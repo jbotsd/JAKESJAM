@@ -11,6 +11,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@msgpack/msgpack": "^3.0.0",
     "convex": "^1.37.0",
     "phaser": "^4.1.0"
   },

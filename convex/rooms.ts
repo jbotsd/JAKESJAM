@@ -2,6 +2,7 @@ import { mutation, query } from "./_generated/server";
 import { v } from "convex/values";
 import type { Doc, Id } from "./_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "./_generated/server";
+import { assignGameServer } from "./matchmaker";
 
 const MAX_PLAYERS = 10;
 const ROOM_CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
@@ -211,6 +212,7 @@ export const startMatch = mutation({
   args: {
     roomId: v.id("rooms"),
     playerId: v.string(),
+    region: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const room = await ctx.db.get(args.roomId);
@@ -243,6 +245,8 @@ export const startMatch = mutation({
       scores,
       startedAt: now,
     });
+
+    await assignGameServer(ctx, matchId, args.region);
 
     await ctx.db.patch(args.roomId, {
       status: "in_match",

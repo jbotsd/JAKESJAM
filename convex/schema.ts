@@ -50,6 +50,13 @@ export default defineSchema({
     scores: v.record(v.string(), v.number()),
     startedAt: v.number(),
     completedAt: v.optional(v.number()),
+    // Dedicated game server assignment — see docs/netcode-architecture.md.
+    // Clients open a WebSocket to gameServerUrl, supplying a per-player token
+    // fetched from matchmaker.getMyMatchToken. The Bun game server validates
+    // the token (HMAC-SHA256 of matchId.playerId against GAME_SERVER_SECRET)
+    // before upgrading the connection.
+    gameServerUrl: v.optional(v.string()),
+    region: v.optional(v.string()),
   }).index("by_room", ["roomId"]),
 
   matchPlayerSnapshots: defineTable({

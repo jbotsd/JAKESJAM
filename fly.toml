@@ -1,0 +1,47 @@
+# JAKESJAM game server — Fly.io config.
+#
+# Default region: syd (closest to AU dev/playtest). Deploy other regions by
+# duplicating this file or overriding via flags:
+#
+#   flyctl deploy --config fly.toml --app jakesjam-srv-syd  --region syd
+#   flyctl deploy --config fly.toml --app jakesjam-srv-sjc  --region sjc
+#   flyctl deploy --config fly.toml --app jakesjam-srv-fra  --region fra
+#
+# First-time per region:
+#   flyctl apps create jakesjam-srv-syd
+#   flyctl secrets set --app jakesjam-srv-syd \
+#     GAME_SERVER_SECRET=<from password manager> \
+#     CONVEX_URL=https://your-deployment.convex.cloud
+
+app = "jakesjam-srv-syd"
+primary_region = "syd"
+
+[build]
+  dockerfile = "server/Dockerfile"
+
+[env]
+  PORT = "8080"
+  REGION = "syd"
+  NODE_ENV = "production"
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  # Game server is stateful — keep VMs up while there's a chance of players.
+  auto_stop_machines = false
+  auto_start_machines = true
+  min_machines_running = 1
+  processes = ["app"]
+
+[[http_service.checks]]
+  grace_period = "10s"
+  interval = "10s"
+  method = "get"
+  path = "/health"
+  protocol = "http"
+  timeout = "2s"
+
+[[vm]]
+  cpu_kind = "shared"
+  cpus = 1
+  memory_mb = 512

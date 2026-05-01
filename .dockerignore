@@ -1,0 +1,13 @@
+**/node_modules
+**/dist
+**/.next
+**/.cache
+client/public/audio/*.wav
+standalone
+docs
+tests
+tools
+.git
+.github
+.env*
+README.md
