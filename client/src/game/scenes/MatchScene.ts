@@ -629,12 +629,14 @@ export class MatchScene extends Phaser.Scene {
         // Prefer the server-authoritative offers rolled by the sim's drafting
         // phase (round.ts:enterDrafting). Falls back to the local generator
         // only when offers are absent (offline / dummy boot path before the
-        // sim has transitioned through drafting).
+        // sim has transitioned through drafting). The local player only
+        // drafts when they lost the round, so the fallback passes
+        // playerBehind=true for the comeback rarity boost.
         const offerIds = this.roundState.draftingOffers?.[this.localPlayerId];
         const draftChoices: CardDefinition[] =
           offerIds && offerIds.length > 0
             ? findCardsById(crystalRoundsCards, offerIds)
-            : this.cardSystem.generateDraftChoices(false, ownedCards);
+            : this.cardSystem.generateDraftChoices(true, ownedCards);
 
         if (draftChoices.length > 0) {
           // Brief delay so round-over banner is visible first
@@ -645,7 +647,7 @@ export class MatchScene extends Phaser.Scene {
               availableCards: draftChoices,
               currentBuild: ownedCards,
               roundNumber: this.roundState.roundIndex,
-              playerBehind: false,
+              playerBehind: true,
               localPlayerId: this.localPlayerId,
             });
 
