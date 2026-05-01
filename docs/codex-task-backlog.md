@@ -527,12 +527,24 @@ Acceptance criteria:
 
 ### JJ-1001 - Add Round State Machine
 
+Implementation already drafted in `client/src/sim/round.ts` — `stepRound(input) -> { state, events, matchComplete }`. Constants: `COUNTDOWN_MS`, `ROUND_TIME_LIMIT_MS`, `ROUND_OVER_HOLD_MS`, `TARGET_SCORE_DEFAULT`. Phase enum on `RoundState.phase` is `'countdown' | 'fighting' | 'round-over'`. Round-end emits `SimEvent { t: 'round-end', winnerId }`.
+
+Wiring tasks:
+
+- call `stepRound` from `World.step` each tick, threading the result back into `WorldState.round` and pushing returned events into the tick's event list;
+- gate input application (movement, jump, fire) when `state.round.phase !== 'fighting'`;
+- render countdown / round-over banner from `state.round` in `MatchScene`;
+- on `matchComplete`, server writes match result to Convex via `convex/matches.ts` and broadcasts a final snapshot;
+- offline practice path uses the same `stepRound` (no Convex write) so behavior is identical to online.
+
 Acceptance criteria:
 
-- match has countdown, fighting, round_over, draft, and match_over states;
-- player input is blocked during countdown and round_over;
+- match has countdown, fighting, round-over, and match-over (parked round-over) states;
+- player input is blocked during countdown and round-over;
 - state changes are visible in the HUD;
-- state resets do not recreate unrelated lobby data.
+- state resets do not recreate unrelated lobby data;
+- mutual KO produces null winner with no score change;
+- time-out resolves by highest health, then alphabetical id tiebreak (matches `decideRoundWinner`).
 
 ### JJ-1002 - Add Score Tracking
 
