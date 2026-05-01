@@ -111,6 +111,17 @@ export function stepWeapon(
     const projectile = spawnProjectile(nextEntityId(), params);
     projectile.bouncesRemaining = build.projectile.bounces;
     projectile.pierceRemaining = build.projectile.pierceCount;
+    // Populate the additive pathing/impact extras the sim's stepProjectile
+    // reads. These are optional on the contract but always set here so the
+    // wire-protocol path can rely on them.
+    projectile.impact = build.projectile.impact;
+    projectile.impactRadiusPx = build.projectile.impactRadiusPx;
+    projectile.splitCount = build.projectile.splitCount;
+    projectile.slowMultiplier = build.projectile.slowMultiplier;
+    projectile.homingStrength = build.projectile.homingStrength;
+    projectile.accelerationMultiplier = build.projectile.accelerationMultiplier;
+    projectile.gravityScale = build.projectile.gravityScale;
+    projectile.rangePx = build.projectile.rangePx;
     projectiles.push(projectile);
   }
 
