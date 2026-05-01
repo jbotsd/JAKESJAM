@@ -186,17 +186,6 @@ export class OnlineMatchScene extends Phaser.Scene {
   // Reused buffer so we don't allocate a new string-array each frame.
   private readonly statsLineBuf: string[] = ["", "", "", "", "", ""];
 
-  // ---- HUD elements ----
-  private hudGraphics: Phaser.GameObjects.Graphics | null = null;
-  private hudHealthText: Phaser.GameObjects.Text | null = null;
-  private hudShieldText: Phaser.GameObjects.Text | null = null;
-  private hudJetpackText: Phaser.GameObjects.Text | null = null;
-  private hudTimerText: Phaser.GameObjects.Text | null = null;
-  private hudScoreText: Phaser.GameObjects.Text | null = null;
-  private hudCardsText: Phaser.GameObjects.Text | null = null;
-  private hudBuffText: Phaser.GameObjects.Text | null = null;
-  private roundBannerText: Phaser.GameObjects.Text | null = null;
-
   // ---- New shared UI systems ----
   private hudSystem: HudSystem | null = null;
   private roundBannerSystem: RoundBanner | null = null;
@@ -263,7 +252,6 @@ export class OnlineMatchScene extends Phaser.Scene {
     this.fireGraphics = this.add.graphics();
     this.fireGraphics.setDepth(4);
 
-    this.createHud();
     this.createStatsHud();
     // Shared HUD/banner/death systems (replace inline text with polished versions)
     this.hudSystem = new HudSystem(this, this.localPlayerId);
@@ -307,7 +295,6 @@ export class OnlineMatchScene extends Phaser.Scene {
 
     this.renderWorld(state, deltaMs, now);
     this.followLocalPlayer(state);
-    this.updateHud(state);
     this.updateHudSystem(state);
     this.maybeShowMatchResults(state);
 
@@ -318,268 +305,10 @@ export class OnlineMatchScene extends Phaser.Scene {
 
   // ---------------- HUD ----------------
 
-  private createHud() {
-    // Anchored to the viewport (scrollFactor = 0). Top-left for vitals,
-    // top-center for round timer, top-right for stats (pre-existing).
-    this.hudGraphics = this.add.graphics();
-    this.hudGraphics.setScrollFactor(0).setDepth(900);
-
-    const fontBase = {
-      fontFamily: "Inter, Arial, sans-serif",
-      fontSize: "12px",
-      fontStyle: "900",
-    } as const;
-
-    this.hudHealthText = this.add
-      .text(28, 16, "", { ...fontBase, color: "#b8f05a" })
-      .setScrollFactor(0)
-      .setDepth(901);
-    this.hudShieldText = this.add
-      .text(28, 38, "", { ...fontBase, color: "#93c5fd" })
-      .setScrollFactor(0)
-      .setDepth(901);
-    this.hudJetpackText = this.add
-      .text(28, 60, "", {
-        ...fontBase,
-        fontSize: "11px",
-        color: "#67e8f9",
-      })
-      .setScrollFactor(0)
-      .setDepth(901);
-
-    this.hudTimerText = this.add
-      .text(this.scale.width / 2, 18, "", {
-        fontFamily: "Consolas, monospace",
-        fontSize: "20px",
-        fontStyle: "900",
-        color: "#f7fbff",
-      })
-      .setOrigin(0.5, 0)
-      .setScrollFactor(0)
-      .setDepth(901);
-
-    this.hudScoreText = this.add
-      .text(this.scale.width / 2, 44, "", {
-        fontFamily: "Inter, Arial, sans-serif",
-        fontSize: "14px",
-        fontStyle: "900",
-        color: "#caffea",
-        align: "center",
-      })
-      .setOrigin(0.5, 0)
-      .setScrollFactor(0)
-      .setDepth(901);
-
-    this.hudBuffText = this.add
-      .text(28, 86, "", {
-        fontFamily: "Consolas, monospace",
-        fontSize: "11px",
-        fontStyle: "900",
-        color: "#f7fbff",
-      })
-      .setScrollFactor(0)
-      .setDepth(901);
-
-    this.hudCardsText = this.add
-      .text(28, 110, "", {
-        fontFamily: "Inter, Arial, sans-serif",
-        fontSize: "10px",
-        color: "#caffea",
-        wordWrap: { width: 280, useAdvancedWrap: true },
-      })
-      .setScrollFactor(0)
-      .setDepth(901);
-
-    this.roundBannerText = this.add
-      .text(this.scale.width / 2, this.scale.height * 0.32, "", {
-        color: "#fff7d6",
-        fontFamily: "Inter, Arial, sans-serif",
-        fontSize: "56px",
-        fontStyle: "900",
-        align: "center",
-        stroke: "#0b0e14",
-        strokeThickness: 9,
-      })
-      .setOrigin(0.5, 0.5)
-      .setScrollFactor(0)
-      .setDepth(990)
-      .setVisible(false);
-
-    this.scale.on("resize", this.repositionHud, this);
-  }
-
   private repositionHud() {
-    if (this.hudTimerText) this.hudTimerText.setX(this.scale.width / 2);
-    if (this.hudScoreText) this.hudScoreText.setX(this.scale.width / 2);
-    if (this.roundBannerText) {
-      this.roundBannerText.setPosition(
-        this.scale.width / 2,
-        this.scale.height * 0.32,
-      );
-    }
     this.repositionStatsHud();
   }
 
-  private updateHud(state: WorldState) {
-    if (
-      !this.hudGraphics ||
-      !this.hudHealthText ||
-      !this.hudShieldText ||
-      !this.hudJetpackText ||
-      !this.hudTimerText ||
-      !this.hudScoreText ||
-      !this.hudCardsText ||
-      !this.hudBuffText
-    ) {
-      return;
-    }
-    const local = state.players[this.localPlayerId];
-    const character = this.getCharacter(local?.characterId);
-    const maxHealth = character.maxHealth;
-    const graphics = this.hudGraphics;
-    graphics.clear();
-
-    if (local) {
-      // Health bar.
-      const healthRatio = Phaser.Math.Clamp(local.health / maxHealth, 0, 1);
-      drawBar(graphics, 28, 14, 200, 12, 0x1f2937, 0xb8f05a, healthRatio, 0.95);
-      this.hudHealthText.setText(
-        `HP ${Math.ceil(local.health)} / ${maxHealth}`,
-      );
-
-      // Shield bar — only when player has shield charge defined.
-      const maxCharge = local.shieldMaxCharge ?? 0;
-      const charge = local.shieldCharge ?? 0;
-      if (maxCharge > 0) {
-        const shieldRatio = Phaser.Math.Clamp(charge / maxCharge, 0, 1);
-        drawBar(graphics, 28, 36, 160, 8, 0x1f2937, 0x93c5fd, shieldRatio, 0.95);
-        this.hudShieldText.setText(
-          `SH ${Math.ceil(charge)} / ${Math.ceil(maxCharge)}`,
-        );
-        this.hudShieldText.setVisible(true);
-      } else {
-        this.hudShieldText.setVisible(false);
-      }
-
-      // Jetpack fuel — only show when sim is exposing fuel data.
-      const fuel = local.jetpackFuel;
-      if (fuel !== undefined) {
-        const fuelRatio = Phaser.Math.Clamp(fuel / 100, 0, 1);
-        drawBar(graphics, 28, 60, 120, 6, 0x1f2937, 0x67e8f9, fuelRatio, 0.85);
-        this.hudJetpackText.setText(`JET ${Math.round(fuel)}`);
-        this.hudJetpackText.setVisible(true);
-      } else {
-        this.hudJetpackText.setVisible(false);
-      }
-
-      // Buff/debuff icons row at y=84..104.
-      const buffRowY = 84;
-      let cursorX = 28;
-      this.hudBuffText.setText("");
-      const lines: string[] = [];
-      for (const buff of BUFF_DESCRIPTORS) {
-        const tickValue = local[buff.field] as number | undefined;
-        if (typeof tickValue === "number" && tickValue > state.tick) {
-          const remainingMs = Math.max(0, (tickValue - state.tick) * STEP_MS);
-          drawIcon(graphics, cursorX, buffRowY, buff.color, 0.9);
-          lines.push(`${buff.label} ${(remainingMs / 1000).toFixed(1)}s`);
-          cursorX += 56;
-        }
-      }
-      for (const debuff of DEBUFF_DESCRIPTORS) {
-        const tickValue = local[debuff.field] as number | undefined;
-        if (typeof tickValue === "number" && tickValue > state.tick) {
-          const remainingMs = Math.max(0, (tickValue - state.tick) * STEP_MS);
-          drawIcon(graphics, cursorX, buffRowY, debuff.color, 0.9);
-          lines.push(`${debuff.label} ${(remainingMs / 1000).toFixed(1)}s`);
-          cursorX += 56;
-        }
-      }
-      this.hudBuffText.setText(lines.join("  "));
-
-      // Card mutators picked up in this match (sim/types: player.cards).
-      const cardNames = local.cards
-        .map((cardId) => crystalRoundsCards.find((c) => c.id === cardId)?.name)
-        .filter((n): n is string => Boolean(n));
-      this.hudCardsText.setText(
-        cardNames.length > 0
-          ? `CARDS: ${cardNames.join(", ")}`
-          : "CARDS: (none)",
-      );
-    } else {
-      this.hudHealthText.setText("");
-      this.hudShieldText.setVisible(false);
-      this.hudJetpackText.setVisible(false);
-      this.hudCardsText.setText("");
-      this.hudBuffText.setText("");
-    }
-
-    // Round timer (mm:ss).
-    const remainingMs = Math.max(0, state.round.countdownRemainingMs);
-    const totalSec = Math.ceil(remainingMs / 1000);
-    const minutes = Math.floor(totalSec / 60);
-    const seconds = totalSec % 60;
-    this.hudTimerText.setText(
-      `${minutes}:${seconds.toString().padStart(2, "0")}`,
-    );
-
-    // Scores row — "you 1   them 0" style. Sort by playerId for stability.
-    const scoreEntries = Object.entries(state.round.scores).sort(
-      ([a], [b]) => a.localeCompare(b),
-    );
-    if (scoreEntries.length === 0) {
-      this.hudScoreText.setText(`Round ${state.round.roundIndex + 1}`);
-    } else {
-      const parts = scoreEntries.map(([pid, score]) => {
-        const tag = pid === this.localPlayerId ? "YOU" : pid.slice(-4);
-        return `${tag} ${score}`;
-      });
-      this.hudScoreText.setText(parts.join("   "));
-    }
-
-    // Round phase banner.
-    this.updateRoundBanner(state);
-  }
-
-  private updateRoundBanner(state: WorldState) {
-    const banner = this.roundBannerText;
-    if (!banner) return;
-    if (this.matchHasEnded) {
-      banner.setVisible(false);
-      return;
-    }
-    const round = state.round;
-    if (round.phase === "countdown") {
-      // 3 / 2 / 1 / FIGHT! by remaining ms (mirrors offline MatchScene).
-      const remaining = round.countdownRemainingMs;
-      let label: string;
-      if (remaining > 2400) {
-        label = "3";
-      } else if (remaining > 1400) {
-        label = "2";
-      } else if (remaining > 600) {
-        label = "1";
-      } else {
-        label = "FIGHT!";
-      }
-      banner.setText(`ROUND ${round.roundIndex + 1}\n${label}`);
-      banner.setVisible(true);
-      return;
-    }
-    if (round.phase === "round-over") {
-      const winnerId = round.winnerPlayerId;
-      const winnerLabel =
-        winnerId === null
-          ? "DRAW"
-          : winnerId === this.localPlayerId
-            ? "YOU"
-            : winnerId.slice(-4).toUpperCase();
-      banner.setText(`ROUND ${round.roundIndex + 1}\n${winnerLabel}`);
-      banner.setVisible(true);
-      return;
-    }
-    banner.setVisible(false);
-  }
 
   // ---------------- New shared HUD system ----------------
 
@@ -1045,7 +774,6 @@ export class OnlineMatchScene extends Phaser.Scene {
 
   private showMatchResults(state: WorldState) {
     if (!this.matchResultsOverlay) return;
-    if (this.roundBannerText) this.roundBannerText.setVisible(false);
     const rows: MatchResultsRow[] = Object.entries(state.round.scores)
       .map(([pid, score]) => {
         const player = state.players[pid];
@@ -1112,24 +840,6 @@ export class OnlineMatchScene extends Phaser.Scene {
     this.fireGraphics = null;
     this.pickupGraphics?.destroy();
     this.pickupGraphics = null;
-    this.hudGraphics?.destroy();
-    this.hudGraphics = null;
-    this.hudHealthText?.destroy();
-    this.hudHealthText = null;
-    this.hudShieldText?.destroy();
-    this.hudShieldText = null;
-    this.hudJetpackText?.destroy();
-    this.hudJetpackText = null;
-    this.hudTimerText?.destroy();
-    this.hudTimerText = null;
-    this.hudScoreText?.destroy();
-    this.hudScoreText = null;
-    this.hudCardsText?.destroy();
-    this.hudCardsText = null;
-    this.hudBuffText?.destroy();
-    this.hudBuffText = null;
-    this.roundBannerText?.destroy();
-    this.roundBannerText = null;
     this.hudSystem?.destroy();
     this.hudSystem = null;
     this.roundBannerSystem?.destroy();
@@ -1147,38 +857,6 @@ export class OnlineMatchScene extends Phaser.Scene {
 }
 
 // ---------------- Drawing helpers (file-local) ----------------
-
-function drawBar(
-  graphics: Phaser.GameObjects.Graphics,
-  x: number,
-  y: number,
-  width: number,
-  height: number,
-  trackColor: number,
-  fillColor: number,
-  ratio: number,
-  alpha: number,
-) {
-  graphics.fillStyle(trackColor, 0.85);
-  graphics.fillRect(x, y, width, height);
-  graphics.fillStyle(fillColor, alpha);
-  graphics.fillRect(x, y, width * ratio, height);
-  graphics.lineStyle(1, 0xf7fbff, 0.5);
-  graphics.strokeRect(x, y, width, height);
-}
-
-function drawIcon(
-  graphics: Phaser.GameObjects.Graphics,
-  x: number,
-  y: number,
-  color: number,
-  alpha: number,
-) {
-  graphics.fillStyle(color, alpha);
-  graphics.fillRoundedRect(x, y, 14, 14, 3);
-  graphics.lineStyle(1, 0xf7fbff, 0.7);
-  graphics.strokeRoundedRect(x, y, 14, 14, 3);
-}
 
 function drawDestructible(
   graphics: Phaser.GameObjects.Graphics,

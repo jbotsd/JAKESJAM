@@ -215,9 +215,6 @@ export class MatchScene extends Phaser.Scene {
   // helper. Initialised on create() to a fresh countdown.
   private roundState: RoundState = createInitialRoundState();
   private targetScore = TARGET_SCORE_DEFAULT;
-  // Big centre-screen banner used during countdown ("3 / 2 / 1 / FIGHT!")
-  // and round-over hold ("Round X to <name>"). Recreated each `create()`.
-  private roundBannerText?: Phaser.GameObjects.Text;
   private matchResultsOverlay?: MatchResultsOverlay;
   // True once stepRound emits matchComplete this scene-life. Stops further
   // round/score mutations and gates the results overlay.
@@ -310,8 +307,6 @@ export class MatchScene extends Phaser.Scene {
     this.createRemotePlayerVisuals();
     this.createReticle();
     this.createScoreboardOverlay();
-    this.createRoundBanner();
-    // ── New HUD / UI systems ──────────────────────────────────────────────
     this.hudSystem?.destroy();
     this.hudSystem = new HudSystem(this, this.localPlayerId);
     this.roundBannerSystem?.destroy();
@@ -330,7 +325,6 @@ export class MatchScene extends Phaser.Scene {
     } else {
       this.matchResultsOverlay.hide();
     }
-    this.updateRoundBanner();
   }
 
   update(_time: number, deltaMs: number) {
@@ -526,25 +520,6 @@ export class MatchScene extends Phaser.Scene {
       .setVisible(false);
   }
 
-  private createRoundBanner() {
-    const { width, height } = this.scale;
-    this.roundBannerText?.destroy();
-    this.roundBannerText = this.add
-      .text(width / 2, height * 0.32, "", {
-        color: "#fff7d6",
-        fontFamily: "Inter, Arial, sans-serif",
-        fontSize: "64px",
-        fontStyle: "900",
-        align: "center",
-        stroke: "#0b0e14",
-        strokeThickness: 10,
-      })
-      .setOrigin(0.5, 0.5)
-      .setScrollFactor(0)
-      .setDepth(990)
-      .setVisible(false);
-  }
-
   /**
    * Build a minimal synthetic Record<PlayerId, PlayerEntity> for stepRound.
    * The state machine only reads `alive` and `health`; everything else is
@@ -629,8 +604,6 @@ export class MatchScene extends Phaser.Scene {
       this.resetDestructibles();
     }
 
-    this.updateRoundBanner();
-
     if (result.matchComplete) {
       this.matchHasEnded = true;
       this.showMatchResults();
@@ -689,44 +662,6 @@ export class MatchScene extends Phaser.Scene {
     }
   }
 
-  private updateRoundBanner() {
-    if (!this.roundBannerText) {
-      return;
-    }
-    const banner = this.roundBannerText;
-    if (this.matchHasEnded) {
-      banner.setVisible(false);
-      return;
-    }
-    if (this.roundState.phase === "countdown") {
-      const remaining = this.roundState.countdownRemainingMs;
-      // 3 / 2 / 1 / FIGHT! based on the seconds remaining. The "FIGHT!"
-      // burst lives in the last 600ms of the countdown so it's visible
-      // before phase flips to "fighting" on the same tick the timer hits 0.
-      let label: string;
-      if (remaining > 2400) {
-        label = "3";
-      } else if (remaining > 1400) {
-        label = "2";
-      } else if (remaining > 600) {
-        label = "1";
-      } else {
-        label = "FIGHT!";
-      }
-      banner.setText(`ROUND ${this.roundState.roundIndex}\n${label}`);
-      banner.setVisible(true);
-      return;
-    }
-    if (this.roundState.phase === "round-over") {
-      const winnerLabel = this.getRoundWinnerLabel(this.roundState.winnerPlayerId);
-      banner.setText(`ROUND ${this.roundState.roundIndex} TO ${winnerLabel}`);
-      banner.setVisible(true);
-      return;
-    }
-    // Fighting: hide banner so combat reads cleanly.
-    banner.setVisible(false);
-  }
-
   private getRoundWinnerLabel(winnerId: PlayerId | null): string {
     if (winnerId === null) {
       return "DRAW";
@@ -746,9 +681,6 @@ export class MatchScene extends Phaser.Scene {
       this.matchResultsOverlay = new MatchResultsOverlay();
     }
     const view = this.buildResultsView();
-    if (this.roundBannerText) {
-      this.roundBannerText.setVisible(false);
-    }
     this.matchResultsOverlay.show(view, {
       onRematch: () => this.handleRematch(),
       onReturnToLobby: () => this.handleReturnToLobby(),
