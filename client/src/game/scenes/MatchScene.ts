@@ -626,7 +626,15 @@ export class MatchScene extends Phaser.Scene {
       // Only the local player drafts (online draft sync is future work)
       if (loserId === this.localPlayerId && !this.matchHasEnded) {
         const ownedCards = findCardsById(crystalRoundsCards, this.progressionCardIds);
-        const draftChoices = this.cardSystem.generateDraftChoices(false, ownedCards);
+        // Prefer the server-authoritative offers rolled by the sim's drafting
+        // phase (round.ts:enterDrafting). Falls back to the local generator
+        // only when offers are absent (offline / dummy boot path before the
+        // sim has transitioned through drafting).
+        const offerIds = this.roundState.draftingOffers?.[this.localPlayerId];
+        const draftChoices: CardDefinition[] =
+          offerIds && offerIds.length > 0
+            ? findCardsById(crystalRoundsCards, offerIds)
+            : this.cardSystem.generateDraftChoices(false, ownedCards);
 
         if (draftChoices.length > 0) {
           // Brief delay so round-over banner is visible first
