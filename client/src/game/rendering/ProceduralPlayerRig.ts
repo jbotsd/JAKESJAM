@@ -1,5 +1,6 @@
 import Phaser from "phaser";
 import type { Vec2 } from "../types/game";
+import { drawWizardOverlay } from "./wizardOverlay";
 
 type ProceduralPlayerRigOptions = {
   color: number;
@@ -153,7 +154,25 @@ export class ProceduralPlayerRig {
     g.fillCircle(head.x, head.y, 12 * s);
     g.lineStyle(3 * s, PLAYER_DARK, 1);
     g.strokeCircle(head.x, head.y, 12 * s);
-    this.drawFace(g, head, s);
+
+    // Wizard overlay: cyberpunk sorcerer accents
+    drawWizardOverlay({
+      g,
+      head,
+      chest,
+      pelvis,
+      shoulderLead,
+      handLead,
+      muzzle,
+      leftFoot,
+      rightFoot,
+      facing: this.facing,
+      scale: s,
+      playerColor: this.color,
+      healthRatio: (pose.health ?? 100) / (pose.maxHealth ?? 100),
+      isFiring: Math.abs(pose.velocity.x) > 200,
+      elapsedMs: this.stepPhase * 166,
+    });
   }
 
   private footTarget(
@@ -229,7 +248,8 @@ export class ProceduralPlayerRig {
     graphics.fillCircle(muzzle.x, muzzle.y, 3 * scale);
   }
 
-  private drawFace(graphics: Phaser.GameObjects.Graphics, head: Vec2, scale: number) {
+  // @ts-ignore Wizard overlay replaces face - kept for reference
+  private _drawFace(graphics: Phaser.GameObjects.Graphics, head: Vec2, scale: number) {
     const eyeY = head.y - 2 * scale;
     graphics.fillStyle(PLAYER_DARK, 1);
     graphics.fillCircle(head.x + this.facing * 4 * scale, eyeY, 2 * scale);
