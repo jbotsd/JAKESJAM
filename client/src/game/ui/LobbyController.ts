@@ -106,6 +106,21 @@ export class LobbyController {
     void this.roomClient?.close();
   }
 
+  openHostMenu() {
+    this.setClientRole("host");
+    this.scrollPanelIntoView(this.serverPanel);
+  }
+
+  openJoinMenu() {
+    this.setClientRole("player");
+    this.scrollPanelIntoView(this.playerConnectPanel);
+  }
+
+  startPracticeFromMenu() {
+    this.setClientRole("host");
+    this.startPractice();
+  }
+
   private bindEvents() {
     this.nameInput.addEventListener("input", () => {
       localStorage.setItem(PLAYER_NAME_KEY, this.playerName);
@@ -380,8 +395,19 @@ export class LobbyController {
   private setClientRole(role: ClientRole) {
     this.clientRole = role;
     localStorage.setItem(CLIENT_ROLE_KEY, role);
+    this.syncRoleInputs();
     this.syncButtons();
     this.setRoleStatus();
+  }
+
+  private syncRoleInputs() {
+    for (const input of this.roleInputs) {
+      input.checked = input.value === this.clientRole;
+    }
+  }
+
+  private scrollPanelIntoView(element: HTMLElement) {
+    element.scrollIntoView({ behavior: "smooth", block: "start" });
   }
 
   private setRoleStatus() {

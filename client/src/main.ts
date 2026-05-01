@@ -10,6 +10,39 @@ if (!app) {
 }
 
 app.innerHTML = `
+  <section class="splash-screen" data-splash>
+    <div class="splash-stage">
+      <p class="splash-kicker">BOXWORKS ONLINE</p>
+      <h1>JAKESJAM</h1>
+      <p class="splash-copy">Pick a lane, tune the setup, then get in the room.</p>
+      <div class="splash-actions">
+        <button data-menu-practice type="button">Practice</button>
+        <button data-menu-host type="button">Host Game</button>
+        <button data-menu-join type="button">Join Game</button>
+        <button data-menu-options type="button">Options</button>
+      </div>
+      <section class="options-panel" data-options hidden>
+        <h2>Options</h2>
+        <label>
+          Music Volume
+          <input data-music-volume type="range" min="0" max="100" value="65" />
+        </label>
+        <label class="option-check">
+          <input data-music-muted type="checkbox" />
+          Mute Music
+        </label>
+        <label>
+          Resolution
+          <select data-resolution>
+            <option value="960">960 x 540</option>
+            <option value="1180" selected>1280-ish Window</option>
+            <option value="1440">1600-ish Window</option>
+          </select>
+        </label>
+        <button data-options-back type="button">Back</button>
+      </section>
+    </div>
+  </section>
   <main class="app-shell">
     <section class="play-surface" aria-label="Game preview">
       <div id="game-root" class="game-root"></div>
@@ -111,9 +144,66 @@ app.innerHTML = `
 
 const game = new Phaser.Game(gameConfig);
 const lobbyController = new LobbyController(app);
+const splash = queryRequired<HTMLElement>("[data-splash]");
+const gameRoot = queryRequired<HTMLElement>("#game-root");
+const optionsPanel = queryRequired<HTMLElement>("[data-options]");
+const musicVolumeInput = queryRequired<HTMLInputElement>("[data-music-volume]");
+const musicMutedInput = queryRequired<HTMLInputElement>("[data-music-muted]");
+const resolutionSelect = queryRequired<HTMLSelectElement>("[data-resolution]");
+const menuMusic = new Audio(getMenuMusicUrl());
+
+menuMusic.loop = true;
+menuMusic.preload = "auto";
+restoreOptions();
+
+queryRequired<HTMLButtonElement>("[data-menu-practice]").addEventListener("click", () => {
+  startMenuMusic();
+  hideSplash();
+  lobbyController.startPracticeFromMenu();
+});
+
+queryRequired<HTMLButtonElement>("[data-menu-host]").addEventListener("click", () => {
+  startMenuMusic();
+  hideSplash();
+  lobbyController.openHostMenu();
+});
+
+queryRequired<HTMLButtonElement>("[data-menu-join]").addEventListener("click", () => {
+  startMenuMusic();
+  hideSplash();
+  lobbyController.openJoinMenu();
+});
+
+queryRequired<HTMLButtonElement>("[data-menu-options]").addEventListener("click", () => {
+  startMenuMusic();
+  optionsPanel.hidden = false;
+});
+
+queryRequired<HTMLButtonElement>("[data-options-back]").addEventListener("click", () => {
+  optionsPanel.hidden = true;
+});
+
+musicVolumeInput.addEventListener("input", () => {
+  localStorage.setItem("jakesjam.musicVolume", musicVolumeInput.value);
+  applyAudioOptions();
+});
+
+musicMutedInput.addEventListener("change", () => {
+  localStorage.setItem("jakesjam.musicMuted", JSON.stringify(musicMutedInput.checked));
+  applyAudioOptions();
+});
+
+resolutionSelect.addEventListener("change", () => {
+  localStorage.setItem("jakesjam.resolutionWidth", resolutionSelect.value);
+  applyResolutionOption();
+});
+
+splash.addEventListener("pointerdown", () => startMenuMusic(), { once: true });
 
 window.addEventListener("jakesjam:start-match", (event) => {
   const matchEvent = event as CustomEvent;
+  stopMenuMusic();
+  hideSplash();
   game.scene.start("MatchScene", matchEvent.detail);
 });
 
@@ -126,3 +216,55 @@ window.addEventListener("beforeunload", () => {
   lobbyController.destroy();
   game.destroy(true);
 });
+
+function queryRequired<T extends HTMLElement>(selector: string): T {
+  const element = app?.querySelector<T>(selector);
+  if (!element) {
+    throw new Error(`Missing UI element: ${selector}`);
+  }
+  return element;
+}
+
+function hideSplash() {
+  splash.hidden = true;
+}
+
+function restoreOptions() {
+  musicVolumeInput.value = localStorage.getItem("jakesjam.musicVolume") ?? "65";
+  musicMutedInput.checked = localStorage.getItem("jakesjam.musicMuted") === "true";
+  resolutionSelect.value = localStorage.getItem("jakesjam.resolutionWidth") ?? "1180";
+  applyAudioOptions();
+  applyResolutionOption();
+}
+
+function applyAudioOptions() {
+  menuMusic.volume = Number(musicVolumeInput.value) / 100;
+  menuMusic.muted = musicMutedInput.checked;
+}
+
+function applyResolutionOption() {
+  gameRoot.style.setProperty("--game-shell-width", `${resolutionSelect.value}px`);
+}
+
+function startMenuMusic() {
+  applyAudioOptions();
+  void menuMusic.play().catch(() => undefined);
+}
+
+function stopMenuMusic() {
+  menuMusic.pause();
+  menuMusic.currentTime = 0;
+}
+
+function getMenuMusicUrl(): string {
+  const assetBase = window.__JAKESJAM_ASSET_BASE__;
+  if (assetBase) {
+    return new URL("audio/menu-music.wav", assetBase).toString();
+  }
+
+  if (window.location.protocol === "file:") {
+    return new URL("./audio/menu-music.wav", window.location.href).toString();
+  }
+
+  return `${window.location.origin}/audio/menu-music.wav`;
+}

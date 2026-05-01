@@ -2,6 +2,9 @@
 
 ## v0.21 - 2026-05-01
 
+- Added a first-run splash menu with Practice, Host, Join, and Options actions.
+- Added menu music loop support using the supplied `ChatGPT Stickgame.wav` track.
+- Added options for menu music volume, mute, and display resolution width.
 - Added a held-Tab scoreboard overlay with per-player kills and deaths.
 - Reworked 5x3 map expansion to use varied seeded room archetypes instead of repeated mirrored clones.
 - Reduced the in-match HUD to only player health plus the active weapon and its current mutators.

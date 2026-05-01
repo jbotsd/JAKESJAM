@@ -108,13 +108,90 @@ input[type="color"] {
 }
 
 .game-root {
-  width: min(100%, 1180px);
+  width: min(100%, var(--game-shell-width, 1180px));
   aspect-ratio: 16 / 9;
   overflow: hidden;
   border: 1px solid rgba(255, 255, 255, 0.12);
   border-radius: 8px;
   background: #0b0e14;
   box-shadow: 0 22px 60px rgba(0, 0, 0, 0.32);
+}
+
+.splash-screen {
+  position: fixed;
+  z-index: 20;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 28px;
+  background:
+    linear-gradient(rgba(7, 10, 16, 0.8), rgba(7, 10, 16, 0.9)),
+    radial-gradient(circle at 50% 28%, rgba(80, 227, 194, 0.24), transparent 36%),
+    #0b0e14;
+}
+
+.splash-stage {
+  display: grid;
+  gap: 18px;
+  width: min(720px, 100%);
+  padding: 38px;
+  border: 1px solid rgba(80, 227, 194, 0.38);
+  border-radius: 8px;
+  background: rgba(16, 19, 26, 0.86);
+  box-shadow: 0 30px 90px rgba(0, 0, 0, 0.45);
+}
+
+.splash-kicker {
+  color: var(--accent);
+  font-size: 0.78rem;
+  font-weight: 900;
+  letter-spacing: 0.12em;
+}
+
+.splash-stage h1 {
+  font-size: clamp(3rem, 9vw, 6.5rem);
+  line-height: 0.9;
+}
+
+.splash-copy {
+  color: var(--muted);
+  font-size: 1rem;
+}
+
+.splash-actions {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 8px;
+}
+
+.options-panel {
+  display: grid;
+  gap: 14px;
+  margin-top: 8px;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: rgba(13, 16, 22, 0.92);
+}
+
+.options-panel label {
+  display: grid;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 0.82rem;
+  font-weight: 800;
+}
+
+.option-check {
+  grid-template-columns: 18px minmax(0, 1fr);
+  align-items: center;
+}
+
+.option-check input {
+  width: 16px;
+  min-height: 16px;
+  padding: 0;
 }
 
 .game-root canvas {
@@ -372,5 +449,13 @@ h2 {
   .lobby-panel {
     border-left: 0;
     border-top: 1px solid rgba(255, 255, 255, 0.1);
+  }
+
+  .splash-stage {
+    padding: 24px;
+  }
+
+  .splash-actions {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }

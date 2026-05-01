@@ -12,4 +12,5 @@ interface ImportMeta {
 interface Window {
   __JAKESJAM_DEFAULT_ROLE__?: "host" | "player";
   __JAKESJAM_CONVEX_URL__?: string;
+  __JAKESJAM_ASSET_BASE__?: string;
 }

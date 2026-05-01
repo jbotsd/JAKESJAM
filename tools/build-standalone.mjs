@@ -1,4 +1,4 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { cp, mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -24,12 +24,17 @@ const [scriptSource, stylesheetSource] = await Promise.all([
 const inlineScriptSource = scriptSource.replace(/<\/script/gi, "<\\/script");
 
 await mkdir(outputDir, { recursive: true });
+await cp(path.join(distDir, "audio"), path.join(outputDir, "audio"), {
+  recursive: true,
+  force: true,
+});
 
 for (const role of ["host", "player"]) {
   const title = role === "host" ? "JAKESJAM Host" : "JAKESJAM Player";
   const runtimeConfig = [
     `window.__JAKESJAM_DEFAULT_ROLE__ = "${role}";`,
     `window.__JAKESJAM_CONVEX_URL__ = location.protocol.startsWith("http") && location.hostname ? location.protocol + "//" + location.hostname + ":3210" : "http://127.0.0.1:3210";`,
+    `window.__JAKESJAM_ASSET_BASE__ = new URL("./", location.href).toString();`,
   ].join("\n");
 
   const html = sourceHtml
