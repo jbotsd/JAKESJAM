@@ -819,23 +819,25 @@ export class OnlineMatchScene extends Phaser.Scene {
     const state = this.loop?.getRenderState();
     if (!state) return;
     const victim = state.players[victimId];
-    if (!victim) return;
+    if (!victim || damage < 1) return;
+    const isLocal = victimId === this.localPlayerId;
+    const spread = (Math.random() - 0.5) * 22;
     const text = this.add
-      .text(victim.x, victim.y - 36, Math.round(damage).toString(), {
-        color: victimId === this.localPlayerId ? "#fb7185" : "#fff7d6",
+      .text(victim.x + spread, victim.y - 36, Math.round(damage).toString(), {
+        color: isLocal ? "#fb7185" : "#fff7d6",
         fontFamily: "Inter, Arial, sans-serif",
-        fontSize: "14px",
+        fontSize: damage >= 30 ? "18px" : "14px",
         fontStyle: "900",
-        stroke: "#0b0e14",
+        stroke: "#05080f",
         strokeThickness: 3,
       })
       .setOrigin(0.5, 1)
       .setDepth(800);
     this.tweens.add({
       targets: text,
-      y: text.y - 24,
+      y: text.y - 28,
       alpha: 0,
-      duration: 520,
+      duration: 560,
       ease: "Sine.easeOut",
       onComplete: () => text.destroy(),
     });

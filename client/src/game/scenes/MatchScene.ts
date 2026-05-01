@@ -1583,9 +1583,34 @@ export class MatchScene extends Phaser.Scene {
       (this.bossModeMs > 0 ? 1.12 : 1);
     this.playerHealth = Math.max(0, this.playerHealth - modifiedAmount);
     this.audio?.play("hit");
+    this.spawnDamageNumber(this.playerBody.position, modifiedAmount, true);
     if (this.playerHealth <= 0) {
       this.killPlayer();
     }
+  }
+
+  private spawnDamageNumber(position: Vec2, amount: number, isLocal: boolean): void {
+    if (amount < 1) return;
+    const spread = (Math.random() - 0.5) * 22;
+    const text = this.add
+      .text(position.x + spread, position.y - 32, Math.round(amount).toString(), {
+        color: isLocal ? "#fb7185" : "#fff7d6",
+        fontFamily: "Inter, Arial, sans-serif",
+        fontSize: amount >= 30 ? "18px" : "14px",
+        fontStyle: "900",
+        stroke: "#05080f",
+        strokeThickness: 3,
+      })
+      .setOrigin(0.5, 1)
+      .setDepth(800);
+    this.tweens.add({
+      targets: text,
+      y: text.y - 28,
+      alpha: 0,
+      duration: 560,
+      ease: "Sine.easeOut",
+      onComplete: () => text.destroy(),
+    });
   }
 
   private isParryCovering(sourcePosition?: Vec2): boolean {
