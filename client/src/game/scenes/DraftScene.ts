@@ -1,6 +1,23 @@
 import Phaser from "phaser";
 import { SceneKeys } from "./SceneKeys";
 import type { CardDefinition } from "../types/game";
+import type { ElementType } from "../../sim/types";
+
+const ELEMENT_COLORS = {
+  crystal: 0x50e3c2,
+  neutral: 0xf7fbff,
+  fire: 0xff7a18,
+  ice: 0x93c5fd,
+  lightning: 0xfef08a,
+  void: 0xa78bfa,
+  radiant: 0xfff7d6,
+  electric: 0xfef08a,
+  toxic: 0x86efac,
+  sticky: 0xf97316,
+  explosive: 0xfb7185,
+} as const satisfies Record<ElementType, number>;
+
+const NEUTRAL_ELEMENTS = new Set<ElementType>(["crystal", "neutral"]);
 
 type DraftSceneInitData = {
   availableCards: CardDefinition[];
@@ -93,9 +110,9 @@ export class DraftScene extends Phaser.Scene {
       cardContainer.add(bg);
 
       // Element accent: tint the border with element color if card has one
-      const cardElement = card.modifier?.projectile?.element;
-      if (cardElement && cardElement !== "neutral" && cardElement !== "crystal") {
-        border.setStrokeStyle(5, this.getElementColor(cardElement));
+      const cardElement: ElementType | undefined = card.modifier?.projectile?.element;
+      if (cardElement && !NEUTRAL_ELEMENTS.has(cardElement)) {
+        border.setStrokeStyle(5, ELEMENT_COLORS[cardElement]);
       }
 
       // Card icon placeholder
@@ -187,20 +204,6 @@ export class DraftScene extends Phaser.Scene {
         this.scene.stop(SceneKeys.Draft);
       }
     });
-  }
-
-  private getElementColor(element: string): number {
-    const colors: Record<string, number> = {
-      fire: 0xff7a18,
-      ice: 0x93c5fd,
-      lightning: 0xfef08a,
-      void: 0xa78bfa,
-      radiant: 0xfff7d6,
-      electric: 0xfef08a,
-      toxic: 0x86efac,
-      explosive: 0xfb7185,
-    };
-    return colors[element] ?? 0x9ca3af;
   }
 
   private getRarityColor(rarity: string): number {

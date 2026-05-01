@@ -70,6 +70,19 @@ const REMOTE_PLAYER_TARGET_PREFIX = "remote-player:";
 // (or vice versa). Picked to avoid clashing with real player ids.
 const DUMMY_TARGET_PLAYER_ID = "dummy:practice-target";
 const VISIBLE_MUTATOR_BUCKETS = ["delivery", "quantity", "shape", "trajectory", "impact", "element"] as const;
+
+// Status-VFX colors and timings. Hoisted so renderers don't allocate them
+// per spawn and so the palette stays consistent with elementColor() in
+// ProjectileSystem. Frozen via `as const` for narrow inferred literal types.
+const STATUS_VFX = {
+  fire: { color: 0xff7a18, hotColor: 0xfde68a },
+  ice: { color: 0x93c5fd },
+  lightning: { color: 0xfef08a, glow: 0xfbbf24 },
+} as const;
+const BURN_DURATION_MS = 3000;
+const FREEZE_DURATION_MS = 1000;
+const BURN_SPARK_INTERVAL_MS = 80;
+const FREEZE_SHARD_INTERVAL_MS = 160;
 const DEATH_POPUP_DELAY_MS = 520;
 const RESPAWN_COUNTDOWN_MS = 3000;
 const PARRY_ACTIVE_MS = 420;
@@ -228,9 +241,9 @@ export class MatchScene extends Phaser.Scene {
   private localBurnSparkTimerMs = 0;
   private localFreezeShardTimerMs = 0;
   // Per-remote/target element status VFX timers (playerId → expiry ms)
-  private readonly remoteBurnUntilMs = new Map<string, number>();
-  private readonly remoteFreezeUntilMs = new Map<string, number>();
-  private readonly remoteStatusSparkTimerMs = new Map<string, number>();
+  private readonly remoteBurnUntilMs = new Map<PlayerId, number>();
+  private readonly remoteFreezeUntilMs = new Map<PlayerId, number>();
+  private readonly remoteStatusSparkTimerMs = new Map<PlayerId, number>();
   // Practice target status
   private targetBurnUntilMs = 0;
   private targetFreezeUntilMs = 0;
@@ -871,7 +884,7 @@ export class MatchScene extends Phaser.Scene {
 
     if (burning) {
       this.localBurnSparkTimerMs += deltaMs;
-      if (this.localBurnSparkTimerMs >= 80) {
+      if (this.localBurnSparkTimerMs >= BURN_SPARK_INTERVAL_MS) {
         this.localBurnSparkTimerMs = 0;
         this.spawnBurnSpark(position);
       }
@@ -881,7 +894,7 @@ export class MatchScene extends Phaser.Scene {
 
     if (frozen) {
       this.localFreezeShardTimerMs += deltaMs;
-      if (this.localFreezeShardTimerMs >= 160) {
+      if (this.localFreezeShardTimerMs >= FREEZE_SHARD_INTERVAL_MS) {
         this.localFreezeShardTimerMs = 0;
         this.spawnFreezeShard(position);
         this.spawnFreezeShard(position);
@@ -1052,7 +1065,7 @@ export class MatchScene extends Phaser.Scene {
     }
   }
 
-  private tickRemoteStatusVfx(playerId: string, deltaMs: number, position: Vec2): void {
+  private tickRemoteStatusVfx(playerId: PlayerId, deltaMs: number, position: Vec2): void {
     const now = Date.now();
     const burnUntil = this.remoteBurnUntilMs.get(playerId) ?? 0;
     const freezeUntil = this.remoteFreezeUntilMs.get(playerId) ?? 0;
@@ -1062,10 +1075,10 @@ export class MatchScene extends Phaser.Scene {
     const sparkTimer = this.remoteStatusSparkTimerMs.get(playerId) ?? 0;
     let nextTimer = sparkTimer + deltaMs;
 
-    if (burning && nextTimer >= 80) {
+    if (burning && nextTimer >= BURN_SPARK_INTERVAL_MS) {
       this.spawnBurnSpark(position);
       nextTimer = 0;
-    } else if (frozen && nextTimer >= 160) {
+    } else if (frozen && nextTimer >= FREEZE_SHARD_INTERVAL_MS) {
       this.spawnFreezeShard(position);
       this.spawnFreezeShard(position);
       this.spawnFrostRing(position);
@@ -1088,7 +1101,7 @@ export class MatchScene extends Phaser.Scene {
 
     if (burning) {
       this.targetBurnSparkTimerMs += deltaMs;
-      if (this.targetBurnSparkTimerMs >= 80) {
+      if (this.targetBurnSparkTimerMs >= BURN_SPARK_INTERVAL_MS) {
         this.targetBurnSparkTimerMs = 0;
         this.spawnBurnSpark(pos);
       }
@@ -1099,7 +1112,7 @@ export class MatchScene extends Phaser.Scene {
     if (frozen) {
       // Reuse the local freeze shard timer for the target
       this.localFreezeShardTimerMs += deltaMs;
-      if (this.localFreezeShardTimerMs >= 160) {
+      if (this.localFreezeShardTimerMs >= FREEZE_SHARD_INTERVAL_MS) {
         this.localFreezeShardTimerMs = 0;
         this.spawnFreezeShard(pos);
         this.spawnFreezeShard(pos);
@@ -1555,18 +1568,24 @@ export class MatchScene extends Phaser.Scene {
   private applyElementStatusToTarget(hit: ProjectileHit): void {
     const now = Date.now();
     if (hit.element === "fire") {
-      this.targetBurnUntilMs = Math.max(this.targetBurnUntilMs, now + 3000);
+      this.targetBurnUntilMs = Math.max(this.targetBurnUntilMs, now + BURN_DURATION_MS);
     } else if (hit.element === "ice") {
-      this.targetFreezeUntilMs = Math.max(this.targetFreezeUntilMs, now + 1000);
+      this.targetFreezeUntilMs = Math.max(this.targetFreezeUntilMs, now + FREEZE_DURATION_MS);
     }
   }
 
-  private applyElementStatusToRemote(playerId: string, hit: ProjectileHit): void {
+  private applyElementStatusToRemote(playerId: PlayerId, hit: ProjectileHit): void {
     const now = Date.now();
     if (hit.element === "fire") {
-      this.remoteBurnUntilMs.set(playerId, Math.max(this.remoteBurnUntilMs.get(playerId) ?? 0, now + 3000));
+      this.remoteBurnUntilMs.set(
+        playerId,
+        Math.max(this.remoteBurnUntilMs.get(playerId) ?? 0, now + BURN_DURATION_MS),
+      );
     } else if (hit.element === "ice") {
-      this.remoteFreezeUntilMs.set(playerId, Math.max(this.remoteFreezeUntilMs.get(playerId) ?? 0, now + 1000));
+      this.remoteFreezeUntilMs.set(
+        playerId,
+        Math.max(this.remoteFreezeUntilMs.get(playerId) ?? 0, now + FREEZE_DURATION_MS),
+      );
     }
   }
 
@@ -1575,10 +1594,8 @@ export class MatchScene extends Phaser.Scene {
    * Called from per-frame update when burnUntilMs > Date.now().
    */
   private spawnBurnSpark(position: Vec2): void {
-    const COLOR_FIRE = 0xff7a18;
-    const COLOR_FIRE_HOT = 0xfde68a;
     const hot = Math.random() < 0.35;
-    const color = hot ? COLOR_FIRE_HOT : COLOR_FIRE;
+    const color = hot ? STATUS_VFX.fire.hotColor : STATUS_VFX.fire.color;
     const ox = (Math.random() - 0.5) * 28;
     const spark = this.add.rectangle(position.x + ox, position.y - 10, 3, 7, color, 0.9);
     spark.rotation = (Math.random() - 0.5) * 0.7;
@@ -1599,9 +1616,8 @@ export class MatchScene extends Phaser.Scene {
    * Single-frame frost ring pulse at `position` — subtle pulsing ice hex.
    */
   private spawnFrostRing(position: Vec2): void {
-    const COLOR_ICE = 0x93c5fd;
-    const ring = this.add.circle(position.x, position.y, 18, COLOR_ICE, 0.0);
-    ring.setStrokeStyle(2, COLOR_ICE, 0.52);
+    const ring = this.add.circle(position.x, position.y, 18, STATUS_VFX.ice.color, 0.0);
+    ring.setStrokeStyle(2, STATUS_VFX.ice.color, 0.52);
     this.tweens.add({
       targets: ring,
       radius: 32,
@@ -1617,7 +1633,6 @@ export class MatchScene extends Phaser.Scene {
    * to indicate active freeze.
    */
   private spawnFreezeShard(position: Vec2): void {
-    const COLOR_ICE = 0x93c5fd;
     const angle = Math.random() * Math.PI * 2;
     const dist = 14 + Math.random() * 18;
     const shard = this.add.rectangle(
@@ -1625,7 +1640,7 @@ export class MatchScene extends Phaser.Scene {
       position.y + Math.sin(angle) * dist,
       4,
       9,
-      COLOR_ICE,
+      STATUS_VFX.ice.color,
       0.72,
     );
     shard.rotation = angle + Math.PI / 2;
@@ -1646,8 +1661,6 @@ export class MatchScene extends Phaser.Scene {
    * Additive-style: bright yellow, short-lived, geometric.
    */
   private spawnLightningChainArc(from: Vec2, to: Vec2): void {
-    const COLOR_LIGHTNING = 0xfef08a;
-    const COLOR_GLOW = 0xfbbf24;
     const graphics = this.add.graphics();
     graphics.setBlendMode(Phaser.BlendModes.ADD);
 
@@ -1675,7 +1688,7 @@ export class MatchScene extends Phaser.Scene {
     ];
 
     // Glow pass (thick, low alpha)
-    graphics.lineStyle(5, COLOR_GLOW, 0.3);
+    graphics.lineStyle(5, STATUS_VFX.lightning.glow, 0.3);
     graphics.beginPath();
     graphics.moveTo(pts[0].x, pts[0].y);
     for (let i = 1; i < pts.length; i++) {
@@ -1684,7 +1697,7 @@ export class MatchScene extends Phaser.Scene {
     graphics.strokePath();
 
     // Core pass (thin, bright)
-    graphics.lineStyle(2, COLOR_LIGHTNING, 0.92);
+    graphics.lineStyle(2, STATUS_VFX.lightning.color, 0.92);
     graphics.beginPath();
     graphics.moveTo(pts[0].x, pts[0].y);
     for (let i = 1; i < pts.length; i++) {
