@@ -89,7 +89,13 @@ export type PickupKind =
   | 'boss-core'
   | 'card-cache';
 
-export type RoundPhase = 'countdown' | 'fighting' | 'round-over';
+/**
+ * Round-state phases. Additive: the `'drafting'` phase was added on top of the
+ * original three (countdown / fighting / round-over). Older snapshot consumers
+ * that don't know about `'drafting'` simply read it as "no fighting" — input is
+ * frozen, projectiles paused, players standing still while they pick a card.
+ */
+export type RoundPhase = 'countdown' | 'fighting' | 'round-over' | 'drafting';
 
 export type PlayerEntity = {
   id: PlayerId;
@@ -273,6 +279,24 @@ export type RoundState = {
   scores: Record<PlayerId, number>;
   roundIndex: number;
   winnerPlayerId: PlayerId | null;
+  /**
+   * Drafting phase bookkeeping. All optional / additive — older snapshots that
+   * pre-date the rogue-lite draft phase simply omit them and the round state
+   * machine treats that as "no draft in progress". See `sim/round.ts` for the
+   * lifecycle: offers are rolled on `round-over → drafting`, picks land via
+   * `applyCardPick` on the server, and drafting auto-resolves at expiry.
+   *
+   * - `draftingExpiresAtTick`: tick at which any unresolved offers auto-pick
+   *   the leftmost candidate.
+   * - `draftingPicked`: playerId → cardId for those who already picked this
+   *   round. The round advances to countdown when all alive players have
+   *   entries here OR the expiry tick is reached.
+   * - `draftingOffers`: playerId → array of DRAFT_OFFER_COUNT cardIds offered
+   *   to that player this round.
+   */
+  draftingExpiresAtTick?: Tick;
+  draftingPicked?: Record<PlayerId, string>;
+  draftingOffers?: Record<PlayerId, string[]>;
 };
 
 export type WorldState = {
@@ -334,7 +358,19 @@ export type SimEvent =
    * consumes this event to show the draft UI; the actual card commit happens
    * via a separate input path (out of sim scope for this pass).
    */
-  | { t: 'card-offered'; playerId: PlayerId; cardIds: string[] };
+  | { t: 'card-offered'; playerId: PlayerId; cardIds: string[] }
+  /**
+   * Emitted exactly once per (round, player) when their draft pick is recorded
+   * by `stepRound`. `autoPicked` is true when the player did not commit a card
+   * before `draftingExpiresAtTick` and the leftmost offer was selected on
+   * their behalf, false when the pick arrived via a normal `card-pick` input.
+   */
+  | {
+      t: 'draft-resolved';
+      playerId: PlayerId;
+      cardId: string;
+      autoPicked: boolean;
+    };
 
 export type StepResult = {
   state: WorldState;

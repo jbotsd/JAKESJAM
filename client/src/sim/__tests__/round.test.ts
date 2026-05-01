@@ -1,12 +1,16 @@
-// Round state machine: countdown → fighting → round-over → countdown loop,
-// plus the score-to-target match-complete signal. Pure inputs, deterministic.
+// Round state machine: countdown → fighting → round-over → drafting →
+// countdown loop, plus the score-to-target match-complete signal. Pure
+// inputs, deterministic.
 
 import { describe, test, expect } from "bun:test";
+import { STEP_MS } from "../constants.js";
 import {
   stepRound,
   COUNTDOWN_MS,
   ROUND_TIME_LIMIT_MS,
   ROUND_OVER_HOLD_MS,
+  DRAFT_OFFER_COUNT,
+  DRAFT_WINDOW_MS,
 } from "../round.js";
 import type { PlayerEntity, PlayerId, RoundState, SimEvent } from "../types.js";
 
@@ -184,5 +188,198 @@ describe("stepRound", () => {
     expect(result.matchComplete).toBe(false);
     // Sanity: the hold constant is the source of truth that we just consumed.
     expect(ROUND_OVER_HOLD_MS).toBeGreaterThan(0);
+  });
+
+  // ---- Drafting phase --------------------------------------------------
+  // Threading `tick` + `rngState` into stepRound flips the round-over
+  // exit from "→ countdown directly" to "→ drafting → countdown". The
+  // drafting phase rolls 3 cards per alive player, holds for 8 seconds
+  // unless everyone picks early, and auto-picks the leftmost offer for
+  // anyone who didn't commit before the window expired.
+
+  test("round-over → drafting rolls DRAFT_OFFER_COUNT offers per alive player", () => {
+    const players = {
+      a: mkPlayer("a", { alive: true }),
+      b: mkPlayer("b", { alive: true }),
+    };
+    const state: RoundState = {
+      phase: "round-over",
+      countdownRemainingMs: 0, // hold timer already drained
+      scores: { a: 1, b: 0 },
+      roundIndex: 0,
+      winnerPlayerId: "a",
+    };
+    const result = stepRound({
+      state,
+      players,
+      dtMs: 32,
+      targetScore: 3,
+      tick: 100,
+      rngState: 0xdead_beef,
+    });
+    expect(result.state.phase).toBe("drafting");
+    expect(result.state.draftingOffers).toBeDefined();
+    expect(Object.keys(result.state.draftingOffers!).sort()).toEqual(["a", "b"]);
+    expect(result.state.draftingOffers!.a!.length).toBe(DRAFT_OFFER_COUNT);
+    expect(result.state.draftingOffers!.b!.length).toBe(DRAFT_OFFER_COUNT);
+    expect(result.state.draftingPicked).toEqual({});
+    // Expiry tick is window converted to ticks at the fixed STEP_MS rate.
+    const expectedExpiry = 100 + Math.ceil(DRAFT_WINDOW_MS / STEP_MS);
+    expect(result.state.draftingExpiresAtTick).toBe(expectedExpiry);
+    // Two card-offered events, one per alive player. Round-end is NOT
+    // re-emitted at this boundary (already fired on fighting → round-over).
+    const offerEvents = result.events.filter(
+      (e): e is Extract<SimEvent, { t: "card-offered" }> => e.t === "card-offered",
+    );
+    expect(offerEvents).toHaveLength(2);
+    const offered = new Map(offerEvents.map((e) => [e.playerId, e.cardIds]));
+    expect(offered.get("a")).toEqual(result.state.draftingOffers!.a!);
+    expect(offered.get("b")).toEqual(result.state.draftingOffers!.b!);
+    // RNG cursor advanced because we drew offers.
+    expect(result.rngState).toBeDefined();
+    expect(result.rngState).not.toBe(0xdead_beef);
+  });
+
+  test("drafting offer rolls are deterministic for the same (rngState, players)", () => {
+    const players = {
+      a: mkPlayer("a", { alive: true }),
+      b: mkPlayer("b", { alive: true }),
+    };
+    const state: RoundState = {
+      phase: "round-over",
+      countdownRemainingMs: 0,
+      scores: { a: 1, b: 0 },
+      roundIndex: 0,
+      winnerPlayerId: "a",
+    };
+    const r1 = stepRound({ state, players, dtMs: 32, targetScore: 3, tick: 50, rngState: 12345 });
+    const r2 = stepRound({ state, players, dtMs: 32, targetScore: 3, tick: 50, rngState: 12345 });
+    expect(r1.state.draftingOffers).toEqual(r2.state.draftingOffers);
+    expect(r1.rngState).toBe(r2.rngState);
+  });
+
+  test("drafting → countdown when all alive players have picked", () => {
+    // Pre-set drafting state with both players having committed.
+    const players = {
+      a: mkPlayer("a", { alive: true }),
+      b: mkPlayer("b", { alive: true }),
+    };
+    const startTick = 100;
+    const state: RoundState = {
+      phase: "drafting",
+      countdownRemainingMs: DRAFT_WINDOW_MS,
+      scores: { a: 1, b: 0 },
+      roundIndex: 2,
+      winnerPlayerId: "a",
+      draftingExpiresAtTick: startTick + Math.ceil(DRAFT_WINDOW_MS / STEP_MS),
+      draftingPicked: { a: "crystal-volley", b: "circle-rounds" },
+      draftingOffers: {
+        a: ["crystal-volley", "circle-rounds", "raycast-prism"],
+        b: ["circle-rounds", "raycast-prism", "crystal-volley"],
+      },
+    };
+    const result = stepRound({
+      state,
+      players,
+      dtMs: 16,
+      targetScore: 3,
+      tick: startTick + 1, // well before expiry
+      rngState: 99,
+    });
+    expect(result.state.phase).toBe("countdown");
+    expect(result.state.countdownRemainingMs).toBe(COUNTDOWN_MS);
+    expect(result.state.roundIndex).toBe(3);
+    expect(result.state.winnerPlayerId).toBeNull();
+    // Drafting bookkeeping is wiped on countdown entry.
+    expect(result.state.draftingExpiresAtTick).toBeUndefined();
+    expect(result.state.draftingPicked).toBeUndefined();
+    expect(result.state.draftingOffers).toBeUndefined();
+    // Two draft-resolved events, neither auto-picked.
+    const resolved = result.events.filter(
+      (e): e is Extract<SimEvent, { t: "draft-resolved" }> => e.t === "draft-resolved",
+    );
+    expect(resolved).toHaveLength(2);
+    expect(resolved.every((e) => !e.autoPicked)).toBe(true);
+    expect(resolved.find((e) => e.playerId === "a")?.cardId).toBe("crystal-volley");
+    expect(resolved.find((e) => e.playerId === "b")?.cardId).toBe("circle-rounds");
+  });
+
+  test("drafting → countdown on expiry auto-picks the leftmost offer for non-pickers", () => {
+    const players = {
+      a: mkPlayer("a", { alive: true, cards: [] }),
+      b: mkPlayer("b", { alive: true, cards: ["raycast-prism"] }),
+    };
+    const expiresAt = 200;
+    const state: RoundState = {
+      phase: "drafting",
+      countdownRemainingMs: 0,
+      scores: { a: 1, b: 0 },
+      roundIndex: 0,
+      winnerPlayerId: "a",
+      draftingExpiresAtTick: expiresAt,
+      // 'a' picked already, 'b' missed the deadline.
+      draftingPicked: { a: "circle-rounds" },
+      draftingOffers: {
+        a: ["circle-rounds", "raycast-prism", "crystal-volley"],
+        b: ["crystal-volley", "raycast-prism", "circle-rounds"],
+      },
+    };
+    const result = stepRound({
+      state,
+      players,
+      dtMs: 16,
+      targetScore: 3,
+      tick: expiresAt, // exactly at expiry — `>=` triggers
+      rngState: 7,
+    });
+    expect(result.state.phase).toBe("countdown");
+    const resolved = result.events.filter(
+      (e): e is Extract<SimEvent, { t: "draft-resolved" }> => e.t === "draft-resolved",
+    );
+    // 'a' fires as a normal pick, 'b' as an auto-pick.
+    expect(resolved.find((e) => e.playerId === "a")?.autoPicked).toBe(false);
+    const bResolved = resolved.find((e) => e.playerId === "b");
+    expect(bResolved?.autoPicked).toBe(true);
+    expect(bResolved?.cardId).toBe("crystal-volley"); // leftmost of b's offers
+    // playerPatches surfaces the auto-pick so World.step folds it into
+    // player.cards. Server-applied 'a' pick is NOT included — that path
+    // mutates player.cards on the server side directly.
+    expect(result.playerPatches).toBeDefined();
+    expect(result.playerPatches!.b!.cards).toEqual(["raycast-prism", "crystal-volley"]);
+    expect(result.playerPatches!.a).toBeUndefined();
+  });
+
+  test("drafting holds while no one has picked and the window has not expired", () => {
+    const players = {
+      a: mkPlayer("a", { alive: true }),
+      b: mkPlayer("b", { alive: true }),
+    };
+    const startTick = 50;
+    const state: RoundState = {
+      phase: "drafting",
+      countdownRemainingMs: DRAFT_WINDOW_MS,
+      scores: { a: 1, b: 0 },
+      roundIndex: 0,
+      winnerPlayerId: "a",
+      draftingExpiresAtTick: startTick + Math.ceil(DRAFT_WINDOW_MS / STEP_MS),
+      draftingPicked: {},
+      draftingOffers: {
+        a: ["crystal-volley", "circle-rounds", "raycast-prism"],
+        b: ["circle-rounds", "crystal-volley", "raycast-prism"],
+      },
+    };
+    const result = stepRound({
+      state,
+      players,
+      dtMs: 16,
+      targetScore: 3,
+      tick: startTick + 1,
+      rngState: 1,
+    });
+    expect(result.state.phase).toBe("drafting");
+    // Still holding — no draft-resolved events, offers preserved.
+    const resolved = result.events.filter((e) => e.t === "draft-resolved");
+    expect(resolved).toHaveLength(0);
+    expect(result.state.draftingOffers).toEqual(state.draftingOffers);
   });
 });

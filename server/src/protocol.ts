@@ -36,7 +36,25 @@ export type Ping = {
   clientTime: number;
 };
 
-export type ClientMessage = ClientHello | Input | Ack | Ping;
+/**
+ * Client → Server: commit a draft card pick. Sent when the local player
+ * clicks a card in the rogue-lite picker overlay during the `drafting`
+ * round phase. Server validates that (a) the round is still in the same
+ * `roundIndex` (so a stale click after a round flip is ignored) and (b)
+ * the cardId was one of the offers rolled for this player. On success,
+ * the card lands in `player.cards` AND in `state.round.draftingPicked`,
+ * which is what unlocks the drafting → countdown transition in `stepRound`.
+ *
+ * Additive: older clients that don't know about this message simply never
+ * send it; auto-pick on draft-window expiry is the safety net.
+ */
+export type CardPick = {
+  t: "card-pick";
+  roundIndex: number;
+  cardId: string;
+};
+
+export type ClientMessage = ClientHello | Input | Ack | Ping | CardPick;
 
 // ---------------- Server → Client ----------------
 

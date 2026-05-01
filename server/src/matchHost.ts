@@ -284,10 +284,63 @@ export class MatchHost {
           }),
         );
         break;
+      case "card-pick":
+        this.applyCardPick(ws.data.playerId, message);
+        break;
       case "hello":
         // Hello is implicit on connect; ignore extras.
         break;
     }
+  }
+
+  /**
+   * Apply a draft-phase card pick from a client. Validates that
+   *  - the round is still in `drafting` AND on the same `roundIndex` the
+   *    client thinks it's picking for (prevents a stale click after the
+   *    round flipped over);
+   *  - the player exists and is alive (dead players don't get to pick);
+   *  - `cardId` is one of the offers rolled for this player.
+   *
+   * On success, mirrors the patch into BOTH `player.cards` and
+   * `state.round.draftingPicked[playerId]`. The latter is what `stepRound`
+   * diffs against to advance from drafting → countdown when all alive
+   * players have committed.
+   *
+   * The matching `draft-resolved` SimEvent is emitted by `stepRound` on
+   * the next tick — we don't push it here. Single source of truth for the
+   * event is the sim, not the network layer.
+   */
+  private applyCardPick(
+    playerId: PlayerId,
+    message: import("./protocol.ts").CardPick,
+  ): void {
+    const round = this.state.round;
+    if (round.phase !== "drafting") return;
+    if (round.roundIndex !== message.roundIndex) return;
+    const player = this.state.players[playerId];
+    if (!player || !player.alive) return;
+
+    const offers = round.draftingOffers?.[playerId];
+    if (!offers || !offers.includes(message.cardId)) return;
+
+    const alreadyPicked = round.draftingPicked?.[playerId];
+    if (alreadyPicked !== undefined) return; // ignore double-clicks
+
+    const nextCards = [...player.cards, message.cardId];
+    this.state = {
+      ...this.state,
+      players: {
+        ...this.state.players,
+        [playerId]: { ...player, cards: nextCards },
+      },
+      round: {
+        ...round,
+        draftingPicked: {
+          ...(round.draftingPicked ?? {}),
+          [playerId]: message.cardId,
+        },
+      },
+    };
   }
 
   private applyInput(playerId: PlayerId, input: import("./protocol.ts").Input): void {

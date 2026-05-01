@@ -218,6 +218,11 @@ export function stepWithRuntime(
 ): StepResult {
   const events: SimEvent[] = [];
   const fightingPhase = state.round.phase === "fighting";
+  // Drafting phase = rogue-lite card pick interlude between rounds. Players
+  // freeze, projectiles stop integrating (so a shard still in flight as the
+  // round ended doesn't drift across the picker UI), and pickup logic is
+  // already gated on fightingPhase. Round timer keeps ticking via stepRound.
+  const draftingPhase = state.round.phase === "drafting";
   const allocId = (): EntityId => {
     const id = runtime.nextEntityId;
     runtime.nextEntityId += 1;
@@ -367,10 +372,17 @@ export function stepWithRuntime(
   //    (direct + AOE) emit `hit-confirmed`; we apply the damage once per
   //    event into `players`. Children spawned by split get fresh ids from
   //    the runtime allocator and join the world next tick.
-  const remainingProjectiles: WorldState["projectiles"] = {};
-  const sortedProjectileIds = Object.keys(nextProjectiles)
-    .map((id) => Number(id))
-    .sort((a, b) => a - b);
+  //
+  //    During the drafting phase we skip the loop entirely: projectiles
+  //    keep their state but don't move or hit, mirroring the player freeze.
+  const remainingProjectiles: WorldState["projectiles"] = draftingPhase
+    ? { ...nextProjectiles }
+    : {};
+  const sortedProjectileIds = draftingPhase
+    ? []
+    : Object.keys(nextProjectiles)
+        .map((id) => Number(id))
+        .sort((a, b) => a - b);
 
   const nextTick = state.tick + 1;
   let rngState = state.rngState;
@@ -635,19 +647,43 @@ export function stepWithRuntime(
   // companions).
   let finalSatellites = despawnSatellitesForDeadOwners(nextSatellites, cleanedPlayers);
 
-  // 5. Round state machine.
+  // 5. Round state machine. Pass the current tick + rng cursor so the
+  //    drafting phase can roll deterministic offers and compute its expiry
+  //    tick. The result threads back any rng advance + per-player card
+  //    patches (for auto-picked draft cards on window expiry).
   const roundResult = stepRound({
     state: state.round,
     players: cleanedPlayers,
     dtMs: effDtMs,
     targetScore: TARGET_SCORE_DEFAULT,
+    tick: nextTick,
+    rngState,
   });
   events.push(...roundResult.events);
+  if (roundResult.rngState !== undefined) {
+    rngState = roundResult.rngState;
+  }
+
+  // Fold draft-auto-pick patches into the player map. Only the `cards`
+  // field is touched; everything else stays as cleanedPlayers had it.
+  let patchedPlayers = cleanedPlayers;
+  if (roundResult.playerPatches) {
+    patchedPlayers = { ...cleanedPlayers };
+    for (const [pid, patch] of Object.entries(roundResult.playerPatches)) {
+      const existing = patchedPlayers[pid];
+      if (!existing) continue;
+      patchedPlayers[pid] = { ...existing, cards: patch.cards };
+    }
+  }
 
   // On round end, players need to respawn for the next round (if not match-over).
-  let respawnedPlayers = cleanedPlayers;
+  // Note: with the drafting phase wired in, the `round-over → countdown`
+  // transition only happens in legacy callers (no tick/rngState passed).
+  // The normal path is `round-over → drafting → countdown`, and we still
+  // want the respawn-on-countdown-entry trigger to fire there.
+  let respawnedPlayers = patchedPlayers;
   if (roundResult.state.phase === "countdown" && state.round.phase !== "countdown") {
-    respawnedPlayers = respawnAll(cleanedPlayers, runtime.map);
+    respawnedPlayers = respawnAll(patchedPlayers, runtime.map);
     // Round transition wipes all satellites — players reactivate them by
     // firing again in the next round.
     finalSatellites = {};
