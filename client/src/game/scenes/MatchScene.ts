@@ -9,7 +9,6 @@ import { ProceduralPlayerRig } from "../rendering/ProceduralPlayerRig";
 import { GameAudioSystem } from "../systems/AudioSystem";
 import {
   MovementSystem,
-  type MovementDebug,
   type MovementInput,
   type PlayerBody,
 } from "../systems/MovementSystem";
@@ -105,7 +104,6 @@ export class MatchScene extends Phaser.Scene {
   private fireGraphics?: Phaser.GameObjects.Graphics;
   private pickupGraphics?: Phaser.GameObjects.Graphics;
   private keys?: MovementKeys;
-  private movementDebug: MovementDebug = { coyoteMs: 0, jumpBufferMs: 0 };
   private playerBody: PlayerBody = createPlayerBody();
   private target: TestTarget = createTestTarget();
   private destructibles: ArenaDestructible[] = createDestructibleStates();
@@ -128,14 +126,12 @@ export class MatchScene extends Phaser.Scene {
   private overchargeMs = 0;
   private lastPickupStatus = "none";
   private shieldGraphics?: Phaser.GameObjects.Graphics;
-  private roomCode?: string;
   private roomId?: string;
   private matchId?: string;
   private localPlayerId = "offline-player";
   private roomPlayers: RoomPlayer[] = [];
   private snapshotSendTimerMs = 0;
   private snapshotSequence = 0;
-  private networkStatus = "offline playground";
   private chaosModifierIds: ChaosModifierId[] = [];
   private fireHazardTimerMs = 0;
 
@@ -145,15 +141,11 @@ export class MatchScene extends Phaser.Scene {
 
   init(data: MatchSceneInitData = {}) {
     this.roomId = data.roomId;
-    this.roomCode = data.roomCode;
     this.matchId = data.matchId;
     this.localPlayerId = data.localPlayerId ?? "offline-player";
     this.roomPlayers = data.players ?? [];
     this.chaosModifierIds = data.chaosModifierIds ?? readStoredChaosModifiers();
     this.fireHazardTimerMs = 0;
-    this.networkStatus = this.roomCode
-      ? `room ${this.roomCode}  players ${Math.max(1, this.roomPlayers.length)}`
-      : "offline playground";
   }
 
   create() {
@@ -238,7 +230,7 @@ export class MatchScene extends Phaser.Scene {
     this.updateShield(scaledDeltaMs);
     const wasGrounded = this.playerBody.grounded;
     const input = this.readInput();
-    this.movementDebug = this.movement.update(
+    this.movement.update(
       this.playerBody,
       input,
       boxworksWorld.platforms,
@@ -293,22 +285,6 @@ export class MatchScene extends Phaser.Scene {
       this.add.circle(spawn.x, spawn.y, 5, 0x50e3c2, 0.5);
     }
 
-    const title = this.add
-      .text(32, 26, "BOXWORKS", {
-        color: "#f7fbff",
-        fontFamily: "Inter, Arial, sans-serif",
-        fontSize: "28px",
-        fontStyle: "900",
-      })
-      .setShadow(0, 3, "#000000", 8);
-    title.setScrollFactor(0);
-
-    const help = this.add.text(34, 60, "A/D move  W/Space jump  S crouch/fast fall  Shift shield  Left click fire  collect card caches  R reset", {
-      color: "#9ba7b8",
-      fontFamily: "Inter, Arial, sans-serif",
-      fontSize: "14px",
-    });
-    help.setScrollFactor(0);
   }
 
   private configureCamera() {
@@ -379,10 +355,11 @@ export class MatchScene extends Phaser.Scene {
   }
 
   private createDebugOverlay() {
-    this.debugText = this.add.text(34, 84, "", {
+    this.debugText = this.add.text(26, 24, "", {
       color: "#50e3c2",
       fontFamily: "Consolas, monospace",
-      fontSize: "13px",
+      fontSize: "16px",
+      fontStyle: "900",
       lineSpacing: 4,
     });
     this.debugText.setScrollFactor(0);
@@ -390,11 +367,12 @@ export class MatchScene extends Phaser.Scene {
   }
 
   private createWeaponOverlay() {
-    this.weaponText = this.add.text(610, 24, "", {
+    this.weaponText = this.add.text(620, 24, "", {
       color: "#dff7ff",
       fontFamily: "Consolas, monospace",
       fontSize: "12px",
       lineSpacing: 4,
+      wordWrap: { width: 315, useAdvancedWrap: true },
     });
     this.weaponText.setScrollFactor(0);
     this.updateWeaponOverlay();
@@ -559,7 +537,6 @@ export class MatchScene extends Phaser.Scene {
 
     const convexUrl = import.meta.env.VITE_CONVEX_URL ?? import.meta.env.CONVEX_URL;
     if (!convexUrl) {
-      this.networkStatus = "online match: missing Convex URL";
       return;
     }
 
@@ -567,11 +544,8 @@ export class MatchScene extends Phaser.Scene {
     this.unsubscribeSnapshots = this.roomClient.subscribeMatchPlayerSnapshots(
       this.matchId,
       (snapshots) => this.applyRemoteSnapshots(snapshots),
-      () => {
-        this.networkStatus = "snapshot sync interrupted";
-      },
+      () => undefined,
     );
-    this.networkStatus = `room ${this.roomCode ?? "------"}  syncing ${this.roomPlayers.length} players`;
     this.sendPlayerSnapshot();
   }
 
@@ -665,9 +639,7 @@ export class MatchScene extends Phaser.Scene {
       shieldActive: this.shieldActive,
       shieldCharge: this.shieldCharge,
       sequence: this.snapshotSequence,
-    }).catch(() => {
-      this.networkStatus = "snapshot write failed";
-    });
+    }).catch(() => undefined);
   }
 
   private applyRemoteSnapshots(snapshots: MatchPlayerSnapshot[]) {
@@ -683,7 +655,6 @@ export class MatchScene extends Phaser.Scene {
         : snapshot);
     }
 
-    this.networkStatus = `room ${this.roomCode ?? "------"}  snapshots ${snapshots.length}`;
   }
 
   private reconcileLocalSnapshot(snapshot: MatchPlayerSnapshot) {
@@ -843,9 +814,7 @@ export class MatchScene extends Phaser.Scene {
       attackerPlayerId: this.localPlayerId,
       targetPlayerId: playerId,
       damage: hit.damage,
-    }).catch(() => {
-      this.networkStatus = "damage write failed";
-    });
+    }).catch(() => undefined);
   }
 
   private floatRemoteDamageText(position: Vec2, amount: number, element: ElementType) {
@@ -1739,18 +1708,9 @@ export class MatchScene extends Phaser.Scene {
       return;
     }
 
-    const { position, velocity, grounded } = this.playerBody;
-    const character = this.getLocalCharacter();
     this.debugText.setText([
-      this.networkStatus,
-      `char ${character.name}  hp ${Math.ceil(this.playerHealth)}/${this.playerMaxHealth}`,
-      `shield ${this.shieldActive ? "up" : "ready"} ${Math.round(this.shieldCharge)}%  hold Shift`,
-      `pickup ${this.lastPickupStatus}  cards ${this.progressionCardIds.length}  overcharge ${Math.ceil(this.overchargeMs / 1000)}s`,
-      `pos ${position.x.toFixed(1)}, ${position.y.toFixed(1)}`,
-      `vel ${velocity.x.toFixed(1)}, ${velocity.y.toFixed(1)}`,
-      `grounded ${grounded ? "yes" : "no"}`,
-      `crouch ${this.playerBody.crouching ? "yes" : "no"}`,
-      `coyote ${this.movementDebug.coyoteMs}ms  buffer ${this.movementDebug.jumpBufferMs}ms`,
+      "HEALTH",
+      `${Math.ceil(this.playerHealth)}/${this.playerMaxHealth}`,
     ]);
   }
 
@@ -1759,24 +1719,20 @@ export class MatchScene extends Phaser.Scene {
       return;
     }
 
-    const cardNames = this.weaponBuild.cards.length > 0
-      ? this.weaponBuild.cards.map((card) => card.name).join(", ")
-      : "No cards";
     const chaos = this.getChaosProfile();
     const activeBuild = this.createChaosWeaponBuild();
+    const mutatorNames = this.weaponBuild.cards.length > 0
+      ? this.weaponBuild.cards.map((card) => card.name).join(", ")
+      : "Base weapon";
 
     this.weaponText.setText([
-      this.matchId ? `match ${this.matchId.slice(-6)}` : "local match",
-      `character ${this.getLocalCharacter().name}  size ${this.getLocalCharacter().sizeScale}x`,
-      `world ${WORLD_COLUMNS}x${WORLD_ROWS} screens  camera follow on`,
-      `pickups ${this.pickups.filter((pickup) => pickup.available).length}/${this.pickups.length} active`,
-      `chaos ${chaos.names.length > 0 ? chaos.names.join(", ") : "none"}`,
-      `weapon ${starterWeapon.name}  mutators ${this.progressionCardIds.length}`,
-      `delivery ${activeBuild.delivery}  shape ${activeBuild.projectile.shape}`,
-      `path ${activeBuild.projectile.pathing}  element ${activeBuild.projectile.element}`,
-      `impact ${activeBuild.projectile.impact}  shots ${chaos.disableProjectiles ? 0 : activeBuild.projectile.count}`,
-      `dmg ${activeBuild.damage}  rate ${activeBuild.fireRate}/s  active ${this.projectileSystem.activeCount()}`,
-      cardNames,
+      `WEAPON ${activeBuild.name}`,
+      `MUTATORS ${this.weaponBuild.cards.length}`,
+      mutatorNames,
+      `fire ${activeBuild.delivery}  shots ${chaos.disableProjectiles ? 0 : activeBuild.projectile.count}`,
+      `shape ${activeBuild.projectile.shape}  path ${activeBuild.projectile.pathing}`,
+      `element ${activeBuild.projectile.element}  impact ${activeBuild.projectile.impact}`,
+      `dmg ${activeBuild.damage}  rate ${activeBuild.fireRate}/s`,
     ]);
   }
 
@@ -1795,7 +1751,6 @@ export class MatchScene extends Phaser.Scene {
     this.shieldActive = false;
     this.playerRig?.setVisible(true);
     this.movement.reset();
-    this.movementDebug = { coyoteMs: 0, jumpBufferMs: 0 };
     this.updateCameraTarget();
     this.syncPlayerVisuals();
     this.updateDebugText();

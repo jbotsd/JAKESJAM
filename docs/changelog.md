@@ -2,6 +2,7 @@
 
 ## v0.21 - 2026-05-01
 
+- Reduced the in-match HUD to only player health plus the active weapon and its current mutators.
 - Changed player death into a full respawn sequence: explode, disappear, show taunt, count down 3 seconds, then respawn cleanly.
 - Added louder card-cache weapon identity rolls: explicit circle, triangle, square, orb, and five-projectile spray mutators.
 - Card caches now prioritize visible weapon changes such as delivery, projectile count, shape, pathing, impact, and element before subtle utility cards.
