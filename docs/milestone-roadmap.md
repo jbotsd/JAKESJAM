@@ -161,7 +161,7 @@ Exit criteria:
 
 **Goal:** make builds feel different without adding many separate weapons.
 
-**Status:** first playable character archetype integration scaffolded on 2026-05-01. Cards currently exist as data and local test loadouts only. Remaining work: draft/collecting flow, pickup spawning/collection, active ability variety, and deeper path identity tuning.
+**Status:** first playable character archetype integration scaffolded on 2026-05-01. Card caches now collect mutators onto the starter weapon so player weapons diverge during play. Remaining work: draft flow, online card sync, active ability variety, and deeper path identity tuning.
 
 Backlog scope:
 
@@ -195,7 +195,7 @@ Exit criteria:
 
 **Goal:** complete a replayable MVP loop on one main map.
 
-**Status:** first single-map polish pass scaffolded on 2026-05-01 with a 15-screen 5x3 Boxworks world, camera follow, world-space aiming, generated placeholder audio, main-menu entry flow, local fire/explosion health damage, and a held Shift shield prototype for shield-capable characters. Remaining work: full PvP health authority, draft/pickup rewards, results/rematch flow, deployment checklist, and real two-window/6-player stress notes.
+**Status:** first single-map polish pass scaffolded on 2026-05-01 with a 15-screen 5x3 Boxworks world, camera follow, world-space aiming, generated placeholder audio, main-menu entry flow, local fire/explosion health damage, and a held Shift shield prototype for shield-capable characters. Target player count is now all-v-all 10-player free-for-all. Remaining work: full PvP health authority, draft/pickup rewards, results/rematch flow, deployment checklist, and real two-window/10-player stress notes.
 
 Backlog scope:
 
@@ -207,7 +207,7 @@ Backlog scope:
 MVP content target:
 
 - One main map.
-- Up to 6-player stress testing after 1v1 works.
+- Up to 10-player all-v-all stress testing after 1v1 works.
 - Four weapon paths.
 - Four characters.
 - Four destructible/interactive element types.
@@ -217,7 +217,7 @@ MVP content target:
 Exit criteria:
 
 - A new player can open the game, join a room, play a match, draft cards, see results, and rematch.
-- Six-player local/online stress testing has a written result, even if the final MVP ships with a lower recommended count.
+- Ten-player local/online free-for-all stress testing has a written result, even if the final MVP ships with a lower recommended count.
 - The game is fun enough to replay immediately.
 
 ## Milestone 7 — Post-MVP Experiments
@@ -265,7 +265,7 @@ Backlog scope:
 - JJ-0801 — Create playtest stress plan.
 - JJ-0802 — Run local combat and chaos-stack smoke tests.
 - JJ-0803 — Run two-window online snapshot test.
-- JJ-0804 — Run six-tab lobby stress test.
+- JJ-0804 — Run ten-tab lobby stress test.
 
 Deliverables:
 
@@ -276,7 +276,7 @@ Deliverables:
 Exit criteria:
 
 - Two browser windows can start and move in one match.
-- Six lobby clients can join and ready without corrupting room state.
+- Ten lobby clients can join and ready without corrupting room state.
 - Camera, chaos modifiers, and destructibles have clear playtest notes.
 
 ## Milestone 9 — Release Readiness

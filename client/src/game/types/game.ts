@@ -162,7 +162,7 @@ export type CardDefinition = {
 };
 
 export type DestructibleKind = "barrel" | "box" | "mine" | "cube";
-export type PickupKind = "health-shard" | "shield-cell" | "overcharge-core";
+export type PickupKind = "health-shard" | "shield-cell" | "overcharge-core" | "card-cache";
 
 export type DestructibleDefinition = {
   id: string;

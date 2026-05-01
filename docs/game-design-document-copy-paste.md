@@ -59,8 +59,8 @@ Prototype:
 MVP:
 
 - 1v1 online duel
-- single-map stress target up to 6 players, if networking feel allows it
-- 2–6 player free-for-all experimental mode after 1v1 works
+- single-map stress target up to 10 players, if networking feel allows it
+- 2–10 player all-v-all free-for-all experimental mode after 1v1 works
 
 Future:
 
@@ -885,7 +885,7 @@ Design rules:
 MVP target:
 
 - one main map for the first complete MVP loop;
-- up to 6 players maximum if networking can support it;
+- up to 10 players maximum if networking can support it;
 - four prototype destructible element types;
 - basic physics interactions;
 - clear non-destructible core arena structure.
@@ -1601,7 +1601,7 @@ The MVP proves that JAKESJAM is fun as a short browser-based multiplayer duel wi
 - TypeScript project structure.
 - Convex-backed room creation and joining.
 - Two players in one room for the first online prototype.
-- Up to 6 players maximum as the MVP multiplayer stress target, if networking tests allow it.
+- Up to 10 players maximum as the MVP all-v-all multiplayer stress target, if networking tests allow it.
 - Ready checks.
 - One playable arena as the main MVP map.
 - Core movement.

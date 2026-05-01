@@ -2,6 +2,7 @@ import { ConvexClient } from "convex/browser";
 import { anyApi } from "convex/server";
 import type { ChaosModifierId, CharacterId, MatchId, RoomId } from "../types/game";
 import type {
+  ApplyPlayerDamageArgs,
   CreateRoomArgs,
   JoinRoomArgs,
   MatchPlayerSnapshot,
@@ -49,6 +50,10 @@ export class RoomClient {
 
   submitPlayerSnapshot(args: SubmitPlayerSnapshotArgs): Promise<void> {
     return this.client.mutation(anyApi.matches.submitPlayerSnapshot, args) as Promise<void>;
+  }
+
+  applyPlayerDamage(args: ApplyPlayerDamageArgs): Promise<void> {
+    return this.client.mutation(anyApi.matches.applyPlayerDamage, args) as Promise<void>;
   }
 
   heartbeat(roomId: RoomId, playerId: string): Promise<void> {

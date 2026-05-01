@@ -68,6 +68,8 @@ export default defineSchema({
     health: v.number(),
     alive: v.boolean(),
     crouching: v.boolean(),
+    shieldActive: v.optional(v.boolean()),
+    shieldCharge: v.optional(v.number()),
     sequence: v.number(),
     updatedAt: v.number(),
   })

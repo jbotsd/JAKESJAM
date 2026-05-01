@@ -5,7 +5,7 @@ Milestone 8 turns the prototype from "features exist" into "we can learn from a 
 ## Goals
 
 - Prove two-window online movement sync before judging combat.
-- Run a 6-player lobby stress pass with movement-only expectations.
+- Run a 10-player all-v-all lobby stress pass with movement-only expectations.
 - Capture whether the 10-screen Boxworks camera feels readable.
 - Identify which chaos modifiers are fun, noisy, or broken.
 
@@ -17,7 +17,7 @@ Milestone 8 turns the prototype from "features exist" into "we can learn from a 
 | Local combat | One browser, no chaos | Projectiles, destructibles, fire, and dummy reset remain readable. |
 | Chaos stack | One browser, Low Grav + Fire Hazard + Max Recoil | Game remains controllable and recovers with `R`. |
 | Online 1v1 | Two browser windows, host/join/start | Remote player rigs follow low-frequency snapshots. |
-| 6-player lobby | Six tabs join one room | Room list, ready state, and match handoff do not fail. |
+| 10-player lobby | Ten tabs join one room | Room list, ready state, and match handoff do not fail. |
 
 ## Session Notes Template
 

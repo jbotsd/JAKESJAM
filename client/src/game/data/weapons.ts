@@ -5,7 +5,7 @@ export const starterWeapon: WeaponDefinition = {
   name: "Crystal Blaster / Scrap Rifle",
   weaponClass: "baseline",
   delivery: "projectile",
-  damage: 15,
+  damage: 10,
   fireRate: 4,
   magazineSize: 8,
   reloadSeconds: 1.1,

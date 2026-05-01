@@ -25,6 +25,7 @@ import {
 } from "../systems/WeaponSystem";
 import type {
   CharacterDefinition,
+  CardDefinition,
   CharacterId,
   ChaosModifierId,
   DestructibleKind,
@@ -46,6 +47,8 @@ const WORLD_ROWS = 3;
 const VERTICAL_SHAFT_WIDTH = 150;
 const boxworksWorld = expandMap(boxworks, WORLD_COLUMNS, WORLD_ROWS);
 const CHAOS_MODIFIERS_KEY = "jakesjam.chaosModifiers";
+const CARD_CACHE_RESPAWN_MS = 18000;
+const REMOTE_PLAYER_TARGET_PREFIX = "remote-player:";
 
 type MatchSceneInitData = {
   roomId?: string;
@@ -63,13 +66,7 @@ type MovementKeys = {
   s: Phaser.Input.Keyboard.Key;
   space: Phaser.Input.Keyboard.Key;
   r: Phaser.Input.Keyboard.Key;
-  c: Phaser.Input.Keyboard.Key;
   shift: Phaser.Input.Keyboard.Key;
-  one: Phaser.Input.Keyboard.Key;
-  two: Phaser.Input.Keyboard.Key;
-  three: Phaser.Input.Keyboard.Key;
-  four: Phaser.Input.Keyboard.Key;
-  five: Phaser.Input.Keyboard.Key;
 };
 
 type ChaosProfile = {
@@ -110,12 +107,13 @@ export class MatchScene extends Phaser.Scene {
   private pickups: ArenaPickup[] = createPickupStates();
   private firePatches: FirePatch[] = [];
   private weaponBuild: ResolvedWeaponBuild = createWeaponBuild(starterWeapon, []);
+  private progressionCardIds: string[] = [];
   private fireCooldownMs = 0;
-  private activeLoadoutIndex = 0;
   private targetKills = 0;
   private nextFirePatchId = 1;
   private playerHealth = 100;
   private playerMaxHealth = 100;
+  private playerRespawnPending = false;
   private shieldCharge = 100;
   private shieldActive = false;
   private temporaryShieldMs = 0;
@@ -170,6 +168,7 @@ export class MatchScene extends Phaser.Scene {
     this.temporaryShieldMs = 0;
     this.overchargeMs = 0;
     this.lastPickupStatus = "none";
+    this.progressionCardIds = [];
     this.projectileSystem = new ProjectileSystem(this);
     this.resetPlayer();
     this.renderArena();
@@ -182,7 +181,7 @@ export class MatchScene extends Phaser.Scene {
     this.createDebugOverlay();
     this.createWeaponOverlay();
     this.bindKeys();
-    this.setLoadout(0);
+    this.rebuildWeaponBuild();
     this.setupNetworkSync();
   }
 
@@ -196,8 +195,6 @@ export class MatchScene extends Phaser.Scene {
       this.resetTarget();
       this.resetDestructibles();
     }
-
-    this.handleLoadoutInput();
 
     const chaos = this.getChaosProfile();
     const scaledDeltaMs = deltaMs * chaos.timeScale;
@@ -270,7 +267,7 @@ export class MatchScene extends Phaser.Scene {
       .setShadow(0, 3, "#000000", 8);
     title.setScrollFactor(0);
 
-    const help = this.add.text(34, 60, "A/D move  W/Space jump  S crouch/fast fall  Left click fire  C/1-5 cores  R reset", {
+    const help = this.add.text(34, 60, "A/D move  W/Space jump  S crouch/fast fall  Shift shield  Left click fire  collect card caches  R reset", {
       color: "#9ba7b8",
       fontFamily: "Inter, Arial, sans-serif",
       fontSize: "14px",
@@ -380,38 +377,8 @@ export class MatchScene extends Phaser.Scene {
       s: keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.S),
       space: keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.SPACE),
       r: keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.R),
-      c: keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.C),
       shift: keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.SHIFT),
-      one: keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.ONE),
-      two: keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.TWO),
-      three: keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.THREE),
-      four: keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.FOUR),
-      five: keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.FIVE),
     };
-  }
-
-  private handleLoadoutInput() {
-    if (!this.keys) {
-      return;
-    }
-
-    if (Phaser.Input.Keyboard.JustDown(this.keys.c)) {
-      this.setLoadout(this.activeLoadoutIndex + 1);
-    }
-
-    const numberKeys = [
-      this.keys.one,
-      this.keys.two,
-      this.keys.three,
-      this.keys.four,
-      this.keys.five,
-    ];
-
-    for (let index = 0; index < numberKeys.length; index += 1) {
-      if (Phaser.Input.Keyboard.JustDown(numberKeys[index])) {
-        this.setLoadout(index);
-      }
-    }
   }
 
   private readInput(): MovementInput {
@@ -644,8 +611,10 @@ export class MatchScene extends Phaser.Scene {
       velocity: { ...this.playerBody.velocity },
       aimAngle,
       health: this.playerHealth,
-      alive: true,
+      alive: this.playerHealth > 0 && !this.playerRespawnPending,
       crouching: this.playerBody.crouching,
+      shieldActive: this.shieldActive,
+      shieldCharge: this.shieldCharge,
       sequence: this.snapshotSequence,
     }).catch(() => {
       this.networkStatus = "snapshot write failed";
@@ -655,6 +624,7 @@ export class MatchScene extends Phaser.Scene {
   private applyRemoteSnapshots(snapshots: MatchPlayerSnapshot[]) {
     for (const snapshot of snapshots) {
       if (snapshot.playerId === this.localPlayerId) {
+        this.reconcileLocalSnapshot(snapshot);
         continue;
       }
 
@@ -665,6 +635,26 @@ export class MatchScene extends Phaser.Scene {
     }
 
     this.networkStatus = `room ${this.roomCode ?? "------"}  snapshots ${snapshots.length}`;
+  }
+
+  private reconcileLocalSnapshot(snapshot: MatchPlayerSnapshot) {
+    if (this.playerRespawnPending) {
+      return;
+    }
+
+    if (snapshot.health < this.playerHealth) {
+      this.playerHealth = Math.max(0, snapshot.health);
+      this.audio?.play("hit");
+    }
+
+    if (snapshot.shieldCharge !== undefined && snapshot.shieldCharge < this.shieldCharge) {
+      this.shieldCharge = Math.max(0, snapshot.shieldCharge);
+    }
+
+    if (!snapshot.alive || this.playerHealth <= 0) {
+      this.playerHealth = 0;
+      this.killPlayer();
+    }
   }
 
   private tryFireWeapon() {
@@ -765,11 +755,69 @@ export class MatchScene extends Phaser.Scene {
         this.audio?.play("hit");
         this.damageDestructible(destructible, hit.damage, hit);
         this.applyImpactArea(hit);
+        continue;
+      }
+
+      const remotePlayerId = playerIdFromRemoteTargetId(hit.targetId);
+      if (remotePlayerId) {
+        this.audio?.play("hit");
+        this.damageRemotePlayer(remotePlayerId, hit);
+        this.applyImpactArea(hit);
       }
     }
 
     this.updateTargetVisuals();
     this.updateDestructibleVisuals();
+  }
+
+  private damageRemotePlayer(playerId: string, hit: ProjectileHit) {
+    const snapshot = this.remoteSnapshots.get(playerId);
+    if (!snapshot || !snapshot.alive) {
+      return;
+    }
+
+    const nextSnapshot = applySnapshotDamage(snapshot, hit.damage);
+    this.remoteSnapshots.set(playerId, nextSnapshot);
+    this.floatRemoteDamageText(nextSnapshot.position, hit.damage, hit.element);
+
+    if (!nextSnapshot.alive) {
+      this.spawnPlayerDeathExplosion(nextSnapshot.position);
+    }
+
+    if (!this.roomClient || !this.roomId || !this.matchId) {
+      return;
+    }
+
+    void this.roomClient.applyPlayerDamage({
+      matchId: this.matchId,
+      roomId: this.roomId,
+      attackerPlayerId: this.localPlayerId,
+      targetPlayerId: playerId,
+      damage: hit.damage,
+    }).catch(() => {
+      this.networkStatus = "damage write failed";
+    });
+  }
+
+  private floatRemoteDamageText(position: Vec2, amount: number, element: ElementType) {
+    const color = element === "fire" ? "#ffb86b" : "#f0abfc";
+    const text = this.add
+      .text(position.x, position.y - 34, Math.round(amount).toString(), {
+        color,
+        fontFamily: "Inter, Arial, sans-serif",
+        fontSize: "13px",
+        fontStyle: "900",
+      })
+      .setOrigin(0.5, 0.5);
+
+    this.tweens.add({
+      targets: text,
+      y: text.y - 28,
+      alpha: 0,
+      duration: 360,
+      ease: "Sine.easeOut",
+      onComplete: () => text.destroy(),
+    });
   }
 
   private damageTarget(amount: number, hit: ProjectileHit) {
@@ -786,7 +834,7 @@ export class MatchScene extends Phaser.Scene {
   }
 
   private damagePlayer(amount: number) {
-    if (amount <= 0 || this.playerHealth <= 0) {
+    if (amount <= 0 || this.playerHealth <= 0 || this.playerRespawnPending) {
       return;
     }
 
@@ -802,8 +850,74 @@ export class MatchScene extends Phaser.Scene {
     this.playerHealth = Math.max(0, this.playerHealth - amount);
     this.audio?.play("hit");
     if (this.playerHealth <= 0) {
-      this.time.delayedCall(420, () => this.resetPlayer());
+      this.killPlayer();
     }
+  }
+
+  private killPlayer() {
+    if (this.playerRespawnPending) {
+      return;
+    }
+
+    this.playerRespawnPending = true;
+    this.playerBody.velocity = { x: 0, y: 0 };
+    this.audio?.play("explosion");
+    this.spawnPlayerDeathExplosion(this.playerBody.position);
+    this.showDeathPopup();
+    this.time.delayedCall(1100, () => this.resetPlayer());
+  }
+
+  private spawnPlayerDeathExplosion(position: Vec2) {
+    const blast = this.add.circle(position.x, position.y, 10, 0xf7fbff, 0.52);
+    blast.setStrokeStyle(4, 0xfb7185, 0.95);
+    this.tweens.add({
+      targets: blast,
+      radius: 118,
+      alpha: 0,
+      duration: 520,
+      ease: "Sine.easeOut",
+      onComplete: () => blast.destroy(),
+    });
+
+    for (let index = 0; index < 18; index += 1) {
+      const angle = (Math.PI * 2 * index) / 18;
+      const shard = this.add.rectangle(position.x, position.y, 5, 14, index % 2 === 0 ? 0x50e3c2 : 0xf0abfc, 0.92);
+      shard.rotation = angle;
+      this.tweens.add({
+        targets: shard,
+        x: position.x + Math.cos(angle) * 82,
+        y: position.y + Math.sin(angle) * 82,
+        alpha: 0,
+        duration: 500,
+        ease: "Sine.easeOut",
+        onComplete: () => shard.destroy(),
+      });
+    }
+  }
+
+  private showDeathPopup() {
+    const { width, height } = this.scale;
+    const popup = this.add
+      .text(width / 2, height * 0.28, "LOL GIT GUD CUNT", {
+        color: "#fff7d6",
+        fontFamily: "Inter, Arial, sans-serif",
+        fontSize: "34px",
+        fontStyle: "900",
+        stroke: "#0b0e14",
+        strokeThickness: 8,
+      })
+      .setOrigin(0.5)
+      .setScrollFactor(0)
+      .setDepth(1000);
+
+    this.tweens.add({
+      targets: popup,
+      y: popup.y - 26,
+      alpha: 0,
+      duration: 980,
+      ease: "Sine.easeOut",
+      onComplete: () => popup.destroy(),
+    });
   }
 
   private damageDestructible(
@@ -919,6 +1033,26 @@ export class MatchScene extends Phaser.Scene {
       const objectRadius = Math.max(object.size.x, object.size.y) / 2;
       if (distance(position, object.position) <= radius + objectRadius) {
         this.damageDestructible(object, damage, hazardHit);
+      }
+    }
+
+    for (const [playerId, snapshot] of this.remoteSnapshots) {
+      if (!snapshot.alive || remotePlayerTargetId(playerId) === excludedId) {
+        continue;
+      }
+
+      const character = this.getCharacter(this.getRoomPlayer(playerId)?.characterId);
+      const remoteRadius = Math.max(getPlayerBodySize(character.sizeScale).x, getPlayerBodySize(character.sizeScale).y) / 2;
+      if (distance(position, snapshot.position) <= radius + remoteRadius) {
+        this.damageRemotePlayer(playerId, {
+          targetId: remotePlayerTargetId(playerId),
+          damage,
+          knockback: 0,
+          position: { ...snapshot.position },
+          element,
+          impact: "explosive",
+          impactRadiusPx: radius,
+        });
       }
     }
   }
@@ -1277,6 +1411,11 @@ export class MatchScene extends Phaser.Scene {
     pickup.respawnRemainingMs = pickup.respawnMs;
     this.audio?.play("pickup");
 
+    if (pickup.kind === "card-cache") {
+      this.collectProgressionCard(pickup);
+      return;
+    }
+
     if (pickup.kind === "health-shard") {
       const before = this.playerHealth;
       this.playerHealth = Math.min(this.playerMaxHealth, this.playerHealth + pickup.amount);
@@ -1296,6 +1435,51 @@ export class MatchScene extends Phaser.Scene {
     this.overchargeMs = Math.max(this.overchargeMs, pickup.durationMs ?? 0);
     this.lastPickupStatus = "overcharge";
     this.floatPickupText(pickup, "overcharge", "#ffd166");
+  }
+
+  private collectProgressionCard(pickup: ArenaPickup) {
+    const card = this.rollProgressionCard();
+    if (!card) {
+      this.overchargeMs = Math.max(this.overchargeMs, 4200);
+      this.lastPickupStatus = "card capped";
+      this.floatPickupText(pickup, "card capped / overcharge", "#f0abfc");
+      return;
+    }
+
+    this.progressionCardIds.push(card.id);
+    this.rebuildWeaponBuild();
+    this.lastPickupStatus = `card ${card.name}`;
+    this.floatPickupText(pickup, card.name, card.visual?.glowColor ?? "#f0abfc");
+  }
+
+  private rollProgressionCard(): CardDefinition | undefined {
+    const ownedCounts = new Map<string, number>();
+    for (const cardId of this.progressionCardIds) {
+      ownedCounts.set(cardId, (ownedCounts.get(cardId) ?? 0) + 1);
+    }
+
+    const occupiedBuckets = new Set(this.weaponBuild.occupiedBuckets);
+    const eligible = crystalRoundsCards.filter((card) => {
+      if (!card.modifier) {
+        return false;
+      }
+
+      const ownedCount = ownedCounts.get(card.id) ?? 0;
+      if (card.unique && ownedCount > 0) {
+        return false;
+      }
+      if (ownedCount >= (card.maxStacks ?? 1)) {
+        return false;
+      }
+
+      return (card.buckets ?? []).every((bucket) => !occupiedBuckets.has(bucket));
+    });
+
+    if (eligible.length === 0) {
+      return undefined;
+    }
+
+    return Phaser.Utils.Array.GetRandom(eligible);
   }
 
   private floatPickupText(pickup: ArenaPickup, label: string, color: string) {
@@ -1352,6 +1536,13 @@ export class MatchScene extends Phaser.Scene {
         graphics.lineTo(pickup.position.x - 10, pickup.position.y - 4);
         graphics.closePath();
         graphics.fillPath();
+      } else if (pickup.kind === "card-cache") {
+        graphics.fillStyle(color, alpha);
+        graphics.fillRoundedRect(pickup.position.x - 11, pickup.position.y - 14, 22, 28, 3);
+        graphics.lineStyle(2, 0xf7fbff, alpha * 0.72);
+        graphics.strokeRoundedRect(pickup.position.x - 11, pickup.position.y - 14, 22, 28, 3);
+        graphics.fillStyle(0xf7fbff, alpha * 0.78);
+        drawPickupDiamond(graphics, pickup.position, 6);
       } else {
         graphics.fillStyle(color, alpha);
         drawPickupDiamond(graphics, pickup.position, 12);
@@ -1390,6 +1581,19 @@ export class MatchScene extends Phaser.Scene {
       if (object.alive) {
         targets.push(object);
       }
+    }
+    for (const [playerId, snapshot] of this.remoteSnapshots) {
+      if (!snapshot.alive) {
+        continue;
+      }
+
+      const character = this.getCharacter(this.getRoomPlayer(playerId)?.characterId);
+      targets.push({
+        id: remotePlayerTargetId(playerId),
+        position: { ...snapshot.position },
+        size: getPlayerBodySize(character.sizeScale),
+        alive: true,
+      });
     }
     return targets;
   }
@@ -1433,7 +1637,7 @@ export class MatchScene extends Phaser.Scene {
       this.networkStatus,
       `char ${character.name}  hp ${Math.ceil(this.playerHealth)}/${this.playerMaxHealth}`,
       `shield ${this.shieldActive ? "up" : "ready"} ${Math.round(this.shieldCharge)}%  hold Shift`,
-      `pickup ${this.lastPickupStatus}  overcharge ${Math.ceil(this.overchargeMs / 1000)}s`,
+      `pickup ${this.lastPickupStatus}  cards ${this.progressionCardIds.length}  overcharge ${Math.ceil(this.overchargeMs / 1000)}s`,
       `pos ${position.x.toFixed(1)}, ${position.y.toFixed(1)}`,
       `vel ${velocity.x.toFixed(1)}, ${velocity.y.toFixed(1)}`,
       `grounded ${grounded ? "yes" : "no"}`,
@@ -1447,7 +1651,6 @@ export class MatchScene extends Phaser.Scene {
       return;
     }
 
-    const loadout = TEST_LOADOUTS[this.activeLoadoutIndex];
     const cardNames = this.weaponBuild.cards.length > 0
       ? this.weaponBuild.cards.map((card) => card.name).join(", ")
       : "No cards";
@@ -1460,7 +1663,7 @@ export class MatchScene extends Phaser.Scene {
       `world ${WORLD_COLUMNS}x${WORLD_ROWS} screens  camera follow on`,
       `pickups ${this.pickups.filter((pickup) => pickup.available).length}/${this.pickups.length} active`,
       `chaos ${chaos.names.length > 0 ? chaos.names.join(", ") : "none"}`,
-      `core ${this.activeLoadoutIndex + 1}/${TEST_LOADOUTS.length}: ${loadout.name}`,
+      `weapon ${starterWeapon.name}  mutators ${this.progressionCardIds.length}`,
       `delivery ${activeBuild.delivery}  shape ${activeBuild.projectile.shape}`,
       `path ${activeBuild.projectile.pathing}  element ${activeBuild.projectile.element}`,
       `impact ${activeBuild.projectile.impact}  shots ${chaos.disableProjectiles ? 0 : activeBuild.projectile.count}`,
@@ -1475,6 +1678,7 @@ export class MatchScene extends Phaser.Scene {
     this.playerBody = createPlayerBody(spawn.x, spawn.y, character.sizeScale);
     this.playerMaxHealth = character.maxHealth;
     this.playerHealth = character.maxHealth;
+    this.playerRespawnPending = false;
     this.shieldCharge = Math.max(this.shieldCharge, 55);
     this.shieldActive = false;
     this.movement.reset();
@@ -1484,10 +1688,8 @@ export class MatchScene extends Phaser.Scene {
     this.updateDebugText();
   }
 
-  private setLoadout(index: number) {
-    this.activeLoadoutIndex = wrapIndex(index, TEST_LOADOUTS.length);
-    const selectedCardIds = TEST_LOADOUTS[this.activeLoadoutIndex].cardIds;
-    const cards = findCardsById(crystalRoundsCards, selectedCardIds);
+  private rebuildWeaponBuild() {
+    const cards = findCardsById(crystalRoundsCards, this.progressionCardIds);
     this.weaponBuild = createWeaponBuild(starterWeapon, cards);
     this.fireCooldownMs = 0;
     this.audio?.play("card");
@@ -1595,48 +1797,6 @@ type HazardHit = {
   impactRadiusPx: number;
 };
 
-type CrystalLoadoutPreset = {
-  name: string;
-  cardIds: string[];
-};
-
-const TEST_LOADOUTS: CrystalLoadoutPreset[] = [
-  {
-    name: "Baseline Crystal Blaster",
-    cardIds: [],
-  },
-  {
-    name: "Homing Cluster Spark",
-    cardIds: ["crystal-volley", "homing-cluster", "voltaic-spark", "rapid-refraction"],
-  },
-  {
-    name: "Sticky Fire Minefield",
-    cardIds: [
-      "crystal-volley",
-      "arc-shards",
-      "cluster-bomb",
-      "sticky-shards",
-      "molten-core",
-      "overcharge",
-    ],
-  },
-  {
-    name: "Raycast Supernova",
-    cardIds: ["raycast-prism", "explosive-facet", "radiant-overload", "rapid-refraction"],
-  },
-  {
-    name: "Bouncy Frost Fan",
-    cardIds: [
-      "crystal-volley",
-      "bouncy-prism",
-      "triple-fan",
-      "frost-prism",
-      "slow-field",
-      "essence-battery",
-    ],
-  },
-];
-
 function createPlayerBody(x = 220, y = 430, sizeScale = 1): PlayerBody {
   return {
     position: { x, y },
@@ -1660,12 +1820,13 @@ function expandMap(base: MapDefinition, columns: number, rows: number): MapDefin
         x: column * base.size.x,
         y: row * base.size.y,
       };
+      const variant = createCellVariant(column, row);
+      const shaftX = offset.x + base.size.x / 2;
+      const cellLeft = offset.x;
+      const cellRight = offset.x + base.size.x;
 
       for (const spawn of base.spawns) {
-        spawns.push({
-          x: spawn.x + offset.x,
-          y: spawn.y + offset.y,
-        });
+        spawns.push(transformCellPosition(spawn, offset, base, variant, 0.28));
       }
 
       for (const platform of base.platforms) {
@@ -1673,26 +1834,30 @@ function expandMap(base: MapDefinition, columns: number, rows: number): MapDefin
           continue;
         }
 
+        const position = platform.kind === "floor"
+          ? { x: platform.position.x + offset.x, y: platform.position.y + offset.y }
+          : transformCellPosition(platform.position, offset, base, variant, 1);
+        const widthScale = platform.kind === "floor" ? 1 : variant.platformWidthScale;
+        const size = {
+          x: Math.max(86, platform.size.x * widthScale),
+          y: platform.size.y,
+        };
+
         appendPlatformWithShaftGap(platforms, {
           ...platform,
           id: `${platform.id}-${column}-${row}`,
-          position: {
-            x: platform.position.x + offset.x,
-            y: platform.position.y + offset.y,
-          },
-        }, offset.x + base.size.x / 2);
+          position,
+          size,
+        }, shaftX);
       }
 
       for (const object of base.destructibles) {
         const position = nudgeBoxOutOfShaft(
-          {
-            x: object.position.x + offset.x,
-            y: object.position.y + offset.y,
-          },
+          transformCellPosition(object.position, offset, base, variant, 1),
           object.size,
-          offset.x + base.size.x / 2,
-          offset.x,
-          offset.x + base.size.x,
+          shaftX,
+          cellLeft,
+          cellRight,
         );
         destructibles.push({
           ...object,
@@ -1703,14 +1868,11 @@ function expandMap(base: MapDefinition, columns: number, rows: number): MapDefin
 
       for (const pickup of base.pickups) {
         const position = nudgeCircleOutOfShaft(
-          {
-            x: pickup.position.x + offset.x,
-            y: pickup.position.y + offset.y,
-          },
+          transformCellPosition(pickup.position, offset, base, variant, 1),
           pickup.radius,
-          offset.x + base.size.x / 2,
-          offset.x,
-          offset.x + base.size.x,
+          shaftX,
+          cellLeft,
+          cellRight,
         );
         pickups.push({
           ...pickup,
@@ -1718,6 +1880,25 @@ function expandMap(base: MapDefinition, columns: number, rows: number): MapDefin
           position,
         });
       }
+
+      const cardCachePosition = nudgeCircleOutOfShaft(
+        {
+          x: offset.x + variant.cardCacheLocalPosition.x,
+          y: offset.y + variant.cardCacheLocalPosition.y,
+        },
+        18,
+        shaftX,
+        cellLeft,
+        cellRight,
+      );
+      pickups.push({
+        id: `card-cache-${column}-${row}`,
+        kind: "card-cache",
+        position: cardCachePosition,
+        radius: 18,
+        amount: 1,
+        respawnMs: CARD_CACHE_RESPAWN_MS,
+      });
     }
   }
 
@@ -1753,6 +1934,64 @@ function expandMap(base: MapDefinition, columns: number, rows: number): MapDefin
     destructibles,
     pickups,
   };
+}
+
+type CellVariant = {
+  mirror: boolean;
+  xJitter: number;
+  yJitter: number;
+  platformWidthScale: number;
+  cardCacheLocalPosition: Vec2;
+};
+
+function createCellVariant(column: number, row: number): CellVariant {
+  return {
+    mirror: seededUnit(column, row, 1) > 0.5,
+    xJitter: seededRange(column, row, 2, -52, 52),
+    yJitter: seededRange(column, row, 3, -28, 30),
+    platformWidthScale: seededRange(column, row, 4, 0.82, 1.18),
+    cardCacheLocalPosition: {
+      x: seededRange(column, row, 5, 250, 710),
+      y: seededRange(column, row, 6, 190, 370),
+    },
+  };
+}
+
+function transformCellPosition(
+  localPosition: Vec2,
+  offset: Vec2,
+  base: MapDefinition,
+  variant: CellVariant,
+  jitterScale: number,
+): Vec2 {
+  const mirroredX = variant.mirror ? base.size.x - localPosition.x : localPosition.x;
+  return {
+    x: Phaser.Math.Clamp(
+      offset.x + mirroredX + variant.xJitter * jitterScale,
+      offset.x + 82,
+      offset.x + base.size.x - 82,
+    ),
+    y: Phaser.Math.Clamp(
+      offset.y + localPosition.y + variant.yJitter * jitterScale,
+      offset.y + 138,
+      offset.y + base.size.y - 54,
+    ),
+  };
+}
+
+function seededRange(
+  column: number,
+  row: number,
+  salt: number,
+  min: number,
+  max: number,
+): number {
+  return min + (max - min) * seededUnit(column, row, salt);
+}
+
+function seededUnit(column: number, row: number, salt: number): number {
+  const value = Math.sin((column + 1) * 127.1 + (row + 1) * 311.7 + salt * 74.7) * 43758.5453;
+  return value - Math.floor(value);
 }
 
 function addTraversalConnectors(
@@ -1936,10 +2175,6 @@ function createTestTarget(): TestTarget {
   };
 }
 
-function wrapIndex(index: number, length: number): number {
-  return ((index % length) + length) % length;
-}
-
 function destructibleColor(kind: DestructibleKind): number {
   const colors: Record<DestructibleKind, number> = {
     barrel: 0xff6b6b,
@@ -1955,8 +2190,41 @@ function pickupColor(kind: PickupKind): number {
     "health-shard": 0x86efac,
     "shield-cell": 0x93c5fd,
     "overcharge-core": 0xffd166,
+    "card-cache": 0xf0abfc,
   };
   return colors[kind];
+}
+
+function remotePlayerTargetId(playerId: string): string {
+  return `${REMOTE_PLAYER_TARGET_PREFIX}${playerId}`;
+}
+
+function playerIdFromRemoteTargetId(targetId: string): string | undefined {
+  return targetId.startsWith(REMOTE_PLAYER_TARGET_PREFIX)
+    ? targetId.slice(REMOTE_PLAYER_TARGET_PREFIX.length)
+    : undefined;
+}
+
+function applySnapshotDamage(
+  snapshot: MatchPlayerSnapshot,
+  damage: number,
+): MatchPlayerSnapshot {
+  const shieldActive = (snapshot.shieldActive ?? false) && (snapshot.shieldCharge ?? 0) > 0;
+  if (shieldActive) {
+    const shieldCharge = Math.max(0, (snapshot.shieldCharge ?? 0) - damage * 1.8);
+    return {
+      ...snapshot,
+      shieldActive: shieldCharge > 0,
+      shieldCharge,
+    };
+  }
+
+  const health = Math.max(0, snapshot.health - damage);
+  return {
+    ...snapshot,
+    health,
+    alive: health > 0,
+  };
 }
 
 function drawPickupDiamond(graphics: Phaser.GameObjects.Graphics, position: Vec2, radius: number) {

@@ -1,5 +1,15 @@
 # JAKESJAM - Changelog
 
+## v0.21 - 2026-05-01
+
+- Changed the weapon model back to the intended progression rule: every player starts from the default starter weapon and card pickups add mutators over time.
+- Added card-cache pickups to the arena so collected cards rebuild the current weapon into divergent player-specific builds.
+- Added deterministic variation to the 5x3 Boxworks grid so cells mirror, jitter, resize platforms, and place pickups/destructibles differently instead of being direct copies.
+- Added player death explosion feedback with the requested on-screen taunt.
+- Raised the room target from 6 players to 10-player all-v-all free-for-all support.
+- Added prototype remote-player projectile targets, shield-aware damage snapshots, and remote damage writes for multiplayer hit sanity testing.
+- Tuned starter weapon damage down from 15 to 10 after a 10-player sanity pass showed the baseline time-to-kill was too fast before card progression.
+
 ## v0.20 - 2026-05-01
 
 - Fixed player gun aiming under camera-follow by feeding the procedural rig the same world-space aim target used by reticle and projectile firing.

@@ -65,6 +65,8 @@ export type MatchPlayerSnapshot = {
   health: number;
   alive: boolean;
   crouching: boolean;
+  shieldActive?: boolean;
+  shieldCharge?: number;
   sequence: number;
   updatedAt: number;
 };
@@ -79,5 +81,15 @@ export type SubmitPlayerSnapshotArgs = {
   health: number;
   alive: boolean;
   crouching: boolean;
+  shieldActive: boolean;
+  shieldCharge: number;
   sequence: number;
+};
+
+export type ApplyPlayerDamageArgs = {
+  matchId: MatchId;
+  roomId: RoomId;
+  attackerPlayerId: string;
+  targetPlayerId: string;
+  damage: number;
 };

@@ -125,7 +125,7 @@ The baseline should feel as direct as a simple raycast shooter while still using
 ## MVP Content Target
 
 - One main map first.
-- Up to 6 players as a stress target after 1v1 works.
+- Up to 10 players as an all-v-all stress target after 1v1 works.
 - Four weapon paths.
 - Four character stat archetypes with one active shield/ability button.
 - Four destructible/interactive element types: barrels, boxes, mines, and cubes/blocks.
