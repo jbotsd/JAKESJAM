@@ -119,6 +119,18 @@ Acceptance criteria:
 - weapon values live in a data file;
 - types enforce required fields.
 
+### JJ-0202A — Add Projectile Modifier Types
+
+Create typed projectile modifier data for the orthogonal weapon system.
+
+Acceptance criteria:
+
+- projectile shape supports circle, triangle, square, hexagon, and orb;
+- projectile modifiers support count, range, fire rate, speed, size, recoil, pathing, element, and lifetime;
+- pathing supports straight, bounce, boomerang, homing, and reverse/anti-homing as typed options;
+- element/status supports neutral, fire, electric, sticky, and explosive as typed options;
+- modifier values can be composed without hardcoding each card.
+
 ### JJ-0203 — Implement Projectile System
 
 Implement projectile spawn, movement, collision, and despawn.
@@ -130,6 +142,29 @@ Acceptance criteria:
 - projectile moves at configured speed;
 - projectile despawns on terrain hit;
 - projectile despawns after lifetime expiry.
+
+### JJ-0203A — Render Basic Projectile Shapes
+
+Render projectile shapes from data.
+
+Acceptance criteria:
+
+- circle, triangle, square, hexagon, and orb projectiles are visually distinct;
+- projectile hitbox can be tuned separately from visual size;
+- projectile colour/effect can represent element/status;
+- shape rendering remains readable against the test arena.
+
+### JJ-0203B — Implement First Pathing Modifiers
+
+Implement the first non-straight projectile behaviours.
+
+Acceptance criteria:
+
+- bounce projectile reflects from terrain with a configurable bounce count;
+- boomerang projectile returns after max range or lifetime threshold;
+- weak homing projectile curves toward a target with capped turn rate;
+- reverse/anti-homing projectile curves away or delays its correction;
+- all behaviours respect projectile lifetime and active projectile caps.
 
 ### JJ-0204 — Implement Health and Damage
 
@@ -252,6 +287,43 @@ Acceptance criteria:
 
 ---
 
+## Phase 4A — Arena Physics and Destructibles
+
+### JJ-04A1 — Add Destructible Object Types
+
+Create data definitions for basic destructible arena objects.
+
+Acceptance criteria:
+
+- barrel, box, mine, and cube object types exist;
+- each object has health, collision shape, damage response, and optional physics behaviour;
+- objects can be placed in the test arena from data.
+
+### JJ-04A2 — Implement Destructible Object Damage
+
+Allow projectiles and explosions to damage destructible objects.
+
+Acceptance criteria:
+
+- boxes break after damage threshold;
+- barrels explode or ignite after destruction;
+- mines trigger on contact or damage;
+- cubes can be pushed or used as temporary cover if physics is enabled.
+
+### JJ-04A3 — Add Fire/Napalm Prototype
+
+Implement the first fire status and map hazard loop.
+
+Acceptance criteria:
+
+- fire can be spawned by a weapon/card or barrel;
+- fire deals damage over time in a small area;
+- fire dissipates after a configurable duration;
+- fire VFX does not hide players or projectiles;
+- ownership is tracked for scoring/debugging.
+
+---
+
 ## Phase 5 — Upgrade Cards
 
 ### JJ-0501 — Create Card Data
@@ -264,6 +336,18 @@ Acceptance criteria:
 - each card has id, name, category, rarity, description;
 - unique/maxStacks fields supported;
 - cards are data-driven.
+
+### JJ-0501A — Define Four Weapon Paths
+
+Create the first curated weapon evolution paths.
+
+Acceptance criteria:
+
+- Blap path exists for fire rate and projectile count;
+- Heavy path exists for damage, recoil, knockback, and large shapes;
+- Trick path exists for bounce, boomerang, and split behaviours;
+- Element path exists for fire/napalm/status effects;
+- every path has at least three draftable cards.
 
 ### JJ-0502 — Implement Card System
 
@@ -300,6 +384,31 @@ Acceptance criteria:
 - Quick Hands works;
 - Air Control works;
 - Panic Shield works.
+
+### JJ-0505 — Add Orthogonal Prototype Cards
+
+Add the first strange projectile/build cards.
+
+Acceptance criteria:
+
+- Boomerang Rounds works;
+- Square Rounds works;
+- Hex Rounds works;
+- Homing Greed works and increases player size as a downside;
+- Reverse Pull changes recoil behaviour;
+- Orby Blap Blap fires slow orb clusters with projectile caps;
+- Napalm Bloke creates short-lived fire patches.
+
+### JJ-0506 — Add Character Stat Archetypes
+
+Create the first four character stat identities.
+
+Acceptance criteria:
+
+- four character definitions exist;
+- each character has health, movement, size, shield/ability, and weakness values;
+- characters do not use permanent progression power;
+- character choice is visible in lobby and match debug UI.
 
 ---
 
