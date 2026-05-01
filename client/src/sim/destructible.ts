@@ -8,7 +8,7 @@
 // Hard rules: no Phaser, no DOM, no wall-clock reads, no Math.random. Iterate
 // destructibles + projectiles in EntityId order for cross-runtime determinism.
 
-import { circleOverlapsAABB, type AABB } from "./collision.js";
+import { circleOverlapsAABB, centerToAABB, type AABB } from "./collision.js";
 import type {
   DestructibleEntity,
   EntityId,
@@ -201,12 +201,7 @@ export function stepDestructibles(
  * out and how `boxworks.ts` describes them.
  */
 export function destructibleAABB(d: DestructibleEntity): AABB {
-  return {
-    x: d.x - d.width / 2,
-    y: d.y - d.height / 2,
-    w: d.width,
-    h: d.height,
-  };
+  return centerToAABB(d.x, d.y, d.width, d.height);
 }
 
 /**

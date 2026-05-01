@@ -2,6 +2,29 @@ export * from './types.js';
 export * from './constants.js';
 export { World } from './World.js';
 export {
+  aabbOverlap,
+  circleOverlapsAABB,
+  circleHitsAnyCached,
+  circleBounceCached,
+  platformToAABB,
+  centerToAABB,
+  buildSpatialGrid,
+  buildStaticCache,
+  queryGrid,
+  resolveMove,
+  resolveMoveCached,
+  sweepAABB,
+  sweepAABBCached,
+  pointInAABB,
+  SPATIAL_CELL_SIZE,
+} from './collision.js';
+export type {
+  AABB,
+  SweepHit,
+  SpatialGrid,
+  StaticCollisionCache,
+} from './collision.js';
+export {
   PARRY_ACTIVE_MS,
   PARRY_COOLDOWN_MS_DEFAULT,
   PARRY_ARC_RADIANS,

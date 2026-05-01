@@ -7,7 +7,13 @@
 // read off PlayerEntity fields that don't exist yet, and we keep this file
 // additive against Dev A's sim/types.ts contract.
 
-import { resolveMove, type AABB } from "./collision.js";
+import {
+  resolveMove,
+  resolveMoveCached,
+  platformToAABB,
+  type AABB,
+  type StaticCollisionCache,
+} from "./collision.js";
 import type { PlayerEntity, PlatformDefinition, InputBitfield } from "./types.js";
 
 const M = {
@@ -74,6 +80,9 @@ export function freshPlayerMovementMemory(): PlayerMovementMemory {
 export type PlayerStepOptions = {
   speedMultiplier?: number;
   gravityMultiplier?: number;
+  /** Pre-built collision cache. When provided, uses spatial-grid-accelerated
+   *  sweep + one-way platform support instead of brute-force iteration. */
+  collisionCache?: StaticCollisionCache;
 };
 
 export type PlayerStepResult = {
@@ -193,8 +202,13 @@ export function stepPlayer(
     w: M.bodyWidth,
     h: bodyHeight,
   };
-  const statics = platforms.map(platformToAABB);
-  const resolved = resolveMove(aabb, next.vx, next.vy, dtSec, statics);
+
+  // Use spatial-grid-accelerated resolution when cache is available,
+  // with one-way platform support (player can jump through platforms from below).
+  // Falls back to brute-force for backward compatibility.
+  const resolved = options.collisionCache
+    ? resolveMoveCached(aabb, next.vx, next.vy, dtSec, options.collisionCache, true)
+    : resolveMove(aabb, next.vx, next.vy, dtSec, platforms.map(platformToAABB));
   next.x = resolved.x + M.bodyWidth / 2;
   next.y = resolved.y + bodyHeight / 2;
   next.vx = resolved.vx;
@@ -202,15 +216,6 @@ export function stepPlayer(
   mem.groundedLastFrame = resolved.groundedThisFrame;
 
   return { player: next, memory: mem, jumpedThisFrame, jetpackFuel: nextFuel };
-}
-
-function platformToAABB(p: PlatformDefinition): AABB {
-  return {
-    x: p.position.x - p.size.x / 2,
-    y: p.position.y - p.size.y / 2,
-    w: p.size.x,
-    h: p.size.y,
-  };
 }
 
 function approach(value: number, target: number, amount: number): number {
