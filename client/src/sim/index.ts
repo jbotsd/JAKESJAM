@@ -10,6 +10,19 @@ export {
   SATELLITE_PROJECTILE_LIFETIME_MS,
   SATELLITE_PROJECTILE_RADIUS,
 } from './satellite.js';
+export {
+  EXPLOSION_RADIUS,
+  EXPLOSION_DAMAGE,
+  FIRE_PATCH_DEFAULT_LIFETIME_MS,
+  FIRE_PATCH_DEFAULT_RADIUS,
+  FIRE_PATCH_DEFAULT_DPS,
+  stepDestructibles,
+  buildFireEntity,
+  destructibleAABB,
+} from './destructible.js';
+export type { SpawnedFireSpec, StepDestructiblesResult } from './destructible.js';
+export { stepFirePatches } from './fire.js';
+export type { StepFirePatchesResult } from './fire.js';
 export type {
   CardDefinition,
   CardId,
