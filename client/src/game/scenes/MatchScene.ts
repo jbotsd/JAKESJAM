@@ -51,6 +51,8 @@ const CHAOS_MODIFIERS_KEY = "jakesjam.chaosModifiers";
 const CARD_CACHE_RESPAWN_MS = 18000;
 const REMOTE_PLAYER_TARGET_PREFIX = "remote-player:";
 const MUTATOR_ROLL_BUCKET_PRIORITY = ["delivery", "quantity", "shape", "trajectory", "impact", "element"] as const;
+const DEATH_POPUP_DELAY_MS = 520;
+const RESPAWN_COUNTDOWN_MS = 3000;
 
 type MatchSceneInitData = {
   roomId?: string;
@@ -96,6 +98,7 @@ export class MatchScene extends Phaser.Scene {
   private reticle?: Phaser.GameObjects.Graphics;
   private debugText?: Phaser.GameObjects.Text;
   private weaponText?: Phaser.GameObjects.Text;
+  private respawnText?: Phaser.GameObjects.Text;
   private targetGraphics?: Phaser.GameObjects.Graphics;
   private targetText?: Phaser.GameObjects.Text;
   private destructibleGraphics?: Phaser.GameObjects.Graphics;
@@ -116,6 +119,9 @@ export class MatchScene extends Phaser.Scene {
   private playerHealth = 100;
   private playerMaxHealth = 100;
   private playerRespawnPending = false;
+  private respawnRemainingMs = 0;
+  private respawnCountdownActive = false;
+  private deathSequenceId = 0;
   private shieldCharge = 100;
   private shieldActive = false;
   private temporaryShieldMs = 0;
@@ -165,6 +171,11 @@ export class MatchScene extends Phaser.Scene {
     this.destructibles = createDestructibleStates();
     this.pickups = createPickupStates();
     this.firePatches = [];
+    this.clearRespawnText();
+    this.playerRespawnPending = false;
+    this.respawnRemainingMs = 0;
+    this.respawnCountdownActive = false;
+    this.deathSequenceId += 1;
     this.shieldCharge = 100;
     this.shieldActive = false;
     this.temporaryShieldMs = 0;
@@ -201,6 +212,29 @@ export class MatchScene extends Phaser.Scene {
     const chaos = this.getChaosProfile();
     const scaledDeltaMs = deltaMs * chaos.timeScale;
     const scaledDeltaSeconds = Math.min(scaledDeltaMs / 1000, 1 / 30);
+    this.updateRespawnCountdown(deltaMs);
+
+    if (this.playerRespawnPending) {
+      this.playerBody.velocity = { x: 0, y: 0 };
+      this.shieldActive = false;
+      this.updateTarget(scaledDeltaMs);
+      this.updateChaosHazards(scaledDeltaMs);
+      this.updateFirePatches(scaledDeltaMs);
+      const hits = this.projectileSystem.update(
+        scaledDeltaSeconds,
+        boxworksWorld.platforms,
+        this.getProjectileTargets(),
+      );
+      this.applyProjectileHits(hits);
+      this.updateNetworkSync(deltaMs);
+      this.syncPlayerVisuals(deltaMs);
+      this.syncRemotePlayerVisuals(deltaMs);
+      this.updateReticle();
+      this.updateDebugText();
+      this.updateWeaponOverlay();
+      return;
+    }
+
     this.updateShield(scaledDeltaMs);
     const wasGrounded = this.playerBody.grounded;
     const input = this.readInput();
@@ -413,6 +447,13 @@ export class MatchScene extends Phaser.Scene {
       return;
     }
 
+    if (this.playerRespawnPending) {
+      this.playerRig.setVisible(false);
+      this.shieldGraphics?.clear();
+      return;
+    }
+
+    this.playerRig.setVisible(true);
     const bodyFeet = {
       x: this.playerBody.position.x,
       y: this.playerBody.position.y + this.playerBody.size.y / 2,
@@ -484,6 +525,12 @@ export class MatchScene extends Phaser.Scene {
       const spawn = boxworksWorld.spawns[playerIndex % boxworksWorld.spawns.length];
       const character = this.getCharacter(this.getRoomPlayer(playerId)?.characterId);
       const snapshot = this.remoteSnapshots.get(playerId);
+      if (snapshot?.alive === false) {
+        rig.setVisible(false);
+        continue;
+      }
+
+      rig.setVisible(true);
       const targetPosition = snapshot?.position ?? spawn;
       const footPosition = {
         x: targetPosition.x,
@@ -660,7 +707,7 @@ export class MatchScene extends Phaser.Scene {
   }
 
   private tryFireWeapon() {
-    if (!this.projectileSystem || this.fireCooldownMs > 0) {
+    if (!this.projectileSystem || this.fireCooldownMs > 0 || this.playerRespawnPending) {
       return;
     }
 
@@ -861,13 +908,34 @@ export class MatchScene extends Phaser.Scene {
       return;
     }
 
+    const deathSequence = this.deathSequenceId + 1;
+    this.deathSequenceId = deathSequence;
+    this.clearRespawnText();
     this.playerRespawnPending = true;
+    this.respawnRemainingMs = RESPAWN_COUNTDOWN_MS;
+    this.respawnCountdownActive = false;
+    this.playerHealth = 0;
     this.playerBody.velocity = { x: 0, y: 0 };
+    this.shieldActive = false;
+    this.shieldGraphics?.clear();
+    this.playerRig?.setVisible(false);
     this.resetWeaponProgression();
     this.audio?.play("explosion");
     this.spawnPlayerDeathExplosion(this.playerBody.position);
-    this.showDeathPopup();
-    this.time.delayedCall(1100, () => this.resetPlayer());
+    this.time.delayedCall(DEATH_POPUP_DELAY_MS, () => {
+      if (this.deathSequenceId !== deathSequence || !this.playerRespawnPending) {
+        return;
+      }
+      this.respawnCountdownActive = true;
+      this.respawnRemainingMs = RESPAWN_COUNTDOWN_MS;
+      this.showDeathPopup();
+    });
+    this.time.delayedCall(DEATH_POPUP_DELAY_MS + RESPAWN_COUNTDOWN_MS, () => {
+      if (this.deathSequenceId !== deathSequence || !this.playerRespawnPending) {
+        return;
+      }
+      this.respawnPlayer();
+    });
   }
 
   private spawnPlayerDeathExplosion(position: Vec2) {
@@ -898,29 +966,68 @@ export class MatchScene extends Phaser.Scene {
     }
   }
 
+  private spawnRespawnBurst(position: Vec2) {
+    const ring = this.add.circle(position.x, position.y, 8, 0x50e3c2, 0.18);
+    ring.setStrokeStyle(3, 0x50e3c2, 0.82);
+    this.tweens.add({
+      targets: ring,
+      radius: 54,
+      alpha: 0,
+      duration: 360,
+      ease: "Sine.easeOut",
+      onComplete: () => ring.destroy(),
+    });
+  }
+
   private showDeathPopup() {
     const { width, height } = this.scale;
-    const popup = this.add
-      .text(width / 2, height * 0.28, "LOL GIT GUD CUNT", {
+    this.clearRespawnText();
+    this.respawnText = this.add
+      .text(width / 2, height * 0.28, this.getRespawnMessage(), {
         color: "#fff7d6",
         fontFamily: "Inter, Arial, sans-serif",
-        fontSize: "34px",
+        fontSize: "32px",
         fontStyle: "900",
+        align: "center",
         stroke: "#0b0e14",
         strokeThickness: 8,
       })
       .setOrigin(0.5)
       .setScrollFactor(0)
       .setDepth(1000);
+  }
 
-    this.tweens.add({
-      targets: popup,
-      y: popup.y - 26,
-      alpha: 0,
-      duration: 980,
-      ease: "Sine.easeOut",
-      onComplete: () => popup.destroy(),
-    });
+  private updateRespawnCountdown(deltaMs: number) {
+    if (!this.playerRespawnPending || !this.respawnCountdownActive) {
+      return;
+    }
+
+    this.respawnRemainingMs = Math.max(0, this.respawnRemainingMs - deltaMs);
+    this.updateRespawnText();
+  }
+
+  private updateRespawnText() {
+    if (!this.respawnText) {
+      return;
+    }
+
+    this.respawnText.setText(this.getRespawnMessage());
+  }
+
+  private getRespawnMessage(): string {
+    const seconds = Math.ceil(this.respawnRemainingMs / 1000);
+    return `LOL GIT GUD CUNT\nRESPAWN ${seconds}`;
+  }
+
+  private clearRespawnText() {
+    this.respawnText?.destroy();
+    this.respawnText = undefined;
+  }
+
+  private respawnPlayer() {
+    this.clearRespawnText();
+    this.resetPlayer();
+    this.spawnRespawnBurst(this.playerBody.position);
   }
 
   private damageDestructible(
@@ -1676,12 +1783,17 @@ export class MatchScene extends Phaser.Scene {
   private resetPlayer() {
     const spawn = this.getLocalSpawn();
     const character = this.getLocalCharacter();
+    this.deathSequenceId += 1;
+    this.clearRespawnText();
     this.playerBody = createPlayerBody(spawn.x, spawn.y, character.sizeScale);
     this.playerMaxHealth = character.maxHealth;
     this.playerHealth = character.maxHealth;
     this.playerRespawnPending = false;
+    this.respawnRemainingMs = 0;
+    this.respawnCountdownActive = false;
     this.shieldCharge = Math.max(this.shieldCharge, 55);
     this.shieldActive = false;
+    this.playerRig?.setVisible(true);
     this.movement.reset();
     this.movementDebug = { coyoteMs: 0, jumpBufferMs: 0 };
     this.updateCameraTarget();

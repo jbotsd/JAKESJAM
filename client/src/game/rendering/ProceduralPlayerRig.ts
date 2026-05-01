@@ -50,6 +50,10 @@ export class ProceduralPlayerRig {
   }
 
   update(deltaMs: number, pose: ProceduralPlayerPose) {
+    if (!this.graphics.visible) {
+      return;
+    }
+
     const walkAmount = Phaser.Math.Clamp(Math.abs(pose.velocity.x) / 180, 0, 1);
     this.stepPhase += deltaMs * (0.006 + walkAmount * 0.01);
 
@@ -65,6 +69,14 @@ export class ProceduralPlayerRig {
   destroy() {
     this.graphics.destroy();
     this.nameText.destroy();
+  }
+
+  setVisible(visible: boolean) {
+    this.graphics.setVisible(visible);
+    this.nameText.setVisible(visible);
+    if (!visible) {
+      this.graphics.clear();
+    }
   }
 
   private draw(pose: ProceduralPlayerPose, walkAmount: number) {
