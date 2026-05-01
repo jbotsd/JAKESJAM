@@ -175,8 +175,10 @@ export class DraftScene extends Phaser.Scene {
       duration: 200,
       ease: "Power2",
       onComplete: () => {
-        // Stop DraftScene and return to MatchScene with selection
-        this.scene.stop(SceneKeys.Draft, { selectedCard: card });
+        // Store selected card in registry so MatchScene can read it
+        this.registry.set("draftSelectedCard", card);
+        // Stop DraftScene - MatchScene listens for shutdown event
+        this.scene.stop(SceneKeys.Draft);
       }
     });
   }

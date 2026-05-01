@@ -673,6 +673,22 @@ export class MatchScene extends Phaser.Scene {
               playerBehind: false,
               localPlayerId: this.localPlayerId,
             });
+
+            // Listen for draft completion: resume match and apply card
+            const draftScene = this.scene.get("DraftScene");
+            if (draftScene) {
+              draftScene.events.once("shutdown", () => {
+                // Read selected card from registry
+                const selectedCard = this.registry.get("draftSelectedCard");
+                if (selectedCard) {
+                  this.progressionCardIds.push(selectedCard.id);
+                  this.rebuildWeaponBuild();
+                  this.registry.remove("draftSelectedCard");
+                }
+                // Resume the match scene so round state continues advancing
+                this.scene.resume();
+              });
+            }
           });
         }
       }
@@ -1627,13 +1643,16 @@ export class MatchScene extends Phaser.Scene {
       if (this.deathSequenceId !== deathSequence || !this.playerRespawnPending) {
         return;
       }
-      // No countdown: respawn is gated on the player actually picking a card.
-      // Show the death popup immediately and surface the draft.
+      // ROUNDS: Death-draft removed. Player drafts between rounds instead.
+      // Auto-respawn via the round state machine (resetTarget + respawnPlayer
+      // fire when round-over → countdown transition completes).
       this.showDeathPopup();
-      this.openDeathDraft(deathSequence);
+      this.respawnCountdownActive = true;
+      this.respawnRemainingMs = RESPAWN_COUNTDOWN_MS;
     });
   }
 
+  // @ts-ignore ROUNDS: Death draft disabled - between-round DraftScene used instead
   private openDeathDraft(deathSequence: number) {
     if (!this.cardDraftOverlay) {
       this.cardDraftOverlay = new CardDraftOverlay();
