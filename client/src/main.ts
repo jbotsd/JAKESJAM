@@ -32,24 +32,13 @@ app.innerHTML = `
           <input data-music-muted type="checkbox" />
           Mute Music
         </label>
-        <label>
-          Resolution
-          <select data-resolution>
-            <option value="960">960 x 540</option>
-            <option value="1180" selected>1280-ish Window</option>
-            <option value="1440">1600-ish Window</option>
-          </select>
-        </label>
         <button data-options-back type="button">Back</button>
       </section>
     </div>
   </section>
   <main class="app-shell">
-    <section class="play-surface" aria-label="Game preview">
-      <div id="game-root" class="game-root"></div>
-    </section>
-
-    <aside class="lobby-panel" aria-label="Room controls">
+    <div id="game-root" class="game-root"></div>
+    <aside class="lobby-panel" data-lobby-panel aria-label="Room controls">
       <div class="brand-row">
         <div>
           <h1>JAKESJAM</h1>
@@ -122,11 +111,10 @@ app.innerHTML = `
 const game = new Phaser.Game(gameConfig);
 const lobbyController = new LobbyController(app);
 const splash = queryRequired<HTMLElement>("[data-splash]");
-const gameRoot = queryRequired<HTMLElement>("#game-root");
+const lobbyPanel = queryRequired<HTMLElement>("[data-lobby-panel]");
 const optionsPanel = queryRequired<HTMLElement>("[data-options]");
 const musicVolumeInput = queryRequired<HTMLInputElement>("[data-music-volume]");
 const musicMutedInput = queryRequired<HTMLInputElement>("[data-music-muted]");
-const resolutionSelect = queryRequired<HTMLSelectElement>("[data-resolution]");
 const menuMusic = new Audio(getMenuMusicUrl());
 
 menuMusic.loop = true;
@@ -136,18 +124,21 @@ restoreOptions();
 queryRequired<HTMLButtonElement>("[data-menu-practice]").addEventListener("click", () => {
   startMenuMusic();
   hideSplash();
+  hideLobby();
   lobbyController.startPracticeFromMenu();
 });
 
 queryRequired<HTMLButtonElement>("[data-menu-host]").addEventListener("click", () => {
   startMenuMusic();
   hideSplash();
+  showLobby();
   lobbyController.focusCreateRoom();
 });
 
 queryRequired<HTMLButtonElement>("[data-menu-join]").addEventListener("click", () => {
   startMenuMusic();
   hideSplash();
+  showLobby();
   lobbyController.focusJoinRoom();
 });
 
@@ -170,17 +161,13 @@ musicMutedInput.addEventListener("change", () => {
   applyAudioOptions();
 });
 
-resolutionSelect.addEventListener("change", () => {
-  localStorage.setItem("jakesjam.resolutionWidth", resolutionSelect.value);
-  applyResolutionOption();
-});
-
 splash.addEventListener("pointerdown", () => startMenuMusic(), { once: true });
 
 window.addEventListener("jakesjam:start-match", (event) => {
   const matchEvent = event as CustomEvent;
   stopMenuMusic();
   hideSplash();
+  hideLobby();
   if (shouldUseNewNetcode() && matchEvent.detail?.matchId) {
     game.scene.start(SceneKeys.OnlineMatch, {
       matchId: matchEvent.detail.matchId,
@@ -218,6 +205,7 @@ window.addEventListener("jakesjam:return-to-lobby", () => {
     game.scene.stop(SceneKeys.OnlineMatch);
   }
   showSplash();
+  showLobby();
   startMenuMusic();
 });
 
@@ -242,21 +230,23 @@ function showSplash() {
   splash.hidden = false;
 }
 
+function hideLobby() {
+  lobbyPanel.classList.add("lobby-panel--hidden");
+}
+
+function showLobby() {
+  lobbyPanel.classList.remove("lobby-panel--hidden");
+}
+
 function restoreOptions() {
   musicVolumeInput.value = localStorage.getItem("jakesjam.musicVolume") ?? "65";
   musicMutedInput.checked = localStorage.getItem("jakesjam.musicMuted") === "true";
-  resolutionSelect.value = localStorage.getItem("jakesjam.resolutionWidth") ?? "1180";
   applyAudioOptions();
-  applyResolutionOption();
 }
 
 function applyAudioOptions() {
   menuMusic.volume = Number(musicVolumeInput.value) / 100;
   menuMusic.muted = musicMutedInput.checked;
-}
-
-function applyResolutionOption() {
-  gameRoot.style.setProperty("--game-shell-width", `${resolutionSelect.value}px`);
 }
 
 function startMenuMusic() {

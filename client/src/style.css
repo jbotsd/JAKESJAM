@@ -1,19 +1,24 @@
+/* ─── JAKESJAM — Cyberpunk-Sorcerer Crystal-Tech UI ──────────────────── */
+
 :root {
   color: #f7fbff;
-  background: #10131a;
+  background: #05080f;
   font-family:
     Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
     sans-serif;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
+  --bg-deep: #05080f;
   --bg: #10131a;
   --surface: #171b24;
   --surface-2: #202633;
   --border: #343c4d;
+  --border-glow: rgba(143, 248, 255, 0.18);
   --text: #f7fbff;
   --muted: #9ba7b8;
   --accent: #50e3c2;
+  --accent-bright: #8ff8ff;
   --danger: #ff6b6b;
   --ready: #8adf70;
 }
@@ -30,13 +35,9 @@ html,
 body,
 #app {
   width: 100%;
-  min-width: 320px;
   height: 100%;
-  min-height: 100vh;
   margin: 0;
-}
-
-body {
+  padding: 0;
   overflow: hidden;
 }
 
@@ -51,24 +52,30 @@ button {
   border: 1px solid #59f0cf;
   border-radius: 6px;
   color: #07110f;
-  background: var(--accent);
+  background: linear-gradient(180deg, #6af4d8 0%, #3fd4b2 100%);
   font-size: 0.9rem;
   font-weight: 800;
   cursor: pointer;
   transition:
     transform 120ms ease,
     filter 120ms ease,
-    opacity 120ms ease;
+    opacity 120ms ease,
+    box-shadow 120ms ease;
 }
 
 button:hover:not(:disabled) {
-  filter: brightness(1.08);
+  filter: brightness(1.12);
   transform: translateY(-1px);
+  box-shadow: 0 0 12px rgba(80, 227, 194, 0.35);
+}
+
+button:active:not(:disabled) {
+  transform: translateY(0);
 }
 
 button:disabled {
   cursor: not-allowed;
-  opacity: 0.45;
+  opacity: 0.4;
 }
 
 input,
@@ -78,8 +85,16 @@ select {
   border: 1px solid var(--border);
   border-radius: 6px;
   color: var(--text);
-  background: #0d1016;
+  background: rgba(5, 8, 15, 0.85);
   padding: 0 12px;
+  transition: border-color 180ms ease;
+}
+
+input:focus,
+select:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px rgba(80, 227, 194, 0.15);
 }
 
 select {
@@ -90,44 +105,46 @@ input[type="color"] {
   padding: 4px;
 }
 
+/* ─── App shell: single-column fullscreen ────────────────────────────── */
+
 .app-shell {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 360px;
+  position: relative;
+  width: 100vw;
   height: 100vh;
-  min-height: 0;
-  background:
-    radial-gradient(circle at 22% 18%, rgba(80, 227, 194, 0.18), transparent 32%),
-    linear-gradient(135deg, #10131a 0%, #111925 48%, #151821 100%);
+  overflow: hidden;
+  background: var(--bg-deep);
 }
 
-.play-surface {
-  display: grid;
-  min-width: 0;
-  padding: 24px;
-  place-items: center;
-}
+/* ─── Game root: fills entire viewport ───────────────────────────────── */
 
 .game-root {
-  width: min(100%, var(--game-shell-width, 1180px));
-  aspect-ratio: 16 / 9;
+  width: 100%;
+  height: 100%;
   overflow: hidden;
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  border-radius: 8px;
-  background: #0b0e14;
-  box-shadow: 0 22px 60px rgba(0, 0, 0, 0.32);
+  background: #05080f;
 }
+
+.game-root canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+/* ─── Splash screen (fullscreen overlay) ─────────────────────────────── */
 
 .splash-screen {
   position: fixed;
-  z-index: 20;
+  z-index: 50;
   inset: 0;
   display: grid;
   place-items: center;
   padding: 28px;
   background:
-    linear-gradient(rgba(7, 10, 16, 0.8), rgba(7, 10, 16, 0.9)),
-    radial-gradient(circle at 50% 28%, rgba(80, 227, 194, 0.24), transparent 36%),
-    #0b0e14;
+    radial-gradient(ellipse at 50% 20%, rgba(143, 248, 255, 0.08) 0%, transparent 50%),
+    radial-gradient(ellipse at 20% 80%, rgba(80, 227, 194, 0.06) 0%, transparent 40%),
+    linear-gradient(180deg, rgba(5, 8, 15, 0.92) 0%, rgba(5, 8, 15, 0.96) 100%);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
 }
 
 .splash-stage {
@@ -135,14 +152,18 @@ input[type="color"] {
   gap: 18px;
   width: min(720px, 100%);
   padding: 38px;
-  border: 1px solid rgba(80, 227, 194, 0.38);
-  border-radius: 8px;
-  background: rgba(16, 19, 26, 0.86);
-  box-shadow: 0 30px 90px rgba(0, 0, 0, 0.45);
+  border: 1px solid rgba(143, 248, 255, 0.22);
+  border-radius: 12px;
+  background:
+    linear-gradient(135deg, rgba(16, 19, 26, 0.92) 0%, rgba(10, 14, 22, 0.95) 100%);
+  box-shadow:
+    0 30px 90px rgba(0, 0, 0, 0.55),
+    0 0 1px rgba(143, 248, 255, 0.3),
+    inset 0 1px 0 rgba(143, 248, 255, 0.08);
 }
 
 .splash-kicker {
-  color: var(--accent);
+  color: var(--accent-bright);
   font-size: 0.78rem;
   font-weight: 900;
   letter-spacing: 0.12em;
@@ -151,6 +172,10 @@ input[type="color"] {
 .splash-stage h1 {
   font-size: clamp(3rem, 9vw, 6.5rem);
   line-height: 0.9;
+  background: linear-gradient(135deg, #f7fbff 30%, var(--accent-bright) 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
 }
 
 .splash-copy {
@@ -194,23 +219,73 @@ input[type="color"] {
   padding: 0;
 }
 
-.game-root canvas {
-  display: block;
-  width: 100%;
-  height: 100%;
-}
+/* ─── Lobby panel: centered floating overlay with glassmorphism ──────── */
 
 .lobby-panel {
+  position: fixed;
+  z-index: 30;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
   display: flex;
   flex-direction: column;
   gap: 20px;
-  min-width: 0;
-  min-height: 0;
+  width: min(420px, calc(100vw - 32px));
+  max-height: calc(100vh - 48px);
   overflow-y: auto;
-  border-left: 1px solid rgba(255, 255, 255, 0.1);
-  background: rgba(16, 19, 26, 0.94);
-  padding: 24px;
+  overflow-x: hidden;
+  padding: 28px 24px;
+  border: 1px solid var(--border-glow);
+  border-radius: 14px;
+  color: var(--text);
+  background:
+    linear-gradient(
+      160deg,
+      rgba(16, 19, 26, 0.88) 0%,
+      rgba(10, 14, 22, 0.92) 50%,
+      rgba(5, 8, 15, 0.94) 100%
+    );
+  backdrop-filter: blur(20px) saturate(1.3);
+  -webkit-backdrop-filter: blur(20px) saturate(1.3);
+  box-shadow:
+    0 32px 80px rgba(0, 0, 0, 0.6),
+    0 0 1px rgba(143, 248, 255, 0.4),
+    0 0 40px rgba(80, 227, 194, 0.06),
+    inset 0 1px 0 rgba(143, 248, 255, 0.1);
+
+  /* Show/hide transition */
+  opacity: 1;
+  pointer-events: auto;
+  transition:
+    opacity 280ms cubic-bezier(0.4, 0, 0.2, 1),
+    transform 280ms cubic-bezier(0.4, 0, 0.2, 1);
 }
+
+/* Scrollbar styling for the lobby panel */
+.lobby-panel::-webkit-scrollbar {
+  width: 6px;
+}
+
+.lobby-panel::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.lobby-panel::-webkit-scrollbar-thumb {
+  background: rgba(143, 248, 255, 0.15);
+  border-radius: 3px;
+}
+
+.lobby-panel::-webkit-scrollbar-thumb:hover {
+  background: rgba(143, 248, 255, 0.3);
+}
+
+.lobby-panel--hidden {
+  opacity: 0;
+  pointer-events: none;
+  transform: translate(-50%, -46%) scale(0.97);
+}
+
+/* ─── Lobby panel inner elements ─────────────────────────────────────── */
 
 .brand-row {
   display: flex;
@@ -228,6 +303,7 @@ p {
 h1 {
   font-size: 1.65rem;
   line-height: 1;
+  color: var(--text);
 }
 
 h2 {
@@ -250,10 +326,10 @@ h2 {
   width: 44px;
   height: 32px;
   place-items: center;
-  border: 1px solid var(--border);
+  border: 1px solid var(--border-glow);
   border-radius: 6px;
-  color: var(--accent);
-  background: #0d1016;
+  color: var(--accent-bright);
+  background: rgba(5, 8, 15, 0.7);
   font-size: 0.82rem;
   font-weight: 900;
 }
@@ -284,7 +360,7 @@ h2 {
   grid-template-columns: repeat(2, minmax(0, 1fr));
   border: 1px solid var(--border);
   border-radius: 8px;
-  background: var(--surface);
+  background: rgba(23, 27, 36, 0.6);
   padding: 14px;
 }
 
@@ -312,7 +388,7 @@ h2 {
 .player-connect {
   border: 1px solid var(--border);
   border-radius: 8px;
-  background: var(--surface);
+  background: rgba(23, 27, 36, 0.6);
   padding: 14px;
 }
 
@@ -323,7 +399,7 @@ h2 {
 }
 
 .server-panel input[readonly] {
-  color: var(--accent);
+  color: var(--accent-bright);
   font-weight: 900;
 }
 
@@ -331,7 +407,7 @@ h2 {
   grid-template-columns: repeat(2, minmax(0, 1fr));
   border: 1px solid var(--border);
   border-radius: 8px;
-  background: var(--surface);
+  background: rgba(23, 27, 36, 0.6);
   padding: 14px;
 }
 
@@ -362,7 +438,7 @@ h2 {
 .active-room {
   border: 1px solid var(--border);
   border-radius: 8px;
-  background: var(--surface);
+  background: rgba(23, 27, 36, 0.6);
   padding: 14px;
 }
 
@@ -375,14 +451,15 @@ h2 {
 }
 
 .room-code-row strong {
-  color: var(--text);
+  color: var(--accent-bright);
   font-size: 1.25rem;
   letter-spacing: 0.1em;
+  text-shadow: 0 0 8px rgba(143, 248, 255, 0.35);
 }
 
 .players-box {
-  min-height: 180px;
-  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  min-height: 120px;
+  border-top: 1px solid rgba(143, 248, 255, 0.08);
   padding-top: 18px;
 }
 
@@ -402,7 +479,7 @@ h2 {
   min-height: 38px;
   border: 1px solid var(--border);
   border-radius: 6px;
-  background: var(--surface-2);
+  background: rgba(32, 38, 51, 0.5);
   padding: 8px 10px;
 }
 
@@ -411,6 +488,7 @@ h2 {
   height: 14px;
   border: 1px solid rgba(255, 255, 255, 0.55);
   border-radius: 50%;
+  box-shadow: 0 0 6px rgba(143, 248, 255, 0.2);
 }
 
 .player-name {
@@ -431,24 +509,17 @@ h2 {
 
 .player-state.ready {
   color: var(--ready);
+  text-shadow: 0 0 6px rgba(138, 223, 112, 0.4);
 }
 
-@media (max-width: 880px) {
-  body {
-    overflow: auto;
-  }
+/* ─── Responsive ─────────────────────────────────────────────────────── */
 
-  .app-shell {
-    grid-template-columns: 1fr;
-  }
-
-  .play-surface {
-    padding: 14px;
-  }
-
+@media (max-width: 480px) {
   .lobby-panel {
-    border-left: 0;
-    border-top: 1px solid rgba(255, 255, 255, 0.1);
+    width: calc(100vw - 16px);
+    max-height: calc(100vh - 24px);
+    padding: 20px 16px;
+    border-radius: 10px;
   }
 
   .splash-stage {
