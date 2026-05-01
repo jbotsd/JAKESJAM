@@ -396,12 +396,22 @@ function queryRequired<T extends HTMLElement>(root: ParentNode, selector: string
 }
 
 function loadOrCreatePlayerId(): string {
-  const existing = localStorage.getItem(PLAYER_ID_KEY);
-  if (existing) {
-    return existing;
+  // Allow ?player=xyz URL param for multi-tab testing
+  const params = new URLSearchParams(window.location.search);
+  const paramId = params.get("player");
+  if (paramId) {
+    return paramId;
   }
+
+  // Each tab gets its own player ID via sessionStorage so two tabs
+  // on the same machine can host and join the same room.
+  const sessionId = sessionStorage.getItem(PLAYER_ID_KEY);
+  if (sessionId) {
+    return sessionId;
+  }
+
   const playerId = crypto.randomUUID();
-  localStorage.setItem(PLAYER_ID_KEY, playerId);
+  sessionStorage.setItem(PLAYER_ID_KEY, playerId);
   return playerId;
 }
 
