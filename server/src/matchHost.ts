@@ -122,10 +122,23 @@ export class MatchHost {
    *  mutation). One flag per host == one write per match lifetime. */
   private matchCompletePosted = false;
 
-  constructor(matchId: string, players: PlayerSpawnInfo[]) {
+  constructor(
+    matchId: string,
+    players: PlayerSpawnInfo[],
+    // TODO(chaos-pipe): the room's selected chaos modifier ids should flow
+    // here once the matchmaker carries them. Today we stub an empty list so
+    // the netcode path runs the no-chaos baseline; the sim already supports
+    // any subset via World.create's optional 4th arg.
+    chaosModifierIds: string[] = [],
+  ) {
     this.matchId = matchId;
     this.rngSeed = (Math.random() * 0xffffffff) >>> 0;
-    this.state = World.create(BOXWORKS_MAP, players, this.rngSeed);
+    this.state = World.create(
+      BOXWORKS_MAP,
+      players,
+      this.rngSeed,
+      chaosModifierIds,
+    );
     this.runtime = createRuntime(BOXWORKS_MAP);
     for (const spawn of players) {
       this.playerInfo.set(spawn.playerId, {

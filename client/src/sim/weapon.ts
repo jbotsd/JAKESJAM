@@ -5,6 +5,11 @@
 // the player snapshot, the input bit, the aim, and dt.
 
 import { crystalRoundsCards } from "./data/cards.js";
+import {
+  NEUTRAL_CHAOS_PROFILE,
+  projectileShapes,
+  type ChaosProfile,
+} from "./data/chaosModifiers.js";
 import type {
   CardDefinition,
   ResolvedWeaponBuild,
@@ -12,6 +17,7 @@ import type {
 import { starterWeapon } from "./data/weapons.js";
 import { createWeaponBuild, findCardsById } from "./data/weaponBuild.js";
 import { spawnProjectile, type ProjectileSpawnParams } from "./projectile.js";
+import { nextInt } from "./rng.js";
 import type { EntityId, PlayerEntity, ProjectileEntity, Vec2 } from "./types.js";
 
 /** Default fire cadence floor when fireRate is zero or missing. */
@@ -52,6 +58,18 @@ export type FireResult = {
    * satellites (first-fire activation). Always >= 0.
    */
   desiredSatelliteCount: number;
+  /**
+   * Updated rng cursor. Only advanced when `random-shapes` chaos rolled a
+   * shape (or another future chaos hook draws). Caller threads back into
+   * `WorldState.rngState`.
+   */
+  rngState: number;
+};
+
+export type StepWeaponOptions = {
+  chaos?: ChaosProfile;
+  /** Initial RNG cursor for any chaos-driven random draws this tick. */
+  rngState?: number;
 };
 
 /**
@@ -62,6 +80,11 @@ export type FireResult = {
  * `fireRequested` should be the value of the Fire input bit on this tick.
  * `nextEntityId` is a callback that returns the next free entity id; the world
  * is responsible for keeping its own id counter consistent.
+ *
+ * Chaos profile (when supplied) scales damage/firerate/recoil multiplicatively
+ * over the resolved build, and gates projectile spawn for `slappers-only`.
+ * `random-shapes` rerolls each spawned shard's shape from the projectileShapes
+ * table using the seeded RNG.
  */
 export function stepWeapon(
   player: PlayerEntity,
@@ -69,7 +92,10 @@ export function stepWeapon(
   aim: Vec2,
   dtMs: number,
   nextEntityId: () => EntityId,
+  options: StepWeaponOptions = {},
 ): FireResult {
+  const chaos = options.chaos ?? NEUTRAL_CHAOS_PROFILE;
+  let rngState = options.rngState ?? 0;
   const next: PlayerEntity = {
     ...player,
     fireCooldownMs: Math.max(0, player.fireCooldownMs - dtMs),
@@ -82,6 +108,7 @@ export function stepWeapon(
       projectiles: [],
       fired: false,
       desiredSatelliteCount: Math.max(0, idleBuild.orbitingSatellites | 0),
+      rngState,
     };
   }
 
@@ -99,52 +126,74 @@ export function stepWeapon(
   const radius = Math.max(2, 7 * build.projectile.sizeMultiplier);
   const projectileCount = Math.max(1, build.projectile.count | 0);
   const totalSpread = build.spreadRadians;
+  // Damage is left at the build value here; the chaos damageMultiplier is
+  // applied post-hit in World.stepWithRuntime so satellites and any other
+  // projectile sources get the same scaling without each spawn site reading
+  // chaos directly.
+  const damage = build.damage;
   // Per-shot offset: spread the count evenly across [-totalSpread/2, +totalSpread/2].
   // Single-shot shots ignore spread entirely (consistent with the offline path).
   const projectiles: ProjectileEntity[] = [];
-  for (let i = 0; i < projectileCount; i += 1) {
-    const offset =
-      projectileCount === 1
-        ? 0
-        : -totalSpread / 2 + (totalSpread * i) / (projectileCount - 1);
-    const angle = baseAngle + offset;
-    const params: ProjectileSpawnParams = {
-      ownerId: next.id,
-      origin: muzzle,
-      aimAngle: angle,
-      speed,
-      damage: build.damage,
-      lifetimeMs,
-      radius,
-      shape: simShape(build.projectile.shape),
-      pathing: build.projectile.pathing,
-      element: build.projectile.element,
-    };
-    const projectile = spawnProjectile(nextEntityId(), params);
-    projectile.bouncesRemaining = build.projectile.bounces;
-    projectile.pierceRemaining = build.projectile.pierceCount;
-    // Populate the additive pathing/impact extras the sim's stepProjectile
-    // reads. These are optional on the contract but always set here so the
-    // wire-protocol path can rely on them.
-    projectile.impact = build.projectile.impact;
-    projectile.impactRadiusPx = build.projectile.impactRadiusPx;
-    projectile.splitCount = build.projectile.splitCount;
-    projectile.slowMultiplier = build.projectile.slowMultiplier;
-    projectile.homingStrength = build.projectile.homingStrength;
-    projectile.accelerationMultiplier = build.projectile.accelerationMultiplier;
-    projectile.gravityScale = build.projectile.gravityScale;
-    projectile.rangePx = build.projectile.rangePx;
-    projectiles.push(projectile);
+  // `slappers-only` skips projectile spawn entirely; cooldown/recoil still
+  // apply so the shooter feels the kick (matches the chaos modifier intent).
+  if (!chaos.disableProjectiles) {
+    for (let i = 0; i < projectileCount; i += 1) {
+      const offset =
+        projectileCount === 1
+          ? 0
+          : -totalSpread / 2 + (totalSpread * i) / (projectileCount - 1);
+      const angle = baseAngle + offset;
+      let shape: ProjectileEntity["shape"] = simShape(build.projectile.shape);
+      if (chaos.randomShapes) {
+        const [nextRng, idx] = nextInt(rngState, 0, projectileShapes.length);
+        rngState = nextRng;
+        shape = projectileShapes[idx]!;
+      }
+      const params: ProjectileSpawnParams = {
+        ownerId: next.id,
+        origin: muzzle,
+        aimAngle: angle,
+        speed,
+        damage,
+        lifetimeMs,
+        radius,
+        shape,
+        pathing: build.projectile.pathing,
+        element: build.projectile.element,
+      };
+      const projectile = spawnProjectile(nextEntityId(), params);
+      projectile.bouncesRemaining = build.projectile.bounces;
+      projectile.pierceRemaining = build.projectile.pierceCount;
+      // Populate the additive pathing/impact extras the sim's stepProjectile
+      // reads. These are optional on the contract but always set here so the
+      // wire-protocol path can rely on them.
+      projectile.impact = build.projectile.impact;
+      projectile.impactRadiusPx = build.projectile.impactRadiusPx;
+      projectile.splitCount = build.projectile.splitCount;
+      projectile.slowMultiplier = build.projectile.slowMultiplier;
+      projectile.homingStrength = build.projectile.homingStrength;
+      projectile.accelerationMultiplier = build.projectile.accelerationMultiplier;
+      projectile.gravityScale = build.projectile.gravityScale;
+      projectile.rangePx = build.projectile.rangePx;
+      projectiles.push(projectile);
+    }
   }
 
   // Apply recoil — push the player opposite to the aim direction, scaled by
-  // the build's recoil and the projectile recoil multiplier.
-  const recoil = build.recoilImpulse * build.projectile.recoilMultiplier;
+  // the build's recoil, the projectile recoil multiplier, and chaos recoil.
+  const recoil =
+    build.recoilImpulse *
+    build.projectile.recoilMultiplier *
+    chaos.recoilMultiplier;
   next.vx -= Math.cos(baseAngle) * recoil;
   next.vy -= Math.sin(baseAngle) * recoil * 0.45;
 
-  // Cooldown derived from build.fireRate (shots per second).
-  const fireRate = Math.max(MIN_FIRE_RATE, build.fireRate);
+  // Cooldown derived from build.fireRate (shots per second), scaled by the
+  // chaos fire-rate multiplier (golden-gun slows it, future buffs raise it).
+  const fireRate = Math.max(
+    MIN_FIRE_RATE,
+    build.fireRate * chaos.fireRateMultiplier,
+  );
   next.fireCooldownMs = 1000 / fireRate;
   next.ammo = Math.max(0, next.ammo - 1);
 
@@ -153,6 +202,7 @@ export function stepWeapon(
     projectiles,
     fired: true,
     desiredSatelliteCount: Math.max(0, build.orbitingSatellites | 0),
+    rngState,
   };
 }
 
