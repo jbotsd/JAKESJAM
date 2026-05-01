@@ -10,8 +10,11 @@ import type {
   InputFrame,
   InputSeq,
   MapDefinition,
+  PlayerEntity,
   PlayerId,
   PlayerSpawnInfo,
+  SimEvent,
+  Tick,
   WorldState,
 } from "@sim/types.ts";
 import { convexClient, type ConvexId } from "./convexClient.ts";
@@ -35,6 +38,55 @@ export type MatchSocketData = {
 // safe at runtime.
 const BOXWORKS_MAP: MapDefinition = boxworksWorld as MapDefinition;
 
+// ---- Lag compensation -----------------------------------------------------
+// Standard "rewind opponents" technique. When the server processes a fire
+// input that was generated at client tick T, the shooter saw opponents where
+// the server had them at T (server-side time, accounting for one-way latency
+// and the client's interpolation buffer). We rewind every OTHER player to
+// their tick-T position for the spawn frame so the shot lands where the
+// shooter aimed. The shooter's own position is NOT rewound — they fire from
+// where they are now, which is what their predicted client also did.
+//
+// Anti-cheat clamp: anything more than ~250 ms of lookback is suspect, so
+// hard-cap. 250 ms / 16.67 ms/tick ≈ 15 ticks.
+const LAG_COMP_MAX_MS = 250;
+const LAG_COMP_MAX_TICKS = Math.ceil(LAG_COMP_MAX_MS / STEP_MS);
+// History capacity. Two "ticks of headroom" past the cap so interpolation
+// between adjacent samples never falls off the end, and there is room for
+// the just-pushed entry plus a few stragglers if the loop falls behind.
+const POSITION_HISTORY_CAPACITY = 32;
+
+const FIRE_BIT = 1 << 6;
+
+type PositionSample = {
+  tick: Tick;
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  alive: boolean;
+};
+
+type RewindPlan = {
+  /** The firing player whose lookback drove the rewind. Their position is
+   *  not shifted; only opponents'. */
+  shooter: PlayerId;
+  /** Lookback in ticks (already clamped to LAG_COMP_MAX_TICKS). */
+  lookbackTicks: number;
+  /** Lookback in ms (lookbackTicks * STEP_MS). */
+  lookbackMs: number;
+  /** The historical tick we rewound opponents to. */
+  targetTick: Tick;
+  /** Per-opponent (dx, dy) shift from real -> rewound, used to invert
+   *  the swap on the post-step state. */
+  shifts: Map<PlayerId, { dx: number; dy: number }>;
+  /** All players who fired this tick, with their individual lookbacks.
+   *  Used only for diagnostic logging. */
+  shooters: Array<{ playerId: PlayerId; lookbackTicks: number; lookbackMs: number }>;
+  /** State copy with opponent positions pre-shifted, ready for stepWithRuntime. */
+  stateForStep: WorldState;
+};
+
 export class MatchHost {
   readonly matchId: string;
   private state: WorldState;
@@ -43,6 +95,10 @@ export class MatchHost {
   private readonly playerInfo = new Map<PlayerId, PlayerLobbyInfo>();
   private readonly pendingInputs = new Map<PlayerId, InputFrame>();
   private readonly lastProcessedInputSeq = new Map<PlayerId, InputSeq>();
+  /** Rolling per-player position history used for lag compensation. Each
+   *  entry is a snapshot taken at the END of a tick; the array is ordered
+   *  oldest -> newest and capped at POSITION_HISTORY_CAPACITY. */
+  private readonly playerPositionHistory = new Map<PlayerId, PositionSample[]>();
   private interval: ReturnType<typeof setInterval> | null = null;
   private readonly rngSeed: number;
   private startedAt = 0;
@@ -214,8 +270,42 @@ export class MatchHost {
     }
     this.pendingInputs.clear();
 
-    const result = stepWithRuntime(this.state, this.runtime, inputsByPlayer, STEP_MS);
-    this.state = result.state;
+    // ---- Lag compensation: rewind opponents for shooting players ---------
+    // Build (a) the state we feed to the sim (with opponents shifted to
+    // their historical positions for the shooter with the largest lookback)
+    // and (b) the per-opponent shift vectors so we can undo the rewind on
+    // the resulting state. We also run a "no-comp" parallel step to detect
+    // shots whose hit/no-hit outcome flipped because of the rewind, purely
+    // for diagnostics.
+    const rewindPlan = this.buildRewindPlan(inputsByPlayer);
+    const stepInputState = rewindPlan ? rewindPlan.stateForStep : this.state;
+
+    // Snapshot a runtime clone BEFORE the authoritative step so the
+    // diagnostic replay below starts from the same runtime state, not the
+    // post-step one.
+    const runtimeSnapshotForDiag = rewindPlan ? snapshotRuntime(this.runtime) : null;
+    const preStepState = this.state;
+
+    const result = stepWithRuntime(stepInputState, this.runtime, inputsByPlayer, STEP_MS);
+    let nextState = result.state;
+    const events = result.events;
+
+    if (rewindPlan && runtimeSnapshotForDiag) {
+      // Restore opponents' future-going positions: they were stepped from a
+      // rewound starting position, so subtract the shift vector to put them
+      // back on their real trajectory. Velocities are unchanged by the
+      // rewind (we only shifted x/y; integration over one tick produces
+      // approximately the same delta from either start, modulo platform
+      // collision edge cases inside the rewind window).
+      nextState = this.unshiftOpponents(nextState, rewindPlan);
+      // Diagnostics: replay the same tick WITHOUT the rewind on a clean
+      // runtime clone and compare hit-confirmed events for the shooter(s).
+      // This is purely an observation; the authoritative result is the
+      // rewound one above.
+      this.logLagCompOutcomeChange(rewindPlan, events, inputsByPlayer, preStepState, runtimeSnapshotForDiag);
+    }
+
+    this.state = nextState;
 
     if (result.matchComplete && !this.matchCompletePosted) {
       this.matchCompletePosted = true;
@@ -225,8 +315,208 @@ export class MatchHost {
       void this.postMatchResult();
     }
 
+    // Push position history AFTER the step so samples reflect the state
+    // visible to clients in the next snapshot. Lookups subtract from the
+    // most recent sample's tick.
+    this.recordPositionHistory();
+
     if (this.state.tick % SNAPSHOT_INTERVAL_TICKS === 0) {
-      this.broadcastSnapshot(result.events);
+      this.broadcastSnapshot(events);
+    }
+  }
+
+  // ---- Lag compensation helpers -----------------------------------------
+
+  /**
+   * Inspect this tick's pending inputs. If any player is firing AND their
+   * input.tick is older than the current server tick, build a rewind plan:
+   *  - `stateForStep`: a copy of `this.state` with each opponent swapped to
+   *    their historical position at the chosen lookback tick.
+   *  - `shifts`: per-opponent (dx, dy) so we can invert the swap on the
+   *    resulting state after stepWithRuntime returns.
+   *  - `lookbackTicks` / `shooters`: bookkeeping for diagnostics.
+   *
+   * Multi-shooter ticks pick the largest lookback (the player most affected
+   * by latency wins; in a duel the other player IS the shooter so this
+   * collapses to "the only firing player's lookback"). For >2 player matches
+   * with simultaneous fire we accept the approximation rather than running
+   * the step N times.
+   */
+  private buildRewindPlan(
+    inputsByPlayer: Record<PlayerId, InputFrame | null>,
+  ): RewindPlan | null {
+    const serverTick = this.state.tick;
+    let bestShooter: PlayerId | null = null;
+    let bestLookback = 0;
+    const shooters: Array<{ playerId: PlayerId; lookbackTicks: number; lookbackMs: number }> = [];
+
+    for (const [pid, input] of Object.entries(inputsByPlayer)) {
+      if (!input) continue;
+      if ((input.keys & FIRE_BIT) === 0) continue;
+      const rawDelta = serverTick - input.tick;
+      const lookbackTicks = Math.max(0, Math.min(LAG_COMP_MAX_TICKS, rawDelta));
+      shooters.push({ playerId: pid, lookbackTicks, lookbackMs: lookbackTicks * STEP_MS });
+      if (lookbackTicks > bestLookback) {
+        bestLookback = lookbackTicks;
+        bestShooter = pid;
+      }
+    }
+
+    if (bestShooter === null || bestLookback === 0) return null;
+
+    const targetTick = serverTick - bestLookback;
+    const shifts = new Map<PlayerId, { dx: number; dy: number }>();
+    const rewoundPlayers: WorldState["players"] = { ...this.state.players };
+    for (const [pid, entity] of Object.entries(this.state.players)) {
+      if (pid === bestShooter) continue;
+      const sample = this.getPlayerAtTick(pid, targetTick);
+      if (!sample) continue;
+      const dx = sample.x - entity.x;
+      const dy = sample.y - entity.y;
+      if (dx === 0 && dy === 0) continue;
+      shifts.set(pid, { dx, dy });
+      rewoundPlayers[pid] = { ...entity, x: sample.x, y: sample.y };
+    }
+
+    if (shifts.size === 0) return null;
+
+    return {
+      shooter: bestShooter,
+      lookbackTicks: bestLookback,
+      lookbackMs: bestLookback * STEP_MS,
+      targetTick,
+      shifts,
+      shooters,
+      stateForStep: { ...this.state, players: rewoundPlayers },
+    };
+  }
+
+  /**
+   * Invert the rewind plan's shift on the post-step state. The sim's
+   * movement integration started each opponent from the rewound position,
+   * so its output position is `(rewound + delta)`; we want `(real + delta)`.
+   * Subtracting the original shift vector restores that. We leave health,
+   * cooldowns, lastProcessedInputSeq etc. untouched — those are not affected
+   * by the rewind.
+   */
+  private unshiftOpponents(state: WorldState, plan: RewindPlan): WorldState {
+    const players: WorldState["players"] = { ...state.players };
+    for (const [pid, shift] of plan.shifts) {
+      const entity = players[pid];
+      if (!entity) continue;
+      players[pid] = { ...entity, x: entity.x - shift.dx, y: entity.y - shift.dy };
+    }
+    return { ...state, players };
+  }
+
+  /**
+   * Returns the player's position at the given tick by linear interpolation
+   * between the two surrounding history samples. Falls back to clamping at
+   * the oldest/newest sample if `tick` lies outside the buffered range.
+   * Returns null if there is no history at all (e.g. just-joined player).
+   */
+  private getPlayerAtTick(playerId: PlayerId, tick: Tick): PositionSample | null {
+    const history = this.playerPositionHistory.get(playerId);
+    if (!history || history.length === 0) return null;
+    // Clamp to bounds.
+    const first = history[0]!;
+    const last = history[history.length - 1]!;
+    if (tick <= first.tick) return first;
+    if (tick >= last.tick) return last;
+    // Find the bracketing pair. Linear scan is fine — capacity is 32.
+    for (let i = history.length - 1; i > 0; i -= 1) {
+      const hi = history[i]!;
+      const lo = history[i - 1]!;
+      if (tick >= lo.tick && tick <= hi.tick) {
+        const span = hi.tick - lo.tick;
+        if (span <= 0) return hi;
+        const t = (tick - lo.tick) / span;
+        return {
+          tick,
+          x: lo.x + (hi.x - lo.x) * t,
+          y: lo.y + (hi.y - lo.y) * t,
+          vx: lo.vx + (hi.vx - lo.vx) * t,
+          vy: lo.vy + (hi.vy - lo.vy) * t,
+          // Treat alive as the lo sample's value: a player who died between
+          // lo and hi shouldn't be hittable at the target tick if we picked
+          // the post-death sample, but pre-death they were hittable.
+          alive: lo.alive,
+        };
+      }
+    }
+    return last;
+  }
+
+  /**
+   * Push one sample per known player onto the history ring. Called at the
+   * end of every tick AFTER state is committed.
+   */
+  private recordPositionHistory(): void {
+    const tick = this.state.tick;
+    for (const [pid, entity] of Object.entries(this.state.players)) {
+      let history = this.playerPositionHistory.get(pid);
+      if (!history) {
+        history = [];
+        this.playerPositionHistory.set(pid, history);
+      }
+      history.push({
+        tick,
+        x: entity.x,
+        y: entity.y,
+        vx: entity.vx,
+        vy: entity.vy,
+        alive: entity.alive,
+      });
+      if (history.length > POSITION_HISTORY_CAPACITY) {
+        history.splice(0, history.length - POSITION_HISTORY_CAPACITY);
+      }
+    }
+    // Drop history for players that have left the match entirely.
+    for (const pid of this.playerPositionHistory.keys()) {
+      if (!this.state.players[pid]) {
+        this.playerPositionHistory.delete(pid);
+      }
+    }
+  }
+
+  /**
+   * Replay this tick on a throwaway runtime + state without the rewind, and
+   * log when a shot's hit/no-hit outcome differs from the authoritative
+   * result. This is observability only — never mutates `this.state`.
+   *
+   * Cost: one extra step() per tick that contains a fire input. Acceptable
+   * for a 2-player match at 60 Hz; if this becomes hot we can drop it
+   * behind a debug flag.
+   */
+  private logLagCompOutcomeChange(
+    plan: RewindPlan,
+    rewoundEvents: SimEvent[],
+    inputsByPlayer: Record<PlayerId, InputFrame | null>,
+    preStepState: WorldState,
+    naiveRuntime: WorldRuntime,
+  ): void {
+    let naiveResult;
+    try {
+      naiveResult = stepWithRuntime(preStepState, naiveRuntime, inputsByPlayer, STEP_MS);
+    } catch {
+      return;
+    }
+    const rewoundHits = collectHitsByShooter(preStepState.players, rewoundEvents);
+    const naiveHits = collectHitsByShooter(preStepState.players, naiveResult.events);
+    for (const shooter of plan.shooters) {
+      const rewound = rewoundHits.get(shooter.playerId) ?? new Set<PlayerId>();
+      const naive = naiveHits.get(shooter.playerId) ?? new Set<PlayerId>();
+      const gained: PlayerId[] = [];
+      const lost: PlayerId[] = [];
+      for (const v of rewound) if (!naive.has(v)) gained.push(v);
+      for (const v of naive) if (!rewound.has(v)) lost.push(v);
+      if (gained.length === 0 && lost.length === 0) continue;
+      console.log(
+        `[lag-comp] match=${this.matchId} shooter=${shooter.playerId} ` +
+          `serverTick=${preStepState.tick} fireInputTick=${preStepState.tick - shooter.lookbackTicks} ` +
+          `lookbackMs=${shooter.lookbackMs.toFixed(1)} ` +
+          `hits-gained=${JSON.stringify(gained)} hits-lost=${JSON.stringify(lost)}`,
+      );
     }
   }
 
@@ -298,6 +588,66 @@ export class MatchHost {
   private now(): number {
     return Date.now() - this.startedAt;
   }
+}
+
+/**
+ * Shallow-clone a WorldRuntime so a diagnostic step can run without
+ * mutating the authoritative one. The map values are immutable in practice
+ * (stepPlayer copies its memory before mutating, prevKeys is numbers), so
+ * shallow-cloning the outer Maps is enough.
+ */
+function snapshotRuntime(runtime: WorldRuntime): WorldRuntime {
+  return {
+    prevKeys: new Map(runtime.prevKeys),
+    movement: new Map(runtime.movement),
+    nextEntityId: runtime.nextEntityId,
+    map: runtime.map,
+  };
+}
+
+/**
+ * Group hit-confirmed events by shooter (the projectile owner). Used by the
+ * lag-comp diagnostic to compare "with rewind" vs "without rewind" outcomes.
+ *
+ * Snapshot of `players` at step-start tells us each projectile owner via the
+ * shooter mapping, but `hit-confirmed` does not carry the shooter id, so we
+ * derive it through the projectile id when present. Hits without a source
+ * projectile (e.g. environment damage) are ignored.
+ */
+function collectHitsByShooter(
+  players: Record<PlayerId, PlayerEntity>,
+  events: SimEvent[],
+): Map<PlayerId, Set<PlayerId>> {
+  // Map projectile id -> shooter is unavailable here without re-running
+  // weapon resolution. Instead we approximate: any "hit-confirmed" event in
+  // the same step as a "shot-fired" by player X is attributed to X. This is
+  // fine for the duel use case (one shooter per tick) and is only used to
+  // gate a single console.log; correctness of the authoritative simulation
+  // does not depend on it.
+  const shootersThisTick = new Set<PlayerId>();
+  for (const ev of events) {
+    if (ev.t === "shot-fired") shootersThisTick.add(ev.playerId);
+  }
+  const out = new Map<PlayerId, Set<PlayerId>>();
+  for (const ev of events) {
+    if (ev.t !== "hit-confirmed") continue;
+    // Attribute the hit to every shooter who fired this tick. In a 1v1 that
+    // is unambiguous; in larger matches the diagnostic becomes lossier but
+    // still useful as a "did anything change" signal.
+    for (const shooter of shootersThisTick) {
+      if (shooter === ev.victimId) continue;
+      let bucket = out.get(shooter);
+      if (!bucket) {
+        bucket = new Set();
+        out.set(shooter, bucket);
+      }
+      bucket.add(ev.victimId);
+    }
+  }
+  // `players` is unused at present but is part of the signature so we can
+  // refine attribution (e.g. by aim direction) without changing call sites.
+  void players;
+  return out;
 }
 
 /**
