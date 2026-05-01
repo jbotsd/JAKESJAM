@@ -2,10 +2,10 @@
 // All constants mirror that file so the offline practice path stays identical
 // after MatchScene wires the sim/ output into rendering.
 //
-// First cut: run/jump/gravity/friction/coyote/buffer/cut/fastFall/crouch.
-// Jetpack, parry, shield, and card stat modifiers come in a follow-up pass —
-// they all read off PlayerEntity fields that don't exist yet, and we keep this
-// file additive against Dev A's sim/types.ts contract.
+// Now covers: run/jump/gravity/friction/coyote/buffer/cut/fastFall/crouch + jetpack.
+// Parry, shield, and card stat modifiers come in a follow-up pass — they all
+// read off PlayerEntity fields that don't exist yet, and we keep this file
+// additive against Dev A's sim/types.ts contract.
 
 import { resolveMove, type AABB } from "./collision.js";
 import type { PlayerEntity, PlatformDefinition, InputBitfield } from "./types.js";
@@ -28,6 +28,15 @@ const M = {
   crouchHeight: 38,
 } as const;
 
+// Jetpack constants — mirror the offline reference in
+// client/src/game/systems/MovementSystem.ts so behavior stays identical.
+export const JETPACK_MAX_FUEL = 125;
+export const JETPACK_THRUST = 1480;
+export const JETPACK_FUEL_DRAIN_PER_SECOND = 32;
+export const JETPACK_GROUND_RECHARGE_PER_SECOND = 64;
+export const JETPACK_AIR_RECHARGE_PER_SECOND = 10;
+export const JETPACK_MIN_UPWARD_VELOCITY = -640;
+
 const Bit = {
   Left: 1 << 0,
   Right: 1 << 1,
@@ -47,6 +56,8 @@ export type PlayerMovementMemory = {
   jumpCutApplied: boolean;
   jumpReleasedSinceJump: boolean;
   groundedLastFrame: boolean;
+  /** True for the tick the jetpack actively applied thrust. */
+  jetpackActive: boolean;
 };
 
 export function freshPlayerMovementMemory(): PlayerMovementMemory {
@@ -56,6 +67,7 @@ export function freshPlayerMovementMemory(): PlayerMovementMemory {
     jumpCutApplied: false,
     jumpReleasedSinceJump: true,
     groundedLastFrame: false,
+    jetpackActive: false,
   };
 }
 
@@ -69,6 +81,8 @@ export type PlayerStepResult = {
   memory: PlayerMovementMemory;
   /** True when the player just left the ground via a jump on this tick. */
   jumpedThisFrame: boolean;
+  /** Fuel remaining at the end of the tick, mirrored from `player.jetpackFuel`. */
+  jetpackFuel: number;
 };
 
 export function stepPlayer(
@@ -147,6 +161,30 @@ export function stepPlayer(
   const gravity = (fastFall && next.vy > 0 ? M.fastFallGravity : M.gravity) * gravityMul;
   next.vy = Math.min(M.maxFallSpeed, next.vy + gravity * dtSec);
 
+  // Jetpack: hold-jump-while-airborne triggers thrust until fuel is empty.
+  // Mirrors MovementSystem.update — drain while active, recharge otherwise
+  // (faster on the ground). On the same tick the player jumps off the ground
+  // we ignore the jetpack — `groundedLastFrame` was true at top of tick — so
+  // the player must release jump and re-press, or hold and wait one tick, to
+  // start thrusting. That matches the offline behavior.
+  const fuelStart = player.jetpackFuel ?? JETPACK_MAX_FUEL;
+  const jetpackHeld = jumpHeld && !mem.groundedLastFrame;
+  const jetpackActive = jetpackHeld && fuelStart > 0 && !mem.groundedLastFrame;
+  let nextFuel = fuelStart;
+  if (jetpackActive) {
+    next.vy -= JETPACK_THRUST * dtSec;
+    next.vy = Math.max(JETPACK_MIN_UPWARD_VELOCITY, next.vy);
+    nextFuel = fuelStart - JETPACK_FUEL_DRAIN_PER_SECOND * dtSec;
+  } else {
+    const rechargeRate = mem.groundedLastFrame
+      ? JETPACK_GROUND_RECHARGE_PER_SECOND
+      : JETPACK_AIR_RECHARGE_PER_SECOND;
+    nextFuel = fuelStart + rechargeRate * dtSec;
+  }
+  nextFuel = clamp(nextFuel, 0, JETPACK_MAX_FUEL);
+  next.jetpackFuel = nextFuel;
+  mem.jetpackActive = jetpackActive;
+
   // Movement resolution against platforms using swept AABB.
   const bodyHeight = next.crouching ? M.crouchHeight : M.bodyHeight;
   const aabb: AABB = {
@@ -163,7 +201,7 @@ export function stepPlayer(
   next.vy = resolved.vy;
   mem.groundedLastFrame = resolved.groundedThisFrame;
 
-  return { player: next, memory: mem, jumpedThisFrame };
+  return { player: next, memory: mem, jumpedThisFrame, jetpackFuel: nextFuel };
 }
 
 function platformToAABB(p: PlatformDefinition): AABB {

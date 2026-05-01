@@ -101,6 +101,12 @@ export type PlayerEntity = {
    */
   slowedUntilTick?: Tick;
   slowMultiplier?: number;
+  /**
+   * Jetpack fuel reservoir. Range [0, JETPACK_MAX_FUEL]; defaults to MAX
+   * when absent (older snapshots) and is reset to MAX on respawn. Drains
+   * while the jetpack is active and recharges otherwise. See `sim/player.ts`.
+   */
+  jetpackFuel?: number;
 };
 
 export type ProjectileEntity = {
