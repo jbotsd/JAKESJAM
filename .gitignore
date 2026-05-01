@@ -11,3 +11,4 @@ npm-debug.log*
 .codex-*.log
 .vercel
 .claude/worktrees/
+.worktrees/
