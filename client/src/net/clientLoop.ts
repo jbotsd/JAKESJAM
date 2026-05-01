@@ -663,6 +663,7 @@ function makeEmptyState(tick: Tick, rngSeed: number): WorldState {
     destructibles: {},
     firePatches: {},
     pickups: {},
+    satellites: {},
     round: {
       phase: "countdown",
       countdownRemainingMs: 3000,
