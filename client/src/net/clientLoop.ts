@@ -23,6 +23,27 @@ import {
 } from "./protocol.js";
 import { InterpolationBuffer } from "./interpolationBuffer.js";
 import type { Transport } from "./transport.js";
+import { WsTransport } from "./wsTransport.js";
+
+/**
+ * Backoff schedule (ms) for automatic reconnect. Length defines the max
+ * attempt count (5). Exponential pattern: 500, 1000, 2000, 4000, 8000.
+ */
+export const RECONNECT_BACKOFF_MS = [500, 1000, 2000, 4000, 8000] as const;
+
+/** Close reasons that should NOT trigger reconnect (terminal disconnects). */
+const TERMINAL_CLOSE_REASONS = new Set<string>([
+  "match-ended",
+  "auth-failed",
+  "protocol-mismatch",
+  "server-shutdown",
+]);
+
+export type ReconnectState = {
+  attempt: number;
+  lastAttemptAt: number | null;
+  isReconnecting: boolean;
+};
 
 export type ClientLoopOptions = {
   transport: Transport;
@@ -30,6 +51,22 @@ export type ClientLoopOptions = {
   playerId: string;
   onEvents?: (events: SimEvent[]) => void;
   onAuthoritativeApplied?: (state: WorldState) => void;
+  /**
+   * Optional URL used to construct replacement WsTransports during automatic
+   * reconnect. If omitted, the loop will not attempt to reconnect — useful
+   * for tests that pass a hand-rolled mock transport.
+   */
+  reconnectUrl?: string;
+  /**
+   * Fired after all reconnect attempts have been exhausted (or immediately
+   * if reconnect is not configured for the given close reason).
+   */
+  onConnectionLost?: (reason: string) => void;
+  /**
+   * Fired before each reconnect attempt is scheduled. Useful for surfacing
+   * progress in the UI.
+   */
+  onReconnectAttempt?: (attemptNumber: number, nextDelayMs: number) => void;
 };
 
 export type LocalInput = {
@@ -39,11 +76,14 @@ export type LocalInput = {
 };
 
 export class ClientLoop {
-  private readonly transport: Transport;
+  private transport: Transport;
   private readonly matchId: string;
   private readonly playerId: PlayerId;
   private readonly onEvents?: (events: SimEvent[]) => void;
   private readonly onAuthoritativeApplied?: (state: WorldState) => void;
+  private readonly reconnectUrl?: string;
+  private readonly onConnectionLost?: (reason: string) => void;
+  private readonly onReconnectAttempt?: (attemptNumber: number, nextDelayMs: number) => void;
 
   private predictedState: WorldState | null = null;
   private authoritativeState: WorldState | null = null;
@@ -56,16 +96,100 @@ export class ClientLoop {
   private lastSnapshotTick: Tick = 0;
   private readonly remoteInterp = new Map<PlayerId, InterpolationBuffer<PlayerEntity>>();
 
+  // ---- Reconnect supervision ----
+  private reconnectAttempt = 0;
+  private reconnectLastAttemptAt: number | null = null;
+  private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  private reconnectInProgress = false;
+  /** Set true once we've decided to give up on reconnect or never reconnect. */
+  private connectionAbandoned = false;
+
   constructor(opts: ClientLoopOptions) {
     this.transport = opts.transport;
     this.matchId = opts.matchId;
     this.playerId = opts.playerId;
     this.onEvents = opts.onEvents;
     this.onAuthoritativeApplied = opts.onAuthoritativeApplied;
+    this.reconnectUrl = opts.reconnectUrl;
+    this.onConnectionLost = opts.onConnectionLost;
+    this.onReconnectAttempt = opts.onReconnectAttempt;
 
-    this.transport.onOpen(() => this.sendHello());
-    this.transport.onMessage((data) => this.handleMessage(data));
-    this.transport.onClose(() => this.stop());
+    this.wireTransport(this.transport);
+  }
+
+  /**
+   * Attach the standard set of handlers to a transport (initial OR a
+   * replacement built during reconnect). On close we route through the
+   * reconnect supervisor instead of just stopping.
+   */
+  private wireTransport(transport: Transport): void {
+    transport.onOpen(() => {
+      // First-time connect or successful reconnect — both reset the attempt
+      // counter so any subsequent drop starts a fresh backoff schedule.
+      this.reconnectAttempt = 0;
+      this.reconnectInProgress = false;
+      this.sendHello();
+    });
+    transport.onMessage((data) => this.handleMessage(data));
+    transport.onClose((reason) => this.handleTransportClose(reason));
+  }
+
+  /**
+   * Decide whether to schedule a reconnect or accept the disconnect as final.
+   * Terminal reasons (match-ended, auth-failed, ...) skip retry. We also
+   * skip if no reconnectUrl was supplied (test mode / bare mock transport).
+   */
+  private handleTransportClose(reason: string): void {
+    if (this.connectionAbandoned) {
+      this.stop();
+      return;
+    }
+    if (!this.reconnectUrl || TERMINAL_CLOSE_REASONS.has(reason)) {
+      this.connectionAbandoned = true;
+      this.stop();
+      this.onConnectionLost?.(reason);
+      return;
+    }
+    if (this.reconnectAttempt >= RECONNECT_BACKOFF_MS.length) {
+      this.connectionAbandoned = true;
+      this.stop();
+      this.onConnectionLost?.(reason);
+      return;
+    }
+    this.scheduleReconnect();
+  }
+
+  private scheduleReconnect(): void {
+    if (this.reconnectTimer) return;
+    const delay = RECONNECT_BACKOFF_MS[this.reconnectAttempt]!;
+    const attemptNumber = this.reconnectAttempt + 1;
+    this.reconnectInProgress = true;
+    this.onReconnectAttempt?.(attemptNumber, delay);
+    this.reconnectTimer = setTimeout(() => {
+      this.reconnectTimer = null;
+      this.attemptReconnect();
+    }, delay);
+  }
+
+  private attemptReconnect(): void {
+    if (this.connectionAbandoned || !this.reconnectUrl) return;
+    this.reconnectAttempt += 1;
+    this.reconnectLastAttemptAt = Date.now();
+    const next = new WsTransport({ url: this.reconnectUrl });
+    this.transport = next;
+    this.wireTransport(next);
+    // If the new socket fails to open, its close handler will route back
+    // through handleTransportClose and either schedule the next backoff
+    // step or give up depending on attempt count.
+  }
+
+  /** Snapshot of the current reconnect state for UI consumers. */
+  getReconnectState(): ReconnectState {
+    return {
+      attempt: this.reconnectAttempt,
+      lastAttemptAt: this.reconnectLastAttemptAt,
+      isReconnecting: this.reconnectInProgress,
+    };
   }
 
   start(): void {
@@ -75,9 +199,14 @@ export class ClientLoop {
   }
 
   stop(): void {
-    if (!this.interval) return;
-    clearInterval(this.interval);
-    this.interval = null;
+    if (this.interval) {
+      clearInterval(this.interval);
+      this.interval = null;
+    }
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
   }
 
   /** Updated by the input capture layer every frame before the next tick. */

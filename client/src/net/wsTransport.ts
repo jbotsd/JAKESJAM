@@ -9,6 +9,13 @@ export type WsTransportOptions = {
   // Called once on the very first message handler registration if state is
   // already open by then (race-safe wiring for late subscribers).
   protocols?: string | string[];
+  /**
+   * Optional notification fired by an outer reconnect supervisor — the
+   * transport itself never auto-reconnects, but a wrapper (e.g. ClientLoop)
+   * may invoke this to surface attempt count / next-delay info to UI.
+   * Reconnection logic lives in the loop, not here.
+   */
+  onReconnectAttempt?: (attemptNumber: number, nextDelayMs: number) => void;
 };
 
 export class WsTransport implements Transport {
@@ -17,8 +24,10 @@ export class WsTransport implements Transport {
   private openHandlers: Array<() => void> = [];
   private messageHandlers: Array<(data: Uint8Array) => void> = [];
   private closeHandlers: Array<(reason: string) => void> = [];
+  private readonly onReconnectAttempt?: (attemptNumber: number, nextDelayMs: number) => void;
 
   constructor(opts: WsTransportOptions) {
+    this.onReconnectAttempt = opts.onReconnectAttempt;
     this.socket = new WebSocket(opts.url, opts.protocols);
     this.socket.binaryType = "arraybuffer";
 
@@ -76,5 +85,14 @@ export class WsTransport implements Transport {
     if (this._state === "closed" || this._state === "closing") return;
     this._state = "closing";
     this.socket.close(1000, reason);
+  }
+
+  /**
+   * Forwards an attempt notification from the outer reconnect supervisor.
+   * The transport itself never schedules reconnects — this exists so the
+   * supervisor can keep all UI surface area routed through one object.
+   */
+  notifyReconnectAttempt(attemptNumber: number, nextDelayMs: number): void {
+    this.onReconnectAttempt?.(attemptNumber, nextDelayMs);
   }
 }

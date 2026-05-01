@@ -35,6 +35,13 @@ export type MatchSocketData = {
 // safe at runtime.
 const BOXWORKS_MAP: MapDefinition = boxworksWorld as MapDefinition;
 
+/**
+ * How long to keep a disconnected player's entity alive in the world while we
+ * wait for them to reconnect. After this window expires the entity, score
+ * entry, and bookkeeping are all evicted.
+ */
+export const RECONNECT_GRACE_MS = 10_000;
+
 export class MatchHost {
   readonly matchId: string;
   private state: WorldState;
@@ -43,6 +50,14 @@ export class MatchHost {
   private readonly playerInfo = new Map<PlayerId, PlayerLobbyInfo>();
   private readonly pendingInputs = new Map<PlayerId, InputFrame>();
   private readonly lastProcessedInputSeq = new Map<PlayerId, InputSeq>();
+  /**
+   * Wall-clock ms (Date.now) at which each known player's connection dropped.
+   * Entries are added on `detachClient`, cleared on a successful re-attach.
+   * The tick loop evicts entries older than RECONNECT_GRACE_MS.
+   */
+  private readonly disconnectedAt = new Map<PlayerId, number>();
+  /** Last wall-clock time we received an input from a given player. */
+  private readonly lastSeenAt = new Map<PlayerId, number>();
   private interval: ReturnType<typeof setInterval> | null = null;
   private readonly rngSeed: number;
   private startedAt = 0;
@@ -74,6 +89,15 @@ export class MatchHost {
       previous.close(1000, "replaced");
     }
     this.clients.set(playerId, ws);
+    // Reconnect path: clear any pending grace-window timer so the eviction
+    // tick won't drop their entity, and refresh their last-seen.
+    if (this.disconnectedAt.has(playerId)) {
+      this.disconnectedAt.delete(playerId);
+      console.log(
+        `[matchHost ${this.matchId}] player ${playerId} reconnected within grace window`,
+      );
+    }
+    this.lastSeenAt.set(playerId, Date.now());
     this.sendHello(ws);
     this.maybeStartLoop();
   }
@@ -82,14 +106,31 @@ export class MatchHost {
     const playerId = ws.data.playerId;
     if (this.clients.get(playerId) === ws) {
       this.clients.delete(playerId);
+      // We deliberately keep the player's entity, score, input-seq state, and
+      // playerInfo entry intact so a quick reconnect can resume seamlessly.
+      // The grace-window check in `tick` ultimately evicts them if they
+      // don't come back within RECONNECT_GRACE_MS.
+      if (this.playerInfo.has(playerId)) {
+        this.disconnectedAt.set(playerId, Date.now());
+      }
     }
-    if (this.clients.size === 0) {
+    // NOTE: previously this stopped the loop when clients hit zero. We now
+    // keep the loop running while there are pending grace windows so the
+    // eviction sweep can fire. Once all disconnects have expired (or there
+    // are no players left at all) `tick` itself calls `stop()`, and the
+    // registry tears the host down via hasClients()+hasPendingDisconnects().
+    if (this.clients.size === 0 && this.disconnectedAt.size === 0) {
       this.stop();
     }
   }
 
   hasClients(): boolean {
     return this.clients.size > 0;
+  }
+
+  /** True while at least one player is in their reconnect grace window. */
+  hasPendingDisconnects(): boolean {
+    return this.disconnectedAt.size > 0;
   }
 
   hasPlayer(playerId: PlayerId): boolean {
@@ -182,6 +223,9 @@ export class MatchHost {
 
   private applyInput(playerId: PlayerId, input: import("./protocol.ts").Input): void {
     const last = this.lastProcessedInputSeq.get(playerId) ?? 0;
+    // Refresh liveness regardless — even a duplicate seq proves the client is
+    // alive on the wire.
+    this.lastSeenAt.set(playerId, Date.now());
     if (input.seq <= last) return; // out-of-order or duplicate
     this.pendingInputs.set(playerId, {
       seq: input.seq,
@@ -205,7 +249,52 @@ export class MatchHost {
     this.interval = null;
   }
 
+  /**
+   * Walk the disconnect map and evict any player whose grace window has
+   * elapsed. Removes them from `state.players` (so the sim no longer renders
+   * them), drops their score entry, and clears all bookkeeping. Called once
+   * per tick from the top of `tick()`.
+   */
+  private evictExpiredDisconnects(): void {
+    if (this.disconnectedAt.size === 0) {
+      // Nothing to do; also use this opportunity to wind down a host that
+      // has no live clients and no pending grace timers.
+      if (this.clients.size === 0) this.stop();
+      return;
+    }
+    const now = Date.now();
+    let evicted = false;
+    for (const [playerId, disconnectedAt] of this.disconnectedAt) {
+      if (now - disconnectedAt <= RECONNECT_GRACE_MS) continue;
+      this.disconnectedAt.delete(playerId);
+      this.playerInfo.delete(playerId);
+      this.lastProcessedInputSeq.delete(playerId);
+      this.lastSeenAt.delete(playerId);
+      this.pendingInputs.delete(playerId);
+      // Strip the entity + score from the world state. We rebuild the maps
+      // immutably to stay consistent with how addPlayer mutates state.
+      const nextPlayers = { ...this.state.players };
+      delete nextPlayers[playerId];
+      const nextScores = { ...this.state.round.scores };
+      delete nextScores[playerId];
+      this.state = {
+        ...this.state,
+        players: nextPlayers,
+        round: { ...this.state.round, scores: nextScores },
+      };
+      evicted = true;
+      console.log(
+        `[matchHost ${this.matchId}] evicted player ${playerId} after ${RECONNECT_GRACE_MS}ms reconnect grace`,
+      );
+    }
+    if (evicted && this.clients.size === 0 && this.disconnectedAt.size === 0) {
+      this.stop();
+    }
+  }
+
   private tick(): void {
+    this.evictExpiredDisconnects();
+
     const inputsByPlayer: Record<PlayerId, InputFrame | null> = {};
     for (const playerId of this.clients.keys()) {
       const input = this.pendingInputs.get(playerId) ?? null;
