@@ -5,6 +5,8 @@ export {
   type ClientLoopOptions,
   type LocalInput,
   type NetStats,
+  type SmoothingOptions,
+  type ReconcileStats,
 } from "./clientLoop.js";
 export { WsTransport, type WsTransportOptions } from "./wsTransport.js";
 export type { Transport, TransportState } from "./transport.js";

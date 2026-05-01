@@ -30,6 +30,33 @@ export type ClientLoopOptions = {
   playerId: string;
   onEvents?: (events: SimEvent[]) => void;
   onAuthoritativeApplied?: (state: WorldState) => void;
+  /**
+   * Local-player render smoothing parameters. The Gambetta + Source-engine
+   * standard: after a reconcile rewind+replay, the new predicted position is
+   * the "target" and the currently-rendered position is "current". Lerp
+   * current toward target over `smoothingWindowMs` so float drift doesn't
+   * cause a visible snap on every snapshot tick. Big deltas (teleport,
+   * respawn, sync) skip smoothing.
+   *
+   * Sim correctness is unchanged — only the rendered position is smoothed.
+   */
+  smoothing?: Partial<SmoothingOptions>;
+};
+
+export type SmoothingOptions = {
+  /** Window over which the residual offset decays to zero, in ms. */
+  windowMs: number;
+  /**
+   * Distance (px) above which we skip smoothing and snap immediately. This is
+   * a teleport/respawn/forced-sync, not float drift.
+   */
+  snapThresholdPx: number;
+  /**
+   * Maximum correction (px) applied to the rendered position in any single
+   * render frame. Clamps overshoot when the renderer runs slower than
+   * expected (e.g. tab refocus).
+   */
+  maxCorrectionPxPerFrame: number;
 };
 
 export type LocalInput = {
@@ -55,9 +82,24 @@ export type NetStats = {
   transportState: TransportState;
 };
 
+export type ReconcileStats = {
+  /** Distance between predicted and previously-rendered position at last reconcile, in px. */
+  lastDeltaPx: number;
+  /** Whether the last reconcile snapped instead of smoothing. */
+  lastSnapped: boolean;
+  /** Magnitude of the smoothing offset still in flight, in px. */
+  currentOffsetPx: number;
+};
+
 const PING_INTERVAL_MS = 1000;
 const RTT_SAMPLE_LIMIT = 10;
 const SNAP_RATE_WINDOW_MS = 1000;
+
+const DEFAULT_SMOOTHING: SmoothingOptions = {
+  windowMs: 100,
+  snapThresholdPx: 30,
+  maxCorrectionPxPerFrame: 8,
+};
 
 export class ClientLoop {
   private readonly transport: Transport;
@@ -84,12 +126,28 @@ export class ClientLoop {
   private readonly snapshotTimestamps: number[] = [];
   private lastPredictDeltaPx = 0;
 
+  // ---- Local-player render smoothing state ----
+  private readonly smoothing: SmoothingOptions;
+  /**
+   * Residual offset between the rendered local-player position and the
+   * predicted position. Rendered = predicted + offset. After a reconcile
+   * disagreement, offset is set to (oldRendered - newPredicted) so the
+   * rendered position stays continuous, then it decays toward zero.
+   */
+  private renderOffsetX = 0;
+  private renderOffsetY = 0;
+  private lastRenderAt = 0;
+  /** Most recent reconcile delta magnitude (px). Surfaced via getReconcileStats. */
+  private lastReconcileDeltaPx = 0;
+  private lastReconcileSnapped = false;
+
   constructor(opts: ClientLoopOptions) {
     this.transport = opts.transport;
     this.matchId = opts.matchId;
     this.playerId = opts.playerId;
     this.onEvents = opts.onEvents;
     this.onAuthoritativeApplied = opts.onAuthoritativeApplied;
+    this.smoothing = { ...DEFAULT_SMOOTHING, ...(opts.smoothing ?? {}) };
 
     this.transport.onOpen(() => this.sendHello());
     this.transport.onMessage((data) => this.handleMessage(data));
@@ -122,9 +180,34 @@ export class ClientLoop {
     this.currentInput = input;
   }
 
-  /** Snapshot state used by the renderer. Clone if you intend to mutate. */
+  /**
+   * Snapshot state used by the renderer. The local player's position has the
+   * smoothing offset applied (rendered = predicted + offset, where offset
+   * decays to zero over `smoothing.windowMs`). All other entities are
+   * unchanged. Clone if you intend to mutate.
+   */
   getRenderState(): WorldState | null {
-    return this.predictedState;
+    if (!this.predictedState) return null;
+    this.advanceSmoothing();
+    if (this.renderOffsetX === 0 && this.renderOffsetY === 0) {
+      return this.predictedState;
+    }
+    const local = this.predictedState.players[this.playerId];
+    if (!local) return this.predictedState;
+    // Shallow clone state + players record + the local player so callers see
+    // smoothed coords without us mutating the predicted sim state.
+    const smoothedLocal: PlayerEntity = {
+      ...local,
+      x: local.x + this.renderOffsetX,
+      y: local.y + this.renderOffsetY,
+    };
+    return {
+      ...this.predictedState,
+      players: {
+        ...this.predictedState.players,
+        [this.playerId]: smoothedLocal,
+      },
+    };
   }
 
   /** Look up a remote player at a given render time (ms in server clock). */
@@ -160,6 +243,18 @@ export class ClientLoop {
       lastPredictDeltaPx: this.lastPredictDeltaPx,
       lastSnapshotTick: this.lastSnapshotTick,
       transportState: this.transport.state,
+    };
+  }
+
+  /**
+   * Most recent reconcile delta + current smoothing offset. Hook for debug
+   * overlays — does not allocate, safe to poll every frame.
+   */
+  getReconcileStats(): ReconcileStats {
+    return {
+      lastDeltaPx: this.lastReconcileDeltaPx,
+      lastSnapped: this.lastReconcileSnapped,
+      currentOffsetPx: Math.hypot(this.renderOffsetX, this.renderOffsetY),
     };
   }
 
@@ -294,6 +389,15 @@ export class ClientLoop {
       this.pendingInputs.shift();
     }
 
+    // Capture the position the renderer was showing for the local player
+    // BEFORE we rewind. We need this to compute the smoothing offset that
+    // keeps the rendered position visually continuous across reconcile.
+    const prevLocal = this.predictedState?.players[this.playerId];
+    const prevRenderedX =
+      prevLocal !== undefined ? prevLocal.x + this.renderOffsetX : null;
+    const prevRenderedY =
+      prevLocal !== undefined ? prevLocal.y + this.renderOffsetY : null;
+
     // Rewind + replay: start from the authoritative state, replay any local
     // input the server has not yet processed. World.step is currently a no-op
     // stub — once Dev A's sim is real, this gives us full Gambetta prediction.
@@ -304,6 +408,10 @@ export class ClientLoop {
       replayState = World.step(replayState, inputs, STEP_MS).state;
     }
     this.predictedState = replayState;
+
+    // Recompute the smoothing offset so rendered = previous-rendered, then
+    // it decays to the new predicted position over smoothing.windowMs.
+    this.updateSmoothingOnReconcile(prevRenderedX, prevRenderedY);
 
     // Push remote players into their interpolation buffers.
     const serverTimeMs = message.tick * STEP_MS;
@@ -332,6 +440,87 @@ export class ClientLoop {
         lastSnapshotTick: this.lastSnapshotTick,
       }),
     );
+  }
+
+  /**
+   * After rewind+replay, set the render offset so the rendered position
+   * matches what the user was just seeing (prevRendered). The offset then
+   * decays to zero over time, sliding the visible character to the new
+   * predicted position. Big jumps (teleport/respawn) skip smoothing.
+   */
+  private updateSmoothingOnReconcile(
+    prevRenderedX: number | null,
+    prevRenderedY: number | null,
+  ): void {
+    if (!this.predictedState) return;
+    const newLocal = this.predictedState.players[this.playerId];
+    if (!newLocal || prevRenderedX === null || prevRenderedY === null) {
+      // No prior frame to be continuous with — start with no offset.
+      this.renderOffsetX = 0;
+      this.renderOffsetY = 0;
+      this.lastReconcileDeltaPx = 0;
+      this.lastReconcileSnapped = false;
+      return;
+    }
+    const dx = prevRenderedX - newLocal.x;
+    const dy = prevRenderedY - newLocal.y;
+    const dist = Math.hypot(dx, dy);
+    this.lastReconcileDeltaPx = dist;
+    if (dist > this.smoothing.snapThresholdPx) {
+      // Teleport / respawn / forced sync: snap, do not smooth.
+      this.renderOffsetX = 0;
+      this.renderOffsetY = 0;
+      this.lastReconcileSnapped = true;
+      return;
+    }
+    this.renderOffsetX = dx;
+    this.renderOffsetY = dy;
+    this.lastReconcileSnapped = false;
+  }
+
+  /**
+   * Decay the render offset toward zero based on wall-clock elapsed since
+   * the previous render call. Called from getRenderState. Linear decay over
+   * `smoothing.windowMs` (so a 100ms window with ~16ms frames closes ~16% of
+   * the offset per frame), with a per-frame max correction clamp to prevent
+   * a visible jump when the renderer stalls.
+   */
+  private advanceSmoothing(): void {
+    if (this.renderOffsetX === 0 && this.renderOffsetY === 0) {
+      this.lastRenderAt = performance.now();
+      return;
+    }
+    const now = performance.now();
+    const elapsed = this.lastRenderAt === 0 ? 0 : Math.max(0, now - this.lastRenderAt);
+    this.lastRenderAt = now;
+    if (elapsed === 0) return;
+
+    // Linear decay over windowMs. Simple, predictable, and keeps the
+    // per-frame step easy to clamp. (Exponential would over-emphasise the
+    // first frame after a reconcile, which is exactly when the offset is
+    // most visible.)
+    const windowMs = Math.max(1, this.smoothing.windowMs);
+    const fraction = Math.min(1, elapsed / windowMs);
+    let stepX = this.renderOffsetX * fraction;
+    let stepY = this.renderOffsetY * fraction;
+
+    // Clamp the per-frame correction so a long pause (tab refocus, GC) can't
+    // produce a visible jump. Direction-preserving clamp on the 2D step.
+    const stepMag = Math.hypot(stepX, stepY);
+    const maxStep = this.smoothing.maxCorrectionPxPerFrame;
+    if (stepMag > maxStep && stepMag > 0) {
+      const k = maxStep / stepMag;
+      stepX *= k;
+      stepY *= k;
+    }
+
+    this.renderOffsetX -= stepX;
+    this.renderOffsetY -= stepY;
+
+    // Snap to zero once we're inside sub-pixel territory to avoid lingering
+    // tiny offsets that pin getRenderState into the slow clone path.
+    if (Math.abs(this.renderOffsetX) < 0.05) this.renderOffsetX = 0;
+    if (Math.abs(this.renderOffsetY) < 0.05) this.renderOffsetY = 0;
   }
 }
 
