@@ -47,6 +47,9 @@ import {
   MatchResultsOverlay,
   type MatchResultsRow,
 } from "../ui/MatchResultsOverlay";
+import { HudSystem, type HudChip, type HudVitals, type HudRound } from "../ui/HudSystem";
+import { RoundBanner } from "../ui/RoundBanner";
+import { DeathOverlay } from "../ui/DeathOverlay";
 import type {
   CardDefinition,
   CharacterDefinition,
@@ -194,6 +197,11 @@ export class OnlineMatchScene extends Phaser.Scene {
   private hudBuffText: Phaser.GameObjects.Text | null = null;
   private roundBannerText: Phaser.GameObjects.Text | null = null;
 
+  // ---- New shared UI systems ----
+  private hudSystem: HudSystem | null = null;
+  private roundBannerSystem: RoundBanner | null = null;
+  private deathOverlay: DeathOverlay | null = null;
+
   // ---- Audio + overlays ----
   private audio?: GameAudioSystem;
   private cardDraftOverlay?: CardDraftOverlay;
@@ -257,6 +265,10 @@ export class OnlineMatchScene extends Phaser.Scene {
 
     this.createHud();
     this.createStatsHud();
+    // Shared HUD/banner/death systems (replace inline text with polished versions)
+    this.hudSystem = new HudSystem(this, this.localPlayerId);
+    this.roundBannerSystem = new RoundBanner(this);
+    this.deathOverlay = new DeathOverlay();
 
     this.lastFrameMs = performance.now();
     this.events.once("shutdown", () => this.teardown());
@@ -296,6 +308,7 @@ export class OnlineMatchScene extends Phaser.Scene {
     this.renderWorld(state, deltaMs, now);
     this.followLocalPlayer(state);
     this.updateHud(state);
+    this.updateHudSystem(state);
     this.maybeShowMatchResults(state);
 
     if (this.statsVisible) {
@@ -566,6 +579,82 @@ export class OnlineMatchScene extends Phaser.Scene {
       return;
     }
     banner.setVisible(false);
+  }
+
+  // ---------------- New shared HUD system ----------------
+
+  private updateHudSystem(state: WorldState): void {
+    if (!this.hudSystem || !this.roundBannerSystem) return;
+
+    const local = state.players[this.localPlayerId];
+    const character = this.getCharacter(local?.characterId);
+    const maxHealth = character.maxHealth;
+
+    const chips: HudChip[] = [];
+    if (local) {
+      for (const buff of BUFF_DESCRIPTORS) {
+        const tickValue = local[buff.field] as number | undefined;
+        if (typeof tickValue === "number" && tickValue > state.tick) {
+          const remainingMs = Math.max(0, (tickValue - state.tick) * STEP_MS);
+          chips.push({ label: buff.label, color: buff.color, remainingSec: remainingMs / 1000, isDebuff: false });
+        }
+      }
+      for (const debuff of DEBUFF_DESCRIPTORS) {
+        const tickValue = local[debuff.field] as number | undefined;
+        if (typeof tickValue === "number" && tickValue > state.tick) {
+          const remainingMs = Math.max(0, (tickValue - state.tick) * STEP_MS);
+          chips.push({ label: debuff.label, color: debuff.color, remainingSec: remainingMs / 1000, isDebuff: true });
+        }
+      }
+    }
+
+    const cardNames: string[] = local
+      ? local.cards
+          .map((id) => crystalRoundsCards.find((c) => c.id === id)?.name)
+          .filter((n): n is string => Boolean(n))
+      : [];
+
+    const vitals: HudVitals = {
+      health: local?.health ?? 0,
+      maxHealth,
+      shieldCharge: local?.shieldCharge,
+      shieldMaxCharge: local?.shieldMaxCharge ?? 0,
+      jetpackFuel: local?.jetpackFuel,
+      chips,
+      cardNames,
+      isDead: !local || local.health <= 0 || !local.alive,
+    };
+
+    const scores = state.round.scores;
+
+    const winnerLabel =
+      state.round.phase === "round-over"
+        ? (() => {
+            const wid = state.round.winnerPlayerId;
+            if (!wid) return "DRAW";
+            if (wid === this.localPlayerId) return "YOU";
+            return wid.slice(-4).toUpperCase();
+          })()
+        : undefined;
+
+    const round: HudRound = {
+      phase: state.round.phase,
+      countdownRemainingMs: state.round.countdownRemainingMs,
+      roundIndex: state.round.roundIndex,
+      scores,
+      winnerLabel,
+    };
+
+    this.hudSystem.update(vitals, round);
+
+    if (!this.matchHasEnded) {
+      this.roundBannerSystem.update({
+        phase: state.round.phase,
+        countdownRemainingMs: state.round.countdownRemainingMs,
+        roundIndex: state.round.roundIndex,
+        winnerLabel,
+      });
+    }
   }
 
   // ---------------- Net stats overlay ----------------
@@ -1039,6 +1128,12 @@ export class OnlineMatchScene extends Phaser.Scene {
     this.hudBuffText = null;
     this.roundBannerText?.destroy();
     this.roundBannerText = null;
+    this.hudSystem?.destroy();
+    this.hudSystem = null;
+    this.roundBannerSystem?.destroy();
+    this.roundBannerSystem = null;
+    this.deathOverlay?.destroy();
+    this.deathOverlay = null;
     this.statsText?.destroy();
     this.statsText = null;
     this.statsBg?.destroy();

@@ -1,0 +1,182 @@
+// RoundBanner — animated centre-screen round banner.
+//
+// Handles countdown (3 / 2 / 1 / FIGHT!), round-over, and inter-round beats.
+// Shared by MatchScene and OnlineMatchScene.
+//
+// Usage:
+//   const banner = new RoundBanner(scene);
+//   banner.update(roundState); // called every frame
+//   banner.destroy();          // on scene shutdown
+
+import Phaser from "phaser";
+
+export type RoundBannerState = {
+  phase: "countdown" | "fighting" | "round-over" | "drafting";
+  countdownRemainingMs: number;
+  roundIndex: number;
+  winnerLabel?: string;
+};
+
+// Which countdown "beat" is currently showing
+type CountdownBeat = "3" | "2" | "1" | "FIGHT!" | "none";
+
+export class RoundBanner {
+  private readonly scene: Phaser.Scene;
+
+  // Main large label ("3", "2", "1", "FIGHT!", "ROUND X TO Y")
+  private mainText!: Phaser.GameObjects.Text;
+  // Smaller above-label ("ROUND N")
+  private subText!: Phaser.GameObjects.Text;
+
+  private lastBeat: CountdownBeat = "none";
+  private lastPhase: RoundBannerState["phase"] | "hidden" = "hidden";
+  private popTween?: Phaser.Tweens.Tween;
+
+  constructor(scene: Phaser.Scene) {
+    this.scene = scene;
+    this.build();
+  }
+
+  update(state: RoundBannerState): void {
+    if (state.phase === "fighting" || state.phase === "drafting") {
+      this.hide();
+      return;
+    }
+
+    if (state.phase === "countdown") {
+      this.updateCountdown(state.countdownRemainingMs, state.roundIndex);
+      return;
+    }
+
+    if (state.phase === "round-over") {
+      if (this.lastPhase !== "round-over") {
+        this.showRoundOver(state.roundIndex, state.winnerLabel ?? "DRAW");
+      }
+      return;
+    }
+  }
+
+  destroy(): void {
+    this.scene.scale.off("resize", this.onResize, this);
+    this.popTween?.stop();
+    this.mainText.destroy();
+    this.subText.destroy();
+  }
+
+  // ─── Private ──────────────────────────────────────────────────────────────
+
+  private build(): void {
+    const s = this.scene;
+    const cx = s.scale.width / 2;
+    const cy = s.scale.height * 0.32;
+
+    this.subText = s.add
+      .text(cx, cy - 44, "", {
+        fontFamily: "Inter, Arial, sans-serif",
+        fontSize: "14px",
+        fontStyle: "bold",
+        color: "#8ff8ff",
+        letterSpacing: 6,
+        stroke: "#05080f",
+        strokeThickness: 4,
+        align: "center",
+      })
+      .setOrigin(0.5, 0.5)
+      .setScrollFactor(0)
+      .setDepth(990)
+      .setVisible(false);
+
+    this.mainText = s.add
+      .text(cx, cy, "", {
+        fontFamily: "Inter, Arial, sans-serif",
+        fontSize: "72px",
+        fontStyle: "900",
+        color: "#fff7d6",
+        stroke: "#0b0e14",
+        strokeThickness: 10,
+        align: "center",
+      })
+      .setOrigin(0.5, 0.5)
+      .setScrollFactor(0)
+      .setDepth(990)
+      .setVisible(false);
+
+    s.scale.on("resize", this.onResize, this);
+  }
+
+  private onResize(): void {
+    const cx = this.scene.scale.width / 2;
+    const cy = this.scene.scale.height * 0.32;
+    this.mainText.setPosition(cx, cy);
+    this.subText.setPosition(cx, cy - 44);
+  }
+
+  private hide(): void {
+    this.mainText.setVisible(false);
+    this.subText.setVisible(false);
+    this.lastPhase = "hidden";
+    this.lastBeat = "none";
+  }
+
+  private updateCountdown(remainingMs: number, roundIndex: number): void {
+    let beat: CountdownBeat;
+    if (remainingMs > 2400) {
+      beat = "3";
+    } else if (remainingMs > 1400) {
+      beat = "2";
+    } else if (remainingMs > 600) {
+      beat = "1";
+    } else {
+      beat = "FIGHT!";
+    }
+
+    if (beat !== this.lastBeat || this.lastPhase !== "countdown") {
+      this.lastBeat = beat;
+      this.lastPhase = "countdown";
+
+      const isFight = beat === "FIGHT!";
+      const subLabel = `ROUND ${roundIndex}`;
+
+      this.subText.setText(subLabel).setVisible(true);
+      this.mainText
+        .setText(beat)
+        .setFontSize(isFight ? "56px" : "88px")
+        .setColor(isFight ? "#8ff8ff" : "#fff7d6")
+        .setVisible(true)
+        .setScale(1.3, 1.3);
+
+      this.popTween?.stop();
+      this.popTween = this.scene.tweens.add({
+        targets: [this.mainText],
+        scaleX: 1,
+        scaleY: 1,
+        duration: isFight ? 420 : 260,
+        ease: "Back.easeOut",
+      });
+    }
+  }
+
+  private showRoundOver(roundIndex: number, winnerLabel: string): void {
+    this.lastPhase = "round-over";
+
+    const subLabel = `ROUND ${roundIndex}`;
+    const mainLabel = `TO ${winnerLabel.toUpperCase()}`;
+
+    this.subText.setText(subLabel).setVisible(true);
+    this.mainText
+      .setText(mainLabel)
+      .setFontSize("52px")
+      .setColor("#fff7d6")
+      .setVisible(true)
+      .setScale(0.7, 0.7);
+
+    this.popTween?.stop();
+    this.popTween = this.scene.tweens.add({
+      targets: [this.mainText],
+      scaleX: 1,
+      scaleY: 1,
+      duration: 380,
+      ease: "Back.easeOut",
+    });
+  }
+}
