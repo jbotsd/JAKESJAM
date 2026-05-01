@@ -1,157 +1,177 @@
 # JAKESJAM
 
-Browser-first 2D multiplayer arena platform shooter prototype inspired by fast side-view shooters and round-based upgrade chaos.
+Browser-first 2D multiplayer arena platform shooter prototype built around fast platform movement, geometric projectile chaos, and stackable roguelike weapon cards.
 
-JAKESJAM is a Phaser + TypeScript client served from Vercel, a Bun authoritative game server, and Convex for lobby/matchmaking/results. The shared `client/src/sim/` package is the deterministic simulation that runs in both the browser (for prediction) and the server (for authority).
+The design target is a 10-player all-v-all arena game: every player starts with the same Crystal Blaster, then roaming card pickups mutate that one weapon into wildly different homing, bouncing, splitting, spraying, elemental, and utility builds. Weapons reset on death so each life becomes a fresh little science accident.
 
-## Current Stack
+## Current Status
 
-- `client/` — Phaser 4 + TypeScript + Vite browser game.
-- `client/src/sim/` — shared simulation contract and stub `World` for prediction/server authority work.
-- `client/src/net/` — client netcode (WebSocket transport, prediction, reconciliation, interpolation).
-- `server/` — Bun + uWebSockets game server (one MatchHost per match, 60 Hz tick, 30 Hz snapshots).
-- `convex/` — lobby, room, ready-state, matchmaker, persistence.
-- `docs/` — GDD, roadmap, netcode architecture, stream handoff docs, changelog, playtest plans.
-- `vercel.json`, `fly.toml`, `server/Dockerfile` — deployment configs.
-- `standalone/` — legacy single-file HTML host/player launchers, kept for offline/LAN demos.
+Playable locally as a browser game. The main loop currently supports:
 
-## What Is Playable Now
-
-- Splash menu with Practice, Create Room, Join Room, Options.
-- Local practice match with no backend required.
-- 5×3 expanded Boxworks arena with seeded varied room layouts and camera follow.
-- Procedural placeholder character with standing, crouch, jump, aim, recoil, and death feedback.
-- Run, jump, crouch, fast fall, coyote time, jump buffering.
-- Shared starter weapon: Starter Pistol / Crystal Blaster.
-- Stackable card pickups that mutate the starter weapon into chaotic builds.
-- Projectile shapes, modifiers, pathing variants, and elemental effects.
-- Destructible barrels, boxes, mines, cubes; fire patches; explosions.
-- Pickups: health shard, shield cell, overcharge core, damage amp, speed boost, melee mode, slow trap, vulnerability trap, block jammer, boss core, roaming card caches.
-- Held shield (Shift), directional parry (C), 3 second respawn, weapon reset on death.
+- Splash menu with Practice, room flow, and options.
+- Local single-player practice with no backend required.
+- 5x3 Boxworks arena with camera follow and varied generated room blocks.
+- Random spawn points across the full grid.
+- Procedural character rig with standing, crouch, jump, recoil, aim, death, and respawn feedback.
+- Health, shield cells, overcharge, damage amp, speed boost, traps, boss core, and roaming card caches.
+- Destructible barrels, boxes, mines, cubes, explosions, and fire patches.
+- Held Space jetpack boost with fuel recharge for reaching higher blocks.
+- Held Shift shield and right-click directional parry with cooldown.
+- 3 second respawn after death, with weapon/card reset.
 - Held Tab kill/death scoreboard.
+
+## Weapon And Card Direction
+
+Current progression rule:
+
+1. Everyone starts with the same default Crystal Blaster.
+2. Card pickups add mutators to that weapon.
+3. Cards stack, so builds can become ridiculous instead of staying clean and polite.
+4. Card caches move around the map every 20 seconds.
+5. Death resets weapon cards back to the starter weapon.
+
+Recent card pass:
+
+- Removed Pulse Nova from normal card progression.
+- Replaced pulse-wave melee mode with close-range projectile spray.
+- Added stackable homing support via Seeker Facets, Micro Seekers, and Magnet Spray.
+- Added more spray patterns via Shard Bloom, Wide Barrage, Needle Hose, Triple Fan, Five Shard Spray, and +1 Projectile.
+- Card rolls are now less bucket-ordered and more random, with extra weight toward visible homing and multi-projectile mutations.
 
 ## Controls
 
 | Action | Input |
 |---|---|
 | Move | A / D |
-| Jump | W or Space |
+| Jump | W or tap Space |
 | Jetpack boost | Hold Space while airborne |
 | Crouch / fast fall | S |
 | Aim | Mouse |
 | Fire | Left mouse |
 | Shield | Left Shift |
-| Directional parry | Right mouse button (C fallback) |
+| Directional parry | Right mouse button, C fallback |
 | Scoreboard | Tab |
 | Reset local match | R |
 
-## Local Setup
+## Project Layout
 
-Install dependencies (Bun is the primary toolchain):
+- `client/` - Phaser + TypeScript + Vite browser game.
+- `client/src/game/` - current playable Phaser scenes, systems, data, rendering, and UI.
+- `client/src/sim/` - shared deterministic simulation contract and World stub for the online authority/prediction migration.
+- `client/src/net/` - WebSocket transport, client prediction, reconciliation, and interpolation work.
+- `server/` - Bun + uWebSockets authoritative game server.
+- `convex/` - lobby, room, matchmaking, and persistence.
+- `docs/` - GDD, roadmap, netcode architecture, stream handoff docs, changelog, and playtest notes.
+- `standalone/` - generated single-file host/player HTML builds for quick cross-platform testing.
+
+## Local Development
+
+Bun is the intended toolchain:
 
 ```bash
 bun install
-```
-
-Three terminals for full online dev:
-
-```bash
-# Terminal 1 — Convex (cloud or local)
-bunx convex dev          # cloud — first run will provision a project
-# or, fully offline:
-bun run dev:convex       # local Convex backend on :3210
-
-# Terminal 2 — Bun game server
-GAME_SERVER_SECRET=dev-secret bun run dev:server
-
-# Terminal 3 — Vite client
 bun run dev:client
 ```
 
-Or in one terminal (spawns all three):
+For the full online stack, run these in separate terminals:
+
+```bash
+# Terminal 1 - Convex local backend
+bun run dev:convex
+
+# Terminal 2 - authoritative game server
+GAME_SERVER_SECRET=dev-secret bun run dev:server
+
+# Terminal 3 - Vite client
+bun run dev:client
+```
+
+Or start the online dev stack together:
 
 ```bash
 GAME_SERVER_SECRET=dev-secret bun run dev:online
 ```
 
-Set `GAME_SERVER_SECRET` to the same value you set in Convex (`bunx convex env set GAME_SERVER_SECRET <value>`) so the per-player auth tokens validate.
+Set the same `GAME_SERVER_SECRET` in Convex when using the online flow:
 
-To point the client at a non-default game server (e.g. localhost during dev, or a Cloudflare tunnel during playtest), add to `client/.env.local`:
-
+```bash
+bunx convex env set GAME_SERVER_SECRET dev-secret
 ```
+
+Optional client override for the game server:
+
+```bash
 VITE_GAME_SERVER_URL=ws://localhost:8080/ws
 ```
 
-## Web Playtest
+## Standalone HTML Builds
 
-Two free paths to publicly playable. Pick one for the game server; both work the same.
+The repo can emit single-file HTML launchers:
 
-**Option A — Cloudflare Tunnel + your own PC (no cloud bill):**
+```bash
+bun run build:standalone
+```
 
-1. Run the server on your PC: `GAME_SERVER_SECRET=<value> bun run dev:server`.
-2. Expose `localhost:8080` via your existing `cloudflared` tunnel as `wss://jakesjam-srv.<your-domain>/ws`.
-3. Set the Vercel env vars `VITE_CONVEX_URL` (from `bunx convex env list` or the Convex dashboard) and `VITE_GAME_SERVER_URL=wss://jakesjam-srv.<your-domain>/ws`.
-4. Deploy the client: `vercel deploy --prod` (or import via Vercel dashboard).
-5. Share the Vercel URL. Players open it, create or join a room with a code, the WebSocket connects to your tunnel.
+On a Windows machine without Bun installed, this fallback has been used successfully:
 
-**Option B — Fly.io (multi-region, ~$0/mo at jam scale):**
+```powershell
+npm.cmd run build --workspace client
+node tools/build-standalone.mjs
+```
 
-1. `flyctl auth login`, `flyctl apps create jakesjam-srv-syd`.
-2. `flyctl secrets set --app jakesjam-srv-syd GAME_SERVER_SECRET=<value>`.
-3. `bun run deploy:server:syd` (alias for `flyctl deploy --config fly.toml --region syd`).
-4. The matchmaker in `convex/matchmaker.ts` already points clients at `wss://jakesjam-srv-syd.fly.dev/ws` — no Vercel env override needed.
-5. Set Vercel env var `VITE_CONVEX_URL` and deploy: `vercel deploy --prod`.
+Outputs:
 
-In both cases the same Convex deployment must hold the same `GAME_SERVER_SECRET` as the game server, so the per-player HMAC tokens validate. See `docs/netcode-architecture.md` for the full handshake.
+- `standalone/JAKESJAM-host.html`
+- `standalone/JAKESJAM-player.html`
 
-## Online Architecture (Short Version)
+These are useful for quick local testing across Windows and Linux, but the active online direction is browser client plus authoritative server, not separate native executables.
 
-- Convex owns lobby, matchmaking, profile, ready state, match results.
+## Online Architecture
+
+Short version:
+
+- Convex owns lobby, matchmaking, room state, player readiness, and persistence.
 - Bun WebSocket server owns authoritative 60 Hz match simulation.
-- Browser client uses client-side prediction and server reconciliation (Gambetta pattern).
-- `client/src/sim/` is the shared runtime-agnostic simulation imported by both sides.
+- Browser client uses client-side prediction and server reconciliation.
+- `client/src/sim/` is being built as the runtime-agnostic simulation package that both browser and server can run.
 
-Source-of-truth docs:
+Important architecture docs:
 
-- `docs/netcode-architecture.md` — full architecture.
-- `docs/dev-stream-sim.md` — sim/gameplay stream handoff.
+- `docs/netcode-architecture.md`
+- `docs/dev-stream-sim.md`
+- `docs/game-design-document.md`
+- `docs/milestone-roadmap.md`
+- `docs/codex-task-backlog.md`
+- `docs/changelog.md`
 
 ## Checks
 
 ```bash
-bun run typecheck            # client + server + convex codegen
-bun run build                # production client build
-bun run --filter '*' test    # workspace tests if any
+bun run typecheck
+bun run build
+bun run test
 ```
 
-## Current Development Focus
+Current Windows/npm checks used during recent gameplay work:
 
-The active architecture work is the simulation extraction:
+```powershell
+npm.cmd run typecheck --workspace client
+npm.cmd run build --workspace client
+node tools/build-standalone.mjs
+```
 
-1. Keep `client/src/sim/types.ts` stable for the netcode stream.
-2. Move pure gameplay logic out of `MatchScene.ts` and old Phaser systems into `client/src/sim/`.
-3. Keep `sim/` free of Phaser, DOM, Convex, Bun, wall-clock reads, and `Math.random()`.
-4. Add deterministic collision, movement, projectile, weapon, fire, pickup, destructible tests.
-5. Reduce `MatchScene.ts` to rendering, input capture, audio/VFX events, and scene lifecycle.
+## Development Focus
 
-Gameplay continues in `sim/` after extraction: cards, draft, projectile pathing, fire tuning, destructibles, shields, parry, boss pickup, and PvP health authority.
+Near-term gameplay focus:
 
-## Important Docs
+- Make weapon cards feel more obviously different through projectile count, shape, pathing, impact, and element changes.
+- Keep improving randomized 5x3 maps so rooms are traversable and less repetitive.
+- Tune health, shield, parry, jetpack, cooldown, and card stacking balance for 10-player all-v-all.
+- Move gameplay logic out of Phaser scenes/systems into `client/src/sim/` so online prediction and server authority use the same rules.
 
-- `AGENTS.md` — contributor and agent rules.
-- `docs/game-design-document.md` — full GDD.
-- `docs/netcode-architecture.md` — online architecture source of truth.
-- `docs/dev-stream-sim.md` — Sim & gameplay stream handoff.
-- `docs/milestone-roadmap.md` — milestone sequencing.
-- `docs/codex-task-backlog.md` — implementation backlog.
-- `docs/technical-design.md` — stack and architecture notes.
-- `docs/changelog.md` — implementation history.
-- `docs/playtest-stress-plan.md` — sanity and stress-test procedure.
+Repo rules:
 
-## Repo Notes
-
-- Bun is the primary toolchain. Scripts use `bun run --filter <pkg>` for workspaces; `npm` should also work but bun is supported and tested.
-- Convex is not the 60 FPS gameplay server. Per-frame state lives on the Bun server.
-- Coordinate changes to `server/`, `client/src/net/`, Convex schema/matchmaker files, and deployment config with the netcode stream.
-- New gameplay code should move toward `client/src/sim/` rather than growing `MatchScene.ts`.
+- New gameplay should move toward `client/src/sim/` as the extraction progresses.
+- Do not make Convex the frame-by-frame gameplay server.
+- Coordinate changes to `server/`, `client/src/net/`, Convex schema/matchmaker, and deployment config with the netcode stream.
 - Do not use Java as the main runtime.
