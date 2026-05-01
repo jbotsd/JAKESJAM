@@ -100,6 +100,64 @@ export class MatchHost {
     return this.clients.size > 0;
   }
 
+  hasPlayer(playerId: PlayerId): boolean {
+    return this.playerInfo.has(playerId);
+  }
+
+  /**
+   * Insert a new player into the world mid-match. Used when a second client
+   * connects to a match that was created with only the first player.
+   * Spawns them at one of the map's spawn points.
+   */
+  addPlayer(spawn: PlayerSpawnInfo): void {
+    if (this.playerInfo.has(spawn.playerId)) return;
+    this.playerInfo.set(spawn.playerId, {
+      playerId: spawn.playerId,
+      characterId: spawn.characterId,
+      color: spawn.color ?? "#ffffff",
+      name: spawn.name ?? spawn.playerId,
+    });
+    this.lastProcessedInputSeq.set(spawn.playerId, 0);
+
+    const existingCount = Object.keys(this.state.players).length;
+    const spawnPoint =
+      PLACEHOLDER_MAP.spawns[existingCount % Math.max(1, PLACEHOLDER_MAP.spawns.length)] ??
+      { x: 0, y: 0 };
+    this.state = {
+      ...this.state,
+      players: {
+        ...this.state.players,
+        [spawn.playerId]: {
+          id: spawn.playerId,
+          characterId: spawn.characterId,
+          x: spawnPoint.x,
+          y: spawnPoint.y,
+          vx: 0,
+          vy: 0,
+          aimX: spawnPoint.x + 160,
+          aimY: spawnPoint.y,
+          health: 100,
+          shieldActive: false,
+          crouching: false,
+          alive: true,
+          weaponId: spawn.weaponId,
+          cards: [],
+          fireCooldownMs: 0,
+          ammo: 0,
+          abilityCharge: 0,
+          lastProcessedInputSeq: 0,
+        },
+      },
+      round: {
+        ...this.state.round,
+        scores: {
+          ...this.state.round.scores,
+          [spawn.playerId]: 0,
+        },
+      },
+    };
+  }
+
   routeMessage(ws: ServerWebSocket<MatchSocketData>, raw: Buffer | ArrayBuffer | Uint8Array): void {
     const decoded = decodeMessage<ClientMessage>(
       raw instanceof Buffer ? new Uint8Array(raw.buffer, raw.byteOffset, raw.byteLength) : raw,

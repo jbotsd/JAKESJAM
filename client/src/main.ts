@@ -180,8 +180,24 @@ window.addEventListener("jakesjam:start-match", (event) => {
   const matchEvent = event as CustomEvent;
   stopMenuMusic();
   hideSplash();
+  if (shouldUseNewNetcode() && matchEvent.detail?.matchId) {
+    game.scene.start("OnlineMatchScene", {
+      matchId: matchEvent.detail.matchId,
+      localPlayerId: matchEvent.detail.localPlayerId,
+      convexUrl:
+        import.meta.env.VITE_CONVEX_URL ??
+        import.meta.env.CONVEX_URL ??
+        "",
+    });
+    return;
+  }
   game.scene.start("MatchScene", matchEvent.detail);
 });
+
+function shouldUseNewNetcode(): boolean {
+  const params = new URLSearchParams(window.location.search);
+  return params.get("netcode") === "new";
+}
 
 window.addEventListener("jakesjam:chaos-change", (event) => {
   const matchEvent = event as CustomEvent;

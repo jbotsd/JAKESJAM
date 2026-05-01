@@ -13,9 +13,6 @@ export class MatchRegistry {
     const { matchId, playerId } = ws.data;
     let host = this.matches.get(matchId);
     if (!host) {
-      // For now spawn a 1-player placeholder roster on first connect. When the
-      // server pulls the real match roster from Convex (next iteration), this
-      // becomes a real lookup with all expected players preregistered.
       host = new MatchHost(matchId, [
         {
           playerId,
@@ -26,10 +23,14 @@ export class MatchRegistry {
         },
       ]);
       this.matches.set(matchId, host);
-    } else {
-      // Late-joining player: not yet preregistered. Until Convex roster fetch
-      // is in, just decline so we don't desync the World's player set.
-      // TODO: rejoin path that diffs roster from Convex.
+    } else if (!host.hasPlayer(playerId)) {
+      host.addPlayer({
+        playerId,
+        characterId: "balanced",
+        name: playerId,
+        color: pickColor(playerId),
+        weaponId: "starter-pistol",
+      });
     }
     host.attachClient(ws);
   }
@@ -55,4 +56,25 @@ export class MatchRegistry {
   size(): number {
     return this.matches.size;
   }
+}
+
+const COLOR_PALETTE = [
+  "#88ccff",
+  "#ff88aa",
+  "#ffd166",
+  "#9bf6ff",
+  "#a0e7a0",
+  "#caa7ff",
+  "#ff9f6b",
+  "#ffe39b",
+  "#9affd1",
+  "#ff7676",
+];
+
+function pickColor(playerId: string): string {
+  let hash = 0;
+  for (let i = 0; i < playerId.length; i += 1) {
+    hash = (hash * 31 + playerId.charCodeAt(i)) >>> 0;
+  }
+  return COLOR_PALETTE[hash % COLOR_PALETTE.length]!;
 }
