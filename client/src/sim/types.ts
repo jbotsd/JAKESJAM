@@ -70,7 +70,24 @@ export type ProjectileImpact =
 
 export type DestructibleKind = 'barrel' | 'box' | 'mine' | 'cube';
 
-export type PickupKind = 'health-shard' | 'shield-cell' | 'overcharge-core';
+/**
+ * Pickup kinds known to the sim. The original three (health-shard, shield-cell,
+ * overcharge-core) shipped first; the remaining members were added when the
+ * full Boxworks pickup set was ported into the sim. Additive: existing
+ * snapshots / older code that only reads the first three remain compatible.
+ */
+export type PickupKind =
+  | 'health-shard'
+  | 'shield-cell'
+  | 'overcharge-core'
+  | 'damage-amp'
+  | 'speed-boost'
+  | 'melee-mode'
+  | 'slow-trap'
+  | 'vulnerability-trap'
+  | 'block-jammer'
+  | 'boss-core'
+  | 'card-cache';
 
 export type RoundPhase = 'countdown' | 'fighting' | 'round-over';
 
@@ -101,6 +118,37 @@ export type PlayerEntity = {
    */
   slowedUntilTick?: Tick;
   slowMultiplier?: number;
+  /**
+   * Pickup-driven buffs / debuffs. All fields are additive and optional. When
+   * the field is unset or its tick is `<= state.tick`, the buff is inactive.
+   * Renderers and combat systems read these to display VFX or modify damage /
+   * fire rate / movement / vulnerability.
+   *
+   * - overchargeUntilTick: damage + fire-rate buff (mirrors old MatchScene
+   *   `overchargeMs`).
+   * - damageAmpUntilTick: extra damage multiplier (mirrors `damageAmpMs`).
+   * - speedBoostUntilTick: movement speed buff (mirrors `speedBoostMs`).
+   * - meleeModeUntilTick: forces close-range / melee fire pattern.
+   * - slowDebuffUntilTick: applied to OTHER players when this player picks up
+   *   a slow-trap (this is the trap-victim debuff timer).
+   * - vulnerabilityUntilTick: takes increased damage.
+   * - blockJammerUntilTick: disables shield + parry while active.
+   * - bossModeUntilTick: boss-mode buff (bigger / slower / more health / more
+   *   damage). Picker-only.
+   *
+   * Optional `shieldCharge` field is also additive — kept here so the
+   * `shield-cell` pickup has a numeric resource to top up. When unset, treat
+   * as full (100).
+   */
+  overchargeUntilTick?: Tick;
+  damageAmpUntilTick?: Tick;
+  speedBoostUntilTick?: Tick;
+  meleeModeUntilTick?: Tick;
+  slowDebuffUntilTick?: Tick;
+  vulnerabilityUntilTick?: Tick;
+  blockJammerUntilTick?: Tick;
+  bossModeUntilTick?: Tick;
+  shieldCharge?: number;
 };
 
 export type ProjectileEntity = {
@@ -173,6 +221,19 @@ export type PickupEntity = {
   amount: number;
   active: boolean;
   respawnAtTick: Tick;
+  /**
+   * Optional buff duration (ms) carried from the source `PickupDefinition`.
+   * Used by buff-style pickups (overcharge-core, damage-amp, speed-boost,
+   * melee-mode, slow-trap, vulnerability-trap, block-jammer, boss-core).
+   * Absent for instant pickups (health-shard, card-cache).
+   */
+  durationMs?: number;
+  /**
+   * Optional respawn time (ms) carried from the source `PickupDefinition` so
+   * the pickup stepper can deterministically schedule respawns without the
+   * map being passed in. Falls back to a default in `pickup.ts` when absent.
+   */
+  respawnMs?: number;
 };
 
 /**
@@ -230,7 +291,14 @@ export type SimEvent =
       victimId: PlayerId;
       multiplier: number;
       durationMs: number;
-    };
+    }
+  /**
+   * Emitted when a player collects a `card-cache` pickup. The sim pre-rolls
+   * the offered card ids deterministically (seeded RNG). The client overlay
+   * consumes this event to show the draft UI; the actual card commit happens
+   * via a separate input path (out of sim scope for this pass).
+   */
+  | { t: 'card-offered'; playerId: PlayerId; cardIds: string[] };
 
 export type StepResult = {
   state: WorldState;

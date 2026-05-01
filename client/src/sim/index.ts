@@ -10,6 +10,22 @@ export {
   SATELLITE_PROJECTILE_LIFETIME_MS,
   SATELLITE_PROJECTILE_RADIUS,
 } from './satellite.js';
+export {
+  stepPickups,
+  clearExpiredBuffs,
+  OVERCHARGE_DURATION_MS,
+  DAMAGE_AMP_MS,
+  SPEED_BOOST_MS,
+  MELEE_MODE_MS,
+  SLOW_DEBUFF_MS,
+  VULNERABILITY_MS,
+  BLOCK_JAMMER_MS,
+  BOSS_MODE_MS,
+  DEFAULT_RESPAWN_MS,
+  PLAYER_FOOTPRINT_RADIUS,
+  SLOW_TRAP_MULTIPLIER,
+  CARD_OFFER_COUNT,
+} from './pickup.js';
 export type {
   CardDefinition,
   CardId,
