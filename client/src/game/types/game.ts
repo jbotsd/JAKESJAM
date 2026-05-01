@@ -1,3 +1,30 @@
+// Card / weapon definition types now live in client/src/sim/data/cardTypes.ts
+// (so server authority + client prediction share one source of truth). They
+// are re-exported here to keep existing client imports stable.
+import type {
+  CardId as SimCardId,
+  WeaponId as SimWeaponId,
+} from "../../sim/data/cardTypes";
+
+export type {
+  CardDefinition,
+  CardId,
+  CardVisualDefinition,
+  ImpactBehavior,
+  ProjectileModifier,
+  ResolvedWeaponBuild,
+  WeaponBucket,
+  WeaponCardModifier,
+  WeaponDefinition,
+  WeaponDelivery,
+  WeaponId,
+} from "../../sim/data/cardTypes";
+export type {
+  ElementType,
+  ProjectilePathing,
+  ProjectileShape,
+} from "../../sim";
+
 export type Vec2 = {
   x: number;
   y: number;
@@ -6,8 +33,6 @@ export type Vec2 = {
 export type PlayerId = string;
 export type RoomId = string;
 export type MatchId = string;
-export type CardId = string;
-export type WeaponId = string;
 export type CharacterId = "balanced" | "heavy" | "sprinter" | "shielded";
 export type ChaosModifierId =
   | "low-gravity"
@@ -17,44 +42,6 @@ export type ChaosModifierId =
   | "fire-hazard"
   | "random-shapes"
   | "max-recoil";
-
-export type ProjectileShape = "circle" | "triangle" | "square" | "hexagon" | "orb" | "x" | "bar";
-export type WeaponDelivery = "projectile" | "raycast" | "continuous-beam" | "area-pulse";
-export type ProjectilePathing =
-  | "straight"
-  | "gravity"
-  | "bounce"
-  | "boomerang"
-  | "homing"
-  | "anti-homing"
-  | "float"
-  | "accelerate";
-export type ElementType =
-  | "crystal"
-  | "neutral"
-  | "fire"
-  | "ice"
-  | "lightning"
-  | "void"
-  | "radiant"
-  | "electric"
-  | "toxic"
-  | "sticky"
-  | "explosive";
-export type ImpactBehavior =
-  | "none"
-  | "explosive"
-  | "sticky"
-  | "pierce-chain"
-  | "slow-field";
-export type WeaponBucket =
-  | "delivery"
-  | "shape"
-  | "trajectory"
-  | "quantity"
-  | "impact"
-  | "element"
-  | "utility";
 
 export type AbilityType = "shield" | "blink" | "brace" | "deflect";
 
@@ -70,79 +57,9 @@ export type PlayerState = {
   maxHealth: number;
   sizeScale: number;
   abilityCharge: number;
-  weaponId: WeaponId;
-  cards: CardId[];
+  weaponId: SimWeaponId;
+  cards: SimCardId[];
   alive: boolean;
-};
-
-export type ProjectileModifier = {
-  shape: ProjectileShape;
-  count: number;
-  rangePx: number;
-  speedMultiplier: number;
-  sizeMultiplier: number;
-  recoilMultiplier: number;
-  pathing: ProjectilePathing;
-  element: ElementType;
-  impact: ImpactBehavior;
-  lifetimeMultiplier: number;
-  gravityScale: number;
-  homingStrength: number;
-  accelerationMultiplier: number;
-  bounces: number;
-  impactRadiusPx: number;
-  pierceCount: number;
-  splitCount: number;
-  slowMultiplier: number;
-};
-
-export type WeaponDefinition = {
-  id: WeaponId;
-  name: string;
-  weaponClass: "baseline" | "beam" | "pulse" | "satellite";
-  delivery: WeaponDelivery;
-  damage: number;
-  fireRate: number;
-  magazineSize: number;
-  reloadSeconds: number;
-  projectileSpeed: number;
-  projectileLifetimeSeconds: number;
-  spreadRadians: number;
-  recoilImpulse: number;
-  knockbackImpulse: number;
-  projectile: ProjectileModifier;
-};
-
-export type WeaponCardModifier = {
-  delivery?: WeaponDelivery;
-  projectile?: Partial<ProjectileModifier>;
-  projectileCountAdd?: number;
-  projectileBounceAdd?: number;
-  projectileSplitAdd?: number;
-  projectileHomingStrengthAdd?: number;
-  spreadRadiansAdd?: number;
-  damageMultiplier?: number;
-  fireRateMultiplier?: number;
-  projectileSpeedMultiplier?: number;
-  reloadMultiplier?: number;
-  magazineSizeAdd?: number;
-  spreadRadians?: number;
-  recoilMultiplier?: number;
-  knockbackMultiplier?: number;
-  ammoRegenPerSecond?: number;
-  overchargeMultiplier?: number;
-  orbitingSatellites?: number;
-  mirrorShield?: boolean;
-  maxHealthAdd?: number;
-  moveSpeedMultiplier?: number;
-  parryCoverMultiplier?: number;
-  parryCooldownMultiplier?: number;
-};
-
-export type CardVisualDefinition = {
-  iconShape: ProjectileShape;
-  glowColor: string;
-  particleColor: string;
 };
 
 export type CharacterDefinition = {
@@ -154,21 +71,6 @@ export type CharacterDefinition = {
   recoilControlMultiplier: number;
   abilityType: AbilityType;
   weakness: string;
-};
-
-export type CardDefinition = {
-  id: CardId;
-  name: string;
-  category: "weapon" | "projectile" | "movement" | "defense" | "utility" | "tradeoff";
-  rarity: "common" | "uncommon" | "rare" | "legendary" | "cursed";
-  description: string;
-  flavorText?: string;
-  buckets?: WeaponBucket[];
-  essenceCost?: number;
-  modifier?: WeaponCardModifier;
-  visual?: CardVisualDefinition;
-  unique?: boolean;
-  maxStacks?: number;
 };
 
 export type DestructibleKind = "barrel" | "box" | "mine" | "cube";

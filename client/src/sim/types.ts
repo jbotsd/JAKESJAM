@@ -25,7 +25,14 @@ export type InputFrame = {
 
 export type CharacterArchetype = 'balanced' | 'heavy' | 'sprinter' | 'shielded';
 
-export type ProjectileShape = 'circle' | 'triangle' | 'square' | 'hexagon' | 'orb';
+export type ProjectileShape =
+  | 'circle'
+  | 'triangle'
+  | 'square'
+  | 'hexagon'
+  | 'orb'
+  | 'x'
+  | 'bar';
 
 export type ProjectilePathing =
   | 'straight'
@@ -36,6 +43,19 @@ export type ProjectilePathing =
   | 'anti-homing'
   | 'float'
   | 'accelerate';
+
+export type ElementType =
+  | 'crystal'
+  | 'neutral'
+  | 'fire'
+  | 'ice'
+  | 'lightning'
+  | 'void'
+  | 'radiant'
+  | 'electric'
+  | 'toxic'
+  | 'sticky'
+  | 'explosive';
 
 export type DestructibleKind = 'barrel' | 'box' | 'mine' | 'cube';
 
