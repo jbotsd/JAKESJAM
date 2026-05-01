@@ -1,5 +1,11 @@
 # JAKESJAM - Changelog
 
+## v0.25 - 2026-05-01
+
+- Added actual health numbers and bars above local and remote player rigs.
+- Added a respawn reconciliation guard so stale remote death snapshots do not repeatedly kill the player after respawn.
+- Added shot sequencing to match player snapshots and visual-only remote projectile playback so other players' shots can be seen in online rooms.
+
 ## v0.24 - 2026-05-01
 
 - Removed Pulse Nova from card progression and changed melee-mode firing away from pulse waves into close-range projectile spray.

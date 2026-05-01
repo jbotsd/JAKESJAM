@@ -13,6 +13,8 @@ type ProceduralPlayerPose = {
   aimTarget: Vec2;
   grounded: boolean;
   crouching: boolean;
+  health?: number;
+  maxHealth?: number;
 };
 
 type LimbSolve = {
@@ -118,7 +120,14 @@ export class ProceduralPlayerRig {
 
     g.clear();
 
-    this.drawNameplate(g, head.x, head.y - 20 * s, s);
+    this.drawNameplate(
+      g,
+      head.x,
+      head.y - 20 * s,
+      s,
+      pose.health ?? 100,
+      pose.maxHealth ?? 100,
+    );
     this.drawLimb(g, hipLeft, leftLeg, 5 * s);
     this.drawLimb(g, hipRight, rightLeg, 5 * s);
     this.drawFoot(g, leftFoot, s);
@@ -236,17 +245,23 @@ export class ProceduralPlayerRig {
     x: number,
     y: number,
     scale: number,
+    health: number,
+    maxHealth: number,
   ) {
-    const nameWidth = Math.max(34, this.name.length * 6) * scale;
+    const healthText = `${Math.ceil(Math.max(0, health))}/${Math.max(1, Math.ceil(maxHealth))}`;
+    const nameWidth = Math.max(46, this.name.length * 6, healthText.length * 6) * scale;
+    const barWidth = nameWidth - 6 * scale;
+    const healthRatio = Phaser.Math.Clamp(health / Math.max(1, maxHealth), 0, 1);
     graphics.fillStyle(PLAYER_DARK, 0.7);
-    graphics.fillRoundedRect(x - nameWidth / 2, y - 13 * scale, nameWidth, 11 * scale, 2 * scale);
+    graphics.fillRoundedRect(x - nameWidth / 2, y - 20 * scale, nameWidth, 18 * scale, 2 * scale);
     graphics.fillStyle(PLAYER_WHITE, 1);
-    graphics.fillRect(x - nameWidth / 2, y - 1 * scale, nameWidth, 3 * scale);
+    graphics.fillRect(x - barWidth / 2, y - 2 * scale, barWidth, 3 * scale);
     graphics.fillStyle(HEALTH_GREEN, 1);
-    graphics.fillRect(x - nameWidth / 2, y - 1 * scale, nameWidth * 0.78, 3 * scale);
+    graphics.fillRect(x - barWidth / 2, y - 2 * scale, barWidth * healthRatio, 3 * scale);
     graphics.fillStyle(HEALTH_BACKING, 1);
-    graphics.fillRect(x + nameWidth * 0.28, y - 1 * scale, nameWidth * 0.22, 3 * scale);
-    this.nameText.setPosition(x, y - 2 * scale);
+    graphics.fillRect(x - barWidth / 2 + barWidth * healthRatio, y - 2 * scale, barWidth * (1 - healthRatio), 3 * scale);
+    this.nameText.setText(`${this.name} ${healthText}`);
+    this.nameText.setPosition(x, y - 4 * scale);
   }
 }
 

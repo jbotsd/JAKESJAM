@@ -57,6 +57,7 @@ type ActiveProjectile = {
   pierceLeft: number;
   splitCount: number;
   slowMultiplier: number;
+  visualOnly: boolean;
   hasSplit: boolean;
   returning: boolean;
   trailMs: number;
@@ -86,6 +87,7 @@ export class ProjectileSystem {
     aimAngle: number,
     build: ResolvedWeaponBuild,
     targets: ProjectileTarget[] = [],
+    visualOnly = false,
   ): WeaponFireResult {
     if (build.delivery === "raycast" || build.delivery === "continuous-beam") {
       return this.fireBeam(origin, aimAngle, build, targets);
@@ -102,7 +104,7 @@ export class ProjectileSystem {
 
     for (let index = 0; index < count; index += 1) {
       const shotAngle = startAngle + angleStep * index;
-      this.spawnProjectile(origin, shotAngle, build, 1);
+      this.spawnProjectile(origin, shotAngle, build, 1, visualOnly);
     }
 
     return { fired: true, hits: [] };
@@ -139,7 +141,7 @@ export class ProjectileSystem {
 
       projectile.traveledPx += distance(projectile.previousPosition, projectile.position);
 
-      const targetHit = findProjectileTargetHit(projectile, targets);
+      const targetHit = projectile.visualOnly ? null : findProjectileTargetHit(projectile, targets);
       const platformHit = findProjectilePlatformHit(projectile, platforms);
 
       if (targetHit && (!platformHit || targetHit.t <= platformHit.t)) {
@@ -269,6 +271,7 @@ export class ProjectileSystem {
     angle: number,
     build: ResolvedWeaponBuild,
     damageScale: number,
+    visualOnly = false,
   ) {
     if (this.projectiles.length >= MAX_ACTIVE_PROJECTILES) {
       const oldest = this.projectiles.shift();
@@ -305,6 +308,7 @@ export class ProjectileSystem {
       pierceLeft: build.projectile.pierceCount,
       splitCount: build.projectile.splitCount,
       slowMultiplier: build.projectile.slowMultiplier,
+      visualOnly,
       hasSplit: false,
       returning: false,
       trailMs: 0,
@@ -424,7 +428,7 @@ export class ProjectileSystem {
       const t = splitCount === 1 ? 0.5 : index / (splitCount - 1);
       const splitAngle = angle - spread / 2 + spread * t;
       const splitBuild = projectileToBuild(projectile);
-      this.spawnProjectile(projectile.position, splitAngle, splitBuild, 0.42);
+      this.spawnProjectile(projectile.position, splitAngle, splitBuild, 0.42, projectile.visualOnly);
     }
   }
 

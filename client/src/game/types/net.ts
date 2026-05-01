@@ -67,6 +67,7 @@ export type MatchPlayerSnapshot = {
   crouching: boolean;
   shieldActive?: boolean;
   shieldCharge?: number;
+  shotSequence?: number;
   sequence: number;
   updatedAt: number;
 };
@@ -83,6 +84,7 @@ export type SubmitPlayerSnapshotArgs = {
   crouching: boolean;
   shieldActive: boolean;
   shieldCharge: number;
+  shotSequence: number;
   sequence: number;
 };
 

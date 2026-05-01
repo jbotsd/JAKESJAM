@@ -126,6 +126,7 @@ export class MatchScene extends Phaser.Scene {
   private playerRig?: ProceduralPlayerRig;
   private readonly remoteRigs = new Map<string, ProceduralPlayerRig>();
   private readonly remoteSnapshots = new Map<string, MatchPlayerSnapshot>();
+  private readonly remoteShotSequences = new Map<string, number>();
   private cameraTarget?: Phaser.GameObjects.Zone;
   private reticle?: Phaser.GameObjects.Graphics;
   private debugText?: Phaser.GameObjects.Text;
@@ -187,6 +188,8 @@ export class MatchScene extends Phaser.Scene {
   private readonly playerScores = new Map<string, PlayerScore>();
   private snapshotSendTimerMs = 0;
   private snapshotSequence = 0;
+  private shotSequence = 0;
+  private ignoreLocalSnapshotsThroughSequence = 0;
   private chaosModifierIds: ChaosModifierId[] = [];
   private fireHazardTimerMs = 0;
 
@@ -242,6 +245,8 @@ export class MatchScene extends Phaser.Scene {
     this.parryActiveMs = 0;
     this.parryCooldownMs = 0;
     this.rightMouseParryWasDown = false;
+    this.shotSequence = 0;
+    this.ignoreLocalSnapshotsThroughSequence = 0;
     this.cardCacheRelocateTimerMs = 0;
     this.lastPickupStatus = "none";
     this.progressionCardIds = [];
@@ -546,6 +551,8 @@ export class MatchScene extends Phaser.Scene {
       aimTarget,
       grounded: this.playerBody.grounded,
       crouching: this.playerBody.crouching,
+      health: this.playerHealth,
+      maxHealth: this.playerMaxHealth,
     });
     this.drawShield();
   }
@@ -701,6 +708,8 @@ export class MatchScene extends Phaser.Scene {
         aimTarget,
         grounded: true,
         crouching: snapshot?.crouching ?? false,
+        health: snapshot?.health ?? character.maxHealth,
+        maxHealth: Math.max(character.maxHealth, snapshot?.health ?? character.maxHealth),
       });
     }
   }
@@ -849,6 +858,7 @@ export class MatchScene extends Phaser.Scene {
       crouching: this.playerBody.crouching,
       shieldActive: this.shieldActive,
       shieldCharge: this.shieldCharge,
+      shotSequence: this.shotSequence,
       sequence: this.snapshotSequence,
     }).catch(() => undefined);
   }
@@ -862,6 +872,7 @@ export class MatchScene extends Phaser.Scene {
 
       this.ensureScore(snapshot.playerId);
       const previous = this.remoteSnapshots.get(snapshot.playerId);
+      this.spawnRemoteProjectileBursts(snapshot, previous);
       this.remoteSnapshots.set(snapshot.playerId, previous
         ? smoothSnapshot(previous, snapshot)
         : snapshot);
@@ -869,7 +880,67 @@ export class MatchScene extends Phaser.Scene {
 
   }
 
+  private spawnRemoteProjectileBursts(
+    snapshot: MatchPlayerSnapshot,
+    previous?: MatchPlayerSnapshot,
+  ) {
+    if (!this.projectileSystem || !snapshot.alive) {
+      return;
+    }
+
+    const shotSequence = snapshot.shotSequence ?? 0;
+    const previousSequence = this.remoteShotSequences.get(snapshot.playerId);
+    if (previousSequence === undefined) {
+      this.remoteShotSequences.set(snapshot.playerId, shotSequence);
+      return;
+    }
+
+    if (shotSequence <= previousSequence) {
+      return;
+    }
+
+    this.remoteShotSequences.set(snapshot.playerId, shotSequence);
+    const burstCount = Math.min(3, shotSequence - previousSequence);
+    const build = createWeaponBuild(starterWeapon, []);
+    const origin = this.getRemoteMuzzlePosition(previous ?? snapshot, snapshot);
+
+    for (let index = 0; index < burstCount; index += 1) {
+      const aimJitter = burstCount > 1 ? (index - (burstCount - 1) / 2) * 0.035 : 0;
+      this.projectileSystem.fire(origin, snapshot.aimAngle + aimJitter, build, [], true);
+    }
+  }
+
+  private getRemoteMuzzlePosition(
+    previous: MatchPlayerSnapshot,
+    snapshot: MatchPlayerSnapshot,
+  ): Vec2 {
+    const character = this.getCharacter(this.getRoomPlayer(snapshot.playerId)?.characterId);
+    const bodySize = getPlayerBodySize(character.sizeScale);
+    const visualScale = this.getVisualScale(character);
+    const position = previous
+      ? lerpVec(previous.position, snapshot.position, 0.65)
+      : snapshot.position;
+    const crouchAmount = snapshot.crouching ? 1 : 0;
+    const feetY = position.y + bodySize.y / 2;
+    const chest = {
+      x: position.x,
+      y: feetY -
+        Phaser.Math.Linear(STANDING_CHEST_OFFSET, CROUCHING_CHEST_OFFSET, crouchAmount) *
+          visualScale,
+    };
+    const muzzleReach = MUZZLE_REACH * visualScale;
+
+    return {
+      x: chest.x + Math.cos(snapshot.aimAngle) * muzzleReach,
+      y: chest.y + Math.sin(snapshot.aimAngle) * muzzleReach,
+    };
+  }
+
   private reconcileLocalSnapshot(snapshot: MatchPlayerSnapshot) {
+    if (snapshot.sequence <= this.ignoreLocalSnapshotsThroughSequence) {
+      return;
+    }
+
     if (this.playerRespawnPending) {
       return;
     }
@@ -925,6 +996,8 @@ export class MatchScene extends Phaser.Scene {
     }
 
     this.audio?.play("shoot");
+    this.shotSequence += 1;
+    this.sendPlayerSnapshot();
     this.fireCooldownMs = this.getShotCooldownMs(build);
     const recoil =
       (build.recoilImpulse * build.projectile.recoilMultiplier) /
@@ -1309,6 +1382,8 @@ export class MatchScene extends Phaser.Scene {
   private respawnPlayer() {
     this.clearRespawnText();
     this.resetPlayer();
+    this.sendPlayerSnapshot();
+    this.ignoreLocalSnapshotsThroughSequence = this.snapshotSequence;
     this.spawnRespawnBurst(this.playerBody.position);
   }
 
@@ -2365,6 +2440,7 @@ export class MatchScene extends Phaser.Scene {
     }
     this.remoteRigs.clear();
     this.remoteSnapshots.clear();
+    this.remoteShotSequences.clear();
   }
 
   private teardownNetworkSync() {

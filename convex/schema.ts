@@ -77,6 +77,7 @@ export default defineSchema({
     crouching: v.boolean(),
     shieldActive: v.optional(v.boolean()),
     shieldCharge: v.optional(v.number()),
+    shotSequence: v.optional(v.number()),
     sequence: v.number(),
     updatedAt: v.number(),
   })

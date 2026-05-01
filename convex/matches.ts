@@ -19,6 +19,7 @@ const snapshotArgs = {
   crouching: v.boolean(),
   shieldActive: v.optional(v.boolean()),
   shieldCharge: v.optional(v.number()),
+  shotSequence: v.optional(v.number()),
   sequence: v.number(),
 };
 
@@ -56,6 +57,7 @@ export const submitPlayerSnapshot = mutation({
       crouching: args.crouching,
       shieldActive: args.shieldActive ?? false,
       shieldCharge: args.shieldCharge ?? 0,
+      shotSequence: args.shotSequence ?? 0,
       sequence: args.sequence,
       updatedAt: now,
     };
