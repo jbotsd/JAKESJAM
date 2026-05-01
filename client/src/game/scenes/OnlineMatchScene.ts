@@ -536,6 +536,8 @@ export class OnlineMatchScene extends Phaser.Scene {
       .map((id) => crystalRoundsCards.find((c) => c.id === id))
       .filter((c): c is CardDefinition => Boolean(c));
     if (candidates.length === 0) return;
+    // Hide the death overlay so the picker is fully readable + clickable.
+    this.deathOverlay?.hide();
     const onPick: CardPickHandler = (card) => {
       const state = this.loop?.getRenderState();
       if (!state || !this.loop) return;
