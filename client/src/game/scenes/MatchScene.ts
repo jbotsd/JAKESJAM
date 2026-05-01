@@ -73,14 +73,14 @@ const PARRY_ACTIVE_MS = 420;
 const PARRY_COOLDOWN_MS = 4300;
 const PARRY_BASE_ARC_RADIANS = Math.PI * 0.72;
 const PARRY_BASE_RANGE = 98;
-const DAMAGE_AMP_MULTIPLIER = 1.42;
-const SPEED_BOOST_MULTIPLIER = 1.22;
+// const DAMAGE_AMP_MULTIPLIER = 1.42;
+// const SPEED_BOOST_MULTIPLIER = 1.22;
 const SLOW_DEBUFF_MULTIPLIER = 0.62;
 const VULNERABILITY_MULTIPLIER = 1.38;
 const BOSS_HEALTH_BONUS = 90;
-const BOSS_MOVE_MULTIPLIER = 0.72;
-const BOSS_DAMAGE_MULTIPLIER = 1.55;
-const BOSS_FIRE_RATE_MULTIPLIER = 0.72;
+// const BOSS_MOVE_MULTIPLIER = 0.72;
+// const BOSS_DAMAGE_MULTIPLIER = 1.55;
+// const BOSS_FIRE_RATE_MULTIPLIER = 0.72;
 
 type MatchSceneInitData = {
   roomId?: string;
@@ -1105,10 +1105,9 @@ export class MatchScene extends Phaser.Scene {
 
   private createChaosWeaponBuild(): ResolvedWeaponBuild {
     const chaos = this.getChaosProfile();
-    const overcharged = this.overchargeMs > 0;
-    const damageBoost = (this.damageAmpMs > 0 ? DAMAGE_AMP_MULTIPLIER : 1) *
-      (this.bossModeMs > 0 ? BOSS_DAMAGE_MULTIPLIER : 1);
-    const fireRateBoost = this.bossModeMs > 0 ? BOSS_FIRE_RATE_MULTIPLIER : 1;
+    const overcharged = false; // ROUNDS: Overcharge removed
+    const damageBoost = 1; // ROUNDS: Damage amp and boss mode removed
+    const fireRateBoost = 1; // ROUNDS: Boss mode removed
     const projectileSpeedBoost = this.slowDebuffMs > 0 ? 0.72 : 1;
     const build: ResolvedWeaponBuild = {
       ...this.weaponBuild,
@@ -1339,7 +1338,7 @@ export class MatchScene extends Phaser.Scene {
     const origin = this.getMuzzlePosition();
     const aimTarget = this.getAimTarget();
     const pointerAimAngle = Math.atan2(aimTarget.y - origin.y, aimTarget.x - origin.x);
-    const aimAngle = this.bossModeMs > 0 ? this.getBossPatternAngle(pointerAimAngle) : pointerAimAngle;
+    const aimAngle = pointerAimAngle; // ROUNDS: Boss pattern removed
     const chaos = this.getChaosProfile();
     const build = this.createChaosWeaponBuild();
     const result = chaos.disableProjectiles
@@ -1367,6 +1366,7 @@ export class MatchScene extends Phaser.Scene {
     this.applyProjectileHits(result.hits);
   }
 
+  // @ts-ignore ROUNDS: Boss mode removed
   private getBossPatternAngle(fallbackAngle: number): number {
     const pattern = [
       0,
@@ -1438,15 +1438,11 @@ export class MatchScene extends Phaser.Scene {
 
   private getMoveSpeedModifier(): number {
     let multiplier = this.weaponBuild.moveSpeedMultiplier;
-    if (this.speedBoostMs > 0) {
-      multiplier *= SPEED_BOOST_MULTIPLIER;
-    }
+    // ROUNDS: Speed boost pickup removed
     if (this.slowDebuffMs > 0) {
       multiplier *= SLOW_DEBUFF_MULTIPLIER;
     }
-    if (this.bossModeMs > 0) {
-      multiplier *= BOSS_MOVE_MULTIPLIER;
-    }
+    // ROUNDS: Boss mode removed
     return multiplier;
   }
 
@@ -2328,7 +2324,7 @@ export class MatchScene extends Phaser.Scene {
     return;
   }
 
-  // @ts-ignore ROUNDS: Boss mode pickup removed but kept for future use
+  // @ts-ignore ROUNDS: Boss mode removed
   private activateBossMode(pickup: ArenaPickup) {
     this.bossModeMs = Math.max(this.bossModeMs, pickup.durationMs ?? 0);
     this.bossShotIndex = 0;
@@ -2680,7 +2676,7 @@ export class MatchScene extends Phaser.Scene {
     this.weaponBuild = createWeaponBuild(starterWeapon, cards);
     const nextMaxHealth = this.getLocalCharacter().maxHealth +
       this.weaponBuild.maxHealthAdd +
-      (this.bossModeMs > 0 ? BOSS_HEALTH_BONUS : 0);
+      0 /* ROUNDS: Boss mode removed */;
     this.syncEffectiveMaxHealth(nextMaxHealth > oldMaxHealth);
     this.fireCooldownMs = 0;
     if (playSound) {
@@ -2692,7 +2688,7 @@ export class MatchScene extends Phaser.Scene {
   private syncEffectiveMaxHealth(healAddedHealth: boolean) {
     const character = this.getLocalCharacter();
     const oldMaxHealth = this.playerMaxHealth;
-    this.playerMaxHealth = character.maxHealth + this.weaponBuild.maxHealthAdd + (this.bossModeMs > 0 ? BOSS_HEALTH_BONUS : 0);
+    this.playerMaxHealth = character.maxHealth + this.weaponBuild.maxHealthAdd + 0 /* ROUNDS: Boss mode removed */;
     if (healAddedHealth && this.playerMaxHealth > oldMaxHealth) {
       this.playerHealth = Math.min(this.playerMaxHealth, this.playerHealth + (this.playerMaxHealth - oldMaxHealth));
       return;

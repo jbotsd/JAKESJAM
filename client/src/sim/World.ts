@@ -28,6 +28,7 @@ import {
 import { stepWeapon } from "./weapon.js";
 import { stepRound, TARGET_SCORE_DEFAULT } from "./round.js";
 import { tickShield, tryDeflectDamage, tryStartParry } from "./combat.js";
+import { buildStaticCache, type StaticCollisionCache } from "./collision.js";
 import type {
   EntityId,
   FireEntity,
