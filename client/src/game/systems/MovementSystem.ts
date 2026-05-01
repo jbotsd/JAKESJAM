@@ -5,6 +5,7 @@ export type MovementInput = {
   right: boolean;
   jumpPressed: boolean;
   jumpHeld: boolean;
+  jetpackHeld: boolean;
   fastFall: boolean;
   crouch: boolean;
 };
@@ -21,6 +22,8 @@ export type PlayerBody = {
 export type MovementDebug = {
   coyoteMs: number;
   jumpBufferMs: number;
+  jetpackFuel: number;
+  jetpackActive: boolean;
 };
 
 export type MovementStats = {
@@ -40,6 +43,12 @@ const MOVEMENT = {
   coyoteMs: 110,
   jumpBufferMs: 110,
   maxFallSpeed: 900,
+  jetpackMaxFuel: 100,
+  jetpackThrust: 980,
+  jetpackFuelDrainPerSecond: 38,
+  jetpackGroundRechargePerSecond: 58,
+  jetpackAirRechargePerSecond: 14,
+  jetpackMinUpwardVelocity: -430,
 };
 
 export class MovementSystem {
@@ -47,12 +56,16 @@ export class MovementSystem {
   private jumpBufferTimerMs = 0;
   private jumpWasReleased = true;
   private jumpCutApplied = false;
+  private jetpackFuel = MOVEMENT.jetpackMaxFuel;
+  private jetpackActive = false;
 
   reset() {
     this.coyoteTimerMs = 0;
     this.jumpBufferTimerMs = 0;
     this.jumpWasReleased = true;
     this.jumpCutApplied = false;
+    this.jetpackFuel = MOVEMENT.jetpackMaxFuel;
+    this.jetpackActive = false;
   }
 
   update(
@@ -116,6 +129,24 @@ export class MovementSystem {
       (stats.gravityMultiplier ?? 1);
     body.velocity.y = Math.min(MOVEMENT.maxFallSpeed, body.velocity.y + gravity * deltaSeconds);
 
+    this.jetpackActive = !body.grounded && input.jetpackHeld && this.jetpackFuel > 0;
+    if (this.jetpackActive) {
+      body.velocity.y -= MOVEMENT.jetpackThrust * deltaSeconds;
+      body.velocity.y = Math.max(MOVEMENT.jetpackMinUpwardVelocity, body.velocity.y);
+      this.jetpackFuel = Math.max(
+        0,
+        this.jetpackFuel - MOVEMENT.jetpackFuelDrainPerSecond * deltaSeconds,
+      );
+    } else {
+      const rechargeRate = body.grounded
+        ? MOVEMENT.jetpackGroundRechargePerSecond
+        : MOVEMENT.jetpackAirRechargePerSecond;
+      this.jetpackFuel = Math.min(
+        MOVEMENT.jetpackMaxFuel,
+        this.jetpackFuel + rechargeRate * deltaSeconds,
+      );
+    }
+
     body.position.x += body.velocity.x * deltaSeconds;
     resolveAxis(body, platforms, "x");
 
@@ -126,6 +157,8 @@ export class MovementSystem {
     return {
       coyoteMs: Math.round(this.coyoteTimerMs),
       jumpBufferMs: Math.round(this.jumpBufferTimerMs),
+      jetpackFuel: Math.round(this.jetpackFuel),
+      jetpackActive: this.jetpackActive,
     };
   }
 }

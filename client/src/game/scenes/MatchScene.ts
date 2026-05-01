@@ -9,6 +9,7 @@ import { ProceduralPlayerRig } from "../rendering/ProceduralPlayerRig";
 import { GameAudioSystem } from "../systems/AudioSystem";
 import {
   MovementSystem,
+  type MovementDebug,
   type MovementInput,
   type PlayerBody,
 } from "../systems/MovementSystem";
@@ -140,6 +141,12 @@ export class MatchScene extends Phaser.Scene {
   private fireGraphics?: Phaser.GameObjects.Graphics;
   private pickupGraphics?: Phaser.GameObjects.Graphics;
   private keys?: MovementKeys;
+  private movementDebug: MovementDebug = {
+    coyoteMs: 0,
+    jumpBufferMs: 0,
+    jetpackFuel: 100,
+    jetpackActive: false,
+  };
   private playerBody: PlayerBody = createPlayerBody();
   private target: TestTarget = createTestTarget();
   private destructibles: ArenaDestructible[] = createDestructibleStates();
@@ -170,6 +177,7 @@ export class MatchScene extends Phaser.Scene {
   private bossShotIndex = 0;
   private parryActiveMs = 0;
   private parryCooldownMs = 0;
+  private rightMouseParryWasDown = false;
   private cardCacheRelocateTimerMs = 0;
   private lastPickupStatus = "none";
   private shieldGraphics?: Phaser.GameObjects.Graphics;
@@ -205,6 +213,7 @@ export class MatchScene extends Phaser.Scene {
     });
     window.removeEventListener("keydown", this.handleScoreboardKeyDown);
     window.addEventListener("keydown", this.handleScoreboardKeyDown);
+    this.input.mouse?.disableContextMenu();
     this.teardownNetworkSync();
     this.audio?.destroy();
     this.audio = new GameAudioSystem(this);
@@ -233,6 +242,7 @@ export class MatchScene extends Phaser.Scene {
     this.bossShotIndex = 0;
     this.parryActiveMs = 0;
     this.parryCooldownMs = 0;
+    this.rightMouseParryWasDown = false;
     this.cardCacheRelocateTimerMs = 0;
     this.lastPickupStatus = "none";
     this.progressionCardIds = [];
@@ -296,7 +306,7 @@ export class MatchScene extends Phaser.Scene {
     this.updateParry(scaledDeltaMs);
     const wasGrounded = this.playerBody.grounded;
     const input = this.readInput();
-    this.movement.update(
+    this.movementDebug = this.movement.update(
       this.playerBody,
       input,
       boxworksWorld.platforms,
@@ -493,6 +503,7 @@ export class MatchScene extends Phaser.Scene {
         right: false,
         jumpPressed: false,
         jumpHeld: false,
+        jetpackHeld: false,
         fastFall: false,
         crouch: false,
       };
@@ -506,6 +517,7 @@ export class MatchScene extends Phaser.Scene {
       right: this.keys.d.isDown,
       jumpPressed,
       jumpHeld: this.keys.w.isDown || this.keys.space.isDown,
+      jetpackHeld: this.keys.space.isDown,
       fastFall: this.keys.s.isDown && !this.playerBody.grounded,
       crouch: this.keys.s.isDown,
     };
@@ -574,9 +586,12 @@ export class MatchScene extends Phaser.Scene {
 
     this.parryActiveMs = Math.max(0, this.parryActiveMs - deltaMs);
     this.parryCooldownMs = Math.max(0, this.parryCooldownMs - deltaMs);
+    const rightMouseDown = this.input.activePointer.rightButtonDown();
+    const rightMousePressed = rightMouseDown && !this.rightMouseParryWasDown;
+    this.rightMouseParryWasDown = rightMouseDown;
 
     if (
-      Phaser.Input.Keyboard.JustDown(this.keys.c) &&
+      (rightMousePressed || Phaser.Input.Keyboard.JustDown(this.keys.c)) &&
       this.blockJammerMs <= 0 &&
       this.parryCooldownMs <= 0
     ) {
@@ -599,6 +614,29 @@ export class MatchScene extends Phaser.Scene {
       this.shieldGraphics.fillCircle(this.playerBody.position.x, this.playerBody.position.y, radius);
       this.shieldGraphics.lineStyle(2, 0x93c5fd, 0.62);
       this.shieldGraphics.strokeCircle(this.playerBody.position.x, this.playerBody.position.y, radius);
+    }
+
+    if (this.movementDebug.jetpackActive) {
+      const plumeX = this.playerBody.position.x - this.playerBody.facing * 6;
+      const plumeY = this.playerBody.position.y + this.playerBody.size.y / 2 - 4;
+      this.shieldGraphics.fillStyle(0xffd166, 0.8);
+      this.shieldGraphics.fillTriangle(
+        plumeX - 7,
+        plumeY,
+        plumeX + 7,
+        plumeY,
+        plumeX,
+        plumeY + 22,
+      );
+      this.shieldGraphics.fillStyle(0x67e8f9, 0.58);
+      this.shieldGraphics.fillTriangle(
+        plumeX - 4,
+        plumeY,
+        plumeX + 4,
+        plumeY,
+        plumeX,
+        plumeY + 13,
+      );
     }
 
     if (this.parryActiveMs <= 0) {
@@ -2109,6 +2147,7 @@ export class MatchScene extends Phaser.Scene {
     this.debugText.setText([
       "HEALTH",
       `${Math.ceil(this.playerHealth)}/${this.playerMaxHealth}`,
+      `JET ${this.movementDebug.jetpackFuel}${this.movementDebug.jetpackActive ? " ON" : ""}`,
     ]);
   }
 

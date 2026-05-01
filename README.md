@@ -42,11 +42,12 @@ JAKESJAM is currently a Phaser + TypeScript gameplay prototype with Convex lobby
 |---|---|
 | Move | A / D |
 | Jump | W or Space |
+| Jetpack boost | Hold Space while airborne |
 | Crouch / fast fall | S |
 | Aim | Mouse |
 | Fire | Left mouse |
 | Shield | Left Shift |
-| Directional parry | C |
+| Directional parry | Right mouse button (C fallback) |
 | Scoreboard | Tab |
 | Reset local match | R |
 

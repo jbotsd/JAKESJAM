@@ -1,5 +1,11 @@
 # JAKESJAM - Changelog
 
+## v0.23 - 2026-05-01
+
+- Added a small rechargeable Space-hold jetpack for higher traversal while keeping W as a clean jump input.
+- Added jetpack fuel/debug readout beside player health and a small flame plume while the boost is active.
+- Moved directional parry to right mouse button while keeping `C` as a keyboard fallback.
+
 ## v0.22 - 2026-05-01
 
 - Reworked card progression so mutator cards can stack into outrageous builds instead of being hard-limited to one card per bucket.
