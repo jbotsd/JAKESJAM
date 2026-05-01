@@ -27,7 +27,7 @@ export const TARGET_SCORE_DEFAULT = 3;
  * unpicked offers. Generous on purpose — the rogue-lite picker is the
  * "moment of progression", we'd rather pause longer than rush the read.
  */
-export const DRAFT_WINDOW_MS = 8000;
+export const DRAFT_WINDOW_MS = 15000;
 
 /**
  * Cards offered to every player in the match when the round transitions
