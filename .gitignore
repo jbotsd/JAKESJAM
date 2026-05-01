@@ -9,3 +9,4 @@ client/.env.*.local
 Thumbs.db
 npm-debug.log*
 .codex-*.log
+.vercel

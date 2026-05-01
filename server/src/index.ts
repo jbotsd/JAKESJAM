@@ -10,8 +10,10 @@ const registry = new MatchRegistry();
 
 const server = Bun.serve<MatchSocketData>({
   port: config.port,
+  hostname: "0.0.0.0",
   async fetch(req, srv) {
     const url = new URL(req.url);
+    console.log(`[req] ${req.method} ${url.pathname} (raw=${req.url}) host=${req.headers.get("host")}`);
 
     if (url.pathname === "/health") {
       return new Response(
