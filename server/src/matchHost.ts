@@ -5,6 +5,7 @@
 import type { ServerWebSocket } from "bun";
 import { SNAPSHOT_INTERVAL_TICKS, STEP_MS, World } from "@sim/index.ts";
 import { createRuntime, stepWithRuntime, type WorldRuntime } from "@sim/World.ts";
+import { boxworksWorld } from "@sim/data/boxworks.ts";
 import type {
   InputFrame,
   InputSeq,
@@ -26,26 +27,12 @@ export type MatchSocketData = {
   authedAt: number;
 };
 
-// Minimal Boxworks scaffold so the server has terrain to collide against until
-// the full map definition is shared between client and server (next iteration).
-// Placeholder floor + a couple of platforms so jumps and projectile blocks work.
-const PLACEHOLDER_MAP: MapDefinition = {
-  id: "boxworks",
-  name: "Boxworks",
-  size: { x: 4800, y: 1620 },
-  spawns: [
-    { x: 240, y: 540 },
-    { x: 4560, y: 540 },
-  ],
-  platforms: [
-    { id: "floor", position: { x: 2400, y: 1580 }, size: { x: 4800, y: 80 }, kind: "floor" },
-    { id: "wall-l", position: { x: 20, y: 810 }, size: { x: 40, y: 1620 }, kind: "wall" },
-    { id: "wall-r", position: { x: 4780, y: 810 }, size: { x: 40, y: 1620 }, kind: "wall" },
-    { id: "plat-1", position: { x: 1200, y: 1200 }, size: { x: 320, y: 30 }, kind: "platform" },
-    { id: "plat-2", position: { x: 2400, y: 1000 }, size: { x: 320, y: 30 }, kind: "platform" },
-    { id: "plat-3", position: { x: 3600, y: 1200 }, size: { x: 320, y: 30 }, kind: "platform" },
-  ],
-};
+// Boxworks is built once in `@sim/data/boxworks.ts` and shared verbatim with
+// the client so authoritative collision matches client prediction. The cast
+// strips Boxworks's wider pickup-kind union back down to the baseline sim
+// type — `World.create` only copies `pickup.kind` through, so any string is
+// safe at runtime.
+const BOXWORKS_MAP: MapDefinition = boxworksWorld as MapDefinition;
 
 export class MatchHost {
   readonly matchId: string;
@@ -62,8 +49,8 @@ export class MatchHost {
   constructor(matchId: string, players: PlayerSpawnInfo[]) {
     this.matchId = matchId;
     this.rngSeed = (Math.random() * 0xffffffff) >>> 0;
-    this.state = World.create(PLACEHOLDER_MAP, players, this.rngSeed);
-    this.runtime = createRuntime(PLACEHOLDER_MAP);
+    this.state = World.create(BOXWORKS_MAP, players, this.rngSeed);
+    this.runtime = createRuntime(BOXWORKS_MAP);
     for (const spawn of players) {
       this.playerInfo.set(spawn.playerId, {
         playerId: spawn.playerId,
@@ -121,7 +108,7 @@ export class MatchHost {
 
     const existingCount = Object.keys(this.state.players).length;
     const spawnPoint =
-      PLACEHOLDER_MAP.spawns[existingCount % Math.max(1, PLACEHOLDER_MAP.spawns.length)] ??
+      BOXWORKS_MAP.spawns[existingCount % Math.max(1, BOXWORKS_MAP.spawns.length)] ??
       { x: 0, y: 0 };
     this.state = {
       ...this.state,
@@ -254,7 +241,7 @@ export class MatchHost {
         matchId: this.matchId,
         startTick: this.state.tick,
         rngSeed: this.rngSeed,
-        mapId: PLACEHOLDER_MAP.id,
+        mapId: BOXWORKS_MAP.id,
         yourPlayerId: ws.data.playerId,
         allPlayers: Array.from(this.playerInfo.values()),
       }),
