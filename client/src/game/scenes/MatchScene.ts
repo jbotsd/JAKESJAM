@@ -7,6 +7,7 @@ import { starterWeapon } from "../data/weapons";
 import { RoomClient } from "../net/RoomClient";
 import { ProceduralPlayerRig } from "../rendering/ProceduralPlayerRig";
 import { GameAudioSystem } from "../systems/AudioSystem";
+import { CardDraftOverlay } from "../ui/CardDraftOverlay";
 import {
   MovementSystem,
   type MovementDebug,
@@ -157,6 +158,8 @@ export class MatchScene extends Phaser.Scene {
   private respawnRemainingMs = 0;
   private respawnCountdownActive = false;
   private deathSequenceId = 0;
+  private cardDraftOverlay?: CardDraftOverlay;
+  private deathDraftPickedThisLife = false;
   private shieldCharge = 100;
   private shieldActive = false;
   private temporaryShieldMs = 0;
@@ -206,6 +209,8 @@ export class MatchScene extends Phaser.Scene {
       this.teardownNetworkSync();
       this.audio?.destroy();
       this.audio = undefined;
+      this.cardDraftOverlay?.destroy();
+      this.cardDraftOverlay = undefined;
     });
     window.removeEventListener("keydown", this.handleScoreboardKeyDown);
     window.addEventListener("keydown", this.handleScoreboardKeyDown);
@@ -224,6 +229,11 @@ export class MatchScene extends Phaser.Scene {
     this.respawnRemainingMs = 0;
     this.respawnCountdownActive = false;
     this.deathSequenceId += 1;
+    this.deathDraftPickedThisLife = false;
+    this.cardDraftOverlay?.hide();
+    if (!this.cardDraftOverlay) {
+      this.cardDraftOverlay = new CardDraftOverlay();
+    }
     this.shieldCharge = 100;
     this.shieldActive = false;
     this.temporaryShieldMs = 0;
@@ -1259,6 +1269,7 @@ export class MatchScene extends Phaser.Scene {
     this.deathSequenceId = deathSequence;
     this.clearRespawnText();
     this.playerRespawnPending = true;
+    this.deathDraftPickedThisLife = false;
     this.respawnRemainingMs = RESPAWN_COUNTDOWN_MS;
     this.respawnCountdownActive = false;
     this.playerHealth = 0;
@@ -1268,7 +1279,8 @@ export class MatchScene extends Phaser.Scene {
     this.clearTemporaryCombatEffects();
     this.shieldGraphics?.clear();
     this.playerRig?.setVisible(false);
-    this.resetWeaponProgression();
+    // Cards persist across deaths; the next life starts with the existing
+    // build PLUS whichever draft card the player picks below.
     this.audio?.play("explosion");
     this.spawnPlayerDeathExplosion(this.playerBody.position);
     this.time.delayedCall(DEATH_POPUP_DELAY_MS, () => {
@@ -1278,13 +1290,58 @@ export class MatchScene extends Phaser.Scene {
       this.respawnCountdownActive = true;
       this.respawnRemainingMs = RESPAWN_COUNTDOWN_MS;
       this.showDeathPopup();
+      this.openDeathDraft();
     });
     this.time.delayedCall(DEATH_POPUP_DELAY_MS + RESPAWN_COUNTDOWN_MS, () => {
       if (this.deathSequenceId !== deathSequence || !this.playerRespawnPending) {
         return;
       }
+      // Auto-pick the leftmost draft option if the player didn't choose in time.
+      if (!this.deathDraftPickedThisLife) {
+        this.cardDraftOverlay?.autoPick();
+      }
       this.respawnPlayer();
     });
+  }
+
+  private openDeathDraft() {
+    if (!this.cardDraftOverlay) {
+      this.cardDraftOverlay = new CardDraftOverlay();
+    }
+    const candidates = this.rollDraftCandidates(3);
+    if (candidates.length === 0) {
+      return;
+    }
+    this.cardDraftOverlay.show(candidates, (card) => {
+      if (this.deathDraftPickedThisLife) return;
+      this.deathDraftPickedThisLife = true;
+      this.progressionCardIds.push(card.id);
+      this.rebuildWeaponBuild();
+      this.lastPickupStatus = `drafted ${card.name}`;
+    });
+  }
+
+  private rollDraftCandidates(count: number): CardDefinition[] {
+    const picked: CardDefinition[] = [];
+    const seenIds = new Set<string>();
+    // Re-roll a few times if we keep drawing the same card. The rollProgression
+    // logic is weighted; we accept duplicates only as a last resort to fill the
+    // requested count.
+    for (let attempt = 0; attempt < count * 8 && picked.length < count; attempt += 1) {
+      const card = this.rollProgressionCard();
+      if (!card) break;
+      if (seenIds.has(card.id)) continue;
+      seenIds.add(card.id);
+      picked.push(card);
+    }
+    // Fallback: if uniqueness culling left us short, fill the rest with
+    // straight rolls (allowing duplicates) so the UI always has 3 options.
+    while (picked.length < count) {
+      const card = this.rollProgressionCard();
+      if (!card) break;
+      picked.push(card);
+    }
+    return picked;
   }
 
   private spawnPlayerDeathExplosion(position: Vec2) {
@@ -2358,16 +2415,6 @@ export class MatchScene extends Phaser.Scene {
       return;
     }
     this.playerHealth = Math.min(this.playerHealth, this.playerMaxHealth);
-  }
-
-  private resetWeaponProgression() {
-    if (this.progressionCardIds.length === 0) {
-      return;
-    }
-
-    this.progressionCardIds = [];
-    this.lastPickupStatus = "weapon reset";
-    this.rebuildWeaponBuild(false);
   }
 
   private clearTemporaryCombatEffects() {
