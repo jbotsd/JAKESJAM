@@ -87,14 +87,24 @@ export class MatchResultsOverlay {
       : undefined;
 
     if (winnerRow) {
-      this.titleEl.textContent = `MATCH WINNER: ${winnerRow.name.toUpperCase()}`;
+      this.titleEl.textContent = winnerRow.name.toUpperCase();
       this.titleEl.style.color = winnerRow.color ?? "#fff7d6";
+      this.titleEl.style.textShadow = `0 0 28px ${withAlpha(winnerRow.color ?? "#fff7d6", 0.45)}`;
+      this.subtitleEl.textContent = "MATCH WINNER";
     } else {
       this.titleEl.textContent = "DRAW";
       this.titleEl.style.color = "#f7fbff";
+      this.titleEl.style.textShadow = "0 0 18px rgba(247,251,255,0.3)";
+      this.subtitleEl.textContent = `First to ${view.targetScore}`;
     }
 
-    this.subtitleEl.textContent = `First to ${view.targetScore}`;
+    // Secondary subtitle line
+    if (winnerRow) {
+      const secondary = document.createElement("div");
+      secondary.textContent = `First to ${view.targetScore} · match over`;
+      Object.assign(secondary.style, SUBTITLE_STYLE);
+      this.subtitleEl.after(secondary);
+    }
 
     this.scoreboardEl.replaceChildren();
     const sortedRows = [...view.rows].sort((a, b) => {
@@ -118,7 +128,14 @@ export class MatchResultsOverlay {
     });
     this.actionsEl.append(rematchButton, lobbyButton);
 
+    // Entry animation
     this.root.style.display = "flex";
+    this.root.style.opacity = "0";
+    this.root.style.transform = "scale(0.94)";
+    requestAnimationFrame(() => {
+      this.root.style.opacity = "1";
+      this.root.style.transform = "scale(1)";
+    });
   }
 
   hide(): void {
@@ -212,42 +229,46 @@ const BASE_OVERLAY_STYLE: Partial<CSSStyleDeclaration> = {
   display: "flex",
   alignItems: "center",
   justifyContent: "center",
-  background: "rgba(8, 11, 18, 0.85)",
-  backdropFilter: "blur(8px)",
+  background: "rgba(5, 8, 15, 0.88)",
+  backdropFilter: "blur(10px)",
   fontFamily: "Inter, Arial, sans-serif",
   pointerEvents: "auto",
+  transition: "opacity 280ms cubic-bezier(0.4,0,0.2,1), transform 280ms cubic-bezier(0.34,1.56,0.64,1)",
 };
 
 const STAGE_STYLE: Partial<CSSStyleDeclaration> = {
   display: "flex",
   flexDirection: "column",
   alignItems: "center",
-  gap: "16px",
-  padding: "32px 36px",
-  borderRadius: "18px",
-  border: "1px solid rgba(80, 227, 194, 0.35)",
-  background: "linear-gradient(180deg, rgba(20, 24, 36, 0.95), rgba(11, 14, 20, 0.98))",
-  boxShadow: "0 0 48px rgba(80, 227, 194, 0.18)",
+  gap: "18px",
+  padding: "36px 40px",
+  borderRadius: "20px",
+  border: "1px solid rgba(143, 248, 255, 0.28)",
+  background:
+    "linear-gradient(160deg, rgba(16, 20, 32, 0.96), rgba(10, 13, 22, 0.99))",
+  boxShadow:
+    "0 40px 100px rgba(0,0,0,0.65), 0 0 1px rgba(143,248,255,0.35), 0 0 50px rgba(80,227,194,0.07), inset 0 1px 0 rgba(143,248,255,0.09)",
   minWidth: "520px",
-  maxWidth: "min(820px, 92vw)",
+  maxWidth: "min(840px, 92vw)",
   maxHeight: "92vh",
   overflowY: "auto",
 };
 
 const TITLE_STYLE: Partial<CSSStyleDeclaration> = {
-  fontSize: "30px",
+  fontSize: "40px",
   fontWeight: "900",
-  letterSpacing: "0.18em",
+  letterSpacing: "0.06em",
   textAlign: "center",
   color: "#fff7d6",
-  textShadow: "0 0 18px rgba(255, 247, 214, 0.45)",
+  lineHeight: "1.1",
 };
 
 const SUBTITLE_STYLE: Partial<CSSStyleDeclaration> = {
-  fontSize: "12px",
-  letterSpacing: "0.18em",
-  color: "#9aa5b1",
+  fontSize: "11px",
+  letterSpacing: "0.2em",
+  color: "#7a8aa3",
   textTransform: "uppercase",
+  textAlign: "center",
 };
 
 const SCOREBOARD_STYLE: Partial<CSSStyleDeclaration> = {
@@ -313,28 +334,29 @@ const ACTIONS_STYLE: Partial<CSSStyleDeclaration> = {
 };
 
 const BUTTON_BASE_STYLE: Partial<CSSStyleDeclaration> = {
-  padding: "11px 22px",
+  padding: "12px 26px",
   borderRadius: "10px",
   fontFamily: "Inter, Arial, sans-serif",
   fontWeight: "900",
-  fontSize: "14px",
-  letterSpacing: "0.12em",
+  fontSize: "13px",
+  letterSpacing: "0.14em",
   textTransform: "uppercase",
   cursor: "pointer",
   border: "1px solid #50e3c2",
-  transition: "transform 120ms ease, filter 120ms ease",
+  transition: "transform 140ms cubic-bezier(0.34,1.56,0.64,1), filter 120ms ease, box-shadow 120ms ease",
 };
 
 const PRIMARY_BUTTON_STYLE: Partial<CSSStyleDeclaration> = {
-  background: "linear-gradient(180deg, #50e3c2, #20c5a4)",
-  color: "#0b0e14",
-  borderColor: "#50e3c2",
+  background: "linear-gradient(180deg, #6af4d8 0%, #3fd4b2 100%)",
+  color: "#071110",
+  borderColor: "#59f0cf",
+  boxShadow: "0 0 18px rgba(80,227,194,0.28)",
 };
 
 const SECONDARY_BUTTON_STYLE: Partial<CSSStyleDeclaration> = {
-  background: "rgba(11, 14, 20, 0.85)",
+  background: "rgba(11, 14, 20, 0.88)",
   color: "#f7fbff",
-  borderColor: "#9aa5b1",
+  borderColor: "rgba(154,165,177,0.5)",
 };
 
 function colorForRarity(rarity: CardDefinition["rarity"]): string {
