@@ -1,19 +1,18 @@
-# sim/ — Shared Simulation Package
+# sim/ - Shared Simulation Package
 
-Owned by Dev A. See `docs/dev-stream-sim.md` for the full handoff.
+Owned by Dev A. This package is imported by client prediction code and the
+authoritative Bun server.
 
-This directory is imported by:
+## Hard Rules
 
-- `client/src/net/` (client-side prediction and reconciliation)
-- `server/src/` (authoritative tick loop on Bun)
+1. No imports from Phaser, the DOM, Convex, Bun, fetch, or other runtime-specific APIs.
+2. No wall-clock reads. Time enters through `dtMs`; randomness will enter through seeded `rngState`.
+3. `World.step(state, inputs, dtMs)` is pure at the boundary. It returns a `StepResult`.
+4. Entity iteration must be sorted once real simulation logic lands.
 
-## Hard rules
+## Current Status
 
-1. No imports from `phaser`, the DOM, `convex/react`, `Bun`, `fetch`, or any side-effecting global.
-2. No wall-clock reads — `Date.now()`, `performance.now()`, `Math.random()` are forbidden. Time is a parameter; randomness is `rng.ts` (seeded).
-3. `World.step(state, inputs, dt)` is pure and deterministic given `(state, inputs, dt, rngState)`.
-4. Iterate entities in sorted order, never raw `Object.values()` order.
-
-## Current status
-
-`types.ts` and `World.ts` are placeholders seeded by Dev B so the netcode and server can compile. Dev A finalizes both per the contract in `docs/dev-stream-sim.md`. Until then `World.step` is a no-op that just advances the tick and acks inputs.
+`types.ts` is the Day 1 network contract. `World.create` builds a minimal starting
+snapshot from map/player data. `World.step` is intentionally a no-op that returns
+`{ state, events: [] }` so Dev B can wire transport, prediction, and authority
+against stable call shapes before gameplay extraction begins.

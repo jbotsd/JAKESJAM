@@ -1,11 +1,5 @@
-// PLACEHOLDER — owned by Dev A (sim/gameplay stream).
-// Stub so client/src/net/ and server/ can import World and compile.
-// Dev A finalizes per docs/dev-stream-sim.md.
-//
-// This stub returns an empty world and a no-op step. The netcode wiring
-// will exercise the call shape; gameplay is no-op until extraction runs.
-
 import type {
+  EntityId,
   InputFrame,
   MapDefinition,
   PlayerId,
@@ -15,18 +9,22 @@ import type {
 } from './types.js';
 
 export class World {
-  static create(_map: MapDefinition, players: PlayerSpawnInfo[], rngSeed: number): WorldState {
+  static create(map: MapDefinition, players: PlayerSpawnInfo[], rngSeed: number): WorldState {
+    let nextEntityId: EntityId = 1;
     const playerEntities: WorldState['players'] = {};
-    for (const spawn of players) {
+    const scores: WorldState['round']['scores'] = {};
+
+    for (const [index, spawn] of players.entries()) {
+      const spawnPoint = map.spawns[index % Math.max(1, map.spawns.length)] ?? { x: 0, y: 0 };
       playerEntities[spawn.playerId] = {
         id: spawn.playerId,
         characterId: spawn.characterId,
-        x: 0,
-        y: 0,
+        x: spawnPoint.x,
+        y: spawnPoint.y,
         vx: 0,
         vy: 0,
-        aimX: 0,
-        aimY: 0,
+        aimX: spawnPoint.x + 160,
+        aimY: spawnPoint.y,
         health: 100,
         shieldActive: false,
         crouching: false,
@@ -38,6 +36,40 @@ export class World {
         abilityCharge: 0,
         lastProcessedInputSeq: 0,
       };
+      scores[spawn.playerId] = 0;
+    }
+
+    const destructibles: WorldState['destructibles'] = {};
+    for (const object of map.destructibles ?? []) {
+      const id = nextEntityId;
+      nextEntityId += 1;
+      destructibles[id] = {
+        id,
+        kind: object.kind,
+        x: object.position.x,
+        y: object.position.y,
+        width: object.size.x,
+        height: object.size.y,
+        health: object.health,
+        explosive: object.explosive,
+        flammable: object.flammable,
+      };
+    }
+
+    const pickups: WorldState['pickups'] = {};
+    for (const pickup of map.pickups ?? []) {
+      const id = nextEntityId;
+      nextEntityId += 1;
+      pickups[id] = {
+        id,
+        kind: pickup.kind,
+        x: pickup.position.x,
+        y: pickup.position.y,
+        radius: pickup.radius,
+        amount: pickup.amount,
+        active: true,
+        respawnAtTick: 0,
+      };
     }
 
     return {
@@ -45,13 +77,13 @@ export class World {
       rngState: rngSeed >>> 0,
       players: playerEntities,
       projectiles: {},
-      destructibles: {},
+      destructibles,
       firePatches: {},
-      pickups: {},
+      pickups,
       round: {
         phase: 'countdown',
         countdownRemainingMs: 3000,
-        scores: Object.fromEntries(players.map((p) => [p.playerId, 0])),
+        scores,
         roundIndex: 0,
         winnerPlayerId: null,
       },
@@ -60,26 +92,11 @@ export class World {
 
   static step(
     state: WorldState,
-    inputsByPlayer: Record<PlayerId, InputFrame | null>,
+    _inputsByPlayer: Record<PlayerId, InputFrame | null>,
     _dtMs: number,
   ): StepResult {
-    // No-op stub: advance tick, ack any incoming inputs so reconciliation
-    // can be exercised end-to-end before the real sim lands.
-    const nextPlayers: WorldState['players'] = {};
-    for (const [pid, entity] of Object.entries(state.players)) {
-      const input = inputsByPlayer[pid];
-      nextPlayers[pid] = {
-        ...entity,
-        lastProcessedInputSeq: input?.seq ?? entity.lastProcessedInputSeq,
-      };
-    }
-
     return {
-      state: {
-        ...state,
-        tick: state.tick + 1,
-        players: nextPlayers,
-      },
+      state,
       events: [],
     };
   }

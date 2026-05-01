@@ -1,23 +1,13 @@
-// PLACEHOLDER — owned by Dev A (sim/gameplay stream).
-// This file is the day-1 contract from docs/dev-stream-sim.md.
-// Dev B (netcode) seeded this stub so client/src/net/ and server/ have types
-// to compile against. Dev A owns this file going forward — finalize the shapes
-// as the sim is extracted from MatchScene/systems. If you change a shape,
-// ping Dev B before merging — protocol depends on these types.
-//
-// Contract section: docs/dev-stream-sim.md → "The Contract".
-
-// ---------------- Identifiers ----------------
+// Day 1 sim contract. This file is imported by client prediction code and the
+// authoritative Bun server, so changes here are protocol-sensitive.
 
 export type Tick = number;
 export type EntityId = number;
 export type PlayerId = string;
 export type InputSeq = number;
 
-// ---------------- Inputs ----------------
-
 /**
- * Bitfield layout (LSB → MSB):
+ * Bitfield layout, least significant bit first:
  *  0 left, 1 right, 2 up, 3 down, 4 jump,
  *  5 crouch, 6 fire, 7 ability, 8 shield,
  *  9..15 reserved.
@@ -32,8 +22,6 @@ export type InputFrame = {
   aimY: number;
   dtMs: number;
 };
-
-// ---------------- World state ----------------
 
 export type CharacterArchetype = 'balanced' | 'heavy' | 'sprinter' | 'shielded';
 
@@ -145,8 +133,6 @@ export type WorldState = {
   round: RoundState;
 };
 
-// ---------------- Discrete events ----------------
-
 export type SimEvent =
   | { t: 'shot-fired'; playerId: PlayerId; x: number; y: number }
   | {
@@ -159,17 +145,10 @@ export type SimEvent =
   | { t: 'pickup-taken'; entityId: EntityId; playerId: PlayerId }
   | { t: 'round-end'; winnerId: PlayerId | null };
 
-// ---------------- Step result ----------------
-
 export type StepResult = {
   state: WorldState;
   events: SimEvent[];
 };
-
-// ---------------- Spawn info / map definitions ----------------
-// Map definitions are owned by Dev A. Sim consumes a MapDefinition when
-// constructing the initial WorldState. The full shape will firm up as
-// extraction lands; for now just declare the placeholder.
 
 export type PlayerSpawnInfo = {
   playerId: PlayerId;
@@ -188,12 +167,32 @@ export type PlatformDefinition = {
   kind: 'floor' | 'wall' | 'platform';
 };
 
+export type DestructibleDefinition = {
+  id: string;
+  kind: DestructibleKind;
+  health: number;
+  position: Vec2;
+  size: Vec2;
+  explosive: boolean;
+  flammable: boolean;
+};
+
+export type PickupDefinition = {
+  id: string;
+  kind: PickupKind;
+  position: Vec2;
+  radius: number;
+  amount: number;
+  respawnMs: number;
+  durationMs?: number;
+};
+
 export type MapDefinition = {
   id: string;
   name: string;
   size: Vec2;
   spawns: Vec2[];
   platforms: PlatformDefinition[];
-  // Destructibles, pickups: Dev A will pull existing definitions in
-  // from client/src/game/data/maps.ts during extraction.
+  destructibles?: DestructibleDefinition[];
+  pickups?: PickupDefinition[];
 };
