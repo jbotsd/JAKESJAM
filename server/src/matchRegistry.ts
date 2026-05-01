@@ -24,6 +24,7 @@ export class MatchRegistry {
       ]);
       this.matches.set(matchId, host);
     } else if (!host.hasPlayer(playerId)) {
+      // Brand-new player joining an existing match.
       host.addPlayer({
         playerId,
         characterId: "balanced",
@@ -32,6 +33,8 @@ export class MatchRegistry {
         weaponId: "starter-pistol",
       });
     }
+    // Else: returning player, possibly mid-grace-window. attachClient handles
+    // clearing the disconnect timer and resending hello + a fresh snapshot.
     host.attachClient(ws);
   }
 
@@ -48,7 +51,10 @@ export class MatchRegistry {
     const host = this.matches.get(ws.data.matchId);
     if (!host) return;
     host.detachClient(ws);
-    if (!host.hasClients()) {
+    // Keep the host alive while any player is in their reconnect grace
+    // window — their entity is still in the world and they may yet come back.
+    // Once both clients and pending-disconnects are zero, we can truly evict.
+    if (!host.hasClients() && !host.hasPendingDisconnects()) {
       this.matches.delete(ws.data.matchId);
     }
   }
