@@ -282,7 +282,14 @@ export function stepWithRuntime(
       const slowActive =
         entity.slowedUntilTick !== undefined &&
         entity.slowedUntilTick > state.tick;
-      const speedMul = slowActive ? entity.slowMultiplier ?? 1 : 1;
+      const slowMul = slowActive ? entity.slowMultiplier ?? 1 : 1;
+      // Ice-element freeze stacks multiplicatively with slow-field. Both
+      // expire by tick comparison; `freezeMultiplier` is set at hit time.
+      const freezeActive =
+        entity.freezeUntilTick !== undefined &&
+        entity.freezeUntilTick > state.tick;
+      const freezeMul = freezeActive ? entity.freezeMultiplier ?? 1 : 1;
+      const speedMul = slowMul * freezeMul;
       const moveResult = stepPlayer(
         entity,
         prevKeys,
@@ -358,6 +365,66 @@ export function stepWithRuntime(
     }
 
     players[pid] = nextEntity;
+  }
+
+  // 1b. Element status effects: burn DoT + freeze expiry. Runs before the
+  //     projectile pass so a fatal burn tick lands before any new hits this
+  //     tick. Burn applies `burnDps` damage once per second of sim time
+  //     (rate-limited via `burnTickLastApplied`). Tick-quantized via STEP_MS;
+  //     no wall-clock. Frozen-state expiry is handled here too so renderers
+  //     see a clean field flip after the freeze window passes.
+  const ONE_SECOND_TICKS = Math.max(1, Math.round(1000 / Math.max(1, effDtMs)));
+  for (const pid of Object.keys(players)) {
+    const p = players[pid]!;
+    if (!p.alive) continue;
+    let next = p;
+    // Burn DoT.
+    if (
+      next.burnUntilTick !== undefined &&
+      next.burnUntilTick > state.tick &&
+      next.burnDps !== undefined &&
+      next.burnDps > 0
+    ) {
+      const last = next.burnTickLastApplied ?? -ONE_SECOND_TICKS;
+      if (state.tick - last >= ONE_SECOND_TICKS) {
+        const dmg = next.burnDps;
+        const newHealth = Math.max(0, next.health - dmg);
+        next = {
+          ...next,
+          health: newHealth,
+          alive: newHealth > 0,
+          burnTickLastApplied: state.tick,
+        };
+        events.push({
+          t: "hit-confirmed",
+          victimId: pid,
+          damage: dmg,
+          sourceProjectileId: null,
+        });
+      }
+    } else if (
+      next.burnUntilTick !== undefined &&
+      next.burnUntilTick <= state.tick
+    ) {
+      next = {
+        ...next,
+        burnUntilTick: undefined,
+        burnDps: undefined,
+        burnTickLastApplied: undefined,
+      };
+    }
+    // Freeze expiry.
+    if (
+      next.freezeUntilTick !== undefined &&
+      next.freezeUntilTick <= state.tick
+    ) {
+      next = {
+        ...next,
+        freezeUntilTick: undefined,
+        freezeMultiplier: undefined,
+      };
+    }
+    if (next !== p) players[pid] = next;
   }
 
   // 2. Satellites: rotate around their owners, fire projectiles when their
@@ -466,13 +533,94 @@ export function stepWithRuntime(
             // hit-confirmed (it's already in result.events; suppress here).
             continue;
           }
-          const finalDamage = mitigation.damage;
+          let finalDamage = mitigation.damage;
+          const element = proj.element;
+          // Radiant: 1.4x to a target already affected by any status effect.
+          if (element === "radiant") {
+            const hasStatus =
+              (postPlayer.burnUntilTick !== undefined &&
+                postPlayer.burnUntilTick > nextTick) ||
+              (postPlayer.freezeUntilTick !== undefined &&
+                postPlayer.freezeUntilTick > nextTick) ||
+              (postPlayer.slowedUntilTick !== undefined &&
+                postPlayer.slowedUntilTick > nextTick) ||
+              (postPlayer.vulnerabilityUntilTick !== undefined &&
+                postPlayer.vulnerabilityUntilTick > nextTick);
+            if (hasStatus) finalDamage *= 1.4;
+          }
+          // Void: 50% armor pierce hook. No armor stat exists yet — leave
+          // a no-op branch here so the wiring is in place when armor lands.
+          if (element === "void") {
+            // TODO: when `armor` is added to PlayerEntity, multiply
+            // finalDamage by 1 / (1 - 0.5 * armor). For now: no-op.
+          }
+          ev.damage = finalDamage;
           const newHealth = Math.max(0, postPlayer.health - finalDamage);
-          players[ev.victimId] = {
+          let nextVictim = {
             ...postPlayer,
             health: newHealth,
             alive: newHealth > 0,
           };
+          // Fire: 3-second burn DoT at damage * 0.4 per second. Tick-quantized.
+          if (element === "fire") {
+            const burnTicks = Math.ceil((3 * 1000) / Math.max(1, effDtMs));
+            nextVictim = {
+              ...nextVictim,
+              burnUntilTick: nextTick + burnTicks,
+              burnDps: finalDamage * 0.4,
+              burnTickLastApplied: nextTick,
+            };
+          }
+          // Ice: 1-second freeze at 0.5x movement.
+          if (element === "ice") {
+            const freezeTicks = Math.ceil((1 * 1000) / Math.max(1, effDtMs));
+            nextVictim = {
+              ...nextVictim,
+              freezeUntilTick: nextTick + freezeTicks,
+              freezeMultiplier: 0.5,
+            };
+          }
+          players[ev.victimId] = nextVictim;
+
+          // Lightning: chain half damage to the nearest OTHER alive player
+          // within radius. Depth 1 only (no recursion). Bypasses parry/shield
+          // for simplicity — the chain is a derived secondary hit.
+          if (element === "lightning") {
+            const CHAIN_RADIUS = 220;
+            const chainDmg = finalDamage * 0.5;
+            let bestId: PlayerId | null = null;
+            let bestD2 = CHAIN_RADIUS * CHAIN_RADIUS;
+            // Iterate sorted ids for determinism.
+            const ids = Object.keys(players).sort();
+            for (const oid of ids) {
+              if (oid === ev.victimId) continue;
+              if (oid === proj.ownerId) continue;
+              const other = players[oid]!;
+              if (!other.alive) continue;
+              const dx = other.x - nextVictim.x;
+              const dy = other.y - nextVictim.y;
+              const d2 = dx * dx + dy * dy;
+              if (d2 <= bestD2) {
+                bestD2 = d2;
+                bestId = oid;
+              }
+            }
+            if (bestId !== null) {
+              const target = players[bestId]!;
+              const tHealth = Math.max(0, target.health - chainDmg);
+              players[bestId] = {
+                ...target,
+                health: tHealth,
+                alive: tHealth > 0,
+              };
+              events.push({
+                t: "hit-confirmed",
+                victimId: bestId,
+                damage: chainDmg,
+                sourceProjectileId: ev.sourceProjectileId,
+              });
+            }
+          }
         }
       } else if (ev.t === "player-slowed" && players[ev.victimId]) {
         const victim = players[ev.victimId]!;
@@ -751,6 +899,12 @@ function respawnAll(
       parryCooldownUntilTick: undefined,
       parryFacing: undefined,
       shieldCharge: player.shieldMaxCharge ?? 100,
+      // Element status effects clear on respawn.
+      burnUntilTick: undefined,
+      burnDps: undefined,
+      burnTickLastApplied: undefined,
+      freezeUntilTick: undefined,
+      freezeMultiplier: undefined,
     };
   }
   return out;
