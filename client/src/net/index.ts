@@ -1,6 +1,11 @@
 // Public entrypoint for the client netcode package.
 
-export { ClientLoop, type ClientLoopOptions, type LocalInput } from "./clientLoop.js";
+export {
+  ClientLoop,
+  type ClientLoopOptions,
+  type LocalInput,
+  type NetStats,
+} from "./clientLoop.js";
 export { WsTransport, type WsTransportOptions } from "./wsTransport.js";
 export type { Transport, TransportState } from "./transport.js";
 export { InputBit, PROTOCOL_VERSION, encodeMessage, decodeMessage } from "./protocol.js";
