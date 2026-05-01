@@ -45,5 +45,8 @@ jobs:
       - name: Typecheck (server)
         run: bun run --filter server typecheck
 
+      - name: Test (sim)
+        run: bun run --filter client test
+
       - name: Build (client production)
         run: bun run build
