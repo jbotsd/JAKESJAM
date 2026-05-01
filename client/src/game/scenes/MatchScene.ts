@@ -673,7 +673,9 @@ export class MatchScene extends Phaser.Scene {
       return "CRYSTAL DUMMY";
     }
     const remote = this.getRoomPlayer(winnerId);
-    return (remote?.name ?? winnerId).toUpperCase();
+    // Fall back to a short id slice (last 4 chars) instead of dumping the
+    // full raw id like 'PLAYER_1B89' which wraps and reads like garbage.
+    return (remote?.name ?? winnerId.slice(-4)).toUpperCase();
   }
 
   private showMatchResults() {
@@ -1613,6 +1615,8 @@ export class MatchScene extends Phaser.Scene {
       }
       return;
     }
+    // Hide the death overlay so the picker is fully readable + clickable.
+    this.deathOverlay?.hide();
     this.cardDraftOverlay.show(candidates, (card) => {
       if (this.deathDraftPickedThisLife) return;
       // Stale-pick guard: a different death sequence (e.g. scene restart)
