@@ -30,8 +30,10 @@ export const TARGET_SCORE_DEFAULT = 3;
 export const DRAFT_WINDOW_MS = 8000;
 
 /**
- * Cards offered to each alive player when the round transitions into
- * drafting. Bumping this requires UI tweaks on the picker side.
+ * Cards offered to every player in the match when the round transitions
+ * into drafting (winners and freshly-killed losers alike — the loser is
+ * usually mid-respawn and would otherwise miss the draft entirely).
+ * Bumping this requires UI tweaks on the picker side.
  */
 export const DRAFT_OFFER_COUNT = 3;
 
@@ -174,14 +176,13 @@ export function stepRound(input: RoundStepInput): RoundStepResult {
     }
 
     case "drafting": {
-      // Resolution criterion: "all alive players have picked" OR
+      // Resolution criterion: "all participating players have picked" OR
       // "tick >= draftingExpiresAtTick". The countdown timer is not
-      // consulted in this phase.
+      // consulted in this phase. Drafting includes dead players too — the
+      // round-end loser is usually mid-respawn and must still get to pick.
       const offers = state.draftingOffers ?? {};
       const previousPicked = state.draftingPicked ?? {};
-      const aliveIds = Object.keys(players)
-        .filter((id) => players[id]!.alive)
-        .sort();
+      const draftingIds = Object.keys(players).sort();
 
       // We need a per-pick "have we already announced this draft-resolved?"
       // marker so picks landing across multiple ticks don't re-emit. Pure-
@@ -210,8 +211,8 @@ export function stepRound(input: RoundStepInput): RoundStepResult {
       const expired = tick !== undefined &&
         state.draftingExpiresAtTick !== undefined &&
         tick >= state.draftingExpiresAtTick;
-      const allPicked = aliveIds.length > 0 &&
-        aliveIds.every((id) => previousPicked[id] !== undefined);
+      const allPicked = draftingIds.length > 0 &&
+        draftingIds.every((id) => previousPicked[id] !== undefined);
 
       if (!expired && !allPicked) {
         // Stay in drafting. Persist the fired marker so subsequent ticks
@@ -232,7 +233,7 @@ export function stepRound(input: RoundStepInput): RoundStepResult {
       // patch is the fallback for the auto-pick case only.
       const playerPatches: Record<PlayerId, { cards: string[] }> = {};
       if (expired) {
-        for (const pid of aliveIds) {
+        for (const pid of draftingIds) {
           if (previousPicked[pid] !== undefined) continue;
           const playerOffers = offers[pid];
           if (!playerOffers || playerOffers.length === 0) continue;
@@ -282,12 +283,14 @@ function finalize(
 }
 
 /**
- * Roll DRAFT_OFFER_COUNT card ids per alive player using the seeded RNG.
- * Skips cards already in the player's hand when the source card declares
- * itself `unique: true` (so the same-rarity weapon never gets re-offered).
+ * Roll DRAFT_OFFER_COUNT card ids per player in the match using the seeded
+ * RNG. Includes dead players — the round-end loser is usually mid-respawn
+ * and must still see their picker. Skips cards already in the player's hand
+ * when the source card declares itself `unique: true` (so the same-rarity
+ * weapon never gets re-offered).
  *
- * Iteration order over alive players is sorted by id so the offer roll is
- * fully deterministic given (rngState, players).
+ * Iteration order over players is sorted by id so the offer roll is fully
+ * deterministic given (rngState, players).
  */
 function enterDrafting(
   next: RoundState,
@@ -297,13 +300,11 @@ function enterDrafting(
 ): { state: RoundState; events: SimEvent[]; rngState: number } {
   const events: SimEvent[] = [];
   let cursor = rngState;
-  const aliveIds = Object.keys(players)
-    .filter((id) => players[id]!.alive)
-    .sort();
+  const draftingIds = Object.keys(players).sort();
 
   const draftingOffers: Record<PlayerId, string[]> = {};
 
-  for (const pid of aliveIds) {
+  for (const pid of draftingIds) {
     const player = players[pid]!;
     const owned = new Set(player.cards);
     const candidatePool = crystalRoundsCards.filter((c) => {

@@ -298,13 +298,15 @@ export class MatchHost {
    *  - the round is still in `drafting` AND on the same `roundIndex` the
    *    client thinks it's picking for (prevents a stale click after the
    *    round flipped over);
-   *  - the player exists and is alive (dead players don't get to pick);
+   *  - the player exists (dead players ARE allowed to pick — the loser is
+   *    usually mid-respawn at draft time and would otherwise miss their
+   *    chance entirely);
    *  - `cardId` is one of the offers rolled for this player.
    *
    * On success, mirrors the patch into BOTH `player.cards` and
    * `state.round.draftingPicked[playerId]`. The latter is what `stepRound`
-   * diffs against to advance from drafting → countdown when all alive
-   * players have committed.
+   * diffs against to advance from drafting → countdown when all
+   * participating players have committed.
    *
    * The matching `draft-resolved` SimEvent is emitted by `stepRound` on
    * the next tick — we don't push it here. Single source of truth for the
@@ -318,7 +320,7 @@ export class MatchHost {
     if (round.phase !== "drafting") return;
     if (round.roundIndex !== message.roundIndex) return;
     const player = this.state.players[playerId];
-    if (!player || !player.alive) return;
+    if (!player) return;
 
     const offers = round.draftingOffers?.[playerId];
     if (!offers || !offers.includes(message.cardId)) return;

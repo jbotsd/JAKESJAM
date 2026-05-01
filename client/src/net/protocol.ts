@@ -36,7 +36,13 @@ export type Ping = {
   clientTime: number;
 };
 
-export type ClientMessage = ClientHello | Input | Ack | Ping;
+export type CardPick = {
+  t: "card-pick";
+  roundIndex: number;
+  cardId: string;
+};
+
+export type ClientMessage = ClientHello | Input | Ack | Ping | CardPick;
 
 // ---------------- Server → Client ----------------
 

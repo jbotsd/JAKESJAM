@@ -303,6 +303,17 @@ export class ClientLoop {
     }
   }
 
+  /**
+   * Send a draft-phase card commit. Server validates it's the right round
+   * and that `cardId` is in the player's offer set. The matching
+   * `draft-resolved` SimEvent comes back through the normal snapshot path.
+   */
+  sendCardPick(roundIndex: number, cardId: string): void {
+    this.transport.send(
+      encodeMessage({ t: "card-pick", roundIndex, cardId }),
+    );
+  }
+
   /** Updated by the input capture layer every frame before the next tick. */
   setLocalInput(input: LocalInput): void {
     this.currentInput = input;

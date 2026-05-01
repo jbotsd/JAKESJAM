@@ -717,10 +717,10 @@ export class OnlineMatchScene extends Phaser.Scene {
       .map((id) => crystalRoundsCards.find((c) => c.id === id))
       .filter((c): c is CardDefinition => Boolean(c));
     if (candidates.length === 0) return;
-    const onPick: CardPickHandler = () => {
-      // Server doesn't yet accept a card-pick input from the client on the
-      // netcode path; the overlay is for UX feedback only. The pick itself
-      // is intentionally a no-op for now.
+    const onPick: CardPickHandler = (card) => {
+      const state = this.loop?.getRenderState();
+      if (!state || !this.loop) return;
+      this.loop.sendCardPick(state.round.roundIndex, card.id);
     };
     this.cardDraftOverlay.show(candidates, onPick);
   }
