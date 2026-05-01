@@ -23,6 +23,9 @@ import {
   MatchResultsOverlay,
   type MatchResultsRow,
 } from "../ui/MatchResultsOverlay";
+import { HudSystem, type HudChip } from "../ui/HudSystem";
+import { RoundBanner } from "../ui/RoundBanner";
+import { DeathOverlay } from "../ui/DeathOverlay";
 import {
   MovementSystem,
   type MovementDebug,
@@ -145,8 +148,6 @@ export class MatchScene extends Phaser.Scene {
   private readonly remoteShotSequences = new Map<string, number>();
   private cameraTarget?: Phaser.GameObjects.Zone;
   private reticle?: Phaser.GameObjects.Graphics;
-  private debugText?: Phaser.GameObjects.Text;
-  private weaponText?: Phaser.GameObjects.Text;
   private scoreboardBack?: Phaser.GameObjects.Rectangle;
   private scoreboardText?: Phaser.GameObjects.Text;
   private scoreboardVisible = false;
@@ -221,6 +222,9 @@ export class MatchScene extends Phaser.Scene {
   // True once stepRound emits matchComplete this scene-life. Stops further
   // round/score mutations and gates the results overlay.
   private matchHasEnded = false;
+  private hudSystem?: HudSystem;
+  private roundBannerSystem?: RoundBanner;
+  private deathOverlay?: DeathOverlay;
 
   constructor() {
     super(SceneKeys.Match);
@@ -245,6 +249,12 @@ export class MatchScene extends Phaser.Scene {
       this.cardDraftOverlay = undefined;
       this.matchResultsOverlay?.destroy();
       this.matchResultsOverlay = undefined;
+      this.hudSystem?.destroy();
+      this.hudSystem = undefined;
+      this.roundBannerSystem?.destroy();
+      this.roundBannerSystem = undefined;
+      this.deathOverlay?.destroy();
+      this.deathOverlay = undefined;
     });
     window.removeEventListener("keydown", this.handleScoreboardKeyDown);
     window.addEventListener("keydown", this.handleScoreboardKeyDown);
@@ -299,10 +309,18 @@ export class MatchScene extends Phaser.Scene {
     this.createPlayerVisuals();
     this.createRemotePlayerVisuals();
     this.createReticle();
-    this.createDebugOverlay();
-    this.createWeaponOverlay();
     this.createScoreboardOverlay();
     this.createRoundBanner();
+    // ── New HUD / UI systems ──────────────────────────────────────────────
+    this.hudSystem?.destroy();
+    this.hudSystem = new HudSystem(this, this.localPlayerId);
+    this.roundBannerSystem?.destroy();
+    this.roundBannerSystem = new RoundBanner(this);
+    if (!this.deathOverlay) {
+      this.deathOverlay = new DeathOverlay();
+    } else {
+      this.deathOverlay.hide();
+    }
     this.bindKeys();
     this.ensureScore(this.localPlayerId);
     this.rebuildWeaponBuild();
@@ -316,7 +334,7 @@ export class MatchScene extends Phaser.Scene {
   }
 
   update(_time: number, deltaMs: number) {
-    if (!this.keys || !this.playerRig || !this.debugText || !this.projectileSystem) {
+    if (!this.keys || !this.playerRig || !this.projectileSystem) {
       return;
     }
 
@@ -352,9 +370,9 @@ export class MatchScene extends Phaser.Scene {
       this.syncPlayerVisuals(deltaMs);
       this.syncRemotePlayerVisuals(deltaMs);
       this.updateReticle();
-      this.updateDebugText();
-      this.updateWeaponOverlay();
       this.updateScoreboardOverlay();
+      this.updateHudSystem();
+      this.updateRoundBannerSystem();
       return;
     }
 
@@ -397,9 +415,9 @@ export class MatchScene extends Phaser.Scene {
     this.syncPlayerVisuals(deltaMs);
     this.syncRemotePlayerVisuals(deltaMs);
     this.updateReticle();
-    this.updateDebugText();
-    this.updateWeaponOverlay();
     this.updateScoreboardOverlay();
+    this.updateHudSystem();
+    this.updateRoundBannerSystem();
   }
 
   private renderArena() {
@@ -485,30 +503,6 @@ export class MatchScene extends Phaser.Scene {
 
   private createReticle() {
     this.reticle = this.add.graphics();
-  }
-
-  private createDebugOverlay() {
-    this.debugText = this.add.text(26, 24, "", {
-      color: "#50e3c2",
-      fontFamily: "Consolas, monospace",
-      fontSize: "16px",
-      fontStyle: "900",
-      lineSpacing: 4,
-    });
-    this.debugText.setScrollFactor(0);
-    this.updateDebugText();
-  }
-
-  private createWeaponOverlay() {
-    this.weaponText = this.add.text(620, 24, "", {
-      color: "#dff7ff",
-      fontFamily: "Consolas, monospace",
-      fontSize: "12px",
-      lineSpacing: 4,
-      wordWrap: { width: 315, useAdvancedWrap: true },
-    });
-    this.weaponText.setScrollFactor(0);
-    this.updateWeaponOverlay();
   }
 
   private createScoreboardOverlay() {
@@ -1589,9 +1583,34 @@ export class MatchScene extends Phaser.Scene {
       (this.bossModeMs > 0 ? 1.12 : 1);
     this.playerHealth = Math.max(0, this.playerHealth - modifiedAmount);
     this.audio?.play("hit");
+    this.spawnDamageNumber(this.playerBody.position, modifiedAmount, true);
     if (this.playerHealth <= 0) {
       this.killPlayer();
     }
+  }
+
+  private spawnDamageNumber(position: Vec2, amount: number, isLocal: boolean): void {
+    if (amount < 1) return;
+    const spread = (Math.random() - 0.5) * 22;
+    const text = this.add
+      .text(position.x + spread, position.y - 32, Math.round(amount).toString(), {
+        color: isLocal ? "#fb7185" : "#fff7d6",
+        fontFamily: "Inter, Arial, sans-serif",
+        fontSize: amount >= 30 ? "18px" : "14px",
+        fontStyle: "900",
+        stroke: "#05080f",
+        strokeThickness: 3,
+      })
+      .setOrigin(0.5, 1)
+      .setDepth(800);
+    this.tweens.add({
+      targets: text,
+      y: text.y - 28,
+      alpha: 0,
+      duration: 560,
+      ease: "Sine.easeOut",
+      onComplete: () => text.destroy(),
+    });
   }
 
   private isParryCovering(sourcePosition?: Vec2): boolean {
@@ -1743,21 +1762,11 @@ export class MatchScene extends Phaser.Scene {
   }
 
   private showDeathPopup() {
-    const { width, height } = this.scale;
     this.clearRespawnText();
-    this.respawnText = this.add
-      .text(width / 2, height * 0.28, this.getRespawnMessage(), {
-        color: "#fff7d6",
-        fontFamily: "Inter, Arial, sans-serif",
-        fontSize: "32px",
-        fontStyle: "900",
-        align: "center",
-        stroke: "#0b0e14",
-        strokeThickness: 8,
-      })
-      .setOrigin(0.5)
-      .setScrollFactor(0)
-      .setDepth(1000);
+    const sec = Math.ceil(this.respawnRemainingMs / 1000);
+    if (this.deathOverlay) {
+      this.deathOverlay.show(sec);
+    }
   }
 
   private updateRespawnCountdown(deltaMs: number) {
@@ -1770,21 +1779,101 @@ export class MatchScene extends Phaser.Scene {
   }
 
   private updateRespawnText() {
+    const sec = Math.ceil(this.respawnRemainingMs / 1000);
+    if (this.deathOverlay?.isOpen()) {
+      this.deathOverlay.updateTimer(sec);
+    }
+    // Legacy text fallback (destroyed path)
     if (!this.respawnText) {
       return;
     }
-
     this.respawnText.setText(this.getRespawnMessage());
   }
 
   private getRespawnMessage(): string {
     const seconds = Math.ceil(this.respawnRemainingMs / 1000);
-    return `LOL GIT GUD CUNT\nRESPAWN ${seconds}`;
+    return `RESPAWN ${seconds}`;
   }
 
   private clearRespawnText() {
     this.respawnText?.destroy();
     this.respawnText = undefined;
+    this.deathOverlay?.hide();
+  }
+
+  // ── HUD system update ─────────────────────────────────────────────────────
+
+  private updateHudSystem(): void {
+    if (!this.hudSystem) return;
+
+    const chips = this.buildHudChips();
+    const cardNames = this.progressionCardIds
+      .map((id) => this.crystalCardsById(id))
+      .filter((n): n is string => n !== undefined);
+
+    const vitals: import("../ui/HudSystem").HudVitals = {
+      health: this.playerHealth,
+      maxHealth: this.playerMaxHealth,
+      shieldCharge: this.shieldCharge,
+      shieldMaxCharge: 100,
+      jetpackFuel: this.movementDebug.jetpackFuel < 100 || this.movementDebug.jetpackActive
+        ? this.movementDebug.jetpackFuel
+        : undefined,
+      chips,
+      cardNames,
+      isDead: this.playerRespawnPending,
+    };
+
+    const scores: Record<string, number> = {};
+    for (const [pid, score] of this.playerScores) {
+      scores[pid] = score.kills;
+    }
+
+    const round: import("../ui/HudSystem").HudRound = {
+      phase: this.roundState.phase,
+      countdownRemainingMs: this.roundState.countdownRemainingMs,
+      roundIndex: this.roundState.roundIndex,
+      scores,
+      winnerLabel: this.roundState.phase === "round-over"
+        ? this.getRoundWinnerLabel(this.roundState.winnerPlayerId)
+        : undefined,
+    };
+
+    this.hudSystem.update(vitals, round);
+  }
+
+  private updateRoundBannerSystem(): void {
+    if (!this.roundBannerSystem) return;
+    const winnerLabel = this.roundState.phase === "round-over"
+      ? this.getRoundWinnerLabel(this.roundState.winnerPlayerId)
+      : undefined;
+    this.roundBannerSystem.update({
+      phase: this.roundState.phase,
+      countdownRemainingMs: this.roundState.countdownRemainingMs,
+      roundIndex: this.roundState.roundIndex,
+      winnerLabel,
+    });
+  }
+
+  private buildHudChips(): HudChip[] {
+    const chips: HudChip[] = [];
+    const now = performance.now(); // approximate — just for remaining calc
+    // Buffs
+    if (this.overchargeMs > 0) chips.push({ label: "OVERCHARGE", color: 0xfde68a, remainingSec: this.overchargeMs / 1000, isDebuff: false });
+    if (this.damageAmpMs > 0) chips.push({ label: "DMG AMP", color: 0xfb923c, remainingSec: this.damageAmpMs / 1000, isDebuff: false });
+    if (this.speedBoostMs > 0) chips.push({ label: "SPEED", color: 0x67e8f9, remainingSec: this.speedBoostMs / 1000, isDebuff: false });
+    if (this.meleeModeMs > 0) chips.push({ label: "MELEE", color: 0xf0abfc, remainingSec: this.meleeModeMs / 1000, isDebuff: false });
+    if (this.bossModeMs > 0) chips.push({ label: "BOSS", color: 0xfb7185, remainingSec: this.bossModeMs / 1000, isDebuff: false });
+    // Debuffs
+    if (this.slowDebuffMs > 0) chips.push({ label: "SLOW", color: 0x93c5fd, remainingSec: this.slowDebuffMs / 1000, isDebuff: true });
+    if (this.vulnerabilityMs > 0) chips.push({ label: "VULN", color: 0xfb7185, remainingSec: this.vulnerabilityMs / 1000, isDebuff: true });
+    if (this.blockJammerMs > 0) chips.push({ label: "JAMMER", color: 0x9aa5b1, remainingSec: this.blockJammerMs / 1000, isDebuff: true });
+    void now; // suppress unused
+    return chips;
+  }
+
+  private crystalCardsById(id: string): string | undefined {
+    return crystalRoundsCards.find((c) => c.id === id)?.name;
   }
 
   private respawnPlayer() {
@@ -2537,59 +2626,41 @@ export class MatchScene extends Phaser.Scene {
     const aimTarget = this.getAimTarget();
     const origin = this.getMuzzlePosition();
     this.reticle.clear();
-    this.reticle.lineStyle(1, 0x50e3c2, 0.45);
+    // Aim trace line — subtle cyan, dashed effect via two segments
+    this.reticle.lineStyle(1, 0x8ff8ff, 0.22);
     this.reticle.beginPath();
     this.reticle.moveTo(origin.x, origin.y);
     this.reticle.lineTo(aimTarget.x, aimTarget.y);
     this.reticle.strokePath();
 
-    this.reticle.lineStyle(2, 0xf7fbff, 0.9);
-    this.reticle.strokeCircle(aimTarget.x, aimTarget.y, 9);
+    // Outer ring (dark outline for contrast on any background)
+    this.reticle.lineStyle(4, 0x05080f, 0.55);
+    this.reticle.strokeCircle(aimTarget.x, aimTarget.y, 10);
+    // Inner ring (bright accent)
+    this.reticle.lineStyle(2, 0x8ff8ff, 0.92);
+    this.reticle.strokeCircle(aimTarget.x, aimTarget.y, 10);
+
+    // Cross-hair lines — dark outline first for contrast
+    const crossLines: Array<[number, number, number, number]> = [
+      [aimTarget.x - 17, aimTarget.y, aimTarget.x - 5, aimTarget.y],
+      [aimTarget.x + 5, aimTarget.y, aimTarget.x + 17, aimTarget.y],
+      [aimTarget.x, aimTarget.y - 17, aimTarget.x, aimTarget.y - 5],
+      [aimTarget.x, aimTarget.y + 5, aimTarget.x, aimTarget.y + 17],
+    ];
+    this.reticle.lineStyle(3, 0x05080f, 0.5);
     this.reticle.beginPath();
-    this.reticle.moveTo(aimTarget.x - 15, aimTarget.y);
-    this.reticle.lineTo(aimTarget.x - 5, aimTarget.y);
-    this.reticle.moveTo(aimTarget.x + 5, aimTarget.y);
-    this.reticle.lineTo(aimTarget.x + 15, aimTarget.y);
-    this.reticle.moveTo(aimTarget.x, aimTarget.y - 15);
-    this.reticle.lineTo(aimTarget.x, aimTarget.y - 5);
-    this.reticle.moveTo(aimTarget.x, aimTarget.y + 5);
-    this.reticle.lineTo(aimTarget.x, aimTarget.y + 15);
+    for (const [x1, y1, x2, y2] of crossLines) {
+      this.reticle.moveTo(x1, y1);
+      this.reticle.lineTo(x2, y2);
+    }
     this.reticle.strokePath();
-  }
-
-  private updateDebugText() {
-    if (!this.debugText) {
-      return;
+    this.reticle.lineStyle(1.5, 0xf7fbff, 0.95);
+    this.reticle.beginPath();
+    for (const [x1, y1, x2, y2] of crossLines) {
+      this.reticle.moveTo(x1, y1);
+      this.reticle.lineTo(x2, y2);
     }
-
-    this.debugText.setText([
-      "HEALTH",
-      `${Math.ceil(this.playerHealth)}/${this.playerMaxHealth}`,
-      `JET ${this.movementDebug.jetpackFuel}${this.movementDebug.jetpackActive ? " ON" : ""}`,
-    ]);
-  }
-
-  private updateWeaponOverlay() {
-    if (!this.weaponText || !this.projectileSystem) {
-      return;
-    }
-
-    const chaos = this.getChaosProfile();
-    const activeBuild = this.createChaosWeaponBuild();
-    const mutatorNames = this.weaponBuild.cards.length > 0
-      ? this.weaponBuild.cards.map((card) => card.name).join(", ")
-      : "Base weapon";
-
-    this.weaponText.setText([
-      `WEAPON ${activeBuild.name}`,
-      `MUTATORS ${this.weaponBuild.cards.length}`,
-      mutatorNames,
-      `fire ${activeBuild.delivery}  shots ${chaos.disableProjectiles ? 0 : activeBuild.projectile.count}`,
-      `shape ${activeBuild.projectile.shape}  path ${activeBuild.projectile.pathing}`,
-      `element ${activeBuild.projectile.element}  impact ${activeBuild.projectile.impact}`,
-      `dmg ${activeBuild.damage}  rate ${activeBuild.fireRate}/s`,
-      `cooldown ${Math.round(this.getShotCooldownMs(activeBuild))}ms  block ${this.parryCooldownMs <= 0 ? "ready" : `${Math.ceil(this.parryCooldownMs / 1000)}s`}`,
-    ]);
+    this.reticle.strokePath();
   }
 
   private updateScoreboardOverlay() {
@@ -2667,7 +2738,6 @@ export class MatchScene extends Phaser.Scene {
     this.movement.reset();
     this.updateCameraTarget();
     this.syncPlayerVisuals();
-    this.updateDebugText();
   }
 
   private rebuildWeaponBuild(playSound = true) {
@@ -2682,7 +2752,6 @@ export class MatchScene extends Phaser.Scene {
     if (playSound) {
       this.audio?.play("card");
     }
-    this.updateWeaponOverlay();
   }
 
   private syncEffectiveMaxHealth(healAddedHealth: boolean) {
