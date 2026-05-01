@@ -49,6 +49,7 @@ import type {
   PickupKind,
   Vec2,
 } from "../types/game";
+import { CardSystem } from "../systems/CardSystem";
 import type { MatchPlayerSnapshot, RoomPlayer } from "../types/net";
 
 const STANDING_CHEST_OFFSET = 75;
@@ -150,7 +151,7 @@ export class MatchScene extends Phaser.Scene {
   private scoreboardText?: Phaser.GameObjects.Text;
   private scoreboardVisible = false;
   private respawnText?: Phaser.GameObjects.Text;
-  private targetGraphics?: Phaser.GameObjects.Graphics;
+  private readonly cardSystem = new CardSystem();
   private targetText?: Phaser.GameObjects.Text;
   private destructibleGraphics?: Phaser.GameObjects.Graphics;
   private fireGraphics?: Phaser.GameObjects.Graphics;
