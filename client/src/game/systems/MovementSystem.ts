@@ -43,12 +43,12 @@ const MOVEMENT = {
   coyoteMs: 110,
   jumpBufferMs: 110,
   maxFallSpeed: 900,
-  jetpackMaxFuel: 100,
-  jetpackThrust: 980,
-  jetpackFuelDrainPerSecond: 38,
-  jetpackGroundRechargePerSecond: 58,
-  jetpackAirRechargePerSecond: 14,
-  jetpackMinUpwardVelocity: -430,
+  jetpackMaxFuel: 125,
+  jetpackThrust: 1480,
+  jetpackFuelDrainPerSecond: 32,
+  jetpackGroundRechargePerSecond: 64,
+  jetpackAirRechargePerSecond: 10,
+  jetpackMinUpwardVelocity: -640,
 };
 
 export class MovementSystem {

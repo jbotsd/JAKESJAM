@@ -5,6 +5,7 @@
 - Added a small rechargeable Space-hold jetpack for higher traversal while keeping W as a clean jump input.
 - Added jetpack fuel/debug readout beside player health and a small flame plume while the boost is active.
 - Moved directional parry to right mouse button while keeping `C` as a keyboard fallback.
+- Tuned jetpack fuel and lift upward so Space-hold can reach higher platform blocks reliably.
 
 ## v0.22 - 2026-05-01
 
