@@ -5,9 +5,6 @@
 //
 // Lifecycle: scene constructs once on `create`, calls show() in killPlayer,
 // hide() on pick or auto-pick, destroy() on scene shutdown.
-//
-// showWithTimer(cards, onPick, totalMs) enables the respawn-timer progress
-// bar that counts down from totalMs. Hide/destroy stop any running timer.
 
 import type { CardDefinition } from "../types/game";
 
@@ -18,13 +15,9 @@ export class CardDraftOverlay {
   private cardsContainer: HTMLDivElement;
   private titleEl: HTMLDivElement;
   private hintEl: HTMLDivElement;
-  private timerBar: HTMLDivElement;
   private currentCards: CardDefinition[] = [];
   private currentHandler: CardPickHandler | null = null;
   private destroyed = false;
-  private timerRafId: number | null = null;
-  private timerStartMs = 0;
-  private timerTotalMs = 0;
 
   constructor() {
     this.root = document.createElement("div");
@@ -34,35 +27,18 @@ export class CardDraftOverlay {
     const stage = document.createElement("div");
     Object.assign(stage.style, STAGE_STYLE);
 
-    // Header row: kicker + title
-    const header = document.createElement("div");
-    Object.assign(header.style, HEADER_STYLE);
-
-    const kicker = document.createElement("div");
-    kicker.textContent = "BETWEEN ROUNDS";
-    Object.assign(kicker.style, KICKER_STYLE);
-
     this.titleEl = document.createElement("div");
-    this.titleEl.textContent = "CHOOSE YOUR UPGRADE";
+    this.titleEl.textContent = "PICK A CARD";
     Object.assign(this.titleEl.style, TITLE_STYLE);
 
     this.hintEl = document.createElement("div");
-    this.hintEl.textContent = "Pick one card. Auto-selects when the timer expires.";
+    this.hintEl.textContent = "Choose one. The next life starts when you pick (or when the respawn timer ends).";
     Object.assign(this.hintEl.style, HINT_STYLE);
-
-    header.append(kicker, this.titleEl, this.hintEl);
-
-    // Timer bar
-    const timerTrack = document.createElement("div");
-    Object.assign(timerTrack.style, TIMER_TRACK_STYLE);
-    this.timerBar = document.createElement("div");
-    Object.assign(this.timerBar.style, TIMER_BAR_STYLE);
-    timerTrack.appendChild(this.timerBar);
 
     this.cardsContainer = document.createElement("div");
     Object.assign(this.cardsContainer.style, CARDS_CONTAINER_STYLE);
 
-    stage.append(header, timerTrack, this.cardsContainer);
+    stage.append(this.titleEl, this.hintEl, this.cardsContainer);
     this.root.appendChild(stage);
 
     document.body.appendChild(this.root);
@@ -70,10 +46,6 @@ export class CardDraftOverlay {
   }
 
   show(cards: CardDefinition[], onPick: CardPickHandler): void {
-    this.showWithTimer(cards, onPick, 0);
-  }
-
-  showWithTimer(cards: CardDefinition[], onPick: CardPickHandler, totalMs: number): void {
     if (this.destroyed) return;
     this.currentCards = cards;
     this.currentHandler = onPick;
@@ -85,25 +57,7 @@ export class CardDraftOverlay {
       this.cardsContainer.appendChild(el);
     }
 
-    // Entry animation
     this.root.style.display = "flex";
-    this.root.style.opacity = "0";
-    this.root.style.transform = "scale(0.96)";
-    requestAnimationFrame(() => {
-      this.root.style.opacity = "1";
-      this.root.style.transform = "scale(1)";
-    });
-
-    // Timer
-    this.stopTimer();
-    if (totalMs > 0) {
-      this.timerTotalMs = totalMs;
-      this.timerStartMs = performance.now();
-      this.timerBar.style.width = "100%";
-      this.tickTimer();
-    } else {
-      this.timerBar.style.width = "0%";
-    }
   }
 
   hide(): void {
@@ -111,7 +65,6 @@ export class CardDraftOverlay {
     this.root.style.display = "none";
     this.currentHandler = null;
     this.currentCards = [];
-    this.stopTimer();
   }
 
   /**
@@ -135,34 +88,7 @@ export class CardDraftOverlay {
     if (this.destroyed) return;
     this.destroyed = true;
     this.currentHandler = null;
-    this.stopTimer();
     this.root.remove();
-  }
-
-  private stopTimer(): void {
-    if (this.timerRafId !== null) {
-      cancelAnimationFrame(this.timerRafId);
-      this.timerRafId = null;
-    }
-  }
-
-  private tickTimer(): void {
-    if (this.destroyed) return;
-    const elapsed = performance.now() - this.timerStartMs;
-    const ratio = Math.max(0, 1 - elapsed / this.timerTotalMs);
-    this.timerBar.style.width = `${ratio * 100}%`;
-    // Color transitions: green → warn → red
-    const pct = ratio * 100;
-    if (pct > 50) {
-      this.timerBar.style.background = "#b8f05a";
-    } else if (pct > 20) {
-      this.timerBar.style.background = "#fde68a";
-    } else {
-      this.timerBar.style.background = "#fb7185";
-    }
-    if (ratio > 0) {
-      this.timerRafId = requestAnimationFrame(() => this.tickTimer());
-    }
   }
 
   private handlePick(card: CardDefinition): void {
@@ -229,122 +155,77 @@ const BASE_OVERLAY_STYLE: Partial<CSSStyleDeclaration> = {
   display: "flex",
   alignItems: "center",
   justifyContent: "center",
-  background: "rgba(5, 8, 15, 0.82)",
-  backdropFilter: "blur(8px)",
+  background: "rgba(11, 14, 20, 0.78)",
+  backdropFilter: "blur(6px)",
   fontFamily: "Inter, Arial, sans-serif",
   pointerEvents: "auto",
-  transition: "opacity 220ms ease, transform 220ms ease",
 };
 
 const STAGE_STYLE: Partial<CSSStyleDeclaration> = {
   display: "flex",
   flexDirection: "column",
   alignItems: "center",
-  gap: "20px",
-  padding: "32px 36px",
-  borderRadius: "18px",
-  border: "1px solid rgba(143, 248, 255, 0.22)",
-  background: "linear-gradient(160deg, rgba(16, 20, 32, 0.94), rgba(10, 13, 22, 0.97))",
-  boxShadow:
-    "0 32px 80px rgba(0,0,0,0.6), 0 0 1px rgba(143,248,255,0.3), inset 0 1px 0 rgba(143,248,255,0.07)",
-  maxWidth: "min(1100px, 95vw)",
-  maxHeight: "92vh",
-  overflowY: "auto",
-};
-
-const HEADER_STYLE: Partial<CSSStyleDeclaration> = {
-  display: "flex",
-  flexDirection: "column",
-  alignItems: "center",
-  gap: "6px",
-};
-
-const KICKER_STYLE: Partial<CSSStyleDeclaration> = {
-  fontSize: "11px",
-  fontWeight: "900",
-  letterSpacing: "0.18em",
-  color: "#8ff8ff",
-  textTransform: "uppercase",
+  gap: "18px",
+  padding: "28px 32px",
 };
 
 const TITLE_STYLE: Partial<CSSStyleDeclaration> = {
-  fontSize: "26px",
+  fontSize: "28px",
   fontWeight: "900",
-  letterSpacing: "0.12em",
+  letterSpacing: "0.18em",
   color: "#f7fbff",
-  textTransform: "uppercase",
+  textShadow: "0 0 18px rgba(80, 227, 194, 0.55)",
 };
 
 const HINT_STYLE: Partial<CSSStyleDeclaration> = {
-  fontSize: "11px",
-  color: "#7a8aa3",
-  letterSpacing: "0.04em",
-};
-
-const TIMER_TRACK_STYLE: Partial<CSSStyleDeclaration> = {
-  width: "100%",
-  height: "4px",
-  borderRadius: "2px",
-  background: "rgba(255,255,255,0.08)",
-  overflow: "hidden",
-};
-
-const TIMER_BAR_STYLE: Partial<CSSStyleDeclaration> = {
-  height: "100%",
-  borderRadius: "2px",
-  background: "#b8f05a",
-  width: "0%",
-  transition: "background 300ms ease",
+  fontSize: "12px",
+  color: "#9aa5b1",
+  letterSpacing: "0.05em",
 };
 
 const CARDS_CONTAINER_STYLE: Partial<CSSStyleDeclaration> = {
   display: "flex",
-  gap: "18px",
-  flexWrap: "wrap",
-  justifyContent: "center",
+  gap: "20px",
+  marginTop: "8px",
 };
 
 const CARD_STYLE: Partial<CSSStyleDeclaration> = {
-  width: "280px",
-  minHeight: "380px",
-  padding: "22px 20px",
-  borderRadius: "16px",
+  width: "240px",
+  minHeight: "300px",
+  padding: "20px 18px",
+  borderRadius: "14px",
   border: "2px solid #f0abfc",
-  background:
-    "linear-gradient(160deg, rgba(22, 26, 40, 0.94), rgba(11, 14, 22, 0.98))",
+  background: "linear-gradient(160deg, rgba(20, 24, 36, 0.92), rgba(11, 14, 20, 0.96))",
   color: "#f7fbff",
   cursor: "pointer",
-  transition: "transform 140ms cubic-bezier(0.34,1.56,0.64,1), box-shadow 140ms ease",
+  transition: "transform 120ms ease, box-shadow 120ms ease",
   display: "flex",
   flexDirection: "column",
-  gap: "12px",
+  gap: "10px",
 };
 
 const RARITY_STYLE: Partial<CSSStyleDeclaration> = {
   fontSize: "10px",
   fontWeight: "900",
-  letterSpacing: "0.2em",
-  textTransform: "uppercase",
+  letterSpacing: "0.18em",
 };
 
 const NAME_STYLE: Partial<CSSStyleDeclaration> = {
-  fontSize: "22px",
+  fontSize: "20px",
   fontWeight: "900",
   lineHeight: "1.1",
-  letterSpacing: "0.01em",
 };
 
 const BUCKETS_STYLE: Partial<CSSStyleDeclaration> = {
   fontSize: "10px",
   fontWeight: "700",
-  letterSpacing: "0.14em",
-  color: "#7a8aa3",
-  textTransform: "uppercase",
+  letterSpacing: "0.12em",
+  color: "#9aa5b1",
 };
 
 const DESCRIPTION_STYLE: Partial<CSSStyleDeclaration> = {
   fontSize: "13px",
-  lineHeight: "1.5",
+  lineHeight: "1.4",
   color: "#caffea",
   flex: "1",
 };
@@ -352,10 +233,9 @@ const DESCRIPTION_STYLE: Partial<CSSStyleDeclaration> = {
 const FLAVOR_STYLE: Partial<CSSStyleDeclaration> = {
   fontSize: "11px",
   fontStyle: "italic",
-  color: "#a78bfa",
+  color: "#f0abfc",
   opacity: "0.78",
   marginTop: "auto",
-  lineHeight: "1.4",
 };
 
 /**
