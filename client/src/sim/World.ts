@@ -197,6 +197,12 @@ export function stepWithRuntime(
     // Movement (only when alive and fighting). Dead players freeze in place.
     let nextEntity = entity;
     if (entity.alive && fightingPhase) {
+      // Slow-field debuff: while slowedUntilTick is in the future, dampen
+      // the player's movement by their slowMultiplier.
+      const slowActive =
+        entity.slowedUntilTick !== undefined &&
+        entity.slowedUntilTick > state.tick;
+      const speedMul = slowActive ? entity.slowMultiplier ?? 1 : 1;
       const moveResult = stepPlayer(
         entity,
         prevKeys,
@@ -206,6 +212,7 @@ export function stepWithRuntime(
         mem,
         runtime.map.platforms,
         dtMs,
+        { speedMultiplier: speedMul },
       );
       nextEntity = moveResult.player;
       runtime.movement.set(pid, moveResult.memory);
@@ -241,34 +248,81 @@ export function stepWithRuntime(
     players[pid] = nextEntity;
   }
 
-  // 2. Projectiles: motion + collision against platforms and players.
+  // 2. Projectiles: motion + pathing + impact + split-on-expire. All hits
+  //    (direct + AOE) emit `hit-confirmed`; we apply the damage once per
+  //    event into `players`. Children spawned by split get fresh ids from
+  //    the runtime allocator and join the world next tick.
   const remainingProjectiles: WorldState["projectiles"] = {};
   const sortedProjectileIds = Object.keys(nextProjectiles)
     .map((id) => Number(id))
     .sort((a, b) => a - b);
 
+  const nextTick = state.tick + 1;
+  let rngState = state.rngState;
+
   for (const id of sortedProjectileIds) {
     const proj = nextProjectiles[id]!;
-    const result = stepProjectile(proj, runtime.map.platforms, players, dtMs);
-    if (result.expired || result.projectile === null) {
-      // Apply hit damage if any.
-      for (const ev of result.events) {
-        if (ev.t === "hit-confirmed" && players[ev.victimId]) {
-          const victim = players[ev.victimId]!;
-          if (victim.alive) {
-            const newHealth = Math.max(0, victim.health - ev.damage);
-            players[ev.victimId] = {
-              ...victim,
-              health: newHealth,
-              alive: newHealth > 0,
-            };
-          }
+    const result = stepProjectile(proj, {
+      platforms: runtime.map.platforms,
+      players,
+      dtMs,
+      tick: nextTick,
+      rngState,
+    });
+    rngState = result.rngState;
+
+    // Drain events: damage on hit-confirmed, slow on player-slowed.
+    for (const ev of result.events) {
+      if (ev.t === "hit-confirmed" && players[ev.victimId]) {
+        const victim = players[ev.victimId]!;
+        if (victim.alive) {
+          const newHealth = Math.max(0, victim.health - ev.damage);
+          players[ev.victimId] = {
+            ...victim,
+            health: newHealth,
+            alive: newHealth > 0,
+          };
         }
-        events.push(ev);
+      } else if (ev.t === "player-slowed" && players[ev.victimId]) {
+        const victim = players[ev.victimId]!;
+        const ticksDuration = Math.ceil(ev.durationMs / dtMs);
+        const until = nextTick + ticksDuration;
+        // Stack policy: keep whichever ends later, take the lower (more
+        // punishing) multiplier.
+        const prevUntil = victim.slowedUntilTick ?? 0;
+        const prevMul = victim.slowMultiplier ?? 1;
+        players[ev.victimId] = {
+          ...victim,
+          slowedUntilTick: Math.max(prevUntil, until),
+          slowMultiplier: Math.min(prevMul, ev.multiplier),
+        };
       }
+      events.push(ev);
+    }
+
+    // Insert any split children (assign ids here, in entity-id order).
+    for (const child of result.spawned) {
+      const childId = runtime.nextEntityId;
+      runtime.nextEntityId += 1;
+      remainingProjectiles[childId] = { ...child.spec, id: childId };
+    }
+
+    if (result.expired || result.projectile === null) {
       continue;
     }
     remainingProjectiles[id] = result.projectile;
+  }
+
+  // Slow-debuff cleanup: clear expired slows so movement returns to normal.
+  for (const pid of Object.keys(players)) {
+    const p = players[pid]!;
+    if (p.slowedUntilTick !== undefined && p.slowedUntilTick <= nextTick) {
+      players[pid] = {
+        ...p,
+        slowedUntilTick: undefined,
+        slowMultiplier: undefined,
+      };
+    }
   }
 
   // 3. Round state machine.
@@ -289,7 +343,8 @@ export function stepWithRuntime(
   return {
     state: {
       ...state,
-      tick: state.tick + 1,
+      tick: nextTick,
+      rngState,
       players: respawnedPlayers,
       projectiles: remainingProjectiles,
       round: roundResult.state,

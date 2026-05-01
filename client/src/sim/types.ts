@@ -57,6 +57,17 @@ export type ElementType =
   | 'sticky'
   | 'explosive';
 
+/**
+ * Mirror of `ImpactBehavior` from `data/cardTypes.ts` — duplicated here to keep
+ * the entity type self-contained (sim/types.ts must not import from data/).
+ */
+export type ProjectileImpact =
+  | 'none'
+  | 'explosive'
+  | 'sticky'
+  | 'pierce-chain'
+  | 'slow-field';
+
 export type DestructibleKind = 'barrel' | 'box' | 'mine' | 'cube';
 
 export type PickupKind = 'health-shard' | 'shield-cell' | 'overcharge-core';
@@ -82,6 +93,14 @@ export type PlayerEntity = {
   ammo: number;
   abilityCharge: number;
   lastProcessedInputSeq: InputSeq;
+  /**
+   * Slow-field debuff. When set and `slowedUntilTick > state.tick`, the
+   * player's movement should multiply by `slowMultiplier`. Additive contract
+   * change — server and client both read these the same way; older snapshots
+   * that omit the fields just see "no slow active".
+   */
+  slowedUntilTick?: Tick;
+  slowMultiplier?: number;
 };
 
 export type ProjectileEntity = {
@@ -99,6 +118,28 @@ export type ProjectileEntity = {
   element: string;
   bouncesRemaining: number;
   pierceRemaining: number;
+  /**
+   * Optional pathing / impact extras. All fields are additive and default
+   * to "no effect" when absent so older snapshots stay compatible. Populated
+   * by `weapon.stepWeapon` from the resolved card build.
+   */
+  impact?: ProjectileImpact;
+  impactRadiusPx?: number;
+  splitCount?: number;
+  slowMultiplier?: number;
+  homingStrength?: number;
+  accelerationMultiplier?: number;
+  gravityScale?: number;
+  rangePx?: number;
+  /** Tracking state set/maintained by the projectile stepper. */
+  ageMs?: number;
+  traveledPx?: number;
+  originX?: number;
+  originY?: number;
+  /** Boomerang-only: true once the shard has begun curving home. */
+  returning?: boolean;
+  /** Sticky-only: ms remaining before the stuck shard detonates. */
+  stickyFuseMs?: number;
 };
 
 export type DestructibleEntity = {
@@ -163,7 +204,13 @@ export type SimEvent =
     }
   | { t: 'destructible-broken'; entityId: EntityId; x: number; y: number }
   | { t: 'pickup-taken'; entityId: EntityId; playerId: PlayerId }
-  | { t: 'round-end'; winnerId: PlayerId | null };
+  | { t: 'round-end'; winnerId: PlayerId | null }
+  | {
+      t: 'player-slowed';
+      victimId: PlayerId;
+      multiplier: number;
+      durationMs: number;
+    };
 
 export type StepResult = {
   state: WorldState;
