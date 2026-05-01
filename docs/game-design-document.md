@@ -59,7 +59,8 @@ Prototype:
 MVP:
 
 - 1v1 online duel
-- 2–4 player free-for-all experimental mode, if networking feel allows it
+- single-map stress target up to 6 players, if networking feel allows it
+- 2–6 player free-for-all experimental mode after 1v1 works
 
 Future:
 
@@ -98,6 +99,7 @@ Design implications:
 - The losing or disadvantaged player should get tools to come back.
 - Upgrades should change decisions, not only increase numbers.
 - Builds should be visible and understandable to opponents.
+- Orthogonal upgrade axes should mutate one simple starter weapon into many readable weapon identities.
 
 ### Pillar 3 — Browser-First Multiplayer Accessibility
 
@@ -269,6 +271,7 @@ These modes should not be part of the first implementation path. They are a futu
 | Aim | Mouse cursor |
 | Fire primary | Left mouse button |
 | Secondary / alt-fire | Right mouse button |
+| Character ability / shield | Q or Left Shift |
 | Reload | R |
 | Throw grenade / utility | G or middle mouse |
 | Interact / ready | E |
@@ -286,6 +289,7 @@ Controller support is not required for the first prototype. If added later:
 | Jump | A / Cross |
 | Fire | Right trigger |
 | Alt-fire | Left trigger |
+| Character ability / shield | Left bumper |
 | Reload | X / Square |
 | Grenade | Right bumper |
 
@@ -293,6 +297,7 @@ Controller support is not required for the first prototype. If added later:
 
 - Movement must be readable before it is complex.
 - Aim should be decoupled from movement.
+- Character abilities should be one-button, readable, and cooldown-based if included.
 - Rebinding should be considered after the first playable prototype.
 - The first prototype should not include too many movement abilities at once.
 
@@ -393,6 +398,8 @@ Reasons:
 
 Hitscan weapons may exist later as special cases.
 
+The baseline should still feel as direct as a simple raycast 2D shooter: point, fire, read the impact line, and understand the result. The implementation should begin with visible projectiles because they make the orthogonal upgrade system easier to see, tune, and network-test.
+
 ### 7.2.1 Orthogonal Projectile Design
 
 The weapon system should be designed around one simple starting weapon that evolves in many orthogonal directions.
@@ -407,7 +414,7 @@ Orthogonal design on a simple 2D shooter theme.
 
 Baseline weapon:
 
-- simple pistol/rifle style shot;
+- simple pistol-style shot, with Scrap Rifle as the current working data name;
 - clear projectile path;
 - readable fire rate;
 - moderate recoil;
@@ -447,7 +454,34 @@ The first build system should support at least four weapon paths:
 | Trick Path | geometry and path changes | bounce, boomerang, split, terrain reflection |
 | Element Path | status and arena pressure | fire, napalm, electric arc, lingering zones |
 
+Cards should not merely create one stat ladder. They should shape the same starter weapon into curated weaponsets that feel different in hand: one build sprays weak blaps, another kicks the shooter across the arena, another plays geometry games, and another turns the map into temporary hazards.
+
 Every path should have tradeoffs. Example: a player may gain homing projectiles, but their character becomes 1.5x larger or easier to hit. Strong effects should be visible and funny, but they need readable downsides.
+
+### 7.2.2 Crystal Rounds Orthogonal Weapon Prototype
+
+The first implemented weapon-system theme is **Crystal Rounds**. This does not add a second starting weapon; it gives the shared Starter Pistol / Scrap Rifle baseline a readable crystal-tech identity under the working visual name **Crystal Blaster**.
+
+Prototype rule:
+
+- one shared baseline weapon;
+- one card per orthogonal bucket during a run;
+- Wild legendary cards may occupy two buckets;
+- every card changes exactly one axis unless it is explicitly Wild;
+- card VFX should add crystal texture, glow, particle, trail, or impact layers without hiding silhouettes or hitboxes.
+
+Implemented bucket model:
+
+| Bucket | What it changes | Prototype examples |
+|---|---|---|
+| Delivery | How the shot is fired | Projectile, raycast prism, continuous beam, pulse nova |
+| Trajectory | How the shot moves | Gravity arc, homing, bounce, zero-G float |
+| Quantity | How many shots or child shots exist | Dual split, triple fan, orbitals, cluster split |
+| Impact | What happens on hit | Explosive, sticky, pierce-chain, slow field |
+| Element | Damage/status identity and colour language | Crystal, fire, ice, lightning, void, radiant |
+| Utility | Cooldown, sustain, charge, reflection hooks | Rapid refraction, essence battery, overcharge, mirror shield |
+
+The current offline test scene includes quick-load cores for baseline, Homing Cluster Spark, Sticky Fire Minefield, Raycast Supernova, and Bouncy Frost Fan so these axes can be felt before the draft UI exists.
 
 ### 7.3 Health and Damage
 
@@ -485,9 +519,11 @@ Each weapon must define:
 
 Start with one weapon.
 
-**Name:** Scrap Rifle  
-**Class:** baseline automatic or semi-automatic rifle  
-**Purpose:** prove movement, aiming, hit detection, knockback, reload, and damage loop  
+**Name:** Starter Pistol / Scrap Rifle, visualized in prototype as the Crystal Blaster
+
+**Class:** baseline semi-automatic pistol or light rifle
+
+**Purpose:** prove movement, aiming, hit detection, knockback, reload, and damage loop
 
 Starting values:
 
@@ -662,7 +698,9 @@ Examples:
 
 ### 8.4 Prototype Card List
 
-Start with 12–18 cards. This is enough to test drafting without exploding scope.
+Start with 12–18 cards for draft UI testing, but the current Crystal Rounds data file includes a larger 28-card design pool so orthogonal bucket coverage can be tested early. Draft presentation should still sample from a small curated subset until readability is proven.
+
+The active Crystal Rounds pool is grouped into Delivery, Trajectory, Quantity, Impact, Element, Utility, plus Wild cards that intentionally occupy two buckets. Keep this bucket ownership visible in card data and draft UI.
 
 | Card | Category | Effect | Risk |
 |---|---|---|---|
@@ -750,6 +788,34 @@ Not:
 Projectiles now calculate collision response against map geometry and preserve 65% of velocity after reflecting based on surface normal.
 ```
 
+### 8.8 Character Stat Archetypes
+
+Characters should start with different stats and light identity, but the weapon mutation system remains the star.
+
+MVP target:
+
+- four prototype characters;
+- each character has health, movement, size, recoil handling, shield/ability, and weakness values;
+- every character starts with the same starter weapon/projectile;
+- character identity should push players toward different weapon paths without locking them in;
+- no character should require permanent account progression to be competitively viable.
+
+First character ability direction:
+
+- use one active ability button;
+- shield is the safest first implementation;
+- later abilities may include short blink, recoil brace, temporary damage resistance, projectile deflect, or ability-charge burst;
+- pickups can charge or modify abilities, but they should create map-control decisions rather than permanent power creep.
+
+Example archetype goals:
+
+| Archetype | Strength | Weakness | Build Pressure |
+|---|---|---|---|
+| Balanced | no major weakness | no extreme stat | works with any path |
+| Heavy | more health, recoil resistance | larger and slower | Heavy or Element path |
+| Sprinter | faster movement, smaller size | lower health | Blap or Trick path |
+| Shielded | better defensive ability | weaker damage or slower reload | risky map-control play |
+
 ---
 
 ## 9. Arena and Level Design
@@ -824,6 +890,8 @@ Long-term arena design should sit somewhere between Worms-style chaotic map inte
 
 Maps should include mostly non-destructible structure with a small number of destructible/interactive objects.
 
+Map layouts can be authored, generated from shape templates, or mixed, but the playable result must have a clear non-destructible core. Destruction should decorate and complicate the fight, not erase the arena.
+
 Prototype destructible set:
 
 | Object | Purpose |
@@ -843,7 +911,7 @@ Design rules:
 
 MVP target:
 
-- one main map;
+- one main map for the first complete MVP loop;
 - up to 6 players maximum if networking can support it;
 - four prototype destructible element types;
 - basic physics interactions;
@@ -1074,6 +1142,9 @@ Recommended repository structure:
         data/
           weapons.ts
           cards.ts
+          characters.ts
+          projectileModifiers.ts
+          destructibles.ts
           maps.ts
         net/
           ConvexClient.ts
@@ -1099,6 +1170,7 @@ Recommended repository structure:
     technical-design.md
     art-direction.md
     codex-task-backlog.md
+    milestone-roadmap.md
     tuning-values.md
     changelog.md
 
@@ -1148,24 +1220,44 @@ export type RoomId = string;
 export type MatchId = string;
 export type CardId = string;
 export type WeaponId = string;
+export type CharacterId = string;
 
 export type Vec2 = {
   x: number;
   y: number;
 };
 
+export type ProjectileShape = 'circle' | 'triangle' | 'square' | 'hexagon' | 'orb';
+export type ProjectilePathing = 'straight' | 'bounce' | 'boomerang' | 'homing' | 'anti-homing';
+export type ElementType = 'neutral' | 'fire' | 'electric' | 'toxic' | 'sticky' | 'explosive';
+
 export type PlayerState = {
   id: PlayerId;
   name: string;
   color: string;
+  characterId: CharacterId;
   position: Vec2;
   velocity: Vec2;
   aimAngle: number;
   health: number;
   maxHealth: number;
+  sizeScale: number;
+  abilityCharge: number;
   weaponId: WeaponId;
   cards: CardId[];
   alive: boolean;
+};
+
+export type ProjectileModifier = {
+  shape: ProjectileShape;
+  count: number;
+  rangePx: number;
+  speedMultiplier: number;
+  sizeMultiplier: number;
+  recoilMultiplier: number;
+  pathing: ProjectilePathing;
+  element: ElementType;
+  lifetimeMultiplier: number;
 };
 
 export type WeaponDefinition = {
@@ -1180,6 +1272,18 @@ export type WeaponDefinition = {
   spreadRadians: number;
   recoilImpulse: number;
   knockbackImpulse: number;
+  projectile: ProjectileModifier;
+};
+
+export type CharacterDefinition = {
+  id: CharacterId;
+  name: string;
+  maxHealth: number;
+  moveSpeedMultiplier: number;
+  sizeScale: number;
+  recoilControlMultiplier: number;
+  abilityType: 'shield' | 'blink' | 'brace' | 'deflect';
+  weakness: string;
 };
 
 export type CardDefinition = {
@@ -1338,6 +1442,9 @@ Lobby UI must show:
 
 The game should be readable first and stylish second.
 
+The detailed art bible lives in `docs/art-direction.md`. This GDD section
+captures the binding gameplay-facing rules.
+
 Recommended initial direction:
 
 - bold silhouettes;
@@ -1345,7 +1452,17 @@ Recommended initial direction:
 - bright projectile trails;
 - clear collision geometry;
 - stylized industrial/scrap/factory environments;
+- murky, textured terrain with bright combat accents;
+- optional saturated teal/lime map palettes against deep shadows;
+- tiny expressive fighters with readable name/health markers;
+- procedural 2D puppet animation with IK limbs for walking, aiming, jumping,
+  and knockback reactions;
+- compact arcade HUD elements pinned away from the fight center;
 - comic violence without heavy realism.
+
+The reference direction combines low-fi side-view arena shooters, rough painted
+terrain, scrap-built platforms, high-contrast player colors, and bright muzzle
+flashes, projectile trails, ricochets, and impact bursts.
 
 ### 14.2 Prototype Art
 
@@ -1382,6 +1499,10 @@ Do not block gameplay development on final art.
 - Explosions must not hide follow-up shots for too long.
 - Cosmetic effects must never obscure hitboxes.
 - Cards that modify projectiles should alter visuals enough to be recognized.
+- Playable collision should match the visible terrain and platform silhouettes.
+- HUD and nameplates should stay compact and avoid covering active combat.
+- IK limb animation must preserve clear facing direction, weapon aim, and
+  stable readable hitboxes.
 
 ---
 
@@ -1457,9 +1578,11 @@ Allowed:
 - stats;
 - profile badges;
 - alternate announcer lines;
-- custom room options.
+- custom room options;
 - loot-box or gacha-style reveals for cosmetics only, if used carefully;
 - unlock presentation that feels exciting without selling power.
+
+Loot boxes and gacha elements are only acceptable as cosmetic reveal/presentation systems. They must not sell combat power, hide core cards, or gate competitive tools. If monetization is ever considered, odds, duplicate handling, and regional compliance need explicit design review before implementation.
 
 Avoid:
 
@@ -1481,7 +1604,15 @@ Possible incentives:
 - risky loot crate spawn;
 - destructible object rewards.
 
-Pickups should create sweaty map-control decisions, but they should not replace the card draft as the main build system.
+Pickups should create sweaty map-control decisions, but they should not replace the card draft as the main build system. Buffs and debuffs may affect the next exchange, a short timer, or an ability charge, but they should not become a hidden meta-progression layer.
+
+Current prototype pickup set:
+
+- Health Shard: restores a small amount of current health.
+- Shield Cell: restores shield charge and grants temporary field-shield access so non-shield characters can contest defensive space briefly.
+- Overcharge Core: temporarily boosts local damage and fire rate.
+
+These pickups respawn from map data, are temporary or charge-based, and are intended to create map pressure while the draft system remains the main build escalator. Online pickup ownership and sync authority still need to be decided before competitive room play depends on them.
 
 ---
 
@@ -1499,7 +1630,7 @@ The MVP proves that JAKESJAM is fun as a short browser-based multiplayer duel wi
 - Two players in one room for the first online prototype.
 - Up to 6 players maximum as the MVP multiplayer stress target, if networking tests allow it.
 - Ready checks.
-- One playable arena.
+- One playable arena as the main MVP map.
 - Core movement.
 - One baseline weapon that can mutate into at least four weapon paths.
 - Four prototype characters with different starting stat identities.
@@ -1871,10 +2002,10 @@ These decisions should be resolved through prototype testing, not theory alone.
 
 - 1 arena: Boxworks.
 - 1 player placeholder.
-- 1 weapon: Scrap Rifle.
-- 1 projectile type.
+- 1 shared weapon: Scrap Rifle / Crystal Blaster baseline.
+- 1 projectile baseline with data-driven shape, delivery, trajectory, quantity, impact, element, and utility modifiers.
 - 1 death effect.
-- 12 upgrade cards.
+- 12 draftable upgrade cards minimum, with the current Crystal Rounds data pool holding 28 prototype cards.
 - 1 lobby UI.
 - 1 draft UI.
 - 1 result UI.
@@ -1899,11 +2030,11 @@ These tasks are ordered for Codex or human contributors.
 2. Add `AGENTS.md` with project rules.
 3. Scaffold Phaser + TypeScript + Vite client.
 4. Add placeholder BootScene and MatchScene.
-5. Create `PlayerState`, `WeaponDefinition`, and `CardDefinition` types.
+5. Create `PlayerState`, `WeaponDefinition`, `ProjectileModifier`, `CharacterDefinition`, and `CardDefinition` types.
 6. Implement Boxworks test arena with simple collision.
 7. Implement player movement.
 8. Implement aim direction and debug reticle.
-9. Implement Scrap Rifle projectile firing.
+9. Implement Starter Pistol / Scrap Rifle projectile firing.
 10. Implement dummy target damage/death.
 11. Implement round reset offline.
 12. Scaffold Convex schema for rooms and roomPlayers.
@@ -1919,6 +2050,20 @@ These tasks are ordered for Codex or human contributors.
 ---
 
 ## 26. Change Log
+
+### v0.4 — 2026-05-01
+
+- Added Crystal Rounds as the current orthogonal weapon-system theme.
+- Defined Delivery, Trajectory, Quantity, Impact, Element, Utility, and Wild card bucket rules.
+- Clarified that Crystal Blaster is the visual prototype identity for the shared Scrap Rifle baseline, not a separate starting weapon.
+
+### v0.3 — 2026-05-01
+
+- Added stronger orthogonal weapon mutation direction around one shared starter pistol/projectile.
+- Added character stat archetype and active shield/ability button direction.
+- Clarified MVP target as one main map with up to 6-player stress testing, four weapon paths, four characters, and four destructible elements.
+- Added map pickup, loot crate, cosmetic-only loot/gacha, and dice-style chaos modifier boundaries.
+- Added typed projectile modifier and character definition expectations.
 
 ### v0.1 — 2026-05-01
 

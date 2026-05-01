@@ -1,0 +1,376 @@
+:root {
+  color: #f7fbff;
+  background: #10131a;
+  font-family:
+    Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+    sans-serif;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  --bg: #10131a;
+  --surface: #171b24;
+  --surface-2: #202633;
+  --border: #343c4d;
+  --text: #f7fbff;
+  --muted: #9ba7b8;
+  --accent: #50e3c2;
+  --danger: #ff6b6b;
+  --ready: #8adf70;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+[hidden] {
+  display: none !important;
+}
+
+html,
+body,
+#app {
+  width: 100%;
+  min-width: 320px;
+  height: 100%;
+  min-height: 100vh;
+  margin: 0;
+}
+
+body {
+  overflow: hidden;
+}
+
+button,
+input,
+select {
+  font: inherit;
+}
+
+button {
+  min-height: 42px;
+  border: 1px solid #59f0cf;
+  border-radius: 6px;
+  color: #07110f;
+  background: var(--accent);
+  font-size: 0.9rem;
+  font-weight: 800;
+  cursor: pointer;
+  transition:
+    transform 120ms ease,
+    filter 120ms ease,
+    opacity 120ms ease;
+}
+
+button:hover:not(:disabled) {
+  filter: brightness(1.08);
+  transform: translateY(-1px);
+}
+
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+input,
+select {
+  width: 100%;
+  min-height: 42px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  background: #0d1016;
+  padding: 0 12px;
+}
+
+select {
+  cursor: pointer;
+}
+
+input[type="color"] {
+  padding: 4px;
+}
+
+.app-shell {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 360px;
+  height: 100vh;
+  min-height: 0;
+  background:
+    radial-gradient(circle at 22% 18%, rgba(80, 227, 194, 0.18), transparent 32%),
+    linear-gradient(135deg, #10131a 0%, #111925 48%, #151821 100%);
+}
+
+.play-surface {
+  display: grid;
+  min-width: 0;
+  padding: 24px;
+  place-items: center;
+}
+
+.game-root {
+  width: min(100%, 1180px);
+  aspect-ratio: 16 / 9;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 8px;
+  background: #0b0e14;
+  box-shadow: 0 22px 60px rgba(0, 0, 0, 0.32);
+}
+
+.game-root canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.lobby-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
+  border-left: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(16, 19, 26, 0.94);
+  padding: 24px;
+}
+
+.brand-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 18px;
+}
+
+h1,
+h2,
+p {
+  margin: 0;
+}
+
+h1 {
+  font-size: 1.65rem;
+  line-height: 1;
+}
+
+h2 {
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.status-line {
+  margin-top: 8px;
+  color: var(--muted);
+  font-size: 0.9rem;
+  line-height: 1.45;
+}
+
+.build-tag {
+  display: grid;
+  width: 44px;
+  height: 32px;
+  place-items: center;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--accent);
+  background: #0d1016;
+  font-size: 0.82rem;
+  font-weight: 900;
+}
+
+.player-form,
+.room-actions,
+.active-room,
+.role-box,
+.server-panel,
+.player-connect,
+.chaos-box,
+.players-box {
+  display: grid;
+  gap: 12px;
+}
+
+.player-form label,
+.server-panel label,
+.chaos-box label {
+  display: grid;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+
+.role-box {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  padding: 14px;
+}
+
+.role-box h2 {
+  grid-column: 1 / -1;
+}
+
+.role-box label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 32px;
+  color: var(--text);
+  font-size: 0.85rem;
+  font-weight: 800;
+}
+
+.role-box input {
+  width: 16px;
+  min-height: 16px;
+  padding: 0;
+}
+
+.server-panel,
+.player-connect {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  padding: 14px;
+}
+
+.join-address {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 92px;
+  gap: 10px;
+}
+
+.server-panel input[readonly] {
+  color: var(--accent);
+  font-weight: 900;
+}
+
+.chaos-box {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  padding: 14px;
+}
+
+.chaos-box h2 {
+  grid-column: 1 / -1;
+}
+
+.chaos-box label {
+  grid-template-columns: 16px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  min-height: 26px;
+  font-size: 0.76rem;
+}
+
+.chaos-box input {
+  width: 16px;
+  min-height: 16px;
+  padding: 0;
+}
+
+.join-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 92px;
+  gap: 10px;
+}
+
+.active-room {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  padding: 14px;
+}
+
+.room-code-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  color: var(--muted);
+  font-size: 0.84rem;
+}
+
+.room-code-row strong {
+  color: var(--text);
+  font-size: 1.25rem;
+  letter-spacing: 0.1em;
+}
+
+.players-box {
+  min-height: 180px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  padding-top: 18px;
+}
+
+.players-box ul {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.player-row {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+  min-height: 38px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface-2);
+  padding: 8px 10px;
+}
+
+.player-swatch {
+  width: 14px;
+  height: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.55);
+  border-radius: 50%;
+}
+
+.player-name {
+  overflow: hidden;
+  color: var(--text);
+  font-size: 0.9rem;
+  font-weight: 750;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.player-state {
+  color: var(--muted);
+  font-size: 0.76rem;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.player-state.ready {
+  color: var(--ready);
+}
+
+@media (max-width: 880px) {
+  body {
+    overflow: auto;
+  }
+
+  .app-shell {
+    grid-template-columns: 1fr;
+  }
+
+  .play-surface {
+    padding: 14px;
+  }
+
+  .lobby-panel {
+    border-left: 0;
+    border-top: 1px solid rgba(255, 255, 255, 0.1);
+  }
+}

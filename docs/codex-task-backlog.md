@@ -56,7 +56,10 @@ Create shared gameplay types.
 
 Acceptance criteria:
 
-- `PlayerState`, `WeaponDefinition`, `CardDefinition`, and `Vec2` exist;
+- `PlayerState`, `WeaponDefinition`, `ProjectileModifier`, `CharacterDefinition`, `CardDefinition`, and `Vec2` exist;
+- projectile shape types support circle, triangle, square, hexagon, and orb;
+- projectile pathing types support straight, bounce, boomerang, homing, and anti-homing;
+- element/status types support neutral, fire, electric, sticky, explosive, and room for future variants;
 - types are exported from a clear location;
 - no circular imports.
 
@@ -109,13 +112,15 @@ Acceptance criteria:
 - reticle is visible;
 - debug angle can be logged or shown if needed.
 
-### JJ-0202 — Implement Scrap Rifle Data
+### JJ-0202 — Implement Starter Pistol / Scrap Rifle Data
 
 Create first weapon definition.
 
 Acceptance criteria:
 
-- Scrap Rifle has damage, fire rate, magazine, reload, projectile speed, spread, recoil, and knockback values;
+- everyone starts with the same pistol-style baseline weapon and projectile;
+- Scrap Rifle can remain the working data name until naming is locked;
+- baseline weapon has damage, fire rate, magazine, reload, projectile speed, spread, recoil, and knockback values;
 - weapon values live in a data file;
 - types enforce required fields.
 
@@ -129,6 +134,7 @@ Acceptance criteria:
 - projectile modifiers support count, range, fire rate, speed, size, recoil, pathing, element, and lifetime;
 - pathing supports straight, bounce, boomerang, homing, and reverse/anti-homing as typed options;
 - element/status supports neutral, fire, electric, sticky, and explosive as typed options;
+- baseline firing remains simple and raycast-like in feel even when implemented as visible projectiles;
 - modifier values can be composed without hardcoding each card.
 
 ### JJ-0203 — Implement Projectile System
@@ -406,9 +412,24 @@ Create the first four character stat identities.
 Acceptance criteria:
 
 - four character definitions exist;
-- each character has health, movement, size, shield/ability, and weakness values;
+- each character has health, movement, size, recoil handling, shield/ability, and weakness values;
+- every character starts with the same baseline weapon/projectile;
+- one active ability button exists in the control model, with shield as the first safe prototype;
 - characters do not use permanent progression power;
-- character choice is visible in lobby and match debug UI.
+- character choice is visible in lobby and match debug UI;
+- character stats nudge weapon path choices without hard-locking builds.
+
+### JJ-0507 — Add Pickup and Map Incentive Prototype
+
+Add one or two map-control incentives so players have a reason to move around the arena.
+
+Acceptance criteria:
+
+- at least one pickup type exists, such as shield charge, ability charge, utility ammo, or short buff/debuff;
+- pickup spawn location is visible and risky enough to contest;
+- pickup effect is temporary or charge-based;
+- pickups do not replace card drafting as the main build system;
+- pickup behaviour is documented in the GDD.
 
 ---
 
@@ -460,3 +481,156 @@ Acceptance criteria:
 - environment variables documented;
 - deployment instructions written;
 - smoke test checklist exists.
+
+---
+
+## Phase 7 — Post-MVP Experiments
+
+These tasks are intentionally after the first playable MVP. They should not block movement, combat, multiplayer, or draft fun.
+
+### JJ-0701 — Add Dice-Roll Chaos Modifiers
+
+Prototype custom-room modifiers that remix existing systems.
+
+Acceptance criteria:
+
+- modifier data exists for low gravity, 4x map scale, slow motion, golden gun, slappers only, Big Purp Dilly Mode, fire hazard rounds, exploding barrels only, random projectile shapes, and max recoil;
+- modifiers are data-driven and can be toggled per room;
+- at least two modifiers can run in a local test without special-case scene forks;
+- modifiers are marked as party/custom mode content, not ranked or core MVP content.
+
+### JJ-0702 — Prototype Cosmetic Loot Crate Presentation
+
+Create a non-monetized cosmetic reveal prototype.
+
+Acceptance criteria:
+
+- loot crate/gacha reveal can award placeholder cosmetics only;
+- no gameplay cards, characters, weapons, buffs, or stats are gated behind loot;
+- duplicate handling is documented;
+- implementation can be removed without affecting combat or progression.
+
+### JJ-0703 — Explore Long-Term Meta Buffs and Debuffs
+
+Investigate whether temporary meta-layer effects add good map-control drama.
+
+Acceptance criteria:
+
+- buffs/debuffs are temporary, match-local, or custom-room-only;
+- no permanent competitive power is added;
+- effects are readable to opponents;
+- any tested effect has a clear opt-out path for normal duels.
+
+---
+
+## Phase 10 - Duel Flow Core
+
+### JJ-1001 - Add Round State Machine
+
+Acceptance criteria:
+
+- match has countdown, fighting, round_over, draft, and match_over states;
+- player input is blocked during countdown and round_over;
+- state changes are visible in the HUD;
+- state resets do not recreate unrelated lobby data.
+
+### JJ-1002 - Add Score Tracking
+
+Acceptance criteria:
+
+- round wins increment player score;
+- target score is configurable;
+- score is visible during combat;
+- match_over fires when a player reaches the target score.
+
+### JJ-1003 - Add Round Timer
+
+Acceptance criteria:
+
+- round timer counts down from a configurable value;
+- timer is visible in the HUD;
+- timeouts resolve by sudden death, damage comparison, or draw rule;
+- timeout rule is documented.
+
+## Phase 11 - Draft and Build Escalation
+
+### JJ-1101 - Add Draft UI
+
+Acceptance criteria:
+
+- draft view shows three valid cards;
+- card name, rarity, bucket, and description are readable;
+- current selected build summary remains visible;
+- selection can be confirmed with mouse.
+
+### JJ-1102 - Apply Drafted Cards
+
+Acceptance criteria:
+
+- selected card is stored in the match session;
+- selected card modifies the next round's weapon build;
+- unique and occupied-bucket conflicts are handled visibly;
+- selected card is shown to opponents.
+
+## Phase 12 - Pickups and Map Pressure
+
+### JJ-1201 - Add Pickup Definitions to Map Data
+
+Acceptance criteria:
+
+- map data supports pickup id, kind, position, radius, amount, duration, and respawn timer;
+- expanded maps duplicate pickups with unique ids;
+- pickup types are typed.
+
+### JJ-1202 - Implement Pickup Collection
+
+Acceptance criteria:
+
+- local player can collect health, shield, and overcharge pickups;
+- collected pickups become inactive;
+- pickups respawn after a data-defined timer;
+- collection has visual and audio feedback.
+
+### JJ-1203 - Tune Pickup Sync Direction
+
+Acceptance criteria:
+
+- document whether pickup state is local-only, host-owned, or server-owned for the next online prototype;
+- no hidden permanent power is added;
+- pickup effects remain temporary or charge-based.
+
+## Phase 13 - PvP Health, Shield, and Authority
+
+### JJ-1301 - Damage Remote Players
+
+Acceptance criteria:
+
+- remote player bodies can be targeted by local projectile collision;
+- health, shield, alive, and hit feedback update in snapshots;
+- death can trigger round-over state.
+
+### JJ-1302 - Add Combat HUD
+
+Acceptance criteria:
+
+- local health and shield are visible outside debug text;
+- opponent health is visible enough for duels;
+- active overcharge/pickup buffs are readable.
+
+## Phase 14 - Results and Persistence
+
+### JJ-1401 - Add Results Summary
+
+Acceptance criteria:
+
+- winner, final score, selected cards, and basic match notes are shown;
+- rematch and return-to-room actions exist;
+- result screen works after local practice and online room matches.
+
+### JJ-1402 - Persist Match Results
+
+Acceptance criteria:
+
+- Convex stores match winner, players, final score, match duration, and selected cards;
+- write failures are surfaced without crashing the client;
+- saved result shape is documented.

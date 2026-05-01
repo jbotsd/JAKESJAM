@@ -1,0 +1,28 @@
+{
+  "name": "jakesjam",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "client"
+  ],
+  "scripts": {
+    "dev": "npm run dev --workspace client",
+    "dev:client": "npm run dev --workspace client",
+    "dev:client:host": "npm run dev:host --workspace client",
+    "dev:convex": "convex dev --local",
+    "dev:full": "convex dev --local --start \"npm run dev:client\"",
+    "dev:full:host": "convex dev --local --start \"npm run dev:client:host\"",
+    "typecheck": "npm run typecheck --workspace client && npm run typecheck:convex",
+    "typecheck:convex": "convex codegen --typecheck enable",
+    "build": "npm run build --workspace client",
+    "build:standalone": "npm run build --workspace client && node tools/build-standalone.mjs",
+    "verify": "npm run typecheck && npm run build",
+    "test": "npm run test --workspaces --if-present",
+    "convex:codegen": "convex codegen",
+    "convex:deploy": "convex deploy"
+  },
+  "devDependencies": {
+    "convex": "^1.37.0"
+  }
+}

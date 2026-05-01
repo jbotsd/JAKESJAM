@@ -21,8 +21,9 @@ Read these before implementing gameplay features:
 
 1. `docs/game-design-document.md`
 2. `docs/codex-task-backlog.md`
-3. `docs/technical-design.md` if present
-4. `docs/changelog.md` if present
+3. `docs/milestone-roadmap.md` if present
+4. `docs/technical-design.md` if present
+5. `docs/changelog.md` if present
 
 When implementation changes design behaviour, update the relevant doc.
 
@@ -134,7 +135,9 @@ Build in this order:
 ## Design Constraints
 
 - The first real mode is 1v1 duel.
-- The first weapon is Scrap Rifle.
+- The first weapon is the shared Starter Pistol / Scrap Rifle baseline.
 - The first map is Boxworks.
 - The first card pool should be small, around 12 cards.
+- Weapon upgrades should be orthogonal and mutate the same baseline weapon before adding many unrelated guns.
+- MVP target is one main map, four weapon paths, four character stat archetypes, four destructible element types, and up to 6-player stress testing after 1v1 works.
 - MVP should prove fun before expanding content.
