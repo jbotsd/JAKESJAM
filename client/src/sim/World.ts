@@ -4,7 +4,12 @@
 //
 // Authority on the Bun server. Replayed on the client for prediction.
 
-import { stepPlayer, freshPlayerMovementMemory, type PlayerMovementMemory } from "./player.js";
+import {
+  stepPlayer,
+  freshPlayerMovementMemory,
+  JETPACK_MAX_FUEL,
+  type PlayerMovementMemory,
+} from "./player.js";
 import { stepProjectile } from "./projectile.js";
 import {
   despawnSatellitesForDeadOwners,
@@ -84,6 +89,7 @@ export class World {
         ammo: 0,
         abilityCharge: 0,
         lastProcessedInputSeq: 0,
+        jetpackFuel: JETPACK_MAX_FUEL,
       };
       scores[spawn.playerId] = 0;
     }
@@ -429,6 +435,7 @@ function respawnAll(
       crouching: false,
       shieldActive: false,
       fireCooldownMs: 0,
+      jetpackFuel: JETPACK_MAX_FUEL,
     };
   }
   return out;
