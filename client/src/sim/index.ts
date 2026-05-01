@@ -2,6 +2,20 @@ export * from './types.js';
 export * from './constants.js';
 export { World } from './World.js';
 export {
+  PARRY_ACTIVE_MS,
+  PARRY_COOLDOWN_MS_DEFAULT,
+  PARRY_ARC_RADIANS,
+  SHIELD_MAX_CHARGE_DEFAULT,
+  SHIELD_DRAIN_PER_SECOND,
+  SHIELD_RECHARGE_PER_SECOND,
+  SHIELD_HIT_DRAIN_MULTIPLIER,
+  isHitInParryArc,
+  isParryActive,
+  tickShield,
+  tryDeflectDamage,
+  tryStartParry,
+} from './combat.js';
+export {
   ORBIT_RADIUS_PX,
   ORBIT_RAD_PER_SEC,
   SATELLITE_FIRE_COOLDOWN_MS,

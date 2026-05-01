@@ -13,6 +13,7 @@ import {
 } from "./satellite.js";
 import { stepWeapon } from "./weapon.js";
 import { stepRound, TARGET_SCORE_DEFAULT } from "./round.js";
+import { tickShield, tryDeflectDamage, tryStartParry } from "./combat.js";
 import type {
   EntityId,
   InputBitfield,
@@ -271,6 +272,17 @@ export function stepWithRuntime(
       }
     }
 
+    // Parry + shield. Both run regardless of round phase so the shield can
+    // recharge between rounds; tryStartParry is gated on alive internally.
+    // Parry trigger is rising-edge from prevKeys → currKeys (InputBit.Ability).
+    {
+      const parryResult = tryStartParry(nextEntity, currKeys, prevKeys, state.tick, {
+        dtMs,
+      });
+      nextEntity = parryResult.player;
+    }
+    nextEntity = tickShield(nextEntity, currKeys, { dtMs });
+
     if (input) {
       nextEntity = { ...nextEntity, lastProcessedInputSeq: input.seq };
       runtime.prevKeys.set(pid, currKeys);
@@ -306,6 +318,10 @@ export function stepWithRuntime(
 
   const nextTick = state.tick + 1;
   let rngState = state.rngState;
+  // Projectile ids that were parry-deflected this tick — they get dropped
+  // from `remainingProjectiles` even if their hit-resolution path would have
+  // kept them alive (e.g. pierce-chain).
+  const deflectedProjectileIds = new Set<EntityId>();
 
   for (const id of sortedProjectileIds) {
     const proj = nextProjectiles[id]!;
@@ -323,9 +339,54 @@ export function stepWithRuntime(
       if (ev.t === "hit-confirmed" && players[ev.victimId]) {
         const victim = players[ev.victimId]!;
         if (victim.alive) {
-          const newHealth = Math.max(0, victim.health - ev.damage);
+          // Run parry/shield mitigation BEFORE applying damage. Pass the live
+          // projectile so the parry arc check has direction info; falls back to
+          // null when the source projectile already despawned this tick.
+          const sourceProj = ev.sourceProjectileId !== null
+            ? remainingProjectiles[ev.sourceProjectileId] ?? proj
+            : null;
+          const mitigation = tryDeflectDamage(
+            victim,
+            sourceProj,
+            ev.damage,
+            nextTick,
+          );
+          let postPlayer = mitigation.player;
+          if (mitigation.deflected) {
+            // Parry: zero damage; tell the caller (and downstream listeners)
+            // by emitting a parry-deflected event. Damage event is suppressed.
+            events.push({
+              t: "parry-deflected",
+              playerId: ev.victimId,
+              projectileId: ev.sourceProjectileId,
+            });
+            if (ev.sourceProjectileId !== null) {
+              deflectedProjectileIds.add(ev.sourceProjectileId);
+            }
+            players[ev.victimId] = postPlayer;
+            continue;
+          }
+          if (mitigation.shielded) {
+            // Shield popped or absorbed — emit shield-popped only when the
+            // charge fully drained; partial absorbs stay silent for the
+            // protocol audience (clients can derive "shield hit" from charge
+            // delta in the snapshot if they want a sound cue).
+            if (mitigation.shieldPopped) {
+              events.push({
+                t: "shield-popped",
+                playerId: ev.victimId,
+                remainingCharge: postPlayer.shieldCharge ?? 0,
+              });
+            }
+            players[ev.victimId] = postPlayer;
+            // Shielded → final damage is 0; don't push the original
+            // hit-confirmed (it's already in result.events; suppress here).
+            continue;
+          }
+          const finalDamage = mitigation.damage;
+          const newHealth = Math.max(0, postPlayer.health - finalDamage);
           players[ev.victimId] = {
-            ...victim,
+            ...postPlayer,
             health: newHealth,
             alive: newHealth > 0,
           };
@@ -355,6 +416,10 @@ export function stepWithRuntime(
     }
 
     if (result.expired || result.projectile === null) {
+      continue;
+    }
+    if (deflectedProjectileIds.has(id)) {
+      // Parry deflected — drop the shard regardless of pierce-chain etc.
       continue;
     }
     remainingProjectiles[id] = result.projectile;
@@ -429,6 +494,12 @@ function respawnAll(
       crouching: false,
       shieldActive: false,
       fireCooldownMs: 0,
+      // Clear parry timers on round transition (mirrors MatchScene's
+      // clearTemporaryCombatEffects). Shield charge resets to full.
+      parryActiveUntilTick: undefined,
+      parryCooldownUntilTick: undefined,
+      parryFacing: undefined,
+      shieldCharge: player.shieldMaxCharge ?? 100,
     };
   }
   return out;

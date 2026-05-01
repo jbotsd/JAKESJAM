@@ -101,6 +101,19 @@ export type PlayerEntity = {
    */
   slowedUntilTick?: Tick;
   slowMultiplier?: number;
+  /**
+   * Parry + shield state. All optional / additive — older snapshots that omit
+   * these read as "no parry active, no shield charge". See sim/combat.ts for
+   * the timing/drain constants and the helpers that mutate these fields.
+   */
+  shieldCharge?: number;
+  shieldMaxCharge?: number;
+  /** Tick (inclusive) at which the parry window expires. */
+  parryActiveUntilTick?: Tick;
+  /** Tick (inclusive) before which a fresh parry can't start. */
+  parryCooldownUntilTick?: Tick;
+  /** Aim direction (radians) captured the moment parry started. */
+  parryFacing?: number;
 };
 
 export type ProjectileEntity = {
@@ -230,6 +243,16 @@ export type SimEvent =
       victimId: PlayerId;
       multiplier: number;
       durationMs: number;
+    }
+  | {
+      t: 'parry-deflected';
+      playerId: PlayerId;
+      projectileId: EntityId | null;
+    }
+  | {
+      t: 'shield-popped';
+      playerId: PlayerId;
+      remainingCharge: number;
     };
 
 export type StepResult = {
