@@ -8,7 +8,7 @@
 // playable gameplay during the cutover.
 
 import Phaser from "phaser";
-import { ConvexReactClient } from "convex/react";
+import { ConvexClient } from "convex/browser";
 import {
   ClientLoop,
   WsTransport,
@@ -34,7 +34,7 @@ const PROJECTILE_RADIUS_DEFAULT = 7;
 
 export class OnlineMatchScene extends Phaser.Scene {
   private loop: ClientLoop | null = null;
-  private convex: ConvexReactClient | null = null;
+  private convex: ConvexClient | null = null;
   private statusText: Phaser.GameObjects.Text | null = null;
   private playerSprites = new Map<string, Phaser.GameObjects.Container>();
   private projectileSprites = new Map<number, Phaser.GameObjects.Arc>();
@@ -104,7 +104,7 @@ export class OnlineMatchScene extends Phaser.Scene {
 
   private async connect(data: OnlineMatchSceneInit) {
     try {
-      this.convex = new ConvexReactClient(data.convexUrl);
+      this.convex = new ConvexClient(data.convexUrl);
       this.setStatus("Fetching match assignment from Convex...");
       const assignment = await fetchMatchAssignment(
         this.convex,

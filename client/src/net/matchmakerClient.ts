@@ -1,8 +1,11 @@
 // Thin wrapper over the Convex matchmaker.getMyMatchToken query. Returns the
 // game server URL + per-player auth token. Use this once after the match doc
 // reaches the "loading" status with a gameServerUrl assigned.
+//
+// Uses convex/browser (framework-free) instead of convex/react — this codebase
+// is Phaser, not React, and convex/react would pull React in as a peer dep.
 
-import type { ConvexReactClient } from "convex/react";
+import type { ConvexClient } from "convex/browser";
 import { api } from "../../../convex/_generated/api";
 import type { Id } from "../../../convex/_generated/dataModel";
 
@@ -13,7 +16,7 @@ export type MatchmakerAssignment = {
 };
 
 export async function fetchMatchAssignment(
-  convex: ConvexReactClient,
+  convex: ConvexClient,
   matchId: Id<"matches">,
   playerId: string,
 ): Promise<MatchmakerAssignment> {
