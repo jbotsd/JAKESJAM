@@ -104,6 +104,12 @@ export type CardVisualDefinition = {
   particleColor: string;
 };
 
+export type StatModifier = {
+  stat: string;
+  value: number;
+  multiplier?: boolean;
+};
+
 export type CardDefinition = {
   id: CardId;
   name: string;
@@ -114,6 +120,11 @@ export type CardDefinition = {
   buckets?: WeaponBucket[];
   essenceCost?: number;
   modifier?: WeaponCardModifier;
+  
+  // ROUNDS-style: Explicit benefits and penalties for tradeoffs
+  benefits?: StatModifier[];
+  penalties?: StatModifier[];
+  
   visual?: CardVisualDefinition;
   unique?: boolean;
   maxStacks?: number;
