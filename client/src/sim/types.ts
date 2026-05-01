@@ -212,6 +212,20 @@ export type WorldState = {
   pickups: Record<EntityId, PickupEntity>;
   satellites: Record<EntityId, SatelliteEntity>;
   round: RoundState;
+  /**
+   * Active chaos modifier ids for this match. Resolved per-tick via
+   * `getChaosProfile(...)` in `sim/data/chaosModifiers.ts`. Optional and
+   * additive — older snapshots that omit it are treated as "no modifiers".
+   * Stable per match: set once at `World.create` time and not mutated by
+   * `step` (round transitions don't touch it either).
+   */
+  chaosModifierIds?: string[];
+  /**
+   * Internal accumulator the World uses to throttle fire-hazard patch spawns
+   * while the `fire-hazard` modifier is active. Reset to 0 on round transitions
+   * so each round starts clean. Absent when no fire hazard is active.
+   */
+  fireHazardTimerMs?: number;
 };
 
 export type SimEvent =
