@@ -12,6 +12,7 @@ import {
 } from "./player.js";
 import { buildFireEntity, stepDestructibles } from "./destructible.js";
 import { stepFirePatches } from "./fire.js";
+import { clearExpiredBuffs, stepPickups } from "./pickup.js";
 import { stepProjectile } from "./projectile.js";
 import {
   despawnSatellitesForDeadOwners,
@@ -127,6 +128,8 @@ export class World {
         amount: pickup.amount,
         active: true,
         respawnAtTick: 0,
+        durationMs: pickup.durationMs,
+        respawnMs: pickup.respawnMs,
       };
     }
 
@@ -506,24 +509,53 @@ export function stepWithRuntime(
     }
   }
 
+  // 4. Pickups: pickup-vs-player overlap, instant effects + buff timers,
+  //    plus respawn scheduling. Runs only during fighting phase — countdown
+  //    / round-over freeze pickup activity. Card-cache offers and other
+  //    buff events emerge from here.
+  let nextPickups: WorldState["pickups"] = state.pickups;
+  if (fightingPhase) {
+    const pickupResult = stepPickups({
+      pickups: state.pickups,
+      players,
+      tick: nextTick,
+      dtMs,
+      rngState,
+    });
+    nextPickups = pickupResult.pickups;
+    rngState = pickupResult.rngState;
+    // pickupResult.players is a fresh map containing every player (with
+    // patches merged in by stepPickups), so we can replace.
+    for (const [pid, patched] of Object.entries(pickupResult.players)) {
+      players[pid] = patched;
+    }
+    for (const ev of pickupResult.events) {
+      events.push(ev);
+    }
+  }
+
+  // Buff cleanup: revert expired pickup-buff fields to undefined so renderers
+  // and combat code see "no buff" cleanly.
+  let cleanedPlayers = clearExpiredBuffs(players, nextTick);
+
   // After projectile / destructible / fire resolution, players whose hp hit 0
   // are now `alive: false`. Drop their satellites in the same tick (no zombie
   // companions).
-  let finalSatellites = despawnSatellitesForDeadOwners(nextSatellites, players);
+  let finalSatellites = despawnSatellitesForDeadOwners(nextSatellites, cleanedPlayers);
 
-  // 4. Round state machine.
+  // 5. Round state machine.
   const roundResult = stepRound({
     state: state.round,
-    players,
+    players: cleanedPlayers,
     dtMs,
     targetScore: TARGET_SCORE_DEFAULT,
   });
   events.push(...roundResult.events);
 
   // On round end, players need to respawn for the next round (if not match-over).
-  let respawnedPlayers = players;
+  let respawnedPlayers = cleanedPlayers;
   if (roundResult.state.phase === "countdown" && state.round.phase !== "countdown") {
-    respawnedPlayers = respawnAll(players, runtime.map);
+    respawnedPlayers = respawnAll(cleanedPlayers, runtime.map);
     // Round transition wipes all satellites — players reactivate them by
     // firing again in the next round.
     finalSatellites = {};
@@ -538,6 +570,7 @@ export function stepWithRuntime(
       projectiles: projectilesAfterDestructibles,
       destructibles: nextDestructibles,
       firePatches: nextFirePatches,
+      pickups: nextPickups,
       satellites: finalSatellites,
       round: roundResult.state,
     },
