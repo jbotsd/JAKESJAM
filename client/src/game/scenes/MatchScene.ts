@@ -1287,37 +1287,39 @@ export class MatchScene extends Phaser.Scene {
       if (this.deathSequenceId !== deathSequence || !this.playerRespawnPending) {
         return;
       }
-      this.respawnCountdownActive = true;
-      this.respawnRemainingMs = RESPAWN_COUNTDOWN_MS;
+      // No countdown: respawn is gated on the player actually picking a card.
+      // Show the death popup immediately and surface the draft.
       this.showDeathPopup();
-      this.openDeathDraft();
-    });
-    this.time.delayedCall(DEATH_POPUP_DELAY_MS + RESPAWN_COUNTDOWN_MS, () => {
-      if (this.deathSequenceId !== deathSequence || !this.playerRespawnPending) {
-        return;
-      }
-      // Auto-pick the leftmost draft option if the player didn't choose in time.
-      if (!this.deathDraftPickedThisLife) {
-        this.cardDraftOverlay?.autoPick();
-      }
-      this.respawnPlayer();
+      this.openDeathDraft(deathSequence);
     });
   }
 
-  private openDeathDraft() {
+  private openDeathDraft(deathSequence: number) {
     if (!this.cardDraftOverlay) {
       this.cardDraftOverlay = new CardDraftOverlay();
     }
     const candidates = this.rollDraftCandidates(3);
     if (candidates.length === 0) {
+      // Nothing eligible — fall back to immediate respawn so the player isn't
+      // stuck (rare; only happens if every card is cap-blocked).
+      if (this.playerRespawnPending && this.deathSequenceId === deathSequence) {
+        this.respawnPlayer();
+      }
       return;
     }
     this.cardDraftOverlay.show(candidates, (card) => {
       if (this.deathDraftPickedThisLife) return;
+      // Stale-pick guard: a different death sequence (e.g. scene restart)
+      // means this overlay belongs to a previous life; ignore the click.
+      if (this.deathSequenceId !== deathSequence) return;
       this.deathDraftPickedThisLife = true;
       this.progressionCardIds.push(card.id);
       this.rebuildWeaponBuild();
       this.lastPickupStatus = `drafted ${card.name}`;
+      // Card chosen → respawn now. Player stays dead until they pick.
+      if (this.playerRespawnPending) {
+        this.respawnPlayer();
+      }
     });
   }
 

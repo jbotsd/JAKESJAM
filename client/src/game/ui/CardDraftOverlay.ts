@@ -101,14 +101,19 @@ export class CardDraftOverlay {
     const el = document.createElement("div");
     Object.assign(el.style, CARD_STYLE);
 
-    const glow = card.visual?.glowColor ?? defaultGlowForRarity(card.rarity);
+    // Border + glow use the card's identity color (or the rarity color if the
+    // card hasn't authored one). Rarity badge ALWAYS uses the rarity color so
+    // a card with a per-card glow doesn't make its rarity look like a
+    // different tier (e.g. an orange uncommon used to read as "legendary").
+    const rarityColor = colorForRarity(card.rarity);
+    const glow = card.visual?.glowColor ?? rarityColor;
     el.style.borderColor = glow;
     el.style.boxShadow = `0 0 24px ${withAlpha(glow, 0.45)}, inset 0 0 18px ${withAlpha(glow, 0.18)}`;
 
     const rarity = document.createElement("div");
     rarity.textContent = card.rarity.toUpperCase();
     Object.assign(rarity.style, RARITY_STYLE);
-    rarity.style.color = glow;
+    rarity.style.color = rarityColor;
 
     const name = document.createElement("div");
     name.textContent = card.name;
@@ -233,18 +238,25 @@ const FLAVOR_STYLE: Partial<CSSStyleDeclaration> = {
   marginTop: "auto",
 };
 
-function defaultGlowForRarity(rarity: CardDefinition["rarity"]): string {
+/**
+ * Standard MMO/loot rarity convention:
+ *   common = gray, uncommon = green, rare = purple, legendary = orange,
+ *   cursed = red.
+ * Used both for the rarity badge text and as a fallback border/glow when a
+ * card hasn't authored its own identity color.
+ */
+function colorForRarity(rarity: CardDefinition["rarity"]): string {
   switch (rarity) {
     case "legendary":
-      return "#fde047";
+      return "#fb923c"; // orange
     case "rare":
-      return "#a78bfa";
+      return "#a78bfa"; // purple
     case "uncommon":
-      return "#50e3c2";
+      return "#4ade80"; // green
     case "cursed":
-      return "#fb7185";
+      return "#fb7185"; // red-pink
     default:
-      return "#9aa5b1";
+      return "#9aa5b1"; // gray (common)
   }
 }
 
