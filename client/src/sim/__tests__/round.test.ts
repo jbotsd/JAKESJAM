@@ -12,9 +12,13 @@ import {
   DRAFT_OFFER_COUNT,
   DRAFT_WINDOW_MS,
 } from "../round.js";
-import type { PlayerEntity, PlayerId, RoundState, SimEvent } from "../types.js";
+import { InputSeq, PlayerId, Tick, type PlayerEntity, type RoundState, type SimEvent } from "../types.js";
 
-function mkPlayer(id: PlayerId, overrides: Partial<PlayerEntity> = {}): PlayerEntity {
+const A = PlayerId("a");
+const B = PlayerId("b");
+
+function mkPlayer(idRaw: string, overrides: Partial<PlayerEntity> = {}): PlayerEntity {
+  const id = PlayerId(idRaw);
   return {
     id,
     characterId: "balanced",
@@ -33,12 +37,13 @@ function mkPlayer(id: PlayerId, overrides: Partial<PlayerEntity> = {}): PlayerEn
     fireCooldownMs: 0,
     ammo: 0,
     abilityCharge: 0,
-    lastProcessedInputSeq: 0,
+    lastProcessedInputSeq: InputSeq(0),
     ...overrides,
   };
 }
 
-function freshRound(playerIds: PlayerId[]): RoundState {
+function freshRound(playerIdsRaw: string[]): RoundState {
+  const playerIds = playerIdsRaw.map(PlayerId);
   const scores: Record<PlayerId, number> = {};
   for (const id of playerIds) scores[id] = 0;
   return {
@@ -52,7 +57,7 @@ function freshRound(playerIds: PlayerId[]): RoundState {
 
 describe("stepRound", () => {
   test("countdown ticks down then transitions to fighting at 0", () => {
-    const players = { a: mkPlayer("a"), b: mkPlayer("b") };
+    const players = { [A]:mkPlayer("a"), [B]:mkPlayer("b") };
     let state = freshRound(["a", "b"]);
 
     // 100ms tick — should still be in countdown.
@@ -76,20 +81,20 @@ describe("stepRound", () => {
     const state: RoundState = {
       phase: "fighting",
       countdownRemainingMs: ROUND_TIME_LIMIT_MS,
-      scores: { a: 0, b: 0 },
+      scores: { [A]:0, [B]:0 },
       roundIndex: 0,
       winnerPlayerId: null,
     };
     const result = stepRound({ state, players, dtMs: 16, targetScore: 3 });
     expect(result.state.phase).toBe("round-over");
-    expect(result.state.winnerPlayerId).toBe("a");
-    expect(result.state.scores.a).toBe(1);
-    expect(result.state.scores.b).toBe(0);
+    expect(result.state.winnerPlayerId).toBe(A);
+    expect(result.state.scores[A]).toBe(1);
+    expect(result.state.scores[B]).toBe(0);
     const endEvent = result.events.find((e): e is Extract<SimEvent, { t: "round-end" }> =>
       e.t === "round-end",
     );
     expect(endEvent).toBeDefined();
-    expect(endEvent!.winnerId).toBe("a");
+    expect(endEvent!.winnerId).toBe(A);
     expect(result.matchComplete).toBe(false);
   });
 
@@ -101,15 +106,15 @@ describe("stepRound", () => {
     const state: RoundState = {
       phase: "fighting",
       countdownRemainingMs: ROUND_TIME_LIMIT_MS,
-      scores: { a: 0, b: 0 },
+      scores: { [A]:0, [B]:0 },
       roundIndex: 0,
       winnerPlayerId: null,
     };
     const result = stepRound({ state, players, dtMs: 16, targetScore: 3 });
     expect(result.state.phase).toBe("round-over");
     expect(result.state.winnerPlayerId).toBeNull();
-    expect(result.state.scores.a).toBe(0);
-    expect(result.state.scores.b).toBe(0);
+    expect(result.state.scores[A]).toBe(0);
+    expect(result.state.scores[B]).toBe(0);
   });
 
   test("time-out resolution picks highest-health player (alphabetical tiebreak)", () => {
@@ -121,7 +126,7 @@ describe("stepRound", () => {
     const stateTimeout: RoundState = {
       phase: "fighting",
       countdownRemainingMs: 1, // will drop to 0 this tick → forceResolve
-      scores: { a: 0, b: 0 },
+      scores: { [A]:0, [B]:0 },
       roundIndex: 0,
       winnerPlayerId: null,
     };
@@ -132,8 +137,8 @@ describe("stepRound", () => {
       targetScore: 3,
     });
     expect(tieResult.state.phase).toBe("round-over");
-    expect(tieResult.state.winnerPlayerId).toBe("a");
-    expect(tieResult.state.scores.a).toBe(1);
+    expect(tieResult.state.winnerPlayerId).toBe(A);
+    expect(tieResult.state.scores[A]).toBe(1);
 
     // Different health — strictly higher health wins, even if id is alphabetically later.
     const playersHealth = {
@@ -146,7 +151,7 @@ describe("stepRound", () => {
       dtMs: 16,
       targetScore: 3,
     });
-    expect(healthResult.state.winnerPlayerId).toBe("b");
+    expect(healthResult.state.winnerPlayerId).toBe(B);
   });
 
   test("score-to-target → matchComplete:true is returned", () => {
@@ -158,12 +163,12 @@ describe("stepRound", () => {
     const state: RoundState = {
       phase: "fighting",
       countdownRemainingMs: ROUND_TIME_LIMIT_MS,
-      scores: { a: 2, b: 0 },
+      scores: { [A]:2, [B]:0 },
       roundIndex: 2,
       winnerPlayerId: null,
     };
     const result = stepRound({ state, players, dtMs: 16, targetScore: 3 });
-    expect(result.state.scores.a).toBe(3);
+    expect(result.state.scores[A]).toBe(3);
     expect(result.matchComplete).toBe(true);
   });
 
@@ -176,9 +181,9 @@ describe("stepRound", () => {
     const state: RoundState = {
       phase: "round-over",
       countdownRemainingMs: 16, // less than dtMs → drains to 0 this tick
-      scores: { a: 1, b: 0 },
+      scores: { [A]:1, [B]:0 },
       roundIndex: 0,
-      winnerPlayerId: "a",
+      winnerPlayerId: A,
     };
     const result = stepRound({ state, players, dtMs: 32, targetScore: 3 });
     expect(result.state.phase).toBe("countdown");
@@ -205,26 +210,26 @@ describe("stepRound", () => {
     const state: RoundState = {
       phase: "round-over",
       countdownRemainingMs: 0, // hold timer already drained
-      scores: { a: 1, b: 0 },
+      scores: { [A]:1, [B]:0 },
       roundIndex: 0,
-      winnerPlayerId: "a",
+      winnerPlayerId: A,
     };
     const result = stepRound({
       state,
       players,
       dtMs: 32,
       targetScore: 3,
-      tick: 100,
+      tick: Tick(100),
       rngState: 0xdead_beef,
     });
     expect(result.state.phase).toBe("drafting");
     expect(result.state.draftingOffers).toBeDefined();
     expect(Object.keys(result.state.draftingOffers!).sort()).toEqual(["a", "b"]);
-    expect(result.state.draftingOffers!.a!.length).toBe(DRAFT_OFFER_COUNT);
-    expect(result.state.draftingOffers!.b!.length).toBe(DRAFT_OFFER_COUNT);
+    expect(result.state.draftingOffers![A]!.length).toBe(DRAFT_OFFER_COUNT);
+    expect(result.state.draftingOffers![B]!.length).toBe(DRAFT_OFFER_COUNT);
     expect(result.state.draftingPicked).toEqual({});
     // Expiry tick is window converted to ticks at the fixed STEP_MS rate.
-    const expectedExpiry = 100 + Math.ceil(DRAFT_WINDOW_MS / STEP_MS);
+    const expectedExpiry = Tick(100 + Math.ceil(DRAFT_WINDOW_MS / STEP_MS));
     expect(result.state.draftingExpiresAtTick).toBe(expectedExpiry);
     // Two card-offered events, one per alive player. Round-end is NOT
     // re-emitted at this boundary (already fired on fighting → round-over).
@@ -233,8 +238,8 @@ describe("stepRound", () => {
     );
     expect(offerEvents).toHaveLength(2);
     const offered = new Map(offerEvents.map((e) => [e.playerId, e.cardIds]));
-    expect(offered.get("a")).toEqual(result.state.draftingOffers!.a!);
-    expect(offered.get("b")).toEqual(result.state.draftingOffers!.b!);
+    expect(offered.get(A)).toEqual(result.state.draftingOffers![A]!);
+    expect(offered.get(B)).toEqual(result.state.draftingOffers![B]!);
     // RNG cursor advanced because we drew offers.
     expect(result.rngState).toBeDefined();
     expect(result.rngState).not.toBe(0xdead_beef);
@@ -248,12 +253,12 @@ describe("stepRound", () => {
     const state: RoundState = {
       phase: "round-over",
       countdownRemainingMs: 0,
-      scores: { a: 1, b: 0 },
+      scores: { [A]:1, [B]:0 },
       roundIndex: 0,
-      winnerPlayerId: "a",
+      winnerPlayerId: A,
     };
-    const r1 = stepRound({ state, players, dtMs: 32, targetScore: 3, tick: 50, rngState: 12345 });
-    const r2 = stepRound({ state, players, dtMs: 32, targetScore: 3, tick: 50, rngState: 12345 });
+    const r1 = stepRound({ state, players, dtMs: 32, targetScore: 3, tick: Tick(50), rngState: 12345 });
+    const r2 = stepRound({ state, players, dtMs: 32, targetScore: 3, tick: Tick(50), rngState: 12345 });
     expect(r1.state.draftingOffers).toEqual(r2.state.draftingOffers);
     expect(r1.rngState).toBe(r2.rngState);
   });
@@ -268,14 +273,14 @@ describe("stepRound", () => {
     const state: RoundState = {
       phase: "drafting",
       countdownRemainingMs: DRAFT_WINDOW_MS,
-      scores: { a: 1, b: 0 },
+      scores: { [A]:1, [B]:0 },
       roundIndex: 2,
-      winnerPlayerId: "a",
-      draftingExpiresAtTick: startTick + Math.ceil(DRAFT_WINDOW_MS / STEP_MS),
-      draftingPicked: { a: "crystal-volley", b: "circle-rounds" },
+      winnerPlayerId: A,
+      draftingExpiresAtTick: Tick(startTick + Math.ceil(DRAFT_WINDOW_MS / STEP_MS)),
+      draftingPicked: { [A]:"crystal-volley", [B]:"circle-rounds" },
       draftingOffers: {
-        a: ["crystal-volley", "circle-rounds", "raycast-prism"],
-        b: ["circle-rounds", "raycast-prism", "crystal-volley"],
+        [A]: ["crystal-volley", "circle-rounds", "raycast-prism"],
+        [B]: ["circle-rounds", "raycast-prism", "crystal-volley"],
       },
     };
     const result = stepRound({
@@ -283,7 +288,7 @@ describe("stepRound", () => {
       players,
       dtMs: 16,
       targetScore: 3,
-      tick: startTick + 1, // well before expiry
+      tick: Tick(startTick + 1), // well before expiry
       rngState: 99,
     });
     expect(result.state.phase).toBe("countdown");
@@ -313,14 +318,14 @@ describe("stepRound", () => {
     const state: RoundState = {
       phase: "drafting",
       countdownRemainingMs: 0,
-      scores: { a: 1, b: 0 },
+      scores: { [A]:1, [B]:0 },
       roundIndex: 0,
-      winnerPlayerId: "a",
-      draftingExpiresAtTick: expiresAt,
-      draftingPicked: { a: "circle-rounds" },
+      winnerPlayerId: A,
+      draftingExpiresAtTick: Tick(expiresAt),
+      draftingPicked: { [A]:"circle-rounds" },
       draftingOffers: {
-        a: ["circle-rounds", "raycast-prism", "crystal-volley"],
-        b: ["crystal-volley", "raycast-prism", "circle-rounds"],
+        [A]: ["circle-rounds", "raycast-prism", "crystal-volley"],
+        [B]: ["crystal-volley", "raycast-prism", "circle-rounds"],
       },
     };
     const result = stepRound({
@@ -328,7 +333,7 @@ describe("stepRound", () => {
       players,
       dtMs: 16,
       targetScore: 3,
-      tick: expiresAt + 1000, // well past the old expiry
+      tick: Tick(expiresAt + 1000), // well past the old expiry
       rngState: 7,
     });
     // Stays in drafting because 'b' hasn't committed.
@@ -351,14 +356,14 @@ describe("stepRound", () => {
     const state: RoundState = {
       phase: "drafting",
       countdownRemainingMs: DRAFT_WINDOW_MS,
-      scores: { a: 1, b: 0 },
+      scores: { [A]:1, [B]:0 },
       roundIndex: 0,
-      winnerPlayerId: "a",
-      draftingExpiresAtTick: startTick + Math.ceil(DRAFT_WINDOW_MS / STEP_MS),
+      winnerPlayerId: A,
+      draftingExpiresAtTick: Tick(startTick + Math.ceil(DRAFT_WINDOW_MS / STEP_MS)),
       draftingPicked: {},
       draftingOffers: {
-        a: ["crystal-volley", "circle-rounds", "raycast-prism"],
-        b: ["circle-rounds", "crystal-volley", "raycast-prism"],
+        [A]: ["crystal-volley", "circle-rounds", "raycast-prism"],
+        [B]: ["circle-rounds", "crystal-volley", "raycast-prism"],
       },
     };
     const result = stepRound({
@@ -366,7 +371,7 @@ describe("stepRound", () => {
       players,
       dtMs: 16,
       targetScore: 3,
-      tick: startTick + 1,
+      tick: Tick(startTick + 1),
       rngState: 1,
     });
     expect(result.state.phase).toBe("drafting");

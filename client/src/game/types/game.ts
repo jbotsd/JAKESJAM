@@ -30,9 +30,11 @@ export type Vec2 = {
   y: number;
 };
 
+import type { Id } from "../../../../convex/_generated/dataModel";
+
 export type PlayerId = string;
-export type RoomId = string;
-export type MatchId = string;
+export type RoomId = Id<"rooms">;
+export type MatchId = Id<"matches">;
 export type CharacterId = "balanced" | "heavy" | "sprinter" | "shielded";
 export type ChaosModifierId =
   | "low-gravity"

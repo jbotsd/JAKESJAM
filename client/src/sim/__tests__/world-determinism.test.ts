@@ -5,13 +5,15 @@
 
 import { describe, test, expect } from "bun:test";
 import { World, createRuntime, stepWithRuntime } from "../World.js";
-import type {
-  InputBitfield,
-  InputFrame,
-  MapDefinition,
+import {
+  InputSeq,
   PlayerId,
-  PlayerSpawnInfo,
-  WorldState,
+  Tick,
+  type InputBitfield,
+  type InputFrame,
+  type MapDefinition,
+  type PlayerSpawnInfo,
+  type WorldState,
 } from "../types.js";
 
 const Bit = {
@@ -45,14 +47,14 @@ const oneFloorMap: MapDefinition = {
 
 const players: PlayerSpawnInfo[] = [
   {
-    playerId: "a",
+    playerId: PlayerId("a"),
     characterId: "balanced",
     name: "Alpha",
     color: "#ff0000",
     weaponId: "starter-pistol",
   },
   {
-    playerId: "b",
+    playerId: PlayerId("b"),
     characterId: "balanced",
     name: "Bravo",
     color: "#00ff00",
@@ -82,10 +84,10 @@ function buildInputs(
   keys: InputBitfield,
 ): InputFrame {
   return {
-    seq: tick,
-    tick,
+    seq: InputSeq(tick),
+    tick: Tick(tick),
     keys,
-    aimX: pid === "a" ? 800 : 0,
+    aimX: pid === PlayerId("a") ? 800 : 0,
     aimY: 400,
     dtMs: DT_MS,
   };
@@ -96,8 +98,8 @@ function runScripted(seed: number): WorldState {
   const runtime = createRuntime(oneFloorMap);
   for (let i = 0; i < TICKS; i += 1) {
     const inputs: Record<PlayerId, InputFrame | null> = {
-      a: buildInputs("a", i, inputForA(i)),
-      b: buildInputs("b", i, inputForB(i)),
+      [PlayerId("a")]: buildInputs(PlayerId("a"), i, inputForA(i)),
+      [PlayerId("b")]: buildInputs(PlayerId("b"), i, inputForB(i)),
     };
     const result = stepWithRuntime(state, runtime, inputs, DT_MS);
     state = result.state;
@@ -110,13 +112,13 @@ describe("World determinism", () => {
     const stateA = runScripted(42);
     const stateB = runScripted(42);
 
-    expect(stateA.tick).toBe(TICKS);
-    expect(stateB.tick).toBe(TICKS);
+    expect(stateA.tick).toBe(Tick(TICKS));
+    expect(stateB.tick).toBe(Tick(TICKS));
 
-    const a1 = stateA.players.a!;
-    const a2 = stateB.players.a!;
-    const b1 = stateA.players.b!;
-    const b2 = stateB.players.b!;
+    const a1 = stateA.players[PlayerId("a")]!;
+    const a2 = stateB.players[PlayerId("a")]!;
+    const b1 = stateA.players[PlayerId("b")]!;
+    const b2 = stateB.players[PlayerId("b")]!;
     expect(a1.x).toBe(a2.x);
     expect(a1.y).toBe(a2.y);
     expect(b1.x).toBe(b2.x);

@@ -29,13 +29,17 @@ import { stepWeapon } from "./weapon.js";
 import { stepRound, TARGET_SCORE_DEFAULT } from "./round.js";
 import { tickShield, tryDeflectDamage, tryStartParry } from "./combat.js";
 import { buildStaticCache, type StaticCollisionCache } from "./collision.js";
-import type {
+import {
   EntityId,
+  PlayerId,
+  Tick,
+  InputSeq,
+} from "./types.js";
+import type {
   FireEntity,
   InputBitfield,
   InputFrame,
   MapDefinition,
-  PlayerId,
   PlayerSpawnInfo,
   SatelliteEntity,
   SimEvent,
@@ -87,7 +91,7 @@ export class World {
     rngSeed: number,
     chaosModifierIds?: readonly string[],
   ): WorldState {
-    let nextEntityId: EntityId = 1;
+    let nextEntityId: EntityId = EntityId(1);
     const playerEntities: WorldState["players"] = {};
     const scores: WorldState["round"]["scores"] = {};
 
@@ -111,7 +115,7 @@ export class World {
         fireCooldownMs: 0,
         ammo: 0,
         abilityCharge: 0,
-        lastProcessedInputSeq: 0,
+        lastProcessedInputSeq: InputSeq(0),
         jetpackFuel: JETPACK_MAX_FUEL,
       };
       scores[spawn.playerId] = 0;
@@ -120,7 +124,7 @@ export class World {
     const destructibles: WorldState["destructibles"] = {};
     for (const object of map.destructibles ?? []) {
       const id = nextEntityId;
-      nextEntityId += 1;
+      nextEntityId = EntityId(nextEntityId + 1);
       destructibles[id] = {
         id,
         kind: object.kind,
@@ -137,7 +141,7 @@ export class World {
     const pickups: WorldState["pickups"] = {};
     for (const pickup of map.pickups ?? []) {
       const id = nextEntityId;
-      nextEntityId += 1;
+      nextEntityId = EntityId(nextEntityId + 1);
       pickups[id] = {
         id,
         kind: pickup.kind,
@@ -146,7 +150,7 @@ export class World {
         radius: pickup.radius,
         amount: pickup.amount,
         active: true,
-        respawnAtTick: 0,
+        respawnAtTick: Tick(0),
         durationMs: pickup.durationMs,
         respawnMs: pickup.respawnMs,
       };
@@ -159,7 +163,7 @@ export class World {
     const chaosProfile = getChaosProfile(chaos as ChaosModifierId[] | undefined);
 
     return {
-      tick: 0,
+      tick: Tick(0),
       rngState: rngSeed >>> 0,
       players: playerEntities,
       projectiles: {},
@@ -231,7 +235,7 @@ export function stepWithRuntime(
   // already gated on fightingPhase. Round timer keeps ticking via stepRound.
   const draftingPhase = state.round.phase === "drafting";
   const allocId = (): EntityId => {
-    const id = runtime.nextEntityId;
+    const id = EntityId(runtime.nextEntityId);
     runtime.nextEntityId += 1;
     return id;
   };
@@ -261,7 +265,8 @@ export function stepWithRuntime(
   // satellite step later this tick rotates and ticks them.
   let nextSatellites: WorldState["satellites"] = { ...(state.satellites ?? {}) };
 
-  for (const [pid, entity] of Object.entries(state.players)) {
+  for (const [pid_, entity] of Object.entries(state.players)) {
+    const pid = pid_ as PlayerId;
     const input = inputsByPlayer[pid] ?? null;
     const prevKeys = runtime.prevKeys.get(pid) ?? 0;
     const currKeys = input ? input.keys : 0;
@@ -374,7 +379,8 @@ export function stepWithRuntime(
   //     no wall-clock. Frozen-state expiry is handled here too so renderers
   //     see a clean field flip after the freeze window passes.
   const ONE_SECOND_TICKS = Math.max(1, Math.round(1000 / Math.max(1, effDtMs)));
-  for (const pid of Object.keys(players)) {
+  for (const pidStr of Object.keys(players)) {
+    const pid = pidStr as PlayerId;
     const p = players[pid]!;
     if (!p.alive) continue;
     let next = p;
@@ -453,13 +459,13 @@ export function stepWithRuntime(
   const remainingProjectiles: WorldState["projectiles"] = draftingPhase
     ? { ...nextProjectiles }
     : {};
-  const sortedProjectileIds = draftingPhase
+  const sortedProjectileIds: EntityId[] = draftingPhase
     ? []
     : Object.keys(nextProjectiles)
-        .map((id) => Number(id))
+        .map((id) => EntityId(Number(id)))
         .sort((a, b) => a - b);
 
-  const nextTick = state.tick + 1;
+  const nextTick = Tick(state.tick + 1);
   let rngState = state.rngState;
   // Projectile ids that were parry-deflected this tick — they get dropped
   // from `remainingProjectiles` even if their hit-resolution path would have
@@ -566,7 +572,7 @@ export function stepWithRuntime(
             const burnTicks = Math.ceil((3 * 1000) / Math.max(1, effDtMs));
             nextVictim = {
               ...nextVictim,
-              burnUntilTick: nextTick + burnTicks,
+              burnUntilTick: (nextTick + burnTicks) as Tick,
               burnDps: finalDamage * 0.4,
               burnTickLastApplied: nextTick,
             };
@@ -576,7 +582,7 @@ export function stepWithRuntime(
             const freezeTicks = Math.ceil((1 * 1000) / Math.max(1, effDtMs));
             nextVictim = {
               ...nextVictim,
-              freezeUntilTick: nextTick + freezeTicks,
+              freezeUntilTick: (nextTick + freezeTicks) as Tick,
               freezeMultiplier: 0.5,
             };
           }
@@ -591,7 +597,7 @@ export function stepWithRuntime(
             let bestId: PlayerId | null = null;
             let bestD2 = CHAIN_RADIUS * CHAIN_RADIUS;
             // Iterate sorted ids for determinism.
-            const ids = Object.keys(players).sort();
+            const ids = (Object.keys(players) as PlayerId[]).sort();
             for (const oid of ids) {
               if (oid === ev.victimId) continue;
               if (oid === proj.ownerId) continue;
@@ -637,14 +643,14 @@ export function stepWithRuntime(
       } else if (ev.t === "player-slowed" && players[ev.victimId]) {
         const victim = players[ev.victimId]!;
         const ticksDuration = Math.ceil(ev.durationMs / effDtMs);
-        const until = nextTick + ticksDuration;
+        const until = Tick(nextTick + ticksDuration);
         // Stack policy: keep whichever ends later, take the lower (more
         // punishing) multiplier.
-        const prevUntil = victim.slowedUntilTick ?? 0;
+        const prevUntil = victim.slowedUntilTick ?? Tick(0);
         const prevMul = victim.slowMultiplier ?? 1;
         players[ev.victimId] = {
           ...victim,
-          slowedUntilTick: Math.max(prevUntil, until),
+          slowedUntilTick: Tick(Math.max(prevUntil, until)),
           slowMultiplier: Math.min(prevMul, ev.multiplier),
         };
       }
@@ -653,7 +659,7 @@ export function stepWithRuntime(
 
     // Insert any split children (assign ids here, in entity-id order).
     for (const child of result.spawned) {
-      const childId = runtime.nextEntityId;
+      const childId = EntityId(runtime.nextEntityId);
       runtime.nextEntityId += 1;
       remainingProjectiles[childId] = { ...child.spec, id: childId };
     }
@@ -669,7 +675,8 @@ export function stepWithRuntime(
   }
 
   // Slow-debuff cleanup: clear expired slows so movement returns to normal.
-  for (const pid of Object.keys(players)) {
+  for (const pid_ of Object.keys(players)) {
+    const pid = pid_ as PlayerId;
     const p = players[pid]!;
     if (p.slowedUntilTick !== undefined && p.slowedUntilTick <= nextTick) {
       players[pid] = {
@@ -715,7 +722,7 @@ export function stepWithRuntime(
       events.push(ev);
     }
     for (const spec of destResult.spawnedFire) {
-      const fid = runtime.nextEntityId;
+      const fid = EntityId(runtime.nextEntityId);
       runtime.nextEntityId += 1;
       nextFirePatches[fid] = buildFireEntity(fid, spec);
     }
@@ -759,8 +766,8 @@ export function stepWithRuntime(
     });
     nextPickups = pickupResult.pickups;
     rngState = pickupResult.rngState;
-    for (const [pid, patched] of Object.entries(pickupResult.players)) {
-      players[pid] = patched;
+    for (const [pid_, patched] of Object.entries(pickupResult.players)) {
+      players[pid_ as PlayerId] = patched;
     }
     for (const ev of pickupResult.events) {
       events.push(ev);
@@ -793,7 +800,7 @@ export function stepWithRuntime(
         y,
         radius,
         remainingMs: 3000,
-        ownerId: "__chaos__",
+        ownerId: PlayerId("__chaos__"),
         damagePerSecond: 13,
       };
       nextFirePatches[fireId] = patch;
@@ -838,7 +845,8 @@ export function stepWithRuntime(
   let patchedPlayers = cleanedPlayers;
   if (roundResult.playerPatches) {
     patchedPlayers = { ...cleanedPlayers };
-    for (const [pid, patch] of Object.entries(roundResult.playerPatches)) {
+    for (const [pid_, patch] of Object.entries(roundResult.playerPatches)) {
+      const pid = pid_ as PlayerId;
       const existing = patchedPlayers[pid];
       if (!existing) continue;
       patchedPlayers[pid] = { ...existing, cards: patch.cards };
@@ -890,7 +898,8 @@ function respawnAll(
 ): WorldState["players"] {
   const out: WorldState["players"] = {};
   const ids = Object.keys(players).sort();
-  for (const [index, pid] of ids.entries()) {
+  for (const [index, pid_] of ids.entries()) {
+    const pid = pid_ as PlayerId;
     const spawn = map.spawns[index % Math.max(1, map.spawns.length)] ?? { x: 0, y: 0 };
     const player = players[pid]!;
     out[pid] = {

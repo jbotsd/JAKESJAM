@@ -6,11 +6,10 @@
 // patches in EntityId order for cross-runtime determinism.
 
 import { aabbOverlap, type AABB } from "./collision.js";
+import { EntityId, PlayerId } from "./types.js";
 import type {
-  EntityId,
   FireEntity,
   PlayerEntity,
-  PlayerId,
   SimEvent,
 } from "./types.js";
 
@@ -44,8 +43,8 @@ export function stepFirePatches(
 
   const dtSec = dtMs / 1000;
 
-  const ids = Object.keys(firePatches)
-    .map((id) => Number(id))
+  const ids: EntityId[] = Object.keys(firePatches)
+    .map((id) => EntityId(Number(id)))
     .sort((a, b) => a - b);
 
   for (const id of ids) {
@@ -67,7 +66,8 @@ export function stepFirePatches(
     };
 
     const playerIds = Object.keys(players).sort();
-    for (const pid of playerIds) {
+    for (const pid_ of playerIds) {
+      const pid = pid_ as PlayerId;
       if (pid === patch.ownerId) continue;
       const p = players[pid]!;
       if (!p.alive) continue;

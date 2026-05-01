@@ -8,14 +8,17 @@
 import { describe, test, expect } from "bun:test";
 import { World, createRuntime, stepWithRuntime } from "../World.js";
 import { getChaosProfile } from "../data/chaosModifiers.js";
+import { InputSeq, PlayerId, Tick } from "../types.js";
 import type {
   InputBitfield,
   InputFrame,
   MapDefinition,
-  PlayerId,
   PlayerSpawnInfo,
   WorldState,
 } from "../types.js";
+
+const PA = PlayerId("a");
+const PB = PlayerId("b");
 
 const Bit = {
   Right: 1 << 1,
@@ -44,14 +47,14 @@ const arena: MapDefinition = {
 
 const players: PlayerSpawnInfo[] = [
   {
-    playerId: "a",
+    playerId: PA,
     characterId: "balanced",
     name: "A",
     color: "#f00",
     weaponId: "starter-pistol",
   },
   {
-    playerId: "b",
+    playerId: PB,
     characterId: "balanced",
     name: "B",
     color: "#0f0",
@@ -60,14 +63,14 @@ const players: PlayerSpawnInfo[] = [
 ];
 
 function buildInput(seq: number, keys: InputBitfield, aimX: number): InputFrame {
-  return { seq, tick: seq, keys, aimX, aimY: 400, dtMs: DT_MS };
+  return { seq: InputSeq(seq), tick: Tick(seq), keys, aimX, aimY: 400, dtMs: DT_MS };
 }
 
 /** Fast-forward through countdown so projectile/movement effects matter. */
 function skipCountdown(state: WorldState, runtime: ReturnType<typeof createRuntime>): WorldState {
   let s = state;
   while (s.round.phase === "countdown") {
-    const inputs: Record<PlayerId, InputFrame | null> = { a: null, b: null };
+    const inputs = { [PA]: null, [PB]: null };
     s = stepWithRuntime(s, runtime, inputs, DT_MS).state;
   }
   return s;
@@ -115,11 +118,11 @@ describe("World chaos integration", () => {
     const baselineRuntime = createRuntime(arena);
     const chaosRuntime = createRuntime(arena);
     for (let i = 0; i < 10; i += 1) {
-      baseline = stepWithRuntime(baseline, baselineRuntime, { a: null, b: null }, DT_MS).state;
-      chaos = stepWithRuntime(chaos, chaosRuntime, { a: null, b: null }, DT_MS).state;
+      baseline = stepWithRuntime(baseline, baselineRuntime, { [PA]: null, [PB]: null }, DT_MS).state;
+      chaos = stepWithRuntime(chaos, chaosRuntime, { [PA]: null, [PB]: null }, DT_MS).state;
     }
     // Both fall, but the chaos player has a smaller downward velocity.
-    expect(Math.abs(chaos.players.a!.vy)).toBeLessThan(Math.abs(baseline.players.a!.vy));
+    expect(Math.abs(chaos.players[PA]!.vy)).toBeLessThan(Math.abs(baseline.players[PA]!.vy));
   });
 
   test("slow-motion: round timer advances slower", () => {
@@ -130,8 +133,8 @@ describe("World chaos integration", () => {
     let baseline = baselineState;
     let chaos = chaosState;
     for (let i = 0; i < 30; i += 1) {
-      baseline = stepWithRuntime(baseline, baselineRuntime, { a: null, b: null }, DT_MS).state;
-      chaos = stepWithRuntime(chaos, chaosRuntime, { a: null, b: null }, DT_MS).state;
+      baseline = stepWithRuntime(baseline, baselineRuntime, { [PA]: null, [PB]: null }, DT_MS).state;
+      chaos = stepWithRuntime(chaos, chaosRuntime, { [PA]: null, [PB]: null }, DT_MS).state;
     }
     // Countdown drains slower under slow-motion.
     expect(chaos.round.countdownRemainingMs).toBeGreaterThan(baseline.round.countdownRemainingMs);
@@ -153,8 +156,8 @@ describe("World chaos integration", () => {
         state,
         createRuntime(arena),
         {
-          a: buildInput(i, Bit.Fire, 800),
-          b: null,
+          [PA]: buildInput(i, Bit.Fire, 800),
+          [PB]: null,
         },
         DT_MS,
       );
@@ -175,7 +178,7 @@ describe("World chaos integration", () => {
     // multiple patches.
     let totalSpawned = 0;
     for (let i = 0; i < 360; i += 1) {
-      state = stepWithRuntime(state, runtime, { a: null, b: null }, DT_MS).state;
+      state = stepWithRuntime(state, runtime, { [PA]: null, [PB]: null }, DT_MS).state;
       totalSpawned = Math.max(totalSpawned, Object.keys(state.firePatches).length);
     }
     expect(totalSpawned).toBeGreaterThan(0);
@@ -194,17 +197,17 @@ describe("World chaos integration", () => {
     baseline = stepWithRuntime(
       baseline,
       baselineRuntime,
-      { a: buildInput(0, Bit.Fire, aimX), b: null },
+      { [PA]: buildInput(0, Bit.Fire, aimX), [PB]: null },
       DT_MS,
     ).state;
     chaos = stepWithRuntime(
       chaos,
       chaosRuntime,
-      { a: buildInput(0, Bit.Fire, aimX), b: null },
+      { [PA]: buildInput(0, Bit.Fire, aimX), [PB]: null },
       DT_MS,
     ).state;
     // Chaos shooter has a larger leftward velocity (more negative vx).
-    expect(chaos.players.a!.vx).toBeLessThan(baseline.players.a!.vx);
+    expect(chaos.players[PA]!.vx).toBeLessThan(baseline.players[PA]!.vx);
   });
 
   test("determinism: chaos run with same seed yields identical state", () => {
@@ -216,8 +219,8 @@ describe("World chaos integration", () => {
           state,
           runtime,
           {
-            a: buildInput(i, Bit.Right, 800),
-            b: buildInput(i, 0, 0),
+            [PA]: buildInput(i, Bit.Right, 800),
+            [PB]: buildInput(i, 0, 0),
           },
           DT_MS,
         ).state;
@@ -226,8 +229,8 @@ describe("World chaos integration", () => {
     };
     const a = run();
     const b = run();
-    expect(a.players.a!.x).toBe(b.players.a!.x);
-    expect(a.players.a!.y).toBe(b.players.a!.y);
+    expect(a.players[PA]!.x).toBe(b.players[PA]!.x);
+    expect(a.players[PA]!.y).toBe(b.players[PA]!.y);
     expect(a.rngState).toBe(b.rngState);
     expect(Object.keys(a.firePatches).length).toBe(Object.keys(b.firePatches).length);
   });

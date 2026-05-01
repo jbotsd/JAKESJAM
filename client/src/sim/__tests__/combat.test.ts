@@ -3,6 +3,7 @@
 // and recharge, and the deflect/shield/passthrough mitigation chain.
 
 import { describe, expect, test } from "bun:test";
+import { EntityId, InputSeq, PlayerId, Tick } from "../types.js";
 import {
   PARRY_ACTIVE_MS,
   PARRY_ARC_RADIANS,
@@ -25,7 +26,7 @@ const SHIELD = 1 << 8;
 
 function mkPlayer(overrides: Partial<PlayerEntity> = {}): PlayerEntity {
   return {
-    id: "p1",
+    id: PlayerId("p1"),
     characterId: "balanced",
     x: 0,
     y: 0,
@@ -42,15 +43,15 @@ function mkPlayer(overrides: Partial<PlayerEntity> = {}): PlayerEntity {
     fireCooldownMs: 0,
     ammo: 0,
     abilityCharge: 0,
-    lastProcessedInputSeq: 0,
+    lastProcessedInputSeq: InputSeq(0),
     ...overrides,
   };
 }
 
 function mkProjectile(overrides: Partial<ProjectileEntity> = {}): ProjectileEntity {
   return {
-    id: 1,
-    ownerId: "enemy",
+    id: EntityId(1),
+    ownerId: PlayerId("enemy"),
     x: 50,
     y: 0,
     vx: -300,
@@ -70,7 +71,7 @@ function mkProjectile(overrides: Partial<ProjectileEntity> = {}): ProjectileEnti
 describe("tryStartParry", () => {
   test("rising-edge triggers parry, sets active+cooldown windows and facing", () => {
     const p = mkPlayer({ aimX: 100, aimY: 0 });
-    const r = tryStartParry(p, ABILITY, 0, 10, { dtMs: DT_MS });
+    const r = tryStartParry(p, ABILITY, 0, Tick(10), { dtMs: DT_MS });
     expect(r.started).toBe(true);
     expect(r.player.parryActiveUntilTick).toBeGreaterThan(10);
     expect(r.player.parryCooldownUntilTick).toBeGreaterThan(10);
@@ -83,47 +84,47 @@ describe("tryStartParry", () => {
 
   test("does not trigger on held input (no rising edge)", () => {
     const p = mkPlayer();
-    const r = tryStartParry(p, ABILITY, ABILITY, 10, { dtMs: DT_MS });
+    const r = tryStartParry(p, ABILITY, ABILITY, Tick(10), { dtMs: DT_MS });
     expect(r.started).toBe(false);
     expect(r.player).toBe(p);
   });
 
   test("blocked while cooldown is active", () => {
-    const p = mkPlayer({ parryCooldownUntilTick: 100 });
-    const r = tryStartParry(p, ABILITY, 0, 50, { dtMs: DT_MS });
+    const p = mkPlayer({ parryCooldownUntilTick: Tick(100) });
+    const r = tryStartParry(p, ABILITY, 0, Tick(50), { dtMs: DT_MS });
     expect(r.started).toBe(false);
   });
 
   test("dead players cannot parry", () => {
     const p = mkPlayer({ alive: false, health: 0 });
-    const r = tryStartParry(p, ABILITY, 0, 10, { dtMs: DT_MS });
+    const r = tryStartParry(p, ABILITY, 0, Tick(10), { dtMs: DT_MS });
     expect(r.started).toBe(false);
   });
 
   test("active window length matches PARRY_ACTIVE_MS at default dt", () => {
     const p = mkPlayer();
-    const r = tryStartParry(p, ABILITY, 0, 0, { dtMs: DT_MS });
-    const expectedTicks = Math.ceil(PARRY_ACTIVE_MS / DT_MS);
+    const r = tryStartParry(p, ABILITY, 0, Tick(0), { dtMs: DT_MS });
+    const expectedTicks = Tick(Math.ceil(PARRY_ACTIVE_MS / DT_MS));
     expect(r.player.parryActiveUntilTick).toBe(expectedTicks);
   });
 
   test("cooldown window length matches PARRY_COOLDOWN_MS_DEFAULT", () => {
     const p = mkPlayer();
-    const r = tryStartParry(p, ABILITY, 0, 0, { dtMs: DT_MS });
+    const r = tryStartParry(p, ABILITY, 0, Tick(0), { dtMs: DT_MS });
     const expectedTicks = Math.ceil(PARRY_COOLDOWN_MS_DEFAULT / DT_MS);
-    expect(r.player.parryCooldownUntilTick).toBe(expectedTicks);
+    expect(r.player.parryCooldownUntilTick).toBe(Tick(expectedTicks));
   });
 });
 
 describe("isParryActive", () => {
   test("returns true while tick < parryActiveUntilTick", () => {
-    const p = mkPlayer({ parryActiveUntilTick: 50 });
-    expect(isParryActive(p, 49)).toBe(true);
-    expect(isParryActive(p, 50)).toBe(false);
+    const p = mkPlayer({ parryActiveUntilTick: Tick(50) });
+    expect(isParryActive(p, Tick(49))).toBe(true);
+    expect(isParryActive(p, Tick(50))).toBe(false);
   });
 
   test("returns false when field is missing", () => {
-    expect(isParryActive(mkPlayer(), 0)).toBe(false);
+    expect(isParryActive(mkPlayer(), Tick(0))).toBe(false);
   });
 });
 
@@ -209,11 +210,11 @@ describe("tryDeflectDamage", () => {
     const p = mkPlayer({
       x: 0,
       y: 0,
-      parryActiveUntilTick: 100,
+      parryActiveUntilTick: Tick(100),
       parryFacing: 0,
     });
     const proj = mkProjectile({ x: 50, y: 0 }); // in front
-    const r = tryDeflectDamage(p, proj, proj.damage, 50);
+    const r = tryDeflectDamage(p, proj, proj.damage, Tick(50));
     expect(r.deflected).toBe(true);
     expect(r.damage).toBe(0);
   });
@@ -222,11 +223,11 @@ describe("tryDeflectDamage", () => {
     const p = mkPlayer({
       x: 0,
       y: 0,
-      parryActiveUntilTick: 100,
+      parryActiveUntilTick: Tick(100),
       parryFacing: 0,
     });
     const proj = mkProjectile({ x: -50, y: 0 }); // behind
-    const r = tryDeflectDamage(p, proj, proj.damage, 50);
+    const r = tryDeflectDamage(p, proj, proj.damage, Tick(50));
     expect(r.deflected).toBe(false);
     // No shield active either → passthrough.
     expect(r.damage).toBe(proj.damage);
@@ -235,7 +236,7 @@ describe("tryDeflectDamage", () => {
   test("active shield with charge absorbs the hit and drains charge", () => {
     const p = mkPlayer({ shieldActive: true, shieldCharge: 100 });
     const proj = mkProjectile({ damage: 25 });
-    const r = tryDeflectDamage(p, proj, proj.damage, 0);
+    const r = tryDeflectDamage(p, proj, proj.damage, Tick(0));
     expect(r.shielded).toBe(true);
     expect(r.damage).toBe(0);
     expect(r.player.shieldCharge).toBeCloseTo(
@@ -248,7 +249,7 @@ describe("tryDeflectDamage", () => {
   test("shield popping deactivates and signals shieldPopped", () => {
     const p = mkPlayer({ shieldActive: true, shieldCharge: 5 });
     const proj = mkProjectile({ damage: 50 }); // way more than charge
-    const r = tryDeflectDamage(p, proj, proj.damage, 0);
+    const r = tryDeflectDamage(p, proj, proj.damage, Tick(0));
     expect(r.shielded).toBe(true);
     expect(r.shieldPopped).toBe(true);
     expect(r.player.shieldActive).toBe(false);
@@ -258,7 +259,7 @@ describe("tryDeflectDamage", () => {
   test("no parry, no shield → damage passes through unchanged", () => {
     const p = mkPlayer();
     const proj = mkProjectile({ damage: 17 });
-    const r = tryDeflectDamage(p, proj, 17, 0);
+    const r = tryDeflectDamage(p, proj, 17, Tick(0));
     expect(r.deflected).toBe(false);
     expect(r.shielded).toBe(false);
     expect(r.damage).toBe(17);
@@ -268,11 +269,11 @@ describe("tryDeflectDamage", () => {
     const p = mkPlayer({
       shieldActive: true,
       shieldCharge: 100,
-      parryActiveUntilTick: 100,
+      parryActiveUntilTick: Tick(100),
       parryFacing: 0,
     });
     const proj = mkProjectile({ x: 50, y: 0, damage: 25 });
-    const r = tryDeflectDamage(p, proj, proj.damage, 50);
+    const r = tryDeflectDamage(p, proj, proj.damage, Tick(50));
     expect(r.deflected).toBe(true);
     expect(r.shielded).toBe(false);
     // Shield charge untouched.
@@ -281,7 +282,7 @@ describe("tryDeflectDamage", () => {
 
   test("zero damage hits return early (no charge cost)", () => {
     const p = mkPlayer({ shieldActive: true, shieldCharge: 100 });
-    const r = tryDeflectDamage(p, mkProjectile(), 0, 0);
+    const r = tryDeflectDamage(p, mkProjectile(), 0, Tick(0));
     expect(r.damage).toBe(0);
     expect(r.shielded).toBe(false);
     expect(r.player.shieldCharge).toBe(100);

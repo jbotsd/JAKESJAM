@@ -9,12 +9,11 @@
 import { STEP_MS } from "./constants.js";
 import { crystalRoundsCards } from "./data/cards.js";
 import { pickOne } from "./rng.js";
+import { PlayerId, Tick } from "./types.js";
 import type {
   PlayerEntity,
-  PlayerId,
   RoundState,
   SimEvent,
-  Tick,
 } from "./types.js";
 
 export const COUNTDOWN_MS = 3000;
@@ -195,7 +194,8 @@ export function stepRound(input: RoundStepInput): RoundStepResult {
       const fired: Record<PlayerId, true> = {
         ...((state as WithMarker)[firedKey] ?? {}),
       };
-      for (const pid of Object.keys(previousPicked).sort()) {
+      for (const pid_ of Object.keys(previousPicked).sort()) {
+        const pid = pid_ as PlayerId;
         if (!fired[pid]) {
           events.push({
             t: "draft-resolved",
@@ -208,7 +208,7 @@ export function stepRound(input: RoundStepInput): RoundStepResult {
       }
 
       const allPicked = draftingIds.length > 0 &&
-        draftingIds.every((id) => previousPicked[id] !== undefined);
+        draftingIds.every((id) => previousPicked[id as PlayerId] !== undefined);
 
       if (!allPicked) {
         // Stay in drafting. Persist the fired marker so subsequent ticks
@@ -269,7 +269,8 @@ function enterDrafting(
 
   const draftingOffers: Record<PlayerId, string[]> = {};
 
-  for (const pid of draftingIds) {
+  for (const pid_ of draftingIds) {
+    const pid = pid_ as PlayerId;
     const player = players[pid]!;
     const owned = new Set(player.cards);
     const candidatePool = crystalRoundsCards.filter((c) => {
@@ -305,7 +306,7 @@ function enterDrafting(
     phase: "drafting",
     countdownRemainingMs: DRAFT_WINDOW_MS,
     winnerPlayerId: next.winnerPlayerId,
-    draftingExpiresAtTick: tick + Math.ceil(DRAFT_WINDOW_MS / STEP_MS),
+    draftingExpiresAtTick: Tick(tick + Math.ceil(DRAFT_WINDOW_MS / STEP_MS)),
     draftingPicked: {},
     draftingOffers,
   };
@@ -325,7 +326,7 @@ function decideRoundWinner(
   players: Record<PlayerId, PlayerEntity>,
   forceResolve: boolean,
 ): PlayerId | null | undefined {
-  const playerIds = Object.keys(players).sort();
+  const playerIds = (Object.keys(players) as PlayerId[]).sort();
   if (playerIds.length === 0) return undefined;
 
   const alive = playerIds.filter((id) => players[id]!.alive);
@@ -357,7 +358,8 @@ function checkMatchWinner(
   targetScore: number,
 ): PlayerId | null {
   let winner: PlayerId | null = null;
-  for (const [id, score] of Object.entries(scores)) {
+  for (const [id_, score] of Object.entries(scores)) {
+    const id = id_ as PlayerId;
     if (score >= targetScore) {
       if (winner === null) {
         winner = id;

@@ -6,9 +6,9 @@ import {
   TARGET_SCORE_DEFAULT,
   stepRound,
 } from "../../sim/round.js";
+import { InputSeq, PlayerId } from "../../sim/types.js";
 import type {
   PlayerEntity,
-  PlayerId,
   RoundState,
 } from "../../sim/types.js";
 import { crystalRoundsCards } from "../data/cards";
@@ -43,13 +43,15 @@ import {
   type ResolvedWeaponBuild,
 } from "../systems/WeaponSystem";
 import type {
-  CharacterDefinition,
   CardDefinition,
+  CharacterDefinition,
   CharacterId,
   ChaosModifierId,
   DestructibleKind,
   ElementType,
+  MatchId,
   PickupKind,
+  RoomId,
   Vec2,
 } from "../types/game";
 import { CardSystem } from "../systems/CardSystem";
@@ -68,8 +70,7 @@ const REMOTE_PLAYER_TARGET_PREFIX = "remote-player:";
 // machine. With only one human player + a dummy, we treat the dummy as a
 // second "player" so last-alive resolution kicks in when the player kills it
 // (or vice versa). Picked to avoid clashing with real player ids.
-const DUMMY_TARGET_PLAYER_ID = "dummy:practice-target";
-const VISIBLE_MUTATOR_BUCKETS = ["delivery", "quantity", "shape", "trajectory", "impact", "element"] as const;
+const DUMMY_TARGET_PLAYER_ID = PlayerId("dummy:practice-target");
 
 // Status-VFX colors and timings. Hoisted so renderers don't allocate them
 // per spawn and so the palette stays consistent with elementColor() in
@@ -93,15 +94,14 @@ const PARRY_BASE_RANGE = 98;
 // const SPEED_BOOST_MULTIPLIER = 1.22;
 const SLOW_DEBUFF_MULTIPLIER = 0.62;
 const VULNERABILITY_MULTIPLIER = 1.38;
-const BOSS_HEALTH_BONUS = 90;
 // const BOSS_MOVE_MULTIPLIER = 0.72;
 // const BOSS_DAMAGE_MULTIPLIER = 1.55;
 // const BOSS_FIRE_RATE_MULTIPLIER = 0.72;
 
 type MatchSceneInitData = {
-  roomId?: string;
+  roomId?: RoomId;
   roomCode?: string;
-  matchId?: string;
+  matchId?: MatchId;
   localPlayerId?: string;
   players?: RoomPlayer[];
   chaosModifierIds?: ChaosModifierId[];
@@ -195,7 +195,6 @@ export class MatchScene extends Phaser.Scene {
   private respawnCountdownActive = false;
   private deathSequenceId = 0;
   private cardDraftOverlay?: CardDraftOverlay;
-  private deathDraftPickedThisLife = false;
   private shieldCharge = 100;
   private shieldActive = false;
   private temporaryShieldMs = 0;
@@ -206,16 +205,14 @@ export class MatchScene extends Phaser.Scene {
   private slowDebuffMs = 0;
   private vulnerabilityMs = 0;
   private blockJammerMs = 0;
-  private bossModeMs = 0;
-  private bossShotIndex = 0;
   private parryActiveMs = 0;
   private parryCooldownMs = 0;
   private rightMouseParryWasDown = false;
   private lastPickupStatus = "none";
   private shieldGraphics?: Phaser.GameObjects.Graphics;
-  private roomId?: string;
-  private matchId?: string;
-  private localPlayerId = "offline-player";
+  private roomId?: RoomId;
+  private matchId?: MatchId;
+  private localPlayerId: PlayerId = PlayerId("offline-player");
   private roomPlayers: RoomPlayer[] = [];
   private readonly playerScores = new Map<string, PlayerScore>();
   private snapshotSendTimerMs = 0;
@@ -256,7 +253,7 @@ export class MatchScene extends Phaser.Scene {
   init(data: MatchSceneInitData = {}) {
     this.roomId = data.roomId;
     this.matchId = data.matchId;
-    this.localPlayerId = data.localPlayerId ?? "offline-player";
+    this.localPlayerId = PlayerId(data.localPlayerId ?? "offline-player");
     this.roomPlayers = data.players ?? [];
     this.chaosModifierIds = data.chaosModifierIds ?? readStoredChaosModifiers();
     this.fireHazardTimerMs = 0;
@@ -296,7 +293,6 @@ export class MatchScene extends Phaser.Scene {
     this.respawnRemainingMs = 0;
     this.respawnCountdownActive = false;
     this.deathSequenceId += 1;
-    this.deathDraftPickedThisLife = false;
     this.cardDraftOverlay?.hide();
     if (!this.cardDraftOverlay) {
       this.cardDraftOverlay = new CardDraftOverlay();
@@ -311,8 +307,6 @@ export class MatchScene extends Phaser.Scene {
     this.slowDebuffMs = 0;
     this.vulnerabilityMs = 0;
     this.blockJammerMs = 0;
-    this.bossModeMs = 0;
-    this.bossShotIndex = 0;
     this.parryActiveMs = 0;
     this.parryCooldownMs = 0;
     this.rightMouseParryWasDown = false;
@@ -576,7 +570,7 @@ export class MatchScene extends Phaser.Scene {
       const snapshot = this.remoteSnapshots.get(remote.playerId);
       const health = snapshot?.health ?? 100;
       const alive = snapshot ? snapshot.alive !== false && health > 0 : true;
-      players[remote.playerId] = makeSimPlayerStub(remote.playerId, health, alive);
+      players[PlayerId(remote.playerId)] = makeSimPlayerStub(PlayerId(remote.playerId), health, alive);
     }
     return players;
   }
@@ -625,7 +619,6 @@ export class MatchScene extends Phaser.Scene {
       // the player hadn't picked yet, the draft is dropped (no penalty —
       // they get fresh chances on subsequent deaths).
       this.cardDraftOverlay?.hide();
-      this.deathDraftPickedThisLife = true;
       this.respawnPlayer();
       this.resetTarget();
       this.resetDestructibles();
@@ -757,7 +750,7 @@ export class MatchScene extends Phaser.Scene {
           playerId: remote.playerId,
           name: remote.name,
           color: remote.color,
-          score: this.roundState.scores[remote.playerId] ?? 0,
+          score: this.roundState.scores[PlayerId(remote.playerId)] ?? 0,
           // Online card lists belong in RoomSnapshot; for now we only have
           // them locally. Empty list is acceptable until that wiring lands.
           cardIds: [],
@@ -1029,9 +1022,10 @@ export class MatchScene extends Phaser.Scene {
       return;
     }
 
-    for (const [playerId, rig] of this.remoteRigs) {
+    for (const [playerIdRaw, rig] of this.remoteRigs) {
+      const playerId = PlayerId(playerIdRaw);
       const playerIndex = this.getRoomPlayerIndex(playerId);
-      const spawn = boxworksWorld.spawns[playerIndex % boxworksWorld.spawns.length];
+      const spawn = boxworksWorld.spawns[playerIndex % boxworksWorld.spawns.length] ?? { x: 0, y: 0 };
       const character = this.getCharacter(this.getRoomPlayer(playerId)?.characterId);
       const snapshot = this.remoteSnapshots.get(playerId);
       if (snapshot?.alive === false) {
@@ -1189,18 +1183,6 @@ export class MatchScene extends Phaser.Scene {
         impactRadiusPx: Math.max(build.projectile.impactRadiusPx, 28),
         sizeMultiplier: Math.max(build.projectile.sizeMultiplier, 0.76),
       };
-    }
-
-    if (this.bossModeMs > 0) {
-      build.projectile = {
-        ...build.projectile,
-        count: Math.max(build.projectile.count, 7),
-        shape: "orb",
-        impact: build.projectile.impact === "none" ? "explosive" : build.projectile.impact,
-        impactRadiusPx: Math.max(build.projectile.impactRadiusPx, 46),
-        sizeMultiplier: Math.max(build.projectile.sizeMultiplier, 1.15),
-      };
-      build.spreadRadians = Math.max(build.spreadRadians, Math.PI * 0.72);
     }
 
     if (chaos.randomProjectileShapes) {
@@ -1418,23 +1400,6 @@ export class MatchScene extends Phaser.Scene {
     this.applyProjectileHits(result.hits);
   }
 
-  // @ts-ignore ROUNDS: Boss mode removed
-  private getBossPatternAngle(fallbackAngle: number): number {
-    const pattern = [
-      0,
-      Math.PI / 4,
-      Math.PI / 2,
-      (Math.PI * 3) / 4,
-      Math.PI,
-      (-Math.PI * 3) / 4,
-      -Math.PI / 2,
-      -Math.PI / 4,
-    ];
-    const aimSign = Math.cos(fallbackAngle) < 0 ? Math.PI : 0;
-    const angle = pattern[this.bossShotIndex % pattern.length] + aimSign;
-    this.bossShotIndex += 1;
-    return Phaser.Math.Angle.Wrap(angle);
-  }
 
   private getShotCooldownMs(build: ResolvedWeaponBuild): number {
     const base = 1000 / build.fireRate;
@@ -1681,27 +1646,27 @@ export class MatchScene extends Phaser.Scene {
     ];
     const pts: Vec2[] = [
       from,
-      { x: from.x + dx * 0.25 + px * offsets[0], y: from.y + dy * 0.25 + py * offsets[0] },
-      { x: mx + px * offsets[1], y: my + py * offsets[1] },
-      { x: from.x + dx * 0.75 + px * offsets[2], y: from.y + dy * 0.75 + py * offsets[2] },
+      { x: from.x + dx * 0.25 + px * offsets[0]!, y: from.y + dy * 0.25 + py * offsets[0]! },
+      { x: mx + px * offsets[1]!, y: my + py * offsets[1]! },
+      { x: from.x + dx * 0.75 + px * offsets[2]!, y: from.y + dy * 0.75 + py * offsets[2]! },
       to,
     ];
 
     // Glow pass (thick, low alpha)
     graphics.lineStyle(5, STATUS_VFX.lightning.glow, 0.3);
     graphics.beginPath();
-    graphics.moveTo(pts[0].x, pts[0].y);
+    graphics.moveTo(pts[0]!.x, pts[0]!.y);
     for (let i = 1; i < pts.length; i++) {
-      graphics.lineTo(pts[i].x, pts[i].y);
+      graphics.lineTo(pts[i]!.x, pts[i]!.y);
     }
     graphics.strokePath();
 
     // Core pass (thin, bright)
     graphics.lineStyle(2, STATUS_VFX.lightning.color, 0.92);
     graphics.beginPath();
-    graphics.moveTo(pts[0].x, pts[0].y);
+    graphics.moveTo(pts[0]!.x, pts[0]!.y);
     for (let i = 1; i < pts.length; i++) {
-      graphics.lineTo(pts[i].x, pts[i].y);
+      graphics.lineTo(pts[i]!.x, pts[i]!.y);
     }
     graphics.strokePath();
 
@@ -1799,8 +1764,7 @@ export class MatchScene extends Phaser.Scene {
     }
 
     const modifiedAmount = amount *
-      (this.vulnerabilityMs > 0 ? VULNERABILITY_MULTIPLIER : 1) *
-      (this.bossModeMs > 0 ? 1.12 : 1);
+      (this.vulnerabilityMs > 0 ? VULNERABILITY_MULTIPLIER : 1);
     this.playerHealth = Math.max(0, this.playerHealth - modifiedAmount);
     this.audio?.play("hit");
     this.spawnDamageNumber(this.playerBody.position, modifiedAmount, true);
@@ -1860,7 +1824,6 @@ export class MatchScene extends Phaser.Scene {
     this.deathSequenceId = deathSequence;
     this.clearRespawnText();
     this.playerRespawnPending = true;
-    this.deathDraftPickedThisLife = false;
     this.respawnRemainingMs = RESPAWN_COUNTDOWN_MS;
     this.respawnCountdownActive = false;
     this.playerHealth = 0;
@@ -1885,61 +1848,6 @@ export class MatchScene extends Phaser.Scene {
       this.respawnCountdownActive = true;
       this.respawnRemainingMs = RESPAWN_COUNTDOWN_MS;
     });
-  }
-
-  // @ts-ignore ROUNDS: Death draft disabled - between-round DraftScene used instead
-  private openDeathDraft(deathSequence: number) {
-    if (!this.cardDraftOverlay) {
-      this.cardDraftOverlay = new CardDraftOverlay();
-    }
-    const candidates = this.rollDraftCandidates(3);
-    if (candidates.length === 0) {
-      // Nothing eligible — fall back to immediate respawn so the player isn't
-      // stuck (rare; only happens if every card is cap-blocked).
-      if (this.playerRespawnPending && this.deathSequenceId === deathSequence) {
-        this.respawnPlayer();
-      }
-      return;
-    }
-    // Hide the death overlay so the picker is fully readable + clickable.
-    this.deathOverlay?.hide();
-    this.cardDraftOverlay.show(candidates, (card) => {
-      if (this.deathDraftPickedThisLife) return;
-      // Stale-pick guard: a different death sequence (e.g. scene restart)
-      // means this overlay belongs to a previous life; ignore the click.
-      if (this.deathSequenceId !== deathSequence) return;
-      this.deathDraftPickedThisLife = true;
-      this.progressionCardIds.push(card.id);
-      this.rebuildWeaponBuild();
-      this.lastPickupStatus = `drafted ${card.name}`;
-      // Card chosen → respawn now. Player stays dead until they pick.
-      if (this.playerRespawnPending) {
-        this.respawnPlayer();
-      }
-    });
-  }
-
-  private rollDraftCandidates(count: number): CardDefinition[] {
-    const picked: CardDefinition[] = [];
-    const seenIds = new Set<string>();
-    // Re-roll a few times if we keep drawing the same card. The rollProgression
-    // logic is weighted; we accept duplicates only as a last resort to fill the
-    // requested count.
-    for (let attempt = 0; attempt < count * 8 && picked.length < count; attempt += 1) {
-      const card = this.rollProgressionCard();
-      if (!card) break;
-      if (seenIds.has(card.id)) continue;
-      seenIds.add(card.id);
-      picked.push(card);
-    }
-    // Fallback: if uniqueness culling left us short, fill the rest with
-    // straight rolls (allowing duplicates) so the UI always has 3 options.
-    while (picked.length < count) {
-      const card = this.rollProgressionCard();
-      if (!card) break;
-      picked.push(card);
-    }
-    return picked;
   }
 
   private spawnPlayerDeathExplosion(position: Vec2) {
@@ -2085,7 +1993,6 @@ export class MatchScene extends Phaser.Scene {
     if (this.damageAmpMs > 0) chips.push({ label: "DMG AMP", color: 0xfb923c, remainingSec: this.damageAmpMs / 1000, isDebuff: false });
     if (this.speedBoostMs > 0) chips.push({ label: "SPEED", color: 0x67e8f9, remainingSec: this.speedBoostMs / 1000, isDebuff: false });
     if (this.meleeModeMs > 0) chips.push({ label: "MELEE", color: 0xf0abfc, remainingSec: this.meleeModeMs / 1000, isDebuff: false });
-    if (this.bossModeMs > 0) chips.push({ label: "BOSS", color: 0xfb7185, remainingSec: this.bossModeMs / 1000, isDebuff: false });
     // Debuffs
     if (this.slowDebuffMs > 0) chips.push({ label: "SLOW", color: 0x93c5fd, remainingSec: this.slowDebuffMs / 1000, isDebuff: true });
     if (this.vulnerabilityMs > 0) chips.push({ label: "VULN", color: 0xfb7185, remainingSec: this.vulnerabilityMs / 1000, isDebuff: true });
@@ -2574,11 +2481,6 @@ export class MatchScene extends Phaser.Scene {
     this.slowDebuffMs = Math.max(0, this.slowDebuffMs - deltaMs);
     this.vulnerabilityMs = Math.max(0, this.vulnerabilityMs - deltaMs);
     this.blockJammerMs = Math.max(0, this.blockJammerMs - deltaMs);
-    const previousBossMs = this.bossModeMs;
-    this.bossModeMs = Math.max(0, this.bossModeMs - deltaMs);
-    if (previousBossMs > 0 && this.bossModeMs <= 0) {
-      this.syncEffectiveMaxHealth(false);
-    }
 
     // ROUNDS: Card cache relocation removed - draft between rounds
 
@@ -2635,16 +2537,6 @@ export class MatchScene extends Phaser.Scene {
     return;
   }
 
-  // @ts-ignore ROUNDS: Boss mode removed
-  private activateBossMode(pickup: ArenaPickup) {
-    this.bossModeMs = Math.max(this.bossModeMs, pickup.durationMs ?? 0);
-    this.bossShotIndex = 0;
-    this.syncEffectiveMaxHealth(true);
-    this.playerHealth = Math.min(this.playerMaxHealth, this.playerHealth + BOSS_HEALTH_BONUS);
-    this.lastPickupStatus = "boss mode";
-    this.floatPickupText(pickup, "boss mode", "#fff7d6");
-  }
-
   // ROUNDS: relocateCardCaches() and getRandomCardCachePosition() removed
   // Cards are now drafted between rounds, not collected in arena
 
@@ -2653,52 +2545,6 @@ export class MatchScene extends Phaser.Scene {
     this.overchargeMs = Math.max(this.overchargeMs, 4200);
     this.lastPickupStatus = "draft between rounds";
     this.floatPickupText(pickup, "draft disabled", "#f0abfc");
-  }
-
-  private rollProgressionCard(): CardDefinition | undefined {
-    const ownedCounts = new Map<string, number>();
-    for (const cardId of this.progressionCardIds) {
-      ownedCounts.set(cardId, (ownedCounts.get(cardId) ?? 0) + 1);
-    }
-
-    const eligible = crystalRoundsCards.filter((card) => isEligibleMutatorCard(card, ownedCounts));
-    const highSignalCards = eligible.filter((card) => isVisibleWeaponMutator(card));
-    const rollPool = highSignalCards.length > 0
-        ? highSignalCards
-        : eligible;
-
-    if (rollPool.length === 0) {
-      return undefined;
-    }
-
-    const weightedPool = rollPool.flatMap((card) => {
-      const modifier = card.modifier;
-      const projectile = modifier?.projectile;
-      const ownedCount = ownedCounts.get(card.id) ?? 0;
-      const hasSpray = Boolean((modifier?.projectileCountAdd ?? 0) > 0 || (projectile?.count ?? 0) > 1);
-      const hasHoming = projectile?.pathing === "homing" || Boolean(modifier?.projectileHomingStrengthAdd);
-      let weight = 1;
-
-      if (hasSpray) {
-        weight += Math.min(4, Math.max(1, modifier?.projectileCountAdd ?? projectile?.count ?? 1));
-      }
-      if (hasHoming) {
-        weight += 3;
-      }
-      if (card.buckets?.includes("trajectory")) {
-        weight += 1;
-      }
-      if (ownedCount > 0 && !card.unique) {
-        weight += 1;
-      }
-      if (card.rarity === "legendary") {
-        weight = Math.max(1, weight - 1);
-      }
-
-      return Array.from({ length: weight }, () => card);
-    });
-
-    return Phaser.Utils.Array.GetRandom(weightedPool);
   }
 
   private floatPickupText(pickup: ArenaPickup, label: string, color: string) {
@@ -2994,8 +2840,6 @@ export class MatchScene extends Phaser.Scene {
     this.slowDebuffMs = 0;
     this.vulnerabilityMs = 0;
     this.blockJammerMs = 0;
-    this.bossModeMs = 0;
-    this.bossShotIndex = 0;
     this.parryActiveMs = 0;
     this.parryCooldownMs = 0;
     this.overchargeMs = 0;
@@ -3034,7 +2878,7 @@ export class MatchScene extends Phaser.Scene {
   }
 
   private getCharacter(characterId: CharacterId = "balanced"): CharacterDefinition {
-    return characters.find((character) => character.id === characterId) ?? characters[0];
+    return characters.find((character) => character.id === characterId) ?? characters[0] ?? { id: "balanced", name: "Balanced", maxHealth: 100, moveSpeedMultiplier: 1, sizeScale: 1, recoilControlMultiplier: 1, abilityType: "shield" as const, weakness: "" };
   }
 
   private getVisualScale(character: CharacterDefinition): number {
@@ -3143,7 +2987,7 @@ function makeSimPlayerStub(id: PlayerId, health: number, alive: boolean): Player
     fireCooldownMs: 0,
     ammo: 0,
     abilityCharge: 0,
-    lastProcessedInputSeq: 0,
+    lastProcessedInputSeq: InputSeq(0),
   };
 }
 
@@ -3234,57 +3078,13 @@ function pickupColor(kind: PickupKind): number {
   return colors[kind];
 }
 
-function isEligibleMutatorCard(
-  card: CardDefinition,
-  ownedCounts: Map<string, number>,
-): boolean {
-  if (!card.modifier || card.id === "crystal-volley") {
-    return false;
-  }
-
-  const ownedCount = ownedCounts.get(card.id) ?? 0;
-  if (card.unique && ownedCount > 0) {
-    return false;
-  }
-  if (ownedCount >= (card.maxStacks ?? 1)) {
-    return false;
-  }
-
-  return true;
-}
-
-function isVisibleWeaponMutator(card: CardDefinition): boolean {
-  const buckets = card.buckets ?? [];
-  if (buckets.some((bucket) => VISIBLE_MUTATOR_BUCKETS.includes(bucket as typeof VISIBLE_MUTATOR_BUCKETS[number]))) {
-    return true;
-  }
-
-  const projectile = card.modifier?.projectile;
-  return Boolean(
-    card.modifier?.delivery ||
-      projectile?.shape ||
-      projectile?.count ||
-      projectile?.pathing ||
-      projectile?.impact ||
-      projectile?.element ||
-      card.modifier?.projectileCountAdd ||
-      card.modifier?.projectileBounceAdd ||
-      card.modifier?.projectileSplitAdd ||
-      card.modifier?.projectileHomingStrengthAdd ||
-      card.modifier?.maxHealthAdd ||
-      card.modifier?.moveSpeedMultiplier ||
-      card.modifier?.parryCoverMultiplier ||
-      card.modifier?.parryCooldownMultiplier,
-  );
-}
-
 function remotePlayerTargetId(playerId: string): string {
   return `${REMOTE_PLAYER_TARGET_PREFIX}${playerId}`;
 }
 
-function playerIdFromRemoteTargetId(targetId: string): string | undefined {
+function playerIdFromRemoteTargetId(targetId: string): PlayerId | undefined {
   return targetId.startsWith(REMOTE_PLAYER_TARGET_PREFIX)
-    ? targetId.slice(REMOTE_PLAYER_TARGET_PREFIX.length)
+    ? PlayerId(targetId.slice(REMOTE_PLAYER_TARGET_PREFIX.length))
     : undefined;
 }
 

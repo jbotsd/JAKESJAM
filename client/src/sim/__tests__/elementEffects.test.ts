@@ -5,14 +5,20 @@
 
 import { describe, expect, test } from "bun:test";
 import { createRuntime, stepWithRuntime } from "../World.js";
-import type {
-  InputFrame,
-  MapDefinition,
-  PlayerEntity,
+import {
+  EntityId,
+  InputSeq,
   PlayerId,
-  ProjectileEntity,
-  WorldState,
+  Tick,
+  type InputFrame,
+  type MapDefinition,
+  type PlayerEntity,
+  type ProjectileEntity,
+  type WorldState,
 } from "../types.js";
+
+const A = PlayerId("a");
+const B = PlayerId("b");
 
 const DT_MS = 1000 / 60;
 const Bit = {
@@ -56,18 +62,19 @@ function mkPlayer(id: PlayerId, x: number, y: number): PlayerEntity {
     fireCooldownMs: 0,
     ammo: 0,
     abilityCharge: 0,
-    lastProcessedInputSeq: 0,
+    lastProcessedInputSeq: InputSeq(0),
   };
 }
 
 function mkProjectile(
-  id: number,
+  idRaw: number,
   ownerId: PlayerId,
   x: number,
   y: number,
   element: string,
   damage = 20,
 ): ProjectileEntity {
+  const id = EntityId(idRaw);
   return {
     id,
     ownerId,
@@ -92,10 +99,10 @@ function mkState(
 ): WorldState {
   const playerMap: Record<PlayerId, PlayerEntity> = {};
   for (const p of players) playerMap[p.id] = p;
-  const projMap: Record<number, ProjectileEntity> = {};
+  const projMap: Record<EntityId, ProjectileEntity> = {};
   for (const pr of projectiles) projMap[pr.id] = pr;
   return {
-    tick: 0,
+    tick: Tick(0),
     rngState: 1234567 >>> 0,
     players: playerMap,
     projectiles: projMap,
@@ -124,9 +131,9 @@ function noInputs(players: PlayerEntity[]): Record<PlayerId, InputFrame | null> 
 describe("element status effects", () => {
   test("fire projectile applies 3-second burn DoT at 0.4x damage per second", () => {
     // Position projectile so it hits the victim immediately (within radius).
-    const attacker = mkPlayer("a", 0, 400);
-    const victim = mkPlayer("b", 100, 400);
-    const proj = mkProjectile(1, "a", 95, 400, "fire", 20);
+    const attacker = mkPlayer(A, 0, 400);
+    const victim = mkPlayer(B, 100, 400);
+    const proj = mkProjectile(1, A, 95, 400, "fire", 20);
     let state = mkState([attacker, victim], [proj]);
     const runtime = createRuntime(flatMap);
     const inputs = noInputs([attacker, victim]);
@@ -134,9 +141,9 @@ describe("element status effects", () => {
     // Step 1: hit lands. health = 100 - 20 = 80. burnDps = 8.
     let res = stepWithRuntime(state, runtime, inputs, DT_MS);
     state = res.state;
-    expect(state.players.b!.health).toBe(80);
-    expect(state.players.b!.burnDps).toBe(8);
-    expect(state.players.b!.burnUntilTick).toBeGreaterThan(state.tick);
+    expect(state.players[B]!.health).toBe(80);
+    expect(state.players[B]!.burnDps).toBe(8);
+    expect(state.players[B]!.burnUntilTick).toBeGreaterThan(state.tick);
 
     // Step ~3 seconds (180 ticks). Burn ticks at second boundaries.
     let burnHits = 0;
@@ -157,30 +164,30 @@ describe("element status effects", () => {
     expect(burnHits).toBeGreaterThanOrEqual(2);
     expect(burnHits).toBeLessThanOrEqual(4);
     // Health dropped further from burn.
-    expect(state.players.b!.health).toBeLessThan(80);
+    expect(state.players[B]!.health).toBeLessThan(80);
     // Burn cleared after window.
-    expect(state.players.b!.burnUntilTick).toBeUndefined();
+    expect(state.players[B]!.burnUntilTick).toBeUndefined();
   });
 
   test("ice projectile freezes target → recorded movement is half", () => {
     // Two parallel sims: one with ice hit, one without. Compare displacement.
     const TICKS = 60; // 1 second at 60Hz
     const runScenario = (withIce: boolean) => {
-      const attacker = mkPlayer("a", 0, 400);
-      const victim = mkPlayer("b", 100, 400);
+      const attacker = mkPlayer(A, 0, 400);
+      const victim = mkPlayer(B, 100, 400);
       const projectiles = withIce
-        ? [mkProjectile(1, "a", 95, 400, "ice", 1)]
+        ? [mkProjectile(1, A, 95, 400, "ice", 1)]
         : [];
       let state = mkState([attacker, victim], projectiles);
       const runtime = createRuntime(flatMap);
       // Scripted: victim presses Right the entire time.
-      const startX = state.players.b!.x;
+      const startX = state.players[B]!.x;
       for (let i = 0; i < TICKS; i++) {
         const inputs: Record<PlayerId, InputFrame | null> = {
-          a: null,
-          b: {
-            seq: i,
-            tick: i,
+          [A]: null,
+          [B]: {
+            seq: InputSeq(i),
+            tick: Tick(i),
             keys: Bit.Right,
             aimX: 1000,
             aimY: 400,
@@ -190,7 +197,7 @@ describe("element status effects", () => {
         const res = stepWithRuntime(state, runtime, inputs, DT_MS);
         state = res.state;
       }
-      return state.players.b!.x - startX;
+      return state.players[B]!.x - startX;
     };
     const withoutIce = runScenario(false);
     const withIce = runScenario(true);
@@ -206,10 +213,11 @@ describe("element status effects", () => {
   });
 
   test("lightning projectile chains half damage to nearest other player", () => {
-    const attacker = mkPlayer("a", 0, 400);
-    const victim = mkPlayer("b", 100, 400);
-    const bystander = mkPlayer("c", 250, 400); // within 220px chain radius
-    const proj = mkProjectile(1, "a", 95, 400, "lightning", 30);
+    const attacker = mkPlayer(A, 0, 400);
+    const victim = mkPlayer(B, 100, 400);
+    const C = PlayerId("c");
+    const bystander = mkPlayer(C, 250, 400); // within 220px chain radius
+    const proj = mkProjectile(1, A, 95, 400, "lightning", 30);
     let state = mkState([attacker, victim, bystander], [proj]);
     const runtime = createRuntime(flatMap);
     const inputs = noInputs([attacker, victim, bystander]);
@@ -217,20 +225,20 @@ describe("element status effects", () => {
     const res = stepWithRuntime(state, runtime, inputs, DT_MS);
     state = res.state;
     // Primary takes full 30, chain target takes 15.
-    expect(state.players.b!.health).toBe(70);
-    expect(state.players.c!.health).toBe(85);
+    expect(state.players[B]!.health).toBe(70);
+    expect(state.players[C]!.health).toBe(85);
   });
 
   test("radiant projectile deals 1.4x damage to a target with active status", () => {
     // Pre-burn the victim, then hit with radiant.
-    const attacker = mkPlayer("a", 0, 400);
+    const attacker = mkPlayer(A, 0, 400);
     const victim: PlayerEntity = {
-      ...mkPlayer("b", 100, 400),
-      burnUntilTick: 9999,
+      ...mkPlayer(B, 100, 400),
+      burnUntilTick: Tick(9999),
       burnDps: 1,
-      burnTickLastApplied: 0,
+      burnTickLastApplied: Tick(0),
     };
-    const proj = mkProjectile(1, "a", 95, 400, "radiant", 20);
+    const proj = mkProjectile(1, A, 95, 400, "radiant", 20);
     let state = mkState([attacker, victim], [proj]);
     const runtime = createRuntime(flatMap);
     const inputs = noInputs([attacker, victim]);
@@ -241,6 +249,6 @@ describe("element status effects", () => {
     // Burn DoT may also tick on the same step (state.tick was 0,
     // burnTickLastApplied was 0, ONE_SECOND_TICKS = 60, so 0 - 0 = 0 < 60,
     // burn does NOT tick this step). So pure radiant = 28.
-    expect(state.players.b!.health).toBe(72);
+    expect(state.players[B]!.health).toBe(72);
   });
 });

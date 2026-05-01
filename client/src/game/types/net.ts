@@ -11,7 +11,7 @@ export type RoomDoc = {
   chaosModifierIds?: ChaosModifierId[];
   createdAt: number;
   updatedAt: number;
-  currentMatchId?: string;
+  currentMatchId?: MatchId;
 };
 
 export type RoomPlayer = {

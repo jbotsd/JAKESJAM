@@ -9,12 +9,11 @@
 // destructibles + projectiles in EntityId order for cross-runtime determinism.
 
 import { circleOverlapsAABB, centerToAABB, type AABB } from "./collision.js";
+import { EntityId, PlayerId } from "./types.js";
 import type {
   DestructibleEntity,
-  EntityId,
   FireEntity,
   PlayerEntity,
-  PlayerId,
   ProjectileEntity,
   SimEvent,
   Tick,
@@ -87,17 +86,17 @@ export function stepDestructibles(
   // Working copies — we mutate health/alive locally then build the final maps.
   const liveDestructibles: Record<EntityId, DestructibleEntity> = {};
   for (const [id, d] of Object.entries(destructibles)) {
-    liveDestructibles[Number(id)] = { ...d };
+    liveDestructibles[EntityId(Number(id))] = { ...d };
   }
   const removedProjectileIds = new Set<EntityId>();
 
   // Iterate projectiles in entity-id order so two runtimes processing the
   // same snapshot resolve overlaps in the same sequence.
-  const projectileIds = Object.keys(projectiles)
-    .map((id) => Number(id))
+  const projectileIds: EntityId[] = Object.keys(projectiles)
+    .map((id) => EntityId(Number(id)))
     .sort((a, b) => a - b);
-  const destructibleIds = Object.keys(liveDestructibles)
-    .map((id) => Number(id))
+  const destructibleIds: EntityId[] = Object.keys(liveDestructibles)
+    .map((id) => EntityId(Number(id)))
     .sort((a, b) => a - b);
 
   for (const pid of projectileIds) {
@@ -172,7 +171,7 @@ export function stepDestructibles(
   // Build the surviving projectile map.
   const survivingProjectiles: Record<EntityId, ProjectileEntity> = {};
   for (const [id, proj] of Object.entries(projectiles)) {
-    const idn = Number(id);
+    const idn = EntityId(Number(id));
     if (!removedProjectileIds.has(idn)) {
       survivingProjectiles[idn] = proj;
     }
@@ -181,7 +180,7 @@ export function stepDestructibles(
   // Build the surviving destructibles map (already pruned via delete above).
   const survivingDestructibles: Record<EntityId, DestructibleEntity> = {};
   for (const [id, d] of Object.entries(liveDestructibles)) {
-    survivingDestructibles[Number(id)] = d;
+    survivingDestructibles[EntityId(Number(id))] = d;
   }
 
   void dtMs;
@@ -218,7 +217,8 @@ function alivePlayersInRadius(
 ): PlayerId[] {
   const out: PlayerId[] = [];
   const ids = Object.keys(players).sort();
-  for (const pid of ids) {
+  for (const pid_ of ids) {
+    const pid = pid_ as PlayerId;
     if (pid === ownerId) continue;
     const p = players[pid]!;
     if (!p.alive) continue;

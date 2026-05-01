@@ -30,7 +30,7 @@ export function pickGameServerUrl(requestedRegion: string | undefined): {
   const region = requestedRegion && GAME_SERVERS[requestedRegion]
     ? requestedRegion
     : DEFAULT_REGION;
-  return { region, url: GAME_SERVERS[region] };
+  return { region, url: GAME_SERVERS[region] ?? "" };
 }
 
 /**
@@ -112,7 +112,7 @@ async function mintToken(matchId: string, playerId: string): Promise<string> {
 function bytesToBase64(bytes: Uint8Array): string {
   let binary = "";
   for (let i = 0; i < bytes.length; i += 1) {
-    binary += String.fromCharCode(bytes[i]);
+    binary += String.fromCharCode(bytes[i] ?? 0);
   }
   return btoa(binary);
 }

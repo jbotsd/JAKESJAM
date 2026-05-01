@@ -15,13 +15,11 @@
 import { aabbOverlap } from "./collision.js";
 import { crystalRoundsCards } from "./data/cards.js";
 import { nextU32 } from "./rng.js";
+import { EntityId, PlayerId, Tick } from "./types.js";
 import type {
-  EntityId,
   PickupEntity,
   PlayerEntity,
-  PlayerId,
   SimEvent,
-  Tick,
   WorldState,
 } from "./types.js";
 
@@ -94,8 +92,8 @@ export function stepPickups(input: StepPickupsInput): StepPickupsResult {
 
   // Stable iteration order (sorted ids) for determinism. This matches the
   // pattern used elsewhere in the sim (projectiles, satellites).
-  const pickupIds = Object.keys(nextPickups)
-    .map((id) => Number(id))
+  const pickupIds: EntityId[] = Object.keys(nextPickups)
+    .map((id) => EntityId(Number(id)))
     .sort((a, b) => a - b);
 
   for (const id of pickupIds) {
@@ -104,7 +102,7 @@ export function stepPickups(input: StepPickupsInput): StepPickupsResult {
     // Inactive pickups: respawn when the timer matures.
     if (!pickup.active) {
       if (pickup.respawnAtTick <= tick) {
-        nextPickups[id] = { ...pickup, active: true, respawnAtTick: 0 };
+        nextPickups[id] = { ...pickup, active: true, respawnAtTick: Tick(0) };
       }
       continue;
     }
@@ -114,7 +112,8 @@ export function stepPickups(input: StepPickupsInput): StepPickupsResult {
     const sortedPlayerIds = Object.keys(nextPlayers).sort();
     let pickedBy: PlayerId | null = null;
 
-    for (const pid of sortedPlayerIds) {
+    for (const pid_ of sortedPlayerIds) {
+      const pid = pid_ as PlayerId;
       const player = nextPlayers[pid]!;
       if (!player.alive) continue;
       if (!playerOverlapsPickup(player, pickup)) continue;
@@ -135,8 +134,8 @@ export function stepPickups(input: StepPickupsInput): StepPickupsResult {
       rngState,
     });
     rngState = applied.rngState;
-    for (const [pid, patched] of Object.entries(applied.players)) {
-      nextPlayers[pid] = patched;
+    for (const [pid_, patched] of Object.entries(applied.players)) {
+      nextPlayers[pid_ as PlayerId] = patched;
     }
     for (const ev of applied.events) {
       events.push(ev);
@@ -146,9 +145,9 @@ export function stepPickups(input: StepPickupsInput): StepPickupsResult {
     nextPickups[id] = {
       ...pickup,
       active: false,
-      respawnAtTick: tick + Math.ceil(respawnMs / dtMs),
+      respawnAtTick: Tick(tick + Math.ceil(respawnMs / dtMs)),
     };
-    events.push({ t: "pickup-taken", entityId: pickup.id as EntityId, playerId: pickedBy });
+    events.push({ t: "pickup-taken", entityId: pickup.id, playerId: pickedBy });
   }
 
   return { pickups: nextPickups, players: nextPlayers, events, rngState };
@@ -166,8 +165,8 @@ export function clearExpiredBuffs(
   tick: Tick,
 ): WorldState["players"] {
   const out: WorldState["players"] = {};
-  for (const [pid, player] of Object.entries(players)) {
-    out[pid] = clearExpiredBuffsOnPlayer(player, tick);
+  for (const [pid_, player] of Object.entries(players)) {
+    out[pid_ as PlayerId] = clearExpiredBuffsOnPlayer(player, tick);
   }
   return out;
 }
@@ -323,18 +322,19 @@ function applyPickup(input: ApplyPickupInput): ApplyPickupOutput {
       // `slowedUntilTick` / `slowMultiplier` fields used by movement, so
       // existing systems pick up the slow without changes.
       const sortedIds = Object.keys(players).sort();
-      for (const otherId of sortedIds) {
+      for (const otherId_ of sortedIds) {
+        const otherId = otherId_ as PlayerId;
         if (otherId === pickerId) continue;
         const other = players[otherId]!;
         if (!other.alive) continue;
         const ticks = Math.ceil(durationMs / dtMs);
-        const until = tick + ticks;
-        const prevSlowUntil = other.slowedUntilTick ?? 0;
+        const until = Tick(tick + ticks);
+        const prevSlowUntil = other.slowedUntilTick ?? Tick(0);
         const prevSlowMul = other.slowMultiplier ?? 1;
         patch[otherId] = {
           ...other,
-          slowDebuffUntilTick: Math.max(other.slowDebuffUntilTick ?? 0, until),
-          slowedUntilTick: Math.max(prevSlowUntil, until),
+          slowDebuffUntilTick: Tick(Math.max(other.slowDebuffUntilTick ?? 0, until)),
+          slowedUntilTick: Tick(Math.max(prevSlowUntil, until)),
           slowMultiplier: Math.min(prevSlowMul, SLOW_TRAP_MULTIPLIER),
         };
         events.push({
@@ -350,7 +350,8 @@ function applyPickup(input: ApplyPickupInput): ApplyPickupOutput {
     case "vulnerability-trap": {
       const durationMs = pickup.durationMs ?? VULNERABILITY_MS;
       const sortedIds = Object.keys(players).sort();
-      for (const otherId of sortedIds) {
+      for (const otherId_ of sortedIds) {
+        const otherId = otherId_ as PlayerId;
         if (otherId === pickerId) continue;
         const other = players[otherId]!;
         if (!other.alive) continue;
@@ -368,7 +369,8 @@ function applyPickup(input: ApplyPickupInput): ApplyPickupOutput {
     case "block-jammer": {
       const durationMs = pickup.durationMs ?? BLOCK_JAMMER_MS;
       const sortedIds = Object.keys(players).sort();
-      for (const otherId of sortedIds) {
+      for (const otherId_ of sortedIds) {
+        const otherId = otherId_ as PlayerId;
         if (otherId === pickerId) continue;
         const other = players[otherId]!;
         if (!other.alive) continue;

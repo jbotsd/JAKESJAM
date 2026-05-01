@@ -10,11 +10,10 @@ import {
   FIRE_PATCH_DEFAULT_RADIUS,
   stepDestructibles,
 } from "../destructible.js";
+import { EntityId, InputSeq, PlayerId, Tick } from "../types.js";
 import type {
   DestructibleEntity,
-  EntityId,
   PlayerEntity,
-  PlayerId,
   ProjectileEntity,
 } from "../types.js";
 
@@ -37,7 +36,7 @@ function mkPlayer(id: PlayerId, x: number, y: number, alive = true): PlayerEntit
     fireCooldownMs: 0,
     ammo: 0,
     abilityCharge: 0,
-    lastProcessedInputSeq: 0,
+    lastProcessedInputSeq: InputSeq(0),
   };
 }
 
@@ -88,31 +87,31 @@ function mkDestructible(
 describe("stepDestructibles", () => {
   test("projectile that overlaps a destructible damages it and despawns", () => {
     const dests: Record<EntityId, DestructibleEntity> = {
-      1: mkDestructible(1, { health: 50 }),
+      [EntityId(1)]: mkDestructible(EntityId(1), { health: 50 }),
     };
     const projs: Record<EntityId, ProjectileEntity> = {
-      10: mkProj(10, "a", 100, 100, { damage: 20 }),
+      [EntityId(10)]: mkProj(EntityId(10), PlayerId("a"), 100, 100, { damage: 20 }),
     };
     const players: Record<PlayerId, PlayerEntity> = {
-      a: mkPlayer("a", 0, 0),
+      [PlayerId("a")]: mkPlayer(PlayerId("a"), 0, 0),
     };
-    const result = stepDestructibles(dests, projs, players, 16.667, 1);
-    expect(result.destructibles[1]?.health).toBe(30);
-    expect(result.projectiles[10]).toBeUndefined();
+    const result = stepDestructibles(dests, projs, players, 16.667, Tick(1));
+    expect(result.destructibles[EntityId(1)]?.health).toBe(30);
+    expect(result.projectiles[EntityId(10)]).toBeUndefined();
     expect(result.events).toEqual([]);
     expect(result.spawnedFire).toEqual([]);
   });
 
   test("projectile that breaks a non-explosive box emits destructible-broken only", () => {
-    const dests = { 1: mkDestructible(1, { health: 10 }) };
-    const projs = { 10: mkProj(10, "a", 100, 100, { damage: 20 }) };
-    const players = { a: mkPlayer("a", 0, 0), b: mkPlayer("b", 110, 110) };
-    const result = stepDestructibles(dests, projs, players, 16.667, 1);
-    expect(result.destructibles[1]).toBeUndefined();
+    const dests = { [EntityId(1)]: mkDestructible(EntityId(1), { health: 10 }) };
+    const projs = { [EntityId(10)]: mkProj(EntityId(10), PlayerId("a"), 100, 100, { damage: 20 }) };
+    const players = { [PlayerId("a")]: mkPlayer(PlayerId("a"), 0, 0), [PlayerId("b")]: mkPlayer(PlayerId("b"), 110, 110) };
+    const result = stepDestructibles(dests, projs, players, 16.667, Tick(1));
+    expect(result.destructibles[EntityId(1)]).toBeUndefined();
     expect(result.events.length).toBe(1);
     expect(result.events[0]).toMatchObject({
       t: "destructible-broken",
-      entityId: 1,
+      entityId: EntityId(1),
       x: 100,
       y: 100,
     });
@@ -121,21 +120,21 @@ describe("stepDestructibles", () => {
 
   test("breaking an explosive barrel deals AOE to alive non-owner players in range", () => {
     const dests = {
-      1: mkDestructible(1, { kind: "barrel", explosive: true, health: 10 }),
+      [EntityId(1)]: mkDestructible(EntityId(1), { kind: "barrel", explosive: true, health: 10 }),
     };
-    const projs = { 10: mkProj(10, "a", 100, 100, { damage: 50 }) };
+    const projs = { [EntityId(10)]: mkProj(EntityId(10), PlayerId("a"), 100, 100, { damage: 50 }) };
     const players = {
-      a: mkPlayer("a", 100, 100), // owner — excluded from AOE
-      b: mkPlayer("b", 130, 100), // close, in range
-      c: mkPlayer("c", 100 + EXPLOSION_RADIUS + 50, 100), // far, out of range
-      d: mkPlayer("d", 110, 100, false), // dead, excluded
+      [PlayerId("a")]: mkPlayer(PlayerId("a"), 100, 100), // owner — excluded from AOE
+      [PlayerId("b")]: mkPlayer(PlayerId("b"), 130, 100), // close, in range
+      [PlayerId("c")]: mkPlayer(PlayerId("c"), 100 + EXPLOSION_RADIUS + 50, 100), // far, out of range
+      [PlayerId("d")]: mkPlayer(PlayerId("d"), 110, 100, false), // dead, excluded
     };
-    const result = stepDestructibles(dests, projs, players, 16.667, 1);
+    const result = stepDestructibles(dests, projs, players, 16.667, Tick(1));
     const hitEvents = result.events.filter((e) => e.t === "hit-confirmed");
     expect(hitEvents.length).toBe(1);
     expect(hitEvents[0]).toMatchObject({
       t: "hit-confirmed",
-      victimId: "b",
+      victimId: PlayerId("b"),
       damage: EXPLOSION_DAMAGE,
       sourceProjectileId: null,
     });
@@ -143,16 +142,16 @@ describe("stepDestructibles", () => {
 
   test("breaking a flammable destructible with a fire-element shard spawns a fire patch", () => {
     const dests = {
-      1: mkDestructible(1, { flammable: true, health: 10, x: 200, y: 150 }),
+      [EntityId(1)]: mkDestructible(EntityId(1), { flammable: true, health: 10, x: 200, y: 150 }),
     };
     const projs = {
-      10: mkProj(10, "a", 200, 150, { damage: 50, element: "fire" }),
+      [EntityId(10)]: mkProj(EntityId(10), PlayerId("a"), 200, 150, { damage: 50, element: "fire" }),
     };
-    const players = { a: mkPlayer("a", 0, 0) };
-    const result = stepDestructibles(dests, projs, players, 16.667, 1);
+    const players = { [PlayerId("a")]: mkPlayer(PlayerId("a"), 0, 0) };
+    const result = stepDestructibles(dests, projs, players, 16.667, Tick(1));
     expect(result.spawnedFire.length).toBe(1);
     expect(result.spawnedFire[0]).toMatchObject({
-      ownerId: "a",
+      ownerId: PlayerId("a"),
       x: 200,
       y: 150,
       radius: FIRE_PATCH_DEFAULT_RADIUS,
@@ -162,32 +161,32 @@ describe("stepDestructibles", () => {
   });
 
   test("flammable but non-fire shard does not spawn a fire patch", () => {
-    const dests = { 1: mkDestructible(1, { flammable: true, health: 10 }) };
+    const dests = { [EntityId(1)]: mkDestructible(EntityId(1), { flammable: true, health: 10 }) };
     const projs = {
-      10: mkProj(10, "a", 100, 100, { damage: 50, element: "crystal" }),
+      [EntityId(10)]: mkProj(EntityId(10), PlayerId("a"), 100, 100, { damage: 50, element: "crystal" }),
     };
-    const players = { a: mkPlayer("a", 0, 0) };
-    const result = stepDestructibles(dests, projs, players, 16.667, 1);
+    const players = { [PlayerId("a")]: mkPlayer(PlayerId("a"), 0, 0) };
+    const result = stepDestructibles(dests, projs, players, 16.667, Tick(1));
     expect(result.spawnedFire).toEqual([]);
   });
 
   test("projectile not overlapping any destructible passes through untouched", () => {
-    const dests = { 1: mkDestructible(1, { x: 100, y: 100 }) };
-    const projs = { 10: mkProj(10, "a", 500, 500) };
-    const players = { a: mkPlayer("a", 0, 0) };
-    const result = stepDestructibles(dests, projs, players, 16.667, 1);
-    expect(result.destructibles[1]?.health).toBe(30);
-    expect(result.projectiles[10]).toBeDefined();
+    const dests = { [EntityId(1)]: mkDestructible(EntityId(1), { x: 100, y: 100 }) };
+    const projs = { [EntityId(10)]: mkProj(EntityId(10), PlayerId("a"), 500, 500) };
+    const players = { [PlayerId("a")]: mkPlayer(PlayerId("a"), 0, 0) };
+    const result = stepDestructibles(dests, projs, players, 16.667, Tick(1));
+    expect(result.destructibles[EntityId(1)]?.health).toBe(30);
+    expect(result.projectiles[EntityId(10)]).toBeDefined();
   });
 
   test("one projectile only damages one destructible per tick", () => {
     const dests = {
-      1: mkDestructible(1, { x: 100, y: 100 }),
-      2: mkDestructible(2, { x: 110, y: 100 }),
+      [EntityId(1)]: mkDestructible(EntityId(1), { x: 100, y: 100 }),
+      [EntityId(2)]: mkDestructible(EntityId(2), { x: 110, y: 100 }),
     };
-    const projs = { 10: mkProj(10, "a", 105, 100, { damage: 20 }) };
-    const players = { a: mkPlayer("a", 0, 0) };
-    const result = stepDestructibles(dests, projs, players, 16.667, 1);
+    const projs = { [EntityId(10)]: mkProj(EntityId(10), PlayerId("a"), 105, 100, { damage: 20 }) };
+    const players = { [PlayerId("a")]: mkPlayer(PlayerId("a"), 0, 0) };
+    const result = stepDestructibles(dests, projs, players, 16.667, Tick(1));
     const damaged = Object.values(result.destructibles).filter((d) => d.health < 30);
     expect(damaged.length).toBe(1);
   });
