@@ -3,21 +3,22 @@
 // when the last client disconnects.
 
 import type { ServerWebSocket } from "bun";
-import type { PlayerSpawnInfo } from "@sim/types.ts";
+import { PlayerId, type PlayerSpawnInfo } from "@sim/types.ts";
 import { MatchHost, type MatchSocketData } from "./matchHost.ts";
 
 export class MatchRegistry {
   private readonly matches = new Map<string, MatchHost>();
 
   attach(ws: ServerWebSocket<MatchSocketData>): void {
-    const { matchId, playerId } = ws.data;
+    const { matchId, playerId: rawPlayerId } = ws.data;
+    const playerId = PlayerId(rawPlayerId);
     let host = this.matches.get(matchId);
     if (!host) {
       host = new MatchHost(matchId, [
         {
           playerId,
           characterId: "balanced",
-          name: playerId,
+          name: rawPlayerId,
           color: "#88ccff",
           weaponId: "starter-pistol",
         },
@@ -28,8 +29,8 @@ export class MatchRegistry {
       host.addPlayer({
         playerId,
         characterId: "balanced",
-        name: playerId,
-        color: pickColor(playerId),
+        name: rawPlayerId,
+        color: pickColor(rawPlayerId),
         weaponId: "starter-pistol",
       });
     }

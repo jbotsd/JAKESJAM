@@ -147,12 +147,12 @@ export class MatchHost {
         color: spawn.color ?? "#ffffff",
         name: spawn.name ?? spawn.playerId,
       });
-      this.lastProcessedInputSeq.set(spawn.playerId, 0);
+      this.lastProcessedInputSeq.set(spawn.playerId, 0 as InputSeq);
     }
   }
 
   attachClient(ws: ServerWebSocket<MatchSocketData>): void {
-    const playerId = ws.data.playerId;
+    const playerId = ws.data.playerId as PlayerId;
     const previous = this.clients.get(playerId);
     if (previous && previous !== ws) {
       previous.close(1000, "replaced");
@@ -172,7 +172,7 @@ export class MatchHost {
   }
 
   detachClient(ws: ServerWebSocket<MatchSocketData>): void {
-    const playerId = ws.data.playerId;
+    const playerId = ws.data.playerId as PlayerId;
     if (this.clients.get(playerId) === ws) {
       this.clients.delete(playerId);
       // We deliberately keep the player's entity, score, input-seq state, and
@@ -219,7 +219,7 @@ export class MatchHost {
       color: spawn.color ?? "#ffffff",
       name: spawn.name ?? spawn.playerId,
     });
-    this.lastProcessedInputSeq.set(spawn.playerId, 0);
+    this.lastProcessedInputSeq.set(spawn.playerId, 0 as InputSeq);
 
     const existingCount = Object.keys(this.state.players).length;
     const spawnPoint =
@@ -268,7 +268,7 @@ export class MatchHost {
     const { message } = decoded;
     switch (message.t) {
       case "in":
-        this.applyInput(ws.data.playerId, message);
+        this.applyInput(ws.data.playerId as PlayerId, message);
         break;
       case "ack":
         // TODO(deltaCodec): drop snapshots in the per-client baseline ring up
@@ -285,7 +285,7 @@ export class MatchHost {
         );
         break;
       case "card-pick":
-        this.applyCardPick(ws.data.playerId, message);
+        this.applyCardPick(ws.data.playerId as PlayerId, message);
         break;
       case "hello":
         // Hello is implicit on connect; ignore extras.
@@ -507,9 +507,10 @@ export class MatchHost {
     let bestLookback = 0;
     const shooters: Array<{ playerId: PlayerId; lookbackTicks: number; lookbackMs: number }> = [];
 
-    for (const [pid, input] of Object.entries(inputsByPlayer)) {
+    for (const [pidStr, input] of Object.entries(inputsByPlayer)) {
       if (!input) continue;
       if ((input.keys & FIRE_BIT) === 0) continue;
+      const pid = pidStr as PlayerId;
       const rawDelta = serverTick - input.tick;
       const lookbackTicks = Math.max(0, Math.min(LAG_COMP_MAX_TICKS, rawDelta));
       shooters.push({ playerId: pid, lookbackTicks, lookbackMs: lookbackTicks * STEP_MS });
@@ -521,10 +522,12 @@ export class MatchHost {
 
     if (bestShooter === null || bestLookback === 0) return null;
 
-    const targetTick = serverTick - bestLookback;
+    const targetTick = (serverTick - bestLookback) as Tick;
     const shifts = new Map<PlayerId, { dx: number; dy: number }>();
     const rewoundPlayers: WorldState["players"] = { ...this.state.players };
-    for (const [pid, entity] of Object.entries(this.state.players)) {
+    // Object.entries widens the branded key to string; re-brand at the boundary.
+    for (const [pidStr, entity] of Object.entries(this.state.players)) {
+      const pid = pidStr as PlayerId;
       if (pid === bestShooter) continue;
       const sample = this.getPlayerAtTick(pid, targetTick);
       if (!sample) continue;
@@ -610,7 +613,9 @@ export class MatchHost {
    */
   private recordPositionHistory(): void {
     const tick = this.state.tick;
-    for (const [pid, entity] of Object.entries(this.state.players)) {
+    // Object.entries widens the branded key to string; re-brand at the boundary.
+    for (const [pidStr, entity] of Object.entries(this.state.players)) {
+      const pid = pidStr as PlayerId;
       let history = this.playerPositionHistory.get(pid);
       if (!history) {
         history = [];
@@ -813,7 +818,8 @@ function collectHitsByShooter(
  * Iteration is in sorted-id order to keep ties deterministic.
  */
 function pickWinner(scores: Record<PlayerId, number>): PlayerId | null {
-  const ids = Object.keys(scores).sort();
+  // Object.keys widens the branded key to string; re-brand at the boundary.
+  const ids = (Object.keys(scores) as PlayerId[]).sort();
   let bestId: PlayerId | null = null;
   let bestScore = -Infinity;
   let tied = false;

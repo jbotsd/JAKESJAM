@@ -17,12 +17,12 @@
 // parryActiveMs, parryCooldownMs, getParryArcRadians, isParryCovering,
 // damagePlayer, clearTemporaryCombatEffects.
 
+import { Tick } from "./types.js";
 import type {
   EntityId,
   InputBitfield,
   PlayerEntity,
   ProjectileEntity,
-  Tick,
 } from "./types.js";
 
 // ----- Constants -------------------------------------------------------------
@@ -109,8 +109,8 @@ export function tryStartParry(
   return {
     player: {
       ...player,
-      parryActiveUntilTick: tick + activeTicks,
-      parryCooldownUntilTick: tick + cooldownTicks,
+      parryActiveUntilTick: Tick(tick + activeTicks),
+      parryCooldownUntilTick: Tick(tick + cooldownTicks),
       parryFacing: facing,
     },
     started: true,

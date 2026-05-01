@@ -33,6 +33,7 @@ import {
   type PickupEntity,
   type PickupKind,
   type PlayerEntity,
+  PlayerId,
   type SimEvent,
   type WorldState,
 } from "../../sim";
@@ -176,7 +177,7 @@ export class OnlineMatchScene extends Phaser.Scene {
   private destructibleGraphics: Phaser.GameObjects.Graphics | null = null;
   private fireGraphics: Phaser.GameObjects.Graphics | null = null;
   private pickupGraphics: Phaser.GameObjects.Graphics | null = null;
-  private localPlayerId: string = "";
+  private localPlayerId: PlayerId = PlayerId("");
   private lastFrameMs = 0;
   private keys!: Record<"a" | "d" | "w" | "s" | "space" | "shift", Phaser.Input.Keyboard.Key>;
   private statsVisible = false;
@@ -209,7 +210,7 @@ export class OnlineMatchScene extends Phaser.Scene {
   }
 
   init(data: OnlineMatchSceneInit) {
-    this.localPlayerId = data.localPlayerId;
+    this.localPlayerId = PlayerId(data.localPlayerId);
     void this.connect(data);
   }
 
@@ -549,7 +550,7 @@ export class OnlineMatchScene extends Phaser.Scene {
   private spawnDamageNumber(victimId: string, damage: number) {
     const state = this.loop?.getRenderState();
     if (!state) return;
-    const victim = state.players[victimId];
+    const victim = state.players[PlayerId(victimId)];
     if (!victim || damage < 1) return;
     const isLocal = victimId === this.localPlayerId;
     const spread = (Math.random() - 0.5) * 22;
@@ -777,7 +778,8 @@ export class OnlineMatchScene extends Phaser.Scene {
   private showMatchResults(state: WorldState) {
     if (!this.matchResultsOverlay) return;
     const rows: MatchResultsRow[] = Object.entries(state.round.scores)
-      .map(([pid, score]) => {
+      .map(([pid_, score]) => {
+        const pid = pid_ as PlayerId;
         const player = state.players[pid];
         return {
           playerId: pid,

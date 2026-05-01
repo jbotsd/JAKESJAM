@@ -6,9 +6,9 @@ import {
   TARGET_SCORE_DEFAULT,
   stepRound,
 } from "../../sim/round.js";
+import { InputSeq, PlayerId } from "../../sim/types.js";
 import type {
   PlayerEntity,
-  PlayerId,
   RoundState,
 } from "../../sim/types.js";
 import { crystalRoundsCards } from "../data/cards";
@@ -69,7 +69,7 @@ const REMOTE_PLAYER_TARGET_PREFIX = "remote-player:";
 // machine. With only one human player + a dummy, we treat the dummy as a
 // second "player" so last-alive resolution kicks in when the player kills it
 // (or vice versa). Picked to avoid clashing with real player ids.
-const DUMMY_TARGET_PLAYER_ID = "dummy:practice-target";
+const DUMMY_TARGET_PLAYER_ID = PlayerId("dummy:practice-target");
 const DEATH_POPUP_DELAY_MS = 520;
 const RESPAWN_COUNTDOWN_MS = 3000;
 const PARRY_ACTIVE_MS = 420;
@@ -198,7 +198,7 @@ export class MatchScene extends Phaser.Scene {
   private shieldGraphics?: Phaser.GameObjects.Graphics;
   private roomId?: RoomId;
   private matchId?: MatchId;
-  private localPlayerId = "offline-player";
+  private localPlayerId: PlayerId = PlayerId("offline-player");
   private roomPlayers: RoomPlayer[] = [];
   private readonly playerScores = new Map<string, PlayerScore>();
   private snapshotSendTimerMs = 0;
@@ -226,7 +226,7 @@ export class MatchScene extends Phaser.Scene {
   init(data: MatchSceneInitData = {}) {
     this.roomId = data.roomId;
     this.matchId = data.matchId;
-    this.localPlayerId = data.localPlayerId ?? "offline-player";
+    this.localPlayerId = PlayerId(data.localPlayerId ?? "offline-player");
     this.roomPlayers = data.players ?? [];
     this.chaosModifierIds = data.chaosModifierIds ?? readStoredChaosModifiers();
     this.fireHazardTimerMs = 0;
@@ -542,7 +542,7 @@ export class MatchScene extends Phaser.Scene {
       const snapshot = this.remoteSnapshots.get(remote.playerId);
       const health = snapshot?.health ?? 100;
       const alive = snapshot ? snapshot.alive !== false && health > 0 : true;
-      players[remote.playerId] = makeSimPlayerStub(remote.playerId, health, alive);
+      players[PlayerId(remote.playerId)] = makeSimPlayerStub(PlayerId(remote.playerId), health, alive);
     }
     return players;
   }
@@ -712,7 +712,7 @@ export class MatchScene extends Phaser.Scene {
           playerId: remote.playerId,
           name: remote.name,
           color: remote.color,
-          score: this.roundState.scores[remote.playerId] ?? 0,
+          score: this.roundState.scores[PlayerId(remote.playerId)] ?? 0,
           // Online card lists belong in RoomSnapshot; for now we only have
           // them locally. Empty list is acceptable until that wiring lands.
           cardIds: [],
@@ -2699,7 +2699,7 @@ function makeSimPlayerStub(id: PlayerId, health: number, alive: boolean): Player
     fireCooldownMs: 0,
     ammo: 0,
     abilityCharge: 0,
-    lastProcessedInputSeq: 0,
+    lastProcessedInputSeq: InputSeq(0),
   };
 }
 

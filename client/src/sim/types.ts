@@ -1,10 +1,16 @@
 // Day 1 sim contract. This file is imported by client prediction code and the
 // authoritative Bun server, so changes here are protocol-sensitive.
 
-export type Tick = number;
-export type EntityId = number;
-export type PlayerId = string;
-export type InputSeq = number;
+declare const __brand: unique symbol;
+export type EntityId = number & { readonly [__brand]: "EntityId" };
+export type PlayerId = string & { readonly [__brand]: "PlayerId" };
+export type Tick = number & { readonly [__brand]: "Tick" };
+export type InputSeq = number & { readonly [__brand]: "InputSeq" };
+
+export const EntityId = (n: number): EntityId => n as EntityId;
+export const PlayerId = (s: string): PlayerId => s as PlayerId;
+export const Tick = (n: number): Tick => n as Tick;
+export const InputSeq = (n: number): InputSeq => n as InputSeq;
 
 /**
  * Bitfield layout, least significant bit first:

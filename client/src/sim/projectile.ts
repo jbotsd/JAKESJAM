@@ -23,11 +23,11 @@ import {
   type StaticCollisionCache,
 } from "./collision.js";
 import { nextFloat } from "./rng.js";
+import { PlayerId } from "./types.js";
 import type {
   EntityId,
   PlatformDefinition,
   PlayerEntity,
-  PlayerId,
   ProjectileEntity,
   ProjectileImpact,
   SimEvent,
@@ -219,7 +219,8 @@ export function stepProjectile(
   let hitPid: PlayerId | null = null;
   // Iterate players in deterministic order.
   const playerIds = Object.keys(players).sort();
-  for (const pid of playerIds) {
+  for (const pid_ of playerIds) {
+    const pid = pid_ as PlayerId;
     if (pid === proj.ownerId) continue;
     const player = players[pid]!;
     if (!player.alive) continue;
@@ -607,7 +608,8 @@ function detonateAt(
   }
 
   const playerIds = Object.keys(players).sort();
-  for (const pid of playerIds) {
+  for (const pid_ of playerIds) {
+    const pid = pid_ as PlayerId;
     if (pid === proj.ownerId) continue;
     const p = players[pid]!;
     if (!p.alive) continue;
@@ -753,7 +755,8 @@ function closestNonOwnerPlayer(
   const ids = Object.keys(players).sort();
   let best: PlayerEntity | null = null;
   let bestSq = Number.POSITIVE_INFINITY;
-  for (const id of ids) {
+  for (const id_ of ids) {
+    const id = id_ as PlayerId;
     if (id === ownerId) continue;
     const p = players[id]!;
     if (!p.alive) continue;

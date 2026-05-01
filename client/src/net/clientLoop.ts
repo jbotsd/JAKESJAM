@@ -6,13 +6,11 @@
 // See docs/netcode-architecture.md "Frame-by-frame, client".
 
 import { STEP_MS, World } from "../sim/index.js";
+import { InputSeq, PlayerId, Tick } from "../sim/types.js";
 import type {
   InputFrame,
-  InputSeq,
   PlayerEntity,
-  PlayerId,
   SimEvent,
-  Tick,
   WorldState,
 } from "../sim/types.js";
 import {
@@ -151,13 +149,13 @@ export class ClientLoop {
   private predictedState: WorldState | null = null;
   private authoritativeState: WorldState | null = null;
   private readonly pendingInputs: InputFrame[] = [];
-  private nextInputSeq: InputSeq = 1;
+  private nextInputSeq: InputSeq = InputSeq(1);
   private currentInput: LocalInput = { keys: 0, aimX: 0, aimY: 0 };
   private interval: ReturnType<typeof setInterval> | null = null;
   private pingInterval: ReturnType<typeof setInterval> | null = null;
   private accumulator = 0;
   private lastTickAt = 0;
-  private lastSnapshotTick: Tick = 0;
+  private lastSnapshotTick: Tick = Tick(0);
   private readonly remoteInterp = new Map<PlayerId, InterpolationBuffer<PlayerEntity>>();
 
   // Net stats bookkeeping.
@@ -192,7 +190,7 @@ export class ClientLoop {
   constructor(opts: ClientLoopOptions) {
     this.transport = opts.transport;
     this.matchId = opts.matchId;
-    this.playerId = opts.playerId;
+    this.playerId = PlayerId(opts.playerId);
     this.onEvents = opts.onEvents;
     this.onAuthoritativeApplied = opts.onAuthoritativeApplied;
     this.smoothing = { ...DEFAULT_SMOOTHING, ...(opts.smoothing ?? {}) };
@@ -443,7 +441,7 @@ export class ClientLoop {
   private stepOnce(): void {
     if (!this.predictedState) return;
     const input: InputFrame = {
-      seq: this.nextInputSeq++,
+      seq: (() => { const s = this.nextInputSeq; this.nextInputSeq = InputSeq(this.nextInputSeq + 1); return s; })(),
       tick: this.predictedState.tick,
       keys: this.currentInput.keys,
       aimX: this.currentInput.aimX,
@@ -554,7 +552,8 @@ export class ClientLoop {
 
     // Push remote players into their interpolation buffers.
     const serverTimeMs = message.tick * STEP_MS;
-    for (const [pid, entity] of Object.entries(message.state.players)) {
+    for (const [pid_, entity] of Object.entries(message.state.players)) {
+      const pid = pid_ as PlayerId;
       if (pid === this.playerId) continue;
       let buffer = this.remoteInterp.get(pid);
       if (!buffer) {

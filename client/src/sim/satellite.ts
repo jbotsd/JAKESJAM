@@ -11,10 +11,9 @@
 // of truth; on the client during prediction this is replayed locally.
 
 import { spawnProjectile, type ProjectileSpawnParams } from "./projectile.js";
+import { EntityId, PlayerId } from "./types.js";
 import type {
-  EntityId,
   PlayerEntity,
-  PlayerId,
   ProjectileEntity,
   RoundPhase,
   SatelliteEntity,
@@ -67,8 +66,8 @@ export function stepSatellites(
   const next: Record<EntityId, SatelliteEntity> = {};
   const projectiles: ProjectileEntity[] = [];
 
-  const ids = Object.keys(satellites)
-    .map((id) => Number(id))
+  const ids: EntityId[] = Object.keys(satellites)
+    .map((id) => EntityId(Number(id)))
     .sort((a, b) => a - b);
 
   for (const id of ids) {
@@ -180,7 +179,7 @@ export function despawnSatellitesForDeadOwners(
   for (const [idStr, sat] of Object.entries(satellites)) {
     const owner = players[sat.ownerId];
     if (owner && owner.alive) {
-      out[Number(idStr)] = sat;
+      out[EntityId(Number(idStr))] = sat;
     }
   }
   return out;
@@ -198,7 +197,8 @@ function nearestEnemy(
   let best: PlayerEntity | null = null;
   let bestDist2 = Infinity;
   const ids = Object.keys(players).sort();
-  for (const pid of ids) {
+  for (const pid_ of ids) {
+    const pid = pid_ as PlayerId;
     if (pid === owner.id) continue;
     const p = players[pid]!;
     if (!p.alive) continue;
