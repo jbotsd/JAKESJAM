@@ -10,6 +10,8 @@ import {
   JETPACK_MAX_FUEL,
   type PlayerMovementMemory,
 } from "./player.js";
+import { buildFireEntity, stepDestructibles } from "./destructible.js";
+import { stepFirePatches } from "./fire.js";
 import { stepProjectile } from "./projectile.js";
 import {
   despawnSatellitesForDeadOwners,
@@ -175,6 +177,7 @@ function nextIdSeed(state: WorldState): number {
   for (const id of Object.keys(state.destructibles)) max = Math.max(max, Number(id));
   for (const id of Object.keys(state.pickups)) max = Math.max(max, Number(id));
   for (const id of Object.keys(state.satellites ?? {})) max = Math.max(max, Number(id));
+  for (const id of Object.keys(state.firePatches ?? {})) max = Math.max(max, Number(id));
   return max + 1;
 }
 
@@ -443,8 +446,69 @@ export function stepWithRuntime(
     }
   }
 
-  // After projectile resolution, players whose hp hit 0 are now `alive: false`.
-  // Drop their satellites in the same tick (no zombie companions).
+  // 3b. Destructibles: any surviving projectile that overlaps a destructible
+  //     applies damage and despawns. Broken explosive boxes deal AOE; broken
+  //     flammable boxes hit by a fire-element shard seed a fire patch. AOE
+  //     and direct hit-confirmed events are drained into players here.
+  let nextDestructibles: WorldState["destructibles"] = state.destructibles;
+  let nextFirePatches: WorldState["firePatches"] = { ...state.firePatches };
+  let projectilesAfterDestructibles = remainingProjectiles;
+
+  if (Object.keys(state.destructibles).length > 0 || Object.keys(remainingProjectiles).length > 0) {
+    const destResult = stepDestructibles(
+      state.destructibles,
+      remainingProjectiles,
+      players,
+      dtMs,
+      nextTick,
+    );
+    nextDestructibles = destResult.destructibles;
+    projectilesAfterDestructibles = destResult.projectiles;
+    for (const ev of destResult.events) {
+      if (ev.t === "hit-confirmed" && players[ev.victimId]) {
+        const victim = players[ev.victimId]!;
+        if (victim.alive) {
+          const newHealth = Math.max(0, victim.health - ev.damage);
+          players[ev.victimId] = {
+            ...victim,
+            health: newHealth,
+            alive: newHealth > 0,
+          };
+        }
+      }
+      events.push(ev);
+    }
+    for (const spec of destResult.spawnedFire) {
+      const fid = runtime.nextEntityId;
+      runtime.nextEntityId += 1;
+      nextFirePatches[fid] = buildFireEntity(fid, spec);
+    }
+  }
+
+  // 3c. Fire patches: tick lifetime, apply DoT to alive non-owner players
+  //     they overlap. Despawn when remaining hits 0.
+  if (Object.keys(nextFirePatches).length > 0) {
+    const fireResult = stepFirePatches(nextFirePatches, players, dtMs);
+    nextFirePatches = fireResult.firePatches;
+    for (const ev of fireResult.events) {
+      if (ev.t === "hit-confirmed" && players[ev.victimId]) {
+        const victim = players[ev.victimId]!;
+        if (victim.alive) {
+          const newHealth = Math.max(0, victim.health - ev.damage);
+          players[ev.victimId] = {
+            ...victim,
+            health: newHealth,
+            alive: newHealth > 0,
+          };
+        }
+      }
+      events.push(ev);
+    }
+  }
+
+  // After projectile / destructible / fire resolution, players whose hp hit 0
+  // are now `alive: false`. Drop their satellites in the same tick (no zombie
+  // companions).
   let finalSatellites = despawnSatellitesForDeadOwners(nextSatellites, players);
 
   // 4. Round state machine.
@@ -471,7 +535,9 @@ export function stepWithRuntime(
       tick: nextTick,
       rngState,
       players: respawnedPlayers,
-      projectiles: remainingProjectiles,
+      projectiles: projectilesAfterDestructibles,
+      destructibles: nextDestructibles,
+      firePatches: nextFirePatches,
       satellites: finalSatellites,
       round: roundResult.state,
     },
