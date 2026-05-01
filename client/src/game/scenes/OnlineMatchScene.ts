@@ -1,6 +1,8 @@
 // Minimal online match scene running on the new netcode path.
 // Connects to the Bun game server through Convex matchmaker, runs ClientLoop
-// for prediction/reconciliation, renders WorldState as colored circles.
+// for prediction/reconciliation, renders WorldState through the same
+// ProceduralPlayerRig used by the offline MatchScene so online players look
+// identical to offline ones.
 //
 // Activated by `?netcode=new` on the page URL. Without that flag, lobby start
 // boots the existing full-featured MatchScene which still goes through the
@@ -22,6 +24,9 @@ import type {
   ProjectileEntity,
   WorldState,
 } from "../../sim/types";
+import { characters } from "../data/characters";
+import { ProceduralPlayerRig } from "../rendering/ProceduralPlayerRig";
+import type { CharacterDefinition, CharacterId } from "../types/game";
 
 export type OnlineMatchSceneInit = {
   matchId: string;
@@ -29,16 +34,24 @@ export type OnlineMatchSceneInit = {
   convexUrl: string;
 };
 
-const PLAYER_RADIUS = 18;
 const PROJECTILE_RADIUS_DEFAULT = 7;
+// Mirrors MatchScene's PLAYER_VISUAL_SCALE so online and offline rigs match.
+const PLAYER_VISUAL_SCALE = 0.78;
+// Sim body heights (sim/player.ts: bodyHeight=56, crouchHeight=38).
+// PlayerEntity (x, y) is the body center; rig wants foot position.
+const SIM_BODY_HALF_HEIGHT = 28;
+const SIM_CROUCH_HALF_HEIGHT = 19;
+const LOCAL_PLAYER_FALLBACK_COLOR = 0x50e3c2;
+const REMOTE_PLAYER_FALLBACK_COLOR = 0xff88aa;
 
 export class OnlineMatchScene extends Phaser.Scene {
   private loop: ClientLoop | null = null;
   private convex: ConvexClient | null = null;
   private statusText: Phaser.GameObjects.Text | null = null;
-  private playerSprites = new Map<string, Phaser.GameObjects.Container>();
+  private playerRigs = new Map<string, ProceduralPlayerRig>();
   private projectileSprites = new Map<number, Phaser.GameObjects.Arc>();
   private localPlayerId: string = "";
+  private lastFrameMs = 0;
   private keys!: Record<"a" | "d" | "w" | "s" | "space" | "shift", Phaser.Input.Keyboard.Key>;
 
   constructor() {
@@ -71,6 +84,7 @@ export class OnlineMatchScene extends Phaser.Scene {
       };
     }
 
+    this.lastFrameMs = performance.now();
     this.events.once("shutdown", () => this.teardown());
   }
 
@@ -98,7 +112,11 @@ export class OnlineMatchScene extends Phaser.Scene {
 
     this.loop.setLocalInput({ keys, aimX, aimY });
 
-    this.renderWorld(state);
+    const now = performance.now();
+    const deltaMs = Math.max(1, Math.min(50, now - this.lastFrameMs));
+    this.lastFrameMs = now;
+
+    this.renderWorld(state, deltaMs);
     this.followLocalPlayer(state);
   }
 
@@ -131,27 +149,26 @@ export class OnlineMatchScene extends Phaser.Scene {
     }
   }
 
-  private renderWorld(state: WorldState) {
-    // Players
+  private renderWorld(state: WorldState, deltaMs: number) {
+    // Players — procedurally rigged puppets, matching the offline MatchScene.
     const seenPlayers = new Set<string>();
     for (const [pid, player] of Object.entries(state.players)) {
       seenPlayers.add(pid);
-      let container = this.playerSprites.get(pid);
-      if (!container) {
-        container = this.makePlayerContainer(player, pid === this.localPlayerId);
-        this.playerSprites.set(pid, container);
+      let rig = this.playerRigs.get(pid);
+      if (!rig) {
+        rig = this.makePlayerRig(player, pid === this.localPlayerId);
+        this.playerRigs.set(pid, rig);
       }
-      container.setPosition(player.x, player.y);
-      container.setAlpha(player.alive ? 1 : 0.25);
+      this.updatePlayerRig(rig, player, deltaMs);
     }
-    for (const [pid, container] of this.playerSprites) {
+    for (const [pid, rig] of this.playerRigs) {
       if (!seenPlayers.has(pid)) {
-        container.destroy();
-        this.playerSprites.delete(pid);
+        rig.destroy();
+        this.playerRigs.delete(pid);
       }
     }
 
-    // Projectiles
+    // Projectiles (placeholder coloured circles — out of scope for this pass).
     const seenProjectiles = new Set<number>();
     for (const [idStr, proj] of Object.entries(state.projectiles)) {
       const id = Number(idStr);
@@ -176,19 +193,51 @@ export class OnlineMatchScene extends Phaser.Scene {
     }
   }
 
-  private makePlayerContainer(player: PlayerEntity, isLocal: boolean): Phaser.GameObjects.Container {
-    const container = this.add.container(player.x, player.y);
-    const body = this.add.circle(0, 0, PLAYER_RADIUS, isLocal ? 0x50e3c2 : 0xff88aa);
-    body.setStrokeStyle(2, isLocal ? 0xffffff : 0x000000, 0.6);
-    const label = this.add
-      .text(0, -PLAYER_RADIUS - 14, player.id.slice(-4), {
-        color: isLocal ? "#caffea" : "#ffd6e0",
-        fontFamily: "Inter, Arial, sans-serif",
-        fontSize: "11px",
-      })
-      .setOrigin(0.5, 0.5);
-    container.add([body, label]);
-    return container;
+  private makePlayerRig(player: PlayerEntity, isLocal: boolean): ProceduralPlayerRig {
+    const character = this.getCharacter(player.characterId);
+    return new ProceduralPlayerRig(this, {
+      color: isLocal ? LOCAL_PLAYER_FALLBACK_COLOR : REMOTE_PLAYER_FALLBACK_COLOR,
+      // No room-roster lookup yet on the netcode path; fall back to the player
+      // id suffix + character name so the nameplate is stable + identifiable.
+      name: `${player.id.slice(-4)} / ${character.name}`,
+      scale: this.getVisualScale(character),
+    });
+  }
+
+  private updatePlayerRig(
+    rig: ProceduralPlayerRig,
+    player: PlayerEntity,
+    deltaMs: number,
+  ) {
+    if (!player.alive) {
+      rig.setVisible(false);
+      return;
+    }
+    rig.setVisible(true);
+    const halfHeight = player.crouching ? SIM_CROUCH_HALF_HEIGHT : SIM_BODY_HALF_HEIGHT;
+    const character = this.getCharacter(player.characterId);
+    rig.update(deltaMs, {
+      position: { x: player.x, y: player.y + halfHeight },
+      velocity: { x: player.vx, y: player.vy },
+      aimTarget: { x: player.aimX, y: player.aimY },
+      // The sim doesn't expose a grounded flag on PlayerEntity (it lives in the
+      // per-tick movement memory). Treat players as grounded for posing — the
+      // rig's bob effect is keyed off horizontal walk speed anyway.
+      grounded: true,
+      crouching: player.crouching,
+      health: player.health,
+      maxHealth: character.maxHealth,
+    });
+  }
+
+  private getCharacter(characterId: CharacterId | string | undefined): CharacterDefinition {
+    return (
+      characters.find((character) => character.id === characterId) ?? characters[0]!
+    );
+  }
+
+  private getVisualScale(character: CharacterDefinition): number {
+    return PLAYER_VISUAL_SCALE * character.sizeScale;
   }
 
   private followLocalPlayer(state: WorldState) {
@@ -209,8 +258,8 @@ export class OnlineMatchScene extends Phaser.Scene {
     this.loop = null;
     void this.convex?.close();
     this.convex = null;
-    for (const sprite of this.playerSprites.values()) sprite.destroy();
-    this.playerSprites.clear();
+    for (const rig of this.playerRigs.values()) rig.destroy();
+    this.playerRigs.clear();
     for (const sprite of this.projectileSprites.values()) sprite.destroy();
     this.projectileSprites.clear();
   }
