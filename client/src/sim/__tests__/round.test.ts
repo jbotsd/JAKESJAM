@@ -304,7 +304,7 @@ describe("stepRound", () => {
     expect(resolved.find((e) => e.playerId === "b")?.cardId).toBe("circle-rounds");
   });
 
-  test("drafting → countdown on expiry auto-picks the leftmost offer for non-pickers", () => {
+  test("drafting holds past the legacy expiry window — no auto-pick, no respawn until everyone commits", () => {
     const players = {
       a: mkPlayer("a", { alive: true, cards: [] }),
       b: mkPlayer("b", { alive: true, cards: ["raycast-prism"] }),
@@ -317,7 +317,6 @@ describe("stepRound", () => {
       roundIndex: 0,
       winnerPlayerId: "a",
       draftingExpiresAtTick: expiresAt,
-      // 'a' picked already, 'b' missed the deadline.
       draftingPicked: { a: "circle-rounds" },
       draftingOffers: {
         a: ["circle-rounds", "raycast-prism", "crystal-volley"],
@@ -329,24 +328,18 @@ describe("stepRound", () => {
       players,
       dtMs: 16,
       targetScore: 3,
-      tick: expiresAt, // exactly at expiry — `>=` triggers
+      tick: expiresAt + 1000, // well past the old expiry
       rngState: 7,
     });
-    expect(result.state.phase).toBe("countdown");
+    // Stays in drafting because 'b' hasn't committed.
+    expect(result.state.phase).toBe("drafting");
+    expect(result.playerPatches).toBeUndefined();
     const resolved = result.events.filter(
       (e): e is Extract<SimEvent, { t: "draft-resolved" }> => e.t === "draft-resolved",
     );
-    // 'a' fires as a normal pick, 'b' as an auto-pick.
-    expect(resolved.find((e) => e.playerId === "a")?.autoPicked).toBe(false);
-    const bResolved = resolved.find((e) => e.playerId === "b");
-    expect(bResolved?.autoPicked).toBe(true);
-    expect(bResolved?.cardId).toBe("crystal-volley"); // leftmost of b's offers
-    // playerPatches surfaces the auto-pick so World.step folds it into
-    // player.cards. Server-applied 'a' pick is NOT included — that path
-    // mutates player.cards on the server side directly.
-    expect(result.playerPatches).toBeDefined();
-    expect(result.playerPatches!.b!.cards).toEqual(["raycast-prism", "crystal-volley"]);
-    expect(result.playerPatches!.a).toBeUndefined();
+    // 'a' may still re-fire if its draft-resolved hasn't been marked yet,
+    // but no auto-pick event for 'b' regardless.
+    expect(resolved.find((e) => e.playerId === "b")).toBeUndefined();
   });
 
   test("drafting holds while no one has picked and the window has not expired", () => {

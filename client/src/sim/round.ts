@@ -176,11 +176,10 @@ export function stepRound(input: RoundStepInput): RoundStepResult {
     }
 
     case "drafting": {
-      // Resolution criterion: "all participating players have picked" OR
-      // "tick >= draftingExpiresAtTick". The countdown timer is not
-      // consulted in this phase. Drafting includes dead players too — the
-      // round-end loser is usually mid-respawn and must still get to pick.
-      const offers = state.draftingOffers ?? {};
+      // Resolution criterion: "all participating players have picked".
+      // No expiry / no auto-pick — players don't respawn until they
+      // commit a card. Drafting includes dead players too (the round-end
+      // loser is usually mid-respawn and must still get to pick).
       const previousPicked = state.draftingPicked ?? {};
       const draftingIds = Object.keys(players).sort();
 
@@ -208,13 +207,10 @@ export function stepRound(input: RoundStepInput): RoundStepResult {
         }
       }
 
-      const expired = tick !== undefined &&
-        state.draftingExpiresAtTick !== undefined &&
-        tick >= state.draftingExpiresAtTick;
       const allPicked = draftingIds.length > 0 &&
         draftingIds.every((id) => previousPicked[id] !== undefined);
 
-      if (!expired && !allPicked) {
+      if (!allPicked) {
         // Stay in drafting. Persist the fired marker so subsequent ticks
         // don't re-emit `draft-resolved` for the same player.
         const carry: WithMarker = {
@@ -222,36 +218,6 @@ export function stepRound(input: RoundStepInput): RoundStepResult {
           [firedKey]: fired,
         };
         return finalize(carry, events, false, rngState);
-      }
-
-      // Resolve: auto-pick leftmost offer for any alive player who hasn't
-      // committed before the window expired. Emit `draft-resolved` with
-      // autoPicked=true for those, and surface a `playerPatches` entry so
-      // the orchestrator (World.ts) folds the new card id into the
-      // canonical `player.cards` array. Server-applied picks (the normal
-      // path) already wrote into `player.cards` via `applyCardPick`; this
-      // patch is the fallback for the auto-pick case only.
-      const playerPatches: Record<PlayerId, { cards: string[] }> = {};
-      if (expired) {
-        for (const pid of draftingIds) {
-          if (previousPicked[pid] !== undefined) continue;
-          const playerOffers = offers[pid];
-          if (!playerOffers || playerOffers.length === 0) continue;
-          const cardId = playerOffers[0]!;
-          if (!fired[pid]) {
-            events.push({
-              t: "draft-resolved",
-              playerId: pid,
-              cardId,
-              autoPicked: true,
-            });
-            fired[pid] = true;
-          }
-          const player = players[pid];
-          if (player) {
-            playerPatches[pid] = { cards: [...player.cards, cardId] };
-          }
-        }
       }
 
       // Drafting → countdown. Wipe drafting bookkeeping so the next round
@@ -263,8 +229,7 @@ export function stepRound(input: RoundStepInput): RoundStepResult {
       next.draftingExpiresAtTick = undefined;
       next.draftingPicked = undefined;
       next.draftingOffers = undefined;
-      const patches = Object.keys(playerPatches).length > 0 ? playerPatches : undefined;
-      return finalize(next, events, false, rngState, patches);
+      return finalize(next, events, false, rngState);
     }
   }
 }
