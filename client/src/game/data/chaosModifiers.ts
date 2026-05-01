@@ -79,7 +79,7 @@ export const chaosModifiers: ChaosModifierDefinition[] = [
   },
 ];
 
-export const projectileShapes: ProjectileShape[] = ["circle", "triangle", "square", "hexagon", "orb"];
+export const projectileShapes: ProjectileShape[] = ["circle", "triangle", "square", "hexagon", "orb", "x", "bar"];
 
 export function getChaosModifiers(ids: ChaosModifierId[]): ChaosModifierDefinition[] {
   const byId = new Map(chaosModifiers.map((modifier) => [modifier.id, modifier]));

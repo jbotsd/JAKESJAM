@@ -533,6 +533,29 @@ export class ProjectileSystem {
         radius * 2,
         radius * 2,
       );
+    } else if (projectile.shape === "x") {
+      graphics.lineStyle(Math.max(3, radius * 0.5), color, 0.95);
+      graphics.beginPath();
+      graphics.moveTo(projectile.position.x - radius, projectile.position.y - radius);
+      graphics.lineTo(projectile.position.x + radius, projectile.position.y + radius);
+      graphics.moveTo(projectile.position.x + radius, projectile.position.y - radius);
+      graphics.lineTo(projectile.position.x - radius, projectile.position.y + radius);
+      graphics.strokePath();
+    } else if (projectile.shape === "bar") {
+      graphics.fillRoundedRect(
+        projectile.position.x - radius * 0.42,
+        projectile.position.y - radius * 1.38,
+        radius * 0.84,
+        radius * 2.76,
+        Math.max(2, radius * 0.18),
+      );
+      graphics.strokeRoundedRect(
+        projectile.position.x - radius * 0.42,
+        projectile.position.y - radius * 1.38,
+        radius * 0.84,
+        radius * 2.76,
+        Math.max(2, radius * 0.18),
+      );
     } else {
       drawPolygon(graphics, projectile.position, radius, projectile.shape === "triangle" ? 3 : 6);
     }
@@ -601,6 +624,10 @@ function projectileToBuild(projectile: ActiveProjectile): ResolvedWeaponBuild {
     overchargeMultiplier: 1,
     orbitingSatellites: 0,
     mirrorShield: false,
+    maxHealthAdd: 0,
+    moveSpeedMultiplier: 1,
+    parryCoverMultiplier: 1,
+    parryCooldownMultiplier: 1,
     cards: [],
     occupiedBuckets: [],
   };

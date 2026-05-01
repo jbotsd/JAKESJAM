@@ -1,5 +1,17 @@
 # JAKESJAM - Changelog
 
+## v0.22 - 2026-05-01
+
+- Reworked card progression so mutator cards can stack into outrageous builds instead of being hard-limited to one card per bucket.
+- Added stackable projectile mutators for +1 projectile, +1 bounce, boomerang pathing, faster projectile velocity, X/I projectile shapes, projectile size changes, and fire-rate/size tradeoffs.
+- Added shot cooldown tax based on projectile count, split count, bounce count, homing, beam delivery, and impact radius so fractured bullet builds have a balance cost.
+- Added directional parry on `C` with a large cooldown, visible forward arc, no-block counterplay, and stackable card upgrades for wider cover and faster parry recovery.
+- Added stackable health and movement cards to counter glass-cannon weapon builds.
+- Added new arena pickups: damage amp, speed boost, melee mode, slow trap, vulnerability trap, block jammer, and boss core.
+- Added boss pickup mode with bonus health, higher damage, slower movement, reduced fire rate, and a forced rotating bullet-pattern aim system.
+- Changed card caches into seven roaming random-spawn pickups that relocate every 20 seconds instead of leaving card stacks everywhere on the map.
+- Rebuilt standalone Host and Player HTML bundles with the new gameplay pass.
+
 ## v0.21 - 2026-05-01
 
 - Added a first-run splash menu with Practice, Host, Join, and Options actions.

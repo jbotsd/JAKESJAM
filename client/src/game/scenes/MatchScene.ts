@@ -46,11 +46,25 @@ const WORLD_COLUMNS = 5;
 const WORLD_ROWS = 3;
 const VERTICAL_SHAFT_WIDTH = 150;
 const CHAOS_MODIFIERS_KEY = "jakesjam.chaosModifiers";
-const CARD_CACHE_RESPAWN_MS = 18000;
+const CARD_CACHE_RESPAWN_MS = 20000;
+const CARD_CACHE_RELOCATE_MS = 20000;
+const ROAMING_CARD_CACHE_COUNT = 7;
 const REMOTE_PLAYER_TARGET_PREFIX = "remote-player:";
 const MUTATOR_ROLL_BUCKET_PRIORITY = ["delivery", "quantity", "shape", "trajectory", "impact", "element"] as const;
 const DEATH_POPUP_DELAY_MS = 520;
 const RESPAWN_COUNTDOWN_MS = 3000;
+const PARRY_ACTIVE_MS = 420;
+const PARRY_COOLDOWN_MS = 4300;
+const PARRY_BASE_ARC_RADIANS = Math.PI * 0.72;
+const PARRY_BASE_RANGE = 98;
+const DAMAGE_AMP_MULTIPLIER = 1.42;
+const SPEED_BOOST_MULTIPLIER = 1.22;
+const SLOW_DEBUFF_MULTIPLIER = 0.62;
+const VULNERABILITY_MULTIPLIER = 1.38;
+const BOSS_HEALTH_BONUS = 90;
+const BOSS_MOVE_MULTIPLIER = 0.72;
+const BOSS_DAMAGE_MULTIPLIER = 1.55;
+const BOSS_FIRE_RATE_MULTIPLIER = 0.72;
 
 type MatchSceneInitData = {
   roomId?: string;
@@ -69,6 +83,7 @@ type MovementKeys = {
   space: Phaser.Input.Keyboard.Key;
   r: Phaser.Input.Keyboard.Key;
   shift: Phaser.Input.Keyboard.Key;
+  c: Phaser.Input.Keyboard.Key;
   tab: Phaser.Input.Keyboard.Key;
 };
 
@@ -145,6 +160,17 @@ export class MatchScene extends Phaser.Scene {
   private shieldActive = false;
   private temporaryShieldMs = 0;
   private overchargeMs = 0;
+  private damageAmpMs = 0;
+  private speedBoostMs = 0;
+  private meleeModeMs = 0;
+  private slowDebuffMs = 0;
+  private vulnerabilityMs = 0;
+  private blockJammerMs = 0;
+  private bossModeMs = 0;
+  private bossShotIndex = 0;
+  private parryActiveMs = 0;
+  private parryCooldownMs = 0;
+  private cardCacheRelocateTimerMs = 0;
   private lastPickupStatus = "none";
   private shieldGraphics?: Phaser.GameObjects.Graphics;
   private roomId?: string;
@@ -197,6 +223,17 @@ export class MatchScene extends Phaser.Scene {
     this.shieldActive = false;
     this.temporaryShieldMs = 0;
     this.overchargeMs = 0;
+    this.damageAmpMs = 0;
+    this.speedBoostMs = 0;
+    this.meleeModeMs = 0;
+    this.slowDebuffMs = 0;
+    this.vulnerabilityMs = 0;
+    this.blockJammerMs = 0;
+    this.bossModeMs = 0;
+    this.bossShotIndex = 0;
+    this.parryActiveMs = 0;
+    this.parryCooldownMs = 0;
+    this.cardCacheRelocateTimerMs = 0;
     this.lastPickupStatus = "none";
     this.progressionCardIds = [];
     this.projectileSystem = new ProjectileSystem(this);
@@ -256,6 +293,7 @@ export class MatchScene extends Phaser.Scene {
     }
 
     this.updateShield(scaledDeltaMs);
+    this.updateParry(scaledDeltaMs);
     const wasGrounded = this.playerBody.grounded;
     const input = this.readInput();
     this.movement.update(
@@ -264,7 +302,7 @@ export class MatchScene extends Phaser.Scene {
       boxworksWorld.platforms,
       scaledDeltaSeconds,
       {
-        speedMultiplier: this.getLocalCharacter().moveSpeedMultiplier,
+        speedMultiplier: this.getLocalCharacter().moveSpeedMultiplier * this.getMoveSpeedModifier(),
         gravityMultiplier: chaos.gravityMultiplier,
       },
     );
@@ -442,6 +480,7 @@ export class MatchScene extends Phaser.Scene {
       space: keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.SPACE),
       r: keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.R),
       shift: keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.SHIFT),
+      c: keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.C),
       tab: keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.TAB),
     };
     keyboard.addCapture(Phaser.Input.Keyboard.KeyCodes.TAB);
@@ -515,7 +554,7 @@ export class MatchScene extends Phaser.Scene {
 
     this.temporaryShieldMs = Math.max(0, this.temporaryShieldMs - deltaMs);
     const canShield = this.getLocalCharacter().abilityType === "shield" || this.temporaryShieldMs > 0;
-    this.shieldActive = canShield && this.keys.shift.isDown && this.shieldCharge > 0;
+    this.shieldActive = canShield && this.blockJammerMs <= 0 && this.keys.shift.isDown && this.shieldCharge > 0;
 
     if (this.shieldActive) {
       this.shieldCharge = Math.max(0, this.shieldCharge - deltaMs * 0.036);
@@ -528,21 +567,68 @@ export class MatchScene extends Phaser.Scene {
     this.shieldCharge = Math.min(100, this.shieldCharge + deltaMs * 0.014);
   }
 
+  private updateParry(deltaMs: number) {
+    if (!this.keys) {
+      return;
+    }
+
+    this.parryActiveMs = Math.max(0, this.parryActiveMs - deltaMs);
+    this.parryCooldownMs = Math.max(0, this.parryCooldownMs - deltaMs);
+
+    if (
+      Phaser.Input.Keyboard.JustDown(this.keys.c) &&
+      this.blockJammerMs <= 0 &&
+      this.parryCooldownMs <= 0
+    ) {
+      this.parryActiveMs = PARRY_ACTIVE_MS;
+      this.parryCooldownMs = this.getParryCooldownMs();
+      this.audio?.play("hit");
+    }
+  }
+
   private drawShield() {
     if (!this.shieldGraphics) {
       return;
     }
 
     this.shieldGraphics.clear();
-    if (!this.shieldActive) {
+
+    if (this.shieldActive) {
+      const radius = Math.max(this.playerBody.size.x, this.playerBody.size.y) * 0.82;
+      this.shieldGraphics.fillStyle(0x93c5fd, 0.08);
+      this.shieldGraphics.fillCircle(this.playerBody.position.x, this.playerBody.position.y, radius);
+      this.shieldGraphics.lineStyle(2, 0x93c5fd, 0.62);
+      this.shieldGraphics.strokeCircle(this.playerBody.position.x, this.playerBody.position.y, radius);
+    }
+
+    if (this.parryActiveMs <= 0) {
       return;
     }
 
-    const radius = Math.max(this.playerBody.size.x, this.playerBody.size.y) * 0.82;
-    this.shieldGraphics.fillStyle(0x93c5fd, 0.08);
-    this.shieldGraphics.fillCircle(this.playerBody.position.x, this.playerBody.position.y, radius);
-    this.shieldGraphics.lineStyle(2, 0x93c5fd, 0.62);
-    this.shieldGraphics.strokeCircle(this.playerBody.position.x, this.playerBody.position.y, radius);
+    const aimAngle = this.getAimAngleFromPlayer();
+    const arc = this.getParryArcRadians();
+    const range = this.getParryRange();
+    this.shieldGraphics.fillStyle(0xf7fbff, 0.13);
+    this.shieldGraphics.slice(
+      this.playerBody.position.x,
+      this.playerBody.position.y,
+      range,
+      aimAngle - arc / 2,
+      aimAngle + arc / 2,
+      false,
+    );
+    this.shieldGraphics.fillPath();
+    this.shieldGraphics.lineStyle(3, 0xf7fbff, 0.82);
+    this.shieldGraphics.beginPath();
+    this.shieldGraphics.arc(
+      this.playerBody.position.x,
+      this.playerBody.position.y,
+      range,
+      aimAngle - arc / 2,
+      aimAngle + arc / 2,
+      false,
+    );
+    this.shieldGraphics.strokePath();
   }
 
   private syncRemotePlayerVisuals(deltaMs = 16) {
@@ -619,15 +705,50 @@ export class MatchScene extends Phaser.Scene {
   private createChaosWeaponBuild(): ResolvedWeaponBuild {
     const chaos = this.getChaosProfile();
     const overcharged = this.overchargeMs > 0;
+    const damageBoost = (this.damageAmpMs > 0 ? DAMAGE_AMP_MULTIPLIER : 1) *
+      (this.bossModeMs > 0 ? BOSS_DAMAGE_MULTIPLIER : 1);
+    const fireRateBoost = this.bossModeMs > 0 ? BOSS_FIRE_RATE_MULTIPLIER : 1;
+    const projectileSpeedBoost = this.slowDebuffMs > 0 ? 0.72 : 1;
     const build: ResolvedWeaponBuild = {
       ...this.weaponBuild,
-      damage: this.weaponBuild.damage * chaos.damageMultiplier * (overcharged ? 1.25 : 1),
-      fireRate: Math.max(0.2, this.weaponBuild.fireRate * chaos.fireRateMultiplier * (overcharged ? 1.2 : 1)),
+      damage: this.weaponBuild.damage * chaos.damageMultiplier * (overcharged ? 1.25 : 1) * damageBoost,
+      fireRate: Math.max(0.2, this.weaponBuild.fireRate * chaos.fireRateMultiplier * (overcharged ? 1.2 : 1) * fireRateBoost),
       recoilImpulse: this.weaponBuild.recoilImpulse * chaos.recoilMultiplier,
+      projectileSpeed: this.weaponBuild.projectileSpeed * projectileSpeedBoost,
       projectile: { ...this.weaponBuild.projectile },
       cards: this.weaponBuild.cards,
       occupiedBuckets: this.weaponBuild.occupiedBuckets,
+      maxHealthAdd: this.weaponBuild.maxHealthAdd,
+      moveSpeedMultiplier: this.weaponBuild.moveSpeedMultiplier,
+      parryCoverMultiplier: this.weaponBuild.parryCoverMultiplier,
+      parryCooldownMultiplier: this.weaponBuild.parryCooldownMultiplier,
     };
+
+    if (this.meleeModeMs > 0) {
+      build.delivery = "area-pulse";
+      build.damage *= 1.34;
+      build.fireRate = Math.min(build.fireRate, 2.1);
+      build.projectile = {
+        ...build.projectile,
+        count: 1,
+        rangePx: 128,
+        impact: "explosive",
+        impactRadiusPx: Math.max(build.projectile.impactRadiusPx, 82),
+        sizeMultiplier: Math.max(build.projectile.sizeMultiplier, 1.25),
+      };
+    }
+
+    if (this.bossModeMs > 0) {
+      build.projectile = {
+        ...build.projectile,
+        count: Math.max(build.projectile.count, 7),
+        shape: "orb",
+        impact: build.projectile.impact === "none" ? "explosive" : build.projectile.impact,
+        impactRadiusPx: Math.max(build.projectile.impactRadiusPx, 46),
+        sizeMultiplier: Math.max(build.projectile.sizeMultiplier, 1.15),
+      };
+      build.spreadRadians = Math.max(build.spreadRadians, Math.PI * 0.72);
+    }
 
     if (chaos.randomProjectileShapes) {
       build.projectile.shape = Phaser.Utils.Array.GetRandom(projectileShapes);
@@ -715,6 +836,12 @@ export class MatchScene extends Phaser.Scene {
       return;
     }
 
+    if (snapshot.health < this.playerHealth && this.blockJammerMs <= 0 && this.parryActiveMs > 0) {
+      this.lastPickupStatus = "parried remote";
+      this.audio?.play("hit");
+      return;
+    }
+
     if (snapshot.health < this.playerHealth) {
       this.playerHealth = Math.max(0, snapshot.health);
       this.audio?.play("hit");
@@ -742,7 +869,8 @@ export class MatchScene extends Phaser.Scene {
 
     const origin = this.getMuzzlePosition();
     const aimTarget = this.getAimTarget();
-    const aimAngle = Math.atan2(aimTarget.y - origin.y, aimTarget.x - origin.x);
+    const pointerAimAngle = Math.atan2(aimTarget.y - origin.y, aimTarget.x - origin.x);
+    const aimAngle = this.bossModeMs > 0 ? this.getBossPatternAngle(pointerAimAngle) : pointerAimAngle;
     const chaos = this.getChaosProfile();
     const build = this.createChaosWeaponBuild();
     const result = chaos.disableProjectiles
@@ -759,13 +887,41 @@ export class MatchScene extends Phaser.Scene {
     }
 
     this.audio?.play("shoot");
-    this.fireCooldownMs = 1000 / build.fireRate;
+    this.fireCooldownMs = this.getShotCooldownMs(build);
     const recoil =
       (build.recoilImpulse * build.projectile.recoilMultiplier) /
       this.getLocalCharacter().recoilControlMultiplier;
     this.playerBody.velocity.x -= Math.cos(aimAngle) * recoil;
     this.playerBody.velocity.y -= Math.sin(aimAngle) * recoil * 0.45;
     this.applyProjectileHits(result.hits);
+  }
+
+  private getBossPatternAngle(fallbackAngle: number): number {
+    const pattern = [
+      0,
+      Math.PI / 4,
+      Math.PI / 2,
+      (Math.PI * 3) / 4,
+      Math.PI,
+      (-Math.PI * 3) / 4,
+      -Math.PI / 2,
+      -Math.PI / 4,
+    ];
+    const aimSign = Math.cos(fallbackAngle) < 0 ? Math.PI : 0;
+    const angle = pattern[this.bossShotIndex % pattern.length] + aimSign;
+    this.bossShotIndex += 1;
+    return Phaser.Math.Angle.Wrap(angle);
+  }
+
+  private getShotCooldownMs(build: ResolvedWeaponBuild): number {
+    const base = 1000 / build.fireRate;
+    const projectileTax = Math.max(0, build.projectile.count - 1) * 0.16;
+    const splitTax = build.projectile.splitCount * 0.06;
+    const bounceTax = Math.max(0, build.projectile.bounces) * 0.035;
+    const areaTax = Math.min(0.4, build.projectile.impactRadiusPx / 280);
+    const homingTax = build.projectile.pathing === "homing" ? 0.24 : 0;
+    const beamTax = build.delivery === "raycast" || build.delivery === "continuous-beam" ? 0.18 : 0;
+    return base * (1 + projectileTax + splitTax + bounceTax + areaTax + homingTax + beamTax);
   }
 
   private getAimTarget(): Vec2 {
@@ -787,6 +943,40 @@ export class MatchScene extends Phaser.Scene {
       x: this.playerBody.position.x + this.playerBody.facing * 160,
       y: this.playerBody.position.y - 10,
     };
+  }
+
+  private getAimAngleFromPlayer(): number {
+    const aimTarget = this.getAimTarget();
+    return Math.atan2(
+      aimTarget.y - this.playerBody.position.y,
+      aimTarget.x - this.playerBody.position.x,
+    );
+  }
+
+  private getParryArcRadians(): number {
+    return Math.min(Math.PI * 1.55, PARRY_BASE_ARC_RADIANS * this.weaponBuild.parryCoverMultiplier);
+  }
+
+  private getParryRange(): number {
+    return PARRY_BASE_RANGE * Math.sqrt(this.weaponBuild.parryCoverMultiplier);
+  }
+
+  private getParryCooldownMs(): number {
+    return PARRY_COOLDOWN_MS * this.weaponBuild.parryCooldownMultiplier;
+  }
+
+  private getMoveSpeedModifier(): number {
+    let multiplier = this.weaponBuild.moveSpeedMultiplier;
+    if (this.speedBoostMs > 0) {
+      multiplier *= SPEED_BOOST_MULTIPLIER;
+    }
+    if (this.slowDebuffMs > 0) {
+      multiplier *= SLOW_DEBUFF_MULTIPLIER;
+    }
+    if (this.bossModeMs > 0) {
+      multiplier *= BOSS_MOVE_MULTIPLIER;
+    }
+    return multiplier;
   }
 
   private getMuzzlePosition(): Vec2 {
@@ -906,8 +1096,15 @@ export class MatchScene extends Phaser.Scene {
     }
   }
 
-  private damagePlayer(amount: number) {
+  private damagePlayer(amount: number, sourcePosition?: Vec2) {
     if (amount <= 0 || this.playerHealth <= 0 || this.playerRespawnPending) {
+      return;
+    }
+
+    if (this.blockJammerMs <= 0 && this.parryActiveMs > 0 && this.isParryCovering(sourcePosition)) {
+      this.parryActiveMs = Math.max(this.parryActiveMs, 120);
+      this.lastPickupStatus = "parried";
+      this.audio?.play("hit");
       return;
     }
 
@@ -920,11 +1117,32 @@ export class MatchScene extends Phaser.Scene {
       return;
     }
 
-    this.playerHealth = Math.max(0, this.playerHealth - amount);
+    const modifiedAmount = amount *
+      (this.vulnerabilityMs > 0 ? VULNERABILITY_MULTIPLIER : 1) *
+      (this.bossModeMs > 0 ? 1.12 : 1);
+    this.playerHealth = Math.max(0, this.playerHealth - modifiedAmount);
     this.audio?.play("hit");
     if (this.playerHealth <= 0) {
       this.killPlayer();
     }
+  }
+
+  private isParryCovering(sourcePosition?: Vec2): boolean {
+    if (!sourcePosition) {
+      return true;
+    }
+
+    const distanceToSource = distance(sourcePosition, this.playerBody.position);
+    if (distanceToSource > this.getParryRange() + Math.max(this.playerBody.size.x, this.playerBody.size.y)) {
+      return false;
+    }
+
+    const sourceAngle = Math.atan2(
+      sourcePosition.y - this.playerBody.position.y,
+      sourcePosition.x - this.playerBody.position.x,
+    );
+    const aimAngle = this.getAimAngleFromPlayer();
+    return Math.abs(Phaser.Math.Angle.Wrap(sourceAngle - aimAngle)) <= this.getParryArcRadians() / 2;
   }
 
   private killPlayer() {
@@ -942,6 +1160,7 @@ export class MatchScene extends Phaser.Scene {
     this.addDeath(this.localPlayerId);
     this.playerBody.velocity = { x: 0, y: 0 };
     this.shieldActive = false;
+    this.clearTemporaryCombatEffects();
     this.shieldGraphics?.clear();
     this.playerRig?.setVisible(false);
     this.resetWeaponProgression();
@@ -1157,7 +1376,7 @@ export class MatchScene extends Phaser.Scene {
 
     const playerRadius = Math.max(this.playerBody.size.x, this.playerBody.size.y) / 2;
     if (distance(position, this.playerBody.position) <= radius + playerRadius) {
-      this.damagePlayer(damage);
+      this.damagePlayer(damage, position);
     }
 
     for (const object of this.destructibles) {
@@ -1234,7 +1453,7 @@ export class MatchScene extends Phaser.Scene {
 
       const playerRadius = Math.max(this.playerBody.size.x, this.playerBody.size.y) / 2;
       if (distance(patch.position, this.playerBody.position) <= patch.radius + playerRadius) {
-        this.damagePlayer(patch.dps * deltaSeconds);
+        this.damagePlayer(patch.dps * deltaSeconds, patch.position);
       }
 
       for (const object of this.destructibles) {
@@ -1517,6 +1736,23 @@ export class MatchScene extends Phaser.Scene {
 
   private updatePickups(deltaMs: number) {
     this.overchargeMs = Math.max(0, this.overchargeMs - deltaMs);
+    this.damageAmpMs = Math.max(0, this.damageAmpMs - deltaMs);
+    this.speedBoostMs = Math.max(0, this.speedBoostMs - deltaMs);
+    this.meleeModeMs = Math.max(0, this.meleeModeMs - deltaMs);
+    this.slowDebuffMs = Math.max(0, this.slowDebuffMs - deltaMs);
+    this.vulnerabilityMs = Math.max(0, this.vulnerabilityMs - deltaMs);
+    this.blockJammerMs = Math.max(0, this.blockJammerMs - deltaMs);
+    const previousBossMs = this.bossModeMs;
+    this.bossModeMs = Math.max(0, this.bossModeMs - deltaMs);
+    if (previousBossMs > 0 && this.bossModeMs <= 0) {
+      this.syncEffectiveMaxHealth(false);
+    }
+
+    this.cardCacheRelocateTimerMs += deltaMs;
+    if (this.cardCacheRelocateTimerMs >= CARD_CACHE_RELOCATE_MS) {
+      this.cardCacheRelocateTimerMs = 0;
+      this.relocateCardCaches();
+    }
 
     let changed = false;
     for (const pickup of this.pickups) {
@@ -1567,9 +1803,87 @@ export class MatchScene extends Phaser.Scene {
       return;
     }
 
+    if (pickup.kind === "damage-amp") {
+      this.damageAmpMs = Math.max(this.damageAmpMs, pickup.durationMs ?? 0);
+      this.lastPickupStatus = "damage up";
+      this.floatPickupText(pickup, "damage up", "#fb7185");
+      return;
+    }
+
+    if (pickup.kind === "speed-boost") {
+      this.speedBoostMs = Math.max(this.speedBoostMs, pickup.durationMs ?? 0);
+      this.lastPickupStatus = "speed up";
+      this.floatPickupText(pickup, "speed up", "#67e8f9");
+      return;
+    }
+
+    if (pickup.kind === "melee-mode") {
+      this.meleeModeMs = Math.max(this.meleeModeMs, pickup.durationMs ?? 0);
+      this.lastPickupStatus = "melee mode";
+      this.floatPickupText(pickup, "melee mode", "#f97316");
+      return;
+    }
+
+    if (pickup.kind === "slow-trap") {
+      this.slowDebuffMs = Math.max(this.slowDebuffMs, pickup.durationMs ?? 0);
+      this.lastPickupStatus = "slowed";
+      this.floatPickupText(pickup, "slowed", "#bfdbfe");
+      return;
+    }
+
+    if (pickup.kind === "vulnerability-trap") {
+      this.vulnerabilityMs = Math.max(this.vulnerabilityMs, pickup.durationMs ?? 0);
+      this.lastPickupStatus = "vulnerable";
+      this.floatPickupText(pickup, "vulnerable", "#fca5a5");
+      return;
+    }
+
+    if (pickup.kind === "block-jammer") {
+      this.blockJammerMs = Math.max(this.blockJammerMs, pickup.durationMs ?? 0);
+      this.shieldActive = false;
+      this.parryActiveMs = 0;
+      this.lastPickupStatus = "no block";
+      this.floatPickupText(pickup, "no block", "#c084fc");
+      return;
+    }
+
+    if (pickup.kind === "boss-core") {
+      this.activateBossMode(pickup);
+      return;
+    }
+
     this.overchargeMs = Math.max(this.overchargeMs, pickup.durationMs ?? 0);
     this.lastPickupStatus = "overcharge";
     this.floatPickupText(pickup, "overcharge", "#ffd166");
+  }
+
+  private activateBossMode(pickup: ArenaPickup) {
+    this.bossModeMs = Math.max(this.bossModeMs, pickup.durationMs ?? 0);
+    this.bossShotIndex = 0;
+    this.syncEffectiveMaxHealth(true);
+    this.playerHealth = Math.min(this.playerMaxHealth, this.playerHealth + BOSS_HEALTH_BONUS);
+    this.lastPickupStatus = "boss mode";
+    this.floatPickupText(pickup, "boss mode", "#fff7d6");
+  }
+
+  private relocateCardCaches() {
+    const cardCaches = this.pickups.filter((pickup) => pickup.kind === "card-cache");
+    for (const [index, pickup] of cardCaches.entries()) {
+      pickup.position = this.getRandomCardCachePosition(index);
+      pickup.available = true;
+      pickup.respawnRemainingMs = 0;
+    }
+    this.updatePickupVisuals();
+  }
+
+  private getRandomCardCachePosition(index: number): Vec2 {
+    const spawn = Phaser.Utils.Array.GetRandom(boxworksWorld.spawns);
+    const angle = seededUnit(index + Math.floor(this.time.now / CARD_CACHE_RELOCATE_MS), index, 300) * Math.PI * 2;
+    const radius = 34 + seededUnit(index, Math.floor(this.time.now / 1000), 301) * 48;
+    return {
+      x: Phaser.Math.Clamp(spawn.x + Math.cos(angle) * radius, 80, boxworksWorld.size.x - 80),
+      y: Phaser.Math.Clamp(spawn.y + Math.sin(angle) * radius, 140, boxworksWorld.size.y - 70),
+    };
   }
 
   private collectProgressionCard(pickup: ArenaPickup) {
@@ -1593,11 +1907,16 @@ export class MatchScene extends Phaser.Scene {
       ownedCounts.set(cardId, (ownedCounts.get(cardId) ?? 0) + 1);
     }
 
-    const occupiedBuckets = new Set(this.weaponBuild.occupiedBuckets);
-    const eligible = crystalRoundsCards.filter((card) => isEligibleMutatorCard(card, ownedCounts, occupiedBuckets));
+    const eligible = crystalRoundsCards.filter((card) => isEligibleMutatorCard(card, ownedCounts));
     const highSignalCards = eligible.filter((card) => isVisibleWeaponMutator(card));
+    const ownedBucketCounts = new Map<WeaponBucket, number>();
+    for (const card of this.weaponBuild.cards) {
+      for (const bucket of card.buckets ?? []) {
+        ownedBucketCounts.set(bucket, (ownedBucketCounts.get(bucket) ?? 0) + 1);
+      }
+    }
     const preferredBucket = MUTATOR_ROLL_BUCKET_PRIORITY.find(
-      (bucket) => !occupiedBuckets.has(bucket),
+      (bucket) => (ownedBucketCounts.get(bucket) ?? 0) < 2,
     );
     const preferredCards = preferredBucket
       ? highSignalCards.filter((card) => card.buckets?.includes(preferredBucket))
@@ -1676,6 +1995,29 @@ export class MatchScene extends Phaser.Scene {
         graphics.strokeRoundedRect(pickup.position.x - 11, pickup.position.y - 14, 22, 28, 3);
         graphics.fillStyle(0xf7fbff, alpha * 0.78);
         drawPickupDiamond(graphics, pickup.position, 6);
+      } else if (pickup.kind === "boss-core") {
+        graphics.fillStyle(color, alpha * 0.75);
+        graphics.fillCircle(pickup.position.x, pickup.position.y, 13);
+        graphics.lineStyle(3, 0xf7fbff, alpha * 0.86);
+        graphics.strokeCircle(pickup.position.x, pickup.position.y, 19);
+        graphics.lineStyle(2, 0xfb7185, alpha * 0.9);
+        graphics.beginPath();
+        graphics.moveTo(pickup.position.x - 16, pickup.position.y);
+        graphics.lineTo(pickup.position.x + 16, pickup.position.y);
+        graphics.moveTo(pickup.position.x, pickup.position.y - 16);
+        graphics.lineTo(pickup.position.x, pickup.position.y + 16);
+        graphics.strokePath();
+      } else if (
+        pickup.kind === "slow-trap" ||
+        pickup.kind === "vulnerability-trap" ||
+        pickup.kind === "block-jammer"
+      ) {
+        graphics.lineStyle(3, color, alpha);
+        graphics.strokeCircle(pickup.position.x, pickup.position.y, 13);
+        graphics.beginPath();
+        graphics.moveTo(pickup.position.x - 9, pickup.position.y - 9);
+        graphics.lineTo(pickup.position.x + 9, pickup.position.y + 9);
+        graphics.strokePath();
       } else {
         graphics.fillStyle(color, alpha);
         drawPickupDiamond(graphics, pickup.position, 12);
@@ -1789,6 +2131,7 @@ export class MatchScene extends Phaser.Scene {
       `shape ${activeBuild.projectile.shape}  path ${activeBuild.projectile.pathing}`,
       `element ${activeBuild.projectile.element}  impact ${activeBuild.projectile.impact}`,
       `dmg ${activeBuild.damage}  rate ${activeBuild.fireRate}/s`,
+      `cooldown ${Math.round(this.getShotCooldownMs(activeBuild))}ms  block ${this.parryCooldownMs <= 0 ? "ready" : `${Math.ceil(this.parryCooldownMs / 1000)}s`}`,
     ]);
   }
 
@@ -1856,8 +2199,8 @@ export class MatchScene extends Phaser.Scene {
     this.deathSequenceId += 1;
     this.clearRespawnText();
     this.playerBody = createPlayerBody(spawn.x, spawn.y, character.sizeScale);
-    this.playerMaxHealth = character.maxHealth;
-    this.playerHealth = character.maxHealth;
+    this.syncEffectiveMaxHealth(false);
+    this.playerHealth = this.playerMaxHealth;
     this.playerRespawnPending = false;
     this.respawnRemainingMs = 0;
     this.respawnCountdownActive = false;
@@ -1872,12 +2215,28 @@ export class MatchScene extends Phaser.Scene {
 
   private rebuildWeaponBuild(playSound = true) {
     const cards = findCardsById(crystalRoundsCards, this.progressionCardIds);
+    const oldMaxHealth = this.playerMaxHealth;
     this.weaponBuild = createWeaponBuild(starterWeapon, cards);
+    const nextMaxHealth = this.getLocalCharacter().maxHealth +
+      this.weaponBuild.maxHealthAdd +
+      (this.bossModeMs > 0 ? BOSS_HEALTH_BONUS : 0);
+    this.syncEffectiveMaxHealth(nextMaxHealth > oldMaxHealth);
     this.fireCooldownMs = 0;
     if (playSound) {
       this.audio?.play("card");
     }
     this.updateWeaponOverlay();
+  }
+
+  private syncEffectiveMaxHealth(healAddedHealth: boolean) {
+    const character = this.getLocalCharacter();
+    const oldMaxHealth = this.playerMaxHealth;
+    this.playerMaxHealth = character.maxHealth + this.weaponBuild.maxHealthAdd + (this.bossModeMs > 0 ? BOSS_HEALTH_BONUS : 0);
+    if (healAddedHealth && this.playerMaxHealth > oldMaxHealth) {
+      this.playerHealth = Math.min(this.playerMaxHealth, this.playerHealth + (this.playerMaxHealth - oldMaxHealth));
+      return;
+    }
+    this.playerHealth = Math.min(this.playerHealth, this.playerMaxHealth);
   }
 
   private resetWeaponProgression() {
@@ -1888,6 +2247,21 @@ export class MatchScene extends Phaser.Scene {
     this.progressionCardIds = [];
     this.lastPickupStatus = "weapon reset";
     this.rebuildWeaponBuild(false);
+  }
+
+  private clearTemporaryCombatEffects() {
+    this.damageAmpMs = 0;
+    this.speedBoostMs = 0;
+    this.meleeModeMs = 0;
+    this.slowDebuffMs = 0;
+    this.vulnerabilityMs = 0;
+    this.blockJammerMs = 0;
+    this.bossModeMs = 0;
+    this.bossShotIndex = 0;
+    this.parryActiveMs = 0;
+    this.parryCooldownMs = 0;
+    this.overchargeMs = 0;
+    this.temporaryShieldMs = 0;
   }
 
   private isOutOfBounds(): boolean {
@@ -2145,6 +2519,9 @@ function expandMap(base: MapDefinition, columns: number, rows: number): MapDefin
       }
 
       for (const [pickupIndex, pickup] of base.pickups.entries()) {
+        if (!shouldPlacePickupInCell(pickup.kind, column, row, pickupIndex)) {
+          continue;
+        }
         const position = nudgeCircleOutOfShaft(
           createCellScatterPosition(offset, base, variant, column, row, 40 + pickupIndex, pickup.radius),
           pickup.radius,
@@ -2159,27 +2536,10 @@ function expandMap(base: MapDefinition, columns: number, rows: number): MapDefin
         });
       }
 
-      const cardCachePosition = nudgeCircleOutOfShaft(
-        {
-          x: offset.x + variant.cardCacheLocalPosition.x,
-          y: offset.y + variant.cardCacheLocalPosition.y,
-        },
-        18,
-        shaftX,
-        cellLeft,
-        cellRight,
-      );
-      pickups.push({
-        id: `card-cache-${column}-${row}`,
-        kind: "card-cache",
-        position: cardCachePosition,
-        radius: 18,
-        amount: 1,
-        respawnMs: CARD_CACHE_RESPAWN_MS,
-      });
     }
   }
 
+  addRoamingCardCaches(pickups, spawns);
   addTraversalConnectors(platforms, base, columns, rows);
 
   const worldSize = {
@@ -2214,6 +2574,45 @@ function expandMap(base: MapDefinition, columns: number, rows: number): MapDefin
   };
 }
 
+function shouldPlacePickupInCell(kind: PickupKind, column: number, row: number, pickupIndex: number): boolean {
+  if (kind === "boss-core") {
+    return column === 2 && row === 1;
+  }
+  if (kind === "health-shard" || kind === "shield-cell" || kind === "overcharge-core") {
+    return seededUnit(column, row, 500 + pickupIndex) > 0.22;
+  }
+  if (kind === "damage-amp" || kind === "speed-boost" || kind === "melee-mode") {
+    return seededUnit(column, row, 520 + pickupIndex) > 0.56;
+  }
+  return seededUnit(column, row, 540 + pickupIndex) > 0.66;
+}
+
+function addRoamingCardCaches(
+  pickups: MapDefinition["pickups"],
+  spawns: MapDefinition["spawns"],
+) {
+  if (spawns.length === 0) {
+    return;
+  }
+
+  for (let index = 0; index < ROAMING_CARD_CACHE_COUNT; index += 1) {
+    const spawn = spawns[Math.floor(seededUnit(index, 0, 700) * spawns.length) % spawns.length];
+    const angle = seededUnit(index, 0, 701) * Math.PI * 2;
+    const radius = 30 + seededUnit(index, 0, 702) * 64;
+    pickups.push({
+      id: `card-cache-roaming-${index}`,
+      kind: "card-cache",
+      position: {
+        x: Phaser.Math.Clamp(spawn.x + Math.cos(angle) * radius, 80, boxworks.size.x * WORLD_COLUMNS - 80),
+        y: Phaser.Math.Clamp(spawn.y + Math.sin(angle) * radius, 140, boxworks.size.y * WORLD_ROWS - 70),
+      },
+      radius: 18,
+      amount: 1,
+      respawnMs: CARD_CACHE_RESPAWN_MS,
+    });
+  }
+}
+
 type CellVariant = {
   mirror: boolean;
   layoutIndex: number;
@@ -2221,7 +2620,6 @@ type CellVariant = {
   yJitter: number;
   platformWidthScale: number;
   platformYSkew: number;
-  cardCacheLocalPosition: Vec2;
 };
 
 function createCellVariant(column: number, row: number): CellVariant {
@@ -2232,10 +2630,6 @@ function createCellVariant(column: number, row: number): CellVariant {
     yJitter: seededRange(column, row, 3, -28, 30),
     platformWidthScale: seededRange(column, row, 4, 0.82, 1.18),
     platformYSkew: seededRange(column, row, 8, -18, 18),
-    cardCacheLocalPosition: {
-      x: seededRange(column, row, 5, 250, 710),
-      y: seededRange(column, row, 6, 190, 370),
-    },
   };
 }
 
@@ -2544,6 +2938,13 @@ function pickupColor(kind: PickupKind): number {
     "shield-cell": 0x93c5fd,
     "overcharge-core": 0xffd166,
     "card-cache": 0xf0abfc,
+    "damage-amp": 0xfb7185,
+    "speed-boost": 0x67e8f9,
+    "melee-mode": 0xf97316,
+    "slow-trap": 0xbfdbfe,
+    "vulnerability-trap": 0xfca5a5,
+    "block-jammer": 0xc084fc,
+    "boss-core": 0xfff7d6,
   };
   return colors[kind];
 }
@@ -2551,7 +2952,6 @@ function pickupColor(kind: PickupKind): number {
 function isEligibleMutatorCard(
   card: CardDefinition,
   ownedCounts: Map<string, number>,
-  occupiedBuckets: Set<WeaponBucket>,
 ): boolean {
   if (!card.modifier || card.id === "crystal-volley") {
     return false;
@@ -2565,7 +2965,7 @@ function isEligibleMutatorCard(
     return false;
   }
 
-  return (card.buckets ?? []).every((bucket) => !occupiedBuckets.has(bucket));
+  return true;
 }
 
 function isVisibleWeaponMutator(card: CardDefinition): boolean {
@@ -2581,7 +2981,14 @@ function isVisibleWeaponMutator(card: CardDefinition): boolean {
       projectile?.count ||
       projectile?.pathing ||
       projectile?.impact ||
-      projectile?.element,
+      projectile?.element ||
+      card.modifier?.projectileCountAdd ||
+      card.modifier?.projectileBounceAdd ||
+      card.modifier?.projectileSplitAdd ||
+      card.modifier?.maxHealthAdd ||
+      card.modifier?.moveSpeedMultiplier ||
+      card.modifier?.parryCoverMultiplier ||
+      card.modifier?.parryCooldownMultiplier,
   );
 }
 

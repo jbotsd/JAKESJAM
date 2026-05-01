@@ -18,7 +18,7 @@ export type ChaosModifierId =
   | "random-shapes"
   | "max-recoil";
 
-export type ProjectileShape = "circle" | "triangle" | "square" | "hexagon" | "orb";
+export type ProjectileShape = "circle" | "triangle" | "square" | "hexagon" | "orb" | "x" | "bar";
 export type WeaponDelivery = "projectile" | "raycast" | "continuous-beam" | "area-pulse";
 export type ProjectilePathing =
   | "straight"
@@ -116,6 +116,10 @@ export type WeaponDefinition = {
 export type WeaponCardModifier = {
   delivery?: WeaponDelivery;
   projectile?: Partial<ProjectileModifier>;
+  projectileCountAdd?: number;
+  projectileBounceAdd?: number;
+  projectileSplitAdd?: number;
+  spreadRadiansAdd?: number;
   damageMultiplier?: number;
   fireRateMultiplier?: number;
   projectileSpeedMultiplier?: number;
@@ -128,6 +132,10 @@ export type WeaponCardModifier = {
   overchargeMultiplier?: number;
   orbitingSatellites?: number;
   mirrorShield?: boolean;
+  maxHealthAdd?: number;
+  moveSpeedMultiplier?: number;
+  parryCoverMultiplier?: number;
+  parryCooldownMultiplier?: number;
 };
 
 export type CardVisualDefinition = {
@@ -163,7 +171,18 @@ export type CardDefinition = {
 };
 
 export type DestructibleKind = "barrel" | "box" | "mine" | "cube";
-export type PickupKind = "health-shard" | "shield-cell" | "overcharge-core" | "card-cache";
+export type PickupKind =
+  | "health-shard"
+  | "shield-cell"
+  | "overcharge-core"
+  | "card-cache"
+  | "damage-amp"
+  | "speed-boost"
+  | "melee-mode"
+  | "slow-trap"
+  | "vulnerability-trap"
+  | "block-jammer"
+  | "boss-core";
 
 export type DestructibleDefinition = {
   id: string;

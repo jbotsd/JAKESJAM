@@ -25,6 +25,10 @@ export type ResolvedWeaponBuild = {
   overchargeMultiplier: number;
   orbitingSatellites: number;
   mirrorShield: boolean;
+  maxHealthAdd: number;
+  moveSpeedMultiplier: number;
+  parryCoverMultiplier: number;
+  parryCooldownMultiplier: number;
   cards: CardDefinition[];
   occupiedBuckets: WeaponBucket[];
 };
@@ -51,6 +55,10 @@ export function createWeaponBuild(
     overchargeMultiplier: 1,
     orbitingSatellites: 0,
     mirrorShield: false,
+    maxHealthAdd: 0,
+    moveSpeedMultiplier: 1,
+    parryCoverMultiplier: 1,
+    parryCooldownMultiplier: 1,
     cards: [],
     occupiedBuckets: [],
   };
@@ -63,11 +71,6 @@ export function createWeaponBuild(
     }
 
     const buckets = card.buckets ?? [];
-    const bucketAvailable = buckets.every((bucket) => !bucketOwners.has(bucket));
-    if (!bucketAvailable) {
-      continue;
-    }
-
     for (const bucket of buckets) {
       bucketOwners.add(bucket);
     }
@@ -111,6 +114,10 @@ function applyCard(build: ResolvedWeaponBuild, card: CardDefinition) {
   build.knockbackImpulse *= modifier.knockbackMultiplier ?? 1;
   build.magazineSize += modifier.magazineSizeAdd ?? 0;
   build.ammoRegenPerSecond += modifier.ammoRegenPerSecond ?? 0;
+  build.maxHealthAdd += modifier.maxHealthAdd ?? 0;
+  build.moveSpeedMultiplier *= modifier.moveSpeedMultiplier ?? 1;
+  build.parryCoverMultiplier *= modifier.parryCoverMultiplier ?? 1;
+  build.parryCooldownMultiplier *= modifier.parryCooldownMultiplier ?? 1;
   build.overchargeMultiplier = Math.max(
     build.overchargeMultiplier,
     modifier.overchargeMultiplier ?? 1,
@@ -121,10 +128,14 @@ function applyCard(build: ResolvedWeaponBuild, card: CardDefinition) {
   if (modifier.spreadRadians !== undefined) {
     build.spreadRadians = modifier.spreadRadians;
   }
+  build.spreadRadians += modifier.spreadRadiansAdd ?? 0;
 
   if (modifier.projectile) {
     build.projectile = mergeProjectileModifier(build.projectile, modifier.projectile);
   }
+  build.projectile.count += modifier.projectileCountAdd ?? 0;
+  build.projectile.bounces += modifier.projectileBounceAdd ?? 0;
+  build.projectile.splitCount += modifier.projectileSplitAdd ?? 0;
 }
 
 function mergeProjectileModifier(
@@ -151,6 +162,10 @@ function clampBuild(build: ResolvedWeaponBuild) {
   build.spreadRadians = Math.max(0, build.spreadRadians);
   build.recoilImpulse = roundTo(Math.max(0, build.recoilImpulse), 2);
   build.knockbackImpulse = roundTo(Math.max(0, build.knockbackImpulse), 2);
+  build.maxHealthAdd = Math.max(0, Math.round(build.maxHealthAdd));
+  build.moveSpeedMultiplier = roundTo(Math.max(0.45, build.moveSpeedMultiplier), 2);
+  build.parryCoverMultiplier = roundTo(Math.max(0.45, build.parryCoverMultiplier), 2);
+  build.parryCooldownMultiplier = roundTo(Math.max(0.28, build.parryCooldownMultiplier), 2);
   build.projectile.count = Math.max(1, Math.round(build.projectile.count));
   build.projectile.rangePx = Math.max(48, build.projectile.rangePx);
   build.projectile.sizeMultiplier = Math.max(0.35, build.projectile.sizeMultiplier);
