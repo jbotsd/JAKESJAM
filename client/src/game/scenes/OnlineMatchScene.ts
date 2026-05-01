@@ -12,6 +12,7 @@
 // playable gameplay during the cutover.
 
 import Phaser from "phaser";
+import { SceneKeys } from "./SceneKeys";
 import { ConvexClient } from "convex/browser";
 import {
   ClientLoop,
@@ -207,7 +208,7 @@ export class OnlineMatchScene extends Phaser.Scene {
   private lastCardOfferKey: string | null = null;
 
   constructor() {
-    super("OnlineMatchScene");
+    super(SceneKeys.OnlineMatch);
   }
 
   init(data: OnlineMatchSceneInit) {

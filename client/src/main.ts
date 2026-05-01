@@ -2,6 +2,7 @@ import Phaser from "phaser";
 import "./style.css";
 import { gameConfig } from "./game/GameConfig";
 import { LobbyController } from "./game/ui/LobbyController";
+import { SceneKeys } from "./game/scenes/SceneKeys";
 
 const app = document.querySelector<HTMLDivElement>("#app");
 
@@ -181,7 +182,7 @@ window.addEventListener("jakesjam:start-match", (event) => {
   stopMenuMusic();
   hideSplash();
   if (shouldUseNewNetcode() && matchEvent.detail?.matchId) {
-    game.scene.start("OnlineMatchScene", {
+    game.scene.start(SceneKeys.OnlineMatch, {
       matchId: matchEvent.detail.matchId,
       localPlayerId: matchEvent.detail.localPlayerId,
       convexUrl:
@@ -191,7 +192,7 @@ window.addEventListener("jakesjam:start-match", (event) => {
     });
     return;
   }
-  game.scene.start("MatchScene", matchEvent.detail);
+  game.scene.start(SceneKeys.Match, matchEvent.detail);
 });
 
 function shouldUseNewNetcode(): boolean {
@@ -201,7 +202,7 @@ function shouldUseNewNetcode(): boolean {
 
 window.addEventListener("jakesjam:chaos-change", (event) => {
   const matchEvent = event as CustomEvent;
-  game.scene.start("MainMenuScene", matchEvent.detail);
+  game.scene.start(SceneKeys.MainMenu, matchEvent.detail);
 });
 
 // Fired by MatchScene's results overlay when the player picks "Back to
@@ -210,11 +211,11 @@ window.addEventListener("jakesjam:chaos-change", (event) => {
 // player lands back on the same room/character/chaos config they started
 // from.
 window.addEventListener("jakesjam:return-to-lobby", () => {
-  if (game.scene.isActive("MatchScene")) {
-    game.scene.stop("MatchScene");
+  if (game.scene.isActive(SceneKeys.Match)) {
+    game.scene.stop(SceneKeys.Match);
   }
-  if (game.scene.isActive("OnlineMatchScene")) {
-    game.scene.stop("OnlineMatchScene");
+  if (game.scene.isActive(SceneKeys.OnlineMatch)) {
+    game.scene.stop(SceneKeys.OnlineMatch);
   }
   showSplash();
   startMenuMusic();

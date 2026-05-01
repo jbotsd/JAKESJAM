@@ -1,0 +1,14 @@
+/**
+ * Scene keys for type-safe scene management.
+ * Use these constants instead of magic strings.
+ */
+export const SceneKeys = {
+  Boot: "BootScene",
+  Preload: "PreloadScene",
+  MainMenu: "MainMenuScene",
+  Match: "MatchScene",
+  OnlineMatch: "OnlineMatchScene",
+  HUD: "HUDScene",
+} as const;
+
+export type SceneKey = (typeof SceneKeys)[keyof typeof SceneKeys];
