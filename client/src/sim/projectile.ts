@@ -14,7 +14,14 @@
 // Hard rules: no Math.random (rng threaded through), no wall-clock reads,
 // no Phaser, no DOM. Iterate entities in EntityId order at the caller.
 
-import { aabbOverlap, circleOverlapsAABB, type AABB } from "./collision.js";
+import {
+  aabbOverlap,
+  circleOverlapsAABB,
+  circleHitsAnyCached,
+  circleBounceCached,
+  platformToAABB,
+  type StaticCollisionCache,
+} from "./collision.js";
 import { nextFloat } from "./rng.js";
 import type {
   EntityId,
@@ -73,6 +80,9 @@ export type StepProjectileContext = {
   /** Current world tick — used to stamp slowedUntilTick on victims. */
   tick: Tick;
   rngState: number;
+  /** Pre-built collision cache. When provided, uses spatial-grid-accelerated
+   *  overlap tests instead of brute-force iteration over all platforms. */
+  collisionCache?: StaticCollisionCache;
 };
 
 export function stepProjectile(
@@ -294,89 +304,126 @@ export function stepProjectile(
     return { projectile: null, events, expired: true, spawned, rngState };
   }
 
-  // 4. Platform collision — bounce or expire. Use simple side-of-AABB normal
-  //    detection: the offline reflectFromPlatform fallback path. We don't have
-  //    swept hit normals here without running the swept-AABB code path; the
-  //    test arena scale (small dt, small radius vs big platforms) is forgiving.
-  for (let i = 0; i < platforms.length; i += 1) {
-    const platform = platforms[i]!;
-    const aabb = platformToAABB(platform);
-    if (!circleOverlapsAABB(x, y, proj.radius, aabb)) continue;
-
+  // 4. Platform collision — bounce or expire. Uses spatial grid when cache is
+  //    available, falls back to brute-force for backward compat.
+  if (ctx.collisionCache) {
+    // Fast path: spatial-grid-accelerated collision
     if (proj.pathing === "bounce" && proj.bouncesRemaining > 0) {
-      // Reflect velocity around the dominant overlap axis. Pick the axis
-      // whose previous position was outside the (radius-padded) box, so we
-      // reflect about the surface we actually crossed this step.
-      const left = aabb.x - proj.radius;
-      const right = aabb.x + aabb.w + proj.radius;
-      const top = aabb.y - proj.radius;
-      const bottom = aabb.y + aabb.h + proj.radius;
+      const bounce = circleBounceCached(x, y, prevX, prevY, proj.radius, vx, vy, ctx.collisionCache);
+      if (bounce) {
+        let bvx = vx;
+        let bvy = vy;
+        if (bounce.reflectX) bvx = -vx;
+        if (bounce.reflectY) bvy = -vy;
 
-      let reflectX = false;
-      let reflectY = false;
-      if (prevX <= left || prevX >= right) {
-        reflectX = true;
-      } else if (prevY <= top || prevY >= bottom) {
-        reflectY = true;
-      } else {
-        // Inside both axes — pick whichever axis is closer to the surface.
-        const dx = Math.min(Math.abs(x - left), Math.abs(x - right));
-        const dy = Math.min(Math.abs(y - top), Math.abs(y - bottom));
-        if (dx < dy) reflectX = true;
-        else reflectY = true;
+        const nudge = Math.max(1, proj.radius * 0.5);
+        const len = Math.hypot(bvx, bvy) || 1;
+        const bx = prevX + (bvx / len) * nudge;
+        const by = prevY + (bvy / len) * nudge;
+
+        const next: ProjectileEntity = {
+          ...proj,
+          x: bx,
+          y: by,
+          vx: bvx,
+          vy: bvy,
+          ageMs: nextAgeMs,
+          traveledPx,
+          originX,
+          originY,
+          returning,
+          bouncesRemaining: proj.bouncesRemaining - 1,
+          lifetimeMs: remaining,
+        };
+        return { projectile: next, events, expired: false, spawned, rngState };
+      }
+    } else {
+      const hitIdx = circleHitsAnyCached(x, y, proj.radius, ctx.collisionCache);
+      if (hitIdx >= 0) {
+        const impact: ProjectileImpact = proj.impact ?? "none";
+        if (impact === "explosive") {
+          events.push(...detonateAt(proj, x, y, players, tick));
+        }
+        if ((proj.splitCount ?? 0) > 0) {
+          const splitProj: ProjectileEntity = {
+            ...proj,
+            x, y, vx, vy, originX, originY,
+          };
+          const splitOut = spawnSplit(splitProj, rngState);
+          rngState = splitOut.rngState;
+          spawned.push(...splitOut.spawned);
+        }
+        return { projectile: null, events, expired: true, spawned, rngState };
+      }
+    }
+  } else {
+    // Legacy brute-force path
+    for (let i = 0; i < platforms.length; i += 1) {
+      const platform = platforms[i]!;
+      const aabb = platformToAABB(platform);
+      if (!circleOverlapsAABB(x, y, proj.radius, aabb)) continue;
+
+      if (proj.pathing === "bounce" && proj.bouncesRemaining > 0) {
+        const left = aabb.x - proj.radius;
+        const right = aabb.x + aabb.w + proj.radius;
+        const top = aabb.y - proj.radius;
+        const bottom = aabb.y + aabb.h + proj.radius;
+
+        let reflectX = false;
+        let reflectY = false;
+        if (prevX <= left || prevX >= right) {
+          reflectX = true;
+        } else if (prevY <= top || prevY >= bottom) {
+          reflectY = true;
+        } else {
+          const dxr = Math.min(Math.abs(x - left), Math.abs(x - right));
+          const dyr = Math.min(Math.abs(y - top), Math.abs(y - bottom));
+          if (dxr < dyr) reflectX = true;
+          else reflectY = true;
+        }
+
+        let bvx = vx;
+        let bvy = vy;
+        if (reflectX) bvx = -vx;
+        if (reflectY) bvy = -vy;
+
+        const nudge = Math.max(1, proj.radius * 0.5);
+        const len = Math.hypot(bvx, bvy) || 1;
+        const bx = prevX + (bvx / len) * nudge;
+        const by = prevY + (bvy / len) * nudge;
+
+        const next: ProjectileEntity = {
+          ...proj,
+          x: bx,
+          y: by,
+          vx: bvx,
+          vy: bvy,
+          ageMs: nextAgeMs,
+          traveledPx,
+          originX,
+          originY,
+          returning,
+          bouncesRemaining: proj.bouncesRemaining - 1,
+          lifetimeMs: remaining,
+        };
+        return { projectile: next, events, expired: false, spawned, rngState };
       }
 
-      let bvx = vx;
-      let bvy = vy;
-      if (reflectX) bvx = -vx;
-      if (reflectY) bvy = -vy;
-
-      // Step back to the previous position so we're outside the surface, then
-      // apply a tiny epsilon nudge along the new velocity to escape.
-      const nudge = Math.max(1, proj.radius * 0.5);
-      const len = Math.hypot(bvx, bvy) || 1;
-      const bx = prevX + (bvx / len) * nudge;
-      const by = prevY + (bvy / len) * nudge;
-
-      const next: ProjectileEntity = {
-        ...proj,
-        x: bx,
-        y: by,
-        vx: bvx,
-        vy: bvy,
-        ageMs: nextAgeMs,
-        traveledPx,
-        originX,
-        originY,
-        returning,
-        bouncesRemaining: proj.bouncesRemaining - 1,
-        lifetimeMs: remaining,
-      };
-      return { projectile: next, events, expired: false, spawned, rngState };
+      const impact: ProjectileImpact = proj.impact ?? "none";
+      if (impact === "explosive") {
+        events.push(...detonateAt(proj, x, y, players, tick));
+      }
+      if ((proj.splitCount ?? 0) > 0) {
+        const splitProj: ProjectileEntity = {
+          ...proj,
+          x, y, vx, vy, originX, originY,
+        };
+        const splitOut = spawnSplit(splitProj, rngState);
+        rngState = splitOut.rngState;
+        spawned.push(...splitOut.spawned);
+      }
+      return { projectile: null, events, expired: true, spawned, rngState };
     }
-
-    // No bounces left (or non-bounce projectile): expire on terrain. Apply
-    // explosive AOE if configured (terrain shots that hit a wall but happen
-    // to be near a player still hurt them). Then split if configured.
-    const impact: ProjectileImpact = proj.impact ?? "none";
-    if (impact === "explosive") {
-      events.push(...detonateAt(proj, x, y, players, tick));
-    }
-    if ((proj.splitCount ?? 0) > 0) {
-      const splitProj: ProjectileEntity = {
-        ...proj,
-        x,
-        y,
-        vx,
-        vy,
-        originX,
-        originY,
-      };
-      const splitOut = spawnSplit(splitProj, rngState);
-      rngState = splitOut.rngState;
-      spawned.push(...splitOut.spawned);
-    }
-    return { projectile: null, events, expired: true, spawned, rngState };
   }
 
   // 5. Boomerang return-home check — once curling back, expire when we get
@@ -719,13 +766,4 @@ function closestNonOwnerPlayer(
     }
   }
   return best ? { x: best.x, y: best.y } : null;
-}
-
-function platformToAABB(p: PlatformDefinition): AABB {
-  return {
-    x: p.position.x - p.size.x / 2,
-    y: p.position.y - p.size.y / 2,
-    w: p.size.x,
-    h: p.size.y,
-  };
 }

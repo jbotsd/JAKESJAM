@@ -28,7 +28,7 @@ import {
 import { stepWeapon } from "./weapon.js";
 import { stepRound, TARGET_SCORE_DEFAULT } from "./round.js";
 import { tickShield, tryDeflectDamage, tryStartParry } from "./combat.js";
-// import { buildStaticCache, StaticCollisionCache } from "./collision.js"; // TODO: re-export when collision cache lands
+import { buildStaticCache, type StaticCollisionCache } from "./collision.js";
 import type {
   EntityId,
   FireEntity,
@@ -59,6 +59,9 @@ export type WorldRuntime = {
   nextEntityId: number;
   /** Cached map (platforms etc.) for the current match. */
   map: MapDefinition;
+  /** Pre-computed collision cache — spatial grid + one-way flags. Built
+   *  once at runtime creation and reused for the match lifetime. */
+  collisionCache?: StaticCollisionCache;
 };
 
 export function createRuntime(map: MapDefinition): WorldRuntime {
@@ -67,6 +70,9 @@ export function createRuntime(map: MapDefinition): WorldRuntime {
     movement: new Map(),
     nextEntityId: 1,
     map,
+    collisionCache: map.size.x > 0 && map.size.y > 0
+      ? buildStaticCache(map.platforms, map.size.x, map.size.y)
+      : undefined,
   };
 }
 
@@ -289,6 +295,7 @@ export function stepWithRuntime(
         {
           speedMultiplier: speedMul,
           gravityMultiplier: chaosProfile.gravityMultiplier,
+          collisionCache: runtime.collisionCache,
         },
       );
       nextEntity = moveResult.player;
@@ -400,6 +407,7 @@ export function stepWithRuntime(
       dtMs: effDtMs,
       tick: nextTick,
       rngState,
+      collisionCache: runtime.collisionCache,
     });
     rngState = result.rngState;
 
