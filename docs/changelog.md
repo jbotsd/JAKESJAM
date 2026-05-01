@@ -1,5 +1,12 @@
 # JAKESJAM - Changelog
 
+## v0.24 - 2026-05-01
+
+- Removed Pulse Nova from card progression and changed melee-mode firing away from pulse waves into close-range projectile spray.
+- Added more stackable homing options, including Seeker Facets stacking, Micro Seekers, and Magnet Spray.
+- Added extra projectile spray patterns with Shard Bloom, Wide Barrage, and Needle Hose.
+- Made random card cache rolls less bucket-ordered and more chaotic, with extra weighting toward visible homing and multi-projectile mutations.
+
 ## v0.23 - 2026-05-01
 
 - Added a small rechargeable Space-hold jetpack for higher traversal while keeping W as a clean jump input.

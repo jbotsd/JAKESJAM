@@ -119,6 +119,7 @@ export type WeaponCardModifier = {
   projectileCountAdd?: number;
   projectileBounceAdd?: number;
   projectileSplitAdd?: number;
+  projectileHomingStrengthAdd?: number;
   spreadRadiansAdd?: number;
   damageMultiplier?: number;
   fireRateMultiplier?: number;

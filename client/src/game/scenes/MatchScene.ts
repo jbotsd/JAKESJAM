@@ -33,7 +33,6 @@ import type {
   MapDefinition,
   PickupKind,
   Vec2,
-  WeaponBucket,
 } from "../types/game";
 import type { MatchPlayerSnapshot, RoomPlayer } from "../types/net";
 
@@ -51,7 +50,7 @@ const CARD_CACHE_RESPAWN_MS = 20000;
 const CARD_CACHE_RELOCATE_MS = 20000;
 const ROAMING_CARD_CACHE_COUNT = 7;
 const REMOTE_PLAYER_TARGET_PREFIX = "remote-player:";
-const MUTATOR_ROLL_BUCKET_PRIORITY = ["delivery", "quantity", "shape", "trajectory", "impact", "element"] as const;
+const VISIBLE_MUTATOR_BUCKETS = ["delivery", "quantity", "shape", "trajectory", "impact", "element"] as const;
 const DEATH_POPUP_DELAY_MS = 520;
 const RESPAWN_COUNTDOWN_MS = 3000;
 const PARRY_ACTIVE_MS = 420;
@@ -763,16 +762,17 @@ export class MatchScene extends Phaser.Scene {
     };
 
     if (this.meleeModeMs > 0) {
-      build.delivery = "area-pulse";
-      build.damage *= 1.34;
-      build.fireRate = Math.min(build.fireRate, 2.1);
+      build.delivery = "projectile";
+      build.damage *= 1.18;
+      build.fireRate = Math.max(build.fireRate, 3.2);
+      build.spreadRadians = Math.max(build.spreadRadians, Math.PI * 0.58);
       build.projectile = {
         ...build.projectile,
-        count: 1,
-        rangePx: 128,
-        impact: "explosive",
-        impactRadiusPx: Math.max(build.projectile.impactRadiusPx, 82),
-        sizeMultiplier: Math.max(build.projectile.sizeMultiplier, 1.25),
+        count: Math.max(build.projectile.count, 7),
+        rangePx: Math.min(build.projectile.rangePx, 240),
+        impact: build.projectile.impact === "none" ? "explosive" : build.projectile.impact,
+        impactRadiusPx: Math.max(build.projectile.impactRadiusPx, 28),
+        sizeMultiplier: Math.max(build.projectile.sizeMultiplier, 0.76),
       };
     }
 
@@ -1947,21 +1947,7 @@ export class MatchScene extends Phaser.Scene {
 
     const eligible = crystalRoundsCards.filter((card) => isEligibleMutatorCard(card, ownedCounts));
     const highSignalCards = eligible.filter((card) => isVisibleWeaponMutator(card));
-    const ownedBucketCounts = new Map<WeaponBucket, number>();
-    for (const card of this.weaponBuild.cards) {
-      for (const bucket of card.buckets ?? []) {
-        ownedBucketCounts.set(bucket, (ownedBucketCounts.get(bucket) ?? 0) + 1);
-      }
-    }
-    const preferredBucket = MUTATOR_ROLL_BUCKET_PRIORITY.find(
-      (bucket) => (ownedBucketCounts.get(bucket) ?? 0) < 2,
-    );
-    const preferredCards = preferredBucket
-      ? highSignalCards.filter((card) => card.buckets?.includes(preferredBucket))
-      : [];
-    const rollPool = preferredCards.length > 0
-      ? preferredCards
-      : highSignalCards.length > 0
+    const rollPool = highSignalCards.length > 0
         ? highSignalCards
         : eligible;
 
@@ -1969,7 +1955,34 @@ export class MatchScene extends Phaser.Scene {
       return undefined;
     }
 
-    return Phaser.Utils.Array.GetRandom(rollPool);
+    const weightedPool = rollPool.flatMap((card) => {
+      const modifier = card.modifier;
+      const projectile = modifier?.projectile;
+      const ownedCount = ownedCounts.get(card.id) ?? 0;
+      const hasSpray = Boolean((modifier?.projectileCountAdd ?? 0) > 0 || (projectile?.count ?? 0) > 1);
+      const hasHoming = projectile?.pathing === "homing" || Boolean(modifier?.projectileHomingStrengthAdd);
+      let weight = 1;
+
+      if (hasSpray) {
+        weight += Math.min(4, Math.max(1, modifier?.projectileCountAdd ?? projectile?.count ?? 1));
+      }
+      if (hasHoming) {
+        weight += 3;
+      }
+      if (card.buckets?.includes("trajectory")) {
+        weight += 1;
+      }
+      if (ownedCount > 0 && !card.unique) {
+        weight += 1;
+      }
+      if (card.rarity === "legendary") {
+        weight = Math.max(1, weight - 1);
+      }
+
+      return Array.from({ length: weight }, () => card);
+    });
+
+    return Phaser.Utils.Array.GetRandom(weightedPool);
   }
 
   private floatPickupText(pickup: ArenaPickup, label: string, color: string) {
@@ -3009,7 +3022,7 @@ function isEligibleMutatorCard(
 
 function isVisibleWeaponMutator(card: CardDefinition): boolean {
   const buckets = card.buckets ?? [];
-  if (buckets.some((bucket) => MUTATOR_ROLL_BUCKET_PRIORITY.includes(bucket as typeof MUTATOR_ROLL_BUCKET_PRIORITY[number]))) {
+  if (buckets.some((bucket) => VISIBLE_MUTATOR_BUCKETS.includes(bucket as typeof VISIBLE_MUTATOR_BUCKETS[number]))) {
     return true;
   }
 
@@ -3024,6 +3037,7 @@ function isVisibleWeaponMutator(card: CardDefinition): boolean {
       card.modifier?.projectileCountAdd ||
       card.modifier?.projectileBounceAdd ||
       card.modifier?.projectileSplitAdd ||
+      card.modifier?.projectileHomingStrengthAdd ||
       card.modifier?.maxHealthAdd ||
       card.modifier?.moveSpeedMultiplier ||
       card.modifier?.parryCoverMultiplier ||

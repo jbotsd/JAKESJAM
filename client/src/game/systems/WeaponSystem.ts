@@ -136,6 +136,7 @@ function applyCard(build: ResolvedWeaponBuild, card: CardDefinition) {
   build.projectile.count += modifier.projectileCountAdd ?? 0;
   build.projectile.bounces += modifier.projectileBounceAdd ?? 0;
   build.projectile.splitCount += modifier.projectileSplitAdd ?? 0;
+  build.projectile.homingStrength += modifier.projectileHomingStrengthAdd ?? 0;
 }
 
 function mergeProjectileModifier(
@@ -172,6 +173,7 @@ function clampBuild(build: ResolvedWeaponBuild) {
   build.projectile.speedMultiplier = Math.max(0.15, build.projectile.speedMultiplier);
   build.projectile.lifetimeMultiplier = Math.max(0.1, build.projectile.lifetimeMultiplier);
   build.projectile.bounces = Math.max(0, Math.round(build.projectile.bounces));
+  build.projectile.homingStrength = roundTo(Math.max(0, build.projectile.homingStrength), 2);
   build.projectile.impactRadiusPx = Math.max(0, build.projectile.impactRadiusPx);
   build.projectile.pierceCount = Math.max(0, Math.round(build.projectile.pierceCount));
   build.projectile.splitCount = Math.max(0, Math.round(build.projectile.splitCount));
