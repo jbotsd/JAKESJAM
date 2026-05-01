@@ -10,11 +10,9 @@
   "scripts": {
     "dev": "bun run --filter client dev",
     "dev:client": "bun run --filter client dev",
-    "dev:client:host": "bun run --filter client dev:host",
     "dev:convex": "bunx convex dev --local",
     "dev:server": "bun run --filter server dev",
     "dev:full": "bunx convex dev --local --start 'bun run --filter client dev'",
-    "dev:full:host": "bunx convex dev --local --start 'bun run --filter client dev:host'",
     "dev:online": "bunx convex dev --local --start 'bun run --filter server dev & bun run --filter client dev'",
     "typecheck": "bun run --filter client typecheck && bun run --filter server typecheck && bun run typecheck:convex",
     "typecheck:convex": "bunx convex codegen --typecheck enable",

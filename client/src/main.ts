@@ -14,11 +14,11 @@ app.innerHTML = `
     <div class="splash-stage">
       <p class="splash-kicker">BOXWORKS ONLINE</p>
       <h1>JAKESJAM</h1>
-      <p class="splash-copy">Pick a lane, tune the setup, then get in the room.</p>
+      <p class="splash-copy">Practice solo, create a room, or jump into one with a code.</p>
       <div class="splash-actions">
         <button data-menu-practice type="button">Practice</button>
-        <button data-menu-host type="button">Host Game</button>
-        <button data-menu-join type="button">Join Game</button>
+        <button data-menu-host type="button">Create Room</button>
+        <button data-menu-join type="button">Join Room</button>
         <button data-menu-options type="button">Options</button>
       </div>
       <section class="options-panel" data-options hidden>
@@ -57,12 +57,6 @@ app.innerHTML = `
         <span class="build-tag">M9</span>
       </div>
 
-      <section class="role-box" aria-label="Client mode">
-        <h2>Client</h2>
-        <label><input data-client-role type="radio" name="client-role" value="host" /> Host</label>
-        <label><input data-client-role type="radio" name="client-role" value="player" /> Player</label>
-      </section>
-
       <form class="player-form" data-player-form>
         <label>
           Name
@@ -72,7 +66,7 @@ app.innerHTML = `
           Colour
           <input data-player-color type="color" value="#50e3c2" />
         </label>
-        <label data-character-field>
+        <label>
           Character
           <select data-player-character>
             <option value="balanced">Balanced</option>
@@ -83,31 +77,13 @@ app.innerHTML = `
         </label>
       </form>
 
-      <section class="server-panel" data-server-panel>
-        <h2>Host / Server Client</h2>
-        <div class="join-address">
-          <label>
-            IP Address
-            <input data-host-address readonly />
-          </label>
-          <label>
-            Port
-            <input data-host-port readonly />
-          </label>
-        </div>
-      </section>
-
-      <div class="room-actions" data-host-actions>
+      <div class="room-actions">
         <button data-practice type="button">Practice</button>
-        <button data-create-room type="button">Host Game</button>
+        <button data-create-room type="button">Create Room</button>
       </div>
 
-      <section class="player-connect" data-player-connect>
-        <h2>Join Server</h2>
-        <div class="join-row">
-          <input data-join-host placeholder="IP ADDRESS" aria-label="Host IP address" />
-          <input data-join-port placeholder="PORT" aria-label="Host port" />
-        </div>
+      <section class="player-connect">
+        <h2>Join Room</h2>
         <div class="join-row">
           <input data-room-code maxlength="6" placeholder="ROOM CODE" aria-label="Room code" />
           <button data-join-room type="button">Join</button>
@@ -123,7 +99,7 @@ app.innerHTML = `
         <button data-start-match type="button">Start Match</button>
       </section>
 
-      <section class="chaos-box" data-host-settings aria-label="Party modifiers">
+      <section class="chaos-box" aria-label="Party modifiers">
         <h2>Chaos</h2>
         <label><input data-chaos-modifier type="checkbox" value="low-gravity" /> Low Grav</label>
         <label><input data-chaos-modifier type="checkbox" value="slow-motion" /> Slo Mo</label>
@@ -165,13 +141,13 @@ queryRequired<HTMLButtonElement>("[data-menu-practice]").addEventListener("click
 queryRequired<HTMLButtonElement>("[data-menu-host]").addEventListener("click", () => {
   startMenuMusic();
   hideSplash();
-  lobbyController.openHostMenu();
+  lobbyController.focusCreateRoom();
 });
 
 queryRequired<HTMLButtonElement>("[data-menu-join]").addEventListener("click", () => {
   startMenuMusic();
   hideSplash();
-  lobbyController.openJoinMenu();
+  lobbyController.focusJoinRoom();
 });
 
 queryRequired<HTMLButtonElement>("[data-menu-options]").addEventListener("click", () => {
