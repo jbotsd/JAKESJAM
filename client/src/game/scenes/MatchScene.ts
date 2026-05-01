@@ -145,8 +145,6 @@ export class MatchScene extends Phaser.Scene {
   private readonly remoteShotSequences = new Map<string, number>();
   private cameraTarget?: Phaser.GameObjects.Zone;
   private reticle?: Phaser.GameObjects.Graphics;
-  private debugText?: Phaser.GameObjects.Text;
-  private weaponText?: Phaser.GameObjects.Text;
   private scoreboardBack?: Phaser.GameObjects.Rectangle;
   private scoreboardText?: Phaser.GameObjects.Text;
   private scoreboardVisible = false;
@@ -299,8 +297,6 @@ export class MatchScene extends Phaser.Scene {
     this.createPlayerVisuals();
     this.createRemotePlayerVisuals();
     this.createReticle();
-    this.createDebugOverlay();
-    this.createWeaponOverlay();
     this.createScoreboardOverlay();
     this.createRoundBanner();
     this.bindKeys();
@@ -316,7 +312,7 @@ export class MatchScene extends Phaser.Scene {
   }
 
   update(_time: number, deltaMs: number) {
-    if (!this.keys || !this.playerRig || !this.debugText || !this.projectileSystem) {
+    if (!this.keys || !this.playerRig || !this.projectileSystem) {
       return;
     }
 
@@ -352,8 +348,6 @@ export class MatchScene extends Phaser.Scene {
       this.syncPlayerVisuals(deltaMs);
       this.syncRemotePlayerVisuals(deltaMs);
       this.updateReticle();
-      this.updateDebugText();
-      this.updateWeaponOverlay();
       this.updateScoreboardOverlay();
       return;
     }
@@ -397,8 +391,6 @@ export class MatchScene extends Phaser.Scene {
     this.syncPlayerVisuals(deltaMs);
     this.syncRemotePlayerVisuals(deltaMs);
     this.updateReticle();
-    this.updateDebugText();
-    this.updateWeaponOverlay();
     this.updateScoreboardOverlay();
   }
 
@@ -485,30 +477,6 @@ export class MatchScene extends Phaser.Scene {
 
   private createReticle() {
     this.reticle = this.add.graphics();
-  }
-
-  private createDebugOverlay() {
-    this.debugText = this.add.text(26, 24, "", {
-      color: "#50e3c2",
-      fontFamily: "Consolas, monospace",
-      fontSize: "16px",
-      fontStyle: "900",
-      lineSpacing: 4,
-    });
-    this.debugText.setScrollFactor(0);
-    this.updateDebugText();
-  }
-
-  private createWeaponOverlay() {
-    this.weaponText = this.add.text(620, 24, "", {
-      color: "#dff7ff",
-      fontFamily: "Consolas, monospace",
-      fontSize: "12px",
-      lineSpacing: 4,
-      wordWrap: { width: 315, useAdvancedWrap: true },
-    });
-    this.weaponText.setScrollFactor(0);
-    this.updateWeaponOverlay();
   }
 
   private createScoreboardOverlay() {
@@ -2557,41 +2525,6 @@ export class MatchScene extends Phaser.Scene {
     this.reticle.strokePath();
   }
 
-  private updateDebugText() {
-    if (!this.debugText) {
-      return;
-    }
-
-    this.debugText.setText([
-      "HEALTH",
-      `${Math.ceil(this.playerHealth)}/${this.playerMaxHealth}`,
-      `JET ${this.movementDebug.jetpackFuel}${this.movementDebug.jetpackActive ? " ON" : ""}`,
-    ]);
-  }
-
-  private updateWeaponOverlay() {
-    if (!this.weaponText || !this.projectileSystem) {
-      return;
-    }
-
-    const chaos = this.getChaosProfile();
-    const activeBuild = this.createChaosWeaponBuild();
-    const mutatorNames = this.weaponBuild.cards.length > 0
-      ? this.weaponBuild.cards.map((card) => card.name).join(", ")
-      : "Base weapon";
-
-    this.weaponText.setText([
-      `WEAPON ${activeBuild.name}`,
-      `MUTATORS ${this.weaponBuild.cards.length}`,
-      mutatorNames,
-      `fire ${activeBuild.delivery}  shots ${chaos.disableProjectiles ? 0 : activeBuild.projectile.count}`,
-      `shape ${activeBuild.projectile.shape}  path ${activeBuild.projectile.pathing}`,
-      `element ${activeBuild.projectile.element}  impact ${activeBuild.projectile.impact}`,
-      `dmg ${activeBuild.damage}  rate ${activeBuild.fireRate}/s`,
-      `cooldown ${Math.round(this.getShotCooldownMs(activeBuild))}ms  block ${this.parryCooldownMs <= 0 ? "ready" : `${Math.ceil(this.parryCooldownMs / 1000)}s`}`,
-    ]);
-  }
-
   private updateScoreboardOverlay() {
     if (!this.scoreboardBack || !this.scoreboardText || !this.keys) {
       return;
@@ -2667,7 +2600,6 @@ export class MatchScene extends Phaser.Scene {
     this.movement.reset();
     this.updateCameraTarget();
     this.syncPlayerVisuals();
-    this.updateDebugText();
   }
 
   private rebuildWeaponBuild(playSound = true) {
@@ -2682,7 +2614,6 @@ export class MatchScene extends Phaser.Scene {
     if (playSound) {
       this.audio?.play("card");
     }
-    this.updateWeaponOverlay();
   }
 
   private syncEffectiveMaxHealth(healAddedHealth: boolean) {
