@@ -2,6 +2,8 @@
 
 ## v0.21 - 2026-05-01
 
+- Added a held-Tab scoreboard overlay with per-player kills and deaths.
+- Reworked 5x3 map expansion to use varied seeded room archetypes instead of repeated mirrored clones.
 - Reduced the in-match HUD to only player health plus the active weapon and its current mutators.
 - Changed player death into a full respawn sequence: explode, disappear, show taunt, count down 3 seconds, then respawn cleanly.
 - Added louder card-cache weapon identity rolls: explicit circle, triangle, square, orb, and five-projectile spray mutators.

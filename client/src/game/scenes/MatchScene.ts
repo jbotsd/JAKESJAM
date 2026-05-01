@@ -45,7 +45,6 @@ const REMOTE_SMOOTHING = 0.26;
 const WORLD_COLUMNS = 5;
 const WORLD_ROWS = 3;
 const VERTICAL_SHAFT_WIDTH = 150;
-const boxworksWorld = expandMap(boxworks, WORLD_COLUMNS, WORLD_ROWS);
 const CHAOS_MODIFIERS_KEY = "jakesjam.chaosModifiers";
 const CARD_CACHE_RESPAWN_MS = 18000;
 const REMOTE_PLAYER_TARGET_PREFIX = "remote-player:";
@@ -70,6 +69,7 @@ type MovementKeys = {
   space: Phaser.Input.Keyboard.Key;
   r: Phaser.Input.Keyboard.Key;
   shift: Phaser.Input.Keyboard.Key;
+  tab: Phaser.Input.Keyboard.Key;
 };
 
 type ChaosProfile = {
@@ -84,8 +84,26 @@ type ChaosProfile = {
   fireHazardIntervalMs?: number;
 };
 
+type PlayerScore = {
+  kills: number;
+  deaths: number;
+};
+
 export class MatchScene extends Phaser.Scene {
   private readonly movement = new MovementSystem();
+  private readonly handleScoreboardKeyDown = (event: KeyboardEvent) => {
+    if (event.code !== "Tab") {
+      return;
+    }
+
+    event.preventDefault();
+    if (event.repeat) {
+      return;
+    }
+
+    this.scoreboardVisible = !this.scoreboardVisible;
+    this.updateScoreboardOverlay();
+  };
   private audio?: GameAudioSystem;
   private projectileSystem?: ProjectileSystem;
   private roomClient?: RoomClient;
@@ -97,6 +115,9 @@ export class MatchScene extends Phaser.Scene {
   private reticle?: Phaser.GameObjects.Graphics;
   private debugText?: Phaser.GameObjects.Text;
   private weaponText?: Phaser.GameObjects.Text;
+  private scoreboardBack?: Phaser.GameObjects.Rectangle;
+  private scoreboardText?: Phaser.GameObjects.Text;
+  private scoreboardVisible = false;
   private respawnText?: Phaser.GameObjects.Text;
   private targetGraphics?: Phaser.GameObjects.Graphics;
   private targetText?: Phaser.GameObjects.Text;
@@ -130,6 +151,7 @@ export class MatchScene extends Phaser.Scene {
   private matchId?: string;
   private localPlayerId = "offline-player";
   private roomPlayers: RoomPlayer[] = [];
+  private readonly playerScores = new Map<string, PlayerScore>();
   private snapshotSendTimerMs = 0;
   private snapshotSequence = 0;
   private chaosModifierIds: ChaosModifierId[] = [];
@@ -150,10 +172,13 @@ export class MatchScene extends Phaser.Scene {
 
   create() {
     this.events.once("shutdown", () => {
+      window.removeEventListener("keydown", this.handleScoreboardKeyDown);
       this.teardownNetworkSync();
       this.audio?.destroy();
       this.audio = undefined;
     });
+    window.removeEventListener("keydown", this.handleScoreboardKeyDown);
+    window.addEventListener("keydown", this.handleScoreboardKeyDown);
     this.teardownNetworkSync();
     this.audio?.destroy();
     this.audio = new GameAudioSystem(this);
@@ -185,7 +210,9 @@ export class MatchScene extends Phaser.Scene {
     this.createReticle();
     this.createDebugOverlay();
     this.createWeaponOverlay();
+    this.createScoreboardOverlay();
     this.bindKeys();
+    this.ensureScore(this.localPlayerId);
     this.rebuildWeaponBuild();
     this.setupNetworkSync();
   }
@@ -224,6 +251,7 @@ export class MatchScene extends Phaser.Scene {
       this.updateReticle();
       this.updateDebugText();
       this.updateWeaponOverlay();
+      this.updateScoreboardOverlay();
       return;
     }
 
@@ -267,6 +295,7 @@ export class MatchScene extends Phaser.Scene {
     this.updateReticle();
     this.updateDebugText();
     this.updateWeaponOverlay();
+    this.updateScoreboardOverlay();
   }
 
   private renderArena() {
@@ -378,6 +407,27 @@ export class MatchScene extends Phaser.Scene {
     this.updateWeaponOverlay();
   }
 
+  private createScoreboardOverlay() {
+    const { width } = this.scale;
+    this.scoreboardBack = this.add
+      .rectangle(width / 2, 126, 410, 196, 0x07101c, 0.84)
+      .setStrokeStyle(2, 0x50e3c2, 0.5)
+      .setScrollFactor(0)
+      .setDepth(950)
+      .setVisible(false);
+    this.scoreboardText = this.add
+      .text(width / 2 - 180, 50, "", {
+        color: "#f7fbff",
+        fontFamily: "Consolas, monospace",
+        fontSize: "14px",
+        fontStyle: "800",
+        lineSpacing: 6,
+      })
+      .setScrollFactor(0)
+      .setDepth(951)
+      .setVisible(false);
+  }
+
   private bindKeys() {
     const keyboard = this.input.keyboard;
     if (!keyboard) {
@@ -392,7 +442,9 @@ export class MatchScene extends Phaser.Scene {
       space: keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.SPACE),
       r: keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.R),
       shift: keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.SHIFT),
+      tab: keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.TAB),
     };
+    keyboard.addCapture(Phaser.Input.Keyboard.KeyCodes.TAB);
   }
 
   private readInput(): MovementInput {
@@ -649,6 +701,7 @@ export class MatchScene extends Phaser.Scene {
         continue;
       }
 
+      this.ensureScore(snapshot.playerId);
       const previous = this.remoteSnapshots.get(snapshot.playerId);
       this.remoteSnapshots.set(snapshot.playerId, previous
         ? smoothSnapshot(previous, snapshot)
@@ -801,6 +854,8 @@ export class MatchScene extends Phaser.Scene {
     this.floatRemoteDamageText(nextSnapshot.position, hit.damage, hit.element);
 
     if (!nextSnapshot.alive) {
+      this.addKill(this.localPlayerId);
+      this.addDeath(playerId);
       this.spawnPlayerDeathExplosion(nextSnapshot.position);
     }
 
@@ -884,6 +939,7 @@ export class MatchScene extends Phaser.Scene {
     this.respawnRemainingMs = RESPAWN_COUNTDOWN_MS;
     this.respawnCountdownActive = false;
     this.playerHealth = 0;
+    this.addDeath(this.localPlayerId);
     this.playerBody.velocity = { x: 0, y: 0 };
     this.shieldActive = false;
     this.shieldGraphics?.clear();
@@ -1736,6 +1792,64 @@ export class MatchScene extends Phaser.Scene {
     ]);
   }
 
+  private updateScoreboardOverlay() {
+    if (!this.scoreboardBack || !this.scoreboardText || !this.keys) {
+      return;
+    }
+
+    this.scoreboardBack.setVisible(this.scoreboardVisible);
+    this.scoreboardText.setVisible(this.scoreboardVisible);
+    if (!this.scoreboardVisible) {
+      return;
+    }
+
+    const rows = this.getScoreboardRows();
+    this.scoreboardText.setText([
+      "PLAYER                 K   D",
+      "----------------------------",
+      ...rows.map((row) =>
+        `${row.name.padEnd(20).slice(0, 20)} ${row.score.kills.toString().padStart(2)}  ${row.score.deaths.toString().padStart(2)}`,
+      ),
+    ]);
+  }
+
+  private getScoreboardRows(): Array<{ playerId: string; name: string; score: PlayerScore }> {
+    const players = this.roomPlayers.length > 0
+      ? this.roomPlayers
+      : [{
+          playerId: this.localPlayerId,
+          name: this.getLocalRoomPlayer()?.name ?? "jakesjam",
+          characterId: this.getLocalCharacter().id,
+        }];
+
+    return players
+      .map((player) => ({
+        playerId: player.playerId,
+        name: player.playerId === this.localPlayerId ? `${player.name} *` : player.name,
+        score: this.ensureScore(player.playerId),
+      }))
+      .sort((a, b) => b.score.kills - a.score.kills || a.score.deaths - b.score.deaths || a.name.localeCompare(b.name));
+  }
+
+  private ensureScore(playerId: string): PlayerScore {
+    const existing = this.playerScores.get(playerId);
+    if (existing) {
+      return existing;
+    }
+
+    const score = { kills: 0, deaths: 0 };
+    this.playerScores.set(playerId, score);
+    return score;
+  }
+
+  private addKill(playerId: string) {
+    this.ensureScore(playerId).kills += 1;
+  }
+
+  private addDeath(playerId: string) {
+    this.ensureScore(playerId).deaths += 1;
+  }
+
   private resetPlayer() {
     const spawn = this.getLocalSpawn();
     const character = this.getLocalCharacter();
@@ -1888,6 +2002,104 @@ function createPlayerBody(x = 220, y = 430, sizeScale = 1): PlayerBody {
   };
 }
 
+type LocalPlatformShape = {
+  id: string;
+  position: Vec2;
+  size: Vec2;
+};
+
+type CellLayout = {
+  name: string;
+  platforms: LocalPlatformShape[];
+  spawns: Vec2[];
+};
+
+const CELL_LAYOUTS: CellLayout[] = [
+  {
+    name: "broken-lanes",
+    platforms: [
+      { id: "left-low", position: { x: 190, y: 386 }, size: { x: 238, y: 22 } },
+      { id: "right-low-short", position: { x: 735, y: 372 }, size: { x: 170, y: 20 } },
+      { id: "left-high-chip", position: { x: 255, y: 220 }, size: { x: 134, y: 18 } },
+      { id: "right-high-long", position: { x: 710, y: 224 }, size: { x: 252, y: 18 } },
+      { id: "mid-splitter", position: { x: 480, y: 302 }, size: { x: 270, y: 18 } },
+    ],
+    spawns: [
+      { x: 178, y: 346 },
+      { x: 734, y: 332 },
+      { x: 268, y: 180 },
+      { x: 700, y: 184 },
+    ],
+  },
+  {
+    name: "stairwell",
+    platforms: [
+      { id: "low-left-step", position: { x: 178, y: 416 }, size: { x: 170, y: 20 } },
+      { id: "mid-left-step", position: { x: 336, y: 338 }, size: { x: 155, y: 18 } },
+      { id: "mid-right-step", position: { x: 624, y: 284 }, size: { x: 155, y: 18 } },
+      { id: "high-right-step", position: { x: 778, y: 214 }, size: { x: 170, y: 18 } },
+      { id: "top-left-perch", position: { x: 220, y: 186 }, size: { x: 150, y: 16 } },
+    ],
+    spawns: [
+      { x: 174, y: 376 },
+      { x: 338, y: 298 },
+      { x: 626, y: 244 },
+      { x: 778, y: 174 },
+    ],
+  },
+  {
+    name: "bowl",
+    platforms: [
+      { id: "left-rim", position: { x: 190, y: 328 }, size: { x: 220, y: 20 } },
+      { id: "right-rim", position: { x: 770, y: 328 }, size: { x: 220, y: 20 } },
+      { id: "low-left-pocket", position: { x: 304, y: 430 }, size: { x: 170, y: 20 } },
+      { id: "low-right-pocket", position: { x: 656, y: 430 }, size: { x: 170, y: 20 } },
+      { id: "top-needle", position: { x: 480, y: 202 }, size: { x: 230, y: 18 } },
+    ],
+    spawns: [
+      { x: 190, y: 288 },
+      { x: 770, y: 288 },
+      { x: 304, y: 390 },
+      { x: 656, y: 390 },
+    ],
+  },
+  {
+    name: "islands",
+    platforms: [
+      { id: "left-island", position: { x: 168, y: 292 }, size: { x: 150, y: 18 } },
+      { id: "left-low-island", position: { x: 300, y: 420 }, size: { x: 168, y: 20 } },
+      { id: "right-island", position: { x: 792, y: 292 }, size: { x: 150, y: 18 } },
+      { id: "right-low-island", position: { x: 660, y: 420 }, size: { x: 168, y: 20 } },
+      { id: "upper-offset", position: { x: 604, y: 198 }, size: { x: 172, y: 18 } },
+      { id: "upper-counter", position: { x: 356, y: 228 }, size: { x: 144, y: 16 } },
+    ],
+    spawns: [
+      { x: 168, y: 252 },
+      { x: 300, y: 380 },
+      { x: 792, y: 252 },
+      { x: 660, y: 380 },
+    ],
+  },
+  {
+    name: "crossfire",
+    platforms: [
+      { id: "left-wide-low", position: { x: 235, y: 398 }, size: { x: 285, y: 20 } },
+      { id: "right-wide-high", position: { x: 725, y: 258 }, size: { x: 285, y: 18 } },
+      { id: "left-short-high", position: { x: 224, y: 214 }, size: { x: 134, y: 16 } },
+      { id: "right-short-low", position: { x: 736, y: 410 }, size: { x: 134, y: 20 } },
+      { id: "center-bridge", position: { x: 480, y: 328 }, size: { x: 222, y: 18 } },
+    ],
+    spawns: [
+      { x: 236, y: 358 },
+      { x: 724, y: 218 },
+      { x: 224, y: 174 },
+      { x: 736, y: 370 },
+    ],
+  },
+];
+
+const boxworksWorld = expandMap(boxworks, WORLD_COLUMNS, WORLD_ROWS);
+
 function expandMap(base: MapDefinition, columns: number, rows: number): MapDefinition {
   const platforms: MapDefinition["platforms"] = [];
   const destructibles: MapDefinition["destructibles"] = [];
@@ -1901,39 +2113,25 @@ function expandMap(base: MapDefinition, columns: number, rows: number): MapDefin
         y: row * base.size.y,
       };
       const variant = createCellVariant(column, row);
+      const layout = CELL_LAYOUTS[variant.layoutIndex];
       const shaftX = offset.x + base.size.x / 2;
       const cellLeft = offset.x;
       const cellRight = offset.x + base.size.x;
 
-      for (const spawn of base.spawns) {
+      for (const spawn of layout.spawns) {
         spawns.push(transformCellPosition(spawn, offset, base, variant, 0.28));
       }
 
-      for (const platform of base.platforms) {
-        if (platform.kind === "wall") {
-          continue;
-        }
-
-        const position = platform.kind === "floor"
-          ? { x: platform.position.x + offset.x, y: platform.position.y + offset.y }
-          : transformCellPosition(platform.position, offset, base, variant, 1);
-        const widthScale = platform.kind === "floor" ? 1 : variant.platformWidthScale;
-        const size = {
-          x: Math.max(86, platform.size.x * widthScale),
-          y: platform.size.y,
-        };
-
+      for (const platform of createCellPlatforms(base, layout, offset, variant, column, row)) {
         appendPlatformWithShaftGap(platforms, {
           ...platform,
           id: `${platform.id}-${column}-${row}`,
-          position,
-          size,
         }, shaftX);
       }
 
-      for (const object of base.destructibles) {
+      for (const [objectIndex, object] of base.destructibles.entries()) {
         const position = nudgeBoxOutOfShaft(
-          transformCellPosition(object.position, offset, base, variant, 1),
+          createCellScatterPosition(offset, base, variant, column, row, 20 + objectIndex, object.size.x / 2),
           object.size,
           shaftX,
           cellLeft,
@@ -1946,9 +2144,9 @@ function expandMap(base: MapDefinition, columns: number, rows: number): MapDefin
         });
       }
 
-      for (const pickup of base.pickups) {
+      for (const [pickupIndex, pickup] of base.pickups.entries()) {
         const position = nudgeCircleOutOfShaft(
-          transformCellPosition(pickup.position, offset, base, variant, 1),
+          createCellScatterPosition(offset, base, variant, column, row, 40 + pickupIndex, pickup.radius),
           pickup.radius,
           shaftX,
           cellLeft,
@@ -2018,23 +2216,98 @@ function expandMap(base: MapDefinition, columns: number, rows: number): MapDefin
 
 type CellVariant = {
   mirror: boolean;
+  layoutIndex: number;
   xJitter: number;
   yJitter: number;
   platformWidthScale: number;
+  platformYSkew: number;
   cardCacheLocalPosition: Vec2;
 };
 
 function createCellVariant(column: number, row: number): CellVariant {
   return {
     mirror: seededUnit(column, row, 1) > 0.5,
+    layoutIndex: (column * 2 + row * 3 + Math.floor(seededUnit(column, row, 7) * CELL_LAYOUTS.length)) % CELL_LAYOUTS.length,
     xJitter: seededRange(column, row, 2, -52, 52),
     yJitter: seededRange(column, row, 3, -28, 30),
     platformWidthScale: seededRange(column, row, 4, 0.82, 1.18),
+    platformYSkew: seededRange(column, row, 8, -18, 18),
     cardCacheLocalPosition: {
       x: seededRange(column, row, 5, 250, 710),
       y: seededRange(column, row, 6, 190, 370),
     },
   };
+}
+
+function createCellPlatforms(
+  base: MapDefinition,
+  layout: CellLayout,
+  offset: Vec2,
+  variant: CellVariant,
+  column: number,
+  row: number,
+): MapDefinition["platforms"] {
+  const floor = base.platforms.find((platform) => platform.kind === "floor");
+  const platforms: MapDefinition["platforms"] = [];
+
+  if (floor) {
+    platforms.push({
+      ...floor,
+      id: "floor",
+      position: { x: floor.position.x + offset.x, y: floor.position.y + offset.y },
+      size: { ...floor.size },
+    });
+  }
+
+  for (const [index, shape] of layout.platforms.entries()) {
+    const widthScale = variant.platformWidthScale * seededRange(column, row, 90 + index, 0.88, 1.12);
+    const position = transformCellPosition(
+      {
+        x: shape.position.x,
+        y: shape.position.y + variant.platformYSkew * seededRange(column, row, 110 + index, 0.45, 1.1),
+      },
+      offset,
+      base,
+      variant,
+      0.82,
+    );
+
+    platforms.push({
+      id: `${layout.name}-${shape.id}`,
+      kind: "platform",
+      position,
+      size: {
+        x: Math.max(96, shape.size.x * widthScale),
+        y: shape.size.y,
+      },
+    });
+  }
+
+  return platforms;
+}
+
+function createCellScatterPosition(
+  offset: Vec2,
+  base: MapDefinition,
+  variant: CellVariant,
+  column: number,
+  row: number,
+  salt: number,
+  radius: number,
+): Vec2 {
+  const onRightSide = seededUnit(column, row, salt) > 0.48;
+  const localX = onRightSide
+    ? seededRange(column, row, salt + 1, 610, base.size.x - 130 - radius)
+    : seededRange(column, row, salt + 1, 130 + radius, 350);
+  const localY = seededRange(column, row, salt + 2, 178, base.size.y - 94);
+
+  return transformCellPosition(
+    { x: localX, y: localY },
+    offset,
+    base,
+    variant,
+    0.48,
+  );
 }
 
 function transformCellPosition(
