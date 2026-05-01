@@ -22,7 +22,7 @@ import {
   type ServerMessage,
 } from "./protocol.js";
 import { InterpolationBuffer } from "./interpolationBuffer.js";
-import type { Transport } from "./transport.js";
+import type { Transport, TransportState } from "./transport.js";
 
 export type ClientLoopOptions = {
   transport: Transport;
@@ -38,6 +38,27 @@ export type LocalInput = {
   aimY: number;
 };
 
+/** Snapshot of network/prediction health for the in-game stats HUD. */
+export type NetStats = {
+  /** Rolling-average round-trip time in milliseconds (last 10 pongs). 0 until first pong. */
+  rttMs: number;
+  /** Snapshots received in the last 1000ms. */
+  snapRateHz: number;
+  /** Inputs sent to the server but not yet acked. */
+  pendingInputs: number;
+  /** Euclidean distance (px) between predicted and authoritative local-player position
+   *  at the moment of the most recent reconcile. 0 until first snapshot. */
+  lastPredictDeltaPx: number;
+  /** Tick number of the most recent snapshot received (0 until first snapshot). */
+  lastSnapshotTick: Tick;
+  /** Underlying transport state. */
+  transportState: TransportState;
+};
+
+const PING_INTERVAL_MS = 1000;
+const RTT_SAMPLE_LIMIT = 10;
+const SNAP_RATE_WINDOW_MS = 1000;
+
 export class ClientLoop {
   private readonly transport: Transport;
   private readonly matchId: string;
@@ -51,10 +72,17 @@ export class ClientLoop {
   private nextInputSeq: InputSeq = 1;
   private currentInput: LocalInput = { keys: 0, aimX: 0, aimY: 0 };
   private interval: ReturnType<typeof setInterval> | null = null;
+  private pingInterval: ReturnType<typeof setInterval> | null = null;
   private accumulator = 0;
   private lastTickAt = 0;
   private lastSnapshotTick: Tick = 0;
   private readonly remoteInterp = new Map<PlayerId, InterpolationBuffer<PlayerEntity>>();
+
+  // Net stats bookkeeping.
+  private readonly rttSamples: number[] = [];
+  private readonly outstandingPings = new Set<number>();
+  private readonly snapshotTimestamps: number[] = [];
+  private lastPredictDeltaPx = 0;
 
   constructor(opts: ClientLoopOptions) {
     this.transport = opts.transport;
@@ -72,12 +100,21 @@ export class ClientLoop {
     if (this.interval) return;
     this.lastTickAt = performance.now();
     this.interval = setInterval(() => this.tick(), STEP_MS);
+    // Ping loop runs on its own timer so it survives even if sim ticks stall.
+    if (!this.pingInterval) {
+      this.pingInterval = setInterval(() => this.sendPing(), PING_INTERVAL_MS);
+    }
   }
 
   stop(): void {
-    if (!this.interval) return;
-    clearInterval(this.interval);
-    this.interval = null;
+    if (this.interval) {
+      clearInterval(this.interval);
+      this.interval = null;
+    }
+    if (this.pingInterval) {
+      clearInterval(this.pingInterval);
+      this.pingInterval = null;
+    }
   }
 
   /** Updated by the input capture layer every frame before the next tick. */
@@ -97,6 +134,35 @@ export class ClientLoop {
     return buffer.sample(renderTimeMs);
   }
 
+  /** Latest network/prediction health snapshot for the stats HUD. */
+  getNetStats(): NetStats {
+    // Trim snapshot timestamps to a 1s sliding window for snap-rate.
+    const now = performance.now();
+    const windowStart = now - SNAP_RATE_WINDOW_MS;
+    while (
+      this.snapshotTimestamps.length > 0 &&
+      this.snapshotTimestamps[0]! < windowStart
+    ) {
+      this.snapshotTimestamps.shift();
+    }
+
+    let rttMs = 0;
+    if (this.rttSamples.length > 0) {
+      let sum = 0;
+      for (const sample of this.rttSamples) sum += sample;
+      rttMs = sum / this.rttSamples.length;
+    }
+
+    return {
+      rttMs,
+      snapRateHz: this.snapshotTimestamps.length,
+      pendingInputs: this.pendingInputs.length,
+      lastPredictDeltaPx: this.lastPredictDeltaPx,
+      lastSnapshotTick: this.lastSnapshotTick,
+      transportState: this.transport.state,
+    };
+  }
+
   // ---------------- Internals ----------------
 
   private sendHello(): void {
@@ -108,6 +174,23 @@ export class ClientLoop {
         protocolVersion: PROTOCOL_VERSION,
       }),
     );
+  }
+
+  private sendPing(): void {
+    if (this.transport.state !== "open") return;
+    const clientTime = performance.now();
+    this.outstandingPings.add(clientTime);
+    this.transport.send(encodeMessage({ t: "ping", clientTime }));
+  }
+
+  private handlePong(message: import("./protocol.js").Pong): void {
+    if (!this.outstandingPings.has(message.clientTime)) return;
+    this.outstandingPings.delete(message.clientTime);
+    const rtt = performance.now() - message.clientTime;
+    this.rttSamples.push(rtt);
+    while (this.rttSamples.length > RTT_SAMPLE_LIMIT) {
+      this.rttSamples.shift();
+    }
   }
 
   private tick(): void {
@@ -169,7 +252,7 @@ export class ClientLoop {
         this.applySnapshot(message);
         break;
       case "pong":
-        // RTT tracking goes here later.
+        this.handlePong(message);
         break;
       case "bye":
         this.transport.close(message.reason);
@@ -188,8 +271,22 @@ export class ClientLoop {
   }
 
   private applySnapshot(message: import("./protocol.js").Snapshot): void {
+    // Predict-vs-auth delta is captured BEFORE we overwrite predicted state via
+    // rewind+replay — this measures how far the local prediction had drifted.
+    const priorPredicted = this.predictedState;
+    const incomingMe = message.state.players[this.playerId];
+    if (priorPredicted) {
+      const predictedMe = priorPredicted.players[this.playerId];
+      if (predictedMe && incomingMe) {
+        const dx = predictedMe.x - incomingMe.x;
+        const dy = predictedMe.y - incomingMe.y;
+        this.lastPredictDeltaPx = Math.sqrt(dx * dx + dy * dy);
+      }
+    }
+
     this.authoritativeState = message.state;
     this.lastSnapshotTick = message.tick;
+    this.snapshotTimestamps.push(performance.now());
 
     // Drop pending inputs the server has already processed.
     const ackedSeq = message.lastProcessedInputSeq[this.playerId] ?? 0;

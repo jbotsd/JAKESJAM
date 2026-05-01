@@ -17,6 +17,7 @@ import {
   buildGameServerWsUrl,
   fetchMatchAssignment,
   InputBit,
+  type NetStats,
 } from "../../net";
 import type { Id } from "../../../../convex/_generated/dataModel";
 import type {
@@ -53,6 +54,12 @@ export class OnlineMatchScene extends Phaser.Scene {
   private localPlayerId: string = "";
   private lastFrameMs = 0;
   private keys!: Record<"a" | "d" | "w" | "s" | "space" | "shift", Phaser.Input.Keyboard.Key>;
+  private statsVisible = false;
+  private statsText: Phaser.GameObjects.Text | null = null;
+  private statsBg: Phaser.GameObjects.Rectangle | null = null;
+  private statsToggleKey: Phaser.Input.Keyboard.Key | null = null;
+  // Reused buffer so we don't allocate a new string-array each frame.
+  private readonly statsLineBuf: string[] = ["", "", "", "", "", ""];
 
   constructor() {
     super("OnlineMatchScene");
@@ -82,7 +89,13 @@ export class OnlineMatchScene extends Phaser.Scene {
         space: this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.SPACE),
         shift: this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.SHIFT),
       };
+      this.statsToggleKey = this.input.keyboard.addKey(
+        Phaser.Input.Keyboard.KeyCodes.BACKTICK,
+      );
+      this.statsToggleKey.on("down", () => this.toggleStats());
     }
+
+    this.createStatsHud();
 
     this.lastFrameMs = performance.now();
     this.events.once("shutdown", () => this.teardown());
@@ -118,6 +131,70 @@ export class OnlineMatchScene extends Phaser.Scene {
 
     this.renderWorld(state, deltaMs);
     this.followLocalPlayer(state);
+
+    if (this.statsVisible) {
+      this.updateStatsHud();
+    }
+  }
+
+  private createStatsHud() {
+    const cam = this.cameras.main;
+    // Right-aligned panel pinned to top-right corner. We size it generously
+    // for ~6 lines of mono-ish digits; concrete width tracks Text bounds after
+    // first update.
+    const panelWidth = 220;
+    const panelHeight = 110;
+    const x = cam.width - panelWidth - 12;
+    const y = 12;
+    this.statsBg = this.add
+      .rectangle(x, y, panelWidth, panelHeight, 0x000000, 0.55)
+      .setOrigin(0, 0)
+      .setScrollFactor(0)
+      .setStrokeStyle(1, 0x50e3c2, 0.5)
+      .setVisible(false);
+    this.statsText = this.add
+      .text(x + 8, y + 6, "", {
+        color: "#dfe7ee",
+        fontFamily: "ui-monospace, Menlo, Consolas, monospace",
+        fontSize: "12px",
+        lineSpacing: 2,
+      })
+      .setScrollFactor(0)
+      .setVisible(false);
+
+    // Reposition the HUD if the canvas resizes (Phaser fires this on scale).
+    this.scale.on("resize", this.repositionStatsHud, this);
+    this.events.once("shutdown", () => this.scale.off("resize", this.repositionStatsHud, this));
+  }
+
+  private repositionStatsHud() {
+    if (!this.statsBg || !this.statsText) return;
+    const cam = this.cameras.main;
+    const panelWidth = (this.statsBg.width as number) || 220;
+    const x = cam.width - panelWidth - 12;
+    const y = 12;
+    this.statsBg.setPosition(x, y);
+    this.statsText.setPosition(x + 8, y + 6);
+  }
+
+  private toggleStats() {
+    this.statsVisible = !this.statsVisible;
+    this.statsBg?.setVisible(this.statsVisible);
+    this.statsText?.setVisible(this.statsVisible);
+    if (this.statsVisible) this.updateStatsHud();
+  }
+
+  private updateStatsHud() {
+    if (!this.loop || !this.statsText) return;
+    const stats: NetStats = this.loop.getNetStats();
+    const buf = this.statsLineBuf;
+    buf[0] = `RTT       ${stats.rttMs.toFixed(1)} ms`;
+    buf[1] = `Snap rate ${stats.snapRateHz} Hz`;
+    buf[2] = `Pending   ${stats.pendingInputs}`;
+    buf[3] = `Δ pred    ${stats.lastPredictDeltaPx.toFixed(2)} px`;
+    buf[4] = `Last tick ${stats.lastSnapshotTick}`;
+    buf[5] = `Conn      ${stats.transportState}`;
+    this.statsText.setText(buf);
   }
 
   private async connect(data: OnlineMatchSceneInit) {
@@ -262,6 +339,11 @@ export class OnlineMatchScene extends Phaser.Scene {
     this.playerRigs.clear();
     for (const sprite of this.projectileSprites.values()) sprite.destroy();
     this.projectileSprites.clear();
+    this.statsText?.destroy();
+    this.statsText = null;
+    this.statsBg?.destroy();
+    this.statsBg = null;
+    this.statsToggleKey = null;
   }
 }
 
