@@ -1,4 +1,5 @@
 import Phaser from "phaser";
+import { SceneKeys } from "./SceneKeys";
 import { ProceduralPlayerRig } from "../rendering/ProceduralPlayerRig";
 
 export class MainMenuScene extends Phaser.Scene {
@@ -6,7 +7,7 @@ export class MainMenuScene extends Phaser.Scene {
   private elapsedMs = 0;
 
   constructor() {
-    super("MainMenuScene");
+    super(SceneKeys.MainMenu);
   }
 
   create() {

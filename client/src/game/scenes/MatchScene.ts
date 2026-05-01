@@ -1,4 +1,5 @@
 import Phaser from "phaser";
+import { SceneKeys } from "./SceneKeys";
 import { boxworksWorld, seededUnit } from "../../sim/data/boxworks.js";
 import {
   COUNTDOWN_MS,
@@ -221,7 +222,7 @@ export class MatchScene extends Phaser.Scene {
   private matchHasEnded = false;
 
   constructor() {
-    super("MatchScene");
+    super(SceneKeys.Match);
   }
 
   init(data: MatchSceneInitData = {}) {
@@ -1128,10 +1129,11 @@ export class MatchScene extends Phaser.Scene {
     }
 
     this.fireHazardTimerMs = 0;
+    const timeSeconds = this.time.now / 1000;
     this.spawnFirePatch({
-      x: Phaser.Math.Between(80, boxworksWorld.size.x - 80),
-      y: Phaser.Math.Between(160, boxworksWorld.size.y - 90),
-    }, Phaser.Math.Between(36, 62));
+      x: 80 + seededUnit(Math.floor(timeSeconds), 0, 300) * (boxworksWorld.size.x - 160),
+      y: 160 + seededUnit(Math.floor(timeSeconds), 1, 301) * (boxworksWorld.size.y - 250),
+    }, 36 + seededUnit(Math.floor(timeSeconds), 2, 302) * 26);
   }
 
   private updateNetworkSync(deltaMs: number) {
