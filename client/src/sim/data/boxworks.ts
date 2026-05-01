@@ -108,18 +108,9 @@ export const boxworks: BoxworksMapDefinition = {
     { id: "mine-a", kind: "mine", health: 10, position: { x: 640, y: 456 }, size: { x: 24, y: 12 }, explosive: true, flammable: false },
     { id: "cube-a", kind: "cube", health: 70, position: { x: 610, y: 315 }, size: { x: 42, y: 42 }, explosive: false, flammable: false },
   ],
-  pickups: [
-    { id: "health-shard-a", kind: "health-shard", position: { x: 190, y: 350 }, radius: 15, amount: 25, respawnMs: 9500 },
-    { id: "shield-cell-a", kind: "shield-cell", position: { x: 480, y: 256 }, radius: 16, amount: 48, respawnMs: 12000, durationMs: 8500 },
-    { id: "overcharge-core-a", kind: "overcharge-core", position: { x: 770, y: 350 }, radius: 16, amount: 1, respawnMs: 14000, durationMs: 8000 },
-    { id: "damage-amp-a", kind: "damage-amp", position: { x: 300, y: 238 }, radius: 15, amount: 1, respawnMs: 11000, durationMs: 8000 },
-    { id: "speed-boost-a", kind: "speed-boost", position: { x: 660, y: 238 }, radius: 15, amount: 1, respawnMs: 11000, durationMs: 8000 },
-    { id: "melee-mode-a", kind: "melee-mode", position: { x: 480, y: 380 }, radius: 16, amount: 1, respawnMs: 15000, durationMs: 9000 },
-    { id: "slow-trap-a", kind: "slow-trap", position: { x: 255, y: 450 }, radius: 14, amount: 1, respawnMs: 13000, durationMs: 5500 },
-    { id: "vulnerability-trap-a", kind: "vulnerability-trap", position: { x: 705, y: 450 }, radius: 14, amount: 1, respawnMs: 13000, durationMs: 5500 },
-    { id: "block-jammer-a", kind: "block-jammer", position: { x: 480, y: 190 }, radius: 14, amount: 1, respawnMs: 14000, durationMs: 6500 },
-    { id: "boss-core-a", kind: "boss-core", position: { x: 480, y: 256 }, radius: 20, amount: 1, respawnMs: 45000, durationMs: 16000 },
-  ],
+  // Pickups removed — JAKESJAM is going rogue-lite with all build progression
+  // happening at the between-rounds card draft instead of arena pickups.
+  pickups: [],
 };
 
 // ---------------------------------------------------------------------------
@@ -613,7 +604,10 @@ export function expandMap(
     y: base.size.y * rows,
   };
 
-  addRoamingCardCaches(pickups, spawns, worldSize);
+  // Roaming card caches disabled — rogue-lite picker handles card progression.
+  // (Helper kept in case we want a Risk-of-Rain style optional pickup later.)
+  void addRoamingCardCaches;
+  void worldSize;
   addTraversalConnectors(platforms, base, columns, rows);
 
   platforms.push(
