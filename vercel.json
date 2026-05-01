@@ -1,8 +1,8 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
-  "buildCommand": "npm run build --workspace client",
+  "buildCommand": "bun run --filter client build",
   "outputDirectory": "client/dist",
-  "installCommand": "npm install",
+  "installCommand": "bun install --frozen-lockfile",
   "framework": null,
   "headers": [
     {

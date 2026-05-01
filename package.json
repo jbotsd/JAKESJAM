@@ -25,6 +25,7 @@
     "deploy:server:syd": "flyctl deploy --config fly.toml --app jakesjam-srv-syd --region syd"
   },
   "devDependencies": {
-    "convex": "^1.37.0"
+    "convex": "^1.37.0",
+    "typescript": "^6.0.3"
   }
 }
