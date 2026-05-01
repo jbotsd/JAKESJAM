@@ -125,6 +125,23 @@ export type PlayerEntity = {
   slowedUntilTick?: Tick;
   slowMultiplier?: number;
   /**
+   * Element status effects (Crystal Rounds card system). Same additive /
+   * optional contract as the slow-field debuff above — older snapshots that
+   * omit these read as "no element status active".
+   *
+   * - `burnUntilTick` / `burnDps` / `burnTickLastApplied`: fire-element DoT.
+   *   Burn applies `burnDps` damage every 1 second (in sim ticks) until
+   *   `burnUntilTick`. `burnTickLastApplied` is the last tick the DoT was
+   *   credited on so the per-tick pass can rate-limit to once per second.
+   * - `freezeUntilTick` / `freezeMultiplier`: ice-element movement freeze.
+   *   Composes alongside `slowMultiplier` at the movement site.
+   */
+  burnUntilTick?: Tick;
+  burnDps?: number;
+  burnTickLastApplied?: Tick;
+  freezeUntilTick?: Tick;
+  freezeMultiplier?: number;
+  /**
    * Jetpack fuel reservoir. Range [0, JETPACK_MAX_FUEL]; defaults to MAX
    * when absent (older snapshots) and is reset to MAX on respawn. Drains
    * while the jetpack is active and recharges otherwise. See `sim/player.ts`.
