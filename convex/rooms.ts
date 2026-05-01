@@ -223,6 +223,12 @@ export const startMatch = mutation({
       throw new Error("Only the host can start the match.");
     }
     if (room.status !== "lobby") {
+      // Idempotent: a duplicate Start click (or a reactive re-fire) lands
+      // here after the room has already transitioned. Return the existing
+      // match instead of throwing so the client just navigates into it.
+      if (room.currentMatchId) {
+        return room.currentMatchId;
+      }
       throw new Error("Room has already moved out of lobby.");
     }
 
