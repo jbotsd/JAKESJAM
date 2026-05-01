@@ -6,6 +6,11 @@
 
 import { stepPlayer, freshPlayerMovementMemory, type PlayerMovementMemory } from "./player.js";
 import { stepProjectile } from "./projectile.js";
+import {
+  despawnSatellitesForDeadOwners,
+  spawnMissingSatellites,
+  stepSatellites,
+} from "./satellite.js";
 import { stepWeapon } from "./weapon.js";
 import { stepRound, TARGET_SCORE_DEFAULT } from "./round.js";
 import type {
@@ -15,6 +20,7 @@ import type {
   MapDefinition,
   PlayerId,
   PlayerSpawnInfo,
+  SatelliteEntity,
   SimEvent,
   StepResult,
   WorldState,
@@ -123,6 +129,7 @@ export class World {
       destructibles,
       firePatches: {},
       pickups,
+      satellites: {},
       round: {
         phase: "countdown",
         countdownRemainingMs: 3000,
@@ -160,6 +167,7 @@ function nextIdSeed(state: WorldState): number {
   for (const id of Object.keys(state.projectiles)) max = Math.max(max, Number(id));
   for (const id of Object.keys(state.destructibles)) max = Math.max(max, Number(id));
   for (const id of Object.keys(state.pickups)) max = Math.max(max, Number(id));
+  for (const id of Object.keys(state.satellites ?? {})) max = Math.max(max, Number(id));
   return max + 1;
 }
 
@@ -175,11 +183,19 @@ export function stepWithRuntime(
 ): StepResult {
   const events: SimEvent[] = [];
   const fightingPhase = state.round.phase === "fighting";
+  const allocId = (): EntityId => {
+    const id = runtime.nextEntityId;
+    runtime.nextEntityId += 1;
+    return id;
+  };
 
   // 1. Players: movement + weapon fire (only during fighting phase; other
   //    phases freeze input but still advance the round timer).
   const players: WorldState["players"] = {};
   let nextProjectiles: WorldState["projectiles"] = { ...state.projectiles };
+  // Mutable copy of satellites — fire-on-first-shot may add new entries; the
+  // satellite step later this tick rotates and ticks them.
+  let nextSatellites: WorldState["satellites"] = { ...(state.satellites ?? {}) };
 
   for (const [pid, entity] of Object.entries(state.players)) {
     const input = inputsByPlayer[pid] ?? null;
@@ -225,17 +241,32 @@ export function stepWithRuntime(
         (currKeys & FireBit) !== 0,
         { x: aimX, y: aimY },
         dtMs,
-        () => {
-          const id = runtime.nextEntityId;
-          runtime.nextEntityId += 1;
-          return id;
-        },
+        allocId,
       );
       nextEntity = fireResult.player;
       if (fireResult.fired) {
         events.push({ t: "shot-fired", playerId: pid, x: nextEntity.x, y: nextEntity.y });
         for (const p of fireResult.projectiles) {
           nextProjectiles[p.id] = p;
+        }
+        // First-fire activation for orbiting satellites: spawn the missing
+        // companions for this player. Existing satellites stay where they are.
+        if (fireResult.desiredSatelliteCount > 0) {
+          const owned: SatelliteEntity[] = [];
+          for (const sat of Object.values(nextSatellites)) {
+            if (sat.ownerId === pid) owned.push(sat);
+          }
+          if (owned.length < fireResult.desiredSatelliteCount) {
+            const newSats = spawnMissingSatellites(
+              pid,
+              fireResult.desiredSatelliteCount,
+              owned,
+              allocId,
+            );
+            for (const sat of newSats) {
+              nextSatellites[sat.id] = sat;
+            }
+          }
         }
       }
     }
@@ -248,7 +279,23 @@ export function stepWithRuntime(
     players[pid] = nextEntity;
   }
 
-  // 2. Projectiles: motion + pathing + impact + split-on-expire. All hits
+  // 2. Satellites: rotate around their owners, fire projectiles when their
+  //    cooldown expires (only during fighting phase). Their fired projectiles
+  //    drop straight into nextProjectiles so the projectile pass below sweeps
+  //    them this same tick.
+  const satStep = stepSatellites(
+    nextSatellites,
+    players,
+    state.round.phase,
+    dtMs,
+    allocId,
+  );
+  nextSatellites = satStep.satellites;
+  for (const p of satStep.projectiles) {
+    nextProjectiles[p.id] = p;
+  }
+
+  // 3. Projectiles: motion + pathing + impact + split-on-expire. All hits
   //    (direct + AOE) emit `hit-confirmed`; we apply the damage once per
   //    event into `players`. Children spawned by split get fresh ids from
   //    the runtime allocator and join the world next tick.
@@ -325,7 +372,11 @@ export function stepWithRuntime(
     }
   }
 
-  // 3. Round state machine.
+  // After projectile resolution, players whose hp hit 0 are now `alive: false`.
+  // Drop their satellites in the same tick (no zombie companions).
+  let finalSatellites = despawnSatellitesForDeadOwners(nextSatellites, players);
+
+  // 4. Round state machine.
   const roundResult = stepRound({
     state: state.round,
     players,
@@ -338,6 +389,9 @@ export function stepWithRuntime(
   let respawnedPlayers = players;
   if (roundResult.state.phase === "countdown" && state.round.phase !== "countdown") {
     respawnedPlayers = respawnAll(players, runtime.map);
+    // Round transition wipes all satellites — players reactivate them by
+    // firing again in the next round.
+    finalSatellites = {};
   }
 
   return {
@@ -347,6 +401,7 @@ export function stepWithRuntime(
       rngState,
       players: respawnedPlayers,
       projectiles: remainingProjectiles,
+      satellites: finalSatellites,
       round: roundResult.state,
     },
     events,

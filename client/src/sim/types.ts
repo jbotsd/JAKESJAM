@@ -175,6 +175,25 @@ export type PickupEntity = {
   respawnAtTick: Tick;
 };
 
+/**
+ * Auto-firing companion that orbits its owner. Position is derived each tick
+ * from owner.x/owner.y + (cos(angle), sin(angle)) * orbitRadius — the entity
+ * stores only the orbit angle so a fresh angle deterministically reproduces
+ * the position. Spawned by the `orbitingSatellites` weapon-card modifier.
+ */
+export type SatelliteEntity = {
+  id: EntityId;
+  ownerId: PlayerId;
+  /** Current orbit angle in radians; advanced each tick. */
+  angle: number;
+  /** Radius (px) the satellite orbits at, around owner.x/owner.y. */
+  orbitRadius: number;
+  /** Time until the satellite can fire again (ms). */
+  fireCooldownMs: number;
+  /** Remaining lifetime (ms). Use Infinity for permanent companions. */
+  lifetimeMs: number;
+};
+
 export type RoundState = {
   phase: RoundPhase;
   countdownRemainingMs: number;
@@ -191,6 +210,7 @@ export type WorldState = {
   destructibles: Record<EntityId, DestructibleEntity>;
   firePatches: Record<EntityId, FireEntity>;
   pickups: Record<EntityId, PickupEntity>;
+  satellites: Record<EntityId, SatelliteEntity>;
   round: RoundState;
 };
 

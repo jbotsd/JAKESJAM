@@ -46,6 +46,12 @@ export type FireResult = {
   player: PlayerEntity;
   projectiles: ProjectileEntity[];
   fired: boolean;
+  /**
+   * Number of orbiting satellites this player's resolved build expects.
+   * The World tick uses this on `fired === true` to spawn any missing
+   * satellites (first-fire activation). Always >= 0.
+   */
+  desiredSatelliteCount: number;
 };
 
 /**
@@ -70,7 +76,13 @@ export function stepWeapon(
   };
 
   if (!fireRequested || !next.alive || next.fireCooldownMs > 0) {
-    return { player: next, projectiles: [], fired: false };
+    const idleBuild = resolvePlayerBuild(next);
+    return {
+      player: next,
+      projectiles: [],
+      fired: false,
+      desiredSatelliteCount: Math.max(0, idleBuild.orbitingSatellites | 0),
+    };
   }
 
   const build = resolvePlayerBuild(next);
@@ -136,7 +148,12 @@ export function stepWeapon(
   next.fireCooldownMs = 1000 / fireRate;
   next.ammo = Math.max(0, next.ammo - 1);
 
-  return { player: next, projectiles, fired: true };
+  return {
+    player: next,
+    projectiles,
+    fired: true,
+    desiredSatelliteCount: Math.max(0, build.orbitingSatellites | 0),
+  };
 }
 
 /**
