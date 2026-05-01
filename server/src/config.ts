@@ -25,8 +25,16 @@ export const config = {
   //   flyctl secrets set GAME_SERVER_SECRET=...
   //   npx convex env set GAME_SERVER_SECRET ...
   gameServerSecret: required("GAME_SERVER_SECRET", DEV_GAME_SERVER_SECRET),
-  // Convex deployment URL — used for writing match state transitions back.
-  // Optional in dev (writes are skipped if missing).
+  // Convex deployment URL — used for writing match state transitions back
+  // (final match result, status -> complete). Optional in dev: if missing,
+  // the convex client logs a warning once and silently skips writes.
+  // Set with: flyctl secrets set CONVEX_URL=https://<deployment>.convex.cloud
   convexUrl: process.env.CONVEX_URL ?? null,
-  convexAdminToken: process.env.CONVEX_ADMIN_TOKEN ?? null,
+  // Convex admin/deploy key. Required to call mutations from a non-browser
+  // context. Optional in dev — calls fall back to unauthenticated, which
+  // works against a `npx convex dev --local` deployment.
+  // Accepts either CONVEX_DEPLOY_KEY (preferred) or CONVEX_ADMIN_TOKEN
+  // (legacy alias) for backward compat.
+  convexDeployKey:
+    process.env.CONVEX_DEPLOY_KEY ?? process.env.CONVEX_ADMIN_TOKEN ?? null,
 } as const;

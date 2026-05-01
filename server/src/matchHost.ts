@@ -13,6 +13,7 @@ import type {
   PlayerSpawnInfo,
   WorldState,
 } from "@sim/types.ts";
+import { convexClient, type ConvexId } from "./convexClient.ts";
 import {
   decodeMessage,
   encodeMessage,
@@ -58,6 +59,10 @@ export class MatchHost {
   private interval: ReturnType<typeof setInterval> | null = null;
   private readonly rngSeed: number;
   private startedAt = 0;
+  /** Set true the first time a `matchComplete` post to Convex is *initiated*.
+   *  Prevents duplicate writes (in addition to the idempotent server-side
+   *  mutation). One flag per host == one write per match lifetime. */
+  private matchCompletePosted = false;
 
   constructor(matchId: string, players: PlayerSpawnInfo[]) {
     this.matchId = matchId;
@@ -225,8 +230,50 @@ export class MatchHost {
     const result = stepWithRuntime(this.state, this.runtime, inputsByPlayer, STEP_MS);
     this.state = result.state;
 
+    if (result.matchComplete && !this.matchCompletePosted) {
+      this.matchCompletePosted = true;
+      // Fire-and-forget: never block the tick loop on a Convex round-trip.
+      // The mutation itself is idempotent and the per-host flag above is the
+      // throttle (one write per match per server process).
+      void this.postMatchResult();
+    }
+
     if (this.state.tick % SNAPSHOT_INTERVAL_TICKS === 0) {
       this.broadcastSnapshot(result.events);
+    }
+  }
+
+  /**
+   * Resolve the match's roomId via Convex, compute winner + scores from the
+   * current world state, and call `recordMatchResult`. Errors are swallowed
+   * (logged in convexClient) so a Convex outage never crashes the sim.
+   */
+  private async postMatchResult(): Promise<void> {
+    try {
+      const matchId = this.matchId as ConvexId;
+      const summary = await convexClient.getMatchSummary(matchId);
+      if (!summary) {
+        console.warn(
+          `[matchHost ${this.matchId}] cannot post result — match summary unavailable (Convex unreachable or match deleted).`,
+        );
+        return;
+      }
+      const scores = this.state.round.scores;
+      const finalScores: Record<string, number> = { ...scores };
+      const winnerPlayerId = pickWinner(scores);
+      const roundsPlayed = this.state.round.roundIndex + 1;
+      await convexClient.recordMatchResult({
+        matchId,
+        roomId: summary.roomId,
+        winnerPlayerId,
+        finalScores,
+        roundsPlayed,
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.error(
+        `[matchHost ${this.matchId}] postMatchResult crashed: ${message}`,
+      );
     }
   }
 
@@ -264,4 +311,28 @@ export class MatchHost {
   private now(): number {
     return Date.now() - this.startedAt;
   }
+}
+
+/**
+ * Pick the highest-scoring player. Returns null on a tie (or empty scores) —
+ * the schema treats null as a draw and recordMatchResult coerces it to "".
+ * Iteration is in sorted-id order to keep ties deterministic.
+ */
+function pickWinner(scores: Record<PlayerId, number>): PlayerId | null {
+  const ids = Object.keys(scores).sort();
+  let bestId: PlayerId | null = null;
+  let bestScore = -Infinity;
+  let tied = false;
+  for (const id of ids) {
+    const score = scores[id]!;
+    if (score > bestScore) {
+      bestScore = score;
+      bestId = id;
+      tied = false;
+    } else if (score === bestScore) {
+      tied = true;
+    }
+  }
+  if (bestId === null || tied) return null;
+  return bestId;
 }
