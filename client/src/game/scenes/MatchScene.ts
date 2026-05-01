@@ -59,7 +59,7 @@ const PLAYER_VISUAL_SCALE = 0.78;
 const SNAPSHOT_SEND_INTERVAL_MS = 100;
 const REMOTE_SMOOTHING = 0.26;
 const CHAOS_MODIFIERS_KEY = "jakesjam.chaosModifiers";
-const CARD_CACHE_RELOCATE_MS = 20000;
+// const CARD_CACHE_RELOCATE_MS = 20000; // ROUNDS: Removed - draft between rounds
 const REMOTE_PLAYER_TARGET_PREFIX = "remote-player:";
 // Synthetic player id used to feed the dummy target into the round state
 // machine. With only one human player + a dummy, we treat the dummy as a
@@ -153,6 +153,7 @@ export class MatchScene extends Phaser.Scene {
   private respawnText?: Phaser.GameObjects.Text;
   private readonly cardSystem = new CardSystem();
   private targetText?: Phaser.GameObjects.Text;
+  private targetGraphics?: Phaser.GameObjects.Graphics;
   private destructibleGraphics?: Phaser.GameObjects.Graphics;
   private fireGraphics?: Phaser.GameObjects.Graphics;
   private pickupGraphics?: Phaser.GameObjects.Graphics;
@@ -196,7 +197,6 @@ export class MatchScene extends Phaser.Scene {
   private parryActiveMs = 0;
   private parryCooldownMs = 0;
   private rightMouseParryWasDown = false;
-  private cardCacheRelocateTimerMs = 0;
   private lastPickupStatus = "none";
   private shieldGraphics?: Phaser.GameObjects.Graphics;
   private roomId?: string;
@@ -285,7 +285,6 @@ export class MatchScene extends Phaser.Scene {
     this.rightMouseParryWasDown = false;
     this.shotSequence = 0;
     this.ignoreLocalSnapshotsThroughSequence = 0;
-    this.cardCacheRelocateTimerMs = 0;
     this.lastPickupStatus = "none";
     this.progressionCardIds = [];
     this.projectileSystem = new ProjectileSystem(this);
@@ -651,6 +650,32 @@ export class MatchScene extends Phaser.Scene {
       // a schema change. Hooks into ensureScore so unknown winners (e.g.
       // the dummy) still get tallied and surfaced in the results overlay.
       this.addKill(winnerId);
+
+      // ROUNDS: Launch draft scene for the loser after each round
+      const loserId = winnerId === this.localPlayerId
+        ? DUMMY_TARGET_PLAYER_ID
+        : this.localPlayerId;
+
+      // Only the local player drafts (online draft sync is future work)
+      if (loserId === this.localPlayerId && !this.matchHasEnded) {
+        const ownedCards = findCardsById(crystalRoundsCards, this.progressionCardIds);
+        const draftChoices = this.cardSystem.generateDraftChoices(false, ownedCards);
+
+        if (draftChoices.length > 0) {
+          // Brief delay so round-over banner is visible first
+          this.time.delayedCall(1800, () => {
+            if (this.matchHasEnded) return;
+            this.scene.pause();
+            this.scene.launch("DraftScene", {
+              availableCards: draftChoices,
+              currentBuild: ownedCards,
+              roundNumber: this.roundState.roundIndex,
+              playerBehind: false,
+              localPlayerId: this.localPlayerId,
+            });
+          });
+        }
+      }
     }
   }
 
@@ -2229,11 +2254,7 @@ export class MatchScene extends Phaser.Scene {
       this.syncEffectiveMaxHealth(false);
     }
 
-    this.cardCacheRelocateTimerMs += deltaMs;
-    if (this.cardCacheRelocateTimerMs >= CARD_CACHE_RELOCATE_MS) {
-      this.cardCacheRelocateTimerMs = 0;
-      this.relocateCardCaches();
-    }
+    // ROUNDS: Card cache relocation removed - draft between rounds
 
     let changed = false;
     for (const pickup of this.pickups) {
@@ -2284,60 +2305,11 @@ export class MatchScene extends Phaser.Scene {
       return;
     }
 
-    if (pickup.kind === "damage-amp") {
-      this.damageAmpMs = Math.max(this.damageAmpMs, pickup.durationMs ?? 0);
-      this.lastPickupStatus = "damage up";
-      this.floatPickupText(pickup, "damage up", "#fb7185");
-      return;
-    }
-
-    if (pickup.kind === "speed-boost") {
-      this.speedBoostMs = Math.max(this.speedBoostMs, pickup.durationMs ?? 0);
-      this.lastPickupStatus = "speed up";
-      this.floatPickupText(pickup, "speed up", "#67e8f9");
-      return;
-    }
-
-    if (pickup.kind === "melee-mode") {
-      this.meleeModeMs = Math.max(this.meleeModeMs, pickup.durationMs ?? 0);
-      this.lastPickupStatus = "melee mode";
-      this.floatPickupText(pickup, "melee mode", "#f97316");
-      return;
-    }
-
-    if (pickup.kind === "slow-trap") {
-      this.slowDebuffMs = Math.max(this.slowDebuffMs, pickup.durationMs ?? 0);
-      this.lastPickupStatus = "slowed";
-      this.floatPickupText(pickup, "slowed", "#bfdbfe");
-      return;
-    }
-
-    if (pickup.kind === "vulnerability-trap") {
-      this.vulnerabilityMs = Math.max(this.vulnerabilityMs, pickup.durationMs ?? 0);
-      this.lastPickupStatus = "vulnerable";
-      this.floatPickupText(pickup, "vulnerable", "#fca5a5");
-      return;
-    }
-
-    if (pickup.kind === "block-jammer") {
-      this.blockJammerMs = Math.max(this.blockJammerMs, pickup.durationMs ?? 0);
-      this.shieldActive = false;
-      this.parryActiveMs = 0;
-      this.lastPickupStatus = "no block";
-      this.floatPickupText(pickup, "no block", "#c084fc");
-      return;
-    }
-
-    if (pickup.kind === "boss-core") {
-      this.activateBossMode(pickup);
-      return;
-    }
-
-    this.overchargeMs = Math.max(this.overchargeMs, pickup.durationMs ?? 0);
-    this.lastPickupStatus = "overcharge";
-    this.floatPickupText(pickup, "overcharge", "#ffd166");
+    // ROUNDS: All other pickups removed - draft provides power progression
+    return;
   }
 
+  // @ts-ignore ROUNDS: Boss mode pickup removed but kept for future use
   private activateBossMode(pickup: ArenaPickup) {
     this.bossModeMs = Math.max(this.bossModeMs, pickup.durationMs ?? 0);
     this.bossShotIndex = 0;
@@ -2347,39 +2319,14 @@ export class MatchScene extends Phaser.Scene {
     this.floatPickupText(pickup, "boss mode", "#fff7d6");
   }
 
-  private relocateCardCaches() {
-    const cardCaches = this.pickups.filter((pickup) => pickup.kind === "card-cache");
-    for (const [index, pickup] of cardCaches.entries()) {
-      pickup.position = this.getRandomCardCachePosition(index);
-      pickup.available = true;
-      pickup.respawnRemainingMs = 0;
-    }
-    this.updatePickupVisuals();
-  }
-
-  private getRandomCardCachePosition(index: number): Vec2 {
-    const spawn = Phaser.Utils.Array.GetRandom(boxworksWorld.spawns);
-    const angle = seededUnit(index + Math.floor(this.time.now / CARD_CACHE_RELOCATE_MS), index, 300) * Math.PI * 2;
-    const radius = 34 + seededUnit(index, Math.floor(this.time.now / 1000), 301) * 48;
-    return {
-      x: Phaser.Math.Clamp(spawn.x + Math.cos(angle) * radius, 80, boxworksWorld.size.x - 80),
-      y: Phaser.Math.Clamp(spawn.y + Math.sin(angle) * radius, 140, boxworksWorld.size.y - 70),
-    };
-  }
+  // ROUNDS: relocateCardCaches() and getRandomCardCachePosition() removed
+  // Cards are now drafted between rounds, not collected in arena
 
   private collectProgressionCard(pickup: ArenaPickup) {
-    const card = this.rollProgressionCard();
-    if (!card) {
-      this.overchargeMs = Math.max(this.overchargeMs, 4200);
-      this.lastPickupStatus = "card capped";
-      this.floatPickupText(pickup, "card capped / overcharge", "#f0abfc");
-      return;
-    }
-
-    this.progressionCardIds.push(card.id);
-    this.rebuildWeaponBuild();
-    this.lastPickupStatus = `card ${card.name}`;
-    this.floatPickupText(pickup, card.name, card.visual?.glowColor ?? "#f0abfc");
+    // ROUNDS: Card collection removed - all progression through between-round draft
+    this.overchargeMs = Math.max(this.overchargeMs, 4200);
+    this.lastPickupStatus = "draft between rounds";
+    this.floatPickupText(pickup, "draft disabled", "#f0abfc");
   }
 
   private rollProgressionCard(): CardDefinition | undefined {
@@ -2967,15 +2914,16 @@ function pickupColor(kind: PickupKind): number {
   const colors: Record<PickupKind, number> = {
     "health-shard": 0x86efac,
     "shield-cell": 0x93c5fd,
-    "overcharge-core": 0xffd166,
-    "card-cache": 0xf0abfc,
-    "damage-amp": 0xfb7185,
-    "speed-boost": 0x67e8f9,
-    "melee-mode": 0xf97316,
-    "slow-trap": 0xbfdbfe,
-    "vulnerability-trap": 0xfca5a5,
-    "block-jammer": 0xc084fc,
-    "boss-core": 0xfff7d6,
+    // ROUNDS: All other pickups removed, grayed out
+    "overcharge-core": 0x666666,
+    "card-cache": 0x666666,
+    "damage-amp": 0x666666,
+    "speed-boost": 0x666666,
+    "melee-mode": 0x666666,
+    "slow-trap": 0x666666,
+    "vulnerability-trap": 0x666666,
+    "block-jammer": 0x666666,
+    "boss-core": 0x666666,
   };
   return colors[kind];
 }
