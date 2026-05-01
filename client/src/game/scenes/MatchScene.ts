@@ -222,6 +222,19 @@ export class MatchScene extends Phaser.Scene {
   private hudSystem?: HudSystem;
   private roundBannerSystem?: RoundBanner;
   private deathOverlay?: DeathOverlay;
+  // Element status VFX tracking (wall-clock ms from Date.now())
+  private localBurnUntilMs = 0;
+  private localFreezeUntilMs = 0;
+  private localBurnSparkTimerMs = 0;
+  private localFreezeShardTimerMs = 0;
+  // Per-remote/target element status VFX timers (playerId → expiry ms)
+  private readonly remoteBurnUntilMs = new Map<string, number>();
+  private readonly remoteFreezeUntilMs = new Map<string, number>();
+  private readonly remoteStatusSparkTimerMs = new Map<string, number>();
+  // Practice target status
+  private targetBurnUntilMs = 0;
+  private targetFreezeUntilMs = 0;
+  private targetBurnSparkTimerMs = 0;
 
   constructor() {
     super(SceneKeys.Match);
@@ -395,6 +408,7 @@ export class MatchScene extends Phaser.Scene {
     this.fireCooldownMs = Math.max(0, this.fireCooldownMs - scaledDeltaMs);
     this.tryFireWeapon();
     this.updateTarget(scaledDeltaMs);
+    this.tickTargetStatusVfx(deltaMs);
     this.updateChaosHazards(scaledDeltaMs);
     this.updateFirePatches(scaledDeltaMs);
 
@@ -847,6 +861,35 @@ export class MatchScene extends Phaser.Scene {
       maxHealth: this.playerMaxHealth,
     });
     this.drawShield();
+    this.tickLocalStatusVfx(deltaMs, this.playerBody.position);
+  }
+
+  private tickLocalStatusVfx(deltaMs: number, position: Vec2): void {
+    const now = Date.now();
+    const burning = this.localBurnUntilMs > now;
+    const frozen = this.localFreezeUntilMs > now;
+
+    if (burning) {
+      this.localBurnSparkTimerMs += deltaMs;
+      if (this.localBurnSparkTimerMs >= 80) {
+        this.localBurnSparkTimerMs = 0;
+        this.spawnBurnSpark(position);
+      }
+    } else {
+      this.localBurnSparkTimerMs = 0;
+    }
+
+    if (frozen) {
+      this.localFreezeShardTimerMs += deltaMs;
+      if (this.localFreezeShardTimerMs >= 160) {
+        this.localFreezeShardTimerMs = 0;
+        this.spawnFreezeShard(position);
+        this.spawnFreezeShard(position);
+        this.spawnFrostRing(position);
+      }
+    } else {
+      this.localFreezeShardTimerMs = 0;
+    }
   }
 
   private playMovementSounds(wasGrounded: boolean) {
@@ -1004,6 +1047,64 @@ export class MatchScene extends Phaser.Scene {
         health: snapshot?.health ?? character.maxHealth,
         maxHealth: Math.max(character.maxHealth, snapshot?.health ?? character.maxHealth),
       });
+
+      this.tickRemoteStatusVfx(playerId, deltaMs, targetPosition);
+    }
+  }
+
+  private tickRemoteStatusVfx(playerId: string, deltaMs: number, position: Vec2): void {
+    const now = Date.now();
+    const burnUntil = this.remoteBurnUntilMs.get(playerId) ?? 0;
+    const freezeUntil = this.remoteFreezeUntilMs.get(playerId) ?? 0;
+    const burning = burnUntil > now;
+    const frozen = freezeUntil > now;
+
+    const sparkTimer = this.remoteStatusSparkTimerMs.get(playerId) ?? 0;
+    let nextTimer = sparkTimer + deltaMs;
+
+    if (burning && nextTimer >= 80) {
+      this.spawnBurnSpark(position);
+      nextTimer = 0;
+    } else if (frozen && nextTimer >= 160) {
+      this.spawnFreezeShard(position);
+      this.spawnFreezeShard(position);
+      this.spawnFrostRing(position);
+      nextTimer = 0;
+    }
+
+    if (!burning && !frozen) {
+      this.remoteStatusSparkTimerMs.delete(playerId);
+    } else {
+      this.remoteStatusSparkTimerMs.set(playerId, nextTimer);
+    }
+  }
+
+  private tickTargetStatusVfx(deltaMs: number): void {
+    if (!this.target.alive) return;
+    const now = Date.now();
+    const burning = this.targetBurnUntilMs > now;
+    const frozen = this.targetFreezeUntilMs > now;
+    const pos = this.target.position;
+
+    if (burning) {
+      this.targetBurnSparkTimerMs += deltaMs;
+      if (this.targetBurnSparkTimerMs >= 80) {
+        this.targetBurnSparkTimerMs = 0;
+        this.spawnBurnSpark(pos);
+      }
+    } else {
+      this.targetBurnSparkTimerMs = 0;
+    }
+
+    if (frozen) {
+      // Reuse the local freeze shard timer for the target
+      this.localFreezeShardTimerMs += deltaMs;
+      if (this.localFreezeShardTimerMs >= 160) {
+        this.localFreezeShardTimerMs = 0;
+        this.spawnFreezeShard(pos);
+        this.spawnFreezeShard(pos);
+        this.spawnFrostRing(pos);
+      }
     }
   }
 
@@ -1415,6 +1516,10 @@ export class MatchScene extends Phaser.Scene {
         this.audio?.play("hit");
         this.damageTarget(hit.damage, hit);
         this.applyImpactArea(hit);
+        this.applyElementStatusToTarget(hit);
+        if (hit.element === "lightning") {
+          this.spawnLightningChainArc(hit.position, this.target.position);
+        }
         continue;
       }
 
@@ -1431,11 +1536,169 @@ export class MatchScene extends Phaser.Scene {
         this.audio?.play("hit");
         this.damageRemotePlayer(remotePlayerId, hit);
         this.applyImpactArea(hit);
+        this.applyElementStatusToRemote(remotePlayerId, hit);
+        if (hit.element === "lightning") {
+          const snapshot = this.remoteSnapshots.get(remotePlayerId);
+          if (snapshot) {
+            this.spawnLightningChainArc(hit.position, snapshot.position);
+          }
+        }
       }
     }
 
     this.updateTargetVisuals();
     this.updateDestructibleVisuals();
+  }
+
+  // ---- Element status effect helpers ----
+
+  private applyElementStatusToTarget(hit: ProjectileHit): void {
+    const now = Date.now();
+    if (hit.element === "fire") {
+      this.targetBurnUntilMs = Math.max(this.targetBurnUntilMs, now + 3000);
+    } else if (hit.element === "ice") {
+      this.targetFreezeUntilMs = Math.max(this.targetFreezeUntilMs, now + 1000);
+    }
+  }
+
+  private applyElementStatusToRemote(playerId: string, hit: ProjectileHit): void {
+    const now = Date.now();
+    if (hit.element === "fire") {
+      this.remoteBurnUntilMs.set(playerId, Math.max(this.remoteBurnUntilMs.get(playerId) ?? 0, now + 3000));
+    } else if (hit.element === "ice") {
+      this.remoteFreezeUntilMs.set(playerId, Math.max(this.remoteFreezeUntilMs.get(playerId) ?? 0, now + 1000));
+    }
+  }
+
+  /**
+   * Spawns a short-lived rising spark above `position` to indicate active burn.
+   * Called from per-frame update when burnUntilMs > Date.now().
+   */
+  private spawnBurnSpark(position: Vec2): void {
+    const COLOR_FIRE = 0xff7a18;
+    const COLOR_FIRE_HOT = 0xfde68a;
+    const hot = Math.random() < 0.35;
+    const color = hot ? COLOR_FIRE_HOT : COLOR_FIRE;
+    const ox = (Math.random() - 0.5) * 28;
+    const spark = this.add.rectangle(position.x + ox, position.y - 10, 3, 7, color, 0.9);
+    spark.rotation = (Math.random() - 0.5) * 0.7;
+    this.tweens.add({
+      targets: spark,
+      y: spark.y - 26 - Math.random() * 20,
+      x: spark.x + (Math.random() - 0.5) * 14,
+      alpha: 0,
+      scaleX: 0.4,
+      scaleY: 0.4,
+      duration: 420 + Math.random() * 200,
+      ease: "Sine.easeOut",
+      onComplete: () => spark.destroy(),
+    });
+  }
+
+  /**
+   * Single-frame frost ring pulse at `position` — subtle pulsing ice hex.
+   */
+  private spawnFrostRing(position: Vec2): void {
+    const COLOR_ICE = 0x93c5fd;
+    const ring = this.add.circle(position.x, position.y, 18, COLOR_ICE, 0.0);
+    ring.setStrokeStyle(2, COLOR_ICE, 0.52);
+    this.tweens.add({
+      targets: ring,
+      radius: 32,
+      alpha: 0,
+      duration: 320,
+      ease: "Sine.easeOut",
+      onComplete: () => ring.destroy(),
+    });
+  }
+
+  /**
+   * Spawns a brief frost facet shard drifting outward from `position`
+   * to indicate active freeze.
+   */
+  private spawnFreezeShard(position: Vec2): void {
+    const COLOR_ICE = 0x93c5fd;
+    const angle = Math.random() * Math.PI * 2;
+    const dist = 14 + Math.random() * 18;
+    const shard = this.add.rectangle(
+      position.x + Math.cos(angle) * dist,
+      position.y + Math.sin(angle) * dist,
+      4,
+      9,
+      COLOR_ICE,
+      0.72,
+    );
+    shard.rotation = angle + Math.PI / 2;
+    this.tweens.add({
+      targets: shard,
+      x: shard.x + Math.cos(angle) * 12,
+      y: shard.y + Math.sin(angle) * 12,
+      alpha: 0,
+      duration: 520,
+      ease: "Sine.easeOut",
+      onComplete: () => shard.destroy(),
+    });
+  }
+
+  /**
+   * Draw a jagged lightning bolt arc from `from` to `to`.
+   * 3 fixed midpoint perturbations, tween-faded over 130ms.
+   * Additive-style: bright yellow, short-lived, geometric.
+   */
+  private spawnLightningChainArc(from: Vec2, to: Vec2): void {
+    const COLOR_LIGHTNING = 0xfef08a;
+    const COLOR_GLOW = 0xfbbf24;
+    const graphics = this.add.graphics();
+    graphics.setBlendMode(Phaser.BlendModes.ADD);
+
+    const mx = (from.x + to.x) / 2;
+    const my = (from.y + to.y) / 2;
+    // 3 midpoints with fixed perpendicular offsets derived from tick (deterministic visual)
+    const dx = to.x - from.x;
+    const dy = to.y - from.y;
+    const len = Math.max(1, Math.hypot(dx, dy));
+    const px = -dy / len;
+    const py = dx / len;
+
+    // Use Math.random for visual jag — this is client-only, not sim state
+    const offsets = [
+      (Math.random() - 0.5) * len * 0.22,
+      (Math.random() - 0.5) * len * 0.18,
+      (Math.random() - 0.5) * len * 0.22,
+    ];
+    const pts: Vec2[] = [
+      from,
+      { x: from.x + dx * 0.25 + px * offsets[0], y: from.y + dy * 0.25 + py * offsets[0] },
+      { x: mx + px * offsets[1], y: my + py * offsets[1] },
+      { x: from.x + dx * 0.75 + px * offsets[2], y: from.y + dy * 0.75 + py * offsets[2] },
+      to,
+    ];
+
+    // Glow pass (thick, low alpha)
+    graphics.lineStyle(5, COLOR_GLOW, 0.3);
+    graphics.beginPath();
+    graphics.moveTo(pts[0].x, pts[0].y);
+    for (let i = 1; i < pts.length; i++) {
+      graphics.lineTo(pts[i].x, pts[i].y);
+    }
+    graphics.strokePath();
+
+    // Core pass (thin, bright)
+    graphics.lineStyle(2, COLOR_LIGHTNING, 0.92);
+    graphics.beginPath();
+    graphics.moveTo(pts[0].x, pts[0].y);
+    for (let i = 1; i < pts.length; i++) {
+      graphics.lineTo(pts[i].x, pts[i].y);
+    }
+    graphics.strokePath();
+
+    this.tweens.add({
+      targets: graphics,
+      alpha: 0,
+      duration: 130,
+      ease: "Sine.easeIn",
+      onComplete: () => graphics.destroy(),
+    });
   }
 
   private damageRemotePlayer(playerId: string, hit: ProjectileHit) {

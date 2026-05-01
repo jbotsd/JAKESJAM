@@ -619,6 +619,18 @@ export function stepWithRuntime(
                 damage: chainDmg,
                 sourceProjectileId: ev.sourceProjectileId,
               });
+              // Emit chain-hit so clients can render the lightning bolt arc.
+              // Positions come from player entities at hit-time — deterministic.
+              events.push({
+                t: "chain-hit",
+                victimId: ev.victimId,
+                chainTargetId: bestId,
+                fromX: nextVictim.x,
+                fromY: nextVictim.y,
+                toX: target.x,
+                toY: target.y,
+                damage: chainDmg,
+              });
             }
           }
         }

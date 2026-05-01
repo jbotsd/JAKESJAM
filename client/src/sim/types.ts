@@ -387,6 +387,22 @@ export type SimEvent =
       playerId: PlayerId;
       cardId: string;
       autoPicked: boolean;
+    }
+  /**
+   * Emitted when a lightning-element projectile chains damage to a secondary
+   * target. Carries world-space positions for the primary hit and chain target
+   * so clients can draw a bolt arc without needing to look up player positions.
+   * Deterministic: positions come from the player entities at hit-time.
+   */
+  | {
+      t: 'chain-hit';
+      victimId: PlayerId;
+      chainTargetId: PlayerId;
+      fromX: number;
+      fromY: number;
+      toX: number;
+      toY: number;
+      damage: number;
     };
 
 export type StepResult = {

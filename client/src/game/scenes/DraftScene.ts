@@ -92,6 +92,12 @@ export class DraftScene extends Phaser.Scene {
       const bg = this.add.rectangle(0, 0, cardWidth - 10, cardHeight - 10, 0x1f2937);
       cardContainer.add(bg);
 
+      // Element accent: tint the border with element color if card has one
+      const cardElement = card.modifier?.projectile?.element;
+      if (cardElement && cardElement !== "neutral" && cardElement !== "crystal") {
+        border.setStrokeStyle(5, this.getElementColor(cardElement));
+      }
+
       // Card icon placeholder
       const iconBg = this.add.rectangle(0, -90, 100, 100, this.getRarityColor(card.rarity));
       iconBg.setAngle(45);
@@ -181,6 +187,20 @@ export class DraftScene extends Phaser.Scene {
         this.scene.stop(SceneKeys.Draft);
       }
     });
+  }
+
+  private getElementColor(element: string): number {
+    const colors: Record<string, number> = {
+      fire: 0xff7a18,
+      ice: 0x93c5fd,
+      lightning: 0xfef08a,
+      void: 0xa78bfa,
+      radiant: 0xfff7d6,
+      electric: 0xfef08a,
+      toxic: 0x86efac,
+      explosive: 0xfb7185,
+    };
+    return colors[element] ?? 0x9ca3af;
   }
 
   private getRarityColor(rarity: string): number {
