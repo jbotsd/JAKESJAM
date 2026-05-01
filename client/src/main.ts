@@ -204,6 +204,22 @@ window.addEventListener("jakesjam:chaos-change", (event) => {
   game.scene.start("MainMenuScene", matchEvent.detail);
 });
 
+// Fired by MatchScene's results overlay when the player picks "Back to
+// Lobby" after a match. We stop the match scene, surface the splash, and
+// re-bind the menu music. The lobby controller keeps its own state, so the
+// player lands back on the same room/character/chaos config they started
+// from.
+window.addEventListener("jakesjam:return-to-lobby", () => {
+  if (game.scene.isActive("MatchScene")) {
+    game.scene.stop("MatchScene");
+  }
+  if (game.scene.isActive("OnlineMatchScene")) {
+    game.scene.stop("OnlineMatchScene");
+  }
+  showSplash();
+  startMenuMusic();
+});
+
 window.addEventListener("beforeunload", () => {
   lobbyController.destroy();
   game.destroy(true);
@@ -219,6 +235,10 @@ function queryRequired<T extends HTMLElement>(selector: string): T {
 
 function hideSplash() {
   splash.hidden = true;
+}
+
+function showSplash() {
+  splash.hidden = false;
 }
 
 function restoreOptions() {
