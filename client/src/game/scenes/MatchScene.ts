@@ -33,6 +33,7 @@ import type {
   MapDefinition,
   PickupKind,
   Vec2,
+  WeaponBucket,
 } from "../types/game";
 import type { MatchPlayerSnapshot, RoomPlayer } from "../types/net";
 
@@ -49,6 +50,7 @@ const boxworksWorld = expandMap(boxworks, WORLD_COLUMNS, WORLD_ROWS);
 const CHAOS_MODIFIERS_KEY = "jakesjam.chaosModifiers";
 const CARD_CACHE_RESPAWN_MS = 18000;
 const REMOTE_PLAYER_TARGET_PREFIX = "remote-player:";
+const MUTATOR_ROLL_BUCKET_PRIORITY = ["delivery", "quantity", "shape", "trajectory", "impact", "element"] as const;
 
 type MatchSceneInitData = {
   roomId?: string;
@@ -861,6 +863,7 @@ export class MatchScene extends Phaser.Scene {
 
     this.playerRespawnPending = true;
     this.playerBody.velocity = { x: 0, y: 0 };
+    this.resetWeaponProgression();
     this.audio?.play("explosion");
     this.spawnPlayerDeathExplosion(this.playerBody.position);
     this.showDeathPopup();
@@ -1459,27 +1462,25 @@ export class MatchScene extends Phaser.Scene {
     }
 
     const occupiedBuckets = new Set(this.weaponBuild.occupiedBuckets);
-    const eligible = crystalRoundsCards.filter((card) => {
-      if (!card.modifier) {
-        return false;
-      }
+    const eligible = crystalRoundsCards.filter((card) => isEligibleMutatorCard(card, ownedCounts, occupiedBuckets));
+    const highSignalCards = eligible.filter((card) => isVisibleWeaponMutator(card));
+    const preferredBucket = MUTATOR_ROLL_BUCKET_PRIORITY.find(
+      (bucket) => !occupiedBuckets.has(bucket),
+    );
+    const preferredCards = preferredBucket
+      ? highSignalCards.filter((card) => card.buckets?.includes(preferredBucket))
+      : [];
+    const rollPool = preferredCards.length > 0
+      ? preferredCards
+      : highSignalCards.length > 0
+        ? highSignalCards
+        : eligible;
 
-      const ownedCount = ownedCounts.get(card.id) ?? 0;
-      if (card.unique && ownedCount > 0) {
-        return false;
-      }
-      if (ownedCount >= (card.maxStacks ?? 1)) {
-        return false;
-      }
-
-      return (card.buckets ?? []).every((bucket) => !occupiedBuckets.has(bucket));
-    });
-
-    if (eligible.length === 0) {
+    if (rollPool.length === 0) {
       return undefined;
     }
 
-    return Phaser.Utils.Array.GetRandom(eligible);
+    return Phaser.Utils.Array.GetRandom(rollPool);
   }
 
   private floatPickupText(pickup: ArenaPickup, label: string, color: string) {
@@ -1688,12 +1689,24 @@ export class MatchScene extends Phaser.Scene {
     this.updateDebugText();
   }
 
-  private rebuildWeaponBuild() {
+  private rebuildWeaponBuild(playSound = true) {
     const cards = findCardsById(crystalRoundsCards, this.progressionCardIds);
     this.weaponBuild = createWeaponBuild(starterWeapon, cards);
     this.fireCooldownMs = 0;
-    this.audio?.play("card");
+    if (playSound) {
+      this.audio?.play("card");
+    }
     this.updateWeaponOverlay();
+  }
+
+  private resetWeaponProgression() {
+    if (this.progressionCardIds.length === 0) {
+      return;
+    }
+
+    this.progressionCardIds = [];
+    this.lastPickupStatus = "weapon reset";
+    this.rebuildWeaponBuild(false);
   }
 
   private isOutOfBounds(): boolean {
@@ -2193,6 +2206,43 @@ function pickupColor(kind: PickupKind): number {
     "card-cache": 0xf0abfc,
   };
   return colors[kind];
+}
+
+function isEligibleMutatorCard(
+  card: CardDefinition,
+  ownedCounts: Map<string, number>,
+  occupiedBuckets: Set<WeaponBucket>,
+): boolean {
+  if (!card.modifier || card.id === "crystal-volley") {
+    return false;
+  }
+
+  const ownedCount = ownedCounts.get(card.id) ?? 0;
+  if (card.unique && ownedCount > 0) {
+    return false;
+  }
+  if (ownedCount >= (card.maxStacks ?? 1)) {
+    return false;
+  }
+
+  return (card.buckets ?? []).every((bucket) => !occupiedBuckets.has(bucket));
+}
+
+function isVisibleWeaponMutator(card: CardDefinition): boolean {
+  const buckets = card.buckets ?? [];
+  if (buckets.some((bucket) => MUTATOR_ROLL_BUCKET_PRIORITY.includes(bucket as typeof MUTATOR_ROLL_BUCKET_PRIORITY[number]))) {
+    return true;
+  }
+
+  const projectile = card.modifier?.projectile;
+  return Boolean(
+    card.modifier?.delivery ||
+      projectile?.shape ||
+      projectile?.count ||
+      projectile?.pathing ||
+      projectile?.impact ||
+      projectile?.element,
+  );
 }
 
 function remotePlayerTargetId(playerId: string): string {

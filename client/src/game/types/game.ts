@@ -49,6 +49,7 @@ export type ImpactBehavior =
   | "slow-field";
 export type WeaponBucket =
   | "delivery"
+  | "shape"
   | "trajectory"
   | "quantity"
   | "impact"

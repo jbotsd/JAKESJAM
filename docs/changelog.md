@@ -2,6 +2,9 @@
 
 ## v0.21 - 2026-05-01
 
+- Added louder card-cache weapon identity rolls: explicit circle, triangle, square, orb, and five-projectile spray mutators.
+- Card caches now prioritize visible weapon changes such as delivery, projectile count, shape, pathing, impact, and element before subtle utility cards.
+- Player death now resets collected weapon mutators back to the default starter weapon for the next life.
 - Changed the weapon model back to the intended progression rule: every player starts from the default starter weapon and card pickups add mutators over time.
 - Added card-cache pickups to the arena so collected cards rebuild the current weapon into divergent player-specific builds.
 - Added deterministic variation to the 5x3 Boxworks grid so cells mirror, jitter, resize platforms, and place pickups/destructibles differently instead of being direct copies.
