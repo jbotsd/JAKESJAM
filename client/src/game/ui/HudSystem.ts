@@ -36,8 +36,11 @@ export type HudVitals = {
   jetpackFuel?: number;
   /** Active buff/debuff chip descriptors */
   chips: HudChip[];
-  /** Short card names in pick order */
-  cardNames: string[];
+  /**
+   * Short card names in pick order. No longer rendered in the HUD —
+   * cards are visible during the draft overlay. Kept for type compat.
+   */
+  cardNames?: string[];
   isDead: boolean;
 };
 
@@ -95,8 +98,10 @@ export class HudSystem {
   private hpLabel!: Phaser.GameObjects.Text;
   private shLabel!: Phaser.GameObjects.Text;
   private jetLabel!: Phaser.GameObjects.Text;
-  private buffRow!: Phaser.GameObjects.Text;
-  private cardsRow!: Phaser.GameObjects.Text;
+  private chipGraphics!: Phaser.GameObjects.Graphics;
+  private chipTexts: Phaser.GameObjects.Text[] = [];
+  // Cache so we don't re-call setColor every frame (string allocation).
+  private hpLabelColorCache = 0;
 
   // Top-center elements
   private timerText!: Phaser.GameObjects.Text;
@@ -134,8 +139,9 @@ export class HudSystem {
     this.hpLabel.destroy();
     this.shLabel.destroy();
     this.jetLabel.destroy();
-    this.buffRow.destroy();
-    this.cardsRow.destroy();
+    this.chipGraphics.destroy();
+    for (const t of this.chipTexts) t.destroy();
+    this.chipTexts = [];
     this.timerText.destroy();
     this.scoreText.destroy();
     this.vignette.destroy();
@@ -187,25 +193,10 @@ export class HudSystem {
       .setScrollFactor(0)
       .setDepth(depth + 2);
 
-    this.buffRow = s.add
-      .text(PAD_LEFT, PAD_TOP + LINE_H * 3 + 4, "", {
-        ...fontBase,
-        fontSize: "10px",
-        color: "#f7fbff",
-        wordWrap: { width: PANEL_W - PANEL_PAD * 2, useAdvancedWrap: true },
-      })
-      .setScrollFactor(0)
-      .setDepth(depth + 2);
-
-    this.cardsRow = s.add
-      .text(PAD_LEFT, PAD_TOP + LINE_H * 4 + 6, "", {
-        ...fontBase,
-        fontSize: "9px",
-        color: "#caffea",
-        wordWrap: { width: PANEL_W - PANEL_PAD * 2, useAdvancedWrap: true },
-      })
-      .setScrollFactor(0)
-      .setDepth(depth + 2);
+    // Chip strip — real rounded Graphics chips (color-coded) with their
+    // own label Text pool that grows on demand.
+    this.chipGraphics = s.add.graphics();
+    this.chipGraphics.setScrollFactor(0).setDepth(depth + 1);
 
     // Top-center: timer + score
     this.timerText = s.add
@@ -242,7 +233,7 @@ export class HudSystem {
     const g = this.panelBg;
     g.clear();
     // Estimate panel height based on max content
-    const panelH = 110;
+    const panelH = 94;
     g.fillStyle(C_PANEL_BG, 0.78);
     g.fillRoundedRect(PAD_LEFT - PANEL_PAD, PAD_TOP - PANEL_PAD, PANEL_W, panelH, 8);
     g.lineStyle(1, C_PANEL_STROKE, 0.9);
@@ -267,8 +258,7 @@ export class HudSystem {
       this.hpLabel.setText("");
       this.shLabel.setVisible(false);
       this.jetLabel.setVisible(false);
-      this.buffRow.setText("");
-      this.cardsRow.setText("");
+      this.drawChips([]);
       return;
     }
 
@@ -276,9 +266,11 @@ export class HudSystem {
     const hpRatio = Phaser.Math.Clamp(v.health / v.maxHealth, 0, 1);
     const hpColor = hpRatio > 0.55 ? C_HP_GOOD : hpRatio > 0.28 ? C_HP_WARN : C_HP_CRIT;
     this.drawBar(g, PAD_LEFT, PAD_TOP, BAR_W, BAR_H, hpRatio, hpColor);
-    this.hpLabel.setColor(numToHex(hpColor));
+    if (hpColor !== this.hpLabelColorCache) {
+      this.hpLabel.setColor(numToHex(hpColor));
+      this.hpLabelColorCache = hpColor;
+    }
     this.hpLabel.setText(`${Math.ceil(v.health)} / ${v.maxHealth}`);
-    this.hpLabel.setY(PAD_TOP + 1);
 
     // ── Shield bar ──────────────────────────────────────────────────────────
     const shMax = v.shieldMaxCharge ?? 0;
@@ -301,22 +293,66 @@ export class HudSystem {
       this.jetLabel.setVisible(false);
     }
 
-    // ── Buff strip ──────────────────────────────────────────────────────────
-    if (v.chips.length > 0) {
-      const parts = v.chips.map((c) => {
-        const prefix = c.isDebuff ? "↓" : "↑";
-        return `${prefix}${c.label} ${c.remainingSec.toFixed(1)}s`;
-      });
-      this.buffRow.setText(parts.join("  "));
-    } else {
-      this.buffRow.setText("");
+    // ── Chip strip (real Graphics chips, not concatenated text) ─────────────
+    this.drawChips(v.chips);
+  }
+
+  // ─── Chip rendering ───────────────────────────────────────────────────────
+
+  private drawChips(chips: HudChip[]): void {
+    const g = this.chipGraphics;
+    g.clear();
+
+    // Hide unused pooled labels
+    while (this.chipTexts.length < chips.length) {
+      const t = this.scene.add
+        .text(0, 0, "", {
+          fontFamily: "Inter, Arial, sans-serif",
+          fontSize: "10px",
+          fontStyle: "900",
+          color: "#05080f",
+        })
+        .setScrollFactor(0)
+        .setDepth(this.panelBg.depth + 2)
+        .setOrigin(0, 0.5);
+      this.chipTexts.push(t);
+    }
+    for (let i = chips.length; i < this.chipTexts.length; i += 1) {
+      this.chipTexts[i]!.setVisible(false);
     }
 
-    // ── Cards row ───────────────────────────────────────────────────────────
-    if (v.cardNames.length > 0) {
-      this.cardsRow.setText(v.cardNames.join("  ·  "));
-    } else {
-      this.cardsRow.setText("");
+    let cx = PAD_LEFT;
+    let cy = PAD_TOP + LINE_H * 3 + 2;
+    const chipH = 16;
+    const chipPadX = 7;
+    const gap = 4;
+    const maxX = PAD_LEFT + (PANEL_W - PANEL_PAD * 2);
+
+    for (let i = 0; i < chips.length; i += 1) {
+      const chip = chips[i]!;
+      const label = `${chip.isDebuff ? "↓" : "↑"}${chip.label} ${chip.remainingSec.toFixed(1)}s`;
+      const text = this.chipTexts[i]!;
+      text.setText(label);
+      const textW = Math.ceil(text.width);
+      const chipW = textW + chipPadX * 2;
+      // Wrap to next row
+      if (cx + chipW > maxX && cx !== PAD_LEFT) {
+        cx = PAD_LEFT;
+        cy += chipH + gap;
+      }
+      // Body
+      g.fillStyle(chip.color, chip.isDebuff ? 0.78 : 0.92);
+      g.fillRoundedRect(cx, cy, chipW, chipH, chipH / 2);
+      // Subtle inner highlight strip
+      g.fillStyle(0xffffff, 0.18);
+      g.fillRoundedRect(cx, cy, chipW, Math.floor(chipH / 2), chipH / 2);
+      // Border
+      g.lineStyle(1, 0x05080f, chip.isDebuff ? 0.4 : 0.55);
+      g.strokeRoundedRect(cx, cy, chipW, chipH, chipH / 2);
+
+      text.setPosition(cx + chipPadX, cy + chipH / 2);
+      text.setVisible(true);
+      cx += chipW + gap;
     }
   }
 
