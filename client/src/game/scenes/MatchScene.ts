@@ -48,7 +48,9 @@ import type {
   ChaosModifierId,
   DestructibleKind,
   ElementType,
+  MatchId,
   PickupKind,
+  RoomId,
   Vec2,
 } from "../types/game";
 import { CardSystem } from "../systems/CardSystem";
@@ -83,9 +85,9 @@ const VULNERABILITY_MULTIPLIER = 1.38;
 // const BOSS_FIRE_RATE_MULTIPLIER = 0.72;
 
 type MatchSceneInitData = {
-  roomId?: string;
+  roomId?: RoomId;
   roomCode?: string;
-  matchId?: string;
+  matchId?: MatchId;
   localPlayerId?: string;
   players?: RoomPlayer[];
   chaosModifierIds?: ChaosModifierId[];
@@ -194,8 +196,8 @@ export class MatchScene extends Phaser.Scene {
   private rightMouseParryWasDown = false;
   private lastPickupStatus = "none";
   private shieldGraphics?: Phaser.GameObjects.Graphics;
-  private roomId?: string;
-  private matchId?: string;
+  private roomId?: RoomId;
+  private matchId?: MatchId;
   private localPlayerId = "offline-player";
   private roomPlayers: RoomPlayer[] = [];
   private readonly playerScores = new Map<string, PlayerScore>();
@@ -955,7 +957,7 @@ export class MatchScene extends Phaser.Scene {
 
     for (const [playerId, rig] of this.remoteRigs) {
       const playerIndex = this.getRoomPlayerIndex(playerId);
-      const spawn = boxworksWorld.spawns[playerIndex % boxworksWorld.spawns.length];
+      const spawn = boxworksWorld.spawns[playerIndex % boxworksWorld.spawns.length] ?? { x: 0, y: 0 };
       const character = this.getCharacter(this.getRoomPlayer(playerId)?.characterId);
       const snapshot = this.remoteSnapshots.get(playerId);
       if (snapshot?.alive === false) {
@@ -2588,7 +2590,7 @@ export class MatchScene extends Phaser.Scene {
   }
 
   private getCharacter(characterId: CharacterId = "balanced"): CharacterDefinition {
-    return characters.find((character) => character.id === characterId) ?? characters[0];
+    return characters.find((character) => character.id === characterId) ?? characters[0] ?? { id: "balanced", name: "Balanced", maxHealth: 100, moveSpeedMultiplier: 1, sizeScale: 1, recoilControlMultiplier: 1, abilityType: "shield" as const, weakness: "" };
   }
 
   private getVisualScale(character: CharacterDefinition): number {

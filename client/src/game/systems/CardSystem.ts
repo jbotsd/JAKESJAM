@@ -31,7 +31,7 @@ export class CardSystem {
     while (choices.length < 3 && synergyBoosted.length > 0) {
       const index = Math.floor(Math.random() * synergyBoosted.length);
       const card = synergyBoosted.splice(index, 1)[0];
-      if (!usedIds.has(card.id)) {
+      if (card && !usedIds.has(card.id)) {
         choices.push(card);
         usedIds.add(card.id);
       }

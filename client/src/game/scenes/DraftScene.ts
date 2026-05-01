@@ -191,7 +191,7 @@ export class DraftScene extends Phaser.Scene {
       legendary: 0xf59e0b,   // Gold
       cursed: 0xef4444,      // Red
     };
-    return colors[rarity] || colors.common;
+    return colors[rarity] ?? colors['common'] ?? 0x9ca3af;
   }
 
   private formatStat(stat: any): string {

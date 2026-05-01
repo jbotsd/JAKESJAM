@@ -1,5 +1,8 @@
 import { ConvexClient } from "convex/browser";
-import { anyApi } from "convex/server";
+import { api } from "../../../../convex/_generated/api";
+
+const rooms = api.rooms;
+const matches = api.matches;
 import type { ChaosModifierId, CharacterId, MatchId, RoomId } from "../types/game";
 import type {
   ApplyPlayerDamageArgs,
@@ -21,15 +24,15 @@ export class RoomClient {
   }
 
   createRoom(args: CreateRoomArgs): Promise<RoomHandle> {
-    return this.client.mutation(anyApi.rooms.create, args) as Promise<RoomHandle>;
+    return this.client.mutation(rooms.create, args) as Promise<RoomHandle>;
   }
 
   joinRoom(args: JoinRoomArgs): Promise<RoomHandle> {
-    return this.client.mutation(anyApi.rooms.join, args) as Promise<RoomHandle>;
+    return this.client.mutation(rooms.join, args) as Promise<RoomHandle>;
   }
 
   setReady(roomId: RoomId, playerId: string, ready: boolean): Promise<void> {
-    return this.client.mutation(anyApi.rooms.setReady, { roomId, playerId, ready }) as Promise<void>;
+    return this.client.mutation(rooms.setReady, { roomId, playerId, ready }) as unknown as Promise<void>;
   }
 
   updateSettings(
@@ -37,31 +40,31 @@ export class RoomClient {
     playerId: string,
     chaosModifierIds: ChaosModifierId[],
   ): Promise<void> {
-    return this.client.mutation(anyApi.rooms.updateSettings, {
+    return this.client.mutation(rooms.updateSettings, {
       roomId,
       playerId,
       chaosModifierIds,
-    }) as Promise<void>;
+    }) as unknown as Promise<void>;
   }
 
   startMatch(roomId: RoomId, playerId: string): Promise<string> {
-    return this.client.mutation(anyApi.rooms.startMatch, { roomId, playerId }) as Promise<string>;
+    return this.client.mutation(rooms.startMatch, { roomId, playerId }) as Promise<string>;
   }
 
   submitPlayerSnapshot(args: SubmitPlayerSnapshotArgs): Promise<void> {
-    return this.client.mutation(anyApi.matches.submitPlayerSnapshot, args) as Promise<void>;
+    return this.client.mutation(matches.submitPlayerSnapshot, args) as unknown as Promise<void>;
   }
 
   applyPlayerDamage(args: ApplyPlayerDamageArgs): Promise<void> {
-    return this.client.mutation(anyApi.matches.applyPlayerDamage, args) as Promise<void>;
+    return this.client.mutation(matches.applyPlayerDamage, args) as unknown as Promise<void>;
   }
 
   heartbeat(roomId: RoomId, playerId: string): Promise<void> {
-    return this.client.mutation(anyApi.rooms.heartbeat, { roomId, playerId }) as Promise<void>;
+    return this.client.mutation(rooms.heartbeat, { roomId, playerId }) as unknown as Promise<void>;
   }
 
   leave(roomId: RoomId, playerId: string): Promise<void> {
-    return this.client.mutation(anyApi.rooms.leave, { roomId, playerId }) as Promise<void>;
+    return this.client.mutation(rooms.leave, { roomId, playerId }) as unknown as Promise<void>;
   }
 
   subscribeRoom(
@@ -70,7 +73,7 @@ export class RoomClient {
     onError: (error: Error) => void,
   ): Unsubscribe {
     return this.client.onUpdate(
-      anyApi.rooms.getById,
+      rooms.getById,
       { roomId },
       (snapshot) => onUpdate(snapshot as RoomSnapshot | null),
       onError,
@@ -83,7 +86,7 @@ export class RoomClient {
     onError: (error: Error) => void,
   ): Unsubscribe {
     return this.client.onUpdate(
-      anyApi.matches.getPlayerSnapshots,
+      matches.getPlayerSnapshots,
       { matchId },
       (snapshots) => onUpdate(snapshots as MatchPlayerSnapshot[]),
       onError,

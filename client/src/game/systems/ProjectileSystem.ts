@@ -119,6 +119,7 @@ export class ProjectileSystem {
 
     for (let index = this.projectiles.length - 1; index >= 0; index -= 1) {
       const projectile = this.projectiles[index];
+      if (!projectile) continue;
       projectile.ageSeconds += deltaSeconds;
 
       if (projectile.stickyFuseSeconds !== undefined) {
