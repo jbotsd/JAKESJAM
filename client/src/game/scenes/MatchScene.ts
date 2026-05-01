@@ -1,5 +1,15 @@
 import Phaser from "phaser";
 import { boxworksWorld, seededUnit } from "../../sim/data/boxworks.js";
+import {
+  COUNTDOWN_MS,
+  TARGET_SCORE_DEFAULT,
+  stepRound,
+} from "../../sim/round.js";
+import type {
+  PlayerEntity,
+  PlayerId,
+  RoundState,
+} from "../../sim/types.js";
 import { crystalRoundsCards } from "../data/cards";
 import { characters } from "../data/characters";
 import { getChaosModifiers, projectileShapes } from "../data/chaosModifiers";
@@ -8,6 +18,10 @@ import { RoomClient } from "../net/RoomClient";
 import { ProceduralPlayerRig } from "../rendering/ProceduralPlayerRig";
 import { GameAudioSystem } from "../systems/AudioSystem";
 import { CardDraftOverlay } from "../ui/CardDraftOverlay";
+import {
+  MatchResultsOverlay,
+  type MatchResultsRow,
+} from "../ui/MatchResultsOverlay";
 import {
   MovementSystem,
   type MovementDebug,
@@ -45,6 +59,11 @@ const REMOTE_SMOOTHING = 0.26;
 const CHAOS_MODIFIERS_KEY = "jakesjam.chaosModifiers";
 const CARD_CACHE_RELOCATE_MS = 20000;
 const REMOTE_PLAYER_TARGET_PREFIX = "remote-player:";
+// Synthetic player id used to feed the dummy target into the round state
+// machine. With only one human player + a dummy, we treat the dummy as a
+// second "player" so last-alive resolution kicks in when the player kills it
+// (or vice versa). Picked to avoid clashing with real player ids.
+const DUMMY_TARGET_PLAYER_ID = "dummy:practice-target";
 const VISIBLE_MUTATOR_BUCKETS = ["delivery", "quantity", "shape", "trajectory", "impact", "element"] as const;
 const DEATH_POPUP_DELAY_MS = 520;
 const RESPAWN_COUNTDOWN_MS = 3000;
@@ -189,6 +208,17 @@ export class MatchScene extends Phaser.Scene {
   private ignoreLocalSnapshotsThroughSequence = 0;
   private chaosModifierIds: ChaosModifierId[] = [];
   private fireHazardTimerMs = 0;
+  // Round-flow state owned by this scene; sim/round.ts is reused as a pure
+  // helper. Initialised on create() to a fresh countdown.
+  private roundState: RoundState = createInitialRoundState();
+  private targetScore = TARGET_SCORE_DEFAULT;
+  // Big centre-screen banner used during countdown ("3 / 2 / 1 / FIGHT!")
+  // and round-over hold ("Round X to <name>"). Recreated each `create()`.
+  private roundBannerText?: Phaser.GameObjects.Text;
+  private matchResultsOverlay?: MatchResultsOverlay;
+  // True once stepRound emits matchComplete this scene-life. Stops further
+  // round/score mutations and gates the results overlay.
+  private matchHasEnded = false;
 
   constructor() {
     super("MatchScene");
@@ -211,6 +241,8 @@ export class MatchScene extends Phaser.Scene {
       this.audio = undefined;
       this.cardDraftOverlay?.destroy();
       this.cardDraftOverlay = undefined;
+      this.matchResultsOverlay?.destroy();
+      this.matchResultsOverlay = undefined;
     });
     window.removeEventListener("keydown", this.handleScoreboardKeyDown);
     window.addEventListener("keydown", this.handleScoreboardKeyDown);
@@ -255,6 +287,9 @@ export class MatchScene extends Phaser.Scene {
     this.lastPickupStatus = "none";
     this.progressionCardIds = [];
     this.projectileSystem = new ProjectileSystem(this);
+    this.roundState = createInitialRoundState();
+    this.matchHasEnded = false;
+    this.playerScores.clear();
     this.resetPlayer();
     this.renderArena();
     this.configureCamera();
@@ -266,16 +301,28 @@ export class MatchScene extends Phaser.Scene {
     this.createDebugOverlay();
     this.createWeaponOverlay();
     this.createScoreboardOverlay();
+    this.createRoundBanner();
     this.bindKeys();
     this.ensureScore(this.localPlayerId);
     this.rebuildWeaponBuild();
     this.setupNetworkSync();
+    if (!this.matchResultsOverlay) {
+      this.matchResultsOverlay = new MatchResultsOverlay();
+    } else {
+      this.matchResultsOverlay.hide();
+    }
+    this.updateRoundBanner();
   }
 
   update(_time: number, deltaMs: number) {
     if (!this.keys || !this.playerRig || !this.debugText || !this.projectileSystem) {
       return;
     }
+
+    // Drive the round state machine first so input gating below picks up
+    // the new phase on the same tick. Round timing uses raw wall-clock dt
+    // so chaos time-scale doesn't stretch the countdown / round-timer.
+    this.advanceRoundState(deltaMs);
 
     if (Phaser.Input.Keyboard.JustDown(this.keys.r)) {
       this.resetPlayer();
@@ -484,6 +531,255 @@ export class MatchScene extends Phaser.Scene {
       .setVisible(false);
   }
 
+  private createRoundBanner() {
+    const { width, height } = this.scale;
+    this.roundBannerText?.destroy();
+    this.roundBannerText = this.add
+      .text(width / 2, height * 0.32, "", {
+        color: "#fff7d6",
+        fontFamily: "Inter, Arial, sans-serif",
+        fontSize: "64px",
+        fontStyle: "900",
+        align: "center",
+        stroke: "#0b0e14",
+        strokeThickness: 10,
+      })
+      .setOrigin(0.5, 0.5)
+      .setScrollFactor(0)
+      .setDepth(990)
+      .setVisible(false);
+  }
+
+  /**
+   * Build a minimal synthetic Record<PlayerId, PlayerEntity> for stepRound.
+   * The state machine only reads `alive` and `health`; everything else is
+   * stub data so the type matches. For offline practice we include the
+   * dummy crystal target as a synthetic second "player" so the round can
+   * resolve via last-alive when the player kills it (or vice versa) — this
+   * is what turns the previously-endless sandbox into a real round loop.
+   */
+  private buildSimPlayers(): Record<PlayerId, PlayerEntity> {
+    const players: Record<PlayerId, PlayerEntity> = {};
+    const localAlive = !this.playerRespawnPending && this.playerHealth > 0;
+    players[this.localPlayerId] = makeSimPlayerStub(this.localPlayerId, this.playerHealth, localAlive);
+
+    if (this.roomPlayers.length === 0) {
+      // Solo / practice — let the dummy stand in as the opponent so the
+      // last-alive resolver has something to compare against.
+      players[DUMMY_TARGET_PLAYER_ID] = makeSimPlayerStub(
+        DUMMY_TARGET_PLAYER_ID,
+        this.target.alive ? this.target.health : 0,
+        this.target.alive,
+      );
+      return players;
+    }
+
+    for (const remote of this.roomPlayers) {
+      if (remote.playerId === this.localPlayerId) continue;
+      const snapshot = this.remoteSnapshots.get(remote.playerId);
+      const health = snapshot?.health ?? 100;
+      const alive = snapshot ? snapshot.alive !== false && health > 0 : true;
+      players[remote.playerId] = makeSimPlayerStub(remote.playerId, health, alive);
+    }
+    return players;
+  }
+
+  /**
+   * Advance the round state machine and react to phase transitions /
+   * `round-end` events. Pure state transitions live in sim/round.ts; this
+   * method wires them to scene-side concerns:
+   *   - on round-end, increment scoreboard kills for the winner;
+   *   - on round-over → countdown (next-round boundary), respawn the local
+   *     player and reset the dummy/destructibles for a clean fight;
+   *   - on matchComplete, freeze the loop and surface the results overlay.
+   */
+  private advanceRoundState(deltaMs: number) {
+    if (this.matchHasEnded) {
+      // Match is parked. Don't keep stepping: stepRound is idempotent on
+      // round-over with countdown=0 + scores satisfying the winner check,
+      // but skipping avoids re-emitting boundary work.
+      return;
+    }
+
+    const players = this.buildSimPlayers();
+    const previousPhase = this.roundState.phase;
+    const result = stepRound({
+      state: this.roundState,
+      players,
+      dtMs: deltaMs,
+      targetScore: this.targetScore,
+    });
+    this.roundState = result.state;
+
+    for (const event of result.events) {
+      if (event.t === "round-end") {
+        this.handleRoundEnd(event.winnerId);
+      }
+    }
+
+    // round-over → countdown is the "next round starts" boundary. When the
+    // match has been decided, stepRound parks in round-over and reports
+    // matchComplete instead of advancing — so we only respawn between
+    // non-final rounds.
+    const enteredCountdownFromOver = previousPhase === "round-over" && this.roundState.phase === "countdown";
+    if (enteredCountdownFromOver) {
+      // Force-close any pending death-draft so the next round starts on a
+      // clean slate. The picked card is already in progressionCardIds; if
+      // the player hadn't picked yet, the draft is dropped (no penalty —
+      // they get fresh chances on subsequent deaths).
+      this.cardDraftOverlay?.hide();
+      this.deathDraftPickedThisLife = true;
+      this.respawnPlayer();
+      this.resetTarget();
+      this.resetDestructibles();
+    }
+
+    this.updateRoundBanner();
+
+    if (result.matchComplete) {
+      this.matchHasEnded = true;
+      this.showMatchResults();
+    }
+  }
+
+  private handleRoundEnd(winnerId: PlayerId | null) {
+    if (winnerId !== null) {
+      // Use kills as a proxy for round-wins on the existing scoreboard so
+      // the held-Tab overlay starts reflecting round-flow progress without
+      // a schema change. Hooks into ensureScore so unknown winners (e.g.
+      // the dummy) still get tallied and surfaced in the results overlay.
+      this.addKill(winnerId);
+    }
+  }
+
+  private updateRoundBanner() {
+    if (!this.roundBannerText) {
+      return;
+    }
+    const banner = this.roundBannerText;
+    if (this.matchHasEnded) {
+      banner.setVisible(false);
+      return;
+    }
+    if (this.roundState.phase === "countdown") {
+      const remaining = this.roundState.countdownRemainingMs;
+      // 3 / 2 / 1 / FIGHT! based on the seconds remaining. The "FIGHT!"
+      // burst lives in the last 600ms of the countdown so it's visible
+      // before phase flips to "fighting" on the same tick the timer hits 0.
+      let label: string;
+      if (remaining > 2400) {
+        label = "3";
+      } else if (remaining > 1400) {
+        label = "2";
+      } else if (remaining > 600) {
+        label = "1";
+      } else {
+        label = "FIGHT!";
+      }
+      banner.setText(`ROUND ${this.roundState.roundIndex}\n${label}`);
+      banner.setVisible(true);
+      return;
+    }
+    if (this.roundState.phase === "round-over") {
+      const winnerLabel = this.getRoundWinnerLabel(this.roundState.winnerPlayerId);
+      banner.setText(`ROUND ${this.roundState.roundIndex} TO ${winnerLabel}`);
+      banner.setVisible(true);
+      return;
+    }
+    // Fighting: hide banner so combat reads cleanly.
+    banner.setVisible(false);
+  }
+
+  private getRoundWinnerLabel(winnerId: PlayerId | null): string {
+    if (winnerId === null) {
+      return "DRAW";
+    }
+    if (winnerId === this.localPlayerId) {
+      return (this.getLocalRoomPlayer()?.name ?? "YOU").toUpperCase();
+    }
+    if (winnerId === DUMMY_TARGET_PLAYER_ID) {
+      return "CRYSTAL DUMMY";
+    }
+    const remote = this.getRoomPlayer(winnerId);
+    return (remote?.name ?? winnerId).toUpperCase();
+  }
+
+  private showMatchResults() {
+    if (!this.matchResultsOverlay) {
+      this.matchResultsOverlay = new MatchResultsOverlay();
+    }
+    const view = this.buildResultsView();
+    if (this.roundBannerText) {
+      this.roundBannerText.setVisible(false);
+    }
+    this.matchResultsOverlay.show(view, {
+      onRematch: () => this.handleRematch(),
+      onReturnToLobby: () => this.handleReturnToLobby(),
+    });
+  }
+
+  private buildResultsView() {
+    const targetScore = this.targetScore;
+    const winnerPlayerId = this.roundState.winnerPlayerId;
+    const rows: MatchResultsRow[] = [];
+
+    const localRoom = this.getLocalRoomPlayer();
+    rows.push({
+      playerId: this.localPlayerId,
+      name: localRoom?.name ?? "jakesjam",
+      color: localRoom?.color,
+      // Round wins for the local player are tracked in roundState.scores.
+      score: this.roundState.scores[this.localPlayerId] ?? 0,
+      cardIds: [...this.progressionCardIds],
+      isLocal: true,
+    });
+
+    if (this.roomPlayers.length === 0) {
+      rows.push({
+        playerId: DUMMY_TARGET_PLAYER_ID,
+        name: "Crystal Dummy",
+        color: "#a78bfa",
+        score: this.roundState.scores[DUMMY_TARGET_PLAYER_ID] ?? 0,
+        cardIds: [],
+      });
+    } else {
+      for (const remote of this.roomPlayers) {
+        if (remote.playerId === this.localPlayerId) continue;
+        rows.push({
+          playerId: remote.playerId,
+          name: remote.name,
+          color: remote.color,
+          score: this.roundState.scores[remote.playerId] ?? 0,
+          // Online card lists belong in RoomSnapshot; for now we only have
+          // them locally. Empty list is acceptable until that wiring lands.
+          cardIds: [],
+        });
+      }
+    }
+
+    return { winnerPlayerId, targetScore, rows };
+  }
+
+  private handleRematch() {
+    // Card progression resets between matches: a rematch is a fresh build
+    // run, mirroring how each match is its own draft arc. Cards picked
+    // mid-round still carry across rounds inside a match — only crossing
+    // a match boundary clears the deck.
+    this.matchResultsOverlay?.hide();
+    this.scene.restart({
+      roomId: this.roomId,
+      matchId: this.matchId,
+      localPlayerId: this.localPlayerId,
+      players: this.roomPlayers,
+      chaosModifierIds: this.chaosModifierIds,
+    });
+  }
+
+  private handleReturnToLobby() {
+    this.matchResultsOverlay?.hide();
+    window.dispatchEvent(new CustomEvent("jakesjam:return-to-lobby"));
+  }
+
   private bindKeys() {
     const keyboard = this.input.keyboard;
     if (!keyboard) {
@@ -505,7 +801,10 @@ export class MatchScene extends Phaser.Scene {
   }
 
   private readInput(): MovementInput {
-    if (!this.keys) {
+    if (!this.keys || this.isInputLockedByRoundPhase()) {
+      // Lock during countdown / round-over / match-over: pin the player in
+      // place so the banner reads cleanly and nobody can pre-fire shots
+      // during the "3 / 2 / 1 / FIGHT" window.
       return {
         left: false,
         right: false,
@@ -529,6 +828,14 @@ export class MatchScene extends Phaser.Scene {
       fastFall: this.keys.s.isDown && !this.playerBody.grounded,
       crouch: this.keys.s.isDown,
     };
+  }
+
+  private isInputLockedByRoundPhase(): boolean {
+    // "fighting" is the only phase where player input drives the sim. Both
+    // the pre-round countdown and the post-round hold (also where the
+    // results overlay sits, since round-over is a terminal park state when
+    // the match has been decided) freeze the player.
+    return this.roundState.phase !== "fighting";
   }
 
   private syncPlayerVisuals(deltaMs = 16) {
@@ -603,7 +910,8 @@ export class MatchScene extends Phaser.Scene {
     if (
       (rightMousePressed || Phaser.Input.Keyboard.JustDown(this.keys.c)) &&
       this.blockJammerMs <= 0 &&
-      this.parryCooldownMs <= 0
+      this.parryCooldownMs <= 0 &&
+      !this.isInputLockedByRoundPhase()
     ) {
       this.parryActiveMs = PARRY_ACTIVE_MS;
       this.parryCooldownMs = this.getParryCooldownMs();
@@ -972,6 +1280,10 @@ export class MatchScene extends Phaser.Scene {
 
   private tryFireWeapon() {
     if (!this.projectileSystem || this.fireCooldownMs > 0 || this.playerRespawnPending) {
+      return;
+    }
+
+    if (this.isInputLockedByRoundPhase()) {
       return;
     }
 
@@ -2535,6 +2847,49 @@ type HazardHit = {
   element: ElementType;
   impactRadiusPx: number;
 };
+
+function createInitialRoundState(): RoundState {
+  return {
+    phase: "countdown",
+    countdownRemainingMs: COUNTDOWN_MS,
+    scores: {},
+    roundIndex: 1,
+    winnerPlayerId: null,
+  };
+}
+
+/**
+ * Build a stub PlayerEntity for the round state machine. stepRound only
+ * touches `alive` and `health`; everything else is pinned to type-correct
+ * defaults. Importantly, this stub MUST NOT be passed to anything that
+ * actually simulates physics — it's input-only for round resolution.
+ *
+ * Note: ROUND_TIME_LIMIT_MS is imported but currently only consumed inside
+ * sim/round.ts; we re-export the read so future scoreboard polish can show
+ * a wall-clock round timer without re-importing.
+ */
+function makeSimPlayerStub(id: PlayerId, health: number, alive: boolean): PlayerEntity {
+  return {
+    id,
+    characterId: "balanced",
+    x: 0,
+    y: 0,
+    vx: 0,
+    vy: 0,
+    aimX: 0,
+    aimY: 0,
+    health,
+    shieldActive: false,
+    crouching: false,
+    alive,
+    weaponId: "stub",
+    cards: [],
+    fireCooldownMs: 0,
+    ammo: 0,
+    abilityCharge: 0,
+    lastProcessedInputSeq: 0,
+  };
+}
 
 function createPlayerBody(x = 220, y = 430, sizeScale = 1): PlayerBody {
   return {
