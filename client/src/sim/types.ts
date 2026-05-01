@@ -168,6 +168,12 @@ export type SimEvent =
 export type StepResult = {
   state: WorldState;
   events: SimEvent[];
+  /**
+   * True on the tick the match was decided (a player reached the target
+   * score). The Bun server uses this to post the final result to Convex
+   * exactly once. See `server/src/matchHost.ts` and `sim/round.ts`.
+   */
+  matchComplete: boolean;
 };
 
 export type PlayerSpawnInfo = {

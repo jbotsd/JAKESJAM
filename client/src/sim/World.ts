@@ -295,6 +295,7 @@ export function stepWithRuntime(
       round: roundResult.state,
     },
     events,
+    matchComplete: roundResult.matchComplete,
   };
 }
 
