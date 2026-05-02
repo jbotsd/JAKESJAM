@@ -330,6 +330,58 @@ export class OnlineMatchScene extends Phaser.Scene {
       this.game.events.off(Phaser.Core.Events.BLUR, onBlur);
       this.game.events.off(Phaser.Core.Events.FOCUS, onFocus);
     });
+
+    this.setupFtueLegend();
+  }
+
+  /**
+   * Per onboarding-ftue/SKILL.md recipe 3: show a controls legend in the first
+   * match only, fade out after 3s, never show again. Persists via localStorage.
+   * No modal, no skip button — Mark Brown's rule "the only good tutorial is the
+   * one you can't tell is a tutorial".
+   */
+  private setupFtueLegend(): void {
+    const FTUE_KEY = "jakesjam-ftue-controls-shown";
+    try {
+      if (localStorage.getItem(FTUE_KEY) === "1") return;
+      localStorage.setItem(FTUE_KEY, "1");
+    } catch {
+      // localStorage unavailable (private mode, file://, …). Show every time.
+    }
+    const lines = [
+      "WASD  move",
+      "SPACE  jump",
+      "MOUSE  aim & fire",
+      "SHIFT  parry",
+    ];
+    const text = this.add
+      .text(this.scale.width - 20, 20, lines.join("\n"), {
+        color: "#cffaff",
+        fontFamily: "Inter, Arial, sans-serif",
+        fontSize: "14px",
+        align: "right",
+        backgroundColor: "rgba(5,8,15,0.45)",
+        padding: { left: 10, right: 10, top: 8, bottom: 8 },
+      })
+      .setOrigin(1, 0)
+      .setScrollFactor(0)
+      .setDepth(2000)
+      .setAlpha(0);
+    this.tweens.add({
+      targets: text,
+      alpha: 1,
+      duration: 220,
+      ease: "Cubic.easeOut",
+    });
+    this.time.delayedCall(3000, () => {
+      this.tweens.add({
+        targets: text,
+        alpha: 0,
+        duration: 380,
+        ease: "Cubic.easeIn",
+        onComplete: () => text.destroy(),
+      });
+    });
   }
 
   /** Stop the sim loop. Idempotent. Called on tab BLUR. */

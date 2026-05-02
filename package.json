@@ -22,7 +22,7 @@
     "test": "bun run --filter '*' test --if-present",
     "convex:codegen": "bunx convex codegen",
     "convex:deploy": "bunx convex deploy",
-    "deploy:server:syd": "flyctl deploy --config fly.toml --app jakesjam-srv-syd --region syd"
+    "deploy:server:syd": "flyctl deploy --config fly.toml --app jakesjam-srv-syd"
   },
   "devDependencies": {
     "convex": "^1.37.0",

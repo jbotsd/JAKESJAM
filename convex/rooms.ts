@@ -3,6 +3,7 @@ import { v } from "convex/values";
 import type { Doc, Id } from "./_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "./_generated/server";
 import { assignGameServer } from "./matchmaker";
+import { chaosModifierId } from "./schema";
 
 const MAX_PLAYERS = 10;
 const ROOM_CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
@@ -16,7 +17,7 @@ const playerArgs = {
 };
 
 const roomSettingsArgs = {
-  chaosModifierIds: v.array(v.string()),
+  chaosModifierIds: v.array(chaosModifierId),
 };
 
 export const create = mutation({
@@ -369,6 +370,11 @@ function cleanName(name: string): string {
   return trimmed.slice(0, 24) || "Player";
 }
 
-function cleanChaosModifierIds(ids: string[]): string[] {
-  return [...new Set(ids.map((id) => id.trim()).filter(Boolean))];
+export type ChaosModifierIdLiteral = "low-gravity" | "slow-motion" | "golden-gun" | "slappers-only" | "fire-hazard" | "random-shapes" | "max-recoil";
+
+export type CleanChaosModifierIds = ChaosModifierIdLiteral[];
+
+function cleanChaosModifierIds(ids: string[]): CleanChaosModifierIds {
+  const trimmed = ids.map((id) => id.trim()).filter(Boolean) as CleanChaosModifierIds;
+  return [...new Set(trimmed)];
 }

@@ -15,13 +15,26 @@ const matchStatus = v.union(
   v.literal("complete"),
 );
 
+// Mirror of CHAOS_MODIFIER_IDS in client/src/sim/data/chaosModifiers.ts.
+// Convex runtime cannot import from src/, so the list is duplicated here;
+// keep them in sync. Validates incoming arrays at the trust boundary.
+export const chaosModifierId = v.union(
+  v.literal("low-gravity"),
+  v.literal("slow-motion"),
+  v.literal("golden-gun"),
+  v.literal("slappers-only"),
+  v.literal("fire-hazard"),
+  v.literal("random-shapes"),
+  v.literal("max-recoil"),
+);
+
 export default defineSchema({
   rooms: defineTable({
     code: v.string(),
     hostPlayerId: v.string(),
     status: roomStatus,
     maxPlayers: v.number(),
-    chaosModifierIds: v.optional(v.array(v.string())),
+    chaosModifierIds: v.optional(v.array(chaosModifierId)),
     /**
      * Host's selected map id for the next match. Optional + additive —
      * older rooms with no selection inherit the default at startMatch time.
@@ -52,7 +65,7 @@ export default defineSchema({
     mapId: v.string(),
     targetScore: v.number(),
     roundIndex: v.number(),
-    chaosModifierIds: v.optional(v.array(v.string())),
+    chaosModifierIds: v.optional(v.array(chaosModifierId)),
     scores: v.record(v.string(), v.number()),
     startedAt: v.number(),
     completedAt: v.optional(v.number()),

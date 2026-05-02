@@ -13,23 +13,25 @@ import type { Id } from "./_generated/dataModel";
 // we actually use here.
 declare const process: { env: Record<string, string | undefined> };
 
-// Hardcoded regional Fly.io app URLs. Add regions as we deploy them.
-// In dev, override via VITE_GAME_SERVER_URL on the client.
-const GAME_SERVERS: Record<string, string> = {
+export const GAME_REGIONS = ["syd", "sjc", "fra"] as const;
+export type GameRegion = typeof GAME_REGIONS[number];
+
+const GAME_SERVERS = {
   syd: "wss://jakesjam-srv-syd.fly.dev/ws",
   sjc: "wss://jakesjam-srv-sjc.fly.dev/ws",
   fra: "wss://jakesjam-srv-fra.fly.dev/ws",
-};
+} as const satisfies Record<GameRegion, string>;
 
-const DEFAULT_REGION = "syd";
+const DEFAULT_REGION: GameRegion = "syd";
 
 export function pickGameServerUrl(requestedRegion: string | undefined): {
   region: string;
   url: string;
 } {
-  const region = requestedRegion && GAME_SERVERS[requestedRegion]
-    ? requestedRegion
-    : DEFAULT_REGION;
+  const region: GameRegion =
+    requestedRegion && (GAME_REGIONS as readonly string[]).includes(requestedRegion)
+      ? (requestedRegion as GameRegion)
+      : DEFAULT_REGION;
   return { region, url: GAME_SERVERS[region] ?? "" };
 }
 

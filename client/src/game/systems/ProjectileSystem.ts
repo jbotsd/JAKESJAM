@@ -278,9 +278,13 @@ export class ProjectileSystem {
     this.spawnGlowBurst(origin.x, origin.y, color, width * 3, 0.9, 160, 1.4);
     this.spawnGlowBurst(end.x, end.y, color, width * 2.2, 0.7, 200, 1.6);
 
-    const hits = targets
-      .filter((target) => target.alive && segmentIntersectsTarget(origin, end, target))
-      .map((target) => ({
+    // Hot path: single for-loop, no filter+map intermediates (game-loop-perf).
+    const hits: ProjectileHit[] = [];
+    for (let i = 0; i < targets.length; i++) {
+      const target = targets[i]!;
+      if (!target.alive) continue;
+      if (!segmentIntersectsTarget(origin, end, target)) continue;
+      hits.push({
         targetId: target.id,
         damage: build.damage,
         knockback: build.knockbackImpulse,
@@ -288,7 +292,8 @@ export class ProjectileSystem {
         element: build.projectile.element,
         impact: build.projectile.impact,
         impactRadiusPx: build.projectile.impactRadiusPx,
-      }));
+      });
+    }
 
     for (const hit of hits) {
       this.impactAt(hit.position, build.projectile.element, build.projectile.impact, hit.impactRadiusPx);
@@ -315,9 +320,13 @@ export class ProjectileSystem {
       onComplete: () => ring.destroy(),
     });
 
-    const hits = targets
-      .filter((target) => target.alive && distance(origin, target.position) <= radius + target.size.x / 2)
-      .map((target) => ({
+    // Hot path: single for-loop, no filter+map intermediates (game-loop-perf).
+    const hits: ProjectileHit[] = [];
+    for (let i = 0; i < targets.length; i++) {
+      const target = targets[i]!;
+      if (!target.alive) continue;
+      if (distance(origin, target.position) > radius + target.size.x / 2) continue;
+      hits.push({
         targetId: target.id,
         damage: build.damage,
         knockback: build.knockbackImpulse,
@@ -325,7 +334,8 @@ export class ProjectileSystem {
         element: build.projectile.element,
         impact: build.projectile.impact,
         impactRadiusPx: radius,
-      }));
+      });
+    }
 
     return { fired: true, hits };
   }
