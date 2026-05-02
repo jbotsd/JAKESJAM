@@ -35,6 +35,7 @@ import {
   Tick,
   InputSeq,
 } from "./types.js";
+import { RoundOrchestrator } from "./RoundOrchestrator.js";
 import type {
   FireEntity,
   InputBitfield,
@@ -66,6 +67,12 @@ export type WorldRuntime = {
   /** Pre-computed collision cache — spatial grid + one-way flags. Built
    *  once at runtime creation and reused for the match lifetime. */
   collisionCache?: StaticCollisionCache;
+  /**
+   * Round state orchestrator. Owns the running RoundState and routes it
+   * through the pure stepRound each tick. Initialised on createRuntime;
+   * synced from snapshots on the client side.
+   */
+  orchestrator?: RoundOrchestrator;
 };
 
 export function createRuntime(map: MapDefinition): WorldRuntime {
@@ -823,18 +830,25 @@ export function stepWithRuntime(
   // companions).
   let finalSatellites = despawnSatellitesForDeadOwners(nextSatellites, cleanedPlayers);
 
-  // 5. Round state machine. Pass the current tick + rng cursor so the
-  //    drafting phase can roll deterministic offers and compute its expiry
-  //    tick. The result threads back any rng advance + per-player card
-  //    patches (for auto-picked draft cards on window expiry).
-  const roundResult = stepRound({
-    state: state.round,
-    players: cleanedPlayers,
-    dtMs: effDtMs,
-    targetScore: TARGET_SCORE_DEFAULT,
-    tick: nextTick,
-    rngState,
-  });
+  // 5. Round state machine. Delegate to the orchestrator when present;
+  //    fall back to the inline stepRound call for tests that don't wire
+  //    up a runtime orchestrator.
+  let roundResult;
+  if (runtime.orchestrator) {
+    // Sync the orchestrator from the world state before stepping, so any
+    // external mutations (server card picks) are reflected.
+    runtime.orchestrator.syncFromWorld(state);
+    roundResult = runtime.orchestrator.step(cleanedPlayers, nextTick, rngState, effDtMs);
+  } else {
+    roundResult = stepRound({
+      state: state.round,
+      players: cleanedPlayers,
+      dtMs: effDtMs,
+      targetScore: TARGET_SCORE_DEFAULT,
+      tick: nextTick,
+      rngState,
+    });
+  }
   events.push(...roundResult.events);
   if (roundResult.rngState !== undefined) {
     rngState = roundResult.rngState;
