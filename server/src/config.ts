@@ -18,7 +18,11 @@ function required(name: string, devDefault: string): string {
 const DEV_GAME_SERVER_SECRET = "dev-insecure-secret";
 
 export const config = {
-  port: Number(process.env.PORT ?? 8080),
+  // Dev default 8088 (8080 commonly clashes with SearXNG / proxies).
+  // Prod (Fly) sets PORT=8080 via fly.toml — see deploy config.
+  port: Number(process.env.PORT ?? 8088),
+  // Auto-heal: if the desired port is taken, server tries the next N ports.
+  portSearchRange: Number(process.env.PORT_SEARCH_RANGE ?? 10),
   region: process.env.REGION ?? "local",
   // Shared secret used to validate per-player WS auth tokens minted by Convex.
   // Must match Convex env var GAME_SERVER_SECRET. Set with:

@@ -30,8 +30,9 @@ const corsHeaders: Record<string, string> = {
   "access-control-allow-headers": "content-type",
 };
 
-const server = Bun.serve<SocketData>({
-  port: config.port,
+function serveOnPort(port: number) {
+  return Bun.serve<SocketData>({
+  port,
   hostname: "0.0.0.0",
   async fetch(req, srv) {
     const url = new URL(req.url);
@@ -157,7 +158,29 @@ const server = Bun.serve<SocketData>({
       }
     },
   },
-});
+  });
+}
+
+function listen() {
+  const start = config.port;
+  const end = start + Math.max(1, config.portSearchRange);
+  let lastErr: unknown;
+  for (let p = start; p < end; p++) {
+    try {
+      return serveOnPort(p);
+    } catch (err) {
+      const code = (err as { code?: string } | null)?.code;
+      if (code !== "EADDRINUSE") throw err;
+      lastErr = err;
+      console.warn(`[jakesjam-srv] port ${p} in use, trying ${p + 1}…`);
+    }
+  }
+  throw new Error(
+    `No free port in [${start}, ${end}). Set PORT or PORT_SEARCH_RANGE. Last: ${String(lastErr)}`,
+  );
+}
+
+const server = listen();
 
 console.log(
   `[jakesjam-srv] region=${config.region} listening on :${server.port} (rooms=0 world=ready)`,

@@ -50,6 +50,7 @@ const EMPTY_STATS: NetStats = {
   lastSnapshotTick: 0 as import("../sim/types.js").Tick,
   transportState: "closed",
   slewMsAvg: 0,
+  lastReconcileSkippedEntities: 0,
 };
 
 export class RenderHost {

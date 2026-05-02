@@ -10,7 +10,7 @@ bun install
 GAME_SERVER_SECRET=dev-secret bun run dev
 ```
 
-The server listens on `:8080` by default. Health: `GET /health`. WebSocket upgrade: `GET /ws?matchId=...&token=...`.
+The server listens on `:8088` in dev (`:8080` in prod via Fly). Override with `PORT=...`. **Auto-heal**: if the desired port is taken, the server tries the next `PORT_SEARCH_RANGE` ports (default 10) — check the boot log for the actual bound port. Health: `GET /health`. WebSocket upgrade: `GET /ws?matchId=...&token=...`.
 
 To validate end-to-end with a real Convex token, set the same `GAME_SERVER_SECRET` in your Convex deployment:
 

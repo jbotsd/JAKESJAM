@@ -5,8 +5,8 @@
 // Render reads from `getRenderState()`. The Phaser scene never mutates state.
 // See docs/netcode-architecture.md "Frame-by-frame, client".
 
-import { STEP_MS, World } from "../sim/index.js";
-import { InputSeq, PlayerId, Tick } from "../sim/types.js";
+import { STEP_MS, World, hashWorldStateLite } from "../sim/index.js";
+import { EntityId, InputSeq, PlayerId, Tick } from "../sim/types.js";
 import type {
   InputFrame,
   PlayerEntity,
@@ -122,6 +122,11 @@ export type NetStats = {
    * the client to slow down; -ve = speed up.
    */
   slewMsAvg: number;
+  /**
+   * Number of entities (players + projectiles) skipped (not rewound) during
+   * the most recent per-entity reconcile pass. 0 after a full safety sweep.
+   */
+  lastReconcileSkippedEntities: number;
 };
 
 export type ReconcileStats = {
@@ -136,6 +141,13 @@ export type ReconcileStats = {
 const PING_INTERVAL_MS = 1000;
 const RTT_SAMPLE_LIMIT = 10;
 const SNAP_RATE_WINDOW_MS = 1000;
+
+/**
+ * Every FULL_RECONCILE_INTERVAL_MS we force a whole-world rewind+replay
+ * regardless of hash comparison results. This is a safety sweep that catches
+ * any false-positive hash collisions before they accumulate into visible drift.
+ */
+const FULL_RECONCILE_INTERVAL_MS = 5000;
 
 const DEFAULT_SMOOTHING: SmoothingOptions = {
   windowMs: 100,
@@ -176,6 +188,10 @@ export class ClientLoop {
    *  when a DeltaSnapshot arrives. Ring size matches server's BASELINE_RING_SIZE. */
   private readonly snapshotRing = new Map<Tick, WorldState>();
   private static readonly SNAPSHOT_RING_SIZE = 10;
+
+  // ---- Per-entity reconcile state ----
+  private lastFullReconcileAt = 0;
+  private lastReconcileSkippedEntities = 0;
 
   // ---- Local-player render smoothing state ----
   private readonly smoothing: SmoothingOptions;
@@ -414,6 +430,7 @@ export class ClientLoop {
       lastSnapshotTick: this.lastSnapshotTick,
       transportState: this.transport.state,
       slewMsAvg,
+      lastReconcileSkippedEntities: this.lastReconcileSkippedEntities,
     };
   }
 
@@ -625,10 +642,113 @@ export class ClientLoop {
     const prevRenderedY =
       prevLocal !== undefined ? prevLocal.y + this.renderOffsetY : null;
 
-    // Rewind + replay: start from the authoritative state, replay any local
-    // input the server has not yet processed. World.step is currently a no-op
-    // stub — once Dev A's sim is real, this gives us full Gambetta prediction.
-    let replayState = cloneState(this.authoritativeState);
+    // ---- Per-entity reconcile ----
+    //
+    // Compare FNV1a-32 hashes for each player and projectile in the predicted
+    // vs authoritative snapshot. Only diverged entities need the authoritative
+    // state copied in; entities whose hashes match can keep their predicted
+    // values. The replay still runs the full World.step for every pending
+    // input — the savings come from the snap-fix step being narrower.
+    //
+    // Exception: the local player ALWAYS gets the authoritative state as its
+    // starting point (smoothing depends on measuring the residual delta).
+    //
+    // Every FULL_RECONCILE_INTERVAL_MS we skip the hash check entirely and
+    // do a whole-world rewind regardless. This bounds the damage from any
+    // false-positive hash collision to at most FULL_RECONCILE_INTERVAL_MS.
+    const nowMs = performance.now();
+    const doFullReconcile =
+      nowMs - this.lastFullReconcileAt >= FULL_RECONCILE_INTERVAL_MS ||
+      this.predictedState === null;
+
+    let replayState: WorldState;
+
+    if (doFullReconcile || this.predictedState === null) {
+      this.lastFullReconcileAt = nowMs;
+      this.lastReconcileSkippedEntities = 0;
+      replayState = cloneState(this.authoritativeState);
+    } else {
+      // Hash-guided partial reconcile.
+      const authHashes = hashWorldStateLite(this.authoritativeState);
+      const predHashes = hashWorldStateLite(this.predictedState);
+
+      const divergedPlayers = new Set<PlayerId>();
+      const divergedProjectiles = new Set<EntityId>();
+
+      // Collect diverged players.
+      for (const pid in this.authoritativeState.players) {
+        const typedPid = pid as PlayerId;
+        const aHash = authHashes.players[typedPid];
+        const pHash = predHashes.players[typedPid];
+        if (aHash === undefined || pHash === undefined || aHash !== pHash) {
+          divergedPlayers.add(typedPid);
+        }
+      }
+      // Catch any players present in predicted but dropped from authoritative.
+      for (const pid in this.predictedState.players) {
+        const typedPid = pid as PlayerId;
+        if (!(typedPid in this.authoritativeState.players)) {
+          divergedPlayers.add(typedPid);
+        }
+      }
+
+      // Local player ALWAYS rewinds — smoothing delta depends on it.
+      divergedPlayers.add(this.playerId);
+
+      // Collect diverged projectiles.
+      for (const eid in this.authoritativeState.projectiles) {
+        const typedEid = Number(eid) as EntityId;
+        const aHash = authHashes.projectiles[typedEid];
+        const pHash = predHashes.projectiles[typedEid];
+        if (aHash === undefined || pHash === undefined || aHash !== pHash) {
+          divergedProjectiles.add(typedEid);
+        }
+      }
+      // Catch projectiles in predicted but dropped from authoritative.
+      for (const eid in this.predictedState.projectiles) {
+        const typedEid = Number(eid) as EntityId;
+        if (!(typedEid in this.authoritativeState.projectiles)) {
+          divergedProjectiles.add(typedEid);
+        }
+      }
+
+      // Count total entities to compute skip ratio.
+      const totalPlayers =
+        Object.keys(this.authoritativeState.players).length;
+      const totalProjectiles =
+        Object.keys(this.authoritativeState.projectiles).length;
+      const totalEntities = totalPlayers + totalProjectiles;
+      const divergedCount = divergedPlayers.size + divergedProjectiles.size;
+      this.lastReconcileSkippedEntities = Math.max(
+        0,
+        totalEntities - divergedCount,
+      );
+
+      // Build the starting state for replay: authoritative base, but for
+      // entities NOT in the diverged set, patch in the predicted entity so
+      // the physics replay starts from the already-correct predicted value.
+      replayState = cloneState(this.authoritativeState);
+
+      // Patch in non-diverged predicted players.
+      for (const pid in this.predictedState.players) {
+        const typedPid = pid as PlayerId;
+        if (!divergedPlayers.has(typedPid)) {
+          replayState.players[typedPid] =
+            this.predictedState.players[typedPid]!;
+        }
+      }
+
+      // Patch in non-diverged predicted projectiles.
+      for (const eid in this.predictedState.projectiles) {
+        const typedEid = Number(eid) as EntityId;
+        if (!divergedProjectiles.has(typedEid)) {
+          replayState.projectiles[typedEid] =
+            this.predictedState.projectiles[typedEid]!;
+        }
+      }
+    }
+
+    // Replay all pending inputs through the (possibly patched) base state.
     for (const input of this.pendingInputs) {
       const inputs: Record<PlayerId, InputFrame | null> = {};
       inputs[this.playerId] = input;

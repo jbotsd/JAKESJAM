@@ -106,3 +106,9 @@ export {
 } from './data/weaponBuild.js';
 export { crystalRoundsCards, prototypeCards } from './data/cards.js';
 export { starterWeapon, weapons } from './data/weapons.js';
+export {
+  hashPlayerEntity,
+  hashProjectileEntity,
+  hashWorldStateLite,
+} from './hash.js';
+export type { WorldHashLite } from './hash.js';

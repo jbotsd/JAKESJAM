@@ -101,7 +101,7 @@ bunx convex env set GAME_SERVER_SECRET dev-secret
 Optional client override for the game server:
 
 ```bash
-VITE_GAME_SERVER_URL=ws://localhost:8080/ws
+VITE_GAME_SERVER_URL=ws://localhost:8088/ws
 ```
 
 ## Standalone HTML Builds
