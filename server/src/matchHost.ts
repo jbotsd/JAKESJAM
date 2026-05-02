@@ -421,10 +421,29 @@ export class MatchHost {
       delete nextScores[playerId];
       // Rewrite in-flight entities owned by the evicted player to world-owned
       // (null) so stale ownerId references don't linger in the sim.
+      // Scrub drafting bookkeeping for the evicted player. Without this,
+      // a player who disconnected mid-drafting keeps their entry in
+      // draftingOffers / draftingPicked. Combined with the resolution
+      // gate keyed off draftingOffers keys, that would deadlock the
+      // world: their offers stay, their pick never lands, drafting
+      // never resolves.
+      const nextDraftingOffers = this.state.round.draftingOffers
+        ? { ...this.state.round.draftingOffers }
+        : undefined;
+      if (nextDraftingOffers) delete nextDraftingOffers[playerId];
+      const nextDraftingPicked = this.state.round.draftingPicked
+        ? { ...this.state.round.draftingPicked }
+        : undefined;
+      if (nextDraftingPicked) delete nextDraftingPicked[playerId];
       const stateAfterPlayerEviction = {
         ...this.state,
         players: nextPlayers,
-        round: { ...this.state.round, scores: nextScores },
+        round: {
+          ...this.state.round,
+          scores: nextScores,
+          draftingOffers: nextDraftingOffers,
+          draftingPicked: nextDraftingPicked,
+        },
       };
       this.state = transferAuthority(stateAfterPlayerEviction, playerId, null);
       evicted = true;

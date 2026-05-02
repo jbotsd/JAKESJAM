@@ -175,12 +175,21 @@ export function stepRound(input: RoundStepInput): RoundStepResult {
     }
 
     case "drafting": {
-      // Resolution criterion: "all participating players have picked".
+      // Resolution criterion: "every player WHO HAS OFFERS has picked".
       // No expiry / no auto-pick — players don't respawn until they
       // commit a card. Drafting includes dead players too (the round-end
       // loser is usually mid-respawn and must still get to pick).
+      //
+      // Critically: we key off `state.draftingOffers` keys, NOT
+      // `state.players` keys. A player who joined the io world AFTER
+      // drafting started has no offers (offers are rolled once at
+      // drafting entry by `enterDrafting`). Including them in the
+      // resolution gate would deadlock the world forever — they can't
+      // pick what they were never offered. Late joiners just sit out
+      // this drafting window and join the next round normally.
       const previousPicked = state.draftingPicked ?? {};
-      const draftingIds = Object.keys(players).sort();
+      const offers = state.draftingOffers ?? {};
+      const draftingIds = Object.keys(offers).sort();
 
       // We need a per-pick "have we already announced this draft-resolved?"
       // marker so picks landing across multiple ticks don't re-emit. Pure-
@@ -207,10 +216,15 @@ export function stepRound(input: RoundStepInput): RoundStepResult {
         }
       }
 
-      const allPicked = draftingIds.length > 0 &&
+      // If everyone with offers has disconnected and been evicted (so
+      // their entries were scrubbed by MatchHost.evictExpiredDisconnects)
+      // there's nobody to wait for — exit drafting cleanly. Same shape
+      // as the all-picked case below.
+      const noDraftersLeft = draftingIds.length === 0;
+      const allPicked = !noDraftersLeft &&
         draftingIds.every((id) => previousPicked[id as PlayerId] !== undefined);
 
-      if (!allPicked) {
+      if (!noDraftersLeft && !allPicked) {
         // Stay in drafting. Persist the fired marker so subsequent ticks
         // don't re-emit `draft-resolved` for the same player.
         const carry: WithMarker = {
