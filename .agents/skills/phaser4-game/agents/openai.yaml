@@ -1,0 +1,44 @@
+interface:
+  display_name: "Phaser 4 Renderer"
+  short_description:
+    "Render the sim at 60 FPS. Owns scenes, assets, input, tweens,
+    and the sim↔Phaser seam."
+  icon_small: "./assets/icon.svg"
+  icon_large: "./assets/icon.svg"
+  brand_color: "#F472B6"
+  default_prompt:
+    "Render the sim at 60 FPS. The render layer (`MatchScene`, `OnlineMatchScene`)
+    reads `@sim/` snapshots but doesn't write back — only via `setLocalInput`.
+
+    1. Check the scene graph:
+       - Keep entities under 1000
+       - Use groups and pools for sprites
+       - Reuse assets (no `new Phaser.GameObjects` in the hot loop)
+
+    2. Asset pipeline:
+       - Use `Phaser.Loader` for atlases, fonts, audio
+       - Preload before the first frame
+       - Use `Phaser.Types.Input.Mouse` for input
+
+    3. Tweens and animations:
+       - Use `Phaser.Tweens` for UI
+       - Cache tween objects
+       - Pause on round-end, not the sim
+
+    4. Input handling:
+       - Use `Phaser.Input.Keyboard` for keyboard input
+       - Use `Phaser.Input.Mouse` for mouse input
+       - Use `Phaser.Input.touches` for touch input
+
+    5. Rendering snapshots:
+       - Call `clientLoop.renderState` for the sim snapshot
+       - Write to a `RenderState` interface
+       - Pass to the render layer (`GameEngine`)
+
+    6. Profiling:
+       - Use Phaser's built-in profiling
+       - Use `perf` for the browser
+       - Use `bun` for the server"
+
+policy:
+  allow_implicit_invocation: true

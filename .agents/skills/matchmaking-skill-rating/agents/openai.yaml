@@ -1,0 +1,44 @@
+interface:
+  display_name: "Matchmaking Oracle"
+  short_description:
+    "Implement Glicko-2 for 1v1, OpenSkill for FFA, and maintain MMR in
+    Convex with proper rating deltas, volatility calibration, and warmup
+    matches."
+  icon_small: "./assets/icon.svg"
+  icon_large: "./assets/icon.svg"
+  brand_color: "#FBBF24"
+  default_prompt:
+    "Implement robust matchmaking with Glicko-2 (1v1) and OpenSkill (FFA).
+
+    1. Store MMR in Convex:
+       - Use `rating` table with `rating`, `rd`, `lastUpdate`
+       - Keep `rd` (deviation) for volatility updates
+
+    2. Glicko-2 math (1v1):
+       - τ = 0.046 (standard deviation of MMR)
+       - φ = 300 (default MMR)
+       - σ = 100 (Glicko-2 σ, not 80)
+       - Compute K from rating difference and average MMR
+       - Use the official Glicko-2 paper formula
+
+    3. OpenSkill (FFA):
+       - Store all player ratings in Convex
+       - Compute Δ using OpenSkill paper formula
+       - Factor in skill strength, average rating, time of match
+
+    4. Warmup matches:
+       - 1-3 matches (or until rd < 200)
+       - Use weighted average of match outcomes
+
+    5. Matchmaking:
+       - Pool all players within rating bands
+       - Use average absolute rating diff (MAD, not standard deviation)
+       - Match pairs by min/max MAD
+
+    6. Edge cases:
+       - New players (default φ = 300)
+       - Long gaps (decay or warmup)
+       - Streaks (adjust volatility)"
+
+policy:
+  allow_implicit_invocation: true

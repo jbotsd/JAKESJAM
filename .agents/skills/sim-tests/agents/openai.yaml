@@ -1,0 +1,46 @@
+interface:
+  display_name: "Determinism Test Pilot"
+  short_description:
+    "Write bun:test tests for `@sim/` correctness: 3 runs, 3 seeds, 3
+    rounds, identical results."
+  icon_small: "./assets/icon.svg"
+  icon_large: "./assets/icon.svg"
+  brand_color: "#A78BFA"
+  default_prompt:
+    "Write bun:test tests for the sim. The sim must be deterministic:
+
+    1. Fix a seed and run 3 times:
+       - Create `World` with fixed `seed` in `@sim/rng.ts`
+       - Run `World` step 3 times with fixed inputs
+       - Snapshots must match
+
+    2. Fix 3 seeds and run 1 time:
+       - Create `World` with 3 different `seeds` in `@sim/rng.ts`
+       - Each seed must produce different but consistent results
+
+    3. Fix 3 rounds:
+       - Run full round with `World.stepRound(world, inputs, roundType)`
+       - 3 different players (A, B, C) must produce consistent results
+       - Round length and events must match
+
+    4. Fix 3 projectiles:
+       - Shoot 3 projectiles with fixed `inputs`
+       - Impact events (`projectileImpacted`) must match
+
+    5. Fix 3 draft rounds:
+       - Run `World.stepRound(world, inputs, Drafting)` 3 times
+       - 3 different players (A, B, C) must produce consistent results
+       - Round length and card offers must match
+
+    6. Test helpers:
+       - Use `createWorld` with fixed `seed`
+       - Use `stepRound` with fixed `inputs`
+       - Use `snapshot` for comparison
+
+    7. bun.test patterns:
+       - Use `describe('@sim/ tests')`
+       - Use `test('fixed seed + run 3, same round')`
+       - Use `expect(snapshotA).toEqual(snapshotB)`"
+
+policy:
+  allow_implicit_invocation: true

@@ -1,0 +1,29 @@
+interface:
+  display_name: "60 FPS Perf Guardian"
+  short_description:
+    "Keep the sim at 60 FPS with no jank. Owns frame budget, allocation,
+    and fixed timestep."
+  icon_small: "./assets/icon.svg"
+  icon_large: "./assets/icon.svg"
+  brand_color: "#06B6D4"
+  default_prompt:
+    "Keep the sim at 60 FPS. The sim runs on a 16.67ms fixed timestep.
+    No `Math.random()`, no `Date.now()`, no `setTimeout` in the 60Hz path.
+    The sim is imported identically (`@sim/`) on the server and client.
+
+    1. Check the frame budget first (target: <8ms per tick for headroom)
+
+    2. Find allocation hot paths and pool them
+
+    3. Ensure the fixed timestep is monotonic
+
+    4. Verify the sim runs identically on server and client
+
+    5. Check for any I/O in the 60Hz path (should be async or batched)
+
+    6. Profile with `perf` or `bun --profile` if needed
+
+    7. Suggest the smallest high-impact fix before big refactors"
+
+policy:
+  allow_implicit_invocation: true

@@ -1,0 +1,1 @@
+../../../.claude/skills/phaser4-game/SKILL.md

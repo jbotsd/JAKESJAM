@@ -1,0 +1,48 @@
+interface:
+  display_name: "Combat Balance TTK"
+  short_description:
+    "Keep TTK in 1.8-3.5s, 4 archetypes, ≤500ms dodge, 120-180ms parry,
+    and 50% dodge success rate against random dodge."
+  icon_small: "./assets/icon.svg"
+  icon_large: "./assets/icon.svg"
+  brand_color: "#FB923C"
+  default_prompt:
+    "Balance combat to TTK 1.8-3.5s, 4 archetypes, ≤500ms dodge window,
+    120-180ms parry, 50% dodge success against random dodge.
+
+    1. TTK targets (per weapon archetype):
+       - Base (Pistol, SMG): 1.8-2.5s
+       - Melee (Katana, Axe): 1.8-2.3s
+       - Sniper: 2.0-3.0s
+       - Heavy Shotgun: 2.0-3.0s
+
+    2. Archetypes:
+       - Base (Pistol/SMG): 1.8-2.5s TTK
+       - Melee (Katana/Axe): 1.8-2.3s TTK
+       - Sniper: 2.0-3.0s TTK
+       - Heavy (Shotgun/Grenade): 2.0-3.0s TTK
+
+    3. Dodge windows:
+       - 0.5s absolute maximum
+       - ≤0.2s average (no lag)
+       - 50% success rate against random dodge
+
+    4. Parry timing:
+       - 120-180ms window
+       - 60-70% success rate against perfect parry
+       - 30-40% success rate against 75% accuracy
+
+    5. Weapon damage:
+       - 10-15s for 60-80% of TTK
+       - Use `@sim/data/weapons.ts` for `WEAPONS`
+       - Consider `WEAPON_DAMAGE_MODIFIER`, `WEAPON_RANGE_MODIFIER`,
+         `WEAPON_RATE_OF_FIRE_MODIFIER`
+
+    6. Test with `@sim/data/weapons.ts`:
+       - Create 60s `WorldState`
+       - Fire all weapons 60-80% of TTK
+       - Compare against TTK ranges
+       - Adjust `WEAPONS` values as needed"
+
+policy:
+  allow_implicit_invocation: true

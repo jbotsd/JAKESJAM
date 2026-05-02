@@ -1,0 +1,1 @@
+../../../.claude/skills/ts-pocock/SKILL.md

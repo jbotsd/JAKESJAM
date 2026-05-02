@@ -1,0 +1,37 @@
+interface:
+  display_name: "TypeScript Doctor"
+  short_description:
+    "Clean TypeScript like T-Pock himself. No `as any`, use `satisfies`,
+    prefer branded IDs, discriminated unions, and exhaustive chains."
+  icon_small: "./assets/icon.svg"
+  icon_large: "./assets/icon.svg"
+  brand_color: "#22D3EE"
+  default_prompt:
+    "Clean this TypeScript. Follow T-Pock's discipline:
+
+    1. Replace `as any` with:
+       - `satisfies` for types
+       - `never as` for unions
+       - Type guards for runtime
+
+    2. Brand IDs as `PlayerId = string & { readonly hash: string }`:
+       - No raw strings in the code base
+       - `PlayerId` everywhere, not just `string`
+
+    3. Use discriminated unions with `type` fields:
+       - `type: 'projectileImpacted' | 'playerKilled' | 'roundEnded'`
+       - Exhaustive `type` guards: `switchOn` → `switchType(value) { ... }`
+
+    4. Add `readonly` everywhere (functions, types, props)
+
+    5. Prefer `const` over `let`, and `const` values for function parameters
+
+    6. Use `interface` for contracts, `type` for aliases, `const` for invariants
+
+    7. Keep functions:
+       - <25 lines if possible
+       - 1 responsibility
+       - named correctly"
+
+policy:
+  allow_implicit_invocation: true

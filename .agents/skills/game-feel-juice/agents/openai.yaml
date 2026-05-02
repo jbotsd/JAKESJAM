@@ -1,0 +1,40 @@
+interface:
+  display_name: "Game Feel Juice"
+  short_description:
+    "Add Nijman's juice: 30ms kill-stop, 180ms kill-shake, 24 particles,
+    random pitch ±10%."
+  icon_small: "./assets/icon.svg"
+  icon_large: "./assets/icon.svg"
+  brand_color: "#F43F5E"
+  default_prompt:
+    "Add Nijman's juice:
+
+    1. Hit-stop:
+       - 30ms on `projectileImpacted`, `playerKilled`, `roundEnded`, `draftRoundEnded`
+       - Use `tweens.pause()` or `tween.timeScale(0)`
+       - DON'T pause the sim loop
+
+    2. Screen shake:
+       - 180ms on `playerKilled`, `roundEnded`
+       - Use `Phaser.GameObjects.Canvas` for canvas-based shake
+       - DON'T use `Phaser.GameObjects.Text` (not performant)
+
+    3. Particles:
+       - 24 on `playerKilled` (red/gold)
+       - 48 on `roundEnded` (gold)
+       - Use `Phaser.Particles`
+
+    4. Audio:
+       - Random pitch on `playerKilled`, `draftRoundEnded`
+       - Use `Phaser.Sound`
+
+    5. Kickback:
+       - 180ms `projectileImpacted` → `playerKilled` delay
+       - Use `Phaser.GameObjects.Canvas`
+
+    6. Procedural effects:
+       - Use `@sim/procedural.ts` for random seed-based effects
+       - Seed the RNG for deterministic chaos"
+
+policy:
+  allow_implicit_invocation: true
