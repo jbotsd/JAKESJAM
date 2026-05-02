@@ -39,6 +39,10 @@ export const boxworksTower: MapDefinition = {
     { id: "mid-left", kind: "platform", position: { x: 320, y: 760 }, size: { x: 320, y: 22 } },
     { id: "mid-right", kind: "platform", position: { x: 1120, y: 760 }, size: { x: 320, y: 22 } },
     { id: "mid-bridge", kind: "platform", position: { x: 720, y: 620 }, size: { x: 280, y: 22 } },
+    // Cover columns to break the 480px mid-tier sightline gap between the
+    // mid-left/mid-right platforms (arena-map-design: max ~320px unbroken).
+    { id: "mid-cover-left",  kind: "platform", position: { x: 560, y: 760 }, size: { x: 60, y: 90 } },
+    { id: "mid-cover-right", kind: "platform", position: { x: 880, y: 760 }, size: { x: 60, y: 90 } },
 
     // ── High tier: stepped towers + crow's nest at top ───────────────
     { id: "high-left", kind: "platform", position: { x: 240, y: 460 }, size: { x: 260, y: 22 } },

@@ -34,5 +34,10 @@ export const boxworksMini: MapDefinition = {
     // Two side ledges at brawl height — give crouchers an angle.
     { id: "ledge-left", kind: "platform", position: { x: 220, y: 460 }, size: { x: 220, y: 18 } },
     { id: "ledge-right", kind: "platform", position: { x: 1060, y: 460 }, size: { x: 220, y: 18 } },
+    // Cover pillars to break the 418px sightline gap between the mid-platform
+    // edges and the walls (arena-map-design: max ~320px unbroken sightline).
+    // Placed at mid-height so they provide cover while not blocking vertical flow.
+    { id: "cover-left", kind: "platform", position: { x: 280, y: 360 }, size: { x: 72, y: 80 } },
+    { id: "cover-right", kind: "platform", position: { x: 1000, y: 360 }, size: { x: 72, y: 80 } },
   ],
 };
