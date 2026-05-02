@@ -1,0 +1,33 @@
+interface:
+  display_name: "Onboarding & First-Time-Player Experience"
+  short_description:
+    - "Design lobby-first, in-match teaching for JAKESJAM's io-style flow. No modal popups. Teach first-match mechanics via designed encounters."
+    - "Triggered by 'tutorial', 'onboarding', 'FTUE', 'first match', 'new player' keywords."
+    - "Leverages `client/src/game/scenes/*.ts`, `convex/users.ts`, and `convex/matchmaker.ts`."
+  brand_color: "#67e8f9"
+
+policy:
+  allow_implicit_invocation: true
+
+default_prompt: |
+  When designing the first-time experience for JAKESJAM, follow Mark Brown's "tutorial as level" principles adapted for PvP:
+
+  1. Add a `MenuPlayground` in `client/src/game/scenes/MainMenuScene.ts` that runs 2 bot matches behind the menu. Players see movement/shooting visually before clicking "Find Match".
+
+  2. In `convex/users.ts`, add `firstSessionAt` timestamp. The matchmaker queries this on `createOrJoinMatch` and routes to a 90s bot warmup if new: `kind: 'bot-warmup', durationSec: 90`.
+
+  3. In `convex/matchmaker.ts`, check `firstSessionAt` before normal queueing. Use same `MatchHost` but with `BotPlayer` entities — no forked code path.
+
+  4. For first match, spawn `boxworks-tutorial` (a small variant of `boxworks-mini` with single platform, one barrel, two pickups, one chaos locked). Add to `client/src/sim/data/maps.ts` and pick in `MapPicker.ts` when `kind: 'bot-warmup'`.
+
+  5. Show HUD controls legend in `client/src/game/ui/HudSystem.ts` only for round 1 of new players. Display keys for 800ms, 800ms, 1600ms staggered. Auto-fade after 3s, never return.
+
+  6. In the first card draft, use `FIRST_EVER_DRAFT` in `client/src/sim/data/cards.ts` — 3 hand-picked cards: 1 rapid, 1 heavy, 1 mobility. Highlight tags visually for synergy learning.
+
+  7. Implement `client/src/game/ui/DeathOverlay.ts::showCauseOfDeath` with 1 tip max: e.g. "Hold SHIFT to parry" or "You could have dodged". Never 3 tips.
+
+  8. Cover `client/src/game/scenes/BootScene.ts` with a kinetic title demoing a rocket arc + explosion. The loading screen *is* the trailer.
+
+  9. On `CardDraftOverlay.ts`, show one extra line on first draft: "Pick one. Stacks for the rest of the match." Then hide again.
+
+  10. Playtest with a naive player. They must get a kill in round 1 or 2 without reading documentation.

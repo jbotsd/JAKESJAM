@@ -6,7 +6,7 @@ import { decode, encode } from "@msgpack/msgpack";
 import type { InputSeq, SimEvent, Tick, WorldState } from "@sim/types.ts";
 import type { DeltaPayload } from "./snapshotDelta.ts";
 
-export const PROTOCOL_VERSION = 1;
+export const PROTOCOL_VERSION = 2;
 
 // ---------------- Client → Server ----------------
 
@@ -157,8 +157,15 @@ export function decodeMessage<T = ClientMessage | ServerMessage>(
   const version = bytes[0]!;
   const body = bytes.subarray(1);
   try {
-    const message = decode(body) as T;
-    return { version, message };
+    const message = decode(body);
+    if (
+      typeof message !== "object" ||
+      message === null ||
+      typeof (message as { t?: unknown }).t !== "string"
+    ) {
+      return null;
+    }
+    return { version, message: message as T };
   } catch {
     return null;
   }

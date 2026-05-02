@@ -4,22 +4,27 @@
 
 import type { ServerWebSocket } from "bun";
 import { PlayerId, type PlayerSpawnInfo } from "@sim/types.ts";
-import { MatchHost, type MatchSocketData } from "./matchHost.ts";
+import {
+  MatchHost,
+  type MatchSocketData,
+} from "./matchHost.ts";
+import { convexClient, type ConvexId } from "./convexClient.ts";
 
 export class MatchRegistry {
   private readonly matches = new Map<string, MatchHost>();
 
-  attach(ws: ServerWebSocket<MatchSocketData>): void {
+  async attach(ws: ServerWebSocket<MatchSocketData>): Promise<void> {
     const { matchId, playerId: rawPlayerId } = ws.data;
     const playerId = PlayerId(rawPlayerId);
     let host = this.matches.get(matchId);
     if (!host) {
-      // TODO(map-pipe): mirror the chaos-pipe TODO — the room's selected
-      // mapId should flow here from Convex. For now we let MatchHost fall
-      // back to the default; the lobby DOES persist the chosen mapId on
-      // the room record so once a Convex lookup is wired in, this just
-      // becomes `(await convexClient.getMatchSummary(matchId))?.mapId`.
-      const mapId: string | undefined = undefined;
+      // Fetch the match summary from Convex to recover the room's chaos modifiers
+      // and map selection. The matchId-only token from the WebSocket handshake
+      // needs the roomId to look up the full match context.
+      const summary =
+        (await convexClient.getMatchSummary(matchId as ConvexId)) ?? null;
+      const chaosModifierIds = summary?.chaosModifierIds ?? [];
+      const mapId = summary?.mapId ?? undefined;
       host = new MatchHost(
         matchId,
         [
@@ -31,7 +36,7 @@ export class MatchRegistry {
             weaponId: "starter-pistol",
           },
         ],
-        [],
+        chaosModifierIds,
         mapId,
       );
       this.matches.set(matchId, host);

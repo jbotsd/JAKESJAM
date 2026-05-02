@@ -1,0 +1,33 @@
+interface:
+  display_name: "Roguelite Draft Design"
+  short_description:
+    - "Balance card draft economy using telemetry — cap pick rates at ≈55% and banish/skip rates at ≈55%. Add to client/src/sim/data/cards.ts."
+    - "Triggered by adding/removing cards, changing draft offers, reviewing pick-rate skews, synergy density."
+    - "Leverages sim/state in client/src/sim/data/*.ts and client/src/sim/round.ts::*."
+  brand_color: "#fde047"
+
+policy:
+  allow_implicit_invocation: true
+
+default_prompt: |
+  When editing or balancing draft cards for JAKESJAM, use metrics-driven design. Balance against these concrete files and numbers:
+
+  1. Define `rarity` ('common'/'uncommon'/'rare'/'mythic'), `weight`, and `tags` on every card in `client/src/sim/data/cards.ts`. Create `CardDef` shape in `client/src/sim/data/cardTypes.ts` with `CardTag` values ('fire'|'pierce'...'sustain'|'control').
+
+  2. Implement weighted rolling in `client/src/sim/round.ts` via `rollDraftOffers()`. Read from `CARDS` in `cards.ts`, respecting `owned` card set per player. Use `rngNext(state)` — never `Math.random()` — to keep determinism.
+
+  3. Apply `DRAFT_OFFER_COUNT = 3` as fixed (Cadwell's variance research). Consider `DRAFT_OFFER_COUNT_BEHIND` for the loser, telemetry-tuned (start at 3, adjust via Convex feature flag if `comebackRate` < 25%).
+
+  4. Add a `draftsSinceRare` pity counter to `PlayerEntity`. At ≥4 drafts since last rare, promote a `common` offer to `rare+` tier in the next 3 slots.
+
+  5. Create telemetry hook `convex/matches.recordDraftEvent` that posts `offerIds`, `pickedId`, `ownedCardCount` and `roundIndex` on draft commit. Dashboard query: `pickRate(card) = picks / offerings` binned by `ownedCardCount` to detect knowledge vs balance problems.
+
+  6. For the first 12-card MVP pool, lock at 12 commons with 4 tags (3 cards per tag). Add rarity tiers only after telemetry validates pick-rate behavior.
+
+  7. Ensure `unique: true` cards don't roll twice in one draft — filter `owned` cards from the roll set.
+
+  8. Design at least 2 counter-cards for the most common build to avoid single-bow meta (e.g. anti-rapid, anti-heavy).
+
+  9. Display tag chips on `client/src/game/ui/CardDraftOverlay.ts` so synergy is visually legible in round 1.
+
+  10. On first-ever draft, hand-pick 3 tag-diverse cards (`FIRST_EVER_DRAFT` constant in `cards.ts`) before rolling.

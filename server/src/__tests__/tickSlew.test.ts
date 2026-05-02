@@ -78,7 +78,7 @@ describe("MatchHost slew integration", () => {
       color: "#ff0000",
       name: "P1",
     };
-    const host = new MatchHost("test-match", [spawn]);
+    const host = new MatchHost("test-match", [spawn], []);
 
     // Reach the private TickSlewController via an intentional cast.
     // This is test-only; the field is private to the production class.

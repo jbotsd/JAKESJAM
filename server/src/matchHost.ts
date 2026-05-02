@@ -142,11 +142,9 @@ export class MatchHost {
   constructor(
     matchId: string,
     players: PlayerSpawnInfo[],
-    // TODO(chaos-pipe): the room's selected chaos modifier ids should flow
-    // here once the matchmaker carries them. Today we stub an empty list so
-    // the netcode path runs the no-chaos baseline; the sim already supports
-    // any subset via World.create's optional 4th arg.
-    chaosModifierIds: string[] = [],
+    // Now wired from Convex via matching registry / WorldHost. Room/host
+    // defaults to [] if no room is available (e.g. IO world).
+    chaosModifierIds: string[],
     mapId: MapId | string | undefined = undefined,
   ) {
     this.matchId = matchId;

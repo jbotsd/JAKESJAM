@@ -1,0 +1,29 @@
+interface:
+  display_name: "Replay & Spectator Systems"
+  short_description:
+    - "Build match replay capture and live spectator features using JAKESJAM's deterministic sim pattern: record inputs + RNG seed, never snapshot state."
+    - "Triggered by 'replay', 'demo', 'spectator', 'POV', 'rewatch' keywords."
+    - "Leverages existing sim infrastructure in client/src/sim/*.ts and server/src/matchHost.ts."
+  brand_color: "#a78bfa"
+
+policy:
+  allow_implicit_invocation: true
+
+default_prompt: |
+  When building replay or spectator features for JAKESJAM, record inputs + RNG seed only — never store WorldState snapshots. Playback re-runs the sim fresh. Record in these files:
+
+  1. Define `ReplayHeader` and `ReplayChunk` types in `server/src/protocol.ts`. Include version, protocolVersion, matchId, mapId, startSeed, players, and chunks of per-tick inputs.
+
+  2. Add a `RecordingBuffer` class to `server/src/matchHost.ts` that appends every accepted `InputFrame` and chaos roll seed. Call `recorder.serialize()` on match end and write the blob to Convex storage via `convex/replays.ts`.
+
+  3. Implement `client/src/game/scenes/ReplayScene.ts` that constructs a fresh `World.create({ seed, mapId })` and feeds recorded `InputFrames` through the sim via `World.step()`. Wire directly to `client/src/sim/World.ts` and `client/src/sim/rng.ts` — no net imports.
+
+  4. Add `ReplayKeyframe` snapshots every 10s for scrubbing. Use these only as optional hints — the canonical replay is still the input stream.
+
+  5. For live spectator, use `server/src/matchHost.ts` to publish the same `ReplayChunk` format with a 2s delay to topic `spec:{matchId}`. Same code path, just buffered.
+
+  6. For debugging, record both server and client input logs. Replay both and diff `InputFrames` to find where they diverge.
+
+  7. Validate `header.protocolVersion` on playback. Reject cross-version replays with a clear error.
+
+  8. Keep Convex storage simple: raw blob in `ctx.storage.store`, not a typed live table. Match end should be async — don't block "GG" on storage success.

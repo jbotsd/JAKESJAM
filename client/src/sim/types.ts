@@ -15,14 +15,15 @@ export const InputSeq = (n: number): InputSeq => n as InputSeq;
 /** Typed iteration helpers — see .claude/skills/ts-pocock/SKILL.md §1.
  *  Use these instead of `Object.keys(...) as PlayerId[]`. */
 export function playerIdsOf<T>(record: Record<PlayerId, T>): PlayerId[] {
-  return Object.keys(record) as PlayerId[];
+  return (Object.keys(record) as PlayerId[]).sort();
 }
 export function entityIdsOf<T>(record: Record<EntityId, T>): EntityId[] {
   // Object.keys returns string[]; entity ids are stored as numeric strings,
-  // so we coerce back through the EntityId constructor.
+  // so we coerce back through the EntityId constructor. Sorted numerically
+  // for cross-host iteration parity (see game-sim-determinism §4).
   const out: EntityId[] = [];
   for (const k in record) out.push(EntityId(+k));
-  return out;
+  return out.sort((a, b) => a - b);
 }
 
 /**
@@ -390,6 +391,20 @@ export type SimEvent =
       t: 'shield-popped';
       playerId: PlayerId;
       remainingCharge: number;
+    }
+  | {
+      /**
+       * Emitted exactly once when a player's `alive` flag transitions from
+       * true to false. Distinct from `hit-confirmed` so the renderer can
+       * drive the kill stack (hit-stop 80ms, kill shake, particle burst,
+       * flash, killer camera kick) without polling `state.players[id].alive`.
+       * `killerId` is the playerId whose projectile/effect caused the kill,
+       * or null for environmental causes (void plane, fire patch DoT).
+       */
+      t: 'player-killed';
+      victimId: PlayerId;
+      killerId: PlayerId | null;
+      cause: 'projectile' | 'void' | 'burn' | 'fire' | 'explosion' | 'chain-lightning';
     }
   /**
    * Emitted when a player collects a `card-cache` pickup. The sim pre-rolls

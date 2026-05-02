@@ -289,6 +289,7 @@ export const startMatch = mutation({
       mapId,
       targetScore: 3,
       roundIndex: 0,
+      chaosModifierIds: room.chaosModifierIds ?? [],
       scores,
       startedAt: now,
     });

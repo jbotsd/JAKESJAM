@@ -604,8 +604,8 @@ export class OnlineMatchScene extends Phaser.Scene {
           // Hit-stop: freeze render tweens for 35–50ms on a heavy hit.
           // Per game-feel-juice/SKILL.md recipe 2 — render-only freeze, sim keeps ticking.
           const stopMs = event.damage >= 30 ? 50 : 35;
-          this.time.timeScale = 0;
-          this.time.delayedCall(stopMs, () => { this.time.timeScale = 1; });
+          this.tweens.timeScale = 0;
+          this.time.delayedCall(stopMs, () => { this.tweens.timeScale = 1; });
           if (event.victimId === this.localPlayerId) {
             // Bigger shake when the LOCAL player is hit — guard stacking.
             this.safeShake(80, 0.008);
@@ -613,6 +613,24 @@ export class OnlineMatchScene extends Phaser.Scene {
           this.spawnDamageNumber(event.victimId, event.damage);
           // Spawn small impact blast at victim's current position.
           this.spawnBlastAtPlayer(event.victimId, 22, event.damage);
+          break;
+        }
+        case "player-killed": {
+          // Kill stack — render-only, sim keeps ticking.
+          // Per game-feel-juice/SKILL.md recipe 1: 80ms hit-stop + 0.012 shake bucket
+          // + particle burst + 2 layered SFX + camera kick for killer.
+          // tweens.timeScale (NOT time.timeScale — that would freeze delayedCall itself).
+          this.tweens.timeScale = 0;
+          this.time.delayedCall(80, () => { this.tweens.timeScale = 1; });
+          this.safeShake(180, 0.012);
+          this.spawnBlastAtPlayer(event.victimId, 36, 50);
+          // Two layered SFX.
+          this.audio.play("explosion");
+          this.audio.play("hit");
+          // Camera kick when LOCAL player got the kill.
+          if (event.killerId !== null && event.killerId === this.localPlayerId) {
+            this.safeShake(120, 0.006);
+          }
           break;
         }
         case "destructible-broken": {

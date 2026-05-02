@@ -12,9 +12,13 @@
 //     just hold one instance of it.
 
 import type { ServerWebSocket } from "bun";
-import { MatchHost, type MatchSocketData } from "./matchHost.ts";
+import {
+  MatchHost,
+  type MatchSocketData,
+} from "./matchHost.ts";
 import { PlayerId, type PlayerSpawnInfo } from "@sim/types.ts";
 import { DEFAULT_MAP_ID, isMapId, type MapId } from "@sim/data/maps.ts";
+import { convexClient, type ConvexId } from "./convexClient.ts";
 
 const WORLD_MATCH_ID = "world";
 
@@ -90,6 +94,9 @@ export class WorldHost {
     const playerId = PlayerId(ws.data.playerId);
     if (!this.host) {
       const spawn = this.spawnFor(ws.data.playerId);
+      // WorldHost doesn't have a room to read chaos modifiers from, so we fall back
+      // to the no-chaos baseline. Future workitem: add a lightweight Convex world token
+      // endpoint that exposes a default/modifiable chaos set for the always-on world.
       this.host = new MatchHost(WORLD_MATCH_ID, [spawn], [], this.nextMapId());
     } else if (!this.host.hasPlayer(playerId)) {
       this.host.addPlayer(this.spawnFor(ws.data.playerId));

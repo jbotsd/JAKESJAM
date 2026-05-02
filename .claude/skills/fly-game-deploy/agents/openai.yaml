@@ -1,0 +1,37 @@
+interface:
+  display_name: "Fly.io Deploy — Stateful Game Server"
+  short_description:
+    - "Deploy JAKESJAM's Bun WebSocket game server to Fly.io with stateful match hosting. Edit `fly.toml`, `server/Dockerfile`, and deploy scripts."
+    - "Handles `flyctl`, secrets, multi-region topology (syd/sjc/fra), and `/health` design."
+    - "Skip for client (Vite) and Convex (use convex skills)."
+  brand_color: "#f97316"
+
+policy:
+  allow_implicit_invocation: true
+
+default_prompt: |
+  When deploying or editing `fly.toml` for JAKESJAM's stateful game server, follow these patterns:
+
+  1. Set `auto_stop_machines = false` in `[http_service]`. If Fly stops a VM mid-match, WS connections die with no migration.
+
+  2. Set `min_machines_running = 1` to keep a warm host for low first-match latency. Bump based on concurrent match load.
+
+  3. Add health checks in `fly.toml`: `grace_period: 10s`, `interval: 10s`, `method: get`, `path: /health`, `timeout: 2s`.
+
+  4. Implement `/health` in `server/src/index.ts` as cheap: `Response(200, {})`. Don't gate on Convex or DB — it's a local process probe.
+
+  5. Use `[vm]` with `cpu_kind: shared`, `cpus: 1`, `memory_mb: 512`. Bump to `dedicated` only when >50 CCU per VM is expected.
+
+  6. Follow naming: `jakesjam-srv-<region>` (e.g. `jakesjam-srv-syd`). Deploy one app per region to keep secrets/scaling clean.
+
+  7. Create apps with `flyctl apps create <name>`, then `flyctl secrets set --app <name> GAME_SERVER_SECRET=<value> CONVEX_URL=https://...`.
+
+  8. Ensure `GAME_SERVER_SECRET` matches Convex environment (`bunx convex env set GAME_SERVER_SECRET ...`) — it verifies match tickets (`server/src/auth.ts`).
+
+  9. Matchmaker URL flow: Convex returns `{ matchId, hostUrl, ticket }`. `hostUrl` is `wss://jakesjam-srv-<region>.fly.dev/match` geolocation-routed.
+
+  10. Rollbacks: `flyctl releases --app <name>` lists prior images; `flyctl deploy --image <prior> --app <name>` redeploys instantly.
+
+  11. Pre-deploy checks: `bun run typecheck` clean, `flyctl status --app <name>` healthy, `flyctl logs --app <name>` last 2 mins spam-free, active matches = 0.
+
+  12. Avoid `regions = [a, b, c]` in fly.toml — matchmaker routing fails. Use per-app configs instead.

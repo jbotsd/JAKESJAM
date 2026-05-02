@@ -52,6 +52,7 @@ export default defineSchema({
     mapId: v.string(),
     targetScore: v.number(),
     roundIndex: v.number(),
+    chaosModifierIds: v.optional(v.array(v.string())),
     scores: v.record(v.string(), v.number()),
     startedAt: v.number(),
     completedAt: v.optional(v.number()),

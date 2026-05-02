@@ -17,6 +17,7 @@ export const getMatchSummary = query({
       roomId: match.roomId,
       status: match.status,
       roundIndex: match.roundIndex,
+      chaosModifierIds: match.chaosModifierIds ?? [],
     };
   },
 });

@@ -405,6 +405,12 @@ export function stepWithRuntime(
         damage: p.health,
         sourceProjectileId: null,
       });
+      events.push({
+        t: "player-killed",
+        victimId: pid,
+        killerId: null,
+        cause: "void",
+      });
       players[pid] = {
         ...p,
         health: 0,
@@ -436,6 +442,7 @@ export function stepWithRuntime(
       if (state.tick - last >= ONE_SECOND_TICKS) {
         const dmg = next.burnDps;
         const newHealth = Math.max(0, next.health - dmg);
+        const wasAlive = next.alive;
         next = {
           ...next,
           health: newHealth,
@@ -448,6 +455,14 @@ export function stepWithRuntime(
           damage: dmg,
           sourceProjectileId: null,
         });
+        if (wasAlive && newHealth === 0) {
+          events.push({
+            t: "player-killed",
+            victimId: pid,
+            killerId: null,
+            cause: "burn",
+          });
+        }
       }
     } else if (
       next.burnUntilTick !== undefined &&
@@ -603,11 +618,20 @@ export function stepWithRuntime(
           }
           ev.damage = finalDamage;
           const newHealth = Math.max(0, postPlayer.health - finalDamage);
+          const wasAlive_main = postPlayer.alive;
           let nextVictim = {
             ...postPlayer,
             health: newHealth,
             alive: newHealth > 0,
           };
+          if (wasAlive_main && newHealth === 0) {
+            events.push({
+              t: "player-killed",
+              victimId: ev.victimId,
+              killerId: proj.ownerId,
+              cause: "projectile",
+            });
+          }
           // Fire: 3-second burn DoT at damage * 0.4 per second. Tick-quantized.
           if (element === "fire") {
             const burnTicks = Math.ceil((3 * 1000) / Math.max(1, effDtMs));
@@ -655,11 +679,20 @@ export function stepWithRuntime(
             if (bestId !== null) {
               const target = players[bestId]!;
               const tHealth = Math.max(0, target.health - chainDmg);
+              const wasAlive_chain = target.alive;
               players[bestId] = {
                 ...target,
                 health: tHealth,
                 alive: tHealth > 0,
               };
+              if (wasAlive_chain && tHealth === 0) {
+                events.push({
+                  t: "player-killed",
+                  victimId: bestId,
+                  killerId: proj.ownerId,
+                  cause: "chain-lightning",
+                });
+              }
               events.push({
                 t: "hit-confirmed",
                 victimId: bestId,
@@ -758,6 +791,14 @@ export function stepWithRuntime(
             health: newHealth,
             alive: newHealth > 0,
           };
+          if (newHealth === 0) {
+            events.push({
+              t: "player-killed",
+              victimId: ev.victimId,
+              killerId: null,
+              cause: "explosion",
+            });
+          }
         }
       }
       events.push(ev);
@@ -786,6 +827,14 @@ export function stepWithRuntime(
             health: newHealth,
             alive: newHealth > 0,
           };
+          if (newHealth === 0) {
+            events.push({
+              t: "player-killed",
+              victimId: ev.victimId,
+              killerId: null,
+              cause: "fire",
+            });
+          }
         }
       }
       events.push(ev);
