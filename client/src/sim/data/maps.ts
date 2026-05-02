@@ -44,7 +44,7 @@ const mapAliasesById: Record<string, MapDefinition> = (() => {
   return out;
 })();
 
-export const DEFAULT_MAP_ID: MapId = "boxworks";
+export const DEFAULT_MAP_ID: MapId = "boxworks-mini";
 
 export function isMapId(value: string): value is MapId {
   return value in mapsById;

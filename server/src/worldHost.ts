@@ -163,4 +163,4 @@ export class WorldHost {
 }
 
 /** Module-level singleton — there's exactly one world per server process. */
-export const worldHost = new WorldHost();
+export const worldHost = new WorldHost({ mapId: "boxworks-mini", rotateMaps: true });
