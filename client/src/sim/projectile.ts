@@ -15,11 +15,12 @@
 // no Phaser, no DOM. Iterate entities in EntityId order at the caller.
 
 import {
-  aabbOverlap,
   circleOverlapsAABB,
   circleHitsAnyCached,
   circleBounceCached,
   platformToAABB,
+  sweepAABB,
+  aabbOverlap,
   type StaticCollisionCache,
 } from "./collision.js";
 import { nextFloat } from "./rng.js";
@@ -212,26 +213,59 @@ export function stepProjectile(
   const stepDist = Math.hypot(x - prevX, y - prevY);
   const traveledPx = (proj.traveledPx ?? 0) + stepDist;
 
-  // 3. Player collision — checked before platform so a homing shard that
-  //    overlaps a wall and a player on the same tick still resolves the hit.
-  //    On hit, dispatch impact behavior (explosive AOE, sticky stick,
-  //    pierce-chain, slow-field, plain damage).
+  // 3. Player collision — swept hit detection: sweep the projectile AABB
+  //    along its prev→current trajectory against each alive non-owner player
+  //    AABB. Earliest t wins. Prevents the tunneling failure mode where a
+  //    fast projectile crosses a player's body in a single tick — the prior
+  //    end-position-AABB check missed those hits entirely.
+  //    Iterate players in deterministic order so the picked target is stable
+  //    when two are equidistant.
   let hitPid: PlayerId | null = null;
-  // Iterate players in deterministic order.
   const playerIds = Object.keys(players).sort();
+  const candidatePids: PlayerId[] = [];
+  const candidateAABBs: { x: number; y: number; w: number; h: number }[] = [];
   for (const pid_ of playerIds) {
     const pid = pid_ as PlayerId;
     if (proj.ownerId !== null && pid === proj.ownerId) continue;
     const player = players[pid]!;
     if (!player.alive) continue;
-    if (
-      aabbOverlap(
-        { x: x - proj.radius, y: y - proj.radius, w: proj.radius * 2, h: proj.radius * 2 },
-        { x: player.x - PLAYER_RADIUS, y: player.y - PLAYER_RADIUS, w: PLAYER_RADIUS * 2, h: PLAYER_RADIUS * 2 },
-      )
-    ) {
-      hitPid = pid;
-      break;
+    candidatePids.push(pid);
+    candidateAABBs.push({
+      x: player.x - PLAYER_RADIUS,
+      y: player.y - PLAYER_RADIUS,
+      w: PLAYER_RADIUS * 2,
+      h: PLAYER_RADIUS * 2,
+    });
+  }
+  if (candidateAABBs.length > 0) {
+    const projAABBPrev = {
+      x: prevX - proj.radius,
+      y: prevY - proj.radius,
+      w: proj.radius * 2,
+      h: proj.radius * 2,
+    };
+    const projAABBNow = {
+      x: x - proj.radius,
+      y: y - proj.radius,
+      w: proj.radius * 2,
+      h: proj.radius * 2,
+    };
+    // Pass 1 — already-overlapping case (projectile spawned inside target,
+    // or end-position overlaps). The original behavior we must preserve.
+    for (let i = 0; i < candidateAABBs.length; i++) {
+      const c = candidateAABBs[i]!;
+      if (aabbOverlap(projAABBPrev, c) || aabbOverlap(projAABBNow, c)) {
+        hitPid = candidatePids[i]!;
+        break;
+      }
+    }
+    // Pass 2 — swept hit (catches tunneling: AABBs don't overlap at endpoints
+    // but the projectile crosses the target between prev and now).
+    if (hitPid === null) {
+      const sweptHit = sweepAABB(projAABBPrev, vx, vy, dtSec, candidateAABBs);
+      if (sweptHit !== null) {
+        hitPid = candidatePids[sweptHit.index]!;
+      }
     }
   }
 

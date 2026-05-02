@@ -46,6 +46,20 @@ async function dump(testInfo: import("@playwright/test").TestInfo, page: Page, l
   await writeFile(join(testInfo.outputDir, `${label}.json`), JSON.stringify(log, null, 2));
 }
 
+test("World mode: ?world=1 enters arena and renders terrain", async ({ page }, testInfo) => {
+  const log = attachConsole(page);
+  await page.goto("/?world=1");
+  await page.waitForSelector("canvas", { timeout: 20_000 });
+  await page.waitForTimeout(5000);
+  await dump(testInfo, page, log.get(), "world-arena");
+
+  const errors = log.get().filter((e) => e.type === "error" || e.type === "pageerror");
+  expect(
+    errors,
+    `World mode JS errors:\n${errors.map((e) => `  [${e.type}] ${e.text}`).join("\n")}`,
+  ).toEqual([]);
+});
+
 test("Create Room flow: no JS errors, room code visible", async ({ page }, testInfo) => {
   const log = attachConsole(page);
   await page.goto("/");

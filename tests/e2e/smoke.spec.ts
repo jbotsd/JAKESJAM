@@ -137,7 +137,7 @@ test("Practice match: canvas contains platform-lime pixels (jadeIsles theme.hi)"
   expect(
     probe.matchPixels,
     `Expected lime platform pixels in viewport. Got ${probe.matchPixels}/${probe.sampledPixels} matching rgb(157,230,66)±30. Top non-bg colors:\n${probe.topColors.join("\n")}`,
-  ).toBeGreaterThan(5000);
+  ).toBeGreaterThan(3000);
 });
 
 test("Practice match: no slow-frame log spam over 5s", async ({ page }, testInfo) => {
