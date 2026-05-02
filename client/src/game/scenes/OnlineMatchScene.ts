@@ -13,16 +13,8 @@
 
 import Phaser from "phaser";
 import { SceneKeys } from "./SceneKeys";
-import { ConvexClient } from "convex/browser";
-import {
-  ClientLoop,
-  WsTransport,
-  buildGameServerWsUrl,
-  fetchMatchAssignment,
-  InputBit,
-  type NetStats,
-} from "../../net";
-import type { Id } from "../../../../convex/_generated/dataModel";
+import { InputBit, type NetStats } from "../../net";
+import { RenderHost } from "../../net/RenderHost";
 import {
   ORBIT_RADIUS_PX,
   type DestructibleEntity,
@@ -132,8 +124,7 @@ function colorForOwner(ownerId: string): number {
 }
 
 export class OnlineMatchScene extends Phaser.Scene {
-  private loop: ClientLoop | null = null;
-  private convex: ConvexClient | null = null;
+  private host: RenderHost | null = null;
   private statusText: Phaser.GameObjects.Text | null = null;
   private playerRigs = new Map<string, ProceduralPlayerRig>();
   private projectileSprites = new Map<number, Phaser.GameObjects.Arc>();
@@ -166,7 +157,13 @@ export class OnlineMatchScene extends Phaser.Scene {
 
   init(data: OnlineMatchSceneInit) {
     this.localPlayerId = PlayerId(data.localPlayerId);
-    void this.connect(data);
+    this.host = new RenderHost({
+      matchId: data.matchId,
+      localPlayerId: data.localPlayerId,
+      convexUrl: data.convexUrl,
+      onEvents: (events) => this.handleSimEvents(events),
+      onStatusChange: (msg) => this.setStatus(msg),
+    });
   }
 
   create() {
@@ -209,7 +206,7 @@ export class OnlineMatchScene extends Phaser.Scene {
     this.createStatsHud();
     this.compositor = new HudCompositor(this, this.localPlayerId, {
       onCardPick: (roundIndex, cardId) => {
-        this.loop?.sendCardPick(roundIndex, cardId);
+        this.host?.commitCardPick(roundIndex, cardId);
       },
       onRematch: () => {
         window.dispatchEvent(new CustomEvent("jakesjam:return-to-lobby"));
@@ -224,8 +221,8 @@ export class OnlineMatchScene extends Phaser.Scene {
   }
 
   update() {
-    if (!this.loop) return;
-    const state = this.loop.getRenderState();
+    if (!this.host) return;
+    const { world: state } = this.host.getRenderSnapshot();
     if (!state) return;
 
     // Translate input to InputBitfield + aim coordinates.
@@ -248,7 +245,7 @@ export class OnlineMatchScene extends Phaser.Scene {
     const aimX = pointer.x + cam.scrollX;
     const aimY = pointer.y + cam.scrollY;
 
-    this.loop.setLocalInput({ keys, aimX, aimY });
+    this.host.setLocalInput({ keys, aimX, aimY });
 
     const now = performance.now();
     const deltaMs = Math.max(1, Math.min(50, now - this.lastFrameMs));
@@ -318,8 +315,8 @@ export class OnlineMatchScene extends Phaser.Scene {
   }
 
   private updateStatsHud() {
-    if (!this.loop || !this.statsText) return;
-    const stats: NetStats = this.loop.getNetStats();
+    if (!this.host || !this.statsText) return;
+    const { localStats: stats } = this.host.getRenderSnapshot();
     const buf = this.statsLineBuf;
     buf[0] = `RTT       ${stats.rttMs.toFixed(1)} ms`;
     buf[1] = `Snap rate ${stats.snapRateHz} Hz`;
@@ -328,38 +325,6 @@ export class OnlineMatchScene extends Phaser.Scene {
     buf[4] = `Last tick ${stats.lastSnapshotTick}`;
     buf[5] = `Conn      ${stats.transportState}`;
     this.statsText.setText(buf);
-  }
-
-  // ---------------- Connect ----------------
-
-  private async connect(data: OnlineMatchSceneInit) {
-    try {
-      this.convex = new ConvexClient(data.convexUrl);
-      this.setStatus("Fetching match assignment from Convex...");
-      const assignment = await fetchMatchAssignment(
-        this.convex,
-        data.matchId as Id<"matches">,
-        data.localPlayerId,
-      );
-      const wsUrl = buildGameServerWsUrl(assignment, data.matchId);
-      this.setStatus(`Opening WebSocket to ${assignment.region ?? "host"}...`);
-      const transport = new WsTransport({ url: wsUrl });
-      this.loop = new ClientLoop({
-        transport,
-        matchId: data.matchId,
-        playerId: data.localPlayerId,
-        onAuthoritativeApplied: () => {
-          this.setStatus(""); // hide status once we start receiving snapshots
-        },
-        onEvents: (events) => this.handleSimEvents(events),
-      });
-      transport.onClose((reason) => {
-        this.setStatus(`Disconnected: ${reason}`);
-      });
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : "unknown error";
-      this.setStatus(`Connect failed: ${msg}`);
-    }
   }
 
   // ---------------- Sim event → audio + overlays ----------------
@@ -413,7 +378,7 @@ export class OnlineMatchScene extends Phaser.Scene {
   }
 
   private spawnDamageNumber(victimId: string, damage: number) {
-    const state = this.loop?.getRenderState();
+    const state = this.host?.getRenderSnapshot().world;
     if (!state) return;
     const victim = state.players[PlayerId(victimId)];
     if (!victim || damage < 1) return;
@@ -639,10 +604,8 @@ export class OnlineMatchScene extends Phaser.Scene {
 
   private teardown() {
     this.scale.off("resize", this.repositionHud, this);
-    this.loop?.stop();
-    this.loop = null;
-    void this.convex?.close();
-    this.convex = null;
+    this.host?.destroy();
+    this.host = null;
     this.audio?.destroy();
     this.audio = undefined;
     this.compositor?.destroy();
