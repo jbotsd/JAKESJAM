@@ -51,6 +51,8 @@ import {
 import { HudSystem, type HudChip, type HudVitals, type HudRound } from "../ui/HudSystem";
 import { RoundBanner } from "../ui/RoundBanner";
 import { DeathOverlay } from "../ui/DeathOverlay";
+import { ParticlePool } from "../systems/ParticlePool";
+import { StatusVfxController } from "../systems/StatusVfxController";
 import type {
   CardDefinition,
   CharacterDefinition,
@@ -197,6 +199,12 @@ export class OnlineMatchScene extends Phaser.Scene {
   private cardDraftOverlay?: CardDraftOverlay;
   private matchResultsOverlay?: MatchResultsOverlay;
   private matchHasEnded = false;
+
+  // ---- Status VFX (sim-authoritative) ----
+  private particlePool: ParticlePool | null = null;
+  private statusVfx: StatusVfxController | null = null;
+  // Events arrive via ClientLoop.onEvents; buffer per-frame and drain in update().
+  private pendingSimEvents: SimEvent[] = [];
   // Track destructible health between frames for damage-flash effect.
   private prevDestructibleHealth = new Map<number, number>();
   private destructibleFlashUntilMs = new Map<number, number>();
@@ -259,6 +267,11 @@ export class OnlineMatchScene extends Phaser.Scene {
     this.roundBannerSystem = new RoundBanner(this);
     this.deathOverlay = new DeathOverlay();
 
+    // Status VFX driven by sim state (burnUntilTick / freezeUntilTick) plus
+    // chain-hit SimEvents. Pool is pre-allocated so no GC during combat.
+    this.particlePool = new ParticlePool(this);
+    this.statusVfx = new StatusVfxController(this, this.particlePool);
+
     this.lastFrameMs = performance.now();
     this.events.once("shutdown", () => this.teardown());
   }
@@ -298,6 +311,15 @@ export class OnlineMatchScene extends Phaser.Scene {
     this.followLocalPlayer(state);
     this.updateHudSystem(state);
     this.maybeShowMatchResults(state);
+
+    if (this.statusVfx) {
+      const events = this.pendingSimEvents;
+      this.statusVfx.update(state, events, deltaMs, (id) => {
+        const p = state.players[id];
+        return p ? { x: p.x, y: p.y } : undefined;
+      });
+      if (events.length > 0) events.length = 0;
+    }
 
     if (this.statsVisible) {
       this.updateStatsHud();
@@ -479,6 +501,10 @@ export class OnlineMatchScene extends Phaser.Scene {
   // ---------------- Sim event → audio + overlays ----------------
 
   private handleSimEvents(events: SimEvent[]) {
+    // Forward all events to the per-frame VFX drain buffer (filters internally).
+    if (events.length > 0) {
+      for (const e of events) this.pendingSimEvents.push(e);
+    }
     if (!this.audio) return;
     for (const event of events) {
       switch (event.t) {
@@ -850,6 +876,11 @@ export class OnlineMatchScene extends Phaser.Scene {
     this.roundBannerSystem = null;
     this.deathOverlay?.destroy();
     this.deathOverlay = null;
+    this.statusVfx?.destroy();
+    this.statusVfx = null;
+    this.particlePool?.destroy();
+    this.particlePool = null;
+    this.pendingSimEvents.length = 0;
     this.statsText?.destroy();
     this.statsText = null;
     this.statsBg?.destroy();

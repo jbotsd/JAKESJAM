@@ -18,6 +18,7 @@ import { starterWeapon } from "../data/weapons";
 import { RoomClient } from "../net/RoomClient";
 import { ProceduralPlayerRig } from "../rendering/ProceduralPlayerRig";
 import { GameAudioSystem } from "../systems/AudioSystem";
+import { ParticlePool } from "../systems/ParticlePool";
 import { CardDraftOverlay } from "../ui/CardDraftOverlay";
 import {
   MatchResultsOverlay,
@@ -153,6 +154,7 @@ export class MatchScene extends Phaser.Scene {
   };
   private audio?: GameAudioSystem;
   private projectileSystem?: ProjectileSystem;
+  private particlePool?: ParticlePool;
   private roomClient?: RoomClient;
   private unsubscribeSnapshots?: () => void;
   private playerRig?: ProceduralPlayerRig;
@@ -275,6 +277,8 @@ export class MatchScene extends Phaser.Scene {
       this.roundBannerSystem = undefined;
       this.deathOverlay?.destroy();
       this.deathOverlay = undefined;
+      this.particlePool?.destroy();
+      this.particlePool = undefined;
     });
     window.removeEventListener("keydown", this.handleScoreboardKeyDown);
     window.addEventListener("keydown", this.handleScoreboardKeyDown);
@@ -282,6 +286,8 @@ export class MatchScene extends Phaser.Scene {
     this.teardownNetworkSync();
     this.audio?.destroy();
     this.audio = new GameAudioSystem(this);
+    this.particlePool?.destroy();
+    this.particlePool = new ParticlePool(this);
     this.projectileSystem?.destroy();
     this.destroyPlayerVisuals();
     this.target = createTestTarget();
@@ -1559,11 +1565,17 @@ export class MatchScene extends Phaser.Scene {
    * Called from per-frame update when burnUntilMs > Date.now().
    */
   private spawnBurnSpark(position: Vec2): void {
+    const spark = this.particlePool?.acquireSpark();
+    if (!spark) return;
     const hot = Math.random() < 0.35;
     const color = hot ? STATUS_VFX.fire.hotColor : STATUS_VFX.fire.color;
     const ox = (Math.random() - 0.5) * 28;
-    const spark = this.add.rectangle(position.x + ox, position.y - 10, 3, 7, color, 0.9);
-    spark.rotation = (Math.random() - 0.5) * 0.7;
+    spark.setPosition(position.x + ox, position.y - 10);
+    spark.setFillStyle(color, 0.9);
+    spark.setAlpha(0.9);
+    spark.setScale(1);
+    spark.setRotation((Math.random() - 0.5) * 0.7);
+    const pool = this.particlePool;
     this.tweens.add({
       targets: spark,
       y: spark.y - 26 - Math.random() * 20,
@@ -1573,7 +1585,7 @@ export class MatchScene extends Phaser.Scene {
       scaleY: 0.4,
       duration: 420 + Math.random() * 200,
       ease: "Sine.easeOut",
-      onComplete: () => spark.destroy(),
+      onComplete: () => pool?.release(spark),
     });
   }
 
@@ -1581,15 +1593,22 @@ export class MatchScene extends Phaser.Scene {
    * Single-frame frost ring pulse at `position` — subtle pulsing ice hex.
    */
   private spawnFrostRing(position: Vec2): void {
-    const ring = this.add.circle(position.x, position.y, 18, STATUS_VFX.ice.color, 0.0);
+    const ring = this.particlePool?.acquireRing();
+    if (!ring) return;
+    ring.setPosition(position.x, position.y);
+    ring.setFillStyle(STATUS_VFX.ice.color, 0.0);
     ring.setStrokeStyle(2, STATUS_VFX.ice.color, 0.52);
+    ring.setScale(1);
+    ring.setAlpha(1);
+    const pool = this.particlePool;
     this.tweens.add({
       targets: ring,
-      radius: 32,
+      scaleX: 32 / 18,
+      scaleY: 32 / 18,
       alpha: 0,
       duration: 320,
       ease: "Sine.easeOut",
-      onComplete: () => ring.destroy(),
+      onComplete: () => pool?.release(ring),
     });
   }
 
@@ -1598,17 +1617,19 @@ export class MatchScene extends Phaser.Scene {
    * to indicate active freeze.
    */
   private spawnFreezeShard(position: Vec2): void {
+    const shard = this.particlePool?.acquireShard();
+    if (!shard) return;
     const angle = Math.random() * Math.PI * 2;
     const dist = 14 + Math.random() * 18;
-    const shard = this.add.rectangle(
+    shard.setPosition(
       position.x + Math.cos(angle) * dist,
       position.y + Math.sin(angle) * dist,
-      4,
-      9,
-      STATUS_VFX.ice.color,
-      0.72,
     );
-    shard.rotation = angle + Math.PI / 2;
+    shard.setFillStyle(STATUS_VFX.ice.color, 0.72);
+    shard.setAlpha(0.72);
+    shard.setScale(1);
+    shard.setRotation(angle + Math.PI / 2);
+    const pool = this.particlePool;
     this.tweens.add({
       targets: shard,
       x: shard.x + Math.cos(angle) * 12,
@@ -1616,7 +1637,7 @@ export class MatchScene extends Phaser.Scene {
       alpha: 0,
       duration: 520,
       ease: "Sine.easeOut",
-      onComplete: () => shard.destroy(),
+      onComplete: () => pool?.release(shard),
     });
   }
 
@@ -1626,7 +1647,12 @@ export class MatchScene extends Phaser.Scene {
    * Additive-style: bright yellow, short-lived, geometric.
    */
   private spawnLightningChainArc(from: Vec2, to: Vec2): void {
-    const graphics = this.add.graphics();
+    const graphics = this.particlePool?.acquireBolt();
+    if (!graphics) return;
+    graphics.setPosition(0, 0);
+    graphics.setAlpha(1);
+    graphics.setScale(1);
+    graphics.setRotation(0);
     graphics.setBlendMode(Phaser.BlendModes.ADD);
 
     const mx = (from.x + to.x) / 2;
@@ -1670,12 +1696,13 @@ export class MatchScene extends Phaser.Scene {
     }
     graphics.strokePath();
 
+    const pool = this.particlePool;
     this.tweens.add({
       targets: graphics,
       alpha: 0,
       duration: 130,
       ease: "Sine.easeIn",
-      onComplete: () => graphics.destroy(),
+      onComplete: () => pool?.release(graphics),
     });
   }
 
