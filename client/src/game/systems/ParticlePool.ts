@@ -195,6 +195,39 @@ export class ParticlePool {
     }
   }
 
+  /**
+   * Force-release all in-flight pool objects and kill their tweens.
+   * Call from the `case "round-end":` arm of `handleSimEvents` to prevent
+   * "tween completed on freed object" crashes on round-restart.
+   * Per `.claude/skills/phaser4-game/SKILL.md` — "Pool drain on round-end".
+   */
+  drainActive(scene: Phaser.Scene): void {
+    if (this.destroyed) return;
+    scene.tweens.killTweensOf([
+      ...this.sparkActive,
+      ...this.shardActive,
+      ...this.ringActive,
+      ...this.boltActive,
+      ...this.blastCircleActive,
+    ]);
+    const releaseAll = <T extends Phaser.GameObjects.GameObject>(
+      active: Set<T>,
+      free: T[],
+    ) => {
+      for (const o of active) {
+        o.setVisible(false);
+        o.setAlpha(1);
+        free.push(o);
+      }
+      active.clear();
+    };
+    releaseAll(this.sparkActive, this.sparkFree);
+    releaseAll(this.shardActive, this.shardFree);
+    releaseAll(this.ringActive, this.ringFree);
+    releaseAll(this.boltActive, this.boltFree);
+    releaseAll(this.blastCircleActive, this.blastCircleFree);
+  }
+
   destroy(): void {
     if (this.destroyed) return;
     this.destroyed = true;

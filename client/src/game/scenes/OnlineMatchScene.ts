@@ -591,6 +591,9 @@ export class OnlineMatchScene extends Phaser.Scene {
         case "round-end":
           // Soft cue. Reuse "card" as a "ding".
           this.audio.play("card");
+          // Drain all in-flight pool particles so round-restart can't tween
+          // into a freed object. Per phaser4-game/SKILL.md "Pool drain on round-end".
+          this.particlePool?.drainActive(this);
           break;
         case "card-offered":
           if (event.playerId === this.localPlayerId) {

@@ -110,6 +110,36 @@ describe("ParticlePool", () => {
     expect(c).toBe(a);
   });
 
+  test("drainActive releases all active objects back to free list and kills tweens", () => {
+    const killed: unknown[] = [];
+    const scene = {
+      ...makeScene(),
+      tweens: {
+        killTweensOf: (targets: unknown) => killed.push(targets),
+      },
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    } as any;
+    const pool = new ParticlePool(scene);
+    // Acquire several objects from different pools.
+    const spark = pool.acquireSpark();
+    const ring = pool.acquireRing();
+    const bolt = pool.acquireBolt();
+    expect(spark).not.toBeNull();
+    expect(ring).not.toBeNull();
+    expect(bolt).not.toBeNull();
+
+    pool.drainActive(scene);
+
+    // tweens.killTweensOf was called with an array containing the active objects.
+    expect(killed.length).toBeGreaterThan(0);
+
+    // After drain, the same objects should be re-acquirable (returned to free list).
+    const spark2 = pool.acquireSpark();
+    const ring2 = pool.acquireRing();
+    expect(spark2).toBe(spark);
+    expect(ring2).toBe(ring);
+  });
+
   test("destroy cleans up free + active lists", () => {
     const pool = new ParticlePool(makeScene());
     const a = pool.acquireSpark() as unknown as Stub;
