@@ -67,7 +67,7 @@ export const PALETTE = {
 } as const satisfies Record<string, number>;
 
 export const ARENA_THEMES = {
-  jadeIsles:   { bg: PALETTE.voidDeep,     hi: PALETTE.platformLimeHi,  wash: PALETTE.platformWashCy },
+  jadeIsles:   { bg: PALETTE.voidDeep,     hi: PALETTE.platformLimeHi,  wash: PALETTE.platformWashCy, hasLightBeams: true },
   ivoryClouds: { bg: PALETTE.voidNavy,     hi: PALETTE.platformIvoryHi, wash: PALETTE.platformIvoryWash, hasLightBeams: true },
   hangingWood: { bg: PALETTE.voidCharcoal, hi: PALETTE.platformWoodHi,  wash: PALETTE.platformWoodLo,   shade: PALETTE.platformWoodLo },
 } satisfies Record<string, ArenaTheme>;

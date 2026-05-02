@@ -34,7 +34,6 @@ import {
   type MapDefinition,
   type PickupEntity,
   type PickupKind,
-  type PlatformDefinition,
   type PlayerEntity,
   PlayerId,
   type SimEvent,
@@ -57,6 +56,9 @@ import { RoundBanner } from "../ui/RoundBanner";
 import { DeathOverlay } from "../ui/DeathOverlay";
 import { ParticlePool } from "../systems/ParticlePool";
 import { StatusVfxController } from "../systems/StatusVfxController";
+import { paintPlatform } from "../render/PlatformPainter";
+import { drawLightBeam } from "../render/LightingLayer";
+import { PALETTE, ARENA_THEMES } from "../ui/palette";
 import type {
   CardDefinition,
   CharacterDefinition,
@@ -215,6 +217,9 @@ export class OnlineMatchScene extends Phaser.Scene {
   private cardDraftOverlay?: CardDraftOverlay;
   private matchResultsOverlay?: MatchResultsOverlay;
   private matchHasEnded = false;
+
+  /** Stored on renderArena so spawnPlatformBlastTint can iterate platforms. */
+  private currentMap: MapDefinition | null = null;
 
   // ---- Status VFX (sim-authoritative) ----
   private particlePool: ParticlePool | null = null;
@@ -561,6 +566,7 @@ export class OnlineMatchScene extends Phaser.Scene {
         case "destructible-broken":
           this.audio.play("explosion");
           this.cameras.main.shake(60, 0.0025);
+          this.spawnPlatformBlastTint({ x: event.x, y: event.y });
           break;
         case "pickup-taken":
           this.audio.play("pickup");
@@ -654,7 +660,9 @@ export class OnlineMatchScene extends Phaser.Scene {
    */
   private renderArena(mapId: string): void {
     const map: MapDefinition = resolveMap(mapId);
+    this.currentMap = map;
     const { x: width, y: height } = map.size;
+    const theme = ARENA_THEMES.jadeIsles;
 
     // Camera bounds — without this, the camera follows the player into
     // empty space when the world is bigger than the viewport.
@@ -667,56 +675,100 @@ export class OnlineMatchScene extends Phaser.Scene {
     g.setDepth(0); // below destructibles (depth 3) and players
     this.arenaGraphics = g;
 
-    // Backdrop: vertical gradient, deep navy → near-black.
-    g.fillGradientStyle(0x0a1424, 0x0a1424, 0x05080f, 0x05080f, 0.95, 0.95, 1, 1);
+    // Solid void background matching jadeIsles theme.
+    g.fillStyle(theme.bg, 1);
     g.fillRect(0, 0, width, height);
 
-    // Geometric grid — 80px spacing, 3% alpha. Cheap atmosphere, cyan tint.
-    g.lineStyle(1, 0x8ff8ff, 0.05);
-    for (let x = 0; x < width; x += 80) {
-      g.lineBetween(x, 0, x, height);
-    }
-    for (let y = 0; y < height; y += 80) {
-      g.lineBetween(0, y, width, y);
+    // Atmospheric back layer: dim overlapping ellipses for parallax depth.
+    const bgShade = PALETTE.voidEdge;
+    this.add.ellipse(width * 0.3, height * 0.45, width * 0.55, height * 0.4, bgShade, 0.08);
+    this.add.ellipse(width * 0.72, height * 0.55, width * 0.5, height * 0.38, bgShade, 0.08);
+
+    // Atmospheric mid-Z haze: 3 large soft ellipses between BG layer and platforms.
+    const hazeColor = 0x0e2a35;
+    const hazeDefs: Array<{ rx: number; ry: number; ew: number; eh: number; a: number }> = [
+      { rx: 0.18 + Math.random() * 0.15, ry: 0.3 + Math.random() * 0.2, ew: width * 0.7, eh: height * 0.32, a: 0.05 },
+      { rx: 0.45 + Math.random() * 0.15, ry: 0.55 + Math.random() * 0.15, ew: width * 0.9, eh: height * 0.4, a: 0.04 },
+      { rx: 0.65 + Math.random() * 0.15, ry: 0.35 + Math.random() * 0.2, ew: width * 0.6, eh: height * 0.3, a: 0.06 },
+    ];
+    for (const hd of hazeDefs) {
+      this.add
+        .ellipse(width * hd.rx, height * hd.ry, hd.ew, hd.eh, hazeColor, hd.a)
+        .setDepth(0.5);
     }
 
-    // Platforms — paint each in the right palette by kind.
+    // Light beams — additive triangle polygons from off-screen top when theme flags them.
+    if (theme.hasLightBeams) {
+      const beamDefs: Array<{ x: number; w: number }> = [
+        { x: width * 0.25, w: 80 },
+        { x: width * 0.55, w: 100 },
+        { x: width * 0.78, w: 70 },
+      ];
+      for (const def of beamDefs) {
+        const beam = drawLightBeam(
+          this,
+          def.x,
+          0,
+          def.w,
+          height,
+          PALETTE.lightBeamWarm,
+          0.10,
+        );
+        beam.setDepth(1);
+        this.tweens.add({
+          targets: beam,
+          angle: 2,
+          duration: 8000,
+          ease: "Sine.easeInOut",
+          yoyo: true,
+          repeat: -1,
+        });
+      }
+    }
+
+    // Platforms — two-tone + brush-streak baked RenderTexture via shared PlatformPainter.
     for (const platform of map.platforms) {
-      this.paintPlatform(g, platform);
+      paintPlatform(
+        this,
+        platform.position.x,
+        platform.position.y,
+        platform.size.x,
+        platform.size.y,
+        theme,
+      );
     }
   }
 
-  private paintPlatform(g: Phaser.GameObjects.Graphics, p: PlatformDefinition): void {
-    const x = p.position.x - p.size.x / 2;
-    const y = p.position.y - p.size.y / 2;
-    const w = p.size.x;
-    const h = p.size.y;
-    if (p.kind === "platform") {
-      // Drop-through ledge — translucent crystal-cyan plate + accent
-      // top edge so players read the surface they can stand on.
-      g.fillStyle(0x1f3a5f, 0.85);
-      g.fillRoundedRect(x, y, w, h, 4);
-      g.lineStyle(1.5, 0x8ff8ff, 0.5);
-      g.lineBetween(x + 1, y + 1, x + w - 1, y + 1);
-      // Soft outer glow line
-      g.lineStyle(1, 0x8ff8ff, 0.18);
-      g.strokeRoundedRect(x - 1, y - 1, w + 2, h + 2, 5);
-    } else {
-      // Floor / wall — solid slab with accent rim on the play-facing edge.
-      g.fillStyle(0x111827, 0.96);
-      g.fillRect(x, y, w, h);
-      g.lineStyle(1.5, 0x8ff8ff, 0.35);
-      if (p.kind === "floor") {
-        // Rim on top edge only.
-        g.lineBetween(x, y, x + w, y);
-      } else {
-        // Wall — rim on the inner-facing vertical edge. Heuristic:
-        // walls on the left half of the map face right; right half
-        // face left. Cheap and good enough for v1.
-        const facingRight = p.position.x < (this.cameras.main.getBounds().width / 2);
-        const rimX = facingRight ? x + w : x;
-        g.lineBetween(rimX, y, rimX, y + h);
-      }
+  /**
+   * Platform warm-tint flash on explosion: platforms within 220px briefly glow.
+   * Mirrors MatchScene.spawnPlatformBlastTint.
+   */
+  private spawnPlatformBlastTint(position: { x: number; y: number }): void {
+    if (!this.currentMap) return;
+    const BLAST_RANGE = 220;
+    for (const platform of this.currentMap.platforms) {
+      const cx = platform.position.x;
+      const cy = platform.position.y;
+      const dist = Math.hypot(cx - position.x, cy - position.y);
+      if (dist >= BLAST_RANGE) continue;
+      const tintAlpha = 0.10 * (1 - dist / BLAST_RANGE);
+      const tintRect = this.add.rectangle(
+        cx,
+        cy,
+        platform.size.x,
+        platform.size.y,
+        PALETTE.blastHalo,
+        tintAlpha,
+      );
+      tintRect.setBlendMode(Phaser.BlendModes.ADD);
+      tintRect.setDepth(5);
+      this.tweens.add({
+        targets: tintRect,
+        alpha: 0,
+        duration: 140,
+        ease: "Linear",
+        onComplete: () => tintRect.destroy(),
+      });
     }
   }
 
