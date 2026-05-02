@@ -13,6 +13,7 @@ import type { MapDefinition } from "../types.js";
 export const boxworksTower: MapDefinition = {
   id: "boxworks-tower",
   name: "Boxworks Tower",
+  arenaTheme: "hangingWood",
   size: { x: 1440, y: 1080 },
   spawns: [
     // Ground tier

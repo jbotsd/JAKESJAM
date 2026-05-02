@@ -470,4 +470,6 @@ export type MapDefinition = {
   platforms: PlatformDefinition[];
   destructibles?: DestructibleDefinition[];
   pickups?: PickupDefinition[];
+  /** Arena theme key from `ARENA_THEMES`. Defaults to "jadeIsles" when omitted. */
+  arenaTheme?: "jadeIsles" | "ivoryClouds" | "hangingWood";
 };

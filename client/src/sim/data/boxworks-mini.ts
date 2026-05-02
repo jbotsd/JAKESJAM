@@ -12,6 +12,7 @@ import type { MapDefinition } from "../types.js";
 export const boxworksMini: MapDefinition = {
   id: "boxworks-mini",
   name: "Boxworks Mini",
+  arenaTheme: "ivoryClouds",
   size: { x: 1280, y: 640 },
   spawns: [
     { x: 160, y: 540 },
