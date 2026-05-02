@@ -478,6 +478,34 @@ h2 {
   box-shadow: 0 0 14px rgba(143, 248, 255, 0.25);
 }
 
+/* Ghost button — subdued, used for nav actions like "← Splash". */
+button.btn-ghost {
+  background: transparent !important;
+  border: 1px solid var(--border) !important;
+  color: var(--muted) !important;
+  font-weight: 700;
+  font-size: 0.8rem;
+  min-height: 36px;
+}
+button.btn-ghost:hover:not(:disabled) {
+  border-color: var(--accent) !important;
+  color: var(--text) !important;
+  box-shadow: none;
+}
+
+/* Danger button — used for destructive actions like Leave Room. */
+button.btn-danger {
+  background: transparent !important;
+  border: 1px solid rgba(251, 113, 133, 0.4) !important;
+  color: var(--danger) !important;
+  font-weight: 700;
+  font-size: 0.85rem;
+}
+button.btn-danger:hover:not(:disabled) {
+  background: rgba(251, 113, 133, 0.08) !important;
+  box-shadow: none;
+}
+
 .room-code-row {
   display: flex;
   align-items: center;

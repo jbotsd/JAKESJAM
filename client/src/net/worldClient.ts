@@ -8,6 +8,18 @@
 // ws://localhost:8088 in dev). The HTTP origin is derived by swapping
 // ws→http / wss→https.
 
+type WorldSummary = {
+  matchId: string;
+  mapId: string;
+  phase: "countdown" | "fighting" | "round-over" | "drafting";
+  roundIndex: number;
+  countdownRemainingMs: number;
+  players: number;
+  targetScore: number;
+  joinable: boolean;
+  chaosModifierIds: string[];
+};
+
 export type WorldAssignment = {
   /** WebSocket URL ready to be passed to WsTransport. */
   wsUrl: string;
@@ -38,25 +50,15 @@ export async function fetchWorldAssignment(playerId: string): Promise<WorldAssig
  * Returns `null` if the world hasn't booted yet OR the request fails
  * (the badge treats both as "world idle").
  */
-export async function fetchWorldSummary(): Promise<{
-  matchId: string;
-  mapId: string;
-  phase: "countdown" | "fighting" | "round-over" | "drafting";
-  roundIndex: number;
-  countdownRemainingMs: number;
-  players: number;
-  targetScore: number;
-  joinable: boolean;
-  chaosModifierIds: string[];
-} | null> {
-  try {
-    const httpBase = wsToHttp(readGameServerWsBase());
-    const res = await fetch(`${httpBase}/world/summary`, { method: "GET" });
-    if (!res.ok) return null;
-    return (await res.json()) ?? null;
-  } catch {
-    return null;
-  }
+export async function fetchWorldSummary(): Promise<WorldSummary | null> {
+  // Let network errors propagate so MatchStatusBadge can distinguish
+  // "server unreachable" (fetch throws) from "world idle" (200/404 with no
+  // active match). HTTP error responses that aren't network failures are
+  // treated as "not live yet" and return null.
+  const httpBase = wsToHttp(readGameServerWsBase());
+  const res = await fetch(`${httpBase}/world/summary`, { method: "GET" });
+  if (!res.ok) return null;
+  return (await res.json() as WorldSummary | null) ?? null;
 }
 
 /**
@@ -64,16 +66,12 @@ export async function fetchWorldSummary(): Promise<{
  * so MatchStatusBadge can use them interchangeably.
  */
 export async function fetchMatchSummary(matchId: string): ReturnType<typeof fetchWorldSummary> {
-  try {
-    const httpBase = wsToHttp(readGameServerWsBase());
-    const url = new URL(`${httpBase}/match/summary`);
-    url.searchParams.set("matchId", matchId);
-    const res = await fetch(url.toString(), { method: "GET" });
-    if (!res.ok) return null;
-    return (await res.json()) ?? null;
-  } catch {
-    return null;
-  }
+  const httpBase = wsToHttp(readGameServerWsBase());
+  const url = new URL(`${httpBase}/match/summary`);
+  url.searchParams.set("matchId", matchId);
+  const res = await fetch(url.toString(), { method: "GET" });
+  if (!res.ok) return null;
+  return (await res.json() as WorldSummary | null) ?? null;
 }
 
 function readGameServerWsBase(): string {

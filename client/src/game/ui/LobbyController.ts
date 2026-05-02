@@ -13,6 +13,22 @@ const PLAYER_CHARACTER_KEY = "jakesjam.playerCharacter";
 const CHAOS_MODIFIERS_KEY = "jakesjam.chaosModifiers";
 const DEFAULT_CHARACTER: CharacterId = "balanced";
 
+/**
+ * Small palette used to auto-assign a distinct color to each player slot
+ * when they first join a room. They can still override it manually.
+ * Kept client-side: no Convex involvement, just a nicety.
+ */
+const COLOR_PALETTE = [
+  "#50e3c2", // teal
+  "#fb7185", // rose
+  "#a78bfa", // violet
+  "#fde68a", // amber
+  "#8ff8ff", // cyan
+  "#86efac", // green
+  "#fdba74", // orange
+  "#c4b5fd", // indigo
+];
+
 export class LobbyController {
   private readonly playerId: string;
   private readonly statusLine: HTMLElement;
@@ -32,12 +48,16 @@ export class LobbyController {
   private readonly mapPicker?: MapPicker;
   private readonly roomShareBtn?: HTMLButtonElement;
   private readonly roomStatusMount?: HTMLElement;
+  // Sections that hide while in a room (item 3).
+  private readonly roomActionsBox?: HTMLElement;
+  private readonly playerConnectBox?: HTMLElement;
   private roomStatusBadge?: MatchStatusBadge;
   private readonly roomClient?: RoomClient;
   private currentRoom?: RoomHandle;
   private currentSnapshot: RoomSnapshot | null = null;
   private unsubscribeRoom?: () => void;
   private heartbeatTimer?: number;
+  private statusClearTimer?: number;
   private launchedMatchId?: string;
 
   constructor(root: ParentNode) {
@@ -56,6 +76,9 @@ export class LobbyController {
     this.activeCode = queryRequired(root, "[data-active-code]");
     this.playerList = queryRequired(root, "[data-player-list]");
     this.chaosInputs = Array.from(root.querySelectorAll<HTMLInputElement>("[data-chaos-modifier]"));
+
+    this.roomActionsBox = root.querySelector<HTMLElement>("[data-room-actions]") ?? undefined;
+    this.playerConnectBox = root.querySelector<HTMLElement>("[data-player-connect]") ?? undefined;
 
     const mapMount = root.querySelector<HTMLElement>("[data-map-picker]");
     if (mapMount) {
@@ -98,6 +121,9 @@ export class LobbyController {
     if (this.heartbeatTimer) {
       window.clearInterval(this.heartbeatTimer);
     }
+    if (this.statusClearTimer) {
+      window.clearTimeout(this.statusClearTimer);
+    }
     this.mapPicker?.destroy();
     this.roomStatusBadge?.destroy();
     if (this.roomClient && this.currentRoom) {
@@ -118,6 +144,20 @@ export class LobbyController {
 
   startPracticeFromMenu() {
     this.startPractice();
+  }
+
+  /**
+   * Auto-join triggered by ?room= URL param on page load (item 4 + item 12).
+   * The server join mutation is idempotent — if this player is already in
+   * the room (e.g. reload) it patches and returns the same handle.
+   */
+  autoJoinFromUrl() {
+    const code = this.codeInput.value.trim();
+    if (!code || !this.roomClient) {
+      this.focusJoinRoom();
+      return;
+    }
+    void this.joinRoom();
   }
 
   private bindEvents() {
@@ -148,6 +188,22 @@ export class LobbyController {
     this.startButton.addEventListener("click", () => {
       void this.startMatch();
     });
+
+    // Leave Room button (item 1).
+    const leaveBtn = this.activeRoomBox.querySelector<HTMLButtonElement>("[data-leave-room]");
+    if (leaveBtn) {
+      leaveBtn.addEventListener("click", () => {
+        void this.leaveRoom();
+      });
+    }
+
+    // Back to Splash button (item 8).
+    const backBtn = document.querySelector<HTMLButtonElement>("[data-back-to-splash]");
+    if (backBtn) {
+      backBtn.addEventListener("click", () => {
+        window.dispatchEvent(new CustomEvent("jakesjam:back-to-splash"));
+      });
+    }
   }
 
   private get playerName(): string {
@@ -232,6 +288,40 @@ export class LobbyController {
     }
   }
 
+  /**
+   * Leave the current room (item 1). Calls the server leave mutation,
+   * tears down local subscription, and returns to the no-room state.
+   */
+  private async leaveRoom() {
+    if (!this.roomClient || !this.currentRoom) return;
+    const roomId = this.currentRoom.roomId;
+    this.unsubscribeRoom?.();
+    this.unsubscribeRoom = undefined;
+    if (this.heartbeatTimer) {
+      window.clearInterval(this.heartbeatTimer);
+      this.heartbeatTimer = undefined;
+    }
+    this.roomStatusBadge?.destroy();
+    this.roomStatusBadge = undefined;
+    this.currentRoom = undefined;
+    this.currentSnapshot = null;
+    this.launchedMatchId = undefined;
+    this.activeRoomBox.hidden = true;
+    this.activeCode.textContent = "------";
+    this.mapPicker?.setHostMode(false);
+    this.mapPicker?.setSelected(undefined);
+    this.renderPlayers([]);
+    this.syncButtons();
+    this.setStatus("Left room.", true);
+    document.title = "JAKESJAM";
+    window.dispatchEvent(new CustomEvent("jakesjam:room-left"));
+    try {
+      await this.roomClient.leave(roomId, this.playerId);
+    } catch {
+      // Fire-and-forget: player is gone from the UI already.
+    }
+  }
+
   private activateRoom(handle: RoomHandle) {
     this.currentRoom = handle;
     this.activeRoomBox.hidden = false;
@@ -250,6 +340,17 @@ export class LobbyController {
       void this.roomClient?.heartbeat(handle.roomId, this.playerId);
     }, 15000);
     void this.roomClient?.heartbeat(handle.roomId, this.playerId);
+
+    // Auto-assign a distinct color if this player is new to the room (item 10).
+    // We detect "new" by checking if localStorage has no saved color yet.
+    if (!localStorage.getItem(PLAYER_COLOR_KEY)) {
+      const assignedColor = COLOR_PALETTE[Math.floor(Math.random() * COLOR_PALETTE.length)];
+      this.colorInput.value = assignedColor ?? "#50e3c2";
+      localStorage.setItem(PLAYER_COLOR_KEY, this.colorInput.value);
+    }
+
+    document.title = `JAKESJAM — Lobby ${handle.code}`;
+    window.dispatchEvent(new CustomEvent("jakesjam:room-joined", { detail: { code: handle.code } }));
     this.syncButtons();
   }
 
@@ -260,6 +361,9 @@ export class LobbyController {
       const isHost = snapshot.room.hostPlayerId === this.playerId;
       this.mapPicker?.setHostMode(isHost);
       this.mapPicker?.setSelected(snapshot.room.selectedMapId ?? DEFAULT_MAP_ID);
+
+      // Auto-assign distinct color from palette if there's a collision (item 10).
+      this.maybeResolveColorCollision(snapshot.players);
     } else {
       this.mapPicker?.setHostMode(false);
       this.mapPicker?.setSelected(undefined);
@@ -288,6 +392,23 @@ export class LobbyController {
       }));
     }
     this.syncButtons();
+  }
+
+  /**
+   * If this player's color collides with another connected player in the
+   * same room, pick the first palette color not yet taken (item 10).
+   */
+  private maybeResolveColorCollision(players: RoomPlayer[]): void {
+    const myColor = this.colorInput.value.toLowerCase();
+    const otherColors = players
+      .filter((p) => p.playerId !== this.playerId && p.connected)
+      .map((p) => p.color.toLowerCase());
+    if (!otherColors.includes(myColor)) return;
+    const taken = new Set(otherColors);
+    const pick = COLOR_PALETTE.find((c) => !taken.has(c.toLowerCase()));
+    if (!pick) return;
+    this.colorInput.value = pick;
+    localStorage.setItem(PLAYER_COLOR_KEY, pick);
   }
 
   private async toggleReady() {
@@ -360,8 +481,55 @@ export class LobbyController {
         if (this.roomShareBtn) this.roomShareBtn.textContent = original ?? "Copy link";
       }, 1400);
     } catch {
-      window.prompt("Copy this link", url);
+      // Fallback: make the URL selectable in a temporary input (item 11).
+      this.showCopyFallback(url);
     }
+  }
+
+  /**
+   * Clipboard write failed — surface a selectable temporary text field
+   * rather than the rough `window.prompt` (item 11).
+   */
+  private showCopyFallback(url: string): void {
+    if (!this.roomShareBtn) return;
+    const existing = this.activeRoomBox.querySelector<HTMLElement>("[data-copy-fallback]");
+    if (existing) {
+      existing.remove();
+      return;
+    }
+    const fallback = document.createElement("div");
+    fallback.dataset.copyFallback = "true";
+    Object.assign(fallback.style, {
+      display: "flex",
+      gap: "8px",
+      marginTop: "6px",
+      alignItems: "center",
+    });
+    const input = document.createElement("input");
+    input.type = "text";
+    input.readOnly = true;
+    input.value = url;
+    Object.assign(input.style, {
+      flex: "1",
+      fontSize: "11px",
+      padding: "6px 8px",
+      minHeight: "32px",
+      color: "var(--accent-bright)",
+      background: "rgba(5,8,15,0.85)",
+      border: "1px solid rgba(143,248,255,0.3)",
+      borderRadius: "6px",
+    });
+    const dismiss = document.createElement("button");
+    dismiss.type = "button";
+    dismiss.textContent = "✕";
+    dismiss.style.minHeight = "32px";
+    dismiss.style.padding = "0 10px";
+    dismiss.style.fontSize = "12px";
+    dismiss.addEventListener("click", () => fallback.remove());
+    fallback.append(input, dismiss);
+    this.roomShareBtn.insertAdjacentElement("afterend", fallback);
+    input.focus();
+    input.select();
   }
 
   /**
@@ -369,6 +537,8 @@ export class LobbyController {
    * snapshot stream re-applies the selection through `applySnapshot`,
    * which is what visibly flips the highlighted card. We don't optimistic-
    * update locally — keeps a single source of truth.
+   * Non-host clicks are already blocked in MapPicker, but if a non-host
+   * somehow triggers this, the server throws and we surface it (item 5).
    */
   private async onMapPicked(mapId: MapId) {
     if (!this.roomClient || !this.currentRoom) return;
@@ -376,7 +546,7 @@ export class LobbyController {
     try {
       await this.roomClient.setMap(this.currentRoom.roomId, this.playerId, mapId);
     } catch (error) {
-      this.setStatus(readError(error));
+      this.setStatus(readError(error), true);
     }
   }
 
@@ -419,6 +589,15 @@ export class LobbyController {
     const allReady = players.length >= 1 && players.every((player) => player.ready);
     const isHost = this.currentSnapshot?.room.hostPlayerId === this.playerId;
 
+    // Items 3: hide create/join/connect sections when in a room; show otherwise.
+    if (this.roomActionsBox) {
+      this.roomActionsBox.hidden = hasRoom;
+    }
+    if (this.playerConnectBox) {
+      this.playerConnectBox.hidden = hasRoom;
+    }
+
+    // These only matter when their parent sections are visible.
     this.createButton.disabled = !hasClient || hasRoom;
     this.joinButton.disabled = !hasClient || hasRoom;
     this.readyButton.disabled = !hasClient || !hasRoom;
@@ -440,7 +619,13 @@ export class LobbyController {
         this.setStartHint("Need at least one player to start.");
       } else if (notReady.length > 0) {
         const names = notReady.map((p) => p.name).join(", ");
-        this.setStartHint(`Waiting on: ${names}`);
+        // Item 6: single-player rooms — the host IS the unready player.
+        const isSoloHost = players.length === 1 && notReady.length === 1 && notReady[0]?.playerId === this.playerId;
+        if (isSoloHost) {
+          this.setStartHint("Mark yourself ready first.");
+        } else {
+          this.setStartHint(`Waiting on: ${names}`);
+        }
       } else {
         this.setStartHint("Everyone ready — start when you like.");
       }
@@ -485,8 +670,45 @@ export class LobbyController {
     }
   }
 
-  private setStatus(message: string) {
+  /**
+   * Set the status line text. Transient messages (errors, confirmations)
+   * auto-clear after 4 s so stale text doesn't accumulate (item 2).
+   * Pass `transient = false` for persistent informational messages.
+   */
+  private setStatus(message: string, transient = false) {
+    if (this.statusClearTimer) {
+      window.clearTimeout(this.statusClearTimer);
+      this.statusClearTimer = undefined;
+    }
     this.statusLine.textContent = message;
+    this.statusLine.style.color = "";
+    if (transient) {
+      this.statusClearTimer = window.setTimeout(() => {
+        this.statusLine.textContent = this.currentRoom
+          ? `In room ${this.currentRoom.code}.`
+          : "Create or join a room.";
+        this.statusClearTimer = undefined;
+      }, 4000);
+    }
+  }
+
+  /**
+   * Set the status line to an error (red text, auto-clears after 4 s).
+   */
+  private setErrorStatus(message: string) {
+    if (this.statusClearTimer) {
+      window.clearTimeout(this.statusClearTimer);
+      this.statusClearTimer = undefined;
+    }
+    this.statusLine.textContent = message;
+    this.statusLine.style.color = "var(--danger, #fb7185)";
+    this.statusClearTimer = window.setTimeout(() => {
+      this.statusLine.style.color = "";
+      this.statusLine.textContent = this.currentRoom
+        ? `In room ${this.currentRoom.code}.`
+        : "Create or join a room.";
+      this.statusClearTimer = undefined;
+    }, 4000);
   }
 
   private restoreRoomCodeFromUrl() {
@@ -528,7 +750,7 @@ export class LobbyController {
           this.currentRoom.roomId,
           this.playerId,
           chaosModifierIds,
-        ).catch((error) => this.setStatus(readError(error)));
+        ).catch((error) => this.setErrorStatus(readError(error)));
       }
     }
     window.dispatchEvent(new CustomEvent("jakesjam:chaos-change", {
