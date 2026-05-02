@@ -46,6 +46,7 @@ export type MatchResultsHandlers = {
 
 export class MatchResultsOverlay {
   private root: HTMLDivElement;
+  private stage: HTMLDivElement;
   private titleEl: HTMLDivElement;
   private subtitleEl: HTMLDivElement;
   private scoreboardEl: HTMLDivElement;
@@ -57,7 +58,8 @@ export class MatchResultsOverlay {
     this.root.dataset.matchResults = "true";
     Object.assign(this.root.style, BASE_OVERLAY_STYLE);
 
-    const stage = document.createElement("div");
+    this.stage = document.createElement("div");
+    const stage = this.stage;
     Object.assign(stage.style, STAGE_STYLE);
 
     this.titleEl = document.createElement("div");
@@ -128,13 +130,55 @@ export class MatchResultsOverlay {
     });
     this.actionsEl.append(rematchButton, lobbyButton);
 
-    // Entry animation
+    // Orchestrated slam-in: backdrop fades, stage slams from below, then
+    // title crashes in overscale → settles, then scoreboard rows stagger in.
     this.root.style.display = "flex";
     this.root.style.opacity = "0";
-    this.root.style.transform = "scale(0.94)";
+
+    // Stage starts off-screen below
+    this.stage.style.transform = "translateY(60px) scale(0.88)";
+    this.stage.style.opacity = "0";
+    this.stage.style.transition = "none";
+
+    // Title starts overscale
+    this.titleEl.style.transform = "scale(1.6)";
+    this.titleEl.style.opacity = "0";
+    this.titleEl.style.transition = "none";
+
+    // Hide scoreboard rows for stagger
+    const rowEls = Array.from(this.scoreboardEl.children) as HTMLElement[];
+    for (const row of rowEls) {
+      row.style.opacity = "0";
+      row.style.transform = "translateX(-18px)";
+      row.style.transition = "none";
+    }
+
     requestAnimationFrame(() => {
+      // 1. Backdrop fade in
       this.root.style.opacity = "1";
-      this.root.style.transform = "scale(1)";
+
+      // 2. Stage slams up (60ms after backdrop starts)
+      setTimeout(() => {
+        this.stage.style.transition = "transform 340ms cubic-bezier(0.22,1,0.36,1), opacity 200ms ease";
+        this.stage.style.transform = "translateY(0) scale(1)";
+        this.stage.style.opacity = "1";
+      }, 60);
+
+      // 3. Title crashes in
+      setTimeout(() => {
+        this.titleEl.style.transition = "transform 280ms cubic-bezier(0.34,1.56,0.64,1), opacity 160ms ease";
+        this.titleEl.style.transform = "scale(1)";
+        this.titleEl.style.opacity = "1";
+      }, 180);
+
+      // 4. Scoreboard rows stagger in
+      rowEls.forEach((row, i) => {
+        setTimeout(() => {
+          row.style.transition = "transform 240ms cubic-bezier(0.34,1.56,0.64,1), opacity 160ms ease";
+          row.style.transform = "translateX(0)";
+          row.style.opacity = "1";
+        }, 380 + i * 80);
+      });
     });
   }
 
@@ -231,7 +275,7 @@ const BASE_OVERLAY_STYLE: Partial<CSSStyleDeclaration> = {
   justifyContent: "center",
   background: "rgba(5, 8, 15, 0.88)",
   backdropFilter: "blur(10px)",
-  fontFamily: "Inter, Arial, sans-serif",
+  fontFamily: "'Space Grotesk', Inter, Arial, sans-serif",
   pointerEvents: "auto",
   transition: "opacity 280ms cubic-bezier(0.4,0,0.2,1), transform 280ms cubic-bezier(0.34,1.56,0.64,1)",
 };
@@ -261,6 +305,7 @@ const TITLE_STYLE: Partial<CSSStyleDeclaration> = {
   textAlign: "center",
   color: "#fff7d6",
   lineHeight: "1.1",
+  fontFamily: "'Space Grotesk', Inter, Arial, sans-serif",
 };
 
 const SUBTITLE_STYLE: Partial<CSSStyleDeclaration> = {
@@ -269,6 +314,7 @@ const SUBTITLE_STYLE: Partial<CSSStyleDeclaration> = {
   color: "#7a8aa3",
   textTransform: "uppercase",
   textAlign: "center",
+  fontFamily: "'Space Mono', 'Courier New', monospace",
 };
 
 const SCOREBOARD_STYLE: Partial<CSSStyleDeclaration> = {
@@ -301,12 +347,13 @@ const ROW_NAME_STYLE: Partial<CSSStyleDeclaration> = {
   fontWeight: "900",
   letterSpacing: "0.04em",
   color: "#f7fbff",
+  fontFamily: "'Space Grotesk', Inter, Arial, sans-serif",
 };
 
 const ROW_SCORE_STYLE: Partial<CSSStyleDeclaration> = {
   fontSize: "26px",
   fontWeight: "900",
-  fontFamily: "Consolas, monospace",
+  fontFamily: "'Space Mono', 'Courier New', monospace",
   color: "#50e3c2",
 };
 
@@ -336,7 +383,7 @@ const ACTIONS_STYLE: Partial<CSSStyleDeclaration> = {
 const BUTTON_BASE_STYLE: Partial<CSSStyleDeclaration> = {
   padding: "12px 26px",
   borderRadius: "10px",
-  fontFamily: "Inter, Arial, sans-serif",
+  fontFamily: "'Space Grotesk', Inter, Arial, sans-serif",
   fontWeight: "900",
   fontSize: "13px",
   letterSpacing: "0.14em",

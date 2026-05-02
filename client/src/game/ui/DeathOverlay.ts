@@ -113,7 +113,7 @@ const SKULL_STYLE: Partial<CSSStyleDeclaration> = {
 };
 
 const TITLE_STYLE: Partial<CSSStyleDeclaration> = {
-  fontFamily: "Inter, Arial, sans-serif",
+  fontFamily: "'Space Grotesk', Inter, Arial, sans-serif",
   fontSize: "26px",
   fontWeight: "900",
   letterSpacing: "0.2em",
@@ -122,7 +122,7 @@ const TITLE_STYLE: Partial<CSSStyleDeclaration> = {
 };
 
 const SUB_STYLE: Partial<CSSStyleDeclaration> = {
-  fontFamily: "Inter, Arial, sans-serif",
+  fontFamily: "'Space Mono', 'Courier New', monospace",
   fontSize: "11px",
   fontWeight: "700",
   letterSpacing: "0.08em",
@@ -131,7 +131,7 @@ const SUB_STYLE: Partial<CSSStyleDeclaration> = {
 };
 
 const TIMER_STYLE: Partial<CSSStyleDeclaration> = {
-  fontFamily: "Consolas, 'Courier New', monospace",
+  fontFamily: "'Space Mono', 'Courier New', monospace",
   fontSize: "48px",
   fontWeight: "900",
   color: "#fff7d6",

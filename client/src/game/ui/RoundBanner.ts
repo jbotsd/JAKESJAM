@@ -72,7 +72,7 @@ export class RoundBanner {
 
     this.subText = s.add
       .text(cx, cy - 44, "", {
-        fontFamily: "Inter, Arial, sans-serif",
+        fontFamily: "'Space Mono', 'Courier New', monospace",
         fontSize: "14px",
         fontStyle: "bold",
         color: "#8ff8ff",
@@ -88,7 +88,7 @@ export class RoundBanner {
 
     this.mainText = s.add
       .text(cx, cy, "", {
-        fontFamily: "Inter, Arial, sans-serif",
+        fontFamily: "'Space Grotesk', Inter, Arial, sans-serif",
         fontSize: "72px",
         fontStyle: "900",
         color: "#fff7d6",
