@@ -1,6 +1,8 @@
-import type Phaser from "phaser";
+import Phaser from "phaser";
 import type { DestructibleKind, ElementType, Vec2 } from "../types/game";
 import { destructibleColor } from "../systems/DestructibleRenderer";
+import type { ParticlePool } from "../systems/ParticlePool";
+import { PALETTE } from "../ui/palette";
 
 /**
  * RenderLayer — owns the cluster of one-shot ephemeral VFX bursts that
@@ -14,12 +16,16 @@ import { destructibleColor } from "../systems/DestructibleRenderer";
  * pickup pickup, destructible break) where the cost of allocate/destroy
  * is negligible and the variety of shapes/text styles makes pooling
  * awkward. Pooling stays for the high-frequency status-VFX path.
+ * Exception: spawnExplosionBlast uses the blastCircle pool for stacked-
+ * additive bloom to match the ROUNDS ref visual.
  */
 export class RenderLayer {
   private readonly scene: Phaser.Scene;
+  private readonly pool: ParticlePool | null;
 
-  constructor(scene: Phaser.Scene) {
+  constructor(scene: Phaser.Scene, pool: ParticlePool | null = null) {
     this.scene = scene;
+    this.pool = pool;
   }
 
   /** Big radial blast + 18 colorful shards. Used when a remote player dies. */
@@ -92,7 +98,12 @@ export class RenderLayer {
   }
 
   /** Floating damage number above a destructible. */
-  flashDestructibleText(position: Vec2, sizeY: number, amount: number, element: ElementType): void {
+  flashDestructibleText(
+    position: Vec2,
+    sizeY: number,
+    amount: number,
+    element: ElementType,
+  ): void {
     const color = element === "fire" ? "#ffb86b" : "#f7fbff";
     const text = this.scene.add
       .text(position.x, position.y - sizeY / 2 - 10, Math.round(amount).toString(), {
@@ -115,13 +126,14 @@ export class RenderLayer {
 
   /** Floating damage number above the practice target (different size/color). */
   flashTargetText(position: Vec2, amount: number, element: ElementType): void {
-    const color = element === "fire"
-      ? "#ffb86b"
-      : element === "ice"
-        ? "#bfdbfe"
-        : element === "radiant"
-          ? "#fff7d6"
-          : "#50e3c2";
+    const color =
+      element === "fire"
+        ? "#ffb86b"
+        : element === "ice"
+          ? "#bfdbfe"
+          : element === "radiant"
+            ? "#fff7d6"
+            : "#50e3c2";
     const text = this.scene.add
       .text(position.x, position.y - 24, Math.round(amount).toString(), {
         color,
@@ -223,17 +235,136 @@ export class RenderLayer {
     });
   }
 
-  /** Generic explosion blast — circle that grows + fades. Caller still applies area damage. */
+  /** Generic explosion blast — stacked-additive bloom circles from ParticlePool.
+   *  Falls back to a simple single circle when the pool is unavailable (e.g. tests). */
   spawnExplosionBlast(position: Vec2, radius: number): void {
-    const blast = this.scene.add.circle(position.x, position.y, 6, 0xffd166, 0.36);
-    blast.setStrokeStyle(3, 0xfb7185, 0.95);
-    this.scene.tweens.add({
-      targets: blast,
-      radius,
-      alpha: 0,
-      duration: 260,
-      ease: "Sine.easeOut",
-      onComplete: () => blast.destroy(),
-    });
+    if (!this.pool) {
+      // Fallback: original single-circle behaviour (keeps test assertions stable).
+      const blast = this.scene.add.circle(position.x, position.y, 6, 0xffd166, 0.36);
+      blast.setStrokeStyle(3, 0xfb7185, 0.95);
+      this.scene.tweens.add({
+        targets: blast,
+        radius,
+        alpha: 0,
+        duration: 260,
+        ease: "Sine.easeOut",
+        onComplete: () => blast.destroy(),
+      });
+      return;
+    }
+    this.spawnBloomLayers(position, radius, this.pool);
+    this.spawnBlastSparks(position, this.pool);
+  }
+
+  /** Big explosion blast — same bloom + a 16-spike radial star overlay.
+   *  Use for boss kills, ults, or killing blows. */
+  spawnExplosionBlastBig(
+    position: Vec2,
+    radius: number,
+    baseColor: number = PALETTE.blastMid,
+  ): void {
+    if (this.pool) {
+      this.spawnBloomLayers(position, radius, this.pool);
+      this.spawnBlastSparks(position, this.pool);
+    } else {
+      const blast = this.scene.add.circle(position.x, position.y, 6, baseColor, 0.5);
+      this.scene.tweens.add({
+        targets: blast,
+        radius,
+        alpha: 0,
+        duration: 300,
+        ease: "Sine.easeOut",
+        onComplete: () => blast.destroy(),
+      });
+    }
+    // Radial spike overlay — 16 thin rectangles fanned around center.
+    const spikeCount = 16;
+    for (let i = 0; i < spikeCount; i++) {
+      const angle = (Math.PI * 2 * i) / spikeCount;
+      const spikeLength = radius * (0.8 + Math.random() * 0.6); // 0.8–1.4 × radius
+      const spike = this.scene.add.rectangle(
+        position.x + Math.cos(angle) * spikeLength * 0.5,
+        position.y + Math.sin(angle) * spikeLength * 0.5,
+        3,
+        spikeLength,
+        baseColor,
+        0.85,
+      );
+      spike.setStrokeStyle(1, PALETTE.cardFrameInk, 1);
+      spike.rotation = angle + Math.PI / 2;
+      this.scene.tweens.add({
+        targets: spike,
+        alpha: 0,
+        duration: 200,
+        ease: "Sine.easeOut",
+        onComplete: () => spike.destroy(),
+      });
+    }
+  }
+
+  // ── Private helpers ──────────────────────────────────────────────────────────
+
+  private spawnBloomLayers(position: Vec2, radius: number, pool: ParticlePool): void {
+    const scales = [0.4, 0.7, 1.0, 1.2, 1.5] as const;
+    const colors = [
+      PALETTE.blastCore,
+      PALETTE.blastCore,
+      PALETTE.blastMid,
+      PALETTE.blastMid,
+      PALETTE.blastHalo,
+    ] as const;
+    const alphas = [1.0, 0.9, 0.7, 0.5, 0.3] as const;
+    const durations = [180, 200, 240, 280, 320] as const;
+
+    for (let i = 0; i < scales.length; i++) {
+      const arc = pool.acquireBlastCircle();
+      if (!arc) continue; // pool exhausted — silent skip
+
+      const scale = scales[i]!;
+      const color = colors[i]!;
+      const alpha = alphas[i]!;
+      const duration = durations[i]!;
+      const layerRadius = radius * scale;
+      arc.setRadius(layerRadius);
+      arc.setFillStyle(color, alpha);
+      arc.setPosition(position.x, position.y);
+      arc.setScale(1);
+      arc.setAlpha(alpha);
+      arc.setBlendMode(Phaser.BlendModes.ADD);
+
+      const targetScale = scale * 1.2; // +20%
+      this.scene.tweens.add({
+        targets: arc,
+        scaleX: targetScale / scale,
+        scaleY: targetScale / scale,
+        alpha: 0,
+        duration,
+        ease: "Sine.easeOut",
+        onComplete: () => pool.release(arc),
+      });
+    }
+  }
+
+  private spawnBlastSparks(position: Vec2, pool: ParticlePool): void {
+    const count = 4 + Math.floor(Math.random() * 3); // 4–6
+    for (let i = 0; i < count; i++) {
+      const spark = pool.acquireSpark();
+      if (!spark) break; // pool exhausted — silent skip
+
+      const angle = Math.random() * Math.PI * 2;
+      const dist = 8 + Math.random() * 18;
+      spark.setFillStyle(PALETTE.emberGold, 0.9);
+      spark.setPosition(position.x, position.y);
+      spark.setAlpha(0.9);
+      this.scene.tweens.add({
+        targets: spark,
+        x: position.x + Math.cos(angle) * dist,
+        y: position.y - (20 + Math.random() * 30), // drift upward
+        alpha: 0,
+        duration: 600,
+        ease: "Sine.easeOut",
+        onComplete: () => pool.release(spark),
+      });
+    }
   }
 }

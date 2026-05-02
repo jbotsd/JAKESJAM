@@ -16,7 +16,6 @@ export interface HeroPresenterOptions {
 }
 
 export class HeroPresenter extends Phaser.GameObjects.Container {
-  private bodyRadius: number;
   private leftBrow: Phaser.GameObjects.Graphics;
   private rightBrow: Phaser.GameObjects.Graphics;
   private mouth: Phaser.GameObjects.Graphics;
@@ -35,7 +34,6 @@ export class HeroPresenter extends Phaser.GameObjects.Container {
     scene.add.existing(this);
 
     const R = 64; // body radius
-    this.bodyRadius = R;
 
     // ── Body ──────────────────────────────────────────────────────────────
     const body = scene.add.graphics();

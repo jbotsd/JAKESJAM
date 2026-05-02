@@ -582,6 +582,31 @@ export class ProjectileSystem {
         duration: 210,
         onComplete: () => trail.destroy(),
       });
+
+      // Blob-cluster augmentation: 2 small additive offset circles for glow feel.
+      // Radius ~40% of primary shape; placed ±2-4px off-axis from centroid.
+      const blobRadius = Math.max(1.5, radius * 0.4);
+      const offsets: [number, number][] = [
+        [2 + Math.random() * 2, -(2 + Math.random() * 2)],
+        [-(2 + Math.random() * 2), 2 + Math.random() * 2],
+      ];
+      for (const [ox, oy] of offsets) {
+        const blob = this.scene.add.circle(
+          projectile.position.x + ox,
+          projectile.position.y + oy,
+          blobRadius,
+          color,
+          0.6,
+        );
+        blob.setBlendMode(Phaser.BlendModes.ADD);
+        this.scene.tweens.add({
+          targets: blob,
+          alpha: 0,
+          scale: 0.5,
+          duration: 160,
+          onComplete: () => blob.destroy(),
+        });
+      }
     }
   }
 
