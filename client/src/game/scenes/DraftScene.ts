@@ -151,7 +151,7 @@ export class DraftScene extends Phaser.Scene {
       const bracket = drawCardBracket(this, 0, 0, cardWidth, cardHeight, bracketColor);
       cardContainer.add(bracket);
 
-      // Bucket-glyph icon (reused as-is per constraints)
+      // Signature icon (or bucket-glyph fallback for unsignatured cards)
       const iconObjs = drawBucketIcon(
         this,
         0, -90,
@@ -160,6 +160,7 @@ export class DraftScene extends Phaser.Scene {
         card.rarity,
         100,
         card.visual?.iconShape,
+        card.id,
       );
       cardContainer.add(iconObjs);
 
@@ -508,6 +509,7 @@ export class DraftScene extends Phaser.Scene {
         card.rarity,
         44,
         card.visual?.iconShape,
+        card.id,
       );
       void iconObjs;
     });
