@@ -220,14 +220,31 @@ function shouldUseNewNetcode(): boolean {
 }
 
 const PLAYER_ID_KEY_FALLBACK = "jakesjam.playerId";
+const SESSION_SUFFIX_KEY = "jakesjam.sessionSuffix";
 
+/**
+ * Per-TAB player id. Combines a stable localStorage base (so a single
+ * tab keeps the same id across reloads — reconnect grace works) with a
+ * sessionStorage suffix that's unique per tab. Two tabs of the same
+ * browser get DIFFERENT effective ids and can therefore both join the
+ * same world/room without one kicking the other.
+ *
+ * The server treats the combined string as opaque, so the suffix
+ * effectively makes each tab a distinct player from the host's
+ * perspective.
+ */
 function localPlayerId(): string {
-  let id = localStorage.getItem(PLAYER_ID_KEY_FALLBACK);
-  if (!id) {
-    id = `player_${Math.random().toString(36).slice(2, 10)}`;
-    localStorage.setItem(PLAYER_ID_KEY_FALLBACK, id);
+  let base = localStorage.getItem(PLAYER_ID_KEY_FALLBACK);
+  if (!base) {
+    base = `player_${Math.random().toString(36).slice(2, 10)}`;
+    localStorage.setItem(PLAYER_ID_KEY_FALLBACK, base);
   }
-  return id;
+  let suffix = sessionStorage.getItem(SESSION_SUFFIX_KEY);
+  if (!suffix) {
+    suffix = Math.random().toString(36).slice(2, 6);
+    sessionStorage.setItem(SESSION_SUFFIX_KEY, suffix);
+  }
+  return `${base}_${suffix}`;
 }
 
 /**
