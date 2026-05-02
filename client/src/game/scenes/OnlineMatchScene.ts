@@ -643,24 +643,46 @@ export class OnlineMatchScene extends Phaser.Scene {
     if (!victim || damage < 1) return;
     const isLocal = victimId === this.localPlayerId;
     const spread = (Math.random() - 0.5) * 22;
+
+    // Damage tiers: light <15, medium 15–29, heavy 30+.
+    // Per game-feel-juice/SKILL.md: bigger impacts need bigger reactions.
+    const isHeavy = damage >= 30;
+    const isMedium = damage >= 15;
+    const fontSize = isHeavy ? "22px" : isMedium ? "17px" : "13px";
+    // Overshoot scale: punch in at 1.4× then settle to 1.0 (Nijman's "tweened spawning").
+    const spawnScale = isHeavy ? 1.6 : isMedium ? 1.35 : 1.2;
+    const color = isLocal ? "#fb7185" : isHeavy ? "#ffffff" : "#fff7d6";
+
     const text = this.add
       .text(victim.x + spread, victim.y - 36, Math.round(damage).toString(), {
-        color: isLocal ? "#fb7185" : "#fff7d6",
-        fontFamily: "Inter, Arial, sans-serif",
-        fontSize: damage >= 30 ? "18px" : "14px",
+        color,
+        fontFamily: '"PP Neue Machina", Inter, Arial, sans-serif',
+        fontSize,
         fontStyle: "900",
         stroke: "#05080f",
-        strokeThickness: 3,
+        strokeThickness: isHeavy ? 4 : 3,
       })
       .setOrigin(0.5, 1)
-      .setDepth(800);
+      .setDepth(800)
+      .setScale(spawnScale);
+
+    // Two-phase: overshoot pop (Back.easeOut) then float-up + fade.
     this.tweens.add({
       targets: text,
-      y: text.y - 28,
-      alpha: 0,
-      duration: 560,
-      ease: "Sine.easeOut",
-      onComplete: () => text.destroy(),
+      scaleX: 1,
+      scaleY: 1,
+      duration: 120,
+      ease: "Back.easeOut",
+      onComplete: () => {
+        this.tweens.add({
+          targets: text,
+          y: text.y - (isHeavy ? 44 : 28),
+          alpha: 0,
+          duration: isHeavy ? 700 : 560,
+          ease: "Sine.easeOut",
+          onComplete: () => text.destroy(),
+        });
+      },
     });
   }
 
