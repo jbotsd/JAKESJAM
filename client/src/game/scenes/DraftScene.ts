@@ -45,21 +45,48 @@ export class DraftScene extends Phaser.Scene {
   create() {
     const { width, height } = this.scale;
 
-    // Dark overlay background
-    this.add.rectangle(0, 0, width, height, 0x000000, 0.85).setOrigin(0);
+    // Void background
+    this.add.rectangle(0, 0, width, height, PALETTE.voidDeep).setOrigin(0);
 
-    // Title
-    this.add.text(width / 2, 50, "CHOOSE YOUR UPGRADE", {
-      font: "bold 36px Inter, Arial, sans-serif",
+    // ── Atmospheric scan lines (horizontal rules, very low alpha) ─────────────
+    this.addScanLines(width, height);
+
+    // ── Radial hero glow — warm orb behind presenter position ─────────────────
+    const heroGlow = this.add.graphics();
+    const heroGlowX = width / 2;
+    const heroGlowY = height - 80;
+    heroGlow.fillStyle(PALETTE.lampOrbCore, 0.04);
+    heroGlow.fillCircle(heroGlowX, heroGlowY, 200);
+    heroGlow.fillStyle(PALETTE.lightBeamWarm, 0.03);
+    heroGlow.fillCircle(heroGlowX, heroGlowY, 310);
+
+    // ── Vignette — stacked dark radial edges ──────────────────────────────────
+    this.addVignette(width, height);
+
+    // Title — Space Grotesk display font
+    this.add.text(width / 2, 48, "CHOOSE YOUR UPGRADE", {
+      fontFamily: "'Space Grotesk', Inter, Arial, sans-serif",
+      fontStyle: "bold",
+      fontSize: "36px",
       color: "#f7fbff",
+      letterSpacing: 2,
     }).setOrigin(0.5);
 
-    // Round info and comeback message
+    // Kicker above title — mono label
+    this.add.text(width / 2, 24, `ROUND ${this.roundNumber}`, {
+      fontFamily: "'Space Mono', 'Courier New', monospace",
+      fontSize: "11px",
+      color: "#8ff8ff",
+      letterSpacing: 4,
+    }).setOrigin(0.5);
+
+    // Round info / comeback message
     const subtitle = this.playerBehind
-      ? `Round ${this.roundNumber} - You're behind. Pick wisely.`
-      : `Round ${this.roundNumber}`;
-    this.add.text(width / 2, 85, subtitle, {
-      font: "18px Inter, Arial, sans-serif",
+      ? `You're behind — pick wisely.`
+      : `Select a card to enhance your build.`;
+    this.add.text(width / 2, 78, subtitle, {
+      fontFamily: "'Space Grotesk', Inter, Arial, sans-serif",
+      fontSize: "16px",
       color: this.playerBehind ? "#f87171" : "#9ba7b8",
     }).setOrigin(0.5);
 
@@ -78,8 +105,10 @@ export class DraftScene extends Phaser.Scene {
 
     // Instructions
     this.add.text(width / 2, height - 30, "Click a card to select it", {
-      font: "16px Inter, Arial, sans-serif",
+      fontFamily: "'Space Mono', 'Courier New', monospace",
+      fontSize: "11px",
       color: "#50e3c2",
+      letterSpacing: 2,
     }).setOrigin(0.5);
 
     // Escape key to pause (optional)
@@ -133,15 +162,18 @@ export class DraftScene extends Phaser.Scene {
       // Card name ABOVE the frame
       const nameY = -(cardHeight / 2 + 14);
       const name = this.add.text(0, nameY, card.name.toUpperCase(), {
-        font: "bold 16px Inter, Arial, sans-serif",
+        fontFamily: "'Space Grotesk', Inter, Arial, sans-serif",
+        fontStyle: "bold",
+        fontSize: "15px",
         color: `#${PALETTE.cardTitle.toString(16).padStart(6, "0")}`,
-        letterSpacing: 1,
+        letterSpacing: 2,
       }).setOrigin(0.5, 1);
       cardContainer.add(name);
 
       // Card description
       const desc = this.add.text(0, -20, card.description, {
-        font: "13px Inter, Arial, sans-serif",
+        fontFamily: "'Space Grotesk', Inter, Arial, sans-serif",
+        fontSize: "13px",
         color: "#f5f8f8",
         wordWrap: { width: cardWidth - 40 },
       }).setOrigin(0.5);
@@ -155,7 +187,9 @@ export class DraftScene extends Phaser.Scene {
             0, statY + i * 20,
             `+${this.formatStat(benefit)}`,
             {
-              font: "bold 13px Inter, Arial, sans-serif",
+              fontFamily: "'Space Mono', 'Courier New', monospace",
+              fontStyle: "bold",
+              fontSize: "12px",
               color: `#${PALETTE.benefitGreen.toString(16).padStart(6, "0")}`,
             },
           ).setOrigin(0.5);
@@ -171,7 +205,9 @@ export class DraftScene extends Phaser.Scene {
             0, statY + i * 20,
             `-${this.formatStat(penalty)}`,
             {
-              font: "bold 13px Inter, Arial, sans-serif",
+              fontFamily: "'Space Mono', 'Courier New', monospace",
+              fontStyle: "bold",
+              fontSize: "12px",
               color: `#${PALETTE.penaltyRed.toString(16).padStart(6, "0")}`,
             },
           ).setOrigin(0.5);
@@ -193,26 +229,81 @@ export class DraftScene extends Phaser.Scene {
   }
 
   private selectCard(card: CardDefinition) {
-    // Flash effect
-    this.cameras.main.shake(200, 0.01);
+    // Disable all card inputs to prevent double-pick
+    this.input.enabled = false;
 
-    // Visual feedback
-    const flash = this.add.text(this.scale.width / 2, this.scale.height / 2, "SELECTED!", {
-      font: "bold 48px Inter, Arial, sans-serif",
-      color: "#4ade80",
-    }).setOrigin(0.5).setAlpha(0);
+    const cx = this.scale.width / 2;
+    const cy = this.scale.height / 2;
+
+    // Screen shake
+    this.cameras.main.shake(240, 0.012);
+
+    // Radial flash: expanding ring burst
+    const ring = this.add.circle(cx, cy, 8, PALETTE.cardBracket, 0.0);
+    ring.setStrokeStyle(3, PALETTE.cardBracketGlow, 0.9);
+    this.tweens.add({
+      targets: ring,
+      radius: 260,
+      alpha: 0,
+      duration: 460,
+      ease: "Sine.easeOut",
+      onComplete: () => ring.destroy(),
+    });
+
+    // 12 outward sparks
+    for (let i = 0; i < 12; i++) {
+      const angle = (Math.PI * 2 * i) / 12;
+      const spark = this.add.rectangle(cx, cy, 4, 12, PALETTE.blastHalo, 0.92);
+      spark.rotation = angle;
+      this.tweens.add({
+        targets: spark,
+        x: cx + Math.cos(angle) * 120,
+        y: cy + Math.sin(angle) * 120,
+        alpha: 0,
+        duration: 400,
+        ease: "Sine.easeOut",
+        onComplete: () => spark.destroy(),
+      });
+    }
+
+    // Flash text with Back.easeOut spring
+    const flash = this.add
+      .text(cx, cy + 20, "SELECTED!", {
+        fontFamily: "'Space Grotesk', Inter, Arial, sans-serif",
+        fontStyle: "bold",
+        fontSize: "52px",
+        color: "#4ade80",
+        stroke: "#05080f",
+        strokeThickness: 6,
+      })
+      .setOrigin(0.5)
+      .setAlpha(0)
+      .setScale(0.6);
 
     this.tweens.add({
       targets: flash,
       alpha: 1,
-      y: this.scale.height / 2 - 50,
-      duration: 200,
-      ease: "Power2",
+      scaleX: 1,
+      scaleY: 1,
+      y: cy - 20,
+      duration: 280,
+      ease: "Back.easeOut",
       onComplete: () => {
-        // Store selected card in registry so MatchScene can read it
-        this.registry.set("draftSelectedCard", card);
-        // Stop DraftScene - MatchScene listens for shutdown event
-        this.scene.stop(SceneKeys.Draft);
+        // Hold briefly, then fade out and close
+        this.time.delayedCall(320, () => {
+          this.tweens.add({
+            targets: flash,
+            alpha: 0,
+            y: cy - 60,
+            duration: 220,
+            ease: "Sine.easeIn",
+            onComplete: () => {
+              flash.destroy();
+              this.registry.set("draftSelectedCard", card);
+              this.scene.stop(SceneKeys.Draft);
+            },
+          });
+        });
       },
     });
   }
@@ -236,9 +327,9 @@ export class DraftScene extends Phaser.Scene {
       if (i !== index) {
         this.tweens.add({
           targets: c,
-          alpha: highlight ? 0.55 : 1.0,
-          duration: 180,
-          ease: "Power2",
+          alpha: highlight ? 0.45 : 1.0,
+          duration: 200,
+          ease: "Sine.easeOut",
         });
       }
     });
@@ -247,13 +338,13 @@ export class DraftScene extends Phaser.Scene {
     if (highlight) {
       this.tweens.add({
         targets: container,
-        scaleX: 1.1,
-        scaleY: 1.1,
-        y: baseY - 20,
+        scaleX: 1.12,
+        scaleY: 1.12,
+        y: baseY - 24,
         rotation: 0.05,
         alpha: 1.0,
-        duration: 180,
-        ease: "Power2",
+        duration: 240,
+        ease: "Back.easeOut",
       });
     } else {
       this.tweens.add({
@@ -264,23 +355,66 @@ export class DraftScene extends Phaser.Scene {
         rotation: 0,
         alpha: 1.0,
         duration: 180,
-        ease: "Power2",
+        ease: "Sine.easeOut",
       });
+    }
+  }
+
+  /**
+   * Procedural edge vignette — four dark gradient ellipses at screen corners.
+   * Gives the ROUNDS void-black atmosphere without a render texture.
+   */
+  private addVignette(width: number, height: number): void {
+    const g = this.add.graphics();
+    // Top edge
+    g.fillStyle(0x000000, 0.55);
+    g.fillRect(0, 0, width, height * 0.18);
+    // Bottom edge
+    g.fillStyle(0x000000, 0.5);
+    g.fillRect(0, height * 0.82, width, height * 0.18);
+    // Left edge
+    g.fillStyle(0x000000, 0.38);
+    g.fillRect(0, 0, width * 0.12, height);
+    // Right edge
+    g.fillStyle(0x000000, 0.38);
+    g.fillRect(width * 0.88, 0, width * 0.12, height);
+    // Center radial darkening (subtle)
+    g.fillStyle(0x000000, 0.18);
+    g.fillEllipse(width / 2, height / 2, width * 1.1, height * 1.1);
+    g.fillStyle(0x000000, 0.0);
+    g.fillEllipse(width / 2, height / 2, width * 0.55, height * 0.55);
+  }
+
+  /**
+   * Horizontal scan-line overlay — every 4px a 1px dark rule at low alpha.
+   * Adds CRT-esque texture to the void background without an image asset.
+   */
+  private addScanLines(width: number, height: number): void {
+    const g = this.add.graphics();
+    g.lineStyle(1, 0x000000, 0.14);
+    for (let y = 0; y < height; y += 4) {
+      g.beginPath();
+      g.moveTo(0, y);
+      g.lineTo(width, y);
+      g.strokePath();
     }
   }
 
   private renderCurrentBuild(centerX: number, y: number) {
     if (this.currentBuild.length === 0) {
-      this.add.text(centerX, y, "No cards yet - first draft!", {
-        font: "14px Inter, Arial, sans-serif",
+      this.add.text(centerX, y, "No cards yet — first draft!", {
+        fontFamily: "'Space Mono', 'Courier New', monospace",
+        fontSize: "11px",
         color: "#6b7280",
       }).setOrigin(0.5);
       return;
     }
 
     this.add.text(centerX, y - 25, "CURRENT BUILD:", {
-      font: "bold 12px Inter, Arial, sans-serif",
+      fontFamily: "'Space Mono', 'Courier New', monospace",
+      fontSize: "10px",
       color: "#9ba7b8",
+      letterSpacing: 3,
     }).setOrigin(0.5);
 
     this.currentBuild.forEach((card, index) => {

@@ -206,7 +206,7 @@ export class HudSystem {
     this.vitalGraphics.setScrollFactor(0).setDepth(depth + 1);
 
     const fontBase = {
-      fontFamily: "Inter, Arial, sans-serif",
+      fontFamily: "'Space Mono', Consolas, 'Courier New', monospace",
       fontStyle: "bold",
     } as const;
 
@@ -234,7 +234,7 @@ export class HudSystem {
     // Top-center: timer + score
     this.timerText = s.add
       .text(s.scale.width / 2, 12, "", {
-        fontFamily: "Consolas, 'Courier New', monospace",
+        fontFamily: "'Space Mono', Consolas, 'Courier New', monospace",
         fontSize: "24px",
         fontStyle: "bold",
         color: "#f7fbff",
@@ -247,7 +247,7 @@ export class HudSystem {
 
     this.scoreText = s.add
       .text(s.scale.width / 2, 42, "", {
-        fontFamily: "Inter, Arial, sans-serif",
+        fontFamily: "'Space Mono', Consolas, 'Courier New', monospace",
         fontSize: "13px",
         fontStyle: "bold",
         color: "#8ff8ff",
@@ -361,9 +361,9 @@ export class HudSystem {
     while (this.chipTexts.length < chips.length) {
       const t = this.scene.add
         .text(0, 0, "", {
-          fontFamily: "Inter, Arial, sans-serif",
-          fontSize: "10px",
-          fontStyle: "900",
+          fontFamily: "'Space Mono', Consolas, 'Courier New', monospace",
+          fontSize: "9px",
+          fontStyle: "bold",
           color: "#f5f8f8",
         })
         .setScrollFactor(0)
@@ -506,7 +506,7 @@ export class HudSystem {
       while (this.pillTexts.length <= i) {
         const t = this.scene.add
           .text(0, 0, "", {
-            fontFamily: "Inter, Arial, sans-serif",
+            fontFamily: "'Space Mono', Consolas, 'Courier New', monospace",
             fontSize: "9px",
             fontStyle: "bold",
             color: numToHex(PALETTE.textHi),

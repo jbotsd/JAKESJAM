@@ -249,7 +249,7 @@ const BASE_OVERLAY_STYLE: Partial<CSSStyleDeclaration> = {
   justifyContent: "center",
   background: "rgba(5, 8, 15, 0.82)",
   backdropFilter: "blur(8px)",
-  fontFamily: "Inter, Arial, sans-serif",
+  fontFamily: "'Space Grotesk', Inter, Arial, sans-serif",
   pointerEvents: "auto",
   transition: "opacity 220ms ease, transform 220ms ease",
 };
@@ -279,10 +279,11 @@ const HEADER_STYLE: Partial<CSSStyleDeclaration> = {
 
 const KICKER_STYLE: Partial<CSSStyleDeclaration> = {
   fontSize: "11px",
-  fontWeight: "900",
-  letterSpacing: "0.18em",
+  fontWeight: "700",
+  letterSpacing: "0.22em",
   color: "#8ff8ff",
   textTransform: "uppercase",
+  fontFamily: "'Space Mono', 'Courier New', monospace",
 };
 
 const TITLE_STYLE: Partial<CSSStyleDeclaration> = {
@@ -291,6 +292,7 @@ const TITLE_STYLE: Partial<CSSStyleDeclaration> = {
   letterSpacing: "0.12em",
   color: "#f7fbff",
   textTransform: "uppercase",
+  fontFamily: "'Space Grotesk', Inter, Arial, sans-serif",
 };
 
 const HINT_STYLE: Partial<CSSStyleDeclaration> = {
@@ -340,9 +342,10 @@ const CARD_STYLE: Partial<CSSStyleDeclaration> = {
 
 const RARITY_STYLE: Partial<CSSStyleDeclaration> = {
   fontSize: "10px",
-  fontWeight: "900",
-  letterSpacing: "0.2em",
+  fontWeight: "700",
+  letterSpacing: "0.22em",
   textTransform: "uppercase",
+  fontFamily: "'Space Mono', 'Courier New', monospace",
 };
 
 const NAME_STYLE: Partial<CSSStyleDeclaration> = {
@@ -350,6 +353,7 @@ const NAME_STYLE: Partial<CSSStyleDeclaration> = {
   fontWeight: "900",
   lineHeight: "1.1",
   letterSpacing: "0.01em",
+  fontFamily: "'Space Grotesk', Inter, Arial, sans-serif",
 };
 
 const BUCKETS_STYLE: Partial<CSSStyleDeclaration> = {
@@ -377,17 +381,19 @@ const FLAVOR_STYLE: Partial<CSSStyleDeclaration> = {
 };
 
 const STAT_BENEFIT_STYLE: Partial<CSSStyleDeclaration> = {
-  fontSize: "13px",
+  fontSize: "12px",
   fontWeight: "700",
   color: "#7DE05A",
   lineHeight: "1.4",
+  fontFamily: "'Space Mono', 'Courier New', monospace",
 };
 
 const STAT_PENALTY_STYLE: Partial<CSSStyleDeclaration> = {
-  fontSize: "13px",
+  fontSize: "12px",
   fontWeight: "700",
   color: "#E55A4A",
   lineHeight: "1.4",
+  fontFamily: "'Space Mono', 'Courier New', monospace",
 };
 
 // Bracket corner dimensions

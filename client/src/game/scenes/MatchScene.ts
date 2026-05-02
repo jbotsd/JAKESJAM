@@ -481,6 +481,54 @@ export class MatchScene extends Phaser.Scene {
     for (const spawn of boxworksWorld.spawns) {
       this.add.circle(spawn.x, spawn.y, 5, PALETTE.textMid, 0.5);
     }
+
+    // ── Edge vignette ─────────────────────────────────────────────────────────
+    // Four dark bands at the world edges — depth cue matching ROUNDS ref.
+    // depth=1 so they sit above BG but below platforms/players.
+    const vigG = this.add.graphics().setDepth(1);
+    vigG.fillStyle(0x000000, 0.52);
+    vigG.fillRect(0, 0, width, height * 0.14);          // top
+    vigG.fillRect(0, height * 0.86, width, height * 0.14); // bottom
+    vigG.fillStyle(0x000000, 0.38);
+    vigG.fillRect(0, 0, width * 0.10, height);          // left
+    vigG.fillRect(width * 0.90, 0, width * 0.10, height); // right
+
+    // ── Ambient dust motes ────────────────────────────────────────────────────
+    // 16 tiny rectangles drifting upward very slowly; scrollFactor 0.6 gives
+    // gentle parallax vs camera. Alpha 0.06-0.14 keeps them subliminal.
+    this.spawnAmbientMotes(width, height);
+  }
+
+  private spawnAmbientMotes(worldW: number, worldH: number): void {
+    const MOTE_COUNT = 16;
+    for (let i = 0; i < MOTE_COUNT; i++) {
+      const x = Phaser.Math.Between(40, worldW - 40);
+      const y = Phaser.Math.Between(40, worldH - 40);
+      const sz = Phaser.Math.Between(1, 3);
+      const alpha = Phaser.Math.FloatBetween(0.06, 0.15);
+      const driftDur = Phaser.Math.Between(4000, 9000);
+      const mote = this.add
+        .rectangle(x, y, sz, sz, PALETTE.textHi, alpha)
+        .setDepth(2);
+      // Slow upward drift with yoyo (oscillate vertically)
+      this.tweens.add({
+        targets: mote,
+        y: y - Phaser.Math.Between(30, 80),
+        alpha: 0,
+        duration: driftDur,
+        delay: Phaser.Math.Between(0, 4000),
+        ease: "Sine.easeInOut",
+        repeat: -1,
+        repeatDelay: Phaser.Math.Between(500, 2500),
+        yoyo: false,
+        onRepeat: () => {
+          // Relocate to a new random x so motes don't stack
+          mote.x = Phaser.Math.Between(40, worldW - 40);
+          mote.y = Phaser.Math.Between(worldH * 0.4, worldH - 40);
+          mote.alpha = Phaser.Math.FloatBetween(0.06, 0.15);
+        },
+      });
+    }
   }
 
   private configureCamera() {
