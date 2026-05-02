@@ -17,6 +17,7 @@ app.innerHTML = `
       <h1>JAKESJAM</h1>
       <p class="splash-copy">Practice solo, create a room, or jump into one with a code.</p>
       <div class="splash-actions">
+        <button data-menu-world type="button" class="primary">Join World</button>
         <button data-menu-practice type="button">Practice</button>
         <button data-menu-host type="button">Create Room</button>
         <button data-menu-join type="button">Join Room</button>
@@ -123,6 +124,11 @@ menuMusic.loop = true;
 menuMusic.preload = "auto";
 restoreOptions();
 
+queryRequired<HTMLButtonElement>("[data-menu-world]").addEventListener("click", () => {
+  startMenuMusic();
+  joinWorld();
+});
+
 queryRequired<HTMLButtonElement>("[data-menu-practice]").addEventListener("click", () => {
   startMenuMusic();
   hideSplash();
@@ -187,6 +193,40 @@ window.addEventListener("jakesjam:start-match", (event) => {
 function shouldUseNewNetcode(): boolean {
   const params = new URLSearchParams(window.location.search);
   return params.get("netcode") === "new";
+}
+
+const PLAYER_ID_KEY_FALLBACK = "jakesjam.playerId";
+
+function localPlayerId(): string {
+  let id = localStorage.getItem(PLAYER_ID_KEY_FALLBACK);
+  if (!id) {
+    id = `player_${Math.random().toString(36).slice(2, 10)}`;
+    localStorage.setItem(PLAYER_ID_KEY_FALLBACK, id);
+  }
+  return id;
+}
+
+/**
+ * io-style direct join: skip lobby + Convex matchmaker, go straight
+ * into the singleton WorldHost. Token mint hits the bun server's
+ * `/world-token` endpoint. Reachable via the splash "Join World"
+ * button or the URL query `?world=1` (auto-fired below).
+ */
+function joinWorld(): void {
+  hideSplash();
+  hideLobby();
+  game.scene.start(SceneKeys.OnlineMatch, {
+    mode: "world",
+    localPlayerId: localPlayerId(),
+  });
+}
+
+// Auto-join the world when the URL says so. Useful for "open this
+// link to spawn into the live game" sharing.
+const urlParams = new URLSearchParams(window.location.search);
+if (urlParams.get("world") === "1" || window.location.pathname === "/world") {
+  // Defer one tick so Phaser has a chance to register the scene.
+  setTimeout(() => joinWorld(), 0);
 }
 
 window.addEventListener("jakesjam:chaos-change", (event) => {

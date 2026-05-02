@@ -19,6 +19,7 @@ import {
   WsTransport,
   buildGameServerWsUrl,
   fetchMatchAssignment,
+  fetchWorldAssignment,
   InputBit,
   type NetStats,
 } from "../../net";
@@ -58,9 +59,17 @@ import type {
 } from "../types/game";
 
 export type OnlineMatchSceneInit = {
-  matchId: string;
+  /**
+   * `matchId` is required for the legacy room flow. Omitted when
+   * `mode === "world"` — the io-style world has no matchId and skips
+   * the Convex matchmaker round-trip entirely.
+   */
+  matchId?: string;
   localPlayerId: string;
-  convexUrl: string;
+  /** Convex URL is only consulted in `mode === "room"`. Optional for world. */
+  convexUrl?: string;
+  /** "room" = legacy lobby/Convex flow. "world" = io singleton. */
+  mode?: "room" | "world";
 };
 
 const PROJECTILE_RADIUS_DEFAULT = 7;
@@ -448,19 +457,12 @@ export class OnlineMatchScene extends Phaser.Scene {
 
   private async connect(data: OnlineMatchSceneInit) {
     try {
-      this.convex = new ConvexClient(data.convexUrl);
-      this.setStatus("Fetching match assignment from Convex...");
-      const assignment = await fetchMatchAssignment(
-        this.convex,
-        data.matchId as Id<"matches">,
-        data.localPlayerId,
-      );
-      const wsUrl = buildGameServerWsUrl(assignment, data.matchId);
-      this.setStatus(`Opening WebSocket to ${assignment.region ?? "host"}...`);
+      const wsUrl = await this.resolveWsUrl(data);
+      this.setStatus("Opening WebSocket...");
       const transport = new WsTransport({ url: wsUrl });
       this.loop = new ClientLoop({
         transport,
-        matchId: data.matchId,
+        matchId: data.matchId ?? "world",
         playerId: data.localPlayerId,
         onAuthoritativeApplied: () => {
           this.setStatus(""); // hide status once we start receiving snapshots
@@ -474,6 +476,26 @@ export class OnlineMatchScene extends Phaser.Scene {
       const msg = err instanceof Error ? err.message : "unknown error";
       this.setStatus(`Connect failed: ${msg}`);
     }
+  }
+
+  private async resolveWsUrl(data: OnlineMatchSceneInit): Promise<string> {
+    if (data.mode === "world") {
+      this.setStatus("Joining live world...");
+      const assignment = await fetchWorldAssignment(data.localPlayerId);
+      return assignment.wsUrl;
+    }
+    if (!data.matchId || !data.convexUrl) {
+      throw new Error("room mode requires matchId + convexUrl");
+    }
+    this.convex = new ConvexClient(data.convexUrl);
+    this.setStatus("Fetching match assignment from Convex...");
+    const assignment = await fetchMatchAssignment(
+      this.convex,
+      data.matchId as Id<"matches">,
+      data.localPlayerId,
+    );
+    this.setStatus(`Opening WebSocket to ${assignment.region ?? "host"}...`);
+    return buildGameServerWsUrl(assignment, data.matchId);
   }
 
   // ---------------- Sim event → audio + overlays ----------------
