@@ -330,7 +330,7 @@ export class MatchScene extends Phaser.Scene {
     this.rightMouseParryWasDown = false;
     this.lastPickupStatus = "none";
     this.progressionCardIds = [];
-    this.projectileSystem = new ProjectileSystem(this);
+    this.projectileSystem = new ProjectileSystem(this, this.particlePool);
     this.roundState = createInitialRoundState();
     this.matchHasEnded = false;
     this.playerScores.clear();

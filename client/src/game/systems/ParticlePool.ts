@@ -8,6 +8,7 @@
 // warning per pool name. Callers must check for null and skip the spawn.
 
 import type Phaser from "phaser";
+import { GLOW_TEXTURE_KEY, ensureGlowTexture } from "../render/glowTexture";
 
 export const STATUS_VFX = {
   fire: { color: 0xff7a18, hotColor: 0xfde68a },
@@ -21,6 +22,7 @@ const POOL_SIZES = {
   ring: 16,
   bolt: 4,
   blastCircle: 16,
+  glow: 64,
 } as const;
 
 const SPARK_W = 3;
@@ -29,7 +31,7 @@ const SHARD_W = 4;
 const SHARD_H = 9;
 const RING_RADIUS = 18;
 
-type PoolName = "spark" | "shard" | "ring" | "bolt" | "blastCircle";
+type PoolName = "spark" | "shard" | "ring" | "bolt" | "blastCircle" | "glow";
 
 export class ParticlePool {
   private readonly sparkFree: Phaser.GameObjects.Rectangle[] = [];
@@ -46,6 +48,11 @@ export class ParticlePool {
 
   private readonly blastCircleFree: Phaser.GameObjects.Arc[] = [];
   private readonly blastCircleActive: Set<Phaser.GameObjects.Arc> = new Set();
+
+  // Additive radial-gradient glows (the "rounds"-style soft halo). Tinted at
+  // acquire time; depth set by caller.
+  private readonly glowFree: Phaser.GameObjects.Image[] = [];
+  private readonly glowActive: Set<Phaser.GameObjects.Image> = new Set();
 
   private readonly warned: Set<PoolName> = new Set();
   // Tracks which pool each acquired object belongs to so `release` can return
@@ -87,6 +94,20 @@ export class ParticlePool {
       a.setBlendMode(1); // Phaser.BlendModes.ADD = 1; using literal to avoid importing Phaser runtime in headless tests
       this.origin.set(a, "blastCircle");
       this.blastCircleFree.push(a);
+    }
+
+    // Glow pool — additive radial Images. Skipped silently if the texture
+    // can't be created (headless tests with no canvas) or if `scene.add.image`
+    // isn't available, so legacy callers still work.
+    const sceneAdd = scene.add as { image?: (x: number, y: number, key: string) => Phaser.GameObjects.Image };
+    if (typeof sceneAdd.image === "function" && ensureGlowTexture(scene)) {
+      for (let i = 0; i < POOL_SIZES.glow; i++) {
+        const img = sceneAdd.image(0, 0, GLOW_TEXTURE_KEY);
+        img.setVisible(false);
+        img.setBlendMode(1); // ADD
+        this.origin.set(img, "glow");
+        this.glowFree.push(img);
+      }
     }
   }
 
@@ -135,6 +156,18 @@ export class ParticlePool {
     }
     obj.setVisible(true);
     this.boltActive.add(obj);
+    return obj;
+  }
+
+  acquireGlow(): Phaser.GameObjects.Image | null {
+    if (this.destroyed) return null;
+    const obj = this.glowFree.pop();
+    if (!obj) {
+      this.warnExhausted("glow");
+      return null;
+    }
+    obj.setVisible(true);
+    this.glowActive.add(obj);
     return obj;
   }
 
@@ -192,6 +225,15 @@ export class ParticlePool {
         this.blastCircleFree.push(a);
         return;
       }
+      case "glow": {
+        const img = gfx as Phaser.GameObjects.Image;
+        if (!this.glowActive.delete(img)) return;
+        this.resetCommon(img);
+        img.setTint(0xffffff);
+        img.setVisible(false);
+        this.glowFree.push(img);
+        return;
+      }
     }
   }
 
@@ -209,6 +251,7 @@ export class ParticlePool {
       ...this.ringActive,
       ...this.boltActive,
       ...this.blastCircleActive,
+      ...this.glowActive,
     ]);
     const releaseAll = (
       active: Set<Phaser.GameObjects.Rectangle> | Set<Phaser.GameObjects.Arc> | Set<Phaser.GameObjects.Graphics>,
@@ -227,6 +270,10 @@ export class ParticlePool {
     releaseAll(this.ringActive, this.ringFree);
     releaseAll(this.boltActive, this.boltFree);
     releaseAll(this.blastCircleActive, this.blastCircleFree);
+    releaseAll(
+      this.glowActive as unknown as Set<Phaser.GameObjects.Rectangle>,
+      this.glowFree as unknown as Phaser.GameObjects.Rectangle[],
+    );
   }
 
   destroy(): void {
@@ -249,13 +296,18 @@ export class ParticlePool {
       this.blastCircleFree,
       this.blastCircleActive as Set<Phaser.GameObjects.GameObject>,
     );
+    drain(
+      this.glowFree as unknown as Phaser.GameObjects.GameObject[],
+      this.glowActive as unknown as Set<Phaser.GameObjects.GameObject>,
+    );
   }
 
   private resetCommon(
     gfx:
       | Phaser.GameObjects.Rectangle
       | Phaser.GameObjects.Arc
-      | Phaser.GameObjects.Graphics,
+      | Phaser.GameObjects.Graphics
+      | Phaser.GameObjects.Image,
   ): void {
     gfx.setVisible(true);
     gfx.setAlpha(1);

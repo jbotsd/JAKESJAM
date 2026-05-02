@@ -12,6 +12,7 @@ type Stub = {
   setRotation: (r: number) => Stub;
   setPosition: (x: number, y: number) => Stub;
   setBlendMode: (mode: number) => Stub;
+  setTint: (c: number) => Stub;
   clear: () => Stub;
   destroy: () => void;
   destroyed: boolean;
@@ -26,6 +27,7 @@ function makeStub(): Stub {
     setRotation: () => s,
     setPosition: () => s,
     setBlendMode: () => s,
+    setTint: () => s,
     clear: () => s,
     destroy: () => {
       s.destroyed = true;
@@ -40,6 +42,18 @@ function makeScene() {
       rectangle: () => makeStub(),
       circle: () => makeStub(),
       graphics: () => makeStub(),
+      image: () => makeStub(),
+    },
+    textures: {
+      exists: () => false,
+      createCanvas: () => ({
+        context: {
+          createRadialGradient: () => ({ addColorStop: () => undefined }),
+          fillStyle: "",
+          fillRect: () => undefined,
+        },
+        refresh: () => undefined,
+      }),
     },
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
   } as any;
@@ -138,6 +152,18 @@ describe("ParticlePool", () => {
     const ring2 = pool.acquireRing();
     expect(spark2).toBe(spark);
     expect(ring2).toBe(ring);
+  });
+
+  test("acquireGlow returns distinct instances and release pools them", () => {
+    const pool = new ParticlePool(makeScene());
+    const a = pool.acquireGlow();
+    const b = pool.acquireGlow();
+    expect(a).not.toBeNull();
+    expect(b).not.toBeNull();
+    expect(a).not.toBe(b);
+    pool.release(a!);
+    const c = pool.acquireGlow();
+    expect(c).toBe(a);
   });
 
   test("destroy cleans up free + active lists", () => {

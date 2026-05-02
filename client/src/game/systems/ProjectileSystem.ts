@@ -8,6 +8,8 @@ import type {
   Vec2,
 } from "../types/game";
 import type { ResolvedWeaponBuild } from "./WeaponSystem";
+import { GLOW_TEXTURE_SIZE } from "../render/glowTexture";
+import type { ParticlePool } from "./ParticlePool";
 
 export type ProjectileTarget = {
   id: string;
@@ -34,6 +36,8 @@ export type WeaponFireResult = {
 type ActiveProjectile = {
   id: number;
   graphics: Phaser.GameObjects.Graphics;
+  /** Persistent additive halo following the projectile body. Pooled. */
+  glow: Phaser.GameObjects.Image | null;
   position: Vec2;
   previousPosition: Vec2;
   origin: Vec2;
@@ -75,11 +79,13 @@ const MAX_ACTIVE_PROJECTILES = 90;
 
 export class ProjectileSystem {
   private readonly scene: Phaser.Scene;
+  private readonly pool: ParticlePool | null;
   private readonly projectiles: ActiveProjectile[] = [];
   private nextProjectileId = 1;
 
-  constructor(scene: Phaser.Scene) {
+  constructor(scene: Phaser.Scene, pool: ParticlePool | null = null) {
     this.scene = scene;
+    this.pool = pool;
   }
 
   fire(
@@ -177,8 +183,61 @@ export class ProjectileSystem {
   destroy() {
     for (const projectile of this.projectiles) {
       projectile.graphics.destroy();
+      this.releaseGlow(projectile);
     }
     this.projectiles.length = 0;
+  }
+
+  /**
+   * One-shot additive glow at (x,y) that fades and grows outward. Pooled —
+   * silently no-ops if the glow pool is unavailable or exhausted, so this is
+   * a pure visual layer over the existing projectile FX.
+   */
+  private spawnGlowBurst(
+    x: number,
+    y: number,
+    color: number,
+    radiusPx: number,
+    alpha: number,
+    durationMs: number,
+    growthScale: number = 1.6,
+  ): void {
+    const pool = this.pool;
+    if (!pool) return;
+    const glow = pool.acquireGlow();
+    if (!glow) return;
+
+    const startScale = (radiusPx * 2) / GLOW_TEXTURE_SIZE;
+    glow.setPosition(x, y);
+    glow.setTint(color);
+    glow.setAlpha(alpha);
+    glow.setScale(startScale);
+    glow.setDepth(199); // just under projectile body (200)
+
+    this.scene.tweens.add({
+      targets: glow,
+      alpha: 0,
+      scale: startScale * growthScale,
+      duration: durationMs,
+      ease: "Sine.easeOut",
+      onComplete: () => pool.release(glow),
+    });
+  }
+
+  private acquireProjectileGlow(projectile: ActiveProjectile, color: number): void {
+    if (projectile.glow || !this.pool) return;
+    const glow = this.pool.acquireGlow();
+    if (!glow) return;
+    glow.setTint(color);
+    glow.setAlpha(0.85);
+    glow.setDepth(199);
+    projectile.glow = glow;
+  }
+
+  private releaseGlow(projectile: ActiveProjectile): void {
+    if (!projectile.glow) return;
+    this.pool?.release(projectile.glow);
+    projectile.glow = null;
   }
 
   private fireBeam(
@@ -214,6 +273,10 @@ export class ProjectileSystem {
       duration: build.delivery === "continuous-beam" ? 140 : 95,
       onComplete: () => graphics.destroy(),
     });
+
+    // Muzzle + tip flash.
+    this.spawnGlowBurst(origin.x, origin.y, color, width * 3, 0.9, 160, 1.4);
+    this.spawnGlowBurst(end.x, end.y, color, width * 2.2, 0.7, 200, 1.6);
 
     const hits = targets
       .filter((target) => target.alive && segmentIntersectsTarget(origin, end, target))
@@ -283,6 +346,7 @@ export class ProjectileSystem {
     const projectile: ActiveProjectile = {
       id: this.nextProjectileId,
       graphics: this.scene.add.graphics(),
+      glow: null,
       position: { ...origin },
       previousPosition: { ...origin },
       origin: { ...origin },
@@ -317,6 +381,7 @@ export class ProjectileSystem {
 
     this.nextProjectileId += 1;
     this.projectiles.push(projectile);
+    this.acquireProjectileGlow(projectile, elementColor(projectile.element));
     this.drawProjectile(projectile, 0);
   }
 
@@ -469,6 +534,14 @@ export class ProjectileSystem {
   ) {
     const color = elementColor(element);
     const radius = Math.max(impactRadiusPx, impact === "none" ? 18 : 34);
+
+    // Soft additive flash — the "rounds"-style halo. Hot core grows out fast.
+    this.spawnGlowBurst(position.x, position.y, color, radius * 0.85, 0.95, impact === "explosive" ? 320 : 200, 1.7);
+    if (impact === "explosive") {
+      // Extra wide secondary wash for explosions.
+      this.spawnGlowBurst(position.x, position.y, color, radius * 1.6, 0.55, 380, 1.4);
+    }
+
     const burst = this.scene.add.circle(position.x, position.y, 6, color, 0.32);
     burst.setStrokeStyle(2, color, 0.86);
     this.scene.tweens.add({
@@ -499,6 +572,7 @@ export class ProjectileSystem {
 
   private bounceSpark(projectile: ActiveProjectile) {
     const color = elementColor(projectile.element);
+    this.spawnGlowBurst(projectile.position.x, projectile.position.y, color, 14, 0.9, 140, 1.5);
     const spark = this.scene.add.circle(projectile.position.x, projectile.position.y, 3, color, 0.86);
     this.scene.tweens.add({
       targets: spark,
@@ -513,6 +587,13 @@ export class ProjectileSystem {
     const color = elementColor(projectile.element);
     const graphics = projectile.graphics;
     const radius = projectile.radius;
+
+    if (projectile.glow) {
+      // Halo ~3.4× projectile body — soft falloff, sits behind the body sprite.
+      const glowScale = (radius * 3.4 * 2) / GLOW_TEXTURE_SIZE;
+      projectile.glow.setPosition(projectile.position.x, projectile.position.y);
+      projectile.glow.setScale(glowScale);
+    }
 
     graphics.clear();
     graphics.lineStyle(2, color, 0.95);
@@ -583,36 +664,32 @@ export class ProjectileSystem {
         onComplete: () => trail.destroy(),
       });
 
-      // Blob-cluster augmentation: 2 small additive offset circles for glow feel.
-      // Radius ~40% of primary shape; placed ±2-4px off-axis from centroid.
-      const blobRadius = Math.max(1.5, radius * 0.4);
+      // Pooled additive glow puffs — replaces the ad-hoc circle blobs. Two
+      // jittered halos give the soft "rounds"-style streak behind the body.
+      const blobRadius = Math.max(2, radius * 0.7);
       const offsets: [number, number][] = [
         [2 + Math.random() * 2, -(2 + Math.random() * 2)],
         [-(2 + Math.random() * 2), 2 + Math.random() * 2],
       ];
       for (const [ox, oy] of offsets) {
-        const blob = this.scene.add.circle(
+        this.spawnGlowBurst(
           projectile.position.x + ox,
           projectile.position.y + oy,
-          blobRadius,
           color,
+          blobRadius,
+          0.55,
+          180,
           0.6,
         );
-        blob.setBlendMode(Phaser.BlendModes.ADD);
-        this.scene.tweens.add({
-          targets: blob,
-          alpha: 0,
-          scale: 0.5,
-          duration: 160,
-          onComplete: () => blob.destroy(),
-        });
       }
     }
   }
 
   private removeProjectile(index: number) {
     const [projectile] = this.projectiles.splice(index, 1);
-    projectile?.graphics.destroy();
+    if (!projectile) return;
+    projectile.graphics.destroy();
+    this.releaseGlow(projectile);
   }
 }
 
