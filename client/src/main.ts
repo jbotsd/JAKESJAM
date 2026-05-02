@@ -71,12 +71,13 @@ app.innerHTML = `
         </label>
       </form>
 
-      <div class="room-actions">
+      <div class="room-actions" data-room-actions>
         <button data-practice type="button">Practice</button>
         <button data-create-room type="button">Create Room</button>
+        <button data-back-to-splash type="button" class="btn-ghost">← Splash</button>
       </div>
 
-      <section class="player-connect">
+      <section class="player-connect" data-player-connect>
         <h2>Join Room</h2>
         <div class="join-row">
           <input data-room-code maxlength="6" placeholder="ROOM CODE" aria-label="Room code" />
@@ -93,6 +94,7 @@ app.innerHTML = `
         <div class="room-status-slot" data-room-status></div>
         <button data-ready-toggle type="button">Ready</button>
         <button data-start-match type="button">Start Match</button>
+        <button data-leave-room type="button" class="btn-danger">Leave Room</button>
       </section>
 
       <section class="map-picker-box" data-map-picker aria-label="Map selection"></section>
@@ -237,6 +239,7 @@ function localPlayerId(): string {
 function joinWorld(): void {
   hideSplash();
   hideLobby();
+  document.title = "JAKESJAM — In World";
   game.scene.start(SceneKeys.OnlineMatch, {
     mode: "world",
     localPlayerId: localPlayerId(),
@@ -250,11 +253,28 @@ if (urlParams.get("world") === "1" || window.location.pathname === "/world") {
   // Defer one tick so Phaser has a chance to register the scene.
   setTimeout(() => joinWorld(), 0);
 } else if (urlParams.get("room") || urlParams.get("code")) {
-  // Shared room link → open the lobby straight to the join form.
+  // Shared room link → open lobby and auto-join the room (idempotent on server).
   hideSplash();
   showLobby();
-  lobbyController.focusJoinRoom();
+  setTimeout(() => lobbyController.autoJoinFromUrl(), 0);
 }
+
+// Back-to-splash button in the lobby panel.
+window.addEventListener("jakesjam:back-to-splash", () => {
+  showSplash();
+  hideLobby();
+  startMenuMusic();
+});
+
+// Tab title reflects which room the player is in (item 9).
+window.addEventListener("jakesjam:room-joined", (event) => {
+  const code = (event as CustomEvent<{ code: string }>).detail.code;
+  document.title = `JAKESJAM — Lobby ${code}`;
+});
+
+window.addEventListener("jakesjam:room-left", () => {
+  document.title = "JAKESJAM";
+});
 
 window.addEventListener("jakesjam:chaos-change", (event) => {
   const matchEvent = event as CustomEvent;
@@ -273,6 +293,7 @@ window.addEventListener("jakesjam:return-to-lobby", () => {
   if (game.scene.isActive(SceneKeys.OnlineMatch)) {
     game.scene.stop(SceneKeys.OnlineMatch);
   }
+  document.title = "JAKESJAM";
   showSplash();
   showLobby();
   startMenuMusic();

@@ -138,20 +138,30 @@ export class MatchStatusBadge {
   private async poll(): Promise<void> {
     if (this.destroyed) return;
     let summary: MatchSummary | null = null;
+    let fetchFailed = false;
     try {
       summary = await this.fetchSummary();
     } catch {
+      fetchFailed = true;
       summary = null;
     }
     if (this.destroyed) return;
-    this.render(summary);
+    this.render(summary, fetchFailed);
   }
 
-  private render(s: MatchSummary | null): void {
+  private render(s: MatchSummary | null, fetchFailed = false): void {
     if (!s) {
-      this.statusDot.style.background = "#7a8aa3";
-      this.summaryEl.textContent = "world idle · be the first to spawn in";
-      if (this.joinBtn) this.joinBtn.disabled = false; // empty world is joinable
+      if (fetchFailed) {
+        // fetch() itself threw (network error / CORS / server is down).
+        this.statusDot.style.background = "#fb7185";
+        this.summaryEl.textContent = "server unreachable";
+        if (this.joinBtn) this.joinBtn.disabled = true;
+      } else {
+        // Fetch succeeded with !ok or returned null — server is up but world hasn't booted.
+        this.statusDot.style.background = "#7a8aa3";
+        this.summaryEl.textContent = "world idle · be the first to spawn in";
+        if (this.joinBtn) this.joinBtn.disabled = false; // empty world is joinable
+      }
       return;
     }
     const phaseLabel = phaseToLabel(s.phase);
