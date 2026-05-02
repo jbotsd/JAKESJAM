@@ -51,6 +51,12 @@ export type ClientLoopOptions = {
   onEvents?: (events: SimEvent[]) => void;
   onAuthoritativeApplied?: (state: WorldState) => void;
   /**
+   * Fired exactly once when the server's first ServerHello lands.
+   * Carries the map id so the scene can render arena geometry before
+   * the first snapshot arrives.
+   */
+  onHello?: (hello: import("./protocol.js").ServerHello) => void;
+  /**
    * Local-player render smoothing parameters. The Gambetta + Source-engine
    * standard: after a reconcile rewind+replay, the new predicted position is
    * the "target" and the currently-rendered position is "current". Lerp
@@ -161,6 +167,7 @@ export class ClientLoop {
   private readonly playerId: PlayerId;
   private readonly onEvents?: (events: SimEvent[]) => void;
   private readonly onAuthoritativeApplied?: (state: WorldState) => void;
+  private readonly onHello?: (hello: import("./protocol.js").ServerHello) => void;
   private readonly reconnectUrl?: string;
   private readonly onConnectionLost?: (reason: string) => void;
   private readonly onReconnectAttempt?: (attemptNumber: number, nextDelayMs: number) => void;
@@ -235,6 +242,7 @@ export class ClientLoop {
     this.playerId = PlayerId(opts.playerId);
     this.onEvents = opts.onEvents;
     this.onAuthoritativeApplied = opts.onAuthoritativeApplied;
+    this.onHello = opts.onHello;
     this.smoothing = { ...DEFAULT_SMOOTHING, ...(opts.smoothing ?? {}) };
     this.reconnectUrl = opts.reconnectUrl;
     this.onConnectionLost = opts.onConnectionLost;
@@ -567,6 +575,7 @@ export class ClientLoop {
       this.predictedState = makeEmptyState(message.startTick, message.rngSeed);
       this.authoritativeState = makeEmptyState(message.startTick, message.rngSeed);
     }
+    this.onHello?.(message);
     this.start();
   }
 

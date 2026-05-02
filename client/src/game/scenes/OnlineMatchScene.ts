@@ -31,13 +31,16 @@ import {
   type DestructibleEntity,
   type DestructibleKind,
   type FireEntity,
+  type MapDefinition,
   type PickupEntity,
   type PickupKind,
+  type PlatformDefinition,
   type PlayerEntity,
   PlayerId,
   type SimEvent,
   type WorldState,
 } from "../../sim";
+import { resolveMap } from "../../sim/data/maps";
 import { characters } from "../data/characters";
 import { ProceduralPlayerRig } from "../rendering/ProceduralPlayerRig";
 import { GameAudioSystem } from "../systems/AudioSystem";
@@ -187,6 +190,9 @@ export class OnlineMatchScene extends Phaser.Scene {
   private projectileSprites = new Map<number, Phaser.GameObjects.Arc>();
   private satelliteSprites = new Map<number, Phaser.GameObjects.Arc>();
   private destructibleGraphics: Phaser.GameObjects.Graphics | null = null;
+  /** Static arena geometry (platforms, walls, floor, vignette). Drawn
+   *  once on hello receipt; never per-frame. */
+  private arenaGraphics: Phaser.GameObjects.Graphics | null = null;
   private fireGraphics: Phaser.GameObjects.Graphics | null = null;
   private pickupGraphics: Phaser.GameObjects.Graphics | null = null;
   private localPlayerId: PlayerId = PlayerId("");
@@ -491,6 +497,12 @@ export class OnlineMatchScene extends Phaser.Scene {
         onAuthoritativeApplied: () => {
           this.setStatus(""); // hide status once we start receiving snapshots
         },
+        onHello: (hello) => {
+          // Server told us which map this match runs on. Render its
+          // geometry now so the player isn't dropped into a black void
+          // before the first snapshot.
+          this.renderArena(hello.mapId);
+        },
         onEvents: (events) => this.handleSimEvents(events),
       });
       transport.onClose((reason) => {
@@ -623,6 +635,89 @@ export class OnlineMatchScene extends Phaser.Scene {
       ease: "Sine.easeOut",
       onComplete: () => text.destroy(),
     });
+  }
+
+  // ---------------- Arena (static geometry) ----------------
+
+  /**
+   * Draw the arena's platforms, walls, floor, and a subtle backdrop.
+   * Called exactly once per match on `onHello` (we don't switch maps
+   * mid-match). Sets camera bounds to the map size so the cyan motes +
+   * arena + camera follow agree on world coordinates.
+   *
+   * Crystal-tech-wizard palette (per `docs/art-direction.md` +
+   * `.claude/skills/phaser4-game/SKILL.md`):
+   * - Floor / walls: cyan-tinted slate, accent border at top edge
+   * - Platforms (drop-through): translucent crystal cyan, glow halo
+   * - Subtle vertical gradient backdrop so the world isn't black
+   * - 80px grid lines at 3% alpha — sells "geometric world" brief
+   */
+  private renderArena(mapId: string): void {
+    const map: MapDefinition = resolveMap(mapId);
+    const { x: width, y: height } = map.size;
+
+    // Camera bounds — without this, the camera follows the player into
+    // empty space when the world is bigger than the viewport.
+    this.cameras.main.setBounds(0, 0, width, height);
+    this.cameras.main.setRoundPixels(true);
+
+    // Tear down any previous arena render (e.g. on reconnect to a new match).
+    this.arenaGraphics?.destroy();
+    const g = this.add.graphics();
+    g.setDepth(0); // below destructibles (depth 3) and players
+    this.arenaGraphics = g;
+
+    // Backdrop: vertical gradient, deep navy → near-black.
+    g.fillGradientStyle(0x0a1424, 0x0a1424, 0x05080f, 0x05080f, 0.95, 0.95, 1, 1);
+    g.fillRect(0, 0, width, height);
+
+    // Geometric grid — 80px spacing, 3% alpha. Cheap atmosphere, cyan tint.
+    g.lineStyle(1, 0x8ff8ff, 0.05);
+    for (let x = 0; x < width; x += 80) {
+      g.lineBetween(x, 0, x, height);
+    }
+    for (let y = 0; y < height; y += 80) {
+      g.lineBetween(0, y, width, y);
+    }
+
+    // Platforms — paint each in the right palette by kind.
+    for (const platform of map.platforms) {
+      this.paintPlatform(g, platform);
+    }
+  }
+
+  private paintPlatform(g: Phaser.GameObjects.Graphics, p: PlatformDefinition): void {
+    const x = p.position.x - p.size.x / 2;
+    const y = p.position.y - p.size.y / 2;
+    const w = p.size.x;
+    const h = p.size.y;
+    if (p.kind === "platform") {
+      // Drop-through ledge — translucent crystal-cyan plate + accent
+      // top edge so players read the surface they can stand on.
+      g.fillStyle(0x1f3a5f, 0.85);
+      g.fillRoundedRect(x, y, w, h, 4);
+      g.lineStyle(1.5, 0x8ff8ff, 0.5);
+      g.lineBetween(x + 1, y + 1, x + w - 1, y + 1);
+      // Soft outer glow line
+      g.lineStyle(1, 0x8ff8ff, 0.18);
+      g.strokeRoundedRect(x - 1, y - 1, w + 2, h + 2, 5);
+    } else {
+      // Floor / wall — solid slab with accent rim on the play-facing edge.
+      g.fillStyle(0x111827, 0.96);
+      g.fillRect(x, y, w, h);
+      g.lineStyle(1.5, 0x8ff8ff, 0.35);
+      if (p.kind === "floor") {
+        // Rim on top edge only.
+        g.lineBetween(x, y, x + w, y);
+      } else {
+        // Wall — rim on the inner-facing vertical edge. Heuristic:
+        // walls on the left half of the map face right; right half
+        // face left. Cheap and good enough for v1.
+        const facingRight = p.position.x < (this.cameras.main.getBounds().width / 2);
+        const rimX = facingRight ? x + w : x;
+        g.lineBetween(rimX, y, rimX, y + h);
+      }
+    }
   }
 
   // ---------------- World rendering ----------------
@@ -890,6 +985,8 @@ export class OnlineMatchScene extends Phaser.Scene {
     this.satelliteSprites.clear();
     this.destructibleGraphics?.destroy();
     this.destructibleGraphics = null;
+    this.arenaGraphics?.destroy();
+    this.arenaGraphics = null;
     this.fireGraphics?.destroy();
     this.fireGraphics = null;
     this.pickupGraphics?.destroy();
