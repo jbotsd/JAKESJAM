@@ -507,7 +507,7 @@ export class MatchScene extends Phaser.Scene {
           PALETTE.lightBeamWarm,
           0.10,
         );
-        beam.setDepth(1);
+        beam.setDepth(0.7); // behind vignette (depth 1) — vignette frames the beam edges
         // Slow yoyo rotation ±2° over 8s for subtle atmospheric life.
         this.tweens.add({
           targets: beam,
