@@ -821,13 +821,28 @@ function readError(error: unknown): string {
   return "Unexpected lobby error.";
 }
 
+/**
+ * Last-resort fallback so the Vite bundle always has *some* Convex URL,
+ * even when prod env vars get lost (recurring "Set VITE_CONVEX_URL to
+ * enable rooms" symptom). Points at the project's dev deployment for
+ * jake-colson/jakesjam — fine for game-jam scale; swap once a separate
+ * prod deployment exists. Override at runtime via `?convex=<url>` query
+ * param, or at build time via VITE_CONVEX_URL / CONVEX_URL env vars
+ * (vite.config.ts envPrefix accepts both).
+ */
+const CONVEX_URL_FALLBACK = "https://wry-kangaroo-531.convex.cloud";
+
 function readConvexUrl(): string | undefined {
   const urlOverride = new URLSearchParams(window.location.search).get("convex");
   if (urlOverride) {
     return urlOverride;
   }
 
-  return import.meta.env.VITE_CONVEX_URL ?? import.meta.env.CONVEX_URL;
+  return (
+    import.meta.env.VITE_CONVEX_URL ??
+    import.meta.env.CONVEX_URL ??
+    CONVEX_URL_FALLBACK
+  );
 }
 
 function characterLabel(characterId: CharacterId): string {
