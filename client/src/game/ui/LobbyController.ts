@@ -2,6 +2,8 @@ import { RoomClient, createRoomArgs } from "../net/RoomClient";
 import type { ChaosModifierId, CharacterId } from "../types/game";
 import type { RoomHandle, RoomPlayer, RoomSnapshot } from "../types/net";
 import { MapPicker } from "./MapPicker";
+import { MatchStatusBadge } from "./MatchStatusBadge";
+import { fetchMatchSummary } from "../../net/worldClient";
 import { DEFAULT_MAP_ID, mapsById, type MapId } from "../../sim/data/maps";
 
 const PLAYER_ID_KEY = "jakesjam.playerId";
@@ -28,6 +30,9 @@ export class LobbyController {
   private readonly playerList: HTMLUListElement;
   private readonly chaosInputs: HTMLInputElement[];
   private readonly mapPicker?: MapPicker;
+  private readonly roomShareBtn?: HTMLButtonElement;
+  private readonly roomStatusMount?: HTMLElement;
+  private roomStatusBadge?: MatchStatusBadge;
   private readonly roomClient?: RoomClient;
   private currentRoom?: RoomHandle;
   private currentSnapshot: RoomSnapshot | null = null;
@@ -62,6 +67,14 @@ export class LobbyController {
       });
     }
 
+    this.roomShareBtn = root.querySelector<HTMLButtonElement>("[data-room-share]") ?? undefined;
+    if (this.roomShareBtn) {
+      this.roomShareBtn.addEventListener("click", () => {
+        void this.copyRoomShareLink();
+      });
+    }
+    this.roomStatusMount = root.querySelector<HTMLElement>("[data-room-status]") ?? undefined;
+
     this.nameInput.value = localStorage.getItem(PLAYER_NAME_KEY) ?? `Player ${this.playerId.slice(-4)}`;
     this.colorInput.value = localStorage.getItem(PLAYER_COLOR_KEY) ?? this.colorInput.value;
     this.characterSelect.value = localStorage.getItem(PLAYER_CHARACTER_KEY) ?? DEFAULT_CHARACTER;
@@ -86,6 +99,7 @@ export class LobbyController {
       window.clearInterval(this.heartbeatTimer);
     }
     this.mapPicker?.destroy();
+    this.roomStatusBadge?.destroy();
     if (this.roomClient && this.currentRoom) {
       void this.roomClient.leave(this.currentRoom.roomId, this.playerId);
     }
@@ -250,6 +264,7 @@ export class LobbyController {
       this.mapPicker?.setHostMode(false);
       this.mapPicker?.setSelected(undefined);
     }
+    this.syncRoomStatusBadge(snapshot);
     this.renderPlayers(snapshot?.players ?? []);
     if (
       snapshot?.room.status === "in_match" &&
@@ -295,6 +310,57 @@ export class LobbyController {
       await this.roomClient.startMatch(this.currentRoom.roomId, this.playerId, mapId);
     } catch (error) {
       this.setStatus(readError(error));
+    }
+  }
+
+  /**
+   * Drives the per-room MatchStatusBadge: spins one up when a match is
+   * active, tears it down when we return to lobby. Polls the bun
+   * server's `/match/summary` endpoint with the current match id.
+   * Other players in the room can see the same badge — useful for
+   * "the host is mid-round, hop in when the round-over banner shows".
+   */
+  private syncRoomStatusBadge(snapshot: RoomSnapshot | null): void {
+    const mount = this.roomStatusMount;
+    if (!mount) return;
+    const matchId = snapshot?.room.currentMatchId;
+    if (!matchId) {
+      this.roomStatusBadge?.destroy();
+      this.roomStatusBadge = undefined;
+      return;
+    }
+    if (this.roomStatusBadge) return; // already mounted for this match
+    this.roomStatusBadge = new MatchStatusBadge({
+      mount,
+      title: "Match Status",
+      shareUrl: this.buildRoomShareUrl(snapshot?.room.code),
+      fetchSummary: () => fetchMatchSummary(matchId),
+      // Returning players auto-rejoin via the existing in-match flow;
+      // explicit "Join" is only needed for fresh links.
+      onJoin: null,
+    });
+  }
+
+  private buildRoomShareUrl(code: string | undefined): string | null {
+    if (!code) return null;
+    const base = `${window.location.origin}${window.location.pathname.replace(/\/$/, "")}`;
+    return `${base}/?room=${encodeURIComponent(code)}`;
+  }
+
+  private async copyRoomShareLink(): Promise<void> {
+    const code = this.currentSnapshot?.room.code;
+    if (!code || !this.roomShareBtn) return;
+    const url = this.buildRoomShareUrl(code);
+    if (!url) return;
+    try {
+      await navigator.clipboard.writeText(url);
+      const original = this.roomShareBtn.textContent;
+      this.roomShareBtn.textContent = "Copied!";
+      window.setTimeout(() => {
+        if (this.roomShareBtn) this.roomShareBtn.textContent = original ?? "Copy link";
+      }, 1400);
+    } catch {
+      window.prompt("Copy this link", url);
     }
   }
 

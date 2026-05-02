@@ -47,8 +47,25 @@ const server = Bun.serve<SocketData>({
           ok: true,
           region: config.region,
           matches: registry.size(),
-          world: worldHost.size(),
+          world: worldHost.summary(),
         }),
+        { headers: { "content-type": "application/json", ...corsHeaders } },
+      );
+    }
+
+    // Dedicated lightweight endpoints for the client status badges.
+    // Cheaper than /health (no string formatting of the rooms map).
+    if (url.pathname === "/world/summary") {
+      return new Response(
+        JSON.stringify(worldHost.summary()),
+        { headers: { "content-type": "application/json", ...corsHeaders } },
+      );
+    }
+    if (url.pathname === "/match/summary") {
+      const id = url.searchParams.get("matchId");
+      if (!id) return new Response("bad request", { status: 400, headers: corsHeaders });
+      return new Response(
+        JSON.stringify(registry.summaryFor(id)),
         { headers: { "content-type": "application/json", ...corsHeaders } },
       );
     }

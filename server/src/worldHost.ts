@@ -92,6 +92,15 @@ export class WorldHost {
     return this.host ? 1 : 0;
   }
 
+  /**
+   * Public summary surfaced through HTTP /health. `null` when the
+   * world hasn't booted yet (no players have ever connected). The
+   * client status badge polls this every few seconds.
+   */
+  summary(): ReturnType<MatchHost["summary"]> | null {
+    return this.host ? this.host.summary() : null;
+  }
+
   private spawnFor(playerIdRaw: string): PlayerSpawnInfo {
     return {
       playerId: PlayerId(playerIdRaw),

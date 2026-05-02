@@ -74,6 +74,16 @@ export class MatchRegistry {
   size(): number {
     return this.matches.size;
   }
+
+  /** Public summary list — surfaced through /health for the room status badge. */
+  summaries(): ReturnType<MatchHost["summary"]>[] {
+    return Array.from(this.matches.values()).map((host) => host.summary());
+  }
+
+  summaryFor(matchId: string): ReturnType<MatchHost["summary"]> | null {
+    const host = this.matches.get(matchId);
+    return host ? host.summary() : null;
+  }
 }
 
 const COLOR_PALETTE = [

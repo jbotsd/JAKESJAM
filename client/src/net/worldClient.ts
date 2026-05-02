@@ -32,6 +32,50 @@ export async function fetchWorldAssignment(playerId: string): Promise<WorldAssig
   return { wsUrl: wsUrl.toString(), token: json.token };
 }
 
+/**
+ * Lightweight summary fetcher used by MatchStatusBadge. Hits the bun
+ * server's `/world/summary` endpoint directly — no Convex involvement.
+ * Returns `null` if the world hasn't booted yet OR the request fails
+ * (the badge treats both as "world idle").
+ */
+export async function fetchWorldSummary(): Promise<{
+  matchId: string;
+  mapId: string;
+  phase: "countdown" | "fighting" | "round-over" | "drafting";
+  roundIndex: number;
+  countdownRemainingMs: number;
+  players: number;
+  targetScore: number;
+  joinable: boolean;
+  chaosModifierIds: string[];
+} | null> {
+  try {
+    const httpBase = wsToHttp(readGameServerWsBase());
+    const res = await fetch(`${httpBase}/world/summary`, { method: "GET" });
+    if (!res.ok) return null;
+    return (await res.json()) ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Per-room summary fetcher. Same endpoint shape as the world variant
+ * so MatchStatusBadge can use them interchangeably.
+ */
+export async function fetchMatchSummary(matchId: string): ReturnType<typeof fetchWorldSummary> {
+  try {
+    const httpBase = wsToHttp(readGameServerWsBase());
+    const url = new URL(`${httpBase}/match/summary`);
+    url.searchParams.set("matchId", matchId);
+    const res = await fetch(url.toString(), { method: "GET" });
+    if (!res.ok) return null;
+    return (await res.json()) ?? null;
+  } catch {
+    return null;
+  }
+}
+
 function readGameServerWsBase(): string {
   // VITE_GAME_SERVER_URL points at the WS endpoint (ends with /ws). For
   // io we strip the trailing /ws and treat what remains as the base.

@@ -209,6 +209,38 @@ export class MatchHost {
   }
 
   /**
+   * Public read-only snapshot for HTTP `/health` consumers. Tiny by
+   * design — only the fields a status badge needs. Joinability is
+   * permissive: any phase that isn't `round-over` accepts late joins,
+   * which matches the io world's "drift in/out" semantic.
+   */
+  summary(): {
+    matchId: string;
+    mapId: string;
+    phase: WorldState["round"]["phase"];
+    roundIndex: number;
+    countdownRemainingMs: number;
+    players: number;
+    targetScore: number;
+    joinable: boolean;
+    chaosModifierIds: string[];
+  } {
+    const round = this.state.round;
+    const targetScore = Math.max(...Object.values(round.scores), 0) >= 0 ? 3 : 3;
+    return {
+      matchId: this.matchId,
+      mapId: this.map.id,
+      phase: round.phase,
+      roundIndex: round.roundIndex,
+      countdownRemainingMs: round.countdownRemainingMs,
+      players: Object.keys(this.state.players).length,
+      targetScore,
+      joinable: round.phase !== "round-over",
+      chaosModifierIds: this.state.chaosModifierIds ?? [],
+    };
+  }
+
+  /**
    * Insert a new player into the world mid-match. Used when a second client
    * connects to a match that was created with only the first player.
    * Spawns them at one of the map's spawn points.
