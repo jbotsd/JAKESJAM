@@ -59,6 +59,14 @@ export class LobbyController {
   private heartbeatTimer?: number;
   private statusClearTimer?: number;
   private launchedMatchId?: string;
+  /**
+   * Host's locally-picked map id, set the moment they click a card in
+   * the picker. Persists across snapshot rounds so a degraded sync
+   * (Convex codegen lag, server down) doesn't lose the choice.
+   * Cleared on leaveRoom + on snapshot.room.selectedMapId arriving
+   * back from the server (which means sync caught up).
+   */
+  private pendingMapId: MapId | null = null;
 
   constructor(root: ParentNode) {
     this.playerId = loadOrCreatePlayerId();
@@ -306,6 +314,7 @@ export class LobbyController {
     this.currentRoom = undefined;
     this.currentSnapshot = null;
     this.launchedMatchId = undefined;
+    this.pendingMapId = null;
     this.activeRoomBox.hidden = true;
     this.activeCode.textContent = "------";
     this.mapPicker?.setHostMode(false);
@@ -360,7 +369,16 @@ export class LobbyController {
       this.applyAuthoritativeChaos(snapshot.room.chaosModifierIds ?? []);
       const isHost = snapshot.room.hostPlayerId === this.playerId;
       this.mapPicker?.setHostMode(isHost);
-      this.mapPicker?.setSelected(snapshot.room.selectedMapId ?? DEFAULT_MAP_ID);
+      // Server selection wins once it arrives, otherwise honor the
+      // host's local pending pick, otherwise fall back to default.
+      const serverSelected = snapshot.room.selectedMapId;
+      if (serverSelected !== undefined) {
+        // Sync caught up — drop the local override.
+        this.pendingMapId = null;
+      }
+      this.mapPicker?.setSelected(
+        serverSelected ?? this.pendingMapId ?? DEFAULT_MAP_ID,
+      );
 
       // Auto-assign distinct color from palette if there's a collision (item 10).
       this.maybeResolveColorCollision(snapshot.players);
@@ -427,7 +445,9 @@ export class LobbyController {
     }
     try {
       const mapId =
-        this.currentSnapshot?.room.selectedMapId ?? DEFAULT_MAP_ID;
+        this.currentSnapshot?.room.selectedMapId ??
+        this.pendingMapId ??
+        DEFAULT_MAP_ID;
       await this.roomClient.startMatch(this.currentRoom.roomId, this.playerId, mapId);
     } catch (error) {
       this.setStatus(readError(error));
@@ -543,6 +563,12 @@ export class LobbyController {
   private async onMapPicked(mapId: MapId) {
     if (!this.roomClient || !this.currentRoom) return;
     if (!(mapId in mapsById)) return;
+    // Optimistic local update so the host sees the highlight flip
+    // immediately, even if the Convex sync below is degraded
+    // (server down, codegen lagging, etc.). startMatch honours the
+    // local pick via this.pendingMapId.
+    this.pendingMapId = mapId;
+    this.mapPicker?.setSelected(mapId);
     try {
       await this.roomClient.setMap(this.currentRoom.roomId, this.playerId, mapId);
     } catch (error) {

@@ -65,11 +65,26 @@ export class RoomClient {
     // Cast: the `setMap` mutation was added in this PR; the generated
     // `convex/_generated/api` types lag a `bunx convex codegen` (or
     // deploy) run. Once codegen catches up, drop the cast.
+    const setMapRef = (rooms as unknown as Record<string, unknown>).setMap;
+    if (!setMapRef) {
+      // Codegen hasn't caught up to the schema. Don't crash through
+      // ConvexClient.mutation(undefined, ...) — it throws a confusing
+      // 'reading disabled' TypeError. The lobby falls back to the
+      // local pendingMapId path, which still works at startMatch time
+      // because the old generated startMatch happily accepts the
+      // extra mapId arg (Convex ignores unknown args server-side
+      // until the mutation rejects them).
+      console.warn(
+        "[RoomClient.setMap] api.rooms.setMap not in generated types yet — " +
+          "run `bunx convex deploy` to enable cross-player map sync. " +
+          "Local map selection still works at startMatch time.",
+      );
+      return Promise.resolve();
+    }
     const mutate = this.client.mutation as unknown as (
       ref: unknown,
       args: { roomId: RoomId; playerId: string; mapId: string },
     ) => Promise<void>;
-    const setMapRef = (rooms as unknown as Record<string, unknown>).setMap;
     return mutate(setMapRef, { roomId, playerId, mapId });
   }
 
