@@ -262,7 +262,13 @@ const STAGE_STYLE: Partial<CSSStyleDeclaration> = {
   padding: "32px 36px",
   borderRadius: "18px",
   border: "1px solid rgba(143, 248, 255, 0.22)",
-  background: "linear-gradient(160deg, rgba(16, 20, 32, 0.94), rgba(10, 13, 22, 0.97))",
+  // Lamp-orb warm fill radiates from bottom-left (mirrors the Phaser DraftScene
+  // lamp orb prop). The radial gradient is layered under the slate gradient so
+  // it reads as an ambient warm glow rather than a flat tint.
+  background: [
+    "radial-gradient(ellipse 420px 320px at 6% 96%, rgba(255, 210, 100, 0.10) 0%, transparent 70%)",
+    "linear-gradient(160deg, rgba(16, 20, 32, 0.94), rgba(10, 13, 22, 0.97))",
+  ].join(", "),
   boxShadow:
     "0 32px 80px rgba(0,0,0,0.6), 0 0 1px rgba(143,248,255,0.3), inset 0 1px 0 rgba(143,248,255,0.07)",
   maxWidth: "min(1100px, 95vw)",

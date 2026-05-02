@@ -396,9 +396,16 @@ export class HudSystem {
         cx = PAD_LEFT;
         cy += chipH + gap;
       }
-      // Plate-less: 1px colored outline only, no fill
-      g.lineStyle(1, chip.color, chip.isDebuff ? 0.6 : 0.85);
+      // Plate-less: 1px colored outline only, no fill.
+      // Dominant-accent rule: only the first chip (highest priority) shows
+      // at full brightness. Subsequent chips dim to 35% so multiple
+      // simultaneous buffs don't compete for visual attention.
+      const baseBrightness = chip.isDebuff ? 0.6 : 0.85;
+      const chipAlpha = i === 0 ? baseBrightness : baseBrightness * 0.38;
+      const textAlpha = i === 0 ? 1 : 0.45;
+      g.lineStyle(1, chip.color, chipAlpha);
       g.strokeRoundedRect(cx, cy, chipW, chipH, chipH / 2);
+      text.setAlpha(textAlpha);
 
       text.setPosition(cx + chipPadX, cy + chipH / 2);
       text.setVisible(true);
