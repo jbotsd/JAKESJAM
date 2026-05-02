@@ -4,16 +4,39 @@
 // drawBucketIcon returns an array of GameObjects (glow first, icon on top)
 // so the caller can add them to a Container in the right depth order.
 
-import Phaser from "phaser";
+// `import type` keeps Phaser bundle out of Bun headless test runtime.
+// BlendModes.ADD is inlined as a constant (stable across Phaser 3→4).
+import type Phaser from "phaser";
+
+/** BLEND_MODE_ADD — inlined to avoid runtime Phaser import in tests. */
+const BLEND_MODE_ADD = 1;
 import type { WeaponBucket } from "../../sim/data/cardTypes";
 import type { ElementType, ProjectileShape } from "../../sim/types";
 import { ELEMENT_COLORS, NEUTRAL_ELEMENTS } from "./elementColors";
+import {
+  drawIcon_frostPrism,
+  drawIcon_moltenCore,
+  drawIcon_voltaicSpark,
+  drawIcon_voidFracture,
+  drawIcon_radiantOverload,
+  drawIcon_cataclysmicPrism,
+  drawIcon_homingCluster,
+  drawIcon_overcharge,
+  drawIcon_mirrorShield,
+  drawIcon_pierceChain,
+  drawIcon_shardBloom,
+  drawIcon_clusterBomb,
+  drawIcon_seekerFacets,
+  drawIcon_stickyRay,
+  drawIcon_orbyBlapBlap,
+} from "./signatureIcons";
 
 export type CardRarity = "common" | "uncommon" | "rare" | "legendary" | "cursed";
 
-/** Shorthand to construct a Phaser.Math.Vector2 — keeps polygon arrays terse. */
+/** Point literal — keeps polygon arrays terse. Typed as Vector2 for fillPoints/strokePoints
+ *  compatibility; plain {x,y} object works at runtime. */
 function v(x: number, y: number): Phaser.Math.Vector2 {
-  return new Phaser.Math.Vector2(x, y);
+  return { x, y } as unknown as Phaser.Math.Vector2;
 }
 
 // ── Color helpers ────────────────────────────────────────────────────────────
@@ -38,6 +61,75 @@ function iconFillColor(
   return getRarityColor(rarity);
 }
 
+// ── Signature icon dispatch ──────────────────────────────────────────────────
+
+/**
+ * Attempt to draw a "signature" (character-art) icon for a named card.
+ *
+ * Returns `[glowGfx, iconGfx]` when a signature exists for `cardId`, or an
+ * empty array when no signature is registered (caller should fall back to
+ * `drawBucketIcon`'s geometric glyph path).
+ *
+ * Glow layer: additive blend, 0.28 alpha, same draw function at 1.4× radius.
+ */
+export function drawSignatureIcon(
+  scene: Phaser.Scene,
+  x: number,
+  y: number,
+  cardId: string,
+  element: ElementType | undefined,
+  rarity: CardRarity,
+  size: number,
+): Phaser.GameObjects.GameObject[] {
+  const fill   = iconFillColor(element, rarity);
+  const stroke = getRarityColor(rarity);
+  const r      = size * 0.5;
+
+  type DrawFn = (
+    g: Phaser.GameObjects.Graphics,
+    radius: number,
+    fill: number,
+    stroke: number,
+  ) => void;
+
+  let drawFn: DrawFn | null = null;
+
+  switch (cardId) {
+    case "frost-prism":         drawFn = drawIcon_frostPrism;        break;
+    case "molten-core":         drawFn = drawIcon_moltenCore;         break;
+    case "voltaic-spark":       drawFn = drawIcon_voltaicSpark;       break;
+    case "void-fracture":       drawFn = drawIcon_voidFracture;       break;
+    case "radiant-overload":    drawFn = drawIcon_radiantOverload;    break;
+    case "cataclysmic-prism":   drawFn = drawIcon_cataclysmicPrism;   break;
+    case "homing-cluster":      drawFn = drawIcon_homingCluster;      break;
+    case "overcharge":          drawFn = drawIcon_overcharge;         break;
+    case "mirror-shield":       drawFn = drawIcon_mirrorShield;       break;
+    case "pierce-chain":        drawFn = drawIcon_pierceChain;        break;
+    case "shard-bloom":         drawFn = drawIcon_shardBloom;         break;
+    case "cluster-bomb":        drawFn = drawIcon_clusterBomb;        break;
+    case "seeker-facets":       drawFn = drawIcon_seekerFacets;       break;
+    case "sticky-ray":          drawFn = drawIcon_stickyRay;          break;
+    case "orby-blap-blap":      drawFn = drawIcon_orbyBlapBlap;       break;
+    default:                    drawFn = null;
+  }
+
+  if (drawFn === null) {
+    return [];
+  }
+
+  // Glow layer
+  const glow = scene.add.graphics({ x, y });
+  glow.setBlendMode(BLEND_MODE_ADD);
+  glow.setAlpha(0.28);
+  drawFn(glow, r * 1.4, fill, fill);
+
+  // Crisp icon layer
+  const icon = scene.add.graphics({ x, y });
+  drawFn(icon, r, fill, stroke);
+
+  return [glow, icon];
+}
+
 // ── Main export ──────────────────────────────────────────────────────────────
 
 /**
@@ -49,6 +141,9 @@ function iconFillColor(
  *
  * If `iconShape` is provided and is a recognised ProjectileShape, it takes
  * priority over the bucket fallback.
+ *
+ * When `cardId` is provided and matches a known signature, the signature icon
+ * is returned instead of the generic bucket glyph.
  */
 export function drawBucketIcon(
   scene: Phaser.Scene,
@@ -59,14 +154,23 @@ export function drawBucketIcon(
   rarity: CardRarity,
   size: number,
   iconShape?: ProjectileShape,
+  cardId?: string,
 ): Phaser.GameObjects.GameObject[] {
+  // Signature icon takes priority — richer character art over generic geometry.
+  if (cardId !== undefined) {
+    const sig = drawSignatureIcon(scene, x, y, cardId, element, rarity, size);
+    if (sig.length > 0) {
+      return sig;
+    }
+  }
+
   const fill   = iconFillColor(element, rarity);
   const stroke = getRarityColor(rarity);
   const r      = size * 0.5; // radius / half-size
 
   // Glow: additive, low alpha, scaled up 1.4×
   const glow = scene.add.graphics({ x, y });
-  glow.setBlendMode(Phaser.BlendModes.ADD);
+  glow.setBlendMode(BLEND_MODE_ADD);
   glow.setAlpha(0.28);
 
   // Icon (crisp, full alpha)
