@@ -52,6 +52,8 @@ export class ProceduralPlayerRig {
   private stepPhase = 0;
   private facing = 1;
   private firePulse = 0;
+  private readonly trailPositions: { x: number; y: number; t: number }[] = [];
+  private lastTrailSampleMs = 0;
 
   constructor(scene: Phaser.Scene, options: ProceduralPlayerRigOptions) {
     this.graphics = scene.add.graphics();
@@ -80,6 +82,16 @@ export class ProceduralPlayerRig {
       this.facing = Math.sign(pose.velocity.x);
     } else if (Math.abs(pose.aimTarget.x - pose.position.x) > 2) {
       this.facing = Math.sign(pose.aimTarget.x - pose.position.x);
+    }
+
+    // Trail sampling — wall-clock, purely visual feedback
+    const now = Date.now();
+    if (now - this.lastTrailSampleMs >= 40) {
+      this.trailPositions.push({ x: pose.position.x, y: pose.position.y, t: now });
+      if (this.trailPositions.length > 6) {
+        this.trailPositions.shift();
+      }
+      this.lastTrailSampleMs = now;
     }
 
     this.draw(pose, walkAmount);
@@ -152,6 +164,9 @@ export class ProceduralPlayerRig {
 
     g.clear();
 
+    // --- TRAIL (drawn before body so it sits behind everything) ---
+    this.drawTrail(g, pose.position, pose.velocity, s);
+
     // --- DRAW ORDER (back to front) ---
 
     // 1. Nameplate + health bar (topmost layer visually but drawn first for z)
@@ -185,6 +200,45 @@ export class ProceduralPlayerRig {
 
     // 10. Head + hood + visor
     this.drawHead(g, head, s, healthRatio);
+  }
+
+  // --- TRAIL: Fading body-color dots at past positions ---
+  private drawTrail(
+    g: Phaser.GameObjects.Graphics,
+    currentPos: Vec2,
+    velocity: Vec2,
+    s: number,
+  ): void {
+    if (this.trailPositions.length < 2) return;
+
+    // Velocity gate: compute speed from last 2 buffer entries
+    const last = this.trailPositions[this.trailPositions.length - 1];
+    const prev = this.trailPositions[this.trailPositions.length - 2];
+    if (!last || !prev) return;
+
+    const dt = Math.max(1, last.t - prev.t);
+    const dx = last.x - prev.x;
+    const dy = last.y - prev.y;
+    const speed = Math.hypot(dx, dy) / (dt / 1000);
+
+    // Also check live velocity as a fallback (covers the very first few frames)
+    const liveSpeed = Math.hypot(velocity.x, velocity.y);
+    if (Math.max(speed, liveSpeed) <= 60) return;
+
+    const len = this.trailPositions.length;
+    for (let i = 0; i < len; i++) {
+      const entry = this.trailPositions[i];
+      if (!entry) continue;
+
+      // Skip dots too close to current position (avoids smear when near-stationary)
+      const distToCurrent = Math.hypot(entry.x - currentPos.x, entry.y - currentPos.y);
+      if (distToCurrent < 4) continue;
+
+      // Older entries have lower index → lower alpha
+      const alpha = ((i + 1) / len) * 0.4;
+      g.fillStyle(this.color, alpha);
+      g.fillCircle(entry.x, entry.y, 3 * s);
+    }
   }
 
   // --- TORSO: Filled armored body ---
