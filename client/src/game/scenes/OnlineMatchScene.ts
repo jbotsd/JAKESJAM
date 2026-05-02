@@ -120,7 +120,7 @@ function pickupColor(kind: PickupKind): number {
 }
 
 /** Element-based projectile tint. */
-function projectileColorByElement(element: string, ownerId: string): number {
+function projectileColorByElement(element: string, ownerId: string | null): number {
   switch (element) {
     case "fire":
       return 0xff7a18;
@@ -148,7 +148,8 @@ function projectileColorByElement(element: string, ownerId: string): number {
   }
 }
 
-function colorForOwner(ownerId: string): number {
+function colorForOwner(ownerId: string | null): number {
+  if (ownerId === null) return 0xffffff; // world-owned: neutral white
   let hash = 0;
   for (let i = 0; i < ownerId.length; i += 1) {
     hash = (hash * 31 + ownerId.charCodeAt(i)) >>> 0;
@@ -731,7 +732,7 @@ export class OnlineMatchScene extends Phaser.Scene {
     for (const [idStr, sat] of Object.entries(state.satellites)) {
       const id = Number(idStr);
       seen.add(id);
-      const owner = state.players[sat.ownerId];
+      const owner = sat.ownerId !== null ? state.players[sat.ownerId] : undefined;
       if (!owner) continue;
       const x = owner.x + Math.cos(sat.angle) * sat.orbitRadius;
       const y = owner.y + Math.sin(sat.angle) * sat.orbitRadius;

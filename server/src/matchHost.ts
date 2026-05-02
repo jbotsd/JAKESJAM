@@ -28,6 +28,7 @@ import {
 } from "./protocol.ts";
 import { InterestGrid, CELL_SIZE_PX, OBSERVE_RADIUS_CELLS } from "./InterestGrid.ts";
 import { encodeDelta } from "./snapshotDelta.ts";
+import { transferAuthority } from "./authority.ts";
 
 export type MatchSocketData = {
   matchId: string;
@@ -418,11 +419,14 @@ export class MatchHost {
       delete nextPlayers[playerId];
       const nextScores = { ...this.state.round.scores };
       delete nextScores[playerId];
-      this.state = {
+      // Rewrite in-flight entities owned by the evicted player to world-owned
+      // (null) so stale ownerId references don't linger in the sim.
+      const stateAfterPlayerEviction = {
         ...this.state,
         players: nextPlayers,
         round: { ...this.state.round, scores: nextScores },
       };
+      this.state = transferAuthority(stateAfterPlayerEviction, playerId, null);
       evicted = true;
       console.log(
         `[matchHost ${this.matchId}] evicted player ${playerId} after ${RECONNECT_GRACE_MS}ms reconnect grace`,

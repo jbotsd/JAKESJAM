@@ -42,7 +42,8 @@ export const FIRE_PATCH_DEFAULT_DPS = 14;
  * fire ids stay monotonic with the rest of the entity allocator.
  */
 export type SpawnedFireSpec = {
-  ownerId: PlayerId;
+  /** null = world-owned (orphaned); fire patch will affect every player. */
+  ownerId: PlayerId | null;
   x: number;
   y: number;
   radius: number;
@@ -213,13 +214,13 @@ function alivePlayersInRadius(
   cx: number,
   cy: number,
   radius: number,
-  ownerId: PlayerId,
+  ownerId: PlayerId | null,
 ): PlayerId[] {
   const out: PlayerId[] = [];
   const ids = Object.keys(players).sort();
   for (const pid_ of ids) {
     const pid = pid_ as PlayerId;
-    if (pid === ownerId) continue;
+    if (ownerId !== null && pid === ownerId) continue;
     const p = players[pid]!;
     if (!p.alive) continue;
     const dx = p.x - cx;

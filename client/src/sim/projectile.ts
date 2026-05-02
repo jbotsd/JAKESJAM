@@ -221,7 +221,7 @@ export function stepProjectile(
   const playerIds = Object.keys(players).sort();
   for (const pid_ of playerIds) {
     const pid = pid_ as PlayerId;
-    if (pid === proj.ownerId) continue;
+    if (proj.ownerId !== null && pid === proj.ownerId) continue;
     const player = players[pid]!;
     if (!player.alive) continue;
     if (
@@ -501,7 +501,7 @@ export function stepProjectile(
 }
 
 export type ProjectileSpawnParams = {
-  ownerId: PlayerId;
+  ownerId: PlayerId | null;
   origin: Vec2;
   aimAngle: number;
   speed: number;
@@ -610,7 +610,7 @@ function detonateAt(
   const playerIds = Object.keys(players).sort();
   for (const pid_ of playerIds) {
     const pid = pid_ as PlayerId;
-    if (pid === proj.ownerId) continue;
+    if (proj.ownerId !== null && pid === proj.ownerId) continue;
     const p = players[pid]!;
     if (!p.alive) continue;
     const dx = p.x - detX;
@@ -748,7 +748,7 @@ function wrapAngle(angle: number): number {
 function closestNonOwnerPlayer(
   fromX: number,
   fromY: number,
-  ownerId: PlayerId,
+  ownerId: PlayerId | null,
   players: Record<PlayerId, PlayerEntity>,
 ): { x: number; y: number } | null {
   // Iterate in id-sorted order for deterministic tiebreaks.
@@ -757,7 +757,7 @@ function closestNonOwnerPlayer(
   let bestSq = Number.POSITIVE_INFINITY;
   for (const id_ of ids) {
     const id = id_ as PlayerId;
-    if (id === ownerId) continue;
+    if (ownerId !== null && id === ownerId) continue;
     const p = players[id]!;
     if (!p.alive) continue;
     const dx = p.x - fromX;

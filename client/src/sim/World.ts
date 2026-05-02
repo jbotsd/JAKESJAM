@@ -607,7 +607,7 @@ export function stepWithRuntime(
             const ids = (Object.keys(players) as PlayerId[]).sort();
             for (const oid of ids) {
               if (oid === ev.victimId) continue;
-              if (oid === proj.ownerId) continue;
+              if (proj.ownerId !== null && oid === proj.ownerId) continue;
               const other = players[oid]!;
               if (!other.alive) continue;
               const dx = other.x - nextVictim.x;
