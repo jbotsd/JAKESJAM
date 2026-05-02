@@ -1,5 +1,7 @@
 import Phaser from "phaser";
 import { SceneKeys } from "./SceneKeys";
+import { PALETTE, ARENA_THEMES } from "../ui/palette";
+import { paintPlatform } from "../render/PlatformPainter";
 import { boxworksWorld, seededUnit } from "../../sim/data/boxworks.js";
 import {
   COUNTDOWN_MS,
@@ -290,7 +292,7 @@ export class MatchScene extends Phaser.Scene {
     this.particlePool?.destroy();
     this.particlePool = new ParticlePool(this);
     this.projectileSystem?.destroy();
-    this.renderLayer = new RenderLayer(this);
+    this.renderLayer = new RenderLayer(this, this.particlePool);
     this.remotePlayers?.reset();
     this.remotePlayers = new RemotePlayerManager(this, {
       localPlayerId: this.localPlayerId,
@@ -454,20 +456,31 @@ export class MatchScene extends Phaser.Scene {
 
   private renderArena() {
     const { x: width, y: height } = boxworksWorld.size;
-    this.add.rectangle(width / 2, height / 2, width, height, 0x0b0e14);
-    this.add.grid(width / 2, height / 2, width, height, 40, 40, 0x111722, 0.65, 0x1f2a3a, 0.26);
+    const theme = ARENA_THEMES.jadeIsles;
 
+    // Solid void background — no grid.
+    this.add.rectangle(width / 2, height / 2, width, height, theme.bg);
+
+    // Atmospheric back layer: dim overlapping ellipses for parallax depth.
+    const bgShade = PALETTE.voidEdge;
+    this.add.ellipse(width * 0.3, height * 0.45, width * 0.55, height * 0.4, bgShade, 0.08);
+    this.add.ellipse(width * 0.72, height * 0.55, width * 0.5, height * 0.38, bgShade, 0.08);
+
+    // Platforms — two-tone + brush-streak baked RenderTexture.
     for (const platform of boxworksWorld.platforms) {
-      const color = platform.kind === "floor" ? 0x354054 : 0x2a3242;
-      this.add
-        .rectangle(platform.position.x, platform.position.y, platform.size.x, platform.size.y, color)
-        .setStrokeStyle(1, 0x56647c, 0.55);
+      paintPlatform(
+        this,
+        platform.position.x,
+        platform.position.y,
+        platform.size.x,
+        platform.size.y,
+        theme,
+      );
     }
 
     for (const spawn of boxworksWorld.spawns) {
-      this.add.circle(spawn.x, spawn.y, 5, 0x50e3c2, 0.5);
+      this.add.circle(spawn.x, spawn.y, 5, PALETTE.textMid, 0.5);
     }
-
   }
 
   private configureCamera() {

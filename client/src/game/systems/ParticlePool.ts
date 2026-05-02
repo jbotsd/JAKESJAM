@@ -20,6 +20,7 @@ const POOL_SIZES = {
   shard: 32,
   ring: 16,
   bolt: 4,
+  blastCircle: 16,
 } as const;
 
 const SPARK_W = 3;
@@ -28,7 +29,7 @@ const SHARD_W = 4;
 const SHARD_H = 9;
 const RING_RADIUS = 18;
 
-type PoolName = "spark" | "shard" | "ring" | "bolt";
+type PoolName = "spark" | "shard" | "ring" | "bolt" | "blastCircle";
 
 export class ParticlePool {
   private readonly sparkFree: Phaser.GameObjects.Rectangle[] = [];
@@ -43,11 +44,15 @@ export class ParticlePool {
   private readonly boltFree: Phaser.GameObjects.Graphics[] = [];
   private readonly boltActive: Set<Phaser.GameObjects.Graphics> = new Set();
 
+  private readonly blastCircleFree: Phaser.GameObjects.Arc[] = [];
+  private readonly blastCircleActive: Set<Phaser.GameObjects.Arc> = new Set();
+
   private readonly warned: Set<PoolName> = new Set();
   // Tracks which pool each acquired object belongs to so `release` can return
   // it correctly without relying on Phaser-class `instanceof` (which fails in
   // headless bun:test environments).
-  private readonly origin: WeakMap<Phaser.GameObjects.GameObject, PoolName> = new WeakMap();
+  private readonly origin: WeakMap<Phaser.GameObjects.GameObject, PoolName> =
+    new WeakMap();
   private destroyed = false;
 
   constructor(scene: Phaser.Scene) {
@@ -74,6 +79,14 @@ export class ParticlePool {
       g.setVisible(false);
       this.origin.set(g, "bolt");
       this.boltFree.push(g);
+    }
+    for (let i = 0; i < POOL_SIZES.blastCircle; i++) {
+      // Radius 1 placeholder — caller sets radius + colour at acquire time.
+      const a = scene.add.circle(0, 0, 1, 0xffffff, 1);
+      a.setVisible(false);
+      a.setBlendMode(1); // Phaser.BlendModes.ADD = 1; using literal to avoid importing Phaser runtime in headless tests
+      this.origin.set(a, "blastCircle");
+      this.blastCircleFree.push(a);
     }
   }
 
@@ -125,6 +138,18 @@ export class ParticlePool {
     return obj;
   }
 
+  acquireBlastCircle(): Phaser.GameObjects.Arc | null {
+    if (this.destroyed) return null;
+    const obj = this.blastCircleFree.pop();
+    if (!obj) {
+      this.warnExhausted("blastCircle");
+      return null;
+    }
+    obj.setVisible(true);
+    this.blastCircleActive.add(obj);
+    return obj;
+  }
+
   release(gfx: Phaser.GameObjects.GameObject): void {
     if (this.destroyed) return;
     const kind = this.origin.get(gfx);
@@ -159,6 +184,14 @@ export class ParticlePool {
         this.boltFree.push(g);
         return;
       }
+      case "blastCircle": {
+        const a = gfx as Phaser.GameObjects.Arc;
+        if (!this.blastCircleActive.delete(a)) return;
+        this.resetCommon(a);
+        a.setVisible(false);
+        this.blastCircleFree.push(a);
+        return;
+      }
     }
   }
 
@@ -178,6 +211,10 @@ export class ParticlePool {
     drain(this.shardFree, this.shardActive as Set<Phaser.GameObjects.GameObject>);
     drain(this.ringFree, this.ringActive as Set<Phaser.GameObjects.GameObject>);
     drain(this.boltFree, this.boltActive as Set<Phaser.GameObjects.GameObject>);
+    drain(
+      this.blastCircleFree,
+      this.blastCircleActive as Set<Phaser.GameObjects.GameObject>,
+    );
   }
 
   private resetCommon(

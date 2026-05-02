@@ -3,7 +3,10 @@ import { SceneKeys } from "./SceneKeys";
 import type { CardDefinition } from "../types/game";
 import type { ElementType } from "../../sim/types";
 import { ELEMENT_COLORS, NEUTRAL_ELEMENTS } from "../ui/elementColors";
-import { drawBucketIcon, getRarityColor as rarityColorNum } from "../ui/cardIcons";
+import { drawBucketIcon } from "../ui/cardIcons";
+import { drawCardBracket } from "../ui/CardBracketFrame";
+import { HeroPresenter } from "../ui/HeroPresenter";
+import { PALETTE } from "../ui/palette";
 
 type DraftSceneInitData = {
   availableCards: CardDefinition[];
@@ -15,7 +18,7 @@ type DraftSceneInitData = {
 
 /**
  * DraftScene - ROUNDS-style between-round card selection
- * 
+ *
  * Shows 3 card choices after each round. Loser drafts first.
  * Cards persist for the entire match and stack.
  */
@@ -24,6 +27,9 @@ export class DraftScene extends Phaser.Scene {
   private currentBuild: CardDefinition[] = [];
   private roundNumber = 1;
   private playerBehind = false;
+  private hero!: HeroPresenter;
+  private cardContainers: Phaser.GameObjects.Container[] = [];
+  private cardBaseY: number[] = [];
 
   constructor() {
     super(SceneKeys.Draft);
@@ -40,7 +46,7 @@ export class DraftScene extends Phaser.Scene {
     const { width, height } = this.scale;
 
     // Dark overlay background
-    this.add.rectangle(0, 0, width, height, 0x000000, 0.85);
+    this.add.rectangle(0, 0, width, height, 0x000000, 0.85).setOrigin(0);
 
     // Title
     this.add.text(width / 2, 50, "CHOOSE YOUR UPGRADE", {
@@ -63,8 +69,15 @@ export class DraftScene extends Phaser.Scene {
     // Three card choices (main display)
     this.renderCardChoices(width / 2, height / 2 + 20);
 
+    // Hero presenter — bottom center
+    this.hero = new HeroPresenter(this, width / 2, height - 80, {
+      bodyColor: PALETTE.playerOrange,
+      shadeColor: PALETTE.playerOrangeShade,
+      playerBehind: this.playerBehind,
+    });
+
     // Instructions
-    this.add.text(width / 2, height - 50, "Click a card to select it", {
+    this.add.text(width / 2, height - 30, "Click a card to select it", {
       font: "16px Inter, Arial, sans-serif",
       color: "#50e3c2",
     }).setOrigin(0.5);
@@ -79,29 +92,33 @@ export class DraftScene extends Phaser.Scene {
     const cardWidth = 220;
     const cardHeight = 300;
     const spacing = 40;
-    const totalWidth = (cardWidth * 3) + (spacing * 2);
+    const totalWidth = cardWidth * 3 + spacing * 2;
     const startX = centerX - totalWidth / 2;
 
+    this.cardContainers = [];
+    this.cardBaseY = [];
+
     this.availableCards.forEach((card, index) => {
-      const x = startX + (cardWidth + spacing) * index;
+      const x = startX + (cardWidth + spacing) * index + cardWidth / 2;
       const cardContainer = this.add.container(x, centerY);
+      this.cardContainers.push(cardContainer);
+      this.cardBaseY.push(centerY);
 
-      // Card background with rarity-colored border
-      const border = this.add.rectangle(0, 0, cardWidth, cardHeight, 0x000000, 0);
-      border.setStrokeStyle(5, rarityColorNum(card.rarity));
-      cardContainer.add(border);
+      // Fully transparent background (plate-less design)
+      const hitArea = this.add.rectangle(0, 0, cardWidth, cardHeight, 0x000000, 0);
+      cardContainer.add(hitArea);
 
-      // Card background
-      const bg = this.add.rectangle(0, 0, cardWidth - 10, cardHeight - 10, 0x1f2937);
-      cardContainer.add(bg);
-
-      // Element accent: tint the border with element color if card has one
+      // Element accent: use element color for bracket if card has one; else cyan
       const cardElement: ElementType | undefined = card.modifier?.projectile?.element;
-      if (cardElement && !NEUTRAL_ELEMENTS.has(cardElement)) {
-        border.setStrokeStyle(5, ELEMENT_COLORS[cardElement]);
-      }
+      const bracketColor =
+        cardElement && !NEUTRAL_ELEMENTS.has(cardElement)
+          ? ELEMENT_COLORS[cardElement]
+          : PALETTE.cardBracket;
 
-      // Bucket-glyph icon (replaces old rotated-rectangle placeholder)
+      const bracket = drawCardBracket(this, 0, 0, cardWidth, cardHeight, bracketColor);
+      cardContainer.add(bracket);
+
+      // Bucket-glyph icon (reused as-is per constraints)
       const iconObjs = drawBucketIcon(
         this,
         0, -90,
@@ -113,79 +130,80 @@ export class DraftScene extends Phaser.Scene {
       );
       cardContainer.add(iconObjs);
 
-      // Card name
-      const name = this.add.text(0, -50, card.name.toUpperCase(), {
+      // Card name ABOVE the frame
+      const nameY = -(cardHeight / 2 + 14);
+      const name = this.add.text(0, nameY, card.name.toUpperCase(), {
         font: "bold 16px Inter, Arial, sans-serif",
-        color: "#f7fbff",
-      }).setOrigin(0.5);
+        color: `#${PALETTE.cardTitle.toString(16).padStart(6, "0")}`,
+        letterSpacing: 1,
+      }).setOrigin(0.5, 1);
       cardContainer.add(name);
 
       // Card description
       const desc = this.add.text(0, -20, card.description, {
         font: "13px Inter, Arial, sans-serif",
-        color: "#9ba7b8",
+        color: "#f5f8f8",
         wordWrap: { width: cardWidth - 40 },
       }).setOrigin(0.5);
       cardContainer.add(desc);
 
-      // Benefits (green text)
-      let benefitsY = 30;
+      // Benefits — green colored lines, no header
+      let statY = 30;
       if (card.benefits && card.benefits.length > 0) {
-        this.add.text(0, benefitsY - 15, "BENEFITS:", {
-          font: "bold 11px Inter, Arial, sans-serif",
-          color: "#4ade80",
-        }).setOrigin(0.5);
-        cardContainer.add(this.add.text(0, benefitsY - 15, "BENEFITS:", {
-          font: "bold 11px Inter, Arial, sans-serif",
-          color: "#4ade80",
-        }).setOrigin(0.5));
-        
         card.benefits.forEach((benefit, i) => {
-          const benefitText = this.add.text(0, benefitsY + (i * 20), `+${this.formatStat(benefit)}`, {
-            font: "bold 13px Inter, Arial, sans-serif",
-            color: "#4ade80",
-          }).setOrigin(0.5);
+          const benefitText = this.add.text(
+            0, statY + i * 20,
+            `+${this.formatStat(benefit)}`,
+            {
+              font: "bold 13px Inter, Arial, sans-serif",
+              color: `#${PALETTE.benefitGreen.toString(16).padStart(6, "0")}`,
+            },
+          ).setOrigin(0.5);
           cardContainer.add(benefitText);
         });
-        benefitsY += card.benefits.length * 20 + 20;
+        statY += card.benefits.length * 20 + 4;
       }
 
-      // Penalties (red text)
+      // Penalties — coral colored lines, no header
       if (card.penalties && card.penalties.length > 0) {
-        this.add.text(0, benefitsY, "TRADEOFFS:", {
-          font: "bold 11px Inter, Arial, sans-serif",
-          color: "#f87171",
-        }).setOrigin(0.5);
-        
         card.penalties.forEach((penalty, i) => {
-          const penaltyText = this.add.text(0, benefitsY + 15 + (i * 20), `-${this.formatStat(penalty)}`, {
-            font: "bold 13px Inter, Arial, sans-serif",
-            color: "#f87171",
-          }).setOrigin(0.5);
+          const penaltyText = this.add.text(
+            0, statY + i * 20,
+            `-${this.formatStat(penalty)}`,
+            {
+              font: "bold 13px Inter, Arial, sans-serif",
+              color: `#${PALETTE.penaltyRed.toString(16).padStart(6, "0")}`,
+            },
+          ).setOrigin(0.5);
           cardContainer.add(penaltyText);
         });
       }
 
-      // Click handler
-      border.setInteractive({ useHandCursor: true });
-      border.on("pointerdown", () => this.selectCard(card));
-      border.on("pointerover", () => this.highlightCard(cardContainer, true));
-      border.on("pointerout", () => this.highlightCard(cardContainer, false));
+      // Interaction — use hitArea rectangle as the interactive target
+      hitArea.setInteractive({ useHandCursor: true });
+      hitArea.on("pointerdown", () => this.selectCard(card));
+      hitArea.on("pointerover", () => {
+        this.highlightCard(cardContainer, index, true);
+        this.hero?.leanToward(cardContainer.x);
+      });
+      hitArea.on("pointerout", () => {
+        this.highlightCard(cardContainer, index, false);
+      });
     });
   }
 
   private selectCard(card: CardDefinition) {
     // Flash effect
     this.cameras.main.shake(200, 0.01);
-    
+
     // Visual feedback
-    this.add.text(this.scale.width / 2, this.scale.height / 2, "SELECTED!", {
+    const flash = this.add.text(this.scale.width / 2, this.scale.height / 2, "SELECTED!", {
       font: "bold 48px Inter, Arial, sans-serif",
       color: "#4ade80",
     }).setOrigin(0.5).setAlpha(0);
-    
+
     this.tweens.add({
-      targets: this.children.list[this.children.list.length - 1],
+      targets: flash,
       alpha: 1,
       y: this.scale.height / 2 - 50,
       duration: 200,
@@ -195,32 +213,57 @@ export class DraftScene extends Phaser.Scene {
         this.registry.set("draftSelectedCard", card);
         // Stop DraftScene - MatchScene listens for shutdown event
         this.scene.stop(SceneKeys.Draft);
-      }
+      },
     });
   }
 
-  private formatStat(stat: any): string {
+  private formatStat(stat: { multiplier?: boolean; value: number; stat: string } | undefined): string {
     if (!stat) return "";
     if (stat.multiplier) {
       const pct = Math.round((stat.value - 1) * 100);
-      return `${pct > 0 ? '+' : ''}${pct}% ${stat.stat}`;
+      return `${pct > 0 ? "+" : ""}${pct}% ${stat.stat}`;
     }
-    return `${stat.value > 0 ? '+' : ''}${stat.value} ${stat.stat}`;
+    return `${stat.value > 0 ? "+" : ""}${stat.value} ${stat.stat}`;
   }
 
-  private highlightCard(container: Phaser.GameObjects.Container, highlight: boolean) {
+  private highlightCard(
+    container: Phaser.GameObjects.Container,
+    index: number,
+    highlight: boolean,
+  ) {
+    // Dim all other cards when one is hovered
+    this.cardContainers.forEach((c, i) => {
+      if (i !== index) {
+        this.tweens.add({
+          targets: c,
+          alpha: highlight ? 0.55 : 1.0,
+          duration: 180,
+          ease: "Power2",
+        });
+      }
+    });
+
+    const baseY = this.cardBaseY[index] ?? container.y;
     if (highlight) {
       this.tweens.add({
         targets: container,
-        scale: 1.05,
-        duration: 150,
+        scaleX: 1.1,
+        scaleY: 1.1,
+        y: baseY - 20,
+        rotation: 0.05,
+        alpha: 1.0,
+        duration: 180,
         ease: "Power2",
       });
     } else {
       this.tweens.add({
         targets: container,
-        scale: 1,
-        duration: 150,
+        scaleX: 1,
+        scaleY: 1,
+        y: baseY,
+        rotation: 0,
+        alpha: 1.0,
+        duration: 180,
         ease: "Power2",
       });
     }
@@ -241,7 +284,7 @@ export class DraftScene extends Phaser.Scene {
     }).setOrigin(0.5);
 
     this.currentBuild.forEach((card, index) => {
-      const x = centerX - ((this.currentBuild.length - 1) * 30) + (index * 60);
+      const x = centerX - (this.currentBuild.length - 1) * 30 + index * 60;
       const buildElement: ElementType | undefined = card.modifier?.projectile?.element;
       const iconObjs = drawBucketIcon(
         this,
@@ -252,8 +295,6 @@ export class DraftScene extends Phaser.Scene {
         44,
         card.visual?.iconShape,
       );
-      // Mini build icons are added directly to the scene (not a container)
-      // Nothing else to do — drawBucketIcon already calls scene.add.*
       void iconObjs;
     });
   }

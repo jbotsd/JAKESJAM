@@ -11,6 +11,7 @@ type Stub = {
   setScale: (s: number) => Stub;
   setRotation: (r: number) => Stub;
   setPosition: (x: number, y: number) => Stub;
+  setBlendMode: (mode: number) => Stub;
   clear: () => Stub;
   destroy: () => void;
   destroyed: boolean;
@@ -24,6 +25,7 @@ function makeStub(): Stub {
     setScale: () => s,
     setRotation: () => s,
     setPosition: () => s,
+    setBlendMode: () => s,
     clear: () => s,
     destroy: () => {
       s.destroyed = true;
@@ -80,6 +82,32 @@ describe("ParticlePool", () => {
     } finally {
       console.warn = original;
     }
+  });
+
+  test("acquireBlastCircle returns distinct instances and release returns to free list", () => {
+    const pool = new ParticlePool(makeScene());
+    const a = pool.acquireBlastCircle();
+    const b = pool.acquireBlastCircle();
+    expect(a).not.toBeNull();
+    expect(b).not.toBeNull();
+    expect(a).not.toBe(b);
+    // Release a and re-acquire — should get back the same instance.
+    pool.release(a!);
+    const c = pool.acquireBlastCircle();
+    expect(c).toBe(a);
+  });
+
+  test("acquireBlastCircle returns distinct instances and release returns to free list", () => {
+    const pool = new ParticlePool(makeScene());
+    const a = pool.acquireBlastCircle();
+    const b = pool.acquireBlastCircle();
+    expect(a).not.toBeNull();
+    expect(b).not.toBeNull();
+    expect(a).not.toBe(b);
+    // Release a and re-acquire — should get back the same instance.
+    pool.release(a!);
+    const c = pool.acquireBlastCircle();
+    expect(c).toBe(a);
   });
 
   test("destroy cleans up free + active lists", () => {

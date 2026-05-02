@@ -1,17 +1,16 @@
 import Phaser from "phaser";
 import type { Vec2 } from "../types/game";
+import { PALETTE } from "../ui/palette.js";
 
 /**
- * ProceduralPlayerRig - AAA-quality procedural character renderer.
+ * ProceduralPlayerRig - ROUNDS-style minimal character renderer.
  *
- * Renders a chunky cyberpunk sorcerer using filled polygons, not wireframe lines.
- * The character has real visual mass: armored torso, thick limbs, heavy boots,
- * a hooded helmet with glowing visor, shoulder armor, and a crystal arm cannon.
+ * Renders a circle body + 4 stick limbs + 2 dot eyes. Silhouette-first design
+ * inspired by ROUNDS: readable at any zoom, zero texture dependencies.
  *
- * Design references: Nuclear Throne (chunky proportions), Hyper Light Drifter
- * (crystal-tech glow), SUPERHOT (geometric reduction).
+ * Design references: ROUNDS (circle+sticks), Platforms Shooter (dot eyes).
  *
- * Performance: ~0.3ms per character at 60fps. All procedural, no textures.
+ * Performance: ~0.15ms per character at 60fps. All procedural, no textures.
  */
 
 type ProceduralPlayerRigOptions = {
@@ -37,11 +36,8 @@ type LimbSolve = {
 
 // --- Colour Constants ---
 const DARK = 0x07101c;
-const DARK2 = 0x0f1a2e;
 const WHITE = 0xf7fbff;
 const ACCENT = 0x8ff8ff; // Crystal cyan glow
-const HEALTH_GOOD = 0xb8f05a;
-const HEALTH_BACKING = 0x1f2937;
 
 export class ProceduralPlayerRig {
   private readonly graphics: Phaser.GameObjects.Graphics;
@@ -58,7 +54,7 @@ export class ProceduralPlayerRig {
     this.graphics = scene.add.graphics();
     this.nameText = scene.add
       .text(0, 0, options.name, {
-        color: "#f7fbff",
+        color: `#${PALETTE.textHi.toString(16).padStart(6, "0")}`,
         fontFamily: "Inter, Arial, sans-serif",
         fontSize: `${Math.round(10 * (options.scale ?? 1))}px`,
         fontStyle: "700",
@@ -107,223 +103,145 @@ export class ProceduralPlayerRig {
     const s = this.scale;
     const ground = pose.position.y;
     const cr = pose.crouching ? 1 : 0;
-    const bob = pose.grounded && !pose.crouching
-      ? Math.abs(Math.sin(this.stepPhase)) * 2 * walkAmount : 0;
+    const bob =
+      pose.grounded && !pose.crouching ? Math.abs(Math.sin(this.stepPhase)) * 2 * walkAmount : 0;
 
-    // Key positions
-    const pelvisY = ground - Phaser.Math.Linear(52, 32, cr) * s - bob;
-    const chestY = ground - Phaser.Math.Linear(78, 56, cr) * s - bob;
-    const headY = ground - Phaser.Math.Linear(100, 76, cr) * s - bob;
+    // Body centre sits above the ground line
+    const bodyRadius = Phaser.Math.Linear(16, 13, cr) * s;
+    const bodyCenterY = ground - Phaser.Math.Linear(52, 38, cr) * s - bob;
     const cx = pose.position.x;
-
-    const pelvis = vec(cx, pelvisY);
-    const chest = vec(cx, chestY);
-    const head = vec(cx + this.facing * 2 * s, headY);
+    const center = vec(cx, bodyCenterY);
+    // Head sits on top of the body circle
+    const headY = bodyCenterY - bodyRadius - 8 * s;
+    const head = vec(cx + this.facing * 1.5 * s, headY);
 
     // Aim
-    const aimAngle = Math.atan2(pose.aimTarget.y - chest.y, pose.aimTarget.x - chest.x);
+    const aimAngle = Math.atan2(pose.aimTarget.y - center.y, pose.aimTarget.x - center.x);
     const aim = vec(Math.cos(aimAngle), Math.sin(aimAngle));
     const perp = vec(-aim.y, aim.x);
 
-    // Joints
-    const hipL = vec(pelvis.x - 7 * s, pelvis.y);
-    const hipR = vec(pelvis.x + 7 * s, pelvis.y);
-    const shoulderLead = vec(chest.x + perp.x * 7 * s, chest.y + perp.y * 7 * s);
-    const shoulderBack = vec(chest.x - perp.x * 7 * s, chest.y - perp.y * 7 * s);
-    const handLead = vec(chest.x + aim.x * 34 * s, chest.y + aim.y * 34 * s);
-    const handBack = vec(chest.x + aim.x * 18 * s - perp.x * 8 * s, chest.y + aim.y * 18 * s - perp.y * 8 * s);
-    const muzzle = vec(chest.x + aim.x * 48 * s, chest.y + aim.y * 48 * s);
+    // Limb roots (body edge)
+    const shoulderLead = vec(center.x + perp.x * bodyRadius, center.y + perp.y * bodyRadius);
+    const shoulderBack = vec(center.x - perp.x * bodyRadius, center.y - perp.y * bodyRadius);
+    const hipL = vec(center.x - 6 * s, center.y + bodyRadius * 0.7);
+    const hipR = vec(center.x + 6 * s, center.y + bodyRadius * 0.7);
 
-    // Feet
+    // Limb endpoints
+    const handLead = vec(center.x + aim.x * 34 * s, center.y + aim.y * 34 * s);
+    const handBack = vec(
+      center.x + aim.x * 18 * s - perp.x * 8 * s,
+      center.y + aim.y * 18 * s - perp.y * 8 * s,
+    );
+    const muzzle = vec(center.x + aim.x * 48 * s, center.y + aim.y * 48 * s);
+
     const footL = this.footPos(cx, -1, ground, walkAmount, pose.crouching);
     const footR = this.footPos(cx, 1, ground, walkAmount, pose.crouching);
 
-    // IK
-    const legLen1 = Phaser.Math.Linear(28, 22, cr) * s;
-    const legLen2 = Phaser.Math.Linear(28, 22, cr) * s;
-    const legL = solveTwoBone(hipL, footL, legLen1, legLen2, -this.facing);
-    const legR = solveTwoBone(hipR, footR, legLen1, legLen2, -this.facing);
+    // IK for arms (kept for correct bend)
     const armLead = solveTwoBone(shoulderLead, handLead, 18 * s, 17 * s, -this.facing);
     const armBack = solveTwoBone(shoulderBack, handBack, 17 * s, 16 * s, this.facing);
-
-    const healthRatio = (pose.health ?? 100) / Math.max(1, pose.maxHealth ?? 100);
 
     g.clear();
 
     // --- DRAW ORDER (back to front) ---
 
-    // 1. Nameplate + health bar (topmost layer visually but drawn first for z)
-    this.drawNameplate(g, head.x, head.y - 24 * s, s, pose.health ?? 100, pose.maxHealth ?? 100);
+    // 1. Nameplate (drawn first — always floats above due to text object z-order)
+    this.drawNameplate(g, head.x, head.y - 14 * s, s, pose.health ?? 100, pose.maxHealth ?? 100);
 
-    // 2. Back leg
-    this.drawThickLimb(g, hipR, legR, 7 * s, 5 * s);
-    this.drawBoot(g, footR, s);
+    // 2. Back leg (stick)
+    this.drawStickLimb(g, hipR, footR);
 
-    // 3. Back arm
-    this.drawThickLimb(g, shoulderBack, armBack, 6 * s, 4 * s);
+    // 3. Back arm (stick)
+    this.drawStickLimb(g, shoulderBack, armBack.end);
 
-    // 4. Torso (filled polygon - the character's MASS)
-    this.drawTorso(g, pelvis, chest, s);
+    // 4. Body circle
+    this.drawBody(g, center, bodyRadius, s);
 
-    // 5. Spine energy lines
-    this.drawSpineGlow(g, pelvis, chest, s, healthRatio);
+    // 5. Front leg (stick)
+    this.drawStickLimb(g, hipL, footL);
 
-    // 6. Front leg
-    this.drawThickLimb(g, hipL, legL, 8 * s, 6 * s);
-    this.drawBoot(g, footL, s);
-
-    // 7. Arm cannon / weapon
+    // 6. Arm cannon / weapon (unchanged attachment point)
     this.drawArmCannon(g, handLead, muzzle, aim, s);
 
-    // 8. Front arm
-    this.drawThickLimb(g, shoulderLead, armLead, 7 * s, 5 * s);
+    // 7. Front arm (stick)
+    this.drawStickLimb(g, shoulderLead, armLead.end);
 
-    // 9. Shoulder armor
-    this.drawShoulderArmor(g, shoulderLead, s);
-
-    // 10. Head + hood + visor
-    this.drawHead(g, head, s, healthRatio);
+    // 8. Head circle + dot eyes
+    this.drawHead(g, head, s);
   }
 
-  // --- TORSO: Filled armored body ---
-  private drawTorso(g: Phaser.GameObjects.Graphics, pelvis: Vec2, chest: Vec2, s: number) {
-    const w1 = 14 * s; // chest width
-    const w2 = 10 * s; // pelvis width
+  // --- BODY: Single filled circle + thin shading lines ---
+  private drawBody(g: Phaser.GameObjects.Graphics, center: Vec2, r: number, s: number) {
+    // Dark outline ring
+    g.fillStyle(DARK, 1);
+    g.fillCircle(center.x, center.y, r + 1.5 * s);
+
+    // Main colour fill
+    g.fillStyle(this.color, 1);
+    g.fillCircle(center.x, center.y, r);
+
+    // 3 thin vertical white shading lines (form hint, ROUNDS-style)
+    const lineAlpha = 0.18;
+    const lineH = r * 1.4;
+    const lineTop = center.y - lineH / 2;
+    g.fillStyle(WHITE, lineAlpha);
+    // Left stripe
+    g.fillRect(center.x - r * 0.45, lineTop, Math.max(1, 1.5 * s), lineH);
+    // Centre stripe
+    g.fillRect(center.x - Math.max(0.5, 0.5 * s), lineTop, Math.max(1, 1.5 * s), lineH);
+    // Right stripe
+    g.fillRect(center.x + r * 0.3, lineTop, Math.max(1, 1.5 * s), lineH);
+  }
+
+  // --- HEAD: Small circle + 2 dot eyes ---
+  private drawHead(g: Phaser.GameObjects.Graphics, head: Vec2, s: number) {
+    const r = 7 * s;
+    const f = this.facing;
 
     // Dark outline
     g.fillStyle(DARK, 1);
-    g.beginPath();
-    g.moveTo(chest.x - w1 / 2 - 1, chest.y - 2 * s);
-    g.lineTo(chest.x + w1 / 2 + 1, chest.y - 2 * s);
-    g.lineTo(pelvis.x + w2 / 2 + 1, pelvis.y + 2 * s);
-    g.lineTo(pelvis.x - w2 / 2 - 1, pelvis.y + 2 * s);
-    g.closePath();
-    g.fillPath();
+    g.fillCircle(head.x, head.y, r + 1.5 * s);
 
-    // Main body fill
+    // Head fill (player colour, slightly darker)
     g.fillStyle(this.colorDark, 1);
-    g.beginPath();
-    g.moveTo(chest.x - w1 / 2, chest.y);
-    g.lineTo(chest.x + w1 / 2, chest.y);
-    g.lineTo(pelvis.x + w2 / 2, pelvis.y);
-    g.lineTo(pelvis.x - w2 / 2, pelvis.y);
-    g.closePath();
-    g.fillPath();
+    g.fillCircle(head.x, head.y, r);
 
-    // Chest plate highlight
-    g.fillStyle(this.color, 0.8);
-    g.beginPath();
-    g.moveTo(chest.x - w1 * 0.35, chest.y + 2 * s);
-    g.lineTo(chest.x + w1 * 0.35, chest.y + 2 * s);
-    g.lineTo(pelvis.x + w2 * 0.25, pelvis.y - 4 * s);
-    g.lineTo(pelvis.x - w2 * 0.25, pelvis.y - 4 * s);
-    g.closePath();
-    g.fillPath();
+    // 2 dot eyes — offset toward facing direction
+    const eyeOffsetX = f * 2.5 * s;
+    const eyeOffsetY = -0.5 * s;
+    const eyeSpacing = 2.8 * s;
+    const eyeR = Math.max(1, 1.5 * s);
 
-    // Belt line
-    g.fillStyle(DARK, 0.9);
-    g.fillRect(pelvis.x - w2 / 2 + 1, pelvis.y - 3 * s, w2 - 2, 4 * s);
+    g.fillStyle(WHITE, 1);
+    g.fillCircle(head.x + eyeOffsetX - eyeSpacing, head.y + eyeOffsetY, eyeR);
+    g.fillCircle(head.x + eyeOffsetX + eyeSpacing, head.y + eyeOffsetY, eyeR);
   }
 
-  // --- SPINE GLOW: Energy filaments showing health ---
-  private drawSpineGlow(g: Phaser.GameObjects.Graphics, pelvis: Vec2, chest: Vec2, s: number, healthRatio: number) {
-    const alpha = 0.3 + 0.6 * healthRatio;
-    const color = healthRatio < 0.25 ? 0xfb7185 : ACCENT;
-
-    g.lineStyle(2 * s, color, alpha);
+  // --- STICK LIMB: Single thin line (3px) ---
+  private drawStickLimb(g: Phaser.GameObjects.Graphics, root: Vec2, end: Vec2) {
+    // Dark shadow stroke
+    g.lineStyle(4, DARK, 0.8);
     g.beginPath();
-    g.moveTo(pelvis.x, pelvis.y - 2 * s);
-    g.lineTo(chest.x, chest.y + 2 * s);
+    g.moveTo(root.x, root.y);
+    g.lineTo(end.x, end.y);
     g.strokePath();
 
-    // Centre glow dot
-    const midY = (pelvis.y + chest.y) / 2;
-    g.fillStyle(color, alpha * 0.6);
-    g.fillCircle(pelvis.x, midY, 3 * s);
-  }
-
-  // --- HEAD: Hood + helmet + visor ---
-  private drawHead(g: Phaser.GameObjects.Graphics, head: Vec2, s: number, healthRatio: number) {
-    const f = this.facing;
-
-    // Hood shadow (larger dark shape behind head)
-    g.fillStyle(DARK, 1);
+    // Player colour stroke
+    g.lineStyle(3, this.color, 1);
     g.beginPath();
-    g.moveTo(head.x - 11 * s, head.y + 6 * s);
-    g.lineTo(head.x + f * 2 * s - 9 * s, head.y - 14 * s);
-    g.lineTo(head.x + f * 2 * s + 9 * s, head.y - 14 * s);
-    g.lineTo(head.x + 11 * s, head.y + 6 * s);
-    g.closePath();
-    g.fillPath();
-
-    // Hood main (player colored)
-    g.fillStyle(this.colorDark, 1);
-    g.beginPath();
-    g.moveTo(head.x - 9 * s, head.y + 4 * s);
-    g.lineTo(head.x + f * 2 * s - 7 * s, head.y - 12 * s);
-    g.lineTo(head.x + f * 2 * s + 7 * s, head.y - 12 * s);
-    g.lineTo(head.x + 9 * s, head.y + 4 * s);
-    g.closePath();
-    g.fillPath();
-
-    // Face plate (darker inset)
-    g.fillStyle(DARK2, 0.9);
-    g.fillRoundedRect(
-      head.x + f * 2 * s - 6 * s,
-      head.y - 6 * s,
-      12 * s,
-      9 * s,
-      2 * s,
-    );
-
-    // VISOR SLIT - the signature glowing eye line
-    const visorColor = healthRatio < 0.25 ? 0xfb7185 : ACCENT;
-    const visorAlpha = 0.7 + 0.3 * Math.sin(this.stepPhase * 2);
-
-    // Outer glow
-    g.fillStyle(visorColor, visorAlpha * 0.35);
-    g.fillRoundedRect(
-      head.x + f * 3 * s - 7 * s,
-      head.y - 3 * s,
-      14 * s,
-      4 * s,
-      2 * s,
-    );
-
-    // Core slit
-    g.fillStyle(visorColor, visorAlpha);
-    g.fillRect(
-      head.x + f * 3 * s - 5.5 * s,
-      head.y - 2 * s,
-      11 * s,
-      2.5 * s,
-    );
-
-    // Inner bright spot (represents eye direction)
-    g.fillStyle(WHITE, visorAlpha * 0.8);
-    g.fillRect(
-      head.x + f * 5 * s - 2 * s,
-      head.y - 1.5 * s,
-      4 * s,
-      1.5 * s,
-    );
+    g.moveTo(root.x, root.y);
+    g.lineTo(end.x, end.y);
+    g.strokePath();
   }
 
-  // --- SHOULDER ARMOR ---
-  private drawShoulderArmor(g: Phaser.GameObjects.Graphics, shoulder: Vec2, s: number) {
-    // Armored pauldron
-    g.fillStyle(DARK, 1);
-    g.fillCircle(shoulder.x, shoulder.y, 6 * s);
-    g.fillStyle(this.color, 0.9);
-    g.fillCircle(shoulder.x, shoulder.y, 4.5 * s);
-
-    // Crystal accent on shoulder
-    g.fillStyle(ACCENT, 0.7);
-    g.fillCircle(shoulder.x, shoulder.y, 2 * s);
-  }
-
-  // --- ARM CANNON: Crystal-tech weapon ---
-  private drawArmCannon(g: Phaser.GameObjects.Graphics, hand: Vec2, muzzle: Vec2, _aim: Vec2, s: number) {
+  // --- ARM CANNON: Crystal-tech weapon (unchanged) ---
+  private drawArmCannon(
+    g: Phaser.GameObjects.Graphics,
+    hand: Vec2,
+    muzzle: Vec2,
+    _aim: Vec2,
+    s: number,
+  ) {
     const dx = muzzle.x - hand.x;
     const dy = muzzle.y - hand.y;
     const len = Math.hypot(dx, dy) || 1;
@@ -347,8 +265,8 @@ export class ProceduralPlayerRig {
     g.fillStyle(this.colorDark, 1);
     g.beginPath();
     g.moveTo(hand.x + px * (barrelW - 1.5 * s), hand.y + py * (barrelW - 1.5 * s));
-    g.lineTo(muzzle.x + px * (barrelW * 0.5), muzzle.y + py * (barrelW * 0.5));
-    g.lineTo(muzzle.x - px * (barrelW * 0.5), muzzle.y - py * (barrelW * 0.5));
+    g.lineTo(muzzle.x + px * barrelW * 0.5, muzzle.y + py * barrelW * 0.5);
+    g.lineTo(muzzle.x - px * barrelW * 0.5, muzzle.y - py * barrelW * 0.5);
     g.lineTo(hand.x - px * (barrelW - 1.5 * s), hand.y - py * (barrelW - 1.5 * s));
     g.closePath();
     g.fillPath();
@@ -377,79 +295,27 @@ export class ProceduralPlayerRig {
     g.fillCircle(muzzle.x, muzzle.y, muzzleRadius * 0.6);
   }
 
-  // --- THICK LIMB: Filled polygon instead of line ---
-  private drawThickLimb(g: Phaser.GameObjects.Graphics, root: Vec2, solve: LimbSolve, outerW: number, innerW: number) {
-    // Dark outline limb
-    g.lineStyle(outerW + 2, DARK, 1);
-    g.beginPath();
-    g.moveTo(root.x, root.y);
-    g.lineTo(solve.joint.x, solve.joint.y);
-    g.lineTo(solve.end.x, solve.end.y);
-    g.strokePath();
-
-    // Colored limb fill
-    g.lineStyle(outerW, this.colorDark, 1);
-    g.beginPath();
-    g.moveTo(root.x, root.y);
-    g.lineTo(solve.joint.x, solve.joint.y);
-    g.lineTo(solve.end.x, solve.end.y);
-    g.strokePath();
-
-    // Inner highlight
-    g.lineStyle(innerW * 0.5, this.color, 0.5);
-    g.beginPath();
-    g.moveTo(root.x, root.y);
-    g.lineTo(solve.joint.x, solve.joint.y);
-    g.strokePath();
-
-    // Joint circle
-    g.fillStyle(DARK, 1);
-    g.fillCircle(solve.joint.x, solve.joint.y, outerW * 0.45);
-    g.fillStyle(this.colorDark, 0.9);
-    g.fillCircle(solve.joint.x, solve.joint.y, outerW * 0.3);
-  }
-
-  // --- BOOT: Heavy armored feet ---
-  private drawBoot(g: Phaser.GameObjects.Graphics, foot: Vec2, s: number) {
-    const f = this.facing;
-    const bw = 10 * s;
-    const bh = 6 * s;
-
-    // Boot sole (dark)
-    g.fillStyle(DARK, 1);
-    g.fillRoundedRect(foot.x - bw * 0.4 + f * 2 * s, foot.y - bh * 0.3, bw, bh, 2 * s);
-
-    // Boot upper
-    g.fillStyle(this.colorDark, 1);
-    g.fillRoundedRect(foot.x - bw * 0.35 + f * 2 * s, foot.y - bh, bw * 0.85, bh * 0.8, 2 * s);
-
-    // Boot accent stripe
-    g.fillStyle(this.color, 0.6);
-    g.fillRect(foot.x - bw * 0.2 + f * 2 * s, foot.y - bh * 0.6, bw * 0.5, 2 * s);
-  }
-
-  // --- NAMEPLATE ---
-  private drawNameplate(g: Phaser.GameObjects.Graphics, x: number, y: number, s: number, health: number, maxHealth: number) {
-    const healthText = `${Math.ceil(Math.max(0, health))}/${Math.max(1, Math.ceil(maxHealth))}`;
-    const nameWidth = Math.max(52, this.name.length * 6.5, healthText.length * 6.5) * s;
-    const barWidth = nameWidth - 6 * s;
+  // --- NAMEPLATE (plate-less) ---
+  // No background rect. Name in textHi. Thin 2px hpLime underline as HP bar.
+  private drawNameplate(
+    g: Phaser.GameObjects.Graphics,
+    x: number,
+    y: number,
+    s: number,
+    health: number,
+    maxHealth: number,
+  ) {
+    const nameWidth = Math.max(52, this.name.length * 6.5) * s;
     const healthRatio = Phaser.Math.Clamp(health / Math.max(1, maxHealth), 0, 1);
 
-    // Background panel
-    g.fillStyle(DARK, 0.75);
-    g.fillRoundedRect(x - nameWidth / 2, y - 22 * s, nameWidth, 20 * s, 3 * s);
+    // Name text — no background, no health suffix
+    this.nameText.setText(this.name);
+    this.nameText.setPosition(x, y - 6 * s);
 
-    // Health bar backing
-    g.fillStyle(HEALTH_BACKING, 1);
-    g.fillRect(x - barWidth / 2, y - 3 * s, barWidth, 4 * s);
-
-    // Health bar fill
-    g.fillStyle(HEALTH_GOOD, 1);
-    g.fillRect(x - barWidth / 2, y - 3 * s, barWidth * healthRatio, 4 * s);
-
-    // Name text
-    this.nameText.setText(`${this.name} ${healthText}`);
-    this.nameText.setPosition(x, y - 5 * s);
+    // 2px lime HP underline directly under name text
+    const lineY = y - 4 * s;
+    g.fillStyle(PALETTE.hpLime, 1);
+    g.fillRect(x - nameWidth / 2, lineY, nameWidth * healthRatio, 2);
   }
 
   // --- FOOT POSITION ---
@@ -465,7 +331,13 @@ export class ProceduralPlayerRig {
 
 // --- Utility ---
 
-function solveTwoBone(root: Vec2, target: Vec2, upper: number, lower: number, bend: number): LimbSolve {
+function solveTwoBone(
+  root: Vec2,
+  target: Vec2,
+  upper: number,
+  lower: number,
+  bend: number,
+): LimbSolve {
   const dx = target.x - root.x;
   const dy = target.y - root.y;
   const dist = Phaser.Math.Clamp(Math.hypot(dx, dy), 0.001, upper + lower - 0.001);

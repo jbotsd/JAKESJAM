@@ -6,18 +6,23 @@
 //
 // Layout (Crystal Cyan palette, anchored to viewport via setScrollFactor(0)):
 //
-//   ┌─ top-left panel ─────────────────────────────────────────────────────┐
-//   │  [HP bar 200px]  HP nnn/max                                          │
-//   │  [SH bar 160px]  SH nnn/max      (hidden when no shield)             │
-//   │  [JET bar 120px] JET nn%         (hidden when no jetpack)            │
-//   │  [buff strip - rounded icon chips per active buff/debuff]            │
-//   │  [cards line - tiny pill chips]                                       │
-//   └──────────────────────────────────────────────────────────────────────┘
+//   ┌─ top-left (plate-less) ──────────────────────────────────────────────────┐
+//   │  [HP bar 200px]  HP nnn/max                                              │
+//   │  [SH bar 160px]  SH nnn/max      (hidden when no shield)                 │
+//   │  [JET bar 120px] JET nn%         (hidden when no jetpack)                │
+//   │  [• • • • • •]  dot-row ability charge                                   │
+//   │  [buff strip - outline chips per active buff/debuff]                     │
+//   └──────────────────────────────────────────────────────────────────────────┘
 //
-//   ┌─ top-center ──────────────────────────────────────────────────────────┐
-//   │  mm:ss (big timer, Consolas)                                           │
-//   │  YOU 2   THEM 1 (score row, Inter)                                     │
-//   └───────────────────────────────────────────────────────────────────────┘
+//   ┌─ top-right ───────────────────────────────────────────────────────────────┐
+//   │  [AB][CD]  2×N build-summary pill grid                                   │
+//   │  [EF][GH]                                                                │
+//   └───────────────────────────────────────────────────────────────────────────┘
+//
+//   ┌─ top-center ──────────────────────────────────────────────────────────────┐
+//   │  mm:ss (big timer, Consolas)                                               │
+//   │  YOU 2   THEM 1 (score row, Inter)                                         │
+//   └───────────────────────────────────────────────────────────────────────────┘
 //
 // A low-health vignette (full-viewport rectangle, alpha-pulsed via tween)
 // kicks in below 30 % HP.
@@ -25,6 +30,8 @@
 // All Phaser objects are created on the scene passed to the constructor.
 
 import Phaser from "phaser";
+import { PALETTE } from "./palette.js";
+import { crystalRoundsCards } from "../../sim/data/cards.js";
 
 export type HudVitals = {
   health: number;
@@ -41,6 +48,10 @@ export type HudVitals = {
    * cards are visible during the draft overlay. Kept for type compat.
    */
   cardNames?: string[];
+  /** 0-1 ability charge fraction — drives the dot-row ammo display. */
+  abilityCharge?: number;
+  /** Card ids in pick order — drives the build-summary pill grid. */
+  cardIds?: string[];
   isDead: boolean;
 };
 
@@ -71,25 +82,41 @@ const BAR_JET_W = 120;
 const BAR_JET_H = 7;
 const LINE_H = 20;
 
-// Palette — Crystal Cyan
+// Palette — Crystal Cyan (bars)
 const C_TRACK = 0x111827;
 const C_HP_GOOD = 0xb8f05a;
 const C_HP_WARN = 0xfde68a;
 const C_HP_CRIT = 0xfb7185;
 const C_SHIELD = 0x93c5fd;
 const C_JET = 0x67e8f9;
-const C_PANEL_BG = 0x0f1a2e;
-const C_PANEL_STROKE = 0x1f3a5f;
 const C_VIGNETTE = 0xfb7185;
 
+// Chip layout (chip strip still uses a wrap boundary)
 const PANEL_W = 244;
 const PANEL_PAD = 8;
 
+// Rarity stroke colours for build pills
+const RARITY_COLORS: Record<string, number> = {
+  common: 0x9ca3af,
+  uncommon: PALETTE.textMid,
+  rare: 0x60a5fa,
+  legendary: 0xfbbf24,
+  cursed: PALETTE.hpDanger,
+};
+
+// Dot-row constants
+const DOT_COUNT = 6;
+const DOT_RADIUS = 4;
+const DOT_GAP = 6;
+
+// Build-pill grid constants
+const PILL_W = 36;
+const PILL_H = 20;
+const PILL_GAP = 5;
+const PILL_ROWS = 2;
+
 export class HudSystem {
   private readonly scene: Phaser.Scene;
-
-  // Panel background
-  private panelBg!: Phaser.GameObjects.Graphics;
 
   // Vitals graphics (bars drawn each frame)
   private vitalGraphics!: Phaser.GameObjects.Graphics;
@@ -102,6 +129,14 @@ export class HudSystem {
   private chipTexts: Phaser.GameObjects.Text[] = [];
   // Cache so we don't re-call setColor every frame (string allocation).
   private hpLabelColorCache = 0;
+
+  // Dot-row ability charge
+  private dotArcs: Phaser.GameObjects.Arc[] = [];
+
+  // Build-pill grid (top-right)
+  private pillGraphics!: Phaser.GameObjects.Graphics;
+  private pillTexts: Phaser.GameObjects.Text[] = [];
+  private lastCardIdsKey = "";
 
   // Top-center elements
   private timerText!: Phaser.GameObjects.Text;
@@ -134,7 +169,6 @@ export class HudSystem {
 
   destroy(): void {
     this.scene.scale.off("resize", this.onResize, this);
-    this.panelBg.destroy();
     this.vitalGraphics.destroy();
     this.hpLabel.destroy();
     this.shLabel.destroy();
@@ -142,6 +176,11 @@ export class HudSystem {
     this.chipGraphics.destroy();
     for (const t of this.chipTexts) t.destroy();
     this.chipTexts = [];
+    for (const arc of this.dotArcs) arc.destroy();
+    this.dotArcs = [];
+    this.pillGraphics.destroy();
+    for (const t of this.pillTexts) t.destroy();
+    this.pillTexts = [];
     this.timerText.destroy();
     this.scoreText.destroy();
     this.vignette.destroy();
@@ -154,18 +193,13 @@ export class HudSystem {
     const s = this.scene;
     const depth = 900;
 
-    // Full-screen vignette (behind HUD panel)
+    // Full-screen vignette (behind HUD elements)
     this.vignette = s.add
       .rectangle(0, 0, s.scale.width, s.scale.height, C_VIGNETTE, 0)
       .setOrigin(0, 0)
       .setScrollFactor(0)
       .setDepth(depth - 1)
       .setBlendMode(Phaser.BlendModes.MULTIPLY);
-
-    // Panel background — frosted glass rect
-    this.panelBg = s.add.graphics();
-    this.panelBg.setScrollFactor(0).setDepth(depth);
-    this.drawPanel();
 
     // Vital bars (redrawn each frame)
     this.vitalGraphics = s.add.graphics();
@@ -193,8 +227,7 @@ export class HudSystem {
       .setScrollFactor(0)
       .setDepth(depth + 2);
 
-    // Chip strip — real rounded Graphics chips (color-coded) with their
-    // own label Text pool that grows on demand.
+    // Chip strip — outline-only chips (plate-less)
     this.chipGraphics = s.add.graphics();
     this.chipGraphics.setScrollFactor(0).setDepth(depth + 1);
 
@@ -226,18 +259,30 @@ export class HudSystem {
       .setScrollFactor(0)
       .setDepth(depth + 2);
 
-    s.scale.on("resize", this.onResize, this);
-  }
+    // Dot-row ammo arcs — created once, recolored each frame
+    const dotY = PAD_TOP + LINE_H * 3 - 2;
+    for (let i = 0; i < DOT_COUNT; i++) {
+      const arc = s.add
+        .arc(
+          PAD_LEFT + DOT_RADIUS + i * (DOT_RADIUS * 2 + DOT_GAP),
+          dotY,
+          DOT_RADIUS,
+          0,
+          360,
+          false,
+          PALETTE.textDim,
+          1,
+        )
+        .setScrollFactor(0)
+        .setDepth(depth + 2);
+      this.dotArcs.push(arc);
+    }
 
-  private drawPanel(): void {
-    const g = this.panelBg;
-    g.clear();
-    // Estimate panel height based on max content
-    const panelH = 94;
-    g.fillStyle(C_PANEL_BG, 0.78);
-    g.fillRoundedRect(PAD_LEFT - PANEL_PAD, PAD_TOP - PANEL_PAD, PANEL_W, panelH, 8);
-    g.lineStyle(1, C_PANEL_STROKE, 0.9);
-    g.strokeRoundedRect(PAD_LEFT - PANEL_PAD, PAD_TOP - PANEL_PAD, PANEL_W, panelH, 8);
+    // Build-pill graphics (redrawn only when card list changes)
+    this.pillGraphics = s.add.graphics();
+    this.pillGraphics.setScrollFactor(0).setDepth(depth + 1);
+
+    s.scale.on("resize", this.onResize, this);
   }
 
   private onResize(): void {
@@ -246,6 +291,8 @@ export class HudSystem {
     this.timerText.setX(w / 2);
     this.scoreText.setX(w / 2);
     this.vignette.setSize(w, h);
+    // Rebuild pills so they stay anchored to top-right
+    this.lastCardIdsKey = "";
   }
 
   // ─── Vitals ───────────────────────────────────────────────────────────────
@@ -259,6 +306,7 @@ export class HudSystem {
       this.shLabel.setVisible(false);
       this.jetLabel.setVisible(false);
       this.drawChips([]);
+      this.updateDots(0);
       return;
     }
 
@@ -293,27 +341,33 @@ export class HudSystem {
       this.jetLabel.setVisible(false);
     }
 
-    // ── Chip strip (real Graphics chips, not concatenated text) ─────────────
+    // ── Chip strip (outline-only, plate-less) ────────────────────────────────
     this.drawChips(v.chips);
+
+    // ── Dot-row ability charge ───────────────────────────────────────────────
+    this.updateDots(v.abilityCharge ?? 0);
+
+    // ── Build-pill grid (only rebuilds when card list changes) ───────────────
+    this.updateBuildPills(v.cardIds ?? []);
   }
 
-  // ─── Chip rendering ───────────────────────────────────────────────────────
+  // ─── Chip rendering (plate-less: outline + text only) ────────────────────
 
   private drawChips(chips: HudChip[]): void {
     const g = this.chipGraphics;
     g.clear();
 
-    // Hide unused pooled labels
+    // Grow the text pool on demand
     while (this.chipTexts.length < chips.length) {
       const t = this.scene.add
         .text(0, 0, "", {
           fontFamily: "Inter, Arial, sans-serif",
           fontSize: "10px",
           fontStyle: "900",
-          color: "#05080f",
+          color: "#f5f8f8",
         })
         .setScrollFactor(0)
-        .setDepth(this.panelBg.depth + 2)
+        .setDepth(902)
         .setOrigin(0, 0.5);
       this.chipTexts.push(t);
     }
@@ -322,7 +376,7 @@ export class HudSystem {
     }
 
     let cx = PAD_LEFT;
-    let cy = PAD_TOP + LINE_H * 3 + 2;
+    let cy = PAD_TOP + LINE_H * 3 + 16; // below dot row
     const chipH = 16;
     const chipPadX = 7;
     const gap = 4;
@@ -333,6 +387,8 @@ export class HudSystem {
       const label = `${chip.isDebuff ? "↓" : "↑"}${chip.label} ${chip.remainingSec.toFixed(1)}s`;
       const text = this.chipTexts[i]!;
       text.setText(label);
+      // Set chip text color to match the chip's own color
+      text.setColor(numToHex(chip.color));
       const textW = Math.ceil(text.width);
       const chipW = textW + chipPadX * 2;
       // Wrap to next row
@@ -340,14 +396,8 @@ export class HudSystem {
         cx = PAD_LEFT;
         cy += chipH + gap;
       }
-      // Body
-      g.fillStyle(chip.color, chip.isDebuff ? 0.78 : 0.92);
-      g.fillRoundedRect(cx, cy, chipW, chipH, chipH / 2);
-      // Subtle inner highlight strip
-      g.fillStyle(0xffffff, 0.18);
-      g.fillRoundedRect(cx, cy, chipW, Math.floor(chipH / 2), chipH / 2);
-      // Border
-      g.lineStyle(1, 0x05080f, chip.isDebuff ? 0.4 : 0.55);
+      // Plate-less: 1px colored outline only, no fill
+      g.lineStyle(1, chip.color, chip.isDebuff ? 0.6 : 0.85);
       g.strokeRoundedRect(cx, cy, chipW, chipH, chipH / 2);
 
       text.setPosition(cx + chipPadX, cy + chipH / 2);
@@ -399,6 +449,77 @@ export class HudSystem {
       this.vignetteTween?.stop();
       this.vignetteTween = undefined;
       this.vignette.setAlpha(0);
+    }
+  }
+
+  // ─── Dot-row ability charge ───────────────────────────────────────────────
+
+  private updateDots(charge: number): void {
+    const filledCount = Math.round(Phaser.Math.Clamp(charge, 0, 1) * DOT_COUNT);
+    for (let i = 0; i < this.dotArcs.length; i++) {
+      const arc = this.dotArcs[i]!;
+      const filled = i < filledCount;
+      arc.setFillStyle(filled ? PALETTE.textHi : PALETTE.textDim, filled ? 1 : 0.45);
+    }
+  }
+
+  // ─── Build-pill grid (top-right) ─────────────────────────────────────────
+
+  private updateBuildPills(cardIds: string[]): void {
+    const key = cardIds.join("|");
+    if (key === this.lastCardIdsKey) return;
+    this.lastCardIdsKey = key;
+
+    const g = this.pillGraphics;
+    g.clear();
+
+    // Hide stale text labels
+    for (const t of this.pillTexts) t.setVisible(false);
+
+    if (cardIds.length === 0) return;
+
+    const cols = Math.ceil(cardIds.length / PILL_ROWS);
+    const gridW = cols * PILL_W + Math.max(0, cols - 1) * PILL_GAP;
+    const startX = this.scene.scale.width - gridW - PAD_LEFT;
+    const startY = PAD_TOP;
+    const depth = 901;
+
+    for (let i = 0; i < cardIds.length; i++) {
+      const id = cardIds[i]!;
+      const card = crystalRoundsCards.find((c) => c.id === id);
+      const abbrev = card ? card.name.slice(0, 2).toUpperCase() : "??";
+      const rarity = card?.rarity ?? "common";
+      const strokeColor = RARITY_COLORS[rarity] ?? (RARITY_COLORS["common"] as number);
+
+      const col = i % cols;
+      const row = Math.floor(i / cols);
+      const px = startX + col * (PILL_W + PILL_GAP);
+      const py = startY + row * (PILL_H + PILL_GAP);
+
+      // Transparent fill, colored 1.5px stroke
+      g.lineStyle(1.5, strokeColor, 0.9);
+      g.fillStyle(0x000000, 0);
+      g.fillRoundedRect(px, py, PILL_W, PILL_H, 4);
+      g.strokeRoundedRect(px, py, PILL_W, PILL_H, 4);
+
+      // Grow text pool on demand
+      while (this.pillTexts.length <= i) {
+        const t = this.scene.add
+          .text(0, 0, "", {
+            fontFamily: "Inter, Arial, sans-serif",
+            fontSize: "9px",
+            fontStyle: "bold",
+            color: numToHex(PALETTE.textHi),
+          })
+          .setScrollFactor(0)
+          .setDepth(depth + 1)
+          .setOrigin(0.5, 0.5);
+        this.pillTexts.push(t);
+      }
+      const label = this.pillTexts[i]!;
+      label.setText(abbrev);
+      label.setPosition(px + PILL_W / 2, py + PILL_H / 2);
+      label.setVisible(true);
     }
   }
 

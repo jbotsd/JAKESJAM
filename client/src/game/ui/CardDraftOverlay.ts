@@ -175,14 +175,13 @@ export class CardDraftOverlay {
     const el = document.createElement("div");
     Object.assign(el.style, CARD_STYLE);
 
-    // Border + glow use the card's identity color (or the rarity color if the
-    // card hasn't authored one). Rarity badge ALWAYS uses the rarity color so
-    // a card with a per-card glow doesn't make its rarity look like a
-    // different tier (e.g. an orange uncommon used to read as "legendary").
+    // ROUNDS-style: fully transparent background, cyan bracket corners via
+    // CSS absolute-positioned L-divs. Rarity glow is a subtle box-shadow only.
     const rarityColor = colorForRarity(card.rarity);
-    const glow = card.visual?.glowColor ?? rarityColor;
-    el.style.borderColor = glow;
-    el.style.boxShadow = `0 0 24px ${withAlpha(glow, 0.45)}, inset 0 0 18px ${withAlpha(glow, 0.18)}`;
+    // No opaque background — plate-less design
+    el.style.background = "transparent";
+    el.style.border = "none";
+    el.style.boxShadow = `0 0 12px ${withAlpha(rarityColor, 0.3)}`;
 
     const rarity = document.createElement("div");
     rarity.textContent = card.rarity.toUpperCase();
@@ -205,15 +204,34 @@ export class CardDraftOverlay {
     flavor.textContent = card.flavorText ?? "";
     Object.assign(flavor.style, FLAVOR_STYLE);
 
-    el.append(rarity, name, buckets, description, flavor);
+    // Benefit lines (green)
+    const benefitEls: HTMLDivElement[] = (card.benefits ?? []).map(b => {
+      const div = document.createElement("div");
+      div.textContent = `+${formatStatLine(b)}`;
+      Object.assign(div.style, STAT_BENEFIT_STYLE);
+      return div;
+    });
+
+    // Penalty lines (coral)
+    const penaltyEls: HTMLDivElement[] = (card.penalties ?? []).map(p => {
+      const div = document.createElement("div");
+      div.textContent = `-${formatStatLine(p)}`;
+      Object.assign(div.style, STAT_PENALTY_STYLE);
+      return div;
+    });
+
+    el.append(rarity, name, buckets, description, ...benefitEls, ...penaltyEls, flavor);
+
+    // Add 4 L-shaped corner bracket divs (cyan, ROUNDS-style)
+    appendBracketCorners(el);
 
     el.addEventListener("mouseenter", () => {
-      el.style.transform = "translateY(-4px) scale(1.02)";
-      el.style.boxShadow = `0 0 32px ${withAlpha(glow, 0.65)}, inset 0 0 22px ${withAlpha(glow, 0.28)}`;
+      el.style.transform = "translateY(-20px) scale(1.10) rotate(3deg)";
+      el.style.boxShadow = `0 0 24px ${withAlpha("#5DCFD9", 0.55)}`;
     });
     el.addEventListener("mouseleave", () => {
-      el.style.transform = "translateY(0) scale(1)";
-      el.style.boxShadow = `0 0 24px ${withAlpha(glow, 0.45)}, inset 0 0 18px ${withAlpha(glow, 0.18)}`;
+      el.style.transform = "translateY(0) scale(1) rotate(0deg)";
+      el.style.boxShadow = `0 0 12px ${withAlpha(rarityColor, 0.3)}`;
     });
 
     return el;
@@ -305,16 +323,16 @@ const CARDS_CONTAINER_STYLE: Partial<CSSStyleDeclaration> = {
 };
 
 const CARD_STYLE: Partial<CSSStyleDeclaration> = {
+  position: "relative",
   width: "280px",
   minHeight: "380px",
   padding: "22px 20px",
-  borderRadius: "16px",
-  border: "2px solid #f0abfc",
-  background:
-    "linear-gradient(160deg, rgba(22, 26, 40, 0.94), rgba(11, 14, 22, 0.98))",
+  // Plate-less: transparent background, bracket corners handle the frame
+  background: "#0A1418",
+  border: "none",
   color: "#f7fbff",
   cursor: "pointer",
-  transition: "transform 140ms cubic-bezier(0.34,1.56,0.64,1), box-shadow 140ms ease",
+  transition: "transform 180ms cubic-bezier(0.34,1.56,0.64,1), box-shadow 180ms ease",
   display: "flex",
   flexDirection: "column",
   gap: "12px",
@@ -358,6 +376,59 @@ const FLAVOR_STYLE: Partial<CSSStyleDeclaration> = {
   lineHeight: "1.4",
 };
 
+const STAT_BENEFIT_STYLE: Partial<CSSStyleDeclaration> = {
+  fontSize: "13px",
+  fontWeight: "700",
+  color: "#7DE05A",
+  lineHeight: "1.4",
+};
+
+const STAT_PENALTY_STYLE: Partial<CSSStyleDeclaration> = {
+  fontSize: "13px",
+  fontWeight: "700",
+  color: "#E55A4A",
+  lineHeight: "1.4",
+};
+
+// Bracket corner dimensions
+const LEG = 14; // px per leg
+
+/**
+ * Appends 4 absolute-positioned L-shaped divs to produce ROUNDS-style corner
+ * brackets. The parent element must have `position: relative`.
+ */
+function appendBracketCorners(el: HTMLDivElement): void {
+  const corners: Array<{
+    top?: string; bottom?: string; left?: string; right?: string;
+    borderTop?: string; borderBottom?: string; borderLeft?: string; borderRight?: string;
+  }> = [
+    // Top-left
+    { top: "0", left: "0", borderTop: `3px solid #5DCFD9`, borderLeft: `3px solid #5DCFD9` },
+    // Top-right
+    { top: "0", right: "0", borderTop: `3px solid #5DCFD9`, borderRight: `3px solid #5DCFD9` },
+    // Bottom-left
+    { bottom: "0", left: "0", borderBottom: `3px solid #5DCFD9`, borderLeft: `3px solid #5DCFD9` },
+    // Bottom-right
+    { bottom: "0", right: "0", borderBottom: `3px solid #5DCFD9`, borderRight: `3px solid #5DCFD9` },
+  ];
+  for (const corner of corners) {
+    const div = document.createElement("div");
+    div.style.position = "absolute";
+    div.style.width = `${LEG}px`;
+    div.style.height = `${LEG}px`;
+    div.style.pointerEvents = "none";
+    if (corner.top !== undefined) div.style.top = corner.top;
+    if (corner.bottom !== undefined) div.style.bottom = corner.bottom;
+    if (corner.left !== undefined) div.style.left = corner.left;
+    if (corner.right !== undefined) div.style.right = corner.right;
+    if (corner.borderTop) div.style.borderTop = corner.borderTop;
+    if (corner.borderBottom) div.style.borderBottom = corner.borderBottom;
+    if (corner.borderLeft) div.style.borderLeft = corner.borderLeft;
+    if (corner.borderRight) div.style.borderRight = corner.borderRight;
+    el.appendChild(div);
+  }
+}
+
 /**
  * Standard MMO/loot rarity convention:
  *   common = gray, uncommon = green, rare = purple, legendary = orange,
@@ -378,6 +449,15 @@ function colorForRarity(rarity: CardDefinition["rarity"]): string {
     default:
       return "#9aa5b1"; // gray (common)
   }
+}
+
+function formatStatLine(stat: { multiplier?: boolean; value: number; stat: string } | undefined): string {
+  if (!stat) return "";
+  if (stat.multiplier) {
+    const pct = Math.round((stat.value - 1) * 100);
+    return `${Math.abs(pct)}% ${stat.stat}`;
+  }
+  return `${Math.abs(stat.value)} ${stat.stat}`;
 }
 
 function withAlpha(hex: string, alpha: number): string {
