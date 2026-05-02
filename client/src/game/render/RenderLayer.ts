@@ -244,8 +244,13 @@ export class RenderLayer {
   }
 
   /** Generic explosion blast — stacked-additive bloom circles from ParticlePool.
-   *  Falls back to a simple single circle when the pool is unavailable (e.g. tests). */
-  spawnExplosionBlast(position: Vec2, radius: number): void {
+   *  Falls back to a simple single circle when the pool is unavailable (e.g. tests).
+   *
+   *  @param damage  Optional hit damage. When > 25, automatically also fires the
+   *                 big spike-overlay variant and uses heavier camera shake. */
+  spawnExplosionBlast(position: Vec2, radius: number, damage?: number): void {
+    const isBig = damage !== undefined && damage > 25;
+
     if (!this.pool) {
       // Fallback: original single-circle behaviour (keeps test assertions stable).
       const blast = this.scene.add.circle(position.x, position.y, 6, 0xffd166, 0.36);
@@ -258,10 +263,29 @@ export class RenderLayer {
         ease: "Sine.easeOut",
         onComplete: () => blast.destroy(),
       });
+      this.applyBlastShake(isBig);
       return;
     }
     this.spawnBloomLayers(position, radius, this.pool);
     this.spawnBlastSparks(position, this.pool);
+    if (isBig) {
+      this.spawnExplosionBlastBig(position, radius);
+    }
+    this.applyBlastShake(isBig);
+  }
+
+  /** Apply camera shake for a blast. Never stacks — skipped if a shake is
+   *  already running. Guards against test environments where cameras is absent. */
+  private applyBlastShake(big: boolean): void {
+    const cam = this.scene.cameras?.main;
+    if (!cam) return;
+    // shakeEffect.isRunning is the Phaser 4 RC API for checking in-flight shake.
+    if (cam.shakeEffect?.isRunning) return;
+    if (big) {
+      cam.shake(180, 0.012);
+    } else {
+      cam.shake(60, 0.004);
+    }
   }
 
   /** Big explosion blast — same bloom + a 16-spike radial star overlay.
@@ -354,14 +378,16 @@ export class RenderLayer {
   }
 
   private spawnBlastSparks(position: Vec2, pool: ParticlePool): void {
-    const count = 4 + Math.floor(Math.random() * 3); // 4–6
+    const count = 10 + Math.floor(Math.random() * 5); // 10–14
     for (let i = 0; i < count; i++) {
       const spark = pool.acquireSpark();
       if (!spark) break; // pool exhausted — silent skip
 
       const angle = Math.random() * Math.PI * 2;
       const dist = 8 + Math.random() * 18;
-      spark.setFillStyle(PALETTE.emberGold, 0.9);
+      // Alternate between emberGold and blastHalo for visual variety.
+      const sparkColor = i % 2 === 0 ? PALETTE.emberGold : PALETTE.blastHalo;
+      spark.setFillStyle(sparkColor, 0.9);
       spark.setPosition(position.x, position.y);
       spark.setAlpha(0.9);
       this.scene.tweens.add({

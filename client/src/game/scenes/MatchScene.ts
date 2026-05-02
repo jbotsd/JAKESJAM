@@ -2101,7 +2101,7 @@ export class MatchScene extends Phaser.Scene {
 
   private spawnExplosion(position: Vec2, radius: number, damage: number, element: ElementType) {
     this.audio?.play("explosion");
-    this.renderLayer.spawnExplosionBlast(position, radius);
+    this.renderLayer.spawnExplosionBlast(position, radius, damage);
     this.spawnPlatformBlastTint(position);
     this.applyAreaDamage(position, radius, damage, element);
   }
