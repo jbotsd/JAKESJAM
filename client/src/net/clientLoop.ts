@@ -19,6 +19,7 @@ import {
   PROTOCOL_VERSION,
   type ServerMessage,
 } from "./protocol.js";
+import { applyDelta } from "./snapshotDelta.js";
 import { InterpolationBuffer } from "./interpolationBuffer.js";
 import type { Transport, TransportState } from "./transport.js";
 import { WsTransport } from "./wsTransport.js";
@@ -163,6 +164,12 @@ export class ClientLoop {
   private readonly outstandingPings = new Set<number>();
   private readonly snapshotTimestamps: number[] = [];
   private lastPredictDeltaPx = 0;
+
+  // ---- Delta snapshot ring ----
+  /** Last N received WorldStates keyed by their tick. Used to resolve baseline
+   *  when a DeltaSnapshot arrives. Ring size matches server's BASELINE_RING_SIZE. */
+  private readonly snapshotRing = new Map<Tick, WorldState>();
+  private static readonly SNAPSHOT_RING_SIZE = 10;
 
   // ---- Local-player render smoothing state ----
   private readonly smoothing: SmoothingOptions;
@@ -503,10 +510,38 @@ export class ClientLoop {
   }
 
   private applySnapshot(message: import("./protocol.js").Snapshot): void {
+    // Resolve the authoritative state from the snapshot (full or delta).
+    let resolvedState: WorldState | null = null;
+
+    if (message.baseline === null) {
+      // FullSnapshot
+      resolvedState = message.state;
+    } else {
+      // DeltaSnapshot — look up the baseline in our ring
+      const baselineState = this.snapshotRing.get(message.baseline);
+      if (baselineState) {
+        resolvedState = applyDelta(baselineState, message.delta);
+      } else {
+        // Baseline evicted from ring. Signal the server to send a full snap
+        // by sending ack with lastSnapshotTick: 0. Discard this snapshot.
+        this.transport.send(
+          encodeMessage({ t: "ack", lastSnapshotTick: Tick(0) }),
+        );
+        return;
+      }
+    }
+
+    // Store in ring for future delta resolution
+    this.snapshotRing.set(message.tick, resolvedState);
+    if (this.snapshotRing.size > ClientLoop.SNAPSHOT_RING_SIZE) {
+      const oldest = this.snapshotRing.keys().next().value as Tick | undefined;
+      if (oldest !== undefined) this.snapshotRing.delete(oldest);
+    }
+
     // Predict-vs-auth delta is captured BEFORE we overwrite predicted state via
     // rewind+replay — this measures how far the local prediction had drifted.
     const priorPredicted = this.predictedState;
-    const incomingMe = message.state.players[this.playerId];
+    const incomingMe = resolvedState.players[this.playerId];
     if (priorPredicted) {
       const predictedMe = priorPredicted.players[this.playerId];
       if (predictedMe && incomingMe) {
@@ -516,7 +551,7 @@ export class ClientLoop {
       }
     }
 
-    this.authoritativeState = message.state;
+    this.authoritativeState = resolvedState;
     this.lastSnapshotTick = message.tick;
     this.snapshotTimestamps.push(performance.now());
 
@@ -552,7 +587,7 @@ export class ClientLoop {
 
     // Push remote players into their interpolation buffers.
     const serverTimeMs = message.tick * STEP_MS;
-    for (const [pid_, entity] of Object.entries(message.state.players)) {
+    for (const [pid_, entity] of Object.entries(resolvedState.players)) {
       const pid = pid_ as PlayerId;
       if (pid === this.playerId) continue;
       let buffer = this.remoteInterp.get(pid);

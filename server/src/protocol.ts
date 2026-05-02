@@ -4,6 +4,7 @@
 
 import { decode, encode } from "@msgpack/msgpack";
 import type { InputSeq, SimEvent, Tick, WorldState } from "@sim/types.ts";
+import type { DeltaPayload } from "./snapshotDelta.ts";
 
 export const PROTOCOL_VERSION = 1;
 
@@ -75,17 +76,36 @@ export type ServerHello = {
   allPlayers: PlayerLobbyInfo[];
 };
 
-export type Snapshot = {
+/**
+ * Full-state snapshot. Sent on first contact (baseline === null) or when the
+ * client's ack falls outside the server's baseline ring.
+ */
+export type FullSnapshot = {
   t: "snap";
   tick: Tick;
   lastProcessedInputSeq: Record<string, InputSeq>;
-  baseline: Tick | null;
-  // For the scaffold we ship full world state. deltaCodec replaces this
-  // with per-entity diffs once the sim is real. The shape on the wire is
-  // already the partial-encoded form so the codec is a drop-in later.
+  baseline: null;
   state: WorldState;
   events: SimEvent[];
 };
+
+/**
+ * Delta snapshot. The client must look up `baseline` tick in its local ring
+ * and call `applyDelta(baselineState, delta)` to reconstruct the full state.
+ * If the client has evicted that tick, it should send `ack { lastSnapshotTick: 0 }`
+ * to signal the server to drop back to a FullSnapshot.
+ */
+export type DeltaSnapshot = {
+  t: "snap";
+  tick: Tick;
+  lastProcessedInputSeq: Record<string, InputSeq>;
+  baseline: Tick; // non-null discriminates from FullSnapshot
+  delta: DeltaPayload;
+  events: SimEvent[];
+};
+
+/** Union of both snapshot variants. Discriminated by `baseline === null`. */
+export type Snapshot = FullSnapshot | DeltaSnapshot;
 
 export type Pong = {
   t: "pong";
