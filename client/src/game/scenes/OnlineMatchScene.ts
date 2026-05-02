@@ -236,6 +236,12 @@ export class OnlineMatchScene extends Phaser.Scene {
   // overlay every snapshot if the same event re-fires from the buffer.
   private lastCardOfferKey: string | null = null;
 
+  // ---- Kill-streak tracking (render-only, per combat-balance-ttk taste) ----
+  // Track which player ids were alive last frame so we can detect transitions.
+  private prevAlive = new Set<string>();
+  // Per-killer kill count in the current round for escalating callouts.
+  private killStreakCount = new Map<string, number>();
+
   constructor() {
     super(SceneKeys.OnlineMatch);
   }
@@ -601,6 +607,9 @@ export class OnlineMatchScene extends Phaser.Scene {
           // Drain all in-flight pool particles so round-restart can't tween
           // into a freed object. Per phaser4-game/SKILL.md "Pool drain on round-end".
           this.particlePool?.drainActive(this);
+          // Reset per-round kill streaks so the next round starts clean.
+          this.killStreakCount.clear();
+          this.prevAlive.clear();
           break;
         case "card-offered":
           if (event.playerId === this.localPlayerId) {
@@ -859,8 +868,21 @@ export class OnlineMatchScene extends Phaser.Scene {
   private renderWorld(state: WorldState, deltaMs: number, nowMs: number) {
     // Players — procedurally rigged puppets, matching the offline MatchScene.
     const seenPlayers = new Set<string>();
+    // Detect alive→dead transitions this frame for kill-streak callouts.
+    const newlyDead: string[] = [];
     for (const [pid, player] of Object.entries(state.players)) {
       seenPlayers.add(pid);
+      const wasAlive = this.prevAlive.has(pid);
+      const isAlive = player.alive && player.health > 0;
+      if (wasAlive && !isAlive) {
+        newlyDead.push(pid);
+      }
+      if (isAlive) {
+        this.prevAlive.add(pid);
+      } else {
+        this.prevAlive.delete(pid);
+      }
+
       let rig = this.playerRigs.get(pid);
       if (!rig) {
         rig = this.makePlayerRig(player, pid === this.localPlayerId);
@@ -868,6 +890,23 @@ export class OnlineMatchScene extends Phaser.Scene {
       }
       this.updatePlayerRig(rig, player, deltaMs);
     }
+
+    // Process kills detected this frame: emit escalating callout banners.
+    // We can't know the *killer* from the snapshot alone (no kill event in sim),
+    // so we attribute the streak to the local player if the last pending
+    // hit-confirmed was against this victim — a reasonable approximation.
+    for (const deadPid of newlyDead) {
+      const wasLocalKill = this.pendingSimEvents.some(
+        (e) => e.t === "hit-confirmed" && e.victimId === deadPid,
+      );
+      if (wasLocalKill) {
+        const prev = this.killStreakCount.get(this.localPlayerId) ?? 0;
+        const streak = prev + 1;
+        this.killStreakCount.set(this.localPlayerId, streak);
+        this.spawnKillCallout(state.players[PlayerId(deadPid)], streak);
+      }
+    }
+
     for (const [pid, rig] of this.playerRigs) {
       if (!seenPlayers.has(pid)) {
         rig.destroy();
@@ -880,6 +919,58 @@ export class OnlineMatchScene extends Phaser.Scene {
     this.renderFirePatches(state, nowMs);
     this.renderPickups(state, nowMs);
     this.renderSatellites(state);
+  }
+
+  /**
+   * Spawn an escalating kill callout banner near the victim's position.
+   * Single kill = plain "KILL", double = "DOUBLE KILL" (bigger), triple+ = "MULTI KILL" (biggest).
+   * Per combat-balance-ttk/SKILL.md taste section: Crysis-style escalating feedback.
+   */
+  private spawnKillCallout(victim: PlayerEntity | undefined, streak: number): void {
+    if (!victim) return;
+    const labels = ["KILL", "DOUBLE KILL", "TRIPLE KILL", "MULTI KILL"];
+    const label = labels[Math.min(streak - 1, labels.length - 1)]!;
+    const scale = 1 + (streak - 1) * 0.3;
+    const fontSize = `${Math.round(14 + (streak - 1) * 5)}px`;
+    const color = streak === 1 ? "#fff7d6" : streak === 2 ? "#ffd166" : "#fb7185";
+
+    const text = this.add
+      .text(victim.x, victim.y - 60, label, {
+        color,
+        fontFamily: '"PP Neue Machina", Inter, Arial, sans-serif',
+        fontSize,
+        fontStyle: "900",
+        stroke: "#05080f",
+        strokeThickness: 4,
+      })
+      .setOrigin(0.5, 1)
+      .setDepth(801)
+      .setScale(scale * 1.4);
+
+    // Overshoot pop in, then float up + fade.
+    this.tweens.add({
+      targets: text,
+      scaleX: scale,
+      scaleY: scale,
+      duration: 160,
+      ease: "Back.easeOut",
+      onComplete: () => {
+        this.tweens.add({
+          targets: text,
+          y: text.y - 50,
+          alpha: 0,
+          duration: 900,
+          ease: "Sine.easeOut",
+          delay: 200,
+          onComplete: () => text.destroy(),
+        });
+      },
+    });
+
+    // Extra camera kick for the killer on streak ≥ 2.
+    if (streak >= 2) {
+      this.safeShake(100, 0.008 + (streak - 2) * 0.003);
+    }
   }
 
   private renderProjectiles(state: WorldState) {
@@ -1165,6 +1256,8 @@ export class OnlineMatchScene extends Phaser.Scene {
     this.statsToggleKey = null;
     this.prevDestructibleHealth.clear();
     this.destructibleFlashUntilMs.clear();
+    this.killStreakCount.clear();
+    this.prevAlive.clear();
   }
 }
 
