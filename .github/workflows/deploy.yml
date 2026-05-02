@@ -68,10 +68,12 @@ jobs:
   # ──────────────────────────────────────────────────────────────────────
   deploy-client:
     name: Deploy client (Vercel)
-    # Sequential: client only deploys if server succeeded. Eliminates the
-    # "new client + old server" half-updated failure mode. Server typically
-    # finishes in ~30s so total wall-clock impact is minimal.
-    needs: [verify, deploy-server]
+    # Decoupled from deploy-server: when Fly is down (e.g. billing lapsed,
+    # platform incident, or the trial expired) we still want the static
+    # client build to ship. The client has CONVEX_URL_FALLBACK + a
+    # client-side reconnect path, so a stale-server scenario is degraded
+    # but not broken. Was previously `[verify, deploy-server]`.
+    needs: [verify]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
