@@ -107,7 +107,15 @@ export class LobbyController {
     }
     this.roomStatusMount = root.querySelector<HTMLElement>("[data-room-status]") ?? undefined;
 
-    this.nameInput.value = localStorage.getItem(PLAYER_NAME_KEY) ?? `Player ${this.playerId.slice(-4)}`;
+    // Per-playerId name slot so two tabs on one PC (each with its own
+    // sessionStorage playerId) don't collide on the shared global name —
+    // otherwise you get "Waiting on: zZDas, zZDas" in any 1v1 dev test.
+    // Default for a brand-new playerId is "Player <last4>" — already unique
+    // because the playerId itself is unique per tab.
+    const perPlayerNameKey = `${PLAYER_NAME_KEY}.${this.playerId}`;
+    this.nameInput.value =
+      localStorage.getItem(perPlayerNameKey) ??
+      `Player ${this.playerId.slice(-4)}`;
     this.colorInput.value = localStorage.getItem(PLAYER_COLOR_KEY) ?? this.colorInput.value;
     this.characterSelect.value = localStorage.getItem(PLAYER_CHARACTER_KEY) ?? DEFAULT_CHARACTER;
     this.restoreRoomCodeFromUrl();
@@ -171,7 +179,8 @@ export class LobbyController {
 
   private bindEvents() {
     this.nameInput.addEventListener("input", () => {
-      localStorage.setItem(PLAYER_NAME_KEY, this.playerName);
+      // Per-playerId so two tabs don't collide on the shared global key.
+      localStorage.setItem(`${PLAYER_NAME_KEY}.${this.playerId}`, this.playerName);
     });
     this.colorInput.addEventListener("input", () => {
       localStorage.setItem(PLAYER_COLOR_KEY, this.colorInput.value);
