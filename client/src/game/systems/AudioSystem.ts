@@ -39,26 +39,40 @@ export class GameAudioSystem {
       return;
     }
 
+    // Per game-feel-juice/SKILL.md Nijman rule #16: random pitch on every SFX.
+    // ±8% jitter (0.92–1.08). Opt-out only for tonal UI cues (card/pickup)
+    // which have intentional pitch relationships between their two tones.
+    const pitch = (): number => 0.92 + Math.random() * 0.16;
+
     if (sound === "shoot") {
-      this.playTone(520, 130, "square", 0.2, -340);
-      this.playNoise(38, 0.18, 1700);
+      const p = pitch();
+      this.playTone(520 * p, 130, "square", 0.2, -340);
+      this.playNoise(38, 0.18, 1700 * p);
     } else if (sound === "hit") {
-      this.playTone(260, 95, "triangle", 0.15, 220);
+      const p = pitch();
+      this.playTone(260 * p, 95, "triangle", 0.15, 220);
     } else if (sound === "jump") {
-      this.playTone(330, 120, "sine", 0.12, 260);
+      const p = pitch();
+      this.playTone(330 * p, 120, "sine", 0.12, 260);
     } else if (sound === "land") {
-      this.playNoise(70, 0.14, 420);
+      const p = pitch();
+      this.playNoise(70, 0.14, 420 * p);
     } else if (sound === "explosion") {
-      this.playNoise(180, 0.32, 240);
-      this.playTone(86, 180, "sawtooth", 0.18, -28);
+      const p = pitch();
+      this.playNoise(180, 0.32, 240 * p);
+      this.playTone(86 * p, 180, "sawtooth", 0.18, -28);
     } else if (sound === "fire") {
-      this.playNoise(140, 0.11, 980);
+      const p = pitch();
+      this.playNoise(140, 0.11, 980 * p);
     } else if (sound === "card") {
-      this.playTone(430, 70, "sine", 0.1, 420);
-      window.setTimeout(() => this.playTone(650, 90, "sine", 0.09, 240), 55);
+      // UI tones: use gentle jitter (±4%) so the two-note phrase stays musical.
+      const p = 0.96 + Math.random() * 0.08;
+      this.playTone(430 * p, 70, "sine", 0.1, 420);
+      window.setTimeout(() => this.playTone(650 * p, 90, "sine", 0.09, 240), 55);
     } else if (sound === "pickup") {
-      this.playTone(740, 55, "sine", 0.08, 260);
-      window.setTimeout(() => this.playTone(980, 75, "triangle", 0.07, 180), 42);
+      const p = 0.96 + Math.random() * 0.08;
+      this.playTone(740 * p, 55, "sine", 0.08, 260);
+      window.setTimeout(() => this.playTone(980 * p, 75, "triangle", 0.07, 180), 42);
     }
   }
 
