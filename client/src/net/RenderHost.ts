@@ -49,6 +49,7 @@ const EMPTY_STATS: NetStats = {
   lastPredictDeltaPx: 0,
   lastSnapshotTick: 0 as import("../sim/types.js").Tick,
   transportState: "closed",
+  slewMsAvg: 0,
 };
 
 export class RenderHost {

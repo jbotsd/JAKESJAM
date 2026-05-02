@@ -87,6 +87,13 @@ export type FullSnapshot = {
   baseline: null;
   state: WorldState;
   events: SimEvent[];
+  /**
+   * Server-driven tick slew hint for this recipient.
+   * +ve = client should slow down (inputs arriving early / client running fast).
+   * -ve = client should speed up (inputs arriving late / client running slow).
+   * Capped server-side to ±MAX_SLEW_MS_PER_TICK (1 ms). Omitted when 0.
+   */
+  tickAdjustMs?: number;
 };
 
 /**
@@ -102,6 +109,13 @@ export type DeltaSnapshot = {
   baseline: Tick; // non-null discriminates from FullSnapshot
   delta: DeltaPayload;
   events: SimEvent[];
+  /**
+   * Server-driven tick slew hint for this recipient.
+   * +ve = client should slow down (inputs arriving early / client running fast).
+   * -ve = client should speed up (inputs arriving late / client running slow).
+   * Capped server-side to ±MAX_SLEW_MS_PER_TICK (1 ms). Omitted when 0.
+   */
+  tickAdjustMs?: number;
 };
 
 /** Union of both snapshot variants. Discriminated by `baseline === null`. */

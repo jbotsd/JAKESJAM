@@ -116,6 +116,12 @@ export type NetStats = {
   lastSnapshotTick: Tick;
   /** Underlying transport state. */
   transportState: TransportState;
+  /**
+   * Rolling average of tickAdjustMs over the last 10 snapshots that carried
+   * the field. 0 until the first slew hint arrives. +ve = server is telling
+   * the client to slow down; -ve = speed up.
+   */
+  slewMsAvg: number;
 };
 
 export type ReconcileStats = {
@@ -185,6 +191,19 @@ export class ClientLoop {
   /** Most recent reconcile delta magnitude (px). Surfaced via getReconcileStats. */
   private lastReconcileDeltaPx = 0;
   private lastReconcileSnapped = false;
+
+  // ---- Server-driven tick slew ----
+  /**
+   * Accumulated budget of ms to inject into / drain from the accumulator.
+   * +ve budget means the server wants us to slow down: we REDUCE the
+   * accumulator by 1 ms each tick until the budget is drained, effectively
+   * stretching the time between sim steps.
+   * -ve budget means the server wants us to speed up: we ADD 1 ms per tick.
+   */
+  private slewMsBudget = 0;
+  /** Rolling window of the last 10 non-zero tickAdjustMs values for NetStats. */
+  private readonly slewMsHistory: number[] = [];
+  private static readonly SLEW_HISTORY_LIMIT = 10;
 
   // ---- Reconnect supervision ----
   private reconnectAttempt = 0;
@@ -380,6 +399,13 @@ export class ClientLoop {
       rttMs = sum / this.rttSamples.length;
     }
 
+    let slewMsAvg = 0;
+    if (this.slewMsHistory.length > 0) {
+      let slewSum = 0;
+      for (const v of this.slewMsHistory) slewSum += v;
+      slewMsAvg = slewSum / this.slewMsHistory.length;
+    }
+
     return {
       rttMs,
       snapRateHz: this.snapshotTimestamps.length,
@@ -387,6 +413,7 @@ export class ClientLoop {
       lastPredictDeltaPx: this.lastPredictDeltaPx,
       lastSnapshotTick: this.lastSnapshotTick,
       transportState: this.transport.state,
+      slewMsAvg,
     };
   }
 
@@ -437,6 +464,23 @@ export class ClientLoop {
     const now = performance.now();
     this.accumulator += now - this.lastTickAt;
     this.lastTickAt = now;
+
+    // Drain one ms of slew budget per tick call. This nudges the effective
+    // tick rate toward the server's desired lead without any discontinuity.
+    //
+    // Sign convention (matches server's intent):
+    //   slewMsBudget > 0 → server asked client to slow down.
+    //     We subtract 1 ms from the accumulator, making it harder to cross
+    //     the STEP_MS threshold → slightly fewer steps per wall-clock second.
+    //   slewMsBudget < 0 → server asked client to speed up.
+    //     We add 1 ms to the accumulator, making it easier to cross the
+    //     threshold → slightly more steps per wall-clock second.
+    if (Math.abs(this.slewMsBudget) >= 1) {
+      const drain = this.slewMsBudget > 0 ? -1 : 1;
+      this.accumulator += drain;  // drain > 0 when speeding up, < 0 when slowing
+      this.slewMsBudget += drain; // move budget toward zero by the same magnitude
+    }
+
     if (this.accumulator < STEP_MS) return;
 
     while (this.accumulator >= STEP_MS) {
@@ -554,6 +598,17 @@ export class ClientLoop {
     this.authoritativeState = resolvedState;
     this.lastSnapshotTick = message.tick;
     this.snapshotTimestamps.push(performance.now());
+
+    // Accumulate server-driven slew hint into the budget.
+    // The budget is drained 1 ms per tick() call (see tick()).
+    if (message.tickAdjustMs) {
+      this.slewMsBudget += message.tickAdjustMs;
+      // Record for NetStats rolling average.
+      this.slewMsHistory.push(message.tickAdjustMs);
+      while (this.slewMsHistory.length > ClientLoop.SLEW_HISTORY_LIMIT) {
+        this.slewMsHistory.shift();
+      }
+    }
 
     // Drop pending inputs the server has already processed.
     const ackedSeq = message.lastProcessedInputSeq[this.playerId] ?? 0;

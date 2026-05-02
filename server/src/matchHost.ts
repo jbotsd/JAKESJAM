@@ -18,6 +18,7 @@ import type {
   WorldState,
 } from "@sim/types.ts";
 import { LagCompensator, type RewindPlan } from "./LagCompensator.ts";
+import { TickSlewController } from "./TickSlewController.ts";
 import { convexClient, type ConvexId } from "./convexClient.ts";
 import {
   decodeMessage,
@@ -58,6 +59,7 @@ export class MatchHost {
   private readonly pendingInputs = new Map<PlayerId, InputFrame>();
   private readonly lastProcessedInputSeq = new Map<PlayerId, InputSeq>();
   private readonly lagComp = new LagCompensator();
+  private readonly tickSlew = new TickSlewController();
   /**
    * Wall-clock ms (Date.now) at which each known player's connection dropped.
    * Entries are added on `detachClient`, cleared on a successful re-attach.
@@ -369,6 +371,11 @@ export class MatchHost {
       aimY: input.aimY,
       dtMs: input.dt,
     });
+    // Record slew sample: server tick vs. the tick the client stamped this input.
+    this.tickSlew.recordInput(playerId, {
+      serverTick: this.state.tick,
+      inputTick: input.tick,
+    });
   }
 
   private maybeStartLoop(): void {
@@ -626,6 +633,10 @@ export class MatchHost {
       }
     }
 
+    // Compute per-client tick slew hint. Only included in the wire message
+    // when non-zero so we don't waste bytes on steady-state traffic.
+    const tickAdjustMs = this.tickSlew.computeAdjustMs(playerId);
+
     if (baselineState === null || baselineTick === null) {
       // Full snapshot path
       return encodeMessage({
@@ -635,6 +646,7 @@ export class MatchHost {
         baseline: null,
         state: currentState,
         events,
+        ...(tickAdjustMs !== 0 ? { tickAdjustMs } : {}),
       });
     }
 
@@ -647,6 +659,7 @@ export class MatchHost {
       baseline: baselineTick,
       delta,
       events,
+      ...(tickAdjustMs !== 0 ? { tickAdjustMs } : {}),
     });
   }
 
