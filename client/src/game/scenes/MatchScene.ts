@@ -177,6 +177,11 @@ export class MatchScene extends Phaser.Scene {
   private destructibleRenderer?: DestructibleRenderer;
   private fireGraphics?: Phaser.GameObjects.Graphics;
   private pickupGraphics?: Phaser.GameObjects.Graphics;
+  /** Additive-blend glow halos for pickups. Separate layer so ADD blend only hits halo pass. */
+  private pickupGlowGraphics?: Phaser.GameObjects.Graphics;
+  /** Small pool of Rectangle objects for platform blast-tint flash.
+   *  Avoids per-blast allocation: acquire → tween → release back to pool. */
+  private readonly blastTintPool: Phaser.GameObjects.Rectangle[] = [];
   private keys?: MovementKeys;
   private movementDebug: MovementDebug = {
     coyoteMs: 0,
@@ -340,6 +345,7 @@ export class MatchScene extends Phaser.Scene {
     this.playerScores.clear();
     this.resetPlayer();
     this.renderArena();
+    this.warmBlastTintPool();
     this.configureCamera();
     this.createArenaHazardVisuals();
     this.createTargetVisuals();
@@ -457,8 +463,9 @@ export class MatchScene extends Phaser.Scene {
 
   private renderArena() {
     const { x: width, y: height } = boxworksWorld.size;
-    // Cast to ArenaTheme so optional properties (hasLightBeams) are accessible.
-    const theme: import("../ui/palette").ArenaTheme = ARENA_THEMES.jadeIsles;
+    // Resolve theme from map metadata; fall back to jadeIsles.
+    const themeKey = (boxworksWorld.arenaTheme ?? "jadeIsles") as keyof typeof ARENA_THEMES;
+    const theme: import("../ui/palette").ArenaTheme = ARENA_THEMES[themeKey] as import("../ui/palette").ArenaTheme;
 
     // Solid void background — no grid.
     this.add.rectangle(width / 2, height / 2, width, height, theme.bg);
@@ -596,6 +603,8 @@ export class MatchScene extends Phaser.Scene {
     this.destructibleRenderer?.destroy();
     this.destructibleRenderer = new DestructibleRenderer(this);
     this.pickupGraphics = this.add.graphics();
+    this.pickupGlowGraphics = this.add.graphics();
+    this.pickupGlowGraphics.setBlendMode(Phaser.BlendModes.ADD);
     this.updateFireVisuals();
     this.updateDestructibleVisuals();
     this.updatePickupVisuals();
@@ -2107,7 +2116,30 @@ export class MatchScene extends Phaser.Scene {
   }
 
   /**
+   * Pre-warms the blast-tint pool: 32 invisible Rectangle GameObjects that are
+   * reused instead of allocating + destroying per blast. Called once on create.
+   */
+  private warmBlastTintPool(): void {
+    const POOL_SIZE = 32;
+    for (let i = 0; i < POOL_SIZE; i++) {
+      const rect = this.add.rectangle(0, 0, 1, 1, PALETTE.blastHalo, 0);
+      rect.setBlendMode(Phaser.BlendModes.ADD);
+      rect.setDepth(5);
+      rect.setActive(false).setVisible(false);
+      this.blastTintPool.push(rect);
+    }
+  }
+
+  private acquireBlastTintRect(): Phaser.GameObjects.Rectangle | null {
+    for (const rect of this.blastTintPool) {
+      if (!rect.active) return rect;
+    }
+    return null; // pool exhausted — silent skip
+  }
+
+  /**
    * Platform warm-tint flash on explosion: platforms within 220px briefly glow.
+   * Uses a 32-entry pool of Rectangle GameObjects to avoid per-blast alloc/GC.
    */
   private spawnPlatformBlastTint(position: Vec2): void {
     const BLAST_RANGE = 220;
@@ -2116,23 +2148,24 @@ export class MatchScene extends Phaser.Scene {
       const cy = platform.position.y;
       const dist = Math.hypot(cx - position.x, cy - position.y);
       if (dist >= BLAST_RANGE) continue;
+      const tintRect = this.acquireBlastTintRect();
+      if (!tintRect) continue;
       const tintAlpha = 0.10 * (1 - dist / BLAST_RANGE);
-      const tintRect = this.add.rectangle(
-        cx,
-        cy,
-        platform.size.x,
-        platform.size.y,
-        PALETTE.blastHalo,
-        tintAlpha,
-      );
-      tintRect.setBlendMode(Phaser.BlendModes.ADD);
-      tintRect.setDepth(5);
+      tintRect
+        .setPosition(cx, cy)
+        .setSize(platform.size.x, platform.size.y)
+        .setFillStyle(PALETTE.blastHalo, tintAlpha)
+        .setAlpha(tintAlpha)
+        .setActive(true)
+        .setVisible(true);
       this.tweens.add({
         targets: tintRect,
         alpha: 0,
         duration: 140,
         ease: "Linear",
-        onComplete: () => tintRect.destroy(),
+        onComplete: () => {
+          tintRect.setActive(false).setVisible(false);
+        },
       });
     }
   }
@@ -2477,6 +2510,7 @@ export class MatchScene extends Phaser.Scene {
 
     const graphics = this.pickupGraphics;
     graphics.clear();
+    this.pickupGlowGraphics?.clear();
 
     for (const pickup of this.pickups) {
       const color = pickupColor(pickup.kind);
@@ -2484,10 +2518,32 @@ export class MatchScene extends Phaser.Scene {
       const pulse = pickup.available ? 1 + Math.sin(this.time.now * 0.006 + pickup.position.x) * 0.08 : 0.72;
       const radius = pickup.radius * pulse;
 
+      // Additive glow halo — soft outer bloom that breathes with the pulse.
+      if (pickup.available && this.pickupGlowGraphics) {
+        this.pickupGlowGraphics.fillStyle(color, 0.10 * pulse);
+        this.pickupGlowGraphics.fillCircle(pickup.position.x, pickup.position.y, radius + 18);
+        this.pickupGlowGraphics.fillStyle(color, 0.07 * pulse);
+        this.pickupGlowGraphics.fillCircle(pickup.position.x, pickup.position.y, radius + 28);
+      }
+
       graphics.lineStyle(2, color, alpha * 0.82);
       graphics.fillStyle(color, alpha * 0.22);
       graphics.fillCircle(pickup.position.x, pickup.position.y, radius + 7);
       graphics.strokeCircle(pickup.position.x, pickup.position.y, radius + 7);
+
+      // Rim highlight — thin bright arc at 45° top-left, white at 60% alpha.
+      if (pickup.available) {
+        graphics.lineStyle(1.5, 0xffffff, 0.55);
+        graphics.beginPath();
+        graphics.arc(
+          pickup.position.x,
+          pickup.position.y,
+          radius + 7,
+          -Math.PI * 0.92,
+          -Math.PI * 0.32,
+        );
+        graphics.strokePath();
+      }
 
       if (pickup.kind === "health-shard") {
         graphics.fillStyle(color, alpha);

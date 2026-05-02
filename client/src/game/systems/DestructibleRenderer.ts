@@ -89,6 +89,15 @@ export class DestructibleRenderer {
       graphics.lineStyle(1, 0xf7fbff, 0.5);
       graphics.strokeRect(position.x - size.x / 2, position.y - size.y / 2, size.x, size.y);
 
+      // Rim highlight — single bright line along the top edge to suggest a
+      // directional light source. Alpha scales with health (dims as damaged).
+      const rimAlpha = 0.55 * (object.health / object.maxHealth);
+      graphics.lineStyle(1.5, 0xffffff, rimAlpha);
+      graphics.beginPath();
+      graphics.moveTo(position.x - size.x / 2 + 2, position.y - size.y / 2 + 1);
+      graphics.lineTo(position.x + size.x / 2 - 2, position.y - size.y / 2 + 1);
+      graphics.strokePath();
+
       if (healthRatio < 1) {
         const barWidth = Math.max(24, size.x + 8);
         graphics.fillStyle(0x1f2937, 0.9);
