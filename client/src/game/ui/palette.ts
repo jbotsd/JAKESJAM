@@ -6,6 +6,10 @@ export type ArenaTheme = {
   bg: number;
   hi: number;
   wash: number;
+  /** Optional explicit shadow/shade color for platform drop-shadow layer. */
+  shade?: number;
+  /** If true, MatchScene renders additive warm light-beam triangles from above. */
+  hasLightBeams?: boolean;
 };
 
 export const PALETTE = {
@@ -64,6 +68,6 @@ export const PALETTE = {
 
 export const ARENA_THEMES = {
   jadeIsles:   { bg: PALETTE.voidDeep,     hi: PALETTE.platformLimeHi,  wash: PALETTE.platformWashCy },
-  ivoryClouds: { bg: PALETTE.voidNavy,     hi: PALETTE.platformIvoryHi, wash: PALETTE.platformIvoryWash },
-  hangingWood: { bg: PALETTE.voidCharcoal, hi: PALETTE.platformWoodHi,  wash: PALETTE.platformWoodLo },
-} as const satisfies Record<string, ArenaTheme>;
+  ivoryClouds: { bg: PALETTE.voidNavy,     hi: PALETTE.platformIvoryHi, wash: PALETTE.platformIvoryWash, hasLightBeams: true },
+  hangingWood: { bg: PALETTE.voidCharcoal, hi: PALETTE.platformWoodHi,  wash: PALETTE.platformWoodLo,   shade: PALETTE.platformWoodLo },
+} satisfies Record<string, ArenaTheme>;

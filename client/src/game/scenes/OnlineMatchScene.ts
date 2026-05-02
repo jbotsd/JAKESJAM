@@ -232,7 +232,8 @@ export class OnlineMatchScene extends Phaser.Scene {
   }
 
   create() {
-    this.cameras.main.setBackgroundColor("#0b0e14");
+    // Match jadeIsles arena theme background (PALETTE.voidDeep = 0x06181C).
+    this.cameras.main.setBackgroundColor("#06181C");
     this.statusText = this.add
       .text(20, 20, "Connecting to game server...", {
         color: "#9aa5b1",
