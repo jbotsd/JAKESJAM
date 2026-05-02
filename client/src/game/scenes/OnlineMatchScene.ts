@@ -193,6 +193,8 @@ export class OnlineMatchScene extends Phaser.Scene {
   private loop: ClientLoop | null = null;
   private convex: ConvexClient | null = null;
   private statusText: Phaser.GameObjects.Text | null = null;
+  /** Captured from init data so onRematch / onReturnToLobby can branch. */
+  private sceneMode: "room" | "world" = "room";
   private playerRigs = new Map<string, ProceduralPlayerRig>();
   private projectileSprites = new Map<number, Phaser.GameObjects.Arc>();
   private satelliteSprites = new Map<number, Phaser.GameObjects.Arc>();
@@ -261,6 +263,7 @@ export class OnlineMatchScene extends Phaser.Scene {
 
   init(data: OnlineMatchSceneInit) {
     this.localPlayerId = PlayerId(data.localPlayerId);
+    this.sceneMode = data.mode ?? "room";
     void this.connect(data);
   }
 
@@ -1372,10 +1375,17 @@ export class OnlineMatchScene extends Phaser.Scene {
       },
       {
         onRematch: () => {
-          // Rematch on the netcode path requires a fresh assignment + new
-          // ClientLoop; for now bounce back to lobby and let the player
-          // re-enter the queue. Mirrors the offline scene's hook surface.
+          // World mode: server keeps the world alive and rolls the next
+          // round on its own — clicking Rematch just dismisses the
+          // overlay so the player sees the next round when it starts.
+          // Room mode: full rematch isn't wired yet; bounce back to
+          // lobby so the host can re-create the match.
           this.matchResultsOverlay?.hide();
+          this.matchHasEnded = false;
+          if (this.sceneMode === "world") {
+            this.setStatus("Waiting for next round…");
+            return;
+          }
           window.dispatchEvent(new CustomEvent("jakesjam:return-to-lobby"));
         },
         onReturnToLobby: () => {
