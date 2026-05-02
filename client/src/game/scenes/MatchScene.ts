@@ -56,8 +56,9 @@ import type {
   Vec2,
 } from "../types/game";
 import { CardSystem } from "../systems/CardSystem";
-import { DestructibleRenderer, destructibleColor } from "../systems/DestructibleRenderer";
+import { DestructibleRenderer } from "../systems/DestructibleRenderer";
 import { RemotePlayerManager } from "../systems/RemotePlayerManager";
+import { RenderLayer } from "../render/RenderLayer";
 import type { MatchPlayerSnapshot, RoomPlayer } from "../types/net";
 
 const STANDING_CHEST_OFFSET = 75;
@@ -160,6 +161,7 @@ export class MatchScene extends Phaser.Scene {
   private unsubscribeSnapshots?: () => void;
   private playerRig?: ProceduralPlayerRig;
   private remotePlayers!: RemotePlayerManager;
+  private renderLayer!: RenderLayer;
   private cameraTarget?: Phaser.GameObjects.Zone;
   private reticle?: Phaser.GameObjects.Graphics;
   private scoreboardBack?: Phaser.GameObjects.Rectangle;
@@ -288,6 +290,7 @@ export class MatchScene extends Phaser.Scene {
     this.particlePool?.destroy();
     this.particlePool = new ParticlePool(this);
     this.projectileSystem?.destroy();
+    this.renderLayer = new RenderLayer(this);
     this.remotePlayers?.reset();
     this.remotePlayers = new RemotePlayerManager(this, {
       localPlayerId: this.localPlayerId,
@@ -1696,24 +1699,7 @@ export class MatchScene extends Phaser.Scene {
   }
 
   private floatRemoteDamageText(position: Vec2, amount: number, element: ElementType) {
-    const color = element === "fire" ? "#ffb86b" : "#f0abfc";
-    const text = this.add
-      .text(position.x, position.y - 34, Math.round(amount).toString(), {
-        color,
-        fontFamily: "Inter, Arial, sans-serif",
-        fontSize: "13px",
-        fontStyle: "900",
-      })
-      .setOrigin(0.5, 0.5);
-
-    this.tweens.add({
-      targets: text,
-      y: text.y - 28,
-      alpha: 0,
-      duration: 360,
-      ease: "Sine.easeOut",
-      onComplete: () => text.destroy(),
-    });
+    this.renderLayer.floatRemoteDamageText(position, amount, element);
   }
 
   private damageTarget(amount: number, hit: ProjectileHit) {
@@ -1761,27 +1747,7 @@ export class MatchScene extends Phaser.Scene {
   }
 
   private spawnDamageNumber(position: Vec2, amount: number, isLocal: boolean): void {
-    if (amount < 1) return;
-    const spread = (Math.random() - 0.5) * 22;
-    const text = this.add
-      .text(position.x + spread, position.y - 32, Math.round(amount).toString(), {
-        color: isLocal ? "#fb7185" : "#fff7d6",
-        fontFamily: "Inter, Arial, sans-serif",
-        fontSize: amount >= 30 ? "18px" : "14px",
-        fontStyle: "900",
-        stroke: "#05080f",
-        strokeThickness: 3,
-      })
-      .setOrigin(0.5, 1)
-      .setDepth(800);
-    this.tweens.add({
-      targets: text,
-      y: text.y - 28,
-      alpha: 0,
-      duration: 560,
-      ease: "Sine.easeOut",
-      onComplete: () => text.destroy(),
-    });
+    this.renderLayer.spawnDamageNumber(position, amount, isLocal);
   }
 
   private isParryCovering(sourcePosition?: Vec2): boolean {
@@ -1838,44 +1804,11 @@ export class MatchScene extends Phaser.Scene {
   }
 
   private spawnPlayerDeathExplosion(position: Vec2) {
-    const blast = this.add.circle(position.x, position.y, 10, 0xf7fbff, 0.52);
-    blast.setStrokeStyle(4, 0xfb7185, 0.95);
-    this.tweens.add({
-      targets: blast,
-      radius: 118,
-      alpha: 0,
-      duration: 520,
-      ease: "Sine.easeOut",
-      onComplete: () => blast.destroy(),
-    });
-
-    for (let index = 0; index < 18; index += 1) {
-      const angle = (Math.PI * 2 * index) / 18;
-      const shard = this.add.rectangle(position.x, position.y, 5, 14, index % 2 === 0 ? 0x50e3c2 : 0xf0abfc, 0.92);
-      shard.rotation = angle;
-      this.tweens.add({
-        targets: shard,
-        x: position.x + Math.cos(angle) * 82,
-        y: position.y + Math.sin(angle) * 82,
-        alpha: 0,
-        duration: 500,
-        ease: "Sine.easeOut",
-        onComplete: () => shard.destroy(),
-      });
-    }
+    this.renderLayer.spawnPlayerDeathExplosion(position);
   }
 
   private spawnRespawnBurst(position: Vec2) {
-    const ring = this.add.circle(position.x, position.y, 8, 0x50e3c2, 0.18);
-    ring.setStrokeStyle(3, 0x50e3c2, 0.82);
-    this.tweens.add({
-      targets: ring,
-      radius: 54,
-      alpha: 0,
-      duration: 360,
-      ease: "Sine.easeOut",
-      onComplete: () => ring.destroy(),
-    });
+    this.renderLayer.spawnRespawnBurst(position);
   }
 
   private showDeathPopup() {
@@ -2060,17 +1993,7 @@ export class MatchScene extends Phaser.Scene {
 
   private spawnExplosion(position: Vec2, radius: number, damage: number, element: ElementType) {
     this.audio?.play("explosion");
-    const blast = this.add.circle(position.x, position.y, 6, 0xffd166, 0.36);
-    blast.setStrokeStyle(3, 0xfb7185, 0.95);
-    this.tweens.add({
-      targets: blast,
-      radius,
-      alpha: 0,
-      duration: 260,
-      ease: "Sine.easeOut",
-      onComplete: () => blast.destroy(),
-    });
-
+    this.renderLayer.spawnExplosionBlast(position, radius);
     this.applyAreaDamage(position, radius, damage, element);
   }
 
@@ -2209,85 +2132,22 @@ export class MatchScene extends Phaser.Scene {
   }
 
   private flashDestructible(object: ArenaDestructible, amount: number, element: ElementType) {
-    const color = element === "fire" ? "#ffb86b" : "#f7fbff";
-    const text = this.add
-      .text(object.position.x, object.position.y - object.size.y / 2 - 10, Math.round(amount).toString(), {
-        color,
-        fontFamily: "Inter, Arial, sans-serif",
-        fontSize: "11px",
-        fontStyle: "900",
-      })
-      .setOrigin(0.5, 0.5);
-
-    this.tweens.add({
-      targets: text,
-      y: text.y - 22,
-      alpha: 0,
-      duration: 280,
-      ease: "Sine.easeOut",
-      onComplete: () => text.destroy(),
-    });
+    this.renderLayer.flashDestructibleText(object.position, object.size.y, amount, element);
   }
 
   private destructibleBurst(object: ArenaDestructible, element: ElementType) {
-    const color = element === "fire" ? 0xff7a18 : destructibleColor(object.kind);
-    for (let index = 0; index < 8; index += 1) {
-      const angle = (Math.PI * 2 * index) / 8;
-      const shard = this.add.rectangle(object.position.x, object.position.y, 4, 9, color, 0.86);
-      shard.rotation = angle;
-      this.tweens.add({
-        targets: shard,
-        x: object.position.x + Math.cos(angle) * 38,
-        y: object.position.y + Math.sin(angle) * 28,
-        alpha: 0,
-        duration: 260,
-        ease: "Sine.easeOut",
-        onComplete: () => shard.destroy(),
-      });
-    }
+    this.renderLayer.destructibleBurst(object.position, object.kind, element);
   }
 
   private flashTarget(hit: ProjectileHit) {
-    const color = hit.element === "fire"
-      ? "#ffb86b"
-      : hit.element === "ice"
-        ? "#bfdbfe"
-        : hit.element === "radiant"
-          ? "#fff7d6"
-          : "#50e3c2";
-    const text = this.add
-      .text(hit.position.x, hit.position.y - 24, Math.round(hit.damage).toString(), {
-        color,
-        fontFamily: "Inter, Arial, sans-serif",
-        fontSize: "13px",
-        fontStyle: "900",
-      })
-      .setOrigin(0.5, 0.5);
-
-    this.tweens.add({
-      targets: text,
-      y: hit.position.y - 52,
-      alpha: 0,
-      duration: 380,
-      ease: "Sine.easeOut",
-      onComplete: () => text.destroy(),
-    });
+    this.renderLayer.flashTargetText(hit.position, hit.damage, hit.element);
   }
 
   private killTarget(hit: ProjectileHit) {
     this.target.alive = false;
     this.target.respawnMs = 900;
     this.targetKills += 1;
-    const burst = this.add.circle(this.target.position.x, this.target.position.y, 8, 0xf7fbff, 0.5);
-    burst.setStrokeStyle(3, 0x50e3c2, 0.9);
-    this.tweens.add({
-      targets: burst,
-      radius: Math.max(90, hit.impactRadiusPx),
-      alpha: 0,
-      duration: 420,
-      ease: "Sine.easeOut",
-      onComplete: () => burst.destroy(),
-    });
+    this.renderLayer.killTargetBurst(this.target.position, hit.impactRadiusPx);
   }
 
   private updateTarget(deltaMs: number) {
@@ -2467,23 +2327,7 @@ export class MatchScene extends Phaser.Scene {
   }
 
   private floatPickupText(pickup: ArenaPickup, label: string, color: string) {
-    const text = this.add
-      .text(pickup.position.x, pickup.position.y - 22, label.toUpperCase(), {
-        color,
-        fontFamily: "Inter, Arial, sans-serif",
-        fontSize: "11px",
-        fontStyle: "900",
-      })
-      .setOrigin(0.5, 0.5);
-
-    this.tweens.add({
-      targets: text,
-      y: text.y - 30,
-      alpha: 0,
-      duration: 520,
-      ease: "Sine.easeOut",
-      onComplete: () => text.destroy(),
-    });
+    this.renderLayer.floatPickupText(pickup.position, label, color);
   }
 
   private updatePickupVisuals() {
