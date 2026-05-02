@@ -13,7 +13,7 @@
 
 import Phaser from "phaser";
 import { SceneKeys } from "./SceneKeys";
-import { InputBit, type NetStats } from "../../net";
+import { InputBit } from "../../net";
 import { RenderHost } from "../../net/RenderHost";
 import {
   ORBIT_RADIUS_PX,

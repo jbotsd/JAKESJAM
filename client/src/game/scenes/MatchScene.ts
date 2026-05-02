@@ -1,5 +1,8 @@
 import Phaser from "phaser";
 import { SceneKeys } from "./SceneKeys";
+import { MatchOrchestrator, type MatchTickDelegate } from "./match/MatchOrchestrator";
+import { MatchRenderer, type RendererDelegate } from "./match/MatchRenderer";
+import { tickBuffTimers, type BuffTimers, moveSpeedModifier, parryArcRadians, parryRange, parryCooldownMs as calcParryCooldownMs, incomingDamageFactor } from "./match/MatchLogic";
 import { boxworksWorld, seededUnit } from "../../sim/data/boxworks.js";
 import {
   COUNTDOWN_MS,
@@ -87,13 +90,8 @@ const FREEZE_SHARD_INTERVAL_MS = 160;
 const DEATH_POPUP_DELAY_MS = 520;
 const RESPAWN_COUNTDOWN_MS = 3000;
 const PARRY_ACTIVE_MS = 420;
-const PARRY_COOLDOWN_MS = 4300;
-const PARRY_BASE_ARC_RADIANS = Math.PI * 0.72;
-const PARRY_BASE_RANGE = 98;
-// const DAMAGE_AMP_MULTIPLIER = 1.42;
-// const SPEED_BOOST_MULTIPLIER = 1.22;
-const SLOW_DEBUFF_MULTIPLIER = 0.62;
-const VULNERABILITY_MULTIPLIER = 1.38;
+// PARRY_COOLDOWN_MS, PARRY_BASE_ARC_RADIANS, PARRY_BASE_RANGE: moved to MatchLogic.ts
+// SLOW_DEBUFF_MULTIPLIER, VULNERABILITY_MULTIPLIER: moved to MatchLogic.ts
 // const BOSS_MOVE_MULTIPLIER = 0.72;
 // const BOSS_DAMAGE_MULTIPLIER = 1.55;
 // const BOSS_FIRE_RATE_MULTIPLIER = 0.72;
@@ -136,7 +134,11 @@ type PlayerScore = {
   deaths: number;
 };
 
-export class MatchScene extends Phaser.Scene {
+export class MatchScene extends Phaser.Scene implements MatchTickDelegate, RendererDelegate {
+  // ── MatchOrchestrator + MatchRenderer ────────────────────────────────────
+  private orchestrator!: MatchOrchestrator;
+  private matchRenderer!: MatchRenderer;
+
   private readonly movement = new MovementSystem();
   private readonly handleScoreboardKeyDown = (event: KeyboardEvent) => {
     if (event.code !== "Tab") {
@@ -345,53 +347,49 @@ export class MatchScene extends Phaser.Scene {
     } else {
       this.matchResultsOverlay.hide();
     }
+    // Initialise the orchestrator and renderer last, after all Phaser objects
+    // are ready, so their isReady() check can use any scene field.
+    this.orchestrator = new MatchOrchestrator(this);
+    this.matchRenderer = new MatchRenderer(this);
   }
 
   update(_time: number, deltaMs: number) {
-    if (!this.keys || !this.playerRig || !this.projectileSystem) {
-      return;
-    }
+    this.orchestrator.update(deltaMs);
+  }
 
-    // Drive the round state machine first so input gating below picks up
-    // the new phase on the same tick. Round timing uses raw wall-clock dt
-    // so chaos time-scale doesn't stretch the countdown / round-timer.
-    this.advanceRoundState(deltaMs);
+  // ── MatchTickDelegate implementation ──────────────────────────────────────
 
-    if (Phaser.Input.Keyboard.JustDown(this.keys.r)) {
+  isReady(): boolean {
+    return !!(this.keys && this.playerRig && this.projectileSystem);
+  }
+
+  freezePlayerForRespawn(): void {
+    this.playerBody.velocity = { x: 0, y: 0 };
+    this.shieldActive = false;
+  }
+
+  isRespawnPending(): boolean {
+    return this.playerRespawnPending;
+  }
+
+  handleDebugReset(): void {
+    if (this.keys && Phaser.Input.Keyboard.JustDown(this.keys.r)) {
       this.resetPlayer();
       this.resetTarget();
       this.resetDestructibles();
     }
+  }
 
+  getChaosTimeScale(): number {
+    return this.getChaosProfile().timeScale;
+  }
+
+  getChaosGravityMultiplier(): number {
+    return this.getChaosProfile().gravityMultiplier;
+  }
+
+  readAndApplyMovement(scaledDeltaMs: number, scaledDeltaSeconds: number): void {
     const chaos = this.getChaosProfile();
-    const scaledDeltaMs = deltaMs * chaos.timeScale;
-    const scaledDeltaSeconds = Math.min(scaledDeltaMs / 1000, 1 / 30);
-    this.updateRespawnCountdown(deltaMs);
-
-    if (this.playerRespawnPending) {
-      this.playerBody.velocity = { x: 0, y: 0 };
-      this.shieldActive = false;
-      this.updateTarget(scaledDeltaMs);
-      this.updateChaosHazards(scaledDeltaMs);
-      this.updateFirePatches(scaledDeltaMs);
-      const hits = this.projectileSystem.update(
-        scaledDeltaSeconds,
-        boxworksWorld.platforms,
-        this.getProjectileTargets(),
-      );
-      this.applyProjectileHits(hits);
-      this.updateNetworkSync(deltaMs);
-      this.syncPlayerVisuals(deltaMs);
-      this.syncRemotePlayerVisuals(deltaMs);
-      this.updateReticle();
-      this.updateScoreboardOverlay();
-      this.updateHudSystem();
-      this.updateRoundBannerSystem();
-      return;
-    }
-
-    this.updateShield(scaledDeltaMs);
-    this.updateParry(scaledDeltaMs);
     const wasGrounded = this.playerBody.grounded;
     const input = this.readInput();
     this.movementDebug = this.movement.update(
@@ -405,34 +403,48 @@ export class MatchScene extends Phaser.Scene {
       },
     );
     this.playMovementSounds(wasGrounded);
+    void scaledDeltaMs;
+  }
 
+  checkOutOfBounds(): void {
     if (this.isOutOfBounds()) {
       this.resetPlayer();
     }
-    this.updateCameraTarget();
-    this.updatePickups(scaledDeltaMs);
+  }
 
+  tryFireWeapon(scaledDeltaMs: number): void {
     this.fireCooldownMs = Math.max(0, this.fireCooldownMs - scaledDeltaMs);
-    this.tryFireWeapon();
-    this.updateTarget(scaledDeltaMs);
-    this.tickTargetStatusVfx(deltaMs);
-    this.updateChaosHazards(scaledDeltaMs);
-    this.updateFirePatches(scaledDeltaMs);
+    this.tryFireWeaponInternal();
+  }
 
+  stepAndApplyProjectiles(scaledDeltaSeconds: number): void {
+    if (!this.projectileSystem) return;
     const hits = this.projectileSystem.update(
       scaledDeltaSeconds,
       boxworksWorld.platforms,
       this.getProjectileTargets(),
     );
     this.applyProjectileHits(hits);
+  }
 
-    this.updateNetworkSync(deltaMs);
-    this.syncPlayerVisuals(deltaMs);
-    this.syncRemotePlayerVisuals(deltaMs);
-    this.updateReticle();
-    this.updateScoreboardOverlay();
-    this.updateHudSystem();
-    this.updateRoundBannerSystem();
+  // ── RendererDelegate implementation ───────────────────────────────────────
+
+  renderFrame(deltaMs: number): void {
+    this.matchRenderer.render(deltaMs);
+  }
+
+  /** RendererDelegate: tick all element-status VFX (local, remote, target) for this frame. */
+  tickAllStatusVfx(deltaMs: number): void {
+    // Local player status VFX — position sourced from playerBody.
+    this.tickLocalStatusVfx(deltaMs, this.playerBody.position);
+    // Remote players — position sourced from last received snapshot.
+    for (const [pid] of this.remoteRigs) {
+      const snap = this.remoteSnapshots.get(pid);
+      const pos = snap?.position ?? this.playerBody.position;
+      this.tickRemoteStatusVfx(PlayerId(pid), deltaMs, pos);
+    }
+    // Practice target.
+    this.tickTargetStatusVfx(deltaMs);
   }
 
   private renderArena() {
@@ -462,7 +474,7 @@ export class MatchScene extends Phaser.Scene {
     this.updateCameraTarget();
   }
 
-  private updateCameraTarget() {
+  updateCameraTarget(): void {
     this.cameraTarget?.setPosition(this.playerBody.position.x, this.playerBody.position.y);
   }
 
@@ -584,7 +596,7 @@ export class MatchScene extends Phaser.Scene {
    *     player and reset the dummy/destructibles for a clean fight;
    *   - on matchComplete, freeze the loop and surface the results overlay.
    */
-  private advanceRoundState(deltaMs: number) {
+  advanceRoundState(deltaMs: number): void {
     if (this.matchHasEnded) {
       // Match is parked. Don't keep stepping: stepRound is idempotent on
       // round-over with countdown=0 + scores satisfying the winner check,
@@ -839,7 +851,7 @@ export class MatchScene extends Phaser.Scene {
     return this.roundState.phase !== "fighting";
   }
 
-  private syncPlayerVisuals(deltaMs = 16) {
+  syncPlayerVisuals(deltaMs = 16): void {
     if (!this.playerRig) {
       return;
     }
@@ -906,12 +918,12 @@ export class MatchScene extends Phaser.Scene {
     }
   }
 
-  private updateShield(deltaMs: number) {
+  updateShield(deltaMs: number): void {
     if (!this.keys) {
       return;
     }
 
-    this.temporaryShieldMs = Math.max(0, this.temporaryShieldMs - deltaMs);
+    // temporaryShieldMs is ticked down by updatePickups via tickBuffTimers.
     const canShield = this.getLocalCharacter().abilityType === "shield" || this.temporaryShieldMs > 0;
     this.shieldActive = canShield && this.blockJammerMs <= 0 && this.keys.shift.isDown && this.shieldCharge > 0;
 
@@ -926,7 +938,7 @@ export class MatchScene extends Phaser.Scene {
     this.shieldCharge = Math.min(100, this.shieldCharge + deltaMs * 0.014);
   }
 
-  private updateParry(deltaMs: number) {
+  updateParry(deltaMs: number): void {
     if (!this.keys) {
       return;
     }
@@ -949,7 +961,7 @@ export class MatchScene extends Phaser.Scene {
     }
   }
 
-  private drawShield() {
+  drawShield(): void {
     if (!this.shieldGraphics) {
       return;
     }
@@ -1017,7 +1029,7 @@ export class MatchScene extends Phaser.Scene {
     this.shieldGraphics.strokePath();
   }
 
-  private syncRemotePlayerVisuals(deltaMs = 16) {
+  syncRemotePlayerVisuals(deltaMs = 16): void {
     if (this.remoteRigs.size === 0) {
       return;
     }
@@ -1192,7 +1204,7 @@ export class MatchScene extends Phaser.Scene {
     return build;
   }
 
-  private updateChaosHazards(deltaMs: number) {
+  updateChaosHazards(deltaMs: number): void {
     const intervalMs = this.getChaosProfile().fireHazardIntervalMs;
     if (!intervalMs) {
       return;
@@ -1211,7 +1223,7 @@ export class MatchScene extends Phaser.Scene {
     }, 36 + seededUnit(Math.floor(timeSeconds), 2, 302) * 26);
   }
 
-  private updateNetworkSync(deltaMs: number) {
+  updateNetworkSync(deltaMs: number): void {
     if (!this.roomClient || !this.roomId || !this.matchId) {
       return;
     }
@@ -1355,7 +1367,7 @@ export class MatchScene extends Phaser.Scene {
     }
   }
 
-  private tryFireWeapon() {
+  private tryFireWeaponInternal() {
     if (!this.projectileSystem || this.fireCooldownMs > 0 || this.playerRespawnPending) {
       return;
     }
@@ -1442,25 +1454,19 @@ export class MatchScene extends Phaser.Scene {
   }
 
   private getParryArcRadians(): number {
-    return Math.min(Math.PI * 1.55, PARRY_BASE_ARC_RADIANS * this.weaponBuild.parryCoverMultiplier);
+    return parryArcRadians(this.weaponBuild.parryCoverMultiplier);
   }
 
   private getParryRange(): number {
-    return PARRY_BASE_RANGE * Math.sqrt(this.weaponBuild.parryCoverMultiplier);
+    return parryRange(this.weaponBuild.parryCoverMultiplier);
   }
 
   private getParryCooldownMs(): number {
-    return PARRY_COOLDOWN_MS * this.weaponBuild.parryCooldownMultiplier;
+    return calcParryCooldownMs(this.weaponBuild.parryCooldownMultiplier);
   }
 
   private getMoveSpeedModifier(): number {
-    let multiplier = this.weaponBuild.moveSpeedMultiplier;
-    // ROUNDS: Speed boost pickup removed
-    if (this.slowDebuffMs > 0) {
-      multiplier *= SLOW_DEBUFF_MULTIPLIER;
-    }
-    // ROUNDS: Boss mode removed
-    return multiplier;
+    return moveSpeedModifier(this.weaponBuild.moveSpeedMultiplier, this.slowDebuffMs);
   }
 
   private getMuzzlePosition(): Vec2 {
@@ -1763,8 +1769,7 @@ export class MatchScene extends Phaser.Scene {
       return;
     }
 
-    const modifiedAmount = amount *
-      (this.vulnerabilityMs > 0 ? VULNERABILITY_MULTIPLIER : 1);
+    const modifiedAmount = amount * incomingDamageFactor(this.vulnerabilityMs);
     this.playerHealth = Math.max(0, this.playerHealth - modifiedAmount);
     this.audio?.play("hit");
     this.spawnDamageNumber(this.playerBody.position, modifiedAmount, true);
@@ -1899,7 +1904,7 @@ export class MatchScene extends Phaser.Scene {
     }
   }
 
-  private updateRespawnCountdown(deltaMs: number) {
+  updateRespawnCountdown(deltaMs: number): void {
     if (!this.playerRespawnPending || !this.respawnCountdownActive) {
       return;
     }
@@ -1933,7 +1938,7 @@ export class MatchScene extends Phaser.Scene {
 
   // ── HUD system update ─────────────────────────────────────────────────────
 
-  private updateHudSystem(): void {
+  updateHudSystem(): void {
     if (!this.hudSystem) return;
 
     const chips = this.buildHudChips();
@@ -1972,7 +1977,7 @@ export class MatchScene extends Phaser.Scene {
     this.hudSystem.update(vitals, round);
   }
 
-  private updateRoundBannerSystem(): void {
+  updateRoundBannerSystem(): void {
     if (!this.roundBannerSystem) return;
     const winnerLabel = this.roundState.phase === "round-over"
       ? this.getRoundWinnerLabel(this.roundState.winnerPlayerId)
@@ -2163,7 +2168,7 @@ export class MatchScene extends Phaser.Scene {
     this.updateFireVisuals();
   }
 
-  private updateFirePatches(deltaMs: number) {
+  updateFirePatches(deltaMs: number): void {
     if (this.firePatches.length === 0) {
       return;
     }
@@ -2303,7 +2308,7 @@ export class MatchScene extends Phaser.Scene {
     });
   }
 
-  private updateTarget(deltaMs: number) {
+  updateTarget(deltaMs: number): void {
     if (this.target.alive) {
       return;
     }
@@ -2319,7 +2324,7 @@ export class MatchScene extends Phaser.Scene {
     this.updateTargetVisuals();
   }
 
-  private updateTargetVisuals() {
+  updateTargetVisuals(): void {
     if (!this.targetGraphics || !this.targetText) {
       return;
     }
@@ -2373,7 +2378,7 @@ export class MatchScene extends Phaser.Scene {
     this.targetText.setPosition(position.x, position.y - size.y / 2 - 20);
   }
 
-  private updateDestructibleVisuals() {
+  updateDestructibleVisuals(): void {
     if (!this.destructibleGraphics) {
       return;
     }
@@ -2445,7 +2450,7 @@ export class MatchScene extends Phaser.Scene {
     }
   }
 
-  private updateFireVisuals() {
+  updateFireVisuals(): void {
     if (!this.fireGraphics) {
       return;
     }
@@ -2473,14 +2478,25 @@ export class MatchScene extends Phaser.Scene {
     }
   }
 
-  private updatePickups(deltaMs: number) {
-    this.overchargeMs = Math.max(0, this.overchargeMs - deltaMs);
-    this.damageAmpMs = Math.max(0, this.damageAmpMs - deltaMs);
-    this.speedBoostMs = Math.max(0, this.speedBoostMs - deltaMs);
-    this.meleeModeMs = Math.max(0, this.meleeModeMs - deltaMs);
-    this.slowDebuffMs = Math.max(0, this.slowDebuffMs - deltaMs);
-    this.vulnerabilityMs = Math.max(0, this.vulnerabilityMs - deltaMs);
-    this.blockJammerMs = Math.max(0, this.blockJammerMs - deltaMs);
+  updatePickups(deltaMs: number): void {
+    const buffTimers: BuffTimers = tickBuffTimers({
+      overchargeMs: this.overchargeMs,
+      damageAmpMs: this.damageAmpMs,
+      speedBoostMs: this.speedBoostMs,
+      meleeModeMs: this.meleeModeMs,
+      slowDebuffMs: this.slowDebuffMs,
+      vulnerabilityMs: this.vulnerabilityMs,
+      blockJammerMs: this.blockJammerMs,
+      temporaryShieldMs: this.temporaryShieldMs,
+    }, deltaMs);
+    this.overchargeMs = buffTimers.overchargeMs;
+    this.damageAmpMs = buffTimers.damageAmpMs;
+    this.speedBoostMs = buffTimers.speedBoostMs;
+    this.meleeModeMs = buffTimers.meleeModeMs;
+    this.slowDebuffMs = buffTimers.slowDebuffMs;
+    this.vulnerabilityMs = buffTimers.vulnerabilityMs;
+    this.blockJammerMs = buffTimers.blockJammerMs;
+    this.temporaryShieldMs = buffTimers.temporaryShieldMs;
 
     // ROUNDS: Card cache relocation removed - draft between rounds
 
@@ -2567,7 +2583,7 @@ export class MatchScene extends Phaser.Scene {
     });
   }
 
-  private updatePickupVisuals() {
+  updatePickupVisuals(): void {
     if (!this.pickupGraphics) {
       return;
     }
@@ -2686,7 +2702,7 @@ export class MatchScene extends Phaser.Scene {
     return targets;
   }
 
-  private updateReticle() {
+  updateReticle(): void {
     if (!this.reticle) {
       return;
     }
@@ -2731,7 +2747,7 @@ export class MatchScene extends Phaser.Scene {
     this.reticle.strokePath();
   }
 
-  private updateScoreboardOverlay() {
+  updateScoreboardOverlay(): void {
     if (!this.scoreboardBack || !this.scoreboardText || !this.keys) {
       return;
     }
