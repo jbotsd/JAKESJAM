@@ -36,14 +36,9 @@ export type PlayerId = string;
 export type RoomId = Id<"rooms">;
 export type MatchId = Id<"matches">;
 export type CharacterId = "balanced" | "heavy" | "sprinter" | "shielded";
-export type ChaosModifierId =
-  | "low-gravity"
-  | "slow-motion"
-  | "golden-gun"
-  | "slappers-only"
-  | "fire-hazard"
-  | "random-shapes"
-  | "max-recoil";
+// Re-exported from the sim canonical source so adding/removing a chaos modifier
+// is a one-line change in one file. See client/src/sim/data/chaosModifiers.ts.
+export type { ChaosModifierId } from "../../sim/data/chaosModifiers";
 
 export type AbilityType = "shield" | "blink" | "brace" | "deflect";
 

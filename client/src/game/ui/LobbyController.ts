@@ -1,5 +1,6 @@
 import { RoomClient, createRoomArgs } from "../net/RoomClient";
 import type { ChaosModifierId, CharacterId } from "../types/game";
+import { parseStoredChaosModifiers } from "../../sim/data/chaosModifiers";
 import type { RoomHandle, RoomPlayer, RoomSnapshot } from "../types/net";
 import { MapPicker } from "./MapPicker";
 import { MatchStatusBadge } from "./MatchStatusBadge";
@@ -840,14 +841,5 @@ function characterLabel(characterId: CharacterId): string {
 }
 
 function readStoredChaosModifiers(): ChaosModifierId[] {
-  const raw = localStorage.getItem(CHAOS_MODIFIERS_KEY);
-  if (!raw) {
-    return [];
-  }
-
-  try {
-    return JSON.parse(raw) as ChaosModifierId[];
-  } catch {
-    return [];
-  }
+  return parseStoredChaosModifiers(localStorage.getItem(CHAOS_MODIFIERS_KEY));
 }

@@ -34,6 +34,19 @@ const M = {
   crouchHeight: 38,
 } as const;
 
+/**
+ * Distance below the map's bottom edge (`map.size.y`) at which a player is
+ * considered "in the void" and force-killed. Prevents the
+ * "fall-through-the-floor → stuck forever" bug when a map has a hole, an
+ * authoring error in the floor row, or a momentum exploit pushes a body past
+ * the wall.
+ *
+ * 200px is generous — a player has to clearly fall well past the visible
+ * arena before the kill plane fires; tweak with care since shrinking it
+ * risks killing players still legitimately mid-air at the bottom edge.
+ */
+export const KILL_PLANE_MARGIN_PX = 200;
+
 // Jetpack constants — mirror the offline reference in
 // client/src/game/systems/MovementSystem.ts so behavior stays identical.
 export const JETPACK_MAX_FUEL = 125;

@@ -58,6 +58,98 @@ Stack: Phaser 4 + Vite 8 + TypeScript 6, served from `client/`. The renderer is 
 - ❌ Putting hit detection in Phaser physics — collisions live in `@sim/collision.ts` and are authoritative server-side.
 - ❌ Tweening gameplay-relevant state (HP, ammo). Tween only cosmetic state (camera shake, UI flashes).
 
+## Sim-loop ↔ Phaser-tick seam (CRITICAL for multiplayer)
+
+JAKESJAM's render uses Phaser's RAF-driven `update()`. The simulation/prediction loop in `client/src/net/clientLoop.ts` runs on `setInterval(STEP_MS)`. These are TWO independent loops; they must coexist on these rules:
+
+1. **Input capture is RAF-paced.** `OnlineMatchScene.update()` reads `this.keys.*.isDown` and the pointer, builds a `LocalInput`, calls `loop.setLocalInput(input)`. The sim loop reads it at its own cadence.
+2. **Sim ticks on its own timer.** The `setInterval` accumulator drains `STEP_MS` chunks from elapsed wall-clock and calls `World.step` each chunk. Independent of frame rate.
+3. **Render reads `getRenderState()` once per RAF.** Never call `World.step` from a Phaser scene — the sim loop owns stepping.
+4. **Tab-blur is the failure mode.** Browsers throttle `setInterval` to 1 Hz when the tab is hidden but freeze RAF entirely. On return, sim has advanced ~N seconds; render hasn't. The reconcile path catches up via `prevRenderedX/Y` smoothing, but for the local player the "smooth window" is 100 ms — much shorter than typical away-time. **Decision:** pause the sim loop on `Phaser.Core.Events.BLUR` (cleaner, but server may time out the connection), or accept divergence and rely on reconcile (current JAKESJAM choice).
+
+```typescript
+// In OnlineMatchScene.create() — pause/resume sim loop on tab focus changes
+this.game.events.on(Phaser.Core.Events.BLUR, () => this.loop?.stop());
+this.game.events.on(Phaser.Core.Events.FOCUS, () => this.loop?.start());
+```
+
+5. **`Math.random()` is forbidden in the sim** but free in scenes. Visual jitter (damage-number spread, particle fan-out angles, blast spike length variance) is render-only and should use `Math.random` directly. Sim-side randomness must use `@sim/rng.ts` so prediction matches authority.
+
+## Procedural rig render contract
+
+`ProceduralPlayerRig` is JAKESJAM's IK-driven character (chest/arm/aim-target). The render contract:
+
+- **Scene owns instantiation.** `new ProceduralPlayerRig(scene, { color, name, scale })` in `create()` or on first sighting of an entity (`OnlineMatchScene.ts` ~line 803).
+- **Per-frame update receives `deltaMs` + a typed pose payload** — position (sim foot-position, NOT body center; the rig wants foot Y), velocity, aim target, grounded flag, crouching flag, health, maxHealth.
+- **Sim body height vs rig body height differ** — sim uses `bodyHeight=56`, `crouchHeight=38`, but stores `(x,y)` as body center. The rig wants foot position. Constants `SIM_BODY_HALF_HEIGHT = 28` / `SIM_CROUCH_HALF_HEIGHT = 19` translate. Document this offset whenever the rig is used; it's the #1 source of "rig is floating above platform" bugs.
+- **Disposal:** `rig.destroy()` is mandatory before `playerRigs.delete(pid)`. Phaser's scene cleanup eventually GCs the inner GameObjects, but the rig holds tween references that need explicit cancellation.
+
+## Pool drain on round-end
+
+Round transitions are the highest-risk pool moment in JAKESJAM:
+
+- **Active particles must drain before round-start.** A burning player at round-end has 5–10 in-flight burn-spark tweens. If the round restart spawns new players in those particles' tween targets… don't.
+- **Pattern:** on `round-end` SimEvent, force-release all active pool entries:
+  ```typescript
+  drainActive(scene: Phaser.Scene): void {
+    scene.tweens.killTweensOf([
+      ...this.sparkActive, ...this.shardActive, ...this.ringActive,
+      ...this.boltActive, ...this.blastCircleActive,
+    ]);
+    for (const o of this.sparkActive) this.release(o);
+    // etc.
+  }
+  ```
+- **Hook from the scene:** `this.particlePool.drainActive(this)` in the `case "round-end":` arm of `handleSimEvents`.
+
+Without this, sporadic crashes on round restart from "tween completed on freed object" — exactly the class of bug the existing `ParticlePool.destroyed` flag mitigates at scene-shutdown but doesn't cover round-restart.
+
+## Visual juice taxonomy (Phaser 4 API surface)
+
+The `phaser-ui` skill's "VISUAL DESIGN QUALITY" section gives taste rules; this is the API cheatsheet for the specific Phaser 4 calls.
+
+| Effect | Phaser 4 API | When to use | Cost |
+|---|---|---|---|
+| **Screen shake** | `cam.shake(durationMs, intensity)` — `intensity` is a 0–1 pixel-fraction (0.004 ≈ 4 px on a 1000px canvas) | Hit confirmation, big explosions | Cheap, but stacks — guard with `cam.shakeEffect.isRunning` |
+| **Hit-stop / time freeze** | `scene.time.timeScale = 0` then `delayedCall(35, () => scene.time.timeScale = 1)` | Big hit, kill confirm | Affects ALL of scene's tweens + timers — single-player only (multiplayer: only the local client freezes; remote players keep moving) |
+| **Slow-mo** | `scene.time.timeScale = 0.4` for a window | Combo finishers, special abilities | Same caveat — single-player only |
+| **Camera flash** | `cam.flash(durationMs, r, g, b)` | Critical hit, level-up | Cheap, doesn't stack with shake |
+| **Camera fade** | `cam.fadeOut(ms, r, g, b, callback)` | Scene transition, death | Owned by camera — cancel on shutdown if mid-fade |
+| **Camera zoom** | `cam.zoomTo(scale, ms, ease)` | Boss reveal, kill cam | Affects HUD if HUD is in same scene — anchor HUD via `setScrollFactor(0)` |
+| **Bloom** | `cam.postFX.addBloom(color, offsetX, offsetY, blurStrength)` | Magic, neon vibes | WebGL-only; per-camera cost |
+| **Vignette** | Full-screen `Rectangle` at depth 900 with radial alpha mask, OR `cam.postFX.addVignette()` | Low-HP, dramatic moment | Cheap (single rect) or moderate (postFX) |
+| **Hit-flash on sprite** | `sprite.setTint(0xffffff); time.delayedCall(60, () => sprite.clearTint())` | Damage taken | Free; clears on next anims frame though — restore tint after |
+| **Damage numbers** | `add.text` + tween upward + alpha to 0 + destroy on complete | Every hit | One Text object per number — pool if >5/sec |
+| **Particle burst** | `add.particles(x, y, key, { …, emitting: false }).explode(count)` | Pickup, explosion | One-shot; cleans up after lifespan |
+| **Stagger reveal** | `tweens.add` with `delay: i * 80` per element | Card draft, results overlay | The juice that sells "intentional design" — see existing recipe in this SKILL.md |
+| **Banner pop** | `setScale(1.3)` + `tween` to `1.0` with `Back.easeOut` | Round start, level intro | Existing recipe in this SKILL.md |
+
+**Anti-pattern from JAKESJAM history:** stacking shake calls. `cam.shake(60, 0.004)` issued every frame during a hit-streak compounds; intensity grows until the camera looks broken. Fix: `if (cam.shakeEffect?.isRunning) return;`. Apply same guard pattern to flash/fade/zoom.
+
+## Scene init data is a typed contract
+
+`OnlineMatchSceneInit` (`client/src/game/scenes/OnlineMatchScene.ts`) is the right shape. Mirror this for every scene that takes init data:
+
+- Export a `XxxSceneInit` type from the scene module.
+- The scene's `init(data: XxxSceneInit)` signature uses that type — no `Record<string, unknown>`, no `any`.
+- The launcher (whether `main.ts`, lobby controller, or another scene) imports the type and constructs typed payloads.
+- For boot ordering: the **launcher must validate the payload before** `scene.start` — Phaser throws into an `init` failure that's hard to trace. Validate at the boundary instead.
+
+```typescript
+// In the launcher (client/src/main.ts or LobbyController.ts):
+window.addEventListener('jakesjam:start-match', (ev: CustomEvent) => {
+  const detail = ev.detail as Partial<OnlineMatchSceneInit>;
+  if (!detail.localPlayerId) { console.error('start-match missing localPlayerId'); return; }
+  const init: OnlineMatchSceneInit = {
+    localPlayerId: detail.localPlayerId,
+    matchId: detail.matchId,
+    convexUrl: detail.convexUrl,
+    mode: detail.mode ?? 'room',
+  };
+  game.scene.start('OnlineMatchScene', init);
+});
+```
+
 ## Quick checks before a PR
 
 - `bun run --filter client typecheck` clean.

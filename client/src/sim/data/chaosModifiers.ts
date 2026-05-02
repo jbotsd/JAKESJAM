@@ -8,14 +8,40 @@
 
 import type { ProjectileShape } from "../types.js";
 
-export type ChaosModifierId =
-  | "low-gravity"
-  | "slow-motion"
-  | "golden-gun"
-  | "slappers-only"
-  | "fire-hazard"
-  | "random-shapes"
-  | "max-recoil";
+/** Canonical list of chaos modifier ids. Use as the single source of truth;
+ *  `ChaosModifierId` is derived from this so adding/removing a modifier is a
+ *  one-line change. */
+export const CHAOS_MODIFIER_IDS = [
+  "low-gravity",
+  "slow-motion",
+  "golden-gun",
+  "slappers-only",
+  "fire-hazard",
+  "random-shapes",
+  "max-recoil",
+] as const;
+
+export type ChaosModifierId = typeof CHAOS_MODIFIER_IDS[number];
+
+/** Type guard for trust-boundary input (localStorage, URL params, WS payloads). */
+export function isChaosModifierId(value: unknown): value is ChaosModifierId {
+  return typeof value === "string" &&
+    (CHAOS_MODIFIER_IDS as readonly string[]).includes(value);
+}
+
+/** Validates a `localStorage`-style JSON payload of chaos modifier ids.
+ *  Returns `[]` on any parse error or shape mismatch. */
+export function parseStoredChaosModifiers(raw: string | null): ChaosModifierId[] {
+  if (!raw) return [];
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return [];
+  }
+  if (!Array.isArray(parsed)) return [];
+  return parsed.filter(isChaosModifierId);
+}
 
 /**
  * Resolved per-tick chaos effect bundle. Multiplicatively composed across the

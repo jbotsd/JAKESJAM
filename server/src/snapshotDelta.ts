@@ -273,7 +273,10 @@ function diffPlayer(
 
 function applyPlayerPatch(base: PlayerEntity, update: EntityUpdate<PlayerEntity>): PlayerEntity {
   const u = update as { bitsLo: number; bitsHi: number } & Partial<PlayerEntity>;
-  return { ...base, ...u, bitsLo: undefined!, bitsHi: undefined! } as PlayerEntity;
+  // Strip bitmask keys before spreading so they don't pollute the entity.
+  // Mirror of client/src/net/snapshotDelta.ts:applyPlayerPatch.
+  const { bitsLo: _lo, bitsHi: _hi, ...fields } = u;
+  return { ...base, ...fields };
 }
 
 // ─── Projectile diff ──────────────────────────────────────────────────────────

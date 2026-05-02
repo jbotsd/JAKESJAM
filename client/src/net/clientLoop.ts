@@ -604,7 +604,13 @@ export class ClientLoop {
     // Store in ring for future delta resolution
     this.snapshotRing.set(message.tick, resolvedState);
     if (this.snapshotRing.size > ClientLoop.SNAPSHOT_RING_SIZE) {
-      const oldest = this.snapshotRing.keys().next().value as Tick | undefined;
+      // Evict the chronologically oldest tick. Map insertion order is not a
+      // safe proxy when ticks can arrive out of order (reconnect, dropped
+      // packets), so scan keys for the minimum.
+      let oldest: Tick | undefined;
+      for (const k of this.snapshotRing.keys()) {
+        if (oldest === undefined || k < oldest) oldest = k;
+      }
       if (oldest !== undefined) this.snapshotRing.delete(oldest);
     }
 

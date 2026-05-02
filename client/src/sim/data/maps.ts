@@ -21,6 +21,29 @@ export const mapsById: Record<MapId, MapDefinition> = {
   "boxworks-tower": boxworksTower,
 };
 
+/**
+ * Alias table: extra string ids that map to the SAME MapDefinition as a
+ * canonical `MapId`. Populated from the embedded `.id` of each registered
+ * map so the broadcast-vs-resolve path can never silently fall back to
+ * the default just because the map's `.id` got renamed (e.g. `expandMap`
+ * tags the expanded boxworks as `"boxworks-expanded"`, which would otherwise
+ * miss the registry on a `resolveMap("boxworks-expanded")` lookup).
+ *
+ * Built once at module load so resolution is O(1).
+ */
+const mapAliasesById: Record<string, MapDefinition> = (() => {
+  const out: Record<string, MapDefinition> = {};
+  for (const [id, def] of Object.entries(mapsById)) {
+    out[id] = def;
+    // The canonical id from the registry key is already in `out`. If the
+    // embedded `.id` differs (post-expansion etc.), register that too.
+    if (def.id && def.id !== id && !(def.id in out)) {
+      out[def.id] = def;
+    }
+  }
+  return out;
+})();
+
 export const DEFAULT_MAP_ID: MapId = "boxworks";
 
 export function isMapId(value: string): value is MapId {
@@ -31,10 +54,23 @@ export function isMapId(value: string): value is MapId {
  * Picks a map for a given id, falling back to the default if unknown.
  * Use at trust boundaries (network decode, Convex reads) where the
  * incoming string hasn't been narrowed yet.
+ *
+ * Resolution order:
+ *   1. `MapId` literal (exact key in `mapsById`)
+ *   2. Embedded `.id` alias (e.g. `"boxworks-expanded"` → boxworksWorld)
+ *   3. DEFAULT_MAP_ID fallback
+ *
+ * Step 2 is what keeps the netcode hello path honest: the server always
+ * broadcasts `this.map.id` (the embedded `.id`, not the registry key),
+ * and without alias resolution the client used to silently fall through
+ * to the default — which only worked by accident when the default
+ * happened to be the same expanded map.
  */
 export function resolveMap(id: string | undefined): MapDefinition {
-  if (id !== undefined && isMapId(id)) {
-    return mapsById[id];
+  if (id !== undefined) {
+    if (isMapId(id)) return mapsById[id];
+    const aliased = mapAliasesById[id];
+    if (aliased) return aliased;
   }
   return mapsById[DEFAULT_MAP_ID];
 }

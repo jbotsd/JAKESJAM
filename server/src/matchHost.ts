@@ -21,6 +21,7 @@ import { LagCompensator, type RewindPlan } from "./LagCompensator.ts";
 import { TickSlewController } from "./TickSlewController.ts";
 import { convexClient, type ConvexId } from "./convexClient.ts";
 import {
+  PROTOCOL_VERSION,
   decodeMessage,
   encodeMessage,
   type ClientMessage,
@@ -280,6 +281,13 @@ export class MatchHost {
       raw instanceof Buffer ? new Uint8Array(raw.buffer, raw.byteOffset, raw.byteLength) : raw,
     );
     if (!decoded) return;
+    if (decoded.version !== PROTOCOL_VERSION) {
+      console.warn(
+        `[matchHost] protocol mismatch from ${ws.data.playerId}: got=${decoded.version} expected=${PROTOCOL_VERSION}`,
+      );
+      try { ws.close(1002, "protocol-version"); } catch { /* socket already closed */ }
+      return;
+    }
     const { message } = decoded;
     switch (message.t) {
       case "in":
@@ -413,6 +421,10 @@ export class MatchHost {
       this.lastProcessedInputSeq.delete(playerId);
       this.lastSeenAt.delete(playerId);
       this.pendingInputs.delete(playerId);
+      // Free per-player baseline ring. Without this, long-lived matches with
+      // many disconnect/reconnect cycles leak BASELINE_RING_SIZE WorldStates
+      // per departed player.
+      this.baselineRing.delete(playerId);
       // Strip the entity + score from the world state. We rebuild the maps
       // immutably to stay consistent with how addPlayer mutates state.
       const nextPlayers = { ...this.state.players };

@@ -209,8 +209,10 @@ export class LagCompensator {
       const lo = history[i - 1]!;
       if (tick >= lo.tick && tick <= hi.tick) {
         const span = hi.tick - lo.tick;
-        if (span <= 0) return hi;
-        const t = (tick - lo.tick) / span;
+        // Zero-span (two samples recorded at the same tick during a hiccup):
+        // clamp t to 0 so we sit on `lo` deterministically. Returning `hi` here
+        // can produce position discontinuities under lag-compensated rewind.
+        const t = span > 0 ? (tick - lo.tick) / span : 0;
         return {
           tick,
           x: lo.x + (hi.x - lo.x) * t,

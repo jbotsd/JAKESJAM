@@ -17,6 +17,7 @@ import type {
 import { crystalRoundsCards } from "../data/cards";
 import { characters } from "../data/characters";
 import { getChaosModifiers, projectileShapes } from "../data/chaosModifiers";
+import { parseStoredChaosModifiers } from "../../sim/data/chaosModifiers";
 import { starterWeapon } from "../data/weapons";
 import { RoomClient } from "../net/RoomClient";
 import { ProceduralPlayerRig } from "../rendering/ProceduralPlayerRig";
@@ -3066,16 +3067,7 @@ function colorToNumber(color: string): number {
 }
 
 function readStoredChaosModifiers(): ChaosModifierId[] {
-  const raw = localStorage.getItem(CHAOS_MODIFIERS_KEY);
-  if (!raw) {
-    return [];
-  }
-
-  try {
-    return JSON.parse(raw) as ChaosModifierId[];
-  } catch {
-    return [];
-  }
+  return parseStoredChaosModifiers(localStorage.getItem(CHAOS_MODIFIERS_KEY));
 }
 
 function lerpVec(a: Vec2, b: Vec2, amount: number): Vec2 {
