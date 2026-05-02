@@ -25,6 +25,7 @@ import {
   type PlayerLobbyInfo,
 } from "./protocol.ts";
 import { InterestGrid, CELL_SIZE_PX, OBSERVE_RADIUS_CELLS } from "./InterestGrid.ts";
+import { encodeDelta } from "./snapshotDelta.ts";
 
 export type MatchSocketData = {
   matchId: string;
@@ -122,6 +123,23 @@ export class MatchHost {
   /** Monotonically-increasing snapshot counter. Used to gate DEBUG_AOI logs
    *  to the first 30 snapshots only. */
   private snapshotCount = 0;
+
+  // ---- Delta snapshot state ------------------------------------------------
+  /** Maximum number of baseline snapshots retained per client. */
+  private static readonly BASELINE_RING_SIZE = 10;
+  /**
+   * Per-client ring of recent WorldState snapshots keyed by their tick.
+   * Ordered oldest→newest. Used to compute per-client deltas. The stored
+   * snapshots are AOI-FILTERED (per-recipient), so deltas are computed
+   * against the same filtered baseline the recipient previously saw —
+   * see DESIGN ASSUMPTION block in InterestGrid.ts.
+   */
+  private readonly baselineRing = new Map<PlayerId, Map<Tick, WorldState>>();
+  /**
+   * Last snapshot tick acked by each client (from their Ack message).
+   * 0 = not yet acked / client requesting full snapshot.
+   */
+  private readonly lastAckedTick = new Map<PlayerId, Tick>();
   /** Set true the first time a `matchComplete` post to Convex is *initiated*.
    *  Prevents duplicate writes (in addition to the idempotent server-side
    *  mutation). One flag per host == one write per match lifetime. */
@@ -313,9 +331,7 @@ export class MatchHost {
         this.applyInput(ws.data.playerId as PlayerId, message);
         break;
       case "ack":
-        // TODO(deltaCodec): drop snapshots in the per-client baseline ring up
-        // through message.lastSnapshotTick. Until delta encoding is in we
-        // simply trust last-seen and move on.
+        this.recordAck(ws.data.playerId as PlayerId, message.lastSnapshotTick);
         break;
       case "ping":
         ws.send(
@@ -759,6 +775,7 @@ export class MatchHost {
   }
 
   private broadcastSnapshot(events: import("@sim/types.ts").SimEvent[]): void {
+    const tick = this.state.tick;
     const lastProcessed: Record<string, InputSeq> = {};
     for (const [pid, seq] of this.lastProcessedInputSeq) lastProcessed[pid] = seq;
 
@@ -769,16 +786,115 @@ export class MatchHost {
     const debugAoi = process.env.DEBUG_AOI === "1" && this.snapshotCount <= 30;
 
     for (const [recipientId, ws] of this.clients) {
+      // 1. AOI filter: produce the per-recipient view of the world.
       const filteredState = this.buildFilteredSnap(this.state, recipientId, debugAoi);
-      const payload = encodeMessage({
+      // 2. Delta-encode against the recipient's last filtered baseline,
+      //    or fall back to a full snap if no baseline is available.
+      const payload = this.buildSnapshotPayload(
+        recipientId,
+        tick,
+        lastProcessed,
+        events,
+        filteredState,
+      );
+      ws.send(payload);
+      // 3. Store the filtered state as the next baseline. Storing filtered
+      //    (not full-world) is critical — see InterestGrid.ts DESIGN
+      //    ASSUMPTION block.
+      this.pushBaseline(recipientId, tick, filteredState);
+    }
+  }
+
+  /**
+   * Build the encoded snapshot (full or delta) for a single client. The
+   * caller has already AOI-filtered `currentState` — this method only
+   * decides full-vs-delta + does the encoding.
+   */
+  private buildSnapshotPayload(
+    playerId: PlayerId,
+    tick: Tick,
+    lastProcessed: Record<string, InputSeq>,
+    events: import("@sim/types.ts").SimEvent[],
+    currentState: WorldState,
+  ): Uint8Array {
+    const ackedTick = this.lastAckedTick.get(playerId) ?? (0 as Tick);
+    const ring = this.baselineRing.get(playerId);
+
+    // Attempt to find the best baseline: most recent acked tick still in ring.
+    let baselineTick: Tick | null = null;
+    let baselineState: WorldState | null = null;
+    if (ackedTick > 0 && ring && ring.size > 0) {
+      // Walk ring ticks in descending order, pick highest tick <= ackedTick.
+      let bestTick = -1 as Tick;
+      for (const t of ring.keys()) {
+        if (t <= ackedTick && t > bestTick) {
+          bestTick = t;
+        }
+      }
+      if (bestTick >= 0) {
+        const s = ring.get(bestTick);
+        if (s) {
+          baselineTick = bestTick;
+          baselineState = s;
+        }
+      }
+    }
+
+    if (baselineState === null || baselineTick === null) {
+      // Full snapshot path
+      return encodeMessage({
         t: "snap",
-        tick: this.state.tick,
+        tick,
         lastProcessedInputSeq: lastProcessed,
         baseline: null,
-        state: filteredState,
+        state: currentState,
         events,
       });
-      ws.send(payload);
+    }
+
+    // Delta snapshot path — diff against the recipient's last filtered baseline.
+    const delta = encodeDelta(baselineState, currentState);
+    return encodeMessage({
+      t: "snap",
+      tick,
+      lastProcessedInputSeq: lastProcessed,
+      baseline: baselineTick,
+      delta,
+      events,
+    });
+  }
+
+  /**
+   * Record the acked tick for a client and trim the ring of any entries
+   * strictly older than the acked tick (they can never be picked as a
+   * baseline again once surpassed).
+   */
+  private recordAck(playerId: PlayerId, ackedTick: Tick): void {
+    this.lastAckedTick.set(playerId, ackedTick);
+    if (ackedTick === 0) return; // client requesting full snapshot — nothing to trim
+
+    const ring = this.baselineRing.get(playerId);
+    if (!ring) return;
+    for (const t of ring.keys()) {
+      if (t < ackedTick) ring.delete(t);
+    }
+  }
+
+  /**
+   * Add the current (already-AOI-filtered) state to a client's baseline ring,
+   * evicting the oldest entry if the ring is full.
+   */
+  private pushBaseline(playerId: PlayerId, tick: Tick, state: WorldState): void {
+    let ring = this.baselineRing.get(playerId);
+    if (!ring) {
+      ring = new Map<Tick, WorldState>();
+      this.baselineRing.set(playerId, ring);
+    }
+    ring.set(tick, state);
+    if (ring.size > MatchHost.BASELINE_RING_SIZE) {
+      // Evict the oldest tick
+      const oldest = ring.keys().next().value as Tick | undefined;
+      if (oldest !== undefined) ring.delete(oldest);
     }
   }
 

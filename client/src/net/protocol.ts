@@ -4,6 +4,7 @@
 
 import { decode, encode } from "@msgpack/msgpack";
 import type { InputSeq, SimEvent, Tick, WorldState } from "../sim/types.js";
+import type { DeltaPayload } from "./snapshotDelta.js";
 
 export const PROTOCOL_VERSION = 1;
 
@@ -63,14 +64,36 @@ export type ServerHello = {
   allPlayers: PlayerLobbyInfo[];
 };
 
-export type Snapshot = {
+/**
+ * Full-state snapshot. Sent on first contact (baseline === null) or when the
+ * client's ack falls outside the server's baseline ring.
+ */
+export type FullSnapshot = {
   t: "snap";
   tick: Tick;
   lastProcessedInputSeq: Record<string, InputSeq>;
-  baseline: Tick | null;
+  baseline: null;
   state: WorldState;
   events: SimEvent[];
 };
+
+/**
+ * Delta snapshot. Look up `baseline` tick in the local ring and call
+ * `applyDelta(baselineState, delta)` to reconstruct the full state.
+ * If the baseline tick isn't in the ring, send `ack { lastSnapshotTick: 0 }`
+ * to request a full snapshot.
+ */
+export type DeltaSnapshot = {
+  t: "snap";
+  tick: Tick;
+  lastProcessedInputSeq: Record<string, InputSeq>;
+  baseline: Tick; // non-null discriminates from FullSnapshot
+  delta: DeltaPayload;
+  events: SimEvent[];
+};
+
+/** Union of both snapshot variants. Discriminated by `baseline === null`. */
+export type Snapshot = FullSnapshot | DeltaSnapshot;
 
 export type Pong = {
   t: "pong";
