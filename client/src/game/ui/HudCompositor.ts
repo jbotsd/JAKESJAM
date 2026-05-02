@@ -160,6 +160,8 @@ export class HudCompositor {
       jetpackFuel: local?.jetpackFuel,
       chips,
       cardNames,
+      abilityCharge: local?.abilityCharge,
+      cardIds: local?.cards,
       isDead: !local || local.health <= 0 || !local.alive,
     };
 

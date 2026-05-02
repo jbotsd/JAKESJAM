@@ -1,5 +1,6 @@
 import Phaser from "phaser";
 import type { Vec2 } from "../types/game";
+import { PALETTE } from "../ui/palette.js";
 
 /**
  * ProceduralPlayerRig - AAA-quality procedural character renderer.
@@ -40,8 +41,6 @@ const DARK = 0x07101c;
 const DARK2 = 0x0f1a2e;
 const WHITE = 0xf7fbff;
 const ACCENT = 0x8ff8ff; // Crystal cyan glow
-const HEALTH_GOOD = 0xb8f05a;
-const HEALTH_BACKING = 0x1f2937;
 
 export class ProceduralPlayerRig {
   private readonly graphics: Phaser.GameObjects.Graphics;
@@ -58,7 +57,7 @@ export class ProceduralPlayerRig {
     this.graphics = scene.add.graphics();
     this.nameText = scene.add
       .text(0, 0, options.name, {
-        color: "#f7fbff",
+        color: `#${PALETTE.textHi.toString(16).padStart(6, "0")}`,
         fontFamily: "Inter, Arial, sans-serif",
         fontSize: `${Math.round(10 * (options.scale ?? 1))}px`,
         fontStyle: "700",
@@ -107,8 +106,8 @@ export class ProceduralPlayerRig {
     const s = this.scale;
     const ground = pose.position.y;
     const cr = pose.crouching ? 1 : 0;
-    const bob = pose.grounded && !pose.crouching
-      ? Math.abs(Math.sin(this.stepPhase)) * 2 * walkAmount : 0;
+    const bob =
+      pose.grounded && !pose.crouching ? Math.abs(Math.sin(this.stepPhase)) * 2 * walkAmount : 0;
 
     // Key positions
     const pelvisY = ground - Phaser.Math.Linear(52, 32, cr) * s - bob;
@@ -131,7 +130,10 @@ export class ProceduralPlayerRig {
     const shoulderLead = vec(chest.x + perp.x * 7 * s, chest.y + perp.y * 7 * s);
     const shoulderBack = vec(chest.x - perp.x * 7 * s, chest.y - perp.y * 7 * s);
     const handLead = vec(chest.x + aim.x * 34 * s, chest.y + aim.y * 34 * s);
-    const handBack = vec(chest.x + aim.x * 18 * s - perp.x * 8 * s, chest.y + aim.y * 18 * s - perp.y * 8 * s);
+    const handBack = vec(
+      chest.x + aim.x * 18 * s - perp.x * 8 * s,
+      chest.y + aim.y * 18 * s - perp.y * 8 * s,
+    );
     const muzzle = vec(chest.x + aim.x * 48 * s, chest.y + aim.y * 48 * s);
 
     // Feet
@@ -226,7 +228,13 @@ export class ProceduralPlayerRig {
   }
 
   // --- SPINE GLOW: Energy filaments showing health ---
-  private drawSpineGlow(g: Phaser.GameObjects.Graphics, pelvis: Vec2, chest: Vec2, s: number, healthRatio: number) {
+  private drawSpineGlow(
+    g: Phaser.GameObjects.Graphics,
+    pelvis: Vec2,
+    chest: Vec2,
+    s: number,
+    healthRatio: number,
+  ) {
     const alpha = 0.3 + 0.6 * healthRatio;
     const color = healthRatio < 0.25 ? 0xfb7185 : ACCENT;
 
@@ -268,13 +276,7 @@ export class ProceduralPlayerRig {
 
     // Face plate (darker inset)
     g.fillStyle(DARK2, 0.9);
-    g.fillRoundedRect(
-      head.x + f * 2 * s - 6 * s,
-      head.y - 6 * s,
-      12 * s,
-      9 * s,
-      2 * s,
-    );
+    g.fillRoundedRect(head.x + f * 2 * s - 6 * s, head.y - 6 * s, 12 * s, 9 * s, 2 * s);
 
     // VISOR SLIT - the signature glowing eye line
     const visorColor = healthRatio < 0.25 ? 0xfb7185 : ACCENT;
@@ -282,31 +284,15 @@ export class ProceduralPlayerRig {
 
     // Outer glow
     g.fillStyle(visorColor, visorAlpha * 0.35);
-    g.fillRoundedRect(
-      head.x + f * 3 * s - 7 * s,
-      head.y - 3 * s,
-      14 * s,
-      4 * s,
-      2 * s,
-    );
+    g.fillRoundedRect(head.x + f * 3 * s - 7 * s, head.y - 3 * s, 14 * s, 4 * s, 2 * s);
 
     // Core slit
     g.fillStyle(visorColor, visorAlpha);
-    g.fillRect(
-      head.x + f * 3 * s - 5.5 * s,
-      head.y - 2 * s,
-      11 * s,
-      2.5 * s,
-    );
+    g.fillRect(head.x + f * 3 * s - 5.5 * s, head.y - 2 * s, 11 * s, 2.5 * s);
 
     // Inner bright spot (represents eye direction)
     g.fillStyle(WHITE, visorAlpha * 0.8);
-    g.fillRect(
-      head.x + f * 5 * s - 2 * s,
-      head.y - 1.5 * s,
-      4 * s,
-      1.5 * s,
-    );
+    g.fillRect(head.x + f * 5 * s - 2 * s, head.y - 1.5 * s, 4 * s, 1.5 * s);
   }
 
   // --- SHOULDER ARMOR ---
@@ -323,7 +309,13 @@ export class ProceduralPlayerRig {
   }
 
   // --- ARM CANNON: Crystal-tech weapon ---
-  private drawArmCannon(g: Phaser.GameObjects.Graphics, hand: Vec2, muzzle: Vec2, _aim: Vec2, s: number) {
+  private drawArmCannon(
+    g: Phaser.GameObjects.Graphics,
+    hand: Vec2,
+    muzzle: Vec2,
+    _aim: Vec2,
+    s: number,
+  ) {
     const dx = muzzle.x - hand.x;
     const dy = muzzle.y - hand.y;
     const len = Math.hypot(dx, dy) || 1;
@@ -347,8 +339,8 @@ export class ProceduralPlayerRig {
     g.fillStyle(this.colorDark, 1);
     g.beginPath();
     g.moveTo(hand.x + px * (barrelW - 1.5 * s), hand.y + py * (barrelW - 1.5 * s));
-    g.lineTo(muzzle.x + px * (barrelW * 0.5), muzzle.y + py * (barrelW * 0.5));
-    g.lineTo(muzzle.x - px * (barrelW * 0.5), muzzle.y - py * (barrelW * 0.5));
+    g.lineTo(muzzle.x + px * barrelW * 0.5, muzzle.y + py * barrelW * 0.5);
+    g.lineTo(muzzle.x - px * barrelW * 0.5, muzzle.y - py * barrelW * 0.5);
     g.lineTo(hand.x - px * (barrelW - 1.5 * s), hand.y - py * (barrelW - 1.5 * s));
     g.closePath();
     g.fillPath();
@@ -378,7 +370,13 @@ export class ProceduralPlayerRig {
   }
 
   // --- THICK LIMB: Filled polygon instead of line ---
-  private drawThickLimb(g: Phaser.GameObjects.Graphics, root: Vec2, solve: LimbSolve, outerW: number, innerW: number) {
+  private drawThickLimb(
+    g: Phaser.GameObjects.Graphics,
+    root: Vec2,
+    solve: LimbSolve,
+    outerW: number,
+    innerW: number,
+  ) {
     // Dark outline limb
     g.lineStyle(outerW + 2, DARK, 1);
     g.beginPath();
@@ -428,28 +426,27 @@ export class ProceduralPlayerRig {
     g.fillRect(foot.x - bw * 0.2 + f * 2 * s, foot.y - bh * 0.6, bw * 0.5, 2 * s);
   }
 
-  // --- NAMEPLATE ---
-  private drawNameplate(g: Phaser.GameObjects.Graphics, x: number, y: number, s: number, health: number, maxHealth: number) {
-    const healthText = `${Math.ceil(Math.max(0, health))}/${Math.max(1, Math.ceil(maxHealth))}`;
-    const nameWidth = Math.max(52, this.name.length * 6.5, healthText.length * 6.5) * s;
-    const barWidth = nameWidth - 6 * s;
+  // --- NAMEPLATE (plate-less) ---
+  // No background rect. Name in textHi. Thin 2px hpLime underline as HP bar.
+  private drawNameplate(
+    g: Phaser.GameObjects.Graphics,
+    x: number,
+    y: number,
+    s: number,
+    health: number,
+    maxHealth: number,
+  ) {
+    const nameWidth = Math.max(52, this.name.length * 6.5) * s;
     const healthRatio = Phaser.Math.Clamp(health / Math.max(1, maxHealth), 0, 1);
 
-    // Background panel
-    g.fillStyle(DARK, 0.75);
-    g.fillRoundedRect(x - nameWidth / 2, y - 22 * s, nameWidth, 20 * s, 3 * s);
+    // Name text — no background, no health suffix
+    this.nameText.setText(this.name);
+    this.nameText.setPosition(x, y - 6 * s);
 
-    // Health bar backing
-    g.fillStyle(HEALTH_BACKING, 1);
-    g.fillRect(x - barWidth / 2, y - 3 * s, barWidth, 4 * s);
-
-    // Health bar fill
-    g.fillStyle(HEALTH_GOOD, 1);
-    g.fillRect(x - barWidth / 2, y - 3 * s, barWidth * healthRatio, 4 * s);
-
-    // Name text
-    this.nameText.setText(`${this.name} ${healthText}`);
-    this.nameText.setPosition(x, y - 5 * s);
+    // 2px lime HP underline directly under name text
+    const lineY = y - 4 * s;
+    g.fillStyle(PALETTE.hpLime, 1);
+    g.fillRect(x - nameWidth / 2, lineY, nameWidth * healthRatio, 2);
   }
 
   // --- FOOT POSITION ---
@@ -465,7 +462,13 @@ export class ProceduralPlayerRig {
 
 // --- Utility ---
 
-function solveTwoBone(root: Vec2, target: Vec2, upper: number, lower: number, bend: number): LimbSolve {
+function solveTwoBone(
+  root: Vec2,
+  target: Vec2,
+  upper: number,
+  lower: number,
+  bend: number,
+): LimbSolve {
   const dx = target.x - root.x;
   const dy = target.y - root.y;
   const dist = Phaser.Math.Clamp(Math.hypot(dx, dy), 0.001, upper + lower - 0.001);
