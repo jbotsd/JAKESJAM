@@ -29,7 +29,9 @@
   },
   "devDependencies": {
     "@playwright/test": "^1.59.1",
+    "@types/pngjs": "^6.0.5",
     "convex": "^1.37.0",
+    "pngjs": "^7.0.0",
     "typescript": "^6.0.3"
   }
 }
