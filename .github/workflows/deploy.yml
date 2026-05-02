@@ -129,22 +129,28 @@ jobs:
           GH_GAME_SERVER_URL: ${{ secrets.GAME_SERVER_URL_PROD }}
         run: |
           set -e
+          # GH secret WINS over Vercel env for this var. Reason: the
+          # Vercel project env is locked to the Fly URL (set early) but
+          # the actual prod target switches between Fly + tunnel as Fly
+          # billing fluctuates. Updating the GH secret is one CLI call;
+          # updating Vercel env is delete-and-recreate (Sensitive flag
+          # is one-way) and a redeploy. So the GH secret is the
+          # operational override knob.
+          if [ -n "$GH_GAME_SERVER_URL" ]; then
+            echo "VITE_GAME_SERVER_URL=${GH_GAME_SERVER_URL}" >> .env.production
+            echo "VITE_GAME_SERVER_URL set from GH secret GAME_SERVER_URL_PROD (length=${#GH_GAME_SERVER_URL}). OK."
+            exit 0
+          fi
           PULLED_ENV_FILE=".vercel/.env.production.local"
           PULLED_URL=""
           if [ -f "$PULLED_ENV_FILE" ]; then
             PULLED_URL=$(grep -E '^VITE_GAME_SERVER_URL=' "$PULLED_ENV_FILE" | head -1 | cut -d'=' -f2- | sed 's/^"//; s/"$//') || true
           fi
           if [ -n "$PULLED_URL" ]; then
-            echo "VITE_GAME_SERVER_URL is provided by Vercel project env (length=${#PULLED_URL}). OK."
+            echo "VITE_GAME_SERVER_URL inherited from Vercel project env (GH secret empty; length=${#PULLED_URL}). OK."
             exit 0
           fi
-          if [ -n "$GH_GAME_SERVER_URL" ]; then
-            echo "VITE_GAME_SERVER_URL missing from Vercel env; falling back to GH secret GAME_SERVER_URL_PROD."
-            echo "VITE_GAME_SERVER_URL=${GH_GAME_SERVER_URL}" >> .env.production
-            echo "Wrote .env.production with VITE_GAME_SERVER_URL (length=${#GH_GAME_SERVER_URL})."
-            exit 0
-          fi
-          echo "::warning::VITE_GAME_SERVER_URL is not set anywhere; client will use the localhost default (broken in prod). Add Vercel env or GH secret GAME_SERVER_URL_PROD."
+          echo "::warning::VITE_GAME_SERVER_URL is not set anywhere; client will use the localhost default (broken in prod). Add GH secret GAME_SERVER_URL_PROD."
       - name: Build (Vercel prebuilt)
         run: vercel build --prod --token=${{ secrets.VERCEL_TOKEN }}
       - name: Deploy
