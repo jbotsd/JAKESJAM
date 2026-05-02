@@ -58,6 +58,7 @@ import { ParticlePool } from "../systems/ParticlePool";
 import { StatusVfxController } from "../systems/StatusVfxController";
 import { paintPlatform } from "../render/PlatformPainter";
 import { drawLightBeam } from "../render/LightingLayer";
+import { RenderLayer } from "../render/RenderLayer";
 import { PALETTE, ARENA_THEMES } from "../ui/palette";
 import type {
   CardDefinition,
@@ -221,9 +222,10 @@ export class OnlineMatchScene extends Phaser.Scene {
   /** Stored on renderArena so spawnPlatformBlastTint can iterate platforms. */
   private currentMap: MapDefinition | null = null;
 
-  // ---- Status VFX (sim-authoritative) ----
+  // ---- Status VFX + render helpers (sim-authoritative) ----
   private particlePool: ParticlePool | null = null;
   private statusVfx: StatusVfxController | null = null;
+  private renderLayer: RenderLayer | null = null;
   // Events arrive via ClientLoop.onEvents; buffer per-frame and drain in update().
   private pendingSimEvents: SimEvent[] = [];
   // Track destructible health between frames for damage-flash effect.
@@ -293,6 +295,7 @@ export class OnlineMatchScene extends Phaser.Scene {
     // chain-hit SimEvents. Pool is pre-allocated so no GC during combat.
     this.particlePool = new ParticlePool(this);
     this.statusVfx = new StatusVfxController(this, this.particlePool);
+    this.renderLayer = new RenderLayer(this, this.particlePool);
 
     this.lastFrameMs = performance.now();
     this.events.once("shutdown", () => this.teardown());
@@ -562,21 +565,29 @@ export class OnlineMatchScene extends Phaser.Scene {
             this.cameras.main.shake(80, 0.004);
           }
           this.spawnDamageNumber(event.victimId, event.damage);
+          // Spawn small impact blast at victim's current position.
+          this.spawnBlastAtPlayer(event.victimId, 22, event.damage);
           break;
-        case "destructible-broken":
+        case "destructible-broken": {
           this.audio.play("explosion");
           this.cameras.main.shake(60, 0.0025);
-          this.spawnPlatformBlastTint({ x: event.x, y: event.y });
+          const bPos = { x: event.x, y: event.y };
+          this.spawnPlatformBlastTint(bPos);
+          this.renderLayer?.spawnExplosionBlast(bPos, 48, 30);
           break;
+        }
         case "pickup-taken":
           this.audio.play("pickup");
           break;
         case "parry-deflected":
           this.audio.play("hit");
           break;
-        case "shield-popped":
+        case "shield-popped": {
           this.audio.play("explosion");
+          // Shield pop blast at player position.
+          this.spawnBlastAtPlayer(event.playerId, 36, 26);
           break;
+        }
         case "round-end":
           // Soft cue. Reuse "card" as a "ding".
           this.audio.play("card");
@@ -643,6 +654,16 @@ export class OnlineMatchScene extends Phaser.Scene {
     });
   }
 
+  /** Spawn a visual blast at the current world position of a player entity. */
+  private spawnBlastAtPlayer(playerId: string, radius: number, damage: number): void {
+    if (!this.renderLayer) return;
+    const state = this.loop?.getRenderState();
+    if (!state) return;
+    const player = state.players[PlayerId(playerId)];
+    if (!player) return;
+    this.renderLayer.spawnExplosionBlast({ x: player.x, y: player.y }, radius, damage);
+  }
+
   // ---------------- Arena (static geometry) ----------------
 
   /**
@@ -662,7 +683,8 @@ export class OnlineMatchScene extends Phaser.Scene {
     const map: MapDefinition = resolveMap(mapId);
     this.currentMap = map;
     const { x: width, y: height } = map.size;
-    const theme = ARENA_THEMES.jadeIsles;
+    const themeKey = (map.arenaTheme ?? "jadeIsles") as keyof typeof ARENA_THEMES;
+    const theme = ARENA_THEMES[themeKey] as import("../ui/palette").ArenaTheme;
 
     // Camera bounds — without this, the camera follows the player into
     // empty space when the world is bigger than the viewport.

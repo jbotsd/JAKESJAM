@@ -36,8 +36,12 @@ export class RenderLayer {
     this.pool = pool;
   }
 
-  /** Big radial blast + 18 colorful shards. Used when a remote player dies. */
+  /** Big radial blast + 18 colorful shards. Used when a remote player dies.
+   *  Automatically fires the big spike overlay — death is the loudest moment. */
   spawnPlayerDeathExplosion(position: Vec2): void {
+    // Auto-invoke the big spike overlay first (plays behind the shards).
+    this.spawnExplosionBlastBig(position, 118, 0xfb7185);
+
     const blast = this.scene.add.circle(position.x, position.y, 10, 0xf7fbff, 0.52);
     blast.setStrokeStyle(4, 0xfb7185, 0.95);
     this.scene.tweens.add({
@@ -69,6 +73,12 @@ export class RenderLayer {
         ease: "Sine.easeOut",
         onComplete: () => shard.destroy(),
       });
+    }
+
+    // Camera shake — stronger than a regular blast, never suppress.
+    const cam = this.scene.cameras?.main;
+    if (cam) {
+      cam.shake(260, 0.016);
     }
   }
 

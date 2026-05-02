@@ -68,14 +68,17 @@ function makeScene() {
 }
 
 describe("RenderLayer", () => {
-  test("spawnPlayerDeathExplosion creates 1 blast + 18 shards + matching tween count", () => {
+  test("spawnPlayerDeathExplosion creates big-blast + ring + 18 shards + spike rects", () => {
     const scene = makeScene();
     new RenderLayer(scene).spawnPlayerDeathExplosion({ x: 50, y: 60 });
     const circles = scene.__adds.filter((c: AddCall) => c.name === "circle").length;
     const rects = scene.__adds.filter((c: AddCall) => c.name === "rectangle").length;
-    expect(circles).toBe(1);
-    expect(rects).toBe(18);
-    expect(scene.__tweens.length).toBe(19);
+    // Big blast (no pool): 1 fallback circle + 16 spike rects.
+    // Ring blast: 1 circle.  Shards: 18 rects.
+    expect(circles).toBe(2); // big-blast circle + ring
+    expect(rects).toBe(34);  // 16 spikes + 18 shards
+    // Tweens: 1 big-blast tween + 16 spike tweens + 1 ring tween + 18 shard tweens = 36
+    expect(scene.__tweens.length).toBe(36);
   });
 
   test("spawnRespawnBurst creates exactly one ring + tween", () => {
