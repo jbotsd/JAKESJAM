@@ -210,14 +210,15 @@ export class ParticlePool {
       ...this.boltActive,
       ...this.blastCircleActive,
     ]);
-    const releaseAll = <T extends Phaser.GameObjects.GameObject>(
-      active: Set<T>,
-      free: T[],
+    const releaseAll = (
+      active: Set<Phaser.GameObjects.Rectangle> | Set<Phaser.GameObjects.Arc> | Set<Phaser.GameObjects.Graphics>,
+      free: Phaser.GameObjects.Rectangle[] | Phaser.GameObjects.Arc[] | Phaser.GameObjects.Graphics[],
     ) => {
       for (const o of active) {
-        o.setVisible(false);
-        o.setAlpha(1);
-        free.push(o);
+        (o as { setVisible(v: boolean): unknown }).setVisible(false);
+        (o as { setAlpha(a: number): unknown }).setAlpha(1);
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        (free as any[]).push(o);
       }
       active.clear();
     };

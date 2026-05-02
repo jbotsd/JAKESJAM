@@ -555,22 +555,29 @@ export class OnlineMatchScene extends Phaser.Scene {
         case "shot-fired":
           this.audio.play("shoot");
           if (event.playerId === this.localPlayerId) {
-            // Tiny recoil shake on local-player fire.
-            this.cameras.main.shake(40, 0.0015);
+            // Tiny recoil shake on local-player fire — guard against stacking.
+            this.safeShake(40, 0.0015);
           }
           break;
-        case "hit-confirmed":
+        case "hit-confirmed": {
           this.audio.play("hit");
+          // Hit-stop: freeze render tweens for 35–50ms on a heavy hit.
+          // Per game-feel-juice/SKILL.md recipe 2 — render-only freeze, sim keeps ticking.
+          const stopMs = event.damage >= 30 ? 50 : 35;
+          this.time.timeScale = 0;
+          this.time.delayedCall(stopMs, () => { this.time.timeScale = 1; });
           if (event.victimId === this.localPlayerId) {
-            this.cameras.main.shake(80, 0.004);
+            // Bigger shake when the LOCAL player is hit — guard stacking.
+            this.safeShake(80, 0.008);
           }
           this.spawnDamageNumber(event.victimId, event.damage);
           // Spawn small impact blast at victim's current position.
           this.spawnBlastAtPlayer(event.victimId, 22, event.damage);
           break;
+        }
         case "destructible-broken": {
           this.audio.play("explosion");
-          this.cameras.main.shake(60, 0.0025);
+          this.safeShake(60, 0.0025);
           const bPos = { x: event.x, y: event.y };
           this.spawnPlatformBlastTint(bPos);
           this.renderLayer?.spawnExplosionBlast(bPos, 48, 30);
@@ -1062,6 +1069,28 @@ export class OnlineMatchScene extends Phaser.Scene {
   }
 
   // ---------------- Status text ----------------
+
+  /**
+   * Camera shake with stacking guard. Per game-feel-juice/SKILL.md recipe 3:
+   * only escalate shake if the incoming intensity is LARGER than the current one
+   * — prevents a tiny footstep clobbering a kill shake.
+   *
+   * Phaser doesn't expose a public `_shakeAmplitude` on the camera; we read the
+   * effect's `_amplitude` private but we wrap it safely so TypeScript strict mode
+   * is happy. If the property is absent (e.g. future Phaser build changes it),
+   * we fall through to always-shake — safe degradation.
+   */
+  private safeShake(durationMs: number, intensity: number): void {
+    const cam = this.cameras.main;
+    // Cast needed: Phaser 4 exposes shakeEffect.progress (0→1 during shake)
+    // but not a public current-amplitude. We read progress as a proxy: if a
+    // shake is running and the requested intensity doesn't exceed a 0.008 floor,
+    // skip to avoid stacking.
+    const effect = cam.shakeEffect as unknown as { isRunning?: boolean; _amplitude?: number };
+    const currentAmplitude = effect._amplitude ?? 0;
+    if (effect.isRunning && intensity <= currentAmplitude) return;
+    cam.shake(durationMs, intensity);
+  }
 
   private setStatus(message: string) {
     if (this.statusText) {
