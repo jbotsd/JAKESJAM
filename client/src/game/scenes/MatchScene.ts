@@ -57,6 +57,7 @@ import type {
 } from "../types/game";
 import { CardSystem } from "../systems/CardSystem";
 import { DestructibleRenderer, destructibleColor } from "../systems/DestructibleRenderer";
+import { RemotePlayerManager } from "../systems/RemotePlayerManager";
 import type { MatchPlayerSnapshot, RoomPlayer } from "../types/net";
 
 const STANDING_CHEST_OFFSET = 75;
@@ -64,7 +65,6 @@ const CROUCHING_CHEST_OFFSET = 54;
 const MUZZLE_REACH = 43;
 const PLAYER_VISUAL_SCALE = 0.78;
 const SNAPSHOT_SEND_INTERVAL_MS = 100;
-const REMOTE_SMOOTHING = 0.26;
 const CHAOS_MODIFIERS_KEY = "jakesjam.chaosModifiers";
 // const CARD_CACHE_RELOCATE_MS = 20000; // ROUNDS: Removed - draft between rounds
 const REMOTE_PLAYER_TARGET_PREFIX = "remote-player:";
@@ -159,9 +159,7 @@ export class MatchScene extends Phaser.Scene {
   private roomClient?: RoomClient;
   private unsubscribeSnapshots?: () => void;
   private playerRig?: ProceduralPlayerRig;
-  private readonly remoteRigs = new Map<string, ProceduralPlayerRig>();
-  private readonly remoteSnapshots = new Map<string, MatchPlayerSnapshot>();
-  private readonly remoteShotSequences = new Map<string, number>();
+  private remotePlayers!: RemotePlayerManager;
   private cameraTarget?: Phaser.GameObjects.Zone;
   private reticle?: Phaser.GameObjects.Graphics;
   private scoreboardBack?: Phaser.GameObjects.Rectangle;
@@ -290,6 +288,15 @@ export class MatchScene extends Phaser.Scene {
     this.particlePool?.destroy();
     this.particlePool = new ParticlePool(this);
     this.projectileSystem?.destroy();
+    this.remotePlayers?.reset();
+    this.remotePlayers = new RemotePlayerManager(this, {
+      localPlayerId: this.localPlayerId,
+      spawns: boxworksWorld.spawns,
+      visualScaleFor: (character) => this.getVisualScale(character),
+      bodySizeFor: (character) => getPlayerBodySize(character.sizeScale),
+      characterFor: (id) => this.getCharacter(id as CharacterId | undefined),
+      colorToNumber: (hex) => colorToNumber(hex),
+    });
     this.destroyPlayerVisuals();
     this.target = createTestTarget();
     this.destructibles = createDestructibleStates();
@@ -496,19 +503,7 @@ export class MatchScene extends Phaser.Scene {
   }
 
   private createRemotePlayerVisuals() {
-    for (const player of this.roomPlayers) {
-      if (player.playerId === this.localPlayerId) {
-        continue;
-      }
-
-      const rig = new ProceduralPlayerRig(this, {
-        color: colorToNumber(player.color),
-        name: `${player.name} / ${this.getCharacter(player.characterId).name}`,
-        scale: this.getVisualScale(this.getCharacter(player.characterId)),
-      });
-      this.remoteRigs.set(player.playerId, rig);
-    }
-    this.syncRemotePlayerVisuals();
+    this.remotePlayers.initRigs(this.roomPlayers);
   }
 
   private createTargetVisuals() {
@@ -575,7 +570,7 @@ export class MatchScene extends Phaser.Scene {
 
     for (const remote of this.roomPlayers) {
       if (remote.playerId === this.localPlayerId) continue;
-      const snapshot = this.remoteSnapshots.get(remote.playerId);
+      const snapshot = this.remotePlayers.getSnapshot(remote.playerId);
       const health = snapshot?.health ?? 100;
       const alive = snapshot ? snapshot.alive !== false && health > 0 : true;
       players[PlayerId(remote.playerId)] = makeSimPlayerStub(PlayerId(remote.playerId), health, alive);
@@ -1026,44 +1021,9 @@ export class MatchScene extends Phaser.Scene {
   }
 
   private syncRemotePlayerVisuals(deltaMs = 16) {
-    if (this.remoteRigs.size === 0) {
-      return;
-    }
-
-    for (const [playerIdRaw, rig] of this.remoteRigs) {
-      const playerId = PlayerId(playerIdRaw);
-      const playerIndex = this.getRoomPlayerIndex(playerId);
-      const spawn = boxworksWorld.spawns[playerIndex % boxworksWorld.spawns.length] ?? { x: 0, y: 0 };
-      const character = this.getCharacter(this.getRoomPlayer(playerId)?.characterId);
-      const snapshot = this.remoteSnapshots.get(playerId);
-      if (snapshot?.alive === false) {
-        rig.setVisible(false);
-        continue;
-      }
-
-      rig.setVisible(true);
-      const targetPosition = snapshot?.position ?? spawn;
-      const footPosition = {
-        x: targetPosition.x,
-        y: targetPosition.y + getPlayerBodySize(character.sizeScale).y / 2,
-      };
-      const aimTarget = {
-        x: targetPosition.x + Math.cos(snapshot?.aimAngle ?? 0) * 120,
-        y: targetPosition.y + Math.sin(snapshot?.aimAngle ?? 0) * 120,
-      };
-      const velocity = snapshot?.velocity ?? { x: 0, y: 0 };
-
-      rig.update(deltaMs, {
-        position: footPosition,
-        velocity,
-        aimTarget,
-        grounded: true,
-        crouching: snapshot?.crouching ?? false,
-        health: snapshot?.health ?? character.maxHealth,
-        maxHealth: Math.max(character.maxHealth, snapshot?.health ?? character.maxHealth),
-      });
-
-      this.tickRemoteStatusVfx(playerId, deltaMs, targetPosition);
+    const rendered = this.remotePlayers.syncVisuals(this.roomPlayers, deltaMs);
+    for (const row of rendered) {
+      this.tickRemoteStatusVfx(PlayerId(row.playerId), deltaMs, row.position);
     }
   }
 
@@ -1268,11 +1228,9 @@ export class MatchScene extends Phaser.Scene {
       }
 
       this.ensureScore(snapshot.playerId);
-      const previous = this.remoteSnapshots.get(snapshot.playerId);
+      const previous = this.remotePlayers.getSnapshot(snapshot.playerId);
       this.spawnRemoteProjectileBursts(snapshot, previous);
-      this.remoteSnapshots.set(snapshot.playerId, previous
-        ? smoothSnapshot(previous, snapshot)
-        : snapshot);
+      this.remotePlayers.ingestSnapshot(snapshot);
     }
 
   }
@@ -1286,9 +1244,9 @@ export class MatchScene extends Phaser.Scene {
     }
 
     const shotSequence = snapshot.shotSequence ?? 0;
-    const previousSequence = this.remoteShotSequences.get(snapshot.playerId);
+    const previousSequence = this.remotePlayers.getShotSequence(snapshot.playerId);
     if (previousSequence === undefined) {
-      this.remoteShotSequences.set(snapshot.playerId, shotSequence);
+      this.remotePlayers.setShotSequence(snapshot.playerId, shotSequence);
       return;
     }
 
@@ -1296,7 +1254,7 @@ export class MatchScene extends Phaser.Scene {
       return;
     }
 
-    this.remoteShotSequences.set(snapshot.playerId, shotSequence);
+    this.remotePlayers.setShotSequence(snapshot.playerId, shotSequence);
     const burstCount = Math.min(3, shotSequence - previousSequence);
     const build = createWeaponBuild(starterWeapon, []);
     const origin = this.getRemoteMuzzlePosition(previous ?? snapshot, snapshot);
@@ -1524,7 +1482,7 @@ export class MatchScene extends Phaser.Scene {
         this.applyImpactArea(hit);
         this.applyElementStatusToRemote(remotePlayerId, hit);
         if (hit.element === "lightning") {
-          const snapshot = this.remoteSnapshots.get(remotePlayerId);
+          const snapshot = this.remotePlayers.getSnapshot(remotePlayerId);
           if (snapshot) {
             this.spawnLightningChainArc(hit.position, snapshot.position);
           }
@@ -1709,13 +1667,13 @@ export class MatchScene extends Phaser.Scene {
   }
 
   private damageRemotePlayer(playerId: string, hit: ProjectileHit) {
-    const snapshot = this.remoteSnapshots.get(playerId);
+    const snapshot = this.remotePlayers.getSnapshot(playerId);
     if (!snapshot || !snapshot.alive) {
       return;
     }
 
     const nextSnapshot = applySnapshotDamage(snapshot, hit.damage);
-    this.remoteSnapshots.set(playerId, nextSnapshot);
+    this.remotePlayers.setSnapshot(playerId, nextSnapshot);
     this.floatRemoteDamageText(nextSnapshot.position, hit.damage, hit.element);
 
     if (!nextSnapshot.alive) {
@@ -2158,7 +2116,7 @@ export class MatchScene extends Phaser.Scene {
       }
     }
 
-    for (const [playerId, snapshot] of this.remoteSnapshots) {
+    for (const [playerId, snapshot] of this.remotePlayers.snapshotEntries()) {
       if (!snapshot.alive || remotePlayerTargetId(playerId) === excludedId) {
         continue;
       }
@@ -2631,7 +2589,7 @@ export class MatchScene extends Phaser.Scene {
         targets.push(object);
       }
     }
-    for (const [playerId, snapshot] of this.remoteSnapshots) {
+    for (const [playerId, snapshot] of this.remotePlayers.snapshotEntries()) {
       if (!snapshot.alive) {
         continue;
       }
@@ -2821,11 +2779,6 @@ export class MatchScene extends Phaser.Scene {
     return { ...spawn };
   }
 
-  private getRoomPlayerIndex(playerId: string): number {
-    const index = this.roomPlayers.findIndex((player) => player.playerId === playerId);
-    return index >= 0 ? index : 0;
-  }
-
   private getLocalRoomPlayer(): RoomPlayer | undefined {
     return this.roomPlayers.find((player) => player.playerId === this.localPlayerId);
   }
@@ -2851,12 +2804,7 @@ export class MatchScene extends Phaser.Scene {
     this.playerRig = undefined;
     this.shieldGraphics?.destroy();
     this.shieldGraphics = undefined;
-    for (const rig of this.remoteRigs.values()) {
-      rig.destroy();
-    }
-    this.remoteRigs.clear();
-    this.remoteSnapshots.clear();
-    this.remoteShotSequences.clear();
+    this.remotePlayers?.reset();
   }
 
   private teardownNetworkSync() {
@@ -3088,18 +3036,6 @@ function readStoredChaosModifiers(): ChaosModifierId[] {
   } catch {
     return [];
   }
-}
-
-function smoothSnapshot(
-  previous: MatchPlayerSnapshot,
-  next: MatchPlayerSnapshot,
-): MatchPlayerSnapshot {
-  return {
-    ...next,
-    position: lerpVec(previous.position, next.position, REMOTE_SMOOTHING),
-    velocity: lerpVec(previous.velocity, next.velocity, REMOTE_SMOOTHING),
-    aimAngle: Phaser.Math.Angle.RotateTo(previous.aimAngle, next.aimAngle, 0.35),
-  };
 }
 
 function lerpVec(a: Vec2, b: Vec2, amount: number): Vec2 {
