@@ -820,6 +820,29 @@ export class OnlineMatchScene extends Phaser.Scene {
         case "player-slowed":
           // Visual-only; no sound.
           break;
+        case "draft-resolved":
+          // Pick landed; hide the local overlay and play a soft confirm.
+          if (event.playerId === this.localPlayerId) {
+            this.cardDraftOverlay?.hide();
+          }
+          this.audio.play("card");
+          break;
+        case "chain-hit": {
+          // Bolt arc visual is drawn by statusVfx (lightning handler) using
+          // the forwarded event in pendingSimEvents. Audio + shake here.
+          this.audio.play("hit");
+          if (event.victimId === this.localPlayerId || event.chainTargetId === this.localPlayerId) {
+            this.safeShake(50, 0.004);
+          }
+          break;
+        }
+        default: {
+          // Exhaustiveness check: TypeScript will error here if a new
+          // SimEvent variant is added to sim/types.ts and not handled above.
+          const _exhaustive: never = event;
+          void _exhaustive;
+          break;
+        }
       }
     }
   }

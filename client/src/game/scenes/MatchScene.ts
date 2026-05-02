@@ -71,7 +71,6 @@ const CROUCHING_CHEST_OFFSET = 54;
 const MUZZLE_REACH = 43;
 const PLAYER_VISUAL_SCALE = 0.78;
 const CHAOS_MODIFIERS_KEY = "jakesjam.chaosModifiers";
-// const CARD_CACHE_RELOCATE_MS = 20000; // ROUNDS: Removed - draft between rounds
 const REMOTE_PLAYER_TARGET_PREFIX = "remote-player:";
 // Synthetic player id used to feed the dummy target into the round state
 // machine. With only one human player + a dummy, we treat the dummy as a
@@ -97,13 +96,8 @@ const PARRY_ACTIVE_MS = 420;
 const PARRY_COOLDOWN_MS = 4300;
 const PARRY_BASE_ARC_RADIANS = Math.PI * 0.72;
 const PARRY_BASE_RANGE = 98;
-// const DAMAGE_AMP_MULTIPLIER = 1.42;
-// const SPEED_BOOST_MULTIPLIER = 1.22;
 const SLOW_DEBUFF_MULTIPLIER = 0.62;
 const VULNERABILITY_MULTIPLIER = 1.38;
-// const BOSS_MOVE_MULTIPLIER = 0.72;
-// const BOSS_DAMAGE_MULTIPLIER = 1.55;
-// const BOSS_FIRE_RATE_MULTIPLIER = 0.72;
 
 type MatchSceneInitData = {
   roomId?: RoomId;

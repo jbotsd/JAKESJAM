@@ -371,6 +371,18 @@ export class MatchHost {
       case "hello":
         // Hello is implicit on connect; ignore extras.
         break;
+      default: {
+        // Exhaustiveness check: TypeScript will error here if a new
+        // ClientMessage variant is added to protocol.ts and not handled
+        // above. At runtime, log and ignore so a forgiving server still
+        // tolerates unknown future variants from older/newer clients.
+        const _exhaustive: never = message;
+        console.warn(
+          `[matchHost] unknown client message type from ${ws.data.playerId}:`,
+          (_exhaustive as { t?: string }).t,
+        );
+        break;
+      }
     }
   }
 

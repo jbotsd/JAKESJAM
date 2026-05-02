@@ -93,11 +93,4 @@ export default defineSchema({
     roundsPlayed: v.number(),
     createdAt: v.number(),
   }).index("by_room", ["roomId"]),
-
-  chatMessages: defineTable({
-    roomId: v.id("rooms"),
-    playerId: v.string(),
-    message: v.string(),
-    createdAt: v.number(),
-  }).index("by_room", ["roomId"]),
 });

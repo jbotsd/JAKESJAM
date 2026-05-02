@@ -13,13 +13,14 @@ import type { Id } from "./_generated/dataModel";
 // we actually use here.
 declare const process: { env: Record<string, string | undefined> };
 
-export const GAME_REGIONS = ["syd", "sjc", "fra"] as const;
+// Only `syd` is deployed today. `sjc` and `fra` are placeholders in the
+// roadmap; re-add them here AND deploy the matching Fly apps in lockstep,
+// otherwise pickGameServerUrl will hand clients dead URLs.
+export const GAME_REGIONS = ["syd"] as const;
 export type GameRegion = typeof GAME_REGIONS[number];
 
 const GAME_SERVERS = {
   syd: "wss://jakesjam-srv-syd.fly.dev/ws",
-  sjc: "wss://jakesjam-srv-sjc.fly.dev/ws",
-  fra: "wss://jakesjam-srv-fra.fly.dev/ws",
 } as const satisfies Record<GameRegion, string>;
 
 const DEFAULT_REGION: GameRegion = "syd";

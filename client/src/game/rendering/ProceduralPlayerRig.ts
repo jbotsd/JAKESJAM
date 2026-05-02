@@ -62,7 +62,12 @@ export class ProceduralPlayerRig {
   private lastTrailSampleMs = 0;
 
   constructor(scene: Phaser.Scene, options: ProceduralPlayerRigOptions) {
+    // Depth 10: above pickups (2), destructibles (3), fire (4), atmospheric
+    // backdrop (-10), and light beams (0.7); well below HUD (>=950).
+    // Without this, light beams visually clip through the player rig and
+    // read as "the player is inside the terrain."
     this.graphics = scene.add.graphics();
+    this.graphics.setDepth(10);
     this.nameText = scene.add
       .text(0, 0, options.name, {
         color: `#${PALETTE.textHi.toString(16).padStart(6, "0")}`,
@@ -70,7 +75,8 @@ export class ProceduralPlayerRig {
         fontSize: `${Math.round(10 * (options.scale ?? 1))}px`,
         fontStyle: "700",
       })
-      .setOrigin(0.5, 1);
+      .setOrigin(0.5, 1)
+      .setDepth(11);
     this.color = options.color;
     this.colorDark = shadeColor(options.color, -0.4);
     this.name = options.name;
