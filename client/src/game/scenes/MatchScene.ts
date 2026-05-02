@@ -56,6 +56,7 @@ import type {
   Vec2,
 } from "../types/game";
 import { CardSystem } from "../systems/CardSystem";
+import { DestructibleRenderer, destructibleColor } from "../systems/DestructibleRenderer";
 import type { MatchPlayerSnapshot, RoomPlayer } from "../types/net";
 
 const STANDING_CHEST_OFFSET = 75;
@@ -170,7 +171,7 @@ export class MatchScene extends Phaser.Scene {
   private readonly cardSystem = new CardSystem();
   private targetText?: Phaser.GameObjects.Text;
   private targetGraphics?: Phaser.GameObjects.Graphics;
-  private destructibleGraphics?: Phaser.GameObjects.Graphics;
+  private destructibleRenderer?: DestructibleRenderer;
   private fireGraphics?: Phaser.GameObjects.Graphics;
   private pickupGraphics?: Phaser.GameObjects.Graphics;
   private keys?: MovementKeys;
@@ -474,7 +475,8 @@ export class MatchScene extends Phaser.Scene {
 
   private createArenaHazardVisuals() {
     this.fireGraphics = this.add.graphics();
-    this.destructibleGraphics = this.add.graphics();
+    this.destructibleRenderer?.destroy();
+    this.destructibleRenderer = new DestructibleRenderer(this);
     this.pickupGraphics = this.add.graphics();
     this.updateFireVisuals();
     this.updateDestructibleVisuals();
@@ -2401,75 +2403,7 @@ export class MatchScene extends Phaser.Scene {
   }
 
   private updateDestructibleVisuals() {
-    if (!this.destructibleGraphics) {
-      return;
-    }
-
-    const graphics = this.destructibleGraphics;
-    graphics.clear();
-
-    for (const object of this.destructibles) {
-      if (!object.alive) {
-        continue;
-      }
-
-      const { position, size } = object;
-      const healthRatio = object.health / object.maxHealth;
-      const color = object.burnMs > 0 ? 0xff7a18 : destructibleColor(object.kind);
-
-      graphics.fillStyle(0x07101c, 0.45);
-      graphics.fillRoundedRect(
-        position.x - size.x / 2 - 3,
-        position.y - size.y / 2 - 3,
-        size.x + 6,
-        size.y + 6,
-        3,
-      );
-
-      graphics.fillStyle(color, object.kind === "mine" ? 0.92 : 0.84);
-      if (object.kind === "barrel") {
-        graphics.fillRoundedRect(position.x - size.x / 2, position.y - size.y / 2, size.x, size.y, 7);
-        graphics.lineStyle(2, 0xf7fbff, 0.35);
-        graphics.beginPath();
-        graphics.moveTo(position.x - size.x / 2 + 3, position.y - 5);
-        graphics.lineTo(position.x + size.x / 2 - 3, position.y - 5);
-        graphics.moveTo(position.x - size.x / 2 + 3, position.y + 8);
-        graphics.lineTo(position.x + size.x / 2 - 3, position.y + 8);
-        graphics.strokePath();
-      } else if (object.kind === "mine") {
-        graphics.fillRoundedRect(position.x - size.x / 2, position.y - size.y / 2, size.x, size.y, 2);
-        graphics.fillStyle(0xfff7d6, 0.9);
-        graphics.fillCircle(position.x, position.y - 2, 3);
-      } else {
-        graphics.fillRect(position.x - size.x / 2, position.y - size.y / 2, size.x, size.y);
-        if (object.kind === "box") {
-          graphics.lineStyle(2, 0x513820, 0.45);
-          graphics.strokeLineShape(new Phaser.Geom.Line(
-            position.x - size.x / 2 + 4,
-            position.y - size.y / 2 + 4,
-            position.x + size.x / 2 - 4,
-            position.y + size.y / 2 - 4,
-          ));
-          graphics.strokeLineShape(new Phaser.Geom.Line(
-            position.x + size.x / 2 - 4,
-            position.y - size.y / 2 + 4,
-            position.x - size.x / 2 + 4,
-            position.y + size.y / 2 - 4,
-          ));
-        }
-      }
-
-      graphics.lineStyle(1, 0xf7fbff, 0.5);
-      graphics.strokeRect(position.x - size.x / 2, position.y - size.y / 2, size.x, size.y);
-
-      if (healthRatio < 1) {
-        const barWidth = Math.max(24, size.x + 8);
-        graphics.fillStyle(0x1f2937, 0.9);
-        graphics.fillRect(position.x - barWidth / 2, position.y - size.y / 2 - 10, barWidth, 4);
-        graphics.fillStyle(healthRatio > 0.35 ? 0xb8f05a : 0xfb7185, 1);
-        graphics.fillRect(position.x - barWidth / 2, position.y - size.y / 2 - 10, barWidth * healthRatio, 4);
-      }
-    }
+    this.destructibleRenderer?.redraw(this.destructibles);
   }
 
   private updateFireVisuals() {
@@ -3075,16 +3009,6 @@ function createTestTarget(): TestTarget {
     maxHealth: 180,
     respawnMs: 0,
   };
-}
-
-function destructibleColor(kind: DestructibleKind): number {
-  const colors: Record<DestructibleKind, number> = {
-    barrel: 0xff6b6b,
-    box: 0xc49a6c,
-    mine: 0xffd166,
-    cube: 0x8fa3c8,
-  };
-  return colors[kind];
 }
 
 function pickupColor(kind: PickupKind): number {
