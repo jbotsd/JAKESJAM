@@ -2,6 +2,7 @@ import Phaser from "phaser";
 import { SceneKeys } from "./SceneKeys";
 import { PALETTE, ARENA_THEMES } from "../ui/palette";
 import { paintPlatform } from "../render/PlatformPainter";
+import { drawLightBeam } from "../render/LightingLayer";
 import { boxworksWorld, seededUnit } from "../../sim/data/boxworks.js";
 import {
   COUNTDOWN_MS,
@@ -456,7 +457,8 @@ export class MatchScene extends Phaser.Scene {
 
   private renderArena() {
     const { x: width, y: height } = boxworksWorld.size;
-    const theme = ARENA_THEMES.jadeIsles;
+    // Cast to ArenaTheme so optional properties (hasLightBeams) are accessible.
+    const theme: import("../ui/palette").ArenaTheme = ARENA_THEMES.jadeIsles;
 
     // Solid void background — no grid.
     this.add.rectangle(width / 2, height / 2, width, height, theme.bg);
@@ -465,6 +467,36 @@ export class MatchScene extends Phaser.Scene {
     const bgShade = PALETTE.voidEdge;
     this.add.ellipse(width * 0.3, height * 0.45, width * 0.55, height * 0.4, bgShade, 0.08);
     this.add.ellipse(width * 0.72, height * 0.55, width * 0.5, height * 0.38, bgShade, 0.08);
+
+    // Light beams — additive triangle polygons from off-screen top when theme flags them.
+    if (theme.hasLightBeams) {
+      const beamDefs: Array<{ x: number; w: number }> = [
+        { x: width * 0.25, w: 80 },
+        { x: width * 0.55, w: 100 },
+        { x: width * 0.78, w: 70 },
+      ];
+      for (const def of beamDefs) {
+        const beam = drawLightBeam(
+          this,
+          def.x,
+          0,
+          def.w,
+          height,
+          PALETTE.lightBeamWarm,
+          0.10,
+        );
+        beam.setDepth(1);
+        // Slow yoyo rotation ±2° over 8s for subtle atmospheric life.
+        this.tweens.add({
+          targets: beam,
+          angle: 2,
+          duration: 8000,
+          ease: "Sine.easeInOut",
+          yoyo: true,
+          repeat: -1,
+        });
+      }
+    }
 
     // Platforms — two-tone + brush-streak baked RenderTexture.
     for (const platform of boxworksWorld.platforms) {
@@ -2055,7 +2087,39 @@ export class MatchScene extends Phaser.Scene {
   private spawnExplosion(position: Vec2, radius: number, damage: number, element: ElementType) {
     this.audio?.play("explosion");
     this.renderLayer.spawnExplosionBlast(position, radius);
+    this.spawnPlatformBlastTint(position);
     this.applyAreaDamage(position, radius, damage, element);
+  }
+
+  /**
+   * Platform warm-tint flash on explosion: platforms within 220px briefly glow.
+   */
+  private spawnPlatformBlastTint(position: Vec2): void {
+    const BLAST_RANGE = 220;
+    for (const platform of boxworksWorld.platforms) {
+      const cx = platform.position.x;
+      const cy = platform.position.y;
+      const dist = Math.hypot(cx - position.x, cy - position.y);
+      if (dist >= BLAST_RANGE) continue;
+      const tintAlpha = 0.10 * (1 - dist / BLAST_RANGE);
+      const tintRect = this.add.rectangle(
+        cx,
+        cy,
+        platform.size.x,
+        platform.size.y,
+        PALETTE.blastHalo,
+        tintAlpha,
+      );
+      tintRect.setBlendMode(Phaser.BlendModes.ADD);
+      tintRect.setDepth(5);
+      this.tweens.add({
+        targets: tintRect,
+        alpha: 0,
+        duration: 140,
+        ease: "Linear",
+        onComplete: () => tintRect.destroy(),
+      });
+    }
   }
 
   private applyAreaDamage(

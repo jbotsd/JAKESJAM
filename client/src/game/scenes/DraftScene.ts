@@ -96,6 +96,10 @@ export class DraftScene extends Phaser.Scene {
     // Three card choices (main display)
     this.renderCardChoices(width / 2, height / 2 + 20);
 
+    // ── Lamp orb prop ─────────────────────────────────────────────────────────
+    // A visible warm light source at bottom-left grounding the scene.
+    this.addLampOrb(width, height);
+
     // Hero presenter — bottom center
     this.hero = new HeroPresenter(this, width / 2, height - 80, {
       bodyColor: PALETTE.playerOrange,
@@ -398,6 +402,82 @@ export class DraftScene extends Phaser.Scene {
       g.lineTo(width, y);
       g.strokePath();
     }
+  }
+
+  /**
+   * Lamp orb prop — a bright warm point-light source at bottom-left.
+   * Solid bright core + 3 stacked additive halos + a soft cone toward the hero.
+   */
+  private addLampOrb(width: number, height: number): void {
+    const orbX = 160;
+    const orbY = height - 120;
+    const coreR = 14;
+
+    // Soft cone polygon: apex at orb, pointing toward hero position.
+    // Simulated gradient via two stacked polygons of decreasing alpha.
+    const heroX = width / 2;
+    const heroY = height - 80;
+    const coneAngle = Math.atan2(heroY - orbY, heroX - orbX);
+    const halfCone = Math.PI / 6; // 60° half-angle = 30° each side
+    const coneLen = Math.hypot(heroX - orbX, heroY - orbY) + 40;
+
+    const conePoints = (scale: number) => [
+      { x: orbX, y: orbY },
+      {
+        x: orbX + Math.cos(coneAngle - halfCone * scale) * coneLen,
+        y: orbY + Math.sin(coneAngle - halfCone * scale) * coneLen,
+      },
+      {
+        x: orbX + Math.cos(coneAngle + halfCone * scale) * coneLen,
+        y: orbY + Math.sin(coneAngle + halfCone * scale) * coneLen,
+      },
+    ];
+
+    // Outer cone (wider, very low alpha)
+    const coneOuter = this.add.polygon(
+      0,
+      0,
+      conePoints(1.0),
+      PALETTE.lightBeamWarm,
+      0.06,
+    );
+    coneOuter.setBlendMode(Phaser.BlendModes.ADD);
+    coneOuter.setOrigin(0, 0);
+
+    // Inner cone (tighter, slightly higher alpha)
+    const coneInner = this.add.polygon(
+      0,
+      0,
+      conePoints(0.55),
+      PALETTE.lightBeamWarm,
+      0.10,
+    );
+    coneInner.setBlendMode(Phaser.BlendModes.ADD);
+    coneInner.setOrigin(0, 0);
+
+    // Halos: additive arcs at 3 scales around the orb
+    const haloScales: Array<{ scale: number; alpha: number }> = [
+      { scale: 1,   alpha: 0.6  },
+      { scale: 2.4, alpha: 0.25 },
+      { scale: 4.8, alpha: 0.10 },
+    ];
+
+    for (const { scale, alpha } of haloScales) {
+      const halo = this.add.arc(
+        orbX,
+        orbY,
+        coreR * scale,
+        0,
+        360,
+        false,
+        PALETTE.lampOrbCore,
+        alpha,
+      );
+      halo.setBlendMode(Phaser.BlendModes.ADD);
+    }
+
+    // Solid bright core on top
+    this.add.arc(orbX, orbY, coreR, 0, 360, false, PALETTE.lampOrbCore, 1.0);
   }
 
   private renderCurrentBuild(centerX: number, y: number) {

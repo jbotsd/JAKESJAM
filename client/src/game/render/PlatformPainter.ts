@@ -13,6 +13,7 @@
 
 import Phaser from "phaser";
 import type { ArenaTheme } from "../ui/palette";
+import { drawRimHighlight } from "./LightingLayer";
 
 // Re-export so callers can import ArenaTheme from here as well.
 export type { ArenaTheme };
@@ -75,6 +76,11 @@ export function paintPlatform(
     g.clear();
     g.fillStyle(theme.hi, 1);
     g.fillRect(0, 0, w, h);
+    rt.draw(g, 0, 0);
+
+    // (b.5) Top-edge rim highlight — 2px white line implying a light source above
+    g.clear();
+    drawRimHighlight(g, 0, 0, w, 0xF5F8F8, 0.22);
     rt.draw(g, 0, 0);
 
     // (c) Brush streaks — 4–6 thin rotated rects at low alpha

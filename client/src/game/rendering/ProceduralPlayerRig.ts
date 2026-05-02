@@ -225,6 +225,20 @@ export class ProceduralPlayerRig {
     // Belt line
     g.fillStyle(DARK, 0.9);
     g.fillRect(pelvis.x - w2 / 2 + 1, pelvis.y - 3 * s, w2 - 2, 4 * s);
+
+    // Upper-hemisphere rim arc — simulates directional light from above.
+    // 200° → 340° (top arc), 2px, light warm color at alpha 0.20.
+    g.lineStyle(2 * s, PALETTE.lightBeamWarm, 0.20);
+    g.beginPath();
+    g.arc(
+      chest.x,
+      chest.y,
+      w1 / 2 + 1,
+      Phaser.Math.DegToRad(200),
+      Phaser.Math.DegToRad(340),
+      false,
+    );
+    g.strokePath();
   }
 
   // --- SPINE GLOW: Energy filaments showing health ---

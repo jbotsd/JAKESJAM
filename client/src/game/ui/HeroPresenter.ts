@@ -5,6 +5,7 @@
 // Call holdCard(container | null) to position a card container in the right hand.
 
 import Phaser from "phaser";
+import { PALETTE } from "./palette";
 
 export type HeroExpression = "angry" | "neutral" | "smug";
 
@@ -35,6 +36,10 @@ export class HeroPresenter extends Phaser.GameObjects.Container {
 
     const R = 64; // body radius
 
+    // ── Ground shadow — flat ellipse beneath hero feet ────────────────────
+    const groundShadow = scene.add.ellipse(0, R + 40, 80, 16, 0x000000, 0.3);
+    this.add(groundShadow);
+
     // ── Body ──────────────────────────────────────────────────────────────
     const body = scene.add.graphics();
     // Shadow facet (lower-right)
@@ -44,6 +49,14 @@ export class HeroPresenter extends Phaser.GameObjects.Container {
     body.fillStyle(opts.bodyColor, 1);
     body.fillCircle(0, 0, R);
     this.add(body);
+
+    // ── Upper-arc rim highlight — warm stroke on top hemisphere ──────────
+    const rimArc = scene.add.graphics();
+    rimArc.lineStyle(3, PALETTE.lightBeamWarm, 0.22);
+    rimArc.beginPath();
+    rimArc.arc(0, 0, R, Phaser.Math.DegToRad(200), Phaser.Math.DegToRad(340), false);
+    rimArc.strokePath();
+    this.add(rimArc);
 
     // ── Legs ──────────────────────────────────────────────────────────────
     const legs = scene.add.graphics();
