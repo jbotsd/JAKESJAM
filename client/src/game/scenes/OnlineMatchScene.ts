@@ -656,6 +656,16 @@ export class OnlineMatchScene extends Phaser.Scene {
     const map: MapDefinition = resolveMap(mapId);
     const { x: width, y: height } = map.size;
 
+    // Diagnostic: confirms the hello → render hop ran. One log per match
+    // (renderArena fires once on first ServerHello; tear-down + re-attach
+    // would log again, which is intentional). If this never appears in the
+    // console, the bug is upstream — `onHello` never fired or the WS hello
+    // never landed; check ClientLoop.applyHello / WsTransport state.
+    console.info(
+      `[OnlineMatchScene] renderArena: requested="${mapId}" → resolved="${map.id}" ` +
+        `size=${width}x${height} platforms=${map.platforms.length}`,
+    );
+
     // Camera bounds — without this, the camera follows the player into
     // empty space when the world is bigger than the viewport.
     this.cameras.main.setBounds(0, 0, width, height);
@@ -664,12 +674,30 @@ export class OnlineMatchScene extends Phaser.Scene {
     // Tear down any previous arena render (e.g. on reconnect to a new match).
     this.arenaGraphics?.destroy();
     const g = this.add.graphics();
-    g.setDepth(0); // below destructibles (depth 3) and players
+    // Explicit negative depth so we render strictly UNDER everything else
+    // even when other layers are also at depth 0 (legacy: arenaGraphics used
+    // depth 0, but a same-depth tie depends on creation order — fragile when
+    // other agents add new layers).
+    g.setDepth(-10);
     this.arenaGraphics = g;
 
-    // Backdrop: vertical gradient, deep navy → near-black.
+    // Backdrop fill — solid first, gradient on top.
+    //
+    // Why both: `fillGradientStyle` is documented as a WebGL-only feature.
+    // If the renderer ever falls back to Canvas (e.g. WebGL context lost,
+    // headless smoke test, very old browser) the gradient is a silent no-op
+    // and the arena would render fully transparent — the camera background
+    // alone (#06181C) would be all the player sees, which reads as "no
+    // terrain". The solid fill below guarantees a visible base layer
+    // regardless of backend; the gradient just adds atmosphere on WebGL.
+    g.fillStyle(0x0a1424, 0.95);
+    g.fillRect(0, 0, width, height);
     g.fillGradientStyle(0x0a1424, 0x0a1424, 0x05080f, 0x05080f, 0.95, 0.95, 1, 1);
     g.fillRect(0, 0, width, height);
+    // Reset to a flat fill so subsequent platform draws don't accidentally
+    // inherit the gradient state (Phaser keeps fill state on the Graphics
+    // object across calls).
+    g.fillStyle(0xffffff, 1);
 
     // Geometric grid — 80px spacing, 3% alpha. Cheap atmosphere, cyan tint.
     g.lineStyle(1, 0x8ff8ff, 0.05);
