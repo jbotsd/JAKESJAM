@@ -336,7 +336,7 @@ export const crystalRoundsCards: CardDefinition[] = [
     rarity: "uncommon",
     buckets: ["trajectory"],
     essenceCost: 3,
-    description: "Crystals drift slowly with small orbiting sparkles.",
+    description: "Crystals drift slowly with extended lifetime and a slight size bump.",
     flavorText: "Momentum takes a smoke break.",
     modifier: {
       projectileSpeedMultiplier: 0.58,
@@ -589,7 +589,7 @@ export const crystalRoundsCards: CardDefinition[] = [
     rarity: "rare",
     buckets: ["element"],
     essenceCost: 4,
-    description: "Lightning element adds crackling arc trails and chain-ready hits.",
+    description: "Lightning element — pierces and arcs to a nearby target on hit.;",
     flavorText: "The crystal remembers the storm.",
     modifier: {
       projectileSpeedMultiplier: 1.08,
@@ -605,7 +605,7 @@ export const crystalRoundsCards: CardDefinition[] = [
     rarity: "rare",
     buckets: ["element"],
     essenceCost: 4,
-    description: "Void element phases through platforms briefly and cuts armor later.",
+    description: "Void element with extra damage — pierces through up to two targets.;"
     flavorText: "The shard takes the scenic route through absence.",
     modifier: {
       damageMultiplier: 1.08,
@@ -638,7 +638,7 @@ export const crystalRoundsCards: CardDefinition[] = [
     rarity: "common",
     buckets: ["utility"],
     essenceCost: 2,
-    description: "Cuts shot cooldown; weapon glow pulses faster.",
+    description: "Cuts shot cooldown and softens recoil."
     flavorText: "Blink and the core has already been rude twice.",
     modifier: {
       // Reduced from 1.32 → 1.22 to prevent 1.5s TTK breach when stacked
@@ -690,7 +690,7 @@ export const crystalRoundsCards: CardDefinition[] = [
     rarity: "common",
     buckets: ["utility"],
     essenceCost: 2,
-    description: "Adds ammo sustain hooks and a larger local magazine.",
+    description: "Larger magazine and faster reload."
     flavorText: "The crystals recharge before you regret anything.",
     modifier: {
       magazineSizeAdd: 2,
@@ -768,7 +768,7 @@ export const crystalRoundsCards: CardDefinition[] = [
     rarity: "rare",
     buckets: ["utility"],
     essenceCost: 4,
-    description: "The next charged shot is bigger and brighter.",
+    description: "Slower fire rate, bigger projectiles with wider impact bursts."
     flavorText: "Patience, then absolute nonsense.",
     modifier: {
       fireRateMultiplier: 0.72,
@@ -785,7 +785,7 @@ export const crystalRoundsCards: CardDefinition[] = [
     rarity: "rare",
     buckets: ["utility"],
     essenceCost: 4,
-    description: "Blocking reflects one projectile as a homing crystal shard later.",
+    description: "Marks projectiles as crystal element — pure-color glow on hits."
     flavorText: "No, you.",
     modifier: {
       mirrorShield: true,

@@ -56,6 +56,7 @@ type ActiveProjectile = {
   gravityScale: number;
   homingStrength: number;
   accelerationMultiplier: number;
+  bouncesInitial: number;
   bouncesLeft: number;
   impactRadiusPx: number;
   pierceLeft: number;
@@ -378,6 +379,7 @@ export class ProjectileSystem {
       gravityScale: build.projectile.gravityScale,
       homingStrength: build.projectile.homingStrength,
       accelerationMultiplier: build.projectile.accelerationMultiplier,
+      bouncesInitial: build.projectile.bounces,
       bouncesLeft: build.projectile.bounces,
       impactRadiusPx: build.projectile.impactRadiusPx,
       pierceLeft: build.projectile.pierceCount,
@@ -542,11 +544,22 @@ export class ProjectileSystem {
     impact: ImpactBehavior,
     impactRadiusPx: number,
   ) {
-    const color = elementColor(element);
+    // P1: cataclysmic-prism (radiant + explosive) advertises "pure white crystal
+    // flash" — override the elementColor's pale yellow with true white for this
+    // specific combo so the card looks like it reads.
+    const color =
+      element === "radiant" && impact === "explosive"
+        ? 0xffffff
+        : elementColor(element);
     const radius = Math.max(impactRadiusPx, impact === "none" ? 18 : 34);
 
+    // P2: radiant-overload promises a flash sized to its impact radius. Scale
+    // the primary glow burst directly with impactRadiusPx for radiant element
+    // so card-authored larger radii produce visibly bigger halos.
+    const primaryGlowRadius =
+      element === "radiant" ? Math.max(impactRadiusPx, radius * 0.85) : radius * 0.85;
     // Soft additive flash — the "rounds"-style halo. Hot core grows out fast.
-    this.spawnGlowBurst(position.x, position.y, color, radius * 0.85, 0.95, impact === "explosive" ? 320 : 200, 1.7);
+    this.spawnGlowBurst(position.x, position.y, color, primaryGlowRadius, 0.95, impact === "explosive" ? 320 : 200, 1.7);
     if (impact === "explosive") {
       // Extra wide secondary wash for explosions.
       this.spawnGlowBurst(position.x, position.y, color, radius * 1.6, 0.55, 380, 1.4);
@@ -582,11 +595,20 @@ export class ProjectileSystem {
 
   private bounceSpark(projectile: ActiveProjectile) {
     const color = elementColor(projectile.element);
-    this.spawnGlowBurst(projectile.position.x, projectile.position.y, color, 14, 0.9, 140, 1.5);
-    const spark = this.scene.add.circle(projectile.position.x, projectile.position.y, 3, color, 0.86);
+    // bouncy-prism: brighter spark + larger glow on each successive bounce.
+    // bouncesInitial captures the spawn-time bounce budget; bouncesLeft is
+    // already decremented before this call, so used = initial - left.
+    const initial = Math.max(1, projectile.bouncesInitial);
+    const used = Math.max(1, initial - projectile.bouncesLeft);
+    const ramp = Math.min(1, used / initial);
+    const glowRadius = 14 + 10 * ramp;
+    const sparkAlpha = 0.86 + 0.14 * ramp;
+    const sparkExpand = 18 + 8 * ramp;
+    this.spawnGlowBurst(projectile.position.x, projectile.position.y, color, glowRadius, 0.9 + 0.1 * ramp, 140, 1.5);
+    const spark = this.scene.add.circle(projectile.position.x, projectile.position.y, 3, color, sparkAlpha);
     this.scene.tweens.add({
       targets: spark,
-      radius: 18,
+      radius: sparkExpand,
       alpha: 0,
       duration: 120,
       onComplete: () => spark.destroy(),
