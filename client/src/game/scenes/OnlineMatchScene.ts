@@ -54,6 +54,7 @@ import {
 import { HudSystem, type HudChip, type HudVitals, type HudRound } from "../ui/HudSystem";
 import { RoundBanner } from "../ui/RoundBanner";
 import { DeathOverlay } from "../ui/DeathOverlay";
+import { ConnectionOverlay } from "../ui/ConnectionOverlay";
 import { ParticlePool } from "../systems/ParticlePool";
 import { StatusVfxController } from "../systems/StatusVfxController";
 import { paintPlatform } from "../render/PlatformPainter";
@@ -205,6 +206,8 @@ export class OnlineMatchScene extends Phaser.Scene {
   private statsText: Phaser.GameObjects.Text | null = null;
   private statsBg: Phaser.GameObjects.Rectangle | null = null;
   private statsToggleKey: Phaser.Input.Keyboard.Key | null = null;
+  /** Always-visible RTT badge (top-right). Independent of toggleable stats HUD. */
+  private rttBadge: Phaser.GameObjects.Text | null = null;
   // Reused buffer so we don't allocate a new string-array each frame.
   private readonly statsLineBuf: string[] = ["", "", "", "", "", ""];
 
@@ -212,6 +215,7 @@ export class OnlineMatchScene extends Phaser.Scene {
   private hudSystem: HudSystem | null = null;
   private roundBannerSystem: RoundBanner | null = null;
   private deathOverlay: DeathOverlay | null = null;
+  private connectionOverlay: ConnectionOverlay | null = null;
 
   // ---- Audio + overlays ----
   private audio?: GameAudioSystem;
@@ -296,6 +300,7 @@ export class OnlineMatchScene extends Phaser.Scene {
     this.hudSystem = new HudSystem(this, this.localPlayerId);
     this.roundBannerSystem = new RoundBanner(this);
     this.deathOverlay = new DeathOverlay();
+    this.connectionOverlay = new ConnectionOverlay();
 
     // Status VFX driven by sim state (burnUntilTick / freezeUntilTick) plus
     // chain-hit SimEvents. Pool is pre-allocated so no GC during combat.
@@ -441,6 +446,7 @@ export class OnlineMatchScene extends Phaser.Scene {
     if (this.statsVisible) {
       this.updateStatsHud();
     }
+    this.updateRttBadge();
   }
 
   // ---------------- HUD ----------------
@@ -551,6 +557,19 @@ export class OnlineMatchScene extends Phaser.Scene {
       .setScrollFactor(0)
       .setVisible(false)
       .setDepth(951);
+
+    // Always-visible RTT pill. Anchored top-right; color-coded by latency.
+    this.rttBadge = this.add
+      .text(cam.width - 12, 12, "—ms", {
+        color: "#94a3b8",
+        fontFamily: "ui-monospace, Menlo, Consolas, monospace",
+        fontSize: "11px",
+        backgroundColor: "rgba(5,8,15,0.55)",
+        padding: { left: 8, right: 8, top: 4, bottom: 4 },
+      })
+      .setOrigin(1, 0)
+      .setScrollFactor(0)
+      .setDepth(960);
   }
 
   private repositionStatsHud() {
@@ -561,6 +580,8 @@ export class OnlineMatchScene extends Phaser.Scene {
     const y = 12;
     this.statsBg.setPosition(x, y);
     this.statsText.setPosition(x + 8, y + 6);
+    // RTT pill anchors to top-right regardless of stats panel state.
+    this.rttBadge?.setPosition(cam.width - 12, this.statsVisible ? y + (this.statsBg.height as number) + 6 : 12);
   }
 
   private toggleStats() {
@@ -583,6 +604,16 @@ export class OnlineMatchScene extends Phaser.Scene {
     this.statsText.setText(buf);
   }
 
+  private updateRttBadge() {
+    if (!this.rttBadge || !this.loop) return;
+    const rtt = this.loop.getNetStats().rttMs;
+    let color = "#86efac"; // green
+    if (rtt > 180) color = "#fb7185"; // red
+    else if (rtt > 80) color = "#fde68a"; // amber
+    this.rttBadge.setText(rtt > 0 ? `${Math.round(rtt)}ms` : "—ms");
+    this.rttBadge.setColor(color);
+  }
+
   // ---------------- Connect ----------------
 
   private async connect(data: OnlineMatchSceneInit) {
@@ -596,6 +627,7 @@ export class OnlineMatchScene extends Phaser.Scene {
         playerId: data.localPlayerId,
         onAuthoritativeApplied: () => {
           this.setStatus(""); // hide status once we start receiving snapshots
+          this.connectionOverlay?.hide();
         },
         onHello: (hello) => {
           // Server told us which map this match runs on. Render its
@@ -604,9 +636,12 @@ export class OnlineMatchScene extends Phaser.Scene {
           this.renderArena(hello.mapId);
         },
         onEvents: (events) => this.handleSimEvents(events),
+        onReconnectAttempt: (attempt, nextDelayMs) =>
+          this.connectionOverlay?.show({ kind: "reconnecting", attempt, nextDelayMs }),
       });
       transport.onClose((reason) => {
         this.setStatus(`Disconnected: ${reason}`);
+        this.connectionOverlay?.show({ kind: "lost", reason });
       });
     } catch (err) {
       const msg = err instanceof Error ? err.message : "unknown error";
@@ -665,6 +700,13 @@ export class OnlineMatchScene extends Phaser.Scene {
           this.spawnDamageNumber(event.victimId, event.damage);
           // Spawn small impact blast at victim's current position.
           this.spawnBlastAtPlayer(event.victimId, 22, event.damage);
+          // Visual knockback on the victim rig — random direction (render-only).
+          // Per game-feel-juice §5.
+          const victimRig = this.playerRigs.get(event.victimId);
+          if (victimRig) {
+            const angle = Math.random() * Math.PI * 2;
+            victimRig.triggerHit(Math.cos(angle), Math.sin(angle));
+          }
           break;
         }
         case "player-killed": {
@@ -1348,6 +1390,8 @@ export class OnlineMatchScene extends Phaser.Scene {
     this.roundBannerSystem = null;
     this.deathOverlay?.destroy();
     this.deathOverlay = null;
+    this.connectionOverlay?.destroy();
+    this.connectionOverlay = null;
     this.statusVfx?.destroy();
     this.statusVfx = null;
     this.particlePool?.destroy();

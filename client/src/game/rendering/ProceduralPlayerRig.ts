@@ -52,6 +52,12 @@ export class ProceduralPlayerRig {
   private stepPhase = 0;
   private facing = 1;
   private firePulse = 0;
+  // Visual-only knockback. Set by triggerHit(); decays over HIT_DECAY_MS.
+  // Per game-feel-juice §5 — render layer overshoots authoritative position.
+  private hitOffsetX = 0;
+  private hitOffsetY = 0;
+  private hitDecay = 0;
+  private static readonly HIT_DECAY_MS = 90;
   private readonly trailPositions: { x: number; y: number; t: number }[] = [];
   private lastTrailSampleMs = 0;
 
@@ -77,6 +83,7 @@ export class ProceduralPlayerRig {
     const walkAmount = Phaser.Math.Clamp(Math.abs(pose.velocity.x) / 180, 0, 1);
     this.stepPhase += deltaMs * (0.006 + walkAmount * 0.01);
     this.firePulse = Math.max(0, this.firePulse - deltaMs * 0.004);
+    this.hitDecay = Math.max(0, this.hitDecay - deltaMs / ProceduralPlayerRig.HIT_DECAY_MS);
 
     if (Math.abs(pose.velocity.x) > 8) {
       this.facing = Math.sign(pose.velocity.x);
@@ -113,10 +120,24 @@ export class ProceduralPlayerRig {
     this.firePulse = 1;
   }
 
+  /**
+   * Trigger a visual knockback on hit. Direction is unit-ish; magnitude is
+   * scaled internally. Pure render — does not affect the authoritative sim.
+   * Per game-feel-juice §5.
+   */
+  triggerHit(dirX: number, dirY: number) {
+    const MAG = 6;
+    this.hitOffsetX = dirX * MAG;
+    this.hitOffsetY = dirY * MAG;
+    this.hitDecay = 1;
+  }
+
   private draw(pose: ProceduralPlayerPose, walkAmount: number) {
     const g = this.graphics;
     const s = this.scale;
-    const ground = pose.position.y;
+    // Quadratic ease-out — strong overshoot, fast snap-back. Visual only.
+    const hitEased = this.hitDecay * this.hitDecay;
+    const ground = pose.position.y + this.hitOffsetY * hitEased;
     const cr = pose.crouching ? 1 : 0;
     const bob =
       pose.grounded && !pose.crouching ? Math.abs(Math.sin(this.stepPhase)) * 2 * walkAmount : 0;
@@ -125,7 +146,7 @@ export class ProceduralPlayerRig {
     const pelvisY = ground - Phaser.Math.Linear(52, 32, cr) * s - bob;
     const chestY = ground - Phaser.Math.Linear(78, 56, cr) * s - bob;
     const headY = ground - Phaser.Math.Linear(100, 76, cr) * s - bob;
-    const cx = pose.position.x;
+    const cx = pose.position.x + this.hitOffsetX * hitEased;
 
     const pelvis = vec(cx, pelvisY);
     const chest = vec(cx, chestY);
