@@ -89,6 +89,8 @@ app.innerHTML = `
         <button data-start-match type="button">Start Match</button>
       </section>
 
+      <section class="map-picker-box" data-map-picker aria-label="Map selection"></section>
+
       <section class="chaos-box" aria-label="Party modifiers">
         <h2>Chaos</h2>
         <label><input data-chaos-modifier type="checkbox" value="low-gravity" /> Low Grav</label>

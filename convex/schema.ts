@@ -22,6 +22,11 @@ export default defineSchema({
     status: roomStatus,
     maxPlayers: v.number(),
     chaosModifierIds: v.optional(v.array(v.string())),
+    /**
+     * Host's selected map id for the next match. Optional + additive —
+     * older rooms with no selection inherit the default at startMatch time.
+     */
+    selectedMapId: v.optional(v.string()),
     createdAt: v.number(),
     updatedAt: v.number(),
     currentMatchId: v.optional(v.id("matches")),

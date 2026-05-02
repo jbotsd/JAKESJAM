@@ -1,6 +1,8 @@
 import { RoomClient, createRoomArgs } from "../net/RoomClient";
 import type { ChaosModifierId, CharacterId } from "../types/game";
 import type { RoomHandle, RoomPlayer, RoomSnapshot } from "../types/net";
+import { MapPicker } from "./MapPicker";
+import { DEFAULT_MAP_ID, mapsById, type MapId } from "../../sim/data/maps";
 
 const PLAYER_ID_KEY = "jakesjam.playerId";
 const PLAYER_NAME_KEY = "jakesjam.playerName";
@@ -25,6 +27,7 @@ export class LobbyController {
   private readonly activeCode: HTMLElement;
   private readonly playerList: HTMLUListElement;
   private readonly chaosInputs: HTMLInputElement[];
+  private readonly mapPicker?: MapPicker;
   private readonly roomClient?: RoomClient;
   private currentRoom?: RoomHandle;
   private currentSnapshot: RoomSnapshot | null = null;
@@ -49,6 +52,16 @@ export class LobbyController {
     this.playerList = queryRequired(root, "[data-player-list]");
     this.chaosInputs = Array.from(root.querySelectorAll<HTMLInputElement>("[data-chaos-modifier]"));
 
+    const mapMount = root.querySelector<HTMLElement>("[data-map-picker]");
+    if (mapMount) {
+      this.mapPicker = new MapPicker({
+        mount: mapMount,
+        onPick: (mapId) => {
+          void this.onMapPicked(mapId);
+        },
+      });
+    }
+
     this.nameInput.value = localStorage.getItem(PLAYER_NAME_KEY) ?? `Player ${this.playerId.slice(-4)}`;
     this.colorInput.value = localStorage.getItem(PLAYER_COLOR_KEY) ?? this.colorInput.value;
     this.characterSelect.value = localStorage.getItem(PLAYER_CHARACTER_KEY) ?? DEFAULT_CHARACTER;
@@ -72,6 +85,7 @@ export class LobbyController {
     if (this.heartbeatTimer) {
       window.clearInterval(this.heartbeatTimer);
     }
+    this.mapPicker?.destroy();
     if (this.roomClient && this.currentRoom) {
       void this.roomClient.leave(this.currentRoom.roomId, this.playerId);
     }
@@ -229,6 +243,12 @@ export class LobbyController {
     this.currentSnapshot = snapshot;
     if (snapshot) {
       this.applyAuthoritativeChaos(snapshot.room.chaosModifierIds ?? []);
+      const isHost = snapshot.room.hostPlayerId === this.playerId;
+      this.mapPicker?.setHostMode(isHost);
+      this.mapPicker?.setSelected(snapshot.room.selectedMapId ?? DEFAULT_MAP_ID);
+    } else {
+      this.mapPicker?.setHostMode(false);
+      this.mapPicker?.setSelected(undefined);
     }
     this.renderPlayers(snapshot?.players ?? []);
     if (
@@ -237,7 +257,10 @@ export class LobbyController {
       snapshot.room.currentMatchId !== this.launchedMatchId
     ) {
       this.launchedMatchId = snapshot.room.currentMatchId;
-      this.setStatus("Match starting in Boxworks.");
+      const mapName =
+        mapsById[(snapshot.room.selectedMapId ?? DEFAULT_MAP_ID) as MapId]?.name ??
+        "the arena";
+      this.setStatus(`Match starting in ${mapName}.`);
       window.dispatchEvent(new CustomEvent("jakesjam:start-match", {
         detail: {
           roomId: snapshot.room._id,
@@ -267,7 +290,25 @@ export class LobbyController {
       return;
     }
     try {
-      await this.roomClient.startMatch(this.currentRoom.roomId, this.playerId);
+      const mapId =
+        this.currentSnapshot?.room.selectedMapId ?? DEFAULT_MAP_ID;
+      await this.roomClient.startMatch(this.currentRoom.roomId, this.playerId, mapId);
+    } catch (error) {
+      this.setStatus(readError(error));
+    }
+  }
+
+  /**
+   * Host clicked a card in the map picker. Persist via Convex; the
+   * snapshot stream re-applies the selection through `applySnapshot`,
+   * which is what visibly flips the highlighted card. We don't optimistic-
+   * update locally — keeps a single source of truth.
+   */
+  private async onMapPicked(mapId: MapId) {
+    if (!this.roomClient || !this.currentRoom) return;
+    if (!(mapId in mapsById)) return;
+    try {
+      await this.roomClient.setMap(this.currentRoom.roomId, this.playerId, mapId);
     } catch (error) {
       this.setStatus(readError(error));
     }

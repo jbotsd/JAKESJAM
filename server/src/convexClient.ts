@@ -34,6 +34,10 @@ export type MatchSummary = {
   roomId: ConvexId;
   status: "loading" | "active" | "draft" | "complete";
   roundIndex: number;
+  /** Map id chosen by the host at room start. Forwarded to MatchHost. */
+  mapId?: string;
+  /** Chaos modifier ids selected for this match. Optional / additive. */
+  chaosModifierIds?: string[];
 };
 
 // Function references keyed by `"<module>:<exportName>"`. Schema for these is

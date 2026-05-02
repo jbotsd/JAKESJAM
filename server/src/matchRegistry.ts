@@ -14,15 +14,26 @@ export class MatchRegistry {
     const playerId = PlayerId(rawPlayerId);
     let host = this.matches.get(matchId);
     if (!host) {
-      host = new MatchHost(matchId, [
-        {
-          playerId,
-          characterId: "balanced",
-          name: rawPlayerId,
-          color: "#88ccff",
-          weaponId: "starter-pistol",
-        },
-      ]);
+      // TODO(map-pipe): mirror the chaos-pipe TODO — the room's selected
+      // mapId should flow here from Convex. For now we let MatchHost fall
+      // back to the default; the lobby DOES persist the chosen mapId on
+      // the room record so once a Convex lookup is wired in, this just
+      // becomes `(await convexClient.getMatchSummary(matchId))?.mapId`.
+      const mapId: string | undefined = undefined;
+      host = new MatchHost(
+        matchId,
+        [
+          {
+            playerId,
+            characterId: "balanced",
+            name: rawPlayerId,
+            color: "#88ccff",
+            weaponId: "starter-pistol",
+          },
+        ],
+        [],
+        mapId,
+      );
       this.matches.set(matchId, host);
     } else if (!host.hasPlayer(playerId)) {
       // Brand-new player joining an existing match.

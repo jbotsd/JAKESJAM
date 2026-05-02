@@ -47,8 +47,30 @@ export class RoomClient {
     }) as unknown as Promise<void>;
   }
 
-  startMatch(roomId: RoomId, playerId: string): Promise<string> {
-    return this.client.mutation(rooms.startMatch, { roomId, playerId }) as Promise<string>;
+  startMatch(roomId: RoomId, playerId: string, mapId?: string): Promise<string> {
+    // Cast: `mapId` arg was added to startMatch in this PR; generated
+    // api types lag `bunx convex codegen`. Drop after next deploy.
+    const mutate = this.client.mutation as unknown as (
+      ref: unknown,
+      args: { roomId: RoomId; playerId: string; mapId?: string },
+    ) => Promise<string>;
+    return mutate(rooms.startMatch, {
+      roomId,
+      playerId,
+      ...(mapId !== undefined ? { mapId } : {}),
+    });
+  }
+
+  setMap(roomId: RoomId, playerId: string, mapId: string): Promise<void> {
+    // Cast: the `setMap` mutation was added in this PR; the generated
+    // `convex/_generated/api` types lag a `bunx convex codegen` (or
+    // deploy) run. Once codegen catches up, drop the cast.
+    const mutate = this.client.mutation as unknown as (
+      ref: unknown,
+      args: { roomId: RoomId; playerId: string; mapId: string },
+    ) => Promise<void>;
+    const setMapRef = (rooms as unknown as Record<string, unknown>).setMap;
+    return mutate(setMapRef, { roomId, playerId, mapId });
   }
 
   submitPlayerSnapshot(args: SubmitPlayerSnapshotArgs): Promise<void> {
