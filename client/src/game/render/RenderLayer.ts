@@ -1,0 +1,239 @@
+import type Phaser from "phaser";
+import type { DestructibleKind, ElementType, Vec2 } from "../types/game";
+import { destructibleColor } from "../systems/DestructibleRenderer";
+
+/**
+ * RenderLayer — owns the cluster of one-shot ephemeral VFX bursts that
+ * MatchScene used to spawn inline. Each method allocates a few Phaser
+ * GameObjects, attaches a tween, and self-destroys on tween complete.
+ *
+ * No game-logic side effects — every method is "given a position, paint
+ * a thing." Callers stay in charge of when and why these fire.
+ *
+ * Why not use ParticlePool? These are low-frequency events (death, kill,
+ * pickup pickup, destructible break) where the cost of allocate/destroy
+ * is negligible and the variety of shapes/text styles makes pooling
+ * awkward. Pooling stays for the high-frequency status-VFX path.
+ */
+export class RenderLayer {
+  private readonly scene: Phaser.Scene;
+
+  constructor(scene: Phaser.Scene) {
+    this.scene = scene;
+  }
+
+  /** Big radial blast + 18 colorful shards. Used when a remote player dies. */
+  spawnPlayerDeathExplosion(position: Vec2): void {
+    const blast = this.scene.add.circle(position.x, position.y, 10, 0xf7fbff, 0.52);
+    blast.setStrokeStyle(4, 0xfb7185, 0.95);
+    this.scene.tweens.add({
+      targets: blast,
+      radius: 118,
+      alpha: 0,
+      duration: 520,
+      ease: "Sine.easeOut",
+      onComplete: () => blast.destroy(),
+    });
+
+    for (let index = 0; index < 18; index += 1) {
+      const angle = (Math.PI * 2 * index) / 18;
+      const shard = this.scene.add.rectangle(
+        position.x,
+        position.y,
+        5,
+        14,
+        index % 2 === 0 ? 0x50e3c2 : 0xf0abfc,
+        0.92,
+      );
+      shard.rotation = angle;
+      this.scene.tweens.add({
+        targets: shard,
+        x: position.x + Math.cos(angle) * 82,
+        y: position.y + Math.sin(angle) * 82,
+        alpha: 0,
+        duration: 500,
+        ease: "Sine.easeOut",
+        onComplete: () => shard.destroy(),
+      });
+    }
+  }
+
+  /** Soft expanding ring used when a player respawns. */
+  spawnRespawnBurst(position: Vec2): void {
+    const ring = this.scene.add.circle(position.x, position.y, 8, 0x50e3c2, 0.18);
+    ring.setStrokeStyle(3, 0x50e3c2, 0.82);
+    this.scene.tweens.add({
+      targets: ring,
+      radius: 54,
+      alpha: 0,
+      duration: 360,
+      ease: "Sine.easeOut",
+      onComplete: () => ring.destroy(),
+    });
+  }
+
+  /** 8 directional shards used when a destructible breaks. */
+  destructibleBurst(position: Vec2, kind: DestructibleKind, element: ElementType): void {
+    const color = element === "fire" ? 0xff7a18 : destructibleColor(kind);
+    for (let index = 0; index < 8; index += 1) {
+      const angle = (Math.PI * 2 * index) / 8;
+      const shard = this.scene.add.rectangle(position.x, position.y, 4, 9, color, 0.86);
+      shard.rotation = angle;
+      this.scene.tweens.add({
+        targets: shard,
+        x: position.x + Math.cos(angle) * 38,
+        y: position.y + Math.sin(angle) * 28,
+        alpha: 0,
+        duration: 260,
+        ease: "Sine.easeOut",
+        onComplete: () => shard.destroy(),
+      });
+    }
+  }
+
+  /** Floating damage number above a destructible. */
+  flashDestructibleText(position: Vec2, sizeY: number, amount: number, element: ElementType): void {
+    const color = element === "fire" ? "#ffb86b" : "#f7fbff";
+    const text = this.scene.add
+      .text(position.x, position.y - sizeY / 2 - 10, Math.round(amount).toString(), {
+        color,
+        fontFamily: "Inter, Arial, sans-serif",
+        fontSize: "11px",
+        fontStyle: "900",
+      })
+      .setOrigin(0.5, 0.5);
+
+    this.scene.tweens.add({
+      targets: text,
+      y: text.y - 22,
+      alpha: 0,
+      duration: 280,
+      ease: "Sine.easeOut",
+      onComplete: () => text.destroy(),
+    });
+  }
+
+  /** Floating damage number above the practice target (different size/color). */
+  flashTargetText(position: Vec2, amount: number, element: ElementType): void {
+    const color = element === "fire"
+      ? "#ffb86b"
+      : element === "ice"
+        ? "#bfdbfe"
+        : element === "radiant"
+          ? "#fff7d6"
+          : "#50e3c2";
+    const text = this.scene.add
+      .text(position.x, position.y - 24, Math.round(amount).toString(), {
+        color,
+        fontFamily: "Inter, Arial, sans-serif",
+        fontSize: "13px",
+        fontStyle: "900",
+      })
+      .setOrigin(0.5, 0.5);
+
+    this.scene.tweens.add({
+      targets: text,
+      y: position.y - 52,
+      alpha: 0,
+      duration: 380,
+      ease: "Sine.easeOut",
+      onComplete: () => text.destroy(),
+    });
+  }
+
+  /** Expanding ring used when the practice target dies. */
+  killTargetBurst(position: Vec2, impactRadius: number): void {
+    const burst = this.scene.add.circle(position.x, position.y, 8, 0xf7fbff, 0.5);
+    burst.setStrokeStyle(3, 0x50e3c2, 0.9);
+    this.scene.tweens.add({
+      targets: burst,
+      radius: Math.max(90, impactRadius),
+      alpha: 0,
+      duration: 420,
+      ease: "Sine.easeOut",
+      onComplete: () => burst.destroy(),
+    });
+  }
+
+  /** Floating damage number above a remote player. */
+  floatRemoteDamageText(position: Vec2, amount: number, element: ElementType): void {
+    const color = element === "fire" ? "#ffb86b" : "#f0abfc";
+    const text = this.scene.add
+      .text(position.x, position.y - 34, Math.round(amount).toString(), {
+        color,
+        fontFamily: "Inter, Arial, sans-serif",
+        fontSize: "13px",
+        fontStyle: "900",
+      })
+      .setOrigin(0.5, 0.5);
+
+    this.scene.tweens.add({
+      targets: text,
+      y: text.y - 28,
+      alpha: 0,
+      duration: 360,
+      ease: "Sine.easeOut",
+      onComplete: () => text.destroy(),
+    });
+  }
+
+  /** Generic floating damage number (local hit / remote hit on the local player). */
+  spawnDamageNumber(position: Vec2, amount: number, isLocal: boolean): void {
+    if (amount < 1) return;
+    const spread = (Math.random() - 0.5) * 22;
+    const text = this.scene.add
+      .text(position.x + spread, position.y - 32, Math.round(amount).toString(), {
+        color: isLocal ? "#fb7185" : "#fff7d6",
+        fontFamily: "Inter, Arial, sans-serif",
+        fontSize: amount >= 30 ? "18px" : "14px",
+        fontStyle: "900",
+        stroke: "#05080f",
+        strokeThickness: 3,
+      })
+      .setOrigin(0.5, 1)
+      .setDepth(800);
+    this.scene.tweens.add({
+      targets: text,
+      y: text.y - 28,
+      alpha: 0,
+      duration: 560,
+      ease: "Sine.easeOut",
+      onComplete: () => text.destroy(),
+    });
+  }
+
+  /** Floating "PICKUP NAME" label drifting upward. */
+  floatPickupText(position: Vec2, label: string, color: string): void {
+    const text = this.scene.add
+      .text(position.x, position.y - 22, label.toUpperCase(), {
+        color,
+        fontFamily: "Inter, Arial, sans-serif",
+        fontSize: "11px",
+        fontStyle: "900",
+      })
+      .setOrigin(0.5, 0.5);
+
+    this.scene.tweens.add({
+      targets: text,
+      y: text.y - 30,
+      alpha: 0,
+      duration: 520,
+      ease: "Sine.easeOut",
+      onComplete: () => text.destroy(),
+    });
+  }
+
+  /** Generic explosion blast — circle that grows + fades. Caller still applies area damage. */
+  spawnExplosionBlast(position: Vec2, radius: number): void {
+    const blast = this.scene.add.circle(position.x, position.y, 6, 0xffd166, 0.36);
+    blast.setStrokeStyle(3, 0xfb7185, 0.95);
+    this.scene.tweens.add({
+      targets: blast,
+      radius,
+      alpha: 0,
+      duration: 260,
+      ease: "Sine.easeOut",
+      onComplete: () => blast.destroy(),
+    });
+  }
+}

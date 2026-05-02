@@ -56,6 +56,9 @@ import type {
   Vec2,
 } from "../types/game";
 import { CardSystem } from "../systems/CardSystem";
+import { DestructibleRenderer } from "../systems/DestructibleRenderer";
+import { RemotePlayerManager } from "../systems/RemotePlayerManager";
+import { RenderLayer } from "../render/RenderLayer";
 import type { MatchPlayerSnapshot, RoomPlayer } from "../types/net";
 
 const STANDING_CHEST_OFFSET = 75;
@@ -63,7 +66,6 @@ const CROUCHING_CHEST_OFFSET = 54;
 const MUZZLE_REACH = 43;
 const PLAYER_VISUAL_SCALE = 0.78;
 const SNAPSHOT_SEND_INTERVAL_MS = 100;
-const REMOTE_SMOOTHING = 0.26;
 const CHAOS_MODIFIERS_KEY = "jakesjam.chaosModifiers";
 // const CARD_CACHE_RELOCATE_MS = 20000; // ROUNDS: Removed - draft between rounds
 const REMOTE_PLAYER_TARGET_PREFIX = "remote-player:";
@@ -158,9 +160,8 @@ export class MatchScene extends Phaser.Scene {
   private roomClient?: RoomClient;
   private unsubscribeSnapshots?: () => void;
   private playerRig?: ProceduralPlayerRig;
-  private readonly remoteRigs = new Map<string, ProceduralPlayerRig>();
-  private readonly remoteSnapshots = new Map<string, MatchPlayerSnapshot>();
-  private readonly remoteShotSequences = new Map<string, number>();
+  private remotePlayers!: RemotePlayerManager;
+  private renderLayer!: RenderLayer;
   private cameraTarget?: Phaser.GameObjects.Zone;
   private reticle?: Phaser.GameObjects.Graphics;
   private scoreboardBack?: Phaser.GameObjects.Rectangle;
@@ -170,7 +171,7 @@ export class MatchScene extends Phaser.Scene {
   private readonly cardSystem = new CardSystem();
   private targetText?: Phaser.GameObjects.Text;
   private targetGraphics?: Phaser.GameObjects.Graphics;
-  private destructibleGraphics?: Phaser.GameObjects.Graphics;
+  private destructibleRenderer?: DestructibleRenderer;
   private fireGraphics?: Phaser.GameObjects.Graphics;
   private pickupGraphics?: Phaser.GameObjects.Graphics;
   private keys?: MovementKeys;
@@ -289,6 +290,16 @@ export class MatchScene extends Phaser.Scene {
     this.particlePool?.destroy();
     this.particlePool = new ParticlePool(this);
     this.projectileSystem?.destroy();
+    this.renderLayer = new RenderLayer(this);
+    this.remotePlayers?.reset();
+    this.remotePlayers = new RemotePlayerManager(this, {
+      localPlayerId: this.localPlayerId,
+      spawns: boxworksWorld.spawns,
+      visualScaleFor: (character) => this.getVisualScale(character),
+      bodySizeFor: (character) => getPlayerBodySize(character.sizeScale),
+      characterFor: (id) => this.getCharacter(id as CharacterId | undefined),
+      colorToNumber: (hex) => colorToNumber(hex),
+    });
     this.destroyPlayerVisuals();
     this.target = createTestTarget();
     this.destructibles = createDestructibleStates();
@@ -474,7 +485,8 @@ export class MatchScene extends Phaser.Scene {
 
   private createArenaHazardVisuals() {
     this.fireGraphics = this.add.graphics();
-    this.destructibleGraphics = this.add.graphics();
+    this.destructibleRenderer?.destroy();
+    this.destructibleRenderer = new DestructibleRenderer(this);
     this.pickupGraphics = this.add.graphics();
     this.updateFireVisuals();
     this.updateDestructibleVisuals();
@@ -494,19 +506,7 @@ export class MatchScene extends Phaser.Scene {
   }
 
   private createRemotePlayerVisuals() {
-    for (const player of this.roomPlayers) {
-      if (player.playerId === this.localPlayerId) {
-        continue;
-      }
-
-      const rig = new ProceduralPlayerRig(this, {
-        color: colorToNumber(player.color),
-        name: `${player.name} / ${this.getCharacter(player.characterId).name}`,
-        scale: this.getVisualScale(this.getCharacter(player.characterId)),
-      });
-      this.remoteRigs.set(player.playerId, rig);
-    }
-    this.syncRemotePlayerVisuals();
+    this.remotePlayers.initRigs(this.roomPlayers);
   }
 
   private createTargetVisuals() {
@@ -573,7 +573,7 @@ export class MatchScene extends Phaser.Scene {
 
     for (const remote of this.roomPlayers) {
       if (remote.playerId === this.localPlayerId) continue;
-      const snapshot = this.remoteSnapshots.get(remote.playerId);
+      const snapshot = this.remotePlayers.getSnapshot(remote.playerId);
       const health = snapshot?.health ?? 100;
       const alive = snapshot ? snapshot.alive !== false && health > 0 : true;
       players[PlayerId(remote.playerId)] = makeSimPlayerStub(PlayerId(remote.playerId), health, alive);
@@ -1024,44 +1024,9 @@ export class MatchScene extends Phaser.Scene {
   }
 
   private syncRemotePlayerVisuals(deltaMs = 16) {
-    if (this.remoteRigs.size === 0) {
-      return;
-    }
-
-    for (const [playerIdRaw, rig] of this.remoteRigs) {
-      const playerId = PlayerId(playerIdRaw);
-      const playerIndex = this.getRoomPlayerIndex(playerId);
-      const spawn = boxworksWorld.spawns[playerIndex % boxworksWorld.spawns.length] ?? { x: 0, y: 0 };
-      const character = this.getCharacter(this.getRoomPlayer(playerId)?.characterId);
-      const snapshot = this.remoteSnapshots.get(playerId);
-      if (snapshot?.alive === false) {
-        rig.setVisible(false);
-        continue;
-      }
-
-      rig.setVisible(true);
-      const targetPosition = snapshot?.position ?? spawn;
-      const footPosition = {
-        x: targetPosition.x,
-        y: targetPosition.y + getPlayerBodySize(character.sizeScale).y / 2,
-      };
-      const aimTarget = {
-        x: targetPosition.x + Math.cos(snapshot?.aimAngle ?? 0) * 120,
-        y: targetPosition.y + Math.sin(snapshot?.aimAngle ?? 0) * 120,
-      };
-      const velocity = snapshot?.velocity ?? { x: 0, y: 0 };
-
-      rig.update(deltaMs, {
-        position: footPosition,
-        velocity,
-        aimTarget,
-        grounded: true,
-        crouching: snapshot?.crouching ?? false,
-        health: snapshot?.health ?? character.maxHealth,
-        maxHealth: Math.max(character.maxHealth, snapshot?.health ?? character.maxHealth),
-      });
-
-      this.tickRemoteStatusVfx(playerId, deltaMs, targetPosition);
+    const rendered = this.remotePlayers.syncVisuals(this.roomPlayers, deltaMs);
+    for (const row of rendered) {
+      this.tickRemoteStatusVfx(PlayerId(row.playerId), deltaMs, row.position);
     }
   }
 
@@ -1266,11 +1231,9 @@ export class MatchScene extends Phaser.Scene {
       }
 
       this.ensureScore(snapshot.playerId);
-      const previous = this.remoteSnapshots.get(snapshot.playerId);
+      const previous = this.remotePlayers.getSnapshot(snapshot.playerId);
       this.spawnRemoteProjectileBursts(snapshot, previous);
-      this.remoteSnapshots.set(snapshot.playerId, previous
-        ? smoothSnapshot(previous, snapshot)
-        : snapshot);
+      this.remotePlayers.ingestSnapshot(snapshot);
     }
 
   }
@@ -1284,9 +1247,9 @@ export class MatchScene extends Phaser.Scene {
     }
 
     const shotSequence = snapshot.shotSequence ?? 0;
-    const previousSequence = this.remoteShotSequences.get(snapshot.playerId);
+    const previousSequence = this.remotePlayers.getShotSequence(snapshot.playerId);
     if (previousSequence === undefined) {
-      this.remoteShotSequences.set(snapshot.playerId, shotSequence);
+      this.remotePlayers.setShotSequence(snapshot.playerId, shotSequence);
       return;
     }
 
@@ -1294,7 +1257,7 @@ export class MatchScene extends Phaser.Scene {
       return;
     }
 
-    this.remoteShotSequences.set(snapshot.playerId, shotSequence);
+    this.remotePlayers.setShotSequence(snapshot.playerId, shotSequence);
     const burstCount = Math.min(3, shotSequence - previousSequence);
     const build = createWeaponBuild(starterWeapon, []);
     const origin = this.getRemoteMuzzlePosition(previous ?? snapshot, snapshot);
@@ -1522,7 +1485,7 @@ export class MatchScene extends Phaser.Scene {
         this.applyImpactArea(hit);
         this.applyElementStatusToRemote(remotePlayerId, hit);
         if (hit.element === "lightning") {
-          const snapshot = this.remoteSnapshots.get(remotePlayerId);
+          const snapshot = this.remotePlayers.getSnapshot(remotePlayerId);
           if (snapshot) {
             this.spawnLightningChainArc(hit.position, snapshot.position);
           }
@@ -1707,13 +1670,13 @@ export class MatchScene extends Phaser.Scene {
   }
 
   private damageRemotePlayer(playerId: string, hit: ProjectileHit) {
-    const snapshot = this.remoteSnapshots.get(playerId);
+    const snapshot = this.remotePlayers.getSnapshot(playerId);
     if (!snapshot || !snapshot.alive) {
       return;
     }
 
     const nextSnapshot = applySnapshotDamage(snapshot, hit.damage);
-    this.remoteSnapshots.set(playerId, nextSnapshot);
+    this.remotePlayers.setSnapshot(playerId, nextSnapshot);
     this.floatRemoteDamageText(nextSnapshot.position, hit.damage, hit.element);
 
     if (!nextSnapshot.alive) {
@@ -1736,24 +1699,7 @@ export class MatchScene extends Phaser.Scene {
   }
 
   private floatRemoteDamageText(position: Vec2, amount: number, element: ElementType) {
-    const color = element === "fire" ? "#ffb86b" : "#f0abfc";
-    const text = this.add
-      .text(position.x, position.y - 34, Math.round(amount).toString(), {
-        color,
-        fontFamily: "Inter, Arial, sans-serif",
-        fontSize: "13px",
-        fontStyle: "900",
-      })
-      .setOrigin(0.5, 0.5);
-
-    this.tweens.add({
-      targets: text,
-      y: text.y - 28,
-      alpha: 0,
-      duration: 360,
-      ease: "Sine.easeOut",
-      onComplete: () => text.destroy(),
-    });
+    this.renderLayer.floatRemoteDamageText(position, amount, element);
   }
 
   private damageTarget(amount: number, hit: ProjectileHit) {
@@ -1801,27 +1747,7 @@ export class MatchScene extends Phaser.Scene {
   }
 
   private spawnDamageNumber(position: Vec2, amount: number, isLocal: boolean): void {
-    if (amount < 1) return;
-    const spread = (Math.random() - 0.5) * 22;
-    const text = this.add
-      .text(position.x + spread, position.y - 32, Math.round(amount).toString(), {
-        color: isLocal ? "#fb7185" : "#fff7d6",
-        fontFamily: "Inter, Arial, sans-serif",
-        fontSize: amount >= 30 ? "18px" : "14px",
-        fontStyle: "900",
-        stroke: "#05080f",
-        strokeThickness: 3,
-      })
-      .setOrigin(0.5, 1)
-      .setDepth(800);
-    this.tweens.add({
-      targets: text,
-      y: text.y - 28,
-      alpha: 0,
-      duration: 560,
-      ease: "Sine.easeOut",
-      onComplete: () => text.destroy(),
-    });
+    this.renderLayer.spawnDamageNumber(position, amount, isLocal);
   }
 
   private isParryCovering(sourcePosition?: Vec2): boolean {
@@ -1878,44 +1804,11 @@ export class MatchScene extends Phaser.Scene {
   }
 
   private spawnPlayerDeathExplosion(position: Vec2) {
-    const blast = this.add.circle(position.x, position.y, 10, 0xf7fbff, 0.52);
-    blast.setStrokeStyle(4, 0xfb7185, 0.95);
-    this.tweens.add({
-      targets: blast,
-      radius: 118,
-      alpha: 0,
-      duration: 520,
-      ease: "Sine.easeOut",
-      onComplete: () => blast.destroy(),
-    });
-
-    for (let index = 0; index < 18; index += 1) {
-      const angle = (Math.PI * 2 * index) / 18;
-      const shard = this.add.rectangle(position.x, position.y, 5, 14, index % 2 === 0 ? 0x50e3c2 : 0xf0abfc, 0.92);
-      shard.rotation = angle;
-      this.tweens.add({
-        targets: shard,
-        x: position.x + Math.cos(angle) * 82,
-        y: position.y + Math.sin(angle) * 82,
-        alpha: 0,
-        duration: 500,
-        ease: "Sine.easeOut",
-        onComplete: () => shard.destroy(),
-      });
-    }
+    this.renderLayer.spawnPlayerDeathExplosion(position);
   }
 
   private spawnRespawnBurst(position: Vec2) {
-    const ring = this.add.circle(position.x, position.y, 8, 0x50e3c2, 0.18);
-    ring.setStrokeStyle(3, 0x50e3c2, 0.82);
-    this.tweens.add({
-      targets: ring,
-      radius: 54,
-      alpha: 0,
-      duration: 360,
-      ease: "Sine.easeOut",
-      onComplete: () => ring.destroy(),
-    });
+    this.renderLayer.spawnRespawnBurst(position);
   }
 
   private showDeathPopup() {
@@ -2100,17 +1993,7 @@ export class MatchScene extends Phaser.Scene {
 
   private spawnExplosion(position: Vec2, radius: number, damage: number, element: ElementType) {
     this.audio?.play("explosion");
-    const blast = this.add.circle(position.x, position.y, 6, 0xffd166, 0.36);
-    blast.setStrokeStyle(3, 0xfb7185, 0.95);
-    this.tweens.add({
-      targets: blast,
-      radius,
-      alpha: 0,
-      duration: 260,
-      ease: "Sine.easeOut",
-      onComplete: () => blast.destroy(),
-    });
-
+    this.renderLayer.spawnExplosionBlast(position, radius);
     this.applyAreaDamage(position, radius, damage, element);
   }
 
@@ -2156,7 +2039,7 @@ export class MatchScene extends Phaser.Scene {
       }
     }
 
-    for (const [playerId, snapshot] of this.remoteSnapshots) {
+    for (const [playerId, snapshot] of this.remotePlayers.snapshotEntries()) {
       if (!snapshot.alive || remotePlayerTargetId(playerId) === excludedId) {
         continue;
       }
@@ -2249,85 +2132,22 @@ export class MatchScene extends Phaser.Scene {
   }
 
   private flashDestructible(object: ArenaDestructible, amount: number, element: ElementType) {
-    const color = element === "fire" ? "#ffb86b" : "#f7fbff";
-    const text = this.add
-      .text(object.position.x, object.position.y - object.size.y / 2 - 10, Math.round(amount).toString(), {
-        color,
-        fontFamily: "Inter, Arial, sans-serif",
-        fontSize: "11px",
-        fontStyle: "900",
-      })
-      .setOrigin(0.5, 0.5);
-
-    this.tweens.add({
-      targets: text,
-      y: text.y - 22,
-      alpha: 0,
-      duration: 280,
-      ease: "Sine.easeOut",
-      onComplete: () => text.destroy(),
-    });
+    this.renderLayer.flashDestructibleText(object.position, object.size.y, amount, element);
   }
 
   private destructibleBurst(object: ArenaDestructible, element: ElementType) {
-    const color = element === "fire" ? 0xff7a18 : destructibleColor(object.kind);
-    for (let index = 0; index < 8; index += 1) {
-      const angle = (Math.PI * 2 * index) / 8;
-      const shard = this.add.rectangle(object.position.x, object.position.y, 4, 9, color, 0.86);
-      shard.rotation = angle;
-      this.tweens.add({
-        targets: shard,
-        x: object.position.x + Math.cos(angle) * 38,
-        y: object.position.y + Math.sin(angle) * 28,
-        alpha: 0,
-        duration: 260,
-        ease: "Sine.easeOut",
-        onComplete: () => shard.destroy(),
-      });
-    }
+    this.renderLayer.destructibleBurst(object.position, object.kind, element);
   }
 
   private flashTarget(hit: ProjectileHit) {
-    const color = hit.element === "fire"
-      ? "#ffb86b"
-      : hit.element === "ice"
-        ? "#bfdbfe"
-        : hit.element === "radiant"
-          ? "#fff7d6"
-          : "#50e3c2";
-    const text = this.add
-      .text(hit.position.x, hit.position.y - 24, Math.round(hit.damage).toString(), {
-        color,
-        fontFamily: "Inter, Arial, sans-serif",
-        fontSize: "13px",
-        fontStyle: "900",
-      })
-      .setOrigin(0.5, 0.5);
-
-    this.tweens.add({
-      targets: text,
-      y: hit.position.y - 52,
-      alpha: 0,
-      duration: 380,
-      ease: "Sine.easeOut",
-      onComplete: () => text.destroy(),
-    });
+    this.renderLayer.flashTargetText(hit.position, hit.damage, hit.element);
   }
 
   private killTarget(hit: ProjectileHit) {
     this.target.alive = false;
     this.target.respawnMs = 900;
     this.targetKills += 1;
-    const burst = this.add.circle(this.target.position.x, this.target.position.y, 8, 0xf7fbff, 0.5);
-    burst.setStrokeStyle(3, 0x50e3c2, 0.9);
-    this.tweens.add({
-      targets: burst,
-      radius: Math.max(90, hit.impactRadiusPx),
-      alpha: 0,
-      duration: 420,
-      ease: "Sine.easeOut",
-      onComplete: () => burst.destroy(),
-    });
+    this.renderLayer.killTargetBurst(this.target.position, hit.impactRadiusPx);
   }
 
   private updateTarget(deltaMs: number) {
@@ -2401,75 +2221,7 @@ export class MatchScene extends Phaser.Scene {
   }
 
   private updateDestructibleVisuals() {
-    if (!this.destructibleGraphics) {
-      return;
-    }
-
-    const graphics = this.destructibleGraphics;
-    graphics.clear();
-
-    for (const object of this.destructibles) {
-      if (!object.alive) {
-        continue;
-      }
-
-      const { position, size } = object;
-      const healthRatio = object.health / object.maxHealth;
-      const color = object.burnMs > 0 ? 0xff7a18 : destructibleColor(object.kind);
-
-      graphics.fillStyle(0x07101c, 0.45);
-      graphics.fillRoundedRect(
-        position.x - size.x / 2 - 3,
-        position.y - size.y / 2 - 3,
-        size.x + 6,
-        size.y + 6,
-        3,
-      );
-
-      graphics.fillStyle(color, object.kind === "mine" ? 0.92 : 0.84);
-      if (object.kind === "barrel") {
-        graphics.fillRoundedRect(position.x - size.x / 2, position.y - size.y / 2, size.x, size.y, 7);
-        graphics.lineStyle(2, 0xf7fbff, 0.35);
-        graphics.beginPath();
-        graphics.moveTo(position.x - size.x / 2 + 3, position.y - 5);
-        graphics.lineTo(position.x + size.x / 2 - 3, position.y - 5);
-        graphics.moveTo(position.x - size.x / 2 + 3, position.y + 8);
-        graphics.lineTo(position.x + size.x / 2 - 3, position.y + 8);
-        graphics.strokePath();
-      } else if (object.kind === "mine") {
-        graphics.fillRoundedRect(position.x - size.x / 2, position.y - size.y / 2, size.x, size.y, 2);
-        graphics.fillStyle(0xfff7d6, 0.9);
-        graphics.fillCircle(position.x, position.y - 2, 3);
-      } else {
-        graphics.fillRect(position.x - size.x / 2, position.y - size.y / 2, size.x, size.y);
-        if (object.kind === "box") {
-          graphics.lineStyle(2, 0x513820, 0.45);
-          graphics.strokeLineShape(new Phaser.Geom.Line(
-            position.x - size.x / 2 + 4,
-            position.y - size.y / 2 + 4,
-            position.x + size.x / 2 - 4,
-            position.y + size.y / 2 - 4,
-          ));
-          graphics.strokeLineShape(new Phaser.Geom.Line(
-            position.x + size.x / 2 - 4,
-            position.y - size.y / 2 + 4,
-            position.x - size.x / 2 + 4,
-            position.y + size.y / 2 - 4,
-          ));
-        }
-      }
-
-      graphics.lineStyle(1, 0xf7fbff, 0.5);
-      graphics.strokeRect(position.x - size.x / 2, position.y - size.y / 2, size.x, size.y);
-
-      if (healthRatio < 1) {
-        const barWidth = Math.max(24, size.x + 8);
-        graphics.fillStyle(0x1f2937, 0.9);
-        graphics.fillRect(position.x - barWidth / 2, position.y - size.y / 2 - 10, barWidth, 4);
-        graphics.fillStyle(healthRatio > 0.35 ? 0xb8f05a : 0xfb7185, 1);
-        graphics.fillRect(position.x - barWidth / 2, position.y - size.y / 2 - 10, barWidth * healthRatio, 4);
-      }
-    }
+    this.destructibleRenderer?.redraw(this.destructibles);
   }
 
   private updateFireVisuals() {
@@ -2575,23 +2327,7 @@ export class MatchScene extends Phaser.Scene {
   }
 
   private floatPickupText(pickup: ArenaPickup, label: string, color: string) {
-    const text = this.add
-      .text(pickup.position.x, pickup.position.y - 22, label.toUpperCase(), {
-        color,
-        fontFamily: "Inter, Arial, sans-serif",
-        fontSize: "11px",
-        fontStyle: "900",
-      })
-      .setOrigin(0.5, 0.5);
-
-    this.tweens.add({
-      targets: text,
-      y: text.y - 30,
-      alpha: 0,
-      duration: 520,
-      ease: "Sine.easeOut",
-      onComplete: () => text.destroy(),
-    });
+    this.renderLayer.floatPickupText(pickup.position, label, color);
   }
 
   private updatePickupVisuals() {
@@ -2697,7 +2433,7 @@ export class MatchScene extends Phaser.Scene {
         targets.push(object);
       }
     }
-    for (const [playerId, snapshot] of this.remoteSnapshots) {
+    for (const [playerId, snapshot] of this.remotePlayers.snapshotEntries()) {
       if (!snapshot.alive) {
         continue;
       }
@@ -2887,11 +2623,6 @@ export class MatchScene extends Phaser.Scene {
     return { ...spawn };
   }
 
-  private getRoomPlayerIndex(playerId: string): number {
-    const index = this.roomPlayers.findIndex((player) => player.playerId === playerId);
-    return index >= 0 ? index : 0;
-  }
-
   private getLocalRoomPlayer(): RoomPlayer | undefined {
     return this.roomPlayers.find((player) => player.playerId === this.localPlayerId);
   }
@@ -2917,12 +2648,7 @@ export class MatchScene extends Phaser.Scene {
     this.playerRig = undefined;
     this.shieldGraphics?.destroy();
     this.shieldGraphics = undefined;
-    for (const rig of this.remoteRigs.values()) {
-      rig.destroy();
-    }
-    this.remoteRigs.clear();
-    this.remoteSnapshots.clear();
-    this.remoteShotSequences.clear();
+    this.remotePlayers?.reset();
   }
 
   private teardownNetworkSync() {
@@ -3077,16 +2803,6 @@ function createTestTarget(): TestTarget {
   };
 }
 
-function destructibleColor(kind: DestructibleKind): number {
-  const colors: Record<DestructibleKind, number> = {
-    barrel: 0xff6b6b,
-    box: 0xc49a6c,
-    mine: 0xffd166,
-    cube: 0x8fa3c8,
-  };
-  return colors[kind];
-}
-
 function pickupColor(kind: PickupKind): number {
   const colors: Record<PickupKind, number> = {
     "health-shard": 0x86efac,
@@ -3164,18 +2880,6 @@ function readStoredChaosModifiers(): ChaosModifierId[] {
   } catch {
     return [];
   }
-}
-
-function smoothSnapshot(
-  previous: MatchPlayerSnapshot,
-  next: MatchPlayerSnapshot,
-): MatchPlayerSnapshot {
-  return {
-    ...next,
-    position: lerpVec(previous.position, next.position, REMOTE_SMOOTHING),
-    velocity: lerpVec(previous.velocity, next.velocity, REMOTE_SMOOTHING),
-    aimAngle: Phaser.Math.Angle.RotateTo(previous.aimAngle, next.aimAngle, 0.35),
-  };
 }
 
 function lerpVec(a: Vec2, b: Vec2, amount: number): Vec2 {
