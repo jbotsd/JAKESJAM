@@ -9,6 +9,8 @@ export type RoomDoc = {
   status: RoomStatus;
   maxPlayers: number;
   chaosModifierIds?: ChaosModifierId[];
+  /** Host's selected map id for the next match. Optional + additive. */
+  selectedMapId?: string;
   createdAt: number;
   updatedAt: number;
   currentMatchId?: MatchId;

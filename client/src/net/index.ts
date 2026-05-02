@@ -29,4 +29,10 @@ export {
   buildGameServerWsUrl,
   type MatchmakerAssignment,
 } from "./matchmakerClient.js";
+export {
+  fetchWorldAssignment,
+  fetchWorldSummary,
+  fetchMatchSummary,
+  type WorldAssignment,
+} from "./worldClient.js";
 export { InterpolationBuffer } from "./interpolationBuffer.js";

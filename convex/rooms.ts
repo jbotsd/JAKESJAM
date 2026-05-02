@@ -78,6 +78,34 @@ export const updateSettings = mutation({
   },
 });
 
+/**
+ * Host-only: pick the map for the next match. Persisted on the room so
+ * non-host players see the selection live in the lobby. The chosen id
+ * is re-validated at startMatch time, so a stale write here can't smuggle
+ * through an unsupported map.
+ */
+export const setMap = mutation({
+  args: {
+    roomId: v.id("rooms"),
+    playerId: v.string(),
+    mapId: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const room = await ctx.db.get(args.roomId);
+    if (!room) throw new Error("Room not found.");
+    if (room.hostPlayerId !== args.playerId) {
+      throw new Error("Only the host can change the map.");
+    }
+    if (room.status !== "lobby") {
+      throw new Error("Map is locked after match start.");
+    }
+    await ctx.db.patch(args.roomId, {
+      selectedMapId: args.mapId,
+      updatedAt: Date.now(),
+    });
+  },
+});
+
 export const join = mutation({
   args: {
     code: v.string(),
@@ -208,11 +236,17 @@ export const leave = mutation({
   },
 });
 
+// Allowed map ids — kept in sync with `client/src/sim/data/maps.ts`.
+// Validated server-side so a tampered client can't pick a missing map.
+const ALLOWED_MAP_IDS = ["boxworks", "boxworks-mini", "boxworks-tower"] as const;
+const DEFAULT_START_MAP_ID = "boxworks" as const;
+
 export const startMatch = mutation({
   args: {
     roomId: v.id("rooms"),
     playerId: v.string(),
     region: v.optional(v.string()),
+    mapId: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const room = await ctx.db.get(args.roomId);
@@ -242,10 +276,17 @@ export const startMatch = mutation({
 
     const now = Date.now();
     const scores = Object.fromEntries(players.map((player) => [player.playerId, 0]));
+    // Precedence: explicit args.mapId > host's persisted selectedMapId > default.
+    const requestedMapId = args.mapId ?? room.selectedMapId;
+    const mapId =
+      requestedMapId !== undefined &&
+      (ALLOWED_MAP_IDS as readonly string[]).includes(requestedMapId)
+        ? requestedMapId
+        : DEFAULT_START_MAP_ID;
     const matchId = await ctx.db.insert("matches", {
       roomId: args.roomId,
       status: "loading",
-      mapId: "boxworks",
+      mapId,
       targetScore: 3,
       roundIndex: 0,
       scores,

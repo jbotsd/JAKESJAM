@@ -5,7 +5,7 @@
 import type { ServerWebSocket } from "bun";
 import { SNAPSHOT_INTERVAL_TICKS, STEP_MS, World } from "@sim/index.ts";
 import { createRuntime, stepWithRuntime, type WorldRuntime } from "@sim/World.ts";
-import { boxworksWorld } from "@sim/data/boxworks.ts";
+import { resolveMap, type MapId } from "@sim/data/maps.ts";
 import type {
   InputFrame,
   InputSeq,
@@ -31,12 +31,10 @@ export type MatchSocketData = {
   authedAt: number;
 };
 
-// Boxworks is built once in `@sim/data/boxworks.ts` and shared verbatim with
-// the client so authoritative collision matches client prediction. The cast
-// strips Boxworks's wider pickup-kind union back down to the baseline sim
-// type — `World.create` only copies `pickup.kind` through, so any string is
-// safe at runtime.
-const BOXWORKS_MAP: MapDefinition = boxworksWorld as MapDefinition;
+// Maps are looked up from the shared registry at construction time so the
+// authoritative collision matches the client's rendered geometry. The
+// host doesn't switch maps mid-match — once constructed, `this.map` is
+// the world for the lifetime of this MatchHost.
 
 // ---- Lag compensation -----------------------------------------------------
 // Standard "rewind opponents" technique. When the server processes a fire
@@ -122,6 +120,8 @@ export class MatchHost {
    *  mutation). One flag per host == one write per match lifetime. */
   private matchCompletePosted = false;
 
+  private readonly map: MapDefinition;
+
   constructor(
     matchId: string,
     players: PlayerSpawnInfo[],
@@ -130,16 +130,18 @@ export class MatchHost {
     // the netcode path runs the no-chaos baseline; the sim already supports
     // any subset via World.create's optional 4th arg.
     chaosModifierIds: string[] = [],
+    mapId: MapId | string | undefined = undefined,
   ) {
     this.matchId = matchId;
+    this.map = resolveMap(mapId);
     this.rngSeed = (Math.random() * 0xffffffff) >>> 0;
     this.state = World.create(
-      BOXWORKS_MAP,
+      this.map,
       players,
       this.rngSeed,
       chaosModifierIds,
     );
-    this.runtime = createRuntime(BOXWORKS_MAP);
+    this.runtime = createRuntime(this.map);
     for (const spawn of players) {
       this.playerInfo.set(spawn.playerId, {
         playerId: spawn.playerId,
@@ -207,6 +209,38 @@ export class MatchHost {
   }
 
   /**
+   * Public read-only snapshot for HTTP `/health` consumers. Tiny by
+   * design — only the fields a status badge needs. Joinability is
+   * permissive: any phase that isn't `round-over` accepts late joins,
+   * which matches the io world's "drift in/out" semantic.
+   */
+  summary(): {
+    matchId: string;
+    mapId: string;
+    phase: WorldState["round"]["phase"];
+    roundIndex: number;
+    countdownRemainingMs: number;
+    players: number;
+    targetScore: number;
+    joinable: boolean;
+    chaosModifierIds: string[];
+  } {
+    const round = this.state.round;
+    const targetScore = Math.max(...Object.values(round.scores), 0) >= 0 ? 3 : 3;
+    return {
+      matchId: this.matchId,
+      mapId: this.map.id,
+      phase: round.phase,
+      roundIndex: round.roundIndex,
+      countdownRemainingMs: round.countdownRemainingMs,
+      players: Object.keys(this.state.players).length,
+      targetScore,
+      joinable: round.phase !== "round-over",
+      chaosModifierIds: this.state.chaosModifierIds ?? [],
+    };
+  }
+
+  /**
    * Insert a new player into the world mid-match. Used when a second client
    * connects to a match that was created with only the first player.
    * Spawns them at one of the map's spawn points.
@@ -223,7 +257,7 @@ export class MatchHost {
 
     const existingCount = Object.keys(this.state.players).length;
     const spawnPoint =
-      BOXWORKS_MAP.spawns[existingCount % Math.max(1, BOXWORKS_MAP.spawns.length)] ??
+      this.map.spawns[existingCount % Math.max(1, this.map.spawns.length)] ??
       { x: 0, y: 0 };
     this.state = {
       ...this.state,
@@ -740,7 +774,7 @@ export class MatchHost {
         matchId: this.matchId,
         startTick: this.state.tick,
         rngSeed: this.rngSeed,
-        mapId: BOXWORKS_MAP.id,
+        mapId: this.map.id,
         yourPlayerId: ws.data.playerId,
         allPlayers: Array.from(this.playerInfo.values()),
       }),

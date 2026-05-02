@@ -2,6 +2,8 @@ import Phaser from "phaser";
 import "./style.css";
 import { gameConfig } from "./game/GameConfig";
 import { LobbyController } from "./game/ui/LobbyController";
+import { MatchStatusBadge } from "./game/ui/MatchStatusBadge";
+import { fetchWorldSummary } from "./net/worldClient";
 import { SceneKeys } from "./game/scenes/SceneKeys";
 
 const app = document.querySelector<HTMLDivElement>("#app");
@@ -17,11 +19,13 @@ app.innerHTML = `
       <h1>JAKESJAM</h1>
       <p class="splash-copy">Practice solo, create a room, or jump into one with a code.</p>
       <div class="splash-actions">
+        <button data-menu-world type="button" class="primary">Join World</button>
         <button data-menu-practice type="button">Practice</button>
         <button data-menu-host type="button">Create Room</button>
         <button data-menu-join type="button">Join Room</button>
         <button data-menu-options type="button">Options</button>
       </div>
+      <div class="splash-status-slot" data-world-status></div>
       <section class="options-panel" data-options hidden>
         <h2>Options</h2>
         <label>
@@ -84,10 +88,14 @@ app.innerHTML = `
         <div class="room-code-row">
           <span>Room</span>
           <strong data-active-code>------</strong>
+          <button data-room-share type="button" class="room-share-btn">Copy link</button>
         </div>
+        <div class="room-status-slot" data-room-status></div>
         <button data-ready-toggle type="button">Ready</button>
         <button data-start-match type="button">Start Match</button>
       </section>
+
+      <section class="map-picker-box" data-map-picker aria-label="Map selection"></section>
 
       <section class="chaos-box" aria-label="Party modifiers">
         <h2>Chaos</h2>
@@ -120,6 +128,28 @@ const menuMusic = new Audio(getMenuMusicUrl());
 menuMusic.loop = true;
 menuMusic.preload = "auto";
 restoreOptions();
+
+queryRequired<HTMLButtonElement>("[data-menu-world]").addEventListener("click", () => {
+  startMenuMusic();
+  joinWorld();
+});
+
+// Live status pill on the splash. Polls /world/summary every 3s — if the
+// world is mid-round, we show how far through; if joinable we light the
+// "Join" CTA. The "Copy link" button copies a `?world=1` shareable URL.
+const worldStatusMount = queryRequired<HTMLElement>("[data-world-status]");
+const worldShareUrl = `${window.location.origin}${window.location.pathname.replace(/\/$/, "")}/?world=1`;
+const worldStatusBadge = new MatchStatusBadge({
+  mount: worldStatusMount,
+  title: "Live World",
+  shareUrl: worldShareUrl,
+  fetchSummary: () => fetchWorldSummary(),
+  onJoin: () => {
+    startMenuMusic();
+    joinWorld();
+    worldStatusBadge.refresh();
+  },
+});
 
 queryRequired<HTMLButtonElement>("[data-menu-practice]").addEventListener("click", () => {
   startMenuMusic();
@@ -187,6 +217,45 @@ function shouldUseNewNetcode(): boolean {
   return params.get("netcode") === "new";
 }
 
+const PLAYER_ID_KEY_FALLBACK = "jakesjam.playerId";
+
+function localPlayerId(): string {
+  let id = localStorage.getItem(PLAYER_ID_KEY_FALLBACK);
+  if (!id) {
+    id = `player_${Math.random().toString(36).slice(2, 10)}`;
+    localStorage.setItem(PLAYER_ID_KEY_FALLBACK, id);
+  }
+  return id;
+}
+
+/**
+ * io-style direct join: skip lobby + Convex matchmaker, go straight
+ * into the singleton WorldHost. Token mint hits the bun server's
+ * `/world-token` endpoint. Reachable via the splash "Join World"
+ * button or the URL query `?world=1` (auto-fired below).
+ */
+function joinWorld(): void {
+  hideSplash();
+  hideLobby();
+  game.scene.start(SceneKeys.OnlineMatch, {
+    mode: "world",
+    localPlayerId: localPlayerId(),
+  });
+}
+
+// Auto-join the world when the URL says so. Useful for "open this
+// link to spawn into the live game" sharing.
+const urlParams = new URLSearchParams(window.location.search);
+if (urlParams.get("world") === "1" || window.location.pathname === "/world") {
+  // Defer one tick so Phaser has a chance to register the scene.
+  setTimeout(() => joinWorld(), 0);
+} else if (urlParams.get("room") || urlParams.get("code")) {
+  // Shared room link → open the lobby straight to the join form.
+  hideSplash();
+  showLobby();
+  lobbyController.focusJoinRoom();
+}
+
 window.addEventListener("jakesjam:chaos-change", (event) => {
   const matchEvent = event as CustomEvent;
   game.scene.start(SceneKeys.MainMenu, matchEvent.detail);
@@ -210,6 +279,7 @@ window.addEventListener("jakesjam:return-to-lobby", () => {
 });
 
 window.addEventListener("beforeunload", () => {
+  worldStatusBadge.destroy();
   lobbyController.destroy();
   game.destroy(true);
 });
