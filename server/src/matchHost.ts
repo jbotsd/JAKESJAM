@@ -24,6 +24,7 @@ import {
   type ClientMessage,
   type PlayerLobbyInfo,
 } from "./protocol.ts";
+import { InterestGrid, CELL_SIZE_PX, OBSERVE_RADIUS_CELLS } from "./InterestGrid.ts";
 
 export type MatchSocketData = {
   matchId: string;
@@ -117,6 +118,12 @@ export class MatchHost {
   private interval: ReturnType<typeof setInterval> | null = null;
   private readonly rngSeed: number;
   private startedAt = 0;
+  /** Spatial grid for per-recipient snapshot filtering (AOI). Rebuilt each
+   *  snapshot tick in broadcastSnapshot before per-client filtering runs. */
+  private readonly grid: InterestGrid;
+  /** Monotonically-increasing snapshot counter. Used to gate DEBUG_AOI logs
+   *  to the first 30 snapshots only. */
+  private snapshotCount = 0;
   /** Set true the first time a `matchComplete` post to Convex is *initiated*.
    *  Prevents duplicate writes (in addition to the idempotent server-side
    *  mutation). One flag per host == one write per match lifetime. */
@@ -140,6 +147,7 @@ export class MatchHost {
       chaosModifierIds,
     );
     this.runtime = createRuntime(BOXWORKS_MAP);
+    this.grid = new InterestGrid(BOXWORKS_MAP.size.x, BOXWORKS_MAP.size.y, CELL_SIZE_PX);
     for (const spawn of players) {
       this.playerInfo.set(spawn.playerId, {
         playerId: spawn.playerId,
@@ -720,17 +728,93 @@ export class MatchHost {
     const lastProcessed: Record<string, InputSeq> = {};
     for (const [pid, seq] of this.lastProcessedInputSeq) lastProcessed[pid] = seq;
 
-    const payload = encodeMessage({
-      t: "snap",
-      tick: this.state.tick,
-      lastProcessedInputSeq: lastProcessed,
-      baseline: null,
-      state: this.state,
-      events,
-    });
-    for (const ws of this.clients.values()) {
+    // Rebuild the spatial grid once per snapshot tick. All per-recipient
+    // observe() calls below share this rebuilt state.
+    this.grid.rebuild(this.state);
+    this.snapshotCount += 1;
+    const debugAoi = process.env.DEBUG_AOI === "1" && this.snapshotCount <= 30;
+
+    for (const [recipientId, ws] of this.clients) {
+      const filteredState = this.buildFilteredSnap(this.state, recipientId, debugAoi);
+      const payload = encodeMessage({
+        t: "snap",
+        tick: this.state.tick,
+        lastProcessedInputSeq: lastProcessed,
+        baseline: null,
+        state: filteredState,
+        events,
+      });
       ws.send(payload);
     }
+  }
+
+  /**
+   * Build a WorldState copy filtered to only the entities visible to
+   * `recipientId`. High-cardinality collections (projectiles, destructibles,
+   * firePatches, pickups, satellites) are filtered by AOI. Players are always
+   * included in full (v1 — player count is low; see InterestGrid.ts module doc
+   * for the upgrade path). The recipient's own player entry is guaranteed to be
+   * present even if their position hasn't been processed this tick.
+   *
+   * This method does NOT perform delta encoding — it produces a full filtered
+   * WorldState ready for the delta encoder to diff against a per-client
+   * baseline. See the DESIGN ASSUMPTION comment in InterestGrid.ts.
+   */
+  private buildFilteredSnap(
+    state: WorldState,
+    recipientId: PlayerId,
+    debugAoi: boolean,
+  ): WorldState {
+    const player = state.players[recipientId];
+    // If the recipient player entity is missing (race between connect and first
+    // tick), fall back to world-center so they still get a useful snapshot.
+    const observerX = player?.x ?? (BOXWORKS_MAP.size.x / 2);
+    const observerY = player?.y ?? (BOXWORKS_MAP.size.y / 2);
+
+    const cells = this.grid.cellsAround(observerX, observerY, OBSERVE_RADIUS_CELLS);
+    const obs = this.grid.observed(cells);
+
+    // Filter the four high-cardinality collections.
+    const projectilesBefore = Object.keys(state.projectiles).length;
+    const destructiblesBefore = Object.keys(state.destructibles).length;
+    const firePatchesBefore = Object.keys(state.firePatches).length;
+    const pickupsBefore = Object.keys(state.pickups).length;
+    const satellitesBefore = Object.keys(state.satellites).length;
+
+    const projectiles = filterRecord(state.projectiles, obs.projectileIds);
+    const destructibles = filterRecord(state.destructibles, obs.destructibleIds);
+    const firePatches = filterRecord(state.firePatches, obs.firePatchIds);
+    const pickups = filterRecord(state.pickups, obs.pickupIds);
+    const satellites = filterRecord(state.satellites, obs.satelliteIds);
+
+    if (debugAoi) {
+      const totalBefore =
+        projectilesBefore + destructiblesBefore + firePatchesBefore +
+        pickupsBefore + satellitesBefore;
+      const totalAfter =
+        Object.keys(projectiles).length + Object.keys(destructibles).length +
+        Object.keys(firePatches).length + Object.keys(pickups).length +
+        Object.keys(satellites).length;
+      console.log(
+        `[aoi] snap#${this.snapshotCount} match=${this.matchId} ` +
+          `recipient=${recipientId} before=${totalBefore} after=${totalAfter} ` +
+          `(proj:${projectilesBefore}→${Object.keys(projectiles).length} ` +
+          `dest:${destructiblesBefore}→${Object.keys(destructibles).length} ` +
+          `fire:${firePatchesBefore}→${Object.keys(firePatches).length} ` +
+          `pick:${pickupsBefore}→${Object.keys(pickups).length} ` +
+          `sat:${satellitesBefore}→${Object.keys(satellites).length})`,
+      );
+    }
+
+    return {
+      ...state,
+      // v1: all players included — players are few, important for targeting.
+      projectiles,
+      destructibles,
+      firePatches,
+      pickups,
+      satellites,
+    };
   }
 
   private sendHello(ws: ServerWebSocket<MatchSocketData>): void {
@@ -809,6 +893,29 @@ function collectHitsByShooter(
   // `players` is unused at present but is part of the signature so we can
   // refine attribution (e.g. by aim direction) without changing call sites.
   void players;
+  return out;
+}
+
+/**
+ * Return a new record containing only the entries whose numeric key is in
+ * `ids`. Keys in WorldState entity maps are branded EntityId (number) stored
+ * as string object keys at runtime. We compare by converting the string key
+ * to a number and checking the Set.
+ */
+function filterRecord<V extends { id: import("@sim/types.ts").EntityId }>(
+  record: Record<import("@sim/types.ts").EntityId, V>,
+  ids: Set<import("@sim/types.ts").EntityId>,
+): Record<import("@sim/types.ts").EntityId, V> {
+  const out: Record<import("@sim/types.ts").EntityId, V> = {} as Record<
+    import("@sim/types.ts").EntityId,
+    V
+  >;
+  for (const [keyStr, entity] of Object.entries(record) as [string, V][]) {
+    const id = Number(keyStr) as import("@sim/types.ts").EntityId;
+    if (ids.has(id)) {
+      out[id] = entity;
+    }
+  }
   return out;
 }
 
