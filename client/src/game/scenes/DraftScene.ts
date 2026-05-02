@@ -2,22 +2,8 @@ import Phaser from "phaser";
 import { SceneKeys } from "./SceneKeys";
 import type { CardDefinition } from "../types/game";
 import type { ElementType } from "../../sim/types";
-
-const ELEMENT_COLORS = {
-  crystal: 0x50e3c2,
-  neutral: 0xf7fbff,
-  fire: 0xff7a18,
-  ice: 0x93c5fd,
-  lightning: 0xfef08a,
-  void: 0xa78bfa,
-  radiant: 0xfff7d6,
-  electric: 0xfef08a,
-  toxic: 0x86efac,
-  sticky: 0xf97316,
-  explosive: 0xfb7185,
-} as const satisfies Record<ElementType, number>;
-
-const NEUTRAL_ELEMENTS = new Set<ElementType>(["crystal", "neutral"]);
+import { ELEMENT_COLORS, NEUTRAL_ELEMENTS } from "../ui/elementColors";
+import { drawBucketIcon, getRarityColor as rarityColorNum } from "../ui/cardIcons";
 
 type DraftSceneInitData = {
   availableCards: CardDefinition[];
@@ -102,7 +88,7 @@ export class DraftScene extends Phaser.Scene {
 
       // Card background with rarity-colored border
       const border = this.add.rectangle(0, 0, cardWidth, cardHeight, 0x000000, 0);
-      border.setStrokeStyle(5, this.getRarityColor(card.rarity));
+      border.setStrokeStyle(5, rarityColorNum(card.rarity));
       cardContainer.add(border);
 
       // Card background
@@ -115,10 +101,17 @@ export class DraftScene extends Phaser.Scene {
         border.setStrokeStyle(5, ELEMENT_COLORS[cardElement]);
       }
 
-      // Card icon placeholder
-      const iconBg = this.add.rectangle(0, -90, 100, 100, this.getRarityColor(card.rarity));
-      iconBg.setAngle(45);
-      cardContainer.add(iconBg);
+      // Bucket-glyph icon (replaces old rotated-rectangle placeholder)
+      const iconObjs = drawBucketIcon(
+        this,
+        0, -90,
+        card.buckets?.[0],
+        cardElement,
+        card.rarity,
+        100,
+        card.visual?.iconShape,
+      );
+      cardContainer.add(iconObjs);
 
       // Card name
       const name = this.add.text(0, -50, card.name.toUpperCase(), {
@@ -206,17 +199,6 @@ export class DraftScene extends Phaser.Scene {
     });
   }
 
-  private getRarityColor(rarity: string): number {
-    const colors: Record<string, number> = {
-      common: 0x9ca3af,      // Gray
-      uncommon: 0x3b82f6,    // Blue
-      rare: 0xd946ef,        // Magenta
-      legendary: 0xf59e0b,   // Gold
-      cursed: 0xef4444,      // Red
-    };
-    return colors[rarity] ?? colors['common'] ?? 0x9ca3af;
-  }
-
   private formatStat(stat: any): string {
     if (!stat) return "";
     if (stat.multiplier) {
@@ -260,9 +242,19 @@ export class DraftScene extends Phaser.Scene {
 
     this.currentBuild.forEach((card, index) => {
       const x = centerX - ((this.currentBuild.length - 1) * 30) + (index * 60);
-      const icon = this.add.rectangle(x, y, 50, 50, this.getRarityColor(card.rarity));
-      icon.setStrokeStyle(2, 0xffffff);
-      icon.setAngle(45);
+      const buildElement: ElementType | undefined = card.modifier?.projectile?.element;
+      const iconObjs = drawBucketIcon(
+        this,
+        x, y,
+        card.buckets?.[0],
+        buildElement,
+        card.rarity,
+        44,
+        card.visual?.iconShape,
+      );
+      // Mini build icons are added directly to the scene (not a container)
+      // Nothing else to do — drawBucketIcon already calls scene.add.*
+      void iconObjs;
     });
   }
 }
