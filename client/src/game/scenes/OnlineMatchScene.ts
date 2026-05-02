@@ -24,8 +24,6 @@ import {
 } from "../../net";
 import type { Id } from "../../../../convex/_generated/dataModel";
 import {
-  STEP_MS,
-  crystalRoundsCards,
   ORBIT_RADIUS_PX,
   type DestructibleEntity,
   type DestructibleKind,
@@ -41,18 +39,10 @@ import { characters } from "../data/characters";
 import { ProceduralPlayerRig } from "../rendering/ProceduralPlayerRig";
 import { GameAudioSystem } from "../systems/AudioSystem";
 import {
-  CardDraftOverlay,
-  type CardPickHandler,
-} from "../ui/CardDraftOverlay";
-import {
-  MatchResultsOverlay,
-  type MatchResultsRow,
-} from "../ui/MatchResultsOverlay";
-import { HudSystem, type HudChip, type HudVitals, type HudRound } from "../ui/HudSystem";
-import { RoundBanner } from "../ui/RoundBanner";
-import { DeathOverlay } from "../ui/DeathOverlay";
+  HudCompositor,
+  type PendingCardOffer,
+} from "../ui/HudCompositor";
 import type {
-  CardDefinition,
   CharacterDefinition,
   CharacterId,
 } from "../types/game";
@@ -72,11 +62,6 @@ const SIM_BODY_HALF_HEIGHT = 28;
 const SIM_CROUCH_HALF_HEIGHT = 19;
 const LOCAL_PLAYER_FALLBACK_COLOR = 0x50e3c2;
 const REMOTE_PLAYER_FALLBACK_COLOR = 0xff88aa;
-// Match the offline target. Needed to format "First to N" in the results
-// overlay; ClientLoop doesn't expose targetScore, so we mirror the constant
-// used by World.create.
-const TARGET_SCORE_DEFAULT = 3;
-
 const DAMAGE_FLASH_MS = 140;
 
 /** Color per destructible kind. Mirrors MatchScene.destructibleColor. */
@@ -146,27 +131,6 @@ function colorForOwner(ownerId: string): number {
   return palette[hash % palette.length]!;
 }
 
-type BuffDescriptor = {
-  key: string;
-  field: keyof PlayerEntity;
-  label: string;
-  color: number;
-};
-
-const BUFF_DESCRIPTORS: BuffDescriptor[] = [
-  { key: "overcharge", field: "overchargeUntilTick", label: "OC", color: 0xffd166 },
-  { key: "damage-amp", field: "damageAmpUntilTick", label: "DMG", color: 0xfb7185 },
-  { key: "speed", field: "speedBoostUntilTick", label: "SPD", color: 0x67e8f9 },
-  { key: "melee", field: "meleeModeUntilTick", label: "MEL", color: 0xf97316 },
-  { key: "boss", field: "bossModeUntilTick", label: "BOSS", color: 0xfff7d6 },
-];
-
-const DEBUFF_DESCRIPTORS: BuffDescriptor[] = [
-  { key: "slow", field: "slowDebuffUntilTick", label: "SLOW", color: 0xbfdbfe },
-  { key: "vuln", field: "vulnerabilityUntilTick", label: "VULN", color: 0xfca5a5 },
-  { key: "no-block", field: "blockJammerUntilTick", label: "JAM", color: 0xc084fc },
-];
-
 export class OnlineMatchScene extends Phaser.Scene {
   private loop: ClientLoop | null = null;
   private convex: ConvexClient | null = null;
@@ -187,23 +151,14 @@ export class OnlineMatchScene extends Phaser.Scene {
   // Reused buffer so we don't allocate a new string-array each frame.
   private readonly statsLineBuf: string[] = ["", "", "", "", "", ""];
 
-  // ---- New shared UI systems ----
-  private hudSystem: HudSystem | null = null;
-  private roundBannerSystem: RoundBanner | null = null;
-  private deathOverlay: DeathOverlay | null = null;
-
-  // ---- Audio + overlays ----
+  // ---- HUD + overlays (collapsed into one compositor) ----
+  private compositor: HudCompositor | null = null;
   private audio?: GameAudioSystem;
-  private cardDraftOverlay?: CardDraftOverlay;
-  private matchResultsOverlay?: MatchResultsOverlay;
-  private matchHasEnded = false;
   // Track destructible health between frames for damage-flash effect.
   private prevDestructibleHealth = new Map<number, number>();
   private destructibleFlashUntilMs = new Map<number, number>();
-  // Snapshot pending card-offer events queued before the overlay was ready,
-  // and remember the last ids we've already shown so we don't reshow the
-  // overlay every snapshot if the same event re-fires from the buffer.
-  private lastCardOfferKey: string | null = null;
+  // Pending card-offer event to route to the compositor on the next update.
+  private pendingCardOffer: PendingCardOffer | null = null;
 
   constructor() {
     super(SceneKeys.OnlineMatch);
@@ -241,8 +196,6 @@ export class OnlineMatchScene extends Phaser.Scene {
     }
 
     this.audio = new GameAudioSystem(this);
-    this.cardDraftOverlay = new CardDraftOverlay();
-    this.matchResultsOverlay = new MatchResultsOverlay();
 
     // World-space graphics layers. Order matters: pickups under destructibles
     // under fire so the fire glow reads on top.
@@ -254,10 +207,17 @@ export class OnlineMatchScene extends Phaser.Scene {
     this.fireGraphics.setDepth(4);
 
     this.createStatsHud();
-    // Shared HUD/banner/death systems (replace inline text with polished versions)
-    this.hudSystem = new HudSystem(this, this.localPlayerId);
-    this.roundBannerSystem = new RoundBanner(this);
-    this.deathOverlay = new DeathOverlay();
+    this.compositor = new HudCompositor(this, this.localPlayerId, {
+      onCardPick: (roundIndex, cardId) => {
+        this.loop?.sendCardPick(roundIndex, cardId);
+      },
+      onRematch: () => {
+        window.dispatchEvent(new CustomEvent("jakesjam:return-to-lobby"));
+      },
+      onReturnToLobby: () => {
+        window.dispatchEvent(new CustomEvent("jakesjam:return-to-lobby"));
+      },
+    });
 
     this.lastFrameMs = performance.now();
     this.events.once("shutdown", () => this.teardown());
@@ -296,8 +256,11 @@ export class OnlineMatchScene extends Phaser.Scene {
 
     this.renderWorld(state, deltaMs, now);
     this.followLocalPlayer(state);
-    this.updateHudSystem(state);
-    this.maybeShowMatchResults(state);
+    if (this.compositor) {
+      const local = state.players[this.localPlayerId];
+      const character = this.getCharacter(local?.characterId);
+      this.pendingCardOffer = this.compositor.update(state, character, this.pendingCardOffer);
+    }
 
     if (this.statsVisible) {
       this.updateStatsHud();
@@ -308,83 +271,6 @@ export class OnlineMatchScene extends Phaser.Scene {
 
   private repositionHud() {
     this.repositionStatsHud();
-  }
-
-
-  // ---------------- New shared HUD system ----------------
-
-  private updateHudSystem(state: WorldState): void {
-    if (!this.hudSystem || !this.roundBannerSystem) return;
-
-    const local = state.players[this.localPlayerId];
-    const character = this.getCharacter(local?.characterId);
-    const maxHealth = character.maxHealth;
-
-    const chips: HudChip[] = [];
-    if (local) {
-      for (const buff of BUFF_DESCRIPTORS) {
-        const tickValue = local[buff.field] as number | undefined;
-        if (typeof tickValue === "number" && tickValue > state.tick) {
-          const remainingMs = Math.max(0, (tickValue - state.tick) * STEP_MS);
-          chips.push({ label: buff.label, color: buff.color, remainingSec: remainingMs / 1000, isDebuff: false });
-        }
-      }
-      for (const debuff of DEBUFF_DESCRIPTORS) {
-        const tickValue = local[debuff.field] as number | undefined;
-        if (typeof tickValue === "number" && tickValue > state.tick) {
-          const remainingMs = Math.max(0, (tickValue - state.tick) * STEP_MS);
-          chips.push({ label: debuff.label, color: debuff.color, remainingSec: remainingMs / 1000, isDebuff: true });
-        }
-      }
-    }
-
-    const cardNames: string[] = local
-      ? local.cards
-          .map((id) => crystalRoundsCards.find((c) => c.id === id)?.name)
-          .filter((n): n is string => Boolean(n))
-      : [];
-
-    const vitals: HudVitals = {
-      health: local?.health ?? 0,
-      maxHealth,
-      shieldCharge: local?.shieldCharge,
-      shieldMaxCharge: local?.shieldMaxCharge ?? 0,
-      jetpackFuel: local?.jetpackFuel,
-      chips,
-      cardNames,
-      isDead: !local || local.health <= 0 || !local.alive,
-    };
-
-    const scores = state.round.scores;
-
-    const winnerLabel =
-      state.round.phase === "round-over"
-        ? (() => {
-            const wid = state.round.winnerPlayerId;
-            if (!wid) return "DRAW";
-            if (wid === this.localPlayerId) return "YOU";
-            return wid.slice(-4).toUpperCase();
-          })()
-        : undefined;
-
-    const round: HudRound = {
-      phase: state.round.phase,
-      countdownRemainingMs: state.round.countdownRemainingMs,
-      roundIndex: state.round.roundIndex,
-      scores,
-      winnerLabel,
-    };
-
-    this.hudSystem.update(vitals, round);
-
-    if (!this.matchHasEnded) {
-      this.roundBannerSystem.update({
-        phase: state.round.phase,
-        countdownRemainingMs: state.round.countdownRemainingMs,
-        roundIndex: state.round.roundIndex,
-        winnerLabel,
-      });
-    }
   }
 
   // ---------------- Net stats overlay ----------------
@@ -515,7 +401,8 @@ export class OnlineMatchScene extends Phaser.Scene {
           break;
         case "card-offered":
           if (event.playerId === this.localPlayerId) {
-            this.showCardDraft(event.cardIds);
+            const key = event.cardIds.join("|");
+            this.pendingCardOffer = { cardIds: event.cardIds, key };
           }
           break;
         case "player-slowed":
@@ -523,28 +410,6 @@ export class OnlineMatchScene extends Phaser.Scene {
           break;
       }
     }
-  }
-
-  private showCardDraft(cardIds: string[]) {
-    if (!this.cardDraftOverlay) return;
-    const key = cardIds.join("|");
-    if (this.lastCardOfferKey === key && this.cardDraftOverlay.isOpen()) {
-      // Same offer, overlay already visible — nothing to do.
-      return;
-    }
-    this.lastCardOfferKey = key;
-    const candidates = cardIds
-      .map((id) => crystalRoundsCards.find((c) => c.id === id))
-      .filter((c): c is CardDefinition => Boolean(c));
-    if (candidates.length === 0) return;
-    // Hide the death overlay so the picker is fully readable + clickable.
-    this.deathOverlay?.hide();
-    const onPick: CardPickHandler = (card) => {
-      const state = this.loop?.getRenderState();
-      if (!state || !this.loop) return;
-      this.loop.sendCardPick(state.round.roundIndex, card.id);
-    };
-    this.cardDraftOverlay.show(candidates, onPick);
   }
 
   private spawnDamageNumber(victimId: string, damage: number) {
@@ -763,54 +628,6 @@ export class OnlineMatchScene extends Phaser.Scene {
     this.cameras.main.centerOn(local.x, local.y);
   }
 
-  // ---------------- Match results ----------------
-
-  private maybeShowMatchResults(state: WorldState) {
-    if (this.matchHasEnded) return;
-    const { winnerPlayerId } = state.round;
-    if (winnerPlayerId === null) return;
-    const winnerScore = state.round.scores[winnerPlayerId] ?? 0;
-    if (winnerScore < TARGET_SCORE_DEFAULT) return;
-    this.matchHasEnded = true;
-    this.showMatchResults(state);
-  }
-
-  private showMatchResults(state: WorldState) {
-    if (!this.matchResultsOverlay) return;
-    const rows: MatchResultsRow[] = Object.entries(state.round.scores)
-      .map(([pid_, score]) => {
-        const pid = pid_ as PlayerId;
-        const player = state.players[pid];
-        return {
-          playerId: pid,
-          name: pid === this.localPlayerId ? "You" : pid.slice(-4),
-          score,
-          cardIds: player?.cards ?? [],
-          isLocal: pid === this.localPlayerId,
-        };
-      });
-    this.matchResultsOverlay.show(
-      {
-        winnerPlayerId: state.round.winnerPlayerId,
-        targetScore: TARGET_SCORE_DEFAULT,
-        rows,
-      },
-      {
-        onRematch: () => {
-          // Rematch on the netcode path requires a fresh assignment + new
-          // ClientLoop; for now bounce back to lobby and let the player
-          // re-enter the queue. Mirrors the offline scene's hook surface.
-          this.matchResultsOverlay?.hide();
-          window.dispatchEvent(new CustomEvent("jakesjam:return-to-lobby"));
-        },
-        onReturnToLobby: () => {
-          this.matchResultsOverlay?.hide();
-          window.dispatchEvent(new CustomEvent("jakesjam:return-to-lobby"));
-        },
-      },
-    );
-  }
-
   // ---------------- Status text ----------------
 
   private setStatus(message: string) {
@@ -828,10 +645,9 @@ export class OnlineMatchScene extends Phaser.Scene {
     this.convex = null;
     this.audio?.destroy();
     this.audio = undefined;
-    this.cardDraftOverlay?.destroy();
-    this.cardDraftOverlay = undefined;
-    this.matchResultsOverlay?.destroy();
-    this.matchResultsOverlay = undefined;
+    this.compositor?.destroy();
+    this.compositor = null;
+    this.pendingCardOffer = null;
     for (const rig of this.playerRigs.values()) rig.destroy();
     this.playerRigs.clear();
     for (const sprite of this.projectileSprites.values()) sprite.destroy();
@@ -844,12 +660,6 @@ export class OnlineMatchScene extends Phaser.Scene {
     this.fireGraphics = null;
     this.pickupGraphics?.destroy();
     this.pickupGraphics = null;
-    this.hudSystem?.destroy();
-    this.hudSystem = null;
-    this.roundBannerSystem?.destroy();
-    this.roundBannerSystem = null;
-    this.deathOverlay?.destroy();
-    this.deathOverlay = null;
     this.statsText?.destroy();
     this.statsText = null;
     this.statsBg?.destroy();
