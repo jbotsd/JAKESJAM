@@ -423,13 +423,56 @@ export class LobbyController {
     this.joinButton.disabled = !hasClient || hasRoom;
     this.readyButton.disabled = !hasClient || !hasRoom;
     this.startButton.disabled = !hasClient || !hasRoom || !isHost || !allReady;
-    this.readyButton.textContent = currentPlayer?.ready ? "Unready" : "Ready";
+
+    // Ready button: label = STATE (not action verb). Toggle via filled vs
+    // outlined visual + a checkmark. Removes the "Unready button means I'm
+    // unready or the button unreadies me?" confusion.
+    const isReady = Boolean(currentPlayer?.ready);
+    this.readyButton.textContent = isReady ? "✓  Ready" : "Mark Ready";
+    this.readyButton.dataset.ready = isReady ? "true" : "false";
+    this.readyButton.setAttribute("aria-pressed", isReady ? "true" : "false");
+
+    // Surface WHY Start is disabled — the most-asked lobby question is
+    // "the button's grey, what am I missing." Status line is the cheap fix.
+    if (hasRoom && isHost) {
+      const notReady = players.filter((p) => !p.ready);
+      if (players.length < 1) {
+        this.setStartHint("Need at least one player to start.");
+      } else if (notReady.length > 0) {
+        const names = notReady.map((p) => p.name).join(", ");
+        this.setStartHint(`Waiting on: ${names}`);
+      } else {
+        this.setStartHint("Everyone ready — start when you like.");
+      }
+    } else if (hasRoom && !isHost) {
+      this.setStartHint("Only the host can start the match.");
+    } else {
+      this.setStartHint("");
+    }
 
     // Chaos modifiers are room-wide settings — only the room host can edit them.
     // Outside a room everyone can preview their default selection.
     for (const input of this.chaosInputs) {
       input.disabled = hasRoom && !isHost;
     }
+  }
+
+  private setStartHint(message: string): void {
+    let hint = this.startButton.parentElement?.querySelector<HTMLElement>(
+      "[data-start-hint]",
+    );
+    if (!hint && this.startButton.parentElement) {
+      hint = document.createElement("div");
+      hint.dataset.startHint = "true";
+      Object.assign(hint.style, {
+        fontSize: "11px",
+        color: "#7a8aa3",
+        marginTop: "4px",
+        letterSpacing: "0.04em",
+      });
+      this.startButton.parentElement.appendChild(hint);
+    }
+    if (hint) hint.textContent = message;
   }
 
   private setBusy(isBusy: boolean) {
