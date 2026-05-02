@@ -1,8 +1,16 @@
-import Phaser from "phaser";
+// `import type` keeps the Phaser bundle out of Node-side test runs that
+// don't have a `window` (Bun's default test env). The runtime constant
+// previously read from `Phaser.BlendModes.ADD` is inlined as
+// `BLEND_MODE_ADD` below — frozen value from Phaser's enum, hasn't
+// changed across 3.x → 4.x.
+import type Phaser from "phaser";
 import type { DestructibleKind, ElementType, Vec2 } from "../types/game";
 import { destructibleColor } from "../systems/DestructibleRenderer";
 import type { ParticlePool } from "../systems/ParticlePool";
 import { PALETTE } from "../ui/palette";
+
+/** Phaser.BlendModes.ADD — inlined to avoid runtime Phaser import in tests. */
+const BLEND_MODE_ADD = 1;
 
 /**
  * RenderLayer — owns the cluster of one-shot ephemeral VFX bursts that
@@ -330,7 +338,7 @@ export class RenderLayer {
       arc.setPosition(position.x, position.y);
       arc.setScale(1);
       arc.setAlpha(alpha);
-      arc.setBlendMode(Phaser.BlendModes.ADD);
+      arc.setBlendMode(BLEND_MODE_ADD);
 
       const targetScale = scale * 1.2; // +20%
       this.scene.tweens.add({
