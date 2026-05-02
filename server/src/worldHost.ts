@@ -14,9 +14,19 @@
 import type { ServerWebSocket } from "bun";
 import { MatchHost, type MatchSocketData } from "./matchHost.ts";
 import { PlayerId, type PlayerSpawnInfo } from "@sim/types.ts";
-import { DEFAULT_MAP_ID, type MapId } from "@sim/data/maps.ts";
+import { DEFAULT_MAP_ID, isMapId, type MapId } from "@sim/data/maps.ts";
 
 const WORLD_MATCH_ID = "world";
+
+/**
+ * Map rotation pool. Two intentions:
+ *   1. Once round-rotation lands (DEFER), the host steps through this list at
+ *      round boundaries. For now `nextMapId()` always returns the head; flipping
+ *      the constructor option `rotateMaps: true` enables round-rotation.
+ *   2. Tested in __tests__/worldHost.test.ts to guard against a regression where
+ *      a typo in `MapId` literal silently falls back to `DEFAULT_MAP_ID`.
+ */
+const ROTATION_MAPS: readonly MapId[] = ["boxworks", "boxworks-mini", "boxworks-tower"];
 
 const WORLD_COLOR_PALETTE = [
   "#88ccff",
@@ -46,25 +56,58 @@ export class WorldHost {
    */
   private host: MatchHost | null = null;
   private readonly mapId: MapId;
+  private readonly rotateMaps: boolean;
+  /** Index into ROTATION_MAPS used by `nextMapId`. Reset alongside host
+   *  rebuild when the existing host is torn down for any reason. */
+  private rotationCursor = 0;
 
-  constructor(opts: { mapId?: MapId } = {}) {
-    this.mapId = opts.mapId ?? DEFAULT_MAP_ID;
+  constructor(opts: { mapId?: MapId | string; rotateMaps?: boolean } = {}) {
+    // Validate the constructor mapId at the boundary so a typo is loud,
+    // not silent. Prior code passed the raw mapId straight into MatchHost,
+    // which then `resolveMap()`d back to DEFAULT_MAP_ID on miss — producing a
+    // running but wrong-arena world. Now we throw at boot.
+    if (opts.mapId !== undefined && !isMapId(opts.mapId)) {
+      throw new Error(
+        `WorldHost: unknown mapId "${opts.mapId}". Known: ${Object.keys({ boxworks: 1, "boxworks-mini": 1, "boxworks-tower": 1 }).join(", ")}`,
+      );
+    }
+    this.mapId = (opts.mapId as MapId | undefined) ?? DEFAULT_MAP_ID;
+    this.rotateMaps = opts.rotateMaps ?? false;
   }
 
   /**
    * Hand a fresh socket to the singleton host. Lazily boots the host
    * on first connect using the new player as the seed spawn (MatchHost
    * requires at least one PlayerSpawnInfo at construction).
+   *
+   * Race safety: JS is single-threaded so concurrent attach calls cannot
+   * race the `if (!this.host)` check, BUT `MatchHost`'s constructor is
+   * synchronous in current code — if it ever becomes async (e.g. if it
+   * starts awaiting a Convex lookup for chaosModifiers), this would need
+   * to gate with a Promise<MatchHost> sentinel. Comment so we remember.
    */
   attach(ws: ServerWebSocket<MatchSocketData>): void {
     const playerId = PlayerId(ws.data.playerId);
     if (!this.host) {
       const spawn = this.spawnFor(ws.data.playerId);
-      this.host = new MatchHost(WORLD_MATCH_ID, [spawn], [], this.mapId);
+      this.host = new MatchHost(WORLD_MATCH_ID, [spawn], [], this.nextMapId());
     } else if (!this.host.hasPlayer(playerId)) {
       this.host.addPlayer(this.spawnFor(ws.data.playerId));
     }
     this.host.attachClient(ws);
+  }
+
+  /**
+   * Return the next mapId for a host construction. Rotation is opt-in via
+   * `rotateMaps: true` in the constructor options; without it, every call
+   * returns `this.mapId`. Wired here so a future "rotate at round-end"
+   * feature can call this without further plumbing.
+   */
+  private nextMapId(): MapId {
+    if (!this.rotateMaps) return this.mapId;
+    const id = ROTATION_MAPS[this.rotationCursor % ROTATION_MAPS.length]!;
+    this.rotationCursor += 1;
+    return id;
   }
 
   route(ws: ServerWebSocket<MatchSocketData>, raw: Buffer | ArrayBuffer | Uint8Array): void {

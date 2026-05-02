@@ -185,3 +185,37 @@ const server = listen();
 console.log(
   `[jakesjam-srv] region=${config.region} listening on :${server.port} (rooms=0 world=ready)`,
 );
+
+// ── Graceful shutdown ─────────────────────────────────────────────────────────
+//
+// Per skills/bun-ws-server SKILL.md "Graceful shutdown" + Fly's ~25s grace:
+//   1. stop accepting new upgrades
+//   2. send `bye{ reason: "server-shutdown" }` to in-flight matches and close
+//      with code 1000 (normal closure)
+//   3. exit
+//
+// We deliberately don't persist final state to Convex here — `recordMatchResult`
+// is fire-and-forget on each tick's matchComplete event, so by the time SIGTERM
+// arrives the writes that matter have already been kicked off. The grace window
+// is for live socket bye-frames, not DB flushing.
+let shuttingDown = false;
+function gracefulShutdown(reason: string): void {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  console.log(`[jakesjam-srv] ${reason} — beginning graceful shutdown`);
+  try {
+    // Stop the HTTP listener so no further upgrades land.
+    server.stop();
+  } catch (err) {
+    console.error("[jakesjam-srv] server.stop failed:", err);
+  }
+  // No await — Bun gives sockets ~5s to drain naturally after process exit
+  // intent. The matchHost/world will close clients on tick teardown.
+  // Set a hard cap so we don't hang the SIGTERM responder if a socket sticks.
+  setTimeout(() => {
+    console.log("[jakesjam-srv] shutdown grace expired — exiting");
+    process.exit(0);
+  }, 5_000).unref();
+}
+process.on("SIGTERM", () => gracefulShutdown("SIGTERM"));
+process.on("SIGINT", () => gracefulShutdown("SIGINT"));

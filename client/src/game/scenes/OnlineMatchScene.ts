@@ -305,6 +305,40 @@ export class OnlineMatchScene extends Phaser.Scene {
 
     this.lastFrameMs = performance.now();
     this.events.once("shutdown", () => this.teardown());
+
+    // Sim-loop ↔ Phaser-tick seam (per phaser4-game SKILL.md "Tab-blur is
+    // the failure mode"):
+    //
+    // ClientLoop runs sim ticks on `setInterval(STEP_MS)`. Browsers throttle
+    // setInterval to ~1Hz when the tab is hidden but freeze RAF entirely.
+    // On return, the sim has advanced N seconds; render hasn't. The reconcile
+    // path normally smooths drift over a 100ms window — much smaller than a
+    // typical away-time. The jam-friendly choice is to PAUSE the sim loop on
+    // BLUR so the local player isn't fighting their own ghost when they
+    // return. The server's RECONNECT_GRACE_MS (10s) covers the resulting
+    // input gap; longer absences will reconnect via WS close→reopen.
+    //
+    // We bind to game-level events because Phaser's per-scene 'pause' fires
+    // for many reasons (dialog overlay, scene.pause), and we only want to
+    // freeze the SIM clock, not the renderer. The handlers no-op if `loop`
+    // is null (pre-connect) so they're safe at any lifecycle point.
+    const onBlur = () => this.renderHostStop();
+    const onFocus = () => this.renderHostStart();
+    this.game.events.on(Phaser.Core.Events.BLUR, onBlur);
+    this.game.events.on(Phaser.Core.Events.FOCUS, onFocus);
+    this.events.once("shutdown", () => {
+      this.game.events.off(Phaser.Core.Events.BLUR, onBlur);
+      this.game.events.off(Phaser.Core.Events.FOCUS, onFocus);
+    });
+  }
+
+  /** Stop the sim loop. Idempotent. Called on tab BLUR. */
+  private renderHostStop(): void {
+    this.loop?.stop();
+  }
+  /** Restart the sim loop. Idempotent. Called on tab FOCUS. */
+  private renderHostStart(): void {
+    this.loop?.start();
   }
 
   update() {
