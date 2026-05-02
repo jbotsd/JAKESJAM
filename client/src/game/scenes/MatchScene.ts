@@ -468,6 +468,21 @@ export class MatchScene extends Phaser.Scene {
     this.add.ellipse(width * 0.3, height * 0.45, width * 0.55, height * 0.4, bgShade, 0.08);
     this.add.ellipse(width * 0.72, height * 0.55, width * 0.5, height * 0.38, bgShade, 0.08);
 
+    // Atmospheric mid-Z haze: 3 large soft ellipses between BG layer and platforms.
+    // Slightly lighter than theme.bg to imply depth fog. Alpha 0.04–0.06, depth 0.5.
+    // Positions seeded at scene-create (Math.random acceptable — render only, not sim).
+    const hazeColor = 0x0e2a35; // ~theme.bg + 8 luminance units (voidDeep variant)
+    const hazeDefs: Array<{ rx: number; ry: number; ew: number; eh: number; a: number }> = [
+      { rx: 0.18 + Math.random() * 0.15, ry: 0.3 + Math.random() * 0.2, ew: width * 0.7, eh: height * 0.32, a: 0.05 },
+      { rx: 0.45 + Math.random() * 0.15, ry: 0.55 + Math.random() * 0.15, ew: width * 0.9, eh: height * 0.4, a: 0.04 },
+      { rx: 0.65 + Math.random() * 0.15, ry: 0.35 + Math.random() * 0.2, ew: width * 0.6, eh: height * 0.3, a: 0.06 },
+    ];
+    for (const hd of hazeDefs) {
+      this.add
+        .ellipse(width * hd.rx, height * hd.ry, hd.ew, hd.eh, hazeColor, hd.a)
+        .setDepth(0.5);
+    }
+
     // Light beams — additive triangle polygons from off-screen top when theme flags them.
     if (theme.hasLightBeams) {
       const beamDefs: Array<{ x: number; w: number }> = [

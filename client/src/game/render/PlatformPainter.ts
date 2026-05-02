@@ -1,14 +1,17 @@
 /**
  * PlatformPainter — bakes two-tone + brush-streak platform visuals into a
- * RenderTexture once per unique (w × h × theme.hi) combination, then returns
- * an Image placed at (x, y) in world space.
+ * RenderTexture once per unique (w × h × theme.hi × seed) combination, then
+ * returns an Image placed at (x, y) in world space.
  *
  * Layers (bottom → top):
  *   (a) Drop shadow: offset rect 4px down/right, shade color at alpha 0.55
  *   (b) Main fill: theme.hi
- *   (c) Brush streaks: 4–6 thin rotated rects, theme.wash color, alpha 0.18
+ *   (c) Brush streaks pass 1: 5 thin rotated rects, theme.wash color, alpha 0.32
+ *       Angles spread −45° … +75° (deterministic per-platform seed).
+ *   (d) Brush streaks pass 2: 3 perpendicular cross-hatch streaks, alpha 0.12
  *
- * No stroke. Identical platforms share one RenderTexture (keyed by size+hi).
+ * No stroke. Each unique (w × h × theme.hi × seed) bakes one RenderTexture.
+ * Seed = (x|0)*73 ^ (y|0)*131, ensuring stable per-platform brushwork.
  */
 
 import Phaser from "phaser";
@@ -57,7 +60,9 @@ export function paintPlatform(
       ? theme.shade
       : darkenColor(theme.hi, 0.35);
 
-  const textureKey = `platform_${w}x${h}_${theme.hi}`;
+  // Deterministic per-platform seed so each unique position gets unique brushwork.
+  const seed = ((x | 0) * 73) ^ ((y | 0) * 131);
+  const textureKey = `platform_${w}x${h}_${theme.hi}_${seed}`;
 
   if (!_bakedKeys.has(textureKey)) {
     // Mark as baked before we actually draw so re-entrant calls don't double-bake.
@@ -83,21 +88,52 @@ export function paintPlatform(
     drawRimHighlight(g, 0, 0, w, 0xF5F8F8, 0.22);
     rt.draw(g, 0, 0);
 
-    // (c) Brush streaks — 4–6 thin rotated rects at low alpha
+    // (c) Brush streaks pass 1 — 5 streaks, wide angle spread −45° … +75°, alpha 0.32
+    //     Angles derived deterministically from per-platform seed for unique brushwork.
     const streakCount = 5;
+    // Simple seeded LCG to generate stable pseudo-random values per-platform.
+    let rng = seed;
+    const nextRng = (): number => {
+      rng = (rng * 1664525 + 1013904223) & 0xffffffff;
+      return (rng >>> 0) / 0xffffffff;
+    };
+
+    const baseAngles: number[] = [];
     for (let i = 0; i < streakCount; i++) {
-      const t = i / (streakCount - 1); // 0 → 1
-      // Spread streaks evenly across the platform width, randomised angle
+      const t = i / (streakCount - 1); // 0 → 1 even spread
       const cx = w * (0.1 + t * 0.8);
       const cy = h * 0.5;
-      const angle = Phaser.Math.DegToRad(-15 + i * 7.5); // −15° … +15°
-      const streakW = w * (0.5 + (i % 2) * 0.25); // vary length
+      // Wide spread: −45° … +75° (120° total range)
+      const angleDeg = -45 + nextRng() * 120;
+      const angle = Phaser.Math.DegToRad(angleDeg);
+      baseAngles.push(angle);
+      const streakW = w * (0.5 + (i % 2) * 0.25);
       const streakH = Math.max(2, h * 0.18);
 
       g.clear();
-      g.fillStyle(theme.wash, 0.18);
-      // Draw the streak as a rotated rectangle by painting into a temp graphics
-      // object using a transformation matrix.
+      g.fillStyle(theme.wash, 0.32);
+      g.save();
+      g.translateCanvas(cx, cy);
+      g.rotateCanvas(angle);
+      g.fillRect(-streakW / 2, -streakH / 2, streakW, streakH);
+      g.restore();
+      rt.draw(g, 0, 0);
+    }
+
+    // (d) Brush streaks pass 2 — 3 cross-hatch streaks perpendicular to pass 1, alpha 0.12
+    const crossCount = 3;
+    for (let i = 0; i < crossCount; i++) {
+      const t = i / (crossCount - 1);
+      const cx = w * (0.15 + t * 0.7);
+      const cy = h * 0.5;
+      // Perpendicular to the corresponding pass-1 streak (+90°)
+      const baseAngle = baseAngles[Math.floor(i * (streakCount / crossCount))] ?? 0;
+      const angle = baseAngle + Math.PI / 2;
+      const streakW = w * (0.4 + (i % 2) * 0.2);
+      const streakH = Math.max(2, h * 0.14);
+
+      g.clear();
+      g.fillStyle(theme.wash, 0.12);
       g.save();
       g.translateCanvas(cx, cy);
       g.rotateCanvas(angle);
