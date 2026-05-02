@@ -194,7 +194,8 @@ export type PlayerEntity = {
 
 export type ProjectileEntity = {
   id: EntityId;
-  ownerId: PlayerId;
+  /** null = world-owned (orphaned); hits/affects every player. */
+  ownerId: PlayerId | null;
   x: number;
   y: number;
   vx: number;
@@ -249,7 +250,8 @@ export type FireEntity = {
   y: number;
   radius: number;
   remainingMs: number;
-  ownerId: PlayerId;
+  /** null = world-owned (orphaned); hits/affects every player. */
+  ownerId: PlayerId | null;
   damagePerSecond: number;
 };
 
@@ -285,7 +287,8 @@ export type PickupEntity = {
  */
 export type SatelliteEntity = {
   id: EntityId;
-  ownerId: PlayerId;
+  /** null = world-owned (orphaned); hits/affects every player. */
+  ownerId: PlayerId | null;
   /** Current orbit angle in radians; advanced each tick. */
   angle: number;
   /** Radius (px) the satellite orbits at, around owner.x/owner.y. */

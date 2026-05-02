@@ -68,7 +68,7 @@ export function stepFirePatches(
     const playerIds = Object.keys(players).sort();
     for (const pid_ of playerIds) {
       const pid = pid_ as PlayerId;
-      if (pid === patch.ownerId) continue;
+      if (patch.ownerId !== null && pid === patch.ownerId) continue;
       const p = players[pid]!;
       if (!p.alive) continue;
       const playerAABB: AABB = {

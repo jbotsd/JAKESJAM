@@ -137,7 +137,7 @@ export class InterestGrid {
     this.satelliteBins.clear();
     for (const [idStr, sat] of Object.entries(state.satellites)) {
       const id = Number(idStr) as EntityId;
-      const owner = state.players[sat.ownerId];
+      const owner = sat.ownerId !== null ? state.players[sat.ownerId] : undefined;
       const sx = owner ? owner.x + Math.cos(sat.angle) * sat.orbitRadius : 0;
       const sy = owner ? owner.y + Math.sin(sat.angle) * sat.orbitRadius : 0;
       this.insertEntity(this.satelliteBins, sx, sy, id);

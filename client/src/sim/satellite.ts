@@ -72,6 +72,8 @@ export function stepSatellites(
 
   for (const id of ids) {
     const sat = satellites[id]!;
+    // Despawn world-owned (orphaned) satellites immediately — no owner to orbit.
+    if (sat.ownerId === null) continue;
     const owner = players[sat.ownerId];
 
     // Despawn satellites whose owner is gone or dead.
@@ -177,6 +179,7 @@ export function despawnSatellitesForDeadOwners(
 ): Record<EntityId, SatelliteEntity> {
   const out: Record<EntityId, SatelliteEntity> = {};
   for (const [idStr, sat] of Object.entries(satellites)) {
+    if (sat.ownerId === null) continue; // orphaned — drop immediately
     const owner = players[sat.ownerId];
     if (owner && owner.alive) {
       out[EntityId(Number(idStr))] = sat;
