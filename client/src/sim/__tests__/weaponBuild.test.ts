@@ -4,8 +4,9 @@
 // stack/clamp/bucket-tracking math is locked here.
 
 import { describe, test, expect } from "bun:test";
-import { createWeaponBuild, clampBuild } from "../data/weaponBuild.js";
-import { starterWeapon } from "../data/weapons.js";
+import { createWeaponBuild, clampBuild, neutralTTK, neutralTTKBuild } from "../data/weaponBuild.js";
+import { starterWeapon, weapons } from "../data/weapons.js";
+import { crystalRoundsCards } from "../data/cards.js";
 import type { CardDefinition } from "../data/cardTypes.js";
 
 describe("createWeaponBuild", () => {
@@ -77,6 +78,45 @@ describe("createWeaponBuild", () => {
     direct.fireRate = 0.1;
     clampBuild(direct);
     expect(direct.fireRate).toBe(0.35);
+  });
+
+  // ---- TTK band tests (per combat-balance-ttk/SKILL.md) ----
+
+  test("neutralTTK: all base weapons sit in the 1.8s–3.5s band", () => {
+    for (const w of weapons) {
+      const ttk = neutralTTK(w);
+      expect(ttk, `${w.id} TTK=${ttk.toFixed(2)}s should be ≥1.8s`).toBeGreaterThanOrEqual(1.8);
+      expect(ttk, `${w.id} TTK=${ttk.toFixed(2)}s should be ≤3.5s`).toBeLessThanOrEqual(3.5);
+    }
+  });
+
+  test("no card combo lets the starter weapon breach the 1.5s TTK floor", () => {
+    // Test every pair of cards from the full card pool.
+    // Three-card combo is O(n³) ≈ 50³ = 125 000 iterations — fast for bun:test.
+    const CARDS = crystalRoundsCards;
+    const FLOOR_S = 1.5;
+    const violations: string[] = [];
+
+    for (let i = 0; i < CARDS.length; i++) {
+      for (let j = i + 1; j < CARDS.length; j++) {
+        for (let k = j + 1; k < CARDS.length; k++) {
+          const combo = [CARDS[i]!, CARDS[j]!, CARDS[k]!];
+          const build = createWeaponBuild(starterWeapon, combo);
+          const ttk = neutralTTKBuild(build);
+          if (ttk < FLOOR_S) {
+            violations.push(
+              `${combo.map((c) => c.id).join("+")} → TTK=${ttk.toFixed(3)}s`,
+            );
+          }
+        }
+      }
+    }
+
+    if (violations.length > 0) {
+      console.warn(`[TTK] ${violations.length} combos breach 1.5s floor:\n  ${violations.slice(0, 5).join("\n  ")}`);
+    }
+    // Hard-fail if any combination one-shots inside 1.5s from full HP.
+    expect(violations.length).toBe(0);
   });
 
   test("delivery card sets delivery and adds 'delivery' to occupiedBuckets", () => {

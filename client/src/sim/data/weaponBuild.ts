@@ -11,6 +11,28 @@ import type {
   WeaponDefinition,
 } from "./cardTypes.js";
 
+/**
+ * Compute the neutral time-to-kill (seconds) for a base weapon definition.
+ * Assumes a 100 HP target (PLAYER_BASE_HP) with no shields, no cards.
+ * Per combat-balance-ttk/SKILL.md: target band is 1.8s – 3.5s.
+ *
+ * Formula: HP / (damage × shots_per_second)
+ * The fireRate field is shots-per-second.
+ */
+export function neutralTTK(weapon: { damage: number; fireRate: number }): number {
+  const PLAYER_BASE_HP = 100;
+  if (weapon.fireRate <= 0 || weapon.damage <= 0) return Infinity;
+  return PLAYER_BASE_HP / (weapon.damage * weapon.fireRate);
+}
+
+/**
+ * TTK for a fully resolved build. Accounts for the resolved DPS of the build
+ * which may include card-multiplied damage + fire rate.
+ */
+export function neutralTTKBuild(build: ResolvedWeaponBuild): number {
+  return neutralTTK({ damage: build.damage, fireRate: build.fireRate });
+}
+
 export function createWeaponBuild(
   baseWeapon: WeaponDefinition,
   cards: CardDefinition[],

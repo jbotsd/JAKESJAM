@@ -641,7 +641,9 @@ export const crystalRoundsCards: CardDefinition[] = [
     description: "Cuts shot cooldown; weapon glow pulses faster.",
     flavorText: "Blink and the core has already been rude twice.",
     modifier: {
-      fireRateMultiplier: 1.32,
+      // Reduced from 1.32 → 1.22 to prevent 1.5s TTK breach when stacked
+      // with needle-compressor + damage shape cards. Per combat-balance-ttk/SKILL.md.
+      fireRateMultiplier: 1.22,
       recoilMultiplier: 0.9,
     },
     visual: visual("circle", "#5eead4"),
@@ -657,7 +659,9 @@ export const crystalRoundsCards: CardDefinition[] = [
     description: "Fires faster while shaving projectile size down.",
     flavorText: "Tiny shots. Horrible tempo.",
     modifier: {
-      fireRateMultiplier: 1.22,
+      // Reduced from 1.22 → 1.14 to prevent 1.5s TTK breach when stacked
+      // with rapid-refraction + damage shape cards. Per combat-balance-ttk/SKILL.md.
+      fireRateMultiplier: 1.14,
       projectile: { sizeMultiplier: 0.86 },
     },
     visual: visual("bar", "#a7f3d0"),
