@@ -118,6 +118,33 @@ export class ConvexClient {
    * @returns true if the request resolved (regardless of `recorded` flag),
    *          false if it failed or was skipped because Convex isn't configured.
    */
+  /**
+   * Upload the replay blob (input log + RNG seed bundle from
+   * ReplayRecorder.serialize()) to Convex storage. Fire-and-forget;
+   * a failure does not affect match completion. Per replay-spectator
+   * SKILL: cold storage, never on the hot path.
+   */
+  async saveReplay(matchId: ConvexId, bytes: Uint8Array): Promise<boolean> {
+    if (!this.client) return false;
+    try {
+      const ab = bytes.buffer.slice(
+        bytes.byteOffset,
+        bytes.byteOffset + bytes.byteLength,
+      ) as ArrayBuffer;
+      await this.client.action(replaysSaveRef, { matchId, bytes: ab });
+      console.log(
+        `[convex] saveReplay ok matchId=${matchId} bytes=${bytes.byteLength}`,
+      );
+      return true;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.error(
+        `[convex] saveReplay FAILED matchId=${matchId} bytes=${bytes.byteLength}: ${message}`,
+      );
+      return false;
+    }
+  }
+
   async recordMatchResult(args: RecordMatchResultArgs): Promise<boolean> {
     if (!this.client) {
       if (!this.warnedMissingUrl) {

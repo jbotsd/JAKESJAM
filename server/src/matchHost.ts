@@ -701,6 +701,19 @@ export class MatchHost {
         finalScores,
         roundsPlayed,
       });
+      // Fire-and-forget replay upload — never blocks "GG" + results screen.
+      // Per replay-spectator SKILL: if Convex is down, drop the replay.
+      try {
+        const bytes = this.replayRecorder.serialize();
+        if (bytes.byteLength > 0) {
+          void convexClient.saveReplay(matchId, bytes);
+        }
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        console.warn(
+          `[matchHost ${this.matchId}] replay serialize/upload skipped: ${message}`,
+        );
+      }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       console.error(
