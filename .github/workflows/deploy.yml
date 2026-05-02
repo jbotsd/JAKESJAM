@@ -1,0 +1,85 @@
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  # ──────────────────────────────────────────────────────────────────────
+  # Gate: typecheck + sim tests must pass before any deploy.
+  # ──────────────────────────────────────────────────────────────────────
+  verify:
+    name: Verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.bun/install/cache
+            node_modules
+            client/node_modules
+            server/node_modules
+          key: ${{ runner.os }}-bun-${{ hashFiles('bun.lock') }}
+          restore-keys: ${{ runner.os }}-bun-
+      - run: bun install --frozen-lockfile
+      - run: bun run --filter client typecheck
+      - run: bun run --filter server typecheck
+      - run: bun run --filter client test
+
+  # ──────────────────────────────────────────────────────────────────────
+  # Deploy Bun game server to Fly.io.
+  # Triggers on changes to server/, fly.toml, or shared sim code.
+  # Secret: FLY_API_TOKEN  (create with `flyctl tokens create deploy -a jakesjam-srv-syd`)
+  # ──────────────────────────────────────────────────────────────────────
+  deploy-server:
+    name: Deploy server (Fly.io)
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # Skip server deploy when only client/convex/docs changed.
+    # (Change-detection per-job is messy in Actions; cheaper to always run
+    # when verify passes — Fly skips re-pushing identical images anyway.)
+    steps:
+      - uses: actions/checkout@v4
+      - uses: superfly/flyctl-actions/setup-flyctl@master
+      - run: flyctl deploy --config fly.toml --app jakesjam-srv-syd --remote-only
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+
+  # ──────────────────────────────────────────────────────────────────────
+  # Deploy Vite client to Vercel (production).
+  # Secrets: VERCEL_TOKEN, VERCEL_ORG_ID, VERCEL_PROJECT_ID
+  # Get IDs from .vercel/project.json after `vercel link`, or the dashboard.
+  # ──────────────────────────────────────────────────────────────────────
+  deploy-client:
+    name: Deploy client (Vercel)
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+      VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - run: bun install --frozen-lockfile
+      - name: Install Vercel CLI
+        run: bun add -g vercel@latest
+      - name: Pull Vercel env (production)
+        run: vercel pull --yes --environment=production --token=${{ secrets.VERCEL_TOKEN }}
+      - name: Build (Vercel prebuilt)
+        run: vercel build --prod --token=${{ secrets.VERCEL_TOKEN }}
+      - name: Deploy
+        run: vercel deploy --prebuilt --prod --token=${{ secrets.VERCEL_TOKEN }}
