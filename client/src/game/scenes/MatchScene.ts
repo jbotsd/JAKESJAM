@@ -19,7 +19,6 @@ import { characters } from "../data/characters";
 import { getChaosModifiers, projectileShapes } from "../data/chaosModifiers";
 import { parseStoredChaosModifiers } from "../../sim/data/chaosModifiers";
 import { starterWeapon } from "../data/weapons";
-import { RoomClient } from "../net/RoomClient";
 import { ProceduralPlayerRig } from "../rendering/ProceduralPlayerRig";
 import { GameAudioSystem } from "../systems/AudioSystem";
 import { ParticlePool } from "../systems/ParticlePool";
@@ -64,12 +63,13 @@ import { DestructibleRenderer } from "../systems/DestructibleRenderer";
 import { RemotePlayerManager } from "../systems/RemotePlayerManager";
 import { RenderLayer } from "../render/RenderLayer";
 import type { MatchPlayerSnapshot, RoomPlayer } from "../types/net";
+// MatchPlayerSnapshot kept as a pure data struct for RemotePlayerManager;
+// the Convex sync that previously fed it has been removed.
 
 const STANDING_CHEST_OFFSET = 75;
 const CROUCHING_CHEST_OFFSET = 54;
 const MUZZLE_REACH = 43;
 const PLAYER_VISUAL_SCALE = 0.78;
-const SNAPSHOT_SEND_INTERVAL_MS = 100;
 const CHAOS_MODIFIERS_KEY = "jakesjam.chaosModifiers";
 // const CARD_CACHE_RELOCATE_MS = 20000; // ROUNDS: Removed - draft between rounds
 const REMOTE_PLAYER_TARGET_PREFIX = "remote-player:";
@@ -161,8 +161,6 @@ export class MatchScene extends Phaser.Scene {
   private audio?: GameAudioSystem;
   private projectileSystem?: ProjectileSystem;
   private particlePool?: ParticlePool;
-  private roomClient?: RoomClient;
-  private unsubscribeSnapshots?: () => void;
   private playerRig?: ProceduralPlayerRig;
   private remotePlayers!: RemotePlayerManager;
   private renderLayer!: RenderLayer;
@@ -227,10 +225,6 @@ export class MatchScene extends Phaser.Scene {
   private localPlayerId: PlayerId = PlayerId("offline-player");
   private roomPlayers: RoomPlayer[] = [];
   private readonly playerScores = new Map<string, PlayerScore>();
-  private snapshotSendTimerMs = 0;
-  private snapshotSequence = 0;
-  private shotSequence = 0;
-  private ignoreLocalSnapshotsThroughSequence = 0;
   private chaosModifierIds: ChaosModifierId[] = [];
   private fireHazardTimerMs = 0;
   // Round-flow state owned by this scene; sim/round.ts is reused as a pure
@@ -274,7 +268,6 @@ export class MatchScene extends Phaser.Scene {
   create() {
     this.events.once("shutdown", () => {
       window.removeEventListener("keydown", this.handleScoreboardKeyDown);
-      this.teardownNetworkSync();
       this.audio?.destroy();
       this.audio = undefined;
       this.cardDraftOverlay?.destroy();
@@ -293,7 +286,6 @@ export class MatchScene extends Phaser.Scene {
     window.removeEventListener("keydown", this.handleScoreboardKeyDown);
     window.addEventListener("keydown", this.handleScoreboardKeyDown);
     this.input.mouse?.disableContextMenu();
-    this.teardownNetworkSync();
     this.audio?.destroy();
     this.audio = new GameAudioSystem(this);
     this.particlePool?.destroy();
@@ -336,8 +328,6 @@ export class MatchScene extends Phaser.Scene {
     this.parryActiveMs = 0;
     this.parryCooldownMs = 0;
     this.rightMouseParryWasDown = false;
-    this.shotSequence = 0;
-    this.ignoreLocalSnapshotsThroughSequence = 0;
     this.lastPickupStatus = "none";
     this.progressionCardIds = [];
     this.projectileSystem = new ProjectileSystem(this);
@@ -366,7 +356,6 @@ export class MatchScene extends Phaser.Scene {
     this.bindKeys();
     this.ensureScore(this.localPlayerId);
     this.rebuildWeaponBuild();
-    this.setupNetworkSync();
     if (!this.matchResultsOverlay) {
       this.matchResultsOverlay = new MatchResultsOverlay();
     } else {
@@ -407,7 +396,6 @@ export class MatchScene extends Phaser.Scene {
         this.getProjectileTargets(),
       );
       this.applyProjectileHits(hits);
-      this.updateNetworkSync(deltaMs);
       this.syncPlayerVisuals(deltaMs);
       this.syncRemotePlayerVisuals(deltaMs);
       this.updateReticle();
@@ -453,7 +441,6 @@ export class MatchScene extends Phaser.Scene {
     );
     this.applyProjectileHits(hits);
 
-    this.updateNetworkSync(deltaMs);
     this.syncPlayerVisuals(deltaMs);
     this.syncRemotePlayerVisuals(deltaMs);
     this.updateReticle();
@@ -1204,25 +1191,6 @@ export class MatchScene extends Phaser.Scene {
     }
   }
 
-  private setupNetworkSync() {
-    if (!this.roomId || !this.matchId) {
-      return;
-    }
-
-    const convexUrl = import.meta.env.VITE_CONVEX_URL ?? import.meta.env.CONVEX_URL;
-    if (!convexUrl) {
-      return;
-    }
-
-    this.roomClient = new RoomClient(convexUrl);
-    this.unsubscribeSnapshots = this.roomClient.subscribeMatchPlayerSnapshots(
-      this.matchId,
-      (snapshots) => this.applyRemoteSnapshots(snapshots),
-      () => undefined,
-    );
-    this.sendPlayerSnapshot();
-  }
-
   private getChaosProfile(): ChaosProfile {
     const modifiers = getChaosModifiers(this.chaosModifierIds);
     return {
@@ -1300,148 +1268,6 @@ export class MatchScene extends Phaser.Scene {
     }, 36 + seededUnit(Math.floor(timeSeconds), 2, 302) * 26);
   }
 
-  private updateNetworkSync(deltaMs: number) {
-    if (!this.roomClient || !this.roomId || !this.matchId) {
-      return;
-    }
-
-    this.snapshotSendTimerMs += deltaMs;
-    if (this.snapshotSendTimerMs < SNAPSHOT_SEND_INTERVAL_MS) {
-      return;
-    }
-
-    this.snapshotSendTimerMs = 0;
-    this.sendPlayerSnapshot();
-  }
-
-  private sendPlayerSnapshot() {
-    if (!this.roomClient || !this.roomId || !this.matchId) {
-      return;
-    }
-
-    const aimTarget = this.getAimTarget();
-    const origin = this.getMuzzlePosition();
-    const aimAngle = Math.atan2(aimTarget.y - origin.y, aimTarget.x - origin.x);
-    this.snapshotSequence += 1;
-
-    void this.roomClient.submitPlayerSnapshot({
-      matchId: this.matchId,
-      roomId: this.roomId,
-      playerId: this.localPlayerId,
-      position: { ...this.playerBody.position },
-      velocity: { ...this.playerBody.velocity },
-      aimAngle,
-      health: this.playerHealth,
-      alive: this.playerHealth > 0 && !this.playerRespawnPending,
-      crouching: this.playerBody.crouching,
-      shieldActive: this.shieldActive,
-      shieldCharge: this.shieldCharge,
-      shotSequence: this.shotSequence,
-      sequence: this.snapshotSequence,
-    }).catch(() => undefined);
-  }
-
-  private applyRemoteSnapshots(snapshots: MatchPlayerSnapshot[]) {
-    for (const snapshot of snapshots) {
-      if (snapshot.playerId === this.localPlayerId) {
-        this.reconcileLocalSnapshot(snapshot);
-        continue;
-      }
-
-      this.ensureScore(snapshot.playerId);
-      const previous = this.remotePlayers.getSnapshot(snapshot.playerId);
-      this.spawnRemoteProjectileBursts(snapshot, previous);
-      this.remotePlayers.ingestSnapshot(snapshot);
-    }
-
-  }
-
-  private spawnRemoteProjectileBursts(
-    snapshot: MatchPlayerSnapshot,
-    previous?: MatchPlayerSnapshot,
-  ) {
-    if (!this.projectileSystem || !snapshot.alive) {
-      return;
-    }
-
-    const shotSequence = snapshot.shotSequence ?? 0;
-    const previousSequence = this.remotePlayers.getShotSequence(snapshot.playerId);
-    if (previousSequence === undefined) {
-      this.remotePlayers.setShotSequence(snapshot.playerId, shotSequence);
-      return;
-    }
-
-    if (shotSequence <= previousSequence) {
-      return;
-    }
-
-    this.remotePlayers.setShotSequence(snapshot.playerId, shotSequence);
-    const burstCount = Math.min(3, shotSequence - previousSequence);
-    const build = createWeaponBuild(starterWeapon, []);
-    const origin = this.getRemoteMuzzlePosition(previous ?? snapshot, snapshot);
-
-    for (let index = 0; index < burstCount; index += 1) {
-      const aimJitter = burstCount > 1 ? (index - (burstCount - 1) / 2) * 0.035 : 0;
-      this.projectileSystem.fire(origin, snapshot.aimAngle + aimJitter, build, [], true);
-    }
-  }
-
-  private getRemoteMuzzlePosition(
-    previous: MatchPlayerSnapshot,
-    snapshot: MatchPlayerSnapshot,
-  ): Vec2 {
-    const character = this.getCharacter(this.getRoomPlayer(snapshot.playerId)?.characterId);
-    const bodySize = getPlayerBodySize(character.sizeScale);
-    const visualScale = this.getVisualScale(character);
-    const position = previous
-      ? lerpVec(previous.position, snapshot.position, 0.65)
-      : snapshot.position;
-    const crouchAmount = snapshot.crouching ? 1 : 0;
-    const feetY = position.y + bodySize.y / 2;
-    const chest = {
-      x: position.x,
-      y: feetY -
-        Phaser.Math.Linear(STANDING_CHEST_OFFSET, CROUCHING_CHEST_OFFSET, crouchAmount) *
-          visualScale,
-    };
-    const muzzleReach = MUZZLE_REACH * visualScale;
-
-    return {
-      x: chest.x + Math.cos(snapshot.aimAngle) * muzzleReach,
-      y: chest.y + Math.sin(snapshot.aimAngle) * muzzleReach,
-    };
-  }
-
-  private reconcileLocalSnapshot(snapshot: MatchPlayerSnapshot) {
-    if (snapshot.sequence <= this.ignoreLocalSnapshotsThroughSequence) {
-      return;
-    }
-
-    if (this.playerRespawnPending) {
-      return;
-    }
-
-    if (snapshot.health < this.playerHealth && this.blockJammerMs <= 0 && this.parryActiveMs > 0) {
-      this.lastPickupStatus = "parried remote";
-      this.audio?.play("hit");
-      return;
-    }
-
-    if (snapshot.health < this.playerHealth) {
-      this.playerHealth = Math.max(0, snapshot.health);
-      this.audio?.play("hit");
-    }
-
-    if (snapshot.shieldCharge !== undefined && snapshot.shieldCharge < this.shieldCharge) {
-      this.shieldCharge = Math.max(0, snapshot.shieldCharge);
-    }
-
-    if (!snapshot.alive || this.playerHealth <= 0) {
-      this.playerHealth = 0;
-      this.killPlayer();
-    }
-  }
-
   private tryFireWeapon() {
     if (!this.projectileSystem || this.fireCooldownMs > 0 || this.playerRespawnPending) {
       return;
@@ -1476,8 +1302,6 @@ export class MatchScene extends Phaser.Scene {
     }
 
     this.audio?.play("shoot");
-    this.shotSequence += 1;
-    this.sendPlayerSnapshot();
     this.fireCooldownMs = this.getShotCooldownMs(build);
     const recoil =
       (build.recoilImpulse * build.projectile.recoilMultiplier) /
@@ -1802,18 +1626,6 @@ export class MatchScene extends Phaser.Scene {
       this.addDeath(playerId);
       this.spawnPlayerDeathExplosion(nextSnapshot.position);
     }
-
-    if (!this.roomClient || !this.roomId || !this.matchId) {
-      return;
-    }
-
-    void this.roomClient.applyPlayerDamage({
-      matchId: this.matchId,
-      roomId: this.roomId,
-      attackerPlayerId: this.localPlayerId,
-      targetPlayerId: playerId,
-      damage: hit.damage,
-    }).catch(() => undefined);
   }
 
   private floatRemoteDamageText(position: Vec2, amount: number, element: ElementType) {
@@ -2046,8 +1858,6 @@ export class MatchScene extends Phaser.Scene {
   private respawnPlayer() {
     this.clearRespawnText();
     this.resetPlayer();
-    this.sendPlayerSnapshot();
-    this.ignoreLocalSnapshotsThroughSequence = this.snapshotSequence;
     this.spawnRespawnBurst(this.playerBody.position);
   }
 
@@ -2848,13 +2658,6 @@ export class MatchScene extends Phaser.Scene {
     this.remotePlayers?.reset();
   }
 
-  private teardownNetworkSync() {
-    this.unsubscribeSnapshots?.();
-    this.unsubscribeSnapshots = undefined;
-    void this.roomClient?.close();
-    this.roomClient = undefined;
-    this.snapshotSendTimerMs = 0;
-  }
 }
 
 type TestTarget = ProjectileTarget & {
@@ -3070,12 +2873,6 @@ function readStoredChaosModifiers(): ChaosModifierId[] {
   return parseStoredChaosModifiers(localStorage.getItem(CHAOS_MODIFIERS_KEY));
 }
 
-function lerpVec(a: Vec2, b: Vec2, amount: number): Vec2 {
-  return {
-    x: Phaser.Math.Linear(a.x, b.x, amount),
-    y: Phaser.Math.Linear(a.y, b.y, amount),
-  };
-}
 
 function distance(a: Vec2, b: Vec2): number {
   return Math.hypot(a.x - b.x, a.y - b.y);

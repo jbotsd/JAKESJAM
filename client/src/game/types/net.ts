@@ -74,26 +74,3 @@ export type MatchPlayerSnapshot = {
   updatedAt: number;
 };
 
-export type SubmitPlayerSnapshotArgs = {
-  matchId: MatchId;
-  roomId: RoomId;
-  playerId: string;
-  position: Vec2;
-  velocity: Vec2;
-  aimAngle: number;
-  health: number;
-  alive: boolean;
-  crouching: boolean;
-  shieldActive: boolean;
-  shieldCharge: number;
-  shotSequence: number;
-  sequence: number;
-};
-
-export type ApplyPlayerDamageArgs = {
-  matchId: MatchId;
-  roomId: RoomId;
-  attackerPlayerId: string;
-  targetPlayerId: string;
-  damage: number;
-};

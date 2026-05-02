@@ -2,16 +2,12 @@ import { ConvexClient } from "convex/browser";
 import { api } from "../../../../convex/_generated/api";
 
 const rooms = api.rooms;
-const matches = api.matches;
-import type { ChaosModifierId, CharacterId, MatchId, RoomId } from "../types/game";
+import type { ChaosModifierId, CharacterId, RoomId } from "../types/game";
 import type {
-  ApplyPlayerDamageArgs,
   CreateRoomArgs,
   JoinRoomArgs,
-  MatchPlayerSnapshot,
   RoomHandle,
   RoomSnapshot,
-  SubmitPlayerSnapshotArgs,
 } from "../types/net";
 
 type Unsubscribe = () => void;
@@ -88,14 +84,6 @@ export class RoomClient {
     return mutate(setMapRef, { roomId, playerId, mapId });
   }
 
-  submitPlayerSnapshot(args: SubmitPlayerSnapshotArgs): Promise<void> {
-    return this.client.mutation(matches.submitPlayerSnapshot, args) as unknown as Promise<void>;
-  }
-
-  applyPlayerDamage(args: ApplyPlayerDamageArgs): Promise<void> {
-    return this.client.mutation(matches.applyPlayerDamage, args) as unknown as Promise<void>;
-  }
-
   heartbeat(roomId: RoomId, playerId: string): Promise<void> {
     return this.client.mutation(rooms.heartbeat, { roomId, playerId }) as unknown as Promise<void>;
   }
@@ -113,19 +101,6 @@ export class RoomClient {
       rooms.getById,
       { roomId },
       (snapshot) => onUpdate(snapshot as RoomSnapshot | null),
-      onError,
-    ) as Unsubscribe;
-  }
-
-  subscribeMatchPlayerSnapshots(
-    matchId: MatchId,
-    onUpdate: (snapshots: MatchPlayerSnapshot[]) => void,
-    onError: (error: Error) => void,
-  ): Unsubscribe {
-    return this.client.onUpdate(
-      matches.getPlayerSnapshots,
-      { matchId },
-      (snapshots) => onUpdate(snapshots as MatchPlayerSnapshot[]),
       onError,
     ) as Unsubscribe;
   }

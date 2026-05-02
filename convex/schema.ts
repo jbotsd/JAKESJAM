@@ -64,31 +64,6 @@ export default defineSchema({
     region: v.optional(v.string()),
   }).index("by_room", ["roomId"]),
 
-  matchPlayerSnapshots: defineTable({
-    matchId: v.id("matches"),
-    roomId: v.id("rooms"),
-    playerId: v.string(),
-    position: v.object({
-      x: v.number(),
-      y: v.number(),
-    }),
-    velocity: v.object({
-      x: v.number(),
-      y: v.number(),
-    }),
-    aimAngle: v.number(),
-    health: v.number(),
-    alive: v.boolean(),
-    crouching: v.boolean(),
-    shieldActive: v.optional(v.boolean()),
-    shieldCharge: v.optional(v.number()),
-    shotSequence: v.optional(v.number()),
-    sequence: v.number(),
-    updatedAt: v.number(),
-  })
-    .index("by_match", ["matchId"])
-    .index("by_match_player", ["matchId", "playerId"]),
-
   matchResults: defineTable({
     matchId: v.id("matches"),
     roomId: v.id("rooms"),
