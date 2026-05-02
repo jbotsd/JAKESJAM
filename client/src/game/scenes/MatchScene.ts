@@ -508,12 +508,7 @@ export class MatchScene extends Phaser.Scene {
       }
     }
 
-    // Platforms — two-tone + brush-streak baked RenderTexture.
-    console.info(
-      `[MatchScene] painting ${boxworksWorld.platforms.length} platforms ` +
-        `(world ${boxworksWorld.size.x}x${boxworksWorld.size.y}, theme.hi=0x${theme.hi.toString(16)})`,
-    );
-    let _platformsPainted = 0;
+    // Platforms — two-tone + brush-streak Graphics, drawn directly in paintPlatform.
     for (const platform of boxworksWorld.platforms) {
       paintPlatform(
         this,
@@ -523,10 +518,7 @@ export class MatchScene extends Phaser.Scene {
         platform.size.y,
         theme,
       );
-      _platformsPainted++;
     }
-    console.info(`[MatchScene] paintPlatform calls completed: ${_platformsPainted}`);
-
     for (const spawn of boxworksWorld.spawns) {
       this.add.circle(spawn.x, spawn.y, 5, PALETTE.textMid, 0.5);
     }
