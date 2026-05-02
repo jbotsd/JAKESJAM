@@ -396,8 +396,16 @@ export class LobbyController {
       this.mapPicker?.setHostMode(false);
       this.mapPicker?.setSelected(undefined);
     }
-    this.syncRoomStatusBadge(snapshot);
-    this.renderPlayers(snapshot?.players ?? []);
+    try {
+      this.syncRoomStatusBadge(snapshot);
+    } catch (err) {
+      console.error("[lobby] syncRoomStatusBadge threw", err);
+    }
+    try {
+      this.renderPlayers(snapshot?.players ?? []);
+    } catch (err) {
+      console.error("[lobby] renderPlayers threw", err);
+    }
     if (
       snapshot?.room.status === "in_match" &&
       snapshot.room.currentMatchId &&
@@ -419,7 +427,15 @@ export class LobbyController {
         },
       }));
     }
-    this.syncButtons();
+    try {
+      this.syncButtons();
+    } catch (err) {
+      // Don't let a transient DOM access error in syncButtons surface as a
+      // user-visible status banner ("Cannot read properties of undefined
+      // reading 'disabled'") — that confused users when a second tab joined
+      // a 1v1 room. Log instead so prod regressions still leave breadcrumbs.
+      console.error("[lobby] syncButtons threw", err);
+    }
   }
 
   /**
