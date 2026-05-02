@@ -72,8 +72,14 @@ export function paintPlatform(
   g.setPosition(x - halfW, y - halfH);
 
   // (a) Drop shadow — 4px down/right.
-  g.fillStyle(shadeColor, 0.55);
-  g.fillRect(4, 4, w, h);
+  // Shadow draws OUTSIDE the platform rect by design; deliberately not
+  // masked. Drawn on a separate (non-masked) Graphics instance.
+  const shadowG = scene.add.graphics();
+  shadowG.setPosition(x - halfW, y - halfH);
+  shadowG.fillStyle(shadeColor, 0.55);
+  shadowG.fillRect(4, 4, w, h);
+  // Shadow goes BEHIND the main platform fill in render order.
+  shadowG.setDepth(-0.1);
 
   // (b) Main fill.
   g.fillStyle(theme.hi, 1);
@@ -121,5 +127,14 @@ export function paintPlatform(
     g.restore();
   }
 
-  return [g];
+  // Clip streaks + rim to the platform rect — the previous RenderTexture
+  // pattern clipped implicitly via texture bounds; the direct Graphics
+  // rewrite needs an explicit GeometryMask to avoid streaks extending
+  // diagonally across the whole arena.
+  const maskShape = scene.make.graphics({ x: 0, y: 0 }, false);
+  maskShape.fillStyle(0xffffff, 1);
+  maskShape.fillRect(x - halfW, y - halfH, w, h);
+  g.setMask(maskShape.createGeometryMask());
+
+  return [g, shadowG];
 }

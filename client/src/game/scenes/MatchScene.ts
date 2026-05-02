@@ -573,8 +573,17 @@ export class MatchScene extends Phaser.Scene {
   }
 
   private configureCamera() {
-    this.cameras.main.setBounds(0, 0, boxworksWorld.size.x, boxworksWorld.size.y);
-    this.cameras.main.setRoundPixels(true);
+    // Camera bounds with viewport-sized padding. Without padding, the camera
+    // clamps so tightly at world edges that the local player visually pins
+    // to the screen edge (visible in prod: player at y=1064 in an 1080-tall
+    // world with an 800-tall viewport → camera can only scroll to 280, so
+    // player ends up 16 px from the bottom of the screen). Padding lets the
+    // camera over-scroll into the void backdrop, keeping the player centered.
+    const cam = this.cameras.main;
+    const padX = cam.width / 2;
+    const padY = cam.height / 2;
+    cam.setBounds(-padX, -padY, boxworksWorld.size.x + cam.width, boxworksWorld.size.y + cam.height);
+    cam.setRoundPixels(true);
     this.cameraTarget?.destroy();
     this.cameraTarget = this.add.zone(this.playerBody.position.x, this.playerBody.position.y, 2, 2);
     this.cameras.main.startFollow(this.cameraTarget, false, 0.12, 0.12);

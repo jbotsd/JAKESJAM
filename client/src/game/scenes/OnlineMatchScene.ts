@@ -935,10 +935,17 @@ export class OnlineMatchScene extends Phaser.Scene {
         `size=${width}x${height} platforms=${map.platforms.length}`,
     );
 
-    // Camera bounds — without this, the camera follows the player into
-    // empty space when the world is bigger than the viewport.
-    this.cameras.main.setBounds(0, 0, width, height);
-    this.cameras.main.setRoundPixels(true);
+    // Camera bounds with viewport-sized padding. Without padding, the camera
+    // clamps so tightly at world edges that the local player visually pins
+    // to the screen edge (visible in prod: player at y=1064 in an 1080-tall
+    // world with an 800-tall viewport → camera can only scroll to 280, so
+    // player ends up 16 px from the bottom of the screen). Padding lets the
+    // camera over-scroll into the void backdrop, keeping the player centered.
+    const cam = this.cameras.main;
+    const padX = cam.width / 2;
+    const padY = cam.height / 2;
+    cam.setBounds(-padX, -padY, width + cam.width, height + cam.height);
+    cam.setRoundPixels(true);
 
     // Tear down any previous arena render (e.g. on reconnect to a new match).
     this.arenaGraphics?.destroy();
