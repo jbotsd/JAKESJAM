@@ -17,7 +17,15 @@ import type {
   Tick,
   WorldState,
 } from "@sim/types.ts";
-import { LagCompensator, type RewindPlan } from "./LagCompensator.ts";
+import { LagCompensator, LAG_COMP_MAX_TICKS, type RewindPlan } from "./LagCompensator.ts";
+
+/**
+ * Acceptable lookback for client-stamped input ticks. The server will drop
+ * any input whose tick is older than `serverTick - this`. Set slightly
+ * larger than LAG_COMP_MAX_TICKS so a steady-state lag-comp shooter is
+ * never accidentally dropped.
+ */
+const LAG_COMP_INPUT_TICK_PAST_BOUND = LAG_COMP_MAX_TICKS + 6;
 import { TickSlewController } from "./TickSlewController.ts";
 import { convexClient, type ConvexId } from "./convexClient.ts";
 import {
@@ -30,6 +38,7 @@ import {
 import { InterestGrid, CELL_SIZE_PX, OBSERVE_RADIUS_CELLS } from "./InterestGrid.ts";
 import { encodeDelta } from "./snapshotDelta.ts";
 import { transferAuthority } from "./authority.ts";
+import { ReplayRecorder } from "./ReplayRecorder.ts";
 
 export type MatchSocketData = {
   matchId: string;
@@ -51,6 +60,15 @@ const FIRE_BIT = 1 << 6; // kept locally for the log-diag helper
  */
 export const RECONNECT_GRACE_MS = 10_000;
 
+/**
+ * Per bun-ws-server SKILL.md: drop snapshots when the kernel send buffer for a
+ * client exceeds this threshold. 256 KB ≈ 25 unfiltered snapshots — anything
+ * past that and the client is too far behind to catch up in any meaningful way.
+ * Snapshots are self-replacing (tick-stamped); the next one supersedes any
+ * dropped one.
+ */
+const MAX_WS_BUFFERED_BYTES = 256 * 1024;
+
 
 export class MatchHost {
   readonly matchId: string;
@@ -70,6 +88,12 @@ export class MatchHost {
   private readonly disconnectedAt = new Map<PlayerId, number>();
   /** Last wall-clock time we received an input from a given player. */
   private readonly lastSeenAt = new Map<PlayerId, number>();
+  /**
+   * Throttle map for the "dropping out-of-window input" log. Keyed by player,
+   * value = wall-clock ms of last log. Prevents log spam from a tampered or
+   * clock-skewed client. Cleared when the player is evicted.
+   */
+  private readonly lastInputDropLogAt = new Map<PlayerId, number>();
   private interval: ReturnType<typeof setInterval> | null = null;
   private readonly rngSeed: number;
   private startedAt = 0;
@@ -79,6 +103,9 @@ export class MatchHost {
   /** Monotonically-increasing snapshot counter. Used to gate DEBUG_AOI logs
    *  to the first 30 snapshots only. */
   private snapshotCount = 0;
+  /** Lifetime tally of snapshots skipped because the recipient's WS send
+   *  buffer was over MAX_WS_BUFFERED_BYTES. Surfaced via summary() for ops. */
+  private snapshotsDroppedForBackpressure = 0;
 
   // ---- Delta snapshot state ------------------------------------------------
   /** Maximum number of baseline snapshots retained per client. */
@@ -103,6 +130,15 @@ export class MatchHost {
 
   private readonly map: MapDefinition;
 
+  /**
+   * Per-match input recorder. Captures every accepted input frame keyed by
+   * the server-tick it was applied at, plus a header (rngSeed, mapId,
+   * players). Sufficient for deterministic playback per replay-spectator
+   * SKILL.md. The blob is fetched via `getReplayBlob()` at match end; the
+   * Convex storage write is DEFER'd until the playback ReplayScene lands.
+   */
+  private readonly replayRecorder: ReplayRecorder;
+
   constructor(
     matchId: string,
     players: PlayerSpawnInfo[],
@@ -124,6 +160,13 @@ export class MatchHost {
     );
     this.runtime = createRuntime(this.map);
     this.grid = new InterestGrid(this.map.size.x, this.map.size.y, CELL_SIZE_PX);
+    this.replayRecorder = new ReplayRecorder({
+      matchId: this.matchId,
+      mapId: this.map.id,
+      rngSeed: this.rngSeed,
+      players,
+      chaosModifierIds,
+    });
     for (const spawn of players) {
       this.playerInfo.set(spawn.playerId, {
         playerId: spawn.playerId,
@@ -133,6 +176,23 @@ export class MatchHost {
       });
       this.lastProcessedInputSeq.set(spawn.playerId, 0 as InputSeq);
     }
+  }
+
+  /**
+   * Encoded replay blob for this match. Contains the rngSeed + every accepted
+   * input frame; sufficient to deterministically re-simulate the match. Bytes
+   * are msgpack-encoded — see `ReplayRecorder.serialize` for the schema.
+   *
+   * Currently called only by tests; production callers (Convex storage upload)
+   * will land in the playback feature work item.
+   */
+  getReplayBlob(): Uint8Array {
+    return this.replayRecorder.serialize();
+  }
+
+  /** Number of recorded input frames in the replay buffer. Diagnostics only. */
+  replaySize(): number {
+    return this.replayRecorder.size();
   }
 
   attachClient(ws: ServerWebSocket<MatchSocketData>): void {
@@ -206,6 +266,7 @@ export class MatchHost {
     targetScore: number;
     joinable: boolean;
     chaosModifierIds: string[];
+    snapshotsDroppedForBackpressure: number;
   } {
     const round = this.state.round;
     const targetScore = Math.max(...Object.values(round.scores), 0) >= 0 ? 3 : 3;
@@ -219,6 +280,7 @@ export class MatchHost {
       targetScore,
       joinable: round.phase !== "round-over",
       chaosModifierIds: this.state.chaosModifierIds ?? [],
+      snapshotsDroppedForBackpressure: this.snapshotsDroppedForBackpressure,
     };
   }
 
@@ -372,13 +434,53 @@ export class MatchHost {
     // alive on the wire.
     this.lastSeenAt.set(playerId, Date.now());
     if (input.seq <= last) return; // out-of-order or duplicate
+
+    // Anti-cheat / anti-bug input clamping. Per game-netcode SKILL.md:
+    //   "Server clamps `dt`, validates `tick` is in a recent window, ignores
+    //   wildly old inputs."
+    //
+    // - dt: clients send STEP_MS (16.67) but a malicious or buggy client could
+    //   stamp anything. We accept [1, STEP_MS * 4] — anything outside that is
+    //   treated as a single step for the sim's benefit. The sim itself uses a
+    //   fixed step internally; dt is informational here.
+    // - tick: must be within [serverTick - LAG_COMP_MAX_TICKS - 4,
+    //   serverTick + 4]. Outside this window, lag-comp can't honor it anyway,
+    //   AND it indicates either clock drift or a tampered client.
+    // - keys: bitmask is 9 bits used (InputBit values up to 1<<8). Strip
+    //   unknown bits so a client can't smuggle out-of-band signals through
+    //   the input frame.
+    const KNOWN_KEY_BITS = 0x1ff; // bits 0..8 inclusive (Left..Shield)
+    const sanitizedKeys = input.keys & KNOWN_KEY_BITS;
+    const sanitizedDt = Math.max(1, Math.min(STEP_MS * 4, Number.isFinite(input.dt) ? input.dt : STEP_MS));
+
+    const serverTick = this.state.tick;
+    const TICK_PAST_BOUND = LAG_COMP_INPUT_TICK_PAST_BOUND;
+    const TICK_FUTURE_BOUND = 4;
+    const minTick = Math.max(0, serverTick - TICK_PAST_BOUND);
+    const maxTick = serverTick + TICK_FUTURE_BOUND;
+    if (input.tick < minTick || input.tick > maxTick) {
+      // Drop the input entirely. Logging is throttled to avoid log spam from
+      // a client whose clock is way off — once per second per player is enough.
+      const now = Date.now();
+      const last = this.lastInputDropLogAt.get(playerId) ?? 0;
+      if (now - last >= 1000) {
+        this.lastInputDropLogAt.set(playerId, now);
+        console.warn(
+          `[matchHost ${this.matchId}] dropping out-of-window input from ${playerId}: ` +
+            `inputTick=${input.tick} serverTick=${serverTick} ` +
+            `window=[${minTick},${maxTick}]`,
+        );
+      }
+      return;
+    }
+
     this.pendingInputs.set(playerId, {
       seq: input.seq,
       tick: input.tick,
-      keys: input.keys,
-      aimX: input.aimX,
-      aimY: input.aimY,
-      dtMs: input.dt,
+      keys: sanitizedKeys,
+      aimX: Number.isFinite(input.aimX) ? input.aimX : 0,
+      aimY: Number.isFinite(input.aimY) ? input.aimY : 0,
+      dtMs: sanitizedDt,
     });
     // Record slew sample: server tick vs. the tick the client stamped this input.
     this.tickSlew.recordInput(playerId, {
@@ -420,6 +522,7 @@ export class MatchHost {
       this.playerInfo.delete(playerId);
       this.lastProcessedInputSeq.delete(playerId);
       this.lastSeenAt.delete(playerId);
+      this.lastInputDropLogAt.delete(playerId);
       this.pendingInputs.delete(playerId);
       // Free per-player baseline ring. Without this, long-lived matches with
       // many disconnect/reconnect cycles leak BASELINE_RING_SIZE WorldStates
@@ -475,7 +578,13 @@ export class MatchHost {
     for (const playerId of this.clients.keys()) {
       const input = this.pendingInputs.get(playerId) ?? null;
       inputsByPlayer[playerId] = input;
-      if (input) this.lastProcessedInputSeq.set(playerId, input.seq);
+      if (input) {
+        this.lastProcessedInputSeq.set(playerId, input.seq);
+        // Replay: capture every accepted input frame keyed by the server-tick
+        // it was applied at. Quake/Doom .DEM model — header + inputs is enough
+        // to deterministically replay the entire match later.
+        this.replayRecorder.record(this.state.tick, playerId, input);
+      }
     }
     this.pendingInputs.clear();
 
@@ -625,7 +734,26 @@ export class MatchHost {
         events,
         filteredState,
       );
-      ws.send(payload);
+      // Backpressure handling per bun-ws-server SKILL.md: snapshots are
+      // tick-stamped and self-replacing — if the kernel buffer is full we
+      // drop THIS snapshot rather than queue it. The next snapshot supersedes
+      // it anyway. We still push the baseline so the next delta has a valid
+      // starting point IF the client is back to receiving by then; if the
+      // client is truly stuck, the next attempt will also fail and we'll keep
+      // dropping until the socket either drains or closes.
+      const buffered = ws.getBufferedAmount();
+      if (buffered > MAX_WS_BUFFERED_BYTES) {
+        // Skip send; record stat and continue. We don't push the baseline
+        // either: the client never saw this filtered state, so a later delta
+        // computed against it would be wrong.
+        this.snapshotsDroppedForBackpressure += 1;
+        continue;
+      }
+      const sent = ws.send(payload);
+      if (sent === -1) {
+        // Socket already closed. Detach handler will follow; nothing to do.
+        continue;
+      }
       // 3. Store the filtered state as the next baseline. Storing filtered
       //    (not full-world) is critical — see InterestGrid.ts DESIGN
       //    ASSUMPTION block.
