@@ -87,6 +87,34 @@ jobs:
         run: bun add -g vercel@latest
       - name: Pull Vercel env (production)
         run: vercel pull --yes --environment=production --token=${{ secrets.VERCEL_TOKEN }}
+      # Fail-loud guard for the recurring "Set VITE_CONVEX_URL to enable rooms"
+      # bug: if neither the Vercel project env nor a GitHub secret carries
+      # VITE_CONVEX_URL, write it from the GH secret CONVEX_URL_PROD into
+      # .env.production at the workspace root (vite.config.ts has envDir: "..").
+      # If both are empty, FAIL the build — shipping a broken lobby is worse
+      # than a red CI badge.
+      - name: Ensure VITE_CONVEX_URL is set for the build
+        env:
+          GH_CONVEX_URL: ${{ secrets.CONVEX_URL_PROD }}
+        run: |
+          set -e
+          PULLED_ENV_FILE=".vercel/.env.production.local"
+          PULLED_URL=""
+          if [ -f "$PULLED_ENV_FILE" ]; then
+            PULLED_URL=$(grep -E '^VITE_CONVEX_URL=' "$PULLED_ENV_FILE" | head -1 | cut -d'=' -f2- | sed 's/^"//; s/"$//') || true
+          fi
+          if [ -n "$PULLED_URL" ]; then
+            echo "VITE_CONVEX_URL is provided by Vercel project env (length=${#PULLED_URL}). OK."
+            exit 0
+          fi
+          if [ -n "$GH_CONVEX_URL" ]; then
+            echo "VITE_CONVEX_URL missing from Vercel env; falling back to GH secret CONVEX_URL_PROD."
+            echo "VITE_CONVEX_URL=${GH_CONVEX_URL}" >> .env.production
+            echo "Wrote .env.production with VITE_CONVEX_URL (length=${#GH_CONVEX_URL})."
+            exit 0
+          fi
+          echo "::error::VITE_CONVEX_URL is not set in Vercel project env AND CONVEX_URL_PROD GitHub secret is empty. Add one of: (a) Vercel project → Settings → Environment Variables → VITE_CONVEX_URL (Production); or (b) repo Settings → Secrets → CONVEX_URL_PROD."
+          exit 1
       - name: Build (Vercel prebuilt)
         run: vercel build --prod --token=${{ secrets.VERCEL_TOKEN }}
       - name: Deploy
