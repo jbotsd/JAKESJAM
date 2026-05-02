@@ -70,3 +70,358 @@ Stack: Phaser 4 + Vite 8 + TypeScript 6, served from `client/`. The renderer is 
 - [bitECS docs — data-oriented ECS using TypedArrays](https://github.com/NateTheGreatt/bitECS)
 - [Phaser Performance Optimization — Object Pooling, Atlases (2025)](https://generalistprogrammer.com/tutorials/phaser-performance-optimization-guide)
 - [Phaser 4 + Vite + TS template](https://github.com/phaserjs/phaser-editor-template-vite-ts)
+
+---
+
+# Visual design + UX polish (mandatory for any user-visible surface)
+
+> Distilled from Anthropic's `frontend-design` plugin and adapted to
+> JAKESJAM's mixed DOM-overlay + Phaser-canvas reality. **Apply on every
+> UI touch.** A grey button with no hint is a shipped bug.
+
+JAKESJAM has TWO visual surfaces that share ONE taste:
+
+1. **DOM overlays** — splash, lobby, card draft, results, death state,
+   status badges. HTML + CSS in `client/src/game/ui/*.ts` and
+   `client/src/style.css`.
+2. **Phaser canvas** — in-game HUD, round banner, particles, scene
+   geometry. Drawn with `Graphics`, `Text`, tweens.
+
+**Don't let DOM be tasteful and Phaser look like a debug build, or
+vice versa.** Every visual decision must serve the chosen aesthetic
+direction documented in `docs/art-direction.md`: **futuristic
+crystal-tech wizards** — geometric-minimal world, cartoon-meaty hits,
+cyberpunk-sorcerer palette (Crystal Cyan default, Gruvbox Tech +
+Monokai Drift swappable per `docs/themes.md`).
+
+## The one rule
+
+> **Commit to a bold aesthetic direction and execute it with
+> precision.** Bold maximalism and refined minimalism both work — the
+> failure mode is the cautious, evenly-distributed, AI-default middle.
+
+## The seven anti-patterns (avoid AI slop)
+
+If you catch yourself doing any of these, stop.
+
+1. **Generic system fonts** — `Inter`, `Arial`, `Roboto`, `system-ui`.
+   Body type loads Inter as a pragmatic concession; for *display*
+   type (titles, kickers, banners > 18px) reach for character. See
+   "Typography."
+2. **Purple-gradient-on-white** + cousins (teal-pink-pastel, indigo
+   CTAs). The whole crypto-SaaS aesthetic. JAKESJAM is dark + cyan
+   + sharp accent — own that.
+3. **Predictable card grids** — three identical cards, identical
+   spacing, identical shadows. If you have N cards, vary at least one
+   of: scale (recommended ≈ 1.05×), tilt, glow, depth.
+4. **Solid-color backgrounds** — `background: #0b0e14` is a starting
+   point, not a finished surface. Layer noise, gradient meshes, scan
+   lines, vignette, drop-shadow halos. See "Backgrounds."
+5. **Centered everything** — splash centred, body centred, buttons
+   centred row, footer centred. Asymmetry beats symmetry 9/10.
+6. **Disabled states with no explanation** — a grey button with no
+   hint is the #1 lobby blocker (we hit this exact bug, fixed in
+   `b837083`). Always pair `disabled` with a hint line ("Waiting on:
+   Player 1f39") via the status-slot pattern.
+7. **State-as-action button labels** — `<button>Unready</button>` →
+   "click to unready me?" Use clear state visuals (filled vs
+   outlined, ✓ prefix, `aria-pressed`) and label the **state**, not
+   the action. Same fix path: `b837083`.
+
+## Typography
+
+### Display (titles, banners, splash > 18px)
+Pick ONE display family per project — variation is a smell.
+
+- **PP Neue Machina** (geometric, characterful — fits crystal-tech)
+- **PP Editorial New** (serif moment, contrast)
+- **Söhne Mono** / **Berkeley Mono** (mono display, retro-futuristic)
+- **GT America Mono** (techy, Linear's house mono)
+- **Migra** (display serif, art-deco edge)
+- **Pangram Sans Rounded** (rounded-geometric)
+- **Geist** (Vercel's neutral-but-distinctive)
+
+Avoid by default: Inter, Roboto, Arial, system-ui, Helvetica,
+**Space Grotesk** (over-used in AI gens), Poppins.
+
+### Body (copy, status lines)
+- **Inter** acceptable here — pair with a distinctive display.
+- Or: **Söhne**, **Untitled Sans**, **Aktiv Grotesk**.
+
+### In-game Phaser text
+- **Bitmap fonts** beat `Text` for HUD readouts that mutate every
+  frame. Pre-bake one bitmap font in the display family. See
+  `phaser-ui` SKILL.md loader pattern.
+- For static labels (round banner, score), font-family fallback
+  prioritises the display family:
+  `fontFamily: '"PP Neue Machina", "Inter", sans-serif'`.
+
+### Hierarchy stack
+Use this trio on every section header — cheapest way to feel
+intentional:
+- `kicker` — 10–12px, ALL CAPS, 0.18em letter-spacing, accent colour
+- `title` — 24–72px, display family, 900 weight, tight line-height
+- `subtitle` — 14–18px, body family, regular, muted
+
+Mono variant for codes, ids, scores: 11–14px, mono family,
+`fontVariantNumeric: tabular-nums`.
+
+## Colour
+
+### Rule
+**Dominant + sharp accent** > evenly-distributed pastel. Pick ONE
+accent that takes ~5–10% of the visible surface — it carries the
+mood. JAKESJAM = `#8ff8ff` (Crystal Cyan).
+
+### CSS variable layer
+All colours in `client/src/style.css` as `--accent`, `--accent-bright`,
+`--bg-deep`, `--bg-mid`, `--bg-elevated`, `--text-primary`,
+`--text-muted`, `--border`, `--border-bright`, `--good`, `--warn`,
+`--crit`. Reference `docs/themes.md` for the three shipped palettes.
+
+### Phaser ↔ CSS sync
+CSS `#8ff8ff` ↔ Phaser `0x8ff8ff`. Centralise in a single constant
+module — don't scatter colour ints through Graphics calls.
+```ts
+// client/src/game/ui/palette.ts
+export const PALETTE = {
+  accent: 0x8ff8ff,
+  accentBright: 0xcaffea,
+  bgDeep: 0x05080f,
+  hpGood: 0xb8f05a,
+  hpWarn: 0xfde68a,
+  hpCrit: 0xfb7185,
+} as const;
+```
+Theme switching = swap CSS vars + re-emit `PALETTE` constants on a
+`theme-change` event. HudSystem and renderers listen.
+
+### State / health colours
+- `hp-good` `#b8f05a` (lime, NOT pure green — pure green reads
+  "form validation")
+- `hp-warn` `#fde68a` (warm yellow)
+- `hp-crit` `#fb7185` (coral, NOT pure red)
+- `shield` `#93c5fd` (cool blue)
+- `jet` `#67e8f9` (icy cyan, distinct from accent)
+- `void` / debuff `#a78bfa` (violet)
+
+### Rarity (cards) — DO NOT SWAP
+- `common` `#94a3b8` (slate)
+- `uncommon` `#86efac` (mint green)
+- `rare` `#93c5fd` (sky blue)
+- `legendary` `#fb923c` (orange) ← NOT pink, NOT purple
+- `unique` `#fde047` (amber)
+
+User explicitly corrected past bug: "uncommons are not meant to be
+orange, orange means legendary." Don't re-swap.
+
+## Motion
+
+### Where it pays
+- **High-impact moments** — page load, scene transition, card
+  reveal, victory pop. ONE orchestrated stagger > ten micro-fades.
+- **State change** — ready toggled, card drafted, pickup grabbed.
+- **Surprise** — hover unfurl, scroll-triggered reveal, mid-air
+  bounce on idle CTA.
+
+### Where it doesn't
+- Constant ambient animation (reads as 2016 webpage).
+- Animations on every list item.
+- Loading spinners spinning forever — show progress or meaningful
+  state, not just rotation.
+
+### Recipes
+
+**Splash entry stagger** (DOM):
+```css
+.splash-stage > * {
+  opacity: 0;
+  transform: translateY(8px);
+  animation: rise 600ms cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+}
+.splash-stage > *:nth-child(1) { animation-delay: 0ms; }
+.splash-stage > *:nth-child(2) { animation-delay: 80ms; }
+.splash-stage > *:nth-child(3) { animation-delay: 160ms; }
+@keyframes rise { to { opacity: 1; transform: none; } }
+```
+
+**Spring CTA hover** (DOM):
+```css
+button.primary {
+  transition: transform 220ms cubic-bezier(0.34, 1.56, 0.64, 1),
+              box-shadow 220ms ease;
+}
+button.primary:hover { transform: translateY(-2px) scale(1.02); }
+button.primary:active { transform: translateY(0) scale(0.98); }
+```
+
+**Round banner pop** (Phaser):
+```ts
+banner.setScale(1.3);
+scene.tweens.add({
+  targets: banner,
+  scaleX: 1, scaleY: 1,
+  duration: 260,
+  ease: "Back.easeOut",
+});
+```
+
+**Damage hit-stop** (Phaser):
+```ts
+scene.time.timeScale = 0;
+scene.time.delayedCall(35, () => { scene.time.timeScale = 1; });
+```
+
+### Easings — taste cheatsheet
+- `cubic-bezier(0.34, 1.56, 0.64, 1)` — bouncy spring (CTAs, cards)
+- `cubic-bezier(0.16, 1, 0.3, 1)` — soft ease-out (page load)
+- `Back.easeOut` (Phaser) — canvas equivalent of the spring
+- `Sine.easeInOut` (Phaser) — looped pulses (low-health vignette)
+- Avoid plain `ease`, `ease-in-out`, `linear` — browser-default tell.
+
+## Spatial composition
+
+- **Asymmetry** — splash title flush-left, CTAs cluster bottom-right.
+  Lobby panel offset from centre. Cards in 2+1 stagger, not 3-equal.
+- **Overlap** — let one element bleed past another's edge. Card
+  hovers escape grid by 8–12px on `:hover`.
+- **Negative space** — 60/40 split where the heavier side does the
+  work, lighter side breathes. Cramped lobbies feel debug.
+- **Diagonal flow** — eye travels splash kicker → title → copy → CTA
+  on a diagonal, not a column.
+- **Grid-breaking** — one element per screen breaks the grid. The
+  Live World status badge bleeds slightly outside the splash-stage
+  box; it's the visual anchor.
+
+### In-game spatial rule
+Phaser HUD: **anchor to corners, not edges**. Top-left vitals,
+top-centre score, bottom-left chips, bottom-right minimap. The
+middle 60% of the screen is gameplay; HUD lives in the gutters.
+
+## Backgrounds — atmosphere over flat fill
+
+Solid colour is the AI tell. Layer up:
+
+### DOM atmosphere
+```css
+/* Triple-radial backdrop — kills banding, adds depth */
+background:
+  radial-gradient(ellipse at 20% 30%, rgba(143,248,255,0.08), transparent 50%),
+  radial-gradient(ellipse at 80% 70%, rgba(167,139,250,0.06), transparent 50%),
+  #05080f;
+```
+Plus optional layers:
+- **Noise** — 1–2% opacity SVG noise top layer. Kills banding.
+- **Scan lines** — 1px horizontal lines, 4% alpha, every 3px. Maps
+  cyberpunk-sorcerer brief.
+- **Grain** — 5–8px noise at 1% alpha for film feel.
+
+### Phaser atmosphere
+- **Vignette** — full-screen rectangle, alpha-pulsed via tween,
+  depth 900. JAKESJAM uses red vignette under 30% HP (HudSystem).
+  Add a *cool* vignette for normal play (cyan, alpha 0.04, no pulse).
+- **Particle ambient** — 3–6 slow-drifting cyan motes per scene.
+  `setBlendMode(ADD)`, lifetime 4–6s, wraparound.
+- **Background grid** — 80px grid lines at alpha 0.03. Sells
+  "geometric-minimal world."
+- **Scene gradient** — subtle cyan→deep-blue vertical gradient via
+  one `Graphics.fillGradientStyle` call.
+
+## Component patterns
+
+### Buttons
+- **Primary CTA** = filled + glow. ONE per section.
+- **Secondary** = outlined + accent border, `:hover` fills 8% accent.
+- **Tertiary** = ghost (text only, accent colour, underline on hover).
+- **Disabled** = 40% opacity + cursor-not-allowed + paired hint line.
+
+NEVER mix multiple primary CTAs in one view. Ask "which one action
+do I want them to take?"
+
+### Cards (draft, map picker)
+- **Resting** — subtle gradient bg, 1px translucent accent border,
+  drop shadow 8–12px blur.
+- **Hover** — lift 2–4px (`translateY`), accent border bumps to
+  full, shadow grows to 18px.
+- **Selected** — solid accent ring + inner glow, slightly desaturated
+  bg so the ring pops.
+- **Rarity** — 0–4px outer ring colour, NOT bg.
+
+### Status badges
+- Pill shape, 16–18px height, accent border.
+- Status dot LEFT of label (color-coded).
+- Right-aligned actions with secondary styling.
+- Canonical: `client/src/game/ui/MatchStatusBadge.ts`.
+
+### Overlays (CardDraftOverlay, MatchResults, Death)
+- Backdrop `rgba(5,8,15,0.82)` + `backdropFilter: blur(8px)`.
+- Stage `linear-gradient(160deg, ...)` 2-stop, 1px accent border at
+  18% alpha, 18px border-radius.
+- Stage shadow:
+  `0 32px 80px rgba(0,0,0,0.6), inset 0 1px 0 rgba(143,248,255,0.07)`.
+- Always include a kicker (e.g. "BETWEEN ROUNDS") above the title.
+- Always include the entry stagger animation.
+
+## JAKESJAM canonical templates
+
+Before building a new overlay, READ these as templates — pattern
+language stays uniform:
+
+- `client/src/game/ui/CardDraftOverlay.ts` — overlay shell + cards
+- `client/src/game/ui/MatchResultsOverlay.ts` — winner-reveal
+- `client/src/game/ui/MatchStatusBadge.ts` — pill widget
+- `client/src/game/ui/MapPicker.ts` — host/non-host toggle
+- `client/src/game/ui/HudSystem.ts` — Phaser HUD bars + chips
+- `client/src/game/ui/RoundBanner.ts` — banner pop pattern
+- `client/src/style.css` — splash, button, room-share
+
+Re-use the per-file STYLE constants (`STAGE_STYLE`, `CARD_STYLE`)
+when starting a new overlay.
+
+## Phaser canvas vs DOM split
+
+- **DOM** — lobby, splash, options, overlays that don't share the
+  rendering with the world (no projectiles passing under).
+- **Phaser** — HUD, round banner, damage numbers, particle juice,
+  reticle, anything anchored to a world position.
+- **Bridge** — DOM overlay opens → pause sim input → DOM closes →
+  resume. See `CardDraftOverlay`'s `onPick` callback for the pattern.
+
+## Audio is part of visual quality
+
+- Every CTA needs a click sound (UI tick).
+- Every state change (ready toggle, card pick, victory) needs a cue.
+- See `client/src/game/systems/AudioSystem.ts` — already wired.
+
+## Pre-flight checklist
+
+Before declaring a UI surface shipped:
+
+1. ☐ Commits to ONE bold aesthetic direction?
+2. ☐ Typography distinctive (display family ≠ Inter)?
+3. ☐ ONE primary CTA per view, not three?
+4. ☐ Every disabled state has a hint line?
+5. ☐ Button labels describe STATE, not action?
+6. ☐ At least one bg layer beyond solid colour?
+7. ☐ One orchestrated entry animation, not scattered fades?
+8. ☐ Hover/active states feel springy
+   (`Back.easeOut` / spring cubic-bezier)?
+9. ☐ Asymmetry preferred to centred-everything?
+10. ☐ Matches `docs/art-direction.md` (crystal-tech wizards)?
+11. ☐ Phaser layer: corner-anchored HUD positions?
+12. ☐ Audio cue wired (CTAs click, state changes ping)?
+
+Any "no" → not done.
+
+## Source
+
+This section distills Anthropic's `frontend-design` plugin (cached
+at `~/.claude/plugins/cache/claude-plugins-official/frontend-design/`).
+Read that for the React-flavoured original.
+
+## More references
+
+- `docs/art-direction.md` — chosen direction + mood pointers
+- `docs/themes.md` — three shipped palettes
+- `docs/asset-prompts/*.md` — AI prompt packs for character, HUD,
+  card art, particles. Use when commissioning new visuals.
