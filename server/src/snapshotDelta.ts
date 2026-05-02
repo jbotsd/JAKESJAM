@@ -75,87 +75,17 @@ import type {
 } from "@sim/types.ts";
 
 // ─── Bit constants ────────────────────────────────────────────────────────────
-
-const P_LO = {
-  x: 1 << 0,
-  y: 1 << 1,
-  vx: 1 << 2,
-  vy: 1 << 3,
-  aimX: 1 << 4,
-  aimY: 1 << 5,
-  health: 1 << 6,
-  shieldActive: 1 << 7,
-  crouching: 1 << 8,
-  alive: 1 << 9,
-  weaponId: 1 << 10,
-  cards: 1 << 11,
-  fireCooldownMs: 1 << 12,
-  slowedUntilTick: 1 << 13,
-  slowMultiplier: 1 << 14,
-  burnUntilTick: 1 << 15,
-  burnDps: 1 << 16,
-  burnTickLastApplied: 1 << 17,
-  freezeUntilTick: 1 << 18,
-  freezeMultiplier: 1 << 19,
-  jetpackFuel: 1 << 20,
-  shieldCharge: 1 << 21,
-  shieldMaxCharge: 1 << 22,
-  parryActiveUntilTick: 1 << 23,
-  parryCooldownUntilTick: 1 << 24,
-  parryFacing: 1 << 25,
-  overchargeUntilTick: 1 << 26,
-  damageAmpUntilTick: 1 << 27,
-  speedBoostUntilTick: 1 << 28,
-  meleeModeUntilTick: 1 << 29,
-  slowDebuffUntilTick: 1 << 30,
-} as const;
-
-const P_HI = {
-  ammo: 1 << 0,
-  vulnerabilityUntilTick: 1 << 1,
-  blockJammerUntilTick: 1 << 2,
-  bossModeUntilTick: 1 << 3,
-} as const;
-
-const PROJ = {
-  x: 1 << 0,
-  y: 1 << 1,
-  vx: 1 << 2,
-  vy: 1 << 3,
-  lifetimeMs: 1 << 4,
-  ageMs: 1 << 5,
-  traveledPx: 1 << 6,
-  returning: 1 << 7,
-  stickyFuseMs: 1 << 8,
-  bouncesRemaining: 1 << 9,
-  pierceRemaining: 1 << 10,
-  impact: 1 << 11,
-  impactRadiusPx: 1 << 12,
-  splitCount: 1 << 13,
-  slowMultiplier: 1 << 14,
-  homingStrength: 1 << 15,
-  accelerationMultiplier: 1 << 16,
-  gravityScale: 1 << 17,
-} as const;
-
-const DESTR = {
-  health: 1 << 0,
-} as const;
-
-const FIRE = {
-  remainingMs: 1 << 0,
-} as const;
-
-const PICKUP = {
-  active: 1 << 0,
-  respawnAtTick: 1 << 1,
-} as const;
-
-const SAT = {
-  angle: 1 << 0,
-  fireCooldownMs: 1 << 1,
-  lifetimeMs: 1 << 2,
-} as const;
+// Single source of truth lives in client/src/sim/snapshotDeltaBits.ts so
+// client and server can never drift. Do not redeclare locally.
+import {
+  P_LO,
+  P_HI,
+  PROJ,
+  DESTR,
+  FIRE,
+  PICKUP,
+  SAT,
+} from "@sim/snapshotDeltaBits.ts";
 
 // ─── Public types ─────────────────────────────────────────────────────────────
 
