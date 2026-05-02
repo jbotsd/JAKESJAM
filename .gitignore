@@ -12,3 +12,6 @@ npm-debug.log*
 .vercel
 .claude/worktrees/
 .worktrees/
+tests/e2e/.artifacts/
+tests/e2e/.report/
+tests/e2e/test-results/

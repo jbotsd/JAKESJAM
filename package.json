@@ -20,11 +20,15 @@
     "build:standalone": "bun run --filter client build && bun tools/build-standalone.mjs",
     "verify": "bun run typecheck && bun run build",
     "test": "bun run --filter '*' test --if-present",
+    "e2e": "bunx playwright test",
+    "e2e:ui": "bunx playwright test --ui",
+    "e2e:headed": "bunx playwright test --headed",
     "convex:codegen": "bunx convex codegen",
     "convex:deploy": "bunx convex deploy",
     "deploy:server:syd": "flyctl deploy --config fly.toml --app jakesjam-srv-syd"
   },
   "devDependencies": {
+    "@playwright/test": "^1.59.1",
     "convex": "^1.37.0",
     "typescript": "^6.0.3"
   }
