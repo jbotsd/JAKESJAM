@@ -1,17 +1,20 @@
 /**
- * PlatformPainter — bakes two-tone + brush-streak platform visuals into a
- * RenderTexture once per unique (w × h × theme.hi × seed) combination, then
- * returns an Image placed at (x, y) in world space.
+ * PlatformPainter — paints two-tone + brush-streak platform visuals
+ * directly into a single Graphics object per platform. Phaser 4 compatible
+ * (the previous RenderTexture-saveTexture-destroy-recreate-Image flow was
+ * Phaser 3 idiom and silently produced empty textures in Phaser 4.1.0
+ * — confirmed via Playwright pixel probe showing 63 paintPlatform calls
+ * with 0 platform-color pixels on screen).
  *
  * Layers (bottom → top):
  *   (a) Drop shadow: offset rect 4px down/right, shade color at alpha 0.55
  *   (b) Main fill: theme.hi
- *   (c) Brush streaks pass 1: 5 thin rotated rects, theme.wash color, alpha 0.32
- *       Angles spread −45° … +75° (deterministic per-platform seed).
- *   (d) Brush streaks pass 2: 3 perpendicular cross-hatch streaks, alpha 0.12
+ *   (c) Top-edge rim highlight (2px white)
+ *   (d) Brush streaks pass 1: 5 thin rotated rects, theme.wash, alpha 0.32
+ *   (e) Brush streaks pass 2: 3 perpendicular cross-hatch streaks, alpha 0.12
  *
- * No stroke. Each unique (w × h × theme.hi × seed) bakes one RenderTexture.
- * Seed = (x|0)*73 ^ (y|0)*131, ensuring stable per-platform brushwork.
+ * Per-platform deterministic seed so brushwork is stable across renders
+ * (matters for test-determinism and for the player's mental map of the arena).
  */
 
 import Phaser from "phaser";
@@ -20,9 +23,6 @@ import { drawRimHighlight } from "./LightingLayer";
 
 // Re-export so callers can import ArenaTheme from here as well.
 export type { ArenaTheme };
-
-/** Cache: texture key → already registered in this game instance */
-const _bakedKeys = new Set<string>();
 
 /** Darken a 24-bit RGB color by the given factor (0–1, where 0 = black). */
 function darkenColor(color: number, factor: number): number {
@@ -33,15 +33,15 @@ function darkenColor(color: number, factor: number): number {
 }
 
 /**
- * Paint a platform and return the Image game objects added to the scene.
+ * Paint a platform directly into a Graphics object added to the scene.
  *
  * @param scene  Active Phaser.Scene
- * @param x      World-space centre X  (same convention as Phaser.GameObjects.Rectangle)
+ * @param x      World-space centre X
  * @param y      World-space centre Y
  * @param w      Platform width  (pixels)
  * @param h      Platform height (pixels)
  * @param theme  ArenaTheme providing hi / wash / optional shade colours
- * @returns      Array containing the single Image that was added to the scene
+ * @returns      Array containing the single Graphics that was added to the scene
  */
 export function paintPlatform(
   scene: Phaser.Scene,
@@ -51,113 +51,75 @@ export function paintPlatform(
   h: number,
   theme: ArenaTheme,
 ): Phaser.GameObjects.GameObject[] {
-  const shadowPad = 6; // extra texture space for the drop-shadow bleed
-  const texW = w + shadowPad;
-  const texH = h + shadowPad;
-
   const shadeColor =
     "shade" in theme && typeof theme.shade === "number"
       ? theme.shade
       : darkenColor(theme.hi, 0.35);
 
-  // Deterministic per-platform seed so each unique position gets unique brushwork.
+  // Per-platform deterministic seed so brushwork is stable per location.
   const seed = ((x | 0) * 73) ^ ((y | 0) * 131);
-  const textureKey = `platform_${w}x${h}_${theme.hi}_${seed}`;
+  let rng = seed;
+  const nextRng = (): number => {
+    rng = (rng * 1664525 + 1013904223) & 0xffffffff;
+    return (rng >>> 0) / 0xffffffff;
+  };
 
-  if (!_bakedKeys.has(textureKey)) {
-    // Mark as baked before we actually draw so re-entrant calls don't double-bake.
-    _bakedKeys.add(textureKey);
+  const g = scene.add.graphics();
+  // World-position the Graphics so all subsequent draws can be in
+  // platform-local coordinates with origin at the platform top-left.
+  const halfW = w / 2;
+  const halfH = h / 2;
+  g.setPosition(x - halfW, y - halfH);
 
-    const rt = scene.add.renderTexture(0, 0, texW, texH);
+  // (a) Drop shadow — 4px down/right.
+  g.fillStyle(shadeColor, 0.55);
+  g.fillRect(4, 4, w, h);
 
-    const g = scene.add.graphics();
+  // (b) Main fill.
+  g.fillStyle(theme.hi, 1);
+  g.fillRect(0, 0, w, h);
 
-    // (a) Drop shadow — offset 4px right / 4px down from origin (0,0)
-    g.fillStyle(shadeColor, 0.55);
-    g.fillRect(4, 4, w, h);
-    rt.draw(g, 0, 0);
+  // (c) Top-edge rim highlight (drawn at y = 0, offset to platform-local).
+  drawRimHighlight(g, 0, 0, w, 0xf5f8f8, 0.22);
 
-    // (b) Main fill
-    g.clear();
-    g.fillStyle(theme.hi, 1);
-    g.fillRect(0, 0, w, h);
-    rt.draw(g, 0, 0);
+  // (d) Brush streaks pass 1 — 5 thin rotated rects, alpha 0.32.
+  const streakCount = 5;
+  const baseAngles: number[] = [];
+  for (let i = 0; i < streakCount; i++) {
+    const t = i / (streakCount - 1);
+    const cx = w * (0.1 + t * 0.8);
+    const cy = h * 0.5;
+    const angleDeg = -45 + nextRng() * 120;
+    const angle = Phaser.Math.DegToRad(angleDeg);
+    baseAngles.push(angle);
+    const streakW = w * (0.5 + (i % 2) * 0.25);
+    const streakH = Math.max(2, h * 0.18);
 
-    // (b.5) Top-edge rim highlight — 2px white line implying a light source above
-    g.clear();
-    drawRimHighlight(g, 0, 0, w, 0xF5F8F8, 0.22);
-    rt.draw(g, 0, 0);
-
-    // (c) Brush streaks pass 1 — 5 streaks, wide angle spread −45° … +75°, alpha 0.32
-    //     Angles derived deterministically from per-platform seed for unique brushwork.
-    const streakCount = 5;
-    // Simple seeded LCG to generate stable pseudo-random values per-platform.
-    let rng = seed;
-    const nextRng = (): number => {
-      rng = (rng * 1664525 + 1013904223) & 0xffffffff;
-      return (rng >>> 0) / 0xffffffff;
-    };
-
-    const baseAngles: number[] = [];
-    for (let i = 0; i < streakCount; i++) {
-      const t = i / (streakCount - 1); // 0 → 1 even spread
-      const cx = w * (0.1 + t * 0.8);
-      const cy = h * 0.5;
-      // Wide spread: −45° … +75° (120° total range)
-      const angleDeg = -45 + nextRng() * 120;
-      const angle = Phaser.Math.DegToRad(angleDeg);
-      baseAngles.push(angle);
-      const streakW = w * (0.5 + (i % 2) * 0.25);
-      const streakH = Math.max(2, h * 0.18);
-
-      g.clear();
-      g.fillStyle(theme.wash, 0.32);
-      g.save();
-      g.translateCanvas(cx, cy);
-      g.rotateCanvas(angle);
-      g.fillRect(-streakW / 2, -streakH / 2, streakW, streakH);
-      g.restore();
-      rt.draw(g, 0, 0);
-    }
-
-    // (d) Brush streaks pass 2 — 3 cross-hatch streaks perpendicular to pass 1, alpha 0.12
-    const crossCount = 3;
-    for (let i = 0; i < crossCount; i++) {
-      const t = i / (crossCount - 1);
-      const cx = w * (0.15 + t * 0.7);
-      const cy = h * 0.5;
-      // Perpendicular to the corresponding pass-1 streak (+90°)
-      const baseAngle = baseAngles[Math.floor(i * (streakCount / crossCount))] ?? 0;
-      const angle = baseAngle + Math.PI / 2;
-      const streakW = w * (0.4 + (i % 2) * 0.2);
-      const streakH = Math.max(2, h * 0.14);
-
-      g.clear();
-      g.fillStyle(theme.wash, 0.12);
-      g.save();
-      g.translateCanvas(cx, cy);
-      g.rotateCanvas(angle);
-      g.fillRect(-streakW / 2, -streakH / 2, streakW, streakH);
-      g.restore();
-      rt.draw(g, 0, 0);
-    }
-
-    g.destroy();
-
-    // Save to texture manager so we can create Images from it without
-    // keeping the RenderTexture alive in the scene.
-    rt.saveTexture(textureKey);
-    rt.destroy();
+    g.fillStyle(theme.wash, 0.32);
+    g.save();
+    g.translateCanvas(cx, cy);
+    g.rotateCanvas(angle);
+    g.fillRect(-streakW / 2, -streakH / 2, streakW, streakH);
+    g.restore();
   }
 
-  // The texture top-left is at (x - w/2, y - h/2) in world space.
-  // Phaser Images are positioned by their centre; offset by half the shadow pad.
-  const img = scene.add.image(
-    x + shadowPad / 2,
-    y + shadowPad / 2,
-    textureKey,
-  );
-  img.setOrigin(0.5, 0.5);
+  // (e) Brush streaks pass 2 — 3 cross-hatch streaks perpendicular to pass 1.
+  const crossCount = 3;
+  for (let i = 0; i < crossCount; i++) {
+    const cx = w * (0.15 + (i / Math.max(1, crossCount - 1)) * 0.7);
+    const cy = h * 0.5;
+    const baseAngle = baseAngles[Math.floor(i * (streakCount / crossCount))] ?? 0;
+    const angle = baseAngle + Math.PI / 2;
+    const streakW = w * (0.4 + (i % 2) * 0.2);
+    const streakH = Math.max(2, h * 0.14);
 
-  return [img];
+    g.fillStyle(theme.wash, 0.12);
+    g.save();
+    g.translateCanvas(cx, cy);
+    g.rotateCanvas(angle);
+    g.fillRect(-streakW / 2, -streakH / 2, streakW, streakH);
+    g.restore();
+  }
+
+  return [g];
 }
