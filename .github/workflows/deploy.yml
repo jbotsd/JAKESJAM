@@ -63,7 +63,10 @@ jobs:
   # ──────────────────────────────────────────────────────────────────────
   deploy-client:
     name: Deploy client (Vercel)
-    needs: verify
+    # Sequential: client only deploys if server succeeded. Eliminates the
+    # "new client + old server" half-updated failure mode. Server typically
+    # finishes in ~30s so total wall-clock impact is minimal.
+    needs: [verify, deploy-server]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
