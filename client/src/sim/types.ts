@@ -12,6 +12,19 @@ export const PlayerId = (s: string): PlayerId => s as PlayerId;
 export const Tick = (n: number): Tick => n as Tick;
 export const InputSeq = (n: number): InputSeq => n as InputSeq;
 
+/** Typed iteration helpers — see .claude/skills/ts-pocock/SKILL.md §1.
+ *  Use these instead of `Object.keys(...) as PlayerId[]`. */
+export function playerIdsOf<T>(record: Record<PlayerId, T>): PlayerId[] {
+  return Object.keys(record) as PlayerId[];
+}
+export function entityIdsOf<T>(record: Record<EntityId, T>): EntityId[] {
+  // Object.keys returns string[]; entity ids are stored as numeric strings,
+  // so we coerce back through the EntityId constructor.
+  const out: EntityId[] = [];
+  for (const k in record) out.push(EntityId(+k));
+  return out;
+}
+
 /**
  * Bitfield layout, least significant bit first:
  *  0 left, 1 right, 2 up, 3 down, 4 jump,

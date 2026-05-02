@@ -8,7 +8,7 @@
 // All functions are pure and allocation-free (operate on numbers only).
 
 import { STEP_MS } from './constants.js';
-import type { EntityId, PlayerId } from './types.js';
+import { EntityId, PlayerId } from './types.js';
 import type { PlayerEntity, ProjectileEntity, WorldState } from './types.js';
 
 // ---------------------------------------------------------------------------
@@ -154,18 +154,16 @@ export function hashWorldStateLite(s: WorldState): WorldHashLite {
   const players = {} as Record<PlayerId, number>;
   const projectiles = {} as Record<EntityId, number>;
 
-  for (const pid in s.players) {
-    const p = s.players[pid as PlayerId];
-    if (p !== undefined) {
-      players[pid as PlayerId] = hashPlayerEntity(p);
-    }
+  for (const pidStr in s.players) {
+    const pid = PlayerId(pidStr);
+    const p = s.players[pid];
+    if (p !== undefined) players[pid] = hashPlayerEntity(p);
   }
 
-  for (const eid in s.projectiles) {
-    const pr = s.projectiles[eid as unknown as EntityId];
-    if (pr !== undefined) {
-      projectiles[eid as unknown as EntityId] = hashProjectileEntity(pr);
-    }
+  for (const eidStr in s.projectiles) {
+    const eid = EntityId(+eidStr);
+    const pr = s.projectiles[eid];
+    if (pr !== undefined) projectiles[eid] = hashProjectileEntity(pr);
   }
 
   return { players, projectiles };

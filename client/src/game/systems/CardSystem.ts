@@ -112,66 +112,10 @@ export class CardSystem {
     return boosted;
   }
 
-  /**
-   * Apply a card to a player's build
-   */
-  applyCard(card: CardDefinition, currentStats: any): any {
-    const newStats = { ...currentStats };
-    
-    // Apply benefits
-    if (card.benefits) {
-      for (const benefit of card.benefits) {
-        const stackCount = this.getStackCount(card.id);
-        const effectiveness = this.getStackEffectiveness(benefit.stat, stackCount);
-        
-        if (benefit.multiplier) {
-          newStats[benefit.stat] = (newStats[benefit.stat] || 1) * benefit.value * effectiveness;
-        } else {
-          newStats[benefit.stat] = (newStats[benefit.stat] || 0) + benefit.value * effectiveness;
-        }
-      }
-    }
-    
-    // Apply penalties
-    if (card.penalties) {
-      for (const penalty of card.penalties) {
-        const stackCount = this.getStackCount(penalty.stat);
-        const effectiveness = this.getStackEffectiveness(penalty.stat, stackCount);
-        
-        if (penalty.multiplier) {
-          newStats[penalty.stat] = (newStats[penalty.stat] || 1) * penalty.value * effectiveness;
-        } else {
-          newStats[penalty.stat] = (newStats[penalty.stat] || 0) + penalty.value * effectiveness;
-        }
-      }
-    }
-    
-    return newStats;
-  }
+  // Authoritative card-application logic lives in
+  // client/src/sim/data/weaponBuild.ts:applyCard. CardSystem is a draft-time
+  // helper only; do not reintroduce a parallel applyCard here.
 
-  /**
-   * Get stack count for a card
-   */
-  private getStackCount(cardId: string): number {
-    return this.ownedCards.filter(c => c.id === cardId).length;
-  }
-
-  /**
-   * Get diminishing returns for stacked stats
-   */
-  private getStackEffectiveness(stat: string, stackCount: number): number {
-    const scaling: Record<string, number> = {
-      damage: 0.75,
-      fireRate: 0.70,
-      projectileCount: 0.60,
-      health: 0.85,
-      moveSpeed: 0.80,
-      bounce: 0.50,
-    };
-    
-    const scale = scaling[stat] || 0.8;
-    return Math.pow(scale, stackCount);
-  }
 
   /**
    * Reset owned cards (new match)

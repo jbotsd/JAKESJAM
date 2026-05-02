@@ -200,6 +200,14 @@ export type DeltaPayload = {
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
+/** Length-then-element compare; cheaper than `a.join() !== b.join()` because
+ *  it skips two intermediate string allocations per call. */
+function sameStringArray(a: readonly string[], b: readonly string[]): boolean {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
+  return true;
+}
+
 function emptyDelta<K extends string | number, V>(): CollectionDelta<K, V> {
   return { added: {} as Record<K, V>, updated: {} as Record<K, EntityUpdate<V>>, removed: [] };
 }
@@ -226,8 +234,8 @@ function diffPlayer(
   if (prev.alive !== next.alive) { bitsLo |= P_LO.alive; patch.alive = next.alive; }
   if (prev.weaponId !== next.weaponId) { bitsLo |= P_LO.weaponId; patch.weaponId = next.weaponId; }
 
-  // Arrays: cheap string comparison
-  if (prev.cards.join(",") !== next.cards.join(",")) {
+  // Arrays: length + element compare; avoids two string allocations per diff.
+  if (!sameStringArray(prev.cards, next.cards)) {
     bitsLo |= P_LO.cards;
     patch.cards = next.cards;
   }
