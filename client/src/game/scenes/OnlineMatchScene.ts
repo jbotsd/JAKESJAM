@@ -39,7 +39,10 @@ import {
   type SimEvent,
   type WorldState,
 } from "../../sim";
-import { resolveMap } from "../../sim/data/maps";
+import {
+  resolveMap,
+} from "../../sim/data/maps";
+import { hashPlayerEntity } from "../../sim/hash";
 import { characters } from "../data/characters";
 import { ProceduralPlayerRig } from "../rendering/ProceduralPlayerRig";
 import { GameAudioSystem } from "../systems/AudioSystem";
@@ -208,6 +211,12 @@ export class OnlineMatchScene extends Phaser.Scene {
   private statsToggleKey: Phaser.Input.Keyboard.Key | null = null;
   /** Always-visible RTT badge (top-right). Independent of toggleable stats HUD. */
   private rttBadge: Phaser.GameObjects.Text | null = null;
+  /** Throttle rtt badge updates — per-frame setText is wasteful. */
+  private rttBadgeNextUpdateMs = 0;
+  private rttBadgeLastValue = -1;
+  /** Determinism debug overlay (toggle with F2). Bottom-left tick + hash. */
+  private detOverlay: Phaser.GameObjects.Text | null = null;
+  private detOverlayVisible = false;
   // Reused buffer so we don't allocate a new string-array each frame.
   private readonly statsLineBuf: string[] = ["", "", "", "", "", ""];
 
@@ -280,6 +289,8 @@ export class OnlineMatchScene extends Phaser.Scene {
         Phaser.Input.Keyboard.KeyCodes.BACKTICK,
       );
       this.statsToggleKey.on("down", () => this.toggleStats());
+      const detKey = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.F2);
+      detKey.on("down", () => this.toggleDetOverlay());
     }
 
     this.audio = new GameAudioSystem(this);
@@ -447,6 +458,7 @@ export class OnlineMatchScene extends Phaser.Scene {
       this.updateStatsHud();
     }
     this.updateRttBadge();
+    this.updateDetOverlay(state);
   }
 
   // ---------------- HUD ----------------
@@ -570,6 +582,20 @@ export class OnlineMatchScene extends Phaser.Scene {
       .setOrigin(1, 0)
       .setScrollFactor(0)
       .setDepth(960);
+
+    // Determinism debug overlay (F2). Hidden by default.
+    this.detOverlay = this.add
+      .text(12, cam.height - 12, "", {
+        color: "#cffaff",
+        fontFamily: "ui-monospace, Menlo, Consolas, monospace",
+        fontSize: "11px",
+        backgroundColor: "rgba(5,8,15,0.65)",
+        padding: { left: 8, right: 8, top: 4, bottom: 4 },
+      })
+      .setOrigin(0, 1)
+      .setScrollFactor(0)
+      .setDepth(960)
+      .setVisible(false);
   }
 
   private repositionStatsHud() {
@@ -606,12 +632,38 @@ export class OnlineMatchScene extends Phaser.Scene {
 
   private updateRttBadge() {
     if (!this.rttBadge || !this.loop) return;
-    const rtt = this.loop.getNetStats().rttMs;
+    // Throttle: badge updates 4×/s. Avoids per-frame setText / setColor cost.
+    const now = performance.now();
+    if (now < this.rttBadgeNextUpdateMs) return;
+    this.rttBadgeNextUpdateMs = now + 250;
+    const rttRaw = this.loop.getNetStats().rttMs;
+    const rtt = rttRaw > 0 ? Math.round(rttRaw) : -1;
+    if (rtt === this.rttBadgeLastValue) return;
+    this.rttBadgeLastValue = rtt;
     let color = "#86efac"; // green
     if (rtt > 180) color = "#fb7185"; // red
     else if (rtt > 80) color = "#fde68a"; // amber
-    this.rttBadge.setText(rtt > 0 ? `${Math.round(rtt)}ms` : "—ms");
+    this.rttBadge.setText(rtt > 0 ? `${rtt}ms` : "—ms");
     this.rttBadge.setColor(color);
+  }
+
+  private toggleDetOverlay() {
+    this.detOverlayVisible = !this.detOverlayVisible;
+    this.detOverlay?.setVisible(this.detOverlayVisible);
+  }
+
+  private updateDetOverlay(state: WorldState) {
+    if (!this.detOverlayVisible || !this.detOverlay) return;
+    // Lightweight per-tick fingerprint. Sum of player-entity hashes —
+    // catches position / health / status drift across hosts.
+    let h = 0;
+    for (const pid in state.players) {
+      const p = state.players[pid as PlayerId];
+      if (p) h = (h ^ hashPlayerEntity(p)) >>> 0;
+    }
+    this.detOverlay.setText(
+      `tick ${state.tick}\nplayers ${Object.keys(state.players).length}\nhash 0x${h.toString(16).padStart(8, "0")}`,
+    );
   }
 
   // ---------------- Connect ----------------

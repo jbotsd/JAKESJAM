@@ -10,6 +10,7 @@
 
 import type * as matches from "../matches.js";
 import type * as matchmaker from "../matchmaker.js";
+import type * as replays from "../replays.js";
 import type * as rooms from "../rooms.js";
 
 import type {
@@ -21,6 +22,7 @@ import type {
 declare const fullApi: ApiFromModules<{
   matches: typeof matches;
   matchmaker: typeof matchmaker;
+  replays: typeof replays;
   rooms: typeof rooms;
 }>;
 

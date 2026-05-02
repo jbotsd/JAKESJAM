@@ -55,6 +55,12 @@ const matchesRecordMatchResultRef = makeFunctionReference<
   { recorded: boolean; reason: string }
 >("matches:recordMatchResult");
 
+const replaysSaveRef = makeFunctionReference<
+  "action",
+  { matchId: ConvexId; bytes: ArrayBuffer },
+  { storageId: string }
+>("replays:saveReplay");
+
 export class ConvexClient {
   private readonly client: ConvexHttpClient | null;
   private warnedMissingUrl = false;

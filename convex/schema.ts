@@ -76,6 +76,13 @@ export default defineSchema({
     // before upgrading the connection.
     gameServerUrl: v.optional(v.string()),
     region: v.optional(v.string()),
+    /**
+     * Storage ID of the replay blob (input log + RNG seed + protocol version)
+     * uploaded by the game server at match-end. Per replay-spectator SKILL:
+     * cold blob, never queried during the live sim. Use `getReplayUrl` to
+     * generate a signed download URL when a viewer wants playback.
+     */
+    replayStorageId: v.optional(v.id("_storage")),
   }).index("by_room", ["roomId"]),
 
   matchResults: defineTable({
