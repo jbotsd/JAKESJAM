@@ -206,7 +206,9 @@ export class OnlineMatchScene extends Phaser.Scene {
   private lightBeams: LightBeamLayer | null = null;
   private fireGraphics: Phaser.GameObjects.Graphics | null = null;
   private pickupGraphics: Phaser.GameObjects.Graphics | null = null;
-  private localPlayerId: PlayerId = PlayerId("");
+  // Sentinel — overwritten in init(data) before any consumer reads it.
+  // Cast bypasses the validating constructor; "" is not a valid PlayerId.
+  private localPlayerId: PlayerId = "" as PlayerId;
   private lastFrameMs = 0;
   private keys!: Record<"a" | "d" | "w" | "s" | "space" | "shift", Phaser.Input.Keyboard.Key>;
   private statsVisible = false;
