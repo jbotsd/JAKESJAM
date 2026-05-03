@@ -32,6 +32,7 @@
 import Phaser from "phaser";
 import { PALETTE } from "./palette.js";
 import { crystalRoundsCards } from "../../sim/data/cards.js";
+import type { PlayerId } from "../../sim/types.js";
 
 export type HudVitals = {
   health: number;
@@ -59,7 +60,7 @@ export type HudRound = {
   phase: "countdown" | "fighting" | "round-over" | "drafting";
   countdownRemainingMs: number;
   roundIndex: number;
-  scores: Record<string, number>;
+  scores: Record<PlayerId, number>;
   winnerLabel?: string;
 };
 

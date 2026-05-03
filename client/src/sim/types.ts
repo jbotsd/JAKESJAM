@@ -7,10 +7,34 @@ export type PlayerId = string & { readonly [__brand]: "PlayerId" };
 export type Tick = number & { readonly [__brand]: "Tick" };
 export type InputSeq = number & { readonly [__brand]: "InputSeq" };
 
-export const EntityId = (n: number): EntityId => n as EntityId;
-export const PlayerId = (s: string): PlayerId => s as PlayerId;
-export const Tick = (n: number): Tick => n as Tick;
-export const InputSeq = (n: number): InputSeq => n as InputSeq;
+/** Brand a number as a non-negative integer ID. Throws on NaN/Infinity/
+ *  negatives/non-integers — those have always been bugs in this codebase
+ *  (a corrupted spatial-grid key, an off-by-one tick, a parsed garbage
+ *  ack). The throw makes them loud at the trust boundary. */
+export const EntityId = (n: number): EntityId => {
+  if (!Number.isInteger(n) || n < 0) {
+    throw new Error(`EntityId: expected non-negative integer, got ${n}`);
+  }
+  return n as EntityId;
+};
+export const PlayerId = (s: string): PlayerId => {
+  if (typeof s !== "string" || s.length === 0 || s.length > 64) {
+    throw new Error(`PlayerId: expected non-empty string ≤64 chars, got ${JSON.stringify(s)}`);
+  }
+  return s as PlayerId;
+};
+export const Tick = (n: number): Tick => {
+  if (!Number.isInteger(n) || n < 0) {
+    throw new Error(`Tick: expected non-negative integer, got ${n}`);
+  }
+  return n as Tick;
+};
+export const InputSeq = (n: number): InputSeq => {
+  if (!Number.isInteger(n) || n < 0) {
+    throw new Error(`InputSeq: expected non-negative integer, got ${n}`);
+  }
+  return n as InputSeq;
+};
 
 /** Typed iteration helpers — see .claude/skills/ts-pocock/SKILL.md §1.
  *  Use these instead of `Object.keys(...) as PlayerId[]`. */

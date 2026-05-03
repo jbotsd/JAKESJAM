@@ -1811,9 +1811,9 @@ export class MatchScene extends Phaser.Scene {
       isDead: this.playerRespawnPending,
     };
 
-    const scores: Record<string, number> = {};
+    const scores: Record<PlayerId, number> = {} as Record<PlayerId, number>;
     for (const [pid, score] of this.playerScores) {
-      scores[pid] = score.kills;
+      scores[pid as PlayerId] = score.kills;
     }
 
     const round: import("../ui/HudSystem").HudRound = {

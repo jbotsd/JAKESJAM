@@ -27,69 +27,40 @@ export class RoomClient {
     return this.client.mutation(rooms.join, args) as Promise<RoomHandle>;
   }
 
-  setReady(roomId: RoomId, playerId: string, ready: boolean): Promise<void> {
-    return this.client.mutation(rooms.setReady, { roomId, playerId, ready }) as unknown as Promise<void>;
+  async setReady(roomId: RoomId, playerId: string, ready: boolean): Promise<void> {
+    await this.client.mutation(rooms.setReady, { roomId, playerId, ready });
   }
 
-  updateSettings(
+  async updateSettings(
     roomId: RoomId,
     playerId: string,
     chaosModifierIds: ChaosModifierId[],
   ): Promise<void> {
-    return this.client.mutation(rooms.updateSettings, {
+    await this.client.mutation(rooms.updateSettings, {
       roomId,
       playerId,
       chaosModifierIds,
-    }) as unknown as Promise<void>;
-  }
-
-  startMatch(roomId: RoomId, playerId: string, mapId?: string): Promise<string> {
-    // Cast: `mapId` arg was added to startMatch in this PR; generated
-    // api types lag `bunx convex codegen`. Drop after next deploy.
-    const mutate = this.client.mutation as unknown as (
-      ref: unknown,
-      args: { roomId: RoomId; playerId: string; mapId?: string },
-    ) => Promise<string>;
-    return mutate(rooms.startMatch, {
-      roomId,
-      playerId,
-      ...(mapId !== undefined ? { mapId } : {}),
     });
   }
 
-  setMap(roomId: RoomId, playerId: string, mapId: string): Promise<void> {
-    // Cast: the `setMap` mutation was added in this PR; the generated
-    // `convex/_generated/api` types lag a `bunx convex codegen` (or
-    // deploy) run. Once codegen catches up, drop the cast.
-    const setMapRef = (rooms as unknown as Record<string, unknown>).setMap;
-    if (!setMapRef) {
-      // Codegen hasn't caught up to the schema. Don't crash through
-      // ConvexClient.mutation(undefined, ...) — it throws a confusing
-      // 'reading disabled' TypeError. The lobby falls back to the
-      // local pendingMapId path, which still works at startMatch time
-      // because the old generated startMatch happily accepts the
-      // extra mapId arg (Convex ignores unknown args server-side
-      // until the mutation rejects them).
-      console.warn(
-        "[RoomClient.setMap] api.rooms.setMap not in generated types yet — " +
-          "run `bunx convex deploy` to enable cross-player map sync. " +
-          "Local map selection still works at startMatch time.",
-      );
-      return Promise.resolve();
-    }
-    const mutate = this.client.mutation as unknown as (
-      ref: unknown,
-      args: { roomId: RoomId; playerId: string; mapId: string },
-    ) => Promise<void>;
-    return mutate(setMapRef, { roomId, playerId, mapId });
+  startMatch(roomId: RoomId, playerId: string, mapId?: string): Promise<string> {
+    return this.client.mutation(rooms.startMatch, {
+      roomId,
+      playerId,
+      ...(mapId !== undefined ? { mapId } : {}),
+    }) as Promise<string>;
   }
 
-  heartbeat(roomId: RoomId, playerId: string): Promise<void> {
-    return this.client.mutation(rooms.heartbeat, { roomId, playerId }) as unknown as Promise<void>;
+  async setMap(roomId: RoomId, playerId: string, mapId: string): Promise<void> {
+    await this.client.mutation(rooms.setMap, { roomId, playerId, mapId });
   }
 
-  leave(roomId: RoomId, playerId: string): Promise<void> {
-    return this.client.mutation(rooms.leave, { roomId, playerId }) as unknown as Promise<void>;
+  async heartbeat(roomId: RoomId, playerId: string): Promise<void> {
+    await this.client.mutation(rooms.heartbeat, { roomId, playerId });
+  }
+
+  async leave(roomId: RoomId, playerId: string): Promise<void> {
+    await this.client.mutation(rooms.leave, { roomId, playerId });
   }
 
   subscribeRoom(
