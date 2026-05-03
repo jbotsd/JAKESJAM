@@ -148,7 +148,12 @@ export function encodeMessage(message: ClientMessage | ServerMessage): Uint8Arra
  * dispatcher, which is more informative than rejecting at decode time.
  */
 const REQUIRED_FIELDS: Record<string, ReadonlyArray<readonly [string, "string" | "number" | "object"]>> = {
-  hello: [["protocolVersion", "number"]], // ClientHello: more required; ServerHello also passes
+  // `t: "hello"` is shared by ClientHello (has protocolVersion) and ServerHello
+  // (doesn't — has matchId/startTick/rngSeed/mapId/yourPlayerId). The version
+  // byte at buffer[0] already gates protocol compat, so we don't redundantly
+  // require any `hello` field here. Each side's handler asserts the variant
+  // it expects.
+  hello: [],
   in: [["seq", "number"], ["tick", "number"], ["keys", "number"]],
   ack: [["lastSnapshotTick", "number"]],
   ping: [["clientTime", "number"]],
