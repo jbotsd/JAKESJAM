@@ -48,10 +48,6 @@ jobs:
   # ──────────────────────────────────────────────────────────────────────
   deploy-server:
     name: Deploy server (Fly.io)
-    # Disabled — Fly trial expired, deploy-client decoupled from this job
-    # so the static client still ships. Re-enable by removing `if: false`
-    # once Fly billing is re-upped.
-    if: false
     needs: verify
     runs-on: ubuntu-latest
     timeout-minutes: 15
