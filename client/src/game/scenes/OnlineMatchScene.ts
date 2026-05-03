@@ -202,6 +202,7 @@ export class OnlineMatchScene extends Phaser.Scene {
   /** Static arena geometry (platforms, walls, floor, vignette). Drawn
    *  once on hello receipt; never per-frame. */
   private arenaGraphics: Phaser.GameObjects.Graphics | null = null;
+  private platformGraphics: Phaser.GameObjects.GameObject[] = [];
   private fireGraphics: Phaser.GameObjects.Graphics | null = null;
   private pickupGraphics: Phaser.GameObjects.Graphics | null = null;
   private localPlayerId: PlayerId = PlayerId("");
@@ -1048,9 +1049,12 @@ export class OnlineMatchScene extends Phaser.Scene {
       }
     }
 
-    // Platforms — two-tone + brush-streak baked RenderTexture via shared PlatformPainter.
+    for (const obj of this.platformGraphics) obj.destroy();
+    this.platformGraphics = [];
+
+    // Platforms — two-tone + brush-streak Graphics via shared PlatformPainter.
     for (const platform of map.platforms) {
-      paintPlatform(
+      const objs = paintPlatform(
         this,
         platform.position.x,
         platform.position.y,
@@ -1058,6 +1062,7 @@ export class OnlineMatchScene extends Phaser.Scene {
         platform.size.y,
         theme,
       );
+      for (const o of objs) this.platformGraphics.push(o);
     }
   }
 

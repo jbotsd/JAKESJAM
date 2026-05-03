@@ -153,6 +153,7 @@ export class MatchScene extends Phaser.Scene {
     this.updateScoreboardOverlay();
   };
   private audio?: GameAudioSystem;
+  private platformGraphics: Phaser.GameObjects.GameObject[] = [];
   private projectileSystem?: ProjectileSystem;
   private particlePool?: ParticlePool;
   private playerRig?: ProceduralPlayerRig;
@@ -502,9 +503,12 @@ export class MatchScene extends Phaser.Scene {
       }
     }
 
-    // Platforms — two-tone + brush-streak Graphics, drawn directly in paintPlatform.
+    for (const obj of this.platformGraphics) obj.destroy();
+    this.platformGraphics = [];
+
+    // Platforms — two-tone + brush-streak Graphics via shared PlatformPainter.
     for (const platform of boxworksWorld.platforms) {
-      paintPlatform(
+      const objs = paintPlatform(
         this,
         platform.position.x,
         platform.position.y,
@@ -512,6 +516,7 @@ export class MatchScene extends Phaser.Scene {
         platform.size.y,
         theme,
       );
+      for (const o of objs) this.platformGraphics.push(o);
     }
     for (const spawn of boxworksWorld.spawns) {
       this.add.circle(spawn.x, spawn.y, 5, PALETTE.textMid, 0.5);

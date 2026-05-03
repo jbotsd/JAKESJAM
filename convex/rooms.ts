@@ -240,7 +240,7 @@ export const leave = mutation({
 // Allowed map ids — kept in sync with `client/src/sim/data/maps.ts`.
 // Validated server-side so a tampered client can't pick a missing map.
 const ALLOWED_MAP_IDS = ["boxworks", "boxworks-mini", "boxworks-tower"] as const;
-const DEFAULT_START_MAP_ID = "boxworks" as const;
+const DEFAULT_START_MAP_ID = "boxworks-mini" as const;
 
 export const startMatch = mutation({
   args: {
