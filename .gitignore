@@ -15,3 +15,5 @@ npm-debug.log*
 tests/e2e/.artifacts/
 tests/e2e/.report/
 tests/e2e/test-results/
+*.bad
+*.bak.*
