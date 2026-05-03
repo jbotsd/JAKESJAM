@@ -61,7 +61,7 @@ import { ConnectionOverlay } from "../ui/ConnectionOverlay";
 import { ParticlePool } from "../systems/ParticlePool";
 import { StatusVfxController } from "../systems/StatusVfxController";
 import { PlatformLayer } from "../render/PlatformPainter";
-import { drawLightBeam } from "../render/LightingLayer";
+import { LightBeamLayer } from "../render/LightingLayer";
 import { RenderLayer } from "../render/RenderLayer";
 import { PALETTE, ARENA_THEMES } from "../ui/palette";
 import type {
@@ -203,6 +203,7 @@ export class OnlineMatchScene extends Phaser.Scene {
    *  once on hello receipt; never per-frame. */
   private arenaGraphics: Phaser.GameObjects.Graphics | null = null;
   private platformLayer: PlatformLayer | null = null;
+  private lightBeams: LightBeamLayer | null = null;
   private fireGraphics: Phaser.GameObjects.Graphics | null = null;
   private pickupGraphics: Phaser.GameObjects.Graphics | null = null;
   private localPlayerId: PlayerId = PlayerId("");
@@ -1020,33 +1021,18 @@ export class OnlineMatchScene extends Phaser.Scene {
         .setDepth(0.5);
     }
 
-    // Light beams — additive triangle polygons from off-screen top when theme flags them.
     if (theme.hasLightBeams) {
-      const beamDefs: Array<{ x: number; w: number }> = [
-        { x: width * 0.25, w: 80 },
-        { x: width * 0.55, w: 100 },
-        { x: width * 0.78, w: 70 },
-      ];
-      for (const def of beamDefs) {
-        const beam = drawLightBeam(
-          this,
-          def.x,
-          0,
-          def.w,
-          height,
-          PALETTE.lightBeamWarm,
-          0.10,
-        );
-        beam.setDepth(0.7); // behind vignette (depth 1) — vignette frames the beam edges
-        this.tweens.add({
-          targets: beam,
-          angle: 2,
-          duration: 8000,
-          ease: "Sine.easeInOut",
-          yoyo: true,
-          repeat: -1,
-        });
-      }
+      if (!this.lightBeams) this.lightBeams = new LightBeamLayer(this);
+      this.lightBeams.spawn(
+        [
+          { x: width * 0.25, w: 80 },
+          { x: width * 0.55, w: 100 },
+          { x: width * 0.78, w: 70 },
+        ],
+        height,
+        PALETTE.lightBeamWarm,
+        0.1,
+      );
     }
 
     if (!this.platformLayer) this.platformLayer = new PlatformLayer(this);

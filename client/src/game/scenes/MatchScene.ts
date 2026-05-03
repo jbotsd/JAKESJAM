@@ -2,7 +2,7 @@ import Phaser from "phaser";
 import { SceneKeys } from "./SceneKeys";
 import { PALETTE, ARENA_THEMES } from "../ui/palette";
 import { PlatformLayer } from "../render/PlatformPainter";
-import { drawLightBeam } from "../render/LightingLayer";
+import { LightBeamLayer } from "../render/LightingLayer";
 import { boxworksWorld, seededUnit } from "../../sim/data/boxworks.js";
 import {
   COUNTDOWN_MS,
@@ -154,6 +154,7 @@ export class MatchScene extends Phaser.Scene {
   };
   private audio?: GameAudioSystem;
   private platformLayer: PlatformLayer | null = null;
+  private lightBeams: LightBeamLayer | null = null;
   private projectileSystem?: ProjectileSystem;
   private particlePool?: ParticlePool;
   private playerRig?: ProceduralPlayerRig;
@@ -473,34 +474,18 @@ export class MatchScene extends Phaser.Scene {
         .setDepth(0.5);
     }
 
-    // Light beams — additive triangle polygons from off-screen top when theme flags them.
     if (theme.hasLightBeams) {
-      const beamDefs: Array<{ x: number; w: number }> = [
-        { x: width * 0.25, w: 80 },
-        { x: width * 0.55, w: 100 },
-        { x: width * 0.78, w: 70 },
-      ];
-      for (const def of beamDefs) {
-        const beam = drawLightBeam(
-          this,
-          def.x,
-          0,
-          def.w,
-          height,
-          PALETTE.lightBeamWarm,
-          0.10,
-        );
-        beam.setDepth(0.7); // behind vignette (depth 1) — vignette frames the beam edges
-        // Slow yoyo rotation ±2° over 8s for subtle atmospheric life.
-        this.tweens.add({
-          targets: beam,
-          angle: 2,
-          duration: 8000,
-          ease: "Sine.easeInOut",
-          yoyo: true,
-          repeat: -1,
-        });
-      }
+      if (!this.lightBeams) this.lightBeams = new LightBeamLayer(this);
+      this.lightBeams.spawn(
+        [
+          { x: width * 0.25, w: 80 },
+          { x: width * 0.55, w: 100 },
+          { x: width * 0.78, w: 70 },
+        ],
+        height,
+        PALETTE.lightBeamWarm,
+        0.1,
+      );
     }
 
     if (!this.platformLayer) this.platformLayer = new PlatformLayer(this);

@@ -45,6 +45,69 @@ export function drawLightBeam(
 }
 
 /**
+ * Tracker that owns a set of beam Polygons + their idle yoyo tweens, and
+ * lets the scene re-spawn them safely. Mirrors PlatformLayer's role for
+ * the platform Graphics — without it, both MatchScene and OnlineMatchScene
+ * had to remember to destroy + cancel-tween the prior beams before
+ * re-running renderArena (the same bug class as the platform-doubling
+ * regression in commit 0c430b2).
+ *
+ * Use:
+ *   private readonly lightBeams = new LightBeamLayer(this);
+ *   ...
+ *   if (theme.hasLightBeams) {
+ *     this.lightBeams.spawn(beamDefs, height, color, 0.10);
+ *   }
+ *
+ * Auto-cleans on scene SHUTDOWN/DESTROY.
+ */
+export class LightBeamLayer {
+  private beams: Phaser.GameObjects.Polygon[] = [];
+  private readonly scene: Phaser.Scene;
+
+  constructor(scene: Phaser.Scene) {
+    this.scene = scene;
+    scene.events.once(Phaser.Scenes.Events.SHUTDOWN, () => this.destroy());
+    scene.events.once(Phaser.Scenes.Events.DESTROY, () => this.destroy());
+  }
+
+  /**
+   * Re-spawn beams from definitions. Each def is { x, w } — apex centre
+   * X and beam width at the bottom. Height + color + alpha are uniform.
+   * Each beam gets the standard slow ±2° yoyo rotation tween.
+   */
+  spawn(
+    defs: ReadonlyArray<{ x: number; w: number }>,
+    height: number,
+    color: number,
+    alpha: number,
+  ): void {
+    this.destroy();
+    for (const def of defs) {
+      const beam = drawLightBeam(this.scene, def.x, 0, def.w, height, color, alpha);
+      beam.setDepth(0.7); // behind vignette (depth 1) — vignette frames the beam edges
+      this.scene.tweens.add({
+        targets: beam,
+        angle: 2,
+        duration: 8000,
+        ease: "Sine.easeInOut",
+        yoyo: true,
+        repeat: -1,
+      });
+      this.beams.push(beam);
+    }
+  }
+
+  destroy(): void {
+    for (const beam of this.beams) {
+      this.scene.tweens.killTweensOf(beam);
+      beam.destroy();
+    }
+    this.beams = [];
+  }
+}
+
+/**
  * Draw a thin horizontal rim-highlight line on an existing Graphics object.
  * Designed for platform top edges — call inside a RenderTexture draw pass.
  *
