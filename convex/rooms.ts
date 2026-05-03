@@ -4,6 +4,7 @@ import type { Doc, Id } from "./_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "./_generated/server";
 import { assignGameServer } from "./matchmaker";
 import { chaosModifierId } from "./schema";
+import type { ChaosModifierId } from "./chaosIds";
 
 const MAX_PLAYERS = 10;
 const ROOM_CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
@@ -370,9 +371,9 @@ function cleanName(name: string): string {
   return trimmed.slice(0, 24) || "Player";
 }
 
-export type ChaosModifierIdLiteral = "low-gravity" | "slow-motion" | "golden-gun" | "slappers-only" | "fire-hazard" | "random-shapes" | "max-recoil";
-
-export type CleanChaosModifierIds = ChaosModifierIdLiteral[];
+// ChaosModifierIdLiteral lives in convex/chaosIds.ts so the Convex schema
+// validator and downstream room mutations share one source of truth.
+export type CleanChaosModifierIds = ChaosModifierId[];
 
 function cleanChaosModifierIds(ids: string[]): CleanChaosModifierIds {
   const trimmed = ids.map((id) => id.trim()).filter(Boolean) as CleanChaosModifierIds;

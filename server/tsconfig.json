@@ -14,8 +14,9 @@
     "noEmit": true,
     "allowImportingTsExtensions": true,
     "paths": {
-      "@sim/*": ["../client/src/sim/*"]
+      "@sim/*": ["../client/src/sim/*"],
+      "@net/*": ["../client/src/net/*"]
     }
   },
-  "include": ["src/**/*.ts", "../client/src/sim/**/*.ts"]
+  "include": ["src/**/*.ts", "../client/src/sim/**/*.ts", "../client/src/net/**/*.ts"]
 }

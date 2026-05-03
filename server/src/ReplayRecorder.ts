@@ -23,7 +23,7 @@ import type {
   PlayerSpawnInfo,
   Tick,
 } from "@sim/types.ts";
-import { PROTOCOL_VERSION } from "./protocol.ts";
+import { PROTOCOL_VERSION } from "@net/protocol.ts";
 
 /**
  * Schema version for the replay file format itself. Distinct from

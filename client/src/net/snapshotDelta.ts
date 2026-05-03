@@ -4,7 +4,7 @@
  *
  * FIELD_BITS — bitmask index per entity type
  * ─────────────────────────────────────────
- * PlayerEntity lo-word (bits 0–30):
+ * PlayerEntity (27 bits used):
  *   0  x                    14  slowMultiplier
  *   1  y                    15  burnUntilTick
  *   2  vx                   16  burnDps
@@ -22,14 +22,18 @@
  *                           28  speedBoostUntilTick
  *                           29  meleeModeUntilTick
  *                           30  slowDebuffUntilTick
- * PlayerEntity hi-word (bits 0–3):
- *   0  ammo
- *   1  vulnerabilityUntilTick
- *   2  blockJammerUntilTick
- *   3  bossModeUntilTick
- * abilityCharge + lastProcessedInputSeq: always included unconditionally.
+ *  (bits 31 and above use BigInt or a second mask — not needed at current scale)
+ *  ammo (bit index 31 — kept < 32 for safe JS bitwise)
+ *  abilityCharge → included in every delta unconditionally (cheap, changes frequently)
+ *  lastProcessedInputSeq → included unconditionally
+ *  vulnerabilityUntilTick, blockJammerUntilTick, bossModeUntilTick → optional tail
  *
- * ProjectileEntity (bits 0–17):
+ * NOTE: For simplicity, since PlayerEntity has ~30 optional/frequent fields,
+ * we use a two-number bitmask pair (lo: bits 0-30, hi: bits 0-7) rather than
+ * cramming into one JS bitwise int (which is 32-bit signed). This gives us
+ * 38 addressable bits without BigInt.
+ *
+ * ProjectileEntity (18 bits):
  *   0  x                    9  bouncesRemaining
  *   1  y                   10  pierceRemaining
  *   2  vx                  11  impact
@@ -39,11 +43,23 @@
  *   6  traveledPx          15  homingStrength
  *   7  returning           16  accelerationMultiplier
  *   8  stickyFuseMs        17  gravityScale
+ *  (ownerId, shape, radius, damage, pathing, element, rangePx, originX, originY
+ *   are static after creation — sent only in `added`, not in updates)
  *
- * DestructibleEntity: 0=health
- * FireEntity:         0=remainingMs
- * PickupEntity:       0=active, 1=respawnAtTick
- * SatelliteEntity:    0=angle, 1=fireCooldownMs, 2=lifetimeMs
+ * DestructibleEntity:
+ *   0  health  (only mutable field; x/y/width/height/explosive/flammable are static)
+ *
+ * FireEntity:
+ *   0  remainingMs  (x, y, radius, ownerId, damagePerSecond are static)
+ *
+ * PickupEntity:
+ *   0  active
+ *   1  respawnAtTick
+ *
+ * SatelliteEntity:
+ *   0  angle
+ *   1  fireCooldownMs
+ *   2  lifetimeMs
  */
 
 import type {
@@ -70,9 +86,6 @@ import {
   PICKUP,
   SAT,
 } from "../sim/snapshotDeltaBits.js";
-
-// Silence unused-var warnings for constants only used as documentation.
-void P_LO; void P_HI; void PROJ; void DESTR; void FIRE; void PICKUP; void SAT;
 
 // ─── Public types ─────────────────────────────────────────────────────────────
 
@@ -117,6 +130,14 @@ export type DeltaPayload = {
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
+/** Length-then-element compare; cheaper than `a.join() !== b.join()` because
+ *  it skips two intermediate string allocations per call. */
+function sameStringArray(a: readonly string[], b: readonly string[]): boolean {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
+  return true;
+}
+
 function emptyDelta<K extends string | number, V>(): CollectionDelta<K, V> {
   return { added: {} as Record<K, V>, updated: {} as Record<K, EntityUpdate<V>>, removed: [] };
 }
@@ -131,44 +152,52 @@ function diffPlayer(
   let bitsHi = 0;
   const patch: Partial<PlayerEntity> = {};
 
-  if (prev.x !== next.x) { bitsLo |= 1 << 0; patch.x = next.x; }
-  if (prev.y !== next.y) { bitsLo |= 1 << 1; patch.y = next.y; }
-  if (prev.vx !== next.vx) { bitsLo |= 1 << 2; patch.vx = next.vx; }
-  if (prev.vy !== next.vy) { bitsLo |= 1 << 3; patch.vy = next.vy; }
-  if (prev.aimX !== next.aimX) { bitsLo |= 1 << 4; patch.aimX = next.aimX; }
-  if (prev.aimY !== next.aimY) { bitsLo |= 1 << 5; patch.aimY = next.aimY; }
-  if (prev.health !== next.health) { bitsLo |= 1 << 6; patch.health = next.health; }
-  if (prev.shieldActive !== next.shieldActive) { bitsLo |= 1 << 7; patch.shieldActive = next.shieldActive; }
-  if (prev.crouching !== next.crouching) { bitsLo |= 1 << 8; patch.crouching = next.crouching; }
-  if (prev.alive !== next.alive) { bitsLo |= 1 << 9; patch.alive = next.alive; }
-  if (prev.weaponId !== next.weaponId) { bitsLo |= 1 << 10; patch.weaponId = next.weaponId; }
-  if (prev.cards.join(",") !== next.cards.join(",")) { bitsLo |= 1 << 11; patch.cards = next.cards; }
-  if (prev.fireCooldownMs !== next.fireCooldownMs) { bitsLo |= 1 << 12; patch.fireCooldownMs = next.fireCooldownMs; }
-  if (prev.slowedUntilTick !== next.slowedUntilTick) { bitsLo |= 1 << 13; patch.slowedUntilTick = next.slowedUntilTick; }
-  if (prev.slowMultiplier !== next.slowMultiplier) { bitsLo |= 1 << 14; patch.slowMultiplier = next.slowMultiplier; }
-  if (prev.burnUntilTick !== next.burnUntilTick) { bitsLo |= 1 << 15; patch.burnUntilTick = next.burnUntilTick; }
-  if (prev.burnDps !== next.burnDps) { bitsLo |= 1 << 16; patch.burnDps = next.burnDps; }
-  if (prev.burnTickLastApplied !== next.burnTickLastApplied) { bitsLo |= 1 << 17; patch.burnTickLastApplied = next.burnTickLastApplied; }
-  if (prev.freezeUntilTick !== next.freezeUntilTick) { bitsLo |= 1 << 18; patch.freezeUntilTick = next.freezeUntilTick; }
-  if (prev.freezeMultiplier !== next.freezeMultiplier) { bitsLo |= 1 << 19; patch.freezeMultiplier = next.freezeMultiplier; }
-  if (prev.jetpackFuel !== next.jetpackFuel) { bitsLo |= 1 << 20; patch.jetpackFuel = next.jetpackFuel; }
-  if (prev.shieldCharge !== next.shieldCharge) { bitsLo |= 1 << 21; patch.shieldCharge = next.shieldCharge; }
-  if (prev.shieldMaxCharge !== next.shieldMaxCharge) { bitsLo |= 1 << 22; patch.shieldMaxCharge = next.shieldMaxCharge; }
-  if (prev.parryActiveUntilTick !== next.parryActiveUntilTick) { bitsLo |= 1 << 23; patch.parryActiveUntilTick = next.parryActiveUntilTick; }
-  if (prev.parryCooldownUntilTick !== next.parryCooldownUntilTick) { bitsLo |= 1 << 24; patch.parryCooldownUntilTick = next.parryCooldownUntilTick; }
-  if (prev.parryFacing !== next.parryFacing) { bitsLo |= 1 << 25; patch.parryFacing = next.parryFacing; }
-  if (prev.overchargeUntilTick !== next.overchargeUntilTick) { bitsLo |= 1 << 26; patch.overchargeUntilTick = next.overchargeUntilTick; }
-  if (prev.damageAmpUntilTick !== next.damageAmpUntilTick) { bitsLo |= 1 << 27; patch.damageAmpUntilTick = next.damageAmpUntilTick; }
-  if (prev.speedBoostUntilTick !== next.speedBoostUntilTick) { bitsLo |= 1 << 28; patch.speedBoostUntilTick = next.speedBoostUntilTick; }
-  if (prev.meleeModeUntilTick !== next.meleeModeUntilTick) { bitsLo |= 1 << 29; patch.meleeModeUntilTick = next.meleeModeUntilTick; }
-  if (prev.slowDebuffUntilTick !== next.slowDebuffUntilTick) { bitsLo |= 1 << 30; patch.slowDebuffUntilTick = next.slowDebuffUntilTick; }
+  if (prev.x !== next.x) { bitsLo |= P_LO.x; patch.x = next.x; }
+  if (prev.y !== next.y) { bitsLo |= P_LO.y; patch.y = next.y; }
+  if (prev.vx !== next.vx) { bitsLo |= P_LO.vx; patch.vx = next.vx; }
+  if (prev.vy !== next.vy) { bitsLo |= P_LO.vy; patch.vy = next.vy; }
+  if (prev.aimX !== next.aimX) { bitsLo |= P_LO.aimX; patch.aimX = next.aimX; }
+  if (prev.aimY !== next.aimY) { bitsLo |= P_LO.aimY; patch.aimY = next.aimY; }
+  if (prev.health !== next.health) { bitsLo |= P_LO.health; patch.health = next.health; }
+  if (prev.shieldActive !== next.shieldActive) { bitsLo |= P_LO.shieldActive; patch.shieldActive = next.shieldActive; }
+  if (prev.crouching !== next.crouching) { bitsLo |= P_LO.crouching; patch.crouching = next.crouching; }
+  if (prev.alive !== next.alive) { bitsLo |= P_LO.alive; patch.alive = next.alive; }
+  if (prev.weaponId !== next.weaponId) { bitsLo |= P_LO.weaponId; patch.weaponId = next.weaponId; }
 
-  if (prev.ammo !== next.ammo) { bitsHi |= 1 << 0; patch.ammo = next.ammo; }
-  if (prev.vulnerabilityUntilTick !== next.vulnerabilityUntilTick) { bitsHi |= 1 << 1; patch.vulnerabilityUntilTick = next.vulnerabilityUntilTick; }
-  if (prev.blockJammerUntilTick !== next.blockJammerUntilTick) { bitsHi |= 1 << 2; patch.blockJammerUntilTick = next.blockJammerUntilTick; }
-  if (prev.bossModeUntilTick !== next.bossModeUntilTick) { bitsHi |= 1 << 3; patch.bossModeUntilTick = next.bossModeUntilTick; }
+  // Arrays: length + element compare; avoids two string allocations per diff.
+  if (!sameStringArray(prev.cards, next.cards)) {
+    bitsLo |= P_LO.cards;
+    patch.cards = next.cards;
+  }
 
-  // Always send abilityCharge and lastProcessedInputSeq
+  if (prev.fireCooldownMs !== next.fireCooldownMs) { bitsLo |= P_LO.fireCooldownMs; patch.fireCooldownMs = next.fireCooldownMs; }
+
+  // Optional fields — only emit if the next value differs OR if one side is undefined
+  if (prev.slowedUntilTick !== next.slowedUntilTick) { bitsLo |= P_LO.slowedUntilTick; patch.slowedUntilTick = next.slowedUntilTick; }
+  if (prev.slowMultiplier !== next.slowMultiplier) { bitsLo |= P_LO.slowMultiplier; patch.slowMultiplier = next.slowMultiplier; }
+  if (prev.burnUntilTick !== next.burnUntilTick) { bitsLo |= P_LO.burnUntilTick; patch.burnUntilTick = next.burnUntilTick; }
+  if (prev.burnDps !== next.burnDps) { bitsLo |= P_LO.burnDps; patch.burnDps = next.burnDps; }
+  if (prev.burnTickLastApplied !== next.burnTickLastApplied) { bitsLo |= P_LO.burnTickLastApplied; patch.burnTickLastApplied = next.burnTickLastApplied; }
+  if (prev.freezeUntilTick !== next.freezeUntilTick) { bitsLo |= P_LO.freezeUntilTick; patch.freezeUntilTick = next.freezeUntilTick; }
+  if (prev.freezeMultiplier !== next.freezeMultiplier) { bitsLo |= P_LO.freezeMultiplier; patch.freezeMultiplier = next.freezeMultiplier; }
+  if (prev.jetpackFuel !== next.jetpackFuel) { bitsLo |= P_LO.jetpackFuel; patch.jetpackFuel = next.jetpackFuel; }
+  if (prev.shieldCharge !== next.shieldCharge) { bitsLo |= P_LO.shieldCharge; patch.shieldCharge = next.shieldCharge; }
+  if (prev.shieldMaxCharge !== next.shieldMaxCharge) { bitsLo |= P_LO.shieldMaxCharge; patch.shieldMaxCharge = next.shieldMaxCharge; }
+  if (prev.parryActiveUntilTick !== next.parryActiveUntilTick) { bitsLo |= P_LO.parryActiveUntilTick; patch.parryActiveUntilTick = next.parryActiveUntilTick; }
+  if (prev.parryCooldownUntilTick !== next.parryCooldownUntilTick) { bitsLo |= P_LO.parryCooldownUntilTick; patch.parryCooldownUntilTick = next.parryCooldownUntilTick; }
+  if (prev.parryFacing !== next.parryFacing) { bitsLo |= P_LO.parryFacing; patch.parryFacing = next.parryFacing; }
+  if (prev.overchargeUntilTick !== next.overchargeUntilTick) { bitsLo |= P_LO.overchargeUntilTick; patch.overchargeUntilTick = next.overchargeUntilTick; }
+  if (prev.damageAmpUntilTick !== next.damageAmpUntilTick) { bitsLo |= P_LO.damageAmpUntilTick; patch.damageAmpUntilTick = next.damageAmpUntilTick; }
+  if (prev.speedBoostUntilTick !== next.speedBoostUntilTick) { bitsLo |= P_LO.speedBoostUntilTick; patch.speedBoostUntilTick = next.speedBoostUntilTick; }
+  if (prev.meleeModeUntilTick !== next.meleeModeUntilTick) { bitsLo |= P_LO.meleeModeUntilTick; patch.meleeModeUntilTick = next.meleeModeUntilTick; }
+  if (prev.slowDebuffUntilTick !== next.slowDebuffUntilTick) { bitsLo |= P_LO.slowDebuffUntilTick; patch.slowDebuffUntilTick = next.slowDebuffUntilTick; }
+
+  if (prev.ammo !== next.ammo) { bitsHi |= P_HI.ammo; patch.ammo = next.ammo; }
+  if (prev.vulnerabilityUntilTick !== next.vulnerabilityUntilTick) { bitsHi |= P_HI.vulnerabilityUntilTick; patch.vulnerabilityUntilTick = next.vulnerabilityUntilTick; }
+  if (prev.blockJammerUntilTick !== next.blockJammerUntilTick) { bitsHi |= P_HI.blockJammerUntilTick; patch.blockJammerUntilTick = next.blockJammerUntilTick; }
+  if (prev.bossModeUntilTick !== next.bossModeUntilTick) { bitsHi |= P_HI.bossModeUntilTick; patch.bossModeUntilTick = next.bossModeUntilTick; }
+
+  // Always send abilityCharge and lastProcessedInputSeq (change almost every tick)
   patch.abilityCharge = next.abilityCharge;
   patch.lastProcessedInputSeq = next.lastProcessedInputSeq;
 
@@ -182,7 +211,8 @@ function diffPlayer(
 
 function applyPlayerPatch(base: PlayerEntity, update: EntityUpdate<PlayerEntity>): PlayerEntity {
   const u = update as { bitsLo: number; bitsHi: number } & Partial<PlayerEntity>;
-  // Spread the patch fields, strip the bitmask keys
+  // Strip bitmask keys before spreading so they don't pollute the entity.
+  // Mirror of client/src/net/snapshotDelta.ts:applyPlayerPatch.
   const { bitsLo: _lo, bitsHi: _hi, ...fields } = u;
   return { ...base, ...fields };
 }
@@ -196,24 +226,24 @@ function diffProjectile(
   let bits = 0;
   const patch: Partial<ProjectileEntity> = {};
 
-  if (prev.x !== next.x) { bits |= 1 << 0; patch.x = next.x; }
-  if (prev.y !== next.y) { bits |= 1 << 1; patch.y = next.y; }
-  if (prev.vx !== next.vx) { bits |= 1 << 2; patch.vx = next.vx; }
-  if (prev.vy !== next.vy) { bits |= 1 << 3; patch.vy = next.vy; }
-  if (prev.lifetimeMs !== next.lifetimeMs) { bits |= 1 << 4; patch.lifetimeMs = next.lifetimeMs; }
-  if (prev.ageMs !== next.ageMs) { bits |= 1 << 5; patch.ageMs = next.ageMs; }
-  if (prev.traveledPx !== next.traveledPx) { bits |= 1 << 6; patch.traveledPx = next.traveledPx; }
-  if (prev.returning !== next.returning) { bits |= 1 << 7; patch.returning = next.returning; }
-  if (prev.stickyFuseMs !== next.stickyFuseMs) { bits |= 1 << 8; patch.stickyFuseMs = next.stickyFuseMs; }
-  if (prev.bouncesRemaining !== next.bouncesRemaining) { bits |= 1 << 9; patch.bouncesRemaining = next.bouncesRemaining; }
-  if (prev.pierceRemaining !== next.pierceRemaining) { bits |= 1 << 10; patch.pierceRemaining = next.pierceRemaining; }
-  if (prev.impact !== next.impact) { bits |= 1 << 11; patch.impact = next.impact; }
-  if (prev.impactRadiusPx !== next.impactRadiusPx) { bits |= 1 << 12; patch.impactRadiusPx = next.impactRadiusPx; }
-  if (prev.splitCount !== next.splitCount) { bits |= 1 << 13; patch.splitCount = next.splitCount; }
-  if (prev.slowMultiplier !== next.slowMultiplier) { bits |= 1 << 14; patch.slowMultiplier = next.slowMultiplier; }
-  if (prev.homingStrength !== next.homingStrength) { bits |= 1 << 15; patch.homingStrength = next.homingStrength; }
-  if (prev.accelerationMultiplier !== next.accelerationMultiplier) { bits |= 1 << 16; patch.accelerationMultiplier = next.accelerationMultiplier; }
-  if (prev.gravityScale !== next.gravityScale) { bits |= 1 << 17; patch.gravityScale = next.gravityScale; }
+  if (prev.x !== next.x) { bits |= PROJ.x; patch.x = next.x; }
+  if (prev.y !== next.y) { bits |= PROJ.y; patch.y = next.y; }
+  if (prev.vx !== next.vx) { bits |= PROJ.vx; patch.vx = next.vx; }
+  if (prev.vy !== next.vy) { bits |= PROJ.vy; patch.vy = next.vy; }
+  if (prev.lifetimeMs !== next.lifetimeMs) { bits |= PROJ.lifetimeMs; patch.lifetimeMs = next.lifetimeMs; }
+  if (prev.ageMs !== next.ageMs) { bits |= PROJ.ageMs; patch.ageMs = next.ageMs; }
+  if (prev.traveledPx !== next.traveledPx) { bits |= PROJ.traveledPx; patch.traveledPx = next.traveledPx; }
+  if (prev.returning !== next.returning) { bits |= PROJ.returning; patch.returning = next.returning; }
+  if (prev.stickyFuseMs !== next.stickyFuseMs) { bits |= PROJ.stickyFuseMs; patch.stickyFuseMs = next.stickyFuseMs; }
+  if (prev.bouncesRemaining !== next.bouncesRemaining) { bits |= PROJ.bouncesRemaining; patch.bouncesRemaining = next.bouncesRemaining; }
+  if (prev.pierceRemaining !== next.pierceRemaining) { bits |= PROJ.pierceRemaining; patch.pierceRemaining = next.pierceRemaining; }
+  if (prev.impact !== next.impact) { bits |= PROJ.impact; patch.impact = next.impact; }
+  if (prev.impactRadiusPx !== next.impactRadiusPx) { bits |= PROJ.impactRadiusPx; patch.impactRadiusPx = next.impactRadiusPx; }
+  if (prev.splitCount !== next.splitCount) { bits |= PROJ.splitCount; patch.splitCount = next.splitCount; }
+  if (prev.slowMultiplier !== next.slowMultiplier) { bits |= PROJ.slowMultiplier; patch.slowMultiplier = next.slowMultiplier; }
+  if (prev.homingStrength !== next.homingStrength) { bits |= PROJ.homingStrength; patch.homingStrength = next.homingStrength; }
+  if (prev.accelerationMultiplier !== next.accelerationMultiplier) { bits |= PROJ.accelerationMultiplier; patch.accelerationMultiplier = next.accelerationMultiplier; }
+  if (prev.gravityScale !== next.gravityScale) { bits |= PROJ.gravityScale; patch.gravityScale = next.gravityScale; }
 
   if (bits === 0) return null;
   return { bits, patch };
@@ -226,7 +256,7 @@ function diffDestructible(
   next: DestructibleEntity,
 ): { bits: number; patch: Partial<DestructibleEntity> } | null {
   if (prev.health === next.health) return null;
-  return { bits: 1 << 0, patch: { health: next.health } };
+  return { bits: DESTR.health, patch: { health: next.health } };
 }
 
 // ─── Fire diff ────────────────────────────────────────────────────────────────
@@ -236,7 +266,7 @@ function diffFire(
   next: FireEntity,
 ): { bits: number; patch: Partial<FireEntity> } | null {
   if (prev.remainingMs === next.remainingMs) return null;
-  return { bits: 1 << 0, patch: { remainingMs: next.remainingMs } };
+  return { bits: FIRE.remainingMs, patch: { remainingMs: next.remainingMs } };
 }
 
 // ─── Pickup diff ──────────────────────────────────────────────────────────────
@@ -247,8 +277,8 @@ function diffPickup(
 ): { bits: number; patch: Partial<PickupEntity> } | null {
   let bits = 0;
   const patch: Partial<PickupEntity> = {};
-  if (prev.active !== next.active) { bits |= 1 << 0; patch.active = next.active; }
-  if (prev.respawnAtTick !== next.respawnAtTick) { bits |= 1 << 1; patch.respawnAtTick = next.respawnAtTick; }
+  if (prev.active !== next.active) { bits |= PICKUP.active; patch.active = next.active; }
+  if (prev.respawnAtTick !== next.respawnAtTick) { bits |= PICKUP.respawnAtTick; patch.respawnAtTick = next.respawnAtTick; }
   if (bits === 0) return null;
   return { bits, patch };
 }
@@ -261,9 +291,9 @@ function diffSatellite(
 ): { bits: number; patch: Partial<SatelliteEntity> } | null {
   let bits = 0;
   const patch: Partial<SatelliteEntity> = {};
-  if (prev.angle !== next.angle) { bits |= 1 << 0; patch.angle = next.angle; }
-  if (prev.fireCooldownMs !== next.fireCooldownMs) { bits |= 1 << 1; patch.fireCooldownMs = next.fireCooldownMs; }
-  if (prev.lifetimeMs !== next.lifetimeMs) { bits |= 1 << 2; patch.lifetimeMs = next.lifetimeMs; }
+  if (prev.angle !== next.angle) { bits |= SAT.angle; patch.angle = next.angle; }
+  if (prev.fireCooldownMs !== next.fireCooldownMs) { bits |= SAT.fireCooldownMs; patch.fireCooldownMs = next.fireCooldownMs; }
+  if (prev.lifetimeMs !== next.lifetimeMs) { bits |= SAT.lifetimeMs; patch.lifetimeMs = next.lifetimeMs; }
   if (bits === 0) return null;
   return { bits, patch };
 }
@@ -397,10 +427,12 @@ function applyCollectionDelta<K extends string | number, V>(
 ): Record<K, V> {
   const out: Record<K, V> = { ...base };
 
+  // Apply additions
   for (const [k, v] of Object.entries(delta.added) as [K, V][]) {
     out[k] = v;
   }
 
+  // Apply updates
   for (const [k, upd] of Object.entries(delta.updated) as [K, EntityUpdate<V>][]) {
     const existing = out[k];
     if (existing !== undefined) {
@@ -408,6 +440,7 @@ function applyCollectionDelta<K extends string | number, V>(
     }
   }
 
+  // Apply removals
   for (const k of delta.removed) {
     delete out[k];
   }

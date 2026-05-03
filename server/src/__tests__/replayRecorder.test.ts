@@ -25,7 +25,7 @@ import {
   playReplay,
   type ReplayHeader,
 } from "../ReplayRecorder.ts";
-import { PROTOCOL_VERSION } from "../protocol.ts";
+import { PROTOCOL_VERSION } from "@net/protocol.ts";
 
 const A = PlayerId("alice");
 const B = PlayerId("bob");

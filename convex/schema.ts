@@ -1,5 +1,6 @@
 import { defineSchema, defineTable } from "convex/server";
 import { v } from "convex/values";
+import { CHAOS_MODIFIER_IDS } from "./chaosIds";
 
 const roomStatus = v.union(
   v.literal("lobby"),
@@ -15,17 +16,17 @@ const matchStatus = v.union(
   v.literal("complete"),
 );
 
-// Mirror of CHAOS_MODIFIER_IDS in client/src/sim/data/chaosModifiers.ts.
-// Convex runtime cannot import from src/, so the list is duplicated here;
-// keep them in sync. Validates incoming arrays at the trust boundary.
+// Validator derived from the shared list in convex/chaosIds.ts. A parity
+// test in client/src/sim/__tests__/chaosIdsParity.test.ts asserts the
+// convex copy stays in lockstep with the sim list. Adding a modifier here
+// means appending to BOTH chaosIds.ts (this dir) AND
+// client/src/sim/data/chaosModifiers.ts.
 export const chaosModifierId = v.union(
-  v.literal("low-gravity"),
-  v.literal("slow-motion"),
-  v.literal("golden-gun"),
-  v.literal("slappers-only"),
-  v.literal("fire-hazard"),
-  v.literal("random-shapes"),
-  v.literal("max-recoil"),
+  ...(CHAOS_MODIFIER_IDS.map((id) => v.literal(id)) as unknown as [
+    ReturnType<typeof v.literal<string>>,
+    ReturnType<typeof v.literal<string>>,
+    ...ReturnType<typeof v.literal<string>>[],
+  ]),
 );
 
 export default defineSchema({

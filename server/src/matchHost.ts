@@ -34,9 +34,9 @@ import {
   encodeMessage,
   type ClientMessage,
   type PlayerLobbyInfo,
-} from "./protocol.ts";
+} from "@net/protocol.ts";
 import { InterestGrid, CELL_SIZE_PX, OBSERVE_RADIUS_CELLS } from "./InterestGrid.ts";
-import { encodeDelta } from "./snapshotDelta.ts";
+import { encodeDelta } from "@net/snapshotDelta.ts";
 import { transferAuthority } from "./authority.ts";
 import { ReplayRecorder } from "./ReplayRecorder.ts";
 
@@ -415,7 +415,7 @@ export class MatchHost {
    */
   private applyCardPick(
     playerId: PlayerId,
-    message: import("./protocol.ts").CardPick,
+    message: import("@net/protocol.ts").CardPick,
   ): void {
     const round = this.state.round;
     if (round.phase !== "drafting") return;
@@ -446,7 +446,7 @@ export class MatchHost {
     };
   }
 
-  private applyInput(playerId: PlayerId, input: import("./protocol.ts").Input): void {
+  private applyInput(playerId: PlayerId, input: import("@net/protocol.ts").Input): void {
     const last = this.lastProcessedInputSeq.get(playerId) ?? 0;
     // Refresh liveness regardless — even a duplicate seq proves the client is
     // alive on the wire.
