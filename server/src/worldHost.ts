@@ -165,5 +165,7 @@ export class WorldHost {
   }
 }
 
-/** Module-level singleton — there's exactly one world per server process. */
-export const worldHost = new WorldHost({ mapId: "boxworks-mini", rotateMaps: true });
+// Construction is now done in server/src/index.ts at boot time and the
+// instance is passed explicitly to the WS handler closure. Removing the
+// module-level singleton makes the host testable, swappable, and
+// guarantees `index.ts` controls lifecycle ordering.

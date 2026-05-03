@@ -995,6 +995,10 @@ function snapshotRuntime(runtime: WorldRuntime): WorldRuntime {
     movement: new Map(runtime.movement),
     nextEntityId: runtime.nextEntityId,
     map: runtime.map,
+    // Fresh scratch buffers — the lag-comp replay path can run concurrently
+    // with the main runtime tick, so they must not share mutable scratch.
+    scratchSortedProjectileIds: [],
+    scratchDeflectedProjectiles: new Set(),
   };
 }
 

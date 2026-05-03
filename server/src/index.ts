@@ -16,10 +16,14 @@
 import { mintWorldToken, verifyMatchToken, verifyWorldToken } from "./auth.ts";
 import { config } from "./config.ts";
 import { MatchRegistry } from "./matchRegistry.ts";
-import { worldHost } from "./worldHost.ts";
+import { WorldHost } from "./worldHost.ts";
 import type { MatchSocketData } from "./matchHost.ts";
 
 const registry = new MatchRegistry();
+// Single always-on world host per server process. Constructed at boot
+// rather than as a module-level singleton so tests can spin up a fresh
+// instance without crossing module-load state.
+const worldHost = new WorldHost({ mapId: "boxworks-mini", rotateMaps: true });
 
 type SocketKind = "room" | "world";
 type SocketData = MatchSocketData & { kind: SocketKind };
