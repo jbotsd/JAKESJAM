@@ -622,7 +622,18 @@ export class ProjectileSystem {
 
     if (projectile.glow) {
       // Halo ~3.4× projectile body — soft falloff, sits behind the body sprite.
-      const glowScale = (radius * 3.4 * 2) / GLOW_TEXTURE_SIZE;
+      // sticky-shards: while the fuse counts down, the halo grows + brightens
+      // so the projectile reads as "about to burst" before impact.
+      let glowMultiplier = 1;
+      if (projectile.stickyFuseSeconds !== undefined) {
+        const STICKY_FUSE_TOTAL = 0.72;
+        const remaining = Math.max(0, projectile.stickyFuseSeconds);
+        const progress = Math.min(1, 1 - remaining / STICKY_FUSE_TOTAL);
+        // Fast pulse layered on top of the linear ramp so it reads as alive.
+        const pulse = 0.5 + 0.5 * Math.sin(progress * Math.PI * 8);
+        glowMultiplier = 1 + 0.7 * progress + 0.18 * pulse;
+      }
+      const glowScale = (radius * 3.4 * 2 * glowMultiplier) / GLOW_TEXTURE_SIZE;
       projectile.glow.setPosition(projectile.position.x, projectile.position.y);
       projectile.glow.setScale(glowScale);
     }
@@ -713,6 +724,34 @@ export class ProjectileSystem {
           180,
           0.6,
         );
+      }
+
+      // voltaic-spark: travel-phase electric crackle. Tiny perpendicular zigzag
+      // line behind the projectile, jittered every trail tick. Render-only —
+      // Math.random is fine here per phaser4-game/SKILL.md (sim/ uses rng.ts).
+      if (projectile.element === "lightning") {
+        const vx = projectile.velocity.x;
+        const vy = projectile.velocity.y;
+        const speed = Math.hypot(vx, vy) || 1;
+        const px = -vy / speed; // perpendicular unit vector
+        const py = vx / speed;
+        const len = Math.max(6, radius * 1.6);
+        const jitter = (Math.random() - 0.5) * len * 0.8;
+        const arc = this.scene.add.graphics();
+        arc.lineStyle(Math.max(1, radius * 0.35), 0xfef9c3, 0.95);
+        const ax = projectile.position.x - vx / speed * (radius * 1.8);
+        const ay = projectile.position.y - vy / speed * (radius * 1.8);
+        arc.beginPath();
+        arc.moveTo(ax + px * len * 0.5, ay + py * len * 0.5);
+        arc.lineTo(ax + px * jitter, ay + py * jitter);
+        arc.lineTo(ax - px * len * 0.5, ay - py * len * 0.5);
+        arc.strokePath();
+        this.scene.tweens.add({
+          targets: arc,
+          alpha: 0,
+          duration: 120,
+          onComplete: () => arc.destroy(),
+        });
       }
     }
   }
