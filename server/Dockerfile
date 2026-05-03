@@ -8,8 +8,12 @@
 FROM oven/bun:1.1 AS base
 WORKDIR /app
 
-# Bring in shared sim package first (small, rarely changes — caches well)
+# Bring in shared sim + net packages first (small, rarely changes — caches well).
+# `@sim/*` and `@net/*` path aliases in server/tsconfig.json point at these.
+# Phase B1 (commit 2feac4b) consolidated protocol.ts and snapshotDelta.ts into
+# client/src/net, so server now depends on this directory at runtime.
 COPY client/src/sim ./client/src/sim
+COPY client/src/net ./client/src/net
 
 # Install server deps
 COPY server/package.json server/bun.lockb* ./server/
