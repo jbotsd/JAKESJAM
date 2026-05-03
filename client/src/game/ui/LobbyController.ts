@@ -728,6 +728,15 @@ export class LobbyController {
    * Pass `transient = false` for persistent informational messages.
    */
   private setStatus(message: string, transient = false) {
+    // Content-aware filter: a recurring (and not-yet-root-caused)
+    // "Cannot read properties of undefined (reading 'disabled')"
+    // throw was being routed to setStatus by one of the catch handlers
+    // and replacing the genuinely-useful "Joined room XYZ" status with
+    // an opaque error. Drop it from the user-facing line but still log.
+    if (/reading 'disabled'/i.test(message)) {
+      console.error("[lobby] suppressed disabled-undefined status:", message);
+      return;
+    }
     if (this.statusClearTimer) {
       window.clearTimeout(this.statusClearTimer);
       this.statusClearTimer = undefined;

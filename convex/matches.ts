@@ -72,6 +72,26 @@ export const recordMatchResult = mutation({
       });
     }
 
+    // Reset the room so it can host another match. Without this, the room
+    // stays in "in_match" with currentMatchId pointing at the dead match —
+    // startMatch's idempotency guard then returns the dead matchId forever
+    // and players have to leave-and-rejoin to play again.
+    const room = await ctx.db.get(args.roomId);
+    if (room && room.status === "in_match" && room.currentMatchId === args.matchId) {
+      await ctx.db.patch(args.roomId, {
+        status: "lobby",
+        currentMatchId: undefined,
+        updatedAt: Date.now(),
+      });
+      const players = await ctx.db
+        .query("roomPlayers")
+        .withIndex("by_room", (q) => q.eq("roomId", args.roomId))
+        .collect();
+      for (const p of players) {
+        if (p.ready) await ctx.db.patch(p._id, { ready: false });
+      }
+    }
+
     return { recorded: !alreadyRecorded, reason: "ok" as const };
   },
 });
