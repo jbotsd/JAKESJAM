@@ -1,7 +1,7 @@
 import Phaser from "phaser";
 import { SceneKeys } from "./SceneKeys";
 import { PALETTE, ARENA_THEMES } from "../ui/palette";
-import { paintPlatform } from "../render/PlatformPainter";
+import { PlatformLayer } from "../render/PlatformPainter";
 import { drawLightBeam } from "../render/LightingLayer";
 import { boxworksWorld, seededUnit } from "../../sim/data/boxworks.js";
 import {
@@ -153,7 +153,7 @@ export class MatchScene extends Phaser.Scene {
     this.updateScoreboardOverlay();
   };
   private audio?: GameAudioSystem;
-  private platformGraphics: Phaser.GameObjects.GameObject[] = [];
+  private platformLayer: PlatformLayer | null = null;
   private projectileSystem?: ProjectileSystem;
   private particlePool?: ParticlePool;
   private playerRig?: ProceduralPlayerRig;
@@ -503,21 +503,8 @@ export class MatchScene extends Phaser.Scene {
       }
     }
 
-    for (const obj of this.platformGraphics) obj.destroy();
-    this.platformGraphics = [];
-
-    // Platforms — two-tone + brush-streak Graphics via shared PlatformPainter.
-    for (const platform of boxworksWorld.platforms) {
-      const objs = paintPlatform(
-        this,
-        platform.position.x,
-        platform.position.y,
-        platform.size.x,
-        platform.size.y,
-        theme,
-      );
-      for (const o of objs) this.platformGraphics.push(o);
-    }
+    if (!this.platformLayer) this.platformLayer = new PlatformLayer(this);
+    this.platformLayer.repaint(boxworksWorld.platforms, theme);
     for (const spawn of boxworksWorld.spawns) {
       this.add.circle(spawn.x, spawn.y, 5, PALETTE.textMid, 0.5);
     }

@@ -60,7 +60,7 @@ import { DeathOverlay } from "../ui/DeathOverlay";
 import { ConnectionOverlay } from "../ui/ConnectionOverlay";
 import { ParticlePool } from "../systems/ParticlePool";
 import { StatusVfxController } from "../systems/StatusVfxController";
-import { paintPlatform } from "../render/PlatformPainter";
+import { PlatformLayer } from "../render/PlatformPainter";
 import { drawLightBeam } from "../render/LightingLayer";
 import { RenderLayer } from "../render/RenderLayer";
 import { PALETTE, ARENA_THEMES } from "../ui/palette";
@@ -202,7 +202,7 @@ export class OnlineMatchScene extends Phaser.Scene {
   /** Static arena geometry (platforms, walls, floor, vignette). Drawn
    *  once on hello receipt; never per-frame. */
   private arenaGraphics: Phaser.GameObjects.Graphics | null = null;
-  private platformGraphics: Phaser.GameObjects.GameObject[] = [];
+  private platformLayer: PlatformLayer | null = null;
   private fireGraphics: Phaser.GameObjects.Graphics | null = null;
   private pickupGraphics: Phaser.GameObjects.Graphics | null = null;
   private localPlayerId: PlayerId = PlayerId("");
@@ -1049,21 +1049,8 @@ export class OnlineMatchScene extends Phaser.Scene {
       }
     }
 
-    for (const obj of this.platformGraphics) obj.destroy();
-    this.platformGraphics = [];
-
-    // Platforms — two-tone + brush-streak Graphics via shared PlatformPainter.
-    for (const platform of map.platforms) {
-      const objs = paintPlatform(
-        this,
-        platform.position.x,
-        platform.position.y,
-        platform.size.x,
-        platform.size.y,
-        theme,
-      );
-      for (const o of objs) this.platformGraphics.push(o);
-    }
+    if (!this.platformLayer) this.platformLayer = new PlatformLayer(this);
+    this.platformLayer.repaint(map.platforms, theme);
   }
 
   /**

@@ -138,3 +138,47 @@ export function paintPlatform(
 
   return [g, shadowG];
 }
+
+/**
+ * Tracker that owns a set of platform Graphics and lets the scene
+ * repaint them safely. Without this, both MatchScene and
+ * OnlineMatchScene had to keep their own `platformGraphics: GameObject[]`
+ * field and remember to clear-and-destroy at the top of every renderArena
+ * pass — bug 0c430b2 was the regression that hit when a re-fired
+ * onHello produced doubled platforms because someone forgot the destroy.
+ *
+ * Use:
+ *   private readonly platforms = new PlatformLayer(this);
+ *   ...
+ *   this.platforms.repaint(map.platforms, theme);  // safe across resyncs
+ *
+ * destroy() runs automatically on scene shutdown via Phaser's event so
+ * callers don't need to wire it explicitly.
+ */
+export class PlatformLayer {
+  private graphics: Phaser.GameObjects.GameObject[] = [];
+  private readonly scene: Phaser.Scene;
+
+  constructor(scene: Phaser.Scene) {
+    this.scene = scene;
+    scene.events.once(Phaser.Scenes.Events.SHUTDOWN, () => this.destroy());
+    scene.events.once(Phaser.Scenes.Events.DESTROY, () => this.destroy());
+  }
+
+  repaint(
+    platforms: ReadonlyArray<{ position: { x: number; y: number }; size: { x: number; y: number } }>,
+    theme: ArenaTheme,
+  ): void {
+    for (const obj of this.graphics) obj.destroy();
+    this.graphics = [];
+    for (const p of platforms) {
+      const objs = paintPlatform(this.scene, p.position.x, p.position.y, p.size.x, p.size.y, theme);
+      for (const o of objs) this.graphics.push(o);
+    }
+  }
+
+  destroy(): void {
+    for (const obj of this.graphics) obj.destroy();
+    this.graphics = [];
+  }
+}
