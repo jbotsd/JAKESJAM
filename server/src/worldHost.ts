@@ -30,7 +30,10 @@ const WORLD_MATCH_ID = "world";
  *   2. Tested in __tests__/worldHost.test.ts to guard against a regression where
  *      a typo in `MapId` literal silently falls back to `DEFAULT_MAP_ID`.
  */
-const ROTATION_MAPS: readonly MapId[] = ["boxworks", "boxworks-mini", "boxworks-tower"];
+// Lead with boxworks-mini so the always-on world starts on the user's
+// preferred default. The full-size "boxworks" arena is excluded from
+// rotation — it's available only for explicit room hosts that pick it.
+const ROTATION_MAPS: readonly MapId[] = ["boxworks-mini", "boxworks-tower"];
 
 const WORLD_COLOR_PALETTE = [
   "#88ccff",
