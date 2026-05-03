@@ -33,6 +33,7 @@ import {
   RenderSmoother,
   type SmoothingOptions,
 } from "./renderSmoother.js";
+import { PingMonitor } from "./pingMonitor.js";
 
 // Re-export for backwards compatibility with prior consumers.
 export { RECONNECT_BACKOFF_MS, DEFAULT_SMOOTHING };
@@ -122,9 +123,6 @@ export type ReconcileStats = {
   currentOffsetPx: number;
 };
 
-const PING_INTERVAL_MS = 1000;
-const RTT_SAMPLE_LIMIT = 10;
-const SNAP_RATE_WINDOW_MS = 1000;
 
 /** Default NetStats for callers that hold a `ClientLoop | null` and need
  *  a value before the loop has connected. Centralised here so it stays
@@ -164,16 +162,14 @@ export class ClientLoop {
   private nextInputSeq: InputSeq = InputSeq(1);
   private currentInput: LocalInput = { keys: 0, aimX: 0, aimY: 0 };
   private interval: ReturnType<typeof setInterval> | null = null;
-  private pingInterval: ReturnType<typeof setInterval> | null = null;
   private accumulator = 0;
   private lastTickAt = 0;
   private lastSnapshotTick: Tick = Tick(0);
   private readonly remoteInterp = new Map<PlayerId, InterpolationBuffer<PlayerEntity>>();
 
-  // Net stats bookkeeping.
-  private readonly rttSamples: number[] = [];
-  private readonly outstandingPings = new Set<number>();
-  private readonly snapshotTimestamps: number[] = [];
+  // Net stats bookkeeping. Ping/pong + RTT + snap-rate live on PingMonitor;
+  // ClientLoop only owns the prediction-delta gauge.
+  private readonly pingMonitor: PingMonitor;
   private lastPredictDeltaPx = 0;
 
   // ---- Delta snapshot ring ----
@@ -213,6 +209,10 @@ export class ClientLoop {
     this.onAuthoritativeApplied = opts.onAuthoritativeApplied;
     this.onHello = opts.onHello;
     this.smoother = new RenderSmoother(opts.smoothing);
+    this.pingMonitor = new PingMonitor({
+      send: (encoded) => this.transport.send(encoded),
+      canSend: () => this.transport.state === "open",
+    });
     this.reconnectUrl = opts.reconnectUrl;
     this.onConnectionLost = opts.onConnectionLost;
     this.onReconnectAttempt = opts.onReconnectAttempt;
@@ -268,10 +268,9 @@ export class ClientLoop {
     if (this.interval) return;
     this.lastTickAt = performance.now();
     this.interval = setInterval(() => this.tick(), STEP_MS);
-    // Ping loop runs on its own timer so it survives even if sim ticks stall.
-    if (!this.pingInterval) {
-      this.pingInterval = setInterval(() => this.sendPing(), PING_INTERVAL_MS);
-    }
+    // Ping monitor runs on its own timer so RTT polling survives even
+    // if sim ticks stall.
+    this.pingMonitor.start();
   }
 
   stop(): void {
@@ -279,10 +278,7 @@ export class ClientLoop {
       clearInterval(this.interval);
       this.interval = null;
     }
-    if (this.pingInterval) {
-      clearInterval(this.pingInterval);
-      this.pingInterval = null;
-    }
+    this.pingMonitor.stop();
     this.reconnect.cancel();
   }
 
@@ -342,33 +338,16 @@ export class ClientLoop {
 
   /** Latest network/prediction health snapshot for the stats HUD. */
   getNetStats(): NetStats {
-    // Trim snapshot timestamps to a 1s sliding window for snap-rate.
-    const now = performance.now();
-    const windowStart = now - SNAP_RATE_WINDOW_MS;
-    while (
-      this.snapshotTimestamps.length > 0 &&
-      this.snapshotTimestamps[0]! < windowStart
-    ) {
-      this.snapshotTimestamps.shift();
-    }
-
-    let rttMs = 0;
-    if (this.rttSamples.length > 0) {
-      let sum = 0;
-      for (const sample of this.rttSamples) sum += sample;
-      rttMs = sum / this.rttSamples.length;
-    }
-
+    const ping = this.pingMonitor.stats();
     let slewMsAvg = 0;
     if (this.slewMsHistory.length > 0) {
       let slewSum = 0;
       for (const v of this.slewMsHistory) slewSum += v;
       slewMsAvg = slewSum / this.slewMsHistory.length;
     }
-
     return {
-      rttMs,
-      snapRateHz: this.snapshotTimestamps.length,
+      rttMs: ping.rttMs,
+      snapRateHz: ping.snapRateHz,
       pendingInputs: this.pendingInputs.length,
       lastPredictDeltaPx: this.lastPredictDeltaPx,
       lastSnapshotTick: this.lastSnapshotTick,
@@ -397,23 +376,6 @@ export class ClientLoop {
         protocolVersion: PROTOCOL_VERSION,
       }),
     );
-  }
-
-  private sendPing(): void {
-    if (this.transport.state !== "open") return;
-    const clientTime = performance.now();
-    this.outstandingPings.add(clientTime);
-    this.transport.send(encodeMessage({ t: "ping", clientTime }));
-  }
-
-  private handlePong(message: import("./protocol.js").Pong): void {
-    if (!this.outstandingPings.has(message.clientTime)) return;
-    this.outstandingPings.delete(message.clientTime);
-    const rtt = performance.now() - message.clientTime;
-    this.rttSamples.push(rtt);
-    while (this.rttSamples.length > RTT_SAMPLE_LIMIT) {
-      this.rttSamples.shift();
-    }
   }
 
   private tick(): void {
@@ -492,7 +454,7 @@ export class ClientLoop {
         this.applySnapshot(message);
         break;
       case "pong":
-        this.handlePong(message);
+        this.pingMonitor.notePong(message);
         break;
       case "bye":
         this.transport.close(message.reason);
@@ -561,7 +523,7 @@ export class ClientLoop {
 
     this.authoritativeState = resolvedState;
     this.lastSnapshotTick = message.tick;
-    this.snapshotTimestamps.push(performance.now());
+    this.pingMonitor.noteSnapshotArrived();
 
     // Accumulate server-driven slew hint into the budget.
     // The budget is drained 1 ms per tick() call (see tick()).
