@@ -23,26 +23,20 @@ import { applyDelta } from "./snapshotDelta.js";
 import { InterpolationBuffer } from "./interpolationBuffer.js";
 import type { Transport, TransportState } from "./transport.js";
 import { WsTransport } from "./wsTransport.js";
+import {
+  RECONNECT_BACKOFF_MS,
+  ReconnectSupervisor,
+  type ReconnectState,
+} from "./reconnectSupervisor.js";
+import {
+  DEFAULT_SMOOTHING,
+  RenderSmoother,
+  type SmoothingOptions,
+} from "./renderSmoother.js";
 
-/**
- * Backoff schedule (ms) for automatic reconnect. Length defines the max
- * attempt count (5). Exponential pattern: 500, 1000, 2000, 4000, 8000.
- */
-export const RECONNECT_BACKOFF_MS = [500, 1000, 2000, 4000, 8000] as const;
-
-/** Close reasons that should NOT trigger reconnect (terminal disconnects). */
-const TERMINAL_CLOSE_REASONS = new Set<string>([
-  "match-ended",
-  "auth-failed",
-  "protocol-mismatch",
-  "server-shutdown",
-]);
-
-export type ReconnectState = {
-  attempt: number;
-  lastAttemptAt: number | null;
-  isReconnecting: boolean;
-};
+// Re-export for backwards compatibility with prior consumers.
+export { RECONNECT_BACKOFF_MS, DEFAULT_SMOOTHING };
+export type { ReconnectState, SmoothingOptions };
 
 export type ClientLoopOptions = {
   transport: Transport;
@@ -83,22 +77,6 @@ export type ClientLoopOptions = {
    * progress in the UI.
    */
   onReconnectAttempt?: (attemptNumber: number, nextDelayMs: number) => void;
-};
-
-export type SmoothingOptions = {
-  /** Window over which the residual offset decays to zero, in ms. */
-  windowMs: number;
-  /**
-   * Distance (px) above which we skip smoothing and snap immediately. This is
-   * a teleport/respawn/forced-sync, not float drift.
-   */
-  snapThresholdPx: number;
-  /**
-   * Maximum correction (px) applied to the rendered position in any single
-   * render frame. Clamps overshoot when the renderer runs slower than
-   * expected (e.g. tab refocus).
-   */
-  maxCorrectionPxPerFrame: number;
 };
 
 export type LocalInput = {
@@ -155,12 +133,6 @@ const SNAP_RATE_WINDOW_MS = 1000;
  */
 const FULL_RECONCILE_INTERVAL_MS = 5000;
 
-const DEFAULT_SMOOTHING: SmoothingOptions = {
-  windowMs: 100,
-  snapThresholdPx: 30,
-  maxCorrectionPxPerFrame: 8,
-};
-
 export class ClientLoop {
   private transport: Transport;
   private readonly matchId: string;
@@ -201,19 +173,7 @@ export class ClientLoop {
   private lastReconcileSkippedEntities = 0;
 
   // ---- Local-player render smoothing state ----
-  private readonly smoothing: SmoothingOptions;
-  /**
-   * Residual offset between the rendered local-player position and the
-   * predicted position. Rendered = predicted + offset. After a reconcile
-   * disagreement, offset is set to (oldRendered - newPredicted) so the
-   * rendered position stays continuous, then it decays toward zero.
-   */
-  private renderOffsetX = 0;
-  private renderOffsetY = 0;
-  private lastRenderAt = 0;
-  /** Most recent reconcile delta magnitude (px). Surfaced via getReconcileStats. */
-  private lastReconcileDeltaPx = 0;
-  private lastReconcileSnapped = false;
+  private readonly smoother: RenderSmoother;
 
   // ---- Server-driven tick slew ----
   /**
@@ -229,12 +189,7 @@ export class ClientLoop {
   private static readonly SLEW_HISTORY_LIMIT = 10;
 
   // ---- Reconnect supervision ----
-  private reconnectAttempt = 0;
-  private reconnectLastAttemptAt: number | null = null;
-  private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
-  private reconnectInProgress = false;
-  /** Set true once we've decided to give up on reconnect or never reconnect. */
-  private connectionAbandoned = false;
+  private readonly reconnect: ReconnectSupervisor;
 
   constructor(opts: ClientLoopOptions) {
     this.transport = opts.transport;
@@ -243,10 +198,19 @@ export class ClientLoop {
     this.onEvents = opts.onEvents;
     this.onAuthoritativeApplied = opts.onAuthoritativeApplied;
     this.onHello = opts.onHello;
-    this.smoothing = { ...DEFAULT_SMOOTHING, ...(opts.smoothing ?? {}) };
+    this.smoother = new RenderSmoother(opts.smoothing);
     this.reconnectUrl = opts.reconnectUrl;
     this.onConnectionLost = opts.onConnectionLost;
     this.onReconnectAttempt = opts.onReconnectAttempt;
+
+    this.reconnect = new ReconnectSupervisor(this.reconnectUrl !== undefined, {
+      onAttempt: () => this.attemptReconnect(),
+      onAbandon: (reason) => {
+        this.stop();
+        this.onConnectionLost?.(reason);
+      },
+      onScheduled: (attempt, delay) => this.onReconnectAttempt?.(attempt, delay),
+    });
 
     this.wireTransport(this.transport);
   }
@@ -258,72 +222,32 @@ export class ClientLoop {
    */
   private wireTransport(transport: Transport): void {
     transport.onOpen(() => {
-      // First-time connect or successful reconnect — both reset the attempt
-      // counter so any subsequent drop starts a fresh backoff schedule.
-      this.reconnectAttempt = 0;
-      this.reconnectInProgress = false;
+      this.reconnect.noteOpen();
       this.sendHello();
     });
     transport.onMessage((data) => this.handleMessage(data));
-    transport.onClose((reason) => this.handleTransportClose(reason));
-  }
-
-  /**
-   * Decide whether to schedule a reconnect or accept the disconnect as final.
-   * Terminal reasons (match-ended, auth-failed, ...) skip retry. We also
-   * skip if no reconnectUrl was supplied (test mode / bare mock transport).
-   */
-  private handleTransportClose(reason: string): void {
-    if (this.connectionAbandoned) {
-      this.stop();
-      return;
-    }
-    if (!this.reconnectUrl || TERMINAL_CLOSE_REASONS.has(reason)) {
-      this.connectionAbandoned = true;
-      this.stop();
-      this.onConnectionLost?.(reason);
-      return;
-    }
-    if (this.reconnectAttempt >= RECONNECT_BACKOFF_MS.length) {
-      this.connectionAbandoned = true;
-      this.stop();
-      this.onConnectionLost?.(reason);
-      return;
-    }
-    this.scheduleReconnect();
-  }
-
-  private scheduleReconnect(): void {
-    if (this.reconnectTimer) return;
-    const delay = RECONNECT_BACKOFF_MS[this.reconnectAttempt]!;
-    const attemptNumber = this.reconnectAttempt + 1;
-    this.reconnectInProgress = true;
-    this.onReconnectAttempt?.(attemptNumber, delay);
-    this.reconnectTimer = setTimeout(() => {
-      this.reconnectTimer = null;
-      this.attemptReconnect();
-    }, delay);
+    transport.onClose((reason) => {
+      if (this.reconnect.isAbandoned()) {
+        this.stop();
+        return;
+      }
+      this.reconnect.noteClose(reason);
+    });
   }
 
   private attemptReconnect(): void {
-    if (this.connectionAbandoned || !this.reconnectUrl) return;
-    this.reconnectAttempt += 1;
-    this.reconnectLastAttemptAt = Date.now();
+    if (!this.reconnectUrl) return;
     const next = new WsTransport({ url: this.reconnectUrl });
     this.transport = next;
     this.wireTransport(next);
     // If the new socket fails to open, its close handler will route back
-    // through handleTransportClose and either schedule the next backoff
+    // through reconnect.noteClose and either schedule the next backoff
     // step or give up depending on attempt count.
   }
 
   /** Snapshot of the current reconnect state for UI consumers. */
   getReconnectState(): ReconnectState {
-    return {
-      attempt: this.reconnectAttempt,
-      lastAttemptAt: this.reconnectLastAttemptAt,
-      isReconnecting: this.reconnectInProgress,
-    };
+    return this.reconnect.state();
   }
 
   start(): void {
@@ -345,10 +269,7 @@ export class ClientLoop {
       clearInterval(this.pingInterval);
       this.pingInterval = null;
     }
-    if (this.reconnectTimer) {
-      clearTimeout(this.reconnectTimer);
-      this.reconnectTimer = null;
-    }
+    this.reconnect.cancel();
   }
 
   /**
@@ -375,18 +296,19 @@ export class ClientLoop {
    */
   getRenderState(): WorldState | null {
     if (!this.predictedState) return null;
-    this.advanceSmoothing();
-    if (this.renderOffsetX === 0 && this.renderOffsetY === 0) {
+    this.smoother.advance(performance.now());
+    if (!this.smoother.hasOffset()) {
       return this.predictedState;
     }
     const local = this.predictedState.players[this.playerId];
     if (!local) return this.predictedState;
     // Shallow clone state + players record + the local player so callers see
     // smoothed coords without us mutating the predicted sim state.
+    const offset = this.smoother.offset();
     const smoothedLocal: PlayerEntity = {
       ...local,
-      x: local.x + this.renderOffsetX,
-      y: local.y + this.renderOffsetY,
+      x: local.x + offset.x,
+      y: local.y + offset.y,
     };
     return {
       ...this.predictedState,
@@ -447,11 +369,7 @@ export class ClientLoop {
    * overlays — does not allocate, safe to poll every frame.
    */
   getReconcileStats(): ReconcileStats {
-    return {
-      lastDeltaPx: this.lastReconcileDeltaPx,
-      lastSnapped: this.lastReconcileSnapped,
-      currentOffsetPx: Math.hypot(this.renderOffsetX, this.renderOffsetY),
-    };
+    return this.smoother.stats();
   }
 
   // ---------------- Internals ----------------
@@ -652,10 +570,11 @@ export class ClientLoop {
     // BEFORE we rewind. We need this to compute the smoothing offset that
     // keeps the rendered position visually continuous across reconcile.
     const prevLocal = this.predictedState?.players[this.playerId];
+    const offset = this.smoother.offset();
     const prevRenderedX =
-      prevLocal !== undefined ? prevLocal.x + this.renderOffsetX : null;
+      prevLocal !== undefined ? prevLocal.x + offset.x : null;
     const prevRenderedY =
-      prevLocal !== undefined ? prevLocal.y + this.renderOffsetY : null;
+      prevLocal !== undefined ? prevLocal.y + offset.y : null;
 
     // ---- Per-entity reconcile ----
     //
@@ -773,7 +692,10 @@ export class ClientLoop {
 
     // Recompute the smoothing offset so rendered = previous-rendered, then
     // it decays to the new predicted position over smoothing.windowMs.
-    this.updateSmoothingOnReconcile(prevRenderedX, prevRenderedY);
+    const newLocal = this.predictedState?.players[this.playerId];
+    if (newLocal) {
+      this.smoother.applyReconcile(prevRenderedX, prevRenderedY, newLocal.x, newLocal.y);
+    }
 
     // Push remote players into their interpolation buffers.
     const serverTimeMs = message.tick * STEP_MS;
@@ -805,86 +727,6 @@ export class ClientLoop {
     );
   }
 
-  /**
-   * After rewind+replay, set the render offset so the rendered position
-   * matches what the user was just seeing (prevRendered). The offset then
-   * decays to zero over time, sliding the visible character to the new
-   * predicted position. Big jumps (teleport/respawn) skip smoothing.
-   */
-  private updateSmoothingOnReconcile(
-    prevRenderedX: number | null,
-    prevRenderedY: number | null,
-  ): void {
-    if (!this.predictedState) return;
-    const newLocal = this.predictedState.players[this.playerId];
-    if (!newLocal || prevRenderedX === null || prevRenderedY === null) {
-      // No prior frame to be continuous with — start with no offset.
-      this.renderOffsetX = 0;
-      this.renderOffsetY = 0;
-      this.lastReconcileDeltaPx = 0;
-      this.lastReconcileSnapped = false;
-      return;
-    }
-    const dx = prevRenderedX - newLocal.x;
-    const dy = prevRenderedY - newLocal.y;
-    const dist = Math.hypot(dx, dy);
-    this.lastReconcileDeltaPx = dist;
-    if (dist > this.smoothing.snapThresholdPx) {
-      // Teleport / respawn / forced sync: snap, do not smooth.
-      this.renderOffsetX = 0;
-      this.renderOffsetY = 0;
-      this.lastReconcileSnapped = true;
-      return;
-    }
-    this.renderOffsetX = dx;
-    this.renderOffsetY = dy;
-    this.lastReconcileSnapped = false;
-  }
-
-  /**
-   * Decay the render offset toward zero based on wall-clock elapsed since
-   * the previous render call. Called from getRenderState. Linear decay over
-   * `smoothing.windowMs` (so a 100ms window with ~16ms frames closes ~16% of
-   * the offset per frame), with a per-frame max correction clamp to prevent
-   * a visible jump when the renderer stalls.
-   */
-  private advanceSmoothing(): void {
-    if (this.renderOffsetX === 0 && this.renderOffsetY === 0) {
-      this.lastRenderAt = performance.now();
-      return;
-    }
-    const now = performance.now();
-    const elapsed = this.lastRenderAt === 0 ? 0 : Math.max(0, now - this.lastRenderAt);
-    this.lastRenderAt = now;
-    if (elapsed === 0) return;
-
-    // Linear decay over windowMs. Simple, predictable, and keeps the
-    // per-frame step easy to clamp. (Exponential would over-emphasise the
-    // first frame after a reconcile, which is exactly when the offset is
-    // most visible.)
-    const windowMs = Math.max(1, this.smoothing.windowMs);
-    const fraction = Math.min(1, elapsed / windowMs);
-    let stepX = this.renderOffsetX * fraction;
-    let stepY = this.renderOffsetY * fraction;
-
-    // Clamp the per-frame correction so a long pause (tab refocus, GC) can't
-    // produce a visible jump. Direction-preserving clamp on the 2D step.
-    const stepMag = Math.hypot(stepX, stepY);
-    const maxStep = this.smoothing.maxCorrectionPxPerFrame;
-    if (stepMag > maxStep && stepMag > 0) {
-      const k = maxStep / stepMag;
-      stepX *= k;
-      stepY *= k;
-    }
-
-    this.renderOffsetX -= stepX;
-    this.renderOffsetY -= stepY;
-
-    // Snap to zero once we're inside sub-pixel territory to avoid lingering
-    // tiny offsets that pin getRenderState into the slow clone path.
-    if (Math.abs(this.renderOffsetX) < 0.05) this.renderOffsetX = 0;
-    if (Math.abs(this.renderOffsetY) < 0.05) this.renderOffsetY = 0;
-  }
 }
 
 // ---------------- Helpers ----------------
