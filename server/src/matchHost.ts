@@ -995,6 +995,9 @@ function snapshotRuntime(runtime: WorldRuntime): WorldRuntime {
     movement: new Map(runtime.movement),
     nextEntityId: runtime.nextEntityId,
     map: runtime.map,
+    // Cache is immutable for the match lifetime — share the reference;
+    // safe even under concurrent lag-comp replay.
+    collisionCache: runtime.collisionCache,
     // Fresh scratch buffers — the lag-comp replay path can run concurrently
     // with the main runtime tick, so they must not share mutable scratch.
     scratchSortedProjectileIds: [],

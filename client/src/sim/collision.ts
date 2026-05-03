@@ -349,10 +349,13 @@ export function sweepAABBCached(
     if (respectOneWay && cache.oneWay[i]) {
       // Only block downward motion hitting the top surface
       if (hit.ny >= 0) continue; // Not a downward-into-top hit
-      // Mover bottom must be at or above platform top at start of frame
+      // Mover bottom must be at or above platform top at start of frame.
+      // Slack tightened from +2 to +0.5 (H1): the original 2 px of slop
+      // let a player sitting just past the platform top edge get the
+      // "pass through" behaviour. 0.5 px is sub-pixel float-safety only.
       const moverBottom = mover.y + mover.h;
       const platformTop = s.y;
-      if (moverBottom > platformTop + 2) continue; // Already inside/below — pass through
+      if (moverBottom > platformTop + 0.5) continue; // Already inside/below — pass through
     }
 
     if (best === null || hit.t < best.t) {
@@ -463,6 +466,12 @@ export function resolveMove(
       break;
     }
 
+    // Float-safety pull-back: stop just before the contact in `t`-space so
+    // `curX/curY` never sit *inside* the static. Without this, a follow-up
+    // sweep on the same surface can return t≈0 with the mover already
+    // overlapping by sub-pixel float error, which the slide loop then
+    // burns a pass on. 1e-4 in normalised t ≈ 0.0017 px at 16.67 ms ×
+    // 1000 px/s — well below visible.
     const epsilon = 1e-4;
     const tClamped = Math.max(0, hit.t - epsilon);
     curX += curVx * remaining * tClamped;
@@ -522,6 +531,12 @@ export function resolveMoveCached(
       break;
     }
 
+    // Float-safety pull-back: stop just before the contact in `t`-space so
+    // `curX/curY` never sit *inside* the static. Without this, a follow-up
+    // sweep on the same surface can return t≈0 with the mover already
+    // overlapping by sub-pixel float error, which the slide loop then
+    // burns a pass on. 1e-4 in normalised t ≈ 0.0017 px at 16.67 ms ×
+    // 1000 px/s — well below visible.
     const epsilon = 1e-4;
     const tClamped = Math.max(0, hit.t - epsilon);
     curX += curVx * remaining * tClamped;

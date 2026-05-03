@@ -68,8 +68,10 @@ export type WorldRuntime = {
   /** Cached map (platforms etc.) for the current match. */
   map: MapDefinition;
   /** Pre-computed collision cache — spatial grid + one-way flags. Built
-   *  once at runtime creation and reused for the match lifetime. */
-  collisionCache?: StaticCollisionCache;
+   *  once at runtime creation and reused for the match lifetime.
+   *  Always populated by createRuntime (post-H2; the brute-force fallback
+   *  was deleted, so the cache is the only collision path). */
+  collisionCache: StaticCollisionCache;
   /**
    * Round state orchestrator. Owns the running RoundState and routes it
    * through the pure stepRound each tick. Initialised on createRuntime;
@@ -92,9 +94,16 @@ export function createRuntime(map: MapDefinition): WorldRuntime {
     movement: new Map(),
     nextEntityId: 1,
     map,
-    collisionCache: map.size.x > 0 && map.size.y > 0
-      ? buildStaticCache(map.platforms, map.size.x, map.size.y)
-      : undefined,
+    // Always build a cache, even for stub maps. An empty cache (no
+    // platforms) is fine — the swept resolve gracefully reports "no hit"
+    // and the player falls into the void. The previous `undefined`
+    // fallback drove a separate brute-force collision path that didn't
+    // support one-way platforms, so we collapse to one path here (H2).
+    collisionCache: buildStaticCache(
+      map.platforms,
+      Math.max(1, map.size.x),
+      Math.max(1, map.size.y),
+    ),
     scratchSortedProjectileIds: [],
     scratchDeflectedProjectiles: new Set(),
   };

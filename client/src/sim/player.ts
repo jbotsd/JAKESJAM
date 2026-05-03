@@ -8,9 +8,7 @@
 // additive against Dev A's sim/types.ts contract.
 
 import {
-  resolveMove,
   resolveMoveCached,
-  platformToAABB,
   type AABB,
   type StaticCollisionCache,
 } from "./collision.js";
@@ -94,9 +92,11 @@ export function freshPlayerMovementMemory(): PlayerMovementMemory {
 export type PlayerStepOptions = {
   speedMultiplier?: number;
   gravityMultiplier?: number;
-  /** Pre-built collision cache. When provided, uses spatial-grid-accelerated
-   *  sweep + one-way platform support instead of brute-force iteration. */
-  collisionCache?: StaticCollisionCache;
+  /** Pre-built collision cache. Required: the brute-force fallback was
+   *  deleted (H2) because it didn't support one-way platforms and every
+   *  production code path passes a cache anyway. createRuntime always
+   *  builds a cache (even for empty stub maps). */
+  collisionCache: StaticCollisionCache;
 };
 
 export type PlayerStepResult = {
@@ -115,9 +115,12 @@ export function stepPlayer(
   aimX: number,
   aimY: number,
   memory: PlayerMovementMemory,
-  platforms: readonly PlatformDefinition[],
+  // `_platforms` retained as a positional placeholder so downstream
+  // call sites (World.ts, tests) don't shift on H2's signature change.
+  // Real collision uses options.collisionCache; the array is unread.
+  _platforms: readonly PlatformDefinition[],
   dtMs: number,
-  options: PlayerStepOptions = {},
+  options: PlayerStepOptions,
 ): PlayerStepResult {
   const dtSec = dtMs / 1000;
   const speedMul = options.speedMultiplier ?? 1;
@@ -230,9 +233,9 @@ export function stepPlayer(
   const subDt = dtSec / subSteps;
   let groundedAcc = false;
   for (let i = 0; i < subSteps; i++) {
-    const resolved = options.collisionCache
-      ? resolveMoveCached(aabb, next.vx, next.vy, subDt, options.collisionCache, true)
-      : resolveMove(aabb, next.vx, next.vy, subDt, platforms.map(platformToAABB));
+    const resolved = resolveMoveCached(
+      aabb, next.vx, next.vy, subDt, options.collisionCache, true,
+    );
     aabb = { x: resolved.x, y: resolved.y, w: aabb.w, h: aabb.h };
     next.vx = resolved.vx;
     next.vy = resolved.vy;
