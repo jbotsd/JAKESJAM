@@ -149,6 +149,23 @@ export function encodeMessage(message: ClientMessage | ServerMessage): Uint8Arra
   return out;
 }
 
+/**
+ * Required scalar-field shapes per discriminant. See client/src/net/protocol.ts
+ * for the canonical comment. Phase B1 will collapse this duplication.
+ */
+const REQUIRED_FIELDS: Record<string, ReadonlyArray<readonly [string, "string" | "number" | "object"]>> = {
+  hello: [["protocolVersion", "number"]],
+  in: [["seq", "number"], ["tick", "number"], ["keys", "number"]],
+  ack: [["lastSnapshotTick", "number"]],
+  ping: [["clientTime", "number"]],
+  pong: [["clientTime", "number"], ["serverTime", "number"]],
+  "card-pick": [["roundIndex", "number"], ["cardId", "string"]],
+  snap: [["tick", "number"]],
+  bye: [["reason", "string"]],
+};
+
+const warnedUnknown = new Set<string>();
+
 export function decodeMessage<T = ClientMessage | ServerMessage>(
   buffer: ArrayBuffer | Uint8Array,
 ): { version: number; message: T } | null {
@@ -156,17 +173,30 @@ export function decodeMessage<T = ClientMessage | ServerMessage>(
   if (bytes.byteLength < 2) return null;
   const version = bytes[0]!;
   const body = bytes.subarray(1);
+  let message: unknown;
   try {
-    const message = decode(body);
-    if (
-      typeof message !== "object" ||
-      message === null ||
-      typeof (message as { t?: unknown }).t !== "string"
-    ) {
-      return null;
-    }
-    return { version, message: message as T };
-  } catch {
+    message = decode(body);
+  } catch (e) {
+    console.warn("[protocol] msgpack decode failed", e);
     return null;
   }
+  if (typeof message !== "object" || message === null) return null;
+  const t = (message as { t?: unknown }).t;
+  if (typeof t !== "string") return null;
+  const required = REQUIRED_FIELDS[t];
+  if (!required) {
+    if (!warnedUnknown.has(t)) {
+      warnedUnknown.add(t);
+      console.warn(`[protocol] unknown discriminant t=${JSON.stringify(t)}`);
+    }
+    return null;
+  }
+  const obj = message as Record<string, unknown>;
+  for (const [field, kind] of required) {
+    if (typeof obj[field] !== kind) {
+      console.warn(`[protocol] message t=${t} missing/invalid field ${field} (expected ${kind})`);
+      return null;
+    }
+  }
+  return { version, message: message as T };
 }

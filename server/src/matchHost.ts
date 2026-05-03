@@ -80,6 +80,14 @@ export class MatchHost {
   private readonly lastProcessedInputSeq = new Map<PlayerId, InputSeq>();
   private readonly lagComp = new LagCompensator();
   private readonly tickSlew = new TickSlewController();
+  /** Per-tag once-only console.warn. Prevents log spam when the same internal
+   *  error fires every tick (e.g. lag-comp replay throws on a malformed runtime). */
+  private readonly warnedTags = new Set<string>();
+  private warnOnce(tag: string, message: string): void {
+    if (this.warnedTags.has(tag)) return;
+    this.warnedTags.add(tag);
+    console.warn(message);
+  }
   /**
    * Wall-clock ms (Date.now) at which each known player's connection dropped.
    * Entries are added on `detachClient`, cleared on a successful re-attach.
@@ -665,7 +673,11 @@ export class MatchHost {
     let naiveResult;
     try {
       naiveResult = stepWithRuntime(preStepState, naiveRuntime, inputsByPlayer, STEP_MS);
-    } catch {
+    } catch (err) {
+      this.warnOnce(
+        "lag-comp-naive-step",
+        `[lag-comp] match=${this.matchId} naive-replay step threw: ${err instanceof Error ? err.message : String(err)}`,
+      );
       return;
     }
     const rewoundHits = collectHitsByShooter(preStepState.players, rewoundEvents);

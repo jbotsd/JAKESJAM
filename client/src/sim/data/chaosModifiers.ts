@@ -36,7 +36,8 @@ export function parseStoredChaosModifiers(raw: string | null): ChaosModifierId[]
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw);
-  } catch {
+  } catch (e) {
+    console.warn("[chaosModifiers] failed to parse stored modifier list", e);
     return [];
   }
   if (!Array.isArray(parsed)) return [];
