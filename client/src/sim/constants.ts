@@ -1,4 +1,12 @@
 export const STEP_MS = 1000 / 60;
+
+/**
+ * Smallest platform height (px) we can author. Sub-stepping in stepPlayer
+ * uses 0.6× this as the per-sub-step max displacement so the swept sweep
+ * never has to span a thin platform in a single integration. 12 px is
+ * generous — boxworks-mini's thinnest platform is 18 px.
+ */
+export const MIN_PLATFORM_H_PX = 12;
 // Snapshot every sim tick — 60Hz authoritative state to clients. Doubles the
 // upstream bandwidth from 30Hz but cuts the worst-case prediction-correction
 // window in half, which is what "feels snappy" in practice. At jam scale

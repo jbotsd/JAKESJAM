@@ -15,6 +15,7 @@ import {
   type StaticCollisionCache,
 } from "./collision.js";
 import type { PlayerEntity, PlatformDefinition, InputBitfield } from "./types.js";
+import { MIN_PLATFORM_H_PX } from "./constants.js";
 
 const M = {
   maxGroundSpeed: 330,
@@ -209,24 +210,37 @@ export function stepPlayer(
 
   // Movement resolution against platforms using swept AABB.
   const bodyHeight = next.crouching ? M.crouchHeight : M.bodyHeight;
-  const aabb: AABB = {
+  let aabb: AABB = {
     x: next.x - M.bodyWidth / 2,
     y: next.y - bodyHeight / 2,
     w: M.bodyWidth,
     h: bodyHeight,
   };
 
-  // Use spatial-grid-accelerated resolution when cache is available,
-  // with one-way platform support (player can jump through platforms from below).
-  // Falls back to brute-force for backward compatibility.
-  const resolved = options.collisionCache
-    ? resolveMoveCached(aabb, next.vx, next.vy, dtSec, options.collisionCache, true)
-    : resolveMove(aabb, next.vx, next.vy, dtSec, platforms.map(platformToAABB));
-  next.x = resolved.x + M.bodyWidth / 2;
-  next.y = resolved.y + bodyHeight / 2;
-  next.vx = resolved.vx;
-  next.vy = resolved.vy;
-  mem.groundedLastFrame = resolved.groundedThisFrame;
+  // Sub-stepping guard: if the displacement this tick would exceed
+  // 0.6 × MIN_PLATFORM_H_PX, split the integration into N equal sub-steps
+  // so the swept sweep never has to span a thin platform in one shot.
+  // resolveMoveCached's slide loop is already bounded to 3 passes; sub-
+  // stepping at the player layer is the right place to add headroom.
+  // Cheap because the branch only fires under fast-fall / chaos-modifier
+  // gravity spikes; normal runs use a single sub-step.
+  const maxStepDisp = MIN_PLATFORM_H_PX * 0.6;
+  const totalDisp = Math.hypot(next.vx, next.vy) * dtSec;
+  const subSteps = Math.max(1, Math.ceil(totalDisp / maxStepDisp));
+  const subDt = dtSec / subSteps;
+  let groundedAcc = false;
+  for (let i = 0; i < subSteps; i++) {
+    const resolved = options.collisionCache
+      ? resolveMoveCached(aabb, next.vx, next.vy, subDt, options.collisionCache, true)
+      : resolveMove(aabb, next.vx, next.vy, subDt, platforms.map(platformToAABB));
+    aabb = { x: resolved.x, y: resolved.y, w: aabb.w, h: aabb.h };
+    next.vx = resolved.vx;
+    next.vy = resolved.vy;
+    if (resolved.groundedThisFrame) groundedAcc = true;
+  }
+  next.x = aabb.x + M.bodyWidth / 2;
+  next.y = aabb.y + bodyHeight / 2;
+  mem.groundedLastFrame = groundedAcc;
 
   return { player: next, memory: mem, jumpedThisFrame, jetpackFuel: nextFuel };
 }

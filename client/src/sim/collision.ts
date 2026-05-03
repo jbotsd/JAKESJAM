@@ -21,6 +21,19 @@ import type { PlatformDefinition } from "./types.js";
 
 export type AABB = { x: number; y: number; w: number; h: number };
 
+/**
+ * Height threshold (px) at or below which a `kind: "platform"` entry is
+ * treated as a thin jump-through-from-below platform. Anything taller is
+ * cover or wall-equivalent — kept solid 4-way regardless of `kind`. This
+ * keeps the existing map authoring stable: thin ledges + the mid platform
+ * stay one-way; cover obstacles stop accidentally being passable.
+ *
+ * Pick: 24 px is wider than any current thin platform (boxworks-mini's
+ * thinnest is 18 px) and well below the smallest cover obstacle (80 px).
+ * Adjust if a designer adds a thin platform > 24 px.
+ */
+export const ONE_WAY_MAX_HEIGHT_PX = 24;
+
 // ---------------------------------------------------------------------------
 // Coordinate conversion — single source of truth
 // ---------------------------------------------------------------------------
@@ -227,9 +240,15 @@ export function buildStaticCache(
 
   for (const p of platforms) {
     aabbs.push(platformToAABB(p));
-    // 'platform' kind = one-way (can jump through from below)
-    // 'floor' and 'wall' = always solid
-    oneWay.push(p.kind === "platform");
+    // 'platform' kind = jump-through-from-below ONLY when the platform is
+    // thin (≤ 24 px tall). Anything taller is a chest-high cover obstacle —
+    // boxworks-mini's `cover-left/right` are 80 px tall and meant to be
+    // solid 4-way. The original `kind === "platform"` rule made cover
+    // pass-through laterally because the one-way short-circuit at
+    // collision.ts ~line 336 treats any mover with bottom > coverTop+2 as
+    // "below the platform" and skips the side hit. Floors and walls are
+    // always solid regardless of height.
+    oneWay.push(p.kind === "platform" && p.size.y <= ONE_WAY_MAX_HEIGHT_PX);
   }
 
   const grid = buildSpatialGrid(aabbs, worldWidth, worldHeight);
@@ -519,6 +538,37 @@ export function resolveMoveCached(
     }
 
     remaining = remaining * (1 - tClamped);
+  }
+
+  // Post-resolve "am I touching the ground?" probe (D2 — see
+  // docs/refactor-followups.md or the collision plan). The swept loop only
+  // sets `grounded=true` when a *new* hit fires this tick. A player resting
+  // on a platform with vy~0 may not produce a new hit (sweep returns null
+  // when there's no entry), so the flag could flicker false even though
+  // they're still standing. A 1-px downward AABB probe against the cache
+  // closes the gap.
+  //
+  // Skip when respectOneWay is true and we're inside a one-way platform
+  // (jumping up through it) — the probe would falsely report grounded.
+  if (!grounded) {
+    const probe: AABB = { x: curX, y: curY + 1, w: mover.w, h: mover.h };
+    const candidates = queryGrid(cache.grid, probe, cache._seen);
+    for (let ci = 0; ci < candidates.length; ci++) {
+      const i = candidates[ci]!;
+      const s = cache.aabbs[i]!;
+      if (!aabbOverlap(probe, s)) continue;
+      // For one-way platforms, only count as grounded if mover was already
+      // at-or-above the platform top going into this tick (i.e. the original
+      // mover bottom was within 1 px of the platform top). Otherwise we'd
+      // ground a player rising up through a platform.
+      if (respectOneWay && cache.oneWay[i]) {
+        const moverBottomBefore = mover.y + mover.h;
+        const platformTop = s.y;
+        if (moverBottomBefore > platformTop + 1) continue; // below or inside — skip
+      }
+      grounded = true;
+      break;
+    }
   }
 
   return { x: curX, y: curY, vx: curVx, vy: curVy, groundedThisFrame: grounded };
