@@ -20,6 +20,7 @@ import { buildFireEntity, stepDestructibles } from "./destructible.js";
 import { stepFirePatches } from "./fire.js";
 import { clearExpiredBuffs, stepPickups } from "./pickup.js";
 import { stepProjectile } from "./projectile.js";
+import { CowRecord } from "./cowRecord.js";
 import { nextFloat } from "./rng.js";
 import {
   despawnSatellitesForDeadOwners,
@@ -43,6 +44,7 @@ import type {
   InputFrame,
   MapDefinition,
   PlayerSpawnInfo,
+  ProjectileEntity,
   SatelliteEntity,
   SimEvent,
   StepResult,
@@ -278,9 +280,13 @@ export function stepWithRuntime(
   // 1. Players: movement + weapon fire (only during fighting phase; other
   //    phases freeze input but still advance the round timer).
   const players: WorldState["players"] = {};
-  let nextProjectiles: WorldState["projectiles"] = { ...state.projectiles };
+  // Copy-on-write so a fighting tick with no new shots costs zero
+  // allocations on the projectiles record. See client/src/sim/cowRecord.ts.
+  const projectilesCow = new CowRecord<EntityId, ProjectileEntity>(state.projectiles);
   // Mutable copy of satellites — fire-on-first-shot may add new entries; the
-  // satellite step later this tick rotates and ticks them.
+  // satellite step later this tick rotates and ticks them. Not CoW-wrapped
+  // because stepSatellites returns a freshly-allocated record at line ~513
+  // anyway, so a CoW would save nothing.
   let nextSatellites: WorldState["satellites"] = { ...(state.satellites ?? {}) };
 
   for (const [pid_, entity] of Object.entries(state.players)) {
@@ -347,7 +353,7 @@ export function stepWithRuntime(
       if (fireResult.fired) {
         events.push({ t: "shot-fired", playerId: pid, x: nextEntity.x, y: nextEntity.y });
         for (const p of fireResult.projectiles) {
-          nextProjectiles[p.id] = p;
+          projectilesCow.set(p.id, p);
         }
         // First-fire activation for orbiting satellites: spawn the missing
         // companions for this player. Existing satellites stay where they are.
@@ -512,7 +518,7 @@ export function stepWithRuntime(
   );
   nextSatellites = satStep.satellites;
   for (const p of satStep.projectiles) {
-    nextProjectiles[p.id] = p;
+    projectilesCow.set(p.id, p);
   }
 
   // 3. Projectiles: motion + pathing + impact + split-on-expire. All hits
@@ -522,14 +528,15 @@ export function stepWithRuntime(
   //
   //    During the drafting phase we skip the loop entirely: projectiles
   //    keep their state but don't move or hit, mirroring the player freeze.
+  const projectilesView = projectilesCow.view();
   const remainingProjectiles: WorldState["projectiles"] = draftingPhase
-    ? { ...nextProjectiles }
+    ? { ...projectilesView }
     : {};
   // Reuse per-runtime scratch buffer — see WorldRuntime.scratchSortedProjectileIds.
   const sortedProjectileIds = runtime.scratchSortedProjectileIds;
   sortedProjectileIds.length = 0;
   if (!draftingPhase) {
-    for (const id in nextProjectiles) {
+    for (const id in projectilesView) {
       sortedProjectileIds.push(EntityId(Number(id)));
     }
     sortedProjectileIds.sort((a, b) => a - b);
@@ -544,7 +551,7 @@ export function stepWithRuntime(
   deflectedProjectileIds.clear();
 
   for (const id of sortedProjectileIds) {
-    const proj = nextProjectiles[id]!;
+    const proj = projectilesView[id]!;
     const result = stepProjectile(proj, {
       platforms: runtime.map.platforms,
       players,
