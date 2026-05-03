@@ -74,6 +74,14 @@ export type WorldRuntime = {
    * synced from snapshots on the client side.
    */
   orchestrator?: RoundOrchestrator;
+  /**
+   * Per-tick scratch storage. Hoisted out of stepWithRuntime so the same
+   * buffers are reused every tick instead of allocating fresh — the
+   * `Object.keys().map().sort()` and `new Set()` patterns showed up as
+   * dominant per-tick allocations in the game-loop-perf audit.
+   */
+  scratchSortedProjectileIds: EntityId[];
+  scratchDeflectedProjectiles: Set<EntityId>;
 };
 
 export function createRuntime(map: MapDefinition): WorldRuntime {
@@ -85,6 +93,8 @@ export function createRuntime(map: MapDefinition): WorldRuntime {
     collisionCache: map.size.x > 0 && map.size.y > 0
       ? buildStaticCache(map.platforms, map.size.x, map.size.y)
       : undefined,
+    scratchSortedProjectileIds: [],
+    scratchDeflectedProjectiles: new Set(),
   };
 }
 
@@ -515,18 +525,23 @@ export function stepWithRuntime(
   const remainingProjectiles: WorldState["projectiles"] = draftingPhase
     ? { ...nextProjectiles }
     : {};
-  const sortedProjectileIds: EntityId[] = draftingPhase
-    ? []
-    : Object.keys(nextProjectiles)
-        .map((id) => EntityId(Number(id)))
-        .sort((a, b) => a - b);
+  // Reuse per-runtime scratch buffer — see WorldRuntime.scratchSortedProjectileIds.
+  const sortedProjectileIds = runtime.scratchSortedProjectileIds;
+  sortedProjectileIds.length = 0;
+  if (!draftingPhase) {
+    for (const id in nextProjectiles) {
+      sortedProjectileIds.push(EntityId(Number(id)));
+    }
+    sortedProjectileIds.sort((a, b) => a - b);
+  }
 
   const nextTick = Tick(state.tick + 1);
   let rngState = state.rngState;
   // Projectile ids that were parry-deflected this tick — they get dropped
   // from `remainingProjectiles` even if their hit-resolution path would have
-  // kept them alive (e.g. pierce-chain).
-  const deflectedProjectileIds = new Set<EntityId>();
+  // kept them alive (e.g. pierce-chain). Reuses runtime scratch.
+  const deflectedProjectileIds = runtime.scratchDeflectedProjectiles;
+  deflectedProjectileIds.clear();
 
   for (const id of sortedProjectileIds) {
     const proj = nextProjectiles[id]!;
