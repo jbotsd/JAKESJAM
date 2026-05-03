@@ -126,6 +126,20 @@ const PING_INTERVAL_MS = 1000;
 const RTT_SAMPLE_LIMIT = 10;
 const SNAP_RATE_WINDOW_MS = 1000;
 
+/** Default NetStats for callers that hold a `ClientLoop | null` and need
+ *  a value before the loop has connected. Centralised here so it stays
+ *  in sync with the NetStats type. */
+export const EMPTY_NET_STATS: NetStats = {
+  rttMs: 0,
+  snapRateHz: 0,
+  pendingInputs: 0,
+  lastPredictDeltaPx: 0,
+  lastSnapshotTick: Tick(0),
+  transportState: "closed",
+  slewMsAvg: 0,
+  lastReconcileSkippedEntities: 0,
+};
+
 /**
  * Every FULL_RECONCILE_INTERVAL_MS we force a whole-world rewind+replay
  * regardless of hash comparison results. This is a safety sweep that catches
