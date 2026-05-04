@@ -965,16 +965,19 @@ export class OnlineMatchScene extends Phaser.Scene {
         `size=${width}x${height} platforms=${map.platforms.length}`,
     );
 
-    // Camera bounds with viewport-sized padding. Without padding, the camera
-    // clamps so tightly at world edges that the local player visually pins
-    // to the screen edge (visible in prod: player at y=1064 in an 1080-tall
-    // world with an 800-tall viewport → camera can only scroll to 280, so
-    // player ends up 16 px from the bottom of the screen). Padding lets the
-    // camera over-scroll into the void backdrop, keeping the player centered.
+    // Camera bounds with a small breathing-room pad. Originally the pad was
+    // half a viewport in each direction — that worked for the edge-pinning
+    // problem the comment used to describe, but it created MORE void than
+    // world on widescreen viewports (1920×1080 viewport on a 1280×640 world
+    // = 540 px of void below the floor). Players reported the rig feeling
+    // "stranded floating in an abyss" even when standing perfectly on the
+    // floor. Reduce padding to 1/6 of the viewport — enough that a player
+    // standing at world-edge isn't visually pinned to screen-edge, but the
+    // void around the world is bounded.
     const cam = this.cameras.main;
-    const padX = cam.width / 2;
-    const padY = cam.height / 2;
-    cam.setBounds(-padX, -padY, width + cam.width, height + cam.height);
+    const padX = Math.round(cam.width / 6);
+    const padY = Math.round(cam.height / 6);
+    cam.setBounds(-padX, -padY, width + padX * 2, height + padY * 2);
     cam.setRoundPixels(true);
 
     // Tear down any previous arena render (e.g. on reconnect to a new match).

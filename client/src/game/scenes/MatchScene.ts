@@ -550,10 +550,14 @@ export class MatchScene extends Phaser.Scene {
     // world with an 800-tall viewport → camera can only scroll to 280, so
     // player ends up 16 px from the bottom of the screen). Padding lets the
     // camera over-scroll into the void backdrop, keeping the player centered.
+    // Camera over-pad reduced from 1/2 viewport to 1/6 — see the same
+    // change in OnlineMatchScene.renderArena. Half-viewport pad created
+    // more void than world on widescreen displays; 1/6 keeps the
+    // edge-pinning fix without leaving the rig stranded in an abyss.
     const cam = this.cameras.main;
-    const padX = cam.width / 2;
-    const padY = cam.height / 2;
-    cam.setBounds(-padX, -padY, boxworksWorld.size.x + cam.width, boxworksWorld.size.y + cam.height);
+    const padX = Math.round(cam.width / 6);
+    const padY = Math.round(cam.height / 6);
+    cam.setBounds(-padX, -padY, boxworksWorld.size.x + padX * 2, boxworksWorld.size.y + padY * 2);
     cam.setRoundPixels(true);
     this.cameraTarget?.destroy();
     this.cameraTarget = this.add.zone(this.playerBody.position.x, this.playerBody.position.y, 2, 2);
