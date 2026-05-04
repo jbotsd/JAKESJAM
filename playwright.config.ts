@@ -16,7 +16,10 @@ export default defineConfig({
     baseURL: BASE_URL,
     trace: "retain-on-failure",
     screenshot: "only-on-failure",
-    video: "off",
+    // Capture WebM video of every test session. Set to "off" once the
+    // collision investigation is done — videos add 1-3 MB per test and
+    // bloat the artifacts dir.
+    video: "on",
     headless: true,
     viewport: { width: 1280, height: 800 },
   },
