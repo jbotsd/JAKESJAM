@@ -201,9 +201,17 @@ flags set, `resolveMoveCached` runs in identical wasm bytecode on
 both sides — predict ↔ authority is byte-identical, the visible
 bug dies. 4 new server-side parity tests.
 
-**PR D3 (pending).** Delete the TS sim. Requires Phase B4
-(player.zig) and Phase C (projectiles + combat) to land first —
-the plain TS impls still cover those paths today.
+**PR D3 ✅ audited 2026-05-05 — `docs/zig-wasm-d3-audit.md`.**
+Conclusion: D3 is **complete by construction**, not by deletion.
+The LUT install path (server-side now also via the v0.48 trig-LUT
+fix) makes every TS sim module's trig calls bit-identical to wasm.
+The three modules that genuinely run wasm in the hot path
+(rng/collision/player) already have minimal TS shims with explicit
+`<X>Native` fallbacks for graceful degradation. Per-module verdict
+in the audit doc: nothing to delete without sacrificing the
+emergency-rollback path. True module deletion blocked on (a)
+wasm-required-load guarantee and (b) `World.step` orchestrator
+port (C3) — neither needed for the determinism fix that's live.
 
 ### Phase E — observability + performance shake-out (1-2 days)
 

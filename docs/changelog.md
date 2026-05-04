@@ -1,5 +1,29 @@
 # JAKESJAM - Changelog
 
+## v0.49 - 2026-05-05
+
+- **Phase D3 audited — `docs/zig-wasm-d3-audit.md`.** Per-module
+  cleanup audit of every TS sim file. Verdict: D3 is **complete
+  by construction**, not by deletion. The comptime trig LUT
+  install path makes every TS sim module's trig calls
+  bit-identical to wasm. The three modules that genuinely route
+  to wasm in the hot path (rng / collision / player) already have
+  minimal shims with explicit `<X>Native` fallbacks for graceful
+  degradation. The remaining six modules (projectile / satellite /
+  fire / weapon / combat / destructible) don't need backend swaps
+  because their math is already deterministic via the LUT — adding
+  swaps would be boundary-crossing overhead with no determinism
+  win.
+- True module deletion is blocked on (a) wasm-required-load
+  guarantee — today wasm load failure falls back to TS gracefully
+  — and (b) `World.step` orchestrator port (C3). Neither is
+  required for the determinism fix that's already live.
+- `docs/zig-wasm-migration.md` updated to mark D3 ✅ audited with
+  the conclusion + link to the audit doc.
+- Smoke against deployed prod: 3/3.
+
+
+
 ## v0.48 - 2026-05-05
 
 - **🚨 Production determinism gap fixed: server now installs the
