@@ -177,6 +177,33 @@ describe("player landing", () => {
     expect(groundedTrueCount).toBe(60);
   });
 
+  // Regression for H1-revert: a grounded player's moverBottom can drift
+  // 1-2 px past platform top due to float accumulation over many ticks.
+  // The one-way short-circuit slack (+2 px) MUST still let the sweep
+  // find the contact and push the player back up onto the surface;
+  // tightening to +0.5 broke this and reintroduced fall-through-terrain
+  // at production scale.
+  for (const drift of [0.6, 1.0, 1.5, 1.9]) {
+    test(`grounded player drifted ${drift}px past one-way platform top is recovered, not dropped`, () => {
+      const platform: PlatformDefinition = {
+        id: "p", kind: "platform",
+        position: { x: 100, y: 100 + 22 / 2 }, size: { x: 200, y: 22 },
+      };
+      const cache = buildStaticCache([platform], 200, 200);
+      const platformTop = 100;
+      // Mover bottom is `drift` px past the platform top — the float-drift
+      // condition that float-accumulates while standing.
+      const mover: AABB = {
+        x: 100, y: platformTop - PLAYER_H + drift, w: PLAYER_W, h: PLAYER_H,
+      };
+      // Apply gravity for one tick; expect to land back on top, not fall through.
+      const result = resolveMoveCached(mover, 0, 24 /* gravity step */, STEP_SEC, cache, true);
+      expect(result.groundedThisFrame).toBe(true);
+      // Foot should snap back to platform top (within the 1e-4 epsilon).
+      expect(result.y + mover.h).toBeLessThanOrEqual(platformTop + 0.001);
+    });
+  }
+
   // D3: matrix sweep over (vy, platform height) — guards the canonical
   // tunneling bug class. Player must never end up below a platform that
   // resolveMoveCached should have stopped them on.

@@ -350,12 +350,15 @@ export function sweepAABBCached(
       // Only block downward motion hitting the top surface
       if (hit.ny >= 0) continue; // Not a downward-into-top hit
       // Mover bottom must be at or above platform top at start of frame.
-      // Slack tightened from +2 to +0.5 (H1): the original 2 px of slop
-      // let a player sitting just past the platform top edge get the
-      // "pass through" behaviour. 0.5 px is sub-pixel float-safety only.
+      // The +2 px slack is PROTECTIVE, not slop: float drift accumulating
+      // over many ticks can put a grounded player's moverBottom between
+      // platformTop+0.5 and platformTop+2, and the sweep needs to STILL
+      // find the hit so we push the player back up onto the surface.
+      // (See git blame: H1 tightened this to +0.5 and re-introduced
+      // fall-through-terrain at production scale; reverted here.)
       const moverBottom = mover.y + mover.h;
       const platformTop = s.y;
-      if (moverBottom > platformTop + 0.5) continue; // Already inside/below — pass through
+      if (moverBottom > platformTop + 2) continue; // Already inside/below — pass through
     }
 
     if (best === null || hit.t < best.t) {
@@ -555,34 +558,49 @@ export function resolveMoveCached(
     remaining = remaining * (1 - tClamped);
   }
 
-  // Post-resolve "am I touching the ground?" probe (D2 — see
-  // docs/refactor-followups.md or the collision plan). The swept loop only
-  // sets `grounded=true` when a *new* hit fires this tick. A player resting
-  // on a platform with vy~0 may not produce a new hit (sweep returns null
-  // when there's no entry), so the flag could flicker false even though
-  // they're still standing. A 1-px downward AABB probe against the cache
-  // closes the gap.
+  // Post-resolve "am I touching/overlapping the ground?" probe (D2). The
+  // swept loop only sets `grounded=true` when a *new* hit fires this tick.
+  // Two scenarios this misses:
+  //   1. Player resting on platform with vy~0 — sweep returns null because
+  //      entry is at t=0 or in the past (already at contact).
+  //   2. Player whose foot has drifted past platformTop by 0..2 px due to
+  //      float accumulation — sweep returns null because entry < 0.
+  // Without this probe + snap, scenario 2 was producing the user-reported
+  // "falls through terrain" bug: gravity kept adding to vy each tick while
+  // grounded stayed false, eventually breaking through.
   //
-  // Skip when respectOneWay is true and we're inside a one-way platform
-  // (jumping up through it) — the probe would falsely report grounded.
+  // The probe AABB extends 2 px below the resolved position. On overlap with
+  // a static AABB, we set grounded=true AND snap the foot back to the static
+  // top + zero vy if descending. The snap is what makes the fix work — just
+  // setting grounded=true while letting vy keep climbing is the bug we hit.
   if (!grounded) {
-    const probe: AABB = { x: curX, y: curY + 1, w: mover.w, h: mover.h };
+    // Probe extends 2 px below current position — matches the +2 slack used
+    // by the swept one-way short-circuit so we recover any drift the swept
+    // loop legitimately ignored.
+    const probe: AABB = { x: curX, y: curY, w: mover.w, h: mover.h + 2 };
     const candidates = queryGrid(cache.grid, probe, cache._seen);
+    let bestPlatformTop = Infinity;
     for (let ci = 0; ci < candidates.length; ci++) {
       const i = candidates[ci]!;
       const s = cache.aabbs[i]!;
       if (!aabbOverlap(probe, s)) continue;
-      // For one-way platforms, only count as grounded if mover was already
-      // at-or-above the platform top going into this tick (i.e. the original
-      // mover bottom was within 1 px of the platform top). Otherwise we'd
-      // ground a player rising up through a platform.
+      // For one-way platforms only ground if mover was already at-or-above
+      // the platform top going into this tick. The +2 slack matches the
+      // swept short-circuit.
       if (respectOneWay && cache.oneWay[i]) {
         const moverBottomBefore = mover.y + mover.h;
         const platformTop = s.y;
-        if (moverBottomBefore > platformTop + 1) continue; // below or inside — skip
+        if (moverBottomBefore > platformTop + 2) continue;
       }
       grounded = true;
-      break;
+      // Track the highest platform top under us — that's where we snap to.
+      if (s.y < bestPlatformTop) bestPlatformTop = s.y;
+    }
+    // Snap foot back to platform top if probe found ground. Stops the
+    // "drifted past + grounded but still gravitating downward" failure.
+    if (grounded && bestPlatformTop < Infinity) {
+      curY = bestPlatformTop - mover.h;
+      if (curVy > 0) curVy = 0;
     }
   }
 
