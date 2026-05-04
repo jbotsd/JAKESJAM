@@ -196,6 +196,7 @@ function diffPlayer(
   if (prev.vulnerabilityUntilTick !== next.vulnerabilityUntilTick) { bitsHi |= P_HI.vulnerabilityUntilTick; patch.vulnerabilityUntilTick = next.vulnerabilityUntilTick; }
   if (prev.blockJammerUntilTick !== next.blockJammerUntilTick) { bitsHi |= P_HI.blockJammerUntilTick; patch.blockJammerUntilTick = next.blockJammerUntilTick; }
   if (prev.bossModeUntilTick !== next.bossModeUntilTick) { bitsHi |= P_HI.bossModeUntilTick; patch.bossModeUntilTick = next.bossModeUntilTick; }
+  if ((prev.grounded ?? false) !== (next.grounded ?? false)) { bitsHi |= P_HI.grounded; patch.grounded = next.grounded; }
 
   // Always send abilityCharge and lastProcessedInputSeq (change almost every tick)
   patch.abilityCharge = next.abilityCharge;

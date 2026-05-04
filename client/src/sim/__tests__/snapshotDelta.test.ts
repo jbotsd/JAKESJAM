@@ -272,6 +272,30 @@ describe("snapshotDelta", () => {
       expect(result.players[p1]?.slowMultiplier).toBe(0.5);
     });
 
+    test("grounded flag transition round-trips (false → true)", () => {
+      const p1 = PlayerId("p1");
+      const basePlayer = makePlayer({ id: p1, grounded: false });
+      const prev = makeWorld({ players: { [p1]: basePlayer } });
+      const next = makeWorld({
+        players: { [p1]: { ...basePlayer, grounded: true } },
+      });
+      const delta = encodeDelta(prev, next);
+      const result = applyDelta(prev, delta);
+      expect(result.players[p1]?.grounded).toBe(true);
+    });
+
+    test("grounded flag transition round-trips (true → false)", () => {
+      const p1 = PlayerId("p1");
+      const basePlayer = makePlayer({ id: p1, grounded: true });
+      const prev = makeWorld({ players: { [p1]: basePlayer } });
+      const next = makeWorld({
+        players: { [p1]: { ...basePlayer, grounded: false } },
+      });
+      const delta = encodeDelta(prev, next);
+      const result = applyDelta(prev, delta);
+      expect(result.players[p1]?.grounded).toBe(false);
+    });
+
     test("clearing a buff (undefined) round-trips cleanly", () => {
       const p1 = PlayerId("p1");
       const basePlayer = makePlayer({

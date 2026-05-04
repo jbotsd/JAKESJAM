@@ -54,6 +54,7 @@ export const P_HI = {
   vulnerabilityUntilTick: 1 << 1,
   blockJammerUntilTick: 1 << 2,
   bossModeUntilTick: 1 << 3,
+  grounded: 1 << 4,
 } as const;
 
 export const PROJ = {
