@@ -1315,10 +1315,10 @@ export class OnlineMatchScene extends Phaser.Scene {
       position: { x: player.x, y: player.y + halfHeight },
       velocity: { x: player.vx, y: player.vy },
       aimTarget: { x: player.aimX, y: player.aimY },
-      // The sim doesn't expose a grounded flag on PlayerEntity (it lives in the
-      // per-tick movement memory). Treat players as grounded for posing — the
-      // rig's bob effect is keyed off horizontal walk speed anyway.
-      grounded: true,
+      // PlayerEntity.grounded is wire-encoded as of commit ef365c7 (P_HI
+      // bit 4). Falls back to true if the snapshot omits it (older builds
+      // or the brief window before the first snap arrives).
+      grounded: player.grounded ?? true,
       crouching: player.crouching,
       health: player.health,
       maxHealth: character.maxHealth,
