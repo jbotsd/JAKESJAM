@@ -1,5 +1,22 @@
 # JAKESJAM - Changelog
 
+## v0.42 - 2026-05-05
+
+- **Phase F1e — `sim/src/destructible.zig` (full port).** Math
+  primitives: HP damage application (`max(0, hp - damage)`),
+  squared-distance blast-radius check (no sqrt — `dx² + dy² <=
+  (R + pr)²`), center→AABB conversion. Wasm exports:
+  `destructible_apply_damage`, `destructible_player_in_blast`,
+  `destructible_center_to_aabb`. The orchestration (entity dict
+  mutation + event emission + fire spawn requests) stays TS.
+- New `destructibleParity.test.ts` (4 tests, 24 expects):
+  HP clamping across overshoots, blast-radius edge boundary +
+  1px-outside, 200 random fixtures (0 mismatches), center→AABB
+  matches `collision.centerToAABB`.
+- 294 client tests, 39 server tests, 6 native Zig tests.
+
+
+
 ## v0.41 - 2026-05-05
 
 - **Phase F1d — `sim/src/combat.zig` ported.** Math primitives:
