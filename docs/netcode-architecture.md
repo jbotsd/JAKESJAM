@@ -419,14 +419,59 @@ Start with **syd** only (you're in AU, so this is the lowest-latency baseline fo
 
 ## Determinism
 
-Determinism in `sim/` is a strong "should", not a "must". The server's snapshots are authoritative either way, but agreement makes prediction tighter and reduces visible reconciliation snaps.
+Determinism in `sim/` was originally framed as a strong "should". After
+two weeks of production wear (May 2026 user reports of *"barely detects
+standing"* and *"falls through terrain"*), it's being upgraded to a
+**hard "must"**: float drift between client and server cascades into
+60 Hz of per-entity reconcile churn that no amount of smoothing can
+fully hide.
 
 Concrete rules:
 
 - All randomness goes through `sim/rng.ts` (mulberry32 or similar, seeded). Seed broadcast in `ServerHello`, restored from `WorldState.rngState`.
 - Fixed-step physics: never multiply by a wall-clock dt. Sim takes a fixed `STEP_MS = 1000/60` and we accumulate real time into integer step counts.
-- Floating-point determinism across Bun and browsers is *not* guaranteed for trig/sqrt. Accept small drift, let snapshots correct it.
+- ~~Floating-point determinism across Bun and browsers is *not* guaranteed for trig/sqrt. Accept small drift, let snapshots correct it.~~ **Superseded** — see "Implementation Substrate" below.
 - Iterate entities in sorted order (by `EntityId`), never raw `Object.values()` order.
+
+## Implementation Substrate
+
+**Decision (May 2026): the shared sim layer migrates from TypeScript
+to Zig → WASM.** Rationale:
+
+The WebAssembly specification mandates IEEE 754 reproducibility for
+`f32`/`f64` ops across all wasm hosts (see [WASM Spec — Numeric
+Instructions](https://webassembly.github.io/spec/core/exec/numerics.html)).
+Two browsers (or Bun and a browser) running identical wasm bytecode
+produce bit-exact identical float results. This eliminates the drift
+that drove every "barely detects standing" symptom.
+
+Zig was chosen over Rust→wasm because:
+
+1. No `wasm-bindgen` glue layer — `zig build-lib -target wasm32-freestanding`
+   is first-class.
+2. Smaller binary (~10–30 KB for our sim vs ~200 KB+ for Rust+wasm-bindgen).
+3. No GC, no hidden allocations — aligns with the "no allocations
+   during step" rule that's been the perf contract from day one.
+4. `comptime` makes lookup tables, struct layouts, bitmask
+   constants trivial.
+5. Bun has native `WebAssembly` support, so server runs the same
+   `.wasm` as the client. **Same code, both sides** — true
+   single-source-of-truth determinism, not by-convention.
+
+**TypeScript stays everywhere else.** Only the deterministic core
+moves to Zig. Render layer (Phaser scene), prediction-reconcile glue
+(`clientLoop.ts`), snapshot delta codec, transport (Bun WebSocket
+server) all stay in TS. The wasm module exposes a small typed
+interface — `step(state_buffer, input_buffer, dt) → state_buffer` —
+that the TS side wraps.
+
+**Migration path:** see `docs/zig-wasm-migration.md` for the
+phased implementation plan. ~3-week project with hard PR boundaries
+so each phase can land or revert independently.
+
+A previous Q16.16 fixed-point-in-TS attempt (commit `894e4b2`,
+since reverted) is preserved as a reference design — same goals,
+different substrate.
 
 ## Two-Dev Split (Owners)
 
