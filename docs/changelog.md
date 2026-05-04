@@ -1,5 +1,26 @@
 # JAKESJAM - Changelog
 
+## v0.47 - 2026-05-05
+
+- **Wasm exports manifest + regression smoke test (D3 partial).**
+  After F1d/F1e/F1a/F2b all shipped (last cuts shipped at `fe4b430`,
+  `4d4318c`, `c2549f8`), there was no remaining cut from the cron's
+  priority list — every TS sim module either has a wasm equivalent
+  or already uses the LUT for cross-host parity.
+- New `docs/zig-wasm-exports.md` — complete reference manifest of
+  all 72 wasm function exports, organised by Zig module, each with
+  its purpose + the parity test that gates byte-equality.
+- New `client/src/sim/wasm/__tests__/exportsManifest.test.ts` —
+  smoke test that the wasm artifact exposes every required export
+  by name and they're all callable. Catches the regression class
+  where a Zig refactor accidentally drops/renames an export.
+  Currently checks 72 names + memory + state buffer + sizeof_*
+  exports + LUT pointer validity.
+- 319 client tests (was 315; +4 manifest test cases), 39 server
+  tests, 6 native Zig tests. Smoke against deployed prod: 3/3.
+
+
+
 ## v0.46 - 2026-05-05
 
 - **Phase F1a finish-half-2 — bounce-resolve + anti-homing helpers
