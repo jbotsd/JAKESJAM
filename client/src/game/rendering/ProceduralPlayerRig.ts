@@ -503,22 +503,30 @@ export class ProceduralPlayerRig {
   }
 
   // --- BOOT: Heavy armored feet ---
+  // Anchor convention: `foot.y` = the platform-top contact point (i.e.
+  // the bottom edge of the boot sole). All three rects sit ABOVE foot.y.
+  // Pre-fix, the sole rect spanned [foot.y - 0.3*bh, foot.y + 0.7*bh] —
+  // bottom 4 px below the contact, so even a perfectly-grounded rig
+  // visibly sank into the platform top. Combined with the airborne
+  // walk-cycle lift this drove the user-visible flicker between "feet
+  // floating" (lift trough) and "feet inside platform" (no-lift, sink).
+  // See commit 7027a82 for the matching footPos gate.
   private drawBoot(g: Phaser.GameObjects.Graphics, foot: Vec2, s: number) {
     const f = this.facing;
     const bw = 10 * s;
     const bh = 6 * s;
 
-    // Boot sole (dark)
+    // Boot sole — bottom edge at foot.y, full height bh above.
     g.fillStyle(DARK, 1);
-    g.fillRoundedRect(foot.x - bw * 0.4 + f * 2 * s, foot.y - bh * 0.3, bw, bh, 2 * s);
+    g.fillRoundedRect(foot.x - bw * 0.4 + f * 2 * s, foot.y - bh, bw, bh, 2 * s);
 
-    // Boot upper
+    // Boot upper — sits on top of the sole. Height 0.8*bh.
     g.fillStyle(this.colorDark, 1);
-    g.fillRoundedRect(foot.x - bw * 0.35 + f * 2 * s, foot.y - bh, bw * 0.85, bh * 0.8, 2 * s);
+    g.fillRoundedRect(foot.x - bw * 0.35 + f * 2 * s, foot.y - bh - bh * 0.8, bw * 0.85, bh * 0.8, 2 * s);
 
-    // Boot accent stripe
+    // Boot accent stripe — runs across the upper, ~half-height up.
     g.fillStyle(this.color, 0.6);
-    g.fillRect(foot.x - bw * 0.2 + f * 2 * s, foot.y - bh * 0.6, bw * 0.5, 2 * s);
+    g.fillRect(foot.x - bw * 0.2 + f * 2 * s, foot.y - bh - bh * 0.4, bw * 0.5, 2 * s);
   }
 
   // --- NAMEPLATE (plate-less) ---
