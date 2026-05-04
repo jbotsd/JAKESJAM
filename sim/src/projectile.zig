@@ -344,3 +344,138 @@ pub export fn projectile_boomerang_turn_rate() f64 {
 pub export fn projectile_homing_turn_rate_default() f64 {
     return HOMING_TURN_RATE_DEFAULT;
 }
+
+// ── Bounce resolve + anti-homing helpers ──────────────────────────────────
+
+pub const BounceResolve = extern struct {
+    /// 1 = bounced this tick (hit a static), 0 = no bounce
+    bounced: i32,
+    /// Index of platform hit, -1 if no bounce
+    hit_index: i32,
+    /// Reflected velocity (post-bounce). Same as input if no bounce.
+    new_vx: f64,
+    new_vy: f64,
+    /// Nudged-back position (post-bounce). Same as input if no bounce.
+    new_x: f64,
+    new_y: f64,
+    /// Decremented bounces_remaining (only if bounced).
+    new_bounces_remaining: i32,
+    _pad: i32 = 0,
+};
+
+/// Resolve a projectile-vs-static bounce step. Mirrors the bounce
+/// branch of `stepProjectile` in projectile.ts:
+///   1. circleBounce against statics at current position
+///   2. If hit: reflect velocity on the indicated axes
+///   3. Nudge-back from prev position by max(1, radius/2) along
+///      the reflected direction so the projectile doesn't tunnel
+///   4. Decrement bounces_remaining
+///
+/// Bit-exact: uses `@sqrt` (IEEE 754 deterministic) — caller's TS
+/// must use `Math.sqrt(bvx*bvx + bvy*bvy)` for parity, NOT
+/// `Math.hypot` (overflow-safe scaling can ULP-differ).
+pub fn bounceResolve(
+    cur_x: f64,
+    cur_y: f64,
+    prev_x: f64,
+    prev_y: f64,
+    vx: f64,
+    vy: f64,
+    radius: f64,
+    bounces_remaining: i32,
+    statics: []const collision.AABB,
+) BounceResolve {
+    var out: BounceResolve = .{
+        .bounced = 0,
+        .hit_index = -1,
+        .new_vx = vx,
+        .new_vy = vy,
+        .new_x = cur_x,
+        .new_y = cur_y,
+        .new_bounces_remaining = bounces_remaining,
+    };
+
+    if (bounces_remaining <= 0) return out;
+
+    var bounce: collision.CircleBounce = undefined;
+    if (!collision.circleBounce(cur_x, cur_y, prev_x, prev_y, radius, statics, &bounce)) {
+        return out;
+    }
+
+    var bvx = vx;
+    var bvy = vy;
+    if (bounce.reflect_x == 1) bvx = -vx;
+    if (bounce.reflect_y == 1) bvy = -vy;
+
+    const len_raw = @sqrt(bvx * bvx + bvy * bvy);
+    const len = if (len_raw == 0.0) 1.0 else len_raw;
+    const nudge_raw = radius * 0.5;
+    const nudge = if (nudge_raw < 1.0) 1.0 else nudge_raw;
+
+    out.bounced = 1;
+    out.hit_index = bounce.index;
+    out.new_vx = bvx;
+    out.new_vy = bvy;
+    out.new_x = prev_x + (bvx / len) * nudge;
+    out.new_y = prev_y + (bvy / len) * nudge;
+    out.new_bounces_remaining = bounces_remaining - 1;
+    return out;
+}
+
+/// Compute the mirror target for anti-homing: `(2*x - tx, 2*y - ty)`.
+/// The projectile rotates AWAY from the real target by chasing this
+/// reflected point. Pure arithmetic.
+pub fn antiHomingTarget(
+    x: f64,
+    y: f64,
+    target_x: f64,
+    target_y: f64,
+    out_tx: *f64,
+    out_ty: *f64,
+) void {
+    out_tx.* = x * 2.0 - target_x;
+    out_ty.* = y * 2.0 - target_y;
+}
+
+// ── wasm exports ──────────────────────────────────────────────────────────
+
+pub export fn projectile_bounce_resolve(
+    cur_x: f64,
+    cur_y: f64,
+    prev_x: f64,
+    prev_y: f64,
+    vx: f64,
+    vy: f64,
+    radius: f64,
+    bounces_remaining: i32,
+    statics_ptr: [*]const collision.AABB,
+    statics_count: u32,
+    out_ptr: *BounceResolve,
+) void {
+    out_ptr.* = bounceResolve(
+        cur_x,
+        cur_y,
+        prev_x,
+        prev_y,
+        vx,
+        vy,
+        radius,
+        bounces_remaining,
+        statics_ptr[0..statics_count],
+    );
+}
+
+pub export fn projectile_anti_homing_target(
+    x: f64,
+    y: f64,
+    target_x: f64,
+    target_y: f64,
+    out_tx: *f64,
+    out_ty: *f64,
+) void {
+    antiHomingTarget(x, y, target_x, target_y, out_tx, out_ty);
+}
+
+pub export fn sizeof_bounce_resolve() u32 {
+    return @sizeOf(BounceResolve);
+}

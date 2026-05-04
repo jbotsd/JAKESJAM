@@ -295,7 +295,10 @@ no `GeneralPurposeAllocator` per step).
 | `scripts/vercel-build.sh` + zig-on-deploy-server CI step | deploy fix | ✅ shipped (3cf5fb2) |
 | `sim/src/projectile.zig` (closestNonOwnerPlayer + boomerangShouldReturn) | F1a finish-half-1 | ✅ shipped |
 | `client/src/sim/wasm/__tests__/projectileHomingParity.test.ts` | F1a finish-half-1 | ✅ shipped |
-| `sim/src/projectile.zig` full stepProjectile dispatch (caller refactor) | F1a finish-half-2 | new |
+| `sim/src/projectile.zig` (bounceResolve + antiHomingTarget) | F1a finish-half-2 | ✅ shipped |
+| `client/src/sim/wasm/__tests__/projectileBounceParity.test.ts` | F1a finish-half-2 | ✅ shipped |
+| Math.hypot → Math.sqrt in projectile.ts (4 sites) | parity fix | ✅ shipped |
+| `sim/src/world.zig` orchestrator (full stepProjectile dispatch in Zig) | C3 | new |
 | `sim/src/world.zig` (orchestrator dispatch over all pathings) | C3 | new |
 | `sim/src/spatial.zig` (static spatial grid replacing TS Map) | F2b | ✅ shipped |
 | `client/src/sim/wasm/__tests__/spatialParity.test.ts` | F2b | ✅ shipped |

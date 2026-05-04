@@ -1,5 +1,30 @@
 # JAKESJAM - Changelog
 
+## v0.46 - 2026-05-05
+
+- **Phase F1a finish-half-2 — bounce-resolve + anti-homing helpers
+  ported.** `sim/src/projectile.zig` now also covers:
+  - `bounceResolve` — full bounce-vs-static reflection step:
+    circleBounce → reflect velocity → nudge-back position →
+    decrement bouncesRemaining. Returns 8-field `BounceResolve`
+    extern struct (48 B).
+  - `antiHomingTarget` — `(2x - tx, 2y - ty)` mirror computation
+    used by anti-homing pathing.
+- **Bug fix in `client/src/sim/projectile.ts`**: replaced four
+  `Math.hypot(...)` calls with `Math.sqrt(a*a + b*b)`. V8's
+  hypot uses overflow-safe scaling that produces ULP-different
+  bits than the simple formula; in our velocity domain there's
+  no overflow risk so matching Zig's `@sqrt` keeps cross-host
+  parity. Same fix pattern as the player.ts hypot fix earlier.
+- New `projectileBounceParity.test.ts` (5 tests, 13 expects):
+  bounces=0 no-op, downward-into-floor reflects vy, horizontal-
+  into-wall reflects vx, 100 randomised fixtures (0 mismatches),
+  anti-homing target arithmetic edge cases.
+- Smoke against deployed prod: 3/3 green.
+- 315 client tests, 39 server tests, 6 native Zig tests.
+
+
+
 ## v0.45 - 2026-05-05
 
 - **Phase F2b — static spatial grid in Zig.** `sim/src/spatial.zig`

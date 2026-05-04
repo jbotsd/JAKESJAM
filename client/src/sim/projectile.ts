@@ -211,7 +211,11 @@ export function stepProjectile(
   const prevY = proj.y;
   const x = prevX + vx * dtSec;
   const y = prevY + vy * dtSec;
-  const stepDist = Math.hypot(x - prevX, y - prevY);
+  // Math.sqrt(dx² + dy²) instead of Math.hypot — V8's hypot uses
+  // overflow-safe scaling that produces ULP-different bits than the
+  // simple formula. In our velocity domain there's no overflow, so
+  // matching Zig's `@sqrt` keeps cross-host parity. ADR-0006.
+  const stepDist = Math.sqrt((x - prevX) * (x - prevX) + (y - prevY) * (y - prevY));
   const traveledPx = (proj.traveledPx ?? 0) + stepDist;
 
   // 3. Player collision — swept hit detection: sweep the projectile AABB
@@ -353,7 +357,7 @@ export function stepProjectile(
         if (bounce.reflectY) bvy = -vy;
 
         const nudge = Math.max(1, proj.radius * 0.5);
-        const len = Math.hypot(bvx, bvy) || 1;
+        const len = Math.sqrt(bvx * bvx + bvy * bvy) || 1;
         const bx = prevX + (bvx / len) * nudge;
         const by = prevY + (bvy / len) * nudge;
 
@@ -424,7 +428,7 @@ export function stepProjectile(
         if (reflectY) bvy = -vy;
 
         const nudge = Math.max(1, proj.radius * 0.5);
-        const len = Math.hypot(bvx, bvy) || 1;
+        const len = Math.sqrt(bvx * bvx + bvy * bvy) || 1;
         const bx = prevX + (bvx / len) * nudge;
         const by = prevY + (bvy / len) * nudge;
 
@@ -690,7 +694,7 @@ function spawnSplit(
     return { spawned: [], rngState };
   }
 
-  const speed = Math.hypot(parent.vx, parent.vy);
+  const speed = Math.sqrt(parent.vx * parent.vx + parent.vy * parent.vy);
   const baseAngle = speed > 0 ? lutAtan2(parent.vy, parent.vx) : 0;
   const spread = SPLIT_SPREAD;
 
@@ -757,7 +761,7 @@ function rotateVelocityToward(
   turnRate: number,
   dtSec: number,
 ): { vx: number; vy: number } {
-  const speed = Math.hypot(vx, vy);
+  const speed = Math.sqrt(vx * vx + vy * vy);
   if (speed <= 0) return { vx, vy };
   const current = lutAtan2(vy, vx);
   const desired = lutAtan2(targetY - py, targetX - px);
