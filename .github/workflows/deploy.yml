@@ -42,6 +42,35 @@ jobs:
       - run: bun run --filter client test
 
   # ──────────────────────────────────────────────────────────────────────
+  # Deploy Convex (lobby + matches schema/functions) to production.
+  # Convex is a separate deploy target — neither Vercel nor Fly cover it.
+  # Without this job a `convex/` change ships in git but the prod schema
+  # stays stale, producing ArgumentValidationError on the client (e.g.
+  # "Object contains extra field `mapId`" — bedeff5..31b7780 trail).
+  #
+  # Secret: CONVEX_DEPLOY_KEY  (Convex dashboard → Settings →
+  #   Deploy Keys → Production → Generate). Distinct from the dev
+  #   deploy key in .env.local; that one is for `bunx convex dev`.
+  # ──────────────────────────────────────────────────────────────────────
+  deploy-convex:
+    name: Deploy Convex (prod)
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - run: bun install --frozen-lockfile
+      - name: Push functions + schema to Convex
+        run: bunx convex deploy --yes
+        env:
+          # The deploy key tells the CLI which deployment to push to;
+          # no other Convex env vars are needed for prod.
+          CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_DEPLOY_KEY }}
+
+  # ──────────────────────────────────────────────────────────────────────
   # Deploy Bun game server to Fly.io.
   # Triggers on changes to server/, fly.toml, or shared sim code.
   # Secret: FLY_API_TOKEN  (create with `flyctl tokens create deploy -a jakesjam-srv-syd`)
