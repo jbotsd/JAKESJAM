@@ -11,6 +11,7 @@ pub const player = @import("player.zig");
 pub const projectile = @import("projectile.zig");
 pub const hash = @import("hash.zig");
 pub const trig = @import("trig.zig");
+pub const fire = @import("fire.zig");
 
 // Force wasm linker to include sub-modules' `export fn` symbols.
 comptime {
@@ -20,6 +21,7 @@ comptime {
     _ = projectile;
     _ = hash;
     _ = trig;
+    _ = fire;
 }
 
 const STATE_SIZE: usize = 64 * 1024;

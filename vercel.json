@@ -1,6 +1,6 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
-  "buildCommand": "bun run --filter client build",
+  "buildCommand": "./scripts/vercel-build.sh",
   "outputDirectory": "client/dist",
   "installCommand": "bun install --frozen-lockfile",
   "framework": null,
@@ -11,6 +11,19 @@
         {
           "key": "Cache-Control",
           "value": "public, max-age=31536000, immutable"
+        }
+      ]
+    },
+    {
+      "source": "/wasm/(.*)",
+      "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "public, max-age=31536000, immutable"
+        },
+        {
+          "key": "Content-Type",
+          "value": "application/wasm"
         }
       ]
     }

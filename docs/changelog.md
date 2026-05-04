@@ -1,5 +1,34 @@
 # JAKESJAM - Changelog
 
+## v0.38 - 2026-05-05
+
+- **🚨 Fixed: bug fix from v0.37 wasn't actually live in prod.** The
+  e2e smoke test caught a 404 on `https://jakesjam.vercel.app/wasm/sim.wasm`.
+  Root cause: Vercel's build env doesn't have Zig installed, so the
+  Vite plugin's `zig build` spawn failed silently and the deploy
+  shipped without the wasm artifact. Default users hit the 404,
+  the wasm boot threw, and the swaps never installed → users were
+  still running the TS sim with the determinism bug.
+- New `scripts/vercel-build.sh` downloads Zig 0.15.2 (matches
+  `.zig-version`), runs `zig build` to produce `sim.wasm`, then
+  invokes the Vite client build. `vercel.json` `buildCommand`
+  switched to call this script.
+- Added `Cache-Control` + explicit `Content-Type: application/wasm`
+  headers for `/wasm/(.*)` so streaming-instantiate works
+  reliably + the 23KB binary gets long-cached.
+- **Phase F1e — `sim/src/fire.zig` ported.** Fire patch tick math
+  (lifetime decay, dps × dt damage, AABB overlap test). Pure
+  arithmetic so the determinism story was already covered by IEEE
+  754, but porting unblocks future D3 (delete TS sim).
+- New `fireParity.test.ts` (3 tests, 226 expect calls): tick
+  decay matches across the patch's full lifetime, damage = dps × dt
+  arithmetic byte-identical, AABB overlap matches `aabbOverlap` for
+  500 random fixtures.
+- 274 client tests, 39 server tests, 6 native Zig tests, all green.
+- Wasm artifact: 23.6 KB.
+
+
+
 ## v0.37 - 2026-05-05
 
 - **🚀 Phase F3 — wasm sim flipped default-on. The "barely detects
