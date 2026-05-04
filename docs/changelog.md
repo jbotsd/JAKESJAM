@@ -1,5 +1,26 @@
 # JAKESJAM - Changelog
 
+## v0.41 - 2026-05-05
+
+- **Phase F1d — `sim/src/combat.zig` ported.** Math primitives:
+  parry arc cosine check (`isHitInParryArc` — uses `lutAtan2` from
+  trig LUT), angle wrapping (mirror `wrapAngle`), shield drain
+  (dps × dt). The orchestration (parry timing state machine,
+  deflection event emission) stays TS-side. Wasm exports:
+  `combat_wrap_angle`, `combat_is_hit_in_parry_arc`,
+  `combat_shield_drain`, `combat_parry_arc_radians`.
+- New `combatParity.test.ts` (6 tests):
+  - PARRY_ARC_RADIANS constant matches π/3
+  - wrap_angle across 41 inputs
+  - 360° sweep at 5° intervals around the player → arc inclusion
+    matches TS exactly
+  - degenerate case (proj at player position) uses velocity fallback
+  - shield drain dps × dt arithmetic
+  - 200 randomised fixtures, 0 mismatches
+- 290 client tests, 39 server tests, 6 native Zig tests. Wasm 25.0 KB.
+
+
+
 ## v0.40 - 2026-05-05
 
 - **Phase F1b — `sim/src/weapon.zig` ported.** Math primitives:
