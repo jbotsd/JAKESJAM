@@ -8,6 +8,7 @@
  * @module
  */
 
+import type * as chaosIds from "../chaosIds.js";
 import type * as matches from "../matches.js";
 import type * as matchmaker from "../matchmaker.js";
 import type * as replays from "../replays.js";
@@ -20,6 +21,7 @@ import type {
 } from "convex/server";
 
 declare const fullApi: ApiFromModules<{
+  chaosIds: typeof chaosIds;
   matches: typeof matches;
   matchmaker: typeof matchmaker;
   replays: typeof replays;
