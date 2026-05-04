@@ -1,5 +1,33 @@
 # JAKESJAM - Changelog
 
+## v0.44 - 2026-05-05
+
+- **Phase F1a finish-half-1 — homing/boomerang helpers ported.**
+  `sim/src/projectile.zig` extended with:
+  - `closestNonOwnerPlayer` — squared-distance lookup over a
+    parallel `(xs[], ys[], alive[])` player array. Caller passes
+    arrays sorted by player id (string order, matching TS
+    `Object.keys(players).sort()`). Returns the closest valid
+    candidate's index, or -1.
+  - `boomerangShouldReturn` — pure boolean trigger:
+    `!returning && range > 0 && traveled > range * 0.55`.
+  - Constants exposed: `BOOMERANG_RANGE_FRACTION = 0.55`,
+    `BOOMERANG_TURN_RATE = 8.4`, `HOMING_TURN_RATE_DEFAULT = 4`.
+- The full pathing dispatch in `stepProjectile` still lives TS-side
+  for now — but the math primitives are now fully ported. The
+  remaining TS code is iteration + entity-dictionary
+  bookkeeping, not float math.
+- New `projectileHomingParity.test.ts` (6 tests, 14 expects):
+  constants match, owner exclusion + dead skip, no-owner case,
+  all-dead returns -1, 100 randomised fixtures (varying player
+  counts 2..6), boomerang trigger truth table.
+- Smoke test against deployed `https://jakesjam.vercel.app`: 3/3
+  green incl. canvas pixel + slow-frame spam check. Wasm at
+  `/wasm/sim.wasm` continues serving 200 OK.
+- 305 client tests, 39 server tests, 6 native Zig tests.
+
+
+
 ## v0.43 - 2026-05-05
 
 - **Phase F1a partial — projectile pathing helpers ported.**

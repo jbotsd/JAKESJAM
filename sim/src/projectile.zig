@@ -250,3 +250,97 @@ pub export fn projectile_rotate_velocity_toward(
 ) void {
     rotateVelocityToward(vx, vy, px, py, target_x, target_y, turn_rate, dt_sec, out_vx, out_vy);
 }
+
+// ── Homing target lookup + boomerang state machine ────────────────────────
+
+pub const BOOMERANG_RANGE_FRACTION: f64 = 0.55;
+pub const BOOMERANG_TURN_RATE: f64 = 8.4;
+pub const HOMING_TURN_RATE_DEFAULT: f64 = 4.0;
+
+/// Find the closest alive non-owner player by squared distance.
+/// Caller passes parallel arrays already sorted by player id (string
+/// order, matching TS `Object.keys(players).sort()`).
+///
+///   player_xs / player_ys: position arrays
+///   player_alive:          1/0 mask, parallel to xs/ys
+///   owner_idx:             index to exclude (-1 = no owner)
+///   n_players:             length of all arrays
+///
+/// Returns the index of the closest valid candidate, or -1 if none.
+pub fn closestNonOwnerPlayer(
+    from_x: f64,
+    from_y: f64,
+    owner_idx: i32,
+    player_xs: []const f64,
+    player_ys: []const f64,
+    player_alive: []const u8,
+    n_players: u32,
+) i32 {
+    var best: i32 = -1;
+    var best_sq: f64 = std.math.inf(f64);
+    var i: u32 = 0;
+    while (i < n_players) : (i += 1) {
+        const ii: i32 = @intCast(i);
+        if (owner_idx >= 0 and ii == owner_idx) continue;
+        if (player_alive[i] == 0) continue;
+        const dx = player_xs[i] - from_x;
+        const dy = player_ys[i] - from_y;
+        const d2 = dx * dx + dy * dy;
+        if (d2 < best_sq) {
+            best = ii;
+            best_sq = d2;
+        }
+    }
+    return best;
+}
+
+/// Boomerang return-trigger: `!returning && range > 0 && traveled >
+/// range * BOOMERANG_RANGE_FRACTION`. Returns whether the projectile
+/// should flip into return mode this tick.
+pub fn boomerangShouldReturn(
+    returning_already: bool,
+    traveled_px: f64,
+    range_px: f64,
+) bool {
+    if (returning_already) return false;
+    if (range_px <= 0.0) return false;
+    return traveled_px > range_px * BOOMERANG_RANGE_FRACTION;
+}
+
+// ── wasm exports ──────────────────────────────────────────────────────────
+
+pub export fn projectile_closest_non_owner_player(
+    from_x: f64,
+    from_y: f64,
+    owner_idx: i32,
+    player_xs_ptr: [*]const f64,
+    player_ys_ptr: [*]const f64,
+    player_alive_ptr: [*]const u8,
+    n_players: u32,
+) i32 {
+    return closestNonOwnerPlayer(
+        from_x,
+        from_y,
+        owner_idx,
+        player_xs_ptr[0..n_players],
+        player_ys_ptr[0..n_players],
+        player_alive_ptr[0..n_players],
+        n_players,
+    );
+}
+
+pub export fn projectile_boomerang_should_return(
+    returning_already: i32,
+    traveled_px: f64,
+    range_px: f64,
+) i32 {
+    return if (boomerangShouldReturn(returning_already != 0, traveled_px, range_px)) 1 else 0;
+}
+
+pub export fn projectile_boomerang_turn_rate() f64 {
+    return BOOMERANG_TURN_RATE;
+}
+
+pub export fn projectile_homing_turn_rate_default() f64 {
+    return HOMING_TURN_RATE_DEFAULT;
+}

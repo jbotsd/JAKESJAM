@@ -293,7 +293,9 @@ no `GeneralPurposeAllocator` per step).
 | `sim/src/projectile.zig` (float/accelerate/rotateVelocityToward) | F1a partial | ✅ shipped (3464509) |
 | `client/src/sim/wasm/__tests__/projectilePathingsParity.test.ts` | F1a partial | ✅ shipped |
 | `scripts/vercel-build.sh` + zig-on-deploy-server CI step | deploy fix | ✅ shipped (3cf5fb2) |
-| `sim/src/projectile.zig` (homing/boomerang/anti-homing — needs player array ABI) | F1a finish | new |
+| `sim/src/projectile.zig` (closestNonOwnerPlayer + boomerangShouldReturn) | F1a finish-half-1 | ✅ shipped |
+| `client/src/sim/wasm/__tests__/projectileHomingParity.test.ts` | F1a finish-half-1 | ✅ shipped |
+| `sim/src/projectile.zig` full stepProjectile dispatch (caller refactor) | F1a finish-half-2 | new |
 | `sim/src/world.zig` (orchestrator dispatch over all pathings) | C3 | new |
 | `sim/src/collision.zig` (static spatial grid replacing TS Map) | F2b | new |
 | `client/vite.config.ts` | A2 | small edit |
