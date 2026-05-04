@@ -1,5 +1,29 @@
 # JAKESJAM - Changelog
 
+## v0.43 - 2026-05-05
+
+- **Phase F1a partial — projectile pathing helpers ported.**
+  `sim/src/projectile.zig` extended with three pure-math helpers:
+  - `applyFloatPathing` — sin/cos oscillation phase-keyed by entity
+    id (uses lutSin/lutCos from comptime trig LUT)
+  - `applyAcceleratePathing` — `(1 + k * dt)` velocity scale
+  - `rotateVelocityToward` — turn-rate-limited rotation of a
+    velocity vector toward a target point (uses lutAtan2 +
+    lutCos/lutSin)
+  - Internal `wrapAngle` + `rotateAngleToward` helpers.
+- The full `stepProjectile` switch over pathing types still
+  dispatches in TS — homing/anti-homing/boomerang need a player
+  array passed across the wasm boundary, which is bigger ABI work.
+  The math primitives are ready to be plugged in when the caller
+  refactor lands.
+- New `projectilePathingsParity.test.ts` (5 tests, 8 expects, 200+
+  randomised fixtures): 60-tick float oscillation, 30-tick
+  accelerate, 30-tick homing-chase rotation, zero-speed edge case,
+  200 random float + 200 random accelerate fixtures.
+- 299 client tests, 39 server tests, 6 native Zig tests.
+
+
+
 ## v0.42 - 2026-05-05
 
 - **Phase F1e — `sim/src/destructible.zig` (full port).** Math
