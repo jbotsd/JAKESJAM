@@ -280,9 +280,22 @@ no `GeneralPurposeAllocator` per step).
 | `client/src/sim/wasm/__tests__/projectileParity.test.ts` | C1 | ✅ shipped |
 | `sim/src/hash.zig` (FNV1a-32) | C utility | ✅ shipped |
 | `client/src/sim/wasm/__tests__/hashParity.test.ts` | C utility | ✅ shipped |
-| `sim/src/projectile.zig` (homing/boomerang/float/accelerate/bounce + impacts) | C1 finish | new |
-| `sim/src/{world,weapon,satellite,combat,destructible,fire}.zig` | C-D | new |
-| `sim/src/collision.zig` (spatial-grid broadphase) | B3 finish | new |
+| `sim/src/fire.zig` | F1e | ✅ shipped (99ffa73) |
+| `client/src/sim/wasm/__tests__/fireParity.test.ts` | F1e | ✅ shipped |
+| `sim/src/satellite.zig` | F1c | ✅ shipped (f3a8a37) |
+| `client/src/sim/wasm/__tests__/satelliteParity.test.ts` | F1c | ✅ shipped |
+| `sim/src/weapon.zig` (math primitives) | F1b | ✅ shipped (2cd4ff5) |
+| `client/src/sim/wasm/__tests__/weaponParity.test.ts` | F1b | ✅ shipped |
+| `sim/src/combat.zig` (parry-arc + shield drain) | F1d | ✅ shipped (345a6d8) |
+| `client/src/sim/wasm/__tests__/combatParity.test.ts` | F1d | ✅ shipped |
+| `sim/src/destructible.zig` | F1e (full) | ✅ shipped (ab6b82e) |
+| `client/src/sim/wasm/__tests__/destructibleParity.test.ts` | F1e (full) | ✅ shipped |
+| `sim/src/projectile.zig` (float/accelerate/rotateVelocityToward) | F1a partial | ✅ shipped (3464509) |
+| `client/src/sim/wasm/__tests__/projectilePathingsParity.test.ts` | F1a partial | ✅ shipped |
+| `scripts/vercel-build.sh` + zig-on-deploy-server CI step | deploy fix | ✅ shipped (3cf5fb2) |
+| `sim/src/projectile.zig` (homing/boomerang/anti-homing — needs player array ABI) | F1a finish | new |
+| `sim/src/world.zig` (orchestrator dispatch over all pathings) | C3 | new |
+| `sim/src/collision.zig` (static spatial grid replacing TS Map) | F2b | new |
 | `client/vite.config.ts` | A2 | small edit |
 | `client/src/sim/wasmShim.ts` | D1 | new |
 | `client/src/sim/types.ts` | D1 | type mirrors stay; logic deleted |
@@ -325,8 +338,24 @@ no `GeneralPurposeAllocator` per step).
   `client/public/wasm/`). Console emits `[wasm-sim] ready` at
   startup. `?wasm-canary=1` URL flag triggers a 30-second RNG
   parity probe that compares TS V8 vs Zig wasm in the actual
-  browser runtime. Default user behaviour unchanged — TS sim
-  still drives gameplay; wasm is observable but inert until D2.
+  browser runtime.
+
+- **Phase F1 b/c/d/e + F1a-partial ✅ (2026-05-04 / 2026-05-05):**
+  satellite, weapon (math primitives), combat (parry-arc cosine),
+  destructible (HP + blast), fire (tick math + AABB), and
+  projectile pathing helpers (float, accelerate,
+  rotateVelocityToward) all ported with bit-exact parity tests.
+  Each module has a `*Parity.test.ts` proving byte-identical
+  output. Test counts: 234 → 299 client tests, +65 from this
+  phase.
+
+- **Deploy pipeline fix ✅ (2026-05-04):** found via e2e smoke
+  test that the v0.37 deploy was 404-ing on `/wasm/sim.wasm`
+  because Vercel's build env had no Zig. Fixed by
+  `scripts/vercel-build.sh` (downloads Zig 0.15.2 to /tmp/zig,
+  runs `zig build`, then Vite) + `mlugg/setup-zig@v2` step in
+  the deploy-server job so Fly's Docker build context has the
+  wasm artifact. Both fixes live in `3cf5fb2`.
 - **End of phase B:** all 34 collision tests + the 24-cell
   tunneling matrix pass against the Zig collision module.
 - **End of phase C:** the world-determinism test passes (canned
