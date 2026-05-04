@@ -103,6 +103,19 @@ describe("hashPlayerEntity", () => {
     const second = hashPlayerEntity(p);
     expect(first).toBe(second);
   });
+
+  // -------------------------------------------------------------------------
+  // Test 6 — `grounded` flag flip changes hash. Without this in the hash,
+  // the per-entity reconcile in clientLoop wouldn't see a remote player's
+  // grounded transitions and the rig would stay frozen on stale state.
+  // -------------------------------------------------------------------------
+  test("grounded flag toggle → different hash", () => {
+    const a = makePlayer({});
+    const b = makePlayer({});
+    a.grounded = true;
+    b.grounded = false;
+    expect(hashPlayerEntity(a)).not.toBe(hashPlayerEntity(b));
+  });
 });
 
 describe("hashProjectileEntity", () => {

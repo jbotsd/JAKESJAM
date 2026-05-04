@@ -345,6 +345,11 @@ export function stepWithRuntime(
       );
       nextEntity = moveResult.player;
       runtime.movement.set(pid, moveResult.memory);
+      // Mirror groundedLastFrame onto the entity for the render layer.
+      // Sim itself reads grounded from `mem` (host-only); the entity copy
+      // is what wire-encodes (snapshotDelta P_HI.grounded) and what the
+      // ProceduralPlayerRig consumes via pose.grounded.
+      nextEntity = { ...nextEntity, grounded: moveResult.memory.groundedLastFrame };
     }
 
     // Fire (only when alive and fighting).

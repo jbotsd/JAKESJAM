@@ -104,6 +104,11 @@ export function hashPlayerEntity(p: PlayerEntity): number {
   h = mixU32(h, (p.vulnerabilityUntilTick ?? 0) | 0);
   h = mixU32(h, (p.blockJammerUntilTick ?? 0) | 0);
   h = mixU32(h, (p.bossModeUntilTick ?? 0) | 0);
+  // Render-only flag, but per-entity reconcile uses this hash to detect
+  // divergence; without grounded mixed in, a remote rig that just landed
+  // would NOT trigger reconcile and would keep its stale grounded=false
+  // until something else on the entity changed.
+  h = mixU32(h, p.grounded ? 1 : 0);
 
   return h;
 }

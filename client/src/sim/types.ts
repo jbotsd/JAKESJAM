@@ -228,6 +228,16 @@ export type PlayerEntity = {
   vulnerabilityUntilTick?: Tick;
   blockJammerUntilTick?: Tick;
   bossModeUntilTick?: Tick;
+  /**
+   * True when the player's foot was touching a static at end-of-tick.
+   * Sourced from `PlayerMovementMemory.groundedLastFrame` after the
+   * collision resolve in `World.ts`. Render-only signal — sim correctness
+   * code uses the host-only movement memory directly. Wire-encoded on the
+   * snapshot so remote-rig render can suppress the walk-step foot lift
+   * when the player is actually airborne. Optional/additive: older
+   * snapshots omitting the field read as "unknown / treat as not grounded".
+   */
+  grounded?: boolean;
 };
 
 export type ProjectileEntity = {
