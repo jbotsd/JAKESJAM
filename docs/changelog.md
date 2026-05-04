@@ -1,5 +1,29 @@
 # JAKESJAM - Changelog
 
+## v0.40 - 2026-05-05
+
+- **Phase F1b — `sim/src/weapon.zig` ported.** Math primitives:
+  muzzle position (sqrt-based unit vector × reach), recoil
+  impulse (uses lutCos/lutSin), cooldown tick, per-shot spread
+  offset (carefully matches V8's left-to-right operator order to
+  preserve byte-equality), cooldown from fire rate (clamped to
+  MIN_FIRE_RATE floor). The full stepWeapon orchestration —
+  build resolution, chaos profile, projectile spawn — stays
+  TS-side because it depends on data tables + RNG threading +
+  entity ID allocation that don't have a clean wasm ABI.
+- New `weaponParity.test.ts` (6 tests, 50 expects):
+  500 randomised muzzle position fixtures, zero-distance edge case,
+  500 recoil angles, cooldown clamp behaviour, spread-offset for
+  N=1..8 fans, fire-rate-floor clamping. 0 mismatches.
+- Bug caught + fixed during port: spread-offset operator order.
+  TS `(total * i) / (n-1)` and Zig `total * (i / (n-1))` are
+  algebraically equal but produce ULP-different bits because
+  IEEE 754 rounding depends on evaluation order. Fixed by
+  matching the TS multiply-then-divide order in `weapon.zig`.
+- 284 client tests, 39 server tests, 6 native Zig tests. Wasm 24.7 KB.
+
+
+
 ## v0.39 - 2026-05-05
 
 - **Phase F1c — `sim/src/satellite.zig` ported.** Per-satellite tick
