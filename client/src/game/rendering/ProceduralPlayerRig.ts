@@ -176,8 +176,8 @@ export class ProceduralPlayerRig {
     const muzzle = vec(chest.x + aim.x * 48 * s, chest.y + aim.y * 48 * s);
 
     // Feet
-    const footL = this.footPos(cx, -1, ground, walkAmount, pose.crouching);
-    const footR = this.footPos(cx, 1, ground, walkAmount, pose.crouching);
+    const footL = this.footPos(cx, -1, ground, walkAmount, pose.crouching, pose.grounded);
+    const footR = this.footPos(cx, 1, ground, walkAmount, pose.crouching, pose.grounded);
 
     // IK
     const legLen1 = Phaser.Math.Linear(28, 22, cr) * s;
@@ -545,11 +545,26 @@ export class ProceduralPlayerRig {
   }
 
   // --- FOOT POSITION ---
-  private footPos(cx: number, side: -1 | 1, ground: number, walk: number, crouch: boolean): Vec2 {
+  private footPos(
+    cx: number,
+    side: -1 | 1,
+    ground: number,
+    walk: number,
+    crouch: boolean,
+    grounded: boolean,
+  ): Vec2 {
     const s = this.scale;
     const cycle = this.stepPhase + (side === -1 ? 0 : Math.PI);
     const stride = (crouch ? 10 : 18) * s * walk;
-    const lift = Math.max(0, Math.sin(cycle)) * (crouch ? 4 : 8) * s * walk;
+    // Lift only when actually walking on a surface. Without the grounded
+    // gate, an airborne player with vx > 0 would still cycle feet up to
+    // 12 px above the (irrelevant) ground anchor and the rig would look
+    // like it's stomping mid-air — the user-visible "barely detects
+    // standing on anything" symptom (commit ef365c7..669fe52 plumbed the
+    // wire field that lets us know).
+    const lift = grounded
+      ? Math.max(0, Math.sin(cycle)) * (crouch ? 4 : 8) * s * walk
+      : 0;
     const spread = (crouch ? 8 : 7) * s;
     return vec(cx + side * spread - Math.cos(cycle) * stride * this.facing, ground - lift);
   }
