@@ -11,7 +11,9 @@
 set -euo pipefail
 
 ZIG_VERSION="$(cat .zig-version)"
-ZIG_DIR="zig-linux-x86_64-${ZIG_VERSION}"
+# Tarball naming: cpu-os-version (NOT os-cpu — easy to get backwards).
+# Confirmed against https://ziglang.org/download/<ver>/ as of Zig 0.15.2.
+ZIG_DIR="zig-x86_64-linux-${ZIG_VERSION}"
 ZIG_TARBALL="${ZIG_DIR}.tar.xz"
 ZIG_URL="https://ziglang.org/download/${ZIG_VERSION}/${ZIG_TARBALL}"
 
