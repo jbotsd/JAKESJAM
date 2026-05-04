@@ -27,6 +27,7 @@ import {
   type SimHandle,
 } from "@sim/wasm/playerWasmBackend.ts";
 import type { SimExports } from "@sim/wasm/types.ts";
+import { installLutTables, lutTablesInstalled } from "@sim/trig.ts";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -55,6 +56,31 @@ export async function loadServerSim(): Promise<{
     const inst = await WebAssembly.instantiate(mod, {});
     const ex = inst.exports as unknown as SimExports;
     cached = { instance: inst, ex };
+
+    // CRITICAL: install the comptime trig LUT exactly the way the
+    // client's `client/src/sim/wasm/runtime.ts` does at boot. Without
+    // this, server-side `lutCos/lutSin/lutAtan2` (used by satellite,
+    // weapon, combat, projectile sim modules) fall back to
+    // `Math.sin/cos/atan2`, which produces ULP-different bits than
+    // the LUT-quantised values the client uses. Every trig-driven
+    // event (weapon muzzle direction, satellite orbit position,
+    // parry-arc inclusion check, projectile float oscillation /
+    // homing rotation) would have predict-vs-authority drift.
+    //
+    // This was a hidden gap in the migration: client installs the
+    // LUT, server didn't. Found in cron 06:31 audit.
+    if (!lutTablesInstalled()) {
+      const tableSize = ex.lut_table_size();
+      const sinPtr = ex.lut_sin_table_ptr();
+      const atanPtr = ex.lut_atan_table_ptr();
+      const sinView = new Float64Array(ex.memory.buffer, sinPtr, tableSize);
+      const atanView = new Float64Array(ex.memory.buffer, atanPtr, tableSize);
+      installLutTables(sinView, atanView);
+      console.info(
+        `[wasm-sim] server-side trig LUT installed (${tableSize} entries) — predict ↔ authority trig now bit-identical`,
+      );
+    }
+
     return {
       ex,
       statePtr: ex.alloc_state(),

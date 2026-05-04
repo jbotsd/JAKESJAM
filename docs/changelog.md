@@ -1,5 +1,38 @@
 # JAKESJAM - Changelog
 
+## v0.48 - 2026-05-05
+
+- **🚨 Production determinism gap fixed: server now installs the
+  trig LUT.** Found during a 06:50 audit pass that wasn't on the
+  cron priority list. The client's
+  `client/src/sim/wasm/runtime.ts` `getWasmSim()` always installed
+  the comptime LUT immediately after wasm boot. The server's
+  `server/src/wasmRuntime.ts` did NOT — so server-side
+  `lutCos/lutSin/lutAtan2` (used by satellite, weapon, combat,
+  projectile sim modules) silently fell back to
+  `Math.cos/sin/atan2`. Different bits than the client's
+  LUT-quantised values → predict-vs-authority drift on every
+  trig-driven event in production: weapon firing direction,
+  satellite orbit position, parry-arc inclusion check, projectile
+  float oscillation + homing rotation.
+- Fix: `loadServerSim()` now installs the LUT immediately after
+  wasm instantiate, mirroring the client's pattern. `index.ts`
+  calls `loadServerSim()` UNCONDITIONALLY at boot (regardless of
+  the `JAKESJAM_WASM_*` env flags) so the LUT is always
+  available, even if collision/player swaps stay disabled.
+- New `server/src/__tests__/serverTrigLut.test.ts` (4 tests, gates
+  the regression):
+  - `loadServerSim` installs the LUT
+  - LUT-quantised values differ from libm Math.cos for ~all
+    non-sample-point inputs (proves LUT is active, not the
+    fallback)
+  - same for atan2 within a reasonable tolerance
+  - LUT survives multiple cached `loadServerSim` calls
+- 319 client / 43 server / 6 native Zig tests, all green.
+  Smoke against deployed prod: 3/3.
+
+
+
 ## v0.47 - 2026-05-05
 
 - **Wasm exports manifest + regression smoke test (D3 partial).**

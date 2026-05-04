@@ -21,12 +21,24 @@ import type { MatchSocketData } from "./matchHost.ts";
 import {
   applyServerWasmCollision,
   applyServerWasmPlayer,
+  loadServerSim,
 } from "./wasmRuntime.ts";
 
 // Phase B4/D2 Zig→WASM substrate (ADR-0006). Awaited at top-level
-// so swaps are installed before any matchHost begins a tick.
-//   JAKESJAM_WASM_COLLISION=1 → resolveMoveCached runs in wasm
-//   JAKESJAM_WASM_PLAYER=1    → full stepPlayer runs in wasm
+// so the trig LUT is installed + swaps are in place before any
+// matchHost begins a tick.
+//
+// `loadServerSim` is called UNCONDITIONALLY (not gated by env)
+// because it also installs the comptime trig LUT used by every
+// satellite/weapon/combat/projectile sim path. Without that the
+// server's TS sim falls back to libm Math.sin/cos/atan2 which
+// produces ULP-different bits than the LUT the client uses →
+// predict-vs-authority drift on every trig-driven event.
+//
+// The collision + player wasm-backend swaps remain env-gated:
+//   JAKESJAM_WASM_COLLISION=0 to disable (default ON)
+//   JAKESJAM_WASM_PLAYER=0    to disable (default ON)
+await loadServerSim();
 if (config.wasmCollision) {
   await applyServerWasmCollision();
 }
