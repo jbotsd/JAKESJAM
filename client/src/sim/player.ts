@@ -108,7 +108,54 @@ export type PlayerStepResult = {
   jetpackFuel: number;
 };
 
+export type StepPlayerFn = (
+  player: PlayerEntity,
+  prevKeys: InputBitfield,
+  currKeys: InputBitfield,
+  aimX: number,
+  aimY: number,
+  memory: PlayerMovementMemory,
+  platforms: readonly PlatformDefinition[],
+  dtMs: number,
+  options: PlayerStepOptions,
+) => PlayerStepResult;
+
+let stepPlayerBackend: StepPlayerFn | null = null;
+
+/**
+ * Swap the stepPlayer impl. Host modules call this at boot when
+ * `?wasm-player=1` is set. The backend MUST be byte-equivalent to
+ * the native TS impl — `playerParity.test.ts` proves the wasm
+ * impl meets that bar across a 90-tick scripted run.
+ *
+ * Pass `null` to revert.
+ */
+export function setStepPlayerBackend(fn: StepPlayerFn | null): void {
+  stepPlayerBackend = fn;
+}
+
 export function stepPlayer(
+  player: PlayerEntity,
+  prevKeys: InputBitfield,
+  currKeys: InputBitfield,
+  aimX: number,
+  aimY: number,
+  memory: PlayerMovementMemory,
+  platforms: readonly PlatformDefinition[],
+  dtMs: number,
+  options: PlayerStepOptions,
+): PlayerStepResult {
+  if (stepPlayerBackend !== null) {
+    return stepPlayerBackend(
+      player, prevKeys, currKeys, aimX, aimY, memory, platforms, dtMs, options,
+    );
+  }
+  return stepPlayerNative(
+    player, prevKeys, currKeys, aimX, aimY, memory, platforms, dtMs, options,
+  );
+}
+
+function stepPlayerNative(
   player: PlayerEntity,
   prevKeys: InputBitfield,
   currKeys: InputBitfield,
@@ -228,7 +275,13 @@ export function stepPlayer(
   // Cheap because the branch only fires under fast-fall / chaos-modifier
   // gravity spikes; normal runs use a single sub-step.
   const maxStepDisp = MIN_PLATFORM_H_PX * 0.6;
-  const totalDisp = Math.hypot(next.vx, next.vy) * dtSec;
+  // Use explicit sqrt(vx² + vy²) instead of Math.hypot — Math.hypot's
+  // overflow-safe scaling produces ULP-different bits than the same
+  // formula computed with naive multiply+add+sqrt, breaking parity
+  // with the Zig wasm port. In our velocity domain (max ~1000 px/s)
+  // there's no overflow risk, so the simpler form is fine. Both
+  // sides now compute this identically. See ADR-0006.
+  const totalDisp = Math.sqrt(next.vx * next.vx + next.vy * next.vy) * dtSec;
   const subSteps = Math.max(1, Math.ceil(totalDisp / maxStepDisp));
   const subDt = dtSec / subSteps;
   let groundedAcc = false;

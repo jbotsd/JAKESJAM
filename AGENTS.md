@@ -32,8 +32,8 @@ For multiplayer / netcode / sim work, the canonical refs are:
 3. `docs/zig-wasm-migration.md` — phased rollout plan
 4. `.claude/skills/deterministic-netcode-architecture/SKILL.md` —
    transferable rules
-5. `.claude/skills/{zig-wasm-build,wasm-ts-bridge,wasm-game-sim-zig}/SKILL.md`
-   — build + boundary + sim design specifics
+5. `.claude/skills/{zig-wasm-build,wasm-ts-bridge,wasm-game-sim-zig,zig-code-quality}/SKILL.md`
+   — build + boundary + sim design specifics + Zig style/idiom rules
 
 When implementation changes design behaviour, update the relevant doc.
 
@@ -45,14 +45,32 @@ WorldStates" requirement at production scale. Native TS float math
 is not bit-deterministic across V8 (browser) and JSC (Bun); WASM
 bytecode is, per spec.
 
-Until the migration completes (see `docs/zig-wasm-migration.md`),
-the sim still lives at `client/src/sim/*.ts`. New sim work should
-either:
+**Phase A toolchain shipped 2026-05-04.** Zig 0.15.2 pinned in
+`.zig-version`; `bun run sim:build` produces
+`client/src/sim/wasm/sim.wasm`; `bun run sim:test` runs Zig unit
+tests; `bun run sim:fmt` gates formatting. Vite plugin
+(`client/vite-plugin-zig.ts`) rebuilds on `.zig` save with full
+reload. CI installs Zig + caches the build.
 
-- Land as a small last-mile change in TS that the migration will
+**Phase B2 (RNG) + B3 (collision kernel + slide) shipped
+2026-05-04.** `sim/src/{rng,collision}.zig` are bit-exact ports of
+the TS originals. Cross-impl parity tests
+(`client/src/sim/wasm/__tests__/{rngParity,collisionParity}.test.ts`)
+prove byte-identical output between TS V8 and Zig wasm across
+9000+ RNG iterations, 1600+ collision fixtures, and a 60-tick
+independent-integration test. This empirically validates the
+substrate thesis (ADR-0006).
+
+Until Phase D cutover (see `docs/zig-wasm-migration.md`), the
+**live sim still runs from TypeScript** in `client/src/sim/*.ts`.
+The wasm loader at `client/src/sim/wasm/loader.ts` is staged but
+not wired into `clientLoop.ts` or `matchHost.ts` yet. New sim
+work should either:
+
+- Land as a small last-mile change in TS that Phase B/C will
   re-implement in Zig, OR
-- Land directly in `sim/src/*.zig` once Phase A of the migration
-  ships.
+- Land directly in `sim/src/*.zig` if it's part of the Phase B
+  collision/player port (`docs/zig-wasm-migration.md` → Phase B).
 
 If you're adding netcode/sim code without seeing this section, **stop
 and read the docs above first**. Patches to the sim that don't honour

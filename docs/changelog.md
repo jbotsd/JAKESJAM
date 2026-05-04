@@ -1,5 +1,371 @@
 # JAKESJAM - Changelog
 
+## v0.37 - 2026-05-05
+
+- **🚀 Phase F3 — wasm sim flipped default-on. The "barely detects
+  standing" bug fix is now live for default users.** No URL flag
+  required. The opt-out becomes `?wasm-collision=0` /
+  `?wasm-player=0` / `?wasm-rng=0`. Server-side: env vars become
+  emergency disables (`JAKESJAM_WASM_COLLISION=0` /
+  `JAKESJAM_WASM_PLAYER=0`).
+- **Phase F2a — comptime trig LUTs.** `sim/src/trig.zig` bakes
+  1024-entry sin and atan tables at compile time via Zig
+  `comptime`. The TS side at `client/src/sim/trig.ts` reads the
+  IDENTICAL bytes from wasm memory at boot via `installLutTables`
+  and uses the same lookup math. Both sides sample bit-identical
+  precomputed tables → cross-host trig drift is impossible by
+  construction. **This is a Zig-only feature: TS can't bake
+  precomputed bytes into the JS bundle the way Zig bakes them
+  into wasm.**
+- All sim trig callsites swapped from `Math.sin/cos/atan2` to
+  `lutSin/lutCos/lutAtan2`:
+  - `satellite.ts` (orbit position + aim)
+  - `weapon.ts` (muzzle direction + recoil)
+  - `combat.ts` (parry facing + projectile direction)
+  - `projectile.ts` (float pathing, spawn, splits, homing turn)
+- New `trigParity.test.ts` (5 tests, 8000+ angles): TS lutSin vs
+  wasm lut_sin byte-identical across [-8π, 8π]; cos same;
+  atan2 across all 4 quadrants + 1000 random pairs; LUT precision
+  within 0.01 of `Math.sin`/`Math.cos`.
+- Wasm artifact: 23 KB (was 6.3 KB; +16 KB for the two LUTs).
+- 271 client tests, 39 server tests, 6 native Zig tests, all green.
+
+**Deployment activation**:
+
+```sh
+git push origin main           # CI runs all gates ~10 min
+                               # Vercel auto-deploys
+                               # Fly auto-deploys with wasm-on default
+```
+
+After deploy: open `https://jakesjam.vercel.app` — console shows
+`[wasm-sim] ready ... trig LUT installed (1024 entries)` plus
+`[wasm-collision] swap applied` plus `[wasm-player] swap applied`.
+The bug fix is live. To verify: open a second tab with
+`?wasm-collision=0` and compare visible jitter side-by-side.
+
+Server-side: nothing to set. wasm is on by default. To emergency-
+disable: `flyctl secrets set --app jakesjam-srv-syd
+JAKESJAM_WASM_COLLISION=0`.
+
+## v0.36 - 2026-05-04
+
+- **Phase C started: projectile motion kernel ported.**
+  `sim/src/projectile.zig` ports `straight` + `gravity` pathing,
+  position integration, lifetime decay, and terrain collision.
+  `ProjectileKinematics` extern struct (80 bytes), `StepResult`
+  extern struct (8 bytes). Wasm exports: `step_projectile`,
+  `sizeof_projectile_kinematics`, `sizeof_projectile_step_result`.
+  Other pathings (homing/boomerang/float/accelerate/anti-homing/
+  bounce) and impacts (sticky/explosive/pierce/slow) remain TS-side
+  for follow-on cuts.
+- New `projectileParity.test.ts` (3 tests):
+  - 30-tick straight-line projectile flight: byte-identical x/y/vx/vy/age/traveled
+    every tick
+  - 60-tick gravity arc trajectory: identical integration including
+    gravity acceleration accumulation
+  - Terrain hit: identical expired flag when projectile hits wall
+- **Phase B/C utility: hash.zig ported.** FNV1a-32 primitives
+  (`fnv1aMix`, `mixU32`, `quantise`) bit-exactly match
+  `client/src/sim/hash.ts`. Note: this is a non-standard FNV1a
+  variant — each byte mix XORs in `FNV1A_BASIS_32 >> 16`. Wrapping
+  multiply (`*%`) matches `Math.imul` exactly.
+- New `hashParity.test.ts` (5 tests, 1264 expect calls):
+  - FNV1A_BASIS_32 constant matches
+  - fnv1aMix across all 256 byte values
+  - mixU32 across 1000 random u32 inputs
+  - quantise matches Math.round-then-truncate
+  - End-to-end multi-field hash chain identical
+- 266/266 client tests, 39/39 server tests, 6/6 Zig tests, both
+  typechecks clean. Wasm artifact: 6.3 KB.
+
+## v0.35 - 2026-05-04
+
+- **Long-horizon determinism canary shipped.**
+  `longHorizonCanary.test.ts` runs 10,000 ticks (~2.8 minutes of
+  60Hz gameplay) of TS-native and Zig-wasm player physics with
+  independent integrators on the same canned input loop, asserts
+  byte-identical state at every tick. **0 divergences** across
+  fall/run/jump/jetpack/crouch/run-left/idle. This is the test
+  that catches the class of bugs that pass short parity checks
+  but accumulate ULP error over minutes of play — exactly the
+  failure mode the original "barely detects standing" jitter
+  represented.
+- **Phase B3 finish (circle primitives).** `sim/src/collision.zig`
+  now also implements `circleOverlapsAABB`, `circleHitsAny`, and
+  `circleBounce` — bit-exact ports of the TS impls used by the
+  projectile collision path. Wasm exports added:
+  `circle_overlaps_aabb`, `circle_hits_any`, `circle_bounce`,
+  `sizeof_circle_bounce`. Unblocks Phase C projectile.zig.
+- New `circleParity.test.ts` (3 tests):
+  - 1000 randomised `circleOverlapsAABB` fixtures: 0 mismatches
+  - 500 randomised `circleHitsAny` against realistic platforms:
+    0 mismatches
+  - 6 realistic ricochet scenarios for `circleBounce`
+    (floor-underside, platform-top, cover-side, wall, corner-
+    clipping, diagonal): identical reflection axis.
+- 258/258 client tests, 39/39 server tests, 6/6 Zig tests, both
+  typechecks clean. Wasm artifact: 5.5 KB.
+
+## v0.34 - 2026-05-04
+
+- **Phase B4 shipped: full player physics ported + live-swappable.**
+  `sim/src/player.zig` ports the entire `stepPlayer` from
+  `client/src/sim/player.ts` bit-for-bit — gravity, ground/air
+  acceleration, friction, jump (coyote + buffer + cut), variable
+  fall, jetpack (drain/recharge/min-velocity-clamp), crouch,
+  sub-stepped collision integration. `PlayerStep` extern struct
+  (96 bytes) packs the full PlayerEntity subset + memory in one
+  ABI-stable layout.
+- New `client/src/sim/wasm/__tests__/playerParity.test.ts` — drives
+  a 90-tick scripted input sequence (free fall → walk → jump →
+  jetpack hold → release → run → crouch) through TS and wasm and
+  asserts byte-identical state every tick: x, y, vx, vy, aimX,
+  aimY, jetpackFuel, crouching, plus all 6 PlayerMovementMemory
+  fields, plus jumpedThisFrame. **0 mismatches across 90 ticks.**
+- `client/src/sim/player.ts` extracted `stepPlayerNative` and
+  exposed `setStepPlayerBackend(fn)`. Sim purity preserved.
+- One TS subtle change: `Math.hypot(vx, vy)` → `Math.sqrt(vx² + vy²)`
+  to match Zig's bit-exact `@sqrt`. In our velocity domain (max
+  ~1000 px/s) there's no overflow risk; the simpler form is
+  identical across hosts.
+- `?wasm-player=1` URL flag swaps client `stepPlayer` to wasm.
+  `JAKESJAM_WASM_PLAYER=1` does the same on the Bun server.
+  Combined with the existing collision flags, predict ↔ authority
+  is bit-identical for the entire player physics pipeline.
+- Shared `client/src/sim/wasm/playerWasmBackend.ts` factory builds
+  the wasm-backed `StepPlayerFn` for both client and server
+  hosts — same pack/unpack code, only the loader differs.
+- 254/254 client tests, 39/39 server tests, 6/6 Zig tests, both
+  typechecks clean. Wasm artifact: 4.9 KB.
+
+## v0.33 - 2026-05-04
+
+- **Phase D2 (server cutover) shipped — bit-identical collision math
+  end-to-end.** With both flags set (`?wasm-collision=1` on the
+  client URL + `JAKESJAM_WASM_COLLISION=1` on the server) client
+  predict and server authority run THE SAME wasm bytecode for
+  collision. Predict ↔ authority becomes byte-identical, reconcile
+  delta = 0 in steady state, "barely detects standing" jitter
+  fully dies in production.
+- New `server/src/wasmRuntime.ts` — Bun-side wasm loader.
+  `applyServerWasmCollision()` reads `client/public/wasm/sim.wasm`,
+  instantiates via Bun's native `WebAssembly`, and installs the
+  same `setResolveMoveCachedBackend` swap the client uses. Sim
+  module is shared via `@sim/*` path alias, so the swap mechanism
+  is mechanically the same — only the loader differs.
+- New `JAKESJAM_WASM_COLLISION` env var in `server/src/config.ts`.
+  `server/src/index.ts` awaits the swap at top-level so it's in
+  place before any matchHost begins ticking.
+- New `server/src/__tests__/wasmRuntime.test.ts` (4 tests) — proves:
+  - The server can load `sim.wasm` from disk and instantiate.
+  - The shared swap mechanism takes effect server-side.
+  - 60-tick simulated drop-and-rest produces byte-identical output
+    between TS native and wasm impls.
+  - The drift-snap fix (foot 1.5 px past floor top) snaps to the
+    same byte-exact y in both impls.
+- `server/Dockerfile` now COPY-s `client/public/wasm/` into the
+  image so the wasm artifact ships with the server. CI builds the
+  wasm before docker build, so the file is on disk.
+- Both CI workflows (`typecheck.yml`, `deploy.yml`) now run
+  `bun run --filter server test` — server tests gate merges.
+- Server now has a `test` script.
+- All gates: 6/6 Zig tests, 253/253 client tests, 39/39 server
+  tests, both typechecks clean. Wasm artifact: 3.4 KB.
+
+**To activate the bug fix in production:**
+
+```sh
+flyctl secrets set --app jakesjam-srv-syd JAKESJAM_WASM_COLLISION=1
+```
+
+Then any client visiting `https://jakesjam.vercel.app/?wasm-collision=1`
+runs full bit-identical collision math against an authoritative
+server doing the same. Default users (no flag) still get the TS path
+until soak validates the rollout.
+
+## v0.32 - 2026-05-04
+
+- **`?wasm-collision=1` URL flag swaps the live `resolveMoveCached`
+  to Zig wasm.** This is the cut where the "barely detects standing"
+  / "falls through terrain" jitter bug dies on the client.
+- `sim/src/collision.zig` now also implements `sweepAABBCached` and
+  `resolveMoveCached`, including the **post-resolve drift probe +
+  snap** + **one-way platform short-circuit** with the +2 px float-
+  drift slack constants. Wasm exports `sweep_aabb_cached` and
+  `resolve_move_cached` take a flat `[]const AABB` plus a parallel
+  `[]const u8` one-way mask (spatial-grid broadphase still TS-side;
+  no determinism impact, perf optimisation).
+- `client/src/sim/collision.ts` extracts `resolveMoveCachedNative`
+  as the pure TS impl and exposes `setResolveMoveCachedBackend(fn)`
+  so the host can swap. Sim purity preserved — collision module
+  imports nothing external; the seam is just a function pointer.
+- `applyWasmCollisionFlag()` in runtime.ts wires it: at boot, if
+  `?wasm-collision=1` set, packs the cache's flat AABB array +
+  one-way mask into the wasm state buffer and routes every
+  `resolveMoveCached` call through Zig wasm.
+- New `collisionBackendSwap.test.ts` (4 tests):
+  - default behaviour (TS native) ✓
+  - 100-tick simulated drop-and-rest, both backends produce
+    byte-identical position/velocity ✓
+  - **the exact bug fix scenario:** mover with foot 1.5 px past
+    floor top — both TS and wasm post-resolve probe catch and
+    snap to platform-top + zero vy ✓
+  - swap is reversible ✓
+- 8 collision parity tests now include 10-fixture suite covering
+  one-way platforms, tall cover, drift recovery (1.5 px, 1.9 px,
+  3.0 px past platform-top), wall slide, jumping through one-way,
+  landing on top.
+- 253/253 client tests, 6/6 native Zig tests, both typechecks
+  clean. Wasm artifact: 3.4 KB.
+
+## v0.31 - 2026-05-04
+
+- **New skill: `zig-code-quality`.** Authoritative Zig style + idiom
+  + footgun rules for `sim/*.zig` work. Covers naming (snake_case
+  vars / PascalCase types / wasm exports use snake_case for JS
+  ergonomics), wrapping vs checked vs saturating arithmetic, error
+  handling at the wasm boundary, allocator discipline (no
+  `GeneralPurposeAllocator` in freestanding), `extern struct` vs
+  `struct` for layout-stable types, optionals over sentinels,
+  comptime-when-it-pays, and a pre-PR checklist. Sourced from the
+  Zig 0.15 style guide, Zig std library conventions, and
+  TigerBeetle's Zig style guide.
+- **Applied the skill to existing Zig code.** `rng.zig` cleaned up:
+  removed the dead `nextStateForFloat` alias, widened
+  `nextIntFromState` arithmetic to i64 internally so callers can
+  pass the full i32 range without triggering Zig's checked-arith
+  panic. `collision.zig` header updated to match shipped scope.
+  `runtime.ts` cleaned up the dead `nextU32` import.
+- AGENTS.md zig skill list extended to include `zig-code-quality`.
+- 6/6 native Zig tests green, 247/247 client tests green, both
+  typechecks clean.
+
+## v0.30 - 2026-05-04
+
+- **`?wasm-rng=1` URL flag swaps the live sim's RNG kernel to Zig
+  wasm.** Default behaviour unchanged; the flag is a per-user
+  opt-in. When set, every `nextU32(state)` call from anywhere in
+  the sim — chaos rolls, projectile spread, draft offers, crit
+  rolls — indirects to `wasm.exports.rng_next_u32`. Behaviour is
+  identical (parity-proven byte-equal across 7000+ iterations);
+  the win is real-browser production validation.
+- `client/src/sim/rng.ts` refactored: kernel impl extracted to
+  `nextU32Native`, public `nextU32` now indirects through
+  `activeBackend`, new `setRngBackend(fn)` lets the host swap.
+  Sim purity preserved — the rng module imports nothing external,
+  only exposes a setter.
+- New `applyWasmRngFlag()` in `client/src/sim/wasm/runtime.ts`
+  awaits the wasm boot, then installs the wasm backend. Wired
+  into `client/src/main.ts`.
+- 4 new `rngBackendSwap.test.ts` cases prove the swap is correct,
+  reversible, and doesn't leak state across replacements.
+- Total client tests: 247 (was 243, +4).
+- Path to bug fix: `?wasm-collision=1` next, which swaps
+  `resolveMove` calls in `player.ts` to the parity-proven Zig
+  impl. That's the cut where the "barely detects standing" bug
+  visibly dies.
+
+## v0.29 - 2026-05-04
+
+- **Zig→WASM substrate is now wired into the live boot path.** The
+  Phaser client boot-loads `sim.wasm` at startup (fire-and-forget
+  via `getWasmSim()` in `client/src/main.ts`), logs `[wasm-sim]
+  ready` to the console with state size + tick + export count.
+  Default behaviour is unchanged — wasm is loaded but no hot path
+  calls it yet. Cutover happens in Phase D.
+- New `client/src/sim/wasm/runtime.ts` — boot singleton +
+  `wasmFlag(name)` URL flag helper + `startWasmCanary()`.
+- `?wasm-canary=1` URL flag enables a 30-second console probe that
+  calls TS `nextU32` and Zig wasm `rng_next_u32` once per second
+  with the same state cursor and asserts byte-equality. Provides
+  production observability that the wasm is genuinely executing
+  and the substrate thesis still holds in real-user runtimes.
+- Production build now ships `dist/wasm/sim.wasm` alongside the JS
+  bundle. Vite 8/rolldown was tree-shaking `?url` and `new URL()`
+  imports; moved to `client/public/wasm/sim.wasm` per Vite's
+  documented runtime-asset escape hatch (matches the existing
+  `client/public/audio/` pattern).
+- `sim/build.zig` now installs the wasm to two locations: the
+  public path for runtime, and `client/src/sim/wasm/sim.wasm` for
+  the Bun parity tests.
+- `Sim` wrapper now exposes the typed `exports` field, so callers
+  can hot-path-call wasm functions directly without re-casting.
+
+## v0.28 - 2026-05-04
+
+- **Zig→WASM Phase B3: collision kernel ported with bit-exact
+  cross-host parity proven for the public API.** This is the
+  marquee win that closes the determinism thesis (ADR-0006) for
+  collision math — the exact code path that's been producing the
+  "barely detects standing" / "falls through terrain" symptoms.
+- `sim/src/collision.zig` ports `sweepAgainstOne`, `sweepAABB`, and
+  `resolveMove` (multi-pass slide solver) bit-for-bit from
+  `client/src/sim/collision.ts`. AABB and SweepHit are
+  `extern struct`s for stable wasm ABI.
+- Wasm exports added: `sweep_against_one_flat`, `sweep_aabb_many`,
+  `resolve_move`, `sizeof_aabb`, `sizeof_sweep_hit`,
+  `sizeof_resolve_move_out`.
+- New `client/src/sim/wasm/__tests__/collisionParity.test.ts` —
+  6 tests asserting byte-identical output between TS V8 and Zig
+  wasm:
+  - 24-cell fast-fall tunneling matrix (vy ∈ {600..3000} ×
+    platformH ∈ {8, 18, 24, 48}) — all pass.
+  - 1000 randomised `sweepAABB` fixtures — 0 mismatches.
+  - 100 randomised `sweepAgainstOne` fixtures — 0 mismatches.
+  - 5 realistic player scenarios (free fall, walk, jump, wall
+    block, diagonal slide) — all pass.
+  - **60-tick simulated drop-and-rest** with TS and wasm
+    integrating independently — byte-identical position +
+    velocity at every tick.
+  - 500 randomised `resolveMove` fixtures — 0 mismatches.
+- Wasm artifact size: 2.2 KB (was 412 B after B2-RNG, +1.8 KB for
+  the collision kernel).
+- The public sim still runs from TypeScript — Phase B3 only
+  delivers the Zig collision module + parity proof. Cutover
+  happens in Phase D when `clientLoop.ts` and `matchHost.ts`
+  start calling `resolve_move` instead of `resolveMove`.
+
+## v0.27 - 2026-05-04
+
+- **Zig→WASM Phase B2: RNG ported with cross-impl parity proof.**
+  `sim/src/rng.zig` is a bit-exact port of `client/src/sim/rng.ts`
+  (mulberry32). New parity test
+  `client/src/sim/wasm/__tests__/rngParity.test.ts` runs 7 seeds ×
+  1000 iterations of TS V8 vs Zig wasm and asserts byte-exact
+  state and IEEE 754 exact-equal float derivations — **7000+
+  bit-identical matches**. This is the first concrete proof that
+  the substrate thesis (ADR-0006) holds: V8 and wasm produce the
+  same bytes for the same inputs.
+- Wasm exports added: `rng_next_u32(state: u32) -> u32` and
+  `rng_next_int(state, min, maxExclusive) -> i64` (state and
+  value packed into one i64 to avoid wasm multivalue ABI).
+- Wasm artifact size: 412 bytes (was 256 in Phase A; +156 bytes
+  for the rng functions).
+- Sim binary still not wired into the live game — TS rng still
+  drives prediction. Cutover staged for Phase D.
+
+## v0.26 - 2026-05-04
+
+- **Zig→WASM sim substrate, Phase A toolchain landed.** New `sim/`
+  Zig project at repo root produces `client/src/sim/wasm/sim.wasm`
+  via `bun run sim:build`. Phase A is staged-only — the live game
+  still runs the TS sim; cutover happens in Phase D.
+- Added `.zig-version` (0.15.2), `.tool-versions`, `sim/build.zig`,
+  `sim/build.zig.zon`, `sim/src/{root,types}.zig`,
+  `sim/test/smoke.zig`, `sim/README.md`.
+- Added `client/vite-plugin-zig.ts` — debounced rebuild on
+  `.zig`/`.zon` change with full-reload on success.
+- Added `client/src/sim/wasm/{loader.ts, types.ts}` and a 4-test
+  ping-pong suite proving load → step → readback → reset works
+  under `bun test`. `loadSim()` for browser (`?url` + streaming
+  fallback), `loadSimFromBytes()` for the test harness.
+- CI: both `typecheck.yml` and `deploy.yml` install Zig 0.15.2 via
+  `mlugg/setup-zig@v2`, cache `~/.cache/zig`, and run
+  `sim:fmt`/`sim:test`/`sim:build` before TS gates.
+- See `docs/adr/0006-zig-wasm-sim-substrate.md` for rationale and
+  `docs/zig-wasm-migration.md` for the rollout plan.
+
 ## v0.25 - 2026-05-01
 
 - Added actual health numbers and bars above local and remote player rigs.

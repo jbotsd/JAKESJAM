@@ -18,3 +18,12 @@ tests/e2e/test-results/
 *.bad
 *.bak.*
 client/convex/
+
+# Zig sim build artifacts. `zig build` writes sim.wasm to two paths:
+#   - client/public/wasm/sim.wasm — Vite copies to dist/ at runtime
+#   - client/src/sim/wasm/sim.wasm — Bun tests resolve from here
+client/src/sim/wasm/sim.wasm
+client/public/wasm/sim.wasm
+sim/zig-out/
+sim/.zig-cache/
+sim/zig-cache/

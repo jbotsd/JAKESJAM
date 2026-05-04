@@ -15,6 +15,13 @@ WORKDIR /app
 COPY client/src/sim ./client/src/sim
 COPY client/src/net ./client/src/net
 
+# Phase D2 — Zig→WASM substrate. wasmRuntime.ts resolves the wasm artifact at
+# `<repo>/client/public/wasm/sim.wasm`. The CI pipeline runs `bun run sim:build`
+# before fly deploy, so this file exists in the build context. If
+# JAKESJAM_WASM_COLLISION is unset at runtime, this file isn't read, so missing
+# it isn't fatal — but COPY-ing it now keeps the image self-sufficient.
+COPY client/public/wasm ./client/public/wasm
+
 # Install server deps
 COPY server/package.json server/bun.lockb* ./server/
 WORKDIR /app/server

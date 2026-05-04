@@ -27,6 +27,11 @@ jobs:
         with:
           bun-version: latest
 
+      - name: Setup Zig
+        uses: mlugg/setup-zig@v2
+        with:
+          version: 0.15.2
+
       - name: Cache Bun install dir
         uses: actions/cache@v4
         with:
@@ -39,8 +44,27 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-bun-
 
+      - name: Cache Zig build cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/zig
+            sim/.zig-cache
+          key: ${{ runner.os }}-zig-${{ hashFiles('sim/build.zig', 'sim/build.zig.zon', 'sim/src/**', 'sim/test/**') }}
+          restore-keys: |
+            ${{ runner.os }}-zig-
+
       - name: Install dependencies
         run: bun install --frozen-lockfile
+
+      - name: Sim — fmt check
+        run: bun run sim:fmt
+
+      - name: Sim — Zig tests
+        run: bun run sim:test
+
+      - name: Sim — build wasm
+        run: bun run sim:build
 
       - name: Typecheck (client)
         run: bun run --filter client typecheck
@@ -50,6 +74,9 @@ jobs:
 
       - name: Test (sim)
         run: bun run --filter client test
+
+      - name: Test (server)
+        run: bun run --filter server test
 
       - name: Build (client production)
         run: bun run build

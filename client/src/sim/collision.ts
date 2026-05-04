@@ -507,6 +507,38 @@ export function resolveMove(
  * to `resolveMove` but uses `sweepAABBCached` for O(1) broadphase.
  * Supports one-way platforms when `respectOneWay` is true.
  */
+export type ResolveMoveCachedResult = {
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  groundedThisFrame: boolean;
+};
+
+export type ResolveMoveCachedFn = (
+  mover: AABB,
+  vx: number,
+  vy: number,
+  dt: number,
+  cache: StaticCollisionCache,
+  respectOneWay: boolean,
+) => ResolveMoveCachedResult;
+
+let resolveMoveCachedBackend: ResolveMoveCachedFn | null = null;
+
+/**
+ * Swap the resolveMoveCached impl. Host modules call this at boot when
+ * `?wasm-collision=1` is set. The backend MUST be byte-equivalent to
+ * the native TS impl — `collisionParity.test.ts` proves the wasm impl
+ * meets this bar across realistic + drift-recovery + one-way + cover
+ * scenarios + a 60-tick simulated drop-and-rest.
+ *
+ * Pass `null` to revert.
+ */
+export function setResolveMoveCachedBackend(fn: ResolveMoveCachedFn | null): void {
+  resolveMoveCachedBackend = fn;
+}
+
 export function resolveMoveCached(
   mover: AABB,
   vx: number,
@@ -514,7 +546,21 @@ export function resolveMoveCached(
   dt: number,
   cache: StaticCollisionCache,
   respectOneWay: boolean = false,
-): { x: number; y: number; vx: number; vy: number; groundedThisFrame: boolean } {
+): ResolveMoveCachedResult {
+  if (resolveMoveCachedBackend !== null) {
+    return resolveMoveCachedBackend(mover, vx, vy, dt, cache, respectOneWay);
+  }
+  return resolveMoveCachedNative(mover, vx, vy, dt, cache, respectOneWay);
+}
+
+function resolveMoveCachedNative(
+  mover: AABB,
+  vx: number,
+  vy: number,
+  dt: number,
+  cache: StaticCollisionCache,
+  respectOneWay: boolean = false,
+): ResolveMoveCachedResult {
   let curX = mover.x;
   let curY = mover.y;
   let curVx = vx;

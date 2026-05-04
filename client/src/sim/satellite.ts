@@ -11,6 +11,7 @@
 // of truth; on the client during prediction this is replayed locally.
 
 import { spawnProjectile, type ProjectileSpawnParams } from "./projectile.js";
+import { lutAtan2, lutCos, lutSin } from "./trig.js";
 import { EntityId, PlayerId } from "./types.js";
 import type {
   PlayerEntity,
@@ -97,9 +98,9 @@ export function stepSatellites(
     if (fireCooldownMs <= 0 && roundPhase === "fighting") {
       const target = nearestEnemy(owner, players);
       if (target) {
-        const sx = owner.x + Math.cos(angle) * sat.orbitRadius;
-        const sy = owner.y + Math.sin(angle) * sat.orbitRadius;
-        const aimAngle = Math.atan2(target.y - sy, target.x - sx);
+        const sx = owner.x + lutCos(angle) * sat.orbitRadius;
+        const sy = owner.y + lutSin(angle) * sat.orbitRadius;
+        const aimAngle = lutAtan2(target.y - sy, target.x - sx);
         const params: ProjectileSpawnParams = {
           ownerId: sat.ownerId,
           origin: { x: sx, y: sy },

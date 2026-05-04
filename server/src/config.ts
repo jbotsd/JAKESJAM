@@ -41,4 +41,18 @@ export const config = {
   // (legacy alias) for backward compat.
   convexDeployKey:
     process.env.CONVEX_DEPLOY_KEY ?? process.env.CONVEX_ADMIN_TOKEN ?? null,
+
+  // Phase F3 — Zig→WASM substrate defaults to ON. The wasm `.wasm`
+  // is bundled in the server image and routed by `wasmRuntime.ts`.
+  // Both sides (client + server) run bit-identical collision +
+  // player physics by default, eliminating the float-drift
+  // reconcile churn that caused the "barely detects standing"
+  // jitter.
+  //
+  // Emergency disable: flyctl secrets set JAKESJAM_WASM_COLLISION=0
+  // Same for JAKESJAM_WASM_PLAYER=0.
+  //
+  // ADR-0006, docs/zig-wasm-migration.md.
+  wasmCollision: process.env.JAKESJAM_WASM_COLLISION !== "0",
+  wasmPlayer: process.env.JAKESJAM_WASM_PLAYER !== "0",
 } as const;

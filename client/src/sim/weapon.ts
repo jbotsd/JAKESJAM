@@ -18,6 +18,7 @@ import { starterWeapon } from "./data/weapons.js";
 import { createWeaponBuild, findCardsById } from "./data/weaponBuild.js";
 import { spawnProjectile, type ProjectileSpawnParams } from "./projectile.js";
 import { nextInt } from "./rng.js";
+import { lutAtan2, lutCos, lutSin } from "./trig.js";
 import type { EntityId, PlayerEntity, ProjectileEntity, Vec2 } from "./types.js";
 
 /** Default fire cadence floor when fireRate is zero or missing. */
@@ -119,7 +120,7 @@ export function stepWeapon(
   // shot still registers visually. Future card pass will model raycast hit
   // resolution and continuous beam ticks.
   const muzzle: Vec2 = playerMuzzlePosition(next, aim);
-  const baseAngle = Math.atan2(aim.y - muzzle.y, aim.x - muzzle.x);
+  const baseAngle = lutAtan2(aim.y - muzzle.y, aim.x - muzzle.x);
 
   const speed = build.projectileSpeed * build.projectile.speedMultiplier;
   const lifetimeMs = Math.max(50, build.projectileLifetimeSeconds * 1000 * build.projectile.lifetimeMultiplier);
@@ -185,8 +186,8 @@ export function stepWeapon(
     build.recoilImpulse *
     build.projectile.recoilMultiplier *
     chaos.recoilMultiplier;
-  next.vx -= Math.cos(baseAngle) * recoil;
-  next.vy -= Math.sin(baseAngle) * recoil * 0.45;
+  next.vx -= lutCos(baseAngle) * recoil;
+  next.vy -= lutSin(baseAngle) * recoil * 0.45;
 
   // Cooldown derived from build.fireRate (shots per second), scaled by the
   // chaos fire-rate multiplier (golden-gun slows it, future buffs raise it).

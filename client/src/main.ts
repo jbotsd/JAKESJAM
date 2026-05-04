@@ -5,6 +5,27 @@ import { LobbyController } from "./game/ui/LobbyController";
 import { MatchStatusBadge } from "./game/ui/MatchStatusBadge";
 import { fetchWorldSummary } from "./net/worldClient";
 import { SceneKeys } from "./game/scenes/SceneKeys";
+import {
+  applyWasmCollisionFlag,
+  applyWasmPlayerFlag,
+  applyWasmRngFlag,
+  getWasmSim,
+  startWasmCanary,
+} from "./sim/wasm/runtime";
+
+// Phase F3 Zig→WASM substrate. RNG, collision, and player physics
+// run in Zig wasm by DEFAULT. Boot-load the wasm sim ASAP so it's
+// warm before any match starts.
+//   ?wasm-canary=1      → 30s of TS↔wasm RNG parity probes (debug).
+//   ?wasm-rng=0         → opt OUT of wasm RNG.
+//   ?wasm-collision=0   → opt OUT of wasm collision.
+//   ?wasm-player=0      → opt OUT of wasm player physics.
+// See docs/zig-wasm-migration.md and ADR-0006.
+void getWasmSim();
+startWasmCanary();
+void applyWasmRngFlag();
+void applyWasmCollisionFlag();
+void applyWasmPlayerFlag();
 
 const app = document.querySelector<HTMLDivElement>("#app");
 

@@ -18,6 +18,21 @@ import { config } from "./config.ts";
 import { MatchRegistry } from "./matchRegistry.ts";
 import { WorldHost } from "./worldHost.ts";
 import type { MatchSocketData } from "./matchHost.ts";
+import {
+  applyServerWasmCollision,
+  applyServerWasmPlayer,
+} from "./wasmRuntime.ts";
+
+// Phase B4/D2 Zig→WASM substrate (ADR-0006). Awaited at top-level
+// so swaps are installed before any matchHost begins a tick.
+//   JAKESJAM_WASM_COLLISION=1 → resolveMoveCached runs in wasm
+//   JAKESJAM_WASM_PLAYER=1    → full stepPlayer runs in wasm
+if (config.wasmCollision) {
+  await applyServerWasmCollision();
+}
+if (config.wasmPlayer) {
+  await applyServerWasmPlayer();
+}
 
 const registry = new MatchRegistry();
 // Single always-on world host per server process. Constructed at boot

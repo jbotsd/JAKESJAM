@@ -27,6 +27,9 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: latest
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: 0.15.2
       - uses: actions/cache@v4
         with:
           path: |
@@ -36,10 +39,21 @@ jobs:
             server/node_modules
           key: ${{ runner.os }}-bun-${{ hashFiles('bun.lock') }}
           restore-keys: ${{ runner.os }}-bun-
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/zig
+            sim/.zig-cache
+          key: ${{ runner.os }}-zig-${{ hashFiles('sim/build.zig', 'sim/build.zig.zon', 'sim/src/**', 'sim/test/**') }}
+          restore-keys: ${{ runner.os }}-zig-
       - run: bun install --frozen-lockfile
+      - run: bun run sim:fmt
+      - run: bun run sim:test
+      - run: bun run sim:build
       - run: bun run --filter client typecheck
       - run: bun run --filter server typecheck
       - run: bun run --filter client test
+      - run: bun run --filter server test
 
   # ──────────────────────────────────────────────────────────────────────
   # Deploy Convex (lobby + matches schema/functions) to production.

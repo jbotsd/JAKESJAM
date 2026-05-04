@@ -18,6 +18,7 @@
 // damagePlayer, clearTemporaryCombatEffects.
 
 import { Tick } from "./types.js";
+import { lutAtan2 } from "./trig.js";
 import type {
   EntityId,
   InputBitfield,
@@ -104,7 +105,7 @@ export function tryStartParry(
   // doesn't change which side is covered mid-parry.
   const dx = player.aimX - player.x;
   const dy = player.aimY - player.y;
-  const facing = dx === 0 && dy === 0 ? 0 : Math.atan2(dy, dx);
+  const facing = dx === 0 && dy === 0 ? 0 : lutAtan2(dy, dx);
 
   return {
     player: {
@@ -289,8 +290,8 @@ export function isHitInParryArc(
   const dy = projectile.y - player.y;
   const sourceAngle = dx === 0 && dy === 0
     ? // Degenerate — use opposite of velocity if available.
-      Math.atan2(-projectile.vy, -projectile.vx)
-    : Math.atan2(dy, dx);
+      lutAtan2(-projectile.vy, -projectile.vx)
+    : lutAtan2(dy, dx);
   const delta = wrapAngle(sourceAngle - facing);
   return Math.abs(delta) <= PARRY_ARC_RADIANS / 2;
 }

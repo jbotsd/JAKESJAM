@@ -24,6 +24,7 @@ import {
   type StaticCollisionCache,
 } from "./collision.js";
 import { nextFloat } from "./rng.js";
+import { lutAtan2, lutCos, lutSin } from "./trig.js";
 import { PlayerId } from "./types.js";
 import type {
   EntityId,
@@ -153,9 +154,9 @@ export function stepProjectile(
       // entity id keeps a fan of floaters out of phase with each other,
       // matching the offline behavior.
       const ageSec = nextAgeMs / 1000;
-      vy += Math.sin(ageSec * FLOAT_OSC_LATERAL_HZ + proj.id) *
+      vy += lutSin(ageSec * FLOAT_OSC_LATERAL_HZ + proj.id) *
         FLOAT_OSC_LATERAL * dtSec;
-      vx += Math.cos(ageSec * FLOAT_OSC_FORWARD_HZ + proj.id) *
+      vx += lutCos(ageSec * FLOAT_OSC_FORWARD_HZ + proj.id) *
         FLOAT_OSC_FORWARD * dtSec;
       break;
     }
@@ -556,8 +557,8 @@ export function spawnProjectile(
     ownerId: params.ownerId,
     x: params.origin.x,
     y: params.origin.y,
-    vx: Math.cos(params.aimAngle) * params.speed,
-    vy: Math.sin(params.aimAngle) * params.speed,
+    vx: lutCos(params.aimAngle) * params.speed,
+    vy: lutSin(params.aimAngle) * params.speed,
     shape: params.shape ?? "circle",
     radius: params.radius ?? 7,
     damage: params.damage,
@@ -690,7 +691,7 @@ function spawnSplit(
   }
 
   const speed = Math.hypot(parent.vx, parent.vy);
-  const baseAngle = speed > 0 ? Math.atan2(parent.vy, parent.vx) : 0;
+  const baseAngle = speed > 0 ? lutAtan2(parent.vy, parent.vx) : 0;
   const spread = SPLIT_SPREAD;
 
   const spawned: SpawnedChild[] = [];
@@ -711,8 +712,8 @@ function spawnSplit(
         ownerId: parent.ownerId,
         x: parent.x,
         y: parent.y,
-        vx: Math.cos(angle) * childSpeed,
-        vy: Math.sin(angle) * childSpeed,
+        vx: lutCos(angle) * childSpeed,
+        vy: lutSin(angle) * childSpeed,
         shape: parent.shape,
         radius,
         damage: parent.damage * SPLIT_DAMAGE_SCALE,
@@ -758,10 +759,10 @@ function rotateVelocityToward(
 ): { vx: number; vy: number } {
   const speed = Math.hypot(vx, vy);
   if (speed <= 0) return { vx, vy };
-  const current = Math.atan2(vy, vx);
-  const desired = Math.atan2(targetY - py, targetX - px);
+  const current = lutAtan2(vy, vx);
+  const desired = lutAtan2(targetY - py, targetX - px);
   const next = rotateAngleToward(current, desired, turnRate * dtSec);
-  return { vx: Math.cos(next) * speed, vy: Math.sin(next) * speed };
+  return { vx: lutCos(next) * speed, vy: lutSin(next) * speed };
 }
 
 function rotateAngleToward(current: number, target: number, maxStep: number): number {

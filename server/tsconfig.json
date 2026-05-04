@@ -18,5 +18,10 @@
       "@net/*": ["../client/src/net/*"]
     }
   },
-  "include": ["src/**/*.ts", "../client/src/sim/**/*.ts", "../client/src/net/**/*.ts"]
+  "include": ["src/**/*.ts", "../client/src/sim/**/*.ts", "../client/src/net/**/*.ts"],
+  "exclude": [
+    "../client/src/sim/wasm/loader.ts",
+    "../client/src/sim/wasm/runtime.ts",
+    "../client/src/sim/wasm/__tests__/**/*"
+  ]
 }

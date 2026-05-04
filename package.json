@@ -25,7 +25,10 @@
     "e2e:headed": "bunx playwright test --headed",
     "convex:codegen": "bunx convex codegen",
     "convex:deploy": "bunx convex deploy",
-    "deploy:server:syd": "flyctl deploy --config fly.toml --app jakesjam-srv-syd"
+    "deploy:server:syd": "flyctl deploy --config fly.toml --app jakesjam-srv-syd",
+    "sim:build": "cd sim && zig build",
+    "sim:test": "cd sim && zig build test",
+    "sim:fmt": "cd sim && zig fmt --check ."
   },
   "devDependencies": {
     "@playwright/test": "^1.59.1",
