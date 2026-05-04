@@ -1,5 +1,23 @@
 # JAKESJAM - Changelog
 
+## v0.39 - 2026-05-05
+
+- **Phase F1c — `sim/src/satellite.zig` ported.** Per-satellite tick
+  kernel: orbit angle advance, fire cooldown decay, lifetime tick,
+  fire-decision math (compute world position via `lutCos/Sin`,
+  aim via `lutAtan2`). Wasm exports: `satellite_tick`,
+  `sizeof_satellite_tick_input` (80 bytes), `sizeof_satellite_tick_output` (56 bytes).
+- New `satelliteParity.test.ts` (4 tests, 188 expects):
+  constants match, lifetime expiry across ~90 ticks, 60-tick orbit
+  with moving target produces byte-identical output, 200
+  randomised fixtures: 0 mismatches.
+- Caller (TS satellite.ts) still owns iteration, owner lookup,
+  target search, projectile spawn — only the per-satellite math
+  is in wasm.
+- 278 client tests, 39 server tests, 6 native Zig tests. Wasm 23.7 KB.
+
+
+
 ## v0.38 - 2026-05-05
 
 - **🚨 Fixed: bug fix from v0.37 wasn't actually live in prod.** The
