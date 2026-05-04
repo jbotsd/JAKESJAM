@@ -13,6 +13,11 @@ description: >
 
 # JAKESJAM Netcode
 
+> **READ FIRST:** `deterministic-netcode-architecture` (companion skill,
+> project-agnostic generalisation). This skill is JAKESJAM-specific
+> tuning of those rules. The substrate decision (Zig→WASM) is recorded
+> in ADR-0006 — `docs/adr/0006-zig-wasm-sim-substrate.md`.
+
 The architecture is **server-authoritative with client-side prediction and snapshot interpolation** — the canonical Glenn Fiedler / Quake 3 model. Convex is **not** in the hot path (per project memory, it's lobby/match metadata only). The hot path is:
 
 ```

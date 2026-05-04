@@ -1,3 +1,9 @@
+// ───────────────────────────────────────────────────────────────────────────
+// SUBSTRATE PIVOT IN PROGRESS — port target Zig→WASM. See
+// docs/adr/0006-zig-wasm-sim-substrate.md and
+// docs/zig-wasm-migration.md before adding behaviour here.
+// ───────────────────────────────────────────────────────────────────────────
+//
 // Deterministic collision system for sim/.
 //
 // Architecture:

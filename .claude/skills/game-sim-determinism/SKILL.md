@@ -15,6 +15,20 @@ The `@sim/` package is the **only** code path allowed to mutate authoritative ga
 
 The bar here is **soft determinism**: same RNG seed + same input sequence + same starting state ⇒ same world state on both sides, within float epsilon. We're not doing cross-platform hard determinism (lockstep) — the server is authoritative and corrects drift on every snapshot.
 
+> **STATUS UPDATE (May 2026):** the "soft determinism, accept float
+> epsilon drift" rule has been **superseded** in JAKESJAM by the
+> Zig→WASM substrate decision (ADR-0006, see
+> `docs/adr/0006-zig-wasm-sim-substrate.md`). The pivot upgrades
+> determinism from "soft / corrected by snapshots" to "hard / bit-
+> exact across all hosts" via WASM's spec-mandated IEEE 754
+> reproducibility. The rules below are still the *contract* — no
+> Math.random, no wall clock, fixed step, etc. The substrate just
+> makes the contract automatically enforced rather than aspirational.
+>
+> See companion skills `zig-wasm-build`, `wasm-ts-bridge`,
+> `wasm-game-sim-zig`, and the project-agnostic generalisation in
+> `deterministic-netcode-architecture`.
+
 ## What "shared" means
 
 - `client/src/sim/` is the source of truth. The server reaches it via the `@sim/` TS path alias (see `tsconfig.json`).

@@ -25,7 +25,38 @@ Read these before implementing gameplay features:
 4. `docs/technical-design.md` if present
 5. `docs/changelog.md` if present
 
+For multiplayer / netcode / sim work, the canonical refs are:
+
+1. `docs/netcode-architecture.md` — substrate-neutral architecture
+2. `docs/adr/0006-zig-wasm-sim-substrate.md` — current substrate decision
+3. `docs/zig-wasm-migration.md` — phased rollout plan
+4. `.claude/skills/deterministic-netcode-architecture/SKILL.md` —
+   transferable rules
+5. `.claude/skills/{zig-wasm-build,wasm-ts-bridge,wasm-game-sim-zig}/SKILL.md`
+   — build + boundary + sim design specifics
+
 When implementation changes design behaviour, update the relevant doc.
+
+## Substrate decision (May 2026)
+
+The deterministic sim core is moving from TypeScript to **Zig
+compiled to WebAssembly** to satisfy ADR-0001's "byte-identical
+WorldStates" requirement at production scale. Native TS float math
+is not bit-deterministic across V8 (browser) and JSC (Bun); WASM
+bytecode is, per spec.
+
+Until the migration completes (see `docs/zig-wasm-migration.md`),
+the sim still lives at `client/src/sim/*.ts`. New sim work should
+either:
+
+- Land as a small last-mile change in TS that the migration will
+  re-implement in Zig, OR
+- Land directly in `sim/src/*.zig` once Phase A of the migration
+  ships.
+
+If you're adding netcode/sim code without seeing this section, **stop
+and read the docs above first**. Patches to the sim that don't honour
+the determinism contract get reverted on principle, not on bug.
 
 ## Required Technical Direction
 

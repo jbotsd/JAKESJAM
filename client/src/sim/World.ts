@@ -1,3 +1,16 @@
+// ───────────────────────────────────────────────────────────────────────────
+// SUBSTRATE PIVOT IN PROGRESS — this file is being ported to Zig→WASM.
+// Source of truth docs:
+//   - docs/adr/0006-zig-wasm-sim-substrate.md
+//   - docs/zig-wasm-migration.md
+//   - .claude/skills/deterministic-netcode-architecture/SKILL.md
+//   - .claude/skills/wasm-game-sim-zig/SKILL.md
+// New sim work that lands in this TS file will be re-implemented in Zig.
+// Prefer landing the change in `sim/src/*.zig` once Phase B of the
+// migration ships. Don't introduce float-math behaviour here that you
+// expect to round-trip across hosts — that's the bug we're escaping.
+// ───────────────────────────────────────────────────────────────────────────
+//
 // Real World implementation. Replaces the no-op stub. Orchestrates per-player
 // movement + weapon fire, projectile flight, hit detection, damage, round
 // state machine. Pure given (state, inputs, dt, rngState).
