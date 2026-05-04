@@ -297,7 +297,8 @@ no `GeneralPurposeAllocator` per step).
 | `client/src/sim/wasm/__tests__/projectileHomingParity.test.ts` | F1a finish-half-1 | ✅ shipped |
 | `sim/src/projectile.zig` full stepProjectile dispatch (caller refactor) | F1a finish-half-2 | new |
 | `sim/src/world.zig` (orchestrator dispatch over all pathings) | C3 | new |
-| `sim/src/collision.zig` (static spatial grid replacing TS Map) | F2b | new |
+| `sim/src/spatial.zig` (static spatial grid replacing TS Map) | F2b | ✅ shipped |
+| `client/src/sim/wasm/__tests__/spatialParity.test.ts` | F2b | ✅ shipped |
 | `client/vite.config.ts` | A2 | small edit |
 | `client/src/sim/wasmShim.ts` | D1 | new |
 | `client/src/sim/types.ts` | D1 | type mirrors stay; logic deleted |

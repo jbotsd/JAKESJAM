@@ -1,5 +1,36 @@
 # JAKESJAM - Changelog
 
+## v0.45 - 2026-05-05
+
+- **Phase F2b — static spatial grid in Zig.** `sim/src/spatial.zig`
+  replaces the TS `Map<int, number[]>` cell buckets with fixed
+  static arrays:
+  - `g_cell_buckets: [256][16]u32`
+  - `g_cell_counts: [256]u32`
+  - `g_seen: [4]u64` bitset for query dedup
+- `buildSpatialGrid(aabbs[], worldW, worldH, cellSize)` populates
+  the module-global grid. `queryGrid(region, out[])` writes
+  deduped indices in iteration order, returns count.
+- TS Map iterates in insertion order; my static buckets reproduce
+  that ordering by iterating AABBs 0..N and pushing to each (r, c)
+  bucket in the same order. The dedup-via-bitset matches Set order
+  (first-seen).
+- New `spatialParity.test.ts` (5 tests, 9 expects):
+  - constants match
+  - whole-world query returns every AABB
+  - small region near floor returns only nearby items
+  - out-of-bounds region returns empty
+  - 100 randomised query regions match TS as a SET
+- The `Map.get(key)` insertion-order property is preserved within
+  a single cell. Across-cell ordering is set-equal to TS but may
+  not be strict order-equal — that's the determinism property the
+  broadphase actually relies on (set membership for circle-vs-AABB
+  checks; cross-cell iteration order doesn't affect hit decisions).
+- Smoke against deployed prod: 3/3 green.
+- 310 client tests, 39 server tests, 6 native Zig tests. Wasm 27.3 KB.
+
+
+
 ## v0.44 - 2026-05-05
 
 - **Phase F1a finish-half-1 — homing/boomerang helpers ported.**
