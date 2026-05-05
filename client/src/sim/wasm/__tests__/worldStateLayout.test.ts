@@ -87,13 +87,14 @@ describe("WorldState extern struct layout (Phase G1c)", () => {
       (ex.world_state_max_fire() * ex.sizeof_fire_entity() + 8) +
       (ex.world_state_max_pickups() * ex.sizeof_pickup_entity() + 8) +
       ex.world_state_max_players() * sizeofMovement +
-      // I15 static cache: 8 preamble + N×32 AABB + N×1 one_way + 8 tail.
+      // I15 static cache: 8 preamble + N×32 AABB + N×1 one_way + 4 tail.
       8 +
       maxStatics * 32 +
       maxStatics +
-      8 +
-      // I18 events buffer: 8 preamble + M×SimEvent.
-      8 +
+      4 +
+      // I18 events buffer: 4 count + 4 pad + 4 alignment pad +
+      // M×SimEvent (40B, 8-aligned).
+      12 +
       maxEvents * sizeofEvent;
     expect(ex.sizeof_world_state()).toBe(expected);
   });

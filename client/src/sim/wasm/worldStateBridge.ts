@@ -89,14 +89,15 @@ export const WORLD_STATE_TOTAL_SIZE =
   // I14 — PlayerMovementMemory parallel array (no preamble; sized
   // by MAX_PLAYERS, indexed parallel to the players array).
   MAX_PLAYERS * PLAYER_MOVEMENT_MEMORY_SIZE +
-  // I15 — static AABB cache: count u32 + 4 pad + N×AABB +
-  // N×u8 one_way + 8 tail pad (struct alignment).
+  // I15 — static AABB cache: 4 count + 4 pad + N×AABB +
+  // N×u8 one_way + 4 tail pad.
   ARRAY_PREAMBLE +
   MAX_STATICS * AABB_SIZE +
   MAX_STATICS +
-  8 +
-  // I18 — events buffer: count + 4 pad + N×SimEvent.
-  ARRAY_PREAMBLE +
+  4 +
+  // I18 — events buffer: 4 count + 4 pad + 4 alignment pad
+  // (SimEvent has f64 → 8-byte aligned) + N×SimEvent.
+  12 +
   64 * 40;
 
 // -----------------------------------------------------------------
@@ -1185,12 +1186,37 @@ export function packWorldState(state: WorldState): Uint8Array {
   return buf;
 }
 
+export type WasmSimEvent = {
+  kind: number;
+  playerIdxA: number;
+  playerIdxB: number;
+  entityId: number;
+  scalar: number;
+  x: number;
+  y: number;
+};
+
+export const SIM_EVENT_KIND = {
+  none: 0,
+  shotFired: 1,
+  hitConfirmed: 2,
+  destructibleBroken: 3,
+  pickupTaken: 4,
+  roundEnd: 5,
+  playerKilled: 6,
+  parryDeflected: 7,
+  shieldPopped: 8,
+  explosion: 9,
+  fireHit: 10,
+} as const;
+
 export type UnpackedWorldState = {
   tick: Tick;
   rngState: number;
   round: Pick<RoundState, "phase" | "countdownRemainingMs" | "roundIndex">;
   chaosModifierIds?: string[];
   fireHazardTimerMs?: number;
+  events: WasmSimEvent[];
   players: Record<PlayerId, PlayerEntity>;
   projectiles: Record<EntityId, ProjectileEntity>;
   satellites: Record<EntityId, SatelliteEntity>;
@@ -1309,6 +1335,34 @@ export function unpackWorldState(buf: Uint8Array): UnpackedWorldState {
     const e = unpackPickup(view, pickupStart + i * PICKUP_ENTITY_SIZE);
     pickups[e.id] = e;
   }
+  off = pickupStart + MAX_PICKUPS * PICKUP_ENTITY_SIZE;
+
+  // I14 player_movement parallel array — 16 × 24 bytes. Skipped
+  // for now (host doesn't consume; lives in wasm linear memory).
+  off += MAX_PLAYERS * PLAYER_MOVEMENT_MEMORY_SIZE;
+
+  // I15 static cache: 4 count + 4 pad + N×AABB + N×u8 + 4 tail.
+  off += 8 + MAX_STATICS * AABB_SIZE + MAX_STATICS + 4;
+
+  // I18 events buffer: 4 count + 4 pad + 4 alignment pad +
+  // N×SimEvent (40B each, 8-aligned). Zig inserts the extra 4
+  // bytes because SimEvent's f64 fields need 8-byte alignment.
+  const eventCount = view.getUint32(off, true);
+  off += 12;
+  const events: WasmSimEvent[] = [];
+  for (let i = 0; i < eventCount; i++) {
+    const e: WasmSimEvent = {
+      kind: view.getUint32(off, true),
+      playerIdxA: view.getInt32(off + 4, true),
+      playerIdxB: view.getInt32(off + 8, true),
+      entityId: view.getUint32(off + 12, true),
+      scalar: view.getFloat64(off + 16, true),
+      x: view.getFloat64(off + 24, true),
+      y: view.getFloat64(off + 32, true),
+    };
+    events.push(e);
+    off += 40;
+  }
 
   const out: UnpackedWorldState = {
     tick,
@@ -1320,6 +1374,7 @@ export function unpackWorldState(buf: Uint8Array): UnpackedWorldState {
     destructibles,
     firePatches,
     pickups,
+    events,
   };
   if (chaosModifierIds.length > 0) out.chaosModifierIds = chaosModifierIds;
   if (fireHazardTimerMs !== 0) out.fireHazardTimerMs = fireHazardTimerMs;
