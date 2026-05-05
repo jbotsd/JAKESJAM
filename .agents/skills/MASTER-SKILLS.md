@@ -4775,15 +4775,15 @@ The game server is **stateful per match** — once a `MatchHost` is hosting play
 ## Required fly.toml shape
 
 ```toml
-app = "jakesjam-srv-syd"
-primary_region = "syd"
+app = "jakesjam-srv-sin"
+primary_region = "sin"
 
 [build]
   dockerfile = "server/Dockerfile"
 
 [env]
   PORT = "8080"
-  REGION = "syd"
+  REGION = "sin"
   NODE_ENV = "production"
 
 [http_service]
@@ -4818,7 +4818,7 @@ The non-obvious bits:
 We deploy **one Fly app per region**, not one app with `regions = [...]`. Reason: matchmaker routes a client to a specific region's app, and per-app secrets/scaling/observability stay clean.
 
 ```bash
-flyctl deploy --config fly.toml --app jakesjam-srv-syd  --region syd
+flyctl deploy --config fly.toml --app jakesjam-srv-sin  --region sin
 flyctl deploy --config fly.toml --app jakesjam-srv-sjc  --region sjc
 flyctl deploy --config fly.toml --app jakesjam-srv-fra  --region fra
 ```
@@ -6573,15 +6573,15 @@ The game server is **stateful per match** — once a `MatchHost` is hosting play
 ## Required fly.toml shape
 
 ```toml
-app = "jakesjam-srv-syd"
-primary_region = "syd"
+app = "jakesjam-srv-sin"
+primary_region = "sin"
 
 [build]
   dockerfile = "server/Dockerfile"
 
 [env]
   PORT = "8080"
-  REGION = "syd"
+  REGION = "sin"
   NODE_ENV = "production"
 
 [http_service]
@@ -6616,7 +6616,7 @@ The non-obvious bits:
 We deploy **one Fly app per region**, not one app with `regions = [...]`. Reason: matchmaker routes a client to a specific region's app, and per-app secrets/scaling/observability stay clean.
 
 ```bash
-flyctl deploy --config fly.toml --app jakesjam-srv-syd  --region syd
+flyctl deploy --config fly.toml --app jakesjam-srv-sin  --region sin
 flyctl deploy --config fly.toml --app jakesjam-srv-sjc  --region sjc
 flyctl deploy --config fly.toml --app jakesjam-srv-fra  --region fra
 ```

@@ -376,8 +376,8 @@ Bun on a `shared-cpu-1x` (256 MB) VM is enough for dozens of concurrent 1v1 matc
 
 `fly.toml` (per-region pattern):
 ```toml
-app = "jakesjam-srv-syd"
-primary_region = "syd"
+app = "jakesjam-srv-sin"
+primary_region = "sin"
 
 [build]
   dockerfile = "../server/Dockerfile"

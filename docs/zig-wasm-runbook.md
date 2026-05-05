@@ -37,7 +37,7 @@ Network tab for `/wasm/sim.wasm` — if 404, re-deploy.
 
 Fly logs:
 ```sh
-flyctl logs -a jakesjam-srv-syd | grep wasm-sim
+flyctl logs -a jakesjam-srv-sin | grep wasm-sim
 ```
 
 You should see at startup:
@@ -117,7 +117,7 @@ In order of severity:
 
 2. **Server-side disable** for all users:
    ```sh
-   flyctl secrets set --app jakesjam-srv-syd \
+   flyctl secrets set --app jakesjam-srv-sin \
      JAKESJAM_WASM_COLLISION=0 JAKESJAM_WASM_PLAYER=0
    ```
    ~3 min for Fly VM roll. Server now runs TS-native; clients

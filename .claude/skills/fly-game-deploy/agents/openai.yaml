@@ -22,7 +22,7 @@ default_prompt: |
 
   5. Use `[vm]` with `cpu_kind: shared`, `cpus: 1`, `memory_mb: 512`. Bump to `dedicated` only when >50 CCU per VM is expected.
 
-  6. Follow naming: `jakesjam-srv-<region>` (e.g. `jakesjam-srv-syd`). Deploy one app per region to keep secrets/scaling clean.
+  6. Follow naming: `jakesjam-srv-<region>` (e.g. `jakesjam-srv-sin`). Deploy one app per region to keep secrets/scaling clean.
 
   7. Create apps with `flyctl apps create <name>`, then `flyctl secrets set --app <name> GAME_SERVER_SECRET=<value> CONVEX_URL=https://...`.
 
