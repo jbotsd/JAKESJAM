@@ -17,6 +17,7 @@ pub const weapon = @import("weapon.zig");
 pub const combat = @import("combat.zig");
 pub const destructible = @import("destructible.zig");
 pub const spatial = @import("spatial.zig");
+pub const world_state = @import("world_state.zig");
 
 // Force wasm linker to include sub-modules' `export fn` symbols.
 comptime {
@@ -32,6 +33,7 @@ comptime {
     _ = combat;
     _ = destructible;
     _ = spatial;
+    _ = world_state;
 }
 
 const STATE_SIZE: usize = 64 * 1024;
