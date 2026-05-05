@@ -17,7 +17,7 @@ const world_state = @import("world_state.zig");
 // Phase H1 — orchestration constants that mirror
 // client/src/sim/projectile.ts. Bit-exact bumps require parity-test
 // updates on both sides.
-const STICKY_FUSE_MS: f64 = 720.0;
+pub const STICKY_FUSE_MS: f64 = 720.0;
 const SPLIT_SPREAD: f64 = std.math.pi * 0.95;
 const SPLIT_DAMAGE_SCALE: f64 = 0.42;
 const SPLIT_LIFETIME_SCALE: f64 = 0.42;

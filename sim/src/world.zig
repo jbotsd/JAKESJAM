@@ -360,14 +360,24 @@ pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
                         state.players[ph2].y,
                     );
                 }
-                // Pierce-chain: decrement and survive; otherwise expire.
+                // Pierce-chain: decrement and survive; otherwise
+                // sticky → linger then detonate, others → expire.
                 if (proj_ptr.impact == .pierce_chain and
                     proj_ptr.pierce_remaining > 0)
                 {
                     proj_ptr.pierce_remaining -= 1;
                     continue;
                 }
-                proj_ptr.lifetime_ms = 0;
+                if (proj_ptr.impact == .sticky) {
+                    proj_ptr.sticky_fuse_ms = projectile.STICKY_FUSE_MS;
+                    proj_ptr.flags.has_sticky_fuse = true;
+                    proj_ptr.lifetime_ms = @max(
+                        proj_ptr.lifetime_ms,
+                        projectile.STICKY_FUSE_MS + eff_dt,
+                    );
+                } else {
+                    proj_ptr.lifetime_ms = 0;
+                }
                 break;
             }
         }
