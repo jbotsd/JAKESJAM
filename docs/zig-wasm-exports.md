@@ -161,6 +161,17 @@ export.
 | `destructible_player_in_blast(...)` | squared-distance blast check | `destructibleParity.test.ts` |
 | `destructible_center_to_aabb(...)` | center-origin → top-left AABB | `destructibleParity.test.ts` |
 
+### Phase H5 — orchestration helpers
+
+| Export | Purpose | Parity test |
+|---|---|---|
+| `destructible_resolve_projectile_hit(proj, dest) → u8` | overlap + damage application; returns 0 no_overlap, 1 damaged, 2 broken | `destructibleHitParity.test.ts` |
+| `destructible_explosion_radius() → f64` | 80 | `destructibleHitParity.test.ts` |
+| `destructible_explosion_damage() → f64` | 28 | `destructibleHitParity.test.ts` |
+| `destructible_fire_patch_default_lifetime_ms() → f64` | 1800 | `destructibleHitParity.test.ts` |
+| `destructible_fire_patch_default_radius() → f64` | 36 | `destructibleHitParity.test.ts` |
+| `destructible_fire_patch_default_dps() → f64` | 14 | `destructibleHitParity.test.ts` |
+
 ## Fire (`fire.zig`)
 
 | Export | Purpose | Parity test |

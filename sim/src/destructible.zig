@@ -8,6 +8,15 @@
 
 const std = @import("std");
 const collision = @import("collision.zig");
+const world_state = @import("world_state.zig");
+
+// Phase H5 — orchestration constants. Mirror
+// `client/src/sim/destructible.ts` exactly.
+pub const EXPLOSION_RADIUS: f64 = 80.0;
+pub const EXPLOSION_DAMAGE: f64 = 28.0;
+pub const FIRE_PATCH_DEFAULT_LIFETIME_MS: f64 = 1800.0;
+pub const FIRE_PATCH_DEFAULT_RADIUS: f64 = 36.0;
+pub const FIRE_PATCH_DEFAULT_DPS: f64 = 14.0;
 
 /// Apply damage to an HP value, clamped at 0.
 /// Matches `Math.max(0, hp - damage)`.
@@ -72,4 +81,65 @@ pub export fn destructible_center_to_aabb(
     out_ptr: *collision.AABB,
 ) void {
     out_ptr.* = centerToAABB(cx, cy, w, h);
+}
+
+// =================================================================
+// Phase H5 — projectile-vs-destructible orchestration helper.
+// Resolves a single projectile/destructible pair: overlap check,
+// HP application, broken decision. Caller iterates the projectile
+// × destructible cross product and wires events / fire spawns
+// externally. Splitting it this way keeps the wasm side pure
+// (no event allocation in linear memory) and lets the orchestrator
+// in Phase I drive the iteration.
+
+pub const HitResult = enum(u8) {
+    no_overlap = 0,
+    /// Projectile hit, destructible took damage but is still
+    /// alive. Caller should remove the projectile.
+    damaged = 1,
+    /// Projectile hit, destructible health dropped to 0 this
+    /// call. Caller emits `destructible-broken`, may emit AOE
+    /// hits if `dest.flags & EXPLOSIVE`, may spawn a fire patch
+    /// if `dest.flags & FLAMMABLE` and projectile element ==
+    /// fire (element tag = 2 from world_state.ElementType).
+    broken = 2,
+};
+
+pub fn resolveProjectileHit(
+    proj: *const world_state.ProjectileEntity,
+    dest: *world_state.DestructibleEntity,
+) HitResult {
+    if (dest.health <= 0) return .no_overlap;
+    const aabb = centerToAABB(dest.x, dest.y, dest.width, dest.height);
+    if (!collision.circleOverlapsAABB(proj.x, proj.y, proj.radius, aabb))
+        return .no_overlap;
+    dest.health = applyDamage(dest.health, proj.damage);
+    return if (dest.health <= 0) .broken else .damaged;
+}
+
+pub export fn destructible_resolve_projectile_hit(
+    proj_ptr: *const world_state.ProjectileEntity,
+    dest_ptr: *world_state.DestructibleEntity,
+) u8 {
+    return @intFromEnum(resolveProjectileHit(proj_ptr, dest_ptr));
+}
+
+pub export fn destructible_explosion_radius() f64 {
+    return EXPLOSION_RADIUS;
+}
+
+pub export fn destructible_explosion_damage() f64 {
+    return EXPLOSION_DAMAGE;
+}
+
+pub export fn destructible_fire_patch_default_lifetime_ms() f64 {
+    return FIRE_PATCH_DEFAULT_LIFETIME_MS;
+}
+
+pub export fn destructible_fire_patch_default_radius() f64 {
+    return FIRE_PATCH_DEFAULT_RADIUS;
+}
+
+pub export fn destructible_fire_patch_default_dps() f64 {
+    return FIRE_PATCH_DEFAULT_DPS;
 }
