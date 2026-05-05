@@ -1459,25 +1459,32 @@ export class MatchScene extends Phaser.Scene {
   private spawnBurnSpark(position: Vec2): void {
     const spark = this.particlePool?.acquireSpark();
     if (!spark) return;
+    const pool = this.particlePool;
     const hot = Math.random() < 0.35;
     const color = hot ? STATUS_VFX.fire.hotColor : STATUS_VFX.fire.color;
     const ox = (Math.random() - 0.5) * 28;
-    spark.setPosition(position.x + ox, position.y - 10);
+    const startX = position.x + ox;
+    const startY = position.y - 10;
+    spark.setPosition(startX, startY);
     spark.setFillStyle(color, 0.9);
     spark.setAlpha(0.9);
     spark.setScale(1);
     spark.setRotation((Math.random() - 0.5) * 0.7);
-    const pool = this.particlePool;
-    this.tweens.add({
-      targets: spark,
-      y: spark.y - 26 - Math.random() * 20,
-      x: spark.x + (Math.random() - 0.5) * 14,
-      alpha: 0,
-      scaleX: 0.4,
-      scaleY: 0.4,
-      duration: 420 + Math.random() * 200,
+    const targetX = startX + (Math.random() - 0.5) * 14;
+    const targetY = startY - 26 - Math.random() * 20;
+    transientVfx.spawn({
+      factory: () => spark,
+      lifetimeMs: 420 + Math.random() * 200,
+      startAlpha: 0.9,
       ease: "Sine.easeOut",
-      onComplete: () => pool?.release(spark),
+      onTick: (obj, t) => {
+        const s = obj as Phaser.GameObjects.Rectangle;
+        s.x = startX + (targetX - startX) * t;
+        s.y = startY + (targetY - startY) * t;
+        const sc = 1 - 0.6 * t;
+        s.setScale(sc, sc);
+      },
+      release: () => pool?.release(spark),
     });
   }
 
@@ -1487,20 +1494,24 @@ export class MatchScene extends Phaser.Scene {
   private spawnFrostRing(position: Vec2): void {
     const ring = this.particlePool?.acquireRing();
     if (!ring) return;
+    const pool = this.particlePool;
     ring.setPosition(position.x, position.y);
     ring.setFillStyle(STATUS_VFX.ice.color, 0.0);
     ring.setStrokeStyle(2, STATUS_VFX.ice.color, 0.52);
     ring.setScale(1);
     ring.setAlpha(1);
-    const pool = this.particlePool;
-    this.tweens.add({
-      targets: ring,
-      scaleX: 32 / 18,
-      scaleY: 32 / 18,
-      alpha: 0,
-      duration: 320,
+    const finalScale = 32 / 18;
+    transientVfx.spawn({
+      factory: () => ring,
+      lifetimeMs: 320,
+      startAlpha: 1,
       ease: "Sine.easeOut",
-      onComplete: () => pool?.release(ring),
+      onTick: (obj, t) => {
+        const r = obj as Phaser.GameObjects.Arc;
+        const s = 1 + (finalScale - 1) * t;
+        r.setScale(s, s);
+      },
+      release: () => pool?.release(ring),
     });
   }
 
@@ -1511,25 +1522,29 @@ export class MatchScene extends Phaser.Scene {
   private spawnFreezeShard(position: Vec2): void {
     const shard = this.particlePool?.acquireShard();
     if (!shard) return;
+    const pool = this.particlePool;
     const angle = Math.random() * Math.PI * 2;
     const dist = 14 + Math.random() * 18;
-    shard.setPosition(
-      position.x + Math.cos(angle) * dist,
-      position.y + Math.sin(angle) * dist,
-    );
+    const startX = position.x + Math.cos(angle) * dist;
+    const startY = position.y + Math.sin(angle) * dist;
+    shard.setPosition(startX, startY);
     shard.setFillStyle(STATUS_VFX.ice.color, 0.72);
     shard.setAlpha(0.72);
     shard.setScale(1);
     shard.setRotation(angle + Math.PI / 2);
-    const pool = this.particlePool;
-    this.tweens.add({
-      targets: shard,
-      x: shard.x + Math.cos(angle) * 12,
-      y: shard.y + Math.sin(angle) * 12,
-      alpha: 0,
-      duration: 520,
+    const targetX = startX + Math.cos(angle) * 12;
+    const targetY = startY + Math.sin(angle) * 12;
+    transientVfx.spawn({
+      factory: () => shard,
+      lifetimeMs: 520,
+      startAlpha: 0.72,
       ease: "Sine.easeOut",
-      onComplete: () => pool?.release(shard),
+      onTick: (obj, t) => {
+        const s = obj as Phaser.GameObjects.Rectangle;
+        s.x = startX + (targetX - startX) * t;
+        s.y = startY + (targetY - startY) * t;
+      },
+      release: () => pool?.release(shard),
     });
   }
 
@@ -1589,12 +1604,11 @@ export class MatchScene extends Phaser.Scene {
     graphics.strokePath();
 
     const pool = this.particlePool;
-    this.tweens.add({
-      targets: graphics,
-      alpha: 0,
-      duration: 130,
+    transientVfx.spawn({
+      factory: () => graphics,
+      lifetimeMs: 130,
       ease: "Sine.easeIn",
-      onComplete: () => pool?.release(graphics),
+      release: () => pool?.release(graphics),
     });
   }
 

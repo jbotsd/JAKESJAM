@@ -6,6 +6,7 @@
 
 import Phaser from "phaser";
 import { ParticlePool, STATUS_VFX } from "./ParticlePool";
+import { transientVfx } from "../render/TransientVfx";
 import type { PlayerId, SimEvent, Vec2, WorldState } from "../../sim";
 
 const BURN_SPARK_INTERVAL_MS = 80;
@@ -19,13 +20,14 @@ const BOLT_DURATION_MS = 130;
 const SPARK_HOT_CHANCE = 0.35;
 
 export class StatusVfxController {
-  private readonly scene: Phaser.Scene;
   private readonly pool: ParticlePool;
   private readonly burnCadence: Map<string, number> = new Map();
   private readonly freezeCadence: Map<string, number> = new Map();
 
-  constructor(scene: Phaser.Scene, pool: ParticlePool) {
-    this.scene = scene;
+  constructor(_scene: Phaser.Scene, pool: ParticlePool) {
+    // Scene is no longer held — transientVfx owns scene routing now.
+    // Constructor signature preserved so callers don't need to
+    // change. Remove the param + bump callers in a follow-up.
     this.pool = pool;
   }
 
@@ -98,21 +100,28 @@ export class StatusVfxController {
     const hot = Math.random() < SPARK_HOT_CHANCE;
     const color = hot ? STATUS_VFX.fire.hotColor : STATUS_VFX.fire.color;
     const ox = (Math.random() - 0.5) * 28;
-    spark.setPosition(position.x + ox, position.y - 10);
+    const startX = position.x + ox;
+    const startY = position.y - 10;
+    spark.setPosition(startX, startY);
     spark.setFillStyle(color, 0.9);
     spark.setRotation((Math.random() - 0.5) * 0.7);
     spark.setScale(1);
     spark.setAlpha(0.9);
-    this.scene.tweens.add({
-      targets: spark,
-      y: spark.y - 26 - Math.random() * 20,
-      x: spark.x + (Math.random() - 0.5) * 14,
-      alpha: 0,
-      scaleX: 0.4,
-      scaleY: 0.4,
-      duration: SPARK_DURATION_MS + Math.random() * 200,
+    const targetX = startX + (Math.random() - 0.5) * 14;
+    const targetY = startY - 26 - Math.random() * 20;
+    transientVfx.spawn({
+      factory: () => spark,
+      lifetimeMs: SPARK_DURATION_MS + Math.random() * 200,
+      startAlpha: 0.9,
       ease: "Sine.easeOut",
-      onComplete: () => this.pool.release(spark),
+      onTick: (obj, t) => {
+        const s = obj as Phaser.GameObjects.Rectangle;
+        s.x = startX + (targetX - startX) * t;
+        s.y = startY + (targetY - startY) * t;
+        const sc = 1 - 0.6 * t;
+        s.setScale(sc, sc);
+      },
+      release: () => this.pool.release(spark),
     });
   }
 
@@ -121,22 +130,26 @@ export class StatusVfxController {
     if (!shard) return;
     const angle = Math.random() * Math.PI * 2;
     const dist = 14 + Math.random() * 18;
-    shard.setPosition(
-      position.x + Math.cos(angle) * dist,
-      position.y + Math.sin(angle) * dist,
-    );
+    const startX = position.x + Math.cos(angle) * dist;
+    const startY = position.y + Math.sin(angle) * dist;
+    shard.setPosition(startX, startY);
     shard.setFillStyle(STATUS_VFX.ice.color, 0.72);
     shard.setRotation(angle + Math.PI / 2);
     shard.setScale(1);
     shard.setAlpha(0.72);
-    this.scene.tweens.add({
-      targets: shard,
-      x: shard.x + Math.cos(angle) * 12,
-      y: shard.y + Math.sin(angle) * 12,
-      alpha: 0,
-      duration: SHARD_DURATION_MS,
+    const targetX = startX + Math.cos(angle) * 12;
+    const targetY = startY + Math.sin(angle) * 12;
+    transientVfx.spawn({
+      factory: () => shard,
+      lifetimeMs: SHARD_DURATION_MS,
+      startAlpha: 0.72,
       ease: "Sine.easeOut",
-      onComplete: () => this.pool.release(shard),
+      onTick: (obj, t) => {
+        const s = obj as Phaser.GameObjects.Rectangle;
+        s.x = startX + (targetX - startX) * t;
+        s.y = startY + (targetY - startY) * t;
+      },
+      release: () => this.pool.release(shard),
     });
   }
 
@@ -148,14 +161,18 @@ export class StatusVfxController {
     ring.setStrokeStyle(2, STATUS_VFX.ice.color, 0.52);
     ring.setScale(1);
     ring.setAlpha(1);
-    this.scene.tweens.add({
-      targets: ring,
-      scaleX: 32 / 18,
-      scaleY: 32 / 18,
-      alpha: 0,
-      duration: RING_DURATION_MS,
+    const finalScale = 32 / 18;
+    transientVfx.spawn({
+      factory: () => ring,
+      lifetimeMs: RING_DURATION_MS,
+      startAlpha: 1,
       ease: "Sine.easeOut",
-      onComplete: () => this.pool.release(ring),
+      onTick: (obj, t) => {
+        const r = obj as Phaser.GameObjects.Arc;
+        const s = 1 + (finalScale - 1) * t;
+        r.setScale(s, s);
+      },
+      release: () => this.pool.release(ring),
     });
   }
 
@@ -201,12 +218,11 @@ export class StatusVfxController {
     for (let i = 1; i < pts.length; i++) graphics.lineTo(pts[i]!.x, pts[i]!.y);
     graphics.strokePath();
 
-    this.scene.tweens.add({
-      targets: graphics,
-      alpha: 0,
-      duration: BOLT_DURATION_MS,
+    transientVfx.spawn({
+      factory: () => graphics,
+      lifetimeMs: BOLT_DURATION_MS,
       ease: "Sine.easeIn",
-      onComplete: () => this.pool.release(graphics),
+      release: () => this.pool.release(graphics),
     });
   }
 }

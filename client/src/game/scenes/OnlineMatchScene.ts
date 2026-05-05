@@ -1067,22 +1067,25 @@ export class OnlineMatchScene extends Phaser.Scene {
       const dist = Math.hypot(cx - position.x, cy - position.y);
       if (dist >= BLAST_RANGE) continue;
       const tintAlpha = 0.10 * (1 - dist / BLAST_RANGE);
-      const tintRect = this.add.rectangle(
-        cx,
-        cy,
-        platform.size.x,
-        platform.size.y,
-        PALETTE.blastHalo,
-        tintAlpha,
-      );
-      tintRect.setBlendMode(Phaser.BlendModes.ADD);
-      tintRect.setDepth(5);
-      this.tweens.add({
-        targets: tintRect,
-        alpha: 0,
-        duration: 140,
+      const sizeX = platform.size.x;
+      const sizeY = platform.size.y;
+      transientVfx.spawn({
+        factory: () => {
+          const tintRect = this.add.rectangle(
+            cx,
+            cy,
+            sizeX,
+            sizeY,
+            PALETTE.blastHalo,
+            tintAlpha,
+          );
+          tintRect.setBlendMode(Phaser.BlendModes.ADD);
+          tintRect.setDepth(5);
+          return tintRect;
+        },
+        lifetimeMs: 140,
+        startAlpha: tintAlpha,
         ease: "Linear",
-        onComplete: () => tintRect.destroy(),
       });
     }
   }
