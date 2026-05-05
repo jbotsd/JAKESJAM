@@ -226,9 +226,7 @@ pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
             // Skip owner self-damage.
             if (patch_ptr.has_owner != 0 and
                 state.players[ph].id_len == patch_ptr.owner_id_len and
-                std.mem.eql(u8,
-                    state.players[ph].id_bytes[0..patch_ptr.owner_id_len],
-                    patch_ptr.owner_id_bytes[0..patch_ptr.owner_id_len]))
+                std.mem.eql(u8, state.players[ph].id_bytes[0..patch_ptr.owner_id_len], patch_ptr.owner_id_bytes[0..patch_ptr.owner_id_len]))
             {
                 continue;
             }
@@ -345,9 +343,7 @@ pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
                     if (!state.players[ex_p].flags.alive) continue;
                     if (proj_ptr.flags.has_owner and
                         state.players[ex_p].id_len == proj_ptr.owner_id_len and
-                        std.mem.eql(u8,
-                            state.players[ex_p].id_bytes[0..proj_ptr.owner_id_len],
-                            proj_ptr.owner_id_bytes[0..proj_ptr.owner_id_len]))
+                        std.mem.eql(u8, state.players[ex_p].id_bytes[0..proj_ptr.owner_id_len], proj_ptr.owner_id_bytes[0..proj_ptr.owner_id_len]))
                     {
                         continue;
                     }
@@ -377,9 +373,7 @@ pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
             // Skip owner.
             if (proj_ptr.flags.has_owner and
                 state.players[ph2].id_len == proj_ptr.owner_id_len and
-                std.mem.eql(u8,
-                    state.players[ph2].id_bytes[0..proj_ptr.owner_id_len],
-                    proj_ptr.owner_id_bytes[0..proj_ptr.owner_id_len]))
+                std.mem.eql(u8, state.players[ph2].id_bytes[0..proj_ptr.owner_id_len], proj_ptr.owner_id_bytes[0..proj_ptr.owner_id_len]))
             {
                 continue;
             }
@@ -402,9 +396,7 @@ pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
                     var sj: u32 = 0;
                     while (sj < state.player_count) : (sj += 1) {
                         if (state.players[sj].id_len == proj_ptr.owner_id_len and
-                            std.mem.eql(u8,
-                                state.players[sj].id_bytes[0..proj_ptr.owner_id_len],
-                                proj_ptr.owner_id_bytes[0..proj_ptr.owner_id_len]))
+                            std.mem.eql(u8, state.players[sj].id_bytes[0..proj_ptr.owner_id_len], proj_ptr.owner_id_bytes[0..proj_ptr.owner_id_len]))
                         {
                             shooter_idx = @intCast(sj);
                             break;
@@ -565,9 +557,7 @@ pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
         var oj: u32 = 0;
         while (oj < state.player_count) : (oj += 1) {
             if (state.players[oj].id_len == sat_ptr.owner_id_len and
-                std.mem.eql(u8,
-                    state.players[oj].id_bytes[0..sat_ptr.owner_id_len],
-                    sat_ptr.owner_id_bytes[0..sat_ptr.owner_id_len]))
+                std.mem.eql(u8, state.players[oj].id_bytes[0..sat_ptr.owner_id_len], sat_ptr.owner_id_bytes[0..sat_ptr.owner_id_len]))
             {
                 owner_x = state.players[oj].x;
                 owner_y = state.players[oj].y;
