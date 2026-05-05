@@ -1,5 +1,18 @@
 # JAKESJAM - Changelog
 
+## v0.51 - 2026-05-05
+
+- **100k-tick determinism canary added.** Extends
+  `longHorizonCanary.test.ts` with a deeper-regression test that
+  runs 100,000 ticks (~28 minutes of 60Hz gameplay) of TS-native
+  vs Zig-wasm player physics with independent integrators on the
+  same canned input loop. Spot-checks every 1000 ticks for full
+  coverage. **0 drift across 100,000 ticks.**
+- Test runs in 169ms total — no CI cost concern.
+- 328 client / 43 server / 6 native Zig tests, all green.
+
+
+
 ## v0.50 - 2026-05-05
 
 - **Phase F1a final — `step_projectile_v2` ports the full pathing

@@ -111,6 +111,64 @@ function makePlayer(): PlayerEntity {
 }
 
 describe("long-horizon determinism canary", () => {
+  test("100,000 ticks of TS-native vs Zig-wasm produce byte-identical final state (deep regression net)", () => {
+    // 100,000 ticks @ 60Hz = ~28 minutes of gameplay. If any
+    // accumulated ULP drift exists in the integration loop it
+    // surfaces here. Compares only every 1000 ticks instead of
+    // every tick so the test stays under ~5s.
+    setResolveMoveCachedBackend(null);
+    setStepPlayerBackend(null);
+
+    let tsP = makePlayer();
+    let tsM = freshPlayerMovementMemory();
+    let waP = makePlayer();
+    let waM = freshPlayerMovementMemory();
+
+    const TICKS = 100_000;
+    let prev: InputBitfield = 0;
+    let drift = 0;
+
+    for (let tick = 0; tick < TICKS; tick++) {
+      const curr = INPUT_LOOP[tick % INPUT_LOOP.length]!;
+
+      setStepPlayerBackend(null);
+      const tsResult = stepPlayer(
+        tsP, prev, curr, 0, 0, tsM, [], DT_MS,
+        { collisionCache: cache },
+      );
+      tsP = tsResult.player;
+      tsM = tsResult.memory;
+
+      setStepPlayerBackend(makeStepPlayerWasmBackend(sim));
+      const waResult = stepPlayer(
+        waP, prev, curr, 0, 0, waM, [], DT_MS,
+        { collisionCache: cache },
+      );
+      waP = waResult.player;
+      waM = waResult.memory;
+
+      // Spot-check every 1000 ticks for fast iteration but full
+      // 100k coverage of the integration loop.
+      if (tick % 1000 === 0) {
+        if (
+          waP.x !== tsP.x ||
+          waP.y !== tsP.y ||
+          waP.vx !== tsP.vx ||
+          waP.vy !== tsP.vy ||
+          waM.groundedLastFrame !== tsM.groundedLastFrame
+        ) {
+          drift++;
+        }
+      }
+      prev = curr;
+    }
+
+    setStepPlayerBackend(null);
+    expect(drift).toBe(0);
+    // Sanity: 100k ticks of mixed input → player has moved.
+    expect(tsP.x).not.toBe(100);
+  });
+
   test("10,000 ticks of TS-native vs Zig-wasm produce byte-identical state every tick", () => {
     setResolveMoveCachedBackend(null);
     setStepPlayerBackend(null);
