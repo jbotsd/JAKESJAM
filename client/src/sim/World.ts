@@ -1100,7 +1100,12 @@ function maybeWasmActual(
   } catch {
     return null;
   }
-  if (mode !== "2") return null;
+  // Gated behind "playtest" — `?wasm-world=2` alone no longer
+  // arms it. Confirmed-broken render churn (procedural rig draws
+  // streaks every frame because mergeUnpacked returns fresh
+  // state objects, breaking renderSmoother referential identity).
+  // Re-enable once the rig + smoother handle wasm-driven state.
+  if (mode !== "playtest") return null;
   type WasmEvent = {
     kind: number;
     playerIdxA: number;
