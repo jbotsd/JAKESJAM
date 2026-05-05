@@ -116,6 +116,9 @@ function mergeUnpacked(
       phase: unpacked.round.phase,
       countdownRemainingMs: unpacked.round.countdownRemainingMs,
       roundIndex: unpacked.round.roundIndex,
+      // I24 — bridge per-player score from PlayerEntity.score
+      // back into round.scores keyed by playerId.
+      scores: { ...state.round.scores, ...unpacked.scores },
     },
     players: unpacked.players,
     firePatches: unpacked.firePatches,

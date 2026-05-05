@@ -1214,6 +1214,7 @@ export type UnpackedWorldState = {
   tick: Tick;
   rngState: number;
   round: Pick<RoundState, "phase" | "countdownRemainingMs" | "roundIndex">;
+  scores: Record<string, number>;
   chaosModifierIds?: string[];
   fireHazardTimerMs?: number;
   events: WasmSimEvent[];
@@ -1364,10 +1365,23 @@ export function unpackWorldState(buf: Uint8Array): UnpackedWorldState {
     off += 40;
   }
 
+  // I24 — extract the per-player score field into a separate
+  // record so the J0 shim can mirror it into state.round.scores.
+  const scores: Record<string, number> = {};
+  let pi = 0;
+  for (const pid of Object.keys(players).sort()) {
+    // PlayerEntity score is at offset 276 from the player's start.
+    const playerStart = playersStart + pi * PLAYER_ENTITY_SIZE;
+    const score = view.getUint32(playerStart + 276, true);
+    if (score > 0) scores[pid] = score;
+    pi++;
+  }
+
   const out: UnpackedWorldState = {
     tick,
     rngState,
     round: { phase, countdownRemainingMs, roundIndex },
+    scores,
     players,
     projectiles,
     satellites,

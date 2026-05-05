@@ -178,7 +178,9 @@ describe("worldWasmBackend.applyWasmWorldStep (Phase J0)", () => {
     const next = await applyWasmWorldStep(state, 16.667);
     // chaosModifierIds round-trips via the chaos_mask bitfield.
     expect(next.chaosModifierIds).toContain("low-gravity");
-    // round.scores stays TS-side until the J shim bridges it.
-    expect(next.round.scores).toBe(state.round.scores);
+    // round.scores merges TS pre-existing entries with wasm-side
+    // increments. With no winner this tick, the merge is empty so
+    // it deep-equals the pre-existing scores object.
+    expect(next.round.scores).toEqual(state.round.scores);
   });
 });
