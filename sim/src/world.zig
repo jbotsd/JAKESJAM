@@ -98,14 +98,12 @@ pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
     state.event_count = 0;
     state.header.tick += 1;
 
-    // 0. Resolve the chaos profile for this tick. Today the
-    //    profile isn't applied to the per-module ticks (the TS
-    //    orchestrator still scales dt by timeScale, etc.), but
-    //    landing the lookup here proves the data layer plugs
-    //    into the orchestrator. Phase I4+ wires the profile into
-    //    the per-module calls.
+    // 0. Resolve the chaos profile for this tick + apply
+    //    timeScale to dt (I20). All downstream per-module
+    //    calls use `eff_dt` so movement, projectile flight, and
+    //    cooldown decrement run at the chaos-scaled tempo.
     const chaos_profile = chaos.chaosProfileFromMask(state.header.chaos_mask);
-    _ = chaos_profile;
+    const eff_dt = dt_ms * chaos_profile.time_scale;
 
     // 1. Round phase machine + winner detection (I6). When a
     //    winner emerges (KO or time-out), increment that player's
@@ -139,7 +137,7 @@ pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
     const phase_result = round.roundStepPhase(
         state.header.round_phase,
         state.header.countdown_remaining_ms,
-        dt_ms,
+        eff_dt,
         winner_idx >= 0,
     );
     state.header.round_phase = phase_result.new_phase;
@@ -160,7 +158,7 @@ pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
     while (fi < state.fire_count) : (fi += 1) {
         const patch_ptr = &state.fires[fi];
         if (patch_ptr.remaining_ms <= 0) continue;
-        const damage_this_tick = patch_ptr.damage_per_second * (dt_ms / 1000.0);
+        const damage_this_tick = patch_ptr.damage_per_second * (eff_dt / 1000.0);
         var ph: u32 = 0;
         while (ph < state.player_count) : (ph += 1) {
             if (!state.players[ph].flags.alive) continue;
@@ -187,7 +185,7 @@ pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
                 }
             }
         }
-        _ = fire.fireEntityTick(patch_ptr, dt_ms);
+        _ = fire.fireEntityTick(patch_ptr, eff_dt);
     }
 
     // 3. Projectile pre-step lifecycle + motion (I7). Sticky /
@@ -203,7 +201,7 @@ pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
     var pi: u32 = 0;
     while (pi < state.projectile_count) : (pi += 1) {
         const proj_ptr = &state.projectiles[pi];
-        const result = projectile.projectilePreStep(proj_ptr, dt_ms);
+        const result = projectile.projectilePreStep(proj_ptr, eff_dt);
         if (result == .advance) {
             // Bridge ProjectileEntity → ProjectileKinematicsV2 →
             // step → write motion fields back.
@@ -229,7 +227,7 @@ pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
             };
             const r = projectile.stepV2(
                 &kine,
-                dt_ms,
+                eff_dt,
                 empty_statics,
                 empty_xs,
                 empty_ys,
@@ -243,7 +241,7 @@ pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
             proj_ptr.y = kine.y;
             proj_ptr.vx = kine.vx;
             proj_ptr.vy = kine.vy;
-            proj_ptr.lifetime_ms -= dt_ms;
+            proj_ptr.lifetime_ms -= eff_dt;
             if (proj_ptr.flags.has_age) proj_ptr.age_ms = kine.age_ms;
             if (proj_ptr.flags.has_traveled) proj_ptr.traveled_px = kine.traveled_px;
             proj_ptr.flags.returning = kine.returning != 0;
@@ -333,14 +331,15 @@ pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
             const dx = proj_ptr.x - closest_x;
             const dy = proj_ptr.y - closest_y;
             if (dx * dx + dy * dy <= proj_ptr.radius * proj_ptr.radius) {
-                state.players[ph2].health -= proj_ptr.damage;
+                const final_dmg = proj_ptr.damage * chaos_profile.damage_multiplier;
+                state.players[ph2].health -= final_dmg;
                 emitEvent(
                     state,
                     .hit_confirmed,
                     @intCast(ph2),
                     -1,
                     proj_ptr.id,
-                    proj_ptr.damage,
+                    final_dmg,
                     state.players[ph2].x,
                     state.players[ph2].y,
                 );
@@ -423,7 +422,7 @@ pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
             target_y,
             has_target,
             can_fire,
-            dt_ms,
+            eff_dt,
         );
     }
 
@@ -452,7 +451,7 @@ pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
                     pickup_ptr.duration_ms
                 else
                     0;
-                const dt: f64 = if (dt_ms > 0) dt_ms else 1.0;
+                const dt: f64 = if (eff_dt > 0) eff_dt else 1.0;
                 const duration_ticks: u32 = @intFromFloat(@ceil(duration_ms / dt));
                 const expiry_tick: u32 = state.header.tick + duration_ticks;
                 switch (pickup_ptr.kind) {
@@ -556,9 +555,9 @@ pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
             state.players[pmi].current_keys,
             state.players[pmi].aim_x,
             state.players[pmi].aim_y,
-            1.0, // speed_mul (chaos profile applies TS-side until I17)
-            1.0, // gravity_mul
-            dt_ms,
+            1.0, // speed_mul — per-player slow effects apply inside stepPlayer via PlayerEntity flags
+            chaos_profile.gravity_multiplier,
+            eff_dt,
             statics_slice,
             one_way_slice,
         );
@@ -586,7 +585,7 @@ pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
         combat.tickShield(
             player_ptr,
             player_ptr.current_keys,
-            dt_ms,
+            eff_dt,
             0.0, // max_charge_override = 0 → use stored shield_max_charge
             combat.SHIELD_DRAIN_PER_SECOND,
             combat.SHIELD_RECHARGE_PER_SECOND,
@@ -596,7 +595,7 @@ pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
             player_ptr.current_keys,
             player_ptr.prev_keys,
             state.header.tick,
-            dt_ms,
+            eff_dt,
             combat.PARRY_ACTIVE_MS,
             combat.PARRY_COOLDOWN_MS_DEFAULT,
         );
