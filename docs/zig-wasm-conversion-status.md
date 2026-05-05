@@ -132,14 +132,11 @@ parity.
 
 ## What's still TS (production hot path)
 
-- **Weapon projectile spawn** — build resolution mid-run (cards
-  + chaos + character archetype) needs the card-data port (H8c)
-  + a resolved-build extern struct passed into wasm.
-- **Satellite projectile spawn** (owner+target lookup is in
-  wasm, the spawn itself needs `next_entity_id` allocation +
-  weapon-base lookup).
-- **Drafting orchestration** (offers, picks, expiry, card list).
-- **Score → state.round.scores bridging** in the J0 shim.
+- **Card-driven weapon build resolution** — multi-shot, spread,
+  per-card pathing/element/impact mutations. Today every player
+  fires the starter pistol; cards apply TS-side until H8c lands.
+- **Drafting orchestration** (offers, picks, expiry, card list)
+  — needs the card data table.
 
 **step_world drives end-to-end:**
 
@@ -157,6 +154,10 @@ parity.
 | Player physics — walk/jump/jetpack/crouch + coyote/buffer + static-AABB collision | C, I16 |
 | **SimEvent emission**: destructible_broken, hit_confirmed, player_killed, pickup_taken, round_end | I18 |
 | **TS drain via UnpackedWorldState.events** | I19 |
+| Apply chaos profile (timeScale, gravity, damage) to per-module ticks | I20 |
+| **Player projectile spawn** on weapon fire (starter pistol base) | I21 |
+| **Satellite projectile spawn** on want-fire | I22 |
+| J0 shim merges full state (players + pickups + satellites + scores) + returns events via applyWasmWorldStepFull | I23, I24 |
 
 ## Test surface
 
