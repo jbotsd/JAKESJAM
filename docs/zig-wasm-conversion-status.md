@@ -56,23 +56,40 @@ parity.
   `weapon_base_by_id` lookup.
 - **Pending**: cards, maps, pickups (H8c-e).
 
-### Orchestrator (Phase I — 5 cuts done)
+### Orchestrator (Phase I — 13 cuts done)
 - **I1** — `step_world(state, dt)` skeleton dispatches H1-H7 in
   deterministic order.
 - **I2** — header carries `countdown_remaining_ms` + `round_index`;
   step_world drives the round phase machine end-to-end.
 - **I3** — header carries `chaos_mask`; step_world resolves the
   ChaosProfile each tick.
-- **I4** — PlayerEntity carries `current_keys` + `prev_keys`;
-  step_world iterates players, calls `combat.tickShield`. I4b
-  also calls `combat.tryStartParry` and rolls current → prev at
-  end-of-tick.
-- **I5** — PlayerEntity gains `score: u32` for orchestrator-side
-  score keeping (winner-detection cut still pending).
-- **Pending**: winner detection + score increment, satellite
-  owner-target lookup, projectile motion dispatch, weapon spawn
-  (needs build resolution port), player physics integration
-  (needs movement-memory parallel array + map AABB cache).
+- **I4/I4b** — PlayerEntity carries `current_keys`/`prev_keys`;
+  step_world iterates players, calls `combat.tickShield` +
+  `combat.tryStartParry`; rolls current→prev at end-of-tick.
+- **I5** — PlayerEntity gains `score: u32`.
+- **I6** — winner detection (KO + time-out) + score increment.
+- **I7** — projectile motion via `step_projectile_v2` for
+  pre-step `advance` results (empty statics + empty players —
+  full collision lands once map AABB cache is wired).
+- **I8** — satellite orbit + closest-non-owner target lookup +
+  fire-decision via `satelliteTickWorld`.
+- **I9** — header carries `target_score` + `match_winner_idx`;
+  step_world flags the match winner when a player hits target.
+- **I10** — fire-patch DPS damage to overlapping non-owner
+  players; clears alive flag on health ≤ 0.
+- **I11** — projectile damage to players (circle vs AABB) on
+  overlap; pierce-chain decrements + survives, other impacts
+  expire the projectile.
+- **I12** — explosive destructible break → AOE damage
+  (EXPLOSION_DAMAGE 28 / EXPLOSION_RADIUS 80) to alive
+  non-owner players via `playerInBlastRadius`.
+- **I13** — pickup overlap → effect (health-shard heals,
+  shield-cell adds shield_charge); deactivates pickup. Buff
+  pickups + respawn scheduling pending.
+- **Pending**: weapon spawn (needs build resolution / data-table
+  resolved-build pass-through), player physics integration
+  (movement-memory parallel array + map AABB cache), drafting
+  orchestration.
 
 ### TS shim (Phase J — partial)
 - **J0** — `applyWasmWorldStep(state, dt)` packs the TS
@@ -115,21 +132,23 @@ parity.
 
 ## What's still TS (production hot path)
 
-- Player physics (walk / jump / jetpack / crouch / collision /
-  coyote time / jump-buffer).
-- Projectile motion + pathing dispatch (the wasm v2 kernel
-  exists but the orchestrator's per-tick dispatch is TS).
-- Weapon projectile spawn (build resolution + projectile
-  insertion).
-- Satellite owner-target lookup + projectile spawn.
-- Combat shield / parry tick (input-driven).
-- Score keeping + winner detection.
-- Drafting orchestration (offers, picks, expiry).
-- Score → match winner check.
+- Player physics (walk / jump / jetpack / crouch / static-AABB
+  collision / coyote time / jump-buffer). Wasm has the kernel
+  in `player.zig`; orchestrator integration needs a movement-
+  memory parallel array + map AABB cache in WorldState.
+- Weapon projectile spawn — build resolution mid-run (cards +
+  chaos + character archetype) is JAKESJAM data and stays TS
+  until H8c card port lands.
+- Satellite projectile spawn (owner+target lookup is in wasm,
+  the spawn itself needs `next_entity_id` + weapon-base lookup).
+- Drafting orchestration (offers, picks, expiry, card list).
+- Specific buff pickups (overcharge-core, damage-amp etc) —
+  duration-tick fields need wiring through PlayerFlags.
 
-These pieces are reachable from wasm via the H1-H7 helpers but
-the orchestrator (`step_world`) hasn't yet wired the per-tick
-loop iteration that calls them.
+step_world drives the rest end-to-end — round phase + chaos +
+fire-DPS + projectile motion/lifecycle/damage + destructible
+HP + AOE + satellite tick + per-player shield + parry +
+pickups + winner + match-end.
 
 ## Test surface
 
