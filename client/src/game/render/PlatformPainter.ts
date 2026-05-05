@@ -103,24 +103,41 @@ export function paintPlatform(
   // Replace rotated rects with axis-aligned, in-platform-bounds rects.
   // No mask required. Visual texture is preserved via varied position +
   // alpha + width.
-  const streakCount = 5;
+  // Two passes of horizontal brush streaks — denser + alpha-varied so
+  // the platform reads as textured instead of a flat slab. All rects
+  // are guaranteed inside [0..w] × [0..h] by clamping at construction
+  // (no mask required, no Phaser-4 GeometryMask quirk).
+  const streakCount = 9;
   for (let i = 0; i < streakCount; i++) {
-    const t = i / (streakCount - 1);
-    const sx = (w * 0.06) + t * (w * 0.88);
-    const sw = Math.max(2, Math.min(w * 0.22, w - sx - w * 0.04));
-    const sh = Math.max(2, h * 0.18);
-    const sy = (h - sh) * 0.5 + (nextRng() - 0.5) * h * 0.3;
-    g.fillStyle(theme.wash, 0.32);
-    g.fillRect(sx, Math.max(0, Math.min(h - sh, sy)), sw, sh);
+    const t = i / Math.max(1, streakCount - 1);
+    const sx = w * 0.04 + t * w * 0.6 + (nextRng() - 0.5) * w * 0.08;
+    const sw = Math.max(3, Math.min(w * 0.32, w - sx - w * 0.04));
+    const sh = Math.max(1.5, h * (0.05 + nextRng() * 0.12));
+    const sy = nextRng() * (h - sh);
+    const alpha = 0.18 + nextRng() * 0.24;
+    g.fillStyle(theme.wash, alpha);
+    g.fillRect(
+      Math.max(0, sx),
+      Math.max(0, Math.min(h - sh, sy)),
+      sw,
+      sh,
+    );
   }
-  const crossCount = 3;
-  for (let i = 0; i < crossCount; i++) {
-    const sx = w * (0.18 + (i / Math.max(1, crossCount - 1)) * 0.6);
-    const sw = Math.max(2, Math.min(w * 0.16, w - sx - w * 0.04));
-    const sh = Math.max(2, h * 0.14);
-    const sy = (h - sh) * 0.5 - (nextRng() - 0.5) * h * 0.18;
-    g.fillStyle(theme.wash, 0.12);
-    g.fillRect(sx, Math.max(0, Math.min(h - sh, sy)), sw, sh);
+  // A few short cross-hatch dabs for variation — alpha lower than the
+  // main streaks so they read as accents.
+  const dabCount = 5;
+  for (let i = 0; i < dabCount; i++) {
+    const sx = w * (0.1 + nextRng() * 0.8);
+    const sw = Math.max(2, w * (0.04 + nextRng() * 0.06));
+    const sh = Math.max(1.5, h * (0.04 + nextRng() * 0.08));
+    const sy = nextRng() * (h - sh);
+    g.fillStyle(theme.wash, 0.10 + nextRng() * 0.12);
+    g.fillRect(
+      Math.max(0, Math.min(w - sw, sx)),
+      Math.max(0, Math.min(h - sh, sy)),
+      sw,
+      sh,
+    );
   }
 
   return [g, shadowG];

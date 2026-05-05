@@ -21,9 +21,25 @@ export type SmoothingOptions = {
   maxCorrectionPxPerFrame: number;
 };
 
+// FishNet-inspired adaptive interpolation (see `game-netcode` skill +
+// fish-networking docs/guides/features/prediction/interpolations).
+// FishNet's NetworkTickSmoother + AdaptiveInterpolation pattern:
+// - separate simulation from presentation: rig follows the
+//   reconciled state, doesn't snap to it
+// - increase interpolation duration as latency rises
+// - snap only on hard discontinuities (teleport, respawn)
+//
+// Before this change: windowMs=100 / snapThresholdPx=30 — at typical
+// 150-180 ms RTT the predicted-vs-snapshot float drift consistently
+// landed above 30 px every reconcile, tripping snap on every
+// snapshot tick → "rig jitters all over the place" symptom the user
+// reported in world mode.
+//
+// New defaults double the smoothing window and triple the snap
+// threshold so only true teleports snap.
 export const DEFAULT_SMOOTHING: SmoothingOptions = {
-  windowMs: 100,
-  snapThresholdPx: 30,
+  windowMs: 200,
+  snapThresholdPx: 90,
   maxCorrectionPxPerFrame: 8,
 };
 
