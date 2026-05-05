@@ -154,6 +154,24 @@ export class ParticlePool {
       this.warnExhausted("bolt");
       return null;
     }
+    // Unreal-style: pool owns the clean state, not the call site. If a
+    // prior tween was killed externally (drainActive killTweensOf bypasses
+    // the alpha-fade onComplete that would otherwise call release()), the
+    // Graphics may still hold previously-drawn geometry. Phaser Graphics
+    // is cumulative — every lineStyle/moveTo/strokePath ADDS, never
+    // replaces — so without a defensive clear() here, every acquired bolt
+    // carries the geometric debt of every prior bolt forever, and
+    // setAlpha(1) reveals the lot. Was the source of the cyan-line
+    // accumulation seen in world-fire screenshots after round 25.
+    obj.clear();
+    obj.setPosition(0, 0);
+    obj.setRotation(0);
+    obj.setScale(1);
+    obj.setAlpha(1);
+    // Reset blend mode to NORMAL (0). spawnLightningChainArc sets ADD;
+    // a future caller using a different blend would inherit that without
+    // this reset.
+    obj.setBlendMode(0);
     obj.setVisible(true);
     this.boltActive.add(obj);
     return obj;
@@ -258,6 +276,12 @@ export class ParticlePool {
       free: Phaser.GameObjects.Rectangle[] | Phaser.GameObjects.Arc[] | Phaser.GameObjects.Graphics[],
     ) => {
       for (const o of active) {
+        // Graphics objects need .clear() to scrub accumulated geometry —
+        // setVisible(false) hides but doesn't drop the line/path data,
+        // and the next acquire's setVisible(true) brings it all back.
+        if ((o as { clear?: () => unknown }).clear) {
+          (o as { clear: () => unknown }).clear();
+        }
         (o as { setVisible(v: boolean): unknown }).setVisible(false);
         (o as { setAlpha(a: number): unknown }).setAlpha(1);
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
