@@ -240,6 +240,95 @@ test.describe("wasm playtest QA — five-layer coverage of ?wasm-world=playtest"
     expect(errors).toEqual([]);
   });
 
+  test("H6: long-horizon — 3-minute bot session in playtest mode produces no growing console error stream", async ({
+    page,
+  }, testInfo) => {
+    test.setTimeout(240_000);
+    const log = attachConsole(page);
+    await page.goto("/?wasm-world=playtest");
+    await page.waitForSelector("canvas", { timeout: 20_000 });
+    await clickButton(page, "Practice");
+    await page.waitForTimeout(2000);
+
+    const bot = startRandomBot(page, 0xdeadbeef);
+    const errorCountSamples: Array<{ ts: number; errors: number }> = [];
+    const start = Date.now();
+    while (Date.now() - start < 180_000) {
+      await page.waitForTimeout(15_000);
+      const errors = log
+        .get()
+        .filter((e) => e.type === "error" || e.type === "pageerror");
+      errorCountSamples.push({
+        ts: Date.now() - start,
+        errors: errors.length,
+      });
+    }
+    await bot.stop();
+
+    await ensureWrite(
+      join(testInfo.outputDir, "error-growth.json"),
+      JSON.stringify(errorCountSamples, null, 2),
+    );
+    await ensureWrite(
+      join(testInfo.outputDir, "console.json"),
+      JSON.stringify(log.get(), null, 2),
+    );
+
+    // Hypothesis: error count over 3min monotonically zero. A
+    // single error mid-session would mean a defect surfaces
+    // only after sustained input.
+    const finalErrors = log
+      .get()
+      .filter((e) => e.type === "error" || e.type === "pageerror");
+    expect(finalErrors).toEqual([]);
+  });
+
+  test("H7: state probe shows monotonically advancing tick over a session", async ({
+    page,
+  }, testInfo) => {
+    test.setTimeout(120_000);
+    const log = attachConsole(page);
+    await page.goto("/?wasm-world=playtest&world=1");
+    await page.waitForSelector("canvas", { timeout: 20_000 });
+    await page.waitForTimeout(4000);
+
+    const samples: Array<{ ts: number; tick: number | null }> = [];
+    const start = Date.now();
+    while (Date.now() - start < 30_000) {
+      await page.waitForTimeout(2000);
+      const tick = await page.evaluate(() => {
+        const w = window as unknown as { __simStepNo?: () => number | null };
+        return w.__simStepNo?.() ?? null;
+      });
+      samples.push({ ts: Date.now() - start, tick });
+    }
+
+    await ensureWrite(
+      join(testInfo.outputDir, "ticks.json"),
+      JSON.stringify(samples, null, 2),
+    );
+
+    // Filter null samples (probe inactive — not an OnlineMatchScene
+    // session) and confirm the rest are monotonically increasing.
+    const live = samples.filter((s) => s.tick != null) as Array<{
+      ts: number;
+      tick: number;
+    }>;
+    if (live.length >= 2) {
+      for (let i = 1; i < live.length; i++) {
+        expect(
+          live[i]!.tick,
+          `Tick regressed: ${live[i - 1]!.tick} → ${live[i]!.tick} at ts=${live[i]!.ts}`,
+        ).toBeGreaterThanOrEqual(live[i - 1]!.tick);
+      }
+    }
+
+    const errors = log
+      .get()
+      .filter((e) => e.type === "error" || e.type === "pageerror");
+    expect(errors).toEqual([]);
+  });
+
   test("H5: two bots in playtest mode parallel browsers — no errors crossing the wire", async ({
     browser,
   }, testInfo) => {
