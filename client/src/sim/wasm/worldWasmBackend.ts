@@ -99,6 +99,10 @@ export async function applyWasmWorldStep(
   // Patch static-AABB cache + one_way after pack so step_world
   // has terrain. No-op if setWorldStatics never called.
   writeStaticsIntoMemory();
+  // Patch per-player current_keys / prev_keys after pack so
+  // wasm players actually see input bits. World.ts maybeWasmActual
+  // stashes the map on globalThis before calling.
+  writePlayerInputsFromGlobal();
   const rc = ex.step_world(sim.statePtr, dt_ms);
   if (rc !== 0) {
     throw new Error(`[wasm-world] step_world returned ${rc}`);
@@ -155,6 +159,10 @@ export async function applyWasmWorldStepFull(
   // Patch static-AABB cache + one_way after pack so step_world
   // has terrain. No-op if setWorldStatics never called.
   writeStaticsIntoMemory();
+  // Patch per-player current_keys / prev_keys after pack so
+  // wasm players actually see input bits. World.ts maybeWasmActual
+  // stashes the map on globalThis before calling.
+  writePlayerInputsFromGlobal();
   const rc = ex.step_world(sim.statePtr, dt_ms);
   if (rc !== 0) throw new Error(`[wasm-world] step_world returned ${rc}`);
   const back = new Uint8Array(
@@ -222,6 +230,10 @@ export function applyWasmWorldStepSync(
   // Patch static-AABB cache + one_way after pack so step_world
   // has terrain. No-op if setWorldStatics never called.
   writeStaticsIntoMemory();
+  // Patch per-player current_keys / prev_keys after pack so
+  // wasm players actually see input bits. World.ts maybeWasmActual
+  // stashes the map on globalThis before calling.
+  writePlayerInputsFromGlobal();
   const rc = ex.step_world(sim.statePtr, dt_ms);
   if (rc !== 0) {
     throw new Error(`[wasm-world] step_world returned ${rc}`);
@@ -233,6 +245,52 @@ export function applyWasmWorldStepSync(
   ).slice();
   const unpacked: UnpackedWorldState = unpackWorldState(back);
   return mergeUnpacked(state, unpacked);
+}
+
+function writePlayerInputsFromGlobal(): void {
+  const stash = (
+    globalThis as {
+      __jakesjam_wasm_inputs__?: ReadonlyMap<
+        string,
+        { keys: number; prevKeys: number }
+      >;
+    }
+  ).__jakesjam_wasm_inputs__;
+  if (!stash) return;
+  writePlayerInputsIntoMemory(stash);
+}
+
+/**
+ * Patch per-player current_keys / prev_keys into the packed
+ * WorldState in linear memory. Caller computes the keys bitmap
+ * and previous-tick keys per playerId (sorted).
+ *
+ * Without this call, wasm players never see input bits → no
+ * walking, no jumping, no firing.
+ */
+export function writePlayerInputsIntoMemory(
+  inputs: ReadonlyMap<string, { keys: number; prevKeys: number }>,
+): void {
+  if (!cachedSim || !cachedEx) return;
+  const sim = cachedSim;
+  const ex = cachedEx;
+  const view = new DataView(ex.memory.buffer);
+  // Player array starts at HEADER_SIZE + ARRAY_PREAMBLE = 48 + 8.
+  const playersStart = sim.statePtr + 48 + 8;
+  const PLAYER_ENTITY_SIZE = 288;
+  // current_keys + prev_keys live at +268 / +272 inside PlayerEntity.
+  const CURR_OFF = 268;
+  const PREV_OFF = 272;
+  // Match the bridge's player ordering: sorted by id string.
+  const sortedIds = [...inputs.keys()].sort();
+  for (let i = 0; i < sortedIds.length; i++) {
+    const pid = sortedIds[i]!;
+    const v = inputs.get(pid);
+    if (!v) continue;
+    const playerOff = playersStart + i * PLAYER_ENTITY_SIZE;
+    view.setUint32(playerOff + CURR_OFF, v.keys >>> 0, true);
+    view.setUint32(playerOff + PREV_OFF, v.prevKeys >>> 0, true);
+  }
 }
 
 /**

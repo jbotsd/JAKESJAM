@@ -1076,7 +1076,7 @@ export function stepWithRuntime(
   // wasm orchestrator's result instead of TS. Default off so
   // most visitors stay on the proven TS path; opt-in lets us
   // playtest the wasm orchestrator end-to-end in production.
-  const wasmActual = maybeWasmActual(state, dtMs);
+  const wasmActual = maybeWasmActual(state, dtMs, inputsByPlayer, runtime);
   if (wasmActual) return wasmActual;
 
   // J1-monitor (opt-in via ?wasm-world-monitor=1): shadow-run
@@ -1089,6 +1089,8 @@ export function stepWithRuntime(
 function maybeWasmActual(
   inputState: WorldState,
   dtMs: number,
+  inputsByPlayer: Record<PlayerId, InputFrame | null>,
+  runtime: WorldRuntime,
 ): StepResult | null {
   const loc = (globalThis as { location?: { search: string } }).location;
   if (!loc) return null;
@@ -1114,11 +1116,33 @@ function maybeWasmActual(
       s: WorldState,
       dt: number,
     ): { state: WorldState; events: WasmEvent[]; matchComplete: boolean };
+    writePlayerInputsIntoMemory(
+      m: Map<string, { keys: number; prevKeys: number }>,
+    ): void;
   };
   const wb = (globalThis as { __jakesjam_wasm_backend__?: WB })
     .__jakesjam_wasm_backend__;
   if (!wb || !wb.isWasmWorldReady()) return null;
   try {
+    // Build per-player keys map. The pack runs INSIDE
+    // applyWasmWorldStepFullSync, so we need to patch keys AFTER
+    // the pack — but we don't control the call order. Trick: stash
+    // the inputs on globalThis right before, and the shim picks
+    // them up after pack via a post-pack hook (next cut). Until
+    // that lands, write keys directly to memory after the call's
+    // pack has finished but before step_world runs by exposing a
+    // new function patchWasmInputs(inputsMap).
+    const inputsMap = new Map<string, { keys: number; prevKeys: number }>();
+    for (const [pid, frame] of Object.entries(inputsByPlayer)) {
+      if (!frame) continue;
+      const prev = runtime.prevKeys.get(pid as PlayerId) ?? 0;
+      inputsMap.set(pid, { keys: frame.keys, prevKeys: prev });
+    }
+    // The shim writes inputs from this snapshot once it's set on
+    // globalThis. Cleanest API: stash + shim consults during pack.
+    (
+      globalThis as { __jakesjam_wasm_inputs__?: typeof inputsMap }
+    ).__jakesjam_wasm_inputs__ = inputsMap;
     const result = wb.applyWasmWorldStepFullSync(inputState, dtMs);
     return {
       state: result.state,
