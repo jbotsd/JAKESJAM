@@ -170,15 +170,19 @@ export class WasmHost {
    * pattern in World.ts (commit de18fb5).
    */
   setStatics(aabbs: ReadonlyArray<StaticAABB>, oneWay: ReadonlyArray<number>): void {
+    const slicedAabbs = aabbs.slice();
+    const slicedOneWay = oneWay.slice();
     this.cachedStatics = {
-      aabbs: aabbs.slice(),
-      oneWay: oneWay.slice(),
+      aabbs: slicedAabbs,
+      oneWay: slicedOneWay,
     };
     // Mirror to legacy module so the existing
     // `applyWasmWorldStepFullSync` flow continues to function until
-    // A2 collapses it.
+    // B1 retires it. Capture the sliced copies in the closure so a
+    // concurrent __resetForTests can't null `this.cachedStatics`
+    // before the dynamic import resolves.
     void import("./worldWasmBackend.js").then((m) =>
-      m.setWorldStatics(this.cachedStatics!.aabbs, this.cachedStatics!.oneWay),
+      m.setWorldStatics(slicedAabbs, slicedOneWay),
     );
   }
 
