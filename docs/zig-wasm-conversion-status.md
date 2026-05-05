@@ -4,14 +4,17 @@ Snapshot as of the most recent push. Pair with
 `docs/zig-wasm-migration-complete.md` (substrate retrospective)
 and `docs/zig-wasm-runbook.md` (ops procedures).
 
-## URL flag matrix
+## URL flag matrix (post-`106056b`)
 
-| URL | What runs | Risk |
-|---|---|---|
-| `https://jakesjam.vercel.app/` | Pure TS sim (default visitors) | None — proven path |
-| `?wasm-world=1` | TS sim + wasm shim layered alongside (J0) | Low — wasm shim runs but TS still drives gameplay |
-| `?wasm-world-monitor=1` | TS sim + wasm shadow-run + console divergence log | None — observation only |
-| `?wasm-world=2` | **Wasm orchestrator drives EVERYTHING** (J1-actual) | Higher — opt-in for playtest, wasm result replaces TS |
+| URL | What runs |
+|---|---|
+| `https://jakesjam.vercel.app/` | **Wasm orchestrator drives every tick (FULL ZIG)** |
+| `?wasm-world=1` | Wasm shim ALSO emits enable log + applyWasmWorldStep can be invoked from outside the loop |
+| `?wasm-world-monitor=1` | Wasm orchestrator runs (now default) + parity-monitor logs comparing wasm vs TS state |
+
+No TS-fallback URL. Default visitors land on wasm. The legacy
+`?wasm-world=2` and `?wasm-world=playtest` flags are no-ops since
+the cutover unconditionally activates.
 
 ## Exhaustive e2e against deployed prod (2026-05-05)
 
@@ -41,21 +44,18 @@ linear memory via `world_state_set_statics` after every pack.
 `World.ts createRuntime` auto-calls `syncWorldStaticsToWasm` on
 every match start.
 
-## TL;DR
+## TL;DR — FULL ZIG (2026-05-05 commit `106056b`)
 
-The substrate migration's bug-fix mission was complete weeks
-back: trig LUT, every per-module wasm equivalent, backend swap
-mechanisms, server-side LUT install, perf bench, runbook,
-e2e prod smoke, doc-sync gates — all live.
+Per user direction "No ts emergency roll back full zig im sicks
+full QA test audit pipeline":
 
-The **full orchestrator port** is essentially feature-complete.
-~30+ cuts shipped on top of the original foundation
-(G1a/b/c/G2/G3 + H1-H7). `step_world` (Zig) drives every major
-sim slice end-to-end. Production hot path still runs TS
-`World.step` for default visitors — flipping to wasm-default
-needs J1-actual cutover (parity-monitor mode J1 already lives
-behind `?wasm-world-monitor=1`). The opt-in `?wasm-world=1`
-shim runs the wasm orchestrator alongside TS today.
+- **Wasm orchestrator is the primary path for every visitor.**
+  No URL flag. No TS fallback. `World.ts maybeWasmActual`
+  unconditionally returns the wasm result.
+- **5-layer QA audit pipeline** (`qa-audit.yml`) gates every
+  push + PR + nightly. Failures by layer for clean triage.
+- 196 wasm tests + Bun parity + long-horizon canaries +
+  9 hypothesis-driven Playwright specs + bot soak all green.
 
 ## What ships in wasm today
 
