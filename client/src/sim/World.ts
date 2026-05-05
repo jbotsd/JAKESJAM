@@ -1176,8 +1176,10 @@ function maybeWasmActual(
   }
 }
 
-/** Translate wasm-emitted SimEvents into the TS SimEvent shape. */
-function convertWasmEventsToTs(
+/** Translate wasm-emitted SimEvents into the TS SimEvent shape.
+ *  Re-exported so wasmStepStrategy.ts can call it without
+ *  duplicating ~90 lines of event-tag translation. */
+export function convertWasmEventsToTs(
   wasmEvents: ReadonlyArray<{
     kind: number;
     playerIdxA: number;
