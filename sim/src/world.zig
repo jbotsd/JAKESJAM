@@ -237,10 +237,50 @@ pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
                 PLAYER_HALF_W * 2.0,
                 PLAYER_HALF_H * 2.0,
             )) {
-                state.players[ph].health -= damage_this_tick;
-                if (state.players[ph].health <= 0) {
-                    state.players[ph].health = 0;
-                    state.players[ph].flags.alive = false;
+                // Shield-first absorption (I38) — fire DPS drains
+                // shield before health if shield active + has charge.
+                var dmg_to_apply = damage_this_tick;
+                const pp = &state.players[ph];
+                if (pp.flags.shield_active and
+                    pp.flags.has_shield_charge and
+                    pp.shield_charge > 0)
+                {
+                    pp.shield_charge -= dmg_to_apply;
+                    if (pp.shield_charge <= 0) {
+                        const overflow = -pp.shield_charge;
+                        pp.shield_charge = 0;
+                        pp.flags.shield_active = false;
+                        emitEvent(
+                            state,
+                            .shield_popped,
+                            @intCast(ph),
+                            -1,
+                            patch_ptr.id,
+                            0,
+                            pp.x,
+                            pp.y,
+                        );
+                        dmg_to_apply = overflow;
+                    } else {
+                        dmg_to_apply = 0;
+                    }
+                }
+                if (dmg_to_apply > 0) {
+                    pp.health -= dmg_to_apply;
+                    if (pp.health <= 0) {
+                        pp.health = 0;
+                        pp.flags.alive = false;
+                        emitEvent(
+                            state,
+                            .player_killed,
+                            @intCast(ph),
+                            -1,
+                            patch_ptr.id,
+                            0,
+                            pp.x,
+                            pp.y,
+                        );
+                    }
                 }
             }
         }
