@@ -32,6 +32,7 @@ const combat = @import("combat.zig");
 const chaos = @import("data/chaos.zig");
 const collision_types = @import("collision.zig");
 const satellite = @import("satellite.zig");
+const player_mod = @import("player.zig");
 
 /// Per-tick step. Mutates `state` in place. Returns 0 on success;
 /// reserved non-zero values for future error reporting.
@@ -401,6 +402,61 @@ pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
                 break;
             }
         }
+    }
+
+    // 8. Player physics (I16). Bridge PlayerEntity +
+    //    PlayerMovementMemory → PlayerStep, run stepPlayer with
+    //    the statics + one_way cache, write motion + memory back.
+    const statics_slice = state.statics[0..state.static_count];
+    const one_way_slice = state.one_way[0..state.static_count];
+    var pmi: u32 = 0;
+    while (pmi < state.player_count) : (pmi += 1) {
+        if (!state.players[pmi].flags.alive) continue;
+        var ps = player_mod.PlayerStep{
+            .x = state.players[pmi].x,
+            .y = state.players[pmi].y,
+            .vx = state.players[pmi].vx,
+            .vy = state.players[pmi].vy,
+            .aim_x = state.players[pmi].aim_x,
+            .aim_y = state.players[pmi].aim_y,
+            .jetpack_fuel = if (state.players[pmi].flags.has_jetpack_fuel)
+                state.players[pmi].jetpack_fuel
+            else
+                100.0,
+            .crouching = if (state.players[pmi].flags.crouching) 1 else 0,
+            .coyote_ms = state.player_movement[pmi].coyote_ms,
+            .jump_buffer_ms = state.player_movement[pmi].jump_buffer_ms,
+            .jump_cut_applied = @intCast(state.player_movement[pmi].jump_cut_applied),
+            .jump_released_since_jump = @intCast(state.player_movement[pmi].jump_released_since_jump),
+            .grounded_last_frame = @intCast(state.player_movement[pmi].grounded_last_frame),
+            .jetpack_active = @intCast(state.player_movement[pmi].jetpack_active),
+        };
+        const grounded = player_mod.stepPlayer(
+            &ps,
+            state.players[pmi].prev_keys,
+            state.players[pmi].current_keys,
+            state.players[pmi].aim_x,
+            state.players[pmi].aim_y,
+            1.0, // speed_mul (chaos profile applies TS-side until I17)
+            1.0, // gravity_mul
+            dt_ms,
+            statics_slice,
+            one_way_slice,
+        );
+        state.players[pmi].x = ps.x;
+        state.players[pmi].y = ps.y;
+        state.players[pmi].vx = ps.vx;
+        state.players[pmi].vy = ps.vy;
+        state.players[pmi].jetpack_fuel = ps.jetpack_fuel;
+        state.players[pmi].flags.has_jetpack_fuel = true;
+        state.players[pmi].flags.crouching = ps.crouching != 0;
+        state.players[pmi].flags.grounded = grounded;
+        state.player_movement[pmi].coyote_ms = ps.coyote_ms;
+        state.player_movement[pmi].jump_buffer_ms = ps.jump_buffer_ms;
+        state.player_movement[pmi].jump_cut_applied = @intCast(ps.jump_cut_applied);
+        state.player_movement[pmi].jump_released_since_jump = @intCast(ps.jump_released_since_jump);
+        state.player_movement[pmi].grounded_last_frame = if (grounded) 1 else 0;
+        state.player_movement[pmi].jetpack_active = @intCast(ps.jetpack_active);
     }
 
     // 6. Combat — per-player shield drain + parry start (I4 +
