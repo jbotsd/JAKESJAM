@@ -30,6 +30,7 @@ const destructible = @import("destructible.zig");
 const fire = @import("fire.zig");
 const combat = @import("combat.zig");
 const chaos = @import("data/chaos.zig");
+const collision_types = @import("collision.zig");
 
 /// Per-tick step. Mutates `state` in place. Returns 0 on success;
 /// reserved non-zero values for future error reporting.
@@ -113,15 +114,66 @@ pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
         _ = fire.fireEntityTick(patch_ptr, dt_ms);
     }
 
-    // 3. Projectile pre-step lifecycle. Sticky / lifetime
-    //    decisions; the actual motion (step_projectile_v2) and
-    //    destructible-hit resolution remain TS-driven for now —
-    //    they need pathing dispatch + spatial collision cache
-    //    that Phase I2 wires up.
+    // 3. Projectile pre-step lifecycle + motion (I7). Sticky /
+    //    lifetime decisions first; for `advance` results the
+    //    motion kernel runs via step_projectile_v2 with empty
+    //    statics + empty players (terrain + player collision
+    //    arrives once the orchestrator owns the static-AABB
+    //    cache + player array indexing).
+    const empty_statics: []const collision_types.AABB = &.{};
+    const empty_xs: []const f64 = &.{};
+    const empty_ys: []const f64 = &.{};
+    const empty_alive: []const u8 = &.{};
     var pi: u32 = 0;
     while (pi < state.projectile_count) : (pi += 1) {
         const proj_ptr = &state.projectiles[pi];
-        _ = projectile.projectilePreStep(proj_ptr, dt_ms);
+        const result = projectile.projectilePreStep(proj_ptr, dt_ms);
+        if (result == .advance) {
+            // Bridge ProjectileEntity → ProjectileKinematicsV2 →
+            // step → write motion fields back.
+            var kine = projectile.ProjectileKinematicsV2{
+                .x = proj_ptr.x,
+                .y = proj_ptr.y,
+                .vx = proj_ptr.vx,
+                .vy = proj_ptr.vy,
+                .age_ms = if (proj_ptr.flags.has_age) proj_ptr.age_ms else 0.0,
+                .lifetime_ms = proj_ptr.lifetime_ms,
+                .radius = proj_ptr.radius,
+                .gravity_scale = if (proj_ptr.flags.has_gravity_scale) proj_ptr.gravity_scale else 0.0,
+                .traveled_px = if (proj_ptr.flags.has_traveled) proj_ptr.traveled_px else 0.0,
+                .origin_x = if (proj_ptr.flags.has_origin) proj_ptr.origin_x else proj_ptr.x,
+                .origin_y = if (proj_ptr.flags.has_origin) proj_ptr.origin_y else proj_ptr.y,
+                .range_px = if (proj_ptr.flags.has_range) proj_ptr.range_px else 0.0,
+                .acceleration_multiplier = if (proj_ptr.flags.has_acceleration) proj_ptr.acceleration_multiplier else 0.0,
+                .homing_strength = if (proj_ptr.flags.has_homing) proj_ptr.homing_strength else 0.0,
+                .id = @floatFromInt(proj_ptr.id),
+                .pathing = @intFromEnum(proj_ptr.pathing),
+                .returning = if (proj_ptr.flags.returning) 1 else 0,
+                .bounces_remaining = @intCast(proj_ptr.bounces_remaining),
+            };
+            const r = projectile.stepV2(
+                &kine,
+                dt_ms,
+                empty_statics,
+                empty_xs,
+                empty_ys,
+                empty_alive,
+                -1, // no owner
+            );
+            // Write motion-relevant fields back. Lifetime drains
+            // by dt_ms regardless of expire flag — the next
+            // pre_step picks up expiry.
+            proj_ptr.x = kine.x;
+            proj_ptr.y = kine.y;
+            proj_ptr.vx = kine.vx;
+            proj_ptr.vy = kine.vy;
+            proj_ptr.lifetime_ms -= dt_ms;
+            if (proj_ptr.flags.has_age) proj_ptr.age_ms = kine.age_ms;
+            if (proj_ptr.flags.has_traveled) proj_ptr.traveled_px = kine.traveled_px;
+            proj_ptr.flags.returning = kine.returning != 0;
+            proj_ptr.bounces_remaining = @intCast(kine.bounces_remaining);
+            _ = r;
+        }
     }
 
     // 4. Per-pair projectile × destructible HP application.
