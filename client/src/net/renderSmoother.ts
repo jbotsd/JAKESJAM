@@ -2,45 +2,65 @@
 //
 // After a reconcile rewinds + replays, the freshly predicted local-player
 // position can differ from the position the user was just looking at by a
-// few pixels (float drift). Snapping the rendered character to the new
-// position on every snapshot tick is visible and ugly. Instead we set an
-// initial "render offset" equal to (oldRendered - newPredicted), then
-// linearly decay it to zero over `windowMs`.
+// few pixels (float drift) or a lot (real correction, e.g. server rejected
+// a chaos card pickup the client predicted). Snapping the rendered character
+// to the new position on every snapshot tick is visible and ugly. Instead
+// we set an initial "render offset" equal to (oldRendered - newPredicted),
+// then exponentially decay it toward zero.
+//
+// The decay rate is BAND-DEPENDENT (Fiedler's pattern from
+// gafferongames.com/post/state_synchronization/):
+//   - small offsets decay slowly  → don't fight sub-pixel jitter
+//   - large offsets decay quickly → visible drift catches up fast
+// Single-rate decay either makes small drifts kick the rig (rate too fast)
+// OR makes large corrections rubber-band visibly (rate too slow). Bands
+// give us both.
 //
 // Sim correctness is unchanged — only the rendered position is smoothed.
-// Big deltas (teleport, respawn, forced sync) skip smoothing and snap.
+// Big deltas above `snapThresholdPx` (teleport, respawn, forced sync) skip
+// smoothing and snap.
 //
-// Extracted from clientLoop.ts during Phase E3.
+// See `.claude/skills/prediction-error-smoothing/SKILL.md` for the
+// project-agnostic recipe and source citations.
 
 export type SmoothingOptions = {
-  /** Window over which the residual offset decays to zero, in ms. */
-  windowMs: number;
+  /** Offsets ≤ this magnitude (px) use `tauSmallMs`. Drifts that are mostly invisible — keep them invisible. */
+  smallBandPx: number;
+  /** Offsets > this magnitude (px) use `tauLargeMs`. Anything in between is mid-band. */
+  largeBandPx: number;
+  /** Time constant for the small band (ms). Larger = slower, smoother. */
+  tauSmallMs: number;
+  /** Time constant for the mid band (ms). Roughly Source `cl_smoothtime` territory. */
+  tauMidMs: number;
+  /** Time constant for the large band (ms). Smaller = faster catch-up. */
+  tauLargeMs: number;
   /** Distance (px) above which we snap instead of smoothing — teleport / respawn / forced sync. */
   snapThresholdPx: number;
   /** Maximum correction (px) applied in any single render frame. Clamps overshoot when the renderer stalls. */
   maxCorrectionPxPerFrame: number;
 };
 
-// FishNet-inspired adaptive interpolation (see `game-netcode` skill +
-// fish-networking docs/guides/features/prediction/interpolations).
-// FishNet's NetworkTickSmoother + AdaptiveInterpolation pattern:
-// - separate simulation from presentation: rig follows the
-//   reconciled state, doesn't snap to it
-// - increase interpolation duration as latency rises
-// - snap only on hard discontinuities (teleport, respawn)
+// Defaults tuned for JAKESJAM's physics scale (BODY_HEIGHT=56px, max jump
+// arc ~2x body height). Numbers are derived from Fiedler's 0.95/0.85
+// per-frame factors at 60fps converted to time constants:
+//   factor = exp(-frameMs / tau)  →  tau = -frameMs / ln(factor)
+// Fiedler 0.95 ≈ τ=325ms (we use 150ms — JAKESJAM doesn't need to
+// preserve sub-pixel inputs across a third of a second). Fiedler 0.85 ≈
+// τ=102ms (we use 40ms — at 60Hz tick a 30px+ delta should resolve in
+// under 100ms or it's a perceptible rubber-band).
 //
-// Before this change: windowMs=100 / snapThresholdPx=30 — at typical
-// 150-180 ms RTT the predicted-vs-snapshot float drift consistently
-// landed above 30 px every reconcile, tripping snap on every
-// snapshot tick → "rig jitters all over the place" symptom the user
-// reported in world mode.
-//
-// New defaults double the smoothing window and triple the snap
-// threshold so only true teleports snap.
+// The previous single-rate (windowMs=200, snap=90) defaults were
+// optimised for the worst case (high-RTT jitter) at the cost of mid-air
+// feel. With per-band τ the sweet spot for both regimes is the same set
+// of constants — no game-state coupling needed.
 export const DEFAULT_SMOOTHING: SmoothingOptions = {
-  windowMs: 200,
+  smallBandPx: 6,
+  largeBandPx: 30,
+  tauSmallMs: 150,
+  tauMidMs: 80,
+  tauLargeMs: 40,
   snapThresholdPx: 90,
-  maxCorrectionPxPerFrame: 8,
+  maxCorrectionPxPerFrame: 16,
 };
 
 export type SmootherStats = {
@@ -110,7 +130,7 @@ export class RenderSmoother {
 
   /**
    * Decay the offset toward zero. Call once per render frame from
-   * getRenderState. Linear over windowMs, with a per-frame max-correction
+   * getRenderState. Exponential per-band, with a per-frame max-correction
    * clamp to prevent visible jumps when the renderer stalls (tab refocus,
    * GC pause).
    */
@@ -123,10 +143,22 @@ export class RenderSmoother {
     this.lastRenderAt = now;
     if (elapsed === 0) return;
 
-    const windowMs = Math.max(1, this.opts.windowMs);
-    const fraction = Math.min(1, elapsed / windowMs);
-    let stepX = this.offsetX * fraction;
-    let stepY = this.offsetY * fraction;
+    // Pick τ from the band the current magnitude falls into. Re-evaluated
+    // every frame so a large offset drops into the mid band as it shrinks,
+    // then into the small band — fast catch-up early, smooth settle late.
+    const mag = Math.hypot(this.offsetX, this.offsetY);
+    const tau =
+      mag <= this.opts.smallBandPx
+        ? this.opts.tauSmallMs
+        : mag >= this.opts.largeBandPx
+          ? this.opts.tauLargeMs
+          : this.opts.tauMidMs;
+
+    // Exponential decay: offset *= exp(-elapsed/τ).
+    // step = offset * (1 - exp(-elapsed/τ)) is the amount we "remove" this frame.
+    const decayFactor = Math.exp(-elapsed / Math.max(1, tau));
+    let stepX = this.offsetX * (1 - decayFactor);
+    let stepY = this.offsetY * (1 - decayFactor);
 
     const stepMag = Math.hypot(stepX, stepY);
     const maxStep = this.opts.maxCorrectionPxPerFrame;

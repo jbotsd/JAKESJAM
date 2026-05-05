@@ -301,7 +301,8 @@ export class ClientLoop {
   /**
    * Snapshot state used by the renderer. The local player's position has the
    * smoothing offset applied (rendered = predicted + offset, where offset
-   * decays to zero over `smoothing.windowMs`). All other entities are
+   * decays to zero via per-band exponential τ — see renderSmoother.ts).
+   * All other entities are
    * unchanged. Clone if you intend to mutate.
    */
   getRenderState(): WorldState | null {
@@ -678,7 +679,7 @@ export class ClientLoop {
     this.predictedState = replayState;
 
     // Recompute the smoothing offset so rendered = previous-rendered, then
-    // it decays to the new predicted position over smoothing.windowMs.
+    // it decays to the new predicted position via per-band τ.
     const newLocal = this.predictedState?.players[this.playerId];
     if (newLocal) {
       this.smoother.applyReconcile(prevRenderedX, prevRenderedY, newLocal.x, newLocal.y);
