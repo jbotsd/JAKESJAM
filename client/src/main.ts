@@ -68,6 +68,13 @@ void preloadWasmWorldSim().then(() => {
     applyWasmWorldStepFullSync,
     setWorldStatics: setWorldStaticsImport,
   };
+  // Flush any pending static-AABB cache that was queued before the
+  // backend was ready. The clientLoop's createRuntime fires on the
+  // first ServerHello, which can land BEFORE this preload-then
+  // resolves — before this fix, setWorldStatics dropped silently and
+  // the wasm sim ran with empty statics → player fell through every
+  // platform.
+  void import("./sim/World.js").then((m) => m.flushPendingStaticsToWasm());
 });
 
 const app = document.querySelector<HTMLDivElement>("#app");

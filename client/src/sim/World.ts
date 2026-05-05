@@ -139,11 +139,30 @@ export function createRuntime(map: MapDefinition): WorldRuntime {
  * step_world's stepPlayer sees an empty statics slice and players
  * fall through every platform.
  */
+// Latest map data that needs to be sync'd to the wasm backend. We
+// stash it here because createRuntime can fire BEFORE the wasm
+// backend is exposed on globalThis (preloadWasmWorldSim is async,
+// and the server hello can arrive within the same RAF tick the
+// preload promise is still pending). When that happens the
+// wb?.setWorldStatics?.(...) optional chain silently drops the call,
+// step_world runs with state.static_count = 0, and the player falls
+// through every platform — exactly the symptom user reported on
+// 2026-05-05.
+let pendingMap: MapDefinition | null = null;
+
 export function syncWorldStaticsToWasm(map: MapDefinition): void {
-  const aabbs = map.platforms.map(platformToAABB);
-  // Platform kind: 'floor' | 'wall' | 'platform'. Only 'platform'
-  // is one-way (jump-up-through). 'floor' + 'wall' are solid.
-  const oneWay = map.platforms.map((p) => (p.kind === "platform" ? 1 : 0));
+  pendingMap = map;
+  flushPendingStaticsToWasm();
+}
+
+/**
+ * Push the most recently set map's statics to the wasm backend.
+ * Called from main.ts AFTER preloadWasmWorldSim().then(...) exposes
+ * the backend, so any setWorldStatics that landed during the boot
+ * race re-fires once the backend is actually callable.
+ */
+export function flushPendingStaticsToWasm(): void {
+  if (!pendingMap) return;
   const wb = (
     globalThis as {
       __jakesjam_wasm_backend__?: {
@@ -154,7 +173,12 @@ export function syncWorldStaticsToWasm(map: MapDefinition): void {
       };
     }
   ).__jakesjam_wasm_backend__;
-  wb?.setWorldStatics?.(aabbs, oneWay);
+  if (!wb?.setWorldStatics) return;
+  const aabbs = pendingMap.platforms.map(platformToAABB);
+  // Platform kind: 'floor' | 'wall' | 'platform'. Only 'platform'
+  // is one-way (jump-up-through). 'floor' + 'wall' are solid.
+  const oneWay = pendingMap.platforms.map((p) => (p.kind === "platform" ? 1 : 0));
+  wb.setWorldStatics(aabbs, oneWay);
 }
 
 export class World {
