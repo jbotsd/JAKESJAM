@@ -39,9 +39,9 @@ type WorldExports = {
 const ex = sim.exports as unknown as WorldExports;
 
 const FIRES_OFFSET =
-  32 + 8 + 16 * 288 + 8 + 256 * 216 + 8 + 32 * 96 + 8 + 64 * 64 + 8;
+  40 + 8 + 16 * 288 + 8 + 256 * 216 + 8 + 32 * 96 + 8 + 64 * 64 + 8;
 const DESTRUCTIBLES_OFFSET =
-  32 + 8 + 16 * 288 + 8 + 256 * 216 + 8 + 32 * 96 + 8;
+  40 + 8 + 16 * 288 + 8 + 256 * 216 + 8 + 32 * 96 + 8;
 const TICK_OFFSET = 0;
 const FIRE_REMAINING_OFFSET = 3 * 8;
 const DEST_HEALTH_OFFSET = 4 * 8;

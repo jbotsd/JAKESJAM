@@ -48,7 +48,7 @@ type WeaponExports = {
 };
 const ex = sim.exports as unknown as WeaponExports;
 
-const PLAYERS_OFFSET = 32 + 8;
+const PLAYERS_OFFSET = 40 + 8;
 const FIRE_COOLDOWN_OFFSET = 7 * 8; // 7 f64s before fire_cooldown_ms
 
 function makePlayer(o: Partial<PlayerEntity> = {}): PlayerEntity {

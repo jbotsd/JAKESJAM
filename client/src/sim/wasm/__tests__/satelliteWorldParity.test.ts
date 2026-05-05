@@ -59,7 +59,7 @@ installLutTables(
 );
 
 const SAT_OFFSET =
-  32 + 8 + 16 * 288 + 8 + 256 * 216 + 8;
+  40 + 8 + 16 * 288 + 8 + 256 * 216 + 8;
 const ANGLE_OFFSET = 0;
 const COOLDOWN_OFFSET = 2 * 8;
 const LIFETIME_OFFSET = 3 * 8;

@@ -348,9 +348,10 @@ pub const PICKUP_ENTITY_BYTES: usize = @sizeOf(PickupEntity);
 
 /// Header — packed up front so the host can cheaply read tick /
 /// rng_state without dereferencing a full WorldState.
-/// 32 bytes total, 4-byte tail pad pinned explicitly so the outer
-/// WorldState's 8-byte alignment doesn't introduce hidden padding
-/// between the header and the player_count field.
+/// 40 bytes after I2 added countdown_remaining_ms (f64). Layout
+/// is u32×7 + u8×8 (round_phase + 3 pad + 4 trail pad) + f64.
+/// Order is u32s first, then alignment fix-up, then the f64 to
+/// keep natural 8-byte alignment without internal padding.
 pub const WorldStateHeader = extern struct {
     tick: u32,
     rng_state: u32,
@@ -360,7 +361,8 @@ pub const WorldStateHeader = extern struct {
     map_id: u32,
     chaos_profile_id: u32,
     fire_hazard_timer_ms: u32,
-    _tail_pad: [4]u8 = .{ 0, 0, 0, 0 },
+    round_index: u32,
+    countdown_remaining_ms: f64,
 };
 
 pub const WorldState = extern struct {
@@ -396,7 +398,7 @@ pub const WorldState = extern struct {
 // goes through a deliberate cut so callers stay in sync.
 
 comptime {
-    std.debug.assert(@sizeOf(WorldStateHeader) == 32);
+    std.debug.assert(@sizeOf(WorldStateHeader) == 40);
 
     // Each entity is 8-byte-aligned and tail-packed with explicit
     // _reserved bytes. These numbers are the wire contract — change

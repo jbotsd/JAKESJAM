@@ -256,7 +256,7 @@ wire contract — bumping any number is a protocol-version change.
 | Export | Returns | Parity test |
 |---|---|---|
 | `sizeof_world_state` | total bytes of `WorldState` | `worldStateBridge.test.ts` (G2) |
-| `sizeof_world_state_header` | 32 | `worldStateBridge.test.ts` (G2) |
+| `sizeof_world_state_header` | 40 | `worldStateBridge.test.ts` (G2) |
 | `sizeof_player_entity` | 288 | `worldStateBridge.test.ts` (G2) |
 | `sizeof_projectile_entity` | 216 | `worldStateBridge.test.ts` (G2) |
 | `sizeof_satellite_entity` | 96 | `worldStateBridge.test.ts` (G2) |

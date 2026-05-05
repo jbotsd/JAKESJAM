@@ -35,14 +35,24 @@ const combat = @import("combat.zig");
 pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
     state.header.tick += 1;
 
-    // 1. Round phase — orchestrator decides winner externally for
-    //    now, so winner_decided=0. step_world only ticks the
-    //    countdown / time-out path. The WorldStateHeader doesn't
-    //    yet carry countdown_remaining_ms — that lives on the
-    //    TS-side RoundState struct. Phase I3 lifts it into
-    //    WorldStateHeader. For I1 the round step is a no-op
-    //    pass-through.
-    _ = round;
+    // 1. Round phase machine — header.countdown_remaining_ms now
+    //    travels with WorldState (I2). Winner detection still
+    //    happens TS-side; we only run the time-out + cooldown
+    //    path here.
+    const phase_result = round.roundStepPhase(
+        state.header.round_phase,
+        state.header.countdown_remaining_ms,
+        dt_ms,
+        false,
+    );
+    state.header.round_phase = phase_result.new_phase;
+    state.header.countdown_remaining_ms =
+        phase_result.new_countdown_remaining_ms;
+    if (phase_result.transitioned == 1 and
+        phase_result.new_phase == @intFromEnum(round.RoundPhase.countdown))
+    {
+        state.header.round_index += 1;
+    }
 
     // 2. Fire patches — tick lifetime in place. Caller iterates
     //    fires × players externally to emit damage events.

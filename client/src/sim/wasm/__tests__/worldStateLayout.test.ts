@@ -44,7 +44,7 @@ const ex = sim.exports as unknown as SizeofExports;
 
 describe("WorldState extern struct layout (Phase G1c)", () => {
   test("entity sizes match the wire contract", () => {
-    expect(ex.sizeof_world_state_header()).toBe(32);
+    expect(ex.sizeof_world_state_header()).toBe(40);
     expect(ex.sizeof_player_entity()).toBe(288);
     expect(ex.sizeof_projectile_entity()).toBe(216);
     expect(ex.sizeof_satellite_entity()).toBe(96);

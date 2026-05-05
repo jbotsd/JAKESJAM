@@ -48,7 +48,7 @@ import {
 // -----------------------------------------------------------------
 // Layout constants — must match sim/src/world_state.zig.
 
-const HEADER_SIZE = 32;
+const HEADER_SIZE = 40;
 const PLAYER_ENTITY_SIZE = 288;
 const PROJECTILE_ENTITY_SIZE = 216;
 const SATELLITE_ENTITY_SIZE = 96;
@@ -1003,7 +1003,7 @@ export function packWorldState(state: WorldState): Uint8Array {
   const view = new DataView(buf.buffer);
   let off = 0;
 
-  // Header — 32 bytes
+  // Header — 40 bytes (I2 added round_index + countdown_remaining_ms)
   view.setUint32(off, state.tick, true);
   off += 4;
   view.setUint32(off, state.rngState >>> 0, true);
@@ -1011,9 +1011,9 @@ export function packWorldState(state: WorldState): Uint8Array {
   view.setUint8(off, encEnum(ROUND_PHASES, state.round.phase));
   off += 1;
   off += 3;
-  // next_entity_id, map_id, chaos_profile_id — placeholders for the
-  // orchestrator port. Header carries them so the wasm side can own
-  // them once Phase H/I lands.
+  // next_entity_id, map_id, chaos_profile_id — placeholders for
+  // the data-table port (Phase H8). Header carries them so the
+  // wasm side can own them once the data tables ship.
   view.setUint32(off, 0, true);
   off += 4;
   view.setUint32(off, 0, true);
@@ -1022,7 +1022,10 @@ export function packWorldState(state: WorldState): Uint8Array {
   off += 4;
   view.setUint32(off, state.fireHazardTimerMs ?? 0, true);
   off += 4;
-  off += 4; // _tail_pad
+  view.setUint32(off, state.round.roundIndex >>> 0, true);
+  off += 4;
+  view.setFloat64(off, state.round.countdownRemainingMs, true);
+  off += 8;
 
   // Players
   const players = Object.values(state.players).sort((a, b) =>
@@ -1111,7 +1114,7 @@ export function packWorldState(state: WorldState): Uint8Array {
 export type UnpackedWorldState = {
   tick: Tick;
   rngState: number;
-  round: Pick<RoundState, "phase">;
+  round: Pick<RoundState, "phase" | "countdownRemainingMs" | "roundIndex">;
   fireHazardTimerMs?: number;
   players: Record<PlayerId, PlayerEntity>;
   projectiles: Record<EntityId, ProjectileEntity>;
@@ -1134,7 +1137,10 @@ export function unpackWorldState(buf: Uint8Array): UnpackedWorldState {
   off += 4 + 4 + 4; // next_entity_id, map_id, chaos_profile_id
   const fireHazardTimerMs = view.getUint32(off, true);
   off += 4;
-  off += 4; // _tail_pad
+  const roundIndex = view.getUint32(off, true);
+  off += 4;
+  const countdownRemainingMs = view.getFloat64(off, true);
+  off += 8;
 
   const players: Record<PlayerId, PlayerEntity> = {} as Record<
     PlayerId,
@@ -1228,7 +1234,7 @@ export function unpackWorldState(buf: Uint8Array): UnpackedWorldState {
   const out: UnpackedWorldState = {
     tick,
     rngState,
-    round: { phase },
+    round: { phase, countdownRemainingMs, roundIndex },
     players,
     projectiles,
     satellites,

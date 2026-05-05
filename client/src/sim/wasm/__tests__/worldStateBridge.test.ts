@@ -344,9 +344,9 @@ describe("worldStateBridge — pack/unpack round-trip (Phase G2)", () => {
       satellites: back.satellites,
       round: {
         phase: back.round.phase,
-        countdownRemainingMs: 0,
+        countdownRemainingMs: back.round.countdownRemainingMs,
         scores: {},
-        roundIndex: 0,
+        roundIndex: back.round.roundIndex,
         winnerPlayerId: null,
       },
     };

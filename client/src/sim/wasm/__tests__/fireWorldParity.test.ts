@@ -42,7 +42,7 @@ type FireExports = {
 const ex = sim.exports as unknown as FireExports;
 
 const FIRES_OFFSET =
-  32 + 8 + 16 * 288 + 8 + 256 * 216 + 8 + 32 * 96 + 8 + 64 * 64 + 8;
+  40 + 8 + 16 * 288 + 8 + 256 * 216 + 8 + 32 * 96 + 8 + 64 * 64 + 8;
 
 function loadFireOnly(f: FireEntity): number {
   const state: WorldState = {
