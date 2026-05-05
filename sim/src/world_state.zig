@@ -234,8 +234,13 @@ pub const PlayerEntity = extern struct {
     current_keys: u32,
     prev_keys: u32,
 
+    /// Round-score counter for this player (Phase I5). Increments
+    /// when the orchestrator decides this player won the round.
+    /// Bridged from / to TS `state.round.scores[playerId]`.
+    score: u32,
+
     // Future field landing zone. Today it's all zeros on the wire.
-    _reserved: [8]u8 = @splat(0),
+    _reserved: [4]u8 = @splat(0),
 };
 
 /// Mirrors `ProjectileEntity`.

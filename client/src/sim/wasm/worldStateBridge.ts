@@ -429,16 +429,18 @@ function packPlayer(view: DataView, offset: number, p: PlayerEntity): void {
   writeString(view, off, WEAPON_ID_BYTES, p.weaponId);
   off += WEAPON_ID_BYTES;
 
-  // current_keys + prev_keys (Phase I4). PlayerEntity in the TS
-  // shape doesn't carry them today — orchestrator writes them
-  // externally before calling step_world. Always zero here; the
+  // current_keys + prev_keys (Phase I4). Always zero here; the
   // caller patches the bytes between pack and step_world.
   view.setUint32(off, 0, true);
   off += 4;
   view.setUint32(off, 0, true);
   off += 4;
 
-  // _reserved 8 bytes — leave zero.
+  // score (Phase I5) — encoded from state.round.scores[p.id].
+  view.setUint32(off, 0, true); // populated by patcher per pack-callsite
+  off += 4;
+
+  // _reserved 4 bytes — leave zero.
 }
 
 function unpackPlayer(view: DataView, offset: number): PlayerEntity {
@@ -509,9 +511,12 @@ function unpackPlayer(view: DataView, offset: number): PlayerEntity {
   const weaponId = readString(view, off, wpnLen);
   off += WEAPON_ID_BYTES;
 
-  // current_keys + prev_keys + _reserved (Phase I4) — skipped on
-  // unpack since the TS-side PlayerEntity doesn't carry them.
-  off += 4 + 4 + 8;
+  // current_keys + prev_keys + score + _reserved (Phase I4 + I5)
+  // — skipped on unpack since the TS-side PlayerEntity doesn't
+  // carry these fields directly. Score round-trips via
+  // state.round.scores keyed by player id; orchestrator writes
+  // back through the J0 shim if needed.
+  off += 4 + 4 + 4 + 4;
 
   const out: PlayerEntity = {
     id: PlayerId(id),
