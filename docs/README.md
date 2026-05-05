@@ -35,6 +35,9 @@ produce byte-identical state across hosts. Read in this order:
 6. [`zig-wasm-perf-baseline.md`](zig-wasm-perf-baseline.md) —
    measured ns/op for TS-libm vs TS-LUT vs wasm-LUT for the hot
    paths.
+7. [`zig-wasm-runbook.md`](zig-wasm-runbook.md) — emergency
+   procedures when something breaks in production. Quick
+   reference for diagnostics + rollback ladder.
 
 ## Netcode + sim architecture
 
