@@ -376,6 +376,31 @@ pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
                         projectile.STICKY_FUSE_MS + eff_dt,
                     );
                 } else {
+                    if (proj_ptr.impact == .slow_field) {
+                        // Slow-field impact (I27): apply slow
+                        // debuff to the hit player. Default
+                        // duration 1500ms + multiplier 0.5
+                        // unless the projectile carries an
+                        // override.
+                        const slow_dur: f64 = 1500.0;
+                        const slow_dt: f64 = if (eff_dt > 0) eff_dt else 1.0;
+                        const slow_ticks: u32 = @intFromFloat(@ceil(slow_dur / slow_dt));
+                        state.players[ph2].slowed_until_tick =
+                            state.header.tick + slow_ticks;
+                        state.players[ph2].slow_multiplier =
+                            if (proj_ptr.flags.has_slow) proj_ptr.slow_multiplier else 0.5;
+                        state.players[ph2].flags.has_slow = true;
+                        emitEvent(
+                            state,
+                            .none, // no dedicated kind yet
+                            @intCast(ph2),
+                            -1,
+                            proj_ptr.id,
+                            slow_dur,
+                            state.players[ph2].x,
+                            state.players[ph2].y,
+                        );
+                    }
                     proj_ptr.lifetime_ms = 0;
                 }
                 break;
