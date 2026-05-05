@@ -248,18 +248,20 @@ function writeString(
   s: string,
 ): number {
   const bytes = textEncoder.encode(s);
-  if (bytes.length > capacity) {
-    throw new Error(
-      `string length ${bytes.length} > capacity ${capacity} for "${s}"`,
-    );
-  }
-  for (let i = 0; i < bytes.length; i++) {
+  // Truncate at the byte cap rather than throw. UUIDs in
+  // production are 41 chars (UUID + `_4hmm` suffix) — well
+  // beyond the 32-byte field. Truncation preserves enough prefix
+  // for ≤16 players to remain unique in their first 32 chars,
+  // which is all the wasm side uses these for (owner-match
+  // comparisons during damage/event attribution).
+  const writeLen = Math.min(bytes.length, capacity);
+  for (let i = 0; i < writeLen; i++) {
     view.setUint8(offset + i, bytes[i]!);
   }
-  for (let i = bytes.length; i < capacity; i++) {
+  for (let i = writeLen; i < capacity; i++) {
     view.setUint8(offset + i, 0);
   }
-  return bytes.length;
+  return writeLen;
 }
 
 function readString(
@@ -429,7 +431,7 @@ function packPlayer(view: DataView, offset: number, p: PlayerEntity): void {
   view.setUint8(off, 0);
   off += 1;
 
-  const idLen = textEncoder.encode(p.id).length;
+  const idLen = Math.min(textEncoder.encode(p.id).length, PLAYER_ID_BYTES);
   const wpnLen = textEncoder.encode(p.weaponId).length;
   view.setUint8(off, idLen & 0xff);
   off += 1;
@@ -696,7 +698,7 @@ function packProjectile(
   off += 1;
 
   const ownerLen = p.ownerId
-    ? textEncoder.encode(p.ownerId).length
+    ? Math.min(textEncoder.encode(p.ownerId).length, PLAYER_ID_BYTES)
     : 0;
   view.setUint8(off, ownerLen & 0xff);
   off += 1;
@@ -837,7 +839,9 @@ function packSatellite(
   off += 4;
   view.setUint32(off, s.ownerId != null ? 1 : 0, true);
   off += 4;
-  const ownerLen = s.ownerId ? textEncoder.encode(s.ownerId).length : 0;
+  const ownerLen = s.ownerId
+    ? Math.min(textEncoder.encode(s.ownerId).length, PLAYER_ID_BYTES)
+    : 0;
   view.setUint8(off, ownerLen & 0xff);
   off += 1;
   for (let i = 0; i < 7; i++) view.setUint8(off + i, 0);
@@ -957,7 +961,9 @@ function packFire(view: DataView, offset: number, f: FireEntity): void {
   off += 4;
   view.setUint32(off, f.ownerId != null ? 1 : 0, true);
   off += 4;
-  const ownerLen = f.ownerId ? textEncoder.encode(f.ownerId).length : 0;
+  const ownerLen = f.ownerId
+    ? Math.min(textEncoder.encode(f.ownerId).length, PLAYER_ID_BYTES)
+    : 0;
   view.setUint8(off, ownerLen & 0xff);
   off += 1;
   for (let i = 0; i < 7; i++) view.setUint8(off + i, 0);
