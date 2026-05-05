@@ -1100,13 +1100,12 @@ function maybeWasmActual(
   } catch {
     return null;
   }
-  // Opt-in cutover. `?wasm-world=playtest` activates the wasm
-  // orchestrator. Default visitors stay on TS until the user
-  // confirms the rig render bug from the 2026-05-05 screenshot
-  // is resolved on the latest deploy. Five-layer QA suite
-  // (game-qa skill) is now green; default-on is a one-line
-  // change once user signs off.
-  if (mode !== "playtest") return null;
+  // FULL ZIG — wasm orchestrator is the primary path for every
+  // visitor. No URL-flag emergency rollback. Per user direction
+  // 2026-05-05: "No ts emergency roll back full zig". The
+  // game-qa five-layer suite (H1-H9 + sim-side merge identity)
+  // gates every push.
+  void mode;
   type WasmEvent = {
     kind: number;
     playerIdxA: number;

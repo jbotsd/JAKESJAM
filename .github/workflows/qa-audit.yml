@@ -1,0 +1,216 @@
+name: QA Audit (5-layer game-qa pipeline)
+
+# Runs the full game-qa skill's five-layer test pyramid on
+# every push to main + nightly. Pushes that break any layer
+# fail loudly; nightly runs catch slow-burn regressions.
+#
+# Layer mapping:
+#   1. Pure unit tests          → bun test client/src/sim/__tests__
+#   2. Cross-host parity        → bun test client/src/sim/wasm/__tests__
+#   3. Long-horizon canary      → wasmFullSessionEvidence + worldLongHorizon + mergeIdentity
+#   4. Browser smoke            → tests/e2e/{smoke, wasm-world, wasm-world-actual, state-probe, fuzz, collisionRepro, repro, lobby, visual}.spec.ts
+#   5. Bot soak                 → tests/e2e/{playtest-bots, wasm-playtest-qa}.spec.ts
+#
+# Each layer runs in its own job so failures triage by layer +
+# CI minutes are minimized via parallelism.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+  schedule:
+    # 02:13 UTC daily — off-minute to avoid the GitHub Actions
+    # "everyone runs at :00" stampede.
+    - cron: "13 2 * * *"
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+concurrency:
+  group: qa-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ──────────────────────────────────────────────────────────
+  # Layer 1 + 2 + 3 — Bun-side: pure / parity / long-horizon
+  # ──────────────────────────────────────────────────────────
+  bun-tests:
+    name: Layer 1-3 — Bun unit + parity + canary
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: 0.15.2
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.bun/install/cache
+            node_modules
+            client/node_modules
+            server/node_modules
+          key: ${{ runner.os }}-bun-${{ hashFiles('bun.lock') }}
+          restore-keys: ${{ runner.os }}-bun-
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/zig
+            sim/.zig-cache
+          key: ${{ runner.os }}-zig-${{ hashFiles('sim/build.zig', 'sim/build.zig.zon', 'sim/src/**') }}
+          restore-keys: ${{ runner.os }}-zig-
+      - run: bun install --frozen-lockfile
+      - run: bun run sim:fmt
+      - run: bun run sim:build
+      - name: Layer 1+2 — wasm parity + Layer 3 — long-horizon canaries
+        run: bun test client/src/sim/__tests__ client/src/sim/wasm/__tests__
+
+  # ──────────────────────────────────────────────────────────
+  # Type gates — catches type-level regressions on both sides.
+  # ──────────────────────────────────────────────────────────
+  typecheck:
+    name: Typecheck (client + server)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.bun/install/cache
+            node_modules
+            client/node_modules
+            server/node_modules
+          key: ${{ runner.os }}-bun-${{ hashFiles('bun.lock') }}
+      - run: bun install --frozen-lockfile
+      - run: bun run --filter client typecheck
+      - run: bun run --filter server typecheck
+
+  # ──────────────────────────────────────────────────────────
+  # Layer 4 — Browser smoke: against the deployed prod URL.
+  # Splits suites across parallel jobs so the slowest doesn't
+  # gate the others.
+  # ──────────────────────────────────────────────────────────
+  e2e-smoke:
+    name: Layer 4 — smoke + state probe + wasm-world boot
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - run: bun install --frozen-lockfile
+      - run: bunx playwright install chromium
+      - run: |
+          bunx playwright test \
+            tests/e2e/smoke.spec.ts \
+            tests/e2e/state-probe.spec.ts \
+            tests/e2e/wasm-world.spec.ts \
+            tests/e2e/wasm-world-actual.spec.ts
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-smoke-artifacts
+          path: tests/e2e/.artifacts
+          retention-days: 14
+
+  e2e-collision-fuzz:
+    name: Layer 4 — collision + fuzz repro suites
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - run: bun install --frozen-lockfile
+      - run: bunx playwright install chromium
+      - run: |
+          bunx playwright test \
+            tests/e2e/collisionRepro.spec.ts \
+            tests/e2e/fuzz.spec.ts \
+            tests/e2e/repro.spec.ts
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-collision-fuzz-artifacts
+          path: tests/e2e/.artifacts
+          retention-days: 14
+
+  e2e-visual:
+    name: Layer 4 — visual harness
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - run: bun install --frozen-lockfile
+      - run: bunx playwright install chromium
+      - run: bunx playwright test tests/e2e/visual.spec.ts tests/e2e/lobby.spec.ts
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-visual-artifacts
+          path: tests/e2e/.artifacts
+          retention-days: 14
+
+  # ──────────────────────────────────────────────────────────
+  # Layer 5 — Bot soak: autonomous gameplay over minutes.
+  # Heavier — runs only on push-to-main + nightly cron.
+  # PRs skip via the `if` gate to keep PR CI under 15 min.
+  # ──────────────────────────────────────────────────────────
+  qa-bot-soak:
+    name: Layer 5 — game-qa hypothesis suite + bot soak
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    if: github.event_name != 'pull_request'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - run: bun install --frozen-lockfile
+      - run: bunx playwright install chromium
+      - run: |
+          bunx playwright test \
+            tests/e2e/wasm-playtest-qa.spec.ts \
+            tests/e2e/playtest-bots.spec.ts
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: qa-bot-soak-artifacts
+          path: tests/e2e/.artifacts
+          retention-days: 14
+
+  # ──────────────────────────────────────────────────────────
+  # Aggregate gate so branch protection can require one
+  # status that depends on everything above.
+  # ──────────────────────────────────────────────────────────
+  qa-audit-summary:
+    name: QA audit summary
+    needs: [bun-tests, typecheck, e2e-smoke, e2e-collision-fuzz, e2e-visual]
+    runs-on: ubuntu-latest
+    if: always()
+    steps:
+      - name: Audit verdict
+        run: |
+          echo "Bun tests: ${{ needs.bun-tests.result }}"
+          echo "Typecheck: ${{ needs.typecheck.result }}"
+          echo "Smoke: ${{ needs.e2e-smoke.result }}"
+          echo "Collision/fuzz: ${{ needs.e2e-collision-fuzz.result }}"
+          echo "Visual: ${{ needs.e2e-visual.result }}"
+          if [[ "${{ needs.bun-tests.result }}" != "success" ]]; then exit 1; fi
+          if [[ "${{ needs.typecheck.result }}" != "success" ]]; then exit 1; fi
+          if [[ "${{ needs.e2e-smoke.result }}" != "success" ]]; then exit 1; fi
+          if [[ "${{ needs.e2e-collision-fuzz.result }}" != "success" ]]; then exit 1; fi
+          if [[ "${{ needs.e2e-visual.result }}" != "success" ]]; then exit 1; fi
