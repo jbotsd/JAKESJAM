@@ -201,6 +201,16 @@ export.
 | `fire_patch_tick_world(fire, dt) → i32` | tick FireEntity in place; returns alive flag | `fireWorldParity.test.ts` |
 | `fire_patch_hits_player_world(fire, px, py, pw, ph) → i32` | overlap test using FireEntity | `fireWorldParity.test.ts` |
 
+## Weapons data (`data/weapons.zig`) — Phase H8b
+
+JAKESJAM-specific data table. Base weapon stats by id.
+
+| Export | Purpose | Parity test |
+|---|---|---|
+| `weapon_base_by_id(id, out)` | populate WeaponBase from the static table; out-of-range falls back to starter | `weaponDataParity.test.ts` |
+| `weapon_count` | length of weapons table | `weaponDataParity.test.ts` |
+| `sizeof_weapon_base` | bytes | `weaponDataParity.test.ts` |
+
 ## Chaos data (`data/chaos.zig`) — Phase H8a
 
 JAKESJAM-specific data table. Bitmask → ChaosProfile resolver.
