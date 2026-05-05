@@ -27,7 +27,6 @@ import type { Id } from "../../../../convex/_generated/dataModel";
 import {
   STEP_MS,
   crystalRoundsCards,
-  ORBIT_RADIUS_PX,
   type DestructibleEntity,
   type DestructibleKind,
   type FireEntity,
@@ -65,6 +64,7 @@ import { PlatformLayer } from "../render/PlatformPainter";
 import { LightBeamLayer } from "../render/LightingLayer";
 import { RenderLayer } from "../render/RenderLayer";
 import { transientVfx } from "../render/TransientVfx";
+import { EntityRenderCoordinator } from "../render/EntityRenderCoordinator";
 import { PALETTE, ARENA_THEMES } from "../ui/palette";
 import type {
   CardDefinition,
@@ -86,7 +86,7 @@ export type OnlineMatchSceneInit = {
   mode?: "room" | "world";
 };
 
-const PROJECTILE_RADIUS_DEFAULT = 7;
+// PROJECTILE_RADIUS_DEFAULT moved to EntityRenderCoordinator (C2a).
 // Mirrors MatchScene's PLAYER_VISUAL_SCALE so online and offline rigs match.
 const PLAYER_VISUAL_SCALE = 0.78;
 // Sim body heights (sim/player.ts: bodyHeight=56, crouchHeight=38).
@@ -100,7 +100,7 @@ const REMOTE_PLAYER_FALLBACK_COLOR = 0xff88aa;
 // used by World.create.
 const TARGET_SCORE_DEFAULT = 3;
 
-const DAMAGE_FLASH_MS = 140;
+// DAMAGE_FLASH_MS moved to EntityRenderCoordinator (C2a).
 
 /** Color per destructible kind. Mirrors MatchScene.destructibleColor. */
 function destructibleColor(kind: DestructibleKind): number {
@@ -198,16 +198,18 @@ export class OnlineMatchScene extends Phaser.Scene {
   /** Captured from init data so onRematch / onReturnToLobby can branch. */
   private sceneMode: "room" | "world" = "room";
   private playerRigs = new Map<string, ProceduralPlayerRig>();
-  private projectileSprites = new Map<number, Phaser.GameObjects.Arc>();
-  private satelliteSprites = new Map<number, Phaser.GameObjects.Arc>();
-  private destructibleGraphics: Phaser.GameObjects.Graphics | null = null;
+  /**
+   * Phase C2a: extracted out of the scene into
+   * `EntityRenderCoordinator`. Owns projectile / satellite sprites
+   * + destructible / fire / pickup graphics. Single update() entry
+   * per frame.
+   */
+  private entityRender: EntityRenderCoordinator | null = null;
   /** Static arena geometry (platforms, walls, floor, vignette). Drawn
    *  once on hello receipt; never per-frame. */
   private arenaGraphics: Phaser.GameObjects.Graphics | null = null;
   private platformLayer: PlatformLayer | null = null;
   private lightBeams: LightBeamLayer | null = null;
-  private fireGraphics: Phaser.GameObjects.Graphics | null = null;
-  private pickupGraphics: Phaser.GameObjects.Graphics | null = null;
   // Sentinel — overwritten in init(data) before any consumer reads it.
   // Cast bypasses the validating constructor; "" is not a valid PlayerId.
   private localPlayerId: PlayerId = "" as PlayerId;
@@ -249,9 +251,6 @@ export class OnlineMatchScene extends Phaser.Scene {
   private renderLayer: RenderLayer | null = null;
   // Events arrive via ClientLoop.onEvents; buffer per-frame and drain in update().
   private pendingSimEvents: SimEvent[] = [];
-  // Track destructible health between frames for damage-flash effect.
-  private prevDestructibleHealth = new Map<number, number>();
-  private destructibleFlashUntilMs = new Map<number, number>();
   // Snapshot pending card-offer events queued before the overlay was ready,
   // and remember the last ids we've already shown so we don't reshow the
   // overlay every snapshot if the same event re-fires from the buffer.
@@ -306,14 +305,16 @@ export class OnlineMatchScene extends Phaser.Scene {
     this.cardDraftOverlay = new CardDraftOverlay();
     this.matchResultsOverlay = new MatchResultsOverlay();
 
-    // World-space graphics layers. Order matters: pickups under destructibles
-    // under fire so the fire glow reads on top.
-    this.pickupGraphics = this.add.graphics();
-    this.pickupGraphics.setDepth(2);
-    this.destructibleGraphics = this.add.graphics();
-    this.destructibleGraphics.setDepth(3);
-    this.fireGraphics = this.add.graphics();
-    this.fireGraphics.setDepth(4);
+    // World-space entity render. C2a: was 5 separate fields +
+    // helper methods; now one coordinator owns all of them.
+    this.entityRender = new EntityRenderCoordinator(this, {
+      projectileColor: (element, ownerId) =>
+        projectileColorByElement(element, ownerId),
+      drawDestructible: (g, obj, flashing) =>
+        drawDestructible(g, obj, flashing),
+      drawFirePatch: (g, fire, nowMs) => drawFirePatch(g, fire, nowMs),
+      drawPickup: (g, pickup, nowMs) => drawPickup(g, pickup, nowMs),
+    });
 
     this.createStatsHud();
     // Shared HUD/banner/death systems (replace inline text with polished versions)
@@ -1141,11 +1142,7 @@ export class OnlineMatchScene extends Phaser.Scene {
       }
     }
 
-    this.renderProjectiles(state);
-    this.renderDestructibles(state, nowMs);
-    this.renderFirePatches(state, nowMs);
-    this.renderPickups(state, nowMs);
-    this.renderSatellites(state);
+    this.entityRender?.update(state, deltaMs, nowMs);
   }
 
   /**
@@ -1200,107 +1197,10 @@ export class OnlineMatchScene extends Phaser.Scene {
     }
   }
 
-  private renderProjectiles(state: WorldState) {
-    const seen = new Set<number>();
-    for (const [idStr, proj] of Object.entries(state.projectiles)) {
-      const id = Number(idStr);
-      seen.add(id);
-      const color = projectileColorByElement(proj.element, proj.ownerId);
-      let arc = this.projectileSprites.get(id);
-      if (!arc) {
-        arc = this.add.circle(
-          proj.x,
-          proj.y,
-          proj.radius || PROJECTILE_RADIUS_DEFAULT,
-          color,
-        );
-        arc.setDepth(6);
-        this.projectileSprites.set(id, arc);
-      }
-      arc.setPosition(proj.x, proj.y);
-      arc.setRadius(proj.radius || PROJECTILE_RADIUS_DEFAULT);
-      arc.setFillStyle(color);
-    }
-    for (const [id, arc] of this.projectileSprites) {
-      if (!seen.has(id)) {
-        arc.destroy();
-        this.projectileSprites.delete(id);
-      }
-    }
-  }
-
-  private renderDestructibles(state: WorldState, nowMs: number) {
-    const graphics = this.destructibleGraphics;
-    if (!graphics) return;
-    graphics.clear();
-
-    const seen = new Set<number>();
-    for (const [idStr, obj] of Object.entries(state.destructibles)) {
-      const id = Number(idStr);
-      seen.add(id);
-
-      // Damage-flash bookkeeping: when health drops between snapshots,
-      // tint white briefly.
-      const prev = this.prevDestructibleHealth.get(id);
-      if (prev !== undefined && obj.health < prev) {
-        this.destructibleFlashUntilMs.set(id, nowMs + DAMAGE_FLASH_MS);
-      }
-      this.prevDestructibleHealth.set(id, obj.health);
-      const flashing = (this.destructibleFlashUntilMs.get(id) ?? 0) > nowMs;
-      drawDestructible(graphics, obj, flashing);
-    }
-    for (const id of this.prevDestructibleHealth.keys()) {
-      if (!seen.has(id)) {
-        this.prevDestructibleHealth.delete(id);
-        this.destructibleFlashUntilMs.delete(id);
-      }
-    }
-  }
-
-  private renderFirePatches(state: WorldState, nowMs: number) {
-    const graphics = this.fireGraphics;
-    if (!graphics) return;
-    graphics.clear();
-    for (const fire of Object.values(state.firePatches)) {
-      drawFirePatch(graphics, fire, nowMs);
-    }
-  }
-
-  private renderPickups(state: WorldState, nowMs: number) {
-    const graphics = this.pickupGraphics;
-    if (!graphics) return;
-    graphics.clear();
-    for (const pickup of Object.values(state.pickups)) {
-      drawPickup(graphics, pickup, nowMs);
-    }
-  }
-
-  private renderSatellites(state: WorldState) {
-    const seen = new Set<number>();
-    for (const [idStr, sat] of Object.entries(state.satellites)) {
-      const id = Number(idStr);
-      seen.add(id);
-      const owner = sat.ownerId !== null ? state.players[sat.ownerId] : undefined;
-      if (!owner) continue;
-      const x = owner.x + Math.cos(sat.angle) * sat.orbitRadius;
-      const y = owner.y + Math.sin(sat.angle) * sat.orbitRadius;
-      let arc = this.satelliteSprites.get(id);
-      if (!arc) {
-        arc = this.add.circle(x, y, 5, 0xfff7d6, 0.92);
-        arc.setStrokeStyle(2, 0xffd166, 0.7);
-        arc.setDepth(7);
-        this.satelliteSprites.set(id, arc);
-      }
-      arc.setPosition(x, y);
-    }
-    for (const [id, arc] of this.satelliteSprites) {
-      if (!seen.has(id)) {
-        arc.destroy();
-        this.satelliteSprites.delete(id);
-      }
-    }
-    void ORBIT_RADIUS_PX; // Constant kept imported for future tuning hooks.
-  }
+  // C2a: renderProjectiles / renderDestructibles / renderFirePatches /
+  // renderPickups / renderSatellites moved to EntityRenderCoordinator.
+  // The scene now calls `entityRender.update(state, dt, nowMs)` once
+  // per frame from renderWorld.
 
   // ---------------- Player rig wiring ----------------
 
@@ -1461,18 +1361,10 @@ export class OnlineMatchScene extends Phaser.Scene {
     this.matchResultsOverlay = undefined;
     for (const rig of this.playerRigs.values()) rig.destroy();
     this.playerRigs.clear();
-    for (const sprite of this.projectileSprites.values()) sprite.destroy();
-    this.projectileSprites.clear();
-    for (const sprite of this.satelliteSprites.values()) sprite.destroy();
-    this.satelliteSprites.clear();
-    this.destructibleGraphics?.destroy();
-    this.destructibleGraphics = null;
+    this.entityRender?.destroy();
+    this.entityRender = null;
     this.arenaGraphics?.destroy();
     this.arenaGraphics = null;
-    this.fireGraphics?.destroy();
-    this.fireGraphics = null;
-    this.pickupGraphics?.destroy();
-    this.pickupGraphics = null;
     this.hudSystem?.destroy();
     this.hudSystem = null;
     this.roundBannerSystem?.destroy();
@@ -1491,8 +1383,8 @@ export class OnlineMatchScene extends Phaser.Scene {
     this.statsBg?.destroy();
     this.statsBg = null;
     this.statsToggleKey = null;
-    this.prevDestructibleHealth.clear();
-    this.destructibleFlashUntilMs.clear();
+    // C2a: prevDestructibleHealth + destructibleFlashUntilMs moved
+    // into EntityRenderCoordinator.destroy().
     this.killStreakCount.clear();
     this.prevAlive.clear();
   }
