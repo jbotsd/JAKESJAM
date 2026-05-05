@@ -48,7 +48,7 @@ import {
 // -----------------------------------------------------------------
 // Layout constants — must match sim/src/world_state.zig.
 
-const HEADER_SIZE = 40;
+const HEADER_SIZE = 48;
 const PLAYER_ENTITY_SIZE = 288;
 const PROJECTILE_ENTITY_SIZE = 216;
 const SATELLITE_ENTITY_SIZE = 96;
@@ -1076,6 +1076,13 @@ export function packWorldState(state: WorldState): Uint8Array {
   off += 4;
   view.setUint32(off, state.round.roundIndex >>> 0, true);
   off += 4;
+  // target_score (I9). Default 0 = no match-end detection.
+  view.setUint32(off, 0, true);
+  off += 4;
+  // match_winner_idx (I9). -1 = no winner; orchestrator writes
+  // back. Encode -1 as 0xFFFFFFFF.
+  view.setInt32(off, -1, true);
+  off += 4;
   view.setFloat64(off, state.round.countdownRemainingMs, true);
   off += 8;
 
@@ -1195,6 +1202,7 @@ export function unpackWorldState(buf: Uint8Array): UnpackedWorldState {
   off += 4;
   const roundIndex = view.getUint32(off, true);
   off += 4;
+  off += 4 + 4; // target_score + match_winner_idx (I9)
   const countdownRemainingMs = view.getFloat64(off, true);
   off += 8;
 

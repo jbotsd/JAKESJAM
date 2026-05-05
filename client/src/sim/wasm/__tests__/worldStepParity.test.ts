@@ -39,9 +39,9 @@ type WorldExports = {
 const ex = sim.exports as unknown as WorldExports;
 
 const FIRES_OFFSET =
-  40 + 8 + 16 * 288 + 8 + 256 * 216 + 8 + 32 * 96 + 8 + 64 * 64 + 8;
+  48 + 8 + 16 * 288 + 8 + 256 * 216 + 8 + 32 * 96 + 8 + 64 * 64 + 8;
 const DESTRUCTIBLES_OFFSET =
-  40 + 8 + 16 * 288 + 8 + 256 * 216 + 8 + 32 * 96 + 8;
+  48 + 8 + 16 * 288 + 8 + 256 * 216 + 8 + 32 * 96 + 8;
 const TICK_OFFSET = 0;
 const FIRE_REMAINING_OFFSET = 3 * 8;
 const DEST_HEALTH_OFFSET = 4 * 8;
@@ -208,7 +208,7 @@ describe("step_world orchestrator parity (Phase I1)", () => {
     // + 1 (card_count) + 2 (pad) + 8 (id_len + weapon_id_len + 6
     // pad) + 32 (id_bytes) + 24 (weapon_id_bytes) = 268.
     // current_keys is at +268.
-    const PLAYERS_OFFSET = 40 + 8;
+    const PLAYERS_OFFSET = 48 + 8;
     const view = new DataView(ex.memory.buffer);
     view.setUint32(ptr + PLAYERS_OFFSET + 268, 1 << 8, true);
     ex.step_world(ptr, 1000); // 1 sec tick

@@ -50,7 +50,7 @@ installLutTables(
   new Float64Array(ex.memory.buffer, ex.lut_atan_table_ptr(), ex.lut_table_size()),
 );
 
-const PLAYERS_OFFSET = 40 + 8;
+const PLAYERS_OFFSET = 48 + 8;
 const SHIELD_CHARGE_OFFSET = 11 * 8;
 const FLAGS_OFFSET = 17 * 8 + 15 * 4;
 const PARRY_ACTIVE_TICK_OFFSET = 17 * 8 + 4 * 4;

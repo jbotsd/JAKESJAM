@@ -90,6 +90,14 @@ pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
     {
         const idx: u32 = @intCast(winner_idx);
         state.players[idx].score += 1;
+        // Match-end check (I9): if this player hit target_score,
+        // mark match winner. orchestrator stops advancing past
+        // round_over once match_winner_idx is set.
+        if (state.header.target_score > 0 and
+            state.players[idx].score >= state.header.target_score)
+        {
+            state.header.match_winner_idx = winner_idx;
+        }
     }
     const phase_result = round.roundStepPhase(
         state.header.round_phase,

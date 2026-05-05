@@ -54,9 +54,9 @@ function loadState(state: WorldState): {
   const heap = new Uint8Array(ex.memory.buffer);
   heap.set(buf, sim.statePtr);
   // Compute precise offsets for projectile[0] and destructible[0].
-  const projOff = 40 + 8 + 16 * 288 + 8;
+  const projOff = 48 + 8 + 16 * 288 + 8;
   const destOff =
-    40 + 8 + 16 * 288 + 8 + 256 * 216 + 8 + 32 * 96 + 8;
+    48 + 8 + 16 * 288 + 8 + 256 * 216 + 8 + 32 * 96 + 8;
   return {
     projPtr: sim.statePtr + projOff,
     destPtr: sim.statePtr + destOff,

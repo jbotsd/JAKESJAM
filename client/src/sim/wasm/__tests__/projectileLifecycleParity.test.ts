@@ -81,7 +81,7 @@ const SIZEOF_SPLIT_VEL = ex.sizeof_split_velocity();
 // Layout in the WorldState packed buffer: header (32) + player
 // preamble (8) + 16*288 player bytes + projectile preamble (8) +
 // projectile array start.
-const PROJECTILES_OFFSET = 40 + 8 + 16 * 288 + 8;
+const PROJECTILES_OFFSET = 48 + 8 + 16 * 288 + 8;
 
 function makeBaseProjectile(): ProjectileEntity {
   return {

@@ -379,6 +379,13 @@ pub const WorldStateHeader = extern struct {
     chaos_mask: u32,
     fire_hazard_timer_ms: u32,
     round_index: u32,
+    /// Round wins required to win the match (Phase I9). 0 disables
+    /// match-end detection (orchestrator stays in fighting/round-
+    /// over loop forever).
+    target_score: u32,
+    /// Match winner index (Phase I9). -1 = no match winner yet,
+    /// ≥ 0 = player array index that hit target_score.
+    match_winner_idx: i32,
     countdown_remaining_ms: f64,
 };
 
@@ -415,7 +422,7 @@ pub const WorldState = extern struct {
 // goes through a deliberate cut so callers stay in sync.
 
 comptime {
-    std.debug.assert(@sizeOf(WorldStateHeader) == 40);
+    std.debug.assert(@sizeOf(WorldStateHeader) == 48);
 
     // Each entity is 8-byte-aligned and tail-packed with explicit
     // _reserved bytes. These numbers are the wire contract — change
