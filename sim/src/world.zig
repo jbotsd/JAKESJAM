@@ -114,12 +114,42 @@ pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
         state.header.round_index += 1;
     }
 
-    // 2. Fire patches — tick lifetime in place. Caller iterates
-    //    fires × players externally to emit damage events.
+    // 2. Fire patches (I10): tick lifetime in place + apply DPS
+    //    damage to overlapping non-owner alive players.
+    //    Player AABB is approximated as 30×56 centered on (x,y).
+    const PLAYER_HALF_W: f64 = 15.0;
+    const PLAYER_HALF_H: f64 = 28.0;
     var fi: u32 = 0;
     while (fi < state.fire_count) : (fi += 1) {
         const patch_ptr = &state.fires[fi];
         if (patch_ptr.remaining_ms <= 0) continue;
+        const damage_this_tick = patch_ptr.damage_per_second * (dt_ms / 1000.0);
+        var ph: u32 = 0;
+        while (ph < state.player_count) : (ph += 1) {
+            if (!state.players[ph].flags.alive) continue;
+            // Skip owner self-damage.
+            if (patch_ptr.has_owner != 0 and
+                state.players[ph].id_len == patch_ptr.owner_id_len and
+                std.mem.eql(u8,
+                    state.players[ph].id_bytes[0..patch_ptr.owner_id_len],
+                    patch_ptr.owner_id_bytes[0..patch_ptr.owner_id_len]))
+            {
+                continue;
+            }
+            if (fire.fireEntityHitsPlayerAABB(
+                patch_ptr,
+                state.players[ph].x - PLAYER_HALF_W,
+                state.players[ph].y - PLAYER_HALF_H,
+                PLAYER_HALF_W * 2.0,
+                PLAYER_HALF_H * 2.0,
+            )) {
+                state.players[ph].health -= damage_this_tick;
+                if (state.players[ph].health <= 0) {
+                    state.players[ph].health = 0;
+                    state.players[ph].flags.alive = false;
+                }
+            }
+        }
         _ = fire.fireEntityTick(patch_ptr, dt_ms);
     }
 
