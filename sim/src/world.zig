@@ -849,6 +849,34 @@ pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
         player_ptr.prev_keys = player_ptr.current_keys;
     }
 
+    // 9. End-of-tick compaction (I29). Walk projectiles + fire
+    //    patches; copy live entries down so the active prefix
+    //    stays packed. Without this the arrays grow until the
+    //    next round restart (I28) wipes them.
+    var write_idx: u32 = 0;
+    var read_idx: u32 = 0;
+    while (read_idx < state.projectile_count) : (read_idx += 1) {
+        if (state.projectiles[read_idx].lifetime_ms > 0) {
+            if (write_idx != read_idx) {
+                state.projectiles[write_idx] = state.projectiles[read_idx];
+            }
+            write_idx += 1;
+        }
+    }
+    state.projectile_count = write_idx;
+
+    var fwrite: u32 = 0;
+    var fread: u32 = 0;
+    while (fread < state.fire_count) : (fread += 1) {
+        if (state.fires[fread].remaining_ms > 0) {
+            if (fwrite != fread) {
+                state.fires[fwrite] = state.fires[fread];
+            }
+            fwrite += 1;
+        }
+    }
+    state.fire_count = fwrite;
+
     return 0;
 }
 
