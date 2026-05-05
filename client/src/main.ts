@@ -18,6 +18,7 @@ import {
   applyWasmWorldStepSync,
   isWasmWorldReady,
   preloadWasmWorldSim,
+  setWorldStatics as setWorldStaticsImport,
 } from "./sim/wasm/worldWasmBackend";
 
 // Phase F3 Zig→WASM substrate. RNG, collision, and player physics
@@ -57,10 +58,12 @@ void preloadWasmWorldSim().then(() => {
   type WB = {
     isWasmWorldReady(): boolean;
     applyWasmWorldStepSync: typeof applyWasmWorldStepSync;
+    setWorldStatics: typeof setWorldStaticsImport;
   };
   (globalThis as { __jakesjam_wasm_backend__?: WB }).__jakesjam_wasm_backend__ = {
     isWasmWorldReady,
     applyWasmWorldStepSync,
+    setWorldStatics: setWorldStaticsImport,
   };
 });
 

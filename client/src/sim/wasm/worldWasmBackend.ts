@@ -39,6 +39,13 @@ import {
 
 type WorldExports = {
   step_world: (state_ptr: number, dt_ms: number) => number;
+  world_state_set_statics: (
+    state_ptr: number,
+    aabbs_ptr: number,
+    one_way_ptr: number,
+    count: number,
+  ) => number;
+  world_state_set_target_score: (state_ptr: number, target: number) => void;
   memory: WebAssembly.Memory;
 };
 
@@ -89,6 +96,9 @@ export async function applyWasmWorldStep(
   }
   const heap = new Uint8Array(ex.memory.buffer);
   heap.set(buf, sim.statePtr);
+  // Patch static-AABB cache + one_way after pack so step_world
+  // has terrain. No-op if setWorldStatics never called.
+  writeStaticsIntoMemory();
   const rc = ex.step_world(sim.statePtr, dt_ms);
   if (rc !== 0) {
     throw new Error(`[wasm-world] step_world returned ${rc}`);
@@ -142,6 +152,9 @@ export async function applyWasmWorldStepFull(
   const buf = packWorldState(state);
   const heap = new Uint8Array(ex.memory.buffer);
   heap.set(buf, sim.statePtr);
+  // Patch static-AABB cache + one_way after pack so step_world
+  // has terrain. No-op if setWorldStatics never called.
+  writeStaticsIntoMemory();
   const rc = ex.step_world(sim.statePtr, dt_ms);
   if (rc !== 0) throw new Error(`[wasm-world] step_world returned ${rc}`);
   const back = new Uint8Array(
@@ -205,6 +218,9 @@ export function applyWasmWorldStepSync(
   }
   const heap = new Uint8Array(ex.memory.buffer);
   heap.set(buf, sim.statePtr);
+  // Patch static-AABB cache + one_way after pack so step_world
+  // has terrain. No-op if setWorldStatics never called.
+  writeStaticsIntoMemory();
   const rc = ex.step_world(sim.statePtr, dt_ms);
   if (rc !== 0) {
     throw new Error(`[wasm-world] step_world returned ${rc}`);
@@ -236,6 +252,63 @@ export async function preloadWasmWorldSim(): Promise<boolean> {
 /** True iff the sync variant can be called without throwing. */
 export function isWasmWorldReady(): boolean {
   return cachedSim != null && cachedEx != null;
+}
+
+/**
+ * Module-level cache of the static AABB layout. The shim writes
+ * these into wasm memory via world_state_set_statics after every
+ * pack so step_world's stepPlayer + step_projectile_v2 see the
+ * full terrain. Without this, players fall through every
+ * platform when running ?wasm-world=2.
+ */
+type StaticAABB = { x: number; y: number; w: number; h: number };
+let cachedStatics: { aabbs: StaticAABB[]; oneWay: number[] } | null = null;
+
+/**
+ * Set the static-AABB cache for this match. The host (World.ts
+ * createRuntime, OnlineMatchScene boot) calls this once after the
+ * map loads. Subsequent step_world calls patch the bytes from
+ * the cache before running the orchestrator.
+ */
+export function setWorldStatics(
+  aabbs: ReadonlyArray<StaticAABB>,
+  oneWay: ReadonlyArray<number>,
+): void {
+  cachedStatics = {
+    aabbs: aabbs.slice(),
+    oneWay: oneWay.slice(),
+  };
+}
+
+const AABB_SIZE_BYTES = 32;
+
+function writeStaticsIntoMemory(): void {
+  if (!cachedStatics || !cachedSim || !cachedEx) return;
+  const ex = cachedEx;
+  // Use the tail of the state buffer as scratch — caller's state
+  // is already packed at sim.statePtr, the static cache lives
+  // INSIDE the WorldState struct, but to call set_statics we
+  // need a flat aabbs[] + one_way[] in linear memory pointing
+  // somewhere we control. The state buffer's `statics` array
+  // already lives at a known offset; rather than compute that,
+  // we use the post-state region.
+  const sim = cachedSim;
+  const heap = new Uint8Array(ex.memory.buffer);
+  const scratchPtr = sim.statePtr + 80000; // safely past state
+  const view = new DataView(ex.memory.buffer, scratchPtr);
+  const count = Math.min(cachedStatics.aabbs.length, 256);
+  for (let i = 0; i < count; i++) {
+    const a = cachedStatics.aabbs[i]!;
+    view.setFloat64(i * AABB_SIZE_BYTES + 0, a.x, true);
+    view.setFloat64(i * AABB_SIZE_BYTES + 8, a.y, true);
+    view.setFloat64(i * AABB_SIZE_BYTES + 16, a.w, true);
+    view.setFloat64(i * AABB_SIZE_BYTES + 24, a.h, true);
+  }
+  const oneWayPtr = scratchPtr + count * AABB_SIZE_BYTES;
+  for (let i = 0; i < count; i++) {
+    heap[oneWayPtr + i] = cachedStatics.oneWay[i] ?? 0;
+  }
+  ex.world_state_set_statics(sim.statePtr, scratchPtr, oneWayPtr, count);
 }
 
 /** Boot-time warning if the user opted in but wasm fails to load. */

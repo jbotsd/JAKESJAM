@@ -43,7 +43,11 @@ import {
 import { stepWeapon } from "./weapon.js";
 import { stepRound, TARGET_SCORE_DEFAULT } from "./round.js";
 import { tickShield, tryDeflectDamage, tryStartParry } from "./combat.js";
-import { buildStaticCache, type StaticCollisionCache } from "./collision.js";
+import {
+  buildStaticCache,
+  platformToAABB,
+  type StaticCollisionCache,
+} from "./collision.js";
 import {
   EntityId,
   PlayerId,
@@ -102,7 +106,7 @@ export type WorldRuntime = {
 };
 
 export function createRuntime(map: MapDefinition): WorldRuntime {
-  return {
+  const runtime: WorldRuntime = {
     prevKeys: new Map(),
     movement: new Map(),
     nextEntityId: 1,
@@ -120,6 +124,37 @@ export function createRuntime(map: MapDefinition): WorldRuntime {
     scratchSortedProjectileIds: [],
     scratchDeflectedProjectiles: new Set(),
   };
+  // Side effect: pre-load the wasm static-AABB cache so the
+  // J0/J1 shim's stepPlayer has terrain to collide with. No-op
+  // if the wasm backend isn't ready yet — main.ts's preload
+  // pre-fills it on completion.
+  syncWorldStaticsToWasm(map);
+  return runtime;
+}
+
+/**
+ * Sync the static-AABB cache into the wasm orchestrator. Called
+ * by the netcode loop / scene boot once the map is known so
+ * ?wasm-world=2 player physics has terrain. Without this call
+ * step_world's stepPlayer sees an empty statics slice and players
+ * fall through every platform.
+ */
+export function syncWorldStaticsToWasm(map: MapDefinition): void {
+  const aabbs = map.platforms.map(platformToAABB);
+  // Platform kind: 'floor' | 'wall' | 'platform'. Only 'platform'
+  // is one-way (jump-up-through). 'floor' + 'wall' are solid.
+  const oneWay = map.platforms.map((p) => (p.kind === "platform" ? 1 : 0));
+  const wb = (
+    globalThis as {
+      __jakesjam_wasm_backend__?: {
+        setWorldStatics?: (
+          aabbs: Array<{ x: number; y: number; w: number; h: number }>,
+          oneWay: number[],
+        ) => void;
+      };
+    }
+  ).__jakesjam_wasm_backend__;
+  wb?.setWorldStatics?.(aabbs, oneWay);
 }
 
 export class World {
