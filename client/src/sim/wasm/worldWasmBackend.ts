@@ -82,7 +82,46 @@ export async function applyWasmWorldStep(
   state: WorldState,
   dt_ms: number,
 ): Promise<WorldState> {
-  const { sim, ex } = await ensureSim();
+  await ensureSim();
+  return runWasmStepSync(state, dt_ms).state;
+}
+
+/**
+ * Phase A2 — single private helper. All four public step variants
+ * (sync/async × events/no-events) collapse to this. Sync because
+ * callers in production always preload first. The async variants
+ * just await `ensureSim()` then delegate.
+ *
+ * Steps performed (in order, every call):
+ *   1. Validate cachedSim + cachedEx are populated.
+ *   2. Validate state buffer size matches packed bytes.
+ *   3. pack(state) → wasm linear memory at sim.statePtr.
+ *   4. writeStaticsIntoMemory() — terrain AABBs into state.statics[].
+ *   5. writePlayerInputsFromGlobal() — current_keys / prev_keys / aim
+ *      patched after pack. Without this, prediction runs on stale
+ *      keys → "stuttery laggy" symptom (commit 4a73635).
+ *   6. ex.step_world(statePtr, dt_ms).
+ *   7. unpack(state) → fresh TS WorldState bytes.
+ *   8. mergeUnpacked → identity-stable merge with prior `state`.
+ *
+ * Returns `{ state, events, matchComplete }` always; callers that
+ * don't need events drop them. Throws on any wasm-side error.
+ *
+ * The check that came before each variant (cachedSim/cachedEx +
+ * buffer size) is centralised here so a future divergence between
+ * variants can't recur.
+ */
+function runWasmStepSync(
+  state: WorldState,
+  dt_ms: number,
+): { state: WorldState; events: WasmSimEvent[]; matchComplete: boolean } {
+  if (!cachedSim || !cachedEx) {
+    throw new Error(
+      "[wasm-world] runWasmStepSync called before preload — call preloadWasmWorldSim() at boot first",
+    );
+  }
+  const sim = cachedSim;
+  const ex = cachedEx;
   const buf = packWorldState(state);
   if (buf.byteLength !== WORLD_STATE_TOTAL_SIZE) {
     throw new Error(
@@ -96,25 +135,23 @@ export async function applyWasmWorldStep(
   }
   const heap = new Uint8Array(ex.memory.buffer);
   heap.set(buf, sim.statePtr);
-  // Patch static-AABB cache + one_way after pack so step_world
-  // has terrain. No-op if setWorldStatics never called.
   writeStaticsIntoMemory();
-  // Patch per-player current_keys / prev_keys after pack so
-  // wasm players actually see input bits. World.ts maybeWasmActual
-  // stashes the map on globalThis before calling.
   writePlayerInputsFromGlobal();
   const rc = ex.step_world(sim.statePtr, dt_ms);
   if (rc !== 0) {
     throw new Error(`[wasm-world] step_world returned ${rc}`);
   }
-  const back: Uint8Array = new Uint8Array(
+  const back = new Uint8Array(
     ex.memory.buffer,
     sim.statePtr,
     WORLD_STATE_TOTAL_SIZE,
   ).slice();
-  const unpacked: UnpackedWorldState = unpackWorldState(back);
-
-  return mergeUnpacked(state, unpacked);
+  const unpacked = unpackWorldState(back);
+  return {
+    state: mergeUnpacked(state, unpacked),
+    events: unpacked.events,
+    matchComplete: unpacked.matchWinnerIdx >= 0,
+  };
 }
 
 function mergeUnpacked(
@@ -196,30 +233,8 @@ export async function applyWasmWorldStepFull(
   state: WorldState,
   dt_ms: number,
 ): Promise<{ state: WorldState; events: WasmSimEvent[]; matchComplete: boolean }> {
-  const { sim, ex } = await ensureSim();
-  const buf = packWorldState(state);
-  const heap = new Uint8Array(ex.memory.buffer);
-  heap.set(buf, sim.statePtr);
-  // Patch static-AABB cache + one_way after pack so step_world
-  // has terrain. No-op if setWorldStatics never called.
-  writeStaticsIntoMemory();
-  // Patch per-player current_keys / prev_keys after pack so
-  // wasm players actually see input bits. World.ts maybeWasmActual
-  // stashes the map on globalThis before calling.
-  writePlayerInputsFromGlobal();
-  const rc = ex.step_world(sim.statePtr, dt_ms);
-  if (rc !== 0) throw new Error(`[wasm-world] step_world returned ${rc}`);
-  const back = new Uint8Array(
-    ex.memory.buffer,
-    sim.statePtr,
-    WORLD_STATE_TOTAL_SIZE,
-  ).slice();
-  const unpacked = unpackWorldState(back);
-  return {
-    state: mergeUnpacked(state, unpacked),
-    events: unpacked.events,
-    matchComplete: unpacked.matchWinnerIdx >= 0,
-  };
+  await ensureSim();
+  return runWasmStepSync(state, dt_ms);
 }
 
 /**
@@ -251,44 +266,7 @@ export function applyWasmWorldStepSync(
   state: WorldState,
   dt_ms: number,
 ): WorldState {
-  if (!cachedSim || !cachedEx) {
-    throw new Error(
-      "[wasm-world] applyWasmWorldStepSync called before preload — call preloadWasmWorldSim() at boot first",
-    );
-  }
-  const sim = cachedSim;
-  const ex = cachedEx;
-  const buf = packWorldState(state);
-  if (buf.byteLength !== WORLD_STATE_TOTAL_SIZE) {
-    throw new Error(
-      `[wasm-world] packed buffer size mismatch: ${buf.byteLength} vs ${WORLD_STATE_TOTAL_SIZE}`,
-    );
-  }
-  if (sim.stateLen < WORLD_STATE_TOTAL_SIZE) {
-    throw new Error(
-      `[wasm-world] sim state buffer ${sim.stateLen}B too small for WorldState ${WORLD_STATE_TOTAL_SIZE}B`,
-    );
-  }
-  const heap = new Uint8Array(ex.memory.buffer);
-  heap.set(buf, sim.statePtr);
-  // Patch static-AABB cache + one_way after pack so step_world
-  // has terrain. No-op if setWorldStatics never called.
-  writeStaticsIntoMemory();
-  // Patch per-player current_keys / prev_keys after pack so
-  // wasm players actually see input bits. World.ts maybeWasmActual
-  // stashes the map on globalThis before calling.
-  writePlayerInputsFromGlobal();
-  const rc = ex.step_world(sim.statePtr, dt_ms);
-  if (rc !== 0) {
-    throw new Error(`[wasm-world] step_world returned ${rc}`);
-  }
-  const back = new Uint8Array(
-    ex.memory.buffer,
-    sim.statePtr,
-    WORLD_STATE_TOTAL_SIZE,
-  ).slice();
-  const unpacked: UnpackedWorldState = unpackWorldState(back);
-  return mergeUnpacked(state, unpacked);
+  return runWasmStepSync(state, dt_ms).state;
 }
 
 function writePlayerInputsFromGlobal(): void {
@@ -355,43 +333,12 @@ export function applyWasmWorldStepFullSync(
   state: WorldState,
   dt_ms: number,
 ): { state: WorldState; events: WasmSimEvent[]; matchComplete: boolean } {
-  if (!cachedSim || !cachedEx) {
-    throw new Error(
-      "[wasm-world] applyWasmWorldStepFullSync called before preload",
-    );
-  }
-  const sim = cachedSim;
-  const ex = cachedEx;
-  const buf = packWorldState(state);
-  const heap = new Uint8Array(ex.memory.buffer);
-  heap.set(buf, sim.statePtr);
-  writeStaticsIntoMemory();
-  // CRITICAL — without this, per-player current_keys/prev_keys/aim
-  // are whatever packWorldState wrote (which is whatever the prior
-  // tick produced via mergeUnpacked) instead of the LIVE input the
-  // host just captured. The local player's prediction step runs
-  // against stale keys → predicted player doesn't move → only the
-  // ~30Hz authoritative snapshot moves the rig → stuttery laggy
-  // gameplay.
-  //
-  // The sync variant (applyWasmWorldStepSync) already calls this;
-  // the full-sync variant was missing it. Both must call it before
-  // step_world for prediction to feel native-60Hz.
-  writePlayerInputsFromGlobal();
-  const rc = ex.step_world(sim.statePtr, dt_ms);
-  if (rc !== 0) throw new Error(`[wasm-world] step_world returned ${rc}`);
-  const back = new Uint8Array(
-    ex.memory.buffer,
-    sim.statePtr,
-    WORLD_STATE_TOTAL_SIZE,
-  ).slice();
-  const unpacked = unpackWorldState(back);
-  return {
-    state: mergeUnpacked(state, unpacked),
-    events: unpacked.events,
-    matchComplete: unpacked.matchWinnerIdx >= 0,
-  };
+  return runWasmStepSync(state, dt_ms);
 }
+
+// Re-export the shared helper so WasmHost can call it directly
+// (avoids one extra function indirection per tick).
+export { runWasmStepSync };
 
 /**
  * Eagerly load + cache the wasm sim so the sync variant works.

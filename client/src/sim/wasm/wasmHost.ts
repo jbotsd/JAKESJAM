@@ -218,9 +218,9 @@ export class WasmHost {
   }
 
   /**
-   * Run one wasm sim step. Phase A1a: delegates to the legacy
-   * `applyWasmWorldStepFullSync`. A2 inlines the body and deletes
-   * the legacy variants.
+   * Run one wasm sim step. Phase A2: calls the shared
+   * `runWasmStepSync` helper directly (single source of truth — no
+   * delegation chain through `applyWasmWorldStep*`).
    */
   step(state: WorldState, dtMs: number): WasmStepResult {
     if (!this.resolvedReady) {
@@ -228,20 +228,13 @@ export class WasmHost {
         "[wasm-host] step() called before ready. Await wasmHost.ready() first.",
       );
     }
-    // Use a sync require-style import — the legacy module has been
-    // loaded by `preload()` already, so the dynamic-import promise
-    // is microtask-only. We still need an awaitable surface, so
-    // step() at A1a stays a delegating shim. A2 inlines the body.
-    //
-    // Workaround: assume preload imported worldWasmBackend; re-look
-    // it up via a module-level cache populated lazily.
     const legacy = legacyModule;
     if (!legacy) {
       throw new Error(
         "[wasm-host] step() called but legacy worldWasmBackend module not yet imported. preload() must complete first.",
       );
     }
-    return legacy.applyWasmWorldStepFullSync(state, dtMs);
+    return legacy.runWasmStepSync(state, dtMs);
   }
 
   /**
