@@ -1,0 +1,67 @@
+name: Perf Bench
+
+# Runs the wasm-bench script and uploads results as a workflow
+# artifact. Useful for tracking perf regressions over time without
+# imposing a CI fail on every PR (perf can vary by runner load).
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+  schedule:
+    # Every Monday 02:13 UTC. Off-minute to avoid the cron-thundering-herd.
+    - cron: "13 2 * * 1"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  bench:
+    name: wasm-bench
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: 0.15.2
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.bun/install/cache
+            node_modules
+            client/node_modules
+            server/node_modules
+          key: ${{ runner.os }}-bun-${{ hashFiles('bun.lock') }}
+          restore-keys: ${{ runner.os }}-bun-
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/zig
+            sim/.zig-cache
+          key: ${{ runner.os }}-zig-${{ hashFiles('sim/build.zig', 'sim/build.zig.zon', 'sim/src/**') }}
+          restore-keys: ${{ runner.os }}-zig-
+      - run: bun install --frozen-lockfile
+      - run: bun run sim:build
+      - name: Run bench
+        # Tee output to a file so we can upload it as an artifact + post a
+        # one-line summary to the Actions summary panel.
+        run: |
+          set -euo pipefail
+          bun run sim:bench | tee bench-output.txt
+          echo "## Perf bench results" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          cat bench-output.txt >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bench-${{ github.sha }}
+          path: bench-output.txt
+          retention-days: 90
