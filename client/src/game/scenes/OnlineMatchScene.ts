@@ -43,6 +43,7 @@ import {
   resolveMap,
 } from "../../sim/data/maps";
 import { hashPlayerEntity } from "../../sim/hash";
+import { setActiveStateGetter } from "../../debug/wasmStateProbe";
 import { characters } from "../data/characters";
 import { ProceduralPlayerRig } from "../rendering/ProceduralPlayerRig";
 import { GameAudioSystem } from "../systems/AudioSystem";
@@ -328,6 +329,11 @@ export class OnlineMatchScene extends Phaser.Scene {
 
     this.lastFrameMs = performance.now();
     this.events.once("shutdown", () => this.teardown());
+
+    // Register the state-probe getter so window.__simStateHash() can
+    // read this scene's predicted WorldState from Playwright + the
+    // V1/V3/V6 evidence specs. Cleared in teardown().
+    setActiveStateGetter(() => this.loop?.getRenderState() ?? null);
 
     // Sim-loop ↔ Phaser-tick seam (per phaser4-game SKILL.md "Tab-blur is
     // the failure mode"):
@@ -1435,6 +1441,7 @@ export class OnlineMatchScene extends Phaser.Scene {
 
   private teardown() {
     this.scale.off("resize", this.repositionHud, this);
+    setActiveStateGetter(null);
     this.loop?.stop();
     this.loop = null;
     void this.convex?.close();

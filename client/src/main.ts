@@ -12,6 +12,7 @@ import {
   getWasmSim,
   startWasmCanary,
 } from "./sim/wasm/runtime";
+import { installWindowProbe } from "./debug/wasmStateProbe";
 
 // Phase F3 Zig→WASM substrate. RNG, collision, and player physics
 // run in Zig wasm by DEFAULT. Boot-load the wasm sim ASAP so it's
@@ -26,6 +27,11 @@ startWasmCanary();
 void applyWasmRngFlag();
 void applyWasmCollisionFlag();
 void applyWasmPlayerFlag();
+
+// Install the deterministic-state probe globals. Scenes register
+// their state getter when they own a WorldState. See
+// client/src/debug/wasmStateProbe.ts.
+installWindowProbe();
 
 const app = document.querySelector<HTMLDivElement>("#app");
 
