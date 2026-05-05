@@ -187,6 +187,19 @@ export.
 | `fire_patch_tick_world(fire, dt) → i32` | tick FireEntity in place; returns alive flag | `fireWorldParity.test.ts` |
 | `fire_patch_hits_player_world(fire, px, py, pw, ph) → i32` | overlap test using FireEntity | `fireWorldParity.test.ts` |
 
+## Round (`round.zig`) — Phase H7
+
+Tick-driven phase machine. Drafting transitions land in H7b
+once the card data tables ship.
+
+| Export | Purpose | Parity test |
+|---|---|---|
+| `round_step_phase(phase, remaining_ms, dt, winner_decided, out)` | tick countdown + phase transitions (countdown → fighting → round_over → countdown) | `roundPhaseParity.test.ts` |
+| `round_countdown_ms() → f64` | 3000 | `roundPhaseParity.test.ts` |
+| `round_time_limit_ms() → f64` | 90_000 | `roundPhaseParity.test.ts` |
+| `round_over_hold_ms() → f64` | 2500 | `roundPhaseParity.test.ts` |
+| `sizeof_round_phase_step_result` | 16 | `roundPhaseParity.test.ts` |
+
 ## Sizeof helpers
 
 These let the host pre-allocate the right amount of wasm memory
