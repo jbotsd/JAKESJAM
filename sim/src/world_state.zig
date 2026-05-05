@@ -1,25 +1,27 @@
-//! Phase G1a — WorldState extern struct skeleton.
+//! Phase G1b — WorldState extern struct + entity extern structs.
 //!
 //! This file is the byte-stable cross-host contract for the FULL
 //! sim state. The TS World currently owns the canonical
 //! `WorldState` shape (client/src/sim/types.ts ~line 376); this
 //! Zig mirror is what `step_world` (Phase I) will mutate in place.
 //!
-//! Discipline:
-//!   1. `extern struct` with explicit padding — the Zig spec
-//!      guarantees no implicit reordering, but alignment-driven
-//!      tail padding still happens. We pin it.
-//!   2. Fixed-size arrays + counts replace `Record<Id, Entity>`.
-//!      Iteration becomes `for (state.projectiles[0..state.projectile_count])`.
-//!      Free-list management moves into Zig (next_entity_id).
-//!   3. Comptime size assertions in `_test_size_assertions` enforce
-//!      that the layout is what we PROMISED downstream — see
-//!      docs/zig-wasm-exports.md.
+//! Layout discipline:
+//!   1. `extern struct` — Zig guarantees no implicit reordering;
+//!      tail/inter-field padding is what we must pin.
+//!   2. f64 fields up front for natural 8-byte alignment, smaller
+//!      fields tail-packed, explicit pad bytes where needed.
+//!   3. Strings are fixed-size byte buffers + length prefix. Cards
+//!      and weapons are ID byte buffers; the TS↔wasm bridge
+//!      (Phase G2) maps them to the canonical TS strings.
+//!   4. Optional/additive TS fields become `flags` bitfields + raw
+//!      values. Absent in TS == flag bit 0 in Zig.
+//!   5. `_reserved` tail bytes give us room to grow without
+//!      breaking the byte contract — until we hit zero, future
+//!      additions land here.
 //!
-//! G1a scaffold scope: header fields + count slots + placeholder
-//! arrays of `[N]u8` so the layout is observable but the entity
-//! structs themselves arrive in G1b. Pure-additive — no callers
-//! yet, no exports referenced from other modules.
+//! Comptime size assertions enforce the layout TODAY so any
+//! regression in a downstream cut fails at compile time, not at
+//! the next snapshot codec mismatch.
 
 const std = @import("std");
 
@@ -30,32 +32,322 @@ pub const MAX_DESTRUCTIBLES: usize = 64;
 pub const MAX_FIRE: usize = 32;
 pub const MAX_PICKUPS: usize = 32;
 
-// Placeholder entity sizes. G1b replaces these with real extern
-// structs whose size is asserted against the corresponding TS
-// type's `sizeof_*` export (already shipping for several modules).
-pub const PLACEHOLDER_PLAYER_BYTES: usize = 256;
-pub const PLACEHOLDER_PROJECTILE_BYTES: usize = 128;
-pub const PLACEHOLDER_SATELLITE_BYTES: usize = 96;
-pub const PLACEHOLDER_DESTRUCTIBLE_BYTES: usize = 64;
-pub const PLACEHOLDER_FIRE_BYTES: usize = 64;
-pub const PLACEHOLDER_PICKUP_BYTES: usize = 64;
+pub const PLAYER_ID_BYTES: usize = 32;
+pub const WEAPON_ID_BYTES: usize = 24;
+pub const CARD_ID_BYTES: usize = 24;
+pub const MAX_PLAYER_CARDS: usize = 8;
 
 /// Round phase tag — mirrors `RoundState.phase` in
-/// `client/src/sim/types.ts`. Encoded as a single byte at the
-/// boundary; the TS side maps to the union string literals.
-///   0 = lobby, 1 = countdown, 2 = fighting, 3 = ending,
-///   4 = drafting
+/// `client/src/sim/types.ts`. Wire as a single byte.
 pub const RoundPhase = enum(u8) {
-    lobby = 0,
-    countdown = 1,
-    fighting = 2,
-    ending = 3,
-    drafting = 4,
+    countdown = 0,
+    fighting = 1,
+    round_over = 2,
+    drafting = 3,
 };
 
-/// Header — small fields packed up front so the host can read
-/// `tick` / `rng_state` without dereferencing a full WorldState.
-/// Aligns to 8 bytes for the f64 fields that follow in G1c.
+/// Character archetype — mirrors `CharacterArchetype` in TS.
+pub const CharacterArchetype = enum(u8) {
+    balanced = 0,
+    heavy = 1,
+    sprinter = 2,
+    shielded = 3,
+};
+
+/// Projectile pathing tag — 8 variants per `ProjectilePathing`.
+pub const ProjectilePathing = enum(u8) {
+    straight = 0,
+    gravity = 1,
+    bounce = 2,
+    boomerang = 3,
+    homing = 4,
+    anti_homing = 5,
+    float = 6,
+    accelerate = 7,
+};
+
+/// Element tag — mirrors `ElementType` in TS.
+pub const ElementType = enum(u8) {
+    crystal = 0,
+    neutral = 1,
+    fire = 2,
+    ice = 3,
+    lightning = 4,
+    void_ = 5,
+    radiant = 6,
+    electric = 7,
+    toxic = 8,
+    sticky = 9,
+    explosive = 10,
+};
+
+/// Impact behaviour tag — mirrors `ProjectileImpact` in TS.
+pub const ProjectileImpact = enum(u8) {
+    none = 0,
+    explosive = 1,
+    sticky = 2,
+    pierce_chain = 3,
+    slow_field = 4,
+};
+
+/// Projectile shape tag — mirrors `ProjectileShape` in TS.
+pub const ProjectileShape = enum(u8) {
+    circle = 0,
+    triangle = 1,
+    square = 2,
+    hexagon = 3,
+    orb = 4,
+    x = 5,
+    bar = 6,
+};
+
+pub const DestructibleKind = enum(u8) {
+    barrel = 0,
+    box = 1,
+    mine = 2,
+    cube = 3,
+};
+
+pub const PickupKind = enum(u8) {
+    health_shard = 0,
+    shield_cell = 1,
+    overcharge_core = 2,
+    damage_amp = 3,
+    speed_boost = 4,
+    melee_mode = 5,
+    slow_trap = 6,
+    vulnerability_trap = 7,
+    block_jammer = 8,
+    boss_core = 9,
+    card_cache = 10,
+};
+
+// -----------------------------------------------------------------
+// Bit flags. Booleans are packed into u32 fields where they cluster
+// so the boundary stays compact. Extending requires only flipping
+// an unused bit, never bumping the struct size.
+
+pub const PlayerFlags = packed struct(u32) {
+    alive: bool,
+    shield_active: bool,
+    crouching: bool,
+    grounded: bool,
+    has_slow: bool,
+    has_burn: bool,
+    has_freeze: bool,
+    has_shield_charge: bool,
+    has_parry_active: bool,
+    has_parry_cooldown: bool,
+    has_overcharge: bool,
+    has_damage_amp: bool,
+    has_speed_boost: bool,
+    has_melee_mode: bool,
+    has_slow_debuff: bool,
+    has_vulnerability: bool,
+    has_block_jammer: bool,
+    has_boss_mode: bool,
+    has_jetpack_fuel: bool,
+    has_parry_facing: bool,
+    _reserved: u12 = 0,
+};
+
+pub const ProjectileFlags = packed struct(u32) {
+    has_owner: bool,
+    has_impact: bool,
+    has_split: bool,
+    has_slow: bool,
+    has_homing: bool,
+    has_acceleration: bool,
+    has_gravity_scale: bool,
+    has_range: bool,
+    has_age: bool,
+    has_traveled: bool,
+    has_origin: bool,
+    returning: bool,
+    has_sticky_fuse: bool,
+    has_impact_radius: bool,
+    _reserved: u18 = 0,
+};
+
+// -----------------------------------------------------------------
+// Entity extern structs. Each starts with the largest fields (f64)
+// for natural alignment; smaller fields trail.
+
+/// Mirrors `PlayerEntity` in client/src/sim/types.ts.
+/// Sized at exactly PLACEHOLDER_PLAYER_BYTES (= 256) — future
+/// growth lands in `_reserved`.
+pub const PlayerEntity = extern struct {
+    // 8-byte fields (28 × 8 = 224 bytes, but we don't fill all of them yet)
+    x: f64,
+    y: f64,
+    vx: f64,
+    vy: f64,
+    aim_x: f64,
+    aim_y: f64,
+    health: f64,
+    fire_cooldown_ms: f64,
+    ammo: f64,
+    ability_charge: f64,
+    jetpack_fuel: f64,
+    shield_charge: f64,
+    shield_max_charge: f64,
+    parry_facing: f64,
+    burn_dps: f64,
+    slow_multiplier: f64,
+    freeze_multiplier: f64,
+
+    // Tick-based optional fields. Stored even when unset; the
+    // PlayerFlags bit gates "is this active?".
+    slowed_until_tick: u32,
+    burn_until_tick: u32,
+    burn_tick_last_applied: u32,
+    freeze_until_tick: u32,
+    parry_active_until_tick: u32,
+    parry_cooldown_until_tick: u32,
+    overcharge_until_tick: u32,
+    damage_amp_until_tick: u32,
+    speed_boost_until_tick: u32,
+    melee_mode_until_tick: u32,
+    slow_debuff_until_tick: u32,
+    vulnerability_until_tick: u32,
+    block_jammer_until_tick: u32,
+    boss_mode_until_tick: u32,
+    last_processed_input_seq: u32,
+
+    flags: PlayerFlags,
+    character_id: CharacterArchetype,
+    card_count: u8,
+    _pad0: [2]u8 = .{ 0, 0 },
+
+    id_len: u8,
+    weapon_id_len: u8,
+    _pad1: [6]u8 = .{ 0, 0, 0, 0, 0, 0 },
+
+    id_bytes: [PLAYER_ID_BYTES]u8 = @splat(0),
+    weapon_id_bytes: [WEAPON_ID_BYTES]u8 = @splat(0),
+
+    // Future field landing zone. Today it's all zeros on the wire.
+    _reserved: [16]u8 = @splat(0),
+};
+
+/// Mirrors `ProjectileEntity`.
+pub const ProjectileEntity = extern struct {
+    x: f64,
+    y: f64,
+    vx: f64,
+    vy: f64,
+    radius: f64,
+    damage: f64,
+    lifetime_ms: f64,
+    age_ms: f64,
+    traveled_px: f64,
+    origin_x: f64,
+    origin_y: f64,
+    homing_strength: f64,
+    acceleration_multiplier: f64,
+    gravity_scale: f64,
+    range_px: f64,
+    slow_multiplier: f64,
+    sticky_fuse_ms: f64,
+    impact_radius_px: f64,
+
+    id: u32,
+    bounces_remaining: u32,
+    pierce_remaining: u32,
+    split_count: u32,
+
+    flags: ProjectileFlags,
+    pathing: ProjectilePathing,
+    element: ElementType,
+    impact: ProjectileImpact,
+    shape: ProjectileShape,
+
+    owner_id_len: u8,
+    _pad0: [3]u8 = .{ 0, 0, 0 },
+
+    owner_id_bytes: [PLAYER_ID_BYTES]u8 = @splat(0),
+
+    _reserved: [12]u8 = @splat(0),
+};
+
+/// Mirrors `SatelliteEntity`.
+pub const SatelliteEntity = extern struct {
+    angle: f64,
+    orbit_radius: f64,
+    fire_cooldown_ms: f64,
+    lifetime_ms: f64,
+
+    id: u32,
+    has_owner: u32, // 0/1; padded to keep 8-byte alignment
+
+    owner_id_len: u8,
+    _pad0: [7]u8 = .{ 0, 0, 0, 0, 0, 0, 0 },
+
+    owner_id_bytes: [PLAYER_ID_BYTES]u8 = @splat(0),
+
+    _reserved: [16]u8 = @splat(0),
+};
+
+/// Mirrors `DestructibleEntity`.
+pub const DestructibleEntity = extern struct {
+    x: f64,
+    y: f64,
+    width: f64,
+    height: f64,
+    health: f64,
+
+    id: u32,
+    flags: u32, // bit0=explosive, bit1=flammable
+    kind: DestructibleKind,
+    _pad0: [7]u8 = .{ 0, 0, 0, 0, 0, 0, 0 },
+
+    _reserved: [8]u8 = @splat(0),
+};
+
+/// Mirrors `FireEntity`.
+pub const FireEntity = extern struct {
+    x: f64,
+    y: f64,
+    radius: f64,
+    remaining_ms: f64,
+    damage_per_second: f64,
+
+    id: u32,
+    has_owner: u32,
+    owner_id_len: u8,
+    _pad0: [7]u8 = .{ 0, 0, 0, 0, 0, 0, 0 },
+    owner_id_bytes: [PLAYER_ID_BYTES]u8 = @splat(0),
+};
+
+/// Mirrors `PickupEntity`.
+pub const PickupEntity = extern struct {
+    x: f64,
+    y: f64,
+    radius: f64,
+    amount: f64,
+    duration_ms: f64,
+    respawn_ms: f64,
+
+    id: u32,
+    respawn_at_tick: u32,
+    flags: u32, // bit0=active, bit1=has_duration, bit2=has_respawn
+    kind: PickupKind,
+    _pad0: [3]u8 = .{ 0, 0, 0 },
+};
+
+// -----------------------------------------------------------------
+// Sanity: each entity comes out at the size we promised in G1a so
+// the WorldState total stays fixed.
+
+pub const PLAYER_ENTITY_BYTES: usize = @sizeOf(PlayerEntity);
+pub const PROJECTILE_ENTITY_BYTES: usize = @sizeOf(ProjectileEntity);
+pub const SATELLITE_ENTITY_BYTES: usize = @sizeOf(SatelliteEntity);
+pub const DESTRUCTIBLE_ENTITY_BYTES: usize = @sizeOf(DestructibleEntity);
+pub const FIRE_ENTITY_BYTES: usize = @sizeOf(FireEntity);
+pub const PICKUP_ENTITY_BYTES: usize = @sizeOf(PickupEntity);
+
+/// Header — packed up front so the host can cheaply read tick /
+/// rng_state without dereferencing a full WorldState.
 pub const WorldStateHeader = extern struct {
     tick: u32,
     rng_state: u32,
@@ -67,68 +359,54 @@ pub const WorldStateHeader = extern struct {
     fire_hazard_timer_ms: u32,
 };
 
-/// G1a skeleton. The placeholder array bytes will become typed
-/// `[N]PlayerEntity` etc. in G1b. The COUNT fields are already
-/// real and will be untouched in G1b, so external readers that
-/// learn how to iterate `players[0..player_count]` won't need to
-/// be re-taught.
 pub const WorldState = extern struct {
     header: WorldStateHeader,
 
     player_count: u32,
     _pad_after_player_count: [4]u8 = .{ 0, 0, 0, 0 },
-    players: [MAX_PLAYERS * PLACEHOLDER_PLAYER_BYTES]u8 = @splat(0),
+    players: [MAX_PLAYERS]PlayerEntity,
 
     projectile_count: u32,
     _pad_after_projectile_count: [4]u8 = .{ 0, 0, 0, 0 },
-    projectiles: [MAX_PROJECTILES * PLACEHOLDER_PROJECTILE_BYTES]u8 = @splat(0),
+    projectiles: [MAX_PROJECTILES]ProjectileEntity,
 
     satellite_count: u32,
     _pad_after_satellite_count: [4]u8 = .{ 0, 0, 0, 0 },
-    satellites: [MAX_SATELLITES * PLACEHOLDER_SATELLITE_BYTES]u8 = @splat(0),
+    satellites: [MAX_SATELLITES]SatelliteEntity,
 
     destructible_count: u32,
     _pad_after_destructible_count: [4]u8 = .{ 0, 0, 0, 0 },
-    destructibles: [MAX_DESTRUCTIBLES * PLACEHOLDER_DESTRUCTIBLE_BYTES]u8 = @splat(0),
+    destructibles: [MAX_DESTRUCTIBLES]DestructibleEntity,
 
     fire_count: u32,
     _pad_after_fire_count: [4]u8 = .{ 0, 0, 0, 0 },
-    fires: [MAX_FIRE * PLACEHOLDER_FIRE_BYTES]u8 = @splat(0),
+    fires: [MAX_FIRE]FireEntity,
 
     pickup_count: u32,
     _pad_after_pickup_count: [4]u8 = .{ 0, 0, 0, 0 },
-    pickups: [MAX_PICKUPS * PLACEHOLDER_PICKUP_BYTES]u8 = @splat(0),
+    pickups: [MAX_PICKUPS]PickupEntity,
 };
 
 // -----------------------------------------------------------------
-// Comptime size assertions. These pin the layout TODAY so G1b/G1c
-// regressions are loud at compile time, not at the next snapshot
-// codec mismatch.
+// Comptime size assertions. Keep them tight — every change here
+// goes through a deliberate cut so callers stay in sync.
 
 comptime {
-    // Header is 28 bytes of fields; tail-pads to 32 because the
-    // outer struct's u32 counts force 4-byte alignment. Make this
-    // explicit so a future field addition doesn't silently bump it.
     std.debug.assert(@sizeOf(WorldStateHeader) == 28);
 
-    // Total size — used by the host to allocate the wasm-side
-    // buffer. Must match `sizeof_world_state` export landed in G1c.
-    const expected_size: usize =
-        @sizeOf(WorldStateHeader) +
-        // Each entity-array preamble is 8 bytes (count u32 + 4-byte
-        // pad to align the byte array to 8).
-        (MAX_PLAYERS * PLACEHOLDER_PLAYER_BYTES + 8) +
-        (MAX_PROJECTILES * PLACEHOLDER_PROJECTILE_BYTES + 8) +
-        (MAX_SATELLITES * PLACEHOLDER_SATELLITE_BYTES + 8) +
-        (MAX_DESTRUCTIBLES * PLACEHOLDER_DESTRUCTIBLE_BYTES + 8) +
-        (MAX_FIRE * PLACEHOLDER_FIRE_BYTES + 8) +
-        (MAX_PICKUPS * PLACEHOLDER_PICKUP_BYTES + 8);
-    std.debug.assert(@sizeOf(WorldState) == expected_size);
+    // Each entity is 8-byte-aligned and tail-packed with explicit
+    // _reserved bytes. These numbers are the wire contract — change
+    // them only in a protocol-version bump.
+    std.debug.assert(@sizeOf(PlayerEntity) == 288);
+    std.debug.assert(@sizeOf(ProjectileEntity) == 216);
+    std.debug.assert(@sizeOf(SatelliteEntity) == 96);
+    std.debug.assert(@sizeOf(DestructibleEntity) == 64);
+    std.debug.assert(@sizeOf(FireEntity) == 88);
+    std.debug.assert(@sizeOf(PickupEntity) == 64);
 }
 
 // -----------------------------------------------------------------
-// G1c will move these into wasm exports. For G1a they're internal
-// helpers so the assertions above can compile.
+// G1c will move these into wasm exports.
 
 pub fn worldStateSize() usize {
     return @sizeOf(WorldState);
