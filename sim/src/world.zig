@@ -395,10 +395,31 @@ pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
                         state.players[ex_p].y,
                         15.0, // PLAYER_HALF_W
                     )) {
-                        state.players[ex_p].health -= destructible.EXPLOSION_DAMAGE;
-                        if (state.players[ex_p].health <= 0) {
-                            state.players[ex_p].health = 0;
-                            state.players[ex_p].flags.alive = false;
+                        // Shield-first absorption (I39).
+                        var aoe_dmg = destructible.EXPLOSION_DAMAGE;
+                        const ape = &state.players[ex_p];
+                        if (ape.flags.shield_active and
+                            ape.flags.has_shield_charge and
+                            ape.shield_charge > 0)
+                        {
+                            ape.shield_charge -= aoe_dmg;
+                            if (ape.shield_charge <= 0) {
+                                const overflow = -ape.shield_charge;
+                                ape.shield_charge = 0;
+                                ape.flags.shield_active = false;
+                                emitEvent(state, .shield_popped, @intCast(ex_p), -1, dest_ptr.id, 0, ape.x, ape.y);
+                                aoe_dmg = overflow;
+                            } else {
+                                aoe_dmg = 0;
+                            }
+                        }
+                        if (aoe_dmg > 0) {
+                            ape.health -= aoe_dmg;
+                            if (ape.health <= 0) {
+                                ape.health = 0;
+                                ape.flags.alive = false;
+                                emitEvent(state, .player_killed, @intCast(ex_p), -1, dest_ptr.id, 0, ape.x, ape.y);
+                            }
                         }
                     }
                 }
