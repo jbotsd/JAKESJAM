@@ -71,6 +71,13 @@ jobs:
     needs: verify
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    # Surface the deploy target URL so deploy-client can verify
+    # Vercel's VITE_CONVEX_URL points at the SAME deployment.
+    # Without this guard, dev/prod URL drift silently ships the
+    # client against a stale schema (the Object-contains-extra-
+    # field-`mapId` class of bug).
+    outputs:
+      convexUrl: ${{ steps.push.outputs.url }}
     steps:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2
@@ -78,7 +85,24 @@ jobs:
           bun-version: latest
       - run: bun install --frozen-lockfile
       - name: Push functions + schema to Convex
-        run: bunx convex deploy --yes
+        id: push
+        run: |
+          set -o pipefail
+          # Capture stdout to a file while letting the CLI's progress
+          # also appear in the live job log (tee).
+          bunx convex deploy --yes 2>&1 | tee /tmp/convex-deploy.log
+          # Extract the deployment URL from the CLI's "Deploying to
+          # https://X.convex.cloud..." line. The trailing "..." is
+          # stripped. Fail loudly if we can't find it — silent failure
+          # would defeat the purpose of the guard.
+          URL=$(grep -oE 'https://[a-z0-9-]+\.convex\.cloud' /tmp/convex-deploy.log | head -1)
+          if [ -z "$URL" ]; then
+            echo "::error::Could not parse Convex deploy URL from CLI output."
+            cat /tmp/convex-deploy.log
+            exit 1
+          fi
+          echo "url=$URL" >> "$GITHUB_OUTPUT"
+          echo "Convex deploy target: $URL"
         env:
           # The deploy key tells the CLI which deployment to push to;
           # no other Convex env vars are needed for prod.
@@ -127,7 +151,13 @@ jobs:
     # client build to ship. The client has CONVEX_URL_FALLBACK + a
     # client-side reconnect path, so a stale-server scenario is degraded
     # but not broken. Was previously `[verify, deploy-server]`.
-    needs: [verify]
+    #
+    # Depends on deploy-convex so we can VERIFY that VITE_CONVEX_URL
+    # in Vercel matches the URL `bunx convex deploy` actually pushed
+    # to. Mismatch = client builds against a stale Convex schema =
+    # ArgumentValidationError on every changed mutation. Caught here
+    # at CI time instead of surfacing as a user-facing prod bug.
+    needs: [verify, deploy-convex]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
@@ -149,9 +179,13 @@ jobs:
       # .env.production at the workspace root (vite.config.ts has envDir: "..").
       # If both are empty, FAIL the build — shipping a broken lobby is worse
       # than a red CI badge.
-      - name: Ensure VITE_CONVEX_URL is set for the build
+      - name: Ensure VITE_CONVEX_URL is set for the build + matches Convex deploy target
         env:
           GH_CONVEX_URL: ${{ secrets.CONVEX_URL_PROD }}
+          # The URL `bunx convex deploy` actually pushed to in the
+          # deploy-convex job above. The client MUST build against
+          # the same deployment or we ship stale-schema bugs.
+          DEPLOY_TARGET_URL: ${{ needs.deploy-convex.outputs.convexUrl }}
         run: |
           set -e
           PULLED_ENV_FILE=".vercel/.env.production.local"
@@ -159,17 +193,39 @@ jobs:
           if [ -f "$PULLED_ENV_FILE" ]; then
             PULLED_URL=$(grep -E '^VITE_CONVEX_URL=' "$PULLED_ENV_FILE" | head -1 | cut -d'=' -f2- | sed 's/^"//; s/"$//') || true
           fi
+          # Resolve the URL that the build will actually use. Order
+          # matches the runtime resolution: Vercel env > GH secret >
+          # in-app fallback (CONVEX_URL_FALLBACK in LobbyController).
+          BUILD_URL=""
+          BUILD_SOURCE=""
           if [ -n "$PULLED_URL" ]; then
-            echo "VITE_CONVEX_URL is provided by Vercel project env (length=${#PULLED_URL}). OK."
-            exit 0
-          fi
-          if [ -n "$GH_CONVEX_URL" ]; then
+            BUILD_URL="$PULLED_URL"
+            BUILD_SOURCE="Vercel project env"
+          elif [ -n "$GH_CONVEX_URL" ]; then
             echo "VITE_CONVEX_URL missing from Vercel env; falling back to GH secret CONVEX_URL_PROD."
             echo "VITE_CONVEX_URL=${GH_CONVEX_URL}" >> .env.production
-            echo "Wrote .env.production with VITE_CONVEX_URL (length=${#GH_CONVEX_URL})."
+            BUILD_URL="$GH_CONVEX_URL"
+            BUILD_SOURCE="GH secret CONVEX_URL_PROD"
+          fi
+
+          if [ -z "$BUILD_URL" ]; then
+            echo "::warning::VITE_CONVEX_URL is not set in Vercel project env AND CONVEX_URL_PROD GitHub secret is empty. Build will use the in-app CONVEX_URL_FALLBACK. Verify it matches the deploy target ($DEPLOY_TARGET_URL)."
             exit 0
           fi
-          echo "::warning::VITE_CONVEX_URL is not set in Vercel project env AND CONVEX_URL_PROD GitHub secret is empty. Build will use the in-app CONVEX_URL_FALLBACK (dev deployment). To override: (a) Vercel project → Settings → Environment Variables → VITE_CONVEX_URL (Production); or (b) repo Settings → Secrets → CONVEX_URL_PROD. Continuing build."
+
+          echo "VITE_CONVEX_URL build value: $BUILD_URL  (source: $BUILD_SOURCE)"
+          echo "Convex deploy target:        $DEPLOY_TARGET_URL"
+          # Strip trailing slash, lowercase host for comparison robustness.
+          NORMALIZED_BUILD=$(echo "$BUILD_URL" | sed 's:/*$::' | tr '[:upper:]' '[:lower:]')
+          NORMALIZED_TARGET=$(echo "$DEPLOY_TARGET_URL" | sed 's:/*$::' | tr '[:upper:]' '[:lower:]')
+          if [ "$NORMALIZED_BUILD" != "$NORMALIZED_TARGET" ]; then
+            echo "::error::VITE_CONVEX_URL ($BUILD_URL) does NOT match the Convex deployment we just pushed to ($DEPLOY_TARGET_URL). The client would build against a stale-schema deployment. Fix one of:"
+            echo "::error::  (a) Vercel project → Settings → Environment Variables → VITE_CONVEX_URL = $DEPLOY_TARGET_URL"
+            echo "::error::  (b) Repo Secrets → CONVEX_URL_PROD = $DEPLOY_TARGET_URL"
+            echo "::error::  (c) Repo Secrets → CONVEX_DEPLOY_KEY → use a deploy key for the deployment Vercel is configured for"
+            exit 1
+          fi
+          echo "VITE_CONVEX_URL matches the Convex deploy target. OK."
       # Same fallback dance for VITE_GAME_SERVER_URL — the prod game-server
       # WS endpoint. When the Bun server is hosted on Fly the matchmaker
       # carries this; while Fly is down we drive it from a GitHub secret
