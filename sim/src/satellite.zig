@@ -12,6 +12,7 @@
 
 const std = @import("std");
 const trig = @import("trig.zig");
+const world_state = @import("world_state.zig");
 
 /// Constants mirror `client/src/sim/satellite.ts`.
 pub const ORBIT_RAD_PER_SEC: f64 = 3.141592653589793 / 1.5; // π/1.5
@@ -115,4 +116,63 @@ pub export fn satellite_orbit_rad_per_sec() f64 {
 
 pub export fn satellite_fire_cooldown_ms() f64 {
     return SATELLITE_FIRE_COOLDOWN_MS;
+}
+
+// =================================================================
+// Phase H3 — orchestration helper operating on
+// world_state.SatelliteEntity directly. Mutates angle/cooldown/
+// lifetime in place; reads owner+target from caller-supplied
+// floats (looked up from the Players array externally).
+
+pub fn satelliteTickWorld(
+    sat: *world_state.SatelliteEntity,
+    owner_x: f64,
+    owner_y: f64,
+    target_x: f64,
+    target_y: f64,
+    has_target: u8,
+    can_fire: u8,
+    dt_ms: f64,
+) TickOutput {
+    const tick_in = TickInput{
+        .angle = sat.angle,
+        .orbit_radius = sat.orbit_radius,
+        .fire_cooldown_ms = sat.fire_cooldown_ms,
+        .lifetime_ms = sat.lifetime_ms,
+        .owner_x = owner_x,
+        .owner_y = owner_y,
+        .target_x = target_x,
+        .target_y = target_y,
+        .has_target = @intCast(has_target),
+        .can_fire = @intCast(can_fire),
+        .dt_ms = dt_ms,
+    };
+    const out = tickSatellite(tick_in);
+    sat.angle = out.new_angle;
+    sat.fire_cooldown_ms = out.new_fire_cooldown_ms;
+    sat.lifetime_ms = out.new_lifetime_ms;
+    return out;
+}
+
+pub export fn satellite_tick_world(
+    sat_ptr: *world_state.SatelliteEntity,
+    owner_x: f64,
+    owner_y: f64,
+    target_x: f64,
+    target_y: f64,
+    has_target: u32,
+    can_fire: u32,
+    dt_ms: f64,
+    out_ptr: *TickOutput,
+) void {
+    out_ptr.* = satelliteTickWorld(
+        sat_ptr,
+        owner_x,
+        owner_y,
+        target_x,
+        target_y,
+        @intCast(has_target),
+        @intCast(can_fire),
+        dt_ms,
+    );
 }

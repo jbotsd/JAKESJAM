@@ -139,6 +139,12 @@ export.
 | `satellite_orbit_rad_per_sec() → f64` | π/1.5 | `satelliteParity.test.ts` |
 | `satellite_fire_cooldown_ms() → f64` | 600 | `satelliteParity.test.ts` |
 
+### Phase H3 — orchestration helper
+
+| Export | Purpose | Parity test |
+|---|---|---|
+| `satellite_tick_world(sat, owner_x, owner_y, target_x, target_y, has_target, can_fire, dt, out)` | tick SatelliteEntity in place; emits TickOutput with fire decision + world position | `satelliteWorldParity.test.ts` |
+
 ## Combat (`combat.zig`)
 
 | Export | Purpose | Parity test |
