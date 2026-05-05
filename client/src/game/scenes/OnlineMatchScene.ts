@@ -64,6 +64,7 @@ import { StatusVfxController } from "../systems/StatusVfxController";
 import { PlatformLayer } from "../render/PlatformPainter";
 import { LightBeamLayer } from "../render/LightingLayer";
 import { RenderLayer } from "../render/RenderLayer";
+import { transientVfx } from "../render/TransientVfx";
 import { PALETTE, ARENA_THEMES } from "../ui/palette";
 import type {
   CardDefinition,
@@ -326,6 +327,9 @@ export class OnlineMatchScene extends Phaser.Scene {
     this.particlePool = new ParticlePool(this);
     this.statusVfx = new StatusVfxController(this, this.particlePool);
     this.renderLayer = new RenderLayer(this, this.particlePool);
+    // C1a: bind TransientVfx so all spawned visuals route here +
+    // drain on shutdown.
+    transientVfx.attach(this);
 
     this.lastFrameMs = performance.now();
     this.events.once("shutdown", () => this.teardown());

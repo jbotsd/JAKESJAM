@@ -3,6 +3,7 @@ import { SceneKeys } from "./SceneKeys";
 import { PALETTE, ARENA_THEMES } from "../ui/palette";
 import { PlatformLayer } from "../render/PlatformPainter";
 import { LightBeamLayer } from "../render/LightingLayer";
+import { transientVfx } from "../render/TransientVfx";
 import { boxworksWorld, seededUnit } from "../../sim/data/boxworks.js";
 import {
   COUNTDOWN_MS,
@@ -327,6 +328,9 @@ export class MatchScene extends Phaser.Scene {
     this.lastPickupStatus = "none";
     this.progressionCardIds = [];
     this.projectileSystem = new ProjectileSystem(this, this.particlePool);
+    // C1a: bind the TransientVfx coordinator so its spawn calls
+    // route to this scene + its drainAll fires on shutdown.
+    transientVfx.attach(this);
     this.roundState = createInitialRoundState();
     this.matchHasEnded = false;
     this.playerScores.clear();

@@ -10,6 +10,7 @@ import type {
 import type { ResolvedWeaponBuild } from "./WeaponSystem";
 import { GLOW_TEXTURE_SIZE } from "../render/glowTexture";
 import type { ParticlePool } from "./ParticlePool";
+import { transientVfx } from "../render/TransientVfx";
 
 export type ProjectileTarget = {
   id: string;
@@ -215,13 +216,19 @@ export class ProjectileSystem {
     glow.setScale(startScale);
     glow.setDepth(199); // just under projectile body (200)
 
-    this.scene.tweens.add({
-      targets: glow,
-      alpha: 0,
-      scale: startScale * growthScale,
-      duration: durationMs,
+    transientVfx.spawn({
+      // The pool already constructed the object — return it as-is.
+      factory: () => glow,
+      lifetimeMs: durationMs,
+      startAlpha: alpha,
       ease: "Sine.easeOut",
-      onComplete: () => pool.release(glow),
+      onTick: (obj, t) => {
+        const g = obj as Phaser.GameObjects.GameObject & {
+          setScale: (s: number) => unknown;
+        };
+        g.setScale(startScale + (startScale * growthScale - startScale) * t);
+      },
+      release: () => pool.release(glow),
     });
   }
 
@@ -254,25 +261,25 @@ export class ProjectileSystem {
     };
     const color = elementColor(build.projectile.element);
     const width = build.delivery === "continuous-beam" ? 9 : 5;
-    const graphics = this.scene.add.graphics();
-
-    graphics.lineStyle(width + 7, color, 0.16);
-    graphics.beginPath();
-    graphics.moveTo(origin.x, origin.y);
-    graphics.lineTo(end.x, end.y);
-    graphics.strokePath();
-
-    graphics.lineStyle(width, color, 0.92);
-    graphics.beginPath();
-    graphics.moveTo(origin.x, origin.y);
-    graphics.lineTo(end.x, end.y);
-    graphics.strokePath();
-
-    this.scene.tweens.add({
-      targets: graphics,
-      alpha: 0,
-      duration: build.delivery === "continuous-beam" ? 140 : 95,
-      onComplete: () => graphics.destroy(),
+    // C1a: route through TransientVfx so the beam's lifetime is
+    // owned by the visual coordinator (auto-drain on round-end,
+    // cumulative-geometry scrub on cleanup).
+    transientVfx.spawn({
+      factory: () => {
+        const graphics = this.scene.add.graphics();
+        graphics.lineStyle(width + 7, color, 0.16);
+        graphics.beginPath();
+        graphics.moveTo(origin.x, origin.y);
+        graphics.lineTo(end.x, end.y);
+        graphics.strokePath();
+        graphics.lineStyle(width, color, 0.92);
+        graphics.beginPath();
+        graphics.moveTo(origin.x, origin.y);
+        graphics.lineTo(end.x, end.y);
+        graphics.strokePath();
+        return graphics;
+      },
+      lifetimeMs: build.delivery === "continuous-beam" ? 140 : 95,
     });
 
     // Muzzle + tip flash.
@@ -310,15 +317,22 @@ export class ProjectileSystem {
   ): WeaponFireResult {
     const radius = Math.max(80, build.projectile.impactRadiusPx || build.projectile.rangePx);
     const color = elementColor(build.projectile.element);
-    const ring = this.scene.add.circle(origin.x, origin.y, 8, color, 0.16);
-    ring.setStrokeStyle(3, color, 0.9);
-    this.scene.tweens.add({
-      targets: ring,
-      radius,
-      alpha: 0,
-      duration: 220,
+    transientVfx.spawn({
+      factory: () => {
+        const ring = this.scene.add.circle(origin.x, origin.y, 8, color, 0.16);
+        ring.setStrokeStyle(3, color, 0.9);
+        // Drive the radius expansion via onTick — Phaser's tween
+        // can't directly tween Arc.radius without going through
+        // setRadius and that's a setter, not a property. Tween
+        // owns alpha; we expand radius procedurally.
+        return ring;
+      },
+      lifetimeMs: 220,
       ease: "Sine.easeOut",
-      onComplete: () => ring.destroy(),
+      onTick: (obj, t) => {
+        const ring = obj as Phaser.GameObjects.Arc;
+        ring.setRadius(8 + (radius - 8) * t);
+      },
     });
 
     // Hot path: single for-loop, no filter+map intermediates (game-loop-perf).
@@ -565,30 +579,38 @@ export class ProjectileSystem {
       this.spawnGlowBurst(position.x, position.y, color, radius * 1.6, 0.55, 380, 1.4);
     }
 
-    const burst = this.scene.add.circle(position.x, position.y, 6, color, 0.32);
-    burst.setStrokeStyle(2, color, 0.86);
-    this.scene.tweens.add({
-      targets: burst,
-      radius,
-      alpha: 0,
-      duration: impact === "explosive" ? 280 : 180,
+    transientVfx.spawn({
+      factory: () => {
+        const burst = this.scene.add.circle(position.x, position.y, 6, color, 0.32);
+        burst.setStrokeStyle(2, color, 0.86);
+        return burst;
+      },
+      lifetimeMs: impact === "explosive" ? 280 : 180,
       ease: "Sine.easeOut",
-      onComplete: () => burst.destroy(),
+      onTick: (obj, t) => {
+        const burst = obj as Phaser.GameObjects.Arc;
+        burst.setRadius(6 + (radius - 6) * t);
+      },
     });
 
     const particleCount = impact === "explosive" ? 16 : 7;
     for (let index = 0; index < particleCount; index += 1) {
       const angle = (Math.PI * 2 * index) / particleCount;
-      const shard = this.scene.add.rectangle(position.x, position.y, 3, 8, color, 0.85);
-      shard.rotation = angle;
-      this.scene.tweens.add({
-        targets: shard,
-        x: position.x + Math.cos(angle) * radius * 0.65,
-        y: position.y + Math.sin(angle) * radius * 0.65,
-        alpha: 0,
-        duration: 220,
+      const targetX = position.x + Math.cos(angle) * radius * 0.65;
+      const targetY = position.y + Math.sin(angle) * radius * 0.65;
+      transientVfx.spawn({
+        factory: () => {
+          const shard = this.scene.add.rectangle(position.x, position.y, 3, 8, color, 0.85);
+          shard.rotation = angle;
+          return shard;
+        },
+        lifetimeMs: 220,
         ease: "Sine.easeOut",
-        onComplete: () => shard.destroy(),
+        onTick: (obj, t) => {
+          const shard = obj as Phaser.GameObjects.Rectangle;
+          shard.x = position.x + (targetX - position.x) * t;
+          shard.y = position.y + (targetY - position.y) * t;
+        },
       });
     }
   }
@@ -605,13 +627,16 @@ export class ProjectileSystem {
     const sparkAlpha = 0.86 + 0.14 * ramp;
     const sparkExpand = 18 + 8 * ramp;
     this.spawnGlowBurst(projectile.position.x, projectile.position.y, color, glowRadius, 0.9 + 0.1 * ramp, 140, 1.5);
-    const spark = this.scene.add.circle(projectile.position.x, projectile.position.y, 3, color, sparkAlpha);
-    this.scene.tweens.add({
-      targets: spark,
-      radius: sparkExpand,
-      alpha: 0,
-      duration: 120,
-      onComplete: () => spark.destroy(),
+    const sparkX = projectile.position.x;
+    const sparkY = projectile.position.y;
+    transientVfx.spawn({
+      factory: () => this.scene.add.circle(sparkX, sparkY, 3, color, sparkAlpha),
+      lifetimeMs: 120,
+      startAlpha: sparkAlpha,
+      onTick: (obj, t) => {
+        const spark = obj as Phaser.GameObjects.Arc;
+        spark.setRadius(3 + (sparkExpand - 3) * t);
+      },
     });
   }
 
@@ -692,19 +717,17 @@ export class ProjectileSystem {
     projectile.trailMs += deltaSeconds * 1000;
     if (projectile.trailMs >= 32) {
       projectile.trailMs = 0;
-      const trail = this.scene.add.circle(
-        projectile.position.x,
-        projectile.position.y,
-        Math.max(2, radius * 0.45),
-        color,
-        0.34,
-      );
-      this.scene.tweens.add({
-        targets: trail,
-        alpha: 0,
-        scale: 0.3,
-        duration: 210,
-        onComplete: () => trail.destroy(),
+      const trailX = projectile.position.x;
+      const trailY = projectile.position.y;
+      const trailRadius = Math.max(2, radius * 0.45);
+      transientVfx.spawn({
+        factory: () => this.scene.add.circle(trailX, trailY, trailRadius, color, 0.34),
+        lifetimeMs: 210,
+        startAlpha: 0.34,
+        onTick: (obj, t) => {
+          const c = obj as Phaser.GameObjects.Arc;
+          c.setScale(1 - 0.7 * t);
+        },
       });
 
       // Pooled additive glow puffs — replaces the ad-hoc circle blobs. Two
@@ -737,20 +760,20 @@ export class ProjectileSystem {
         const py = vx / speed;
         const len = Math.max(6, radius * 1.6);
         const jitter = (Math.random() - 0.5) * len * 0.8;
-        const arc = this.scene.add.graphics();
-        arc.lineStyle(Math.max(1, radius * 0.35), 0xfef9c3, 0.95);
         const ax = projectile.position.x - vx / speed * (radius * 1.8);
         const ay = projectile.position.y - vy / speed * (radius * 1.8);
-        arc.beginPath();
-        arc.moveTo(ax + px * len * 0.5, ay + py * len * 0.5);
-        arc.lineTo(ax + px * jitter, ay + py * jitter);
-        arc.lineTo(ax - px * len * 0.5, ay - py * len * 0.5);
-        arc.strokePath();
-        this.scene.tweens.add({
-          targets: arc,
-          alpha: 0,
-          duration: 120,
-          onComplete: () => arc.destroy(),
+        transientVfx.spawn({
+          factory: () => {
+            const arc = this.scene.add.graphics();
+            arc.lineStyle(Math.max(1, radius * 0.35), 0xfef9c3, 0.95);
+            arc.beginPath();
+            arc.moveTo(ax + px * len * 0.5, ay + py * len * 0.5);
+            arc.lineTo(ax + px * jitter, ay + py * jitter);
+            arc.lineTo(ax - px * len * 0.5, ay - py * len * 0.5);
+            arc.strokePath();
+            return arc;
+          },
+          lifetimeMs: 120,
         });
       }
     }
