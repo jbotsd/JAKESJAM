@@ -6,7 +6,13 @@ import { decode, encode } from "@msgpack/msgpack";
 import type { InputSeq, SimEvent, Tick, WorldState } from "../sim/types.js";
 import type { DeltaPayload } from "./snapshotDelta.js";
 
-export const PROTOCOL_VERSION = 2;
+// PROTOCOL_VERSION = 3 marks the wasm-orchestrator wire format
+// (Phase G3 / J cutover). The bump signals to clients + servers
+// that snapshots may carry the raw `WorldState` extern-struct
+// bytes from sim.wasm in addition to the legacy `state: WorldState`
+// TS object form. Mixed-version peers reject each other in the
+// hello handshake.
+export const PROTOCOL_VERSION = 3;
 
 // ---------------- Client → Server ----------------
 
@@ -106,8 +112,30 @@ export type DeltaSnapshot = {
   tickAdjustMs?: number;
 };
 
+/**
+ * Raw wasm-orchestrator snapshot. Carries the `WorldState` extern
+ * struct bytes from `sim.wasm` directly — no msgpack hop, no
+ * field-by-field repacking. The receiver runs `unpackWorldState`
+ * (`@sim/wasm/worldStateBridge.ts`) to reconstruct the TS shape.
+ *
+ * Introduced at PROTOCOL_VERSION = 3 (Phase G3). Phase J flips
+ * the server emission path to use this for full snapshots. The
+ * legacy `FullSnapshot` shape is kept so older replays can still
+ * be replayed offline.
+ */
+export type RawBytesSnapshot = {
+  t: "snap-raw";
+  tick: Tick;
+  lastProcessedInputSeq: Record<string, InputSeq>;
+  baseline: null;
+  /** WORLD_STATE_TOTAL_SIZE bytes — see worldStateBridge.ts. */
+  bytes: Uint8Array;
+  events: SimEvent[];
+  tickAdjustMs?: number;
+};
+
 /** Union of both snapshot variants. Discriminated by `baseline === null`. */
-export type Snapshot = FullSnapshot | DeltaSnapshot;
+export type Snapshot = FullSnapshot | DeltaSnapshot | RawBytesSnapshot;
 
 export type Pong = {
   t: "pong";

@@ -453,6 +453,15 @@ export class ClientLoop {
       case "snap":
         this.applySnapshot(message);
         break;
+      case "snap-raw":
+        // Phase G3 — wire shape exists but the J cutover hasn't
+        // landed yet. The server still emits "snap"; receiving a
+        // "snap-raw" right now would mean we're running against a
+        // newer server. Drop silently — the next "snap" will
+        // re-sync us. Once J ships the orchestrator on the
+        // server we'll wire `unpackWorldState(message.bytes)`
+        // here directly.
+        break;
       case "pong":
         this.pingMonitor.notePong(message);
         break;
@@ -473,7 +482,9 @@ export class ClientLoop {
     this.start();
   }
 
-  private applySnapshot(message: import("./protocol.js").Snapshot): void {
+  private applySnapshot(
+    message: Extract<import("./protocol.js").Snapshot, { t: "snap" }>,
+  ): void {
     // Resolve the authoritative state from the snapshot (full or delta).
     let resolvedState: WorldState | null = null;
 

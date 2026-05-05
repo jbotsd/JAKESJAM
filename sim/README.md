@@ -22,8 +22,42 @@ zig fmt --check .   # format gate
 
 Toolchain pinned in `../.zig-version` (currently `0.15.2`).
 
-## Phase A status
+## Package boundaries (KEEP THESE)
 
-Skeleton only. Exports `alloc_state`, `free_state`, `state_size`,
-`step` (no-op increment), `current_tick`, `reset`. Real sim logic
-lands in Phase B.
+This Zig crate is **two layers**, kept separate so the core can
+be lifted into future games:
+
+1. **Core sim** — game-agnostic deterministic primitives.
+   `rng.zig`, `hash.zig`, `trig.zig`, `collision.zig`,
+   `spatial.zig`, `player.zig`, `projectile.zig`, `weapon.zig`,
+   `combat.zig`, `destructible.zig`, `fire.zig`,
+   `satellite.zig`, `world_state.zig`. No JAKESJAM-specific
+   cards, weapon tables, or chaos modifiers reach these files.
+
+2. **JAKESJAM data + orchestrator** — `data/*.zig` and
+   `world.zig`. Holds the card list, weapon profiles, chaos
+   modifier definitions, and the per-tick orchestration that
+   wires them into the core sim. This is where game-specific
+   tuning lives.
+
+Future games reuse layer 1 directly and write their own layer 2.
+Don't import `data/` from inside layer 1.
+
+The TS netcode layer (`client/src/net/`) is similarly
+game-agnostic — it carries `WorldState` shapes from `@sim/types`
+and `@sim/wasm/worldStateBridge` but doesn't reach into Phaser
+or JAKESJAM data. Future games can import this netcode crate
+unchanged.
+
+## Phase progress
+
+- A — skeleton ✅
+- B — RNG, hash, trig LUT, collision ✅
+- C — player physics ✅
+- D — projectile (incl. v2 8-pathing dispatch) ✅
+- E — weapon, satellite, combat, destructible, fire ✅
+- F — backend swap mechanisms + default-on rollout ✅
+- G — WorldState extern struct + bridge ✅ (G1a/G1b/G1c/G2/G3)
+- H — per-module full orchestration (in progress)
+- I — `step_world` orchestrator (pending)
+- J/K/L/M — production cutover, deletion, validation, decommission
