@@ -139,22 +139,24 @@ parity.
   wasm, the spawn itself needs `next_entity_id` allocation +
   weapon-base lookup).
 - **Drafting orchestration** (offers, picks, expiry, card list).
-- **Specific buff pickups** (overcharge-core, damage-amp,
-  speed-boost, etc) — duration-tick fields need wiring through
-  PlayerFlags.
 - **Score → state.round.scores bridging** in the J0 shim.
-- **Sim event emission** — destructible-broken, hit-confirmed,
-  player-killed, round-end events. step_world mutates state
-  directly today; events arrive in the J shim by diff or in a
-  follow-on cut adding an events buffer to WorldState.
 
-**step_world drives end-to-end:** tick + round phase + chaos
-profile + fire DPS + projectile motion / lifecycle / damage +
-destructible HP + explosive AOE + satellite tick + per-player
-shield drain + parry rising-edge + pickup overlap (heal +
-shield cell) + KO winner + time-out winner + match-end +
-**player physics with full static-AABB collision + jetpack +
-coyote/jump-buffer state** (I16).
+**step_world drives end-to-end:**
+
+| Slice | Phase |
+|---|---|
+| tick increment + round phase + winner detection + match-end | I1, I6, I9 |
+| Chaos profile resolve + apply (timeScale, gravity, damage) | I3, I20 |
+| Fire-patch lifetime + DPS to overlapping non-owner players | I10 |
+| Projectile lifecycle (sticky / lifetime expire) + 8-pathing motion | H1, I7 |
+| Projectile→destructible HP + projectile→player damage + pierce-chain | I11 |
+| Explosive destructible AOE on break | I12 |
+| Satellite orbit + closest-non-owner target lookup + fire decision | H3, I8 |
+| Per-player shield drain/recharge + parry rising-edge + edge state roll | H4, I4, I4b |
+| Pickup overlap → heal/shield/all 8 buff types | I13, I17 |
+| Player physics — walk/jump/jetpack/crouch + coyote/buffer + static-AABB collision | C, I16 |
+| **SimEvent emission**: destructible_broken, hit_confirmed, player_killed, pickup_taken, round_end | I18 |
+| **TS drain via UnpackedWorldState.events** | I19 |
 
 ## Test surface
 
