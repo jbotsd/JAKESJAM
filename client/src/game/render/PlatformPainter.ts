@@ -131,12 +131,22 @@ export function paintPlatform(
   // pattern clipped implicitly via texture bounds; the direct Graphics
   // rewrite needs an explicit GeometryMask to avoid streaks extending
   // diagonally across the whole arena.
+  //
+  // CRITICAL: maskShape is returned in the array so PlatformLayer.repaint
+  // destroys it on the next repaint. Without this, every renderArena call
+  // (each reconnect / map change) leaves an orphan undisplayed Graphics
+  // backing a stale GeometryMask in scene memory — and worse, when the
+  // mask source is destroyed implicitly (e.g. on scene shutdown) without
+  // detaching from g, Phaser falls back to NOT applying the stencil pass
+  // and the rotated brush streaks render unclipped, extending diagonally
+  // across the whole arena. Source of the cyan-line accumulation bug seen
+  // in world-fire artifacts.
   const maskShape = scene.make.graphics({ x: 0, y: 0 }, false);
   maskShape.fillStyle(0xffffff, 1);
   maskShape.fillRect(x - halfW, y - halfH, w, h);
   g.setMask(maskShape.createGeometryMask());
 
-  return [g, shadowG];
+  return [g, shadowG, maskShape];
 }
 
 /**
