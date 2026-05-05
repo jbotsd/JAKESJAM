@@ -55,6 +55,7 @@ const SATELLITE_ENTITY_SIZE = 96;
 const DESTRUCTIBLE_ENTITY_SIZE = 64;
 const FIRE_ENTITY_SIZE = 88;
 const PICKUP_ENTITY_SIZE = 64;
+const PLAYER_MOVEMENT_MEMORY_SIZE = 24;
 
 const MAX_PLAYERS = 16;
 const MAX_PROJECTILES = 256;
@@ -82,7 +83,10 @@ export const WORLD_STATE_TOTAL_SIZE =
   ARRAY_PREAMBLE +
   MAX_FIRE * FIRE_ENTITY_SIZE +
   ARRAY_PREAMBLE +
-  MAX_PICKUPS * PICKUP_ENTITY_SIZE;
+  MAX_PICKUPS * PICKUP_ENTITY_SIZE +
+  // I14 — PlayerMovementMemory parallel array (no preamble; sized
+  // by MAX_PLAYERS, indexed parallel to the players array).
+  MAX_PLAYERS * PLAYER_MOVEMENT_MEMORY_SIZE;
 
 // -----------------------------------------------------------------
 // Enum tables. Order MUST match the enum(u8) declarations in

@@ -64,6 +64,11 @@ describe("WorldState extern struct layout (Phase G1c)", () => {
 
   test("total WorldState size derives correctly from entity sizes", () => {
     // Each entity-array preamble is 8 bytes (count u32 + pad).
+    // PlayerMovementMemory has no preamble — sized by MAX_PLAYERS,
+    // indexed parallel to players[].
+    const sizeofMovement = (
+      ex as unknown as { sizeof_player_movement_memory: () => number }
+    ).sizeof_player_movement_memory();
     const expected =
       ex.sizeof_world_state_header() +
       (ex.world_state_max_players() * ex.sizeof_player_entity() + 8) +
@@ -71,7 +76,8 @@ describe("WorldState extern struct layout (Phase G1c)", () => {
       (ex.world_state_max_satellites() * ex.sizeof_satellite_entity() + 8) +
       (ex.world_state_max_destructibles() * ex.sizeof_destructible_entity() + 8) +
       (ex.world_state_max_fire() * ex.sizeof_fire_entity() + 8) +
-      (ex.world_state_max_pickups() * ex.sizeof_pickup_entity() + 8);
+      (ex.world_state_max_pickups() * ex.sizeof_pickup_entity() + 8) +
+      ex.world_state_max_players() * sizeofMovement;
     expect(ex.sizeof_world_state()).toBe(expected);
   });
 });

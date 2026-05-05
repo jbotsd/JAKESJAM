@@ -332,6 +332,20 @@ pub const FireEntity = extern struct {
     owner_id_bytes: [PLAYER_ID_BYTES]u8 = @splat(0),
 };
 
+/// Per-player movement memory — the host-only fields that the
+/// player.zig stepPlayer kernel needs to thread across ticks
+/// (coyote time, jump buffer, jump-cut flag, grounded-last-frame,
+/// jetpack active). Indexed parallel to `WorldState.players`.
+pub const PlayerMovementMemory = extern struct {
+    coyote_ms: f64,
+    jump_buffer_ms: f64,
+    jump_cut_applied: u8,
+    jump_released_since_jump: u8,
+    grounded_last_frame: u8,
+    jetpack_active: u8,
+    _pad: [4]u8 = .{ 0, 0, 0, 0 },
+};
+
 /// Mirrors `PickupEntity`.
 pub const PickupEntity = extern struct {
     x: f64,
@@ -415,6 +429,10 @@ pub const WorldState = extern struct {
     pickup_count: u32,
     _pad_after_pickup_count: [4]u8 = .{ 0, 0, 0, 0 },
     pickups: [MAX_PICKUPS]PickupEntity,
+
+    /// Parallel to `players[]` — index N is movement memory for
+    /// players[N]. Used by player.stepPlayer (Phase I14+).
+    player_movement: [MAX_PLAYERS]PlayerMovementMemory,
 };
 
 // -----------------------------------------------------------------
@@ -433,6 +451,7 @@ comptime {
     std.debug.assert(@sizeOf(DestructibleEntity) == 64);
     std.debug.assert(@sizeOf(FireEntity) == 88);
     std.debug.assert(@sizeOf(PickupEntity) == 64);
+    std.debug.assert(@sizeOf(PlayerMovementMemory) == 24);
 }
 
 // -----------------------------------------------------------------
@@ -472,6 +491,10 @@ pub export fn sizeof_fire_entity() u32 {
 
 pub export fn sizeof_pickup_entity() u32 {
     return @intCast(@sizeOf(PickupEntity));
+}
+
+pub export fn sizeof_player_movement_memory() u32 {
+    return @intCast(@sizeOf(PlayerMovementMemory));
 }
 
 pub export fn world_state_max_players() u32 {
