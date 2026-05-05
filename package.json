@@ -28,7 +28,8 @@
     "deploy:server:syd": "flyctl deploy --config fly.toml --app jakesjam-srv-syd",
     "sim:build": "cd sim && zig build",
     "sim:test": "cd sim && zig build test",
-    "sim:fmt": "cd sim && zig fmt --check ."
+    "sim:fmt": "cd sim && zig fmt --check .",
+    "sim:bench": "bun run tools/wasm-bench.ts"
   },
   "devDependencies": {
     "@playwright/test": "^1.59.1",

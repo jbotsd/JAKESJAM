@@ -1,5 +1,26 @@
 # JAKESJAM - Changelog
 
+## v0.52 - 2026-05-05
+
+- **Performance baseline benchmark added.** New `tools/wasm-bench.ts`
+  measures TS-libm vs TS-LUT vs wasm-LUT for the hot paths. Run
+  via `bun run sim:bench`.
+- New `docs/zig-wasm-perf-baseline.md` documents the findings:
+  - **Trig**: TS-LUT is 4× slower than libm Math.sin/cos but
+    deterministic across hosts; wasm boundary adds another ~6 ns.
+    `lutAtan2` (24 ns) is FASTER than libm `Math.atan2` (35 ns).
+  - **RNG**: TS is 13 ns/op, wasm 44 ns (3× slower due to boundary
+    crossing). RNG is too small to make wasm worthwhile in isolation.
+  - **Player physics**: TS 347 ns, wasm-swap 369 ns (~6% slower
+    via cache-pack overhead). Negligible vs the 16.67 ms frame
+    budget — wasm tax for 4 players × 60 Hz = 5.3 µs/sec.
+  - **Architectural guidance**: package multiple ops into single
+    wasm calls to amortise the boundary tax. Use TS-LUT for trig
+    in TS sim modules (already done). The default-on production
+    deploy has zero perf concerns.
+
+
+
 ## v0.51 - 2026-05-05
 
 - **100k-tick determinism canary added.** Extends
