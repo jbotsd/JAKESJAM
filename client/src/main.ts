@@ -15,6 +15,8 @@ import {
 import { installWindowProbe } from "./debug/wasmStateProbe";
 import {
   applyWasmWorldFlag,
+  applyWasmWorldStepSync,
+  isWasmWorldReady,
   preloadWasmWorldSim,
 } from "./sim/wasm/worldWasmBackend";
 
@@ -48,7 +50,19 @@ void applyWasmWorldFlag();
 // netcode loop's sync `stepWithRuntime` path. Fire-and-forget —
 // the netcode loop falls back to the async variant if preload
 // hasn't finished by the first sim tick.
-void preloadWasmWorldSim();
+void preloadWasmWorldSim().then(() => {
+  // Expose the sync API on globalThis so World.ts maybeWasmActual
+  // (J1-actual ?wasm-world=2 path) can pick it up without a
+  // circular import. Sync from then on; preload guarantees ready.
+  type WB = {
+    isWasmWorldReady(): boolean;
+    applyWasmWorldStepSync: typeof applyWasmWorldStepSync;
+  };
+  (globalThis as { __jakesjam_wasm_backend__?: WB }).__jakesjam_wasm_backend__ = {
+    isWasmWorldReady,
+    applyWasmWorldStepSync,
+  };
+});
 
 const app = document.querySelector<HTMLDivElement>("#app");
 
