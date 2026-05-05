@@ -246,6 +246,11 @@ either an attack or a network anomaly.
   (overlaps with §"The determinism contract" — read both).
 - `game-netcode` — project-tuned variant for JAKESJAM specifically;
   this skill is the project-agnostic generalisation.
+- `prediction-error-smoothing` — render-layer recipe for hiding the
+  reconcile snap visually (Source `cl_smoothtime`-equivalent).
+- `fixed-step-sim-integration` — accumulator pattern, tick-tagged
+  inputs, float-vs-fixed-point decision; root cause for why air
+  physics drifts before ground does.
 
 ## Source
 
