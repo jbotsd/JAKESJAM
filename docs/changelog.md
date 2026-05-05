@@ -1,5 +1,21 @@
 # JAKESJAM - Changelog
 
+## v0.53 - 2026-05-05
+
+- **Server-side smoke for ALL wasm modules.** New
+  `server/src/__tests__/serverWasmModulesSmoke.test.ts` verifies
+  that the server's `loadServerSim()` instantiates every module's
+  exports correctly under Bun's WebAssembly. 9 tests covering
+  rng / hash / trig LUT / collision / spatial / player /
+  projectile (v1+v2) / weapon / satellite / combat / destructible /
+  fire — confirms each module's primary export(s) are callable
+  with sentinel inputs and return expected results.
+- 52 server tests now (was 43, +9). Catches the regression class
+  where wasm boundary works in the browser but breaks under
+  Bun's WebAssembly.
+
+
+
 ## v0.52 - 2026-05-05
 
 - **Performance baseline benchmark added.** New `tools/wasm-bench.ts`
