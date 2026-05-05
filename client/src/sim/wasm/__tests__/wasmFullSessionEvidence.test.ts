@@ -25,7 +25,7 @@ import {
   applyWasmWorldStepFull,
   preloadWasmWorldSim,
 } from "../worldWasmBackend";
-import { SIM_EVENT_KIND } from "../worldStateBridge";
+// SIM_EVENT_KIND import omitted — events scanned generically below.
 import {
   EntityId,
   InputSeq,
@@ -175,9 +175,7 @@ describe("wasm full-session evidence (I35)", () => {
     // when in range.
 
     let fireRemainingDecreased = false;
-    let destructibleEverBroken = false;
-    let pickupEverDeactivated = false;
-    let allEventsKinds = new Set<number>();
+    const allEventsKinds = new Set<number>();
 
     for (let i = 0; i < 180; i++) {
       const r = await applyWasmWorldStepFull(state, STEP_MS);
@@ -185,10 +183,6 @@ describe("wasm full-session evidence (I35)", () => {
       for (const e of r.events) allEventsKinds.add(e.kind);
       const fire = state.firePatches[EntityId(201)];
       if (fire && fire.remainingMs < 2000) fireRemainingDecreased = true;
-      if (state.destructibles[EntityId(101)]?.health === 0)
-        destructibleEverBroken = true;
-      if (state.pickups[EntityId(301)]?.active === false)
-        pickupEverDeactivated = true;
     }
 
     expect(fireRemainingDecreased).toBe(true);

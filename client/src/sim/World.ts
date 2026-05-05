@@ -1037,14 +1037,53 @@ export function stepWithRuntime(
     matchComplete: roundResult.matchComplete,
   };
 
-  // J1-monitor (Phase J1, opt-in via ?wasm-world-monitor=1):
-  // shadow-run the wasm orchestrator on the SAME input state and
-  // log key-field divergence. Default off — does NOT change the
-  // returned result. Throw-safe: any wasm failure logs and falls
-  // through.
+  // J1-actual (Phase J1, opt-in via ?wasm-world=2): return the
+  // wasm orchestrator's result instead of TS. Default off so
+  // most visitors stay on the proven TS path; opt-in lets us
+  // playtest the wasm orchestrator end-to-end in production.
+  const wasmActual = maybeWasmActual(state, dtMs);
+  if (wasmActual) return wasmActual;
+
+  // J1-monitor (opt-in via ?wasm-world-monitor=1): shadow-run
+  // wasm + log divergence; doesn't change behavior.
   maybeWasmMonitor(state, dtMs, result);
 
   return result;
+}
+
+function maybeWasmActual(
+  inputState: WorldState,
+  dtMs: number,
+): StepResult | null {
+  const loc = (globalThis as { location?: { search: string } }).location;
+  if (!loc) return null;
+  let mode = "";
+  try {
+    mode = new URLSearchParams(loc.search).get("wasm-world") ?? "";
+  } catch {
+    return null;
+  }
+  if (mode !== "2") return null;
+  // Lazy-load synchronously via the cached module. Module init
+  // happens once on first call; subsequent calls are sync.
+  type WB = {
+    isWasmWorldReady(): boolean;
+    applyWasmWorldStepSync(s: WorldState, dt: number): WorldState;
+  };
+  const wb = (globalThis as { __jakesjam_wasm_backend__?: WB })
+    .__jakesjam_wasm_backend__;
+  if (!wb || !wb.isWasmWorldReady()) return null;
+  try {
+    const next = wb.applyWasmWorldStepSync(inputState, dtMs);
+    return {
+      state: next,
+      events: [],
+      matchComplete: false,
+    };
+  } catch (err) {
+    console.error("[wasm-world=2] step_world threw — falling back to TS", err);
+    return null;
+  }
 }
 
 let monitorActive = false;
