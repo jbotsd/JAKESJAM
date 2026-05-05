@@ -498,7 +498,7 @@ test("dom: world summary HTTP endpoint reports a live world", async ({
   const log = attachConsole(page);
   // Probe the game-server's /world/summary directly. If it 200s with a
   // non-null body the world is reachable.
-  const url = process.env.GAME_SERVER_URL ?? "https://jakesjam-srv-syd.fly.dev";
+  const url = process.env.GAME_SERVER_URL ?? "https://jakesjam-srv-sin.fly.dev";
   const res = await request.get(`${url}/world/summary`, { timeout: 10_000 });
   expect(res.ok(), `${url}/world/summary should return 200`).toBeTruthy();
   void page;

@@ -2,7 +2,7 @@
 // auth tokens. See docs/netcode-architecture.md "Convex Integration".
 //
 // Region picking is deliberately dumb for now: the match doc records whatever
-// the host requests (or "syd" by default). Add latency-aware routing later.
+// the host requests (or "sin" by default). Add latency-aware routing later.
 
 import { v } from "convex/values";
 import { query, type MutationCtx } from "./_generated/server";
@@ -13,17 +13,17 @@ import type { Id } from "./_generated/dataModel";
 // we actually use here.
 declare const process: { env: Record<string, string | undefined> };
 
-// Only `syd` is deployed today. `sjc` and `fra` are placeholders in the
+// Only `sin` is deployed today. `sjc` and `fra` are placeholders in the
 // roadmap; re-add them here AND deploy the matching Fly apps in lockstep,
 // otherwise pickGameServerUrl will hand clients dead URLs.
-export const GAME_REGIONS = ["syd"] as const;
+export const GAME_REGIONS = ["sin"] as const;
 export type GameRegion = typeof GAME_REGIONS[number];
 
 const GAME_SERVERS = {
-  syd: "wss://jakesjam-srv-syd.fly.dev/ws",
+  sin: "wss://jakesjam-srv-sin.fly.dev/ws",
 } as const satisfies Record<GameRegion, string>;
 
-const DEFAULT_REGION: GameRegion = "syd";
+const DEFAULT_REGION: GameRegion = "sin";
 
 export function pickGameServerUrl(requestedRegion: string | undefined): {
   region: string;

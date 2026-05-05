@@ -23,14 +23,14 @@ npx convex env set GAME_SERVER_SECRET dev-secret
 See `fly.toml` and `Dockerfile` at the repo root. One Fly app per region:
 
 ```bash
-flyctl deploy --config fly.toml --app jakesjam-srv-syd --region syd
+flyctl deploy --config fly.toml --app jakesjam-srv-sin --region sin
 ```
 
 Set the production secret on each region app:
 
 ```bash
-flyctl secrets set --app jakesjam-srv-syd GAME_SERVER_SECRET=<from a password manager>
-flyctl secrets set --app jakesjam-srv-syd CONVEX_URL=https://...convex.cloud
+flyctl secrets set --app jakesjam-srv-sin GAME_SERVER_SECRET=<from a password manager>
+flyctl secrets set --app jakesjam-srv-sin CONVEX_URL=https://...convex.cloud
 ```
 
 ## Layout

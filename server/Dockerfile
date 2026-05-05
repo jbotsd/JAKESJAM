@@ -3,7 +3,7 @@
 # relative paths the dev environment uses.
 #
 # Build:   docker build -f server/Dockerfile -t jakesjam-srv .
-# Or via:  flyctl deploy --config fly.toml --app jakesjam-srv-syd
+# Or via:  flyctl deploy --config fly.toml --app jakesjam-srv-sin
 
 FROM oven/bun:1.1 AS base
 WORKDIR /app

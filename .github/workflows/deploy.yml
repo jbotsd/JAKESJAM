@@ -87,7 +87,7 @@ jobs:
   # ──────────────────────────────────────────────────────────────────────
   # Deploy Bun game server to Fly.io.
   # Triggers on changes to server/, fly.toml, or shared sim code.
-  # Secret: FLY_API_TOKEN  (create with `flyctl tokens create deploy -a jakesjam-srv-syd`)
+  # Secret: FLY_API_TOKEN  (create with `flyctl tokens create deploy -a jakesjam-srv-sin`)
   # ──────────────────────────────────────────────────────────────────────
   deploy-server:
     name: Deploy server (Fly.io)
@@ -111,7 +111,7 @@ jobs:
       - name: Build sim.wasm for Docker COPY
         run: cd sim && zig build
       - uses: superfly/flyctl-actions/setup-flyctl@master
-      - run: flyctl deploy --config fly.toml --app jakesjam-srv-syd --remote-only
+      - run: flyctl deploy --config fly.toml --app jakesjam-srv-sin --remote-only
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
 
