@@ -132,23 +132,29 @@ parity.
 
 ## What's still TS (production hot path)
 
-- Player physics (walk / jump / jetpack / crouch / static-AABB
-  collision / coyote time / jump-buffer). Wasm has the kernel
-  in `player.zig`; orchestrator integration needs a movement-
-  memory parallel array + map AABB cache in WorldState.
-- Weapon projectile spawn — build resolution mid-run (cards +
-  chaos + character archetype) is JAKESJAM data and stays TS
-  until H8c card port lands.
-- Satellite projectile spawn (owner+target lookup is in wasm,
-  the spawn itself needs `next_entity_id` + weapon-base lookup).
-- Drafting orchestration (offers, picks, expiry, card list).
-- Specific buff pickups (overcharge-core, damage-amp etc) —
-  duration-tick fields need wiring through PlayerFlags.
+- **Weapon projectile spawn** — build resolution mid-run (cards
+  + chaos + character archetype) needs the card-data port (H8c)
+  + a resolved-build extern struct passed into wasm.
+- **Satellite projectile spawn** (owner+target lookup is in
+  wasm, the spawn itself needs `next_entity_id` allocation +
+  weapon-base lookup).
+- **Drafting orchestration** (offers, picks, expiry, card list).
+- **Specific buff pickups** (overcharge-core, damage-amp,
+  speed-boost, etc) — duration-tick fields need wiring through
+  PlayerFlags.
+- **Score → state.round.scores bridging** in the J0 shim.
+- **Sim event emission** — destructible-broken, hit-confirmed,
+  player-killed, round-end events. step_world mutates state
+  directly today; events arrive in the J shim by diff or in a
+  follow-on cut adding an events buffer to WorldState.
 
-step_world drives the rest end-to-end — round phase + chaos +
-fire-DPS + projectile motion/lifecycle/damage + destructible
-HP + AOE + satellite tick + per-player shield + parry +
-pickups + winner + match-end.
+**step_world drives end-to-end:** tick + round phase + chaos
+profile + fire DPS + projectile motion / lifecycle / damage +
+destructible HP + explosive AOE + satellite tick + per-player
+shield drain + parry rising-edge + pickup overlap (heal +
+shield cell) + KO winner + time-out winner + match-end +
+**player physics with full static-AABB collision + jetpack +
+coyote/jump-buffer state** (I16).
 
 ## Test surface
 
