@@ -11,11 +11,14 @@ back: trig LUT, every per-module wasm equivalent, backend swap
 mechanisms, server-side LUT install, perf bench, runbook,
 e2e prod smoke, doc-sync gates — all live.
 
-The **full orchestrator port** is in flight. Foundation +
-verification scaffolding shipped (~24 cuts so far). Production
-hot path still runs TS World.step; wasm orchestrator is opt-in
-via `?wasm-world=1` and growing tick by tick toward feature
-parity.
+The **full orchestrator port** is essentially feature-complete.
+~30+ cuts shipped on top of the original foundation
+(G1a/b/c/G2/G3 + H1-H7). `step_world` (Zig) drives every major
+sim slice end-to-end. Production hot path still runs TS
+`World.step` for default visitors — flipping to wasm-default
+needs J1-actual cutover (parity-monitor mode J1 already lives
+behind `?wasm-world-monitor=1`). The opt-in `?wasm-world=1`
+shim runs the wasm orchestrator alongside TS today.
 
 ## What ships in wasm today
 
@@ -157,7 +160,14 @@ parity.
 | Apply chaos profile (timeScale, gravity, damage) to per-module ticks | I20 |
 | **Player projectile spawn** on weapon fire (starter pistol base) | I21 |
 | **Satellite projectile spawn** on want-fire | I22 |
-| J0 shim merges full state (players + pickups + satellites + scores) + returns events via applyWasmWorldStepFull | I23, I24 |
+| J0 shim merges full state + returns events via applyWasmWorldStepFull | I23, I24 |
+| **Sticky impact** — projectile lingers on hit then detonates | I25 |
+| **Pickup respawn** scheduling (re-activate at respawn_at_tick) | I26 |
+| **Slow-field impact** — applies slow debuff to hit player | I27 |
+| **Round-transition entity cleanup** — heal players, clear projectiles/fire/satellites between rounds | I28 |
+| **End-of-tick array compaction** — drop expired projectiles + fire patches | I29 |
+| **Host patcher exports** for statics + target_score | I30 |
+| **J1-monitor** — opt-in parity check vs TS via `?wasm-world-monitor=1` | J1m |
 
 ## Test surface
 
