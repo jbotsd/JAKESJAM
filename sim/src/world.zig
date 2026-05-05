@@ -33,6 +33,39 @@ const chaos = @import("data/chaos.zig");
 
 /// Per-tick step. Mutates `state` in place. Returns 0 on success;
 /// reserved non-zero values for future error reporting.
+/// Decide a round winner during fighting phase. Returns:
+///   * winner index ≥ 0 if exactly one player alive (KO)
+///   * winner index ≥ 0 if time-out (highest health)
+///   * -1 if no winner yet
+fn detectRoundWinner(state: *const world_state.WorldState) i32 {
+    if (state.header.round_phase != @intFromEnum(round.RoundPhase.fighting))
+        return -1;
+    var alive_count: u32 = 0;
+    var alive_idx: i32 = -1;
+    var i: u32 = 0;
+    while (i < state.player_count) : (i += 1) {
+        if (state.players[i].flags.alive) {
+            alive_count += 1;
+            alive_idx = @intCast(i);
+        }
+    }
+    if (alive_count == 1) return alive_idx; // KO
+    // Time-out path: highest health among the dead/alive set wins.
+    if (state.header.countdown_remaining_ms <= 0 and state.player_count > 0) {
+        var best_idx: i32 = 0;
+        var best_health: f64 = state.players[0].health;
+        var k: u32 = 1;
+        while (k < state.player_count) : (k += 1) {
+            if (state.players[k].health > best_health) {
+                best_health = state.players[k].health;
+                best_idx = @intCast(k);
+            }
+        }
+        return best_idx;
+    }
+    return -1;
+}
+
 pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
     state.header.tick += 1;
 
@@ -45,15 +78,22 @@ pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
     const chaos_profile = chaos.chaosProfileFromMask(state.header.chaos_mask);
     _ = chaos_profile;
 
-    // 1. Round phase machine — header.countdown_remaining_ms now
-    //    travels with WorldState (I2). Winner detection still
-    //    happens TS-side; we only run the time-out + cooldown
-    //    path here.
+    // 1. Round phase machine + winner detection (I6). When a
+    //    winner emerges (KO or time-out), increment that player's
+    //    score and signal the phase machine so it transitions
+    //    fighting → round_over even before the time-out.
+    const winner_idx = detectRoundWinner(state);
+    if (winner_idx >= 0 and
+        state.header.round_phase == @intFromEnum(round.RoundPhase.fighting))
+    {
+        const idx: u32 = @intCast(winner_idx);
+        state.players[idx].score += 1;
+    }
     const phase_result = round.roundStepPhase(
         state.header.round_phase,
         state.header.countdown_remaining_ms,
         dt_ms,
-        false,
+        winner_idx >= 0,
     );
     state.header.round_phase = phase_result.new_phase;
     state.header.countdown_remaining_ms =
