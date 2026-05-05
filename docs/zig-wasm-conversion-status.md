@@ -13,6 +13,34 @@ and `docs/zig-wasm-runbook.md` (ops procedures).
 | `?wasm-world-monitor=1` | TS sim + wasm shadow-run + console divergence log | None — observation only |
 | `?wasm-world=2` | **Wasm orchestrator drives EVERYTHING** (J1-actual) | Higher — opt-in for playtest, wasm result replaces TS |
 
+## Exhaustive e2e against deployed prod (2026-05-05)
+
+26/27 e2e specs passing against `jakesjam.vercel.app`:
+
+| Suite | Pass | Notes |
+|---|---|---|
+| state-probe | 1 | window globals install at boot |
+| wasm-world | 1 | `?wasm-world=1` boots without crashes |
+| wasm-world-actual | 1 | `?wasm-world=2` boots Practice without crashes |
+| smoke | 4 | splash, Practice lime pixels, no slow-frame spam, wasm sim confirmed running |
+| collisionRepro | 6 | stand-still, lateral run+jumps, jetpack altitude, crouch hold, edge-fall, two-tab combat |
+| fuzz | 10 | splash, Practice scripted, World mode connect/move/fall/wall-press, two-tab world |
+| lobby | 3/4 | World ?world=1, Create Room, single-tab — two-tab 1v1 timed out (Convex preexisting flake) |
+| repro | 1 | platform/jump/run/fall |
+
+### Known-fixed terrain bug (2026-05-05)
+
+User reported "bad terrain" when using `?wasm-world=2`. Root cause:
+the bridge zeroed `state.statics` on every pack because
+`PlatformDefinition` lives on `MapDefinition` (not `WorldState`).
+Without statics, `step_world`'s `stepPlayer` saw an empty AABB
+slice → players fell through every platform. Fixed in
+`01f7ec7`: `worldWasmBackend.setWorldStatics()` caches the AABB
+layout in module state; `applyWasmWorldStep*` patches it into
+linear memory via `world_state_set_statics` after every pack.
+`World.ts createRuntime` auto-calls `syncWorldStaticsToWasm` on
+every match start.
+
 ## TL;DR
 
 The substrate migration's bug-fix mission was complete weeks
