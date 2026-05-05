@@ -366,6 +366,18 @@ export function applyWasmWorldStepFullSync(
   const heap = new Uint8Array(ex.memory.buffer);
   heap.set(buf, sim.statePtr);
   writeStaticsIntoMemory();
+  // CRITICAL — without this, per-player current_keys/prev_keys/aim
+  // are whatever packWorldState wrote (which is whatever the prior
+  // tick produced via mergeUnpacked) instead of the LIVE input the
+  // host just captured. The local player's prediction step runs
+  // against stale keys → predicted player doesn't move → only the
+  // ~30Hz authoritative snapshot moves the rig → stuttery laggy
+  // gameplay.
+  //
+  // The sync variant (applyWasmWorldStepSync) already calls this;
+  // the full-sync variant was missing it. Both must call it before
+  // step_world for prediction to feel native-60Hz.
+  writePlayerInputsFromGlobal();
   const rc = ex.step_world(sim.statePtr, dt_ms);
   if (rc !== 0) throw new Error(`[wasm-world] step_world returned ${rc}`);
   const back = new Uint8Array(
