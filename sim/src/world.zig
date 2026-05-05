@@ -353,6 +353,54 @@ pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
             const dy = proj_ptr.y - closest_y;
             if (dx * dx + dy * dy <= proj_ptr.radius * proj_ptr.radius) {
                 const final_dmg = proj_ptr.damage * chaos_profile.damage_multiplier;
+                // Parry deflect: if the player has an active
+                // parry window, drop a parry_deflected event +
+                // skip damage. (Caller can use this to bounce or
+                // destroy the projectile.) Mirrors offline TS
+                // behavior — parry mitigates incoming projectiles.
+                if (combat.isParryActive(&state.players[ph2], state.header.tick)) {
+                    emitEvent(
+                        state,
+                        .parry_deflected,
+                        @intCast(ph2),
+                        -1,
+                        proj_ptr.id,
+                        0,
+                        state.players[ph2].x,
+                        state.players[ph2].y,
+                    );
+                    proj_ptr.lifetime_ms = 0;
+                    break;
+                }
+                // Shield pop: if the player's shield is active
+                // and absorbs the hit, drop a shield_popped
+                // event (and tap the shield charge — full
+                // mitigation handled in a follow-on cut once
+                // shield-vs-direct-damage is wired into the
+                // model).
+                if (state.players[ph2].flags.shield_active and
+                    state.players[ph2].flags.has_shield_charge and
+                    state.players[ph2].shield_charge > 0)
+                {
+                    state.players[ph2].shield_charge -=
+                        final_dmg * combat.SHIELD_HIT_DRAIN_MULTIPLIER;
+                    if (state.players[ph2].shield_charge <= 0) {
+                        state.players[ph2].shield_charge = 0;
+                        state.players[ph2].flags.shield_active = false;
+                        emitEvent(
+                            state,
+                            .shield_popped,
+                            @intCast(ph2),
+                            -1,
+                            proj_ptr.id,
+                            0,
+                            state.players[ph2].x,
+                            state.players[ph2].y,
+                        );
+                    }
+                    proj_ptr.lifetime_ms = 0;
+                    break;
+                }
                 state.players[ph2].health -= final_dmg;
                 emitEvent(
                     state,
