@@ -1,0 +1,57 @@
+name: E2E Prod Smoke
+
+# Runs the Playwright smoke spec against the deployed production
+# URL. Catches the regression class where local tests pass but the
+# deployed build silently breaks (e.g. wasm 404, environment
+# variable missing, asset path mismatch).
+#
+# Schedule: every 30 min during AWST waking hours (UTC 22:00–09:00
+# next day = AWST 06:00–17:00). Adjust if the player base spreads.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      base_url:
+        description: "URL to smoke-test (defaults to jakesjam.vercel.app)"
+        required: false
+        default: "https://jakesjam.vercel.app"
+  schedule:
+    # :11 of every other hour, 24/7. ~12 runs/day. Off-minute to
+    # avoid cron-thundering-herd at :00 and :30. UTC.
+    - cron: "11 */2 * * *"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  smoke:
+    name: prod-smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - run: bun install --frozen-lockfile
+      - name: Install Playwright browsers
+        run: bunx playwright install --with-deps chromium
+      - name: Run smoke against prod
+        env:
+          E2E_BASE_URL: ${{ github.event.inputs.base_url || 'https://jakesjam.vercel.app' }}
+        run: bunx playwright test tests/e2e/smoke.spec.ts
+      - name: Upload artifacts on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: prod-smoke-${{ github.sha }}-${{ github.run_attempt }}
+          path: |
+            tests/e2e/.artifacts
+            tests/e2e/.report
+          retention-days: 14
