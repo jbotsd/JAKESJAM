@@ -201,6 +201,17 @@ export.
 | `fire_patch_tick_world(fire, dt) → i32` | tick FireEntity in place; returns alive flag | `fireWorldParity.test.ts` |
 | `fire_patch_hits_player_world(fire, px, py, pw, ph) → i32` | overlap test using FireEntity | `fireWorldParity.test.ts` |
 
+## Chaos data (`data/chaos.zig`) — Phase H8a
+
+JAKESJAM-specific data table. Bitmask → ChaosProfile resolver.
+Lives in `sim/src/data/` to keep core sim modules game-agnostic.
+
+| Export | Purpose | Parity test |
+|---|---|---|
+| `chaos_profile_from_mask(mask, out)` | resolve bit positions of active modifier ids → composed ChaosProfile | `chaosDataParity.test.ts` |
+| `sizeof_chaos_profile` | 56 | `chaosDataParity.test.ts` |
+| `chaos_modifier_count` | 7 | `chaosDataParity.test.ts` |
+
 ## World (`world.zig`) — Phase I
 
 The orchestrator that drives one tick: ticks fire patches, runs

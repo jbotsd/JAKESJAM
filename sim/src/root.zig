@@ -20,6 +20,7 @@ pub const spatial = @import("spatial.zig");
 pub const world_state = @import("world_state.zig");
 pub const round = @import("round.zig");
 pub const world = @import("world.zig");
+pub const chaos = @import("data/chaos.zig");
 
 // Force wasm linker to include sub-modules' `export fn` symbols.
 comptime {
@@ -38,6 +39,7 @@ comptime {
     _ = world_state;
     _ = round;
     _ = world;
+    _ = chaos;
 }
 
 // 128 KB — sized for the full WorldState extern struct (72 KB
