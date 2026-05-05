@@ -1017,7 +1017,7 @@ export function stepWithRuntime(
     }
   }
 
-  return {
+  const result: StepResult = {
     state: {
       ...state,
       tick: nextTick,
@@ -1036,6 +1036,70 @@ export function stepWithRuntime(
     events,
     matchComplete: roundResult.matchComplete,
   };
+
+  // J1-monitor (Phase J1, opt-in via ?wasm-world-monitor=1):
+  // shadow-run the wasm orchestrator on the SAME input state and
+  // log key-field divergence. Default off — does NOT change the
+  // returned result. Throw-safe: any wasm failure logs and falls
+  // through.
+  maybeWasmMonitor(state, dtMs, result);
+
+  return result;
+}
+
+let monitorActive = false;
+function maybeWasmMonitor(
+  inputState: WorldState,
+  dtMs: number,
+  tsResult: StepResult,
+): void {
+  if (typeof window === "undefined") return;
+  let enabled = false;
+  try {
+    enabled =
+      new URLSearchParams(window.location.search).get("wasm-world-monitor") ===
+      "1";
+  } catch {
+    return;
+  }
+  if (!enabled) return;
+  if (monitorActive) return; // re-entry guard
+  monitorActive = true;
+  void (async () => {
+    try {
+      const mod = await import("./wasm/worldWasmBackend.js");
+      if (!mod.isWasmWorldReady()) return;
+      const wasmNext = mod.applyWasmWorldStepSync(inputState, dtMs);
+      const tsState = tsResult.state;
+      const drift = {
+        tick: wasmNext.tick !== tsState.tick,
+        roundPhase: wasmNext.round.phase !== tsState.round.phase,
+        countdownMs:
+          Math.abs(
+            wasmNext.round.countdownRemainingMs -
+              tsState.round.countdownRemainingMs,
+          ) > 0.5,
+        playerCount:
+          Object.keys(wasmNext.players).length !==
+          Object.keys(tsState.players).length,
+      };
+      if (
+        drift.tick ||
+        drift.roundPhase ||
+        drift.countdownMs ||
+        drift.playerCount
+      ) {
+        console.warn("[wasm-world-monitor] divergence", drift, {
+          tick_ts: tsState.tick,
+          tick_wasm: wasmNext.tick,
+        });
+      }
+    } catch (err) {
+      console.warn("[wasm-world-monitor] failed", err);
+    } finally {
+      monitorActive = false;
+    }
+  })();
 }
 
 function respawnAll(
