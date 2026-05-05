@@ -13,6 +13,7 @@
 
 const std = @import("std");
 const collision = @import("collision.zig");
+const world_state = @import("world_state.zig");
 
 pub const FirePatch = extern struct {
     x: f64,
@@ -109,4 +110,59 @@ pub export fn fire_patch_hits_player(
 
 pub export fn sizeof_fire_patch_tick_result() u32 {
     return @sizeOf(TickResult);
+}
+
+// =================================================================
+// Phase H6 — orchestration helpers operating on FireEntity from
+// the WorldState extern struct. Mutate in place; caller iterates
+// fires × players for hit emission.
+
+/// Tick a fire patch in place. Returns 1 if alive, 0 if expired.
+pub fn fireEntityTick(fire: *world_state.FireEntity, dt_ms: f64) i32 {
+    const next = fire.remaining_ms - dt_ms;
+    fire.remaining_ms = next;
+    return if (next > 0.0) 1 else 0;
+}
+
+pub export fn fire_patch_tick_world(
+    fire_ptr: *world_state.FireEntity,
+    dt_ms: f64,
+) i32 {
+    return fireEntityTick(fire_ptr, dt_ms);
+}
+
+/// True if a fire patch overlaps a player's AABB. Owner-self
+/// avoidance is the orchestrator's responsibility (compare
+/// `fire.owner_id_bytes` to the player's id externally).
+pub fn fireEntityHitsPlayerAABB(
+    fire: *const world_state.FireEntity,
+    player_x: f64,
+    player_y: f64,
+    player_w: f64,
+    player_h: f64,
+) bool {
+    const patch = FirePatch{
+        .x = fire.x,
+        .y = fire.y,
+        .radius = fire.radius,
+        .remaining_ms = fire.remaining_ms,
+        .damage_per_second = fire.damage_per_second,
+    };
+    const player_aabb = collision.AABB{
+        .x = player_x,
+        .y = player_y,
+        .w = player_w,
+        .h = player_h,
+    };
+    return firePatchHitsPlayerAABB(patch, player_aabb);
+}
+
+pub export fn fire_patch_hits_player_world(
+    fire_ptr: *const world_state.FireEntity,
+    player_x: f64,
+    player_y: f64,
+    player_w: f64,
+    player_h: f64,
+) i32 {
+    return if (fireEntityHitsPlayerAABB(fire_ptr, player_x, player_y, player_w, player_h)) 1 else 0;
 }

@@ -180,6 +180,13 @@ export.
 | `fire_patch_damage(dps, dt) → f64` | dps × dt | `fireParity.test.ts` |
 | `fire_patch_hits_player(...)` | AABB overlap | `fireParity.test.ts` |
 
+### Phase H6 — orchestration helpers
+
+| Export | Purpose | Parity test |
+|---|---|---|
+| `fire_patch_tick_world(fire, dt) → i32` | tick FireEntity in place; returns alive flag | `fireWorldParity.test.ts` |
+| `fire_patch_hits_player_world(fire, px, py, pw, ph) → i32` | overlap test using FireEntity | `fireWorldParity.test.ts` |
+
 ## Sizeof helpers
 
 These let the host pre-allocate the right amount of wasm memory
