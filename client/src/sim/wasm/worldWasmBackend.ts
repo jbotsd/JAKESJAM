@@ -121,6 +121,14 @@ function mergeUnpacked(
   state: WorldState,
   unpacked: UnpackedWorldState,
 ): WorldState {
+  // Identity-preserving merge (I44): only replace each entity
+  // record if its scalar fields differ from the prior tick's
+  // record. This keeps Phaser sprite + procedural-rig
+  // bookkeeping stable across ticks (the renderer uses
+  // referential identity on entity records as a cheap "did this
+  // change?" probe). Without this every tick produces brand-new
+  // entity objects → rig redraws every limb every frame → visual
+  // streaks (user playtest report 2026-05-05).
   return {
     ...state,
     tick: unpacked.tick,
@@ -130,17 +138,53 @@ function mergeUnpacked(
       phase: unpacked.round.phase,
       countdownRemainingMs: unpacked.round.countdownRemainingMs,
       roundIndex: unpacked.round.roundIndex,
-      // I24 — bridge per-player score from PlayerEntity.score
-      // back into round.scores keyed by playerId.
       scores: { ...state.round.scores, ...unpacked.scores },
     },
-    players: unpacked.players,
-    firePatches: unpacked.firePatches,
-    destructibles: unpacked.destructibles,
-    projectiles: unpacked.projectiles,
-    satellites: unpacked.satellites,
-    pickups: unpacked.pickups,
+    players: stableMergeRecord(state.players, unpacked.players),
+    firePatches: stableMergeRecord(state.firePatches, unpacked.firePatches),
+    destructibles: stableMergeRecord(
+      state.destructibles,
+      unpacked.destructibles,
+    ),
+    projectiles: stableMergeRecord(state.projectiles, unpacked.projectiles),
+    satellites: stableMergeRecord(state.satellites, unpacked.satellites),
+    pickups: stableMergeRecord(state.pickups, unpacked.pickups),
   };
+}
+
+function stableMergeRecord<K extends string | number, V>(
+  prev: Record<K, V>,
+  next: Record<K, V>,
+): Record<K, V> {
+  // For each key in `next`, reuse the prev value if shallow-equal.
+  // For keys removed from `next`, drop them. Ensures referential
+  // stability for unchanged entities.
+  const out: Record<K, V> = {} as Record<K, V>;
+  for (const k in next) {
+    const a = prev[k];
+    const b = next[k];
+    if (a !== undefined && shallowEqual(a, b)) {
+      out[k] = a;
+    } else {
+      out[k] = b;
+    }
+  }
+  return out;
+}
+
+function shallowEqual<T>(a: T, b: T): boolean {
+  if (a === b) return true;
+  if (typeof a !== "object" || typeof b !== "object") return false;
+  if (a === null || b === null) return false;
+  const ka = Object.keys(a as object);
+  const kb = Object.keys(b as object);
+  if (ka.length !== kb.length) return false;
+  for (const k of ka) {
+    const av = (a as Record<string, unknown>)[k];
+    const bv = (b as Record<string, unknown>)[k];
+    if (av !== bv) return false;
+  }
+  return true;
 }
 
 /**
