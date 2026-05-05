@@ -168,3 +168,25 @@ when packing struct arrays.
 | `sizeof_muzzle_position` | 16 |
 | `sizeof_recoil_impulse` | 16 |
 | `sizeof_fire_patch_tick_result` | 16 |
+
+## WorldState (`world_state.zig`) — Phase G1
+
+Full WorldState extern struct landed in G1a/G1b. Sizes are the
+wire contract — bumping any number is a protocol-version change.
+
+| Export | Returns | Parity test |
+|---|---|---|
+| `sizeof_world_state` | total bytes of `WorldState` | `worldStateBridge.test.ts` (G2) |
+| `sizeof_world_state_header` | 32 | `worldStateBridge.test.ts` (G2) |
+| `sizeof_player_entity` | 288 | `worldStateBridge.test.ts` (G2) |
+| `sizeof_projectile_entity` | 216 | `worldStateBridge.test.ts` (G2) |
+| `sizeof_satellite_entity` | 96 | `worldStateBridge.test.ts` (G2) |
+| `sizeof_destructible_entity` | 64 | `worldStateBridge.test.ts` (G2) |
+| `sizeof_fire_entity` | 88 | `worldStateBridge.test.ts` (G2) |
+| `sizeof_pickup_entity` | 64 | `worldStateBridge.test.ts` (G2) |
+| `world_state_max_players` | 16 | `worldStateBridge.test.ts` (G2) |
+| `world_state_max_projectiles` | 256 | `worldStateBridge.test.ts` (G2) |
+| `world_state_max_satellites` | 32 | `worldStateBridge.test.ts` (G2) |
+| `world_state_max_destructibles` | 64 | `worldStateBridge.test.ts` (G2) |
+| `world_state_max_fire` | 32 | `worldStateBridge.test.ts` (G2) |
+| `world_state_max_pickups` | 32 | `worldStateBridge.test.ts` (G2) |

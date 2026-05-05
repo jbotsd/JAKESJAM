@@ -348,6 +348,9 @@ pub const PICKUP_ENTITY_BYTES: usize = @sizeOf(PickupEntity);
 
 /// Header — packed up front so the host can cheaply read tick /
 /// rng_state without dereferencing a full WorldState.
+/// 32 bytes total, 4-byte tail pad pinned explicitly so the outer
+/// WorldState's 8-byte alignment doesn't introduce hidden padding
+/// between the header and the player_count field.
 pub const WorldStateHeader = extern struct {
     tick: u32,
     rng_state: u32,
@@ -357,6 +360,7 @@ pub const WorldStateHeader = extern struct {
     map_id: u32,
     chaos_profile_id: u32,
     fire_hazard_timer_ms: u32,
+    _tail_pad: [4]u8 = .{ 0, 0, 0, 0 },
 };
 
 pub const WorldState = extern struct {
@@ -392,7 +396,7 @@ pub const WorldState = extern struct {
 // goes through a deliberate cut so callers stay in sync.
 
 comptime {
-    std.debug.assert(@sizeOf(WorldStateHeader) == 28);
+    std.debug.assert(@sizeOf(WorldStateHeader) == 32);
 
     // Each entity is 8-byte-aligned and tail-packed with explicit
     // _reserved bytes. These numbers are the wire contract — change
@@ -406,12 +410,64 @@ comptime {
 }
 
 // -----------------------------------------------------------------
-// G1c will move these into wasm exports.
+// Wasm exports — let the host (TS bridge) pre-allocate the right
+// amount of memory and assert at runtime that its struct mirror
+// matches what Zig built. The doc-sync gate
+// (`exportsDocSync.test.ts`) keeps `docs/zig-wasm-exports.md` in
+// step with these.
 
-pub fn worldStateSize() usize {
-    return @sizeOf(WorldState);
+pub export fn sizeof_world_state() u32 {
+    return @intCast(@sizeOf(WorldState));
 }
 
-pub fn worldStateHeaderSize() usize {
-    return @sizeOf(WorldStateHeader);
+pub export fn sizeof_world_state_header() u32 {
+    return @intCast(@sizeOf(WorldStateHeader));
+}
+
+pub export fn sizeof_player_entity() u32 {
+    return @intCast(@sizeOf(PlayerEntity));
+}
+
+pub export fn sizeof_projectile_entity() u32 {
+    return @intCast(@sizeOf(ProjectileEntity));
+}
+
+pub export fn sizeof_satellite_entity() u32 {
+    return @intCast(@sizeOf(SatelliteEntity));
+}
+
+pub export fn sizeof_destructible_entity() u32 {
+    return @intCast(@sizeOf(DestructibleEntity));
+}
+
+pub export fn sizeof_fire_entity() u32 {
+    return @intCast(@sizeOf(FireEntity));
+}
+
+pub export fn sizeof_pickup_entity() u32 {
+    return @intCast(@sizeOf(PickupEntity));
+}
+
+pub export fn world_state_max_players() u32 {
+    return @intCast(MAX_PLAYERS);
+}
+
+pub export fn world_state_max_projectiles() u32 {
+    return @intCast(MAX_PROJECTILES);
+}
+
+pub export fn world_state_max_satellites() u32 {
+    return @intCast(MAX_SATELLITES);
+}
+
+pub export fn world_state_max_destructibles() u32 {
+    return @intCast(MAX_DESTRUCTIBLES);
+}
+
+pub export fn world_state_max_fire() u32 {
+    return @intCast(MAX_FIRE);
+}
+
+pub export fn world_state_max_pickups() u32 {
+    return @intCast(MAX_PICKUPS);
 }
