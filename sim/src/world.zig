@@ -417,7 +417,7 @@ pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
         }
         const can_fire: u8 = if (state.header.round_phase ==
             @intFromEnum(round.RoundPhase.fighting)) 1 else 0;
-        _ = satellite.satelliteTickWorld(
+        const sat_out = satellite.satelliteTickWorld(
             sat_ptr,
             owner_x,
             owner_y,
@@ -427,6 +427,81 @@ pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
             can_fire,
             eff_dt,
         );
+        // Satellite projectile spawn (I22). Fire at the position
+        // satellite_tick_world reported with the same starter-
+        // pistol base stats as I21.
+        if (sat_out.wants_fire == 1 and
+            state.projectile_count < world_state.MAX_PROJECTILES and
+            chaos_profile.disable_projectiles == 0)
+        {
+            const sat_weapon = weapons_data.weaponBaseById(.starter_pistol);
+            const sat_speed = sat_weapon.projectile_speed *
+                sat_weapon.projectile_speed_multiplier;
+            const slot: u32 = state.projectile_count;
+            state.projectile_count += 1;
+            const new_id: u32 = state.header.next_entity_id;
+            state.header.next_entity_id += 1;
+            state.projectiles[slot] = .{
+                .x = sat_out.fire_x,
+                .y = sat_out.fire_y,
+                .vx = trig.lutCos(sat_out.fire_aim_angle) * sat_speed,
+                .vy = trig.lutSin(sat_out.fire_aim_angle) * sat_speed,
+                .radius = @max(2.0, 7.0 * sat_weapon.projectile_size_multiplier),
+                .damage = sat_weapon.damage,
+                .lifetime_ms = @max(
+                    50.0,
+                    sat_weapon.projectile_lifetime_seconds * 1000.0 *
+                        sat_weapon.projectile_lifetime_multiplier,
+                ),
+                .age_ms = 0,
+                .traveled_px = 0,
+                .origin_x = sat_out.fire_x,
+                .origin_y = sat_out.fire_y,
+                .homing_strength = 0,
+                .acceleration_multiplier = 0,
+                .gravity_scale = 0,
+                .range_px = sat_weapon.projectile_range_px,
+                .slow_multiplier = 1,
+                .sticky_fuse_ms = 0,
+                .impact_radius_px = 0,
+                .id = new_id,
+                .bounces_remaining = 0,
+                .pierce_remaining = 0,
+                .split_count = 0,
+                .flags = .{
+                    .has_owner = true,
+                    .has_impact = false,
+                    .has_split = false,
+                    .has_slow = false,
+                    .has_homing = false,
+                    .has_acceleration = false,
+                    .has_gravity_scale = false,
+                    .has_range = true,
+                    .has_age = true,
+                    .has_traveled = true,
+                    .has_origin = true,
+                    .returning = false,
+                    .has_sticky_fuse = false,
+                    .has_impact_radius = false,
+                },
+                .pathing = sat_weapon.projectile_pathing,
+                .element = sat_weapon.projectile_element,
+                .impact = .none,
+                .shape = sat_weapon.projectile_shape,
+                .owner_id_len = sat_ptr.owner_id_len,
+                .owner_id_bytes = sat_ptr.owner_id_bytes,
+            };
+            emitEvent(
+                state,
+                .shot_fired,
+                -1,
+                -1,
+                new_id,
+                sat_out.fire_aim_angle,
+                sat_out.fire_x,
+                sat_out.fire_y,
+            );
+        }
     }
 
     // 7. Pickups (I13): for each ACTIVE pickup, check overlap
