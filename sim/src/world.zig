@@ -523,7 +523,18 @@ pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
     var ui: u32 = 0;
     while (ui < state.pickup_count) : (ui += 1) {
         const pickup_ptr = &state.pickups[ui];
-        if ((pickup_ptr.flags & 1) == 0) continue; // inactive
+        // Respawn check (I26): if inactive but respawn_at_tick is
+        // in the past, re-activate. respawn_at_tick == 0 means
+        // "no scheduled respawn", so skip.
+        if ((pickup_ptr.flags & 1) == 0) {
+            if (pickup_ptr.respawn_at_tick > 0 and
+                state.header.tick >= pickup_ptr.respawn_at_tick)
+            {
+                pickup_ptr.flags |= 1;
+                pickup_ptr.respawn_at_tick = 0;
+            }
+            continue;
+        }
         var pp: u32 = 0;
         while (pp < state.player_count) : (pp += 1) {
             if (!state.players[pp].flags.alive) continue;
@@ -605,6 +616,16 @@ pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
                     pickup_ptr.y,
                 );
                 pickup_ptr.flags &= ~@as(u32, 1); // deactivate
+                // Schedule respawn: respawn_ms after current
+                // tick. respawn_ms field is bit 2 of flags; if
+                // unset, use a default 12s.
+                const respawn_ms: f64 = if ((pickup_ptr.flags & 4) != 0)
+                    pickup_ptr.respawn_ms
+                else
+                    12_000.0;
+                const respawn_dt: f64 = if (eff_dt > 0) eff_dt else 1.0;
+                const respawn_ticks: u32 = @intFromFloat(@ceil(respawn_ms / respawn_dt));
+                pickup_ptr.respawn_at_tick = state.header.tick + respawn_ticks;
                 break;
             }
         }
