@@ -37,43 +37,64 @@ For multiplayer / netcode / sim work, the canonical refs are:
 
 When implementation changes design behaviour, update the relevant doc.
 
-## Substrate decision (May 2026)
+## Substrate decision (May 2026) — migration substantially shipped
 
-The deterministic sim core is moving from TypeScript to **Zig
+The deterministic sim core has been ported from TypeScript to **Zig
 compiled to WebAssembly** to satisfy ADR-0001's "byte-identical
 WorldStates" requirement at production scale. Native TS float math
-is not bit-deterministic across V8 (browser) and JSC (Bun); WASM
+isn't bit-deterministic across V8 (browser) and JSC (Bun); WASM
 bytecode is, per spec.
 
-**Phase A toolchain shipped 2026-05-04.** Zig 0.15.2 pinned in
-`.zig-version`; `bun run sim:build` produces
-`client/src/sim/wasm/sim.wasm`; `bun run sim:test` runs Zig unit
-tests; `bun run sim:fmt` gates formatting. Vite plugin
-(`client/vite-plugin-zig.ts`) rebuilds on `.zig` save with full
-reload. CI installs Zig + caches the build.
+**Status as of 2026-05-05**: migration substantially complete +
+deployed to production.
 
-**Phase B2 (RNG) + B3 (collision kernel + slide) shipped
-2026-05-04.** `sim/src/{rng,collision}.zig` are bit-exact ports of
-the TS originals. Cross-impl parity tests
-(`client/src/sim/wasm/__tests__/{rngParity,collisionParity}.test.ts`)
-prove byte-identical output between TS V8 and Zig wasm across
-9000+ RNG iterations, 1600+ collision fixtures, and a 60-tick
-independent-integration test. This empirically validates the
-substrate thesis (ADR-0006).
+| Phase | What | Status |
+|---|---|---|
+| A | Toolchain (Zig 0.15.2 pinned, `bun run sim:build`, Vite plugin, CI) | ✅ shipped |
+| B2 | RNG (mulberry32) | ✅ shipped |
+| B3 | Collision kernel + slide + drift snap + circles | ✅ shipped |
+| B4 | Player physics (full stepPlayer) | ✅ shipped |
+| F1b | Weapon math primitives | ✅ shipped |
+| F1c | Satellite tick | ✅ shipped |
+| F1d | Combat parry-arc | ✅ shipped |
+| F1e | Destructible + Fire | ✅ shipped |
+| F1a | Projectile pathing helpers + bounce + anti-homing + step_v2 | ✅ shipped |
+| F2a | Comptime trig LUT | ✅ shipped |
+| F2b | Static spatial grid | ✅ shipped |
+| F3 | Default-on rollout (env vars are emergency disables) | ✅ shipped |
+| D2 | Server-side wasm load + collision/player swap | ✅ shipped |
+| D3 | TS-side cleanup audit (verdict: complete by construction) | ✅ shipped |
+| Trig LUT install on server | Off-list bug fix | ✅ shipped |
 
-Until Phase D cutover (see `docs/zig-wasm-migration.md`), the
-**live sim still runs from TypeScript** in `client/src/sim/*.ts`.
-The wasm loader at `client/src/sim/wasm/loader.ts` is staged but
-not wired into `clientLoop.ts` or `matchHost.ts` yet. New sim
-work should either:
+**Read `docs/zig-wasm-migration-complete.md`** for the consolidated
+retrospective. The full per-module exports manifest is in
+`docs/zig-wasm-exports.md`.
 
-- Land as a small last-mile change in TS that Phase B/C will
-  re-implement in Zig, OR
-- Land directly in `sim/src/*.zig` if it's part of the Phase B
-  collision/player port (`docs/zig-wasm-migration.md` → Phase B).
+### Working in the sim now
+
+The live sim runs through wasm by default in production. Both
+client and server install the comptime trig LUT at boot (so even
+TS code paths using `lutCos/lutSin/lutAtan2` produce bit-identical
+output). The three "swap" modules — `rng`, `collision`, `player` —
+route to wasm through `set<X>Backend` mechanisms applied at boot
+via `applyWasm*Flag()` in `client/src/sim/wasm/runtime.ts` (client)
+and `server/src/wasmRuntime.ts` (server).
+
+**When adding new sim work**:
+- TS-side: use `lutCos/lutSin/lutAtan2` from `@sim/trig.ts`, NOT
+  `Math.sin/cos/atan2`. The LUT bytes match wasm.
+- Avoid `Math.hypot` — use `Math.sqrt(a*a + b*b)` (V8's hypot
+  uses overflow-safe scaling that produces ULP-different bits
+  from wasm's `@sqrt`).
+- New Zig module: add to `sim/src/<mod>.zig`, add `pub const <mod>`
+  + `_ = <mod>` in root.zig, write parity test under
+  `client/src/sim/wasm/__tests__/`.
+- Follow `.claude/skills/zig-code-quality/SKILL.md` — especially
+  the "Lessons learned" section (operator order, hypot, LUT
+  install discipline, etc.).
 
 If you're adding netcode/sim code without seeing this section, **stop
-and read the docs above first**. Patches to the sim that don't honour
+and read the docs first**. Patches to the sim that don't honour
 the determinism contract get reverted on principle, not on bug.
 
 ## Required Technical Direction
