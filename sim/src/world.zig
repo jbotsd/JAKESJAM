@@ -475,6 +475,11 @@ pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
                         {
                             final_dmg *= 1.5;
                         }
+                        if (sp.flags.has_boss_mode and
+                            sp.boss_mode_until_tick > state.header.tick)
+                        {
+                            final_dmg *= 2.0;
+                        }
                     }
                 }
                 // Victim buff: vulnerability multiplies incoming
