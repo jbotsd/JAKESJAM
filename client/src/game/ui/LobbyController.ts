@@ -864,7 +864,16 @@ function readError(error: unknown): string {
  * param, or at build time via VITE_CONVEX_URL / CONVEX_URL env vars
  * (vite.config.ts envPrefix accepts both).
  */
-const CONVEX_URL_FALLBACK = "https://wry-kangaroo-531.convex.cloud";
+// Must match the deployment that .github/workflows/deploy.yml's
+// `Push functions + schema to Convex` step targets via
+// CONVEX_DEPLOY_KEY. If this URL drifts away from the deploy target
+// you ship the client against a STALE Convex schema → users hit
+// ArgumentValidationError on every mutation that has changed
+// signature since the last sync (e.g. mapId on rooms.startMatch).
+//
+// Current prod target (verified via `gh run view` of the latest
+// deploy log: "Deploying to https://adept-partridge-96.convex.cloud"):
+const CONVEX_URL_FALLBACK = "https://adept-partridge-96.convex.cloud";
 
 function readConvexUrl(): string | undefined {
   const urlOverride = new URLSearchParams(window.location.search).get("convex");
