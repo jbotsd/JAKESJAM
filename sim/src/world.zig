@@ -31,6 +31,7 @@ const fire = @import("fire.zig");
 const combat = @import("combat.zig");
 const chaos = @import("data/chaos.zig");
 const collision_types = @import("collision.zig");
+const satellite = @import("satellite.zig");
 
 /// Per-tick step. Mutates `state` in place. Returns 0 on success;
 /// reserved non-zero values for future error reporting.
@@ -190,9 +191,61 @@ pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
         }
     }
 
-    // 5. Satellites — orbit advance only. Owner/target lookup
-    //    requires player iteration which the orchestrator owns
-    //    in Phase I2 once player array indexing is wired.
+    // 5. Satellites — orbit advance + fire decision (I8). Owner
+    //    lookup walks the players array matching owner_id_bytes;
+    //    target lookup picks the closest non-owner alive player.
+    var si: u32 = 0;
+    while (si < state.satellite_count) : (si += 1) {
+        const sat_ptr = &state.satellites[si];
+        // Find owner index by id_bytes match.
+        var owner_x: f64 = 0;
+        var owner_y: f64 = 0;
+        var owner_idx: i32 = -1;
+        var oj: u32 = 0;
+        while (oj < state.player_count) : (oj += 1) {
+            if (state.players[oj].id_len == sat_ptr.owner_id_len and
+                std.mem.eql(u8,
+                    state.players[oj].id_bytes[0..sat_ptr.owner_id_len],
+                    sat_ptr.owner_id_bytes[0..sat_ptr.owner_id_len]))
+            {
+                owner_x = state.players[oj].x;
+                owner_y = state.players[oj].y;
+                owner_idx = @intCast(oj);
+                break;
+            }
+        }
+        // Closest non-owner alive player.
+        var target_x: f64 = 0;
+        var target_y: f64 = 0;
+        var has_target: u8 = 0;
+        var best_dist_sq: f64 = std.math.inf(f64);
+        var ti: u32 = 0;
+        while (ti < state.player_count) : (ti += 1) {
+            if (@as(i32, @intCast(ti)) == owner_idx) continue;
+            if (!state.players[ti].flags.alive) continue;
+            const dx = state.players[ti].x - owner_x;
+            const dy = state.players[ti].y - owner_y;
+            const d2 = dx * dx + dy * dy;
+            if (d2 < best_dist_sq) {
+                best_dist_sq = d2;
+                target_x = state.players[ti].x;
+                target_y = state.players[ti].y;
+                has_target = 1;
+            }
+        }
+        const can_fire: u8 = if (state.header.round_phase ==
+            @intFromEnum(round.RoundPhase.fighting)) 1 else 0;
+        _ = satellite.satelliteTickWorld(
+            sat_ptr,
+            owner_x,
+            owner_y,
+            target_x,
+            target_y,
+            has_target,
+            can_fire,
+            dt_ms,
+        );
+    }
 
     // 6. Combat — per-player shield drain + parry start (I4 +
     //    I4b). Defaults match `combat_*` exports.
