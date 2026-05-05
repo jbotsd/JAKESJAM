@@ -432,16 +432,16 @@ const AABB_SIZE_BYTES = 32;
 function writeStaticsIntoMemory(): void {
   if (!cachedStatics || !cachedSim || !cachedEx) return;
   const ex = cachedEx;
-  // Use the tail of the state buffer as scratch — caller's state
-  // is already packed at sim.statePtr, the static cache lives
-  // INSIDE the WorldState struct, but to call set_statics we
-  // need a flat aabbs[] + one_way[] in linear memory pointing
-  // somewhere we control. The state buffer's `statics` array
-  // already lives at a known offset; rather than compute that,
-  // we use the post-state region.
   const sim = cachedSim;
+  // Scratch buffer must live PAST the end of WorldState in
+  // linear memory, otherwise the AABBs we're packing trample
+  // the very statics region we're about to fill. The static
+  // state buffer is 128 KB; WorldState is ~84 KB. Place scratch
+  // at the buffer tail (state buffer is 128 KB total — leave
+  // ~30 KB for the AABB array (256×32 = 8 KB) + one_way (256 B)
+  // + headroom).
+  const scratchPtr = sim.statePtr + WORLD_STATE_TOTAL_SIZE + 64;
   const heap = new Uint8Array(ex.memory.buffer);
-  const scratchPtr = sim.statePtr + 80000; // safely past state
   const view = new DataView(ex.memory.buffer, scratchPtr);
   const count = Math.min(cachedStatics.aabbs.length, 256);
   for (let i = 0; i < count; i++) {
