@@ -4,6 +4,15 @@ Snapshot as of the most recent push. Pair with
 `docs/zig-wasm-migration-complete.md` (substrate retrospective)
 and `docs/zig-wasm-runbook.md` (ops procedures).
 
+## URL flag matrix
+
+| URL | What runs | Risk |
+|---|---|---|
+| `https://jakesjam.vercel.app/` | Pure TS sim (default visitors) | None — proven path |
+| `?wasm-world=1` | TS sim + wasm shim layered alongside (J0) | Low — wasm shim runs but TS still drives gameplay |
+| `?wasm-world-monitor=1` | TS sim + wasm shadow-run + console divergence log | None — observation only |
+| `?wasm-world=2` | **Wasm orchestrator drives EVERYTHING** (J1-actual) | Higher — opt-in for playtest, wasm result replaces TS |
+
 ## TL;DR
 
 The substrate migration's bug-fix mission was complete weeks
