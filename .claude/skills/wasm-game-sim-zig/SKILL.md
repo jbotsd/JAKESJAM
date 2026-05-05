@@ -228,8 +228,20 @@ performs OS-level mmap calls that don't exist in
 ## Determinism gotchas
 
 - **`std.math.sin`/`cos` are deterministic in wasm** because the
-  WASM spec mandates IEEE 754. Use them freely. (This is the whole
-  reason for the wasm pivot.)
+  WASM spec mandates IEEE 754 reproducibility. They produce the
+  same bits across all wasm hosts. Use them freely INSIDE the
+  Zig sim. **CAVEAT**: V8's `Math.sin` and JSC's `Math.sin` may
+  produce ULP-different bits from each other AND from
+  `std.math.sin`. If the host's TS code path also computes trig
+  (e.g. for client prediction), all three impls (V8, JSC,
+  wasm-via-`std.math`) can disagree at the last ULP. Mitigation:
+  bake a comptime sin/cos/atan2 LUT into the wasm binary, expose
+  it via `lut_sin_table_ptr`, and have the TS host install a
+  Float64Array view over the same bytes at boot. Both sides
+  sample identical precomputed values → cross-host bit-equality
+  by construction. See JAKESJAM `sim/src/trig.zig` for a
+  reference implementation (1024 entries × f64 = 8 KB per table,
+  4-quadrant decomposition for sin, arctan LUT for atan2).
 - **Iteration over `std.AutoHashMap`** has nondeterministic order
   across Zig versions — never iterate a hashmap where order
   matters; sort first or use a struct-of-arrays.
@@ -288,7 +300,11 @@ and `zig build test` (runs the test suite). Same source.
 - [ ] No `std.heap.GeneralPurposeAllocator` anywhere in the sim.
 - [ ] All randomness through `state.rng_state` + `rng.next()`.
 - [ ] No `std.time.*`, no `std.fs.*`, no `std.process.*`.
-- [ ] All trig through `std.math.{sin,cos,atan2,sqrt}`.
+- [ ] All trig through `std.math.{sin,cos,atan2,sqrt}` for
+      pure-wasm code paths. If the host's TS code also computes
+      trig, install a shared comptime LUT in both languages
+      (the JAKESJAM `sim/src/trig.zig` + `client/src/sim/trig.ts`
+      pattern) — `Math.sin` and `std.math.sin` may ULP-differ.
 - [ ] Test suite runs via `zig build test` and passes the same
       cases the host's test suite passed pre-pivot.
 - [ ] Step is single-threaded; no `std.Thread`, no `async`.
