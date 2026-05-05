@@ -827,13 +827,30 @@ pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
             .grounded_last_frame = @intCast(state.player_movement[pmi].grounded_last_frame),
             .jetpack_active = @intCast(state.player_movement[pmi].jetpack_active),
         };
+        // Compose per-player movement speed (I37). Defaults 1.0;
+        // speed_boost buff multiplies, slow_debuff / freeze /
+        // slow_field debuffs multiply (≤1).
+        var speed_mul: f64 = 1.0;
+        const ple = &state.players[pmi];
+        if (ple.flags.has_speed_boost and ple.speed_boost_until_tick > state.header.tick) {
+            speed_mul *= 1.4;
+        }
+        if (ple.flags.has_slow_debuff and ple.slow_debuff_until_tick > state.header.tick) {
+            speed_mul *= 0.5;
+        }
+        if (ple.flags.has_slow and ple.slowed_until_tick > state.header.tick) {
+            speed_mul *= ple.slow_multiplier;
+        }
+        if (ple.flags.has_freeze and ple.freeze_until_tick > state.header.tick) {
+            speed_mul *= ple.freeze_multiplier;
+        }
         const grounded = player_mod.stepPlayer(
             &ps,
             state.players[pmi].prev_keys,
             state.players[pmi].current_keys,
             state.players[pmi].aim_x,
             state.players[pmi].aim_y,
-            1.0, // speed_mul — per-player slow effects apply inside stepPlayer via PlayerEntity flags
+            speed_mul,
             chaos_profile.gravity_multiplier,
             eff_dt,
             statics_slice,
