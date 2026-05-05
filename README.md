@@ -57,12 +57,29 @@ Recent card pass:
 
 - `client/` - Phaser + TypeScript + Vite browser game.
 - `client/src/game/` - current playable Phaser scenes, systems, data, rendering, and UI.
-- `client/src/sim/` - shared deterministic simulation contract and World stub for the online authority/prediction migration.
+- `client/src/sim/` - shared deterministic simulation. The hot paths route through Zig→WASM (see `sim/`).
+- `client/src/sim/wasm/` - TS-side wasm loader, runtime, and parity tests.
 - `client/src/net/` - WebSocket transport, client prediction, reconciliation, and interpolation work.
-- `server/` - Bun + uWebSockets authoritative game server.
+- `sim/` - Zig source for the deterministic sim core (compiled to wasm). `bun run sim:build` produces `client/public/wasm/sim.wasm`. See `docs/zig-wasm-migration-complete.md` for the architecture.
+- `server/` - Bun + uWebSockets authoritative game server. Loads the same wasm artifact; LUT install + sim swap gates predict↔authority bit-equality.
 - `convex/` - lobby, room, matchmaking, and persistence.
-- `docs/` - GDD, roadmap, netcode architecture, stream handoff docs, changelog, and playtest notes.
+- `docs/` - GDD, roadmap, netcode architecture, stream handoff docs, changelog, playtest notes, and the Zig→WASM migration docs (start at `docs/README.md`).
 - `standalone/` - generated single-file host/player HTML builds for quick cross-platform testing.
+
+### Sim architecture in one paragraph
+
+The deterministic core is Zig compiled to WebAssembly (Zig 0.15.2,
+`wasm32-freestanding`, ReleaseSmall ~29 KB). The same `.wasm` runs in
+the browser (V8) for client prediction and in Bun (server) for
+authoritative simulation. A comptime-baked sin/cos/atan2 LUT is
+loaded into the TS runtime at boot so even the TS sim modules sample
+bit-identical bytes — no `Math.sin/cos/atan2` libm divergence between
+hosts. `setRngBackend` / `setResolveMoveCachedBackend` /
+`setStepPlayerBackend` route the heavy paths through wasm by
+default in production, with `?wasm-collision=0` style URL flags as
+emergency opt-out and `JAKESJAM_WASM_*=0` as the server-side
+counterpart. Read `docs/zig-wasm-migration-complete.md` for the
+full retrospective.
 
 ## Local Development
 
