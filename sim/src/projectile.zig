@@ -11,6 +11,24 @@
 const std = @import("std");
 const collision = @import("collision.zig");
 const trig = @import("trig.zig");
+const rng = @import("rng.zig");
+const world_state = @import("world_state.zig");
+
+// Phase H1 — orchestration constants that mirror
+// client/src/sim/projectile.ts. Bit-exact bumps require parity-test
+// updates on both sides.
+const STICKY_FUSE_MS: f64 = 720.0;
+const SPLIT_SPREAD: f64 = std.math.pi * 0.95;
+const SPLIT_DAMAGE_SCALE: f64 = 0.42;
+const SPLIT_LIFETIME_SCALE: f64 = 0.42;
+const SPLIT_RANGE_SCALE: f64 = 0.32;
+const SPLIT_MAX: u32 = 8;
+const SPLIT_MIN_LIFETIME_MS: f64 = 280.0;
+const SPLIT_RADIUS_SCALE: f64 = 0.78;
+const SPLIT_RADIUS_MIN: f64 = 2.0;
+const SPLIT_SPEED_SCALE: f64 = 0.82;
+const SPLIT_SPEED_MIN: f64 = 180.0;
+const SPLIT_IMPACT_RADIUS_SCALE: f64 = 0.45;
 
 pub const Pathing = enum(u8) {
     straight = 0,
@@ -707,4 +725,146 @@ pub export fn sizeof_projectile_kinematics_v2() u32 {
 
 pub export fn sizeof_projectile_step_result_v2() u32 {
     return @sizeOf(StepResultV2);
+}
+
+// =================================================================
+// Phase H1 — orchestration helpers operating on the WorldState
+// extern struct's ProjectileEntity. These are the smallest pieces
+// of the TS `stepProjectile` orchestrator we can lift to wasm
+// without dragging in the player array, the events bus, or the
+// spatial cache. They land here, not in world.zig, because they're
+// pure projectile lifecycle decisions — the orchestrator (Phase I)
+// will dispatch on their results.
+
+/// Outcome of `projectile_pre_step`. The orchestrator dispatches
+/// based on this before deciding to call step_projectile_v2.
+pub const PreStepResult = enum(u8) {
+    /// Run the v2 motion kernel as normal.
+    advance = 0,
+    /// Sticky fuse > 0; projectile holds position. Caller MUST keep
+    /// it alive (no v2 step). `sticky_fuse_ms` and `age_ms` already
+    /// decremented in place by this call.
+    sticky_linger = 1,
+    /// Sticky fuse expired this tick. Caller should despawn (after
+    /// optionally spawning splits via `projectile_split_velocities`).
+    sticky_expired = 2,
+    /// Lifetime ran out this tick. Caller should despawn (after
+    /// optionally spawning splits).
+    lifetime_expired = 3,
+};
+
+/// Internal — pure decision logic. Mutates `proj` in place for the
+/// linger case. Independent of wasm ABI so we can unit-test it from
+/// Zig if we want.
+pub fn projectilePreStep(
+    proj: *world_state.ProjectileEntity,
+    dt_ms: f64,
+) PreStepResult {
+    if (proj.flags.has_sticky_fuse and proj.sticky_fuse_ms > 0) {
+        const fuse = proj.sticky_fuse_ms - dt_ms;
+        if (fuse > 0) {
+            proj.sticky_fuse_ms = fuse;
+            if (proj.flags.has_age) {
+                proj.age_ms += dt_ms;
+            }
+            return .sticky_linger;
+        }
+        return .sticky_expired;
+    }
+    const remaining = proj.lifetime_ms - dt_ms;
+    if (remaining <= 0) {
+        return .lifetime_expired;
+    }
+    return .advance;
+}
+
+pub export fn projectile_pre_step(
+    proj_ptr: *world_state.ProjectileEntity,
+    dt_ms: f64,
+) u8 {
+    return @intFromEnum(projectilePreStep(proj_ptr, dt_ms));
+}
+
+/// Output of split-velocity computation. The orchestrator
+/// materialises children using parent.x/y + these velocities.
+pub const SplitVelocity = extern struct {
+    vx: f64,
+    vy: f64,
+    angle: f64,
+};
+
+/// Compute the velocity fan for split children. Bit-exact mirror of
+/// `spawnSplit` in client/src/sim/projectile.ts. Returns the new
+/// RNG state (caller threads it through subsequent splits).
+pub fn projectileSplitVelocities(
+    parent: *const world_state.ProjectileEntity,
+    rng_in: u32,
+    out: []SplitVelocity,
+) struct { rng_state: u32, count: u32 } {
+    const raw_count: u32 = if (parent.flags.has_split) parent.split_count else 0;
+    const split_count: u32 = @min(raw_count, SPLIT_MAX);
+    if (split_count == 0) {
+        return .{ .rng_state = rng_in, .count = 0 };
+    }
+    const cap: u32 = @intCast(out.len);
+    const emit_count: u32 = @min(split_count, cap);
+
+    const speed = @sqrt(parent.vx * parent.vx + parent.vy * parent.vy);
+    const base_angle: f64 = if (speed > 0)
+        trig.lutAtan2(parent.vy, parent.vx)
+    else
+        0;
+
+    var state = rng_in;
+    var i: u32 = 0;
+    while (i < emit_count) : (i += 1) {
+        const t: f64 = if (split_count == 1)
+            0.5
+        else
+            @as(f64, @floatFromInt(i)) /
+                @as(f64, @floatFromInt(split_count - 1));
+        // Per-shard rng jitter — mirrors `nextFloat` in TS.
+        state = rng.nextU32(state);
+        const jitter: f64 = @as(f64, @floatFromInt(state)) / 4294967296.0;
+        const angle = base_angle - SPLIT_SPREAD / 2.0 +
+            SPLIT_SPREAD * t + (jitter - 0.5) * 0.06;
+        const child_speed = @max(SPLIT_SPEED_MIN, speed * SPLIT_SPEED_SCALE);
+        out[i] = .{
+            .vx = trig.lutCos(angle) * child_speed,
+            .vy = trig.lutSin(angle) * child_speed,
+            .angle = angle,
+        };
+    }
+    return .{ .rng_state = state, .count = emit_count };
+}
+
+/// Wasm export. Returns packed u64: hi 32 = new RNG state, lo 32 =
+/// number of velocity entries written. The host caps `out_cap` at
+/// SPLIT_MAX (= 8); higher caps are truncated.
+pub export fn projectile_split_velocities(
+    parent_ptr: *const world_state.ProjectileEntity,
+    rng_in: u32,
+    out_ptr: [*]SplitVelocity,
+    out_cap: u32,
+) u64 {
+    const result = projectileSplitVelocities(
+        parent_ptr,
+        rng_in,
+        out_ptr[0..out_cap],
+    );
+    const hi: u64 = @as(u64, @intCast(result.rng_state)) << 32;
+    const lo: u64 = @as(u64, @intCast(result.count));
+    return hi | lo;
+}
+
+pub export fn projectile_sticky_fuse_default_ms() f64 {
+    return STICKY_FUSE_MS;
+}
+
+pub export fn projectile_split_max() u32 {
+    return SPLIT_MAX;
+}
+
+pub export fn sizeof_split_velocity() u32 {
+    return @sizeOf(SplitVelocity);
 }

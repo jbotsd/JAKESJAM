@@ -103,6 +103,16 @@ export.
 | `projectile_boomerang_turn_rate() → f64` | 8.4 | `projectileHomingParity.test.ts` |
 | `projectile_homing_turn_rate_default() → f64` | 4.0 | `projectileHomingParity.test.ts` |
 
+### Phase H1 — orchestration helpers
+
+| Export | Purpose | Parity test |
+|---|---|---|
+| `projectile_pre_step(proj, dt_ms) → u8` | sticky-fuse / lifetime-expire pre-step decision (returns PreStepResult: 0 advance, 1 sticky_linger, 2 sticky_expired, 3 lifetime_expired) | `projectileLifecycleParity.test.ts` |
+| `projectile_split_velocities(parent, rng, out, cap) → u64` | velocity fan for split children; packed (rng<<32 \| count) | `projectileLifecycleParity.test.ts` |
+| `projectile_sticky_fuse_default_ms() → f64` | 720 | `projectileLifecycleParity.test.ts` |
+| `projectile_split_max() → u32` | 8 | `projectileLifecycleParity.test.ts` |
+| `sizeof_split_velocity` | 24 | `projectileLifecycleParity.test.ts` |
+
 ## Weapon (`weapon.zig`)
 
 | Export | Purpose | Parity test |
