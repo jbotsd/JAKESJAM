@@ -359,7 +359,11 @@ pub const WorldStateHeader = extern struct {
     _pad0: [3]u8 = .{ 0, 0, 0 },
     next_entity_id: u32,
     map_id: u32,
-    chaos_profile_id: u32,
+    /// Bitmask of active chaos modifier ids (Phase I3). Bit N
+    /// corresponds to `data/chaos.zig::ChaosModifierId` value N.
+    /// Resolves into a `ChaosProfile` each tick via
+    /// `chaosProfileFromMask`.
+    chaos_mask: u32,
     fire_hazard_timer_ms: u32,
     round_index: u32,
     countdown_remaining_ms: f64,

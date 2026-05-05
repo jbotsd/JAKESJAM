@@ -161,6 +161,41 @@ const PICKUP_KINDS = [
   "card-cache",
 ] as const;
 
+/**
+ * Order MUST match `CHAOS_MODIFIER_IDS` in
+ * `client/src/sim/data/chaosModifiers.ts` AND the
+ * `ChaosModifierId` enum in `sim/src/data/chaos.zig`. Bit N
+ * corresponds to array index N.
+ */
+const CHAOS_MASK_ORDER = [
+  "low-gravity",
+  "slow-motion",
+  "golden-gun",
+  "slappers-only",
+  "fire-hazard",
+  "random-shapes",
+  "max-recoil",
+] as const;
+
+function encodeChaosMask(ids: readonly string[] | undefined): number {
+  if (!ids || ids.length === 0) return 0;
+  let mask = 0;
+  for (const id of ids) {
+    const idx = (CHAOS_MASK_ORDER as readonly string[]).indexOf(id);
+    if (idx >= 0) mask |= 1 << idx;
+  }
+  return mask >>> 0;
+}
+
+function decodeChaosMask(mask: number): string[] {
+  if (mask === 0) return [];
+  const out: string[] = [];
+  for (let i = 0; i < CHAOS_MASK_ORDER.length; i++) {
+    if ((mask & (1 << i)) !== 0) out.push(CHAOS_MASK_ORDER[i]!);
+  }
+  return out;
+}
+
 function encEnum<T extends string>(
   table: readonly T[],
   value: T,
@@ -1011,14 +1046,15 @@ export function packWorldState(state: WorldState): Uint8Array {
   view.setUint8(off, encEnum(ROUND_PHASES, state.round.phase));
   off += 1;
   off += 3;
-  // next_entity_id, map_id, chaos_profile_id — placeholders for
-  // the data-table port (Phase H8). Header carries them so the
-  // wasm side can own them once the data tables ship.
+  // next_entity_id + map_id stay placeholders until the
+  // data-table-driven orchestrator owns them.
   view.setUint32(off, 0, true);
   off += 4;
   view.setUint32(off, 0, true);
   off += 4;
-  view.setUint32(off, 0, true);
+  // chaos_mask — encode chaosModifierIds[] into the bitmask the
+  // wasm `chaos_profile_from_mask` resolver expects (Phase I3).
+  view.setUint32(off, encodeChaosMask(state.chaosModifierIds), true);
   off += 4;
   view.setUint32(off, state.fireHazardTimerMs ?? 0, true);
   off += 4;
@@ -1115,6 +1151,7 @@ export type UnpackedWorldState = {
   tick: Tick;
   rngState: number;
   round: Pick<RoundState, "phase" | "countdownRemainingMs" | "roundIndex">;
+  chaosModifierIds?: string[];
   fireHazardTimerMs?: number;
   players: Record<PlayerId, PlayerEntity>;
   projectiles: Record<EntityId, ProjectileEntity>;
@@ -1134,7 +1171,10 @@ export function unpackWorldState(buf: Uint8Array): UnpackedWorldState {
   const phase = decEnum(ROUND_PHASES, view.getUint8(off)) as RoundPhase;
   off += 1;
   off += 3;
-  off += 4 + 4 + 4; // next_entity_id, map_id, chaos_profile_id
+  off += 4 + 4; // next_entity_id, map_id (placeholders)
+  const chaosMask = view.getUint32(off, true);
+  off += 4;
+  const chaosModifierIds = decodeChaosMask(chaosMask);
   const fireHazardTimerMs = view.getUint32(off, true);
   off += 4;
   const roundIndex = view.getUint32(off, true);
@@ -1242,6 +1282,7 @@ export function unpackWorldState(buf: Uint8Array): UnpackedWorldState {
     firePatches,
     pickups,
   };
+  if (chaosModifierIds.length > 0) out.chaosModifierIds = chaosModifierIds;
   if (fireHazardTimerMs !== 0) out.fireHazardTimerMs = fireHazardTimerMs;
   return out;
 }

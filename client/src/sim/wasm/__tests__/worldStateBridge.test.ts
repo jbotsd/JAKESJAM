@@ -325,6 +325,18 @@ describe("worldStateBridge — pack/unpack round-trip (Phase G2)", () => {
     expect(u2.respawnMs).toBe(12000);
   });
 
+  test("chaosModifierIds round-trip through the chaos_mask bitfield", () => {
+    const state = makeFixtureState();
+    state.chaosModifierIds = ["low-gravity", "max-recoil"];
+    const buf = packWorldState(state);
+    const back = unpackWorldState(buf);
+    expect(back.chaosModifierIds).toBeDefined();
+    // Decoding preserves the canonical order, not insertion order.
+    expect(back.chaosModifierIds).toContain("low-gravity");
+    expect(back.chaosModifierIds).toContain("max-recoil");
+    expect(back.chaosModifierIds).toHaveLength(2);
+  });
+
   test("idempotent — pack→unpack→pack produces identical bytes", () => {
     const state = makeFixtureState();
     const buf1 = packWorldState(state);

@@ -29,11 +29,21 @@ const projectile = @import("projectile.zig");
 const destructible = @import("destructible.zig");
 const fire = @import("fire.zig");
 const combat = @import("combat.zig");
+const chaos = @import("data/chaos.zig");
 
 /// Per-tick step. Mutates `state` in place. Returns 0 on success;
 /// reserved non-zero values for future error reporting.
 pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
     state.header.tick += 1;
+
+    // 0. Resolve the chaos profile for this tick. Today the
+    //    profile isn't applied to the per-module ticks (the TS
+    //    orchestrator still scales dt by timeScale, etc.), but
+    //    landing the lookup here proves the data layer plugs
+    //    into the orchestrator. Phase I4+ wires the profile into
+    //    the per-module calls.
+    const chaos_profile = chaos.chaosProfileFromMask(state.header.chaos_mask);
+    _ = chaos_profile;
 
     // 1. Round phase machine — header.countdown_remaining_ms now
     //    travels with WorldState (I2). Winner detection still
