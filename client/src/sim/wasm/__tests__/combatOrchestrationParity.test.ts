@@ -72,7 +72,6 @@ installLutTables(
 );
 
 const PLAYERS_OFFSET = 32 + 8;
-const PLAYER_ENTITY_SIZE = 288;
 const FLAGS_OFFSET = 17 * 8 + 15 * 4; // 17 f64s + 15 u32s
 const SHIELD_CHARGE_OFFSET = 11 * 8;
 const PARRY_FACING_OFFSET = 13 * 8;
