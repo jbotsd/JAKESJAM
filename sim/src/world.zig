@@ -886,3 +886,34 @@ pub export fn step_world(
 ) i32 {
     return stepWorld(state_ptr, dt_ms);
 }
+
+/// Bulk-write the static AABB cache (I30). Hosts call this once
+/// per match (after the map loads) so step_world has the full
+/// terrain to feed into stepPlayer + step_projectile_v2.
+///
+/// Returns the count actually written (clamped at MAX_STATICS).
+pub export fn world_state_set_statics(
+    state_ptr: *world_state.WorldState,
+    aabbs_ptr: [*]const collision_types.AABB,
+    one_way_ptr: [*]const u8,
+    count: u32,
+) u32 {
+    const clamped = @min(count, world_state.MAX_STATICS);
+    var i: u32 = 0;
+    while (i < clamped) : (i += 1) {
+        state_ptr.statics[i] = aabbs_ptr[i];
+        state_ptr.one_way[i] = one_way_ptr[i];
+    }
+    state_ptr.static_count = clamped;
+    return clamped;
+}
+
+/// Set the match target_score (I9 was set on pack; this lets the
+/// host change it mid-match without re-packing).
+pub export fn world_state_set_target_score(
+    state_ptr: *world_state.WorldState,
+    target: u32,
+) void {
+    state_ptr.header.target_score = target;
+    state_ptr.header.match_winner_idx = -1;
+}
