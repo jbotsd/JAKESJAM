@@ -87,7 +87,41 @@ export type StepProjectileContext = {
   collisionCache?: StaticCollisionCache;
 };
 
+export type StepProjectileFn = (
+  proj: ProjectileEntity,
+  ctx: StepProjectileContext,
+) => StepProjectileResult;
+
+let stepProjectileBackend: StepProjectileFn | null = null;
+
+/**
+ * Swap the stepProjectile impl. Pass `null` to revert to the
+ * native TS impl. The wasm-backed swap (when wired) uses
+ * `step_projectile_v2` for the kinematic core but reproduces the
+ * sticky-fuse / split / impact / player-collision logic in TS —
+ * those don't yet have wasm equivalents and adding them would
+ * require ferrying the full ProjectileEntity + player array
+ * across the boundary on every call.
+ *
+ * Today this seam is wired but unused: production runs the native
+ * TS impl. Future cuts can install a wasm-backed fn at boot via
+ * `applyWasmProjectileFlag()` (TBD).
+ */
+export function setStepProjectileBackend(fn: StepProjectileFn | null): void {
+  stepProjectileBackend = fn;
+}
+
 export function stepProjectile(
+  proj: ProjectileEntity,
+  ctx: StepProjectileContext,
+): StepProjectileResult {
+  if (stepProjectileBackend !== null) {
+    return stepProjectileBackend(proj, ctx);
+  }
+  return stepProjectileNative(proj, ctx);
+}
+
+function stepProjectileNative(
   proj: ProjectileEntity,
   ctx: StepProjectileContext,
 ): StepProjectileResult {

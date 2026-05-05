@@ -1,5 +1,25 @@
 # JAKESJAM - Changelog
 
+## v0.54 - 2026-05-05
+
+- **`setStepProjectileBackend` swap mechanism wired** (NOOP swap;
+  default behaviour unchanged). Future cuts can install a
+  wasm-backed fn at boot to route the projectile dispatch through
+  Zig.
+- `stepProjectile` is now a thin dispatcher that delegates to
+  `stepProjectileBackend` when set, else falls through to
+  `stepProjectileNative` (the existing implementation, just
+  renamed). Same pattern as `setRngBackend` / `setStepPlayerBackend`.
+- New `stepProjectileBackendSwap.test.ts` (4 tests, 8 expects)
+  gates the regression class where the swap mechanism subtly
+  diverges from the no-swap path: identity-swap produces
+  identical output, custom backend gets invoked, revert restores
+  native path.
+- 332 client / 58 server / 6 native Zig tests, all green.
+- Smoke against deployed prod: 3/3.
+
+
+
 ## v0.53 - 2026-05-05
 
 - **Server-side smoke for ALL wasm modules.** New
