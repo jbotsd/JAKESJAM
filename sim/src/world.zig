@@ -170,6 +170,46 @@ pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
         }
     }
 
+    // 2a. Fire-hazard chaos modifier (I33): spawn fire patches at
+    //     random map positions on the configured interval.
+    if (chaos_profile.fire_hazard_active != 0 and
+        chaos_profile.fire_hazard_interval_ms > 0 and
+        state.fire_count < world_state.MAX_FIRE)
+    {
+        const cur_timer: f64 = @floatFromInt(state.header.fire_hazard_timer_ms);
+        const next_timer = cur_timer + eff_dt;
+        if (next_timer >= chaos_profile.fire_hazard_interval_ms) {
+            state.header.fire_hazard_timer_ms = 0;
+            // Use the rng_state for jitter; advance it.
+            state.header.rng_state +%= 0x6d2b79f5;
+            const rx_raw = state.header.rng_state ^ (state.header.rng_state >> 15);
+            const ry_raw = state.header.rng_state ^ (state.header.rng_state >> 7);
+            // Map to a rough -800..+800 / -400..+400 range. Caller
+            // can clamp via map AABB later.
+            const fx: f64 = @as(f64, @floatFromInt(rx_raw)) /
+                @as(f64, @floatFromInt(@as(u32, 0xFFFFFFFF))) * 1600.0 - 800.0;
+            const fy: f64 = @as(f64, @floatFromInt(ry_raw)) /
+                @as(f64, @floatFromInt(@as(u32, 0xFFFFFFFF))) * 800.0 - 400.0;
+            const slot = state.fire_count;
+            state.fire_count += 1;
+            const new_id: u32 = state.header.next_entity_id;
+            state.header.next_entity_id += 1;
+            state.fires[slot] = .{
+                .x = fx,
+                .y = fy,
+                .radius = 36.0,
+                .remaining_ms = 1800.0,
+                .damage_per_second = 14.0,
+                .id = new_id,
+                .has_owner = 0,
+                .owner_id_len = 0,
+                .owner_id_bytes = @splat(0),
+            };
+        } else {
+            state.header.fire_hazard_timer_ms = @intFromFloat(next_timer);
+        }
+    }
+
     // 2. Fire patches (I10): tick lifetime in place + apply DPS
     //    damage to overlapping non-owner alive players.
     //    Player AABB is approximated as 30×56 centered on (x,y).
