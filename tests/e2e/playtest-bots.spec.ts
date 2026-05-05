@@ -211,6 +211,42 @@ test.describe("playtest bots — autonomous gameplay sessions", () => {
     expect(errors).toEqual([]);
   });
 
+  test("Practice + ?wasm-world=1 shim — bot runs 60s, no errors, samples state hashes", async ({
+    page,
+  }, testInfo) => {
+    test.setTimeout(120_000);
+    const log = attachConsole(page);
+    await page.goto("/?wasm-world=1");
+    await page.waitForSelector("canvas", { timeout: 20_000 });
+    await clickButton(page, "Practice");
+    await page.waitForTimeout(2000);
+
+    // Confirm shim enabled.
+    const enableLog = log
+      .get()
+      .find((e) => /\[wasm-world\]\s+enabled/.test(e.text));
+    expect(enableLog).toBeDefined();
+
+    const bot = startBot(page, 0xfeed);
+    const samples: FrameSample[] = [];
+    const start = Date.now();
+    while (Date.now() - start < BOT_SESSION_MS) {
+      await page.waitForTimeout(2000);
+      samples.push(await sampleStateProbe(page));
+    }
+    await bot.stop();
+
+    await ensureWrite(
+      join(testInfo.outputDir, "samples.json"),
+      JSON.stringify(samples, null, 2),
+    );
+
+    const errors = log
+      .get()
+      .filter((e) => e.type === "error" || e.type === "pageerror");
+    expect(errors).toEqual([]);
+  });
+
   test("Two bots in parallel browser contexts — same world room", async ({
     browser,
   }, testInfo) => {
