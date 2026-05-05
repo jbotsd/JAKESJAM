@@ -168,6 +168,11 @@ shim runs the wasm orchestrator alongside TS today.
 | **End-of-tick array compaction** — drop expired projectiles + fire patches | I29 |
 | **Host patcher exports** for statics + target_score | I30 |
 | **J1-monitor** — opt-in parity check vs TS via `?wasm-world-monitor=1` | J1m |
+| **Parry deflect + shield pop** events on incoming projectile | I31 |
+| **Burn DoT** tick at 1s cadence | I32 |
+| **Fire-hazard chaos modifier** spawns fire patches | I33 |
+| **Damage_amp / overcharge / vulnerability** scale projectile damage | I36 |
+| **Speed_boost / slow / freeze** scale player movement | I37 |
 
 ## Test surface
 
