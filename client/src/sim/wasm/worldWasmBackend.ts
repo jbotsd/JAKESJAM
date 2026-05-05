@@ -252,7 +252,7 @@ function writePlayerInputsFromGlobal(): void {
     globalThis as {
       __jakesjam_wasm_inputs__?: ReadonlyMap<
         string,
-        { keys: number; prevKeys: number }
+        { keys: number; prevKeys: number; aimX: number; aimY: number }
       >;
     }
   ).__jakesjam_wasm_inputs__;
@@ -261,33 +261,41 @@ function writePlayerInputsFromGlobal(): void {
 }
 
 /**
- * Patch per-player current_keys / prev_keys into the packed
- * WorldState in linear memory. Caller computes the keys bitmap
- * and previous-tick keys per playerId (sorted).
+ * Patch per-player current_keys / prev_keys / aim_x / aim_y into
+ * the packed WorldState in linear memory. Caller computes the
+ * fresh keys bitmap, previous-tick keys, and aim per playerId
+ * (sorted).
  *
  * Without this call, wasm players never see input bits → no
- * walking, no jumping, no firing.
+ * walking, no jumping, no firing. Aim updates also need this
+ * path so the muzzle position matches what the player sees.
  */
 export function writePlayerInputsIntoMemory(
-  inputs: ReadonlyMap<string, { keys: number; prevKeys: number }>,
+  inputs: ReadonlyMap<
+    string,
+    { keys: number; prevKeys: number; aimX: number; aimY: number }
+  >,
 ): void {
   if (!cachedSim || !cachedEx) return;
   const sim = cachedSim;
   const ex = cachedEx;
   const view = new DataView(ex.memory.buffer);
-  // Player array starts at HEADER_SIZE + ARRAY_PREAMBLE = 48 + 8.
   const playersStart = sim.statePtr + 48 + 8;
   const PLAYER_ENTITY_SIZE = 288;
-  // current_keys + prev_keys live at +268 / +272 inside PlayerEntity.
+  // aim_x + aim_y are at f64 slots 4 + 5 (offset 32 + 40).
+  const AIMX_OFF = 4 * 8;
+  const AIMY_OFF = 5 * 8;
+  // current_keys + prev_keys live at +268 / +272.
   const CURR_OFF = 268;
   const PREV_OFF = 272;
-  // Match the bridge's player ordering: sorted by id string.
   const sortedIds = [...inputs.keys()].sort();
   for (let i = 0; i < sortedIds.length; i++) {
     const pid = sortedIds[i]!;
     const v = inputs.get(pid);
     if (!v) continue;
     const playerOff = playersStart + i * PLAYER_ENTITY_SIZE;
+    view.setFloat64(playerOff + AIMX_OFF, v.aimX, true);
+    view.setFloat64(playerOff + AIMY_OFF, v.aimY, true);
     view.setUint32(playerOff + CURR_OFF, v.keys >>> 0, true);
     view.setUint32(playerOff + PREV_OFF, v.prevKeys >>> 0, true);
   }

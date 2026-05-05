@@ -1117,7 +1117,10 @@ function maybeWasmActual(
       dt: number,
     ): { state: WorldState; events: WasmEvent[]; matchComplete: boolean };
     writePlayerInputsIntoMemory(
-      m: Map<string, { keys: number; prevKeys: number }>,
+      m: Map<
+        string,
+        { keys: number; prevKeys: number; aimX: number; aimY: number }
+      >,
     ): void;
   };
   const wb = (globalThis as { __jakesjam_wasm_backend__?: WB })
@@ -1132,11 +1135,19 @@ function maybeWasmActual(
     // that lands, write keys directly to memory after the call's
     // pack has finished but before step_world runs by exposing a
     // new function patchWasmInputs(inputsMap).
-    const inputsMap = new Map<string, { keys: number; prevKeys: number }>();
+    const inputsMap = new Map<
+      string,
+      { keys: number; prevKeys: number; aimX: number; aimY: number }
+    >();
     for (const [pid, frame] of Object.entries(inputsByPlayer)) {
       if (!frame) continue;
       const prev = runtime.prevKeys.get(pid as PlayerId) ?? 0;
-      inputsMap.set(pid, { keys: frame.keys, prevKeys: prev });
+      inputsMap.set(pid, {
+        keys: frame.keys,
+        prevKeys: prev,
+        aimX: frame.aimX,
+        aimY: frame.aimY,
+      });
     }
     // The shim writes inputs from this snapshot once it's set on
     // globalThis. Cleanest API: stash + shim consults during pack.
