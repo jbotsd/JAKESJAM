@@ -376,7 +376,17 @@ pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
             const dy = state.players[pp].y - pickup_ptr.y;
             const total_r = pickup_ptr.radius + 18.0; // player half-width
             if (dx * dx + dy * dy <= total_r * total_r) {
-                // Apply effect inline for the simplest cases.
+                // Apply effect inline. Numeric pickups heal /
+                // restore directly; buff pickups set the matching
+                // *_until_tick field + flag bit so the player's
+                // existing buff machinery picks them up.
+                const duration_ms: f64 = if ((pickup_ptr.flags & 2) != 0)
+                    pickup_ptr.duration_ms
+                else
+                    0;
+                const dt: f64 = if (dt_ms > 0) dt_ms else 1.0;
+                const duration_ticks: u32 = @intFromFloat(@ceil(duration_ms / dt));
+                const expiry_tick: u32 = state.header.tick + duration_ticks;
                 switch (pickup_ptr.kind) {
                     .health_shard => {
                         state.players[pp].health = @min(
@@ -392,10 +402,41 @@ pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
                             );
                         }
                     },
-                    else => {
-                        // Buff-style pickups land in a follow-on cut
-                        // — they need duration-tick fields wired
-                        // through the player flags.
+                    .overcharge_core => {
+                        state.players[pp].overcharge_until_tick = expiry_tick;
+                        state.players[pp].flags.has_overcharge = true;
+                    },
+                    .damage_amp => {
+                        state.players[pp].damage_amp_until_tick = expiry_tick;
+                        state.players[pp].flags.has_damage_amp = true;
+                    },
+                    .speed_boost => {
+                        state.players[pp].speed_boost_until_tick = expiry_tick;
+                        state.players[pp].flags.has_speed_boost = true;
+                    },
+                    .melee_mode => {
+                        state.players[pp].melee_mode_until_tick = expiry_tick;
+                        state.players[pp].flags.has_melee_mode = true;
+                    },
+                    .slow_trap => {
+                        state.players[pp].slow_debuff_until_tick = expiry_tick;
+                        state.players[pp].flags.has_slow_debuff = true;
+                    },
+                    .vulnerability_trap => {
+                        state.players[pp].vulnerability_until_tick = expiry_tick;
+                        state.players[pp].flags.has_vulnerability = true;
+                    },
+                    .block_jammer => {
+                        state.players[pp].block_jammer_until_tick = expiry_tick;
+                        state.players[pp].flags.has_block_jammer = true;
+                    },
+                    .boss_core => {
+                        state.players[pp].boss_mode_until_tick = expiry_tick;
+                        state.players[pp].flags.has_boss_mode = true;
+                    },
+                    .card_cache => {
+                        // Card draft offer — orchestrator emits
+                        // event externally; no inline effect.
                     },
                 }
                 pickup_ptr.flags &= ~@as(u32, 1); // deactivate
