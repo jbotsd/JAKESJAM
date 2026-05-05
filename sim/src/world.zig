@@ -33,6 +33,9 @@ const chaos = @import("data/chaos.zig");
 const collision_types = @import("collision.zig");
 const satellite = @import("satellite.zig");
 const player_mod = @import("player.zig");
+const weapon = @import("weapon.zig");
+const weapons_data = @import("data/weapons.zig");
+const trig = @import("trig.zig");
 
 /// Per-tick step. Mutates `state` in place. Returns 0 on success;
 /// reserved non-zero values for future error reporting.
@@ -599,6 +602,100 @@ pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
             combat.PARRY_ACTIVE_MS,
             combat.PARRY_COOLDOWN_MS_DEFAULT,
         );
+        // Weapon fire decision + projectile spawn (I21). Today
+        // every player uses the starter-pistol base stats from
+        // data/weapons.zig — full card-build resolution lands in
+        // a follow-on cut. Projectile_count guard prevents
+        // overflow of the fixed-size array.
+        const weapon_base = weapons_data.weaponBaseById(.starter_pistol);
+        const cd_after = weapon.cooldownFromFireRate(
+            weapon_base.fire_rate * chaos_profile.fire_rate_multiplier,
+            1.0,
+        );
+        var fire_decision: weapon.FireDecision = undefined;
+        weapon.weapon_tick_fire_with_keys(
+            player_ptr,
+            player_ptr.current_keys,
+            eff_dt,
+            cd_after,
+            &fire_decision,
+        );
+        if (fire_decision.fired == 1 and
+            state.projectile_count < world_state.MAX_PROJECTILES and
+            chaos_profile.disable_projectiles == 0)
+        {
+            const dx = player_ptr.aim_x - player_ptr.x;
+            const dy = player_ptr.aim_y - player_ptr.y;
+            const aim_angle: f64 = if (dx == 0 and dy == 0) 0 else trig.lutAtan2(dy, dx);
+            const speed = weapon_base.projectile_speed *
+                weapon_base.projectile_speed_multiplier;
+            const lifetime_ms = @max(
+                50.0,
+                weapon_base.projectile_lifetime_seconds * 1000.0 *
+                    weapon_base.projectile_lifetime_multiplier,
+            );
+            const slot: u32 = state.projectile_count;
+            state.projectile_count += 1;
+            const new_id: u32 = state.header.next_entity_id;
+            state.header.next_entity_id += 1;
+            state.projectiles[slot] = .{
+                .x = player_ptr.x,
+                .y = player_ptr.y,
+                .vx = trig.lutCos(aim_angle) * speed,
+                .vy = trig.lutSin(aim_angle) * speed,
+                .radius = @max(2.0, 7.0 * weapon_base.projectile_size_multiplier),
+                .damage = weapon_base.damage,
+                .lifetime_ms = lifetime_ms,
+                .age_ms = 0,
+                .traveled_px = 0,
+                .origin_x = player_ptr.x,
+                .origin_y = player_ptr.y,
+                .homing_strength = weapon_base.projectile_homing_strength,
+                .acceleration_multiplier = weapon_base.projectile_acceleration_multiplier,
+                .gravity_scale = weapon_base.projectile_gravity_scale,
+                .range_px = weapon_base.projectile_range_px,
+                .slow_multiplier = weapon_base.projectile_slow_multiplier,
+                .sticky_fuse_ms = 0,
+                .impact_radius_px = weapon_base.projectile_impact_radius_px,
+                .id = new_id,
+                .bounces_remaining = weapon_base.projectile_bounces,
+                .pierce_remaining = weapon_base.projectile_pierce_count,
+                .split_count = weapon_base.projectile_split_count,
+                .flags = .{
+                    .has_owner = true,
+                    .has_impact = true,
+                    .has_split = false,
+                    .has_slow = false,
+                    .has_homing = false,
+                    .has_acceleration = false,
+                    .has_gravity_scale = false,
+                    .has_range = true,
+                    .has_age = true,
+                    .has_traveled = true,
+                    .has_origin = true,
+                    .returning = false,
+                    .has_sticky_fuse = false,
+                    .has_impact_radius = false,
+                },
+                .pathing = weapon_base.projectile_pathing,
+                .element = weapon_base.projectile_element,
+                .impact = weapon_base.projectile_impact,
+                .shape = weapon_base.projectile_shape,
+                .owner_id_len = player_ptr.id_len,
+                .owner_id_bytes = player_ptr.id_bytes,
+            };
+            emitEvent(
+                state,
+                .shot_fired,
+                @intCast(pi3),
+                -1,
+                new_id,
+                aim_angle,
+                player_ptr.x,
+                player_ptr.y,
+            );
+        }
+
         // Roll current → prev for the next tick's edge detection.
         player_ptr.prev_keys = player_ptr.current_keys;
     }
