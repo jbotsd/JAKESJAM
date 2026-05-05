@@ -88,65 +88,42 @@ export function paintPlatform(
   // (c) Top-edge rim highlight (drawn at y = 0, offset to platform-local).
   drawRimHighlight(g, 0, 0, w, 0xf5f8f8, 0.22);
 
-  // (d) Brush streaks pass 1 — 5 thin rotated rects, alpha 0.32.
+  // (d, e) Brush streaks — 8 thin dimensional streaks WITHOUT canvas
+  // rotation. Phaser 4's GeometryMask does NOT clip when the mask source
+  // is an undisplayed Graphics (`scene.make.graphics(_, false)`); the
+  // stencil pass for an off-display-list source is silently skipped.
+  // The previous rotated-rect approach relied on that mask to keep the
+  // streak inside the platform — without the mask, a streakW=150px rect
+  // rotated -45°…+75° extends diagonally hundreds of pixels into the
+  // arena. Compounded across renderArena re-fires (reconnects, map
+  // changes), this is the source of the criss-crossing cyan line
+  // accumulation seen in tests/e2e/.artifacts/visual-…fire-spam… frame
+  // 5 of the test video.
+  //
+  // Replace rotated rects with axis-aligned, in-platform-bounds rects.
+  // No mask required. Visual texture is preserved via varied position +
+  // alpha + width.
   const streakCount = 5;
-  const baseAngles: number[] = [];
   for (let i = 0; i < streakCount; i++) {
     const t = i / (streakCount - 1);
-    const cx = w * (0.1 + t * 0.8);
-    const cy = h * 0.5;
-    const angleDeg = -45 + nextRng() * 120;
-    const angle = Phaser.Math.DegToRad(angleDeg);
-    baseAngles.push(angle);
-    const streakW = w * (0.5 + (i % 2) * 0.25);
-    const streakH = Math.max(2, h * 0.18);
-
+    const sx = (w * 0.06) + t * (w * 0.88);
+    const sw = Math.max(2, Math.min(w * 0.22, w - sx - w * 0.04));
+    const sh = Math.max(2, h * 0.18);
+    const sy = (h - sh) * 0.5 + (nextRng() - 0.5) * h * 0.3;
     g.fillStyle(theme.wash, 0.32);
-    g.save();
-    g.translateCanvas(cx, cy);
-    g.rotateCanvas(angle);
-    g.fillRect(-streakW / 2, -streakH / 2, streakW, streakH);
-    g.restore();
+    g.fillRect(sx, Math.max(0, Math.min(h - sh, sy)), sw, sh);
   }
-
-  // (e) Brush streaks pass 2 — 3 cross-hatch streaks perpendicular to pass 1.
   const crossCount = 3;
   for (let i = 0; i < crossCount; i++) {
-    const cx = w * (0.15 + (i / Math.max(1, crossCount - 1)) * 0.7);
-    const cy = h * 0.5;
-    const baseAngle = baseAngles[Math.floor(i * (streakCount / crossCount))] ?? 0;
-    const angle = baseAngle + Math.PI / 2;
-    const streakW = w * (0.4 + (i % 2) * 0.2);
-    const streakH = Math.max(2, h * 0.14);
-
+    const sx = w * (0.18 + (i / Math.max(1, crossCount - 1)) * 0.6);
+    const sw = Math.max(2, Math.min(w * 0.16, w - sx - w * 0.04));
+    const sh = Math.max(2, h * 0.14);
+    const sy = (h - sh) * 0.5 - (nextRng() - 0.5) * h * 0.18;
     g.fillStyle(theme.wash, 0.12);
-    g.save();
-    g.translateCanvas(cx, cy);
-    g.rotateCanvas(angle);
-    g.fillRect(-streakW / 2, -streakH / 2, streakW, streakH);
-    g.restore();
+    g.fillRect(sx, Math.max(0, Math.min(h - sh, sy)), sw, sh);
   }
 
-  // Clip streaks + rim to the platform rect — the previous RenderTexture
-  // pattern clipped implicitly via texture bounds; the direct Graphics
-  // rewrite needs an explicit GeometryMask to avoid streaks extending
-  // diagonally across the whole arena.
-  //
-  // CRITICAL: maskShape is returned in the array so PlatformLayer.repaint
-  // destroys it on the next repaint. Without this, every renderArena call
-  // (each reconnect / map change) leaves an orphan undisplayed Graphics
-  // backing a stale GeometryMask in scene memory — and worse, when the
-  // mask source is destroyed implicitly (e.g. on scene shutdown) without
-  // detaching from g, Phaser falls back to NOT applying the stencil pass
-  // and the rotated brush streaks render unclipped, extending diagonally
-  // across the whole arena. Source of the cyan-line accumulation bug seen
-  // in world-fire artifacts.
-  const maskShape = scene.make.graphics({ x: 0, y: 0 }, false);
-  maskShape.fillStyle(0xffffff, 1);
-  maskShape.fillRect(x - halfW, y - halfH, w, h);
-  g.setMask(maskShape.createGeometryMask());
-
-  return [g, shadowG, maskShape];
+  return [g, shadowG];
 }
 
 /**
