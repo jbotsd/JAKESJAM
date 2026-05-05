@@ -215,17 +215,61 @@ pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
         }
     }
 
-    // 4. Per-pair projectile × destructible HP application.
-    //    O(N×M) but N,M ≤ 256×64 in the worst case. The full
-    //    spatial-grid path lands when the orchestrator owns
-    //    spawn / despawn (Phase I3+).
+    // 4. Per-pair projectile × {destructible, player} resolution
+    //    (I11). Destructible HP application + player damage on
+    //    overlap (skip owner). Projectile destroy is signalled by
+    //    setting lifetime_ms = 0 so the next pre_step expires it.
     var pi2: u32 = 0;
     while (pi2 < state.projectile_count) : (pi2 += 1) {
         const proj_ptr = &state.projectiles[pi2];
+        if (proj_ptr.lifetime_ms <= 0) continue;
         var di: u32 = 0;
         while (di < state.destructible_count) : (di += 1) {
             const dest_ptr = &state.destructibles[di];
-            _ = destructible.resolveProjectileHit(proj_ptr, dest_ptr);
+            const r = destructible.resolveProjectileHit(proj_ptr, dest_ptr);
+            if (r != .no_overlap) {
+                proj_ptr.lifetime_ms = 0; // mark for expire
+                break;
+            }
+        }
+        if (proj_ptr.lifetime_ms <= 0) continue;
+        // Player overlap: circle vs AABB.
+        var ph2: u32 = 0;
+        while (ph2 < state.player_count) : (ph2 += 1) {
+            if (!state.players[ph2].flags.alive) continue;
+            // Skip owner.
+            if (proj_ptr.flags.has_owner and
+                state.players[ph2].id_len == proj_ptr.owner_id_len and
+                std.mem.eql(u8,
+                    state.players[ph2].id_bytes[0..proj_ptr.owner_id_len],
+                    proj_ptr.owner_id_bytes[0..proj_ptr.owner_id_len]))
+            {
+                continue;
+            }
+            const px = state.players[ph2].x;
+            const py = state.players[ph2].y;
+            const half_w: f64 = 15.0;
+            const half_h: f64 = 28.0;
+            const closest_x = @max(px - half_w, @min(proj_ptr.x, px + half_w));
+            const closest_y = @max(py - half_h, @min(proj_ptr.y, py + half_h));
+            const dx = proj_ptr.x - closest_x;
+            const dy = proj_ptr.y - closest_y;
+            if (dx * dx + dy * dy <= proj_ptr.radius * proj_ptr.radius) {
+                state.players[ph2].health -= proj_ptr.damage;
+                if (state.players[ph2].health <= 0) {
+                    state.players[ph2].health = 0;
+                    state.players[ph2].flags.alive = false;
+                }
+                // Pierce-chain: decrement and survive; otherwise expire.
+                if (proj_ptr.impact == .pierce_chain and
+                    proj_ptr.pierce_remaining > 0)
+                {
+                    proj_ptr.pierce_remaining -= 1;
+                    continue;
+                }
+                proj_ptr.lifetime_ms = 0;
+                break;
+            }
         }
     }
 
