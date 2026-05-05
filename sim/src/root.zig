@@ -40,7 +40,11 @@ comptime {
     _ = world;
 }
 
-const STATE_SIZE: usize = 64 * 1024;
+// 128 KB — sized for the full WorldState extern struct (72 KB
+// after Phase G1c) plus a reasonable headroom for transient
+// per-tick scratch + future entity-array growth. Bump 4× before
+// adding more entity capacity.
+const STATE_SIZE: usize = 128 * 1024;
 var state_buffer: [STATE_SIZE]u8 align(8) = @splat(0);
 
 var tick: u32 = 0;

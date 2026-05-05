@@ -13,6 +13,7 @@ import {
   startWasmCanary,
 } from "./sim/wasm/runtime";
 import { installWindowProbe } from "./debug/wasmStateProbe";
+import { applyWasmWorldFlag } from "./sim/wasm/worldWasmBackend";
 
 // Phase F3 Zig→WASM substrate. RNG, collision, and player physics
 // run in Zig wasm by DEFAULT. Boot-load the wasm sim ASAP so it's
@@ -32,6 +33,12 @@ void applyWasmPlayerFlag();
 // their state getter when they own a WorldState. See
 // client/src/debug/wasmStateProbe.ts.
 installWindowProbe();
+
+// Phase J0 — opt-in wasm orchestrator shim. `?wasm-world=1` lets
+// step_world drive the round phase machine, fire-patch lifetime,
+// projectile lifecycle, and projectile×destructible HP each tick.
+// Default OFF until full parity lands.
+void applyWasmWorldFlag();
 
 const app = document.querySelector<HTMLDivElement>("#app");
 
