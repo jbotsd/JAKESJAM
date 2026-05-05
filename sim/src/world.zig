@@ -150,6 +150,24 @@ pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
         phase_result.new_phase == @intFromEnum(round.RoundPhase.countdown))
     {
         state.header.round_index += 1;
+        // Reset transient entities for the new round (I28).
+        // Players keep their score + buff durations; everything
+        // else clears so the next round starts clean.
+        state.projectile_count = 0;
+        state.fire_count = 0;
+        state.satellite_count = 0;
+        // Heal alive players to full + clear timed buffs that
+        // shouldn't carry across rounds (slow, burn, freeze).
+        // Buff pickups (overcharge, damage_amp etc) DO carry per
+        // the offline TS behavior.
+        var ri: u32 = 0;
+        while (ri < state.player_count) : (ri += 1) {
+            state.players[ri].health = 100.0;
+            state.players[ri].flags.alive = true;
+            state.players[ri].flags.has_slow = false;
+            state.players[ri].flags.has_burn = false;
+            state.players[ri].flags.has_freeze = false;
+        }
     }
 
     // 2. Fire patches (I10): tick lifetime in place + apply DPS
