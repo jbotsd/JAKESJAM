@@ -77,7 +77,6 @@ const SPLIT_SPREAD = Math.PI * 0.95;
 const SPLIT_SPEED_MIN = 180;
 const SPLIT_SPEED_SCALE = 0.82;
 const SIZEOF_SPLIT_VEL = ex.sizeof_split_velocity();
-const PROJECTILE_ENTITY_SIZE = ex.sizeof_projectile_entity();
 
 // Layout in the WorldState packed buffer: header (32) + player
 // preamble (8) + 16*288 player bytes + projectile preamble (8) +
