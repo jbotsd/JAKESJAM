@@ -91,7 +91,8 @@ export.
 
 | Export | Purpose | Parity test |
 |---|---|---|
-| `step_projectile(...)` | straight + gravity + lifetime + terrain hit | `projectileParity.test.ts` |
+| `step_projectile(...)` | straight + gravity + lifetime + terrain hit (V1) | `projectileParity.test.ts` |
+| `step_projectile_v2(...)` | full 8-pathing dispatch in one call (straight/gravity/float/accelerate/boomerang/homing/anti-homing/bounce); needs player array + sized struct | `projectileStepV2Parity.test.ts` |
 | `projectile_apply_float(...)` | sin/cos oscillation pathing | `projectilePathingsParity.test.ts` |
 | `projectile_apply_accelerate(...)` | (1+k·dt) velocity scale | `projectilePathingsParity.test.ts` |
 | `projectile_rotate_velocity_toward(...)` | turn-rate-limited rotation | `projectilePathingsParity.test.ts` |
@@ -158,6 +159,8 @@ when packing struct arrays.
 | `sizeof_player_step` | 96 |
 | `sizeof_projectile_kinematics` | 80 |
 | `sizeof_projectile_step_result` | 8 |
+| `sizeof_projectile_kinematics_v2` | 136 |
+| `sizeof_projectile_step_result_v2` | 16 |
 | `sizeof_circle_bounce` | 16 |
 | `sizeof_bounce_resolve` | 48 |
 | `sizeof_satellite_tick_input` | 80 |

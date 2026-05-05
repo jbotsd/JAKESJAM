@@ -1,5 +1,17 @@
 # JAKESJAM - Changelog
 
+## v0.56 - 2026-05-05
+
+- **Doc-sync regression gate added** — `exportsDocSync.test.ts`
+  asserts every wasm export name is referenced in
+  `docs/zig-wasm-exports.md`. The test caught real drift on its
+  first run: `step_projectile_v2` (shipped in `be73380`) and the
+  v2 sizeof exports weren't in the doc. Doc updated.
+- Forward defence: future PRs that add wasm exports without
+  updating the manifest doc fail this test in CI.
+- 337 client / 58 server / 6 native Zig tests, all green.
+- E2E smoke 4/4 against deployed prod.
+
 ## v0.55 - 2026-05-05
 
 - **`setStepWeaponBackend` + `setStepSatellitesBackend` swap
