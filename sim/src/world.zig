@@ -227,10 +227,39 @@ pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
         while (di < state.destructible_count) : (di += 1) {
             const dest_ptr = &state.destructibles[di];
             const r = destructible.resolveProjectileHit(proj_ptr, dest_ptr);
-            if (r != .no_overlap) {
-                proj_ptr.lifetime_ms = 0; // mark for expire
-                break;
+            if (r == .no_overlap) continue;
+            proj_ptr.lifetime_ms = 0;
+            // Explosive AOE on break (I12): radial damage to
+            // every alive non-owner player within EXPLOSION_RADIUS.
+            if (r == .broken and (dest_ptr.flags & 1) != 0) {
+                var ex_p: u32 = 0;
+                while (ex_p < state.player_count) : (ex_p += 1) {
+                    if (!state.players[ex_p].flags.alive) continue;
+                    if (proj_ptr.flags.has_owner and
+                        state.players[ex_p].id_len == proj_ptr.owner_id_len and
+                        std.mem.eql(u8,
+                            state.players[ex_p].id_bytes[0..proj_ptr.owner_id_len],
+                            proj_ptr.owner_id_bytes[0..proj_ptr.owner_id_len]))
+                    {
+                        continue;
+                    }
+                    if (destructible.playerInBlastRadius(
+                        dest_ptr.x,
+                        dest_ptr.y,
+                        destructible.EXPLOSION_RADIUS,
+                        state.players[ex_p].x,
+                        state.players[ex_p].y,
+                        15.0, // PLAYER_HALF_W
+                    )) {
+                        state.players[ex_p].health -= destructible.EXPLOSION_DAMAGE;
+                        if (state.players[ex_p].health <= 0) {
+                            state.players[ex_p].health = 0;
+                            state.players[ex_p].flags.alive = false;
+                        }
+                    }
+                }
             }
+            break;
         }
         if (proj_ptr.lifetime_ms <= 0) continue;
         // Player overlap: circle vs AABB.
