@@ -286,6 +286,118 @@ Before exposing a new wasm export:
 - [ ] No `std.debug.print` / `std.log` calls reachable from a wasm
       export — there's no console in freestanding.
 
+## Lessons learned — JAKESJAM Zig→WASM migration
+
+Captured 2026-05-05 after porting the full sim. Each item below
+cost real debugging time during the migration; capturing here
+saves the next porter the same.
+
+### 1. Match TS evaluation order *exactly*, not just algebra
+
+`(a * b) / c` and `a * (b / c)` are algebraically equal but produce
+ULP-different f64 bits because IEEE 754 rounding depends on
+intermediate precision. V8 evaluates left-to-right; if your Zig
+port reorders for "clarity" the parity test fails.
+
+Found in: `sim/src/weapon.zig` `spreadOffset` — initial port did
+`-total/2 + total * (i / (n-1))` matching the algebra; TS does
+`-total/2 + (total * i) / (n-1)`. Different bits. Fix: write the
+Zig in the same order as the TS source, even when it looks
+worse.
+
+### 2. `Math.hypot` is overflow-safe and slow; in-domain values use `Math.sqrt`
+
+`Math.hypot(x, y)` does range-scaling to avoid overflow when
+`x*x` would exceed f64 max. The result differs by 1 ULP from
+`Math.sqrt(x*x + y*y)` for in-domain inputs. Wasm `@sqrt` matches
+the simple form, not hypot.
+
+Fix: in TS sim modules, replace `Math.hypot` with
+`Math.sqrt(a*a + b*b)` wherever the values are bounded (velocities
+in a game sim never overflow f64). See `client/src/sim/player.ts`
+and `client/src/sim/projectile.ts` for the existing 5 sites.
+
+### 3. `pub export fn` — both keywords required
+
+`export fn` exposes the symbol to wasm linker but does NOT make
+it `pub`-accessible from other Zig files. To call from another
+module (e.g. `sim/test/smoke.zig` calling `sim/src/root.zig`'s
+exports), you need both: `pub export fn`. This bit me in Phase A.
+
+### 4. The trig LUT install path must run on EVERY host
+
+The migration's trig parity story assumes both TS and wasm sample
+the same precomputed bytes. The client installs them in
+`client/src/sim/wasm/runtime.ts` `getWasmSim()`. The server
+*also* needs to install them in `server/src/wasmRuntime.ts`
+`loadServerSim()`. If either host skips the install, its TS-side
+`lutCos/lutSin/lutAtan2` falls back to libm `Math.cos/sin/atan2`
+which produces ULP-different values from the LUT.
+
+This was a hidden production gap caught in audit (commit
+`6e088d2`). Server install must be unconditional — wasm load
+failures should fall back gracefully but the LUT install is not
+optional whenever wasm successfully loads.
+
+### 5. `Map<>` iteration order is insertion-order; static-array buckets must match it
+
+When porting TS `Map<int, Array>` to Zig `[N][M]u32` static
+buckets, you must insert in the same per-AABB order TS does.
+Otherwise `queryGrid` returns hit indices in different sequences
+and downstream algorithms (e.g. circle-vs-AABB iteration) hit a
+different first-overlap.
+
+Fix in `sim/src/spatial.zig`: iterate AABBs `0..N` in the same
+loop structure as the TS `buildSpatialGrid`. Cross-cell ordering
+is set-equal to TS but may not be strict order-equal — the
+parity test enforces set membership, which is the property that
+matters for broadphase correctness.
+
+### 6. `extern struct` size discipline
+
+Adding fields to an `extern struct` shipped via wasm is an ABI
+change. Existing parity tests have hardcoded `FIELD_OFFSETS`.
+Two safe paths:
+- Bump the struct AND every test that uses it in the same commit
+  (mechanical churn but explicit).
+- Create a `StructV2` next to `Struct` and add new wasm exports
+  alongside the old; deprecate v1 later.
+
+The migration used the second pattern for `step_projectile_v2`
+(commit `be73380`).
+
+### 7. Wasm boundary tax kills primitives, not composites
+
+`rng_next_u32` via wasm: 44 ns vs 13 ns native (3× slower). But
+`stepPlayer` via wasm: 369 ns vs 347 ns native (~6% slower). The
+boundary cost is ~22 ns regardless of function size; small
+primitives spend most of their time in boundary, big composites
+amortise it. **Package multiple ops into single wasm calls
+(e.g. `step_projectile_v2`'s all-pathings dispatch) to amortise.**
+
+See `docs/zig-wasm-perf-baseline.md` for the full numbers.
+
+### 8. The float-from-int conversion gotcha
+
+`@intFromFloat(@floor(...))` returns the integer type you ask
+for; for negative inputs you must use `i64` not `usize` else
+`@intCast` traps. Common pattern in spatial-grid building where
+AABB `x` can be negative.
+
+### 9. Comptime branch quota for LUT generation
+
+Building a 1024-entry LUT via `comptime { var t: [N]f64; for (...) t[i] = @sin(...); break :blk t; }` exceeds the default
+100k branch limit. Use `@setEvalBranchQuota(2_000_000)` at the
+top of the comptime block. For 4096-entry tables you may need
+more.
+
+### 10. Wasm exports default `_pad` fields to `i32 = 0`
+
+Zig comptime padding fields default to undefined unless given a
+default. For `extern struct` returned to TS via DataView, that
+means TS reads garbage in the pad region. Always default-init
+pads: `_pad: i32 = 0`.
+
 ## References
 
 - [Zig Style Guide](https://ziglang.org/documentation/0.15.1/#Style-Guide)
