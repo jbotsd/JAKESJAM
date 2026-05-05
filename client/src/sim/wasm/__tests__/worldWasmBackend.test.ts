@@ -172,13 +172,13 @@ describe("worldWasmBackend.applyWasmWorldStep (Phase J0)", () => {
     expect(next.round.roundIndex).toBe(1);
   });
 
-  test("non-wasm-owned fields pass through unchanged", async () => {
+  test("merged state preserves non-wasm-owned slices like chaosModifierIds + scores", async () => {
     const state = makeFixture();
+    state.chaosModifierIds = ["low-gravity"];
     const next = await applyWasmWorldStep(state, 16.667);
-    // pickups / satellites / players are not yet driven by step_world;
-    // confirm the shim hands them back untouched.
-    expect(next.pickups).toBe(state.pickups);
-    expect(next.satellites).toBe(state.satellites);
-    expect(next.players).toBe(state.players);
+    // chaosModifierIds round-trips via the chaos_mask bitfield.
+    expect(next.chaosModifierIds).toContain("low-gravity");
+    // round.scores stays TS-side until the J shim bridges it.
+    expect(next.round.scores).toBe(state.round.scores);
   });
 });

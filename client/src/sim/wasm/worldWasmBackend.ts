@@ -34,6 +34,7 @@ import {
   unpackWorldState,
   WORLD_STATE_TOTAL_SIZE,
   type UnpackedWorldState,
+  type WasmSimEvent,
 } from "./worldStateBridge.js";
 
 type WorldExports = {
@@ -99,10 +100,14 @@ export async function applyWasmWorldStep(
   ).slice();
   const unpacked: UnpackedWorldState = unpackWorldState(back);
 
-  // Merge the wasm-owned fields back into the TS-shaped state. The
-  // shim only writes fields that step_world actually touches today;
-  // everything else passes through untouched.
-  const merged: WorldState = {
+  return mergeUnpacked(state, unpacked);
+}
+
+function mergeUnpacked(
+  state: WorldState,
+  unpacked: UnpackedWorldState,
+): WorldState {
+  return {
     ...state,
     tick: unpacked.tick,
     rngState: unpacked.rngState,
@@ -112,11 +117,40 @@ export async function applyWasmWorldStep(
       countdownRemainingMs: unpacked.round.countdownRemainingMs,
       roundIndex: unpacked.round.roundIndex,
     },
+    players: unpacked.players,
     firePatches: unpacked.firePatches,
     destructibles: unpacked.destructibles,
     projectiles: unpacked.projectiles,
+    satellites: unpacked.satellites,
+    pickups: unpacked.pickups,
   };
-  return merged;
+}
+
+/**
+ * Variant returning the wasm-emitted SimEvents alongside the
+ * merged state. Callers drain `events` for UI / audio / VFX
+ * dispatch (round-end banner, hit confirms, kill stack, etc).
+ */
+export async function applyWasmWorldStepFull(
+  state: WorldState,
+  dt_ms: number,
+): Promise<{ state: WorldState; events: WasmSimEvent[] }> {
+  const { sim, ex } = await ensureSim();
+  const buf = packWorldState(state);
+  const heap = new Uint8Array(ex.memory.buffer);
+  heap.set(buf, sim.statePtr);
+  const rc = ex.step_world(sim.statePtr, dt_ms);
+  if (rc !== 0) throw new Error(`[wasm-world] step_world returned ${rc}`);
+  const back = new Uint8Array(
+    ex.memory.buffer,
+    sim.statePtr,
+    WORLD_STATE_TOTAL_SIZE,
+  ).slice();
+  const unpacked = unpackWorldState(back);
+  return {
+    state: mergeUnpacked(state, unpacked),
+    events: unpacked.events,
+  };
 }
 
 /**
@@ -177,20 +211,7 @@ export function applyWasmWorldStepSync(
     WORLD_STATE_TOTAL_SIZE,
   ).slice();
   const unpacked: UnpackedWorldState = unpackWorldState(back);
-  return {
-    ...state,
-    tick: unpacked.tick,
-    rngState: unpacked.rngState,
-    round: {
-      ...state.round,
-      phase: unpacked.round.phase,
-      countdownRemainingMs: unpacked.round.countdownRemainingMs,
-      roundIndex: unpacked.round.roundIndex,
-    },
-    firePatches: unpacked.firePatches,
-    destructibles: unpacked.destructibles,
-    projectiles: unpacked.projectiles,
-  };
+  return mergeUnpacked(state, unpacked);
 }
 
 /**
