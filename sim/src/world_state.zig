@@ -27,6 +27,7 @@ const std = @import("std");
 
 pub const MAX_PLAYERS: usize = 16;
 pub const MAX_STATICS: usize = 256;
+pub const MAX_EVENTS_PER_TICK: usize = 64;
 pub const MAX_PROJECTILES: usize = 256;
 pub const MAX_SATELLITES: usize = 32;
 pub const MAX_DESTRUCTIBLES: usize = 64;
@@ -347,6 +348,35 @@ pub const PlayerMovementMemory = extern struct {
     _pad: [4]u8 = .{ 0, 0, 0, 0 },
 };
 
+/// SimEvent kind tag (Phase I18). Mirrors the discriminated
+/// `SimEvent` union in client/src/sim/types.ts but flat: each
+/// event carries an i32 tag + 4 generic numeric payload slots
+/// (player_idx_a, player_idx_b, entity_id, scalar) which the
+/// caller decodes per kind.
+pub const SimEventKind = enum(u32) {
+    none = 0,
+    shot_fired = 1,
+    hit_confirmed = 2,
+    destructible_broken = 3,
+    pickup_taken = 4,
+    round_end = 5,
+    player_killed = 6,
+    parry_deflected = 7,
+    shield_popped = 8,
+    explosion = 9,
+    fire_hit = 10,
+};
+
+pub const SimEvent = extern struct {
+    kind: u32,
+    player_idx_a: i32,
+    player_idx_b: i32,
+    entity_id: u32,
+    scalar: f64,
+    x: f64,
+    y: f64,
+};
+
 /// Mirrors `PickupEntity`.
 pub const PickupEntity = extern struct {
     x: f64,
@@ -447,6 +477,14 @@ pub const WorldState = extern struct {
     /// pass freely from below).
     one_way: [MAX_STATICS]u8,
     _pad_after_one_way: [4]u8 = .{ 0, 0, 0, 0 },
+
+    /// Per-tick events buffer (I18). step_world resets event_count
+    /// to 0 at the start of every tick and pushes events as it
+    /// runs. The host drains this by reading
+    /// events[0..event_count] after each step_world call.
+    event_count: u32,
+    _pad_after_event_count: [4]u8 = .{ 0, 0, 0, 0 },
+    events: [MAX_EVENTS_PER_TICK]SimEvent,
 };
 
 // -----------------------------------------------------------------
@@ -466,6 +504,7 @@ comptime {
     std.debug.assert(@sizeOf(FireEntity) == 88);
     std.debug.assert(@sizeOf(PickupEntity) == 64);
     std.debug.assert(@sizeOf(PlayerMovementMemory) == 24);
+    std.debug.assert(@sizeOf(SimEvent) == 40);
 }
 
 // -----------------------------------------------------------------
@@ -537,4 +576,12 @@ pub export fn world_state_max_pickups() u32 {
 
 pub export fn world_state_max_statics() u32 {
     return @intCast(MAX_STATICS);
+}
+
+pub export fn world_state_max_events_per_tick() u32 {
+    return @intCast(MAX_EVENTS_PER_TICK);
+}
+
+pub export fn sizeof_sim_event() u32 {
+    return @intCast(@sizeOf(SimEvent));
 }

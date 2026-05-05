@@ -94,7 +94,10 @@ export const WORLD_STATE_TOTAL_SIZE =
   ARRAY_PREAMBLE +
   MAX_STATICS * AABB_SIZE +
   MAX_STATICS +
-  8;
+  8 +
+  // I18 — events buffer: count + 4 pad + N×SimEvent.
+  ARRAY_PREAMBLE +
+  64 * 40;
 
 // -----------------------------------------------------------------
 // Enum tables. Order MUST match the enum(u8) declarations in

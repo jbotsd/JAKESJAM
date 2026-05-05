@@ -69,7 +69,33 @@ fn detectRoundWinner(state: *const world_state.WorldState) i32 {
     return -1;
 }
 
+/// Push an event into state.events[event_count++]. Drops silently
+/// when the buffer is full (caller should drain every tick).
+fn emitEvent(
+    state: *world_state.WorldState,
+    kind: world_state.SimEventKind,
+    a: i32,
+    b: i32,
+    eid: u32,
+    scalar: f64,
+    x: f64,
+    y: f64,
+) void {
+    if (state.event_count >= world_state.MAX_EVENTS_PER_TICK) return;
+    state.events[state.event_count] = .{
+        .kind = @intFromEnum(kind),
+        .player_idx_a = a,
+        .player_idx_b = b,
+        .entity_id = eid,
+        .scalar = scalar,
+        .x = x,
+        .y = y,
+    };
+    state.event_count += 1;
+}
+
 pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
+    state.event_count = 0;
     state.header.tick += 1;
 
     // 0. Resolve the chaos profile for this tick. Today the
@@ -91,6 +117,16 @@ pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
     {
         const idx: u32 = @intCast(winner_idx);
         state.players[idx].score += 1;
+        emitEvent(
+            state,
+            .round_end,
+            winner_idx,
+            -1,
+            0,
+            @floatFromInt(state.players[idx].score),
+            0,
+            0,
+        );
         // Match-end check (I9): if this player hit target_score,
         // mark match winner. orchestrator stops advancing past
         // round_over once match_winner_idx is set.
@@ -232,6 +268,18 @@ pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
             proj_ptr.lifetime_ms = 0;
             // Explosive AOE on break (I12): radial damage to
             // every alive non-owner player within EXPLOSION_RADIUS.
+            if (r == .broken) {
+                emitEvent(
+                    state,
+                    .destructible_broken,
+                    -1,
+                    -1,
+                    dest_ptr.id,
+                    0,
+                    dest_ptr.x,
+                    dest_ptr.y,
+                );
+            }
             if (r == .broken and (dest_ptr.flags & 1) != 0) {
                 var ex_p: u32 = 0;
                 while (ex_p < state.player_count) : (ex_p += 1) {
@@ -286,9 +334,29 @@ pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
             const dy = proj_ptr.y - closest_y;
             if (dx * dx + dy * dy <= proj_ptr.radius * proj_ptr.radius) {
                 state.players[ph2].health -= proj_ptr.damage;
+                emitEvent(
+                    state,
+                    .hit_confirmed,
+                    @intCast(ph2),
+                    -1,
+                    proj_ptr.id,
+                    proj_ptr.damage,
+                    state.players[ph2].x,
+                    state.players[ph2].y,
+                );
                 if (state.players[ph2].health <= 0) {
                     state.players[ph2].health = 0;
                     state.players[ph2].flags.alive = false;
+                    emitEvent(
+                        state,
+                        .player_killed,
+                        @intCast(ph2),
+                        -1,
+                        proj_ptr.id,
+                        0,
+                        state.players[ph2].x,
+                        state.players[ph2].y,
+                    );
                 }
                 // Pierce-chain: decrement and survive; otherwise expire.
                 if (proj_ptr.impact == .pierce_chain and
@@ -439,6 +507,16 @@ pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
                         // event externally; no inline effect.
                     },
                 }
+                emitEvent(
+                    state,
+                    .pickup_taken,
+                    @intCast(pp),
+                    -1,
+                    pickup_ptr.id,
+                    @floatFromInt(@intFromEnum(pickup_ptr.kind)),
+                    pickup_ptr.x,
+                    pickup_ptr.y,
+                );
                 pickup_ptr.flags &= ~@as(u32, 1); // deactivate
                 break;
             }

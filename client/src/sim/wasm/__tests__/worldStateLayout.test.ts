@@ -72,6 +72,12 @@ describe("WorldState extern struct layout (Phase G1c)", () => {
     const maxStatics = (
       ex as unknown as { world_state_max_statics: () => number }
     ).world_state_max_statics();
+    const maxEvents = (
+      ex as unknown as { world_state_max_events_per_tick: () => number }
+    ).world_state_max_events_per_tick();
+    const sizeofEvent = (
+      ex as unknown as { sizeof_sim_event: () => number }
+    ).sizeof_sim_event();
     const expected =
       ex.sizeof_world_state_header() +
       (ex.world_state_max_players() * ex.sizeof_player_entity() + 8) +
@@ -85,7 +91,10 @@ describe("WorldState extern struct layout (Phase G1c)", () => {
       8 +
       maxStatics * 32 +
       maxStatics +
-      8;
+      8 +
+      // I18 events buffer: 8 preamble + M×SimEvent.
+      8 +
+      maxEvents * sizeofEvent;
     expect(ex.sizeof_world_state()).toBe(expected);
   });
 });
