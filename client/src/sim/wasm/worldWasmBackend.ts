@@ -147,7 +147,7 @@ function mergeUnpacked(
 export async function applyWasmWorldStepFull(
   state: WorldState,
   dt_ms: number,
-): Promise<{ state: WorldState; events: WasmSimEvent[] }> {
+): Promise<{ state: WorldState; events: WasmSimEvent[]; matchComplete: boolean }> {
   const { sim, ex } = await ensureSim();
   const buf = packWorldState(state);
   const heap = new Uint8Array(ex.memory.buffer);
@@ -166,6 +166,7 @@ export async function applyWasmWorldStepFull(
   return {
     state: mergeUnpacked(state, unpacked),
     events: unpacked.events,
+    matchComplete: unpacked.matchWinnerIdx >= 0,
   };
 }
 
@@ -243,7 +244,7 @@ export function applyWasmWorldStepSync(
 export function applyWasmWorldStepFullSync(
   state: WorldState,
   dt_ms: number,
-): { state: WorldState; events: WasmSimEvent[] } {
+): { state: WorldState; events: WasmSimEvent[]; matchComplete: boolean } {
   if (!cachedSim || !cachedEx) {
     throw new Error(
       "[wasm-world] applyWasmWorldStepFullSync called before preload",
@@ -266,6 +267,7 @@ export function applyWasmWorldStepFullSync(
   return {
     state: mergeUnpacked(state, unpacked),
     events: unpacked.events,
+    matchComplete: unpacked.matchWinnerIdx >= 0,
   };
 }
 

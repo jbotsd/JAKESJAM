@@ -1113,7 +1113,7 @@ function maybeWasmActual(
     applyWasmWorldStepFullSync(
       s: WorldState,
       dt: number,
-    ): { state: WorldState; events: WasmEvent[] };
+    ): { state: WorldState; events: WasmEvent[]; matchComplete: boolean };
   };
   const wb = (globalThis as { __jakesjam_wasm_backend__?: WB })
     .__jakesjam_wasm_backend__;
@@ -1123,7 +1123,7 @@ function maybeWasmActual(
     return {
       state: result.state,
       events: convertWasmEventsToTs(result.events, result.state),
-      matchComplete: false,
+      matchComplete: result.matchComplete,
     };
   } catch (err) {
     console.error("[wasm-world=2] step_world threw — falling back to TS", err);

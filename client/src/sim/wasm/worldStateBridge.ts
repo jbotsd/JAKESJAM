@@ -1215,6 +1215,8 @@ export type UnpackedWorldState = {
   rngState: number;
   round: Pick<RoundState, "phase" | "countdownRemainingMs" | "roundIndex">;
   scores: Record<string, number>;
+  targetScore: number;
+  matchWinnerIdx: number; // -1 = no winner
   chaosModifierIds?: string[];
   fireHazardTimerMs?: number;
   events: WasmSimEvent[];
@@ -1244,7 +1246,11 @@ export function unpackWorldState(buf: Uint8Array): UnpackedWorldState {
   off += 4;
   const roundIndex = view.getUint32(off, true);
   off += 4;
-  off += 4 + 4; // target_score + match_winner_idx (I9)
+  // target_score (I9), match_winner_idx (I9)
+  const targetScore = view.getUint32(off, true);
+  off += 4;
+  const matchWinnerIdx = view.getInt32(off, true);
+  off += 4;
   const countdownRemainingMs = view.getFloat64(off, true);
   off += 8;
 
@@ -1382,6 +1388,8 @@ export function unpackWorldState(buf: Uint8Array): UnpackedWorldState {
     rngState,
     round: { phase, countdownRemainingMs, roundIndex },
     scores,
+    targetScore,
+    matchWinnerIdx,
     players,
     projectiles,
     satellites,
