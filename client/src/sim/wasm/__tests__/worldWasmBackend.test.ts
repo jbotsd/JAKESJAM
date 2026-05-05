@@ -122,6 +122,27 @@ function makeFixture(): WorldState {
   };
 }
 
+describe("worldWasmBackend.applyWasmWorldStepSync (Phase J0b)", () => {
+  test("after preload, sync variant produces same result as async", async () => {
+    const { preloadWasmWorldSim, applyWasmWorldStepSync, isWasmWorldReady } =
+      await import("../worldWasmBackend");
+    const ok = await preloadWasmWorldSim();
+    expect(ok).toBe(true);
+    expect(isWasmWorldReady()).toBe(true);
+
+    const stateAsync = makeFixture();
+    const stateSync = makeFixture();
+    const nextSync = applyWasmWorldStepSync(stateSync, 16.667);
+    const { applyWasmWorldStep } = await import("../worldWasmBackend");
+    const nextAsync = await applyWasmWorldStep(stateAsync, 16.667);
+
+    expect(nextSync.tick).toBe(nextAsync.tick);
+    const dSync = nextSync.destructibles[EntityId(101)]!;
+    const dAsync = nextAsync.destructibles[EntityId(101)]!;
+    expect(dSync.health).toBe(dAsync.health);
+  });
+});
+
 describe("worldWasmBackend.applyWasmWorldStep (Phase J0)", () => {
   test("round-trips a state through step_world; tick advances", async () => {
     const state = makeFixture();

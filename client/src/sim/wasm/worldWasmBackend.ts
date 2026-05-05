@@ -137,6 +137,82 @@ export function isWasmWorldEnabled(): boolean {
   return false;
 }
 
+/**
+ * Sync variant. Requires `preloadWasmWorldSim()` to have completed
+ * already — otherwise throws. Use from inside the netcode loop's
+ * sync `stepWithRuntime` once the loop has confirmed the boot
+ * preload finished.
+ */
+export function applyWasmWorldStepSync(
+  state: WorldState,
+  dt_ms: number,
+): WorldState {
+  if (!cachedSim || !cachedEx) {
+    throw new Error(
+      "[wasm-world] applyWasmWorldStepSync called before preload — call preloadWasmWorldSim() at boot first",
+    );
+  }
+  const sim = cachedSim;
+  const ex = cachedEx;
+  const buf = packWorldState(state);
+  if (buf.byteLength !== WORLD_STATE_TOTAL_SIZE) {
+    throw new Error(
+      `[wasm-world] packed buffer size mismatch: ${buf.byteLength} vs ${WORLD_STATE_TOTAL_SIZE}`,
+    );
+  }
+  if (sim.stateLen < WORLD_STATE_TOTAL_SIZE) {
+    throw new Error(
+      `[wasm-world] sim state buffer ${sim.stateLen}B too small for WorldState ${WORLD_STATE_TOTAL_SIZE}B`,
+    );
+  }
+  const heap = new Uint8Array(ex.memory.buffer);
+  heap.set(buf, sim.statePtr);
+  const rc = ex.step_world(sim.statePtr, dt_ms);
+  if (rc !== 0) {
+    throw new Error(`[wasm-world] step_world returned ${rc}`);
+  }
+  const back = new Uint8Array(
+    ex.memory.buffer,
+    sim.statePtr,
+    WORLD_STATE_TOTAL_SIZE,
+  ).slice();
+  const unpacked: UnpackedWorldState = unpackWorldState(back);
+  return {
+    ...state,
+    tick: unpacked.tick,
+    rngState: unpacked.rngState,
+    round: {
+      ...state.round,
+      phase: unpacked.round.phase,
+      countdownRemainingMs: unpacked.round.countdownRemainingMs,
+      roundIndex: unpacked.round.roundIndex,
+    },
+    firePatches: unpacked.firePatches,
+    destructibles: unpacked.destructibles,
+    projectiles: unpacked.projectiles,
+  };
+}
+
+/**
+ * Eagerly load + cache the wasm sim so the sync variant works.
+ * Idempotent. Returns true if the sim is ready, false if it
+ * couldn't load this boot.
+ */
+export async function preloadWasmWorldSim(): Promise<boolean> {
+  try {
+    await ensureSim();
+    return true;
+  } catch (err) {
+    console.error("[wasm-world] preload failed:", err);
+    return false;
+  }
+}
+
+/** True iff the sync variant can be called without throwing. */
+export function isWasmWorldReady(): boolean {
+  return cachedSim != null && cachedEx != null;
+}
+
 /** Boot-time warning if the user opted in but wasm fails to load. */
 export async function applyWasmWorldFlag(): Promise<void> {
   if (!isWasmWorldEnabled()) return;

@@ -13,7 +13,10 @@ import {
   startWasmCanary,
 } from "./sim/wasm/runtime";
 import { installWindowProbe } from "./debug/wasmStateProbe";
-import { applyWasmWorldFlag } from "./sim/wasm/worldWasmBackend";
+import {
+  applyWasmWorldFlag,
+  preloadWasmWorldSim,
+} from "./sim/wasm/worldWasmBackend";
 
 // Phase F3 Zig→WASM substrate. RNG, collision, and player physics
 // run in Zig wasm by DEFAULT. Boot-load the wasm sim ASAP so it's
@@ -39,6 +42,13 @@ installWindowProbe();
 // projectile lifecycle, and projectile×destructible HP each tick.
 // Default OFF until full parity lands.
 void applyWasmWorldFlag();
+
+// Eagerly preload the wasm orchestrator's sim instance so the
+// sync variant `applyWasmWorldStepSync` is callable from the
+// netcode loop's sync `stepWithRuntime` path. Fire-and-forget —
+// the netcode loop falls back to the async variant if preload
+// hasn't finished by the first sim tick.
+void preloadWasmWorldSim();
 
 const app = document.querySelector<HTMLDivElement>("#app");
 
