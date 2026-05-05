@@ -28,8 +28,12 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 concurrency:
+  # Don't cancel in-progress runs — Playwright tests are slow and
+  # surfacing the FIRST run's results matters more than chasing
+  # the latest commit. Multiple concurrent runs are fine; GitHub
+  # Actions queues them.
   group: qa-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   # ──────────────────────────────────────────────────────────
