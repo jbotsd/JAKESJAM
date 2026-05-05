@@ -56,6 +56,10 @@ const DESTRUCTIBLE_ENTITY_SIZE = 64;
 const FIRE_ENTITY_SIZE = 88;
 const PICKUP_ENTITY_SIZE = 64;
 const PLAYER_MOVEMENT_MEMORY_SIZE = 24;
+// I-final — ResolvedFireConfig parallel array (per-player fire
+// build resolved by the host from createWeaponBuild). 14 × f64 +
+// 4 × u32 + 4 × u8(enum) + 1 × u8(valid) + 3 × u8(pad) = 136.
+export const RESOLVED_FIRE_CONFIG_SIZE = 136;
 
 const MAX_PLAYERS = 16;
 const MAX_STATICS = 256;
@@ -89,6 +93,9 @@ export const WORLD_STATE_TOTAL_SIZE =
   // I14 — PlayerMovementMemory parallel array (no preamble; sized
   // by MAX_PLAYERS, indexed parallel to the players array).
   MAX_PLAYERS * PLAYER_MOVEMENT_MEMORY_SIZE +
+  // I-final — player_fire_config parallel array (no preamble;
+  // host writes per tick from createWeaponBuild).
+  MAX_PLAYERS * RESOLVED_FIRE_CONFIG_SIZE +
   // I15 — static AABB cache: 4 count + 4 pad + N×AABB +
   // N×u8 one_way + 4 tail pad.
   ARRAY_PREAMBLE +
@@ -1353,6 +1360,10 @@ export function unpackWorldState(buf: Uint8Array): UnpackedWorldState {
   // I14 player_movement parallel array — 16 × 24 bytes. Skipped
   // for now (host doesn't consume; lives in wasm linear memory).
   off += MAX_PLAYERS * PLAYER_MOVEMENT_MEMORY_SIZE;
+
+  // I-final player_fire_config parallel array — 16 × 136 bytes.
+  // Host-writable; no read-back needed (sim writes nothing here).
+  off += MAX_PLAYERS * RESOLVED_FIRE_CONFIG_SIZE;
 
   // I15 static cache: 4 count + 4 pad + N×AABB + N×u8 + 4 tail.
   off += 8 + MAX_STATICS * AABB_SIZE + MAX_STATICS + 4;

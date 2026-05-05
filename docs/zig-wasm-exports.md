@@ -287,6 +287,8 @@ wire contract — bumping any number is a protocol-version change.
 | `sizeof_fire_entity` | 88 | `worldStateBridge.test.ts` (G2) |
 | `sizeof_pickup_entity` | 64 | `worldStateBridge.test.ts` (G2) |
 | `sizeof_player_movement_memory` | 24 | `worldStateLayout.test.ts` (I14) |
+| `sizeof_resolved_fire_config` | 136 | `worldStateLayout.test.ts` (I-final) |
+| `offset_player_fire_config` | byte offset | host-side fire config write (I-final) |
 | `world_state_max_statics` | 256 | `worldStateLayout.test.ts` (I15) |
 | `world_state_max_events_per_tick` | 64 | `worldStateLayout.test.ts` (I18) |
 | `sizeof_sim_event` | 40 | `worldStateLayout.test.ts` (I18) |

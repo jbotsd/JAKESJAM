@@ -69,6 +69,9 @@ describe("WorldState extern struct layout (Phase G1c)", () => {
     const sizeofMovement = (
       ex as unknown as { sizeof_player_movement_memory: () => number }
     ).sizeof_player_movement_memory();
+    const sizeofFireConfig = (
+      ex as unknown as { sizeof_resolved_fire_config: () => number }
+    ).sizeof_resolved_fire_config();
     const maxStatics = (
       ex as unknown as { world_state_max_statics: () => number }
     ).world_state_max_statics();
@@ -87,6 +90,8 @@ describe("WorldState extern struct layout (Phase G1c)", () => {
       (ex.world_state_max_fire() * ex.sizeof_fire_entity() + 8) +
       (ex.world_state_max_pickups() * ex.sizeof_pickup_entity() + 8) +
       ex.world_state_max_players() * sizeofMovement +
+      // I-final player_fire_config parallel array (no preamble).
+      ex.world_state_max_players() * sizeofFireConfig +
       // I15 static cache: 8 preamble + N×32 AABB + N×1 one_way + 4 tail.
       8 +
       maxStatics * 32 +

@@ -348,6 +348,43 @@ pub const PlayerMovementMemory = extern struct {
     _pad: [4]u8 = .{ 0, 0, 0, 0 },
 };
 
+/// Resolved per-player fire config — what `step_world` reads
+/// when spawning projectiles instead of the global weapon_base.
+/// Host-side TS computes this from `createWeaponBuild` (cards
+/// applied) once per tick + patches it into wasm memory.
+///
+/// Without this, every player fires the bare starter pistol
+/// regardless of their card hand → multi-shot doesn't work,
+/// damage cards do nothing, build variety is invisible.
+pub const ResolvedFireConfig = extern struct {
+    damage: f64,
+    fire_rate: f64, // shots/sec
+    projectile_speed: f64,
+    projectile_lifetime_seconds: f64,
+    spread_radians: f64,
+    range_px: f64,
+    homing_strength: f64,
+    acceleration_multiplier: f64,
+    gravity_scale: f64,
+    slow_multiplier: f64,
+    impact_radius_px: f64,
+    size_multiplier: f64,
+    speed_multiplier: f64,
+    lifetime_multiplier: f64,
+    projectile_count: u32,
+    bounces: u32,
+    pierce_count: u32,
+    split_count: u32,
+    shape: ProjectileShape,
+    element: ElementType,
+    pathing: ProjectilePathing,
+    impact: ProjectileImpact,
+    /// 1 = config valid + use this; 0 = fall back to starter
+    /// pistol base from data/weapons.zig.
+    valid: u8,
+    _pad: [3]u8 = .{ 0, 0, 0 },
+};
+
 /// SimEvent kind tag (Phase I18). Mirrors the discriminated
 /// `SimEvent` union in client/src/sim/types.ts but flat: each
 /// event carries an i32 tag + 4 generic numeric payload slots
@@ -465,6 +502,12 @@ pub const WorldState = extern struct {
     /// players[N]. Used by player.stepPlayer (Phase I14+).
     player_movement: [MAX_PLAYERS]PlayerMovementMemory,
 
+    /// Parallel to `players[]` — resolved fire config from
+    /// applied cards. Host writes this each tick from
+    /// `createWeaponBuild`. Without `valid=1`, step_world
+    /// falls back to the starter pistol base.
+    player_fire_config: [MAX_PLAYERS]ResolvedFireConfig,
+
     /// Static-AABB cache (I15). Caller bakes the map's platforms
     /// into this array before the first step_world call; static
     /// across the match. Used by player.stepPlayer +
@@ -505,6 +548,7 @@ comptime {
     std.debug.assert(@sizeOf(PickupEntity) == 64);
     std.debug.assert(@sizeOf(PlayerMovementMemory) == 24);
     std.debug.assert(@sizeOf(SimEvent) == 40);
+    std.debug.assert(@sizeOf(ResolvedFireConfig) == 136);
 }
 
 // -----------------------------------------------------------------
@@ -548,6 +592,17 @@ pub export fn sizeof_pickup_entity() u32 {
 
 pub export fn sizeof_player_movement_memory() u32 {
     return @intCast(@sizeOf(PlayerMovementMemory));
+}
+
+pub export fn sizeof_resolved_fire_config() u32 {
+    return @intCast(@sizeOf(ResolvedFireConfig));
+}
+
+/// Byte offset of `player_fire_config[0]` from the start of
+/// `WorldState`. Host writes resolved fire configs directly into
+/// wasm memory at this offset before each step_world call.
+pub export fn offset_player_fire_config() u32 {
+    return @intCast(@offsetOf(WorldState, "player_fire_config"));
 }
 
 pub export fn world_state_max_players() u32 {
