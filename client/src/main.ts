@@ -183,6 +183,10 @@ app.innerHTML = `
 `;
 
 const game = new Phaser.Game(gameConfig);
+// Diagnostic: expose the Phaser game on window so e2e specs can walk
+// the scene's display list to find render-time leaks. No production
+// behaviour depends on this — pure introspection hook.
+(globalThis as { __jakesjam_game__?: Phaser.Game }).__jakesjam_game__ = game;
 const lobbyController = new LobbyController(app);
 const splash = queryRequired<HTMLElement>("[data-splash]");
 const lobbyPanel = queryRequired<HTMLElement>("[data-lobby-panel]");
