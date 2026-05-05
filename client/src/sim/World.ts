@@ -1099,26 +1099,125 @@ function maybeWasmActual(
     return null;
   }
   if (mode !== "2") return null;
-  // Lazy-load synchronously via the cached module. Module init
-  // happens once on first call; subsequent calls are sync.
+  type WasmEvent = {
+    kind: number;
+    playerIdxA: number;
+    playerIdxB: number;
+    entityId: number;
+    scalar: number;
+    x: number;
+    y: number;
+  };
   type WB = {
     isWasmWorldReady(): boolean;
-    applyWasmWorldStepSync(s: WorldState, dt: number): WorldState;
+    applyWasmWorldStepFullSync(
+      s: WorldState,
+      dt: number,
+    ): { state: WorldState; events: WasmEvent[] };
   };
   const wb = (globalThis as { __jakesjam_wasm_backend__?: WB })
     .__jakesjam_wasm_backend__;
   if (!wb || !wb.isWasmWorldReady()) return null;
   try {
-    const next = wb.applyWasmWorldStepSync(inputState, dtMs);
+    const result = wb.applyWasmWorldStepFullSync(inputState, dtMs);
     return {
-      state: next,
-      events: [],
+      state: result.state,
+      events: convertWasmEventsToTs(result.events, result.state),
       matchComplete: false,
     };
   } catch (err) {
     console.error("[wasm-world=2] step_world threw — falling back to TS", err);
     return null;
   }
+}
+
+/** Translate wasm-emitted SimEvents into the TS SimEvent shape. */
+function convertWasmEventsToTs(
+  wasmEvents: ReadonlyArray<{
+    kind: number;
+    playerIdxA: number;
+    playerIdxB: number;
+    entityId: number;
+    scalar: number;
+    x: number;
+    y: number;
+  }>,
+  state: WorldState,
+): SimEvent[] {
+  const out: SimEvent[] = [];
+  // Sort player ids deterministically so player_idx maps to playerId
+  // the same way wasm packs them (Object.keys.sort()).
+  const playerIds = Object.keys(state.players).sort();
+  const pidByIdx = (idx: number): PlayerId | null =>
+    idx >= 0 && idx < playerIds.length
+      ? PlayerId(playerIds[idx]!)
+      : null;
+  for (const e of wasmEvents) {
+    const victim = pidByIdx(e.playerIdxA);
+    switch (e.kind) {
+      case 1: // shot_fired
+        if (victim)
+          out.push({ t: "shot-fired", playerId: victim, x: e.x, y: e.y });
+        break;
+      case 2: // hit_confirmed
+        if (victim)
+          out.push({
+            t: "hit-confirmed",
+            victimId: victim,
+            damage: e.scalar,
+            sourceProjectileId: null,
+          });
+        break;
+      case 3: // destructible_broken
+        out.push({
+          t: "destructible-broken",
+          entityId: EntityId(e.entityId),
+          x: e.x,
+          y: e.y,
+        });
+        break;
+      case 4: // pickup_taken
+        if (victim)
+          out.push({
+            t: "pickup-taken",
+            entityId: EntityId(e.entityId),
+            playerId: victim,
+          });
+        break;
+      case 5: // round_end — winner_idx in playerIdxA
+        out.push({ t: "round-end", winnerId: victim });
+        break;
+      case 6: // player_killed
+        if (victim)
+          out.push({
+            t: "player-killed",
+            victimId: victim,
+            killerId: null,
+            cause: "projectile",
+          });
+        break;
+      case 7: // parry_deflected
+        if (victim)
+          out.push({
+            t: "parry-deflected",
+            playerId: victim,
+            projectileId: null,
+          });
+        break;
+      case 8: // shield_popped
+        if (victim)
+          out.push({
+            t: "shield-popped",
+            playerId: victim,
+            remainingCharge: 0,
+          });
+        break;
+      // 9 explosion / 10 fire_hit have no direct TS SimEvent kind;
+      // skip for now (UI hooks already react to hit-confirmed +
+      // destructible-broken).
+    }
+  }
+  return out;
 }
 
 let monitorActive = false;

@@ -235,6 +235,41 @@ export function applyWasmWorldStepSync(
 }
 
 /**
+ * Sync variant of applyWasmWorldStepFull — returns merged state
+ * AND the wasm-emitted SimEvents in one call. Used by the J1-actual
+ * path in World.ts so the netcode loop can emit hit-confirms +
+ * round-end + pickup-taken events to the renderer.
+ */
+export function applyWasmWorldStepFullSync(
+  state: WorldState,
+  dt_ms: number,
+): { state: WorldState; events: WasmSimEvent[] } {
+  if (!cachedSim || !cachedEx) {
+    throw new Error(
+      "[wasm-world] applyWasmWorldStepFullSync called before preload",
+    );
+  }
+  const sim = cachedSim;
+  const ex = cachedEx;
+  const buf = packWorldState(state);
+  const heap = new Uint8Array(ex.memory.buffer);
+  heap.set(buf, sim.statePtr);
+  writeStaticsIntoMemory();
+  const rc = ex.step_world(sim.statePtr, dt_ms);
+  if (rc !== 0) throw new Error(`[wasm-world] step_world returned ${rc}`);
+  const back = new Uint8Array(
+    ex.memory.buffer,
+    sim.statePtr,
+    WORLD_STATE_TOTAL_SIZE,
+  ).slice();
+  const unpacked = unpackWorldState(back);
+  return {
+    state: mergeUnpacked(state, unpacked),
+    events: unpacked.events,
+  };
+}
+
+/**
  * Eagerly load + cache the wasm sim so the sync variant works.
  * Idempotent. Returns true if the sim is ready, false if it
  * couldn't load this boot.

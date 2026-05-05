@@ -15,6 +15,7 @@ import {
 import { installWindowProbe } from "./debug/wasmStateProbe";
 import {
   applyWasmWorldFlag,
+  applyWasmWorldStepFullSync,
   applyWasmWorldStepSync,
   isWasmWorldReady,
   preloadWasmWorldSim,
@@ -58,11 +59,13 @@ void preloadWasmWorldSim().then(() => {
   type WB = {
     isWasmWorldReady(): boolean;
     applyWasmWorldStepSync: typeof applyWasmWorldStepSync;
+    applyWasmWorldStepFullSync: typeof applyWasmWorldStepFullSync;
     setWorldStatics: typeof setWorldStaticsImport;
   };
   (globalThis as { __jakesjam_wasm_backend__?: WB }).__jakesjam_wasm_backend__ = {
     isWasmWorldReady,
     applyWasmWorldStepSync,
+    applyWasmWorldStepFullSync,
     setWorldStatics: setWorldStaticsImport,
   };
 });
