@@ -58,6 +58,8 @@ const PICKUP_ENTITY_SIZE = 64;
 const PLAYER_MOVEMENT_MEMORY_SIZE = 24;
 
 const MAX_PLAYERS = 16;
+const MAX_STATICS = 256;
+const AABB_SIZE = 32;
 const MAX_PROJECTILES = 256;
 const MAX_SATELLITES = 32;
 const MAX_DESTRUCTIBLES = 64;
@@ -86,7 +88,13 @@ export const WORLD_STATE_TOTAL_SIZE =
   MAX_PICKUPS * PICKUP_ENTITY_SIZE +
   // I14 — PlayerMovementMemory parallel array (no preamble; sized
   // by MAX_PLAYERS, indexed parallel to the players array).
-  MAX_PLAYERS * PLAYER_MOVEMENT_MEMORY_SIZE;
+  MAX_PLAYERS * PLAYER_MOVEMENT_MEMORY_SIZE +
+  // I15 — static AABB cache: count u32 + 4 pad + N×AABB +
+  // N×u8 one_way + 8 tail pad (struct alignment).
+  ARRAY_PREAMBLE +
+  MAX_STATICS * AABB_SIZE +
+  MAX_STATICS +
+  8;
 
 // -----------------------------------------------------------------
 // Enum tables. Order MUST match the enum(u8) declarations in

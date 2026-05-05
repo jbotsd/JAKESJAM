@@ -69,6 +69,9 @@ describe("WorldState extern struct layout (Phase G1c)", () => {
     const sizeofMovement = (
       ex as unknown as { sizeof_player_movement_memory: () => number }
     ).sizeof_player_movement_memory();
+    const maxStatics = (
+      ex as unknown as { world_state_max_statics: () => number }
+    ).world_state_max_statics();
     const expected =
       ex.sizeof_world_state_header() +
       (ex.world_state_max_players() * ex.sizeof_player_entity() + 8) +
@@ -77,7 +80,12 @@ describe("WorldState extern struct layout (Phase G1c)", () => {
       (ex.world_state_max_destructibles() * ex.sizeof_destructible_entity() + 8) +
       (ex.world_state_max_fire() * ex.sizeof_fire_entity() + 8) +
       (ex.world_state_max_pickups() * ex.sizeof_pickup_entity() + 8) +
-      ex.world_state_max_players() * sizeofMovement;
+      ex.world_state_max_players() * sizeofMovement +
+      // I15 static cache: 8 preamble + N×32 AABB + N×1 one_way + 8 tail.
+      8 +
+      maxStatics * 32 +
+      maxStatics +
+      8;
     expect(ex.sizeof_world_state()).toBe(expected);
   });
 });

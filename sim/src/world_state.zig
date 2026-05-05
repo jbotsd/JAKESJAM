@@ -26,6 +26,7 @@
 const std = @import("std");
 
 pub const MAX_PLAYERS: usize = 16;
+pub const MAX_STATICS: usize = 256;
 pub const MAX_PROJECTILES: usize = 256;
 pub const MAX_SATELLITES: usize = 32;
 pub const MAX_DESTRUCTIBLES: usize = 64;
@@ -433,6 +434,19 @@ pub const WorldState = extern struct {
     /// Parallel to `players[]` — index N is movement memory for
     /// players[N]. Used by player.stepPlayer (Phase I14+).
     player_movement: [MAX_PLAYERS]PlayerMovementMemory,
+
+    /// Static-AABB cache (I15). Caller bakes the map's platforms
+    /// into this array before the first step_world call; static
+    /// across the match. Used by player.stepPlayer +
+    /// projectile.stepV2 for terrain collision.
+    static_count: u32,
+    _pad_after_static_count: [4]u8 = .{ 0, 0, 0, 0 },
+    statics: [MAX_STATICS]@import("collision.zig").AABB,
+    /// Parallel to `statics[]` — 1 if the corresponding AABB is a
+    /// one-way platform (player can jump up through it; projectiles
+    /// pass freely from below).
+    one_way: [MAX_STATICS]u8,
+    _pad_after_one_way: [4]u8 = .{ 0, 0, 0, 0 },
 };
 
 // -----------------------------------------------------------------
@@ -519,4 +533,8 @@ pub export fn world_state_max_fire() u32 {
 
 pub export fn world_state_max_pickups() u32 {
     return @intCast(MAX_PICKUPS);
+}
+
+pub export fn world_state_max_statics() u32 {
+    return @intCast(MAX_STATICS);
 }
