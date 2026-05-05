@@ -201,6 +201,17 @@ export.
 | `fire_patch_tick_world(fire, dt) → i32` | tick FireEntity in place; returns alive flag | `fireWorldParity.test.ts` |
 | `fire_patch_hits_player_world(fire, px, py, pw, ph) → i32` | overlap test using FireEntity | `fireWorldParity.test.ts` |
 
+## World (`world.zig`) — Phase I
+
+The orchestrator that drives one tick: ticks fire patches, runs
+projectile pre-step lifecycle, resolves projectile×destructible
+HP application. Score keeping, drafting transitions, projectile
+spawn, satellite owner-lookup land in I2-I4.
+
+| Export | Purpose | Parity test |
+|---|---|---|
+| `step_world(state, dt_ms) → i32` | one full tick of the orchestrator over WorldState | `worldStepParity.test.ts` |
+
 ## Round (`round.zig`) — Phase H7
 
 Tick-driven phase machine. Drafting transitions land in H7b
