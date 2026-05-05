@@ -55,6 +55,7 @@ import {
   InputSeq,
 } from "./types.js";
 import { RoundOrchestrator } from "./RoundOrchestrator.js";
+import { wasmHost } from "./wasm/wasmHost.js";
 import type {
   FireEntity,
   InputBitfield,
@@ -133,52 +134,31 @@ export function createRuntime(map: MapDefinition): WorldRuntime {
 }
 
 /**
- * Sync the static-AABB cache into the wasm orchestrator. Called
- * by the netcode loop / scene boot once the map is known so
- * ?wasm-world=2 player physics has terrain. Without this call
- * step_world's stepPlayer sees an empty statics slice and players
- * fall through every platform.
+ * Sync the static-AABB cache into the wasm orchestrator (Phase
+ * A1b: now goes through `WasmHost`). The host owns the
+ * pre-ready buffering; callers can fire this at any tick without
+ * worrying about boot order.
  */
-// Latest map data that needs to be sync'd to the wasm backend. We
-// stash it here because createRuntime can fire BEFORE the wasm
-// backend is exposed on globalThis (preloadWasmWorldSim is async,
-// and the server hello can arrive within the same RAF tick the
-// preload promise is still pending). When that happens the
-// wb?.setWorldStatics?.(...) optional chain silently drops the call,
-// step_world runs with state.static_count = 0, and the player falls
-// through every platform — exactly the symptom user reported on
-// 2026-05-05.
-let pendingMap: MapDefinition | null = null;
-
 export function syncWorldStaticsToWasm(map: MapDefinition): void {
-  pendingMap = map;
-  flushPendingStaticsToWasm();
+  const aabbs = map.platforms.map(platformToAABB);
+  // Platform kind: 'floor' | 'wall' | 'platform'. Only 'platform'
+  // is one-way (jump-up-through). 'floor' + 'wall' are solid.
+  const oneWay = map.platforms.map((p) => (p.kind === "platform" ? 1 : 0));
+  wasmHost.setStatics(aabbs, oneWay);
 }
 
 /**
- * Push the most recently set map's statics to the wasm backend.
- * Called from main.ts AFTER preloadWasmWorldSim().then(...) exposes
- * the backend, so any setWorldStatics that landed during the boot
- * race re-fires once the backend is actually callable.
+ * Re-export of `wasmHost.preload().then(...)` flush as a no-op
+ * compat shim. Kept so `main.ts` (which still calls this) compiles
+ * unchanged in A1b; the actual flush happens automatically inside
+ * `wasmHost.setStatics` (it mirrors to the legacy backend, which
+ * publishes once preload completes).
+ *
+ * A2 deletes this function and updates the lone caller.
  */
 export function flushPendingStaticsToWasm(): void {
-  if (!pendingMap) return;
-  const wb = (
-    globalThis as {
-      __jakesjam_wasm_backend__?: {
-        setWorldStatics?: (
-          aabbs: Array<{ x: number; y: number; w: number; h: number }>,
-          oneWay: number[],
-        ) => void;
-      };
-    }
-  ).__jakesjam_wasm_backend__;
-  if (!wb?.setWorldStatics) return;
-  const aabbs = pendingMap.platforms.map(platformToAABB);
-  // Platform kind: 'floor' | 'wall' | 'platform'. Only 'platform'
-  // is one-way (jump-up-through). 'floor' + 'wall' are solid.
-  const oneWay = pendingMap.platforms.map((p) => (p.kind === "platform" ? 1 : 0));
-  wb.setWorldStatics(aabbs, oneWay);
+  // `wasmHost.setStatics` already keeps a buffered copy + mirrors
+  // to the legacy `setWorldStatics`. The flush is implicit.
 }
 
 export class World {
@@ -1178,11 +1158,12 @@ function maybeWasmActual(
         aimY: frame.aimY,
       });
     }
-    // The shim writes inputs from this snapshot once it's set on
-    // globalThis. Cleanest API: stash + shim consults during pack.
-    (
-      globalThis as { __jakesjam_wasm_inputs__?: typeof inputsMap }
-    ).__jakesjam_wasm_inputs__ = inputsMap;
+    // Phase A1b: Inputs go through `wasmHost.writeInputs` (which
+    // owns the cache). The legacy `writePlayerInputsFromGlobal`
+    // call inside the wasm shim still reads
+    // `globalThis.__jakesjam_wasm_inputs__`, which `wasmHost`
+    // mirrors for compat — A2 deletes the globalThis read.
+    wasmHost.writeInputs(inputsMap);
     const result = wb.applyWasmWorldStepFullSync(inputState, dtMs);
     return {
       state: result.state,
