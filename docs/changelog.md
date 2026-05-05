@@ -1,5 +1,23 @@
 # JAKESJAM - Changelog
 
+## v0.55 - 2026-05-05
+
+- **`setStepWeaponBackend` + `setStepSatellitesBackend` swap
+  mechanisms wired** (NOOP swaps; default behaviour unchanged).
+  Now every major sim step function has a backend swap seam:
+  `setRngBackend`, `setResolveMoveCachedBackend`,
+  `setStepPlayerBackend`, `setStepProjectileBackend`,
+  `setStepWeaponBackend`, `setStepSatellitesBackend`.
+- weapon.ts and satellite.ts now follow the same pattern:
+  `stepX()` is a thin dispatcher → `stepXBackend ?? stepXNative`.
+  `stepXNative` holds the existing impl (just renamed).
+- New `stepWeaponSatelliteBackendSwap.test.ts` (3 tests, 5 expects)
+  gates the regression class where the swap mechanism subtly
+  diverges or silently no-ops.
+- 335 client / 58 server / 6 native Zig tests, all green.
+
+
+
 ## v0.54 - 2026-05-05
 
 - **`setStepProjectileBackend` swap mechanism wired** (NOOP swap;

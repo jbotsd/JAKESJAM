@@ -87,7 +87,42 @@ export type StepWeaponOptions = {
  * `random-shapes` rerolls each spawned shard's shape from the projectileShapes
  * table using the seeded RNG.
  */
+export type StepWeaponFn = (
+  player: PlayerEntity,
+  fireRequested: boolean,
+  aim: Vec2,
+  dtMs: number,
+  nextEntityId: () => EntityId,
+  options?: StepWeaponOptions,
+) => FireResult;
+
+let stepWeaponBackend: StepWeaponFn | null = null;
+
+/**
+ * Swap the stepWeapon impl. Pass `null` to revert. NOOP today —
+ * the seam exists for future wasm-backed routing of the muzzle/
+ * recoil/cooldown math through Zig. Mirrors the
+ * `setStepProjectileBackend` / `setStepPlayerBackend` pattern.
+ */
+export function setStepWeaponBackend(fn: StepWeaponFn | null): void {
+  stepWeaponBackend = fn;
+}
+
 export function stepWeapon(
+  player: PlayerEntity,
+  fireRequested: boolean,
+  aim: Vec2,
+  dtMs: number,
+  nextEntityId: () => EntityId,
+  options: StepWeaponOptions = {},
+): FireResult {
+  if (stepWeaponBackend !== null) {
+    return stepWeaponBackend(player, fireRequested, aim, dtMs, nextEntityId, options);
+  }
+  return stepWeaponNative(player, fireRequested, aim, dtMs, nextEntityId, options);
+}
+
+function stepWeaponNative(
   player: PlayerEntity,
   fireRequested: boolean,
   aim: Vec2,

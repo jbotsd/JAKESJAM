@@ -56,7 +56,40 @@ export type StepSatellitesResult = {
  * Iteration order is sorted by EntityId ascending to keep behavior
  * deterministic across runtimes.
  */
+export type StepSatellitesFn = (
+  satellites: Record<EntityId, SatelliteEntity>,
+  players: Record<PlayerId, PlayerEntity>,
+  roundPhase: RoundPhase,
+  dtMs: number,
+  nextEntityId: () => EntityId,
+) => StepSatellitesResult;
+
+let stepSatellitesBackend: StepSatellitesFn | null = null;
+
+/**
+ * Swap the stepSatellites impl. Pass `null` to revert. NOOP today;
+ * future wasm-backed routing would use `satellite_tick` for the
+ * per-satellite kinematic step and keep the iteration + projectile
+ * spawn in TS. Mirrors the other set<X>Backend patterns.
+ */
+export function setStepSatellitesBackend(fn: StepSatellitesFn | null): void {
+  stepSatellitesBackend = fn;
+}
+
 export function stepSatellites(
+  satellites: Record<EntityId, SatelliteEntity>,
+  players: Record<PlayerId, PlayerEntity>,
+  roundPhase: RoundPhase,
+  dtMs: number,
+  nextEntityId: () => EntityId,
+): StepSatellitesResult {
+  if (stepSatellitesBackend !== null) {
+    return stepSatellitesBackend(satellites, players, roundPhase, dtMs, nextEntityId);
+  }
+  return stepSatellitesNative(satellites, players, roundPhase, dtMs, nextEntityId);
+}
+
+function stepSatellitesNative(
   satellites: Record<EntityId, SatelliteEntity>,
   players: Record<PlayerId, PlayerEntity>,
   roundPhase: RoundPhase,
