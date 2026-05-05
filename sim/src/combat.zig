@@ -8,9 +8,26 @@
 
 const std = @import("std");
 const trig = @import("trig.zig");
+const world_state = @import("world_state.zig");
 
 const PI: f64 = 3.141592653589793;
 const TWO_PI: f64 = 6.283185307179586;
+
+// Phase H4 — combat orchestration constants. Mirror
+// `client/src/sim/combat.ts` exactly. Bit-exact bumps require
+// parity-test updates on both sides.
+pub const PARRY_ACTIVE_MS: f64 = 420.0;
+pub const PARRY_COOLDOWN_MS_DEFAULT: f64 = 1800.0;
+pub const SHIELD_MAX_CHARGE_DEFAULT: f64 = 100.0;
+pub const SHIELD_DRAIN_PER_SECOND: f64 = 35.0;
+pub const SHIELD_RECHARGE_PER_SECOND: f64 = 14.0;
+pub const SHIELD_HIT_DRAIN_MULTIPLIER: f64 = 1.8;
+
+// Input bit layout — mirrors client/src/net/protocol.ts InputBit.
+const InputBit = struct {
+    pub const ability: u32 = 1 << 7;
+    pub const shield: u32 = 1 << 8;
+};
 
 /// Parry arc — full angular width within which incoming shards
 /// can be deflected. Mirrors `combat.ts` `PARRY_ARC_RADIANS = π/3`.
@@ -80,4 +97,181 @@ pub export fn combat_shield_drain(drain_per_second: f64, dt_ms: f64) f64 {
 
 pub export fn combat_parry_arc_radians() f64 {
     return PARRY_ARC_RADIANS;
+}
+
+// =================================================================
+// Phase H4 — orchestration helpers operating on PlayerEntity from
+// the WorldState extern struct. These are the smallest pieces of
+// the TS combat orchestrator that can be lifted without dragging
+// in the events bus or the projectile array. The Phase I
+// orchestrator wires them into per-tick player iteration.
+
+/// Try to start a parry. Mirrors `tryStartParry` in
+/// client/src/sim/combat.ts. Returns 1 if a parry started this
+/// tick (caller can read the new parryActiveUntilTick /
+/// parryCooldownUntilTick / parryFacing fields), 0 otherwise.
+///
+/// Mutation: when started, sets has_parry_active +
+/// has_parry_cooldown + has_parry_facing flags + the
+/// corresponding tick / facing values.
+pub fn tryStartParry(
+    player: *world_state.PlayerEntity,
+    curr_keys: u32,
+    prev_keys: u32,
+    tick: u32,
+    dt_ms: f64,
+    active_ms: f64,
+    cooldown_ms: f64,
+) bool {
+    if (!player.flags.alive) return false;
+
+    const pressed = (curr_keys & InputBit.ability) != 0;
+    const was_pressed = (prev_keys & InputBit.ability) != 0;
+    if (!pressed or was_pressed) return false;
+
+    const cooldown_until: u32 =
+        if (player.flags.has_parry_cooldown) player.parry_cooldown_until_tick else 0;
+    if (cooldown_until > tick) return false;
+
+    const dt: f64 = if (dt_ms > 0) dt_ms else 1.0;
+    const active_ticks_f = @ceil(active_ms / dt);
+    const cooldown_ticks_f = @ceil(cooldown_ms / dt);
+    const active_ticks: u32 = @max(1, @as(u32, @intFromFloat(active_ticks_f)));
+    const cooldown_ticks: u32 = @max(1, @as(u32, @intFromFloat(cooldown_ticks_f)));
+
+    // Capture aim direction (radians) at trigger time. Same
+    // dx==0 && dy==0 → 0 fallback as TS.
+    const dx = player.aim_x - player.x;
+    const dy = player.aim_y - player.y;
+    const facing: f64 = if (dx == 0.0 and dy == 0.0)
+        0.0
+    else
+        trig.lutAtan2(dy, dx);
+
+    player.parry_active_until_tick = tick + active_ticks;
+    player.parry_cooldown_until_tick = tick + cooldown_ticks;
+    player.parry_facing = facing;
+    player.flags.has_parry_active = true;
+    player.flags.has_parry_cooldown = true;
+    player.flags.has_parry_facing = true;
+    return true;
+}
+
+pub export fn combat_try_start_parry(
+    player_ptr: *world_state.PlayerEntity,
+    curr_keys: u32,
+    prev_keys: u32,
+    tick: u32,
+    dt_ms: f64,
+    active_ms: f64,
+    cooldown_ms: f64,
+) i32 {
+    return if (tryStartParry(
+        player_ptr,
+        curr_keys,
+        prev_keys,
+        tick,
+        dt_ms,
+        active_ms,
+        cooldown_ms,
+    )) 1 else 0;
+}
+
+/// True if the player has an active parry window covering this
+/// tick. Mirrors `isParryActive` in TS.
+pub fn isParryActive(player: *const world_state.PlayerEntity, tick: u32) bool {
+    return player.flags.has_parry_active and
+        player.parry_active_until_tick > tick;
+}
+
+pub export fn combat_is_parry_active(
+    player_ptr: *const world_state.PlayerEntity,
+    tick: u32,
+) i32 {
+    return if (isParryActive(player_ptr, tick)) 1 else 0;
+}
+
+/// Held-shield update: drain while held + charge available;
+/// otherwise deactivate and recharge toward `max_charge`.
+/// Mirrors `tickShield` in TS bit-exact. Mutates `player` in
+/// place.
+pub fn tickShield(
+    player: *world_state.PlayerEntity,
+    curr_keys: u32,
+    dt_ms: f64,
+    max_charge_override: f64,
+    drain_per_second: f64,
+    recharge_per_second: f64,
+) void {
+    if (!player.flags.alive) {
+        if (player.flags.shield_active) player.flags.shield_active = false;
+        return;
+    }
+    const dt_sec = dt_ms / 1000.0;
+    const max_charge: f64 = blk: {
+        if (max_charge_override > 0) break :blk max_charge_override;
+        if (player.flags.has_shield_charge) {
+            break :blk player.shield_max_charge;
+        }
+        break :blk SHIELD_MAX_CHARGE_DEFAULT;
+    };
+
+    const current_charge: f64 = if (player.flags.has_shield_charge)
+        player.shield_charge
+    else
+        max_charge;
+
+    const wants_shield = (curr_keys & InputBit.shield) != 0;
+    if (wants_shield and current_charge > 0) {
+        const drained = @max(0.0, current_charge - drain_per_second * dt_sec);
+        player.shield_charge = drained;
+        player.shield_max_charge = max_charge;
+        player.flags.has_shield_charge = true;
+        player.flags.shield_active = drained > 0;
+        return;
+    }
+
+    const recharged = @min(max_charge, current_charge + recharge_per_second * dt_sec);
+    player.shield_charge = recharged;
+    player.shield_max_charge = max_charge;
+    player.flags.has_shield_charge = true;
+    player.flags.shield_active = false;
+}
+
+pub export fn combat_tick_shield(
+    player_ptr: *world_state.PlayerEntity,
+    curr_keys: u32,
+    dt_ms: f64,
+    max_charge_override: f64,
+    drain_per_second: f64,
+    recharge_per_second: f64,
+) void {
+    tickShield(
+        player_ptr,
+        curr_keys,
+        dt_ms,
+        max_charge_override,
+        drain_per_second,
+        recharge_per_second,
+    );
+}
+
+pub export fn combat_parry_active_ms() f64 {
+    return PARRY_ACTIVE_MS;
+}
+
+pub export fn combat_parry_cooldown_ms_default() f64 {
+    return PARRY_COOLDOWN_MS_DEFAULT;
+}
+
+pub export fn combat_shield_max_charge_default() f64 {
+    return SHIELD_MAX_CHARGE_DEFAULT;
+}
+
+pub export fn combat_shield_drain_per_second() f64 {
+    return SHIELD_DRAIN_PER_SECOND;
+}
+
+pub export fn combat_shield_recharge_per_second() f64 {
+    return SHIELD_RECHARGE_PER_SECOND;
 }

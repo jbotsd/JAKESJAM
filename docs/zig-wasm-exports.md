@@ -140,6 +140,19 @@ export.
 | `combat_shield_drain(dps, dt) → f64` | dps × dt | `combatParity.test.ts` |
 | `combat_parry_arc_radians() → f64` | π/3 | `combatParity.test.ts` |
 
+### Phase H4 — orchestration helpers
+
+| Export | Purpose | Parity test |
+|---|---|---|
+| `combat_try_start_parry(player, curr_keys, prev_keys, tick, dt, active_ms, cooldown_ms) → i32` | edge-detect Ability + cooldown gate; sets parry tick bounds + facing | `combatOrchestrationParity.test.ts` |
+| `combat_is_parry_active(player, tick) → i32` | true while parryActiveUntilTick > tick | `combatOrchestrationParity.test.ts` |
+| `combat_tick_shield(player, curr_keys, dt, max_override, drain_dps, recharge_dps)` | drain when held; recharge otherwise | `combatOrchestrationParity.test.ts` |
+| `combat_parry_active_ms() → f64` | 420 | `combatOrchestrationParity.test.ts` |
+| `combat_parry_cooldown_ms_default() → f64` | 1800 | `combatOrchestrationParity.test.ts` |
+| `combat_shield_max_charge_default() → f64` | 100 | `combatOrchestrationParity.test.ts` |
+| `combat_shield_drain_per_second() → f64` | 35 | `combatOrchestrationParity.test.ts` |
+| `combat_shield_recharge_per_second() → f64` | 14 | `combatOrchestrationParity.test.ts` |
+
 ## Destructible (`destructible.zig`)
 
 | Export | Purpose | Parity test |
