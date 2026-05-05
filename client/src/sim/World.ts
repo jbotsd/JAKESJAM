@@ -1053,12 +1053,14 @@ function maybeWasmMonitor(
   dtMs: number,
   tsResult: StepResult,
 ): void {
-  if (typeof window === "undefined") return;
+  // Browser-only: server runs sim with the SAME World.ts but
+  // never visits a URL, so this short-circuits there.
+  const w = (globalThis as { location?: { search: string } }).location;
+  if (!w) return;
   let enabled = false;
   try {
     enabled =
-      new URLSearchParams(window.location.search).get("wasm-world-monitor") ===
-      "1";
+      new URLSearchParams(w.search).get("wasm-world-monitor") === "1";
   } catch {
     return;
   }

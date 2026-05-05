@@ -163,9 +163,10 @@ export async function applyWasmWorldStepFull(
  * surface, not a determinism win, until J3 lands.
  */
 export function isWasmWorldEnabled(): boolean {
-  if (typeof window === "undefined") return false;
+  const loc = (globalThis as { location?: { search: string } }).location;
+  if (!loc) return false;
   try {
-    const params = new URLSearchParams(window.location.search);
+    const params = new URLSearchParams(loc.search);
     if (params.get("wasm-world") === "1") return true;
     if (params.get("wasm-world") === "0") return false;
   } catch {
