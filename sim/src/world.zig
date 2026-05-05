@@ -392,7 +392,45 @@ pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
             const dx = proj_ptr.x - closest_x;
             const dy = proj_ptr.y - closest_y;
             if (dx * dx + dy * dy <= proj_ptr.radius * proj_ptr.radius) {
-                const final_dmg = proj_ptr.damage * chaos_profile.damage_multiplier;
+                // Compose damage multipliers (I36):
+                //   chaos × shooter damage_amp × victim vulnerability
+                var final_dmg = proj_ptr.damage * chaos_profile.damage_multiplier;
+                // Shooter buff: damage_amp doubles damage while
+                // active. Look up shooter by owner_id_bytes.
+                if (proj_ptr.flags.has_owner) {
+                    var shooter_idx: i32 = -1;
+                    var sj: u32 = 0;
+                    while (sj < state.player_count) : (sj += 1) {
+                        if (state.players[sj].id_len == proj_ptr.owner_id_len and
+                            std.mem.eql(u8,
+                                state.players[sj].id_bytes[0..proj_ptr.owner_id_len],
+                                proj_ptr.owner_id_bytes[0..proj_ptr.owner_id_len]))
+                        {
+                            shooter_idx = @intCast(sj);
+                            break;
+                        }
+                    }
+                    if (shooter_idx >= 0) {
+                        const sp = &state.players[@intCast(shooter_idx)];
+                        if (sp.flags.has_damage_amp and
+                            sp.damage_amp_until_tick > state.header.tick)
+                        {
+                            final_dmg *= 2.0;
+                        }
+                        if (sp.flags.has_overcharge and
+                            sp.overcharge_until_tick > state.header.tick)
+                        {
+                            final_dmg *= 1.5;
+                        }
+                    }
+                }
+                // Victim buff: vulnerability multiplies incoming
+                // damage (default 1.5×).
+                if (state.players[ph2].flags.has_vulnerability and
+                    state.players[ph2].vulnerability_until_tick > state.header.tick)
+                {
+                    final_dmg *= 1.5;
+                }
                 // Parry deflect: if the player has an active
                 // parry window, drop a parry_deflected event +
                 // skip damage. (Caller can use this to bounce or
