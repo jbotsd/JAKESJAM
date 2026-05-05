@@ -358,6 +358,51 @@ pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
         );
     }
 
+    // 7. Pickups (I13): for each ACTIVE pickup, check overlap
+    //    against every alive player. On overlap apply the
+    //    pickup's effect (health-shard heals, shield-cell adds
+    //    shield_charge, others are flagged for buff durations
+    //    handled TS-side until H8e ships) and deactivate the
+    //    pickup. Respawn schedule is TS-driven for now.
+    var ui: u32 = 0;
+    while (ui < state.pickup_count) : (ui += 1) {
+        const pickup_ptr = &state.pickups[ui];
+        if ((pickup_ptr.flags & 1) == 0) continue; // inactive
+        var pp: u32 = 0;
+        while (pp < state.player_count) : (pp += 1) {
+            if (!state.players[pp].flags.alive) continue;
+            const dx = state.players[pp].x - pickup_ptr.x;
+            const dy = state.players[pp].y - pickup_ptr.y;
+            const total_r = pickup_ptr.radius + 18.0; // player half-width
+            if (dx * dx + dy * dy <= total_r * total_r) {
+                // Apply effect inline for the simplest cases.
+                switch (pickup_ptr.kind) {
+                    .health_shard => {
+                        state.players[pp].health = @min(
+                            100.0,
+                            state.players[pp].health + pickup_ptr.amount,
+                        );
+                    },
+                    .shield_cell => {
+                        if (state.players[pp].flags.has_shield_charge) {
+                            state.players[pp].shield_charge = @min(
+                                state.players[pp].shield_max_charge,
+                                state.players[pp].shield_charge + pickup_ptr.amount,
+                            );
+                        }
+                    },
+                    else => {
+                        // Buff-style pickups land in a follow-on cut
+                        // — they need duration-tick fields wired
+                        // through the player flags.
+                    },
+                }
+                pickup_ptr.flags &= ~@as(u32, 1); // deactivate
+                break;
+            }
+        }
+    }
+
     // 6. Combat — per-player shield drain + parry start (I4 +
     //    I4b). Defaults match `combat_*` exports.
     var pi3: u32 = 0;
