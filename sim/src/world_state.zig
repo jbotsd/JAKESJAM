@@ -226,8 +226,16 @@ pub const PlayerEntity = extern struct {
     id_bytes: [PLAYER_ID_BYTES]u8 = @splat(0),
     weapon_id_bytes: [WEAPON_ID_BYTES]u8 = @splat(0),
 
+    /// Per-tick input bitmask for this player (Phase I4). The
+    /// orchestrator writes the captured input bits before calling
+    /// `step_world`. `prev_keys` holds the previous-tick mask so
+    /// edge-detect operations (e.g. parry-on-rising-edge of the
+    /// Ability key) work without a host-side memo.
+    current_keys: u32,
+    prev_keys: u32,
+
     // Future field landing zone. Today it's all zeros on the wire.
-    _reserved: [16]u8 = @splat(0),
+    _reserved: [8]u8 = @splat(0),
 };
 
 /// Mirrors `ProjectileEntity`.

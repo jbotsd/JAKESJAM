@@ -429,7 +429,16 @@ function packPlayer(view: DataView, offset: number, p: PlayerEntity): void {
   writeString(view, off, WEAPON_ID_BYTES, p.weaponId);
   off += WEAPON_ID_BYTES;
 
-  // _reserved 16 bytes — leave zero. Auto-zeroed by initial buffer fill.
+  // current_keys + prev_keys (Phase I4). PlayerEntity in the TS
+  // shape doesn't carry them today — orchestrator writes them
+  // externally before calling step_world. Always zero here; the
+  // caller patches the bytes between pack and step_world.
+  view.setUint32(off, 0, true);
+  off += 4;
+  view.setUint32(off, 0, true);
+  off += 4;
+
+  // _reserved 8 bytes — leave zero.
 }
 
 function unpackPlayer(view: DataView, offset: number): PlayerEntity {
@@ -500,7 +509,9 @@ function unpackPlayer(view: DataView, offset: number): PlayerEntity {
   const weaponId = readString(view, off, wpnLen);
   off += WEAPON_ID_BYTES;
 
-  // _reserved 16 bytes — skipped.
+  // current_keys + prev_keys + _reserved (Phase I4) — skipped on
+  // unpack since the TS-side PlayerEntity doesn't carry them.
+  off += 4 + 4 + 8;
 
   const out: PlayerEntity = {
     id: PlayerId(id),

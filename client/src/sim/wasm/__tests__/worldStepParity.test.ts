@@ -156,6 +156,67 @@ describe("step_world orchestrator parity (Phase I1)", () => {
     expect(health).toBe(75);
   });
 
+  test("step_world iterates players + ticks combat shield (I4)", () => {
+    // Manually pack a player with shield held (Shield bit = 1<<8)
+    // and observe shield_charge drain after one tick.
+    const players = [
+      {
+        id: "p_shield",
+        x: 0,
+        y: 0,
+        shieldCharge: 100,
+        shieldMaxCharge: 100,
+        currentKeys: 1 << 8,
+      },
+    ];
+    // Cheap: just use the standard fixture builder + then patch
+    // current_keys + shield_charge in wasm memory before stepping.
+    const baseState = buildState();
+    const PlayerId_module = require("../../types") as {
+      PlayerId: (s: string) => string;
+    };
+    const pid = PlayerId_module.PlayerId(players[0]!.id);
+    const ptr = load({
+      ...baseState,
+      players: {
+        [pid]: {
+          id: pid,
+          characterId: "balanced",
+          x: 0,
+          y: 0,
+          vx: 0,
+          vy: 0,
+          aimX: 0,
+          aimY: 0,
+          health: 100,
+          shieldActive: true,
+          crouching: false,
+          alive: true,
+          weaponId: "scrap",
+          cards: [],
+          fireCooldownMs: 0,
+          ammo: 0,
+          abilityCharge: 0,
+          lastProcessedInputSeq: 0 as never,
+          shieldCharge: 100,
+          shieldMaxCharge: 100,
+        },
+      } as unknown as typeof baseState.players,
+    });
+    // Patch current_keys at the player's offset:
+    // 17×8 (f64s) + 15×4 (u32s) + 4 (flags u32) + 1 (character)
+    // + 1 (card_count) + 2 (pad) + 8 (id_len + weapon_id_len + 6
+    // pad) + 32 (id_bytes) + 24 (weapon_id_bytes) = 268.
+    // current_keys is at +268.
+    const PLAYERS_OFFSET = 40 + 8;
+    const view = new DataView(ex.memory.buffer);
+    view.setUint32(ptr + PLAYERS_OFFSET + 268, 1 << 8, true);
+    ex.step_world(ptr, 1000); // 1 sec tick
+    // shield_charge offset: 11×8 = 88
+    const charge = view.getFloat64(ptr + PLAYERS_OFFSET + 88, true);
+    expect(charge).toBe(65); // 100 - 35*1
+  });
+
   test("step_world projectile lifecycle: lifetime decrements toward expire", () => {
     const projectiles: ProjectileEntity[] = [
       {

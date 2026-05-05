@@ -102,10 +102,22 @@ pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
     //    requires player iteration which the orchestrator owns
     //    in Phase I2 once player array indexing is wired.
 
-    // 6. Combat — per-player shield drain not iterated here yet:
-    //    needs the per-tick input bitmap which arrives via the
-    //    input drain in Phase I2. Phase I1 just ticks the
-    //    parry-active flag down implicitly via tick increment.
+    // 6. Combat shield drain — per-player iteration using the
+    //    current_keys field added in Phase I4. Defaults match
+    //    `combat_shield_*_per_second` exports (caller can override
+    //    by mutating PlayerEntity.shield_max_charge directly).
+    var pi3: u32 = 0;
+    while (pi3 < state.player_count) : (pi3 += 1) {
+        const player_ptr = &state.players[pi3];
+        combat.tickShield(
+            player_ptr,
+            player_ptr.current_keys,
+            dt_ms,
+            0.0, // max_charge_override = 0 → use stored shield_max_charge
+            combat.SHIELD_DRAIN_PER_SECOND,
+            combat.SHIELD_RECHARGE_PER_SECOND,
+        );
+    }
 
     return 0;
 }
