@@ -102,10 +102,8 @@ pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
     //    requires player iteration which the orchestrator owns
     //    in Phase I2 once player array indexing is wired.
 
-    // 6. Combat shield drain — per-player iteration using the
-    //    current_keys field added in Phase I4. Defaults match
-    //    `combat_shield_*_per_second` exports (caller can override
-    //    by mutating PlayerEntity.shield_max_charge directly).
+    // 6. Combat — per-player shield drain + parry start (I4 +
+    //    I4b). Defaults match `combat_*` exports.
     var pi3: u32 = 0;
     while (pi3 < state.player_count) : (pi3 += 1) {
         const player_ptr = &state.players[pi3];
@@ -117,6 +115,17 @@ pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
             combat.SHIELD_DRAIN_PER_SECOND,
             combat.SHIELD_RECHARGE_PER_SECOND,
         );
+        _ = combat.tryStartParry(
+            player_ptr,
+            player_ptr.current_keys,
+            player_ptr.prev_keys,
+            state.header.tick,
+            dt_ms,
+            combat.PARRY_ACTIVE_MS,
+            combat.PARRY_COOLDOWN_MS_DEFAULT,
+        );
+        // Roll current → prev for the next tick's edge detection.
+        player_ptr.prev_keys = player_ptr.current_keys;
     }
 
     return 0;
