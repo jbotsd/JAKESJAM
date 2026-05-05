@@ -38,7 +38,33 @@
 //   drainAll. ProjectileSystem migrates in this same cut.
 // Phase C1b — StatusVfxController + OnlineMatchScene blast-tint.
 
-import Phaser from "phaser";
+// Avoid `import Phaser from "phaser"` here so unit tests under
+// bun:test can load this module without instantiating the full
+// Phaser engine. We reference `Phaser.GameObjects.GameObject` and
+// `Phaser.Tweens.Tween` only as type-only references via global
+// triple-slash typing (Phaser is in scope at runtime in real game
+// code; in tests we cast through `unknown`).
+//
+// The two scene-event names we register for ("shutdown" + "destroy")
+// are the literal string keys Phaser's SceneEvents enum resolves
+// to; using the strings directly keeps this module Phaser-free at
+// import time.
+
+declare global {
+  // eslint-disable-next-line @typescript-eslint/no-namespace
+  namespace Phaser {
+    namespace GameObjects {
+      interface GameObject {
+        destroy(): void;
+      }
+    }
+    namespace Tweens {
+      interface Tween {
+        progress: number;
+      }
+    }
+  }
+}
 
 /**
  * What the caller hands `TransientVfx.spawn`. The factory
@@ -119,13 +145,16 @@ export class TransientVfx {
       this.drainAll();
     }
     this.scene = scene;
-    scene.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
+    // Use the literal event-name strings Phaser's SceneEvents enum
+    // resolves to. Avoids importing Phaser at module load (so the
+    // unit tests can run without a real Phaser instance).
+    scene.events.once("shutdown", () => {
       if (this.scene === scene) {
         this.drainAll();
         this.scene = null;
       }
     });
-    scene.events.once(Phaser.Scenes.Events.DESTROY, () => {
+    scene.events.once("destroy", () => {
       if (this.scene === scene) {
         this.drainAll();
         this.scene = null;
