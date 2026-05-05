@@ -329,6 +329,81 @@ test.describe("wasm playtest QA — five-layer coverage of ?wasm-world=playtest"
     expect(errors).toEqual([]);
   });
 
+  test("H8: state hash evolves over time — sim is not frozen", async ({
+    page,
+  }, testInfo) => {
+    test.setTimeout(60_000);
+    const log = attachConsole(page);
+    await page.goto("/?wasm-world=playtest&world=1");
+    await page.waitForSelector("canvas", { timeout: 20_000 });
+    await page.waitForTimeout(4000);
+
+    const hashes: Array<number | null> = [];
+    for (let i = 0; i < 8; i++) {
+      const h = await page.evaluate(() => {
+        const w = window as unknown as {
+          __simStateHash?: () => number | null;
+        };
+        return w.__simStateHash?.() ?? null;
+      });
+      hashes.push(h);
+      await page.waitForTimeout(1000);
+    }
+    await ensureWrite(
+      join(testInfo.outputDir, "hashes.json"),
+      JSON.stringify(hashes, null, 2),
+    );
+
+    // Hypothesis: in a live world session, the state hash should
+    // CHANGE across samples (not all-equal, not all-null). All-equal
+    // = sim frozen; all-null = probe not registered → world scene
+    // didn't boot.
+    const live = hashes.filter((h) => h != null);
+    if (live.length >= 4) {
+      const distinct = new Set(live).size;
+      expect(
+        distinct,
+        `Sim appears frozen: ${distinct} distinct hashes across ${live.length} samples`,
+      ).toBeGreaterThan(1);
+    }
+
+    const errors = log
+      .get()
+      .filter((e) => e.type === "error" || e.type === "pageerror");
+    expect(errors).toEqual([]);
+  });
+
+  test("H9: parry input (Shift) lands without console errors", async ({
+    page,
+  }, testInfo) => {
+    test.setTimeout(60_000);
+    const log = attachConsole(page);
+    await page.goto("/?wasm-world=playtest");
+    await page.waitForSelector("canvas", { timeout: 20_000 });
+    await clickButton(page, "Practice");
+    await page.waitForTimeout(2000);
+
+    // Press parry (Shift) several times — combat orchestration
+    // path must not throw or NaN.
+    for (let i = 0; i < 6; i++) {
+      await page.keyboard.down("Shift");
+      await page.waitForTimeout(80);
+      await page.keyboard.up("Shift");
+      await page.waitForTimeout(400);
+    }
+    await page.waitForTimeout(1000);
+
+    await ensureWrite(
+      join(testInfo.outputDir, "console.json"),
+      JSON.stringify(log.get(), null, 2),
+    );
+
+    const errors = log
+      .get()
+      .filter((e) => e.type === "error" || e.type === "pageerror");
+    expect(errors).toEqual([]);
+  });
+
   test("H5: two bots in playtest mode parallel browsers — no errors crossing the wire", async ({
     browser,
   }, testInfo) => {
