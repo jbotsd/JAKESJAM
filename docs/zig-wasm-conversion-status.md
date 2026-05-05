@@ -56,16 +56,23 @@ parity.
   `weapon_base_by_id` lookup.
 - **Pending**: cards, maps, pickups (H8c-e).
 
-### Orchestrator (Phase I — 3 cuts done)
+### Orchestrator (Phase I — 5 cuts done)
 - **I1** — `step_world(state, dt)` skeleton dispatches H1-H7 in
   deterministic order.
 - **I2** — header carries `countdown_remaining_ms` + `round_index`;
   step_world drives the round phase machine end-to-end.
 - **I3** — header carries `chaos_mask`; step_world resolves the
-  ChaosProfile each tick (not yet applied to per-module ticks).
-- **Pending**: I4 player-input drain (per-tick input bitmap),
-  satellite owner-target lookup, projectile motion dispatch,
-  weapon spawn, combat shield/parry tick.
+  ChaosProfile each tick.
+- **I4** — PlayerEntity carries `current_keys` + `prev_keys`;
+  step_world iterates players, calls `combat.tickShield`. I4b
+  also calls `combat.tryStartParry` and rolls current → prev at
+  end-of-tick.
+- **I5** — PlayerEntity gains `score: u32` for orchestrator-side
+  score keeping (winner-detection cut still pending).
+- **Pending**: winner detection + score increment, satellite
+  owner-target lookup, projectile motion dispatch, weapon spawn
+  (needs build resolution port), player physics integration
+  (needs movement-memory parallel array + map AABB cache).
 
 ### TS shim (Phase J — partial)
 - **J0** — `applyWasmWorldStep(state, dt)` packs the TS
@@ -93,6 +100,15 @@ parity.
   correctly, no NaN). 61ms runtime.
 - **V8** — Playwright e2e proves `?wasm-world=1` boots
   step_world without crashes against deployed prod.
+- **V8b** — 20s `?wasm-world=1` gameplay session with random
+  inputs + state-probe sampling.
+- **V6b** — Determinism canary. Same seed + 200 ticks → byte-
+  identical final state. Different seeds diverge. Interleaved
+  A/B/A/B sequence equals sequential AAAA/BBBB.
+- **I4c** — 100-tick combat integration: shield held →
+  released → Ability rising-edge parry → idle. Asserts
+  shield_charge band, parry_active_until_tick exact value,
+  flag bits set, prev_keys rolled.
 - **Pending**: V3 multi-instance (4 concurrent browsers in same
   room → byte-identical state-hash arrays), V4 visual regression
   with golden PNGs, V7 per-cron evidence dirs.
@@ -119,10 +135,10 @@ loop iteration that calls them.
 
 ```
 $ bun test client/src/sim/wasm/__tests__/
-178 tests across 39 files
-11260 expect() calls
+185 tests across 41 files
+11280 expect() calls
 0 failures
-≈ 350ms total
+≈ 430ms total
 ```
 
 Every wasm export passes through `exportsManifest.test.ts` +
