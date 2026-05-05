@@ -479,3 +479,232 @@ pub export fn projectile_anti_homing_target(
 pub export fn sizeof_bounce_resolve() u32 {
     return @sizeOf(BounceResolve);
 }
+
+// ── Full-dispatch step_projectile_v2 — all pathings in one call ───────────
+//
+// Extends the per-tick projectile step to dispatch every pathing
+// type internally instead of relying on TS-side switch. Use this
+// when the TS caller wants to run the entire projectile flight
+// physics through wasm in a single boundary crossing.
+//
+// V1 (`step_projectile` + `ProjectileKinematics`) stays around for
+// the simpler straight+gravity case. V2 supersedes it.
+
+pub const PathingV2 = enum(u8) {
+    straight = 0,
+    gravity = 1,
+    float = 2,
+    accelerate = 3,
+    boomerang = 4,
+    homing = 5,
+    anti_homing = 6,
+    bounce = 7,
+    _,
+};
+
+pub const ProjectileKinematicsV2 = extern struct {
+    // Motion
+    x: f64,
+    y: f64,
+    vx: f64,
+    vy: f64,
+    // Lifetime
+    age_ms: f64,
+    lifetime_ms: f64,
+    // Collision
+    radius: f64,
+    // Pathing params
+    gravity_scale: f64, // 0 = use default 1450 for gravity pathing
+    traveled_px: f64,
+    origin_x: f64,
+    origin_y: f64,
+    range_px: f64,
+    acceleration_multiplier: f64, // for accelerate pathing
+    homing_strength: f64, // 0 = use default for homing
+    id: f64, // entity id (used for float phase keying)
+    // Discrete state (i32-aligned for ABI stability)
+    pathing: i32, // matches PathingV2 enum
+    returning: i32, // boomerang state machine
+    bounces_remaining: i32,
+    _pad: i32 = 0,
+};
+
+pub const StepResultV2 = extern struct {
+    /// 1 = expired this tick (lifetime, terrain non-bounce, etc.)
+    expired: i32,
+    /// Index of platform hit, -1 if no terrain hit. For bounce
+    /// pathing, this is set on a successful bounce too (and the
+    /// projectile keeps going with reflected velocity). For other
+    /// pathings, terrain hit means expire.
+    terrain_hit_index: i32,
+    /// 1 = projectile bounced this tick (only set for bounce pathing)
+    bounced: i32,
+    _pad: i32 = 0,
+};
+
+pub fn stepV2(
+    k: *ProjectileKinematicsV2,
+    dt_ms: f64,
+    statics: []const collision.AABB,
+    // Player arrays (for homing/anti-homing). Sorted by player id
+    // (string order matches TS Object.keys.sort()).
+    player_xs: []const f64,
+    player_ys: []const f64,
+    player_alive: []const u8,
+    owner_idx: i32,
+) StepResultV2 {
+    const dt_sec = dt_ms / 1000.0;
+
+    // Lifetime: even before motion, expire if remaining <= 0.
+    const remaining = k.lifetime_ms - dt_ms;
+    if (remaining <= 0.0) {
+        return .{ .expired = 1, .terrain_hit_index = -1, .bounced = 0 };
+    }
+
+    // Pathing — velocity update.
+    const pathing = @as(PathingV2, @enumFromInt(@as(u8, @intCast(k.pathing & 0xff))));
+    switch (pathing) {
+        .straight => {},
+        .gravity => {
+            const g = if (k.gravity_scale > 0.0) k.gravity_scale else GRAVITY_PATHING_ACCEL_DEFAULT;
+            k.vy += g * dt_sec;
+        },
+        .float => {
+            // Match TS: use ageMs at START of this tick (pre-increment)
+            // for phase keying — projectile.ts reads `ageSec = nextAgeMs / 1000`
+            // where nextAgeMs = (proj.ageMs ?? 0) + dtMs. So phase reflects
+            // the END-of-tick age. We follow that contract here too.
+            const next_age_ms = k.age_ms + dt_ms;
+            var new_vx: f64 = undefined;
+            var new_vy: f64 = undefined;
+            applyFloatPathing(k.vx, k.vy, next_age_ms, k.id, dt_ms, &new_vx, &new_vy);
+            k.vx = new_vx;
+            k.vy = new_vy;
+        },
+        .accelerate => {
+            var new_vx: f64 = undefined;
+            var new_vy: f64 = undefined;
+            applyAcceleratePathing(k.vx, k.vy, k.acceleration_multiplier, dt_ms, &new_vx, &new_vy);
+            k.vx = new_vx;
+            k.vy = new_vy;
+        },
+        .boomerang => {
+            // Trigger return mode if past range fraction.
+            if (boomerangShouldReturn(k.returning != 0, k.traveled_px, k.range_px)) {
+                k.returning = 1;
+            }
+            if (k.returning != 0) {
+                var new_vx: f64 = undefined;
+                var new_vy: f64 = undefined;
+                rotateVelocityToward(
+                    k.vx,
+                    k.vy,
+                    k.x,
+                    k.y,
+                    k.origin_x,
+                    k.origin_y,
+                    BOOMERANG_TURN_RATE,
+                    dt_sec,
+                    &new_vx,
+                    &new_vy,
+                );
+                k.vx = new_vx;
+                k.vy = new_vy;
+            }
+        },
+        .homing, .anti_homing => {
+            const target_idx = closestNonOwnerPlayer(
+                k.x,
+                k.y,
+                owner_idx,
+                player_xs,
+                player_ys,
+                player_alive,
+                @intCast(player_xs.len),
+            );
+            if (target_idx >= 0) {
+                const ti: usize = @intCast(target_idx);
+                var tx: f64 = undefined;
+                var ty: f64 = undefined;
+                if (pathing == .anti_homing) {
+                    antiHomingTarget(k.x, k.y, player_xs[ti], player_ys[ti], &tx, &ty);
+                } else {
+                    tx = player_xs[ti];
+                    ty = player_ys[ti];
+                }
+                const turn_rate = if (k.homing_strength > 0.0) k.homing_strength else HOMING_TURN_RATE_DEFAULT;
+                var new_vx: f64 = undefined;
+                var new_vy: f64 = undefined;
+                rotateVelocityToward(k.vx, k.vy, k.x, k.y, tx, ty, turn_rate, dt_sec, &new_vx, &new_vy);
+                k.vx = new_vx;
+                k.vy = new_vy;
+            }
+        },
+        .bounce => {},
+        else => {},
+    }
+
+    // Position integration + traveled distance.
+    const prev_x = k.x;
+    const prev_y = k.y;
+    k.x = prev_x + k.vx * dt_sec;
+    k.y = prev_y + k.vy * dt_sec;
+    const dx = k.x - prev_x;
+    const dy = k.y - prev_y;
+    k.traveled_px += @sqrt(dx * dx + dy * dy);
+    k.age_ms += dt_ms;
+    k.lifetime_ms = remaining;
+
+    // Terrain handling — bounce vs expire.
+    if (pathing == .bounce and k.bounces_remaining > 0) {
+        var br: BounceResolve = undefined;
+        br = bounceResolve(k.x, k.y, prev_x, prev_y, k.vx, k.vy, k.radius, k.bounces_remaining, statics);
+        if (br.bounced == 1) {
+            k.x = br.new_x;
+            k.y = br.new_y;
+            k.vx = br.new_vx;
+            k.vy = br.new_vy;
+            k.bounces_remaining = br.new_bounces_remaining;
+            return .{ .expired = 0, .terrain_hit_index = br.hit_index, .bounced = 1 };
+        }
+    }
+
+    const hit_idx = collision.circleHitsAny(k.x, k.y, k.radius, statics);
+    if (hit_idx >= 0) {
+        return .{ .expired = 1, .terrain_hit_index = hit_idx, .bounced = 0 };
+    }
+
+    return .{ .expired = 0, .terrain_hit_index = -1, .bounced = 0 };
+}
+
+// Wasm export
+pub export fn step_projectile_v2(
+    state_ptr: *ProjectileKinematicsV2,
+    dt_ms: f64,
+    statics_ptr: [*]const collision.AABB,
+    statics_count: u32,
+    player_xs_ptr: [*]const f64,
+    player_ys_ptr: [*]const f64,
+    player_alive_ptr: [*]const u8,
+    n_players: u32,
+    owner_idx: i32,
+    out_ptr: *StepResultV2,
+) void {
+    out_ptr.* = stepV2(
+        state_ptr,
+        dt_ms,
+        statics_ptr[0..statics_count],
+        player_xs_ptr[0..n_players],
+        player_ys_ptr[0..n_players],
+        player_alive_ptr[0..n_players],
+        owner_idx,
+    );
+}
+
+pub export fn sizeof_projectile_kinematics_v2() u32 {
+    return @sizeOf(ProjectileKinematicsV2);
+}
+
+pub export fn sizeof_projectile_step_result_v2() u32 {
+    return @sizeOf(StepResultV2);
+}

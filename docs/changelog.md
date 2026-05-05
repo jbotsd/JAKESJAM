@@ -1,5 +1,29 @@
 # JAKESJAM - Changelog
 
+## v0.50 - 2026-05-05
+
+- **Phase F1a final — `step_projectile_v2` ports the full pathing
+  dispatch to a single wasm call.** Every projectile pathing now
+  runs entirely in Zig when v2 is invoked: straight, gravity,
+  float (sin/cos oscillation), accelerate (vel scale), boomerang
+  (range-fraction return + rotate-toward-origin), homing
+  (closest-non-owner + rotate-toward-target), anti-homing
+  (mirror target + rotate), bounce (reflect on terrain hit).
+- New `ProjectileKinematicsV2` extern struct (136 B) carries all
+  per-pathing state (id, origin, range, returning flag, bounces,
+  accel mul, homing strength). New `StepResultV2` (16 B) reports
+  expired + terrain-hit-index + bounced flags. Caller passes
+  player array via wasm memory for homing/anti-homing.
+- Existing v1 `step_projectile` + `ProjectileKinematics` kept for
+  the simpler straight+gravity case (backward compat).
+- New `projectileStepV2Parity.test.ts` (8 tests, 209 expects):
+  every pathing through 30-80 ticks of TS reference vs Zig wasm,
+  0 mismatches across all eight.
+- 327 client tests, 43 server tests, 6 native Zig tests. Wasm 29 KB.
+- Smoke against deployed prod: 3/3.
+
+
+
 ## v0.49 - 2026-05-05
 
 - **Phase D3 audited — `docs/zig-wasm-d3-audit.md`.** Per-module
