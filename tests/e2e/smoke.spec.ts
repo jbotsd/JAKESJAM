@@ -156,3 +156,49 @@ test("Practice match: no slow-frame log spam over 5s", async ({ page }, testInfo
   );
   expect(stutter, "no stutter logs in 5s warmup").toEqual([]);
 });
+
+test("wasm sim is actually running in production", async ({ page }, testInfo) => {
+  // Catches the regression where wasm artifact 404s, fails to load,
+  // or doesn't get linked into the build. Without this gate, the page
+  // could render fine while silently running the TS-only fallback —
+  // exactly the bug we hit in v0.37 (commit 99ffa73).
+  const log = attachConsole(page);
+  await page.goto("/");
+  await page.waitForSelector("canvas", { timeout: 20_000 });
+  // Boot logs land within ~1s. Wait long enough to be sure.
+  await page.waitForTimeout(2500);
+  await saveArtifacts(testInfo, page, log.get(), "wasm-boot");
+
+  const allEntries = log.get();
+  const wasmReady = allEntries.find((e) =>
+    /\[wasm-sim\]\s+ready/i.test(e.text),
+  );
+  const collisionApplied = allEntries.find((e) =>
+    /\[wasm-collision\]\s+swap applied/i.test(e.text),
+  );
+  const playerApplied = allEntries.find((e) =>
+    /\[wasm-player\]\s+swap applied/i.test(e.text),
+  );
+
+  expect(
+    wasmReady,
+    `Expected [wasm-sim] ready console log within 2.5s. Got:\n${
+      allEntries.map((e) => `  [${e.type}] ${e.text}`).join("\n")
+    }`,
+  ).toBeDefined();
+
+  expect(
+    collisionApplied,
+    "Expected [wasm-collision] swap applied console log",
+  ).toBeDefined();
+
+  expect(
+    playerApplied,
+    "Expected [wasm-player] swap applied console log",
+  ).toBeDefined();
+
+  // Also confirm the wasm asset itself is reachable (200 OK).
+  const wasmResp = await page.request.fetch("/wasm/sim.wasm");
+  expect(wasmResp.status()).toBe(200);
+  expect(wasmResp.headers()["content-type"]).toBe("application/wasm");
+});
