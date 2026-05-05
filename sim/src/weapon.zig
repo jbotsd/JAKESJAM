@@ -12,6 +12,7 @@
 
 const std = @import("std");
 const trig = @import("trig.zig");
+const world_state = @import("world_state.zig");
 
 pub const MuzzlePosition = extern struct {
     x: f64,
@@ -131,4 +132,74 @@ pub export fn sizeof_muzzle_position() u32 {
 
 pub export fn sizeof_recoil_impulse() u32 {
     return @sizeOf(RecoilImpulse);
+}
+
+// =================================================================
+// Phase H2 — fire-decision orchestration. Mutates PlayerEntity in
+// place: tick fire_cooldown_ms down by dt_ms; if fire requested AND
+// alive AND cooldown reached 0, set cooldown to the build-resolved
+// post-fire cooldown and report fired=1. Caller spawns projectiles
+// externally using the resolved-build data.
+
+pub const FireDecision = extern struct {
+    fired: u8,
+    _pad: [7]u8 = .{ 0, 0, 0, 0, 0, 0, 0 },
+};
+
+const InputBitFire: u32 = 1 << 6;
+
+/// Tick the player's fire cooldown and decide whether to fire this
+/// tick. Caller computes `cooldown_after_fire_ms` from the resolved
+/// weapon build (e.g. `weaponCooldownFromFireRate(fireRate, minRate)`)
+/// — keeping data tables out of the core sim layer.
+pub fn weaponTickFire(
+    player: *world_state.PlayerEntity,
+    fire_requested: bool,
+    dt_ms: f64,
+    cooldown_after_fire_ms: f64,
+) FireDecision {
+    const decremented = @max(0.0, player.fire_cooldown_ms - dt_ms);
+    if (!fire_requested or !player.flags.alive or decremented > 0) {
+        player.fire_cooldown_ms = decremented;
+        return .{ .fired = 0 };
+    }
+    // Fire window opens. Reset cooldown for the next shot.
+    player.fire_cooldown_ms = cooldown_after_fire_ms;
+    return .{ .fired = 1 };
+}
+
+pub export fn weapon_tick_fire(
+    player_ptr: *world_state.PlayerEntity,
+    fire_requested: u32,
+    dt_ms: f64,
+    cooldown_after_fire_ms: f64,
+    out_ptr: *FireDecision,
+) void {
+    out_ptr.* = weaponTickFire(
+        player_ptr,
+        fire_requested != 0,
+        dt_ms,
+        cooldown_after_fire_ms,
+    );
+}
+
+/// Convenience: tick + check whether the Fire input bit is set in
+/// the keys bitmask. Saves the host one wasm boundary call.
+pub export fn weapon_tick_fire_with_keys(
+    player_ptr: *world_state.PlayerEntity,
+    keys: u32,
+    dt_ms: f64,
+    cooldown_after_fire_ms: f64,
+    out_ptr: *FireDecision,
+) void {
+    out_ptr.* = weaponTickFire(
+        player_ptr,
+        (keys & InputBitFire) != 0,
+        dt_ms,
+        cooldown_after_fire_ms,
+    );
+}
+
+pub export fn sizeof_fire_decision() u32 {
+    return @sizeOf(FireDecision);
 }

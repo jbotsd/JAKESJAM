@@ -123,6 +123,14 @@ export.
 | `weapon_spread_offset(...)` | per-shot fan angle | `weaponParity.test.ts` |
 | `weapon_cooldown_from_fire_rate(...)` | 1000/max(min,rate) | `weaponParity.test.ts` |
 
+### Phase H2 — fire-decision orchestration
+
+| Export | Purpose | Parity test |
+|---|---|---|
+| `weapon_tick_fire(player, fire_requested, dt, cooldown_after_fire, out)` | tick player.fire_cooldown_ms; decide fired? mutate in place | `weaponFireDecisionParity.test.ts` |
+| `weapon_tick_fire_with_keys(player, keys, dt, cooldown_after_fire, out)` | same but reads InputBit.Fire from keys bitmask | `weaponFireDecisionParity.test.ts` |
+| `sizeof_fire_decision` | 8 | `weaponFireDecisionParity.test.ts` |
+
 ## Satellite (`satellite.zig`)
 
 | Export | Purpose | Parity test |
