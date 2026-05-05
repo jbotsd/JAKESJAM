@@ -35,6 +35,7 @@
 
 import { test, expect, type ConsoleMessage, type Page } from "@playwright/test";
 import { mkdir, writeFile, readdir } from "node:fs/promises";
+import { dirname } from "node:path";
 import { join } from "node:path";
 import { spawn } from "node:child_process";
 import { PNG } from "pngjs";
@@ -60,6 +61,15 @@ function attachConsole(page: Page): { get: () => ConsoleEntry[] } {
     entries.push({ type: "pageerror", text: `${err.name}: ${err.message}` });
   });
   return { get: () => entries };
+}
+
+async function ensureWrite(
+  path: string,
+  content: string,
+  _enc?: string,
+): Promise<void> {
+  await mkdir(dirname(path), { recursive: true });
+  await writeFile(path, content, "utf8");
 }
 
 async function clickButton(page: Page, label: string): Promise<void> {
@@ -128,36 +138,53 @@ async function sampleStateHashes(
   return result ?? [];
 }
 
+function runFfmpeg(args: readonly string[]): Promise<number | null> {
+  return new Promise((resolve) => {
+    const ff = spawn("ffmpeg", args, { stdio: "ignore" });
+    ff.on("error", () => resolve(null));
+    ff.on("exit", (code) => resolve(code));
+  });
+}
+
 async function extractFirstLastFrame(
   videoPath: string,
   outDir: string,
 ): Promise<{ ok: boolean; reason?: string }> {
+  // Image-buffer discipline: extract ONLY the first + last frame.
+  // ffmpeg's `select` filter doesn't expand `N`, so we use two
+  // cheap probes:
+  //   first → seek 0 + 1 frame
+  //   last  → -sseof -0.05 (50ms before EOF) + 1 frame
+  // Each invocation is fast; together they're <100ms.
   const framesDir = join(outDir, "frames");
   await mkdir(framesDir, { recursive: true });
-  return new Promise((resolve) => {
-    // Image-buffer discipline: select first + last frame only via
-    // a single ffmpeg invocation. Output pattern produces 2 PNGs.
-    const ff = spawn(
-      "ffmpeg",
-      [
-        "-y",
-        "-i",
-        videoPath,
-        "-vf",
-        "select='eq(n,0)+eq(n,N-1)'",
-        "-vsync",
-        "vfr",
-        join(framesDir, "frame-%02d.png"),
-      ],
-      { stdio: "ignore" },
-    );
-    ff.on("error", (err) => resolve({ ok: false, reason: err.message }));
-    ff.on("exit", (code) =>
-      code === 0
-        ? resolve({ ok: true })
-        : resolve({ ok: false, reason: `ffmpeg exit ${code}` }),
-    );
-  });
+  const firstCode = await runFfmpeg([
+    "-y",
+    "-i",
+    videoPath,
+    "-frames:v",
+    "1",
+    join(framesDir, "first.png"),
+  ]);
+  const lastCode = await runFfmpeg([
+    "-y",
+    "-sseof",
+    "-0.1",
+    "-i",
+    videoPath,
+    "-frames:v",
+    "1",
+    "-update",
+    "1",
+    join(framesDir, "last.png"),
+  ]);
+  if (firstCode !== 0 || lastCode !== 0) {
+    return {
+      ok: false,
+      reason: `ffmpeg first=${firstCode} last=${lastCode}`,
+    };
+  }
+  return { ok: true };
 }
 
 async function findVideoFile(outDir: string): Promise<string | null> {
@@ -171,18 +198,36 @@ async function findVideoFile(outDir: string): Promise<string | null> {
 }
 
 test.describe("V1 — input-driven evidence suite", () => {
-  test.afterEach(async ({}, testInfo) => {
-    // Playwright places the recorded video next to other artifacts when
-    // it has a chance to flush — and only after the test has fully
-    // closed the page. We post-process here.
+  test.afterEach(async ({ page }, testInfo) => {
+    // The recorded video is only finalized once the browser context
+    // closes. Use the saveAs helper to force the flush + place the
+    // file at a known path. Then ffmpeg extracts first+last frame
+    // (image-buffer discipline: never read intermediate frames).
     const outDir = testInfo.outputDir;
+    const videoTarget = join(outDir, "video.webm");
+    const v = page.video();
+    if (v) {
+      try {
+        await page.close();
+        await v.saveAs(videoTarget);
+      } catch (err) {
+        await ensureWrite(
+          join(outDir, "video-save-error.json"),
+          JSON.stringify({ error: String(err) }, null, 2),
+        );
+      }
+    }
     const video = await findVideoFile(outDir);
     if (video) {
       const result = await extractFirstLastFrame(video, outDir);
-      await writeFile(
+      await ensureWrite(
         join(outDir, "frame-extract.json"),
         JSON.stringify(result, null, 2),
-        "utf8",
+      );
+    } else {
+      await ensureWrite(
+        join(outDir, "frame-extract.json"),
+        JSON.stringify({ ok: false, reason: "no video produced" }, null, 2),
       );
     }
   });
@@ -206,12 +251,12 @@ test.describe("V1 — input-driven evidence suite", () => {
 
     await page.screenshot({ path: join(testInfo.outputDir, "after.png") });
     const probe = await probeColor(page, { r: 157, g: 230, b: 66 }, 30);
-    await writeFile(
+    await ensureWrite(
       join(testInfo.outputDir, "color-probe.json"),
       JSON.stringify(probe, null, 2),
       "utf8",
     );
-    await writeFile(
+    await ensureWrite(
       join(testInfo.outputDir, "console.json"),
       JSON.stringify(log.get(), null, 2),
       "utf8",
@@ -243,7 +288,7 @@ test.describe("V1 — input-driven evidence suite", () => {
     }
     await page.waitForTimeout(800);
     await page.screenshot({ path: join(testInfo.outputDir, "after.png") });
-    await writeFile(
+    await ensureWrite(
       join(testInfo.outputDir, "console.json"),
       JSON.stringify(log.get(), null, 2),
       "utf8",
@@ -277,12 +322,12 @@ test.describe("V1 — input-driven evidence suite", () => {
     await page.screenshot({ path: join(testInfo.outputDir, "mid.png") });
 
     const probe = await probeColor(page, { r: 157, g: 230, b: 66 }, 30);
-    await writeFile(
+    await ensureWrite(
       join(testInfo.outputDir, "color-probe.json"),
       JSON.stringify(probe, null, 2),
       "utf8",
     );
-    await writeFile(
+    await ensureWrite(
       join(testInfo.outputDir, "console.json"),
       JSON.stringify(log.get(), null, 2),
       "utf8",
@@ -306,7 +351,7 @@ test.describe("V1 — input-driven evidence suite", () => {
     await page.keyboard.up("a");
     await page.waitForTimeout(400);
     await page.screenshot({ path: join(testInfo.outputDir, "after.png") });
-    await writeFile(
+    await ensureWrite(
       join(testInfo.outputDir, "console.json"),
       JSON.stringify(log.get(), null, 2),
       "utf8",
@@ -332,7 +377,7 @@ test.describe("V1 — input-driven evidence suite", () => {
     await page.keyboard.up("d");
     await page.waitForTimeout(1500);
     await page.screenshot({ path: join(testInfo.outputDir, "after.png") });
-    await writeFile(
+    await ensureWrite(
       join(testInfo.outputDir, "console.json"),
       JSON.stringify(log.get(), null, 2),
       "utf8",
@@ -357,7 +402,7 @@ test.describe("V1 — input-driven evidence suite", () => {
     // small probe window (top-left HP bar is ~250×16 px). Practice
     // pits the player against bots — sustained exposure should bleed HP.
     const before = await probeColor(page, { r: 184, g: 240, b: 90 }, 12);
-    await writeFile(
+    await ensureWrite(
       join(testInfo.outputDir, "before-hp.json"),
       JSON.stringify(before, null, 2),
       "utf8",
@@ -368,12 +413,12 @@ test.describe("V1 — input-driven evidence suite", () => {
     await page.waitForTimeout(6000);
 
     const after = await probeColor(page, { r: 184, g: 240, b: 90 }, 12);
-    await writeFile(
+    await ensureWrite(
       join(testInfo.outputDir, "after-hp.json"),
       JSON.stringify(after, null, 2),
       "utf8",
     );
-    await writeFile(
+    await ensureWrite(
       join(testInfo.outputDir, "console.json"),
       JSON.stringify(log.get(), null, 2),
       "utf8",
@@ -388,6 +433,7 @@ test.describe("V1 — input-driven evidence suite", () => {
   });
 
   test("V1.g 60s autoplay: random inputs, zero console errors", async ({ page }, testInfo) => {
+    test.setTimeout(120_000);
     const log = attachConsole(page);
     await page.goto("/");
     await page.waitForSelector("canvas", { timeout: 20_000 });
@@ -416,12 +462,12 @@ test.describe("V1 — input-driven evidence suite", () => {
     // Sample state hashes if a probe is wired — the practice scene
     // doesn't currently register one, so this stays informational.
     const hashes = await sampleStateHashes(page, 20, 100);
-    await writeFile(
+    await ensureWrite(
       join(testInfo.outputDir, "state-hashes.json"),
       JSON.stringify(hashes, null, 2),
       "utf8",
     );
-    await writeFile(
+    await ensureWrite(
       join(testInfo.outputDir, "console.json"),
       JSON.stringify(log.get(), null, 2),
       "utf8",
