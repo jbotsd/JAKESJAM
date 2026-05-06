@@ -31,8 +31,6 @@ import type {
 
 const PROJECTILE_RADIUS_DEFAULT = 6;
 const DAMAGE_FLASH_MS = 110;
-const ORBIT_RADIUS_PX = 38;
-void ORBIT_RADIUS_PX;
 
 /**
  * Resolves projectile colour. Caller injects so the coordinator
