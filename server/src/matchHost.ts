@@ -45,9 +45,14 @@ import { serverWasmHost } from "./serverWasmHost.ts";
  * Phase B3 feature flag. When `true`, the authoritative tick goes
  * through `serverWasmHost.step()` (Zig wasm) instead of the TS
  * `stepWithRuntime`. Default off: B3 cutover requires a 30-min
- * multi-client playtest before flipping in production. Once
- * validated, the env var goes away and the TS path is deleted in
- * B2.
+ * multi-client playtest before flipping in production. Flip via
+ * `fly secrets set USE_WASM_STEP_WORLD=1 -a jakesjam-srv-sin`.
+ *
+ * B2 (full TS sim deletion) is gated on this flag soaking
+ * default-on for ≥1 week without auto-fallback warnings AND on
+ * migrating the ~25 wasm-parity tests + ~15 TS-side sim tests +
+ * server/src/wasmRuntime.ts imports off the TS sim modules.
+ * That's a separate supervised cut.
  */
 const USE_WASM_STEP_WORLD =
   process.env.USE_WASM_STEP_WORLD === "1" ||
