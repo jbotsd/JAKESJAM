@@ -24,14 +24,10 @@ export type {
   SpatialGrid,
   StaticCollisionCache,
 } from './collision.js';
+// Constants (PARRY_*, SHIELD_*, ORBIT_*, SATELLITE_*, JETPACK_*,
+// KILL_PLANE_MARGIN_PX, EXPLOSION_*, FIRE_PATCH_*) are exported via
+// `export * from './constants.js'` above. Function exports below.
 export {
-  PARRY_ACTIVE_MS,
-  PARRY_COOLDOWN_MS_DEFAULT,
-  PARRY_ARC_RADIANS,
-  SHIELD_MAX_CHARGE_DEFAULT,
-  SHIELD_DRAIN_PER_SECOND,
-  SHIELD_RECHARGE_PER_SECOND,
-  SHIELD_HIT_DRAIN_MULTIPLIER,
   isHitInParryArc,
   isParryActive,
   tickShield,
@@ -39,29 +35,6 @@ export {
   tryStartParry,
 } from './combat.js';
 export {
-  ORBIT_RADIUS_PX,
-  ORBIT_RAD_PER_SEC,
-  SATELLITE_FIRE_COOLDOWN_MS,
-  SATELLITE_DAMAGE,
-  SATELLITE_PROJECTILE_SPEED,
-  SATELLITE_PROJECTILE_LIFETIME_MS,
-  SATELLITE_PROJECTILE_RADIUS,
-} from './satellite.js';
-export {
-  JETPACK_MAX_FUEL,
-  JETPACK_THRUST,
-  JETPACK_FUEL_DRAIN_PER_SECOND,
-  JETPACK_GROUND_RECHARGE_PER_SECOND,
-  JETPACK_AIR_RECHARGE_PER_SECOND,
-  JETPACK_MIN_UPWARD_VELOCITY,
-  KILL_PLANE_MARGIN_PX,
-} from './player.js';
-export {
-  EXPLOSION_RADIUS,
-  EXPLOSION_DAMAGE,
-  FIRE_PATCH_DEFAULT_LIFETIME_MS,
-  FIRE_PATCH_DEFAULT_RADIUS,
-  FIRE_PATCH_DEFAULT_DPS,
   stepDestructibles,
   buildFireEntity,
   destructibleAABB,
