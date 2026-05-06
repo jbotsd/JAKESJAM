@@ -36,7 +36,10 @@ const ab = bytes.buffer.slice(
 const preloaded = await loadSimFromBytes(ab);
 void preloaded;
 
-const fetchStub = (input: RequestInfo | URL): Promise<Response> => {
+// Server typecheck doesn't include the DOM lib by default, so
+// `RequestInfo` isn't in scope. Use `unknown` and rely on the
+// runtime `instanceof URL` + String() cast.
+const fetchStub = (input: unknown): Promise<Response> => {
   const url = input instanceof URL ? input.toString() : String(input);
   if (url.endsWith("sim.wasm")) {
     return Promise.resolve(
