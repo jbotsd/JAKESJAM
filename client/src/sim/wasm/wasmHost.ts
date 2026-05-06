@@ -50,6 +50,43 @@ export type PlayerInputBits = {
 };
 
 /**
+ * Encoded ResolvedWeaponBuild → ResolvedFireConfig (136 bytes in
+ * wasm). Caller resolves cards via `createWeaponBuild` then
+ * encodes via `packResolvedFireConfig`. WasmHost.writeFireConfigs
+ * places it at the `player_fire_config[i]` slot (parallel to
+ * players[i] in the packed WorldState).
+ *
+ * When the host writes a config with valid=1 for player i,
+ * step_world's I21 weapon-fire branch reads from this slot
+ * instead of falling back to the starter pistol — meaning cards
+ * finally apply.
+ */
+export type ResolvedFireConfigBytes = {
+  damage: number;
+  fireRate: number;
+  projectileSpeed: number;
+  projectileLifetimeSeconds: number;
+  spreadRadians: number;
+  rangePx: number;
+  homingStrength: number;
+  accelerationMultiplier: number;
+  gravityScale: number;
+  slowMultiplier: number;
+  impactRadiusPx: number;
+  sizeMultiplier: number;
+  speedMultiplier: number;
+  lifetimeMultiplier: number;
+  projectileCount: number;
+  bounces: number;
+  pierceCount: number;
+  splitCount: number;
+  shapeIdx: number;
+  elementIdx: number;
+  pathingIdx: number;
+  impactIdx: number;
+};
+
+/**
  * Result of one wasm step. `state` is the merged TS WorldState
  * with referential stability applied per-entity (see
  * `mergeUnpacked`). `events` are the wasm-emitted SimEvents already
@@ -219,6 +256,83 @@ export class WasmHost {
    */
   getInputsSnapshot(): ReadonlyMap<string, PlayerInputBits> | null {
     return this.cachedInputs;
+  }
+
+  /**
+   * Write per-player resolved fire config into wasm memory at
+   * `offset_player_fire_config`. The wasm sim reads this each tick
+   * via `state.player_fire_config[i]` (parallel to players[]). When
+   * `valid == 0`, step_world falls back to the starter pistol base
+   * from `data/weapons.zig` — the entire reason cards weren't
+   * applying in wasm prior to this method existing.
+   *
+   * `configs` is keyed by sorted-player-id, matching the order
+   * `packPlayer` writes the players array. Index N in the array
+   * corresponds to players[N] in wasm memory.
+   *
+   * No-op if any of (cachedSim, cachedEx, the offset/size exports)
+   * are missing.
+   */
+  writeFireConfigs(
+    configsByIndex: ReadonlyArray<ResolvedFireConfigBytes | null>,
+  ): void {
+    if (!this.resolvedReady) return;
+    const legacy = legacyModule;
+    if (!legacy) return;
+    const sim = legacy.__getCachedSim?.();
+    if (!sim) return;
+    const exObj = legacy.__getCachedEx?.() as
+      | {
+          memory: WebAssembly.Memory;
+          offset_player_fire_config?: () => number;
+          sizeof_resolved_fire_config?: () => number;
+        }
+      | null;
+    if (!exObj?.offset_player_fire_config || !exObj.sizeof_resolved_fire_config) {
+      return;
+    }
+    const baseOffset = exObj.offset_player_fire_config();
+    const recordSize = exObj.sizeof_resolved_fire_config();
+    const view = new DataView(exObj.memory.buffer);
+    for (let i = 0; i < configsByIndex.length; i++) {
+      const cfg = configsByIndex[i];
+      const off = sim.statePtr + baseOffset + i * recordSize;
+      if (!cfg) {
+        // valid=0; rest of fields don't matter.
+        view.setUint8(off + 132, 0);
+        continue;
+      }
+      // 14 × f64
+      view.setFloat64(off + 0, cfg.damage, true);
+      view.setFloat64(off + 8, cfg.fireRate, true);
+      view.setFloat64(off + 16, cfg.projectileSpeed, true);
+      view.setFloat64(off + 24, cfg.projectileLifetimeSeconds, true);
+      view.setFloat64(off + 32, cfg.spreadRadians, true);
+      view.setFloat64(off + 40, cfg.rangePx, true);
+      view.setFloat64(off + 48, cfg.homingStrength, true);
+      view.setFloat64(off + 56, cfg.accelerationMultiplier, true);
+      view.setFloat64(off + 64, cfg.gravityScale, true);
+      view.setFloat64(off + 72, cfg.slowMultiplier, true);
+      view.setFloat64(off + 80, cfg.impactRadiusPx, true);
+      view.setFloat64(off + 88, cfg.sizeMultiplier, true);
+      view.setFloat64(off + 96, cfg.speedMultiplier, true);
+      view.setFloat64(off + 104, cfg.lifetimeMultiplier, true);
+      // 4 × u32
+      view.setUint32(off + 112, cfg.projectileCount >>> 0, true);
+      view.setUint32(off + 116, cfg.bounces >>> 0, true);
+      view.setUint32(off + 120, cfg.pierceCount >>> 0, true);
+      view.setUint32(off + 124, cfg.splitCount >>> 0, true);
+      // 4 × u8 enum
+      view.setUint8(off + 128, cfg.shapeIdx);
+      view.setUint8(off + 129, cfg.elementIdx);
+      view.setUint8(off + 130, cfg.pathingIdx);
+      view.setUint8(off + 131, cfg.impactIdx);
+      // valid + pad
+      view.setUint8(off + 132, 1);
+      view.setUint8(off + 133, 0);
+      view.setUint8(off + 134, 0);
+      view.setUint8(off + 135, 0);
+    }
   }
 
   /**

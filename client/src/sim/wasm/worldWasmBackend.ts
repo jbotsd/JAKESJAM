@@ -341,6 +341,22 @@ export function applyWasmWorldStepFullSync(
 export { runWasmStepSync };
 
 /**
+ * Test-/seam-exposed accessors for the legacy module-level cache.
+ * Called by WasmHost to write fire configs directly into wasm
+ * memory at the canonical offset (no extra delegation hop).
+ *
+ * These are NOT part of the public API; the underscore prefix
+ * marks them as "internal seam glue, will be deleted once
+ * WasmHost owns the wasm instance directly in B-final".
+ */
+export function __getCachedSim(): Sim | null {
+  return cachedSim;
+}
+export function __getCachedEx(): WorldExports | null {
+  return cachedEx;
+}
+
+/**
  * Eagerly load + cache the wasm sim so the sync variant works.
  * Idempotent. Returns true if the sim is ready, false if it
  * couldn't load this boot.

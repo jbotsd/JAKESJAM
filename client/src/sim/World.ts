@@ -56,6 +56,7 @@ import {
 } from "./types.js";
 import { RoundOrchestrator } from "./RoundOrchestrator.js";
 import { wasmHost } from "./wasm/wasmHost.js";
+import { writeFireConfigsForState } from "./wasm/writeFireConfigs.js";
 import type {
   FireEntity,
   InputBitfield,
@@ -1164,6 +1165,12 @@ function maybeWasmActual(
     // `globalThis.__jakesjam_wasm_inputs__`, which `wasmHost`
     // mirrors for compat — A2 deletes the globalThis read.
     wasmHost.writeInputs(inputsMap);
+    // Phase 97: resolve + write per-player fire configs so cards
+    // finally apply. Without this every player fires bare starter
+    // pistol regardless of their card hand. The helper holds an
+    // internal per-player cache (re-resolved only when cards
+    // change).
+    writeFireConfigsForState(inputState);
     const result = wb.applyWasmWorldStepFullSync(inputState, dtMs);
     return {
       state: result.state,
