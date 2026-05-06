@@ -271,33 +271,32 @@ export class ParticlePool {
       ...this.blastCircleActive,
       ...this.glowActive,
     ]);
-    const releaseAll = (
-      active: Set<Phaser.GameObjects.Rectangle> | Set<Phaser.GameObjects.Arc> | Set<Phaser.GameObjects.Graphics>,
-      free: Phaser.GameObjects.Rectangle[] | Phaser.GameObjects.Arc[] | Phaser.GameObjects.Graphics[],
-    ) => {
+    function releaseAll<T extends Phaser.GameObjects.GameObject>(
+      active: Set<T>,
+      free: T[],
+    ): void {
       for (const o of active) {
         // Graphics objects need .clear() to scrub accumulated geometry —
         // setVisible(false) hides but doesn't drop the line/path data,
         // and the next acquire's setVisible(true) brings it all back.
-        if ((o as { clear?: () => unknown }).clear) {
-          (o as { clear: () => unknown }).clear();
-        }
-        (o as { setVisible(v: boolean): unknown }).setVisible(false);
-        (o as { setAlpha(a: number): unknown }).setAlpha(1);
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        (free as any[]).push(o);
+        const obj = o as unknown as {
+          clear?: () => void;
+          setVisible(v: boolean): void;
+          setAlpha(a: number): void;
+        };
+        if (obj.clear) obj.clear();
+        obj.setVisible(false);
+        obj.setAlpha(1);
+        free.push(o);
       }
       active.clear();
-    };
+    }
     releaseAll(this.sparkActive, this.sparkFree);
     releaseAll(this.shardActive, this.shardFree);
     releaseAll(this.ringActive, this.ringFree);
     releaseAll(this.boltActive, this.boltFree);
     releaseAll(this.blastCircleActive, this.blastCircleFree);
-    releaseAll(
-      this.glowActive as unknown as Set<Phaser.GameObjects.Rectangle>,
-      this.glowFree as unknown as Phaser.GameObjects.Rectangle[],
-    );
+    releaseAll(this.glowActive, this.glowFree);
   }
 
   destroy(): void {
