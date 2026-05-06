@@ -315,7 +315,12 @@ test("visual: world — fire spam (projectiles + muzzle flash)", async ({
     }
   }
   const { diff } = await pairShots(testInfo, page, log.get(), "world-fire");
-  assertNotFrozen(diff, "world-fire", 0.005);
+  // Threshold lowered from 0.5% → 0.2%. The world session lands on
+  // any round-phase including TO DRAW interludes where only a few
+  // small projectile dots move; the prior threshold flaked. 0.2%
+  // still catches a genuinely-frozen canvas (the original bug
+  // class) but tolerates between-rounds states.
+  assertNotFrozen(diff, "world-fire", 0.002);
   assertNoErrors(log.get(), "world-fire");
 });
 
