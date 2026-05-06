@@ -126,9 +126,12 @@ matchmaker assignment to a Bun host, final score persistence.
 
 ## Seams (where modules meet)
 
-**Sim ↔ Net seam** — `World.step(state, inputs, dtMs) → StepResult`.
-Pure. Every cross-process bug should narrow to either an input mismatch
-or a missing inclusion in `WorldState`.
+**Sim ↔ Net seam** — `StepStrategy.step(state, runtime, inputs, dtMs) →
+StepResult`, defined in `client/src/sim/stepStrategy.ts`. The only
+adapter today is `WasmStepStrategy` (`wasmStepStrategy.ts`), which
+wraps `wasmHost.step()`. Per ADR-0007. Pure. Every cross-process bug
+should narrow to either an input mismatch or a missing inclusion in
+`WorldState`.
 
 **Net ↔ Render seam** — `clientLoop.getRenderState() → WorldState`.
 Render code never sees raw snapshots, baselines, or the prediction
@@ -138,8 +141,39 @@ buffer.
 (`show / hide / destroy`) is owned by the overlay; scenes only hold a
 reference and call into the seam.
 
+**Render ↔ Visual-Lifetime seam** — `transientVfx.spawn(opts)` in
+`client/src/game/render/TransientVfx.ts`. Single owner of every
+short-lived visual effect's lifetime (graphic + curve-based fade +
+release/destroy + round-end drain). Per ADR-0007. Replaces the 11+
+ad-hoc tween-onComplete patterns formerly scattered across
+`ProjectileSystem`, `StatusVfxController`, scene blast-tints.
+
+**Wasm-Host seam** — `wasmHost` singleton in
+`client/src/sim/wasm/wasmHost.ts` owns wasm boot + statics cache +
+per-tick input stash + step. Replaces three `globalThis` keys with
+explicit module exports. Per ADR-0007. The buffered `setStatics`
+queue + auto-flush on `ready()` makes boot-race bugs structurally
+impossible.
+
 **Server ↔ Convex seam** — `server/src/convexClient.ts`. The Bun host
 posts match summaries here; Convex never reaches into the live world.
+
+## Render coordinators (Phase C extraction, ADR-0007)
+
+**EntityRenderCoordinator**
+(`client/src/game/render/EntityRenderCoordinator.ts`). Owns the 5
+state-driven entity render systems — projectile sprites, satellite
+sprites, destructible graphics + damage-flash bookkeeping,
+fire-patch graphics, pickup graphics. Single per-frame entry:
+`update(state, deltaMs, nowMs)`. Drawer + colour-resolver helpers
+injected via config so the coordinator stays scene-agnostic.
+
+**SimEventRouter**
+(`client/src/game/render/SimEventRouter.ts`). Owns the per-event
+dispatch from sim → audio + screen-shake + hit-stop + overlay
+state. The 12+ cross-cutting deps are explicit fields on
+`SimEventRouterDeps` instead of inline `this.*` accesses across a
+giant switch.
 
 ## Player roles in code
 
