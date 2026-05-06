@@ -39,6 +39,31 @@ import { InterestGrid, CELL_SIZE_PX, OBSERVE_RADIUS_CELLS } from "./InterestGrid
 import { encodeDelta } from "@net/snapshotDelta.ts";
 import { transferAuthority } from "./authority.ts";
 import { ReplayRecorder } from "./ReplayRecorder.ts";
+import { serverWasmHost } from "./serverWasmHost.ts";
+
+/**
+ * Phase B3 feature flag. When `true`, the authoritative tick goes
+ * through `serverWasmHost.step()` (Zig wasm) instead of the TS
+ * `stepWithRuntime`. Default off: B3 cutover requires a 30-min
+ * multi-client playtest before flipping in production. Once
+ * validated, the env var goes away and the TS path is deleted in
+ * B2.
+ */
+const USE_WASM_STEP_WORLD =
+  process.env.USE_WASM_STEP_WORLD === "1" ||
+  process.env.USE_WASM_STEP_WORLD === "true";
+
+if (USE_WASM_STEP_WORLD) {
+  // Fire-and-forget preload so the first tick after construction
+  // doesn't await. If the load fails, serverWasmHost.isReady()
+  // stays false and matchHost falls back to stepWithRuntime per
+  // the runtime guard in stepOnce().
+  void serverWasmHost.preload().catch((err) => {
+    console.warn(
+      `[matchHost] B3 wasm step preload failed; falling back to TS: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  });
+}
 
 export type MatchSocketData = {
   matchId: string;
@@ -165,6 +190,21 @@ export class MatchHost {
       chaosModifierIds,
     );
     this.runtime = createRuntime(this.map);
+    // B3: also push the map's static-AABB cache to the wasm host
+    // so step_world has terrain. Idempotent; no-op when wasm path
+    // is disabled. The host buffers if not yet ready.
+    if (USE_WASM_STEP_WORLD) {
+      const aabbs = this.map.platforms.map((p) => ({
+        x: p.position.x - p.size.x / 2,
+        y: p.position.y - p.size.y / 2,
+        w: p.size.x,
+        h: p.size.y,
+      }));
+      const oneWay = this.map.platforms.map((p) =>
+        p.kind === "platform" ? 1 : 0,
+      );
+      serverWasmHost.setStatics(aabbs, oneWay);
+    }
     this.grid = new InterestGrid(this.map.size.x, this.map.size.y, CELL_SIZE_PX);
     this.replayRecorder = new ReplayRecorder({
       matchId: this.matchId,
@@ -616,7 +656,7 @@ export class MatchHost {
     const runtimeSnapshotForDiag = rewindPlan ? snapshotRuntime(this.runtime) : null;
     const preStepState = this.state;
 
-    const result = stepWithRuntime(stepInputState, this.runtime, inputsByPlayer, STEP_MS);
+    const result = this.runStep(stepInputState, inputsByPlayer);
     let nextState = result.state;
     const events = result.events;
 
@@ -663,6 +703,63 @@ export class MatchHost {
    * for a 2-player match at 60 Hz; if this becomes hot we can drop it
    * behind a debug flag.
    */
+  /**
+   * Phase B3: pick the active step backend.
+   *
+   * - Default: TS `stepWithRuntime` (the authoritative path that's
+   *   shipped for all of production history).
+   * - When `USE_WASM_STEP_WORLD=1` AND `serverWasmHost.isReady()`:
+   *   route through `serverWasmHost.step()` (Zig wasm). Falls back
+   *   to TS automatically if the wasm preload hasn't completed
+   *   yet (returns false from isReady()) or if the wasm step
+   *   throws.
+   *
+   * Returns the same shape as `stepWithRuntime` so call sites
+   * don't need to change.
+   */
+  private runStep(
+    state: WorldState,
+    inputsByPlayer: Record<PlayerId, InputFrame | null>,
+  ): { state: WorldState; events: SimEvent[]; matchComplete: boolean } {
+    if (USE_WASM_STEP_WORLD && serverWasmHost.isReady()) {
+      try {
+        // Build the per-player keys map so wasm sees fresh input.
+        const inputsMap = new Map<
+          string,
+          { keys: number; prevKeys: number; aimX: number; aimY: number }
+        >();
+        for (const [pid, frame] of Object.entries(inputsByPlayer)) {
+          if (!frame) continue;
+          const prev = this.runtime.prevKeys.get(pid as PlayerId) ?? 0;
+          inputsMap.set(pid, {
+            keys: frame.keys,
+            prevKeys: prev,
+            aimX: frame.aimX,
+            aimY: frame.aimY,
+          });
+          this.runtime.prevKeys.set(pid as PlayerId, frame.keys);
+        }
+        serverWasmHost.writeInputs(inputsMap);
+        const result = serverWasmHost.step(state, STEP_MS);
+        // serverWasmHost emits WasmSimEvents (numeric kind +
+        // payload). The per-event TS translation lives in the
+        // client module; for now, drop them server-side — the
+        // server only needs `matchComplete` for Convex posting,
+        // and snapshot broadcast carries the WorldState.
+        return {
+          state: result.state,
+          events: [] as SimEvent[],
+          matchComplete: result.matchComplete,
+        };
+      } catch (err) {
+        console.warn(
+          `[matchHost] wasm step threw; falling back to TS for this tick: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+    }
+    return stepWithRuntime(state, this.runtime, inputsByPlayer, STEP_MS);
+  }
+
   private logLagCompOutcomeChange(
     plan: RewindPlan,
     rewoundEvents: SimEvent[],
