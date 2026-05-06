@@ -65,6 +65,7 @@ import { LightBeamLayer } from "../render/LightingLayer";
 import { RenderLayer } from "../render/RenderLayer";
 import { transientVfx } from "../render/TransientVfx";
 import { EntityRenderCoordinator } from "../render/EntityRenderCoordinator";
+import { SimEventRouter } from "../render/SimEventRouter";
 import { PALETTE, ARENA_THEMES } from "../ui/palette";
 import type {
   CardDefinition,
@@ -205,6 +206,10 @@ export class OnlineMatchScene extends Phaser.Scene {
    * per frame.
    */
   private entityRender: EntityRenderCoordinator | null = null;
+  /** Phase C2b: SimEvent → audio + shake + overlay routing.
+   *  Lazy-init in handleSimEvents because audio + overlays come up
+   *  asynchronously during scene boot. */
+  private simEventRouter: SimEventRouter | null = null;
   /** Static arena geometry (platforms, walls, floor, vignette). Drawn
    *  once on hello receipt; never per-frame. */
   private arenaGraphics: Phaser.GameObjects.Graphics | null = null;
@@ -747,118 +752,29 @@ export class OnlineMatchScene extends Phaser.Scene {
       for (const e of events) this.pendingSimEvents.push(e);
     }
     if (!this.audio) return;
+    // C2b: per-event dispatch lives in SimEventRouter. The 120-line
+    // switch was inline here. Lazy-init the router on first use so
+    // it picks up the now-ready audio + overlay refs.
+    if (!this.simEventRouter) {
+      this.simEventRouter = new SimEventRouter({
+        scene: this,
+        audio: this.audio,
+        localPlayerId: this.localPlayerId,
+        safeShake: (durationMs, intensity) => this.safeShake(durationMs, intensity),
+        spawnDamageNumber: (vid, dmg) => this.spawnDamageNumber(vid, dmg),
+        spawnBlastAtPlayer: (pid, r, d) => this.spawnBlastAtPlayer(pid, r, d),
+        spawnPlatformBlastTint: (pos) => this.spawnPlatformBlastTint(pos),
+        showCardDraft: (cardIds) => this.showCardDraft(cardIds),
+        hideCardDraft: () => this.cardDraftOverlay?.hide(),
+        playerRigs: this.playerRigs,
+        particlePool: this.particlePool,
+        renderLayer: this.renderLayer,
+        killStreakCount: this.killStreakCount,
+        prevAlive: this.prevAlive,
+      });
+    }
     for (const event of events) {
-      switch (event.t) {
-        case "shot-fired":
-          this.audio.play("shoot");
-          if (event.playerId === this.localPlayerId) {
-            // Tiny recoil shake on local-player fire — guard against stacking.
-            this.safeShake(40, 0.0015);
-          }
-          break;
-        case "hit-confirmed": {
-          this.audio.play("hit");
-          // Hit-stop: freeze render tweens for 35–50ms on a heavy hit.
-          // Per game-feel-juice/SKILL.md recipe 2 — render-only freeze, sim keeps ticking.
-          const stopMs = event.damage >= 30 ? 50 : 35;
-          this.tweens.timeScale = 0;
-          this.time.delayedCall(stopMs, () => { this.tweens.timeScale = 1; });
-          if (event.victimId === this.localPlayerId) {
-            // Bigger shake when the LOCAL player is hit — guard stacking.
-            this.safeShake(80, 0.008);
-          }
-          this.spawnDamageNumber(event.victimId, event.damage);
-          // Spawn small impact blast at victim's current position.
-          this.spawnBlastAtPlayer(event.victimId, 22, event.damage);
-          // Visual knockback on the victim rig — random direction (render-only).
-          // Per game-feel-juice §5.
-          const victimRig = this.playerRigs.get(event.victimId);
-          if (victimRig) {
-            const angle = Math.random() * Math.PI * 2;
-            victimRig.triggerHit(Math.cos(angle), Math.sin(angle));
-          }
-          break;
-        }
-        case "player-killed": {
-          // Kill stack — render-only, sim keeps ticking.
-          // Per game-feel-juice/SKILL.md recipe 1: 80ms hit-stop + 0.012 shake bucket
-          // + particle burst + 2 layered SFX + camera kick for killer.
-          // tweens.timeScale (NOT time.timeScale — that would freeze delayedCall itself).
-          this.tweens.timeScale = 0;
-          this.time.delayedCall(80, () => { this.tweens.timeScale = 1; });
-          this.safeShake(180, 0.012);
-          this.spawnBlastAtPlayer(event.victimId, 36, 50);
-          // Two layered SFX.
-          this.audio.play("explosion");
-          this.audio.play("hit");
-          // Camera kick when LOCAL player got the kill.
-          if (event.killerId !== null && event.killerId === this.localPlayerId) {
-            this.safeShake(120, 0.006);
-          }
-          break;
-        }
-        case "destructible-broken": {
-          this.audio.play("explosion");
-          this.safeShake(60, 0.0025);
-          const bPos = { x: event.x, y: event.y };
-          this.spawnPlatformBlastTint(bPos);
-          this.renderLayer?.spawnExplosionBlast(bPos, 48, 30);
-          break;
-        }
-        case "pickup-taken":
-          this.audio.play("pickup");
-          break;
-        case "parry-deflected":
-          this.audio.play("hit");
-          break;
-        case "shield-popped": {
-          this.audio.play("explosion");
-          // Shield pop blast at player position.
-          this.spawnBlastAtPlayer(event.playerId, 36, 26);
-          break;
-        }
-        case "round-end":
-          // Soft cue. Reuse "card" as a "ding".
-          this.audio.play("card");
-          // Drain all in-flight pool particles so round-restart can't tween
-          // into a freed object. Per phaser4-game/SKILL.md "Pool drain on round-end".
-          this.particlePool?.drainActive(this);
-          // Reset per-round kill streaks so the next round starts clean.
-          this.killStreakCount.clear();
-          this.prevAlive.clear();
-          break;
-        case "card-offered":
-          if (event.playerId === this.localPlayerId) {
-            this.showCardDraft(event.cardIds);
-          }
-          break;
-        case "player-slowed":
-          // Visual-only; no sound.
-          break;
-        case "draft-resolved":
-          // Pick landed; hide the local overlay and play a soft confirm.
-          if (event.playerId === this.localPlayerId) {
-            this.cardDraftOverlay?.hide();
-          }
-          this.audio.play("card");
-          break;
-        case "chain-hit": {
-          // Bolt arc visual is drawn by statusVfx (lightning handler) using
-          // the forwarded event in pendingSimEvents. Audio + shake here.
-          this.audio.play("hit");
-          if (event.victimId === this.localPlayerId || event.chainTargetId === this.localPlayerId) {
-            this.safeShake(50, 0.004);
-          }
-          break;
-        }
-        default: {
-          // Exhaustiveness check: TypeScript will error here if a new
-          // SimEvent variant is added to sim/types.ts and not handled above.
-          const _exhaustive: never = event;
-          void _exhaustive;
-          break;
-        }
-      }
+      this.simEventRouter.dispatch(event);
     }
   }
 
