@@ -37,6 +37,14 @@ const WORLD_MATCH_ID = "world";
 // rotation — it's available only for explicit room hosts that pick it.
 const ROTATION_MAPS: readonly MapId[] = ["boxworks-mini", "boxworks-tower"];
 
+/**
+ * How many recycles between curated-map appearances. Slots that aren't
+ * curated roll a seeded procgen arena ("gen:<seed>") — the seed rides in
+ * the mapId, so clients expand the identical map deterministically. See
+ * docs/map-design.md + client/src/sim/data/mapGen.ts (validator-gated).
+ */
+const GEN_SLOTS_PER_CURATED = 2;
+
 const WORLD_COLOR_PALETTE = [
   "#88ccff",
   "#ff88aa",
@@ -97,7 +105,7 @@ export class WorldHost {
     // not silent. Prior code passed the raw mapId straight into MatchHost,
     // which then `resolveMap()`d back to DEFAULT_MAP_ID on miss — producing a
     // running but wrong-arena world. Now we throw at boot.
-    if (opts.mapId !== undefined && !isMapId(opts.mapId)) {
+    if (opts.mapId !== undefined && !isMapId(opts.mapId) && !opts.mapId.startsWith("gen:")) {
       throw new Error(
         `WorldHost: unknown mapId "${opts.mapId}". Known: ${Object.keys({ boxworks: 1, "boxworks-mini": 1, "boxworks-tower": 1 }).join(", ")}`,
       );
@@ -204,11 +212,19 @@ export class WorldHost {
    * returns `this.mapId`. Wired here so a future "rotate at round-end"
    * feature can call this without further plumbing.
    */
-  private nextMapId(): MapId {
+  private nextMapId(): MapId | string {
     if (!this.rotateMaps) return this.mapId;
-    const id = ROTATION_MAPS[this.rotationCursor % ROTATION_MAPS.length]!;
+    const slot = this.rotationCursor;
     this.rotationCursor += 1;
-    return id;
+    // Pattern with GEN_SLOTS_PER_CURATED=2: curated, gen, gen, curated, …
+    // Curated slots walk ROTATION_MAPS; gen slots roll a fresh seed.
+    // Seed choice is SERVER-side only (transmitted via mapId), so wall
+    // clock is fine here — expansion from the seed is what must be pure.
+    if (slot % (GEN_SLOTS_PER_CURATED + 1) === 0) {
+      const idx = Math.floor(slot / (GEN_SLOTS_PER_CURATED + 1));
+      return ROTATION_MAPS[idx % ROTATION_MAPS.length]!;
+    }
+    return `gen:${Math.floor(Date.now() / 1000) % 1_000_000}`;
   }
 
   route(ws: ServerWebSocket<MatchSocketData>, raw: Buffer | ArrayBuffer | Uint8Array): void {

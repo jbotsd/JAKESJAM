@@ -9,6 +9,7 @@
 // in an empty world.
 
 import { boxworksWorld } from "./boxworks.js";
+import { generateArena, isGenMapId, parseGenSeed } from "./mapGen.js";
 import { boxworksMini } from "./boxworks-mini.js";
 import { boxworksTower } from "./boxworks-tower.js";
 import type { MapDefinition } from "../types.js";
@@ -66,11 +67,28 @@ export function isMapId(value: string): value is MapId {
  * to the default — which only worked by accident when the default
  * happened to be the same expanded map.
  */
+/** Cache of generated arenas by seed — generation is pure/deterministic,
+ *  so caching is just an allocation saver for repeat lookups. */
+const genMapCache = new Map<number, MapDefinition>();
+
 export function resolveMap(id: string | undefined): MapDefinition {
   if (id !== undefined) {
     if (isMapId(id)) return mapsById[id];
     const aliased = mapAliasesById[id];
     if (aliased) return aliased;
+    // Seeded procgen arenas: "gen:<seed>". Client and server expand the
+    // seed through the same pure generator — byte-identical geometry.
+    if (isGenMapId(id)) {
+      const seed = parseGenSeed(id);
+      if (seed !== null) {
+        let map = genMapCache.get(seed);
+        if (!map) {
+          map = generateArena(seed);
+          genMapCache.set(seed, map);
+        }
+        return map;
+      }
+    }
   }
   return mapsById[DEFAULT_MAP_ID];
 }

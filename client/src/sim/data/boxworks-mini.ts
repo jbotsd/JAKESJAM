@@ -30,7 +30,10 @@ export const boxworksMini: MapDefinition = {
     { id: "ceiling", kind: "wall", position: { x: 640, y: 16 }, size: { x: 1280, y: 32 } },
     // Single floating mid-platform — splits airspace, drop-through enabled
     // because all 'platform' kinds are one-way (per boxworks.ts contract).
-    { id: "mid", kind: "platform", position: { x: 640, y: 360 }, size: { x: 380, y: 22 } },
+    // y=362 (top 351): ledge(479)→mid rise = 128px ≤ the 129px step law.
+    // At y=360 the rise was 130 — one pixel over, caught by the map
+    // validator (mapGen.test.ts curated audit).
+    { id: "mid", kind: "platform", position: { x: 640, y: 362 }, size: { x: 380, y: 22 } },
     // Two side ledges at brawl height — give crouchers an angle.
     // y=488 (top 479): floor→ledge rise is 129px = 93% of the 139px max
     // jump. At the previous y=460 the rise was 157px — mathematically

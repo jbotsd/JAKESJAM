@@ -52,8 +52,10 @@ const registry = new MatchRegistry();
 // rather than as a module-level singleton so tests can spin up a fresh
 // instance without crossing module-load state.
 const worldHost = new WorldHost({
-  mapId: "boxworks-mini",
-  rotateMaps: true,
+  // WORLD_MAP pins the world to one map (curated id or "gen:<seed>") —
+  // useful for playtesting a specific arena. Default: mini + rotation.
+  mapId: process.env.WORLD_MAP ?? "boxworks-mini",
+  rotateMaps: process.env.WORLD_MAP === undefined,
   // AI duelists keeping the world alive — 0 disables (default, so tests
   // and probes stay deterministic). host-public.sh hosts with 2.
   bots: Number(process.env.WORLD_BOTS ?? 0),

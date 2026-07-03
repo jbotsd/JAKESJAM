@@ -200,6 +200,19 @@
   and probes run 0). Fix along the way: matchHost's input loop keyed
   on connected sockets and starved socketless players — now iterates
   playerInfo.
+- **Procgen arenas + map-design ruleset (docs/map-design.md)** — new
+  seeded generator (client/src/sim/data/mapGen.ts): tier-structured
+  1280x640 arenas obeying validator-enforced laws derived from the
+  measured movement (step ≤129px, sightline ≤420px on the floor
+  lane, ≥2 routes up, 8–16% openness, spawn fairness, mirrored
+  symmetry rolls). Seed rides in the mapId ("gen:<seed>") so client
+  and server expand byte-identical geometry — verified live
+  (predictDelta 8px on a generated map). World rotation now rolls
+  fresh arenas between curated slots (mini/tower); WORLD_MAP env
+  pins a specific map for playtests. The SAME validator audits the
+  curated maps in CI — it immediately caught that the T1 ledge fix
+  left ledge→mid at 130px (one over the law; mid moved to y=362).
+  60-seed fuzz + determinism suite in mapGen.test.ts.
 - NOTE: probe runs on a saturated host (e.g. DAW pinning 6 cores)
   produce skewed observations — the probe now warns when
   load/cores > 0.8 and records hostLoadRatio in report.json.
