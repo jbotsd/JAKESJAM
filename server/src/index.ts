@@ -13,6 +13,7 @@
 //   POST /world-token   body { playerId } → { token, wsUrl }
 //                       Cheap mint — no Convex round-trip required.
 
+import { resolve, normalize } from "node:path";
 import { mintWorldToken, verifyMatchToken, verifyWorldToken } from "./auth.ts";
 import { config } from "./config.ts";
 import { MatchRegistry } from "./matchRegistry.ts";
@@ -50,10 +51,76 @@ const registry = new MatchRegistry();
 // Single always-on world host per server process. Constructed at boot
 // rather than as a module-level singleton so tests can spin up a fresh
 // instance without crossing module-load state.
-const worldHost = new WorldHost({ mapId: "boxworks-mini", rotateMaps: true });
+const worldHost = new WorldHost({
+  mapId: "boxworks-mini",
+  rotateMaps: true,
+  // AI duelists keeping the world alive — 0 disables (default, so tests
+  // and probes stay deterministic). host-public.sh hosts with 2.
+  bots: Number(process.env.WORLD_BOTS ?? 0),
+});
 
 type SocketKind = "room" | "world";
 type SocketData = MatchSocketData & { kind: SocketKind };
+
+// ── Self-contained hosting: optional static client serving ─────────────────
+// When SERVE_CLIENT_DIR points at a Vite build output (client/dist), any GET
+// that doesn't match an API/WS route serves files from it, with index.html
+// fallback. This lets a single tunnel/port host BOTH the client and the game
+// server (see scripts/host-public.sh) — no Vercel/Convex/Fly involvement.
+const serveClientDir = process.env.SERVE_CLIENT_DIR
+  ? resolve(process.env.SERVE_CLIENT_DIR)
+  : null;
+if (serveClientDir) {
+  console.log(`[jakesjam-srv] serving client statics from ${serveClientDir}`);
+}
+
+async function serveStatic(
+  pathname: string,
+  requestOrigin: string,
+): Promise<Response | null> {
+  if (!serveClientDir) return null;
+  // Root and client-side routes fall back to index.html (SPA).
+  const rel = pathname === "/" ? "/index.html" : pathname;
+  const full = normalize(resolve(serveClientDir + rel));
+  // Path traversal guard: the resolved path must stay inside the dist dir.
+  if (!full.startsWith(serveClientDir + "/") && full !== serveClientDir) {
+    return null;
+  }
+  // Dotfile deny: the funnel URL is public internet — scanners probe
+  // /.git/config, /.env, etc. Nothing under dist legitimately starts
+  // with a dot, so refuse outright instead of relying on file-miss 404s.
+  if (rel.includes("/.")) return null;
+  let file = Bun.file(full);
+  if (!(await file.exists())) {
+    // Unknown non-asset path → SPA fallback to index.html.
+    if (/\.[a-z0-9]+$/i.test(rel)) return null; // real missing asset: 404
+    file = Bun.file(resolve(serveClientDir, "index.html"));
+    if (!(await file.exists())) return null;
+  }
+  // index.html gets the share-card origin rewrite: OG/Twitter scrapers
+  // require ABSOLUTE image/url metas, and this server answers on many
+  // hosts (funnel domain, LAN IP, localhost, future VPS domain). The
+  // __ORIGIN__ placeholder in client/index.html becomes the origin the
+  // REQUEST actually arrived on, so shared links always carry a card
+  // the scraper can fetch.
+  const isIndex = full.endsWith("/index.html") || file.name?.endsWith("index.html");
+  if (isIndex) {
+    const html = (await file.text()).replaceAll("__ORIGIN__", requestOrigin);
+    return new Response(html, {
+      headers: {
+        "content-type": "text/html; charset=utf-8",
+        "cache-control": "no-cache",
+      },
+    });
+  }
+  // Bun.file infers content-type from the extension (including wasm).
+  const immutable = rel.startsWith("/assets/") || rel.startsWith("/wasm/");
+  return new Response(file, {
+    headers: immutable
+      ? { "cache-control": "public, max-age=31536000, immutable" }
+      : { "cache-control": "no-cache" },
+  });
+}
 
 const corsHeaders: Record<string, string> = {
   "access-control-allow-origin": "*",
@@ -159,6 +226,16 @@ function serveOnPort(port: number) {
       };
       const upgraded = srv.upgrade(req, { data });
       return upgraded ? undefined : new Response("upgrade failed", { status: 500 });
+    }
+
+    if (req.method === "GET") {
+      // Origin as the client sees it. Proxies terminating TLS (Tailscale
+      // Funnel, lhr tunnel) forward plain http but set x-forwarded-proto;
+      // trust it, falling back to the URL scheme for direct connections.
+      const host = req.headers.get("host") ?? url.host;
+      const proto = req.headers.get("x-forwarded-proto") ?? url.protocol.replace(":", "");
+      const staticRes = await serveStatic(url.pathname, `${proto}://${host}`);
+      if (staticRes) return staticRes;
     }
 
     return new Response("not found", { status: 404 });

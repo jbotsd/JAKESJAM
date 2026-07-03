@@ -8,6 +8,7 @@
 import type { ConvexClient } from "convex/browser";
 import { api } from "../../../convex/_generated/api";
 import type { Id } from "../../../convex/_generated/dataModel";
+import { readGameServerUrlOverride } from "./worldClient.js";
 
 export type MatchmakerAssignment = {
   gameServerUrl: string;
@@ -20,8 +21,13 @@ export async function fetchMatchAssignment(
   matchId: Id<"matches">,
   playerId: string,
 ): Promise<MatchmakerAssignment> {
-  // VITE_GAME_SERVER_URL overrides the assigned URL (useful for local Bun dev).
-  const override = (import.meta.env.VITE_GAME_SERVER_URL as string | undefined) ?? null;
+  // Overrides of the Convex-assigned URL, highest precedence first:
+  // runtime `?server=` query param (share links to a self-hosted server),
+  // then build-time VITE_GAME_SERVER_URL (local Bun dev).
+  const override =
+    readGameServerUrlOverride() ??
+    (import.meta.env.VITE_GAME_SERVER_URL as string | undefined) ??
+    null;
   const result = await convex.query(api.matchmaker.getMyMatchToken, {
     matchId,
     playerId,

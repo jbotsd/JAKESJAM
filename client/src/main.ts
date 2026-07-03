@@ -13,6 +13,7 @@ import {
   startWasmCanary,
 } from "./sim/wasm/runtime";
 import { installWindowProbe } from "./debug/wasmStateProbe";
+import { installBotDriver } from "./debug/botDriver";
 import {
   applyWasmWorldFlag,
   applyWasmWorldStepFullSync,
@@ -40,6 +41,7 @@ void applyWasmPlayerFlag();
 // their state getter when they own a WorldState. See
 // client/src/debug/wasmStateProbe.ts.
 installWindowProbe();
+installBotDriver();
 
 // Phase J0 — opt-in wasm orchestrator shim. `?wasm-world=1` lets
 // step_world drive the round phase machine, fire-patch lifetime,
@@ -201,9 +203,14 @@ const optionsPanel = queryRequired<HTMLElement>("[data-options]");
 const musicVolumeInput = queryRequired<HTMLInputElement>("[data-music-volume]");
 const musicMutedInput = queryRequired<HTMLInputElement>("[data-music-muted]");
 const menuMusic = new Audio(getMenuMusicUrl());
+// ?world=1 auto-join never shows the menu — eager preload would only
+// produce an aborted request in the console.
+const autoJoiningWorld =
+  new URLSearchParams(window.location.search).get("world") === "1" ||
+  window.location.pathname === "/world";
 
 menuMusic.loop = true;
-menuMusic.preload = "auto";
+menuMusic.preload = autoJoiningWorld ? "none" : "auto";
 restoreOptions();
 
 queryRequired<HTMLButtonElement>("[data-menu-world]").addEventListener("click", () => {
@@ -275,6 +282,10 @@ window.addEventListener("jakesjam:start-match", (event) => {
   stopMenuMusic();
   hideSplash();
   hideLobby();
+  // game.scene.start() does NOT stop other running scenes (unlike a
+  // scene-local this.scene.start), so the menu scene kept rendering its
+  // footer text ("Practice starts locally...") under the match.
+  game.scene.stop(SceneKeys.MainMenu);
   if (shouldUseNewNetcode() && matchEvent.detail?.matchId) {
     game.scene.start(SceneKeys.OnlineMatch, {
       matchId: matchEvent.detail.matchId,
@@ -331,6 +342,7 @@ function localPlayerId(): string {
 function joinWorld(): void {
   hideSplash();
   hideLobby();
+  game.scene.stop(SceneKeys.MainMenu); // see start-match handler note
   document.title = "JAKESJAM — In World";
   game.scene.start(SceneKeys.OnlineMatch, {
     mode: "world",
@@ -384,6 +396,11 @@ window.addEventListener("jakesjam:return-to-lobby", () => {
   }
   if (game.scene.isActive(SceneKeys.OnlineMatch)) {
     game.scene.stop(SceneKeys.OnlineMatch);
+  }
+  // Match-start paths stop the menu scene (it kept rendering its footer
+  // under matches); bring it back with the splash.
+  if (!game.scene.isActive(SceneKeys.MainMenu)) {
+    game.scene.start(SceneKeys.MainMenu);
   }
   document.title = "JAKESJAM";
   showSplash();

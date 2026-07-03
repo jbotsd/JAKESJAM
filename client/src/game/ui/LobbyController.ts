@@ -126,7 +126,11 @@ export class LobbyController {
       this.roomClient = new RoomClient(convexUrl);
       this.setStatus("Connected. Create or join a room.");
     } else {
-      this.setStatus("Set VITE_CONVEX_URL to enable rooms.");
+      // Player-facing copy: rooms need a matchmaking backend the
+      // self-hosted pivot doesn't run. Point players at the world
+      // instead of leaking env-var internals. (The e2e lobby spec keys
+      // on "VITE_CONVEX_URL" still being present for its skip guard.)
+      this.setStatus("Rooms are offline — hit Join World instead. (VITE_CONVEX_URL unset)");
     }
 
     this.bindEvents();
@@ -843,7 +847,15 @@ function loadOrCreatePlayerId(): string {
     return sessionId;
   }
 
-  const playerId = crypto.randomUUID();
+  // crypto.randomUUID only exists in SECURE contexts (https / localhost).
+  // Self-hosted LAN play is plain http://192.168.x.x — there the call is
+  // undefined and, because this runs during module init, it killed the
+  // ENTIRE menu (dead buttons, no world badge, no auto-join). Fall back
+  // to a random id of equivalent uniqueness for this purpose.
+  const playerId =
+    typeof crypto.randomUUID === "function"
+      ? crypto.randomUUID()
+      : `p-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`;
   sessionStorage.setItem(PLAYER_ID_KEY, playerId);
   return playerId;
 }

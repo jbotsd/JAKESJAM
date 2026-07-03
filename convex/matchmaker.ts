@@ -29,6 +29,17 @@ export function pickGameServerUrl(requestedRegion: string | undefined): {
   region: string;
   url: string;
 } {
+  // Self-hosted override: when GAME_SERVER_URL_OVERRIDE is set on this
+  // deployment, ALL matches route to it regardless of requested region.
+  // Used to host matches from a home PC (tunnel or port-forward) instead
+  // of the Fly fleet:
+  //   npx convex env set GAME_SERVER_URL_OVERRIDE wss://<public-host>/ws
+  //   npx convex env remove GAME_SERVER_URL_OVERRIDE   # back to Fly
+  // scripts/host-public.sh manages this automatically.
+  const override = process.env.GAME_SERVER_URL_OVERRIDE;
+  if (override) {
+    return { region: "home", url: override };
+  }
   const region: GameRegion =
     requestedRegion && (GAME_REGIONS as readonly string[]).includes(requestedRegion)
       ? (requestedRegion as GameRegion)
