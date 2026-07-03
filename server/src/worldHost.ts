@@ -16,6 +16,8 @@ import {
   MatchHost,
   type MatchSocketData,
 } from "./matchHost.ts";
+import { WorldBots } from "./worldBots.ts";
+import { STEP_MS } from "@sim/index.ts";
 import { PlayerId, type PlayerSpawnInfo } from "@sim/types.ts";
 import { DEFAULT_MAP_ID, isMapId, type MapId } from "@sim/data/maps.ts";
 import { convexClient, type ConvexId } from "./convexClient.ts";
@@ -64,11 +66,33 @@ export class WorldHost {
   private host: MatchHost | null = null;
   private readonly mapId: MapId;
   private readonly rotateMaps: boolean;
+  /** Live sockets by player — maintained across host recycles so a
+   *  completed match can migrate everyone into the replacement host. */
+  private readonly sockets = new Map<PlayerId, ServerWebSocket<MatchSocketData>>();
+  /** Pending recycle timer (results-display hold). */
+  private recycleTimer: ReturnType<typeof setTimeout> | null = null;
+  /** How long the final scoreboard stays up before the world rolls a new
+   *  match. Overridable for tests. */
+  private readonly resultsHoldMs: number;
+  /** Server-side AI duelists that keep the world alive. Count via the
+   *  WORLD_BOTS env (host-public.sh sets 2); 0 disables (tests/probes). */
+  private readonly botCount: number;
+  private readonly bots = new WorldBots();
+  private botTimer: ReturnType<typeof setInterval> | null = null;
   /** Index into ROTATION_MAPS used by `nextMapId`. Reset alongside host
    *  rebuild when the existing host is torn down for any reason. */
   private rotationCursor = 0;
 
-  constructor(opts: { mapId?: MapId | string; rotateMaps?: boolean } = {}) {
+  constructor(opts: { mapId?: MapId | string; rotateMaps?: boolean; resultsHoldMs?: number; bots?: number } = {}) {
+    this.resultsHoldMs = opts.resultsHoldMs ?? 6000;
+    this.botCount = Math.max(0, Math.min(4, opts.bots ?? 0));
+    if (this.botCount > 0) {
+      // Bot brains tick at sim rate; think() no-ops while the host loop
+      // is stopped (empty world), so idle cost is a timer wakeup.
+      this.botTimer = setInterval(() => {
+        if (this.host) this.bots.think(this.host, Date.now());
+      }, STEP_MS);
+    }
     // Validate the constructor mapId at the boundary so a typo is loud,
     // not silent. Prior code passed the raw mapId straight into MatchHost,
     // which then `resolveMap()`d back to DEFAULT_MAP_ID on miss — producing a
@@ -95,16 +119,83 @@ export class WorldHost {
    */
   attach(ws: ServerWebSocket<MatchSocketData>): void {
     const playerId = PlayerId(ws.data.playerId);
+    this.sockets.set(playerId, ws);
     if (!this.host) {
       const spawn = this.spawnFor(ws.data.playerId);
       // WorldHost doesn't have a room to read chaos modifiers from, so we fall back
       // to the no-chaos baseline. Future workitem: add a lightweight Convex world token
       // endpoint that exposes a default/modifiable chaos set for the always-on world.
-      this.host = new MatchHost(WORLD_MATCH_ID, [spawn], [], this.nextMapId());
+      this.host = this.buildHost([spawn]);
     } else if (!this.host.hasPlayer(playerId)) {
       this.host.addPlayer(this.spawnFor(ws.data.playerId));
     }
     this.host.attachClient(ws);
+  }
+
+  private buildHost(spawns: PlayerSpawnInfo[]): MatchHost {
+    // Bots ride along in every host build (including recycles).
+    const botSpawns = this.bots
+      .spawnInfosFor(this.botCount)
+      .filter((b) => !spawns.some((sp) => sp.playerId === b.playerId))
+      .map((b) => this.botSpawn(b.playerId, b.name));
+    return new MatchHost(WORLD_MATCH_ID, [...spawns, ...botSpawns], [], this.nextMapId(), {
+      onMatchComplete: () => this.scheduleRecycle(),
+    });
+  }
+
+  private botSpawn(playerId: PlayerId, name: string): PlayerSpawnInfo {
+    return {
+      playerId,
+      characterId: "balanced",
+      name: `BOT · ${name}`,
+      // Amber — the client also colors bot rigs by the bot_ id prefix, but
+      // the roster color keeps room-mode consistent too.
+      color: "#ffb454",
+      weaponId: "starter-pistol",
+    };
+  }
+
+  /**
+   * A match just completed (someone reached the target score). The round
+   * machine deliberately parks in round-over so the results UI can show —
+   * in room mode the registry tears the host down, but the always-on world
+   * must ROLL ON. After a short scoreboard hold, rebuild the host on the
+   * next rotation map and migrate every live socket into it. Without this
+   * the world stays parked in round-over forever (observed live 2026-07-03).
+   */
+  private scheduleRecycle(): void {
+    if (this.recycleTimer) return;
+    this.recycleTimer = setTimeout(() => {
+      this.recycleTimer = null;
+      this.recycle();
+    }, this.resultsHoldMs);
+  }
+
+  private recycle(): void {
+    const old = this.host;
+    if (!old) return;
+    // Drop sockets that closed while the scoreboard was up.
+    for (const [pid, ws] of this.sockets) {
+      if (ws.readyState !== 1) this.sockets.delete(pid);
+    }
+    if (this.sockets.size === 0) {
+      // Nobody connected — tear down and lazy-boot on the next attach.
+      old.dispose();
+      this.host = null;
+      console.log("[worldHost] match complete with no players — world reset (lazy reboot)");
+      return;
+    }
+    const spawns = [...this.sockets.keys()].map((pid) => this.spawnFor(pid));
+    this.host = this.buildHost(spawns);
+    old.dispose();
+    for (const ws of this.sockets.values()) {
+      // attachClient sends a fresh ServerHello (new map + startTick); the
+      // client re-renders the arena and resyncs off the first full snapshot.
+      this.host.attachClient(ws);
+    }
+    console.log(
+      `[worldHost] recycled world after match completion — map=${this.host.summary().mapId} players=${this.sockets.size}`,
+    );
   }
 
   /**
@@ -129,6 +220,8 @@ export class WorldHost {
   }
 
   detach(ws: ServerWebSocket<MatchSocketData>): void {
+    const playerId = PlayerId(ws.data.playerId);
+    if (this.sockets.get(playerId) === ws) this.sockets.delete(playerId);
     if (!this.host) return;
     this.host.detachClient(ws);
     // Note: unlike MatchRegistry, we deliberately do NOT tear down the

@@ -112,6 +112,10 @@ export type NetStats = {
    * the most recent per-entity reconcile pass. 0 after a full safety sweep.
    */
   lastReconcileSkippedEntities: number;
+  /** Diagnostics: predicted sim steps with Fire held / local spawns produced. */
+  diagFireSteps?: number;
+  diagPredictedSpawns?: number;
+  lastReplayDebug?: Record<string, unknown> | null;
 };
 
 export type ReconcileStats = {
@@ -145,6 +149,32 @@ export const EMPTY_NET_STATS: NetStats = {
  */
 const FULL_RECONCILE_INTERVAL_MS = 5000;
 
+/**
+ * How far in the past remote players are rendered (entity interpolation).
+ * Remote entities always render at estimated-server-now minus this delay so
+ * the renderer lerps BETWEEN two received snapshots instead of showing the
+ * raw predicted extrapolation (which jumps on every reconcile).
+ *
+ * At 20Hz snapshots this is 2 intervals — the Source-engine default
+ * (cl_interp = 2/updaterate). One lost snapshot leaves the render time at
+ * the edge of the newest bracket; the buffer's hold-last covers the gap.
+ * Raise toward 150 if sustained loss shows remote stutter in the wild.
+ */
+const INTERP_DELAY_MS = 100;
+
+/** EMA weight for the server-clock offset estimate (snapshot arrival times
+ *  are jittery; a slow EMA keeps the render clock steady). */
+const SERVER_CLOCK_EMA_ALPHA = 0.1;
+
+/**
+ * Cap on wall-clock time credited to the accumulator in a single tick() call.
+ * Browsers throttle setInterval in background tabs to ~1 Hz; without a clamp
+ * a refocus would credit seconds at once and burst-step the sim (and flood
+ * the server's input queue) to "catch up". Beyond this the missed time is
+ * simply dropped — the server's slew hint re-syncs the tick lead.
+ */
+const MAX_TICK_DELTA_MS = 250;
+
 export class ClientLoop {
   private transport: Transport;
   private readonly matchId: string;
@@ -166,11 +196,24 @@ export class ClientLoop {
   private lastTickAt = 0;
   private lastSnapshotTick: Tick = Tick(0);
   private readonly remoteInterp = new Map<PlayerId, InterpolationBuffer<PlayerEntity>>();
+  /**
+   * EMA of (snapshot server time − local performance.now()) sampled at each
+   * snapshot arrival. estimated server now = performance.now() + this offset.
+   * null until the first snapshot lands.
+   */
+  private serverClockOffsetMs: number | null = null;
 
   // Net stats bookkeeping. Ping/pong + RTT + snap-rate live on PingMonitor;
   // ClientLoop only owns the prediction-delta gauge.
   private readonly pingMonitor: PingMonitor;
   private lastPredictDeltaPx = 0;
+  /** Diagnostics: sim steps predicted with the Fire bit held, and how many
+   *  of those steps spawned a projectile locally. If fire inputs flow but
+   *  predicted spawns stay 0, client fire prediction is broken. */
+  private diagFireSteps = 0;
+  private diagPredictedSpawns = 0;
+  /** Diagnostics: what the most recent reconcile replay did to round state. */
+  private lastReplayDebug: Record<string, unknown> | null = null;
 
   // ---- Delta snapshot ring ----
   /** Last N received WorldStates keyed by their tick. Used to resolve baseline
@@ -200,6 +243,9 @@ export class ClientLoop {
 
   // ---- Reconnect supervision ----
   private readonly reconnect: ReconnectSupervisor;
+  /** In-band bye reason captured before the socket close lands — the
+   *  CloseEvent's reason is unreliable through proxies. */
+  private pendingByeReason: string | null = null;
 
   constructor(opts: ClientLoopOptions) {
     this.transport = opts.transport;
@@ -241,11 +287,13 @@ export class ClientLoop {
     });
     transport.onMessage((data) => this.handleMessage(data));
     transport.onClose((reason) => {
+      const effective = this.pendingByeReason ?? reason;
+      this.pendingByeReason = null;
       if (this.reconnect.isAbandoned()) {
         this.stop();
         return;
       }
-      this.reconnect.noteClose(reason);
+      this.reconnect.noteClose(effective);
     });
   }
 
@@ -299,35 +347,65 @@ export class ClientLoop {
   }
 
   /**
-   * Snapshot state used by the renderer. The local player's position has the
-   * smoothing offset applied (rendered = predicted + offset, where offset
-   * decays to zero via per-band exponential τ — see renderSmoother.ts).
-   * All other entities are
-   * unchanged. Clone if you intend to mutate.
+   * Snapshot state used by the renderer.
+   *
+   * Local player: predicted position with the smoothing offset applied
+   * (rendered = predicted + offset, where offset decays to zero via per-band
+   * exponential τ — see renderSmoother.ts).
+   *
+   * Remote players: sampled from their interpolation buffers at
+   * estimated-server-now − INTERP_DELAY_MS (Gambetta entity interpolation).
+   * The predicted state's remote entries are raw snapshot extrapolations
+   * that jump on every reconcile; the buffers glide between authoritative
+   * snapshots instead. Falls back to the predicted entity until the buffer
+   * has samples.
+   *
+   * Clone if you intend to mutate.
    */
   getRenderState(): WorldState | null {
     if (!this.predictedState) return null;
-    this.smoother.advance(performance.now());
-    if (!this.smoother.hasOffset()) {
-      return this.predictedState;
+    const now = performance.now();
+    this.smoother.advance(now);
+
+    let players = this.predictedState.players;
+    let cloned = false;
+
+    // Local-player render smoothing.
+    if (this.smoother.hasOffset()) {
+      const local = players[this.playerId];
+      if (local) {
+        const offset = this.smoother.offset();
+        players = {
+          ...players,
+          [this.playerId]: {
+            ...local,
+            x: local.x + offset.x,
+            y: local.y + offset.y,
+          },
+        };
+        cloned = true;
+      }
     }
-    const local = this.predictedState.players[this.playerId];
-    if (!local) return this.predictedState;
-    // Shallow clone state + players record + the local player so callers see
-    // smoothed coords without us mutating the predicted sim state.
-    const offset = this.smoother.offset();
-    const smoothedLocal: PlayerEntity = {
-      ...local,
-      x: local.x + offset.x,
-      y: local.y + offset.y,
-    };
-    return {
-      ...this.predictedState,
-      players: {
-        ...this.predictedState.players,
-        [this.playerId]: smoothedLocal,
-      },
-    };
+
+    // Remote-player entity interpolation.
+    if (this.serverClockOffsetMs !== null) {
+      const renderTimeMs = now + this.serverClockOffsetMs - INTERP_DELAY_MS;
+      for (const [pid, buffer] of this.remoteInterp) {
+        // Only render players the sim still knows about — buffers for
+        // departed / out-of-interest players are pruned on snapshot apply.
+        if (!(pid in players)) continue;
+        const sampled = buffer.sample(renderTimeMs);
+        if (!sampled) continue;
+        if (!cloned) {
+          players = { ...players };
+          cloned = true;
+        }
+        players[pid] = sampled;
+      }
+    }
+
+    if (!cloned) return this.predictedState;
+    return { ...this.predictedState, players };
   }
 
   /** Look up a remote player at a given render time (ms in server clock). */
@@ -355,6 +433,9 @@ export class ClientLoop {
       transportState: this.transport.state,
       slewMsAvg,
       lastReconcileSkippedEntities: this.lastReconcileSkippedEntities,
+      diagFireSteps: this.diagFireSteps,
+      diagPredictedSpawns: this.diagPredictedSpawns,
+      lastReplayDebug: this.lastReplayDebug,
     };
   }
 
@@ -364,6 +445,18 @@ export class ClientLoop {
    */
   getReconcileStats(): ReconcileStats {
     return this.smoother.stats();
+  }
+
+  /** Raw authoritative round state as last received — debug probes only.
+   *  Distinguishes "bad wire data" from "bad prediction" when the predicted
+   *  round diverges. */
+  getAuthoritativeRound(): WorldState["round"] | null {
+    return this.authoritativeState?.round ?? null;
+  }
+
+  /** Full authoritative state clone — heavyweight, debug dumps only. */
+  getAuthoritativeStateDebug(): WorldState | null {
+    return this.authoritativeState ? structuredClone(this.authoritativeState) : null;
   }
 
   // ---------------- Internals ----------------
@@ -382,7 +475,7 @@ export class ClientLoop {
   private tick(): void {
     if (!this.predictedState) return;
     const now = performance.now();
-    this.accumulator += now - this.lastTickAt;
+    this.accumulator += Math.min(now - this.lastTickAt, MAX_TICK_DELTA_MS);
     this.lastTickAt = now;
 
     // Drain one ms of slew budget per tick call. This nudges the effective
@@ -423,7 +516,14 @@ export class ClientLoop {
 
     const inputs: Record<PlayerId, InputFrame | null> = {};
     inputs[this.playerId] = input;
+    const beforeProjCount = Object.keys(this.predictedState.projectiles).length;
     const result = World.step(this.predictedState, inputs, STEP_MS);
+    if (input.keys & (1 << 6)) {
+      this.diagFireSteps += 1;
+      if (Object.keys(result.state.projectiles).length > beforeProjCount) {
+        this.diagPredictedSpawns += 1;
+      }
+    }
     this.predictedState = result.state;
 
     this.transport.send(
@@ -467,17 +567,46 @@ export class ClientLoop {
         this.pingMonitor.notePong(message);
         break;
       case "bye":
+        // Feed the supervisor the IN-BAND reason directly: proxies
+        // (tunnel/funnel) routinely strip the WS close frame's reason, so
+        // waiting for the CloseEvent would turn terminal reasons like
+        // "replaced" into a generic code:1006 retry loop.
+        this.pendingByeReason = message.reason;
         this.transport.close(message.reason);
         break;
     }
   }
 
   private applyHello(message: import("./protocol.js").ServerHello): void {
-    // First snapshot will replace state proper. Until it lands we use an empty
-    // placeholder so getRenderState doesn't return null.
     if (!this.predictedState) {
+      // First hello: empty placeholder so getRenderState doesn't return
+      // null until the first snapshot lands.
       this.predictedState = makeEmptyState(message.startTick, message.rngSeed);
       this.authoritativeState = makeEmptyState(message.startTick, message.rngSeed);
+    } else {
+      // RE-hello = new match epoch (world recycle after match completion,
+      // or reconnect landing on a rebuilt host). The server tick timeline
+      // resets — every piece of tick/time-keyed state from the old epoch
+      // is poison and must go:
+      //  - snapshotRing: old-epoch ticks are all larger than new ones, so
+      //    the evict-minimum policy would forever evict the fresh entry
+      //    and delta baselines would never resolve again.
+      //  - remoteInterp: buffers keyed on old serverTimeMs can never be
+      //    pruned by new (smaller) times and grow unboundedly.
+      //  - serverClockOffsetMs: the EMA would take seconds to traverse
+      //    the epoch jump, rendering remotes at old-match positions.
+      //  - pendingInputs: stamped with old-epoch ticks; replaying them
+      //    into the new match is meaningless.
+      this.predictedState = makeEmptyState(message.startTick, message.rngSeed);
+      this.authoritativeState = makeEmptyState(message.startTick, message.rngSeed);
+      this.snapshotRing.clear();
+      this.remoteInterp.clear();
+      this.serverClockOffsetMs = null;
+      this.lastSnapshotTick = Tick(0);
+      this.pendingInputs.length = 0;
+      this.slewMsBudget = 0;
+      this.slewMsHistory.length = 0;
+      this.lastFullReconcileAt = 0;
     }
     this.onHello?.(message);
     this.start();
@@ -536,6 +665,16 @@ export class ClientLoop {
     this.authoritativeState = resolvedState;
     this.lastSnapshotTick = message.tick;
     this.pingMonitor.noteSnapshotArrived();
+
+    // Server-clock offset sample for the remote-interpolation render clock.
+    // Arrival times jitter with the network; the EMA keeps renderTimeMs
+    // advancing smoothly instead of tracking per-packet queueing noise.
+    const clockSample = message.tick * STEP_MS - performance.now();
+    this.serverClockOffsetMs =
+      this.serverClockOffsetMs === null
+        ? clockSample
+        : this.serverClockOffsetMs +
+          SERVER_CLOCK_EMA_ALPHA * (clockSample - this.serverClockOffsetMs);
 
     // Accumulate server-driven slew hint into the budget.
     // The budget is drained 1 ms per tick() call (see tick()).
@@ -671,11 +810,31 @@ export class ClientLoop {
     }
 
     // Replay all pending inputs through the (possibly patched) base state.
+    const replayBasePhase = replayState.round.phase;
+    const replayBaseAlive = Object.values(replayState.players).filter((p) => p.alive).length;
+    const replayBaseTick = replayState.tick;
+    const replayInputTicks: number[] = [];
+    const replaySteps: string[] = [];
     for (const input of this.pendingInputs) {
+      replayInputTicks.push(input.tick as number);
       const inputs: Record<PlayerId, InputFrame | null> = {};
       inputs[this.playerId] = input;
       replayState = World.step(replayState, inputs, STEP_MS).state;
+      const alive = Object.values(replayState.players).filter((p) => p.alive).length;
+      const total = Object.keys(replayState.players).length;
+      replaySteps.push(
+        `${replayState.round.phase}:${alive}/${total}:hp=${Object.values(replayState.players)[0]?.health}:k=${input.keys}`,
+      );
     }
+    this.lastReplayDebug = {
+      basePhase: replayBasePhase,
+      baseAlive: replayBaseAlive,
+      baseTick: replayBaseTick as number,
+      postPhase: replayState.round.phase,
+      postWinner: replayState.round.winnerPlayerId,
+      inputTicks: replayInputTicks,
+      steps: replaySteps,
+    };
     this.predictedState = replayState;
 
     // Recompute the smoothing offset so rendered = previous-rendered, then
@@ -696,6 +855,12 @@ export class ClientLoop {
         this.remoteInterp.set(pid, buffer);
       }
       buffer.push(serverTimeMs, entity);
+    }
+    // Prune buffers for players no longer in the authoritative state
+    // (left the match or moved out of the interest area). The buffer is
+    // rebuilt from scratch if they come back.
+    for (const pid of this.remoteInterp.keys()) {
+      if (!(pid in resolvedState.players)) this.remoteInterp.delete(pid);
     }
 
     if (message.events.length > 0 && this.onEvents) {

@@ -309,7 +309,12 @@ describe("stepRound", () => {
     expect(resolved.find((e) => e.playerId === "b")?.cardId).toBe("circle-rounds");
   });
 
-  test("drafting holds past the legacy expiry window — no auto-pick, no respawn until everyone commits", () => {
+  test("draft window expiry auto-picks the first offer for unpicked drafters", () => {
+    // This used to assert the OPPOSITE ("no auto-pick ever") — which
+    // codified a live deadlock: one AFK/closed-tab player wedged the
+    // always-on world in drafting forever (observed 2026-07-03). The
+    // DRAFT_WINDOW_MS docstring and the CardDraftOverlay UI copy
+    // ("Auto-selects when the timer expires") always promised expiry.
     const players = {
       a: mkPlayer("a", { alive: true, cards: [] }),
       b: mkPlayer("b", { alive: true, cards: ["raycast-prism"] }),
@@ -333,18 +338,56 @@ describe("stepRound", () => {
       players,
       dtMs: 16,
       targetScore: 3,
-      tick: Tick(expiresAt + 1000), // well past the old expiry
+      tick: Tick(expiresAt + 1000), // past the window
       rngState: 7,
     });
-    // Stays in drafting because 'b' hasn't committed.
-    expect(result.state.phase).toBe("drafting");
-    expect(result.playerPatches).toBeUndefined();
+    // Expiry resolves the draft: on to the next round's countdown.
+    expect(result.state.phase).toBe("countdown");
+    expect(result.state.roundIndex).toBe(1);
+    // 'b' got their FIRST offer auto-picked, card granted via patches.
     const resolved = result.events.filter(
       (e): e is Extract<SimEvent, { t: "draft-resolved" }> => e.t === "draft-resolved",
     );
-    // 'a' may still re-fire if its draft-resolved hasn't been marked yet,
-    // but no auto-pick event for 'b' regardless.
-    expect(resolved.find((e) => e.playerId === "b")).toBeUndefined();
+    const bResolved = resolved.find((e) => e.playerId === "b");
+    expect(bResolved?.autoPicked).toBe(true);
+    expect(bResolved?.cardId).toBe("crystal-volley");
+    expect(result.playerPatches?.["b" as never]?.cards).toEqual([
+      "raycast-prism",
+      "crystal-volley",
+    ]);
+    // 'a' picked manually — no auto-pick patch for them.
+    expect(result.playerPatches?.["a" as never]).toBeUndefined();
+  });
+
+  test("drafting holds BEFORE the window expires while picks are outstanding", () => {
+    const players = {
+      a: mkPlayer("a", { alive: true, cards: [] }),
+      b: mkPlayer("b", { alive: true, cards: [] }),
+    };
+    const expiresAt = 200;
+    const state: RoundState = {
+      phase: "drafting",
+      countdownRemainingMs: 0,
+      scores: { [A]:1, [B]:0 },
+      roundIndex: 0,
+      winnerPlayerId: A,
+      draftingExpiresAtTick: Tick(expiresAt),
+      draftingPicked: { [A]:"circle-rounds" },
+      draftingOffers: {
+        [A]: ["circle-rounds", "raycast-prism", "crystal-volley"],
+        [B]: ["crystal-volley", "raycast-prism", "circle-rounds"],
+      },
+    };
+    const result = stepRound({
+      state,
+      players,
+      dtMs: 16,
+      targetScore: 3,
+      tick: Tick(expiresAt - 10), // still inside the window
+      rngState: 7,
+    });
+    expect(result.state.phase).toBe("drafting");
+    expect(result.playerPatches).toBeUndefined();
   });
 
   test("drafting holds while no one has picked and the window has not expired", () => {

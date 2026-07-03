@@ -150,6 +150,9 @@ export type Disconnect = {
     | "match-ended"
     | "protocol-mismatch"
     | "auth-failed"
+    // Same player id attached from a newer connection (second tab);
+    // terminal on the receiving client — reconnecting would ping-pong.
+    | "replaced"
     | "server-shutdown";
 };
 

@@ -1106,12 +1106,24 @@ function maybeWasmActual(
   } catch {
     return null;
   }
-  // FULL ZIG — wasm orchestrator is the primary path for every
-  // visitor. No URL-flag emergency rollback. Per user direction
-  // 2026-05-05: "No ts emergency roll back full zig". The
-  // game-qa five-layer suite (H1-H9 + sim-side merge identity)
-  // gates every push.
-  void mode;
+  // PARITY GATE (2026-07-03). The May directive made the Zig
+  // orchestrator the client default ("no ts emergency roll back full
+  // zig") — but the SERVER's B3 cutover never happened
+  // (USE_WASM_STEP_WORLD defaults OFF), so clients were PREDICTING with
+  // the Zig round machine while reconciling against the TS one.
+  // Divergences observed live: Zig round machine ends a solo-world
+  // round as an instant mutual-KO (TS keeps fighting), and the TS-side
+  // draft-expiry fix doesn't exist in Zig — every predicted tick
+  // disagreed with authority, producing constant reconcile churn
+  // (rubber-banding, vanishing predicted projectiles, round-phase
+  // flicker, worlds stuck in round-over client-side).
+  //
+  // Prediction MUST run the same sim as authority. The bit-identical
+  // Zig SUBSTRATE (trig LUT, rng, collision, stepPlayer) stays default
+  // on both sides; the Zig ORCHESTRATOR returns to opt-in
+  // (?wasm-world=2) until the server flips USE_WASM_STEP_WORLD — then
+  // both sides cut over TOGETHER (B3 as originally planned).
+  if (mode !== "2") return null;
   type WasmEvent = {
     kind: number;
     playerIdxA: number;

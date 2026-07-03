@@ -99,6 +99,37 @@ export const RECONNECT_GRACE_MS = 10_000;
  */
 const MAX_WS_BUFFERED_BYTES = 256 * 1024;
 
+/**
+ * Input queue tuning. The server buffers a QUEUE of input frames per player
+ * and consumes exactly one per tick, in seq order. A last-write-wins slot
+ * (the old design) silently dropped any input that arrived in the same tick
+ * interval as a later one — and then acked the dropped seq as processed, so
+ * the client never replayed it either. Every jitter-batched packet pair
+ * became permanently lost movement → authoritative position fell behind
+ * prediction → reconcile rubber-banding.
+ *
+ * SOFT_CAP: queue depth drained (drop-oldest + ack) at the top of each tick.
+ * Bounds the standing input latency to ~SOFT_CAP ticks when a client bursts
+ * (e.g. tab refocus). TickSlewController keeps steady-state depth near the
+ * 2-tick target lead, so the cap only bites on pathological bursts.
+ *
+ * MAX_DEPTH: absolute memory bound applied on push, between ticks.
+ */
+const INPUT_QUEUE_SOFT_CAP = 5;
+const INPUT_QUEUE_MAX_DEPTH = 120;
+
+/**
+ * When a tick fires with an empty queue (packet late or lost), re-apply the
+ * player's last real input for up to this many consecutive ticks instead of
+ * stepping them with null. World.step treats a null input as "all keys
+ * released" — a one-tick full stop the client never predicted, guaranteeing
+ * a reconcile snap. Holding the last input matches what the client's
+ * prediction assumed. The cap exists so a client that genuinely stopped
+ * sending (backgrounded tab, dead connection) doesn't keep walking/firing
+ * forever off a stale frame.
+ */
+const INPUT_HOLD_MAX_TICKS = 15;
+
 
 export class MatchHost {
   readonly matchId: string;
@@ -106,8 +137,17 @@ export class MatchHost {
   private readonly runtime: WorldRuntime;
   private readonly clients = new Map<PlayerId, ServerWebSocket<MatchSocketData>>();
   private readonly playerInfo = new Map<PlayerId, PlayerLobbyInfo>();
-  private readonly pendingInputs = new Map<PlayerId, InputFrame>();
+  /** Per-player FIFO of unprocessed input frames, seq-ordered. One frame is
+   *  consumed per tick; see INPUT_QUEUE_SOFT_CAP doc for why this must be a
+   *  queue and not a single slot. */
+  private readonly pendingInputs = new Map<PlayerId, InputFrame[]>();
   private readonly lastProcessedInputSeq = new Map<PlayerId, InputSeq>();
+  /** Last real (client-sent) input applied per player — source frame for
+   *  input-hold synthesis on empty-queue ticks. */
+  private readonly lastAppliedInput = new Map<PlayerId, InputFrame>();
+  /** Consecutive ticks a player has been stepped on a held (synthesized)
+   *  input. Reset to 0 whenever a real frame is consumed. */
+  private readonly heldInputTicks = new Map<PlayerId, number>();
   private readonly lagComp = new LagCompensator();
   private readonly tickSlew = new TickSlewController();
   /** Per-tag once-only console.warn. Prevents log spam when the same internal
@@ -161,6 +201,13 @@ export class MatchHost {
    * 0 = not yet acked / client requesting full snapshot.
    */
   private readonly lastAckedTick = new Map<PlayerId, Tick>();
+  /**
+   * Events accumulated since the last snapshot broadcast. Snapshots go out
+   * every SNAPSHOT_INTERVAL_TICKS; sim events fire every tick. Broadcasting
+   * only the snapshot-tick's events silently dropped 2/3 of all events at
+   * 20Hz (missing shot SFX / hit feedback / kill callouts — observed live).
+   */
+  private pendingEvents: import("@sim/types.ts").SimEvent[] = [];
   /** Set true the first time a `matchComplete` post to Convex is *initiated*.
    *  Prevents duplicate writes (in addition to the idempotent server-side
    *  mutation). One flag per host == one write per match lifetime. */
@@ -177,6 +224,11 @@ export class MatchHost {
    */
   private readonly replayRecorder: ReplayRecorder;
 
+  /** Fired exactly once when the match completes (a player reaches the
+   *  target score). WorldHost uses it to recycle the always-on world into
+   *  a fresh match; room mode leaves it unset (registry tears down). */
+  private readonly onMatchComplete?: () => void;
+
   constructor(
     matchId: string,
     players: PlayerSpawnInfo[],
@@ -184,7 +236,9 @@ export class MatchHost {
     // defaults to [] if no room is available (e.g. IO world).
     chaosModifierIds: string[],
     mapId: MapId | string | undefined = undefined,
+    opts: { onMatchComplete?: () => void } = {},
   ) {
+    this.onMatchComplete = opts.onMatchComplete;
     this.matchId = matchId;
     this.map = resolveMap(mapId);
     this.rngSeed = (Math.random() * 0xffffffff) >>> 0;
@@ -250,6 +304,14 @@ export class MatchHost {
     const playerId = ws.data.playerId as PlayerId;
     const previous = this.clients.get(playerId);
     if (previous && previous !== ws) {
+      // Explicit bye BEFORE the close: through proxies (funnel/tunnel) the
+      // close frame's reason is often lost and the old tab just sees a raw
+      // 1006 — it then auto-reconnects and kicks THIS socket, ping-ponging
+      // the session between tabs forever. The in-band bye survives any
+      // proxy; the client treats "replaced" as terminal (no reconnect).
+      try {
+        previous.send(encodeMessage({ t: "bye", reason: "replaced" }));
+      } catch { /* socket already dead — close below is enough */ }
       previous.close(1000, "replaced");
     }
     this.clients.set(playerId, ws);
@@ -261,6 +323,16 @@ export class MatchHost {
         `[matchHost ${this.matchId}] player ${playerId} reconnected within grace window`,
       );
     }
+    // Fresh socket = fresh input pipeline. A page RELOAD keeps the player
+    // id (sessionStorage) but restarts the client's seq counter at 1 — the
+    // preserved watermark would reject every input as "out of order" and
+    // freeze the player (unevictably: each rejected input refreshes
+    // liveness). A resumed session's larger seqs still pass a 0 watermark,
+    // so resetting is safe for both cases.
+    this.lastProcessedInputSeq.set(playerId, 0 as InputSeq);
+    this.pendingInputs.delete(playerId);
+    this.lastAppliedInput.delete(playerId);
+    this.heldInputTicks.delete(playerId);
     this.lastSeenAt.set(playerId, Date.now());
     this.sendHello(ws);
     this.maybeStartLoop();
@@ -290,6 +362,34 @@ export class MatchHost {
 
   hasClients(): boolean {
     return this.clients.size > 0;
+  }
+
+  /** True while the tick loop is running. Bots only think when the world
+   *  is actually simulating. */
+  isRunning(): boolean {
+    return this.interval !== null;
+  }
+
+  /** Read-only view of the live state for server-side bot brains. The
+   *  state object is replaced (not mutated) each tick, so handing out the
+   *  reference is safe as long as callers never write to it. */
+  getStateSnapshot(): WorldState {
+    return this.state;
+  }
+
+  /**
+   * Server-side input injection for AI players — same validation path as
+   * a WS input, minus the socket. Bots are first-class sim citizens: they
+   * queue like everyone else and are subject to the same anti-cheat
+   * clamps.
+   */
+  injectInput(playerId: PlayerId, input: import("@net/protocol.ts").Input): void {
+    this.applyInput(playerId, input);
+  }
+
+  /** Server-side card pick for AI players during drafting. */
+  injectCardPick(playerId: PlayerId, roundIndex: number, cardId: string): void {
+    this.applyCardPick(playerId, { t: "card-pick", roundIndex, cardId });
   }
 
   /** True while at least one player is in their reconnect grace window. */
@@ -492,11 +592,17 @@ export class MatchHost {
   }
 
   private applyInput(playerId: PlayerId, input: import("@net/protocol.ts").Input): void {
-    const last = this.lastProcessedInputSeq.get(playerId) ?? 0;
     // Refresh liveness regardless — even a duplicate seq proves the client is
     // alive on the wire.
     this.lastSeenAt.set(playerId, Date.now());
-    if (input.seq <= last) return; // out-of-order or duplicate
+    // Dedupe against BOTH the processed watermark and the tail of the queue:
+    // seqs already queued but not yet consumed must not be re-enqueued.
+    const queued = this.pendingInputs.get(playerId);
+    const tailSeq =
+      queued && queued.length > 0
+        ? queued[queued.length - 1]!.seq
+        : (this.lastProcessedInputSeq.get(playerId) ?? 0);
+    if (input.seq <= tailSeq) return; // out-of-order or duplicate
 
     // Anti-cheat / anti-bug input clamping. Per game-netcode SKILL.md:
     //   "Server clamps `dt`, validates `tick` is in a recent window, ignores
@@ -518,7 +624,14 @@ export class MatchHost {
 
     const serverTick = this.state.tick;
     const TICK_PAST_BOUND = LAG_COMP_INPUT_TICK_PAST_BOUND;
-    const TICK_FUTURE_BOUND = 4;
+    // Was 4 — too tight. The slew controller TARGETS inputs arriving 2
+    // ticks ahead, so ordinary jitter (+ the slow 1ms/tick convergence
+    // after join) routinely puts honest clients at +5..+8. Observed live:
+    // "dropping out-of-window input ... inputTick=1293 serverTick=1288"
+    // — every drop rubber-bands the player. The stamp only feeds lag-comp
+    // and this validation (the input queue consumes frames in seq order
+    // regardless), so a generous future window is safe. Half a second:
+    const TICK_FUTURE_BOUND = 30;
     const minTick = Math.max(0, serverTick - TICK_PAST_BOUND);
     const maxTick = serverTick + TICK_FUTURE_BOUND;
     if (input.tick < minTick || input.tick > maxTick) {
@@ -537,7 +650,12 @@ export class MatchHost {
       return;
     }
 
-    this.pendingInputs.set(playerId, {
+    let queue = this.pendingInputs.get(playerId);
+    if (!queue) {
+      queue = [];
+      this.pendingInputs.set(playerId, queue);
+    }
+    queue.push({
       seq: input.seq,
       tick: input.tick,
       keys: sanitizedKeys,
@@ -545,6 +663,9 @@ export class MatchHost {
       aimY: Number.isFinite(input.aimY) ? input.aimY : 0,
       dtMs: sanitizedDt,
     });
+    // Memory bound between ticks; the tick-side soft-cap drain does the
+    // real flow control (and acks what it drops).
+    while (queue.length > INPUT_QUEUE_MAX_DEPTH) queue.shift();
     // Record slew sample: server tick vs. the tick the client stamped this input.
     this.tickSlew.recordInput(playerId, {
       serverTick: this.state.tick,
@@ -562,6 +683,21 @@ export class MatchHost {
     if (!this.interval) return;
     clearInterval(this.interval);
     this.interval = null;
+  }
+
+  /**
+   * Hard teardown WITHOUT closing client sockets — used by WorldHost when
+   * migrating live connections to a replacement host. Clears every map
+   * that could otherwise fire timers or broadcast to the moved sockets.
+   */
+  dispose(): void {
+    this.stop();
+    this.clients.clear();
+    this.disconnectedAt.clear();
+    this.pendingInputs.clear();
+    this.lastAppliedInput.clear();
+    this.heldInputTicks.clear();
+    this.baselineRing.clear();
   }
 
   /**
@@ -587,6 +723,8 @@ export class MatchHost {
       this.lastSeenAt.delete(playerId);
       this.lastInputDropLogAt.delete(playerId);
       this.pendingInputs.delete(playerId);
+      this.lastAppliedInput.delete(playerId);
+      this.heldInputTicks.delete(playerId);
       // Free per-player baseline ring. Without this, long-lived matches with
       // many disconnect/reconnect cycles leak BASELINE_RING_SIZE WorldStates
       // per departed player.
@@ -638,18 +776,60 @@ export class MatchHost {
     this.evictExpiredDisconnects();
 
     const inputsByPlayer: Record<PlayerId, InputFrame | null> = {};
-    for (const playerId of this.clients.keys()) {
-      const input = this.pendingInputs.get(playerId) ?? null;
-      inputsByPlayer[playerId] = input;
+    // Iterate ALL known players, not just connected sockets: server-side
+    // bots (WorldBots) have no ws client but queue inputs via injectInput —
+    // keying on clients silently starved them (bots stood frozen at spawn).
+    // Disconnected-grace players get input-hold too (capped at 15 ticks).
+    for (const playerId of this.playerInfo.keys()) {
+      const queue = this.pendingInputs.get(playerId);
+
+      // Flow control: drain a backed-up queue (client burst, e.g. tab
+      // refocus) down to the soft cap. Dropped frames are NOT acked: the
+      // watermark only ever advances for inputs actually simulated. The
+      // client keeps replaying a dropped input against authoritative state
+      // until a LATER consumed seq covers it (the watermark is monotone),
+      // so predicted effects — a fired projectile especially — stay alive
+      // until the server's own version arrives instead of being erased
+      // mid-flight. (Ack-on-drop was the root cause of "my bullets never
+      // render at my muzzle": at steady-state queue depth the drain acked
+      // fire inputs it never simulated, and the reconcile wiped the
+      // predicted projectile every time.)
+      if (queue) {
+        while (queue.length > INPUT_QUEUE_SOFT_CAP) {
+          queue.shift();
+        }
+      }
+
+      let input = queue && queue.length > 0 ? queue.shift()! : null;
       if (input) {
+        this.heldInputTicks.set(playerId, 0);
+        this.lastAppliedInput.set(playerId, input);
+        // Honest ack: ONLY seqs actually fed into World.step (or explicitly
+        // dropped by flow control above) advance the watermark. Anything
+        // else stays in the client's replay set.
         this.lastProcessedInputSeq.set(playerId, input.seq);
         // Replay: capture every accepted input frame keyed by the server-tick
         // it was applied at. Quake/Doom .DEM model — header + inputs is enough
         // to deterministically replay the entire match later.
         this.replayRecorder.record(this.state.tick, playerId, input);
+      } else {
+        // Input-hold: no fresh frame this tick (packet late/lost). Re-apply
+        // the last real input, capped at INPUT_HOLD_MAX_TICKS, so the player
+        // doesn't full-stop for a tick the client never predicted. The held
+        // frame keeps its original seq — the watermark is monotone, so
+        // re-setting the same value is a no-op and nothing is falsely acked.
+        const held = this.lastAppliedInput.get(playerId);
+        const heldFor = this.heldInputTicks.get(playerId) ?? 0;
+        if (held && heldFor < INPUT_HOLD_MAX_TICKS) {
+          this.heldInputTicks.set(playerId, heldFor + 1);
+          input = { ...held, tick: this.state.tick, dtMs: STEP_MS };
+          // Record the synthesized frame too — replay playback must step
+          // the exact same inputs at the exact same ticks as the live sim.
+          this.replayRecorder.record(this.state.tick, playerId, input);
+        }
       }
+      inputsByPlayer[playerId] = input;
     }
-    this.pendingInputs.clear();
 
     // ---- Lag compensation: rewind opponents for shooting players ---------
     const rewindPlan = this.lagComp.buildRewindPlan(this.state, inputsByPlayer);
@@ -688,14 +868,23 @@ export class MatchHost {
       // The mutation itself is idempotent and the per-host flag above is the
       // throttle (one write per match per server process).
       void this.postMatchResult();
+      // World mode: without this, the round machine parks in round-over
+      // FOREVER after someone reaches the target score — the always-on
+      // world bricks for every future joiner. WorldHost recycles here.
+      this.onMatchComplete?.();
     }
 
     // Push position history AFTER the step so samples reflect the state
     // visible to clients in the next snapshot.
     this.lagComp.recordTick(this.state);
 
+    // Accumulate this tick's events; flush the whole window with the next
+    // snapshot so clients receive EVERY event exactly once.
+    if (events.length > 0) this.pendingEvents.push(...events);
     if (this.state.tick % SNAPSHOT_INTERVAL_TICKS === 0) {
-      this.broadcastSnapshot(events);
+      const flush = this.pendingEvents;
+      this.pendingEvents = [];
+      this.broadcastSnapshot(flush);
     }
   }
 

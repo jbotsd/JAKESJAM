@@ -7,14 +7,21 @@ export const STEP_MS = 1000 / 60;
  * generous — boxworks-mini's thinnest platform is 18 px.
  */
 export const MIN_PLATFORM_H_PX = 12;
-// Snapshot every sim tick — 60Hz authoritative state to clients. Doubles the
-// upstream bandwidth from 30Hz but cuts the worst-case prediction-correction
-// window in half, which is what "feels snappy" in practice. At jam scale
-// (1v1 → 10 players, ~600 byte snapshots) this is well under residential
-// upload limits. Drop back to 2 (= 30Hz) if delta encoding lands and we
-// want to spend the bandwidth on bigger frames instead.
-export const SNAPSHOT_HZ = 60;
-export const SNAPSHOT_INTERVAL_TICKS = 1;
+// Snapshot every 3rd sim tick — 20Hz authoritative state to clients.
+//
+// History: this was 1 (60Hz) while remote players rendered RAW snapshot
+// positions — per-tick snapshots were masking the missing entity
+// interpolation. Now that ClientLoop renders remotes from interpolation
+// buffers ~100ms in the past (2 snapshot intervals at 20Hz), per-tick
+// snapshots buy nothing visually and cost a LOT:
+//   - client: applySnapshot runs hash-compare + structuredClone + full
+//     rewind/replay per snapshot — at 60Hz this saturated slower machines
+//     and inflated measured RTT (pongs queue behind snapshot processing).
+//   - server: per-client AOI filter + delta encode per tick.
+// 20Hz is the standard band for fast shooters (CS2 servers run 64-tick
+// sim with lower-rate client updates; Fortnite/Apex send ~20-30Hz).
+export const SNAPSHOT_HZ = 20;
+export const SNAPSHOT_INTERVAL_TICKS = 3;
 
 // ============================================================
 // B2 prep — sim-level tuning constants extracted from sim/*.ts

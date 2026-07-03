@@ -175,9 +175,17 @@ export function stepRound(input: RoundStepInput): RoundStepResult {
     }
 
     case "drafting": {
-      // Resolution criterion: "every player WHO HAS OFFERS has picked".
-      // No expiry / no auto-pick — players don't respawn until they
-      // commit a card. Drafting includes dead players too (the round-end
+      // Resolution criteria (either):
+      //   1. every player WHO HAS OFFERS has picked, or
+      //   2. the draft window expired (tick >= draftingExpiresAtTick) —
+      //      unpicked drafters get their first offer auto-picked.
+      // The expiry path is what the CardDraftOverlay UI has always
+      // promised ("Auto-selects when the timer expires") and what the
+      // World.step playerPatches consumer was built for; without it a
+      // single AFK/closed-tab player wedged the whole always-on world in
+      // drafting forever (observed live 2026-07-03: world stuck, no
+      // fighting phase for 5+ minutes).
+      // Drafting includes dead players too (the round-end
       // loser is usually mid-respawn and must still get to pick).
       //
       // Critically: we key off `state.draftingOffers` keys, NOT
@@ -223,8 +231,12 @@ export function stepRound(input: RoundStepInput): RoundStepResult {
       const noDraftersLeft = draftingIds.length === 0;
       const allPicked = !noDraftersLeft &&
         draftingIds.every((id) => previousPicked[id as PlayerId] !== undefined);
+      const expired =
+        tick !== undefined &&
+        state.draftingExpiresAtTick !== undefined &&
+        (tick as number) >= (state.draftingExpiresAtTick as number);
 
-      if (!noDraftersLeft && !allPicked) {
+      if (!noDraftersLeft && !allPicked && !expired) {
         // Stay in drafting. Persist the fired marker so subsequent ticks
         // don't re-emit `draft-resolved` for the same player.
         const carry: WithMarker = {
@@ -232,6 +244,35 @@ export function stepRound(input: RoundStepInput): RoundStepResult {
           [firedKey]: fired,
         };
         return finalize(carry, events, false, rngState);
+      }
+
+      // Window expired with picks outstanding: auto-pick the FIRST offer
+      // for every unpicked drafter. Deterministic (offer order is the
+      // rolled order), emits draft-resolved with autoPicked=true, and
+      // grants the card via playerPatches — the World.step consumer that
+      // has been waiting for exactly this.
+      let playerPatches: Record<PlayerId, { cards: string[] }> | undefined;
+      if (expired && !allPicked) {
+        for (const pid_ of draftingIds) {
+          const pid = pid_ as PlayerId;
+          if (previousPicked[pid] !== undefined) continue;
+          const cardId = offers[pid]?.[0];
+          if (cardId === undefined) continue;
+          if (!fired[pid]) {
+            events.push({
+              t: "draft-resolved",
+              playerId: pid,
+              cardId,
+              autoPicked: true,
+            });
+            fired[pid] = true;
+          }
+          const player = players[pid];
+          if (player) {
+            playerPatches ??= {};
+            playerPatches[pid] = { cards: [...player.cards, cardId] };
+          }
+        }
       }
 
       // Drafting → countdown. Wipe drafting bookkeeping so the next round
@@ -243,7 +284,7 @@ export function stepRound(input: RoundStepInput): RoundStepResult {
       next.draftingExpiresAtTick = undefined;
       next.draftingPicked = undefined;
       next.draftingOffers = undefined;
-      return finalize(next, events, false, rngState);
+      return finalize(next, events, false, rngState, playerPatches);
     }
   }
 }

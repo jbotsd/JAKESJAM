@@ -22,6 +22,10 @@ const TERMINAL_CLOSE_REASONS = new Set<string>([
   "auth-failed",
   "protocol-mismatch",
   "server-shutdown",
+  // Same player id connected from another tab/window (duplicated tabs
+  // share sessionStorage, hence the id). Reconnecting would kick the
+  // NEWER tab and ping-pong the session — stay down instead.
+  "replaced",
 ]);
 
 export type ReconnectState = {
