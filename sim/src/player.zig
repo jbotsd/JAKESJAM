@@ -15,7 +15,12 @@ const GROUND_ACCELERATION: f64 = 2700.0;
 const AIR_ACCELERATION: f64 = 2050.0;
 const GROUND_FRICTION: f64 = 3600.0;
 const GRAVITY: f64 = 1450.0;
-const FAST_FALL_GRAVITY: f64 = 2150.0;
+// M1 (docs/game-feel-tuning.md): descend 1.5x faster than rise by default.
+// Symmetric gravity gave a ~880ms full hop that read as floaty; every
+// genre benchmark falls 1.4-2x faster than it rises. Apex height and
+// rise time are unchanged; full hop is now ~730ms.
+const DESCENT_GRAVITY: f64 = 2175.0;
+const FAST_FALL_GRAVITY: f64 = 2800.0;
 const JUMP_VELOCITY: f64 = -635.0;
 const JUMP_CUT_MULTIPLIER: f64 = 0.48;
 const COYOTE_MS: f64 = 110.0;
@@ -169,7 +174,10 @@ pub fn stepPlayer(
     }
 
     // Gravity.
-    const gravity_now = (if (fast_fall and s.vy > 0.0) FAST_FALL_GRAVITY else GRAVITY) * gravity_mul;
+    const gravity_now = (if (s.vy > 0.0)
+        (if (fast_fall) FAST_FALL_GRAVITY else DESCENT_GRAVITY)
+    else
+        GRAVITY) * gravity_mul;
     s.vy = @min(MAX_FALL_SPEED, s.vy + gravity_now * dt_sec);
 
     // Jetpack.

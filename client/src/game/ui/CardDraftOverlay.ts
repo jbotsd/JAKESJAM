@@ -226,7 +226,9 @@ export class CardDraftOverlay {
     appendBracketCorners(el);
 
     el.addEventListener("mouseenter", () => {
-      el.style.transform = "translateY(-20px) scale(1.10) rotate(3deg)";
+      // Softened from -20px/1.10/3deg — at those values the corner brackets
+      // visibly detached and long descriptions crossed the frame edge.
+      el.style.transform = "translateY(-12px) scale(1.05) rotate(0.9deg)";
       el.style.boxShadow = `0 0 24px ${withAlpha("#5DCFD9", 0.55)}`;
     });
     el.addEventListener("mouseleave", () => {

@@ -42,7 +42,9 @@ import {
   resolveMap,
 } from "../../sim/data/maps";
 import { hashPlayerEntity } from "../../sim/hash";
-import { setActiveStateGetter } from "../../debug/wasmStateProbe";
+import { setActiveCameraGetter, setActiveNetStatsGetter, setActiveRigDebugGetter, setActiveStateGetter } from "../../debug/wasmStateProbe";
+import { computeBotInput } from "../../debug/botDriver";
+import { BOT_RIG_COLOR, botLabel, isBotId, playerTag } from "../ui/botIdentity";
 import { characters } from "../data/characters";
 import { ProceduralPlayerRig } from "../rendering/ProceduralPlayerRig";
 import { GameAudioSystem } from "../systems/AudioSystem";
@@ -213,6 +215,10 @@ export class OnlineMatchScene extends Phaser.Scene {
   /** Static arena geometry (platforms, walls, floor, vignette). Drawn
    *  once on hello receipt; never per-frame. */
   private arenaGraphics: Phaser.GameObjects.Graphics | null = null;
+  /** Per-frame combat state overlay: shield bubbles + parry arcs for every
+   *  player, drawn from wire state (shieldActive / parryActiveUntilTick /
+   *  parryFacing). Cleared and redrawn each renderWorld pass. */
+  private combatFx: Phaser.GameObjects.Graphics | null = null;
   private platformLayer: PlatformLayer | null = null;
   private lightBeams: LightBeamLayer | null = null;
   // Sentinel — overwritten in init(data) before any consumer reads it.
@@ -280,6 +286,9 @@ export class OnlineMatchScene extends Phaser.Scene {
   create() {
     // Match jadeIsles arena theme background (PALETTE.voidDeep = 0x06181C).
     this.cameras.main.setBackgroundColor("#06181C");
+    // Right-click triggers parry (InputBit.Ability) — suppress the browser
+    // context menu so it's usable in combat. Mirrors MatchScene.
+    this.input.mouse?.disableContextMenu();
     this.statusText = this.add
       .text(20, 20, "Connecting to game server...", {
         color: "#9aa5b1",
@@ -344,6 +353,37 @@ export class OnlineMatchScene extends Phaser.Scene {
     // read this scene's predicted WorldState from Playwright + the
     // V1/V3/V6 evidence specs. Cleared in teardown().
     setActiveStateGetter(() => this.loop?.getRenderState() ?? null);
+    setActiveCameraGetter(() => ({
+      scrollX: this.cameras.main.scrollX,
+      scrollY: this.cameras.main.scrollY,
+    }));
+    setActiveNetStatsGetter(() =>
+      this.loop
+        ? {
+            ...this.loop.getNetStats(),
+            authRound: this.loop.getAuthoritativeRound(),
+            authStateDump: this.loop.getAuthoritativeStateDebug(),
+          }
+        : null,
+    );
+    setActiveRigDebugGetter(() => {
+      const state = this.loop?.getRenderState() ?? null;
+      const rows = [];
+      for (const [pid, rig] of this.playerRigs) {
+        const info = rig.debugInfo();
+        const p = state?.players[pid as PlayerId];
+        rows.push({
+          pid,
+          visible: info.visible,
+          x: info.x,
+          y: info.y,
+          stateX: p?.x ?? null,
+          stateY: p?.y ?? null,
+          alive: p?.alive ?? null,
+        });
+      }
+      return rows;
+    });
 
     // Sim-loop ↔ Phaser-tick seam (per phaser4-game SKILL.md "Tab-blur is
     // the failure mode"):
@@ -391,10 +431,15 @@ export class OnlineMatchScene extends Phaser.Scene {
       "WASD  move",
       "SPACE  jump",
       "MOUSE  aim & fire",
-      "SHIFT  parry",
+      // Shift maps to InputBit.Shield (hold-to-shield); right mouse is the
+      // parry (InputBit.Ability).
+      "SHIFT  shield",
+      "RIGHT CLICK  parry",
     ];
+    // y=48: below the always-visible RTT pill (top-right, ~28px tall) so
+    // the two don't overlap during the legend's 3s life.
     const text = this.add
-      .text(this.scale.width - 20, 20, lines.join("\n"), {
+      .text(this.scale.width - 20, 48, lines.join("\n"), {
         color: "#cffaff",
         fontFamily: "Inter, Arial, sans-serif",
         fontSize: "14px",
@@ -451,11 +496,25 @@ export class OnlineMatchScene extends Phaser.Scene {
       keys |= InputBit.Fire;
     }
     if (this.keys.shift.isDown) keys |= InputBit.Shield;
+    // Parry: right mouse button -> InputBit.Ability. The sim handles the
+    // rising-edge trigger + cooldown (tryStartParry via prevKeys), so we
+    // just report the held state like every other key.
+    if (this.input.activePointer.rightButtonDown()) keys |= InputBit.Ability;
 
     const pointer = this.input.activePointer;
     const cam = this.cameras.main;
-    const aimX = pointer.x + cam.scrollX;
-    const aimY = pointer.y + cam.scrollY;
+    let aimX = pointer.x + cam.scrollX;
+    let aimY = pointer.y + cam.scrollY;
+
+    // Debug bot autopilot (combat probe): when a goal is set via
+    // __setBotInput, it replaces human input for this frame. No-op in
+    // normal play — computeBotInput returns null when no goal is set.
+    const bot = computeBotInput(state, this.localPlayerId);
+    if (bot) {
+      keys = bot.keys;
+      aimX = bot.aimX;
+      aimY = bot.aimY;
+    }
 
     this.loop.setLocalInput({ keys, aimX, aimY });
 
@@ -543,7 +602,7 @@ export class OnlineMatchScene extends Phaser.Scene {
             const wid = state.round.winnerPlayerId;
             if (!wid) return "DRAW";
             if (wid === this.localPlayerId) return "YOU";
-            return wid.slice(-4).toUpperCase();
+            return playerTag(wid);
           })()
         : undefined;
 
@@ -709,6 +768,14 @@ export class OnlineMatchScene extends Phaser.Scene {
           // geometry now so the player isn't dropped into a black void
           // before the first snapshot.
           this.renderArena(hello.mapId);
+          // World recycle: after a completed match the server rebuilds the
+          // world and re-hellos every socket. Clear the stale results
+          // overlay so players roll straight into the new match.
+          if (this.matchHasEnded) {
+            this.matchHasEnded = false;
+            this.matchResultsOverlay?.hide();
+            this.setStatus("");
+          }
         },
         onEvents: (events) => this.handleSimEvents(events),
         onReconnectAttempt: (attempt, nextDelayMs) =>
@@ -820,7 +887,7 @@ export class OnlineMatchScene extends Phaser.Scene {
     const text = this.add
       .text(victim.x + spread, victim.y - 36, Math.round(damage).toString(), {
         color,
-        fontFamily: '"PP Neue Machina", Inter, Arial, sans-serif',
+        fontFamily: "'Space Grotesk', Inter, Arial, sans-serif",
         fontSize,
         fontStyle: "900",
         stroke: "#05080f",
@@ -1058,7 +1125,66 @@ export class OnlineMatchScene extends Phaser.Scene {
       }
     }
 
+    this.drawCombatFx(state);
+
     this.entityRender?.update(state, deltaMs, nowMs);
+  }
+
+  /**
+   * Shield bubbles + parry arcs for every player, driven purely by wire
+   * state so local AND remote combat reads identically. Mirrors the
+   * offline MatchScene visuals (drawShield): blue 0x93c5fd circle while
+   * shieldActive; white 0xf7fbff arc slice for the parry window.
+   *
+   * Sizes come from the sim: body 26x56 -> shield radius 56*0.82 ~= 46;
+   * parry visual range mirrors MatchLogic.PARRY_BASE_RANGE (98) and
+   * PARRY_ARC_RADIANS (60 deg cone).
+   */
+  private drawCombatFx(state: WorldState): void {
+    if (!this.combatFx) {
+      this.combatFx = this.add.graphics().setDepth(12);
+    }
+    const g = this.combatFx;
+    g.clear();
+    const SHIELD_RADIUS = 46;
+    const PARRY_RANGE = 98;
+    const PARRY_ARC = Math.PI / 3;
+    for (const player of Object.values(state.players)) {
+      if (!player.alive) continue;
+      if (player.shieldActive) {
+        g.fillStyle(0x93c5fd, 0.08);
+        g.fillCircle(player.x, player.y, SHIELD_RADIUS);
+        g.lineStyle(2, 0x93c5fd, 0.62);
+        g.strokeCircle(player.x, player.y, SHIELD_RADIUS);
+      }
+      if (
+        player.parryActiveUntilTick !== undefined &&
+        player.parryActiveUntilTick > state.tick
+      ) {
+        const facing = player.parryFacing ?? 0;
+        g.fillStyle(0xf7fbff, 0.13);
+        g.slice(
+          player.x,
+          player.y,
+          PARRY_RANGE,
+          facing - PARRY_ARC / 2,
+          facing + PARRY_ARC / 2,
+          false,
+        );
+        g.fillPath();
+        g.lineStyle(3, 0xf7fbff, 0.82);
+        g.beginPath();
+        g.arc(
+          player.x,
+          player.y,
+          PARRY_RANGE,
+          facing - PARRY_ARC / 2,
+          facing + PARRY_ARC / 2,
+          false,
+        );
+        g.strokePath();
+      }
+    }
   }
 
   /**
@@ -1077,7 +1203,7 @@ export class OnlineMatchScene extends Phaser.Scene {
     const text = this.add
       .text(victim.x, victim.y - 60, label, {
         color,
-        fontFamily: '"PP Neue Machina", Inter, Arial, sans-serif',
+        fontFamily: "'Space Grotesk', Inter, Arial, sans-serif",
         fontSize,
         fontStyle: "900",
         stroke: "#05080f",
@@ -1122,11 +1248,18 @@ export class OnlineMatchScene extends Phaser.Scene {
 
   private makePlayerRig(player: PlayerEntity, isLocal: boolean): ProceduralPlayerRig {
     const character = this.getCharacter(player.characterId);
+    const bot = isBotId(player.id);
     return new ProceduralPlayerRig(this, {
-      color: isLocal ? LOCAL_PLAYER_FALLBACK_COLOR : REMOTE_PLAYER_FALLBACK_COLOR,
+      // Bots render AMBER with a "BOT · NAME" plate — unmistakable next to
+      // the teal local / crimson remote rigs.
+      color: bot
+        ? BOT_RIG_COLOR
+        : isLocal
+          ? LOCAL_PLAYER_FALLBACK_COLOR
+          : REMOTE_PLAYER_FALLBACK_COLOR,
       // No room-roster lookup yet on the netcode path; fall back to the player
       // id suffix + character name so the nameplate is stable + identifiable.
-      name: `${player.id.slice(-4)} / ${character.name}`,
+      name: bot ? botLabel(player.id) : `${player.id.slice(-4)} / ${character.name}`,
       scale: this.getVisualScale(character),
     });
   }
@@ -1196,7 +1329,7 @@ export class OnlineMatchScene extends Phaser.Scene {
         const player = state.players[pid];
         return {
           playerId: pid,
-          name: pid === this.localPlayerId ? "You" : pid.slice(-4),
+          name: pid === this.localPlayerId ? "You" : playerTag(pid),
           score,
           cardIds: player?.cards ?? [],
           isLocal: pid === this.localPlayerId,
@@ -1265,6 +1398,13 @@ export class OnlineMatchScene extends Phaser.Scene {
   private teardown() {
     this.scale.off("resize", this.repositionHud, this);
     setActiveStateGetter(null);
+    setActiveCameraGetter(null);
+    setActiveRigDebugGetter(null);
+    setActiveNetStatsGetter(null);
+    // drawCombatFx lazily re-creates this; without the null the guard
+    // would reuse a DESTROYED Graphics on scene restart.
+    this.combatFx?.destroy();
+    this.combatFx = null;
     this.loop?.stop();
     this.loop = null;
     void this.convex?.close();

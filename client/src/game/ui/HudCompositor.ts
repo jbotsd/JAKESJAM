@@ -15,6 +15,7 @@
 // consumed, since WorldState does not carry the last-emitted events.
 
 import type { PlayerId, WorldState } from "../../sim/types.js";
+import { playerTag } from "./botIdentity";
 import { STEP_MS } from "../../sim/constants.js";
 import { crystalRoundsCards } from "../../sim/data/cards.js";
 import type { CharacterDefinition } from "../types/game.js";
@@ -171,7 +172,7 @@ export class HudCompositor {
             const wid = state.round.winnerPlayerId;
             if (!wid) return "DRAW";
             if (wid === this.localPlayerId) return "YOU";
-            return wid.slice(-4).toUpperCase();
+            return playerTag(wid);
           })()
         : undefined;
 
@@ -193,7 +194,7 @@ export class HudCompositor {
             const wid = state.round.winnerPlayerId;
             if (!wid) return "DRAW";
             if (wid === this.localPlayerId) return "YOU";
-            return wid.slice(-4).toUpperCase();
+            return playerTag(wid);
           })()
         : undefined;
 
@@ -269,7 +270,7 @@ export class HudCompositor {
         const player = state.players[pid];
         return {
           playerId: pid,
-          name: pid === this.localPlayerId ? "You" : pid.slice(-4),
+          name: pid === this.localPlayerId ? "You" : playerTag(pid),
           score,
           cardIds: player?.cards ?? [],
           isLocal: pid === this.localPlayerId,

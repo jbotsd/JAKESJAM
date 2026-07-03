@@ -1,5 +1,210 @@
 # JAKESJAM - Changelog
 
+## v0.57 - 2026-07-02
+
+- **Server input queue** — `matchHost.pendingInputs` was a
+  last-write-wins slot: any input arriving in the same tick
+  interval as a later one was silently dropped AND acked as
+  processed, so the client pruned it from its replay set. Every
+  jitter-batched packet pair became permanently lost movement →
+  authoritative fell behind prediction → reconcile rubber-banding.
+  Now a per-player FIFO consumed one frame per tick with honest
+  acks, soft-cap flow control (drop-oldest + ack on burst), and
+  input-hold on empty-queue ticks (≤15 ticks) so a late packet
+  doesn't full-stop the player server-side. New
+  `matchHostInputQueue.test.ts` (5 tests) gates the contracts.
+- **Remote-player interpolation actually wired** — ClientLoop
+  filled `remoteInterp` buffers but no production caller ever
+  sampled them; remotes rendered from raw predicted extrapolation
+  and jumped on every reconcile. `getRenderState()` now samples
+  remote players at estimated-server-now − 100 ms (EMA'd server
+  clock offset from snapshot arrivals) per the Gambetta loop the
+  netcode doc always specified. Buffers are pruned when players
+  leave the authoritative state.
+- **Client accumulator clamp** (250 ms) — background-tab
+  setInterval throttling no longer burst-steps the sim and floods
+  the server input queue on refocus.
+- **Self-contained self-hosting** (Fly is gone; Convex pivoted
+  away from) — `bun run host:public` (scripts/host-public.sh)
+  builds the client, serves it from the Bun server itself (new
+  `SERVE_CLIENT_DIR` static handler with SPA fallback + traversal
+  guard), opens a Cloudflare quick tunnel, verifies it end-to-end
+  via DNS-over-HTTPS (some LAN resolvers block
+  *.trycloudflare.com), and prints one `?world=1` share link.
+  Players join the pub world via `/world-token` + `/ws/world` —
+  zero external services. Client WS targeting now falls back to
+  same-origin when served from a real (non-Vite-dev) origin, with
+  a new runtime `?server=<ws-url>` query param (mirrors
+  `?convex=`) as explicit override. The Convex matchmaker also
+  gained a `GAME_SERVER_URL_OVERRIDE` env hook for whenever
+  room-mode matchmaking is revived.
+- **Visual + perf pass (Playwright screenshot audit)**:
+  - Snapshot rate 60Hz → 20Hz (`SNAPSHOT_INTERVAL_TICKS = 3`). The
+    60Hz rate was masking the unwired interpolation; with interp
+    wired it only bought client-side reconcile churn — measured
+    in-browser RTT fell from ~1200ms to ~48ms on localhost after
+    the change (pongs were queuing behind snapshot processing).
+  - Round-over banner no longer prints "TO DRAW" on draws.
+  - Kill callouts + hit markers referenced the never-loaded
+    "PP Neue Machina" font (silent Arial fallback since the font
+    swap to Space Grotesk/Mono) — now use Space Grotesk.
+  - FTUE controls legend moved below the RTT pill (they overlapped
+    for the legend's 3s life) and now says "SHIFT shield" — Shift
+    maps to InputBit.Shield; parry is the (still unbound online)
+    Ability bit.
+  - Draft-card hover softened (scale 1.12→1.06, rotation
+    0.05→0.015 rad) — at the old values the bracket frame visibly
+    detached and long descriptions crossed the card edge.
+- **Combat observability + online combat parity**:
+  - `bun run combat:probe` (tools/combat-probe.mjs) — scripted
+    two-player combat with full video + frame extraction + a
+    state-level report (health timeline, shield/parry/kill
+    observations). FAILS if no damage lands. Verified end-to-end:
+    damage ✓ kill ✓ shield ✓ parry ✓ remote-rig rendering ✓.
+  - In-page bot autopilot (client/src/debug/botDriver.ts,
+    `window.__setBotInput`) — 60Hz goal-driven control that
+    survives loaded hosts where CDP input events stall. Debug
+    hooks added: `__simPlayers()`, `__simPhase()`, `__simCamera()`,
+    `__rigDebug()`.
+  - Parry BOUND ONLINE: right-click → InputBit.Ability (context
+    menu suppressed, mirrors MatchScene). FTUE legend updated.
+  - Shield bubble + parry arc now RENDER online for all players,
+    driven by wire state (they previously only existed offline).
+  - Round banner shows 1-based round numbers (was "ROUND 0").
+  - MainMenuScene is stopped when a match starts (its footer text
+    kept rendering under matches) and restarted on return-to-lobby.
+  - Menu-music preload skipped on `?world=1` auto-join (killed the
+    aborted-request console noise).
+  - DOM draft-card hover softened to match the Phaser DraftScene
+    (brackets detached at 3° rotation + 1.10 scale).
+- **Insecure-context crash fixed** — `crypto.randomUUID()` in
+  LobbyController ran at module init and only exists in secure
+  contexts (https / localhost). On self-hosted LAN play
+  (http://192.168.x.x:8088) it threw and killed the ENTIRE menu:
+  dead buttons, no world badge, no `?world=1` auto-join. Now falls
+  back to a timestamp+random id. Reproduced and verified fixed in
+  Brave against the LAN IP. (navigator.clipboard uses were already
+  try/caught with fallbacks.)
+- **Stable public URL via Tailscale Funnel** — host-public.sh now
+  defaults to `TUNNEL=funnel`: https://randel.<tailnet>.ts.net,
+  never rotates, survives reboots (config lives in tailscaled
+  state). Verified end-to-end incl. browser world-join over WS.
+  One-time setup done: tailscaled enabled on the PC, funnel
+  enabled on the tailnet, `tailscale set --operator=jimothy` so
+  the script manages it without sudo.
+- **Fallback tunnel** — localhost.run over SSH (`TUNNEL=lhr`),
+  with auto-reconnect and new-URL announcements (free URLs rotate
+  every ~15-30 min by design; `.host-logs/current-url` always has
+  the live link). Verified end-to-end on this network:
+  HTTP + WebSocket + full browser world-join through the public
+  lhr.life URL. cloudflared (which registers but never carries
+  traffic here — CGNAT) is kept behind `TUNNEL=cloudflared` for
+  other networks; `TUNNEL=none`/`HOST_MODE=direct` for the
+  port-forward path once CGNAT opt-out lands.
+- **Input future-window widened (4 → 30 ticks)** — live play logs
+  showed honest clients at +5 ticks (slew targets +2, plus jitter)
+  getting inputs dropped → rubber-banding. The stamp only feeds
+  lag-comp and validation; the input queue consumes frames in seq
+  order regardless, so a generous window is safe.
+- **Two world-bricking deadlocks fixed** (found by the new
+  full-lifecycle match probe):
+  - Drafting never expired: `draftingExpiresAtTick` was set on entry
+    but never checked — one AFK/closed-tab player wedged the whole
+    always-on world in drafting FOREVER. Expiry now auto-picks the
+    first offer for unpicked drafters (emits `draft-resolved
+    autoPicked:true`, grants via the playerPatches consumer that was
+    already built for this). The UI always said "Auto-selects when
+    the timer expires"; now it's true. Old test that codified the
+    deadlock rewritten to the documented semantics.
+  - World never recycled on match completion: the round machine
+    parks in round-over at target score (correct for rooms) but
+    WorldHost had no completion handler — first finished match
+    bricked the world. WorldHost now rebuilds the host on the next
+    rotation map after a 6s scoreboard hold and migrates live
+    sockets (fresh hello; client clears the stale results overlay).
+    New matchHost `onMatchComplete` hook + `dispose()`, new
+    `worldRecycle.test.ts` (3 tests).
+- **`bun run match:probe`** (tools/match-probe.mjs) — two bots play
+  a FULL match: fighting → kill → draft → next round → completion →
+  recycle → fighting again, on video, every milestone asserted.
+- Second-tab kick is now graceful: server sends an in-band
+  `bye{replaced}` before closing the old socket (proxies eat close
+  reasons → the old tab saw 1006 and reconnect-ping-ponged the
+  session between tabs); "replaced" is a terminal reason client-side.
+- host-public.sh runs the server WITHOUT --watch (source edits were
+  hot-restarting live hosting and dropping players).
+- Static handler denies dotfile paths outright (public tunnel URL
+  attracts constant /.env//.git scanner sweeps — all 404 anyway,
+  now categorical).
+- Input tick future-window widened 4 → 30 (honest clients at slew
+  target +2 plus jitter were getting inputs dropped → rubber-band).
+- E2E hardening: predict-feel waits for the fighting phase and
+  asserts on sim state (pixel scan kept as evidence only);
+  visual long-fall spec walks during its anti-freeze diff (it
+  previously passed only because the menu scene leaked animation
+  under the match — that leak is fixed); lobby room-flow skips
+  with a clear reason when no working Convex exists.
+- **PREDICT/AUTHORITY SIM PARITY RESTORED — the root cause of the
+  "tons of issues"**. Since the May "full zig" cut, the CLIENT
+  predicted every tick with the Zig step_world orchestrator while
+  the SERVER still ran the TS path (B3 flag never flipped). Two
+  different sims = permanent reconcile churn: rubber-banding,
+  predicted bullets erased before rendering (then popping in
+  ~100px downrange — "bullets spawn at the player I'm shooting
+  at"), round-phase flicker, and solo worlds wedged in round-over
+  client-side (the Zig round machine ends a solo round as an
+  instant mutual-KO; TS keeps fighting). The Zig SUBSTRATE (trig
+  LUT, rng, collision, stepPlayer — bit-identical on both sides)
+  stays default; the Zig ORCHESTRATOR is opt-in (?wasm-world=2)
+  until the server flips USE_WASM_STEP_WORLD and both sides cut
+  over together. Verified: in-page step now matches bun exactly;
+  10/12 bullets first-render at the muzzle (was 1/13); predicted
+  phase tracks authoritative every sample.
+- **Event delivery fixed for 20Hz snapshots** — events from
+  non-snapshot ticks were dropped entirely (2/3 of shot SFX, hit
+  feedback, kill callouts). matchHost now accumulates and flushes
+  every event with the next snapshot.
+- **Max-effort review batch (15 verified findings)**: world-recycle
+  epoch reset in ClientLoop (snapshot ring, interp buffers, server
+  clock EMA, pending inputs — all were poisoned by the tick-0 reset
+  after a recycle); reload-freeze fixed (input watermark reset on
+  re-attach); flow-control drops no longer ack unsimulated inputs;
+  in-band bye reason survives reason-stripping proxies; combatFx
+  teardown; Vite-dev detection via import.meta.env.DEV; probe
+  scaffolding deduped into tools/probeKit.mjs with crash guards;
+  predict-feel pins its player id and gates on renderer truth.
+- **Game-feel pass (docs/game-feel-tuning.md)** — full scale audit
+  of movement/terrain/weapons in body-height units vs genre
+  benchmarks. Applied: T1 (boxworks-mini side ledges were 18px
+  ABOVE max jump height — unreachable without jetpack; moved to
+  93% of max jump) and M1 (asymmetric jump gravity: descent 1.5×
+  rise, fast-fall 2800 — full hop ~880ms → ~730ms; one cut across
+  player.zig + player.ts + wasm rebuild, parity suites green).
+  Watch item W1: baseline damage 10→15 if attrition fatigue shows.
+- **Share card** — OG/Twitter meta with a rendered 1200x630 card
+  (real parry-clash gameplay frame + wordmark) and favicon. The
+  server rewrites __ORIGIN__ in index.html to the REQUEST origin
+  (x-forwarded-proto aware) so absolute image URLs work on the
+  funnel domain, LAN, or any future domain. Verified with a
+  Discordbot-UA scrape through the public URL. Stale "Phaser and
+  Convex scaffold" copy replaced with store copy; lobby rooms
+  message no longer leaks env-var internals.
+- **World bots** — server-side AI duelists (server/src/worldBots.ts)
+  keep the world alive: approach/strafe/aim-lead with humanized
+  error, threat-reactive parry + jump + shield, low-health retreat,
+  delayed draft picks. First-class sim citizens (inputs go through
+  the same queue/validation via MatchHost.injectInput). UNMISTAKABLY
+  bots: bot_ id prefix renders AMBER rigs + "BOT · NAME" nameplates,
+  scoreboard/banners/results all label them (client/src/game/ui/
+  botIdentity.ts). WORLD_BOTS env (host-public.sh defaults 2; tests
+  and probes run 0). Fix along the way: matchHost's input loop keyed
+  on connected sockets and starved socketless players — now iterates
+  playerInfo.
+- NOTE: probe runs on a saturated host (e.g. DAW pinning 6 cores)
+  produce skewed observations — the probe now warns when
+  load/cores > 0.8 and records hostLoadRatio in report.json.
+- 545 client / 72 server tests, all green.
+
 ## v0.56 - 2026-05-05
 
 - **Doc-sync regression gate added** — `exportsDocSync.test.ts`

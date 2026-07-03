@@ -32,8 +32,13 @@ export const boxworksMini: MapDefinition = {
     // because all 'platform' kinds are one-way (per boxworks.ts contract).
     { id: "mid", kind: "platform", position: { x: 640, y: 360 }, size: { x: 380, y: 22 } },
     // Two side ledges at brawl height — give crouchers an angle.
-    { id: "ledge-left", kind: "platform", position: { x: 220, y: 460 }, size: { x: 220, y: 18 } },
-    { id: "ledge-right", kind: "platform", position: { x: 1060, y: 460 }, size: { x: 220, y: 18 } },
+    // y=488 (top 479): floor→ledge rise is 129px = 93% of the 139px max
+    // jump. At the previous y=460 the rise was 157px — mathematically
+    // UNREACHABLE by jumping (max jump 2.48 body-heights), so the
+    // intended floor→ledge→mid flow silently required jetpack fuel.
+    // See docs/game-feel-tuning.md (finding T1).
+    { id: "ledge-left", kind: "platform", position: { x: 220, y: 488 }, size: { x: 220, y: 18 } },
+    { id: "ledge-right", kind: "platform", position: { x: 1060, y: 488 }, size: { x: 220, y: 18 } },
     // Cover pillars to break the 418px sightline gap between the mid-platform
     // edges and the walls (arena-map-design: max ~320px unbroken sightline).
     // Placed at mid-height so they provide cover while not blocking vertical flow.

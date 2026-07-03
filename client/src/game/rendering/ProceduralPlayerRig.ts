@@ -83,7 +83,12 @@ export class ProceduralPlayerRig {
     this.scale = options.scale ?? 1;
   }
 
+  private lastDrawX = 0;
+  private lastDrawY = 0;
+
   update(deltaMs: number, pose: ProceduralPlayerPose) {
+    this.lastDrawX = pose.position.x;
+    this.lastDrawY = pose.position.y;
     if (!this.graphics.visible) return;
 
     const walkAmount = Phaser.Math.Clamp(Math.abs(pose.velocity.x) / 180, 0, 1);
@@ -113,6 +118,16 @@ export class ProceduralPlayerRig {
   destroy() {
     this.graphics.destroy();
     this.nameText.destroy();
+  }
+
+  /** Renderer-truth snapshot for the __rigDebug probe hook: what this rig
+   *  last drew and whether it's currently visible. */
+  debugInfo(): { visible: boolean; x: number; y: number } {
+    return {
+      visible: this.graphics.visible,
+      x: this.lastDrawX,
+      y: this.lastDrawY,
+    };
   }
 
   setVisible(visible: boolean) {

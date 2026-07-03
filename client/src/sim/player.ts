@@ -21,7 +21,10 @@ const M = {
   airAcceleration: 2050,
   groundFriction: 3600,
   gravity: 1450,
-  fastFallGravity: 2150,
+  // M1 (docs/game-feel-tuning.md): asymmetric jump gravity — mirrors
+  // sim/src/player.zig exactly (wasm parity).
+  descentGravity: 2175,
+  fastFallGravity: 2800,
   jumpVelocity: -635,
   jumpCutMultiplier: 0.48,
   coyoteMs: 110,
@@ -231,7 +234,12 @@ function stepPlayerNative(
   }
 
   // Gravity.
-  const gravity = (fastFall && next.vy > 0 ? M.fastFallGravity : M.gravity) * gravityMul;
+  const gravity =
+    (next.vy > 0
+      ? fastFall
+        ? M.fastFallGravity
+        : M.descentGravity
+      : M.gravity) * gravityMul;
   next.vy = Math.min(M.maxFallSpeed, next.vy + gravity * dtSec);
 
   // Jetpack: hold-jump-while-airborne triggers thrust until fuel is empty.

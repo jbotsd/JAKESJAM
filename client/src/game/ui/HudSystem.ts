@@ -30,6 +30,7 @@
 // All Phaser objects are created on the scene passed to the constructor.
 
 import Phaser from "phaser";
+import { playerTag } from "./botIdentity";
 import { PALETTE } from "./palette.js";
 import { crystalRoundsCards } from "../../sim/data/cards.js";
 import type { PlayerId } from "../../sim/types.js";
@@ -430,7 +431,7 @@ export class HudSystem {
       this.scoreText.setText(`ROUND ${round.roundIndex + 1}`);
     } else {
       const parts = entries.map(([pid, score]) => {
-        const tag = pid === this.localPlayerId ? "YOU" : pid.slice(-4).toUpperCase();
+        const tag = pid === this.localPlayerId ? "YOU" : playerTag(pid);
         return `${tag} ${score}`;
       });
       this.scoreText.setText(parts.join("   "));

@@ -341,12 +341,15 @@ export class DraftScene extends Phaser.Scene {
 
     const baseY = this.cardBaseY[index] ?? container.y;
     if (highlight) {
+      // Softened from scale 1.12 / rotation 0.05 / lift 24: at those values
+      // the corner brackets visibly detached from the card body and long
+      // description lines crossed the frame edge on 3-wide layouts.
       this.tweens.add({
         targets: container,
-        scaleX: 1.12,
-        scaleY: 1.12,
-        y: baseY - 24,
-        rotation: 0.05,
+        scaleX: 1.06,
+        scaleY: 1.06,
+        y: baseY - 14,
+        rotation: 0.015,
         alpha: 1.0,
         duration: 240,
         ease: "Back.easeOut",

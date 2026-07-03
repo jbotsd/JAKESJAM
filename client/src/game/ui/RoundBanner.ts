@@ -119,6 +119,8 @@ export class RoundBanner {
   }
 
   private updateCountdown(remainingMs: number, roundIndex: number): void {
+    // roundIndex is 0-based sim state; display 1-based.
+    roundIndex += 1;
     let beat: CountdownBeat;
     if (remainingMs > 2400) {
       beat = "3";
@@ -158,9 +160,14 @@ export class RoundBanner {
 
   private showRoundOver(roundIndex: number, winnerLabel: string): void {
     this.lastPhase = "round-over";
+    // roundIndex is 0-based sim state; display 1-based.
+    roundIndex += 1;
 
     const subLabel = `ROUND ${roundIndex}`;
-    const mainLabel = `TO ${winnerLabel.toUpperCase()}`;
+    // "TO YOU" / "TO 3F2A" reads as "point goes to X" — but a draw is not
+    // awarded to anyone, so "TO DRAW" was nonsense copy.
+    const upper = winnerLabel.toUpperCase();
+    const mainLabel = upper === "DRAW" ? "DRAW" : `TO ${upper}`;
 
     this.subText.setText(subLabel).setVisible(true);
     this.mainText
