@@ -167,7 +167,14 @@ test("visual: practice — long fall + land (D4 sub-stepping)", async ({
   await page.waitForTimeout(1500);
   await page.keyboard.up("Space");
   await page.waitForTimeout(2500);
+  // Walk during the screenshot pair so the anti-freeze diff has guaranteed
+  // motion. Previously this spec passed only by accident: the menu scene
+  // kept animating UNDERNEATH the match (a real bug, since fixed) and its
+  // shimmer inflated the pixel diff. A landed, idle player is legitimately
+  // near-static (~0.08%), which is not "frozen".
+  await page.keyboard.down("d");
   const { diff } = await pairShots(testInfo, page, log.get(), "practice-fall");
+  await page.keyboard.up("d");
   const probe = await probeColor(page, COLORS.platformLime, 30);
   assertColorPresent(probe, COLORS.platformLime, 2000, "practice-fall");
   assertNotFrozen(diff, "practice-fall", 0.002);

@@ -19,9 +19,28 @@
 // tests/e2e/multi-client.spec.ts.
 
 import { hashWorldStateLite } from "../sim/hash.js";
-import type { WorldState } from "../sim/types.js";
+import { World } from "../sim/index.js";
+import type { InputFrame, PlayerId, WorldState } from "../sim/types.js";
 
 let activeStateGetter: (() => WorldState | null) | null = null;
+let activeCameraGetter: (() => { scrollX: number; scrollY: number } | null) | null = null;
+let activeRigDebugGetter: (() => RigDebugRow[] | null) | null = null;
+let activeNetStatsGetter: (() => Record<string, unknown> | null) | null = null;
+
+/** Renderer-side truth for probes: where each player rig ACTUALLY is on
+ *  screen and whether it's visible. Catches "sim says alive at (x,y) but
+ *  nothing rendered" bugs that state sampling alone can't see. */
+export type RigDebugRow = {
+  pid: string;
+  visible: boolean;
+  /** Rig world position as last drawn. */
+  x: number;
+  y: number;
+  /** Matching sim-state position (post-smoothing render state). */
+  stateX: number | null;
+  stateY: number | null;
+  alive: boolean | null;
+};
 
 const FNV1A_PRIME_32 = 0x01000193;
 const FNV1A_BASIS_32 = 0x811c9dc5;
@@ -53,11 +72,63 @@ export function setActiveStateGetter(
   activeStateGetter = fn;
 }
 
+/** Camera scroll for probes that need world -> screen mapping (combat
+ *  probe aims the mouse at another player's rendered position). */
+export function setActiveCameraGetter(
+  fn: (() => { scrollX: number; scrollY: number } | null) | null,
+): void {
+  activeCameraGetter = fn;
+}
+
+export function setActiveRigDebugGetter(
+  fn: (() => RigDebugRow[] | null) | null,
+): void {
+  activeRigDebugGetter = fn;
+}
+
+export function setActiveNetStatsGetter(
+  fn: (() => Record<string, unknown> | null) | null,
+): void {
+  activeNetStatsGetter = fn;
+}
+
+/** Combat-relevant per-player snapshot for probes (combat-probe.mjs,
+ *  Playwright specs). Everything needed to assert "damage happened",
+ *  "shield is up", "parry fired" from outside the page. */
+export type ProbePlayer = {
+  id: string;
+  x: number;
+  y: number;
+  health: number;
+  alive: boolean;
+  shieldActive: boolean;
+  shieldCharge: number | undefined;
+  parryActive: boolean;
+  weaponId: string;
+  score: number;
+  fireCooldownMs: number;
+  ammo: number;
+};
+
 type ProbeWindow = {
   __simStateHash?: () => number | null;
   __simStepNo?: () => number | null;
   __simHasState?: () => boolean;
   __simSampleHashes?: (count: number, intervalMs: number) => Promise<number[]>;
+  __simPlayers?: () => ProbePlayer[] | null;
+  __simPhase?: () => string | null;
+  __simProjectiles?: () =>
+    | { id: number; x: number; y: number; ownerId: string | null }[]
+    | null;
+  __simCamera?: () => { scrollX: number; scrollY: number } | null;
+  __simRound?: () => {
+    phase: string;
+    remainingMs: number;
+    winner: string | null;
+    roundIndex: number;
+  } | null;
+  __rigDebug?: () => RigDebugRow[] | null;
+  __netStats?: () => Record<string, unknown> | null;
 };
 
 export function installWindowProbe(): void {
@@ -72,6 +143,72 @@ export function installWindowProbe(): void {
     return s ? (s.tick | 0) : null;
   };
   w.__simHasState = () => activeStateGetter?.() != null;
+  w.__simPlayers = () => {
+    const s = activeStateGetter?.();
+    if (!s) return null;
+    return Object.values(s.players).map((p) => ({
+      id: p.id,
+      x: p.x,
+      y: p.y,
+      health: p.health,
+      alive: p.alive,
+      shieldActive: p.shieldActive,
+      shieldCharge: p.shieldCharge,
+      parryActive:
+        p.parryActiveUntilTick !== undefined &&
+        p.parryActiveUntilTick > s.tick,
+      weaponId: p.weaponId,
+      score: s.round.scores[p.id] ?? 0,
+      fireCooldownMs: p.fireCooldownMs,
+      ammo: p.ammo,
+    }));
+  };
+  w.__simPhase = () => {
+    const s = activeStateGetter?.();
+    return s ? s.round.phase : null;
+  };
+  w.__simProjectiles = () => {
+    const s = activeStateGetter?.();
+    if (!s) return null;
+    return Object.values(s.projectiles).map((p) => ({
+      id: p.id,
+      x: p.x,
+      y: p.y,
+      ownerId: p.ownerId,
+    }));
+  };
+  w.__simCamera = () => activeCameraGetter?.() ?? null;
+  // Debug: run one World.step in-page on an arbitrary state — lets an
+  // external probe compare the BUNDLED sim's behavior against the same
+  // step executed in bun with identical inputs (desync bisection).
+  (w as Record<string, unknown>).__simStepDebug = (
+    stateJson: string,
+    inputJson: string,
+  ): string => {
+    const st = JSON.parse(stateJson) as WorldState;
+    const input = JSON.parse(inputJson) as InputFrame & { playerId: string };
+    const inputs: Record<PlayerId, InputFrame | null> = {};
+    inputs[input.playerId as PlayerId] = input;
+    const r = World.step(st, inputs, 1000 / 60);
+    return JSON.stringify({
+      phase: r.state.round.phase,
+      winner: r.state.round.winnerPlayerId,
+      alive: Object.values(r.state.players).filter((p) => p.alive).length,
+      events: r.events.map((e) => e.t),
+    });
+  };
+  w.__simRound = () => {
+    const s = activeStateGetter?.();
+    if (!s) return null;
+    return {
+      phase: s.round.phase,
+      remainingMs: s.round.countdownRemainingMs,
+      winner: s.round.winnerPlayerId,
+      roundIndex: s.round.roundIndex,
+    };
+  };
+  w.__rigDebug = () => activeRigDebugGetter?.() ?? null;
+  w.__netStats = () => activeNetStatsGetter?.() ?? null;
   w.__simSampleHashes = async (count, intervalMs) => {
     const out: number[] = [];
     for (let i = 0; i < count; i++) {

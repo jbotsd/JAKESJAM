@@ -29,7 +29,10 @@
     "sim:build": "cd sim && zig build",
     "sim:test": "cd sim && zig build test",
     "sim:fmt": "cd sim && zig fmt --check .",
-    "sim:bench": "bun run tools/wasm-bench.ts"
+    "sim:bench": "bun run tools/wasm-bench.ts",
+    "host:public": "./scripts/host-public.sh",
+    "combat:probe": "bun tools/combat-probe.mjs",
+    "match:probe": "bun tools/match-probe.mjs"
   },
   "devDependencies": {
     "@playwright/test": "^1.59.1",

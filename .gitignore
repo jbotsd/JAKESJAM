@@ -27,3 +27,6 @@ client/public/wasm/sim.wasm
 sim/zig-out/
 sim/.zig-cache/
 sim/zig-cache/
+.host-logs/
+.combat-probe/
+.match-probe/
