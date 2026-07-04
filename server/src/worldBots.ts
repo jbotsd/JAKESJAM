@@ -58,9 +58,9 @@ type BotState = {
    *  pinning themselves against walls and ledges). */
   lastX: number;
   stuckTicks: number;
-  /** While nowMs < unstickUntil, override movement to unstickDir + hop. */
-  unstickUntil: number;
-  unstickDir: -1 | 1;
+  /** Wall-clock ms the bot first became FAR from its foe (0 = not far).
+   *  Drives anti-standoff commit mode so two bots never freeze apart. */
+  farSince: number;
 };
 
 const BOT_TUNING = {
@@ -110,8 +110,7 @@ export class WorldBots {
         lastDraftRound: -1,
         lastX: 0,
         stuckTicks: 0,
-        unstickUntil: 0,
-        unstickDir: 1,
+        farSince: 0,
       });
       out.push({ playerId: id, name });
     }
@@ -173,40 +172,60 @@ export class WorldBots {
     const dx = foe.x - me.x;
     const dist = Math.hypot(dx, foe.y - me.y);
     const retreating = me.health <= BOT_TUNING.retreatHp;
+    const towardFoe = (Math.sign(dx) || 1) as -1 | 1;
 
-    // Movement: hold engage range; retreat widens it. Strafe jitter on top.
-    // `moveDir` is the INTENDED horizontal direction this tick (-1/0/1); the
-    // stuck detector below watches whether the bot actually moved.
-    const targetRange = retreating ? 520 : BOT_TUNING.engageRange;
-    let moveDir: -1 | 0 | 1 = 0;
-    if (Math.abs(dist - targetRange) > 60) {
-      moveDir = (dist > targetRange ? Math.sign(dx) : -Math.sign(dx)) as -1 | 0 | 1;
+    // Anti-standoff: track how long we've been beyond fire range. After a
+    // short while, COMMIT — sprint straight at the foe and jump over
+    // obstacles, ignoring range-holding/strafe. Guarantees two bots at
+    // opposite ends close in instead of freezing in a standoff.
+    const FAR = 560;
+    if (dist > FAR) {
+      if (bot.farSince === 0) bot.farSince = nowMs;
     } else {
-      if (nowMs > bot.strafeUntil) {
-        bot.strafeDir = bot.rand() < 0.5 ? -1 : 1;
-        bot.strafeUntil = nowMs + 350 + bot.rand() * 650;
+      bot.farSince = 0;
+    }
+    const committing = bot.farSince !== 0 && nowMs - bot.farSince > 1200;
+
+    // Movement intent (`moveDir`, -1/0/1). Far → always close distance;
+    // near → hold engage range with strafe jitter.
+    let moveDir: -1 | 0 | 1;
+    if (committing || dist > FAR) {
+      moveDir = towardFoe; // close the gap
+    } else {
+      const targetRange = retreating ? 460 : BOT_TUNING.engageRange;
+      if (Math.abs(dist - targetRange) > 60) {
+        moveDir = (dist > targetRange ? towardFoe : -towardFoe) as -1 | 0 | 1;
+      } else {
+        if (nowMs > bot.strafeUntil) {
+          bot.strafeDir = bot.rand() < 0.5 ? -1 : 1;
+          bot.strafeUntil = nowMs + 350 + bot.rand() * 650;
+        }
+        moveDir = bot.strafeDir;
       }
-      moveDir = bot.strafeDir;
     }
 
-    // Unstick: bots have no terrain map. If a horizontal intent produced no
-    // horizontal movement for a stretch, the bot is jammed on a wall/ledge —
-    // reverse and hop for a short window to path around it.
+    // Unstick (bots have no terrain map): if a horizontal intent produced no
+    // horizontal movement, JUMP FIRST while still heading toward the foe —
+    // that clears steps/ledges/cover pillars without abandoning the chase
+    // (the old "reverse away" could push a bot into a wall or away from its
+    // foe, causing the standoff). Only after prolonged sticking do we briefly
+    // sidestep to unwedge a true corner, then reset the cycle.
     const moved = Math.abs(me.x - bot.lastX);
     if (moveDir !== 0 && moved < 0.6) bot.stuckTicks += 1;
     else bot.stuckTicks = 0;
-    if (bot.stuckTicks >= 10 && nowMs >= bot.unstickUntil) {
-      // Reverse away from whatever we were pushing into; hop to clear ledges.
-      bot.unstickDir = (moveDir !== 0 ? -moveDir : bot.rand() < 0.5 ? -1 : 1) as -1 | 1;
-      bot.unstickUntil = nowMs + 450 + bot.rand() * 350;
-      bot.stuckTicks = 0;
-    }
     bot.lastX = me.x;
 
-    if (nowMs < bot.unstickUntil) {
-      // Override toward the unstick direction and jump to get over the lip.
-      moveDir = bot.unstickDir;
-      if (me.grounded ?? true) keys |= InputBit.Jump;
+    if (bot.stuckTicks >= 6) {
+      if (me.grounded ?? true) keys |= InputBit.Jump; // hop the obstacle, keep going
+      if (bot.stuckTicks >= 40) {
+        moveDir = -moveDir as -1 | 0 | 1; // real wall: brief sidestep to unwedge
+        if (bot.stuckTicks >= 46) bot.stuckTicks = 0; // then resume the chase
+      }
+    }
+
+    // Commit mode also hops periodically to cross floor gaps between platforms.
+    if (committing && (me.grounded ?? true) && bot.rand() < 0.04) {
+      keys |= InputBit.Jump;
     }
 
     if (moveDir < 0) keys |= InputBit.Left;

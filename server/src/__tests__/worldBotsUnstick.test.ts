@@ -22,7 +22,7 @@ function stubHost(state: WorldState, captured: number[]): MatchHost {
   } as unknown as MatchHost;
 }
 
-function fightingState(botId: string, botX: number): WorldState {
+function fightingState(botId: string, botX: number, foeX = 1200): WorldState {
   return {
     tick: 0,
     rngState: 0,
@@ -44,7 +44,7 @@ function fightingState(botId: string, botX: number): WorldState {
       foe: {
         id: "foe",
         characterId: "balanced",
-        x: 1200, // far to the right → bot wants to move right, but x is pinned
+        x: foeX,
         y: 500,
         vx: 0,
         vy: 0,
@@ -65,23 +65,33 @@ function fightingState(botId: string, botX: number): WorldState {
 }
 
 describe("WorldBots unstick", () => {
-  test("a bot pinned against terrain eventually jumps to escape", () => {
+  test("a bot pinned FAR from its foe jumps AND keeps pressing toward it (no standoff)", () => {
     const bots = new WorldBots();
     const botId = bots.spawnInfosFor(1)[0]!.playerId as unknown as string;
 
-    // Position never changes across ticks (pinned on a wall).
-    const state = fightingState(botId, 60);
+    // Pinned at the left wall (x constant), foe far to the right. The bot
+    // must try to jump free AND keep heading toward the foe — never sustain
+    // a retreat away from it (the standoff bug).
+    const state = fightingState(botId, 60, 1200);
     const captured: number[] = [];
     const host = stubHost(state, captured);
 
-    // Drive many think ticks; x stays constant so stuckTicks accrues.
     let jumped = false;
-    for (let i = 0; i < 40; i += 1) {
+    let rightPresses = 0;
+    let leftPresses = 0;
+    for (let i = 0; i < 120; i += 1) {
       captured.length = 0;
       bots.think(host, 1000 + i * 16);
-      if (captured.some((k) => (k & InputBit.Jump) !== 0)) jumped = true;
+      const k = captured[0] ?? 0;
+      if ((k & InputBit.Jump) !== 0) jumped = true;
+      if ((k & InputBit.Right) !== 0) rightPresses += 1;
+      if ((k & InputBit.Left) !== 0) leftPresses += 1;
     }
-    expect(jumped).toBe(true);
+    expect(jumped).toBe(true); // tries to unstick
+    // Overwhelmingly presses TOWARD the foe; only rare brief unwedge nudges
+    // go the other way. The old standoff bug sustained long reversals.
+    expect(rightPresses).toBeGreaterThan(leftPresses * 4);
+    expect(rightPresses).toBeGreaterThan(90);
   });
 
   test("a bot advancing toward the foe moves right and rarely jumps", () => {
