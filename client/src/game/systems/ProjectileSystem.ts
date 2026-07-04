@@ -829,6 +829,10 @@ function projectileToBuild(projectile: ActiveProjectile): ResolvedWeaponBuild {
     moveSpeedMultiplier: 1,
     parryCoverMultiplier: 1,
     parryCooldownMultiplier: 1,
+    gravityMultiplier: 1,
+    shieldChargeMultiplier: 1,
+    shieldRechargeMultiplier: 1,
+    directionalShield: false,
     cards: [],
     occupiedBuckets: [],
   };

@@ -38,6 +38,9 @@ export const PARRY_ACTIVE_MS = 420;
 export const PARRY_COOLDOWN_MS_DEFAULT = 1800;
 /** Half-cone width is half of this — i.e. ±30° around `parryFacing`. */
 export const PARRY_ARC_RADIANS = Math.PI / 3;
+/** Aim-shield block arc — a broad 120° frontal cone (wider than the 60° parry
+ *  since a held shield is a wall, not a flick). */
+export const SHIELD_AIM_ARC_RADIANS = (2 * Math.PI) / 3;
 /** Default starting / max shield charge. */
 export const SHIELD_MAX_CHARGE_DEFAULT = 100;
 /** Charge drained per second while shieldActive is true and not blocking a hit. */
@@ -196,6 +199,16 @@ export type DeflectResult = {
   shielded: boolean;
   /** True if the shield charge ran out as a result of this hit. */
   shieldPopped: boolean;
+  /** True if a MIRROR shield absorbed the hit AND should bounce the shard back
+   *  at the attacker (caller reflects it, like a parry). */
+  shieldReflected: boolean;
+};
+
+export type DeflectOptions = {
+  /** Blocked shield hits reflect the projectile back at the attacker. */
+  mirrorShield?: boolean;
+  /** Aim shield: the shield only blocks hits within the AIM arc. */
+  directionalShield?: boolean;
 };
 
 /**
@@ -215,6 +228,7 @@ export function tryDeflectDamage(
   projectile: Pick<ProjectileEntity, "id" | "x" | "y" | "vx" | "vy" | "damage"> | null,
   damage: number,
   tick: Tick,
+  options: DeflectOptions = {},
 ): DeflectResult {
   if (damage <= 0 || !player.alive) {
     return {
@@ -223,6 +237,7 @@ export function tryDeflectDamage(
       deflected: false,
       shielded: false,
       shieldPopped: false,
+      shieldReflected: false,
     };
   }
 
@@ -239,6 +254,7 @@ export function tryDeflectDamage(
         deflected: true,
         shielded: false,
         shieldPopped: false,
+        shieldReflected: false,
       };
     }
   }
@@ -247,6 +263,23 @@ export function tryDeflectDamage(
   if (player.shieldActive) {
     const currentCharge = player.shieldCharge ?? 0;
     if (currentCharge > 0) {
+      // Aim shield: only blocks hits arriving within the AIM arc. A shot from
+      // the flank/back gets through, so the player must face the threat.
+      if (options.directionalShield && projectile !== null) {
+        const dx = player.aimX - player.x;
+        const dy = player.aimY - player.y;
+        const facing = dx === 0 && dy === 0 ? 0 : lutAtan2(dy, dx);
+        if (!isHitInParryArc(player, facing, projectile, SHIELD_AIM_ARC_RADIANS)) {
+          return {
+            player,
+            damage,
+            deflected: false,
+            shielded: false,
+            shieldPopped: false,
+            shieldReflected: false,
+          };
+        }
+      }
       const drained = Math.max(0, currentCharge - damage * SHIELD_HIT_DRAIN_MULTIPLIER);
       const popped = drained <= 0;
       return {
@@ -259,6 +292,8 @@ export function tryDeflectDamage(
         deflected: false,
         shielded: true,
         shieldPopped: popped,
+        // Mirror shield bounces the shard back at the attacker.
+        shieldReflected: options.mirrorShield === true,
       };
     }
   }
@@ -270,6 +305,7 @@ export function tryDeflectDamage(
     deflected: false,
     shielded: false,
     shieldPopped: false,
+    shieldReflected: false,
   };
 }
 
@@ -283,6 +319,7 @@ export function isHitInParryArc(
   player: PlayerEntity,
   facing: number,
   projectile: Pick<ProjectileEntity, "x" | "y" | "vx" | "vy">,
+  arcRadians: number = PARRY_ARC_RADIANS,
 ): boolean {
   // Direction to the projectile from the player. If the shard is in the same
   // half-plane as the parry facing, it's a candidate for deflection.
@@ -293,7 +330,7 @@ export function isHitInParryArc(
       lutAtan2(-projectile.vy, -projectile.vx)
     : lutAtan2(dy, dx);
   const delta = wrapAngle(sourceAngle - facing);
-  return Math.abs(delta) <= PARRY_ARC_RADIANS / 2;
+  return Math.abs(delta) <= arcRadians / 2;
 }
 
 function wrapAngle(angle: number): number {

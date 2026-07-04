@@ -94,6 +94,17 @@ export type WeaponCardModifier = {
   moveSpeedMultiplier?: number;
   parryCoverMultiplier?: number;
   parryCooldownMultiplier?: number;
+  // ── Movement augments (ride the existing speed/gravity step params) ──────
+  /** <1 = floatier (glide), >1 = heavier/snappier fall. Multiplies gravity. */
+  gravityMultiplier?: number;
+  // ── Shield augments ──────────────────────────────────────────────────────
+  /** Scales the shield's max charge (bigger bar = longer block). */
+  shieldChargeMultiplier?: number;
+  /** Scales how fast the shield recharges when not held. */
+  shieldRechargeMultiplier?: number;
+  /** Aim shield: the held shield only blocks hits arriving within the AIM arc
+   *  (must face the threat) — in exchange for a stronger benefit on the card. */
+  directionalShield?: boolean;
 };
 
 // Visual hints used by UI overlays. Pure data, no Phaser refs — shapes /
@@ -152,6 +163,10 @@ export type ResolvedWeaponBuild = {
   moveSpeedMultiplier: number;
   parryCoverMultiplier: number;
   parryCooldownMultiplier: number;
+  gravityMultiplier: number;
+  shieldChargeMultiplier: number;
+  shieldRechargeMultiplier: number;
+  directionalShield: boolean;
   cards: CardDefinition[];
   occupiedBuckets: WeaponBucket[];
 };

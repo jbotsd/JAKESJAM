@@ -40,9 +40,16 @@ import {
   spawnMissingSatellites,
   stepSatellites,
 } from "./satellite.js";
-import { stepWeapon } from "./weapon.js";
+import { stepWeapon, resolvePlayerBuild } from "./weapon.js";
 import { stepRound, TARGET_SCORE_DEFAULT } from "./round.js";
-import { tickShield, tryDeflectDamage, tryStartParry } from "./combat.js";
+import {
+  tickShield,
+  tryDeflectDamage,
+  tryStartParry,
+  SHIELD_MAX_CHARGE_DEFAULT,
+  SHIELD_RECHARGE_PER_SECOND,
+  PARRY_COOLDOWN_MS_DEFAULT,
+} from "./combat.js";
 import {
   buildStaticCache,
   platformToAABB,
@@ -418,6 +425,10 @@ export function stepWithRuntime(
       runtime.movement.set(pid, mem);
     }
 
+    // Resolve the card build once — drives movement (speed/gravity), shield
+    // stats (charge/recharge), the mirror/aim shield, and parry cooldown.
+    const build = resolvePlayerBuild(entity);
+
     // Movement (only when alive and fighting). Dead players freeze in place.
     let nextEntity = entity;
     if (entity.alive && fightingPhase) {
@@ -433,7 +444,9 @@ export function stepWithRuntime(
         entity.freezeUntilTick !== undefined &&
         entity.freezeUntilTick > state.tick;
       const freezeMul = freezeActive ? entity.freezeMultiplier ?? 1 : 1;
-      const speedMul = slowMul * freezeMul;
+      // Card augments: move-speed + gravity (glide/heavy) ride the existing
+      // step multipliers, so they cross into the Zig player step for free.
+      const speedMul = slowMul * freezeMul * build.moveSpeedMultiplier;
       const moveResult = stepPlayer(
         entity,
         prevKeys,
@@ -445,7 +458,7 @@ export function stepWithRuntime(
         effDtMs,
         {
           speedMultiplier: speedMul,
-          gravityMultiplier: chaosProfile.gravityMultiplier,
+          gravityMultiplier: chaosProfile.gravityMultiplier * build.gravityMultiplier,
           collisionCache: runtime.collisionCache,
         },
       );
@@ -503,10 +516,16 @@ export function stepWithRuntime(
     {
       const parryResult = tryStartParry(nextEntity, currKeys, prevKeys, state.tick, {
         dtMs,
+        cooldownMs: PARRY_COOLDOWN_MS_DEFAULT * build.parryCooldownMultiplier,
       });
       nextEntity = parryResult.player;
     }
-    nextEntity = tickShield(nextEntity, currKeys, { dtMs });
+    // Shield stats scale with the build: bigger bar (charge), faster refill.
+    nextEntity = tickShield(nextEntity, currKeys, {
+      dtMs,
+      maxCharge: SHIELD_MAX_CHARGE_DEFAULT * build.shieldChargeMultiplier,
+      rechargePerSecond: SHIELD_RECHARGE_PER_SECOND * build.shieldRechargeMultiplier,
+    });
 
     if (input) {
       nextEntity = { ...nextEntity, lastProcessedInputSeq: input.seq };
@@ -699,11 +718,16 @@ export function stepWithRuntime(
           const sourceProj = ev.sourceProjectileId !== null
             ? remainingProjectiles[ev.sourceProjectileId] ?? proj
             : null;
+          const victimBuild = resolvePlayerBuild(victim);
           const mitigation = tryDeflectDamage(
             victim,
             sourceProj,
             scaledDamage,
             nextTick,
+            {
+              mirrorShield: victimBuild.mirrorShield,
+              directionalShield: victimBuild.directionalShield,
+            },
           );
           let postPlayer = mitigation.player;
           if (mitigation.deflected) {
@@ -721,6 +745,17 @@ export function stepWithRuntime(
             continue;
           }
           if (mitigation.shielded) {
+            // Mirror shield: bounce the blocked shard back at the attacker,
+            // reusing the parry-reflect path (reverse velocity + reassign owner
+            // at the projectile-drop site) and the same deflect event/VFX.
+            if (mitigation.shieldReflected && ev.sourceProjectileId !== null) {
+              deflectedProjectileIds.set(ev.sourceProjectileId, ev.victimId);
+              events.push({
+                t: "parry-deflected",
+                playerId: ev.victimId,
+                projectileId: ev.sourceProjectileId,
+              });
+            }
             // Shield popped or absorbed — emit shield-popped only when the
             // charge fully drained; partial absorbs stay silent for the
             // protocol audience (clients can derive "shield hit" from charge

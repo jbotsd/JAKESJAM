@@ -37,7 +37,7 @@ function buildKey(player: PlayerEntity): string {
   return `${player.weaponId}|${player.cards.join(",")}`;
 }
 
-function resolvePlayerBuild(player: PlayerEntity): ResolvedWeaponBuild {
+export function resolvePlayerBuild(player: PlayerEntity): ResolvedWeaponBuild {
   const key = buildKey(player);
   const cached = buildCache.get(key);
   if (cached) return cached;

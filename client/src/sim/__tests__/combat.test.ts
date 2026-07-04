@@ -288,3 +288,48 @@ describe("tryDeflectDamage", () => {
     expect(r.player.shieldCharge).toBe(100);
   });
 });
+
+describe("shield augments — mirror + directional (aim) shield", () => {
+  test("mirror shield: a blocked hit reflects (shieldReflected) and zeroes damage", () => {
+    const p = mkPlayer({ shieldActive: true, shieldCharge: 100 });
+    const proj = mkProjectile();
+    const r = tryDeflectDamage(p, proj, 25, Tick(0), { mirrorShield: true });
+    expect(r.shielded).toBe(true);
+    expect(r.shieldReflected).toBe(true);
+    expect(r.damage).toBe(0);
+  });
+
+  test("plain shield blocks but does NOT reflect", () => {
+    const p = mkPlayer({ shieldActive: true, shieldCharge: 100 });
+    const r = tryDeflectDamage(p, mkProjectile(), 25, Tick(0));
+    expect(r.shielded).toBe(true);
+    expect(r.shieldReflected).toBe(false);
+  });
+
+  test("aim shield blocks a hit from the AIM direction", () => {
+    // Aim +x (default); projectile at x=+50 → within the frontal arc.
+    const p = mkPlayer({ shieldActive: true, shieldCharge: 100, aimX: 100, aimY: 0 });
+    const r = tryDeflectDamage(p, mkProjectile({ x: 50, y: 0 }), 25, Tick(0), {
+      directionalShield: true,
+    });
+    expect(r.shielded).toBe(true);
+    expect(r.damage).toBe(0);
+  });
+
+  test("aim shield does NOT block a hit from behind (outside the arc)", () => {
+    // Aim +x, but the shot comes from -x (behind) → passes through.
+    const p = mkPlayer({ shieldActive: true, shieldCharge: 100, aimX: 100, aimY: 0 });
+    const r = tryDeflectDamage(p, mkProjectile({ x: -50, y: 0, vx: 300 }), 25, Tick(0), {
+      directionalShield: true,
+    });
+    expect(r.shielded).toBe(false);
+    expect(r.damage).toBe(25);
+  });
+
+  test("omnidirectional shield DOES block a hit from behind", () => {
+    const p = mkPlayer({ shieldActive: true, shieldCharge: 100, aimX: 100, aimY: 0 });
+    const r = tryDeflectDamage(p, mkProjectile({ x: -50, y: 0, vx: 300 }), 25, Tick(0));
+    expect(r.shielded).toBe(true);
+    expect(r.damage).toBe(0);
+  });
+});

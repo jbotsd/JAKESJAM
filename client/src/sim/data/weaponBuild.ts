@@ -59,6 +59,10 @@ export function createWeaponBuild(
     moveSpeedMultiplier: 1,
     parryCoverMultiplier: 1,
     parryCooldownMultiplier: 1,
+    gravityMultiplier: 1,
+    shieldChargeMultiplier: 1,
+    shieldRechargeMultiplier: 1,
+    directionalShield: false,
     cards: [],
     occupiedBuckets: [],
   };
@@ -118,6 +122,10 @@ export function applyCard(build: ResolvedWeaponBuild, card: CardDefinition) {
   build.moveSpeedMultiplier *= modifier.moveSpeedMultiplier ?? 1;
   build.parryCoverMultiplier *= modifier.parryCoverMultiplier ?? 1;
   build.parryCooldownMultiplier *= modifier.parryCooldownMultiplier ?? 1;
+  build.gravityMultiplier *= modifier.gravityMultiplier ?? 1;
+  build.shieldChargeMultiplier *= modifier.shieldChargeMultiplier ?? 1;
+  build.shieldRechargeMultiplier *= modifier.shieldRechargeMultiplier ?? 1;
+  build.directionalShield ||= modifier.directionalShield ?? false;
   build.overchargeMultiplier = Math.max(
     build.overchargeMultiplier,
     modifier.overchargeMultiplier ?? 1,
