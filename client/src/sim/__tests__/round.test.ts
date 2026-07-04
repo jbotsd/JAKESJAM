@@ -11,6 +11,7 @@ import {
   ROUND_OVER_HOLD_MS,
   DRAFT_OFFER_COUNT,
   DRAFT_WINDOW_MS,
+  NO_HUMAN_SURVIVOR_END_MS,
 } from "../round.js";
 import { InputSeq, PlayerId, Tick, type PlayerEntity, type RoundState, type SimEvent } from "../types.js";
 
@@ -96,6 +97,43 @@ describe("stepRound", () => {
     expect(endEvent).toBeDefined();
     expect(endEvent!.winnerId).toBe(A);
     expect(result.matchComplete).toBe(false);
+  });
+
+  test("bot-shootout guard: all humans dead + bots alive → round timer clamped", () => {
+    const players = {
+      human1: mkPlayer("human1", { alive: false, health: 0 }),
+      bot_spark: mkPlayer("bot_spark", { alive: true, health: 100 }),
+      bot_piston: mkPlayer("bot_piston", { alive: true, health: 80 }),
+    };
+    const state: RoundState = {
+      phase: "fighting",
+      countdownRemainingMs: ROUND_TIME_LIMIT_MS, // 90s left
+      scores: {},
+      roundIndex: 0,
+      winnerPlayerId: null,
+    };
+    const result = stepRound({ state, players, dtMs: 16, targetScore: 3 });
+    // Two bots alive → not resolved this tick, but the clock is clamped so it
+    // wraps within the guard window instead of dragging out ~90s.
+    expect(result.state.phase).toBe("fighting");
+    expect(result.state.countdownRemainingMs).toBe(NO_HUMAN_SURVIVOR_END_MS);
+  });
+
+  test("bot-shootout guard: pure-bot world (no humans) runs the FULL round", () => {
+    const players = {
+      bot_a: mkPlayer("bot_a", { alive: true, health: 100 }),
+      bot_b: mkPlayer("bot_b", { alive: true, health: 100 }),
+    };
+    const state: RoundState = {
+      phase: "fighting",
+      countdownRemainingMs: ROUND_TIME_LIMIT_MS,
+      scores: {},
+      roundIndex: 0,
+      winnerPlayerId: null,
+    };
+    const result = stepRound({ state, players, dtMs: 16, targetScore: 3 });
+    // No humans in the match → guard does NOT fire; ambiance rounds run full.
+    expect(result.state.countdownRemainingMs).toBe(ROUND_TIME_LIMIT_MS - 16);
   });
 
   test("mutual KO: winnerId is null and no scores change", () => {

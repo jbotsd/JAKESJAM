@@ -22,6 +22,17 @@ export const ROUND_OVER_HOLD_MS = 2500;
 export const TARGET_SCORE_DEFAULT = 3;
 
 /**
+ * When every HUMAN player is dead but bots are still alive, don't make the
+ * lobby sit through a minute-long bot-vs-bot shootout — clamp the round to end
+ * within this window. Only applies when humans are actually in the match (a
+ * pure-bot world still runs full rounds for ambiance). Bots are identified by
+ * the shared "bot_" id prefix (same convention the renderer uses to draw amber
+ * bot rigs). Round authority is server-side, so this needs no client parity.
+ */
+export const NO_HUMAN_SURVIVOR_END_MS = 12_000;
+const BOT_ID_PREFIX = "bot_";
+
+/**
  * How long the drafting phase stays open before auto-resolving any
  * unpicked offers. Generous on purpose — the rogue-lite picker is the
  * "moment of progression", we'd rather pause longer than rush the read.
@@ -126,6 +137,18 @@ export function stepRound(input: RoundStepInput): RoundStepResult {
 
     case "fighting": {
       next.countdownRemainingMs = Math.max(0, state.countdownRemainingMs - dtMs);
+      // Bot-shootout guard: if humans are in the match but every human is dead,
+      // clamp the remaining time so the round wraps within
+      // NO_HUMAN_SURVIVOR_END_MS instead of dragging out a bot duel. one-way
+      // min() → idempotent + monotonic (never extends the round).
+      const ids = Object.keys(players) as PlayerId[];
+      const humanIds = ids.filter((id) => !id.startsWith(BOT_ID_PREFIX));
+      if (humanIds.length > 0 && !humanIds.some((id) => players[id]?.alive)) {
+        next.countdownRemainingMs = Math.min(
+          next.countdownRemainingMs,
+          NO_HUMAN_SURVIVOR_END_MS,
+        );
+      }
       const winner = decideRoundWinner(players, next.countdownRemainingMs <= 0);
       if (winner === undefined) {
         return finalize(next, events, false, rngState);
