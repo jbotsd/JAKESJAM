@@ -189,6 +189,11 @@ app.innerHTML = `
       </section>
     </aside>
   </main>
+  <div class="orientation-hint" data-orientation-hint aria-hidden="true">
+    <div class="rotate-icon">📱</div>
+    <h2>Rotate your device</h2>
+    <p>JAKESJAM plays best in landscape.</p>
+  </div>
 `;
 
 const game = new Phaser.Game(gameConfig);
@@ -196,6 +201,23 @@ const game = new Phaser.Game(gameConfig);
 // the scene's display list to find render-time leaks. No production
 // behaviour depends on this — pure introspection hook.
 (globalThis as { __jakesjam_game__?: Phaser.Game }).__jakesjam_game__ = game;
+
+// Portrait nudge for touch devices — a brawler wants landscape. Purely a
+// hint; the game still runs. Toggled on resize/orientation change.
+const orientationHint = app.querySelector<HTMLElement>("[data-orientation-hint]");
+function updateOrientationHint(): void {
+  if (!orientationHint) return;
+  const touch =
+    (navigator.maxTouchPoints ?? 0) > 0 &&
+    typeof window.matchMedia === "function" &&
+    window.matchMedia("(pointer: coarse)").matches;
+  const portrait = window.innerHeight > window.innerWidth;
+  orientationHint.classList.toggle("show", touch && portrait);
+}
+updateOrientationHint();
+window.addEventListener("resize", updateOrientationHint);
+window.addEventListener("orientationchange", updateOrientationHint);
+
 const lobbyController = new LobbyController(app);
 const splash = queryRequired<HTMLElement>("[data-splash]");
 const lobbyPanel = queryRequired<HTMLElement>("[data-lobby-panel]");

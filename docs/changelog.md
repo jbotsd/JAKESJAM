@@ -263,6 +263,18 @@
   Added stuck detection (intended-to-move-but-didn't) + unstick (jump +
   reverse for a short window). Verified live: bots roam the full arena
   (xRange 700px+), no near-wall stalls. New worldBotsUnstick.test.ts.
+- **Mobile experience (docs/mobile-experience.md)** — one build, two
+  first-class inputs. Runtime touch detection (isTouchPrimary) picks
+  input; desktop keyboard/mouse path untouched. TouchControls: floating
+  twin-stick DOM overlay — left = move (up-tilt jumps/jetpacks), right =
+  aim + auto-fire, SHIELD/PARRY thumb buttons. Wired into BOTH the live
+  world and offline Practice scenes. Viewport locked (no zoom/scroll,
+  viewport-fit=cover, safe-area insets); portrait shows a rotate-to-
+  landscape nudge; short-landscape menu media query; touch-aware FTUE
+  legend. Verified via iPhone-landscape emulation (move stick drove the
+  player 540->1056px, buttons present, orientation hint toggles) +
+  touchControls.test.ts. Desktop: full 563-test suite green, overlay
+  gated off.
 - NOTE: probe runs on a saturated host (e.g. DAW pinning 6 cores)
   produce skewed observations — the probe now warns when
   load/cores > 0.8 and records hostLoadRatio in report.json.

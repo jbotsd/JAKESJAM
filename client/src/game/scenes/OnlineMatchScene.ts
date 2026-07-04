@@ -68,6 +68,8 @@ import { RenderLayer } from "../render/RenderLayer";
 import { transientVfx } from "../render/TransientVfx";
 import { EntityRenderCoordinator } from "../render/EntityRenderCoordinator";
 import { SimEventRouter } from "../render/SimEventRouter";
+import { TouchControls } from "../input/TouchControls";
+import { isTouchPrimary } from "../input/mobile";
 import { PALETTE, ARENA_THEMES } from "../ui/palette";
 import type {
   CardDefinition,
@@ -263,6 +265,11 @@ export class OnlineMatchScene extends Phaser.Scene {
   /** P3: cinematic combat FX (kill flash/zoom-punch/bloom). Enabled when the
    *  renderer is WebGL and not disabled via ?fx=off. */
   private combatCinematics = false;
+  /** Mobile on-screen twin-stick controls; null on desktop/keyboard. */
+  private touchControls: TouchControls | null = null;
+  /** Last aim direction from the touch aim-stick, so shots keep heading when
+   *  the thumb lifts. */
+  private lastTouchAim: { x: number; y: number } = { x: 1, y: 0 };
   // Events arrive via ClientLoop.onEvents; buffer per-frame and drain in update().
   private pendingSimEvents: SimEvent[] = [];
   // Snapshot pending card-offer events queued before the overlay was ready,
@@ -292,6 +299,14 @@ export class OnlineMatchScene extends Phaser.Scene {
     // Right-click triggers parry (InputBit.Ability) — suppress the browser
     // context menu so it's usable in combat. Mirrors MatchScene.
     this.input.mouse?.disableContextMenu();
+
+    // Mobile: spawn the on-screen twin-stick controls. On desktop this stays
+    // null and keyboard/mouse drive input as before.
+    if (isTouchPrimary()) {
+      this.touchControls = new TouchControls();
+      this.touchControls.attach();
+      this.touchControls.setVisible(true);
+    }
     this.statusText = this.add
       .text(20, 20, "Connecting to game server...", {
         color: "#9aa5b1",
@@ -443,15 +458,22 @@ export class OnlineMatchScene extends Phaser.Scene {
     } catch {
       // localStorage unavailable (private mode, file://, …). Show every time.
     }
-    const lines = [
-      "WASD  move",
-      "SPACE  jump",
-      "MOUSE  aim & fire",
-      // Shift maps to InputBit.Shield (hold-to-shield); right mouse is the
-      // parry (InputBit.Ability).
-      "SHIFT  shield",
-      "RIGHT CLICK  parry",
-    ];
+    const lines = this.touchControls
+      ? [
+          "LEFT STICK  move",
+          "PUSH UP  jump",
+          "RIGHT STICK  aim & fire",
+          "SHIELD / PARRY  buttons",
+        ]
+      : [
+          "WASD  move",
+          "SPACE  jump",
+          "MOUSE  aim & fire",
+          // Shift maps to InputBit.Shield (hold-to-shield); right mouse is the
+          // parry (InputBit.Ability).
+          "SHIFT  shield",
+          "RIGHT CLICK  parry",
+        ];
     // y=48: below the always-visible RTT pill (top-right, ~28px tall) so
     // the two don't overlap during the legend's 3s life.
     const text = this.add
@@ -521,6 +543,22 @@ export class OnlineMatchScene extends Phaser.Scene {
     const cam = this.cameras.main;
     let aimX = pointer.x + cam.scrollX;
     let aimY = pointer.y + cam.scrollY;
+
+    // Mobile: touch controls REPLACE keyboard/mouse. Movement + fire/shield/
+    // parry come from the bitfield; aim is the local player's position plus
+    // the right-stick direction (kept from last aim when the thumb lifts, so
+    // shots keep their heading).
+    if (this.touchControls) {
+      const t = this.touchControls.getState();
+      keys = t.keys;
+      if (t.aimDir) this.lastTouchAim = t.aimDir;
+      const me = state.players[this.localPlayerId];
+      const AIM_REACH = 420;
+      const ox = me?.x ?? aimX;
+      const oy = me?.y ?? aimY;
+      aimX = ox + this.lastTouchAim.x * AIM_REACH;
+      aimY = oy + this.lastTouchAim.y * AIM_REACH;
+    }
 
     // Debug bot autopilot (combat probe): when a goal is set via
     // __setBotInput, it replaces human input for this frame. No-op in
@@ -1468,6 +1506,8 @@ export class OnlineMatchScene extends Phaser.Scene {
     // would reuse a DESTROYED Graphics on scene restart.
     this.combatFx?.destroy();
     this.combatFx = null;
+    this.touchControls?.destroy();
+    this.touchControls = null;
     this.loop?.stop();
     this.loop = null;
     void this.convex?.close();

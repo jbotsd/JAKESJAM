@@ -48,6 +48,16 @@ body,
   overflow: hidden;
 }
 
+body {
+  /* Mobile: kill pull-to-refresh / rubber-band scroll and the grey tap
+     flash; the game manages its own input. Text selection off so dragging
+     a thumb never selects UI. */
+  overscroll-behavior: none;
+  -webkit-tap-highlight-color: transparent;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
 button,
 input,
 select {
@@ -602,4 +612,151 @@ button.btn-danger:hover:not(:disabled) {
   .splash-actions {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
+}
+
+/* Short-viewport (landscape phones): the splash/lobby must fit without
+   scrolling awkwardly. Tighten vertical rhythm and let panels scroll. */
+@media (max-height: 560px) and (orientation: landscape) {
+  .splash-stage {
+    padding: 16px 24px;
+  }
+  .splash-stage h1 {
+    font-size: clamp(2.2rem, 8vw, 4rem);
+  }
+  .splash-copy {
+    display: none;
+  }
+  .splash-actions {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 8px;
+  }
+  .lobby-panel {
+    max-height: calc(100dvh - 16px);
+    overflow-y: auto;
+  }
+}
+
+/* ─── Touch controls (mobile match HUD) ──────────────────────────────── */
+
+.tc-root {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  pointer-events: none; /* only the zones/buttons capture touches */
+  touch-action: none;
+  /* Keep controls clear of notches / rounded corners. */
+  --tc-safe-l: env(safe-area-inset-left, 0px);
+  --tc-safe-r: env(safe-area-inset-right, 0px);
+  --tc-safe-b: env(safe-area-inset-bottom, 0px);
+}
+
+.tc-zone {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 46%;
+  pointer-events: auto;
+  touch-action: none;
+}
+.tc-zone--left {
+  left: 0;
+}
+.tc-zone--right {
+  right: 0;
+}
+
+/* Floating joystick — base spawns at the touch point (JS sets left/top). */
+.tc-stick {
+  position: absolute;
+  width: 132px;
+  height: 132px;
+  margin: -66px 0 0 -66px;
+  border-radius: 50%;
+  border: 2px solid rgba(143, 248, 255, 0.35);
+  background: radial-gradient(circle, rgba(143, 248, 255, 0.10), rgba(5, 8, 15, 0.05) 70%);
+  pointer-events: none;
+}
+.tc-stick-knob {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 60px;
+  height: 60px;
+  margin: -30px 0 0 -30px;
+  border-radius: 50%;
+  will-change: transform;
+}
+.tc-stick--move {
+  background: radial-gradient(circle, #8ff8ff, #3aa8bf);
+  box-shadow: 0 0 22px rgba(143, 248, 255, 0.6);
+}
+.tc-stick--aim {
+  background: radial-gradient(circle, #ffd166, #d67a2f);
+  box-shadow: 0 0 22px rgba(255, 209, 102, 0.6);
+}
+
+/* Thumb buttons, bottom-centre, reachable by either thumb. */
+.tc-btn {
+  position: absolute;
+  bottom: calc(20px + var(--tc-safe-b));
+  width: 84px;
+  height: 84px;
+  border-radius: 50%;
+  pointer-events: auto;
+  touch-action: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font: 700 13px/1 Inter, system-ui, sans-serif;
+  letter-spacing: 1px;
+  color: #f7fbff;
+  border: 2px solid rgba(143, 248, 255, 0.4);
+  background: rgba(15, 26, 46, 0.72);
+  user-select: none;
+}
+.tc-btn--shield {
+  right: calc(50% + 8px);
+  border-color: rgba(147, 197, 253, 0.7);
+}
+.tc-btn--parry {
+  left: calc(50% + 8px);
+  border-color: rgba(247, 251, 255, 0.6);
+}
+.tc-btn--active {
+  transform: scale(0.92);
+  background: rgba(143, 248, 255, 0.28);
+  box-shadow: 0 0 18px rgba(143, 248, 255, 0.5);
+}
+
+/* Portrait orientation nudge — a brawler wants landscape. Shown only on
+   touch-primary devices held vertically (toggled by JS adding a class). */
+.orientation-hint {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  display: none;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 18px;
+  text-align: center;
+  padding: 32px;
+  background: radial-gradient(circle at 50% 40%, #0b1a24, #05080f);
+  color: #cfe9f2;
+}
+.orientation-hint.show {
+  display: flex;
+}
+.orientation-hint .rotate-icon {
+  font-size: 64px;
+  animation: rotate-nudge 2.2s ease-in-out infinite;
+}
+.orientation-hint h2 {
+  font-size: 1.6rem;
+  color: #8ff8ff;
+  margin: 0;
+}
+@keyframes rotate-nudge {
+  0%, 60%, 100% { transform: rotate(0deg); }
+  30% { transform: rotate(-90deg); }
 }

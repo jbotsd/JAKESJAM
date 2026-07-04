@@ -21,6 +21,9 @@ import { getChaosModifiers, projectileShapes } from "../data/chaosModifiers";
 import { parseStoredChaosModifiers } from "../../sim/data/chaosModifiers";
 import { starterWeapon } from "../data/weapons";
 import { ProceduralPlayerRig } from "../rendering/ProceduralPlayerRig";
+import { TouchControls } from "../input/TouchControls";
+import { isTouchPrimary } from "../input/mobile";
+import { InputBit } from "../../net/protocol";
 import { GameAudioSystem } from "../systems/AudioSystem";
 import { ParticlePool } from "../systems/ParticlePool";
 import { CardDraftOverlay } from "../ui/CardDraftOverlay";
@@ -179,6 +182,10 @@ export class MatchScene extends Phaser.Scene {
    *  Avoids per-blast allocation: acquire → tween → release back to pool. */
   private readonly blastTintPool: Phaser.GameObjects.Rectangle[] = [];
   private keys?: MovementKeys;
+  /** Mobile twin-stick overlay (null on desktop). */
+  private touchControls: TouchControls | null = null;
+  private lastTouchAim: { x: number; y: number } = { x: 1, y: 0 };
+  private prevTouchJump = false;
   private movementDebug: MovementDebug = {
     coyoteMs: 0,
     jumpBufferMs: 0,
@@ -265,6 +272,8 @@ export class MatchScene extends Phaser.Scene {
   create() {
     this.events.once("shutdown", () => {
       window.removeEventListener("keydown", this.handleScoreboardKeyDown);
+      this.touchControls?.destroy();
+      this.touchControls = null;
       this.audio?.destroy();
       this.audio = undefined;
       this.cardDraftOverlay?.destroy();
@@ -897,6 +906,22 @@ export class MatchScene extends Phaser.Scene {
       tab: keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.TAB),
     };
     keyboard.addCapture(Phaser.Input.Keyboard.KeyCodes.TAB);
+
+    // Mobile: spawn the shared twin-stick overlay for offline Practice too,
+    // so the Practice button isn't a dead end on phones.
+    if (isTouchPrimary() && !this.touchControls) {
+      this.touchControls = new TouchControls();
+      this.touchControls.attach();
+      this.touchControls.setVisible(true);
+    }
+  }
+
+  /** Current touch bitfield, or null on desktop. Also refreshes lastTouchAim. */
+  private touchKeys(): number | null {
+    if (!this.touchControls) return null;
+    const s = this.touchControls.getState();
+    if (s.aimDir) this.lastTouchAim = s.aimDir;
+    return s.keys;
   }
 
   private readInput(): MovementInput {
@@ -912,6 +937,26 @@ export class MatchScene extends Phaser.Scene {
         jetpackHeld: false,
         fastFall: false,
         crouch: false,
+      };
+    }
+
+    // Mobile: build the movement command from the touch move-stick. Up-tilt
+    // = jump/jetpack (jumpPressed on the rising edge); down-tilt = fast-fall/
+    // crouch.
+    const tk = this.touchKeys();
+    if (tk !== null) {
+      const jumpNow = (tk & InputBit.Jump) !== 0;
+      const jumpPressed = jumpNow && !this.prevTouchJump;
+      this.prevTouchJump = jumpNow;
+      const down = (tk & InputBit.Down) !== 0;
+      return {
+        left: (tk & InputBit.Left) !== 0,
+        right: (tk & InputBit.Right) !== 0,
+        jumpPressed,
+        jumpHeld: jumpNow,
+        jetpackHeld: jumpNow, // hold up on the stick to fly
+        fastFall: down && !this.playerBody.grounded,
+        crouch: down,
       };
     }
 
@@ -1011,7 +1056,11 @@ export class MatchScene extends Phaser.Scene {
 
     this.temporaryShieldMs = Math.max(0, this.temporaryShieldMs - deltaMs);
     const canShield = this.getLocalCharacter().abilityType === "shield" || this.temporaryShieldMs > 0;
-    this.shieldActive = canShield && this.blockJammerMs <= 0 && this.keys.shift.isDown && this.shieldCharge > 0;
+    const shieldHeld =
+      this.keys.shift.isDown ||
+      (this.touchControls !== null &&
+        (this.touchControls.getState().keys & InputBit.Shield) !== 0);
+    this.shieldActive = canShield && this.blockJammerMs <= 0 && shieldHeld && this.shieldCharge > 0;
 
     if (this.shieldActive) {
       this.shieldCharge = Math.max(0, this.shieldCharge - deltaMs * 0.036);
@@ -1031,7 +1080,10 @@ export class MatchScene extends Phaser.Scene {
 
     this.parryActiveMs = Math.max(0, this.parryActiveMs - deltaMs);
     this.parryCooldownMs = Math.max(0, this.parryCooldownMs - deltaMs);
-    const rightMouseDown = this.input.activePointer.rightButtonDown();
+    const touchParry =
+      this.touchControls !== null &&
+      (this.touchControls.getState().keys & InputBit.Ability) !== 0;
+    const rightMouseDown = this.input.activePointer.rightButtonDown() || touchParry;
     const rightMousePressed = rightMouseDown && !this.rightMouseParryWasDown;
     this.rightMouseParryWasDown = rightMouseDown;
 
@@ -1264,8 +1316,13 @@ export class MatchScene extends Phaser.Scene {
       return;
     }
 
+    // Fire when the desktop pointer is held (left button) OR, on mobile, the
+    // aim stick is engaged (auto-fire).
     const pointer = this.input.activePointer;
-    if (!pointer.isDown || pointer.rightButtonDown()) {
+    const touchFiring =
+      this.touchControls !== null &&
+      (this.touchControls.getState().keys & InputBit.Fire) !== 0;
+    if (!touchFiring && (!pointer.isDown || pointer.rightButtonDown())) {
       return;
     }
 
@@ -1311,6 +1368,15 @@ export class MatchScene extends Phaser.Scene {
   }
 
   private getAimTarget(): Vec2 {
+    // Mobile: aim is the player position offset by the right-stick direction
+    // (kept from last aim when the thumb lifts).
+    if (this.touchControls) {
+      const AIM_REACH = 420;
+      return {
+        x: this.playerBody.position.x + this.lastTouchAim.x * AIM_REACH,
+        y: this.playerBody.position.y + this.lastTouchAim.y * AIM_REACH,
+      };
+    }
     const pointer = this.input.activePointer;
     const pointerIsInsideArena =
       Number.isFinite(pointer.x) &&
