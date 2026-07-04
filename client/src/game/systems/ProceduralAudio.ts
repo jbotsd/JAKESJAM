@@ -139,6 +139,11 @@ function weaponPatch(el?: string): WeaponPatch {
 export class ProceduralAudio {
   private ctx?: AudioContext;
   private master?: GainNode;
+  /** Concurrent weapon voices — a hard cap prevents audio-thread overload
+   *  (crackle/"lag distortion") when fire rate + player count spikes. */
+  private activeShots = 0;
+  /** Cached distortion curves (avoid a per-shot Float32Array allocation). */
+  private readonly distCurveCache = new Map<number, Float32Array>();
   private reverbSend?: GainNode;
   private noiseBuf?: AudioBuffer;
   /** Active shield drone voice (started on shield-up, stopped on shield down). */
@@ -285,6 +290,13 @@ export class ProceduralAudio {
     const ctx = this.ctx;
     const master = this.master;
     if (!ctx || !master) return;
+    // Voice cap — skip the synth if too many shots are already ringing out.
+    // Overlapping heavy (distorted) voices are what crackle the audio thread.
+    if (this.activeShots > 12) return;
+    this.activeShots += 1;
+    window.setTimeout(() => {
+      this.activeShots = Math.max(0, this.activeShots - 1);
+    }, 260);
     const t = ctx.currentTime;
     const v = elementVoice(p.element);
     const charge = clamp01(p.charge ?? 0);
@@ -329,7 +341,6 @@ export class ProceduralAudio {
     } else {
       bus.connect(tone).connect(master);
     }
-    this.sendReverb(tone, 0.04 + inten * 0.04);
 
     // Body chain: detuned oscillators -> waveshaper distortion -> wobble
     // (LFO/env) lowpass -> body envelope -> bus. This is the dubstep growl.
@@ -338,13 +349,12 @@ export class ProceduralAudio {
     // Float32Array; the DOM lib's tighter ArrayBuffer generic isn't worth the
     // ceremony here.
     (shaper as unknown as { curve: Float32Array | null }).curve = this.makeDistCurve(dist);
-    shaper.oversample = "2x";
     const wob = this.wobbleFilter(t, dur, patch.filterBase * rand(0.9, 1.12), wobbleDepth, wobbleRate);
     const bodyEnv = this.env(t, 0.002, dur, 0.34 + inten * 0.16);
     shaper.connect(wob).connect(bodyEnv).connect(bus);
     // Parallel formant growl on the wobbled signal (vocal character).
     if (formantHz > 0) {
-      for (const [ff, g] of [[formantHz, 0.5] as const, [formantHz * 1.7, 0.32] as const]) {
+      for (const [ff, g] of [[formantHz, 0.55] as const]) {
         const bp = ctx.createBiquadFilter();
         bp.type = "bandpass";
         bp.frequency.value = ff;
@@ -389,6 +399,9 @@ export class ProceduralAudio {
 
   /** Waveshaper distortion curve (tanh soft-clip). amount 0..1 → gritty. */
   private makeDistCurve(amount: number): Float32Array {
+    const key = Math.round(amount * 8); // bucket → at most ~9 cached curves
+    const hit = this.distCurveCache.get(key);
+    if (hit) return hit;
     const n = 512;
     const c = new Float32Array(n);
     const k = 1 + amount * amount * 50;
@@ -397,6 +410,7 @@ export class ProceduralAudio {
       const x = (i / (n - 1)) * 2 - 1;
       c[i] = Math.tanh(k * x) / norm;
     }
+    this.distCurveCache.set(key, c);
     return c;
   }
 
