@@ -160,7 +160,31 @@ export type WorldRuntime = {
   /** Projectiles parried this tick → the player who parried them (so a
    *  reflective parry can hand the shard back with reversed velocity). */
   scratchDeflectedProjectiles: Map<EntityId, PlayerId>;
+  /** Y of the ceiling's underside (bottom edge of the top wall), or null if the
+   *  map has no ceiling. Players are clamped below this each tick so a fast
+   *  wall-jump into the wall/ceiling corner can't tunnel them ONTO the roof. */
+  ceilingClampY: number | null;
 };
+
+/** Half the standing player body height (bodyHeight 56 / 2). Used for the
+ *  ceiling clamp; crouching is shorter so clamping to the standing half is a
+ *  safe over-estimate. */
+const PLAYER_HALF_HEIGHT = 28;
+
+/** Underside of the map's ceiling (a wide solid wall whose top sits at the map
+ *  top). null when there's no such platform (open-top map). */
+function computeCeilingClampY(map: MapDefinition): number | null {
+  let bottom: number | null = null;
+  for (const p of map.platforms) {
+    const top = p.position.y - p.size.y / 2;
+    const isCeiling = p.kind === "wall" && p.size.x >= map.size.x * 0.5 && top <= 8;
+    if (isCeiling) {
+      const b = p.position.y + p.size.y / 2;
+      bottom = bottom === null ? b : Math.max(bottom, b);
+    }
+  }
+  return bottom;
+}
 
 export function createRuntime(map: MapDefinition): WorldRuntime {
   const runtime: WorldRuntime = {
@@ -180,6 +204,7 @@ export function createRuntime(map: MapDefinition): WorldRuntime {
     ),
     scratchSortedProjectileIds: [],
     scratchDeflectedProjectiles: new Map(),
+    ceilingClampY: computeCeilingClampY(map),
   };
   // Side effect: pre-load the wasm static-AABB cache so the
   // J0/J1 shim's stepPlayer has terrain to collide with. No-op
@@ -533,6 +558,22 @@ export function stepWithRuntime(
     }
 
     players[pid] = nextEntity;
+  }
+
+  // 1a0. Ceiling clamp. A powerful wall-jump into the wall/ceiling corner can
+  //      tunnel a body ONTO the roof (bots climbing the outer walls escaped the
+  //      arena this way). Clamp any player whose head has pushed above the
+  //      ceiling back under it and kill their upward velocity. Deterministic
+  //      (client + server both run this) and TS-only — no Zig step change.
+  if (runtime.ceilingClampY !== null) {
+    const minCenterY = runtime.ceilingClampY + PLAYER_HALF_HEIGHT;
+    for (const pidStr of Object.keys(players)) {
+      const pid = pidStr as PlayerId;
+      const p = players[pid]!;
+      if (p.y < minCenterY) {
+        players[pid] = { ...p, y: minCenterY, vy: Math.max(p.vy, 0) };
+      }
+    }
   }
 
   // 1a. Void-plane kill check. Any alive player whose `y` exceeds the map's
