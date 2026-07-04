@@ -288,7 +288,10 @@ function stepPlayerNative(
   // traversal toolkit now.)
   let jumpedThisFrame = false;
   const wallDir = mem.touchingWallDir;
-  if (mem.jumpBufferMs > 0 && !mem.groundedLastFrame && wallDir !== 0) {
+  // Wall-jump fires when touching a wall UNLESS you're pressing AWAY from it —
+  // pushing off the wall + jump is a double-jump (if you have the card), so the
+  // two coexist on wall-dense maps instead of the wall always stealing the jump.
+  if (mem.jumpBufferMs > 0 && !mem.groundedLastFrame && wallDir !== 0 && direction !== -wallDir) {
     // WALL-JUMP — up + a firm shove AWAY from the wall (SMB). ×wallJumpMul.
     next.vy = M.wallJumpVy * wallJumpMul;
     next.vx = -wallDir * M.wallJumpVx;

@@ -82,6 +82,16 @@ const FIELD_OFFSETS = {
   jump_released_since_jump: 84, // i32
   grounded_last_frame: 88, // i32
   jetpack_active: 92, // i32
+  touching_wall_dir: 96, // i32
+  jump_mul: 104, // f64
+  wall_jump_mul: 112, // f64
+  wall_slide_mul: 120, // f64
+  dash_cooldown_ms: 128, // f64
+  dash_active_ms: 136, // f64
+  air_jumps: 144, // i32
+  dash_charges: 148, // i32
+  air_jumps_used: 152, // i32
+  dash_used_in_air: 156, // i32
 } as const;
 
 const PLATFORMS: PlatformDefinition[] = [
@@ -97,6 +107,9 @@ function packPlayerStep(absPtr: number, p: {
   aimX: number; aimY: number; jetpackFuel: number;
   crouching: boolean;
   memory: PlayerMovementMemory;
+  // Augment inputs (card-driven). Default inert.
+  jumpMul?: number; wallJumpMul?: number; wallSlideMul?: number;
+  airJumps?: number; dashCharges?: number;
 }): void {
   const dv = new DataView(sim.exports.memory.buffer);
   dv.setFloat64(absPtr + FIELD_OFFSETS.x, p.x, true);
@@ -113,6 +126,19 @@ function packPlayerStep(absPtr: number, p: {
   dv.setInt32(absPtr + FIELD_OFFSETS.jump_released_since_jump, p.memory.jumpReleasedSinceJump ? 1 : 0, true);
   dv.setInt32(absPtr + FIELD_OFFSETS.grounded_last_frame, p.memory.groundedLastFrame ? 1 : 0, true);
   dv.setInt32(absPtr + FIELD_OFFSETS.jetpack_active, p.memory.jetpackActive ? 1 : 0, true);
+  dv.setInt32(absPtr + FIELD_OFFSETS.touching_wall_dir, p.memory.touchingWallDir, true);
+  // Augment INPUTS — must be initialised or the wasm reads garbage (mults of 0
+  // would zero every jump). Defaults are inert.
+  dv.setFloat64(absPtr + FIELD_OFFSETS.jump_mul, p.jumpMul ?? 1, true);
+  dv.setFloat64(absPtr + FIELD_OFFSETS.wall_jump_mul, p.wallJumpMul ?? 1, true);
+  dv.setFloat64(absPtr + FIELD_OFFSETS.wall_slide_mul, p.wallSlideMul ?? 1, true);
+  dv.setInt32(absPtr + FIELD_OFFSETS.air_jumps, p.airJumps ?? 0, true);
+  dv.setInt32(absPtr + FIELD_OFFSETS.dash_charges, p.dashCharges ?? 0, true);
+  // Augment MEMORY.
+  dv.setFloat64(absPtr + FIELD_OFFSETS.dash_cooldown_ms, p.memory.dashCooldownMs, true);
+  dv.setFloat64(absPtr + FIELD_OFFSETS.dash_active_ms, p.memory.dashActiveMs, true);
+  dv.setInt32(absPtr + FIELD_OFFSETS.air_jumps_used, p.memory.airJumpsUsed, true);
+  dv.setInt32(absPtr + FIELD_OFFSETS.dash_used_in_air, p.memory.dashUsedInAir, true);
 }
 
 function unpackPlayerStep(absPtr: number) {
@@ -298,5 +324,46 @@ describe("player parity (TS V8 vs Zig wasm)", () => {
     // vx, vy, jetpackFuel, crouching, and the full PlayerMovementMemory
     // matched between TS V8 and Zig wasm. That's the parity proof.
     expect(SCRIPT.length).toBe(90);
+  });
+
+  // Exercises the AUGMENT marshaling with non-default values (airJumps=1) —
+  // the base parity test runs everything inert, so this is what actually
+  // proves double-jump crosses the wasm boundary and behaves identically.
+  test("double-jump (airJumps=1): wasm fires it AND matches TS byte-for-byte", () => {
+    const STATE_PTR = sim.statePtr;
+    const STATICS_OFF = SIZEOF_PLAYER_STEP + 8;
+    const packed = packStaticsAndOneWay(sim, STATE_PTR + STATICS_OFF, STATICS, ONE_WAY);
+    // Stand on the floor (floor top = 600; body 56 → centre 572).
+    let tsP = makePlayer(700, 572);
+    let tsM = { ...freshPlayerMovementMemory(), groundedLastFrame: true };
+    packPlayerStep(STATE_PTR, {
+      x: 700, y: 572, vx: 0, vy: 0, aimX: 900, aimY: 572,
+      jetpackFuel: JETPACK_MAX_FUEL, crouching: false,
+      memory: { ...freshPlayerMovementMemory(), groundedLastFrame: true },
+      airJumps: 1,
+    });
+    const DT = 1000 / 60;
+    const opts = { collisionCache: cache, airJumps: 1 };
+    // ground jump → hold 2 → release → coast 9 (coyote expires) → JUMP again.
+    const script: number[] = [Bit.Jump, Bit.Jump, Bit.Jump, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, Bit.Jump, 0, 0];
+    let prev = 0;
+    let doubleJumpVy = 999;
+    const secondJumpTick = script.lastIndexOf(Bit.Jump);
+    for (let t = 0; t < script.length; t++) {
+      const curr = script[t]!;
+      const ts = stepPlayer(tsP, prev, curr, 900, 572, tsM, [], DT, opts);
+      tsP = ts.player; tsM = ts.memory;
+      ex.step_player(STATE_PTR, prev, curr, 900, 572, 1, 1, DT,
+        packed.staticsPtr, packed.staticsCount, packed.oneWayPtr, packed.oneWayCount);
+      const wa = unpackPlayerStep(STATE_PTR);
+      // wasm ↔ TS byte-identical each tick (the marshaling proof).
+      expect(wa.vy).toBe(tsP.vy);
+      expect(wa.y).toBe(tsP.y);
+      expect(wa.vx).toBe(tsP.vx);
+      if (t === secondJumpTick) doubleJumpVy = tsP.vy;
+      prev = curr;
+    }
+    // The second airborne jump actually launched (a real double-jump, not a no-op).
+    expect(doubleJumpVy).toBeLessThan(-400);
   });
 });

@@ -197,7 +197,9 @@ pub fn stepPlayer(
     var jumped_this_frame = false;
     const wall_dir_i = s.touching_wall_dir;
     const wall_dir: f64 = @floatFromInt(wall_dir_i);
-    if (s.jump_buffer_ms > 0.0 and !boolFromInt(s.grounded_last_frame) and wall_dir_i != 0) {
+    // Wall-jump unless pressing AWAY from the wall (then it's a double-jump) —
+    // lets the two coexist on wall-dense maps. Mirrors player.ts.
+    if (s.jump_buffer_ms > 0.0 and !boolFromInt(s.grounded_last_frame) and wall_dir_i != 0 and direction != -wall_dir) {
         s.vy = WALL_JUMP_VY * s.wall_jump_mul;
         s.vx = -wall_dir * WALL_JUMP_VX;
         s.jump_buffer_ms = 0.0;
