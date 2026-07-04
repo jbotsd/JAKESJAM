@@ -48,6 +48,25 @@ describe("mapGen fuzz — the laws hold for every seed", () => {
       ).toBe(true);
     }
   });
+
+  test("60 seeds: generous, well-separated spawn sets", () => {
+    for (let seed = 0; seed < 60; seed++) {
+      const map = generateArena(seed);
+      // At least 4 spawns; opposite floor corners guaranteed. All pairs
+      // keep the min separation so a full lobby never stacks.
+      expect(map.spawns.length, `seed ${seed} spawn count`).toBeGreaterThanOrEqual(4);
+      for (let i = 0; i < map.spawns.length; i++) {
+        for (let j = i + 1; j < map.spawns.length; j++) {
+          const a = map.spawns[i]!;
+          const b = map.spawns[j]!;
+          expect(
+            Math.hypot(a.x - b.x, a.y - b.y),
+            `seed ${seed} spawns ${i},${j} too close`,
+          ).toBeGreaterThanOrEqual(360);
+        }
+      }
+    }
+  });
 });
 
 describe("curated map audit — same validator, no exceptions for age", () => {

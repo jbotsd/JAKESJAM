@@ -203,14 +203,12 @@ const optionsPanel = queryRequired<HTMLElement>("[data-options]");
 const musicVolumeInput = queryRequired<HTMLInputElement>("[data-music-volume]");
 const musicMutedInput = queryRequired<HTMLInputElement>("[data-music-muted]");
 const menuMusic = new Audio(getMenuMusicUrl());
-// ?world=1 auto-join never shows the menu — eager preload would only
-// produce an aborted request in the console.
-const autoJoiningWorld =
-  new URLSearchParams(window.location.search).get("world") === "1" ||
-  window.location.pathname === "/world";
-
 menuMusic.loop = true;
-menuMusic.preload = autoJoiningWorld ? "none" : "auto";
+// Always ready to play — the soundtrack underscores the world too, not just
+// the menu, so eager-load even on `?world=1` auto-join. (Setting this to
+// "none" for world auto-join is what silenced the song once world play
+// became the main entry.)
+menuMusic.preload = "auto";
 restoreOptions();
 
 queryRequired<HTMLButtonElement>("[data-menu-world]").addEventListener("click", () => {
@@ -277,9 +275,30 @@ musicMutedInput.addEventListener("change", () => {
 
 splash.addEventListener("pointerdown", () => startMenuMusic(), { once: true });
 
+// Soundtrack autoplay is blocked until a user gesture. The splash handler
+// above covers the menu path, but the primary entry is now the `?world=1`
+// share link, which hides the splash immediately and never fires it. So
+// arm a GLOBAL one-time gesture starter: the player's first click or key
+// anywhere (including their first move/shoot in-world) starts the song.
+// No-op if already playing or muted.
+function armSoundtrackOnFirstGesture(): void {
+  const start = () => {
+    startMenuMusic();
+    window.removeEventListener("pointerdown", start);
+    window.removeEventListener("keydown", start);
+  };
+  window.addEventListener("pointerdown", start);
+  window.addEventListener("keydown", start);
+}
+armSoundtrackOnFirstGesture();
+
 window.addEventListener("jakesjam:start-match", (event) => {
   const matchEvent = event as CustomEvent;
-  stopMenuMusic();
+  // Keep the soundtrack running INTO the match — it's the game's only
+  // music, and cutting it on match start is what made the song "stop"
+  // once world/room play became the main flow. It still respects the
+  // mute toggle and volume slider via applyAudioOptions().
+  startMenuMusic();
   hideSplash();
   hideLobby();
   // game.scene.start() does NOT stop other running scenes (unlike a
@@ -340,6 +359,11 @@ function localPlayerId(): string {
  * button or the URL query `?world=1` (auto-fired below).
  */
 function joinWorld(): void {
+  // Start the soundtrack for the world (the main entry path). Plays
+  // immediately if a gesture already happened (e.g. the click that hit
+  // "Join World"); for a bare `?world=1` auto-join the global first-gesture
+  // starter picks up the player's first in-world input.
+  startMenuMusic();
   hideSplash();
   hideLobby();
   game.scene.stop(SceneKeys.MainMenu); // see start-match handler note
@@ -452,11 +476,6 @@ function applyAudioOptions() {
 function startMenuMusic() {
   applyAudioOptions();
   void menuMusic.play().catch(() => undefined);
-}
-
-function stopMenuMusic() {
-  menuMusic.pause();
-  menuMusic.currentTime = 0;
 }
 
 function getMenuMusicUrl(): string {

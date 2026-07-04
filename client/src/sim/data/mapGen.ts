@@ -129,14 +129,28 @@ function generateCandidate(rand: () => number): MapDefinition {
     });
   });
 
-  // Spawns: floor corners always; T1 alternates when present.
+  // Spawns: aim for a FULL lobby's worth (up to 8) spread across the floor
+  // and every tier segment, greedily accepting only points that keep the
+  // ≥MIN_SPAWN_DIST separation the validator enforces. Opposite floor
+  // corners always come first so a 2-player round opens end-to-end.
+  const SPAWN_TARGET = 8;
   const spawns: Vec2[] = [
     { x: 160, y: FLOOR_TOP - 68 },
     { x: ARENA_W - 160, y: FLOOR_TOP - 68 },
   ];
-  const t1 = segs.filter((s) => s.tier === 0).sort((a, b) => a.x - b.x);
-  for (const seg of t1.length >= 2 ? [t1[0]!, t1[t1.length - 1]!] : []) {
-    const cand = { x: seg.x + seg.w / 2, y: TIER_TOPS[0] - 68 };
+  // Candidate pool: extra floor positions + one atop each tier segment,
+  // ordered floor-first then by tier so lower/safer spots fill first.
+  const candidates: Vec2[] = [
+    { x: ARENA_W / 2, y: FLOOR_TOP - 68 },
+    { x: ARENA_W / 3, y: FLOOR_TOP - 68 },
+    { x: (ARENA_W * 2) / 3, y: FLOOR_TOP - 68 },
+    ...segs
+      .slice()
+      .sort((a, b) => a.tier - b.tier || a.x - b.x)
+      .map((s) => ({ x: s.x + s.w / 2, y: TIER_TOPS[s.tier]! - 68 })),
+  ];
+  for (const cand of candidates) {
+    if (spawns.length >= SPAWN_TARGET) break;
     if (spawns.every((sp) => Math.hypot(sp.x - cand.x, sp.y - cand.y) >= MIN_SPAWN_DIST)) {
       spawns.push(cand);
     }

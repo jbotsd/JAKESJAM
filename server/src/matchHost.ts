@@ -450,10 +450,30 @@ export class MatchHost {
     });
     this.lastProcessedInputSeq.set(spawn.playerId, 0 as InputSeq);
 
-    const existingCount = Object.keys(this.state.players).length;
-    const spawnPoint =
-      this.map.spawns[existingCount % Math.max(1, this.map.spawns.length)] ??
-      { x: 0, y: 0 };
+    // Mid-match join: spawn at the point FARTHEST from where living players
+    // currently are (not a fixed index) — avoids dropping a joiner straight
+    // into a firefight or on top of someone. Deterministic given state.
+    const occupied = Object.values(this.state.players)
+      .filter((p) => p.alive)
+      .map((p) => ({ x: p.x, y: p.y }));
+    const candidates =
+      this.map.spawns.length > 0
+        ? this.map.spawns
+        : [{ x: this.map.size.x / 2, y: this.map.size.y / 2 }];
+    let spawnPoint = candidates[0] ?? { x: 0, y: 0 };
+    let bestMinDist = -1;
+    for (const c of candidates) {
+      let minD = Infinity;
+      for (const o of occupied) minD = Math.min(minD, Math.hypot(c.x - o.x, c.y - o.y));
+      if (occupied.length === 0) {
+        spawnPoint = c;
+        break;
+      }
+      if (minD > bestMinDist) {
+        bestMinDist = minD;
+        spawnPoint = c;
+      }
+    }
     this.state = {
       ...this.state,
       players: {

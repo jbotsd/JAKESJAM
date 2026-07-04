@@ -14,11 +14,22 @@ export const boxworksMini: MapDefinition = {
   name: "Boxworks Mini",
   arenaTheme: "ivoryClouds",
   size: { x: 1280, y: 640 },
+  // 8 spawn points spread across all three tiers and the full width, so the
+  // deterministic max-spread assigner (World.assignSpawnPoints) can seat a
+  // full lobby without stacking and vary each round's opening positions.
+  // Every point sits on solid ground within a jump-fall (map-validated).
   spawns: [
+    // Floor — four across, opposite corners first.
     { x: 160, y: 540 },
     { x: 1120, y: 540 },
-    { x: 320, y: 320 },
-    { x: 960, y: 320 },
+    { x: 470, y: 540 },
+    { x: 810, y: 540 },
+    // Side ledges (top 479).
+    { x: 220, y: 420 },
+    { x: 1060, y: 420 },
+    // Mid platform ends (top 351).
+    { x: 540, y: 292 },
+    { x: 740, y: 292 },
   ],
   platforms: [
     // Floor.

@@ -68,8 +68,53 @@ import type {
   SatelliteEntity,
   SimEvent,
   StepResult,
+  Vec2,
   WorldState,
 } from "./types.js";
+
+/**
+ * Deterministic spawn assignment — greedy max-spread over the map's spawn
+ * points. Players are placed one at a time (in a STABLE id-sorted order so
+ * client prediction and server authority agree), each at the spawn point
+ * that is farthest from everyone already placed, preferring unused points.
+ *
+ * This replaces the old `spawns[index % length]`, which had two failures:
+ *   1. With more players than spawn points it STACKED players on identical
+ *      coordinates (telefrag on the always-on world once bots + joiners
+ *      exceeded 4).
+ *   2. Every player respawned at the SAME fixed point every round — free
+ *      information for a spawn-camper.
+ * Pure + order-stable → parity-safe (no Math.random, no wall clock).
+ */
+export function assignSpawnPoints(
+  map: MapDefinition,
+  orderedIds: readonly string[],
+): Map<string, Vec2> {
+  const points: Vec2[] =
+    map.spawns.length > 0 ? map.spawns : [{ x: map.size.x / 2, y: map.size.y / 2 }];
+  const ids = [...orderedIds].sort();
+  const result = new Map<string, Vec2>();
+  const placed: Vec2[] = [];
+  for (const id of ids) {
+    let best = points[0]!;
+    let bestScore = -Infinity;
+    for (const p of points) {
+      let minD = Infinity;
+      for (const q of placed) minD = Math.min(minD, Math.hypot(p.x - q.x, p.y - q.y));
+      const used = placed.some((q) => q.x === p.x && q.y === p.y);
+      // Unused points always beat reused ones; among equals, maximise the
+      // distance to the nearest already-placed player.
+      const score = (used ? 0 : 1e7) + (minD === Infinity ? 2e7 : minD);
+      if (score > bestScore) {
+        bestScore = score;
+        best = p;
+      }
+    }
+    result.set(id, best);
+    placed.push(best);
+  }
+  return result;
+}
 
 const FireBit = 1 << 6;
 
@@ -178,8 +223,13 @@ export class World {
     const playerEntities: WorldState["players"] = {};
     const scores: WorldState["round"]["scores"] = {};
 
+    const spawnAssignment = assignSpawnPoints(
+      map,
+      players.map((p) => p.playerId as string),
+    );
     for (const [index, spawn] of players.entries()) {
-      const spawnPoint = map.spawns[index % Math.max(1, map.spawns.length)] ?? { x: 0, y: 0 };
+      void index;
+      const spawnPoint = spawnAssignment.get(spawn.playerId as string) ?? { x: 0, y: 0 };
       playerEntities[spawn.playerId] = {
         id: spawn.playerId,
         characterId: spawn.characterId,
@@ -1264,9 +1314,11 @@ function respawnAll(
 ): WorldState["players"] {
   const out: WorldState["players"] = {};
   const ids = Object.keys(players).sort();
+  const spawnAssignment = assignSpawnPoints(map, ids);
   for (const [index, pid_] of ids.entries()) {
+    void index;
     const pid = pid_ as PlayerId;
-    const spawn = map.spawns[index % Math.max(1, map.spawns.length)] ?? { x: 0, y: 0 };
+    const spawn = spawnAssignment.get(pid as string) ?? { x: 0, y: 0 };
     const player = players[pid]!;
     out[pid] = {
       ...player,

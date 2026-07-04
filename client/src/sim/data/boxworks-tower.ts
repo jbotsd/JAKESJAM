@@ -15,16 +15,23 @@ export const boxworksTower: MapDefinition = {
   name: "Boxworks Tower",
   arenaTheme: "hangingWood",
   size: { x: 1440, y: 1080 },
+  // 10 spawn points across all vertical tiers — enough for a full FFA lobby
+  // with the max-spread assigner (World.assignSpawnPoints) seating everyone
+  // without stacking and rotating opening positions each round.
   spawns: [
     // Ground tier
     { x: 200, y: 1000 },
     { x: 1240, y: 1000 },
-    // Mid tier
-    { x: 360, y: 700 },
-    { x: 1080, y: 700 },
+    { x: 720, y: 1000 },
+    // Mid tier (on the platform tops)
+    { x: 320, y: 690 },
+    { x: 1120, y: 690 },
+    { x: 720, y: 550 },
     // High tier
-    { x: 720, y: 380 },
-    { x: 720, y: 200 },
+    { x: 240, y: 390 },
+    { x: 1200, y: 390 },
+    // Crow's nest
+    { x: 720, y: 210 },
   ],
   platforms: [
     // Floor.

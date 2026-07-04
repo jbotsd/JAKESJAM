@@ -213,6 +213,21 @@
   curated maps in CI — it immediately caught that the T1 ledge fix
   left ledge→mid at 130px (one over the law; mid moved to y=362).
   60-seed fuzz + determinism suite in mapGen.test.ts.
+- **Spawn system overhaul** — replaced `spawns[index % len]` (which
+  STACKED players on identical points once bots + joiners exceeded the
+  spawn count, and gave campers a fixed target every round) with a
+  deterministic max-spread assigner (World.assignSpawnPoints): players
+  placed one-by-one at the point farthest from those already seated,
+  id-sorted so client/server agree (parity-safe). Mid-match joins now
+  drop in farthest from live players. Way more spawn points: mini 4→8,
+  tower 6→9, generator now emits up to 8 spread across every tier. New
+  spawnAssign.test.ts + spawn-separation fuzz in mapGen.test.ts.
+- **Soundtrack regression fixed** — the song stopped once `?world=1`
+  became the main entry: that path never called startMenuMusic() and
+  set preload="none". Now the soundtrack is gesture-gated globally
+  (first click/key anywhere, incl. first in-world input), plays
+  through world AND room/practice matches (was cut on match-start),
+  preloads eagerly. Verified live: currentTime advances, loops.
 - NOTE: probe runs on a saturated host (e.g. DAW pinning 6 cores)
   produce skewed observations — the probe now warns when
   load/cores > 0.8 and records hostLoadRatio in report.json.
