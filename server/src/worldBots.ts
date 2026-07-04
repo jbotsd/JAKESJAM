@@ -215,8 +215,16 @@ export class WorldBots {
     else bot.stuckTicks = 0;
     bot.lastX = me.x;
 
+    // IMPORTANT: bots only ever press Jump while GROUNDED. Holding Jump in the
+    // air engages the jetpack — a bot that keeps pressing it airborne flies
+    // straight up and out of the map. Gating on grounded === true means the
+    // moment a bot leaves the ground it releases Jump, so it HOPS (bounded)
+    // rather than sustaining flight. (Was `grounded ?? true`, which let
+    // unknown/airborne bots keep jetpacking.)
+    const grounded = me.grounded === true;
+
     if (bot.stuckTicks >= 6) {
-      if (me.grounded ?? true) keys |= InputBit.Jump; // hop the obstacle, keep going
+      if (grounded) keys |= InputBit.Jump; // hop the obstacle, keep going
       if (bot.stuckTicks >= 40) {
         moveDir = -moveDir as -1 | 0 | 1; // real wall: brief sidestep to unwedge
         if (bot.stuckTicks >= 46) bot.stuckTicks = 0; // then resume the chase
@@ -224,15 +232,16 @@ export class WorldBots {
     }
 
     // Commit mode also hops periodically to cross floor gaps between platforms.
-    if (committing && (me.grounded ?? true) && bot.rand() < 0.04) {
+    if (committing && grounded && bot.rand() < 0.04) {
       keys |= InputBit.Jump;
     }
 
     if (moveDir < 0) keys |= InputBit.Left;
     if (moveDir > 0) keys |= InputBit.Right;
 
-    // Vertical: chase height advantage occasionally; hop at ledges.
-    if (foe.y < me.y - 90 && bot.rand() < 0.05) keys |= InputBit.Jump;
+    // Vertical: chase height advantage with a grounded hop only (never a
+    // sustained airborne jetpack climb — that's how bots escaped the arena).
+    if (grounded && foe.y < me.y - 90 && bot.rand() < 0.05) keys |= InputBit.Jump;
 
     // Threat response: inbound projectile → parry (facing it) or hop.
     const threat = this.inboundThreat(state, me);
@@ -244,7 +253,7 @@ export class WorldBots {
         bot.aimY = threat.y;
         return { keys, aimX: threat.x, aimY: threat.y };
       }
-      if (bot.rand() < 0.35) keys |= InputBit.Jump;
+      if (grounded && bot.rand() < 0.35) keys |= InputBit.Jump;
       if (me.shieldCharge !== undefined && me.shieldCharge > 40 && bot.rand() < 0.3) {
         keys |= InputBit.Shield;
       }

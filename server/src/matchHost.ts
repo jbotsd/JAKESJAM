@@ -1312,7 +1312,7 @@ function snapshotRuntime(runtime: WorldRuntime): WorldRuntime {
     // Fresh scratch buffers — the lag-comp replay path can run concurrently
     // with the main runtime tick, so they must not share mutable scratch.
     scratchSortedProjectileIds: [],
-    scratchDeflectedProjectiles: new Set(),
+    scratchDeflectedProjectiles: new Map(),
   };
 }
 

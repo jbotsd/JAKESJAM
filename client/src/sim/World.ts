@@ -150,7 +150,9 @@ export type WorldRuntime = {
    * dominant per-tick allocations in the game-loop-perf audit.
    */
   scratchSortedProjectileIds: EntityId[];
-  scratchDeflectedProjectiles: Set<EntityId>;
+  /** Projectiles parried this tick → the player who parried them (so a
+   *  reflective parry can hand the shard back with reversed velocity). */
+  scratchDeflectedProjectiles: Map<EntityId, PlayerId>;
 };
 
 export function createRuntime(map: MapDefinition): WorldRuntime {
@@ -170,7 +172,7 @@ export function createRuntime(map: MapDefinition): WorldRuntime {
       Math.max(1, map.size.y),
     ),
     scratchSortedProjectileIds: [],
-    scratchDeflectedProjectiles: new Set(),
+    scratchDeflectedProjectiles: new Map(),
   };
   // Side effect: pre-load the wasm static-AABB cache so the
   // J0/J1 shim's stepPlayer has terrain to collide with. No-op
@@ -713,7 +715,7 @@ export function stepWithRuntime(
               projectileId: ev.sourceProjectileId,
             });
             if (ev.sourceProjectileId !== null) {
-              deflectedProjectileIds.add(ev.sourceProjectileId);
+              deflectedProjectileIds.set(ev.sourceProjectileId, ev.victimId);
             }
             players[ev.victimId] = postPlayer;
             continue;
@@ -881,8 +883,25 @@ export function stepWithRuntime(
     if (result.expired || result.projectile === null) {
       continue;
     }
-    if (deflectedProjectileIds.has(id)) {
-      // Parry deflected — drop the shard regardless of pierce-chain etc.
+    const parrier = deflectedProjectileIds.get(id);
+    if (parrier !== undefined) {
+      // REFLECTIVE parry: instead of dropping the shard, send it back the way
+      // it came — now OWNED by the parrier, so it can strike the original
+      // attacker. Travel/age reset so it doesn't instantly expire on
+      // range/lifetime, and a small speed boost makes the return read as a
+      // deliberate deflection ("No, you.").
+      const pr = result.projectile;
+      remainingProjectiles[id] = {
+        ...pr,
+        vx: -pr.vx * 1.15,
+        vy: -pr.vy * 1.15,
+        ownerId: parrier,
+        ageMs: 0,
+        traveledPx: 0,
+        originX: pr.x,
+        originY: pr.y,
+        returning: undefined,
+      };
       continue;
     }
     remainingProjectiles[id] = result.projectile;

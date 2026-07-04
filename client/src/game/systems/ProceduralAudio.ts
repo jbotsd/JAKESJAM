@@ -86,6 +86,56 @@ function elementVoice(el?: string): ElementVoice {
   return ELEMENTS[el ?? "neutral"] ?? NEUTRAL_VOICE;
 }
 
+/**
+ * Dubstep-style weapon patch: a diverse, MODULATED voice per element. Two
+ * detuned oscillators → waveshaper distortion → an LFO-wobbled (or
+ * envelope-swept) lowpass → optional formant growl. This is the "array of
+ * sounds" — each element is a distinct aggressive character, and cards modify
+ * it (charge → more distortion + deeper wobble, shape → waveform/formant).
+ * Tunable in one table.
+ */
+type WeaponPatch = {
+  osc: OscillatorType;
+  detune: number; // cents between the two oscillators (thickness)
+  pitch: number; // Hz base
+  sweep: number; // downward pitch sweep over decay (Hz)
+  dist: number; // 0..1 waveshaper drive
+  filterBase: number; // wobble lowpass base cutoff (Hz)
+  wobbleRate: number; // LFO Hz on cutoff (0 = a single filter-envelope "wub")
+  wobbleDepth: number; // cutoff modulation depth (Hz)
+  formant: number; // vocal growl bandpass centre (0 = none)
+  sub: number; // sub-osc level 0..1
+  decay: number; // body decay (s)
+};
+
+const WEAPON_PATCHES: Record<string, WeaponPatch> = {
+  // Default crystal — a bright, aggressive laser-growl (filter-env wub).
+  crystal: { osc: "sawtooth", detune: 16, pitch: 540, sweep: 280, dist: 0.42, filterBase: 2600, wobbleRate: 0, wobbleDepth: 1700, formant: 0, sub: 0.22, decay: 0.15 },
+  neutral: { osc: "sawtooth", detune: 14, pitch: 520, sweep: 300, dist: 0.4, filterBase: 2400, wobbleRate: 0, wobbleDepth: 1600, formant: 0, sub: 0.24, decay: 0.15 },
+  // Fire — a formant growl.
+  fire: { osc: "sawtooth", detune: 24, pitch: 300, sweep: 150, dist: 0.64, filterBase: 1500, wobbleRate: 32, wobbleDepth: 1300, formant: 850, sub: 0.32, decay: 0.2 },
+  // Ice — bright crystalline zap.
+  ice: { osc: "sawtooth", detune: 10, pitch: 720, sweep: 220, dist: 0.32, filterBase: 4200, wobbleRate: 0, wobbleDepth: 2100, formant: 0, sub: 0.12, decay: 0.13 },
+  // Lightning — fast neuro wobble.
+  lightning: { osc: "sawtooth", detune: 30, pitch: 480, sweep: 240, dist: 0.74, filterBase: 3200, wobbleRate: 72, wobbleDepth: 2800, formant: 0, sub: 0.16, decay: 0.13 },
+  electric: { osc: "sawtooth", detune: 30, pitch: 480, sweep: 240, dist: 0.74, filterBase: 3200, wobbleRate: 72, wobbleDepth: 2800, formant: 0, sub: 0.16, decay: 0.13 },
+  // Void — deep slow sub wobble.
+  void: { osc: "square", detune: 8, pitch: 150, sweep: 70, dist: 0.55, filterBase: 700, wobbleRate: 18, wobbleDepth: 600, formant: 0, sub: 0.55, decay: 0.24 },
+  // Radiant — bright screech (high formant).
+  radiant: { osc: "sawtooth", detune: 18, pitch: 600, sweep: 220, dist: 0.46, filterBase: 5000, wobbleRate: 0, wobbleDepth: 2300, formant: 1400, sub: 0.14, decay: 0.14 },
+  // Toxic — gurgle wobble.
+  toxic: { osc: "square", detune: 20, pitch: 340, sweep: 120, dist: 0.5, filterBase: 1200, wobbleRate: 26, wobbleDepth: 1000, formant: 700, sub: 0.26, decay: 0.18 },
+  // Sticky — damped low wobble.
+  sticky: { osc: "triangle", detune: 12, pitch: 260, sweep: 110, dist: 0.4, filterBase: 900, wobbleRate: 16, wobbleDepth: 500, formant: 0, sub: 0.3, decay: 0.16 },
+  // Explosive — sub-drop growl.
+  explosive: { osc: "sawtooth", detune: 14, pitch: 160, sweep: 90, dist: 0.72, filterBase: 900, wobbleRate: 14, wobbleDepth: 700, formant: 0, sub: 0.6, decay: 0.24 },
+};
+
+const CRYSTAL_PATCH: WeaponPatch = WEAPON_PATCHES.crystal!;
+function weaponPatch(el?: string): WeaponPatch {
+  return WEAPON_PATCHES[el ?? "crystal"] ?? CRYSTAL_PATCH;
+}
+
 export class ProceduralAudio {
   private ctx?: AudioContext;
   private master?: GainNode;
@@ -252,22 +302,26 @@ export class ProceduralAudio {
     const rr = this.rrIdx;
     this.rrIdx += 1;
     const pitchMul = SEMI(step) * rand(0.994, 1.006);
-    const tailMul = lerp(1.0, 0.42, rapid);
     const level = lerp(1.0, 0.68, rapid); // duck sustained fire
     const pan = ((rr & 1) === 0 ? 1 : -1) * lerp(0.1, 0.34, rapid);
 
-    // Shape → timbre. Waveform + brightness shift so a shape card is audible.
-    const shapeWave: OscillatorType | null =
-      shape === "square" ? "square" : shape === "bar" ? "sawtooth" : shape === "triangle" || shape === "orb" ? "triangle" : null;
-    const wave = shapeWave ?? v.wave;
-    const bright = shape === "x" || shape === "hexagon" ? 1.35 : shape === "triangle" || shape === "orb" ? 0.82 : 1;
+    // Dubstep patch for this element — a distinct aggressive character.
+    const patch = weaponPatch(p.element);
+    const dist = clamp01(patch.dist + charge * 0.3);
+    const wobbleDepth = patch.wobbleDepth * (1 + charge * 0.5) * rand(0.85, 1.15);
+    const wobbleRate = patch.wobbleRate > 0 ? patch.wobbleRate * rand(0.85, 1.2) : 0;
+    const bodyFreq = patch.pitch * (1 - charge * 0.3 - (heavy ? 0.12 : 0)) * pitchMul;
+    const dur = patch.decay * lerp(1, 0.55, rapid);
+    const osc: OscillatorType =
+      shape === "square" ? "square" : shape === "triangle" || shape === "orb" ? "triangle" : patch.osc;
+    const formantHz = patch.formant * (shape === "x" || shape === "hexagon" ? 1.4 : 1);
 
-    // Bus: level → stereo pan → tone lowpass → master (+ reverb send).
+    // Output bus: level -> stereo pan -> tone lowpass -> master (+ reverb).
     const bus = ctx.createGain();
     bus.gain.value = level;
     const tone = ctx.createBiquadFilter();
     tone.type = "lowpass";
-    tone.frequency.value = v.tone * bright * rand(0.9, 1.12);
+    tone.frequency.value = v.tone * rand(0.9, 1.12);
     const panner = ctx.createStereoPanner ? ctx.createStereoPanner() : null;
     if (panner) {
       panner.pan.value = pan;
@@ -275,75 +329,100 @@ export class ProceduralAudio {
     } else {
       bus.connect(tone).connect(master);
     }
-    this.sendReverb(tone, 0.05 + inten * 0.05);
+    this.sendReverb(tone, 0.04 + inten * 0.04);
 
-    const bodyFreq = v.body * (1 - charge * 0.35 - (heavy ? 0.15 : 0)) * pitchMul;
-    const dur = (0.1 + charge * 0.09 + (heavy ? 0.05 : 0)) * tailMul;
-
-    // 1) Transient — varied per shot (brightness + level jitter).
-    const tb = rand(0.8, 1.3) * bright;
-    this.noiseInto(bus, t, 0.005, (0.45 + inten * 0.3) * rand(0.85, 1.15), v.air * 2 * tb, 0.9, "highpass");
-
-    // 2) Body — FM carrier with fast downward pitch sweep.
-    const carrier = ctx.createOscillator();
-    carrier.type = wave;
-    carrier.frequency.setValueAtTime(bodyFreq * 1.6, t);
-    carrier.frequency.exponentialRampToValueAtTime(Math.max(40, bodyFreq - v.sweep), t + dur);
-    const bodyGain = this.env(t, 0.001, dur, 0.32 + inten * 0.22);
-    if (v.fmRatio > 0) {
-      const mod = ctx.createOscillator();
-      mod.type = "sine";
-      // Small per-shot FM-ratio wobble → spectral variation (anti-fatigue).
-      mod.frequency.setValueAtTime(bodyFreq * v.fmRatio * rand(0.98, 1.02), t);
-      const modGain = ctx.createGain();
-      modGain.gain.setValueAtTime(v.fmIndex * (1 + charge * 0.6) * rand(0.85, 1.15), t);
-      modGain.gain.exponentialRampToValueAtTime(1, t + dur);
-      mod.connect(modGain).connect(carrier.frequency);
-      mod.start(t);
-      mod.stop(t + dur + 0.02);
+    // Body chain: detuned oscillators -> waveshaper distortion -> wobble
+    // (LFO/env) lowpass -> body envelope -> bus. This is the dubstep growl.
+    const shaper = ctx.createWaveShaper();
+    // Loose-typed curve setter — the makeDistCurve buffer is a fresh
+    // Float32Array; the DOM lib's tighter ArrayBuffer generic isn't worth the
+    // ceremony here.
+    (shaper as unknown as { curve: Float32Array | null }).curve = this.makeDistCurve(dist);
+    shaper.oversample = "2x";
+    const wob = this.wobbleFilter(t, dur, patch.filterBase * rand(0.9, 1.12), wobbleDepth, wobbleRate);
+    const bodyEnv = this.env(t, 0.002, dur, 0.34 + inten * 0.16);
+    shaper.connect(wob).connect(bodyEnv).connect(bus);
+    // Parallel formant growl on the wobbled signal (vocal character).
+    if (formantHz > 0) {
+      for (const [ff, g] of [[formantHz, 0.5] as const, [formantHz * 1.7, 0.32] as const]) {
+        const bp = ctx.createBiquadFilter();
+        bp.type = "bandpass";
+        bp.frequency.value = ff;
+        bp.Q.value = 6;
+        const fg = ctx.createGain();
+        fg.gain.value = g;
+        wob.connect(bp).connect(fg).connect(bodyEnv);
+      }
     }
-    carrier.connect(bodyGain).connect(bus);
-    carrier.start(t);
-    carrier.stop(t + dur + 0.02);
-
-    // 3) Sub thump — weight (thinned on rapid fire to avoid low-end buildup).
-    const sub = ctx.createOscillator();
-    sub.type = "sine";
-    const subF = (heavy ? 70 : 95) * (1 - charge * 0.3);
-    sub.frequency.setValueAtTime(subF * 2, t);
-    sub.frequency.exponentialRampToValueAtTime(subF, t + 0.08);
-    sub.connect(this.env(t, 0.001, (0.1 + charge * 0.06) * tailMul, (0.26 + charge * 0.25) * lerp(1, 0.6, rapid))).connect(bus);
-    sub.start(t);
-    sub.stop(t + 0.18);
-
-    // 4) Air burst — bandpassed noise sizzle, varied.
-    this.noiseInto(bus, t, (0.05 + inten * 0.05) * tailMul, 0.16 + inten * 0.14, v.air * bright * rand(0.9, 1.12), 1.4, "bandpass");
-
-    // 5) Crystalline shimmer — the signature "laser crystal" arpeggio for the
-    //    default weapon (crystal). Partials rotate per shot → magical, never
-    //    identical.
-    if ((p.element ?? "crystal") === "crystal" || p.element === "ice" || p.element === "radiant") {
-      this.crystalShimmer(bus, t, bodyFreq, rr, rapid, tailMul);
+    for (const det of [-patch.detune, patch.detune]) {
+      const o = ctx.createOscillator();
+      o.type = osc;
+      o.detune.value = det;
+      o.frequency.setValueAtTime(bodyFreq * 1.5, t);
+      o.frequency.exponentialRampToValueAtTime(Math.max(45, bodyFreq - patch.sweep), t + dur);
+      o.connect(shaper);
+      o.start(t);
+      o.stop(t + dur + 0.05);
     }
 
-    // 6) Element flavour (fire/lightning/void/toxic/…).
+    // Transient — varied attack (the ear tracks it, so never identical).
+    this.noiseInto(bus, t, 0.005, (0.4 + inten * 0.3) * rand(0.85, 1.15), v.air * 2 * rand(0.8, 1.3), 0.9, "highpass");
+
+    // Sub thump — thinned on rapid fire to avoid low-end buildup.
+    if (patch.sub > 0) {
+      const sub = ctx.createOscillator();
+      sub.type = "sine";
+      const sf = (heavy ? 60 : 88) * (1 - charge * 0.25);
+      sub.frequency.setValueAtTime(sf * 2, t);
+      sub.frequency.exponentialRampToValueAtTime(sf, t + 0.07);
+      sub
+        .connect(this.env(t, 0.001, 0.1 * lerp(1, 0.6, rapid), patch.sub * (0.6 + charge * 0.4) * lerp(1, 0.7, rapid)))
+        .connect(bus);
+      sub.start(t);
+      sub.stop(t + 0.18);
+    }
+
+    // Card layers: element extras (crackle/zap) + impact/pathing.
     this.weaponFlavour(bus, t, p.element, charge);
-
-    // 7) Impact-card flavour — an explosive/sticky/pierce card is audible.
-    this.impactFlavour(bus, t, p.impact, p.pathing, bodyFreq, tailMul);
+    this.impactFlavour(bus, t, p.impact, p.pathing, bodyFreq, lerp(1, 0.55, rapid));
   }
 
-  /** Rotating inharmonic crystal partials — the shimmer that makes rapid
-   *  crystal fire read as an evolving arpeggio instead of a repeated click. */
-  private crystalShimmer(bus: AudioNode, t: number, bodyFreq: number, rr: number, rapid: number, tailMul: number): void {
-    const count = rapid > 0.6 ? 2 : 3; // thin the shimmer on rapid fire
-    const dur = lerp(0.2, 0.07, rapid) * tailMul;
-    for (let i = 0; i < count; i += 1) {
-      const semi = SHIMMER_STEPS[(rr + i * 3) % SHIMMER_STEPS.length]!;
-      const f = bodyFreq * SEMI(semi) * rand(0.995, 1.005);
-      // Inharmonic ratio (2.76) → glassy bell; high-Q bandpass = ringing.
-      this.fmPing(bus, t + i * 0.004, f, 2.76, 260, (0.16 - i * 0.03) * lerp(1, 0.7, rapid), dur, true);
+  /** Waveshaper distortion curve (tanh soft-clip). amount 0..1 → gritty. */
+  private makeDistCurve(amount: number): Float32Array {
+    const n = 512;
+    const c = new Float32Array(n);
+    const k = 1 + amount * amount * 50;
+    const norm = Math.tanh(k);
+    for (let i = 0; i < n; i += 1) {
+      const x = (i / (n - 1)) * 2 - 1;
+      c[i] = Math.tanh(k * x) / norm;
     }
+    return c;
+  }
+
+  /** Wobble lowpass: cutoff either LFO-modulated (rateHz>0, the dubstep wub)
+   *  or a single filter-envelope sweep (rateHz=0). Returns the filter node. */
+  private wobbleFilter(t: number, dur: number, base: number, depth: number, rateHz: number): BiquadFilterNode {
+    const ctx = this.ctx!;
+    const lp = ctx.createBiquadFilter();
+    lp.type = "lowpass";
+    lp.frequency.value = base;
+    lp.Q.value = 7;
+    if (rateHz > 0) {
+      const lfo = ctx.createOscillator();
+      lfo.type = "sine";
+      lfo.frequency.setValueAtTime(rateHz, t);
+      const lg = ctx.createGain();
+      lg.gain.value = depth;
+      lfo.connect(lg).connect(lp.frequency);
+      lfo.start(t);
+      lfo.stop(t + dur + 0.05);
+    } else {
+      lp.frequency.setValueAtTime(base * 2.4, t);
+      lp.frequency.exponentialRampToValueAtTime(Math.max(120, base * 0.45), t + dur * 0.55);
+      lp.frequency.exponentialRampToValueAtTime(base * 1.5, t + dur);
+    }
+    return lp;
   }
 
   /** Impact/pathing card flavour layered onto the shot. */
@@ -600,21 +679,40 @@ export class ProceduralAudio {
     const t = ctx.currentTime;
     const bus = ctx.createGain();
     bus.connect(master);
-    this.sendReverb(bus, 0.18);
-    // A tiny reverse pre-swell (the "catch") then a sharp bright metallic ting.
+    this.sendReverb(bus, 0.2);
+    // ICONIC REFLECT TELL (Overwatch philosophy — one listen = "reflected!").
+    // 1) A reverse pre-swell = the "catch".
     const swell = this.noiseSource();
     const sf = ctx.createBiquadFilter();
     sf.type = "bandpass";
-    sf.frequency.value = 3000;
+    sf.frequency.value = 3200;
     sf.Q.value = 2;
     const sg = ctx.createGain();
     sg.gain.setValueAtTime(0.0001, t);
-    sg.gain.linearRampToValueAtTime(0.14, t + 0.05); // reverse swell up
-    sg.gain.exponentialRampToValueAtTime(0.0001, t + 0.07);
+    sg.gain.linearRampToValueAtTime(0.16, t + 0.045); // reverse swell up to the clang
+    sg.gain.exponentialRampToValueAtTime(0.0001, t + 0.065);
     swell.connect(sf).connect(sg).connect(bus);
-    swell.start(t); swell.stop(t + 0.09);
-    // The ting — very high resonant FM ping right after the swell peak.
-    this.fmPing(bus, t + 0.05, rand(1900, 2400), 4.1, 620, 0.32, 0.13, true);
+    swell.start(t);
+    swell.stop(t + 0.08);
+    // 2) A hard metallic CLANG — two detuned resonant FM pings for a bright,
+    //    heavy hit (Halo weight). Right on the swell peak.
+    const clangT = t + 0.045;
+    this.fmPing(bus, clangT, rand(2000, 2300), 4.1, 700, 0.34, 0.14, true);
+    this.fmPing(bus, clangT + 0.004, rand(1400, 1600), 2.76, 520, 0.24, 0.16, true);
+    // 3) The ENERGY RETURN — a rising whoosh (the shot flying back). This is
+    //    the readable "sent it back" gesture.
+    const ret = ctx.createOscillator();
+    ret.type = "sawtooth";
+    ret.frequency.setValueAtTime(300, clangT + 0.02);
+    ret.frequency.exponentialRampToValueAtTime(1400, clangT + 0.18);
+    const rf = ctx.createBiquadFilter();
+    rf.type = "bandpass";
+    rf.frequency.setValueAtTime(600, clangT + 0.02);
+    rf.frequency.exponentialRampToValueAtTime(2600, clangT + 0.18);
+    rf.Q.value = 3;
+    ret.connect(rf).connect(this.env(clangT + 0.02, 0.02, 0.18, 0.14)).connect(bus);
+    ret.start(clangT + 0.02);
+    ret.stop(clangT + 0.24);
   }
 
   // ── Synth primitives ────────────────────────────────────────────────
@@ -768,7 +866,3 @@ function SEMI(n: number): number {
 // Ordered to avoid neighbouring repeats.
 const BODY_STEPS = [0, 3, -2, 2, -3, 1, 4, -1];
 
-// Bright crystalline partials (semitones above the body) for the shimmer tail
-// — consonant intervals (octaves, fifths, thirds, tenths) so rapid crystal
-// fire reads as a magical arpeggio rather than noise.
-const SHIMMER_STEPS = [12, 19, 24, 7, 16, 28, 31, 15];
