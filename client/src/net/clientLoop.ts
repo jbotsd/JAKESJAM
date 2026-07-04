@@ -911,7 +911,18 @@ function cloneState(state: WorldState): WorldState {
   return structuredClone(state);
 }
 
+// Above this jump between two snapshots we treat it as a TELEPORT (respawn /
+// round reset), not real motion, and SNAP to the new position instead of
+// interpolating. No legit movement covers this in one snapshot step (max speed
+// ~900px/s → ~45px per 50ms tick), so a jump this big is always a respawn — and
+// lerping across it is exactly the "bot glided/teleported across the map" look.
+const TELEPORT_SNAP_PX = 260;
 function lerpPlayer(a: PlayerEntity, b: PlayerEntity, t: number): PlayerEntity {
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  if (dx * dx + dy * dy > TELEPORT_SNAP_PX * TELEPORT_SNAP_PX) {
+    return { ...b }; // teleport/respawn — snap, don't smear across the arena
+  }
   return {
     ...b,
     x: lerp(a.x, b.x, t),
