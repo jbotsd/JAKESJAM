@@ -69,7 +69,19 @@ import { transientVfx } from "../render/TransientVfx";
 import { EntityRenderCoordinator } from "../render/EntityRenderCoordinator";
 import { SimEventRouter } from "../render/SimEventRouter";
 import { TouchControls } from "../input/TouchControls";
-import { isTouchPrimary } from "../input/mobile";
+import { isTouchPrimary, isPortraitMobile } from "../input/mobile";
+
+// Portrait-mobile camera framing. The arena is 2:1 wide but a phone held
+// upright is ~1:2 tall, so we frame the arena HEIGHT into the upper play-area
+// and follow the player horizontally, biasing them above centre so the
+// bottom control band never covers them. Tunable.
+// Camera zoom stays 1.0 in portrait: Phaser scales scroll-fixed HUD objects
+// with zoom (pushing them off-screen at zoom>1), and a dedicated UI camera is
+// too invasive for this scene. Framing is done entirely via the upward bias +
+// extended bottom bounds, which keeps the player in the upper play-area with
+// the ground below — no HUD breakage.
+const PORTRAIT_CAM_ZOOM = 1.0;
+const PORTRAIT_CAM_Y_BIAS = 150; // world px: camera centres BELOW the player → player rides in the upper third, clear of the bottom control band
 import { PALETTE, ARENA_THEMES } from "../ui/palette";
 import type {
   CardDefinition,
@@ -307,6 +319,10 @@ export class OnlineMatchScene extends Phaser.Scene {
       this.touchControls.attach();
       this.touchControls.setVisible(true);
     }
+
+    // Portrait-mobile camera framing + re-apply on orientation change.
+    this.applyMobileCamera();
+    this.scale.on("resize", this.applyMobileCamera, this);
     this.statusText = this.add
       .text(20, 20, "Connecting to game server...", {
         color: "#9aa5b1",
@@ -1072,7 +1088,12 @@ export class OnlineMatchScene extends Phaser.Scene {
     const cam = this.cameras.main;
     const padX = Math.round(cam.width / 6);
     const padY = Math.round(cam.height / 6);
-    cam.setBounds(-padX, -padY, width + padX * 2, height + padY * 2);
+    // Portrait mobile biases the player high on the tall screen (so the bottom
+    // control band never covers them). That only works if the camera may drop
+    // BELOW the arena floor — otherwise the bottom bound clamps the view and
+    // the player slides down behind the controls. Give generous bottom room.
+    const bottomPad = isPortraitMobile() ? Math.round(cam.height / 1.4) : padY;
+    cam.setBounds(-padX, -padY, width + padX * 2, height + padY + bottomPad);
     cam.setRoundPixels(true);
 
     // Tear down any previous arena render (e.g. on reconnect to a new match).
@@ -1407,7 +1428,20 @@ export class OnlineMatchScene extends Phaser.Scene {
   private followLocalPlayer(state: WorldState) {
     const local = state.players[this.localPlayerId];
     if (!local) return;
-    this.cameras.main.centerOn(local.x, local.y);
+    // Portrait mobile: bias the player above screen centre so the bottom
+    // control band doesn't cover them (centre the camera BELOW the player).
+    const yBias = isPortraitMobile() ? PORTRAIT_CAM_Y_BIAS : 0;
+    this.cameras.main.centerOn(local.x, local.y + yBias);
+  }
+
+  /**
+   * Apply the mobile camera zoom for the current orientation. Portrait frames
+   * the arena height into the upper play-area; landscape/desktop use 1:1.
+   * Called on create and whenever the viewport resizes (orientation change).
+   */
+  private applyMobileCamera(): void {
+    const cam = this.cameras.main;
+    cam.setZoom(isPortraitMobile() ? PORTRAIT_CAM_ZOOM : 1);
   }
 
   // ---------------- Match results ----------------
@@ -1498,6 +1532,7 @@ export class OnlineMatchScene extends Phaser.Scene {
 
   private teardown() {
     this.scale.off("resize", this.repositionHud, this);
+    this.scale.off("resize", this.applyMobileCamera, this);
     setActiveStateGetter(null);
     setActiveCameraGetter(null);
     setActiveRigDebugGetter(null);

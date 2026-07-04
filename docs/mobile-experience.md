@@ -58,6 +58,32 @@ a phone.
 - The in-match FTUE legend swaps to touch wording ("LEFT STICK move / PUSH UP
   jump / RIGHT STICK aim & fire / SHIELD·PARRY buttons") when touch is active.
 
+## Portrait-first redesign (2026-07-04)
+
+Landscape on a phone was cramped and the controls overlaid the action
+("dog ugly"). Mobile is now **portrait-first**:
+
+- **Orientation**: portrait is the target; a nudge asks players holding
+  the phone sideways to rotate upright (`main.ts` + `.orientation-hint`).
+- **Fullscreen**: first tap on a touch device calls the Fullscreen API +
+  portrait orientation lock (`enterFullscreenPortrait`), hiding the mobile
+  browser URL bar ("massive banner"). iOS Safari has no Fullscreen API —
+  there the apple-mobile-web-app meta tags give a chrome-less PWA via
+  Add to Home Screen.
+- **Camera**: the arena is 2:1 wide but a phone is ~1:2 tall. Rather than
+  zoom (Phaser scales scroll-fixed HUD objects with camera zoom, breaking
+  the HUD, and a UI camera is too invasive for this scene), the camera
+  stays at zoom 1.0 and frames via an upward player bias
+  (`PORTRAIT_CAM_Y_BIAS`) plus extended bottom camera bounds — the player
+  rides in the upper third with the ground below, HUD untouched.
+- **Controls**: a dedicated bottom band (`@media (orientation: portrait)`)
+  — joystick zones confined to the band so tapping the play field never
+  spawns a stick, SHIELD/PARRY buttons on the band's top edge, a gradient
+  separating controls from the game.
+
+Verified on a 400x860 portrait emulation: HUD at top, player framed high,
+controls in the band, VFX reading well.
+
 ## Verification
 
 - Unit: `touchControls.test.ts` locks the mapping (move/jump/crouch, aim +

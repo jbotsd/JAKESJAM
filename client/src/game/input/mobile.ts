@@ -25,8 +25,45 @@ export function isTouchPrimary(): boolean {
   return hasTouch && coarse;
 }
 
-/** True when the viewport is taller than wide — a brawler wants landscape. */
+/** True when the viewport is taller than wide. Portrait is the mobile-first
+ *  orientation for JAKESJAM (game on top, controls in a bottom band). */
 export function isPortrait(): boolean {
   if (typeof window === "undefined") return false;
-  return window.innerHeight > window.innerWidth;
+  return window.innerHeight >= window.innerWidth;
+}
+
+/** Touch device currently held upright — the target mobile layout. */
+export function isPortraitMobile(): boolean {
+  return isTouchPrimary() && isPortrait();
+}
+
+/**
+ * Go fullscreen (hides the mobile browser URL bar / chrome — the "massive
+ * banner") and lock to portrait when possible. Must be called from within a
+ * user-gesture handler. All calls are best-effort: iOS Safari has no
+ * Fullscreen API (there, "Add to Home Screen" gives a chrome-less PWA via the
+ * apple-mobile-web-app meta tags), and orientation lock only works in
+ * fullscreen on Android — failures are swallowed.
+ */
+export async function enterFullscreenPortrait(): Promise<void> {
+  if (typeof document === "undefined") return;
+  const el = document.documentElement as HTMLElement & {
+    webkitRequestFullscreen?: () => Promise<void>;
+  };
+  try {
+    if (!document.fullscreenElement) {
+      if (el.requestFullscreen) await el.requestFullscreen({ navigationUI: "hide" });
+      else if (el.webkitRequestFullscreen) await el.webkitRequestFullscreen();
+    }
+  } catch {
+    /* user denied or unsupported — game still runs, just with chrome */
+  }
+  try {
+    const orientation = screen.orientation as ScreenOrientation & {
+      lock?: (o: string) => Promise<void>;
+    };
+    await orientation.lock?.("portrait");
+  } catch {
+    /* orientation lock unsupported / not allowed */
+  }
 }

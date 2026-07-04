@@ -191,8 +191,8 @@ app.innerHTML = `
   </main>
   <div class="orientation-hint" data-orientation-hint aria-hidden="true">
     <div class="rotate-icon">📱</div>
-    <h2>Rotate your device</h2>
-    <p>JAKESJAM plays best in landscape.</p>
+    <h2>Hold your phone upright</h2>
+    <p>JAKESJAM is built for portrait.</p>
   </div>
 `;
 
@@ -202,21 +202,34 @@ const game = new Phaser.Game(gameConfig);
 // behaviour depends on this — pure introspection hook.
 (globalThis as { __jakesjam_game__?: Phaser.Game }).__jakesjam_game__ = game;
 
-// Portrait nudge for touch devices — a brawler wants landscape. Purely a
-// hint; the game still runs. Toggled on resize/orientation change.
+// Mobile is PORTRAIT-first (game on top, controls in a bottom band). Nudge to
+// rotate upright when a touch device is held sideways. Purely a hint.
 const orientationHint = app.querySelector<HTMLElement>("[data-orientation-hint]");
-function updateOrientationHint(): void {
-  if (!orientationHint) return;
-  const touch =
+function isTouchDevice(): boolean {
+  return (
     (navigator.maxTouchPoints ?? 0) > 0 &&
     typeof window.matchMedia === "function" &&
-    window.matchMedia("(pointer: coarse)").matches;
-  const portrait = window.innerHeight > window.innerWidth;
-  orientationHint.classList.toggle("show", touch && portrait);
+    window.matchMedia("(pointer: coarse)").matches
+  );
+}
+function updateOrientationHint(): void {
+  if (!orientationHint) return;
+  const landscape = window.innerWidth > window.innerHeight;
+  orientationHint.classList.toggle("show", isTouchDevice() && landscape);
 }
 updateOrientationHint();
 window.addEventListener("resize", updateOrientationHint);
 window.addEventListener("orientationchange", updateOrientationHint);
+
+// Kill the mobile browser chrome ("massive banner") on first tap: request
+// fullscreen + lock portrait. Best-effort, once, touch devices only.
+if (isTouchDevice()) {
+  const goFullscreen = () => {
+    void import("./game/input/mobile").then((m) => m.enterFullscreenPortrait());
+    window.removeEventListener("pointerdown", goFullscreen);
+  };
+  window.addEventListener("pointerdown", goFullscreen);
+}
 
 const lobbyController = new LobbyController(app);
 const splash = queryRequired<HTMLElement>("[data-splash]");

@@ -728,6 +728,49 @@ button.btn-danger:hover:not(:disabled) {
   box-shadow: 0 0 18px rgba(143, 248, 255, 0.5);
 }
 
+/* ── PORTRAIT (mobile-first) — game up top, controls in a bottom band ── */
+@media (orientation: portrait) {
+  /* Solid-ish control band so the bottom third reads as a controls area,
+     visually separated from the play field above. */
+  .tc-root::before {
+    content: "";
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    height: calc(var(--tc-band, 34vh) + var(--tc-safe-b));
+    background: linear-gradient(
+      to top,
+      rgba(4, 8, 14, 0.96) 0%,
+      rgba(4, 8, 14, 0.9) 55%,
+      rgba(4, 8, 14, 0) 100%
+    );
+    border-top: 1px solid rgba(143, 248, 255, 0.14);
+    pointer-events: none;
+  }
+  /* Joystick zones live ONLY in the bottom band, so tapping the game field
+     up top never spawns a stick. */
+  .tc-zone {
+    top: auto;
+    bottom: 0;
+    height: calc(var(--tc-band, 34vh) + var(--tc-safe-b));
+    width: 50%;
+  }
+  /* Buttons ride the top edge of the band, centre-ish, above the thumb
+     joysticks so both are reachable without overlap. */
+  .tc-btn {
+    bottom: calc(var(--tc-band, 34vh) - 30px + var(--tc-safe-b));
+    width: 76px;
+    height: 76px;
+  }
+  .tc-btn--shield {
+    right: calc(50% + 14px);
+  }
+  .tc-btn--parry {
+    left: calc(50% + 14px);
+  }
+}
+
 /* Portrait orientation nudge — a brawler wants landscape. Shown only on
    touch-primary devices held vertically (toggled by JS adding a class). */
 .orientation-hint {
