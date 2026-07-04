@@ -163,10 +163,19 @@ export class ProceduralPlayerRig {
     const bob =
       pose.grounded && !pose.crouching ? Math.abs(Math.sin(this.stepPhase)) * 2 * walkAmount : 0;
 
+    // Squash & stretch (visual only): the body ELONGATES on a powerful launch
+    // (strong upward velocity — a wall-jump reads as a real kick) and COMPRESSES
+    // on a fast fall / impact. Sells the wall-jump's power without touching the
+    // sim. Only airborne, so grounded walk/idle is unaffected.
+    const stretchY = pose.grounded
+      ? 1
+      : 1 + Phaser.Math.Clamp(-pose.velocity.y / 2600, -0.14, 0.3);
+    const sy = s * stretchY;
+
     // Key positions
-    const pelvisY = ground - Phaser.Math.Linear(52, 32, cr) * s - bob;
-    const chestY = ground - Phaser.Math.Linear(78, 56, cr) * s - bob;
-    const headY = ground - Phaser.Math.Linear(100, 76, cr) * s - bob;
+    const pelvisY = ground - Phaser.Math.Linear(52, 32, cr) * sy - bob;
+    const chestY = ground - Phaser.Math.Linear(78, 56, cr) * sy - bob;
+    const headY = ground - Phaser.Math.Linear(100, 76, cr) * sy - bob;
     const cx = pose.position.x + this.hitOffsetX * hitEased;
 
     const pelvis = vec(cx, pelvisY);

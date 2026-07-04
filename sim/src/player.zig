@@ -32,8 +32,8 @@ const BODY_HEIGHT: f64 = 56.0;
 const CROUCH_HEIGHT: f64 = 38.0;
 // Wall movement (SMB / Warframe) — replaces the jetpack. Mirror player.ts M.
 const WALL_SLIDE_MAX_FALL: f64 = 175.0;
-const WALL_JUMP_VY: f64 = -640.0;
-const WALL_JUMP_VX: f64 = 420.0;
+const WALL_JUMP_VY: f64 = -720.0;
+const WALL_JUMP_VX: f64 = 470.0;
 const WALL_RESTITUTION: f64 = 0.5;
 
 const JETPACK_MAX_FUEL: f64 = 125.0;

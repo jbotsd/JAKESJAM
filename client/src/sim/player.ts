@@ -39,11 +39,11 @@ const M = {
   // Stickier (was 200) so a grip reads as a genuine catch, giving time to
   // line up the next wall-jump.
   wallSlideMaxFall: 175,
-  // Wall-jump: up + away kick. vy now matches a floor jump so a climb feels
-  // decisive (~3 jumps up a full shaft, was ~5); vx a firm shove off the
-  // wall, eased slightly (was 430) so narrow shafts don't overshoot.
-  wallJumpVy: -640,
-  wallJumpVx: 420,
+  // Wall-jump: a POWERFUL launch — vy ABOVE a floor jump (~179px apex, a full
+  // shaft in ~3 kicks) with a strong horizontal shove off the wall. This is
+  // the signature move; it should feel like a hard KICK, not a hop.
+  wallJumpVy: -720,
+  wallJumpVx: 470,
   // Wall-bang: rebound off a wall hit at speed when NOT gripping it.
   wallRestitution: 0.5,
   // Below this fall speed a fresh wall-touch "latches" (near-zero vy) for a

@@ -49,8 +49,8 @@ export const GRAB_MIN_H = 25;
  *  shaft (wall-jump vx 430 crosses this comfortably). */
 export const SHAFT_MAX = 230;
 /** Extra reach ABOVE a shaft's climb-top for the final wall-jump hop
- *  (wall-jump apex ≈ 141px at vy -640). */
-export const WALL_JUMP_UP = 148;
+ *  (wall-jump apex ≈ 179px at vy -720). */
+export const WALL_JUMP_UP = 186;
 /** Horizontal reach of a wall-jump onto a side ledge. */
 export const GRAB_REACH_SIDE = 200;
 
