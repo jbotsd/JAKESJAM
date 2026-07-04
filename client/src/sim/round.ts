@@ -29,7 +29,7 @@ export const TARGET_SCORE_DEFAULT = 3;
  * the shared "bot_" id prefix (same convention the renderer uses to draw amber
  * bot rigs). Round authority is server-side, so this needs no client parity.
  */
-export const NO_HUMAN_SURVIVOR_END_MS = 12_000;
+export const NO_HUMAN_SURVIVOR_END_MS = 6_000;
 const BOT_ID_PREFIX = "bot_";
 
 /**
