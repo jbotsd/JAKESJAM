@@ -58,6 +58,10 @@ type BotState = {
    *  pinning themselves against walls and ledges). */
   lastX: number;
   stuckTicks: number;
+  /** Was Jump pressed last tick? The sim buffers a jump only on the RISING
+   *  edge, so a held Jump wall-jumps once; we force a one-tick release between
+   *  presses so bots can CHAIN wall-jumps up a shaft. */
+  jumpHeldPrev: boolean;
   /** Wall-clock ms the bot first became FAR from its foe (0 = not far).
    *  Drives anti-standoff commit mode so two bots never freeze apart. */
   farSince: number;
@@ -110,6 +114,7 @@ export class WorldBots {
         lastDraftRound: -1,
         lastX: 0,
         stuckTicks: 0,
+        jumpHeldPrev: false,
         farSince: 0,
       });
       out.push({ playerId: id, name });
@@ -166,6 +171,7 @@ export class WorldBots {
       }
       if (bot.strafeDir < 0) keys |= InputBit.Left;
       if (bot.strafeDir > 0) keys |= InputBit.Right;
+      bot.jumpHeldPrev = (keys & InputBit.Jump) !== 0;
       return { keys, aimX: me.x + (bot.strafeDir || 1) * 200, aimY: me.y };
     }
 
@@ -216,34 +222,30 @@ export class WorldBots {
     bot.lastX = me.x;
 
     const grounded = me.grounded === true;
-    const airborne = !grounded;
-    // Target meaningfully above → we need height. The jetpack is gone, so the
-    // ONLY way up is WALL-JUMPING: seek a wall/column and climb it.
     const wantUp = foe.y < me.y - 60;
-    // Reuse stuck detection as "pressed against a wall": a horizontal intent
-    // that produced ~no movement means a wall/column is blocking us.
+    // Reuse stuck detection as "pressed against a wall/column": a horizontal
+    // intent that produced ~no movement means something is blocking us.
     const onWall = bot.stuckTicks >= 3;
+    let wantJump = false;
 
-    // WALL-CLIMB. Airborne + on a wall + wanting height → wall-jump (up + away).
-    // Safe now the jetpack is gone: an airborne Jump is a NO-OP unless we're
+    // WALL-CLIMB / climb-over. Whenever a wall blocks us, JUMP: on the ground
+    // it's the hop that starts the climb; airborne it's a wall-jump (up + away).
+    // Chained via the pulse below, bots alternate up a shaft OR climb over a
+    // column standing between them and the foe — instead of grinding into it
+    // forever. Safe now the jetpack is gone: an airborne Jump is a NO-OP unless
     // touching a wall (and a wall-jump clears the contact), so bots can't fly
-    // out of the map. Each wall-jump pushes us off; we re-contact the opposite
-    // wall of a shaft a few ticks later and jump again — alternating upward.
-    if (airborne && onWall && wantUp) keys |= InputBit.Jump;
+    // out of the map.
+    if (onWall) wantJump = true;
 
-    // Ground unstick / obstacle hop.
-    if (bot.stuckTicks >= 6) {
-      if (grounded) keys |= InputBit.Jump; // hop the obstacle, keep going
-      if (bot.stuckTicks >= 40) {
-        moveDir = -moveDir as -1 | 0 | 1; // real wall: brief sidestep to unwedge
-        if (bot.stuckTicks >= 46) bot.stuckTicks = 0; // then resume the chase
-      }
+    // Only a PROLONGED stick (a true dead corner, not a climbable wall) forces
+    // a sidestep — give the climb plenty of ticks to work first.
+    if (bot.stuckTicks >= 48) {
+      moveDir = -moveDir as -1 | 0 | 1;
+      if (bot.stuckTicks >= 54) bot.stuckTicks = 0;
     }
 
     // Commit mode also hops periodically to cross floor gaps between platforms.
-    if (committing && grounded && bot.rand() < 0.04) {
-      keys |= InputBit.Jump;
-    }
+    if (committing && grounded && bot.rand() < 0.04) wantJump = true;
 
     // Seek a wall to climb when we want height but aren't already driving into
     // one (e.g. the foe is directly overhead) — drift toward the foe's side.
@@ -254,7 +256,11 @@ export class WorldBots {
 
     // Grounded hop to START a climb toward a higher foe (get airborne and into
     // the wall); the wall-climb branch above takes over once we're up on it.
-    if (grounded && foe.y < me.y - 90 && bot.rand() < 0.12) keys |= InputBit.Jump;
+    if (grounded && foe.y < me.y - 90 && bot.rand() < 0.12) wantJump = true;
+
+    // Pulse: force a one-tick release between presses so the sim re-arms its
+    // jump buffer and bots can CHAIN wall-jumps (a HELD Jump fires only once).
+    if (wantJump && !bot.jumpHeldPrev) keys |= InputBit.Jump;
 
     // Threat response: inbound projectile → parry (facing it) or hop.
     const threat = this.inboundThreat(state, me);
@@ -264,6 +270,7 @@ export class WorldBots {
         bot.parryReadyAt = nowMs + BOT_TUNING.parryEveryMs + bot.rand() * 1200;
         bot.aimX = threat.x;
         bot.aimY = threat.y;
+        bot.jumpHeldPrev = (keys & InputBit.Jump) !== 0;
         return { keys, aimX: threat.x, aimY: threat.y };
       }
       if (grounded && bot.rand() < 0.35) keys |= InputBit.Jump;
@@ -291,6 +298,7 @@ export class WorldBots {
       keys |= InputBit.Shield;
     }
 
+    bot.jumpHeldPrev = (keys & InputBit.Jump) !== 0;
     return { keys, aimX, aimY };
   }
 
