@@ -56,6 +56,9 @@ export const GRAB_REACH_SIDE = 200;
 
 // Column top heights (feet/perch land here). Higher = taller shaft climb.
 const COL_TOPS = [316, 256, 196] as const;
+// Side columns stay TALL so their perches sit high enough to be a
+// well-separated spawn from the floor corners (≥ MIN_SPAWN_DIST).
+const SIDE_COL_TOPS = [256, 196] as const;
 // Low-ledge top: one plain jump off the floor (rise 608-498 = 110 ≤ RISE).
 const LOW_LEDGE_TOP = 498;
 const MID_LEDGE_TOPS = [430, 356] as const;
@@ -109,7 +112,7 @@ function generateCandidate(rand: () => number): MapDefinition {
   // ── Side shafts: a column near each outer wall forms a wall+column shaft.
   // Gap (wall inner=WALL) → column left edge is ≤ SHAFT_MAX so it climbs.
   const leftColX = snap8(WALL + colW / 2 + 96 + rand() * 70); // gap ~96..166
-  const leftTop = pick(rand, COL_TOPS);
+  const leftTop = pick(rand, SIDE_COL_TOPS);
   addColumn(leftColX, colW, leftTop);
   // Perch just INSIDE the column (wall-jump off the column lands here).
   addLedge(leftColX + colW / 2 + 82, 150, leftTop);
@@ -117,7 +120,7 @@ function generateCandidate(rand: () => number): MapDefinition {
   const rightColX = mirrored
     ? ARENA_W - leftColX
     : snap8(ARENA_W - WALL - colW / 2 - 96 - rand() * 70);
-  const rightTop = mirrored ? leftTop : pick(rand, COL_TOPS);
+  const rightTop = mirrored ? leftTop : pick(rand, SIDE_COL_TOPS);
   addColumn(rightColX, colW, rightTop);
   addLedge(rightColX - colW / 2 - 82, 150, rightTop);
 
