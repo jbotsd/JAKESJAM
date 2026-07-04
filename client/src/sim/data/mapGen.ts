@@ -18,13 +18,14 @@
 
 import type { MapDefinition, PlatformDefinition, Vec2 } from "../types.js";
 
-// ── Arena frame (matches boxworks-mini scale — see game-feel-tuning.md) ──
-const ARENA_W = 1280;
-const ARENA_H = 640;
+// ── Arena frame. BIGGER than boxworks-mini (user: "the bigger ones are
+//    funner") — more room to run, dash, and chain wall-jumps up taller shafts.
+const ARENA_W = 1760;
+const ARENA_H = 820;
 const WALL = 32;
 const FLOOR_H = 32;
 const PLAT_H = 18; // thin one-way ledge thickness (≤ 24 → pass-through)
-const FLOOR_TOP = ARENA_H - FLOOR_H; // 608 — feet rest here
+const FLOOR_TOP = ARENA_H - FLOOR_H; // 788 — feet rest here
 
 // ── Movement-derived law constants (docs/map-design.md) ──────────────────
 /** Max rise a standard jump may be asked to clear (93% of 139px apex). */
@@ -33,8 +34,9 @@ export const MAX_STEP_RISE = 129;
 export const MAX_GAP_RISING = 180;
 /** Max horizontal gap when FALLING/level (full-speed arc). */
 export const MAX_GAP_FALLING = 300;
-/** Sightline cap per horizontal band. */
-export const MAX_SIGHTLINE = 420;
+/** Sightline cap per horizontal band. Roomier for the bigger, more open
+ *  arena — the floor still gets cover, just not wall-to-wall. */
+export const MAX_SIGHTLINE = 560;
 /** Openness band: platform+column footprint as fraction of playable area. */
 export const DENSITY_MIN = 0.08;
 export const DENSITY_MAX = 0.16;
@@ -54,14 +56,15 @@ export const WALL_JUMP_UP = 186;
 /** Horizontal reach of a wall-jump onto a side ledge. */
 export const GRAB_REACH_SIDE = 200;
 
-// Column top heights (feet/perch land here). Higher = taller shaft climb.
-const COL_TOPS = [316, 256, 196] as const;
-// Side columns stay TALL so their perches sit high enough to be a
-// well-separated spawn from the floor corners (≥ MIN_SPAWN_DIST).
-const SIDE_COL_TOPS = [256, 196] as const;
-// Low-ledge top: one plain jump off the floor (rise 608-498 = 110 ≤ RISE).
-const LOW_LEDGE_TOP = 498;
-const MID_LEDGE_TOPS = [430, 356] as const;
+// Ledge bands (feet land on top). Each ~108px above the last (≤ jump rise),
+// so the whole gym is climbable with plain jumps; wall-shafts skip the climb.
+// Floor 788 → 680 → 572 → 464 → 356 → 248.
+const BANDS = [680, 572, 464, 356, 248] as const;
+// Side climb towers reach a tall band; central tower is a bit shorter.
+const SIDE_TOWER_TOPS = [356, 248] as const;
+const CENTER_TOWER_TOPS = [464, 356] as const;
+// Short cover pillars break the floor sightline without walling the arena.
+const COVER_TOP = 640;
 
 // ── Seeded PRNG (mulberry32 — same family the bots use) ─────────────────
 function mulberry32(seed: number): () => number {
@@ -107,50 +110,52 @@ function generateCandidate(rand: () => number): MapDefinition {
     platforms.push({ id: nid("ledge"), kind: "platform", position: { x: snap8(cx), y: top + PLAT_H / 2 }, size: { x: snap8(w), y: PLAT_H } });
   };
 
-  const colW = snap8(40 + rand() * 16); // 40..56
+  const colW = snap8(36 + rand() * 12); // 36..48 — thin towers keep it open
 
-  // ── Side shafts: a column near each outer wall forms a wall+column shaft.
-  // Gap (wall inner=WALL) → column left edge is ≤ SHAFT_MAX so it climbs.
-  const leftColX = snap8(WALL + colW / 2 + 96 + rand() * 70); // gap ~96..166
-  const leftTop = pick(rand, SIDE_COL_TOPS);
+  // ── SIDE climb towers: each forms a wall-jump shaft with the outer wall.
+  const leftColX = snap8(WALL + colW / 2 + 90 + rand() * 64);
+  const leftTop = pick(rand, SIDE_TOWER_TOPS);
   addColumn(leftColX, colW, leftTop);
-  // Perch just INSIDE the column (wall-jump off the column lands here).
-  addLedge(leftColX + colW / 2 + 82, 150, leftTop);
+  addLedge(leftColX + colW / 2 + 78, 150, leftTop); // perch beside the tower
 
   const rightColX = mirrored
     ? ARENA_W - leftColX
-    : snap8(ARENA_W - WALL - colW / 2 - 96 - rand() * 70);
-  const rightTop = mirrored ? leftTop : pick(rand, SIDE_COL_TOPS);
+    : snap8(ARENA_W - WALL - colW / 2 - 90 - rand() * 64);
+  const rightTop = mirrored ? leftTop : pick(rand, SIDE_TOWER_TOPS);
   addColumn(rightColX, colW, rightTop);
-  addLedge(rightColX - colW / 2 - 82, 150, rightTop);
+  addLedge(rightColX - colW / 2 - 78, 150, rightTop);
 
-  // ── Central shaft: a column PAIR (gap ≤ SHAFT_MAX) with a bridging perch.
-  const centerGap = snap8(150 + rand() * (SHAFT_MAX - 170)); // 150..210
-  const centerX = ARENA_W / 2 + (mirrored ? 0 : snap8((rand() - 0.5) * 120));
-  const cTop = pick(rand, COL_TOPS);
-  const cLX = snap8(centerX - centerGap / 2 - colW / 2);
-  const cRX = snap8(centerX + centerGap / 2 + colW / 2);
-  addColumn(cLX, colW, cTop);
-  addColumn(cRX, colW, cTop);
-  // Perch bridging the shaft top (spans the gap so you top out onto it).
-  addLedge(centerX, centerGap + colW, cTop - PLAT_H);
+  // ── CENTRAL climb tower + perch — a mid anchor that also breaks the middle
+  //    sightline. A bit shorter than the sides.
+  const centerX = snap8(ARENA_W / 2 + (mirrored ? 0 : (rand() - 0.5) * 130));
+  const cTop = pick(rand, CENTER_TOWER_TOPS);
+  addColumn(centerX, colW, cTop);
+  addLedge(centerX, 160, cTop); // perch atop
 
-  // ── Low launch ledges: ≥2 plain jumps off the floor (routes up), placed
-  // between the side columns and center so lateral hops chain upward.
-  const lowXs = mirrored
-    ? [snap8(ARENA_W * 0.32), snap8(ARENA_W * 0.68)]
-    : [snap8(ARENA_W * 0.3 + (rand() - 0.5) * 80), snap8(ARENA_W * 0.72 + (rand() - 0.5) * 80)];
-  for (const lx of lowXs) addLedge(lx, snap8(150 + rand() * 70), LOW_LEDGE_TOP);
+  // ── Short COVER pillars in the wide floor gaps — sightline + low climb pads.
+  const coverLX = snap8((leftColX + centerX) / 2);
+  const coverRX = mirrored ? ARENA_W - coverLX : snap8((rightColX + centerX) / 2);
+  addColumn(coverLX, colW, COVER_TOP);
+  addColumn(coverRX, colW, COVER_TOP);
 
-  // ── Mid ledges: lateral wall-jump targets between the perches. Kept within
-  // GRAB_REACH_SIDE of a column so they're wall-reachable, and within a jump
-  // of the low ledges so there are multiple routes.
-  const midTop = pick(rand, MID_LEDGE_TOPS);
-  addLedge(snap8((leftColX + centerX) / 2), snap8(140 + rand() * 60), midTop);
-  if (!mirrored || rand() < 0.5) {
-    addLedge(snap8((rightColX + centerX) / 2), snap8(140 + rand() * 60), MID_LEDGE_TOPS[mirrored ? 0 : 1]!);
-  } else {
-    addLedge(snap8(ARENA_W - (leftColX + centerX) / 2), snap8(140 + rand() * 60), midTop);
+  // ── LEDGE BANDS: an open jungle-gym. Diagonal staircases climb inward from
+  //    each side (the reachability spine — every step is a plain jump off the
+  //    one below), plus scattered lateral ledges on the lower bands so there's
+  //    always somewhere to hop, with wide gaps that reward a dash.
+  const stairLX = snap8(230 + rand() * 80);
+  const step = 176; // horizontal march per band (crossable while rising)
+  for (let b = 0; b < BANDS.length; b++) {
+    const top = BANDS[b]!;
+    const w = snap8(130 + rand() * 64);
+    addLedge(snap8(stairLX + b * step), w, top);
+    const rx = mirrored
+      ? ARENA_W - (stairLX + b * step)
+      : snap8(ARENA_W - stairLX - b * step);
+    addLedge(rx, w, top);
+    if (b < 3) {
+      // extra hop target / dash pad, wandering across the open middle.
+      addLedge(snap8(ARENA_W / 2 + (rand() - 0.5) * 340), snap8(120 + rand() * 64), top);
+    }
   }
 
   // ── Spawns. CRITICAL: a floor spawn must NOT sit inside a solid column —
