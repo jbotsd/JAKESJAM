@@ -153,22 +153,42 @@ function generateCandidate(rand: () => number): MapDefinition {
     addLedge(snap8(ARENA_W - (leftColX + centerX) / 2), snap8(140 + rand() * 60), midTop);
   }
 
-  // ── Spawns: opposite floor corners first (end-to-end 1v1 open), then fill
-  // toward SPAWN_TARGET across floor + perches keeping MIN_SPAWN_DIST.
+  // ── Spawns. CRITICAL: a floor spawn must NOT sit inside a solid column —
+  // the body would spawn embedded, the collision resolver ejects it out of the
+  // map, and it void-kills → respawns at the same bad point → an endless
+  // "teleport to spawn" loop. So we only place floor spawns in the OPEN lanes
+  // between columns, and use perch tops (already clear) for the rest.
   const SPAWN_TARGET = 8;
-  const spawns: Vec2[] = [
-    { x: 160, y: FLOOR_TOP - 68 },
-    { x: ARENA_W - 160, y: FLOOR_TOP - 68 },
-  ];
-  const candidates: Vec2[] = [
-    { x: ARENA_W / 2, y: FLOOR_TOP - 68 },
-    { x: lowXs[0]!, y: LOW_LEDGE_TOP - 68 },
-    { x: lowXs[1]!, y: LOW_LEDGE_TOP - 68 },
+  const solidCols = platforms
+    .filter((p) => p.id.startsWith("col"))
+    .map((p) => ({ x0: p.position.x - p.size.x / 2, x1: p.position.x + p.size.x / 2 }));
+  const HALF_W = 13 + 18; // player half-width + clearance margin
+  const floorClear = (x: number) =>
+    solidCols.every((c) => x + HALF_W < c.x0 || x - HALF_W > c.x1);
+  const floorY = FLOOR_TOP - 68;
+  const floorPts: Vec2[] = [];
+  for (let x = WALL + 96; x <= ARENA_W - WALL - 96; x += 88) {
+    if (floorClear(x)) floorPts.push({ x: snap8(x), y: floorY });
+  }
+  // Order: the two floor extremes first (end-to-end 1v1 open), then perch tops,
+  // then the middle floor lanes. Greedy accept keeps every pair ≥ MIN_SPAWN_DIST.
+  const perchPts: Vec2[] = [
     { x: leftColX + colW / 2 + 82, y: leftTop - 68 },
     { x: rightColX - colW / 2 - 82, y: rightTop - 68 },
     { x: centerX, y: cTop - 68 },
   ];
-  for (const cand of candidates) {
+  // Perches FIRST (the arena is short, so the ~352px-high perches only clear
+  // MIN_SPAWN_DIST from floor points at a different x — seeding them first lets
+  // the floor lanes stagger AROUND them). Then the floor extremes (end-to-end),
+  // then middle floor lanes. The spawn assigner picks max-spread at match time,
+  // so list order doesn't affect 1v1 fairness.
+  const ordered: Vec2[] = [
+    ...perchPts,
+    ...(floorPts.length > 0 ? [floorPts[0]!, floorPts[floorPts.length - 1]!] : []),
+    ...floorPts.slice(1, -1),
+  ];
+  const spawns: Vec2[] = [];
+  for (const cand of ordered) {
     if (spawns.length >= SPAWN_TARGET) break;
     if (spawns.every((sp) => Math.hypot(sp.x - cand.x, sp.y - cand.y) >= MIN_SPAWN_DIST)) {
       spawns.push(cand);
