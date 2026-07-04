@@ -228,6 +228,24 @@
   (first click/key anywhere, incl. first in-world input), plays
   through world AND room/practice matches (was cut on match-start),
   preloads eagerly. Verified live: currentTime advances, loops.
+- **Combat VFX overhaul — P1 (docs/vfx-spec.md)** — the live world drew
+  every projectile as a FLAT CIRCLE while the pooled glow/particle
+  toolkit sat unused on that path; that's why "not everything has VFX".
+  New ProjectileVfx closes the muzzle -> travel -> impact lifecycle in
+  EntityRenderCoordinator: shaped + velocity-oriented bodies with a hot
+  core, additive glow halo, and a fading segmented trail; a muzzle flash
+  (glow pop + spark cone) on spawn; an element spark-fan + ring on
+  despawn (impact/fizzle). Element visual language table is total over
+  all 11 elements; shape drawer total over all 7 shapes. Pixel-art safe
+  (additive, no sprite blur), pool-budget safe (one halo per projectile,
+  alloc-free trail ring buffer), render-only (sim untouched — verified
+  live: bullets now show core+halo+trail, muzzle + impact bursts, RTT
+  unchanged). juice-it principles: reactive, tiered by damage, and the
+  visual layer now matches the existing audio + shake/hit-stop layers.
+  P2 (bounce/explosive/sticky/element-specific impacts) and P3 (opt-in
+  bloom/chromatic/color-grade shaders) specced but deferred. New
+  projectileVfx.test.ts (totality + pool-null safety + trail-cap) and
+  updated entityRenderCoordinator.test.ts for the new draw path.
 - NOTE: probe runs on a saturated host (e.g. DAW pinning 6 cores)
   produce skewed observations — the probe now warns when
   load/cores > 0.8 and records hostLoadRatio in report.json.

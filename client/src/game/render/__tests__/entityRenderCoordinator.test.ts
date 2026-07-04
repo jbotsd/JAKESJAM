@@ -32,10 +32,24 @@ type FakeArc = {
 type FakeGraphics = {
   destroyed: boolean;
   cleared: number;
+  /** Count of fill/stroke primitives drawn (body + trail shapes). */
+  fillOps: number;
   drawCalls: Array<{ kind: string; args: unknown[] }>;
   depth: number;
+  blendMode: number;
   clear(): FakeGraphics;
   setDepth(d: number): FakeGraphics;
+  setBlendMode(m: number): FakeGraphics;
+  fillStyle(c: number, a?: number): FakeGraphics;
+  fillCircle(x: number, y: number, r: number): FakeGraphics;
+  fillTriangle(...a: number[]): FakeGraphics;
+  fillPath(): FakeGraphics;
+  beginPath(): FakeGraphics;
+  closePath(): FakeGraphics;
+  moveTo(x: number, y: number): FakeGraphics;
+  lineTo(x: number, y: number): FakeGraphics;
+  lineStyle(w: number, c: number, a?: number): FakeGraphics;
+  lineBetween(x1: number, y1: number, x2: number, y2: number): FakeGraphics;
   destroy(): void;
 };
 
@@ -80,14 +94,54 @@ function fakeGraphics(): FakeGraphics {
   const obj: FakeGraphics = {
     destroyed: false,
     cleared: 0,
+    fillOps: 0,
     drawCalls: [],
     depth: 0,
+    blendMode: 0,
     clear() {
       obj.cleared += 1;
       return obj;
     },
     setDepth(d) {
       obj.depth = d;
+      return obj;
+    },
+    setBlendMode(m) {
+      obj.blendMode = m;
+      return obj;
+    },
+    fillStyle() {
+      return obj;
+    },
+    fillCircle() {
+      obj.fillOps += 1;
+      return obj;
+    },
+    fillTriangle() {
+      obj.fillOps += 1;
+      return obj;
+    },
+    fillPath() {
+      obj.fillOps += 1;
+      return obj;
+    },
+    beginPath() {
+      return obj;
+    },
+    closePath() {
+      return obj;
+    },
+    moveTo() {
+      return obj;
+    },
+    lineTo() {
+      return obj;
+    },
+    lineStyle() {
+      return obj;
+    },
+    lineBetween() {
+      obj.fillOps += 1;
       return obj;
     },
     destroy() {
@@ -170,20 +224,21 @@ describe("EntityRenderCoordinator — C2a contract", () => {
     });
   });
 
-  test("constructor allocates 3 graphics with depths 2/3/4 (pickup/destructible/fire)", () => {
-    expect(env.graphicsCreated.length).toBe(3);
-    const depths = env.graphicsCreated.map((g) => g.depth).sort();
-    expect(depths).toEqual([2, 3, 4]);
+  test("constructor allocates 5 graphics: 3 persistent (2/3/4) + trail(5) + body(6)", () => {
+    // ProjectileVfx adds the additive trail + body graphics (docs/vfx-spec.md).
+    expect(env.graphicsCreated.length).toBe(5);
+    const depths = env.graphicsCreated.map((g) => g.depth).sort((a, b) => a - b);
+    expect(depths).toEqual([2, 3, 4, 5, 6]);
   });
 
-  test("update on empty state still clears the persistent graphics", () => {
+  test("update on empty state clears persistent + vfx graphics", () => {
     coord.update(emptyState(), 16.667, 0);
-    // pickupGraphics + destructibleGraphics + fireGraphics each cleared once.
+    // pickup + destructible + fire + projectile body + trail each cleared once.
     const total = env.graphicsCreated.reduce((s, g) => s + g.cleared, 0);
-    expect(total).toBe(3);
+    expect(total).toBe(5);
   });
 
-  test("first projectile in state spawns a new arc sprite", () => {
+  test("projectiles are drawn into the additive body graphics, not flat arcs", () => {
     const s = emptyState();
     s.projectiles = {
       [1]: {
@@ -204,15 +259,14 @@ describe("EntityRenderCoordinator — C2a contract", () => {
       },
     } as unknown as WorldState["projectiles"];
     coord.update(s, 16.667, 0);
-    expect(env.arcsCreated.length).toBe(1);
-    const arc = env.arcsCreated[0]!;
-    expect(arc.x).toBe(100);
-    expect(arc.y).toBe(200);
-    expect(arc.radius).toBe(7);
-    expect(arc.depth).toBe(6);
+    // No flat-circle sprites anymore.
+    expect(env.arcsCreated.length).toBe(0);
+    // Body graphics (depth 6) received fill primitives (shell + hot core).
+    const body = env.graphicsCreated.find((g) => g.depth === 6)!;
+    expect(body.fillOps).toBeGreaterThan(0);
   });
 
-  test("projectile reused across ticks — same arc, position updated", () => {
+  test("projectile keeps drawing across ticks, no arcs ever created", () => {
     const s = emptyState();
     s.projectiles = {
       [1]: {
@@ -233,16 +287,15 @@ describe("EntityRenderCoordinator — C2a contract", () => {
       },
     } as unknown as WorldState["projectiles"];
     coord.update(s, 16.667, 0);
-    expect(env.arcsCreated.length).toBe(1);
+    const body = env.graphicsCreated.find((g) => g.depth === 6)!;
+    const opsAfterFrame1 = body.fillOps;
     (s.projectiles as Record<number, { x: number; y: number }>)[1]!.x = 150;
-    (s.projectiles as Record<number, { x: number; y: number }>)[1]!.y = 210;
     coord.update(s, 16.667, 16.667);
-    expect(env.arcsCreated.length).toBe(1); // still ONE arc
-    expect(env.arcsCreated[0]!.x).toBe(150);
-    expect(env.arcsCreated[0]!.y).toBe(210);
+    expect(env.arcsCreated.length).toBe(0);
+    expect(body.fillOps).toBeGreaterThan(opsAfterFrame1); // drew again
   });
 
-  test("projectile removed from state → arc destroyed + map entry cleaned", () => {
+  test("projectile removed from state → impact fires, no crash, body stops drawing", () => {
     const s = emptyState();
     s.projectiles = {
       [1]: {
@@ -263,9 +316,13 @@ describe("EntityRenderCoordinator — C2a contract", () => {
       },
     } as unknown as WorldState["projectiles"];
     coord.update(s, 16.667, 0);
+    const body = env.graphicsCreated.find((g) => g.depth === 6)!;
+    const opsWithProjectile = body.fillOps;
     s.projectiles = {};
+    // Pool is null in this harness, so impact() no-ops gracefully; the key
+    // contract is despawn doesn't throw and the body draws nothing new.
     coord.update(s, 16.667, 16.667);
-    expect(env.arcsCreated[0]!.destroyed).toBe(true);
+    expect(body.fillOps).toBe(opsWithProjectile); // no further body draws
   });
 
   test("satellite without an alive owner is skipped (no arc spawn)", () => {
@@ -355,7 +412,8 @@ describe("EntityRenderCoordinator — C2a contract", () => {
     } as unknown as WorldState["projectiles"];
     coord.update(s, 16.667, 0);
     coord.destroy();
-    expect(env.arcsCreated[0]!.destroyed).toBe(true);
+    // Projectiles no longer create flat arcs; destroy() must tear down all
+    // owned graphics including the ProjectileVfx body + trail buffers.
     expect(env.graphicsCreated.every((g) => g.destroyed)).toBe(true);
   });
 });

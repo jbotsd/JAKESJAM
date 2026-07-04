@@ -321,14 +321,22 @@ export class OnlineMatchScene extends Phaser.Scene {
 
     // World-space entity render. C2a: was 5 separate fields +
     // helper methods; now one coordinator owns all of them.
-    this.entityRender = new EntityRenderCoordinator(this, {
-      projectileColor: (element, ownerId) =>
-        projectileColorByElement(element, ownerId),
-      drawDestructible: (g, obj, flashing) =>
-        drawDestructible(g, obj, flashing),
-      drawFirePatch: (g, fire, nowMs) => drawFirePatch(g, fire, nowMs),
-      drawPickup: (g, pickup, nowMs) => drawPickup(g, pickup, nowMs),
-    });
+    // Pool is pre-allocated (no GC during combat) BEFORE the entity
+    // coordinator so projectile VFX (muzzle/trail/impact) can draw from it.
+    this.particlePool = new ParticlePool(this);
+
+    this.entityRender = new EntityRenderCoordinator(
+      this,
+      {
+        projectileColor: (element, ownerId) =>
+          projectileColorByElement(element, ownerId),
+        drawDestructible: (g, obj, flashing) =>
+          drawDestructible(g, obj, flashing),
+        drawFirePatch: (g, fire, nowMs) => drawFirePatch(g, fire, nowMs),
+        drawPickup: (g, pickup, nowMs) => drawPickup(g, pickup, nowMs),
+      },
+      this.particlePool,
+    );
 
     this.createStatsHud();
     // Shared HUD/banner/death systems (replace inline text with polished versions)
@@ -338,8 +346,7 @@ export class OnlineMatchScene extends Phaser.Scene {
     this.connectionOverlay = new ConnectionOverlay();
 
     // Status VFX driven by sim state (burnUntilTick / freezeUntilTick) plus
-    // chain-hit SimEvents. Pool is pre-allocated so no GC during combat.
-    this.particlePool = new ParticlePool(this);
+    // chain-hit SimEvents.
     this.statusVfx = new StatusVfxController(this, this.particlePool);
     this.renderLayer = new RenderLayer(this, this.particlePool);
     // C1a: bind TransientVfx so all spawned visuals route here +

@@ -28,8 +28,9 @@ import type {
   PlayerId,
   WorldState,
 } from "../../sim/types";
+import type { ParticlePool } from "../systems/ParticlePool";
+import { ProjectileVfx } from "./ProjectileVfx";
 
-const PROJECTILE_RADIUS_DEFAULT = 6;
 const DAMAGE_FLASH_MS = 110;
 
 /**
@@ -74,18 +75,21 @@ export class EntityRenderCoordinator {
   private readonly scene: Phaser.Scene;
   private readonly cfg: EntityRenderConfig;
 
-  private readonly projectileSprites = new Map<number, Phaser.GameObjects.Arc>();
   private readonly satelliteSprites = new Map<number, Phaser.GameObjects.Arc>();
   private readonly destructibleGraphics: Phaser.GameObjects.Graphics;
   private readonly fireGraphics: Phaser.GameObjects.Graphics;
   private readonly pickupGraphics: Phaser.GameObjects.Graphics;
+  /** High-fidelity projectile bodies/trails/muzzle/impact (docs/vfx-spec.md).
+   *  Replaces the old flat-circle sprites on the live path. */
+  private readonly projectileVfx: ProjectileVfx;
 
   private readonly prevDestructibleHealth = new Map<number, number>();
   private readonly destructibleFlashUntilMs = new Map<number, number>();
 
-  constructor(scene: Phaser.Scene, cfg: EntityRenderConfig) {
+  constructor(scene: Phaser.Scene, cfg: EntityRenderConfig, pool: ParticlePool | null = null) {
     this.scene = scene;
     this.cfg = cfg;
+    this.projectileVfx = new ProjectileVfx(scene, pool);
     this.pickupGraphics = scene.add.graphics();
     this.pickupGraphics.setDepth(2);
     this.destructibleGraphics = scene.add.graphics();
@@ -109,8 +113,7 @@ export class EntityRenderCoordinator {
 
   /** Destroy all owned graphics. Called from scene shutdown. */
   destroy(): void {
-    for (const arc of this.projectileSprites.values()) arc.destroy();
-    this.projectileSprites.clear();
+    this.projectileVfx.destroy();
     for (const arc of this.satelliteSprites.values()) arc.destroy();
     this.satelliteSprites.clear();
     this.destructibleGraphics.destroy();
@@ -121,35 +124,10 @@ export class EntityRenderCoordinator {
   }
 
   private renderProjectiles(state: WorldState): void {
-    const seen = new Set<number>();
-    for (const [idStr, proj] of Object.entries(state.projectiles)) {
-      const id = Number(idStr);
-      seen.add(id);
-      const color = this.cfg.projectileColor(
-        proj.element as ElementType,
-        proj.ownerId,
-      );
-      let arc = this.projectileSprites.get(id);
-      if (!arc) {
-        arc = this.scene.add.circle(
-          proj.x,
-          proj.y,
-          proj.radius || PROJECTILE_RADIUS_DEFAULT,
-          color,
-        );
-        arc.setDepth(6);
-        this.projectileSprites.set(id, arc);
-      }
-      arc.setPosition(proj.x, proj.y);
-      arc.setRadius(proj.radius || PROJECTILE_RADIUS_DEFAULT);
-      arc.setFillStyle(color);
-    }
-    for (const [id, arc] of this.projectileSprites) {
-      if (!seen.has(id)) {
-        arc.destroy();
-        this.projectileSprites.delete(id);
-      }
-    }
+    // Delegated to ProjectileVfx: shaped/glowing/trailed bodies + muzzle
+    // flash on spawn + element impact/fizzle on despawn. Reads the same
+    // element colour resolver the flat-circle path used.
+    this.projectileVfx.render(state, this.cfg.projectileColor);
   }
 
   private renderDestructibles(state: WorldState, nowMs: number): void {
