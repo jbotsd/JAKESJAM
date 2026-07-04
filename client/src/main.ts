@@ -237,17 +237,27 @@ const lobbyPanel = queryRequired<HTMLElement>("[data-lobby-panel]");
 const optionsPanel = queryRequired<HTMLElement>("[data-options]");
 const musicVolumeInput = queryRequired<HTMLInputElement>("[data-music-volume]");
 const musicMutedInput = queryRequired<HTMLInputElement>("[data-music-muted]");
-const menuMusic = new Audio(getMenuMusicUrl());
+// Menu/lobby theme — the "Jakes Jam" track, looped.
+const menuMusic = new Audio(getAudioUrl("jakes-jam-theme.ogg"));
 menuMusic.loop = true;
-// Always ready to play — the soundtrack underscores the world too, not just
-// the menu, so eager-load even on `?world=1` auto-join. (Setting this to
-// "none" for world auto-join is what silenced the song once world play
-// became the main entry.)
 menuMusic.preload = "auto";
+
+// In-world / match soundtrack — the three "bassradian" epic loops, cycled for
+// variety (advance on `ended`, wrap around) so a long session doesn't hear the
+// same 2 minutes on repeat.
+const WORLD_MUSIC_TRACKS = ["epic-loop-1.ogg", "epic-loop-2.ogg", "epic-loop-3.ogg"] as const;
+let worldTrackIdx = 0;
+const worldMusic = new Audio(getAudioUrl(WORLD_MUSIC_TRACKS[0]));
+worldMusic.preload = "auto";
+worldMusic.addEventListener("ended", () => {
+  worldTrackIdx = (worldTrackIdx + 1) % WORLD_MUSIC_TRACKS.length;
+  worldMusic.src = getAudioUrl(WORLD_MUSIC_TRACKS[worldTrackIdx]!);
+  applyAudioOptions();
+  if (musicContext === "world") void worldMusic.play().catch(() => undefined);
+});
 restoreOptions();
 
 queryRequired<HTMLButtonElement>("[data-menu-world]").addEventListener("click", () => {
-  startMenuMusic();
   joinWorld();
 });
 
@@ -262,7 +272,6 @@ const worldStatusBadge = new MatchStatusBadge({
   shareUrl: worldShareUrl,
   fetchSummary: () => fetchWorldSummary(),
   onJoin: () => {
-    startMenuMusic();
     joinWorld();
     worldStatusBadge.refresh();
   },
@@ -318,7 +327,9 @@ splash.addEventListener("pointerdown", () => startMenuMusic(), { once: true });
 // No-op if already playing or muted.
 function armSoundtrackOnFirstGesture(): void {
   const start = () => {
-    startMenuMusic();
+    // Play whichever track the current context wants — a bare `?world=1`
+    // auto-join has already flipped the context to "world" by now.
+    playCurrentMusic();
     window.removeEventListener("pointerdown", start);
     window.removeEventListener("keydown", start);
   };
@@ -333,7 +344,7 @@ window.addEventListener("jakesjam:start-match", (event) => {
   // music, and cutting it on match start is what made the song "stop"
   // once world/room play became the main flow. It still respects the
   // mute toggle and volume slider via applyAudioOptions().
-  startMenuMusic();
+  startWorldMusic();
   hideSplash();
   hideLobby();
   // game.scene.start() does NOT stop other running scenes (unlike a
@@ -398,7 +409,7 @@ function joinWorld(): void {
   // immediately if a gesture already happened (e.g. the click that hit
   // "Join World"); for a bare `?world=1` auto-join the global first-gesture
   // starter picks up the player's first in-world input.
-  startMenuMusic();
+  startWorldMusic();
   hideSplash();
   hideLobby();
   game.scene.stop(SceneKeys.MainMenu); // see start-match handler note
@@ -504,24 +515,49 @@ function restoreOptions() {
 }
 
 function applyAudioOptions() {
-  menuMusic.volume = Number(musicVolumeInput.value) / 100;
-  menuMusic.muted = musicMutedInput.checked;
+  const vol = Number(musicVolumeInput.value) / 100;
+  const muted = musicMutedInput.checked;
+  menuMusic.volume = vol;
+  menuMusic.muted = muted;
+  worldMusic.volume = vol;
+  worldMusic.muted = muted;
+}
+
+// Two-track soundtrack: the "Jakes Jam" theme underscores the menu/lobby; the
+// "bassradian" epic loops drive in-world/match play (cycled for variety). One
+// context flag decides which is live so gesture-unlock + volume/mute apply to
+// the right track.
+type MusicContext = "menu" | "world";
+let musicContext: MusicContext = "menu";
+
+function playCurrentMusic() {
+  applyAudioOptions();
+  if (musicContext === "world") {
+    menuMusic.pause();
+    void worldMusic.play().catch(() => undefined);
+  } else {
+    worldMusic.pause();
+    void menuMusic.play().catch(() => undefined);
+  }
 }
 
 function startMenuMusic() {
-  applyAudioOptions();
-  void menuMusic.play().catch(() => undefined);
+  musicContext = "menu";
+  playCurrentMusic();
 }
 
-function getMenuMusicUrl(): string {
+function startWorldMusic() {
+  musicContext = "world";
+  playCurrentMusic();
+}
+
+function getAudioUrl(file: string): string {
   const assetBase = window.__JAKESJAM_ASSET_BASE__;
   if (assetBase) {
-    return new URL("audio/menu-music.wav", assetBase).toString();
+    return new URL(`audio/${file}`, assetBase).toString();
   }
-
   if (window.location.protocol === "file:") {
-    return new URL("./audio/menu-music.wav", window.location.href).toString();
+    return new URL(`./audio/${file}`, window.location.href).toString();
   }
-
-  return `${window.location.origin}/audio/menu-music.wav`;
+  return `${window.location.origin}/audio/${file}`;
 }
