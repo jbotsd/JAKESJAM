@@ -1003,23 +1003,34 @@ export class OnlineMatchScene extends Phaser.Scene {
    */
   private resolveShotAudioParams(
     playerId: string,
-  ): { element?: string; charge?: number; heavy?: boolean } | undefined {
+  ):
+    | { element?: string; charge?: number; heavy?: boolean; shape?: string; impact?: string; pathing?: string }
+    | undefined {
     const state = this.loop?.getRenderState();
     if (!state) return undefined;
-    let newest: { element: string; id: number } | undefined;
+    // The newest live projectile owned by this player carries the FULL card
+    // build (element/shape/impact/pathing), so every draft card is audible.
+    let newest: { id: number; proj: (typeof state.projectiles)[keyof typeof state.projectiles] } | undefined;
     for (const [idStr, proj] of Object.entries(state.projectiles)) {
       if (proj.ownerId !== playerId) continue;
       const id = Number(idStr);
-      if (!newest || id > newest.id) newest = { element: proj.element, id };
+      if (!newest || id > newest.id) newest = { id, proj };
     }
     const player = state.players[PlayerId(playerId)];
-    // Overcharge buff → treat as charge for a beefier shot sound.
     const charge =
       player?.overchargeUntilTick !== undefined && (player.overchargeUntilTick as number) > state.tick
         ? 0.7
         : 0;
     const heavy = player?.characterId === "heavy";
-    return { element: newest?.element, charge, heavy };
+    const proj = newest?.proj;
+    return {
+      element: proj?.element,
+      shape: proj?.shape,
+      impact: proj?.impact,
+      pathing: proj?.pathing,
+      charge,
+      heavy,
+    };
   }
 
   /**

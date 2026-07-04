@@ -73,6 +73,45 @@ and edge-detects the local shield to start/stop the hum.
 Offline Practice (`MatchScene`) still uses the legacy bleep engine — the
 live world (the product) gets the procedural engine.
 
+## AAA anti-fatigue design (weapons)
+
+The crystal weapon is the DEFAULT and most-fired sound, so it must survive
+hundreds of repeats without ear fatigue. Random jitter alone isn't enough —
+the engine uses the pro techniques:
+
+- **Round-robin musical pitch** (`BODY_STEPS`): each shot advances a
+  cycle over small consonant intervals, so consecutive shots are *guaranteed*
+  to differ and rapid fire reads as a shimmering arpeggio, not a machine gun.
+- **Rate-adaptive dynamics**: the inter-shot interval drives a `rapid`
+  factor — sustained fire DUCKS level and SHORTENS tails (and thins the sub +
+  shimmer) so a burst thins out instead of building into low-end mush.
+- **Stereo spread**: alternating pan, wider under rapid fire (mono repeats
+  fatigue fastest).
+- **Per-shot spectral variation**: transient brightness/level, FM ratio and
+  index all jitter every shot — the ear locks onto the attack, so the attack
+  must never be identical twice.
+- **Signature laser-crystal voice** (`crystalShimmer`): rotating inharmonic
+  FM bell partials (2.76 ratio, high-Q bandpass ring) picked from
+  `SHIMMER_STEPS`, giving the glassy magical arpeggio. Applied to
+  crystal/ice/radiant.
+
+## Every card is audible (and visible)
+
+A draft card changes element / shape / impact / pathing, and all four now
+reach the synth via the firing player's newest live projectile:
+
+- **element** → base voice timbre (fire crackle / ice bell / lightning zap /
+  void sub / …).
+- **shape** → waveform + brightness (square = buzzier, bar = laser saw,
+  triangle/orb = softer, x/hexagon = brighter).
+- **impact** → tail layer (explosive = low boom, pierce-chain = bright zing,
+  sticky = damped thud).
+- **pathing** → homing adds a rising "seeking" tail.
+
+The VFX layer already mirrors this (element → colour/glow/trail/impact,
+shape → body geometry, explosive → blast, bounce → ricochet ticks), so a
+card change lands in both channels at once.
+
 ## Tuning knobs
 
 - `ELEMENTS` table: per-element waveform / FM ratio+index / body pitch /

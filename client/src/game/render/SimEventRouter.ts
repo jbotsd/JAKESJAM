@@ -34,7 +34,15 @@ export type AudioPlayer = {
       | "card"
       | "parry"
       | "shield-break",
-    params?: { element?: string; charge?: number; intensity?: number; heavy?: boolean },
+    params?: {
+      element?: string;
+      charge?: number;
+      intensity?: number;
+      heavy?: boolean;
+      shape?: string;
+      impact?: string;
+      pathing?: string;
+    },
   ): void;
 };
 
@@ -68,7 +76,9 @@ export type SimEventRouterDeps = {
    *  firing player — the scene looks these up from sim state. */
   shotAudioParams?: (
     playerId: PlayerId | string,
-  ) => { element?: string; charge?: number; heavy?: boolean } | undefined;
+  ) =>
+    | { element?: string; charge?: number; heavy?: boolean; shape?: string; impact?: string; pathing?: string }
+    | undefined;
 
   /** Warm-tint the platforms within blast range of `pos`. */
   spawnPlatformBlastTint: (pos: { x: number; y: number }) => void;

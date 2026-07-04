@@ -37,6 +37,14 @@ export type AudioParams = {
   intensity?: number;
   /** Heavy weapon class → more low-end thump. */
   heavy?: boolean;
+  /** Projectile shape (circle/triangle/square/hexagon/orb/x/bar) → waveform +
+   *  brightness, so a shape-changing card is audible. */
+  shape?: string;
+  /** Impact behaviour (explosive/sticky/pierce-chain/slow-field) → extra
+   *  tail layer, so an impact card is audible. */
+  impact?: string;
+  /** Pathing (homing/bounce/…) → subtle motion in the tail. */
+  pathing?: string;
 };
 
 const MASTER = 0.22;
@@ -85,6 +93,12 @@ export class ProceduralAudio {
   private noiseBuf?: AudioBuffer;
   /** Active shield drone voice (started on shield-up, stopped on shield down). */
   private shieldDrone: { stop: (t: number) => void } | null = null;
+
+  // Anti-fatigue weapon variation: round-robin index + last-shot time. Every
+  // shot advances the round-robin (guaranteed non-repeat) and the inter-shot
+  // interval drives rate-adaptive dynamics (rapid fire ducks + shortens).
+  private rrIdx = 0;
+  private lastShotAt = 0;
 
   // ── Lifecycle ───────────────────────────────────────────────────────
 
@@ -200,9 +214,22 @@ export class ProceduralAudio {
   // ── Weapons ─────────────────────────────────────────────────────────
 
   /**
-   * Layered gunshot: transient click + FM/osc body with a fast downward
-   * pitch sweep + sub thump + filtered air burst + per-element flavour, all
-   * jittered per shot.
+   * AAA anti-fatigue weapon shot. Layered synthesis (varied transient + FM
+   * body + sub + air + element/shape/impact flavour), but critically built to
+   * survive HUNDREDS of repeats without wearing on the ear:
+   *
+   *  - Round-robin musical pitch (BODY_STEPS): consecutive shots are
+   *    guaranteed to differ, over consonant intervals so rapid fire reads as
+   *    a shimmering arpeggio, not a machine gun.
+   *  - Rate-adaptive dynamics: rapid fire DUCKS level + SHORTENS tails so a
+   *    burst thins out instead of building into mush.
+   *  - Stereo spread: alternating pan widens the field (mono repeats fatigue
+   *    fastest).
+   *  - Per-shot transient variation: the ear locks onto the attack, so its
+   *    brightness/pitch jitters every shot.
+   *
+   * Every draft card is audible: element → timbre, shape → waveform/bright,
+   * impact → tail layer, pathing → subtle motion, charge/intensity → weight.
    */
   private weaponFire(p: AudioParams): void {
     const ctx = this.ctx;
@@ -213,36 +240,63 @@ export class ProceduralAudio {
     const charge = clamp01(p.charge ?? 0);
     const inten = clamp01(p.intensity ?? 0.5);
     const heavy = p.heavy ?? false;
+    const shape = p.shape ?? "circle";
 
-    // Charge/weight → lower + longer. Micro pitch jitter per shot.
-    const pitchJit = rand(0.94, 1.06);
-    const chargeMul = 1 - charge * 0.35 - (heavy ? 0.15 : 0);
-    const bodyFreq = v.body * chargeMul * pitchJit;
-    const dur = 0.11 + charge * 0.09 + (heavy ? 0.05 : 0);
+    // Rate tracking → rapid factor (1 = machine-gun, 0 = spaced single shots).
+    const interval = this.lastShotAt ? t - this.lastShotAt : 1;
+    this.lastShotAt = t;
+    const rapid = clamp01((0.32 - interval) / 0.28);
 
-    // Whole-voice tone shaping (element warmth) + reverb space.
+    // Round-robin variation — guaranteed non-repeat.
+    const step = BODY_STEPS[this.rrIdx % BODY_STEPS.length]!;
+    const rr = this.rrIdx;
+    this.rrIdx += 1;
+    const pitchMul = SEMI(step) * rand(0.994, 1.006);
+    const tailMul = lerp(1.0, 0.42, rapid);
+    const level = lerp(1.0, 0.68, rapid); // duck sustained fire
+    const pan = ((rr & 1) === 0 ? 1 : -1) * lerp(0.1, 0.34, rapid);
+
+    // Shape → timbre. Waveform + brightness shift so a shape card is audible.
+    const shapeWave: OscillatorType | null =
+      shape === "square" ? "square" : shape === "bar" ? "sawtooth" : shape === "triangle" || shape === "orb" ? "triangle" : null;
+    const wave = shapeWave ?? v.wave;
+    const bright = shape === "x" || shape === "hexagon" ? 1.35 : shape === "triangle" || shape === "orb" ? 0.82 : 1;
+
+    // Bus: level → stereo pan → tone lowpass → master (+ reverb send).
     const bus = ctx.createGain();
+    bus.gain.value = level;
     const tone = ctx.createBiquadFilter();
     tone.type = "lowpass";
-    tone.frequency.value = v.tone * rand(0.9, 1.1);
-    bus.connect(tone).connect(master);
-    this.sendReverb(tone, 0.06 + inten * 0.05);
+    tone.frequency.value = v.tone * bright * rand(0.9, 1.12);
+    const panner = ctx.createStereoPanner ? ctx.createStereoPanner() : null;
+    if (panner) {
+      panner.pan.value = pan;
+      bus.connect(panner).connect(tone).connect(master);
+    } else {
+      bus.connect(tone).connect(master);
+    }
+    this.sendReverb(tone, 0.05 + inten * 0.05);
 
-    // 1) Transient click — 4ms highpassed noise spike.
-    this.noiseInto(bus, t, 0.006, 0.5 + inten * 0.3, v.air * 2, 0.9, "highpass");
+    const bodyFreq = v.body * (1 - charge * 0.35 - (heavy ? 0.15 : 0)) * pitchMul;
+    const dur = (0.1 + charge * 0.09 + (heavy ? 0.05 : 0)) * tailMul;
 
-    // 2) Body — osc (+ optional FM) with fast exp pitch drop.
+    // 1) Transient — varied per shot (brightness + level jitter).
+    const tb = rand(0.8, 1.3) * bright;
+    this.noiseInto(bus, t, 0.005, (0.45 + inten * 0.3) * rand(0.85, 1.15), v.air * 2 * tb, 0.9, "highpass");
+
+    // 2) Body — FM carrier with fast downward pitch sweep.
     const carrier = ctx.createOscillator();
-    carrier.type = v.wave;
+    carrier.type = wave;
     carrier.frequency.setValueAtTime(bodyFreq * 1.6, t);
     carrier.frequency.exponentialRampToValueAtTime(Math.max(40, bodyFreq - v.sweep), t + dur);
-    const bodyGain = this.env(t, 0.001, dur, 0.34 + inten * 0.22);
+    const bodyGain = this.env(t, 0.001, dur, 0.32 + inten * 0.22);
     if (v.fmRatio > 0) {
       const mod = ctx.createOscillator();
       mod.type = "sine";
-      mod.frequency.setValueAtTime(bodyFreq * v.fmRatio, t);
+      // Small per-shot FM-ratio wobble → spectral variation (anti-fatigue).
+      mod.frequency.setValueAtTime(bodyFreq * v.fmRatio * rand(0.98, 1.02), t);
       const modGain = ctx.createGain();
-      modGain.gain.setValueAtTime(v.fmIndex * (1 + charge * 0.6), t);
+      modGain.gain.setValueAtTime(v.fmIndex * (1 + charge * 0.6) * rand(0.85, 1.15), t);
       modGain.gain.exponentialRampToValueAtTime(1, t + dur);
       mod.connect(modGain).connect(carrier.frequency);
       mod.start(t);
@@ -252,21 +306,74 @@ export class ProceduralAudio {
     carrier.start(t);
     carrier.stop(t + dur + 0.02);
 
-    // 3) Sub thump — weight, scales with charge/heavy.
+    // 3) Sub thump — weight (thinned on rapid fire to avoid low-end buildup).
     const sub = ctx.createOscillator();
     sub.type = "sine";
     const subF = (heavy ? 70 : 95) * (1 - charge * 0.3);
     sub.frequency.setValueAtTime(subF * 2, t);
     sub.frequency.exponentialRampToValueAtTime(subF, t + 0.08);
-    sub.connect(this.env(t, 0.001, 0.1 + charge * 0.06, 0.28 + charge * 0.25)).connect(bus);
+    sub.connect(this.env(t, 0.001, (0.1 + charge * 0.06) * tailMul, (0.26 + charge * 0.25) * lerp(1, 0.6, rapid))).connect(bus);
     sub.start(t);
     sub.stop(t + 0.18);
 
-    // 4) Air burst — bandpassed noise sizzle.
-    this.noiseInto(bus, t, 0.05 + inten * 0.05, 0.18 + inten * 0.14, v.air * rand(0.9, 1.1), 1.4, "bandpass");
+    // 4) Air burst — bandpassed noise sizzle, varied.
+    this.noiseInto(bus, t, (0.05 + inten * 0.05) * tailMul, 0.16 + inten * 0.14, v.air * bright * rand(0.9, 1.12), 1.4, "bandpass");
 
-    // 5) Element flavour.
+    // 5) Crystalline shimmer — the signature "laser crystal" arpeggio for the
+    //    default weapon (crystal). Partials rotate per shot → magical, never
+    //    identical.
+    if ((p.element ?? "crystal") === "crystal" || p.element === "ice" || p.element === "radiant") {
+      this.crystalShimmer(bus, t, bodyFreq, rr, rapid, tailMul);
+    }
+
+    // 6) Element flavour (fire/lightning/void/toxic/…).
     this.weaponFlavour(bus, t, p.element, charge);
+
+    // 7) Impact-card flavour — an explosive/sticky/pierce card is audible.
+    this.impactFlavour(bus, t, p.impact, p.pathing, bodyFreq, tailMul);
+  }
+
+  /** Rotating inharmonic crystal partials — the shimmer that makes rapid
+   *  crystal fire read as an evolving arpeggio instead of a repeated click. */
+  private crystalShimmer(bus: AudioNode, t: number, bodyFreq: number, rr: number, rapid: number, tailMul: number): void {
+    const count = rapid > 0.6 ? 2 : 3; // thin the shimmer on rapid fire
+    const dur = lerp(0.2, 0.07, rapid) * tailMul;
+    for (let i = 0; i < count; i += 1) {
+      const semi = SHIMMER_STEPS[(rr + i * 3) % SHIMMER_STEPS.length]!;
+      const f = bodyFreq * SEMI(semi) * rand(0.995, 1.005);
+      // Inharmonic ratio (2.76) → glassy bell; high-Q bandpass = ringing.
+      this.fmPing(bus, t + i * 0.004, f, 2.76, 260, (0.16 - i * 0.03) * lerp(1, 0.7, rapid), dur, true);
+    }
+  }
+
+  /** Impact/pathing card flavour layered onto the shot. */
+  private impactFlavour(bus: AudioNode, t: number, impact: string | undefined, pathing: string | undefined, bodyFreq: number, tailMul: number): void {
+    const ctx = this.ctx;
+    if (!ctx) return;
+    if (impact === "explosive") {
+      // A low boom hint so an explosive-round card lands heavier.
+      const s = ctx.createOscillator();
+      s.type = "sine";
+      s.frequency.setValueAtTime(140, t);
+      s.frequency.exponentialRampToValueAtTime(70, t + 0.14);
+      s.connect(this.env(t, 0.002, 0.16 * tailMul, 0.22)).connect(bus);
+      s.start(t); s.stop(t + 0.2);
+    } else if (impact === "pierce-chain") {
+      // Bright zing → "it'll chain".
+      this.fmPing(bus, t, bodyFreq * 4 * rand(0.98, 1.02), 3.2, 200, 0.14, 0.1, true);
+    } else if (impact === "sticky") {
+      // Damped thud.
+      this.noiseInto(bus, t, 0.04, 0.14, 700, 1, "lowpass");
+    }
+    if (pathing === "homing") {
+      // A subtle rising tail = "it's seeking".
+      const o = ctx.createOscillator();
+      o.type = "sine";
+      o.frequency.setValueAtTime(bodyFreq * 0.9, t);
+      o.frequency.exponentialRampToValueAtTime(bodyFreq * 1.6, t + 0.12);
+      o.connect(this.env(t, 0.02, 0.14, 0.1)).connect(bus);
+      o.start(t); o.stop(t + 0.16);
+    }
   }
 
   private weaponFlavour(bus: AudioNode, t: number, el: string | undefined, charge: number): void {
@@ -646,3 +753,22 @@ function clamp01(v: number): number {
 function rand(min: number, max: number): number {
   return min + Math.random() * (max - min);
 }
+
+function lerp(a: number, b: number, t: number): number {
+  return a + (b - a) * t;
+}
+
+/** Semitone → frequency ratio. */
+function SEMI(n: number): number {
+  return Math.pow(2, n / 12);
+}
+
+// Body-pitch round-robin — small musical steps keep the weapon's identity
+// while guaranteeing consecutive shots differ (the core anti-fatigue trick).
+// Ordered to avoid neighbouring repeats.
+const BODY_STEPS = [0, 3, -2, 2, -3, 1, 4, -1];
+
+// Bright crystalline partials (semitones above the body) for the shimmer tail
+// — consonant intervals (octaves, fifths, thirds, tenths) so rapid crystal
+// fire reads as a magical arpeggio rather than noise.
+const SHIMMER_STEPS = [12, 19, 24, 7, 16, 28, 31, 15];
