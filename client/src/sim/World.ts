@@ -484,6 +484,11 @@ export function stepWithRuntime(
         {
           speedMultiplier: speedMul,
           gravityMultiplier: chaosProfile.gravityMultiplier * build.gravityMultiplier,
+          jumpMultiplier: build.jumpMultiplier,
+          wallJumpMultiplier: build.wallJumpMultiplier,
+          wallSlideMultiplier: build.wallSlideMultiplier,
+          airJumps: build.airJumps,
+          dashCharges: build.dashCharges,
           collisionCache: runtime.collisionCache,
         },
       );

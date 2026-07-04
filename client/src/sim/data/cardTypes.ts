@@ -97,6 +97,18 @@ export type WeaponCardModifier = {
   // ── Movement augments (ride the existing speed/gravity step params) ──────
   /** <1 = floatier (glide), >1 = heavier/snappier fall. Multiplies gravity. */
   gravityMultiplier?: number;
+  // ── Deep movement augments (cross the wasm boundary via PlayerStep) ──────
+  /** Scales the ground/coyote jump launch velocity. */
+  jumpMultiplier?: number;
+  /** Scales the wall-jump launch velocity. */
+  wallJumpMultiplier?: number;
+  /** Scales the wall-slide cap (<1 = grippier/slower slide, >1 = looser). */
+  wallSlideMultiplier?: number;
+  /** Extra mid-air jumps granted (1 = double jump, 2 = triple, …). Additive. */
+  airJumpsAdd?: number;
+  /** Dash charges granted: enables the Dash input and this many AIR dashes
+   *  before landing (ground dash is always available on cooldown). Additive. */
+  dashChargesAdd?: number;
   // ── Shield augments ──────────────────────────────────────────────────────
   /** Scales the shield's max charge (bigger bar = longer block). */
   shieldChargeMultiplier?: number;
@@ -167,6 +179,11 @@ export type ResolvedWeaponBuild = {
   shieldChargeMultiplier: number;
   shieldRechargeMultiplier: number;
   directionalShield: boolean;
+  jumpMultiplier: number;
+  wallJumpMultiplier: number;
+  wallSlideMultiplier: number;
+  airJumps: number;
+  dashCharges: number;
   cards: CardDefinition[];
   occupiedBuckets: WeaponBucket[];
 };

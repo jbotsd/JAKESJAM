@@ -63,7 +63,7 @@ interface PlayerExports {
 const ex = sim.exports as unknown as typeof sim.exports & PlayerExports;
 const SIZEOF_PLAYER_STEP = ex.sizeof_player_step();
 const SIZEOF_AABB = ex.sizeof_aabb();
-expect(SIZEOF_PLAYER_STEP).toBe(104); // +touching_wall_dir i32 (wall movement), padded to 8
+expect(SIZEOF_PLAYER_STEP).toBe(160); // +wall movement +augments (jump/dash/double-jump)
 
 // Layout matches sim/src/player.zig PlayerStep extern struct.
 const FIELD_OFFSETS = {

@@ -83,7 +83,16 @@ const Bit = {
   Fire: 1 << 6,
   Ability: 1 << 7,
   Shield: 1 << 8,
+  Dash: 1 << 9,
 } as const;
+
+// Deep-movement augment constants (card-gated; 0/1 multipliers = inert).
+/** Horizontal dash burst velocity (px/s). */
+const DASH_SPEED = 780;
+/** Dash cooldown (ms) between uses. */
+const DASH_COOLDOWN_MS = 520;
+/** How long the dash burst holds full speed before the normal clamp resumes. */
+const DASH_DURATION_MS = 150;
 
 /** Per-player movement memory the entity itself doesn't carry. */
 export type PlayerMovementMemory = {
@@ -99,6 +108,15 @@ export type PlayerMovementMemory = {
    *  +1 wall on the right, 0 none. Read this tick to decide wall-jump / slide;
    *  recomputed from the collision resolve at the end of the tick. */
   touchingWallDir: number;
+  /** Mid-air jumps consumed since last grounded (double-jump card). */
+  airJumpsUsed: number;
+  /** Remaining dash cooldown (ms). */
+  dashCooldownMs: number;
+  /** Air dashes consumed since last grounded. */
+  dashUsedInAir: number;
+  /** Remaining dash burst window (ms) — while >0 the max-speed clamp is raised
+   *  to DASH_SPEED and friction is suspended so the burst carries. */
+  dashActiveMs: number;
 };
 
 export function freshPlayerMovementMemory(): PlayerMovementMemory {
@@ -110,12 +128,23 @@ export function freshPlayerMovementMemory(): PlayerMovementMemory {
     groundedLastFrame: false,
     jetpackActive: false,
     touchingWallDir: 0,
+    airJumpsUsed: 0,
+    dashCooldownMs: 0,
+    dashUsedInAir: 0,
+    dashActiveMs: 0,
   };
 }
 
 export type PlayerStepOptions = {
   speedMultiplier?: number;
   gravityMultiplier?: number;
+  /** Card augments (default inert): jump/wall-jump/slide scalars, extra air
+   *  jumps, dash charges. Threaded through to the wasm step via PlayerStep. */
+  jumpMultiplier?: number;
+  wallJumpMultiplier?: number;
+  wallSlideMultiplier?: number;
+  airJumps?: number;
+  dashCharges?: number;
   /** Pre-built collision cache. Required: the brute-force fallback was
    *  deleted (H2) because it didn't support one-way platforms and every
    *  production code path passes a cache anyway. createRuntime always
@@ -196,6 +225,11 @@ function stepPlayerNative(
   const dtSec = dtMs / 1000;
   const speedMul = options.speedMultiplier ?? 1;
   const gravityMul = options.gravityMultiplier ?? 1;
+  const jumpMul = options.jumpMultiplier ?? 1;
+  const wallJumpMul = options.wallJumpMultiplier ?? 1;
+  const wallSlideMul = options.wallSlideMultiplier ?? 1;
+  const airJumps = options.airJumps ?? 0;
+  const dashCharges = options.dashCharges ?? 0;
 
   const left = (currKeys & Bit.Left) !== 0;
   const right = (currKeys & Bit.Right) !== 0;
@@ -204,9 +238,18 @@ function stepPlayerNative(
   const jumpReleased = !jumpHeld && (prevKeys & Bit.Jump) !== 0;
   const wantsCrouch = (currKeys & Bit.Crouch) !== 0;
   const fastFall = (currKeys & Bit.Down) !== 0;
+  const dashPressed = (currKeys & Bit.Dash) !== 0 && (prevKeys & Bit.Dash) === 0;
 
   const next: PlayerEntity = { ...player, aimX, aimY };
   const mem: PlayerMovementMemory = { ...memory };
+
+  // Timers tick down every frame; grounded resets air-jump / air-dash budgets.
+  mem.dashCooldownMs = Math.max(0, mem.dashCooldownMs - dtMs);
+  mem.dashActiveMs = Math.max(0, mem.dashActiveMs - dtMs);
+  if (mem.groundedLastFrame) {
+    mem.airJumpsUsed = 0;
+    mem.dashUsedInAir = 0;
+  }
 
   if (mem.groundedLastFrame) {
     mem.coyoteMs = M.coyoteMs;
@@ -224,16 +267,20 @@ function stepPlayerNative(
 
   next.crouching = wantsCrouch && mem.groundedLastFrame;
 
-  // Horizontal acceleration / friction.
+  // Horizontal acceleration / friction. During a dash burst friction is
+  // suspended and the clamp is raised so the burst carries.
+  const dashActive = mem.dashActiveMs > 0;
   const direction = (right ? 1 : 0) - (left ? 1 : 0);
   if (direction !== 0) {
     const accel =
       (mem.groundedLastFrame ? M.groundAcceleration : M.airAcceleration) * speedMul;
     next.vx = next.vx + direction * accel * dtSec;
-  } else if (mem.groundedLastFrame) {
+  } else if (mem.groundedLastFrame && !dashActive) {
     next.vx = approach(next.vx, 0, M.groundFriction * dtSec);
   }
-  const maxSpeed = M.maxGroundSpeed * speedMul * (next.crouching ? M.crouchSpeedFactor : 1);
+  const maxSpeed = dashActive
+    ? DASH_SPEED
+    : M.maxGroundSpeed * speedMul * (next.crouching ? M.crouchSpeedFactor : 1);
   next.vx = clamp(next.vx, -maxSpeed, maxSpeed);
 
   // Jump: WALL-JUMP takes precedence when airborne against a wall; otherwise
@@ -242,8 +289,8 @@ function stepPlayerNative(
   let jumpedThisFrame = false;
   const wallDir = mem.touchingWallDir;
   if (mem.jumpBufferMs > 0 && !mem.groundedLastFrame && wallDir !== 0) {
-    // WALL-JUMP — up + a firm shove AWAY from the wall (SMB).
-    next.vy = M.wallJumpVy;
+    // WALL-JUMP — up + a firm shove AWAY from the wall (SMB). ×wallJumpMul.
+    next.vy = M.wallJumpVy * wallJumpMul;
     next.vx = -wallDir * M.wallJumpVx;
     mem.jumpBufferMs = 0;
     mem.jumpReleasedSinceJump = false;
@@ -251,11 +298,20 @@ function stepPlayerNative(
     mem.touchingWallDir = 0; // left the wall
     jumpedThisFrame = true;
   } else if (mem.jumpBufferMs > 0 && mem.coyoteMs > 0) {
-    next.vy = M.jumpVelocity;
+    next.vy = M.jumpVelocity * jumpMul;
     mem.coyoteMs = 0;
     mem.jumpBufferMs = 0;
     mem.jumpReleasedSinceJump = false;
     mem.jumpCutApplied = false;
+    jumpedThisFrame = true;
+  } else if (mem.jumpBufferMs > 0 && !mem.groundedLastFrame && mem.airJumpsUsed < airJumps) {
+    // DOUBLE-JUMP (card): a mid-air jump when off the ground, not on a wall,
+    // and coyote is spent. Consumes one air-jump charge (reset on landing).
+    next.vy = M.jumpVelocity * jumpMul;
+    mem.jumpBufferMs = 0;
+    mem.jumpReleasedSinceJump = false;
+    mem.jumpCutApplied = false;
+    mem.airJumpsUsed += 1;
     jumpedThisFrame = true;
   }
 
@@ -280,7 +336,24 @@ function stepPlayerNative(
   // a free fall. Wall-jump reads the wall state from LAST tick (`wallDir`).
   const gripping = !mem.groundedLastFrame && wallDir !== 0 && direction === wallDir;
   if (gripping && next.vy > 0) {
-    next.vy = Math.min(next.vy, M.wallSlideMaxFall);
+    next.vy = Math.min(next.vy, M.wallSlideMaxFall * wallSlideMul);
+  }
+
+  // DASH (card): a horizontal burst on the Dash input. Ground dash is always
+  // available on cooldown; air dashes are limited to `dashCharges` before
+  // landing. Direction = movement input, else the aim side.
+  if (dashPressed && dashCharges > 0 && mem.dashCooldownMs <= 0) {
+    const canAir = !mem.groundedLastFrame && mem.dashUsedInAir < dashCharges;
+    if (mem.groundedLastFrame || canAir) {
+      const dashDir = direction !== 0 ? direction : (aimX - next.x >= 0 ? 1 : -1);
+      next.vx = dashDir * DASH_SPEED;
+      if (!mem.groundedLastFrame) {
+        next.vy = 0; // flat air-dash
+        mem.dashUsedInAir += 1;
+      }
+      mem.dashCooldownMs = DASH_COOLDOWN_MS;
+      mem.dashActiveMs = DASH_DURATION_MS;
+    }
   }
 
   // Jetpack removed. Pin the fuel field to max for wire/ABI stability so the

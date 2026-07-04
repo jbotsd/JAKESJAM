@@ -244,4 +244,5 @@ export const InputBit = {
   Fire: 1 << 6,
   Ability: 1 << 7,
   Shield: 1 << 8,
+  Dash: 1 << 9,
 } as const;

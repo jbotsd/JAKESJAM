@@ -833,6 +833,11 @@ function projectileToBuild(projectile: ActiveProjectile): ResolvedWeaponBuild {
     shieldChargeMultiplier: 1,
     shieldRechargeMultiplier: 1,
     directionalShield: false,
+    jumpMultiplier: 1,
+    wallJumpMultiplier: 1,
+    wallSlideMultiplier: 1,
+    airJumps: 0,
+    dashCharges: 0,
     cards: [],
     occupiedBuckets: [],
   };

@@ -239,7 +239,7 @@ export class OnlineMatchScene extends Phaser.Scene {
   // Cast bypasses the validating constructor; "" is not a valid PlayerId.
   private localPlayerId: PlayerId = "" as PlayerId;
   private lastFrameMs = 0;
-  private keys!: Record<"a" | "d" | "w" | "s" | "space" | "shift", Phaser.Input.Keyboard.Key>;
+  private keys!: Record<"a" | "d" | "w" | "s" | "space" | "shift" | "dash", Phaser.Input.Keyboard.Key>;
   private statsVisible = false;
   private statsText: Phaser.GameObjects.Text | null = null;
   private statsBg: Phaser.GameObjects.Rectangle | null = null;
@@ -342,6 +342,8 @@ export class OnlineMatchScene extends Phaser.Scene {
         s: this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.S),
         space: this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.SPACE),
         shift: this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.SHIFT),
+        // Dash (card-gated: inert without a dash card). C is free + reachable.
+        dash: this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.C),
       };
       this.statsToggleKey = this.input.keyboard.addKey(
         Phaser.Input.Keyboard.KeyCodes.BACKTICK,
@@ -555,6 +557,7 @@ export class OnlineMatchScene extends Phaser.Scene {
       keys |= InputBit.Fire;
     }
     if (this.keys.shift.isDown) keys |= InputBit.Shield;
+    if (this.keys.dash.isDown) keys |= InputBit.Dash;
     // Parry: right mouse button -> InputBit.Ability. The sim handles the
     // rising-edge trigger + cooldown (tryStartParry via prevKeys), so we
     // just report the held state like every other key.

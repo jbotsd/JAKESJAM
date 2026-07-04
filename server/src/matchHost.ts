@@ -638,7 +638,7 @@ export class MatchHost {
     // - keys: bitmask is 9 bits used (InputBit values up to 1<<8). Strip
     //   unknown bits so a client can't smuggle out-of-band signals through
     //   the input frame.
-    const KNOWN_KEY_BITS = 0x1ff; // bits 0..8 inclusive (Left..Shield)
+    const KNOWN_KEY_BITS = 0x3ff; // bits 0..9 inclusive (Left..Dash)
     const sanitizedKeys = input.keys & KNOWN_KEY_BITS;
     const sanitizedDt = Math.max(1, Math.min(STEP_MS * 4, Number.isFinite(input.dt) ? input.dt : STEP_MS));
 
@@ -1313,6 +1313,7 @@ function snapshotRuntime(runtime: WorldRuntime): WorldRuntime {
     // with the main runtime tick, so they must not share mutable scratch.
     scratchSortedProjectileIds: [],
     scratchDeflectedProjectiles: new Map(),
+    ceilingClampY: runtime.ceilingClampY,
   };
 }
 

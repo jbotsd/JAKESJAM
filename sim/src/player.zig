@@ -35,6 +35,10 @@ const WALL_SLIDE_MAX_FALL: f64 = 175.0;
 const WALL_JUMP_VY: f64 = -720.0;
 const WALL_JUMP_VX: f64 = 470.0;
 const WALL_RESTITUTION: f64 = 0.5;
+// Deep-movement augment constants (mirror player.ts).
+const DASH_SPEED: f64 = 780.0;
+const DASH_COOLDOWN_MS: f64 = 520.0;
+const DASH_DURATION_MS: f64 = 150.0;
 
 const JETPACK_MAX_FUEL: f64 = 125.0;
 const JETPACK_THRUST: f64 = 1480.0;
@@ -55,6 +59,7 @@ const Bit = struct {
     const down: u32 = 1 << 3;
     const jump: u32 = 1 << 4;
     const crouch: u32 = 1 << 5;
+    const dash: u32 = 1 << 9;
 };
 
 /// Combined PlayerEntity (subset touched by stepPlayer) + PlayerMovementMemory
@@ -85,6 +90,19 @@ pub const PlayerStep = extern struct {
     /// Wall contact from last tick: -1 left, +1 right, 0 none. Mirrors
     /// PlayerMovementMemory.touchingWallDir in player.ts.
     touching_wall_dir: i32,
+    // ── Augment INPUTS (f64) — set by the caller from the resolved build. ──
+    jump_mul: f64,
+    wall_jump_mul: f64,
+    wall_slide_mul: f64,
+    // ── Augment MEMORY (f64) — persisted across ticks. ──
+    dash_cooldown_ms: f64,
+    dash_active_ms: f64,
+    // ── Augment INPUTS (i32) ──
+    air_jumps: i32,
+    dash_charges: i32,
+    // ── Augment MEMORY (i32) ──
+    air_jumps_used: i32,
+    dash_used_in_air: i32,
 };
 
 inline fn approach(value: f64, target: f64, amount: f64) f64 {
@@ -128,9 +146,18 @@ pub fn stepPlayer(
     const jump_released = !jump_held and (prev_keys & Bit.jump) != 0;
     const wants_crouch = (curr_keys & Bit.crouch) != 0;
     const fast_fall = (curr_keys & Bit.down) != 0;
+    const dash_pressed = (curr_keys & Bit.dash) != 0 and (prev_keys & Bit.dash) == 0;
 
     s.aim_x = aim_x;
     s.aim_y = aim_y;
+
+    // Augment timers tick down; grounded resets air-jump / air-dash budgets.
+    s.dash_cooldown_ms = @max(0.0, s.dash_cooldown_ms - dt_ms);
+    s.dash_active_ms = @max(0.0, s.dash_active_ms - dt_ms);
+    if (boolFromInt(s.grounded_last_frame)) {
+        s.air_jumps_used = 0;
+        s.dash_used_in_air = 0;
+    }
 
     // Coyote time + jump buffer.
     if (boolFromInt(s.grounded_last_frame)) {
@@ -149,18 +176,20 @@ pub fn stepPlayer(
 
     s.crouching = intFromBool(wants_crouch and boolFromInt(s.grounded_last_frame));
 
-    // Horizontal acceleration / friction.
+    // Horizontal acceleration / friction. During a dash burst friction is
+    // suspended and the clamp is raised so the burst carries.
+    const dash_active = s.dash_active_ms > 0.0;
     const dir_r: f64 = if (right) 1.0 else 0.0;
     const dir_l: f64 = if (left) 1.0 else 0.0;
     const direction: f64 = dir_r - dir_l;
     if (direction != 0.0) {
         const accel = (if (boolFromInt(s.grounded_last_frame)) GROUND_ACCELERATION else AIR_ACCELERATION) * speed_mul;
         s.vx = s.vx + direction * accel * dt_sec;
-    } else if (boolFromInt(s.grounded_last_frame)) {
+    } else if (boolFromInt(s.grounded_last_frame) and !dash_active) {
         s.vx = approach(s.vx, 0.0, GROUND_FRICTION * dt_sec);
     }
     const crouch_factor: f64 = if (boolFromInt(s.crouching)) CROUCH_SPEED_FACTOR else 1.0;
-    const max_speed = MAX_GROUND_SPEED * speed_mul * crouch_factor;
+    const max_speed = if (dash_active) DASH_SPEED else MAX_GROUND_SPEED * speed_mul * crouch_factor;
     s.vx = clamp(s.vx, -max_speed, max_speed);
 
     // Jump: WALL-JUMP takes precedence when airborne against a wall; else the
@@ -169,7 +198,7 @@ pub fn stepPlayer(
     const wall_dir_i = s.touching_wall_dir;
     const wall_dir: f64 = @floatFromInt(wall_dir_i);
     if (s.jump_buffer_ms > 0.0 and !boolFromInt(s.grounded_last_frame) and wall_dir_i != 0) {
-        s.vy = WALL_JUMP_VY;
+        s.vy = WALL_JUMP_VY * s.wall_jump_mul;
         s.vx = -wall_dir * WALL_JUMP_VX;
         s.jump_buffer_ms = 0.0;
         s.jump_released_since_jump = 0;
@@ -177,11 +206,19 @@ pub fn stepPlayer(
         s.touching_wall_dir = 0;
         jumped_this_frame = true;
     } else if (s.jump_buffer_ms > 0.0 and s.coyote_ms > 0.0) {
-        s.vy = JUMP_VELOCITY;
+        s.vy = JUMP_VELOCITY * s.jump_mul;
         s.coyote_ms = 0.0;
         s.jump_buffer_ms = 0.0;
         s.jump_released_since_jump = 0;
         s.jump_cut_applied = 0;
+        jumped_this_frame = true;
+    } else if (s.jump_buffer_ms > 0.0 and !boolFromInt(s.grounded_last_frame) and s.air_jumps_used < s.air_jumps) {
+        // DOUBLE-JUMP (card): mid-air jump; consumes one charge (reset on land).
+        s.vy = JUMP_VELOCITY * s.jump_mul;
+        s.jump_buffer_ms = 0.0;
+        s.jump_released_since_jump = 0;
+        s.jump_cut_applied = 0;
+        s.air_jumps_used += 1;
         jumped_this_frame = true;
     }
 
@@ -203,7 +240,25 @@ pub fn stepPlayer(
     // airborne + descending caps the fall speed.
     const gripping = !boolFromInt(s.grounded_last_frame) and wall_dir_i != 0 and direction == wall_dir;
     if (gripping and s.vy > 0.0) {
-        s.vy = @min(s.vy, WALL_SLIDE_MAX_FALL);
+        s.vy = @min(s.vy, WALL_SLIDE_MAX_FALL * s.wall_slide_mul);
+    }
+
+    // DASH (card): horizontal burst on the Dash input. Ground dash always on
+    // cooldown; air dashes limited to dash_charges before landing.
+    if (dash_pressed and s.dash_charges > 0 and s.dash_cooldown_ms <= 0.0) {
+        const can_air = !boolFromInt(s.grounded_last_frame) and s.dash_used_in_air < s.dash_charges;
+        if (boolFromInt(s.grounded_last_frame) or can_air) {
+            const dash_dir: f64 = if (direction != 0.0)
+                direction
+            else if (aim_x - s.x >= 0.0) 1.0 else -1.0;
+            s.vx = dash_dir * DASH_SPEED;
+            if (!boolFromInt(s.grounded_last_frame)) {
+                s.vy = 0.0;
+                s.dash_used_in_air += 1;
+            }
+            s.dash_cooldown_ms = DASH_COOLDOWN_MS;
+            s.dash_active_ms = DASH_DURATION_MS;
+        }
     }
 
     // Jetpack removed. Pin fuel to max for wire/ABI stability.

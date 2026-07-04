@@ -63,6 +63,11 @@ export function createWeaponBuild(
     shieldChargeMultiplier: 1,
     shieldRechargeMultiplier: 1,
     directionalShield: false,
+    jumpMultiplier: 1,
+    wallJumpMultiplier: 1,
+    wallSlideMultiplier: 1,
+    airJumps: 0,
+    dashCharges: 0,
     cards: [],
     occupiedBuckets: [],
   };
@@ -126,6 +131,11 @@ export function applyCard(build: ResolvedWeaponBuild, card: CardDefinition) {
   build.shieldChargeMultiplier *= modifier.shieldChargeMultiplier ?? 1;
   build.shieldRechargeMultiplier *= modifier.shieldRechargeMultiplier ?? 1;
   build.directionalShield ||= modifier.directionalShield ?? false;
+  build.jumpMultiplier *= modifier.jumpMultiplier ?? 1;
+  build.wallJumpMultiplier *= modifier.wallJumpMultiplier ?? 1;
+  build.wallSlideMultiplier *= modifier.wallSlideMultiplier ?? 1;
+  build.airJumps += modifier.airJumpsAdd ?? 0;
+  build.dashCharges += modifier.dashChargesAdd ?? 0;
   build.overchargeMultiplier = Math.max(
     build.overchargeMultiplier,
     modifier.overchargeMultiplier ?? 1,

@@ -899,6 +899,18 @@ pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
             .grounded_last_frame = @intCast(state.player_movement[pmi].grounded_last_frame),
             .jetpack_active = @intCast(state.player_movement[pmi].jetpack_active),
             .touching_wall_dir = @intCast(state.player_movement[pmi].touching_wall_dir),
+            // Augment INPUTS default inert — the Zig-world path doesn't resolve
+            // card builds yet (Phase-2 migration item).
+            .jump_mul = 1.0,
+            .wall_jump_mul = 1.0,
+            .wall_slide_mul = 1.0,
+            .air_jumps = 0,
+            .dash_charges = 0,
+            // Augment MEMORY carried from world state.
+            .dash_cooldown_ms = state.player_movement[pmi].dash_cooldown_ms,
+            .dash_active_ms = state.player_movement[pmi].dash_active_ms,
+            .air_jumps_used = @intCast(state.player_movement[pmi].air_jumps_used),
+            .dash_used_in_air = @intCast(state.player_movement[pmi].dash_used_in_air),
         };
         // Compose per-player movement speed (I37). Defaults 1.0;
         // speed_boost buff multiplies, slow_debuff / freeze /
@@ -944,6 +956,10 @@ pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
         state.player_movement[pmi].grounded_last_frame = if (grounded) 1 else 0;
         state.player_movement[pmi].jetpack_active = @intCast(ps.jetpack_active);
         state.player_movement[pmi].touching_wall_dir = @intCast(ps.touching_wall_dir);
+        state.player_movement[pmi].dash_cooldown_ms = ps.dash_cooldown_ms;
+        state.player_movement[pmi].dash_active_ms = ps.dash_active_ms;
+        state.player_movement[pmi].air_jumps_used = @intCast(ps.air_jumps_used);
+        state.player_movement[pmi].dash_used_in_air = @intCast(ps.dash_used_in_air);
     }
 
     // 6. Combat — per-player shield drain + parry start (I4 +

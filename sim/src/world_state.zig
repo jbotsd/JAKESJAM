@@ -341,14 +341,18 @@ pub const FireEntity = extern struct {
 pub const PlayerMovementMemory = extern struct {
     coyote_ms: f64,
     jump_buffer_ms: f64,
+    // Deep-movement augment memory (double-jump + dash). f64s first for align.
+    dash_cooldown_ms: f64 = 0,
+    dash_active_ms: f64 = 0,
     jump_cut_applied: u8,
     jump_released_since_jump: u8,
     grounded_last_frame: u8,
     jetpack_active: u8,
-    /// Wall contact from last tick: -1 left, +1 right, 0 none (SMB wall
-    /// movement). Uses a former padding byte — struct size stays 24.
+    /// Wall contact from last tick: -1 left, +1 right, 0 none (SMB wall movement).
     touching_wall_dir: i8 = 0,
-    _pad: [3]u8 = .{ 0, 0, 0 },
+    air_jumps_used: i8 = 0,
+    dash_used_in_air: i8 = 0,
+    _pad: [1]u8 = .{0},
 };
 
 /// Resolved per-player fire config — what `step_world` reads
@@ -549,7 +553,7 @@ comptime {
     std.debug.assert(@sizeOf(DestructibleEntity) == 64);
     std.debug.assert(@sizeOf(FireEntity) == 88);
     std.debug.assert(@sizeOf(PickupEntity) == 64);
-    std.debug.assert(@sizeOf(PlayerMovementMemory) == 24);
+    std.debug.assert(@sizeOf(PlayerMovementMemory) == 40);
     std.debug.assert(@sizeOf(SimEvent) == 40);
     std.debug.assert(@sizeOf(ResolvedFireConfig) == 136);
 }

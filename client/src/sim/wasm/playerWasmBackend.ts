@@ -55,6 +55,19 @@ export function makeStepPlayerWasmBackend(sim: SimHandle): StepPlayerFn {
     grounded_last_frame: 88,
     jetpack_active: 92,
     touching_wall_dir: 96,
+    // ── augment inputs (f64) ──
+    jump_mul: 104,
+    wall_jump_mul: 112,
+    wall_slide_mul: 120,
+    // ── augment memory (f64) ──
+    dash_cooldown_ms: 128,
+    dash_active_ms: 136,
+    // ── augment inputs (i32) ──
+    air_jumps: 144,
+    dash_charges: 148,
+    // ── augment memory (i32) ──
+    air_jumps_used: 152,
+    dash_used_in_air: 156,
   } as const;
 
   return (
@@ -66,7 +79,16 @@ export function makeStepPlayerWasmBackend(sim: SimHandle): StepPlayerFn {
     memory: PlayerMovementMemory,
     _platforms: readonly unknown[],
     dtMs: number,
-    options: { collisionCache: StaticCollisionCache; speedMultiplier?: number; gravityMultiplier?: number },
+    options: {
+      collisionCache: StaticCollisionCache;
+      speedMultiplier?: number;
+      gravityMultiplier?: number;
+      jumpMultiplier?: number;
+      wallJumpMultiplier?: number;
+      wallSlideMultiplier?: number;
+      airJumps?: number;
+      dashCharges?: number;
+    },
   ) => {
     const cache = options.collisionCache;
     const aabbs = cache.aabbs;
@@ -94,6 +116,17 @@ export function makeStepPlayerWasmBackend(sim: SimHandle): StepPlayerFn {
     dv.setInt32(PLAYER_OFF + F.grounded_last_frame, memory.groundedLastFrame ? 1 : 0, true);
     dv.setInt32(PLAYER_OFF + F.jetpack_active, memory.jetpackActive ? 1 : 0, true);
     dv.setInt32(PLAYER_OFF + F.touching_wall_dir, memory.touchingWallDir, true);
+    // Augment inputs (from the resolved build; default inert).
+    dv.setFloat64(PLAYER_OFF + F.jump_mul, options.jumpMultiplier ?? 1, true);
+    dv.setFloat64(PLAYER_OFF + F.wall_jump_mul, options.wallJumpMultiplier ?? 1, true);
+    dv.setFloat64(PLAYER_OFF + F.wall_slide_mul, options.wallSlideMultiplier ?? 1, true);
+    dv.setInt32(PLAYER_OFF + F.air_jumps, options.airJumps ?? 0, true);
+    dv.setInt32(PLAYER_OFF + F.dash_charges, options.dashCharges ?? 0, true);
+    // Augment memory (persisted across ticks).
+    dv.setFloat64(PLAYER_OFF + F.dash_cooldown_ms, memory.dashCooldownMs, true);
+    dv.setFloat64(PLAYER_OFF + F.dash_active_ms, memory.dashActiveMs, true);
+    dv.setInt32(PLAYER_OFF + F.air_jumps_used, memory.airJumpsUsed, true);
+    dv.setInt32(PLAYER_OFF + F.dash_used_in_air, memory.dashUsedInAir, true);
 
     // Pack statics + one-way mask
     for (let i = 0; i < count; i++) {
@@ -139,6 +172,10 @@ export function makeStepPlayerWasmBackend(sim: SimHandle): StepPlayerFn {
       groundedLastFrame: dv.getInt32(PLAYER_OFF + F.grounded_last_frame, true) === 1,
       jetpackActive: dv.getInt32(PLAYER_OFF + F.jetpack_active, true) === 1,
       touchingWallDir: dv.getInt32(PLAYER_OFF + F.touching_wall_dir, true),
+      airJumpsUsed: dv.getInt32(PLAYER_OFF + F.air_jumps_used, true),
+      dashCooldownMs: dv.getFloat64(PLAYER_OFF + F.dash_cooldown_ms, true),
+      dashUsedInAir: dv.getInt32(PLAYER_OFF + F.dash_used_in_air, true),
+      dashActiveMs: dv.getFloat64(PLAYER_OFF + F.dash_active_ms, true),
     };
 
     return {
