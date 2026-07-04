@@ -505,7 +505,23 @@ pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
                         state.players[ph2].x,
                         state.players[ph2].y,
                     );
-                    proj_ptr.lifetime_ms = 0;
+                    // REFLECTIVE parry (mirrors client/src/sim/World.ts): rather
+                    // than dropping the shard, send it back — now OWNED by the
+                    // parrier so it can strike the attacker. Travel/age reset so
+                    // it doesn't instantly expire on range/lifetime.
+                    proj_ptr.vx = -proj_ptr.vx * 1.15;
+                    proj_ptr.vy = -proj_ptr.vy * 1.15;
+                    proj_ptr.age_ms = 0;
+                    proj_ptr.traveled_px = 0;
+                    proj_ptr.origin_x = proj_ptr.x;
+                    proj_ptr.origin_y = proj_ptr.y;
+                    proj_ptr.flags.has_owner = true;
+                    const parrier_len = state.players[ph2].id_len;
+                    proj_ptr.owner_id_len = parrier_len;
+                    @memcpy(
+                        proj_ptr.owner_id_bytes[0..parrier_len],
+                        state.players[ph2].id_bytes[0..parrier_len],
+                    );
                     break;
                 }
                 // Shield pop: if the player's shield is active
