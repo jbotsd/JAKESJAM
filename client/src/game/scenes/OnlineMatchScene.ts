@@ -1539,14 +1539,20 @@ export class OnlineMatchScene extends Phaser.Scene {
           // World mode: server keeps the world alive and rolls the next
           // round on its own — clicking Rematch just dismisses the
           // overlay so the player sees the next round when it starts.
-          // Room mode: full rematch isn't wired yet; bounce back to
-          // lobby so the host can re-create the match.
+          // CRUCIAL: keep `matchHasEnded = true`. The server is still parked
+          // in match-over (winner at target score), so if we reset the flag
+          // here, the very next snapshot re-fires maybeShowMatchResults and the
+          // overlay POPS RIGHT BACK UP — you can't dismiss it until recycle.
+          // The recycle's re-hello (onHello) clears the flag when the NEXT
+          // match actually starts.
           this.matchResultsOverlay?.hide();
-          this.matchHasEnded = false;
           if (this.sceneMode === "world") {
             this.setStatus("Waiting for next round…");
             return;
           }
+          // Room mode: full rematch isn't wired yet; bounce back to lobby so
+          // the host can re-create the match.
+          this.matchHasEnded = false;
           window.dispatchEvent(new CustomEvent("jakesjam:return-to-lobby"));
         },
         onReturnToLobby: () => {
