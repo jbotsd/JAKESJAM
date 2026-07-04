@@ -345,7 +345,10 @@ pub const PlayerMovementMemory = extern struct {
     jump_released_since_jump: u8,
     grounded_last_frame: u8,
     jetpack_active: u8,
-    _pad: [4]u8 = .{ 0, 0, 0, 0 },
+    /// Wall contact from last tick: -1 left, +1 right, 0 none (SMB wall
+    /// movement). Uses a former padding byte — struct size stays 24.
+    touching_wall_dir: i8 = 0,
+    _pad: [3]u8 = .{ 0, 0, 0 },
 };
 
 /// Resolved per-player fire config — what `step_world` reads

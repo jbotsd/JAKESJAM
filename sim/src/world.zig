@@ -898,6 +898,7 @@ pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
             .jump_released_since_jump = @intCast(state.player_movement[pmi].jump_released_since_jump),
             .grounded_last_frame = @intCast(state.player_movement[pmi].grounded_last_frame),
             .jetpack_active = @intCast(state.player_movement[pmi].jetpack_active),
+            .touching_wall_dir = @intCast(state.player_movement[pmi].touching_wall_dir),
         };
         // Compose per-player movement speed (I37). Defaults 1.0;
         // speed_boost buff multiplies, slow_debuff / freeze /
@@ -942,6 +943,7 @@ pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
         state.player_movement[pmi].jump_released_since_jump = @intCast(ps.jump_released_since_jump);
         state.player_movement[pmi].grounded_last_frame = if (grounded) 1 else 0;
         state.player_movement[pmi].jetpack_active = @intCast(ps.jetpack_active);
+        state.player_movement[pmi].touching_wall_dir = @intCast(ps.touching_wall_dir);
     }
 
     // 6. Combat — per-player shield drain + parry start (I4 +

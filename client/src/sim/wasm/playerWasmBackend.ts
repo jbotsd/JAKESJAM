@@ -54,6 +54,7 @@ export function makeStepPlayerWasmBackend(sim: SimHandle): StepPlayerFn {
     jump_released_since_jump: 84,
     grounded_last_frame: 88,
     jetpack_active: 92,
+    touching_wall_dir: 96,
   } as const;
 
   return (
@@ -92,6 +93,7 @@ export function makeStepPlayerWasmBackend(sim: SimHandle): StepPlayerFn {
     dv.setInt32(PLAYER_OFF + F.jump_released_since_jump, memory.jumpReleasedSinceJump ? 1 : 0, true);
     dv.setInt32(PLAYER_OFF + F.grounded_last_frame, memory.groundedLastFrame ? 1 : 0, true);
     dv.setInt32(PLAYER_OFF + F.jetpack_active, memory.jetpackActive ? 1 : 0, true);
+    dv.setInt32(PLAYER_OFF + F.touching_wall_dir, memory.touchingWallDir, true);
 
     // Pack statics + one-way mask
     for (let i = 0; i < count; i++) {
@@ -136,6 +138,7 @@ export function makeStepPlayerWasmBackend(sim: SimHandle): StepPlayerFn {
       jumpReleasedSinceJump: dv.getInt32(PLAYER_OFF + F.jump_released_since_jump, true) === 1,
       groundedLastFrame: dv.getInt32(PLAYER_OFF + F.grounded_last_frame, true) === 1,
       jetpackActive: dv.getInt32(PLAYER_OFF + F.jetpack_active, true) === 1,
+      touchingWallDir: dv.getInt32(PLAYER_OFF + F.touching_wall_dir, true),
     };
 
     return {

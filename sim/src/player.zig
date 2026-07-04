@@ -30,6 +30,11 @@ const CROUCH_SPEED_FACTOR: f64 = 0.42;
 const BODY_WIDTH: f64 = 26.0;
 const BODY_HEIGHT: f64 = 56.0;
 const CROUCH_HEIGHT: f64 = 38.0;
+// Wall movement (SMB / Warframe) — replaces the jetpack. Mirror player.ts M.
+const WALL_SLIDE_MAX_FALL: f64 = 200.0;
+const WALL_JUMP_VY: f64 = -560.0;
+const WALL_JUMP_VX: f64 = 430.0;
+const WALL_RESTITUTION: f64 = 0.5;
 
 const JETPACK_MAX_FUEL: f64 = 125.0;
 const JETPACK_THRUST: f64 = 1480.0;
@@ -77,6 +82,9 @@ pub const PlayerStep = extern struct {
     jump_released_since_jump: i32,
     grounded_last_frame: i32,
     jetpack_active: i32,
+    /// Wall contact from last tick: -1 left, +1 right, 0 none. Mirrors
+    /// PlayerMovementMemory.touchingWallDir in player.ts.
+    touching_wall_dir: i32,
 };
 
 inline fn approach(value: f64, target: f64, amount: f64) f64 {
@@ -155,9 +163,20 @@ pub fn stepPlayer(
     const max_speed = MAX_GROUND_SPEED * speed_mul * crouch_factor;
     s.vx = clamp(s.vx, -max_speed, max_speed);
 
-    // Jump (with coyote + buffer).
+    // Jump: WALL-JUMP takes precedence when airborne against a wall; else the
+    // normal ground/coyote jump. (Jetpack removed — walls do vertical now.)
     var jumped_this_frame = false;
-    if (s.jump_buffer_ms > 0.0 and s.coyote_ms > 0.0) {
+    const wall_dir_i = s.touching_wall_dir;
+    const wall_dir: f64 = @floatFromInt(wall_dir_i);
+    if (s.jump_buffer_ms > 0.0 and !boolFromInt(s.grounded_last_frame) and wall_dir_i != 0) {
+        s.vy = WALL_JUMP_VY;
+        s.vx = -wall_dir * WALL_JUMP_VX;
+        s.jump_buffer_ms = 0.0;
+        s.jump_released_since_jump = 0;
+        s.jump_cut_applied = 0;
+        s.touching_wall_dir = 0;
+        jumped_this_frame = true;
+    } else if (s.jump_buffer_ms > 0.0 and s.coyote_ms > 0.0) {
         s.vy = JUMP_VELOCITY;
         s.coyote_ms = 0.0;
         s.jump_buffer_ms = 0.0;
@@ -180,25 +199,16 @@ pub fn stepPlayer(
         GRAVITY) * gravity_mul;
     s.vy = @min(MAX_FALL_SPEED, s.vy + gravity_now * dt_sec);
 
-    // Jetpack.
-    const fuel_start = s.jetpack_fuel;
-    const jetpack_held = jump_held and !boolFromInt(s.grounded_last_frame);
-    const jetpack_active = jetpack_held and fuel_start > 0.0 and !boolFromInt(s.grounded_last_frame);
-    var next_fuel = fuel_start;
-    if (jetpack_active) {
-        s.vy -= JETPACK_THRUST * dt_sec;
-        s.vy = @max(JETPACK_MIN_UPWARD_VELOCITY, s.vy);
-        next_fuel = fuel_start - JETPACK_FUEL_DRAIN_PER_SECOND * dt_sec;
-    } else {
-        const recharge_rate = if (boolFromInt(s.grounded_last_frame))
-            JETPACK_GROUND_RECHARGE_PER_SECOND
-        else
-            JETPACK_AIR_RECHARGE_PER_SECOND;
-        next_fuel = fuel_start + recharge_rate * dt_sec;
+    // Grippy wall-slide / latch (Warframe/SMB): pressing INTO the wall while
+    // airborne + descending caps the fall speed.
+    const gripping = !boolFromInt(s.grounded_last_frame) and wall_dir_i != 0 and direction == wall_dir;
+    if (gripping and s.vy > 0.0) {
+        s.vy = @min(s.vy, WALL_SLIDE_MAX_FALL);
     }
-    next_fuel = clamp(next_fuel, 0.0, JETPACK_MAX_FUEL);
-    s.jetpack_fuel = next_fuel;
-    s.jetpack_active = intFromBool(jetpack_active);
+
+    // Jetpack removed. Pin fuel to max for wire/ABI stability.
+    s.jetpack_fuel = JETPACK_MAX_FUEL;
+    s.jetpack_active = 0;
 
     // Movement resolution against platforms — sub-stepped.
     const body_height: f64 = if (boolFromInt(s.crouching)) CROUCH_HEIGHT else BODY_HEIGHT;
@@ -221,18 +231,36 @@ pub fn stepPlayer(
     }
     const sub_dt = dt_sec / @as(f64, @floatFromInt(sub_steps));
     var grounded_acc = false;
+    var wall_contact_this_tick: i32 = 0;
 
     var i: u32 = 0;
     while (i < sub_steps) : (i += 1) {
+        const pre_vx = s.vx;
         const resolved = collision.resolveMoveCached(aabb, s.vx, s.vy, sub_dt, statics, one_way);
         aabb = .{ .x = resolved.x, .y = resolved.y, .w = aabb.w, .h = aabb.h };
-        s.vx = resolved.vx;
+        // A horizontal collision zeroes vx — that's a WALL.
+        if (pre_vx != 0.0 and resolved.vx == 0.0 and (pre_vx > 1.0 or pre_vx < -1.0)) {
+            const hit_dir: i32 = if (pre_vx > 0.0) 1 else -1;
+            const hit_dir_f: f64 = @floatFromInt(hit_dir);
+            if (direction != hit_dir_f and (pre_vx > 120.0 or pre_vx < -120.0)) {
+                // WALL-BANG — hit at speed without gripping → rebound.
+                s.vx = -pre_vx * WALL_RESTITUTION;
+            } else {
+                // Stuck to the wall → eligible to slide / wall-jump next tick.
+                s.vx = resolved.vx;
+                wall_contact_this_tick = hit_dir;
+            }
+        } else {
+            s.vx = resolved.vx;
+        }
         s.vy = resolved.vy;
         if (resolved.grounded_this_frame == 1) grounded_acc = true;
     }
     s.x = aabb.x + BODY_WIDTH / 2.0;
     s.y = aabb.y + body_height / 2.0;
     s.grounded_last_frame = intFromBool(grounded_acc);
+    // Wall state for next tick — cleared on the ground (a floor isn't a wall).
+    s.touching_wall_dir = if (grounded_acc) 0 else wall_contact_this_tick;
 
     return jumped_this_frame;
 }

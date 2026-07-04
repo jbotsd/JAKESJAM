@@ -34,6 +34,18 @@ const M = {
   bodyWidth: 26,
   bodyHeight: 56,
   crouchHeight: 38,
+  // ── Wall movement (SMB / Warframe) — replaces the jetpack. ────────────
+  // Grippy wall-slide: capped descent while pressing into a wall airborne.
+  wallSlideMaxFall: 200,
+  // Wall-jump: up + away kick. vy a touch under a floor jump; vx a firm
+  // horizontal shove off the wall.
+  wallJumpVy: -560,
+  wallJumpVx: 430,
+  // Wall-bang: rebound off a wall hit at speed when NOT gripping it.
+  wallRestitution: 0.5,
+  // Below this fall speed a fresh wall-touch "latches" (near-zero vy) for a
+  // Warframe-style catch before the grippy slide takes over.
+  wallLatchCatchVy: 90,
 } as const;
 
 /**
@@ -77,8 +89,13 @@ export type PlayerMovementMemory = {
   jumpCutApplied: boolean;
   jumpReleasedSinceJump: boolean;
   groundedLastFrame: boolean;
-  /** True for the tick the jetpack actively applied thrust. */
+  /** Legacy field (jetpack removed). Kept for wasm struct ABI stability;
+   *  always false now. */
   jetpackActive: boolean;
+  /** Wall the player was in contact with LAST tick: -1 wall on the left,
+   *  +1 wall on the right, 0 none. Read this tick to decide wall-jump / slide;
+   *  recomputed from the collision resolve at the end of the tick. */
+  touchingWallDir: number;
 };
 
 export function freshPlayerMovementMemory(): PlayerMovementMemory {
@@ -89,6 +106,7 @@ export function freshPlayerMovementMemory(): PlayerMovementMemory {
     jumpReleasedSinceJump: true,
     groundedLastFrame: false,
     jetpackActive: false,
+    touchingWallDir: 0,
   };
 }
 
@@ -215,9 +233,21 @@ function stepPlayerNative(
   const maxSpeed = M.maxGroundSpeed * speedMul * (next.crouching ? M.crouchSpeedFactor : 1);
   next.vx = clamp(next.vx, -maxSpeed, maxSpeed);
 
-  // Jump (with coyote + buffer).
+  // Jump: WALL-JUMP takes precedence when airborne against a wall; otherwise
+  // the normal ground/coyote jump. (Jetpack removed — walls are the vertical
+  // traversal toolkit now.)
   let jumpedThisFrame = false;
-  if (mem.jumpBufferMs > 0 && mem.coyoteMs > 0) {
+  const wallDir = mem.touchingWallDir;
+  if (mem.jumpBufferMs > 0 && !mem.groundedLastFrame && wallDir !== 0) {
+    // WALL-JUMP — up + a firm shove AWAY from the wall (SMB).
+    next.vy = M.wallJumpVy;
+    next.vx = -wallDir * M.wallJumpVx;
+    mem.jumpBufferMs = 0;
+    mem.jumpReleasedSinceJump = false;
+    mem.jumpCutApplied = false;
+    mem.touchingWallDir = 0; // left the wall
+    jumpedThisFrame = true;
+  } else if (mem.jumpBufferMs > 0 && mem.coyoteMs > 0) {
     next.vy = M.jumpVelocity;
     mem.coyoteMs = 0;
     mem.jumpBufferMs = 0;
@@ -242,29 +272,18 @@ function stepPlayerNative(
       : M.gravity) * gravityMul;
   next.vy = Math.min(M.maxFallSpeed, next.vy + gravity * dtSec);
 
-  // Jetpack: hold-jump-while-airborne triggers thrust until fuel is empty.
-  // Mirrors MovementSystem.update — drain while active, recharge otherwise
-  // (faster on the ground). On the same tick the player jumps off the ground
-  // we ignore the jetpack — `groundedLastFrame` was true at top of tick — so
-  // the player must release jump and re-press, or hold and wait one tick, to
-  // start thrusting. That matches the offline behavior.
-  const fuelStart = player.jetpackFuel ?? JETPACK_MAX_FUEL;
-  const jetpackHeld = jumpHeld && !mem.groundedLastFrame;
-  const jetpackActive = jetpackHeld && fuelStart > 0 && !mem.groundedLastFrame;
-  let nextFuel = fuelStart;
-  if (jetpackActive) {
-    next.vy -= JETPACK_THRUST * dtSec;
-    next.vy = Math.max(JETPACK_MIN_UPWARD_VELOCITY, next.vy);
-    nextFuel = fuelStart - JETPACK_FUEL_DRAIN_PER_SECOND * dtSec;
-  } else {
-    const rechargeRate = mem.groundedLastFrame
-      ? JETPACK_GROUND_RECHARGE_PER_SECOND
-      : JETPACK_AIR_RECHARGE_PER_SECOND;
-    nextFuel = fuelStart + rechargeRate * dtSec;
+  // Grippy wall-slide / latch (Warframe/SMB): pressing INTO a wall while
+  // airborne + descending caps the fall speed — a controlled grip instead of
+  // a free fall. Wall-jump reads the wall state from LAST tick (`wallDir`).
+  const gripping = !mem.groundedLastFrame && wallDir !== 0 && direction === wallDir;
+  if (gripping && next.vy > 0) {
+    next.vy = Math.min(next.vy, M.wallSlideMaxFall);
   }
-  nextFuel = clamp(nextFuel, 0, JETPACK_MAX_FUEL);
-  next.jetpackFuel = nextFuel;
-  mem.jetpackActive = jetpackActive;
+
+  // Jetpack removed. Pin the fuel field to max for wire/ABI stability so the
+  // snapshot/protocol shape is unchanged; nothing drains it now.
+  next.jetpackFuel = JETPACK_MAX_FUEL;
+  mem.jetpackActive = false;
 
   // Movement resolution against platforms using swept AABB.
   const bodyHeight = next.crouching ? M.crouchHeight : M.bodyHeight;
@@ -293,20 +312,39 @@ function stepPlayerNative(
   const subSteps = Math.max(1, Math.ceil(totalDisp / maxStepDisp));
   const subDt = dtSec / subSteps;
   let groundedAcc = false;
+  let wallContactThisTick = 0;
   for (let i = 0; i < subSteps; i++) {
+    const preVx = next.vx;
     const resolved = resolveMoveCached(
       aabb, next.vx, next.vy, subDt, options.collisionCache, true,
     );
     aabb = { x: resolved.x, y: resolved.y, w: aabb.w, h: aabb.h };
-    next.vx = resolved.vx;
+    // A horizontal collision zeroes vx — that's a WALL. Direction = the way we
+    // were moving into it.
+    if (preVx !== 0 && resolved.vx === 0 && (preVx > 1 || preVx < -1)) {
+      const hitDir = preVx > 0 ? 1 : -1;
+      if (direction !== hitDir && (preVx > 120 || preVx < -120)) {
+        // WALL-BANG — hit it at speed without gripping → rebound, no latch.
+        next.vx = -preVx * M.wallRestitution;
+      } else {
+        // Stuck to the wall → eligible to slide / wall-jump next tick.
+        next.vx = resolved.vx;
+        wallContactThisTick = hitDir;
+      }
+    } else {
+      next.vx = resolved.vx;
+    }
     next.vy = resolved.vy;
     if (resolved.groundedThisFrame) groundedAcc = true;
   }
   next.x = aabb.x + M.bodyWidth / 2;
   next.y = aabb.y + bodyHeight / 2;
   mem.groundedLastFrame = groundedAcc;
+  // Wall state carried to next tick — cleared on the ground (a floor is not a
+  // wall) so you can't wall-jump off level ground.
+  mem.touchingWallDir = groundedAcc ? 0 : wallContactThisTick;
 
-  return { player: next, memory: mem, jumpedThisFrame, jetpackFuel: nextFuel };
+  return { player: next, memory: mem, jumpedThisFrame, jetpackFuel: next.jetpackFuel };
 }
 
 function approach(value: number, target: number, amount: number): number {
