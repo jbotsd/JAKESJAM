@@ -238,14 +238,14 @@ const optionsPanel = queryRequired<HTMLElement>("[data-options]");
 const musicVolumeInput = queryRequired<HTMLInputElement>("[data-music-volume]");
 const musicMutedInput = queryRequired<HTMLInputElement>("[data-music-muted]");
 // Menu/lobby theme — the "Jakes Jam" track, looped.
-const menuMusic = new Audio(getAudioUrl("jakes-jam-theme.ogg"));
+const menuMusic = new Audio(getAudioUrl("jakes-jam-theme.mp3"));
 menuMusic.loop = true;
 menuMusic.preload = "auto";
 
 // In-world / match soundtrack — the three "bassradian" epic loops, cycled for
 // variety (advance on `ended`, wrap around) so a long session doesn't hear the
 // same 2 minutes on repeat.
-const WORLD_MUSIC_TRACKS = ["epic-loop-1.ogg", "epic-loop-2.ogg", "epic-loop-3.ogg"] as const;
+const WORLD_MUSIC_TRACKS = ["epic-loop-1.mp3", "epic-loop-2.mp3", "epic-loop-3.mp3"] as const;
 let worldTrackIdx = 0;
 const worldMusic = new Audio(getAudioUrl(WORLD_MUSIC_TRACKS[0]));
 worldMusic.preload = "auto";

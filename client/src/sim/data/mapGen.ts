@@ -1,16 +1,20 @@
-// Deterministic arena generator — tier-structured, validator-gated.
+// Deterministic arena generator — WALL-MOVEMENT structured, validator-gated.
 //
-// See docs/map-design.md for the research this encodes. The short form:
-// every generated arena obeys the same movement-derived laws (step cost
-// ≤93% of max jump, sightline caps, ≥2 routes up, openness band, fair
-// spawns), checked by a route-graph validator BEFORE the map is allowed
-// to exist. Invalid rolls advance an internal attempt counter
-// deterministically, so `gen:N` produces the SAME final arena on every
-// machine — client and server expand the seed independently and get
-// byte-identical geometry (the same guarantee curated maps have).
+// Rewritten for the Super Meat Boy / Warframe wall kit (docs/character-
+// controller-overhaul.md): the jetpack is gone, so VERTICAL traversal is
+// wall-jumping up shafts. Every arena is built from tall SOLID columns
+// (a `platform` taller than the one-way cap of 24px is solid 4-way → a
+// grabbable wall) arranged so that:
+//   • columns sit within SHAFT_MAX of the outer wall or a sibling column,
+//     forming climbable shafts,
+//   • perches sit at shaft tops (reachable by wall-jumping the shaft),
+//   • thin one-way ledges give lateral hop routes,
+//   • ≥2 low ledges are a plain jump off the floor (routes up),
+// checked by a route-graph validator that models BOTH jump edges AND
+// shaft/wall-jump reachability BEFORE the map is allowed to exist.
 //
-// PURE MODULE: no Math.random, no Date, no Phaser, no DOM. Shared by
-// client prediction and server authority.
+// Deterministic: `gen:N` expands to byte-identical geometry on client and
+// server. PURE MODULE: no Math.random, no Date, no Phaser, no DOM.
 
 import type { MapDefinition, PlatformDefinition, Vec2 } from "../types.js";
 
@@ -19,7 +23,7 @@ const ARENA_W = 1280;
 const ARENA_H = 640;
 const WALL = 32;
 const FLOOR_H = 32;
-const PLAT_H = 18;
+const PLAT_H = 18; // thin one-way ledge thickness (≤ 24 → pass-through)
 const FLOOR_TOP = ARENA_H - FLOOR_H; // 608 — feet rest here
 
 // ── Movement-derived law constants (docs/map-design.md) ──────────────────
@@ -31,16 +35,30 @@ export const MAX_GAP_RISING = 180;
 export const MAX_GAP_FALLING = 300;
 /** Sightline cap per horizontal band. */
 export const MAX_SIGHTLINE = 420;
-/** Openness band: platform+cover footprint as fraction of arena area. */
+/** Openness band: platform+column footprint as fraction of playable area. */
 export const DENSITY_MIN = 0.08;
 export const DENSITY_MAX = 0.16;
 /** Minimum spawn separation. */
 export const MIN_SPAWN_DIST = 360;
 
-// Tier tops (player feet land here). Steps: 608→486 = 122, 486→360 = 126,
-// 360→232 = 128 — all ≤ MAX_STEP_RISE. The perch tier is jetpack-gated on
-// purpose when no T2 segment sits under it.
-const TIER_TOPS = [486, 360, 232] as const;
+// ── Wall-movement law constants (docs/character-controller-overhaul.md) ──
+/** A `platform` taller than this is SOLID 4-way (grabbable). Mirrors
+ *  ONE_WAY_MAX_HEIGHT_PX in collision.ts — the reason columns can be walls. */
+export const GRAB_MIN_H = 25;
+/** Max gap between two facing grab walls that can still be climbed as a
+ *  shaft (wall-jump vx 430 crosses this comfortably). */
+export const SHAFT_MAX = 230;
+/** Extra reach ABOVE a shaft's climb-top for the final wall-jump hop
+ *  (wall-jump apex ≈ 124px at vy -600). */
+export const WALL_JUMP_UP = 138;
+/** Horizontal reach of a wall-jump onto a side ledge. */
+export const GRAB_REACH_SIDE = 200;
+
+// Column top heights (feet/perch land here). Higher = taller shaft climb.
+const COL_TOPS = [316, 256, 196] as const;
+// Low-ledge top: one plain jump off the floor (rise 608-498 = 110 ≤ RISE).
+const LOW_LEDGE_TOP = 498;
+const MID_LEDGE_TOPS = [430, 356] as const;
 
 // ── Seeded PRNG (mulberry32 — same family the bots use) ─────────────────
 function mulberry32(seed: number): () => number {
@@ -54,100 +72,98 @@ function mulberry32(seed: number): () => number {
 }
 
 const snap8 = (v: number) => Math.round(v / 8) * 8;
-
-type Seg = { x: number; w: number; tier: number };
+const pick = <T>(rand: () => number, arr: readonly T[]): T =>
+  arr[Math.floor(rand() * arr.length)]!;
 
 // ── Generation ───────────────────────────────────────────────────────────
 
 /**
- * Generate one arena candidate for a given attempt. Mirror-symmetric half
- * the time (1v1 fairness); asymmetric rolls still pass the fairness laws
- * via the validator.
+ * Generate one arena candidate. Mirror-symmetric ~half the time (1v1
+ * fairness). Builds side shafts (outer wall + column), an optional central
+ * shaft (column pair), perches at shaft tops, lateral ledges, and low
+ * launch ledges — all sized to the wall-jump laws.
  */
 function generateCandidate(rand: () => number): MapDefinition {
-  const mirrored = rand() < 0.6;
-  const segs: Seg[] = [];
-
-  // Per tier: fill the half (or full) width with segments + gaps.
-  const spanEnd = mirrored ? ARENA_W / 2 : ARENA_W - WALL - 40;
-  for (let tier = 0; tier < TIER_TOPS.length; tier++) {
-    // Higher tiers are sparser (risk/reward: less ground up high) —
-    // widen gaps as the tier climbs.
-    const gapScale = tier === 2 ? 1.6 : tier === 1 ? 1.15 : 1.0;
-    let x = WALL + 24 + rand() * 90;
-    while (x < spanEnd) {
-      const w = snap8(144 + rand() * (tier === 2 ? 150 : 260));
-      if (x + w > spanEnd + 60) break;
-      segs.push({ x: snap8(x), w, tier });
-      // Gap: crossable per the falling-arc law, with jitter.
-      x += w + snap8((90 + rand() * (MAX_GAP_FALLING - 110)) * gapScale);
-    }
-  }
-
-  if (mirrored) {
-    // Reflect across the vertical center line; merge center-touching segs.
-    for (const s of [...segs]) {
-      const mx = ARENA_W - s.x - s.w;
-      if (mx > s.x + s.w - 16) segs.push({ x: snap8(mx), w: s.w, tier: s.tier });
-      else s.w = snap8(ARENA_W - 2 * s.x); // spans the middle — widen
-    }
-  }
-
-  // Cover pillars on the floor — the floor lane is the only band where a
-  // horizontal sightline exists (tiers are one-way platforms), so cover
-  // spacing IS the sightline law. One pillar per third with jitter;
-  // mirrored arenas mirror them.
-  const covers: { x: number; y: number; w: number; h: number }[] = [];
-  const thirds = mirrored ? [ARENA_W / 6, (ARENA_W * 2.6) / 6] : [ARENA_W / 6, ARENA_W / 2, (ARENA_W * 4.4) / 6];
-  for (const anchor of thirds) {
-    const cx = snap8(anchor - 36 + (rand() - 0.5) * 120);
-    const c = { x: Math.max(WALL + 48, cx), y: FLOOR_TOP - 40, w: 72, h: 80 };
-    covers.push(c);
-    if (mirrored) covers.push({ ...c, x: snap8(ARENA_W - c.x - c.w) });
-  }
-
+  const mirrored = rand() < 0.5;
   const platforms: PlatformDefinition[] = [
     { id: "floor", kind: "floor", position: { x: ARENA_W / 2, y: ARENA_H - FLOOR_H / 2 }, size: { x: ARENA_W, y: FLOOR_H } },
     { id: "wall-left", kind: "wall", position: { x: WALL / 2, y: ARENA_H / 2 }, size: { x: WALL, y: ARENA_H } },
     { id: "wall-right", kind: "wall", position: { x: ARENA_W - WALL / 2, y: ARENA_H / 2 }, size: { x: WALL, y: ARENA_H } },
     { id: "ceiling", kind: "wall", position: { x: ARENA_W / 2, y: WALL / 2 }, size: { x: ARENA_W, y: WALL } },
   ];
-  segs.forEach((s, i) => {
-    platforms.push({
-      id: `t${s.tier}-${i}`,
-      kind: "platform",
-      position: { x: s.x + s.w / 2, y: TIER_TOPS[s.tier]! + PLAT_H / 2 },
-      size: { x: s.w, y: PLAT_H },
-    });
-  });
-  covers.forEach((c, i) => {
-    platforms.push({
-      id: `cover-${i}`,
-      kind: "platform",
-      position: { x: c.x + c.w / 2, y: c.y + c.h / 2 },
-      size: { x: c.w, y: c.h },
-    });
-  });
+  let idc = 0;
+  const nid = (p: string) => `${p}-${idc++}`;
 
-  // Spawns: aim for a FULL lobby's worth (up to 8) spread across the floor
-  // and every tier segment, greedily accepting only points that keep the
-  // ≥MIN_SPAWN_DIST separation the validator enforces. Opposite floor
-  // corners always come first so a 2-player round opens end-to-end.
+  // Solid grab column from floor up to `top`. Solid 4-way (h > GRAB_MIN_H).
+  const addColumn = (cx: number, w: number, top: number) => {
+    const h = FLOOR_TOP - top;
+    platforms.push({ id: nid("col"), kind: "platform", position: { x: snap8(cx), y: snap8(top + h / 2) }, size: { x: w, y: snap8(h) } });
+  };
+  // Thin one-way ledge (pass-through from below).
+  const addLedge = (cx: number, w: number, top: number) => {
+    platforms.push({ id: nid("ledge"), kind: "platform", position: { x: snap8(cx), y: top + PLAT_H / 2 }, size: { x: snap8(w), y: PLAT_H } });
+  };
+
+  const colW = snap8(40 + rand() * 16); // 40..56
+
+  // ── Side shafts: a column near each outer wall forms a wall+column shaft.
+  // Gap (wall inner=WALL) → column left edge is ≤ SHAFT_MAX so it climbs.
+  const leftColX = snap8(WALL + colW / 2 + 96 + rand() * 70); // gap ~96..166
+  const leftTop = pick(rand, COL_TOPS);
+  addColumn(leftColX, colW, leftTop);
+  // Perch just INSIDE the column (wall-jump off the column lands here).
+  addLedge(leftColX + colW / 2 + 82, 150, leftTop);
+
+  const rightColX = mirrored
+    ? ARENA_W - leftColX
+    : snap8(ARENA_W - WALL - colW / 2 - 96 - rand() * 70);
+  const rightTop = mirrored ? leftTop : pick(rand, COL_TOPS);
+  addColumn(rightColX, colW, rightTop);
+  addLedge(rightColX - colW / 2 - 82, 150, rightTop);
+
+  // ── Central shaft: a column PAIR (gap ≤ SHAFT_MAX) with a bridging perch.
+  const centerGap = snap8(150 + rand() * (SHAFT_MAX - 170)); // 150..210
+  const centerX = ARENA_W / 2 + (mirrored ? 0 : snap8((rand() - 0.5) * 120));
+  const cTop = pick(rand, COL_TOPS);
+  const cLX = snap8(centerX - centerGap / 2 - colW / 2);
+  const cRX = snap8(centerX + centerGap / 2 + colW / 2);
+  addColumn(cLX, colW, cTop);
+  addColumn(cRX, colW, cTop);
+  // Perch bridging the shaft top (spans the gap so you top out onto it).
+  addLedge(centerX, centerGap + colW, cTop - PLAT_H);
+
+  // ── Low launch ledges: ≥2 plain jumps off the floor (routes up), placed
+  // between the side columns and center so lateral hops chain upward.
+  const lowXs = mirrored
+    ? [snap8(ARENA_W * 0.32), snap8(ARENA_W * 0.68)]
+    : [snap8(ARENA_W * 0.3 + (rand() - 0.5) * 80), snap8(ARENA_W * 0.72 + (rand() - 0.5) * 80)];
+  for (const lx of lowXs) addLedge(lx, snap8(150 + rand() * 70), LOW_LEDGE_TOP);
+
+  // ── Mid ledges: lateral wall-jump targets between the perches. Kept within
+  // GRAB_REACH_SIDE of a column so they're wall-reachable, and within a jump
+  // of the low ledges so there are multiple routes.
+  const midTop = pick(rand, MID_LEDGE_TOPS);
+  addLedge(snap8((leftColX + centerX) / 2), snap8(140 + rand() * 60), midTop);
+  if (!mirrored || rand() < 0.5) {
+    addLedge(snap8((rightColX + centerX) / 2), snap8(140 + rand() * 60), MID_LEDGE_TOPS[mirrored ? 0 : 1]!);
+  } else {
+    addLedge(snap8(ARENA_W - (leftColX + centerX) / 2), snap8(140 + rand() * 60), midTop);
+  }
+
+  // ── Spawns: opposite floor corners first (end-to-end 1v1 open), then fill
+  // toward SPAWN_TARGET across floor + perches keeping MIN_SPAWN_DIST.
   const SPAWN_TARGET = 8;
   const spawns: Vec2[] = [
     { x: 160, y: FLOOR_TOP - 68 },
     { x: ARENA_W - 160, y: FLOOR_TOP - 68 },
   ];
-  // Candidate pool: extra floor positions + one atop each tier segment,
-  // ordered floor-first then by tier so lower/safer spots fill first.
   const candidates: Vec2[] = [
     { x: ARENA_W / 2, y: FLOOR_TOP - 68 },
-    { x: ARENA_W / 3, y: FLOOR_TOP - 68 },
-    { x: (ARENA_W * 2) / 3, y: FLOOR_TOP - 68 },
-    ...segs
-      .slice()
-      .sort((a, b) => a.tier - b.tier || a.x - b.x)
-      .map((s) => ({ x: s.x + s.w / 2, y: TIER_TOPS[s.tier]! - 68 })),
+    { x: lowXs[0]!, y: LOW_LEDGE_TOP - 68 },
+    { x: lowXs[1]!, y: LOW_LEDGE_TOP - 68 },
+    { x: leftColX + colW / 2 + 82, y: leftTop - 68 },
+    { x: rightColX - colW / 2 - 82, y: rightTop - 68 },
+    { x: centerX, y: cTop - 68 },
   ];
   for (const cand of candidates) {
     if (spawns.length >= SPAWN_TARGET) break;
@@ -156,7 +172,6 @@ function generateCandidate(rand: () => number): MapDefinition {
     }
   }
 
-  // Theme rides the seed too — variety across recycles at zero cost.
   const themes = ["jadeIsles", "ivoryClouds", "hangingWood"] as const;
   return {
     id: "gen",
@@ -171,7 +186,10 @@ function generateCandidate(rand: () => number): MapDefinition {
 // ── Validation (the laws) ────────────────────────────────────────────────
 
 type Top = { x0: number; x1: number; top: number; id: string; kind: string };
+type Solid = { x0: number; x1: number; top: number; cx: number };
 
+/** Platform TOPS you can stand on (floor + all platforms; excludes the
+ *  ceiling and the outer side walls' "tops"). */
 function tops(map: MapDefinition): Top[] {
   return map.platforms
     .filter((p) => p.kind !== "wall" || p.id === "floor")
@@ -185,12 +203,65 @@ function tops(map: MapDefinition): Top[] {
     }));
 }
 
-/** Route-graph reachability: BFS from the floor over jump-sized edges. */
-export function unreachablePlatforms(map: MapDefinition, allowPerchTier = true): string[] {
+/** SOLID grab walls: the outer side walls (full height) plus any `platform`
+ *  tall enough to be solid 4-way (a column). These are the wall-jump
+ *  substrate. All reach the floor, so all are reachable from the floor. */
+function grabWalls(map: MapDefinition): Solid[] {
+  const out: Solid[] = [];
+  for (const p of map.platforms) {
+    if (p.id === "ceiling" || p.id === "floor") continue;
+    const isOuterWall = p.kind === "wall";
+    const isColumn = p.kind === "platform" && p.size.y >= GRAB_MIN_H;
+    if (!isOuterWall && !isColumn) continue;
+    out.push({
+      x0: p.position.x - p.size.x / 2,
+      x1: p.position.x + p.size.x / 2,
+      top: p.position.y - p.size.y / 2,
+      cx: p.position.x,
+    });
+  }
+  return out;
+}
+
+/** Tops reachable by climbing a SHAFT (two grab walls facing within
+ *  SHAFT_MAX) and wall-jumping off the top. yClimb = the shorter wall's top
+ *  (where both walls still exist); a final hop reaches WALL_JUMP_UP above it
+ *  and GRAB_REACH_SIDE to the side. */
+function shaftReachable(ts: Top[], walls: Solid[]): Set<string> {
+  const reached = new Set<string>();
+  for (let i = 0; i < walls.length; i++) {
+    for (let j = i + 1; j < walls.length; j++) {
+      const a = walls[i]!;
+      const b = walls[j]!;
+      const gap = b.x0 > a.x1 ? b.x0 - a.x1 : a.x0 > b.x1 ? a.x0 - b.x1 : 0;
+      if (gap <= 0 || gap > SHAFT_MAX) continue; // overlapping or too wide
+      const yClimb = Math.max(a.top, b.top); // shorter wall's top (higher y)
+      const reachTop = yClimb - WALL_JUMP_UP;
+      const xLo = Math.min(a.x0, b.x0) - GRAB_REACH_SIDE;
+      const xHi = Math.max(a.x1, b.x1) + GRAB_REACH_SIDE;
+      for (const t of ts) {
+        if (t.id === "floor") continue;
+        const cx = (t.x0 + t.x1) / 2;
+        if (cx >= xLo && cx <= xHi && t.top >= reachTop && t.top <= FLOOR_TOP) {
+          reached.add(t.id);
+        }
+      }
+    }
+  }
+  return reached;
+}
+
+/**
+ * Route-graph reachability: seed with the floor + everything reachable by
+ * climbing a shaft, then BFS out over jump-sized edges. A top is unreachable
+ * only if neither the wall kit nor a jump can get to it.
+ */
+export function unreachablePlatforms(map: MapDefinition): string[] {
   const ts = tops(map);
   const floor = ts.find((t) => t.id === "floor");
   if (!floor) return ["<no-floor>"];
-  const reached = new Set<string>([floor.id]);
+  const reached = shaftReachable(ts, grabWalls(map));
+  reached.add(floor.id);
   let grew = true;
   while (grew) {
     grew = false;
@@ -212,32 +283,38 @@ export function unreachablePlatforms(map: MapDefinition, allowPerchTier = true):
       }
     }
   }
-  return ts
-    .filter((t) => !reached.has(t.id))
-    .filter((t) => !(allowPerchTier && t.top <= TIER_TOPS[2] + PLAT_H))
-    .map((t) => t.id);
+  return ts.filter((t) => !reached.has(t.id)).map((t) => t.id);
 }
 
-/** Count distinct T1 entry platforms reachable directly from the floor. */
-function floorToT1Routes(map: MapDefinition): number {
+/** Distinct routes UP from the floor: a plain jump onto a ledge, OR a
+ *  shaft you can climb. Both count — the wall kit is a first-class route. */
+function routesUp(map: MapDefinition): number {
   const ts = tops(map);
   const floor = ts.find((t) => t.id === "floor")!;
-  return ts.filter((t) => {
+  const jumpRoutes = ts.filter((t) => {
     if (t.id === "floor") return false;
     const rise = floor.top - t.top;
     return rise > 0 && rise <= MAX_STEP_RISE;
   }).length;
+  const shafts = grabWalls(map);
+  let shaftRoutes = 0;
+  for (let i = 0; i < shafts.length; i++) {
+    for (let j = i + 1; j < shafts.length; j++) {
+      const a = shafts[i]!;
+      const b = shafts[j]!;
+      const gap = b.x0 > a.x1 ? b.x0 - a.x1 : a.x0 > b.x1 ? a.x0 - b.x1 : 0;
+      if (gap > 0 && gap <= SHAFT_MAX) shaftRoutes++;
+    }
+  }
+  return jumpRoutes + shaftRoutes;
 }
 
-/** Longest unbroken sightline in a horizontal band (shoulder height above
- *  each tier), broken by platforms/cover intersecting the band. */
+/** Longest unbroken sightline in the floor lane, broken by columns/ledges
+ *  intersecting shoulder height. */
 function worstSightline(map: MapDefinition): number {
-  // Only the FLOOR lane carries a true horizontal sightline: every tier is
-  // a one-way platform (no body-height solid above it), so diagonal play
-  // dominates up there. Cover pillars are what break the floor lane.
-  const bandY = FLOOR_TOP - 28; // shoulder height on the floor
+  const bandY = FLOOR_TOP - 28;
   const blockers = map.platforms
-    .filter((p) => p.kind !== "floor" && p.id !== "ceiling")
+    .filter((p) => p.kind !== "floor" && p.id !== "ceiling" && p.kind !== "wall")
     .filter((p) => {
       const y0 = p.position.y - p.size.y / 2;
       const y1 = p.position.y + p.size.y / 2;
@@ -246,20 +323,19 @@ function worstSightline(map: MapDefinition): number {
     .map((p) => ({ x0: p.position.x - p.size.x / 2, x1: p.position.x + p.size.x / 2 }))
     .sort((a, b) => a.x0 - b.x0);
   let worst = 0;
-  let cursor = 0;
+  let cursor = WALL;
   for (const b of blockers) {
     worst = Math.max(worst, b.x0 - cursor);
     cursor = Math.max(cursor, b.x1);
   }
-  return Math.max(worst, ARENA_W - cursor);
+  return Math.max(worst, ARENA_W - WALL - cursor);
 }
 
 function density(map: MapDefinition): number {
+  // Columns (solid platforms) AND ledges are structure; both count.
   const area = map.platforms
     .filter((p) => p.kind === "platform")
     .reduce((a, p) => a + p.size.x * p.size.y, 0);
-  // Openness is judged over the PLAYABLE volume (inside walls, above the
-  // floor) — walls/floor margins aren't space anyone fights in.
   const playable = (map.size.x - 2 * WALL) * (map.size.y - FLOOR_H - WALL);
   return area / playable;
 }
@@ -268,7 +344,6 @@ function spawnsValid(map: MapDefinition): boolean {
   const ts = tops(map);
   for (let i = 0; i < map.spawns.length; i++) {
     const s = map.spawns[i]!;
-    // Ground within a fall below the spawn.
     const under = ts.some(
       (t) => s.x >= t.x0 - 8 && s.x <= t.x1 + 8 && t.top >= s.y && t.top - s.y < 200,
     );
@@ -292,20 +367,20 @@ export type MapValidation = {
 
 export function validateMap(map: MapDefinition): MapValidation {
   const unreachable = unreachablePlatforms(map);
-  const routesUp = floorToT1Routes(map);
+  const routes = routesUp(map);
   const sight = worstSightline(map);
   const dens = density(map);
   const spawnsOk = spawnsValid(map);
   return {
     ok:
       unreachable.length === 0 &&
-      routesUp >= 2 &&
+      routes >= 2 &&
       sight <= MAX_SIGHTLINE &&
       dens >= DENSITY_MIN &&
       dens <= DENSITY_MAX &&
       spawnsOk,
     unreachable,
-    routesUp,
+    routesUp: routes,
     sightline: sight,
     density: dens,
     spawnsOk,
@@ -315,12 +390,11 @@ export function validateMap(map: MapDefinition): MapValidation {
 // ── Public entry ─────────────────────────────────────────────────────────
 
 export const GEN_MAP_PREFIX = "gen:";
-const MAX_ATTEMPTS = 40;
+const MAX_ATTEMPTS = 60;
 
 /**
  * Deterministically produce a VALID arena for a seed. Invalid candidates
- * advance the attempt counter (seeded), so the (seed → map) mapping is a
- * pure function — identical on client and server.
+ * advance the attempt counter (seeded), so (seed → map) is a pure function.
  */
 export function generateArena(seed: number): MapDefinition {
   for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
@@ -330,9 +404,6 @@ export function generateArena(seed: number): MapDefinition {
       return { ...candidate, id: `${GEN_MAP_PREFIX}${seed}`, name: `Arena #${seed}` };
     }
   }
-  // Statistically unreachable (validation pass-rate is high — see
-  // mapGen.test.ts fuzz), but never brick the world: fall back to a
-  // minimal always-valid layout.
   const fallback = generateCandidate(mulberry32(0xfa11bacc));
   return { ...fallback, id: `${GEN_MAP_PREFIX}${seed}`, name: `Arena #${seed}` };
 }

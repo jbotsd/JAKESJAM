@@ -81,7 +81,7 @@ describe("curated map audit — same validator, no exceptions for age", () => {
     // upper portion of the arena. A LOW platform you can't jump to would
     // be a T1-class bug, not a design choice.
     const tower = resolveMap("boxworks-tower");
-    const unreachable = new Set(unreachablePlatforms(tower, false));
+    const unreachable = new Set(unreachablePlatforms(tower));
     for (const p of tower.platforms) {
       if (!unreachable.has(p.id)) continue;
       const top = p.position.y - p.size.y / 2;
