@@ -209,6 +209,8 @@ export type DeflectOptions = {
   mirrorShield?: boolean;
   /** Aim shield: the shield only blocks hits within the AIM arc. */
   directionalShield?: boolean;
+  /** Widens the PARRY arc (Wide Parry card). 1 = default 60°. */
+  parryCoverMultiplier?: number;
 };
 
 /**
@@ -247,7 +249,8 @@ export function tryDeflectDamage(
   //    relative to the player when velocity is unavailable.
   if (isParryActive(player, tick) && projectile !== null) {
     const facing = player.parryFacing ?? 0;
-    if (isHitInParryArc(player, facing, projectile)) {
+    const parryArc = PARRY_ARC_RADIANS * (options.parryCoverMultiplier ?? 1);
+    if (isHitInParryArc(player, facing, projectile, parryArc)) {
       return {
         player,
         damage: 0,

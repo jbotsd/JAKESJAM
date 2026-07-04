@@ -274,7 +274,15 @@ export class ProceduralPlayerRig {
 
     // Also check live velocity as a fallback (covers the very first few frames)
     const liveSpeed = Math.hypot(velocity.x, velocity.y);
-    if (Math.max(speed, liveSpeed) <= 60) return;
+    const topSpeed = Math.max(speed, liveSpeed);
+    if (topSpeed <= 60) return;
+
+    // Intensity ramps with speed so a SPRINT card reads as a brighter streak
+    // and a DASH (>~500 px/s, above the normal max) blazes white-hot after-
+    // images. Card feedback with zero sim coupling — pure velocity read.
+    const intensity = Phaser.Math.Clamp((topSpeed - 60) / 720, 0, 1);
+    const dashing = topSpeed > 500;
+    const col = dashing ? 0xffffff : this.color;
 
     const len = this.trailPositions.length;
     for (let i = 0; i < len; i++) {
@@ -285,10 +293,11 @@ export class ProceduralPlayerRig {
       const distToCurrent = Math.hypot(entry.x - currentPos.x, entry.y - currentPos.y);
       if (distToCurrent < 4) continue;
 
-      // Older entries have lower index → lower alpha
-      const alpha = ((i + 1) / len) * 0.4;
-      g.fillStyle(this.color, alpha);
-      g.fillCircle(entry.x, entry.y, 3 * s);
+      // Older entries have lower index → lower alpha; boosted by speed.
+      const alpha = ((i + 1) / len) * (0.4 + intensity * 0.5);
+      const radius = (3 + intensity * 3) * s;
+      g.fillStyle(col, alpha);
+      g.fillCircle(entry.x, entry.y, radius);
     }
   }
 

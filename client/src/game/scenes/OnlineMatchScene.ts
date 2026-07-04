@@ -233,6 +233,9 @@ export class OnlineMatchScene extends Phaser.Scene {
    *  player, drawn from wire state (shieldActive / parryActiveUntilTick /
    *  parryFacing). Cleared and redrawn each renderWorld pass. */
   private combatFx: Phaser.GameObjects.Graphics | null = null;
+  /** Per-player last shield charge + block-flash timer (shield-block VFX). */
+  private readonly shieldPrevCharge = new Map<string, number>();
+  private readonly shieldBlockFlash = new Map<string, number>();
   private platformLayer: PlatformLayer | null = null;
   private lightBeams: LightBeamLayer | null = null;
   // Sentinel — overwritten in init(data) before any consumer reads it.
@@ -1334,12 +1337,28 @@ export class OnlineMatchScene extends Phaser.Scene {
     const PARRY_ARC = Math.PI / 3;
     for (const player of Object.values(state.players)) {
       if (!player.alive) continue;
-      if (player.shieldActive) {
-        g.fillStyle(0x93c5fd, 0.08);
-        g.fillCircle(player.x, player.y, SHIELD_RADIUS);
-        g.lineStyle(2, 0x93c5fd, 0.62);
-        g.strokeCircle(player.x, player.y, SHIELD_RADIUS);
+      // Shield BLOCK flash: a hit absorbed drops shieldCharge far more than the
+      // passive hold-drain (~0.6/frame), so a >5 single-frame drop = a block.
+      const pid = player.id as string;
+      const charge = player.shieldCharge ?? 0;
+      const prevCharge = this.shieldPrevCharge.get(pid);
+      if (prevCharge !== undefined && prevCharge - charge > 5 && player.shieldActive) {
+        this.shieldBlockFlash.set(pid, 1);
       }
+      this.shieldPrevCharge.set(pid, charge);
+      const flash = this.shieldBlockFlash.get(pid) ?? 0;
+      if (player.shieldActive) {
+        g.fillStyle(0x93c5fd, 0.08 + flash * 0.28);
+        g.fillCircle(player.x, player.y, SHIELD_RADIUS);
+        g.lineStyle(2 + flash * 3, 0x93c5fd, 0.62 + flash * 0.38);
+        g.strokeCircle(player.x, player.y, SHIELD_RADIUS);
+        // Expanding ripple ring on a block.
+        if (flash > 0.02) {
+          g.lineStyle(2, 0xdbeafe, flash * 0.75);
+          g.strokeCircle(player.x, player.y, SHIELD_RADIUS + (1 - flash) * 24);
+        }
+      }
+      if (flash > 0) this.shieldBlockFlash.set(pid, Math.max(0, flash - 0.14));
       if (
         player.parryActiveUntilTick !== undefined &&
         player.parryActiveUntilTick > state.tick

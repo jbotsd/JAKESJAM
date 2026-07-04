@@ -773,6 +773,7 @@ export function stepWithRuntime(
             {
               mirrorShield: victimBuild.mirrorShield,
               directionalShield: victimBuild.directionalShield,
+              parryCoverMultiplier: victimBuild.parryCoverMultiplier,
             },
           );
           let postPlayer = mitigation.player;
