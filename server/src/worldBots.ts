@@ -215,14 +215,23 @@ export class WorldBots {
     else bot.stuckTicks = 0;
     bot.lastX = me.x;
 
-    // IMPORTANT: bots only ever press Jump while GROUNDED. Holding Jump in the
-    // air engages the jetpack — a bot that keeps pressing it airborne flies
-    // straight up and out of the map. Gating on grounded === true means the
-    // moment a bot leaves the ground it releases Jump, so it HOPS (bounded)
-    // rather than sustaining flight. (Was `grounded ?? true`, which let
-    // unknown/airborne bots keep jetpacking.)
     const grounded = me.grounded === true;
+    const airborne = !grounded;
+    // Target meaningfully above → we need height. The jetpack is gone, so the
+    // ONLY way up is WALL-JUMPING: seek a wall/column and climb it.
+    const wantUp = foe.y < me.y - 60;
+    // Reuse stuck detection as "pressed against a wall": a horizontal intent
+    // that produced ~no movement means a wall/column is blocking us.
+    const onWall = bot.stuckTicks >= 3;
 
+    // WALL-CLIMB. Airborne + on a wall + wanting height → wall-jump (up + away).
+    // Safe now the jetpack is gone: an airborne Jump is a NO-OP unless we're
+    // touching a wall (and a wall-jump clears the contact), so bots can't fly
+    // out of the map. Each wall-jump pushes us off; we re-contact the opposite
+    // wall of a shaft a few ticks later and jump again — alternating upward.
+    if (airborne && onWall && wantUp) keys |= InputBit.Jump;
+
+    // Ground unstick / obstacle hop.
     if (bot.stuckTicks >= 6) {
       if (grounded) keys |= InputBit.Jump; // hop the obstacle, keep going
       if (bot.stuckTicks >= 40) {
@@ -236,12 +245,16 @@ export class WorldBots {
       keys |= InputBit.Jump;
     }
 
+    // Seek a wall to climb when we want height but aren't already driving into
+    // one (e.g. the foe is directly overhead) — drift toward the foe's side.
+    if (wantUp && moveDir === 0) moveDir = towardFoe;
+
     if (moveDir < 0) keys |= InputBit.Left;
     if (moveDir > 0) keys |= InputBit.Right;
 
-    // Vertical: chase height advantage with a grounded hop only (never a
-    // sustained airborne jetpack climb — that's how bots escaped the arena).
-    if (grounded && foe.y < me.y - 90 && bot.rand() < 0.05) keys |= InputBit.Jump;
+    // Grounded hop to START a climb toward a higher foe (get airborne and into
+    // the wall); the wall-climb branch above takes over once we're up on it.
+    if (grounded && foe.y < me.y - 90 && bot.rand() < 0.12) keys |= InputBit.Jump;
 
     // Threat response: inbound projectile → parry (facing it) or hop.
     const threat = this.inboundThreat(state, me);

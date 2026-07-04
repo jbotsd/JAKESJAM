@@ -237,6 +237,17 @@ const lobbyPanel = queryRequired<HTMLElement>("[data-lobby-panel]");
 const optionsPanel = queryRequired<HTMLElement>("[data-options]");
 const musicVolumeInput = queryRequired<HTMLInputElement>("[data-music-volume]");
 const musicMutedInput = queryRequired<HTMLInputElement>("[data-music-muted]");
+// ── Soundtrack state ─────────────────────────────────────────────────────
+// Two tracks that CROSSFADE rather than hard-cut: the "Jakes Jam" theme
+// underscores menu/lobby; the "bassradian" loops drive world/match. A context
+// flag decides which is live; a per-element RAF fade smooths every transition
+// (menu↔world and loop→loop) so nothing clicks or drops out — the main
+// game-feel win over the initial hard-switch.
+type MusicContext = "menu" | "world";
+let musicContext: MusicContext = "menu";
+const CROSSFADE_MS = 900;
+const musicFades = new WeakMap<HTMLAudioElement, number>();
+
 // Menu/lobby theme — the "Jakes Jam" track, looped.
 const menuMusic = new Audio(getAudioUrl("jakes-jam-theme.mp3"));
 menuMusic.loop = true;
@@ -252,8 +263,13 @@ worldMusic.preload = "auto";
 worldMusic.addEventListener("ended", () => {
   worldTrackIdx = (worldTrackIdx + 1) % WORLD_MUSIC_TRACKS.length;
   worldMusic.src = getAudioUrl(WORLD_MUSIC_TRACKS[worldTrackIdx]!);
-  applyAudioOptions();
-  if (musicContext === "world") void worldMusic.play().catch(() => undefined);
+  worldMusic.muted = musicMutedInput.checked;
+  if (musicContext === "world") {
+    // Fade the next loop up from silence so the seam between tracks doesn't
+    // click — the loops don't share a bar boundary, so a hard cut is audible.
+    worldMusic.volume = 0;
+    void worldMusic.play().then(() => fadeMusic(worldMusic, musicVol(), 700)).catch(() => undefined);
+  }
 });
 restoreOptions();
 
@@ -514,31 +530,50 @@ function restoreOptions() {
   applyAudioOptions();
 }
 
-function applyAudioOptions() {
-  const vol = Number(musicVolumeInput.value) / 100;
-  const muted = musicMutedInput.checked;
-  menuMusic.volume = vol;
-  menuMusic.muted = muted;
-  worldMusic.volume = vol;
-  worldMusic.muted = muted;
+function musicVol(): number {
+  return Number(musicVolumeInput.value) / 100;
 }
 
-// Two-track soundtrack: the "Jakes Jam" theme underscores the menu/lobby; the
-// "bassradian" epic loops drive in-world/match play (cycled for variety). One
-// context flag decides which is live so gesture-unlock + volume/mute apply to
-// the right track.
-type MusicContext = "menu" | "world";
-let musicContext: MusicContext = "menu";
+/** RAF volume ramp on an Audio element; pauses it when it reaches silence.
+ *  Cancels any in-flight fade on the same element so transitions don't fight. */
+function fadeMusic(el: HTMLAudioElement, to: number, ms: number): void {
+  const prev = musicFades.get(el);
+  if (prev !== undefined) cancelAnimationFrame(prev);
+  const from = el.volume;
+  const t0 = performance.now();
+  const tick = (now: number) => {
+    const k = ms <= 0 ? 1 : Math.min(1, (now - t0) / ms);
+    el.volume = Math.max(0, Math.min(1, from + (to - from) * k));
+    if (k < 1) {
+      musicFades.set(el, requestAnimationFrame(tick));
+    } else {
+      musicFades.delete(el);
+      if (to <= 0.001) el.pause();
+    }
+  };
+  musicFades.set(el, requestAnimationFrame(tick));
+}
+
+function applyAudioOptions() {
+  const muted = musicMutedInput.checked;
+  menuMusic.muted = muted;
+  worldMusic.muted = muted;
+  // Live slider: jump the ACTIVE track to the new level (unless it's mid-fade,
+  // where the fade already targets the current level).
+  const active = musicContext === "world" ? worldMusic : menuMusic;
+  if (!musicFades.has(active)) active.volume = musicVol();
+}
 
 function playCurrentMusic() {
-  applyAudioOptions();
-  if (musicContext === "world") {
-    menuMusic.pause();
-    void worldMusic.play().catch(() => undefined);
-  } else {
-    worldMusic.pause();
-    void menuMusic.play().catch(() => undefined);
-  }
+  const active = musicContext === "world" ? worldMusic : menuMusic;
+  const other = musicContext === "world" ? menuMusic : worldMusic;
+  menuMusic.muted = musicMutedInput.checked;
+  worldMusic.muted = musicMutedInput.checked;
+  // Crossfade: bring the active track up from wherever it is, fade the other
+  // out (and pause it at the end).
+  if (active.paused) active.volume = 0;
+  void active.play().then(() => fadeMusic(active, musicVol(), CROSSFADE_MS)).catch(() => undefined);
+  if (!other.paused) fadeMusic(other, 0, CROSSFADE_MS);
 }
 
 function startMenuMusic() {

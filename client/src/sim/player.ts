@@ -36,11 +36,14 @@ const M = {
   crouchHeight: 38,
   // ── Wall movement (SMB / Warframe) — replaces the jetpack. ────────────
   // Grippy wall-slide: capped descent while pressing into a wall airborne.
-  wallSlideMaxFall: 200,
-  // Wall-jump: up + away kick. vy a touch under a floor jump; vx a firm
-  // horizontal shove off the wall.
-  wallJumpVy: -560,
-  wallJumpVx: 430,
+  // Stickier (was 200) so a grip reads as a genuine catch, giving time to
+  // line up the next wall-jump.
+  wallSlideMaxFall: 175,
+  // Wall-jump: up + away kick. vy now matches a floor jump so a climb feels
+  // decisive (~3 jumps up a full shaft, was ~5); vx a firm shove off the
+  // wall, eased slightly (was 430) so narrow shafts don't overshoot.
+  wallJumpVy: -640,
+  wallJumpVx: 420,
   // Wall-bang: rebound off a wall hit at speed when NOT gripping it.
   wallRestitution: 0.5,
   // Below this fall speed a fresh wall-touch "latches" (near-zero vy) for a
