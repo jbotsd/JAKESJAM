@@ -20,12 +20,22 @@ import type { ParticlePool } from "../systems/ParticlePool";
 import type { RenderLayer } from "./RenderLayer";
 
 /**
- * Audio surface the router needs. Matches GameAudioSystem.play
- * shape — kept as a tiny structural interface so unit tests can
- * stub it without instantiating audio.
+ * Audio surface the router needs. Procedural synth: each cue takes optional
+ * params (element / charge / intensity) so weapon + shield sounds are
+ * nuanced by game state. Kept structural so unit tests can stub it.
  */
 export type AudioPlayer = {
-  play(cue: "shoot" | "hit" | "explosion" | "pickup" | "card"): void;
+  play(
+    cue:
+      | "shoot"
+      | "hit"
+      | "explosion"
+      | "pickup"
+      | "card"
+      | "parry"
+      | "shield-break",
+    params?: { element?: string; charge?: number; intensity?: number; heavy?: boolean },
+  ): void;
 };
 
 /**
@@ -53,6 +63,12 @@ export type SimEventRouterDeps = {
   /** P3 cinematic kill moment (flash + zoom-punch + bloom). No-op when
    *  cinematics are disabled (Canvas fallback / ?fx=off). */
   killCinematic: (victimId: PlayerId | string) => void;
+
+  /** Resolve procedural-audio params (element/charge) for a shot by its
+   *  firing player — the scene looks these up from sim state. */
+  shotAudioParams?: (
+    playerId: PlayerId | string,
+  ) => { element?: string; charge?: number; heavy?: boolean } | undefined;
 
   /** Warm-tint the platforms within blast range of `pos`. */
   spawnPlatformBlastTint: (pos: { x: number; y: number }) => void;
@@ -104,14 +120,14 @@ export class SimEventRouter {
     const scene = d.scene;
     switch (event.t) {
       case "shot-fired":
-        audio.play("shoot");
+        audio.play("shoot", d.shotAudioParams?.(event.playerId));
         if (event.playerId === d.localPlayerId) {
           // Tiny recoil shake on local-player fire — guard stacking.
           d.safeShake(40, 0.0015);
         }
         break;
       case "hit-confirmed": {
-        audio.play("hit");
+        audio.play("hit", { intensity: Math.min(1, event.damage / 40) });
         // Hit-stop: freeze render tweens for 35–50ms on a heavy hit.
         // Per game-feel-juice/SKILL.md recipe 2 — render-only freeze, sim keeps ticking.
         const stopMs = event.damage >= 30 ? 50 : 35;
@@ -158,10 +174,10 @@ export class SimEventRouter {
         audio.play("pickup");
         break;
       case "parry-deflected":
-        audio.play("hit");
+        audio.play("parry");
         break;
       case "shield-popped": {
-        audio.play("explosion");
+        audio.play("shield-break", { intensity: 0.7 });
         d.spawnBlastAtPlayer(event.playerId, 36, 26);
         break;
       }

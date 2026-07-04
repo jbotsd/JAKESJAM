@@ -2,6 +2,32 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
+    <!-- Boot diagnostic (mobile has no devtools): surface ANY uncaught error /
+         rejection as an on-screen red overlay so a black-screen failure is
+         legible. Inline in <head> so it runs before the module bundle and
+         catches module-load failures too. Harmless when nothing throws. -->
+    <script>
+      (function () {
+        function show(label, detail) {
+          var d = document.getElementById("jj-boot-err");
+          if (!d) {
+            d = document.createElement("div");
+            d.id = "jj-boot-err";
+            d.style.cssText =
+              "position:fixed;inset:0;z-index:99999;background:#180505;color:#ff9a9a;font:12px/1.4 monospace;padding:16px;overflow:auto;white-space:pre-wrap;";
+            (document.body || document.documentElement).appendChild(d);
+          }
+          d.textContent += label + ": " + detail + "\n\n";
+        }
+        window.addEventListener("error", function (e) {
+          show("ERROR", (e.message || "") + "\n" + ((e.error && e.error.stack) || e.filename || ""));
+        });
+        window.addEventListener("unhandledrejection", function (e) {
+          var r = e.reason || {};
+          show("PROMISE", typeof r === "string" ? r : (r.message || "") + "\n" + (r.stack || ""));
+        });
+      })();
+    </script>
     <!-- Mobile: lock zoom (the game handles its own scaling), fill the screen
          edge-to-edge, and extend under notches (safe-area insets in CSS). -->
     <meta

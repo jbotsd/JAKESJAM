@@ -47,7 +47,7 @@ import { computeBotInput } from "../../debug/botDriver";
 import { BOT_RIG_COLOR, botLabel, isBotId, playerTag } from "../ui/botIdentity";
 import { characters } from "../data/characters";
 import { ProceduralPlayerRig } from "../rendering/ProceduralPlayerRig";
-import { GameAudioSystem } from "../systems/AudioSystem";
+import { ProceduralAudio } from "../systems/ProceduralAudio";
 import {
   CardDraftOverlay,
   type CardPickHandler,
@@ -262,7 +262,9 @@ export class OnlineMatchScene extends Phaser.Scene {
   private connectionOverlay: ConnectionOverlay | null = null;
 
   // ---- Audio + overlays ----
-  private audio?: GameAudioSystem;
+  private audio?: ProceduralAudio;
+  /** Tracks the local player's shield state to drive shield-up / hum audio. */
+  private prevLocalShield = false;
   private cardDraftOverlay?: CardDraftOverlay;
   private matchResultsOverlay?: MatchResultsOverlay;
   private matchHasEnded = false;
@@ -349,7 +351,10 @@ export class OnlineMatchScene extends Phaser.Scene {
       detKey.on("down", () => this.toggleDetOverlay());
     }
 
-    this.audio = new GameAudioSystem(this);
+    this.audio = new ProceduralAudio();
+    // Web Audio unlocks on a user gesture (matches the global audio-unlock).
+    this.input.once("pointerdown", () => this.audio?.unlock());
+    this.input.keyboard?.once("keydown", () => this.audio?.unlock());
     this.cardDraftOverlay = new CardDraftOverlay();
     this.matchResultsOverlay = new MatchResultsOverlay();
 
@@ -594,6 +599,7 @@ export class OnlineMatchScene extends Phaser.Scene {
 
     this.renderWorld(state, deltaMs, now);
     this.followLocalPlayer(state);
+    this.updateShieldAudio(state);
     this.updateHudSystem(state);
     this.maybeShowMatchResults(state);
 
@@ -901,6 +907,7 @@ export class OnlineMatchScene extends Phaser.Scene {
         spawnDamageNumber: (vid, dmg) => this.spawnDamageNumber(vid, dmg),
         spawnBlastAtPlayer: (pid, r, d) => this.spawnBlastAtPlayer(pid, r, d),
         killCinematic: (vid) => this.killCinematic(vid),
+        shotAudioParams: (pid) => this.resolveShotAudioParams(pid),
         spawnPlatformBlastTint: (pos) => this.spawnPlatformBlastTint(pos),
         showCardDraft: (cardIds) => this.showCardDraft(cardIds),
         hideCardDraft: () => this.cardDraftOverlay?.hide(),
@@ -986,6 +993,46 @@ export class OnlineMatchScene extends Phaser.Scene {
         });
       },
     });
+  }
+
+  /**
+   * Resolve procedural-audio params for a shot by its firing player: the
+   * element comes from that player's most recent live projectile (so the
+   * sound matches the actual round fired). Best-effort — undefined falls back
+   * to a neutral shot.
+   */
+  private resolveShotAudioParams(
+    playerId: string,
+  ): { element?: string; charge?: number; heavy?: boolean } | undefined {
+    const state = this.loop?.getRenderState();
+    if (!state) return undefined;
+    let newest: { element: string; id: number } | undefined;
+    for (const [idStr, proj] of Object.entries(state.projectiles)) {
+      if (proj.ownerId !== playerId) continue;
+      const id = Number(idStr);
+      if (!newest || id > newest.id) newest = { element: proj.element, id };
+    }
+    const player = state.players[PlayerId(playerId)];
+    // Overcharge buff → treat as charge for a beefier shot sound.
+    const charge =
+      player?.overchargeUntilTick !== undefined && (player.overchargeUntilTick as number) > state.tick
+        ? 0.7
+        : 0;
+    const heavy = player?.characterId === "heavy";
+    return { element: newest?.element, charge, heavy };
+  }
+
+  /**
+   * Drive shield-up / continuous hum audio off the LOCAL player's shield
+   * state. Called each frame; edge-detects the shieldActive transition.
+   */
+  private updateShieldAudio(state: WorldState): void {
+    if (!this.audio) return;
+    const me = state.players[this.localPlayerId];
+    const active = me?.shieldActive === true && me.alive;
+    if (active && !this.prevLocalShield) this.audio.play("shield-up");
+    else if (!active && this.prevLocalShield) this.audio.setShieldHum(false);
+    this.prevLocalShield = active;
   }
 
   /** Spawn a visual blast at the current world position of a player entity. */
