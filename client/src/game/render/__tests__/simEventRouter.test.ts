@@ -18,6 +18,7 @@ function makeDeps(): {
   shakeCalls: Array<[number, number]>;
   damageNumbers: Array<[string, number]>;
   blasts: Array<[string, number, number]>;
+  killCinematics: string[];
   blastTints: Array<{ x: number; y: number }>;
   shownCardOffers: string[][];
   hideCardCalls: number;
@@ -33,6 +34,7 @@ function makeDeps(): {
   const shakeCalls: Array<[number, number]> = [];
   const damageNumbers: Array<[string, number]> = [];
   const blasts: Array<[string, number, number]> = [];
+  const killCinematics: string[] = [];
   const blastTints: Array<{ x: number; y: number }> = [];
   const shownCardOffers: string[][] = [];
   let hideCardCalls = 0;
@@ -93,6 +95,9 @@ function makeDeps(): {
     spawnBlastAtPlayer(pid, r, d) {
       blasts.push([String(pid), r, d]);
     },
+    killCinematic(vid) {
+      killCinematics.push(String(vid));
+    },
     spawnPlatformBlastTint(pos) {
       blastTints.push(pos);
     },
@@ -115,6 +120,7 @@ function makeDeps(): {
     shakeCalls,
     damageNumbers,
     blasts,
+    killCinematics,
     blastTints,
     shownCardOffers,
     get hideCardCalls() {
@@ -208,6 +214,7 @@ describe("SimEventRouter — C2b contract", () => {
     expect(env.tweens.timeScale).toBe(0);
     expect(env.audioCalls).toEqual(["explosion", "hit"]);
     expect(env.blasts).toEqual([["remote", 36, 50]]);
+    expect(env.killCinematics).toEqual(["remote"]); // P3 kill moment fired
     // Big shake (180/0.012) + killer kick (120/0.006) since LOCAL got the kill.
     expect(env.shakeCalls).toEqual([
       [180, 0.012],

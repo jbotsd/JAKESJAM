@@ -131,10 +131,19 @@ renderer falls back to Canvas (`Phaser.AUTO` → no WebGL → skip pipelines).
   language table, shaped+glowing+trailed bodies in the live coordinator,
   muzzle flash on `shot-fired`, element impact/fizzle on despawn. Closes
   the visual layer for every shot. No shaders.
-- **P2 — Pathing/impact richness:** bounce ticks, explosive blast reuse,
-  sticky fuse blink, element-specific impacts (bolt fork, void implosion).
-- **P3 — Shaders (opt-in):** additive bloom PostFX, impact chromatic
-  pulse, kill color-grade, behind a quality flag with Canvas fallback.
+- **P2 — Pathing/impact richness (DONE 2026-07-04):** bounce ticks
+  (velocity-flip inference), explosive blast circle (impactRadiusPx),
+  sticky fuse blink, and element-specific impacts — lightning fork bolt,
+  void implosion (inward ring + inward sparks), fire embers, ice shatter,
+  radiant flash, toxic linger cloud, sticky splat, crystal prism fan.
+- **P3 — Cinematic tier (DONE 2026-07-04, adapted):** Phaser 4.1 dropped
+  the Phaser-3 PostFXPipeline API (only BaseShader remains), so a custom
+  fragment-shader bloom pipeline isn't viable/stable. Adapted to built-in
+  camera FX: KILL moment = camera flash + micro zoom-punch + additive
+  bloom pop (the additive-glow layer IS the bloom). Gated by
+  `combatCinematics` (WebGL only; `?fx=off` opt-out; Canvas fallback
+  skips it). True fragment-shader bloom/chromatic remains a future item
+  if/when Phaser exposes a stable post-pipeline API.
 
 New sim events worth adding for P2 (all additive, optional): none strictly
 required — despawn-diff + `hit-confirmed` + `parry-deflected` cover P1.

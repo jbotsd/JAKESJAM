@@ -53,6 +53,14 @@ type BotState = {
   /** Draft pick delay so picks don't look instant. */
   draftPickAt: number | null;
   lastDraftRound: number;
+  /** Stuck detection — bots have no terrain map, so we detect "intended to
+   *  move horizontally but didn't" and jump/reverse to unstick (fixes bots
+   *  pinning themselves against walls and ledges). */
+  lastX: number;
+  stuckTicks: number;
+  /** While nowMs < unstickUntil, override movement to unstickDir + hop. */
+  unstickUntil: number;
+  unstickDir: -1 | 1;
 };
 
 const BOT_TUNING = {
@@ -100,6 +108,10 @@ export class WorldBots {
         parryReadyAt: 0,
         draftPickAt: null,
         lastDraftRound: -1,
+        lastX: 0,
+        stuckTicks: 0,
+        unstickUntil: 0,
+        unstickDir: 1,
       });
       out.push({ playerId: id, name });
     }
@@ -163,19 +175,42 @@ export class WorldBots {
     const retreating = me.health <= BOT_TUNING.retreatHp;
 
     // Movement: hold engage range; retreat widens it. Strafe jitter on top.
+    // `moveDir` is the INTENDED horizontal direction this tick (-1/0/1); the
+    // stuck detector below watches whether the bot actually moved.
     const targetRange = retreating ? 520 : BOT_TUNING.engageRange;
+    let moveDir: -1 | 0 | 1 = 0;
     if (Math.abs(dist - targetRange) > 60) {
-      const toward = dist > targetRange ? Math.sign(dx) : -Math.sign(dx);
-      if (toward < 0) keys |= InputBit.Left;
-      if (toward > 0) keys |= InputBit.Right;
+      moveDir = (dist > targetRange ? Math.sign(dx) : -Math.sign(dx)) as -1 | 0 | 1;
     } else {
       if (nowMs > bot.strafeUntil) {
         bot.strafeDir = bot.rand() < 0.5 ? -1 : 1;
         bot.strafeUntil = nowMs + 350 + bot.rand() * 650;
       }
-      if (bot.strafeDir < 0) keys |= InputBit.Left;
-      if (bot.strafeDir > 0) keys |= InputBit.Right;
+      moveDir = bot.strafeDir;
     }
+
+    // Unstick: bots have no terrain map. If a horizontal intent produced no
+    // horizontal movement for a stretch, the bot is jammed on a wall/ledge —
+    // reverse and hop for a short window to path around it.
+    const moved = Math.abs(me.x - bot.lastX);
+    if (moveDir !== 0 && moved < 0.6) bot.stuckTicks += 1;
+    else bot.stuckTicks = 0;
+    if (bot.stuckTicks >= 10 && nowMs >= bot.unstickUntil) {
+      // Reverse away from whatever we were pushing into; hop to clear ledges.
+      bot.unstickDir = (moveDir !== 0 ? -moveDir : bot.rand() < 0.5 ? -1 : 1) as -1 | 1;
+      bot.unstickUntil = nowMs + 450 + bot.rand() * 350;
+      bot.stuckTicks = 0;
+    }
+    bot.lastX = me.x;
+
+    if (nowMs < bot.unstickUntil) {
+      // Override toward the unstick direction and jump to get over the lip.
+      moveDir = bot.unstickDir;
+      if (me.grounded ?? true) keys |= InputBit.Jump;
+    }
+
+    if (moveDir < 0) keys |= InputBit.Left;
+    if (moveDir > 0) keys |= InputBit.Right;
 
     // Vertical: chase height advantage occasionally; hop at ledges.
     if (foe.y < me.y - 90 && bot.rand() < 0.05) keys |= InputBit.Jump;

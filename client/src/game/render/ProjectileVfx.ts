@@ -81,7 +81,20 @@ export class ProjectileVfx {
   private readonly trailGfx: Phaser.GameObjects.Graphics;
   private readonly trails = new Map<number, Trail>();
   private readonly halos = new Map<number, Phaser.GameObjects.Image>();
-  private readonly lastPos = new Map<number, { x: number; y: number; element: string; radius: number }>();
+  private readonly lastPos = new Map<
+    number,
+    {
+      x: number;
+      y: number;
+      vx: number;
+      vy: number;
+      element: string;
+      radius: number;
+      impact: string;
+      impactRadiusPx: number;
+      pathing: string;
+    }
+  >();
 
   constructor(scene: Phaser.Scene, pool: ParticlePool | null) {
     this.scene = scene;
@@ -140,23 +153,75 @@ export class ProjectileVfx {
         py = y;
       });
 
+      // P2 — bounce tell: a 'bounce'-pathing shard reflecting off a wall
+      // flips a velocity axis sharply between frames. Spark-tick at the
+      // contact so it reads as a skillful ricochet, not a glitch.
+      const prev = this.lastPos.get(id);
+      if (
+        prev &&
+        proj.pathing === "bounce" &&
+        (Math.sign(proj.vx) !== Math.sign(prev.vx) || Math.sign(proj.vy) !== Math.sign(prev.vy))
+      ) {
+        this.bounceTick(proj.x, proj.y, color);
+      }
+
       // Halo — one pooled additive glow following the body.
       this.updateHalo(id, proj.x, proj.y, radius * lang.glowScale, color);
 
-      // Body — element core over a resolved-color shell, shape-correct.
-      this.drawBody(body, proj.shape, proj.x, proj.y, radius, angle, color, lang.core);
+      // P2 — sticky fuse blink: a stuck shard counting down to detonation
+      // pulses so the threat is legible. Faster blink as the fuse shortens.
+      let bodyAlpha = 1;
+      if (proj.stickyFuseMs !== undefined && proj.stickyFuseMs > 0) {
+        const hz = proj.stickyFuseMs < 400 ? 18 : 9;
+        bodyAlpha = 0.55 + 0.45 * Math.abs(Math.sin((proj.stickyFuseMs / 1000) * hz));
+      }
 
-      this.lastPos.set(id, { x: proj.x, y: proj.y, element: proj.element, radius });
+      // Body — element core over a resolved-color shell, shape-correct.
+      this.drawBody(body, proj.shape, proj.x, proj.y, radius, angle, color, lang.core, bodyAlpha);
+
+      this.lastPos.set(id, {
+        x: proj.x,
+        y: proj.y,
+        vx: proj.vx,
+        vy: proj.vy,
+        element: proj.element,
+        radius,
+        impact: proj.impact ?? "none",
+        impactRadiusPx: proj.impactRadiusPx ?? 0,
+        pathing: proj.pathing,
+      });
     }
 
-    // Despawn diff → impact/fizzle, release halo + trail.
+    // Despawn diff → element impact/fizzle, release halo + trail.
     for (const id of [...this.trails.keys()]) {
       if (seen.has(id)) continue;
       const last = this.lastPos.get(id);
-      if (last) this.impact(last.x, last.y, last.element, last.radius);
+      if (last) {
+        this.impact(last.x, last.y, last.element, last.radius, last.impact, last.impactRadiusPx);
+      }
       this.releaseHalo(id);
       this.trails.delete(id);
       this.lastPos.delete(id);
+    }
+  }
+
+  /** P2 — small ricochet spark + glow tick at a wall bounce. */
+  private bounceTick(x: number, y: number, color: number): void {
+    const pool = this.pool;
+    if (!pool) return;
+    const glow = pool.acquireGlow();
+    if (glow) {
+      const scale = (8 / GLOW_TEXTURE_SIZE) * 2;
+      glow.setPosition(x, y).setTint(color).setAlpha(0.7).setScale(scale).setDepth(HALO_DEPTH);
+      this.tweenRelease(glow, { alpha: 0, scaleX: scale * 1.6, scaleY: scale * 1.6 }, 130);
+    }
+    for (let i = 0; i < 2; i += 1) {
+      const s = pool.acquireSpark();
+      if (!s) break;
+      const a = Math.random() * Math.PI * 2;
+      const dist = 8 + Math.random() * 8;
+      s.setPosition(x, y).setFillStyle(color, 1).setDepth(HALO_DEPTH).setRotation(a);
+      this.tweenRelease(s, { x: x + Math.cos(a) * dist, y: y + Math.sin(a) * dist, alpha: 0 }, 150);
     }
   }
 
@@ -185,25 +250,234 @@ export class ProjectileVfx {
     }
   }
 
-  /** Impact / fizzle on despawn — element spark fan + ring. */
-  private impact(x: number, y: number, element: string, radius: number): void {
+  /**
+   * P2 — element-flavored impact/fizzle on despawn. Explosive impact behavior
+   * (from the card build) upgrades any element to a blast circle scaled to
+   * `impactRadiusPx`. Each element then adds its signature burst.
+   */
+  private impact(
+    x: number,
+    y: number,
+    element: string,
+    radius: number,
+    impactBehavior = "none",
+    impactRadiusPx = 0,
+  ): void {
     const pool = this.pool;
     if (!pool) return;
     const color = elementVfx(element).core;
-    const ring = pool.acquireRing();
-    if (ring) {
-      ring.setPosition(x, y).setScale(0.2).setAlpha(0.8).setDepth(HALO_DEPTH);
-      (ring as unknown as { setStrokeStyle?: (w: number, c: number) => void }).setStrokeStyle?.(2, color);
-      this.tweenRelease(ring, { scaleX: 1.4, scaleY: 1.4, alpha: 0 }, 220);
+
+    if (impactBehavior === "explosive" && impactRadiusPx > 0) {
+      this.blast(x, y, impactRadiusPx, color);
     }
-    const fan = Math.min(6, 3 + Math.round(radius / 4));
-    for (let i = 0; i < fan; i += 1) {
+
+    switch (element) {
+      case "lightning":
+      case "electric":
+        this.forkBolt(x, y, color);
+        this.sparkFan(x, y, color, 4, 16, 180);
+        break;
+      case "void":
+        this.implosion(x, y, color);
+        break;
+      case "fire":
+        this.embers(x, y, color);
+        this.ring(x, y, color, 1.3, 200);
+        break;
+      case "ice":
+        this.ring(x, y, 0xe8ffff, 1.5, 160); // crisp fast shatter ring
+        this.shatter(x, y, color);
+        break;
+      case "radiant":
+        this.flashGlow(x, y, color, 20, 260);
+        this.ring(x, y, color, 1.6, 260);
+        break;
+      case "toxic":
+        this.lingerCloud(x, y, color);
+        break;
+      case "sticky":
+        this.splat(x, y, color);
+        break;
+      case "explosive":
+        // The blast above already fired if configured; add a punchy fan.
+        this.sparkFan(x, y, color, 6, 20, 220);
+        this.ring(x, y, color, 1.5, 200);
+        break;
+      case "crystal":
+        this.prismFan(x, y);
+        this.ring(x, y, color, 1.3, 220);
+        break;
+      default:
+        this.ring(x, y, color, 1.4, 220);
+        this.sparkFan(x, y, color, Math.min(6, 3 + Math.round(radius / 4)), 14, 200);
+        break;
+    }
+  }
+
+  // ── Impact primitives ────────────────────────────────────────────────
+
+  private ring(x: number, y: number, color: number, toScale: number, ms: number): void {
+    const ring = this.pool?.acquireRing();
+    if (!ring) return;
+    ring.setPosition(x, y).setScale(0.2).setAlpha(0.8).setDepth(HALO_DEPTH);
+    (ring as unknown as { setStrokeStyle?: (w: number, c: number) => void }).setStrokeStyle?.(2, color);
+    this.tweenRelease(ring, { scaleX: toScale, scaleY: toScale, alpha: 0 }, ms);
+  }
+
+  private sparkFan(x: number, y: number, color: number, count: number, reach: number, ms: number): void {
+    const pool = this.pool;
+    if (!pool) return;
+    for (let i = 0; i < count; i += 1) {
       const s = pool.acquireSpark();
       if (!s) break;
-      const a = (i / fan) * Math.PI * 2 + Math.random() * 0.4;
-      const dist = 10 + Math.random() * 14;
+      const a = (i / count) * Math.PI * 2 + Math.random() * 0.4;
+      const dist = reach * 0.7 + Math.random() * reach;
       s.setPosition(x, y).setFillStyle(color, 1).setDepth(HALO_DEPTH).setRotation(a);
-      this.tweenRelease(s, { x: x + Math.cos(a) * dist, y: y + Math.sin(a) * dist, alpha: 0 }, 200);
+      this.tweenRelease(s, { x: x + Math.cos(a) * dist, y: y + Math.sin(a) * dist, alpha: 0 }, ms);
+    }
+  }
+
+  private flashGlow(x: number, y: number, color: number, px: number, ms: number): void {
+    const glow = this.pool?.acquireGlow();
+    if (!glow) return;
+    const scale = (px / GLOW_TEXTURE_SIZE) * 2;
+    glow.setPosition(x, y).setTint(color).setAlpha(0.95).setScale(scale * 0.6).setDepth(HALO_DEPTH);
+    this.tweenRelease(glow, { alpha: 0, scaleX: scale * 1.6, scaleY: scale * 1.6 }, ms);
+  }
+
+  /** Explosive: additive blast circle scaled to the AoE radius + core flash. */
+  private blast(x: number, y: number, radiusPx: number, color: number): void {
+    const pool = this.pool;
+    if (!pool) return;
+    const circle = pool.acquireBlastCircle();
+    if (circle) {
+      circle.setPosition(x, y).setDepth(HALO_DEPTH).setAlpha(0.5);
+      (circle as unknown as { setRadius?: (r: number) => void }).setRadius?.(radiusPx * 0.4);
+      (circle as unknown as { setFillStyle?: (c: number, a: number) => void }).setFillStyle?.(color, 0.5);
+      this.tweenRelease(circle, { scaleX: 2.4, scaleY: 2.4, alpha: 0 }, 260);
+    }
+    this.flashGlow(x, y, color, radiusPx * 0.7, 200);
+    this.sparkFan(x, y, color, 8, radiusPx * 0.6, 260);
+  }
+
+  /** Lightning: a few jagged forks from the impact point. */
+  private forkBolt(x: number, y: number, color: number): void {
+    const bolt = this.pool?.acquireBolt();
+    if (!bolt) return;
+    const g = bolt as unknown as {
+      clear: () => void;
+      lineStyle: (w: number, c: number, a?: number) => void;
+      beginPath: () => void;
+      moveTo: (x: number, y: number) => void;
+      lineTo: (x: number, y: number) => void;
+      strokePath: () => void;
+      setDepth: (d: number) => void;
+      setBlendMode: (m: number) => void;
+    };
+    g.clear();
+    g.setBlendMode(1);
+    g.setDepth(HALO_DEPTH);
+    g.lineStyle(2, color, 0.9);
+    const forks = 3;
+    for (let f = 0; f < forks; f += 1) {
+      const dir = (f / forks) * Math.PI * 2 + Math.random();
+      g.beginPath();
+      g.moveTo(x, y);
+      let cx = x;
+      let cy = y;
+      for (let seg = 0; seg < 3; seg += 1) {
+        const len = 8 + Math.random() * 10;
+        cx += Math.cos(dir) * len + (Math.random() - 0.5) * 8;
+        cy += Math.sin(dir) * len + (Math.random() - 0.5) * 8;
+        g.lineTo(cx, cy);
+      }
+      g.strokePath();
+    }
+    this.tweenRelease(bolt, { alpha: 0 }, 150);
+  }
+
+  /** Void: a ring that collapses INWARD + sparks pulled toward the center. */
+  private implosion(x: number, y: number, color: number): void {
+    const pool = this.pool;
+    if (!pool) return;
+    const ring = pool.acquireRing();
+    if (ring) {
+      ring.setPosition(x, y).setScale(1.6).setAlpha(0.9).setDepth(HALO_DEPTH);
+      (ring as unknown as { setStrokeStyle?: (w: number, c: number) => void }).setStrokeStyle?.(2, color);
+      this.tweenRelease(ring, { scaleX: 0.1, scaleY: 0.1, alpha: 0 }, 260);
+    }
+    for (let i = 0; i < 5; i += 1) {
+      const s = pool.acquireSpark();
+      if (!s) break;
+      const a = (i / 5) * Math.PI * 2;
+      const dist = 20 + Math.random() * 10;
+      s.setPosition(x + Math.cos(a) * dist, y + Math.sin(a) * dist)
+        .setFillStyle(color, 1)
+        .setDepth(HALO_DEPTH)
+        .setRotation(a);
+      this.tweenRelease(s, { x, y, alpha: 0 }, 220); // drawn INWARD
+    }
+  }
+
+  /** Fire: embers that drift outward-up, warm fade. */
+  private embers(x: number, y: number, color: number): void {
+    const pool = this.pool;
+    if (!pool) return;
+    for (let i = 0; i < 6; i += 1) {
+      const s = pool.acquireShard() ?? pool.acquireSpark();
+      if (!s) break;
+      const a = -Math.PI / 2 + (Math.random() - 0.5) * 1.8;
+      const dist = 10 + Math.random() * 18;
+      s.setPosition(x, y).setFillStyle(color, 1).setDepth(HALO_DEPTH).setRotation(Math.random() * Math.PI);
+      this.tweenRelease(
+        s,
+        { x: x + Math.cos(a) * dist, y: y + Math.sin(a) * dist - 8, alpha: 0 },
+        280 + Math.random() * 120,
+      );
+    }
+  }
+
+  /** Ice: sharp shards flung fast + outward. */
+  private shatter(x: number, y: number, color: number): void {
+    const pool = this.pool;
+    if (!pool) return;
+    for (let i = 0; i < 6; i += 1) {
+      const s = pool.acquireShard() ?? pool.acquireSpark();
+      if (!s) break;
+      const a = (i / 6) * Math.PI * 2;
+      const dist = 16 + Math.random() * 12;
+      s.setPosition(x, y).setFillStyle(color, 1).setDepth(HALO_DEPTH).setRotation(a);
+      this.tweenRelease(s, { x: x + Math.cos(a) * dist, y: y + Math.sin(a) * dist, alpha: 0 }, 140);
+    }
+  }
+
+  /** Toxic: a dim green glow that lingers, then fades. */
+  private lingerCloud(x: number, y: number, color: number): void {
+    const glow = this.pool?.acquireGlow();
+    if (!glow) return;
+    const scale = (18 / GLOW_TEXTURE_SIZE) * 2;
+    glow.setPosition(x, y).setTint(color).setAlpha(0.5).setScale(scale).setDepth(HALO_DEPTH);
+    this.tweenRelease(glow, { alpha: 0, scaleX: scale * 1.3, scaleY: scale * 1.3 }, 600);
+  }
+
+  /** Sticky: a short glob splat + a couple of dribbles. */
+  private splat(x: number, y: number, color: number): void {
+    this.flashGlow(x, y, color, 12, 180);
+    this.sparkFan(x, y, color, 3, 8, 160);
+  }
+
+  /** Crystal: prismatic fan — sparks tinted across a small hue set. */
+  private prismFan(x: number, y: number): void {
+    const pool = this.pool;
+    if (!pool) return;
+    const hues = [0xff88ff, 0x88ffff, 0xffff88, 0xff99cc];
+    for (let i = 0; i < 6; i += 1) {
+      const s = pool.acquireSpark();
+      if (!s) break;
+      const a = (i / 6) * Math.PI * 2 + Math.random() * 0.3;
+      const dist = 12 + Math.random() * 12;
+      s.setPosition(x, y).setFillStyle(hues[i % hues.length]!, 1).setDepth(HALO_DEPTH).setRotation(a);
+      this.tweenRelease(s, { x: x + Math.cos(a) * dist, y: y + Math.sin(a) * dist, alpha: 0 }, 220);
     }
   }
 
@@ -244,11 +518,12 @@ export class ProjectileVfx {
     angle: number,
     color: number,
     core: number,
+    bodyAlpha = 1,
   ): void {
     const cos = Math.cos(angle);
     const sin = Math.sin(angle);
     const rot = (dx: number, dy: number): [number, number] => [x + dx * cos - dy * sin, y + dx * sin + dy * cos];
-    g.fillStyle(color, 0.95);
+    g.fillStyle(color, 0.95 * bodyAlpha);
     switch (shape) {
       case "triangle": {
         const p0 = rot(r * 1.6, 0);
@@ -286,7 +561,7 @@ export class ProjectileVfx {
       }
       case "x": {
         const arm = r * 1.4;
-        g.lineStyle(Math.max(2, r * 0.6), color, 0.95);
+        g.lineStyle(Math.max(2, r * 0.6), color, 0.95 * bodyAlpha);
         for (const base of [angle + Math.PI / 4, angle - Math.PI / 4]) {
           g.lineBetween(x - Math.cos(base) * arm, y - Math.sin(base) * arm, x + Math.cos(base) * arm, y + Math.sin(base) * arm);
         }
@@ -295,7 +570,7 @@ export class ProjectileVfx {
       case "bar": {
         // Capsule stretched along velocity.
         const half = r * 2.2;
-        g.lineStyle(Math.max(2, r * 1.2), color, 0.95);
+        g.lineStyle(Math.max(2, r * 1.2), color, 0.95 * bodyAlpha);
         g.lineBetween(x - cos * half, y - sin * half, x + cos * half, y + sin * half);
         break;
       }
@@ -306,7 +581,7 @@ export class ProjectileVfx {
         break;
     }
     // Hot core — a small bright dot reads as energy regardless of shape.
-    g.fillStyle(core, 1);
+    g.fillStyle(core, bodyAlpha);
     g.fillCircle(x, y, Math.max(1, r * 0.45));
   }
 

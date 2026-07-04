@@ -246,6 +246,23 @@
   bloom/chromatic/color-grade shaders) specced but deferred. New
   projectileVfx.test.ts (totality + pool-null safety + trail-cap) and
   updated entityRenderCoordinator.test.ts for the new draw path.
+- **Combat VFX P2 + P3 (docs/vfx-spec.md)** — P2: element-flavored
+  impacts (lightning fork bolt, void implosion, fire embers, ice
+  shatter, radiant flash, toxic linger, sticky splat/fuse-blink,
+  crystal prism, explosive blast circle scaled to impactRadiusPx) +
+  bounce-tick spark on 'bounce'-pathing wall reflections (velocity-flip
+  inference). P3: cinematic KILL moment (camera flash + micro zoom-punch
+  + additive bloom pop) via Phaser 4 built-in camera FX — Phaser 4.1
+  dropped the PostFXPipeline API so no fragment-shader bloom; the
+  additive-glow layer is the bloom. Gated by combatCinematics (WebGL
+  only, ?fx=off opt-out, Canvas fallback skips). Verified live: element
+  impacts + explosive blast + damage numbers visible mid-firefight.
+- **Bots no longer get stuck on terrain** — the bot brain had no map
+  awareness and pushed a fixed horizontal direction toward/away from
+  the foe, pinning itself against walls/ledges forever (user report).
+  Added stuck detection (intended-to-move-but-didn't) + unstick (jump +
+  reverse for a short window). Verified live: bots roam the full arena
+  (xRange 700px+), no near-wall stalls. New worldBotsUnstick.test.ts.
 - NOTE: probe runs on a saturated host (e.g. DAW pinning 6 cores)
   produce skewed observations — the probe now warns when
   load/cores > 0.8 and records hostLoadRatio in report.json.

@@ -260,6 +260,9 @@ export class OnlineMatchScene extends Phaser.Scene {
   private particlePool: ParticlePool | null = null;
   private statusVfx: StatusVfxController | null = null;
   private renderLayer: RenderLayer | null = null;
+  /** P3: cinematic combat FX (kill flash/zoom-punch/bloom). Enabled when the
+   *  renderer is WebGL and not disabled via ?fx=off. */
+  private combatCinematics = false;
   // Events arrive via ClientLoop.onEvents; buffer per-frame and drain in update().
   private pendingSimEvents: SimEvent[] = [];
   // Snapshot pending card-offer events queued before the overlay was ready,
@@ -324,6 +327,12 @@ export class OnlineMatchScene extends Phaser.Scene {
     // Pool is pre-allocated (no GC during combat) BEFORE the entity
     // coordinator so projectile VFX (muzzle/trail/impact) can draw from it.
     this.particlePool = new ParticlePool(this);
+
+    // P3: enable cinematic combat FX only on WebGL (camera flash/zoom read
+    // poorly on the Canvas fallback) and honor an opt-out flag.
+    const rendererType = (this.game.renderer as { type?: number } | undefined)?.type;
+    const fxDisabled = new URLSearchParams(window.location.search).get("fx") === "off";
+    this.combatCinematics = !fxDisabled && rendererType === Phaser.WEBGL;
 
     this.entityRender = new EntityRenderCoordinator(
       this,
@@ -837,6 +846,7 @@ export class OnlineMatchScene extends Phaser.Scene {
         safeShake: (durationMs, intensity) => this.safeShake(durationMs, intensity),
         spawnDamageNumber: (vid, dmg) => this.spawnDamageNumber(vid, dmg),
         spawnBlastAtPlayer: (pid, r, d) => this.spawnBlastAtPlayer(pid, r, d),
+        killCinematic: (vid) => this.killCinematic(vid),
         spawnPlatformBlastTint: (pos) => this.spawnPlatformBlastTint(pos),
         showCardDraft: (cardIds) => this.showCardDraft(cardIds),
         hideCardDraft: () => this.cardDraftOverlay?.hide(),
@@ -932,6 +942,52 @@ export class OnlineMatchScene extends Phaser.Scene {
     const player = state.players[PlayerId(playerId)];
     if (!player) return;
     this.renderLayer.spawnExplosionBlast({ x: player.x, y: player.y }, radius, damage);
+  }
+
+  /**
+   * P3 (docs/vfx-spec.md) — cinematic KILL moment: camera flash + micro
+   * zoom-punch + an additive bloom pop at the victim. Built on Phaser 4's
+   * built-in camera FX (Phaser 4.1 dropped the PostFXPipeline API, so no
+   * fragment-shader bloom — the additive-glow layer is the bloom). Gated by
+   * `combatCinematics` so it's off on Canvas fallback or `?fx=off`.
+   */
+  private killCinematic(victimId: string): void {
+    if (!this.combatCinematics) return;
+    const cam = this.cameras.main;
+    // Brief warm flash — sells the "everything pops" beat over the hit-stop.
+    cam.flash(90, 255, 240, 200, false);
+    // Zoom-punch: snap in ~4% then ease back. force=true to interrupt any
+    // in-flight zoom from a previous kill.
+    const base = cam.zoom;
+    cam.zoomTo(base * 1.04, 70, "Quad.easeOut", true);
+    this.time.delayedCall(80, () => {
+      if (this.cameras?.main) this.cameras.main.zoomTo(base, 200, "Quad.easeOut", true);
+    });
+    // Additive bloom pop at the victim.
+    const state = this.loop?.getRenderState();
+    const victim = state?.players[PlayerId(victimId)];
+    const pool = this.particlePool;
+    if (victim && pool) {
+      const glow = pool.acquireGlow();
+      if (glow) {
+        glow
+          .setPosition(victim.x, victim.y)
+          .setTint(0xffe9c0)
+          .setAlpha(0.9)
+          .setScale(0.4)
+          .setDepth(7)
+          .setBlendMode(1);
+        this.tweens.add({
+          targets: glow,
+          alpha: 0,
+          scaleX: 1.6,
+          scaleY: 1.6,
+          duration: 300,
+          ease: "Quad.easeOut",
+          onComplete: () => pool.release(glow),
+        });
+      }
+    }
   }
 
   // ---------------- Arena (static geometry) ----------------

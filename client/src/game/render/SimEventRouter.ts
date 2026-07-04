@@ -50,6 +50,10 @@ export type SimEventRouterDeps = {
     damage: number,
   ) => void;
 
+  /** P3 cinematic kill moment (flash + zoom-punch + bloom). No-op when
+   *  cinematics are disabled (Canvas fallback / ?fx=off). */
+  killCinematic: (victimId: PlayerId | string) => void;
+
   /** Warm-tint the platforms within blast range of `pos`. */
   spawnPlatformBlastTint: (pos: { x: number; y: number }) => void;
 
@@ -134,6 +138,7 @@ export class SimEventRouter {
         });
         d.safeShake(180, 0.012);
         d.spawnBlastAtPlayer(event.victimId, 36, 50);
+        d.killCinematic(event.victimId);
         audio.play("explosion");
         audio.play("hit");
         if (event.killerId !== null && event.killerId === d.localPlayerId) {
