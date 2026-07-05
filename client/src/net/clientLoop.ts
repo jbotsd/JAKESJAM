@@ -5,7 +5,14 @@
 // Render reads from `getRenderState()`. The Phaser scene never mutates state.
 // See docs/netcode-architecture.md "Frame-by-frame, client".
 
-import { STEP_MS, World, hashWorldStateLite } from "../sim/index.js";
+import { STEP_MS, hashWorldStateLite } from "../sim/index.js";
+import {
+  createRuntime,
+  nextEntityIdSeed,
+  stepWithRuntime,
+  type WorldRuntime,
+} from "../sim/World.js";
+import { resolveMap } from "../sim/data/maps.js";
 import { EntityId, InputSeq, PlayerId, Tick } from "../sim/types.js";
 import type {
   InputFrame,
@@ -188,6 +195,10 @@ export class ClientLoop {
 
   private predictedState: WorldState | null = null;
   private authoritativeState: WorldState | null = null;
+  /** Persistent movement memory + prevKeys for local prediction. World.step()
+   *  allocates a fresh runtime every tick (test helper only) which breaks
+   *  jump edge-detect and coyote/buffer state — production uses stepWithRuntime. */
+  private runtime: WorldRuntime | null = null;
   private readonly pendingInputs: InputFrame[] = [];
   private nextInputSeq: InputSeq = InputSeq(1);
   private currentInput: LocalInput = { keys: 0, aimX: 0, aimY: 0 };
@@ -503,7 +514,7 @@ export class ClientLoop {
   }
 
   private stepOnce(): void {
-    if (!this.predictedState) return;
+    if (!this.predictedState || !this.runtime) return;
     const input: InputFrame = {
       seq: (() => { const s = this.nextInputSeq; this.nextInputSeq = InputSeq(this.nextInputSeq + 1); return s; })(),
       tick: this.predictedState.tick,
@@ -517,7 +528,12 @@ export class ClientLoop {
     const inputs: Record<PlayerId, InputFrame | null> = {};
     inputs[this.playerId] = input;
     const beforeProjCount = Object.keys(this.predictedState.projectiles).length;
-    const result = World.step(this.predictedState, inputs, STEP_MS);
+    const result = stepWithRuntime(
+      this.predictedState,
+      this.runtime,
+      inputs,
+      STEP_MS,
+    );
     if (input.keys & (1 << 6)) {
       this.diagFireSteps += 1;
       if (Object.keys(result.state.projectiles).length > beforeProjCount) {
@@ -608,6 +624,7 @@ export class ClientLoop {
       this.slewMsHistory.length = 0;
       this.lastFullReconcileAt = 0;
     }
+    this.runtime = createRuntime(resolveMap(message.mapId));
     this.onHello?.(message);
     this.start();
   }
@@ -810,6 +827,13 @@ export class ClientLoop {
     }
 
     // Replay all pending inputs through the (possibly patched) base state.
+    // Fresh runtime so movement memory matches the rewound base, then replay
+    // rebuilds prevKeys/coyote/buffer state tick-by-tick.
+    if (this.runtime) {
+      const map = this.runtime.map;
+      this.runtime = createRuntime(map);
+      this.runtime.nextEntityId = nextEntityIdSeed(replayState);
+    }
     const replayBasePhase = replayState.round.phase;
     const replayBaseAlive = Object.values(replayState.players).filter((p) => p.alive).length;
     const replayBaseTick = replayState.tick;
@@ -819,7 +843,8 @@ export class ClientLoop {
       replayInputTicks.push(input.tick as number);
       const inputs: Record<PlayerId, InputFrame | null> = {};
       inputs[this.playerId] = input;
-      replayState = World.step(replayState, inputs, STEP_MS).state;
+      if (!this.runtime) break;
+      replayState = stepWithRuntime(replayState, this.runtime, inputs, STEP_MS).state;
       const alive = Object.values(replayState.players).filter((p) => p.alive).length;
       const total = Object.keys(replayState.players).length;
       replaySteps.push(

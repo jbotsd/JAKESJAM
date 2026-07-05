@@ -376,12 +376,13 @@ export class World {
       spawns: [],
       platforms: [],
     });
-    runtime.nextEntityId = nextIdSeed(state);
+    runtime.nextEntityId = nextEntityIdSeed(state);
     return stepWithRuntime(state, runtime, inputsByPlayer, dtMs);
   }
 }
 
-function nextIdSeed(state: WorldState): number {
+/** Next entity id allocator seed from current world contents. */
+export function nextEntityIdSeed(state: WorldState): number {
   let max = 0;
   for (const id of Object.keys(state.projectiles)) max = Math.max(max, Number(id));
   for (const id of Object.keys(state.destructibles)) max = Math.max(max, Number(id));
