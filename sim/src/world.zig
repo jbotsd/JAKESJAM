@@ -347,11 +347,11 @@ pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
 
     // 3. Projectile pre-step lifecycle + motion (I7). Sticky /
     //    lifetime decisions first; for `advance` results the
-    //    motion kernel runs via step_projectile_v2 with empty
-    //    statics + empty players (terrain + player collision
-    //    arrives once the orchestrator owns the static-AABB
-    //    cache + player array indexing).
-    const empty_statics: []const collision_types.AABB = &.{};
+    //    motion kernel runs via step_projectile_v2 with the REAL
+    //    static-AABB cache (terrain collision + bounce). Player
+    //    collision is resolved separately in phase 4; homing needs
+    //    the player array and is a follow-on (empty players here).
+    const proj_statics = state.statics[0..state.static_count];
     const empty_xs: []const f64 = &.{};
     const empty_ys: []const f64 = &.{};
     const empty_alive: []const u8 = &.{};
@@ -385,7 +385,7 @@ pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
             const r = projectile.stepV2(
                 &kine,
                 eff_dt,
-                empty_statics,
+                proj_statics,
                 empty_xs,
                 empty_ys,
                 empty_alive,
@@ -403,7 +403,9 @@ pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
             if (proj_ptr.flags.has_traveled) proj_ptr.traveled_px = kine.traveled_px;
             proj_ptr.flags.returning = kine.returning != 0;
             proj_ptr.bounces_remaining = @intCast(kine.bounces_remaining);
-            _ = r;
+            // Terrain hit on a non-bouncing shard → expire it (stopped at the
+            // wall). End-of-tick compaction removes lifetime<=0 projectiles.
+            if (r.expired != 0) proj_ptr.lifetime_ms = 0;
         }
     }
 

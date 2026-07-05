@@ -52,8 +52,8 @@ pub const GRAB_MIN_H: f64 = 25;
 pub const SHAFT_MAX: f64 = 230;
 pub const WALL_JUMP_UP: f64 = 178;
 pub const GRAB_REACH_SIDE: f64 = 200;
-/** A `structure` platform taller than this is one-way (mirrors
- *  ONE_WAY_MAX_HEIGHT_PX in collision.ts). */
+// A `structure` platform taller than this is one-way (mirrors
+// ONE_WAY_MAX_HEIGHT_PX in collision.ts).
 const ONE_WAY_MAX_HEIGHT: f64 = 24;
 
 const JUMP_V0: f64 = 635;
@@ -693,77 +693,8 @@ pub export fn world_state_generate_arena(
     return clamped;
 }
 
-// ── Tests ────────────────────────────────────────────────────────────────
-
-const testing = std.testing;
-
-test "same seed twice -> identical geometry" {
-    const seeds = [_]u32{ 0, 1, 7, 1234, 999999 };
-    for (seeds) |seed| {
-        const a = generateArena(seed);
-        const b = generateArena(seed);
-        try testing.expectEqual(a.platform_count, b.platform_count);
-        var i: usize = 0;
-        while (i < a.platform_count) : (i += 1) {
-            try testing.expectEqual(a.platforms[i].cx, b.platforms[i].cx);
-            try testing.expectEqual(a.platforms[i].cy, b.platforms[i].cy);
-            try testing.expectEqual(a.platforms[i].w, b.platforms[i].w);
-            try testing.expectEqual(a.platforms[i].h, b.platforms[i].h);
-            try testing.expectEqual(a.platforms[i].kind, b.platforms[i].kind);
-        }
-        try testing.expectEqual(a.spawn_count, b.spawn_count);
-        var j: usize = 0;
-        while (j < a.spawn_count) : (j += 1) {
-            try testing.expectEqual(a.spawns[j].x, b.spawns[j].x);
-            try testing.expectEqual(a.spawns[j].y, b.spawns[j].y);
-        }
-    }
-}
-
-test "60 seeds: all valid" {
-    var seed: u32 = 0;
-    while (seed < 60) : (seed += 1) {
-        const cand = generateArena(seed);
-        const v = validate(&cand);
-        try testing.expect(v.ok);
-    }
-}
-
-test "60 seeds: generous well-separated spawns" {
-    var seed: u32 = 0;
-    while (seed < 60) : (seed += 1) {
-        const cand = generateArena(seed);
-        try testing.expect(cand.spawn_count >= 4);
-        var i: usize = 0;
-        while (i < cand.spawn_count) : (i += 1) {
-            var j: usize = i + 1;
-            while (j < cand.spawn_count) : (j += 1) {
-                const a = cand.spawns[i];
-                const b = cand.spawns[j];
-                const dx = a.x - b.x;
-                const dy = a.y - b.y;
-                try testing.expect(@sqrt(dx * dx + dy * dy) >= MIN_SPAWN_DIST);
-            }
-        }
-    }
-}
-
-test "60 seeds: platform count stays within headroom" {
-    var seed: u32 = 0;
-    while (seed < 60) : (seed += 1) {
-        const cand = generateArena(seed);
-        try testing.expect(cand.platform_count <= MAX_GEN_PLATFORMS);
-        try testing.expect(cand.platform_count > 4); // frame is not the whole arena
-    }
-}
-
-test "world_state_generate_arena writes statics and meta" {
-    var state: world_state.WorldState = std.mem.zeroes(world_state.WorldState);
-    var meta: GeneratedArenaMeta = std.mem.zeroes(GeneratedArenaMeta);
-    const written = world_state_generate_arena(&state, 42, &meta);
-    try testing.expect(written > 4);
-    try testing.expectEqual(written, state.static_count);
-    try testing.expect(meta.spawn_count >= 4);
-    try testing.expectEqual(@as(f64, ARENA_W), meta.arena_w);
-    try testing.expectEqual(@as(f64, ARENA_H), meta.arena_h);
-}
+// Tests live in `sim/test/smoke.zig` — `zig build test` only harvests
+// `test` blocks from that root file's own module, not from files reached
+// via `sim_root`'s cross-module import (verified empirically: colocated
+// `test` blocks here did not run under `zig build test`). See
+// `.claude/skills/zig-code-quality/SKILL.md` "Tests".
