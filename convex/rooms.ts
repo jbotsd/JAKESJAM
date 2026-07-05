@@ -240,7 +240,10 @@ export const leave = mutation({
 
 // Allowed map ids — kept in sync with `client/src/sim/data/maps.ts`.
 // Validated server-side so a tampered client can't pick a missing map.
+// "gen:<seed>" (any non-negative integer seed) is also allowed — those
+// expand deterministically via mapGen.ts on both client and server.
 const ALLOWED_MAP_IDS = ["boxworks", "boxworks-mini", "boxworks-tower"] as const;
+const GEN_MAP_ID_RE = /^gen:\d+$/;
 const DEFAULT_START_MAP_ID = "boxworks-mini" as const;
 
 export const startMatch = mutation({
@@ -282,7 +285,8 @@ export const startMatch = mutation({
     const requestedMapId = args.mapId ?? room.selectedMapId;
     const mapId =
       requestedMapId !== undefined &&
-      (ALLOWED_MAP_IDS as readonly string[]).includes(requestedMapId)
+      ((ALLOWED_MAP_IDS as readonly string[]).includes(requestedMapId) ||
+        GEN_MAP_ID_RE.test(requestedMapId))
         ? requestedMapId
         : DEFAULT_START_MAP_ID;
     const matchId = await ctx.db.insert("matches", {

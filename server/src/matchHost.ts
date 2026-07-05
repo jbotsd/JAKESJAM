@@ -6,6 +6,7 @@ import type { ServerWebSocket } from "bun";
 import { SNAPSHOT_INTERVAL_TICKS, STEP_MS, World } from "@sim/index.ts";
 import { createRuntime, stepWithRuntime, type WorldRuntime } from "@sim/World.ts";
 import { KILL_PLANE_MARGIN_PX } from "@sim/player.ts";
+import { stepRound, enterDrafting, TARGET_SCORE_DEFAULT } from "@sim/round.ts";
 import { resolveMap, type MapId } from "@sim/data/maps.ts";
 import type {
   InputFrame,
@@ -962,14 +963,16 @@ export class MatchHost {
         }
         serverWasmHost.writeInputs(inputsMap);
         const result = serverWasmHost.step(state, STEP_MS);
-        // serverWasmHost emits WasmSimEvents (numeric kind +
-        // payload). The per-event TS translation lives in the
-        // client module; for now, drop them server-side — the
-        // server only needs `matchComplete` for Convex posting,
-        // and snapshot broadcast carries the WorldState.
+        // The Zig round machine skips drafting; drive the between-rounds card
+        // menu host-side (deterministic, reuses the TS round machine). Physics
+        // stays authoritative in Zig. serverWasmHost's own WasmSimEvents are
+        // dropped (snapshot broadcast carries the WorldState); the overlay's
+        // round/draft events ARE returned so the loser-respawn + draft-resolved
+        // pipeline still fires.
+        const overlay = this.applyDraftingOverlay(state, result.state);
         return {
-          state: result.state,
-          events: [] as SimEvent[],
+          state: overlay.state,
+          events: overlay.events,
           matchComplete: result.matchComplete,
         };
       } catch (err) {
@@ -979,6 +982,80 @@ export class MatchHost {
       }
     }
     return stepWithRuntime(state, this.runtime, inputsByPlayer, STEP_MS);
+  }
+
+  /** Independent RNG cursor for host-driven drafting offers (kept off the sim
+   *  rng so offer rolls don't perturb wasm physics determinism). */
+  private roundRngCursor = 0x9e3779b9;
+
+  /**
+   * Drafting overlay for the wasm path. The Zig round machine advances
+   * round-over → countdown (doing the heal/reset) but has no drafting phase.
+   * Here we CAPTURE that transition into a card-draft menu and RESOLVE it with
+   * the TS round machine, then hand back to Zig at countdown. Physics is
+   * untouched — only `state.round` (+ drafted `player.cards`) are overlaid.
+   */
+  private applyDraftingOverlay(
+    prevState: WorldState,
+    stepped: WorldState,
+  ): { state: WorldState; events: SimEvent[] } {
+    const round = stepped.round;
+    const targetScore = TARGET_SCORE_DEFAULT;
+
+    // CAPTURE: the Zig transition round-over → countdown becomes drafting,
+    // unless the match just ended or nobody is present to draft.
+    if (prevState.round.phase === "round-over" && round.phase === "countdown") {
+      const matchOver = Object.values(round.scores).some((s) => s >= targetScore);
+      const anyDrafter = Object.keys(stepped.players).length > 0;
+      if (matchOver || !anyDrafter) return { state: stepped, events: [] };
+      const d = enterDrafting(
+        // The Zig transition already bumped roundIndex; undo it so the eventual
+        // drafting → countdown bump (in stepRound) lands on the right number.
+        { ...round, roundIndex: prevState.round.roundIndex },
+        stepped.players,
+        stepped.tick,
+        this.roundRngCursor,
+      );
+      this.roundRngCursor = d.rngState;
+      return { state: { ...stepped, round: d.state }, events: d.events };
+    }
+
+    // RESOLVE: run the TS round machine for the drafting phase (picks are
+    // recorded by applyDraftPick into round.draftingPicked). It stays in
+    // drafting until all pick or the tick-based window expires, then returns
+    // countdown + card patches.
+    if (round.phase === "drafting") {
+      const r = stepRound({
+        state: round,
+        players: stepped.players,
+        dtMs: STEP_MS,
+        targetScore,
+        tick: stepped.tick,
+        rngState: this.roundRngCursor,
+      });
+      this.roundRngCursor = r.rngState ?? this.roundRngCursor;
+      // Display timer is tick-based (draftingExpiresAtTick) so it's immune to
+      // the Zig sim also decrementing countdownRemainingMs during the hold.
+      let nextRound = r.state;
+      if (nextRound.phase === "drafting" && nextRound.draftingExpiresAtTick !== undefined) {
+        const msLeft = Math.max(
+          0,
+          ((nextRound.draftingExpiresAtTick as number) - (stepped.tick as number)) * STEP_MS,
+        );
+        nextRound = { ...nextRound, countdownRemainingMs: msLeft };
+      }
+      let players = stepped.players;
+      if (r.playerPatches) {
+        players = { ...players };
+        for (const [pid, patch] of Object.entries(r.playerPatches)) {
+          const p = players[pid as PlayerId];
+          if (p) players[pid as PlayerId] = { ...p, ...patch };
+        }
+      }
+      return { state: { ...stepped, round: nextRound, players }, events: r.events };
+    }
+
+    return { state: stepped, events: [] };
   }
 
   private logLagCompOutcomeChange(

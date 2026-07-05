@@ -5,7 +5,13 @@ import type { RoomHandle, RoomPlayer, RoomSnapshot } from "../types/net";
 import { MapPicker } from "./MapPicker";
 import { MatchStatusBadge } from "./MatchStatusBadge";
 import { fetchMatchSummary } from "../../net/worldClient";
-import { DEFAULT_MAP_ID, mapsById, type MapId } from "../../sim/data/maps";
+import {
+  DEFAULT_MAP_ID,
+  mapsById,
+  resolveMap,
+  GEN_RANDOM_PICKER_ID,
+  type MapPickerId,
+} from "../../sim/data/maps";
 
 const PLAYER_ID_KEY = "jakesjam.playerId";
 const PLAYER_NAME_KEY = "jakesjam.playerName";
@@ -67,7 +73,7 @@ export class LobbyController {
    * Cleared on leaveRoom + on snapshot.room.selectedMapId arriving
    * back from the server (which means sync caught up).
    */
-  private pendingMapId: MapId | null = null;
+  private pendingMapId: string | null = null;
 
   constructor(root: ParentNode) {
     this.playerId = loadOrCreatePlayerId();
@@ -416,9 +422,7 @@ export class LobbyController {
       snapshot.room.currentMatchId !== this.launchedMatchId
     ) {
       this.launchedMatchId = snapshot.room.currentMatchId;
-      const mapName =
-        mapsById[(snapshot.room.selectedMapId ?? DEFAULT_MAP_ID) as MapId]?.name ??
-        "the arena";
+      const mapName = resolveMap(snapshot.room.selectedMapId ?? DEFAULT_MAP_ID).name;
       this.setStatus(`Match starting in ${mapName}.`);
       window.dispatchEvent(new CustomEvent("jakesjam:start-match", {
         detail: {
@@ -590,17 +594,24 @@ export class LobbyController {
    * Non-host clicks are already blocked in MapPicker, but if a non-host
    * somehow triggers this, the server throws and we surface it (item 5).
    */
-  private async onMapPicked(mapId: MapId) {
+  private async onMapPicked(pickerId: MapPickerId) {
     if (!this.roomClient || !this.currentRoom) return;
-    if (!(mapId in mapsById)) return;
+    if (!(pickerId in mapsById) && pickerId !== GEN_RANDOM_PICKER_ID) return;
+    // "Generated Arena" mints a fresh seed right here (mirrors
+    // worldHost.ts's wall-clock-seeded rotation) — the wire value is a
+    // plain "gen:<seed>" string, never the "gen-random" sentinel itself.
+    const wireMapId =
+      pickerId === GEN_RANDOM_PICKER_ID
+        ? `gen:${Math.floor(Date.now() / 1000) % 1_000_000}`
+        : pickerId;
     // Optimistic local update so the host sees the highlight flip
     // immediately, even if the Convex sync below is degraded
     // (server down, codegen lagging, etc.). startMatch honours the
     // local pick via this.pendingMapId.
-    this.pendingMapId = mapId;
-    this.mapPicker?.setSelected(mapId);
+    this.pendingMapId = wireMapId;
+    this.mapPicker?.setSelected(wireMapId);
     try {
-      await this.roomClient.setMap(this.currentRoom.roomId, this.playerId, mapId);
+      await this.roomClient.setMap(this.currentRoom.roomId, this.playerId, wireMapId);
     } catch (error) {
       this.setStatus(readError(error), true);
     }

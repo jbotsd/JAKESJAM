@@ -339,7 +339,7 @@ function finalize(
  * Iteration order over players is sorted by id so the offer roll is fully
  * deterministic given (rngState, players).
  */
-function enterDrafting(
+export function enterDrafting(
   next: RoundState,
   players: Record<PlayerId, PlayerEntity>,
   tick: Tick,

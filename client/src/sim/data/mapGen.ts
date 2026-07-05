@@ -197,6 +197,19 @@ function generateCandidate(rand: () => number): MapDefinition {
     }
   }
 
+  // ── Spawns. CRITICAL: a floor spawn must NOT sit inside a solid column —
+  // the body would spawn embedded, the collision resolver ejects it out of the
+  // map, and it void-kills → respawns at the same bad point → an endless
+  // "teleport to spawn" loop. So we only place floor spawns in the OPEN lanes
+  // between columns, and use perch tops (already clear) for the rest.
+  const SPAWN_TARGET = 8;
+  const solidCols = platforms
+    .filter((p) => p.id.startsWith("col"))
+    .map((p) => ({ x0: p.position.x - p.size.x / 2, x1: p.position.x + p.size.x / 2 }));
+  const HALF_W = 13 + 18; // player half-width + clearance margin
+  const floorClear = (x: number) =>
+    solidCols.every((c) => x + HALF_W < c.x0 || x - HALF_W > c.x1);
+
   // ── LOW CLUTTER: extra one-way ledges hugging the floor (rise 40–110px,
   //    always inside a single plain jump straight off the floor — the floor
   //    spans the whole arena width so the reachability check is a trivial
@@ -219,18 +232,6 @@ function generateCandidate(rand: () => number): MapDefinition {
     addLedge(cx, snap8(90 + rand() * 60), top);
   }
 
-  // ── Spawns. CRITICAL: a floor spawn must NOT sit inside a solid column —
-  // the body would spawn embedded, the collision resolver ejects it out of the
-  // map, and it void-kills → respawns at the same bad point → an endless
-  // "teleport to spawn" loop. So we only place floor spawns in the OPEN lanes
-  // between columns, and use perch tops (already clear) for the rest.
-  const SPAWN_TARGET = 8;
-  const solidCols = platforms
-    .filter((p) => p.id.startsWith("col"))
-    .map((p) => ({ x0: p.position.x - p.size.x / 2, x1: p.position.x + p.size.x / 2 }));
-  const HALF_W = 13 + 18; // player half-width + clearance margin
-  const floorClear = (x: number) =>
-    solidCols.every((c) => x + HALF_W < c.x0 || x - HALF_W > c.x1);
   const floorY = FLOOR_TOP - 68;
   const floorPts: Vec2[] = [];
   for (let x = WALL + 96; x <= ARENA_W - WALL - 96; x += 88) {

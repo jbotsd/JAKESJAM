@@ -10,9 +10,11 @@
 
 import {
   mapPickerOrder,
-  mapsById,
-  type MapId,
+  previewMapForPicker,
   isMapId,
+  isGenMapId,
+  GEN_RANDOM_PICKER_ID,
+  type MapPickerId,
 } from "../../sim/data/maps";
 import type { MapDefinition } from "../../sim";
 
@@ -24,13 +26,13 @@ export type MapPickerOptions = {
    * highlight — it waits for `setSelected` to be called with the value
    * Convex confirmed (avoids selection flicker on validation failure).
    */
-  onPick: (mapId: MapId) => void;
+  onPick: (mapId: MapPickerId) => void;
 };
 
 export class MapPicker {
   private readonly root: HTMLDivElement;
-  private readonly cards = new Map<MapId, HTMLButtonElement>();
-  private selectedId: MapId | null = null;
+  private readonly cards = new Map<MapPickerId, HTMLButtonElement>();
+  private selectedId: MapPickerId | null = null;
   private hostMode = false;
 
   constructor(opts: MapPickerOptions) {
@@ -45,7 +47,7 @@ export class MapPicker {
     Object.assign(grid.style, GRID_STYLE);
 
     for (const entry of mapPickerOrder) {
-      const map = mapsById[entry.id];
+      const map = previewMapForPicker(entry.id);
       const card = this.buildCard(map, entry.blurb, entry.recommendedPlayers);
       this.cards.set(entry.id, card);
       card.addEventListener("click", () => {
@@ -65,7 +67,14 @@ export class MapPicker {
    * never local optimistic state.
    */
   setSelected(mapId: string | undefined): void {
-    const next = mapId !== undefined && isMapId(mapId) ? mapId : null;
+    const next: MapPickerId | null =
+      mapId === undefined
+        ? null
+        : isMapId(mapId)
+          ? mapId
+          : isGenMapId(mapId)
+            ? GEN_RANDOM_PICKER_ID
+            : null;
     if (next === this.selectedId) return;
     if (this.selectedId !== null) {
       this.applySelected(this.selectedId, false);
@@ -162,7 +171,7 @@ export class MapPicker {
     return wrap;
   }
 
-  private applySelected(id: MapId, on: boolean): void {
+  private applySelected(id: MapPickerId, on: boolean): void {
     const card = this.cards.get(id);
     if (!card) return;
     if (on) {
@@ -196,7 +205,7 @@ const HEADING_STYLE: Partial<CSSStyleDeclaration> = {
 
 const GRID_STYLE: Partial<CSSStyleDeclaration> = {
   display: "grid",
-  gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
+  gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))",
   gap: "10px",
 };
 

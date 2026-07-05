@@ -26,9 +26,11 @@ anything taller):
    between platforms/cover.
 3. **Circulation** — ≥2 distinct jump-routes from floor to the mid
    tier (no single chokepoint to height). Enforced on the route graph.
-4. **Openness band** — platform+cover footprint 8–16% of arena area.
+4. **Openness band** — platform+cover footprint 8–19% of arena area.
    Below = featureless spam-box; above = corridor mess. (Towerfall
-   maps measure ~10–14%.)
+   maps measure ~10–14%; JAKESJAM's upper bound sits a bit higher to
+   allow the variable band count + scatter/clutter ledges added for
+   platform-density variety.)
 5. **Spawn fairness** — spawns ≥360px apart, never inside geometry,
    ground within a jump-fall below, and mirrored when the arena is
    mirrored.

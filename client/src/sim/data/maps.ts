@@ -10,6 +10,8 @@
 
 import { boxworksWorld } from "./boxworks.js";
 import { generateArena, isGenMapId, parseGenSeed } from "./mapGen.js";
+
+export { isGenMapId };
 import { boxworksMini } from "./boxworks-mini.js";
 import { boxworksTower } from "./boxworks-tower.js";
 import type { MapDefinition } from "../types.js";
@@ -97,8 +99,29 @@ export function resolveMap(id: string | undefined): MapDefinition {
  * Display metadata for the lobby map picker. Keep parallel to mapsById.
  * Order here is the order players see them.
  */
+/**
+ * Picker-only id: not a real `MapId` (never appears in `mapsById`/`resolveMap`
+ * as a literal key). Selecting it means "mint a fresh `gen:<seed>` on pick" —
+ * see `LobbyController.onMapPicked`. Kept separate from `MapId` so that type
+ * stays a strict compile-time guard against wire/registry typos (per the
+ * header comment above); this is purely a UI-layer affordance.
+ */
+export const GEN_RANDOM_PICKER_ID = "gen-random" as const;
+export type MapPickerId = MapId | typeof GEN_RANDOM_PICKER_ID;
+
+/** Representative arena shown on the "Generated Arena" picker card. The
+ *  actual match uses a freshly minted seed, not this one — this is only
+ *  ever used for the card's name/size/preview silhouette. */
+export const GEN_PREVIEW_MAP: MapDefinition = generateArena(0);
+
+/** Resolves a picker id (real MapId or the gen-random sentinel) to the
+ *  MapDefinition used for the card preview. */
+export function previewMapForPicker(id: MapPickerId): MapDefinition {
+  return id === GEN_RANDOM_PICKER_ID ? GEN_PREVIEW_MAP : mapsById[id];
+}
+
 export const mapPickerOrder: ReadonlyArray<{
-  id: MapId;
+  id: MapPickerId;
   blurb: string;
   recommendedPlayers: string;
 }> = [
@@ -116,5 +139,10 @@ export const mapPickerOrder: ReadonlyArray<{
     id: "boxworks-tower",
     blurb: "Vertical jetpack chaos. Burn fuel or fall.",
     recommendedPlayers: "4-6",
+  },
+  {
+    id: GEN_RANDOM_PICKER_ID,
+    blurb: "Freshly generated every match. Validated layout, never the same twice.",
+    recommendedPlayers: "2-8",
   },
 ];
