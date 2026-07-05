@@ -572,7 +572,7 @@ fn spawnsValid(cand: *const Candidate) bool {
     return cand.spawn_count >= 4;
 }
 
-const Validation = struct {
+pub const Validation = struct {
     ok: bool,
     unreachable_count: usize,
     routes_up: u32,
@@ -581,7 +581,11 @@ const Validation = struct {
     spawns_ok: bool,
 };
 
-fn validate(cand: *const Candidate) Validation {
+/// Exposed for `sim/test/smoke.zig` (re-validating a generated candidate
+/// is otherwise redundant — `generateArena` only ever returns candidates
+/// that already pass this gate — but it's a useful direct assertion in
+/// the test suite and a debugging hook).
+pub fn validate(cand: *const Candidate) Validation {
     const unreached = unreachableCount(cand);
     const routes = routesUpCount(cand);
     const sight = worstSightline(cand);

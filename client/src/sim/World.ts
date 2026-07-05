@@ -1,14 +1,15 @@
 // ───────────────────────────────────────────────────────────────────────────
-// SUBSTRATE PIVOT IN PROGRESS — this file is being ported to Zig→WASM.
-// Source of truth docs:
-//   - docs/adr/0006-zig-wasm-sim-substrate.md
-//   - docs/zig-wasm-migration.md
-//   - .claude/skills/deterministic-netcode-architecture/SKILL.md
-//   - .claude/skills/wasm-game-sim-zig/SKILL.md
-// New sim work that lands in this TS file will be re-implemented in Zig.
-// Prefer landing the change in `sim/src/*.zig` once Phase B of the
-// migration ships. Don't introduce float-math behaviour here that you
-// expect to round-trip across hosts — that's the bug we're escaping.
+// MOTHBALLED — the B3 cutover shipped: `sim/src/world.zig` (step_world) is the
+// AUTHORITATIVE orchestrator on both client (default prediction) and server
+// (USE_WASM_STEP_WORLD=1). `stepWithRuntime` below is retained ONLY as:
+//   1. the emergency TS fallback (?wasm-world=off + server flag unset), and
+//   2. the parity REFERENCE the wasm-parity tests diff Zig against.
+// DO NOT add gameplay here expecting it to run in production — it won't. New
+// sim behaviour lands in `sim/src/*.zig`. If you change this file to keep the
+// parity oracle honest, mirror the exact change into world.zig in the same PR.
+// (Drafting is the one live TS path: a host-side overlay in matchHost, since
+//  the card pool stays TS — see jakesjam-drafting-host-overlay memory.)
+// Source of truth: docs/adr/0006-zig-wasm-sim-substrate.md, docs/zig-wasm-conversion-status.md
 // ───────────────────────────────────────────────────────────────────────────
 //
 // Real World implementation. Replaces the no-op stub. Orchestrates per-player

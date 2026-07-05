@@ -682,6 +682,47 @@ pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
                         state.players[ph2].y,
                     );
                 }
+                // Element on-hit effects (parity with World.ts phase 6d).
+                switch (proj_ptr.element) {
+                    .ice => {
+                        // 1-second freeze at 0.5x movement (tick-quantized).
+                        const freeze_ticks: u32 = @intFromFloat(@ceil(1000.0 / @max(1.0, eff_dt)));
+                        state.players[ph2].flags.has_freeze = true;
+                        state.players[ph2].freeze_until_tick = state.header.tick + freeze_ticks;
+                        state.players[ph2].freeze_multiplier = 0.5;
+                    },
+                    .lightning, .electric => {
+                        // Chain HALF damage to the nearest OTHER alive player
+                        // within 220px — a derived secondary hit.
+                        const chain_dmg = final_dmg * 0.5;
+                        const hx = state.players[ph2].x;
+                        const hy = state.players[ph2].y;
+                        var best: i32 = -1;
+                        var best_d2: f64 = 220.0 * 220.0;
+                        var ci: u32 = 0;
+                        while (ci < state.player_count) : (ci += 1) {
+                            if (ci == ph2 or !state.players[ci].flags.alive) continue;
+                            const cdx = state.players[ci].x - hx;
+                            const cdy = state.players[ci].y - hy;
+                            const d2 = cdx * cdx + cdy * cdy;
+                            if (d2 <= best_d2) {
+                                best_d2 = d2;
+                                best = @intCast(ci);
+                            }
+                        }
+                        if (best >= 0) {
+                            const cb: u32 = @intCast(best);
+                            state.players[cb].health -= chain_dmg;
+                            emitEvent(state, .hit_confirmed, best, -1, proj_ptr.id, chain_dmg, state.players[cb].x, state.players[cb].y);
+                            if (state.players[cb].health <= 0) {
+                                state.players[cb].health = 0;
+                                state.players[cb].flags.alive = false;
+                                emitEvent(state, .player_killed, best, -1, proj_ptr.id, 0, state.players[cb].x, state.players[cb].y);
+                            }
+                        }
+                    },
+                    else => {},
+                }
                 // Pierce-chain: decrement and survive; otherwise
                 // sticky → linger then detonate, others → expire.
                 if (proj_ptr.impact == .pierce_chain and
