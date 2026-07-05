@@ -57,6 +57,26 @@ pub fn isHitInParryArc(
     proj_vx: f64,
     proj_vy: f64,
 ) bool {
+    return isHitInArc(player_x, player_y, facing, proj_x, proj_y, proj_vx, proj_vy, PARRY_ARC_RADIANS);
+}
+
+/// Aim-shield cone: mirrors `combat.ts` `SHIELD_AIM_ARC_RADIANS = 2π/3`.
+pub const SHIELD_AIM_ARC_RADIANS: f64 = (2.0 * PI) / 3.0;
+
+/// Parameterized arc test — TS `isHitInParryArc(player, facing, proj, arc)`
+/// passes a variable arc (parry cover mult widens it; the aim shield uses the
+/// wider SHIELD_AIM_ARC). `arc_radians` is the FULL arc; covered when the
+/// source direction is within ±arc/2 of `facing`.
+pub fn isHitInArc(
+    player_x: f64,
+    player_y: f64,
+    facing: f64,
+    proj_x: f64,
+    proj_y: f64,
+    proj_vx: f64,
+    proj_vy: f64,
+    arc_radians: f64,
+) bool {
     const dx = proj_x - player_x;
     const dy = proj_y - player_y;
     const source_angle = if (dx == 0.0 and dy == 0.0)
@@ -64,7 +84,7 @@ pub fn isHitInParryArc(
     else
         trig.lutAtan2(dy, dx);
     const delta = wrapAngle(source_angle - facing);
-    return @abs(delta) <= PARRY_ARC_RADIANS / 2.0;
+    return @abs(delta) <= arc_radians / 2.0;
 }
 
 /// Shield drain over a tick: `dps * (dt_ms / 1000)`. Pure float

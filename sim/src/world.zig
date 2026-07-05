@@ -489,12 +489,25 @@ pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
                 {
                     final_dmg *= 1.5;
                 }
-                // Parry deflect: if the player has an active
-                // parry window, drop a parry_deflected event +
-                // skip damage. (Caller can use this to bounce or
-                // destroy the projectile.) Mirrors offline TS
-                // behavior — parry mitigates incoming projectiles.
-                if (combat.isParryActive(&state.players[ph2], state.header.tick)) {
+                // Victim's resolved card build (parry cover, directional +
+                // mirror shield) — parity with TS tryDeflectDamage.
+                const vcfg = &state.player_fire_config[ph2];
+                // Parry deflect: active parry window AND the shard's source
+                // direction lies within the parry arc (widened by cover mult).
+                const parry_arc = combat.PARRY_ARC_RADIANS *
+                    (if (vcfg.valid != 0) vcfg.parry_cover_mul else 1.0);
+                if (combat.isParryActive(&state.players[ph2], state.header.tick) and
+                    combat.isHitInArc(
+                        state.players[ph2].x,
+                        state.players[ph2].y,
+                        state.players[ph2].parry_facing,
+                        proj_ptr.x,
+                        proj_ptr.y,
+                        proj_ptr.vx,
+                        proj_ptr.vy,
+                        parry_arc,
+                    ))
+                {
                     emitEvent(
                         state,
                         .parry_deflected,
@@ -530,10 +543,23 @@ pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
                 // mitigation handled in a follow-on cut once
                 // shield-vs-direct-damage is wired into the
                 // model).
-                if (state.players[ph2].flags.shield_active and
-                    state.players[ph2].flags.has_shield_charge and
-                    state.players[ph2].shield_charge > 0)
-                {
+                shield_block: {
+                    if (!(state.players[ph2].flags.shield_active and
+                        state.players[ph2].flags.has_shield_charge and
+                        state.players[ph2].shield_charge > 0)) break :shield_block;
+                    // Aim shield: only blocks hits arriving within the aim cone;
+                    // flank/back shots pass through to damage below.
+                    if (vcfg.valid != 0 and vcfg.directional_shield != 0) {
+                        const vp = &state.players[ph2];
+                        const adx = vp.aim_x - vp.x;
+                        const ady = vp.aim_y - vp.y;
+                        const aim_facing = if (adx == 0.0 and ady == 0.0)
+                            0.0
+                        else
+                            trig.lutAtan2(ady, adx);
+                        if (!combat.isHitInArc(vp.x, vp.y, aim_facing, proj_ptr.x, proj_ptr.y, proj_ptr.vx, proj_ptr.vy, combat.SHIELD_AIM_ARC_RADIANS))
+                            break :shield_block; // not covered → take the hit
+                    }
                     state.players[ph2].shield_charge -=
                         final_dmg * combat.SHIELD_HIT_DRAIN_MULTIPLIER;
                     if (state.players[ph2].shield_charge <= 0) {
@@ -550,7 +576,25 @@ pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
                             state.players[ph2].y,
                         );
                     }
-                    proj_ptr.lifetime_ms = 0;
+                    // Mirror shield: bounce the shard back at the attacker
+                    // (owned by the blocker) instead of expiring it.
+                    if (vcfg.valid != 0 and vcfg.mirror_shield != 0) {
+                        proj_ptr.vx = -proj_ptr.vx * 1.15;
+                        proj_ptr.vy = -proj_ptr.vy * 1.15;
+                        proj_ptr.age_ms = 0;
+                        proj_ptr.traveled_px = 0;
+                        proj_ptr.origin_x = proj_ptr.x;
+                        proj_ptr.origin_y = proj_ptr.y;
+                        proj_ptr.flags.has_owner = true;
+                        const rlen = state.players[ph2].id_len;
+                        proj_ptr.owner_id_len = rlen;
+                        @memcpy(
+                            proj_ptr.owner_id_bytes[0..rlen],
+                            state.players[ph2].id_bytes[0..rlen],
+                        );
+                    } else {
+                        proj_ptr.lifetime_ms = 0;
+                    }
                     break;
                 }
                 state.players[ph2].health -= final_dmg;
@@ -977,13 +1021,18 @@ pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
     var pi3: u32 = 0;
     while (pi3 < state.player_count) : (pi3 += 1) {
         const player_ptr = &state.players[pi3];
+        // Card shield/parry augments from the host-resolved build. Match the TS
+        // orchestrator: maxCharge = SHIELD_MAX_CHARGE_DEFAULT × chargeMul (NOT
+        // the stored max), recharge × rechargeMul, parry cooldown × cooldownMul.
+        const cfg3 = &state.player_fire_config[pi3];
+        const has3 = cfg3.valid != 0;
         combat.tickShield(
             player_ptr,
             player_ptr.current_keys,
             eff_dt,
-            0.0, // max_charge_override = 0 → use stored shield_max_charge
+            combat.SHIELD_MAX_CHARGE_DEFAULT * (if (has3) cfg3.shield_charge_mul else 1.0),
             combat.SHIELD_DRAIN_PER_SECOND,
-            combat.SHIELD_RECHARGE_PER_SECOND,
+            combat.SHIELD_RECHARGE_PER_SECOND * (if (has3) cfg3.shield_recharge_mul else 1.0),
         );
         _ = combat.tryStartParry(
             player_ptr,
@@ -992,7 +1041,7 @@ pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
             state.header.tick,
             eff_dt,
             combat.PARRY_ACTIVE_MS,
-            combat.PARRY_COOLDOWN_MS_DEFAULT,
+            combat.PARRY_COOLDOWN_MS_DEFAULT * (if (has3) cfg3.parry_cooldown_mul else 1.0),
         );
         // Weapon fire decision + projectile spawn (I21 + I45).
         // Use the host-resolved fire config when valid, else fall
