@@ -929,7 +929,10 @@ pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
         if (ple.flags.has_freeze and ple.freeze_until_tick > state.header.tick) {
             speed_mul *= ple.freeze_multiplier;
         }
-        const grounded = player_mod.stepPlayer(
+        // NB: stepPlayer RETURNS jumped-this-frame, not grounded. The grounded
+        // state lives in ps.grounded_last_frame (mutated in place). The world
+        // orchestrator emits no jump event, so the return is discarded.
+        _ = player_mod.stepPlayer(
             &ps,
             state.players[pmi].prev_keys,
             state.players[pmi].current_keys,
@@ -948,12 +951,12 @@ pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
         state.players[pmi].jetpack_fuel = ps.jetpack_fuel;
         state.players[pmi].flags.has_jetpack_fuel = true;
         state.players[pmi].flags.crouching = ps.crouching != 0;
-        state.players[pmi].flags.grounded = grounded;
+        state.players[pmi].flags.grounded = ps.grounded_last_frame != 0;
         state.player_movement[pmi].coyote_ms = ps.coyote_ms;
         state.player_movement[pmi].jump_buffer_ms = ps.jump_buffer_ms;
         state.player_movement[pmi].jump_cut_applied = @intCast(ps.jump_cut_applied);
         state.player_movement[pmi].jump_released_since_jump = @intCast(ps.jump_released_since_jump);
-        state.player_movement[pmi].grounded_last_frame = if (grounded) 1 else 0;
+        state.player_movement[pmi].grounded_last_frame = @intCast(ps.grounded_last_frame);
         state.player_movement[pmi].jetpack_active = @intCast(ps.jetpack_active);
         state.player_movement[pmi].touching_wall_dir = @intCast(ps.touching_wall_dir);
         state.player_movement[pmi].dash_cooldown_ms = ps.dash_cooldown_ms;

@@ -962,28 +962,35 @@ export function stepWithRuntime(
       remainingProjectiles[childId] = { ...child.spec, id: childId };
     }
 
-    if (result.expired || result.projectile === null) {
-      continue;
-    }
+    // REFLECT (parry OR mirror-shield) — MUST run BEFORE the expiry check: a
+    // single-hit shard EXPIRES on the very hit that triggered the deflect, so
+    // `result.projectile` is already null. We reflect the PRE-step projectile
+    // (`proj`) instead: send it back the way it came, now OWNED by the deflector
+    // so it can strike the original attacker, spawned at the deflector's body so
+    // it visibly bounces off. Travel/age reset so it doesn't instantly expire; a
+    // small speed boost reads as a deliberate return ("No, you.").
     const parrier = deflectedProjectileIds.get(id);
     if (parrier !== undefined) {
-      // REFLECTIVE parry: instead of dropping the shard, send it back the way
-      // it came — now OWNED by the parrier, so it can strike the original
-      // attacker. Travel/age reset so it doesn't instantly expire on
-      // range/lifetime, and a small speed boost makes the return read as a
-      // deliberate deflection ("No, you.").
-      const pr = result.projectile;
+      const deflector = players[parrier];
+      const rx = deflector ? deflector.x : proj.x;
+      const ry = deflector ? deflector.y : proj.y;
       remainingProjectiles[id] = {
-        ...pr,
-        vx: -pr.vx * 1.15,
-        vy: -pr.vy * 1.15,
+        ...proj,
+        x: rx,
+        y: ry,
+        vx: -proj.vx * 1.15,
+        vy: -proj.vy * 1.15,
         ownerId: parrier,
         ageMs: 0,
         traveledPx: 0,
-        originX: pr.x,
-        originY: pr.y,
+        originX: rx,
+        originY: ry,
         returning: undefined,
       };
+      continue;
+    }
+
+    if (result.expired || result.projectile === null) {
       continue;
     }
     remainingProjectiles[id] = result.projectile;

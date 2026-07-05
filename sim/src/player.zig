@@ -197,9 +197,11 @@ pub fn stepPlayer(
     var jumped_this_frame = false;
     const wall_dir_i = s.touching_wall_dir;
     const wall_dir: f64 = @floatFromInt(wall_dir_i);
-    // Wall-jump unless pressing AWAY from the wall (then it's a double-jump) —
-    // lets the two coexist on wall-dense maps. Mirrors player.ts.
-    if (s.jump_buffer_ms > 0.0 and !boolFromInt(s.grounded_last_frame) and wall_dir_i != 0 and direction != -wall_dir) {
+    // Wall-jump unless pressing AWAY from the wall AND a double-jump charge is
+    // available (then the push-off becomes the double-jump). Mirrors player.ts —
+    // without the card, wall-jump still fires in every direction.
+    const divert_to_double_jump = direction == -wall_dir and s.air_jumps_used < s.air_jumps;
+    if (s.jump_buffer_ms > 0.0 and !boolFromInt(s.grounded_last_frame) and wall_dir_i != 0 and !divert_to_double_jump) {
         s.vy = WALL_JUMP_VY * s.wall_jump_mul;
         s.vx = -wall_dir * WALL_JUMP_VX;
         s.jump_buffer_ms = 0.0;
