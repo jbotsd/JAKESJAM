@@ -137,19 +137,23 @@ export function stepRound(input: RoundStepInput): RoundStepResult {
 
     case "fighting": {
       next.countdownRemainingMs = Math.max(0, state.countdownRemainingMs - dtMs);
-      // Bot-shootout guard: if humans are in the match but every human is dead,
-      // clamp the remaining time so the round wraps within
-      // NO_HUMAN_SURVIVOR_END_MS instead of dragging out a bot duel. one-way
-      // min() → idempotent + monotonic (never extends the round).
+      // Bot-shootout guard: if humans are in the match but EVERY human is dead,
+      // force the round to resolve once it has run at least
+      // NO_HUMAN_SURVIVOR_END_MS — so the lobby isn't stuck watching bots duel.
+      // Computed FRESH each tick from the current alive-set (NOT a persistent
+      // countdown clamp), so a human who joins the world mid-round flips
+      // anyHumanAlive → true and instantly cancels the force-end, getting a full
+      // round instead of being yanked in <6s.
       const ids = Object.keys(players) as PlayerId[];
       const humanIds = ids.filter((id) => !id.startsWith(BOT_ID_PREFIX));
-      if (humanIds.length > 0 && !humanIds.some((id) => players[id]?.alive)) {
-        next.countdownRemainingMs = Math.min(
-          next.countdownRemainingMs,
-          NO_HUMAN_SURVIVOR_END_MS,
-        );
-      }
-      const winner = decideRoundWinner(players, next.countdownRemainingMs <= 0);
+      const anyHumanAlive = humanIds.some((id) => players[id]?.alive);
+      const elapsedMs = ROUND_TIME_LIMIT_MS - next.countdownRemainingMs;
+      const forceByBotShootout =
+        humanIds.length > 0 && !anyHumanAlive && elapsedMs >= NO_HUMAN_SURVIVOR_END_MS;
+      const winner = decideRoundWinner(
+        players,
+        next.countdownRemainingMs <= 0 || forceByBotShootout,
+      );
       if (winner === undefined) {
         return finalize(next, events, false, rngState);
       }

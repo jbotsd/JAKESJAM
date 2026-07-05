@@ -368,20 +368,37 @@ function density(map: MapDefinition): number {
   return area / playable;
 }
 
+/** Half the player body (26w × 56h) + a small margin — a spawn this close to a
+ *  solid column embeds the body and the resolver ejects it out of the map. */
+const SPAWN_HALF_W = 13 + 6;
+const SPAWN_HALF_H = 28 + 6;
+
 function spawnsValid(map: MapDefinition): boolean {
   const ts = tops(map);
+  const solids = grabWalls(map).filter((w) => {
+    // Only the tall grab COLUMNS embed a body; the outer walls are the frame.
+    return w.cx > WALL && w.cx < map.size.x - WALL;
+  });
   for (let i = 0; i < map.spawns.length; i++) {
     const s = map.spawns[i]!;
     const under = ts.some(
       (t) => s.x >= t.x0 - 8 && s.x <= t.x1 + 8 && t.top >= s.y && t.top - s.y < 200,
     );
     if (!under) return false;
+    // No spawn embedded in a solid column (feet at s.y, body up to s.y-56).
+    for (const c of solids) {
+      const overlapsX = s.x + SPAWN_HALF_W > c.x0 && s.x - SPAWN_HALF_W < c.x1;
+      const overlapsY = s.y > c.top && s.y - 2 * SPAWN_HALF_H < FLOOR_TOP;
+      if (overlapsX && overlapsY) return false;
+    }
     for (let j = i + 1; j < map.spawns.length; j++) {
       const o = map.spawns[j]!;
       if (Math.hypot(s.x - o.x, s.y - o.y) < MIN_SPAWN_DIST) return false;
     }
   }
-  return map.spawns.length >= 2;
+  // The stated law is ≥4 well-separated spawns (was ≥2) — match it in the gate,
+  // not only in the generation heuristics.
+  return map.spawns.length >= 4;
 }
 
 export type MapValidation = {
@@ -432,8 +449,20 @@ export function generateArena(seed: number): MapDefinition {
       return { ...candidate, id: `${GEN_MAP_PREFIX}${seed}`, name: `Arena #${seed}` };
     }
   }
-  const fallback = generateCandidate(mulberry32(0xfa11bacc));
-  return { ...fallback, id: `${GEN_MAP_PREFIX}${seed}`, name: `Arena #${seed}` };
+  // Statistically unreachable (every real seed validates well within
+  // MAX_ATTEMPTS). But NEVER ship an UNVALIDATED map — a future constant change
+  // could make the old hardcoded fallback invalid and silently ship a broken
+  // arena. Scan fixed fallback seeds and return the first that VALIDATES; the
+  // scan is deterministic so (seed → map) stays pure.
+  for (let f = 0; f < 256; f++) {
+    const cand = generateCandidate(mulberry32((0xfa11bacc + f * 0x9e3779b9) >>> 0));
+    if (validateMap(cand).ok) {
+      return { ...cand, id: `${GEN_MAP_PREFIX}${seed}`, name: `Arena #${seed}` };
+    }
+  }
+  // Truly unreachable — if even 256 fallback seeds fail, the laws are
+  // self-contradictory (a build bug). Surface it loudly rather than ship junk.
+  throw new Error("mapGen: no valid arena found — validator laws are unsatisfiable");
 }
 
 export function isGenMapId(id: string | undefined): boolean {

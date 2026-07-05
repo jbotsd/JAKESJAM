@@ -99,7 +99,7 @@ describe("stepRound", () => {
     expect(result.matchComplete).toBe(false);
   });
 
-  test("bot-shootout guard: all humans dead + bots alive → round timer clamped", () => {
+  test("bot-shootout guard: all humans dead + bots alive, ≥6s elapsed → resolves", () => {
     const players = {
       human1: mkPlayer("human1", { alive: false, health: 0 }),
       bot_spark: mkPlayer("bot_spark", { alive: true, health: 100 }),
@@ -107,16 +107,49 @@ describe("stepRound", () => {
     };
     const state: RoundState = {
       phase: "fighting",
-      countdownRemainingMs: ROUND_TIME_LIMIT_MS, // 90s left
+      // Round has already run > NO_HUMAN_SURVIVOR_END_MS.
+      countdownRemainingMs: ROUND_TIME_LIMIT_MS - (NO_HUMAN_SURVIVOR_END_MS + 1000),
       scores: {},
       roundIndex: 0,
       winnerPlayerId: null,
     };
     const result = stepRound({ state, players, dtMs: 16, targetScore: 3 });
-    // Two bots alive → not resolved this tick, but the clock is clamped so it
-    // wraps within the guard window instead of dragging out ~90s.
+    // Force-resolved even though two bots are still alive and time remains.
+    expect(result.state.phase).toBe("round-over");
+  });
+
+  test("bot-shootout guard: all humans dead but round is fresh (<6s) → keeps fighting", () => {
+    const players = {
+      human1: mkPlayer("human1", { alive: false, health: 0 }),
+      bot_spark: mkPlayer("bot_spark", { alive: true, health: 100 }),
+      bot_piston: mkPlayer("bot_piston", { alive: true, health: 80 }),
+    };
+    const state: RoundState = {
+      phase: "fighting",
+      countdownRemainingMs: ROUND_TIME_LIMIT_MS, // just started
+      scores: {},
+      roundIndex: 0,
+      winnerPlayerId: null,
+    };
+    const result = stepRound({ state, players, dtMs: 16, targetScore: 3 });
+    expect(result.state.phase).toBe("fighting"); // grace before force-end
+  });
+
+  test("bot-shootout guard: a LIVE human cancels the force-end (mid-round joiner)", () => {
+    const players = {
+      human1: mkPlayer("human1", { alive: true, health: 60 }), // joined + alive
+      bot_spark: mkPlayer("bot_spark", { alive: true, health: 100 }),
+    };
+    const state: RoundState = {
+      phase: "fighting",
+      countdownRemainingMs: ROUND_TIME_LIMIT_MS - (NO_HUMAN_SURVIVOR_END_MS + 5000),
+      scores: {},
+      roundIndex: 0,
+      winnerPlayerId: null,
+    };
+    const result = stepRound({ state, players, dtMs: 16, targetScore: 3 });
+    // Human alive → no force-end even though >6s elapsed; full round continues.
     expect(result.state.phase).toBe("fighting");
-    expect(result.state.countdownRemainingMs).toBe(NO_HUMAN_SURVIVOR_END_MS);
   });
 
   test("bot-shootout guard: pure-bot world (no humans) runs the FULL round", () => {
