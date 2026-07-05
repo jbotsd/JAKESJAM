@@ -44,21 +44,24 @@ import { ReplayRecorder } from "./ReplayRecorder.ts";
 import { serverWasmHost } from "./serverWasmHost.ts";
 
 /**
- * Phase B3 feature flag. When `true`, the authoritative tick goes
- * through `serverWasmHost.step()` (Zig wasm) instead of the TS
- * `stepWithRuntime`. Default off: B3 cutover requires a 30-min
- * multi-client playtest before flipping in production. Flip via
- * `fly secrets set USE_WASM_STEP_WORLD=1 -a jakesjam-srv-sin`.
+ * Phase B3 feature flag. Default ON: the authoritative tick goes through
+ * `serverWasmHost.step()` (Zig wasm), paired with the client defaulting to
+ * the same wasm prediction path (see maybeWasmActual in World.ts). The
+ * earlier TS-default revert (2026-07-05) turned out to be masking a
+ * client-side prediction bug (clientLoop was reallocating WorldRuntime every
+ * tick, breaking jump edge-detect) — NOT a Zig-sim defect. That bug is fixed
+ * (predictionRuntime persistence); re-verify jump feel live before trusting
+ * this flag's default.
  *
- * B2 (full TS sim deletion) is gated on this flag soaking
- * default-on for ≥1 week without auto-fallback warnings AND on
- * migrating the ~25 wasm-parity tests + ~15 TS-side sim tests +
- * server/src/wasmRuntime.ts imports off the TS sim modules.
- * That's a separate supervised cut.
+ * Emergency opt-out: `USE_WASM_STEP_WORLD=0` (or `false`) falls back to TS
+ * `stepWithRuntime`. Pair any opt-out with the client's `?wasm-world=off`.
+ *
+ * B2 (full TS sim deletion) is gated on this flag soaking default-on for
+ * ≥1 week without auto-fallback warnings. That's a separate supervised cut.
  */
 const USE_WASM_STEP_WORLD =
-  process.env.USE_WASM_STEP_WORLD === "1" ||
-  process.env.USE_WASM_STEP_WORLD === "true";
+  process.env.USE_WASM_STEP_WORLD !== "0" &&
+  process.env.USE_WASM_STEP_WORLD !== "false";
 
 if (USE_WASM_STEP_WORLD) {
   // Fire-and-forget preload so the first tick after construction

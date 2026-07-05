@@ -1272,10 +1272,15 @@ function maybeWasmActual(
   } catch {
     return null;
   }
-  // TS orchestrator is the default prediction path. Zig orchestrator is
-  // opt-in via ?wasm-world=2 (playtest) — prediction MUST match authority,
-  // and the server defaults to stepWithRuntime unless USE_WASM_STEP_WORLD=1.
-  if (mode !== "2") return null;
+  // Zig orchestrator is the DEFAULT prediction path, paired with the
+  // server's USE_WASM_STEP_WORLD default-on (matchHost.ts). Both write the
+  // same statics + resolved card configs + arena bounds, so prediction ≡
+  // authority. Emergency dev fallback: ?wasm-world=off (only valid when the
+  // server is ALSO running TS via USE_WASM_STEP_WORLD=0 — otherwise predict
+  // and authority disagree). The 2026-07-05 revert to TS-default traced to a
+  // client-only prediction bug (WorldRuntime reallocated every tick, killing
+  // jump edge-detect) — not a Zig-sim defect; that bug is now fixed.
+  if (mode === "off") return null;
   type WasmEvent = {
     kind: number;
     playerIdxA: number;
