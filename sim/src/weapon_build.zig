@@ -16,6 +16,33 @@ fn round2(v: f64) f64 {
 
 /// Resolve starter-base + `card_ids` → ResolvedFireConfig (valid=1).
 pub fn resolveBuild(card_ids: []const []const u8) world_state.ResolvedFireConfig {
+    var buf: [world_state.MAX_PLAYER_CARDS]gen.CardMod = undefined;
+    var n: usize = 0;
+    for (card_ids) |id| {
+        if (n >= buf.len) break;
+        if (gen.cardMod(id)) |m| {
+            buf[n] = m;
+            n += 1;
+        }
+    }
+    return resolveMods(buf[0..n]);
+}
+
+/// Resolve starter-base + cards named by their index into `cards_gen.cards`.
+pub fn resolveByIndices(indices: []const u8) world_state.ResolvedFireConfig {
+    var buf: [world_state.MAX_PLAYER_CARDS]gen.CardMod = undefined;
+    var n: usize = 0;
+    for (indices) |idx| {
+        if (n >= buf.len) break;
+        if (idx < gen.cards.len) {
+            buf[n] = gen.cards[idx].mod;
+            n += 1;
+        }
+    }
+    return resolveMods(buf[0..n]);
+}
+
+fn resolveMods(mods: []const gen.CardMod) world_state.ResolvedFireConfig {
     var damage = B.damage;
     var fire_rate = B.fire_rate;
     var projectile_speed = B.projectile_speed;
@@ -53,8 +80,7 @@ pub fn resolveBuild(card_ids: []const []const u8) world_state.ResolvedFireConfig
     var p_split = B.p_split_count;
     var p_slow = B.p_slow_mul;
 
-    for (card_ids) |id| {
-        const m = gen.cardMod(id) orelse continue;
+    for (mods) |m| {
         damage *= m.damage_mul;
         fire_rate *= m.fire_rate_mul;
         projectile_speed *= m.projectile_speed_mul;
@@ -175,4 +201,18 @@ pub export fn resolve_build_test(card_index: i32, out_ptr: *world_state.Resolved
 
 pub export fn resolve_build_card_count() u32 {
     return gen.cards.len;
+}
+
+/// Host entry: resolve player[player_index]'s build from `count` card indices
+/// (into cards_gen.cards) and write it into state.player_fire_config[i]. Replaces
+/// the TS host-side writeFireConfigs — the build LOGIC now lives in Zig.
+pub export fn resolve_player_fire_config(
+    state_ptr: *world_state.WorldState,
+    player_index: u32,
+    indices_ptr: [*]const u8,
+    count: u32,
+) void {
+    if (player_index >= world_state.MAX_PLAYERS) return;
+    const n = @min(count, @as(u32, world_state.MAX_PLAYER_CARDS));
+    state_ptr.player_fire_config[player_index] = resolveByIndices(indices_ptr[0..n]);
 }

@@ -23,8 +23,8 @@ import {
 } from "@sim/wasm/worldStateBridge.ts";
 import { loadServerSim } from "./wasmRuntime.ts";
 import {
-  resolveFireConfigsForState,
-  writeFireConfigsInto,
+  resolveFireConfigsViaZig,
+  type FireConfigResolverExports,
 } from "@sim/wasm/fireConfigShared.ts";
 
 /** Same shape as client `StaticAABB`. */
@@ -61,6 +61,12 @@ type WorldExports = {
     ceiling_y: number,
     has_ceiling: number,
     kill_plane_y: number,
+  ) => void;
+  resolve_player_fire_config?: (
+    state_ptr: number,
+    player_index: number,
+    indices_ptr: number,
+    count: number,
   ) => void;
   memory: WebAssembly.Memory;
 };
@@ -254,14 +260,12 @@ class ServerWasmHost {
    *  AFTER pack (pack skips the fire-config region) and before step_world. */
   private writeFireConfigsIntoMemory(state: WorldState): void {
     if (!this.ex || this.statePtr === null) return;
-    const ex = this.ex;
-    if (!ex.offset_player_fire_config || !ex.sizeof_resolved_fire_config) return;
-    const view = new DataView(ex.memory.buffer);
-    writeFireConfigsInto(
-      view,
-      this.statePtr + ex.offset_player_fire_config(),
-      ex.sizeof_resolved_fire_config(),
-      resolveFireConfigsForState(state),
+    if (typeof this.ex.resolve_player_fire_config !== "function") return;
+    // Build resolution lives in Zig (weapon_build.zig) — hand it card indices.
+    resolveFireConfigsViaZig(
+      this.ex as unknown as FireConfigResolverExports,
+      this.statePtr,
+      state,
     );
   }
 

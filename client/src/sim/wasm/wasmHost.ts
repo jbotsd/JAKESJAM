@@ -29,7 +29,7 @@
 
 import type { WorldState } from "../types.js";
 import type { WasmSimEvent } from "./worldStateBridge.js";
-import { writeFireConfigsInto } from "./fireConfigShared.js";
+import { resolveFireConfigsViaZig, type FireConfigResolverExports } from "./fireConfigShared.js";
 
 /**
  * Static-AABB layout for terrain collision. Mirrors
@@ -298,30 +298,21 @@ export class WasmHost {
    * No-op if any of (cachedSim, cachedEx, the offset/size exports)
    * are missing.
    */
-  writeFireConfigs(
-    configsByIndex: ReadonlyArray<ResolvedFireConfigBytes | null>,
-  ): void {
+  writeFireConfigs(state: WorldState): void {
     if (!this.resolvedReady) return;
     const legacy = legacyModule;
     if (!legacy) return;
     const sim = legacy.__getCachedSim?.();
     if (!sim) return;
     const exObj = legacy.__getCachedEx?.() as
-      | {
-          memory: WebAssembly.Memory;
-          offset_player_fire_config?: () => number;
-          sizeof_resolved_fire_config?: () => number;
-        }
+      | (FireConfigResolverExports & {
+          resolve_player_fire_config?: unknown;
+        })
       | null;
-    if (!exObj?.offset_player_fire_config || !exObj.sizeof_resolved_fire_config) {
-      return;
-    }
-    const baseOffset = exObj.offset_player_fire_config();
-    const recordSize = exObj.sizeof_resolved_fire_config();
-    const view = new DataView(exObj.memory.buffer);
-    // Shared writer — server (serverWasmHost) uses the identical bytes so the
-    // two cutover paths can't drift on the struct layout.
-    writeFireConfigsInto(view, sim.statePtr + baseOffset, recordSize, configsByIndex);
+    if (typeof exObj?.resolve_player_fire_config !== "function") return;
+    // Build resolution lives in Zig now — hand it the card indices; it fills
+    // player_fire_config. Same helper the server uses (no drift).
+    resolveFireConfigsViaZig(exObj, sim.statePtr, state);
   }
 
   /**
