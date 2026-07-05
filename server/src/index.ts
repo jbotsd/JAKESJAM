@@ -25,6 +25,29 @@ import {
   loadServerSim,
 } from "./wasmRuntime.ts";
 import { handleClipUpload, serveClip } from "./clipStore.ts";
+import {
+  generatePkcePair,
+  generateState,
+  requireTikTokConfig,
+  buildAuthorizeUrl,
+  exchangeCodeForToken,
+  refreshAccessToken,
+} from "./tiktok/auth.ts";
+import { postClipFromUrl, getCreatorInfo } from "./tiktok/post.ts";
+import { saveToken, getToken, isAccessTokenStale } from "./tiktok/tokenStore.ts";
+
+// In-memory PKCE/state stash for the OAuth handshake — short-lived (a few
+// minutes at most, spanning one redirect round-trip), so process memory is
+// fine; no need for the persisted store tokenStore.ts uses for tokens
+// themselves. Swept lazily on each start() call.
+const pendingOAuth = new Map<string, { codeVerifier: string; createdAtMs: number }>();
+const OAUTH_STATE_TTL_MS = 10 * 60 * 1000;
+function sweepPendingOAuth(): void {
+  const now = Date.now();
+  for (const [state, entry] of pendingOAuth) {
+    if (now - entry.createdAtMs > OAUTH_STATE_TTL_MS) pendingOAuth.delete(state);
+  }
+}
 
 // Phase B4/D2 Zig→WASM substrate (ADR-0006). Awaited at top-level
 // so the trig LUT is installed + swaps are in place before any
@@ -190,6 +213,100 @@ function serveOnPort(port: number) {
       const res = await serveClip(filename);
       if (res) return res;
       return new Response("not found", { status: 404, headers: corsHeaders });
+    }
+
+    // ── TikTok Content Posting API integration ──────────────────────────
+    // Requires TIKTOK_CLIENT_KEY / TIKTOK_CLIENT_SECRET / TIKTOK_REDIRECT_URI
+    // (a registered TikTok Developer app) — see server/src/tiktok/. These
+    // routes are mechanically complete but cannot be exercised end-to-end
+    // without those real credentials, which only the account owner can obtain.
+    if (url.pathname === "/tiktok/oauth/start" && req.method === "GET") {
+      try {
+        const cfg = requireTikTokConfig();
+        sweepPendingOAuth();
+        const state = generateState();
+        const { codeVerifier, codeChallenge } = generatePkcePair();
+        pendingOAuth.set(state, { codeVerifier, createdAtMs: Date.now() });
+        const authorizeUrl = buildAuthorizeUrl(cfg, { state, codeChallenge });
+        return new Response(null, { status: 302, headers: { location: authorizeUrl, ...corsHeaders } });
+      } catch (err) {
+        return new Response(err instanceof Error ? err.message : String(err), {
+          status: 500,
+          headers: corsHeaders,
+        });
+      }
+    }
+    if (url.pathname === "/tiktok/oauth/callback" && req.method === "GET") {
+      const code = url.searchParams.get("code");
+      const state = url.searchParams.get("state");
+      if (!code || !state) {
+        return new Response("missing code/state", { status: 400, headers: corsHeaders });
+      }
+      const pending = pendingOAuth.get(state);
+      if (!pending) {
+        return new Response("unknown or expired state — restart /tiktok/oauth/start", {
+          status: 400,
+          headers: corsHeaders,
+        });
+      }
+      pendingOAuth.delete(state);
+      try {
+        const cfg = requireTikTokConfig();
+        const token = await exchangeCodeForToken(cfg, code, pending.codeVerifier);
+        await saveToken(token.open_id, token);
+        return new Response(
+          JSON.stringify({ ok: true, openId: token.open_id }),
+          { headers: { "content-type": "application/json", ...corsHeaders } },
+        );
+      } catch (err) {
+        return new Response(err instanceof Error ? err.message : String(err), {
+          status: 500,
+          headers: corsHeaders,
+        });
+      }
+    }
+    if (url.pathname === "/tiktok/post" && req.method === "POST") {
+      let body: { openId?: string; videoUrl?: string; title?: string };
+      try {
+        body = (await req.json()) as typeof body;
+      } catch {
+        return new Response("bad request", { status: 400, headers: corsHeaders });
+      }
+      if (!body.openId || !body.videoUrl || !body.title) {
+        return new Response("missing openId/videoUrl/title", { status: 400, headers: corsHeaders });
+      }
+      try {
+        const cfg = requireTikTokConfig();
+        let stored = await getToken(body.openId);
+        if (!stored) {
+          return new Response("no stored token for this openId — run /tiktok/oauth/start first", {
+            status: 401,
+            headers: corsHeaders,
+          });
+        }
+        if (isAccessTokenStale(stored)) {
+          const refreshed = await refreshAccessToken(cfg, stored.refresh_token);
+          await saveToken(body.openId, refreshed);
+          stored = { ...refreshed, obtainedAtMs: Date.now() };
+        }
+        // TikTok's review requires the UI to show creator_username +
+        // creator_avatar_url before every post — callers of this endpoint own
+        // that confirmation step; this call just re-fetches it for the caller.
+        const creator = await getCreatorInfo(stored.access_token);
+        const result = await postClipFromUrl(stored.access_token, {
+          videoUrl: body.videoUrl,
+          title: body.title,
+        });
+        return new Response(
+          JSON.stringify({ ok: true, publishId: result.publish_id, creator }),
+          { headers: { "content-type": "application/json", ...corsHeaders } },
+        );
+      } catch (err) {
+        return new Response(err instanceof Error ? err.message : String(err), {
+          status: 500,
+          headers: corsHeaders,
+        });
+      }
     }
 
     // ── World token mint ──────────────────────────────────────────────

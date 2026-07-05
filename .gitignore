@@ -33,3 +33,4 @@ sim/zig-cache/
 
 # Highlight-clip uploads (server/src/clipStore.ts) — runtime data, not source
 server/.clips/
+server/.tiktok/
