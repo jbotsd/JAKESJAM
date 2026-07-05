@@ -35,16 +35,16 @@ function zigGeom(seed: number) {
   };
   const pc = rd();
   const plats: number[][] = [];
-  for (let k = 0; k < pc; k++) plats.push([rd(), rd(), rd(), rd()]), rd(); // skip kind
+  for (let k = 0; k < pc; k++) { plats.push([rd(), rd(), rd(), rd()]); rd(); /* skip kind */ }
   const sc = rd();
   const spawns: number[][] = [];
   for (let k = 0; k < sc; k++) spawns.push([rd(), rd()]);
-  const key = (a: number[][]) => a.slice().sort((x, y) => x[0] - y[0] || x[1] - y[1]);
+  const key = (a: number[][]) => a.slice().sort((x, y) => (x[0]! - y[0]!) || (x[1]! - y[1]!));
   return { plats: key(plats), spawns: key(spawns) };
 }
 function tsGeom(seed: number) {
   const m = generateArena(seed);
-  const key = (a: number[][]) => a.slice().sort((x, y) => x[0] - y[0] || x[1] - y[1]);
+  const key = (a: number[][]) => a.slice().sort((x, y) => (x[0]! - y[0]!) || (x[1]! - y[1]!));
   return {
     plats: key(m.platforms.map((p) => [p.position.x, p.position.y, p.size.x, p.size.y])),
     spawns: key(m.spawns.map((s) => [s.x, s.y])),
