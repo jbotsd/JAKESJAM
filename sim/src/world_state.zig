@@ -390,6 +390,25 @@ pub const ResolvedFireConfig = extern struct {
     /// pistol base from data/weapons.zig.
     valid: u8,
     _pad: [3]u8 = .{ 0, 0, 0 },
+    // ── Card augments (offset 136+). Mirrors ResolvedFireConfigBytes in
+    //    client/src/sim/wasm/wasmHost.ts — the host resolves the build TS-side
+    //    and writes these so the Zig orchestrator applies the SAME movement /
+    //    shield / parry augments as the TS orchestrator (parity for cutover).
+    move_speed_mul: f64 = 1,
+    gravity_mul: f64 = 1,
+    jump_mul: f64 = 1,
+    wall_jump_mul: f64 = 1,
+    wall_slide_mul: f64 = 1,
+    shield_charge_mul: f64 = 1,
+    shield_recharge_mul: f64 = 1,
+    parry_cover_mul: f64 = 1,
+    parry_cooldown_mul: f64 = 1,
+    max_health_add: f64 = 0,
+    air_jumps: u32 = 0,
+    dash_charges: u32 = 0,
+    mirror_shield: u8 = 0,
+    directional_shield: u8 = 0,
+    _pad2: [6]u8 = .{ 0, 0, 0, 0, 0, 0 },
 };
 
 /// SimEvent kind tag (Phase I18). Mirrors the discriminated
@@ -555,7 +574,7 @@ comptime {
     std.debug.assert(@sizeOf(PickupEntity) == 64);
     std.debug.assert(@sizeOf(PlayerMovementMemory) == 40);
     std.debug.assert(@sizeOf(SimEvent) == 40);
-    std.debug.assert(@sizeOf(ResolvedFireConfig) == 136);
+    std.debug.assert(@sizeOf(ResolvedFireConfig) == 232);
 }
 
 // -----------------------------------------------------------------

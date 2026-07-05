@@ -84,6 +84,22 @@ export type ResolvedFireConfigBytes = {
   elementIdx: number;
   pathingIdx: number;
   impactIdx: number;
+  // ── Card augments (movement + shield + parry) — mirrored into world.zig's
+  //    ResolvedFireConfig so the Zig orchestrator applies the SAME build as TS.
+  moveSpeedMultiplier: number;
+  gravityMultiplier: number;
+  jumpMultiplier: number;
+  wallJumpMultiplier: number;
+  wallSlideMultiplier: number;
+  shieldChargeMultiplier: number;
+  shieldRechargeMultiplier: number;
+  parryCoverMultiplier: number;
+  parryCooldownMultiplier: number;
+  maxHealthAdd: number;
+  airJumps: number;
+  dashCharges: number;
+  mirrorShield: number; // 0/1
+  directionalShield: number; // 0/1
 };
 
 /**
@@ -332,6 +348,21 @@ export class WasmHost {
       view.setUint8(off + 133, 0);
       view.setUint8(off + 134, 0);
       view.setUint8(off + 135, 0);
+      // Card augments (offset 136+; mirrors sim/src/world_state.zig).
+      view.setFloat64(off + 136, cfg.moveSpeedMultiplier, true);
+      view.setFloat64(off + 144, cfg.gravityMultiplier, true);
+      view.setFloat64(off + 152, cfg.jumpMultiplier, true);
+      view.setFloat64(off + 160, cfg.wallJumpMultiplier, true);
+      view.setFloat64(off + 168, cfg.wallSlideMultiplier, true);
+      view.setFloat64(off + 176, cfg.shieldChargeMultiplier, true);
+      view.setFloat64(off + 184, cfg.shieldRechargeMultiplier, true);
+      view.setFloat64(off + 192, cfg.parryCoverMultiplier, true);
+      view.setFloat64(off + 200, cfg.parryCooldownMultiplier, true);
+      view.setFloat64(off + 208, cfg.maxHealthAdd, true);
+      view.setUint32(off + 216, cfg.airJumps >>> 0, true);
+      view.setUint32(off + 220, cfg.dashCharges >>> 0, true);
+      view.setUint8(off + 224, cfg.mirrorShield ? 1 : 0);
+      view.setUint8(off + 225, cfg.directionalShield ? 1 : 0);
     }
   }
 

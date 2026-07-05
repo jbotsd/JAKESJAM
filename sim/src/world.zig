@@ -880,6 +880,10 @@ pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
     var pmi: u32 = 0;
     while (pmi < state.player_count) : (pmi += 1) {
         if (!state.players[pmi].flags.alive) continue;
+        // Host-resolved card build for this player (movement/shield/parry
+        // augments) — parity with the TS orchestrator's resolvePlayerBuild.
+        const fcfg = &state.player_fire_config[pmi];
+        const has_cfg = fcfg.valid != 0;
         var ps = player_mod.PlayerStep{
             .x = state.players[pmi].x,
             .y = state.players[pmi].y,
@@ -899,13 +903,12 @@ pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
             .grounded_last_frame = @intCast(state.player_movement[pmi].grounded_last_frame),
             .jetpack_active = @intCast(state.player_movement[pmi].jetpack_active),
             .touching_wall_dir = @intCast(state.player_movement[pmi].touching_wall_dir),
-            // Augment INPUTS default inert — the Zig-world path doesn't resolve
-            // card builds yet (Phase-2 migration item).
-            .jump_mul = 1.0,
-            .wall_jump_mul = 1.0,
-            .wall_slide_mul = 1.0,
-            .air_jumps = 0,
-            .dash_charges = 0,
+            // Augment INPUTS from the host-resolved card build.
+            .jump_mul = if (has_cfg) fcfg.jump_mul else 1.0,
+            .wall_jump_mul = if (has_cfg) fcfg.wall_jump_mul else 1.0,
+            .wall_slide_mul = if (has_cfg) fcfg.wall_slide_mul else 1.0,
+            .air_jumps = if (has_cfg) @intCast(fcfg.air_jumps) else 0,
+            .dash_charges = if (has_cfg) @intCast(fcfg.dash_charges) else 0,
             // Augment MEMORY carried from world state.
             .dash_cooldown_ms = state.player_movement[pmi].dash_cooldown_ms,
             .dash_active_ms = state.player_movement[pmi].dash_active_ms,
@@ -929,6 +932,10 @@ pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
         if (ple.flags.has_freeze and ple.freeze_until_tick > state.header.tick) {
             speed_mul *= ple.freeze_multiplier;
         }
+        // Card move-speed + gravity augments ride the existing step multipliers.
+        if (has_cfg) speed_mul *= fcfg.move_speed_mul;
+        const grav_mul = chaos_profile.gravity_multiplier *
+            (if (has_cfg) fcfg.gravity_mul else 1.0);
         // NB: stepPlayer RETURNS jumped-this-frame, not grounded. The grounded
         // state lives in ps.grounded_last_frame (mutated in place). The world
         // orchestrator emits no jump event, so the return is discarded.
@@ -939,7 +946,7 @@ pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
             state.players[pmi].aim_x,
             state.players[pmi].aim_y,
             speed_mul,
-            chaos_profile.gravity_multiplier,
+            grav_mul,
             eff_dt,
             statics_slice,
             one_way_slice,
