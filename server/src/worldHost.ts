@@ -112,6 +112,17 @@ export class WorldHost {
     }
     this.mapId = (opts.mapId as MapId | undefined) ?? DEFAULT_MAP_ID;
     this.rotateMaps = opts.rotateMaps ?? false;
+    // Eager-boot when bots are configured: the always-on world should be
+    // live (rounds advancing, drafting cycling) before the first human opens
+    // the share link — otherwise /health shows world=null and visitors land
+    // in a frozen arena.
+    if (this.botCount > 0) {
+      const botSpawns = this.bots
+        .spawnInfosFor(this.botCount)
+        .map((b) => this.botSpawn(b.playerId, b.name));
+      this.host = this.buildHost(botSpawns);
+      this.host.ensureTickLoop();
+    }
   }
 
   /**

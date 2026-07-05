@@ -28,4 +28,12 @@ describe("WorldHost construction", () => {
       /unknown mapId/,
     );
   });
+
+  test("eager-boots the world when bots > 0", () => {
+    const wh = new WorldHost({ bots: 2 });
+    const summary = wh.summary();
+    expect(summary).not.toBeNull();
+    expect(summary!.players).toBeGreaterThanOrEqual(2);
+    expect(wh.size()).toBe(1);
+  });
 });
