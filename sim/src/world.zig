@@ -43,6 +43,31 @@ const trig = @import("trig.zig");
 ///   * winner index ≥ 0 if exactly one player alive (KO)
 ///   * winner index ≥ 0 if time-out (highest health)
 ///   * -1 if no winner yet
+/// Grace after ALL humans die before the bot-shootout guard ends the round
+/// (parity with round.ts NO_HUMAN_SURVIVOR_END_MS).
+const NO_HUMAN_SURVIVOR_END_MS: f64 = 6000;
+
+/// A player whose id begins with "bot_" is AI (parity with round.ts BOT_ID_PREFIX).
+fn isBotPlayer(p: *const world_state.PlayerEntity) bool {
+    if (p.id_len < 4) return false;
+    return p.id_bytes[0] == 'b' and p.id_bytes[1] == 'o' and
+        p.id_bytes[2] == 't' and p.id_bytes[3] == '_';
+}
+
+/// Highest-health player index (time-out / force-resolve tiebreak).
+fn highestHealthIdx(state: *const world_state.WorldState) i32 {
+    var best_idx: i32 = 0;
+    var best_health: f64 = state.players[0].health;
+    var k: u32 = 1;
+    while (k < state.player_count) : (k += 1) {
+        if (state.players[k].health > best_health) {
+            best_health = state.players[k].health;
+            best_idx = @intCast(k);
+        }
+    }
+    return best_idx;
+}
+
 fn detectRoundWinner(state: *const world_state.WorldState) i32 {
     if (state.header.round_phase != @intFromEnum(round.RoundPhase.fighting))
         return -1;
@@ -56,18 +81,28 @@ fn detectRoundWinner(state: *const world_state.WorldState) i32 {
         }
     }
     if (alive_count == 1) return alive_idx; // KO
-    // Time-out path: highest health among the dead/alive set wins.
-    if (state.header.countdown_remaining_ms <= 0 and state.player_count > 0) {
-        var best_idx: i32 = 0;
-        var best_health: f64 = state.players[0].health;
-        var k: u32 = 1;
-        while (k < state.player_count) : (k += 1) {
-            if (state.players[k].health > best_health) {
-                best_health = state.players[k].health;
-                best_idx = @intCast(k);
+    // Bot-shootout guard (parity with round.ts): humans present but ALL dead,
+    // and the round has run ≥ NO_HUMAN_SURVIVOR_END_MS → force-resolve so the
+    // lobby isn't stuck watching bots duel. Computed fresh each tick, so a live
+    // human (alive_humans>0) cancels it.
+    if (state.player_count > 0) {
+        var humans: u32 = 0;
+        var alive_humans: u32 = 0;
+        var h: u32 = 0;
+        while (h < state.player_count) : (h += 1) {
+            if (!isBotPlayer(&state.players[h])) {
+                humans += 1;
+                if (state.players[h].flags.alive) alive_humans += 1;
             }
         }
-        return best_idx;
+        const elapsed = round.ROUND_TIME_LIMIT_MS - state.header.countdown_remaining_ms;
+        if (humans > 0 and alive_humans == 0 and elapsed >= NO_HUMAN_SURVIVOR_END_MS) {
+            return highestHealthIdx(state);
+        }
+    }
+    // Time-out path: highest health among the dead/alive set wins.
+    if (state.header.countdown_remaining_ms <= 0 and state.player_count > 0) {
+        return highestHealthIdx(state);
     }
     return -1;
 }
