@@ -24,6 +24,8 @@ import {
   type NetStats,
 } from "../../net";
 import type { Id } from "../../../../convex/_generated/dataModel";
+import { HighlightTracker } from "../highlights/highlightRules";
+import { ClipRecorder } from "../highlights/ClipRecorder";
 import {
   STEP_MS,
   crystalRoundsCards,
@@ -226,6 +228,11 @@ export class OnlineMatchScene extends Phaser.Scene {
    *  Lazy-init in handleSimEvents because audio + overlays come up
    *  asynchronously during scene boot. */
   private simEventRouter: SimEventRouter | null = null;
+  /** Highlight-clip capture (see client/src/game/highlights/). OFF unless the
+   *  player opted in via ?clips=1 — this records gameplay to the server, so
+   *  it must never activate silently. null when not opted in. */
+  private highlightTracker: HighlightTracker | null = null;
+  private clipRecorder: ClipRecorder | null = null;
   /** Static arena geometry (platforms, walls, floor, vignette). Drawn
    *  once on hello receipt; never per-frame. */
   private arenaGraphics: Phaser.GameObjects.Graphics | null = null;
@@ -374,6 +381,24 @@ export class OnlineMatchScene extends Phaser.Scene {
     const rendererType = (this.game.renderer as { type?: number } | undefined)?.type;
     const fxDisabled = new URLSearchParams(window.location.search).get("fx") === "off";
     this.combatCinematics = !fxDisabled && rendererType === Phaser.WEBGL;
+
+    // Highlight-clip capture — EXPLICIT opt-in only (?clips=1). This records
+    // gameplay video and uploads it to the server; it must never activate by
+    // default. See client/src/game/highlights/ — no consent UI exists yet,
+    // so treat this flag as a developer/tester switch, not a shipped feature.
+    if (new URLSearchParams(window.location.search).get("clips") === "1") {
+      this.highlightTracker = new HighlightTracker();
+      this.clipRecorder = new ClipRecorder(this.game.canvas, {
+        onUploaded: (url) => console.log(`[clips] uploaded: ${url}`),
+        onError: (err) => console.warn("[clips] capture/upload failed:", err),
+      });
+      this.clipRecorder.start();
+      // Debug hook (mirrors client/src/debug/wasmStateProbe.ts's philosophy):
+      // lets an external test force a trigger to verify the capture/upload
+      // mechanism without depending on rare in-game highlight RNG.
+      (window as unknown as { __clipsTrigger?: () => void }).__clipsTrigger = () =>
+        this.clipRecorder?.trigger();
+    }
 
     this.entityRender = new EntityRenderCoordinator(
       this,
@@ -899,6 +924,14 @@ export class OnlineMatchScene extends Phaser.Scene {
     // Forward all events to the per-frame VFX drain buffer (filters internally).
     if (events.length > 0) {
       for (const e of events) this.pendingSimEvents.push(e);
+    }
+    // Highlight capture — independent of audio readiness, opt-in only (?clips=1).
+    if (this.highlightTracker && this.clipRecorder) {
+      const highlights = this.highlightTracker.ingest(events, performance.now());
+      for (const h of highlights) {
+        console.log(`[clips] highlight: ${h.label} (${h.playerId})`);
+        this.clipRecorder.trigger();
+      }
     }
     if (!this.audio) return;
     // C2b: per-event dispatch lives in SimEventRouter. The 120-line
@@ -1619,6 +1652,10 @@ export class OnlineMatchScene extends Phaser.Scene {
   private teardown() {
     this.scale.off("resize", this.repositionHud, this);
     this.scale.off("resize", this.applyMobileCamera, this);
+    this.clipRecorder?.stop();
+    this.clipRecorder = null;
+    this.highlightTracker = null;
+    delete (window as unknown as { __clipsTrigger?: () => void }).__clipsTrigger;
     setActiveStateGetter(null);
     setActiveCameraGetter(null);
     setActiveRigDebugGetter(null);

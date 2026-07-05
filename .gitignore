@@ -30,3 +30,6 @@ sim/zig-cache/
 .host-logs/
 .combat-probe/
 .match-probe/
+
+# Highlight-clip uploads (server/src/clipStore.ts) — runtime data, not source
+server/.clips/

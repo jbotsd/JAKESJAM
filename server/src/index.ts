@@ -24,6 +24,7 @@ import {
   applyServerWasmPlayer,
   loadServerSim,
 } from "./wasmRuntime.ts";
+import { handleClipUpload, serveClip } from "./clipStore.ts";
 
 // Phase B4/D2 Zig→WASM substrate (ADR-0006). Awaited at top-level
 // so the trig LUT is installed + swaps are in place before any
@@ -169,6 +170,26 @@ function serveOnPort(port: number) {
         JSON.stringify(registry.summaryFor(id)),
         { headers: { "content-type": "application/json", ...corsHeaders } },
       );
+    }
+
+    // ── Highlight clips (client/src/game/highlights/ClipRecorder.ts) ───
+    // Upload lands the file under server/.clips/; the returned URL is what
+    // a future TikTok Content Posting API PULL_FROM_URL call would use.
+    if (url.pathname === "/clips/upload" && req.method === "POST") {
+      const origin = `${url.protocol}//${req.headers.get("host") ?? url.host}`;
+      const result = await handleClipUpload(req, origin);
+      if (!result.ok) {
+        return new Response(result.message, { status: result.status, headers: corsHeaders });
+      }
+      return new Response(JSON.stringify({ url: result.url }), {
+        headers: { "content-type": "application/json", ...corsHeaders },
+      });
+    }
+    if (url.pathname.startsWith("/clips/") && req.method === "GET") {
+      const filename = url.pathname.slice("/clips/".length);
+      const res = await serveClip(filename);
+      if (res) return res;
+      return new Response("not found", { status: 404, headers: corsHeaders });
     }
 
     // ── World token mint ──────────────────────────────────────────────
