@@ -409,7 +409,10 @@ function decideRoundWinner(
   forceResolve: boolean,
 ): PlayerId | null | undefined {
   const playerIds = (Object.keys(players) as PlayerId[]).sort();
-  if (playerIds.length === 0) return undefined;
+  // Empty match: keep the round in-progress on a normal tick, but on a forced
+  // resolve (time-out or bot-shootout guard) resolve to a draw so the phase
+  // can't hang forever with zero players.
+  if (playerIds.length === 0) return forceResolve ? null : undefined;
 
   const alive = playerIds.filter((id) => players[id]!.alive);
 

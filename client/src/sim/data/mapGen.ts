@@ -50,11 +50,33 @@ export const GRAB_MIN_H = 25;
 /** Max gap between two facing grab walls that can still be climbed as a
  *  shaft (wall-jump vx 430 crosses this comfortably). */
 export const SHAFT_MAX = 230;
-/** Extra reach ABOVE a shaft's climb-top for the final wall-jump hop
- *  (wall-jump apex ≈ 179px at vy -720). */
-export const WALL_JUMP_UP = 186;
+/** Extra reach ABOVE a shaft's climb-top for the final wall-jump hop. The true
+ *  wall-jump apex is 720²/(2·1450) ≈ 178.8px (vy -720, rise gravity 1450); we
+ *  sit a hair UNDER it so the reachability model never OVER-claims. */
+export const WALL_JUMP_UP = 178;
 /** Horizontal reach of a wall-jump onto a side ledge. */
 export const GRAB_REACH_SIDE = 200;
+
+// ── Jump-arc physics (mirrors player.ts M). The reachability model must not
+//    over-approximate: rise and gap trade off along a REAL arc, so a platform
+//    near the max rise admits far less horizontal gap than a level hop. Using
+//    independent rise/gap budgets was a wrong-PASS risk (agent audit).
+const JUMP_V0 = 635; // |jumpVelocity|
+const JUMP_GRAV = 1450; // rise-phase gravity
+const RUN_SPEED = 330; // maxGroundSpeed
+/** Apex height of a plain jump (~139px). */
+export const JUMP_APEX = (JUMP_V0 * JUMP_V0) / (2 * JUMP_GRAV);
+
+/** Max horizontal gap a jump can cross while RISING to a platform `rise` px
+ *  above: (time to reach that height) × run speed. Solves rise = v0·t − ½g·t²
+ *  for the earliest t. Returns -1 when `rise` is above the apex. */
+function maxGapForRise(rise: number): number {
+  if (rise <= 0) return MAX_GAP_FALLING;
+  const disc = JUMP_V0 * JUMP_V0 - 2 * JUMP_GRAV * rise;
+  if (disc < 0) return -1; // above apex — unreachable by a plain jump
+  const t = (JUMP_V0 - Math.sqrt(disc)) / JUMP_GRAV;
+  return RUN_SPEED * t;
+}
 
 // Ledge bands (feet land on top). Each ~108px above the last (≤ jump rise),
 // so the whole gym is climbable with plain jumps; wall-shafts skip the climb.
@@ -302,7 +324,7 @@ export function unreachablePlatforms(map: MapDefinition): string[] {
           to.x0 > from.x1 ? to.x0 - from.x1 : from.x0 > to.x1 ? from.x0 - to.x1 : 0;
         const ok =
           rise > 0
-            ? rise <= MAX_STEP_RISE && gap <= MAX_GAP_RISING
+            ? rise <= MAX_STEP_RISE && gap <= maxGapForRise(rise)
             : gap <= MAX_GAP_FALLING;
         if (ok) {
           reached.add(to.id);
