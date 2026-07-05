@@ -79,11 +79,18 @@ const SIDE_TOWER_TOPS = [_]f64{ 356, 248 };
 const CENTER_TOWER_TOPS = [_]f64{ 464, 356 };
 const COVER_TOP: f64 = 640;
 
-// ── Seeded RNG — reuse the sim's established mulberry32-family cursor
-//    (rng.zig::nextU32) rather than inventing a second variant. ────────
+// ── Seeded RNG — EXACT mulberry32 matching client/src/sim/data/mapGen.ts.
+//    Advance the cursor by ONLY the increment, scramble a COPY for output.
+//    (rng.zig::nextU32 advances the cursor to the full scramble — a DIFFERENT
+//    stream — so using it made generated maps diverge from TS. Verified via
+//    mapGenParity.test.ts.) ────────────────────────────────────────────────
 fn randFloat01(state: *u32) f64 {
-    state.* = rng.nextU32(state.*);
-    return @as(f64, @floatFromInt(state.*)) / 4294967296.0;
+    state.* = state.* +% 0x6d2b79f5;
+    var t: u32 = state.*;
+    t = (t ^ (t >> 15)) *% (t | 1);
+    t ^= t +% ((t ^ (t >> 7)) *% (t | 61));
+    t = t ^ (t >> 14);
+    return @as(f64, @floatFromInt(t)) / 4294967296.0;
 }
 
 fn pickF(state: *u32, arr: []const f64) f64 {
@@ -702,3 +709,29 @@ pub export fn world_state_generate_arena(
 // via `sim_root`'s cross-module import (verified empirically: colocated
 // `test` blocks here did not run under `zig build test`). See
 // `.claude/skills/zig-code-quality/SKILL.md` "Tests".
+
+/// Parity-test export: generate arena for `seed` and write geometry into `out`
+/// as f64s: [platform_count, (cx,cy,w,h,kind)×N, spawn_count, (x,y)×M].
+/// Returns the number of f64s written.
+pub export fn gen_arena_geometry(seed: u32, out: [*]f64) u32 {
+    const cand = generateArena(seed);
+    var i: usize = 0;
+    out[i] = @floatFromInt(cand.platform_count);
+    i += 1;
+    for (cand.platforms[0..cand.platform_count]) |pl| {
+        out[i] = pl.cx;
+        out[i + 1] = pl.cy;
+        out[i + 2] = pl.w;
+        out[i + 3] = pl.h;
+        out[i + 4] = @floatFromInt(@intFromEnum(pl.kind));
+        i += 5;
+    }
+    out[i] = @floatFromInt(cand.spawn_count);
+    i += 1;
+    for (cand.spawns[0..cand.spawn_count]) |s| {
+        out[i] = s.x;
+        out[i + 1] = s.y;
+        i += 2;
+    }
+    return @intCast(i);
+}

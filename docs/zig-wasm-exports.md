@@ -238,6 +238,8 @@ spawn, satellite owner-lookup land in I2-I4.
 | `resolve_player_fire_config(state, player_index, indices_ptr, count)` | resolve player's build from card indices → player_fire_config (weapon_build.zig; replaces TS createWeaponBuild) | B4 |
 | `resolve_build_test(card_index, out_ptr)` | test-only: resolve base (idx<0) or base+cards[idx] into out | B4 |
 | `resolve_build_card_count() → u32` | test-only: count of cards in the generated table | B4 |
+| `gen_arena_geometry(seed, out_ptr) → u32` | test-only: write generated arena geometry (platforms+spawns) for parity vs mapGen.ts | B4 |
+| `world_state_generate_arena(state, seed)` | generate arena into state.statics/spawns (map_gen.zig) — mapgen authority | B4 |
 
 ## Round (`round.zig`) — Phase H7
 
