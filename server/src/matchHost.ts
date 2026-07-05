@@ -5,6 +5,7 @@
 import type { ServerWebSocket } from "bun";
 import { SNAPSHOT_INTERVAL_TICKS, STEP_MS, World } from "@sim/index.ts";
 import { createRuntime, stepWithRuntime, type WorldRuntime } from "@sim/World.ts";
+import { KILL_PLANE_MARGIN_PX } from "@sim/player.ts";
 import { resolveMap, type MapId } from "@sim/data/maps.ts";
 import type {
   InputFrame,
@@ -263,6 +264,12 @@ export class MatchHost {
         p.kind === "platform" ? 1 : 0,
       );
       serverWasmHost.setStatics(aabbs, oneWay);
+      // Ceiling clamp + void kill-plane — same values the client feeds its host,
+      // so step_world's bounds match on both sides.
+      serverWasmHost.setArenaBounds(
+        this.runtime.ceilingClampY,
+        this.map.size.y > 0 ? this.map.size.y + KILL_PLANE_MARGIN_PX : 0,
+      );
     }
     this.grid = new InterestGrid(this.map.size.x, this.map.size.y, CELL_SIZE_PX);
     this.replayRecorder = new ReplayRecorder({

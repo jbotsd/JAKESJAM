@@ -22,6 +22,10 @@ import {
   type WasmSimEvent,
 } from "@sim/wasm/worldStateBridge.ts";
 import { loadServerSim } from "./wasmRuntime.ts";
+import {
+  resolveFireConfigsForState,
+  writeFireConfigsInto,
+} from "@sim/wasm/fireConfigShared.ts";
 
 /** Same shape as client `StaticAABB`. */
 export type StaticAABB = { x: number; y: number; w: number; h: number };
@@ -53,6 +57,11 @@ type WorldExports = {
   ) => number;
   offset_player_fire_config?: () => number;
   sizeof_resolved_fire_config?: () => number;
+  world_state_set_arena_bounds?: (
+    ceiling_y: number,
+    has_ceiling: number,
+    kill_plane_y: number,
+  ) => void;
   memory: WebAssembly.Memory;
 };
 
@@ -62,6 +71,11 @@ class ServerWasmHost {
   private ex: WorldExports | null = null;
   private cachedStatics: { aabbs: StaticAABB[]; oneWay: number[] } | null = null;
   private cachedInputs: ReadonlyMap<string, PlayerInputBits> | null = null;
+  private cachedArenaBounds: {
+    ceilingY: number;
+    hasCeiling: number;
+    killPlaneY: number;
+  } | null = null;
   private preloadPromise: Promise<void> | null = null;
   private resolvedReady = false;
   private readyResolvers: Array<() => void> = [];
@@ -133,6 +147,16 @@ class ServerWasmHost {
     this.cachedInputs = inputs;
   }
 
+  /** Ceiling-clamp + void kill-plane bounds (World.ts computeCeilingClampY +
+   *  map.size.y + KILL_PLANE_MARGIN_PX). Set once per match. */
+  setArenaBounds(ceilingY: number | null, killPlaneY: number): void {
+    this.cachedArenaBounds = {
+      ceilingY: ceilingY ?? 0,
+      hasCeiling: ceilingY === null ? 0 : 1,
+      killPlaneY,
+    };
+  }
+
   getStaticsSnapshot(): { aabbs: ReadonlyArray<StaticAABB>; oneWay: ReadonlyArray<number> } | null {
     return this.cachedStatics
       ? { aabbs: this.cachedStatics.aabbs, oneWay: this.cachedStatics.oneWay }
@@ -167,6 +191,11 @@ class ServerWasmHost {
     const heap = new Uint8Array(ex.memory.buffer);
     heap.set(buf, statePtr);
     this.writeStaticsIntoMemory();
+    // Card builds + arena bounds — MUST match the client (writeFireConfigsForState
+    // + setArenaBounds). Without these the server runs every player's build inert
+    // (no card augments) while the client predicts WITH them → desync.
+    this.writeFireConfigsIntoMemory(state);
+    this.writeArenaBoundsIntoMemory();
     this.writeInputsIntoMemory();
     const rc = ex.step_world(statePtr, dtMs);
     if (rc !== 0) {
@@ -218,6 +247,31 @@ class ServerWasmHost {
       heap[oneWayPtr + i] = this.cachedStatics.oneWay[i] ?? 0;
     }
     ex.world_state_set_statics(this.statePtr, scratchPtr, oneWayPtr, count);
+  }
+
+  /** Resolve each player's build + write the ResolvedFireConfig array (shared
+   *  bytes with the client) so world.zig applies the SAME card augments. Runs
+   *  AFTER pack (pack skips the fire-config region) and before step_world. */
+  private writeFireConfigsIntoMemory(state: WorldState): void {
+    if (!this.ex || this.statePtr === null) return;
+    const ex = this.ex;
+    if (!ex.offset_player_fire_config || !ex.sizeof_resolved_fire_config) return;
+    const view = new DataView(ex.memory.buffer);
+    writeFireConfigsInto(
+      view,
+      this.statePtr + ex.offset_player_fire_config(),
+      ex.sizeof_resolved_fire_config(),
+      resolveFireConfigsForState(state),
+    );
+  }
+
+  private writeArenaBoundsIntoMemory(): void {
+    if (!this.cachedArenaBounds || !this.ex) return;
+    this.ex.world_state_set_arena_bounds?.(
+      this.cachedArenaBounds.ceilingY,
+      this.cachedArenaBounds.hasCeiling,
+      this.cachedArenaBounds.killPlaneY,
+    );
   }
 
   private writeInputsIntoMemory(): void {

@@ -29,6 +29,7 @@
 
 import type { WorldState } from "../types.js";
 import type { WasmSimEvent } from "./worldStateBridge.js";
+import { writeFireConfigsInto } from "./fireConfigShared.js";
 
 /**
  * Static-AABB layout for terrain collision. Mirrors
@@ -318,60 +319,9 @@ export class WasmHost {
     const baseOffset = exObj.offset_player_fire_config();
     const recordSize = exObj.sizeof_resolved_fire_config();
     const view = new DataView(exObj.memory.buffer);
-    for (let i = 0; i < configsByIndex.length; i++) {
-      const cfg = configsByIndex[i];
-      const off = sim.statePtr + baseOffset + i * recordSize;
-      if (!cfg) {
-        // valid=0; rest of fields don't matter.
-        view.setUint8(off + 132, 0);
-        continue;
-      }
-      // 14 × f64
-      view.setFloat64(off + 0, cfg.damage, true);
-      view.setFloat64(off + 8, cfg.fireRate, true);
-      view.setFloat64(off + 16, cfg.projectileSpeed, true);
-      view.setFloat64(off + 24, cfg.projectileLifetimeSeconds, true);
-      view.setFloat64(off + 32, cfg.spreadRadians, true);
-      view.setFloat64(off + 40, cfg.rangePx, true);
-      view.setFloat64(off + 48, cfg.homingStrength, true);
-      view.setFloat64(off + 56, cfg.accelerationMultiplier, true);
-      view.setFloat64(off + 64, cfg.gravityScale, true);
-      view.setFloat64(off + 72, cfg.slowMultiplier, true);
-      view.setFloat64(off + 80, cfg.impactRadiusPx, true);
-      view.setFloat64(off + 88, cfg.sizeMultiplier, true);
-      view.setFloat64(off + 96, cfg.speedMultiplier, true);
-      view.setFloat64(off + 104, cfg.lifetimeMultiplier, true);
-      // 4 × u32
-      view.setUint32(off + 112, cfg.projectileCount >>> 0, true);
-      view.setUint32(off + 116, cfg.bounces >>> 0, true);
-      view.setUint32(off + 120, cfg.pierceCount >>> 0, true);
-      view.setUint32(off + 124, cfg.splitCount >>> 0, true);
-      // 4 × u8 enum
-      view.setUint8(off + 128, cfg.shapeIdx);
-      view.setUint8(off + 129, cfg.elementIdx);
-      view.setUint8(off + 130, cfg.pathingIdx);
-      view.setUint8(off + 131, cfg.impactIdx);
-      // valid + pad
-      view.setUint8(off + 132, 1);
-      view.setUint8(off + 133, 0);
-      view.setUint8(off + 134, 0);
-      view.setUint8(off + 135, 0);
-      // Card augments (offset 136+; mirrors sim/src/world_state.zig).
-      view.setFloat64(off + 136, cfg.moveSpeedMultiplier, true);
-      view.setFloat64(off + 144, cfg.gravityMultiplier, true);
-      view.setFloat64(off + 152, cfg.jumpMultiplier, true);
-      view.setFloat64(off + 160, cfg.wallJumpMultiplier, true);
-      view.setFloat64(off + 168, cfg.wallSlideMultiplier, true);
-      view.setFloat64(off + 176, cfg.shieldChargeMultiplier, true);
-      view.setFloat64(off + 184, cfg.shieldRechargeMultiplier, true);
-      view.setFloat64(off + 192, cfg.parryCoverMultiplier, true);
-      view.setFloat64(off + 200, cfg.parryCooldownMultiplier, true);
-      view.setFloat64(off + 208, cfg.maxHealthAdd, true);
-      view.setUint32(off + 216, cfg.airJumps >>> 0, true);
-      view.setUint32(off + 220, cfg.dashCharges >>> 0, true);
-      view.setUint8(off + 224, cfg.mirrorShield ? 1 : 0);
-      view.setUint8(off + 225, cfg.directionalShield ? 1 : 0);
-    }
+    // Shared writer — server (serverWasmHost) uses the identical bytes so the
+    // two cutover paths can't drift on the struct layout.
+    writeFireConfigsInto(view, sim.statePtr + baseOffset, recordSize, configsByIndex);
   }
 
   /**
