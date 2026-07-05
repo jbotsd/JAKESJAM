@@ -35,6 +35,9 @@ import {
 } from "./tiktok/auth.ts";
 import { postClipFromUrl, getCreatorInfo } from "./tiktok/post.ts";
 import { saveToken, getToken, isAccessTokenStale } from "./tiktok/tokenStore.ts";
+import { createCheckoutSession, findSku, COSMETIC_CATALOG } from "./stripe/checkout.ts";
+import { requireStripeWebhookSecret, verifyStripeSignature, parseCheckoutCompleted } from "./stripe/webhook.ts";
+import { grantEntitlement, getEntitlements } from "./stripe/entitlements.ts";
 
 // In-memory PKCE/state stash for the OAuth handshake — short-lived (a few
 // minutes at most, spanning one redirect round-trip), so process memory is
@@ -307,6 +310,85 @@ function serveOnPort(port: number) {
           headers: corsHeaders,
         });
       }
+    }
+
+    // ── Cosmetics store (Stripe Checkout) ───────────────────────────────
+    // Requires STRIPE_SECRET_KEY / STRIPE_WEBHOOK_SECRET (a real Stripe
+    // account) — see server/src/stripe/. Same credential-gated boundary as
+    // the TikTok integration above: mechanically complete, untestable live
+    // without the account owner's own keys.
+    if (url.pathname === "/store/catalog" && req.method === "GET") {
+      return new Response(JSON.stringify(COSMETIC_CATALOG), {
+        headers: { "content-type": "application/json", ...corsHeaders },
+      });
+    }
+    if (url.pathname === "/store/checkout" && req.method === "POST") {
+      let body: { playerId?: string; skuId?: string };
+      try {
+        body = (await req.json()) as typeof body;
+      } catch {
+        return new Response("bad request", { status: 400, headers: corsHeaders });
+      }
+      if (!body.playerId || !body.skuId) {
+        return new Response("missing playerId/skuId", { status: 400, headers: corsHeaders });
+      }
+      const sku = findSku(body.skuId);
+      if (!sku) return new Response("unknown skuId", { status: 404, headers: corsHeaders });
+      try {
+        const origin = `${url.protocol}//${req.headers.get("host") ?? url.host}`;
+        const session = await createCheckoutSession({
+          sku,
+          playerId: body.playerId,
+          successUrl: `${origin}/?purchase=success`,
+          cancelUrl: `${origin}/?purchase=cancelled`,
+        });
+        return new Response(JSON.stringify({ checkoutUrl: session.url }), {
+          headers: { "content-type": "application/json", ...corsHeaders },
+        });
+      } catch (err) {
+        return new Response(err instanceof Error ? err.message : String(err), {
+          status: 500,
+          headers: corsHeaders,
+        });
+      }
+    }
+    if (url.pathname === "/store/webhook" && req.method === "POST") {
+      // MUST verify against the raw body text — parsing first and
+      // re-serializing would not reproduce the bytes Stripe signed.
+      const rawBody = await req.text();
+      try {
+        const secret = requireStripeWebhookSecret();
+        const result = verifyStripeSignature(rawBody, req.headers.get("stripe-signature"), secret);
+        if (!result.ok) {
+          return new Response(`signature verification failed: ${result.reason}`, {
+            status: 400,
+            headers: corsHeaders,
+          });
+        }
+      } catch (err) {
+        return new Response(err instanceof Error ? err.message : String(err), {
+          status: 500,
+          headers: corsHeaders,
+        });
+      }
+      const completed = parseCheckoutCompleted(rawBody);
+      if (completed) {
+        await grantEntitlement(completed.playerId, completed.skuId);
+      }
+      // 200 for anything else too (other event types) — Stripe retries
+      // non-2xx responses, and there's nothing to do for events this store
+      // doesn't act on.
+      return new Response(JSON.stringify({ received: true }), {
+        headers: { "content-type": "application/json", ...corsHeaders },
+      });
+    }
+    if (url.pathname === "/store/entitlements" && req.method === "GET") {
+      const playerId = url.searchParams.get("playerId");
+      if (!playerId) return new Response("missing playerId", { status: 400, headers: corsHeaders });
+      const owned = await getEntitlements(playerId);
+      return new Response(JSON.stringify({ owned }), {
+        headers: { "content-type": "application/json", ...corsHeaders },
+      });
     }
 
     // ── World token mint ──────────────────────────────────────────────
