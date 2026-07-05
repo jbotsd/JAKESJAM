@@ -46,6 +46,11 @@ type WorldExports = {
     count: number,
   ) => number;
   world_state_set_target_score: (state_ptr: number, target: number) => void;
+  world_state_set_arena_bounds: (
+    ceiling_y: number,
+    has_ceiling: number,
+    kill_plane_y: number,
+  ) => void;
   memory: WebAssembly.Memory;
 };
 
@@ -385,6 +390,26 @@ export function isWasmWorldReady(): boolean {
  */
 type StaticAABB = { x: number; y: number; w: number; h: number };
 let cachedStatics: { aabbs: StaticAABB[]; oneWay: number[] } | null = null;
+let cachedArenaBounds:
+  | { ceilingY: number; hasCeiling: number; killPlaneY: number }
+  | null = null;
+
+/**
+ * Cache the ceiling-clamp + void kill-plane bounds for this match (World.ts
+ * createRuntime calls this after the map loads). Applied to wasm module state
+ * each tick alongside the statics so step_world's ceiling clamp + void kill
+ * match the TS orchestrator.
+ */
+export function setWorldArenaBounds(
+  ceilingY: number | null,
+  killPlaneY: number,
+): void {
+  cachedArenaBounds = {
+    ceilingY: ceilingY ?? 0,
+    hasCeiling: ceilingY === null ? 0 : 1,
+    killPlaneY,
+  };
+}
 
 /**
  * Set the static-AABB cache for this match. The host (World.ts
@@ -431,6 +456,13 @@ function writeStaticsIntoMemory(): void {
     heap[oneWayPtr + i] = cachedStatics.oneWay[i] ?? 0;
   }
   ex.world_state_set_statics(sim.statePtr, scratchPtr, oneWayPtr, count);
+  if (cachedArenaBounds) {
+    ex.world_state_set_arena_bounds(
+      cachedArenaBounds.ceilingY,
+      cachedArenaBounds.hasCeiling,
+      cachedArenaBounds.killPlaneY,
+    );
+  }
 }
 
 /** Boot-time warning if the user opted in but wasm fails to load. */

@@ -47,6 +47,29 @@ const trig = @import("trig.zig");
 /// (parity with round.ts NO_HUMAN_SURVIVOR_END_MS).
 const NO_HUMAN_SURVIVOR_END_MS: f64 = 6000;
 
+/// Half the player body height (parity with World.ts PLAYER_HALF_HEIGHT).
+const PLAYER_HALF_HEIGHT: f64 = 28;
+
+// Arena bounds for the ceiling clamp + void-plane kill (parity with World.ts).
+// Module-level (not packed in WorldState) — one sim instance, same lifetime as
+// the statics cache; set by the host on match start.
+var g_ceiling_clamp_y: f64 = 0;
+var g_has_ceiling: bool = false;
+var g_kill_plane_y: f64 = 0; // map.size.y + KILL_PLANE_MARGIN_PX; 0 = disabled
+
+/// Host sets arena bounds on match start: ceiling-clamp Y (World.ts
+/// computeCeilingClampY, has_ceiling=0 when the map has no ceiling) and the
+/// void kill-plane Y (map.size.y + KILL_PLANE_MARGIN_PX).
+pub export fn world_state_set_arena_bounds(
+    ceiling_y: f64,
+    has_ceiling: i32,
+    kill_plane_y: f64,
+) void {
+    g_ceiling_clamp_y = ceiling_y;
+    g_has_ceiling = has_ceiling != 0;
+    g_kill_plane_y = kill_plane_y;
+}
+
 /// A player whose id begins with "bot_" is AI (parity with round.ts BOT_ID_PREFIX).
 fn isBotPlayer(p: *const world_state.PlayerEntity) bool {
     if (p.id_len < 4) return false;
@@ -1049,6 +1072,26 @@ pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
         state.player_movement[pmi].dash_active_ms = ps.dash_active_ms;
         state.player_movement[pmi].air_jumps_used = @intCast(ps.air_jumps_used);
         state.player_movement[pmi].dash_used_in_air = @intCast(ps.dash_used_in_air);
+        // Ceiling clamp (parity with World.ts computeCeilingClampY): head pushed
+        // above the ceiling → shove back under + kill upward velocity.
+        if (g_has_ceiling) {
+            const min_center_y = g_ceiling_clamp_y + PLAYER_HALF_HEIGHT;
+            if (state.players[pmi].y < min_center_y) {
+                state.players[pmi].y = min_center_y;
+                if (state.players[pmi].vy < 0) state.players[pmi].vy = 0;
+            }
+        }
+        // Void-plane kill (parity with World.ts): fell past the map bottom +
+        // KILL_PLANE_MARGIN → force-kill so the death→respawn flow runs. Player
+        // is alive here (checked at loop top). Emit hit_confirmed (damage =
+        // remaining health) + player_killed like any other death.
+        if (g_kill_plane_y > 0 and state.players[pmi].y > g_kill_plane_y) {
+            const rem = state.players[pmi].health;
+            state.players[pmi].health = 0;
+            state.players[pmi].flags.alive = false;
+            emitEvent(state, .hit_confirmed, @intCast(pmi), -1, 0, rem, state.players[pmi].x, state.players[pmi].y);
+            emitEvent(state, .player_killed, @intCast(pmi), -1, 0, 0, state.players[pmi].x, state.players[pmi].y);
+        }
     }
 
     // 6. Combat — per-player shield drain + parry start (I4 +

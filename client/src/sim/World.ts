@@ -226,6 +226,12 @@ export function syncWorldStaticsToWasm(map: MapDefinition): void {
   // is one-way (jump-up-through). 'floor' + 'wall' are solid.
   const oneWay = map.platforms.map((p) => (p.kind === "platform" ? 1 : 0));
   wasmHost.setStatics(aabbs, oneWay);
+  // Ceiling clamp + void kill-plane bounds for the Zig orchestrator — same
+  // formulas the TS tick uses (computeCeilingClampY + map.size.y + margin).
+  wasmHost.setArenaBounds(
+    computeCeilingClampY(map),
+    map.size.y > 0 ? map.size.y + KILL_PLANE_MARGIN_PX : 0,
+  );
 }
 
 /**

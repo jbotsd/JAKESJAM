@@ -239,6 +239,14 @@ export class WasmHost {
     );
   }
 
+  /** Mirror the ceiling-clamp + void kill-plane bounds to the world backend
+   *  so step_world's ceiling clamp + void kill match the TS orchestrator. */
+  setArenaBounds(ceilingY: number | null, killPlaneY: number): void {
+    void import("./worldWasmBackend.js").then((m) =>
+      m.setWorldArenaBounds(ceilingY, killPlaneY),
+    );
+  }
+
   /**
    * Cache per-player input for the next `step()`. Replaces the
    * `globalThis.__jakesjam_wasm_inputs__` stash. The wasm step
