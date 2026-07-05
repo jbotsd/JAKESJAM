@@ -23,9 +23,11 @@ pub const world = @import("world.zig");
 pub const chaos = @import("data/chaos.zig");
 pub const weapons = @import("data/weapons.zig");
 pub const map_gen = @import("data/map_gen.zig");
+pub const weapon_build = @import("weapon_build.zig");
 
 // Force wasm linker to include sub-modules' `export fn` symbols.
 comptime {
+    _ = weapon_build;
     _ = rng;
     _ = collision;
     _ = player;

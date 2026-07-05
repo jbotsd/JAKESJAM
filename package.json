@@ -26,13 +26,14 @@
     "convex:codegen": "bunx convex codegen",
     "convex:deploy": "bunx convex deploy",
     "deploy:server:sin": "flyctl deploy --config fly.toml --app jakesjam-srv-sin",
-    "sim:build": "cd sim && zig build",
+    "sim:build": "bun run gen:cards && cd sim && zig build",
     "sim:test": "cd sim && zig build test",
     "sim:fmt": "cd sim && zig fmt --check .",
     "sim:bench": "bun run tools/wasm-bench.ts",
     "host:public": "./scripts/host-public.sh",
     "combat:probe": "bun tools/combat-probe.mjs",
-    "match:probe": "bun tools/match-probe.mjs"
+    "match:probe": "bun tools/match-probe.mjs",
+    "gen:cards": "bun run sim/tools/gen_card_data.ts"
   },
   "devDependencies": {
     "@playwright/test": "^1.59.1",
