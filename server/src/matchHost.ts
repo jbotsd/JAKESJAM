@@ -4,7 +4,7 @@
 
 import type { ServerWebSocket } from "bun";
 import { SNAPSHOT_INTERVAL_TICKS, STEP_MS, World } from "@sim/index.ts";
-import { createRuntime, stepWithRuntime, type WorldRuntime } from "@sim/World.ts";
+import { createRuntime, type WorldRuntime } from "@sim/World.ts";
 import { KILL_PLANE_MARGIN_PX } from "@sim/player.ts";
 import { stepRound, enterDrafting, TARGET_SCORE_DEFAULT } from "@sim/round.ts";
 import { resolveMap, type MapId } from "@sim/data/maps.ts";
@@ -44,33 +44,18 @@ import { ReplayRecorder } from "./ReplayRecorder.ts";
 import { serverWasmHost } from "./serverWasmHost.ts";
 
 /**
- * Phase B3 feature flag. When `true`, the authoritative tick goes
- * through `serverWasmHost.step()` (Zig wasm) instead of the TS
- * `stepWithRuntime`. Default off: B3 cutover requires a 30-min
- * multi-client playtest before flipping in production. Flip via
- * `fly secrets set USE_WASM_STEP_WORLD=1 -a jakesjam-srv-sin`.
- *
- * B2 (full TS sim deletion) is gated on this flag soaking
- * default-on for ≥1 week without auto-fallback warnings AND on
- * migrating the ~25 wasm-parity tests + ~15 TS-side sim tests +
- * server/src/wasmRuntime.ts imports off the TS sim modules.
- * That's a separate supervised cut.
+ * 100% Zig: the authoritative tick runs exclusively through serverWasmHost
+ * (the Zig sim). There is NO TS fallback — the tick loop is gated on
+ * serverWasmHost.ready() so a match never ticks before the sim is live.
  */
-const USE_WASM_STEP_WORLD =
-  process.env.USE_WASM_STEP_WORLD === "1" ||
-  process.env.USE_WASM_STEP_WORLD === "true";
-
-if (USE_WASM_STEP_WORLD) {
-  // Fire-and-forget preload so the first tick after construction
-  // doesn't await. If the load fails, serverWasmHost.isReady()
-  // stays false and matchHost falls back to stepWithRuntime per
-  // the runtime guard in stepOnce().
-  void serverWasmHost.preload().catch((err) => {
-    console.warn(
-      `[matchHost] B3 wasm step preload failed; falling back to TS: ${err instanceof Error ? err.message : String(err)}`,
-    );
-  });
-}
+// 100% Zig: the authoritative tick runs EXCLUSIVELY through serverWasmHost.
+// Preload unconditionally; the tick loop (maybeStartLoop) awaits readiness so
+// no tick ever runs before the Zig sim is live. There is no TS fallback.
+void serverWasmHost.preload().catch((err) => {
+  console.error(
+    `[matchHost] wasm sim preload FAILED — matches cannot run: ${err instanceof Error ? err.message : String(err)}`,
+  );
+});
 
 export type MatchSocketData = {
   matchId: string;
@@ -254,7 +239,7 @@ export class MatchHost {
     // B3: also push the map's static-AABB cache to the wasm host
     // so step_world has terrain. Idempotent; no-op when wasm path
     // is disabled. The host buffers if not yet ready.
-    if (USE_WASM_STEP_WORLD) {
+    {
       const aabbs = this.map.platforms.map((p) => ({
         x: p.position.x - p.size.x / 2,
         y: p.position.y - p.size.y / 2,
@@ -701,10 +686,26 @@ export class MatchHost {
     });
   }
 
+  private loopStarting = false;
   private maybeStartLoop(): void {
-    if (this.interval) return;
-    this.startedAt = this.now();
-    this.interval = setInterval(() => this.tick(), STEP_MS);
+    if (this.interval || this.loopStarting) return;
+    // Gate the tick loop on the Zig sim being ready — with no TS fallback, a
+    // tick before readiness has nothing to run. Once ready, ticks are wasm-only.
+    this.loopStarting = true;
+    void serverWasmHost
+      .ready()
+      .then(() => {
+        this.loopStarting = false;
+        if (this.interval) return;
+        this.startedAt = this.now();
+        this.interval = setInterval(() => this.tick(), STEP_MS);
+      })
+      .catch((err) => {
+        this.loopStarting = false;
+        console.error(
+          `[matchHost] wasm sim not ready — match ${this.matchId} cannot start: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      });
   }
 
   private stop(): void {
@@ -881,11 +882,6 @@ export class MatchHost {
       // approximately the same delta from either start, modulo platform
       // collision edge cases inside the rewind window).
       nextState = this.lagComp.unshiftAfterStep(nextState, rewindPlan);
-      // Diagnostics: replay the same tick WITHOUT the rewind on a clean
-      // runtime clone and compare hit-confirmed events for the shooter(s).
-      // This is purely an observation; the authoritative result is the
-      // rewound one above.
-      this.logLagCompOutcomeChange(rewindPlan, events, inputsByPlayer, preStepState, runtimeSnapshotForDiag);
     }
 
     this.state = nextState;
@@ -943,45 +939,42 @@ export class MatchHost {
     state: WorldState,
     inputsByPlayer: Record<PlayerId, InputFrame | null>,
   ): { state: WorldState; events: SimEvent[]; matchComplete: boolean } {
-    if (USE_WASM_STEP_WORLD && serverWasmHost.isReady()) {
-      try {
-        // Build the per-player keys map so wasm sees fresh input.
-        const inputsMap = new Map<
-          string,
-          { keys: number; prevKeys: number; aimX: number; aimY: number }
-        >();
-        for (const [pid, frame] of Object.entries(inputsByPlayer)) {
-          if (!frame) continue;
-          const prev = this.runtime.prevKeys.get(pid as PlayerId) ?? 0;
-          inputsMap.set(pid, {
-            keys: frame.keys,
-            prevKeys: prev,
-            aimX: frame.aimX,
-            aimY: frame.aimY,
-          });
-          this.runtime.prevKeys.set(pid as PlayerId, frame.keys);
-        }
-        serverWasmHost.writeInputs(inputsMap);
-        const result = serverWasmHost.step(state, STEP_MS);
-        // The Zig round machine skips drafting; drive the between-rounds card
-        // menu host-side (deterministic, reuses the TS round machine). Physics
-        // stays authoritative in Zig. serverWasmHost's own WasmSimEvents are
-        // dropped (snapshot broadcast carries the WorldState); the overlay's
-        // round/draft events ARE returned so the loser-respawn + draft-resolved
-        // pipeline still fires.
-        const overlay = this.applyDraftingOverlay(state, result.state);
-        return {
-          state: overlay.state,
-          events: overlay.events,
-          matchComplete: result.matchComplete,
-        };
-      } catch (err) {
-        console.warn(
-          `[matchHost] wasm step threw; falling back to TS for this tick: ${err instanceof Error ? err.message : String(err)}`,
-        );
-      }
+    // 100% Zig — the loop is ready-gated, so the sim is live here. No TS path.
+    const inputsMap = new Map<
+      string,
+      { keys: number; prevKeys: number; aimX: number; aimY: number }
+    >();
+    for (const [pid, frame] of Object.entries(inputsByPlayer)) {
+      if (!frame) continue;
+      const prev = this.runtime.prevKeys.get(pid as PlayerId) ?? 0;
+      inputsMap.set(pid, {
+        keys: frame.keys,
+        prevKeys: prev,
+        aimX: frame.aimX,
+        aimY: frame.aimY,
+      });
+      this.runtime.prevKeys.set(pid as PlayerId, frame.keys);
     }
-    return stepWithRuntime(state, this.runtime, inputsByPlayer, STEP_MS);
+    serverWasmHost.writeInputs(inputsMap);
+    let result;
+    try {
+      result = serverWasmHost.step(state, STEP_MS);
+    } catch (err) {
+      // A wasm throw must not kill the match loop; log once + hold this tick.
+      this.warnOnce(
+        "wasm-step-threw",
+        `[matchHost] wasm step threw (holding tick): ${err instanceof Error ? err.message : String(err)}`,
+      );
+      return { state, events: [], matchComplete: false };
+    }
+    // The Zig round machine skips drafting; drive the between-rounds card menu
+    // host-side (deterministic). Physics stays authoritative in Zig.
+    const overlay = this.applyDraftingOverlay(state, result.state);
+    return {
+      state: overlay.state,
+      events: overlay.events,
+      matchComplete: result.matchComplete,
+    };
   }
 
   /** Independent RNG cursor for host-driven drafting offers (kept off the sim
@@ -1058,41 +1051,6 @@ export class MatchHost {
     return { state: stepped, events: [] };
   }
 
-  private logLagCompOutcomeChange(
-    plan: RewindPlan,
-    rewoundEvents: SimEvent[],
-    inputsByPlayer: Record<PlayerId, InputFrame | null>,
-    preStepState: WorldState,
-    naiveRuntime: WorldRuntime,
-  ): void {
-    let naiveResult;
-    try {
-      naiveResult = stepWithRuntime(preStepState, naiveRuntime, inputsByPlayer, STEP_MS);
-    } catch (err) {
-      this.warnOnce(
-        "lag-comp-naive-step",
-        `[lag-comp] match=${this.matchId} naive-replay step threw: ${err instanceof Error ? err.message : String(err)}`,
-      );
-      return;
-    }
-    const rewoundHits = collectHitsByShooter(preStepState.players, rewoundEvents);
-    const naiveHits = collectHitsByShooter(preStepState.players, naiveResult.events);
-    for (const shooter of plan.shooters) {
-      const rewound = rewoundHits.get(shooter.playerId) ?? new Set<PlayerId>();
-      const naive = naiveHits.get(shooter.playerId) ?? new Set<PlayerId>();
-      const gained: PlayerId[] = [];
-      const lost: PlayerId[] = [];
-      for (const v of rewound) if (!naive.has(v)) gained.push(v);
-      for (const v of naive) if (!rewound.has(v)) lost.push(v);
-      if (gained.length === 0 && lost.length === 0) continue;
-      console.log(
-        `[lag-comp] match=${this.matchId} shooter=${shooter.playerId} ` +
-          `serverTick=${preStepState.tick} fireInputTick=${preStepState.tick - shooter.lookbackTicks} ` +
-          `lookbackMs=${shooter.lookbackMs.toFixed(1)} ` +
-          `hits-gained=${JSON.stringify(gained)} hits-lost=${JSON.stringify(lost)}`,
-      );
-    }
-  }
 
   /**
    * Resolve the match's roomId via Convex, compute winner + scores from the
