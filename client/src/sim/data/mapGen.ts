@@ -37,9 +37,14 @@ export const MAX_GAP_FALLING = 300;
 /** Sightline cap per horizontal band. Roomier for the bigger, more open
  *  arena — the floor still gets cover, just not wall-to-wall. */
 export const MAX_SIGHTLINE = 560;
-/** Openness band: platform+column footprint as fraction of playable area. */
+/** Openness band: platform+column footprint as fraction of playable area.
+ *  Raised from 0.16 → 0.19 to give room for the extra scatter/clutter
+ *  ledges added for platform-density variety (docs/map-design.md law 4);
+ *  still inside the Quake-arena upper range, just above Towerfall's tighter
+ *  10–14% since JAKESJAM leans busier/more vertical than a single-screen
+ *  platformer. */
 export const DENSITY_MIN = 0.08;
-export const DENSITY_MAX = 0.16;
+export const DENSITY_MAX = 0.19;
 /** Minimum spawn separation. */
 export const MIN_SPAWN_DIST = 360;
 
@@ -80,8 +85,10 @@ function maxGapForRise(rise: number): number {
 
 // Ledge bands (feet land on top). Each ~108px above the last (≤ jump rise),
 // so the whole gym is climbable with plain jumps; wall-shafts skip the climb.
-// Floor 788 → 680 → 572 → 464 → 356 → 248.
-const BANDS = [680, 572, 464, 356, 248] as const;
+// Floor 788 → 680 → 572 → 464 → 356 → 248 → 140. Six bands available; each
+// candidate uses a random 4–6 of them (BAND_COUNTS) for layout variety.
+const BANDS = [680, 572, 464, 356, 248, 140] as const;
+const BAND_COUNTS = [4, 5, 6] as const;
 // Side climb towers reach a tall band; central tower is a bit shorter.
 const SIDE_TOWER_TOPS = [356, 248] as const;
 const CENTER_TOWER_TOPS = [464, 356] as const;
@@ -163,10 +170,13 @@ function generateCandidate(rand: () => number): MapDefinition {
   // ── LEDGE BANDS: an open jungle-gym. Diagonal staircases climb inward from
   //    each side (the reachability spine — every step is a plain jump off the
   //    one below), plus scattered lateral ledges on the lower bands so there's
-  //    always somewhere to hop, with wide gaps that reward a dash.
+  //    always somewhere to hop, with wide gaps that reward a dash. Band COUNT
+  //    (4–6) is randomized per candidate so the gym isn't the same height
+  //    every time — real structural variety, not just numeric jitter.
+  const bandCount = pick(rand, BAND_COUNTS);
   const stairLX = snap8(230 + rand() * 80);
   const step = 176; // horizontal march per band (crossable while rising)
-  for (let b = 0; b < BANDS.length; b++) {
+  for (let b = 0; b < bandCount; b++) {
     const top = BANDS[b]!;
     const w = snap8(130 + rand() * 64);
     addLedge(snap8(stairLX + b * step), w, top);
@@ -174,10 +184,39 @@ function generateCandidate(rand: () => number): MapDefinition {
       ? ARENA_W - (stairLX + b * step)
       : snap8(ARENA_W - stairLX - b * step);
     addLedge(rx, w, top);
-    if (b < 3) {
-      // extra hop target / dash pad, wandering across the open middle.
-      addLedge(snap8(ARENA_W / 2 + (rand() - 0.5) * 340), snap8(120 + rand() * 64), top);
+    // Middle scatter ledge every band (was: only the bottom 3) — more hop
+    // targets across the whole climb, not just near the floor.
+    const scatterX = snap8(ARENA_W / 2 + (rand() - 0.5) * 340);
+    addLedge(scatterX, snap8(120 + rand() * 64), top);
+    // A second scatter ledge, same height, offset close enough (≤280px, well
+    // under MAX_GAP_FALLING) to the first that the level-hop reachability
+    // check passes trivially off the ledge we already know is reached.
+    if (rand() < 0.5) {
+      const offset = (rand() < 0.5 ? -1 : 1) * (140 + rand() * 120);
+      addLedge(snap8(scatterX + offset), snap8(110 + rand() * 54), top);
     }
+  }
+
+  // ── LOW CLUTTER: extra one-way ledges hugging the floor (rise 40–110px,
+  //    always inside a single plain jump straight off the floor — the floor
+  //    spans the whole arena width so the reachability check is a trivial
+  //    direct hop, never route-graph-risky). Pure platform-count variety:
+  //    "lots of platforms" without touching the shaft/tower structure at all.
+  const clutterCount = 2 + Math.floor(rand() * 3); // 2..4
+  const clutterXs: number[] = [];
+  for (let c = 0; c < clutterCount; c++) {
+    let cx = 0;
+    let ok = false;
+    for (let tries = 0; tries < 8 && !ok; tries++) {
+      cx = snap8(WALL + 140 + rand() * (ARENA_W - 2 * WALL - 280));
+      ok =
+        floorClear(cx) &&
+        clutterXs.every((x) => Math.abs(x - cx) >= 150);
+    }
+    if (!ok) continue; // couldn't find a clear slot — skip rather than crowd
+    clutterXs.push(cx);
+    const top = FLOOR_TOP - (40 + rand() * 70);
+    addLedge(cx, snap8(90 + rand() * 60), top);
   }
 
   // ── Spawns. CRITICAL: a floor spawn must NOT sit inside a solid column —

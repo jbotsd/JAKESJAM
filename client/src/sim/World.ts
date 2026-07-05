@@ -1270,24 +1270,22 @@ function maybeWasmActual(
   } catch {
     return null;
   }
-  // PARITY GATE (2026-07-03). The May directive made the Zig
-  // orchestrator the client default ("no ts emergency roll back full
-  // zig") — but the SERVER's B3 cutover never happened
-  // (USE_WASM_STEP_WORLD defaults OFF), so clients were PREDICTING with
-  // the Zig round machine while reconciling against the TS one.
-  // Divergences observed live: Zig round machine ends a solo-world
-  // round as an instant mutual-KO (TS keeps fighting), and the TS-side
-  // draft-expiry fix doesn't exist in Zig — every predicted tick
-  // disagreed with authority, producing constant reconcile churn
-  // (rubber-banding, vanishing predicted projectiles, round-phase
-  // flicker, worlds stuck in round-over client-side).
+  // B3 CUTOVER — the Zig orchestrator is now the DEFAULT prediction path.
   //
-  // Prediction MUST run the same sim as authority. The bit-identical
-  // Zig SUBSTRATE (trig LUT, rng, collision, stepPlayer) stays default
-  // on both sides; the Zig ORCHESTRATOR returns to opt-in
-  // (?wasm-world=2) until the server flips USE_WASM_STEP_WORLD — then
-  // both sides cut over TOGETHER (B3 as originally planned).
-  if (mode !== "2") return null;
+  // The 2026-07-03 gate held it opt-in only because the SERVER still ran the
+  // TS orchestrator (USE_WASM_STEP_WORLD OFF) — client-predict-Zig against
+  // server-authority-TS produced reconcile churn. That prerequisite is now
+  // met: serverWasmHost writes the SAME statics + resolved card configs +
+  // arena bounds as the client (shared fireConfigShared), so with the server
+  // flag set both sides run byte-identical world.zig. The migration closed the
+  // orchestrator gaps that diverged in May (round machine, augments, shield,
+  // ceiling/void) and the shared substrate was always bit-identical.
+  //
+  // Deploy is coordinated: this client default pairs with the server's
+  // USE_WASM_STEP_WORLD=1. Dev-only TS fallback: ?wasm-world=off (ONLY valid
+  // when the server also runs TS, i.e. USE_WASM_STEP_WORLD unset — otherwise
+  // prediction would disagree with authority).
+  if (mode === "off") return null;
   type WasmEvent = {
     kind: number;
     playerIdxA: number;
