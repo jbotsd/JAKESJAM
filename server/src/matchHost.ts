@@ -96,6 +96,27 @@ const FIRE_BIT = 1 << 6; // kept locally for the log-diag helper
 export const RECONNECT_GRACE_MS = 10_000;
 
 /**
+ * Liveness backstop. `lastSeenAt` is stamped on every inbound message, but
+ * until this was added nothing ever ACTED on it — the only way a client's
+ * disconnect was ever detected was the WS `close` event firing, which
+ * requires a clean TCP FIN/WS close frame. An abruptly-killed client process
+ * (observed repeatedly this session from test-runner timeouts) or a tunnel
+ * that silently drops a socket produces neither: the connection sits in
+ * `this.clients` forever, `disconnectedAt` never gets set, and
+ * `evictExpiredDisconnects` never even starts counting for it. Long-running
+ * always-on worlds (WorldHost) accumulate these zombies over hours of uptime
+ * — each one still occupies a slot the sim packs into wasm memory
+ * (MAX_PLAYERS=16), degrading or starving real players once enough zombies
+ * pile up. The client sends an input frame every tick regardless of activity
+ * (even background-tab-throttled ~1Hz), so genuine silence this long means
+ * the connection is actually dead, not just idle.
+ */
+export const LIVENESS_TIMEOUT_MS = 20_000;
+/** How often to actually run the liveness scan — no need to do the
+ *  Date.now() + Map walk every tick. */
+const LIVENESS_SWEEP_INTERVAL_MS = 5_000;
+
+/**
  * Per bun-ws-server SKILL.md: drop snapshots when the kernel send buffer for a
  * client exceeds this threshold. 256 KB ≈ 25 unfiltered snapshots — anything
  * past that and the client is too far behind to catch up in any meaningful way.
@@ -171,6 +192,8 @@ export class MatchHost {
   private readonly disconnectedAt = new Map<PlayerId, number>();
   /** Last wall-clock time we received an input from a given player. */
   private readonly lastSeenAt = new Map<PlayerId, number>();
+  /** Throttle for `sweepStaleConnections` — see LIVENESS_SWEEP_INTERVAL_MS. */
+  private lastLivenessSweepAt = 0;
   /**
    * Throttle map for the "dropping out-of-window input" log. Keyed by player,
    * value = wall-clock ms of last log. Prevents log spam from a tampered or
@@ -750,6 +773,38 @@ export class MatchHost {
   }
 
   /**
+   * Backstop for connections that go silent without ever firing a WS `close`
+   * event (abruptly-killed client process, a tunnel that drops the socket
+   * without signaling it). Force-closes anything that hasn't sent a single
+   * message in LIVENESS_TIMEOUT_MS; the close() call feeds the EXISTING
+   * detach -> disconnectedAt -> evictExpiredDisconnects pipeline, so this is
+   * purely "make sure close() eventually fires," not a second cleanup path.
+   * detachClient is idempotent (guards on `this.clients.get(playerId) === ws`)
+   * so it's safe even if the real close event fires afterward too.
+   */
+  private sweepStaleConnections(): void {
+    const now = Date.now();
+    if (now - this.lastLivenessSweepAt < LIVENESS_SWEEP_INTERVAL_MS) return;
+    this.lastLivenessSweepAt = now;
+    for (const [playerId, ws] of this.clients) {
+      if (this.disconnectedAt.has(playerId)) continue; // already being evicted
+      const lastSeen = this.lastSeenAt.get(playerId);
+      if (lastSeen === undefined) continue; // hasn't had a chance to stamp yet
+      if (now - lastSeen <= LIVENESS_TIMEOUT_MS) continue;
+      console.warn(
+        `[matchHost ${this.matchId}] player ${playerId} silent for ${now - lastSeen}ms — force-closing (liveness backstop)`,
+      );
+      try {
+        ws.close(1000, "liveness timeout");
+      } catch {
+        // Socket may already be unusable; detachClient below covers cleanup
+        // either way since it doesn't depend on close() actually succeeding.
+      }
+      this.detachClient(ws);
+    }
+  }
+
+  /**
    * Walk the disconnect map and evict any player whose grace window has
    * elapsed. Removes them from `state.players` (so the sim no longer renders
    * them), drops their score entry, and clears all bookkeeping. Called once
@@ -822,6 +877,7 @@ export class MatchHost {
   }
 
   private tick(): void {
+    this.sweepStaleConnections();
     this.evictExpiredDisconnects();
 
     const inputsByPlayer: Record<PlayerId, InputFrame | null> = {};
