@@ -22,7 +22,20 @@
 // only ever constructed behind an explicit opt-in (see OnlineMatchScene), and
 // real product use needs a visible consent toggle before defaulting to on.
 // This module does not add that UI; it's the capture mechanism only.
+//
+// FORMAT: TikTok is a 9:16 VERTICAL platform. Capturing the raw landscape
+// game canvas produces a small, pillarboxed clip in the feed — the content
+// itself reads as unwatchable regardless of file validity. This crops a
+// centered vertical strip out of the landscape canvas every frame onto an
+// offscreen destination canvas, and captures THAT. No per-frame focus
+// tracking is needed: OnlineMatchScene.followLocalPlayer already calls
+// `camera.centerOn(localPlayer)` every tick, so the local player already
+// sits at the horizontal center of the source canvas — a centered crop
+// keeps them centered in the vertical output for free.
 
+/** TikTok-native vertical output resolution. */
+const DEST_WIDTH = 720;
+const DEST_HEIGHT = 1280;
 /** Normal segment length — also the max lookback a trigger can capture. */
 const SEGMENT_MS = 10_000;
 /** Extra time recorded AFTER a trigger so the aftermath (death cam, VFX
@@ -64,11 +77,18 @@ export class ClipRecorder {
   private pendingFinishAtMs: number | null = null;
   private stopped = true;
   private mimeType: string | null = null;
-  private readonly canvas: HTMLCanvasElement;
+  private readonly sourceCanvas: HTMLCanvasElement;
+  private readonly destCanvas: HTMLCanvasElement;
+  private readonly destCtx: CanvasRenderingContext2D | null;
+  private drawRafId: number | null = null;
   private readonly deps: ClipRecorderDeps;
 
   constructor(canvas: HTMLCanvasElement, deps: ClipRecorderDeps = {}) {
-    this.canvas = canvas;
+    this.sourceCanvas = canvas;
+    this.destCanvas = document.createElement("canvas");
+    this.destCanvas.width = DEST_WIDTH;
+    this.destCanvas.height = DEST_HEIGHT;
+    this.destCtx = this.destCanvas.getContext("2d");
     this.deps = deps;
   }
 
@@ -80,10 +100,16 @@ export class ClipRecorder {
       this.deps.onError?.(new Error("no supported MediaRecorder mimeType"));
       return;
     }
+    if (!this.destCtx) {
+      this.deps.onError?.(new Error("2D context unavailable for vertical-crop canvas"));
+      return;
+    }
     this.mimeType = mimeType;
     this.stopped = false;
-    this.stream = this.canvas.captureStream(30);
+    // Capture the CROPPED destination canvas, not the raw landscape source.
+    this.stream = this.destCanvas.captureStream(30);
     this.beginSegment();
+    this.startDrawLoop();
   }
 
   stop(): void {
@@ -92,6 +118,10 @@ export class ClipRecorder {
       clearTimeout(this.rotateTimer);
       this.rotateTimer = null;
     }
+    if (this.drawRafId !== null) {
+      cancelAnimationFrame(this.drawRafId);
+      this.drawRafId = null;
+    }
     this.pendingFinishAtMs = null;
     // onstop will fire but `this.stopped` guards it from starting a new
     // segment; the in-flight one is simply discarded (not uploaded).
@@ -99,6 +129,36 @@ export class ClipRecorder {
     this.recorder = null;
     this.stream = null;
     this.currentChunks = [];
+  }
+
+  private startDrawLoop(): void {
+    const draw = () => {
+      if (this.stopped) return;
+      this.drawCroppedFrame();
+      this.drawRafId = requestAnimationFrame(draw);
+    };
+    this.drawRafId = requestAnimationFrame(draw);
+  }
+
+  /** Draw a centered 9:16 vertical strip of the source canvas onto the
+   *  destination canvas. Centered horizontally is sufficient — the camera
+   *  already keeps the local player there (see the file header comment). */
+  private drawCroppedFrame(): void {
+    if (!this.destCtx) return;
+    const sw = this.sourceCanvas.width;
+    const sh = this.sourceCanvas.height;
+    if (sw === 0 || sh === 0) return;
+    let cropW = sh * (DEST_WIDTH / DEST_HEIGHT);
+    let cropH = sh;
+    if (cropW > sw) {
+      // Source is already narrower than a 9:16 slice needs (e.g. portrait
+      // mobile) — crop by width instead so cropW/H never exceed the source.
+      cropW = sw;
+      cropH = sw * (DEST_HEIGHT / DEST_WIDTH);
+    }
+    const cropX = (sw - cropW) / 2;
+    const cropY = (sh - cropH) / 2;
+    this.destCtx.drawImage(this.sourceCanvas, cropX, cropY, cropW, cropH, 0, 0, DEST_WIDTH, DEST_HEIGHT);
   }
 
   /** Call when a highlight fires. Extends (never shortens) the current
