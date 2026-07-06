@@ -827,11 +827,27 @@ export class ClientLoop {
     }
 
     // Replay all pending inputs through the (possibly patched) base state.
-    // Fresh runtime so movement memory matches the rewound base, then replay
-    // rebuilds prevKeys/coyote/buffer state tick-by-tick.
+    //
+    // MUST NOT recreate the runtime here. createRuntime() allocates a FRESH
+    // WorldRuntime — empty `movement` (coyote/jump-buffer/wall-touch) and
+    // `prevKeys` Maps — and this reconcile path runs on EVERY incoming
+    // snapshot, not once per match. Wiping prevKeys every reconcile means
+    // the very next tick's rising-edge input detection sees "no previous
+    // keys" and misreads a still-released key as a fresh press — this is
+    // the SAME bug class as the earlier WorldRuntime-persistence fix
+    // (clientLoop stepOnce calling the stateless World.step() helper), just
+    // reintroduced in the reconcile path instead of the main predict path.
+    // Live symptom (only reproduces over a real network, never near-zero-
+    // latency localhost, since it needs enough pending/replayed inputs to
+    // matter): tap a movement key briefly, release it, and the character
+    // keeps moving for seconds afterward — each reconcile's replay was
+    // rebuilding prevKeys from scratch and never converging back to
+    // "released." Map changes are already handled correctly by the
+    // dedicated `createRuntime` call in the hello handler (this.runtime =
+    // createRuntime(...) on every new match/map) — this path never needs to
+    // rebuild the map-derived collision cache, only keep the entity-id
+    // allocator consistent with the rewound base.
     if (this.runtime) {
-      const map = this.runtime.map;
-      this.runtime = createRuntime(map);
       this.runtime.nextEntityId = nextEntityIdSeed(replayState);
     }
     const replayBasePhase = replayState.round.phase;

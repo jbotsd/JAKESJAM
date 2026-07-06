@@ -413,7 +413,15 @@ function stepProjectileNative(
       }
     } else {
       const hitIdx = circleHitsAnyCached(x, y, proj.radius, ctx.collisionCache);
-      if (hitIdx >= 0) {
+      // Skip terrain expiry on the very first step since spawn: the muzzle
+      // can legitimately place a projectile overlapping (or immediately
+      // adjacent to) nearby geometry — e.g. firing steeply upward spawns it
+      // close enough to a low ceiling that even one tick of motion still
+      // overlaps. Expiring right there destroys the shot before it's ever
+      // externally visible. Reproduced live (Zig, mirrored here for parity):
+      // steep upward shots vanished with zero travel; level-aimed shots from
+      // the same spot worked fine. Mirrors sim/src/projectile.zig stepV2.
+      if (hitIdx >= 0 && proj.ageMs !== 0) {
         const impact: ProjectileImpact = proj.impact ?? "none";
         if (impact === "explosive") {
           events.push(...detonateAt(proj, x, y, players, tick));
@@ -436,6 +444,10 @@ function stepProjectileNative(
       const platform = platforms[i]!;
       const aabb = platformToAABB(platform);
       if (!circleOverlapsAABB(x, y, proj.radius, aabb)) continue;
+      // Same first-tick exemption as the cached path above — a projectile
+      // spawned overlapping nearby geometry shouldn't expire before it's
+      // ever externally visible.
+      if (proj.ageMs === 0) continue;
 
       if (proj.pathing === "bounce" && proj.bouncesRemaining > 0) {
         const left = aabb.x - proj.radius;

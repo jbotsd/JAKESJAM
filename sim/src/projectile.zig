@@ -572,6 +572,15 @@ pub fn stepV2(
     owner_idx: i32,
 ) StepResultV2 {
     const dt_sec = dt_ms / 1000.0;
+    // The muzzle can legitimately place a freshly-spawned projectile
+    // overlapping (or immediately adjacent to) nearby static geometry — e.g.
+    // firing steeply upward spawns it close enough to a low ceiling that
+    // even this first tick's motion still overlaps. Expiring on that very
+    // first step destroys the projectile before any external observer
+    // (snapshot, render) ever sees it. Reproduced live: shots fired at a
+    // steep upward angle vanished with zero travel (0/30 samples at 20ms
+    // polling), while level-aimed shots from the same spot worked fine.
+    const is_first_tick = k.age_ms <= 0.0;
 
     // Lifetime: even before motion, expire if remaining <= 0.
     const remaining = k.lifetime_ms - dt_ms;
@@ -688,7 +697,7 @@ pub fn stepV2(
     }
 
     const hit_idx = collision.circleHitsAny(k.x, k.y, k.radius, statics);
-    if (hit_idx >= 0) {
+    if (hit_idx >= 0 and !is_first_tick) {
         return .{ .expired = 1, .terrain_hit_index = hit_idx, .bounced = 0 };
     }
 
