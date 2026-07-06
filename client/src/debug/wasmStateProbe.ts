@@ -26,6 +26,7 @@ let activeStateGetter: (() => WorldState | null) | null = null;
 let activeCameraGetter: (() => { scrollX: number; scrollY: number } | null) | null = null;
 let activeRigDebugGetter: (() => RigDebugRow[] | null) | null = null;
 let activeNetStatsGetter: (() => Record<string, unknown> | null) | null = null;
+let activeLocalPlayerIdGetter: (() => string | null) | null = null;
 
 /** Renderer-side truth for probes: where each player rig ACTUALLY is on
  *  screen and whether it's visible. Catches "sim says alive at (x,y) but
@@ -92,6 +93,14 @@ export function setActiveNetStatsGetter(
   activeNetStatsGetter = fn;
 }
 
+/** Ground truth for "which entity does this scene believe is mine" —
+ *  window.__localPlayerId(). Diagnostic for identity/rig-binding bugs: if
+ *  this doesn't match the entity whose position responds to your own key
+ *  presses, the camera/rig/HUD are bound to the wrong player. */
+export function setActiveLocalPlayerIdGetter(fn: (() => string | null) | null): void {
+  activeLocalPlayerIdGetter = fn;
+}
+
 /** Combat-relevant per-player snapshot for probes (combat-probe.mjs,
  *  Playwright specs). Everything needed to assert "damage happened",
  *  "shield is up", "parry fired" from outside the page. */
@@ -128,6 +137,7 @@ type ProbeWindow = {
     roundIndex: number;
   } | null;
   __rigDebug?: () => RigDebugRow[] | null;
+  __localPlayerId?: () => string | null;
   __netStats?: () => Record<string, unknown> | null;
 };
 
@@ -209,6 +219,7 @@ export function installWindowProbe(): void {
   };
   w.__rigDebug = () => activeRigDebugGetter?.() ?? null;
   w.__netStats = () => activeNetStatsGetter?.() ?? null;
+  w.__localPlayerId = () => activeLocalPlayerIdGetter?.() ?? null;
   w.__simSampleHashes = async (count, intervalMs) => {
     const out: number[] = [];
     for (let i = 0; i < count; i++) {

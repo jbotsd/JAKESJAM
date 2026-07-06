@@ -44,7 +44,7 @@ import {
   resolveMap,
 } from "../../sim/data/maps";
 import { hashPlayerEntity } from "../../sim/hash";
-import { setActiveCameraGetter, setActiveNetStatsGetter, setActiveRigDebugGetter, setActiveStateGetter } from "../../debug/wasmStateProbe";
+import { setActiveCameraGetter, setActiveLocalPlayerIdGetter, setActiveNetStatsGetter, setActiveRigDebugGetter, setActiveStateGetter } from "../../debug/wasmStateProbe";
 import { computeBotInput } from "../../debug/botDriver";
 import { BOT_RIG_COLOR, botLabel, isBotId, playerTag } from "../ui/botIdentity";
 import { characters } from "../data/characters";
@@ -439,6 +439,7 @@ export class OnlineMatchScene extends Phaser.Scene {
       scrollX: this.cameras.main.scrollX,
       scrollY: this.cameras.main.scrollY,
     }));
+    setActiveLocalPlayerIdGetter(() => this.localPlayerId);
     setActiveNetStatsGetter(() =>
       this.loop
         ? {
@@ -1660,6 +1661,7 @@ export class OnlineMatchScene extends Phaser.Scene {
     setActiveCameraGetter(null);
     setActiveRigDebugGetter(null);
     setActiveNetStatsGetter(null);
+    setActiveLocalPlayerIdGetter(null);
     // drawCombatFx lazily re-creates this; without the null the guard
     // would reuse a DESTROYED Graphics on scene restart.
     this.combatFx?.destroy();
