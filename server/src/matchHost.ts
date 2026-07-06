@@ -44,24 +44,22 @@ import { ReplayRecorder } from "./ReplayRecorder.ts";
 import { serverWasmHost } from "./serverWasmHost.ts";
 
 /**
- * Phase B3 feature flag. Default ON: the authoritative tick goes through
- * `serverWasmHost.step()` (Zig wasm), paired with the client defaulting to
- * the same wasm prediction path (see maybeWasmActual in World.ts). The
- * earlier TS-default revert (2026-07-05) turned out to be masking a
- * client-side prediction bug (clientLoop was reallocating WorldRuntime every
- * tick, breaking jump edge-detect) — NOT a Zig-sim defect. That bug is fixed
- * (predictionRuntime persistence); re-verify jump feel live before trusting
- * this flag's default.
- *
- * Emergency opt-out: `USE_WASM_STEP_WORLD=0` (or `false`) falls back to TS
- * `stepWithRuntime`. Pair any opt-out with the client's `?wasm-world=off`.
- *
- * B2 (full TS sim deletion) is gated on this flag soaking default-on for
- * ≥1 week without auto-fallback warnings. That's a separate supervised cut.
+ * Phase B3 feature flag. Default OFF again as of 2026-07-06 (direct user
+ * call: "the TS version was great but the Zig version is garbage"). Several
+ * real bugs got found and fixed downstream of the 2026-07-05 Zig-default
+ * flip (WorldRuntime persistence, a liveness backstop, a reconcile runtime
+ * wipe, a projectile spawn-inside-geometry grace) — but live play over the
+ * real funnel kept surfacing further symptoms under Zig authority that
+ * never reproduced under TS, and this session's automated Playwright checks
+ * repeatedly passed while the live build was still broken. TS
+ * `stepWithRuntime` is authoritative again; Zig work continues, opt-in via
+ * `USE_WASM_STEP_WORLD=1`. Do NOT flip this default back without real,
+ * extensive human playtesting — scripted checks alone already proved
+ * insufficient once this session.
  */
 const USE_WASM_STEP_WORLD =
-  process.env.USE_WASM_STEP_WORLD !== "0" &&
-  process.env.USE_WASM_STEP_WORLD !== "false";
+  process.env.USE_WASM_STEP_WORLD === "1" ||
+  process.env.USE_WASM_STEP_WORLD === "true";
 
 if (USE_WASM_STEP_WORLD) {
   // Fire-and-forget preload so the first tick after construction

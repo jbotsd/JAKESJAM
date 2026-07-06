@@ -1272,15 +1272,20 @@ function maybeWasmActual(
   } catch {
     return null;
   }
-  // Zig orchestrator is the DEFAULT prediction path, paired with the
-  // server's USE_WASM_STEP_WORLD default-on (matchHost.ts). Both write the
-  // same statics + resolved card configs + arena bounds, so prediction ≡
-  // authority. Emergency dev fallback: ?wasm-world=off (only valid when the
-  // server is ALSO running TS via USE_WASM_STEP_WORLD=0 — otherwise predict
-  // and authority disagree). The 2026-07-05 revert to TS-default traced to a
-  // client-only prediction bug (WorldRuntime reallocated every tick, killing
-  // jump edge-detect) — not a Zig-sim defect; that bug is now fixed.
-  if (mode === "off") return null;
+  // TS orchestrator is the DEFAULT prediction path again (2026-07-06
+  // revert). Several real bugs were found and fixed downstream of the
+  // 2026-07-05 Zig-default flip (WorldRuntime persistence, a matchHost
+  // liveness backstop, a reconcile-path runtime wipe, a projectile
+  // spawn-inside-geometry grace) — but live play over the actual funnel
+  // (not this session's near-zero-latency localhost tests) kept surfacing
+  // further, worse symptoms under Zig-as-authority: wrong-feeling movement,
+  // shots not registering, general "unplayable" reports that didn't
+  // reproduce for TS. Direct user call: TS was good, Zig isn't ready to be
+  // the default yet. Zig orchestrator is opt-in via ?wasm-world=2 while that
+  // work continues — do not flip this back without real, extensive human
+  // playtesting (this session's automated Playwright checks repeatedly
+  // passed while the live build was still broken).
+  if (mode !== "2") return null;
   type WasmEvent = {
     kind: number;
     playerIdxA: number;
