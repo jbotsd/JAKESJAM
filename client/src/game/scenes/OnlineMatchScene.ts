@@ -73,6 +73,8 @@ import { EntityRenderCoordinator } from "../render/EntityRenderCoordinator";
 import { SimEventRouter } from "../render/SimEventRouter";
 import { TouchControls } from "../input/TouchControls";
 import { isTouchPrimary, isPortraitMobile } from "../input/mobile";
+import { ActionIntensity } from "../systems/ActionIntensity.js";
+import { CameraJuice } from "../systems/CameraJuice.js";
 
 // Portrait-mobile camera framing. The arena is 2:1 wide but a phone held
 // upright is ~1:2 tall, so we frame the arena HEIGHT into the upper play-area
@@ -290,6 +292,13 @@ export class OnlineMatchScene extends Phaser.Scene {
   /** P3: cinematic combat FX (kill flash/zoom-punch/bloom). Enabled when the
    *  renderer is WebGL and not disabled via ?fx=off. */
   private combatCinematics = false;
+  private cameraJuice!: CameraJuice;
+  private readonly actionIntensity = new ActionIntensity();
+  /** Local-player movement-juice edge detection (landing/wall-jump/dash). */
+  private prevLocalGrounded = true;
+  private prevLocalWallDir = 0;
+  private prevLocalDashing = false;
+  private prevLocalVy = 0;
   /** Mobile on-screen twin-stick controls; null on desktop/keyboard. */
   private touchControls: TouchControls | null = null;
   /** Last aim direction from the touch aim-stick, so shots keep heading when
@@ -382,6 +391,7 @@ export class OnlineMatchScene extends Phaser.Scene {
     const rendererType = (this.game.renderer as { type?: number } | undefined)?.type;
     const fxDisabled = new URLSearchParams(window.location.search).get("fx") === "off";
     this.combatCinematics = !fxDisabled && rendererType === Phaser.WEBGL;
+    this.cameraJuice = new CameraJuice(this.cameras.main, this.actionIntensity);
 
     // Highlight-clip capture — EXPLICIT opt-in only (?clips=1). This records
     // gameplay video and uploads it to the server; it must never activate by
@@ -638,6 +648,8 @@ export class OnlineMatchScene extends Phaser.Scene {
     this.updateShieldAudio(state);
     this.updateHudSystem(state);
     this.maybeShowMatchResults(state);
+    this.updateLocalMovementJuice(state);
+    this.actionIntensity.update(deltaMs);
 
     if (this.statusVfx) {
       const events = this.pendingSimEvents;
@@ -1112,13 +1124,8 @@ export class OnlineMatchScene extends Phaser.Scene {
     const cam = this.cameras.main;
     // Brief warm flash — sells the "everything pops" beat over the hit-stop.
     cam.flash(90, 255, 240, 200, false);
-    // Zoom-punch: snap in ~4% then ease back. force=true to interrupt any
-    // in-flight zoom from a previous kill.
-    const base = cam.zoom;
-    cam.zoomTo(base * 1.04, 70, "Quad.easeOut", true);
-    this.time.delayedCall(80, () => {
-      if (this.cameras?.main) this.cameras.main.zoomTo(base, 200, "Quad.easeOut", true);
-    });
+    // Zoom-punch: snap in ~4% then ease back.
+    this.cameraJuice.punchZoom(cam.zoom * 0.04, 70, 200);
     // Additive bloom pop at the victim.
     const state = this.loop?.getRenderState();
     const victim = state?.players[PlayerId(victimId)];
@@ -1557,6 +1564,44 @@ export class OnlineMatchScene extends Phaser.Scene {
   }
 
   /**
+   * Camera juice for the LOCAL player's own movement — landing impact,
+   * wall-jump/power-slide kick-off, dash burst. Mirrors MatchScene's
+   * updateMovementJuice (same trigger shapes, same tuning) so Practice and
+   * real combat feel consistent; combat itself already had shake via
+   * safeShake/killCinematic (both now routed through the same CameraJuice,
+   * see above) — this just closes the gap where movement alone had none.
+   * Never applied to remote players/bots — shaking the camera for a bot's
+   * wall-jump off-screen would feel disconnected from what the local
+   * player is actually doing.
+   */
+  private updateLocalMovementJuice(state: WorldState): void {
+    const local = state.players[this.localPlayerId];
+    if (!local || !local.alive) return;
+
+    if (!this.prevLocalGrounded && local.grounded && this.prevLocalVy > 200) {
+      const fallRatio = Phaser.Math.Clamp((this.prevLocalVy - 200) / 700, 0, 1);
+      this.cameraJuice.safeShake(90 + fallRatio * 80, 0.002 + fallRatio * 0.006);
+    }
+
+    const wallDir = local.touchingWallDir ?? 0;
+    if (this.prevLocalWallDir !== 0 && wallDir === 0 && !local.grounded) {
+      const speedRatio = Phaser.Math.Clamp((Math.abs(local.vx) - 400) / 300, 0, 1);
+      this.cameraJuice.safeShake(120, 0.006 + speedRatio * 0.006);
+      this.cameraJuice.punchZoom(-0.03 - speedRatio * 0.03);
+    }
+    this.prevLocalWallDir = wallDir;
+
+    const dashing = local.dashing ?? false;
+    if (!this.prevLocalDashing && dashing) {
+      this.cameraJuice.punchZoom(-0.05, 50, 180);
+    }
+    this.prevLocalDashing = dashing;
+
+    this.prevLocalGrounded = local.grounded ?? true;
+    this.prevLocalVy = local.vy;
+  }
+
+  /**
    * Apply the mobile camera zoom for the current orientation. Portrait frames
    * the arena height into the upper play-area; landscape/desktop use 1:1.
    * Called on create and whenever the viewport resizes (orientation change).
@@ -1632,23 +1677,12 @@ export class OnlineMatchScene extends Phaser.Scene {
   /**
    * Camera shake with stacking guard. Per game-feel-juice/SKILL.md recipe 3:
    * only escalate shake if the incoming intensity is LARGER than the current one
-   * — prevents a tiny footstep clobbering a kill shake.
-   *
-   * Phaser doesn't expose a public `_shakeAmplitude` on the camera; we read the
-   * effect's `_amplitude` private but we wrap it safely so TypeScript strict mode
-   * is happy. If the property is absent (e.g. future Phaser build changes it),
-   * we fall through to always-shake — safe degradation.
+   * — prevents a tiny footstep clobbering a kill shake. Delegates to the
+   * shared CameraJuice (also used by Practice) so this and every combat
+   * shake call site feed the same action-intensity score for free.
    */
   private safeShake(durationMs: number, intensity: number): void {
-    const cam = this.cameras.main;
-    // Cast needed: Phaser 4 exposes shakeEffect.progress (0→1 during shake)
-    // but not a public current-amplitude. We read progress as a proxy: if a
-    // shake is running and the requested intensity doesn't exceed a 0.008 floor,
-    // skip to avoid stacking.
-    const effect = cam.shakeEffect as unknown as { isRunning?: boolean; _amplitude?: number };
-    const currentAmplitude = effect._amplitude ?? 0;
-    if (effect.isRunning && intensity <= currentAmplitude) return;
-    cam.shake(durationMs, intensity);
+    this.cameraJuice.safeShake(durationMs, intensity);
   }
 
   private setStatus(message: string) {

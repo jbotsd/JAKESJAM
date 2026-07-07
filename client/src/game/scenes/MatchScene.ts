@@ -24,6 +24,8 @@ import type {
   Vec2,
 } from "../types/game";
 import { RenderLayer } from "../render/RenderLayer";
+import { ActionIntensity } from "../systems/ActionIntensity.js";
+import { CameraJuice } from "../systems/CameraJuice.js";
 import type { RoomPlayer } from "../types/net";
 
 const PLAYER_VISUAL_SCALE = 0.78;
@@ -80,6 +82,10 @@ export class MatchScene extends Phaser.Scene {
   private playerRig?: ProceduralPlayerRig;
   private renderLayer!: RenderLayer;
   private cameraTarget?: Phaser.GameObjects.Zone;
+  private cameraJuice!: CameraJuice;
+  private readonly actionIntensity = new ActionIntensity();
+  private prevWallDir = 0;
+  private prevDashing = false;
   private respawnText?: Phaser.GameObjects.Text;
   private keys?: MovementKeys;
   /** Mobile twin-stick overlay (null on desktop). */
@@ -162,6 +168,7 @@ export class MatchScene extends Phaser.Scene {
     }
 
     const wasGrounded = this.localPlayer.grounded;
+    const fallSpeedBeforeStep = this.localPlayer.velocity.y;
     const currKeys = this.readInput();
     const aimTarget = this.getAimTarget();
     // Clamp the physics step like the online path does (1/30s spike guard).
@@ -174,6 +181,8 @@ export class MatchScene extends Phaser.Scene {
       dashCharges: 1,
     });
     this.playMovementSounds(wasGrounded);
+    this.updateMovementJuice(wasGrounded, fallSpeedBeforeStep);
+    this.actionIntensity.update(deltaMs);
     this.updateCheckpoint();
 
     if (this.isOutOfBounds()) {
@@ -181,6 +190,47 @@ export class MatchScene extends Phaser.Scene {
     }
     this.updateCameraTarget();
     this.syncPlayerVisuals(deltaMs);
+  }
+
+  /**
+   * Camera shake/zoom-punch tied to the same movement beats the rig's own
+   * squash/stretch already sells — landing, wall-jump/power-slide kick-off,
+   * dash burst. Practice had zero camera reaction to any of these before;
+   * the online path already had combat-triggered shake (safeShake), so
+   * this brings movement-feel up to the same bar rather than inventing a
+   * new pattern. Also the sole feed into `actionIntensity` in Practice
+   * (there's no combat here to bump it another way).
+   */
+  private updateMovementJuice(wasGrounded: boolean, fallSpeedBeforeStep: number): void {
+    // Landing: scaled by how fast you were falling, same spirit as the
+    // rig's own landing-kick spring (ProceduralPlayerRig.LANDING_KICK_SCALE).
+    if (!wasGrounded && this.localPlayer.grounded && fallSpeedBeforeStep > 200) {
+      const fallRatio = Phaser.Math.Clamp((fallSpeedBeforeStep - 200) / 700, 0, 1);
+      this.cameraJuice.safeShake(90 + fallRatio * 80, 0.002 + fallRatio * 0.006);
+      this.actionIntensity.bump(0.12 + fallRatio * 0.18);
+    }
+
+    // Wall-jump / power-slide kick-off: the tick touchingWallDir drops back
+    // to 0 while still airborne (mirrors the rig's own wall-kick trigger).
+    const wallDir = this.localPlayer.touchingWallDir;
+    if (this.prevWallDir !== 0 && wallDir === 0 && !this.localPlayer.grounded) {
+      // A power-slide launches faster/flatter than a plain wall-jump — size
+      // the punch off the actual resulting horizontal speed rather than
+      // guessing which variant fired.
+      const speedRatio = Phaser.Math.Clamp((Math.abs(this.localPlayer.velocity.x) - 400) / 300, 0, 1);
+      this.cameraJuice.safeShake(120, 0.006 + speedRatio * 0.006);
+      this.cameraJuice.punchZoom(-0.03 - speedRatio * 0.03);
+      this.actionIntensity.bump(0.25 + speedRatio * 0.15);
+    }
+    this.prevWallDir = wallDir;
+
+    // Dash burst: a quick, punchy zoom-out sells the speed without a shake
+    // (a dash is controlled, not an impact — shake would read as a stumble).
+    if (!this.prevDashing && this.localPlayer.dashing) {
+      this.cameraJuice.punchZoom(-0.05, 50, 180);
+      this.actionIntensity.bump(0.3);
+    }
+    this.prevDashing = this.localPlayer.dashing;
   }
 
   private renderArena() {
@@ -300,6 +350,7 @@ export class MatchScene extends Phaser.Scene {
     this.cameraTarget?.destroy();
     this.cameraTarget = this.add.zone(this.localPlayer.position.x, this.localPlayer.position.y, 2, 2);
     this.cameras.main.startFollow(this.cameraTarget, false, 0.12, 0.12);
+    this.cameraJuice = new CameraJuice(cam);
     this.updateCameraTarget();
   }
 
