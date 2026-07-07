@@ -585,14 +585,26 @@ function applyAudioOptions() {
 }
 
 function playCurrentMusic() {
-  const active = musicContext === "world" ? worldMusic : menuMusic;
-  const other = musicContext === "world" ? menuMusic : worldMusic;
+  const requestedContext = musicContext;
+  const active = requestedContext === "world" ? worldMusic : menuMusic;
+  const other = requestedContext === "world" ? menuMusic : worldMusic;
   menuMusic.muted = musicMutedInput.checked;
   worldMusic.muted = musicMutedInput.checked;
   // Crossfade: bring the active track up from wherever it is, fade the other
   // out (and pause it at the end).
   if (active.paused) active.volume = 0;
-  void active.play().then(() => fadeMusic(active, musicVol(), CROSSFADE_MS)).catch(() => undefined);
+  void active
+    .play()
+    .then(() => {
+      // The context can flip again before this promise resolves (Practice's
+      // launch flow calls startMenuMusic() then startWorldMusic() almost
+      // back-to-back) — fading this element UP after it's no longer the
+      // active track is exactly how two tracks end up audible at once.
+      if (musicContext === requestedContext) {
+        fadeMusic(active, musicVol(), CROSSFADE_MS);
+      }
+    })
+    .catch(() => undefined);
   if (!other.paused) fadeMusic(other, 0, CROSSFADE_MS);
 }
 

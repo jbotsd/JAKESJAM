@@ -135,6 +135,14 @@ export class ProceduralPlayerRig {
   private static readonly DRAPE_FREQUENCY_HZ = 5;
   private static readonly DRAPE_DAMPING = 0.35;
 
+  // Charge stance (the Kamehameha read): both hands converge on one shared
+  // point near the hip instead of posing independently, with a growing orb
+  // between them — the natural future spawn point for a projectile/ability
+  // effect. Ramps while idle/running/airborne; resets on dash (the
+  // "release") and while wall-gripping (one hand is busy holding on).
+  private chargeMs = 0;
+  private static readonly CHARGE_RAMP_MS = 1600;
+
   // "Mad aura" — a small turbulent halo of motes orbiting the vessel.
   // Per-instance phase/radius offsets (frozen at construction) so a lineup
   // of players doesn't all swirl in lockstep. Deliberately irregular
@@ -224,6 +232,14 @@ export class ProceduralPlayerRig {
       this.footRSpringY = springKick(this.footRSpringY, ProceduralPlayerRig.WALL_KICK_Y);
     }
     this.wasWallDir = wallDir;
+
+    // Charge ramps whenever both hands are free to hold the stance (not
+    // gripping a wall); dashing is the release, so it resets hard.
+    if (pose.dashing) {
+      this.chargeMs = 0;
+    } else if (wallDir === 0) {
+      this.chargeMs = Math.min(ProceduralPlayerRig.CHARGE_RAMP_MS, this.chargeMs + deltaMs);
+    }
 
     this.draw(pose, walkAmount, deltaMs);
   }
@@ -349,13 +365,15 @@ export class ProceduralPlayerRig {
     );
     const drapeTip = vec(this.drapeSpringX.value, this.drapeSpringY.value);
 
-    // Both hands, one shared state machine (see computeArmTargets): straight
-    // and at full reach unless wall-gripping or mid-run-gait, in which case
-    // that hand's target moves inside max reach and the two-bone solve
-    // bends naturally. Springed so state changes settle instead of popping.
+    // Both hands, one shared state machine (see computeArmTargets): a
+    // two-handed charge stance by default (converged on one point, straight
+    // arms), a wall-plant bend for the gripping hand, and a straight thrust
+    // toward aim on dash (the "release"). Springed so state changes settle
+    // instead of popping.
     const armTargets = this.computeArmTargets(
       shoulderLead,
       shoulderBack,
+      pelvis,
       aim,
       walkAmount,
       wallDir,
@@ -489,6 +507,13 @@ export class ProceduralPlayerRig {
     this.drawThickLimb(g, shoulderLead, armLead, 5.4 * s, 3.8 * s);
     this.drawShoulderArmor(g, shoulderLead, s);
     this.drawHandGlow(g, armLead.end, s, this.firePulse);
+
+    // 8. Charge orb — the shared point between the two hands, growing the
+    // longer the vessel holds the stance. Skipped while wall-gripping (one
+    // hand is busy) or dashing (the orb just fired).
+    if (wallDir === 0 && !dashing) {
+      this.drawChargeOrb(g, armLead.end, armBack.end, s);
+    }
 
     // 10. Head + hood + visor
     this.drawHead(g, head, s, healthRatio);
@@ -847,6 +872,27 @@ export class ProceduralPlayerRig {
     g.fillCircle(hand.x, hand.y, radius * 0.5);
   }
 
+  // --- CHARGE ORB: the shared point between the two cupped hands — the
+  // Kamehameha read, and the natural future spawn origin for a projectile
+  // or ability effect. Grows and brightens with chargeMs, with a fast
+  // turbulent flicker layered on top so it never reads as a static sprite.
+  private drawChargeOrb(g: Phaser.GameObjects.Graphics, handLead: Vec2, handBack: Vec2, s: number) {
+    const cx = (handLead.x + handBack.x) / 2;
+    const cy = (handLead.y + handBack.y) / 2;
+    const ratio = Phaser.Math.Clamp(this.chargeMs / ProceduralPlayerRig.CHARGE_RAMP_MS, 0, 1);
+    if (ratio <= 0.02) return;
+
+    const flicker = 0.85 + 0.15 * Math.sin(this.stepPhase * 5);
+    const radius = (2 + ratio * 5) * s * flicker;
+
+    g.fillStyle(this.accentColor, ratio * 0.25);
+    g.fillCircle(cx, cy, radius * 2.4);
+    g.fillStyle(this.accentColor, ratio * 0.6);
+    g.fillCircle(cx, cy, radius * 1.3);
+    g.fillStyle(WHITE, ratio * 0.75);
+    g.fillCircle(cx, cy, radius * 0.6);
+  }
+
   // --- THICK LIMB: Filled polygon instead of line ---
   private drawThickLimb(
     g: Phaser.GameObjects.Graphics,
@@ -945,17 +991,26 @@ export class ProceduralPlayerRig {
     return vec(cx + wallDir * 42 * s, pelvis.y + 6 * s);
   }
 
-  // --- ARM TARGETS: ground-up rebuild. Both arms share one state machine
-  // and are IDENTICAL length (ARM_UPPER/ARM_LOWER) — "straight" is not a
-  // special-cased draw path, it's just an IK hand target placed exactly at
-  // the edge of the reach circle (see straightTarget()); solveTwoBone's own
-  // reach clamp then yields a joint angle of ~0. Bend only appears when a
-  // target is placed CLOSER than full reach, which only happens for two
-  // states: gripping a wall, and the natural swing while running. Idle,
-  // airborne, and dashing all stay dead straight. ---
+  // --- ARM TARGETS: a two-handed Kamehameha-style charge stance, not two
+  // independently-posed limbs. Both arms are IDENTICAL length
+  // (ARM_UPPER/ARM_LOWER); "straight" is never a special-cased draw path,
+  // it's just an IK hand target placed exactly at the edge of the reach
+  // circle (see straightTarget()) — solveTwoBone's own reach clamp then
+  // yields a joint angle of ~0. The only two states that place a target
+  // CLOSER than full reach (and so actually bend) are the wall-plant and
+  // the release thrust's back hand trailing a hair short of the lead.
+  //
+  // The first version of this gave each arm its own running-gait swing,
+  // which read as tangled/broken (the two independently-bent limbs kept
+  // crossing in front of the torso). Converging both hands on one shared
+  // charge point removes that failure mode entirely: there's only ever
+  // ONE bend geometry to solve for a moving/idle vessel, not two competing
+  // ones. It also gives the "orb between the hands" a real anchor point —
+  // the natural spawn origin for a future projectile/ability effect. ---
   private computeArmTargets(
     shoulderLead: Vec2,
     shoulderBack: Vec2,
+    pelvis: Vec2,
     aim: Vec2,
     walkAmount: number,
     wallDir: number,
@@ -966,46 +1021,51 @@ export class ProceduralPlayerRig {
 
     if (wallDir !== 0) {
       // Back hand plants against the gripped wall — closer than full
-      // reach, the one deliberate bend this state allows. Lead hand stays
-      // in its default straight cast pose, independent of the grip.
+      // reach, the one deliberate bend this state allows. Lead hand keeps
+      // charging alone (one hand holds on, the other never stops working).
       return {
-        lead: this.straightTarget(shoulderLead, aim, reach),
+        lead: this.chargeHandTarget(shoulderLead, pelvis, s, 0),
         back: vec(shoulderBack.x + wallDir * 20 * s, shoulderBack.y + 2 * s),
       };
     }
 
     if (dashing) {
-      // Both arms straight, swept back at full reach — a streamlined,
-      // committed "javelin" pose. Dash is speed, not a grab: no bend.
-      const sweepRaw = vec(-this.facing, 0.3);
-      const sweepLen = Math.hypot(sweepRaw.x, sweepRaw.y) || 1;
-      const sweep = vec(sweepRaw.x / sweepLen, sweepRaw.y / sweepLen);
+      // The release: both arms thrust straight out toward aim — the
+      // charged blast firing as you commit to the dash. Back hand trails
+      // a hair short of full reach so the two hands don't perfectly
+      // overlap on the way out.
       return {
-        lead: this.straightTarget(shoulderLead, sweep, reach),
-        back: this.straightTarget(shoulderBack, sweep, reach),
+        lead: this.straightTarget(shoulderLead, aim, reach),
+        back: this.straightTarget(shoulderBack, aim, reach * 0.94),
       };
     }
 
-    if (walkAmount > 0.05) {
-      // Natural opposite-phase running gait — bent (well inside full
-      // reach). This is the "moving around" bend the vessel is allowed.
-      const swingReach = reach * 0.55;
-      const swingLead = Math.sin(this.stepPhase) * walkAmount;
-      const swingBack = Math.sin(this.stepPhase + Math.PI) * walkAmount;
-      return {
-        lead: vec(shoulderLead.x + this.facing * swingLead * 10 * s, shoulderLead.y + swingReach),
-        back: vec(shoulderBack.x + this.facing * swingBack * 10 * s, shoulderBack.y + swingReach),
-      };
-    }
-
-    // Idle / airborne (not gripping, not dashing, not running): both arms
-    // straight. The lead hand points at the aim target — the wizard's
-    // always-ready cast gesture, and also the online path's aim indicator.
-    // The back hand hangs straight down at the side.
+    // Idle, running, or airborne: both hands held at the SAME charging
+    // point near the hip, one a hair further out than the other (cupped,
+    // not overlapping). A synchronized bob while running — both hands
+    // move together — instead of an opposite-phase swing.
+    const bob = walkAmount > 0.05 ? Math.sin(this.stepPhase * 2) * 2 * s * walkAmount : 0;
     return {
-      lead: this.straightTarget(shoulderLead, aim, reach),
-      back: this.straightTarget(shoulderBack, vec(0, 1), reach),
+      lead: this.chargeHandTarget(shoulderLead, pelvis, s, bob),
+      back: this.chargeHandTarget(shoulderBack, pelvis, s, bob, 0.82),
     };
+  }
+
+  /** The shared charge-stance hand target: hip height, offset forward in
+   *  the facing direction, `depth` (0-1) pulling it a hair closer to the
+   *  shoulder than full reach so the front/back hand don't perfectly
+   *  overlap when cupped together. */
+  private chargeHandTarget(
+    shoulder: Vec2,
+    pelvis: Vec2,
+    s: number,
+    bob: number,
+    depth = 1,
+  ): Vec2 {
+    const reach = ProceduralPlayerRig.ARM_REACH * s * depth;
+    const dir = vec(this.facing * 0.55, (pelvis.y + 10 * s - shoulder.y + bob) / reach);
+    const len = Math.hypot(dir.x, dir.y) || 1;
+    return this.straightTarget(shoulder, vec(dir.x / len, dir.y / len), reach);
   }
 
   /** A hand target at EXACTLY max arm reach in direction `dir` from
