@@ -42,6 +42,13 @@ export const config = {
   convexDeployKey:
     process.env.CONVEX_DEPLOY_KEY ?? process.env.CONVEX_ADMIN_TOKEN ?? null,
 
+  // Gates single-owner admin actions (TikTok OAuth start + post-as-Jake)
+  // that must never be reachable by anonymous players. Unset by default —
+  // those endpoints fail closed (401) until an operator sets this, rather
+  // than defaulting to an open admin surface. Set with:
+  //   ADMIN_SECRET=$(head -c 32 /dev/urandom | base64) bun run host:public
+  adminSecret: process.env.ADMIN_SECRET ?? null,
+
   // Phase F3 — Zig→WASM substrate defaults to ON. The wasm `.wasm`
   // is bundled in the server image and routed by `wasmRuntime.ts`.
   // Both sides (client + server) run bit-identical collision +

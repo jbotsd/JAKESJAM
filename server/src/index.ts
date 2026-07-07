@@ -14,8 +14,9 @@
 //                       Cheap mint — no Convex round-trip required.
 
 import { resolve, normalize } from "node:path";
-import { mintWorldToken, verifyMatchToken, verifyWorldToken } from "./auth.ts";
+import { mintWorldToken, verifyMatchToken, verifyWorldToken, constantTimeEquals } from "./auth.ts";
 import { config } from "./config.ts";
+import { checkRateLimit, clientKey } from "./rateLimit.ts";
 import { MatchRegistry } from "./matchRegistry.ts";
 import { WorldHost } from "./worldHost.ts";
 import type { MatchSocketData } from "./matchHost.ts";
@@ -154,8 +155,21 @@ async function serveStatic(
 const corsHeaders: Record<string, string> = {
   "access-control-allow-origin": "*",
   "access-control-allow-methods": "GET,POST,OPTIONS",
-  "access-control-allow-headers": "content-type",
+  "access-control-allow-headers": "content-type,x-admin-secret",
 };
+
+const RATE_LIMIT_429 = () =>
+  new Response("rate limited — slow down", { status: 429, headers: corsHeaders });
+
+/** Gates single-owner admin actions (see config.adminSecret). Fails closed:
+ *  no secret configured means no caller can pass, not "anyone can". */
+function requireAdmin(req: Request): Response | null {
+  const provided = req.headers.get("x-admin-secret") ?? "";
+  if (!config.adminSecret || !provided || !constantTimeEquals(provided, config.adminSecret)) {
+    return new Response("unauthorized", { status: 401, headers: corsHeaders });
+  }
+  return null;
+}
 
 function serveOnPort(port: number) {
   return Bun.serve<SocketData>({
@@ -168,6 +182,11 @@ function serveOnPort(port: number) {
     if (req.method === "OPTIONS") {
       return new Response(null, { status: 204, headers: corsHeaders });
     }
+
+    const ip = clientKey(req, srv);
+    // Global ceiling — bounds aggregate flooding from one source without
+    // touching legitimate traffic (world/summary polling is ~20/min/client).
+    if (!checkRateLimit(`global:${ip}`, 600, 60_000)) return RATE_LIMIT_429();
 
     if (url.pathname === "/health") {
       return new Response(
@@ -202,6 +221,11 @@ function serveOnPort(port: number) {
     // Upload lands the file under server/.clips/; the returned URL is what
     // a future TikTok Content Posting API PULL_FROM_URL call would use.
     if (url.pathname === "/clips/upload" && req.method === "POST") {
+      // No player-identity auth is worth adding here (clip capture is a
+      // client-local highlight, not a privileged action) — but the endpoint
+      // is unauthenticated and internet-reachable, so cap upload frequency
+      // per source. The storage-side quota (clipStore.ts) bounds total disk.
+      if (!checkRateLimit(`clip:${ip}`, 6, 5 * 60_000)) return RATE_LIMIT_429();
       const origin = `${url.protocol}//${req.headers.get("host") ?? url.host}`;
       const result = await handleClipUpload(req, origin);
       if (!result.ok) {
@@ -224,6 +248,11 @@ function serveOnPort(port: number) {
     // routes are mechanically complete but cannot be exercised end-to-end
     // without those real credentials, which only the account owner can obtain.
     if (url.pathname === "/tiktok/oauth/start" && req.method === "GET") {
+      // One-time account-linking action for the server owner only — a
+      // stolen/guessed openId would otherwise let anyone re-link or post as
+      // Jake's TikTok account (see /tiktok/post below). Gate both.
+      const denied = requireAdmin(req);
+      if (denied) return denied;
       try {
         const cfg = requireTikTokConfig();
         sweepPendingOAuth();
@@ -269,6 +298,11 @@ function serveOnPort(port: number) {
       }
     }
     if (url.pathname === "/tiktok/post" && req.method === "POST") {
+      // openId is not a secret (TikTok returns it in the plain oauth
+      // callback response) — without this gate, anyone who learned it could
+      // post arbitrary videos to Jake's real TikTok account.
+      const denied = requireAdmin(req);
+      if (denied) return denied;
       let body: { openId?: string; videoUrl?: string; title?: string };
       try {
         body = (await req.json()) as typeof body;
@@ -323,6 +357,9 @@ function serveOnPort(port: number) {
       });
     }
     if (url.pathname === "/store/checkout" && req.method === "POST") {
+      // Unauthenticated (anyone can request a session for any playerId) —
+      // rate-limit so a script can't hammer the Stripe API on Jake's account.
+      if (!checkRateLimit(`checkout:${ip}`, 10, 60_000)) return RATE_LIMIT_429();
       let body: { playerId?: string; skuId?: string };
       try {
         body = (await req.json()) as typeof body;
@@ -393,6 +430,7 @@ function serveOnPort(port: number) {
 
     // ── World token mint ──────────────────────────────────────────────
     if (url.pathname === "/world-token" && req.method === "POST") {
+      if (!checkRateLimit(`worldtoken:${ip}`, 20, 60_000)) return RATE_LIMIT_429();
       let body: unknown;
       try {
         body = await req.json();
@@ -415,6 +453,9 @@ function serveOnPort(port: number) {
 
     // ── World WS upgrade ──────────────────────────────────────────────
     if (url.pathname === "/ws/world") {
+      if (!checkRateLimit(`wsconnect:${ip}`, 30, 5 * 60_000)) {
+        return new Response("rate limited", { status: 429 });
+      }
       const token = url.searchParams.get("token");
       if (!token) return new Response("bad request", { status: 400 });
       const verified = await verifyWorldToken(token, config.gameServerSecret);
@@ -431,6 +472,9 @@ function serveOnPort(port: number) {
 
     // ── Room WS upgrade (legacy) ──────────────────────────────────────
     if (url.pathname === "/ws") {
+      if (!checkRateLimit(`wsconnect:${ip}`, 30, 5 * 60_000)) {
+        return new Response("rate limited", { status: 429 });
+      }
       const matchId = url.searchParams.get("matchId");
       const token = url.searchParams.get("token");
       if (!matchId || !token) {
