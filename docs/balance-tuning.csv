@@ -210,6 +210,11 @@ Card,aim-barrier,rare / cost 4 / unique,shieldChargeMultiplier,2.2,+120% max cha
 Card,riot-mirror,legendary / cost 6 / unique,directionalShield,true,Directional shield
 Card,riot-mirror,legendary / cost 6 / unique,mirrorShield,true,Reflects blocked shots
 Card,riot-mirror,legendary / cost 6 / unique,shieldChargeMultiplier,1.7,+70% max charge
+Card,stolen-fangs,legendary / cost 7 / unique,stolenFangs,true,Any absorbed hit banks a lock charge
+Card,stolen-fangs,legendary / cost 7 / unique,STOLEN_FANGS_MAX_CHARGES,2,Max banked charges (constants.ts)
+Card,stolen-fangs,legendary / cost 7 / unique,STOLEN_FANGS_CHARGE_EXPIRY_MS,4000,Unspent charge expiry window
+Card,stolen-fangs,legendary / cost 7 / unique,STOLEN_FANGS_HOMING_STRENGTH,5.0,Homing turn-rate on the spent shot
+Card,stolen-fangs,legendary / cost 7 / unique,STOLEN_FANGS_DAMAGE_MULTIPLIER,0.75,-25% damage on the spent shot
 Round Flow,Countdown,Core,COUNTDOWN_MS,3000,Pre-round countdown duration (ms)
 Round Flow,Round Timer,Core,ROUND_TIME_LIMIT_MS,90000,Max round duration before forced time-out resolution (90s)
 Round Flow,Round Over,Core,ROUND_OVER_HOLD_MS,2500,Hold time on round-over screen before drafting/countdown

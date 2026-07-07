@@ -200,6 +200,17 @@ function clearExpiredBuffsOnPlayer(player: PlayerEntity, tick: Tick): PlayerEnti
       next = { ...next, [field]: undefined };
     }
   }
+  // Stolen Fangs: unspent lock charges expire together as a pair.
+  if (
+    next.pendingLockExpiresAtTick !== undefined &&
+    next.pendingLockExpiresAtTick <= tick
+  ) {
+    next = {
+      ...next,
+      pendingLockCharges: undefined,
+      pendingLockExpiresAtTick: undefined,
+    };
+  }
   return next;
 }
 

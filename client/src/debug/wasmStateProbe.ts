@@ -117,6 +117,8 @@ export type ProbePlayer = {
   score: number;
   fireCooldownMs: number;
   ammo: number;
+  cards: string[];
+  pendingLockCharges: number | undefined;
 };
 
 type ProbeWindow = {
@@ -127,7 +129,15 @@ type ProbeWindow = {
   __simPlayers?: () => ProbePlayer[] | null;
   __simPhase?: () => string | null;
   __simProjectiles?: () =>
-    | { id: number; x: number; y: number; ownerId: string | null }[]
+    | {
+        id: number;
+        x: number;
+        y: number;
+        ownerId: string | null;
+        pathing: string | undefined;
+        homingStrength: number | undefined;
+        damage: number;
+      }[]
     | null;
   __simCamera?: () => { scrollX: number; scrollY: number } | null;
   __simRound?: () => {
@@ -171,6 +181,8 @@ export function installWindowProbe(): void {
       score: s.round.scores[p.id] ?? 0,
       fireCooldownMs: p.fireCooldownMs,
       ammo: p.ammo,
+      cards: p.cards,
+      pendingLockCharges: p.pendingLockCharges,
     }));
   };
   w.__simPhase = () => {
@@ -185,6 +197,9 @@ export function installWindowProbe(): void {
       x: p.x,
       y: p.y,
       ownerId: p.ownerId,
+      pathing: p.pathing,
+      homingStrength: p.homingStrength,
+      damage: p.damage,
     }));
   };
   w.__simCamera = () => activeCameraGetter?.() ?? null;

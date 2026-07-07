@@ -17,6 +17,10 @@ import type {
 import { starterWeapon } from "./data/weapons.js";
 import { createWeaponBuild, findCardsById } from "./data/weaponBuild.js";
 import { spawnProjectile, type ProjectileSpawnParams } from "./projectile.js";
+import {
+  STOLEN_FANGS_HOMING_STRENGTH,
+  STOLEN_FANGS_DAMAGE_MULTIPLIER,
+} from "./constants.js";
 import { nextInt } from "./rng.js";
 import { lutAtan2, lutCos, lutSin } from "./trig.js";
 import type { EntityId, PlayerEntity, ProjectileEntity, Vec2 } from "./types.js";
@@ -166,7 +170,17 @@ function stepWeaponNative(
   // applied post-hit in World.stepWithRuntime so satellites and any other
   // projectile sources get the same scaling without each spawn site reading
   // chaos directly.
-  const damage = build.damage;
+  // Stolen Fangs: a banked lock charge converts this whole volley into a
+  // homing shot at reduced damage, then spends the charge (once per fire
+  // event, not per pellet — a shotgun-style build doesn't get N free charges
+  // out of one bank). Expiry is handled centrally in pickup.ts's buff sweep.
+  const spendStolenFangsCharge = (next.pendingLockCharges ?? 0) > 0;
+  if (spendStolenFangsCharge) {
+    next.pendingLockCharges = (next.pendingLockCharges ?? 0) - 1;
+  }
+  const damage = spendStolenFangsCharge
+    ? build.damage * STOLEN_FANGS_DAMAGE_MULTIPLIER
+    : build.damage;
   // Per-shot offset: spread the count evenly across [-totalSpread/2, +totalSpread/2].
   // Single-shot shots ignore spread entirely (consistent with the offline path).
   const projectiles: ProjectileEntity[] = [];
@@ -194,7 +208,7 @@ function stepWeaponNative(
         lifetimeMs,
         radius,
         shape,
-        pathing: build.projectile.pathing,
+        pathing: spendStolenFangsCharge ? "homing" : build.projectile.pathing,
         element: build.projectile.element,
       };
       const projectile = spawnProjectile(nextEntityId(), params);
@@ -207,7 +221,9 @@ function stepWeaponNative(
       projectile.impactRadiusPx = build.projectile.impactRadiusPx;
       projectile.splitCount = build.projectile.splitCount;
       projectile.slowMultiplier = build.projectile.slowMultiplier;
-      projectile.homingStrength = build.projectile.homingStrength;
+      projectile.homingStrength = spendStolenFangsCharge
+        ? STOLEN_FANGS_HOMING_STRENGTH
+        : build.projectile.homingStrength;
       projectile.accelerationMultiplier = build.projectile.accelerationMultiplier;
       projectile.gravityScale = build.projectile.gravityScale;
       projectile.rangePx = build.projectile.rangePx;

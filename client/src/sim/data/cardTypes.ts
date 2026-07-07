@@ -117,6 +117,11 @@ export type WeaponCardModifier = {
   /** Aim shield: the held shield only blocks hits arriving within the AIM arc
    *  (must face the threat) — in exchange for a stronger benefit on the card. */
   directionalShield?: boolean;
+  /** Stolen Fangs: absorbing ANY shielded hit banks a lock charge (cap 2,
+   *  expires after a few seconds unspent). The next fired shot(s) consume a
+   *  charge and become homing at reduced damage. See sim/World.ts and
+   *  sim/weapon.ts for the grant/consume logic. */
+  stolenFangs?: boolean;
 };
 
 // Visual hints used by UI overlays. Pure data, no Phaser refs — shapes /
@@ -179,6 +184,7 @@ export type ResolvedWeaponBuild = {
   shieldChargeMultiplier: number;
   shieldRechargeMultiplier: number;
   directionalShield: boolean;
+  stolenFangs: boolean;
   jumpMultiplier: number;
   wallJumpMultiplier: number;
   wallSlideMultiplier: number;

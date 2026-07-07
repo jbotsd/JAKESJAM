@@ -35,6 +35,10 @@ import { buildFireEntity, stepDestructibles } from "./destructible.js";
 import { stepFirePatches } from "./fire.js";
 import { stepSuddenDeathStorm } from "./suddenDeath.js";
 import { clearExpiredBuffs, stepPickups } from "./pickup.js";
+import {
+  STOLEN_FANGS_MAX_CHARGES,
+  STOLEN_FANGS_CHARGE_EXPIRY_MS,
+} from "./constants.js";
 import { stepProjectile } from "./projectile.js";
 import { CowRecord } from "./cowRecord.js";
 import { nextFloat } from "./rng.js";
@@ -832,6 +836,21 @@ export function stepWithRuntime(
                 playerId: ev.victimId,
                 remainingCharge: postPlayer.shieldCharge ?? 0,
               });
+            }
+            // Stolen Fangs: any absorbed hit banks a lock charge (cap 2),
+            // refreshing the expiry window. weapon.ts spends charges on the
+            // player's next fired shot(s), turning them homing.
+            if (victimBuild.stolenFangs) {
+              const expiryTicks = Math.ceil(STOLEN_FANGS_CHARGE_EXPIRY_MS / effDtMs);
+              const bankedCharges = Math.min(
+                STOLEN_FANGS_MAX_CHARGES,
+                (postPlayer.pendingLockCharges ?? 0) + 1,
+              );
+              postPlayer = {
+                ...postPlayer,
+                pendingLockCharges: bankedCharges,
+                pendingLockExpiresAtTick: (nextTick + expiryTicks) as Tick,
+              };
             }
             players[ev.victimId] = postPlayer;
             // Shielded → final damage is 0; don't push the original

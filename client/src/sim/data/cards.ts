@@ -1005,6 +1005,22 @@ export const crystalRoundsCards: CardDefinition[] = [
     visual: visual("hexagon", "#c4b5fd"),
     unique: true,
   },
+  {
+    id: "stolen-fangs",
+    name: "Stolen Fangs",
+    category: "defense",
+    rarity: "legendary",
+    buckets: ["utility"],
+    essenceCost: 7,
+    description: "Blocking any hit banks a lock (max 2, expires if unused). Your next shot burns one, turning homing at reduced damage.",
+    flavorText: "It came in trying to bite you. It leaves owing you a favor.",
+    modifier: {
+      stolenFangs: true,
+      projectile: { element: "crystal" },
+    },
+    visual: visual("triangle", "#a78bfa"),
+    unique: true,
+  },
 ];
 
 export const prototypeCards = crystalRoundsCards;

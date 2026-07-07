@@ -833,6 +833,7 @@ function projectileToBuild(projectile: ActiveProjectile): ResolvedWeaponBuild {
     shieldChargeMultiplier: 1,
     shieldRechargeMultiplier: 1,
     directionalShield: false,
+    stolenFangs: false,
     jumpMultiplier: 1,
     wallJumpMultiplier: 1,
     wallSlideMultiplier: 1,

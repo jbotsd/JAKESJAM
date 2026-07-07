@@ -42,6 +42,12 @@ export const SHIELD_DRAIN_PER_SECOND = 35;
 export const SHIELD_RECHARGE_PER_SECOND = 14;
 export const SHIELD_HIT_DRAIN_MULTIPLIER = 1.8;
 
+// Stolen Fangs (legendary defense card, cards.ts id "stolen-fangs")
+export const STOLEN_FANGS_MAX_CHARGES = 2;
+export const STOLEN_FANGS_CHARGE_EXPIRY_MS = 4000;
+export const STOLEN_FANGS_HOMING_STRENGTH = 5.0;
+export const STOLEN_FANGS_DAMAGE_MULTIPLIER = 0.75;
+
 // satellite.ts
 export const ORBIT_RADIUS_PX = 80;
 export const ORBIT_RAD_PER_SEC = Math.PI / 1.5;

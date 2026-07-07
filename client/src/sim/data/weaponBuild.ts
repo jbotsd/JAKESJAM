@@ -63,6 +63,7 @@ export function createWeaponBuild(
     shieldChargeMultiplier: 1,
     shieldRechargeMultiplier: 1,
     directionalShield: false,
+    stolenFangs: false,
     jumpMultiplier: 1,
     wallJumpMultiplier: 1,
     wallSlideMultiplier: 1,
@@ -131,6 +132,7 @@ export function applyCard(build: ResolvedWeaponBuild, card: CardDefinition) {
   build.shieldChargeMultiplier *= modifier.shieldChargeMultiplier ?? 1;
   build.shieldRechargeMultiplier *= modifier.shieldRechargeMultiplier ?? 1;
   build.directionalShield ||= modifier.directionalShield ?? false;
+  build.stolenFangs ||= modifier.stolenFangs ?? false;
   build.jumpMultiplier *= modifier.jumpMultiplier ?? 1;
   build.wallJumpMultiplier *= modifier.wallJumpMultiplier ?? 1;
   build.wallSlideMultiplier *= modifier.wallSlideMultiplier ?? 1;

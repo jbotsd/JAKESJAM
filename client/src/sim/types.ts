@@ -229,6 +229,15 @@ export type PlayerEntity = {
   blockJammerUntilTick?: Tick;
   bossModeUntilTick?: Tick;
   /**
+   * Stolen Fangs (legendary defense card): banked lock charges from
+   * absorbing a shielded hit. The next fired shot(s) consume one charge and
+   * become homing at reduced damage (see sim/weapon.ts). Cap 2; expires
+   * unspent at `pendingLockExpiresAtTick`. See sim/World.ts's shielded-hit
+   * branch for where charges are granted.
+   */
+  pendingLockCharges?: number;
+  pendingLockExpiresAtTick?: Tick;
+  /**
    * True when the player's foot was touching a static at end-of-tick.
    * Sourced from `PlayerMovementMemory.groundedLastFrame` after the
    * collision resolve in `World.ts`. Render-only signal — sim correctness
