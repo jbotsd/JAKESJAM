@@ -981,14 +981,15 @@ export class ProceduralPlayerRig {
     g.fillRect(x - nameWidth / 2, lineY, nameWidth * healthRatio, 2);
   }
 
-  // --- WALL-PLANT FOOT: near-max leg reach toward the gripped wall, at
-  // roughly hip height (bent knee) rather than "ground" level — there is no
-  // ground while sliding. Doesn't need the wall's actual world-space
-  // position: pushing the target this far toward it is enough for
-  // solveTwoBone's reach clamp to read as "straining to plant against
-  // something in that direction."
+  // --- WALL-PLANT FOOT: a tucked knee bracing flat against the gripped
+  // wall — closer to the body than a straight-leg reach (was 42*s out at
+  // pelvis+6, a long diagonal that combined with the wall-plant arm's own
+  // diagonal read as a symmetric cross/pinwheel silhouette from some
+  // angles). Doesn't need the wall's actual world-space position: pushing
+  // the target this far toward it is enough for solveTwoBone's reach clamp
+  // to read as "bracing against something in that direction."
   private wallPlantFoot(cx: number, wallDir: number, pelvis: Vec2, s: number): Vec2 {
-    return vec(cx + wallDir * 42 * s, pelvis.y + 6 * s);
+    return vec(cx + wallDir * 22 * s, pelvis.y - 6 * s);
   }
 
   // --- ARM TARGETS: a two-handed Kamehameha-style charge stance, not two
@@ -1024,7 +1025,7 @@ export class ProceduralPlayerRig {
       // reach, the one deliberate bend this state allows. Lead hand keeps
       // charging alone (one hand holds on, the other never stops working).
       return {
-        lead: this.chargeHandTarget(shoulderLead, pelvis, s, 0),
+        lead: this.chargeHandTarget(pelvis, aim, s, 0),
         back: vec(shoulderBack.x + wallDir * 20 * s, shoulderBack.y + 2 * s),
       };
     }
@@ -1046,26 +1047,25 @@ export class ProceduralPlayerRig {
     // move together — instead of an opposite-phase swing.
     const bob = walkAmount > 0.05 ? Math.sin(this.stepPhase * 2) * 2 * s * walkAmount : 0;
     return {
-      lead: this.chargeHandTarget(shoulderLead, pelvis, s, bob),
-      back: this.chargeHandTarget(shoulderBack, pelvis, s, bob, 0.82),
+      lead: this.chargeHandTarget(pelvis, aim, s, bob),
+      back: this.chargeHandTarget(pelvis, aim, s, bob, 0.82),
     };
   }
 
-  /** The shared charge-stance hand target: hip height, offset forward in
-   *  the facing direction, `depth` (0-1) pulling it a hair closer to the
-   *  shoulder than full reach so the front/back hand don't perfectly
-   *  overlap when cupped together. */
-  private chargeHandTarget(
-    shoulder: Vec2,
-    pelvis: Vec2,
-    s: number,
-    bob: number,
-    depth = 1,
-  ): Vec2 {
-    const reach = ProceduralPlayerRig.ARM_REACH * s * depth;
-    const dir = vec(this.facing * 0.55, (pelvis.y + 10 * s - shoulder.y + bob) / reach);
-    const len = Math.hypot(dir.x, dir.y) || 1;
-    return this.straightTarget(shoulder, vec(dir.x / len, dir.y / len), reach);
+  /** The shared charge-stance target: a point near the hip that ORBITS
+   *  toward wherever aim is pointing — the charge visibly tracks the
+   *  mouse/aim even while held, not just at the dash-release. This is a
+   *  real world-space IK target (not forced onto a fixed-length line from
+   *  the shoulder), so solveTwoBone bends each arm naturally to reach it
+   *  rather than snapping to a straight facing-locked pose. `depth` (0-1)
+   *  shrinks the orbit radius a hair for the back hand so the two hands
+   *  don't perfectly overlap when cupped together. */
+  private chargeHandTarget(pelvis: Vec2, aim: Vec2, s: number, bob: number, depth = 1): Vec2 {
+    const orbitRadius = 15 * s * depth;
+    return vec(
+      pelvis.x + aim.x * orbitRadius,
+      pelvis.y + 8 * s + aim.y * orbitRadius + bob,
+    );
   }
 
   /** A hand target at EXACTLY max arm reach in direction `dir` from
