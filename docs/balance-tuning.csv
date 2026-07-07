@@ -1,0 +1,312 @@
+Category,Item,Type/Rarity,Field,Value,Notes
+Movement,Ground Movement,Core,maxGroundSpeed,330,Max horizontal ground speed (px/s)
+Movement,Ground Movement,Core,groundAcceleration,2700,Horizontal accel while grounded (px/s^2)
+Movement,Ground Movement,Core,airAcceleration,2050,Horizontal accel while airborne (px/s^2)
+Movement,Ground Movement,Core,groundFriction,3600,Deceleration toward 0 vx with no input WHILE GROUNDED ONLY (px/s^2) - no air friction exists at all
+Movement,Ground Movement,Core,crouchSpeedFactor,0.42,Multiplier on max ground speed while crouching
+Movement,Jump,Core,jumpVelocity,-635,Initial upward launch velocity on jump (px/s)
+Movement,Jump,Core,jumpCutMultiplier,0.48,Multiplier on upward vy when jump released early (variable jump height)
+Movement,Jump,Core,coyoteMs,110,Coyote-time window after leaving ground where jump still registers (ms)
+Movement,Jump,Core,jumpBufferMs,110,Jump input buffer window before landing (ms)
+Movement,Gravity,Core,gravity,1450,Base gravity while rising / vy<0 (px/s^2)
+Movement,Gravity,Core,descentGravity,2175,Gravity while falling normally - asymmetric jump gravity (px/s^2)
+Movement,Gravity,Core,fastFallGravity,2800,Gravity while falling AND holding Down (px/s^2)
+Movement,Gravity,Core,maxFallSpeed,900,Terminal fall speed clamp (px/s)
+Movement,Wall,Core,wallSlideMaxFall,175,Capped fall speed while gripping a wall (px/s)
+Movement,Wall,Core,wallJumpVy,-720,Vertical launch velocity on wall-jump - stronger than floor jump (px/s)
+Movement,Wall,Core,wallJumpVx,470,Horizontal shove velocity away from wall on wall-jump (px/s)
+Movement,Wall,Core,wallRestitution,0.5,Rebound velocity fraction when hitting a wall at speed without gripping
+Movement,Wall,Core,wallLatchCatchVy,90,Fall-speed threshold below which a fresh wall-touch latches near-zero vy
+Movement,Dash,Core,DASH_SPEED,780,Horizontal dash burst velocity (px/s)
+Movement,Dash,Core,DASH_COOLDOWN_MS,520,Cooldown between dash uses (ms)
+Movement,Dash,Core,DASH_DURATION_MS,150,How long the dash burst holds max speed before normal clamp resumes (ms)
+Movement,Body,Core,bodyWidth,26,Player collision AABB width (px)
+Movement,Body,Core,bodyHeight,56,Player collision AABB height standing (px)
+Movement,Body,Core,crouchHeight,38,Player collision AABB height crouched (px)
+Movement,Body,Core,PLAYER_RADIUS,18,Approx hit-circle radius used by combat/AOE math (duplicated literal in destructible.ts/fire.ts/projectile.ts - no single source of truth)
+Movement,Void,Core,KILL_PLANE_MARGIN_PX,200,Distance below map bottom edge before a player is force-killed
+Movement,Jetpack (legacy/unused),Dead code,JETPACK_MAX_FUEL,125,Field pinned to max - jetpack removed from design
+Movement,Jetpack (legacy/unused),Dead code,JETPACK_THRUST,1480,Unused
+Movement,Jetpack (legacy/unused),Dead code,JETPACK_FUEL_DRAIN_PER_SECOND,32,Unused
+Movement,Jetpack (legacy/unused),Dead code,JETPACK_GROUND_RECHARGE_PER_SECOND,64,Unused
+Movement,Jetpack (legacy/unused),Dead code,JETPACK_AIR_RECHARGE_PER_SECOND,10,Unused
+Movement,Jetpack (legacy/unused),Dead code,JETPACK_MIN_UPWARD_VELOCITY,-640,Unused
+Weapon Base,starter-pistol,Weapon,damage,10,Base damage per projectile hit
+Weapon Base,starter-pistol,Weapon,fireRate,4,Shots per second
+Weapon Base,starter-pistol,Weapon,magazineSize,8,Rounds per magazine
+Weapon Base,starter-pistol,Weapon,reloadSeconds,1.1,Reload duration (s)
+Weapon Base,starter-pistol,Weapon,projectileSpeed,650,Base projectile travel speed (px/s)
+Weapon Base,starter-pistol,Weapon,projectileLifetimeSeconds,1.2,Max projectile lifetime (s)
+Weapon Base,starter-pistol,Weapon,spreadRadians,0.03,Base shot spread cone (radians)
+Weapon Base,starter-pistol,Weapon,recoilImpulse,95,Recoil push-back applied to shooter on fire
+Weapon Base,starter-pistol,Weapon,knockbackImpulse,120,Knockback applied to target on hit - defined but not yet read by combat code
+Weapon Base,starter-pistol,Weapon,projectile.rangePx,720,Max travel distance before expiry (px)
+Weapon Base,starter-pistol,Weapon,neutralTTK (derived),2.5,"100 HP / (10 dmg x 4/s) = 2.5s; design target band is 1.8s-3.5s"
+Weapon Base,Muzzle,Constant,MUZZLE_CHEST_UP,50,Muzzle spawn offset above player center along rig chest (px)
+Weapon Base,Muzzle,Constant,MUZZLE_REACH,46,Distance muzzle extends from chest toward aim (px)
+Weapon Base,Fire Rate Floor,Constant,MIN_FIRE_RATE,0.35,Floor cadence used if resolved build's fireRate is 0/missing (shots/s)
+Card,raycast-prism,rare / cost 4 / unique,damageMultiplier,0.9,-10% dmg for hitscan delivery
+Card,raycast-prism,rare / cost 4 / unique,recoilMultiplier,0.8,-20% recoil
+Card,raycast-prism,rare / cost 4 / unique,projectile.rangePx,880,Extended hitscan range
+Card,raycast-prism,rare / cost 4 / unique,projectile.impactRadiusPx,12,Small impact radius
+Card,crystal-volley,common / cost 1 / unique,projectile.count,1,Baseline reset card - hexagon shape
+Card,circle-rounds,common / cost 1 / unique,projectileSpeedMultiplier,1.08,+8% speed
+Card,circle-rounds,common / cost 1 / unique,projectile.sizeMultiplier,0.92,-8% size
+Card,triangle-rounds,common / cost 1 / unique,damageMultiplier,1.12,+12% dmg
+Card,triangle-rounds,common / cost 1 / unique,recoilMultiplier,1.14,+14% recoil
+Card,triangle-rounds,common / cost 1 / unique,projectile.sizeMultiplier,1.02,+2% size
+Card,square-rounds,uncommon / cost 2 / unique,projectileSpeedMultiplier,0.88,-12% speed
+Card,square-rounds,uncommon / cost 2 / unique,knockbackMultiplier,1.18,+18% knockback
+Card,square-rounds,uncommon / cost 2 / unique,projectile.sizeMultiplier,1.22,+22% size
+Card,x-rounds,uncommon / cost 2 / unique,damageMultiplier,1.06,+6% dmg
+Card,x-rounds,uncommon / cost 2 / unique,projectile.sizeMultiplier,1.08,+8% size
+Card,i-rounds,uncommon / cost 2 / unique,damageMultiplier,1.16,+16% dmg
+Card,i-rounds,uncommon / cost 2 / unique,projectileSpeedMultiplier,0.94,-6% speed
+Card,i-rounds,uncommon / cost 2 / unique,projectile.sizeMultiplier,1.12,+12% size
+Card,orby-blap-blap,rare / cost 4 / unique,damageMultiplier,0.78,-22% dmg
+Card,orby-blap-blap,rare / cost 4 / unique,projectileSpeedMultiplier,0.72,-28% speed
+Card,orby-blap-blap,rare / cost 4 / unique,spreadRadians,0.314,Fixed 18deg spread (overrides base)
+Card,orby-blap-blap,rare / cost 4 / unique,projectile.count,2,Two projectiles per shot
+Card,orby-blap-blap,rare / cost 4 / unique,projectile.sizeMultiplier,1.38,+38% size
+Card,orby-blap-blap,rare / cost 4 / unique,projectile.impactRadiusPx,36,Impact radius
+Card,continuous-refractor,rare / cost 5 / unique,damageMultiplier,0.42,-58% dmg per-tick beam
+Card,continuous-refractor,rare / cost 5 / unique,fireRateMultiplier,2.4,+140% fire rate - beam cadence
+Card,continuous-refractor,rare / cost 5 / unique,projectile.rangePx,760,Beam range
+Card,continuous-refractor,rare / cost 5 / unique,slowMultiplier,0.72,Slow-field impact on hit
+Card,shard-bloom,rare / cost 5 / max 3,damageMultiplier,0.54,-46% dmg
+Card,shard-bloom,rare / cost 5 / max 3,fireRateMultiplier,0.82,-18% fire rate
+Card,shard-bloom,rare / cost 5 / max 3,recoilMultiplier,1.24,+24% recoil
+Card,shard-bloom,rare / cost 5 / max 3,spreadRadiansAdd,0.663,+38deg spread added
+Card,shard-bloom,rare / cost 5 / max 3,projectileCountAdd,5,+5 projectiles
+Card,shard-bloom,rare / cost 5 / max 3,projectile.sizeMultiplier,0.78,-22% size
+Card,shard-bloom,rare / cost 5 / max 3,projectile.rangePx,390,Short range
+Card,arc-shards,common / cost 2,projectileSpeedMultiplier,0.86,-14% speed
+Card,arc-shards,common / cost 2,gravityScale,560,Arc pathing accel (px/s^2)
+Card,seeker-facets,rare / cost 4 / max 4,projectileSpeedMultiplier,0.82,-18% speed
+Card,seeker-facets,rare / cost 4 / max 4,homingStrength,4.4,Homing turn rate (rad/s)
+Card,seeker-facets,rare / cost 4 / max 4,projectileHomingStrengthAdd,1.2,Per-stack turn-rate add
+Card,micro-seekers,uncommon / cost 3 / max 5,damageMultiplier,0.78,-22% dmg
+Card,micro-seekers,uncommon / cost 3 / max 5,projectileSpeedMultiplier,0.9,-10% speed
+Card,micro-seekers,uncommon / cost 3 / max 5,spreadRadiansAdd,0.279,+16deg spread added
+Card,micro-seekers,uncommon / cost 3 / max 5,projectileCountAdd,2,+2 projectiles
+Card,micro-seekers,uncommon / cost 3 / max 5,projectileHomingStrengthAdd,0.9,Per-stack turn-rate add
+Card,micro-seekers,uncommon / cost 3 / max 5,homingStrength,3.2,Base homing turn rate
+Card,micro-seekers,uncommon / cost 3 / max 5,projectile.sizeMultiplier,0.74,-26% size
+Card,magnet-spray,rare / cost 5 / max 4,damageMultiplier,0.58,-42% dmg
+Card,magnet-spray,rare / cost 5 / max 4,fireRateMultiplier,0.9,-10% fire rate
+Card,magnet-spray,rare / cost 5 / max 4,projectileSpeedMultiplier,0.84,-16% speed
+Card,magnet-spray,rare / cost 5 / max 4,spreadRadiansAdd,0.593,+34deg spread added
+Card,magnet-spray,rare / cost 5 / max 4,projectileCountAdd,4,+4 projectiles
+Card,magnet-spray,rare / cost 5 / max 4,projectileHomingStrengthAdd,1.1,Per-stack turn-rate add
+Card,magnet-spray,rare / cost 5 / max 4,homingStrength,2.8,Base homing turn rate
+Card,magnet-spray,rare / cost 5 / max 4,projectile.sizeMultiplier,0.68,-32% size
+Card,bouncy-prism,uncommon / cost 3 / max 4,projectileBounceAdd,4,+4 bounces per stack cap
+Card,extra-bounce (+1 Bounce),common / cost 1 / max 8,projectileBounceAdd,1,+1 bounce per stack
+Card,boomerang-return,uncommon / cost 3 / unique,projectileSpeedMultiplier,0.92,-8% speed
+Card,boomerang-return,uncommon / cost 3 / unique,lifetimeMultiplier,1.18,+18% lifetime
+Card,x-velocity (+X Velocity),common / cost 1 / max 7,projectileSpeedMultiplier,1.18,+18% speed
+Card,x-velocity (+X Velocity),common / cost 1 / max 7,lifetimeMultiplier,0.96,-4% lifetime - thinner trail
+Card,zero-g-floaters,uncommon / cost 3 / unique,projectileSpeedMultiplier,0.58,-42% speed
+Card,zero-g-floaters,uncommon / cost 3 / unique,lifetimeMultiplier,1.5,+50% lifetime
+Card,zero-g-floaters,uncommon / cost 3 / unique,projectile.sizeMultiplier,1.18,+18% size
+Card,dual-splitter,common / cost 2 / max 6,damageMultiplier,0.88,-12% dmg
+Card,dual-splitter,common / cost 2 / max 6,spreadRadians,0.524,Fixed 30deg spread (overrides base)
+Card,dual-splitter,common / cost 2 / max 6,projectileCountAdd,1,+1 projectile
+Card,triple-fan,uncommon / cost 3 / max 4,damageMultiplier,0.68,-32% dmg
+Card,triple-fan,uncommon / cost 3 / max 4,spreadRadiansAdd,0.314,+18deg spread added
+Card,triple-fan,uncommon / cost 3 / max 4,projectileCountAdd,2,+2 projectiles
+Card,five-shard-spray,rare / cost 5 / max 3,damageMultiplier,0.48,-52% dmg
+Card,five-shard-spray,rare / cost 5 / max 3,fireRateMultiplier,0.86,-14% fire rate
+Card,five-shard-spray,rare / cost 5 / max 3,recoilMultiplier,1.22,+22% recoil
+Card,five-shard-spray,rare / cost 5 / max 3,spreadRadiansAdd,0.454,+26deg spread added
+Card,five-shard-spray,rare / cost 5 / max 3,projectileCountAdd,4,+4 projectiles
+Card,five-shard-spray,rare / cost 5 / max 3,projectile.sizeMultiplier,0.86,-14% size
+Card,one-more-shard (+1 Projectile),common / cost 1 / max 8,damageMultiplier,0.94,-6% dmg
+Card,one-more-shard (+1 Projectile),common / cost 1 / max 8,spreadRadiansAdd,0.122,+7deg spread added
+Card,one-more-shard (+1 Projectile),common / cost 1 / max 8,projectileCountAdd,1,+1 projectile
+Card,wide-barrage,uncommon / cost 3 / max 5,damageMultiplier,0.7,-30% dmg
+Card,wide-barrage,uncommon / cost 3 / max 5,fireRateMultiplier,0.94,-6% fire rate
+Card,wide-barrage,uncommon / cost 3 / max 5,recoilMultiplier,1.12,+12% recoil
+Card,wide-barrage,uncommon / cost 3 / max 5,spreadRadiansAdd,0.768,+44deg spread added
+Card,wide-barrage,uncommon / cost 3 / max 5,projectileCountAdd,3,+3 projectiles
+Card,wide-barrage,uncommon / cost 3 / max 5,projectile.sizeMultiplier,0.82,-18% size
+Card,needle-hose,common / cost 2 / max 6,damageMultiplier,0.82,-18% dmg
+Card,needle-hose,common / cost 2 / max 6,fireRateMultiplier,1.1,+10% fire rate
+Card,needle-hose,common / cost 2 / max 6,projectileSpeedMultiplier,1.08,+8% speed
+Card,needle-hose,common / cost 2 / max 6,spreadRadiansAdd,0.192,+11deg spread added
+Card,needle-hose,common / cost 2 / max 6,projectileCountAdd,2,+2 projectiles
+Card,needle-hose,common / cost 2 / max 6,projectile.sizeMultiplier,0.62,-38% size
+Card,orbiting-satellites,rare / cost 5 / unique,orbitingSatellites,2,Adds 2 auto-firing satellites
+Card,orbiting-satellites,rare / cost 5 / unique,fireRateMultiplier,1.12,+12% main-weapon fire rate
+Card,cluster-bomb,rare / cost 5 / max 3,fireRateMultiplier,0.72,-28% fire rate
+Card,cluster-bomb,rare / cost 5 / max 3,projectileSplitAdd,6,Splits into 6 on first impact
+Card,cluster-bomb,rare / cost 5 / max 3,projectile.sizeMultiplier,1.12,+12% size
+Card,explosive-facet,uncommon / cost 3 / unique,damageMultiplier,0.92,-8% dmg
+Card,explosive-facet,uncommon / cost 3 / unique,impactRadiusPx,64,Explosive AOE radius
+Card,sticky-shards,uncommon / cost 3 / unique,projectileSpeedMultiplier,0.8,-20% speed
+Card,sticky-shards,uncommon / cost 3 / unique,impactRadiusPx,48,Sticky detonation radius
+Card,pierce-chain,rare / cost 4 / unique,pierceCount,3,Pierces 3 targets before expiring
+Card,pierce-chain,rare / cost 4 / unique,splitCount,2,Splits into 2 on final impact
+Card,slow-field,uncommon / cost 3 / unique,damageMultiplier,0.86,-14% dmg
+Card,slow-field,uncommon / cost 3 / unique,impactRadiusPx,70,Slow-field AOE radius
+Card,slow-field,uncommon / cost 3 / unique,slowMultiplier,0.58,-42% speed applied to victims
+Card,molten-core,uncommon / cost 3 / unique,element,fire,3s burn DoT at 40% of hit damage/sec
+Card,molten-core,uncommon / cost 3 / unique,impactRadiusPx,42,Fire impact radius
+Card,frost-prism,uncommon / cost 3 / unique,element,ice,1s freeze at 50% movement on hit
+Card,frost-prism,uncommon / cost 3 / unique,slowMultiplier,0.68,Slow-field impact
+Card,voltaic-spark,rare / cost 4 / unique,projectileSpeedMultiplier,1.08,+8% speed
+Card,voltaic-spark,rare / cost 4 / unique,element,lightning,Chains 50% dmg to nearest other player within 220px
+Card,voltaic-spark,rare / cost 4 / unique,pierceCount,1,Pierces once
+Card,void-fracture,rare / cost 4 / unique,damageMultiplier,1.08,+8% dmg
+Card,void-fracture,rare / cost 4 / unique,element,void,Element flavor
+Card,void-fracture,rare / cost 4 / unique,pierceCount,2,Pierces 2 targets
+Card,radiant-overload,rare / cost 5 / unique,damageMultiplier,1.24,+24% dmg
+Card,radiant-overload,rare / cost 5 / unique,fireRateMultiplier,0.82,-18% fire rate
+Card,radiant-overload,rare / cost 5 / unique,impactRadiusPx,58,Radiant impact radius
+Card,radiant-overload,rare / cost 5 / unique,projectile.sizeMultiplier,1.14,+14% size
+Card,rapid-refraction,common / cost 2 / max 5,fireRateMultiplier,1.22,"+22% fire rate - NERFED from 1.32 in-code, TTK guard vs stacking"
+Card,rapid-refraction,common / cost 2 / max 5,recoilMultiplier,0.9,-10% recoil
+Card,needle-compressor,common / cost 2 / max 5,fireRateMultiplier,1.14,"+14% fire rate - NERFED from 1.22 in-code, TTK guard vs stacking"
+Card,needle-compressor,common / cost 2 / max 5,projectile.sizeMultiplier,0.86,-14% size
+Card,heavy-coolant,common / cost 2 / max 6,fireRateMultiplier,0.88,-12% fire rate
+Card,heavy-coolant,common / cost 2 / max 6,projectile.sizeMultiplier,1.22,+22% size
+Card,essence-battery,common / cost 2 / max 4,magazineSizeAdd,2,+2 magazine size per stack
+Card,essence-battery,common / cost 2 / max 4,reloadMultiplier,0.86,-14% reload time
+Card,essence-battery,common / cost 2 / max 4,ammoRegenPerSecond,2,Passive ammo regen
+Card,crystal-plating,common / cost 2 / max 5,maxHealthAdd,20,+20 max HP per stack
+Card,crystal-plating,common / cost 2 / max 5,moveSpeedMultiplier,0.98,-2% move speed
+Card,phase-soles,common / cost 2 / max 4,moveSpeedMultiplier,1.1,+10% move speed
+Card,wide-parry,uncommon / cost 3 / max 4,parryCoverMultiplier,1.28,+28% parry arc width
+Card,quick-parry,uncommon / cost 3 / max 4,parryCooldownMultiplier,0.86,-14% parry cooldown
+Card,overcharge,rare / cost 4 / unique,fireRateMultiplier,0.72,-28% fire rate
+Card,overcharge,rare / cost 4 / unique,overchargeMultiplier,3,3x damage (max-of composition not additive)
+Card,overcharge,rare / cost 4 / unique,projectile.sizeMultiplier,1.42,+42% size
+Card,overcharge,rare / cost 4 / unique,impactRadiusPx,76,Impact radius
+Card,mirror-shield,rare / cost 4 / unique,mirrorShield,true,Shield-blocked shots bounce back at attacker
+Card,cataclysmic-prism,legendary / cost 7 / unique,damageMultiplier,1.18,+18% dmg
+Card,cataclysmic-prism,legendary / cost 7 / unique,fireRateMultiplier,0.72,-28% fire rate
+Card,cataclysmic-prism,legendary / cost 7 / unique,impactRadiusPx,118,Explosive AOE radius
+Card,cataclysmic-prism,legendary / cost 7 / unique,projectile.sizeMultiplier,1.22,+22% size
+Card,homing-cluster,legendary / cost 7 / unique,damageMultiplier,0.78,-22% dmg
+Card,homing-cluster,legendary / cost 7 / unique,projectileSpeedMultiplier,0.82,-18% speed
+Card,homing-cluster,legendary / cost 7 / unique,spreadRadians,0.489,Fixed 28deg spread (overrides base)
+Card,homing-cluster,legendary / cost 7 / unique,projectile.count,3,3 homing projectiles
+Card,homing-cluster,legendary / cost 7 / unique,homingStrength,5.2,Homing turn rate
+Card,sticky-ray,legendary / cost 7 / unique,fireRateMultiplier,0.78,-22% fire rate (hitscan delivery)
+Card,sticky-ray,legendary / cost 7 / unique,impactRadiusPx,74,Sticky detonation radius
+Card,sprint-coils,uncommon / cost 3 / max 3,moveSpeedMultiplier,1.18,+18% move speed
+Card,glide-membrane,uncommon / cost 3 / max 2,gravityMultiplier,0.74,-26% gravity - floatier
+Card,lead-boots,uncommon / cost 2 / max 2,gravityMultiplier,1.35,+35% gravity - heavier fall
+Card,lead-boots,uncommon / cost 2 / max 2,moveSpeedMultiplier,1.06,+6% move speed
+Card,spring-heel,uncommon / cost 3 / max 2,jumpMultiplier,1.18,+18% jump launch velocity
+Card,spring-heel,uncommon / cost 3 / max 2,wallJumpMultiplier,1.16,+16% wall-jump launch velocity
+Card,gecko-grip,uncommon / cost 3 / max 2,wallSlideMultiplier,0.45,-55% wall-slide fall cap - stickier
+Card,double-jump (Second Wind),rare / cost 4 / max 3,airJumpsAdd,1,+1 mid-air jump per stack
+Card,blink-dash,rare / cost 4 / max 2,dashChargesAdd,1,Unlocks dash / +1 air-dash charge per stack
+Card,bulwark-core,uncommon / cost 3 / max 3,shieldChargeMultiplier,1.6,+60% max shield charge
+Card,rapid-capacitor,uncommon / cost 3 / max 3,shieldRechargeMultiplier,1.8,+80% shield recharge rate
+Card,aim-barrier,rare / cost 4 / unique,directionalShield,true,Directional shield
+Card,aim-barrier,rare / cost 4 / unique,shieldChargeMultiplier,2.2,+120% max charge
+Card,riot-mirror,legendary / cost 6 / unique,directionalShield,true,Directional shield
+Card,riot-mirror,legendary / cost 6 / unique,mirrorShield,true,Reflects blocked shots
+Card,riot-mirror,legendary / cost 6 / unique,shieldChargeMultiplier,1.7,+70% max charge
+Round Flow,Countdown,Core,COUNTDOWN_MS,3000,Pre-round countdown duration (ms)
+Round Flow,Round Timer,Core,ROUND_TIME_LIMIT_MS,90000,Max round duration before forced time-out resolution (90s)
+Round Flow,Round Over,Core,ROUND_OVER_HOLD_MS,2500,Hold time on round-over screen before drafting/countdown
+Round Flow,Match Length,Core,TARGET_SCORE_DEFAULT,3,Default rounds-won needed to win the match
+Round Flow,Bot Shootout Guard,Core,NO_HUMAN_SURVIVOR_END_MS,6000,Max time a bot-only shootout runs once all humans are dead before forced end
+Round Flow,Drafting,Core,DRAFT_WINDOW_MS,15000,How long the card-draft phase stays open before auto-resolving
+Round Flow,Drafting,Core,DRAFT_OFFER_COUNT,3,Number of card offers shown to each player at draft time
+Combat,Parry,Core,PARRY_ACTIVE_MS,420,Duration of the active parry deflect window after trigger (ms)
+Combat,Parry,Core,PARRY_COOLDOWN_MS_DEFAULT,1800,Cooldown before another parry can trigger (ms)
+Combat,Parry,Core,PARRY_ARC_RADIANS,1.047,Full parry cone width - 60deg (pi/3)
+Combat,Shield,Core,SHIELD_AIM_ARC_RADIANS,2.094,Directional/aim-shield block cone width - 120deg (2pi/3)
+Combat,Shield,Core,SHIELD_MAX_CHARGE_DEFAULT,100,Default max shield charge
+Combat,Shield,Core,SHIELD_DRAIN_PER_SECOND,35,Charge drained per second while actively holding shield idle-block
+Combat,Shield,Core,SHIELD_RECHARGE_PER_SECOND,14,Charge regenerated per second while shield idle
+Combat,Shield,Core,SHIELD_HIT_DRAIN_MULTIPLIER,1.8,Charge cost multiplier per point of damage absorbed on a blocked hit
+Elemental,Fire,Core,burn duration,3,Burn DoT duration on hit (seconds)
+Elemental,Fire,Core,burn DPS factor,0.4,Burn deals 40% of triggering hit's damage per second
+Elemental,Ice,Core,freeze duration,1,Freeze duration on hit (seconds)
+Elemental,Ice,Core,freeze movement multiplier,0.5,Ice freeze slows movement to 50%
+Elemental,Lightning,Core,CHAIN_RADIUS,220,Chain-hit search radius (px)
+Elemental,Lightning,Core,chain damage factor,0.5,Chain deals 50% of triggering hit's damage to nearest secondary target
+Satellite,Orbiting Satellites,Core,ORBIT_RADIUS_PX,80,Orbit radius around owner (px)
+Satellite,Orbiting Satellites,Core,ORBIT_RAD_PER_SEC,2.094,Angular orbit speed - ~120deg/s (pi/1.5)
+Satellite,Orbiting Satellites,Core,SATELLITE_FIRE_COOLDOWN_MS,600,Time between satellite shots (ms)
+Satellite,Orbiting Satellites,Core,SATELLITE_DAMAGE,4,Damage per satellite shot
+Satellite,Orbiting Satellites,Core,SATELLITE_PROJECTILE_SPEED,540,Satellite projectile speed (px/s)
+Satellite,Orbiting Satellites,Core,SATELLITE_PROJECTILE_LIFETIME_MS,700,Satellite projectile lifetime (ms)
+Satellite,Orbiting Satellites,Core,SATELLITE_PROJECTILE_RADIUS,4,Satellite projectile hit radius (px)
+Destructible,Explosive Barrel,Core,EXPLOSION_RADIUS,80,AOE blast radius when explosive destructible breaks (px)
+Destructible,Explosive Barrel,Core,EXPLOSION_DAMAGE,28,AOE damage dealt to players in blast radius
+Destructible,Flammable Object,Core,FIRE_PATCH_DEFAULT_LIFETIME_MS,1800,Lifetime of fire patch spawned from a flammable destructible (ms)
+Destructible,Flammable Object,Core,FIRE_PATCH_DEFAULT_RADIUS,36,Radius of spawned fire patch (px)
+Destructible,Flammable Object,Core,FIRE_PATCH_DEFAULT_DPS,14,Damage-per-second of spawned fire patch
+Pickup Buff,Overcharge,Core,OVERCHARGE_DURATION_MS,8000,Overcharge (damage+firerate) buff duration
+Pickup Buff,Damage Amp,Core,DAMAGE_AMP_MS,8000,Damage amplifier buff duration
+Pickup Buff,Speed Boost,Core,SPEED_BOOST_MS,8000,Movement speed buff duration
+Pickup Buff,Melee Mode,Core,MELEE_MODE_MS,9000,Forced melee/close-range buff duration (stub - not implemented in Zig or TS)
+Pickup Debuff,Slow Trap,Core,SLOW_DEBUFF_MS,5500,Slow debuff duration applied to others
+Pickup Debuff,Slow Trap,Core,SLOW_TRAP_MULTIPLIER,0.62,Movement-speed multiplier applied by slow-trap (-38% speed)
+Pickup Debuff,Vulnerability,Core,VULNERABILITY_MS,5500,Vulnerability debuff duration applied to others
+Pickup Debuff,Block Jammer,Core,BLOCK_JAMMER_MS,6500,Shield-block-jam debuff duration (stub - not implemented in Zig or TS)
+Pickup Buff,Boss Mode,Core,BOSS_MODE_MS,16000,Boss-mode buff duration
+Pickup Buff,Boss Mode,Core,boss mode max HP add,90,Boss Mode adds +90 max HP while active (base 100 -> 190)
+Pickup Misc,Respawn Timer,Core,DEFAULT_RESPAWN_MS,20000,Default pickup respawn timer when none baked into the entity
+Pickup Misc,Card Cache,Core,CARD_OFFER_COUNT,3,Number of cards offered by a card-cache pickup
+Pickup Misc,Shield Cell,Core,shield-cell heal cap,100,Shield-cell pickup heal is clamped to 100 charge
+Pickup Misc,Footprint,Core,PLAYER_FOOTPRINT_RADIUS,18,Player footprint radius used for pickup-overlap test (px)
+Projectile Physics,Gravity Pathing,Core,GRAVITY_PATHING_ACCEL_DEFAULT,1450,Default arc-gravity accel if card doesn't set gravityScale (px/s^2)
+Projectile Physics,Homing Pathing,Core,HOMING_TURN_RATE_DEFAULT,4,Default homing turn rate if card doesn't set homingStrength (rad/s)
+Projectile Physics,Boomerang Pathing,Core,BOOMERANG_TURN_RATE,8.4,Turn rate while curling back (rad/s)
+Projectile Physics,Boomerang Pathing,Core,BOOMERANG_RANGE_FRACTION,0.55,Fraction of rangePx traveled before a boomerang starts returning
+Projectile Physics,Boomerang Pathing,Core,BOOMERANG_RETURN_RADIUS,16,Distance from origin at which returning boomerang is caught/expires (px)
+Projectile Physics,Sticky Impact,Core,STICKY_FUSE_MS,720,Fuse time before a sticky projectile detonates/despawns after attaching (ms)
+Projectile Physics,Slow Field Impact,Core,SLOW_FIELD_DURATION_MS,1500,Duration of the slow debuff applied by slow-field impact (ms)
+Projectile Physics,Float Pathing,Core,FLOAT_OSC_LATERAL,22,Amplitude of lateral drift oscillation
+Projectile Physics,Float Pathing,Core,FLOAT_OSC_FORWARD,11,Amplitude of forward drift oscillation
+Projectile Physics,Float Pathing,Core,FLOAT_OSC_LATERAL_HZ,9,Frequency of lateral float oscillation
+Projectile Physics,Float Pathing,Core,FLOAT_OSC_FORWARD_HZ,5,Frequency of forward float oscillation
+Projectile Physics,Split On Death,Core,SPLIT_SPREAD,2.985,Fan angle for split children - ~171deg (pi x 0.95)
+Projectile Physics,Split On Death,Core,SPLIT_DAMAGE_SCALE,0.42,Damage multiplier applied to split children (42% of parent)
+Projectile Physics,Split On Death,Core,SPLIT_LIFETIME_SCALE,0.42,Lifetime multiplier applied to split children
+Projectile Physics,Split On Death,Core,SPLIT_RANGE_SCALE,0.32,Range multiplier applied to split children
+Projectile Physics,Split On Death,Core,SPLIT_MAX,8,Hard cap on number of children spawned per split event
+Projectile Physics,Split On Death,Core,split child min speed,180,"Floor on child speed (max(180, speed*0.82))"
+Projectile Physics,Split On Death,Core,split child speed scale,0.82,Child speed = 82% of parent speed before the floor
+Projectile Physics,Split On Death,Core,split child radius scale,0.78,Child radius = 78% of parent radius (floored at 2px)
+Projectile Physics,Split On Death,Core,split child impact radius scale,0.45,Child impactRadiusPx = 45% of parent's
+Projectile Physics,Split On Death,Core,split child jitter,0.06,Random angular jitter range added per split child (rad)
+Projectile Physics,Defaults,Core,default projectile radius,7,spawnProjectile default radius if none supplied
+Projectile Physics,Defaults,Core,explosive default AOE radius,34,detonateAt fallback radius when impact=explosive and no impactRadiusPx set
+Projectile Physics,Defaults,Core,sticky default AOE radius,24,detonateAt fallback radius when impact=sticky and no impactRadiusPx set
+Projectile Physics,Spawn Grace,Fix 2026-07-06,first-tick terrain grace,1 tick,"Projectile does not expire from terrain overlap on the tick it spawns (ageMs===0) - fixes shots vanishing when muzzle overlaps a ceiling"
+Clamp/Floor,Weapon Build,weaponBuild.ts,fireRate min,0.35,Fire-rate floor (shots/s)
+Clamp/Floor,Weapon Build,weaponBuild.ts,reloadSeconds min,0.15,Reload floor (s)
+Clamp/Floor,Weapon Build,weaponBuild.ts,projectileSpeed min,80,Projectile speed floor (px/s)
+Clamp/Floor,Weapon Build,weaponBuild.ts,projectileLifetimeSeconds min,0.1,Lifetime floor (s)
+Clamp/Floor,Weapon Build,weaponBuild.ts,moveSpeedMultiplier min,0.45,Move-speed multiplier floor
+Clamp/Floor,Weapon Build,weaponBuild.ts,parryCoverMultiplier min,0.45,Parry-cover multiplier floor
+Clamp/Floor,Weapon Build,weaponBuild.ts,parryCooldownMultiplier min,0.28,Parry-cooldown multiplier floor
+Clamp/Floor,Weapon Build,weaponBuild.ts,projectile.rangePx min,48,Range floor (px)
+Clamp/Floor,Weapon Build,weaponBuild.ts,projectile.sizeMultiplier min,0.35,Size multiplier floor
+Clamp/Floor,Weapon Build,weaponBuild.ts,projectile.speedMultiplier min,0.15,Speed multiplier floor
+Clamp/Floor,Weapon Build,weaponBuild.ts,projectile.lifetimeMultiplier min,0.1,Lifetime multiplier floor
+Clamp/Floor,Weapon Build,weaponBuild.ts,projectile.slowMultiplier range,"0.1 - 1",Slow multiplier bounds
+Clamp/Floor,Design Target,weaponBuild.ts comment,PLAYER_BASE_HP (TTK calc),100,Assumed target HP for neutralTTK calc
+Clamp/Floor,Design Target,weaponBuild.ts comment,TTK target band,"1.8s - 3.5s",Design-intent balance band referenced in code comments - see combat-balance-ttk skill
+Chaos Modifier,low-gravity,Party modifier,gravityMultiplier,0.46,-54% gravity
+Chaos Modifier,slow-motion,Party modifier,timeScale,0.55,Whole match at 55% speed
+Chaos Modifier,golden-gun,Party modifier,damageMultiplier,9,9x damage
+Chaos Modifier,golden-gun,Party modifier,fireRateMultiplier,0.28,-72% fire rate
+Chaos Modifier,golden-gun,Party modifier,recoilMultiplier,1.8,+80% recoil
+Chaos Modifier,slappers-only,Party modifier,disableProjectiles,true,No projectiles spawn - shove-only combat
+Chaos Modifier,slappers-only,Party modifier,recoilMultiplier,2.8,+180% recoil
+Chaos Modifier,fire-hazard,Party modifier,fireHazardIntervalMs,2400,Arena spawns fire patches every 2.4s
+Chaos Modifier,random-shapes,Party modifier,randomProjectileShapes,true,Rerolls shot shape every fire (7-shape pool)
+Chaos Modifier,max-recoil,Party modifier,recoilMultiplier,3.6,+260% recoil
+Network,Snapshot Rate,Core,SNAPSHOT_HZ,20,Network snapshot broadcast rate (Hz)
+Network,Snapshot Rate,Core,SNAPSHOT_INTERVAL_TICKS,3,Ticks between snapshots (60Hz sim / 20Hz snapshot)
+Network,Sim Tick,Core,STEP_MS,16.667,Fixed sim tick duration (ms) - 60Hz simulation
+Map Authoring,Platform,Core,MIN_PLATFORM_H_PX,12,Smallest authorable platform height (px) - drives sub-step guard (0.6x this)

@@ -495,3 +495,100 @@ describe("stepRound", () => {
     expect(result.state.draftingOffers).toEqual(state.draftingOffers);
   });
 });
+
+describe("sudden death + first blood (design pillars distinctive features)", () => {
+  test("countdown->fighting sets suddenDeathActive when every scored player is tied at targetScore-1", () => {
+    const players = { a: mkPlayer("a"), b: mkPlayer("b") };
+    const state: RoundState = {
+      phase: "countdown",
+      countdownRemainingMs: 1,
+      scores: { [A]: 2, [B]: 2 },
+      roundIndex: 4,
+      winnerPlayerId: null,
+    };
+    const result = stepRound({ state, players, dtMs: 16, targetScore: 3 });
+    expect(result.state.phase).toBe("fighting");
+    expect(result.state.suddenDeathActive).toBe(true);
+    expect(result.events.some((e) => e.t === "sudden-death-started")).toBe(true);
+  });
+
+  test("countdown->fighting does NOT set suddenDeathActive when scores aren't all tied at targetScore-1", () => {
+    const players = { a: mkPlayer("a"), b: mkPlayer("b") };
+    const state: RoundState = {
+      phase: "countdown",
+      countdownRemainingMs: 1,
+      scores: { [A]: 2, [B]: 1 },
+      roundIndex: 3,
+      winnerPlayerId: null,
+    };
+    const result = stepRound({ state, players, dtMs: 16, targetScore: 3 });
+    expect(result.state.phase).toBe("fighting");
+    expect(result.state.suddenDeathActive).toBe(false);
+    expect(result.events.some((e) => e.t === "sudden-death-started")).toBe(false);
+  });
+
+  test("a single scored player can't trigger sudden death against themselves", () => {
+    const players = { a: mkPlayer("a") };
+    const state: RoundState = {
+      phase: "countdown",
+      countdownRemainingMs: 1,
+      scores: { [A]: 2 },
+      roundIndex: 2,
+      winnerPlayerId: null,
+    };
+    const result = stepRound({ state, players, dtMs: 16, targetScore: 3 });
+    expect(result.state.suddenDeathActive).toBe(false);
+  });
+
+  test("firstBloodPlayerId and suddenDeathActive reset on the drafting->countdown transition", () => {
+    const players = {
+      a: mkPlayer("a", { alive: true }),
+      b: mkPlayer("b", { alive: true }),
+    };
+    const startTick = 50;
+    const state: RoundState = {
+      phase: "drafting",
+      countdownRemainingMs: DRAFT_WINDOW_MS,
+      scores: { [A]: 3, [B]: 2 },
+      roundIndex: 4,
+      winnerPlayerId: A,
+      draftingExpiresAtTick: Tick(startTick),
+      draftingPicked: { [A]: "crystal-volley", [B]: "circle-rounds" },
+      draftingOffers: {
+        [A]: ["crystal-volley", "circle-rounds", "raycast-prism"],
+        [B]: ["circle-rounds", "crystal-volley", "raycast-prism"],
+      },
+      firstBloodPlayerId: A,
+      suddenDeathActive: true,
+    };
+    const result = stepRound({
+      state,
+      players,
+      dtMs: 16,
+      targetScore: 5,
+      tick: Tick(startTick + 1),
+      rngState: 1,
+    });
+    expect(result.state.phase).toBe("countdown");
+    expect(result.state.firstBloodPlayerId).toBeUndefined();
+    expect(result.state.suddenDeathActive).toBeUndefined();
+  });
+
+  test("firstBloodPlayerId carries forward untouched through an ordinary fighting tick", () => {
+    const players = {
+      a: mkPlayer("a", { alive: true }),
+      b: mkPlayer("b", { alive: true }),
+    };
+    const state: RoundState = {
+      phase: "fighting",
+      countdownRemainingMs: ROUND_TIME_LIMIT_MS - 1000,
+      scores: { [A]: 0, [B]: 0 },
+      roundIndex: 0,
+      winnerPlayerId: null,
+      firstBloodPlayerId: A,
+    };
+    const result = stepRound({ state, players, dtMs: 16, targetScore: 3 });
+    expect(result.state.phase).toBe("fighting");
+    expect(result.state.firstBloodPlayerId).toBe(A);
+  });
+});

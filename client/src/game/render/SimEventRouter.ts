@@ -221,6 +221,18 @@ export class SimEventRouter {
         }
         break;
       }
+      case "first-blood":
+        // Reuses the "pickup" cue — a bright, positive sting for claiming
+        // the round's speed wager. No dedicated asset yet.
+        audio.play("pickup");
+        break;
+      case "sudden-death-started":
+        // Announces the round is a decider (design pillars: "the money
+        // moment"). Reuses "card" (already the round-transition cue) plus a
+        // bigger shake than chain-hit — no dedicated asset yet.
+        audio.play("card");
+        d.safeShake(150, 0.01);
+        break;
       default: {
         // Exhaustiveness check.
         const _exhaustive: never = event;

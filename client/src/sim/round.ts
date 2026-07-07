@@ -22,6 +22,41 @@ export const ROUND_OVER_HOLD_MS = 2500;
 export const TARGET_SCORE_DEFAULT = 3;
 
 /**
+ * First-blood wager (design pillars doc): movement speed multiplier applied
+ * for the rest of the round to whichever player lands the first hit. Applied
+ * in World.ts's per-player movement step alongside the existing slow/freeze
+ * multipliers.
+ */
+export const FIRST_BLOOD_SPEED_MULTIPLIER = 1.15;
+
+/**
+ * Sudden-death shrinking arena (design pillars doc): once triggered, the
+ * safe-zone radius lerps from START to END (fraction of the arena's
+ * half-diagonal) over the round's `ROUND_TIME_LIMIT_MS`. Enforced by
+ * `suddenDeath.ts`'s storm-damage step in World.ts.
+ */
+export const SUDDEN_DEATH_SCALE_START = 1.0;
+export const SUDDEN_DEATH_SCALE_END = 0.6;
+/** Damage per second dealt to a player caught outside the safe zone. Tuned
+ *  low-ish on purpose — pressure, not an instant kill; a player can still
+ *  fight their way back in. */
+export const SUDDEN_DEATH_STORM_DPS = 8;
+
+/**
+ * True when every player with a recorded score this match is tied one round
+ * away from winning — the condition design pillars calls "both players at
+ * targetScore-1". Generalizes past 2 players: an FFA where everyone with a
+ * score is tied at match point is exactly the tense decider the mechanic is
+ * for. Needs at least 2 scored players — a single scorer can't have a
+ * decider round with themselves.
+ */
+function isSuddenDeathRound(scores: Record<PlayerId, number>, targetScore: number): boolean {
+  const scored = Object.values(scores);
+  if (scored.length < 2) return false;
+  return scored.every((s) => s === targetScore - 1);
+}
+
+/**
  * When every HUMAN player is dead but bots are still alive, don't make the
  * lobby sit through a minute-long bot-vs-bot shootout — clamp the round to end
  * within this window. Only applies when humans are actually in the match (a
@@ -123,6 +158,8 @@ export function stepRound(input: RoundStepInput): RoundStepResult {
     draftingExpiresAtTick: state.draftingExpiresAtTick,
     draftingPicked: state.draftingPicked,
     draftingOffers: state.draftingOffers,
+    firstBloodPlayerId: state.firstBloodPlayerId,
+    suddenDeathActive: state.suddenDeathActive,
   };
 
   switch (state.phase) {
@@ -131,6 +168,12 @@ export function stepRound(input: RoundStepInput): RoundStepResult {
       if (next.countdownRemainingMs <= 0) {
         next.phase = "fighting";
         next.countdownRemainingMs = ROUND_TIME_LIMIT_MS;
+        // Fresh round: first-blood is unclaimed, and sudden death is
+        // re-evaluated from the scores heading into it.
+        next.firstBloodPlayerId = undefined;
+        const suddenDeath = isSuddenDeathRound(state.scores, targetScore);
+        next.suddenDeathActive = suddenDeath;
+        if (suddenDeath) events.push({ t: "sudden-death-started" });
       }
       return finalize(next, events, false, rngState);
     }
@@ -198,6 +241,8 @@ export function stepRound(input: RoundStepInput): RoundStepResult {
       next.draftingExpiresAtTick = undefined;
       next.draftingPicked = undefined;
       next.draftingOffers = undefined;
+      next.firstBloodPlayerId = undefined;
+      next.suddenDeathActive = undefined;
       return finalize(next, events, false, rngState);
     }
 
@@ -311,6 +356,8 @@ export function stepRound(input: RoundStepInput): RoundStepResult {
       next.draftingExpiresAtTick = undefined;
       next.draftingPicked = undefined;
       next.draftingOffers = undefined;
+      next.firstBloodPlayerId = undefined;
+      next.suddenDeathActive = undefined;
       return finalize(next, events, false, rngState, playerPatches);
     }
   }
