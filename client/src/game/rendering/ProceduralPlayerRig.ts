@@ -1061,7 +1061,13 @@ export class ProceduralPlayerRig {
    *  shrinks the orbit radius a hair for the back hand so the two hands
    *  don't perfectly overlap when cupped together. */
   private chargeHandTarget(pelvis: Vec2, aim: Vec2, s: number, bob: number, depth = 1): Vec2 {
-    const orbitRadius = 15 * s * depth;
+    // Widened 15→26: at 15 the hands read as clamped in tight against the
+    // body; this reads as an actual held charge out in front of the hip.
+    // Keep in sync with MUZZLE_ANCHOR_OFFSET_Y/MUZZLE_REACH in
+    // sim/weapon.ts — that's the ACTUAL projectile spawn point in combat,
+    // and it should coincide with where this orb visually sits, not just
+    // approximate an old arm-cannon geometry.
+    const orbitRadius = 26 * s * depth;
     return vec(
       pelvis.x + aim.x * orbitRadius,
       pelvis.y + 8 * s + aim.y * orbitRadius + bob,

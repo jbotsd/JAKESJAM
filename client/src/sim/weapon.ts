@@ -259,22 +259,27 @@ function stepWeaponNative(
 }
 
 /**
- * Where the projectile spawns from on the player rig. Approximate match to the
- * existing MatchScene muzzle math, kept simple here since the sim doesn't know
- * about visual rig pose (crouching offset etc. — close enough for hitscan).
+ * Where the projectile spawns from on the player rig. Approximate match to
+ * the rig's actual hand position, kept simple here since the sim doesn't
+ * know about visual rig pose (crouching offset etc. — close enough for
+ * hitscan).
  */
 /**
- * Muzzle = the tip of the rig's wand, not the body centre. The procedural
- * rig anchors the wand at the CHEST (~50px above the entity centre `player.y`
- * at standing scale) and draws the barrel out to ~48px. Spawning the shard
- * there — and aiming from the chest — makes the shot visibly leave the wand
- * tip instead of the torso. (Was anchored at `player.y` with reach 22.)
+ * Muzzle = the charge point between the rig's two cupped hands (the
+ * Kamehameha-style charge stance — see ProceduralPlayerRig.chargeHandTarget),
+ * NOT the old arm-cannon's chest-high wand tip. The rig's charge point
+ * anchors ~6px above the entity centre `player.y` at standing scale (the
+ * hip, not the chest) and orbits ~20px toward aim. Was anchored 50px up
+ * with a 46px reach — that was the old wand-tip math and now sits well
+ * away from where the hands actually are. Keep this in sync with
+ * ProceduralPlayerRig's ORBIT_RADIUS(26)*visual-scale(~0.78) ≈ 20 and its
+ * `pelvis.y + 8*s` hip offset ≈ 6px above player-centre at that scale.
  */
-const MUZZLE_CHEST_UP = 50;
-const MUZZLE_REACH = 46;
+const MUZZLE_ANCHOR_UP = 6;
+const MUZZLE_REACH = 20;
 function playerMuzzlePosition(player: PlayerEntity, aim: Vec2): Vec2 {
   const cx = player.x;
-  const cy = player.y - MUZZLE_CHEST_UP;
+  const cy = player.y - MUZZLE_ANCHOR_UP;
   const dx = aim.x - cx;
   const dy = aim.y - cy;
   const len = Math.sqrt(dx * dx + dy * dy) || 1;
