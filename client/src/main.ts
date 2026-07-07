@@ -293,6 +293,56 @@ worldMusic.addEventListener("ended", () => {
 });
 restoreOptions();
 
+// ── Action-intensity → music reactivity ─────────────────────────────────
+// Scenes dispatch `jakesjam:intensity` (throttled, see ActionIntensity
+// consumers) with a 0-1 "how much is happening" score. Rather than
+// analyzing the actual audio (fussy autoplay-gated AudioContexts, and it'd
+// sync to what the track's bassline happens to be doing rather than to
+// gameplay), the SAME score modulates the currently-playing world track
+// directly — tempo and bass, the two levers that read as "the music going
+// wild" without needing per-track metadata (there's no way to programmatically
+// judge whether epic-loop-2 "sounds heavier" than epic-loop-1; this works
+// on whichever one is playing). Menu music never modulates — intensity is a
+// gameplay-only concept there's nothing of in the lobby.
+const audioCtx = new AudioContext();
+const worldBassFilter = audioCtx.createBiquadFilter();
+worldBassFilter.type = "lowshelf";
+worldBassFilter.frequency.value = 150;
+worldBassFilter.gain.value = 0;
+audioCtx.createMediaElementSource(worldMusic).connect(worldBassFilter).connect(audioCtx.destination);
+// menuMusic doesn't need the filter graph, but once ANY element on the page
+// is routed through an AudioContext, browsers still play unrouted elements
+// fine — no need to touch menuMusic at all.
+
+let targetIntensity = 0;
+window.addEventListener("jakesjam:intensity", (event) => {
+  const detail = (event as CustomEvent<{ intensity: number }>).detail;
+  if (typeof detail?.intensity === "number") {
+    targetIntensity = Math.max(0, Math.min(1, detail.intensity));
+  }
+});
+
+const BASE_PLAYBACK_RATE = 1.0;
+const MAX_PLAYBACK_RATE = 1.12;
+const MAX_BASS_GAIN_DB = 9;
+let smoothedIntensity = 0;
+function tickMusicIntensity() {
+  // Smooth toward the target rather than snapping — the raw score updates
+  // in throttled bursts from the scene, and a stepped playbackRate change
+  // is audible as a stutter.
+  smoothedIntensity += (targetIntensity - smoothedIntensity) * 0.06;
+  if (musicContext === "world" && !worldMusic.paused) {
+    worldMusic.playbackRate =
+      BASE_PLAYBACK_RATE + smoothedIntensity * (MAX_PLAYBACK_RATE - BASE_PLAYBACK_RATE);
+    worldBassFilter.gain.value = smoothedIntensity * MAX_BASS_GAIN_DB;
+  } else {
+    worldMusic.playbackRate = BASE_PLAYBACK_RATE;
+    worldBassFilter.gain.value = 0;
+  }
+  requestAnimationFrame(tickMusicIntensity);
+}
+requestAnimationFrame(tickMusicIntensity);
+
 queryRequired<HTMLButtonElement>("[data-menu-world]").addEventListener("click", () => {
   joinWorld();
 });
@@ -585,6 +635,12 @@ function applyAudioOptions() {
 }
 
 function playCurrentMusic() {
+  // Every music start traces back to a user gesture (splash click, menu
+  // button, etc.) — this is the one choke point they all go through, so
+  // it's the safe place to resume the AudioContext the bass filter lives
+  // in (browsers create it suspended until a gesture happens). Resuming an
+  // already-running context is a harmless no-op.
+  void audioCtx.resume();
   const requestedContext = musicContext;
   const active = requestedContext === "world" ? worldMusic : menuMusic;
   const other = requestedContext === "world" ? menuMusic : worldMusic;

@@ -13,8 +13,12 @@
 // Pure render-layer bookkeeping: never read by the sim, never affects
 // determinism/parity. Consumed by camera juice, environment reactivity, and
 // (via a dispatched window event) the music system in main.ts.
+const INTENSITY_EVENT = "jakesjam:intensity";
+const DISPATCH_INTERVAL_MS = 150;
+
 export class ActionIntensity {
   private value = 0;
+  private msSinceDispatch = 0;
   private static readonly DECAY_PER_SECOND = 0.35;
 
   /** Push the score toward 1, never past it. Bigger events pass a bigger amount. */
@@ -29,5 +33,17 @@ export class ActionIntensity {
 
   get(): number {
     return this.value;
+  }
+
+  /**
+   * Tell main.ts's music system the current score, throttled — every-frame
+   * CustomEvent dispatch would be wasteful and main.ts smooths the value
+   * anyway, so there's nothing gained from tighter than ~150ms.
+   */
+  dispatchToMusic(deltaMs: number): void {
+    this.msSinceDispatch += deltaMs;
+    if (this.msSinceDispatch < DISPATCH_INTERVAL_MS) return;
+    this.msSinceDispatch = 0;
+    window.dispatchEvent(new CustomEvent(INTENSITY_EVENT, { detail: { intensity: this.value } }));
   }
 }

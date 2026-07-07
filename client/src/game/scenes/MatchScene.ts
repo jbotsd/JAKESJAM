@@ -86,6 +86,9 @@ export class MatchScene extends Phaser.Scene {
   private readonly actionIntensity = new ActionIntensity();
   private prevWallDir = 0;
   private prevDashing = false;
+  /** Ambient haze ellipses (renderArena) + their resting alpha, retained so
+   *  environment reactivity can brighten them with action intensity. */
+  private hazeEllipses: Array<{ ellipse: Phaser.GameObjects.Ellipse; baseAlpha: number }> = [];
   private respawnText?: Phaser.GameObjects.Text;
   private keys?: MovementKeys;
   /** Mobile twin-stick overlay (null on desktop). */
@@ -183,6 +186,8 @@ export class MatchScene extends Phaser.Scene {
     this.playMovementSounds(wasGrounded);
     this.updateMovementJuice(wasGrounded, fallSpeedBeforeStep);
     this.actionIntensity.update(deltaMs);
+    this.actionIntensity.dispatchToMusic(deltaMs);
+    this.updateEnvironmentReactivity();
     this.updateCheckpoint();
 
     if (this.isOutOfBounds()) {
@@ -233,6 +238,20 @@ export class MatchScene extends Phaser.Scene {
     this.prevDashing = this.localPlayer.dashing;
   }
 
+  /**
+   * Brighten the ambient haze with action intensity — same score driving
+   * the camera juice and music (see ActionIntensity). At rest the haze
+   * sits at its authored alpha; mid-action it lifts toward ~2.2x, giving
+   * the whole scene a faint "charged" glow without touching platforms or
+   * the rig (those already have their own reactions).
+   */
+  private updateEnvironmentReactivity(): void {
+    const intensity = this.actionIntensity.get();
+    for (const { ellipse, baseAlpha } of this.hazeEllipses) {
+      ellipse.setAlpha(baseAlpha * (1 + intensity * 1.2));
+    }
+  }
+
   private renderArena() {
     const { x: width, y: height } = boxworksPractice.size;
     // Resolve theme from map metadata; fall back to jadeIsles.
@@ -256,10 +275,12 @@ export class MatchScene extends Phaser.Scene {
       { rx: 0.45 + Math.random() * 0.15, ry: 0.55 + Math.random() * 0.15, ew: width * 0.9, eh: height * 0.4, a: 0.04 },
       { rx: 0.65 + Math.random() * 0.15, ry: 0.35 + Math.random() * 0.2, ew: width * 0.6, eh: height * 0.3, a: 0.06 },
     ];
+    this.hazeEllipses = [];
     for (const hd of hazeDefs) {
-      this.add
+      const ellipse = this.add
         .ellipse(width * hd.rx, height * hd.ry, hd.ew, hd.eh, hazeColor, hd.a)
         .setDepth(0.5);
+      this.hazeEllipses.push({ ellipse, baseAlpha: hd.a });
     }
 
     if (theme.hasLightBeams) {

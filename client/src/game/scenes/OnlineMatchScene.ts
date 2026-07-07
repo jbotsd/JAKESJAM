@@ -299,6 +299,9 @@ export class OnlineMatchScene extends Phaser.Scene {
   private prevLocalWallDir = 0;
   private prevLocalDashing = false;
   private prevLocalVy = 0;
+  /** Ambient haze ellipses (renderArena) + their resting alpha, retained so
+   *  environment reactivity can brighten them with action intensity. */
+  private hazeEllipses: Array<{ ellipse: Phaser.GameObjects.Ellipse; baseAlpha: number }> = [];
   /** Mobile on-screen twin-stick controls; null on desktop/keyboard. */
   private touchControls: TouchControls | null = null;
   /** Last aim direction from the touch aim-stick, so shots keep heading when
@@ -650,6 +653,8 @@ export class OnlineMatchScene extends Phaser.Scene {
     this.maybeShowMatchResults(state);
     this.updateLocalMovementJuice(state);
     this.actionIntensity.update(deltaMs);
+    this.actionIntensity.dispatchToMusic(deltaMs);
+    this.updateEnvironmentReactivity();
 
     if (this.statusVfx) {
       const events = this.pendingSimEvents;
@@ -1245,10 +1250,12 @@ export class OnlineMatchScene extends Phaser.Scene {
       { rx: 0.45 + Math.random() * 0.15, ry: 0.55 + Math.random() * 0.15, ew: width * 0.9, eh: height * 0.4, a: 0.04 },
       { rx: 0.65 + Math.random() * 0.15, ry: 0.35 + Math.random() * 0.2, ew: width * 0.6, eh: height * 0.3, a: 0.06 },
     ];
+    this.hazeEllipses = [];
     for (const hd of hazeDefs) {
-      this.add
+      const ellipse = this.add
         .ellipse(width * hd.rx, height * hd.ry, hd.ew, hd.eh, hazeColor, hd.a)
         .setDepth(0.5);
+      this.hazeEllipses.push({ ellipse, baseAlpha: hd.a });
     }
 
     if (theme.hasLightBeams) {
@@ -1599,6 +1606,19 @@ export class OnlineMatchScene extends Phaser.Scene {
 
     this.prevLocalGrounded = local.grounded ?? true;
     this.prevLocalVy = local.vy;
+  }
+
+  /**
+   * Brighten the ambient haze with action intensity — same score driving
+   * the camera juice and music (see ActionIntensity). Combat now contributes
+   * here too (every safeShake call bumps intensity), so a fight ramps the
+   * whole scene's atmosphere, not just the camera.
+   */
+  private updateEnvironmentReactivity(): void {
+    const intensity = this.actionIntensity.get();
+    for (const { ellipse, baseAlpha } of this.hazeEllipses) {
+      ellipse.setAlpha(baseAlpha * (1 + intensity * 1.2));
+    }
   }
 
   /**
