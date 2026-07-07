@@ -34,6 +34,10 @@ const CROUCH_HEIGHT: f64 = 38.0;
 const WALL_SLIDE_MAX_FALL: f64 = 175.0;
 const WALL_JUMP_VY: f64 = -720.0;
 const WALL_JUMP_VX: f64 = 470.0;
+// Wall POWER-SLIDE: holding Down at the wall-jump trigger trades height for
+// speed. Mirror player.ts M.wallPowerSlideVy/Vx.
+const WALL_POWER_SLIDE_VY: f64 = -430.0;
+const WALL_POWER_SLIDE_VX: f64 = 690.0;
 const WALL_RESTITUTION: f64 = 0.5;
 // Deep-movement augment constants (mirror player.ts).
 const DASH_SPEED: f64 = 780.0;
@@ -202,8 +206,15 @@ pub fn stepPlayer(
     // without the card, wall-jump still fires in every direction.
     const divert_to_double_jump = direction == -wall_dir and s.air_jumps_used < s.air_jumps;
     if (s.jump_buffer_ms > 0.0 and !boolFromInt(s.grounded_last_frame) and wall_dir_i != 0 and !divert_to_double_jump) {
-        s.vy = WALL_JUMP_VY * s.wall_jump_mul;
-        s.vx = -wall_dir * WALL_JUMP_VX;
+        // Holding Down at the trigger instant swaps in the POWER-SLIDE
+        // variant — flatter, faster. Mirrors player.ts.
+        if (wants_crouch) {
+            s.vy = WALL_POWER_SLIDE_VY * s.wall_jump_mul;
+            s.vx = -wall_dir * WALL_POWER_SLIDE_VX;
+        } else {
+            s.vy = WALL_JUMP_VY * s.wall_jump_mul;
+            s.vx = -wall_dir * WALL_JUMP_VX;
+        }
         s.jump_buffer_ms = 0.0;
         s.jump_released_since_jump = 0;
         s.jump_cut_applied = 0;

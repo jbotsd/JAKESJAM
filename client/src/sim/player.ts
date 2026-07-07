@@ -43,6 +43,14 @@ const M = {
   // the signature move; it should feel like a hard KICK, not a hop.
   wallJumpVy: -720,
   wallJumpVx: 470,
+  // Wall POWER-SLIDE: holding Down at the moment of a wall-jump trades
+  // height for speed — a flat, fast diagonal launch (not a vertical climb).
+  // Same trigger/precedence as the normal wall-jump, just a different
+  // vy/vx pair, so the wall-jump-shaft reachability model (mapGen.ts) is
+  // untouched — this is a strictly additional, faster-but-flatter option,
+  // never required to clear a shaft.
+  wallPowerSlideVy: -430,
+  wallPowerSlideVx: 690,
   // Wall-bang: rebound off a wall hit at speed when NOT gripping it.
   wallRestitution: 0.5,
   // Below this fall speed a fresh wall-touch "latches" (near-zero vy) for a
@@ -321,9 +329,17 @@ function stepPlayerNative(
   // direction (no regression for card-less players).
   const divertToDoubleJump = direction === -wallDir && mem.airJumpsUsed < airJumps;
   if (mem.jumpBufferMs > 0 && !mem.groundedLastFrame && wallDir !== 0 && !divertToDoubleJump) {
-    // WALL-JUMP — up + a firm shove AWAY from the wall (SMB). ×wallJumpMul.
-    next.vy = M.wallJumpVy * wallJumpMul;
-    next.vx = -wallDir * M.wallJumpVx;
+    // WALL-JUMP — up + a firm shove AWAY from the wall (SMB), OR — holding
+    // Down at the trigger instant — the POWER-SLIDE variant: a flatter,
+    // faster launch that trades height for horizontal speed. Same
+    // trigger/precedence either way, ×wallJumpMul applies to both.
+    if (wantsCrouch) {
+      next.vy = M.wallPowerSlideVy * wallJumpMul;
+      next.vx = -wallDir * M.wallPowerSlideVx;
+    } else {
+      next.vy = M.wallJumpVy * wallJumpMul;
+      next.vx = -wallDir * M.wallJumpVx;
+    }
     mem.jumpBufferMs = 0;
     mem.jumpReleasedSinceJump = false;
     mem.jumpCutApplied = false;

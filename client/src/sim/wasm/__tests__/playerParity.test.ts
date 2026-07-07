@@ -366,4 +366,45 @@ describe("player parity (TS V8 vs Zig wasm)", () => {
     // The second airborne jump actually launched (a real double-jump, not a no-op).
     expect(doubleJumpVy).toBeLessThan(-400);
   });
+
+  test("wall power-slide (Jump+Crouch at a wall): wasm matches TS byte-for-byte, and differs from a plain wall-jump", () => {
+    const STATE_PTR = sim.statePtr;
+    const STATICS_OFF = SIZEOF_PLAYER_STEP + 8;
+    const packed = packStaticsAndOneWay(sim, STATICS_OFF + STATE_PTR, STATICS, ONE_WAY);
+    const DT = 1000 / 60;
+    const opts = { collisionCache: cache };
+
+    const run = (currKeys: number) => {
+      let tsP = makePlayer(700, 400);
+      let tsM: PlayerMovementMemory = {
+        ...freshPlayerMovementMemory(),
+        groundedLastFrame: false,
+        touchingWallDir: -1,
+        jumpBufferMs: 50,
+      };
+      packPlayerStep(STATE_PTR, {
+        x: 700, y: 400, vx: 0, vy: 0, aimX: 900, aimY: 400,
+        jetpackFuel: JETPACK_MAX_FUEL, crouching: false,
+        memory: tsM,
+      });
+      const ts = stepPlayer(tsP, 0, currKeys, 900, 400, tsM, [], DT, opts);
+      tsP = ts.player; tsM = ts.memory;
+      ex.step_player(STATE_PTR, 0, currKeys, 900, 400, 1, 1, DT,
+        packed.staticsPtr, packed.staticsCount, packed.oneWayPtr, packed.oneWayCount);
+      const wa = unpackPlayerStep(STATE_PTR);
+      expect(wa.vy).toBe(tsP.vy);
+      expect(wa.vx).toBe(tsP.vx);
+      return tsP;
+    };
+
+    const plainKick = run(Bit.Jump);
+    const powerSlide = run(Bit.Jump | Bit.Crouch);
+
+    // Both fired away from the left wall (+x); the power-slide is flatter
+    // (smaller |vy|) and faster (bigger |vx|) than the plain kick.
+    expect(plainKick.vx).toBeGreaterThan(0);
+    expect(powerSlide.vx).toBeGreaterThan(0);
+    expect(Math.abs(powerSlide.vy)).toBeLessThan(Math.abs(plainKick.vy));
+    expect(Math.abs(powerSlide.vx)).toBeGreaterThan(Math.abs(plainKick.vx));
+  });
 });
