@@ -1,16 +1,24 @@
 import Phaser from "phaser";
 import type { Vec2 } from "../types/game";
 import { PALETTE } from "../ui/palette.js";
+import { type SpringState, springKick, springState, springTo } from "./spring";
 
 /**
  * ProceduralPlayerRig - AAA-quality procedural character renderer.
  *
- * Renders a chunky cyberpunk sorcerer using filled polygons, not wireframe lines.
- * The character has real visual mass: armored torso, thick limbs, heavy boots,
- * a hooded helmet with glowing visor, shoulder armor, and a crystal arm cannon.
+ * Renders a "gnostic vessel" — a ghost operating a lean biomechanical
+ * frame — using filled polygons, not wireframe lines. Slimmer than a
+ * true-armored build (a manufactured shell, not a tank), but stays
+ * bipedal and readable at 30-60px: a visor-seam of light for a face,
+ * a glowing spine conduit, crystal joint stubs, a crystal-tech arm cannon.
  *
- * Design references: Nuclear Throne (chunky proportions), Hyper Light Drifter
- * (crystal-tech glow), SUPERHOT (geometric reduction).
+ * Design references: Warframe (biomechanical-vessel silhouette, "a ghost
+ * in a frame"), Hyper Light Drifter (crystal-tech glow), Nuclear Throne
+ * (weight/impact, dialed back from "chunky" to "lean").
+ *
+ * `accentColor` (default crystal cyan) is the cosmetic-skin seam — swap it
+ * per player to reskin the glow (visor/spine/cannon/crystal stubs) without
+ * touching geometry. Purely visual; never read by the sim.
  *
  * Performance: ~0.3ms per character at 60fps. All procedural, no textures.
  */
@@ -19,6 +27,8 @@ type ProceduralPlayerRigOptions = {
   color: number;
   name: string;
   scale?: number;
+  /** Cosmetic accent (visor/spine/cannon glow). Defaults to crystal cyan. */
+  accentColor?: number;
 };
 
 type ProceduralPlayerPose = {
@@ -29,6 +39,10 @@ type ProceduralPlayerPose = {
   crouching: boolean;
   health?: number;
   maxHealth?: number;
+  /** -1/0/+1: which side (if any) the player is gripping a wall on. */
+  touchingWallDir?: number;
+  /** True while a dash is active. */
+  dashing?: boolean;
 };
 
 type LimbSolve = {
@@ -47,6 +61,7 @@ export class ProceduralPlayerRig {
   private readonly nameText: Phaser.GameObjects.Text;
   private readonly color: number;
   private readonly colorDark: number;
+  private readonly accentColor: number;
   private readonly name: string;
   private readonly scale: number;
   private stepPhase = 0;
@@ -60,6 +75,73 @@ export class ProceduralPlayerRig {
   private static readonly HIT_DECAY_MS = 90;
   private readonly trailPositions: { x: number; y: number; t: number }[] = [];
   private lastTrailSampleMs = 0;
+
+  // Wobbly-leg secondary motion: each foot's IK target chases footPos()
+  // through a spring instead of snapping to it, so plants/direction changes/
+  // landings overshoot and settle. Pure render layer — solveTwoBone still
+  // clamps reach, so an aggressive wobble just reads as the leg straining.
+  private footSpringsReady = false;
+  private footLSpringX: SpringState = springState(0);
+  private footLSpringY: SpringState = springState(0);
+  private footRSpringX: SpringState = springState(0);
+  private footRSpringY: SpringState = springState(0);
+  private wasGrounded = true;
+  private prevVelY = 0;
+  // Bumped 9→12Hz for a nimbler, snappier settle — a lean vessel should
+  // recover from a plant/landing quicker than a heavier build would.
+  private static readonly WOBBLE_FREQUENCY_HZ = 12;
+  private static readonly WOBBLE_DAMPING = 0.38;
+  // Landing converts stored fall speed into a foot-spring velocity kick —
+  // the wobble's payoff moment: a hard landing (esp. off a wall-jump) makes
+  // the legs visibly absorb and rebound instead of just stopping dead.
+  private static readonly LANDING_KICK_SCALE = 0.35;
+  private static readonly LANDING_KICK_MAX = 900;
+
+  // Wall-jump kick-off: the instant the player leaves a wall while airborne,
+  // both foot springs get a velocity kick away from the wall (and up), so the
+  // legs visibly snap into the launch instead of just continuing whatever
+  // stride phase they were in. Reuses the same foot-spring rig as the
+  // landing kick — one wobble system serving both ends of a wall-jump.
+  private wasWallDir = 0;
+  private static readonly WALL_KICK_X = 520;
+  private static readonly WALL_KICK_Y = -360;
+
+  // Arms, rebuilt ground-up: BOTH arms are the exact same length (upper ==
+  // lower, lead == back) and hang perfectly STRAIGHT by default — the
+  // two-bone solve only bends when the hand target is placed closer than
+  // the arm's full reach. Bending is reserved for two purposeful states:
+  // gripping a wall, and the natural swing while running. Idle, airborne,
+  // and dashing all keep both arms dead straight — an alien stillness that
+  // breaks the instant the vessel actually moves or grabs something.
+  private static readonly ARM_UPPER = 20;
+  private static readonly ARM_LOWER = 20;
+  private static readonly ARM_REACH = ProceduralPlayerRig.ARM_UPPER + ProceduralPlayerRig.ARM_LOWER;
+  private leadHandSpringReady = false;
+  private leadHandSpringX: SpringState = springState(0);
+  private leadHandSpringY: SpringState = springState(0);
+  private backHandSpringReady = false;
+  private backHandSpringX: SpringState = springState(0);
+  private backHandSpringY: SpringState = springState(0);
+  private static readonly ARM_FREQUENCY_HZ = 7;
+  private static readonly ARM_DAMPING = 0.55;
+
+  // Hip drape (the "space wizard" sash) — a short cloth strip that trails
+  // and flutters off the pelvis. Springed to velocity so it whips out on a
+  // dash and settles with a lag on landing, instead of pinning rigidly to
+  // the body like a plate.
+  private drapeSpringReady = false;
+  private drapeSpringX: SpringState = springState(0);
+  private drapeSpringY: SpringState = springState(0);
+  private static readonly DRAPE_FREQUENCY_HZ = 5;
+  private static readonly DRAPE_DAMPING = 0.35;
+
+  // "Mad aura" — a small turbulent halo of motes orbiting the vessel.
+  // Per-instance phase/radius offsets (frozen at construction) so a lineup
+  // of players doesn't all swirl in lockstep. Deliberately irregular
+  // (three different frequencies summed) rather than a clean circular
+  // orbit — reads as barely-contained energy, not a UI ring.
+  private static readonly AURA_MOTE_COUNT = 6;
+  private readonly auraSeed = Math.random() * Math.PI * 2;
 
   constructor(scene: Phaser.Scene, options: ProceduralPlayerRigOptions) {
     // Depth 10: above pickups (2), destructibles (3), fire (4), atmospheric
@@ -79,6 +161,7 @@ export class ProceduralPlayerRig {
       .setDepth(11);
     this.color = options.color;
     this.colorDark = shadeColor(options.color, -0.4);
+    this.accentColor = options.accentColor ?? ACCENT;
     this.name = options.name;
     this.scale = options.scale ?? 1;
   }
@@ -112,7 +195,37 @@ export class ProceduralPlayerRig {
       this.lastTrailSampleMs = now;
     }
 
-    this.draw(pose, walkAmount);
+    // Landing impact: the frame grounded flips true, kick both foot springs'
+    // vertical velocity from the fall speed carried in on the PREVIOUS frame
+    // (this frame's velocity.y is typically already zeroed by the collision
+    // resolve, so the pre-landing value is the one that reads as "impact").
+    if (pose.grounded && !this.wasGrounded) {
+      const kick = Phaser.Math.Clamp(
+        this.prevVelY * ProceduralPlayerRig.LANDING_KICK_SCALE,
+        -ProceduralPlayerRig.LANDING_KICK_MAX,
+        ProceduralPlayerRig.LANDING_KICK_MAX,
+      );
+      this.footLSpringY = springKick(this.footLSpringY, kick);
+      this.footRSpringY = springKick(this.footRSpringY, kick);
+    }
+    this.wasGrounded = pose.grounded;
+    this.prevVelY = pose.velocity.y;
+
+    // Wall-jump kick-off: the tick the player leaves a wall while still
+    // airborne (a true wall-jump, or just sliding off the end of one — both
+    // read correctly as "the legs just pushed off"), kick both feet away
+    // from the wall and upward.
+    const wallDir = pose.touchingWallDir ?? 0;
+    if (this.wasWallDir !== 0 && wallDir === 0 && !pose.grounded) {
+      const kickDir = -this.wasWallDir;
+      this.footLSpringX = springKick(this.footLSpringX, kickDir * ProceduralPlayerRig.WALL_KICK_X);
+      this.footRSpringX = springKick(this.footRSpringX, kickDir * ProceduralPlayerRig.WALL_KICK_X);
+      this.footLSpringY = springKick(this.footLSpringY, ProceduralPlayerRig.WALL_KICK_Y);
+      this.footRSpringY = springKick(this.footRSpringY, ProceduralPlayerRig.WALL_KICK_Y);
+    }
+    this.wasWallDir = wallDir;
+
+    this.draw(pose, walkAmount, deltaMs);
   }
 
   destroy() {
@@ -153,7 +266,7 @@ export class ProceduralPlayerRig {
     this.hitDecay = 1;
   }
 
-  private draw(pose: ProceduralPlayerPose, walkAmount: number) {
+  private draw(pose: ProceduralPlayerPose, walkAmount: number, deltaMs: number) {
     const g = this.graphics;
     const s = this.scale;
     // Quadratic ease-out — strong overshoot, fast snap-back. Visual only.
@@ -172,6 +285,19 @@ export class ProceduralPlayerRig {
       : 1 + Phaser.Math.Clamp(-pose.velocity.y / 2600, -0.14, 0.3);
     const sy = s * stretchY;
 
+    // Wall-slide / dash read as full-body states, not just leg tricks: the
+    // torso leans toward a gripped wall (bracing) or forward into a dash
+    // (committed). Only chest/head shift — the pelvis stays anchored so the
+    // stance doesn't wander. A ground sprint gets its own, smaller forward
+    // lean too — "very nimble" means committing into a run, not staying
+    // bolt upright at full speed.
+    const wallDir = pose.touchingWallDir ?? 0;
+    const wallSliding = wallDir !== 0 && !pose.grounded;
+    const dashing = pose.dashing ?? false;
+    const sprintLean = pose.grounded ? Phaser.Math.Clamp(pose.velocity.x / 330, -1, 1) * 2 * s : 0;
+    const leanX =
+      (wallSliding ? wallDir * 2.5 * s : 0) + (dashing ? this.facing * 4 * s : 0) + sprintLean;
+
     // Key positions
     const pelvisY = ground - Phaser.Math.Linear(52, 32, cr) * sy - bob;
     const chestY = ground - Phaser.Math.Linear(78, 56, cr) * sy - bob;
@@ -179,8 +305,8 @@ export class ProceduralPlayerRig {
     const cx = pose.position.x + this.hitOffsetX * hitEased;
 
     const pelvis = vec(cx, pelvisY);
-    const chest = vec(cx, chestY);
-    const head = vec(cx + this.facing * 2 * s, headY);
+    const chest = vec(cx + leanX, chestY);
+    const head = vec(cx + leanX + this.facing * 2 * s, headY);
 
     // Aim
     const aimAngle = Math.atan2(pose.aimTarget.y - chest.y, pose.aimTarget.x - chest.x);
@@ -192,24 +318,130 @@ export class ProceduralPlayerRig {
     const hipR = vec(pelvis.x + 7 * s, pelvis.y);
     const shoulderLead = vec(chest.x + perp.x * 7 * s, chest.y + perp.y * 7 * s);
     const shoulderBack = vec(chest.x - perp.x * 7 * s, chest.y - perp.y * 7 * s);
-    const handLead = vec(chest.x + aim.x * 34 * s, chest.y + aim.y * 34 * s);
-    const handBack = vec(
-      chest.x + aim.x * 18 * s - perp.x * 8 * s,
-      chest.y + aim.y * 18 * s - perp.y * 8 * s,
-    );
-    const muzzle = vec(chest.x + aim.x * 48 * s, chest.y + aim.y * 48 * s);
 
-    // Feet
-    const footL = this.footPos(cx, -1, ground, walkAmount, pose.crouching, pose.grounded);
-    const footR = this.footPos(cx, 1, ground, walkAmount, pose.crouching, pose.grounded);
+    // Hip drape: hangs straight down at rest, kicked backward by horizontal
+    // speed (trails behind a sprint/dash) and by falling speed (streams up
+    // behind a fast descent) — a springed target so it whips out and settles
+    // rather than snapping. Range widened (was ±6) so a dash (780px/s) reads
+    // as a real whip-out, clearly beyond a normal sprint's (330px/s) sway.
+    const drapeTargetRaw = vec(
+      pelvis.x - Phaser.Math.Clamp(pose.velocity.x / 45, -14, 14) * s,
+      pelvis.y + 14 * s - Phaser.Math.Clamp(pose.velocity.y / 140, -3, 3) * s,
+    );
+    if (!this.drapeSpringReady) {
+      this.drapeSpringX = springState(drapeTargetRaw.x);
+      this.drapeSpringY = springState(drapeTargetRaw.y);
+      this.drapeSpringReady = true;
+    }
+    this.drapeSpringX = springTo(
+      this.drapeSpringX,
+      drapeTargetRaw.x,
+      deltaMs,
+      ProceduralPlayerRig.DRAPE_FREQUENCY_HZ,
+      ProceduralPlayerRig.DRAPE_DAMPING,
+    );
+    this.drapeSpringY = springTo(
+      this.drapeSpringY,
+      drapeTargetRaw.y,
+      deltaMs,
+      ProceduralPlayerRig.DRAPE_FREQUENCY_HZ,
+      ProceduralPlayerRig.DRAPE_DAMPING,
+    );
+    const drapeTip = vec(this.drapeSpringX.value, this.drapeSpringY.value);
+
+    // Both hands, one shared state machine (see computeArmTargets): straight
+    // and at full reach unless wall-gripping or mid-run-gait, in which case
+    // that hand's target moves inside max reach and the two-bone solve
+    // bends naturally. Springed so state changes settle instead of popping.
+    const armTargets = this.computeArmTargets(
+      shoulderLead,
+      shoulderBack,
+      aim,
+      walkAmount,
+      wallDir,
+      dashing,
+      s,
+    );
+
+    if (!this.leadHandSpringReady) {
+      this.leadHandSpringX = springState(armTargets.lead.x);
+      this.leadHandSpringY = springState(armTargets.lead.y);
+      this.leadHandSpringReady = true;
+    }
+    this.leadHandSpringX = springTo(
+      this.leadHandSpringX,
+      armTargets.lead.x,
+      deltaMs,
+      ProceduralPlayerRig.ARM_FREQUENCY_HZ,
+      ProceduralPlayerRig.ARM_DAMPING,
+    );
+    this.leadHandSpringY = springTo(
+      this.leadHandSpringY,
+      armTargets.lead.y,
+      deltaMs,
+      ProceduralPlayerRig.ARM_FREQUENCY_HZ,
+      ProceduralPlayerRig.ARM_DAMPING,
+    );
+    const handLead = vec(this.leadHandSpringX.value, this.leadHandSpringY.value);
+
+    if (!this.backHandSpringReady) {
+      this.backHandSpringX = springState(armTargets.back.x);
+      this.backHandSpringY = springState(armTargets.back.y);
+      this.backHandSpringReady = true;
+    }
+    this.backHandSpringX = springTo(
+      this.backHandSpringX,
+      armTargets.back.x,
+      deltaMs,
+      ProceduralPlayerRig.ARM_FREQUENCY_HZ,
+      ProceduralPlayerRig.ARM_DAMPING,
+    );
+    this.backHandSpringY = springTo(
+      this.backHandSpringY,
+      armTargets.back.y,
+      deltaMs,
+      ProceduralPlayerRig.ARM_FREQUENCY_HZ,
+      ProceduralPlayerRig.ARM_DAMPING,
+    );
+    const handBack = vec(this.backHandSpringX.value, this.backHandSpringY.value);
+
+    // Feet — raw stepping targets (or a wall-plant target while gripping),
+    // then run through a spring so the IK end effector chases the target
+    // with lag/overshoot instead of snapping.
+    const footLTarget =
+      wallSliding && wallDir === -1
+        ? this.wallPlantFoot(cx, wallDir, pelvis, s)
+        : this.footPos(cx, -1, ground, walkAmount, pose.crouching, pose.grounded);
+    const footRTarget =
+      wallSliding && wallDir === 1
+        ? this.wallPlantFoot(cx, wallDir, pelvis, s)
+        : this.footPos(cx, 1, ground, walkAmount, pose.crouching, pose.grounded);
+
+    if (!this.footSpringsReady) {
+      this.footLSpringX = springState(footLTarget.x);
+      this.footLSpringY = springState(footLTarget.y);
+      this.footRSpringX = springState(footRTarget.x);
+      this.footRSpringY = springState(footRTarget.y);
+      this.footSpringsReady = true;
+    }
+    const freq = ProceduralPlayerRig.WOBBLE_FREQUENCY_HZ;
+    const damping = ProceduralPlayerRig.WOBBLE_DAMPING;
+    this.footLSpringX = springTo(this.footLSpringX, footLTarget.x, deltaMs, freq, damping);
+    this.footLSpringY = springTo(this.footLSpringY, footLTarget.y, deltaMs, freq, damping);
+    this.footRSpringX = springTo(this.footRSpringX, footRTarget.x, deltaMs, freq, damping);
+    this.footRSpringY = springTo(this.footRSpringY, footRTarget.y, deltaMs, freq, damping);
+    const footL = vec(this.footLSpringX.value, this.footLSpringY.value);
+    const footR = vec(this.footRSpringX.value, this.footRSpringY.value);
 
     // IK
     const legLen1 = Phaser.Math.Linear(28, 22, cr) * s;
     const legLen2 = Phaser.Math.Linear(28, 22, cr) * s;
     const legL = solveTwoBone(hipL, footL, legLen1, legLen2, -this.facing);
     const legR = solveTwoBone(hipR, footR, legLen1, legLen2, -this.facing);
-    const armLead = solveTwoBone(shoulderLead, handLead, 18 * s, 17 * s, -this.facing);
-    const armBack = solveTwoBone(shoulderBack, handBack, 17 * s, 16 * s, this.facing);
+    const armUpper = ProceduralPlayerRig.ARM_UPPER * s;
+    const armLower = ProceduralPlayerRig.ARM_LOWER * s;
+    const armLead = solveTwoBone(shoulderLead, handLead, armUpper, armLower, -this.facing);
+    const armBack = solveTwoBone(shoulderBack, handBack, armUpper, armLower, this.facing);
 
     const healthRatio = (pose.health ?? 100) / Math.max(1, pose.maxHealth ?? 100);
 
@@ -220,34 +452,43 @@ export class ProceduralPlayerRig {
 
     // --- DRAW ORDER (back to front) ---
 
+    // 0. Mad aura — an ambient field around the vessel, behind the body.
+    this.drawAura(g, pelvis, chest, s);
+
     // 1. Nameplate + health bar (topmost layer visually but drawn first for z)
     this.drawNameplate(g, head.x, head.y - 24 * s, s, pose.health ?? 100, pose.maxHealth ?? 100);
 
     // 2. Back leg
-    this.drawThickLimb(g, hipR, legR, 7 * s, 5 * s);
+    this.drawThickLimb(g, hipR, legR, 5.5 * s, 4 * s);
     this.drawBoot(g, footR, s);
 
-    // 3. Back arm
-    this.drawThickLimb(g, shoulderBack, armBack, 6 * s, 4 * s);
+    // 3. Back arm + hand — a bare glowing hand, not a gun: the "casting"
+    // limb read the abilities/effects system can hook a spell VFX onto
+    // later without touching the geometry.
+    this.drawThickLimb(g, shoulderBack, armBack, 4.6 * s, 3.2 * s);
+    this.drawShoulderArmor(g, shoulderBack, s);
+    this.drawHandGlow(g, armBack.end, s, 0);
+
+    // 3b. Hip drape (the wizard sash) — behind the torso so only its
+    // trailing edge peeks out, same layering a real cloak would have.
+    this.drawHipDrape(g, pelvis, drapeTip, s);
 
     // 4. Torso (filled polygon - the character's MASS)
     this.drawTorso(g, pelvis, chest, s);
 
-    // 5. Spine energy lines
-    this.drawSpineGlow(g, pelvis, chest, s, healthRatio);
+    // 5. Spine energy lines — dims while gripping a wall (conserving, not
+    // spending, energy) versus the normal health-driven brightness.
+    this.drawSpineGlow(g, pelvis, chest, s, healthRatio, wallSliding);
 
     // 6. Front leg
-    this.drawThickLimb(g, hipL, legL, 8 * s, 6 * s);
+    this.drawThickLimb(g, hipL, legL, 6.2 * s, 4.6 * s);
     this.drawBoot(g, footL, s);
 
-    // 7. Arm cannon / weapon
-    this.drawArmCannon(g, handLead, muzzle, aim, s);
-
-    // 8. Front arm
-    this.drawThickLimb(g, shoulderLead, armLead, 7 * s, 5 * s);
-
-    // 9. Shoulder armor
+    // 7. Front arm + hand — the "active" hand: brighter, pulses on
+    // triggerFire() (kept as the ability/cast-trigger hook).
+    this.drawThickLimb(g, shoulderLead, armLead, 5.4 * s, 3.8 * s);
     this.drawShoulderArmor(g, shoulderLead, s);
+    this.drawHandGlow(g, armLead.end, s, this.firePulse);
 
     // 10. Head + hood + visor
     this.drawHead(g, head, s, healthRatio);
@@ -303,8 +544,8 @@ export class ProceduralPlayerRig {
 
   // --- TORSO: Filled armored body ---
   private drawTorso(g: Phaser.GameObjects.Graphics, pelvis: Vec2, chest: Vec2, s: number) {
-    const w1 = 14 * s; // chest width
-    const w2 = 10 * s; // pelvis width
+    const w1 = 11 * s; // chest width — leaner vessel taper, not armored bulk
+    const w2 = 7.5 * s; // pelvis width
 
     // Dark outline
     g.fillStyle(DARK, 1);
@@ -362,9 +603,10 @@ export class ProceduralPlayerRig {
     chest: Vec2,
     s: number,
     healthRatio: number,
+    gripping: boolean,
   ) {
-    const alpha = 0.3 + 0.6 * healthRatio;
-    const color = healthRatio < 0.25 ? 0xfb7185 : ACCENT;
+    const alpha = (0.3 + 0.6 * healthRatio) * (gripping ? 0.55 : 1);
+    const color = healthRatio < 0.25 ? 0xfb7185 : this.accentColor;
 
     g.lineStyle(2 * s, color, alpha);
     g.beginPath();
@@ -372,129 +614,237 @@ export class ProceduralPlayerRig {
     g.lineTo(chest.x, chest.y + 2 * s);
     g.strokePath();
 
+    // Rib filaments — two thinner, dimmer seams flanking the spine, angled
+    // slightly outward. Sells "something alive glowing inside the vessel"
+    // rather than a single wire down the middle.
+    g.lineStyle(1 * s, color, alpha * 0.5);
+    for (const side of [-1, 1] as const) {
+      g.beginPath();
+      g.moveTo(pelvis.x + side * 2.5 * s, pelvis.y - 4 * s);
+      g.lineTo(chest.x + side * 4 * s, chest.y + 3 * s);
+      g.strokePath();
+    }
+
     // Centre glow dot
     const midY = (pelvis.y + chest.y) / 2;
     g.fillStyle(color, alpha * 0.6);
     g.fillCircle(pelvis.x, midY, 3 * s);
   }
 
+  // --- MAD AURA: a turbulent halo of motes orbiting the vessel, each
+  // trailing a short comet-tail. Three summed sine frequencies per mote
+  // instead of a clean circular orbit — deliberately irregular, reads as
+  // barely-contained energy rather than a decorative UI ring. Envelops the
+  // whole body (pelvis to well above the head), not just the torso. ---
+  private drawAura(g: Phaser.GameObjects.Graphics, pelvis: Vec2, chest: Vec2, s: number) {
+    const cx = (pelvis.x + chest.x) / 2;
+    const cy = (pelvis.y + chest.y) / 2 - 10 * s;
+    const t = this.stepPhase + this.auraSeed;
+
+    const motePos = (i: number, tt: number): { x: number; y: number } => {
+      const off = (i / ProceduralPlayerRig.AURA_MOTE_COUNT) * Math.PI * 2;
+      const radius = (20 + 7 * Math.sin(tt * 0.7 + off * 2)) * s;
+      const angle = tt * (1.1 + i * 0.17) + off;
+      const wobbleR = radius + 4 * s * Math.sin(tt * 2.3 + off);
+      return {
+        x: cx + Math.cos(angle) * wobbleR,
+        y: cy + Math.sin(angle) * wobbleR * 0.8,
+      };
+    };
+
+    for (let i = 0; i < ProceduralPlayerRig.AURA_MOTE_COUNT; i++) {
+      const off = (i / ProceduralPlayerRig.AURA_MOTE_COUNT) * Math.PI * 2;
+      const twinkle = 0.55 + 0.35 * Math.sin(t * 3.1 + off * 3);
+
+      // Comet tail: three fading echoes sampled slightly earlier in time.
+      for (let e = 3; e >= 1; e--) {
+        const echo = motePos(i, t - e * 0.05);
+        const tailAlpha = twinkle * (0.22 - e * 0.05);
+        g.fillStyle(this.accentColor, Math.max(0, tailAlpha));
+        g.fillCircle(echo.x, echo.y, (2.2 - e * 0.4) * s);
+      }
+
+      const p = motePos(i, t);
+      g.fillStyle(this.accentColor, twinkle * 0.4);
+      g.fillCircle(p.x, p.y, 4.5 * s);
+      g.fillStyle(this.accentColor, twinkle * 0.85);
+      g.fillCircle(p.x, p.y, 2.4 * s);
+      g.fillStyle(WHITE, twinkle * 0.8);
+      g.fillCircle(p.x, p.y, 1 * s);
+    }
+  }
+
+  // --- HIP DRAPE: a short cloth strip trailing off the pelvis — the
+  // "wizard sash" that keeps the vessel from reading as pure armor plate.
+  private drawHipDrape(g: Phaser.GameObjects.Graphics, pelvis: Vec2, tip: Vec2, s: number) {
+    const w = 5 * s;
+    const nx = -(tip.y - pelvis.y);
+    const ny = tip.x - pelvis.x;
+    const len = Math.hypot(nx, ny) || 1;
+    const px = (nx / len) * w;
+    const py = (ny / len) * w;
+
+    // Dark outline first (same outline-then-fill pattern as the limbs) so
+    // the drape keeps a visible silhouette edge against the torso/legs
+    // instead of blending into them.
+    g.fillStyle(DARK, 1);
+    g.beginPath();
+    g.moveTo(pelvis.x - px * 0.7 - 1, pelvis.y - py * 0.7 - 1);
+    g.lineTo(pelvis.x + px * 0.7 + 1, pelvis.y + py * 0.7 + 1);
+    g.lineTo(tip.x + px * 0.3, tip.y + py * 0.3);
+    g.lineTo(tip.x - px * 0.3, tip.y - py * 0.3);
+    g.closePath();
+    g.fillPath();
+
+    g.fillStyle(this.colorDark, 1);
+    g.beginPath();
+    g.moveTo(pelvis.x - px * 0.6, pelvis.y - py * 0.6);
+    g.lineTo(pelvis.x + px * 0.6, pelvis.y + py * 0.6);
+    g.lineTo(tip.x + px * 0.25, tip.y + py * 0.25);
+    g.lineTo(tip.x - px * 0.25, tip.y - py * 0.25);
+    g.closePath();
+    g.fillPath();
+
+    // Accent glow trim, bolder than the first pass, along both edges.
+    g.lineStyle(1.2 * s, this.accentColor, 0.6);
+    g.beginPath();
+    g.moveTo(pelvis.x + px * 0.6, pelvis.y + py * 0.6);
+    g.lineTo(tip.x + px * 0.25, tip.y + py * 0.25);
+    g.strokePath();
+  }
+
+  // --- HEAD CREST: the swept blade/fin every Warframe silhouette shares —
+  // the single strongest identity marker the vessel was missing. Drawn
+  // BEHIND the hood so the hood's base overlaps its root and only the
+  // swept blade reads clearly above/behind the skull. ---
+  private drawHeadCrest(g: Phaser.GameObjects.Graphics, head: Vec2, s: number) {
+    const f = this.facing;
+    const rootX = head.x - f * 1 * s;
+    const rootY = head.y - 8 * s;
+    // Sweeps mostly BACKWARD (opposite facing) rather than steeply upward,
+    // so the tip clears the nameplate/health-bar line drawn just above the
+    // head instead of visually tangling with it.
+    const tipX = head.x - f * 19 * s;
+    const tipY = head.y - 19 * s;
+
+    // Dark base — bigger swept silhouette than the first pass, so it reads
+    // as a real fin/horn rather than a hood wrinkle.
+    g.fillStyle(DARK, 1);
+    g.beginPath();
+    g.moveTo(rootX - f * 3 * s, rootY + 3 * s);
+    g.lineTo(tipX, tipY);
+    g.lineTo(rootX + f * 4 * s, rootY - 1.5 * s);
+    g.closePath();
+    g.fillPath();
+
+    // Bright plate fill — full player color (not the darkened body shade),
+    // so the crest visually separates from the hood instead of blending
+    // into it.
+    g.fillStyle(this.color, 1);
+    g.beginPath();
+    g.moveTo(rootX - f * 1.5 * s, rootY + 1.5 * s);
+    g.lineTo(tipX + f * 1.5 * s, tipY + 1.5 * s);
+    g.lineTo(rootX + f * 3 * s, rootY - 1 * s);
+    g.closePath();
+    g.fillPath();
+
+    // Accent glow edge along the leading (upper) side, plus a soft outer
+    // halo so the crest reads as energized, matching the visor/spine.
+    g.lineStyle(1.4 * s, this.accentColor, 0.8);
+    g.beginPath();
+    g.moveTo(rootX + f * 3 * s, rootY - 1 * s);
+    g.lineTo(tipX + f * 1.5 * s, tipY + 1.5 * s);
+    g.strokePath();
+    g.fillStyle(this.accentColor, 0.35);
+    g.fillCircle(tipX + f * 1.5 * s, tipY + 1.5 * s, 2 * s);
+  }
+
   // --- HEAD: Hood + helmet + visor ---
   private drawHead(g: Phaser.GameObjects.Graphics, head: Vec2, s: number, healthRatio: number) {
     const f = this.facing;
 
-    // Hood shadow (larger dark shape behind head)
+    this.drawHeadCrest(g, head, s);
+
+    // Hood shadow (larger dark shape behind head) — narrower than the old
+    // helmet build, reads as a sealed vessel-hull rather than a hard helmet.
     g.fillStyle(DARK, 1);
     g.beginPath();
-    g.moveTo(head.x - 11 * s, head.y + 6 * s);
-    g.lineTo(head.x + f * 2 * s - 9 * s, head.y - 14 * s);
-    g.lineTo(head.x + f * 2 * s + 9 * s, head.y - 14 * s);
-    g.lineTo(head.x + 11 * s, head.y + 6 * s);
+    g.moveTo(head.x - 8.5 * s, head.y + 6 * s);
+    g.lineTo(head.x + f * 2 * s - 6.5 * s, head.y - 14 * s);
+    g.lineTo(head.x + f * 2 * s + 6.5 * s, head.y - 14 * s);
+    g.lineTo(head.x + 8.5 * s, head.y + 6 * s);
     g.closePath();
     g.fillPath();
 
     // Hood main (player colored)
     g.fillStyle(this.colorDark, 1);
     g.beginPath();
-    g.moveTo(head.x - 9 * s, head.y + 4 * s);
-    g.lineTo(head.x + f * 2 * s - 7 * s, head.y - 12 * s);
-    g.lineTo(head.x + f * 2 * s + 7 * s, head.y - 12 * s);
-    g.lineTo(head.x + 9 * s, head.y + 4 * s);
+    g.moveTo(head.x - 6.5 * s, head.y + 4 * s);
+    g.lineTo(head.x + f * 2 * s - 5 * s, head.y - 12 * s);
+    g.lineTo(head.x + f * 2 * s + 5 * s, head.y - 12 * s);
+    g.lineTo(head.x + 6.5 * s, head.y + 4 * s);
     g.closePath();
     g.fillPath();
 
     // Face plate (darker inset)
     g.fillStyle(DARK2, 0.9);
-    g.fillRoundedRect(head.x + f * 2 * s - 6 * s, head.y - 6 * s, 12 * s, 9 * s, 2 * s);
+    g.fillRoundedRect(head.x + f * 2 * s - 5 * s, head.y - 6 * s, 10 * s, 9 * s, 2 * s);
 
-    // VISOR SLIT - the signature glowing eye line
-    const visorColor = healthRatio < 0.25 ? 0xfb7185 : ACCENT;
+    // VISOR SEAM — the vessel's "face" is a thin line of light, not a thick
+    // eye-slit: longer and narrower than the old helmet visor.
+    const visorColor = healthRatio < 0.25 ? 0xfb7185 : this.accentColor;
     const visorAlpha = 0.7 + 0.3 * Math.sin(this.stepPhase * 2);
 
     // Outer glow
     g.fillStyle(visorColor, visorAlpha * 0.35);
-    g.fillRoundedRect(head.x + f * 3 * s - 7 * s, head.y - 3 * s, 14 * s, 4 * s, 2 * s);
+    g.fillRoundedRect(head.x + f * 3 * s - 7.5 * s, head.y - 2.6 * s, 15 * s, 3 * s, 1.5 * s);
 
-    // Core slit
+    // Core seam
     g.fillStyle(visorColor, visorAlpha);
-    g.fillRect(head.x + f * 3 * s - 5.5 * s, head.y - 2 * s, 11 * s, 2.5 * s);
+    g.fillRect(head.x + f * 3 * s - 6.25 * s, head.y - 1.8 * s, 12.5 * s, 1.8 * s);
 
     // Inner bright spot (represents eye direction)
     g.fillStyle(WHITE, visorAlpha * 0.8);
-    g.fillRect(head.x + f * 5 * s - 2 * s, head.y - 1.5 * s, 4 * s, 1.5 * s);
+    g.fillRect(head.x + f * 5 * s - 2 * s, head.y - 1.4 * s, 4 * s, 1.1 * s);
   }
 
-  // --- SHOULDER ARMOR ---
+  // --- SHOULDER STUB: crystal joint seal, not a bulky pauldron ---
   private drawShoulderArmor(g: Phaser.GameObjects.Graphics, shoulder: Vec2, s: number) {
-    // Armored pauldron
     g.fillStyle(DARK, 1);
-    g.fillCircle(shoulder.x, shoulder.y, 6 * s);
-    g.fillStyle(this.color, 0.9);
     g.fillCircle(shoulder.x, shoulder.y, 4.5 * s);
+    g.fillStyle(this.color, 0.9);
+    g.fillCircle(shoulder.x, shoulder.y, 3.4 * s);
 
     // Crystal accent on shoulder
-    g.fillStyle(ACCENT, 0.7);
-    g.fillCircle(shoulder.x, shoulder.y, 2 * s);
+    g.fillStyle(this.accentColor, 0.7);
+    g.fillCircle(shoulder.x, shoulder.y, 1.6 * s);
   }
 
-  // --- ARM CANNON: Crystal-tech weapon ---
-  private drawArmCannon(
-    g: Phaser.GameObjects.Graphics,
-    hand: Vec2,
-    muzzle: Vec2,
-    _aim: Vec2,
-    s: number,
-  ) {
-    const dx = muzzle.x - hand.x;
-    const dy = muzzle.y - hand.y;
-    const len = Math.hypot(dx, dy) || 1;
-    const nx = dx / len;
-    const ny = dy / len;
-    const px = -ny;
-    const py = nx;
-
-    // Cannon body (thick dark barrel)
-    const barrelW = 5 * s;
+  // --- HAND GLOW: a bare channeling hand, not a gun. Both hands get one —
+  // the vessel doesn't hold a weapon, it channels straight from the palm.
+  // `pulse` (0-1) is the ability/cast-trigger hook: triggerFire() drives
+  // the lead hand's pulse today, but any future ability effect can drive
+  // either hand's pulse the same way without touching this method. ---
+  private drawHandGlow(g: Phaser.GameObjects.Graphics, hand: Vec2, s: number, pulse: number) {
+    // Bare palm — small dark disc, no barrel/weapon geometry.
     g.fillStyle(DARK, 1);
-    g.beginPath();
-    g.moveTo(hand.x + px * barrelW, hand.y + py * barrelW);
-    g.lineTo(muzzle.x + px * barrelW * 0.7, muzzle.y + py * barrelW * 0.7);
-    g.lineTo(muzzle.x - px * barrelW * 0.7, muzzle.y - py * barrelW * 0.7);
-    g.lineTo(hand.x - px * barrelW, hand.y - py * barrelW);
-    g.closePath();
-    g.fillPath();
-
-    // Inner cannon colour
+    g.fillCircle(hand.x, hand.y, 2.6 * s);
     g.fillStyle(this.colorDark, 1);
-    g.beginPath();
-    g.moveTo(hand.x + px * (barrelW - 1.5 * s), hand.y + py * (barrelW - 1.5 * s));
-    g.lineTo(muzzle.x + px * barrelW * 0.5, muzzle.y + py * barrelW * 0.5);
-    g.lineTo(muzzle.x - px * barrelW * 0.5, muzzle.y - py * barrelW * 0.5);
-    g.lineTo(hand.x - px * (barrelW - 1.5 * s), hand.y - py * (barrelW - 1.5 * s));
-    g.closePath();
-    g.fillPath();
+    g.fillCircle(hand.x, hand.y, 1.8 * s);
 
-    // Energy channel along cannon
-    g.lineStyle(1.5 * s, ACCENT, 0.6);
-    g.beginPath();
-    g.moveTo(hand.x + nx * 4 * s, hand.y + ny * 4 * s);
-    g.lineTo(muzzle.x - nx * 4 * s, muzzle.y - ny * 4 * s);
-    g.strokePath();
+    // Channeled energy point just past the fingertips — ambient even at
+    // rest (a wizard's hand is never fully dark), brighter and pulsing
+    // when an ability/cast triggers.
+    const baseGlow = 0.35;
+    const pulseSize = 1 + pulse * 0.9;
+    const radius = 3 * s * pulseSize;
 
-    // Muzzle glow
-    const pulseSize = 1 + this.firePulse * 0.8;
-    const muzzleRadius = 4 * s * pulseSize;
-
-    // Outer halo
-    g.fillStyle(ACCENT, 0.2 + this.firePulse * 0.3);
-    g.fillCircle(muzzle.x, muzzle.y, muzzleRadius * 2.5);
-
-    // Mid glow
-    g.fillStyle(ACCENT, 0.5 + this.firePulse * 0.3);
-    g.fillCircle(muzzle.x, muzzle.y, muzzleRadius * 1.4);
-
-    // Core
-    g.fillStyle(WHITE, 0.8 + this.firePulse * 0.2);
-    g.fillCircle(muzzle.x, muzzle.y, muzzleRadius * 0.6);
+    g.fillStyle(this.accentColor, (baseGlow * 0.5 + pulse * 0.35));
+    g.fillCircle(hand.x, hand.y, radius * 2.2);
+    g.fillStyle(this.accentColor, (baseGlow + pulse * 0.4));
+    g.fillCircle(hand.x, hand.y, radius * 1.2);
+    g.fillStyle(WHITE, (baseGlow * 0.6 + pulse * 0.4));
+    g.fillCircle(hand.x, hand.y, radius * 0.5);
   }
 
   // --- THICK LIMB: Filled polygon instead of line ---
@@ -535,7 +885,7 @@ export class ProceduralPlayerRig {
     g.fillCircle(solve.joint.x, solve.joint.y, outerW * 0.3);
   }
 
-  // --- BOOT: Heavy armored feet ---
+  // --- BOOT: Sleek greave, not a heavy armored boot ---
   // Anchor convention: `foot.y` = the platform-top contact point (i.e.
   // the bottom edge of the boot sole). All three rects sit ABOVE foot.y.
   // Pre-fix, the sole rect spanned [foot.y - 0.3*bh, foot.y + 0.7*bh] —
@@ -546,8 +896,8 @@ export class ProceduralPlayerRig {
   // See commit 7027a82 for the matching footPos gate.
   private drawBoot(g: Phaser.GameObjects.Graphics, foot: Vec2, s: number) {
     const f = this.facing;
-    const bw = 10 * s;
-    const bh = 6 * s;
+    const bw = 8 * s;
+    const bh = 5 * s;
 
     // Boot sole — bottom edge at foot.y, full height bh above.
     g.fillStyle(DARK, 1);
@@ -583,6 +933,86 @@ export class ProceduralPlayerRig {
     const lineY = y - 4 * s;
     g.fillStyle(PALETTE.hpLime, 1);
     g.fillRect(x - nameWidth / 2, lineY, nameWidth * healthRatio, 2);
+  }
+
+  // --- WALL-PLANT FOOT: near-max leg reach toward the gripped wall, at
+  // roughly hip height (bent knee) rather than "ground" level — there is no
+  // ground while sliding. Doesn't need the wall's actual world-space
+  // position: pushing the target this far toward it is enough for
+  // solveTwoBone's reach clamp to read as "straining to plant against
+  // something in that direction."
+  private wallPlantFoot(cx: number, wallDir: number, pelvis: Vec2, s: number): Vec2 {
+    return vec(cx + wallDir * 42 * s, pelvis.y + 6 * s);
+  }
+
+  // --- ARM TARGETS: ground-up rebuild. Both arms share one state machine
+  // and are IDENTICAL length (ARM_UPPER/ARM_LOWER) — "straight" is not a
+  // special-cased draw path, it's just an IK hand target placed exactly at
+  // the edge of the reach circle (see straightTarget()); solveTwoBone's own
+  // reach clamp then yields a joint angle of ~0. Bend only appears when a
+  // target is placed CLOSER than full reach, which only happens for two
+  // states: gripping a wall, and the natural swing while running. Idle,
+  // airborne, and dashing all stay dead straight. ---
+  private computeArmTargets(
+    shoulderLead: Vec2,
+    shoulderBack: Vec2,
+    aim: Vec2,
+    walkAmount: number,
+    wallDir: number,
+    dashing: boolean,
+    s: number,
+  ): { lead: Vec2; back: Vec2 } {
+    const reach = ProceduralPlayerRig.ARM_REACH * s;
+
+    if (wallDir !== 0) {
+      // Back hand plants against the gripped wall — closer than full
+      // reach, the one deliberate bend this state allows. Lead hand stays
+      // in its default straight cast pose, independent of the grip.
+      return {
+        lead: this.straightTarget(shoulderLead, aim, reach),
+        back: vec(shoulderBack.x + wallDir * 20 * s, shoulderBack.y + 2 * s),
+      };
+    }
+
+    if (dashing) {
+      // Both arms straight, swept back at full reach — a streamlined,
+      // committed "javelin" pose. Dash is speed, not a grab: no bend.
+      const sweepRaw = vec(-this.facing, 0.3);
+      const sweepLen = Math.hypot(sweepRaw.x, sweepRaw.y) || 1;
+      const sweep = vec(sweepRaw.x / sweepLen, sweepRaw.y / sweepLen);
+      return {
+        lead: this.straightTarget(shoulderLead, sweep, reach),
+        back: this.straightTarget(shoulderBack, sweep, reach),
+      };
+    }
+
+    if (walkAmount > 0.05) {
+      // Natural opposite-phase running gait — bent (well inside full
+      // reach). This is the "moving around" bend the vessel is allowed.
+      const swingReach = reach * 0.55;
+      const swingLead = Math.sin(this.stepPhase) * walkAmount;
+      const swingBack = Math.sin(this.stepPhase + Math.PI) * walkAmount;
+      return {
+        lead: vec(shoulderLead.x + this.facing * swingLead * 10 * s, shoulderLead.y + swingReach),
+        back: vec(shoulderBack.x + this.facing * swingBack * 10 * s, shoulderBack.y + swingReach),
+      };
+    }
+
+    // Idle / airborne (not gripping, not dashing, not running): both arms
+    // straight. The lead hand points at the aim target — the wizard's
+    // always-ready cast gesture, and also the online path's aim indicator.
+    // The back hand hangs straight down at the side.
+    return {
+      lead: this.straightTarget(shoulderLead, aim, reach),
+      back: this.straightTarget(shoulderBack, vec(0, 1), reach),
+    };
+  }
+
+  /** A hand target at EXACTLY max arm reach in direction `dir` from
+   *  `shoulder`. solveTwoBone's own dist clamp then yields a joint angle
+   *  of ~0 — a dead-straight limb — with zero special-casing. */
+  private straightTarget(shoulder: Vec2, dir: Vec2, reach: number): Vec2 {
+    return vec(shoulder.x + dir.x * reach, shoulder.y + dir.y * reach);
   }
 
   // --- FOOT POSITION ---

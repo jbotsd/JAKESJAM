@@ -78,17 +78,17 @@ This doc is the synthesis. For per-image detail see `refs/01..04-*.md`. For audi
 - `client/src/game/ui/HudSystem.ts`
 - `client/src/game/scenes/MatchScene.ts` (lines 1900-1930 chip definitions stay; rendering changes in HudCompositor)
 
-### Pillar 5 — Player rig simplification
-**Why last:** Risky (touches every gameplay frame). Do after others land so we can revert if it hurts readability.
+### Pillar 5 — Player rig simplification [REDEFINED 2026-07-06]
+**Status:** Landed, but aimed at a different target than originally specified below. The original plan (SUPERHOT-style flat reduction — single circle body, 4 thin stick limbs, 2 dot eyes) was superseded by a **Warframe-esque "gnostic vessel"** direction: a leaner biomechanical-frame silhouette, still built from the same filled-polygon torso/limb/hood/visor language as before, just slimmed down and re-tuned rather than collapsed to primitives. See `docs/art-direction.md`'s "Gnostic Vessel Silhouette Spec" for the shipped spec. This still accomplishes this pillar's actual goal (de-bulk the "chunky armored" build) without going as far as flat geometric reduction — kept because it reads as "palatable but gorgeous" rather than minimal.
 
-**What to build:**
+**Original plan (not built, kept for history):**
 1. **Body = single circle** with body-color fill + 2-3 thin white shading lines (vertical strokes per ref 01).
 2. **Limbs = 4 thin sticks** with rounded ends. Currently multi-shape; collapse to `Phaser.GameObjects.Rectangle` with thin width.
 3. **Eyes = 2 dot circles**. No mouth (silhouette-first).
 4. **Optional: facial expression states** for damage/death/win moments only — not per-frame.
 
 **Code touch points:**
-- `client/src/game/scenes/MatchScene.ts:syncPlayerRig` (and equivalent in `RemotePlayerManager.ts`)
+- `client/src/game/rendering/ProceduralPlayerRig.ts` (the actual rig — confirmed the sole file that draws the character; `MatchScene.ts`/`RemotePlayerManager.ts` just feed it pose data)
 
 ---
 

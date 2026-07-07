@@ -1,4 +1,6 @@
-# JAKESJAM — Character Overlay Spec (Hand-Off to phaser-coder)
+# JAKESJAM — Character Overlay Spec (Hand-Off to phaser-coder) [SUPERSEDED]
+
+**Superseded (2026-07-06).** The `wizardOverlay.ts` this spec described was written but never wired into any scene — it was dead code. Its ideas (hood/visor, energy bands, palm glow, crystal stubs, spine filaments) were independently and more roughly reimplemented *inline* in `ProceduralPlayerRig.ts` itself, which is the file that actually draws every player on screen. Rather than maintain two half-finished parallel systems, `wizardOverlay.ts` has been deleted and its accent-color parameter (`accentColor`, defaulting to crystal cyan) was folded directly into `ProceduralPlayerRig`'s constructor options — see that file's top-of-file doc comment for the current ("gnostic vessel," Warframe-esque) design direction. This doc is kept for historical context only; do not implement against it.
 
 **This file is NOT for AI image generation.** It is a written implementation spec for the cyberpunk-sorcerer overlay that draws on top of the existing `ProceduralPlayerRig` (`client/src/game/rendering/ProceduralPlayerRig.ts`).
 

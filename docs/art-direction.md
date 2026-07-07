@@ -1,8 +1,8 @@
 # JAKESJAM — Art Direction
 
-**Version:** 0.2 (cyberpunk-sorcerer pivot)
-**Status:** Locked. Replaces the v0.1 "industrial scrap shooter" direction.
-**Date:** 2026-05-02
+**Version:** 0.3 (gnostic-vessel silhouette pivot)
+**Status:** Locked. Character silhouette superseded 2026-07-06 — see "Gnostic Vessel Silhouette Spec" below. Arena/palette/VFX sections from v0.2 (cyberpunk-sorcerer pivot, 2026-05-02) still hold; only the character's proportions and the source of its "sorcerer" identity changed.
+**Date:** 2026-05-02 (character section revised 2026-07-06)
 
 ## Title / Concept
 
@@ -22,22 +22,26 @@ Ten references, each with the specific thing we are stealing.
 - **Hades** — card draft elegance. Card-pick UX that feels weighty, animated, expensive. Our draft-pick radial wipe and glow pulse are calibrated to this register.
 - **Furi** — boss-mode silhouette. When a player picks up a boss-core they should read the way Furi bosses do: bigger, slower, halo-lit, *dangerous on sight*.
 - **Mirror's Edge** — palette discipline. A handful of saturated accents on a near-monochrome base. Our themes use this rule: 1-2 hot accents per palette, not five.
-- **Tron: Legacy (film)** — energy-line lighting language. Bright filaments routed across dark armour. Our wizard overlay uses the exact "thin glowing tube along the limb" trick.
+- **Tron: Legacy (film)** — energy-line lighting language. Bright filaments routed across dark armour. Our rig's spine conduit and cannon energy-channel use the exact "thin glowing tube along the limb" trick.
 - **JetBrains New UI / Darcula+** — UI elevation. Subtle inner glows, micro-gradients on flat fills, deeper shadows. Our "juicing pass" (see `themes.md`) is calibrated to feel like that "paid IDE" depth, not programmer-art chips.
 
-## Wizard Silhouette Spec
+## Gnostic Vessel Silhouette Spec (v0.3, supersedes "Wizard Silhouette Spec")
 
-The character is the existing `ProceduralPlayerRig` (stick rig with two-bone IK, per-player tinted), with a thin **cyberpunk-sorcerer overlay** drawn on top. The rig stays small (~30-60px tall in play). The overlay is additive and never breaks the rig's silhouette read.
+**Brief that drove this:** lean into a Warframe-esque read — "a ghost operating a manufactured vessel" — which is also literally what "Autogenes" (self-generated, individuated, not from pairing or inherited programming) names in the Gnostic-translation sense. Constraint: **palatable but gorgeous** — stay bipedal and readable, don't collapse into an alien mess; keep the rendering rich/premium.
 
-Overlay parts, top to bottom:
+The character is the `ProceduralPlayerRig` (`client/src/game/rendering/ProceduralPlayerRig.ts`, two-bone IK, spring-damped "wobbly" foot IK for secondary motion, per-player tinted). Unlike the old spec, there is **no separate overlay pass** — the previous `wizardOverlay.ts` was written but never wired in (dead code, now deleted); every visual element below is drawn inline by the rig itself, which is the only file that determines the on-screen look. The rig stays small (~30-60px tall in play) and noticeably **leaner** than the old "chunky armored" build — a manufactured shell, not a tank.
 
-- **Hooded sci-fi visor.** Replaces the head circle's facial detail. A trapezoidal hood drawn in the player's tint (darker shade), with a **single horizontal glowing eye-line** in the player's accent. No mouth, no eyes — just the slit. The slit colour is the player's tint at +30% luminance and reads as the character's "gaze direction" when facing changes.
-- **Upper-arm energy bands.** A 2px-wide glowing ring around each upper-arm bone, in the active theme's accent. Pulses at 0.5 Hz idle, 2 Hz when firing. When a card adds an element (fire/ice/lightning/etc.), the bands shift to that element's colour for ~400ms after each shot.
-- **Palm-projector glow.** A 5-7px additive disc at the lead-arm hand, replacing the current muzzle dot. Brightness scales with weapon damage tier. On fire, it pulses to 1.6× then settles in 80ms. The "gun line" between hand and muzzle becomes a thin energy filament instead of a barrel.
-- **Crystal shoulder/ankle stubs.** A single 3-4px faceted hexagonal chip on the lead shoulder and on each ankle. Drawn as a flat polygon with a 1px highlight on the upper edge and a 1px shadow underneath. These glow when the player has a relevant active buff (overcharge → shoulder; speed-boost → ankles; boss-core → both, halo'd).
-- **Energy filaments.** Two thin (1px) lines tracing from pelvis to chest along the spine, in the accent colour. These are the "I'm alive" signal: dim when low health, bright when full, flicker when hit.
+Parts, top to bottom (all inline in `ProceduralPlayerRig.ts`):
 
-**Per-player tint** drives the wizard's primary armour colour. **Active theme** drives the accent (visor slit, energy bands, filament glow). On any active element buff (fire/ice/etc.), the accent temporarily shifts to that element's theme-mapped colour. At 30px tall the read is: silhouette = stick rig + hood + faint shoulder chip; at 60px the visor slit, palm glow, and ankle crystals all become legible.
+- **Visor seam.** Replaces the old thick "eye-slit" with a longer, narrower line of light — less helmet-visor, more "the vessel's face is a seam of light." Colour is the rig's `accentColor` (see cosmetic hook below), shifting to a warning red below 25% health. Pulses gently at idle.
+- **Slimmed hood/hull.** Narrower trapezoid than the old helmet build — reads as a sealed vessel hull, not hard armor plating.
+- **Spine energy conduit.** A glowing filament from pelvis to chest — the "I'm alive"/"self-generated" signal: dim when low health, bright when full. Unchanged in concept from the old spec, tuned brighter as the character's core identity motif.
+- **Crystal joint stubs.** Small faceted accents at the shoulder and — unchanged from the old spec's ankle-stub idea — reads as manufactured joint seals rather than armor bolted on.
+- **Palm-projector glow + energy-channel cannon.** Unchanged in concept: an additive glow at the lead hand, brightening on fire, with a thin energy channel running the "barrel" — now on a slimmer cannon body to match the leaner limbs.
+
+**Cosmetic accent hook.** `accentColor` (constructor option on `ProceduralPlayerRig`, default crystal cyan `0x8ff8ff`) is the single seam every glow element (visor, spine, shoulder crystal, cannon channel/muzzle) reads from. This is the plug-in point for paid cosmetic skins (e.g. an "Autogenes" tier: gold/teal accent echoing the Autogenes Editions palette) — swap the color, not the geometry. Purely visual; the sim never reads it.
+
+**Per-player tint** (the existing `color` option) still drives the primary body/hood/limb color, unchanged from the old spec. There is no live "active theme" system reaching the rig (confirmed absent codebase-wide) — the old spec's "active theme drives the accent" line was aspirational and never built; `accentColor` today is set once per rig instance, not swapped at runtime by a global theme.
 
 ## Spell Readability Rules
 
