@@ -26,6 +26,7 @@ import {
 import type { Id } from "../../../../convex/_generated/dataModel";
 import { HighlightTracker } from "../highlights/highlightRules";
 import { ClipRecorder } from "../highlights/ClipRecorder";
+import { showClipShareToast } from "../ui/ClipShareToast";
 import {
   STEP_MS,
   crystalRoundsCards,
@@ -389,7 +390,10 @@ export class OnlineMatchScene extends Phaser.Scene {
     if (new URLSearchParams(window.location.search).get("clips") === "1") {
       this.highlightTracker = new HighlightTracker();
       this.clipRecorder = new ClipRecorder(this.game.canvas, {
-        onUploaded: (url) => console.log(`[clips] uploaded: ${url}`),
+        onUploaded: (url) => {
+          console.log(`[clips] uploaded: ${url}`);
+          showClipShareToast(url);
+        },
         onError: (err) => console.warn("[clips] capture/upload failed:", err),
       });
       this.clipRecorder.start();
@@ -1523,6 +1527,10 @@ export class OnlineMatchScene extends Phaser.Scene {
       crouching: player.crouching,
       health: player.health,
       maxHealth: character.maxHealth,
+      // touchingWallDir/dashing wire-encoded per P_HI.wallDirNeg/wallDirPos/
+      // dashing (same optional/additive pattern as grounded above).
+      touchingWallDir: player.touchingWallDir ?? 0,
+      dashing: player.dashing ?? false,
     });
   }
 

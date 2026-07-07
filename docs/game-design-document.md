@@ -1201,7 +1201,7 @@ Do not create `server-java/` until the prototype proves it is necessary.
 
 | System | Responsibility |
 |---|---|
-| MovementSystem | input, acceleration, jump, air control, collision response |
+| ~~MovementSystem~~ (deleted 2026-07-07; see `sim/player.ts` + `LocalPlayerController.ts`) | input, acceleration, jump, air control, collision response, wall-slide/wall-jump/dash |
 | CombatSystem | weapon firing, reload, damage application |
 | ProjectileSystem | projectile spawn, movement, collision, lifetime, effects |
 | CardSystem | apply card modifiers to player/weapon/projectiles |

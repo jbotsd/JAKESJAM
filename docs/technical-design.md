@@ -85,7 +85,7 @@ Room modifiers are stored on the Convex room document and can only be changed by
 
 ## Systems
 
-- MovementSystem
+- ~~MovementSystem~~ deleted (2026-07-07) — movement is `sim/player.ts`'s `stepPlayer`, wrapped for offline Practice by `client/src/game/systems/LocalPlayerController.ts`
 - WeaponSystem
 - CombatSystem
 - ProjectileSystem

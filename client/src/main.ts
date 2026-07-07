@@ -196,11 +196,31 @@ app.innerHTML = `
   </div>
 `;
 
+// Vite HMR guard: `main.ts` has no accept boundary, so a change anywhere in
+// its import graph (which is most of the game — this bit us during the
+// practice-zone rework, where dozens of MatchScene.ts edits under `bun run
+// dev:client` each re-executed this module) re-runs this file WITHOUT
+// tearing down the previous `Phaser.Game`. Without a dispose guard that
+// stacks a new game on top of the old one every reload — duplicate
+// canvases, both instances' keyboard capture fighting, movement that looks
+// dead because input is going to the instance you can't see.
+const globalWithGame = globalThis as { __jakesjam_game__?: Phaser.Game };
+globalWithGame.__jakesjam_game__?.destroy(true);
+
 const game = new Phaser.Game(gameConfig);
 // Diagnostic: expose the Phaser game on window so e2e specs can walk
 // the scene's display list to find render-time leaks. No production
 // behaviour depends on this — pure introspection hook.
-(globalThis as { __jakesjam_game__?: Phaser.Game }).__jakesjam_game__ = game;
+globalWithGame.__jakesjam_game__ = game;
+
+if (import.meta.hot) {
+  import.meta.hot.dispose(() => {
+    game.destroy(true);
+    if (globalWithGame.__jakesjam_game__ === game) {
+      globalWithGame.__jakesjam_game__ = undefined;
+    }
+  });
+}
 
 // Mobile is PORTRAIT-first (game on top, controls in a bottom band). Nudge to
 // rotate upright when a touch device is held sideways. Purely a hint.

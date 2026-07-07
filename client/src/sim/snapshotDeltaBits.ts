@@ -55,6 +55,11 @@ export const P_HI = {
   blockJammerUntilTick: 1 << 2,
   bossModeUntilTick: 1 << 3,
   grounded: 1 << 4,
+  // One bit each, same "did this field change" convention as every other
+  // P_LO/P_HI entry — the actual value (including 0/-1/+1) always rides in
+  // the patch object, never in the bit pattern itself.
+  touchingWallDir: 1 << 5,
+  dashing: 1 << 6,
 } as const;
 
 export const PROJ = {

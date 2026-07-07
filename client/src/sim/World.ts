@@ -26,12 +26,14 @@ import {
 import {
   stepPlayer,
   freshPlayerMovementMemory,
+  mirrorMovementMemoryOntoEntity,
   JETPACK_MAX_FUEL,
   KILL_PLANE_MARGIN_PX,
   type PlayerMovementMemory,
 } from "./player.js";
 import { buildFireEntity, stepDestructibles } from "./destructible.js";
 import { stepFirePatches } from "./fire.js";
+import { stepSuddenDeathStorm } from "./suddenDeath.js";
 import { clearExpiredBuffs, stepPickups } from "./pickup.js";
 import { stepProjectile } from "./projectile.js";
 import { CowRecord } from "./cowRecord.js";
@@ -42,7 +44,7 @@ import {
   stepSatellites,
 } from "./satellite.js";
 import { stepWeapon, resolvePlayerBuild } from "./weapon.js";
-import { stepRound, TARGET_SCORE_DEFAULT } from "./round.js";
+import { stepRound, TARGET_SCORE_DEFAULT, FIRST_BLOOD_SPEED_MULTIPLIER } from "./round.js";
 import {
   tickShield,
   tryDeflectDamage,
@@ -477,9 +479,14 @@ export function stepWithRuntime(
         entity.freezeUntilTick !== undefined &&
         entity.freezeUntilTick > state.tick;
       const freezeMul = freezeActive ? entity.freezeMultiplier ?? 1 : 1;
+      // First-blood wager: whoever claimed it this round moves faster for
+      // the rest of it. Reads the PRE-tick round state — if this tick is the
+      // one that awards it (see the hit-confirmed drain below), the boost
+      // takes effect starting next tick, which is imperceptible.
+      const firstBloodMul = state.round.firstBloodPlayerId === pid ? FIRST_BLOOD_SPEED_MULTIPLIER : 1;
       // Card augments: move-speed + gravity (glide/heavy) ride the existing
       // step multipliers, so they cross into the Zig player step for free.
-      const speedMul = slowMul * freezeMul * build.moveSpeedMultiplier;
+      const speedMul = slowMul * freezeMul * firstBloodMul * build.moveSpeedMultiplier;
       const moveResult = stepPlayer(
         entity,
         prevKeys,
@@ -502,11 +509,10 @@ export function stepWithRuntime(
       );
       nextEntity = moveResult.player;
       runtime.movement.set(pid, moveResult.memory);
-      // Mirror groundedLastFrame onto the entity for the render layer.
-      // Sim itself reads grounded from `mem` (host-only); the entity copy
-      // is what wire-encodes (snapshotDelta P_HI.grounded) and what the
-      // ProceduralPlayerRig consumes via pose.grounded.
-      nextEntity = { ...nextEntity, grounded: moveResult.memory.groundedLastFrame };
+      // Mirror grounded/touchingWallDir/dashing onto the entity for the
+      // render layer — wire-encoded (snapshotDelta P_HI.grounded/
+      // touchingWallDir/dashing) and consumed by ProceduralPlayerRig's pose.
+      nextEntity = mirrorMovementMemoryOntoEntity(nextEntity, moveResult.memory);
     }
 
     // Fire (only when alive and fighting).
@@ -737,6 +743,11 @@ export function stepWithRuntime(
 
   const nextTick = Tick(state.tick + 1);
   let rngState = state.rngState;
+  // First-blood wager: the first projectile hit this tick with a resolvable,
+  // non-self attacker claims it, but only if nobody has claimed it yet this
+  // round. Threaded into the stepRound() call below so RoundState picks it
+  // up starting next tick (see round.ts's `next` scaffold).
+  let firstBloodAwardThisTick: PlayerId | null = null;
   // Projectile ids that were parry-deflected this tick — they get dropped
   // from `remainingProjectiles` even if their hit-resolution path would have
   // kept them alive (e.g. pierce-chain). Reuses runtime scratch.
@@ -849,6 +860,19 @@ export function stepWithRuntime(
             // finalDamage by 1 / (1 - 0.5 * armor). For now: no-op.
           }
           ev.damage = finalDamage;
+          // First-blood wager: this is a real, non-self, attacker-attributed
+          // hit landing during the fighting phase — claim it if nobody has
+          // this round yet. `firstBloodAwardThisTick` also guards against a
+          // second projectile awarding it again later in this same tick.
+          if (
+            fightingPhase &&
+            state.round.firstBloodPlayerId === undefined &&
+            firstBloodAwardThisTick === null &&
+            proj.ownerId !== null &&
+            proj.ownerId !== ev.victimId
+          ) {
+            firstBloodAwardThisTick = proj.ownerId;
+          }
           const newHealth = Math.max(0, postPlayer.health - finalDamage);
           const wasAlive_main = postPlayer.alive;
           let nextVictim = {
@@ -1097,6 +1121,40 @@ export function stepWithRuntime(
     }
   }
 
+  // 3d. Sudden-death storm: only active once round.suddenDeathActive is set
+  //     (see round.ts's countdown→fighting transition). Same direct-damage
+  //     drain shape as fire patches above — environmental DoT, no parry/
+  //     shield mitigation. Uses `state.round`, not `roundStateForStep` (not
+  //     computed yet at this point in the tick) — one-tick lag on a shrink
+  //     that unfolds over 90s is imperceptible.
+  if (state.round.suddenDeathActive) {
+    const stormResult = stepSuddenDeathStorm(players, state.round, runtime.map.size, effDtMs);
+    for (const ev of stormResult.events) {
+      if (ev.t === "hit-confirmed" && players[ev.victimId]) {
+        const victim = players[ev.victimId]!;
+        if (victim.alive) {
+          const scaledDamage = ev.damage * chaosProfile.damageMultiplier;
+          ev.damage = scaledDamage;
+          const newHealth = Math.max(0, victim.health - scaledDamage);
+          players[ev.victimId] = {
+            ...victim,
+            health: newHealth,
+            alive: newHealth > 0,
+          };
+          if (newHealth === 0) {
+            events.push({
+              t: "player-killed",
+              victimId: ev.victimId,
+              killerId: null,
+              cause: "storm",
+            });
+          }
+        }
+      }
+      events.push(ev);
+    }
+  }
+
   // 4. Pickups: pickup-vs-player overlap, instant effects + buff timers,
   //    plus respawn scheduling. Runs only during fighting phase — countdown
   //    / round-over freeze pickup activity. Card-cache offers and other
@@ -1169,6 +1227,17 @@ export function stepWithRuntime(
   // companions).
   let finalSatellites = despawnSatellitesForDeadOwners(nextSatellites, cleanedPlayers);
 
+  // First-blood wager: fold this tick's award (if any) into the round-state
+  // input BEFORE stepping the round machine, so round.ts's `next` scaffold
+  // (which carries `firstBloodPlayerId` forward untouched) persists it from
+  // here on. Also emit the informational event now that we know the tick's
+  // final verdict.
+  let roundStateForStep = state.round;
+  if (firstBloodAwardThisTick !== null && state.round.firstBloodPlayerId === undefined) {
+    roundStateForStep = { ...state.round, firstBloodPlayerId: firstBloodAwardThisTick };
+    events.push({ t: "first-blood", playerId: firstBloodAwardThisTick });
+  }
+
   // 5. Round state machine. Delegate to the orchestrator when present;
   //    fall back to the inline stepRound call for tests that don't wire
   //    up a runtime orchestrator.
@@ -1180,7 +1249,7 @@ export function stepWithRuntime(
     roundResult = runtime.orchestrator.step(cleanedPlayers, nextTick, rngState, effDtMs);
   } else {
     roundResult = stepRound({
-      state: state.round,
+      state: roundStateForStep,
       players: cleanedPlayers,
       dtMs: effDtMs,
       targetScore: TARGET_SCORE_DEFAULT,

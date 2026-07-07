@@ -238,6 +238,23 @@ export type PlayerEntity = {
    * snapshots omitting the field read as "unknown / treat as not grounded".
    */
   grounded?: boolean;
+  /**
+   * -1/0/+1: which side (if any) the player is currently touching/gripping
+   * a wall on, at end-of-tick. Sourced from
+   * `PlayerMovementMemory.touchingWallDir` in `World.ts`, same render-only
+   * pattern as `grounded` above — sim correctness code uses the host-only
+   * movement memory directly. Wire-encoded so remote rigs can render the
+   * wall-slide/wall-jump pose. Optional/additive: omitted reads as 0 (not
+   * touching a wall).
+   */
+  touchingWallDir?: number;
+  /**
+   * True while a dash is active, at end-of-tick. Sourced from
+   * `PlayerMovementMemory.dashActiveMs > 0` in `World.ts`. Render-only
+   * signal, same pattern as `grounded`/`touchingWallDir`. Optional/additive:
+   * omitted reads as false.
+   */
+  dashing?: boolean;
 };
 
 export type ProjectileEntity = {
@@ -371,6 +388,23 @@ export type RoundState = {
   draftingExpiresAtTick?: Tick;
   draftingPicked?: Record<PlayerId, string>;
   draftingOffers?: Record<PlayerId, string[]>;
+  /**
+   * First-blood wager (design pillars doc, "distinctive features"): the
+   * first player to land a hit on another player this round gets a temp
+   * speed boost for the rest of the round (see FIRST_BLOOD_SPEED_MULTIPLIER
+   * in World.ts). `undefined` = not yet claimed this round. Reset on every
+   * round transition (round.ts).
+   */
+  firstBloodPlayerId?: PlayerId;
+  /**
+   * Sudden-death shrinking arena (design pillars doc): set true when this
+   * round begins with every scored player tied at `targetScore - 1` — a
+   * true decider round. While true, `World.ts`'s sudden-death storm zone
+   * (see `suddenDeath.ts`) damages players outside a safe radius that
+   * shrinks from 1.0x to 0.6x of the arena over the round timer. Reset on
+   * every round transition.
+   */
+  suddenDeathActive?: boolean;
 };
 
 export type WorldState = {
@@ -438,8 +472,22 @@ export type SimEvent =
       t: 'player-killed';
       victimId: PlayerId;
       killerId: PlayerId | null;
-      cause: 'projectile' | 'void' | 'burn' | 'fire' | 'explosion' | 'chain-lightning';
+      cause: 'projectile' | 'void' | 'burn' | 'fire' | 'explosion' | 'chain-lightning' | 'storm';
     }
+  /**
+   * Emitted exactly once per round when the first hit-confirmed of the
+   * round lands with a resolvable attacker (see World.ts's per-projectile
+   * hit-resolution loop). `playerId` is the attacker, not the victim —
+   * matches how `player-killed.killerId` is named from the actor's side.
+   */
+  | { t: 'first-blood'; playerId: PlayerId }
+  /**
+   * Emitted exactly once when a round enters sudden death (every scored
+   * player tied at `targetScore - 1`). Purely informational — the actual
+   * shrinking-storm damage is carried by ordinary `hit-confirmed` events
+   * with `sourceProjectileId: null` and `player-killed.cause === 'storm'`.
+   */
+  | { t: 'sudden-death-started' }
   /**
    * Emitted when a player collects a `card-cache` pickup. The sim pre-rolls
    * the offered card ids deterministically (seeded RNG). The client overlay

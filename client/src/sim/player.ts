@@ -1,11 +1,10 @@
-// Pure player movement extracted from client/src/game/systems/MovementSystem.ts.
-// All constants mirror that file so the offline practice path stays identical
-// after MatchScene wires the sim/ output into rendering.
-//
-// Now covers: run/jump/gravity/friction/coyote/buffer/cut/fastFall/crouch + jetpack.
-// Parry, shield, and card stat modifiers come in a follow-up pass — they all
-// read off PlayerEntity fields that don't exist yet, and we keep this file
-// additive against Dev A's sim/types.ts contract.
+// Pure player movement: run/jump/gravity/friction/coyote/buffer/cut/
+// fastFall/crouch/wall-slide/wall-jump/dash. Historically extracted from a
+// legacy jetpack-era MovementSystem (since deleted, along with the jetpack —
+// walls are the vertical-traversal toolkit now); this is the single physics
+// implementation for both the online path (World.ts) and offline Practice
+// (client/src/game/systems/LocalPlayerController.ts), mirrored bit-for-bit
+// in sim/src/player.zig for wasm parity.
 
 import {
   resolveMoveCached,
@@ -51,6 +50,14 @@ const M = {
   wallLatchCatchVy: 90,
 } as const;
 
+// Collision-box size, re-exported so external consumers (rendering/VFX
+// proximity checks, the local-practice player controller) read the real
+// physics box instead of hand-duplicating these numbers as magic constants
+// (which is exactly what happened before this export existed).
+export const PLAYER_BODY_WIDTH = M.bodyWidth;
+export const PLAYER_BODY_HEIGHT = M.bodyHeight;
+export const PLAYER_CROUCH_HEIGHT = M.crouchHeight;
+
 /**
  * Distance below the map's bottom edge (`map.size.y`) at which a player is
  * considered "in the void" and force-killed. Prevents the
@@ -64,8 +71,9 @@ const M = {
  */
 export const KILL_PLANE_MARGIN_PX = 200;
 
-// Jetpack constants — mirror the offline reference in
-// client/src/game/systems/MovementSystem.ts so behavior stays identical.
+// Jetpack constants — the jetpack itself is removed from gameplay (walls are
+// the vertical-traversal toolkit now); these remain only for the wasm ABI
+// struct layout / wire compatibility (PlayerEntity.jetpackFuel).
 export const JETPACK_MAX_FUEL = 125;
 export const JETPACK_THRUST = 1480;
 export const JETPACK_FUEL_DRAIN_PER_SECOND = 32;
@@ -132,6 +140,25 @@ export function freshPlayerMovementMemory(): PlayerMovementMemory {
     dashCooldownMs: 0,
     dashUsedInAir: 0,
     dashActiveMs: 0,
+  };
+}
+
+/**
+ * Mirrors the host-only `PlayerMovementMemory` fields the render layer needs
+ * onto the entity itself: `grounded`/`touchingWallDir`/`dashing`. Sim
+ * correctness code always reads movement memory directly — these entity
+ * copies exist only so the wire codec (snapshotDelta P_HI bits) and the
+ * procedural rig (`ProceduralPlayerPose`) have something to read.
+ */
+export function mirrorMovementMemoryOntoEntity(
+  entity: PlayerEntity,
+  memory: PlayerMovementMemory,
+): PlayerEntity {
+  return {
+    ...entity,
+    grounded: memory.groundedLastFrame,
+    touchingWallDir: memory.touchingWallDir,
+    dashing: memory.dashActiveMs > 0,
   };
 }
 

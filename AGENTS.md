@@ -176,7 +176,7 @@ A task is done when:
 Use tasks like this:
 
 ```text
-Implement player jump buffering in client/src/game/systems/MovementSystem.ts.
+Implement player jump buffering in client/src/sim/player.ts.
 Acceptance criteria:
 - jump input within 100ms before landing triggers jump on landing;
 - buffer duration is configurable;

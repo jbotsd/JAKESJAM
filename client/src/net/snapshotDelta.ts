@@ -27,6 +27,9 @@
  *  abilityCharge → included in every delta unconditionally (cheap, changes frequently)
  *  lastProcessedInputSeq → included unconditionally
  *  vulnerabilityUntilTick, blockJammerUntilTick, bossModeUntilTick → optional tail
+ *  P_HI tail (bits 4-6): grounded, touchingWallDir (-1/0/+1 — the bit only
+ *  flags "changed"; the actual signed value rides in the patch), dashing.
+ *  All render-only signals for the procedural rig, not read by sim logic.
  *
  * NOTE: For simplicity, since PlayerEntity has ~30 optional/frequent fields,
  * we use a two-number bitmask pair (lo: bits 0-30, hi: bits 0-7) rather than
@@ -197,6 +200,8 @@ function diffPlayer(
   if (prev.blockJammerUntilTick !== next.blockJammerUntilTick) { bitsHi |= P_HI.blockJammerUntilTick; patch.blockJammerUntilTick = next.blockJammerUntilTick; }
   if (prev.bossModeUntilTick !== next.bossModeUntilTick) { bitsHi |= P_HI.bossModeUntilTick; patch.bossModeUntilTick = next.bossModeUntilTick; }
   if ((prev.grounded ?? false) !== (next.grounded ?? false)) { bitsHi |= P_HI.grounded; patch.grounded = next.grounded; }
+  if ((prev.touchingWallDir ?? 0) !== (next.touchingWallDir ?? 0)) { bitsHi |= P_HI.touchingWallDir; patch.touchingWallDir = next.touchingWallDir ?? 0; }
+  if ((prev.dashing ?? false) !== (next.dashing ?? false)) { bitsHi |= P_HI.dashing; patch.dashing = next.dashing; }
 
   // Always send abilityCharge and lastProcessedInputSeq (change almost every tick)
   patch.abilityCharge = next.abilityCharge;

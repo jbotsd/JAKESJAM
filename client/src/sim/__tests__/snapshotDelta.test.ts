@@ -296,6 +296,51 @@ describe("snapshotDelta", () => {
       expect(result.players[p1]?.grounded).toBe(false);
     });
 
+    test("touchingWallDir transition round-trips (0 → -1 → +1 → 0)", () => {
+      const p1 = PlayerId("p1");
+      const base = makePlayer({ id: p1, touchingWallDir: 0 });
+      const prev0 = makeWorld({ players: { [p1]: base } });
+
+      const negWorld = makeWorld({ players: { [p1]: { ...base, touchingWallDir: -1 } } });
+      const negDelta = encodeDelta(prev0, negWorld);
+      const negResult = applyDelta(prev0, negDelta);
+      expect(negResult.players[p1]?.touchingWallDir).toBe(-1);
+
+      const posWorld = makeWorld({ players: { [p1]: { ...base, touchingWallDir: 1 } } });
+      const posDelta = encodeDelta(negWorld, posWorld);
+      const posResult = applyDelta(negResult, posDelta);
+      expect(posResult.players[p1]?.touchingWallDir).toBe(1);
+
+      const zeroWorld = makeWorld({ players: { [p1]: { ...base, touchingWallDir: 0 } } });
+      const zeroDelta = encodeDelta(posWorld, zeroWorld);
+      const zeroResult = applyDelta(posResult, zeroDelta);
+      expect(zeroResult.players[p1]?.touchingWallDir).toBe(0);
+    });
+
+    test("dashing flag transition round-trips (false → true)", () => {
+      const p1 = PlayerId("p1");
+      const basePlayer = makePlayer({ id: p1, dashing: false });
+      const prev = makeWorld({ players: { [p1]: basePlayer } });
+      const next = makeWorld({
+        players: { [p1]: { ...basePlayer, dashing: true } },
+      });
+      const delta = encodeDelta(prev, next);
+      const result = applyDelta(prev, delta);
+      expect(result.players[p1]?.dashing).toBe(true);
+    });
+
+    test("dashing flag transition round-trips (true → false)", () => {
+      const p1 = PlayerId("p1");
+      const basePlayer = makePlayer({ id: p1, dashing: true });
+      const prev = makeWorld({ players: { [p1]: basePlayer } });
+      const next = makeWorld({
+        players: { [p1]: { ...basePlayer, dashing: false } },
+      });
+      const delta = encodeDelta(prev, next);
+      const result = applyDelta(prev, delta);
+      expect(result.players[p1]?.dashing).toBe(false);
+    });
+
     test("clearing a buff (undefined) round-trips cleanly", () => {
       const p1 = PlayerId("p1");
       const basePlayer = makePlayer({

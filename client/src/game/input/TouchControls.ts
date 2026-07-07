@@ -53,9 +53,14 @@ export class TouchControls {
 
   private attached = false;
   private readonly mount: HTMLElement;
+  /** Off in Practice — no combat there, so the buttons would show a
+   *  mechanic with nothing to react to (docs/practice-zone-goal.md item 3:
+   *  combat UI genuinely absent, not just inert). On for the online path. */
+  private readonly combatButtons: boolean;
 
-  constructor(mount: HTMLElement = document.body) {
+  constructor(mount: HTMLElement = document.body, options: { combatButtons?: boolean } = {}) {
     this.mount = mount;
+    this.combatButtons = options.combatButtons ?? true;
     this.root = el("div", "tc-root");
     this.leftZone = el("div", "tc-zone tc-zone--left");
     this.rightZone = el("div", "tc-zone tc-zone--right");
@@ -63,7 +68,10 @@ export class TouchControls {
     this.shieldBtn.textContent = "SHIELD";
     this.parryBtn = el("div", "tc-btn tc-btn--parry");
     this.parryBtn.textContent = "PARRY";
-    this.root.append(this.leftZone, this.rightZone, this.shieldBtn, this.parryBtn);
+    this.root.append(this.leftZone, this.rightZone);
+    if (this.combatButtons) {
+      this.root.append(this.shieldBtn, this.parryBtn);
+    }
   }
 
   attach(): void {
@@ -74,8 +82,10 @@ export class TouchControls {
     // the zone still tracks (thumbs wander).
     this.leftZone.addEventListener("pointerdown", this.onLeftDown, { passive: false });
     this.rightZone.addEventListener("pointerdown", this.onRightDown, { passive: false });
-    this.shieldBtn.addEventListener("pointerdown", this.onShieldDown, { passive: false });
-    this.parryBtn.addEventListener("pointerdown", this.onParryDown, { passive: false });
+    if (this.combatButtons) {
+      this.shieldBtn.addEventListener("pointerdown", this.onShieldDown, { passive: false });
+      this.parryBtn.addEventListener("pointerdown", this.onParryDown, { passive: false });
+    }
     window.addEventListener("pointermove", this.onMove, { passive: false });
     window.addEventListener("pointerup", this.onUp, { passive: false });
     window.addEventListener("pointercancel", this.onUp, { passive: false });

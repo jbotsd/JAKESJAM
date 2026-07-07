@@ -39,7 +39,7 @@ client/src/sim/                        # NEW — entire directory is yours
 
 client/src/game/scenes/MatchScene.ts   # YOU WILL HEAVILY REFACTOR THIS
                                        # (extract sim out, leave rendering/input behind)
-client/src/game/systems/MovementSystem.ts    # delete after extraction
+client/src/game/systems/MovementSystem.ts    # DELETED (2026-07-07) — see client/src/sim/player.ts + LocalPlayerController.ts
 client/src/game/systems/WeaponSystem.ts      # delete after extraction
 client/src/game/systems/ProjectileSystem.ts  # delete after extraction
 client/src/game/systems/AudioSystem.ts       # KEEP — audio is rendering, not sim. Read events from sim, play sounds.
@@ -219,7 +219,7 @@ Your starting material lives in these files. Order roughly matches dependency:
 | Source (current) | Destination (new) | Notes |
 |---|---|---|
 | `client/src/game/types/game.ts` lines 60–227 (gameplay types) | `sim/types.ts` | Keep UI-only types (`CardVisualDefinition`, `CharacterDefinition`) in `game/types/game.ts` — sim doesn't need them. |
-| `client/src/game/systems/MovementSystem.ts` (184 lines) | `sim/player.ts` | Extract pure functions; replace Phaser body refs with PlayerEntity fields. |
+| `client/src/game/systems/MovementSystem.ts` (184 lines) | `sim/player.ts` | ✅ Done (2026-07-07) — extracted, `MatchScene` now wraps `stepPlayer` via `LocalPlayerController.ts`, `MovementSystem.ts` deleted. |
 | `client/src/game/systems/WeaponSystem.ts` (169 lines) | `sim/weapon.ts` | Fire-rate, recoil, modifier composition. |
 | `client/src/game/systems/ProjectileSystem.ts` (952 lines) | `sim/projectile.ts` + `sim/collision.ts` | Biggest extraction. Split projectile motion from collision response. |
 | `client/src/game/scenes/MatchScene.ts` lines 1557–1597 (TestTarget, ArenaDestructible, FirePatch, HazardHit) | `sim/destructible.ts` + `sim/fire.ts` | These are inline in MatchScene right now. |
@@ -316,7 +316,7 @@ You're done with the extraction (and unblock real gameplay work) when:
 - [ ] `sim/World.create()` builds a starting state for a 1v1 match on Boxworks with both players, all destructibles, all pickups
 - [ ] `sim/World.step()` advances one 60Hz tick: movement, projectile motion, collisions, damage, destructible health, fire DoT, pickup collection
 - [ ] `MatchScene.ts` is ≤500 lines and contains zero gameplay logic — only Phaser lifecycle, rendering, and input capture
-- [ ] `MovementSystem.ts`, `WeaponSystem.ts`, `ProjectileSystem.ts` are deleted
+- [x] `MovementSystem.ts` is deleted (2026-07-07) — [ ] `WeaponSystem.ts`, `ProjectileSystem.ts` still pending
 - [ ] `npm run test --workspace client` passes with at least the determinism test green
 - [ ] `npm run typecheck` passes
 - [ ] `npm run dev:client` boots, you can play offline practice using only `sim/` + `MatchScene` rendering, no behavioral regressions vs. current main
@@ -331,7 +331,7 @@ These are the moments where the streams will collide. Plan for them.
 | When | What | How to handle |
 |---|---|---|
 | Day 1, end of day | You publish `sim/types.ts` + stub `sim/World.ts` | One PR, small, clearly titled `[sim] contract types — unblocks netcode`. Dev B reviews and merges fast. |
-| When you delete `MovementSystem.ts` | Dev B may have referenced it from `RoomClient` for offline-mode snapshot building | Grep first; coordinate the delete with a heads-up. |
+| ~~When you delete `MovementSystem.ts`~~ Done (2026-07-07) | Confirmed via grep: nothing outside the file itself referenced it (`RoomClient`/`RemotePlayerManager` don't) | Deleted; `MatchScene.ts` now runs the real physics via `LocalPlayerController.ts` (wraps `sim/player.ts`'s `stepPlayer`, same as the online path). |
 | When you refactor `MatchScene.ts` | Dev B will be adding the online connection boot path here | Land your refactor first, in a single PR. Dev B integrates against the new shape. |
 | When `sim/` step exists for real | Dev B can finally test reconciliation against your sim | Pair-debug session — reconciliation bugs often look like sim bugs and vice versa. Plan an hour together. |
 | When character archetypes / cards modify sim behavior | Dev B's protocol may need new event types | Ping Dev B; don't add to `SimEvent` union without a heads-up. Versioned protocol means breaking change costs us a deploy coordination. |

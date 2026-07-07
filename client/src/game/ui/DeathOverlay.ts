@@ -13,7 +13,14 @@ export class DeathOverlay {
   private timerEl: HTMLSpanElement;
   private destroyed = false;
 
-  constructor() {
+  /**
+   * `title`/`subtitle` default to the online-match copy ("ELIMINATED" /
+   * "Respawning next round") — combat-coded language that assumes an
+   * opponent and a round. Practice mode (no enemies, no round/match wrapper
+   * — docs/practice-zone-goal.md item 3) passes its own copy so a solo fall
+   * doesn't read as being killed by someone.
+   */
+  constructor(title = "ELIMINATED", subtitle = "Respawning next round") {
     this.root = document.createElement("div");
     this.root.dataset.deathOverlay = "true";
     Object.assign(this.root.style, ROOT_STYLE);
@@ -25,19 +32,19 @@ export class DeathOverlay {
     skull.textContent = "✦";
     Object.assign(skull.style, SKULL_STYLE);
 
-    const title = document.createElement("div");
-    title.textContent = "ELIMINATED";
-    Object.assign(title.style, TITLE_STYLE);
+    const titleEl = document.createElement("div");
+    titleEl.textContent = title;
+    Object.assign(titleEl.style, TITLE_STYLE);
 
     const sub = document.createElement("div");
-    sub.textContent = "Respawning next round";
+    sub.textContent = subtitle;
     Object.assign(sub.style, SUB_STYLE);
 
     this.timerEl = document.createElement("span");
     this.timerEl.textContent = "3";
     Object.assign(this.timerEl.style, TIMER_STYLE);
 
-    stage.append(skull, title, sub, this.timerEl);
+    stage.append(skull, titleEl, sub, this.timerEl);
     this.root.appendChild(stage);
 
     document.body.appendChild(this.root);
