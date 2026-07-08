@@ -231,17 +231,22 @@ const game = new Phaser.Game(gameConfig);
 // behaviour depends on this — pure introspection hook.
 globalWithGame.__jakesjam_game__ = game;
 
-// Right-click is the parry input, but Phaser's per-scene
-// input.mouse.disableContextMenu() misses edge cases (scene transitions,
-// right-drag), so the browser menu occasionally popped over the canvas.
-// A capture-phase listener scoped to the canvas kills it reliably while
-// leaving the DOM lobby/menus (where right-click is harmless) untouched.
-// Guarded so re-running under HMR doesn't stack duplicate listeners.
+// Right-click is now the PRIMARY combat action (the shield power-slide
+// bash), so the browser copy/paste-style context menu must NEVER appear
+// over the game. Phaser's per-scene input.mouse.disableContextMenu() misses
+// edge cases (scene transitions, right-drag). A capture-phase listener kills
+// it for any right-click landing on the canvas OR the game-root container
+// that holds it (covers right-drag where the event target isn't the canvas
+// itself), while leaving the DOM lobby/menus untouched. HMR-guarded so it
+// doesn't stack duplicate listeners.
 if (!globalWithGame.__jakesjam_ctxmenu__) {
-  const suppressCanvasContextMenu = (e: MouseEvent) => {
-    if ((e.target as HTMLElement | null)?.tagName === "CANVAS") e.preventDefault();
+  const suppressGameContextMenu = (e: MouseEvent) => {
+    const el = e.target as HTMLElement | null;
+    if (el && (el.tagName === "CANVAS" || el.closest("#game-root"))) {
+      e.preventDefault();
+    }
   };
-  document.addEventListener("contextmenu", suppressCanvasContextMenu, { capture: true });
+  document.addEventListener("contextmenu", suppressGameContextMenu, { capture: true });
   globalWithGame.__jakesjam_ctxmenu__ = true;
 }
 

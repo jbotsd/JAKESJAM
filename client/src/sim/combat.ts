@@ -262,15 +262,16 @@ export function tryDeflectDamage(
     }
   }
 
-  // 1.5. AEGIS DASH — while lunging, the shield is deployed in the travel
-  //      direction: a FULL block within the frontal arc of the dash, at NO
-  //      shield-charge cost (the dash's own 520ms cooldown + air-charge gating
-  //      bound it). Directional, NOT full invuln — a hit from the flank or
-  //      back still lands — so it's the directional shield merged onto the
-  //      dash, not a panic-immortality button. Guard direction is the dash's
+  // 1.5. AEGIS POWER-SLIDE (the right-click move) — a directional launch that
+  //      PARRIES on the way in: a shot arriving within the frontal arc of the
+  //      slide is DEFLECTED (0 damage AND the shard is reflected back at the
+  //      attacker, exactly like the timed parry) — the parry, kept, but bolted
+  //      onto the launch. At no shield-charge cost (the dash's own 520ms
+  //      cooldown + air-charge gating bound it). Directional, NOT full invuln —
+  //      a hit from the flank/back still lands. Guard direction is the slide's
   //      travel velocity (friction+gravity are suspended during the burst, so
-  //      velocity == the aim-directional lunge vector). Reuses the shield's
-  //      120° frontal cone so a held guard and a lunging guard feel identical.
+  //      velocity == the aim-directional launch vector). Reuses the shield's
+  //      120° frontal cone.
   if (player.dashing === true && projectile !== null) {
     const facing =
       player.vx === 0 && player.vy === 0 ? 0 : lutAtan2(player.vy, player.vx);
@@ -278,8 +279,8 @@ export function tryDeflectDamage(
       return {
         player,
         damage: 0,
-        deflected: false,
-        shielded: true,
+        deflected: true, // parry-style: World.ts reflects the shard at the attacker
+        shielded: false,
         shieldPopped: false,
         shieldReflected: false,
       };

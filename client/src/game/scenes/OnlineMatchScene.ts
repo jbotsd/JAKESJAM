@@ -559,10 +559,10 @@ export class OnlineMatchScene extends Phaser.Scene {
           "WASD  move",
           "SPACE  jump",
           "MOUSE  aim & fire",
-          // Shift maps to InputBit.Shield (hold-to-shield); right mouse is the
-          // parry (InputBit.Ability).
+          // Shift = hold-to-shield (InputBit.Shield); right mouse (or C) = the
+          // aegis shield power-slide bash (InputBit.Dash).
           "SHIFT  shield",
-          "RIGHT CLICK  parry",
+          "RIGHT CLICK  shield dash",
         ];
     // y=48: below the always-visible RTT pill (top-right, ~28px tall) so
     // the two don't overlap during the legend's 3s life.
@@ -624,11 +624,13 @@ export class OnlineMatchScene extends Phaser.Scene {
       keys |= InputBit.Fire;
     }
     if (this.keys.shift.isDown) keys |= InputBit.Shield;
-    if (this.keys.dash.isDown) keys |= InputBit.Dash;
-    // Parry: right mouse button -> InputBit.Ability. The sim handles the
-    // rising-edge trigger + cooldown (tryStartParry via prevKeys), so we
-    // just report the held state like every other key.
-    if (this.input.activePointer.rightButtonDown()) keys |= InputBit.Ability;
+    // Shield power-slide bash on RIGHT MOUSE (aimable — slides toward the
+    // cursor, blocks on the way in, bashes on contact). C stays as a keyboard
+    // alternate. The old timed parry (InputBit.Ability) is subsumed by the
+    // aegis shield-dash and is no longer bound.
+    if (this.keys.dash.isDown || this.input.activePointer.rightButtonDown()) {
+      keys |= InputBit.Dash;
+    }
 
     const pointer = this.input.activePointer;
     const cam = this.cameras.main;

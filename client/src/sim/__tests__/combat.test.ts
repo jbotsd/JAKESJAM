@@ -233,31 +233,31 @@ describe("tryDeflectDamage", () => {
     expect(r.damage).toBe(proj.damage);
   });
 
-  test("aegis dash blocks a hit in the lunge's frontal arc (no charge cost)", () => {
-    // Lunging toward +x (vx>0) with no shield held and no charge — the block
-    // is the dash's own property.
+  test("aegis power-slide PARRIES (deflects) a hit in the frontal arc, no charge cost", () => {
+    // Sliding toward +x (vx>0) with no shield held and no charge — the parry
+    // is the slide's own property, and it reflects like the timed parry.
     const p = mkPlayer({ x: 0, y: 0, vx: 700, vy: 0, dashing: true, shieldActive: false });
-    const proj = mkProjectile({ x: 50, y: 0 }); // in front of the lunge
+    const proj = mkProjectile({ x: 50, y: 0 }); // in front of the slide
     const r = tryDeflectDamage(p, proj, proj.damage, Tick(0));
-    expect(r.shielded).toBe(true);
+    expect(r.deflected).toBe(true);
     expect(r.damage).toBe(0);
     // No shield-charge machinery touched.
     expect(r.player.shieldCharge).toBe(p.shieldCharge);
   });
 
-  test("aegis dash does NOT block a hit from behind the lunge (directional)", () => {
+  test("aegis power-slide does NOT parry a hit from behind the slide (directional)", () => {
     const p = mkPlayer({ x: 0, y: 0, vx: 700, vy: 0, dashing: true });
     const proj = mkProjectile({ x: -50, y: 0, vx: 300 }); // from behind
     const r = tryDeflectDamage(p, proj, proj.damage, Tick(0));
-    expect(r.shielded).toBe(false);
+    expect(r.deflected).toBe(false);
     expect(r.damage).toBe(proj.damage);
   });
 
-  test("aegis block is inactive when not dashing", () => {
+  test("aegis parry is inactive when not sliding", () => {
     const p = mkPlayer({ x: 0, y: 0, vx: 700, vy: 0, dashing: false });
     const proj = mkProjectile({ x: 50, y: 0 });
     const r = tryDeflectDamage(p, proj, proj.damage, Tick(0));
-    expect(r.shielded).toBe(false);
+    expect(r.deflected).toBe(false);
     expect(r.damage).toBe(proj.damage);
   });
 
