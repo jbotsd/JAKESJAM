@@ -76,11 +76,11 @@ pub const StarterBase = struct {
 
 pub const cards = [_]CardEntry{
     .{ .id = "raycast-prism", .mod = .{ .damage_mul = 0.9, .proj_range_px_set = 880.0, .proj_impact_radius_set = 12.0 } },
-    .{ .id = "crystal-volley", .mod = .{ .proj_shape = 3, .proj_count_set = 1.0 } },
+    .{ .id = "crystal-volley", .mod = .{ .damage_mul = 1.06, .proj_speed_mul = 1.06, .proj_shape = 3, .proj_count_set = 1.0 } },
     .{ .id = "circle-rounds", .mod = .{ .projectile_speed_mul = 1.08, .proj_size_mul = 0.92, .proj_shape = 0 } },
     .{ .id = "triangle-rounds", .mod = .{ .damage_mul = 1.12, .proj_size_mul = 1.02, .proj_shape = 1 } },
     .{ .id = "square-rounds", .mod = .{ .projectile_speed_mul = 0.88, .proj_size_mul = 1.22, .proj_shape = 2 } },
-    .{ .id = "x-rounds", .mod = .{ .damage_mul = 1.06, .proj_size_mul = 1.08, .proj_shape = 5 } },
+    .{ .id = "x-rounds", .mod = .{ .damage_mul = 1.1, .proj_size_mul = 1.08, .proj_shape = 5 } },
     .{ .id = "i-rounds", .mod = .{ .damage_mul = 1.16, .projectile_speed_mul = 0.94, .proj_size_mul = 1.12, .proj_shape = 6 } },
     .{ .id = "orby-blap-blap", .mod = .{ .damage_mul = 0.78, .projectile_speed_mul = 0.72, .spread_radians_set = 0.3141592653589793, .proj_size_mul = 1.38, .proj_shape = 4, .proj_count_set = 2.0, .proj_impact_radius_set = 36.0 } },
     .{ .id = "continuous-refractor", .mod = .{ .damage_mul = 0.42, .fire_rate_mul = 2.4, .proj_impact = 4, .proj_range_px_set = 760.0, .proj_slow_mul_set = 0.72 } },
@@ -94,7 +94,7 @@ pub const cards = [_]CardEntry{
     .{ .id = "boomerang-return", .mod = .{ .projectile_speed_mul = 0.92, .proj_lifetime_mul = 1.18, .proj_pathing = 3 } },
     .{ .id = "x-velocity", .mod = .{ .projectile_speed_mul = 1.18, .proj_lifetime_mul = 0.96 } },
     .{ .id = "zero-g-floaters", .mod = .{ .projectile_speed_mul = 0.58, .proj_size_mul = 1.18, .proj_lifetime_mul = 1.5, .proj_pathing = 6 } },
-    .{ .id = "dual-splitter", .mod = .{ .damage_mul = 0.88, .spread_radians_set = 0.5235987755982988, .proj_count_add = 1.0 } },
+    .{ .id = "dual-splitter", .mod = .{ .damage_mul = 0.92, .fire_rate_mul = 1.06, .spread_radians_set = 0.4537856055185257, .proj_count_add = 1.0 } },
     .{ .id = "triple-fan", .mod = .{ .damage_mul = 0.68, .spread_radians_add = 0.3141592653589793, .proj_count_add = 2.0 } },
     .{ .id = "five-shard-spray", .mod = .{ .damage_mul = 0.48, .fire_rate_mul = 0.86, .spread_radians_add = 0.4537856055185257, .proj_count_add = 4.0, .proj_size_mul = 0.86 } },
     .{ .id = "one-more-shard", .mod = .{ .damage_mul = 0.94, .spread_radians_add = 0.12217304763960307, .proj_count_add = 1.0 } },

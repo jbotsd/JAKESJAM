@@ -134,4 +134,44 @@ describe("createWeaponBuild", () => {
     expect(build.occupiedBuckets).toContain("delivery");
     expect(build.occupiedBuckets).toHaveLength(1);
   });
+
+  // Balance audit: these three were trap picks (crystal-volley = zero stat
+  // change; x-rounds = strictly boring next to its uncommon peers;
+  // dual-splitter = strictly dominated by +1 Projectile). Locks in the fix
+  // so a future edit can't silently re-flatten them back to traps.
+  describe("trap-card fixes have real, non-zero effect", () => {
+    const find = (id: string): CardDefinition => {
+      const c = crystalRoundsCards.find((c) => c.id === id);
+      if (!c) throw new Error(`missing card: ${id}`);
+      return c;
+    };
+
+    test("crystal-volley is no longer a pure-identity pick", () => {
+      const base = createWeaponBuild(starterWeapon, []);
+      const withCard = createWeaponBuild(starterWeapon, [find("crystal-volley")]);
+      expect(withCard.damage).toBeGreaterThan(base.damage);
+      expect(withCard.projectile.speedMultiplier).toBeGreaterThan(
+        base.projectile.speedMultiplier,
+      );
+    });
+
+    test("x-rounds now beats its uncommon peer's damage-only baseline", () => {
+      const base = createWeaponBuild(starterWeapon, []);
+      const build = createWeaponBuild(starterWeapon, [find("x-rounds")]);
+      // Was +6%; must now be a real step up (>=+10%) and also grants
+      // recoil control, not damage alone.
+      expect(build.damage).toBeGreaterThanOrEqual(base.damage * 1.1 - 1e-6);
+      expect(build.recoilImpulse).toBeLessThan(base.recoilImpulse);
+    });
+
+    test("dual-splitter no longer strictly loses to +1 Projectile", () => {
+      const oneMore = createWeaponBuild(starterWeapon, [find("one-more-shard")]);
+      const dual = createWeaponBuild(starterWeapon, [find("dual-splitter")]);
+      // Both add exactly 1 projectile — dual-splitter must now win on at
+      // least one axis (fire rate) to justify its higher essence cost,
+      // where before it strictly lost on every axis.
+      expect(dual.projectile.count).toBe(oneMore.projectile.count);
+      expect(dual.fireRate).toBeGreaterThan(oneMore.fireRate);
+    });
+  });
 });

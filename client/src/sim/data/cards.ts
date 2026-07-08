@@ -37,17 +37,21 @@ export const crystalRoundsCards: CardDefinition[] = [
     unique: true,
   },
   {
+    // Was a pure-identity pick (zero stat change) — a wasted slot in every
+    // offer it appeared in. Given a small, real edge (still the cheapest
+    // card in the game) so "keep it simple" is an honest choice, not a trap.
     id: "crystal-volley",
     name: "Crystal Volley",
     category: "weapon",
     rarity: "common",
     buckets: ["delivery"],
     essenceCost: 1,
-    description: "Keeps the baseline single crystal projectile delivery.",
+    description: "A cleanly-honed baseline shot: tighter and faster.",
     flavorText: "A clean shard, cleanly thrown.",
     modifier: {
       delivery: "projectile",
-      projectile: { shape: "hexagon", count: 1 },
+      projectile: { shape: "hexagon", count: 1, speedMultiplier: 1.06 },
+      damageMultiplier: 1.06,
     },
     visual: visual("hexagon", "#50e3c2"),
     unique: true,
@@ -103,16 +107,20 @@ export const crystalRoundsCards: CardDefinition[] = [
     unique: true,
   },
   {
+    // Was strictly boring next to its uncommon-tier peers (I-Rounds: +16%
+    // dmg / -6% speed at the same cost). Bumped damage and added recoil
+    // control so it earns a real niche: a punchier, steadier shot.
     id: "x-rounds",
     name: "X Rounds",
     category: "projectile",
     rarity: "uncommon",
     buckets: ["shape"],
     essenceCost: 2,
-    description: "Turns the shot into an X-cut crystal with wider contact edges.",
+    description: "An X-cut crystal: wider edges, harder hit, steadier grip.",
     flavorText: "Marked for removal.",
     modifier: {
-      damageMultiplier: 1.06,
+      damageMultiplier: 1.1,
+      recoilMultiplier: 0.92,
       projectile: { shape: "x", sizeMultiplier: 1.08 },
     },
     visual: visual("x", "#fca5a5"),
@@ -346,17 +354,23 @@ export const crystalRoundsCards: CardDefinition[] = [
     unique: true,
   },
   {
+    // Was strictly dominated by +1 Projectile (cheaper, less damage loss,
+    // tighter spread) — the only differentiator (SET vs ADD spread) never
+    // mattered in practice. Given its own niche: a controlled twin-shot
+    // burst (fire-rate up, damage retained better) instead of a worse
+    // swarm-starter.
     id: "dual-splitter",
     name: "Dual Splitter",
     category: "weapon",
     rarity: "common",
     buckets: ["quantity"],
     essenceCost: 2,
-    description: "Fires two projectiles at a tight angle.",
+    description: "Fires two projectiles at a tight angle, faster.",
     flavorText: "One argument, two points.",
     modifier: {
-      damageMultiplier: 0.88,
-      spreadRadians: degrees(30),
+      damageMultiplier: 0.92,
+      fireRateMultiplier: 1.06,
+      spreadRadians: degrees(26),
       projectileCountAdd: 1,
     },
     visual: visual("triangle", "#67e8f9"),
