@@ -1057,6 +1057,7 @@ pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
             // Augment MEMORY carried from world state.
             .dash_cooldown_ms = state.player_movement[pmi].dash_cooldown_ms,
             .dash_active_ms = state.player_movement[pmi].dash_active_ms,
+            .dash_recovery_ms = state.player_movement[pmi].dash_recovery_ms,
             .air_jumps_used = @intCast(state.player_movement[pmi].air_jumps_used),
             .dash_used_in_air = @intCast(state.player_movement[pmi].dash_used_in_air),
         };
@@ -1113,6 +1114,7 @@ pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
         state.player_movement[pmi].touching_wall_dir = @intCast(ps.touching_wall_dir);
         state.player_movement[pmi].dash_cooldown_ms = ps.dash_cooldown_ms;
         state.player_movement[pmi].dash_active_ms = ps.dash_active_ms;
+        state.player_movement[pmi].dash_recovery_ms = ps.dash_recovery_ms;
         state.player_movement[pmi].air_jumps_used = @intCast(ps.air_jumps_used);
         state.player_movement[pmi].dash_used_in_air = @intCast(ps.dash_used_in_air);
         // Ceiling clamp (parity with World.ts computeCeilingClampY): head pushed

@@ -68,6 +68,8 @@ export function makeStepPlayerWasmBackend(sim: SimHandle): StepPlayerFn {
     // ── augment memory (i32) ──
     air_jumps_used: 152,
     dash_used_in_air: 156,
+    // ── augment memory (f64, appended) ──
+    dash_recovery_ms: 160,
   } as const;
 
   return (
@@ -127,6 +129,7 @@ export function makeStepPlayerWasmBackend(sim: SimHandle): StepPlayerFn {
     dv.setFloat64(PLAYER_OFF + F.dash_active_ms, memory.dashActiveMs, true);
     dv.setInt32(PLAYER_OFF + F.air_jumps_used, memory.airJumpsUsed, true);
     dv.setInt32(PLAYER_OFF + F.dash_used_in_air, memory.dashUsedInAir, true);
+    dv.setFloat64(PLAYER_OFF + F.dash_recovery_ms, memory.dashRecoveryMs, true);
 
     // Pack statics + one-way mask
     for (let i = 0; i < count; i++) {
@@ -176,6 +179,7 @@ export function makeStepPlayerWasmBackend(sim: SimHandle): StepPlayerFn {
       dashCooldownMs: dv.getFloat64(PLAYER_OFF + F.dash_cooldown_ms, true),
       dashUsedInAir: dv.getInt32(PLAYER_OFF + F.dash_used_in_air, true),
       dashActiveMs: dv.getFloat64(PLAYER_OFF + F.dash_active_ms, true),
+      dashRecoveryMs: dv.getFloat64(PLAYER_OFF + F.dash_recovery_ms, true),
     };
 
     return {

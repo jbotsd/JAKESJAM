@@ -344,6 +344,7 @@ pub const PlayerMovementMemory = extern struct {
     // Deep-movement augment memory (double-jump + dash). f64s first for align.
     dash_cooldown_ms: f64 = 0,
     dash_active_ms: f64 = 0,
+    dash_recovery_ms: f64 = 0,
     jump_cut_applied: u8,
     jump_released_since_jump: u8,
     grounded_last_frame: u8,
@@ -572,7 +573,7 @@ comptime {
     std.debug.assert(@sizeOf(DestructibleEntity) == 64);
     std.debug.assert(@sizeOf(FireEntity) == 88);
     std.debug.assert(@sizeOf(PickupEntity) == 64);
-    std.debug.assert(@sizeOf(PlayerMovementMemory) == 40);
+    std.debug.assert(@sizeOf(PlayerMovementMemory) == 48);
     std.debug.assert(@sizeOf(SimEvent) == 40);
     std.debug.assert(@sizeOf(ResolvedFireConfig) == 232);
 }

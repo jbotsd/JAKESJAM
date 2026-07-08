@@ -29,6 +29,7 @@ import {
   mirrorMovementMemoryOntoEntity,
   JETPACK_MAX_FUEL,
   KILL_PLANE_MARGIN_PX,
+  DASH_RECOVERY_MS,
   type PlayerMovementMemory,
 } from "./player.js";
 import { buildFireEntity, stepDestructibles } from "./destructible.js";
@@ -681,8 +682,14 @@ export function stepWithRuntime(
 
         // The lance stops: end the attacker's dash and bleed most of its
         // speed (the impact). dashActiveMs=0 also drops the shield block.
+        // A landed bash pays the same recovery endlag as a whiffed slide —
+        // set it directly since stepPlayer's own transition detector only
+        // sees timers it decayed itself.
         const aMem = runtime.movement.get(aid);
-        if (aMem) aMem.dashActiveMs = 0;
+        if (aMem) {
+          aMem.dashActiveMs = 0;
+          aMem.dashRecoveryMs = DASH_RECOVERY_MS;
+        }
         const stopped = {
           ...attacker,
           vx: attacker.vx * BASH_ATTACKER_STOP,

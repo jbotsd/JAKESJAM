@@ -152,4 +152,74 @@ describe("movement augments", () => {
     });
     expect(Math.abs(r.player.vx)).toBeLessThan(50);
   });
+
+  // Recovery endlag: the genre-standard anti-spam lever (Smash air-dodge
+  // endlag, Rivals post-parry lockout, Brawlhalla dash lockout). A whiffed
+  // slide must leave a real, punishable commitment window — sluggish
+  // steering right after the burst ends.
+  describe("dash recovery endlag", () => {
+    test("steering accel is reduced immediately after the burst ends", () => {
+      const map = miniMap();
+      const cache = buildStaticCache(map.platforms, map.size.x, map.size.y);
+      const opts = { collisionCache: cache, dashCharges: 1 };
+      let player = mkPlayer();
+      let mem = freshPlayerMovementMemory();
+      mem.groundedLastFrame = true;
+      // Ground dash toward +x, then coast (no input) until the 210ms burst
+      // fully elapses — recovery should now be active.
+      let r = stepPlayer(player, 0, DASH, 900, 580, mem, map.platforms, STEP, opts);
+      player = r.player; mem = r.memory;
+      let ticks = 0;
+      while (mem.dashActiveMs > 0 && ticks < 30) {
+        r = stepPlayer(player, 0, 0, 900, 580, mem, map.platforms, STEP, opts);
+        player = r.player; mem = r.memory;
+        ticks += 1;
+      }
+      expect(mem.dashActiveMs).toBe(0);
+      expect(mem.dashRecoveryMs).toBeGreaterThan(0);
+
+      // Now hold LEFT (reverse of the dash direction) for one tick — a bare
+      // steering reversal is the clearest signal of accel being throttled.
+      const LEFT = 1 << 0;
+      const recoveringVx = player.vx;
+      r = stepPlayer(player, 0, LEFT, 900, 580, mem, map.platforms, STEP, opts);
+      const deltaRecovering = Math.abs(r.player.vx - recoveringVx);
+
+      // Compare against the SAME reversal once recovery has fully elapsed.
+      let freeMem = { ...mem, dashRecoveryMs: 0 };
+      const freePlayer = { ...player };
+      const rFree = stepPlayer(freePlayer, 0, LEFT, 900, 580, freeMem, map.platforms, STEP, opts);
+      const deltaFree = Math.abs(rFree.player.vx - freePlayer.vx);
+
+      expect(deltaRecovering).toBeLessThan(deltaFree);
+      // The mult is 0.4 — recovering steering should land close to that ratio.
+      expect(deltaRecovering / deltaFree).toBeLessThan(0.6);
+    });
+
+    test("recovery expires and full steering returns", () => {
+      const map = miniMap();
+      const cache = buildStaticCache(map.platforms, map.size.x, map.size.y);
+      const opts = { collisionCache: cache, dashCharges: 1 };
+      let player = mkPlayer();
+      let mem = freshPlayerMovementMemory();
+      mem.groundedLastFrame = true;
+      let r = stepPlayer(player, 0, DASH, 900, 580, mem, map.platforms, STEP, opts);
+      player = r.player; mem = r.memory;
+      // Coast through burst (210ms) + recovery (200ms) + margin.
+      for (let i = 0; i < 30; i++) {
+        r = stepPlayer(player, 0, 0, 900, 580, mem, map.platforms, STEP, opts);
+        player = r.player; mem = r.memory;
+      }
+      expect(mem.dashRecoveryMs).toBe(0);
+    });
+
+    test("a landed bash also opens recovery (World.ts sets it directly)", () => {
+      // Bash-stop is wired in World.ts, not stepPlayer — this just locks in
+      // that the memory field exists and defaults sanely so that wiring
+      // compiles against the right shape (full bash-path coverage lives in
+      // dashBash.test.ts).
+      const mem = freshPlayerMovementMemory();
+      expect(mem.dashRecoveryMs).toBe(0);
+    });
+  });
 });

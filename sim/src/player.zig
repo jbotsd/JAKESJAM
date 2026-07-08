@@ -43,6 +43,8 @@ const WALL_RESTITUTION: f64 = 0.5;
 const DASH_SPEED: f64 = 940.0;
 const DASH_COOLDOWN_MS: f64 = 520.0;
 const DASH_DURATION_MS: f64 = 210.0;
+const DASH_RECOVERY_MS: f64 = 200.0;
+const DASH_RECOVERY_ACCEL_MULT: f64 = 0.4;
 
 const JETPACK_MAX_FUEL: f64 = 125.0;
 const JETPACK_THRUST: f64 = 1480.0;
@@ -107,6 +109,9 @@ pub const PlayerStep = extern struct {
     // ── Augment MEMORY (i32) ──
     air_jumps_used: i32,
     dash_used_in_air: i32,
+    // ── Augment MEMORY (f64, appended — keep prior offsets stable) ──
+    /// Recovery endlag after a dash burst (mirrors mem.dashRecoveryMs).
+    dash_recovery_ms: f64,
 };
 
 inline fn approach(value: f64, target: f64, amount: f64) f64 {
@@ -156,8 +161,15 @@ pub fn stepPlayer(
     s.aim_y = aim_y;
 
     // Augment timers tick down; grounded resets air-jump / air-dash budgets.
+    const was_dash_active = s.dash_active_ms > 0.0;
     s.dash_cooldown_ms = @max(0.0, s.dash_cooldown_ms - dt_ms);
     s.dash_active_ms = @max(0.0, s.dash_active_ms - dt_ms);
+    // Burst just ended this tick → open the recovery endlag window.
+    if (was_dash_active and s.dash_active_ms <= 0.0) {
+        s.dash_recovery_ms = DASH_RECOVERY_MS;
+    } else {
+        s.dash_recovery_ms = @max(0.0, s.dash_recovery_ms - dt_ms);
+    }
     if (boolFromInt(s.grounded_last_frame)) {
         s.air_jumps_used = 0;
         s.dash_used_in_air = 0;
@@ -183,11 +195,15 @@ pub fn stepPlayer(
     // Horizontal acceleration / friction. During a dash burst friction is
     // suspended and the clamp is raised so the burst carries.
     const dash_active = s.dash_active_ms > 0.0;
+    // Recovery endlag: steering is sluggish right after a burst (mirrors
+    // player.ts dashRecovering).
+    const dash_recovering = !dash_active and s.dash_recovery_ms > 0.0;
     const dir_r: f64 = if (right) 1.0 else 0.0;
     const dir_l: f64 = if (left) 1.0 else 0.0;
     const direction: f64 = dir_r - dir_l;
     if (direction != 0.0) {
-        const accel = (if (boolFromInt(s.grounded_last_frame)) GROUND_ACCELERATION else AIR_ACCELERATION) * speed_mul;
+        const recovery_mult: f64 = if (dash_recovering) DASH_RECOVERY_ACCEL_MULT else 1.0;
+        const accel = (if (boolFromInt(s.grounded_last_frame)) GROUND_ACCELERATION else AIR_ACCELERATION) * speed_mul * recovery_mult;
         s.vx = s.vx + direction * accel * dt_sec;
     } else if (boolFromInt(s.grounded_last_frame) and !dash_active) {
         s.vx = approach(s.vx, 0.0, GROUND_FRICTION * dt_sec);

@@ -56,10 +56,11 @@ const DESTRUCTIBLE_ENTITY_SIZE = 64;
 const FIRE_ENTITY_SIZE = 88;
 const PICKUP_ENTITY_SIZE = 64;
 // Must match sim/src/world_state.zig PlayerMovementMemory @sizeOf. Grew 24→40
-// when the deep-movement augment memory (dash timers + air-jump/dash counters)
-// landed; the TS bridge skips the array's contents but MUST advance by the
-// correct stride or every field after it mis-aligns.
-const PLAYER_MOVEMENT_MEMORY_SIZE = 40;
+// with the deep-movement augment memory (dash timers + counters), then 40→48
+// with dash_recovery_ms (slide endlag); the TS bridge skips the array's
+// contents but MUST advance by the correct stride or every field after it
+// mis-aligns.
+const PLAYER_MOVEMENT_MEMORY_SIZE = 48;
 // I-final — ResolvedFireConfig parallel array (per-player fire
 // build resolved by the host from createWeaponBuild). 14 × f64 +
 // 4 × u32 + 4 × u8(enum) + 1 × u8(valid) + 3 × u8(pad) = 136.
@@ -1361,7 +1362,7 @@ export function unpackWorldState(buf: Uint8Array): UnpackedWorldState {
   }
   off = pickupStart + MAX_PICKUPS * PICKUP_ENTITY_SIZE;
 
-  // I14 player_movement parallel array — 16 × 40 bytes. Skipped
+  // I14 player_movement parallel array — 16 × 48 bytes. Skipped
   // for now (host doesn't consume; lives in wasm linear memory).
   off += MAX_PLAYERS * PLAYER_MOVEMENT_MEMORY_SIZE;
 

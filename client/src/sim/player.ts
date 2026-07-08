@@ -112,6 +112,14 @@ const DASH_COOLDOWN_MS = 520;
  *  Bumped 150→210: a longer slide = a more committed, readable power-slide
  *  bash (you can see it coming and it carries you through the block window). */
 const DASH_DURATION_MS = 210;
+/** Recovery endlag after the burst: steering accel is reduced so a whiffed
+ *  slide is genuinely punishable. This is the genre's canonical anti-spam
+ *  lever (Smash air-dodge endlag, Rivals post-parry lockout, Brawlhalla dash
+ *  lockout): the slide keeps its full power but costs a real commitment. */
+export const DASH_RECOVERY_MS = 200;
+/** Steering-acceleration multiplier while recovering (0.4 = sluggish, not
+ *  frozen — you can still drift, you just can't juke). */
+const DASH_RECOVERY_ACCEL_MULT = 0.4;
 
 /** Per-player movement memory the entity itself doesn't carry. */
 export type PlayerMovementMemory = {
@@ -136,6 +144,9 @@ export type PlayerMovementMemory = {
   /** Remaining dash burst window (ms) — while >0 the max-speed clamp is raised
    *  to DASH_SPEED and friction is suspended so the burst carries. */
   dashActiveMs: number;
+  /** Remaining recovery endlag (ms) after a burst ends — steering accel is
+   *  reduced (DASH_RECOVERY_ACCEL_MULT) so a whiffed slide can be punished. */
+  dashRecoveryMs: number;
 };
 
 export function freshPlayerMovementMemory(): PlayerMovementMemory {
@@ -151,6 +162,7 @@ export function freshPlayerMovementMemory(): PlayerMovementMemory {
     dashCooldownMs: 0,
     dashUsedInAir: 0,
     dashActiveMs: 0,
+    dashRecoveryMs: 0,
   };
 }
 
@@ -282,8 +294,15 @@ function stepPlayerNative(
   const mem: PlayerMovementMemory = { ...memory };
 
   // Timers tick down every frame; grounded resets air-jump / air-dash budgets.
+  const wasDashActive = memory.dashActiveMs > 0;
   mem.dashCooldownMs = Math.max(0, mem.dashCooldownMs - dtMs);
   mem.dashActiveMs = Math.max(0, mem.dashActiveMs - dtMs);
+  // Burst just ended this tick → open the recovery endlag window.
+  if (wasDashActive && mem.dashActiveMs <= 0) {
+    mem.dashRecoveryMs = DASH_RECOVERY_MS;
+  } else {
+    mem.dashRecoveryMs = Math.max(0, mem.dashRecoveryMs - dtMs);
+  }
   if (mem.groundedLastFrame) {
     mem.airJumpsUsed = 0;
     mem.dashUsedInAir = 0;
@@ -308,10 +327,15 @@ function stepPlayerNative(
   // Horizontal acceleration / friction. During a dash burst friction is
   // suspended and the clamp is raised so the burst carries.
   const dashActive = mem.dashActiveMs > 0;
+  // Recovery endlag: steering is sluggish right after a burst — the
+  // whiff-punish window that keeps slide-spam honest.
+  const dashRecovering = !dashActive && mem.dashRecoveryMs > 0;
   const direction = (right ? 1 : 0) - (left ? 1 : 0);
   if (direction !== 0) {
     const accel =
-      (mem.groundedLastFrame ? M.groundAcceleration : M.airAcceleration) * speedMul;
+      (mem.groundedLastFrame ? M.groundAcceleration : M.airAcceleration) *
+      speedMul *
+      (dashRecovering ? DASH_RECOVERY_ACCEL_MULT : 1);
     next.vx = next.vx + direction * accel * dtSec;
   } else if (mem.groundedLastFrame && !dashActive) {
     next.vx = approach(next.vx, 0, M.groundFriction * dtSec);
