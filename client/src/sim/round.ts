@@ -402,10 +402,18 @@ export function enterDrafting(
     const pid = pid_ as PlayerId;
     const player = players[pid]!;
     const owned = new Set(player.cards);
+    // Copies held per card id — `player.cards` keeps one entry per stack.
+    const copies = new Map<string, number>();
+    for (const id of player.cards) copies.set(id, (copies.get(id) ?? 0) + 1);
     const candidatePool = crystalRoundsCards.filter((c) => {
-      // `unique: true` cards must not appear twice in a hand. Non-unique
-      // cards can stack so we leave them in the pool regardless.
+      // `unique: true` cards must not appear twice in a hand.
       if (c.unique && owned.has(c.id)) return false;
+      // maxStacks is a REAL cap, enforced here at the offer roll (it used to
+      // be advisory-only — unbounded fire-rate/count stacking blew straight
+      // through the 1.5s-TTK guardrail, e.g. 5× Rapid Refraction = 2.7× rate).
+      if (c.maxStacks !== undefined && (copies.get(c.id) ?? 0) >= c.maxStacks) {
+        return false;
+      }
       return true;
     });
     const offered: string[] = [];

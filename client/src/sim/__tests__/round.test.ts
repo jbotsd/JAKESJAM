@@ -6,6 +6,7 @@ import { describe, test, expect } from "bun:test";
 import { STEP_MS } from "../constants.js";
 import {
   stepRound,
+  enterDrafting,
   COUNTDOWN_MS,
   ROUND_TIME_LIMIT_MS,
   ROUND_OVER_HOLD_MS,
@@ -590,5 +591,43 @@ describe("sudden death + first blood (design pillars distinctive features)", () 
     const result = stepRound({ state, players, dtMs: 16, targetScore: 3 });
     expect(result.state.phase).toBe("fighting");
     expect(result.state.firstBloodPlayerId).toBe(A);
+  });
+});
+
+// maxStacks is a REAL cap enforced at the offer roll (it used to be
+// advisory-only — unbounded stacking of fire-rate commons broke the TTK
+// guardrail).
+describe("draft maxStacks enforcement", () => {
+  // rapid-refraction: maxStacks 5 in cards.ts.
+  const STACKED = "rapid-refraction";
+  const SEEDS = 200;
+
+  function offersAcrossSeeds(copies: number): Set<string> {
+    const all = new Set<string>();
+    for (let seed = 1; seed <= SEEDS; seed++) {
+      const players = {
+        a: mkPlayer("a", { cards: Array(copies).fill(STACKED) }),
+      };
+      const state: RoundState = {
+        phase: "round-over",
+        countdownRemainingMs: 0,
+        scores: { [A]: 0 },
+        roundIndex: 0,
+        winnerPlayerId: null,
+      };
+      const res = enterDrafting(state, players, Tick(100), seed);
+      for (const ev of res.events) {
+        if (ev.t === "card-offered") for (const id of ev.cardIds) all.add(id);
+      }
+    }
+    return all;
+  }
+
+  test("a card at maxStacks copies is never offered again", () => {
+    expect(offersAcrossSeeds(5).has(STACKED)).toBe(false);
+  });
+
+  test("the same card below maxStacks still appears in offers", () => {
+    expect(offersAcrossSeeds(4).has(STACKED)).toBe(true);
   });
 });
