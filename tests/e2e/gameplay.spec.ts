@@ -250,7 +250,11 @@ test.describe("V1 — input-driven evidence suite", () => {
     await page.waitForTimeout(400);
 
     await page.screenshot({ path: join(testInfo.outputDir, "after.png") });
-    const probe = await probeColor(page, { r: 157, g: 230, b: 66 }, 30);
+    // Practice's map is hardcoded to arenaTheme "hangingWood" (not
+    // "jadeIsles" — this used to check jadeIsles' lime, stale since that
+    // changed). hangingWood's dominant rendered tone is platformWoodLo
+    // (0x5C3414 = rgb(92, 52, 20)), not the hi highlight.
+    const probe = await probeColor(page, { r: 92, g: 52, b: 20 }, 30);
     await ensureWrite(
       join(testInfo.outputDir, "color-probe.json"),
       JSON.stringify(probe, null, 2),
@@ -321,7 +325,11 @@ test.describe("V1 — input-driven evidence suite", () => {
     await page.waitForTimeout(300);
     await page.screenshot({ path: join(testInfo.outputDir, "mid.png") });
 
-    const probe = await probeColor(page, { r: 157, g: 230, b: 66 }, 30);
+    // Practice's map is hardcoded to arenaTheme "hangingWood" (not
+    // "jadeIsles" — this used to check jadeIsles' lime, stale since that
+    // changed). hangingWood's dominant rendered tone is platformWoodLo
+    // (0x5C3414 = rgb(92, 52, 20)), not the hi highlight.
+    const probe = await probeColor(page, { r: 92, g: 52, b: 20 }, 30);
     await ensureWrite(
       join(testInfo.outputDir, "color-probe.json"),
       JSON.stringify(probe, null, 2),

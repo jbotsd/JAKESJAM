@@ -113,7 +113,7 @@ test("splash menu loads with no errors", async ({ page }, testInfo) => {
   ).toEqual([]);
 });
 
-test("Practice match: canvas contains platform-lime pixels (jadeIsles theme.hi)", async ({
+test("Practice match: canvas contains platform-wood pixels (hangingWood theme.lo)", async ({
   page,
 }, testInfo) => {
   const log = attachConsole(page);
@@ -123,12 +123,17 @@ test("Practice match: canvas contains platform-lime pixels (jadeIsles theme.hi)"
   await page.waitForTimeout(4500);
   await saveArtifacts(testInfo, page, log.get(), "in-match");
 
-  // jadeIsles theme: platformLimeHi = 0x9DE642 = rgb(157, 230, 66).
-  // Note: HUD HP bar uses a similar lime — match has to subtract that
-  // baseline. The HP bar is ≤ ~250×16 = 4000 px in the splash baseline;
-  // platforms cover thousands+ when visible, so a >5000 threshold is
-  // a clear "platforms drew" signal.
-  const probe = await probeScreenshotColor(page, { r: 157, g: 230, b: 66 }, 30);
+  // Practice's map (boxworks-practice.ts) is hardcoded to arenaTheme
+  // "hangingWood", not "jadeIsles" — this test used to check for jadeIsles'
+  // lime, which stopped matching once Practice's map moved to hangingWood.
+  // hangingWood's wash/shade color (platformWoodLo = 0x5C3414 = rgb(92, 52,
+  // 20)) is the dominant rendered tone — confirmed empirically: the
+  // formerly-failing run's own logged top color buckets (rgb(80,48,16),
+  // rgb(96,64,32), rgb(96,48,16), rgb(64,32,16)) are all within this
+  // tolerance of platformWoodLo, together comfortably over the threshold.
+  // (platformWoodHi, 0x9B5A28, barely renders in-frame — most of a
+  // platform's visible area is the lo/shade face, not the hi highlight.)
+  const probe = await probeScreenshotColor(page, { r: 92, g: 52, b: 20 }, 30);
   await writeFile(
     join(testInfo.outputDir, "color-probe.json"),
     JSON.stringify(probe, null, 2),
@@ -136,7 +141,7 @@ test("Practice match: canvas contains platform-lime pixels (jadeIsles theme.hi)"
   );
   expect(
     probe.matchPixels,
-    `Expected lime platform pixels in viewport. Got ${probe.matchPixels}/${probe.sampledPixels} matching rgb(157,230,66)±30. Top non-bg colors:\n${probe.topColors.join("\n")}`,
+    `Expected wood platform pixels in viewport. Got ${probe.matchPixels}/${probe.sampledPixels} matching rgb(92,52,20)±30. Top non-bg colors:\n${probe.topColors.join("\n")}`,
   ).toBeGreaterThan(3000);
 });
 

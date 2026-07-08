@@ -212,7 +212,7 @@ test.describe("wasm playtest QA — five-layer coverage of ?wasm-world=playtest"
     expect(errors).toEqual([]);
   });
 
-  test("H4: match still has lime platform pixels visible (jadeIsles arena renders)", async ({
+  test("H4: match still has wood platform pixels visible (hangingWood arena renders)", async ({
     page,
   }, testInfo) => {
     test.setTimeout(60_000);
@@ -222,16 +222,17 @@ test.describe("wasm playtest QA — five-layer coverage of ?wasm-world=playtest"
     await clickButton(page, "Practice");
     await page.waitForTimeout(3000);
 
-    // jadeIsles platformLimeHi = rgb(157, 230, 66). Practice arena
-    // should have thousands of these pixels visible.
-    const limePixels = await probeColor(page, { r: 157, g: 230, b: 66 }, 30);
+    // Practice's map is hardcoded to arenaTheme "hangingWood" (not
+    // "jadeIsles" — stale since that changed). hangingWood's dominant
+    // rendered tone is platformWoodLo (0x5C3414 = rgb(92, 52, 20)).
+    const limePixels = await probeColor(page, { r: 92, g: 52, b: 20 }, 30);
     await ensureWrite(
       join(testInfo.outputDir, "lime-probe.json"),
       JSON.stringify({ limePixels }, null, 2),
     );
     expect(
       limePixels,
-      `Expected lime platform pixels in viewport. Got ${limePixels}.`,
+      `Expected wood platform pixels in viewport. Got ${limePixels}.`,
     ).toBeGreaterThan(2000);
 
     const errors = log
