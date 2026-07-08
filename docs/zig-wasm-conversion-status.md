@@ -1,5 +1,18 @@
 # Zig→WASM full-conversion status
 
+> **SUPERSEDED — DO NOT TRUST THE CLAIMS BELOW (correction 2026-07-08).**
+> This snapshot describes the brief FULL-Zig-orchestrator cutover of
+> 2026-05-05. That cutover was **REVERTED** after it broke live play:
+> production today runs the TS orchestrator (`client/src/sim/World.ts`
+> `stepWithRuntime`) as server authority + client prediction, with only the
+> swap modules (rng/collision/player physics/trig LUT) in wasm. Full-Zig is
+> opt-in via `USE_WASM_STEP_WORLD=1` (unset on the live server — verified
+> against the running process) and `?wasm-world` client flags. The
+> `jakesjam.vercel.app` URLs below are also no longer the deployment — the
+> game ships via the self-contained Bun host (`bun run host:public`).
+> Current ground truth: `CLAUDE.md`. Kept for historical reference only.
+
+
 Snapshot as of the most recent push. Pair with
 `docs/zig-wasm-migration-complete.md` (substrate retrospective)
 and `docs/zig-wasm-runbook.md` (ops procedures).

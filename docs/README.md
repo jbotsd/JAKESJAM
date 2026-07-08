@@ -2,6 +2,17 @@
 
 Game design + technical reference for JAKESJAM.
 
+> **Doc freshness (2026-07-08):** these docs are a mix of current
+> reference and historical planning records — several describe plans that
+> were later reverted or superseded, and they have misled agent sessions
+> before. **The repo-root `CLAUDE.md` is the verified current state and
+> wins on any conflict.** Known-stale docs carry correction banners:
+> `zig-wasm-conversion-status.md` (FULL-Zig cutover — reverted),
+> `zig-wasm-migration-complete.md` (scope caveat), and the Convex-era
+> architecture sections of `technical-design.md` /
+> `game-design-document.md` (deployment is now the self-contained Bun
+> host, not Vercel/Convex).
+
 ## Start here
 
 - [`game-design-document.md`](game-design-document.md) — the GDD.

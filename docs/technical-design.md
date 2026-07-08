@@ -1,5 +1,17 @@
 # JAKESJAM — Technical Design Notes
 
+> **Architecture note (added 2026-07-08):** the Convex/Vercel-centric
+> platform sections of this doc describe the original plan and are now
+> historical. The shipped deployment is a **self-contained Bun host**
+> (`bun run host:public`): one process serves the built client AND the
+> authoritative game server, exposed via Tailscale Funnel — no Vercel, no
+> Fly, no Convex required (`CONVEX_URL` is unset live; the Convex code
+> paths are env-gated off). Gameplay/design content in this doc is still
+> broadly valid, but check `CLAUDE.md` for current mechanics (e.g. the
+> timed parry was replaced by the right-click aegis power-slide; jetpack
+> was removed; drafts are loser-only).
+
+
 ## Current Stack Decision
 
 Use Phaser + TypeScript + Vite + Convex.

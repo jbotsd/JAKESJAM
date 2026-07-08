@@ -1,5 +1,16 @@
 # Zig→WASM migration — completion summary
 
+> **Scope note (added 2026-07-08):** accurate for the SWAP MODULES —
+> rng, collision, player physics (`stepPlayer`/`resolveMoveCached`) and the
+> trig LUT really do run in wasm by default on both hosts. But "the
+> migration" here does NOT mean the whole sim: the orchestration layer
+> (weapon fire, combat mitigation, rounds, drafts, events) is TypeScript in
+> `client/src/sim/World.ts` and runs as production authority. A later
+> FULL-Zig `step_world` cutover was attempted and **reverted** (see
+> `docs/zig-wasm-conversion-status.md`'s banner). Current ground truth:
+> `CLAUDE.md`.
+
+
 Captured 2026-05-05 after the migration substantially shipped. This
 is the consolidated retrospective: what got built, what determinism
 properties hold, what remains. Read this if you're new to the

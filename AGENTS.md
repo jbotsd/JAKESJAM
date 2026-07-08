@@ -17,13 +17,20 @@ Core design:
 
 ## Source-of-Truth Docs
 
+**Read `CLAUDE.md` first** — it carries the verified current state
+(2026-07-08) and wins over anything stale below. Several docs describe
+plans that were later reverted or superseded; banners mark the known ones.
+
 Read these before implementing gameplay features:
 
-1. `docs/game-design-document.md`
-2. `docs/codex-task-backlog.md`
-3. `docs/milestone-roadmap.md` if present
-4. `docs/technical-design.md` if present
-5. `docs/changelog.md` if present
+1. `CLAUDE.md` — verified ground truth (authority model, deploy rules,
+   current controls/mechanics)
+2. `docs/game-design-document.md` (historical Convex-era architecture
+   sections — see its banner)
+3. `docs/codex-task-backlog.md`
+4. `docs/milestone-roadmap.md` if present
+5. `docs/technical-design.md` if present (same banner caveat)
+6. `docs/changelog.md` if present
 
 For multiplayer / netcode / sim work, the canonical refs are:
 
@@ -37,16 +44,29 @@ For multiplayer / netcode / sim work, the canonical refs are:
 
 When implementation changes design behaviour, update the relevant doc.
 
-## Substrate decision (May 2026) — migration substantially shipped
+## Substrate decision (May 2026) — swap modules shipped; FULL-Zig orchestrator REVERTED
 
-The deterministic sim core has been ported from TypeScript to **Zig
-compiled to WebAssembly** to satisfy ADR-0001's "byte-identical
+> **Ground-truth correction (2026-07-08, verified against the live server
+> process):** the table below is accurate for the SWAP MODULES (rng /
+> collision / player physics / trig LUT run in wasm by default on both
+> hosts). But the later FULL-Zig `step_world` orchestrator cutover — which
+> `docs/zig-wasm-conversion-status.md` still describes as the production
+> default — was **reverted** after it broke live play. The TS orchestrator
+> (`client/src/sim/World.ts` `stepWithRuntime`) runs as server authority +
+> client prediction today; full-Zig is opt-in only (`USE_WASM_STEP_WORLD=1`
+> server env — unset live — and `?wasm-world` client flags). Practical
+> consequence: player-movement changes need a `player.ts` ↔ `player.zig`
+> mirror + `cd sim && zig build`; weapon/combat/round/draft changes are
+> TS-only and need NO Zig mirror. See `CLAUDE.md` for the verified state.
+
+The deterministic sim core's hot paths have been ported from TypeScript
+to **Zig compiled to WebAssembly** to satisfy ADR-0001's "byte-identical
 WorldStates" requirement at production scale. Native TS float math
 isn't bit-deterministic across V8 (browser) and JSC (Bun); WASM
 bytecode is, per spec.
 
-**Status as of 2026-05-05**: migration substantially complete +
-deployed to production.
+**Status as of 2026-05-05** (see correction banner above for what was
+later reverted): swap-module migration complete + deployed.
 
 | Phase | What | Status |
 |---|---|---|
@@ -72,13 +92,16 @@ retrospective. The full per-module exports manifest is in
 
 ### Working in the sim now
 
-The live sim runs through wasm by default in production. Both
+The three "swap" modules — `rng`, `collision`, `player` — run through
+wasm by default in production; the ORCHESTRATION around them (weapon
+fire, combat mitigation, rounds, drafts, events) is TS and runs in
+`World.ts`'s `stepWithRuntime` (see the correction banner above). Both
 client and server install the comptime trig LUT at boot (so even
 TS code paths using `lutCos/lutSin/lutAtan2` produce bit-identical
-output). The three "swap" modules — `rng`, `collision`, `player` —
-route to wasm through `set<X>Backend` mechanisms applied at boot
-via `applyWasm*Flag()` in `client/src/sim/wasm/runtime.ts` (client)
-and `server/src/wasmRuntime.ts` (server).
+output). The swap modules route to wasm through `set<X>Backend`
+mechanisms applied at boot via `applyWasm*Flag()` in
+`client/src/sim/wasm/runtime.ts` (client) and
+`server/src/wasmRuntime.ts` (server).
 
 **When adding new sim work**:
 - TS-side: use `lutCos/lutSin/lutAtan2` from `@sim/trig.ts`, NOT
@@ -103,7 +126,13 @@ Use:
 
 - Phaser + TypeScript for the client.
 - Vite for client build tooling.
-- Convex for lobby, room, player profile, ready state, chat/emotes, low-frequency room state, and match results.
+- Bun for everything script/test/tooling-shaped (`bun`, `bunx` — never
+  npm/npx/yarn/node).
+- Convex — OPTIONAL, and disabled in the live deployment (`CONVEX_URL`
+  unset; the shipped host is the self-contained Bun server in
+  `scripts/host-public.sh`: one process serves statics + the game server,
+  no Vercel/Fly/Convex). Where Convex IS used, scope it to lobby/room/
+  profile/ready-state/chat/low-frequency state and match results.
 
 Do not use Java as the main runtime.
 
@@ -181,7 +210,7 @@ Acceptance criteria:
 - jump input within 100ms before landing triggers jump on landing;
 - buffer duration is configurable;
 - existing movement still works;
-- npm run typecheck passes.
+- bun run typecheck passes.
 ```
 
 Avoid vague tasks like:
@@ -214,14 +243,8 @@ Build in this order:
 
 <!-- convex-ai-start -->
 
-This project uses [Convex](https://convex.dev) as its backend.
-
-When working on Convex code, **always read
-`convex/_generated/ai/guidelines.md` first** for important guidelines on
-how to correctly use Convex APIs and patterns. The file contains rules that
-override what you may have learned about Convex from training data.
-
-Convex agent skills for common tasks can be installed by running
-`npx convex ai-files install`.
+Convex note (scoped): Convex is OPTIONAL and disabled in the live
+deployment (`CONVEX_URL` unset). Only when actually editing code under
+`convex/` should you read `convex/_generated/ai/guidelines.md` first.
 
 <!-- convex-ai-end -->

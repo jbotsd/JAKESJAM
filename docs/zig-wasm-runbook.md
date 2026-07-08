@@ -1,5 +1,14 @@
 # Zig→WASM substrate runbook
 
+> **Deployment update (2026-07-08):** every `jakesjam.vercel.app` URL below
+> is the OLD deployment. The game now ships via the self-contained Bun host
+> — `bun run host:public` serves statics + game server on :8088, exposed at
+> the Tailscale Funnel URL (see `.host-logs/` for the current one, or use
+> `http://localhost:8088` on the host box). The diagnostic console lines and
+> `?wasm-*` flags below still work — just substitute the live origin. Also
+> note: the FULL-Zig orchestrator cutover was reverted (see CLAUDE.md);
+> rollback procedures here apply to the swap modules, which ARE live.
+
 What to do if the wasm sim breaks in production.
 
 ## Quick reference: emergency disables
