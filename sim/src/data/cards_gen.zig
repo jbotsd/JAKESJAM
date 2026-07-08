@@ -134,6 +134,7 @@ pub const cards = [_]CardEntry{
     .{ .id = "rapid-capacitor", .mod = .{ .shield_recharge_mul = 1.8 } },
     .{ .id = "aim-barrier", .mod = .{ .shield_charge_mul = 2.2, .directional_shield = true } },
     .{ .id = "riot-mirror", .mod = .{ .shield_charge_mul = 1.7, .mirror_shield = true, .directional_shield = true, .proj_element = 0 } },
+    .{ .id = "stolen-fangs", .mod = .{ .proj_element = 0 } },
 };
 
 pub fn cardMod(id: []const u8) ?CardMod {
