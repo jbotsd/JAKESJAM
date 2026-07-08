@@ -1,14 +1,19 @@
 // ───────────────────────────────────────────────────────────────────────────
-// MOTHBALLED — the B3 cutover shipped: `sim/src/world.zig` (step_world) is the
-// AUTHORITATIVE orchestrator on both client (default prediction) and server
-// (USE_WASM_STEP_WORLD=1). `stepWithRuntime` below is retained ONLY as:
-//   1. the emergency TS fallback (?wasm-world=off + server flag unset), and
-//   2. the parity REFERENCE the wasm-parity tests diff Zig against.
-// DO NOT add gameplay here expecting it to run in production — it won't. New
-// sim behaviour lands in `sim/src/*.zig`. If you change this file to keep the
-// parity oracle honest, mirror the exact change into world.zig in the same PR.
-// Production runs the full TS orchestrator (client prediction + server authority).
-// Drafting is native in stepRound; matchHost's overlay applies only on the wasm path.
+// The "MOTHBALLED" label below is stale/aspirational — a Zig `step_world`
+// cutover exists (`sim/src/world.zig`) and CAN become authoritative, but only
+// when the server is explicitly launched with `USE_WASM_STEP_WORLD=1`
+// (matchHost.ts) — an opt-in nobody has flipped for the live host-public
+// server. VERIFIED against the actual running process's environment
+// (2026-07-08): `USE_WASM_STEP_WORLD` is unset there, so the switch defaults
+// false and `stepWithRuntime` below (client prediction + server authority)
+// IS what's actually running in production today. Only PLAYER MOVEMENT
+// physics runs through Zig-wasm by default (see player.ts/player.zig +
+// playerWasmBackend.ts) — weapon/combat/round/draft orchestration in THIS
+// file is TS-authoritative and needs no Zig mirror to ship. If you flip
+// USE_WASM_STEP_WORLD=1 for a real cutover, then yes, mirror changes here
+// into world.zig too — but don't assume that's the live path without
+// checking the actual server env first (this comment nearly sent a future
+// session down the wrong path).
 // Source of truth: docs/adr/0006-zig-wasm-sim-substrate.md, docs/zig-wasm-conversion-status.md
 // ───────────────────────────────────────────────────────────────────────────
 //
