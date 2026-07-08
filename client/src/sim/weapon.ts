@@ -68,7 +68,16 @@ export function resolvePlayerBuild(player: PlayerEntity): ResolvedWeaponBuild {
   // For now the only weapon is starter-pistol. When more weapons exist this
   // will look up the WeaponDefinition by player.weaponId.
   const cards: CardDefinition[] = findCardsById(crystalRoundsCards, player.cards);
-  const build = applyCharacterInnateAbility(player, createWeaponBuild(starterWeapon, cards));
+  const withInnate = applyCharacterInnateAbility(player, createWeaponBuild(starterWeapon, cards));
+  // BASELINE: the aegis power-slide (right-click) is a core move for EVERYONE,
+  // exactly like the parry it replaced — grant at least one dash charge so
+  // every character can slide/parry/bash from match start. Cards + the
+  // Shielded innate stack MORE on top (extra air-dashes). Applied here, after
+  // createWeaponBuild, so it never touches the Zig createWeaponBuild parity.
+  const build: ResolvedWeaponBuild = {
+    ...withInnate,
+    dashCharges: Math.max(withInnate.dashCharges, 1),
+  };
   buildCache.set(key, build);
   return build;
 }
