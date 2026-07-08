@@ -28,6 +28,28 @@
         });
       })();
     </script>
+    <!-- Right-click is the aegis power-slide input. The browser context menu
+         must NEVER appear over the game — this is the EARLIEST, most reliable
+         layer: a capture-phase handler installed inline in <head>, before the
+         module bundle loads and before any canvas exists, so there is no
+         timing window in which a right-click can slip through. Also suppresses
+         `auxclick`. Independent of Phaser and of main.ts (which add their own
+         layers) so no single failure re-enables the menu. -->
+    <script>
+      (function () {
+        var kill = function (e) {
+          e.preventDefault();
+          e.stopPropagation();
+          return false;
+        };
+        window.addEventListener("contextmenu", kill, { capture: true });
+        document.addEventListener("contextmenu", kill, { capture: true });
+        window.addEventListener("auxclick", function (e) {
+          if (e.button === 2) kill(e);
+        }, { capture: true });
+        document.documentElement.oncontextmenu = kill;
+      })();
+    </script>
     <!-- Mobile: lock zoom (the game handles its own scaling), fill the screen
          edge-to-edge, and extend under notches (safe-area insets in CSS). -->
     <meta

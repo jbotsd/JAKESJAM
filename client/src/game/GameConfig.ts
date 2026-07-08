@@ -25,6 +25,11 @@ const clipsRequested =
 export const gameConfig: Phaser.Types.Core.GameConfig = {
   type: Phaser.AUTO,
   parent: "game-root",
+  // Right-click is the aegis power-slide — the browser context menu must NEVER
+  // appear. This is Phaser's own canvas-level suppressor (Mouse + Touch
+  // managers), one of several independent layers (see index.html head script
+  // and main.ts) so no single point of failure lets the menu through.
+  disableContextMenu: true,
   width: window.innerWidth,
   height: window.innerHeight,
   backgroundColor: "#05080f",
