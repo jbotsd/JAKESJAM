@@ -76,6 +76,7 @@ import { isTouchPrimary, isPortraitMobile } from "../input/mobile";
 import { ActionIntensity } from "../systems/ActionIntensity.js";
 import { ActionCamera } from "../systems/ActionCamera.js";
 import { CameraJuice } from "../systems/CameraJuice.js";
+import { installHudCamera } from "../systems/HudCamera.js";
 
 // Portrait-mobile camera framing. The arena is 2:1 wide but a phone held
 // upright is ~1:2 tall, so we frame the arena HEIGHT into the upper play-area
@@ -87,6 +88,14 @@ import { CameraJuice } from "../systems/CameraJuice.js";
 // extended bottom bounds, which keeps the player in the upper play-area with
 // the ground below — no HUD breakage.
 const PORTRAIT_CAM_ZOOM = 1.0;
+// Desktop crop-in: the world camera zooms to make the player the main event
+// (was 1.0 — the player read as a tiny figure showing almost the whole map).
+// 1.4 puts the ~56px character at ~11% of screen height with ~4.5
+// character-heights of sightline each way — the researched arena-shooter
+// sweet spot (Keren/TowerFall/Duck Game framing; see HudCamera for how the
+// scroll-fixed HUD is kept unzoomed). Portrait mobile stays 1.0 (small
+// screen already frames the player large enough, and vertical room is tight).
+const DESKTOP_CAM_ZOOM = 1.4;
 const PORTRAIT_CAM_Y_BIAS = 150; // world px: camera centres BELOW the player → player rides in the upper third, clear of the bottom control band
 import { PALETTE, ARENA_THEMES } from "../ui/palette";
 import type {
@@ -518,6 +527,11 @@ export class OnlineMatchScene extends Phaser.Scene {
     });
 
     this.setupFtueLegend();
+
+    // Split the HUD onto its own 1:1 camera so the world can crop in
+    // (DESKTOP_CAM_ZOOM) without dragging the edge-anchored HUD off-screen.
+    // Installed last so the initial-partition pass sees the full HUD.
+    installHudCamera(this);
   }
 
   /**
@@ -1668,8 +1682,13 @@ export class OnlineMatchScene extends Phaser.Scene {
    * Called on create and whenever the viewport resizes (orientation change).
    */
   private applyMobileCamera(): void {
-    const cam = this.cameras.main;
-    cam.setZoom(isPortraitMobile() ? PORTRAIT_CAM_ZOOM : 1);
+    const zoom = isPortraitMobile() ? PORTRAIT_CAM_ZOOM : DESKTOP_CAM_ZOOM;
+    // Route through the ActionCamera so its punch-zoom returns to this base.
+    // Guarded because applyMobileCamera also fires once in create() before
+    // the ActionCamera exists (resize listener); the direct setZoom covers
+    // that first call.
+    if (this.actionCamera) this.actionCamera.setBaseZoom(zoom);
+    else this.cameras.main.setZoom(zoom);
   }
 
   // ---------------- Match results ----------------

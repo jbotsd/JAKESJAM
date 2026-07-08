@@ -27,9 +27,12 @@ import { RenderLayer } from "../render/RenderLayer";
 import { ActionIntensity } from "../systems/ActionIntensity.js";
 import { ActionCamera } from "../systems/ActionCamera.js";
 import { CameraJuice } from "../systems/CameraJuice.js";
+import { installHudCamera } from "../systems/HudCamera.js";
 import type { RoomPlayer } from "../types/net";
 
 const PLAYER_VISUAL_SCALE = 0.78;
+// Desktop crop-in for Practice — matches the online DESKTOP_CAM_ZOOM.
+const PRACTICE_CAM_ZOOM = 1.4;
 const DEATH_POPUP_DELAY_MS = 520;
 
 /**
@@ -156,6 +159,10 @@ export class MatchScene extends Phaser.Scene {
       this.deathOverlay.hide();
     }
     this.bindKeys();
+    // Split the HUD onto its own 1:1 camera so the world crop-in doesn't drag
+    // scroll-fixed HUD off-screen. Installed last so the initial partition
+    // sees everything already created.
+    installHudCamera(this);
   }
 
   update(_time: number, deltaMs: number) {
@@ -401,6 +408,10 @@ export class MatchScene extends Phaser.Scene {
     // shake) replaces Phaser's frame-rate-dependent startFollow lerp.
     this.actionCamera = new ActionCamera(cam);
     this.actionCamera.snap(this.localPlayer.position.x, this.localPlayer.position.y);
+    // Crop in so the character is the main event (see HudCamera / research).
+    // Desktop 1.4; touch stays 1.0 (small screen already frames large, and a
+    // precision movement course needs the platform sightlines).
+    this.actionCamera.setBaseZoom(isTouchPrimary() ? 1.0 : PRACTICE_CAM_ZOOM);
     // No ActionIntensity passed: Practice bumps intensity explicitly in
     // updateMovementJuice, so routing it here too would double-count.
     this.cameraJuice = new CameraJuice(this.actionCamera);
