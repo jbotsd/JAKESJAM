@@ -103,12 +103,15 @@ const Bit = {
 } as const;
 
 // Deep-movement augment constants (card-gated; 0/1 multipliers = inert).
-/** Horizontal dash burst velocity (px/s). */
-const DASH_SPEED = 780;
+/** Aegis power-slide burst velocity (px/s). Bumped 780→940: the shield-dash
+ *  reads as a committed POWER SLIDE — fast and flat — not a floaty hop. */
+const DASH_SPEED = 940;
 /** Dash cooldown (ms) between uses. */
 const DASH_COOLDOWN_MS = 520;
-/** How long the dash burst holds full speed before the normal clamp resumes. */
-const DASH_DURATION_MS = 150;
+/** How long the slide holds full speed before the normal clamp resumes.
+ *  Bumped 150→210: a longer slide = a more committed, readable power-slide
+ *  bash (you can see it coming and it carries you through the block window). */
+const DASH_DURATION_MS = 210;
 
 /** Per-player movement memory the entity itself doesn't carry. */
 export type PlayerMovementMemory = {

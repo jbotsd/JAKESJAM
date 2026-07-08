@@ -40,9 +40,9 @@ const WALL_POWER_SLIDE_VY: f64 = -430.0;
 const WALL_POWER_SLIDE_VX: f64 = 690.0;
 const WALL_RESTITUTION: f64 = 0.5;
 // Deep-movement augment constants (mirror player.ts).
-const DASH_SPEED: f64 = 780.0;
+const DASH_SPEED: f64 = 940.0;
 const DASH_COOLDOWN_MS: f64 = 520.0;
-const DASH_DURATION_MS: f64 = 150.0;
+const DASH_DURATION_MS: f64 = 210.0;
 
 const JETPACK_MAX_FUEL: f64 = 125.0;
 const JETPACK_THRUST: f64 = 1480.0;
