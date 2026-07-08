@@ -67,13 +67,18 @@ export class ProceduralPlayerRig {
   private stepPhase = 0;
   private facing = 1;
   private firePulse = 0;
-  // Fire recoil (0-1): set to 1 by triggerFire(), decays over FIRE_RECOIL_MS.
-  // Drives the arms PUNCHING out toward aim on each shot (the shot leaving
-  // the hands) then springing back to the charge hold — the difference
-  // between "holding a ball" and "throwing it". Separate from firePulse
-  // (glow brightness) so the two can be tuned independently.
-  private fireRecoil = 0;
-  private static readonly FIRE_RECOIL_MS = 260;
+  // ALTERNATING SHURIKEN THROW. The two hands throw independently and take
+  // turns: each shot flicks ONE hand out toward aim (a fast shuriken snap)
+  // while the other stays ready, then alternates. `throwHand` is whose turn
+  // it is; `leadThrow`/`backThrow` (0-1) are each hand's own flick progress,
+  // set to 1 on that hand's shot and decaying over FIRE_RECOIL_MS. The
+  // projectile leaves from the throwing hand at the peak of its flick.
+  private throwHand: 0 | 1 = 0;
+  private leadThrow = 0;
+  private backThrow = 0;
+  private static readonly FIRE_RECOIL_MS = 200;
+  // Spin phase for the held/thrown shuriken shards (wall-clock, visual only).
+  private shurikenSpin = 0;
   // Visual-only knockback. Set by triggerHit(); decays over HIT_DECAY_MS.
   // Per game-feel-juice §5 — render layer overshoots authoritative position.
   private hitOffsetX = 0;
@@ -130,7 +135,17 @@ export class ProceduralPlayerRig {
   private backHandSpringX: SpringState = springState(0);
   private backHandSpringY: SpringState = springState(0);
   private static readonly ARM_FREQUENCY_HZ = 7;
-  private static readonly ARM_DAMPING = 0.55;
+  // 0.55 (well under spring.ts's own critical-damping threshold of 1) meant
+  // visible overshoot/wobble on every target change — reported as "every
+  // projectile gets a wobbly arm animation": triggerFire() snaps fireRecoil
+  // to 1 instantly, which is a large, abrupt jump in the hand's target
+  // (charge-hold toward the thrust point), and the lead/back hands (which
+  // thrust to slightly different distances — reach vs reach*0.94) overshoot
+  // and settle slightly out of phase with each other, reading as "alternate
+  // arms" rather than a clean simultaneous snap. Raised toward critical
+  // damping — still not fully rigid (some follow-through is the intended
+  // "throw" read on a shot), just far less bouncy.
+  private static readonly ARM_DAMPING = 0.9;
 
   // Hip drape (the "space wizard" sash) — a short cloth strip that trails
   // and flutters off the pelvis. Springed to velocity so it whips out on a
@@ -142,13 +157,6 @@ export class ProceduralPlayerRig {
   private static readonly DRAPE_FREQUENCY_HZ = 5;
   private static readonly DRAPE_DAMPING = 0.35;
 
-  // Charge stance (the Kamehameha read): both hands converge on one shared
-  // point near the hip instead of posing independently, with a growing orb
-  // between them — the natural future spawn point for a projectile/ability
-  // effect. Ramps while idle/running/airborne; resets on dash (the
-  // "release") and while wall-gripping (one hand is busy holding on).
-  private chargeMs = 0;
-  private static readonly CHARGE_RAMP_MS = 1600;
 
   // "Mad aura" — a small turbulent halo of motes orbiting the vessel.
   // Per-instance phase/radius offsets (frozen at construction) so a lineup
@@ -192,7 +200,9 @@ export class ProceduralPlayerRig {
     const walkAmount = Phaser.Math.Clamp(Math.abs(pose.velocity.x) / 180, 0, 1);
     this.stepPhase += deltaMs * (0.006 + walkAmount * 0.01);
     this.firePulse = Math.max(0, this.firePulse - deltaMs * 0.004);
-    this.fireRecoil = Math.max(0, this.fireRecoil - deltaMs / ProceduralPlayerRig.FIRE_RECOIL_MS);
+    this.leadThrow = Math.max(0, this.leadThrow - deltaMs / ProceduralPlayerRig.FIRE_RECOIL_MS);
+    this.backThrow = Math.max(0, this.backThrow - deltaMs / ProceduralPlayerRig.FIRE_RECOIL_MS);
+    this.shurikenSpin += deltaMs * 0.02;
     this.hitDecay = Math.max(0, this.hitDecay - deltaMs / ProceduralPlayerRig.HIT_DECAY_MS);
 
     if (Math.abs(pose.velocity.x) > 8) {
@@ -241,14 +251,6 @@ export class ProceduralPlayerRig {
     }
     this.wasWallDir = wallDir;
 
-    // Charge ramps whenever both hands are free to hold the stance (not
-    // gripping a wall); dashing is the release, so it resets hard.
-    if (pose.dashing) {
-      this.chargeMs = 0;
-    } else if (wallDir === 0) {
-      this.chargeMs = Math.min(ProceduralPlayerRig.CHARGE_RAMP_MS, this.chargeMs + deltaMs);
-    }
-
     this.draw(pose, walkAmount, deltaMs);
   }
 
@@ -273,13 +275,20 @@ export class ProceduralPlayerRig {
     if (!visible) this.graphics.clear();
   }
 
-  /** Call on every shot fired. Punches the arms out toward aim (fireRecoil)
-   *  and flashes the muzzle glow (firePulse). Rapid fire re-triggers both
-   *  each shot, so a held stream reads as repeated jabs rather than a
-   *  static hold. */
+  /** Call on every shot fired. ALTERNATES hands: flicks the next hand out
+   *  toward aim (a shuriken snap) and flashes the muzzle glow. A held stream
+   *  reads as left-right-left rapid throws rather than a static hold. */
   triggerFire() {
     this.firePulse = 1;
-    this.fireRecoil = 1;
+    this.throwHand = this.throwHand === 0 ? 1 : 0;
+    if (this.throwHand === 0) this.leadThrow = 1;
+    else this.backThrow = 1;
+  }
+
+  /** Which hand is throwing right now (for the muzzle/spawn point). 0 = lead,
+   *  1 = back. Whichever hand's flick is furthest along is the active one. */
+  activeThrowHandIndex(): 0 | 1 {
+    return this.leadThrow >= this.backThrow ? 0 : 1;
   }
 
   /**
@@ -377,20 +386,20 @@ export class ProceduralPlayerRig {
     );
     const drapeTip = vec(this.drapeSpringX.value, this.drapeSpringY.value);
 
-    // Both hands, one shared state machine (see computeArmTargets): a
-    // two-handed charge stance by default (converged on one point, straight
-    // arms), a wall-plant bend for the gripping hand, and a straight thrust
-    // toward aim on dash (the "release"). Springed so state changes settle
-    // instead of popping.
+    // Two INDEPENDENT hands (see computeArmTargets): each rests at its own
+    // ready position and flicks out toward aim on its own throw
+    // (leadThrow/backThrow), alternating per shot. Wall-plant bends the
+    // gripping hand; dash braces both forward (the aegis guard). Springed so
+    // state changes settle instead of popping.
     const armTargets = this.computeArmTargets(
       shoulderLead,
       shoulderBack,
-      pelvis,
       aim,
       walkAmount,
       wallDir,
       dashing,
-      this.fireRecoil,
+      this.leadThrow,
+      this.backThrow,
       s,
     );
 
@@ -493,12 +502,12 @@ export class ProceduralPlayerRig {
     this.drawThickLimb(g, hipR, legR, 5.5 * s, 4 * s);
     this.drawBoot(g, footR, s);
 
-    // 3. Back arm + hand — a bare glowing hand, not a gun: the "casting"
-    // limb read the abilities/effects system can hook a spell VFX onto
-    // later without touching the geometry.
+    // 3. Back arm + hand — an independent throwing hand holding a cocked
+    // shuriken; it flashes and streaks on its OWN throw (backThrow).
     this.drawThickLimb(g, shoulderBack, armBack, 4.6 * s, 3.2 * s);
     this.drawShoulderArmor(g, shoulderBack, s);
-    this.drawHandGlow(g, armBack.end, s, 0);
+    this.drawHandGlow(g, armBack.end, s, this.backThrow);
+    this.drawShuriken(g, armBack.end, aim, s, this.backThrow);
 
     // 3b. Hip drape (the wizard sash) — behind the torso so only its
     // trailing edge peeks out, same layering a real cloak would have.
@@ -515,18 +524,12 @@ export class ProceduralPlayerRig {
     this.drawThickLimb(g, hipL, legL, 6.2 * s, 4.6 * s);
     this.drawBoot(g, footL, s);
 
-    // 7. Front arm + hand — the "active" hand: brighter, pulses on
-    // triggerFire() (kept as the ability/cast-trigger hook).
+    // 7. Front arm + hand — the other independent throwing hand + its
+    // shuriken; flashes and streaks on its own throw (leadThrow).
     this.drawThickLimb(g, shoulderLead, armLead, 5.4 * s, 3.8 * s);
     this.drawShoulderArmor(g, shoulderLead, s);
-    this.drawHandGlow(g, armLead.end, s, this.firePulse);
-
-    // 8. Charge orb — the shared point between the two hands, growing the
-    // longer the vessel holds the stance. Skipped while wall-gripping (one
-    // hand is busy) or dashing (the orb just fired).
-    if (wallDir === 0 && !dashing) {
-      this.drawChargeOrb(g, armLead.end, armBack.end, s);
-    }
+    this.drawHandGlow(g, armLead.end, s, this.leadThrow);
+    this.drawShuriken(g, armLead.end, aim, s, this.leadThrow);
 
     // 10. Head + hood + visor
     this.drawHead(g, head, s, healthRatio);
@@ -885,25 +888,46 @@ export class ProceduralPlayerRig {
     g.fillCircle(hand.x, hand.y, radius * 0.5);
   }
 
-  // --- CHARGE ORB: the shared point between the two cupped hands — the
-  // Kamehameha read, and the natural future spawn origin for a projectile
-  // or ability effect. Grows and brightens with chargeMs, with a fast
-  // turbulent flicker layered on top so it never reads as a static sprite.
-  private drawChargeOrb(g: Phaser.GameObjects.Graphics, handLead: Vec2, handBack: Vec2, s: number) {
-    const cx = (handLead.x + handBack.x) / 2;
-    const cy = (handLead.y + handBack.y) / 2;
-    const ratio = Phaser.Math.Clamp(this.chargeMs / ProceduralPlayerRig.CHARGE_RAMP_MS, 0, 1);
-    if (ratio <= 0.02) return;
+  // --- SHURIKEN: a small 4-point spinning star cocked in each hand, the
+  // projectile-in-waiting. Always spinning (idle read); on that hand's throw
+  // (`throwAmount` 0-1) it brightens and stretches a motion streak along aim
+  // — the shuriken leaving the hand. The shard spawn point IS this hand, so
+  // a shot visibly launches from the exact hand mid-flick.
+  private drawShuriken(
+    g: Phaser.GameObjects.Graphics,
+    hand: Vec2,
+    aim: Vec2,
+    s: number,
+    throwAmount: number,
+  ) {
+    const spin = this.shurikenSpin + (hand.x + hand.y) * 0.02; // desync L/R
+    const size = (3.2 + throwAmount * 1.6) * s;
+    const bright = 0.55 + throwAmount * 0.45;
 
-    const flicker = 0.85 + 0.15 * Math.sin(this.stepPhase * 5);
-    const radius = (2 + ratio * 5) * s * flicker;
+    // Motion streak along aim as it's flung.
+    if (throwAmount > 0.15) {
+      const streak = throwAmount * 16 * s;
+      g.lineStyle(2.2 * s, WHITE, throwAmount * 0.7);
+      g.beginPath();
+      g.moveTo(hand.x - aim.x * streak * 0.3, hand.y - aim.y * streak * 0.3);
+      g.lineTo(hand.x + aim.x * streak, hand.y + aim.y * streak);
+      g.strokePath();
+    }
 
-    g.fillStyle(this.accentColor, ratio * 0.25);
-    g.fillCircle(cx, cy, radius * 2.4);
-    g.fillStyle(this.accentColor, ratio * 0.6);
-    g.fillCircle(cx, cy, radius * 1.3);
-    g.fillStyle(WHITE, ratio * 0.75);
-    g.fillCircle(cx, cy, radius * 0.6);
+    // 4-point star (two crossed blades) spinning.
+    g.lineStyle(1.8 * s, this.accentColor, bright);
+    for (let i = 0; i < 2; i++) {
+      const a = spin + (i * Math.PI) / 2;
+      const dx = Math.cos(a) * size;
+      const dy = Math.sin(a) * size;
+      g.beginPath();
+      g.moveTo(hand.x - dx, hand.y - dy);
+      g.lineTo(hand.x + dx, hand.y + dy);
+      g.strokePath();
+    }
+    // Bright core.
+    g.fillStyle(WHITE, bright);
+    g.fillCircle(hand.x, hand.y, 1.4 * s);
   }
 
   // --- THICK LIMB: Filled polygon instead of line ---
@@ -1024,67 +1048,76 @@ export class ProceduralPlayerRig {
   private computeArmTargets(
     shoulderLead: Vec2,
     shoulderBack: Vec2,
-    pelvis: Vec2,
     aim: Vec2,
     walkAmount: number,
     wallDir: number,
     dashing: boolean,
-    fireRecoil: number,
+    leadThrow: number,
+    backThrow: number,
     s: number,
   ): { lead: Vec2; back: Vec2 } {
     const reach = ProceduralPlayerRig.ARM_REACH * s;
 
-    if (wallDir !== 0) {
-      // Back hand plants against the gripped wall — closer than full
-      // reach, the one deliberate bend this state allows. Lead hand keeps
-      // charging alone (one hand holds on, the other never stops working)
-      // — and still punches out toward aim when firing off the wall.
-      return {
-        lead: this.recoilTarget(
-          this.chargeHandTarget(pelvis, aim, s, 0),
-          shoulderLead,
-          aim,
-          reach,
-          fireRecoil,
-        ),
-        back: vec(shoulderBack.x + wallDir * 20 * s, shoulderBack.y + 2 * s),
-      };
-    }
-
     if (dashing) {
-      // The release: both arms thrust straight out toward aim — the
-      // charged blast firing as you commit to the dash. Back hand trails
-      // a hair short of full reach so the two hands don't perfectly
-      // overlap on the way out.
+      // AEGIS guard: both arms brace forward along the lunge — the shield
+      // deployed in the travel direction.
       return {
         lead: this.straightTarget(shoulderLead, aim, reach),
         back: this.straightTarget(shoulderBack, aim, reach * 0.94),
       };
     }
 
-    // Idle, running, or airborne: both hands held at the SAME charging
-    // point near the hip, one a hair further out than the other (cupped,
-    // not overlapping). A synchronized bob while running — both hands
-    // move together — instead of an opposite-phase swing. On each shot the
-    // recoil blends both hands out toward aim (the throw) and the spring
-    // settles them back to the cup.
-    const bob = walkAmount > 0.05 ? Math.sin(this.stepPhase * 2) * 2 * s * walkAmount : 0;
+    if (wallDir !== 0) {
+      // Back hand plants against the gripped wall; the FREE (lead) hand still
+      // throws — route whichever throw is live to it so a shot off the wall
+      // always reads on the working hand.
+      return {
+        lead: this.recoilTarget(
+          this.readyHandTarget(shoulderLead, aim, s),
+          shoulderLead,
+          aim,
+          reach,
+          Math.max(leadThrow, backThrow),
+        ),
+        back: vec(shoulderBack.x + wallDir * 20 * s, shoulderBack.y + 2 * s),
+      };
+    }
+
+    // Idle / running / airborne: each hand rests INDEPENDENTLY at its own
+    // ready position (a shuriken cocked at each hip) and flicks out toward
+    // aim only on ITS OWN throw — the alternation means only one hand is
+    // extended at a time, so the two limbs never cross (the old failure mode
+    // the converged charge-stance was avoiding). A gentle opposite-phase bob
+    // keeps the idle/run read alive.
+    const leadBob = walkAmount > 0.05 ? Math.sin(this.stepPhase * 2) * 2 * s * walkAmount : 0;
+    const backBob = walkAmount > 0.05 ? Math.sin(this.stepPhase * 2 + Math.PI) * 2 * s * walkAmount : 0;
     return {
       lead: this.recoilTarget(
-        this.chargeHandTarget(pelvis, aim, s, bob),
+        this.readyHandTarget(shoulderLead, aim, s, leadBob),
         shoulderLead,
         aim,
         reach,
-        fireRecoil,
+        leadThrow,
       ),
       back: this.recoilTarget(
-        this.chargeHandTarget(pelvis, aim, s, bob, 0.82),
+        this.readyHandTarget(shoulderBack, aim, s, backBob),
         shoulderBack,
         aim,
-        reach * 0.94,
-        fireRecoil,
+        reach,
+        backThrow,
       ),
     };
+  }
+
+  /** A relaxed READY pose for one hand, INDEPENDENT of the other: the hand
+   *  hangs a little below and slightly toward aim from its OWN shoulder,
+   *  holding its cocked shuriken. Each hand keys off its own shoulder so the
+   *  two never converge. `bob` adds the idle/run rhythm. */
+  private readyHandTarget(shoulder: Vec2, aim: Vec2, s: number, bob = 0): Vec2 {
+    return vec(
+      shoulder.x + aim.x * 11 * s,
+      shoulder.y + 15 * s + aim.y * 7 * s + bob,
+    );
   }
 
   /** Blend a resting (charge-hold) hand target toward a full thrust along
@@ -1103,28 +1136,6 @@ export class ProceduralPlayerRig {
     return vec(
       hold.x + (thrust.x - hold.x) * fireRecoil,
       hold.y + (thrust.y - hold.y) * fireRecoil,
-    );
-  }
-
-  /** The shared charge-stance target: a point near the hip that ORBITS
-   *  toward wherever aim is pointing — the charge visibly tracks the
-   *  mouse/aim even while held, not just at the dash-release. This is a
-   *  real world-space IK target (not forced onto a fixed-length line from
-   *  the shoulder), so solveTwoBone bends each arm naturally to reach it
-   *  rather than snapping to a straight facing-locked pose. `depth` (0-1)
-   *  shrinks the orbit radius a hair for the back hand so the two hands
-   *  don't perfectly overlap when cupped together. */
-  private chargeHandTarget(pelvis: Vec2, aim: Vec2, s: number, bob: number, depth = 1): Vec2 {
-    // Widened 15→26: at 15 the hands read as clamped in tight against the
-    // body; this reads as an actual held charge out in front of the hip.
-    // Keep in sync with MUZZLE_ANCHOR_OFFSET_Y/MUZZLE_REACH in
-    // sim/weapon.ts — that's the ACTUAL projectile spawn point in combat,
-    // and it should coincide with where this orb visually sits, not just
-    // approximate an old arm-cannon geometry.
-    const orbitRadius = 26 * s * depth;
-    return vec(
-      pelvis.x + aim.x * orbitRadius,
-      pelvis.y + 8 * s + aim.y * orbitRadius + bob,
     );
   }
 
