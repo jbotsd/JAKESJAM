@@ -65,6 +65,17 @@ type BotState = {
   /** Wall-clock ms the bot first became FAR from its foe (0 = not far).
    *  Drives anti-standoff commit mode so two bots never freeze apart. */
   farSince: number;
+  /** Aegis-slide aggression tier (balance audit: bots must exhibit the
+   *  live meta or players never learn to punish it). 0 = never dashes
+   *  offensively (telegraphs — new players don't get blindsided into
+   *  learning "spam is correct"). 1 = occasional. 2 = presses it
+   *  aggressively whenever in bash range, matching a committed human
+   *  opponent. ALL tiers still react defensively to an inbound dash. */
+  slideTier: 0 | 1 | 2;
+  /** Wall-clock ms an inbound dashing-body threat was first noticed (0 =
+   *  none tracked). Drives a ~250ms human-plausible reaction delay before
+   *  the defensive response fires, same shape as `farSince`. */
+  bodyThreatSince: number;
 };
 
 const BOT_TUNING = {
@@ -82,6 +93,22 @@ const BOT_TUNING = {
   parryEveryMs: 2600,
   /** Projectile speed used for lead calc — starter pistol. */
   projectileSpeed: 650,
+  /** How close (px) an enemy actively sliding (dashing) triggers a
+   *  defensive reaction. Bigger than threatRadius — a 940px/s dash covers
+   *  ground fast, so the reaction window has to open sooner. */
+  bodyThreatRadius: 260,
+  /** Reaction delay before a noticed body-threat gets a response (ms) —
+   *  standard fighting-game-AI practice (~15 frames / 250ms) so bots stay
+   *  plausibly human rather than reading inputs instantly. */
+  bodyThreatReactionMs: 250,
+  /** Range (px) a tier>=1 bot will offensively press Dash toward its foe —
+   *  inside the ~197px lunge distance plus approach margin, so the burst
+   *  actually connects instead of firing into empty air. */
+  dashBashRange: 230,
+  /** Per-tick probability an in-range bot presses Dash offensively, by
+   *  slideTier. Tier 0 never initiates (see BotState.slideTier); tier 2 is
+   *  close to "every opportunity" — a committed opponent, not a coinflip. */
+  dashOffenseChance: [0, 0.05, 0.22] as readonly [number, number, number],
 } as const;
 
 export class WorldBots {
@@ -116,6 +143,12 @@ export class WorldBots {
         stuckTicks: 0,
         jumpHeldPrev: false,
         farSince: 0,
+        // Deterministic spread across the roster (not random) so a given
+        // bot slot's aggression is stable across recycles — 0,1,2,0,1,2,…
+        // (nameCursor already incremented above, so subtract 1 to key off
+        // THIS bot's own index, not the next one's).
+        slideTier: ((this.nameCursor - 1) % 3) as 0 | 1 | 2,
+        bodyThreatSince: 0,
       });
       out.push({ playerId: id, name });
     }
@@ -262,6 +295,52 @@ export class WorldBots {
     // jump buffer and bots can CHAIN wall-jumps (a HELD Jump fires only once).
     if (wantJump && !bot.jumpHeldPrev) keys |= InputBit.Jump;
 
+    // Body threat: an enemy actively SLIDING (aegis dash) toward us. Every
+    // tier reacts (only the OFFENSIVE use of the slide is tier-gated below)
+    // — this is the balance-audit fix: bots that never perceive a charging
+    // body as a threat made the mechanic invisible/uncounterable in the
+    // world people actually play in. Reaction-delayed like a human (~250ms)
+    // via bodyThreatSince, mirroring the farSince commit-mode pattern.
+    const bodyThreat =
+      foe.dashing === true &&
+      dist <= BOT_TUNING.bodyThreatRadius &&
+      this.headingTowardMe(me, foe);
+    if (bodyThreat) {
+      if (bot.bodyThreatSince === 0) bot.bodyThreatSince = nowMs;
+    } else {
+      bot.bodyThreatSince = 0;
+    }
+    if (bodyThreat && nowMs - bot.bodyThreatSince >= BOT_TUNING.bodyThreatReactionMs) {
+      const roll = bot.rand();
+      if (roll < 0.4 && me.shieldCharge !== undefined && me.shieldCharge > 25) {
+        // Hold shield — absorbs the bash outright (no directional-arc gate
+        // on a plain held shield), the passive-safe answer.
+        keys |= InputBit.Shield;
+      } else if (roll < 0.75) {
+        // Dash AWAY — aim opposite the attacker so the lunge (and its own
+        // front-arc block) launches clear of them instead of into them.
+        const awayX = me.x - dx;
+        const awayY = me.y - (foe.y - me.y);
+        keys |= InputBit.Dash;
+        bot.jumpHeldPrev = (keys & InputBit.Jump) !== 0;
+        return { keys, aimX: awayX, aimY: awayY };
+      } else if (grounded) {
+        keys |= InputBit.Jump; // a bare hop still breaks the lunge's lane
+      }
+    }
+
+    // Offensive slide: tier-gated (see BotState.slideTier) — only when
+    // already closing distance and inside bash range, so it reads as a
+    // deliberate engage, not a random twitch.
+    if (
+      bot.slideTier > 0 &&
+      moveDir === towardFoe &&
+      dist <= BOT_TUNING.dashBashRange &&
+      bot.rand() < BOT_TUNING.dashOffenseChance[bot.slideTier]
+    ) {
+      keys |= InputBit.Dash;
+    }
+
     // Threat response: inbound projectile → parry (facing it) or hop.
     const threat = this.inboundThreat(state, me);
     if (threat) {
@@ -300,6 +379,18 @@ export class WorldBots {
 
     bot.jumpHeldPrev = (keys & InputBit.Jump) !== 0;
     return { keys, aimX, aimY };
+  }
+
+  /** Is `foe`'s velocity roughly aligned toward `me`? Same dot-product
+   *  shape as the projectile threat check, applied to a player body —
+   *  used to tell "sliding toward us" from "sliding somewhere else". */
+  private headingTowardMe(me: PlayerEntity, foe: PlayerEntity): boolean {
+    const dx = me.x - foe.x;
+    const dy = me.y - foe.y;
+    const d = Math.hypot(dx, dy) || 1;
+    const speed = Math.hypot(foe.vx, foe.vy) || 1;
+    const align = (foe.vx * dx + foe.vy * dy) / (speed * d);
+    return align > 0.5;
   }
 
   private nearestFoe(state: WorldState, me: PlayerEntity): PlayerEntity | null {
