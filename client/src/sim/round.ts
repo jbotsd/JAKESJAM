@@ -377,11 +377,11 @@ function finalize(
 }
 
 /**
- * Roll DRAFT_OFFER_COUNT card ids per player in the match using the seeded
- * RNG. Includes dead players — the round-end loser is usually mid-respawn
- * and must still see their picker. Skips cards already in the player's hand
- * when the source card declares itself `unique: true` (so the same-rarity
- * weapon never gets re-offered).
+ * Roll DRAFT_OFFER_COUNT card ids for every NON-WINNER in the match using
+ * the seeded RNG (loser-only catch-up draft; draws let everyone pick).
+ * Includes dead players — the round-end loser is usually mid-respawn and
+ * must still see their picker. Skips `unique: true` cards already in hand
+ * and cards already held at maxStacks copies.
  *
  * Iteration order over players is sorted by id so the offer roll is fully
  * deterministic given (rngState, players).
@@ -394,7 +394,18 @@ export function enterDrafting(
 ): { state: RoundState; events: SimEvent[]; rngState: number } {
   const events: SimEvent[] = [];
   let cursor = rngState;
-  const draftingIds = Object.keys(players).sort();
+  // LOSER-ONLY DRAFT (the ROUNDS catch-up model): the round winner sits the
+  // draft out; everyone else picks a card. This is the match's entire
+  // anti-snowball engine — the leader stays still while the field arms up,
+  // so a 2-0 lead is never a 2-0 power lead as well. On a DRAW
+  // (winnerPlayerId null — mutual KO or empty world) everyone drafts.
+  // The winner having no offers composes cleanly with the resolution gate
+  // below: it keys off draftingOffers keys, so the winner is simply not
+  // waited on.
+  const roundWinner = next.winnerPlayerId ?? null;
+  const draftingIds = Object.keys(players)
+    .sort()
+    .filter((pid) => pid !== roundWinner);
 
   const draftingOffers: Record<PlayerId, string[]> = {};
 

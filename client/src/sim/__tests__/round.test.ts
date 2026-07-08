@@ -274,7 +274,7 @@ describe("stepRound", () => {
   // unless everyone picks early, and auto-picks the leftmost offer for
   // anyone who didn't commit before the window expired.
 
-  test("round-over → drafting rolls DRAFT_OFFER_COUNT offers per alive player", () => {
+  test("round-over → drafting: LOSER-ONLY draft (winner sits out — ROUNDS catch-up)", () => {
     const players = {
       a: mkPlayer("a", { alive: true }),
       b: mkPlayer("b", { alive: true }),
@@ -296,25 +296,43 @@ describe("stepRound", () => {
     });
     expect(result.state.phase).toBe("drafting");
     expect(result.state.draftingOffers).toBeDefined();
-    expect(Object.keys(result.state.draftingOffers!).sort()).toEqual(["a", "b"]);
-    expect(result.state.draftingOffers![A]!.length).toBe(DRAFT_OFFER_COUNT);
+    // The winner (A) gets NO offers — only the loser (B) drafts.
+    expect(Object.keys(result.state.draftingOffers!).sort()).toEqual(["b"]);
     expect(result.state.draftingOffers![B]!.length).toBe(DRAFT_OFFER_COUNT);
     expect(result.state.draftingPicked).toEqual({});
     // Expiry tick is window converted to ticks at the fixed STEP_MS rate.
     const expectedExpiry = Tick(100 + Math.ceil(DRAFT_WINDOW_MS / STEP_MS));
     expect(result.state.draftingExpiresAtTick).toBe(expectedExpiry);
-    // Two card-offered events, one per alive player. Round-end is NOT
-    // re-emitted at this boundary (already fired on fighting → round-over).
+    // One card-offered event — the loser's. Round-end is NOT re-emitted at
+    // this boundary (already fired on fighting → round-over).
     const offerEvents = result.events.filter(
       (e): e is Extract<SimEvent, { t: "card-offered" }> => e.t === "card-offered",
     );
-    expect(offerEvents).toHaveLength(2);
-    const offered = new Map(offerEvents.map((e) => [e.playerId, e.cardIds]));
-    expect(offered.get(A)).toEqual(result.state.draftingOffers![A]!);
-    expect(offered.get(B)).toEqual(result.state.draftingOffers![B]!);
+    expect(offerEvents).toHaveLength(1);
+    expect(offerEvents[0]!.playerId).toBe(B);
+    expect(offerEvents[0]!.cardIds).toEqual(result.state.draftingOffers![B]!);
     // RNG cursor advanced because we drew offers.
     expect(result.rngState).toBeDefined();
     expect(result.rngState).not.toBe(0xdead_beef);
+  });
+
+  test("round-over → drafting on a DRAW: everyone drafts", () => {
+    const players = {
+      a: mkPlayer("a", { alive: false }),
+      b: mkPlayer("b", { alive: false }),
+    };
+    const state: RoundState = {
+      phase: "round-over",
+      countdownRemainingMs: 0,
+      scores: { [A]: 0, [B]: 0 },
+      roundIndex: 0,
+      winnerPlayerId: null, // mutual KO
+    };
+    const result = stepRound({
+      state, players, dtMs: 32, targetScore: 3, tick: Tick(100), rngState: 7,
+    });
+    expect(result.state.phase).toBe("drafting");
+    expect(Object.keys(result.state.draftingOffers!).sort()).toEqual(["a", "b"]);
   });
 
   test("drafting offer rolls are deterministic for the same (rngState, players)", () => {
