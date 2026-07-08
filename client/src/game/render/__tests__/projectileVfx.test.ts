@@ -18,7 +18,7 @@ import {
 
 const ELEMENTS: ElementType[] = [
   "crystal", "neutral", "fire", "ice", "lightning", "void",
-  "radiant", "electric", "toxic", "sticky", "explosive",
+  "radiant", "sticky", "explosive",
 ];
 const SHAPES: ProjectileShape[] = ["circle", "triangle", "square", "hexagon", "orb", "x", "bar"];
 

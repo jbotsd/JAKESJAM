@@ -211,6 +211,12 @@ export type DeflectOptions = {
   directionalShield?: boolean;
   /** Widens the PARRY arc (Wide Parry card). 1 = default 60°. */
   parryCoverMultiplier?: number;
+  /** Void Fracture: the shot punches through a passively HELD shield
+   *  untouched (no absorb, no charge drain) — the counter-pick to the
+   *  turtle meta. Does NOT bypass the timed parry or the aegis slide's
+   *  active block/reflect — those are a skilled READ, not passive
+   *  attrition, and stay a hard counter to void same as anything else. */
+  voidPiercing?: boolean;
 };
 
 /**
@@ -296,6 +302,18 @@ export function tryDeflectDamage(
   }
 
   // 2. Shield — drain charge by damage * multiplier and zero the damage.
+  //    Void Fracture punches straight through this step: pass-through
+  //    damage, shield left completely untouched (not even drained).
+  if (player.shieldActive && options.voidPiercing) {
+    return {
+      player,
+      damage,
+      deflected: false,
+      shielded: false,
+      shieldPopped: false,
+      shieldReflected: false,
+    };
+  }
   if (player.shieldActive) {
     const currentCharge = player.shieldCharge ?? 0;
     if (currentCharge > 0) {

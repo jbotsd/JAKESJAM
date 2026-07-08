@@ -88,6 +88,13 @@ export type ProjectilePathing =
   | 'float'
   | 'accelerate';
 
+// 'electric' and 'toxic' were declared here with NO sim handler anywhere
+// (World.ts's element switch has no branch for either) — a ghost a future
+// card could accidentally reference and silently do nothing. Removed from
+// the card-authoring-facing union so that mistake can't happen. The
+// numeric wire slots (Zig ElementType enum, wasm index tables) are left
+// untouched — no card can ever emit them now, so they're simply unused,
+// not a renumbering hazard.
 export type ElementType =
   | 'crystal'
   | 'neutral'
@@ -96,8 +103,6 @@ export type ElementType =
   | 'lightning'
   | 'void'
   | 'radiant'
-  | 'electric'
-  | 'toxic'
   | 'sticky'
   | 'explosive';
 

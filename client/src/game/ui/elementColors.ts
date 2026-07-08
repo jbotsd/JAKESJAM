@@ -11,8 +11,6 @@ export const ELEMENT_COLORS = {
   lightning: 0xfef08a,
   void: 0xa78bfa,
   radiant: 0xfff7d6,
-  electric: 0xfef08a,
-  toxic: 0x86efac,
   sticky: 0xf97316,
   explosive: 0xfb7185,
 } as const satisfies Record<ElementType, number>;

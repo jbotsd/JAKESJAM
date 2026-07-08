@@ -613,13 +613,17 @@ export const crystalRoundsCards: CardDefinition[] = [
     unique: true,
   },
   {
+    // Void's damage now punches a HELD shield untouched (combat.ts
+    // voidPiercing) — the counter-pick to the turtle meta. Still a fair
+    // fight against SKILLED defense: the timed parry and the aegis slide's
+    // active block still stop it same as anything else.
     id: "void-fracture",
     name: "Void Fracture",
     category: "projectile",
     rarity: "rare",
     buckets: ["element"],
     essenceCost: 4,
-    description: "Void element with extra damage — pierces through up to two targets.",
+    description: "Void element: ignores held shields, pierces two targets.",
     flavorText: "The shard takes the scenic route through absence.",
     modifier: {
       damageMultiplier: 1.08,

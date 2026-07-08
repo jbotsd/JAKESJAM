@@ -308,6 +308,72 @@ describe("tryDeflectDamage", () => {
     expect(r.player.shieldActive).toBe(true);
   });
 
+  // Void Fracture: the counter-pick to the turtle meta. Punches a held
+  // shield untouched — no absorb, no charge drain — but must NOT bypass
+  // the ACTIVE, skill-gated defenses (timed parry, aegis slide block).
+  describe("voidPiercing — Void Fracture bypasses the held shield only", () => {
+    test("pierces a held+charged shield: full damage, charge left untouched", () => {
+      const p = mkPlayer({ shieldActive: true, shieldCharge: 100 });
+      const proj = mkProjectile({ damage: 25 });
+      const r = tryDeflectDamage(p, proj, proj.damage, Tick(0), {
+        voidPiercing: true,
+      });
+      expect(r.shielded).toBe(false);
+      expect(r.damage).toBe(25); // NOT zeroed — it punched through
+      expect(r.player.shieldCharge).toBe(100); // untouched, not even drained
+      expect(r.player.shieldActive).toBe(true);
+    });
+
+    test("a non-void hit against the same shield is absorbed normally (regression guard)", () => {
+      const p = mkPlayer({ shieldActive: true, shieldCharge: 100 });
+      const proj = mkProjectile({ damage: 25 });
+      const r = tryDeflectDamage(p, proj, proj.damage, Tick(0), {
+        voidPiercing: false,
+      });
+      expect(r.shielded).toBe(true);
+      expect(r.damage).toBe(0);
+    });
+
+    test("does NOT bypass the timed parry — a parrying target still deflects a void shot", () => {
+      const p = mkPlayer({ shieldActive: true, shieldCharge: 100 });
+      const parried = tryStartParry(p, ABILITY, 0, Tick(0), { dtMs: 16 });
+      const proj = mkProjectile({ damage: 25 });
+      const r = tryDeflectDamage(
+        parried.player,
+        proj,
+        proj.damage,
+        Tick(0),
+        { voidPiercing: true },
+      );
+      expect(r.deflected).toBe(true);
+      expect(r.damage).toBe(0);
+    });
+
+    test("does NOT bypass the aegis slide's active block", () => {
+      const p = mkPlayer({
+        x: 0, y: 0, vx: 700, vy: 0, dashing: true,
+        shieldActive: true, shieldCharge: 100,
+      });
+      const proj = mkProjectile({ x: 50, y: 0, damage: 25 }); // in the slide's front arc
+      const r = tryDeflectDamage(p, proj, proj.damage, Tick(0), {
+        voidPiercing: true,
+      });
+      expect(r.deflected).toBe(true);
+      expect(r.damage).toBe(0);
+      expect(r.player.shieldCharge).toBe(100); // never even reached the shield step
+    });
+
+    test("no shield held: voidPiercing is a no-op, damage passes through as usual", () => {
+      const p = mkPlayer({ shieldActive: false });
+      const proj = mkProjectile({ damage: 25 });
+      const r = tryDeflectDamage(p, proj, proj.damage, Tick(0), {
+        voidPiercing: true,
+      });
+      expect(r.shielded).toBe(false);
+      expect(r.damage).toBe(25);
+    });
+  });
+
   test("shield popping deactivates and signals shieldPopped", () => {
     const p = mkPlayer({ shieldActive: true, shieldCharge: 5 });
     const proj = mkProjectile({ damage: 50 }); // way more than charge

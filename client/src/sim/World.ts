@@ -916,6 +916,7 @@ export function stepWithRuntime(
               mirrorShield: victimBuild.mirrorShield,
               directionalShield: victimBuild.directionalShield,
               parryCoverMultiplier: victimBuild.parryCoverMultiplier,
+              voidPiercing: proj.element === "void",
             },
           );
           let postPlayer = mitigation.player;
@@ -991,8 +992,11 @@ export function stepWithRuntime(
                 postPlayer.vulnerabilityUntilTick > nextTick);
             if (hasStatus) finalDamage *= 1.4;
           }
-          // Void: 50% armor pierce hook. No armor stat exists yet — leave
-          // a no-op branch here so the wiring is in place when armor lands.
+          // Void's HELD-SHIELD pierce already happened above (voidPiercing
+          // short-circuits tryDeflectDamage's shield step entirely — a void
+          // hit that reaches here either had no shield in the way or already
+          // passed through one untouched). This is a SEPARATE, still-open
+          // hook: 50% armor pierce. No armor stat exists yet.
           if (element === "void") {
             // TODO: when `armor` is added to PlayerEntity, multiply
             // finalDamage by 1 / (1 - 0.5 * armor). For now: no-op.
