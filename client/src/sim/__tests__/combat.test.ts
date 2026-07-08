@@ -233,6 +233,34 @@ describe("tryDeflectDamage", () => {
     expect(r.damage).toBe(proj.damage);
   });
 
+  test("aegis dash blocks a hit in the lunge's frontal arc (no charge cost)", () => {
+    // Lunging toward +x (vx>0) with no shield held and no charge — the block
+    // is the dash's own property.
+    const p = mkPlayer({ x: 0, y: 0, vx: 700, vy: 0, dashing: true, shieldActive: false });
+    const proj = mkProjectile({ x: 50, y: 0 }); // in front of the lunge
+    const r = tryDeflectDamage(p, proj, proj.damage, Tick(0));
+    expect(r.shielded).toBe(true);
+    expect(r.damage).toBe(0);
+    // No shield-charge machinery touched.
+    expect(r.player.shieldCharge).toBe(p.shieldCharge);
+  });
+
+  test("aegis dash does NOT block a hit from behind the lunge (directional)", () => {
+    const p = mkPlayer({ x: 0, y: 0, vx: 700, vy: 0, dashing: true });
+    const proj = mkProjectile({ x: -50, y: 0, vx: 300 }); // from behind
+    const r = tryDeflectDamage(p, proj, proj.damage, Tick(0));
+    expect(r.shielded).toBe(false);
+    expect(r.damage).toBe(proj.damage);
+  });
+
+  test("aegis block is inactive when not dashing", () => {
+    const p = mkPlayer({ x: 0, y: 0, vx: 700, vy: 0, dashing: false });
+    const proj = mkProjectile({ x: 50, y: 0 });
+    const r = tryDeflectDamage(p, proj, proj.damage, Tick(0));
+    expect(r.shielded).toBe(false);
+    expect(r.damage).toBe(proj.damage);
+  });
+
   test("active shield with charge absorbs the hit and drains charge", () => {
     const p = mkPlayer({ shieldActive: true, shieldCharge: 100 });
     const proj = mkProjectile({ damage: 25 });

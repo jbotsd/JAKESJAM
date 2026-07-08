@@ -244,12 +244,17 @@ pub fn stepPlayer(
         s.jump_cut_applied = 1;
     }
 
-    // Gravity.
+    // Gravity — SUSPENDED during a dash burst so the aim-directional lunge
+    // travels straight in the aimed direction instead of sagging. Mirrors
+    // player.ts. `dash_active` reflects a dash from a PRIOR tick; the trigger
+    // tick runs gravity here then overwrites vy in the dash block below.
     const gravity_now = (if (s.vy > 0.0)
         (if (fast_fall) FAST_FALL_GRAVITY else DESCENT_GRAVITY)
     else
         GRAVITY) * gravity_mul;
-    s.vy = @min(MAX_FALL_SPEED, s.vy + gravity_now * dt_sec);
+    if (!dash_active) {
+        s.vy = @min(MAX_FALL_SPEED, s.vy + gravity_now * dt_sec);
+    }
 
     // Grippy wall-slide / latch (Warframe/SMB): pressing INTO the wall while
     // airborne + descending caps the fall speed.
@@ -258,21 +263,32 @@ pub fn stepPlayer(
         s.vy = @min(s.vy, WALL_SLIDE_MAX_FALL * s.wall_slide_mul);
     }
 
-    // DASH (card): horizontal burst on the Dash input. Ground dash always on
-    // cooldown; air dashes limited to dash_charges before landing.
+    // AEGIS DASH (card): aim-directional shielded lunge on the Dash input.
+    // Ground dash always on cooldown; air dashes limited to dash_charges.
+    // Direction = the AIM vector (8-way, incl. up/diagonal and off walls).
+    // Mirrors player.ts byte-for-byte.
     if (dash_pressed and s.dash_charges > 0 and s.dash_cooldown_ms <= 0.0) {
         const can_air = !boolFromInt(s.grounded_last_frame) and s.dash_used_in_air < s.dash_charges;
         if (boolFromInt(s.grounded_last_frame) or can_air) {
-            const dash_dir: f64 = if (direction != 0.0)
-                direction
-            else if (aim_x - s.x >= 0.0) 1.0 else -1.0;
-            s.vx = dash_dir * DASH_SPEED;
+            var dx = aim_x - s.x;
+            var dy = aim_y - s.y;
+            const len = @sqrt(dx * dx + dy * dy);
+            if (len < 1e-3) {
+                // Degenerate aim (cursor on the player): fall back to facing, flat.
+                dx = if (direction != 0.0) direction else 1.0;
+                dy = 0.0;
+            }
+            const inv_len = 1.0 / (if (len < 1e-3) 1.0 else len);
+            s.vx = dx * inv_len * DASH_SPEED;
+            s.vy = dy * inv_len * DASH_SPEED;
             if (!boolFromInt(s.grounded_last_frame)) {
-                s.vy = 0.0;
                 s.dash_used_in_air += 1;
             }
             s.dash_cooldown_ms = DASH_COOLDOWN_MS;
             s.dash_active_ms = DASH_DURATION_MS;
+            // The lunge's upward component isn't a jump — mark jump-cut
+            // consumed so variable-jump-height doesn't halve an up dash.
+            s.jump_cut_applied = 1;
         }
     }
 

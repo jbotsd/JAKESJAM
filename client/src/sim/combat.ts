@@ -262,6 +262,30 @@ export function tryDeflectDamage(
     }
   }
 
+  // 1.5. AEGIS DASH — while lunging, the shield is deployed in the travel
+  //      direction: a FULL block within the frontal arc of the dash, at NO
+  //      shield-charge cost (the dash's own 520ms cooldown + air-charge gating
+  //      bound it). Directional, NOT full invuln — a hit from the flank or
+  //      back still lands — so it's the directional shield merged onto the
+  //      dash, not a panic-immortality button. Guard direction is the dash's
+  //      travel velocity (friction+gravity are suspended during the burst, so
+  //      velocity == the aim-directional lunge vector). Reuses the shield's
+  //      120° frontal cone so a held guard and a lunging guard feel identical.
+  if (player.dashing === true && projectile !== null) {
+    const facing =
+      player.vx === 0 && player.vy === 0 ? 0 : lutAtan2(player.vy, player.vx);
+    if (isHitInParryArc(player, facing, projectile, SHIELD_AIM_ARC_RADIANS)) {
+      return {
+        player,
+        damage: 0,
+        deflected: false,
+        shielded: true,
+        shieldPopped: false,
+        shieldReflected: false,
+      };
+    }
+  }
+
   // 2. Shield — drain charge by damage * multiplier and zero the damage.
   if (player.shieldActive) {
     const currentCharge = player.shieldCharge ?? 0;

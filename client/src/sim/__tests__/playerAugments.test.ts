@@ -95,6 +95,52 @@ describe("movement augments", () => {
     expect(r.memory.dashCooldownMs).toBeGreaterThan(0);
   });
 
+  test("aegis dash: lunges toward AIM (up-right → vx>0 AND vy<0)", () => {
+    const map = miniMap();
+    const cache = buildStaticCache(map.platforms, map.size.x, map.size.y);
+    const player = mkPlayer(); // at (400, 580)
+    const mem = freshPlayerMovementMemory();
+    mem.groundedLastFrame = true;
+    // Aim up-and-right of the player → a diagonal lunge, not the old
+    // horizontal-only burst.
+    const r = stepPlayer(player, 0, DASH, 600, 380, mem, map.platforms, STEP, {
+      collisionCache: cache, dashCharges: 1,
+    });
+    expect(r.player.vx).toBeGreaterThan(400);
+    expect(r.player.vy).toBeLessThan(-400);
+    expect(r.memory.dashActiveMs).toBeGreaterThan(0);
+  });
+
+  test("aegis dash: straight-up lunge is possible (aim directly above)", () => {
+    const map = miniMap();
+    const cache = buildStaticCache(map.platforms, map.size.x, map.size.y);
+    const player = mkPlayer(); // at (400, 580)
+    const mem = freshPlayerMovementMemory();
+    mem.groundedLastFrame = true;
+    const r = stepPlayer(player, 0, DASH, 400, 300, mem, map.platforms, STEP, {
+      collisionCache: cache, dashCharges: 1,
+    });
+    expect(Math.abs(r.player.vx)).toBeLessThan(30);
+    expect(r.player.vy).toBeLessThan(-700); // near full DASH_SPEED upward
+  });
+
+  test("aegis dash: gravity suspended during the burst (no vy sag)", () => {
+    const map = miniMap();
+    const cache = buildStaticCache(map.platforms, map.size.x, map.size.y);
+    const player = { ...mkPlayer(), y: 300 }; // airborne
+    const mem = freshPlayerMovementMemory(); // groundedLastFrame = false
+    const opts = { collisionCache: cache, dashCharges: 1 };
+    // Air-dash horizontally (aim level, to the right).
+    let r = stepPlayer(player, 0, DASH, 900, 300, mem, map.platforms, STEP, opts);
+    expect(Math.abs(r.player.vy)).toBeLessThan(10); // flat lunge
+    // Coast through the burst with no input — gravity must NOT accumulate vy.
+    for (let i = 0; i < 4; i++) {
+      r = stepPlayer(r.player, 0, 0, 900, 300, r.memory, map.platforms, STEP, opts);
+    }
+    expect(r.memory.dashActiveMs).toBeGreaterThan(0); // still dashing
+    expect(Math.abs(r.player.vy)).toBeLessThan(10); // no sag
+  });
+
   test("no dash without the card (dashCharges=0)", () => {
     const map = miniMap();
     const cache = buildStaticCache(map.platforms, map.size.x, map.size.y);

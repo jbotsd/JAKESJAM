@@ -217,6 +217,7 @@ const Bit = {
   Down: 1 << 3,
   Jump: 1 << 4,
   Crouch: 1 << 5,
+  Dash: 1 << 9,
 } as const;
 
 type Tick = { prev: InputBitfield; curr: InputBitfield };
@@ -406,5 +407,51 @@ describe("player parity (TS V8 vs Zig wasm)", () => {
     expect(powerSlide.vx).toBeGreaterThan(0);
     expect(Math.abs(powerSlide.vy)).toBeLessThan(Math.abs(plainKick.vy));
     expect(Math.abs(powerSlide.vx)).toBeGreaterThan(Math.abs(plainKick.vx));
+  });
+
+  test("aegis dash (aim up-right): wasm matches TS byte-for-byte and lunges diagonally with gravity suspended", () => {
+    const STATE_PTR = sim.statePtr;
+    const STATICS_OFF = SIZEOF_PLAYER_STEP + 8;
+    const packed = packStaticsAndOneWay(sim, STATICS_OFF + STATE_PTR, STATICS, ONE_WAY);
+    const DT = 1000 / 60;
+    const opts = { collisionCache: cache, dashCharges: 1 };
+    // Airborne in open space (away from floor/ceiling) so the diagonal lunge
+    // isn't clipped by geometry; aim up-and-right.
+    const AIMX = 900;
+    const AIMY = 150;
+    let tsP = makePlayer(700, 400);
+    let tsM = { ...freshPlayerMovementMemory(), groundedLastFrame: false };
+    packPlayerStep(STATE_PTR, {
+      x: 700, y: 400, vx: 0, vy: 0, aimX: AIMX, aimY: AIMY,
+      jetpackFuel: JETPACK_MAX_FUEL, crouching: false,
+      memory: { ...freshPlayerMovementMemory(), groundedLastFrame: false },
+      dashCharges: 1,
+    });
+    const script: number[] = [Bit.Dash, 0, 0, 0, 0, 0];
+    let prev = 0;
+    let dashVy = 999;
+    let dashVx = -999;
+    let vyMidBurst = 999;
+    for (let t = 0; t < script.length; t++) {
+      const curr = script[t]!;
+      const ts = stepPlayer(tsP, prev, curr, AIMX, AIMY, tsM, [], DT, opts);
+      tsP = ts.player; tsM = ts.memory;
+      ex.step_player(STATE_PTR, prev, curr, AIMX, AIMY, 1, 1, DT,
+        packed.staticsPtr, packed.staticsCount, packed.oneWayPtr, packed.oneWayCount);
+      const wa = unpackPlayerStep(STATE_PTR);
+      expect(wa.vx).toBe(tsP.vx);
+      expect(wa.vy).toBe(tsP.vy);
+      expect(wa.y).toBe(tsP.y);
+      if (t === 0) { dashVy = tsP.vy; dashVx = tsP.vx; }
+      if (t === 2) vyMidBurst = tsP.vy;
+      prev = curr;
+    }
+    // A real diagonal lunge: up (vy<0) AND right (vx>0), both a big fraction
+    // of DASH_SPEED.
+    expect(dashVy).toBeLessThan(-400);
+    expect(dashVx).toBeGreaterThan(400);
+    // Gravity suspended mid-burst: vy hasn't decayed toward 0 (would if
+    // gravity were adding ~+24/tick).
+    expect(vyMidBurst).toBeLessThan(-400);
   });
 });

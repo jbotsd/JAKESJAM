@@ -370,14 +370,20 @@ function stepPlayerNative(
     mem.jumpCutApplied = true;
   }
 
-  // Gravity.
+  // Gravity — SUSPENDED during a dash burst so the aim-directional lunge
+  // travels straight in the aimed direction (a floaty, crisp dash) instead
+  // of sagging. `dashActive` reflects a dash started on a PRIOR tick; the
+  // trigger tick itself runs gravity here then overwrites vy in the dash
+  // block below, which is fine.
   const gravity =
     (next.vy > 0
       ? fastFall
         ? M.fastFallGravity
         : M.descentGravity
       : M.gravity) * gravityMul;
-  next.vy = Math.min(M.maxFallSpeed, next.vy + gravity * dtSec);
+  if (!dashActive) {
+    next.vy = Math.min(M.maxFallSpeed, next.vy + gravity * dtSec);
+  }
 
   // Grippy wall-slide / latch (Warframe/SMB): pressing INTO a wall while
   // airborne + descending caps the fall speed — a controlled grip instead of
@@ -387,20 +393,36 @@ function stepPlayerNative(
     next.vy = Math.min(next.vy, M.wallSlideMaxFall * wallSlideMul);
   }
 
-  // DASH (card): a horizontal burst on the Dash input. Ground dash is always
-  // available on cooldown; air dashes are limited to `dashCharges` before
-  // landing. Direction = movement input, else the aim side.
+  // AEGIS DASH (card): an aim-directional shielded lunge on the Dash input.
+  // Ground dash is always available on cooldown; air dashes are limited to
+  // `dashCharges` before landing. Direction = the AIM vector (8-way, incl.
+  // up/diagonal and off walls) — aim is the only directional intent the
+  // control scheme carries (A/D-only movement has no vertical axis). The
+  // shield is deployed in the travel direction for the burst window; the
+  // block lives in combat.tryDeflectDamage, keyed on `dashing` + velocity.
   if (dashPressed && dashCharges > 0 && mem.dashCooldownMs <= 0) {
     const canAir = !mem.groundedLastFrame && mem.dashUsedInAir < dashCharges;
     if (mem.groundedLastFrame || canAir) {
-      const dashDir = direction !== 0 ? direction : (aimX - next.x >= 0 ? 1 : -1);
-      next.vx = dashDir * DASH_SPEED;
+      let dx = aimX - next.x;
+      let dy = aimY - next.y;
+      const len = Math.sqrt(dx * dx + dy * dy);
+      if (len < 1e-3) {
+        // Degenerate aim (cursor on the player): fall back to facing, flat.
+        dx = direction !== 0 ? direction : 1;
+        dy = 0;
+      }
+      const invLen = 1 / (len < 1e-3 ? 1 : len);
+      next.vx = dx * invLen * DASH_SPEED;
+      next.vy = dy * invLen * DASH_SPEED;
       if (!mem.groundedLastFrame) {
-        next.vy = 0; // flat air-dash
         mem.dashUsedInAir += 1;
       }
       mem.dashCooldownMs = DASH_COOLDOWN_MS;
       mem.dashActiveMs = DASH_DURATION_MS;
+      // The lunge's upward component is NOT a jump — mark jump-cut consumed
+      // so the variable-jump-height logic doesn't halve an up/diagonal dash
+      // (it fires on any vy<0). A later real jump resets this.
+      mem.jumpCutApplied = true;
     }
   }
 
