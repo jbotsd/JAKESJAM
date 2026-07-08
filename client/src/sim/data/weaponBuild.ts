@@ -69,6 +69,7 @@ export function createWeaponBuild(
     wallSlideMultiplier: 1,
     airJumps: 0,
     dashCharges: 0,
+    dashCooldownMultiplier: 1,
     cards: [],
     occupiedBuckets: [],
   };
@@ -138,6 +139,7 @@ export function applyCard(build: ResolvedWeaponBuild, card: CardDefinition) {
   build.wallSlideMultiplier *= modifier.wallSlideMultiplier ?? 1;
   build.airJumps += modifier.airJumpsAdd ?? 0;
   build.dashCharges += modifier.dashChargesAdd ?? 0;
+  build.dashCooldownMultiplier *= modifier.dashCooldownMultiplier ?? 1;
   build.overchargeMultiplier = Math.max(
     build.overchargeMultiplier,
     modifier.overchargeMultiplier ?? 1,
@@ -187,6 +189,10 @@ export function clampBuild(build: ResolvedWeaponBuild) {
   build.moveSpeedMultiplier = roundTo(Math.max(0.45, build.moveSpeedMultiplier), 2);
   build.parryCoverMultiplier = roundTo(Math.max(0.45, build.parryCoverMultiplier), 2);
   build.parryCooldownMultiplier = roundTo(Math.max(0.28, build.parryCooldownMultiplier), 2);
+  // Data-hygiene floor only — the GAMEPLAY-SAFE floor (cooldown can never
+  // shrink below burst+recovery, so stacking can't erode the punish window)
+  // is enforced where the ms math actually lives: player.ts / player.zig.
+  build.dashCooldownMultiplier = roundTo(Math.max(0.5, build.dashCooldownMultiplier), 2);
   build.projectile.count = Math.max(1, Math.round(build.projectile.count));
   build.projectile.rangePx = Math.max(48, build.projectile.rangePx);
   build.projectile.sizeMultiplier = Math.max(0.35, build.projectile.sizeMultiplier);

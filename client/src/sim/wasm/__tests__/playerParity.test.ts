@@ -63,7 +63,7 @@ interface PlayerExports {
 const ex = sim.exports as unknown as typeof sim.exports & PlayerExports;
 const SIZEOF_PLAYER_STEP = ex.sizeof_player_step();
 const SIZEOF_AABB = ex.sizeof_aabb();
-expect(SIZEOF_PLAYER_STEP).toBe(168); // +wall movement +augments +dash_recovery_ms (slide endlag)
+expect(SIZEOF_PLAYER_STEP).toBe(176); // +wall movement +augments +dash_recovery_ms +dash_cooldown_mul
 
 // Layout matches sim/src/player.zig PlayerStep extern struct.
 const FIELD_OFFSETS = {
@@ -92,6 +92,8 @@ const FIELD_OFFSETS = {
   dash_charges: 148, // i32
   air_jumps_used: 152, // i32
   dash_used_in_air: 156, // i32
+  dash_recovery_ms: 160, // f64
+  dash_cooldown_mul: 168, // f64
 } as const;
 
 const PLATFORMS: PlatformDefinition[] = [
@@ -109,7 +111,7 @@ function packPlayerStep(absPtr: number, p: {
   memory: PlayerMovementMemory;
   // Augment inputs (card-driven). Default inert.
   jumpMul?: number; wallJumpMul?: number; wallSlideMul?: number;
-  airJumps?: number; dashCharges?: number;
+  airJumps?: number; dashCharges?: number; dashCooldownMultiplier?: number;
 }): void {
   const dv = new DataView(sim.exports.memory.buffer);
   dv.setFloat64(absPtr + FIELD_OFFSETS.x, p.x, true);
@@ -134,11 +136,13 @@ function packPlayerStep(absPtr: number, p: {
   dv.setFloat64(absPtr + FIELD_OFFSETS.wall_slide_mul, p.wallSlideMul ?? 1, true);
   dv.setInt32(absPtr + FIELD_OFFSETS.air_jumps, p.airJumps ?? 0, true);
   dv.setInt32(absPtr + FIELD_OFFSETS.dash_charges, p.dashCharges ?? 0, true);
+  dv.setFloat64(absPtr + FIELD_OFFSETS.dash_cooldown_mul, p.dashCooldownMultiplier ?? 1, true);
   // Augment MEMORY.
   dv.setFloat64(absPtr + FIELD_OFFSETS.dash_cooldown_ms, p.memory.dashCooldownMs, true);
   dv.setFloat64(absPtr + FIELD_OFFSETS.dash_active_ms, p.memory.dashActiveMs, true);
   dv.setInt32(absPtr + FIELD_OFFSETS.air_jumps_used, p.memory.airJumpsUsed, true);
   dv.setInt32(absPtr + FIELD_OFFSETS.dash_used_in_air, p.memory.dashUsedInAir, true);
+  dv.setFloat64(absPtr + FIELD_OFFSETS.dash_recovery_ms, p.memory.dashRecoveryMs, true);
 }
 
 function unpackPlayerStep(absPtr: number) {
@@ -158,6 +162,9 @@ function unpackPlayerStep(absPtr: number) {
     jumpReleasedSinceJump: dv.getInt32(absPtr + FIELD_OFFSETS.jump_released_since_jump, true) === 1,
     groundedLastFrame: dv.getInt32(absPtr + FIELD_OFFSETS.grounded_last_frame, true) === 1,
     jetpackActive: dv.getInt32(absPtr + FIELD_OFFSETS.jetpack_active, true) === 1,
+    dashCooldownMs: dv.getFloat64(absPtr + FIELD_OFFSETS.dash_cooldown_ms, true),
+    dashActiveMs: dv.getFloat64(absPtr + FIELD_OFFSETS.dash_active_ms, true),
+    dashRecoveryMs: dv.getFloat64(absPtr + FIELD_OFFSETS.dash_recovery_ms, true),
   };
 }
 
@@ -305,6 +312,9 @@ describe("player parity (TS V8 vs Zig wasm)", () => {
         wa.jumpReleasedSinceJump !== tsM.jumpReleasedSinceJump ||
         wa.groundedLastFrame !== tsM.groundedLastFrame ||
         wa.jetpackActive !== tsM.jetpackActive ||
+        wa.dashCooldownMs !== tsM.dashCooldownMs ||
+        wa.dashActiveMs !== tsM.dashActiveMs ||
+        wa.dashRecoveryMs !== tsM.dashRecoveryMs ||
         (jumped === 1) !== tsResult.jumpedThisFrame
       ) {
         throw new Error(
@@ -453,5 +463,44 @@ describe("player parity (TS V8 vs Zig wasm)", () => {
     // Gravity suspended mid-burst: vy hasn't decayed toward 0 (would if
     // gravity were adding ~+24/tick).
     expect(vyMidBurst).toBeLessThan(-400);
+  });
+
+  // I25: recovery endlag + the Quick Parry cooldown-multiplier floor cross
+  // the wasm boundary too — prove TS and Zig agree tick-for-tick, not just
+  // that each independently has the right unit-test behavior.
+  test("dash recovery endlag + cooldown-multiplier floor: wasm matches TS byte-for-byte", () => {
+    const STATE_PTR = sim.statePtr;
+    const STATICS_OFF = SIZEOF_PLAYER_STEP + 8;
+    const packed = packStaticsAndOneWay(sim, STATICS_OFF + STATE_PTR, STATICS, ONE_WAY);
+    const DT = 1000 / 60;
+    // Two Quick Parry stacks (0.86^2 ≈ 0.7396) — below the floor, so both
+    // sides must land on the SAME clamped 410ms cycle, not diverge.
+    const dashCooldownMultiplier = 0.86 * 0.86;
+    const opts = { collisionCache: cache, dashCharges: 1, dashCooldownMultiplier };
+    let tsP = makePlayer(700, 580);
+    let tsM = { ...freshPlayerMovementMemory(), groundedLastFrame: true };
+    packPlayerStep(STATE_PTR, {
+      x: 700, y: 580, vx: 0, vy: 0, aimX: 900, aimY: 580,
+      jetpackFuel: JETPACK_MAX_FUEL, crouching: false,
+      memory: { ...freshPlayerMovementMemory(), groundedLastFrame: true },
+      dashCharges: 1, dashCooldownMultiplier,
+    });
+    // Dash, then coast (no input) through burst + recovery + margin.
+    const script: number[] = [Bit.Dash, ...Array(30).fill(0)];
+    let prev = 0;
+    for (let t = 0; t < script.length; t++) {
+      const curr = script[t]!;
+      const ts = stepPlayer(tsP, prev, curr, 900, 580, tsM, [], DT, opts);
+      tsP = ts.player; tsM = ts.memory;
+      ex.step_player(STATE_PTR, prev, curr, 900, 580, 1, 1, DT,
+        packed.staticsPtr, packed.staticsCount, packed.oneWayPtr, packed.oneWayCount);
+      const wa = unpackPlayerStep(STATE_PTR);
+      expect(wa.dashActiveMs).toBe(tsM.dashActiveMs);
+      expect(wa.dashRecoveryMs).toBe(tsM.dashRecoveryMs);
+      expect(wa.dashCooldownMs).toBe(tsM.dashCooldownMs);
+      prev = curr;
+    }
+    // The floor actually engaged (below-floor multiplier got clamped).
+    expect(tsM.dashCooldownMs).toBe(0); // fully decayed by tick 30
   });
 });

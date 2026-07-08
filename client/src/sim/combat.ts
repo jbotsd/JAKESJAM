@@ -271,11 +271,19 @@ export function tryDeflectDamage(
   //      a hit from the flank/back still lands. Guard direction is the slide's
   //      travel velocity (friction+gravity are suspended during the burst, so
   //      velocity == the aim-directional launch vector). Reuses the shield's
-  //      120° frontal cone.
+  //      120° frontal cone, widened by Wide Parry (parryCoverMultiplier) —
+  //      Wide Parry lost its original target (the timed parry is now
+  //      human-unreachable, subsumed by this slide) so it was repurposed
+  //      onto the slide's arc instead of left dead. Clamped so a maxed-out
+  //      stack can never reach a full 360° block.
   if (player.dashing === true && projectile !== null) {
     const facing =
       player.vx === 0 && player.vy === 0 ? 0 : lutAtan2(player.vy, player.vx);
-    if (isHitInParryArc(player, facing, projectile, SHIELD_AIM_ARC_RADIANS)) {
+    const slideArc = Math.min(
+      2 * Math.PI - 0.01,
+      SHIELD_AIM_ARC_RADIANS * (options.parryCoverMultiplier ?? 1),
+    );
+    if (isHitInParryArc(player, facing, projectile, slideArc)) {
       return {
         player,
         damage: 0,

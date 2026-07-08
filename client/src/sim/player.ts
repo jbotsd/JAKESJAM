@@ -120,6 +120,12 @@ export const DASH_RECOVERY_MS = 200;
 /** Steering-acceleration multiplier while recovering (0.4 = sluggish, not
  *  frozen — you can still drift, you just can't juke). */
 const DASH_RECOVERY_ACCEL_MULT = 0.4;
+/** HARD floor on the dash cycle (cooldown), regardless of card stacking
+ *  (Quick Parry: dashCooldownMultiplier). Risk of Rain's stacking lesson,
+ *  applied: uptime-adjacent stats must never compound toward 100% — so the
+ *  cooldown can never shrink below burst+recovery, which guarantees the
+ *  punish window survives no matter how many Quick Parrys are stacked. */
+const DASH_MIN_CYCLE_MS = DASH_DURATION_MS + DASH_RECOVERY_MS;
 
 /** Per-player movement memory the entity itself doesn't carry. */
 export type PlayerMovementMemory = {
@@ -195,6 +201,10 @@ export type PlayerStepOptions = {
   wallSlideMultiplier?: number;
   airJumps?: number;
   dashCharges?: number;
+  /** Scales the aegis slide's cooldown (<1 = sooner — Quick Parry,
+   *  repurposed). Floor-clamped against burst+recovery so stacking can
+   *  never squeeze out the punish window (see DASH_MIN_CYCLE_MS). */
+  dashCooldownMultiplier?: number;
   /** Pre-built collision cache. Required: the brute-force fallback was
    *  deleted (H2) because it didn't support one-way platforms and every
    *  production code path passes a cache anyway. createRuntime always
@@ -280,6 +290,10 @@ function stepPlayerNative(
   const wallSlideMul = options.wallSlideMultiplier ?? 1;
   const airJumps = options.airJumps ?? 0;
   const dashCharges = options.dashCharges ?? 0;
+  const dashCooldownMs = Math.max(
+    DASH_MIN_CYCLE_MS,
+    DASH_COOLDOWN_MS * (options.dashCooldownMultiplier ?? 1),
+  );
 
   const left = (currKeys & Bit.Left) !== 0;
   const right = (currKeys & Bit.Right) !== 0;
@@ -451,7 +465,7 @@ function stepPlayerNative(
       if (!mem.groundedLastFrame) {
         mem.dashUsedInAir += 1;
       }
-      mem.dashCooldownMs = DASH_COOLDOWN_MS;
+      mem.dashCooldownMs = dashCooldownMs;
       mem.dashActiveMs = DASH_DURATION_MS;
       // The lunge's upward component is NOT a jump — mark jump-cut consumed
       // so the variable-jump-height logic doesn't halve an up/diagonal dash

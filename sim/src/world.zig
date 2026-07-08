@@ -1054,6 +1054,7 @@ pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
             .wall_slide_mul = if (has_cfg) fcfg.wall_slide_mul else 1.0,
             .air_jumps = if (has_cfg) @intCast(fcfg.air_jumps) else 0,
             .dash_charges = if (has_cfg) @intCast(fcfg.dash_charges) else 0,
+            .dash_cooldown_mul = if (has_cfg) fcfg.dash_cooldown_mul else 1.0,
             // Augment MEMORY carried from world state.
             .dash_cooldown_ms = state.player_movement[pmi].dash_cooldown_ms,
             .dash_active_ms = state.player_movement[pmi].dash_active_ms,

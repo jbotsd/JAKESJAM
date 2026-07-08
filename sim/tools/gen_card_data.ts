@@ -50,6 +50,7 @@ function cardLiteral(id: string, mod: NonNullable<(typeof crystalRoundsCards)[nu
   add("wall_slide_mul", f(mod.wallSlideMultiplier, 1), "1.0");
   add("air_jumps_add", f(mod.airJumpsAdd, 0), "0.0");
   add("dash_charges_add", f(mod.dashChargesAdd, 0), "0.0");
+  add("dash_cooldown_mul", f(mod.dashCooldownMultiplier, 1), "1.0");
   add("mirror_shield", mod.mirrorShield ? "true" : "false", "false");
   add("directional_shield", mod.directionalShield ? "true" : "false", "false");
   add("proj_count_add", f(mod.projectileCountAdd, 0), "0.0");
@@ -108,6 +109,7 @@ pub const CardMod = struct {
     wall_slide_mul: f64 = 1,
     air_jumps_add: f64 = 0,
     dash_charges_add: f64 = 0,
+    dash_cooldown_mul: f64 = 1,
     mirror_shield: bool = false,
     directional_shield: bool = false,
     proj_count_add: f64 = 0,

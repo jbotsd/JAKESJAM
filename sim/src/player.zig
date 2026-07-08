@@ -45,6 +45,9 @@ const DASH_COOLDOWN_MS: f64 = 520.0;
 const DASH_DURATION_MS: f64 = 210.0;
 const DASH_RECOVERY_MS: f64 = 200.0;
 const DASH_RECOVERY_ACCEL_MULT: f64 = 0.4;
+/// HARD floor on the dash cycle regardless of card stacking (Quick Parry).
+/// Mirrors player.ts DASH_MIN_CYCLE_MS.
+const DASH_MIN_CYCLE_MS: f64 = DASH_DURATION_MS + DASH_RECOVERY_MS;
 
 const JETPACK_MAX_FUEL: f64 = 125.0;
 const JETPACK_THRUST: f64 = 1480.0;
@@ -112,6 +115,13 @@ pub const PlayerStep = extern struct {
     // ── Augment MEMORY (f64, appended — keep prior offsets stable) ──
     /// Recovery endlag after a dash burst (mirrors mem.dashRecoveryMs).
     dash_recovery_ms: f64,
+    // ── Augment INPUT (f64, appended — keep prior offsets stable) ──
+    /// Scales the dash cooldown (Quick Parry, repurposed). Floor-clamped
+    /// against DASH_MIN_CYCLE_MS in stepPlayer so stacking can't erode the
+    /// recovery-endlag punish window. Defaults to identity (1.0) so any
+    /// caller that forgets to set it (raw-memory writers, stale literals)
+    /// degrades to "no card" rather than always-floored.
+    dash_cooldown_mul: f64 = 1.0,
 };
 
 inline fn approach(value: f64, target: f64, amount: f64) f64 {
@@ -304,7 +314,7 @@ pub fn stepPlayer(
             if (!boolFromInt(s.grounded_last_frame)) {
                 s.dash_used_in_air += 1;
             }
-            s.dash_cooldown_ms = DASH_COOLDOWN_MS;
+            s.dash_cooldown_ms = @max(DASH_MIN_CYCLE_MS, DASH_COOLDOWN_MS * s.dash_cooldown_mul);
             s.dash_active_ms = DASH_DURATION_MS;
             // The lunge's upward component isn't a jump — mark jump-cut
             // consumed so variable-jump-height doesn't halve an up dash.

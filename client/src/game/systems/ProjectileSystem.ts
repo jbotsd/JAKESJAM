@@ -839,6 +839,7 @@ function projectileToBuild(projectile: ActiveProjectile): ResolvedWeaponBuild {
     wallSlideMultiplier: 1,
     airJumps: 0,
     dashCharges: 0,
+    dashCooldownMultiplier: 1,
     cards: [],
     occupiedBuckets: [],
   };

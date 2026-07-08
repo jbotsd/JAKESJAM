@@ -99,6 +99,7 @@ export type ResolvedFireConfigBytes = {
   maxHealthAdd: number;
   airJumps: number;
   dashCharges: number;
+  dashCooldownMultiplier: number;
   mirrorShield: number; // 0/1
   directionalShield: number; // 0/1
 };

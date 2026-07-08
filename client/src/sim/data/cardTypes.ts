@@ -109,6 +109,11 @@ export type WeaponCardModifier = {
   /** Dash charges granted: enables the Dash input and this many AIR dashes
    *  before landing (ground dash is always available on cooldown). Additive. */
   dashChargesAdd?: number;
+  /** Scales the aegis slide's cooldown (<1 = sooner). Floor-clamped in
+   *  weaponBuild.ts and stepPlayer so the recovery-endlag window can never be
+   *  squeezed out by stacking — Quick Parry (repurposed from the now-dead
+   *  timed-parry cooldown onto this). */
+  dashCooldownMultiplier?: number;
   // ── Shield augments ──────────────────────────────────────────────────────
   /** Scales the shield's max charge (bigger bar = longer block). */
   shieldChargeMultiplier?: number;
@@ -190,6 +195,7 @@ export type ResolvedWeaponBuild = {
   wallSlideMultiplier: number;
   airJumps: number;
   dashCharges: number;
+  dashCooldownMultiplier: number;
   cards: CardDefinition[];
   occupiedBuckets: WeaponBucket[];
 };

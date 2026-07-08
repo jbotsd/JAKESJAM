@@ -222,4 +222,50 @@ describe("movement augments", () => {
       expect(mem.dashRecoveryMs).toBe(0);
     });
   });
+
+  // Quick Parry (repurposed): dashCooldownMultiplier shortens the cycle, but
+  // a HARD floor (burst 210ms + recovery 200ms = 410ms) means stacking can
+  // never squeeze the recovery-endlag punish window out of existence — the
+  // Risk of Rain stacking lesson, enforced structurally rather than by card
+  // balance alone.
+  describe("dash cooldown multiplier (Quick Parry) + hard floor", () => {
+    test("a single stack (0.86x) shortens the cooldown, still above the floor", () => {
+      const map = miniMap();
+      const cache = buildStaticCache(map.platforms, map.size.x, map.size.y);
+      let player = mkPlayer();
+      let mem = freshPlayerMovementMemory();
+      mem.groundedLastFrame = true;
+      const r = stepPlayer(player, 0, DASH, 900, 580, mem, map.platforms, STEP, {
+        collisionCache: cache, dashCharges: 1, dashCooldownMultiplier: 0.86,
+      });
+      // 520 * 0.86 = 447.2ms — above the 410ms floor, so the multiplier
+      // actually applies (not just clamped).
+      expect(r.memory.dashCooldownMs).toBeCloseTo(447.2, 0);
+    });
+
+    test("two stacks (0.86^2) would fall below the floor — the floor wins", () => {
+      const map = miniMap();
+      const cache = buildStaticCache(map.platforms, map.size.x, map.size.y);
+      let player = mkPlayer();
+      let mem = freshPlayerMovementMemory();
+      mem.groundedLastFrame = true;
+      const twoStacks = 0.86 * 0.86; // 0.7396 -> 520*0.7396=384.6ms, below 410
+      const r = stepPlayer(player, 0, DASH, 900, 580, mem, map.platforms, STEP, {
+        collisionCache: cache, dashCharges: 1, dashCooldownMultiplier: twoStacks,
+      });
+      expect(r.memory.dashCooldownMs).toBe(210 + 200); // DASH_MIN_CYCLE_MS
+    });
+
+    test("even an absurd multiplier can't shrink the cycle below burst+recovery", () => {
+      const map = miniMap();
+      const cache = buildStaticCache(map.platforms, map.size.x, map.size.y);
+      let player = mkPlayer();
+      let mem = freshPlayerMovementMemory();
+      mem.groundedLastFrame = true;
+      const r = stepPlayer(player, 0, DASH, 900, 580, mem, map.platforms, STEP, {
+        collisionCache: cache, dashCharges: 1, dashCooldownMultiplier: 0.01,
+      });
+      expect(r.memory.dashCooldownMs).toBe(410);
+    });
+  });
 });

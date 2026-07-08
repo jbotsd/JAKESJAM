@@ -410,6 +410,9 @@ pub const ResolvedFireConfig = extern struct {
     mirror_shield: u8 = 0,
     directional_shield: u8 = 0,
     _pad2: [6]u8 = .{ 0, 0, 0, 0, 0, 0 },
+    // Appended — keeps every offset above stable (I25: repurposed Quick Parry
+    // from the dead timed-parry cooldown onto the aegis slide's cooldown).
+    dash_cooldown_mul: f64 = 1,
 };
 
 /// SimEvent kind tag (Phase I18). Mirrors the discriminated
@@ -575,7 +578,7 @@ comptime {
     std.debug.assert(@sizeOf(PickupEntity) == 64);
     std.debug.assert(@sizeOf(PlayerMovementMemory) == 48);
     std.debug.assert(@sizeOf(SimEvent) == 40);
-    std.debug.assert(@sizeOf(ResolvedFireConfig) == 232);
+    std.debug.assert(@sizeOf(ResolvedFireConfig) == 240);
 }
 
 // -----------------------------------------------------------------

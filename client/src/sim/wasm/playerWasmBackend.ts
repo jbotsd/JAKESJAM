@@ -70,6 +70,8 @@ export function makeStepPlayerWasmBackend(sim: SimHandle): StepPlayerFn {
     dash_used_in_air: 156,
     // ── augment memory (f64, appended) ──
     dash_recovery_ms: 160,
+    // ── augment input (f64, appended) ──
+    dash_cooldown_mul: 168,
   } as const;
 
   return (
@@ -90,6 +92,7 @@ export function makeStepPlayerWasmBackend(sim: SimHandle): StepPlayerFn {
       wallSlideMultiplier?: number;
       airJumps?: number;
       dashCharges?: number;
+      dashCooldownMultiplier?: number;
     },
   ) => {
     const cache = options.collisionCache;
@@ -124,6 +127,7 @@ export function makeStepPlayerWasmBackend(sim: SimHandle): StepPlayerFn {
     dv.setFloat64(PLAYER_OFF + F.wall_slide_mul, options.wallSlideMultiplier ?? 1, true);
     dv.setInt32(PLAYER_OFF + F.air_jumps, options.airJumps ?? 0, true);
     dv.setInt32(PLAYER_OFF + F.dash_charges, options.dashCharges ?? 0, true);
+    dv.setFloat64(PLAYER_OFF + F.dash_cooldown_mul, options.dashCooldownMultiplier ?? 1, true);
     // Augment memory (persisted across ticks).
     dv.setFloat64(PLAYER_OFF + F.dash_cooldown_ms, memory.dashCooldownMs, true);
     dv.setFloat64(PLAYER_OFF + F.dash_active_ms, memory.dashActiveMs, true);

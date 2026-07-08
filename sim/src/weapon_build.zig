@@ -59,6 +59,7 @@ fn resolveMods(mods: []const gen.CardMod) world_state.ResolvedFireConfig {
     var wall_slide_mul: f64 = 1;
     var air_jumps: f64 = 0;
     var dash_charges: f64 = 0;
+    var dash_cooldown_mul: f64 = 1;
     var mirror = false;
     var directional = false;
 
@@ -96,6 +97,7 @@ fn resolveMods(mods: []const gen.CardMod) world_state.ResolvedFireConfig {
         wall_slide_mul *= m.wall_slide_mul;
         air_jumps += m.air_jumps_add;
         dash_charges += m.dash_charges_add;
+        dash_cooldown_mul *= m.dash_cooldown_mul;
         directional = directional or m.directional_shield;
         mirror = mirror or m.mirror_shield;
         if (m.spread_radians_set) |s| spread = s;
@@ -134,6 +136,9 @@ fn resolveMods(mods: []const gen.CardMod) world_state.ResolvedFireConfig {
     move_speed_mul = round2(@max(0.45, move_speed_mul));
     parry_cover_mul = round2(@max(0.45, parry_cover_mul));
     parry_cooldown_mul = round2(@max(0.28, parry_cooldown_mul));
+    // Data-hygiene floor only — the gameplay-safe floor (cooldown can never
+    // shrink below burst+recovery) is enforced in player.zig's stepPlayer.
+    dash_cooldown_mul = round2(@max(0.5, dash_cooldown_mul));
     p_count = @max(1.0, @round(p_count));
     p_range = @max(48.0, p_range);
     p_size_mul = @max(0.35, p_size_mul);
@@ -182,6 +187,7 @@ fn resolveMods(mods: []const gen.CardMod) world_state.ResolvedFireConfig {
         .max_health_add = max_health_add,
         .air_jumps = @intFromFloat(air_jumps),
         .dash_charges = @intFromFloat(dash_charges),
+        .dash_cooldown_mul = dash_cooldown_mul,
         .mirror_shield = if (mirror) 1 else 0,
         .directional_shield = if (directional) 1 else 0,
     };

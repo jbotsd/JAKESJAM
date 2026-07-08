@@ -732,34 +732,45 @@ export const crystalRoundsCards: CardDefinition[] = [
     maxStacks: 4,
   },
   {
+    // Repurposed onto the aegis power-slide (widens its 120° block/reflect
+    // arc) — the timed parry it originally targeted is human-unreachable
+    // now (right-click is the slide). maxStacks cut 4→2: uncapped stacking
+    // of an uptime/coverage stat is exactly the degenerate pattern the
+    // balance audit flagged (Risk of Rain's stacking lesson) — at 2 stacks
+    // the arc widens to ~197°, generous but nowhere near a full circle.
     id: "wide-parry",
     name: "Wide Parry",
     category: "defense",
     rarity: "uncommon",
     buckets: ["utility"],
     essenceCost: 3,
-    description: "Increases directional block coverage.",
+    description: "Widens the aegis slide's block/reflect arc.",
     flavorText: "Your no is wider now.",
     modifier: {
       parryCoverMultiplier: 1.28,
     },
     visual: visual("hexagon", "#bae6fd"),
-    maxStacks: 4,
+    maxStacks: 2,
   },
   {
+    // Repurposed onto the aegis slide's cooldown (was the dead timed-parry
+    // cooldown). maxStacks cut 4→2 for the same reason as Wide Parry — the
+    // slide's cooldown is ALSO hard-floored in player.ts/player.zig
+    // (DASH_MIN_CYCLE_MS = burst+recovery) so stacking this can never erode
+    // the recovery-endlag punish window, even at the cap.
     id: "quick-parry",
     name: "Quick Parry",
     category: "defense",
     rarity: "uncommon",
     buckets: ["utility"],
     essenceCost: 3,
-    description: "Reduces the big parry cooldown.",
+    description: "Reduces the aegis slide's cooldown.",
     flavorText: "Still rude. Available sooner.",
     modifier: {
-      parryCooldownMultiplier: 0.86,
+      dashCooldownMultiplier: 0.86,
     },
     visual: visual("square", "#93c5fd"),
-    maxStacks: 4,
+    maxStacks: 2,
   },
   {
     id: "overcharge",

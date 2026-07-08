@@ -101,6 +101,7 @@ export function packResolvedFireConfig(
     maxHealthAdd: build.maxHealthAdd,
     airJumps: build.airJumps,
     dashCharges: build.dashCharges,
+    dashCooldownMultiplier: build.dashCooldownMultiplier,
     mirrorShield: build.mirrorShield ? 1 : 0,
     directionalShield: build.directionalShield ? 1 : 0,
   };

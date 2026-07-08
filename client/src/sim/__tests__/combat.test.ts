@@ -261,6 +261,40 @@ describe("tryDeflectDamage", () => {
     expect(r.damage).toBe(proj.damage);
   });
 
+  // Wide Parry lost its original target (the timed parry is human-
+  // unreachable now) and was repurposed onto the slide's arc instead of
+  // left dead — parryCoverMultiplier now widens the aegis block too.
+  test("Wide Parry (parryCoverMultiplier) widens the aegis slide's arc", () => {
+    // A shot arriving at 70° off the slide's travel direction: outside the
+    // base 120° cone (half-arc 60°) but inside a 1.28x-widened one
+    // (half-arc 76.8°).
+    const p = mkPlayer({ x: 0, y: 0, vx: 700, vy: 0, dashing: true });
+    const angle = (70 * Math.PI) / 180;
+    const proj = mkProjectile({
+      x: Math.cos(angle) * 50,
+      y: Math.sin(angle) * 50,
+    });
+    const base = tryDeflectDamage(p, proj, proj.damage, Tick(0));
+    expect(base.deflected).toBe(false); // outside the unmodified 120° cone
+    const widened = tryDeflectDamage(p, proj, proj.damage, Tick(0), {
+      parryCoverMultiplier: 1.28,
+    });
+    expect(widened.deflected).toBe(true);
+    expect(widened.damage).toBe(0);
+  });
+
+  test("Wide Parry's widened arc is clamped — can never reach a full circle", () => {
+    // A hit from directly BEHIND the slide (180°) must still land even with
+    // an absurd cover multiplier — the clamp caps just under 360°, not at it.
+    const p = mkPlayer({ x: 0, y: 0, vx: 700, vy: 0, dashing: true });
+    const proj = mkProjectile({ x: -50, y: 0 });
+    const r = tryDeflectDamage(p, proj, proj.damage, Tick(0), {
+      parryCoverMultiplier: 100,
+    });
+    expect(r.deflected).toBe(false);
+    expect(r.damage).toBe(proj.damage);
+  });
+
   test("active shield with charge absorbs the hit and drains charge", () => {
     const p = mkPlayer({ shieldActive: true, shieldCharge: 100 });
     const proj = mkProjectile({ damage: 25 });

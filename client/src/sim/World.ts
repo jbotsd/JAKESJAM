@@ -522,6 +522,7 @@ export function stepWithRuntime(
           wallSlideMultiplier: build.wallSlideMultiplier,
           airJumps: build.airJumps,
           dashCharges: build.dashCharges,
+          dashCooldownMultiplier: build.dashCooldownMultiplier,
           collisionCache: runtime.collisionCache,
         },
       );

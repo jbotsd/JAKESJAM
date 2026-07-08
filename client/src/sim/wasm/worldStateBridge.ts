@@ -64,7 +64,7 @@ const PLAYER_MOVEMENT_MEMORY_SIZE = 48;
 // I-final — ResolvedFireConfig parallel array (per-player fire
 // build resolved by the host from createWeaponBuild). 14 × f64 +
 // 4 × u32 + 4 × u8(enum) + 1 × u8(valid) + 3 × u8(pad) = 136.
-export const RESOLVED_FIRE_CONFIG_SIZE = 232; // +14 augment fields (movement/shield/parry)
+export const RESOLVED_FIRE_CONFIG_SIZE = 240; // +14 augment fields (movement/shield/parry) +dash_cooldown_mul
 
 const MAX_PLAYERS = 16;
 const MAX_STATICS = 256;
