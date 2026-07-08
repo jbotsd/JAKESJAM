@@ -332,13 +332,22 @@ export class ProceduralPlayerRig {
     const wallSliding = wallDir !== 0 && !pose.grounded;
     const dashing = pose.dashing ?? false;
     const sprintLean = pose.grounded ? Phaser.Math.Clamp(pose.velocity.x / 330, -1, 1) * 2 * s : 0;
+    // WHOLE-BODY throw english: the torso coils then rotates forward into the
+    // pitch over a planted hip (chest/head lean forward, pelvis stays), with
+    // a slight weight-drop — the whole body goes into the throw, not just the
+    // arm. Keyed on whichever hand is mid-throw.
+    const throwEnglish = Math.max(this.leadThrow, this.backThrow);
+    const throwDrop = throwEnglish * 2.5 * s;
     const leanX =
-      (wallSliding ? wallDir * 2.5 * s : 0) + (dashing ? this.facing * 4 * s : 0) + sprintLean;
+      (wallSliding ? wallDir * 2.5 * s : 0) +
+      (dashing ? this.facing * 4 * s : 0) +
+      sprintLean +
+      this.facing * throwEnglish * 9 * s;
 
     // Key positions
-    const pelvisY = ground - Phaser.Math.Linear(52, 32, cr) * sy - bob;
-    const chestY = ground - Phaser.Math.Linear(78, 56, cr) * sy - bob;
-    const headY = ground - Phaser.Math.Linear(100, 76, cr) * sy - bob;
+    const pelvisY = ground - Phaser.Math.Linear(52, 32, cr) * sy - bob + throwDrop;
+    const chestY = ground - Phaser.Math.Linear(78, 56, cr) * sy - bob + throwDrop * 0.5;
+    const headY = ground - Phaser.Math.Linear(100, 76, cr) * sy - bob + throwDrop * 0.3;
     const cx = pose.position.x + this.hitOffsetX * hitEased;
 
     const pelvis = vec(cx, pelvisY);
@@ -1109,14 +1118,16 @@ export class ProceduralPlayerRig {
     };
   }
 
-  /** A relaxed READY pose for one hand, INDEPENDENT of the other: the hand
-   *  hangs a little below and slightly toward aim from its OWN shoulder,
-   *  holding its cocked shuriken. Each hand keys off its own shoulder so the
-   *  two never converge. `bob` adds the idle/run rhythm. */
-  private readyHandTarget(shoulder: Vec2, aim: Vec2, s: number, bob = 0): Vec2 {
+  /** The COCKED ready pose for one hand: shuriken held up and slightly
+   *  BEHIND its own shoulder (by the ear), a pitcher's set position. The
+   *  throw whips from here forward toward aim, so the arm travels UP-and-OVER
+   *  the top — an overhand/baseball pitch, not a side-arm lob. Independent
+   *  per hand (keys off its own shoulder). `bob` adds the idle/run rhythm.
+   *  `aim` is unused for the rest pose but kept for signature symmetry. */
+  private readyHandTarget(shoulder: Vec2, _aim: Vec2, s: number, bob = 0): Vec2 {
     return vec(
-      shoulder.x + aim.x * 11 * s,
-      shoulder.y + 15 * s + aim.y * 7 * s + bob,
+      shoulder.x - this.facing * 7 * s, // cocked slightly BEHIND the shoulder
+      shoulder.y - 11 * s + bob, // and UP, above the shoulder (by the ear)
     );
   }
 
