@@ -231,24 +231,18 @@ const game = new Phaser.Game(gameConfig);
 // behaviour depends on this — pure introspection hook.
 globalWithGame.__jakesjam_game__ = game;
 
-// Right-click is now the PRIMARY combat action (the shield power-slide
-// bash), so the browser copy/paste-style context menu must NEVER appear
-// over the game. Phaser's per-scene input.mouse.disableContextMenu() misses
-// edge cases (scene transitions, right-drag). A capture-phase listener kills
-// it for any right-click landing on the canvas OR the game-root container
-// that holds it (covers right-drag where the event target isn't the canvas
-// itself), while leaving the DOM lobby/menus untouched. HMR-guarded so it
-// doesn't stack duplicate listeners.
-if (!globalWithGame.__jakesjam_ctxmenu__) {
-  const suppressGameContextMenu = (e: MouseEvent) => {
-    const el = e.target as HTMLElement | null;
-    if (el && (el.tagName === "CANVAS" || el.closest("#game-root"))) {
-      e.preventDefault();
-    }
-  };
-  document.addEventListener("contextmenu", suppressGameContextMenu, { capture: true });
-  globalWithGame.__jakesjam_ctxmenu__ = true;
-}
+// Right-click is the PRIMARY combat action (the aegis power-slide), so the
+// browser context menu must NEVER appear — anywhere. The previous
+// canvas/#game-root-scoped version still let the menu through in some real
+// cases (overlays, drag targets), so this is UNCONDITIONAL: a game has no
+// use for the OS right-click menu on any element. Belt-and-suspenders —
+// window + document, capture phase, plus a body-level handler and the
+// on-canvas suppressor below — so nothing can slip past.
+const killContextMenu = (e: Event) => e.preventDefault();
+window.addEventListener("contextmenu", killContextMenu, { capture: true });
+document.addEventListener("contextmenu", killContextMenu, { capture: true });
+document.body.addEventListener("contextmenu", killContextMenu);
+document.body.oncontextmenu = () => false;
 
 if (import.meta.hot) {
   import.meta.hot.dispose(() => {
