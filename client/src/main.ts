@@ -217,6 +217,7 @@ app.innerHTML = `
 const globalWithGame = globalThis as {
   __jakesjam_game__?: Phaser.Game;
   __jakesjam_music__?: HTMLAudioElement[];
+  __jakesjam_ctxmenu__?: boolean;
 };
 globalWithGame.__jakesjam_game__?.destroy(true);
 globalWithGame.__jakesjam_music__?.forEach((audio) => {
@@ -229,6 +230,20 @@ const game = new Phaser.Game(gameConfig);
 // the scene's display list to find render-time leaks. No production
 // behaviour depends on this — pure introspection hook.
 globalWithGame.__jakesjam_game__ = game;
+
+// Right-click is the parry input, but Phaser's per-scene
+// input.mouse.disableContextMenu() misses edge cases (scene transitions,
+// right-drag), so the browser menu occasionally popped over the canvas.
+// A capture-phase listener scoped to the canvas kills it reliably while
+// leaving the DOM lobby/menus (where right-click is harmless) untouched.
+// Guarded so re-running under HMR doesn't stack duplicate listeners.
+if (!globalWithGame.__jakesjam_ctxmenu__) {
+  const suppressCanvasContextMenu = (e: MouseEvent) => {
+    if ((e.target as HTMLElement | null)?.tagName === "CANVAS") e.preventDefault();
+  };
+  document.addEventListener("contextmenu", suppressCanvasContextMenu, { capture: true });
+  globalWithGame.__jakesjam_ctxmenu__ = true;
+}
 
 if (import.meta.hot) {
   import.meta.hot.dispose(() => {
