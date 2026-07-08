@@ -50,7 +50,7 @@ pub const CardEntry = struct { id: []const u8, mod: CardMod };
 
 /// Starter-pistol base (the only weapon) — mirrors weapons.ts.
 pub const StarterBase = struct {
-    pub const damage: f64 = 10.0;
+    pub const damage: f64 = 12.0;
     pub const fire_rate: f64 = 4.0;
     pub const projectile_speed: f64 = 650.0;
     pub const projectile_lifetime_seconds: f64 = 1.2;

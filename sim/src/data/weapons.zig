@@ -47,7 +47,9 @@ pub const WeaponBase = extern struct {
 };
 
 const STARTER_PISTOL = WeaponBase{
-    .damage = 10.0,
+    // Mirrors client/src/sim/data/weapons.ts: bumped 10->12 (balance audit,
+    // snappier round-1 pre-card TTK).
+    .damage = 12.0,
     .fire_rate = 4.0,
     .projectile_speed = 650.0,
     .projectile_lifetime_seconds = 1.2,

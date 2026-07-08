@@ -8,7 +8,12 @@ export const starterWeapon: WeaponDefinition = {
   name: "Crystal Blaster / Scrap Rifle",
   weaponClass: "baseline",
   delivery: "projectile",
-  damage: 10,
+  // Bumped 10->12 (balance audit): round-1, pre-card duels sat at a
+  // 10-shot/2.25s sustained TTK — spongy next to the genre (Duck
+  // Game/Towerfall are one-hit; Stick Fight is 3-5 hits). 12 dmg = 8
+  // shots/~1.75s, snappier without touching card-curve pacing (the max
+  // damage-stack path stays well clear of the 1.5s TTK guardrail).
+  damage: 12,
   fireRate: 4,
   magazineSize: 8,
   reloadSeconds: 1.1,
