@@ -275,12 +275,15 @@ export class ProceduralPlayerRig {
     if (!visible) this.graphics.clear();
   }
 
-  /** Call on every shot fired. ALTERNATES hands: flicks the next hand out
-   *  toward aim (a shuriken snap) and flashes the muzzle glow. A held stream
-   *  reads as left-right-left rapid throws rather than a static hold. */
-  triggerFire() {
+  /** Call on every shot fired. Flicks the throwing hand out toward aim (a
+   *  shuriken snap) and flashes the muzzle glow. `hand` is the sim's
+   *  authoritative throwing hand (0 = lead, 1 = back) from the shot-fired
+   *  event — using it keeps the rig's hand in lock-step with where the sim
+   *  spawned the projectile (the shard leaves the exact hand). Falls back to
+   *  local alternation if omitted. */
+  triggerFire(hand?: 0 | 1) {
     this.firePulse = 1;
-    this.throwHand = this.throwHand === 0 ? 1 : 0;
+    this.throwHand = hand ?? (this.throwHand === 0 ? 1 : 0);
     if (this.throwHand === 0) this.leadThrow = 1;
     else this.backThrow = 1;
   }

@@ -38,7 +38,27 @@ const MIN_FIRE_RATE = 0.35;
 const buildCache = new Map<string, ResolvedWeaponBuild>();
 
 function buildKey(player: PlayerEntity): string {
-  return `${player.weaponId}|${player.cards.join(",")}`;
+  return `${player.characterId}|${player.weaponId}|${player.cards.join(",")}`;
+}
+
+/**
+ * The Shielded character's innate ability: the aim-directional dash + shield
+ * (dashCharges + directionalShield, both otherwise only granted by the Aegis
+ * Dash card) is available from the start of the match — vanilla, no card
+ * required. Applied after card resolution so a Shielded player who ALSO
+ * picks up Aegis Dash just stacks extra charges rather than double-counting
+ * the base grant (Math.max, not addition).
+ */
+function applyCharacterInnateAbility(
+  player: PlayerEntity,
+  build: ResolvedWeaponBuild,
+): ResolvedWeaponBuild {
+  if (player.characterId !== "shielded") return build;
+  return {
+    ...build,
+    dashCharges: Math.max(build.dashCharges, 1),
+    directionalShield: true,
+  };
 }
 
 export function resolvePlayerBuild(player: PlayerEntity): ResolvedWeaponBuild {
@@ -48,7 +68,7 @@ export function resolvePlayerBuild(player: PlayerEntity): ResolvedWeaponBuild {
   // For now the only weapon is starter-pistol. When more weapons exist this
   // will look up the WeaponDefinition by player.weaponId.
   const cards: CardDefinition[] = findCardsById(crystalRoundsCards, player.cards);
-  const build = createWeaponBuild(starterWeapon, cards);
+  const build = applyCharacterInnateAbility(player, createWeaponBuild(starterWeapon, cards));
   buildCache.set(key, build);
   return build;
 }
@@ -69,6 +89,13 @@ export type FireResult = {
    * `WorldState.rngState`.
    */
   rngState: number;
+  /**
+   * Which hand threw this shot (0 = lead, 1 = back). Alternates each shot.
+   * The muzzle is offset to this hand; the World stamps it into the
+   * shot-fired event so the rig throws with the SAME hand — the shard leaves
+   * the exact hand. `undefined` when nothing fired.
+   */
+  throwHand?: 0 | 1;
 };
 
 export type StepWeaponOptions = {
@@ -158,7 +185,14 @@ function stepWeaponNative(
   // through to projectile semantics so the cooldown still advances and the
   // shot still registers visually. Future card pass will model raycast hit
   // resolution and continuous beam ticks.
-  const muzzle: Vec2 = playerMuzzlePosition(next, aim);
+  // Alternate the throwing hand each shot (0 = lead, 1 = back), toggled off
+  // the persisted parity so it stays in lock-step across shots. The muzzle is
+  // offset to this hand and the hand is threaded out in FireResult so the
+  // shot-fired event tells the rig to throw with the SAME hand — the shard
+  // then leaves the exact hand.
+  const throwHand: 0 | 1 = ((next.throwHandParity ?? 1) ^ 1) as 0 | 1;
+  next.throwHandParity = throwHand;
+  const muzzle: Vec2 = playerMuzzlePosition(next, aim, throwHand);
   const baseAngle = lutAtan2(aim.y - muzzle.y, aim.x - muzzle.x);
 
   const speed = build.projectileSpeed * build.projectile.speedMultiplier;
@@ -255,6 +289,7 @@ function stepWeaponNative(
     fired: true,
     desiredSatelliteCount: Math.max(0, build.orbitingSatellites | 0),
     rngState,
+    throwHand,
   };
 }
 
@@ -265,27 +300,39 @@ function stepWeaponNative(
  * hitscan).
  */
 /**
- * Muzzle = the charge point between the rig's two cupped hands (the
- * Kamehameha-style charge stance — see ProceduralPlayerRig.chargeHandTarget),
- * NOT the old arm-cannon's chest-high wand tip. The rig's charge point
- * anchors ~6px above the entity centre `player.y` at standing scale (the
- * hip, not the chest) and orbits ~20px toward aim. Was anchored 50px up
- * with a 46px reach — that was the old wand-tip math and now sits well
- * away from where the hands actually are. Keep this in sync with
- * ProceduralPlayerRig's ORBIT_RADIUS(26)*visual-scale(~0.78) ≈ 20 and its
- * `pelvis.y + 8*s` hip offset ≈ 6px above player-centre at that scale.
+ * Muzzle = the exact THROWING HAND at release, for the ALTERNATING
+ * shuriken-throw rig (ProceduralPlayerRig). The hands sit at SHOULDER height
+ * — the rig's `chest` is at `ground - ~78*sy` (`ground` ≈ player.y), and the
+ * shoulders track the chest — so at the rig's standard visual scale
+ * (PLAYER_VISUAL_SCALE 0.78 × sizeScale ≈ 0.78 Balanced) the shoulder is
+ * ~60px above player.y, NOT the ~34 the old hip charge-point math gave (that
+ * geometry was deleted with the charge stance). At release the hand extends
+ * ~ARM_REACH(40)×0.78 ≈ 31 toward aim.
+ *
+ * `hand` (0 = lead, 1 = back) offsets perpendicular to aim toward that hand,
+ * matching the rig's `shoulderLead/Back = chest ± perp*7*s` split (perp =
+ * (-aimUnit.y, aimUnit.x); lead is the +perp side). So each shot leaves from
+ * the precise hand the rig is throwing with. Still a fixed approximation for
+ * one scale (the sim can't see per-character sizeScale).
  */
-const MUZZLE_ANCHOR_UP = 6;
-const MUZZLE_REACH = 20;
-function playerMuzzlePosition(player: PlayerEntity, aim: Vec2): Vec2 {
+const MUZZLE_ANCHOR_UP = 60;
+const MUZZLE_REACH = 31;
+const MUZZLE_HAND_SPREAD = 6;
+function playerMuzzlePosition(player: PlayerEntity, aim: Vec2, hand: 0 | 1 = 0): Vec2 {
   const cx = player.x;
   const cy = player.y - MUZZLE_ANCHOR_UP;
   const dx = aim.x - cx;
   const dy = aim.y - cy;
   const len = Math.sqrt(dx * dx + dy * dy) || 1;
+  const ux = dx / len;
+  const uy = dy / len;
+  // Perpendicular to aim, toward the throwing hand (lead = +perp side).
+  const side = hand === 0 ? 1 : -1;
+  const px = -uy;
+  const py = ux;
   return {
-    x: cx + (dx / len) * MUZZLE_REACH,
-    y: cy + (dy / len) * MUZZLE_REACH,
+    x: cx + ux * MUZZLE_REACH + px * side * MUZZLE_HAND_SPREAD,
+    y: cy + uy * MUZZLE_REACH + py * side * MUZZLE_HAND_SPREAD,
   };
 }
 

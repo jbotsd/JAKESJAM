@@ -131,11 +131,11 @@ export class SimEventRouter {
     switch (event.t) {
       case "shot-fired": {
         audio.play("shoot", d.shotAudioParams?.(event.playerId));
-        // Punch the shooter's arms out toward aim (every player's rig, not
-        // just the local one — a remote/bot firing should visibly throw
-        // too). Previously triggerFire() was dead code: shooting changed
-        // nothing about the character.
-        d.playerRigs.get(event.playerId)?.triggerFire();
+        // Throw the shot from the sim's authoritative hand (event.hand) so
+        // the rig's throwing hand matches where the projectile spawned.
+        // Every player's rig, not just the local one (remotes/bots throw
+        // too). Previously triggerFire() was dead code.
+        d.playerRigs.get(event.playerId)?.triggerFire(event.hand);
         if (event.playerId === d.localPlayerId) {
           // Tiny recoil shake on local-player fire — guard stacking.
           d.safeShake(40, 0.0015);

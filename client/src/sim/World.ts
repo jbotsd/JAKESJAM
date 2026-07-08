@@ -532,7 +532,13 @@ export function stepWithRuntime(
       runtimeRngState = fireResult.rngState;
       nextEntity = fireResult.player;
       if (fireResult.fired) {
-        events.push({ t: "shot-fired", playerId: pid, x: nextEntity.x, y: nextEntity.y });
+        events.push({
+          t: "shot-fired",
+          playerId: pid,
+          x: nextEntity.x,
+          y: nextEntity.y,
+          hand: fireResult.throwHand,
+        });
         for (const p of fireResult.projectiles) {
           projectilesCow.set(p.id, p);
         }

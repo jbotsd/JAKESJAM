@@ -264,6 +264,14 @@ export type PlayerEntity = {
    * omitted reads as false.
    */
   dashing?: boolean;
+  /**
+   * Alternating throwing-hand parity (0 = lead, 1 = back) for the last shot.
+   * Toggled per fire in stepWeapon so the muzzle + shot-fired event pick the
+   * hand that matches the rig's alternating throw. Runtime-only cosmetic
+   * field; not wire-encoded (the authoritative hand reaches remote clients
+   * via the shot-fired event, and predicted-local parity self-corrects).
+   */
+  throwHandParity?: number;
 };
 
 export type ProjectileEntity = {
@@ -443,7 +451,7 @@ export type WorldState = {
 };
 
 export type SimEvent =
-  | { t: 'shot-fired'; playerId: PlayerId; x: number; y: number }
+  | { t: 'shot-fired'; playerId: PlayerId; x: number; y: number; hand?: 0 | 1 }
   | {
       t: 'hit-confirmed';
       victimId: PlayerId;
