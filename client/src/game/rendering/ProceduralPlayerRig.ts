@@ -545,6 +545,44 @@ export class ProceduralPlayerRig {
 
     // 10. Head + hood + visor
     this.drawHead(g, head, s, healthRatio);
+
+    // 11. Aegis shield — deployed only while dashing: a bright energy arc in
+    // the lunge direction, the directional block made visible (matches the
+    // 120° front-arc shield-dash block + bash in combat/World). Drawn last so
+    // it reads as a shell out in front of the braced arms.
+    if (dashing) {
+      this.drawAegisShield(g, chest, aim, s);
+    }
+  }
+
+  /** The deployed shield-dash shell: a curved energy arc centred on the chest,
+   *  spanning the 120° block cone around the lunge (aim) direction, with a
+   *  bright shimmering leading rim and a faint field behind it. */
+  private drawAegisShield(g: Phaser.GameObjects.Graphics, chest: Vec2, aim: Vec2, s: number) {
+    const aimAngle = Math.atan2(aim.y, aim.x);
+    const halfArc = Math.PI / 3; // 60° each side → the 120° block cone
+    const r = 42 * s; // just past the braced hands
+    const a0 = aimAngle - halfArc;
+    const a1 = aimAngle + halfArc;
+    const shimmer = 0.7 + 0.3 * Math.sin(this.stepPhase * 6);
+
+    // Faint field emanating from the chest out to the shell.
+    g.fillStyle(this.accentColor, 0.1 * shimmer);
+    g.beginPath();
+    g.moveTo(chest.x, chest.y);
+    g.arc(chest.x, chest.y, r, a0, a1);
+    g.closePath();
+    g.fillPath();
+
+    // Shell rim — an accent underlay + a bright white leading edge.
+    g.lineStyle(5 * s, this.accentColor, 0.45 * shimmer);
+    g.beginPath();
+    g.arc(chest.x, chest.y, r, a0, a1);
+    g.strokePath();
+    g.lineStyle(2 * s, WHITE, 0.7 * shimmer);
+    g.beginPath();
+    g.arc(chest.x, chest.y, r, a0, a1);
+    g.strokePath();
   }
 
   // --- TRAIL: Fading body-color dots at past positions ---
