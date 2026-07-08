@@ -211,6 +211,10 @@ pub fn stepPlayer(
         if (wants_crouch) {
             s.vy = WALL_POWER_SLIDE_VY * s.wall_jump_mul;
             s.vx = -wall_dir * WALL_POWER_SLIDE_VX;
+            // INTEGRATION: the wall power-slide IS an aegis slide — mark it
+            // dash-active so it inherits the shield reflect + bash + arc +
+            // flat carry via the same `dashing` gate. Mirrors player.ts.
+            s.dash_active_ms = DASH_DURATION_MS;
         } else {
             s.vy = WALL_JUMP_VY * s.wall_jump_mul;
             s.vx = -wall_dir * WALL_JUMP_VX;

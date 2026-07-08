@@ -339,6 +339,13 @@ function stepPlayerNative(
     if (wantsCrouch) {
       next.vy = M.wallPowerSlideVy * wallJumpMul;
       next.vx = -wallDir * M.wallPowerSlideVx;
+      // INTEGRATION: the wall power-slide IS an aegis slide. Marking it
+      // dash-active gives it — for free, via the same `dashing` gate — the
+      // shield reflect (combat.tryDeflectDamage), the bash (World.ts), the
+      // deployed shield arc (rig), and the flat gravity-suspended carry. One
+      // "aegis slide" concept, two triggers: right-click, or crouch-off-wall.
+      // No dash charge consumed — it's the wall move, not the dash.
+      mem.dashActiveMs = DASH_DURATION_MS;
     } else {
       next.vy = M.wallJumpVy * wallJumpMul;
       next.vx = -wallDir * M.wallJumpVx;

@@ -79,6 +79,20 @@ describe("wall power-slide", () => {
     // the plain wall-jump.
     expect(Math.abs(r.player.vy)).toBeLessThan(720);
     expect(Math.abs(r.player.vx)).toBeGreaterThan(470);
+
+    // INTEGRATION: the power-slide IS an aegis slide — it opens the dash
+    // window (dashActiveMs), which World.ts mirrors onto `entity.dashing` so
+    // it inherits the shield reflect + bash + arc. The plain kick does not.
+    expect(r.memory.dashActiveMs).toBeGreaterThan(0);
+  });
+
+  test("plain wall-jump does NOT open the aegis window (no shield/bash)", () => {
+    const map = miniMap();
+    const cache = buildStaticCache(map.platforms, map.size.x, map.size.y);
+    const opts = { collisionCache: cache };
+    const { player, mem } = airborneAgainstWall(-1);
+    const r = stepPlayer(player, 0, Bit.Jump, 600, 300, mem, map.platforms, STEP, opts);
+    expect(r.memory.dashActiveMs).toBe(0);
   });
 
   test("power-slide direction flips with which wall is gripped", () => {
