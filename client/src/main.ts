@@ -309,7 +309,17 @@ const worldBassFilter = audioCtx.createBiquadFilter();
 worldBassFilter.type = "lowshelf";
 worldBassFilter.frequency.value = 150;
 worldBassFilter.gain.value = 0;
-audioCtx.createMediaElementSource(worldMusic).connect(worldBassFilter).connect(audioCtx.destination);
+// A dedicated gain node for the intensity loudness-swell, kept SEPARATE
+// from the element's own `.volume` (which the crossfade system owns — see
+// fadeMusic). Multiplying here instead of touching `.volume` means the two
+// don't fight. Graph: element → bass shelf → swell gain → out.
+const worldSwellGain = audioCtx.createGain();
+worldSwellGain.gain.value = 1;
+audioCtx
+  .createMediaElementSource(worldMusic)
+  .connect(worldBassFilter)
+  .connect(worldSwellGain)
+  .connect(audioCtx.destination);
 // menuMusic doesn't need the filter graph, but once ANY element on the page
 // is routed through an AudioContext, browsers still play unrouted elements
 // fine — no need to touch menuMusic at all.
@@ -323,21 +333,29 @@ window.addEventListener("jakesjam:intensity", (event) => {
 });
 
 const BASE_PLAYBACK_RATE = 1.0;
-const MAX_PLAYBACK_RATE = 1.12;
-const MAX_BASS_GAIN_DB = 9;
+const MAX_PLAYBACK_RATE = 1.16;
+const MAX_BASS_GAIN_DB = 12;
+const MAX_SWELL = 0.16; // up to +16% loudness at peak action
+// Asymmetric smoothing: SNAP up toward a spike (0.18) but ease back DOWN
+// slowly (0.03). Symmetric smoothing made the ramp feel laggy — by the
+// time the music got loud the moment had passed. Fast attack means the
+// music lunges the instant things kick off; slow release means it rides
+// the energy for a beat after rather than dropping out abruptly.
+const INTENSITY_ATTACK = 0.18;
+const INTENSITY_RELEASE = 0.03;
 let smoothedIntensity = 0;
 function tickMusicIntensity() {
-  // Smooth toward the target rather than snapping — the raw score updates
-  // in throttled bursts from the scene, and a stepped playbackRate change
-  // is audible as a stutter.
-  smoothedIntensity += (targetIntensity - smoothedIntensity) * 0.06;
+  const k = targetIntensity > smoothedIntensity ? INTENSITY_ATTACK : INTENSITY_RELEASE;
+  smoothedIntensity += (targetIntensity - smoothedIntensity) * k;
   if (musicContext === "world" && !worldMusic.paused) {
     worldMusic.playbackRate =
       BASE_PLAYBACK_RATE + smoothedIntensity * (MAX_PLAYBACK_RATE - BASE_PLAYBACK_RATE);
     worldBassFilter.gain.value = smoothedIntensity * MAX_BASS_GAIN_DB;
+    worldSwellGain.gain.value = 1 + smoothedIntensity * MAX_SWELL;
   } else {
     worldMusic.playbackRate = BASE_PLAYBACK_RATE;
     worldBassFilter.gain.value = 0;
+    worldSwellGain.gain.value = 1;
   }
   requestAnimationFrame(tickMusicIntensity);
 }

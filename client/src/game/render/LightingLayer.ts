@@ -63,12 +63,27 @@ export function drawLightBeam(
  */
 export class LightBeamLayer {
   private beams: Phaser.GameObjects.Polygon[] = [];
+  private baseAlpha = 0;
   private readonly scene: Phaser.Scene;
 
   constructor(scene: Phaser.Scene) {
     this.scene = scene;
     scene.events.once(Phaser.Scenes.Events.SHUTDOWN, () => this.destroy());
     scene.events.once(Phaser.Scenes.Events.DESTROY, () => this.destroy());
+  }
+
+  /**
+   * Reactive brightness — call each frame with the 0-1 action-intensity
+   * score. The beams flare up to ~3.5x their resting alpha at peak action,
+   * settling back as it decays. The additive blend means this reads as the
+   * whole shaft of light swelling, a much more legible "the world is
+   * reacting" cue than the faint haze ellipses alone. No-op if no beams
+   * (theme without light beams).
+   */
+  setReactiveBoost(intensity: number): void {
+    if (this.beams.length === 0) return;
+    const alpha = this.baseAlpha * (1 + intensity * 2.5);
+    for (const beam of this.beams) beam.setAlpha(alpha);
   }
 
   /**
@@ -83,6 +98,7 @@ export class LightBeamLayer {
     alpha: number,
   ): void {
     this.destroy();
+    this.baseAlpha = alpha;
     for (const def of defs) {
       const beam = drawLightBeam(this.scene, def.x, 0, def.w, height, color, alpha);
       beam.setDepth(0.7); // behind vignette (depth 1) — vignette frames the beam edges

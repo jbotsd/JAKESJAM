@@ -302,6 +302,10 @@ export class OnlineMatchScene extends Phaser.Scene {
   /** Ambient haze ellipses (renderArena) + their resting alpha, retained so
    *  environment reactivity can brighten them with action intensity. */
   private hazeEllipses: Array<{ ellipse: Phaser.GameObjects.Ellipse; baseAlpha: number }> = [];
+  /** Full-screen additive "energy" glow, scroll-fixed, alpha driven by
+   *  action intensity — the theme-independent environment cue (light beams
+   *  only exist on some themes). */
+  private energyBloom?: Phaser.GameObjects.Rectangle;
   /** Mobile on-screen twin-stick controls; null on desktop/keyboard. */
   private touchControls: TouchControls | null = null;
   /** Last aim direction from the touch aim-stick, so shots keep heading when
@@ -1274,6 +1278,16 @@ export class OnlineMatchScene extends Phaser.Scene {
 
     if (!this.platformLayer) this.platformLayer = new PlatformLayer(this);
     this.platformLayer.repaint(map.platforms, theme);
+
+    // Theme-independent environment reaction (see updateEnvironmentReactivity).
+    // renderArena can re-run on a map change, so replace any prior bloom.
+    this.energyBloom?.destroy();
+    const bloomCam = this.cameras.main;
+    this.energyBloom = this.add
+      .rectangle(bloomCam.width / 2, bloomCam.height / 2, bloomCam.width, bloomCam.height, 0xffc27a, 0)
+      .setScrollFactor(0)
+      .setDepth(1.5)
+      .setBlendMode(Phaser.BlendModes.ADD);
   }
 
   /**
@@ -1587,20 +1601,20 @@ export class OnlineMatchScene extends Phaser.Scene {
 
     if (!this.prevLocalGrounded && local.grounded && this.prevLocalVy > 200) {
       const fallRatio = Phaser.Math.Clamp((this.prevLocalVy - 200) / 700, 0, 1);
-      this.cameraJuice.safeShake(90 + fallRatio * 80, 0.002 + fallRatio * 0.006);
+      this.cameraJuice.safeShake(100 + fallRatio * 90, 0.004 + fallRatio * 0.011);
     }
 
     const wallDir = local.touchingWallDir ?? 0;
     if (this.prevLocalWallDir !== 0 && wallDir === 0 && !local.grounded) {
       const speedRatio = Phaser.Math.Clamp((Math.abs(local.vx) - 400) / 300, 0, 1);
-      this.cameraJuice.safeShake(120, 0.006 + speedRatio * 0.006);
-      this.cameraJuice.punchZoom(-0.03 - speedRatio * 0.03);
+      this.cameraJuice.safeShake(130, 0.009 + speedRatio * 0.009);
+      this.cameraJuice.punchZoom(-0.05 - speedRatio * 0.045);
     }
     this.prevLocalWallDir = wallDir;
 
     const dashing = local.dashing ?? false;
     if (!this.prevLocalDashing && dashing) {
-      this.cameraJuice.punchZoom(-0.05, 50, 180);
+      this.cameraJuice.punchZoom(-0.085, 45, 200);
     }
     this.prevLocalDashing = dashing;
 
@@ -1609,16 +1623,21 @@ export class OnlineMatchScene extends Phaser.Scene {
   }
 
   /**
-   * Brighten the ambient haze with action intensity — same score driving
-   * the camera juice and music (see ActionIntensity). Combat now contributes
-   * here too (every safeShake call bumps intensity), so a fight ramps the
-   * whole scene's atmosphere, not just the camera.
+   * The environment reacting to action intensity — same score driving the
+   * camera juice and music (see ActionIntensity). Combat contributes here
+   * too (every safeShake bumps intensity), so a fight ramps the whole
+   * scene's atmosphere. The light beams flaring (additive) is the legible
+   * cue; the haze lift is a supporting glow (too faint alone).
    */
   private updateEnvironmentReactivity(): void {
     const intensity = this.actionIntensity.get();
     for (const { ellipse, baseAlpha } of this.hazeEllipses) {
-      ellipse.setAlpha(baseAlpha * (1 + intensity * 1.2));
+      ellipse.setAlpha(baseAlpha * (1 + intensity * 3));
     }
+    this.lightBeams?.setReactiveBoost(intensity);
+    // Eased so the bloom only really shows in the top half of the intensity
+    // range — a light jog shouldn't tint the screen, but a firefight should.
+    this.energyBloom?.setAlpha(intensity * 0.14);
   }
 
   /**

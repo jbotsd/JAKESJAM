@@ -89,6 +89,10 @@ export class MatchScene extends Phaser.Scene {
   /** Ambient haze ellipses (renderArena) + their resting alpha, retained so
    *  environment reactivity can brighten them with action intensity. */
   private hazeEllipses: Array<{ ellipse: Phaser.GameObjects.Ellipse; baseAlpha: number }> = [];
+  /** Full-screen additive "energy" glow, scroll-fixed, alpha driven by
+   *  action intensity — the theme-independent environment cue (light beams
+   *  only exist on some themes). */
+  private energyBloom?: Phaser.GameObjects.Rectangle;
   private respawnText?: Phaser.GameObjects.Text;
   private keys?: MovementKeys;
   /** Mobile twin-stick overlay (null on desktop). */
@@ -211,7 +215,7 @@ export class MatchScene extends Phaser.Scene {
     // rig's own landing-kick spring (ProceduralPlayerRig.LANDING_KICK_SCALE).
     if (!wasGrounded && this.localPlayer.grounded && fallSpeedBeforeStep > 200) {
       const fallRatio = Phaser.Math.Clamp((fallSpeedBeforeStep - 200) / 700, 0, 1);
-      this.cameraJuice.safeShake(90 + fallRatio * 80, 0.002 + fallRatio * 0.006);
+      this.cameraJuice.safeShake(100 + fallRatio * 90, 0.004 + fallRatio * 0.011);
       this.actionIntensity.bump(0.12 + fallRatio * 0.18);
     }
 
@@ -223,8 +227,8 @@ export class MatchScene extends Phaser.Scene {
       // the punch off the actual resulting horizontal speed rather than
       // guessing which variant fired.
       const speedRatio = Phaser.Math.Clamp((Math.abs(this.localPlayer.velocity.x) - 400) / 300, 0, 1);
-      this.cameraJuice.safeShake(120, 0.006 + speedRatio * 0.006);
-      this.cameraJuice.punchZoom(-0.03 - speedRatio * 0.03);
+      this.cameraJuice.safeShake(130, 0.009 + speedRatio * 0.009);
+      this.cameraJuice.punchZoom(-0.05 - speedRatio * 0.045);
       this.actionIntensity.bump(0.25 + speedRatio * 0.15);
     }
     this.prevWallDir = wallDir;
@@ -232,24 +236,29 @@ export class MatchScene extends Phaser.Scene {
     // Dash burst: a quick, punchy zoom-out sells the speed without a shake
     // (a dash is controlled, not an impact — shake would read as a stumble).
     if (!this.prevDashing && this.localPlayer.dashing) {
-      this.cameraJuice.punchZoom(-0.05, 50, 180);
+      this.cameraJuice.punchZoom(-0.085, 45, 200);
       this.actionIntensity.bump(0.3);
     }
     this.prevDashing = this.localPlayer.dashing;
   }
 
   /**
-   * Brighten the ambient haze with action intensity — same score driving
-   * the camera juice and music (see ActionIntensity). At rest the haze
-   * sits at its authored alpha; mid-action it lifts toward ~2.2x, giving
-   * the whole scene a faint "charged" glow without touching platforms or
-   * the rig (those already have their own reactions).
+   * The environment reacting to action intensity — same score driving the
+   * camera juice and music (see ActionIntensity). The haze ellipses were
+   * too faint to read on their own (0.05 alpha × 2.2 is imperceptible), so
+   * the main cue is the light beams flaring (additive, very legible); the
+   * haze lift (now ~4x) is a supporting glow. Neither touches platforms or
+   * the rig — those have their own reactions.
    */
   private updateEnvironmentReactivity(): void {
     const intensity = this.actionIntensity.get();
     for (const { ellipse, baseAlpha } of this.hazeEllipses) {
-      ellipse.setAlpha(baseAlpha * (1 + intensity * 1.2));
+      ellipse.setAlpha(baseAlpha * (1 + intensity * 3));
     }
+    this.lightBeams?.setReactiveBoost(intensity);
+    // Eased so the bloom only really shows in the top half of the intensity
+    // range — a light jog shouldn't tint the screen, but a firefight should.
+    this.energyBloom?.setAlpha(intensity * 0.14);
   }
 
   private renderArena() {
@@ -318,6 +327,22 @@ export class MatchScene extends Phaser.Scene {
     // 16 tiny rectangles drifting upward very slowly; scrollFactor 0.6 gives
     // gentle parallax vs camera. Alpha 0.06-0.14 keeps them subliminal.
     this.spawnAmbientMotes(width, height);
+
+    this.energyBloom = this.createEnergyBloom();
+  }
+
+  /** A scroll-fixed, full-screen additive glow whose alpha rides action
+   *  intensity — the ALWAYS-visible environment reaction (light beams only
+   *  exist on some themes, and the haze alone is too faint). Sits below the
+   *  players/HUD but above the backdrop, so at peak action the whole frame
+   *  warms up like the arena is charging, without washing out the rig. */
+  private createEnergyBloom(): Phaser.GameObjects.Rectangle {
+    const cam = this.cameras.main;
+    return this.add
+      .rectangle(cam.width / 2, cam.height / 2, cam.width, cam.height, 0xffc27a, 0)
+      .setScrollFactor(0)
+      .setDepth(1.5)
+      .setBlendMode(Phaser.BlendModes.ADD);
   }
 
   private spawnAmbientMotes(worldW: number, worldH: number): void {

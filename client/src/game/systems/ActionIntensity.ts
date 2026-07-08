@@ -19,7 +19,11 @@ const DISPATCH_INTERVAL_MS = 150;
 export class ActionIntensity {
   private value = 0;
   private msSinceDispatch = 0;
-  private static readonly DECAY_PER_SECOND = 0.35;
+  // Slow enough that sustained action ACCUMULATES toward 1.0 rather than
+  // each event's bump decaying away before the next lands — a firefight or
+  // a movement flow-chain should build, not flatline near 0.3. A full decay
+  // from peak still takes ~4s, so it winds down promptly once things calm.
+  private static readonly DECAY_PER_SECOND = 0.25;
 
   /** Push the score toward 1, never past it. Bigger events pass a bigger amount. */
   bump(amount: number): void {
