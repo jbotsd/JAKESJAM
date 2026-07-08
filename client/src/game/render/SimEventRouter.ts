@@ -129,13 +129,19 @@ export class SimEventRouter {
     if (!audio) return;
     const scene = d.scene;
     switch (event.t) {
-      case "shot-fired":
+      case "shot-fired": {
         audio.play("shoot", d.shotAudioParams?.(event.playerId));
+        // Punch the shooter's arms out toward aim (every player's rig, not
+        // just the local one — a remote/bot firing should visibly throw
+        // too). Previously triggerFire() was dead code: shooting changed
+        // nothing about the character.
+        d.playerRigs.get(event.playerId)?.triggerFire();
         if (event.playerId === d.localPlayerId) {
           // Tiny recoil shake on local-player fire — guard stacking.
           d.safeShake(40, 0.0015);
         }
         break;
+      }
       case "hit-confirmed": {
         audio.play("hit", { intensity: Math.min(1, event.damage / 40) });
         // Hit-stop: freeze render tweens for 35–50ms on a heavy hit.

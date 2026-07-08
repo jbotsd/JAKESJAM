@@ -25,6 +25,7 @@ function makeDeps(): {
   drainActiveCalls: number;
   explosionBlasts: Array<{ x: number; y: number; r: number; d: number }>;
   rigHits: Array<{ pid: string; dirX: number; dirY: number }>;
+  rigFires: string[];
   killStreaks: Map<string, number>;
   prevAlive: Set<string>;
   tweens: { timeScale: number };
@@ -41,6 +42,7 @@ function makeDeps(): {
   let drainActiveCalls = 0;
   const explosionBlasts: Array<{ x: number; y: number; r: number; d: number }> = [];
   const rigHits: Array<{ pid: string; dirX: number; dirY: number }> = [];
+  const rigFires: string[] = [];
   const killStreaks = new Map<string, number>();
   const prevAlive = new Set<string>();
   const tweens = { timeScale: 1 };
@@ -50,6 +52,9 @@ function makeDeps(): {
     ({
       triggerHit(dx: number, dy: number) {
         rigHits.push({ pid, dirX: dx, dirY: dy });
+      },
+      triggerFire() {
+        rigFires.push(pid);
       },
     }) as unknown as ProceduralPlayerRig;
 
@@ -131,6 +136,7 @@ function makeDeps(): {
     },
     explosionBlasts,
     rigHits,
+    rigFires,
     killStreaks,
     prevAlive,
     tweens,
@@ -147,18 +153,21 @@ describe("SimEventRouter — C2b contract", () => {
     router = new SimEventRouter(env.deps);
   });
 
-  test("shot-fired by local player → shoot SFX + tiny shake", () => {
+  test("shot-fired by local player → shoot SFX + tiny shake + rig fire recoil", () => {
     const ev: SimEvent = { t: "shot-fired", playerId: PlayerId("local"), x: 0, y: 0 };
     router.dispatch(ev);
     expect(env.audioCalls).toEqual(["shoot"]);
     expect(env.shakeCalls).toEqual([[40, 0.0015]]);
+    expect(env.rigFires).toEqual(["local"]);
   });
 
-  test("shot-fired by remote player → shoot SFX, NO shake", () => {
+  test("shot-fired by remote player → shoot SFX, NO shake, but rig still recoils", () => {
     const ev: SimEvent = { t: "shot-fired", playerId: PlayerId("remote"), x: 0, y: 0 };
     router.dispatch(ev);
     expect(env.audioCalls).toEqual(["shoot"]);
     expect(env.shakeCalls).toEqual([]);
+    // Every shooter's rig throws — a remote firing visibly recoils too.
+    expect(env.rigFires).toEqual(["remote"]);
   });
 
   test("hit-confirmed: heavy hit (>=30 dmg) triggers 50ms hit-stop", () => {

@@ -67,6 +67,13 @@ export class ProceduralPlayerRig {
   private stepPhase = 0;
   private facing = 1;
   private firePulse = 0;
+  // Fire recoil (0-1): set to 1 by triggerFire(), decays over FIRE_RECOIL_MS.
+  // Drives the arms PUNCHING out toward aim on each shot (the shot leaving
+  // the hands) then springing back to the charge hold — the difference
+  // between "holding a ball" and "throwing it". Separate from firePulse
+  // (glow brightness) so the two can be tuned independently.
+  private fireRecoil = 0;
+  private static readonly FIRE_RECOIL_MS = 260;
   // Visual-only knockback. Set by triggerHit(); decays over HIT_DECAY_MS.
   // Per game-feel-juice §5 — render layer overshoots authoritative position.
   private hitOffsetX = 0;
@@ -185,6 +192,7 @@ export class ProceduralPlayerRig {
     const walkAmount = Phaser.Math.Clamp(Math.abs(pose.velocity.x) / 180, 0, 1);
     this.stepPhase += deltaMs * (0.006 + walkAmount * 0.01);
     this.firePulse = Math.max(0, this.firePulse - deltaMs * 0.004);
+    this.fireRecoil = Math.max(0, this.fireRecoil - deltaMs / ProceduralPlayerRig.FIRE_RECOIL_MS);
     this.hitDecay = Math.max(0, this.hitDecay - deltaMs / ProceduralPlayerRig.HIT_DECAY_MS);
 
     if (Math.abs(pose.velocity.x) > 8) {
@@ -265,9 +273,13 @@ export class ProceduralPlayerRig {
     if (!visible) this.graphics.clear();
   }
 
-  /** Trigger muzzle flash pulse (call on fire). */
+  /** Call on every shot fired. Punches the arms out toward aim (fireRecoil)
+   *  and flashes the muzzle glow (firePulse). Rapid fire re-triggers both
+   *  each shot, so a held stream reads as repeated jabs rather than a
+   *  static hold. */
   triggerFire() {
     this.firePulse = 1;
+    this.fireRecoil = 1;
   }
 
   /**
@@ -378,6 +390,7 @@ export class ProceduralPlayerRig {
       walkAmount,
       wallDir,
       dashing,
+      this.fireRecoil,
       s,
     );
 
@@ -1016,6 +1029,7 @@ export class ProceduralPlayerRig {
     walkAmount: number,
     wallDir: number,
     dashing: boolean,
+    fireRecoil: number,
     s: number,
   ): { lead: Vec2; back: Vec2 } {
     const reach = ProceduralPlayerRig.ARM_REACH * s;
@@ -1023,9 +1037,16 @@ export class ProceduralPlayerRig {
     if (wallDir !== 0) {
       // Back hand plants against the gripped wall — closer than full
       // reach, the one deliberate bend this state allows. Lead hand keeps
-      // charging alone (one hand holds on, the other never stops working).
+      // charging alone (one hand holds on, the other never stops working)
+      // — and still punches out toward aim when firing off the wall.
       return {
-        lead: this.chargeHandTarget(pelvis, aim, s, 0),
+        lead: this.recoilTarget(
+          this.chargeHandTarget(pelvis, aim, s, 0),
+          shoulderLead,
+          aim,
+          reach,
+          fireRecoil,
+        ),
         back: vec(shoulderBack.x + wallDir * 20 * s, shoulderBack.y + 2 * s),
       };
     }
@@ -1044,12 +1065,45 @@ export class ProceduralPlayerRig {
     // Idle, running, or airborne: both hands held at the SAME charging
     // point near the hip, one a hair further out than the other (cupped,
     // not overlapping). A synchronized bob while running — both hands
-    // move together — instead of an opposite-phase swing.
+    // move together — instead of an opposite-phase swing. On each shot the
+    // recoil blends both hands out toward aim (the throw) and the spring
+    // settles them back to the cup.
     const bob = walkAmount > 0.05 ? Math.sin(this.stepPhase * 2) * 2 * s * walkAmount : 0;
     return {
-      lead: this.chargeHandTarget(pelvis, aim, s, bob),
-      back: this.chargeHandTarget(pelvis, aim, s, bob, 0.82),
+      lead: this.recoilTarget(
+        this.chargeHandTarget(pelvis, aim, s, bob),
+        shoulderLead,
+        aim,
+        reach,
+        fireRecoil,
+      ),
+      back: this.recoilTarget(
+        this.chargeHandTarget(pelvis, aim, s, bob, 0.82),
+        shoulderBack,
+        aim,
+        reach * 0.94,
+        fireRecoil,
+      ),
     };
+  }
+
+  /** Blend a resting (charge-hold) hand target toward a full thrust along
+   *  `aim` by `fireRecoil` (0-1). The hand spring lags the blend, so a shot
+   *  reads as a snap-out toward the target and a settle back — the throw
+   *  motion — rather than the arm just teleporting to the extended pose. */
+  private recoilTarget(
+    hold: Vec2,
+    shoulder: Vec2,
+    aim: Vec2,
+    reach: number,
+    fireRecoil: number,
+  ): Vec2 {
+    if (fireRecoil <= 0) return hold;
+    const thrust = this.straightTarget(shoulder, aim, reach);
+    return vec(
+      hold.x + (thrust.x - hold.x) * fireRecoil,
+      hold.y + (thrust.y - hold.y) * fireRecoil,
+    );
   }
 
   /** The shared charge-stance target: a point near the hip that ORBITS
