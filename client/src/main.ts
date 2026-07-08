@@ -204,8 +204,25 @@ app.innerHTML = `
 // stacks a new game on top of the old one every reload — duplicate
 // canvases, both instances' keyboard capture fighting, movement that looks
 // dead because input is going to the instance you can't see.
-const globalWithGame = globalThis as { __jakesjam_game__?: Phaser.Game };
+//
+// The same re-execution ALSO recreates menuMusic/worldMusic as brand new
+// `Audio` elements below. A JS reference going out of scope does NOT stop a
+// currently-playing HTMLAudioElement — the browser keeps it alive and
+// audible with no reference to it at all — so the previous execution's
+// tracks kept playing right alongside the new ones: reported as "double
+// music", reproducing specifically while iterating on the practice zone
+// (i.e. exactly the dev:client HMR churn this comment already warned about).
+// Stash the old elements on the same global slot so this run can pause them
+// before creating their replacements.
+const globalWithGame = globalThis as {
+  __jakesjam_game__?: Phaser.Game;
+  __jakesjam_music__?: HTMLAudioElement[];
+};
 globalWithGame.__jakesjam_game__?.destroy(true);
+globalWithGame.__jakesjam_music__?.forEach((audio) => {
+  audio.pause();
+  audio.currentTime = 0;
+});
 
 const game = new Phaser.Game(gameConfig);
 // Diagnostic: expose the Phaser game on window so e2e specs can walk
@@ -267,6 +284,16 @@ type MusicContext = "menu" | "world";
 let musicContext: MusicContext = "menu";
 const CROSSFADE_MS = 900;
 const musicFades = new WeakMap<HTMLAudioElement, number>();
+// Which context playCurrentMusic() last actually kicked off successfully.
+// Every entry point that "makes sure music is playing" (a menu button's own
+// click handler, the splash's own pointerdown-once listener, and the global
+// armSoundtrackOnFirstGesture safety net) can all fire off the SAME single
+// user gesture — clicking "Practice" hit all three. Without this guard each
+// one re-entered playCurrentMusic() and scheduled its own competing fade-up
+// on the SAME <audio> element, which is what read as "double music" /
+// distortion: not two tracks overlapping, but 2-3 fade animations racing
+// each other on one track before the crossfade to world settled it down.
+let musicStartedForContext: MusicContext | null = null;
 
 // Menu/lobby theme — the "Jakes Jam" track, looped.
 const menuMusic = new Audio(getAudioUrl("jakes-jam-theme.mp3"));
@@ -291,6 +318,9 @@ worldMusic.addEventListener("ended", () => {
     void worldMusic.play().then(() => fadeMusic(worldMusic, musicVol(), 700)).catch(() => undefined);
   }
 });
+// So the NEXT HMR re-execution (see the guard above) can find and pause
+// these before creating their replacements.
+globalWithGame.__jakesjam_music__ = [menuMusic, worldMusic];
 restoreOptions();
 
 // ── Action-intensity → music reactivity ─────────────────────────────────
@@ -312,13 +342,26 @@ worldBassFilter.gain.value = 0;
 // A dedicated gain node for the intensity loudness-swell, kept SEPARATE
 // from the element's own `.volume` (which the crossfade system owns — see
 // fadeMusic). Multiplying here instead of touching `.volume` means the two
-// don't fight. Graph: element → bass shelf → swell gain → out.
+// don't fight.
 const worldSwellGain = audioCtx.createGain();
 worldSwellGain.gain.value = 1;
+// Safety limiter on the master world-music bus so NOTHING clips, ever — the
+// bass shelf boost + loudness swell can push peaks past 0 dBFS on
+// bass-heavy passages, which would clip hard at the destination. A
+// near-brickwall compressor catches only those peaks and is transparent
+// below threshold, so the output stays clean at any intensity.
+const worldLimiter = audioCtx.createDynamicsCompressor();
+worldLimiter.threshold.value = -3;
+worldLimiter.knee.value = 3;
+worldLimiter.ratio.value = 20;
+worldLimiter.attack.value = 0.003;
+worldLimiter.release.value = 0.25;
+// Graph: element → bass shelf → swell gain → limiter → out.
 audioCtx
   .createMediaElementSource(worldMusic)
   .connect(worldBassFilter)
   .connect(worldSwellGain)
+  .connect(worldLimiter)
   .connect(audioCtx.destination);
 // menuMusic doesn't need the filter graph, but once ANY element on the page
 // is routed through an AudioContext, browsers still play unrouted elements
@@ -332,30 +375,31 @@ window.addEventListener("jakesjam:intensity", (event) => {
   }
 });
 
-const BASE_PLAYBACK_RATE = 1.0;
-const MAX_PLAYBACK_RATE = 1.16;
-const MAX_BASS_GAIN_DB = 12;
-const MAX_SWELL = 0.16; // up to +16% loudness at peak action
-// Asymmetric smoothing: SNAP up toward a spike (0.18) but ease back DOWN
-// slowly (0.03). Symmetric smoothing made the ramp feel laggy — by the
-// time the music got loud the moment had passed. Fast attack means the
-// music lunges the instant things kick off; slow release means it rides
-// the energy for a beat after rather than dropping out abruptly.
-const INTENSITY_ATTACK = 0.18;
+// Intensity → music is EXTREMELY SUBTLE and NEVER changes tempo (speeding
+// the track up was too much — it's gone entirely; playbackRate stays 1.0).
+// All that moves is a faint low-end lift and a barely-there loudness swell,
+// off a quieter resting baseline. Should register as "the mix warms up a
+// touch" under heavy action, not as an obvious effect. The limiter keeps
+// the loud end clean.
+const MAX_BASS_GAIN_DB = 3; // faint low-end lift at peak
+const REST_SWELL = 0.8; // resting loudness (quieter when calm)
+const PEAK_SWELL = 0.9; // barely louder at peak
+// Asymmetric smoothing: ease up (0.10) a little quicker than down (0.03),
+// but both gentle so even this subtle move never pumps.
+const INTENSITY_ATTACK = 0.1;
 const INTENSITY_RELEASE = 0.03;
 let smoothedIntensity = 0;
 function tickMusicIntensity() {
   const k = targetIntensity > smoothedIntensity ? INTENSITY_ATTACK : INTENSITY_RELEASE;
   smoothedIntensity += (targetIntensity - smoothedIntensity) * k;
+  // Tempo is deliberately never touched — the element stays at its natural
+  // 1.0 playbackRate.
   if (musicContext === "world" && !worldMusic.paused) {
-    worldMusic.playbackRate =
-      BASE_PLAYBACK_RATE + smoothedIntensity * (MAX_PLAYBACK_RATE - BASE_PLAYBACK_RATE);
     worldBassFilter.gain.value = smoothedIntensity * MAX_BASS_GAIN_DB;
-    worldSwellGain.gain.value = 1 + smoothedIntensity * MAX_SWELL;
+    worldSwellGain.gain.value = REST_SWELL + smoothedIntensity * (PEAK_SWELL - REST_SWELL);
   } else {
-    worldMusic.playbackRate = BASE_PLAYBACK_RATE;
     worldBassFilter.gain.value = 0;
-    worldSwellGain.gain.value = 1;
+    worldSwellGain.gain.value = REST_SWELL;
   }
   requestAnimationFrame(tickMusicIntensity);
 }
@@ -662,6 +706,15 @@ function playCurrentMusic() {
   const requestedContext = musicContext;
   const active = requestedContext === "world" ? worldMusic : menuMusic;
   const other = requestedContext === "world" ? menuMusic : worldMusic;
+  // Already settled on this exact context — see musicStartedForContext's
+  // doc comment. Only skip once the track is actually audibly running
+  // (not just non-paused): if an earlier attempt is still stuck mid-way
+  // (autoplay block, slow promise), let this call retry for real rather
+  // than silently no-op forever.
+  if (musicStartedForContext === requestedContext && !active.paused) {
+    return;
+  }
+  musicStartedForContext = requestedContext;
   menuMusic.muted = musicMutedInput.checked;
   worldMusic.muted = musicMutedInput.checked;
   // Crossfade: bring the active track up from wherever it is, fade the other

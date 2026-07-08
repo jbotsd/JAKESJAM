@@ -25,6 +25,7 @@ import type {
 } from "../types/game";
 import { RenderLayer } from "../render/RenderLayer";
 import { ActionIntensity } from "../systems/ActionIntensity.js";
+import { ActionCamera } from "../systems/ActionCamera.js";
 import { CameraJuice } from "../systems/CameraJuice.js";
 import type { RoomPlayer } from "../types/net";
 
@@ -81,7 +82,7 @@ export class MatchScene extends Phaser.Scene {
   private particlePool?: ParticlePool;
   private playerRig?: ProceduralPlayerRig;
   private renderLayer!: RenderLayer;
-  private cameraTarget?: Phaser.GameObjects.Zone;
+  private actionCamera!: ActionCamera;
   private cameraJuice!: CameraJuice;
   private readonly actionIntensity = new ActionIntensity();
   private prevWallDir = 0;
@@ -197,46 +198,49 @@ export class MatchScene extends Phaser.Scene {
     if (this.isOutOfBounds()) {
       this.killPlayer();
     }
-    this.updateCameraTarget();
+    this.actionCamera.update(deltaMs, {
+      x: this.localPlayer.position.x,
+      y: this.localPlayer.position.y,
+      vx: this.localPlayer.velocity.x,
+      vy: this.localPlayer.velocity.y,
+      aimX: aimTarget.x,
+      aimY: aimTarget.y,
+    });
     this.syncPlayerVisuals(deltaMs);
   }
 
   /**
-   * Camera shake/zoom-punch tied to the same movement beats the rig's own
-   * squash/stretch already sells — landing, wall-jump/power-slide kick-off,
-   * dash burst. Practice had zero camera reaction to any of these before;
-   * the online path already had combat-triggered shake (safeShake), so
-   * this brings movement-feel up to the same bar rather than inventing a
-   * new pattern. Also the sole feed into `actionIntensity` in Practice
-   * (there's no combat here to bump it another way).
+   * Camera feedback tied to the same movement beats the rig's own
+   * squash/stretch sells — landing, wall-jump/power-slide, dash. All via
+   * trauma shake (additive on the smoothed follow), NEVER a zoom-punch: a
+   * zoom-punch on a frequent movement action pulses the whole frame and
+   * reads as instability (this is exactly the "wall-jump plays bad"
+   * feedback — the zoom is gone). Also the sole feed into actionIntensity
+   * in Practice (no combat here to bump it another way).
    */
   private updateMovementJuice(wasGrounded: boolean, fallSpeedBeforeStep: number): void {
-    // Landing: scaled by how fast you were falling, same spirit as the
-    // rig's own landing-kick spring (ProceduralPlayerRig.LANDING_KICK_SCALE).
+    // Landing: an impact — a real thump scaled by fall speed.
     if (!wasGrounded && this.localPlayer.grounded && fallSpeedBeforeStep > 200) {
       const fallRatio = Phaser.Math.Clamp((fallSpeedBeforeStep - 200) / 700, 0, 1);
-      this.cameraJuice.safeShake(100 + fallRatio * 90, 0.004 + fallRatio * 0.011);
+      this.cameraJuice.addTrauma(0.18 + fallRatio * 0.4);
       this.actionIntensity.bump(0.12 + fallRatio * 0.18);
     }
 
     // Wall-jump / power-slide kick-off: the tick touchingWallDir drops back
     // to 0 while still airborne (mirrors the rig's own wall-kick trigger).
+    // GENTLE trauma only — the previous zoom-punch here played badly.
     const wallDir = this.localPlayer.touchingWallDir;
     if (this.prevWallDir !== 0 && wallDir === 0 && !this.localPlayer.grounded) {
-      // A power-slide launches faster/flatter than a plain wall-jump — size
-      // the punch off the actual resulting horizontal speed rather than
-      // guessing which variant fired.
       const speedRatio = Phaser.Math.Clamp((Math.abs(this.localPlayer.velocity.x) - 400) / 300, 0, 1);
-      this.cameraJuice.safeShake(130, 0.009 + speedRatio * 0.009);
-      this.cameraJuice.punchZoom(-0.05 - speedRatio * 0.045);
+      this.cameraJuice.addTrauma(0.12 + speedRatio * 0.1);
       this.actionIntensity.bump(0.25 + speedRatio * 0.15);
     }
     this.prevWallDir = wallDir;
 
-    // Dash burst: a quick, punchy zoom-out sells the speed without a shake
-    // (a dash is controlled, not an impact — shake would read as a stumble).
+    // Dash burst: the look-ahead already sells the speed; a small trauma
+    // adds a kick without perturbing framing (no zoom).
     if (!this.prevDashing && this.localPlayer.dashing) {
-      this.cameraJuice.punchZoom(-0.085, 45, 200);
+      this.cameraJuice.addTrauma(0.14);
       this.actionIntensity.bump(0.3);
     }
     this.prevDashing = this.localPlayer.dashing;
@@ -393,15 +397,13 @@ export class MatchScene extends Phaser.Scene {
     const padY = Math.round(cam.height / 6);
     cam.setBounds(-padX, -padY, boxworksPractice.size.x + padX * 2, boxworksPractice.size.y + padY * 2);
     cam.setRoundPixels(true);
-    this.cameraTarget?.destroy();
-    this.cameraTarget = this.add.zone(this.localPlayer.position.x, this.localPlayer.position.y, 2, 2);
-    this.cameras.main.startFollow(this.cameraTarget, false, 0.12, 0.12);
-    this.cameraJuice = new CameraJuice(cam);
-    this.updateCameraTarget();
-  }
-
-  private updateCameraTarget() {
-    this.cameraTarget?.setPosition(this.localPlayer.position.x, this.localPlayer.position.y);
+    // Hand-driven action camera (smoothed follow + look-ahead + trauma
+    // shake) replaces Phaser's frame-rate-dependent startFollow lerp.
+    this.actionCamera = new ActionCamera(cam);
+    this.actionCamera.snap(this.localPlayer.position.x, this.localPlayer.position.y);
+    // No ActionIntensity passed: Practice bumps intensity explicitly in
+    // updateMovementJuice, so routing it here too would double-count.
+    this.cameraJuice = new CameraJuice(this.actionCamera);
   }
 
   private createPlayerVisuals() {
@@ -653,7 +655,9 @@ export class MatchScene extends Phaser.Scene {
     this.respawnRemainingMs = 0;
     this.respawnCountdownActive = false;
     this.playerRig?.setVisible(true);
-    this.updateCameraTarget();
+    // Snap the camera onto the (possibly far-away checkpoint) spawn instead
+    // of smearing across the whole level to catch up.
+    this.actionCamera?.snap(this.localPlayer.position.x, this.localPlayer.position.y);
     this.syncPlayerVisuals();
   }
 

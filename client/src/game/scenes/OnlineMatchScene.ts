@@ -74,6 +74,7 @@ import { SimEventRouter } from "../render/SimEventRouter";
 import { TouchControls } from "../input/TouchControls";
 import { isTouchPrimary, isPortraitMobile } from "../input/mobile";
 import { ActionIntensity } from "../systems/ActionIntensity.js";
+import { ActionCamera } from "../systems/ActionCamera.js";
 import { CameraJuice } from "../systems/CameraJuice.js";
 
 // Portrait-mobile camera framing. The arena is 2:1 wide but a phone held
@@ -292,6 +293,7 @@ export class OnlineMatchScene extends Phaser.Scene {
   /** P3: cinematic combat FX (kill flash/zoom-punch/bloom). Enabled when the
    *  renderer is WebGL and not disabled via ?fx=off. */
   private combatCinematics = false;
+  private actionCamera!: ActionCamera;
   private cameraJuice!: CameraJuice;
   private readonly actionIntensity = new ActionIntensity();
   /** Local-player movement-juice edge detection (landing/wall-jump/dash). */
@@ -398,7 +400,8 @@ export class OnlineMatchScene extends Phaser.Scene {
     const rendererType = (this.game.renderer as { type?: number } | undefined)?.type;
     const fxDisabled = new URLSearchParams(window.location.search).get("fx") === "off";
     this.combatCinematics = !fxDisabled && rendererType === Phaser.WEBGL;
-    this.cameraJuice = new CameraJuice(this.cameras.main, this.actionIntensity);
+    this.actionCamera = new ActionCamera(this.cameras.main);
+    this.cameraJuice = new CameraJuice(this.actionCamera, this.actionIntensity);
 
     // Highlight-clip capture — EXPLICIT opt-in only (?clips=1). This records
     // gameplay video and uploads it to the server; it must never activate by
@@ -651,7 +654,7 @@ export class OnlineMatchScene extends Phaser.Scene {
     this.lastFrameMs = now;
 
     this.renderWorld(state, deltaMs, now);
-    this.followLocalPlayer(state);
+    this.followLocalPlayer(state, deltaMs);
     this.updateShieldAudio(state);
     this.updateHudSystem(state);
     this.maybeShowMatchResults(state);
@@ -1575,13 +1578,29 @@ export class OnlineMatchScene extends Phaser.Scene {
     return PLAYER_VISUAL_SCALE * character.sizeScale;
   }
 
-  private followLocalPlayer(state: WorldState) {
+  private followLocalPlayer(state: WorldState, deltaMs: number) {
     const local = state.players[this.localPlayerId];
     if (!local) return;
     // Portrait mobile: bias the player above screen centre so the bottom
     // control band doesn't cover them (centre the camera BELOW the player).
     const yBias = isPortraitMobile() ? PORTRAIT_CAM_Y_BIAS : 0;
-    this.cameras.main.centerOn(local.x, local.y + yBias);
+    // Other alive players are action points the frame leans toward (weighted
+    // lightly vs the local player, which stays the central locus).
+    const extra: Array<{ x: number; y: number }> = [];
+    for (const [id, p] of Object.entries(state.players)) {
+      if (id === this.localPlayerId) continue;
+      if (p && p.alive) extra.push({ x: p.x, y: p.y });
+    }
+    this.actionCamera.update(deltaMs, {
+      x: local.x,
+      y: local.y,
+      vx: local.vx,
+      vy: local.vy,
+      aimX: local.aimX,
+      aimY: local.aimY,
+      extra,
+      yBias,
+    });
   }
 
   /**
@@ -1599,22 +1618,25 @@ export class OnlineMatchScene extends Phaser.Scene {
     const local = state.players[this.localPlayerId];
     if (!local || !local.alive) return;
 
+    // Landing impact — a real thump scaled by fall speed (trauma shake).
     if (!this.prevLocalGrounded && local.grounded && this.prevLocalVy > 200) {
       const fallRatio = Phaser.Math.Clamp((this.prevLocalVy - 200) / 700, 0, 1);
-      this.cameraJuice.safeShake(100 + fallRatio * 90, 0.004 + fallRatio * 0.011);
+      this.cameraJuice.addTrauma(0.18 + fallRatio * 0.4);
     }
 
+    // Wall-jump / power-slide kick-off — GENTLE trauma only. The previous
+    // zoom-punch here played badly (frequent action pulsing the whole frame).
     const wallDir = local.touchingWallDir ?? 0;
     if (this.prevLocalWallDir !== 0 && wallDir === 0 && !local.grounded) {
       const speedRatio = Phaser.Math.Clamp((Math.abs(local.vx) - 400) / 300, 0, 1);
-      this.cameraJuice.safeShake(130, 0.009 + speedRatio * 0.009);
-      this.cameraJuice.punchZoom(-0.05 - speedRatio * 0.045);
+      this.cameraJuice.addTrauma(0.12 + speedRatio * 0.1);
     }
     this.prevLocalWallDir = wallDir;
 
+    // Dash burst — small trauma; the camera look-ahead sells the speed, no zoom.
     const dashing = local.dashing ?? false;
     if (!this.prevLocalDashing && dashing) {
-      this.cameraJuice.punchZoom(-0.085, 45, 200);
+      this.cameraJuice.addTrauma(0.14);
     }
     this.prevLocalDashing = dashing;
 

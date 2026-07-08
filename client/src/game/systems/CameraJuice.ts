@@ -1,63 +1,49 @@
 import Phaser from "phaser";
 import type { ActionIntensity } from "./ActionIntensity.js";
+import type { ActionCamera } from "./ActionCamera.js";
 
-// CameraJuice — small reusable camera-feel helpers, factored out of
-// OnlineMatchScene's original combat-only safeShake/killCinematic so
-// Practice (which had ZERO camera reaction to landing/wall-jump/dash) and
-// the online path can share one implementation instead of two drifting
-// copies.
+// CameraJuice — thin adapter so the many existing call sites (SimEventRouter
+// combat shakes, both scenes' movement juice) don't each need to know about
+// the ActionCamera's trauma model. Maps the old `safeShake(durationMs,
+// intensity)` shape onto ActionCamera.addTrauma, and optionally bumps the
+// shared ActionIntensity so every impact that shakes also feeds the
+// music/environment reaction for free.
 //
-// Takes the scene's ActionIntensity (optional — Practice has one, but any
-// future caller that doesn't care about intensity can omit it) and bumps it
-// automatically whenever a shake/punch ACTUALLY fires. This means every
-// existing combat shake call site (shot-fired, hit-confirmed, kill,
-// sudden-death, kill-streak...) feeds intensity for free just by routing
-// through here — no need to hunt down and edit each one individually.
+// Zoom-punch delegates straight through but should ONLY be used for RARE
+// events (a kill): a punch on a frequent movement action pulses the whole
+// frame and reads as instability (see ActionCamera). Wall-jump/dash use
+// addTrauma instead.
 export class CameraJuice {
-  private readonly cam: Phaser.Cameras.Scene2D.Camera;
+  private readonly cam: ActionCamera;
   private readonly intensity?: ActionIntensity;
 
-  constructor(cam: Phaser.Cameras.Scene2D.Camera, intensity?: ActionIntensity) {
+  constructor(cam: ActionCamera, intensity?: ActionIntensity) {
     this.cam = cam;
     this.intensity = intensity;
   }
 
   /**
-   * Shake, but never stacks a smaller request on top of a bigger one already
-   * running — repeated small triggers (e.g. a fast string of landings)
-   * shouldn't compound into nausea. Ported from OnlineMatchScene's
-   * safeShake; `shakeEffect._amplitude` is a private Phaser field, cast
-   * defensively so a future Phaser version simply falls back to
-   * always-shake rather than throwing.
+   * Legacy shake entry point. `intensity` is the old Phaser cam.shake
+   * amplitude (fraction of viewport, ~0.0015–0.018 across the codebase),
+   * mapped onto additive trauma. Duration is ignored — trauma decays on its
+   * own curve now.
    */
-  safeShake(durationMs: number, intensity: number): void {
-    const effect = this.cam.shakeEffect as unknown as {
-      isRunning?: boolean;
-      _amplitude?: number;
-    };
-    const currentAmplitude = effect._amplitude ?? 0;
-    if (effect.isRunning && intensity <= currentAmplitude) return;
-    this.cam.shake(durationMs, intensity);
-    // Shake intensities in practice range roughly 0.0015 (a shot fired) to
-    // 0.016 (a big destructible break) — scale that into a reasonable
-    // action-intensity bump rather than passing the raw shake number
-    // through (they're unrelated units).
+  safeShake(_durationMs: number, intensity: number): void {
+    // ~0.012 (a kill) → ~0.66 trauma; ~0.008 (a hit) → ~0.44; floor keeps a
+    // tiny shot-shake perceptible without dominating.
+    this.cam.addTrauma(Math.min(0.85, Math.max(0.03, intensity * 55)));
     this.intensity?.bump(Phaser.Math.Clamp(intensity * 12, 0.03, 0.35));
   }
 
-  /**
-   * A quick zoom punch — out then back to base — same pattern
-   * OnlineMatchScene's killCinematic already proved out for the kill flash.
-   * `scaleDelta` is added to the camera's CURRENT zoom (so it composes
-   * fine with whatever base zoom a scene is already using).
-   */
-  punchZoom(scaleDelta: number, outMs = 70, backMs = 160): void {
-    const base = this.cam.zoom;
-    this.cam.zoomTo(base + scaleDelta, outMs, "Quad.easeOut", true, (_, progress) => {
-      if (progress === 1) {
-        this.cam.zoomTo(base, backMs, "Quad.easeIn", true);
-      }
-    });
+  /** Direct trauma add for movement feedback that isn't shaped like a shake. */
+  addTrauma(amount: number): void {
+    this.cam.addTrauma(amount);
+    this.intensity?.bump(Phaser.Math.Clamp(amount * 0.5, 0.03, 0.35));
+  }
+
+  /** RARE zoom-punch only (a kill). Never for frequent movement. */
+  punchZoom(scaleDelta: number, outMs = 70, backMs = 200): void {
+    this.cam.punchZoom(scaleDelta, outMs, backMs);
     this.intensity?.bump(Phaser.Math.Clamp(Math.abs(scaleDelta) * 3, 0.05, 0.3));
   }
 }
