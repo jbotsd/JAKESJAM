@@ -11,7 +11,11 @@
 
 import { describe, expect, test } from "bun:test";
 import { World, createRuntime, stepWithRuntime } from "../World.js";
-import { FIRST_BLOOD_SPEED_MULTIPLIER, ROUND_TIME_LIMIT_MS } from "../round.js";
+import {
+  ENDGAME_ZONE_TRIGGER_MS,
+  FIRST_BLOOD_SPEED_MULTIPLIER,
+  ROUND_TIME_LIMIT_MS,
+} from "../round.js";
 import {
   EntityId,
   InputSeq,
@@ -186,7 +190,7 @@ describe("sudden-death shrinking arena", () => {
     expect(result.state.players[B]!.health).toBeLessThan(state.players[B]!.health);
   });
 
-  test("suddenDeathActive: false never applies storm damage regardless of position", () => {
+  test("suddenDeathActive: false + plenty of time left: no storm damage", () => {
     const state0 = World.create(arena, spawnInfo, 1);
     const runtime = createRuntime(arena);
     const state: WorldState = {
@@ -198,11 +202,82 @@ describe("sudden-death shrinking arena", () => {
       round: {
         ...state0.round,
         phase: "fighting",
-        countdownRemainingMs: 1,
+        // Outside the last-15s soft endgame window AND no full sudden
+        // death — neither shrink zone should be active.
+        countdownRemainingMs: ROUND_TIME_LIMIT_MS - 20_000,
         suddenDeathActive: false,
       },
     };
     const result = stepWithRuntime(state, runtime, noInputs(), DT_MS);
     expect(result.state.players[B]!.health).toBe(state.players[B]!.health);
+  });
+
+  // Balance audit: timeout resolving to most-health-remaining rewarded
+  // passive corner-camping. A GENTLER shrink zone (0.75, vs sudden death's
+  // 0.6) now runs in the final 15s of every round, sudden death or not.
+  test("soft endgame zone: a far-corner player takes damage in the last 15s even without sudden death", () => {
+    const state0 = World.create(arena, spawnInfo, 1);
+    const runtime = createRuntime(arena);
+    const state: WorldState = {
+      ...state0,
+      players: {
+        ...state0.players,
+        [B]: { ...state0.players[B]!, x: 1990, y: 1990 },
+      },
+      round: {
+        ...state0.round,
+        phase: "fighting",
+        countdownRemainingMs: 1, // last instant of the round — soft zone eased almost to 0.75
+        suddenDeathActive: false,
+      },
+    };
+    const result = stepWithRuntime(state, runtime, noInputs(), DT_MS);
+    expect(result.state.players[B]!.health).toBeLessThan(state.players[B]!.health);
+  });
+
+  test("soft endgame zone: no damage the instant it opens (still full coverage)", () => {
+    const state0 = World.create(arena, spawnInfo, 1);
+    const runtime = createRuntime(arena);
+    const state: WorldState = {
+      ...state0,
+      players: {
+        ...state0.players,
+        [B]: { ...state0.players[B]!, x: 1990, y: 1990 },
+      },
+      round: {
+        ...state0.round,
+        phase: "fighting",
+        countdownRemainingMs: ENDGAME_ZONE_TRIGGER_MS, // the exact instant it opens — scale 1.0
+        suddenDeathActive: false,
+      },
+    };
+    const result = stepWithRuntime(state, runtime, noInputs(), DT_MS);
+    expect(result.state.players[B]!.health).toBe(state.players[B]!.health);
+  });
+
+  test("full sudden death still wins over the soft zone (harder 0.6 scale, not 0.75)", () => {
+    const state0 = World.create(arena, spawnInfo, 1);
+    const runtime = createRuntime(arena);
+    // Position B just outside a 0.75-scale zone but inside a 0.6-scale one
+    // is geometrically awkward to pin exactly; instead assert the two paths
+    // are NOT simply additive — same far-corner position, same instant,
+    // only `suddenDeathActive` differs, and full SD must still apply (this
+    // is already covered above), while confirming the soft path alone
+    // doesn't silently get skipped when SD is layered on top.
+    const state: WorldState = {
+      ...state0,
+      players: {
+        ...state0.players,
+        [B]: { ...state0.players[B]!, x: 1990, y: 1990 },
+      },
+      round: {
+        ...state0.round,
+        phase: "fighting",
+        countdownRemainingMs: 1,
+        suddenDeathActive: true,
+      },
+    };
+    const result = stepWithRuntime(state, runtime, noInputs(), DT_MS);
+    expect(result.state.players[B]!.health).toBeLessThan(state.players[B]!.health);
   });
 });

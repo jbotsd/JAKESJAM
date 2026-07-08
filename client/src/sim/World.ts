@@ -1263,13 +1263,17 @@ export function stepWithRuntime(
     }
   }
 
-  // 3d. Sudden-death storm: only active once round.suddenDeathActive is set
-  //     (see round.ts's countdown→fighting transition). Same direct-damage
-  //     drain shape as fire patches above — environmental DoT, no parry/
-  //     shield mitigation. Uses `state.round`, not `roundStateForStep` (not
-  //     computed yet at this point in the tick) — one-tick lag on a shrink
-  //     that unfolds over 90s is imperceptible.
-  if (state.round.suddenDeathActive) {
+  // 3d. Shrink-zone storm: full sudden death (round.suddenDeathActive, see
+  //     round.ts's countdown→fighting transition) OR the gentler soft
+  //     endgame zone that's active in the final 15s of EVERY round
+  //     (anti-timeout-camping — stepSuddenDeathStorm branches internally,
+  //     mutually exclusive, sudden death wins). Called unconditionally so
+  //     the soft zone's own gating actually gets a chance to run. Same
+  //     direct-damage drain shape as fire patches above — environmental
+  //     DoT, no parry/shield mitigation. Uses `state.round`, not
+  //     `roundStateForStep` (not computed yet at this point in the tick) —
+  //     one-tick lag on a shrink that unfolds over seconds is imperceptible.
+  {
     const stormResult = stepSuddenDeathStorm(players, state.round, runtime.map.size, effDtMs);
     for (const ev of stormResult.events) {
       if (ev.t === "hit-confirmed" && players[ev.victimId]) {

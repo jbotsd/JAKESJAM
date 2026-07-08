@@ -43,6 +43,20 @@ export const SUDDEN_DEATH_SCALE_END = 0.6;
 export const SUDDEN_DEATH_STORM_DPS = 8;
 
 /**
+ * Soft endgame zone (balance audit): timeout used to reward passive play —
+ * whoever had the most health when the clock ran out won, so corner-camping
+ * was a viable strategy. A GENTLER version of the sudden-death shrink now
+ * runs in the final ENDGAME_ZONE_TRIGGER_MS of every round (not just a 2-2
+ * game-point tie), forcing engagement without being punishing: scale only
+ * eases from full coverage to ENDGAME_ZONE_SCALE_END (vs sudden death's
+ * harder 0.6), and it only spans the last 15s rather than the whole round.
+ * True sudden death (`round.suddenDeathActive`) always takes precedence —
+ * this never doubles up with it.
+ */
+export const ENDGAME_ZONE_TRIGGER_MS = 15_000;
+export const ENDGAME_ZONE_SCALE_END = 0.75;
+
+/**
  * True when every player with a recorded score this match is tied one round
  * away from winning — the condition design pillars calls "both players at
  * targetScore-1". Generalizes past 2 players: an FFA where everyone with a
