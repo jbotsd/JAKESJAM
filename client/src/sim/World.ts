@@ -56,6 +56,7 @@ import {
   SHIELD_MAX_CHARGE_DEFAULT,
   SHIELD_RECHARGE_PER_SECOND,
   PARRY_COOLDOWN_MS_DEFAULT,
+  SHIELD_AIM_ARC_RADIANS,
 } from "./combat.js";
 import {
   buildStaticCache,
@@ -177,6 +178,18 @@ export type WorldRuntime = {
  *  ceiling clamp; crouching is shorter so clamping to the standing half is a
  *  safe over-estimate. */
 const PLAYER_HALF_HEIGHT = 28;
+
+// ── AEGIS DASH BASH (the offensive half of the shield-dash) ─────────────────
+// A dashing player is a moving shield (see the block in combat.tryDeflect
+// Damage). Ram an enemy inside the shield's frontal arc and you BASH them:
+// damage + a hard knockback along the lunge, and your own dash STOPS on
+// impact — a lance charge, so exactly one bash per dash (no per-tick
+// multi-hit). Contact radius is body-to-body plus a small reach.
+const BASH_RANGE = 46; // px, centre-to-centre contact
+const BASH_DAMAGE = 34; // a committed melee hit; bounded by dash cooldown + charges
+const BASH_KNOCKBACK = 660; // px/s shove along the lunge direction
+const BASH_KNOCK_UP = 240; // px/s upward pop so the victim is launched, not just slid
+const BASH_ATTACKER_STOP = 0.22; // attacker keeps this fraction of velocity on impact
 
 /** Underside of the map's ceiling (a wide solid wall whose top sits at the map
  *  top). null when there's no such platform (open-top map). */
@@ -587,6 +600,90 @@ export function stepWithRuntime(
     }
 
     players[pid] = nextEntity;
+  }
+
+  // 1z. AEGIS DASH BASH — the offensive half of the shield-dash. Positions,
+  //     velocity, and `dashing` are all current here (post-movement). For each
+  //     player mid-dash, ram the first enemy inside the shield's frontal arc:
+  //     damage (through the same shield/parry mitigation as a projectile, so
+  //     two shields clashing cancels) + a hard knockback along the lunge, and
+  //     the attacker's dash STOPS on impact (one bash per dash). Iterated over
+  //     sorted ids for determinism (client + server agree).
+  if (fightingPhase) {
+    const bashTick = Tick(state.tick + 1);
+    const bashIds = (Object.keys(players) as PlayerId[]).sort();
+    for (const aid of bashIds) {
+      const attacker = players[aid]!;
+      if (!attacker.alive || attacker.dashing !== true) continue;
+      const speed = Math.hypot(attacker.vx, attacker.vy);
+      if (speed < 1) continue;
+      const ux = attacker.vx / speed;
+      const uy = attacker.vy / speed;
+      const dashAngle = Math.atan2(attacker.vy, attacker.vx);
+      for (const vid of bashIds) {
+        if (vid === aid) continue;
+        const victim = players[vid]!;
+        if (!victim.alive) continue;
+        const dx = victim.x - attacker.x;
+        const dy = victim.y - attacker.y;
+        const dist = Math.hypot(dx, dy);
+        if (dist > BASH_RANGE || dist < 1e-3) continue;
+        // Within the shield's frontal arc of the lunge direction?
+        let da = Math.atan2(dy, dx) - dashAngle;
+        da = Math.atan2(Math.sin(da), Math.cos(da)); // normalize to [-π, π]
+        if (Math.abs(da) > SHIELD_AIM_ARC_RADIANS / 2) continue;
+
+        // Bash lands. Run it through the SAME mitigation a projectile hit
+        // uses (null projectile → parry/directional checks fall through to
+        // an omnidirectional shield block): a shielded target clashes shields
+        // and takes no damage, but everyone still gets shoved.
+        const victimBuild = resolvePlayerBuild(victim);
+        const mit = tryDeflectDamage(victim, null, BASH_DAMAGE, bashTick, {
+          mirrorShield: victimBuild.mirrorShield,
+          directionalShield: victimBuild.directionalShield,
+          parryCoverMultiplier: victimBuild.parryCoverMultiplier,
+        });
+        let post = {
+          ...mit.player,
+          vx: ux * BASH_KNOCKBACK,
+          vy: uy * BASH_KNOCKBACK - BASH_KNOCK_UP,
+        };
+        const blocked = mit.shielded || mit.deflected;
+        if (!blocked) {
+          const newHealth = Math.max(0, post.health - mit.damage);
+          const wasAlive = post.alive;
+          post = { ...post, health: newHealth, alive: newHealth > 0 };
+          events.push({
+            t: "hit-confirmed",
+            victimId: vid,
+            damage: mit.damage,
+            sourceProjectileId: null,
+          });
+          if (wasAlive && newHealth === 0) {
+            events.push({ t: "player-killed", victimId: vid, killerId: aid, cause: "bash" });
+          }
+        } else if (mit.shielded && mit.shieldPopped) {
+          events.push({
+            t: "shield-popped",
+            playerId: vid,
+            remainingCharge: post.shieldCharge ?? 0,
+          });
+        }
+        players[vid] = post;
+
+        // The lance stops: end the attacker's dash and bleed most of its
+        // speed (the impact). dashActiveMs=0 also drops the shield block.
+        const aMem = runtime.movement.get(aid);
+        if (aMem) aMem.dashActiveMs = 0;
+        const stopped = {
+          ...attacker,
+          vx: attacker.vx * BASH_ATTACKER_STOP,
+          vy: attacker.vy * BASH_ATTACKER_STOP,
+        };
+        players[aid] = aMem ? mirrorMovementMemoryOntoEntity(stopped, aMem) : stopped;
+        break; // one bash per dash
+      }
+    }
   }
 
   // 1a0. Ceiling clamp. A powerful wall-jump into the wall/ceiling corner can

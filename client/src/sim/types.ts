@@ -489,7 +489,7 @@ export type SimEvent =
       t: 'player-killed';
       victimId: PlayerId;
       killerId: PlayerId | null;
-      cause: 'projectile' | 'void' | 'burn' | 'fire' | 'explosion' | 'chain-lightning' | 'storm';
+      cause: 'projectile' | 'void' | 'burn' | 'fire' | 'explosion' | 'chain-lightning' | 'storm' | 'bash';
     }
   /**
    * Emitted exactly once per round when the first hit-confirmed of the
