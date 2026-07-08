@@ -662,12 +662,20 @@ export function stepWithRuntime(
           if (wasAlive && newHealth === 0) {
             events.push({ t: "player-killed", victimId: vid, killerId: aid, cause: "bash" });
           }
-        } else if (mit.shielded && mit.shieldPopped) {
-          events.push({
-            t: "shield-popped",
-            playerId: vid,
-            remainingCharge: post.shieldCharge ?? 0,
-          });
+        } else {
+          // The CLANG: a blocked bash is a shield-on-shield clash — the
+          // victim's guard caught the lance. Without an event the renderer
+          // gets a 660px/s collision with zero feedback. parry-deflected is
+          // the exact semantic (a directional guard turned an attack) and
+          // already drives the parry flash + sound.
+          events.push({ t: "parry-deflected", playerId: vid, projectileId: null });
+          if (mit.shielded && mit.shieldPopped) {
+            events.push({
+              t: "shield-popped",
+              playerId: vid,
+              remainingCharge: post.shieldCharge ?? 0,
+            });
+          }
         }
         players[vid] = post;
 

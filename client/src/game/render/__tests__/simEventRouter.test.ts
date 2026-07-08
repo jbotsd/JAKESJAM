@@ -26,6 +26,7 @@ function makeDeps(): {
   explosionBlasts: Array<{ x: number; y: number; r: number; d: number }>;
   rigHits: Array<{ pid: string; dirX: number; dirY: number }>;
   rigFires: string[];
+  rigParryFlashes: string[];
   killStreaks: Map<string, number>;
   prevAlive: Set<string>;
   tweens: { timeScale: number };
@@ -43,6 +44,7 @@ function makeDeps(): {
   const explosionBlasts: Array<{ x: number; y: number; r: number; d: number }> = [];
   const rigHits: Array<{ pid: string; dirX: number; dirY: number }> = [];
   const rigFires: string[] = [];
+  const rigParryFlashes: string[] = [];
   const killStreaks = new Map<string, number>();
   const prevAlive = new Set<string>();
   const tweens = { timeScale: 1 };
@@ -55,6 +57,9 @@ function makeDeps(): {
       },
       triggerFire() {
         rigFires.push(pid);
+      },
+      triggerParryFlash() {
+        rigParryFlashes.push(pid);
       },
     }) as unknown as ProceduralPlayerRig;
 
@@ -137,6 +142,7 @@ function makeDeps(): {
     explosionBlasts,
     rigHits,
     rigFires,
+    rigParryFlashes,
     killStreaks,
     prevAlive,
     tweens,
@@ -168,6 +174,32 @@ describe("SimEventRouter — C2b contract", () => {
     expect(env.shakeCalls).toEqual([]);
     // Every shooter's rig throws — a remote firing visibly recoils too.
     expect(env.rigFires).toEqual(["remote"]);
+  });
+
+  test("parry-deflected (local) → parry SFX + rig flash + micro hit-stop + shake", () => {
+    const ev: SimEvent = {
+      t: "parry-deflected",
+      playerId: PlayerId("local"),
+      projectileId: null,
+    };
+    router.dispatch(ev);
+    expect(env.audioCalls).toEqual(["parry"]);
+    expect(env.rigParryFlashes).toEqual(["local"]);
+    expect(env.tweens.timeScale).toBe(0); // hit-stop engaged...
+    env.delayedCalls.forEach((fn) => fn());
+    expect(env.tweens.timeScale).toBe(1); // ...and released
+    expect(env.shakeCalls).toEqual([[50, 0.004]]);
+  });
+
+  test("parry-deflected (remote) → flash + SFX but NO local shake", () => {
+    const ev: SimEvent = {
+      t: "parry-deflected",
+      playerId: PlayerId("remote"),
+      projectileId: null,
+    };
+    router.dispatch(ev);
+    expect(env.rigParryFlashes).toEqual(["remote"]);
+    expect(env.shakeCalls).toEqual([]);
   });
 
   test("hit-confirmed: heavy hit (>=30 dmg) triggers 50ms hit-stop", () => {

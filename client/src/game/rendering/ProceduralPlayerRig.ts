@@ -87,6 +87,11 @@ export class ProceduralPlayerRig {
   private static readonly HIT_DECAY_MS = 90;
   private readonly trailPositions: { x: number; y: number; t: number }[] = [];
   private lastTrailSampleMs = 0;
+  // Parry flash — the aegis guard just turned an attack (slide-parry reflect,
+  // timed parry, or a bash clash). Set by triggerParryFlash(); while active
+  // the shield arc overdrives to white and an impact ring expands outward.
+  private parryFlashMs = 0;
+  private static readonly PARRY_FLASH_MS = 240;
 
   // Wobbly-leg secondary motion: each foot's IK target chases footPos()
   // through a spring instead of snapping to it, so plants/direction changes/
@@ -204,6 +209,7 @@ export class ProceduralPlayerRig {
     this.backThrow = Math.max(0, this.backThrow - deltaMs / ProceduralPlayerRig.FIRE_RECOIL_MS);
     this.shurikenSpin += deltaMs * 0.02;
     this.hitDecay = Math.max(0, this.hitDecay - deltaMs / ProceduralPlayerRig.HIT_DECAY_MS);
+    this.parryFlashMs = Math.max(0, this.parryFlashMs - deltaMs);
 
     if (Math.abs(pose.velocity.x) > 8) {
       this.facing = Math.sign(pose.velocity.x);
@@ -304,6 +310,13 @@ export class ProceduralPlayerRig {
     this.hitOffsetX = dirX * MAG;
     this.hitOffsetY = dirY * MAG;
     this.hitDecay = 1;
+  }
+
+  /** The guard just TURNED an attack — slide-parry reflect, timed parry, or a
+   *  bash clash. Overdrives the aegis arc to white and fires an expanding
+   *  impact ring. Pure render; driven by the parry-deflected sim event. */
+  triggerParryFlash() {
+    this.parryFlashMs = ProceduralPlayerRig.PARRY_FLASH_MS;
   }
 
   private draw(pose: ProceduralPlayerPose, walkAmount: number, deltaMs: number) {
@@ -502,6 +515,12 @@ export class ProceduralPlayerRig {
     // --- TRAIL (drawn before body so it sits behind everything) ---
     this.drawTrail(g, pose.position, pose.velocity, s);
 
+    // --- SPEED-STREAKS (aegis slide only): tapered motion lines trailing
+    // opposite the launch vector — the anime read of a committed slide. ---
+    if (dashing) {
+      this.drawDashStreaks(g, pose.position, pose.velocity, s);
+    }
+
     // --- DRAW ORDER (back to front) ---
 
     // 0. Mad aura — an ambient field around the vessel, behind the body.
@@ -552,6 +571,48 @@ export class ProceduralPlayerRig {
     // it reads as a shell out in front of the braced arms.
     if (dashing) {
       this.drawAegisShield(g, chest, aim, s);
+    }
+
+    // 12. Parry flash — the guard just turned an attack. Drawn over
+    // everything: the moment must be unmissable at a glance.
+    if (this.parryFlashMs > 0) {
+      this.drawParryFlash(g, chest, aim, s, dashing);
+    }
+  }
+
+  /** The reflect moment: an impact ring expanding from the chest + (while
+   *  sliding) the aegis arc overdriven to solid white. Progress eases out —
+   *  violent at the instant of the turn, gone in a quarter second. */
+  private drawParryFlash(
+    g: Phaser.GameObjects.Graphics,
+    chest: Vec2,
+    aim: Vec2,
+    s: number,
+    dashing: boolean,
+  ) {
+    const p = 1 - this.parryFlashMs / ProceduralPlayerRig.PARRY_FLASH_MS; // 0→1
+    const fade = (1 - p) * (1 - p); // ease-out: bright birth, quick death
+    // Birth flash — a filled white pop at the guard the first ~80ms. This is
+    // what makes the turn UNMISSABLE; the ring alone read too faint.
+    if (p < 0.34) {
+      const pop = 1 - p / 0.34;
+      g.fillStyle(WHITE, 0.55 * pop);
+      g.fillCircle(chest.x, chest.y, 30 * s * (0.7 + 0.3 * pop));
+    }
+    // Expanding impact ring — white leading edge over an accent underlay.
+    const ringR = (26 + p * 52) * s;
+    g.lineStyle(9 * s * (1 - p), this.accentColor, 0.7 * fade);
+    g.strokeCircle(chest.x, chest.y, ringR);
+    g.lineStyle(3.5 * s, WHITE, fade);
+    g.strokeCircle(chest.x, chest.y, ringR);
+    // While sliding, the arc itself goes solid white — the shield "rings".
+    if (dashing) {
+      const aimAngle = Math.atan2(aim.y, aim.x);
+      const halfArc = Math.PI / 3;
+      g.lineStyle(7 * s, WHITE, 0.85 * fade);
+      g.beginPath();
+      g.arc(chest.x, chest.y, 42 * s, aimAngle - halfArc, aimAngle + halfArc);
+      g.strokePath();
     }
   }
 
@@ -630,6 +691,53 @@ export class ProceduralPlayerRig {
       const radius = (3 + intensity * 3) * s;
       g.fillStyle(col, alpha);
       g.fillCircle(entry.x, entry.y, radius);
+    }
+  }
+
+  // --- SPEED-STREAKS: tapered motion lines during the aegis slide ---
+  /** Three staggered lines trailing opposite the launch vector, longest in the
+   *  middle — the classic anime speed-line read. Length/alpha scale with
+   *  speed so the tail end of the slide relaxes instead of cutting off. */
+  private drawDashStreaks(
+    g: Phaser.GameObjects.Graphics,
+    pos: Vec2,
+    velocity: Vec2,
+    s: number,
+  ): void {
+    const speed = Math.hypot(velocity.x, velocity.y);
+    if (speed < 200) return;
+    const ux = -velocity.x / speed; // unit vector opposite travel
+    const uy = -velocity.y / speed;
+    const px = -uy; // perpendicular for the stagger
+    const py = ux;
+    const boost = Phaser.Math.Clamp(speed / 940, 0, 1);
+    // [perp offset, length multiplier] — middle streak longest.
+    const STREAKS: [number, number][] = [
+      [-14, 0.72],
+      [0, 1],
+      [13, 0.62],
+    ];
+    for (const [off, lenMul] of STREAKS) {
+      const ox = pos.x + px * off * s;
+      const oy = pos.y - 28 * s + py * off * s; // originate near the torso
+      const len = 46 * lenMul * boost * s;
+      // Tapered: a wide accent base under a thin white core, both fading
+      // along their length via three shrinking segments.
+      for (let seg = 0; seg < 3; seg++) {
+        const t0 = seg / 3;
+        const t1 = (seg + 1) / 3;
+        const a = 0.4 * boost * (1 - t0);
+        g.lineStyle((3.4 - seg) * s, this.accentColor, a);
+        g.beginPath();
+        g.moveTo(ox + ux * len * t0, oy + uy * len * t0);
+        g.lineTo(ox + ux * len * t1, oy + uy * len * t1);
+        g.strokePath();
+      }
+      g.lineStyle(1.4 * s, WHITE, 0.5 * boost);
+      g.beginPath();
+      g.moveTo(ox, oy);
+      g.lineTo(ox + ux * len * 0.55, oy + uy * len * 0.55);
+      g.strokePath();
     }
   }
 

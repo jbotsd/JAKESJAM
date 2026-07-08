@@ -249,6 +249,7 @@ export class MatchScene extends Phaser.Scene {
     if (!this.prevDashing && this.localPlayer.dashing) {
       this.cameraJuice.addTrauma(0.14);
       this.actionIntensity.bump(0.3);
+      this.audio?.play("dash");
     }
     this.prevDashing = this.localPlayer.dashing;
   }

@@ -8,7 +8,8 @@ export type GameSound =
   | "explosion"
   | "fire"
   | "card"
-  | "pickup";
+  | "pickup"
+  | "dash";
 
 type AudioWindow = Window & {
   webkitAudioContext?: typeof AudioContext;
@@ -64,6 +65,10 @@ export class GameAudioSystem {
     } else if (sound === "fire") {
       const p = pitch();
       this.playNoise(140, 0.11, 980 * p);
+    } else if (sound === "dash") {
+      // Aegis slide launch: a short air-cut whoosh. Quiet — it fires often.
+      const p = pitch();
+      this.playNoise(190, 0.1, 1500 * p);
     } else if (sound === "card") {
       // UI tones: use gentle jitter (±4%) so the two-note phrase stays musical.
       const p = 0.96 + Math.random() * 0.08;

@@ -189,9 +189,22 @@ export class SimEventRouter {
       case "pickup-taken":
         audio.play("pickup");
         break;
-      case "parry-deflected":
+      case "parry-deflected": {
+        // The signature aegis moment (slide-parry reflect, timed parry, or a
+        // bash clash). Was audio-only — the flash/ring/hit-stop make it READ.
         audio.play("parry");
+        d.playerRigs.get(event.playerId)?.triggerParryFlash();
+        // Micro hit-stop (shorter than a damage hit) — the "turn" registers
+        // without interrupting the slide's flow.
+        scene.tweens.timeScale = 0;
+        scene.time.delayedCall(30, () => {
+          scene.tweens.timeScale = 1;
+        });
+        if (event.playerId === d.localPlayerId) {
+          d.safeShake(50, 0.004);
+        }
         break;
+      }
       case "shield-popped": {
         audio.play("shield-break", { intensity: 0.7 });
         d.spawnBlastAtPlayer(event.playerId, 36, 26);

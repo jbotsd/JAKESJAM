@@ -26,7 +26,8 @@ export type AudioCue =
   | "shield-up"
   | "shield-hit"
   | "shield-break"
-  | "parry";
+  | "parry"
+  | "dash";
 
 export type AudioParams = {
   /** Element of the shot/effect (fire/ice/lightning/void/…) → timbre. */
@@ -235,6 +236,9 @@ export class ProceduralAudio {
         break;
       case "parry":
         this.parry(params);
+        break;
+      case "dash":
+        this.dashWhoosh(params);
         break;
       case "jump":
         this.blip(330, "sine", 0.12, 0.12, 260);
@@ -727,6 +731,31 @@ export class ProceduralAudio {
     ret.connect(rf).connect(this.env(clangT + 0.02, 0.02, 0.18, 0.14)).connect(bus);
     ret.start(clangT + 0.02);
     ret.stop(clangT + 0.24);
+  }
+
+  /** The aegis power-slide launch: a short air-cut whoosh. Band-passed noise
+   *  whose center sweeps up fast then falls away — cloth-through-air, not an
+   *  engine. Quiet by design: the slide fires often, so the cue must read
+   *  without fatiguing (same restraint as jump/land). */
+  private dashWhoosh(_p: AudioParams): void {
+    const ctx = this.ctx;
+    const master = this.master;
+    if (!ctx || !master) return;
+    const t = ctx.currentTime;
+    const src = this.noiseSource();
+    const f = ctx.createBiquadFilter();
+    f.type = "bandpass";
+    f.Q.value = 1.4;
+    f.frequency.setValueAtTime(320, t);
+    f.frequency.exponentialRampToValueAtTime(rand(1500, 1900), t + 0.09);
+    f.frequency.exponentialRampToValueAtTime(500, t + 0.2);
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.linearRampToValueAtTime(0.11, t + 0.05);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.22);
+    src.connect(f).connect(g).connect(master);
+    src.start(t);
+    src.stop(t + 0.24);
   }
 
   // ── Synth primitives ────────────────────────────────────────────────

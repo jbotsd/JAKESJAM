@@ -132,5 +132,10 @@ describe("aegis dash bash", () => {
     expect(vb.health).toBe(100); // blocked
     expect(vb.vx).toBeGreaterThan(300); // still knocked back
     expect((vb.shieldCharge ?? 0)).toBeLessThan(100); // shield drained by the clash
+    // The CLANG: a blocked bash must emit parry-deflected so the renderer
+    // gets the clash (flash + sound) — it used to be a silent 660px/s hit.
+    expect(
+      res.events.some((e) => e.t === "parry-deflected" && e.playerId === B),
+    ).toBe(true);
   });
 });

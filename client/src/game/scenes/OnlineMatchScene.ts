@@ -1649,10 +1649,13 @@ export class OnlineMatchScene extends Phaser.Scene {
     }
     this.prevLocalWallDir = wallDir;
 
-    // Dash burst — small trauma; the camera look-ahead sells the speed, no zoom.
+    // Dash burst — small trauma; the camera look-ahead sells the speed, no
+    // zoom — plus the launch whoosh (render-side: prediction makes this land
+    // the instant the local player slides, no server round-trip).
     const dashing = local.dashing ?? false;
     if (!this.prevLocalDashing && dashing) {
       this.cameraJuice.addTrauma(0.14);
+      this.audio?.play("dash");
     }
     this.prevLocalDashing = dashing;
 
