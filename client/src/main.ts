@@ -14,6 +14,7 @@ import {
 } from "./sim/wasm/runtime";
 import { installWindowProbe } from "./debug/wasmStateProbe";
 import { installBotDriver } from "./debug/botDriver";
+import { isClipsConsentStored, setClipsEnabled } from "./game/highlights/clipConsent";
 import {
   applyWasmWorldFlag,
   applyWasmWorldStepFullSync,
@@ -108,6 +109,10 @@ app.innerHTML = `
         <label class="option-check">
           <input data-music-muted type="checkbox" />
           Mute Music
+        </label>
+        <label class="option-check">
+          <input data-clips-enabled type="checkbox" />
+          🎬 Auto-clip my highlights (records your play, share-ready vertical video)
         </label>
         <button data-options-back type="button">Back</button>
       </section>
@@ -477,6 +482,16 @@ musicVolumeInput.addEventListener("input", () => {
 musicMutedInput.addEventListener("change", () => {
   localStorage.setItem("jakesjam.musicMuted", JSON.stringify(musicMutedInput.checked));
   applyAudioOptions();
+});
+
+// Highlight-clip consent toggle (see game/highlights/clipConsent.ts —
+// capture NEVER activates without this or the ?clips=1 dev override).
+// Takes effect on the next world join; no live re-wiring needed since
+// OnlineMatchScene reads consent once in create().
+const clipsEnabledInput = queryRequired<HTMLInputElement>("[data-clips-enabled]");
+clipsEnabledInput.checked = isClipsConsentStored();
+clipsEnabledInput.addEventListener("change", () => {
+  setClipsEnabled(clipsEnabledInput.checked);
 });
 
 splash.addEventListener("pointerdown", () => startMenuMusic(), { once: true });

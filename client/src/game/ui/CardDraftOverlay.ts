@@ -77,6 +77,20 @@ export class CardDraftOverlay {
     if (this.destroyed) return;
     this.currentCards = cards;
     this.currentHandler = onPick;
+    // Per onboarding-ftue/SKILL.md: the FIRST draft ever gets one extra
+    // teaching line, then never again (localStorage-gated, same pattern as
+    // the controls legend).
+    const FIRST_DRAFT_KEY = "jakesjam-ftue-first-draft-shown";
+    let firstDraftEver = false;
+    try {
+      firstDraftEver = localStorage.getItem(FIRST_DRAFT_KEY) !== "1";
+      if (firstDraftEver) localStorage.setItem(FIRST_DRAFT_KEY, "1");
+    } catch {
+      // localStorage unavailable — skip the extra line rather than nag forever.
+    }
+    this.hintEl.textContent = firstDraftEver
+      ? "Pick one. It stacks with your weapon for the rest of the match. Auto-selects when the timer expires."
+      : "Pick one card. Auto-selects when the timer expires.";
     this.cardsContainer.replaceChildren();
 
     for (const card of cards) {

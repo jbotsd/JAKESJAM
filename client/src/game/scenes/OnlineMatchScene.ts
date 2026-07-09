@@ -26,6 +26,7 @@ import {
 import type { Id } from "../../../../convex/_generated/dataModel";
 import { HighlightTracker } from "../highlights/highlightRules";
 import { ClipRecorder } from "../highlights/ClipRecorder";
+import { isClipsEnabled } from "../highlights/clipConsent";
 import { showClipShareToast } from "../ui/ClipShareToast";
 import {
   STEP_MS,
@@ -412,11 +413,11 @@ export class OnlineMatchScene extends Phaser.Scene {
     this.actionCamera = new ActionCamera(this.cameras.main);
     this.cameraJuice = new CameraJuice(this.actionCamera, this.actionIntensity);
 
-    // Highlight-clip capture — EXPLICIT opt-in only (?clips=1). This records
-    // gameplay video and uploads it to the server; it must never activate by
-    // default. See client/src/game/highlights/ — no consent UI exists yet,
-    // so treat this flag as a developer/tester switch, not a shipped feature.
-    if (new URLSearchParams(window.location.search).get("clips") === "1") {
+    // Highlight-clip capture — EXPLICIT opt-in only: the Options-panel
+    // consent toggle (persisted) or the ?clips=1 dev override. This records
+    // gameplay video and uploads it to the server; it never activates
+    // silently. See client/src/game/highlights/clipConsent.ts.
+    if (isClipsEnabled()) {
       this.highlightTracker = new HighlightTracker();
       this.clipRecorder = new ClipRecorder(this.game.canvas, {
         onUploaded: (url) => {
@@ -536,9 +537,13 @@ export class OnlineMatchScene extends Phaser.Scene {
 
   /**
    * Per onboarding-ftue/SKILL.md recipe 3: show a controls legend in the first
-   * match only, fade out after 3s, never show again. Persists via localStorage.
-   * No modal, no skip button — Mark Brown's rule "the only good tutorial is the
-   * one you can't tell is a tutorial".
+   * match only, never again. Persists via localStorage. No modal, no skip
+   * button — Mark Brown's rule "the only good tutorial is the one you can't
+   * tell is a tutorial". STAGED reveal (the skill's progressive-disclosure
+   * recipe: move → attack → defend, ~900ms apart) so five simultaneous lines
+   * don't hit a brand-new player as a wall of text, and a longer life (9s vs
+   * the old 3s — five lines in 3s wasn't readable while also, you know,
+   * being shot at).
    */
   private setupFtueLegend(): void {
     const FTUE_KEY = "jakesjam-ftue-controls-shown";
@@ -548,52 +553,53 @@ export class OnlineMatchScene extends Phaser.Scene {
     } catch {
       // localStorage unavailable (private mode, file://, …). Show every time.
     }
-    const lines = this.touchControls
+    // Grouped by concept, revealed one group at a time.
+    const groups: string[][] = this.touchControls
       ? [
-          "LEFT STICK  move",
-          "PUSH UP  jump",
-          "RIGHT STICK  aim & fire",
-          "SHIELD / PARRY  buttons",
+          ["LEFT STICK  move", "PUSH UP  jump"],
+          ["RIGHT STICK  aim & fire"],
+          ["SHIELD / DASH  buttons"],
         ]
       : [
-          "WASD  move",
-          "SPACE  jump",
-          "MOUSE  aim & fire",
+          ["WASD  move", "SPACE  jump"],
+          ["MOUSE  aim & fire"],
           // Shift = hold-to-shield (InputBit.Shield); right mouse (or C) = the
           // aegis shield power-slide bash (InputBit.Dash).
-          "SHIFT  shield",
-          "RIGHT CLICK  shield dash",
+          ["SHIFT  shield", "RIGHT CLICK  shield dash"],
         ];
+    const STAGE_GAP_MS = 900;
+    const LEGEND_LIFE_MS = 9_000;
     // y=48: below the always-visible RTT pill (top-right, ~28px tall) so
-    // the two don't overlap during the legend's 3s life.
-    const text = this.add
-      .text(this.scale.width - 20, 48, lines.join("\n"), {
-        color: "#cffaff",
-        fontFamily: "Inter, Arial, sans-serif",
-        fontSize: "14px",
-        align: "right",
-        backgroundColor: "rgba(5,8,15,0.45)",
-        padding: { left: 10, right: 10, top: 8, bottom: 8 },
-      })
-      .setOrigin(1, 0)
-      .setScrollFactor(0)
-      .setDepth(2000)
-      .setAlpha(0);
-    this.tweens.add({
-      targets: text,
-      alpha: 1,
-      duration: 220,
-      ease: "Cubic.easeOut",
-    });
-    this.time.delayedCall(3000, () => {
-      this.tweens.add({
-        targets: text,
-        alpha: 0,
-        duration: 380,
-        ease: "Cubic.easeIn",
-        onComplete: () => text.destroy(),
+    // the two don't overlap during the legend's life.
+    let y = 48;
+    for (const [i, lines] of groups.entries()) {
+      const text = this.add
+        .text(this.scale.width - 20, y, lines.join("\n"), {
+          color: "#cffaff",
+          fontFamily: "Inter, Arial, sans-serif",
+          fontSize: "14px",
+          align: "right",
+          backgroundColor: "rgba(5,8,15,0.45)",
+          padding: { left: 10, right: 10, top: 8, bottom: 8 },
+        })
+        .setOrigin(1, 0)
+        .setScrollFactor(0)
+        .setDepth(2000)
+        .setAlpha(0);
+      y += lines.length * 18 + 22;
+      this.time.delayedCall(i * STAGE_GAP_MS, () => {
+        this.tweens.add({ targets: text, alpha: 1, duration: 260, ease: "Cubic.easeOut" });
       });
-    });
+      this.time.delayedCall(LEGEND_LIFE_MS, () => {
+        this.tweens.add({
+          targets: text,
+          alpha: 0,
+          duration: 380,
+          ease: "Cubic.easeIn",
+          onComplete: () => text.destroy(),
+        });
+      });
+    }
   }
 
   /** Stop the sim loop. Idempotent. Called on tab BLUR. */
@@ -970,10 +976,15 @@ export class OnlineMatchScene extends Phaser.Scene {
     if (events.length > 0) {
       for (const e of events) this.pendingSimEvents.push(e);
     }
-    // Highlight capture — independent of audio readiness, opt-in only (?clips=1).
+    // Highlight capture — independent of audio readiness, consent-gated.
+    // LOCAL-PLAYER highlights only: the recorder captures THIS client's
+    // camera, so a bot's multi-kill across the map would clip footage of
+    // the local player doing nothing (the pre-fix behavior — it produced
+    // boring/false clips).
     if (this.highlightTracker && this.clipRecorder) {
       const highlights = this.highlightTracker.ingest(events, performance.now());
       for (const h of highlights) {
+        if (h.playerId !== this.localPlayerId) continue;
         console.log(`[clips] highlight: ${h.label} (${h.playerId})`);
         this.clipRecorder.trigger();
       }

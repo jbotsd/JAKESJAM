@@ -22,11 +22,15 @@ function hostCapturing(state: WorldState, botId: string, sink: number[]): MatchH
 }
 
 /** Bot and foe close together — inside both dashBashRange (230) and
- *  bodyThreatRadius (260), both grounded, foe to the bot's right. */
+ *  bodyThreatRadius (260), both grounded, foe to the bot's right.
+ *  DEFAULT foe id is a BOT ("bot_foe") so it's never inside the FTUE
+ *  fresh-human grace window — the offense/defense tests measure the
+ *  un-handicapped behavior. FTUE tests override foeId with a human id. */
 function bashRangeState(
   botId: string,
-  opts: { foeDashing?: boolean; foeVx?: number } = {},
+  opts: { foeDashing?: boolean; foeVx?: number; foeId?: string } = {},
 ): WorldState {
+  const foeId = opts.foeId ?? "bot_foe";
   return {
     tick: 0,
     rngState: 0,
@@ -45,8 +49,8 @@ function bashRangeState(
         grounded: true,
         shieldCharge: 100,
       },
-      foe: {
-        id: "foe",
+      [foeId]: {
+        id: foeId,
         characterId: "balanced",
         x: 650, // 150px away
         y: 500,
@@ -154,5 +158,71 @@ describe("WorldBots body-threat defense (all tiers)", () => {
     // Tier 0 never presses Dash offensively either, so ANY Dash press here
     // would have to be the body-threat branch misfiring on a non-dashing foe.
     expect(keys.some((k) => (k & InputBit.Dash) !== 0)).toBe(false);
+  });
+});
+
+describe("WorldBots FTUE grace (fresh-human warmup)", () => {
+  test("a fresh human is never dash-bashed, even by a tier-2 bot at point-blank", () => {
+    const bots = new WorldBots();
+    const spawned = bots.spawnInfosFor(3);
+    const botId = spawned[2]!.playerId as unknown as string; // tier 2 — most aggressive
+    const keys: number[] = [];
+    // Human foe id (no bot_ prefix) → tracked as a fresh human from the
+    // first think() tick.
+    const host = hostCapturing(bashRangeState(botId, { foeId: "freshie" }), botId, keys);
+    // 300 ticks at 16ms = ~4.8s — well inside the 60s grace window.
+    for (let i = 0; i < 300; i += 1) bots.think(host, 1000 + i * 16);
+    expect(keys.some((k) => (k & InputBit.Dash) !== 0)).toBe(false);
+  });
+
+  test("after the grace window expires the same bot dash-bashes again", () => {
+    const bots = new WorldBots();
+    const spawned = bots.spawnInfosFor(3);
+    const botId = spawned[2]!.playerId as unknown as string; // tier 2
+    const keys: number[] = [];
+    const host = hostCapturing(bashRangeState(botId, { foeId: "freshie" }), botId, keys);
+    // First tick at t=1000 stamps the foe's arrival; then jump wall-clock
+    // past the 60s grace window and run the same close-range scenario.
+    bots.think(host, 1000);
+    keys.length = 0;
+    for (let i = 0; i < 300; i += 1) bots.think(host, 1000 + 61_000 + i * 16);
+    const dashCount = keys.filter((k) => (k & InputBit.Dash) !== 0).length;
+    expect(dashCount).toBeGreaterThan(5);
+  });
+
+  test("bots prefer a seasoned target over a fresh human when both are in reach", () => {
+    const bots = new WorldBots();
+    const botId = bots.spawnInfosFor(1)[0]!.playerId as unknown as string;
+    // Two foes: "fresh" (a human just arrived, CLOSER) and another BOT
+    // (never fresh, slightly farther). The bot should aim at the bot, not
+    // the fresh human — check via the injected aim traveling toward the
+    // seasoned target's side.
+    const state = bashRangeState(botId) as unknown as {
+      players: Record<string, Record<string, unknown>>;
+    };
+    // Default foe is already a bot (seasoned) — push it farther LEFT, and
+    // add a CLOSER fresh human on the right.
+    state.players["bot_foe"]!.x = 350; // 150px LEFT of the bot
+    state.players["freshie"] = {
+      ...state.players["bot_foe"]!,
+      id: "freshie",
+      x: 560, // 60px RIGHT of the bot — closer than the rival
+      dashing: false,
+    };
+    const aims: number[] = [];
+    const host = {
+      isRunning: () => true,
+      getStateSnapshot: () => state,
+      injectInput: (id: unknown, input: { keys: number; aimX: number }) => {
+        if (id === botId) aims.push(input.aimX);
+      },
+      injectCardPick: () => {},
+    } as unknown as MatchHost;
+    for (let i = 0; i < 120; i += 1) bots.think(host, 1000 + i * 16);
+    // The bot sits at x=500. Seasoned rival is at 350 (left), fresh human at
+    // 560 (right). Aim EMA should settle toward the rival's side.
+    const settled = aims.slice(-30);
+    const avgAim = settled.reduce((a, b) => a + b, 0) / settled.length;
+    expect(avgAim).toBeLessThan(500);
   });
 });

@@ -30,6 +30,15 @@ export function showClipShareToast(url: string): void {
   const actions = document.createElement("div");
   Object.assign(actions.style, ACTIONS_STYLE);
 
+  const watchBtn = document.createElement("button");
+  watchBtn.type = "button";
+  watchBtn.textContent = "Watch";
+  Object.assign(watchBtn.style, BTN_SECONDARY_STYLE);
+  watchBtn.addEventListener("click", () => {
+    window.open(url, "_blank", "noopener");
+  });
+  actions.appendChild(watchBtn);
+
   const copyBtn = document.createElement("button");
   copyBtn.type = "button";
   copyBtn.textContent = "Copy link";

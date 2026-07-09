@@ -109,11 +109,26 @@ const BOT_TUNING = {
    *  slideTier. Tier 0 never initiates (see BotState.slideTier); tier 2 is
    *  close to "every opportunity" — a committed opponent, not a coinflip. */
   dashOffenseChance: [0, 0.05, 0.22] as readonly [number, number, number],
+  /** FTUE grace window (ms): a HUMAN's first N seconds in the world after
+   *  joining. The onboarding-ftue skill's "first-session bot warmup" adapted
+   *  to the always-on world (there is no matchmaker to quarantine new
+   *  players behind, and no accounts to detect first-EVER sessions with) —
+   *  instead, bots go gentle on every fresh human arrival: doubled aim
+   *  error, no offensive dash-bash, and they prefer any non-fresh target
+   *  when one exists. Applies on every join, which is fine: 60s of "the
+   *  bots aren't bullying me yet" is good arrival feel for veterans too,
+   *  and irrelevant once real players outnumber bots. */
+  freshPlayerGraceMs: 60_000,
 } as const;
 
 export class WorldBots {
   private readonly bots = new Map<PlayerId, BotState>();
   private nameCursor = 0;
+  /** Wall-clock ms each HUMAN player id was first seen in the world state —
+   *  drives the FTUE grace window (BOT_TUNING.freshPlayerGraceMs). Pruned
+   *  when a player leaves; ids are per-session so a rejoin is a new entry
+   *  (and correctly gets a fresh grace window). */
+  private readonly humanFirstSeenAtMs = new Map<string, number>();
 
   /** Bot spawn descriptors for host construction / recycle. */
   spawnInfosFor(count: number): { playerId: PlayerId; name: string }[] {
@@ -163,6 +178,7 @@ export class WorldBots {
   think(host: MatchHost, nowMs: number): void {
     if (!host.isRunning()) return;
     const state = host.getStateSnapshot();
+    this.trackHumanArrivals(state, nowMs);
     for (const bot of this.bots.values()) {
       const me = state.players[bot.id];
       if (!me) continue;
@@ -193,7 +209,7 @@ export class WorldBots {
     me: PlayerEntity,
     nowMs: number,
   ): { keys: number; aimX: number; aimY: number } {
-    const foe = this.nearestFoe(state, me);
+    const foe = this.nearestFoe(state, me, nowMs);
     let keys = 0;
 
     if (!foe) {
@@ -212,6 +228,10 @@ export class WorldBots {
     const dist = Math.hypot(dx, foe.y - me.y);
     const retreating = me.health <= BOT_TUNING.retreatHp;
     const towardFoe = (Math.sign(dx) || 1) as -1 | 1;
+    // FTUE grace: fresh humans get a gentler bot — no dash-bash, doubled
+    // aim error. They still get shot at (the world must feel alive), just
+    // survivably, while they find the controls.
+    const foeIsFresh = this.isFreshHuman(foe.id as string, nowMs);
 
     // Anti-standoff: track how long we've been beyond fire range. After a
     // short while, COMMIT — sprint straight at the foe and jump over
@@ -331,9 +351,12 @@ export class WorldBots {
 
     // Offensive slide: tier-gated (see BotState.slideTier) — only when
     // already closing distance and inside bash range, so it reads as a
-    // deliberate engage, not a random twitch.
+    // deliberate engage, not a random twitch. Never against a fresh human
+    // (FTUE grace): a 34-damage bash in your first minute teaches "this
+    // game kills you before you learn the controls".
     if (
       bot.slideTier > 0 &&
+      !foeIsFresh &&
       moveDir === towardFoe &&
       dist <= BOT_TUNING.dashBashRange &&
       bot.rand() < BOT_TUNING.dashOffenseChance[bot.slideTier]
@@ -365,7 +388,9 @@ export class WorldBots {
     const leadY = foe.y + foe.vy * flightSec * BOT_TUNING.leadFactor;
     bot.aimX += (leadX - bot.aimX) * 0.25;
     bot.aimY += (leadY - bot.aimY) * 0.25;
-    const err = BOT_TUNING.aimErrorPx;
+    // Doubled wobble against a fresh human (FTUE grace) — they get shot AT,
+    // survivably, while they find the controls.
+    const err = BOT_TUNING.aimErrorPx * (foeIsFresh ? 2 : 1);
     const aimX = bot.aimX + (bot.rand() - 0.5) * err;
     const aimY = bot.aimY + (bot.rand() - 0.5) * err;
 
@@ -381,6 +406,28 @@ export class WorldBots {
     return { keys, aimX, aimY };
   }
 
+  /** Record first-seen timestamps for humans and prune departures. */
+  private trackHumanArrivals(state: WorldState, nowMs: number): void {
+    const present = new Set<string>();
+    for (const p of Object.values(state.players)) {
+      const id = p.id as string;
+      if (id.startsWith(BOT_ID_PREFIX)) continue;
+      present.add(id);
+      if (!this.humanFirstSeenAtMs.has(id)) this.humanFirstSeenAtMs.set(id, nowMs);
+    }
+    for (const id of [...this.humanFirstSeenAtMs.keys()]) {
+      if (!present.has(id)) this.humanFirstSeenAtMs.delete(id);
+    }
+  }
+
+  /** FTUE grace: a human inside their first freshPlayerGraceMs in the world.
+   *  Bots go easy on them (see BOT_TUNING.freshPlayerGraceMs). */
+  private isFreshHuman(id: string, nowMs: number): boolean {
+    const firstSeen = this.humanFirstSeenAtMs.get(id);
+    if (firstSeen === undefined) return false;
+    return nowMs - firstSeen < BOT_TUNING.freshPlayerGraceMs;
+  }
+
   /** Is `foe`'s velocity roughly aligned toward `me`? Same dot-product
    *  shape as the projectile threat check, applied to a player body —
    *  used to tell "sliding toward us" from "sliding somewhere else". */
@@ -393,9 +440,16 @@ export class WorldBots {
     return align > 0.5;
   }
 
-  private nearestFoe(state: WorldState, me: PlayerEntity): PlayerEntity | null {
+  private nearestFoe(state: WorldState, me: PlayerEntity, nowMs: number): PlayerEntity | null {
+    // FTUE grace: prefer the nearest NON-fresh target when one exists, so a
+    // just-joined human isn't immediately dogpiled — bots fight each other
+    // (or veterans) instead. A fresh human is still a valid LAST-resort foe
+    // (an empty-feeling world is worse than gentle pressure; the gentleness
+    // itself comes from the aim/dash handicaps in decide()).
     let best: PlayerEntity | null = null;
     let bestD = Infinity;
+    let bestSeasoned: PlayerEntity | null = null;
+    let bestSeasonedD = Infinity;
     for (const p of Object.values(state.players)) {
       if (p.id === me.id || !p.alive) continue;
       const d = Math.hypot(p.x - me.x, p.y - me.y);
@@ -403,8 +457,12 @@ export class WorldBots {
         bestD = d;
         best = p;
       }
+      if (!this.isFreshHuman(p.id as string, nowMs) && d < bestSeasonedD) {
+        bestSeasonedD = d;
+        bestSeasoned = p;
+      }
     }
-    return best;
+    return bestSeasoned ?? best;
   }
 
   private inboundThreat(

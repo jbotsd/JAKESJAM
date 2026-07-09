@@ -47,6 +47,11 @@ const MAX_SEGMENT_MS = 20_000;
 /** Explicit bitrate — MediaRecorder's implicit default can be low enough to
  *  look noticeably blocky on fast-moving gameplay. */
 const VIDEO_BITS_PER_SECOND = 5_000_000;
+/** Upload floor: a hidden tab stops the rAF draw loop, so captureStream
+ *  produces no frames and the recorder emits a header-only blob (the
+ *  10-15 BYTE junk files observed in server/.clips). Any real clip at
+ *  5Mbps is megabytes; anything under this floor is a dud — drop it. */
+const MIN_UPLOAD_BYTES = 100_000;
 
 export type ClipRecorderDeps = {
   /** Where to upload finished clips. Relative path — resolved against the
@@ -215,7 +220,14 @@ export class ClipRecorder {
     if (shouldUpload && this.mimeType) {
       this.pendingFinishAtMs = null;
       const blob = new Blob(this.currentChunks, { type: this.mimeType });
-      void this.upload(blob);
+      // Dud guard: a hidden tab freezes the rAF draw loop → the recorder
+      // emits a header-only blob. Uploading those littered server/.clips
+      // with 10-15 byte junk files. Drop anything implausibly small.
+      if (blob.size >= MIN_UPLOAD_BYTES) {
+        void this.upload(blob);
+      } else {
+        console.log(`[clips] dropped dud segment (${blob.size} bytes — tab hidden?)`);
+      }
     }
     if (!this.stopped) this.beginSegment();
   }
