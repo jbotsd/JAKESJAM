@@ -1605,6 +1605,24 @@ export class OnlineMatchScene extends Phaser.Scene {
     });
   }
 
+  /** Reused every rig update — the rig consumes the pose synchronously
+   *  (copies what it keeps), so one mutable scratch object replaces four
+   *  small allocations per rig per frame. */
+  private readonly rigPoseScratch = {
+    position: { x: 0, y: 0 },
+    velocity: { x: 0, y: 0 },
+    aimTarget: { x: 0, y: 0 },
+    grounded: true,
+    crouching: false,
+    health: 100,
+    maxHealth: 100,
+    touchingWallDir: 0,
+    dashing: false,
+  };
+  /** Cull margin (world px) beyond the camera's view — generous enough that
+   *  a rig's trail/shield arc never visibly pops at the screen edge. */
+  private static readonly RIG_CULL_MARGIN = 220;
+
   private updatePlayerRig(
     rig: ProceduralPlayerRig,
     player: PlayerEntity,
@@ -1614,33 +1632,59 @@ export class OnlineMatchScene extends Phaser.Scene {
       rig.setVisible(false);
       return;
     }
+    // Off-screen culling: an out-of-view rig still costs a full procedural
+    // redraw (dozens of Graphics path ops) every frame. Skip it entirely —
+    // matters increasingly as the world fills toward 16 players with the
+    // action camera cropped in. The local player is always in view (the
+    // camera follows them), so this can't cull "you".
+    const view = this.cameras.main.worldView;
+    const M = OnlineMatchScene.RIG_CULL_MARGIN;
+    if (
+      player.x < view.x - M ||
+      player.x > view.right + M ||
+      player.y < view.y - M ||
+      player.y > view.bottom + M
+    ) {
+      rig.setVisible(false);
+      return;
+    }
     rig.setVisible(true);
     const halfHeight = player.crouching ? SIM_CROUCH_HALF_HEIGHT : SIM_BODY_HALF_HEIGHT;
     const character = this.getCharacter(player.characterId);
-    rig.update(deltaMs, {
-      position: { x: player.x, y: player.y + halfHeight },
-      velocity: { x: player.vx, y: player.vy },
-      aimTarget: { x: player.aimX, y: player.aimY },
-      // PlayerEntity.grounded is wire-encoded as of commit ef365c7 (P_HI
-      // bit 4). Falls back to true if the snapshot omits it (older builds
-      // or the brief window before the first snap arrives).
-      grounded: player.grounded ?? true,
-      crouching: player.crouching,
-      health: player.health,
-      maxHealth: character.maxHealth,
-      // touchingWallDir/dashing wire-encoded per P_HI.wallDirNeg/wallDirPos/
-      // dashing (same optional/additive pattern as grounded above).
-      touchingWallDir: player.touchingWallDir ?? 0,
-      dashing: player.dashing ?? false,
-    });
+    const pose = this.rigPoseScratch;
+    pose.position.x = player.x;
+    pose.position.y = player.y + halfHeight;
+    pose.velocity.x = player.vx;
+    pose.velocity.y = player.vy;
+    pose.aimTarget.x = player.aimX;
+    pose.aimTarget.y = player.aimY;
+    // PlayerEntity.grounded is wire-encoded as of commit ef365c7 (P_HI
+    // bit 4). Falls back to true if the snapshot omits it (older builds
+    // or the brief window before the first snap arrives).
+    pose.grounded = player.grounded ?? true;
+    pose.crouching = player.crouching;
+    pose.health = player.health;
+    pose.maxHealth = character.maxHealth;
+    // touchingWallDir/dashing wire-encoded per P_HI.wallDirNeg/wallDirPos/
+    // dashing (same optional/additive pattern as grounded above).
+    pose.touchingWallDir = player.touchingWallDir ?? 0;
+    pose.dashing = player.dashing ?? false;
+    rig.update(deltaMs, pose);
   }
+
+  /** id → definition, built once (characters.find per rig per frame was a
+   *  linear scan + closure allocation in the render loop). */
+  private static readonly characterById = new Map(
+    characters.map((c) => [c.id as string, c]),
+  );
 
   private getCharacter(
     characterId: CharacterId | string | undefined,
   ): CharacterDefinition {
     return (
-      characters.find((character) => character.id === characterId) ??
-      characters[0]!
+      (characterId !== undefined
+        ? OnlineMatchScene.characterById.get(characterId as string)
+        : undefined) ?? characters[0]!
     );
   }
 
