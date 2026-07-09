@@ -609,6 +609,13 @@ export function stepWithRuntime(
     players[pid] = nextEntity;
   }
 
+  // Perf hoist: id-sorted player list, computed ONCE per tick and shared by
+  // every pass that needs deterministic player iteration (bash, per-
+  // projectile hit sweeps, AOE, homing, chain-lightning). The key SET is
+  // stable for the rest of the tick — passes mutate player VALUES, never
+  // add/remove ids — so this is byte-identical to each pass re-sorting.
+  const sortedPlayerIdsForTick = (Object.keys(players) as PlayerId[]).sort();
+
   // 1z. AEGIS DASH BASH — the offensive half of the shield-dash. Positions,
   //     velocity, and `dashing` are all current here (post-movement). For each
   //     player mid-dash, ram the first enemy inside the shield's frontal arc:
@@ -618,7 +625,7 @@ export function stepWithRuntime(
   //     sorted ids for determinism (client + server agree).
   if (fightingPhase) {
     const bashTick = Tick(state.tick + 1);
-    const bashIds = (Object.keys(players) as PlayerId[]).sort();
+    const bashIds = sortedPlayerIdsForTick;
     for (const aid of bashIds) {
       const attacker = players[aid]!;
       if (!attacker.alive || attacker.dashing !== true) continue;
@@ -882,16 +889,23 @@ export function stepWithRuntime(
   const deflectedProjectileIds = runtime.scratchDeflectedProjectiles;
   deflectedProjectileIds.clear();
 
+  // Perf hoist (bench: dominant per-tick allocator at real projectile
+  // counts): ONE context object reused across the projectile loop (only
+  // rngState changes between iterations), sharing the tick's sorted ids.
+  const projCtx = {
+    platforms: runtime.map.platforms,
+    players,
+    dtMs: effDtMs,
+    tick: nextTick,
+    rngState,
+    collisionCache: runtime.collisionCache,
+    sortedPlayerIds: sortedPlayerIdsForTick,
+  };
+
   for (const id of sortedProjectileIds) {
     const proj = projectilesView[id]!;
-    const result = stepProjectile(proj, {
-      platforms: runtime.map.platforms,
-      players,
-      dtMs: effDtMs,
-      tick: nextTick,
-      rngState,
-      collisionCache: runtime.collisionCache,
-    });
+    projCtx.rngState = rngState;
+    const result = stepProjectile(proj, projCtx);
     rngState = result.rngState;
 
     // Drain events: damage on hit-confirmed, slow on player-slowed.
@@ -1065,7 +1079,7 @@ export function stepWithRuntime(
             let bestId: PlayerId | null = null;
             let bestD2 = CHAIN_RADIUS * CHAIN_RADIUS;
             // Iterate sorted ids for determinism.
-            const ids = (Object.keys(players) as PlayerId[]).sort();
+            const ids = sortedPlayerIdsForTick;
             for (const oid of ids) {
               if (oid === ev.victimId) continue;
               if (proj.ownerId !== null && oid === proj.ownerId) continue;

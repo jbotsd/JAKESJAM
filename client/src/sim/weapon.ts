@@ -61,10 +61,46 @@ function applyCharacterInnateAbility(
   };
 }
 
+/** Identity fast path: keyed on the `cards` ARRAY REFERENCE, which is stable
+ *  between drafts (per-tick entity spreads copy the reference, not the
+ *  array; a draft pick allocates a new array = correct invalidation), then
+ *  by characterId → weaponId so distinct archetypes sharing an array can't
+ *  collide. Fully allocation-free on the hit path — resolvePlayerBuild is
+ *  called several times per player per tick and buildKey's `cards.join`
+ *  string was pure churn. Snapshot decodes allocate fresh arrays (~20Hz),
+ *  which miss here and fall through to the string-keyed cache below. */
+const buildIdentityCache = new WeakMap<
+  readonly string[],
+  Map<string, Map<string, ResolvedWeaponBuild>>
+>();
+
+function identityCacheGet(player: PlayerEntity): ResolvedWeaponBuild | undefined {
+  return buildIdentityCache.get(player.cards)?.get(player.characterId)?.get(player.weaponId);
+}
+
+function identityCacheSet(player: PlayerEntity, build: ResolvedWeaponBuild): void {
+  let byChar = buildIdentityCache.get(player.cards);
+  if (!byChar) {
+    byChar = new Map();
+    buildIdentityCache.set(player.cards, byChar);
+  }
+  let byWeapon = byChar.get(player.characterId);
+  if (!byWeapon) {
+    byWeapon = new Map();
+    byChar.set(player.characterId, byWeapon);
+  }
+  byWeapon.set(player.weaponId, build);
+}
+
 export function resolvePlayerBuild(player: PlayerEntity): ResolvedWeaponBuild {
+  const fast = identityCacheGet(player);
+  if (fast) return fast;
   const key = buildKey(player);
   const cached = buildCache.get(key);
-  if (cached) return cached;
+  if (cached) {
+    identityCacheSet(player, cached);
+    return cached;
+  }
   // For now the only weapon is starter-pistol. When more weapons exist this
   // will look up the WeaponDefinition by player.weaponId.
   const cards: CardDefinition[] = findCardsById(crystalRoundsCards, player.cards);
@@ -79,6 +115,7 @@ export function resolvePlayerBuild(player: PlayerEntity): ResolvedWeaponBuild {
     dashCharges: Math.max(withInnate.dashCharges, 1),
   };
   buildCache.set(key, build);
+  identityCacheSet(player, build);
   return build;
 }
 

@@ -85,6 +85,12 @@ export type StepProjectileContext = {
   /** Pre-built collision cache. When provided, uses spatial-grid-accelerated
    *  overlap tests instead of brute-force iteration over all platforms. */
   collisionCache?: StaticCollisionCache;
+  /** OPTIONAL perf hoist: `Object.keys(players).sort()`, computed ONCE per
+   *  tick by the caller and shared across every projectile. Without it each
+   *  stepProjectile call re-sorts — measured as the sim's dominant per-tick
+   *  allocator at realistic projectile counts. MUST be exactly the sorted
+   *  key set of `players` (determinism depends on the id-sorted order). */
+  sortedPlayerIds?: readonly PlayerId[];
 };
 
 export type StepProjectileFn = (
@@ -217,7 +223,7 @@ function stepProjectileNative(
     }
     case "homing":
     case "anti-homing": {
-      const target = closestNonOwnerPlayer(proj.x, proj.y, proj.ownerId, players);
+      const target = closestNonOwnerPlayer(proj.x, proj.y, proj.ownerId, players, ctx.sortedPlayerIds);
       if (target) {
         const tx = proj.pathing === "anti-homing"
           ? proj.x * 2 - target.x
@@ -260,7 +266,7 @@ function stepProjectileNative(
   //    Iterate players in deterministic order so the picked target is stable
   //    when two are equidistant.
   let hitPid: PlayerId | null = null;
-  const playerIds = Object.keys(players).sort();
+  const playerIds = ctx.sortedPlayerIds ?? Object.keys(players).sort();
   const candidatePids: PlayerId[] = [];
   const candidateAABBs: { x: number; y: number; w: number; h: number }[] = [];
   for (const pid_ of playerIds) {
@@ -338,7 +344,7 @@ function stepProjectileNative(
     }
 
     // Apply primary hit damage + side effects (explosive AOE, slow).
-    events.push(...applyHitOn(proj, hitPid, x, y, players, tick));
+    events.push(...applyHitOn(proj, hitPid, x, y, players, tick, ctx.sortedPlayerIds));
 
     // Pierce-chain: decrement and survive (don't expire). All other impacts
     // expire on the first hit (with optional split spawn).
@@ -424,7 +430,7 @@ function stepProjectileNative(
       if (hitIdx >= 0 && proj.ageMs !== 0) {
         const impact: ProjectileImpact = proj.impact ?? "none";
         if (impact === "explosive") {
-          events.push(...detonateAt(proj, x, y, players, tick));
+          events.push(...detonateAt(proj, x, y, players, tick, ctx.sortedPlayerIds));
         }
         if ((proj.splitCount ?? 0) > 0) {
           const splitProj: ProjectileEntity = {
@@ -497,7 +503,7 @@ function stepProjectileNative(
 
       const impact: ProjectileImpact = proj.impact ?? "none";
       if (impact === "explosive") {
-        events.push(...detonateAt(proj, x, y, players, tick));
+        events.push(...detonateAt(proj, x, y, players, tick, ctx.sortedPlayerIds));
       }
       if ((proj.splitCount ?? 0) > 0) {
         const splitProj: ProjectileEntity = {
@@ -639,13 +645,14 @@ function applyHitOn(
   hitY: number,
   players: Record<PlayerId, PlayerEntity>,
   tick: Tick,
+  sortedIds?: readonly PlayerId[],
 ): SimEvent[] {
   const events: SimEvent[] = [];
   const impact: ProjectileImpact = proj.impact ?? "none";
 
   if (impact === "explosive") {
     // AOE — damage all alive non-owner players within the radius.
-    events.push(...detonateAt(proj, hitX, hitY, players, tick));
+    events.push(...detonateAt(proj, hitX, hitY, players, tick, sortedIds));
     return events;
   }
 
@@ -680,6 +687,7 @@ function detonateAt(
   detY: number,
   players: Record<PlayerId, PlayerEntity>,
   tick: Tick,
+  sortedIds?: readonly PlayerId[],
 ): SimEvent[] {
   const events: SimEvent[] = [];
   const impact: ProjectileImpact = proj.impact ?? "none";
@@ -692,7 +700,7 @@ function detonateAt(
     return events;
   }
 
-  const playerIds = Object.keys(players).sort();
+  const playerIds = sortedIds ?? Object.keys(players).sort();
   for (const pid_ of playerIds) {
     const pid = pid_ as PlayerId;
     if (proj.ownerId !== null && pid === proj.ownerId) continue;
@@ -835,9 +843,10 @@ function closestNonOwnerPlayer(
   fromY: number,
   ownerId: PlayerId | null,
   players: Record<PlayerId, PlayerEntity>,
+  sortedIds?: readonly PlayerId[],
 ): { x: number; y: number } | null {
   // Iterate in id-sorted order for deterministic tiebreaks.
-  const ids = Object.keys(players).sort();
+  const ids = sortedIds ?? Object.keys(players).sort();
   let best: PlayerEntity | null = null;
   let bestSq = Number.POSITIVE_INFINITY;
   for (const id_ of ids) {

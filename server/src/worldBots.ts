@@ -174,11 +174,19 @@ export class WorldBots {
     return out;
   }
 
+  /** Reused across think() calls — refilled per tick, never reallocated
+   *  (60Hz × N bots made the per-call Object.values arrays real churn). */
+  private readonly playersScratch: PlayerEntity[] = [];
+
   /** Drive every bot for one tick. Call at sim rate while the host runs. */
   think(host: MatchHost, nowMs: number): void {
     if (!host.isRunning()) return;
     const state = host.getStateSnapshot();
-    this.trackHumanArrivals(state, nowMs);
+    // Hoist the player list ONCE per tick — nearestFoe/trackHumanArrivals
+    // previously rebuilt Object.values per bot per tick.
+    this.playersScratch.length = 0;
+    for (const pid in state.players) this.playersScratch.push(state.players[pid as PlayerId]!);
+    this.trackHumanArrivals(this.playersScratch, nowMs);
     for (const bot of this.bots.values()) {
       const me = state.players[bot.id];
       if (!me) continue;
@@ -209,7 +217,7 @@ export class WorldBots {
     me: PlayerEntity,
     nowMs: number,
   ): { keys: number; aimX: number; aimY: number } {
-    const foe = this.nearestFoe(state, me, nowMs);
+    const foe = this.nearestFoe(this.playersScratch, me, nowMs);
     let keys = 0;
 
     if (!foe) {
@@ -407,9 +415,9 @@ export class WorldBots {
   }
 
   /** Record first-seen timestamps for humans and prune departures. */
-  private trackHumanArrivals(state: WorldState, nowMs: number): void {
+  private trackHumanArrivals(players: readonly PlayerEntity[], nowMs: number): void {
     const present = new Set<string>();
-    for (const p of Object.values(state.players)) {
+    for (const p of players) {
       const id = p.id as string;
       if (id.startsWith(BOT_ID_PREFIX)) continue;
       present.add(id);
@@ -440,7 +448,7 @@ export class WorldBots {
     return align > 0.5;
   }
 
-  private nearestFoe(state: WorldState, me: PlayerEntity, nowMs: number): PlayerEntity | null {
+  private nearestFoe(players: readonly PlayerEntity[], me: PlayerEntity, nowMs: number): PlayerEntity | null {
     // FTUE grace: prefer the nearest NON-fresh target when one exists, so a
     // just-joined human isn't immediately dogpiled — bots fight each other
     // (or veterans) instead. A fresh human is still a valid LAST-resort foe
@@ -450,7 +458,7 @@ export class WorldBots {
     let bestD = Infinity;
     let bestSeasoned: PlayerEntity | null = null;
     let bestSeasonedD = Infinity;
-    for (const p of Object.values(state.players)) {
+    for (const p of players) {
       if (p.id === me.id || !p.alive) continue;
       const d = Math.hypot(p.x - me.x, p.y - me.y);
       if (d < bestD) {
