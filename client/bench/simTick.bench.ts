@@ -17,7 +17,7 @@ import {
 } from "../src/sim/types.ts";
 
 const DT_MS = 1000 / 60;
-const PLAYERS = 8;
+const PLAYERS = Number(process.env.BENCH_PLAYERS ?? 8);
 const WARMUP_TICKS = 600;
 const MEASURE_TICKS = 3000;
 
@@ -36,12 +36,33 @@ const spawns: PlayerSpawnInfo[] = Array.from({ length: PLAYERS }, (_, i) => ({
 }));
 
 let state = World.create(map, spawns, 1);
+// BENCH_HEAVY=1: give every player a max-pellet, bouncy, fast-firing build —
+// the worst-case projectile load a real drafted endgame can produce.
+if (process.env.BENCH_HEAVY === "1") {
+  const heavyCards = [
+    "five-shard-spray", "five-shard-spray", "five-shard-spray",
+    "one-more-shard", "one-more-shard", "one-more-shard", "one-more-shard",
+    "rapid-refraction", "rapid-refraction",
+    "bouncy-prism", "extra-bounce",
+  ];
+  const heavyPlayers: typeof state.players = {};
+  for (const [pid, pl] of Object.entries(state.players)) {
+    heavyPlayers[pid as PlayerId] = { ...pl, cards: [...heavyCards] };
+  }
+  state = { ...state, players: heavyPlayers };
+}
 // Force the round into fighting so weapons actually fire.
 state = {
   ...state,
   round: { ...state.round, phase: "fighting", countdownRemainingMs: 90_000 },
 };
 const runtime = createRuntime(map);
+// BENCH_NO_SCRATCH=1: disable the hit-sweep scratch to A/B the optimization
+// under IDENTICAL machine contention (cross-run comparisons are useless
+// when other workloads share the box).
+if (process.env.BENCH_NO_SCRATCH === "1") {
+  (runtime as { scratchHitSweep?: unknown }).scratchHitSweep = undefined;
+}
 
 let seq = 1;
 function inputsForTick(tick: number): Record<PlayerId, InputFrame | null> {
@@ -66,9 +87,28 @@ function inputsForTick(tick: number): Record<PlayerId, InputFrame | null> {
   return out;
 }
 
+// God-mode sustain: revive everyone each tick and pin the round in
+// `fighting` so the brawl never resolves — the bench measures a permanent
+// worst-case combat load, not round-cycle idle time.
+function sustain(s0: typeof state): typeof state {
+  let anyDead = false;
+  for (const pl of Object.values(s0.players)) {
+    if (!pl.alive || pl.health < 100) { anyDead = true; break; }
+  }
+  const round = s0.round.phase !== "fighting" || s0.round.countdownRemainingMs < 10_000
+    ? { ...s0.round, phase: "fighting" as const, countdownRemainingMs: 90_000, suddenDeathActive: false }
+    : s0.round;
+  if (!anyDead && round === s0.round) return s0;
+  const players: typeof s0.players = {};
+  for (const [pid, pl] of Object.entries(s0.players)) {
+    players[pid as PlayerId] = pl.alive && pl.health >= 100 ? pl : { ...pl, alive: true, health: 100 };
+  }
+  return { ...s0, players, round };
+}
+
 // Warmup (JIT + steady-state projectile population).
 for (let t = 0; t < WARMUP_TICKS; t++) {
-  const res = stepWithRuntime(state, runtime, inputsForTick(t), DT_MS);
+  const res = stepWithRuntime(sustain(state), runtime, inputsForTick(t), DT_MS);
   state = res.state;
 }
 
@@ -77,8 +117,9 @@ const heapBefore = process.memoryUsage().heapUsed;
 
 const samples = new Float64Array(MEASURE_TICKS);
 for (let t = 0; t < MEASURE_TICKS; t++) {
+  const sustained = sustain(state);
   const t0 = performance.now();
-  const res = stepWithRuntime(state, runtime, inputsForTick(WARMUP_TICKS + t), DT_MS);
+  const res = stepWithRuntime(sustained, runtime, inputsForTick(WARMUP_TICKS + t), DT_MS);
   samples[t] = performance.now() - t0;
   state = res.state;
 }

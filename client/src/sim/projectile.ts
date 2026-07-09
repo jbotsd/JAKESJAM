@@ -91,7 +91,67 @@ export type StepProjectileContext = {
    *  allocator at realistic projectile counts. MUST be exactly the sorted
    *  key set of `players` (determinism depends on the id-sorted order). */
   sortedPlayerIds?: readonly PlayerId[];
+  /** OPTIONAL perf hoist: reusable hit-sweep scratch (see HitSweepScratch).
+   *  Player positions are stable for the whole projectile pass (movement
+   *  and bash already ran), so the caller fills base pids/AABBs ONCE per
+   *  tick; each projectile filters by owner + LIVE alive-flag into the
+   *  reused view arrays. Eliminates ~players×projectiles AABB allocations
+   *  per tick — measured as the top remaining allocator under heavy
+   *  (16-player, 400+ projectile) load. */
+  hitScratch?: HitSweepScratch;
 };
+
+export type HitSweepScratch = {
+  /** All players alive at tick start, id-sorted, AABBs prebuilt. */
+  basePids: PlayerId[];
+  baseAABBs: { x: number; y: number; w: number; h: number }[];
+  /** Per-projectile filtered views (references into base*). */
+  pids: PlayerId[];
+  aabbs: { x: number; y: number; w: number; h: number }[];
+  /** Reused projectile swept-AABB endpoints. */
+  projPrev: { x: number; y: number; w: number; h: number };
+  projNow: { x: number; y: number; w: number; h: number };
+};
+
+/** Build an empty HitSweepScratch (caller keeps + refills it per tick). */
+export function makeHitSweepScratch(): HitSweepScratch {
+  return {
+    basePids: [],
+    baseAABBs: [],
+    pids: [],
+    aabbs: [],
+    projPrev: { x: 0, y: 0, w: 0, h: 0 },
+    projNow: { x: 0, y: 0, w: 0, h: 0 },
+  };
+}
+
+/** Refill scratch.base* from the tick's players — call ONCE per tick,
+ *  after movement/bash and before the projectile loop. Reuses the pooled
+ *  AABB objects; grows the pool only when the player count grows. */
+export function fillHitSweepScratch(
+  scratch: HitSweepScratch,
+  players: Record<PlayerId, PlayerEntity>,
+  sortedPlayerIds: readonly PlayerId[],
+): void {
+  scratch.basePids.length = 0;
+  let n = 0;
+  for (const pid of sortedPlayerIds) {
+    const player = players[pid]!;
+    if (!player.alive) continue;
+    scratch.basePids.push(pid);
+    let box = scratch.baseAABBs[n];
+    if (!box) {
+      box = { x: 0, y: 0, w: 0, h: 0 };
+      scratch.baseAABBs[n] = box;
+    }
+    box.x = player.x - PLAYER_RADIUS;
+    box.y = player.y - PLAYER_RADIUS;
+    box.w = PLAYER_RADIUS * 2;
+    box.h = PLAYER_RADIUS * 2;
+    n += 1;
+  }
+  scratch.baseAABBs.length = n;
+}
 
 export type StepProjectileFn = (
   proj: ProjectileEntity,
@@ -266,35 +326,54 @@ function stepProjectileNative(
   //    Iterate players in deterministic order so the picked target is stable
   //    when two are equidistant.
   let hitPid: PlayerId | null = null;
-  const playerIds = ctx.sortedPlayerIds ?? Object.keys(players).sort();
-  const candidatePids: PlayerId[] = [];
-  const candidateAABBs: { x: number; y: number; w: number; h: number }[] = [];
-  for (const pid_ of playerIds) {
-    const pid = pid_ as PlayerId;
-    if (proj.ownerId !== null && pid === proj.ownerId) continue;
-    const player = players[pid]!;
-    if (!player.alive) continue;
-    candidatePids.push(pid);
-    candidateAABBs.push({
-      x: player.x - PLAYER_RADIUS,
-      y: player.y - PLAYER_RADIUS,
-      w: PLAYER_RADIUS * 2,
-      h: PLAYER_RADIUS * 2,
-    });
+  const scratch = ctx.hitScratch;
+  let candidatePids: PlayerId[];
+  let candidateAABBs: { x: number; y: number; w: number; h: number }[];
+  if (scratch) {
+    // Zero-alloc path: filter the tick's prebuilt AABBs by owner + LIVE
+    // alive flag (a player killed by an earlier projectile THIS tick must
+    // not absorb a later one — identical semantics to the allocating path,
+    // which also re-reads `alive` per projectile).
+    candidatePids = scratch.pids;
+    candidateAABBs = scratch.aabbs;
+    candidatePids.length = 0;
+    candidateAABBs.length = 0;
+    for (let i = 0; i < scratch.basePids.length; i++) {
+      const pid = scratch.basePids[i]!;
+      if (proj.ownerId !== null && pid === proj.ownerId) continue;
+      if (!players[pid]!.alive) continue;
+      candidatePids.push(pid);
+      candidateAABBs.push(scratch.baseAABBs[i]!);
+    }
+  } else {
+    const playerIds = ctx.sortedPlayerIds ?? Object.keys(players).sort();
+    candidatePids = [];
+    candidateAABBs = [];
+    for (const pid_ of playerIds) {
+      const pid = pid_ as PlayerId;
+      if (proj.ownerId !== null && pid === proj.ownerId) continue;
+      const player = players[pid]!;
+      if (!player.alive) continue;
+      candidatePids.push(pid);
+      candidateAABBs.push({
+        x: player.x - PLAYER_RADIUS,
+        y: player.y - PLAYER_RADIUS,
+        w: PLAYER_RADIUS * 2,
+        h: PLAYER_RADIUS * 2,
+      });
+    }
   }
   if (candidateAABBs.length > 0) {
-    const projAABBPrev = {
-      x: prevX - proj.radius,
-      y: prevY - proj.radius,
-      w: proj.radius * 2,
-      h: proj.radius * 2,
-    };
-    const projAABBNow = {
-      x: x - proj.radius,
-      y: y - proj.radius,
-      w: proj.radius * 2,
-      h: proj.radius * 2,
-    };
+    const projAABBPrev = scratch ? scratch.projPrev : { x: 0, y: 0, w: 0, h: 0 };
+    projAABBPrev.x = prevX - proj.radius;
+    projAABBPrev.y = prevY - proj.radius;
+    projAABBPrev.w = proj.radius * 2;
+    projAABBPrev.h = proj.radius * 2;
+    const projAABBNow = scratch ? scratch.projNow : { x: 0, y: 0, w: 0, h: 0 };
+    projAABBNow.x = x - proj.radius;
+    projAABBNow.y = y - proj.radius;
+    projAABBNow.w = proj.radius * 2;
+    projAABBNow.h = proj.radius * 2;
     // Pass 1 — already-overlapping case (projectile spawned inside target,
     // or end-position overlaps). The original behavior we must preserve.
     for (let i = 0; i < candidateAABBs.length; i++) {

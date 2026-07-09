@@ -45,7 +45,7 @@ import {
   STOLEN_FANGS_MAX_CHARGES,
   STOLEN_FANGS_CHARGE_EXPIRY_MS,
 } from "./constants.js";
-import { stepProjectile } from "./projectile.js";
+import { stepProjectile, makeHitSweepScratch, fillHitSweepScratch, type HitSweepScratch } from "./projectile.js";
 import { CowRecord } from "./cowRecord.js";
 import { nextFloat } from "./rng.js";
 import {
@@ -171,6 +171,10 @@ export type WorldRuntime = {
    * dominant per-tick allocations in the game-loop-perf audit.
    */
   scratchSortedProjectileIds: EntityId[];
+  /** Reused hit-sweep scratch for the projectile pass (see projectile.ts
+   *  HitSweepScratch) — kills the per-projectile candidate-AABB allocation
+   *  storm under heavy load. */
+  scratchHitSweep: HitSweepScratch;
   /** Projectiles parried this tick → the player who parried them (so a
    *  reflective parry can hand the shard back with reversed velocity). */
   scratchDeflectedProjectiles: Map<EntityId, PlayerId>;
@@ -229,6 +233,7 @@ export function createRuntime(map: MapDefinition): WorldRuntime {
       Math.max(1, map.size.y),
     ),
     scratchSortedProjectileIds: [],
+    scratchHitSweep: makeHitSweepScratch(),
     scratchDeflectedProjectiles: new Map(),
     ceilingClampY: computeCeilingClampY(map),
   };
@@ -891,7 +896,12 @@ export function stepWithRuntime(
 
   // Perf hoist (bench: dominant per-tick allocator at real projectile
   // counts): ONE context object reused across the projectile loop (only
-  // rngState changes between iterations), sharing the tick's sorted ids.
+  // rngState changes between iterations), sharing the tick's sorted ids
+  // and the prebuilt hit-sweep AABBs (positions are stable for the whole
+  // pass — movement and bash already ran; aliveness is re-read live).
+  if (runtime.scratchHitSweep) {
+    fillHitSweepScratch(runtime.scratchHitSweep, players, sortedPlayerIdsForTick);
+  }
   const projCtx = {
     platforms: runtime.map.platforms,
     players,
@@ -900,6 +910,7 @@ export function stepWithRuntime(
     rngState,
     collisionCache: runtime.collisionCache,
     sortedPlayerIds: sortedPlayerIdsForTick,
+    hitScratch: runtime.scratchHitSweep,
   };
 
   for (const id of sortedProjectileIds) {
