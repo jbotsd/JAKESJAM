@@ -5,7 +5,10 @@
 //     Jump (hold to sustain the jetpack). Down-tilt = crouch/down.
 //   - RIGHT thumb → floating AIM+FIRE stick. Drag sets aim direction and
 //     fires while held (twin-stick auto-fire — the smoothest mobile aim).
-//   - Two thumb buttons bottom-centre → SHIELD (hold) and PARRY (tap).
+//   - Two thumb buttons bottom-centre → SHIELD (hold) and DASH (hold —
+//     the aegis power-slide toward the current aim; replaced the old timed
+//     parry, which is human-unreachable now, exactly like desktop where
+//     right-click/C sends InputBit.Dash).
 //
 // Floating joysticks (base spawns where the thumb lands) beat fixed pads —
 // more forgiving and no need to look down. Multi-touch is tracked by
@@ -44,12 +47,12 @@ export class TouchControls {
   private readonly leftZone: HTMLDivElement;
   private readonly rightZone: HTMLDivElement;
   private readonly shieldBtn: HTMLDivElement;
-  private readonly parryBtn: HTMLDivElement;
+  private readonly dashBtn: HTMLDivElement;
 
   private moveStick: Stick | null = null;
   private aimStick: Stick | null = null;
   private shieldPointer: number | null = null;
-  private parryPointer: number | null = null;
+  private dashPointer: number | null = null;
 
   private attached = false;
   private readonly mount: HTMLElement;
@@ -66,11 +69,11 @@ export class TouchControls {
     this.rightZone = el("div", "tc-zone tc-zone--right");
     this.shieldBtn = el("div", "tc-btn tc-btn--shield");
     this.shieldBtn.textContent = "SHIELD";
-    this.parryBtn = el("div", "tc-btn tc-btn--parry");
-    this.parryBtn.textContent = "PARRY";
+    this.dashBtn = el("div", "tc-btn tc-btn--dash");
+    this.dashBtn.textContent = "DASH";
     this.root.append(this.leftZone, this.rightZone);
     if (this.combatButtons) {
-      this.root.append(this.shieldBtn, this.parryBtn);
+      this.root.append(this.shieldBtn, this.dashBtn);
     }
   }
 
@@ -84,7 +87,7 @@ export class TouchControls {
     this.rightZone.addEventListener("pointerdown", this.onRightDown, { passive: false });
     if (this.combatButtons) {
       this.shieldBtn.addEventListener("pointerdown", this.onShieldDown, { passive: false });
-      this.parryBtn.addEventListener("pointerdown", this.onParryDown, { passive: false });
+      this.dashBtn.addEventListener("pointerdown", this.onDashDown, { passive: false });
     }
     window.addEventListener("pointermove", this.onMove, { passive: false });
     window.addEventListener("pointerup", this.onUp, { passive: false });
@@ -119,7 +122,9 @@ export class TouchControls {
       }
     }
     if (this.shieldPointer !== null) keys |= InputBit.Shield;
-    if (this.parryPointer !== null) keys |= InputBit.Ability;
+    // Aegis power-slide (aim-directional; the scene feeds aim from the right
+    // stick). Same bit as desktop right-click/C.
+    if (this.dashPointer !== null) keys |= InputBit.Dash;
     return { keys, aimDir };
   }
 
@@ -127,7 +132,7 @@ export class TouchControls {
     this.leftZone.removeEventListener("pointerdown", this.onLeftDown);
     this.rightZone.removeEventListener("pointerdown", this.onRightDown);
     this.shieldBtn.removeEventListener("pointerdown", this.onShieldDown);
-    this.parryBtn.removeEventListener("pointerdown", this.onParryDown);
+    this.dashBtn.removeEventListener("pointerdown", this.onDashDown);
     window.removeEventListener("pointermove", this.onMove);
     window.removeEventListener("pointerup", this.onUp);
     window.removeEventListener("pointercancel", this.onUp);
@@ -155,10 +160,10 @@ export class TouchControls {
     this.shieldBtn.classList.add("tc-btn--active");
   };
 
-  private onParryDown = (e: PointerEvent): void => {
+  private onDashDown = (e: PointerEvent): void => {
     e.preventDefault();
-    this.parryPointer = e.pointerId;
-    this.parryBtn.classList.add("tc-btn--active");
+    this.dashPointer = e.pointerId;
+    this.dashBtn.classList.add("tc-btn--active");
   };
 
   private onMove = (e: PointerEvent): void => {
@@ -194,9 +199,9 @@ export class TouchControls {
       this.shieldPointer = null;
       this.shieldBtn.classList.remove("tc-btn--active");
     }
-    if (this.parryPointer === e.pointerId) {
-      this.parryPointer = null;
-      this.parryBtn.classList.remove("tc-btn--active");
+    if (this.dashPointer === e.pointerId) {
+      this.dashPointer = null;
+      this.dashBtn.classList.remove("tc-btn--active");
     }
   };
 
@@ -216,9 +221,9 @@ export class TouchControls {
     this.moveStick = null;
     this.aimStick = null;
     this.shieldPointer = null;
-    this.parryPointer = null;
+    this.dashPointer = null;
     this.shieldBtn.classList.remove("tc-btn--active");
-    this.parryBtn.classList.remove("tc-btn--active");
+    this.dashBtn.classList.remove("tc-btn--active");
   }
 }
 

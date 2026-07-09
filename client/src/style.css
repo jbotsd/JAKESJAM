@@ -718,9 +718,9 @@ button.btn-danger:hover:not(:disabled) {
   right: calc(50% + 8px);
   border-color: rgba(147, 197, 253, 0.7);
 }
-.tc-btn--parry {
+.tc-btn--dash {
   left: calc(50% + 8px);
-  border-color: rgba(247, 251, 255, 0.6);
+  border-color: rgba(255, 209, 102, 0.7);
 }
 .tc-btn--active {
   transform: scale(0.92);
@@ -766,7 +766,7 @@ button.btn-danger:hover:not(:disabled) {
   .tc-btn--shield {
     right: calc(50% + 14px);
   }
-  .tc-btn--parry {
+  .tc-btn--dash {
     left: calc(50% + 14px);
   }
 }
