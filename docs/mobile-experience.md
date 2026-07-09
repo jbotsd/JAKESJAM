@@ -27,8 +27,12 @@ platform-brawler:
   always want to shoot where you aim). Aim = player position + stick direction
   × reach, and the last direction is held when the thumb lifts so shots keep
   heading.
-- **SHIELD (hold) + PARRY (tap)** thumb buttons, bottom-centre, reachable by
-  lifting either thumb inward.
+- **SHIELD (hold) + DASH (hold)** thumb buttons, bottom-centre, reachable by
+  lifting either thumb inward. DASH sends `InputBit.Dash` — the aegis
+  power-slide toward the current aim, the same action as desktop
+  right-click/C. (It replaced the original PARRY button when the timed parry
+  became human-unreachable; a PARRY button that sent `InputBit.Ability` was
+  dead weight.)
 
 Floating (base spawns where the thumb lands) beats fixed pads — no need to
 look down, forgiving of thumb drift. Multi-touch is tracked by `pointerId` so
@@ -52,11 +56,13 @@ a phone.
 
 - Splash/lobby get a short-landscape media query (`max-height: 560px`): 3-col
   button grid, tighter rhythm, scrollable lobby, copy hidden.
-- Portrait on a touch device shows a "rotate to landscape" nudge overlay
-  (`.orientation-hint`, toggled in `main.ts` on resize/orientationchange). It's
-  a hint only — the game still runs.
+- A touch device held sideways shows the rotate-to-portrait nudge overlay
+  (`.orientation-hint`, toggled in `main.ts` on resize/orientationchange).
+  It is tap-to-dismiss for the session ("tap to play sideways anyway") —
+  the overlay is opaque, so without the dismiss it hard-blocked landscape.
 - The in-match FTUE legend swaps to touch wording ("LEFT STICK move / PUSH UP
-  jump / RIGHT STICK aim & fire / SHIELD·PARRY buttons") when touch is active.
+  jump / RIGHT STICK aim & fire / SHIELD·DASH buttons") when touch is active,
+  and starts lower (y=112) so it clears the compact phone HUD.
 
 ## Portrait-first redesign (2026-07-04)
 
@@ -83,6 +89,23 @@ Landscape on a phone was cramped and the controls overlaid the action
 
 Verified on a 400x860 portrait emulation: HUD at top, player framed high,
 controls in the band, VFX reading well.
+
+## Phone-width HUD + overlays (2026-07-09 QA sweep)
+
+A 393x852 (Pixel-class) sweep drove a batch of fixes, all client-side:
+
+- `HudSystem` compact mode below 520 CSS px: narrower HP/shield bars,
+  smaller timer/score type, score tags drop the "BOT · " prefix and the
+  score gets its own row. The vestigial jetpack bar (jetpack removed) and
+  the never-fed ability-charge dot row no longer render anywhere.
+- Portrait camera: bottom bound pad is 0.5×viewport in BOTH match scenes
+  (Practice previously had no portrait handling at all and pinned the
+  player under the thumbs).
+- Card draft: cards compact on touch so all offers are scannable; card
+  copy rewrites "(press C)" → "(DASH button)" at render time.
+- Clip-share toast sits above the portrait control band, not on the aim
+  stick zone.
+- Match results stage no longer forces a 520px min-width on a 393px phone.
 
 ## Verification
 
