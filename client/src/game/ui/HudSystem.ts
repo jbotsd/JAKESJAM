@@ -253,8 +253,10 @@ export class HudSystem {
       .setScrollFactor(0)
       .setDepth(depth + 2);
 
+    // Compact puts the score on its own row BELOW the shield row — at 393px
+    // a centred score line horizontally collides with the shield label.
     this.scoreText = s.add
-      .text(s.scale.width / 2, this.compact ? 32 : 42, "", {
+      .text(s.scale.width / 2, this.compact ? 47 : 42, "", {
         fontFamily: "'Space Mono', Consolas, 'Courier New', monospace",
         fontSize: this.compact ? "10px" : "13px",
         fontStyle: "bold",

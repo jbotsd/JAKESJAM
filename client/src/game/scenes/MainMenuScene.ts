@@ -35,7 +35,7 @@ export class MainMenuScene extends Phaser.Scene {
       })
       .setShadow(0, 4, "#000000", 10);
 
-    this.add.text(52, 94, "Pick character, chaos, and room on the right.", {
+    this.add.text(52, 94, "Pick character, chaos, and room.", {
       color: "#9ba7b8",
       fontFamily: "Inter, Arial, sans-serif",
       fontSize: "18px",

@@ -10,8 +10,17 @@
 // bar that counts down from totalMs. Hide/destroy stop any running timer.
 
 import type { CardDefinition } from "../types/game";
+import { isTouchPrimary } from "../input/mobile";
 
 export type CardPickHandler = (card: CardDefinition) => void;
+
+/** Card copy lives in sim data (cards.ts) and is written for desktop
+ *  ("press C"). Rewrite input references at render time for touch players —
+ *  the data file feeds the Zig codegen and must stay input-agnostic. */
+function localizeDescriptionForInput(description: string): string {
+  if (!isTouchPrimary()) return description;
+  return description.replace(/\(press C\)/g, "(DASH button)");
+}
 
 export class CardDraftOverlay {
   private root: HTMLDivElement;
@@ -211,7 +220,7 @@ export class CardDraftOverlay {
     Object.assign(buckets.style, BUCKETS_STYLE);
 
     const description = document.createElement("div");
-    description.textContent = card.description;
+    description.textContent = localizeDescriptionForInput(card.description);
     Object.assign(description.style, DESCRIPTION_STYLE);
 
     const flavor = document.createElement("div");
