@@ -1280,11 +1280,13 @@ export class OnlineMatchScene extends Phaser.Scene {
     // Portrait mobile biases the player high on the tall screen (so the bottom
     // control band never covers them). That only works if the camera may drop
     // BELOW the arena floor — otherwise the bottom bound clamps the view and
-    // the player slides down behind the controls. Pad ≈ the control band's
-    // 34vh: the sub-floor void the camera can show is exactly what the band
-    // covers. (The old height/1.4 pad left a big raw-void gap between the
-    // arena floor and the band whenever the player stood on the bottom floor.)
-    const bottomPad = isPortraitMobile() ? Math.round(cam.height * 0.3) : padY;
+    // the player slides down behind the controls. 0.5×height balances the
+    // two failure modes: the old height/1.4 (~0.71) pad let the camera show a
+    // huge raw-void gap between floor and band, while a band-sized 0.34 pad
+    // clamped a floor-standing player right down to the band edge under the
+    // thumbs. At 0.5 a player on the bottom floor rides at ~45% of the
+    // screen and the band gradient covers most of the sub-floor void.
+    const bottomPad = isPortraitMobile() ? Math.round(cam.height * 0.5) : padY;
     cam.setBounds(-padX, -padY, width + padX * 2, height + padY + bottomPad);
     cam.setRoundPixels(true);
 

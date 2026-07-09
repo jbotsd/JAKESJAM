@@ -9,7 +9,7 @@ import { PlayerId } from "../../sim/types.js";
 import { characters } from "../data/characters";
 import { ProceduralPlayerRig } from "../rendering/ProceduralPlayerRig";
 import { TouchControls } from "../input/TouchControls";
-import { isTouchPrimary } from "../input/mobile";
+import { isPortraitMobile, isTouchPrimary } from "../input/mobile";
 import { InputBit } from "../../net/protocol";
 import { GameAudioSystem } from "../systems/AudioSystem";
 import { ParticlePool } from "../systems/ParticlePool";
@@ -33,6 +33,10 @@ import type { RoomPlayer } from "../types/net";
 const PLAYER_VISUAL_SCALE = 0.78;
 // Desktop crop-in for Practice — matches the online DESKTOP_CAM_ZOOM.
 const PRACTICE_CAM_ZOOM = 1.4;
+// Portrait mobile: same framing contract as OnlineMatchScene — the camera
+// centres BELOW the player so they ride the upper third, clear of the
+// bottom touch-control band.
+const PORTRAIT_CAM_Y_BIAS = 150;
 const DEATH_POPUP_DELAY_MS = 520;
 
 /**
@@ -212,6 +216,8 @@ export class MatchScene extends Phaser.Scene {
       vy: this.localPlayer.velocity.y,
       aimX: aimTarget.x,
       aimY: aimTarget.y,
+      // Portrait mobile: keep the player above the bottom control band.
+      yBias: isPortraitMobile() ? PORTRAIT_CAM_Y_BIAS : 0,
     });
     this.syncPlayerVisuals(deltaMs);
   }
@@ -403,7 +409,18 @@ export class MatchScene extends Phaser.Scene {
     const cam = this.cameras.main;
     const padX = Math.round(cam.width / 6);
     const padY = Math.round(cam.height / 6);
-    cam.setBounds(-padX, -padY, boxworksPractice.size.x + padX * 2, boxworksPractice.size.y + padY * 2);
+    // Portrait mobile: allow the camera below the floor so the y-biased
+    // framing (player in the upper half) doesn't clamp out — the practice
+    // world (640 world-px) is SHORTER than a phone viewport, so without
+    // this the player pins to the bottom of the screen under the thumbs.
+    // 0.5×height mirrors OnlineMatchScene.renderArena (see rationale there).
+    const bottomPad = isPortraitMobile() ? Math.round(cam.height * 0.5) : padY;
+    cam.setBounds(
+      -padX,
+      -padY,
+      boxworksPractice.size.x + padX * 2,
+      boxworksPractice.size.y + padY + bottomPad,
+    );
     cam.setRoundPixels(true);
     // Hand-driven action camera (smoothed follow + look-ahead + trauma
     // shake) replaces Phaser's frame-rate-dependent startFollow lerp.
