@@ -1422,8 +1422,12 @@ export class OnlineMatchScene extends Phaser.Scene {
       // Clip-crop focus: the recorder's 9:16 window tracks the local
       // player's SCREEN position (the ActionCamera deliberately doesn't
       // center them, so a static crop loses them — v1's fatal flaw).
+      // While DEAD, null it out — the camera is spectating the fight, so
+      // a corpse-anchored crop would pin the window to a screen edge;
+      // null makes the recorder fall back to center-frame, which IS the
+      // action during spectate.
       if (pid === this.localPlayerId) {
-        this.clipFocusWorld = { x: player.x, y: player.y };
+        this.clipFocusWorld = player.alive ? { x: player.x, y: player.y } : null;
       }
     }
 
@@ -1698,20 +1702,48 @@ export class OnlineMatchScene extends Phaser.Scene {
     // Portrait mobile: bias the player above screen centre so the bottom
     // control band doesn't cover them (centre the camera BELOW the player).
     const yBias = isPortraitMobile() ? PORTRAIT_CAM_Y_BIAS : 0;
+
+    // DEATH SPECTATE: while dead, anchoring on your own corpse position
+    // parks the camera over empty map as the fight moves on (very visible
+    // in a full world where the round outlives you by a while). Instead,
+    // anchor on the alive player nearest the camera's current midpoint —
+    // stable handoffs (no cross-map jumps when your anchor dies; the next-
+    // closest fighter is usually right there), and the ActionCamera's own
+    // snap threshold covers the rare far handoff.
+    let anchor = local;
+    if (!local.alive) {
+      const mid = this.cameras.main.midPoint;
+      let bestD2 = Number.POSITIVE_INFINITY;
+      let best: PlayerEntity | null = null;
+      for (const p of Object.values(state.players)) {
+        if (!p.alive) continue;
+        const dx = p.x - mid.x;
+        const dy = p.y - mid.y;
+        const d2 = dx * dx + dy * dy;
+        if (d2 < bestD2) {
+          bestD2 = d2;
+          best = p;
+        }
+      }
+      // Nobody alive (round resolving) — hold the last framing.
+      if (!best) return;
+      anchor = best;
+    }
+
     // Other alive players are action points the frame leans toward (weighted
-    // lightly vs the local player, which stays the central locus).
+    // lightly vs the anchor, which stays the central locus).
     const extra: Array<{ x: number; y: number }> = [];
     for (const [id, p] of Object.entries(state.players)) {
-      if (id === this.localPlayerId) continue;
+      if (id === (anchor.id as string)) continue;
       if (p && p.alive) extra.push({ x: p.x, y: p.y });
     }
     this.actionCamera.update(deltaMs, {
-      x: local.x,
-      y: local.y,
-      vx: local.vx,
-      vy: local.vy,
-      aimX: local.aimX,
-      aimY: local.aimY,
+      x: anchor.x,
+      y: anchor.y,
+      vx: anchor.vx,
+      vy: anchor.vy,
+      aimX: anchor.aimX,
+      aimY: anchor.aimY,
       extra,
       yBias,
     });
