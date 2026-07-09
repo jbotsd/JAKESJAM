@@ -281,7 +281,13 @@ function updateOrientationHint(): void {
     isTouchDevice() && landscape && !orientationHintDismissed,
   );
 }
-orientationHint?.addEventListener("pointerdown", () => {
+// Dismiss on CLICK (not pointerdown): hiding the overlay mid-gesture lets
+// the tail of the same tap "click through" onto whatever sits underneath
+// (e.g. the splash's JOIN button) — hide only after the full tap completes,
+// and swallow the event so nothing below receives it.
+orientationHint?.addEventListener("click", (e) => {
+  e.preventDefault();
+  e.stopPropagation();
   orientationHintDismissed = true;
   updateOrientationHint();
 });
@@ -480,6 +486,9 @@ queryRequired<HTMLButtonElement>("[data-menu-join]").addEventListener("click", (
 queryRequired<HTMLButtonElement>("[data-menu-options]").addEventListener("click", () => {
   startMenuMusic();
   optionsPanel.hidden = false;
+  // Short screens (landscape phones): the panel opens below the splash's
+  // scroll fold — without this, tapping Options looks like it did nothing.
+  optionsPanel.scrollIntoView({ behavior: "smooth", block: "nearest" });
 });
 
 queryRequired<HTMLButtonElement>("[data-options-back]").addEventListener("click", () => {
