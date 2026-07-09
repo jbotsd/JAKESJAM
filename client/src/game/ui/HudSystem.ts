@@ -499,7 +499,9 @@ export class HudSystem {
     const cols = Math.ceil(cardIds.length / PILL_ROWS);
     const gridW = cols * PILL_W + Math.max(0, cols - 1) * PILL_GAP;
     const startX = this.scene.scale.width - gridW - PAD_LEFT;
-    const startY = PAD_TOP;
+    // Below the always-visible RTT pill (top-right, y≈12..34) — at PAD_TOP
+    // the first pill row rendered directly through it.
+    const startY = PAD_TOP + 26;
     const depth = 901;
 
     for (let i = 0; i < cardIds.length; i++) {

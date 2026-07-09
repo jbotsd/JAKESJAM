@@ -10,7 +10,7 @@
 // bar that counts down from totalMs. Hide/destroy stop any running timer.
 
 import type { CardDefinition } from "../types/game";
-import { isTouchPrimary } from "../input/mobile";
+import { isPortraitMobile, isTouchPrimary } from "../input/mobile";
 
 export type CardPickHandler = (card: CardDefinition) => void;
 
@@ -197,6 +197,15 @@ export class CardDraftOverlay {
   private makeCardElement(card: CardDefinition): HTMLDivElement {
     const el = document.createElement("div");
     Object.assign(el.style, CARD_STYLE);
+    // Portrait phones stack the cards vertically in a scrolling column; the
+    // desktop 380px plate is mostly empty there and pushes the other picks
+    // below the fold while the auto-pick timer runs — compact the cards so
+    // 2-3 options are scannable at a glance.
+    if (isPortraitMobile()) {
+      el.style.minHeight = "0";
+      el.style.width = "min(280px, 78vw)";
+      el.style.padding = "16px 16px";
+    }
 
     // ROUNDS-style: fully transparent background, cyan bracket corners via
     // CSS absolute-positioned L-divs. Rarity glow is a subtle box-shadow only.

@@ -6,6 +6,8 @@
 // straight into TikTok/Instagram/X without any API keys or server-side
 // posting integration.
 
+import { isPortraitMobile } from "../input/mobile";
+
 let currentToast: HTMLDivElement | null = null;
 
 const AUTO_DISMISS_MS = 15_000;
@@ -14,7 +16,13 @@ export function showClipShareToast(url: string, originalUrl?: string): void {
   currentToast?.remove();
 
   const root = document.createElement("div");
+  root.dataset.clipToast = "";
   Object.assign(root.style, ROOT_STYLE);
+  // Portrait touch: bottom-right 16px sits INSIDE the touch-control band, on
+  // top of the right (aim) thumb zone — lift the toast above the band.
+  if (isPortraitMobile()) {
+    root.style.bottom = "calc(34vh + env(safe-area-inset-bottom, 0px) + 12px)";
+  }
 
   const closeBtn = document.createElement("button");
   closeBtn.type = "button";
