@@ -39,6 +39,7 @@ import {
 } from "@net/protocol.ts";
 import { InterestGrid, CELL_SIZE_PX, OBSERVE_RADIUS_CELLS } from "./InterestGrid.ts";
 import { encodeDelta } from "@net/snapshotDelta.ts";
+import { makeHitSweepScratch } from "@sim/projectile.ts";
 import { transferAuthority } from "./authority.ts";
 import { ReplayRecorder } from "./ReplayRecorder.ts";
 import { serverWasmHost } from "./serverWasmHost.ts";
@@ -1472,6 +1473,7 @@ function snapshotRuntime(runtime: WorldRuntime): WorldRuntime {
     // with the main runtime tick, so they must not share mutable scratch.
     scratchSortedProjectileIds: [],
     scratchDeflectedProjectiles: new Map(),
+    scratchHitSweep: makeHitSweepScratch(),
     ceilingClampY: runtime.ceilingClampY,
   };
 }

@@ -517,7 +517,14 @@ function serveOnPort(port: number) {
     return new Response("not found", { status: 404 });
   },
   websocket: {
-    perMessageDeflate: false,
+    // Measured (client/bench/snapshotDelta.bench.ts, worst case: 16 players
+    // / ~900 projectiles): an 85KB msgpack snapshot delta deflates to 22KB
+    // (74% egress cut) for ~0.9ms/msg — and typical snapshots are a few KB
+    // where the cost is tens of µs. On a home-uplink-hosted server the
+    // uncompressed worst case (~7MB/s at 4 clients) would saturate the
+    // link; deflated it's comfortable. Browsers negotiate this
+    // automatically; clients that don't offer it just get uncompressed.
+    perMessageDeflate: true,
     maxPayloadLength: 16 * 1024,
     open(ws) {
       if (ws.data.kind === "world") {
