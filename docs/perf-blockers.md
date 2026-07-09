@@ -1,5 +1,15 @@
 # JAKESJAM — Performance & Architecture Blockers
 
+> **Mostly RESOLVED (status check 2026-07-09):** this audit predates the
+> netcode cutover and most Tier S/A items have since shipped — the scene
+> split landed (MatchScene is the no-enemy practice zone; OnlineMatchScene
+> is the game), the sim has full test coverage (669 client + 143 server
+> tests), snapshot DELTA encoding + AOI interest grids exist
+> (snapshotDelta.ts, InterestGrid.ts), and the legacy per-frame Convex sync
+> is env-gated off. Kept for the still-open items and as the origin of the
+> per-tick scratch-buffer discipline (see World.ts runtime scratch +
+> bench/simTick.bench.ts). Current ground truth: CLAUDE.md.
+
 Snapshot-in-time audit of the biggest things slowing the project down or capping its ceiling. Sorted by **impact ÷ effort**. The top of this list is "fix today, get massive return"; the bottom is "ship without it, revisit if it bites."
 
 ## Tier S — Massive blockers, fix now
