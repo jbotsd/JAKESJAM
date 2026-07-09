@@ -335,9 +335,24 @@ export class OnlineMatchScene extends Phaser.Scene {
   private prevAlive = new Set<string>();
   // Per-killer kill count in the current round for escalating callouts.
   private killStreakCount = new Map<string, number>();
+  // Local player's latest WORLD position — converted to screen coords on
+  // demand for the clip recorder's tracked 9:16 crop (clipFocusScreenPos).
+  private clipFocusWorld: { x: number; y: number } | null = null;
 
   constructor() {
     super(SceneKeys.OnlineMatch);
+  }
+
+  /** Local player's position in SOURCE-CANVAS pixels for the clip crop.
+   *  worldView already accounts for zoom (its extent is viewport/zoom), so
+   *  (world - worldView.origin) * zoom lands in render-resolution px. */
+  private clipFocusScreenPos(): { x: number; y: number } | null {
+    if (!this.clipFocusWorld) return null;
+    const cam = this.cameras.main;
+    return {
+      x: (this.clipFocusWorld.x - cam.worldView.x) * cam.zoom,
+      y: (this.clipFocusWorld.y - cam.worldView.y) * cam.zoom,
+    };
   }
 
   init(data: OnlineMatchSceneInit) {
@@ -419,10 +434,32 @@ export class OnlineMatchScene extends Phaser.Scene {
     // silently. See client/src/game/highlights/clipConsent.ts.
     if (isClipsEnabled()) {
       this.highlightTracker = new HighlightTracker();
+      // Each trigger produces TWO uploads (vertical + original) that land
+      // within ~a second of each other. Pair them into ONE toast; if the
+      // partner never shows (upload failed), toast whatever arrived.
+      let pendingVertical: string | null = null;
+      let pendingOriginal: string | null = null;
+      let pairTimer: ReturnType<typeof setTimeout> | null = null;
+      const flushToast = () => {
+        if (pairTimer !== null) clearTimeout(pairTimer);
+        pairTimer = null;
+        const vertical = pendingVertical;
+        const original = pendingOriginal;
+        pendingVertical = null;
+        pendingOriginal = null;
+        // Vertical is the shareable; fall back to original-only if the
+        // vertical upload failed.
+        if (vertical) showClipShareToast(vertical, original ?? undefined);
+        else if (original) showClipShareToast(original);
+      };
       this.clipRecorder = new ClipRecorder(this.game.canvas, {
-        onUploaded: (url) => {
-          console.log(`[clips] uploaded: ${url}`);
-          showClipShareToast(url);
+        getFocus: () => this.clipFocusScreenPos(),
+        onUploaded: (url, kind) => {
+          console.log(`[clips] uploaded (${kind}): ${url}`);
+          if (kind === "vertical") pendingVertical = url;
+          else pendingOriginal = url;
+          if (pendingVertical && pendingOriginal) flushToast();
+          else if (pairTimer === null) pairTimer = setTimeout(flushToast, 5_000);
         },
         onError: (err) => console.warn("[clips] capture/upload failed:", err),
       });
@@ -1382,6 +1419,12 @@ export class OnlineMatchScene extends Phaser.Scene {
         this.playerRigs.set(pid, rig);
       }
       this.updatePlayerRig(rig, player, deltaMs);
+      // Clip-crop focus: the recorder's 9:16 window tracks the local
+      // player's SCREEN position (the ActionCamera deliberately doesn't
+      // center them, so a static crop loses them — v1's fatal flaw).
+      if (pid === this.localPlayerId) {
+        this.clipFocusWorld = { x: player.x, y: player.y };
+      }
     }
 
     // Process kills detected this frame: emit escalating callout banners.

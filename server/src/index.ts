@@ -225,7 +225,9 @@ function serveOnPort(port: number) {
       // client-local highlight, not a privileged action) — but the endpoint
       // is unauthenticated and internet-reachable, so cap upload frequency
       // per source. The storage-side quota (clipStore.ts) bounds total disk.
-      if (!checkRateLimit(`clip:${ip}`, 6, 5 * 60_000)) return RATE_LIMIT_429();
+      // 12 per 5min: each highlight trigger now uploads TWO files
+      // (vertical + original), so this allows ~6 triggers per window.
+      if (!checkRateLimit(`clip:${ip}`, 12, 5 * 60_000)) return RATE_LIMIT_429();
       const origin = `${url.protocol}//${req.headers.get("host") ?? url.host}`;
       const result = await handleClipUpload(req, origin);
       if (!result.ok) {
@@ -235,10 +237,18 @@ function serveOnPort(port: number) {
         headers: { "content-type": "application/json", ...corsHeaders },
       });
     }
-    if (url.pathname.startsWith("/clips/") && req.method === "GET") {
+    // GET serves the bytes; HEAD answers metadata-only probes (curl -I,
+    // link unfurlers, TikTok PULL_FROM_URL's URL verification) — they used
+    // to 404, which read as "the link is broken" in any HEAD-based check.
+    if (url.pathname.startsWith("/clips/") && (req.method === "GET" || req.method === "HEAD")) {
       const filename = url.pathname.slice("/clips/".length);
       const res = await serveClip(filename);
-      if (res) return res;
+      if (res) {
+        if (req.method === "HEAD") {
+          return new Response(null, { status: 200, headers: res.headers });
+        }
+        return res;
+      }
       return new Response("not found", { status: 404, headers: corsHeaders });
     }
 

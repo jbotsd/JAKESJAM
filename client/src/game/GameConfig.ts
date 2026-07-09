@@ -5,6 +5,7 @@ import { MainMenuScene } from "./scenes/MainMenuScene";
 import { MatchScene } from "./scenes/MatchScene";
 import { OnlineMatchScene } from "./scenes/OnlineMatchScene";
 import { DraftScene } from "./scenes/DraftScene";
+import { isClipsEnabled } from "./highlights/clipConsent";
 
 // Highlight-clip capture (?clips=1, see client/src/game/highlights/) draws a
 // cropped copy of the game canvas onto a SEPARATE destination canvas via
@@ -18,9 +19,12 @@ import { DraftScene } from "./scenes/DraftScene";
 // manual drawImage reads do not. preserveDrawingBuffer:true keeps the last
 // rendered frame available for reads at any time, at a real but small copy
 // cost — only paid when a tester/dev explicitly opts into capture.
-const clipsRequested =
-  typeof window !== "undefined" &&
-  new URLSearchParams(window.location.search).get("clips") === "1";
+// MUST match the ClipRecorder's own gate (clipConsent covers BOTH the
+// Options-panel toggle and the ?clips=1 dev override) — checking only the
+// URL param here while the recorder also honored the persisted toggle
+// meant toggle-enabled sessions recorded from a buffer the browser had
+// already cleared: 100% BLACK clips.
+const clipsRequested = typeof window !== "undefined" && isClipsEnabled();
 
 export const gameConfig: Phaser.Types.Core.GameConfig = {
   type: Phaser.AUTO,

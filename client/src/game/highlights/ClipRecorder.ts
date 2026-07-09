@@ -1,7 +1,6 @@
 // Segment-based clip capture off the game canvas. Feeds a highlight trigger
-// (see highlightRules.ts) into a video clip and uploads it to the server's
-// /clips/upload endpoint, which stores it at a static path ready for the
-// future TikTok PULL_FROM_URL step.
+// (see highlightRules.ts) into video clips and uploads them to the server's
+// /clips/upload endpoint.
 //
 // WHY SEGMENTS, NOT A SLICED ROLLING BUFFER: an earlier version kept one
 // never-stopped MediaRecorder and sliced an arbitrary sub-range of its
@@ -11,31 +10,37 @@
 // segment (unless it happens to start at chunk 0) nor a valid close. ffprobe
 // confirmed this: "File ended prematurely," duration/frame-rate unreadable.
 //
-// This version keeps exactly ONE MediaRecorder session "in flight" at a
-// time and always calls .stop() on it before treating its output as a real
-// file — every clip is therefore a complete, independently valid WebM.
+// This version keeps exactly ONE MediaRecorder session per pipeline "in
+// flight" at a time and always calls .stop() before treating its output as a
+// real file — every clip is therefore a complete, independently valid WebM.
 // Lookback is whatever of the current segment preceded the trigger (0 up to
 // SEGMENT_MS) rather than a precise fixed window — a real but acceptable
 // v1 tradeoff; corruption is not.
 //
 // OFF BY DEFAULT — this records the player's own gameplay to a server. It is
-// only ever constructed behind an explicit opt-in (see OnlineMatchScene), and
-// real product use needs a visible consent toggle before defaulting to on.
-// This module does not add that UI; it's the capture mechanism only.
+// only ever constructed behind an explicit opt-in (clipConsent.ts).
 //
-// FORMAT: TikTok is a 9:16 VERTICAL platform. Capturing the raw landscape
-// game canvas produces a small, pillarboxed clip in the feed — the content
-// itself reads as unwatchable regardless of file validity. This crops a
-// centered vertical strip out of the landscape canvas every frame onto an
-// offscreen destination canvas, and captures THAT. No per-frame focus
-// tracking is needed: OnlineMatchScene.followLocalPlayer already calls
-// `camera.centerOn(localPlayer)` every tick, so the local player already
-// sits at the horizontal center of the source canvas — a centered crop
-// keeps them centered in the vertical output for free.
+// TWO OUTPUTS PER TRIGGER (v2, after the first real-footage review):
+//   1. VERTICAL 720x1280 — a 9:16 crop whose window TRACKS THE LOCAL PLAYER
+//      via deps.getFocus (screen-space position fed by the scene each call).
+//      The v1 static center-crop assumed the camera kept the player centered
+//      — true under the old centerOn() camera, but the ActionCamera
+//      deliberately leads AHEAD of the player (look-ahead + action centroid
+//      + deadzone), so a fixed center crop lost the player entirely.
+//      The window is smoothed (exp lerp) so it pans like a camera operator
+//      instead of jittering with every velocity change, and clamped to the
+//      source bounds.
+//   2. ORIGINAL landscape (scaled to 1280 wide) — the full view, kept
+//      because the crop is lossy by nature: review, devlogs, YouTube.
+//
+// FPS: captureStream(60) + 8Mbps (v1's 30fps/5Mbps read as choppy on
+// fast-moving gameplay).
 
 /** TikTok-native vertical output resolution. */
 const DEST_WIDTH = 720;
 const DEST_HEIGHT = 1280;
+/** Original-view output width (height derived from source aspect). */
+const ORIGINAL_WIDTH = 1280;
 /** Normal segment length — also the max lookback a trigger can capture. */
 const SEGMENT_MS = 10_000;
 /** Extra time recorded AFTER a trigger so the aftermath (death cam, VFX
@@ -44,27 +49,49 @@ const LOOKAHEAD_MS = 3_000;
 /** Hard ceiling so a trigger landing right before a natural rotation can't
  *  keep extending a single segment indefinitely. */
 const MAX_SEGMENT_MS = 20_000;
+/** Capture frame rate. The draw loop runs on rAF (display rate); 60 here
+ *  lets captureStream propagate every one of those frames. */
+const CAPTURE_FPS = 60;
 /** Explicit bitrate — MediaRecorder's implicit default can be low enough to
  *  look noticeably blocky on fast-moving gameplay. */
-const VIDEO_BITS_PER_SECOND = 5_000_000;
+const VIDEO_BITS_PER_SECOND = 8_000_000;
 /** Upload floor: a hidden tab stops the rAF draw loop, so captureStream
  *  produces no frames and the recorder emits a header-only blob (the
  *  10-15 BYTE junk files observed in server/.clips). Any real clip at
- *  5Mbps is megabytes; anything under this floor is a dud — drop it. */
+ *  8Mbps is megabytes; anything under this floor is a dud — drop it. */
 const MIN_UPLOAD_BYTES = 100_000;
+/** Crop-window smoothing: fraction of the remaining distance covered per
+ *  frame (~60Hz). 0.12 ≈ settles in ~0.3s — pans like a camera operator,
+ *  never snaps, never jitters with per-frame velocity noise. */
+const FOCUS_LERP = 0.12;
+
+export type ClipKind = "vertical" | "original";
 
 export type ClipRecorderDeps = {
   /** Where to upload finished clips. Relative path — resolved against the
    *  page's own origin so it works under any tunnel/host domain. */
   uploadPath?: string;
-  onUploaded?: (url: string) => void;
+  /** Local player's CURRENT position in SOURCE-CANVAS pixel coordinates.
+   *  Called once per drawn frame; return null when unknown (falls back to
+   *  the source center). The scene owns the camera math. */
+  getFocus?: () => { x: number; y: number } | null;
+  onUploaded?: (url: string, kind: ClipKind) => void;
   onError?: (err: unknown) => void;
 };
 
 function pickSupportedMimeType(): string | null {
+  // Order = encode THROUGHPUT, not compression quality. Measured on the
+  // first real footage: VP9 realtime software encode at 720x1280 couldn't
+  // keep up — clips came out ~12fps regardless of the captureStream cap.
+  // H.264 uses the platform hardware encoder in Chrome (full frame rate,
+  // and .mp4 is what TikTok wants anyway); VP8 encodes several times
+  // faster than VP9 as the software fallback.
   const candidates = [
-    "video/webm;codecs=vp9",
+    "video/mp4;codecs=avc1.640028",
+    "video/mp4",
+    "video/webm;codecs=h264",
     "video/webm;codecs=vp8",
+    "video/webm;codecs=vp9",
     "video/webm",
   ];
   for (const c of candidates) {
@@ -73,27 +100,39 @@ function pickSupportedMimeType(): string | null {
   return null;
 }
 
+/** One capture chain: offscreen dest canvas → captureStream → MediaRecorder.
+ *  The owning ClipRecorder rotates all pipelines on the same shared timer so
+ *  the vertical + original files cover the same moment. */
+type Pipeline = {
+  kind: ClipKind;
+  canvas: HTMLCanvasElement;
+  ctx: CanvasRenderingContext2D;
+  stream: MediaStream;
+  recorder: MediaRecorder | null;
+  chunks: Blob[];
+};
+
 export class ClipRecorder {
-  private stream: MediaStream | null = null;
-  private recorder: MediaRecorder | null = null;
-  private currentChunks: Blob[] = [];
+  private pipelines: Pipeline[] = [];
   private segmentStartedAtMs = 0;
   private rotateTimer: ReturnType<typeof setTimeout> | null = null;
   private pendingFinishAtMs: number | null = null;
   private stopped = true;
   private mimeType: string | null = null;
   private readonly sourceCanvas: HTMLCanvasElement;
-  private readonly destCanvas: HTMLCanvasElement;
-  private readonly destCtx: CanvasRenderingContext2D | null;
   private drawRafId: number | null = null;
   private readonly deps: ClipRecorderDeps;
+  /** Smoothed crop-window center (source-canvas px). NaN = uninitialised —
+   *  first frame snaps straight to the target instead of panning in. */
+  private focusX = Number.NaN;
+  private focusY = Number.NaN;
+  /** Recorders whose onstop hasn't fired yet during this rotation. */
+  private pendingStops = 0;
+  /** Whether the segment being stopped should upload once all stops land. */
+  private uploadOnStop = false;
 
   constructor(canvas: HTMLCanvasElement, deps: ClipRecorderDeps = {}) {
     this.sourceCanvas = canvas;
-    this.destCanvas = document.createElement("canvas");
-    this.destCanvas.width = DEST_WIDTH;
-    this.destCanvas.height = DEST_HEIGHT;
-    this.destCtx = this.destCanvas.getContext("2d");
     this.deps = deps;
   }
 
@@ -105,14 +144,22 @@ export class ClipRecorder {
       this.deps.onError?.(new Error("no supported MediaRecorder mimeType"));
       return;
     }
-    if (!this.destCtx) {
-      this.deps.onError?.(new Error("2D context unavailable for vertical-crop canvas"));
+    const vertical = this.makePipeline("vertical", DEST_WIDTH, DEST_HEIGHT);
+    // Original keeps the source aspect, scaled to ORIGINAL_WIDTH so a
+    // fullscreen 1440p canvas doesn't demand a 2560-wide realtime encode.
+    const srcW = this.sourceCanvas.width || 1280;
+    const srcH = this.sourceCanvas.height || 720;
+    const origH = Math.max(2, Math.round((ORIGINAL_WIDTH * srcH) / srcW / 2) * 2);
+    const original = this.makePipeline("original", ORIGINAL_WIDTH, origH);
+    if (!vertical || !original) {
+      this.deps.onError?.(new Error("2D context unavailable for clip canvases"));
       return;
     }
+    this.pipelines = [vertical, original];
     this.mimeType = mimeType;
     this.stopped = false;
-    // Capture the CROPPED destination canvas, not the raw landscape source.
-    this.stream = this.destCanvas.captureStream(30);
+    this.focusX = Number.NaN;
+    this.focusY = Number.NaN;
     this.beginSegment();
     this.startDrawLoop();
   }
@@ -130,72 +177,108 @@ export class ClipRecorder {
     this.pendingFinishAtMs = null;
     // onstop will fire but `this.stopped` guards it from starting a new
     // segment; the in-flight one is simply discarded (not uploaded).
-    this.recorder?.stop();
-    this.recorder = null;
-    this.stream = null;
-    this.currentChunks = [];
+    for (const p of this.pipelines) {
+      p.recorder?.stop();
+      p.recorder = null;
+      p.chunks = [];
+    }
+    this.pipelines = [];
+  }
+
+  private makePipeline(kind: ClipKind, w: number, h: number): Pipeline | null {
+    const canvas = document.createElement("canvas");
+    canvas.width = w;
+    canvas.height = h;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return null;
+    return {
+      kind,
+      canvas,
+      ctx,
+      stream: canvas.captureStream(CAPTURE_FPS),
+      recorder: null,
+      chunks: [],
+    };
   }
 
   private startDrawLoop(): void {
     const draw = () => {
       if (this.stopped) return;
-      this.drawCroppedFrame();
+      this.drawFrame();
       this.drawRafId = requestAnimationFrame(draw);
     };
     this.drawRafId = requestAnimationFrame(draw);
   }
 
-  /** Draw a centered 9:16 vertical strip of the source canvas onto the
-   *  destination canvas. Centered horizontally is sufficient — the camera
-   *  already keeps the local player there (see the file header comment). */
-  private drawCroppedFrame(): void {
-    if (!this.destCtx) return;
+  private drawFrame(): void {
     const sw = this.sourceCanvas.width;
     const sh = this.sourceCanvas.height;
     if (sw === 0 || sh === 0) return;
-    let cropW = sh * (DEST_WIDTH / DEST_HEIGHT);
-    let cropH = sh;
-    if (cropW > sw) {
-      // Source is already narrower than a 9:16 slice needs (e.g. portrait
-      // mobile) — crop by width instead so cropW/H never exceed the source.
-      cropW = sw;
-      cropH = sw * (DEST_HEIGHT / DEST_WIDTH);
+
+    // Focus target: the local player's screen position (scene-fed), else
+    // the source center. Smoothed so the crop pans, never jitters.
+    const focus = this.deps.getFocus?.() ?? null;
+    const tx = focus ? Math.max(0, Math.min(sw, focus.x)) : sw / 2;
+    const ty = focus ? Math.max(0, Math.min(sh, focus.y)) : sh / 2;
+    if (Number.isNaN(this.focusX)) {
+      this.focusX = tx;
+      this.focusY = ty;
+    } else {
+      this.focusX += (tx - this.focusX) * FOCUS_LERP;
+      this.focusY += (ty - this.focusY) * FOCUS_LERP;
     }
-    const cropX = (sw - cropW) / 2;
-    const cropY = (sh - cropH) / 2;
-    this.destCtx.drawImage(this.sourceCanvas, cropX, cropY, cropW, cropH, 0, 0, DEST_WIDTH, DEST_HEIGHT);
+
+    for (const p of this.pipelines) {
+      if (p.kind === "vertical") {
+        // 9:16 window centered on the smoothed focus, clamped in-bounds.
+        let cropW = sh * (DEST_WIDTH / DEST_HEIGHT);
+        let cropH = sh;
+        if (cropW > sw) {
+          cropW = sw;
+          cropH = sw * (DEST_HEIGHT / DEST_WIDTH);
+        }
+        const cropX = Math.max(0, Math.min(sw - cropW, this.focusX - cropW / 2));
+        const cropY = Math.max(0, Math.min(sh - cropH, this.focusY - cropH / 2));
+        p.ctx.drawImage(this.sourceCanvas, cropX, cropY, cropW, cropH, 0, 0, DEST_WIDTH, DEST_HEIGHT);
+      } else {
+        // Original: full view scaled to the pipeline canvas.
+        p.ctx.drawImage(this.sourceCanvas, 0, 0, sw, sh, 0, 0, p.canvas.width, p.canvas.height);
+      }
+    }
   }
 
   /** Call when a highlight fires. Extends (never shortens) the current
    *  segment's planned end so the trigger's own segment stays intact and
    *  keeps recording through the lookahead window. */
   trigger(nowMs: number = performance.now()): void {
-    if (this.stopped || !this.recorder) return;
+    if (this.stopped || this.pipelines.length === 0) return;
     const finishAt = nowMs + LOOKAHEAD_MS;
     this.pendingFinishAtMs = this.pendingFinishAtMs === null ? finishAt : Math.max(this.pendingFinishAtMs, finishAt);
     this.scheduleRotation();
   }
 
   private beginSegment(): void {
-    if (this.stopped || !this.stream || !this.mimeType) return;
-    this.currentChunks = [];
+    if (this.stopped || !this.mimeType) return;
     this.segmentStartedAtMs = performance.now();
-    let recorder: MediaRecorder;
-    try {
-      recorder = new MediaRecorder(this.stream, {
-        mimeType: this.mimeType,
-        videoBitsPerSecond: VIDEO_BITS_PER_SECOND,
-      });
-    } catch (err) {
-      this.deps.onError?.(err);
-      return;
+    for (const p of this.pipelines) {
+      p.chunks = [];
+      let recorder: MediaRecorder;
+      try {
+        recorder = new MediaRecorder(p.stream, {
+          mimeType: this.mimeType,
+          videoBitsPerSecond: VIDEO_BITS_PER_SECOND,
+        });
+      } catch (err) {
+        this.deps.onError?.(err);
+        return;
+      }
+      recorder.ondataavailable = (e) => {
+        if (e.data.size > 0) p.chunks.push(e.data);
+      };
+      recorder.onstop = () => this.onPipelineStopped(p);
+      recorder.start();
+      p.recorder = recorder;
     }
-    recorder.ondataavailable = (e) => {
-      if (e.data.size > 0) this.currentChunks.push(e.data);
-    };
-    recorder.onstop = () => this.onSegmentComplete();
-    recorder.start();
-    this.recorder = recorder;
     this.scheduleRotation();
   }
 
@@ -210,40 +293,53 @@ export class ClipRecorder {
     const cappedEndAt = Math.min(desiredEndAt, this.segmentStartedAtMs + MAX_SEGMENT_MS);
     const delay = Math.max(0, cappedEndAt - performance.now());
     this.rotateTimer = setTimeout(() => {
-      if (this.recorder?.state === "recording") this.recorder.stop();
+      const endedAtMs = performance.now();
+      this.uploadOnStop =
+        !this.stopped && this.pendingFinishAtMs !== null && endedAtMs >= this.pendingFinishAtMs;
+      if (this.uploadOnStop) this.pendingFinishAtMs = null;
+      this.pendingStops = 0;
+      for (const p of this.pipelines) {
+        if (p.recorder?.state === "recording") {
+          this.pendingStops += 1;
+          p.recorder.stop();
+        }
+      }
+      // Nothing was recording (shouldn't happen mid-run) — just restart.
+      if (this.pendingStops === 0 && !this.stopped) this.beginSegment();
     }, delay);
   }
 
-  private onSegmentComplete(): void {
-    const endedAtMs = performance.now();
-    const shouldUpload = !this.stopped && this.pendingFinishAtMs !== null && endedAtMs >= this.pendingFinishAtMs;
-    if (shouldUpload && this.mimeType) {
-      this.pendingFinishAtMs = null;
-      const blob = new Blob(this.currentChunks, { type: this.mimeType });
-      // Dud guard: a hidden tab freezes the rAF draw loop → the recorder
+  private onPipelineStopped(p: Pipeline): void {
+    if (this.uploadOnStop && this.mimeType) {
+      const blob = new Blob(p.chunks, { type: this.mimeType });
+      // Dud guard: a hidden tab freezes the rAF crop loop → the recorder
       // emits a header-only blob. Uploading those littered server/.clips
       // with 10-15 byte junk files. Drop anything implausibly small.
       if (blob.size >= MIN_UPLOAD_BYTES) {
-        void this.upload(blob);
+        void this.upload(blob, p.kind);
       } else {
-        console.log(`[clips] dropped dud segment (${blob.size} bytes — tab hidden?)`);
+        console.log(`[clips] dropped dud ${p.kind} segment (${blob.size} bytes — tab hidden?)`);
       }
     }
-    if (!this.stopped) this.beginSegment();
+    p.chunks = [];
+    this.pendingStops -= 1;
+    // Restart both pipelines together once the LAST one has flushed, so the
+    // next segment's files stay time-aligned.
+    if (this.pendingStops <= 0 && !this.stopped) this.beginSegment();
   }
 
-  private async upload(blob: Blob): Promise<void> {
+  private async upload(blob: Blob, kind: ClipKind): Promise<void> {
     try {
       const form = new FormData();
       const ext = blob.type.includes("webm") ? "webm" : "mp4";
-      form.append("file", blob, `clip.${ext}`);
+      form.append("file", blob, `clip-${kind}.${ext}`);
       const res = await fetch(this.deps.uploadPath ?? "/clips/upload", {
         method: "POST",
         body: form,
       });
       if (!res.ok) throw new Error(`clip upload failed: ${res.status}`);
       const { url } = (await res.json()) as { url: string };
-      this.deps.onUploaded?.(url);
+      this.deps.onUploaded?.(url, kind);
     } catch (err) {
       this.deps.onError?.(err);
     }
