@@ -197,14 +197,14 @@ export class CardDraftOverlay {
   private makeCardElement(card: CardDefinition): HTMLDivElement {
     const el = document.createElement("div");
     Object.assign(el.style, CARD_STYLE);
-    // Portrait phones stack the cards vertically in a scrolling column; the
-    // desktop 380px plate is mostly empty there and pushes the other picks
-    // below the fold while the auto-pick timer runs — compact the cards so
-    // 2-3 options are scannable at a glance.
-    if (isPortraitMobile()) {
+    // Phones: the desktop 380px plate is mostly empty and pushes the other
+    // picks out of view while the auto-pick timer runs (below the fold in
+    // portrait's vertical stack; past the stage's 92vh scroll in a 393px-tall
+    // landscape) — compact the cards so 2-3 options are scannable at a glance.
+    if (isTouchPrimary()) {
       el.style.minHeight = "0";
-      el.style.width = "min(280px, 78vw)";
       el.style.padding = "16px 16px";
+      if (isPortraitMobile()) el.style.width = "min(280px, 78vw)";
     }
 
     // ROUNDS-style: fully transparent background, cyan bracket corners via

@@ -62,7 +62,10 @@ export async function enterFullscreenPortrait(): Promise<void> {
     const orientation = screen.orientation as ScreenOrientation & {
       lock?: (o: string) => Promise<void>;
     };
-    await orientation.lock?.("portrait");
+    // Respect the player's current hold: locking hard to portrait while the
+    // phone is held sideways would yank the screen out from under someone
+    // who just dismissed the rotate hint ("play sideways anyway").
+    await orientation.lock?.(isPortrait() ? "portrait" : "landscape");
   } catch {
     /* orientation lock unsupported / not allowed */
   }

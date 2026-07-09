@@ -292,7 +292,8 @@ const STAGE_STYLE: Partial<CSSStyleDeclaration> = {
     "linear-gradient(160deg, rgba(16, 20, 32, 0.96), rgba(10, 13, 22, 0.99))",
   boxShadow:
     "0 40px 100px rgba(0,0,0,0.65), 0 0 1px rgba(143,248,255,0.35), 0 0 50px rgba(80,227,194,0.07), inset 0 1px 0 rgba(143,248,255,0.09)",
-  minWidth: "520px",
+  // min() so a 393px phone is not forced wider than its own viewport
+  minWidth: "min(520px, 92vw)",
   maxWidth: "min(840px, 92vw)",
   maxHeight: "92vh",
   overflowY: "auto",
