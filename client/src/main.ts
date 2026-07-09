@@ -120,7 +120,7 @@ app.innerHTML = `
   </section>
   <main class="app-shell">
     <div id="game-root" class="game-root"></div>
-    <aside class="lobby-panel" data-lobby-panel aria-label="Room controls">
+    <aside class="lobby-panel lobby-panel--hidden" data-lobby-panel aria-label="Room controls">
       <div class="brand-row">
         <div>
           <h1>JAKESJAM</h1>
@@ -198,6 +198,7 @@ app.innerHTML = `
     <div class="rotate-icon">📱</div>
     <h2>Hold your phone upright</h2>
     <p>JAKESJAM is built for portrait.</p>
+    <p class="orientation-hint-dismiss">tap to play sideways anyway</p>
   </div>
 `;
 
@@ -268,11 +269,22 @@ function isTouchDevice(): boolean {
     window.matchMedia("(pointer: coarse)").matches
   );
 }
+// The hint is dismissible: it's a full-screen opaque overlay, so without a
+// dismiss it doesn't "nudge" — it hard-blocks landscape play entirely.
+// Dismissing sticks for the whole session (the player has made their choice).
+let orientationHintDismissed = false;
 function updateOrientationHint(): void {
   if (!orientationHint) return;
   const landscape = window.innerWidth > window.innerHeight;
-  orientationHint.classList.toggle("show", isTouchDevice() && landscape);
+  orientationHint.classList.toggle(
+    "show",
+    isTouchDevice() && landscape && !orientationHintDismissed,
+  );
 }
+orientationHint?.addEventListener("pointerdown", () => {
+  orientationHintDismissed = true;
+  updateOrientationHint();
+});
 updateOrientationHint();
 window.addEventListener("resize", updateOrientationHint);
 window.addEventListener("orientationchange", updateOrientationHint);

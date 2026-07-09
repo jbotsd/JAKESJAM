@@ -174,7 +174,7 @@ export class MatchStatusBadge {
           ? `starts in ${seconds}s`
           : s.phase === "drafting"
             ? "drafting cards"
-            : "round over";
+            : "next round soon"; // phaseLabel already says "Round over"
     this.summaryEl.textContent = `${phaseLabel} · ${playersLabel} · round ${s.roundIndex + 1} · ${timerLabel}`;
     this.statusDot.style.background = s.joinable ? "#86efac" : "#fde68a";
     if (this.joinBtn) this.joinBtn.disabled = !s.joinable;

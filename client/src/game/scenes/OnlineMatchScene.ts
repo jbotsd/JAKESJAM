@@ -606,9 +606,11 @@ export class OnlineMatchScene extends Phaser.Scene {
         ];
     const STAGE_GAP_MS = 900;
     const LEGEND_LIFE_MS = 9_000;
-    // y=48: below the always-visible RTT pill (top-right, ~28px tall) so
-    // the two don't overlap during the legend's life.
-    let y = 48;
+    // Desktop y=48: below the always-visible RTT pill (top-right, ~28px tall)
+    // so the two don't overlap during the legend's life. Touch phones start
+    // lower still — at 393px the score row + build pills reach into the
+    // legend's right-anchored column (seen overlapping in portrait QA).
+    let y = this.touchControls ? 112 : 48;
     for (const [i, lines] of groups.entries()) {
       const text = this.add
         .text(this.scale.width - 20, y, lines.join("\n"), {
@@ -783,7 +785,9 @@ export class OnlineMatchScene extends Phaser.Scene {
       maxHealth,
       shieldCharge: local?.shieldCharge,
       shieldMaxCharge: local?.shieldMaxCharge ?? 0,
-      jetpackFuel: local?.jetpackFuel,
+      // jetpackFuel deliberately NOT fed: the jetpack was removed from the
+      // game (the sim field is pinned for ABI stability only), so the HUD
+      // bar was rendering a meaningless frozen "125%" forever.
       chips,
       cardNames,
       isDead: !local || local.health <= 0 || !local.alive,
@@ -1276,8 +1280,11 @@ export class OnlineMatchScene extends Phaser.Scene {
     // Portrait mobile biases the player high on the tall screen (so the bottom
     // control band never covers them). That only works if the camera may drop
     // BELOW the arena floor — otherwise the bottom bound clamps the view and
-    // the player slides down behind the controls. Give generous bottom room.
-    const bottomPad = isPortraitMobile() ? Math.round(cam.height / 1.4) : padY;
+    // the player slides down behind the controls. Pad ≈ the control band's
+    // 34vh: the sub-floor void the camera can show is exactly what the band
+    // covers. (The old height/1.4 pad left a big raw-void gap between the
+    // arena floor and the band whenever the player stood on the bottom floor.)
+    const bottomPad = isPortraitMobile() ? Math.round(cam.height * 0.3) : padY;
     cam.setBounds(-padX, -padY, width + padX * 2, height + padY + bottomPad);
     cam.setRoundPixels(true);
 

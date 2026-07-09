@@ -158,10 +158,12 @@ export class HudCompositor {
       maxHealth: character.maxHealth,
       shieldCharge: local?.shieldCharge,
       shieldMaxCharge: local?.shieldMaxCharge ?? 0,
-      jetpackFuel: local?.jetpackFuel,
+      // jetpackFuel / abilityCharge deliberately not fed: the jetpack was
+      // removed from the game and abilityCharge is a dead sim field that's
+      // initialized to 0 and never written — both rendered as permanent
+      // frozen HUD noise ("125%" fuel bar, six always-dim dots).
       chips,
       cardNames,
-      abilityCharge: local?.abilityCharge,
       cardIds: local?.cards,
       isDead: !local || local.health <= 0 || !local.alive,
     };

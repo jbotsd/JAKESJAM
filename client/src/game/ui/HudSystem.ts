@@ -41,8 +41,6 @@ export type HudVitals = {
   /** undefined = no shield for this character */
   shieldCharge?: number;
   shieldMaxCharge?: number;
-  /** undefined = no jetpack for this character */
-  jetpackFuel?: number;
   /** Active buff/debuff chip descriptors */
   chips: HudChip[];
   /**
@@ -80,9 +78,15 @@ const BAR_W = 200;
 const BAR_H = 12;
 const BAR_SHIELD_W = 160;
 const BAR_SHIELD_H = 9;
-const BAR_JET_W = 120;
-const BAR_JET_H = 7;
 const LINE_H = 20;
+
+// Compact (phone-width) HUD: below this CSS-px viewport width the full-size
+// bars/fonts collide with the centred timer + score row (seen on a 393px
+// portrait phone: HP text under the timer, score under the RTT pill), so
+// everything in the top strip shrinks.
+const COMPACT_MAX_WIDTH = 520;
+const BAR_W_COMPACT = 96;
+const BAR_SHIELD_W_COMPACT = 76;
 
 // Palette — Crystal Cyan (bars)
 const C_TRACK = 0x111827;
@@ -90,7 +94,6 @@ const C_HP_GOOD = 0xb8f05a;
 const C_HP_WARN = 0xfde68a;
 const C_HP_CRIT = 0xfb7185;
 const C_SHIELD = 0x93c5fd;
-const C_JET = 0x67e8f9;
 const C_VIGNETTE = 0xfb7185;
 
 // Chip layout (chip strip still uses a wrap boundary)
@@ -126,7 +129,6 @@ export class HudSystem {
   // Vital text labels
   private hpLabel!: Phaser.GameObjects.Text;
   private shLabel!: Phaser.GameObjects.Text;
-  private jetLabel!: Phaser.GameObjects.Text;
   private chipGraphics!: Phaser.GameObjects.Graphics;
   private chipTexts: Phaser.GameObjects.Text[] = [];
   // Cache so we don't re-call setColor every frame (string allocation).
@@ -148,6 +150,11 @@ export class HudSystem {
   private vignette!: Phaser.GameObjects.Rectangle;
   private vignetteTween?: Phaser.Tweens.Tween;
   private vignetteActive = false;
+
+  // Phone-width compact layout (decided once at build; phones don't grow).
+  private compact = false;
+  private barW = BAR_W;
+  private barShieldW = BAR_SHIELD_W;
 
   private localPlayerId: string;
 
@@ -174,7 +181,6 @@ export class HudSystem {
     this.vitalGraphics.destroy();
     this.hpLabel.destroy();
     this.shLabel.destroy();
-    this.jetLabel.destroy();
     this.chipGraphics.destroy();
     for (const t of this.chipTexts) t.destroy();
     this.chipTexts = [];
@@ -195,6 +201,10 @@ export class HudSystem {
     const s = this.scene;
     const depth = 900;
 
+    this.compact = s.scale.width < COMPACT_MAX_WIDTH;
+    this.barW = this.compact ? BAR_W_COMPACT : BAR_W;
+    this.barShieldW = this.compact ? BAR_SHIELD_W_COMPACT : BAR_SHIELD_W;
+
     // Full-screen vignette (behind HUD elements)
     this.vignette = s.add
       .rectangle(0, 0, s.scale.width, s.scale.height, C_VIGNETTE, 0)
@@ -212,20 +222,16 @@ export class HudSystem {
       fontStyle: "bold",
     } as const;
 
-    const labelX = PAD_LEFT + BAR_W + 8;
+    const labelX = PAD_LEFT + this.barW + 8;
+    const vitalsFontSize = this.compact ? "9px" : "10px";
 
     this.hpLabel = s.add
-      .text(labelX, PAD_TOP + 1, "", { ...fontBase, fontSize: "10px", color: "#b8f05a" })
+      .text(labelX, PAD_TOP + 1, "", { ...fontBase, fontSize: vitalsFontSize, color: "#b8f05a" })
       .setScrollFactor(0)
       .setDepth(depth + 2);
 
     this.shLabel = s.add
-      .text(labelX, PAD_TOP + LINE_H + 1, "", { ...fontBase, fontSize: "10px", color: "#93c5fd" })
-      .setScrollFactor(0)
-      .setDepth(depth + 2);
-
-    this.jetLabel = s.add
-      .text(labelX, PAD_TOP + LINE_H * 2 + 1, "", { ...fontBase, fontSize: "10px", color: "#67e8f9" })
+      .text(labelX, PAD_TOP + LINE_H + 1, "", { ...fontBase, fontSize: vitalsFontSize, color: "#93c5fd" })
       .setScrollFactor(0)
       .setDepth(depth + 2);
 
@@ -235,22 +241,22 @@ export class HudSystem {
 
     // Top-center: timer + score
     this.timerText = s.add
-      .text(s.scale.width / 2, 12, "", {
+      .text(s.scale.width / 2, this.compact ? 10 : 12, "", {
         fontFamily: "'Space Mono', Consolas, 'Courier New', monospace",
-        fontSize: "24px",
+        fontSize: this.compact ? "17px" : "24px",
         fontStyle: "bold",
         color: "#f7fbff",
         stroke: "#05080f",
-        strokeThickness: 4,
+        strokeThickness: this.compact ? 3 : 4,
       })
       .setOrigin(0.5, 0)
       .setScrollFactor(0)
       .setDepth(depth + 2);
 
     this.scoreText = s.add
-      .text(s.scale.width / 2, 42, "", {
+      .text(s.scale.width / 2, this.compact ? 32 : 42, "", {
         fontFamily: "'Space Mono', Consolas, 'Courier New', monospace",
-        fontSize: "13px",
+        fontSize: this.compact ? "10px" : "13px",
         fontStyle: "bold",
         color: "#8ff8ff",
         stroke: "#05080f",
@@ -261,8 +267,10 @@ export class HudSystem {
       .setScrollFactor(0)
       .setDepth(depth + 2);
 
-    // Dot-row ammo arcs — created once, recolored each frame
-    const dotY = PAD_TOP + LINE_H * 3 - 2;
+    // Dot-row ammo arcs — created once, recolored each frame (hidden until
+    // something actually feeds abilityCharge). Rows shifted up one LINE_H
+    // since the vestigial jetpack bar row was removed.
+    const dotY = PAD_TOP + LINE_H * 2 - 2;
     for (let i = 0; i < DOT_COUNT; i++) {
       const arc = s.add
         .arc(
@@ -306,16 +314,15 @@ export class HudSystem {
     if (v.isDead) {
       this.hpLabel.setText("");
       this.shLabel.setVisible(false);
-      this.jetLabel.setVisible(false);
       this.drawChips([]);
-      this.updateDots(0);
+      this.updateDots(undefined);
       return;
     }
 
     // ── Health bar ──────────────────────────────────────────────────────────
     const hpRatio = Phaser.Math.Clamp(v.health / v.maxHealth, 0, 1);
     const hpColor = hpRatio > 0.55 ? C_HP_GOOD : hpRatio > 0.28 ? C_HP_WARN : C_HP_CRIT;
-    this.drawBar(g, PAD_LEFT, PAD_TOP, BAR_W, BAR_H, hpRatio, hpColor);
+    this.drawBar(g, PAD_LEFT, PAD_TOP, this.barW, BAR_H, hpRatio, hpColor);
     if (hpColor !== this.hpLabelColorCache) {
       this.hpLabel.setColor(numToHex(hpColor));
       this.hpLabelColorCache = hpColor;
@@ -326,28 +333,18 @@ export class HudSystem {
     const shMax = v.shieldMaxCharge ?? 0;
     if (shMax > 0 && v.shieldCharge !== undefined) {
       const shRatio = Phaser.Math.Clamp(v.shieldCharge / shMax, 0, 1);
-      this.drawBar(g, PAD_LEFT, PAD_TOP + LINE_H, BAR_SHIELD_W, BAR_SHIELD_H, shRatio, C_SHIELD);
+      this.drawBar(g, PAD_LEFT, PAD_TOP + LINE_H, this.barShieldW, BAR_SHIELD_H, shRatio, C_SHIELD);
       this.shLabel.setText(`${Math.ceil(v.shieldCharge)}`);
       this.shLabel.setVisible(true);
     } else {
       this.shLabel.setVisible(false);
     }
 
-    // ── Jetpack bar ─────────────────────────────────────────────────────────
-    if (v.jetpackFuel !== undefined) {
-      const jetRatio = Phaser.Math.Clamp(v.jetpackFuel / 100, 0, 1);
-      this.drawBar(g, PAD_LEFT, PAD_TOP + LINE_H * 2, BAR_JET_W, BAR_JET_H, jetRatio, C_JET);
-      this.jetLabel.setText(`${Math.round(v.jetpackFuel)}%`);
-      this.jetLabel.setVisible(true);
-    } else {
-      this.jetLabel.setVisible(false);
-    }
-
     // ── Chip strip (outline-only, plate-less) ────────────────────────────────
     this.drawChips(v.chips);
 
     // ── Dot-row ability charge ───────────────────────────────────────────────
-    this.updateDots(v.abilityCharge ?? 0);
+    this.updateDots(v.abilityCharge);
 
     // ── Build-pill grid (only rebuilds when card list changes) ───────────────
     this.updateBuildPills(v.cardIds ?? []);
@@ -378,7 +375,7 @@ export class HudSystem {
     }
 
     let cx = PAD_LEFT;
-    let cy = PAD_TOP + LINE_H * 3 + 16; // below dot row
+    let cy = PAD_TOP + LINE_H * 2 + 16; // below dot row (jetpack row removed)
     const chipH = 16;
     const chipPadX = 7;
     const gap = 4;
@@ -431,10 +428,13 @@ export class HudSystem {
       this.scoreText.setText(`ROUND ${round.roundIndex + 1}`);
     } else {
       const parts = entries.map(([pid, score]) => {
-        const tag = pid === this.localPlayerId ? "YOU" : playerTag(pid);
+        let tag = pid === this.localPlayerId ? "YOU" : playerTag(pid);
+        // Phone widths: "BOT · PISTON 2   BOT · SPARK 0   YOU 0" overflows the
+        // 393px row into the FTUE legend / RTT pill — drop the "BOT · " prefix.
+        if (this.compact) tag = tag.replace("BOT · ", "");
         return `${tag} ${score}`;
       });
-      this.scoreText.setText(parts.join("   "));
+      this.scoreText.setText(parts.join(this.compact ? "  " : "   "));
     }
   }
 
@@ -463,11 +463,18 @@ export class HudSystem {
 
   // ─── Dot-row ability charge ───────────────────────────────────────────────
 
-  private updateDots(charge: number): void {
+  private updateDots(charge: number | undefined): void {
+    // Nothing feeds abilityCharge → hide the row entirely rather than pin six
+    // permanently-dim dots to the HUD (dead UI, and precious space on phones).
+    if (charge === undefined) {
+      for (const arc of this.dotArcs) arc.setVisible(false);
+      return;
+    }
     const filledCount = Math.round(Phaser.Math.Clamp(charge, 0, 1) * DOT_COUNT);
     for (let i = 0; i < this.dotArcs.length; i++) {
       const arc = this.dotArcs[i]!;
       const filled = i < filledCount;
+      arc.setVisible(true);
       arc.setFillStyle(filled ? PALETTE.textHi : PALETTE.textDim, filled ? 1 : 0.45);
     }
   }
