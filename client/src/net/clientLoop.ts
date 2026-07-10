@@ -234,6 +234,8 @@ export class ClientLoop {
    *  scales with this so renderTime keeps snapshot headroom instead of
    *  constantly overrunning the buffer. */
   private frameDtEmaMs = 0;
+  /** performance.now() of the last decoded server message (resume watchdog). */
+  private lastMessageAtMs = 0;
   private lastRenderCallMs = 0;
 
   // Net stats bookkeeping. Ping/pong + RTT + snap-rate live on PingMonitor;
@@ -595,6 +597,23 @@ export class ClientLoop {
     return this.frameDtEmaMs;
   }
 
+  /**
+   * Resume watchdog. Mobile browsers (iOS Safari above all) kill background
+   * WebSockets WITHOUT firing onclose — the transport still reports "open"
+   * but nothing will ever arrive, so the reconnect supervisor never runs.
+   * Call on visibilitychange→visible / pageshow / resume: if the socket
+   * claims open but the server has been silent past the threshold, force a
+   * local close with a non-terminal reason — that drops us into the normal
+   * supervisor reconnect path (fresh transport, hello, full snapshot).
+   */
+  noteVisible(nowMs: number = performance.now()): void {
+    const STALE_MS = 3_000;
+    if (this.transport.state !== "open") return;
+    if (this.lastMessageAtMs > 0 && nowMs - this.lastMessageAtMs < STALE_MS) return;
+    console.log("[net] resumed with a silent socket — forcing reconnect");
+    this.transport.close("stale-on-resume");
+  }
+
   getNetStats(): NetStats {
     const ping = this.pingMonitor.stats();
     let slewMsAvg = 0;
@@ -728,6 +747,7 @@ export class ClientLoop {
   }
 
   private handleMessage(raw: Uint8Array): void {
+    this.lastMessageAtMs = performance.now();
     const decoded = decodeMessage<ServerMessage>(raw);
     if (!decoded) return;
     if (decoded.version !== PROTOCOL_VERSION) {

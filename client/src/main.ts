@@ -377,6 +377,14 @@ const game = new Phaser.Game(buildGameConfig());
 // Scale.NONE does no automatic window tracking — this owns it (backing
 // store = CSS × renderScale; see game/render/renderResolution.ts).
 installRenderResolution(game);
+
+// PWA installability (public/sw.js is a deliberate no-cache pass-through —
+// a stale bundle is worse than a slow one for a live multiplayer game).
+if ("serviceWorker" in navigator && window.location.protocol === "https:") {
+  window.addEventListener("load", () => {
+    navigator.serviceWorker.register("/sw.js").catch(() => {});
+  });
+}
 // Diagnostic: expose the Phaser game on window so e2e specs can walk
 // the scene's display list to find render-time leaks. No production
 // behaviour depends on this — pure introspection hook.

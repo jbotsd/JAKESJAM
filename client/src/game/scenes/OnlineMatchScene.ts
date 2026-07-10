@@ -378,6 +378,27 @@ export class OnlineMatchScene extends Phaser.Scene {
   private newlyDeadScratch: string[] = [];
   private aimWorldScratch = new Phaser.Math.Vector2();
   private renderGovernor: RenderGovernor | null = null;
+  private wakeLock: WakeLockSentinel | null = null;
+
+  /** visibilitychange/pageshow → resume watchdog + wake-lock re-acquire.
+   *  Arrow field so add/removeEventListener get the same reference. */
+  private onVisibilityResume = (): void => {
+    if (document.visibilityState !== "visible") return;
+    this.loop?.noteVisible();
+    void this.acquireWakeLock();
+  };
+
+  /** Keep the screen on during a match (phones sleep mid-fight otherwise).
+   *  The OS releases the lock whenever the page hides — onVisibilityResume
+   *  re-acquires. No-op where unsupported; denial is non-fatal. */
+  private async acquireWakeLock(): Promise<void> {
+    try {
+      if (!("wakeLock" in navigator) || document.visibilityState !== "visible") return;
+      this.wakeLock = await navigator.wakeLock.request("screen");
+    } catch {
+      this.wakeLock = null;
+    }
+  }
   // Per-killer kill count in the current round for escalating callouts.
   private killStreakCount = new Map<string, number>();
   // Clip 9:16 crop focus in WORLD space — envelopes local + a STICKY duel
@@ -486,6 +507,12 @@ export class OnlineMatchScene extends Phaser.Scene {
     this.ensureClipCapture();
     window.addEventListener(ShellEvents.CLIPS_CONSENT_CHANGED, this.onClipsConsentChanged);
     window.addEventListener(ShellEvents.CLIP_SAVE_NOW, this.onClipSaveNow);
+    // Mobile lifecycle: iOS kills background sockets silently, and phones
+    // sleep mid-match without a wake lock. pageshow catches bfcache resumes
+    // that never fire visibilitychange.
+    document.addEventListener("visibilitychange", this.onVisibilityResume);
+    window.addEventListener("pageshow", this.onVisibilityResume);
+    void this.acquireWakeLock();
 
     this.entityRender = new EntityRenderCoordinator(
       this,
@@ -2238,6 +2265,10 @@ export class OnlineMatchScene extends Phaser.Scene {
   private teardown() {
     this.scale.off("resize", this.repositionHud, this);
     this.scale.off("resize", this.applyMobileCamera, this);
+    document.removeEventListener("visibilitychange", this.onVisibilityResume);
+    window.removeEventListener("pageshow", this.onVisibilityResume);
+    this.wakeLock?.release().catch(() => {});
+    this.wakeLock = null;
     window.removeEventListener(ShellEvents.CLIPS_CONSENT_CHANGED, this.onClipsConsentChanged);
     window.removeEventListener(ShellEvents.CLIP_SAVE_NOW, this.onClipSaveNow);
     this.stopClipCapture();
