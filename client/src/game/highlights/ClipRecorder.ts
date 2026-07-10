@@ -37,6 +37,14 @@
 // encoder only achieved ~22fps, and the load stalled the game's own rAF
 // loop: gameplay stuttered whenever clips were recording. 30fps that the
 // encoder actually sustains beats 60fps it can't.)
+//
+// v4 (Phase 3): where WebCodecs exists the whole chain moves OFF the main
+// thread — per frame the main thread does only `new VideoFrame(canvas)`
+// (GPU-side copy) + a transfer to clipEncoderWorker.ts (WebCodecs encode in
+// latencyMode 'quality' + mediabunny MP4 mux). No 2D mezzanine canvas, no
+// captureStream, no MediaRecorder. MediaRecorder remains as the fallback
+// for browsers without WebCodecs and as the escape hatch if the worker
+// errors mid-session.
 
 /** Mezzanine output width (height derived from source aspect, both capped
  *  at the source size). Full-res: the single stream this recorder encodes is
@@ -132,6 +140,14 @@ export class ClipRecorder {
   private pendingFinishAtMs: number | null = null;
   private stopped = true;
   private mimeType: string | null = null;
+  /** WebCodecs worker path (v4). Null = MediaRecorder fallback. */
+  private encoderWorker: Worker | null = null;
+  /** Worker-path segment epoch for VideoFrame timestamps. */
+  private segEpochMs = 0;
+  /** Whether the CURRENT segment should upload when its file arrives. */
+  private workerUploadOnFile = false;
+  /** Set when the worker errors — start() must not retry it this session. */
+  private workerPathFailed = false;
   private readonly sourceCanvas: HTMLCanvasElement;
   private lastDrawAtMs = 0;
   private readonly deps: ClipRecorderDeps;
@@ -156,6 +172,13 @@ export class ClipRecorder {
   /** Start continuous segmented capture. Safe to call once per match. */
   start(): void {
     if (!this.stopped) return;
+    if (
+      typeof VideoEncoder !== "undefined" &&
+      !this.workerPathFailed &&
+      this.tryStartWorkerPath()
+    ) {
+      return;
+    }
     const mimeType = pickSupportedMimeType();
     if (!mimeType) {
       this.deps.onError?.(new Error("no supported MediaRecorder mimeType"));
@@ -192,6 +215,11 @@ export class ClipRecorder {
       this.rotateTimer = null;
     }
     this.pendingFinishAtMs = null;
+    if (this.encoderWorker) {
+      this.encoderWorker.postMessage({ t: "cancel" });
+      this.encoderWorker.terminate();
+      this.encoderWorker = null;
+    }
     // onstop will fire but `this.stopped` guards it from starting a new
     // segment; the in-flight one is simply discarded (not uploaded).
     for (const p of this.pipelines) {
@@ -200,6 +228,76 @@ export class ClipRecorder {
       p.chunks = [];
     }
     this.pipelines = [];
+  }
+
+  // ── WebCodecs worker path (v4) ───────────────────────────────────────
+
+  /** Returns true when the worker path started (WebCodecs available). */
+  private tryStartWorkerPath(): boolean {
+    try {
+      this.encoderWorker = new Worker(new URL("./clipEncoderWorker.ts", import.meta.url), {
+        type: "module",
+      });
+    } catch {
+      return false;
+    }
+    this.encoderWorker.onmessage = (e: MessageEvent) => this.onWorkerMessage(e.data);
+    // A module worker that fails to LOAD (import error, CSP, bundling)
+    // never posts a message — onerror is the only signal.
+    this.encoderWorker.onerror = (e: ErrorEvent) =>
+      this.onWorkerMessage({ t: "error", message: `worker load/runtime error: ${e.message}` });
+    this.stopped = false;
+    this.focusX = Number.NaN;
+    this.focusY = Number.NaN;
+    this.lastDrawAtMs = 0;
+    this.beginWorkerSegment();
+    console.log("[clips] WebCodecs worker capture active (off-main-thread encode)");
+    return true;
+  }
+
+  private beginWorkerSegment(): void {
+    if (this.stopped || !this.encoderWorker) return;
+    this.segmentStartedAtMs = performance.now();
+    this.segEpochMs = this.segmentStartedAtMs;
+    this.focusTrace = [];
+    this.encoderWorker.postMessage({
+      t: "begin",
+      width: this.sourceCanvas.width || 1280,
+      height: this.sourceCanvas.height || 720,
+      bitrate: VIDEO_BITS_PER_SECOND,
+    });
+    this.scheduleRotation();
+  }
+
+  private onWorkerMessage(msg: { t: string; buffer?: ArrayBuffer; width?: number; height?: number; message?: string }): void {
+    if (msg.t === "file" && msg.buffer) {
+      if (this.workerUploadOnFile) {
+        const blob = new Blob([msg.buffer], { type: "video/mp4" });
+        const trace = decimateTrace(this.focusTrace);
+        if (blob.size >= MIN_UPLOAD_BYTES) {
+          void this.upload(blob, trace, msg.width ?? 0, msg.height ?? 0);
+        } else {
+          console.log(`[clips] dropped dud worker segment (${blob.size} bytes — tab hidden?)`);
+        }
+      }
+      if (!this.stopped) this.beginWorkerSegment();
+      return;
+    }
+    if (msg.t === "error") {
+      // Worker path is dead for this session — fall back to MediaRecorder.
+      console.warn(`[clips] encoder worker failed (${msg.message}) — falling back to MediaRecorder`);
+      this.workerPathFailed = true;
+      this.encoderWorker?.terminate();
+      this.encoderWorker = null;
+      if (!this.stopped) {
+        this.stopped = true;
+        if (this.rotateTimer !== null) {
+          clearTimeout(this.rotateTimer);
+          this.rotateTimer = null;
+        }
+        this.start();
+      }
+    }
   }
 
   private makePipeline(kind: ClipKind, w: number, h: number): Pipeline | null {
@@ -252,6 +350,28 @@ export class ClipRecorder {
       this.focusY += (ty - this.focusY) * a;
     }
 
+    if (this.encoderWorker) {
+      // Worker path: one GPU-side copy + transfer; encode/mux off-thread.
+      // The worker caps encoded width at 1920 like the old mezzanine, so
+      // the trace is logged in ENCODED px (the uploaded coordinate space).
+      const tMs = performance.now() - this.segEpochMs;
+      try {
+        const frame = new VideoFrame(this.sourceCanvas, {
+          timestamp: Math.max(0, Math.round(tMs * 1000)),
+        });
+        this.encoderWorker.postMessage({ t: "frame", frame }, [frame as unknown as Transferable]);
+      } catch (err) {
+        this.deps.onError?.(err);
+        return;
+      }
+      const encodedW = Math.min(1920, sw);
+      this.focusTrace.push({
+        t: Math.max(0, Math.round(tMs)),
+        x: Math.round(this.focusX * (encodedW / sw)),
+      });
+      return;
+    }
+
     for (const p of this.pipelines) {
       // Full view scaled to the mezzanine canvas. The vertical crop is no
       // longer drawn or encoded here — the smoothed focus is LOGGED and the
@@ -269,7 +389,8 @@ export class ClipRecorder {
    *  segment's planned end so the trigger's own segment stays intact and
    *  keeps recording through the lookahead window. */
   trigger(nowMs: number = performance.now()): void {
-    if (this.stopped || this.pipelines.length === 0) return;
+    // Active = worker path OR at least one MediaRecorder pipeline.
+    if (this.stopped || (this.pipelines.length === 0 && !this.encoderWorker)) return;
     const finishAt = nowMs + LOOKAHEAD_MS;
     this.pendingFinishAtMs = this.pendingFinishAtMs === null ? finishAt : Math.max(this.pendingFinishAtMs, finishAt);
     this.scheduleRotation();
@@ -313,9 +434,17 @@ export class ClipRecorder {
     const delay = Math.max(0, cappedEndAt - performance.now());
     this.rotateTimer = setTimeout(() => {
       const endedAtMs = performance.now();
-      this.uploadOnStop =
+      const shouldUpload =
         !this.stopped && this.pendingFinishAtMs !== null && endedAtMs >= this.pendingFinishAtMs;
-      if (this.uploadOnStop) this.pendingFinishAtMs = null;
+      if (shouldUpload) this.pendingFinishAtMs = null;
+      if (this.encoderWorker) {
+        // Worker path: finish the segment; the 'file' reply uploads (when
+        // covered by a trigger) and begins the next segment.
+        this.workerUploadOnFile = shouldUpload;
+        this.encoderWorker.postMessage({ t: "finish" });
+        return;
+      }
+      this.uploadOnStop = shouldUpload;
       this.pendingStops = 0;
       for (const p of this.pipelines) {
         if (p.recorder?.state === "recording") {
