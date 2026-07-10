@@ -158,6 +158,13 @@ onto the atlas; BitmapText; high-tier filter stack (bloom on emissive layer,
 damage chromatic) built on 4.2 Filters.
 
 ### Phase 3 — capture rework
+STATUS 2026-07-10: WebCodecs worker path SHIPPED + verified. gsr replay
+buffer BLOCKED on a real bug: gpu-screen-recorder 5.13.9 SIGSEGVs during
+EGL init on this box's nvidia-open 610.43.02 + Hyprland stack (verified
+in-session via hyprctl dispatch exec, forced NVIDIA vendor, every
+platform permutation; three core dumps in coredumpctl). Fix candidates:
+upgrade to gsr 5.14.x (AUR/source build — needs Jake), or wf-recorder
+with -c h264_nvenc as a buffer-less fallback.
 - Host/stream instance: gpu-screen-recorder KMS region replay buffer,
   game server sends SIGUSR1 on kill events, `-sc` chains the existing
   NVENC crop-pan. Zero in-browser capture cost. (Afternoon of work.)
