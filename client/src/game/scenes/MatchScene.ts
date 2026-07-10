@@ -3,6 +3,8 @@ import { SceneKeys } from "./SceneKeys";
 import { PALETTE, ARENA_THEMES } from "../ui/palette";
 import { PlatformLayer } from "../render/PlatformPainter";
 import { LightBeamLayer } from "../render/LightingLayer";
+import { CosmicArenaLayer } from "../render/CosmicArenaLayer";
+import { getMusicLevel } from "../systems/MusicAmplitude";
 import { transientVfx } from "../render/TransientVfx";
 import { boxworksPractice } from "../../sim/data/boxworks-practice.js";
 import { PlayerId } from "../../sim/types.js";
@@ -86,6 +88,7 @@ export class MatchScene extends Phaser.Scene {
   private audio?: GameAudioSystem;
   private platformLayer: PlatformLayer | null = null;
   private lightBeams: LightBeamLayer | null = null;
+  private cosmicArena: CosmicArenaLayer | null = null;
   private particlePool?: ParticlePool;
   private playerRig?: ProceduralPlayerRig;
   private renderLayer!: RenderLayer;
@@ -134,6 +137,8 @@ export class MatchScene extends Phaser.Scene {
       this.deathOverlay = undefined;
       this.particlePool?.destroy();
       this.particlePool = undefined;
+      this.cosmicArena?.destroy();
+      this.cosmicArena = null;
     });
     this.input.mouse?.disableContextMenu();
     this.audio?.destroy();
@@ -270,13 +275,18 @@ export class MatchScene extends Phaser.Scene {
    */
   private updateEnvironmentReactivity(): void {
     const intensity = this.actionIntensity.get();
+    // Mix combat intensity with live track pulse so light beams + bloom
+    // breathe with the music even between hits.
+    const music = getMusicLevel();
+    const env = Math.min(1, intensity * 0.72 + music.pulse * 0.55 + music.beat * 0.25);
     for (const { ellipse, baseAlpha } of this.hazeEllipses) {
-      ellipse.setAlpha(baseAlpha * (1 + intensity * 3));
+      ellipse.setAlpha(baseAlpha * (1 + env * 3));
     }
-    this.lightBeams?.setReactiveBoost(intensity);
-    // Eased so the bloom only really shows in the top half of the intensity
-    // range — a light jog shouldn't tint the screen, but a firefight should.
-    this.energyBloom?.setAlpha(intensity * 0.14);
+    this.lightBeams?.setReactiveBoost(env);
+    // Warm bloom rides action + bass so the arena charges with the drop.
+    this.energyBloom?.setAlpha(env * 0.16 + music.bass * 0.05);
+    // Cosmic vault + choir of angels — amplitude-synced pulse from epic-loop.
+    this.cosmicArena?.update(this.game.loop.delta, intensity);
   }
 
   private renderArena() {
@@ -285,13 +295,11 @@ export class MatchScene extends Phaser.Scene {
     const themeKey = (boxworksPractice.arenaTheme ?? "jadeIsles") as keyof typeof ARENA_THEMES;
     const theme: import("../ui/palette").ArenaTheme = ARENA_THEMES[themeKey] as import("../ui/palette").ArenaTheme;
 
-    // Solid void background — no grid.
-    this.add.rectangle(width / 2, height / 2, width, height, theme.bg);
-
-    // Atmospheric back layer: dim overlapping ellipses for parallax depth.
-    const bgShade = PALETTE.voidEdge;
-    this.add.ellipse(width * 0.3, height * 0.45, width * 0.55, height * 0.4, bgShade, 0.08);
-    this.add.ellipse(width * 0.72, height * 0.55, width * 0.5, height * 0.38, bgShade, 0.08);
+    // Cool Forerunner void base under skybox.
+    this.add.rectangle(width / 2, height / 2, width, height, 0x0a101c);
+    this.add.ellipse(width * 0.5, height * 0.18, width * 1.3, height * 0.55, 0x101a30, 0.5);
+    this.add.ellipse(width * 0.3, height * 0.4, width * 0.85, height * 0.5, 0x0a3040, 0.26);
+    this.add.ellipse(width * 0.75, height * 0.5, width * 0.7, height * 0.45, 0x123850, 0.22);
 
     // Atmospheric mid-Z haze: 3 large soft ellipses between BG layer and platforms.
     // Slightly lighter than theme.bg to imply depth fog. Alpha 0.04–0.06, depth 0.5.
@@ -329,6 +337,10 @@ export class MatchScene extends Phaser.Scene {
     for (const spawn of boxworksPractice.spawns) {
       this.add.circle(spawn.x, spawn.y, 5, PALETTE.textMid, 0.5);
     }
+
+    // Cosmic death-arena vault — angels, elements, rings pulse with music.
+    if (!this.cosmicArena) this.cosmicArena = new CosmicArenaLayer(this);
+    this.cosmicArena.spawn(width, height);
 
     // ── Edge vignette ─────────────────────────────────────────────────────────
     // Four dark bands at the world edges — depth cue matching ROUNDS ref.
@@ -631,7 +643,8 @@ export class MatchScene extends Phaser.Scene {
     this.clearRespawnText();
     const sec = Math.ceil(this.respawnRemainingMs / 1000);
     if (this.deathOverlay) {
-      this.deathOverlay.show(sec);
+      // Practice falls: no combat tip unless we invent one — silence is fine.
+      this.deathOverlay.show(sec, { tip: null, shareUrl: null });
     }
   }
 

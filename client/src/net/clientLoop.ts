@@ -26,6 +26,7 @@ import {
   PROTOCOL_VERSION,
   type ServerMessage,
 } from "./protocol.js";
+import type { SpectatorCamPose } from "../sim/spectatorDirector.js";
 import { applyDelta } from "./snapshotDelta.js";
 import { InterpolationBuffer } from "./interpolationBuffer.js";
 import type { Transport, TransportState } from "./transport.js";
@@ -206,6 +207,8 @@ export class ClientLoop {
   private accumulator = 0;
   private lastTickAt = 0;
   private lastSnapshotTick: Tick = Tick(0);
+  /** Latest server arena-spectator director pose (from snapshot.cam). */
+  private spectatorCam: SpectatorCamPose | null = null;
   private readonly remoteInterp = new Map<PlayerId, InterpolationBuffer<PlayerEntity>>();
   /**
    * EMA of (snapshot server time − local performance.now()) sampled at each
@@ -213,6 +216,17 @@ export class ClientLoop {
    * null until the first snapshot lands.
    */
   private serverClockOffsetMs: number | null = null;
+  /** Last remote render-clock value — the clock must never step backwards.
+   *  The server-clock EMA re-converges after a main-thread stall burst,
+   *  which used to rewind renderTime on the next frame → remote bodies
+   *  visibly moved BACKWARDS (the measured direction-reversal pops). */
+  private lastRemoteRenderTimeMs: number | null = null;
+  /** EMA of the gap between getRenderState calls (≈ render frame time).
+   *  Under load (clip encoders, OBS) frames run 45ms+; the interp delay
+   *  scales with this so renderTime keeps snapshot headroom instead of
+   *  constantly overrunning the buffer. */
+  private frameDtEmaMs = 0;
+  private lastRenderCallMs = 0;
 
   // Net stats bookkeeping. Ping/pong + RTT + snap-rate live on PingMonitor;
   // ClientLoop only owns the prediction-delta gauge.
@@ -238,6 +252,23 @@ export class ClientLoop {
 
   // ---- Local-player render smoothing state ----
   private readonly smoother: RenderSmoother;
+
+  /**
+   * Between-tick visual interpolation (Gaffer fixed-timestep α).
+   * Sim advances at 60Hz; display is often 120–144Hz. Without α the rig
+   * holds the last discrete sim pose and staircase-pops every step.
+   * After each stepOnce we keep the pre-step local pose as `prevLocal*` and
+   * blend toward the post-step pose with alpha = accumulator / STEP_MS.
+   * Reconcile resets prev=curr so RenderSmoother alone absorbs corrections.
+   */
+  private prevLocalX = 0;
+  private prevLocalY = 0;
+  private prevLocalVx = 0;
+  private prevLocalVy = 0;
+  private hasPrevLocal = false;
+  /** Wall-clock of last stepOnce — α = (now − this) / STEP_MS, not residual
+   *  accumulator (which is ~0 right after a step, so blend never ran). */
+  private lastStepAtMs = 0;
 
   // ---- Server-driven tick slew ----
   /**
@@ -326,6 +357,9 @@ export class ClientLoop {
   start(): void {
     if (this.interval) return;
     this.lastTickAt = performance.now();
+    // Backup driver when RAF is frozen (background tab). Primary pump is
+    // `pump()` from OnlineMatchScene.update after input sample so the same
+    // frame can apply keys → step → render (cuts a full RAF of input lag).
     this.interval = setInterval(() => this.tick(), STEP_MS);
     // Ping monitor runs on its own timer so RTT polling survives even
     // if sim ticks stall.
@@ -339,6 +373,16 @@ export class ClientLoop {
     }
     this.pingMonitor.stop();
     this.reconnect.cancel();
+  }
+
+  /**
+   * Drain the fixed-step accumulator with the latest setLocalInput.
+   * Call from the render loop AFTER sampling keys so prediction responds
+   * in the same frame (setInterval alone adds up to ~STEP_MS of lag).
+   * Safe to call every RAF; no-ops when accumulator < STEP_MS.
+   */
+  pump(): void {
+    this.tick();
   }
 
   /**
@@ -360,9 +404,12 @@ export class ClientLoop {
   /**
    * Snapshot state used by the renderer.
    *
-   * Local player: predicted position with the smoothing offset applied
-   * (rendered = predicted + offset, where offset decays to zero via per-band
-   * exponential τ — see renderSmoother.ts).
+   * Local player: between-tick FORWARD extrapolation from the latest
+   * predicted pose (curr + lastStepDelta * α) plus reconcile smoother
+   * offset. α = accumulator/STEP_MS. Unlike classic Gaffer
+   * lerp(prev,curr,α) this keeps 0 sim-tick of visual lag at α=0 (show
+   * latest prediction) while still gliding between 60Hz steps on high-Hz
+   * displays. Reconcile offset still decays via per-band τ.
    *
    * Remote players: sampled from their interpolation buffers at
    * estimated-server-now − INTERP_DELAY_MS (Gambetta entity interpolation).
@@ -373,6 +420,78 @@ export class ClientLoop {
    *
    * Clone if you intend to mutate.
    */
+  /**
+   * Server arena-spectator director pose from the latest snapshot, or null
+   * until the first snap with `cam` arrives. Broadcast clients follow this.
+   */
+  getSpectatorCam(): SpectatorCamPose | null {
+    return this.spectatorCam;
+  }
+
+  /**
+   * 0..1 fraction of a sim step since last stepOnce (wall clock).
+   * Residual `accumulator` is wrong for this: after a step it's ~0 every
+   * paint until the next interval, so α never ramped and motion stayed
+   * staircase. Wall-clock α grows 0→1 between steps on every RAF.
+   */
+  private renderAlpha(nowMs: number = performance.now()): number {
+    if (this.lastStepAtMs <= 0) return 0;
+    // Cap at 2 steps: at healthy 60fps α stays <1; on slow frames (clip
+    // encoders / OBS load stretch frames to 45ms+) the old cap of 1 left the
+    // local player rendered up to a full step stale — visible as the "glitchy
+    // liquid" stutter. Two steps covers a 33ms frame gap; genuine stalls
+    // beyond that still clamp instead of projecting into walls.
+    return Math.min(2, Math.max(0, (nowMs - this.lastStepAtMs) / STEP_MS));
+  }
+
+  /**
+   * Visual local-player pose: forward-extrapolate from the latest predicted
+   * sample using the last sim step delta, then add smoother offset.
+   *
+   *   render = curr + (curr − prev) * α + offset
+   *
+   * α=0 right after a step → exact latest prediction (responsive).
+   * α→1 just before next step → one-step projection (smooth on 120Hz+).
+   * Shared with reconcile prevRendered capture.
+   */
+  private localRenderPose(
+    local: PlayerEntity,
+    offsetX: number,
+    offsetY: number,
+    nowMs: number = performance.now(),
+  ): { x: number; y: number; vx: number; vy: number } {
+    if (!this.hasPrevLocal) {
+      return {
+        x: local.x + offsetX,
+        y: local.y + offsetY,
+        vx: local.vx,
+        vy: local.vy,
+      };
+    }
+    // Cap extrapolation so a stall/tab-spike can't project more than two steps.
+    const t = this.renderAlpha(nowMs);
+    return {
+      x: local.x + (local.x - this.prevLocalX) * t + offsetX,
+      y: local.y + (local.y - this.prevLocalY) * t + offsetY,
+      vx: local.vx + (local.vx - this.prevLocalVx) * t,
+      vy: local.vy + (local.vy - this.prevLocalVy) * t,
+    };
+  }
+
+  private capturePrevLocalFrom(local: PlayerEntity | undefined): void {
+    if (!local) return;
+    this.prevLocalX = local.x;
+    this.prevLocalY = local.y;
+    this.prevLocalVx = local.vx;
+    this.prevLocalVy = local.vy;
+    this.hasPrevLocal = true;
+  }
+
+  /** After reconcile: kill α trail so only RenderSmoother owns the continuity. */
+  private resetLocalRenderTrail(local: PlayerEntity | undefined): void {
+    this.capturePrevLocalFrom(local);
+  }
+
   getRenderState(): WorldState | null {
     if (!this.predictedState) return null;
     const now = performance.now();
@@ -381,17 +500,22 @@ export class ClientLoop {
     let players = this.predictedState.players;
     let cloned = false;
 
-    // Local-player render smoothing.
-    if (this.smoother.hasOffset()) {
-      const local = players[this.playerId];
-      if (local) {
-        const offset = this.smoother.offset();
+    // Local-player: between-tick α + reconcile error offset.
+    const local = players[this.playerId];
+    if (local) {
+      const offset = this.smoother.offset();
+      const needsBlend =
+        this.hasPrevLocal || offset.x !== 0 || offset.y !== 0;
+      if (needsBlend) {
+        const pose = this.localRenderPose(local, offset.x, offset.y, now);
         players = {
           ...players,
           [this.playerId]: {
             ...local,
-            x: local.x + offset.x,
-            y: local.y + offset.y,
+            x: pose.x,
+            y: pose.y,
+            vx: pose.vx,
+            vy: pose.vy,
           },
         };
         cloned = true;
@@ -400,7 +524,7 @@ export class ClientLoop {
 
     // Remote-player entity interpolation.
     if (this.serverClockOffsetMs !== null) {
-      const renderTimeMs = now + this.serverClockOffsetMs - INTERP_DELAY_MS;
+      const renderTimeMs = this.remoteRenderTimeMs(now);
       for (const [pid, buffer] of this.remoteInterp) {
         // Only render players the sim still knows about — buffers for
         // departed / out-of-interest players are pruned on snapshot apply.
@@ -417,6 +541,36 @@ export class ClientLoop {
 
     if (!cloned) return this.predictedState;
     return { ...this.predictedState, players };
+  }
+
+  /**
+   * Remote render clock for this frame: estimated-server-now minus an
+   * ADAPTIVE interpolation delay, clamped monotonic.
+   *
+   * Delay: INTERP_DELAY_MS is tuned for a healthy 60fps client. When render
+   * frames stretch (clip encoders, OBS on the same box), each frame consumes
+   * multiple snapshot intervals and the fixed delay leaves no headroom —
+   * renderTime overruns the buffer every frame (freeze-then-leap). Scale the
+   * delay with the observed frame-time EMA, up to +100ms.
+   *
+   * Monotonic: the server-clock EMA re-converges after stall bursts, which
+   * can move the computed clock backwards between frames. Never render time
+   * backwards — hold the floor and let real time catch up.
+   */
+  private remoteRenderTimeMs(nowMs: number): number {
+    if (this.lastRenderCallMs > 0) {
+      const dt = Math.min(200, nowMs - this.lastRenderCallMs);
+      this.frameDtEmaMs =
+        this.frameDtEmaMs === 0 ? dt : this.frameDtEmaMs + 0.1 * (dt - this.frameDtEmaMs);
+    }
+    this.lastRenderCallMs = nowMs;
+    const extraDelayMs = Math.min(100, Math.max(0, 2 * (this.frameDtEmaMs - 17)));
+    let rt = nowMs + (this.serverClockOffsetMs ?? 0) - (INTERP_DELAY_MS + extraDelayMs);
+    if (this.lastRemoteRenderTimeMs !== null && rt < this.lastRemoteRenderTimeMs) {
+      rt = this.lastRemoteRenderTimeMs;
+    }
+    this.lastRemoteRenderTimeMs = rt;
+    return rt;
   }
 
   /** Look up a remote player at a given render time (ms in server clock). */
@@ -515,6 +669,9 @@ export class ClientLoop {
 
   private stepOnce(): void {
     if (!this.predictedState || !this.runtime) return;
+    // Capture pre-step local pose for between-tick render α.
+    this.capturePrevLocalFrom(this.predictedState.players[this.playerId]);
+    this.lastStepAtMs = performance.now();
     const input: InputFrame = {
       seq: (() => { const s = this.nextInputSeq; this.nextInputSeq = InputSeq(this.nextInputSeq + 1); return s; })(),
       tick: this.predictedState.tick,
@@ -681,6 +838,7 @@ export class ClientLoop {
 
     this.authoritativeState = resolvedState;
     this.lastSnapshotTick = message.tick;
+    if (message.cam) this.spectatorCam = message.cam;
     this.pingMonitor.noteSnapshotArrived();
 
     // Server-clock offset sample for the remote-interpolation render clock.
@@ -711,14 +869,15 @@ export class ClientLoop {
     }
 
     // Capture the position the renderer was showing for the local player
-    // BEFORE we rewind. We need this to compute the smoothing offset that
-    // keeps the rendered position visually continuous across reconcile.
+    // BEFORE we rewind (α-blended + offset — same formula as getRenderState).
     const prevLocal = this.predictedState?.players[this.playerId];
     const offset = this.smoother.offset();
-    const prevRenderedX =
-      prevLocal !== undefined ? prevLocal.x + offset.x : null;
-    const prevRenderedY =
-      prevLocal !== undefined ? prevLocal.y + offset.y : null;
+    const prevRendered =
+      prevLocal !== undefined
+        ? this.localRenderPose(prevLocal, offset.x, offset.y, performance.now())
+        : null;
+    const prevRenderedX = prevRendered?.x ?? null;
+    const prevRenderedY = prevRendered?.y ?? null;
 
     // ---- Per-entity reconcile ----
     //
@@ -880,9 +1039,13 @@ export class ClientLoop {
 
     // Recompute the smoothing offset so rendered = previous-rendered, then
     // it decays to the new predicted position via per-band τ.
+    // Reset α trail to the new predicted pose so we don't double-blend
+    // (smoother owns post-reconcile continuity; α owns between-tick glide).
     const newLocal = this.predictedState?.players[this.playerId];
     if (newLocal) {
       this.smoother.applyReconcile(prevRenderedX, prevRenderedY, newLocal.x, newLocal.y);
+      this.resetLocalRenderTrail(newLocal);
+      this.lastStepAtMs = performance.now();
     }
 
     // Push remote players into their interpolation buffers.

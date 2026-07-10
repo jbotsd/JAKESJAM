@@ -8,6 +8,18 @@
          catches module-load failures too. Harmless when nothing throws. -->
     <script>
       (function () {
+        // Ignore wallet/extension noise (Phantom, MetaMask, etc. fight over
+        // window.ethereum and throw "Cannot redefine property: ethereum").
+        // Those must NOT paint our full-screen boot overlay — looks like a
+        // game black-screen crash but the game never ran the bad code.
+        function isExtensionNoise(msg, file, stack) {
+          var s = String(msg || "") + "\n" + String(file || "") + "\n" + String(stack || "");
+          if (/chrome-extension:|moz-extension:|safari-extension:|webkit-masked-url:/i.test(s))
+            return true;
+          if (/Cannot redefine property:\s*ethereum/i.test(s)) return true;
+          if (/evmAsk\.js|inpage\.js|contentscript/i.test(s)) return true;
+          return false;
+        }
         function show(label, detail) {
           var d = document.getElementById("jj-boot-err");
           if (!d) {
@@ -20,11 +32,16 @@
           d.textContent += label + ": " + detail + "\n\n";
         }
         window.addEventListener("error", function (e) {
-          show("ERROR", (e.message || "") + "\n" + ((e.error && e.error.stack) || e.filename || ""));
+          var stack = (e.error && e.error.stack) || "";
+          if (isExtensionNoise(e.message, e.filename, stack)) return;
+          show("ERROR", (e.message || "") + "\n" + (stack || e.filename || ""));
         });
         window.addEventListener("unhandledrejection", function (e) {
           var r = e.reason || {};
-          show("PROMISE", typeof r === "string" ? r : (r.message || "") + "\n" + (r.stack || ""));
+          var msg = typeof r === "string" ? r : r.message || "";
+          var stack = typeof r === "object" && r ? r.stack || "" : "";
+          if (isExtensionNoise(msg, "", stack)) return;
+          show("PROMISE", msg + "\n" + stack);
         });
       })();
     </script>
@@ -61,7 +78,7 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <meta
       name="description"
-      content="Crystal-arena brawler. Predict, parry, draft. Jump straight into the live world — no install."
+      content="Crystal-arena brawler. Predict, parry, draft. Drop into Hot Lobby — no install."
     />
     <title>JAKESJAM — crystal-arena brawler</title>
 

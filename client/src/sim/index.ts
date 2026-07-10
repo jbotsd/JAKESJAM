@@ -2,6 +2,21 @@ export * from './types.js';
 export * from './constants.js';
 export { World } from './World.js';
 export {
+  createDirectorState,
+  stepSpectatorDirector,
+  directorToPose,
+  defaultDirectorBounds,
+  DIRECTOR_BASE_ZOOM,
+  DIRECTOR_MIN_ZOOM,
+  DIRECTOR_MAX_ZOOM,
+} from './spectatorDirector.js';
+export type {
+  DirectorState,
+  DirectorBounds,
+  SpectatorCamPose,
+  SpectatorMode,
+} from './spectatorDirector.js';
+export {
   aabbOverlap,
   circleOverlapsAABB,
   circleHitsAnyCached,

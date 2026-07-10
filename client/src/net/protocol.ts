@@ -4,6 +4,7 @@
 
 import { decode, encode } from "@msgpack/msgpack";
 import type { InputSeq, SimEvent, Tick, WorldState } from "../sim/types.js";
+import type { SpectatorCamPose } from "../sim/spectatorDirector.js";
 import type { DeltaPayload } from "./snapshotDelta.js";
 
 // PROTOCOL_VERSION = 3 marks the wasm-orchestrator wire format
@@ -88,6 +89,12 @@ export type FullSnapshot = {
    * Capped server-side to ±MAX_SLEW_MS_PER_TICK (1 ms). Omitted when 0.
    */
   tickAdjustMs?: number;
+  /**
+   * Server arena-spectator director pose (esports observer cam). Optional —
+   * older clients ignore. Broadcast clients (`?spectator=1` / F9) follow this
+   * instead of the local player.
+   */
+  cam?: SpectatorCamPose;
 };
 
 /**
@@ -110,6 +117,8 @@ export type DeltaSnapshot = {
    * Capped server-side to ±MAX_SLEW_MS_PER_TICK (1 ms). Omitted when 0.
    */
   tickAdjustMs?: number;
+  /** Server arena-spectator director pose — see FullSnapshot.cam. */
+  cam?: SpectatorCamPose;
 };
 
 /**

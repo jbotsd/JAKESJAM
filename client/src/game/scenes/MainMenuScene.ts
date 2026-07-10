@@ -11,41 +11,22 @@ export class MainMenuScene extends Phaser.Scene {
   }
 
   create() {
+    // Atmosphere-only backdrop for the DOM shell HOME (sci-fi gnostic void).
+    // Product CTAs live exclusively in the DOM shell — no Join/Host/Practice here.
     const { width, height } = this.scale;
-    this.add.rectangle(width / 2, height / 2, width, height, 0x0b0e14);
-    this.add.rectangle(width / 2, height - 58, width - 96, 30, 0x2a3242);
-    this.add.rectangle(190, height - 122, 180, 22, 0x2a3242);
-    this.add.rectangle(width - 210, height - 172, 220, 22, 0x2a3242);
+    this.add.rectangle(width / 2, height / 2, width, height, 0x0a0e1a);
+    this.add.rectangle(width / 2, height - 58, width - 96, 30, 0x141b2d);
+    this.add.rectangle(190, height - 122, 180, 22, 0x161d2f);
+    this.add.rectangle(width - 210, height - 172, 220, 22, 0x161d2f);
 
-    this.add.circle(width - 260, height - 190, 7, 0xffd166);
-    this.add.circle(width - 235, height - 190, 7, 0xffd166);
-    this.add.circle(width - 210, height - 190, 7, 0xffd166);
+    this.add.circle(width - 260, height - 190, 7, 0xc9a84c);
+    this.add.circle(width - 235, height - 190, 7, 0xc9a84c);
+    this.add.circle(width - 210, height - 190, 7, 0x8ff8ff);
     this.previewRig = new ProceduralPlayerRig(this, {
       color: 0x50e3c2,
-      name: "jakesjam",
+      name: "vessel",
       scale: 0.92,
-    });
-
-    this.add
-      .text(48, 42, "JAKESJAM", {
-        color: "#f7fbff",
-        fontFamily: "Inter, Arial, sans-serif",
-        fontSize: "38px",
-        fontStyle: "900",
-      })
-      .setShadow(0, 4, "#000000", 10);
-
-    this.add.text(52, 94, "Pick character, chaos, and room.", {
-      color: "#9ba7b8",
-      fontFamily: "Inter, Arial, sans-serif",
-      fontSize: "18px",
-    });
-
-    this.add.text(52, height - 42, "Practice starts locally. Host/join starts the room flow.", {
-      color: "#50e3c2",
-      fontFamily: "Inter, Arial, sans-serif",
-      fontSize: "14px",
-      fontStyle: "700",
+      accentColor: 0x8ff8ff,
     });
   }
 

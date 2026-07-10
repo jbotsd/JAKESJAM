@@ -226,7 +226,7 @@ const CELL_LAYOUTS: CellLayout[] = [
 export const boxworks: BoxworksMapDefinition = {
   id: "boxworks",
   name: "Boxworks",
-  arenaTheme: "jadeIsles",
+  arenaTheme: "voidVessel",
   size: { x: CELL_W, y: CELL_H },
   spawns: [
     { x: 200, y: 432 },

@@ -1,6 +1,6 @@
 import Phaser from "phaser";
 import "./style.css";
-import { gameConfig } from "./game/GameConfig";
+import { buildGameConfig } from "./game/GameConfig";
 import { LobbyController } from "./game/ui/LobbyController";
 import { MatchStatusBadge } from "./game/ui/MatchStatusBadge";
 import { fetchWorldSummary } from "./net/worldClient";
@@ -14,7 +14,20 @@ import {
 } from "./sim/wasm/runtime";
 import { installWindowProbe } from "./debug/wasmStateProbe";
 import { installBotDriver } from "./debug/botDriver";
-import { isClipsConsentStored, setClipsEnabled } from "./game/highlights/clipConsent";
+import {
+  isClipsConsentStored,
+  isClipsEnabled,
+  setClipsEnabled,
+} from "./game/highlights/clipConsent";
+import { ShellController } from "./shell/ShellController";
+import {
+  emitClipSaveNow,
+  emitClipsConsentChanged,
+  emitMatchStarted,
+  ShellEvents,
+} from "./shell/events";
+import { showClipShareToast } from "./game/ui/ClipShareToast";
+import { globalClipSession } from "./shell/clipSession";
 import {
   applyWasmWorldFlag,
   applyWasmWorldStepFullSync,
@@ -23,6 +36,12 @@ import {
   preloadWasmWorldSim,
   setWorldStatics as setWorldStaticsImport,
 } from "./sim/wasm/worldWasmBackend";
+import {
+  isVoiceWanted,
+  startVoiceReactive,
+  tickVoiceReactive,
+  writeMusicBands,
+} from "./game/systems/SonicField";
 
 // Phase F3 Zig→WASM substrate. RNG, collision, and player physics
 // run in Zig wasm by DEFAULT. Boot-load the wasm sim ASAP so it's
@@ -86,22 +105,75 @@ if (!app) {
   throw new Error("Missing #app root element.");
 }
 
+// ── Kiosk / stream shell ──────────────────────────────────────────────
+// Chromium --app= + Hyprland fullscreen already hide OS/browser chrome.
+// ?kiosk=1 tightens the web surface: no cursor idle noise, Fullscreen API,
+// canvas edge-to-edge. Used by stream-kit/launch-game-kiosk.sh.
+const isKioskMode = (() => {
+  try {
+    return new URLSearchParams(window.location.search).get("kiosk") === "1";
+  } catch {
+    return false;
+  }
+})();
+if (isKioskMode) {
+  document.documentElement.classList.add("kiosk");
+  document.body.classList.add("kiosk");
+  document.title = "JAKESJAM";
+  let cursorTimer = 0;
+  const hideCursor = () => {
+    document.body.classList.remove("kiosk-show-cursor");
+  };
+  const bumpCursor = () => {
+    document.body.classList.add("kiosk-show-cursor");
+    window.clearTimeout(cursorTimer);
+    cursorTimer = window.setTimeout(hideCursor, 1800);
+  };
+  window.addEventListener("pointermove", bumpCursor, { passive: true });
+  window.addEventListener("pointerdown", bumpCursor, { passive: true });
+  // Fullscreen API (hides remaining shell if any) after first gesture.
+  const enterFs = () => {
+    const el = document.documentElement;
+    const req =
+      el.requestFullscreen?.bind(el) ??
+      (el as HTMLElement & { webkitRequestFullscreen?: () => void }).webkitRequestFullscreen?.bind(el);
+    try {
+      void req?.();
+    } catch {
+      /* ignore */
+    }
+    window.removeEventListener("pointerdown", enterFs);
+    window.removeEventListener("keydown", enterFs);
+  };
+  window.addEventListener("pointerdown", enterFs, { once: true });
+  window.addEventListener("keydown", enterFs, { once: true });
+}
+
 app.innerHTML = `
-  <section class="splash-screen" data-splash>
+  <section class="splash-screen" data-splash data-shell-home>
     <div class="splash-stage">
-      <p class="splash-kicker">BOXWORKS ONLINE</p>
+      <p class="splash-kicker">ELYAD</p>
       <h1>JAKESJAM</h1>
-      <p class="splash-copy">Practice solo, create a room, or jump into one with a code.</p>
-      <div class="splash-actions">
-        <button data-menu-world type="button" class="primary">Join World</button>
-        <button data-menu-practice type="button">Practice</button>
-        <button data-menu-host type="button">Create Room</button>
-        <button data-menu-join type="button">Join Room</button>
-        <button data-menu-options type="button">Options</button>
+      <p class="splash-copy">Crystal-tech arena. Draft between rounds. Spawn in seconds.</p>
+      <div class="splash-actions splash-actions--primary">
+        <button data-menu-world type="button" class="primary shell-cta-primary">Hot Lobby</button>
+      </div>
+      <div class="splash-actions splash-actions--secondary">
+        <button data-menu-practice type="button" class="shell-btn-secondary">Practice</button>
+        <button data-menu-host type="button" class="shell-btn-secondary">Private room</button>
+        <button data-menu-join type="button" class="shell-btn-secondary">Join room</button>
+        <button data-menu-clips type="button" class="shell-btn-secondary">Clips</button>
+        <button data-menu-options type="button" class="shell-btn-secondary">Settings</button>
       </div>
       <div class="splash-status-slot" data-world-status></div>
-      <section class="options-panel" data-options hidden>
-        <h2>Options</h2>
+    </div>
+  </section>
+  <section class="shell-layer options-panel" data-options data-shell-settings hidden>
+    <div class="shell-frame">
+      <p class="shell-kicker">VESSEL</p>
+      <h2>Settings</h2>
+      <div class="shell-section">
+        <h3>Audio</h3>
         <label>
           Music Volume
           <input data-music-volume type="range" min="0" max="100" value="65" />
@@ -110,88 +182,137 @@ app.innerHTML = `
           <input data-music-muted type="checkbox" />
           Mute Music
         </label>
+      </div>
+      <div class="shell-section">
+        <h3>Clips</h3>
         <label class="option-check">
           <input data-clips-enabled type="checkbox" />
-          🎬 Auto-clip my highlights (records your play, share-ready vertical video)
+          Auto-clip my highlights
         </label>
-        <button data-options-back type="button">Back</button>
-      </section>
+        <p class="shell-hint">Records your gameplay to this server for shareable vertical video. On by default — uncheck to opt out.</p>
+        <button data-open-clips type="button" class="shell-btn-secondary">Open clips</button>
+      </div>
+      <div class="shell-section">
+        <h3>Controls</h3>
+        <p class="shell-hint">Move WASD · Aim mouse · Fire left-click · Parry right-click · Jump space</p>
+        <p class="shell-hint">Touch: left stick move · right zone aim/fire · on-screen parry/jump</p>
+      </div>
+      <button data-options-back type="button" class="shell-btn-secondary">Back</button>
     </div>
   </section>
+  <section class="shell-layer clips-panel" data-shell-clips hidden>
+    <div class="shell-frame">
+      <p class="shell-kicker">HIGHLIGHTS</p>
+      <h2>Clips</h2>
+      <p class="shell-hint" data-clips-save-status>
+        Auto: multi-kill / parry-kill / chain · or tap Save clip now in Hot Lobby.
+      </p>
+      <button data-clips-save-now type="button" class="primary">Save clip now</button>
+      <div data-clips-list class="shell-clips-list"></div>
+      <button data-clips-back type="button" class="shell-btn-secondary">Back</button>
+    </div>
+  </section>
+  <section class="shell-layer pause-panel" data-shell-pause hidden>
+    <div class="shell-frame">
+      <p class="shell-kicker">APERTURE</p>
+      <h2>Paused</h2>
+      <p class="shell-hint">You are still in Hot Lobby. Resume to keep playing, or leave.</p>
+      <p class="shell-hint" data-pause-clips-status>Clips: off</p>
+      <div class="shell-pause-actions">
+        <button data-pause-resume type="button" class="primary">Resume</button>
+        <button data-pause-toggle-clips type="button" class="shell-btn-secondary">Enable auto-clips</button>
+        <button data-pause-save-clip type="button" class="shell-btn-secondary">Save clip now</button>
+        <button data-pause-settings type="button" class="shell-btn-secondary">Settings</button>
+        <button data-pause-clips type="button" class="shell-btn-secondary">Clip library</button>
+        <button data-pause-leave type="button" class="btn-danger">Leave</button>
+      </div>
+      <p class="shell-hint">Tip: Esc · Save clip now (manual) · multi-kill/parry/chain auto-toast.</p>
+    </div>
+  </section>
+  <!-- Always-on match chrome: world auto-join skips HOME, so clips must be reachable here. -->
+  <div class="match-chrome" data-match-chrome hidden>
+    <button type="button" class="match-chrome-btn" data-match-menu title="Menu (Esc)">Menu</button>
+    <button type="button" class="match-chrome-btn match-chrome-clips" data-match-clips title="Clips">
+      <span class="match-chrome-dot" data-match-clips-dot></span>
+      <span data-match-clips-label>Clips off</span>
+    </button>
+  </div>
   <main class="app-shell">
     <div id="game-root" class="game-root"></div>
-    <aside class="lobby-panel lobby-panel--hidden" data-lobby-panel aria-label="Room controls">
-      <div class="brand-row">
-        <div>
-          <h1>JAKESJAM</h1>
-          <p class="status-line" data-status>Booting client...</p>
+    <aside class="lobby-panel lobby-panel--hidden shell-room" data-lobby-panel data-shell-room aria-label="Private room">
+      <div class="shell-frame shell-frame--room">
+        <p class="shell-kicker">PRIVATE CHANNEL</p>
+        <h2>Private Room</h2>
+        <p class="status-line" data-status>Booting channel...</p>
+
+        <form class="player-form" data-player-form>
+          <label>
+            Callsign
+            <input data-player-name maxlength="24" autocomplete="nickname" />
+          </label>
+          <label>
+            Accent
+            <input data-player-color type="color" value="#50e3c2" />
+          </label>
+          <label>
+            Vessel
+            <select data-player-character>
+              <option value="balanced">Balanced</option>
+              <option value="heavy">Heavy</option>
+              <option value="sprinter">Sprinter</option>
+              <option value="shielded">Shielded</option>
+            </select>
+          </label>
+        </form>
+
+        <div class="room-actions" data-room-actions>
+          <button data-create-room type="button" class="primary">Host private room</button>
+          <button data-back-to-splash type="button" class="shell-btn-secondary">← Home</button>
         </div>
-        <span class="build-tag">M9</span>
+        <!-- hidden practice hook for legacy LobbyController (practice is on HOME) -->
+        <button data-practice type="button" hidden>Practice</button>
+
+        <section class="player-connect" data-player-connect>
+          <h3 class="shell-section-title">Join with code</h3>
+          <div class="join-row">
+            <input data-room-code maxlength="6" placeholder="CODE" aria-label="Room code" autocomplete="off" />
+            <button data-join-room type="button" class="shell-btn-secondary">Join</button>
+          </div>
+          <p class="shell-hint">Share link or 6-letter code. No Convex — runs on this server.</p>
+        </section>
+
+        <section class="active-room" data-active-room hidden>
+          <div class="room-code-row">
+            <span>Channel</span>
+            <strong data-active-code>------</strong>
+            <button data-room-share type="button" class="shell-btn-secondary room-share-btn">Copy link</button>
+          </div>
+          <div class="room-status-slot" data-room-status></div>
+          <div class="shell-pause-actions">
+            <button data-ready-toggle type="button" class="shell-btn-secondary">Ready</button>
+            <button data-start-match type="button" class="primary">Start match</button>
+            <button data-leave-room type="button" class="btn-danger">Leave</button>
+          </div>
+        </section>
+
+        <section class="map-picker-box" data-map-picker aria-label="Map selection"></section>
+
+        <section class="chaos-box" aria-label="Party modifiers">
+          <h3 class="shell-section-title">Chaos</h3>
+          <label><input data-chaos-modifier type="checkbox" value="low-gravity" /> Low Grav</label>
+          <label><input data-chaos-modifier type="checkbox" value="slow-motion" /> Slo Mo</label>
+          <label><input data-chaos-modifier type="checkbox" value="golden-gun" /> Golden Gun</label>
+          <label><input data-chaos-modifier type="checkbox" value="slappers-only" /> Slappers Only</label>
+          <label><input data-chaos-modifier type="checkbox" value="fire-hazard" /> Fire Hazard</label>
+          <label><input data-chaos-modifier type="checkbox" value="random-shapes" /> Random Shapes</label>
+          <label><input data-chaos-modifier type="checkbox" value="max-recoil" /> Max Recoil</label>
+        </section>
+
+        <section class="players-box" aria-label="Players in room">
+          <h3 class="shell-section-title">Squad</h3>
+          <ul data-player-list></ul>
+        </section>
       </div>
-
-      <form class="player-form" data-player-form>
-        <label>
-          Name
-          <input data-player-name maxlength="24" autocomplete="nickname" />
-        </label>
-        <label>
-          Colour
-          <input data-player-color type="color" value="#50e3c2" />
-        </label>
-        <label>
-          Character
-          <select data-player-character>
-            <option value="balanced">Balanced</option>
-            <option value="heavy">Heavy</option>
-            <option value="sprinter">Sprinter</option>
-            <option value="shielded">Shielded</option>
-          </select>
-        </label>
-      </form>
-
-      <div class="room-actions" data-room-actions>
-        <button data-practice type="button">Practice</button>
-        <button data-create-room type="button">Create Room</button>
-        <button data-back-to-splash type="button" class="btn-ghost">← Splash</button>
-      </div>
-
-      <section class="player-connect" data-player-connect>
-        <h2>Join Room</h2>
-        <div class="join-row">
-          <input data-room-code maxlength="6" placeholder="ROOM CODE" aria-label="Room code" />
-          <button data-join-room type="button">Join</button>
-        </div>
-      </section>
-
-      <section class="active-room" data-active-room hidden>
-        <div class="room-code-row">
-          <span>Room</span>
-          <strong data-active-code>------</strong>
-          <button data-room-share type="button" class="room-share-btn">Copy link</button>
-        </div>
-        <div class="room-status-slot" data-room-status></div>
-        <button data-ready-toggle type="button">Ready</button>
-        <button data-start-match type="button">Start Match</button>
-        <button data-leave-room type="button" class="btn-danger">Leave Room</button>
-      </section>
-
-      <section class="map-picker-box" data-map-picker aria-label="Map selection"></section>
-
-      <section class="chaos-box" aria-label="Party modifiers">
-        <h2>Chaos</h2>
-        <label><input data-chaos-modifier type="checkbox" value="low-gravity" /> Low Grav</label>
-        <label><input data-chaos-modifier type="checkbox" value="slow-motion" /> Slo Mo</label>
-        <label><input data-chaos-modifier type="checkbox" value="golden-gun" /> Golden Gun</label>
-        <label><input data-chaos-modifier type="checkbox" value="slappers-only" /> Slappers Only</label>
-        <label><input data-chaos-modifier type="checkbox" value="fire-hazard" /> Fire Hazard</label>
-        <label><input data-chaos-modifier type="checkbox" value="random-shapes" /> Random Shapes</label>
-        <label><input data-chaos-modifier type="checkbox" value="max-recoil" /> Max Recoil</label>
-      </section>
-
-      <section class="players-box" aria-label="Players in room">
-        <h2>Players</h2>
-        <ul data-player-list></ul>
-      </section>
     </aside>
   </main>
   <div class="orientation-hint" data-orientation-hint aria-hidden="true">
@@ -231,7 +352,7 @@ globalWithGame.__jakesjam_music__?.forEach((audio) => {
   audio.currentTime = 0;
 });
 
-const game = new Phaser.Game(gameConfig);
+const game = new Phaser.Game(buildGameConfig());
 // Diagnostic: expose the Phaser game on window so e2e specs can walk
 // the scene's display list to find render-time leaks. No production
 // behaviour depends on this — pure introspection hook.
@@ -309,8 +430,35 @@ const lobbyController = new LobbyController(app);
 const splash = queryRequired<HTMLElement>("[data-splash]");
 const lobbyPanel = queryRequired<HTMLElement>("[data-lobby-panel]");
 const optionsPanel = queryRequired<HTMLElement>("[data-options]");
+const clipsPanel = queryRequired<HTMLElement>("[data-shell-clips]");
+const pausePanel = queryRequired<HTMLElement>("[data-shell-pause]");
+const clipsListEl = queryRequired<HTMLElement>("[data-clips-list]");
 const musicVolumeInput = queryRequired<HTMLInputElement>("[data-music-volume]");
 const musicMutedInput = queryRequired<HTMLInputElement>("[data-music-muted]");
+
+const shell = new ShellController({
+  dom: {
+    home: splash,
+    room: lobbyPanel,
+    settings: optionsPanel,
+    clips: clipsPanel,
+    pause: pausePanel,
+    clipsList: clipsListEl,
+  },
+  onEnterWorld: () => joinWorld(),
+  onEnterPractice: () => {
+    startMenuMusic();
+    shell.setMatchMode("practice");
+    lobbyController.startPracticeFromMenu();
+  },
+  onEnterRoom: (mode) => {
+    startMenuMusic();
+    shell.goto("room");
+    if (mode === "host") lobbyController.focusCreateRoom();
+    else lobbyController.focusJoinRoom();
+  },
+  onLeaveMatch: () => leaveMatchToHome(),
+});
 // ── Soundtrack state ─────────────────────────────────────────────────────
 // Two tracks that CROSSFADE rather than hard-cut: the "Jakes Jam" theme
 // underscores menu/lobby; the "bassradian" loops drive world/match. A context
@@ -393,11 +541,21 @@ worldLimiter.knee.value = 3;
 worldLimiter.ratio.value = 20;
 worldLimiter.attack.value = 0.003;
 worldLimiter.release.value = 0.25;
-// Graph: element → bass shelf → swell gain → limiter → out.
+// Analyser for arena juice (CosmicArenaLayer) — frequency bands + beat.
+// Sits after swell so we hear the same mix the player hears.
+const musicAnalyser = audioCtx.createAnalyser();
+musicAnalyser.fftSize = 256;
+// Low smoothing → snappy arena response (was 0.72, laggy).
+musicAnalyser.smoothingTimeConstant = 0.35;
+const musicFreqBins = new Uint8Array(musicAnalyser.frequencyBinCount);
+const musicTimeBins = new Uint8Array(musicAnalyser.fftSize);
+
+// Graph: element → bass shelf → swell gain → analyser → limiter → out.
 audioCtx
   .createMediaElementSource(worldMusic)
   .connect(worldBassFilter)
   .connect(worldSwellGain)
+  .connect(musicAnalyser)
   .connect(worldLimiter)
   .connect(audioCtx.destination);
 // menuMusic doesn't need the filter graph, but once ANY element on the page
@@ -426,6 +584,24 @@ const PEAK_SWELL = 0.9; // barely louder at peak
 const INTENSITY_ATTACK = 0.1;
 const INTENSITY_RELEASE = 0.03;
 let smoothedIntensity = 0;
+// Smoothed bands for arena pulse (exported via jakesjam:music-level).
+let smBass = 0;
+let smMid = 0;
+let smHigh = 0;
+let smRms = 0;
+let prevBass = 0;
+let beatEnv = 0;
+const MUSIC_LEVEL_EVENT = "jakesjam:music-level";
+
+function bandMean(data: Uint8Array, i0: number, i1: number): number {
+  let s = 0;
+  const a = Math.max(0, i0 | 0);
+  const b = Math.min(data.length, i1 | 0);
+  if (b <= a) return 0;
+  for (let i = a; i < b; i++) s += data[i]!;
+  return s / (b - a) / 255;
+}
+
 function tickMusicIntensity() {
   const k = targetIntensity > smoothedIntensity ? INTENSITY_ATTACK : INTENSITY_RELEASE;
   smoothedIntensity += (targetIntensity - smoothedIntensity) * k;
@@ -434,9 +610,80 @@ function tickMusicIntensity() {
   if (musicContext === "world" && !worldMusic.paused) {
     worldBassFilter.gain.value = smoothedIntensity * MAX_BASS_GAIN_DB;
     worldSwellGain.gain.value = REST_SWELL + smoothedIntensity * (PEAK_SWELL - REST_SWELL);
+
+    // ── Live amplitude for cosmic arena (bass / mid / high / beat) ──
+    if (audioCtx.state === "running") {
+      musicAnalyser.getByteFrequencyData(musicFreqBins);
+      musicAnalyser.getByteTimeDomainData(musicTimeBins);
+      const n = musicFreqBins.length;
+      // fftSize 256 → ~86 Hz/bin at 44.1k; bands approximate
+      const bass = bandMean(musicFreqBins, 1, Math.max(2, Math.floor(n * 0.08)));
+      const mid = bandMean(musicFreqBins, Math.floor(n * 0.08), Math.floor(n * 0.35));
+      const high = bandMean(musicFreqBins, Math.floor(n * 0.35), Math.floor(n * 0.75));
+      let peak = 0;
+      for (let i = 0; i < musicTimeBins.length; i++) {
+        const v = Math.abs((musicTimeBins[i]! - 128) / 128);
+        if (v > peak) peak = v;
+      }
+      const rms = peak;
+      // Expand quiet tracks; gamma < 1 lifts lows for responsive geometry.
+      const lift = (v: number) => Math.min(1, Math.pow(Math.max(0, v) * 1.55, 0.62));
+      const bL = lift(bass);
+      const mL = lift(mid);
+      const hL = lift(high);
+      const rL = lift(rms);
+      // Near-instant attack, still soft release (hits land in 1–2 frames).
+      smBass += (bL - smBass) * (bL > smBass ? 0.92 : 0.22);
+      smMid += (mL - smMid) * (mL > smMid ? 0.9 : 0.2);
+      smHigh += (hL - smHigh) * (hL > smHigh ? 0.94 : 0.24);
+      smRms += (rL - smRms) * (rL > smRms ? 0.92 : 0.22);
+      const bassDelta = Math.max(0, smBass - prevBass);
+      prevBass = smBass;
+      // Beat: hard attack, medium decay
+      beatEnv = Math.max(beatEnv * 0.72, Math.min(1, bassDelta * 28 + (bL > 0.55 ? bL * 0.35 : 0)));
+      const pulse = Math.min(1, smBass * 0.48 + smRms * 0.28 + beatEnv * 0.55 + smMid * 0.18);
+      // Mutable sonic field first (arena hot path — no event alloc required).
+      writeMusicBands({
+        bass: smBass,
+        mid: smMid,
+        high: smHigh,
+        rms: smRms,
+        pulse,
+        beat: beatEnv,
+      });
+      // Keep legacy event for MusicAmplitude consumers (env bloom, etc.).
+      window.dispatchEvent(
+        new CustomEvent(MUSIC_LEVEL_EVENT, {
+          detail: {
+            bass: smBass,
+            mid: smMid,
+            high: smHigh,
+            rms: smRms,
+            pulse,
+            beat: beatEnv,
+          },
+        }),
+      );
+    }
+    // Mic sample every frame while audio graph is live (cheap if no stream).
+    tickVoiceReactive();
   } else {
     worldBassFilter.gain.value = 0;
     worldSwellGain.gain.value = REST_SWELL;
+    smBass *= 0.9;
+    smMid *= 0.9;
+    smHigh *= 0.9;
+    smRms *= 0.9;
+    beatEnv *= 0.85;
+    writeMusicBands({
+      bass: smBass,
+      mid: smMid,
+      high: smHigh,
+      rms: smRms,
+      pulse: Math.min(1, smBass * 0.5 + smRms * 0.3 + beatEnv * 0.4),
+      beat: beatEnv,
+    });
+    tickVoiceReactive();
   }
   requestAnimationFrame(tickMusicIntensity);
 }
@@ -453,7 +700,7 @@ const worldStatusMount = queryRequired<HTMLElement>("[data-world-status]");
 const worldShareUrl = `${window.location.origin}${window.location.pathname.replace(/\/$/, "")}/?world=1`;
 const worldStatusBadge = new MatchStatusBadge({
   mount: worldStatusMount,
-  title: "Live World",
+  title: "Hot Lobby",
   shareUrl: worldShareUrl,
   fetchSummary: () => fetchWorldSummary(),
   onJoin: () => {
@@ -464,36 +711,86 @@ const worldStatusBadge = new MatchStatusBadge({
 
 queryRequired<HTMLButtonElement>("[data-menu-practice]").addEventListener("click", () => {
   startMenuMusic();
-  hideSplash();
-  hideLobby();
+  shell.setMatchMode("practice");
   lobbyController.startPracticeFromMenu();
 });
 
 queryRequired<HTMLButtonElement>("[data-menu-host]").addEventListener("click", () => {
   startMenuMusic();
-  hideSplash();
-  showLobby();
+  shell.goto("room");
   lobbyController.focusCreateRoom();
 });
 
 queryRequired<HTMLButtonElement>("[data-menu-join]").addEventListener("click", () => {
   startMenuMusic();
-  hideSplash();
-  showLobby();
+  shell.goto("room");
   lobbyController.focusJoinRoom();
 });
 
 queryRequired<HTMLButtonElement>("[data-menu-options]").addEventListener("click", () => {
   startMenuMusic();
-  optionsPanel.hidden = false;
-  // Short screens (landscape phones): the panel opens below the splash's
-  // scroll fold — without this, tapping Options looks like it did nothing.
+  shell.goto("settings");
   optionsPanel.scrollIntoView({ behavior: "smooth", block: "nearest" });
 });
 
-queryRequired<HTMLButtonElement>("[data-options-back]").addEventListener("click", () => {
-  optionsPanel.hidden = true;
+queryRequired<HTMLButtonElement>("[data-menu-clips]").addEventListener("click", () => {
+  startMenuMusic();
+  shell.goto("clips");
 });
+
+queryRequired<HTMLButtonElement>("[data-options-back]").addEventListener("click", () => {
+  shell.closeLayer();
+});
+
+queryRequired<HTMLButtonElement>("[data-clips-back]").addEventListener("click", () => {
+  shell.closeLayer();
+});
+
+queryRequired<HTMLButtonElement>("[data-open-clips]").addEventListener("click", () => {
+  shell.goto("clips");
+});
+
+queryRequired<HTMLButtonElement>("[data-pause-resume]").addEventListener("click", () => {
+  shell.closeLayer();
+});
+
+queryRequired<HTMLButtonElement>("[data-pause-settings]").addEventListener("click", () => {
+  shell.goto("settings");
+});
+
+queryRequired<HTMLButtonElement>("[data-pause-clips]").addEventListener("click", () => {
+  shell.goto("clips");
+});
+
+queryRequired<HTMLButtonElement>("[data-pause-leave]").addEventListener("click", () => {
+  if (confirm("Leave Hot Lobby? It keeps running without you.")) {
+    leaveMatchToHome();
+  }
+});
+
+// Clip toast when match emits jakesjam:clip-uploaded (session list is ShellController).
+const pendingToast: { vertical?: string; original?: string; timer?: number } = {};
+window.addEventListener(ShellEvents.CLIP_UPLOADED, ((e: CustomEvent) => {
+  const d = e.detail as { url?: string; kind?: string };
+  if (!d?.url) return;
+  if (d.kind === "vertical") pendingToast.vertical = d.url;
+  if (d.kind === "original") pendingToast.original = d.url;
+  const flush = () => {
+    if (pendingToast.timer) window.clearTimeout(pendingToast.timer);
+    pendingToast.timer = undefined;
+    const v = pendingToast.vertical;
+    const o = pendingToast.original;
+    pendingToast.vertical = undefined;
+    pendingToast.original = undefined;
+    if (v) showClipShareToast(v, o);
+    else if (o) showClipShareToast(o);
+  };
+  if (pendingToast.vertical && pendingToast.original) flush();
+  else {
+    if (pendingToast.timer) window.clearTimeout(pendingToast.timer);
+    pendingToast.timer = window.setTimeout(flush, 5000);
+  }
+}) as EventListener);
 
 musicVolumeInput.addEventListener("input", () => {
   localStorage.setItem("jakesjam.musicVolume", musicVolumeInput.value);
@@ -510,10 +807,112 @@ musicMutedInput.addEventListener("change", () => {
 // Takes effect on the next world join; no live re-wiring needed since
 // OnlineMatchScene reads consent once in create().
 const clipsEnabledInput = queryRequired<HTMLInputElement>("[data-clips-enabled]");
+const clipsSaveStatus = queryRequired<HTMLElement>("[data-clips-save-status]");
 clipsEnabledInput.checked = isClipsConsentStored();
 clipsEnabledInput.addEventListener("change", () => {
   setClipsEnabled(clipsEnabledInput.checked);
+  emitClipsConsentChanged(clipsEnabledInput.checked);
+  syncClipsChrome();
 });
+
+// ── In-match clips chrome (visible during world/practice/private) ────────
+const matchChrome = queryRequired<HTMLElement>("[data-match-chrome]");
+const matchClipsLabel = queryRequired<HTMLElement>("[data-match-clips-label]");
+const matchClipsDot = queryRequired<HTMLElement>("[data-match-clips-dot]");
+const pauseClipsStatus = queryRequired<HTMLElement>("[data-pause-clips-status]");
+const pauseToggleClips = queryRequired<HTMLButtonElement>("[data-pause-toggle-clips]");
+
+function applyClipsConsent(enabled: boolean): void {
+  setClipsEnabled(enabled);
+  clipsEnabledInput.checked = enabled;
+  emitClipsConsentChanged(enabled);
+  syncClipsChrome();
+}
+
+function requestSaveClipNow(): void {
+  if (!isClipsEnabled()) {
+    applyClipsConsent(true);
+  }
+  clipsSaveStatus.textContent =
+    "Capturing… toast + library entry in ~3–12s (stay in Hot Lobby, tab focused).";
+  emitClipSaveNow();
+  // Brief status refresh after upload window
+  window.setTimeout(() => syncClipsChrome(), 4_000);
+  window.setTimeout(() => syncClipsChrome(), 14_000);
+}
+
+function syncClipsChrome(): void {
+  const on = isClipsEnabled();
+  const n = globalClipSession.list().length;
+  clipsEnabledInput.checked = isClipsConsentStored();
+  matchClipsDot.classList.toggle("is-on", on);
+  matchClipsLabel.textContent = on
+    ? n > 0
+      ? `Clips · ${n}`
+      : "Clips on"
+    : "Clips off";
+  pauseClipsStatus.textContent = on
+    ? n > 0
+      ? `Clips: on · ${n} this session`
+      : "Clips: on · Save clip now, or multi-kill / parry / chain auto"
+    : "Clips: off · enable or Save clip now (turns on)";
+  pauseToggleClips.textContent = on ? "Disable auto-clips" : "Enable auto-clips";
+  if (n > 0) {
+    clipsSaveStatus.textContent = `${n} clip file(s) this session — Watch / Copy / Share below.`;
+  } else if (on) {
+    clipsSaveStatus.textContent =
+      "Auto: multi-kill / parry / chain · or Save clip now in Hot Lobby.";
+  } else {
+    clipsSaveStatus.textContent =
+      "Clips off. Save clip now turns them on and captures the current moment.";
+  }
+}
+
+function showMatchChrome(show: boolean): void {
+  matchChrome.hidden = !show;
+  if (show) syncClipsChrome();
+}
+
+queryRequired<HTMLButtonElement>("[data-match-menu]").addEventListener("click", () => {
+  shell.goto("pause");
+  syncClipsChrome();
+});
+
+queryRequired<HTMLButtonElement>("[data-match-clips]").addEventListener("click", () => {
+  if (!isClipsEnabled()) {
+    // One-tap enable from match chrome (tap = explicit consent) + hot-start recorder
+    applyClipsConsent(true);
+  }
+  shell.goto("clips");
+  shell.refreshClipsList();
+  syncClipsChrome();
+});
+
+pauseToggleClips.addEventListener("click", () => {
+  applyClipsConsent(!isClipsConsentStored());
+});
+
+queryRequired<HTMLButtonElement>("[data-clips-save-now]").addEventListener("click", () => {
+  requestSaveClipNow();
+});
+
+queryRequired<HTMLButtonElement>("[data-pause-save-clip]").addEventListener("click", () => {
+  requestSaveClipNow();
+  shell.goto("clips");
+});
+
+// Keep chrome in sync with shell match mode
+window.addEventListener(ShellEvents.MATCH_STARTED, () => {
+  showMatchChrome(true);
+  syncClipsChrome();
+});
+window.addEventListener(ShellEvents.MATCH_ENDED, () => {
+  showMatchChrome(false);
+});
+window.addEventListener(ShellEvents.CLIP_UPLOADED, () => {
+  syncClipsChrome();
+});
+// leaveMatchToHome hides chrome when returning home (defined below).
 
 splash.addEventListener("pointerdown", () => startMenuMusic(), { once: true });
 
@@ -537,18 +936,35 @@ function armSoundtrackOnFirstGesture(): void {
 armSoundtrackOnFirstGesture();
 
 window.addEventListener("jakesjam:start-match", (event) => {
-  const matchEvent = event as CustomEvent;
-  // Keep the soundtrack running INTO the match — it's the game's only
-  // music, and cutting it on match start is what made the song "stop"
-  // once world/room play became the main flow. It still respects the
-  // mute toggle and volume slider via applyAudioOptions().
+  const matchEvent = event as CustomEvent<{
+    mode?: string;
+    matchId?: string;
+    matchToken?: string;
+    localPlayerId?: string;
+  }>;
   startWorldMusic();
-  hideSplash();
-  hideLobby();
-  // game.scene.start() does NOT stop other running scenes (unlike a
-  // scene-local this.scene.start), so the menu scene kept rendering its
-  // footer text ("Practice starts locally...") under the match.
+  const detailMode = matchEvent.detail?.mode;
+  const matchMode =
+    detailMode === "practice"
+      ? "practice"
+      : detailMode === "world"
+        ? "world"
+        : matchEvent.detail?.matchId
+          ? "private"
+          : "private";
+  emitMatchStarted(matchMode);
   game.scene.stop(SceneKeys.MainMenu);
+  // Private rooms always use OnlineMatch + server token (no Convex).
+  if (matchEvent.detail?.matchId && matchEvent.detail?.matchToken) {
+    game.scene.start(SceneKeys.OnlineMatch, {
+      mode: "private",
+      matchId: matchEvent.detail.matchId,
+      matchToken: matchEvent.detail.matchToken,
+      localPlayerId: matchEvent.detail.localPlayerId ?? localPlayerId(),
+    });
+    return;
+  }
+  // Legacy Convex private path (opt-in ?netcode=new)
   if (shouldUseNewNetcode() && matchEvent.detail?.matchId) {
     game.scene.start(SceneKeys.OnlineMatch, {
       matchId: matchEvent.detail.matchId,
@@ -597,44 +1013,55 @@ function localPlayerId(): string {
 }
 
 /**
- * io-style direct join: skip lobby + Convex matchmaker, go straight
- * into the singleton WorldHost. Token mint hits the bun server's
- * `/world-token` endpoint. Reachable via the splash "Join World"
- * button or the URL query `?world=1` (auto-fired below).
+ * Hot Lobby (product name) — io-style direct join into the always-on
+ * singleton WorldHost. Internal mode remains `"world"` / `?world=1` /
+ * `/world-token` so deep links and server routes stay stable.
  */
 function joinWorld(): void {
-  // Start the soundtrack for the world (the main entry path). Plays
-  // immediately if a gesture already happened (e.g. the click that hit
-  // "Join World"); for a bare `?world=1` auto-join the global first-gesture
-  // starter picks up the player's first in-world input.
+  // Soundtrack for Hot Lobby. Plays immediately if a gesture already
+  // happened (e.g. the click that hit "Hot Lobby"); for bare `?world=1`
+  // the global first-gesture starter picks up the first in-match input.
   startWorldMusic();
-  hideSplash();
-  hideLobby();
+  emitMatchStarted("world");
   game.scene.stop(SceneKeys.MainMenu); // see start-match handler note
-  document.title = "JAKESJAM — In World";
+  document.title = "JAKESJAM — Hot Lobby";
   game.scene.start(SceneKeys.OnlineMatch, {
     mode: "world",
     localPlayerId: localPlayerId(),
   });
 }
 
-// Auto-join the world when the URL says so. Useful for "open this
-// link to spawn into the live game" sharing.
+function leaveMatchToHome(): void {
+  if (game.scene.isActive(SceneKeys.Match)) {
+    game.scene.stop(SceneKeys.Match);
+  }
+  if (game.scene.isActive(SceneKeys.OnlineMatch)) {
+    game.scene.stop(SceneKeys.OnlineMatch);
+  }
+  if (!game.scene.isActive(SceneKeys.MainMenu)) {
+    game.scene.start(SceneKeys.MainMenu);
+  }
+  document.title = "JAKESJAM";
+  shell.setMatchMode("none");
+  shell.goto("home");
+  showMatchChrome(false);
+  startMenuMusic();
+}
+
+// Auto-join Hot Lobby when the URL says so (`?world=1` / `/world`).
 const urlParams = new URLSearchParams(window.location.search);
 if (urlParams.get("world") === "1" || window.location.pathname === "/world") {
   // Defer one tick so Phaser has a chance to register the scene.
   setTimeout(() => joinWorld(), 0);
 } else if (urlParams.get("room") || urlParams.get("code")) {
   // Shared room link → open lobby and auto-join the room (idempotent on server).
-  hideSplash();
-  showLobby();
+  shell.goto("room");
   setTimeout(() => lobbyController.autoJoinFromUrl(), 0);
 }
 
-// Back-to-splash button in the lobby panel.
+// Back-to-splash button in the lobby panel → shell home.
 window.addEventListener("jakesjam:back-to-splash", () => {
-  showSplash();
-  hideLobby();
+  shell.goto("home");
   startMenuMusic();
 });
 
@@ -654,31 +1081,19 @@ window.addEventListener("jakesjam:chaos-change", (event) => {
 });
 
 // Fired by MatchScene's results overlay when the player picks "Back to
-// Lobby" after a match. We stop the match scene, surface the splash, and
-// re-bind the menu music. The lobby controller keeps its own state, so the
-// player lands back on the same room/character/chaos config they started
-// from.
+// Lobby" after a match.
 window.addEventListener("jakesjam:return-to-lobby", () => {
-  if (game.scene.isActive(SceneKeys.Match)) {
-    game.scene.stop(SceneKeys.Match);
-  }
-  if (game.scene.isActive(SceneKeys.OnlineMatch)) {
-    game.scene.stop(SceneKeys.OnlineMatch);
-  }
-  // Match-start paths stop the menu scene (it kept rendering its footer
-  // under matches); bring it back with the splash.
-  if (!game.scene.isActive(SceneKeys.MainMenu)) {
-    game.scene.start(SceneKeys.MainMenu);
-  }
-  document.title = "JAKESJAM";
-  showSplash();
-  showLobby();
-  startMenuMusic();
+  leaveMatchToHome();
+});
+
+window.addEventListener(ShellEvents.REQUEST_LEAVE_MATCH, () => {
+  leaveMatchToHome();
 });
 
 window.addEventListener("beforeunload", () => {
   worldStatusBadge.destroy();
   lobbyController.destroy();
+  shell.destroy();
   game.destroy(true);
 });
 
@@ -688,22 +1103,6 @@ function queryRequired<T extends HTMLElement>(selector: string): T {
     throw new Error(`Missing UI element: ${selector}`);
   }
   return element;
-}
-
-function hideSplash() {
-  splash.hidden = true;
-}
-
-function showSplash() {
-  splash.hidden = false;
-}
-
-function hideLobby() {
-  lobbyPanel.classList.add("lobby-panel--hidden");
-}
-
-function showLobby() {
-  lobbyPanel.classList.remove("lobby-panel--hidden");
 }
 
 function restoreOptions() {
@@ -753,6 +1152,10 @@ function playCurrentMusic() {
   // in (browsers create it suspended until a gesture happens). Resuming an
   // already-running context is a harmless no-op.
   void audioCtx.resume();
+  // Arm mic for gnostic geometry (same gesture). Failures are silent.
+  if (isVoiceWanted()) {
+    void startVoiceReactive(audioCtx);
+  }
   const requestedContext = musicContext;
   const active = requestedContext === "world" ? worldMusic : menuMusic;
   const other = requestedContext === "world" ? menuMusic : worldMusic;

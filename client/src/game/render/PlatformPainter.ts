@@ -81,40 +81,46 @@ export function paintPlatform(
   // Shadow goes BEHIND the main platform fill in render order.
   shadowG.setDepth(-0.1);
 
-  // (b) Main fill.
+  // (b) Main fill — hull plate.
   g.fillStyle(theme.hi, 1);
   g.fillRect(0, 0, w, h);
 
-  // (c) Top-edge rim highlight (drawn at y = 0, offset to platform-local).
-  drawRimHighlight(g, 0, 0, w, 0xf5f8f8, 0.22);
+  // (c) Top-edge rim — gold instrument rule when vesselChrome, else soft white.
+  const rimColor =
+    theme.vesselChrome && typeof theme.gold === "number" ? theme.gold : 0xf5f8f8;
+  drawRimHighlight(g, 0, 0, w, rimColor, theme.vesselChrome ? 0.55 : 0.22);
 
-  // (d, e) Brush streaks — 8 thin dimensional streaks WITHOUT canvas
-  // rotation. Phaser 4's GeometryMask does NOT clip when the mask source
-  // is an undisplayed Graphics (`scene.make.graphics(_, false)`); the
-  // stencil pass for an off-display-list source is silently skipped.
-  // The previous rotated-rect approach relied on that mask to keep the
-  // streak inside the platform — without the mask, a streakW=150px rect
-  // rotated -45°…+75° extends diagonally hundreds of pixels into the
-  // arena. Compounded across renderArena re-fires (reconnects, map
-  // changes), this is the source of the criss-crossing cyan line
-  // accumulation seen in tests/e2e/.artifacts/visual-…fire-spam… frame
-  // 5 of the test video.
-  //
-  // Replace rotated rects with axis-aligned, in-platform-bounds rects.
-  // No mask required. Visual texture is preserved via varied position +
-  // alpha + width.
-  // Two passes of horizontal brush streaks — denser + alpha-varied so
-  // the platform reads as textured instead of a flat slab. All rects
-  // are guaranteed inside [0..w] × [0..h] by clamping at construction
-  // (no mask required, no Phaser-4 GeometryMask quirk).
-  const streakCount = 9;
+  // Vessel seal: thin gold under-rim + cyan conduit ticks (sci-fi gnostic).
+  if (theme.vesselChrome && w >= 28 && h >= 10) {
+    const gold = typeof theme.gold === "number" ? theme.gold : 0xc9a84c;
+    g.fillStyle(gold, 0.28);
+    g.fillRect(1, Math.max(1, h - 2), w - 2, 1.5);
+    // Conduit filament ticks along the plate.
+    const tickN = Math.max(2, Math.min(12, Math.floor(w / 48)));
+    for (let i = 0; i < tickN; i++) {
+      const tx = (w * (i + 0.5)) / tickN;
+      const th = Math.max(3, h * 0.45);
+      g.fillStyle(theme.wash, 0.22 + nextRng() * 0.18);
+      g.fillRect(tx - 0.75, h * 0.2, 1.5, th);
+    }
+    // Corner brackets (instrument panel language).
+    const br = Math.min(6, w * 0.08, h * 0.35);
+    g.fillStyle(gold, 0.4);
+    g.fillRect(0, 0, br, 1.5);
+    g.fillRect(0, 0, 1.5, br);
+    g.fillRect(w - br, 0, br, 1.5);
+    g.fillRect(w - 1.5, 0, 1.5, br);
+  }
+
+  // (d, e) Hull streaks — axis-aligned only (Phaser 4 GeometryMask quirk).
+  const streakCount = theme.vesselChrome ? 11 : 9;
   for (let i = 0; i < streakCount; i++) {
     const t = i / Math.max(1, streakCount - 1);
     const sx = w * 0.04 + t * w * 0.6 + (nextRng() - 0.5) * w * 0.08;
     const sw = Math.max(3, Math.min(w * 0.32, w - sx - w * 0.04));
     const sh = Math.max(1.5, h * (0.05 + nextRng() * 0.12));
     const sy = nextRng() * (h - sh);
-    const alpha = 0.18 + nextRng() * 0.24;
+    const alpha = 0.14 + nextRng() * 0.22;
     g.fillStyle(theme.wash, alpha);
     g.fillRect(
       Math.max(0, sx),
@@ -123,15 +129,13 @@ export function paintPlatform(
       sh,
     );
   }
-  // A few short cross-hatch dabs for variation — alpha lower than the
-  // main streaks so they read as accents.
-  const dabCount = 5;
+  const dabCount = theme.vesselChrome ? 7 : 5;
   for (let i = 0; i < dabCount; i++) {
     const sx = w * (0.1 + nextRng() * 0.8);
     const sw = Math.max(2, w * (0.04 + nextRng() * 0.06));
     const sh = Math.max(1.5, h * (0.04 + nextRng() * 0.08));
     const sy = nextRng() * (h - sh);
-    g.fillStyle(theme.wash, 0.10 + nextRng() * 0.12);
+    g.fillStyle(theme.wash, 0.08 + nextRng() * 0.12);
     g.fillRect(
       Math.max(0, Math.min(w - sw, sx)),
       Math.max(0, Math.min(h - sh, sy)),

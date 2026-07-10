@@ -182,12 +182,13 @@ describe("WorldBots FTUE grace (fresh-human warmup)", () => {
     const keys: number[] = [];
     const host = hostCapturing(bashRangeState(botId, { foeId: "freshie" }), botId, keys);
     // First tick at t=1000 stamps the foe's arrival; then jump wall-clock
-    // past the 60s grace window and run the same close-range scenario.
+    // past the 90s FTUE grace window and run the same close-range scenario.
     bots.think(host, 1000);
     keys.length = 0;
-    for (let i = 0; i < 300; i += 1) bots.think(host, 1000 + 61_000 + i * 16);
+    for (let i = 0; i < 400; i += 1) bots.think(host, 1000 + 95_000 + i * 16);
     const dashCount = keys.filter((k) => (k & InputBit.Dash) !== 0).length;
-    expect(dashCount).toBeGreaterThan(5);
+    // Tier 2 dash rate is intentionally low now (~0.07/tick when lined up).
+    expect(dashCount).toBeGreaterThan(2);
   });
 
   test("bots prefer a seasoned target over a fresh human when both are in reach", () => {

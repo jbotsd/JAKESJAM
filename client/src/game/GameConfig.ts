@@ -5,49 +5,46 @@ import { MainMenuScene } from "./scenes/MainMenuScene";
 import { MatchScene } from "./scenes/MatchScene";
 import { OnlineMatchScene } from "./scenes/OnlineMatchScene";
 import { DraftScene } from "./scenes/DraftScene";
-import { isClipsEnabled } from "./highlights/clipConsent";
+import { isClipsEnabled } from "./highlights/clipConsent.js";
 
-// Highlight-clip capture (?clips=1, see client/src/game/highlights/) draws a
-// cropped copy of the game canvas onto a SEPARATE destination canvas via
-// drawImage(), in its own requestAnimationFrame — not inside Phaser's own
-// render pass. Without preserveDrawingBuffer, a WebGL canvas's drawing buffer
-// is allowed to be cleared by the browser immediately after each frame is
-// composited (an optimization to avoid a copy), so that drawImage read can
-// land on an already-cleared buffer — produces solid BLACK captured frames
-// (confirmed: ffprobe showed valid, corruption-free video that was 100%
-// black). captureStream() sidesteps this internally via the compositor;
-// manual drawImage reads do not. preserveDrawingBuffer:true keeps the last
-// rendered frame available for reads at any time, at a real but small copy
-// cost — only paid when a tester/dev explicitly opts into capture.
-// MUST match the ClipRecorder's own gate (clipConsent covers BOTH the
-// Options-panel toggle and the ?clips=1 dev override) — checking only the
-// URL param here while the recorder also honored the persisted toggle
-// meant toggle-enabled sessions recorded from a buffer the browser had
-// already cleared: 100% BLACK clips.
-const clipsRequested = typeof window !== "undefined" && isClipsEnabled();
+// Highlight-clip capture draws a cropped copy of the game canvas onto a
+// separate destination canvas via drawImage() (see ClipRecorder). Without
+// preserveDrawingBuffer, WebGL may clear the drawing buffer right after
+// composite → solid BLACK frames.
+//
+// Cost: a small per-frame GPU→retain path. Only pay it when clips are ON
+// at boot (product default ON). WebGL context attrs can't flip mid-session;
+// toggling clips off/on after load needs a reload to change this bit
+// (OnlineMatchScene still gates recorder start/stop by consent).
 
-export const gameConfig: Phaser.Types.Core.GameConfig = {
-  type: Phaser.AUTO,
-  parent: "game-root",
-  // Right-click is the aegis power-slide — the browser context menu must NEVER
-  // appear. This is Phaser's own canvas-level suppressor (Mouse + Touch
-  // managers), one of several independent layers (see index.html head script
-  // and main.ts) so no single point of failure lets the menu through.
-  disableContextMenu: true,
-  width: window.innerWidth,
-  height: window.innerHeight,
-  backgroundColor: "#05080f",
-  scene: [BootScene, PreloadScene, MainMenuScene, MatchScene, OnlineMatchScene, DraftScene],
-  scale: {
-    mode: Phaser.Scale.RESIZE,
-    autoCenter: Phaser.Scale.NO_CENTER,
-    width: "100%",
-    height: "100%",
-  },
-  render: {
-    roundPixels: true,
-    antialias: false,
-    pixelArt: true,
-    preserveDrawingBuffer: clipsRequested,
-  },
-};
+export function buildGameConfig(): Phaser.Types.Core.GameConfig {
+  return {
+    type: Phaser.AUTO,
+    parent: "game-root",
+    // Right-click is the aegis power-slide — the browser context menu must NEVER
+    // appear. This is Phaser's own canvas-level suppressor (Mouse + Touch
+    // managers), one of several independent layers (see index.html head script
+    // and main.ts) so no single point of failure lets the menu through.
+    disableContextMenu: true,
+    width: window.innerWidth,
+    height: window.innerHeight,
+    backgroundColor: "#05080f",
+    scene: [BootScene, PreloadScene, MainMenuScene, MatchScene, OnlineMatchScene, DraftScene],
+    scale: {
+      mode: Phaser.Scale.RESIZE,
+      autoCenter: Phaser.Scale.NO_CENTER,
+      width: "100%",
+      height: "100%",
+    },
+    render: {
+      roundPixels: true,
+      antialias: false,
+      pixelArt: true,
+      preserveDrawingBuffer: isClipsEnabled(),
+      powerPreference: "high-performance",
+    },
+  };
+}
+
+/** @deprecated Prefer buildGameConfig() — frozen snapshot for rare static imports. */
+export const gameConfig: Phaser.Types.Core.GameConfig = buildGameConfig();

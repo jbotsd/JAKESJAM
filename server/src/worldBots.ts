@@ -1,32 +1,37 @@
-// Server-side AI duelists for the always-on world.
+// Server-side AI duelists for the always-on Hot Lobby world.
 //
-// Design goals (user brief 2026-07-03: "fantastic bots, and the bots are
-// apparent they are bots"):
+// Design goals:
 //   - The world is never dead: a share-link click lands in live action.
-//   - Bots are UNMISTAKABLY bots: ids are prefixed "bot_" (the client
-//     renders amber rigs + "BOT · NAME" nameplates off that prefix) and
-//     names come from a robot roster.
-//   - They play the actual game: approach, strafe, lead their shots,
-//     jump gaps, PARRY incoming projectiles, shield under pressure,
-//     retreat at low health, and pick draft cards.
-//   - Humanized: reaction delay + aim error keep them beatable; they get
-//     out of the way as real players fill the world.
+//   - Bots are UNMISTAKABLY bots: ids prefixed "bot_" (amber rigs + "BOT · NAME").
+//   - They play the CURRENT maps: full floor, cover pylons, hop plates
+//     (map-aware via botArenaNav — not blind stuck-jump only).
+//   - Combat: approach, cover peek, lead shots, LOS-gated fire, parry,
+//     shield, retreat, draft picks, tiered aegis-slide.
+//   - Humanized: reaction delay + aim error; FTUE grace on fresh humans.
 //
-// Bots are first-class sim citizens — inputs go through the SAME queue,
-// validation, and anti-cheat clamps as WS clients (MatchHost.injectInput).
+// Inputs go through MatchHost.injectInput (same queue as WS clients).
 
 import { InputBit } from "@net/protocol.ts";
 import type { MatchHost } from "./matchHost.ts";
-import { PlayerId, Tick, type PlayerEntity, type WorldState } from "@sim/types.ts";
+import { PlayerId, type MapDefinition, type PlayerEntity, type WorldState } from "@sim/types.ts";
+import {
+  buildArenaNav,
+  dirTowardX,
+  hasLineOfSight,
+  hopTargetToward,
+  megaScale,
+  nearestCoverFlank,
+  type ArenaNav,
+} from "./botArenaNav.ts";
 
 export const BOT_ID_PREFIX = "bot_";
 
 const ROSTER = [
   "SPARK", "PISTON", "GIZMO", "RATCHET", "JOLT", "WIDGET", "SOCKET", "DYNAMO",
+  "COG", "FLUX", "BOLT", "GEAR",
 ] as const;
 
-/** Deterministic-ish per-bot RNG (mulberry32) so two bots don't strafe in
- *  lockstep but replays of a seed are stable. */
+/** Deterministic-ish per-bot RNG (mulberry32). */
 function rng(seed: number): () => number {
   let t = seed >>> 0;
   return () => {
@@ -37,98 +42,88 @@ function rng(seed: number): () => number {
   };
 }
 
+type BotMode = "chase" | "hold" | "cover" | "commit" | "retreat";
+
 type BotState = {
   id: PlayerId;
   name: string;
   seq: number;
   rand: () => number;
-  /** Wall-clock ms until which the current strafe direction holds. */
   strafeUntil: number;
   strafeDir: -1 | 0 | 1;
-  /** Reaction-delayed target position (bots track where the foe WAS). */
   aimX: number;
   aimY: number;
-  /** Next wall-clock ms the bot may parry (cooldown + humanization). */
   parryReadyAt: number;
-  /** Draft pick delay so picks don't look instant. */
   draftPickAt: number | null;
   lastDraftRound: number;
-  /** Stuck detection — bots have no terrain map, so we detect "intended to
-   *  move horizontally but didn't" and jump/reverse to unstick (fixes bots
-   *  pinning themselves against walls and ledges). */
   lastX: number;
+  lastY: number;
   stuckTicks: number;
-  /** Was Jump pressed last tick? The sim buffers a jump only on the RISING
-   *  edge, so a held Jump wall-jumps once; we force a one-tick release between
-   *  presses so bots can CHAIN wall-jumps up a shaft. */
   jumpHeldPrev: boolean;
-  /** Wall-clock ms the bot first became FAR from its foe (0 = not far).
-   *  Drives anti-standoff commit mode so two bots never freeze apart. */
   farSince: number;
-  /** Aegis-slide aggression tier (balance audit: bots must exhibit the
-   *  live meta or players never learn to punish it). 0 = never dashes
-   *  offensively (telegraphs — new players don't get blindsided into
-   *  learning "spam is correct"). 1 = occasional. 2 = presses it
-   *  aggressively whenever in bash range, matching a committed human
-   *  opponent. ALL tiers still react defensively to an inbound dash. */
   slideTier: 0 | 1 | 2;
-  /** Wall-clock ms an inbound dashing-body threat was first noticed (0 =
-   *  none tracked). Drives a ~250ms human-plausible reaction delay before
-   *  the defensive response fires, same shape as `farSince`. */
   bodyThreatSince: number;
+  /** Cover-hold until wall-clock ms (0 = not holding). */
+  coverUntil: number;
+  mode: BotMode;
 };
 
 const BOT_TUNING = {
-  /** Preferred dueling range (px). */
-  engageRange: 300,
-  /** Retreat below this health. */
-  retreatHp: 30,
-  /** Aim error radius in px (humanization). */
-  aimErrorPx: 42,
-  /** Projectile-lead factor: 1 = perfect lead, 0 = none. */
-  leadFactor: 0.7,
-  /** How close (px) an inbound projectile triggers a defensive reaction. */
-  threatRadius: 190,
-  /** Parry cooldown floor between attempts (ms). */
-  parryEveryMs: 2600,
-  /** Projectile speed used for lead calc — starter pistol. */
+  /** Preferred dueling range at 1280-wide cells (scaled by megaScale).
+   *  Wider = hang back more, less face-tank pressure. */
+  engageRange: 380,
+  retreatHp: 40,
+  /** Base aim wobble — deliberately sloppy so humans can out-aim them. */
+  aimErrorPx: 78,
+  /** Lead quality 0–1; lower = shoot where you were, not where you're going. */
+  leadFactor: 0.4,
+  threatRadius: 170,
+  parryEveryMs: 3400,
   projectileSpeed: 650,
-  /** How close (px) an enemy actively sliding (dashing) triggers a
-   *  defensive reaction. Bigger than threatRadius — a 940px/s dash covers
-   *  ground fast, so the reaction window has to open sooner. */
-  bodyThreatRadius: 260,
-  /** Reaction delay before a noticed body-threat gets a response (ms) —
-   *  standard fighting-game-AI practice (~15 frames / 250ms) so bots stay
-   *  plausibly human rather than reading inputs instantly. */
-  bodyThreatReactionMs: 250,
-  /** Range (px) a tier>=1 bot will offensively press Dash toward its foe —
-   *  inside the ~197px lunge distance plus approach margin, so the burst
-   *  actually connects instead of firing into empty air. */
-  dashBashRange: 230,
-  /** Per-tick probability an in-range bot presses Dash offensively, by
-   *  slideTier. Tier 0 never initiates (see BotState.slideTier); tier 2 is
-   *  close to "every opportunity" — a committed opponent, not a coinflip. */
-  dashOffenseChance: [0, 0.05, 0.22] as readonly [number, number, number],
-  /** FTUE grace window (ms): a HUMAN's first N seconds in the world after
-   *  joining. The onboarding-ftue skill's "first-session bot warmup" adapted
-   *  to the always-on world (there is no matchmaker to quarantine new
-   *  players behind, and no accounts to detect first-EVER sessions with) —
-   *  instead, bots go gentle on every fresh human arrival: doubled aim
-   *  error, no offensive dash-bash, and they prefer any non-fresh target
-   *  when one exists. Applies on every join, which is fine: 60s of "the
-   *  bots aren't bullying me yet" is good arrival feel for veterans too,
-   *  and irrelevant once real players outnumber bots. */
-  freshPlayerGraceMs: 60_000,
+  bodyThreatRadius: 240,
+  bodyThreatReactionMs: 320,
+  dashBashRange: 200,
+  /** Offensive slide rates — tier 2 used to be nearly free-bash. */
+  dashOffenseChance: [0, 0.02, 0.07] as readonly [number, number, number],
+  /** First minutes after a human joins — doubled aim error, no dash-bash. */
+  freshPlayerGraceMs: 90_000,
+  /** Beyond this (× megaScale) → commit chase (higher = less sticky chase). */
+  farRange: 720,
+  /** Max fire range (× megaScale). */
+  fireRange: 640,
+  /** Seek cover when under projectile pressure or mid-range duel. */
+  coverSeekRange: 520,
+  /** Hold a cover flank for this long before re-peeking. */
+  coverHoldMs: 1100,
+  /** Per-tick chance to hold Fire when lined up (was always-on → laser bots). */
+  fireChanceLos: 0.55,
+  fireChanceBlind: 0.08,
+  /** Prefer bot-on-bot: if a bot is within this × nearest-human dist, pick bot. */
+  preferBotDistFactor: 1.55,
+  /** Extra aim error multiplier against ANY human (not only fresh). */
+  humanAimErrorMul: 1.45,
+  /** Fresh humans get this × aimError on top of humanAimErrorMul. */
+  freshAimErrorMul: 2.2,
+  /** Delay before bots start hard-commit chasing a human (ms of farSince). */
+  humanCommitMs: 2000,
+  botCommitMs: 1100,
 } as const;
 
 export class WorldBots {
   private readonly bots = new Map<PlayerId, BotState>();
   private nameCursor = 0;
-  /** Wall-clock ms each HUMAN player id was first seen in the world state —
-   *  drives the FTUE grace window (BOT_TUNING.freshPlayerGraceMs). Pruned
-   *  when a player leaves; ids are per-session so a rejoin is a new entry
-   *  (and correctly gets a fresh grace window). */
   private readonly humanFirstSeenAtMs = new Map<string, number>();
+  /** Compiled map geometry for cover / hop / LOS. Null = map-blind fallback. */
+  private nav: ArenaNav | null = null;
+  private readonly playersScratch: PlayerEntity[] = [];
+
+  /**
+   * Bind bots to the active arena (call on host build / recycle).
+   * Without this, bots only have stuck-jump heuristics.
+   */
+  bindMap(map: MapDefinition | null | undefined): void {
+    this.nav = map ? buildArenaNav(map) : null;
+  }
 
   /** Bot spawn descriptors for host construction / recycle. */
   spawnInfosFor(count: number): { playerId: PlayerId; name: string }[] {
@@ -155,35 +150,27 @@ export class WorldBots {
         draftPickAt: null,
         lastDraftRound: -1,
         lastX: 0,
+        lastY: 0,
         stuckTicks: 0,
         jumpHeldPrev: false,
         farSince: 0,
-        // Deterministic spread across the roster (not random) so a given
-        // bot slot's aggression is stable across recycles — 0,1,2,0,1,2,…
-        // (nameCursor already incremented above, so subtract 1 to key off
-        // THIS bot's own index, not the next one's).
         slideTier: ((this.nameCursor - 1) % 3) as 0 | 1 | 2,
         bodyThreatSince: 0,
+        coverUntil: 0,
+        mode: "chase",
       });
       out.push({ playerId: id, name });
     }
-    // Trim roster if count shrank.
     for (const id of [...this.bots.keys()]) {
       if (!out.some((o) => o.playerId === id)) this.bots.delete(id);
     }
     return out;
   }
 
-  /** Reused across think() calls — refilled per tick, never reallocated
-   *  (60Hz × N bots made the per-call Object.values arrays real churn). */
-  private readonly playersScratch: PlayerEntity[] = [];
-
   /** Drive every bot for one tick. Call at sim rate while the host runs. */
   think(host: MatchHost, nowMs: number): void {
     if (!host.isRunning()) return;
     const state = host.getStateSnapshot();
-    // Hoist the player list ONCE per tick — nearestFoe/trackHumanArrivals
-    // previously rebuilt Object.values per bot per tick.
     this.playersScratch.length = 0;
     for (const pid in state.players) this.playersScratch.push(state.players[pid as PlayerId]!);
     this.trackHumanArrivals(this.playersScratch, nowMs);
@@ -219,9 +206,12 @@ export class WorldBots {
   ): { keys: number; aimX: number; aimY: number } {
     const foe = this.nearestFoe(this.playersScratch, me, nowMs);
     let keys = 0;
+    const scale = megaScale(this.nav);
+    const farRange = BOT_TUNING.farRange * scale;
+    const engageRange = BOT_TUNING.engageRange * Math.min(1.35, scale);
+    const fireRange = BOT_TUNING.fireRange * scale;
 
     if (!foe) {
-      // Nobody to fight: idle wander so the world looks alive.
       if (nowMs > bot.strafeUntil) {
         bot.strafeDir = ([-1, 0, 1] as const)[Math.floor(bot.rand() * 3)]!;
         bot.strafeUntil = nowMs + 900 + bot.rand() * 1400;
@@ -229,106 +219,140 @@ export class WorldBots {
       if (bot.strafeDir < 0) keys |= InputBit.Left;
       if (bot.strafeDir > 0) keys |= InputBit.Right;
       bot.jumpHeldPrev = (keys & InputBit.Jump) !== 0;
+      bot.mode = "chase";
       return { keys, aimX: me.x + (bot.strafeDir || 1) * 200, aimY: me.y };
     }
 
     const dx = foe.x - me.x;
-    const dist = Math.hypot(dx, foe.y - me.y);
+    const dy = foe.y - me.y;
+    const dist = Math.hypot(dx, dy);
     const retreating = me.health <= BOT_TUNING.retreatHp;
     const towardFoe = (Math.sign(dx) || 1) as -1 | 1;
-    // FTUE grace: fresh humans get a gentler bot — no dash-bash, doubled
-    // aim error. They still get shot at (the world must feel alive), just
-    // survivably, while they find the controls.
     const foeIsFresh = this.isFreshHuman(foe.id as string, nowMs);
+    const foeIsHuman = !(foe.id as string).startsWith(BOT_ID_PREFIX);
+    const grounded = me.grounded === true;
+    const los =
+      !this.nav || hasLineOfSight(this.nav, me.x, me.y, foe.x, foe.y);
 
-    // Anti-standoff: track how long we've been beyond fire range. After a
-    // short while, COMMIT — sprint straight at the foe and jump over
-    // obstacles, ignoring range-holding/strafe. Guarantees two bots at
-    // opposite ends close in instead of freezing in a standoff.
-    const FAR = 560;
-    if (dist > FAR) {
+    // Anti-standoff commit — slower to hard-chase humans (less sticky bullying).
+    if (dist > farRange) {
       if (bot.farSince === 0) bot.farSince = nowMs;
     } else {
       bot.farSince = 0;
     }
-    const committing = bot.farSince !== 0 && nowMs - bot.farSince > 1200;
+    const commitDelay = foeIsHuman ? BOT_TUNING.humanCommitMs : BOT_TUNING.botCommitMs;
+    const committing = bot.farSince !== 0 && nowMs - bot.farSince > commitDelay;
 
-    // Movement intent (`moveDir`, -1/0/1). Far → always close distance;
-    // near → hold engage range with strafe jitter.
-    let moveDir: -1 | 0 | 1;
-    if (committing || dist > FAR) {
-      moveDir = towardFoe; // close the gap
+    // ── Mode selection ─────────────────────────────────────────────
+    let mode: BotMode = "hold";
+    if (retreating) mode = "retreat";
+    else if (committing || dist > farRange) mode = "commit";
+    else if (
+      this.nav &&
+      (nowMs < bot.coverUntil ||
+        (!los && dist < BOT_TUNING.coverSeekRange * scale) ||
+        (dist < engageRange + 80 && bot.rand() < 0.012 && nowMs > bot.coverUntil))
+    ) {
+      mode = "cover";
+    } else if (Math.abs(dist - engageRange) > 70) {
+      mode = "chase";
     } else {
-      const targetRange = retreating ? 460 : BOT_TUNING.engageRange;
-      if (Math.abs(dist - targetRange) > 60) {
-        moveDir = (dist > targetRange ? towardFoe : -towardFoe) as -1 | 0 | 1;
-      } else {
-        if (nowMs > bot.strafeUntil) {
-          bot.strafeDir = bot.rand() < 0.5 ? -1 : 1;
-          bot.strafeUntil = nowMs + 350 + bot.rand() * 650;
+      mode = "hold";
+    }
+    bot.mode = mode;
+
+    // ── Movement intent ────────────────────────────────────────────
+    let moveDir: -1 | 0 | 1 = 0;
+    let runToX: number | null = null;
+    let wantJump = false;
+
+    // Vertical hop: foe above → aim for a hop ledge under them.
+    const meTop = me.y; // entity y is roughly body centre; good enough for rise
+    if (this.nav && foe.y < me.y - 70 && mode !== "retreat") {
+      const hop = hopTargetToward(this.nav, me.x, me.y + 28, foe.x, foe.y);
+      if (hop) {
+        runToX = hop.cx;
+        if (grounded && Math.abs(me.x - hop.cx) < 100 && bot.rand() < 0.28) {
+          wantJump = true;
+        } else if (grounded && Math.abs(me.x - hop.cx) < 160 && bot.rand() < 0.08) {
+          wantJump = true;
         }
-        moveDir = bot.strafeDir;
+      } else if (grounded && bot.rand() < 0.1) {
+        wantJump = true; // blind hop toward height
+        moveDir = towardFoe;
       }
     }
 
-    // Unstick (bots have no terrain map): if a horizontal intent produced no
-    // horizontal movement, JUMP FIRST while still heading toward the foe —
-    // that clears steps/ledges/cover pillars without abandoning the chase
-    // (the old "reverse away" could push a bot into a wall or away from its
-    // foe, causing the standoff). Only after prolonged sticking do we briefly
-    // sidestep to unwedge a true corner, then reset the cycle.
-    const moved = Math.abs(me.x - bot.lastX);
-    if (moveDir !== 0 && moved < 0.6) bot.stuckTicks += 1;
+    if (mode === "retreat") {
+      runToX = me.x - towardFoe * 200;
+      if (this.nav) {
+        const flank = nearestCoverFlank(this.nav, me.x, me.y, foe.x, 500);
+        if (flank) runToX = flank.x;
+      }
+    } else if (mode === "cover" && this.nav) {
+      const flank = nearestCoverFlank(this.nav, me.x, me.y, foe.x, 480 * scale);
+      if (flank) {
+        runToX = flank.x;
+        if (Math.abs(me.x - flank.x) < 28) {
+          // At cover: hold briefly, then re-peek toward foe.
+          if (bot.coverUntil < nowMs) {
+            bot.coverUntil = nowMs + BOT_TUNING.coverHoldMs * (0.7 + bot.rand() * 0.6);
+          }
+          if (nowMs + 200 > bot.coverUntil) {
+            // Peek: step toward foe for a beat.
+            runToX = me.x + towardFoe * 50;
+          } else {
+            runToX = flank.x;
+          }
+        } else {
+          bot.coverUntil = Math.max(bot.coverUntil, nowMs + 200);
+        }
+      } else {
+        mode = "chase";
+        bot.mode = "chase";
+      }
+    }
+
+    if (mode === "commit" || mode === "chase") {
+      if (runToX === null) runToX = foe.x;
+    } else if (mode === "hold") {
+      if (nowMs > bot.strafeUntil) {
+        bot.strafeDir = bot.rand() < 0.5 ? -1 : 1;
+        bot.strafeUntil = nowMs + 350 + bot.rand() * 650;
+      }
+      moveDir = bot.strafeDir;
+      // Micro-adjust range while strafing.
+      if (dist > engageRange + 40) moveDir = towardFoe;
+      if (dist < engageRange - 50) moveDir = -towardFoe as -1 | 0 | 1;
+    }
+
+    if (runToX !== null) {
+      moveDir = dirTowardX(me.x, runToX);
+    }
+
+    // Unstick: no map path → jump while still heading toward foe; prolonged
+    // stick briefly reverse (true corner). Prefer hop over reverse on mega.
+    const moved = Math.abs(me.x - bot.lastX) + Math.abs(me.y - bot.lastY) * 0.35;
+    if (moveDir !== 0 && moved < 0.7) bot.stuckTicks += 1;
     else bot.stuckTicks = 0;
     bot.lastX = me.x;
+    bot.lastY = me.y;
 
-    const grounded = me.grounded === true;
-    const wantUp = foe.y < me.y - 60;
-    // Reuse stuck detection as "pressed against a wall/column": a horizontal
-    // intent that produced ~no movement means something is blocking us.
     const onWall = bot.stuckTicks >= 3;
-    let wantJump = false;
-
-    // WALL-CLIMB / climb-over. Whenever a wall blocks us, JUMP: on the ground
-    // it's the hop that starts the climb; airborne it's a wall-jump (up + away).
-    // Chained via the pulse below, bots alternate up a shaft OR climb over a
-    // column standing between them and the foe — instead of grinding into it
-    // forever. Safe now the jetpack is gone: an airborne Jump is a NO-OP unless
-    // touching a wall (and a wall-jump clears the contact), so bots can't fly
-    // out of the map.
     if (onWall) wantJump = true;
-
-    // Only a PROLONGED stick (a true dead corner, not a climbable wall) forces
-    // a sidestep — give the climb plenty of ticks to work first.
     if (bot.stuckTicks >= 48) {
       moveDir = -moveDir as -1 | 0 | 1;
       if (bot.stuckTicks >= 54) bot.stuckTicks = 0;
     }
-
-    // Commit mode also hops periodically to cross floor gaps between platforms.
-    if (committing && grounded && bot.rand() < 0.04) wantJump = true;
-
-    // Seek a wall to climb when we want height but aren't already driving into
-    // one (e.g. the foe is directly overhead) — drift toward the foe's side.
-    if (wantUp && moveDir === 0) moveDir = towardFoe;
+    if (committing && grounded && bot.rand() < 0.05) wantJump = true;
+    // Cover columns are hop-overable: if stuck mid-commit, keep jumping.
+    if (onWall && mode === "commit" && grounded) wantJump = true;
 
     if (moveDir < 0) keys |= InputBit.Left;
     if (moveDir > 0) keys |= InputBit.Right;
-
-    // Grounded hop to START a climb toward a higher foe (get airborne and into
-    // the wall); the wall-climb branch above takes over once we're up on it.
-    if (grounded && foe.y < me.y - 90 && bot.rand() < 0.12) wantJump = true;
-
-    // Pulse: force a one-tick release between presses so the sim re-arms its
-    // jump buffer and bots can CHAIN wall-jumps (a HELD Jump fires only once).
     if (wantJump && !bot.jumpHeldPrev) keys |= InputBit.Jump;
 
-    // Body threat: an enemy actively SLIDING (aegis dash) toward us. Every
-    // tier reacts (only the OFFENSIVE use of the slide is tier-gated below)
-    // — this is the balance-audit fix: bots that never perceive a charging
-    // body as a threat made the mechanic invisible/uncounterable in the
-    // world people actually play in. Reaction-delayed like a human (~250ms)
-    // via bodyThreatSince, mirroring the farSince commit-mode pattern.
+    // Body threat defense (universal).
     const bodyThreat =
       foe.dashing === true &&
       dist <= BOT_TUNING.bodyThreatRadius &&
@@ -341,27 +365,19 @@ export class WorldBots {
     if (bodyThreat && nowMs - bot.bodyThreatSince >= BOT_TUNING.bodyThreatReactionMs) {
       const roll = bot.rand();
       if (roll < 0.4 && me.shieldCharge !== undefined && me.shieldCharge > 25) {
-        // Hold shield — absorbs the bash outright (no directional-arc gate
-        // on a plain held shield), the passive-safe answer.
         keys |= InputBit.Shield;
       } else if (roll < 0.75) {
-        // Dash AWAY — aim opposite the attacker so the lunge (and its own
-        // front-arc block) launches clear of them instead of into them.
         const awayX = me.x - dx;
-        const awayY = me.y - (foe.y - me.y);
+        const awayY = me.y - dy;
         keys |= InputBit.Dash;
         bot.jumpHeldPrev = (keys & InputBit.Jump) !== 0;
         return { keys, aimX: awayX, aimY: awayY };
       } else if (grounded) {
-        keys |= InputBit.Jump; // a bare hop still breaks the lunge's lane
+        keys |= InputBit.Jump;
       }
     }
 
-    // Offensive slide: tier-gated (see BotState.slideTier) — only when
-    // already closing distance and inside bash range, so it reads as a
-    // deliberate engage, not a random twitch. Never against a fresh human
-    // (FTUE grace): a 34-damage bash in your first minute teaches "this
-    // game kills you before you learn the controls".
+    // Offensive slide (tiered, FTUE-gated).
     if (
       bot.slideTier > 0 &&
       !foeIsFresh &&
@@ -372,14 +388,12 @@ export class WorldBots {
       keys |= InputBit.Dash;
     }
 
-    // Threat response: inbound projectile → parry (facing it) or hop.
+    // Projectile threat → parry / hop / shield (parry less often = more open).
     const threat = this.inboundThreat(state, me);
     if (threat) {
-      if (nowMs >= bot.parryReadyAt && bot.rand() < 0.55) {
-        keys |= InputBit.Ability; // parry toward current aim (set below)
+      if (nowMs >= bot.parryReadyAt && bot.rand() < 0.38) {
+        keys |= InputBit.Ability;
         bot.parryReadyAt = nowMs + BOT_TUNING.parryEveryMs + bot.rand() * 1200;
-        bot.aimX = threat.x;
-        bot.aimY = threat.y;
         bot.jumpHeldPrev = (keys & InputBit.Jump) !== 0;
         return { keys, aimX: threat.x, aimY: threat.y };
       }
@@ -387,25 +401,33 @@ export class WorldBots {
       if (me.shieldCharge !== undefined && me.shieldCharge > 40 && bot.rand() < 0.3) {
         keys |= InputBit.Shield;
       }
+      if (this.nav && bot.coverUntil < nowMs) {
+        bot.coverUntil = nowMs + BOT_TUNING.coverHoldMs;
+      }
     }
 
-    // Aim: lead the target, with reaction lag (EMA toward true lead point)
-    // and a human aim-error wobble.
+    // Aim: weak lead + slow EMA + human/fresh error multipliers.
     const flightSec = dist / BOT_TUNING.projectileSpeed;
     const leadX = foe.x + foe.vx * flightSec * BOT_TUNING.leadFactor;
     const leadY = foe.y + foe.vy * flightSec * BOT_TUNING.leadFactor;
-    bot.aimX += (leadX - bot.aimX) * 0.25;
-    bot.aimY += (leadY - bot.aimY) * 0.25;
-    // Doubled wobble against a fresh human (FTUE grace) — they get shot AT,
-    // survivably, while they find the controls.
-    const err = BOT_TUNING.aimErrorPx * (foeIsFresh ? 2 : 1);
+    bot.aimX += (leadX - bot.aimX) * 0.16; // slower track = more miss
+    bot.aimY += (leadY - bot.aimY) * 0.16;
+    let errMul = 1;
+    if (foeIsHuman) errMul *= BOT_TUNING.humanAimErrorMul;
+    if (foeIsFresh) errMul *= BOT_TUNING.freshAimErrorMul;
+    const err = BOT_TUNING.aimErrorPx * errMul;
     const aimX = bot.aimX + (bot.rand() - 0.5) * err;
     const aimY = bot.aimY + (bot.rand() - 0.5) * err;
 
-    // Fire when roughly on target and in range (never while retreating
-    // and hurt — bots that spray while fleeing feel unfair).
-    const inRange = dist < 620;
-    if (inRange && !retreating) keys |= InputBit.Fire;
+    // Fire: bursty, not permanent trigger-hold (was "hard as nails").
+    const inRange = dist < fireRange;
+    if (inRange && !retreating) {
+      if (los) {
+        if (bot.rand() < BOT_TUNING.fireChanceLos) keys |= InputBit.Fire;
+      } else if (mode === "cover" && bot.rand() < BOT_TUNING.fireChanceBlind) {
+        keys |= InputBit.Fire;
+      }
+    }
     if (retreating && me.shieldCharge !== undefined && me.shieldCharge > 20) {
       keys |= InputBit.Shield;
     }
@@ -414,7 +436,6 @@ export class WorldBots {
     return { keys, aimX, aimY };
   }
 
-  /** Record first-seen timestamps for humans and prune departures. */
   private trackHumanArrivals(players: readonly PlayerEntity[], nowMs: number): void {
     const present = new Set<string>();
     for (const p of players) {
@@ -428,17 +449,12 @@ export class WorldBots {
     }
   }
 
-  /** FTUE grace: a human inside their first freshPlayerGraceMs in the world.
-   *  Bots go easy on them (see BOT_TUNING.freshPlayerGraceMs). */
   private isFreshHuman(id: string, nowMs: number): boolean {
     const firstSeen = this.humanFirstSeenAtMs.get(id);
     if (firstSeen === undefined) return false;
     return nowMs - firstSeen < BOT_TUNING.freshPlayerGraceMs;
   }
 
-  /** Is `foe`'s velocity roughly aligned toward `me`? Same dot-product
-   *  shape as the projectile threat check, applied to a player body —
-   *  used to tell "sliding toward us" from "sliding somewhere else". */
   private headingTowardMe(me: PlayerEntity, foe: PlayerEntity): boolean {
     const dx = me.x - foe.x;
     const dy = me.y - foe.y;
@@ -449,27 +465,42 @@ export class WorldBots {
   }
 
   private nearestFoe(players: readonly PlayerEntity[], me: PlayerEntity, nowMs: number): PlayerEntity | null {
-    // FTUE grace: prefer the nearest NON-fresh target when one exists, so a
-    // just-joined human isn't immediately dogpiled — bots fight each other
-    // (or veterans) instead. A fresh human is still a valid LAST-resort foe
-    // (an empty-feeling world is worse than gentle pressure; the gentleness
-    // itself comes from the aim/dash handicaps in decide()).
+    // Prefer bot-on-bot + skip fresh humans when any non-fresh target exists.
+    // Humans still get pressure, but the gang piles on each other first.
     let best: PlayerEntity | null = null;
     let bestD = Infinity;
+    let bestBot: PlayerEntity | null = null;
+    let bestBotD = Infinity;
     let bestSeasoned: PlayerEntity | null = null;
     let bestSeasonedD = Infinity;
+    let bestHuman: PlayerEntity | null = null;
+    let bestHumanD = Infinity;
     for (const p of players) {
       if (p.id === me.id || !p.alive) continue;
+      const id = p.id as string;
       const d = Math.hypot(p.x - me.x, p.y - me.y);
       if (d < bestD) {
         bestD = d;
         best = p;
       }
-      if (!this.isFreshHuman(p.id as string, nowMs) && d < bestSeasonedD) {
+      if (id.startsWith(BOT_ID_PREFIX) && d < bestBotD) {
+        bestBotD = d;
+        bestBot = p;
+      }
+      if (!this.isFreshHuman(id, nowMs) && d < bestSeasonedD) {
         bestSeasonedD = d;
         bestSeasoned = p;
       }
+      if (!id.startsWith(BOT_ID_PREFIX) && d < bestHumanD) {
+        bestHumanD = d;
+        bestHuman = p;
+      }
     }
+    // Bot within preferBotDistFactor of nearest human → pick bot (bot-on-bot).
+    if (bestBot && bestHuman) {
+      if (bestBotD <= bestHumanD * BOT_TUNING.preferBotDistFactor) return bestBot;
+    }
+    if (bestBot && !bestHuman) return bestBot;
     return bestSeasoned ?? best;
   }
 
@@ -483,7 +514,6 @@ export class WorldBots {
       const dy = me.y - pr.y;
       const d = Math.hypot(dx, dy);
       if (d > BOT_TUNING.threatRadius) continue;
-      // Heading toward us? (velocity dot to-me > 0 with decent alignment)
       const speed = Math.hypot(pr.vx, pr.vy) || 1;
       const align = (pr.vx * dx + pr.vy * dy) / (speed * d || 1);
       if (align > 0.6) return { x: pr.x, y: pr.y };
@@ -502,7 +532,6 @@ export class WorldBots {
     if (state.round.draftingPicked?.[bot.id] !== undefined) return;
     if (state.round.roundIndex !== bot.lastDraftRound) {
       bot.lastDraftRound = state.round.roundIndex;
-      // Deliberate pause: instant picks read as robotic in the BAD way.
       bot.draftPickAt = nowMs + 1500 + bot.rand() * 3000;
     }
     if (bot.draftPickAt !== null && nowMs >= bot.draftPickAt) {

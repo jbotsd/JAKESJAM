@@ -14,11 +14,13 @@ import { generateArena, isGenMapId, parseGenSeed } from "./mapGen.js";
 export { isGenMapId };
 import { boxworksMini } from "./boxworks-mini.js";
 import { boxworksTower } from "./boxworks-tower.js";
+import { vesselNexus } from "./vessel-nexus.js";
 import type { MapDefinition } from "../types.js";
 
-export type MapId = "boxworks" | "boxworks-mini" | "boxworks-tower";
+export type MapId = "vessel-nexus" | "boxworks" | "boxworks-mini" | "boxworks-tower";
 
 export const mapsById: Record<MapId, MapDefinition> = {
+  "vessel-nexus": vesselNexus,
   "boxworks": boxworksWorld as MapDefinition,
   "boxworks-mini": boxworksMini,
   "boxworks-tower": boxworksTower,
@@ -47,7 +49,8 @@ const mapAliasesById: Record<string, MapDefinition> = (() => {
   return out;
 })();
 
-export const DEFAULT_MAP_ID: MapId = "boxworks-mini";
+/** Hot Lobby default — 16-pad mega vessel dock. */
+export const DEFAULT_MAP_ID: MapId = "vessel-nexus";
 
 export function isMapId(value: string): value is MapId {
   return value in mapsById;
@@ -109,10 +112,19 @@ export function resolveMap(id: string | undefined): MapDefinition {
 export const GEN_RANDOM_PICKER_ID = "gen-random" as const;
 export type MapPickerId = MapId | typeof GEN_RANDOM_PICKER_ID;
 
-/** Representative arena shown on the "Generated Arena" picker card. The
- *  actual match uses a freshly minted seed, not this one — this is only
- *  ever used for the card's name/size/preview silhouette. */
-export const GEN_PREVIEW_MAP: MapDefinition = generateArena(0);
+/** Representative arena shown on the "Generated Arena" picker card. Lazy
+ *  so a broken generator can't crash module import during tests. */
+let _genPreview: MapDefinition | null = null;
+export function getGenPreviewMap(): MapDefinition {
+  if (!_genPreview) _genPreview = generateArena(0);
+  return _genPreview;
+}
+/** @deprecated use getGenPreviewMap() — kept for call sites that import the const name. */
+export const GEN_PREVIEW_MAP: MapDefinition = new Proxy({} as MapDefinition, {
+  get(_t, prop) {
+    return (getGenPreviewMap() as unknown as Record<string | symbol, unknown>)[prop];
+  },
+});
 
 /** Resolves a picker id (real MapId or the gen-random sentinel) to the
  *  MapDefinition used for the card preview. */
@@ -126,23 +138,28 @@ export const mapPickerOrder: ReadonlyArray<{
   recommendedPlayers: string;
 }> = [
   {
+    id: "vessel-nexus",
+    blurb: "Hot Lobby mega-dock. Sixteen vessel pads, hull shafts, sci-fi gnostic chrome.",
+    recommendedPlayers: "8-16",
+  },
+  {
     id: "boxworks-mini",
-    blurb: "Tight 1v1 brawl. Every shot is a real engagement.",
+    blurb: "Tight 1v1 cell. Every shot is a real engagement.",
     recommendedPlayers: "2",
   },
   {
     id: "boxworks",
-    blurb: "Classic 3-tier flow. The default arena.",
+    blurb: "Classic multi-cell flow. Room-scale FFA.",
     recommendedPlayers: "2-8",
   },
   {
     id: "boxworks-tower",
-    blurb: "Vertical jetpack chaos. Burn fuel or fall.",
-    recommendedPlayers: "4-6",
+    blurb: "Vertical climb chaos. Wall-jump or fall.",
+    recommendedPlayers: "4-8",
   },
   {
     id: GEN_RANDOM_PICKER_ID,
-    blurb: "Freshly generated every match. Validated layout, never the same twice.",
-    recommendedPlayers: "2-8",
+    blurb: "Fresh mega dock every match. Validated layout, never the same twice.",
+    recommendedPlayers: "8-16",
   },
 ];

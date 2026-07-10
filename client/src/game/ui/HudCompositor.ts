@@ -27,6 +27,8 @@ import {
   MatchResultsOverlay,
   type MatchResultsRow,
 } from "./MatchResultsOverlay.js";
+import { pickDeathTip, type DeathTipSignal } from "../highlights/deathTip.js";
+import { globalClipSession } from "../../shell/clipSession.js";
 
 export type HudCompositorCallbacks = {
   /** Called when the local player commits a card pick from the draft overlay. */
@@ -35,6 +37,8 @@ export type HudCompositorCallbacks = {
   onRematch: () => void;
   /** Called when the Back to Lobby button is pressed on the results overlay. */
   onReturnToLobby: () => void;
+  /** Optional death-tip signal builder (scene has kill context). */
+  getDeathTipSignal?: () => DeathTipSignal | null;
 };
 
 /** A card-offered event that the compositor should route to the draft overlay. */
@@ -78,6 +82,7 @@ export class HudCompositor {
 
   private matchHasEnded = false;
   private lastCardOfferKey: string | null = null;
+  private deathTipLocked: string | null | undefined = undefined;
 
   constructor(
     scene: Phaser.Scene,
@@ -216,6 +221,7 @@ export class HudCompositor {
       if (this.deathOverlay.isOpen()) {
         this.deathOverlay.hide();
       }
+      this.deathTipLocked = undefined;
       return;
     }
 
@@ -228,7 +234,14 @@ export class HudCompositor {
     if (this.deathOverlay.isOpen()) {
       this.deathOverlay.updateTimer(remainingSec);
     } else {
-      this.deathOverlay.show(remainingSec);
+      if (this.deathTipLocked === undefined) {
+        const signal = this.callbacks.getDeathTipSignal?.() ?? null;
+        this.deathTipLocked = pickDeathTip(signal);
+      }
+      this.deathOverlay.show(remainingSec, {
+        tip: this.deathTipLocked,
+        shareUrl: globalClipSession.primaryShareUrl(),
+      });
     }
   }
 
@@ -281,7 +294,12 @@ export class HudCompositor {
     );
 
     this.matchResults.show(
-      { winnerPlayerId, targetScore: TARGET_SCORE_DEFAULT, rows },
+      {
+        winnerPlayerId,
+        targetScore: TARGET_SCORE_DEFAULT,
+        rows,
+        shareUrl: globalClipSession.primaryShareUrl() ?? undefined,
+      },
       {
         onRematch: () => {
           this.matchResults.hide();

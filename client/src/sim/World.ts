@@ -735,25 +735,22 @@ export function stepWithRuntime(
     }
   }
 
-  // 1a. Void-plane kill check. Any alive player whose `y` exceeds the map's
-  //     bottom edge by `KILL_PLANE_MARGIN_PX` is force-killed. Catches the
-  //     fall-through-floor / off-map edge case so the player drops into the
-  //     existing death → respawn → next-round flow instead of floating
-  //     forever in the void with no death event. Runs before status effects
-  //     so a void-killed player won't take a burn tick on the way down.
-  //
-  //     Pure sim mutation: server + client see the same kill at the same tick.
-  //     We emit a hit-confirmed with damage = remaining health and a null
-  //     source projectile so the client SFX/HUD pipeline treats it like any
-  //     other death. Round logic at the end of the tick will see alive: false
-  //     and resolve last-alive accordingly.
-  if (runtime.map.size.y > 0) {
+  // 1a. Void-plane kill check. Open silhouettes (segmented floors, no
+  //     full box walls) let players fall between islands or walk off the
+  //     map AABB — kill on Y *or* X past the margin so nobody floats
+  //     forever in the void. Pure sim; server + client agree per tick.
+  if (runtime.map.size.y > 0 || runtime.map.size.x > 0) {
     const killY = runtime.map.size.y + KILL_PLANE_MARGIN_PX;
+    const killMinX = -KILL_PLANE_MARGIN_PX;
+    const killMaxX = runtime.map.size.x + KILL_PLANE_MARGIN_PX;
     for (const pidStr of Object.keys(players)) {
       const pid = pidStr as PlayerId;
       const p = players[pid]!;
       if (!p.alive) continue;
-      if (p.y <= killY) continue;
+      const fellDown = runtime.map.size.y > 0 && p.y > killY;
+      const fellSide =
+        runtime.map.size.x > 0 && (p.x < killMinX || p.x > killMaxX);
+      if (!fellDown && !fellSide) continue;
       events.push({
         t: "hit-confirmed",
         victimId: pid,

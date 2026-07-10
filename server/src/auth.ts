@@ -49,6 +49,20 @@ export async function mintWorldToken(
   return `${message}.${sigB64}`;
 }
 
+/**
+ * Mint a match token for private rooms (server-issued, no Convex).
+ * Same wire format as Convex matchmaker tokens so /ws upgrade is unchanged.
+ */
+export async function mintMatchToken(
+  matchId: string,
+  playerId: string,
+  secret: string,
+): Promise<string> {
+  const message = `${matchId}.${playerId}`;
+  const sigB64 = await sign(message, secret);
+  return `${message}.${sigB64}`;
+}
+
 export type ParsedWorldToken = {
   playerId: string;
 };

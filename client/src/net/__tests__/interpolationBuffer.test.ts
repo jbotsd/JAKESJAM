@@ -49,19 +49,26 @@ describe("InterpolationBuffer", () => {
     expect(buf.sample(150)).toEqual({ x: 50, y: 25 });
   });
 
-  test("sample past the last entry returns the last value (hold-extrapolate)", () => {
+  test("sample past the last entry velocity-extrapolates, capped at 120ms", () => {
     buf.push(100, { x: 0, y: 0 });
     buf.push(200, { x: 100, y: 0 });
-    expect(buf.sample(500)).toEqual({ x: 100, y: 0 });
+    // Segment velocity = 1px/ms. 20ms past the newest → 20px beyond it —
+    // continued motion instead of the old freeze-then-leap under stalls.
+    expect(buf.sample(220)).toEqual({ x: 120, y: 0 });
+    // Far past the newest: extrapolation caps at newest+120ms → x=220, then
+    // holds (a long outage must not slide the body off into space).
+    const held = buf.sample(500)!;
+    expect(held.x).toBeCloseTo(220, 6);
+    expect(held.y).toBeCloseTo(0, 6);
   });
 
-  test("sample before first entry returns the first value (hold-extrapolate)", () => {
+  test("sample before first entry returns the FIRST value", () => {
     buf.push(100, { x: 5, y: 0 });
     buf.push(200, { x: 100, y: 0 });
-    // Before the first sample, the for-loop fails; falls through
-    // to the "hold last" branch which returns the LAST sample's
-    // value. Document this behaviour.
-    expect(buf.sample(0)).toEqual({ x: 100, y: 0 });
+    // Render-in-the-past semantics: a render time older than the buffer is
+    // closest to the OLDEST sample. (The old fall-through returned the
+    // NEWEST — an undelayed position flash right after a buffer rebuild.)
+    expect(buf.sample(0)).toEqual({ x: 5, y: 0 });
   });
 
   test("zero-span between two samples returns first value (no NaN)", () => {

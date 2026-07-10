@@ -21,20 +21,22 @@
 // only ever constructed behind an explicit opt-in (clipConsent.ts).
 //
 // TWO OUTPUTS PER TRIGGER (v2, after the first real-footage review):
-//   1. VERTICAL 720x1280 — a 9:16 crop whose window TRACKS THE LOCAL PLAYER
-//      via deps.getFocus (screen-space position fed by the scene each call).
-//      The v1 static center-crop assumed the camera kept the player centered
-//      — true under the old centerOn() camera, but the ActionCamera
-//      deliberately leads AHEAD of the player (look-ahead + action centroid
-//      + deadzone), so a fixed center crop lost the player entirely.
+//   1. VERTICAL 720x1280 — a 9:16 crop whose window TRACKS THE FIGHT PAIR
+//      via deps.getFocus (screen-space: midpoint of local + nearest enemy,
+//      same envelope law as ActionCamera). v1 static center lost the player
+//      under ActionCamera look-ahead; v2 player-only still cropped the
+//      victim out of multi-kills. Fight-pair focus keeps both in frame.
 //      The window is smoothed (exp lerp) so it pans like a camera operator
 //      instead of jittering with every velocity change, and clamped to the
 //      source bounds.
 //   2. ORIGINAL landscape (scaled to 1280 wide) — the full view, kept
 //      because the crop is lossy by nature: review, devlogs, YouTube.
 //
-// FPS: captureStream(60) + 8Mbps (v1's 30fps/5Mbps read as choppy on
-// fast-moving gameplay).
+// FPS: captureStream(30) + 5Mbps, paced draw loop. (v2 ran 60fps/8Mbps ×2
+// pipelines — Linux Chromium encodes H.264 in SOFTWARE (OpenH264), the
+// encoder only achieved ~22fps, and the load stalled the game's own rAF
+// loop: gameplay stuttered whenever clips were recording. 30fps that the
+// encoder actually sustains beats 60fps it can't.)
 
 /** TikTok-native vertical output resolution. */
 const DEST_WIDTH = 720;
@@ -49,21 +51,30 @@ const LOOKAHEAD_MS = 3_000;
 /** Hard ceiling so a trigger landing right before a natural rotation can't
  *  keep extending a single segment indefinitely. */
 const MAX_SEGMENT_MS = 20_000;
-/** Capture frame rate. The draw loop runs on rAF (display rate); 60 here
- *  lets captureStream propagate every one of those frames. */
-const CAPTURE_FPS = 60;
+/** Capture frame rate. Was 60 — but on Linux Chromium MediaRecorder H.264
+ *  falls back to OpenH264 SOFTWARE encoding, and two 60fps/8Mbps encodes
+ *  starved the main thread to ~22fps (dips to 8fps) — the encoder never
+ *  achieved 60 anyway and the stalls made the GAME stutter while clips were
+ *  recording. 30fps halves encode + drawImage cost; the paced draw loop
+ *  below feeds it exactly 30. */
+const CAPTURE_FPS = 30;
 /** Explicit bitrate — MediaRecorder's implicit default can be low enough to
- *  look noticeably blocky on fast-moving gameplay. */
-const VIDEO_BITS_PER_SECOND = 8_000_000;
+ *  look noticeably blocky on fast-moving gameplay. 5Mbps at 30fps is denser
+ *  per-frame than the old 8Mbps at (nominal) 60. */
+const VIDEO_BITS_PER_SECOND = 5_000_000;
+/** Draw-loop pacing interval. rAF fires at display rate; we only pay the
+ *  two drawImage calls when this much time has passed since the last draw. */
+const DRAW_INTERVAL_MS = 1000 / CAPTURE_FPS;
 /** Upload floor: a hidden tab stops the rAF draw loop, so captureStream
  *  produces no frames and the recorder emits a header-only blob (the
  *  10-15 BYTE junk files observed in server/.clips). Any real clip at
  *  8Mbps is megabytes; anything under this floor is a dud — drop it. */
 const MIN_UPLOAD_BYTES = 100_000;
-/** Crop-window smoothing: fraction of the remaining distance covered per
- *  frame (~60Hz). 0.12 ≈ settles in ~0.3s — pans like a camera operator,
- *  never snaps, never jitters with per-frame velocity noise. */
-const FOCUS_LERP = 0.12;
+/** Crop-window smoothing time constant. Time-based (1 − e^(−dt/τ)) so the
+ *  pan speed is identical at 30Hz, 60Hz, or a janky 22Hz — the old per-frame
+ *  0.12 factor panned at half speed whenever the frame rate halved.
+ *  τ=130ms ≈ settles in ~0.4s: pans like a camera operator, never snaps. */
+const FOCUS_TAU_MS = 130;
 
 export type ClipKind = "vertical" | "original";
 
@@ -71,9 +82,9 @@ export type ClipRecorderDeps = {
   /** Where to upload finished clips. Relative path — resolved against the
    *  page's own origin so it works under any tunnel/host domain. */
   uploadPath?: string;
-  /** Local player's CURRENT position in SOURCE-CANVAS pixel coordinates.
-   *  Called once per drawn frame; return null when unknown (falls back to
-   *  the source center). The scene owns the camera math. */
+  /** Fight-pair centre in SOURCE-CANVAS pixel coordinates (player + nearest
+   *  enemy midpoint when engaged). Called once per drawn frame; return null
+   *  when unknown (falls back to the source center). The scene owns the math. */
   getFocus?: () => { x: number; y: number } | null;
   onUploaded?: (url: string, kind: ClipKind) => void;
   onError?: (err: unknown) => void;
@@ -202,15 +213,22 @@ export class ClipRecorder {
   }
 
   private startDrawLoop(): void {
-    const draw = () => {
+    let lastDrawAt = 0;
+    const draw = (nowMs: number) => {
       if (this.stopped) return;
-      this.drawFrame();
+      // Pace to CAPTURE_FPS — drawing (and feeding the encoders) at full
+      // display rate doubled the encode load for frames the 30fps stream
+      // would drop anyway.
+      if (nowMs - lastDrawAt >= DRAW_INTERVAL_MS - 1) {
+        this.drawFrame(nowMs - (lastDrawAt || nowMs));
+        lastDrawAt = nowMs;
+      }
       this.drawRafId = requestAnimationFrame(draw);
     };
     this.drawRafId = requestAnimationFrame(draw);
   }
 
-  private drawFrame(): void {
+  private drawFrame(frameDtMs: number): void {
     const sw = this.sourceCanvas.width;
     const sh = this.sourceCanvas.height;
     if (sw === 0 || sh === 0) return;
@@ -224,8 +242,9 @@ export class ClipRecorder {
       this.focusX = tx;
       this.focusY = ty;
     } else {
-      this.focusX += (tx - this.focusX) * FOCUS_LERP;
-      this.focusY += (ty - this.focusY) * FOCUS_LERP;
+      const a = 1 - Math.exp(-Math.max(1, frameDtMs) / FOCUS_TAU_MS);
+      this.focusX += (tx - this.focusX) * a;
+      this.focusY += (ty - this.focusY) * a;
     }
 
     for (const p of this.pipelines) {

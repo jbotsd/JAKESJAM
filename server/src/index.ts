@@ -21,11 +21,36 @@ import { MatchRegistry } from "./matchRegistry.ts";
 import { WorldHost } from "./worldHost.ts";
 import type { MatchSocketData } from "./matchHost.ts";
 import {
+  createPrivateLobby,
+  getPrivateLobby,
+  heartbeatPrivateLobby,
+  joinPrivateLobby,
+  leavePrivateLobby,
+  setChaosPrivate,
+  setMapPrivate,
+  setReadyPrivate,
+  startPrivateMatch,
+} from "./privateLobby.ts";
+import {
   applyServerWasmCollision,
   applyServerWasmPlayer,
   loadServerSim,
 } from "./wasmRuntime.ts";
-import { handleClipUpload, serveClip } from "./clipStore.ts";
+import {
+  ensurePinnedClipsOnDisk,
+  handleClipUpload,
+  publicClipOrigin,
+  serveClip,
+} from "./clipStore.ts";
+import {
+  clipByteSize,
+  clipExistsOnDisk,
+  isClipFilename,
+  renderClipSharePage,
+  requestWantsClipSharePage,
+  resolveClipFilename,
+} from "./clipSharePage.ts";
+import { handleOps } from "./ops.ts";
 import {
   generatePkcePair,
   generateState,
@@ -39,6 +64,9 @@ import { saveToken, getToken, isAccessTokenStale } from "./tiktok/tokenStore.ts"
 import { createCheckoutSession, findSku, COSMETIC_CATALOG } from "./stripe/checkout.ts";
 import { requireStripeWebhookSecret, verifyStripeSignature, parseCheckoutCompleted } from "./stripe/webhook.ts";
 import { grantEntitlement, getEntitlements } from "./stripe/entitlements.ts";
+
+/** Process boot time — surfaced on /ops/api/status uptime. */
+const processStartedAtMs = Date.now();
 
 // In-memory PKCE/state stash for the OAuth handshake — short-lived (a few
 // minutes at most, spanning one redirect round-trip), so process memory is
@@ -81,12 +109,13 @@ const registry = new MatchRegistry();
 // instance without crossing module-load state.
 const worldHost = new WorldHost({
   // WORLD_MAP pins the world to one map (curated id or "gen:<seed>") —
-  // useful for playtesting a specific arena. Default: mini + rotation.
-  mapId: process.env.WORLD_MAP ?? "boxworks-mini",
+  // useful for playtesting a specific arena. Default: Vessel Nexus mega
+  // (always-floor + cover) with rotation across Hot Lobby maps when unset.
+  mapId: process.env.WORLD_MAP ?? "vessel-nexus",
   rotateMaps: process.env.WORLD_MAP === undefined,
-  // AI duelists keeping the world alive — 0 disables (default, so tests
-  // and probes stay deterministic). host-public.sh hosts with 2.
-  bots: Number(process.env.WORLD_BOTS ?? 0),
+  // AI duelists keeping the Hot Lobby alive. Default 2 (host-public.sh
+  // same). Set WORLD_BOTS=0 for deterministic probes / quiet local.
+  bots: Number(process.env.WORLD_BOTS ?? 2),
 });
 
 type SocketKind = "room" | "world";
@@ -200,6 +229,19 @@ function serveOnPort(port: number) {
       );
     }
 
+    // ── Operator console (ADMIN_SECRET) ───────────────────────────────
+    // Deep backend UI + JSON API for the host owner — clips pin/unpin,
+    // world/rooms status, env flags. Never part of the player SPA.
+    {
+      const opsRes = await handleOps(req, url, {
+        registry,
+        worldHost,
+        startedAtMs: processStartedAtMs,
+        port: srv.port ?? config.port,
+      });
+      if (opsRes) return opsRes;
+    }
+
     // Dedicated lightweight endpoints for the client status badges.
     // Cheaper than /health (no string formatting of the rooms map).
     if (url.pathname === "/world/summary") {
@@ -228,20 +270,192 @@ function serveOnPort(port: number) {
       // 12 per 5min: each highlight trigger now uploads TWO files
       // (vertical + original), so this allows ~6 triggers per window.
       if (!checkRateLimit(`clip:${ip}`, 12, 5 * 60_000)) return RATE_LIMIT_429();
-      const origin = `${url.protocol}//${req.headers.get("host") ?? url.host}`;
+      // Brand domain for share URLs — never randel.*.ts.net (Tailscale funnel).
+      const origin = publicClipOrigin(req, url);
       const result = await handleClipUpload(req, origin);
       if (!result.ok) {
         return new Response(result.message, { status: result.status, headers: corsHeaders });
       }
-      return new Response(JSON.stringify({ url: result.url }), {
-        headers: { "content-type": "application/json", ...corsHeaders },
-      });
+      // `url` is the human/SEO share page; `mediaUrl` is raw bytes for embeds/TikTok.
+      return new Response(
+        JSON.stringify({ url: result.url, mediaUrl: result.mediaUrl }),
+        { headers: { "content-type": "application/json", ...corsHeaders } },
+      );
     }
-    // GET serves the bytes; HEAD answers metadata-only probes (curl -I,
-    // link unfurlers, TikTok PULL_FROM_URL's URL verification) — they used
-    // to 404, which read as "the link is broken" in any HEAD-based check.
+
+    // Pretty share page: /c/<uuid> (preferred, no .mp4) and /c/<uuid>.mp4 (legacy)
+    // HEAD supported so Facebook crawler probes don't 404.
+    if (
+      (url.pathname.startsWith("/c/") || url.pathname.startsWith("/watch/")) &&
+      (req.method === "GET" || req.method === "HEAD")
+    ) {
+      const prefix = url.pathname.startsWith("/c/") ? "/c/" : "/watch/";
+      const slug = url.pathname.slice(prefix.length).split("/")[0] ?? "";
+      const resolved = await resolveClipFilename(slug);
+      // Still render a 404 marketing page when slug looks like a clip id.
+      if (resolved || isClipFilename(slug) || /^[a-f0-9-]{36}$/i.test(slug)) {
+        const origin = publicClipOrigin(req, url);
+        const filename = resolved ?? (isClipFilename(slug) ? slug : `${slug}.mp4`);
+        const exists = resolved !== null;
+        const sizeBytes = exists ? await clipByteSize(filename) : null;
+        // Canonical: /c/<uuid> without extension — 301 legacy .mp4 share URLs.
+        if (exists && isClipFilename(slug)) {
+          const idOnly = slug.replace(/\.(webm|mp4)$/i, "");
+          return new Response(null, {
+            status: 301,
+            headers: {
+              location: `${origin}/c/${idOnly}`,
+              "cache-control": "public, max-age=3600",
+              ...corsHeaders,
+            },
+          });
+        }
+        if (req.method === "HEAD") {
+          return new Response(null, {
+            status: exists ? 200 : 404,
+            headers: {
+              "content-type": "text/html; charset=utf-8",
+              "cache-control": "public, max-age=60, must-revalidate",
+              ...corsHeaders,
+            },
+          });
+        }
+        const html = renderClipSharePage({
+          filename,
+          origin,
+          exists,
+          sizeBytes,
+        });
+        return new Response(html, {
+          status: exists ? 200 : 404,
+          headers: {
+            "content-type": "text/html; charset=utf-8",
+            // Short TTL so FB rescrape picks up OG changes quickly
+            "cache-control": "public, max-age=60, must-revalidate",
+            "cdn-cache-control": "max-age=60",
+            ...corsHeaders,
+          },
+        });
+      }
+    }
+
+    // Minimal embed player (twitter:player / og:video text/html)
+    if (url.pathname.startsWith("/embed/") && req.method === "GET") {
+      const slug = url.pathname.slice("/embed/".length).split("/")[0] ?? "";
+      const resolved = await resolveClipFilename(slug);
+      if (resolved) {
+        const origin = publicClipOrigin(req, url);
+        const media = `${origin}/v/${resolved}`;
+        const mime = resolved.endsWith(".mp4") ? "video/mp4" : "video/webm";
+        const html = `<!DOCTYPE html><html lang="en"><head>
+<meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>JAKESJAM clip</title>
+<style>*{margin:0;padding:0;box-sizing:border-box}html,body{height:100%;background:#000}
+video{width:100%;height:100%;object-fit:contain;display:block}</style>
+</head><body>
+<video controls playsinline autoplay muted loop preload="auto">
+<source src="${media}" type="${mime}"/>
+</video></body></html>`;
+        return new Response(html, {
+          headers: {
+            "content-type": "text/html; charset=utf-8",
+            "cache-control": "public, max-age=300",
+            // Allow embedding in Twitter/FB player iframes
+            "content-security-policy": "frame-ancestors *",
+            ...corsHeaders,
+          },
+        });
+      }
+      return new Response("not found", { status: 404, headers: corsHeaders });
+    }
+
+    // Always-raw video stream for og:video / <video> / TikTok — never HTML.
+    // Paths: /v/<file> (preferred) and /media/<file> (alias).
+    if (
+      (url.pathname.startsWith("/v/") || url.pathname.startsWith("/media/")) &&
+      (req.method === "GET" || req.method === "HEAD")
+    ) {
+      const prefix = url.pathname.startsWith("/v/") ? "/v/" : "/media/";
+      const filename = url.pathname.slice(prefix.length).split("?")[0] ?? "";
+      const res = await serveClip(filename);
+      if (res) {
+        if (req.method === "HEAD") {
+          return new Response(null, { status: 200, headers: res.headers });
+        }
+        return res;
+      }
+      return new Response("not found", { status: 404, headers: corsHeaders });
+    }
+
+    // oEmbed for Discord/Slack/etc.
+    if (url.pathname === "/oembed" && req.method === "GET") {
+      const target = url.searchParams.get("url") ?? "";
+      let id = "";
+      try {
+        const u = new URL(target);
+        const parts = u.pathname.split("/").filter(Boolean);
+        // /c/<uuid> or /c/<uuid>.mp4
+        if (parts[0] === "c" && parts[1]) id = parts[1];
+      } catch {
+        /* bad url */
+      }
+      const resolved = id ? await resolveClipFilename(id) : null;
+      if (!resolved) {
+        return new Response(JSON.stringify({ error: "not found" }), {
+          status: 404,
+          headers: { "content-type": "application/json", ...corsHeaders },
+        });
+      }
+      const origin = publicClipOrigin(req, url);
+      const idOnly = resolved.replace(/\.(webm|mp4)$/i, "");
+      const pageUrl = `${origin}/c/${idOnly}`;
+      const mediaUrl = `${origin}/v/${resolved}`;
+      const thumb = `${origin}/og-image.png`;
+      return new Response(
+        JSON.stringify({
+          version: "1.0",
+          type: "video",
+          provider_name: "JAKESJAM",
+          provider_url: origin,
+          title: "JAKESJAM highlight — crystal arena clip",
+          html: `<video src="${mediaUrl}" controls playsinline style="max-width:100%;height:auto" width="360" height="640"></video>`,
+          width: 360,
+          height: 640,
+          thumbnail_url: thumb,
+          thumbnail_width: 1200,
+          thumbnail_height: 630,
+          // Some consumers also read these:
+          url: pageUrl,
+        }),
+        {
+          headers: {
+            "content-type": "application/json; charset=utf-8",
+            "cache-control": "public, max-age=300",
+            ...corsHeaders,
+          },
+        },
+      );
+    }
+
+    // GET /clips/* — never HTML under the .mp4 path (CF caches by extension and
+    // poisoned play.elyad.io/clips/*.mp4 as video/mp4 for a year). Humans get a
+    // 302 → /c/<uuid> share page. Bytes only for ?raw=1 / Range / download.
     if (url.pathname.startsWith("/clips/") && (req.method === "GET" || req.method === "HEAD")) {
-      const filename = url.pathname.slice("/clips/".length);
+      const filename = url.pathname.slice("/clips/".length).split("?")[0] ?? "";
+      if (isClipFilename(filename) && requestWantsClipSharePage(req, url)) {
+        const origin = publicClipOrigin(req, url);
+        const idOnly = filename.replace(/\.(webm|mp4)$/i, "");
+        return new Response(null, {
+          status: 302,
+          headers: {
+            location: `${origin}/c/${idOnly}`,
+            "cache-control": "no-store, no-cache, must-revalidate",
+            "cdn-cache-control": "no-store",
+            "cloudflare-cdn-cache-control": "no-store",
+            ...corsHeaders,
+          },
+        });
+      }
       const res = await serveClip(filename);
       if (res) {
         if (req.method === "HEAD") {
@@ -438,6 +652,127 @@ function serveOnPort(port: number) {
       });
     }
 
+    // ── Private room lobby (server-native, no Convex) ────────────────
+    // Vessel-style private rooms for self-hosted Hot Lobby stack.
+    const privateJson = async (fn: () => unknown) => {
+      try {
+        const body = await fn();
+        return new Response(JSON.stringify(body), {
+          headers: { "content-type": "application/json", ...corsHeaders },
+        });
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return new Response(JSON.stringify({ error: msg }), {
+          status: 400,
+          headers: { "content-type": "application/json", ...corsHeaders },
+        });
+      }
+    };
+    const readJsonBody = async (): Promise<Record<string, unknown>> => {
+      try {
+        const b = await req.json();
+        return b && typeof b === "object" ? (b as Record<string, unknown>) : {};
+      } catch {
+        return {};
+      }
+    };
+
+    if (url.pathname === "/private/create" && req.method === "POST") {
+      if (!checkRateLimit(`privcreate:${ip}`, 10, 60_000)) return RATE_LIMIT_429();
+      const body = await readJsonBody();
+      return privateJson(() =>
+        createPrivateLobby({
+          playerId: String(body.playerId ?? ""),
+          name: String(body.name ?? "Host"),
+          color: String(body.color ?? "#50e3c2"),
+          characterId: String(body.characterId ?? "balanced"),
+          mapId: body.mapId ? String(body.mapId) : undefined,
+          chaosModifierIds: Array.isArray(body.chaosModifierIds)
+            ? body.chaosModifierIds.map(String)
+            : undefined,
+        }),
+      );
+    }
+    if (url.pathname === "/private/join" && req.method === "POST") {
+      if (!checkRateLimit(`privjoin:${ip}`, 20, 60_000)) return RATE_LIMIT_429();
+      const body = await readJsonBody();
+      return privateJson(() =>
+        joinPrivateLobby({
+          code: String(body.code ?? ""),
+          playerId: String(body.playerId ?? ""),
+          name: String(body.name ?? "Player"),
+          color: String(body.color ?? "#50e3c2"),
+          characterId: String(body.characterId ?? "balanced"),
+        }),
+      );
+    }
+    if (url.pathname.startsWith("/private/") && req.method === "GET") {
+      const code = url.pathname.slice("/private/".length).split("/")[0] ?? "";
+      if (!code || code.includes("create") || code.includes("join")) {
+        return new Response("not found", { status: 404, headers: corsHeaders });
+      }
+      const snap = getPrivateLobby(code);
+      if (!snap) {
+        return new Response(JSON.stringify({ error: "Room not found." }), {
+          status: 404,
+          headers: { "content-type": "application/json", ...corsHeaders },
+        });
+      }
+      return new Response(JSON.stringify(snap), {
+        headers: { "content-type": "application/json", ...corsHeaders },
+      });
+    }
+    if (url.pathname === "/private/ready" && req.method === "POST") {
+      const body = await readJsonBody();
+      return privateJson(() =>
+        setReadyPrivate(String(body.code ?? ""), String(body.playerId ?? ""), Boolean(body.ready)),
+      );
+    }
+    if (url.pathname === "/private/map" && req.method === "POST") {
+      const body = await readJsonBody();
+      return privateJson(() =>
+        setMapPrivate(String(body.code ?? ""), String(body.playerId ?? ""), String(body.mapId ?? "")),
+      );
+    }
+    if (url.pathname === "/private/chaos" && req.method === "POST") {
+      const body = await readJsonBody();
+      return privateJson(() =>
+        setChaosPrivate(
+          String(body.code ?? ""),
+          String(body.playerId ?? ""),
+          Array.isArray(body.chaosModifierIds) ? body.chaosModifierIds.map(String) : [],
+        ),
+      );
+    }
+    if (url.pathname === "/private/heartbeat" && req.method === "POST") {
+      const body = await readJsonBody();
+      return privateJson(() =>
+        heartbeatPrivateLobby(String(body.code ?? ""), String(body.playerId ?? "")),
+      );
+    }
+    if (url.pathname === "/private/leave" && req.method === "POST") {
+      const body = await readJsonBody();
+      return privateJson(() =>
+        leavePrivateLobby(String(body.code ?? ""), String(body.playerId ?? "")),
+      );
+    }
+    if (url.pathname === "/private/start" && req.method === "POST") {
+      if (!checkRateLimit(`privstart:${ip}`, 10, 60_000)) return RATE_LIMIT_429();
+      const body = await readJsonBody();
+      return privateJson(async () => {
+        const result = await startPrivateMatch(
+          String(body.code ?? ""),
+          String(body.playerId ?? ""),
+          config.gameServerSecret,
+        );
+        return {
+          ...result.snapshot,
+          matchId: result.matchId,
+          tokens: result.tokens,
+        };
+      });
+    }
+
     // ── World token mint ──────────────────────────────────────────────
     if (url.pathname === "/world-token" && req.method === "POST") {
       if (!checkRateLimit(`worldtoken:${ip}`, 20, 60_000)) return RATE_LIMIT_429();
@@ -576,6 +911,11 @@ const server = listen();
 console.log(
   `[jakesjam-srv] region=${config.region} listening on :${server.port} (rooms=0 world=ready)`,
 );
+
+// Keep user-flagged highlight reels on disk (server/clip-pins.json).
+void ensurePinnedClipsOnDisk().then(() => {
+  console.log("[jakesjam-srv] pinned clips ensured under .clips/kept/");
+});
 
 // ── Graceful shutdown ─────────────────────────────────────────────────────────
 //

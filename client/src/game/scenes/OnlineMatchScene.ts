@@ -27,7 +27,8 @@ import type { Id } from "../../../../convex/_generated/dataModel";
 import { HighlightTracker } from "../highlights/highlightRules";
 import { ClipRecorder } from "../highlights/ClipRecorder";
 import { isClipsEnabled } from "../highlights/clipConsent";
-import { showClipShareToast } from "../ui/ClipShareToast";
+import { emitClipUploaded, ShellEvents } from "../../shell/events";
+import { pickDeathTip, type DeathTipSignal } from "../highlights/deathTip";
 import {
   STEP_MS,
   crystalRoundsCards,
@@ -45,6 +46,8 @@ import {
 import {
   resolveMap,
 } from "../../sim/data/maps";
+import { createWeaponBuild, findCardsById } from "../../sim/data/weaponBuild";
+import { starterWeapon } from "../../sim/data/weapons";
 import { hashPlayerEntity } from "../../sim/hash";
 import { setActiveCameraGetter, setActiveLocalPlayerIdGetter, setActiveNetStatsGetter, setActiveRigDebugGetter, setActiveStateGetter } from "../../debug/wasmStateProbe";
 import { computeBotInput } from "../../debug/botDriver";
@@ -68,6 +71,8 @@ import { ParticlePool } from "../systems/ParticlePool";
 import { StatusVfxController } from "../systems/StatusVfxController";
 import { PlatformLayer } from "../render/PlatformPainter";
 import { LightBeamLayer } from "../render/LightingLayer";
+import { CosmicArenaLayer } from "../render/CosmicArenaLayer";
+import { getMusicLevel } from "../systems/MusicAmplitude";
 import { RenderLayer } from "../render/RenderLayer";
 import { transientVfx } from "../render/TransientVfx";
 import { EntityRenderCoordinator } from "../render/EntityRenderCoordinator";
@@ -76,8 +81,10 @@ import { TouchControls } from "../input/TouchControls";
 import { isTouchPrimary, isPortraitMobile } from "../input/mobile";
 import { ActionIntensity } from "../systems/ActionIntensity.js";
 import { ActionCamera } from "../systems/ActionCamera.js";
+import { stickyEnvelopeSubjects } from "../systems/actionCameraMath.js";
 import { CameraJuice } from "../systems/CameraJuice.js";
 import { installHudCamera } from "../systems/HudCamera.js";
+import { playCardPickFeel } from "../render/CardFeel.js";
 
 // Portrait-mobile camera framing. The arena is 2:1 wide but a phone held
 // upright is ~1:2 tall, so we frame the arena HEIGHT into the upper play-area
@@ -107,16 +114,22 @@ import type {
 
 export type OnlineMatchSceneInit = {
   /**
-   * `matchId` is required for the legacy room flow. Omitted when
-   * `mode === "world"` — the io-style world has no matchId and skips
-   * the Convex matchmaker round-trip entirely.
+   * `matchId` is required for room/private flow. Omitted when
+   * `mode === "world"` — the io-style world has no matchId.
    */
   matchId?: string;
   localPlayerId: string;
-  /** Convex URL is only consulted in `mode === "room"`. Optional for world. */
+  /** Convex URL is only consulted in legacy `mode === "room"`. */
   convexUrl?: string;
-  /** "room" = legacy lobby/Convex flow. "world" = io singleton. */
-  mode?: "room" | "world";
+  /**
+   * Server-minted match token for private rooms (no Convex).
+   * When set, client connects to /ws?matchId&token directly.
+   */
+  matchToken?: string;
+  /** Ready WebSocket URL (private rooms may pass this prebuilt). */
+  wsUrl?: string;
+  /** "room" = legacy Convex. "private" = server lobby. "world" = Hot Lobby. */
+  mode?: "room" | "world" | "private";
 };
 
 // PROJECTILE_RADIUS_DEFAULT moved to EntityRenderCoordinator (C2a).
@@ -229,7 +242,7 @@ export class OnlineMatchScene extends Phaser.Scene {
   private convex: ConvexClient | null = null;
   private statusText: Phaser.GameObjects.Text | null = null;
   /** Captured from init data so onRematch / onReturnToLobby can branch. */
-  private sceneMode: "room" | "world" = "room";
+  private sceneMode: "room" | "world" | "private" = "room";
   private playerRigs = new Map<string, ProceduralPlayerRig>();
   /**
    * Phase C2a: extracted out of the scene into
@@ -247,6 +260,27 @@ export class OnlineMatchScene extends Phaser.Scene {
    *  it must never activate silently. null when not opted in. */
   private highlightTracker: HighlightTracker | null = null;
   private clipRecorder: ClipRecorder | null = null;
+  /** Bound listeners so teardown can remove them (hot-start / save-now). */
+  private readonly onClipsConsentChanged = (e: Event) => {
+    const enabled = (e as CustomEvent<{ enabled?: boolean }>).detail?.enabled;
+    if (enabled === false) this.stopClipCapture();
+    else if (enabled === true || isClipsEnabled()) this.ensureClipCapture();
+  };
+  private readonly onClipSaveNow = () => {
+    this.ensureClipCapture();
+    if (!this.clipRecorder) {
+      console.warn("[clips] save-now: recorder unavailable (consent off or no MediaRecorder)");
+      return;
+    }
+    console.log("[clips] manual save — toast in a few seconds");
+    this.clipRecorder.trigger();
+  };
+  /** Scene-local last shareable clip URL (no shell session import). */
+  private lastShareClipUrl: string | null = null;
+  /** Wall-clock of last local successful parry (for death-tip evidence). */
+  private lastLocalParryAtMs = 0;
+  /** Locked tip for current death stretch (undefined = not yet computed). */
+  private deathTipLocked: string | null | undefined = undefined;
   /** Static arena geometry (platforms, walls, floor, vignette). Drawn
    *  once on hello receipt; never per-frame. */
   private arenaGraphics: Phaser.GameObjects.Graphics | null = null;
@@ -259,10 +293,14 @@ export class OnlineMatchScene extends Phaser.Scene {
   private readonly shieldBlockFlash = new Map<string, number>();
   private platformLayer: PlatformLayer | null = null;
   private lightBeams: LightBeamLayer | null = null;
+  private cosmicArena: CosmicArenaLayer | null = null;
   // Sentinel — overwritten in init(data) before any consumer reads it.
   // Cast bypasses the validating constructor; "" is not a valid PlayerId.
   private localPlayerId: PlayerId = "" as PlayerId;
   private lastFrameMs = 0;
+  /** Last rendered local feet (for touch aim origin without pre-pump getRenderState). */
+  private lastLocalRenderX: number | null = null;
+  private lastLocalRenderY: number | null = null;
   private keys!: Record<"a" | "d" | "w" | "s" | "space" | "shift" | "dash", Phaser.Input.Keyboard.Key>;
   private statsVisible = false;
   private statsText: Phaser.GameObjects.Text | null = null;
@@ -335,17 +373,23 @@ export class OnlineMatchScene extends Phaser.Scene {
   private prevAlive = new Set<string>();
   // Per-killer kill count in the current round for escalating callouts.
   private killStreakCount = new Map<string, number>();
-  // Local player's latest WORLD position — converted to screen coords on
-  // demand for the clip recorder's tracked 9:16 crop (clipFocusScreenPos).
+  // Clip 9:16 crop focus in WORLD space — envelopes local + a STICKY duel
+  // partner (same hysteresis as ActionCamera), converted to screen px in
+  // clipFocusScreenPos. The old non-sticky nearest-enemy pick teleported the
+  // crop target every time two foes swapped distance rank or crossed the
+  // range boundary — the measured left-right-left crop slams in clips.
   private clipFocusWorld: { x: number; y: number } | null = null;
+  private clipFocusSubjects: Array<{ x: number; y: number }> = [];
 
   constructor() {
     super(SceneKeys.OnlineMatch);
   }
 
-  /** Local player's position in SOURCE-CANVAS pixels for the clip crop.
+  /** Fight-pair centre in SOURCE-CANVAS pixels for the vertical clip crop.
    *  worldView already accounts for zoom (its extent is viewport/zoom), so
-   *  (world - worldView.origin) * zoom lands in render-resolution px. */
+   *  (world - worldView.origin) * zoom lands in render-resolution px.
+   *  MUST track player+enemy midpoint so the 9:16 window includes the duel
+   *  (ActionCamera look-ahead alone still left victims cropped out). */
   private clipFocusScreenPos(): { x: number; y: number } | null {
     if (!this.clipFocusWorld) return null;
     const cam = this.cameras.main;
@@ -411,7 +455,9 @@ export class OnlineMatchScene extends Phaser.Scene {
     // Web Audio unlocks on a user gesture (matches the global audio-unlock).
     this.input.once("pointerdown", () => this.audio?.unlock());
     this.input.keyboard?.once("keydown", () => this.audio?.unlock());
-    this.cardDraftOverlay = new CardDraftOverlay();
+    this.cardDraftOverlay = new CardDraftOverlay({
+      onPicked: (card) => this.playLocalCardPickFeel(card),
+    });
     this.matchResultsOverlay = new MatchResultsOverlay();
 
     // World-space entity render. C2a: was 5 separate fields +
@@ -428,48 +474,11 @@ export class OnlineMatchScene extends Phaser.Scene {
     this.actionCamera = new ActionCamera(this.cameras.main);
     this.cameraJuice = new CameraJuice(this.actionCamera, this.actionIntensity);
 
-    // Highlight-clip capture — EXPLICIT opt-in only: the Options-panel
-    // consent toggle (persisted) or the ?clips=1 dev override. This records
-    // gameplay video and uploads it to the server; it never activates
-    // silently. See client/src/game/highlights/clipConsent.ts.
-    if (isClipsEnabled()) {
-      this.highlightTracker = new HighlightTracker();
-      // Each trigger produces TWO uploads (vertical + original) that land
-      // within ~a second of each other. Pair them into ONE toast; if the
-      // partner never shows (upload failed), toast whatever arrived.
-      let pendingVertical: string | null = null;
-      let pendingOriginal: string | null = null;
-      let pairTimer: ReturnType<typeof setTimeout> | null = null;
-      const flushToast = () => {
-        if (pairTimer !== null) clearTimeout(pairTimer);
-        pairTimer = null;
-        const vertical = pendingVertical;
-        const original = pendingOriginal;
-        pendingVertical = null;
-        pendingOriginal = null;
-        // Vertical is the shareable; fall back to original-only if the
-        // vertical upload failed.
-        if (vertical) showClipShareToast(vertical, original ?? undefined);
-        else if (original) showClipShareToast(original);
-      };
-      this.clipRecorder = new ClipRecorder(this.game.canvas, {
-        getFocus: () => this.clipFocusScreenPos(),
-        onUploaded: (url, kind) => {
-          console.log(`[clips] uploaded (${kind}): ${url}`);
-          if (kind === "vertical") pendingVertical = url;
-          else pendingOriginal = url;
-          if (pendingVertical && pendingOriginal) flushToast();
-          else if (pairTimer === null) pairTimer = setTimeout(flushToast, 5_000);
-        },
-        onError: (err) => console.warn("[clips] capture/upload failed:", err),
-      });
-      this.clipRecorder.start();
-      // Debug hook (mirrors client/src/debug/wasmStateProbe.ts's philosophy):
-      // lets an external test force a trigger to verify the capture/upload
-      // mechanism without depending on rare in-game highlight RNG.
-      (window as unknown as { __clipsTrigger?: () => void }).__clipsTrigger = () =>
-        this.clipRecorder?.trigger();
-    }
+    // Highlight-clip capture — opt-in only (consent toggle / ?clips=1).
+    // Also hot-starts when consent flips mid-match (no rejoin required).
+    this.ensureClipCapture();
+    window.addEventListener(ShellEvents.CLIPS_CONSENT_CHANGED, this.onClipsConsentChanged);
+    window.addEventListener(ShellEvents.CLIP_SAVE_NOW, this.onClipSaveNow);
 
     this.entityRender = new EntityRenderCoordinator(
       this,
@@ -652,10 +661,12 @@ export class OnlineMatchScene extends Phaser.Scene {
 
   update() {
     if (!this.loop) return;
-    const state = this.loop.getRenderState();
-    if (!state) return;
 
-    // Translate input to InputBitfield + aim coordinates.
+    // ---- Input FIRST, then pump sim, then sample render state ----
+    // Old order (getRenderState → setLocalInput) left the visible frame on
+    // the previous key sample and deferred prediction to setInterval —
+    // up to ~1 RAF + ~STEP_MS of pure input lag. Same-frame pump makes
+    // local movement feel immediate while still fixed-step deterministic.
     let keys = 0;
     if (this.keys.a.isDown) keys |= InputBit.Left;
     if (this.keys.d.isDown) keys |= InputBit.Right;
@@ -685,30 +696,46 @@ export class OnlineMatchScene extends Phaser.Scene {
     // Mobile: touch controls REPLACE keyboard/mouse. Movement + fire/shield/
     // parry come from the bitfield; aim is the local player's position plus
     // the right-stick direction (kept from last aim when the thumb lifts, so
-    // shots keep their heading).
+    // shots keep their heading). Use last-frame feet (updated after render)
+    // so we don't call getRenderState before pump (that would advance the
+    // smoother twice per frame).
     if (this.touchControls) {
       const t = this.touchControls.getState();
       keys = t.keys;
       if (t.aimDir) this.lastTouchAim = t.aimDir;
-      const me = state.players[this.localPlayerId];
       const AIM_REACH = 420;
-      const ox = me?.x ?? aimX;
-      const oy = me?.y ?? aimY;
+      const ox = this.lastLocalRenderX ?? aimX;
+      const oy = this.lastLocalRenderY ?? aimY;
       aimX = ox + this.lastTouchAim.x * AIM_REACH;
       aimY = oy + this.lastTouchAim.y * AIM_REACH;
     }
 
-    // Debug bot autopilot (combat probe): when a goal is set via
-    // __setBotInput, it replaces human input for this frame. No-op in
-    // normal play — computeBotInput returns null when no goal is set.
-    const bot = computeBotInput(state, this.localPlayerId);
-    if (bot) {
-      keys = bot.keys;
-      aimX = bot.aimX;
-      aimY = bot.aimY;
+    this.loop.setLocalInput({ keys, aimX, aimY });
+    this.loop.pump(); // apply input to prediction this frame when due
+
+    const state = this.loop.getRenderState();
+    if (!state) return;
+
+    // Bot autopilot (combat probe) after pump so it sees current prediction.
+    // Re-pump once if it overrides keys so the step matches bot intent.
+    {
+      const bot = computeBotInput(state, this.localPlayerId);
+      if (bot) {
+        this.loop.setLocalInput({
+          keys: bot.keys,
+          aimX: bot.aimX,
+          aimY: bot.aimY,
+        });
+        // Bot path is debug-only; no second pump (would double-step).
+        // Keys take effect on the next pump/interval tick.
+      }
     }
 
-    this.loop.setLocalInput({ keys, aimX, aimY });
+    const me = state.players[this.localPlayerId];
+    if (me) {
+      this.lastLocalRenderX = me.x;
+      this.lastLocalRenderY = me.y;
+    }
 
     const now = performance.now();
     const deltaMs = Math.max(1, Math.min(50, now - this.lastFrameMs));
@@ -814,6 +841,27 @@ export class OnlineMatchScene extends Phaser.Scene {
     };
 
     this.hudSystem.update(vitals, round);
+
+    // Death overlay (teach tip ≤1 + optional share when clip URL known).
+    if (this.deathOverlay) {
+      if (vitals.isDead) {
+        const remainingSec = Math.max(0, Math.ceil(state.round.countdownRemainingMs / 1000));
+        if (this.deathOverlay.isOpen()) {
+          this.deathOverlay.updateTimer(remainingSec);
+        } else {
+          if (this.deathTipLocked === undefined) {
+            this.deathTipLocked = this.computeDeathTip(state);
+          }
+          this.deathOverlay.show(remainingSec, {
+            tip: this.deathTipLocked,
+            shareUrl: this.lastShareClipUrl,
+          });
+        }
+      } else if (this.deathOverlay.isOpen()) {
+        this.deathOverlay.hide();
+        this.deathTipLocked = undefined;
+      }
+    }
 
     if (!this.matchHasEnded) {
       this.roundBannerSystem.update({
@@ -992,12 +1040,28 @@ export class OnlineMatchScene extends Phaser.Scene {
 
   private async resolveWsUrl(data: OnlineMatchSceneInit): Promise<string> {
     if (data.mode === "world") {
-      this.setStatus("Joining live world...");
+      this.setStatus("Joining Hot Lobby...");
       const assignment = await fetchWorldAssignment(data.localPlayerId);
       return assignment.wsUrl;
     }
+    // Server-native private room: token or full wsUrl from lobby start.
+    if (data.wsUrl) {
+      this.setStatus("Joining private room...");
+      return data.wsUrl;
+    }
+    if (data.matchId && data.matchToken) {
+      this.setStatus("Joining private room...");
+      const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
+      const host = window.location.host;
+      const override = new URLSearchParams(window.location.search).get("server");
+      const base = override ?? `${proto}//${host}`;
+      const url = new URL("/ws", base.replace(/^http/i, "ws"));
+      url.searchParams.set("matchId", data.matchId);
+      url.searchParams.set("token", data.matchToken);
+      return url.toString();
+    }
     if (!data.matchId || !data.convexUrl) {
-      throw new Error("room mode requires matchId + convexUrl");
+      throw new Error("room mode requires matchId + (matchToken or convexUrl)");
     }
     this.convex = new ConvexClient(data.convexUrl);
     this.setStatus("Fetching match assignment from Convex...");
@@ -1016,6 +1080,13 @@ export class OnlineMatchScene extends Phaser.Scene {
     // Forward all events to the per-frame VFX drain buffer (filters internally).
     if (events.length > 0) {
       for (const e of events) this.pendingSimEvents.push(e);
+    }
+    // Death-tip evidence: only real sim signals (never fabricate diedToProjectile).
+    const nowMs = performance.now();
+    for (const e of events) {
+      if (e.t === "parry-deflected" && e.playerId === this.localPlayerId) {
+        this.lastLocalParryAtMs = nowMs;
+      }
     }
     // Highlight capture — independent of audio readiness, consent-gated.
     // LOCAL-PLAYER highlights only: the recorder captures THIS client's
@@ -1079,6 +1150,32 @@ export class OnlineMatchScene extends Phaser.Scene {
       this.loop.sendCardPick(state.round.roundIndex, card.id);
     };
     this.cardDraftOverlay.show(candidates, onPick);
+  }
+
+  /** Full juice stack for every card pick — color from card.visual. */
+  private playLocalCardPickFeel(card: CardDefinition): void {
+    const state = this.loop?.getRenderState();
+    const local = state?.players[this.localPlayerId];
+    const at = local
+      ? { x: local.x, y: local.y }
+      : { x: this.cameras.main.midPoint.x, y: this.cameras.main.midPoint.y };
+    playCardPickFeel(card, {
+      scene: this,
+      pool: this.particlePool ?? null,
+      at,
+      addTrauma: (a) => this.cameraJuice?.addTrauma(a),
+      playCardSfx: (rarity) => {
+        // Rarity scales intensity via heavy flag for legendaries.
+        this.audio?.play("card", {
+          heavy: rarity === "legendary" || rarity === "rare",
+          intensity: rarity === "legendary" ? 1 : rarity === "rare" ? 0.8 : 0.55,
+        });
+      },
+      flashLocalRig: (_color) => {
+        // Knock visual pulse on the local rig so the pick reads on-body.
+        this.playerRigs.get(this.localPlayerId as string)?.triggerHit(0, -1);
+      },
+    });
   }
 
   private spawnDamageNumber(victimId: string, damage: number) {
@@ -1309,26 +1406,35 @@ export class OnlineMatchScene extends Phaser.Scene {
     // clear-colour would show, reading as "no terrain". The solid fill
     // below guarantees a visible base regardless of backend; the gradient
     // adds atmosphere on WebGL.
-    g.fillStyle(theme.bg, 1);
+    // Cool Forerunner void base under the skybox (not purple church night).
+    g.fillStyle(0x0a101c, 1);
     g.fillRect(0, 0, width, height);
-    g.fillGradientStyle(0x0a1424, 0x0a1424, 0x05080f, 0x05080f, 0.95, 0.95, 1, 1);
+    g.fillGradientStyle(0x101a30, 0x101a30, 0x0a101c, 0x0a1420, 0.9, 0.9, 1, 1);
     g.fillRect(0, 0, width, height);
-    // Reset to a flat fill so subsequent platform draws don't accidentally
-    // inherit the gradient state (Phaser keeps fill state on the Graphics
-    // object across calls).
+    g.fillStyle(0x0a3040, 0.2);
+    g.fillEllipse(width * 0.35, height * 0.25, width * 0.9, height * 0.5);
+    g.fillStyle(0x123850, 0.18);
+    g.fillEllipse(width * 0.7, height * 0.4, width * 0.8, height * 0.45);
+    // Quiet instrument grid
+    const gridGold = typeof theme.gold === "number" ? theme.gold : PALETTE.hullGold;
+    const gridStep = 96;
+    g.lineStyle(1, gridGold, 0.03);
+    for (let gx = 0; gx <= width; gx += gridStep) {
+      g.lineBetween(gx, 0, gx, height);
+    }
+    for (let gy = 0; gy <= height; gy += gridStep) {
+      g.lineBetween(0, gy, width, gy);
+    }
+    g.lineStyle(1, theme.wash, 0.06);
+    g.lineBetween(0, height * 0.42, width, height * 0.42);
     g.fillStyle(0xffffff, 1);
 
-    // Atmospheric back layer: dim overlapping ellipses for parallax depth.
-    const bgShade = PALETTE.voidEdge;
-    this.add.ellipse(width * 0.3, height * 0.45, width * 0.55, height * 0.4, bgShade, 0.08);
-    this.add.ellipse(width * 0.72, height * 0.55, width * 0.5, height * 0.38, bgShade, 0.08);
-
-    // Atmospheric mid-Z haze: 3 large soft ellipses between BG layer and platforms.
-    const hazeColor = 0x0e2a35;
+    // Soft mid haze — more present than before
+    const hazeColor = 0x1a3050;
     const hazeDefs: Array<{ rx: number; ry: number; ew: number; eh: number; a: number }> = [
-      { rx: 0.18 + Math.random() * 0.15, ry: 0.3 + Math.random() * 0.2, ew: width * 0.7, eh: height * 0.32, a: 0.05 },
-      { rx: 0.45 + Math.random() * 0.15, ry: 0.55 + Math.random() * 0.15, ew: width * 0.9, eh: height * 0.4, a: 0.04 },
-      { rx: 0.65 + Math.random() * 0.15, ry: 0.35 + Math.random() * 0.2, ew: width * 0.6, eh: height * 0.3, a: 0.06 },
+      { rx: 0.25, ry: 0.35, ew: width * 0.75, eh: height * 0.35, a: 0.1 },
+      { rx: 0.65, ry: 0.5, ew: width * 0.7, eh: height * 0.4, a: 0.08 },
+      { rx: 0.5, ry: 0.25, ew: width * 0.55, eh: height * 0.28, a: 0.09 },
     ];
     this.hazeEllipses = [];
     for (const hd of hazeDefs) {
@@ -1340,20 +1446,28 @@ export class OnlineMatchScene extends Phaser.Scene {
 
     if (theme.hasLightBeams) {
       if (!this.lightBeams) this.lightBeams = new LightBeamLayer(this);
+      // Crystal projector shafts — cyan spark, not warm sun.
       this.lightBeams.spawn(
         [
-          { x: width * 0.25, w: 80 },
-          { x: width * 0.55, w: 100 },
-          { x: width * 0.78, w: 70 },
+          { x: width * 0.18, w: 70 },
+          { x: width * 0.38, w: 90 },
+          { x: width * 0.55, w: 110 },
+          { x: width * 0.72, w: 85 },
+          { x: width * 0.88, w: 65 },
         ],
         height,
-        PALETTE.lightBeamWarm,
-        0.1,
+        PALETTE.lightBeamCyan ?? 0x8ff8ff,
+        0.09,
       );
     }
 
     if (!this.platformLayer) this.platformLayer = new PlatformLayer(this);
     this.platformLayer.repaint(map.platforms, theme);
+
+    // Cosmic death-arena vault — choir of angels, elemental orbs, rings
+    // that pulse with live music amplitude + action intensity.
+    if (!this.cosmicArena) this.cosmicArena = new CosmicArenaLayer(this);
+    this.cosmicArena.spawn(width, height);
 
     // Theme-independent environment reaction (see updateEnvironmentReactivity).
     // renderArena can re-run on a map change, so replace any prior bloom.
@@ -1428,17 +1542,11 @@ export class OnlineMatchScene extends Phaser.Scene {
         this.playerRigs.set(pid, rig);
       }
       this.updatePlayerRig(rig, player, deltaMs);
-      // Clip-crop focus: the recorder's 9:16 window tracks the local
-      // player's SCREEN position (the ActionCamera deliberately doesn't
-      // center them, so a static crop loses them — v1's fatal flaw).
-      // While DEAD, null it out — the camera is spectating the fight, so
-      // a corpse-anchored crop would pin the window to a screen edge;
-      // null makes the recorder fall back to center-frame, which IS the
-      // action during spectate.
-      if (pid === this.localPlayerId) {
-        this.clipFocusWorld = player.alive ? { x: player.x, y: player.y } : null;
-      }
+      // Clip focus is rebuilt once per frame after the player loop
+      // (see updateClipFocusWorld) so it can envelope local + nearest enemy.
     }
+
+    this.updateClipFocusWorld(state);
 
     // Process kills detected this frame: emit escalating callout banners.
     // We can't know the *killer* from the snapshot alone (no kill event in sim),
@@ -1460,6 +1568,8 @@ export class OnlineMatchScene extends Phaser.Scene {
       if (!seenPlayers.has(pid)) {
         rig.destroy();
         this.playerRigs.delete(pid);
+        this.crouchHalfByPid.delete(pid);
+        this.buildCacheByPid.delete(pid);
       }
     }
 
@@ -1615,8 +1725,16 @@ export class OnlineMatchScene extends Phaser.Scene {
       // id suffix + character name so the nameplate is stable + identifiable.
       name: bot ? botLabel(player.id) : `${player.id.slice(-4)} / ${character.name}`,
       scale: this.getVisualScale(character),
+      // Full juice for local; lite path for remotes/bots (fewer Graphics ops).
+      detail: isLocal ? "full" : "lite",
     });
   }
+
+  /** Cache createWeaponBuild — was rebuilt every rig every frame. */
+  private readonly buildCacheByPid = new Map<
+    string,
+    { key: string; maxHealthAdd: number; parryCover: number }
+  >();
 
   /** Reused every rig update — the rig consumes the pose synchronously
    *  (copies what it keeps), so one mutable scratch object replaces four
@@ -1631,10 +1749,15 @@ export class OnlineMatchScene extends Phaser.Scene {
     maxHealth: 100,
     touchingWallDir: 0,
     dashing: false,
+    shieldArcScale: 1,
+    platingGlow: 0,
   };
   /** Cull margin (world px) beyond the camera's view — generous enough that
    *  a rig's trail/shield arc never visibly pops at the screen edge. */
   private static readonly RIG_CULL_MARGIN = 220;
+  /** Ease sim crouch half-height (28↔19) so feet don't jump 9px on duck. */
+  private static readonly CROUCH_HALF_TAU_MS = 55;
+  private readonly crouchHalfByPid = new Map<string, number>();
 
   private updatePlayerRig(
     rig: ProceduralPlayerRig,
@@ -1643,6 +1766,7 @@ export class OnlineMatchScene extends Phaser.Scene {
   ) {
     if (!player.alive) {
       rig.setVisible(false);
+      this.crouchHalfByPid.delete(player.id as string);
       return;
     }
     // Off-screen culling: an out-of-view rig still costs a full procedural
@@ -1662,7 +1786,17 @@ export class OnlineMatchScene extends Phaser.Scene {
       return;
     }
     rig.setVisible(true);
-    const halfHeight = player.crouching ? SIM_CROUCH_HALF_HEIGHT : SIM_BODY_HALF_HEIGHT;
+    const halfTarget = player.crouching ? SIM_CROUCH_HALF_HEIGHT : SIM_BODY_HALF_HEIGHT;
+    const pid = player.id as string;
+    let halfHeight = this.crouchHalfByPid.get(pid) ?? halfTarget;
+    if (deltaMs > 0) {
+      const k = 1 - Math.exp(-deltaMs / OnlineMatchScene.CROUCH_HALF_TAU_MS);
+      halfHeight += (halfTarget - halfHeight) * k;
+      if (Math.abs(halfHeight - halfTarget) < 0.05) halfHeight = halfTarget;
+    } else {
+      halfHeight = halfTarget;
+    }
+    this.crouchHalfByPid.set(pid, halfHeight);
     const character = this.getCharacter(player.characterId);
     const pose = this.rigPoseScratch;
     pose.position.x = player.x;
@@ -1677,7 +1811,29 @@ export class OnlineMatchScene extends Phaser.Scene {
     pose.grounded = player.grounded ?? true;
     pose.crouching = player.crouching;
     pose.health = player.health;
-    pose.maxHealth = character.maxHealth;
+    // Card-driven plating — cache by card-id key (no rebuild every frame).
+    const cardIds = player.cards ?? [];
+    const cardKey = cardIds.join(",");
+    let cached = this.buildCacheByPid.get(pid);
+    if (!cached || cached.key !== cardKey) {
+      if (cardIds.length > 0) {
+        const build = createWeaponBuild(
+          starterWeapon,
+          findCardsById(crystalRoundsCards, cardIds),
+        );
+        cached = {
+          key: cardKey,
+          maxHealthAdd: build.maxHealthAdd ?? 0,
+          parryCover: build.parryCoverMultiplier ?? 1,
+        };
+      } else {
+        cached = { key: cardKey, maxHealthAdd: 0, parryCover: 1 };
+      }
+      this.buildCacheByPid.set(pid, cached);
+    }
+    pose.maxHealth = character.maxHealth + cached.maxHealthAdd;
+    pose.shieldArcScale = cached.parryCover;
+    pose.platingGlow = Math.min(1, cached.maxHealthAdd / 40);
     // touchingWallDir/dashing wire-encoded per P_HI.wallDirNeg/wallDirPos/
     // dashing (same optional/additive pattern as grounded above).
     pose.touchingWallDir = player.touchingWallDir ?? 0;
@@ -1703,6 +1859,33 @@ export class OnlineMatchScene extends Phaser.Scene {
 
   private getVisualScale(character: CharacterDefinition): number {
     return PLAYER_VISUAL_SCALE * character.sizeScale;
+  }
+
+  /**
+   * Vertical clip crop target in world space: midpoint of local player and
+   * the nearest living enemy (envelope law). Dead local → null (crop falls
+   * back to canvas centre = spectate action).
+   */
+  private updateClipFocusWorld(state: WorldState): void {
+    const local = state.players[this.localPlayerId];
+    if (!local?.alive) {
+      this.clipFocusWorld = null;
+      this.clipFocusSubjects = [];
+      return;
+    }
+    const extras: Array<{ x: number; y: number }> = [];
+    for (const [id, p] of Object.entries(state.players)) {
+      if (id === (this.localPlayerId as string)) continue;
+      if (p?.alive) extras.push({ x: p.x, y: p.y });
+    }
+    const self = { x: local.x, y: local.y };
+    // Sticky partner pick (enter 750px / exit 950px hysteresis) — keeps the
+    // crop on the same duel partner instead of thrashing between foes.
+    this.clipFocusSubjects = stickyEnvelopeSubjects(self, extras, this.clipFocusSubjects, 1);
+    const partner = this.clipFocusSubjects[0];
+    this.clipFocusWorld = partner
+      ? { x: (self.x + partner.x) / 2, y: (self.y + partner.y) / 2 }
+      : self;
   }
 
   private followLocalPlayer(state: WorldState, deltaMs: number) {
@@ -1739,13 +1922,16 @@ export class OnlineMatchScene extends Phaser.Scene {
       anchor = best;
     }
 
-    // Other alive players are action points the frame leans toward (weighted
-    // lightly vs the anchor, which stays the central locus).
-    const extra: Array<{ x: number; y: number }> = [];
+    // Nearest few within mid range — sticky pick still caps to 1 duel partner.
+    const extra: Array<{ x: number; y: number; d: number }> = [];
     for (const [id, p] of Object.entries(state.players)) {
       if (id === (anchor.id as string)) continue;
-      if (p && p.alive) extra.push({ x: p.x, y: p.y });
+      if (!p?.alive) continue;
+      const d = Math.hypot(p.x - anchor.x, p.y - anchor.y);
+      if (d > 1100) continue;
+      extra.push({ x: p.x, y: p.y, d });
     }
+    extra.sort((a, b) => a.d - b.d);
     this.actionCamera.update(deltaMs, {
       x: anchor.x,
       y: anchor.y,
@@ -1753,7 +1939,7 @@ export class OnlineMatchScene extends Phaser.Scene {
       vy: anchor.vy,
       aimX: anchor.aimX,
       aimY: anchor.aimY,
-      extra,
+      extra: extra.slice(0, 3).map(({ x, y }) => ({ x, y })),
       yBias,
     });
   }
@@ -1811,13 +1997,16 @@ export class OnlineMatchScene extends Phaser.Scene {
    */
   private updateEnvironmentReactivity(): void {
     const intensity = this.actionIntensity.get();
+    const music = getMusicLevel();
+    const env = Math.min(1, intensity * 0.72 + music.pulse * 0.55 + music.beat * 0.25);
     for (const { ellipse, baseAlpha } of this.hazeEllipses) {
-      ellipse.setAlpha(baseAlpha * (1 + intensity * 3));
+      ellipse.setAlpha(baseAlpha * (1 + env * 3));
     }
-    this.lightBeams?.setReactiveBoost(intensity);
-    // Eased so the bloom only really shows in the top half of the intensity
-    // range — a light jog shouldn't tint the screen, but a firefight should.
-    this.energyBloom?.setAlpha(intensity * 0.14);
+    this.lightBeams?.setReactiveBoost(env);
+    // Warm bloom rides action + bass so the arena charges with the drop.
+    this.energyBloom?.setAlpha(env * 0.16 + music.bass * 0.05);
+    // Cosmic vault / angel choir — bass·mid·high pulse from epic-loop analyser.
+    this.cosmicArena?.update(this.game.loop.delta, intensity);
   }
 
   /**
@@ -1836,6 +2025,32 @@ export class OnlineMatchScene extends Phaser.Scene {
   }
 
   // ---------------- Match results ----------------
+
+  /**
+   * Build death-tip signal from sim evidence only. Never fabricates
+   * diedToProjectile; parry recency uses wall-clock of last local parry-deflected
+   * plus active window vs current tick (not "field was ever set").
+   */
+  private computeDeathTip(state: WorldState): string | null {
+    const local = state.players[this.localPlayerId];
+    const nowMs = performance.now();
+    let diedToProjectile = false;
+    for (const e of this.pendingSimEvents) {
+      if (e.t === "player-killed" && e.victimId === this.localPlayerId) {
+        diedToProjectile = e.cause === "projectile" || e.cause === "explosion";
+      }
+    }
+    const parryWindowOpen =
+      typeof local?.parryActiveUntilTick === "number" &&
+      local.parryActiveUntilTick > state.tick;
+    const parryRecentlySucceeded =
+      this.lastLocalParryAtMs > 0 && nowMs - this.lastLocalParryAtMs <= 2_000;
+    const signal: DeathTipSignal = {
+      diedToProjectile,
+      parryAvailableRecently: parryWindowOpen || parryRecentlySucceeded,
+    };
+    return pickDeathTip(signal);
+  }
 
   private maybeShowMatchResults(state: WorldState) {
     if (this.matchHasEnded) return;
@@ -1866,6 +2081,7 @@ export class OnlineMatchScene extends Phaser.Scene {
         winnerPlayerId: state.round.winnerPlayerId,
         targetScore: TARGET_SCORE_DEFAULT,
         rows,
+        shareUrl: this.lastShareClipUrl ?? undefined,
       },
       {
         onRematch: () => {
@@ -1916,13 +2132,76 @@ export class OnlineMatchScene extends Phaser.Scene {
     }
   }
 
-  private teardown() {
-    this.scale.off("resize", this.repositionHud, this);
-    this.scale.off("resize", this.applyMobileCamera, this);
+  /**
+   * Start capture if consent is on and not already running. Safe to call
+   * mid-match when the player flips Auto-clip on (no leave/rejoin).
+   */
+  private ensureClipCapture(): void {
+    if (this.clipRecorder || !isClipsEnabled()) return;
+    this.highlightTracker = new HighlightTracker();
+    // Each trigger produces TWO uploads (vertical + original). Pair them
+    // for one toast; if partner never lands, toast whatever arrived.
+    let pairId = `pair_${Date.now()}`;
+    let pendingVertical: string | null = null;
+    let pendingOriginal: string | null = null;
+    let pairTimer: ReturnType<typeof setTimeout> | null = null;
+    const flushPair = () => {
+      if (pairTimer !== null) clearTimeout(pairTimer);
+      pairTimer = null;
+      const vertical = pendingVertical;
+      const original = pendingOriginal;
+      pendingVertical = null;
+      pendingOriginal = null;
+      if (vertical) {
+        this.lastShareClipUrl = vertical;
+        emitClipUploaded({
+          url: vertical,
+          kind: "vertical",
+          pairId,
+          label: "Highlight",
+        });
+      }
+      if (original) {
+        if (!this.lastShareClipUrl) this.lastShareClipUrl = original;
+        emitClipUploaded({
+          url: original,
+          kind: "original",
+          pairId,
+          label: "Highlight",
+        });
+      }
+      pairId = `pair_${Date.now()}`;
+    };
+    this.clipRecorder = new ClipRecorder(this.game.canvas, {
+      getFocus: () => this.clipFocusScreenPos(),
+      onUploaded: (url, kind) => {
+        console.log(`[clips] uploaded (${kind}): ${url}`);
+        if (kind === "vertical") pendingVertical = url;
+        else pendingOriginal = url;
+        if (pendingVertical && pendingOriginal) flushPair();
+        else if (pairTimer === null) pairTimer = setTimeout(flushPair, 5_000);
+      },
+      onError: (err) => console.warn("[clips] capture/upload failed:", err),
+    });
+    this.clipRecorder.start();
+    (window as unknown as { __clipsTrigger?: () => void }).__clipsTrigger = () =>
+      this.clipRecorder?.trigger();
+    console.log("[clips] recorder started (segment buffer rolling)");
+  }
+
+  private stopClipCapture(): void {
     this.clipRecorder?.stop();
     this.clipRecorder = null;
     this.highlightTracker = null;
     delete (window as unknown as { __clipsTrigger?: () => void }).__clipsTrigger;
+  }
+
+  private teardown() {
+    this.scale.off("resize", this.repositionHud, this);
+    this.scale.off("resize", this.applyMobileCamera, this);
+    window.removeEventListener(ShellEvents.CLIPS_CONSENT_CHANGED, this.onClipsConsentChanged);
+    window.removeEventListener(ShellEvents.CLIP_SAVE_NOW, this.onClipSaveNow);
+    this.stopClipCapture();
     setActiveStateGetter(null);
     setActiveCameraGetter(null);
     setActiveRigDebugGetter(null);
@@ -1950,6 +2229,8 @@ export class OnlineMatchScene extends Phaser.Scene {
     this.entityRender = null;
     this.arenaGraphics?.destroy();
     this.arenaGraphics = null;
+    this.cosmicArena?.destroy();
+    this.cosmicArena = null;
     this.hudSystem?.destroy();
     this.hudSystem = null;
     this.roundBannerSystem?.destroy();

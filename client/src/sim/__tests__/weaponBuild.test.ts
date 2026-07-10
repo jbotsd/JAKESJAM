@@ -4,7 +4,17 @@
 // stack/clamp/bucket-tracking math is locked here.
 
 import { describe, test, expect } from "bun:test";
-import { createWeaponBuild, clampBuild, neutralTTK, neutralTTKBuild } from "../data/weaponBuild.js";
+import {
+  createWeaponBuild,
+  clampBuild,
+  neutralTTK,
+  neutralTTKBuild,
+  effectiveTTKBuild,
+  orthogonalScale,
+  mergeProjectileModifier,
+  TTK_FLOOR_S,
+} from "../data/weaponBuild.js";
+import type { ProjectileModifier } from "../data/cardTypes.js";
 import { starterWeapon, weapons } from "../data/weapons.js";
 import { crystalRoundsCards } from "../data/cards.js";
 import type { CardDefinition } from "../data/cardTypes.js";
@@ -25,7 +35,7 @@ describe("createWeaponBuild", () => {
     expect(build.occupiedBuckets).toEqual([]);
   });
 
-  test("two damage 1.5× cards stack multiplicatively → 2.25× base damage", () => {
+  test("two damage 1.5× cards stack, then TTK floor clamp softens overstack", () => {
     const damageCard = (id: string): CardDefinition => ({
       id,
       name: id,
@@ -38,10 +48,37 @@ describe("createWeaponBuild", () => {
       damageCard("dmg-a"),
       damageCard("dmg-b"),
     ]);
-    // base × 1.5 × 1.5 = 2.25× base, then roundTo(_, 2).
-    expect(build.damage).toBeCloseTo(starterWeapon.damage * 1.5 * 1.5, 5);
-    expect(build.damage).toBe(starterWeapon.damage * 2.25);
+    // Raw stack is 2.25×, but clampBuild enforces effective TTK ≥ ~1.55s so
+    // damage (and/or fireRate) may be scaled down. Must still be ABOVE base.
+    expect(build.damage).toBeGreaterThan(starterWeapon.damage);
+    expect(build.damage).toBeLessThanOrEqual(starterWeapon.damage * 2.25 + 0.01);
+    expect(neutralTTKBuild(build)).toBeGreaterThanOrEqual(1.5);
     expect(build.cards).toHaveLength(2);
+  });
+
+  test("unique cards only apply once; maxStacks is honored", () => {
+    const unique: CardDefinition = {
+      id: "once-only",
+      name: "Once",
+      category: "projectile",
+      rarity: "rare",
+      description: "unique",
+      unique: true,
+      modifier: { damageMultiplier: 1.2 },
+    };
+    const stacked: CardDefinition = {
+      id: "twice-ok",
+      name: "Twice",
+      category: "projectile",
+      rarity: "common",
+      description: "max 2",
+      maxStacks: 2,
+      modifier: { projectileCountAdd: 1 },
+    };
+    const build = createWeaponBuild(starterWeapon, [unique, unique, stacked, stacked, stacked]);
+    expect(build.cards.filter((c) => c.id === "once-only")).toHaveLength(1);
+    expect(build.cards.filter((c) => c.id === "twice-ok")).toHaveLength(2);
+    expect(build.projectile.count).toBe(starterWeapon.projectile.count + 2);
   });
 
   test("two projectileCountAdd:1 cards stack additively → starter count + 2", () => {
@@ -90,45 +127,34 @@ describe("createWeaponBuild", () => {
     }
   });
 
-  test("no card combo lets the starter weapon breach the 1.15s TTK floor", () => {
-    // Test every pair of cards from the full card pool.
-    // Three-card combo is O(n³) ≈ 50³ = 125 000 iterations — fast for bun:test.
-    //
-    // FLOOR_S recalibrated 1.5 -> 1.15 alongside the base-damage bump
-    // (10->12, balance audit). That bump deliberately compresses the max-
-    // stack endgame TTK from ~1.5s toward ~1.2s — "a healthy power arc"
-    // was the explicit design goal, not an accident. Verified the worst
-    // 3-distinct-card combo over the full 61-card pool bottoms out at
-    // 1.292s with nothing below 1.2s (no repeat of the old uncapped-
-    // fire-rate 0.72s degenerate stack) — so 1.15s keeps real headroom
-    // under the observed floor while still catching a genuine regression.
+  test("no 3-card combo breaches arena TTK floor (~1.55s effective)", () => {
+    // docs/arena-balance-feel-goal.md: stacked cards ≥ ~1.55s effective TTK
+    // (pellet-aware). createWeaponBuild → clampBuild is the shipped path.
     const CARDS = crystalRoundsCards;
-    const FLOOR_S = 1.15;
     const violations: string[] = [];
+    let worst = Infinity;
 
     for (let i = 0; i < CARDS.length; i++) {
       for (let j = i + 1; j < CARDS.length; j++) {
         for (let k = j + 1; k < CARDS.length; k++) {
           const combo = [CARDS[i]!, CARDS[j]!, CARDS[k]!];
           const build = createWeaponBuild(starterWeapon, combo);
-          const ttk = neutralTTKBuild(build);
-          if (ttk < FLOOR_S) {
+          const ttk = effectiveTTKBuild(build);
+          if (ttk < worst) worst = ttk;
+          if (ttk < TTK_FLOOR_S - 0.02) {
             violations.push(
-              `${combo.map((c) => c.id).join("+")} → TTK=${ttk.toFixed(3)}s`,
+              `${combo.map((c) => c.id).join("+")} → effTTK=${ttk.toFixed(3)}s`,
             );
           }
         }
       }
     }
 
-    if (violations.length > 0) {
-      console.warn(`[TTK] ${violations.length} combos breach 1.15s floor:\n  ${violations.slice(0, 5).join("\n  ")}`);
-    }
-    // Hard-fail if any combination one-shots inside 1.5s from full HP.
-    expect(violations.length).toBe(0);
+    expect(worst, `worst effective TTK ${worst}`).toBeGreaterThanOrEqual(TTK_FLOOR_S - 0.02);
+    expect(violations.length, violations.slice(0, 3).join("; ")).toBe(0);
   });
 
-  test("delivery card sets delivery and adds 'delivery' to occupiedBuckets", () => {
+  test("delivery card sets delivery and maps projectile identity", () => {
     const raycastCard: CardDefinition = {
       id: "test-raycast",
       name: "Test Raycast",
@@ -141,7 +167,113 @@ describe("createWeaponBuild", () => {
     const build = createWeaponBuild(starterWeapon, [raycastCard]);
     expect(build.delivery).toBe("raycast");
     expect(build.occupiedBuckets).toContain("delivery");
-    expect(build.occupiedBuckets).toHaveLength(1);
+    // applyDeliveryFeel: hyper-speed shard identity
+    expect(build.projectile.speedMultiplier).toBeGreaterThanOrEqual(3.0);
+    expect(build.projectile.count).toBe(1);
+
+    const beam = createWeaponBuild(starterWeapon, [
+      {
+        id: "test-beam",
+        name: "Beam",
+        category: "weapon",
+        rarity: "rare",
+        description: "beam",
+        buckets: ["delivery"],
+        modifier: { delivery: "continuous-beam", fireRateMultiplier: 1.5 },
+      },
+    ]);
+    expect(beam.delivery).toBe("continuous-beam");
+    expect(beam.fireRate).toBeGreaterThanOrEqual(8);
+  });
+
+  describe("deep orthogonality — stacks never erase each other", () => {
+    const find = (id: string): CardDefinition => {
+      const c = crystalRoundsCards.find((c) => c.id === id);
+      if (!c) throw new Error(`missing card: ${id}`);
+      return c;
+    };
+
+    test("orthogonalScale keeps grow+shrink both readable", () => {
+      // Heavy 1.22 * Needle 0.86 = ~1.05 mush under pure multiply.
+      const pure = 1.22 * 0.86;
+      const ortho = orthogonalScale(1.22, 0.86);
+      expect(ortho).toBeGreaterThan(pure); // less cancellation
+      expect(ortho).toBeGreaterThan(1.05);
+      expect(ortho).toBeLessThan(1.22); // still smaller than pure grow
+    });
+
+    test("element crystal never overwrites void", () => {
+      const base: ProjectileModifier = {
+        shape: "circle",
+        count: 1,
+        rangePx: 400,
+        speedMultiplier: 1,
+        sizeMultiplier: 1,
+        recoilMultiplier: 1,
+        pathing: "straight",
+        element: "void",
+        impact: "none",
+        lifetimeMultiplier: 1,
+        gravityScale: 0,
+        homingStrength: 0,
+        accelerationMultiplier: 1,
+        bounces: 0,
+        impactRadiusPx: 0,
+        pierceCount: 0,
+        splitCount: 0,
+        slowMultiplier: 1,
+      };
+      const merged = mergeProjectileModifier(base, { element: "crystal", sizeMultiplier: 1.1 });
+      expect(merged.element).toBe("void");
+      expect(merged.sizeMultiplier).toBeCloseTo(1.1, 5);
+    });
+
+    test("shape: first distinctive shape survives a later weak shape", () => {
+      const triangle = find("triangle-rounds");
+      const circle = find("circle-rounds");
+      const build = createWeaponBuild(starterWeapon, [triangle, circle]);
+      expect(build.projectile.shape).toBe("triangle");
+    });
+
+    test("homing pathing survives bounce card after", () => {
+      const seek = find("seeker-facets");
+      const bounce = find("bouncy-prism");
+      // Order: seeker first, then bounce — bounce must not wipe homing
+      const build = createWeaponBuild(starterWeapon, [seek, bounce]);
+      expect(build.projectile.pathing).toBe("homing");
+      // Bounces still apply (geometry gift)
+      expect(build.projectile.bounces).toBeGreaterThan(0);
+    });
+
+    test("Heavy Coolant + Needle keep size away from mush ~1", () => {
+      const heavy = find("heavy-coolant");
+      const needle = find("needle-compressor");
+      const build = createWeaponBuild(starterWeapon, [heavy, needle]);
+      // Pure product: 1.22 * 0.86 ≈ 1.05. Orthogonal must stay clearly big OR
+      // clearly not mush — at least 8% away from 1.0 in the grow direction.
+      expect(build.projectile.sizeMultiplier).toBeGreaterThan(1.08);
+    });
+
+    test("spread: absolute set never shrinks a wider prior fan", () => {
+      const wide: CardDefinition = {
+        id: "wide-set",
+        name: "Wide",
+        category: "projectile",
+        rarity: "common",
+        description: "test",
+        modifier: { spreadRadians: 0.5 },
+      };
+      const narrow: CardDefinition = {
+        id: "narrow-set",
+        name: "Narrow",
+        category: "projectile",
+        rarity: "common",
+        description: "test",
+        modifier: { spreadRadians: 0.1 },
+      };
+      const build = createWeaponBuild(starterWeapon, [wide, narrow]);
+      expect(build.spreadRadians).toBeGreaterThanOrEqual(0.5);
+    });
   });
 
   // Balance audit: these three were trap picks (crystal-volley = zero stat

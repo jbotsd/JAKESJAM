@@ -1,10 +1,13 @@
-import { RoomClient, createRoomArgs } from "../net/RoomClient";
 import type { ChaosModifierId, CharacterId } from "../types/game";
 import { parseStoredChaosModifiers } from "../../sim/data/chaosModifiers";
-import type { RoomHandle, RoomPlayer, RoomSnapshot } from "../types/net";
+import type { RoomPlayer } from "../types/net";
 import { MapPicker } from "./MapPicker";
 import { MatchStatusBadge } from "./MatchStatusBadge";
 import { fetchMatchSummary } from "../../net/worldClient";
+import {
+  PrivateRoomClient,
+  type PrivateLobbySnapshot,
+} from "../net/PrivateRoomClient";
 import {
   DEFAULT_MAP_ID,
   mapsById,
@@ -59,19 +62,17 @@ export class LobbyController {
   private readonly roomActionsBox?: HTMLElement;
   private readonly playerConnectBox?: HTMLElement;
   private roomStatusBadge?: MatchStatusBadge;
-  private readonly roomClient?: RoomClient;
-  private currentRoom?: RoomHandle;
-  private currentSnapshot: RoomSnapshot | null = null;
-  private unsubscribeRoom?: () => void;
+  /** Server-native private rooms (no Convex). */
+  private readonly privateClient = new PrivateRoomClient();
+  private currentCode: string | null = null;
+  private currentSnapshot: PrivateLobbySnapshot | null = null;
+  private pollTimer?: number;
   private heartbeatTimer?: number;
   private statusClearTimer?: number;
   private launchedMatchId?: string;
+  private pendingMatchToken: string | null = null;
   /**
-   * Host's locally-picked map id, set the moment they click a card in
-   * the picker. Persists across snapshot rounds so a degraded sync
-   * (Convex codegen lag, server down) doesn't lose the choice.
-   * Cleared on leaveRoom + on snapshot.room.selectedMapId arriving
-   * back from the server (which means sync caught up).
+   * Host's locally-picked map id until server snapshot confirms it.
    */
   private pendingMapId: string | null = null;
 
@@ -82,7 +83,8 @@ export class LobbyController {
     this.colorInput = queryRequired(root, "[data-player-color]");
     this.characterSelect = queryRequired(root, "[data-player-character]");
     this.codeInput = queryRequired(root, "[data-room-code]");
-    this.practiceButton = queryRequired(root, "[data-practice]");
+    this.practiceButton = (root.querySelector("[data-practice]") as HTMLButtonElement | null) ??
+      document.createElement("button");
     this.createButton = queryRequired(root, "[data-create-room]");
     this.joinButton = queryRequired(root, "[data-join-room]");
     this.readyButton = queryRequired(root, "[data-ready-toggle]");
@@ -113,11 +115,7 @@ export class LobbyController {
     }
     this.roomStatusMount = root.querySelector<HTMLElement>("[data-room-status]") ?? undefined;
 
-    // Per-playerId name slot so two tabs on one PC (each with its own
-    // sessionStorage playerId) don't collide on the shared global name —
-    // otherwise you get "Waiting on: zZDas, zZDas" in any 1v1 dev test.
-    // Default for a brand-new playerId is "Player <last4>" — already unique
-    // because the playerId itself is unique per tab.
+    // Per-playerId name slot so two tabs don't collide.
     const perPlayerNameKey = `${PLAYER_NAME_KEY}.${this.playerId}`;
     this.nameInput.value =
       localStorage.getItem(perPlayerNameKey) ??
@@ -127,24 +125,14 @@ export class LobbyController {
     this.restoreRoomCodeFromUrl();
     this.restoreChaosModifiers();
 
-    const convexUrl = readConvexUrl();
-    if (convexUrl) {
-      this.roomClient = new RoomClient(convexUrl);
-      this.setStatus("Connected. Create or join a room.");
-    } else {
-      // Player-facing copy: rooms need a matchmaking backend the
-      // self-hosted pivot doesn't run. Point players at the world
-      // instead of leaking env-var internals. (The e2e lobby spec keys
-      // on "VITE_CONVEX_URL" still being present for its skip guard.)
-      this.setStatus("Rooms are offline — hit Join World instead. (VITE_CONVEX_URL unset)");
-    }
+    this.setStatus("Private channel ready — host or join with a code.");
 
     this.bindEvents();
     this.syncButtons();
   }
 
   destroy() {
-    this.unsubscribeRoom?.();
+    this.stopPolling();
     if (this.heartbeatTimer) {
       window.clearInterval(this.heartbeatTimer);
     }
@@ -153,10 +141,9 @@ export class LobbyController {
     }
     this.mapPicker?.destroy();
     this.roomStatusBadge?.destroy();
-    if (this.roomClient && this.currentRoom) {
-      void this.roomClient.leave(this.currentRoom.roomId, this.playerId);
+    if (this.currentCode) {
+      void this.privateClient.leave(this.currentCode, this.playerId);
     }
-    void this.roomClient?.close();
   }
 
   focusCreateRoom() {
@@ -180,7 +167,7 @@ export class LobbyController {
    */
   autoJoinFromUrl() {
     const code = this.codeInput.value.trim();
-    if (!code || !this.roomClient) {
+    if (!code) {
       this.focusJoinRoom();
       return;
     }
@@ -245,22 +232,18 @@ export class LobbyController {
   }
 
   private async createRoom() {
-    if (!this.roomClient) {
-      return;
-    }
     this.setBusy(true);
     try {
-      const handle = await this.roomClient.createRoom(
-        createRoomArgs(
-          this.playerId,
-          this.playerName,
-          this.colorInput.value,
-          this.characterId,
-          this.chaosModifierIds,
-        ),
-      );
-      this.activateRoom(handle);
-      this.setStatus(`Room ${handle.code} created. Share the code.`);
+      const snap = await this.privateClient.create({
+        playerId: this.playerId,
+        name: this.playerName,
+        color: this.colorInput.value,
+        characterId: this.characterId,
+        mapId: this.pendingMapId ?? DEFAULT_MAP_ID,
+        chaosModifierIds: this.chaosModifierIds,
+      });
+      this.activatePrivate(snap);
+      this.setStatus(`Channel ${snap.code} open — share the code.`);
     } catch (error) {
       this.setStatus(readError(error));
     } finally {
@@ -271,6 +254,7 @@ export class LobbyController {
   private startPractice() {
     window.dispatchEvent(new CustomEvent("jakesjam:start-match", {
       detail: {
+        mode: "practice",
         localPlayerId: this.playerId,
         players: [{
           _id: "local-practice",
@@ -290,9 +274,6 @@ export class LobbyController {
   }
 
   private async joinRoom() {
-    if (!this.roomClient) {
-      return;
-    }
     const code = this.codeInput.value.trim().toUpperCase();
     if (!code) {
       this.setStatus("Enter a room code first.");
@@ -300,15 +281,15 @@ export class LobbyController {
     }
     this.setBusy(true);
     try {
-      const handle = await this.roomClient.joinRoom({
+      const snap = await this.privateClient.join({
         code,
         playerId: this.playerId,
         name: this.playerName,
         color: this.colorInput.value,
         characterId: this.characterId,
       });
-      this.activateRoom(handle);
-      this.setStatus(`Joined room ${handle.code}.`);
+      this.activatePrivate(snap);
+      this.setStatus(`Joined channel ${snap.code}.`);
     } catch (error) {
       this.setStatus(readError(error));
     } finally {
@@ -321,127 +302,149 @@ export class LobbyController {
    * tears down local subscription, and returns to the no-room state.
    */
   private async leaveRoom() {
-    if (!this.roomClient || !this.currentRoom) return;
-    const roomId = this.currentRoom.roomId;
-    this.unsubscribeRoom?.();
-    this.unsubscribeRoom = undefined;
-    if (this.heartbeatTimer) {
-      window.clearInterval(this.heartbeatTimer);
-      this.heartbeatTimer = undefined;
-    }
+    if (!this.currentCode) return;
+    const code = this.currentCode;
+    this.stopPolling();
     this.roomStatusBadge?.destroy();
     this.roomStatusBadge = undefined;
-    this.currentRoom = undefined;
+    this.currentCode = null;
     this.currentSnapshot = null;
     this.launchedMatchId = undefined;
     this.pendingMapId = null;
+    this.pendingMatchToken = null;
     this.activeRoomBox.hidden = true;
     this.activeCode.textContent = "------";
     this.mapPicker?.setHostMode(false);
     this.mapPicker?.setSelected(undefined);
     this.renderPlayers([]);
     this.syncButtons();
-    this.setStatus("Left room.", true);
+    this.setStatus("Left channel.", true);
     document.title = "JAKESJAM";
     window.dispatchEvent(new CustomEvent("jakesjam:room-left"));
     try {
-      await this.roomClient.leave(roomId, this.playerId);
+      await this.privateClient.leave(code, this.playerId);
     } catch {
-      // Fire-and-forget: player is gone from the UI already.
+      // UI already left.
     }
   }
 
-  private activateRoom(handle: RoomHandle) {
-    this.currentRoom = handle;
+  private activatePrivate(snap: PrivateLobbySnapshot) {
+    this.currentCode = snap.code;
     this.activeRoomBox.hidden = false;
-    this.activeCode.textContent = handle.code;
-    this.unsubscribeRoom?.();
-    this.unsubscribeRoom = this.roomClient?.subscribeRoom(
-      handle.roomId,
-      (snapshot) => this.applySnapshot(snapshot),
-      (error) => this.setStatus(readError(error)),
-    );
+    this.activeCode.textContent = snap.code;
+    this.codeInput.value = snap.code;
+    this.applyPrivateSnapshot(snap);
 
-    if (this.heartbeatTimer) {
-      window.clearInterval(this.heartbeatTimer);
-    }
+    this.stopPolling();
+    this.pollTimer = window.setInterval(() => {
+      void this.pollSnapshot();
+    }, 1500);
+    if (this.heartbeatTimer) window.clearInterval(this.heartbeatTimer);
     this.heartbeatTimer = window.setInterval(() => {
-      void this.roomClient?.heartbeat(handle.roomId, this.playerId);
-    }, 15000);
-    void this.roomClient?.heartbeat(handle.roomId, this.playerId);
+      if (!this.currentCode) return;
+      void this.privateClient.heartbeat(this.currentCode, this.playerId).then(
+        (s) => this.applyPrivateSnapshot(s),
+        () => undefined,
+      );
+    }, 12_000);
 
-    // Auto-assign a distinct color if this player is new to the room (item 10).
-    // We detect "new" by checking if localStorage has no saved color yet.
     if (!localStorage.getItem(PLAYER_COLOR_KEY)) {
       const assignedColor = COLOR_PALETTE[Math.floor(Math.random() * COLOR_PALETTE.length)];
       this.colorInput.value = assignedColor ?? "#50e3c2";
       localStorage.setItem(PLAYER_COLOR_KEY, this.colorInput.value);
     }
 
-    document.title = `JAKESJAM — Lobby ${handle.code}`;
-    window.dispatchEvent(new CustomEvent("jakesjam:room-joined", { detail: { code: handle.code } }));
+    document.title = `JAKESJAM — Private ${snap.code}`;
+    window.dispatchEvent(new CustomEvent("jakesjam:room-joined", { detail: { code: snap.code } }));
     this.syncButtons();
   }
 
-  private applySnapshot(snapshot: RoomSnapshot | null) {
-    this.currentSnapshot = snapshot;
-    if (snapshot) {
-      this.applyAuthoritativeChaos(snapshot.room.chaosModifierIds ?? []);
-      const isHost = snapshot.room.hostPlayerId === this.playerId;
-      this.mapPicker?.setHostMode(isHost);
-      // Server selection wins once it arrives, otherwise honor the
-      // host's local pending pick, otherwise fall back to default.
-      const serverSelected = snapshot.room.selectedMapId;
-      if (serverSelected !== undefined) {
-        // Sync caught up — drop the local override.
-        this.pendingMapId = null;
-      }
-      this.mapPicker?.setSelected(
-        serverSelected ?? this.pendingMapId ?? DEFAULT_MAP_ID,
-      );
-
-      // Auto-assign distinct color from palette if there's a collision (item 10).
-      this.maybeResolveColorCollision(snapshot.players);
-    } else {
-      this.mapPicker?.setHostMode(false);
-      this.mapPicker?.setSelected(undefined);
+  private stopPolling() {
+    if (this.pollTimer) {
+      window.clearInterval(this.pollTimer);
+      this.pollTimer = undefined;
     }
+    if (this.heartbeatTimer) {
+      window.clearInterval(this.heartbeatTimer);
+      this.heartbeatTimer = undefined;
+    }
+  }
+
+  private async pollSnapshot() {
+    if (!this.currentCode) return;
+    try {
+      const snap = await this.privateClient.get(this.currentCode);
+      if (snap) this.applyPrivateSnapshot(snap);
+    } catch (err) {
+      console.warn("[lobby] poll failed", err);
+    }
+  }
+
+  private applyPrivateSnapshot(snapshot: PrivateLobbySnapshot) {
+    this.currentSnapshot = snapshot;
+    this.applyAuthoritativeChaos(
+      (snapshot.chaosModifierIds ?? []) as ChaosModifierId[],
+    );
+    const isHost = snapshot.hostPlayerId === this.playerId;
+    this.mapPicker?.setHostMode(isHost);
+    if (snapshot.mapId) this.pendingMapId = null;
+    this.mapPicker?.setSelected(snapshot.mapId || this.pendingMapId || DEFAULT_MAP_ID);
+
+    const playersAsRoom: RoomPlayer[] = snapshot.players.map((p) => ({
+      _id: p.playerId,
+      roomId: snapshot.code as never,
+      playerId: p.playerId,
+      name: p.name,
+      color: p.color,
+      characterId: p.characterId as CharacterId,
+      ready: p.ready,
+      connected: true,
+      joinedAt: p.lastSeenAt,
+      lastSeenAt: p.lastSeenAt,
+    }));
+    this.maybeResolveColorCollision(playersAsRoom);
     try {
       this.syncRoomStatusBadge(snapshot);
     } catch (err) {
       console.error("[lobby] syncRoomStatusBadge threw", err);
     }
     try {
-      this.renderPlayers(snapshot?.players ?? []);
+      this.renderPlayers(playersAsRoom);
     } catch (err) {
       console.error("[lobby] renderPlayers threw", err);
     }
+
     if (
-      snapshot?.room.status === "in_match" &&
-      snapshot.room.currentMatchId &&
-      snapshot.room.currentMatchId !== this.launchedMatchId
+      snapshot.status === "in_match" &&
+      snapshot.matchId &&
+      snapshot.matchId !== this.launchedMatchId
     ) {
-      this.launchedMatchId = snapshot.room.currentMatchId;
-      const mapName = resolveMap(snapshot.room.selectedMapId ?? DEFAULT_MAP_ID).name;
-      this.setStatus(`Match starting in ${mapName}.`);
-      window.dispatchEvent(new CustomEvent("jakesjam:start-match", {
-        detail: {
-          roomId: snapshot.room._id,
-          roomCode: snapshot.room.code,
-          matchId: snapshot.room.currentMatchId,
-          localPlayerId: this.playerId,
-          players: snapshot.players,
-          chaosModifierIds: snapshot.room.chaosModifierIds ?? [],
-        },
-      }));
+      this.launchedMatchId = snapshot.matchId;
+      const token =
+        this.pendingMatchToken ??
+        snapshot.tokens?.[this.playerId] ??
+        null;
+      if (token) {
+        const mapName = resolveMap(snapshot.mapId || DEFAULT_MAP_ID).name;
+        this.setStatus(`Match starting — ${mapName}.`);
+        window.dispatchEvent(
+          new CustomEvent("jakesjam:start-match", {
+            detail: {
+              mode: "private",
+              roomCode: snapshot.code,
+              matchId: snapshot.matchId,
+              matchToken: token,
+              localPlayerId: this.playerId,
+              players: playersAsRoom,
+              chaosModifierIds: snapshot.chaosModifierIds ?? [],
+            },
+          }),
+        );
+      }
     }
     try {
       this.syncButtons();
     } catch (err) {
-      // Don't let a transient DOM access error in syncButtons surface as a
-      // user-visible status banner ("Cannot read properties of undefined
-      // reading 'disabled'") — that confused users when a second tab joined
-      // a 1v1 room. Log instead so prod regressions still leave breadcrumbs.
       console.error("[lobby] syncButtons threw", err);
     }
   }
@@ -464,54 +467,54 @@ export class LobbyController {
   }
 
   private async toggleReady() {
-    if (!this.roomClient || !this.currentRoom) {
-      return;
-    }
-    const currentPlayer = this.currentSnapshot?.players.find(
+    if (!this.currentCode || !this.currentSnapshot) return;
+    const currentPlayer = this.currentSnapshot.players.find(
       (player) => player.playerId === this.playerId,
     );
-    await this.roomClient.setReady(this.currentRoom.roomId, this.playerId, !currentPlayer?.ready);
-  }
-
-  private async startMatch() {
-    if (!this.roomClient || !this.currentRoom) {
-      return;
-    }
     try {
-      const mapId =
-        this.currentSnapshot?.room.selectedMapId ??
-        this.pendingMapId ??
-        DEFAULT_MAP_ID;
-      await this.roomClient.startMatch(this.currentRoom.roomId, this.playerId, mapId);
+      const snap = await this.privateClient.ready(
+        this.currentCode,
+        this.playerId,
+        !currentPlayer?.ready,
+      );
+      this.applyPrivateSnapshot(snap);
     } catch (error) {
       this.setStatus(readError(error));
     }
   }
 
-  /**
-   * Drives the per-room MatchStatusBadge: spins one up when a match is
-   * active, tears it down when we return to lobby. Polls the bun
-   * server's `/match/summary` endpoint with the current match id.
-   * Other players in the room can see the same badge — useful for
-   * "the host is mid-round, hop in when the round-over banner shows".
-   */
-  private syncRoomStatusBadge(snapshot: RoomSnapshot | null): void {
+  private async startMatch() {
+    if (!this.currentCode) return;
+    try {
+      // Push map pick before start if host selected one.
+      const mapId = this.pendingMapId ?? this.currentSnapshot?.mapId ?? DEFAULT_MAP_ID;
+      if (this.currentSnapshot?.hostPlayerId === this.playerId) {
+        await this.privateClient.setMap(this.currentCode, this.playerId, mapId);
+      }
+      const snap = await this.privateClient.start(this.currentCode, this.playerId);
+      const token = snap.tokens?.[this.playerId];
+      if (token) this.pendingMatchToken = token;
+      this.applyPrivateSnapshot(snap);
+    } catch (error) {
+      this.setStatus(readError(error));
+    }
+  }
+
+  private syncRoomStatusBadge(snapshot: PrivateLobbySnapshot | null): void {
     const mount = this.roomStatusMount;
     if (!mount) return;
-    const matchId = snapshot?.room.currentMatchId;
+    const matchId = snapshot?.matchId;
     if (!matchId) {
       this.roomStatusBadge?.destroy();
       this.roomStatusBadge = undefined;
       return;
     }
-    if (this.roomStatusBadge) return; // already mounted for this match
+    if (this.roomStatusBadge) return;
     this.roomStatusBadge = new MatchStatusBadge({
       mount,
       title: "Match Status",
-      shareUrl: this.buildRoomShareUrl(snapshot?.room.code),
+      shareUrl: this.buildRoomShareUrl(snapshot?.code),
       fetchSummary: () => fetchMatchSummary(matchId),
-      // Returning players auto-rejoin via the existing in-match flow;
-      // explicit "Join" is only needed for fresh links.
       onJoin: null,
     });
   }
@@ -523,7 +526,7 @@ export class LobbyController {
   }
 
   private async copyRoomShareLink(): Promise<void> {
-    const code = this.currentSnapshot?.room.code;
+    const code = this.currentSnapshot?.code ?? this.currentCode ?? undefined;
     if (!code || !this.roomShareBtn) return;
     const url = this.buildRoomShareUrl(code);
     if (!url) return;
@@ -595,23 +598,21 @@ export class LobbyController {
    * somehow triggers this, the server throws and we surface it (item 5).
    */
   private async onMapPicked(pickerId: MapPickerId) {
-    if (!this.roomClient || !this.currentRoom) return;
+    if (!this.currentCode) return;
     if (!(pickerId in mapsById) && pickerId !== GEN_RANDOM_PICKER_ID) return;
-    // "Generated Arena" mints a fresh seed right here (mirrors
-    // worldHost.ts's wall-clock-seeded rotation) — the wire value is a
-    // plain "gen:<seed>" string, never the "gen-random" sentinel itself.
     const wireMapId =
       pickerId === GEN_RANDOM_PICKER_ID
         ? `gen:${Math.floor(Date.now() / 1000) % 1_000_000}`
         : pickerId;
-    // Optimistic local update so the host sees the highlight flip
-    // immediately, even if the Convex sync below is degraded
-    // (server down, codegen lagging, etc.). startMatch honours the
-    // local pick via this.pendingMapId.
     this.pendingMapId = wireMapId;
     this.mapPicker?.setSelected(wireMapId);
     try {
-      await this.roomClient.setMap(this.currentRoom.roomId, this.playerId, wireMapId);
+      const snap = await this.privateClient.setMap(
+        this.currentCode,
+        this.playerId,
+        wireMapId,
+      );
+      this.applyPrivateSnapshot(snap);
     } catch (error) {
       this.setStatus(readError(error), true);
     }
@@ -647,16 +648,15 @@ export class LobbyController {
   }
 
   private syncButtons() {
-    const hasClient = Boolean(this.roomClient);
-    const hasRoom = Boolean(this.currentRoom);
+    const hasClient = true; // always-on private server path
+    const hasRoom = Boolean(this.currentCode);
     const currentPlayer = this.currentSnapshot?.players.find(
       (player) => player.playerId === this.playerId,
     );
     const players = this.currentSnapshot?.players ?? [];
     const allReady = players.length >= 1 && players.every((player) => player.ready);
-    const isHost = this.currentSnapshot?.room.hostPlayerId === this.playerId;
+    const isHost = this.currentSnapshot?.hostPlayerId === this.playerId;
 
-    // Items 3: hide create/join/connect sections when in a room; show otherwise.
     if (this.roomActionsBox) {
       this.roomActionsBox.hidden = hasRoom;
     }
@@ -664,10 +664,10 @@ export class LobbyController {
       this.playerConnectBox.hidden = hasRoom;
     }
 
-    // These only matter when their parent sections are visible.
     this.createButton.disabled = !hasClient || hasRoom;
     this.joinButton.disabled = !hasClient || hasRoom;
     this.readyButton.disabled = !hasClient || !hasRoom;
+    // Host can start alone (private 1p) once ready — invite friends any time.
     this.startButton.disabled = !hasClient || !hasRoom || !isHost || !allReady;
 
     // Ready button: label = STATE (not action verb). Toggle via filled vs
@@ -760,9 +760,9 @@ export class LobbyController {
     this.statusLine.style.color = "";
     if (transient) {
       this.statusClearTimer = window.setTimeout(() => {
-        this.statusLine.textContent = this.currentRoom
-          ? `In room ${this.currentRoom.code}.`
-          : "Create or join a room.";
+        this.statusLine.textContent = this.currentCode
+          ? `In channel ${this.currentCode}.`
+          : "Host or join a private room.";
         this.statusClearTimer = undefined;
       }, 4000);
     }
@@ -780,9 +780,9 @@ export class LobbyController {
     this.statusLine.style.color = "var(--danger, #fb7185)";
     this.statusClearTimer = window.setTimeout(() => {
       this.statusLine.style.color = "";
-      this.statusLine.textContent = this.currentRoom
-        ? `In room ${this.currentRoom.code}.`
-        : "Create or join a room.";
+      this.statusLine.textContent = this.currentCode
+        ? `In channel ${this.currentCode}.`
+        : "Host or join a private room.";
       this.statusClearTimer = undefined;
     }, 4000);
   }
@@ -819,15 +819,11 @@ export class LobbyController {
   private applyChaosChange() {
     const chaosModifierIds = this.chaosModifierIds;
     localStorage.setItem(CHAOS_MODIFIERS_KEY, JSON.stringify(chaosModifierIds));
-    if (this.currentRoom && this.roomClient) {
-      const isHost = this.currentSnapshot?.room.hostPlayerId === this.playerId;
-      if (isHost) {
-        void this.roomClient.updateSettings(
-          this.currentRoom.roomId,
-          this.playerId,
-          chaosModifierIds,
-        ).catch((error) => this.setErrorStatus(readError(error)));
-      }
+    if (this.currentCode && this.currentSnapshot?.hostPlayerId === this.playerId) {
+      void this.privateClient
+        .setChaos(this.currentCode, this.playerId, chaosModifierIds)
+        .then((s) => this.applyPrivateSnapshot(s))
+        .catch((error) => this.setErrorStatus(readError(error)));
     }
     window.dispatchEvent(new CustomEvent("jakesjam:chaos-change", {
       detail: { chaosModifierIds },
@@ -876,39 +872,6 @@ function readError(error: unknown): string {
     return error.message;
   }
   return "Unexpected lobby error.";
-}
-
-/**
- * Last-resort fallback so the Vite bundle always has *some* Convex URL,
- * even when prod env vars get lost (recurring "Set VITE_CONVEX_URL to
- * enable rooms" symptom). Points at the project's dev deployment for
- * jake-colson/jakesjam — fine for game-jam scale; swap once a separate
- * prod deployment exists. Override at runtime via `?convex=<url>` query
- * param, or at build time via VITE_CONVEX_URL / CONVEX_URL env vars
- * (vite.config.ts envPrefix accepts both).
- */
-// Must match the deployment that .github/workflows/deploy.yml's
-// `Push functions + schema to Convex` step targets via
-// CONVEX_DEPLOY_KEY. If this URL drifts away from the deploy target
-// you ship the client against a STALE Convex schema → users hit
-// ArgumentValidationError on every mutation that has changed
-// signature since the last sync (e.g. mapId on rooms.startMatch).
-//
-// Current prod target (verified via `gh run view` of the latest
-// deploy log: "Deploying to https://adept-partridge-96.convex.cloud"):
-const CONVEX_URL_FALLBACK = "https://adept-partridge-96.convex.cloud";
-
-function readConvexUrl(): string | undefined {
-  const urlOverride = new URLSearchParams(window.location.search).get("convex");
-  if (urlOverride) {
-    return urlOverride;
-  }
-
-  return (
-    import.meta.env.VITE_CONVEX_URL ??
-    import.meta.env.CONVEX_URL ??
-    CONVEX_URL_FALLBACK
-  );
 }
 
 function characterLabel(characterId: CharacterId): string {

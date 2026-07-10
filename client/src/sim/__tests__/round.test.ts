@@ -4,6 +4,8 @@
 
 import { describe, test, expect } from "bun:test";
 import { STEP_MS } from "../constants.js";
+import { crystalRoundsCards } from "../data/cards.js";
+import { classifyDraftRole, weightForCard } from "../draftWeights.js";
 import {
   stepRound,
   enterDrafting,
@@ -274,7 +276,7 @@ describe("stepRound", () => {
   // unless everyone picks early, and auto-picks the leftmost offer for
   // anyone who didn't commit before the window expired.
 
-  test("round-over → drafting: LOSER-ONLY draft (winner sits out — ROUNDS catch-up)", () => {
+  test("round-over → drafting: UNIVERSAL draft (winner included — Escalation Engine)", () => {
     const players = {
       a: mkPlayer("a", { alive: true }),
       b: mkPlayer("b", { alive: true }),
@@ -296,21 +298,26 @@ describe("stepRound", () => {
     });
     expect(result.state.phase).toBe("drafting");
     expect(result.state.draftingOffers).toBeDefined();
-    // The winner (A) gets NO offers — only the loser (B) drafts.
-    expect(Object.keys(result.state.draftingOffers!).sort()).toEqual(["b"]);
+    // Winner (A) and loser (B) both get offers — never omit winner for winning.
+    expect(Object.keys(result.state.draftingOffers!).sort()).toEqual(["a", "b"]);
+    expect(result.state.draftingOffers![A]!.length).toBe(DRAFT_OFFER_COUNT);
     expect(result.state.draftingOffers![B]!.length).toBe(DRAFT_OFFER_COUNT);
     expect(result.state.draftingPicked).toEqual({});
     // Expiry tick is window converted to ticks at the fixed STEP_MS rate.
     const expectedExpiry = Tick(100 + Math.ceil(DRAFT_WINDOW_MS / STEP_MS));
     expect(result.state.draftingExpiresAtTick).toBe(expectedExpiry);
-    // One card-offered event — the loser's. Round-end is NOT re-emitted at
-    // this boundary (already fired on fighting → round-over).
+    // Two card-offered events (sorted id order a then b).
     const offerEvents = result.events.filter(
       (e): e is Extract<SimEvent, { t: "card-offered" }> => e.t === "card-offered",
     );
-    expect(offerEvents).toHaveLength(1);
-    expect(offerEvents[0]!.playerId).toBe(B);
-    expect(offerEvents[0]!.cardIds).toEqual(result.state.draftingOffers![B]!);
+    expect(offerEvents).toHaveLength(2);
+    expect(offerEvents.map((e) => String(e.playerId)).sort()).toEqual(["a", "b"]);
+    expect(offerEvents.find((e) => e.playerId === A)!.cardIds).toEqual(
+      result.state.draftingOffers![A]!,
+    );
+    expect(offerEvents.find((e) => e.playerId === B)!.cardIds).toEqual(
+      result.state.draftingOffers![B]!,
+    );
     // RNG cursor advanced because we drew offers.
     expect(result.rngState).toBeDefined();
     expect(result.rngState).not.toBe(0xdead_beef);
@@ -647,5 +654,125 @@ describe("draft maxStacks enforcement", () => {
 
   test("the same card below maxStacks still appears in offers", () => {
     expect(offersAcrossSeeds(4).has(STACKED)).toBe(true);
+  });
+});
+
+// Escalation Engine — real enterDrafting entry path (docs/escalation-engine-goal.md).
+describe("enterDrafting universal policy", () => {
+  test("with a non-null winner, offers map keys include the winner and every roster player", () => {
+    const players = {
+      a: mkPlayer("a", { alive: true }),
+      b: mkPlayer("b", { alive: false }), // mid-respawn still drafts
+      c: mkPlayer("c", { alive: true }),
+    };
+    const state: RoundState = {
+      phase: "round-over",
+      countdownRemainingMs: 0,
+      scores: { [A]: 2, [B]: 1, [PlayerId("c")]: 0 },
+      roundIndex: 2,
+      winnerPlayerId: A,
+    };
+    const res = enterDrafting(state, players, Tick(100), 0xcafe);
+    const keys = Object.keys(res.state.draftingOffers!).sort();
+    expect(keys).toEqual(["a", "b", "c"]);
+    for (const k of keys) {
+      expect(res.state.draftingOffers![PlayerId(k)]!.length).toBe(DRAFT_OFFER_COUNT);
+    }
+    // Winner is never omitted solely for winning.
+    expect(res.state.draftingOffers![A]).toBeDefined();
+    expect(res.state.draftingOffers![A]!.length).toBeGreaterThan(0);
+  });
+
+  test("with null winner (draw), all roster players get offers", () => {
+    const players = {
+      a: mkPlayer("a"),
+      b: mkPlayer("b"),
+    };
+    const state: RoundState = {
+      phase: "round-over",
+      countdownRemainingMs: 0,
+      scores: { [A]: 0, [B]: 0 },
+      roundIndex: 0,
+      winnerPlayerId: null,
+    };
+    const res = enterDrafting(state, players, Tick(10), 99);
+    expect(Object.keys(res.state.draftingOffers!).sort()).toEqual(["a", "b"]);
+  });
+
+  test("unique cards already held are never re-offered", () => {
+    const unique = crystalRoundsCards.find((c) => c.unique);
+    expect(unique).toBeDefined();
+    const id = unique!.id;
+    const players = {
+      a: mkPlayer("a", { cards: [id] }),
+    };
+    const state: RoundState = {
+      phase: "round-over",
+      countdownRemainingMs: 0,
+      scores: { [A]: 0 },
+      roundIndex: 0,
+      winnerPlayerId: null,
+    };
+    const seen = new Set<string>();
+    for (let seed = 1; seed <= 150; seed++) {
+      const res = enterDrafting(state, players, Tick(1), seed);
+      for (const cardId of res.state.draftingOffers![A]!) seen.add(cardId);
+    }
+    expect(seen.has(id)).toBe(false);
+  });
+
+  test("same seed + same state yields identical offer maps", () => {
+    const players = {
+      a: mkPlayer("a", { cards: ["rapid-refraction"] }),
+      b: mkPlayer("b", { cards: [] }),
+    };
+    const state: RoundState = {
+      phase: "round-over",
+      countdownRemainingMs: 0,
+      scores: { [A]: 1, [B]: 0 },
+      roundIndex: 1,
+      winnerPlayerId: A,
+    };
+    const r1 = enterDrafting(state, players, Tick(42), 4242);
+    const r2 = enterDrafting(state, players, Tick(42), 4242);
+    expect(r1.state.draftingOffers).toEqual(r2.state.draftingOffers);
+    expect(r1.rngState).toBe(r2.rngState);
+    expect(r1.events).toEqual(r2.events);
+  });
+
+  test("catch-up role uses weighted sampling (non-winner still gets offers when winner exists)", () => {
+    // Structural: with a winner, both seats draft; catch-up is weight-only.
+    const players = {
+      winner: mkPlayer("winner"),
+      loser: mkPlayer("loser"),
+    };
+    const state: RoundState = {
+      phase: "round-over",
+      countdownRemainingMs: 0,
+      scores: { [PlayerId("winner")]: 1, [PlayerId("loser")]: 0 },
+      roundIndex: 0,
+      winnerPlayerId: PlayerId("winner"),
+    };
+    const res = enterDrafting(state, players, Tick(5), 777);
+    expect(res.state.draftingOffers![PlayerId("winner")]!.length).toBe(DRAFT_OFFER_COUNT);
+    expect(res.state.draftingOffers![PlayerId("loser")]!.length).toBe(DRAFT_OFFER_COUNT);
+  });
+});
+
+describe("draftWeights helpers", () => {
+  test("classifyDraftRole: winner / catch_up / draw-standard", () => {
+    expect(classifyDraftRole("a", "a")).toBe("winner");
+    expect(classifyDraftRole("b", "a")).toBe("catch_up");
+    expect(classifyDraftRole("a", null)).toBe("standard");
+    expect(classifyDraftRole("b", null)).toBe("standard");
+  });
+
+  test("weightForCard: catch_up boosts impact/utility/element over plain standard", () => {
+    const base = { id: "x", name: "x", category: "utility" as const, rarity: "common" as const, description: "" };
+    const impact = { ...base, buckets: ["impact" as const] };
+    const plain = { ...base, buckets: ["quantity" as const] };
+    expect(weightForCard(plain, "standard")).toBe(1);
+    expect(weightForCard(plain, "winner")).toBe(1);
+    expect(weightForCard(impact, "catch_up")).toBeGreaterThan(weightForCard(plain, "catch_up"));
   });
 });

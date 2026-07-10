@@ -35,3 +35,7 @@ sim/zig-cache/
 server/.clips/
 server/.tiktok/
 server/.entitlements/
+elm-stuff/
+# stream-kit runtime junk
+__pycache__/
+stream-kit/obs/*.bak-*

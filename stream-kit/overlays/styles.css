@@ -1,0 +1,551 @@
+/* JAKESJAM stream kit — broadcast-grade vessel chrome
+   Gold house · cyan combat · void hull · upright triangle seal · L-brackets
+   Juice: breath rings, shimmer link, stagger reveal (atmosphere only) */
+
+@import url("https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Space+Mono:wght@400;700&display=swap");
+
+:root {
+  --void: #0a0e1a;
+  --void-edge: #0d1117;
+  --panel: rgba(20, 27, 45, 0.94);
+  --panel-solid: #141b2d;
+  --hl: #50e3c2;
+  --hl-hi: #8ff8ff;
+  --gold: #c9a84c;
+  --gold-dim: #8a7033;
+  --text: #e8ecf4;
+  --text-dim: #7a8299;
+  --rim: #a8b8c8;
+  --live: #fb7185;
+  --font: "Space Grotesk", "Inter", system-ui, sans-serif;
+  --mono: "Space Mono", ui-monospace, monospace;
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html,
+body {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: transparent !important;
+  font-family: var(--font);
+  color: var(--text);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: geometricPrecision;
+}
+
+/* ── Vessel hull chrome ────────────────────────────────── */
+.hull {
+  position: relative;
+  background: linear-gradient(
+    168deg,
+    rgba(30, 39, 64, 0.96) 0%,
+    rgba(20, 27, 45, 0.94) 45%,
+    rgba(10, 14, 26, 0.96) 100%
+  );
+  border: 1px solid rgba(201, 168, 76, 0.28);
+  box-shadow:
+    0 0 0 1px rgba(0, 0, 0, 0.55),
+    0 16px 48px rgba(0, 0, 0, 0.55),
+    0 0 32px rgba(80, 227, 194, 0.06),
+    inset 0 1px 0 rgba(143, 248, 255, 0.1),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.35);
+  backdrop-filter: blur(12px);
+}
+
+/* Dual L-brackets: cyan TL · gold BR */
+.hull::before,
+.hull::after {
+  content: "";
+  position: absolute;
+  width: 16px;
+  height: 16px;
+  pointer-events: none;
+  z-index: 3;
+}
+.hull::before {
+  top: -1px;
+  left: -1px;
+  border-top: 2px solid var(--hl);
+  border-left: 2px solid var(--hl);
+  filter: drop-shadow(0 0 4px rgba(80, 227, 194, 0.45));
+}
+.hull::after {
+  bottom: -1px;
+  right: -1px;
+  border-bottom: 2px solid var(--gold);
+  border-right: 2px solid var(--gold);
+  filter: drop-shadow(0 0 4px rgba(201, 168, 76, 0.35));
+}
+
+/* ── Lower third ───────────────────────────────────────── */
+.lt {
+  position: absolute;
+  left: 48px;
+  bottom: 48px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 400px;
+  max-width: 520px;
+  padding: 18px 22px 16px 20px;
+  animation: rise-in 0.65s cubic-bezier(0.2, 0.9, 0.2, 1) both;
+}
+
+.lt-kicker {
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.26em;
+  text-transform: uppercase;
+  color: var(--gold);
+  animation: rise-in 0.55s 0.05s cubic-bezier(0.2, 0.9, 0.2, 1) both;
+}
+
+.lt-title {
+  font-size: 30px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  line-height: 1.05;
+  color: var(--text);
+  animation: rise-in 0.55s 0.1s cubic-bezier(0.2, 0.9, 0.2, 1) both;
+}
+
+.lt-rule {
+  width: 56%;
+  height: 1px;
+  margin: 6px 0 4px;
+  background: linear-gradient(90deg, var(--gold) 0%, rgba(201, 168, 76, 0.2) 70%, transparent);
+  animation: rise-in 0.55s 0.14s cubic-bezier(0.2, 0.9, 0.2, 1) both;
+}
+
+.lt-sub {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-dim);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  animation: rise-in 0.55s 0.18s cubic-bezier(0.2, 0.9, 0.2, 1) both;
+}
+
+.lt-link {
+  margin-top: 8px;
+  font-family: var(--mono);
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--hl-hi);
+  letter-spacing: 0.1em;
+  text-shadow: 0 0 18px rgba(80, 227, 194, 0.4);
+  animation: rise-in 0.55s 0.22s cubic-bezier(0.2, 0.9, 0.2, 1) both;
+  position: relative;
+  overflow: hidden;
+  display: inline-block;
+  padding-right: 4px;
+}
+
+.lt-link::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    100deg,
+    transparent 20%,
+    rgba(255, 255, 255, 0.28) 50%,
+    transparent 80%
+  );
+  transform: translateX(-120%);
+  animation: shimmer 4.2s ease-in-out infinite;
+  animation-delay: 1.2s;
+}
+
+/* ── Brand corner ──────────────────────────────────────── */
+.brand {
+  position: absolute;
+  top: 28px;
+  left: 28px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 11px 16px 11px 12px;
+  animation: rise-in 0.55s cubic-bezier(0.2, 0.9, 0.2, 1) both;
+}
+
+.brand-mark {
+  width: 22px;
+  height: 22px;
+  flex-shrink: 0;
+  filter: drop-shadow(0 0 6px rgba(80, 227, 194, 0.45));
+  animation: breath 7s ease-in-out infinite;
+}
+
+.brand-mark svg {
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+
+.brand-name {
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--text);
+}
+
+.brand-live {
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.2em;
+  color: var(--live);
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-left: 2px;
+  padding-left: 12px;
+  border-left: 1px solid rgba(201, 168, 76, 0.3);
+}
+
+.brand-live::before {
+  content: "";
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--live);
+  box-shadow: 0 0 10px var(--live);
+  animation: pulse 1.15s ease-in-out infinite;
+}
+
+.corner-link {
+  position: absolute;
+  right: 28px;
+  bottom: 28px;
+  font-family: var(--mono);
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  color: var(--hl-hi);
+  padding: 10px 14px;
+  text-shadow: 0 0 16px rgba(80, 227, 194, 0.4);
+  animation: rise-in 0.55s 0.12s cubic-bezier(0.2, 0.9, 0.2, 1) both;
+  overflow: hidden;
+}
+
+.corner-link::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    100deg,
+    transparent 25%,
+    rgba(255, 255, 255, 0.2) 50%,
+    transparent 75%
+  );
+  transform: translateX(-120%);
+  animation: shimmer 4.8s ease-in-out infinite;
+  animation-delay: 1.8s;
+}
+
+/* ── Full-screen broadcast cards ───────────────────────── */
+.screen {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  background:
+    radial-gradient(ellipse 65% 50% at 50% 40%, rgba(18, 48, 64, 0.5), transparent 70%),
+    radial-gradient(ellipse 30% 25% at 50% 46%, rgba(201, 168, 76, 0.05), transparent 55%),
+    linear-gradient(180deg, #0a0e1a 0%, #0d1117 48%, #080b12 100%);
+  overflow: hidden;
+}
+
+.screen::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background-image:
+    linear-gradient(rgba(80, 227, 194, 0.04) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(80, 227, 194, 0.04) 1px, transparent 1px);
+  background-size: 72px 72px;
+  mask-image: radial-gradient(ellipse 62% 52% at 50% 42%, black, transparent);
+  pointer-events: none;
+}
+
+/* vignette */
+.screen::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(ellipse 90% 80% at 50% 50%, transparent 50%, rgba(0, 0, 0, 0.45) 100%);
+  pointer-events: none;
+}
+
+.ring {
+  position: absolute;
+  left: 50%;
+  top: 42%;
+  width: min(46vw, 460px);
+  height: min(46vw, 460px);
+  transform: translate(-50%, -50%);
+  border: 1px solid rgba(80, 227, 194, 0.22);
+  border-radius: 50%;
+  box-shadow:
+    0 0 0 1px rgba(0, 0, 0, 0.2),
+    inset 0 0 48px rgba(80, 227, 194, 0.05);
+  animation: spin 64s linear infinite, breath 8s ease-in-out infinite;
+  pointer-events: none;
+  z-index: 0;
+}
+
+.ring-2 {
+  width: min(33vw, 330px);
+  height: min(33vw, 330px);
+  border-color: rgba(201, 168, 76, 0.2);
+  animation: spin-rev 48s linear infinite, breath 9s ease-in-out infinite;
+}
+
+.ring-3 {
+  width: min(21vw, 210px);
+  height: min(21vw, 210px);
+  border: 1px dashed rgba(143, 248, 255, 0.18);
+  animation: spin 80s linear infinite;
+  box-shadow: none;
+}
+
+.tri {
+  position: absolute;
+  left: 50%;
+  top: 42%;
+  width: min(24vw, 250px);
+  height: min(24vw, 250px);
+  transform: translate(-50%, -50%);
+  opacity: 0.85;
+  pointer-events: none;
+  z-index: 1;
+  filter: drop-shadow(0 0 12px rgba(80, 227, 194, 0.25));
+  animation: breath 7.5s ease-in-out infinite;
+}
+
+.tri svg {
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+
+.screen-kicker {
+  position: relative;
+  z-index: 2;
+  font-family: var(--mono);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.3em;
+  text-transform: uppercase;
+  color: var(--gold);
+  animation: rise-in 0.7s 0.08s cubic-bezier(0.2, 0.9, 0.2, 1) both;
+}
+
+.screen-title {
+  position: relative;
+  z-index: 2;
+  font-size: clamp(42px, 5.8vw, 70px);
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text);
+  text-shadow: 0 0 56px rgba(80, 227, 194, 0.22);
+  animation: rise-in 0.7s 0.14s cubic-bezier(0.2, 0.9, 0.2, 1) both;
+}
+
+.screen-rule {
+  position: relative;
+  z-index: 2;
+  width: 140px;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, var(--gold), transparent);
+  opacity: 0.85;
+  margin: 4px 0 6px;
+  animation: rise-in 0.7s 0.2s cubic-bezier(0.2, 0.9, 0.2, 1) both;
+}
+
+.screen-sub {
+  position: relative;
+  z-index: 2;
+  font-family: var(--mono);
+  font-size: 14px;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  animation: rise-in 0.7s 0.24s cubic-bezier(0.2, 0.9, 0.2, 1) both;
+}
+
+.screen-link {
+  position: relative;
+  z-index: 2;
+  margin-top: 16px;
+  font-family: var(--mono);
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  color: var(--hl-hi);
+  padding: 12px 24px;
+  border: 1px solid rgba(80, 227, 194, 0.4);
+  background: rgba(10, 14, 26, 0.75);
+  box-shadow:
+    0 0 0 1px rgba(201, 168, 76, 0.14),
+    0 0 36px rgba(80, 227, 194, 0.12),
+    inset 0 1px 0 rgba(143, 248, 255, 0.08);
+  overflow: hidden;
+  animation: rise-in 0.7s 0.3s cubic-bezier(0.2, 0.9, 0.2, 1) both;
+}
+
+.screen-link::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    105deg,
+    transparent 25%,
+    rgba(255, 255, 255, 0.22) 50%,
+    transparent 75%
+  );
+  transform: translateX(-120%);
+  animation: shimmer 3.8s ease-in-out infinite;
+  animation-delay: 1.5s;
+}
+
+.screen-foot {
+  position: absolute;
+  bottom: 40px;
+  z-index: 2;
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.24em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  animation: rise-in 0.7s 0.36s cubic-bezier(0.2, 0.9, 0.2, 1) both;
+}
+
+@keyframes pulse {
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.4;
+    transform: scale(0.92);
+  }
+}
+
+@keyframes spin {
+  from {
+    transform: translate(-50%, -50%) rotate(0deg);
+  }
+  to {
+    transform: translate(-50%, -50%) rotate(360deg);
+  }
+}
+
+@keyframes spin-rev {
+  from {
+    transform: translate(-50%, -50%) rotate(0deg);
+  }
+  to {
+    transform: translate(-50%, -50%) rotate(-360deg);
+  }
+}
+
+@keyframes breath {
+  0%,
+  100% {
+    opacity: 0.72;
+    transform: translate(-50%, -50%) scale(1);
+  }
+  50% {
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(1.025);
+  }
+}
+
+@keyframes rise-in {
+  from {
+    opacity: 0;
+    transform: translateY(14px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes shimmer {
+  0% {
+    transform: translateX(-120%);
+  }
+  40%,
+  100% {
+    transform: translateX(120%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* ── Export freeze (PNG bake / OBS) — final pose, full opacity ── */
+html.export-static *,
+html.export-static *::before,
+html.export-static *::after {
+  animation: none !important;
+  transition: none !important;
+}
+html.export-static .ring,
+html.export-static .ring-2,
+html.export-static .ring-3,
+html.export-static .tri {
+  opacity: 0.88 !important;
+  transform: translate(-50%, -50%) scale(1) !important;
+  filter: drop-shadow(0 0 12px rgba(80, 227, 194, 0.28));
+}
+html.export-static .brand,
+html.export-static .corner-link,
+html.export-static .lt,
+html.export-static .lt-kicker,
+html.export-static .lt-title,
+html.export-static .lt-rule,
+html.export-static .lt-sub,
+html.export-static .lt-link,
+html.export-static .screen-kicker,
+html.export-static .screen-title,
+html.export-static .screen-rule,
+html.export-static .screen-sub,
+html.export-static .screen-link,
+html.export-static .screen-foot {
+  opacity: 1 !important;
+  transform: none !important;
+}
+html.export-static .hull {
+  /* solid enough for OBS image sources (no backdrop-filter bleed) */
+  background: linear-gradient(
+    168deg,
+    rgba(30, 39, 64, 0.98) 0%,
+    rgba(20, 27, 45, 0.97) 45%,
+    rgba(10, 14, 26, 0.98) 100%
+  );
+  backdrop-filter: none;
+}

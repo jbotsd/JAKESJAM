@@ -27,7 +27,9 @@ Ten references, each with the specific thing we are stealing.
 
 ## Gnostic Vessel Silhouette Spec (v0.3, supersedes "Wizard Silhouette Spec")
 
-**Brief that drove this:** lean into a Warframe-esque read — "a ghost operating a manufactured vessel" — which is also literally what "Autogenes" (self-generated, individuated, not from pairing or inherited programming) names in the Gnostic-translation sense. Constraint: **palatable but gorgeous** — stay bipedal and readable, don't collapse into an alien mess; keep the rendering rich/premium.
+**UI / shell extension:** character silhouette is only half the language. Menus, panels, dual accent (Autogenes gold house vs crystal cyan combat), and withdraw-not-ascend motion are specified in **`docs/visual-language-gnostic-vessel.md`** (feeds `docs/ui-shell-goal.md`). Do not invent a second mythology for chrome.
+
+**Brief that drove this:** lean into a Warframe-esque read — "a ghost operating a manufactured vessel" — which is also literally what "Autogenes" (self-generated, individuated, not from pairing or inherited programming) names in the Gnostic-translation sense. Constraint: **palatable but gorgeous** — stay bipedal and readable, don't collapse into an alien mess; keep the rendering rich/premium. Research spine: Autogenes Editions / Nag Hammadi fidelity work (Allogenes *anachōrei* = withdraw; keep *gnosis/archon/ousia* un-flattened as *form*, not UI copy).
 
 The character is the `ProceduralPlayerRig` (`client/src/game/rendering/ProceduralPlayerRig.ts`, two-bone IK, spring-damped "wobbly" foot IK for secondary motion, per-player tinted). Unlike the old spec, there is **no separate overlay pass** — the previous `wizardOverlay.ts` was written but never wired in (dead code, now deleted); every visual element below is drawn inline by the rig itself, which is the only file that determines the on-screen look. The rig stays small (~30-60px tall in play) and noticeably **leaner** than the old "chunky armored" build — a manufactured shell, not a tank.
 

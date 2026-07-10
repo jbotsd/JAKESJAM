@@ -1,44 +1,35 @@
 #!/usr/bin/env bash
 # Host JAKESJAM multiplayer from THIS machine — fully self-contained.
 # No Fly, no Convex, no Vercel: one Bun process serves the built client
-# AND the game server; one Cloudflare quick tunnel exposes both.
+# AND the game server; one tunnel exposes both.
 #
 #   1. builds the client (if client/dist is missing; force with --build)
 #   2. starts the Bun game server on :$PORT serving client/dist statics
-#   3. opens a Cloudflare quick tunnel (wss works through CF)
-#   4. verifies the tunnel end-to-end, then prints ONE shareable link
+#   3. opens tunnel (cf / funnel / lhr) and prints ONE shareable link
 #
-# Players open the link, pick a name, and join the pub world
-# (/world-token + /ws/world — no external matchmaking service needed).
-# The client auto-targets its own origin for the game server, so the
-# bare tunnel URL is the whole story.
+# Players open the link, pick a name, and join the pub world.
+# Client uses same origin for the game server.
 #
 # Ctrl-C tears everything down.
-#
-# NOTE: tunnel reachability is verified through DNS-over-HTTPS (1.1.1.1).
-# Some LAN resolvers (Pi-hole style blocklists) block *.trycloudflare.com —
-# that only breaks resolution ON THIS LAN; remote players are unaffected.
-# LAN players can use http://<this-machine-ip>:$PORT directly.
+# Docs: docs/hosting-elyad-io.md
 #
 # TUNNEL PROVIDERS (this network is CGNAT — verified 2026-07-02/03):
-#   funnel (default) — Tailscale Funnel. STABLE URL
-#                    (https://randel.<tailnet>.ts.net), survives reboots,
-#                    verified end-to-end (HTTP + WS + browser world-join).
-#                    Needs: tailscaled up, funnel enabled on the tailnet,
-#                    and `tailscale set --operator=<user>` (all done
-#                    2026-07-03). Falls back to lhr if unavailable.
-#   lhr            — localhost.run over SSH. Works here but free URLs
-#                    ROTATE every ~15-30 min by design. Auto-reconnects.
-#   cloudflared    — quick tunnels REGISTER but never carry traffic on
-#                    this network (edge 522/404; QUIC + http2, v4 + v6
-#                    edges, multiple tunnels). Kept for other networks.
-#   none           — direct mode: share http://<public-ip>:$PORT after a
-#                    router port-forward (requires CGNAT opt-out at the
-#                    ISP; lowest latency once available).
+#   cf (preferred) — Named Cloudflare tunnel "jakesjam" + play.elyad.io.
+#                    Config: ops/cloudflared/config.yml only.
+#                    Needs elyad.io on Cloudflare (see docs/hosting-elyad-io.md).
+#                    Falls back to funnel if public URL won't verify.
+#   funnel         — Tailscale Funnel. STABLE but *.ts.net hostname.
+#                    (https://randel.<tailnet>.ts.net). Falls back to lhr.
+#   lhr            — localhost.run over SSH. Free URLs ROTATE ~15-30 min.
+#   cloudflared    — quick tunnels (trycloudflare.com). Unreliable here.
+#   none           — direct mode: LAN / public IP only.
 #
 # Env knobs:
 #   PORT              game server port (default 8088)
-#   TUNNEL=funnel|lhr|cloudflared|none   tunnel provider (default funnel)
+#   TUNNEL=cf|funnel|lhr|cloudflared|none   (default: cf if play DNS is
+#                         not parking, else funnel — see below)
+#   PUBLIC_URL        brand https URL when TUNNEL=cf (default
+#                         https://play.elyad.io)
 #   HOST_MODE=direct  alias for TUNNEL=none
 
 set -euo pipefail
@@ -79,6 +70,20 @@ echo "[host] client build present: client/dist"
 GAME_SERVER_SECRET="$(head -c 32 /dev/urandom | base64)"
 export GAME_SERVER_SECRET
 
+# Operator console (/ops) — fail-closed unless ADMIN_SECRET is set.
+# Persist across host restarts so the same cookie/login keeps working.
+ADMIN_SECRET_FILE="$LOG_DIR/admin-secret"
+if [ -z "${ADMIN_SECRET:-}" ]; then
+  if [ -f "$ADMIN_SECRET_FILE" ]; then
+    ADMIN_SECRET="$(tr -d '\n' < "$ADMIN_SECRET_FILE")"
+  else
+    ADMIN_SECRET="$(head -c 32 /dev/urandom | base64)"
+    umask 077
+    printf '%s\n' "$ADMIN_SECRET" >"$ADMIN_SECRET_FILE"
+  fi
+fi
+export ADMIN_SECRET
+
 SERVER_PID=""
 TUNNEL_PID=""
 
@@ -108,8 +113,11 @@ echo "[host] starting game server on :$PORT ..."
 # `bun --watch`, which hot-restarts on every file save — dropping all
 # players mid-match and occasionally dying on the port-rebind race
 # ("No free port in [8088, 8089)"). Observed live 2026-07-03.
+# PUBLIC_URL is the brand face for shareable clip links (never Tailscale Host).
 REGION=home PORT="$PORT" PORT_SEARCH_RANGE=1 SERVE_CLIENT_DIR="$PWD/client/dist" \
   WORLD_BOTS="${WORLD_BOTS:-2}" \
+  PUBLIC_URL="${PUBLIC_URL:-https://play.elyad.io}" \
+  ADMIN_SECRET="$ADMIN_SECRET" \
   setsid bun --cwd server src/index.ts >"$LOG_DIR/server.log" 2>&1 &
 SERVER_PID=$!
 
@@ -148,6 +156,7 @@ print_direct_banner() {
   echo
   echo "  LAN players : http://${LAN_IP:-<this-machine-ip>}:$PORT/?world=1"
   echo "  Health      : http://${PUBLIC_IP:-<public-ip>}:$PORT/health"
+  echo "  Ops console : http://localhost:$PORT/ops  (ADMIN_SECRET in $ADMIN_SECRET_FILE)"
   echo "  Logs        : $LOG_DIR/server.log"
   echo
   echo "  Ctrl-C stops hosting."
@@ -155,7 +164,21 @@ print_direct_banner() {
   echo
 }
 
+# Prefer brand domain when play.elyad.io is not still on Hover parking.
+PUBLIC_URL="${PUBLIC_URL:-https://play.elyad.io}"
+if [ -z "${TUNNEL:-}" ]; then
+  PARK="$(getent hosts play.elyad.io 2>/dev/null | awk '{print $1}' | head -1 || true)"
+  if [ "$PARK" = "216.40.34.41" ] || [ -z "$PARK" ]; then
+    TUNNEL="funnel"
+    echo "[host] play.elyad.io DNS not pointed at CF tunnel yet (parking/missing) — defaulting TUNNEL=funnel"
+    echo "[host] set Hover CNAME play → 4019d70d-f4ae-4423-941b-a13ae9a0112a.cfargotunnel.com"
+    echo "[host] then: TUNNEL=cf PUBLIC_URL=https://play.elyad.io bun run host:public"
+  else
+    TUNNEL="cf"
+  fi
+fi
 TUNNEL="${TUNNEL:-funnel}"
+
 if [ "${HOST_MODE:-auto}" = "direct" ] || [ "$TUNNEL" = "none" ]; then
   print_direct_banner
   tail -f "$LOG_DIR/server.log" &
@@ -175,6 +198,7 @@ print_tunnel_banner() {
   echo "  (bare $1 lands on the menu instead)"
   echo
   echo "  LAN players : http://${LAN_IP:-<this-machine-ip>}:$PORT/?world=1"
+  echo "  Ops console : $1/ops  (secret: $ADMIN_SECRET_FILE — do not share)"
   echo "  Health      : $1/health"
   echo "  Logs        : $LOG_DIR/server.log  $LOG_DIR/tunnel.log"
   echo
@@ -182,6 +206,62 @@ print_tunnel_banner() {
   echo "══════════════════════════════════════════════════════════════════════"
   echo
 }
+
+if [ "$TUNNEL" = "cf" ] || [ "$TUNNEL" = "cf-named" ]; then
+  # ── 2a. Named Cloudflare Tunnel "jakesjam" only → play.elyad.io ─────────
+  # FAIL CLOSED: project-owned config only (ops/cloudflared/config.yml).
+  # One tunnel (jakesjam), one origin (:8088). Multi-app ingress = refuse.
+  CF_CONFIG="${CLOUDFLARED_CONFIG:-$PWD/ops/cloudflared/config.yml}"
+  JAKESJAM_TUNNEL_ID="4019d70d-f4ae-4423-941b-a13ae9a0112a"
+  if ! command -v cloudflared >/dev/null 2>&1; then
+    echo "[host] cloudflared not installed — falling back to funnel."
+    TUNNEL="funnel"
+  elif [ ! -f "$CF_CONFIG" ]; then
+    echo "[host] ERROR: missing $CF_CONFIG (required for TUNNEL=cf)."
+    echo "[host] falling back to funnel."
+    TUNNEL="funnel"
+  elif ! grep -q "$JAKESJAM_TUNNEL_ID" "$CF_CONFIG"; then
+    echo "[host] FATAL: $CF_CONFIG is not the jakesjam tunnel id ($JAKESJAM_TUNNEL_ID)."
+    kill_tree "$SERVER_PID"
+    exit 1
+  elif grep -qiE 'localhost:3001|solas\.|other-app' "$CF_CONFIG"; then
+    echo "[host] FATAL: $CF_CONFIG has non-JAKESJAM services — refuse to run."
+    kill_tree "$SERVER_PID"
+    exit 1
+  else
+    echo "[host] starting tunnel jakesjam (config=$CF_CONFIG) → $PUBLIC_URL ..."
+    : > "$LOG_DIR/tunnel.log"
+    pkill -x cloudflared 2>/dev/null || true
+    sleep 1
+    setsid cloudflared tunnel --config "$CF_CONFIG" run jakesjam \
+      >"$LOG_DIR/tunnel.log" 2>&1 &
+    TUNNEL_PID=$!
+    TUNNEL_OK=0
+    for _ in $(seq 1 30); do
+      if ! kill -0 "$TUNNEL_PID" 2>/dev/null; then
+        echo "[host] cloudflared exited — $LOG_DIR/tunnel.log:"
+        tail -15 "$LOG_DIR/tunnel.log"
+        break
+      fi
+      CODE="$(curl -s -o /dev/null -w '%{http_code}' --max-time 12 "$PUBLIC_URL/health" || true)"
+      if [ "$CODE" = "200" ]; then TUNNEL_OK=1; break; fi
+      sleep 2
+    done
+    if [ "$TUNNEL_OK" = "1" ]; then
+      echo "[host] brand URL verified: $PUBLIC_URL"
+      echo "$PUBLIC_URL" > "$LOG_DIR/current-url"
+      print_tunnel_banner "$PUBLIC_URL"
+      tail -f "$LOG_DIR/server.log" &
+      wait $SERVER_PID
+      exit 0
+    fi
+    echo "[host] WARNING: $PUBLIC_URL/health not 200 (last: ${CODE:-none})"
+    echo "[host] Check Hover CNAME for play → ${JAKESJAM_TUNNEL_ID}.cfargotunnel.com"
+    echo "[host] Falling back to Tailscale Funnel (explicit emergency only)."
+    kill_tree "$TUNNEL_PID"; TUNNEL_PID=""
+    TUNNEL="funnel"
+  fi
+fi
 
 if [ "$TUNNEL" = "funnel" ]; then
   # ── 2a. Tailscale Funnel (stable URL) ────────────────────────────────────

@@ -18,6 +18,12 @@
 import { findCardsById } from "../systems/WeaponSystem";
 import type { CardDefinition } from "../types/game";
 import { crystalRoundsCards } from "../data/cards";
+import {
+  formatSealChip,
+  sealAccent,
+  sealForCard,
+  SEAL_ACCENT_HEX,
+} from "./cardSeals.js";
 
 export type MatchResultsRow = {
   playerId: string;
@@ -37,6 +43,8 @@ export type MatchResultsView = {
   targetScore: number;
   /** Scoreboard rows. The overlay sorts by score desc internally. */
   rows: MatchResultsRow[];
+  /** Optional highlight clip URL for Share/Copy. */
+  shareUrl?: string;
 };
 
 export type MatchResultsHandlers = {
@@ -129,6 +137,29 @@ export class MatchResultsOverlay {
       handlers.onReturnToLobby();
     });
     this.actionsEl.append(rematchButton, lobbyButton);
+    if (view.shareUrl) {
+      const shareUrl = view.shareUrl;
+      const shareButton = makeButton("Share highlight", SECONDARY_BUTTON_STYLE);
+      shareButton.addEventListener("click", () => {
+        void (async () => {
+          try {
+            if (typeof navigator.share === "function") {
+              await navigator.share({
+                title: "JAKESJAM highlight",
+                text: "Check out this play from JAKESJAM!",
+                url: shareUrl,
+              });
+            } else {
+              await navigator.clipboard.writeText(shareUrl);
+              shareButton.textContent = "Copied!";
+            }
+          } catch {
+            /* cancel */
+          }
+        })();
+      });
+      this.actionsEl.appendChild(shareButton);
+    }
 
     // Orchestrated slam-in: backdrop fades, stage slams from below, then
     // title crashes in overscale → settles, then scoreboard rows stagger in.
@@ -239,11 +270,37 @@ export class MatchResultsOverlay {
 
   private makeCardChipElement(card: CardDefinition): HTMLSpanElement {
     const chip = document.createElement("span");
-    chip.textContent = card.name;
     Object.assign(chip.style, CARD_CHIP_STYLE);
     const glow = card.visual?.glowColor ?? colorForRarity(card.rarity);
     chip.style.borderColor = glow;
     chip.style.color = glow;
+    chip.style.display = "inline-flex";
+    chip.style.flexDirection = "column";
+    chip.style.alignItems = "flex-start";
+    chip.style.gap = "2px";
+    chip.style.lineHeight = "1.2";
+
+    // Card plate micro-seal: Coptic + english (never bare Coptic)
+    const seal = sealForCard(card);
+    const accent = SEAL_ACCENT_HEX[sealAccent(card)];
+    const sealEl = document.createElement("span");
+    sealEl.textContent = formatSealChip(card);
+    sealEl.title = `${seal.latin} — ${seal.english}`;
+    Object.assign(sealEl.style, {
+      fontSize: "9px",
+      letterSpacing: "0.08em",
+      color: accent,
+      fontFamily: "'Segoe UI Historic', 'Noto Sans Coptic', 'Noto Sans', serif",
+      opacity: "0.9",
+    } as Partial<CSSStyleDeclaration>);
+    const nameEl = document.createElement("span");
+    nameEl.textContent = card.name;
+    Object.assign(nameEl.style, {
+      fontSize: "11px",
+      fontWeight: "700",
+      color: glow,
+    } as Partial<CSSStyleDeclaration>);
+    chip.append(sealEl, nameEl);
     return chip;
   }
 }

@@ -1,0 +1,33 @@
+# House + game only — no multi-app creep.
+#   elyad.io / www  → apex house landing (:8090)
+#   play / jakesjam → JAKESJAM origin (:8088)
+#
+# tunnel: jakesjam
+# id:     4019d70d-f4ae-4423-941b-a13ae9a0112a
+#
+# Used by: scripts/host-public.sh (TUNNEL=cf)
+# Docs:    docs/hosting-elyad-io.md
+# Apex:    ops/elyad-apex/
+
+tunnel: 4019d70d-f4ae-4423-941b-a13ae9a0112a
+credentials-file: /home/jimothy/.cloudflared/4019d70d-f4ae-4423-941b-a13ae9a0112a.json
+
+ingress:
+  - hostname: elyad.io
+    service: http://127.0.0.1:8090
+    originRequest:
+      connectTimeout: 30s
+  - hostname: www.elyad.io
+    service: http://127.0.0.1:8090
+    originRequest:
+      connectTimeout: 30s
+  - hostname: play.elyad.io
+    service: http://127.0.0.1:8088
+    originRequest:
+      connectTimeout: 30s
+  - hostname: jakesjam.elyad.io
+    service: http://127.0.0.1:8088
+    originRequest:
+      connectTimeout: 30s
+  - service: http_status:404
+

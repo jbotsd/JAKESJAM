@@ -1,8 +1,17 @@
 import Phaser from "phaser";
+import {
+  ENVELOPE_MARGIN_FRAC,
+  expSmoothPoint,
+  fitEnvelope,
+  smoothZoomGoal,
+  stickyEnvelopeSubjects,
+  weightedCentroid,
+  zoomToFit,
+  type Point2,
+} from "./actionCameraMath.js";
 
-/** Per-frame inputs the camera frames around. `extra` are other action
- *  points (opponents, etc.) the frame should lean toward without letting go
- *  of the player. `yBias` shifts the framed centre down (portrait mobile). */
+/** Per-frame inputs the camera frames around. `extra` are opponents the
+ *  frame should envelope when in range. `yBias` shifts centre down (portrait). */
 export interface CameraFocus {
   x: number;
   y: number;
@@ -15,165 +24,252 @@ export interface CameraFocus {
 }
 
 /**
- * ActionCamera — a hand-driven follow camera replacing Phaser's naive
- * `startFollow` lerp (frame-rate dependent) and the online path's hard
- * per-frame `centerOn` (reports every physics micro-jitter 1:1, feels
- * rigid/bad). Composes, in one update:
+ * ActionCamera — smooth hand-driven follow.
  *
- *  1. Weighted-centroid target — the player weighted heavily (stays anchored
- *     near centre) blended with nearby action points, so the frame leans
- *     toward the fight without losing the player. ("envelope the action")
- *  2. Look-ahead — an eased offset toward movement + aim, so you see where
- *     you're going, not where you've been.
- *  3. Soft deadzone + frame-rate-independent exponential smoothing — tight
- *     but soft; low-passes landing/physics jitter the hard follow exposed.
- *  4. Trauma-based shake as an ADDITIVE offset on top of the smoothed centre
- *     — punchy impacts that never destabilise the base follow.
- *
- * Grounded in Keren "Scroll Back" (GDC15), Eiserloh "Juicing Your Cameras"
- * (GDC16), Driscoll/Holmer frame-rate-independent damping. Deliberately does
- * NOT do a sustained speed-zoom: zoom>1 shifts the scroll-fixed HUD, and a
- * zoom-punch on a frequent action (wall-jump) pulses the whole frame and
- * reads as instability — impacts use trauma shake instead. Zoom-punch is
- * reserved for RARE events (a kill) via punchZoom().
+ * Pipeline (each step is continuous / exp-smoothed — no hard snaps mid-fight):
+ *  1. Sticky envelope subjects (hysteresis) so nearest-foe thrash can't yank frame
+ *  2. EMA on subject positions (physics jitter ≠ camera jitter)
+ *  3. Soft centroid + soft envelope pull (not hard min/max clamp)
+ *  4. EMA on the framing target itself
+ *  5. Look-ahead (eased; reduced under envelope tension)
+ *  6. Deadzone only when solo; multi-subject disables it (deadzone+constraint = stutter)
+ *  7. Exp follow on centre
+ *  8. Trauma shake additive
+ *  9. Zoom pull-out with deadband + slower ease-in than ease-out
  */
 export class ActionCamera {
   private readonly cam: Phaser.Cameras.Scene2D.Camera;
 
-  // Smoothed camera centre in world space — tracked here (not read back from
-  // the camera) so the additive shake never feeds into the follow.
   private cx = 0;
   private cy = 0;
-  // Eased look-ahead offset (glides across centre on a direction flip
-  // instead of snapping).
   private leadX = 0;
   private leadY = 0;
   private trauma = 0;
   private shakeTime = 0;
   private ready = false;
-  // Resting zoom the frame sits at (the "cropped closer" base). punchZoom
-  // returns to THIS, captured once, so overlapping punches can't ratchet the
-  // zoom away from its true resting value.
   private baseZoom = 1;
+  private envelopeZoom = 1;
+  private punchActive = false;
 
-  // --- tuning (fractions of viewport where noted; see research defaults) ---
-  private static readonly FOLLOW_K = 8; // follow stiffness (1/s)
-  private static readonly LEAD_K = 3; // look-ahead ease (1/s), slower = glidier
-  private static readonly LEAD_FRAC = 0.2; // max horizontal lead as frac of half-width
-  private static readonly VLEAD_SCALE = 0.4; // vertical lead is gentler (jumps extrapolate badly)
-  private static readonly AIM_LEAD_FRAC = 0.1; // aim lead as frac of half-width
-  private static readonly LEAD_SATURATE_SPEED = 520; // px/s at which movement lead maxes
-  private static readonly DEADZONE_FRAC = 0.04; // soft slack radius as frac of width
-  private static readonly SELF_WEIGHT = 4; // player dominates the centroid
-  private static readonly OTHER_WEIGHT = 1;
-  private static readonly OTHER_FADE = 640; // px: other-point weight falls off over this
-  private static readonly OTHER_MAX_DIST = 1400; // px: ignore action beyond this
-  private static readonly TRAUMA_DECAY = 1.6; // per second
-  private static readonly MAX_SHAKE_PX = 26;
-  private static readonly SNAP_DIST = 900; // px jump that counts as a teleport
+  /** Sticky subject slots (world positions, smoothed). */
+  private stickySubjects: Point2[] = [];
+  private smoothedSubjects: Point2[] = [];
+  /** Smoothed framing target — kills hard-envelope edge chatter. */
+  private targetX = 0;
+  private targetY = 0;
+  private targetReady = false;
+
+  // --- tuning: snappier follow (was 5.2/7.2/5.8) — τ≈1/k was ~190ms of
+  // camera lag making local motion feel floaty even when prediction was tight.
+  // Raised k keeps envelope smoothing but cuts perceived lag ~40%.
+  private static readonly FOLLOW_K = 8.5;
+  private static readonly TARGET_K = 11;
+  private static readonly SUBJECT_K = 9;
+  private static readonly LEAD_K = 3.2;
+  private static readonly LEAD_FRAC = 0.12;
+  private static readonly VLEAD_SCALE = 0.33;
+  private static readonly AIM_LEAD_FRAC = 0.06;
+  private static readonly LEAD_SATURATE_SPEED = 570;
+  private static readonly DEADZONE_FRAC = 0.04;
+  private static readonly TRAUMA_DECAY = 1.8;
+  private static readonly MAX_SHAKE_PX = 18;
+  private static readonly SNAP_DIST = 1150;
+  private static readonly ZOOM_OUT_K = 3.5;
+  private static readonly ZOOM_IN_K = 1.8;
+  /** How much of the soft-envelope correction we take (mid: full↔0.45). */
+  private static readonly ENVELOPE_BLEND = 0.72;
 
   constructor(cam: Phaser.Cameras.Scene2D.Camera) {
     this.cam = cam;
     this.baseZoom = cam.zoom;
+    this.envelopeZoom = cam.zoom;
   }
 
-  /** Set the resting zoom (the "cropped closer, character is the main event"
-   *  base). punchZoom returns here. */
   setBaseZoom(zoom: number): void {
     this.baseZoom = zoom;
-    this.cam.setZoom(zoom);
+    if (!this.punchActive) {
+      // Don't instantly jump envelopeZoom up with base; ease next frames.
+      if (this.envelopeZoom > zoom) this.envelopeZoom = zoom;
+      this.cam.setZoom(this.envelopeZoom);
+    }
   }
 
-  /** Snap the camera onto a point instantly (scene start / respawn / teleport). */
   snap(x: number, y: number): void {
     this.cx = x;
     this.cy = y;
     this.leadX = 0;
     this.leadY = 0;
     this.ready = true;
+    this.targetX = x;
+    this.targetY = y;
+    this.targetReady = true;
+    this.stickySubjects = [];
+    this.smoothedSubjects = [];
+    this.envelopeZoom = this.baseZoom;
+    if (!this.punchActive) this.cam.setZoom(this.baseZoom);
     this.cam.centerOn(x, y);
   }
 
-  /** Additive impact trauma (0-1 clamped). shake = trauma², so small bumps
-   *  stay subtle and big ones read. */
   addTrauma(amount: number): void {
     this.trauma = Math.min(1, this.trauma + amount);
   }
 
-  /** RARE zoom-punch (a kill) — out then back to the resting base zoom.
-   *  Never call this for a frequent movement action; use addTrauma there.
-   *  Returns to the cached `baseZoom` (not a fresh `cam.zoom` read) and
-   *  defers the return tween one tick, so overlapping punches can't ratchet
-   *  the zoom away permanently (the old "screen keeps shrinking" bug). */
   punchZoom(scaleDelta: number, outMs = 70, backMs = 200): void {
-    const base = this.baseZoom;
-    this.cam.zoomTo(base + scaleDelta, outMs, "Quad.easeOut", true, (_, progress) => {
+    const returnTo = this.envelopeZoom;
+    this.punchActive = true;
+    this.cam.zoomTo(returnTo + scaleDelta, outMs, "Quad.easeOut", true, (_, progress) => {
       if (progress === 1) {
         this.cam.scene.time.delayedCall(0, () => {
-          this.cam.zoomTo(base, backMs, "Quad.easeIn", true);
+          this.cam.zoomTo(returnTo, backMs, "Quad.easeIn", true, (__, p2) => {
+            if (p2 === 1) this.punchActive = false;
+          });
         });
       }
     });
   }
 
   update(deltaMs: number, focus: CameraFocus): void {
-    const dt = Math.min(deltaMs, 50) / 1000; // clamp spikes (tab-out etc.)
+    const dt = Math.min(deltaMs, 40) / 1000; // clamp harder — tab spikes used to lurch
+    const self: Point2 = { x: focus.x, y: focus.y };
+    const extras = focus.extra ?? [];
+    const yBias = focus.yBias ?? 0;
+
     if (!this.ready) {
-      this.snap(focus.x, focus.y + (focus.yBias ?? 0));
+      this.snap(self.x, self.y + yBias);
       return;
     }
-    // Teleport guard: on a respawn/warp the target jumps across the level;
-    // snap instead of smearing the camera the whole way.
-    if (Math.hypot(focus.x - this.cx, focus.y - this.cy) > ActionCamera.SNAP_DIST) {
-      this.snap(focus.x, focus.y + (focus.yBias ?? 0));
+    if (Math.hypot(self.x - this.cx, self.y - this.cy) > ActionCamera.SNAP_DIST) {
+      this.snap(self.x, self.y + yBias);
       return;
     }
 
-    // 1. Weighted centroid — player heavy, nearby action fades in by distance.
-    let tx = focus.x * ActionCamera.SELF_WEIGHT;
-    let ty = focus.y * ActionCamera.SELF_WEIGHT;
-    let wSum = ActionCamera.SELF_WEIGHT;
-    for (const p of focus.extra ?? []) {
-      const d = Math.hypot(p.x - focus.x, p.y - focus.y);
-      if (d > ActionCamera.OTHER_MAX_DIST) continue;
-      const w = ActionCamera.OTHER_WEIGHT / (1 + d / ActionCamera.OTHER_FADE);
-      tx += p.x * w;
-      ty += p.y * w;
-      wSum += w;
+    // 1–2. Sticky subjects + EMA positions (stable fight pair).
+    this.stickySubjects = stickyEnvelopeSubjects(self, extras, this.stickySubjects);
+    while (this.smoothedSubjects.length < this.stickySubjects.length) {
+      const s = this.stickySubjects[this.smoothedSubjects.length]!;
+      this.smoothedSubjects.push({ x: s.x, y: s.y });
     }
-    tx /= wSum;
-    ty /= wSum;
-    ty += focus.yBias ?? 0;
+    this.smoothedSubjects.length = this.stickySubjects.length;
+    for (let i = 0; i < this.stickySubjects.length; i++) {
+      this.smoothedSubjects[i] = expSmoothPoint(
+        this.smoothedSubjects[i]!,
+        this.stickySubjects[i]!,
+        ActionCamera.SUBJECT_K,
+        dt,
+      );
+    }
+    const subjects = this.smoothedSubjects;
 
-    // 2. Look-ahead toward movement + aim, eased so a flip glides.
-    const halfW = this.cam.width / 2 / this.cam.zoom;
+    // View at current envelope zoom (matches what player sees).
+    const z = Math.max(0.01, this.envelopeZoom);
+    const halfW = this.cam.width / 2 / z;
+    const halfH = this.cam.height / 2 / z;
+
+    // 3. Soft centroid + *partial* envelope pull (full pull was too sensitive).
+    const soft = weightedCentroid(self, subjects.length ? subjects : extras);
+    soft.y += yBias;
+    const env = fitEnvelope(soft, self, subjects, halfW, halfH, ENVELOPE_MARGIN_FRAC);
+    const desiredX = soft.x + (env.x - soft.x) * ActionCamera.ENVELOPE_BLEND;
+    const desiredY = soft.y + (env.y - soft.y) * ActionCamera.ENVELOPE_BLEND;
+
+    // 4. EMA the framing target (kills clamp chatter).
+    if (!this.targetReady) {
+      this.targetX = desiredX;
+      this.targetY = desiredY;
+      this.targetReady = true;
+    } else {
+      const t = expSmoothPoint(
+        { x: this.targetX, y: this.targetY },
+        { x: desiredX, y: desiredY },
+        ActionCamera.TARGET_K,
+        dt,
+      );
+      this.targetX = t.x;
+      this.targetY = t.y;
+    }
+
+    // Zoom: compute need at base zoom, deadband, asymmetric ease.
+    const baseHalfW = this.cam.width / 2 / Math.max(0.01, this.baseZoom);
+    const baseHalfH = this.cam.height / 2 / Math.max(0.01, this.baseZoom);
+    const envBase = fitEnvelope(soft, self, subjects, baseHalfW, baseHalfH, ENVELOPE_MARGIN_FRAC);
+    let goalZoom = zoomToFit(
+      this.cam.width,
+      this.cam.height,
+      envBase.neededHalfW,
+      envBase.neededHalfH,
+      this.baseZoom,
+    );
+    goalZoom = smoothZoomGoal(this.envelopeZoom, goalZoom, this.baseZoom);
+    const zoomK =
+      goalZoom < this.envelopeZoom - 0.001
+        ? ActionCamera.ZOOM_OUT_K
+        : ActionCamera.ZOOM_IN_K;
+    this.envelopeZoom += (goalZoom - this.envelopeZoom) * (1 - Math.exp(-zoomK * dt));
+    if (!this.punchActive) {
+      // Quantize to 0.001 to avoid subpixel zoom fighting GPU scroll.
+      const zq = Math.round(this.envelopeZoom * 1000) / 1000;
+      if (Math.abs(zq - this.cam.zoom) > 0.0005) this.cam.setZoom(zq);
+      this.envelopeZoom = zq;
+    }
+
+    // 5. Look-ahead — mid: quieter in fights, not muted.
+    const halfWLead = this.cam.width / 2 / Math.max(0.01, this.envelopeZoom);
+    const leadScale = subjects.length > 0 ? 0.34 * (1 - 0.5 * env.tension) : 0.92;
     const speed = Math.hypot(focus.vx, focus.vy) || 1;
     const speedFrac = Math.min(1, speed / ActionCamera.LEAD_SATURATE_SPEED);
-    const moveLeadX = (focus.vx / speed) * speedFrac * halfW * ActionCamera.LEAD_FRAC;
+    const moveLeadX =
+      (focus.vx / speed) * speedFrac * halfWLead * ActionCamera.LEAD_FRAC * leadScale;
     const moveLeadY =
-      (focus.vy / speed) * speedFrac * halfW * ActionCamera.LEAD_FRAC * ActionCamera.VLEAD_SCALE;
+      (focus.vy / speed) *
+      speedFrac *
+      halfWLead *
+      ActionCamera.LEAD_FRAC *
+      ActionCamera.VLEAD_SCALE *
+      leadScale;
     const aimDx = focus.aimX - focus.x;
     const aimDy = focus.aimY - focus.y;
     const aimLen = Math.hypot(aimDx, aimDy) || 1;
-    const aimLeadX = (aimDx / aimLen) * halfW * ActionCamera.AIM_LEAD_FRAC;
-    const aimLeadY = (aimDy / aimLen) * halfW * ActionCamera.AIM_LEAD_FRAC * ActionCamera.VLEAD_SCALE;
-    const goalLeadX = moveLeadX + aimLeadX;
-    const goalLeadY = moveLeadY + aimLeadY;
-    const leadK = 1 - Math.exp(-ActionCamera.LEAD_K * dt);
-    this.leadX += (goalLeadX - this.leadX) * leadK;
-    this.leadY += (goalLeadY - this.leadY) * leadK;
-    tx += this.leadX;
-    ty += this.leadY;
+    const aimLeadX =
+      (aimDx / aimLen) * halfWLead * ActionCamera.AIM_LEAD_FRAC * leadScale;
+    const aimLeadY =
+      (aimDy / aimLen) *
+      halfWLead *
+      ActionCamera.AIM_LEAD_FRAC *
+      ActionCamera.VLEAD_SCALE *
+      leadScale;
+    const leadA = 1 - Math.exp(-ActionCamera.LEAD_K * dt);
+    this.leadX += (moveLeadX + aimLeadX - this.leadX) * leadA;
+    this.leadY += (moveLeadY + aimLeadY - this.leadY) * leadA;
 
-    // 3. Soft deadzone (slack) + exp-decay follow (frame-rate independent).
+    // Soft re-fit after lead when the fight is stretching the frame.
+    let tx = this.targetX + this.leadX;
+    let ty = this.targetY + this.leadY;
+    if (subjects.length > 0 && env.tension > 0.15) {
+      const halfW2 = this.cam.width / 2 / Math.max(0.01, this.envelopeZoom);
+      const halfH2 = this.cam.height / 2 / Math.max(0.01, this.envelopeZoom);
+      const led = fitEnvelope(
+        { x: tx, y: ty },
+        self,
+        subjects,
+        halfW2,
+        halfH2,
+        ENVELOPE_MARGIN_FRAC,
+      );
+      const blend = 0.38 + 0.3 * led.tension;
+      tx = tx + (led.x - tx) * blend;
+      ty = ty + (led.y - ty) * blend;
+    }
+
+    // Deadzone always (mid slack) — kills micro stick-slip without feeling floaty.
     const dz = this.cam.width * ActionCamera.DEADZONE_FRAC;
     const effTx = this.cx + ActionCamera.deadzoned(tx - this.cx, dz);
     const effTy = this.cy + ActionCamera.deadzoned(ty - this.cy, dz);
-    const followK = 1 - Math.exp(-ActionCamera.FOLLOW_K * dt);
-    this.cx += (effTx - this.cx) * followK;
-    this.cy += (effTy - this.cy) * followK;
+    const followK = ActionCamera.FOLLOW_K;
+    const f = 1 - Math.exp(-followK * dt);
+    this.cx += (effTx - this.cx) * f;
+    this.cy += (effTy - this.cy) * f;
 
-    // 4. Trauma shake as an additive offset on the smoothed centre.
+    // 8. Trauma shake (additive).
     this.trauma = Math.max(0, this.trauma - ActionCamera.TRAUMA_DECAY * dt);
     this.shakeTime += dt;
     const shake = this.trauma * this.trauma;
@@ -184,16 +280,11 @@ export class ActionCamera {
     this.cam.centerOn(this.cx + ox, this.cy + oy);
   }
 
-  /** Zero within `dz`, linear beyond — a small slack box so tiny jitters
-   *  don't tug the camera. The exp-follow softens the boundary crossing. */
   private static deadzoned(delta: number, dz: number): number {
     const a = Math.abs(delta);
     return a <= dz ? 0 : Math.sign(delta) * (a - dz);
   }
 
-  /** Smooth, deterministic, pause/slow-mo-safe noise in ~[-1,1] — summed
-   *  incommensurate sines (cheap stand-in for Perlin, per Eiserloh's
-   *  "don't use random()"). */
   private static smoothNoise(t: number, seed: number): number {
     return (
       Math.sin(t * 13.7 + seed) * 0.6 +

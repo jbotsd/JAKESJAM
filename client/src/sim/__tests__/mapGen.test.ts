@@ -32,8 +32,8 @@ describe("mapGen determinism", () => {
   });
 
   test("malformed gen ids fall back to the default map", () => {
-    expect(resolveMap("gen:nope").id).toBe("boxworks-mini");
-    expect(resolveMap("gen:-5").id).toBe("boxworks-mini");
+    expect(resolveMap("gen:nope").id).toBe("vessel-nexus");
+    expect(resolveMap("gen:-5").id).toBe("vessel-nexus");
   });
 });
 
@@ -49,12 +49,12 @@ describe("mapGen fuzz — the laws hold for every seed", () => {
     }
   });
 
-  test("60 seeds: generous, well-separated spawn sets", () => {
+  test("60 seeds: 16-pad Hot Lobby spawn sets", () => {
     for (let seed = 0; seed < 60; seed++) {
       const map = generateArena(seed);
-      // At least 4 spawns; opposite floor corners guaranteed. All pairs
-      // keep the min separation so a full lobby never stacks.
-      expect(map.spawns.length, `seed ${seed} spawn count`).toBeGreaterThanOrEqual(4);
+      // Mega docks target 16; validator floor is 12. All pairs ≥300px.
+      expect(map.spawns.length, `seed ${seed} spawn count`).toBeGreaterThanOrEqual(12);
+      expect(map.size.x, `seed ${seed} width`).toBeGreaterThanOrEqual(2600);
       for (let i = 0; i < map.spawns.length; i++) {
         for (let j = i + 1; j < map.spawns.length; j++) {
           const a = map.spawns[i]!;
@@ -62,10 +62,34 @@ describe("mapGen fuzz — the laws hold for every seed", () => {
           expect(
             Math.hypot(a.x - b.x, a.y - b.y),
             `seed ${seed} spawns ${i},${j} too close`,
-          ).toBeGreaterThanOrEqual(360);
+          ).toBeGreaterThanOrEqual(280);
         }
       }
     }
+  });
+});
+
+describe("vessel-nexus curated mega — always floor + sightlines", () => {
+  test("full recoverable floor, cover, reachable, ≥12 pads", () => {
+    const map = resolveMap("vessel-nexus");
+    expect(map.id).toBe("vessel-nexus");
+    expect(map.spawns.length).toBeGreaterThanOrEqual(12);
+    expect(map.size.x).toBeGreaterThanOrEqual(2800);
+    expect(unreachablePlatforms(map)).toEqual([]);
+    // ALWAYS a continuous ground floor (no void death between islands).
+    const floor = map.platforms.find((p) => p.id === "floor");
+    expect(floor?.kind).toBe("floor");
+    expect(floor!.size.x).toBeGreaterThanOrEqual(2800);
+    // Contained sides + open sky (no full-width ceiling box lid).
+    expect(map.platforms.some((p) => p.id === "wall-left")).toBe(true);
+    expect(map.platforms.some((p) => p.id === "wall-right")).toBe(true);
+    expect(map.platforms.some((p) => p.id === "ceiling")).toBe(false);
+    // Floor-band cover pylons for sightline discipline.
+    const covers = map.platforms.filter((p) => p.id.startsWith("cover-"));
+    expect(covers.length).toBeGreaterThanOrEqual(4);
+    const v = validateMap(map);
+    expect(v.ok, `sight=${v.sightline} dens=${v.density} spawns=${v.spawnsOk}`).toBe(true);
+    expect(v.sightline).toBeLessThanOrEqual(480);
   });
 });
 

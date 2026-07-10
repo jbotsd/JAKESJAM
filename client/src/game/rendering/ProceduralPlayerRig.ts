@@ -29,6 +29,11 @@ type ProceduralPlayerRigOptions = {
   scale?: number;
   /** Cosmetic accent (visor/spine/cannon glow). Defaults to crystal cyan. */
   accentColor?: number;
+  /**
+   * `full` = local / hero (aura + trail + full secondary motion).
+   * `lite` = remotes/bots — fewer path ops so multi-player frames stay smooth.
+   */
+  detail?: "full" | "lite";
 };
 
 type ProceduralPlayerPose = {
@@ -43,6 +48,10 @@ type ProceduralPlayerPose = {
   touchingWallDir?: number;
   /** True while a dash is active. */
   dashing?: boolean;
+  /** Wide Parry: multiplies the 120° aegis cone (1 = base, 1.28 = one stack). */
+  shieldArcScale?: number;
+  /** Crystal Plating stacks: draw a hex shell outline on the body. */
+  platingGlow?: number;
 };
 
 type LimbSolve = {
@@ -64,8 +73,18 @@ export class ProceduralPlayerRig {
   private readonly accentColor: number;
   private readonly name: string;
   private readonly scale: number;
+  private readonly detail: "full" | "lite";
   private stepPhase = 0;
+  /** Continuous facing −1..+1 (eases flips — no whole-body IK flip pop). */
+  private facingSmooth = 1;
   private facing = 1;
+  /** Smoothed crouch 0..1 — eases pelvis height so crouch/uncrouch doesn't pop. */
+  private crouchBlend = 0;
+  private static readonly CROUCH_BLEND_TAU_MS = 70;
+  /** Smoothed |vx| walk weight — kills step-phase stutter from sim velocity steps. */
+  private walkBlend = 0;
+  private static readonly WALK_BLEND_TAU_MS = 55;
+  private static readonly FACING_TAU_MS = 90;
   private firePulse = 0;
   // ALTERNATING SHURIKEN THROW. The two hands throw independently and take
   // turns: each shot flicks ONE hand out toward aim (a fast shuriken snap)
@@ -104,24 +123,30 @@ export class ProceduralPlayerRig {
   private footRSpringY: SpringState = springState(0);
   private wasGrounded = true;
   private prevVelY = 0;
-  // Bumped 9→12Hz for a nimbler, snappier settle — a lean vessel should
-  // recover from a plant/landing quicker than a heavier build would.
-  private static readonly WOBBLE_FREQUENCY_HZ = 12;
-  private static readonly WOBBLE_DAMPING = 0.38;
-  // Landing converts stored fall speed into a foot-spring velocity kick —
-  // the wobble's payoff moment: a hard landing (esp. off a wall-jump) makes
-  // the legs visibly absorb and rebound instead of just stopping dead.
-  private static readonly LANDING_KICK_SCALE = 0.35;
-  private static readonly LANDING_KICK_MAX = 900;
+  // Drunken-master legs: underdamped chase so plants overshoot and settle
+  // (floppy) while root motion is α-smoothed so we don't ring every sim tick.
+  private static readonly WOBBLE_FREQUENCY_HZ = 7.5;
+  private static readonly WOBBLE_DAMPING = 0.48;
+  private static readonly LANDING_KICK_SCALE = 0.42;
+  private static readonly LANDING_KICK_MAX = 820;
 
   // Wall-jump kick-off: the instant the player leaves a wall while airborne,
-  // both foot springs get a velocity kick away from the wall (and up), so the
-  // legs visibly snap into the launch instead of just continuing whatever
-  // stride phase they were in. Reuses the same foot-spring rig as the
-  // landing kick — one wobble system serving both ends of a wall-jump.
+  // both foot springs get a velocity kick away from the wall (and up).
   private wasWallDir = 0;
-  private static readonly WALL_KICK_X = 520;
-  private static readonly WALL_KICK_Y = -360;
+  private static readonly WALL_KICK_X = 480;
+  private static readonly WALL_KICK_Y = -320;
+
+  // Torso chain lag (drunken master): lean / chest / head spring behind the
+  // hip so the body reads as loose segments, not a rigid plate.
+  private leanSpring: SpringState = springState(0);
+  private chestLagX: SpringState = springState(0);
+  private chestLagY: SpringState = springState(0);
+  private headLagX: SpringState = springState(0);
+  private headLagY: SpringState = springState(0);
+  private static readonly TORSO_FREQ = 4.2;
+  private static readonly TORSO_DAMP = 0.42;
+  private static readonly HEAD_FREQ = 5.5;
+  private static readonly HEAD_DAMP = 0.38;
 
   // Arms, rebuilt ground-up: BOTH arms are the exact same length (upper ==
   // lower, lead == back) and hang perfectly STRAIGHT by default — the
@@ -139,59 +164,44 @@ export class ProceduralPlayerRig {
   private backHandSpringReady = false;
   private backHandSpringX: SpringState = springState(0);
   private backHandSpringY: SpringState = springState(0);
-  private static readonly ARM_FREQUENCY_HZ = 7;
-  // 0.55 (well under spring.ts's own critical-damping threshold of 1) meant
-  // visible overshoot/wobble on every target change — reported as "every
-  // projectile gets a wobbly arm animation": triggerFire() snaps fireRecoil
-  // to 1 instantly, which is a large, abrupt jump in the hand's target
-  // (charge-hold toward the thrust point), and the lead/back hands (which
-  // thrust to slightly different distances — reach vs reach*0.94) overshoot
-  // and settle slightly out of phase with each other, reading as "alternate
-  // arms" rather than a clean simultaneous snap. Raised toward critical
-  // damping — still not fully rigid (some follow-through is the intended
-  // "throw" read on a shot), just far less bouncy.
-  private static readonly ARM_DAMPING = 0.9;
+  // Floppy arms — hang late, overshoot on throw, settle soft (drunken master).
+  private static readonly ARM_FREQUENCY_HZ = 5.2;
+  private static readonly ARM_DAMPING = 0.52;
 
-  // Hip drape (the "space wizard" sash) — a short cloth strip that trails
-  // and flutters off the pelvis. Springed to velocity so it whips out on a
-  // dash and settles with a lag on landing, instead of pinning rigidly to
-  // the body like a plate.
+  // Hip drape — cloth whip, very underdamped.
   private drapeSpringReady = false;
   private drapeSpringX: SpringState = springState(0);
   private drapeSpringY: SpringState = springState(0);
-  private static readonly DRAPE_FREQUENCY_HZ = 5;
-  private static readonly DRAPE_DAMPING = 0.35;
+  private static readonly DRAPE_FREQUENCY_HZ = 3.8;
+  private static readonly DRAPE_DAMPING = 0.28;
 
-
-  // "Mad aura" — a small turbulent halo of motes orbiting the vessel.
-  // Per-instance phase/radius offsets (frozen at construction) so a lineup
-  // of players doesn't all swirl in lockstep. Deliberately irregular
-  // (three different frequencies summed) rather than a clean circular
-  // orbit — reads as barely-contained energy, not a UI ring.
-  private static readonly AURA_MOTE_COUNT = 6;
+  // "Mad aura" — fewer motes on lite; full still irregular (not a UI ring).
+  private static readonly AURA_MOTE_COUNT = 8;
+  private static readonly AURA_MOTE_LITE = 3;
   private readonly auraSeed = Math.random() * Math.PI * 2;
 
   constructor(scene: Phaser.Scene, options: ProceduralPlayerRigOptions) {
-    // Depth 10: above pickups (2), destructibles (3), fire (4), atmospheric
-    // backdrop (-10), and light beams (0.7); well below HUD (>=950).
-    // Without this, light beams visually clip through the player rig and
-    // read as "the player is inside the terrain."
+    // Depth 12: above arena near-layer (~-4), platforms, pickups, fire, beams.
+    // Players must own the mid-frame silhouette over cosmic vault chrome.
     this.graphics = scene.add.graphics();
-    this.graphics.setDepth(10);
+    this.graphics.setDepth(12);
     this.nameText = scene.add
       .text(0, 0, options.name, {
         color: `#${PALETTE.textHi.toString(16).padStart(6, "0")}`,
         fontFamily: "Inter, Arial, sans-serif",
-        fontSize: `${Math.round(10 * (options.scale ?? 1))}px`,
+        fontSize: `${Math.round(11 * (options.scale ?? 1))}px`,
         fontStyle: "700",
       })
       .setOrigin(0.5, 1)
-      .setDepth(11);
+      .setDepth(13)
+      .setStroke("#05080f", 3)
+      .setShadow(0, 1, "#000000", 4, false, true);
     this.color = options.color;
     this.colorDark = shadeColor(options.color, -0.4);
     this.accentColor = options.accentColor ?? ACCENT;
     this.name = options.name;
     this.scale = options.scale ?? 1;
+    this.detail = options.detail ?? "full";
   }
 
   private lastDrawX = 0;
@@ -202,7 +212,14 @@ export class ProceduralPlayerRig {
     this.lastDrawY = pose.position.y;
     if (!this.graphics.visible) return;
 
-    const walkAmount = Phaser.Math.Clamp(Math.abs(pose.velocity.x) / 180, 0, 1);
+    const walkTarget = Phaser.Math.Clamp(Math.abs(pose.velocity.x) / 180, 0, 1);
+    if (deltaMs > 0) {
+      const wk = 1 - Math.exp(-deltaMs / ProceduralPlayerRig.WALK_BLEND_TAU_MS);
+      this.walkBlend += (walkTarget - this.walkBlend) * wk;
+    } else {
+      this.walkBlend = walkTarget;
+    }
+    const walkAmount = this.walkBlend;
     this.stepPhase += deltaMs * (0.006 + walkAmount * 0.01);
     this.firePulse = Math.max(0, this.firePulse - deltaMs * 0.004);
     this.leadThrow = Math.max(0, this.leadThrow - deltaMs / ProceduralPlayerRig.FIRE_RECOIL_MS);
@@ -211,20 +228,42 @@ export class ProceduralPlayerRig {
     this.hitDecay = Math.max(0, this.hitDecay - deltaMs / ProceduralPlayerRig.HIT_DECAY_MS);
     this.parryFlashMs = Math.max(0, this.parryFlashMs - deltaMs);
 
-    if (Math.abs(pose.velocity.x) > 8) {
-      this.facing = Math.sign(pose.velocity.x);
-    } else if (Math.abs(pose.aimTarget.x - pose.position.x) > 2) {
-      this.facing = Math.sign(pose.aimTarget.x - pose.position.x);
+    // Facing target with hysteresis, then smooth ease so IK bend doesn't pop.
+    let facingTarget = this.facingSmooth >= 0 ? 1 : -1;
+    if (Math.abs(pose.velocity.x) > 18) {
+      facingTarget = Math.sign(pose.velocity.x);
+    } else if (
+      Math.abs(pose.velocity.x) < 6 &&
+      Math.abs(pose.aimTarget.x - pose.position.x) > 28
+    ) {
+      facingTarget = Math.sign(pose.aimTarget.x - pose.position.x);
+    }
+    if (deltaMs > 0) {
+      const fk = 1 - Math.exp(-deltaMs / ProceduralPlayerRig.FACING_TAU_MS);
+      this.facingSmooth += (facingTarget - this.facingSmooth) * fk;
+    }
+    this.facing = this.facingSmooth >= 0 ? 1 : -1;
+
+    // Ease crouch so half-height / pelvis drop isn't a hard step.
+    const crouchTarget = pose.crouching ? 1 : 0;
+    if (deltaMs > 0) {
+      const k = 1 - Math.exp(-deltaMs / ProceduralPlayerRig.CROUCH_BLEND_TAU_MS);
+      this.crouchBlend += (crouchTarget - this.crouchBlend) * k;
+      if (Math.abs(this.crouchBlend - crouchTarget) < 0.001) {
+        this.crouchBlend = crouchTarget;
+      }
     }
 
-    // Trail sampling — wall-clock, purely visual feedback
-    const now = Date.now();
-    if (now - this.lastTrailSampleMs >= 40) {
-      this.trailPositions.push({ x: pose.position.x, y: pose.position.y, t: now });
-      if (this.trailPositions.length > 6) {
-        this.trailPositions.shift();
+    // Trail sampling — local/full only (remotes skip for CPU).
+    if (this.detail === "full") {
+      const now = Date.now();
+      if (now - this.lastTrailSampleMs >= 48) {
+        this.trailPositions.push({ x: pose.position.x, y: pose.position.y, t: now });
+        if (this.trailPositions.length > 5) {
+          this.trailPositions.shift();
+        }
+        this.lastTrailSampleMs = now;
       }
-      this.lastTrailSampleMs = now;
     }
 
     // Landing impact: the frame grounded flips true, kick both foot springs'
@@ -325,50 +364,87 @@ export class ProceduralPlayerRig {
     // Quadratic ease-out — strong overshoot, fast snap-back. Visual only.
     const hitEased = this.hitDecay * this.hitDecay;
     const ground = pose.position.y + this.hitOffsetY * hitEased;
-    const cr = pose.crouching ? 1 : 0;
+    // Smoothed crouch (0..1) — geometric crouch only; pose.crouching still
+    // gates locomotion (bob) so we don't bob mid-duck.
+    const cr = this.crouchBlend;
+    // Soft sine bob (less hard plant) + drunk side-sway on the hip.
     const bob =
-      pose.grounded && !pose.crouching ? Math.abs(Math.sin(this.stepPhase)) * 2 * walkAmount : 0;
+      pose.grounded && cr < 0.35
+        ? Math.pow(Math.abs(Math.sin(this.stepPhase)), 1.2) * 2.4 * walkAmount * (1 - cr)
+        : 0;
+    const drunkSway =
+      pose.grounded && walkAmount > 0.08
+        ? Math.sin(this.stepPhase * 0.5) * 3.2 * s * walkAmount
+        : Math.sin(this.stepPhase * 0.35) * 0.8 * s;
 
     // Squash & stretch (visual only): the body ELONGATES on a powerful launch
-    // (strong upward velocity — a wall-jump reads as a real kick) and COMPRESSES
-    // on a fast fall / impact. Sells the wall-jump's power without touching the
-    // sim. Only airborne, so grounded walk/idle is unaffected.
+    // and COMPRESSES on a fast fall. Airborne only.
     const stretchY = pose.grounded
-      ? 1
+      ? 1 + Math.sin(this.stepPhase * 2) * 0.015 * walkAmount // micro breath on run
       : 1 + Phaser.Math.Clamp(-pose.velocity.y / 2600, -0.14, 0.3);
     const sy = s * stretchY;
 
-    // Wall-slide / dash read as full-body states, not just leg tricks: the
-    // torso leans toward a gripped wall (bracing) or forward into a dash
-    // (committed). Only chest/head shift — the pelvis stays anchored so the
-    // stance doesn't wander. A ground sprint gets its own, smaller forward
-    // lean too — "very nimble" means committing into a run, not staying
-    // bolt upright at full speed.
     const wallDir = pose.touchingWallDir ?? 0;
     const wallSliding = wallDir !== 0 && !pose.grounded;
     const dashing = pose.dashing ?? false;
-    const sprintLean = pose.grounded ? Phaser.Math.Clamp(pose.velocity.x / 330, -1, 1) * 2 * s : 0;
-    // WHOLE-BODY throw english: the torso coils then rotates forward into the
-    // pitch over a planted hip (chest/head lean forward, pelvis stays), with
-    // a slight weight-drop — the whole body goes into the throw, not just the
-    // arm. Keyed on whichever hand is mid-throw.
+    const sprintLean =
+      pose.grounded ? Phaser.Math.Clamp(pose.velocity.x / 300, -1, 1) * 3.2 * s : 0;
     const throwEnglish = Math.max(this.leadThrow, this.backThrow);
-    const throwDrop = throwEnglish * 2.5 * s;
-    const leanX =
+    const throwDrop = throwEnglish * 3.2 * s;
+    // Target lean — springed so direction changes read as drunk recovery.
+    const leanTarget =
       (wallSliding ? wallDir * 2.5 * s : 0) +
-      (dashing ? this.facing * 4 * s : 0) +
+      (dashing ? this.facingSmooth * 5 * s : 0) +
       sprintLean +
-      this.facing * throwEnglish * 9 * s;
+      this.facingSmooth * throwEnglish * 10 * s +
+      drunkSway;
+    this.leanSpring = springTo(
+      this.leanSpring,
+      leanTarget,
+      deltaMs,
+      ProceduralPlayerRig.TORSO_FREQ,
+      ProceduralPlayerRig.TORSO_DAMP,
+    );
+    const leanX = this.leanSpring.value;
 
-    // Key positions
+    // Key positions — head/chest lag hip for floppy chain.
     const pelvisY = ground - Phaser.Math.Linear(52, 32, cr) * sy - bob + throwDrop;
-    const chestY = ground - Phaser.Math.Linear(78, 56, cr) * sy - bob + throwDrop * 0.5;
-    const headY = ground - Phaser.Math.Linear(100, 76, cr) * sy - bob + throwDrop * 0.3;
-    const cx = pose.position.x + this.hitOffsetX * hitEased;
+    const chestYTarget = ground - Phaser.Math.Linear(78, 56, cr) * sy - bob + throwDrop * 0.5;
+    const headYTarget = ground - Phaser.Math.Linear(100, 76, cr) * sy - bob + throwDrop * 0.3;
+    const cx = pose.position.x + this.hitOffsetX * hitEased + drunkSway * 0.35;
+
+    this.chestLagX = springTo(
+      this.chestLagX,
+      leanX * 0.85,
+      deltaMs,
+      ProceduralPlayerRig.TORSO_FREQ,
+      ProceduralPlayerRig.TORSO_DAMP,
+    );
+    this.chestLagY = springTo(
+      this.chestLagY,
+      chestYTarget,
+      deltaMs,
+      ProceduralPlayerRig.TORSO_FREQ * 1.1,
+      ProceduralPlayerRig.TORSO_DAMP,
+    );
+    this.headLagX = springTo(
+      this.headLagX,
+      this.chestLagX.value + this.facingSmooth * 2.4 * s,
+      deltaMs,
+      ProceduralPlayerRig.HEAD_FREQ,
+      ProceduralPlayerRig.HEAD_DAMP,
+    );
+    this.headLagY = springTo(
+      this.headLagY,
+      headYTarget,
+      deltaMs,
+      ProceduralPlayerRig.HEAD_FREQ,
+      ProceduralPlayerRig.HEAD_DAMP,
+    );
 
     const pelvis = vec(cx, pelvisY);
-    const chest = vec(cx + leanX, chestY);
-    const head = vec(cx + leanX + this.facing * 2 * s, headY);
+    const chest = vec(cx + this.chestLagX.value, this.chestLagY.value);
+    const head = vec(cx + this.headLagX.value, this.headLagY.value);
 
     // Aim
     const aimAngle = Math.atan2(pose.aimTarget.y - chest.y, pose.aimTarget.x - chest.x);
@@ -509,21 +585,37 @@ export class ProceduralPlayerRig {
     const armBack = solveTwoBone(shoulderBack, handBack, armUpper, armLower, this.facing);
 
     const healthRatio = (pose.health ?? 100) / Math.max(1, pose.maxHealth ?? 100);
+    const full = this.detail === "full";
 
     g.clear();
 
-    // --- TRAIL (drawn before body so it sits behind everything) ---
-    this.drawTrail(g, pose.position, pose.velocity, s);
-
-    // --- SPEED-STREAKS (aegis slide only): tapered motion lines trailing
-    // opposite the launch vector — the anime read of a committed slide. ---
-    if (dashing) {
-      this.drawDashStreaks(g, pose.position, pose.velocity, s);
+    // --- TRAIL / dash streaks — full detail only ---
+    if (full) {
+      this.drawTrail(g, pose.position, pose.velocity, s);
+      if (dashing) {
+        this.drawDashStreaks(g, pose.position, pose.velocity, s);
+      }
     }
 
     // --- DRAW ORDER (back to front) ---
 
-    // 0. Mad aura — an ambient field around the vessel, behind the body.
+    // 0a. Contact shadow
+    g.fillStyle(0x000000, 0.28);
+    g.fillEllipse(pelvis.x, ground + 2 * s, 22 * s, 7 * s);
+    if (full) {
+      g.fillStyle(0x000000, 0.12);
+      g.fillEllipse(pelvis.x, ground + 2 * s, 30 * s, 10 * s);
+    }
+
+    // 0b. Soft under-glow
+    g.fillStyle(this.color, full ? 0.12 : 0.08);
+    g.fillCircle(chest.x, chest.y, 28 * s);
+    if (full) {
+      g.fillStyle(this.accentColor, 0.1);
+      g.fillCircle(chest.x, chest.y, 18 * s);
+    }
+
+    // 0c. Mad aura — full only (or reduced for lite)
     this.drawAura(g, pelvis, chest, s);
 
     // 1. Nameplate + health bar (topmost layer visually but drawn first for z)
@@ -568,9 +660,19 @@ export class ProceduralPlayerRig {
     // 11. Aegis shield — deployed only while dashing: a bright energy arc in
     // the lunge direction, the directional block made visible (matches the
     // 120° front-arc shield-dash block + bash in combat/World). Drawn last so
-    // it reads as a shell out in front of the braced arms.
+    // it reads as a shell out in front of the braced arms. Wide Parry widens
+    // the cone (shieldArcScale).
     if (dashing) {
-      this.drawAegisShield(g, chest, aim, s);
+      this.drawAegisShield(g, chest, aim, s, pose.shieldArcScale ?? 1);
+    }
+
+    // 11b. Crystal Plating — hex shell outline so "more HP" reads on the body.
+    if ((pose.platingGlow ?? 0) > 0) {
+      const p = Math.min(1, pose.platingGlow ?? 0);
+      g.lineStyle(2 * s, 0x86efac, 0.35 + p * 0.4);
+      g.strokeCircle(chest.x, chest.y, 22 * s * (1 + p * 0.08));
+      g.lineStyle(1 * s, 0xf0abfc, 0.25 + p * 0.3);
+      g.strokeCircle(chest.x, chest.y, 26 * s * (1 + p * 0.1));
     }
 
     // 12. Parry flash — the guard just turned an attack. Drawn over
@@ -619,9 +721,16 @@ export class ProceduralPlayerRig {
   /** The deployed shield-dash shell: a curved energy arc centred on the chest,
    *  spanning the 120° block cone around the lunge (aim) direction, with a
    *  bright shimmering leading rim and a faint field behind it. */
-  private drawAegisShield(g: Phaser.GameObjects.Graphics, chest: Vec2, aim: Vec2, s: number) {
+  private drawAegisShield(
+    g: Phaser.GameObjects.Graphics,
+    chest: Vec2,
+    aim: Vec2,
+    s: number,
+    arcScale = 1,
+  ) {
     const aimAngle = Math.atan2(aim.y, aim.x);
-    const halfArc = Math.PI / 3; // 60° each side → the 120° block cone
+    // Base 120° cone; Wide Parry multiplies coverage (clamped so it never wraps).
+    const halfArc = Math.min(Math.PI * 0.92, (Math.PI / 3) * Math.max(0.5, arcScale));
     const r = 42 * s; // just past the braced hands
     const a0 = aimAngle - halfArc;
     const a1 = aimAngle + halfArc;
@@ -836,12 +945,18 @@ export class ProceduralPlayerRig {
   // barely-contained energy rather than a decorative UI ring. Envelops the
   // whole body (pelvis to well above the head), not just the torso. ---
   private drawAura(g: Phaser.GameObjects.Graphics, pelvis: Vec2, chest: Vec2, s: number) {
+    const n =
+      this.detail === "full"
+        ? ProceduralPlayerRig.AURA_MOTE_COUNT
+        : ProceduralPlayerRig.AURA_MOTE_LITE;
+    if (n <= 0) return;
     const cx = (pelvis.x + chest.x) / 2;
     const cy = (pelvis.y + chest.y) / 2 - 10 * s;
     const t = this.stepPhase + this.auraSeed;
+    const tails = this.detail === "full" ? 3 : 0;
 
     const motePos = (i: number, tt: number): { x: number; y: number } => {
-      const off = (i / ProceduralPlayerRig.AURA_MOTE_COUNT) * Math.PI * 2;
+      const off = (i / n) * Math.PI * 2;
       const radius = (20 + 7 * Math.sin(tt * 0.7 + off * 2)) * s;
       const angle = tt * (1.1 + i * 0.17) + off;
       const wobbleR = radius + 4 * s * Math.sin(tt * 2.3 + off);
@@ -851,25 +966,26 @@ export class ProceduralPlayerRig {
       };
     };
 
-    for (let i = 0; i < ProceduralPlayerRig.AURA_MOTE_COUNT; i++) {
-      const off = (i / ProceduralPlayerRig.AURA_MOTE_COUNT) * Math.PI * 2;
-      const twinkle = 0.55 + 0.35 * Math.sin(t * 3.1 + off * 3);
+    for (let i = 0; i < n; i++) {
+      const off = (i / n) * Math.PI * 2;
+      const twinkle = 0.6 + 0.4 * Math.sin(t * 3.1 + off * 3);
 
-      // Comet tail: three fading echoes sampled slightly earlier in time.
-      for (let e = 3; e >= 1; e--) {
+      for (let e = tails; e >= 1; e--) {
         const echo = motePos(i, t - e * 0.05);
-        const tailAlpha = twinkle * (0.22 - e * 0.05);
+        const tailAlpha = twinkle * (0.28 - e * 0.05);
         g.fillStyle(this.accentColor, Math.max(0, tailAlpha));
-        g.fillCircle(echo.x, echo.y, (2.2 - e * 0.4) * s);
+        g.fillCircle(echo.x, echo.y, (2.5 - e * 0.4) * s);
       }
 
       const p = motePos(i, t);
-      g.fillStyle(this.accentColor, twinkle * 0.4);
-      g.fillCircle(p.x, p.y, 4.5 * s);
-      g.fillStyle(this.accentColor, twinkle * 0.85);
-      g.fillCircle(p.x, p.y, 2.4 * s);
-      g.fillStyle(WHITE, twinkle * 0.8);
-      g.fillCircle(p.x, p.y, 1 * s);
+      g.fillStyle(this.accentColor, twinkle * 0.5);
+      g.fillCircle(p.x, p.y, 5 * s);
+      g.fillStyle(this.accentColor, twinkle * 0.95);
+      g.fillCircle(p.x, p.y, 2.7 * s);
+      if (this.detail === "full") {
+        g.fillStyle(WHITE, twinkle * 0.9);
+        g.fillCircle(p.x, p.y, 1.15 * s);
+      }
     }
   }
 
@@ -1096,8 +1212,8 @@ export class ProceduralPlayerRig {
     outerW: number,
     innerW: number,
   ) {
-    // Dark outline limb
-    g.lineStyle(outerW + 2, DARK, 1);
+    // Dark outline limb — thicker so vessel reads over dense vault geometry
+    g.lineStyle(outerW + 3.5, DARK, 1);
     g.beginPath();
     g.moveTo(root.x, root.y);
     g.lineTo(solve.joint.x, solve.joint.y);
@@ -1312,23 +1428,26 @@ export class ProceduralPlayerRig {
     side: -1 | 1,
     ground: number,
     walk: number,
-    crouch: boolean,
+    _crouch: boolean,
     grounded: boolean,
   ): Vec2 {
     const s = this.scale;
+    // Use continuous crouch blend so stride/lift ease with duck/stand.
+    const cr = this.crouchBlend;
     const cycle = this.stepPhase + (side === -1 ? 0 : Math.PI);
-    const stride = (crouch ? 10 : 18) * s * walk;
-    // Lift only when actually walking on a surface. Without the grounded
-    // gate, an airborne player with vx > 0 would still cycle feet up to
-    // 12 px above the (irrelevant) ground anchor and the rig would look
-    // like it's stomping mid-air — the user-visible "barely detects
-    // standing on anything" symptom (commit ef365c7..669fe52 plumbed the
-    // wire field that lets us know).
+    // Wider drunken stride + soft lift (plant isn't a hard stomp).
+    const stride = Phaser.Math.Linear(20, 11, cr) * s * walk;
+    const liftRaw = Math.max(0, Math.sin(cycle));
     const lift = grounded
-      ? Math.max(0, Math.sin(cycle)) * (crouch ? 4 : 8) * s * walk
+      ? Math.pow(liftRaw, 1.55) * Phaser.Math.Linear(9, 4.5, cr) * s * walk
       : 0;
-    const spread = (crouch ? 8 : 7) * s;
-    return vec(cx + side * spread - Math.cos(cycle) * stride * this.facing, ground - lift);
+    const spread = Phaser.Math.Linear(7.5, 8.5, cr) * s;
+    // Slight out-of-phase lateral wobble per foot for floppy gait.
+    const drunkFoot = grounded ? Math.sin(cycle * 0.5 + side) * 1.6 * s * walk : 0;
+    return vec(
+      cx + side * spread - Math.cos(cycle) * stride * this.facing + drunkFoot,
+      ground - lift,
+    );
   }
 }
 

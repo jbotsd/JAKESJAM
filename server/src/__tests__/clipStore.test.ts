@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { handleClipUpload, serveClip } from "../clipStore.ts";
+import { handleClipUpload, publicClipOrigin, serveClip } from "../clipStore.ts";
 
 const ORIGIN = "https://example-tunnel.ts.net";
 
@@ -9,20 +9,68 @@ function uploadRequest(fileContent: string, filename: string): Request {
   return new Request("http://localhost/clips/upload", { method: "POST", body: form });
 }
 
+describe("publicClipOrigin", () => {
+  test("PUBLIC_URL wins over Tailscale Host", () => {
+    const prev = process.env.PUBLIC_URL;
+    process.env.PUBLIC_URL = "https://play.elyad.io";
+    try {
+      const req = new Request("https://randel.taile8fa30.ts.net/clips/upload", {
+        headers: { host: "randel.taile8fa30.ts.net" },
+      });
+      const origin = publicClipOrigin(req, new URL("https://randel.taile8fa30.ts.net/clips/upload"));
+      expect(origin).toBe("https://play.elyad.io");
+    } finally {
+      if (prev === undefined) delete process.env.PUBLIC_URL;
+      else process.env.PUBLIC_URL = prev;
+    }
+  });
+
+  test("ts.net host without PUBLIC_URL still brands to play.elyad.io", () => {
+    const prev = process.env.PUBLIC_URL;
+    delete process.env.PUBLIC_URL;
+    try {
+      const req = new Request("https://randel.example.ts.net/clips/upload", {
+        headers: { host: "randel.example.ts.net" },
+      });
+      const origin = publicClipOrigin(req, new URL("https://randel.example.ts.net/x"));
+      expect(origin).toBe("https://play.elyad.io");
+    } finally {
+      if (prev !== undefined) process.env.PUBLIC_URL = prev;
+    }
+  });
+
+  test("localhost stays local for dev", () => {
+    const prev = process.env.PUBLIC_URL;
+    delete process.env.PUBLIC_URL;
+    try {
+      const req = new Request("http://localhost:8088/clips/upload", {
+        headers: { host: "localhost:8088" },
+      });
+      const origin = publicClipOrigin(req, new URL("http://localhost:8088/clips/upload"));
+      expect(origin).toBe("http://localhost:8088");
+    } finally {
+      if (prev !== undefined) process.env.PUBLIC_URL = prev;
+    }
+  });
+});
+
 describe("clipStore", () => {
-  test("uploads a clip and returns an absolute URL on the request's own origin", async () => {
+  test("uploads a clip and returns share page + media URLs", async () => {
     const result = await handleClipUpload(uploadRequest("fake-webm-bytes", "clip.webm"), ORIGIN);
     expect(result.ok).toBe(true);
     if (!result.ok) return;
-    expect(result.url.startsWith(`${ORIGIN}/clips/`)).toBe(true);
-    expect(result.url.endsWith(".webm")).toBe(true);
+    expect(result.url.startsWith(`${ORIGIN}/c/`)).toBe(true);
+    // No media extension on share URL — FB treats *.mp4 as bare video.
+    expect(result.url.endsWith(".webm")).toBe(false);
+    expect(result.url.endsWith(".mp4")).toBe(false);
+    expect(result.mediaUrl.startsWith(`${ORIGIN}/v/`)).toBe(true);
   });
 
-  test("uploaded clip is immediately servable at the returned path", async () => {
+  test("uploaded clip is immediately servable at the media path", async () => {
     const result = await handleClipUpload(uploadRequest("hello clip", "clip.webm"), ORIGIN);
     expect(result.ok).toBe(true);
     if (!result.ok) return;
-    const filename = result.url.split("/clips/")[1]!;
+    const filename = result.mediaUrl.split("/v/")[1]!.split("?")[0]!;
     const res = await serveClip(filename);
     expect(res).not.toBeNull();
     expect(res!.headers.get("content-type")).toBe("video/webm");
@@ -73,5 +121,14 @@ describe("clipStore", () => {
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.status).toBe(413);
+  });
+
+  test("pinned highlight reel is listed in clip-pins.json", async () => {
+    const raw = await Bun.file(
+      new URL("../../clip-pins.json", import.meta.url),
+    ).text();
+    const data = JSON.parse(raw) as { pins: Array<{ id: string; ext: string }> };
+    const pin = data.pins.find((p) => p.id === "837b0742-9faa-4fb2-bd1b-653e504b40cb");
+    expect(pin?.ext).toBe("mp4");
   });
 });

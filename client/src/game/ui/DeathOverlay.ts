@@ -8,9 +8,19 @@
 // DOM-based so it reads cleanly over any arena background.
 // Lifecycle: show() / updateTimer() / hide() / destroy()
 
+export type DeathOverlayShowOpts = {
+  /** At most one contextual tip (from shell/deathTip). */
+  tip?: string | null;
+  /** Shareable highlight URL if a clip is known for this life. */
+  shareUrl?: string | null;
+};
+
 export class DeathOverlay {
   private root: HTMLDivElement;
+  private stage: HTMLDivElement;
   private timerEl: HTMLSpanElement;
+  private tipEl: HTMLDivElement;
+  private shareBtn: HTMLButtonElement;
   private destroyed = false;
 
   /**
@@ -25,8 +35,8 @@ export class DeathOverlay {
     this.root.dataset.deathOverlay = "true";
     Object.assign(this.root.style, ROOT_STYLE);
 
-    const stage = document.createElement("div");
-    Object.assign(stage.style, STAGE_STYLE);
+    this.stage = document.createElement("div");
+    Object.assign(this.stage.style, STAGE_STYLE);
 
     const skull = document.createElement("div");
     skull.textContent = "✦";
@@ -44,16 +54,58 @@ export class DeathOverlay {
     this.timerEl.textContent = "3";
     Object.assign(this.timerEl.style, TIMER_STYLE);
 
-    stage.append(skull, titleEl, sub, this.timerEl);
-    this.root.appendChild(stage);
+    this.tipEl = document.createElement("div");
+    Object.assign(this.tipEl.style, TIP_STYLE);
+    this.tipEl.hidden = true;
+
+    this.shareBtn = document.createElement("button");
+    this.shareBtn.type = "button";
+    this.shareBtn.textContent = "Share highlight";
+    Object.assign(this.shareBtn.style, SHARE_BTN_STYLE);
+    this.shareBtn.hidden = true;
+    this.shareBtn.style.pointerEvents = "auto";
+
+    this.stage.append(skull, titleEl, sub, this.timerEl, this.tipEl, this.shareBtn);
+    this.root.appendChild(this.stage);
 
     document.body.appendChild(this.root);
     this.root.style.display = "none";
   }
 
-  show(remainingSec: number): void {
+  show(remainingSec: number, opts: DeathOverlayShowOpts = {}): void {
     if (this.destroyed) return;
     this.timerEl.textContent = remainingSec.toString();
+    const tip = opts.tip?.trim() || "";
+    this.tipEl.textContent = tip;
+    this.tipEl.hidden = !tip;
+    const shareUrl = opts.shareUrl?.trim() || "";
+    if (shareUrl) {
+      this.shareBtn.hidden = false;
+      this.shareBtn.onclick = () => {
+        void (async () => {
+          try {
+            if (typeof navigator.share === "function") {
+              await navigator.share({
+                title: "JAKESJAM highlight",
+                text: "Check out this play from JAKESJAM!",
+                url: shareUrl,
+              });
+            } else {
+              await navigator.clipboard.writeText(shareUrl);
+              this.shareBtn.textContent = "Copied!";
+              setTimeout(() => {
+                this.shareBtn.textContent = "Share highlight";
+              }, 1200);
+            }
+          } catch {
+            /* user cancel */
+          }
+        })();
+      };
+    } else {
+      this.shareBtn.hidden = true;
+      this.shareBtn.onclick = null;
+    }
     this.root.style.display = "flex";
     // Fade in
     this.root.style.opacity = "0";
@@ -145,4 +197,29 @@ const TIMER_STYLE: Partial<CSSStyleDeclaration> = {
   lineHeight: "1.1",
   textShadow: "0 0 18px rgba(255, 247, 214, 0.35)",
   marginTop: "4px",
+};
+
+const TIP_STYLE: Partial<CSSStyleDeclaration> = {
+  fontFamily: "Inter, Arial, sans-serif",
+  fontSize: "12px",
+  fontWeight: "600",
+  color: "#9ba7b8",
+  maxWidth: "280px",
+  textAlign: "center",
+  lineHeight: "1.4",
+  marginTop: "8px",
+};
+
+const SHARE_BTN_STYLE: Partial<CSSStyleDeclaration> = {
+  marginTop: "10px",
+  padding: "8px 14px",
+  borderRadius: "8px",
+  border: "1px solid rgba(201, 168, 76, 0.45)",
+  background: "transparent",
+  color: "#c9a84c",
+  fontWeight: "800",
+  fontSize: "11px",
+  letterSpacing: "0.06em",
+  textTransform: "uppercase",
+  cursor: "pointer",
 };

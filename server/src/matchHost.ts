@@ -8,6 +8,14 @@ import { createRuntime, stepWithRuntime, type WorldRuntime } from "@sim/World.ts
 import { KILL_PLANE_MARGIN_PX } from "@sim/player.ts";
 import { stepRound, enterDrafting, TARGET_SCORE_DEFAULT } from "@sim/round.ts";
 import { resolveMap, type MapId } from "@sim/data/maps.ts";
+import {
+  createDirectorState,
+  defaultDirectorBounds,
+  directorToPose,
+  stepSpectatorDirector,
+  type DirectorState,
+  type SpectatorCamPose,
+} from "@sim/spectatorDirector.ts";
 import type {
   InputFrame,
   InputSeq,
@@ -243,6 +251,15 @@ export class MatchHost {
   private readonly map: MapDefinition;
 
   /**
+   * Esports-style arena spectator director. Stepped every sim tick from the
+   * FULL (unfiltered) world so broadcast/stream clients share one framing.
+   * Pose is piggybacked on every snapshot as `cam`.
+   */
+  private director: DirectorState = createDirectorState();
+  private directorBounds = defaultDirectorBounds();
+  private latestCam: SpectatorCamPose | null = null;
+
+  /**
    * Per-match input recorder. Captures every accepted input frame keyed by
    * the server-tick it was applied at, plus a header (rngSeed, mapId,
    * players). Sufficient for deterministic playback per replay-spectator
@@ -268,6 +285,10 @@ export class MatchHost {
     this.onMatchComplete = opts.onMatchComplete;
     this.matchId = matchId;
     this.map = resolveMap(mapId);
+    this.directorBounds = defaultDirectorBounds(
+      this.map.size?.x ?? 3000,
+      this.map.size?.y ?? 1100,
+    );
     this.rngSeed = (Math.random() * 0xffffffff) >>> 0;
     this.state = World.create(
       this.map,
@@ -966,6 +987,16 @@ export class MatchHost {
 
     this.state = nextState;
 
+    // Arena spectator director — full-world view, every tick, before AOI.
+    this.director = stepSpectatorDirector(
+      this.director,
+      this.state,
+      events,
+      STEP_MS / 1000,
+      this.directorBounds,
+    );
+    this.latestCam = directorToPose(this.director);
+
     if (result.matchComplete && !this.matchCompletePosted) {
       this.matchCompletePosted = true;
       // Fire-and-forget: never block the tick loop on a Convex round-trip.
@@ -1306,6 +1337,8 @@ export class MatchHost {
     // when non-zero so we don't waste bytes on steady-state traffic.
     const tickAdjustMs = this.tickSlew.computeAdjustMs(playerId);
 
+    const cam = this.latestCam ?? undefined;
+
     if (baselineState === null || baselineTick === null) {
       // Full snapshot path
       return encodeMessage({
@@ -1316,6 +1349,7 @@ export class MatchHost {
         state: currentState,
         events,
         ...(tickAdjustMs !== 0 ? { tickAdjustMs } : {}),
+        ...(cam ? { cam } : {}),
       });
     }
 
@@ -1329,6 +1363,7 @@ export class MatchHost {
       delta,
       events,
       ...(tickAdjustMs !== 0 ? { tickAdjustMs } : {}),
+      ...(cam ? { cam } : {}),
     });
   }
 

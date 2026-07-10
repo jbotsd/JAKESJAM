@@ -19,7 +19,7 @@ import {
 import { WorldBots } from "./worldBots.ts";
 import { STEP_MS } from "@sim/index.ts";
 import { PlayerId, type PlayerSpawnInfo } from "@sim/types.ts";
-import { DEFAULT_MAP_ID, isMapId, type MapId } from "@sim/data/maps.ts";
+import { DEFAULT_MAP_ID, isMapId, resolveMap, type MapId } from "@sim/data/maps.ts";
 import { convexClient, type ConvexId } from "./convexClient.ts";
 
 const WORLD_MATCH_ID = "world";
@@ -32,10 +32,9 @@ const WORLD_MATCH_ID = "world";
  *   2. Tested in __tests__/worldHost.test.ts to guard against a regression where
  *      a typo in `MapId` literal silently falls back to `DEFAULT_MAP_ID`.
  */
-// Lead with boxworks-mini so the always-on world starts on the user's
-// preferred default. The full-size "boxworks" arena is excluded from
-// rotation — it's available only for explicit room hosts that pick it.
-const ROTATION_MAPS: readonly MapId[] = ["boxworks-mini", "boxworks-tower"];
+// Hot Lobby rotation: mega Vessel Nexus first, then vertical Spire Dock.
+// Full multi-cell "boxworks" stays room-picker only.
+const ROTATION_MAPS: readonly MapId[] = ["vessel-nexus", "boxworks-tower"];
 
 /**
  * How many recycles between curated-map appearances. Slots that aren't
@@ -83,7 +82,7 @@ export class WorldHost {
    *  match. Overridable for tests. */
   private readonly resultsHoldMs: number;
   /** Server-side AI duelists that keep the world alive. Count via the
-   *  WORLD_BOTS env (host-public.sh sets 2); 0 disables (tests/probes). */
+   *  WORLD_BOTS env (host-public.sh default 2 — enough motion, not a gang). */
   private readonly botCount: number;
   private readonly bots = new WorldBots();
   private botTimer: ReturnType<typeof setInterval> | null = null;
@@ -93,7 +92,8 @@ export class WorldHost {
 
   constructor(opts: { mapId?: MapId | string; rotateMaps?: boolean; resultsHoldMs?: number; bots?: number } = {}) {
     this.resultsHoldMs = opts.resultsHoldMs ?? 6000;
-    this.botCount = Math.max(0, Math.min(4, opts.bots ?? 0));
+    // Cap 6 — 4+ on mega docks felt like a firing squad for solo humans.
+    this.botCount = Math.max(0, Math.min(6, opts.bots ?? 0));
     if (this.botCount > 0) {
       // Bot brains tick at sim rate; think() no-ops while the host loop
       // is stopped (empty world), so idle cost is a timer wakeup.
@@ -107,7 +107,7 @@ export class WorldHost {
     // running but wrong-arena world. Now we throw at boot.
     if (opts.mapId !== undefined && !isMapId(opts.mapId) && !opts.mapId.startsWith("gen:")) {
       throw new Error(
-        `WorldHost: unknown mapId "${opts.mapId}". Known: ${Object.keys({ boxworks: 1, "boxworks-mini": 1, "boxworks-tower": 1 }).join(", ")}`,
+        `WorldHost: unknown mapId "${opts.mapId}". Known: vessel-nexus, boxworks, boxworks-mini, boxworks-tower, gen:<seed>`,
       );
     }
     this.mapId = (opts.mapId as MapId | undefined) ?? DEFAULT_MAP_ID;
@@ -157,7 +157,10 @@ export class WorldHost {
       .spawnInfosFor(this.botCount)
       .filter((b) => !spawns.some((sp) => sp.playerId === b.playerId))
       .map((b) => this.botSpawn(b.playerId, b.name));
-    return new MatchHost(WORLD_MATCH_ID, [...spawns, ...botSpawns], [], this.nextMapId(), {
+    const mapId = this.nextMapId();
+    // Map-aware brains: cover / hop / LOS for the arena they're actually on.
+    this.bots.bindMap(resolveMap(mapId));
+    return new MatchHost(WORLD_MATCH_ID, [...spawns, ...botSpawns], [], mapId, {
       onMatchComplete: () => this.scheduleRecycle(),
     });
   }

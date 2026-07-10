@@ -49,8 +49,12 @@ code. Last verified: 2026-07-08.
 - Jetpack: **removed** (fuel field pinned for ABI stability only).
   Magazine/reload: **data-only, deliberately unenforced** (explicit
   design decision 2026-07-08 — do not "fix" this by implementing reload).
-- Drafts are **loser-only** (ROUNDS-style catch-up); `maxStacks` is
-  enforced at the offer roll.
+- **Drafts are universal round-end** (Escalation Engine —
+  `docs/escalation-engine-goal.md`): every roster player including the
+  **round winner** receives offers; catch-up is **richer sampling weights**
+  for non-winners (`draftWeights.ts`), never winner silence. Draws: all
+  draft at standard weights. `maxStacks` / `unique` enforced at the offer
+  roll. Death is **not** the picker primary loop.
 
 ## Testing / tooling
 

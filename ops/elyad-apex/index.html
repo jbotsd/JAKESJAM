@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>elyad.io — uncommitted</title>
+  <meta name="description" content="elyad.io — a taster of things that may never come. JAKESJAM might be live at play.elyad.io." />
+  <meta property="og:title" content="elyad.io" />
+  <meta property="og:description" content="Things may appear here. No promises." />
+  <meta property="og:url" content="https://elyad.io/" />
+  <meta name="theme-color" content="#03060c" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,500;0,600;1,400&family=IBM+Plex+Mono:wght@300;400;500&family=Syne:wght@600;700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="styles.css?v=taster1" />
+</head>
+<body>
+  <div class="cursor-glow" id="glow" aria-hidden="true"></div>
+  <div id="app"></div>
+  <script src="elm.js?v=taster1"></script>
+  <script>
+    (function () {
+      var reduced =
+        window.matchMedia &&
+        window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+      Elm.Main.init({
+        node: document.getElementById("app"),
+        flags: { reducedMotion: !!reduced },
+      });
+
+      if (reduced) return;
+
+      // Soft cursor field
+      var glow = document.getElementById("glow");
+      if (glow && window.matchMedia("(pointer: fine)").matches) {
+        var ax = 0, ay = 0, tx = 0, ty = 0;
+        window.addEventListener("pointermove", function (e) {
+          tx = e.clientX; ty = e.clientY;
+        }, { passive: true });
+        (function tick() {
+          ax += (tx - ax) * 0.14;
+          ay += (ty - ay) * 0.14;
+          glow.style.transform = "translate(" + ax + "px," + ay + "px)";
+          requestAnimationFrame(tick);
+        })();
+      }
+
+      // Magnetic CTA + layered audio
+      var ctx;
+      function tone(freq, type, dur, gain) {
+        try {
+          ctx = ctx || new AudioContext();
+          if (ctx.state === "suspended") ctx.resume();
+          var o = ctx.createOscillator();
+          var g = ctx.createGain();
+          var f = ctx.createBiquadFilter();
+          o.type = type || "triangle";
+          o.frequency.value = freq;
+          f.type = "lowpass";
+          f.frequency.value = 2400;
+          g.gain.setValueAtTime(gain || 0.1, ctx.currentTime);
+          g.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + (dur || 0.1));
+          o.connect(f).connect(g).connect(ctx.destination);
+          o.start();
+          o.stop(ctx.currentTime + (dur || 0.1));
+        } catch (_) {}
+      }
+      function chordIn() {
+        tone(523, "sine", 0.14, 0.06);
+        tone(784, "triangle", 0.12, 0.05);
+      }
+      function chordHit() {
+        tone(660, "triangle", 0.1, 0.1);
+        tone(990, "sine", 0.14, 0.07);
+        tone(1320, "sine", 0.08, 0.04);
+      }
+
+      // Magnetic hover (desktop)
+      function bindMagnet() {
+        var btn = document.getElementById("enter-cta");
+        if (!btn || !window.matchMedia("(pointer: fine)").matches) return;
+        btn.addEventListener("pointermove", function (e) {
+          var r = btn.getBoundingClientRect();
+          var x = (e.clientX - r.left) / r.width - 0.5;
+          var y = (e.clientY - r.top) / r.height - 0.5;
+          btn.style.transform =
+            "translateY(-4px) scale(1.03) translate(" + (x * 10) + "px," + (y * 6) + "px)";
+        });
+        btn.addEventListener("pointerleave", function () {
+          btn.style.transform = "";
+        });
+        btn.addEventListener("pointerenter", function () {
+          chordIn();
+        });
+        btn.addEventListener("pointerdown", function () {
+          chordHit();
+          if ("vibrate" in navigator) navigator.vibrate([14, 28, 18, 40, 22]);
+        });
+      }
+      // Elm mounts async — poll briefly for CTA
+      var n = 0;
+      var iv = setInterval(function () {
+        n++;
+        if (document.getElementById("enter-cta") || n > 40) {
+          clearInterval(iv);
+          bindMagnet();
+        }
+      }, 50);
+    })();
+  </script>
+</body>
+</html>

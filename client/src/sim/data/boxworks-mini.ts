@@ -11,8 +11,8 @@ import type { MapDefinition } from "../types.js";
 
 export const boxworksMini: MapDefinition = {
   id: "boxworks-mini",
-  name: "Boxworks Mini",
-  arenaTheme: "ivoryClouds",
+  name: "Dock Cell",
+  arenaTheme: "crystalDock",
   size: { x: 1280, y: 640 },
   // 8 spawn points spread across all three tiers and the full width, so the
   // deterministic max-spread assigner (World.assignSpawnPoints) can seat a

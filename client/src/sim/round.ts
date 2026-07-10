@@ -8,7 +8,11 @@
 
 import { STEP_MS } from "./constants.js";
 import { crystalRoundsCards } from "./data/cards.js";
-import { pickOne } from "./rng.js";
+import {
+  classifyDraftRole,
+  pickWeighted,
+  weightForCard,
+} from "./draftWeights.js";
 import { PlayerId, Tick } from "./types.js";
 import type {
   PlayerEntity,
@@ -89,10 +93,10 @@ const BOT_ID_PREFIX = "bot_";
 export const DRAFT_WINDOW_MS = 15000;
 
 /**
- * Cards offered to every player in the match when the round transitions
- * into drafting (winners and freshly-killed losers alike — the loser is
- * usually mid-respawn and would otherwise miss the draft entirely).
- * Bumping this requires UI tweaks on the picker side.
+ * Cards offered to every roster player when the round transitions into
+ * drafting (winner included — Escalation Engine / universal draft).
+ * Dead / mid-respawn players still draft. Bumping this requires UI tweaks
+ * on the picker side.
  */
 export const DRAFT_OFFER_COUNT = 3;
 
@@ -391,14 +395,15 @@ function finalize(
 }
 
 /**
- * Roll DRAFT_OFFER_COUNT card ids for every NON-WINNER in the match using
- * the seeded RNG (loser-only catch-up draft; draws let everyone pick).
- * Includes dead players — the round-end loser is usually mid-respawn and
- * must still see their picker. Skips `unique: true` cards already in hand
- * and cards already held at maxStacks copies.
+ * Roll DRAFT_OFFER_COUNT card ids for every roster player using the seeded
+ * RNG (Escalation Engine — universal round-end draft). Includes the round
+ * winner and dead/mid-respawn players. Catch-up is additive: non-winners use
+ * richer sampling weights (`draftWeights.ts`); winners still get full offers.
+ * On a draw (`winnerPlayerId` null) everyone uses standard weights.
  *
- * Iteration order over players is sorted by id so the offer roll is fully
- * deterministic given (rngState, players).
+ * Skips `unique: true` cards already in hand and cards already held at
+ * maxStacks copies. Iteration order is sorted by id so the offer roll is
+ * fully deterministic given (rngState, players, winner).
  */
 export function enterDrafting(
   next: RoundState,
@@ -408,24 +413,18 @@ export function enterDrafting(
 ): { state: RoundState; events: SimEvent[]; rngState: number } {
   const events: SimEvent[] = [];
   let cursor = rngState;
-  // LOSER-ONLY DRAFT (the ROUNDS catch-up model): the round winner sits the
-  // draft out; everyone else picks a card. This is the match's entire
-  // anti-snowball engine — the leader stays still while the field arms up,
-  // so a 2-0 lead is never a 2-0 power lead as well. On a DRAW
-  // (winnerPlayerId null — mutual KO or empty world) everyone drafts.
-  // The winner having no offers composes cleanly with the resolution gate
-  // below: it keys off draftingOffers keys, so the winner is simply not
-  // waited on.
   const roundWinner = next.winnerPlayerId ?? null;
-  const draftingIds = Object.keys(players)
-    .sort()
-    .filter((pid) => pid !== roundWinner);
+  // UNIVERSAL DRAFT: every roster seat is a drafting seat. Sorted ids keep
+  // RNG consumption deterministic. Winner inclusion changes the historical
+  // loser-only stream (documented in changelog / goal).
+  const draftingIds = Object.keys(players).sort();
 
   const draftingOffers: Record<PlayerId, string[]> = {};
 
   for (const pid_ of draftingIds) {
     const pid = pid_ as PlayerId;
     const player = players[pid]!;
+    const role = classifyDraftRole(pid, roundWinner);
     const owned = new Set(player.cards);
     // Copies held per card id — `player.cards` keeps one entry per stack.
     const copies = new Map<string, number>();
@@ -450,7 +449,11 @@ export function enterDrafting(
       // card) from spinning forever.
       let attempts = 0;
       while (offered.length < target && attempts < target * 8) {
-        const [nextCursor, picked] = pickOne(cursor, candidatePool);
+        const remaining = candidatePool.filter((c) => !seen.has(c.id));
+        if (remaining.length === 0) break;
+        const [nextCursor, picked] = pickWeighted(cursor, remaining, (c) =>
+          weightForCard(c, role),
+        );
         cursor = nextCursor;
         if (!seen.has(picked.id)) {
           seen.add(picked.id);

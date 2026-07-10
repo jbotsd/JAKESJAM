@@ -227,10 +227,10 @@ function stepWeaponNative(
 
   const build = resolvePlayerBuild(next);
 
-  // Beam / pulse / area deliveries are not modeled in the sim yet; fall
-  // through to projectile semantics so the cooldown still advances and the
-  // shot still registers visually. Future card pass will model raycast hit
-  // resolution and continuous beam ticks.
+  // Delivery identities (raycast / continuous-beam / area-pulse) are mapped
+  // onto projectile parameters in weaponBuild.applyDeliveryFeel — hyper-speed
+  // shards, high-rate ticks, wide explosions — so every delivery card FEELS
+  // different without a separate hitscan step (keeps client/server parity).
   // Alternate the throwing hand each shot (0 = lead, 1 = back), toggled off
   // the persisted parity so it stays in lock-step across shots. The muzzle is
   // offset to this hand and the hand is threaded out in FireResult so the

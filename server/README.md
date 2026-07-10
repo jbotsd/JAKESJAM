@@ -12,6 +12,21 @@ GAME_SERVER_SECRET=dev-secret bun run dev
 
 The server listens on `:8088` in dev (`:8080` in prod via Fly). Override with `PORT=...`. **Auto-heal**: if the desired port is taken, the server tries the next `PORT_SEARCH_RANGE` ports (default 10) — check the boot log for the actual bound port. Health: `GET /health`. WebSocket upgrade: `GET /ws?matchId=...&token=...`.
 
+### Operator console (`/ops`)
+
+Deep backend UI for you (not players) — **Elm SPA** at `ops/console/`. Requires `ADMIN_SECRET` (fail-closed when unset).
+
+```bash
+# rebuild UI after Elm edits
+(cd ops/console && ./build.sh)
+
+ADMIN_SECRET=$(head -c 32 /dev/urandom | base64) bun run start
+# open http://localhost:8088/ops  — or /ops?key=<secret> once to set cookie
+# API:  curl -H "x-admin-secret: $ADMIN_SECRET" http://localhost:8088/ops/api/status
+```
+
+Surfaces: world status, private lobbies, match registry, clip inventory + **pin/unpin** (writes `clip-pins.json`, copies into `.clips/kept/`). `host:public` persists the secret in `.host-logs/admin-secret`.
+
 To validate end-to-end with a real Convex token, set the same `GAME_SERVER_SECRET` in your Convex deployment:
 
 ```bash

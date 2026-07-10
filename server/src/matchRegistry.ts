@@ -9,6 +9,7 @@ import {
   type MatchSocketData,
 } from "./matchHost.ts";
 import { convexClient, type ConvexId } from "./convexClient.ts";
+import { getMatchPrep } from "./privateLobby.ts";
 
 export class MatchRegistry {
   private readonly matches = new Map<string, MatchHost>();
@@ -18,21 +19,23 @@ export class MatchRegistry {
     const playerId = PlayerId(rawPlayerId);
     let host = this.matches.get(matchId);
     if (!host) {
-      // Fetch the match summary from Convex to recover the room's chaos modifiers
-      // and map selection. The matchId-only token from the WebSocket handshake
-      // needs the roomId to look up the full match context.
-      const summary =
-        (await convexClient.getMatchSummary(matchId as ConvexId)) ?? null;
-      const chaosModifierIds = summary?.chaosModifierIds ?? [];
-      const mapId = summary?.mapId ?? undefined;
+      // Prefer server-native private lobby prep (no Convex). Fall back to
+      // Convex match summary for legacy room flow.
+      const prep = getMatchPrep(matchId);
+      const summary = prep
+        ? null
+        : ((await convexClient.getMatchSummary(matchId as ConvexId)) ?? null);
+      const chaosModifierIds = prep?.chaosModifierIds ?? summary?.chaosModifierIds ?? [];
+      const mapId = prep?.mapId ?? summary?.mapId ?? undefined;
+      const prepPlayer = prep?.players.find((p) => p.playerId === rawPlayerId);
       host = new MatchHost(
         matchId,
         [
           {
             playerId,
-            characterId: "balanced",
-            name: rawPlayerId,
-            color: "#88ccff",
+            characterId: (prepPlayer?.characterId as PlayerSpawnInfo["characterId"]) ?? "balanced",
+            name: prepPlayer?.name ?? rawPlayerId,
+            color: prepPlayer?.color ?? "#88ccff",
             weaponId: "starter-pistol",
           },
         ],
@@ -42,11 +45,13 @@ export class MatchRegistry {
       this.matches.set(matchId, host);
     } else if (!host.hasPlayer(playerId)) {
       // Brand-new player joining an existing match.
+      const prep = getMatchPrep(matchId);
+      const prepPlayer = prep?.players.find((p) => p.playerId === rawPlayerId);
       host.addPlayer({
         playerId,
-        characterId: "balanced",
-        name: rawPlayerId,
-        color: pickColor(rawPlayerId),
+        characterId: (prepPlayer?.characterId as PlayerSpawnInfo["characterId"]) ?? "balanced",
+        name: prepPlayer?.name ?? rawPlayerId,
+        color: prepPlayer?.color ?? pickColor(rawPlayerId),
         weaponId: "starter-pistol",
       });
     }

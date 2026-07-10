@@ -11,8 +11,23 @@
 
 import type { CardDefinition } from "../types/game";
 import { isPortraitMobile, isTouchPrimary } from "../input/mobile";
+import {
+  formatSealGloss,
+  formatSealLine,
+  sealAccent,
+  sealForCard,
+  SEAL_ACCENT_HEX,
+} from "./cardSeals.js";
+import { cardGlyphHtml } from "./cardGlyphs.js";
 
 export type CardPickHandler = (card: CardDefinition) => void;
+
+/** Optional juice hooks so the scene can fire camera/audio/world VFX on pick
+ *  without the overlay importing Phaser. */
+export type CardDraftJuice = {
+  /** Called immediately when the player confirms a card (before hide). */
+  onPicked?: (card: CardDefinition) => void;
+};
 
 /** Card copy lives in sim data (cards.ts) and is written for desktop
  *  ("press C"). Rewrite input references at render time for touch players —
@@ -34,8 +49,10 @@ export class CardDraftOverlay {
   private timerRafId: number | null = null;
   private timerStartMs = 0;
   private timerTotalMs = 0;
+  private juice: CardDraftJuice = {};
 
-  constructor() {
+  constructor(juice: CardDraftJuice = {}) {
+    this.juice = juice;
     this.root = document.createElement("div");
     this.root.dataset.cardDraft = "true";
     Object.assign(this.root.style, BASE_OVERLAY_STYLE);
@@ -55,11 +72,41 @@ export class CardDraftOverlay {
     this.titleEl.textContent = "CHOOSE YOUR UPGRADE";
     Object.assign(this.titleEl.style, TITLE_STYLE);
 
+    // Instrument imprint — Coptic seal with English gloss (not a sermon).
+    const sealImprint = document.createElement("div");
+    sealImprint.setAttribute("aria-hidden", "true");
+    Object.assign(sealImprint.style, {
+      display: "flex",
+      flexDirection: "column",
+      alignItems: "center",
+      gap: "2px",
+      marginTop: "2px",
+    } as Partial<CSSStyleDeclaration>);
+    const sealCoptic = document.createElement("div");
+    sealCoptic.textContent = "ⲤⲪⲢⲀⲄⲒⲤ  ·  sphragis";
+    Object.assign(sealCoptic.style, {
+      fontSize: "11px",
+      letterSpacing: "0.18em",
+      color: "#c9a84c",
+      fontFamily: "'Segoe UI Historic', 'Noto Sans Coptic', 'Noto Sans', serif",
+      opacity: "0.85",
+    } as Partial<CSSStyleDeclaration>);
+    const sealGloss = document.createElement("div");
+    sealGloss.textContent = "seal — pick one emission into the vessel";
+    Object.assign(sealGloss.style, {
+      fontSize: "9px",
+      letterSpacing: "0.12em",
+      color: "#7a8299",
+      textTransform: "lowercase",
+      fontFamily: "'Space Mono', 'Courier New', monospace",
+    } as Partial<CSSStyleDeclaration>);
+    sealImprint.append(sealCoptic, sealGloss);
+
     this.hintEl = document.createElement("div");
     this.hintEl.textContent = "Pick one card. Auto-selects when the timer expires.";
     Object.assign(this.hintEl.style, HINT_STYLE);
 
-    header.append(kicker, this.titleEl, this.hintEl);
+    header.append(kicker, this.titleEl, sealImprint, this.hintEl);
 
     // Timer bar
     const timerTrack = document.createElement("div");
@@ -102,11 +149,19 @@ export class CardDraftOverlay {
       : "Pick one card. Auto-selects when the timer expires.";
     this.cardsContainer.replaceChildren();
 
-    for (const card of cards) {
+    cards.forEach((card, i) => {
       const el = this.makeCardElement(card);
       el.addEventListener("click", () => this.handlePick(card));
+      // Nijman staggered spawn — each plate overshoots in.
+      el.style.opacity = "0";
+      el.style.transform = "translateY(28px) scale(0.88)";
+      el.style.transition = `opacity 200ms ease ${i * 55}ms, transform 240ms cubic-bezier(0.34,1.4,0.64,1) ${i * 55}ms`;
       this.cardsContainer.appendChild(el);
-    }
+      requestAnimationFrame(() => {
+        el.style.opacity = "1";
+        el.style.transform = "translateY(0) scale(1)";
+      });
+    });
 
     // Entry animation
     this.root.style.display = "flex";
@@ -190,50 +245,202 @@ export class CardDraftOverlay {
 
   private handlePick(card: CardDefinition): void {
     const handler = this.currentHandler;
+    // Pick juice BEFORE hide so the scene can still flash while overlay fades.
+    try {
+      this.juice.onPicked?.(card);
+    } catch {
+      // never block the pick path on juice errors
+    }
+    // Brief white flash on the whole stage so every pick "lands".
+    const flash = document.createElement("div");
+    Object.assign(flash.style, {
+      position: "fixed",
+      inset: "0",
+      zIndex: "9001",
+      pointerEvents: "none",
+      background: card.visual?.glowColor
+        ? `radial-gradient(circle at 50% 50%, ${card.visual.glowColor}88 0%, transparent 55%)`
+        : "rgba(255,255,255,0.35)",
+      opacity: "1",
+      transition: "opacity 280ms ease",
+    } as Partial<CSSStyleDeclaration>);
+    document.body.appendChild(flash);
+    requestAnimationFrame(() => {
+      flash.style.opacity = "0";
+      setTimeout(() => flash.remove(), 320);
+    });
     this.hide();
     handler?.(card);
   }
 
   private makeCardElement(card: CardDefinition): HTMLDivElement {
     const el = document.createElement("div");
+    el.dataset.cardPlate = card.id;
     Object.assign(el.style, CARD_STYLE);
-    // Phones: the desktop 380px plate is mostly empty and pushes the other
-    // picks out of view while the auto-pick timer runs (below the fold in
-    // portrait's vertical stack; past the stage's 92vh scroll in a 393px-tall
-    // landscape) — compact the cards so 2-3 options are scannable at a glance.
+    // Phones: compact plates so 2–3 options stay on-screen under the timer.
     if (isTouchPrimary()) {
       el.style.minHeight = "0";
       el.style.padding = "16px 16px";
       if (isPortraitMobile()) el.style.width = "min(280px, 78vw)";
     }
 
-    // ROUNDS-style: fully transparent background, cyan bracket corners via
-    // CSS absolute-positioned L-divs. Rarity glow is a subtle box-shadow only.
+    // Matte plate — glyph silhouette + copy carry identity. Minimal radiance.
     const rarityColor = colorForRarity(card.rarity);
-    // No opaque background — plate-less design
-    el.style.background = "transparent";
-    el.style.border = "none";
-    el.style.boxShadow = `0 0 12px ${withAlpha(rarityColor, 0.3)}`;
+    const glow = card.visual?.glowColor ?? rarityColor;
+    const accent = sealAccent(card);
+    const accentHex = SEAL_ACCENT_HEX[accent];
+    const seal = sealForCard(card);
+
+    el.style.background = "linear-gradient(165deg, rgba(14, 18, 28, 0.98), rgba(8, 10, 16, 0.99))";
+    el.style.border = `1px solid ${withAlpha(glow, 0.14)}`;
+    el.style.setProperty(
+      "--jj-card-glow",
+      [
+        `0 0 0 1px ${withAlpha(glow, 0.08)}`,
+        "0 8px 24px rgba(0,0,0,0.45)",
+        "inset 0 1px 0 rgba(255,255,255,0.04)",
+      ].join(", "),
+    );
+    el.style.setProperty(
+      "--jj-card-glow-hot",
+      [
+        `0 0 0 1px ${withAlpha(glow, 0.2)}`,
+        "0 10px 28px rgba(0,0,0,0.5)",
+        "inset 0 1px 0 rgba(255,255,255,0.06)",
+      ].join(", "),
+    );
+    el.style.boxShadow = "var(--jj-card-glow)";
+    el.style.overflow = "hidden";
 
     const rarity = document.createElement("div");
     rarity.textContent = card.rarity.toUpperCase();
     Object.assign(rarity.style, RARITY_STYLE);
     rarity.style.color = rarityColor;
+    rarity.style.textShadow = "none";
+    rarity.style.position = "relative";
+    rarity.style.zIndex = "2";
 
+    // Glyph only — no aura halo. Symbol is the icon.
+    const orbWrap = document.createElement("div");
+    Object.assign(orbWrap.style, {
+      position: "relative",
+      width: "76px",
+      height: "76px",
+      margin: "4px auto 8px",
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "center",
+      zIndex: "2",
+    } as Partial<CSSStyleDeclaration>);
+    const glyph = document.createElement("div");
+    glyph.innerHTML = cardGlyphHtml(card);
+    Object.assign(glyph.style, {
+      position: "relative",
+      zIndex: "1",
+      lineHeight: "0",
+      opacity: "0.95",
+    } as Partial<CSSStyleDeclaration>);
+    orbWrap.append(glyph);
+
+    // ── Card identity stack (this IS the plate, not a header footnote) ──
+    // Name → seal (Coptic · latin) → english gloss → buckets
     const name = document.createElement("div");
     name.textContent = card.name;
     Object.assign(name.style, NAME_STYLE);
+    name.style.textAlign = "center";
+
+    // Gold hairline under name (Orthodox inscription bar → instrument rule)
+    const nameRule = document.createElement("div");
+    Object.assign(nameRule.style, {
+      width: "48%",
+      height: "1px",
+      margin: "0 auto 4px",
+      background: `linear-gradient(90deg, transparent, ${accentHex}, transparent)`,
+      opacity: "0.7",
+    } as Partial<CSSStyleDeclaration>);
+
+    const sealBlock = document.createElement("div");
+    sealBlock.setAttribute("data-card-seal", card.id);
+    Object.assign(sealBlock.style, {
+      display: "flex",
+      flexDirection: "column",
+      alignItems: "center",
+      gap: "4px",
+      margin: "2px 0 6px",
+      padding: "6px 10px",
+      borderRadius: "4px",
+      border: `1px solid ${withAlpha(accentHex, 0.14)}`,
+      background: "transparent",
+      width: "100%",
+      boxSizing: "border-box",
+    } as Partial<CSSStyleDeclaration>);
+    const sealLine = document.createElement("div");
+    sealLine.textContent = formatSealLine(seal);
+    sealLine.title = `${seal.latin} — ${seal.english} (${seal.motif})`;
+    Object.assign(sealLine.style, {
+      fontSize: "13px",
+      letterSpacing: "0.12em",
+      color: accentHex,
+      fontFamily: "'Segoe UI Historic', 'Noto Sans Coptic', 'Noto Sans', 'Segoe UI', serif",
+      textAlign: "center",
+      lineHeight: "1.35",
+      opacity: "0.98",
+    } as Partial<CSSStyleDeclaration>);
+    const sealGloss = document.createElement("div");
+    // Always show english — and latin again for screen readers / no-Coptic fonts
+    sealGloss.textContent = `${formatSealGloss(seal)}  ·  ${seal.latin}`;
+    Object.assign(sealGloss.style, {
+      fontSize: "9px",
+      letterSpacing: "0.16em",
+      textTransform: "uppercase",
+      color: withAlpha(accentHex, 0.8),
+      fontFamily: "'Space Mono', 'Courier New', monospace",
+      fontWeight: "600",
+      textAlign: "center",
+    } as Partial<CSSStyleDeclaration>);
+    sealBlock.append(sealLine, sealGloss);
 
     const buckets = document.createElement("div");
     buckets.textContent = (card.buckets ?? []).join(" · ").toUpperCase() || card.category.toUpperCase();
     Object.assign(buckets.style, BUCKETS_STYLE);
+    buckets.style.textAlign = "center";
+
+    // WHAT IT DOES — primary scannable truth (gameplay first)
+    const doesLabel = document.createElement("div");
+    doesLabel.textContent = "EFFECT";
+    Object.assign(doesLabel.style, {
+      fontSize: "9px",
+      letterSpacing: "0.18em",
+      color: withAlpha(glow, 0.7),
+      fontFamily: "'Space Mono', monospace",
+      fontWeight: "700",
+      marginTop: "6px",
+      alignSelf: "flex-start",
+      position: "relative",
+      zIndex: "2",
+    } as Partial<CSSStyleDeclaration>);
 
     const description = document.createElement("div");
     description.textContent = localizeDescriptionForInput(card.description);
     Object.assign(description.style, DESCRIPTION_STYLE);
 
+    // LORE — secondary, quieter (a little story under the facts)
+    const loreLabel = document.createElement("div");
+    loreLabel.textContent = card.flavorText ? "LORE" : "";
+    Object.assign(loreLabel.style, {
+      fontSize: "9px",
+      letterSpacing: "0.18em",
+      color: withAlpha("#c4b5fd", 0.55),
+      fontFamily: "'Space Mono', monospace",
+      fontWeight: "700",
+      marginTop: "8px",
+      alignSelf: "flex-start",
+      position: "relative",
+      zIndex: "2",
+    } as Partial<CSSStyleDeclaration>);
+
     const flavor = document.createElement("div");
-    flavor.textContent = card.flavorText ?? "";
+    flavor.textContent = card.flavorText ? `“${card.flavorText}”` : "";
     Object.assign(flavor.style, FLAVOR_STYLE);
 
     // Benefit lines (green)
@@ -252,20 +459,36 @@ export class CardDraftOverlay {
       return div;
     });
 
-    el.append(rarity, name, buckets, description, ...benefitEls, ...penaltyEls, flavor);
+    // Reading order: rarity → glyph (what it looks like) → name → seal →
+    // EFFECT copy → stats → LORE (quiet).
+    el.append(
+      rarity,
+      orbWrap,
+      name,
+      nameRule,
+      sealBlock,
+      buckets,
+      doesLabel,
+      description,
+      ...benefitEls,
+      ...penaltyEls,
+    );
+    if (card.flavorText) {
+      el.append(loreLabel, flavor);
+    }
 
     // Add 4 L-shaped corner bracket divs (cyan, ROUNDS-style)
-    appendBracketCorners(el);
+    appendBracketCorners(el, glow);
 
     el.addEventListener("mouseenter", () => {
-      // Softened from -20px/1.10/3deg — at those values the corner brackets
-      // visibly detached and long descriptions crossed the frame edge.
-      el.style.transform = "translateY(-12px) scale(1.05) rotate(0.9deg)";
-      el.style.boxShadow = `0 0 24px ${withAlpha("#5DCFD9", 0.55)}`;
+      el.style.transform = "translateY(-4px)";
+      el.style.boxShadow = "var(--jj-card-glow-hot)";
+      el.style.borderColor = withAlpha(glow, 0.28);
     });
     el.addEventListener("mouseleave", () => {
-      el.style.transform = "translateY(0) scale(1) rotate(0deg)";
-      el.style.boxShadow = `0 0 12px ${withAlpha(rarityColor, 0.3)}`;
+      el.style.transform = "translateY(0)";
+      el.style.boxShadow = "var(--jj-card-glow)";
+      el.style.borderColor = withAlpha(glow, 0.14);
     });
 
     return el;
@@ -321,7 +544,7 @@ const KICKER_STYLE: Partial<CSSStyleDeclaration> = {
   fontSize: "11px",
   fontWeight: "700",
   letterSpacing: "0.22em",
-  color: "#8ff8ff",
+  color: "#c9a84c",
   textTransform: "uppercase",
   fontFamily: "'Space Mono', 'Courier New', monospace",
 };
@@ -366,18 +589,18 @@ const CARDS_CONTAINER_STYLE: Partial<CSSStyleDeclaration> = {
 
 const CARD_STYLE: Partial<CSSStyleDeclaration> = {
   position: "relative",
-  width: "280px",
-  minHeight: "380px",
+  width: "286px",
+  minHeight: "400px",
   padding: "22px 20px",
-  // Plate-less: transparent background, bracket corners handle the frame
   background: "#0A1418",
   border: "none",
   color: "#f7fbff",
   cursor: "pointer",
-  transition: "transform 180ms cubic-bezier(0.34,1.56,0.64,1), box-shadow 180ms ease",
+  transition: "transform 200ms cubic-bezier(0.34,1.56,0.64,1), box-shadow 200ms ease, filter 200ms ease",
   display: "flex",
   flexDirection: "column",
   gap: "12px",
+  willChange: "transform, box-shadow",
 };
 
 const RARITY_STYLE: Partial<CSSStyleDeclaration> = {
@@ -390,10 +613,14 @@ const RARITY_STYLE: Partial<CSSStyleDeclaration> = {
 
 const NAME_STYLE: Partial<CSSStyleDeclaration> = {
   fontSize: "22px",
-  fontWeight: "900",
+  fontWeight: "800",
   lineHeight: "1.1",
   letterSpacing: "0.01em",
   fontFamily: "'Space Grotesk', Inter, Arial, sans-serif",
+  color: "#e8eef4",
+  textShadow: "none",
+  position: "relative",
+  zIndex: "2",
 };
 
 const BUCKETS_STYLE: Partial<CSSStyleDeclaration> = {
@@ -405,19 +632,29 @@ const BUCKETS_STYLE: Partial<CSSStyleDeclaration> = {
 };
 
 const DESCRIPTION_STYLE: Partial<CSSStyleDeclaration> = {
-  fontSize: "13px",
-  lineHeight: "1.5",
-  color: "#caffea",
+  fontSize: "13.5px",
+  lineHeight: "1.45",
+  color: "#dce8f0",
   flex: "1",
+  fontWeight: "500",
+  // Read first — light lift, not neon wash
+  textShadow: "0 1px 0 rgba(0,0,0,0.45)",
+  position: "relative",
+  zIndex: "2",
+  width: "100%",
 };
 
 const FLAVOR_STYLE: Partial<CSSStyleDeclaration> = {
-  fontSize: "11px",
+  fontSize: "11.5px",
   fontStyle: "italic",
-  color: "#a78bfa",
-  opacity: "0.78",
-  marginTop: "auto",
+  color: "#b8a8d8",
+  opacity: "0.88",
+  marginTop: "2px",
   lineHeight: "1.4",
+  textShadow: "none",
+  position: "relative",
+  zIndex: "2",
+  width: "100%",
 };
 
 const STAT_BENEFIT_STYLE: Partial<CSSStyleDeclaration> = {
@@ -437,25 +674,23 @@ const STAT_PENALTY_STYLE: Partial<CSSStyleDeclaration> = {
 };
 
 // Bracket corner dimensions
-const LEG = 14; // px per leg
+const LEG = 18; // px per leg
 
 /**
- * Appends 4 absolute-positioned L-shaped divs to produce ROUNDS-style corner
- * brackets. The parent element must have `position: relative`.
+ * Appends 4 absolute-positioned L-shaped divs — ROUNDS-style corners,
+ * tinted to the card's identity glow when provided.
  */
-function appendBracketCorners(el: HTMLDivElement): void {
+function appendBracketCorners(el: HTMLDivElement, color = "#5DCFD9"): void {
+  // Quiet corner marks — no glow filter.
+  const c = withAlpha(color, 0.45);
   const corners: Array<{
     top?: string; bottom?: string; left?: string; right?: string;
     borderTop?: string; borderBottom?: string; borderLeft?: string; borderRight?: string;
   }> = [
-    // Top-left
-    { top: "0", left: "0", borderTop: `3px solid #5DCFD9`, borderLeft: `3px solid #5DCFD9` },
-    // Top-right
-    { top: "0", right: "0", borderTop: `3px solid #5DCFD9`, borderRight: `3px solid #5DCFD9` },
-    // Bottom-left
-    { bottom: "0", left: "0", borderBottom: `3px solid #5DCFD9`, borderLeft: `3px solid #5DCFD9` },
-    // Bottom-right
-    { bottom: "0", right: "0", borderBottom: `3px solid #5DCFD9`, borderRight: `3px solid #5DCFD9` },
+    { top: "0", left: "0", borderTop: `2px solid ${c}`, borderLeft: `2px solid ${c}` },
+    { top: "0", right: "0", borderTop: `2px solid ${c}`, borderRight: `2px solid ${c}` },
+    { bottom: "0", left: "0", borderBottom: `2px solid ${c}`, borderLeft: `2px solid ${c}` },
+    { bottom: "0", right: "0", borderBottom: `2px solid ${c}`, borderRight: `2px solid ${c}` },
   ];
   for (const corner of corners) {
     const div = document.createElement("div");
@@ -463,6 +698,7 @@ function appendBracketCorners(el: HTMLDivElement): void {
     div.style.width = `${LEG}px`;
     div.style.height = `${LEG}px`;
     div.style.pointerEvents = "none";
+    div.style.zIndex = "3";
     if (corner.top !== undefined) div.style.top = corner.top;
     if (corner.bottom !== undefined) div.style.bottom = corner.bottom;
     if (corner.left !== undefined) div.style.left = corner.left;

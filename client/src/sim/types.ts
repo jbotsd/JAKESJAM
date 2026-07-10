@@ -602,6 +602,12 @@ export type MapDefinition = {
   platforms: PlatformDefinition[];
   destructibles?: DestructibleDefinition[];
   pickups?: PickupDefinition[];
-  /** Arena theme key from `ARENA_THEMES`. Defaults to "jadeIsles" when omitted. */
-  arenaTheme?: "jadeIsles" | "ivoryClouds" | "hangingWood";
+  /** Arena theme key from `ARENA_THEMES`. Defaults to voidVessel when omitted. */
+  arenaTheme?:
+    | "voidVessel"
+    | "crystalDock"
+    | "autogenesHull"
+    | "jadeIsles"
+    | "ivoryClouds"
+    | "hangingWood";
 };

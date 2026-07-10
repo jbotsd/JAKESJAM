@@ -13,7 +13,7 @@
 //   This file is responsible for steps 1-2 only; steps 3-4 are out of scope.
 //
 // FishNet-inspired grid observer pattern. The grid is rebuilt from scratch each
-// tick snapshot (called ~6× per second at SNAPSHOT_INTERVAL_TICKS=10 @ 60Hz).
+// tick snapshot (20× per second at SNAPSHOT_INTERVAL_TICKS=3 @ 60Hz).
 // Rebuild cost is O(E) where E = total entity count; observe cost is O(R²) where
 // R = OBSERVE_RADIUS_CELLS (typically 2, giving a 5×5 neighbourhood = 25 cells).
 
