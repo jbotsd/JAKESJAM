@@ -151,6 +151,13 @@ be recording.
 - Replay-rendered clip of a stored match is pixel-plausible against a live
   screen recording of the same match (same events, same positions, same
   camera behaviour) and renders ≥ 2× realtime on the 4080.
+  **FOUNDATION PASSED 2026-07-10**: a real 7-minute world match (25,476
+  ticks, 69,212 inputs, 7MB .jjr) re-simulated from disk to its exact
+  final state in 0.51s — **830× realtime**, backend=ts, 0 fallback ticks.
+  Re-sim cost is negligible; the renderer's budget is pure rendering.
+  Known format gap for the renderer: the replay header rosters only
+  match-start players — mid-match join/leave must be recorded (roster
+  deltas) before world replays reconstruct every participant.
 - A player who joined from a phone gets a highlight clip of their own kill
   without their phone having encoded anything.
 
