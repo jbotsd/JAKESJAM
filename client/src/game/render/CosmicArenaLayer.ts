@@ -14,6 +14,7 @@
  */
 
 import Phaser from "phaser";
+import { getQualityProfile } from "./qualityProfile.js";
 import { getSonicField } from "../systems/SonicField";
 import { PALETTE } from "../ui/palette";
 
@@ -96,6 +97,11 @@ export class CosmicArenaLayer {
 
   spawn(worldW: number, worldH: number): void {
     this.destroy();
+    // Potato tier: the vault's additive seal/twinkle stack is fullscreen
+    // blended fill — the exact cost VideoCore can't pay (measured on a
+    // real Pi 5, 2026-07-10: ~12fps with it, see END_PRODUCT_GOAL). The
+    // backdrop gradient + platforms carry the look on weak GPUs.
+    if (getQualityProfile().fxLevel === 0) return;
     this.alive = true;
     this.motifX = worldW * 0.5;
     this.motifY = worldH * 0.5;

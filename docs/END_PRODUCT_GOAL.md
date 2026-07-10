@@ -35,6 +35,18 @@ always wins.
 **Acceptance tests**
 - Pi 5 in Chromium: median frame time ≤ 16.7ms over a 10-minute bot match at
   720p; no interaction ever blocks on a frame spike > 100ms.
+  **MEASURED ON THE REAL Pi 5 2026-07-10 (the living-room rpi, VideoCore
+  VII / V3D 7.1.7 confirmed hardware-accelerated)**: auto-detection picked
+  potato correctly; governor floored renderScale at 0.5 (960×540). First
+  measurement: ~10fps in combat — two causes found and FIXED same session:
+  (1) the Pi was software-encoding clips of itself (capture now disabled
+  on potato; the replay renderer covers its highlights), (2) the cosmic
+  vault's additive fullscreen stack (now gated at fxLevel 0). Result:
+  ~20fps sustained in combat at 540p — 2× in one session, "deliberately
+  clean" look verified by screenshot (baked rigs + contract FX, zero
+  fullscreen glow). Remaining gap to 30fps target: platform-layer fill and
+  ARM sim cost are the next suspects; row stays OPEN but is now measured,
+  instrumented, and improving on real hardware.
 - Mid-range Android phone: 60fps for 15 continuous minutes (thermal
   equilibrium), touch-only player completes a match and lands kills.
 - iPhone Safari: lock the screen 10s mid-match, unlock → rejoined and

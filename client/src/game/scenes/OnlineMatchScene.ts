@@ -2231,6 +2231,14 @@ export class OnlineMatchScene extends Phaser.Scene {
    */
   private ensureClipCapture(): void {
     if (this.clipRecorder || !isClipsEnabled()) return;
+    // Potato tier NEVER encodes video of itself — measured on a real Pi 5
+    // (2026-07-10): in-combat software encode dragged VideoCore from
+    // playable to ~10fps. Pillar 4's whole design is that weak devices get
+    // their highlights from the server-side replay renderer instead.
+    if (getQualityProfile().tier === "potato") {
+      console.log("[clips] potato tier — capture disabled (replay renderer covers highlights)");
+      return;
+    }
     this.highlightTracker = new HighlightTracker();
     // Each trigger produces TWO uploads (vertical + original). Pair them
     // for one toast; if partner never lands, toast whatever arrived.
