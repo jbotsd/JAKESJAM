@@ -130,6 +130,12 @@ be recording.
   NVENC buffer).
 - Kill → shareable vertical clip URL in < 60s, crisp enough that text/HUD
   in the clip is readable on a phone.
+  **LOOP EVIDENCE 2026-07-10** (automated player, not yet a human): probe
+  clicked the world URL → joined → fought via bot driver → trigger →
+  1920×938 mezzanine + NVENC 720×1280 vertical uploaded ≈13s later →
+  share page `/c/<id>` and vertical media both public 200 with og:video
+  tags. Capture ran with preserveDrawingBuffer:false via POST_RENDER;
+  frames verified non-black; HUD text readable in the vertical.
 - Replay-rendered clip of a stored match is pixel-plausible against a live
   screen recording of the same match (same events, same positions, same
   camera behaviour) and renders ≥ 2× realtime on the 4080.
