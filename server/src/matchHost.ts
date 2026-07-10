@@ -1224,6 +1224,22 @@ export class MatchHost {
    * (logged in convexClient) so a Convex outage never crashes the sim.
    */
   private async postMatchResult(): Promise<void> {
+    // LOCAL replay persist FIRST — it must not sit behind any Convex call:
+    // on a self-hosted box with no CONVEX_URL, getMatchSummary() returns
+    // null and the early-return below used to silently skip persistence
+    // for every world match (found 2026-07-10: four completed matches,
+    // zero .jjr files).
+    try {
+      const bytes = this.replayRecorder.serialize();
+      if (bytes.byteLength > 0) {
+        const saved = persistReplay(this.matchId, bytes);
+        if (saved) console.log(`[matchHost ${this.matchId}] replay persisted: ${saved}`);
+      }
+    } catch (err) {
+      console.warn(
+        `[matchHost ${this.matchId}] replay persist failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
     try {
       const matchId = this.matchId as ConvexId;
       const summary = await convexClient.getMatchSummary(matchId);
@@ -1244,14 +1260,11 @@ export class MatchHost {
         finalScores,
         roundsPlayed,
       });
-      // Fire-and-forget replay upload — never blocks "GG" + results screen.
-      // Local disk FIRST (kilobytes; feeds the headless replay renderer and
-      // survives Convex being down), then the Convex cold copy.
+      // Fire-and-forget Convex cold copy (local persist already happened
+      // above, before any Convex dependency).
       try {
         const bytes = this.replayRecorder.serialize();
         if (bytes.byteLength > 0) {
-          const saved = persistReplay(matchId, bytes);
-          if (saved) console.log(`[matchHost ${this.matchId}] replay persisted: ${saved}`);
           void convexClient.saveReplay(matchId, bytes);
         }
       } catch (err) {
