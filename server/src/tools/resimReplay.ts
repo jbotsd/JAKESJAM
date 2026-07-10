@@ -17,7 +17,8 @@ import { STEP_MS, World } from "@sim/index.ts";
 import { createRuntime, stepWithRuntime } from "@sim/World.ts";
 import { resolveMap } from "@sim/data/maps.ts";
 import type { InputFrame, PlayerId } from "@sim/types.ts";
-import type { ReplayHeader, ReplayInputEntry } from "../ReplayRecorder.ts";
+import type { ReplayHeader, ReplayInputEntry, ReplayRosterEvent } from "../ReplayRecorder.ts";
+import { applyMidMatchJoin, applyRosterLeave } from "../rosterOps.ts";
 
 const path = process.argv[2];
 if (!path) {
@@ -29,7 +30,7 @@ const bytes = new Uint8Array(await Bun.file(path).arrayBuffer());
 const { header, inputs, rosterEvents } = msgpackDecode(bytes) as {
   header: ReplayHeader;
   inputs: ReplayInputEntry[];
-  rosterEvents?: Array<{ atTick: number; t: string }>;
+  rosterEvents?: ReplayRosterEvent[];
 };
 
 console.log(
@@ -38,10 +39,7 @@ console.log(
     `backend=${header.simBackend ?? "unknown"} fallbackTicks=${header.backendFallbackTicks ?? 0}`,
 );
 if (rosterEvents && rosterEvents.length > 0) {
-  console.warn(
-    `warning: ${rosterEvents.length} mid-match roster events recorded — this tool does not ` +
-      `apply them yet, so joiners/leavers are missing from this reconstruction (renderer TODO)`,
-  );
+  console.log(`roster events: ${rosterEvents.length} (applied at their ticks)`);
 }
 if (header.simBackend === "wasm") {
   console.warn(
@@ -64,12 +62,28 @@ for (const e of inputs) {
   if (!b) byTick.set(e.atTick, (b = []));
   b.push(e);
 }
+const rosterByTick = new Map<number, ReplayRosterEvent[]>();
+for (const e of rosterEvents ?? []) {
+  let b = rosterByTick.get(e.atTick);
+  if (!b) rosterByTick.set(e.atTick, (b = []));
+  b.push(e);
+}
 
 let state = World.create(map, spawns, header.rngSeed, [...header.chaosModifierIds]);
 const runtime = createRuntime(map);
 const t0 = performance.now();
 let applied = 0;
 while (state.tick < header.totalTicks) {
+  // Roster events for tick T apply BEFORE stepping T — joins happen between
+  // ticks and the host's eviction runs at the top of tick(), before the step.
+  const roster = rosterByTick.get(state.tick);
+  if (roster) {
+    for (const ev of roster) {
+      state = ev.t === "join"
+        ? applyMidMatchJoin(state, map, ev.spawn)
+        : applyRosterLeave(state, ev.playerId);
+    }
+  }
   const entries = byTick.get(state.tick);
   const frame: Record<PlayerId, InputFrame | null> = {};
   if (entries) {

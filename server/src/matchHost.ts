@@ -49,6 +49,7 @@ import { InterestGrid, CELL_SIZE_PX, OBSERVE_RADIUS_CELLS } from "./InterestGrid
 import { encodeDelta } from "@net/snapshotDelta.ts";
 import { makeHitSweepScratch } from "@sim/projectile.ts";
 import { transferAuthority } from "./authority.ts";
+import { applyMidMatchJoin, applyRosterLeave } from "./rosterOps.ts";
 import { maybeSignalHostClip } from "./hostReplayBuffer.ts";
 import { persistReplay } from "./replayStore.ts";
 import { ReplayRecorder } from "./ReplayRecorder.ts";
@@ -535,63 +536,9 @@ export class MatchHost {
     });
     this.lastProcessedInputSeq.set(spawn.playerId, 0 as InputSeq);
 
-    // Mid-match join: spawn at the point FARTHEST from where living players
-    // currently are (not a fixed index) — avoids dropping a joiner straight
-    // into a firefight or on top of someone. Deterministic given state.
-    const occupied = Object.values(this.state.players)
-      .filter((p) => p.alive)
-      .map((p) => ({ x: p.x, y: p.y }));
-    const candidates =
-      this.map.spawns.length > 0
-        ? this.map.spawns
-        : [{ x: this.map.size.x / 2, y: this.map.size.y / 2 }];
-    let spawnPoint = candidates[0] ?? { x: 0, y: 0 };
-    let bestMinDist = -1;
-    for (const c of candidates) {
-      let minD = Infinity;
-      for (const o of occupied) minD = Math.min(minD, Math.hypot(c.x - o.x, c.y - o.y));
-      if (occupied.length === 0) {
-        spawnPoint = c;
-        break;
-      }
-      if (minD > bestMinDist) {
-        bestMinDist = minD;
-        spawnPoint = c;
-      }
-    }
-    this.state = {
-      ...this.state,
-      players: {
-        ...this.state.players,
-        [spawn.playerId]: {
-          id: spawn.playerId,
-          characterId: spawn.characterId,
-          x: spawnPoint.x,
-          y: spawnPoint.y,
-          vx: 0,
-          vy: 0,
-          aimX: spawnPoint.x + 160,
-          aimY: spawnPoint.y,
-          health: 100,
-          shieldActive: false,
-          crouching: false,
-          alive: true,
-          weaponId: spawn.weaponId,
-          cards: [],
-          fireCooldownMs: 0,
-          ammo: 0,
-          abilityCharge: 0,
-          lastProcessedInputSeq: 0,
-        },
-      },
-      round: {
-        ...this.state.round,
-        scores: {
-          ...this.state.round.scores,
-          [spawn.playerId]: 0,
-        },
-      },
-    };
+    // Shared roster op — the replay re-sim must apply the IDENTICAL state
+    // surgery (rosterOps.ts), so the live host and playback run one code path.
+    this.state = applyMidMatchJoin(this.state, this.map, spawn);
   }
 
   routeMessage(ws: ServerWebSocket<MatchSocketData>, raw: Buffer | ArrayBuffer | Uint8Array): void {
@@ -867,39 +814,11 @@ export class MatchHost {
       // many disconnect/reconnect cycles leak BASELINE_RING_SIZE WorldStates
       // per departed player.
       this.baselineRing.delete(playerId);
-      // Strip the entity + score from the world state. We rebuild the maps
-      // immutably to stay consistent with how addPlayer mutates state.
-      const nextPlayers = { ...this.state.players };
-      delete nextPlayers[playerId];
-      const nextScores = { ...this.state.round.scores };
-      delete nextScores[playerId];
-      // Rewrite in-flight entities owned by the evicted player to world-owned
-      // (null) so stale ownerId references don't linger in the sim.
-      // Scrub drafting bookkeeping for the evicted player. Without this,
-      // a player who disconnected mid-drafting keeps their entry in
-      // draftingOffers / draftingPicked. Combined with the resolution
-      // gate keyed off draftingOffers keys, that would deadlock the
-      // world: their offers stay, their pick never lands, drafting
-      // never resolves.
-      const nextDraftingOffers = this.state.round.draftingOffers
-        ? { ...this.state.round.draftingOffers }
-        : undefined;
-      if (nextDraftingOffers) delete nextDraftingOffers[playerId];
-      const nextDraftingPicked = this.state.round.draftingPicked
-        ? { ...this.state.round.draftingPicked }
-        : undefined;
-      if (nextDraftingPicked) delete nextDraftingPicked[playerId];
-      const stateAfterPlayerEviction = {
-        ...this.state,
-        players: nextPlayers,
-        round: {
-          ...this.state.round,
-          scores: nextScores,
-          draftingOffers: nextDraftingOffers,
-          draftingPicked: nextDraftingPicked,
-        },
-      };
-      this.state = transferAuthority(stateAfterPlayerEviction, playerId, null);
+      // Shared roster op (rosterOps.ts) — one code path with replay playback.
+      // Strips entity + score + drafting bookkeeping and rewrites owned
+      // entities to world-owned (stale ownerIds must not linger; a
+      // mid-draft leaver must not deadlock the drafting resolution gate).
+      this.state = applyRosterLeave(this.state, playerId);
       evicted = true;
       console.log(
         `[matchHost ${this.matchId}] evicted player ${playerId} after ${RECONNECT_GRACE_MS}ms reconnect grace`,
