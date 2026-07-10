@@ -124,6 +124,13 @@ export type NetStats = {
   diagFireSteps?: number;
   diagPredictedSpawns?: number;
   lastReplayDebug?: Record<string, unknown> | null;
+  /**
+   * EMA of the render-frame delta (ms) — the same signal the adaptive
+   * interpolation delay keys off. 60fps ≈ 16.7; sustained > ~20 means the
+   * main thread is struggling (encoder load, weak GPU, thermal throttle).
+   * Also the input the QualityProfile governor will consume.
+   */
+  frameDtEmaMs: number;
 };
 
 export type ReconcileStats = {
@@ -148,6 +155,7 @@ export const EMPTY_NET_STATS: NetStats = {
   transportState: "closed",
   slewMsAvg: 0,
   lastReconcileSkippedEntities: 0,
+  frameDtEmaMs: 0,
 };
 
 /**
@@ -601,6 +609,7 @@ export class ClientLoop {
       diagFireSteps: this.diagFireSteps,
       diagPredictedSpawns: this.diagPredictedSpawns,
       lastReplayDebug: this.lastReplayDebug,
+      frameDtEmaMs: this.frameDtEmaMs,
     };
   }
 

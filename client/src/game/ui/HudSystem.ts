@@ -43,11 +43,6 @@ export type HudVitals = {
   shieldMaxCharge?: number;
   /** Active buff/debuff chip descriptors */
   chips: HudChip[];
-  /**
-   * Short card names in pick order. No longer rendered in the HUD —
-   * cards are visible during the draft overlay. Kept for type compat.
-   */
-  cardNames?: string[];
   /** 0-1 ability charge fraction — drives the dot-row ammo display. */
   abilityCharge?: number;
   /** Card ids in pick order — drives the build-summary pill grid. */

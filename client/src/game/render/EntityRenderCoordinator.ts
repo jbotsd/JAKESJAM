@@ -85,6 +85,10 @@ export class EntityRenderCoordinator {
 
   private readonly prevDestructibleHealth = new Map<number, number>();
   private readonly destructibleFlashUntilMs = new Map<number, number>();
+  /** Per-frame scratch — reused so the render loop allocates nothing
+   *  (the old `new Set()` + `Object.entries()` pair churned every frame). */
+  private readonly seenScratch = new Set<number>();
+  private readonly staleScratch: number[] = [];
 
   constructor(scene: Phaser.Scene, cfg: EntityRenderConfig, pool: ParticlePool | null = null) {
     this.scene = scene;
@@ -133,8 +137,10 @@ export class EntityRenderCoordinator {
   private renderDestructibles(state: WorldState, nowMs: number): void {
     const graphics = this.destructibleGraphics;
     graphics.clear();
-    const seen = new Set<number>();
-    for (const [idStr, obj] of Object.entries(state.destructibles)) {
+    const seen = this.seenScratch;
+    seen.clear();
+    for (const idStr in state.destructibles) {
+      const obj = state.destructibles[idStr as unknown as keyof typeof state.destructibles]!;
       const id = Number(idStr);
       seen.add(id);
       const prev = this.prevDestructibleHealth.get(id);
@@ -145,33 +151,40 @@ export class EntityRenderCoordinator {
       const flashing = (this.destructibleFlashUntilMs.get(id) ?? 0) > nowMs;
       this.cfg.drawDestructible(graphics, obj, flashing);
     }
+    // Two-pass delete via scratch list — deleting while iterating a Map's
+    // keys() is legal but the scratch keeps intent explicit and alloc-free.
+    const stale = this.staleScratch;
+    stale.length = 0;
     for (const id of this.prevDestructibleHealth.keys()) {
-      if (!seen.has(id)) {
-        this.prevDestructibleHealth.delete(id);
-        this.destructibleFlashUntilMs.delete(id);
-      }
+      if (!seen.has(id)) stale.push(id);
+    }
+    for (const id of stale) {
+      this.prevDestructibleHealth.delete(id);
+      this.destructibleFlashUntilMs.delete(id);
     }
   }
 
   private renderFirePatches(state: WorldState, nowMs: number): void {
     const graphics = this.fireGraphics;
     graphics.clear();
-    for (const fire of Object.values(state.firePatches)) {
-      this.cfg.drawFirePatch(graphics, fire, nowMs);
+    for (const id in state.firePatches) {
+      this.cfg.drawFirePatch(graphics, state.firePatches[id as unknown as keyof typeof state.firePatches]!, nowMs);
     }
   }
 
   private renderPickups(state: WorldState, nowMs: number): void {
     const graphics = this.pickupGraphics;
     graphics.clear();
-    for (const pickup of Object.values(state.pickups)) {
-      this.cfg.drawPickup(graphics, pickup, nowMs);
+    for (const id in state.pickups) {
+      this.cfg.drawPickup(graphics, state.pickups[id as unknown as keyof typeof state.pickups]!, nowMs);
     }
   }
 
   private renderSatellites(state: WorldState): void {
-    const seen = new Set<number>();
-    for (const [idStr, sat] of Object.entries(state.satellites)) {
+    const seen = this.seenScratch;
+    seen.clear();
+    for (const idStr in state.satellites) {
+      const sat = state.satellites[idStr as unknown as keyof typeof state.satellites]!;
       const id = Number(idStr);
       seen.add(id);
       const owner = sat.ownerId !== null ? state.players[sat.ownerId] : undefined;
@@ -187,11 +200,14 @@ export class EntityRenderCoordinator {
       }
       arc.setPosition(x, y);
     }
-    for (const [id, arc] of this.satelliteSprites) {
-      if (!seen.has(id)) {
-        arc.destroy();
-        this.satelliteSprites.delete(id);
-      }
+    const stale = this.staleScratch;
+    stale.length = 0;
+    for (const id of this.satelliteSprites.keys()) {
+      if (!seen.has(id)) stale.push(id);
+    }
+    for (const id of stale) {
+      this.satelliteSprites.get(id)?.destroy();
+      this.satelliteSprites.delete(id);
     }
   }
 }

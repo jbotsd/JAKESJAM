@@ -30,6 +30,7 @@ import { ActionIntensity } from "../systems/ActionIntensity.js";
 import { ActionCamera } from "../systems/ActionCamera.js";
 import { CameraJuice } from "../systems/CameraJuice.js";
 import { installHudCamera } from "../systems/HudCamera.js";
+import { getRenderScale } from "../render/renderResolution.js";
 import type { RoomPlayer } from "../types/net";
 
 const PLAYER_VISUAL_SCALE = 0.78;
@@ -441,7 +442,8 @@ export class MatchScene extends Phaser.Scene {
     // Crop in so the character is the main event (see HudCamera / research).
     // Desktop 1.4; touch stays 1.0 (small screen already frames large, and a
     // precision movement course needs the platform sightlines).
-    this.actionCamera.setBaseZoom(isTouchPrimary() ? 1.0 : PRACTICE_CAM_ZOOM);
+    // × renderScale keeps world framing identical at every backing resolution.
+    this.actionCamera.setBaseZoom((isTouchPrimary() ? 1.0 : PRACTICE_CAM_ZOOM) * getRenderScale());
     // No ActionIntensity passed: Practice bumps intensity explicitly in
     // updateMovementJuice, so routing it here too would double-count.
     this.cameraJuice = new CameraJuice(this.actionCamera);

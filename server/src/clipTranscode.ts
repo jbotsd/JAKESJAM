@@ -122,17 +122,31 @@ export async function transcodeVertical(opts: {
     `scale=${DEST_W}:${DEST_H}:flags=lanczos${label}`;
 
   try {
+    // p7/tune-hq with temporal+spatial AQ and lookahead: NVENC preset cost
+    // is irrelevant at clip length (~4s for a 30s clip on the dual-encoder
+    // 4080), so always spend the quality. cq 19 ≈ social-upload-survivable
+    // for 720x1280 game content (platforms re-encode; feed them quality).
     const nvenc = await runFfmpeg([
       "-y",
       "-i", srcPath,
       "-vf", filter(""),
       "-c:v", "h264_nvenc",
-      "-preset", "p5",
+      "-preset", "p7",
+      "-tune", "hq",
+      "-profile:v", "high",
       "-rc", "vbr",
-      "-cq", "22",
+      "-cq", "19",
       "-b:v", "0",
       "-maxrate", "14M",
-      "-bufsize", "20M",
+      "-bufsize", "24M",
+      "-bf", "3",
+      "-b_ref_mode", "middle",
+      "-rc-lookahead", "32",
+      "-multipass", "fullres",
+      "-spatial-aq", "1",
+      "-aq-strength", "8",
+      "-temporal-aq", "1",
+      "-pix_fmt", "yuv420p",
       "-movflags", "+faststart",
       "-an",
       dstPath,

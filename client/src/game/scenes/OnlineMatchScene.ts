@@ -84,6 +84,7 @@ import { ActionCamera } from "../systems/ActionCamera.js";
 import { stickyEnvelopeSubjects } from "../systems/actionCameraMath.js";
 import { CameraJuice } from "../systems/CameraJuice.js";
 import { installHudCamera } from "../systems/HudCamera.js";
+import { getRenderScale } from "../render/renderResolution.js";
 import { playCardPickFeel } from "../render/CardFeel.js";
 
 // Portrait-mobile camera framing. The arena is 2:1 wide but a phone held
@@ -315,7 +316,7 @@ export class OnlineMatchScene extends Phaser.Scene {
   private detOverlay: Phaser.GameObjects.Text | null = null;
   private detOverlayVisible = false;
   // Reused buffer so we don't allocate a new string-array each frame.
-  private readonly statsLineBuf: string[] = ["", "", "", "", "", ""];
+  private readonly statsLineBuf: string[] = ["", "", "", "", "", "", "", ""];
 
   // ---- New shared UI systems ----
   private hudSystem: HudSystem | null = null;
@@ -371,6 +372,9 @@ export class OnlineMatchScene extends Phaser.Scene {
   // ---- Kill-streak tracking (render-only, per combat-balance-ttk taste) ----
   // Track which player ids were alive last frame so we can detect transitions.
   private prevAlive = new Set<string>();
+  // Per-frame scratch (renderWorld) — reused to keep the hot path zero-alloc.
+  private seenPlayersScratch = new Set<string>();
+  private newlyDeadScratch: string[] = [];
   // Per-killer kill count in the current round for escalating callouts.
   private killStreakCount = new Map<string, number>();
   // Clip 9:16 crop focus in WORLD space — envelopes local + a STICKY duel
@@ -801,12 +805,6 @@ export class OnlineMatchScene extends Phaser.Scene {
       }
     }
 
-    const cardNames: string[] = local
-      ? local.cards
-          .map((id) => crystalRoundsCards.find((c) => c.id === id)?.name)
-          .filter((n): n is string => Boolean(n))
-      : [];
-
     const vitals: HudVitals = {
       health: local?.health ?? 0,
       maxHealth,
@@ -816,7 +814,6 @@ export class OnlineMatchScene extends Phaser.Scene {
       // game (the sim field is pinned for ABI stability only), so the HUD
       // bar was rendering a meaningless frozen "125%" forever.
       chips,
-      cardNames,
       isDead: !local || local.health <= 0 || !local.alive,
     };
 
@@ -950,12 +947,14 @@ export class OnlineMatchScene extends Phaser.Scene {
     if (!this.loop || !this.statsText) return;
     const stats: NetStats = this.loop.getNetStats();
     const buf = this.statsLineBuf;
-    buf[0] = `RTT       ${stats.rttMs.toFixed(1)} ms`;
-    buf[1] = `Snap rate ${stats.snapRateHz} Hz`;
-    buf[2] = `Pending   ${stats.pendingInputs}`;
-    buf[3] = `Δ pred    ${stats.lastPredictDeltaPx.toFixed(2)} px`;
-    buf[4] = `Last tick ${stats.lastSnapshotTick}`;
-    buf[5] = `Conn      ${stats.transportState}`;
+    buf[0] = `FPS       ${Math.round(this.game.loop.actualFps)}`;
+    buf[1] = `Frame Δ   ${stats.frameDtEmaMs.toFixed(1)} ms ema`;
+    buf[2] = `RTT       ${stats.rttMs.toFixed(1)} ms`;
+    buf[3] = `Snap rate ${stats.snapRateHz} Hz`;
+    buf[4] = `Pending   ${stats.pendingInputs}`;
+    buf[5] = `Δ pred    ${stats.lastPredictDeltaPx.toFixed(2)} px`;
+    buf[6] = `Last tick ${stats.lastSnapshotTick}`;
+    buf[7] = `Conn      ${stats.transportState}`;
     this.statsText.setText(buf);
   }
 
@@ -1520,10 +1519,16 @@ export class OnlineMatchScene extends Phaser.Scene {
 
   private renderWorld(state: WorldState, deltaMs: number, nowMs: number) {
     // Players — procedurally rigged puppets, matching the offline MatchScene.
-    const seenPlayers = new Set<string>();
+    // Scratch collections + for-in: this runs every frame, and the old
+    // `new Set()` + `Object.entries()` pair allocated on every call
+    // (game-loop-perf: zero-alloc hot path).
+    const seenPlayers = this.seenPlayersScratch;
+    seenPlayers.clear();
     // Detect alive→dead transitions this frame for kill-streak callouts.
-    const newlyDead: string[] = [];
-    for (const [pid, player] of Object.entries(state.players)) {
+    const newlyDead = this.newlyDeadScratch;
+    newlyDead.length = 0;
+    for (const pid in state.players) {
+      const player = state.players[PlayerId(pid)]!;
       seenPlayers.add(pid);
       const wasAlive = this.prevAlive.has(pid);
       const isAlive = player.alive && player.health > 0;
@@ -1733,8 +1738,16 @@ export class OnlineMatchScene extends Phaser.Scene {
   /** Cache createWeaponBuild — was rebuilt every rig every frame. */
   private readonly buildCacheByPid = new Map<
     string,
-    { key: string; maxHealthAdd: number; parryCover: number }
+    { ids: readonly string[]; maxHealthAdd: number; parryCover: number }
   >();
+
+  /** Element-wise compare so the per-frame cache check allocates nothing —
+   *  the old `cardIds.join(",")` built a string per player per frame. */
+  private static cardIdsEqual(a: readonly string[], b: readonly string[]): boolean {
+    if (a.length !== b.length) return false;
+    for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
+    return true;
+  }
 
   /** Reused every rig update — the rig consumes the pose synchronously
    *  (copies what it keeps), so one mutable scratch object replaces four
@@ -1811,23 +1824,22 @@ export class OnlineMatchScene extends Phaser.Scene {
     pose.grounded = player.grounded ?? true;
     pose.crouching = player.crouching;
     pose.health = player.health;
-    // Card-driven plating — cache by card-id key (no rebuild every frame).
+    // Card-driven plating — cache by card-id list (no rebuild every frame).
     const cardIds = player.cards ?? [];
-    const cardKey = cardIds.join(",");
     let cached = this.buildCacheByPid.get(pid);
-    if (!cached || cached.key !== cardKey) {
+    if (!cached || !OnlineMatchScene.cardIdsEqual(cached.ids, cardIds)) {
       if (cardIds.length > 0) {
         const build = createWeaponBuild(
           starterWeapon,
           findCardsById(crystalRoundsCards, cardIds),
         );
         cached = {
-          key: cardKey,
+          ids: cardIds.slice(),
           maxHealthAdd: build.maxHealthAdd ?? 0,
           parryCover: build.parryCoverMultiplier ?? 1,
         };
       } else {
-        cached = { key: cardKey, maxHealthAdd: 0, parryCover: 1 };
+        cached = { ids: cardIds.slice(), maxHealthAdd: 0, parryCover: 1 };
       }
       this.buildCacheByPid.set(pid, cached);
     }
@@ -2015,7 +2027,10 @@ export class OnlineMatchScene extends Phaser.Scene {
    * Called on create and whenever the viewport resizes (orientation change).
    */
   private applyMobileCamera(): void {
-    const zoom = isPortraitMobile() ? PORTRAIT_CAM_ZOOM : DESKTOP_CAM_ZOOM;
+    // × renderScale: the backing store is scaled, so the camera zooms by the
+    // same factor to keep the WORLD framing identical at every resolution
+    // (rs=1 today ⇒ no-op; the dial is the quality ladder's master knob).
+    const zoom = (isPortraitMobile() ? PORTRAIT_CAM_ZOOM : DESKTOP_CAM_ZOOM) * getRenderScale();
     // Route through the ActionCamera so its punch-zoom returns to this base.
     // Guarded because applyMobileCamera also fires once in create() before
     // the ActionCamera exists (resize listener); the direct setZoom covers
@@ -2184,12 +2199,21 @@ export class OnlineMatchScene extends Phaser.Scene {
       onError: (err) => console.warn("[clips] capture/upload failed:", err),
     });
     this.clipRecorder.start();
+    // Drive capture from POST_RENDER: same task as the WebGL draw, so the
+    // drawing buffer is still intact — this is what lets the game run with
+    // preserveDrawingBuffer:false (see GameConfig). Recorder paces itself.
+    this.game.events.on(Phaser.Core.Events.POST_RENDER, this.onPostRenderClipCapture, this);
     (window as unknown as { __clipsTrigger?: () => void }).__clipsTrigger = () =>
       this.clipRecorder?.trigger();
     console.log("[clips] recorder started (segment buffer rolling)");
   }
 
+  private onPostRenderClipCapture(): void {
+    this.clipRecorder?.captureFrame();
+  }
+
   private stopClipCapture(): void {
+    this.game.events.off(Phaser.Core.Events.POST_RENDER, this.onPostRenderClipCapture, this);
     this.clipRecorder?.stop();
     this.clipRecorder = null;
     this.highlightTracker = null;

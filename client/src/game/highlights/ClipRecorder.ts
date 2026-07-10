@@ -133,7 +133,7 @@ export class ClipRecorder {
   private stopped = true;
   private mimeType: string | null = null;
   private readonly sourceCanvas: HTMLCanvasElement;
-  private drawRafId: number | null = null;
+  private lastDrawAtMs = 0;
   private readonly deps: ClipRecorderDeps;
   /** Smoothed crop-window center (source-canvas px). NaN = uninitialised —
    *  first frame snaps straight to the target instead of panning in. */
@@ -179,8 +179,10 @@ export class ClipRecorder {
     this.stopped = false;
     this.focusX = Number.NaN;
     this.focusY = Number.NaN;
+    this.lastDrawAtMs = 0;
     this.beginSegment();
-    this.startDrawLoop();
+    // No internal rAF loop: the host drives capture via captureFrame() from
+    // Phaser's POST_RENDER hook — see the preserveDrawingBuffer note below.
   }
 
   stop(): void {
@@ -188,10 +190,6 @@ export class ClipRecorder {
     if (this.rotateTimer !== null) {
       clearTimeout(this.rotateTimer);
       this.rotateTimer = null;
-    }
-    if (this.drawRafId !== null) {
-      cancelAnimationFrame(this.drawRafId);
-      this.drawRafId = null;
     }
     this.pendingFinishAtMs = null;
     // onstop will fire but `this.stopped` guards it from starting a new
@@ -220,20 +218,19 @@ export class ClipRecorder {
     };
   }
 
-  private startDrawLoop(): void {
-    let lastDrawAt = 0;
-    const draw = (nowMs: number) => {
-      if (this.stopped) return;
-      // Pace to CAPTURE_FPS — drawing (and feeding the encoders) at full
-      // display rate doubled the encode load for frames the 30fps stream
-      // would drop anyway.
-      if (nowMs - lastDrawAt >= DRAW_INTERVAL_MS - 1) {
-        this.drawFrame(nowMs - (lastDrawAt || nowMs));
-        lastDrawAt = nowMs;
-      }
-      this.drawRafId = requestAnimationFrame(draw);
-    };
-    this.drawRafId = requestAnimationFrame(draw);
+  /** Drive one capture tick. MUST be called synchronously in the same task
+   *  as the WebGL draw (Phaser POST_RENDER) — that guarantee is what lets
+   *  the game run with preserveDrawingBuffer:false: the drawing buffer is
+   *  only cleared after the task that drew it yields to the compositor.
+   *  Paced internally to CAPTURE_FPS — drawing (and feeding the encoder) at
+   *  full display rate doubled the encode load for frames the 30fps stream
+   *  would drop anyway. A hidden tab stops Phaser's loop → no frames → the
+   *  dud-guard drops the header-only blob, same as the old rAF loop. */
+  captureFrame(nowMs: number = performance.now()): void {
+    if (this.stopped) return;
+    if (nowMs - this.lastDrawAtMs < DRAW_INTERVAL_MS - 1) return;
+    this.drawFrame(nowMs - (this.lastDrawAtMs || nowMs));
+    this.lastDrawAtMs = nowMs;
   }
 
   private drawFrame(frameDtMs: number): void {

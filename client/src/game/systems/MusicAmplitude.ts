@@ -1,11 +1,16 @@
-// Live music amplitude for arena juice. Fed by main.ts AnalyserNode via
-// `jakesjam:music-level` CustomEvent. Pure render-layer — never touches sim.
+// Live music amplitude for arena juice — a thin music-only VIEW over the
+// shared SonicField (main.ts writes bands there every analyser tick).
+// Pure render-layer — never touches sim.
+//
+// Formerly fed by a `jakesjam:music-level` CustomEvent; that allocated and
+// dispatched a fresh event+detail object EVERY rAF (game-loop-perf: pure
+// heap churn). SonicField is the single source of truth now; this module
+// exists so env-bloom-style consumers keep a music-only type.
 //
 // Values are 0..1 smoothed bands. `pulse` blends bass+rms for a single
 // "how hard is the track pumping" cue; `beat` is a short spike on bass hits.
-//
-// Prefer `getSonicField()` (music + voice) for CosmicArenaLayer; this module
-// remains for env bloom / legacy consumers that only need music bands.
+
+import { getSonicField } from "./SonicField";
 
 export type MusicLevel = {
   /** ~20–200 Hz energy */
@@ -22,9 +27,8 @@ export type MusicLevel = {
   beat: number;
 };
 
-const EVENT = "jakesjam:music-level";
-
-const REST: MusicLevel = {
+/** Reused every call — hot path, never clone. */
+const view: MusicLevel = {
   bass: 0,
   mid: 0,
   high: 0,
@@ -33,38 +37,14 @@ const REST: MusicLevel = {
   beat: 0,
 };
 
-let current: MusicLevel = { ...REST };
-let listening = false;
-
-function onLevel(ev: Event): void {
-  const d = (ev as CustomEvent<Partial<MusicLevel>>).detail;
-  if (!d) return;
-  current = {
-    bass: clamp01(d.bass ?? 0),
-    mid: clamp01(d.mid ?? 0),
-    high: clamp01(d.high ?? 0),
-    rms: clamp01(d.rms ?? 0),
-    pulse: clamp01(d.pulse ?? 0),
-    beat: clamp01(d.beat ?? 0),
-  };
-}
-
-function ensureListen(): void {
-  if (listening) return;
-  listening = true;
-  // globalThis works in browser (window) and bun tests
-  globalThis.addEventListener?.(EVENT, onLevel as EventListener);
-}
-
-function clamp01(n: number): number {
-  return n < 0 ? 0 : n > 1 ? 1 : n;
-}
-
-/** Latest smoothed bands. Safe to call every frame. */
+/** Latest smoothed bands (same object every call). Safe to call every frame. */
 export function getMusicLevel(): MusicLevel {
-  ensureListen();
-  return current;
+  const f = getSonicField();
+  view.bass = f.bass;
+  view.mid = f.mid;
+  view.high = f.high;
+  view.rms = f.rms;
+  view.pulse = f.pulse;
+  view.beat = f.beat;
+  return view;
 }
-
-/** Event name main.ts dispatches (for tests / tooling). */
-export const MUSIC_LEVEL_EVENT = EVENT;

@@ -15,7 +15,12 @@ export function springState(value: number): SpringState {
 
 /** Advance a spring toward `target`. `frequencyHz` sets oscillation speed,
  *  `dampingRatio` < 1 underdamps (visible overshoot/wobble), 1 critically
- *  damps (no overshoot), > 1 overdamps (sluggish). */
+ *  damps (no overshoot), > 1 overdamps (sluggish).
+ *
+ *  MUTATES `state` and returns it — the rig advances ~14 springs per player
+ *  per frame, and the previous fresh-object return was a top per-frame
+ *  allocation source (game-loop-perf). Every call site is
+ *  `x = springTo(x, ...)`, so in-place is behavior-identical. */
 export function springTo(
   state: SpringState,
   target: number,
@@ -32,11 +37,15 @@ export function springTo(
   const detInv = 1 / (f + dt * hoo);
   const value = (f * state.value + dt * state.vel + dt * hoo * target) * detInv;
   const vel = (state.vel + hoo * (target - state.value)) * detInv;
-  return { value, vel };
+  state.value = value;
+  state.vel = vel;
+  return state;
 }
 
 /** Instantly kick a spring's velocity (e.g. landing impact), leaving its
- *  value where it is so the spring visibly recoils from the new target. */
+ *  value where it is so the spring visibly recoils from the new target.
+ *  MUTATES `state` and returns it (see springTo). */
 export function springKick(state: SpringState, velDelta: number): SpringState {
-  return { value: state.value, vel: state.vel + velDelta };
+  state.vel += velDelta;
+  return state;
 }

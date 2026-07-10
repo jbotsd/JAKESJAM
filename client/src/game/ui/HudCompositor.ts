@@ -152,12 +152,6 @@ export class HudCompositor {
       }
     }
 
-    const cardNames: string[] = local
-      ? local.cards
-          .map((id) => crystalRoundsCards.find((c) => c.id === id)?.name)
-          .filter((n): n is string => Boolean(n))
-      : [];
-
     const vitals: HudVitals = {
       health: local?.health ?? 0,
       maxHealth: character.maxHealth,
@@ -168,7 +162,6 @@ export class HudCompositor {
       // initialized to 0 and never written — both rendered as permanent
       // frozen HUD noise ("125%" fuel bar, six always-dim dots).
       chips,
-      cardNames,
       cardIds: local?.cards,
       isDead: !local || local.health <= 0 || !local.alive,
     };

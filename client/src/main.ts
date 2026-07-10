@@ -1,6 +1,7 @@
 import Phaser from "phaser";
 import "./style.css";
 import { buildGameConfig } from "./game/GameConfig";
+import { installRenderResolution } from "./game/render/renderResolution";
 import { LobbyController } from "./game/ui/LobbyController";
 import { MatchStatusBadge } from "./game/ui/MatchStatusBadge";
 import { fetchWorldSummary } from "./net/worldClient";
@@ -353,6 +354,9 @@ globalWithGame.__jakesjam_music__?.forEach((audio) => {
 });
 
 const game = new Phaser.Game(buildGameConfig());
+// Scale.NONE does no automatic window tracking — this owns it (backing
+// store = CSS × renderScale; see game/render/renderResolution.ts).
+installRenderResolution(game);
 // Diagnostic: expose the Phaser game on window so e2e specs can walk
 // the scene's display list to find render-time leaks. No production
 // behaviour depends on this — pure introspection hook.
@@ -584,14 +588,13 @@ const PEAK_SWELL = 0.9; // barely louder at peak
 const INTENSITY_ATTACK = 0.1;
 const INTENSITY_RELEASE = 0.03;
 let smoothedIntensity = 0;
-// Smoothed bands for arena pulse (exported via jakesjam:music-level).
+// Smoothed bands for arena pulse (published via SonicField.writeMusicBands).
 let smBass = 0;
 let smMid = 0;
 let smHigh = 0;
 let smRms = 0;
 let prevBass = 0;
 let beatEnv = 0;
-const MUSIC_LEVEL_EVENT = "jakesjam:music-level";
 
 function bandMean(data: Uint8Array, i0: number, i1: number): number {
   let s = 0;
@@ -651,19 +654,8 @@ function tickMusicIntensity() {
         pulse,
         beat: beatEnv,
       });
-      // Keep legacy event for MusicAmplitude consumers (env bloom, etc.).
-      window.dispatchEvent(
-        new CustomEvent(MUSIC_LEVEL_EVENT, {
-          detail: {
-            bass: smBass,
-            mid: smMid,
-            high: smHigh,
-            rms: smRms,
-            pulse,
-            beat: beatEnv,
-          },
-        }),
-      );
+      // (MusicAmplitude reads the SonicField directly now — the legacy
+      // CustomEvent dispatch here allocated an event+detail EVERY frame.)
     }
     // Mic sample every frame while audio graph is live (cheap if no stream).
     tickVoiceReactive();

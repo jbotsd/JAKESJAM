@@ -93,6 +93,10 @@ export class ProjectileVfx {
       pathing: string;
     }
   >();
+  /** Per-frame scratch — the render loop must not allocate (the old
+   *  `new Set()` + `Object.entries()` + spread trio churned every frame). */
+  private readonly seenScratch = new Set<number>();
+  private readonly staleScratch: number[] = [];
 
   constructor(scene: Phaser.Scene, pool: ParticlePool | null) {
     this.scene = scene;
@@ -116,8 +120,10 @@ export class ProjectileVfx {
     body.clear();
     trail.clear();
 
-    const seen = new Set<number>();
-    for (const [idStr, proj] of Object.entries(state.projectiles)) {
+    const seen = this.seenScratch;
+    seen.clear();
+    for (const idStr in state.projectiles) {
+      const proj = state.projectiles[idStr as unknown as keyof typeof state.projectiles]!;
       const id = Number(idStr);
       seen.add(id);
       const color = resolveColor(proj.element as ElementType, proj.ownerId);
@@ -177,22 +183,34 @@ export class ProjectileVfx {
       // Body — element core over a resolved-color shell, shape-correct.
       this.drawBody(body, proj.shape, proj.x, proj.y, radius, angle, color, lang.core, bodyAlpha);
 
-      this.lastPos.set(id, {
-        x: proj.x,
-        y: proj.y,
-        vx: proj.vx,
-        vy: proj.vy,
-        element: proj.element,
-        radius,
-        impact: proj.impact ?? "none",
-        impactRadiusPx: proj.impactRadiusPx ?? 0,
-        pathing: proj.pathing,
-      });
+      // Mutate the existing record — a fresh object per projectile per
+      // frame was one of the render loop's biggest allocation sources.
+      let last = this.lastPos.get(id);
+      if (!last) {
+        last = {
+          x: 0, y: 0, vx: 0, vy: 0, element: "neutral",
+          radius: 0, impact: "none", impactRadiusPx: 0, pathing: "linear",
+        };
+        this.lastPos.set(id, last);
+      }
+      last.x = proj.x;
+      last.y = proj.y;
+      last.vx = proj.vx;
+      last.vy = proj.vy;
+      last.element = proj.element;
+      last.radius = radius;
+      last.impact = proj.impact ?? "none";
+      last.impactRadiusPx = proj.impactRadiusPx ?? 0;
+      last.pathing = proj.pathing;
     }
 
     // Despawn diff → element impact/fizzle, release halo + trail.
-    for (const id of [...this.trails.keys()]) {
-      if (seen.has(id)) continue;
+    const stale = this.staleScratch;
+    stale.length = 0;
+    for (const id of this.trails.keys()) {
+      if (!seen.has(id)) stale.push(id);
+    }
+    for (const id of stale) {
       const last = this.lastPos.get(id);
       if (last) {
         this.impact(last.x, last.y, last.element, last.radius, last.impact, last.impactRadiusPx);
