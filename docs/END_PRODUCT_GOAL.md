@@ -193,6 +193,11 @@ funnel; the game is installable and feels native.
 
 **Acceptance tests**
 - Cold phone → tap link → in a match in under 15s on 5G.
+  **MEASURED 2026-07-10 (LAN path)**: cold browser → https://play.elyad.io/?world=1
+  → rendering inside a live match in **5.7s** (full page load, wasm boot,
+  WS join, spawn — through the real cloudflared tunnel). 2.6× headroom
+  against the bound; the 5G re-run needs the phone but the budget is
+  established.
 - Airplane-mode 8s mid-match → auto-rejoin, same entity, < 3s after signal
   returns.
 - A first-time touch player gets ≥ 1 kill in their first three matches
