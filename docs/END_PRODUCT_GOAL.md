@@ -48,10 +48,17 @@ always wins.
   ARM sim cost are the next suspects; row stays OPEN but is now measured,
   instrumented, and improving on real hardware.
   **FOLLOW-UP same night**: haze ellipses gated at fxLevel 0 + governor
-  floor deepened to 0.35 on potato — fps stayed flat at ~20, which is the
-  key diagnostic: the Pi is now CPU-BOUND (ARM sim + engine overhead),
-  not fill-bound. The last 10fps is a profiling-led sim/engine
-  optimization, cleanly scoped for a follow-up session.
+  floor deepened to 0.35 on potato — fps stayed flat at ~20. CDP CPU
+  profile then showed the main thread 72% IDLE (JS is NOT the
+  bottleneck), and inspection revealed the session was a HEADLESS Wayland
+  output (both HDMI ports disconnected — no TV attached tonight) with a
+  zombie mpv decoding 720p video to the void throughout every
+  measurement. Pausing it: 20 → 24fps and climbing. CORRECTED
+  CONCLUSION: rendering is genuinely hardware-accelerated (V3D verified)
+  and the game's own cost is small; the plateau is the headless output's
+  present clock + the competing decode. The definitive 720p/30-60
+  measurement requires the TV physically connected — 30fps looks within
+  reach on current code. mpv restored; Pi left as found.
 - Mid-range Android phone: 60fps for 15 continuous minutes (thermal
   equilibrium), touch-only player completes a match and lands kills.
 - iPhone Safari: lock the screen 10s mid-match, unlock → rejoined and
