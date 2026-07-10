@@ -9,6 +9,7 @@
 //   banner.destroy();          // on scene shutdown
 
 import Phaser from "phaser";
+import { uiWidth, uiHeight } from "../render/renderResolution.js";
 
 export type RoundBannerState = {
   phase: "countdown" | "fighting" | "round-over" | "drafting";
@@ -67,8 +68,8 @@ export class RoundBanner {
 
   private build(): void {
     const s = this.scene;
-    const cx = s.scale.width / 2;
-    const cy = s.scale.height * 0.32;
+    const cx = uiWidth(s) / 2;
+    const cy = uiHeight(s) * 0.32;
 
     this.subText = s.add
       .text(cx, cy - 44, "", {
@@ -105,8 +106,8 @@ export class RoundBanner {
   }
 
   private onResize(): void {
-    const cx = this.scene.scale.width / 2;
-    const cy = this.scene.scale.height * 0.32;
+    const cx = uiWidth(this.scene) / 2;
+    const cy = uiHeight(this.scene) * 0.32;
     this.mainText.setPosition(cx, cy);
     this.subText.setPosition(cx, cy - 44);
   }

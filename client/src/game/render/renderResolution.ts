@@ -60,6 +60,19 @@ export function backingSize(): { width: number; height: number } {
   };
 }
 
+/** HUD-space (CSS px) width for a scene. HUD objects are laid out in CSS
+ *  pixels and the HUD camera zooms by renderScale, so HUD physical size is
+ *  independent of the backing resolution (screen = cssX × rs exactly,
+ *  because backing = css × rs and zoom pivots at the viewport centre). */
+export function uiWidth(scene: Phaser.Scene): number {
+  return scene.scale.width / getRenderScale();
+}
+
+/** HUD-space (CSS px) height — see uiWidth. */
+export function uiHeight(scene: Phaser.Scene): number {
+  return scene.scale.height / getRenderScale();
+}
+
 /** Keep the backing store tracking the window. Scale.NONE mode does no
  *  automatic resizing, so this owns what Scale.RESIZE used to do — every
  *  resize re-derives game size from CSS×rs and the ScaleManager re-applies

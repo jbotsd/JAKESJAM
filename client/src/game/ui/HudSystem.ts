@@ -31,6 +31,7 @@
 
 import Phaser from "phaser";
 import { playerTag } from "./botIdentity";
+import { uiWidth, uiHeight } from "../render/renderResolution.js";
 import { PALETTE } from "./palette.js";
 import { crystalRoundsCards } from "../../sim/data/cards.js";
 import type { PlayerId } from "../../sim/types.js";
@@ -196,13 +197,13 @@ export class HudSystem {
     const s = this.scene;
     const depth = 900;
 
-    this.compact = s.scale.width < COMPACT_MAX_WIDTH;
+    this.compact = uiWidth(s) < COMPACT_MAX_WIDTH;
     this.barW = this.compact ? BAR_W_COMPACT : BAR_W;
     this.barShieldW = this.compact ? BAR_SHIELD_W_COMPACT : BAR_SHIELD_W;
 
     // Full-screen vignette (behind HUD elements)
     this.vignette = s.add
-      .rectangle(0, 0, s.scale.width, s.scale.height, C_VIGNETTE, 0)
+      .rectangle(0, 0, uiWidth(s), uiHeight(s), C_VIGNETTE, 0)
       .setOrigin(0, 0)
       .setScrollFactor(0)
       .setDepth(depth - 1)
@@ -236,7 +237,7 @@ export class HudSystem {
 
     // Top-center: timer + score
     this.timerText = s.add
-      .text(s.scale.width / 2, this.compact ? 10 : 12, "", {
+      .text(uiWidth(s) / 2, this.compact ? 10 : 12, "", {
         fontFamily: "'Space Mono', Consolas, 'Courier New', monospace",
         fontSize: this.compact ? "17px" : "24px",
         fontStyle: "bold",
@@ -251,7 +252,7 @@ export class HudSystem {
     // Compact puts the score on its own row BELOW the shield row — at 393px
     // a centred score line horizontally collides with the shield label.
     this.scoreText = s.add
-      .text(s.scale.width / 2, this.compact ? 47 : 42, "", {
+      .text(uiWidth(s) / 2, this.compact ? 47 : 42, "", {
         fontFamily: "'Space Mono', Consolas, 'Courier New', monospace",
         fontSize: this.compact ? "10px" : "13px",
         fontStyle: "bold",
@@ -293,8 +294,8 @@ export class HudSystem {
   }
 
   private onResize(): void {
-    const w = this.scene.scale.width;
-    const h = this.scene.scale.height;
+    const w = uiWidth(this.scene);
+    const h = uiHeight(this.scene);
     this.timerText.setX(w / 2);
     this.scoreText.setX(w / 2);
     this.vignette.setSize(w, h);
@@ -493,7 +494,7 @@ export class HudSystem {
 
     const cols = Math.ceil(cardIds.length / PILL_ROWS);
     const gridW = cols * PILL_W + Math.max(0, cols - 1) * PILL_GAP;
-    const startX = this.scene.scale.width - gridW - PAD_LEFT;
+    const startX = uiWidth(this.scene) - gridW - PAD_LEFT;
     // Below the always-visible RTT pill (top-right, y≈12..34) — at PAD_TOP
     // the first pill row rendered directly through it.
     const startY = PAD_TOP + 26;

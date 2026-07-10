@@ -434,7 +434,9 @@ export class MatchScene extends Phaser.Scene {
       boxworksPractice.size.x + padX * 2,
       boxworksPractice.size.y + padY + bottomPad,
     );
-    cam.setRoundPixels(true);
+    // OFF for vector art — camera rounding quantizes slow pans (see
+    // OnlineMatchScene note); MSAA handles edges.
+    cam.setRoundPixels(false);
     // Hand-driven action camera (smoothed follow + look-ahead + trauma
     // shake) replaces Phaser's frame-rate-dependent startFollow lerp.
     this.actionCamera = new ActionCamera(cam);

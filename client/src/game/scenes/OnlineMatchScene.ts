@@ -84,7 +84,7 @@ import { ActionCamera } from "../systems/ActionCamera.js";
 import { stickyEnvelopeSubjects } from "../systems/actionCameraMath.js";
 import { CameraJuice } from "../systems/CameraJuice.js";
 import { installHudCamera } from "../systems/HudCamera.js";
-import { getRenderScale } from "../render/renderResolution.js";
+import { getRenderScale, uiWidth, uiHeight } from "../render/renderResolution.js";
 import { playCardPickFeel } from "../render/CardFeel.js";
 
 // Portrait-mobile camera framing. The arena is 2:1 wide but a phone held
@@ -626,7 +626,7 @@ export class OnlineMatchScene extends Phaser.Scene {
     let y = this.touchControls ? 112 : 48;
     for (const [i, lines] of groups.entries()) {
       const text = this.add
-        .text(this.scale.width - 20, y, lines.join("\n"), {
+        .text(uiWidth(this) - 20, y, lines.join("\n"), {
           color: "#cffaff",
           fontFamily: "Inter, Arial, sans-serif",
           fontSize: "14px",
@@ -873,10 +873,9 @@ export class OnlineMatchScene extends Phaser.Scene {
   // ---------------- Net stats overlay ----------------
 
   private createStatsHud() {
-    const cam = this.cameras.main;
     const panelWidth = 220;
     const panelHeight = 110;
-    const x = cam.width - panelWidth - 12;
+    const x = uiWidth(this) - panelWidth - 12;
     const y = 12;
     this.statsBg = this.add
       .rectangle(x, y, panelWidth, panelHeight, 0x000000, 0.55)
@@ -898,7 +897,7 @@ export class OnlineMatchScene extends Phaser.Scene {
 
     // Always-visible RTT pill. Anchored top-right; color-coded by latency.
     this.rttBadge = this.add
-      .text(cam.width - 12, 12, "—ms", {
+      .text(uiWidth(this) - 12, 12, "—ms", {
         color: "#94a3b8",
         fontFamily: "ui-monospace, Menlo, Consolas, monospace",
         fontSize: "11px",
@@ -911,7 +910,7 @@ export class OnlineMatchScene extends Phaser.Scene {
 
     // Determinism debug overlay (F2). Hidden by default.
     this.detOverlay = this.add
-      .text(12, cam.height - 12, "", {
+      .text(12, uiHeight(this) - 12, "", {
         color: "#cffaff",
         fontFamily: "ui-monospace, Menlo, Consolas, monospace",
         fontSize: "11px",
@@ -926,14 +925,13 @@ export class OnlineMatchScene extends Phaser.Scene {
 
   private repositionStatsHud() {
     if (!this.statsBg || !this.statsText) return;
-    const cam = this.cameras.main;
     const panelWidth = (this.statsBg.width as number) || 220;
-    const x = cam.width - panelWidth - 12;
+    const x = uiWidth(this) - panelWidth - 12;
     const y = 12;
     this.statsBg.setPosition(x, y);
     this.statsText.setPosition(x + 8, y + 6);
     // RTT pill anchors to top-right regardless of stats panel state.
-    this.rttBadge?.setPosition(cam.width - 12, this.statsVisible ? y + (this.statsBg.height as number) + 6 : 12);
+    this.rttBadge?.setPosition(uiWidth(this) - 12, this.statsVisible ? y + (this.statsBg.height as number) + 6 : 12);
   }
 
   private toggleStats() {
@@ -1371,8 +1369,9 @@ export class OnlineMatchScene extends Phaser.Scene {
     // standing at world-edge isn't visually pinned to screen-edge, but the
     // void around the world is bounded.
     const cam = this.cameras.main;
-    const padX = Math.round(cam.width / 6);
-    const padY = Math.round(cam.height / 6);
+    // CSS-px viewport (uiWidth/uiHeight) so world padding is renderScale-invariant.
+    const padX = Math.round(uiWidth(this) / 6);
+    const padY = Math.round(uiHeight(this) / 6);
     // Portrait mobile biases the player high on the tall screen (so the bottom
     // control band never covers them). That only works if the camera may drop
     // BELOW the arena floor — otherwise the bottom bound clamps the view and
@@ -1382,9 +1381,12 @@ export class OnlineMatchScene extends Phaser.Scene {
     // clamped a floor-standing player right down to the band edge under the
     // thumbs. At 0.5 a player on the bottom floor rides at ~45% of the
     // screen and the band gradient covers most of the sub-floor void.
-    const bottomPad = isPortraitMobile() ? Math.round(cam.height * 0.5) : padY;
+    const bottomPad = isPortraitMobile() ? Math.round(uiHeight(this) * 0.5) : padY;
     cam.setBounds(-padX, -padY, width + padX * 2, height + padY + bottomPad);
-    cam.setRoundPixels(true);
+    // Round pixels stays OFF: this is a vector-art game and camera-level
+    // rounding quantizes slow pans to whole-pixel steps (visible stutter on
+    // drift). MSAA (GameConfig antialias:true) handles edge quality instead.
+    cam.setRoundPixels(false);
 
     // Tear down any previous arena render (e.g. on reconnect to a new match).
     this.arenaGraphics?.destroy();
