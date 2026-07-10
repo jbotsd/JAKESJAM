@@ -9,6 +9,7 @@ import {
   zoomToFit,
   type Point2,
 } from "./actionCameraMath.js";
+import { isPortraitMobile } from "../input/mobile.js";
 
 /** Per-frame inputs the camera frames around. `extra` are opponents the
  *  frame should envelope when in range. `yBias` shifts centre down (portrait). */
@@ -74,6 +75,12 @@ export class ActionCamera {
   private static readonly TRAUMA_DECAY = 1.8;
   private static readonly MAX_SHAKE_PX = 18;
   private static readonly SNAP_DIST = 1150;
+  /** On-screen guarantee margins (fraction of half-view kept clear between
+   *  the player and the screen edge). */
+  private static readonly SAFE_MARGIN_FRAC = 0.16;
+  /** Portrait phones: the bottom control band owns the lower screen — keep
+   *  the player well above it (fraction of half-view as bottom margin). */
+  private static readonly SAFE_BOTTOM_PORTRAIT_FRAC = 0.7;
   private static readonly ZOOM_OUT_K = 3.5;
   private static readonly ZOOM_IN_K = 1.8;
   /** How much of the soft-envelope correction we take (mid: full↔0.45). */
@@ -269,7 +276,31 @@ export class ActionCamera {
     this.cx += (effTx - this.cx) * f;
     this.cy += (effTy - this.cy) * f;
 
-    // 8. Trauma shake (additive).
+    // 7.5 HARD GUARANTEE: the local player NEVER leaves the screen.
+    // Envelope pull toward a distant duel partner, look-ahead, EMA lag and
+    // trauma shake are all suggestions — this clamp is the authority.
+    // Asymmetric on portrait mobile: the bottom control band owns the lower
+    // ~35% of the screen, so the player is kept in the touch-visible zone.
+    {
+      const zNow = Math.max(0.01, this.punchActive ? this.cam.zoom : this.envelopeZoom);
+      const hw = this.cam.width / 2 / zNow;
+      const hh = this.cam.height / 2 / zNow;
+      const portrait = isPortraitMobile();
+      const mx = hw * ActionCamera.SAFE_MARGIN_FRAC;
+      const mTop = hh * ActionCamera.SAFE_MARGIN_FRAC;
+      const mBottom = hh * (portrait ? ActionCamera.SAFE_BOTTOM_PORTRAIT_FRAC : ActionCamera.SAFE_MARGIN_FRAC);
+      // Feasible center range keeping self inside [edge+margin] on each axis.
+      const minCx = self.x - hw + mx;
+      const maxCx = self.x + hw - mx;
+      const minCy = self.y - hh + mBottom;
+      const maxCy = self.y + hh - mTop;
+      this.cx = Math.min(maxCx, Math.max(minCx, this.cx));
+      this.cy = Math.min(maxCy, Math.max(minCy, this.cy));
+    }
+
+    // 8. Trauma shake (additive) — kept inside the same guarantee: the
+    // shake amplitude is small, but clamping the FINAL center means even a
+    // max-trauma frame can't push the player out.
     this.trauma = Math.max(0, this.trauma - ActionCamera.TRAUMA_DECAY * dt);
     this.shakeTime += dt;
     const shake = this.trauma * this.trauma;
