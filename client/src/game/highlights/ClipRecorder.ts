@@ -38,11 +38,11 @@
 // loop: gameplay stuttered whenever clips were recording. 30fps that the
 // encoder actually sustains beats 60fps it can't.)
 
-/** TikTok-native vertical output resolution. */
-const DEST_WIDTH = 720;
-const DEST_HEIGHT = 1280;
-/** Original-view output width (height derived from source aspect). */
-const ORIGINAL_WIDTH = 1280;
+/** Mezzanine output width (height derived from source aspect, both capped
+ *  at the source size). Full-res: the single stream this recorder encodes is
+ *  BOTH the landscape deliverable and the master the server NVENC-crops the
+ *  vertical from — 1280 here meant a soft upscaled 720p everywhere. */
+const MEZZANINE_MAX_WIDTH = 1920;
 /** Normal segment length — also the max lookback a trigger can capture. */
 const SEGMENT_MS = 10_000;
 /** Extra time recorded AFTER a trigger so the aftermath (death cam, VFX
@@ -59,9 +59,11 @@ const MAX_SEGMENT_MS = 20_000;
  *  below feeds it exactly 30. */
 const CAPTURE_FPS = 30;
 /** Explicit bitrate — MediaRecorder's implicit default can be low enough to
- *  look noticeably blocky on fast-moving gameplay. 5Mbps at 30fps is denser
- *  per-frame than the old 8Mbps at (nominal) 60. */
-const VIDEO_BITS_PER_SECOND = 5_000_000;
+ *  look noticeably blocky on fast-moving gameplay. Bitrate is nearly free
+ *  CPU-wise for a realtime software encoder (pixels×fps is the expensive
+ *  axis), and this stream is the MASTER the server transcodes from — spend
+ *  bits: 16Mbps holds the thin-line arena art at 1080p30. */
+const VIDEO_BITS_PER_SECOND = 16_000_000;
 /** Draw-loop pacing interval. rAF fires at display rate; we only pay the
  *  two drawImage calls when this much time has passed since the last draw. */
 const DRAW_INTERVAL_MS = 1000 / CAPTURE_FPS;
@@ -137,6 +139,10 @@ export class ClipRecorder {
    *  first frame snaps straight to the target instead of panning in. */
   private focusX = Number.NaN;
   private focusY = Number.NaN;
+  /** Per-segment crop-focus trace (video-timeline ms → mezzanine px).
+   *  Uploaded with the segment; the server NVENC-crops the vertical along
+   *  it (clipTranscode.ts) — the browser no longer encodes a second stream. */
+  private focusTrace: Array<{ t: number; x: number }> = [];
   /** Recorders whose onstop hasn't fired yet during this rotation. */
   private pendingStops = 0;
   /** Whether the segment being stopped should upload once all stops land. */
@@ -155,18 +161,20 @@ export class ClipRecorder {
       this.deps.onError?.(new Error("no supported MediaRecorder mimeType"));
       return;
     }
-    const vertical = this.makePipeline("vertical", DEST_WIDTH, DEST_HEIGHT);
-    // Original keeps the source aspect, scaled to ORIGINAL_WIDTH so a
-    // fullscreen 1440p canvas doesn't demand a 2560-wide realtime encode.
+    // SINGLE pipeline: the landscape mezzanine at native resolution (capped
+    // 1920 wide). The vertical is produced server-side from this stream +
+    // the focus trace (NVENC) — encoding it here too was the main-thread
+    // stall that made gameplay stutter during recording.
     const srcW = this.sourceCanvas.width || 1280;
     const srcH = this.sourceCanvas.height || 720;
-    const origH = Math.max(2, Math.round((ORIGINAL_WIDTH * srcH) / srcW / 2) * 2);
-    const original = this.makePipeline("original", ORIGINAL_WIDTH, origH);
-    if (!vertical || !original) {
-      this.deps.onError?.(new Error("2D context unavailable for clip canvases"));
+    const mezzW = Math.min(MEZZANINE_MAX_WIDTH, srcW);
+    const mezzH = Math.max(2, Math.round((mezzW * srcH) / srcW / 2) * 2);
+    const original = this.makePipeline("original", mezzW, mezzH);
+    if (!original) {
+      this.deps.onError?.(new Error("2D context unavailable for clip canvas"));
       return;
     }
-    this.pipelines = [vertical, original];
+    this.pipelines = [original];
     this.mimeType = mimeType;
     this.stopped = false;
     this.focusX = Number.NaN;
@@ -248,21 +256,15 @@ export class ClipRecorder {
     }
 
     for (const p of this.pipelines) {
-      if (p.kind === "vertical") {
-        // 9:16 window centered on the smoothed focus, clamped in-bounds.
-        let cropW = sh * (DEST_WIDTH / DEST_HEIGHT);
-        let cropH = sh;
-        if (cropW > sw) {
-          cropW = sw;
-          cropH = sw * (DEST_HEIGHT / DEST_WIDTH);
-        }
-        const cropX = Math.max(0, Math.min(sw - cropW, this.focusX - cropW / 2));
-        const cropY = Math.max(0, Math.min(sh - cropH, this.focusY - cropH / 2));
-        p.ctx.drawImage(this.sourceCanvas, cropX, cropY, cropW, cropH, 0, 0, DEST_WIDTH, DEST_HEIGHT);
-      } else {
-        // Original: full view scaled to the pipeline canvas.
-        p.ctx.drawImage(this.sourceCanvas, 0, 0, sw, sh, 0, 0, p.canvas.width, p.canvas.height);
-      }
+      // Full view scaled to the mezzanine canvas. The vertical crop is no
+      // longer drawn or encoded here — the smoothed focus is LOGGED and the
+      // server NVENC-crops along it (clipTranscode.ts).
+      p.ctx.drawImage(this.sourceCanvas, 0, 0, sw, sh, 0, 0, p.canvas.width, p.canvas.height);
+      this.focusTrace.push({
+        t: Math.max(0, Math.round(performance.now() - this.segmentStartedAtMs)),
+        // Trace in MEZZANINE px (the uploaded video's coordinate space).
+        x: Math.round(this.focusX * (p.canvas.width / sw)),
+      });
     }
   }
 
@@ -279,6 +281,7 @@ export class ClipRecorder {
   private beginSegment(): void {
     if (this.stopped || !this.mimeType) return;
     this.segmentStartedAtMs = performance.now();
+    this.focusTrace = [];
     for (const p of this.pipelines) {
       p.chunks = [];
       let recorder: MediaRecorder;
@@ -331,36 +334,66 @@ export class ClipRecorder {
   private onPipelineStopped(p: Pipeline): void {
     if (this.uploadOnStop && this.mimeType) {
       const blob = new Blob(p.chunks, { type: this.mimeType });
+      // Snapshot the trace NOW — beginSegment() below resets it before the
+      // async upload reads it.
+      const trace = decimateTrace(this.focusTrace);
       // Dud guard: a hidden tab freezes the rAF crop loop → the recorder
       // emits a header-only blob. Uploading those littered server/.clips
       // with 10-15 byte junk files. Drop anything implausibly small.
       if (blob.size >= MIN_UPLOAD_BYTES) {
-        void this.upload(blob, p.kind);
+        void this.upload(blob, trace, p.canvas.width, p.canvas.height);
       } else {
         console.log(`[clips] dropped dud ${p.kind} segment (${blob.size} bytes — tab hidden?)`);
       }
     }
     p.chunks = [];
     this.pendingStops -= 1;
-    // Restart both pipelines together once the LAST one has flushed, so the
-    // next segment's files stay time-aligned.
     if (this.pendingStops <= 0 && !this.stopped) this.beginSegment();
   }
 
-  private async upload(blob: Blob, kind: ClipKind): Promise<void> {
+  private async upload(
+    blob: Blob,
+    trace: Array<{ t: number; x: number }>,
+    mezzW: number,
+    mezzH: number,
+  ): Promise<void> {
     try {
       const form = new FormData();
       const ext = blob.type.includes("webm") ? "webm" : "mp4";
-      form.append("file", blob, `clip-${kind}.${ext}`);
+      form.append("file", blob, `clip-original.${ext}`);
+      // The server produces the vertical from this stream + the trace
+      // (NVENC — see server/src/clipTranscode.ts).
+      form.append("focusTrace", JSON.stringify(trace));
+      form.append("srcW", String(mezzW));
+      form.append("srcH", String(mezzH));
       const res = await fetch(this.deps.uploadPath ?? "/clips/upload", {
         method: "POST",
         body: form,
       });
       if (!res.ok) throw new Error(`clip upload failed: ${res.status}`);
-      const { url } = (await res.json()) as { url: string };
-      this.deps.onUploaded?.(url, kind);
+      const { url, verticalUrl } = (await res.json()) as {
+        url: string;
+        verticalUrl?: string;
+      };
+      this.deps.onUploaded?.(url, "original");
+      if (verticalUrl) this.deps.onUploaded?.(verticalUrl, "vertical");
     } catch (err) {
       this.deps.onError?.(err);
     }
   }
+}
+
+/** Cap the uploaded trace at ~600 points (30Hz × 20s max segment) — evenly
+ *  strided so long segments still cover the whole timeline. */
+function decimateTrace(
+  trace: Array<{ t: number; x: number }>,
+): Array<{ t: number; x: number }> {
+  const MAX_POINTS = 600;
+  if (trace.length <= MAX_POINTS) return trace.slice();
+  const out: Array<{ t: number; x: number }> = [];
+  const stride = trace.length / MAX_POINTS;
+  for (let i = 0; i < MAX_POINTS; i++) {
+    out.push(trace[Math.floor(i * stride)]!);
+  }
+  return out;
 }

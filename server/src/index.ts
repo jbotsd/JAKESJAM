@@ -277,8 +277,14 @@ function serveOnPort(port: number) {
         return new Response(result.message, { status: result.status, headers: corsHeaders });
       }
       // `url` is the human/SEO share page; `mediaUrl` is raw bytes for embeds/TikTok.
+      // vertical* fields are present when the server-side NVENC crop ran.
       return new Response(
-        JSON.stringify({ url: result.url, mediaUrl: result.mediaUrl }),
+        JSON.stringify({
+          url: result.url,
+          mediaUrl: result.mediaUrl,
+          verticalUrl: result.verticalUrl,
+          verticalMediaUrl: result.verticalMediaUrl,
+        }),
         { headers: { "content-type": "application/json", ...corsHeaders } },
       );
     }
