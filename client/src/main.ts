@@ -1080,11 +1080,36 @@ function localPlayerId(): string {
  * singleton WorldHost. Internal mode remains `"world"` / `?world=1` /
  * `/world-token` so deep links and server routes stay stable.
  */
+/**
+ * Go fullscreen on touch devices when entering a match. Android Chrome
+ * supports the Fullscreen API from a user gesture (joinWorld is always
+ * gesture-initiated from a button/tap path); iPhone Safari doesn't — there
+ * the PWA install is the fullscreen story. No-ops silently on desktop,
+ * already-fullscreen, and standalone/installed contexts.
+ */
+function requestGameFullscreen(): void {
+  try {
+    const touch = window.matchMedia?.("(pointer: coarse)")?.matches ?? false;
+    const standalone = window.matchMedia?.("(display-mode: standalone)")?.matches ?? false;
+    if (!touch || standalone || document.fullscreenElement) return;
+    void document.documentElement.requestFullscreen?.({ navigationUI: "hide" }).catch(() => {});
+  } catch {
+    // Fullscreen denied/unsupported — the browser chrome stays; not fatal.
+  }
+}
+
 function joinWorld(): void {
   // Soundtrack for Hot Lobby. Plays immediately if a gesture already
   // happened (e.g. the click that hit "Hot Lobby"); for bare `?world=1`
   // the global first-gesture starter picks up the first in-match input.
   startWorldMusic();
+  requestGameFullscreen();
+  // Bare `?world=1` auto-joins with no gesture (fullscreen rejects) — the
+  // first in-match touch retries once.
+  window.addEventListener("pointerdown", () => requestGameFullscreen(), {
+    once: true,
+    capture: true,
+  });
   emitMatchStarted("world");
   game.scene.stop(SceneKeys.MainMenu); // see start-match handler note
   document.title = "JAKESJAM — Hot Lobby";

@@ -27,7 +27,17 @@ export type TouchInputState = {
 };
 
 const MOVE_DEADZONE = 0.22;
-const JUMP_TILT = 0.5; // up-tilt past this on the move stick = jump
+// Jump lives on the stick, but a plain tilt threshold is unreachable
+// mid-run: walking pins the thumb at the rim horizontally, and arcing it
+// upward barely moves the normalized angle. Two mechanics fix it:
+//   - FLICK: a fast upward knob movement latches Jump (held while the
+//     thumb stays up, so variable jump height still works).
+//   - FOLLOWING BASE: past the rim, the base drifts with the thumb, so
+//     "up" is always one small motion from wherever the thumb is now.
+const JUMP_HOLD_TILT = 0.42; // deliberate up-hold still jumps
+const JUMP_RELEASE_TILT = 0.12; // latch releases when thumb returns here
+const FLICK_WINDOW_MS = 120; // upward delta must happen this fast
+const FLICK_DELTA = 0.26; // normalized dy drop that counts as a flick
 const CROUCH_TILT = 0.6; // down-tilt = crouch/down
 const STICK_RADIUS = 56; // px the knob travels from the base
 const AIM_DEADZONE = 0.3;
@@ -53,6 +63,9 @@ export class TouchControls {
   private aimStick: Stick | null = null;
   private shieldPointer: number | null = null;
   private dashPointer: number | null = null;
+  /** Flick-to-jump state: recent (t, dy) samples + the jump latch. */
+  private moveDySamples: Array<{ t: number; dy: number }> = [];
+  private jumpLatched = false;
 
   private attached = false;
   private readonly mount: HTMLElement;
@@ -106,7 +119,14 @@ export class TouchControls {
       const { dx, dy } = this.moveStick;
       if (dx < -MOVE_DEADZONE) keys |= InputBit.Left;
       if (dx > MOVE_DEADZONE) keys |= InputBit.Right;
-      if (dy < -JUMP_TILT) keys |= InputBit.Jump;
+      // Jump: latched by an upward flick (onMove), sustained while the
+      // thumb stays up, or entered directly by a deliberate up-hold.
+      if (this.jumpLatched) {
+        if (dy > -JUMP_RELEASE_TILT) this.jumpLatched = false;
+        else keys |= InputBit.Jump;
+      } else if (dy < -JUMP_HOLD_TILT) {
+        keys |= InputBit.Jump;
+      }
       if (dy > CROUCH_TILT) {
         keys |= InputBit.Down;
         keys |= InputBit.Crouch;
@@ -175,21 +195,54 @@ export class TouchControls {
           : null;
     if (!stick) return;
     e.preventDefault();
-    const rawX = e.clientX - stick.baseX;
-    const rawY = e.clientY - stick.baseY;
-    const dist = Math.hypot(rawX, rawY);
+    let rawX = e.clientX - stick.baseX;
+    let rawY = e.clientY - stick.baseY;
+    let dist = Math.hypot(rawX, rawY);
+    // FOLLOWING BASE: past the rim, the base drifts with the thumb. The
+    // stick direction is then always re-steerable with one small motion —
+    // without this, walking pins the thumb at the rim and changing to
+    // "up" (jump) means arcing the whole thumb around the base.
+    if (dist > STICK_RADIUS) {
+      const excess = dist - STICK_RADIUS;
+      const fx = (rawX / dist) * excess;
+      const fy = (rawY / dist) * excess;
+      stick.baseX += fx;
+      stick.baseY += fy;
+      stick.base.style.left = `${stick.baseX}px`;
+      stick.base.style.top = `${stick.baseY}px`;
+      rawX -= fx;
+      rawY -= fy;
+      dist = STICK_RADIUS;
+    }
     const clamped = Math.min(dist, STICK_RADIUS);
     const ux = dist > 0 ? rawX / dist : 0;
     const uy = dist > 0 ? rawY / dist : 0;
     stick.dx = (ux * clamped) / STICK_RADIUS;
     stick.dy = (uy * clamped) / STICK_RADIUS;
     stick.knob.style.transform = `translate(${ux * clamped}px, ${uy * clamped}px)`;
+
+    // Flick-to-jump detection (move stick only): a fast upward dy delta
+    // inside the window latches Jump (released in getState when the thumb
+    // comes back toward centre).
+    if (stick === this.moveStick) {
+      const now = e.timeStamp;
+      this.moveDySamples.push({ t: now, dy: stick.dy });
+      while (this.moveDySamples.length > 0 && now - this.moveDySamples[0]!.t > FLICK_WINDOW_MS) {
+        this.moveDySamples.shift();
+      }
+      const oldest = this.moveDySamples[0];
+      if (oldest && oldest.dy - stick.dy >= FLICK_DELTA && stick.dy < -JUMP_RELEASE_TILT) {
+        this.jumpLatched = true;
+      }
+    }
   };
 
   private onUp = (e: PointerEvent): void => {
     if (this.moveStick?.pointerId === e.pointerId) {
       this.moveStick.base.remove();
       this.moveStick = null;
+      this.moveDySamples.length = 0;
+      this.jumpLatched = false;
     }
     if (this.aimStick?.pointerId === e.pointerId) {
       this.aimStick.base.remove();
@@ -220,6 +273,8 @@ export class TouchControls {
     this.aimStick?.base.remove();
     this.moveStick = null;
     this.aimStick = null;
+    this.moveDySamples.length = 0;
+    this.jumpLatched = false;
     this.shieldPointer = null;
     this.dashPointer = null;
     this.shieldBtn.classList.remove("tc-btn--active");
