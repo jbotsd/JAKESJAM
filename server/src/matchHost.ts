@@ -49,6 +49,7 @@ import { InterestGrid, CELL_SIZE_PX, OBSERVE_RADIUS_CELLS } from "./InterestGrid
 import { encodeDelta } from "@net/snapshotDelta.ts";
 import { makeHitSweepScratch } from "@sim/projectile.ts";
 import { transferAuthority } from "./authority.ts";
+import { maybeSignalHostClip } from "./hostReplayBuffer.ts";
 import { ReplayRecorder } from "./ReplayRecorder.ts";
 import { serverWasmHost } from "./serverWasmHost.ts";
 
@@ -994,6 +995,10 @@ export class MatchHost {
     }
 
     this.state = nextState;
+
+    // Host-box replay buffer: kill events save a zero-cost NVENC clip when
+    // the streaming host runs gpu-screen-recorder (JJ_HOST_REPLAY=1).
+    maybeSignalHostClip(events);
 
     // Arena spectator director — full-world view, every tick, before AOI.
     this.director = stepSpectatorDirector(
