@@ -86,6 +86,7 @@ import { CameraJuice } from "../systems/CameraJuice.js";
 import { installHudCamera } from "../systems/HudCamera.js";
 import { getRenderScale, uiWidth, uiHeight } from "../render/renderResolution.js";
 import { RenderGovernor } from "../render/renderGovernor.js";
+import { getQualityProfile } from "../render/qualityProfile.js";
 import { playCardPickFeel } from "../render/CardFeel.js";
 
 // Portrait-mobile camera framing. The arena is 2:1 wide but a phone held
@@ -1772,8 +1773,11 @@ export class OnlineMatchScene extends Phaser.Scene {
       // id suffix + character name so the nameplate is stable + identifiable.
       name: bot ? botLabel(player.id) : `${player.id.slice(-4)} / ${character.name}`,
       scale: this.getVisualScale(character),
-      // Full juice for local; lite path for remotes/bots (fewer Graphics ops).
-      detail: isLocal ? "full" : "lite",
+      // Full juice for local; lite path for remotes/bots (fewer Graphics
+      // ops). Potato tier runs EVERY rig lite — per-frame vector
+      // tessellation is the tier's biggest CPU line item until the baked
+      // rig backend lands (RENDER_OVERHAUL_PLAN Phase 2).
+      detail: isLocal && getQualityProfile().tier !== "potato" ? "full" : "lite",
     });
   }
 
