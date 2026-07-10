@@ -165,6 +165,16 @@ be recording.
   in the re-simmed timeline (fought, died, final state correct) at 515×
   realtime. The replay substrate — record → persist → decode → roster →
   deterministic timeline — is complete; only the visual renderer remains.
+  **RENDERER SHIPPED + END-TO-END PASSED same night**: ReplayScene re-sims
+  a stored .jjr with the shared roster ops and renders with the LIVE
+  game's own systems (rigs, contract-backed entities, combat FX, spectator
+  director camera); `?replay=latest&render=1&from=&ticks=` steps 2 ticks
+  per frame into the SAME WebCodecs worker the live recorder uses →
+  /clips/upload → NVENC vertical. Verified headless on a real stored
+  match: 600 frames / 20s slice → 1920×938 mp4 + 720×1280 vertical, both
+  share pages public, frames show the reconstructed fight (bots named,
+  arena correct, director-framed). A player's device never encodes
+  anything — the pillar's core claim is now TRUE in production code.
 - A player who joined from a phone gets a highlight clip of their own kill
   without their phone having encoded anything.
 
