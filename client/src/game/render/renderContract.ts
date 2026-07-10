@@ -172,6 +172,91 @@ export function produceDestructibles(
   return n;
 }
 
+// ── Combat FX (shields + parry arcs) ──────────────────────────────────────
+
+/** Sim constants mirrored for painters: body 26x56 → shield r = 56*0.82. */
+export const SHIELD_RADIUS = 46;
+/** Mirrors MatchLogic.PARRY_BASE_RANGE. */
+export const PARRY_RANGE = 98;
+/** 60° parry cone. */
+export const PARRY_ARC = Math.PI / 3;
+
+export type CombatFxRenderModel = {
+  x: number;
+  y: number;
+  shieldActive: boolean;
+  /** 0..1 block-flash envelope (decays over ~7 frames after an absorb). */
+  shieldFlash: number;
+  parryActive: boolean;
+  /** Parry cone centre direction (radians). */
+  parryFacing: number;
+};
+
+/** Engine-free block-flash bookkeeping (one per painter instance). */
+export type CombatFxState = {
+  prevShieldCharge: Map<string, number>;
+  blockFlash: Map<string, number>;
+  staleScratch: string[];
+};
+
+export function makeCombatFxState(): CombatFxState {
+  return { prevShieldCharge: new Map(), blockFlash: new Map(), staleScratch: [] };
+}
+
+function blankCombatFx(): CombatFxRenderModel {
+  return { x: 0, y: 0, shieldActive: false, shieldFlash: 0, parryActive: false, parryFacing: 0 };
+}
+
+/**
+ * Fill `out` with shield/parry models for every LIVING player. The block
+ * flash fires when shieldCharge drops >5 in one frame while shielding
+ * (passive hold-drain is ~0.6/frame — a big drop = an absorbed hit) and
+ * decays 0.14/call. Dead/departed players are pruned from bookkeeping.
+ */
+export function produceCombatFx(
+  state: WorldState,
+  st: CombatFxState,
+  out: CombatFxRenderModel[],
+): number {
+  let n = 0;
+  for (const pid in state.players) {
+    const player = state.players[pid as PlayerId]!;
+    if (!player.alive) continue;
+    const charge = player.shieldCharge ?? 0;
+    const prev = st.prevShieldCharge.get(pid);
+    if (prev !== undefined && prev - charge > 5 && player.shieldActive) {
+      st.blockFlash.set(pid, 1);
+    }
+    st.prevShieldCharge.set(pid, charge);
+    let flash = st.blockFlash.get(pid) ?? 0;
+    if (n >= out.length) out.push(blankCombatFx());
+    const m = out[n]!;
+    n += 1;
+    m.x = player.x;
+    m.y = player.y;
+    m.shieldActive = player.shieldActive ?? false;
+    m.shieldFlash = flash;
+    m.parryActive =
+      player.parryActiveUntilTick !== undefined && player.parryActiveUntilTick > state.tick;
+    m.parryFacing = player.parryFacing ?? 0;
+    if (flash > 0) {
+      flash = Math.max(0, flash - 0.14);
+      st.blockFlash.set(pid, flash);
+    }
+  }
+  const stale = st.staleScratch;
+  stale.length = 0;
+  for (const pid of st.prevShieldCharge.keys()) {
+    const p = state.players[pid as PlayerId];
+    if (!p || !p.alive) stale.push(pid);
+  }
+  for (const pid of stale) {
+    st.prevShieldCharge.delete(pid);
+    st.blockFlash.delete(pid);
+  }
+  return n;
+}
+
 // ── Satellites ────────────────────────────────────────────────────────────
 
 /** Resolved orbit position for one satellite (owner lookup + trig done). */

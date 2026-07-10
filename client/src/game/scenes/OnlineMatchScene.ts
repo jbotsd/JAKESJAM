@@ -89,6 +89,14 @@ import { RenderGovernor } from "../render/renderGovernor.js";
 import { getQualityProfile } from "../render/qualityProfile.js";
 import { assistTouchAim } from "../input/touchAimAssist.js";
 import { autoWallHopKeys, makeAutoHopState } from "../input/autoWallHop.js";
+import {
+  makeCombatFxState,
+  produceCombatFx,
+  PARRY_ARC,
+  PARRY_RANGE,
+  SHIELD_RADIUS,
+  type CombatFxRenderModel,
+} from "../render/renderContract.js";
 import { playCardPickFeel } from "../render/CardFeel.js";
 
 // Portrait-mobile camera framing. The arena is 2:1 wide but a phone held
@@ -303,8 +311,8 @@ export class OnlineMatchScene extends Phaser.Scene {
    *  parryFacing). Cleared and redrawn each renderWorld pass. */
   private combatFx: Phaser.GameObjects.Graphics | null = null;
   /** Per-player last shield charge + block-flash timer (shield-block VFX). */
-  private readonly shieldPrevCharge = new Map<string, number>();
-  private readonly shieldBlockFlash = new Map<string, number>();
+  private readonly combatFxState = makeCombatFxState();
+  private readonly combatFxModels: CombatFxRenderModel[] = [];
   private platformLayer: PlatformLayer | null = null;
   private lightBeams: LightBeamLayer | null = null;
   private cosmicArena: CosmicArenaLayer | null = null;
@@ -1682,58 +1690,29 @@ export class OnlineMatchScene extends Phaser.Scene {
     }
     const g = this.combatFx;
     g.clear();
-    const SHIELD_RADIUS = 46;
-    const PARRY_RANGE = 98;
-    const PARRY_ARC = Math.PI / 3;
-    for (const player of Object.values(state.players)) {
-      if (!player.alive) continue;
-      // Shield BLOCK flash: a hit absorbed drops shieldCharge far more than the
-      // passive hold-drain (~0.6/frame), so a >5 single-frame drop = a block.
-      const pid = player.id as string;
-      const charge = player.shieldCharge ?? 0;
-      const prevCharge = this.shieldPrevCharge.get(pid);
-      if (prevCharge !== undefined && prevCharge - charge > 5 && player.shieldActive) {
-        this.shieldBlockFlash.set(pid, 1);
-      }
-      this.shieldPrevCharge.set(pid, charge);
-      const flash = this.shieldBlockFlash.get(pid) ?? 0;
-      if (player.shieldActive) {
-        g.fillStyle(0x93c5fd, 0.08 + flash * 0.28);
-        g.fillCircle(player.x, player.y, SHIELD_RADIUS);
-        g.lineStyle(2 + flash * 3, 0x93c5fd, 0.62 + flash * 0.38);
-        g.strokeCircle(player.x, player.y, SHIELD_RADIUS);
+    // Contract producer owns the block-flash derivation (renderContract.ts);
+    // this is now a pure painter over the models.
+    const count = produceCombatFx(state, this.combatFxState, this.combatFxModels);
+    for (let i = 0; i < count; i++) {
+      const m = this.combatFxModels[i]!;
+      if (m.shieldActive) {
+        g.fillStyle(0x93c5fd, 0.08 + m.shieldFlash * 0.28);
+        g.fillCircle(m.x, m.y, SHIELD_RADIUS);
+        g.lineStyle(2 + m.shieldFlash * 3, 0x93c5fd, 0.62 + m.shieldFlash * 0.38);
+        g.strokeCircle(m.x, m.y, SHIELD_RADIUS);
         // Expanding ripple ring on a block.
-        if (flash > 0.02) {
-          g.lineStyle(2, 0xdbeafe, flash * 0.75);
-          g.strokeCircle(player.x, player.y, SHIELD_RADIUS + (1 - flash) * 24);
+        if (m.shieldFlash > 0.02) {
+          g.lineStyle(2, 0xdbeafe, m.shieldFlash * 0.75);
+          g.strokeCircle(m.x, m.y, SHIELD_RADIUS + (1 - m.shieldFlash) * 24);
         }
       }
-      if (flash > 0) this.shieldBlockFlash.set(pid, Math.max(0, flash - 0.14));
-      if (
-        player.parryActiveUntilTick !== undefined &&
-        player.parryActiveUntilTick > state.tick
-      ) {
-        const facing = player.parryFacing ?? 0;
+      if (m.parryActive) {
         g.fillStyle(0xf7fbff, 0.13);
-        g.slice(
-          player.x,
-          player.y,
-          PARRY_RANGE,
-          facing - PARRY_ARC / 2,
-          facing + PARRY_ARC / 2,
-          false,
-        );
+        g.slice(m.x, m.y, PARRY_RANGE, m.parryFacing - PARRY_ARC / 2, m.parryFacing + PARRY_ARC / 2, false);
         g.fillPath();
         g.lineStyle(3, 0xf7fbff, 0.82);
         g.beginPath();
-        g.arc(
-          player.x,
-          player.y,
-          PARRY_RANGE,
-          facing - PARRY_ARC / 2,
-          facing + PARRY_ARC / 2,
-          false,
-        );
+        g.arc(m.x, m.y, PARRY_RANGE, m.parryFacing - PARRY_ARC / 2, m.parryFacing + PARRY_ARC / 2, false);
         g.strokePath();
       }
     }

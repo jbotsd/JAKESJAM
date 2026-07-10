@@ -110,3 +110,47 @@ describe("produceSatellites (render contract)", () => {
     expect(pool[0]!.y).toBeCloseTo(200, 5);
   });
 });
+
+import { makeCombatFxState, produceCombatFx, type CombatFxRenderModel } from "../renderContract";
+
+function stateWithShieldPlayer(charge: number, shieldActive: boolean, tick = 100): WorldState {
+  return {
+    tick,
+    players: {
+      p1: { id: "p1", x: 5, y: 6, alive: true, health: 100, shieldActive, shieldCharge: charge },
+    },
+  } as unknown as WorldState;
+}
+
+describe("produceCombatFx (render contract)", () => {
+  test("big shield-charge drop while shielding fires the block flash, then decays", () => {
+    const st = makeCombatFxState();
+    const pool: CombatFxRenderModel[] = [];
+    produceCombatFx(stateWithShieldPlayer(80, true), st, pool);
+    expect(pool[0]!.shieldFlash).toBe(0);
+    produceCombatFx(stateWithShieldPlayer(60, true), st, pool); // -20 = absorbed hit
+    expect(pool[0]!.shieldFlash).toBe(1);
+    produceCombatFx(stateWithShieldPlayer(60, true), st, pool);
+    expect(pool[0]!.shieldFlash).toBeCloseTo(0.86, 5);
+  });
+
+  test("passive drain never flashes", () => {
+    const st = makeCombatFxState();
+    const pool: CombatFxRenderModel[] = [];
+    produceCombatFx(stateWithShieldPlayer(80, true), st, pool);
+    produceCombatFx(stateWithShieldPlayer(79.4, true), st, pool);
+    expect(pool[0]!.shieldFlash).toBe(0);
+  });
+
+  test("parry window derives from ticks", () => {
+    const st = makeCombatFxState();
+    const pool: CombatFxRenderModel[] = [];
+    const s = {
+      tick: 100,
+      players: { p1: { id: "p1", x: 0, y: 0, alive: true, health: 100, parryActiveUntilTick: 120, parryFacing: 1.5 } },
+    } as unknown as WorldState;
+    produceCombatFx(s, st, pool);
+    expect(pool[0]!.parryActive).toBe(true);
+    expect(pool[0]!.parryFacing).toBe(1.5);
+  });
+});
