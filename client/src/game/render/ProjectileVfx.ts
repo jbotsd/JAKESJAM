@@ -18,6 +18,7 @@
 import type Phaser from "phaser";
 import type { ElementType, PlayerId, ProjectileShape, WorldState } from "../../sim/types";
 import type { ParticlePool } from "../systems/ParticlePool";
+import { produceProjectiles, type ProjectileRenderModel } from "./renderContract";
 import { GLOW_TEXTURE_SIZE } from "./glowTexture";
 
 const TRAIL_SAMPLES = 6;
@@ -96,6 +97,8 @@ export class ProjectileVfx {
   /** Per-frame scratch — the render loop must not allocate (the old
    *  `new Set()` + `Object.entries()` + spread trio churned every frame). */
   private readonly seenScratch = new Set<number>();
+  /** Contract model pool — grows once to peak projectile count. */
+  private readonly modelPool: ProjectileRenderModel[] = [];
   private readonly staleScratch: number[] = [];
 
   constructor(scene: Phaser.Scene, pool: ParticlePool | null) {
@@ -113,6 +116,10 @@ export class ProjectileVfx {
    * Per-frame render of all live projectiles. Draws bodies + trails, keeps a
    * pooled halo per projectile, and fires an impact burst for any projectile
    * that vanished since last frame.
+   *
+   * Consumes RENDER MODELS from the contract (renderContract.ts), not raw
+   * sim entities — the same models any other painter (baked tier, headless
+   * replay renderer) will consume.
    */
   render(state: WorldState, resolveColor: ColorResolver): void {
     const body = this.bodyGfx;
@@ -120,16 +127,17 @@ export class ProjectileVfx {
     body.clear();
     trail.clear();
 
+    const count = produceProjectiles(state, this.modelPool);
     const seen = this.seenScratch;
     seen.clear();
-    for (const idStr in state.projectiles) {
-      const proj = state.projectiles[idStr as unknown as keyof typeof state.projectiles]!;
-      const id = Number(idStr);
+    for (let mi = 0; mi < count; mi++) {
+      const proj = this.modelPool[mi]!;
+      const id = proj.id;
       seen.add(id);
       const color = resolveColor(proj.element as ElementType, proj.ownerId);
       const lang = elementVfx(proj.element);
-      const radius = proj.radius || 5;
-      const angle = Math.atan2(proj.vy, proj.vx);
+      const radius = proj.radius;
+      const angle = proj.angle;
 
       // Trail — record position, draw newest→oldest as fading additive segs.
       // First sight of an id = the shot's muzzle frame: the spawn point IS
@@ -172,13 +180,8 @@ export class ProjectileVfx {
       // Halo — one pooled additive glow following the body.
       this.updateHalo(id, proj.x, proj.y, radius * lang.glowScale, color);
 
-      // P2 — sticky fuse blink: a stuck shard counting down to detonation
-      // pulses so the threat is legible. Faster blink as the fuse shortens.
-      let bodyAlpha = 1;
-      if (proj.stickyFuseMs !== undefined && proj.stickyFuseMs > 0) {
-        const hz = proj.stickyFuseMs < 400 ? 18 : 9;
-        bodyAlpha = 0.55 + 0.45 * Math.abs(Math.sin((proj.stickyFuseMs / 1000) * hz));
-      }
+      // Sticky fuse blink comes precomputed from the contract model.
+      const bodyAlpha = proj.bodyAlpha;
 
       // Body — element core over a resolved-color shell, shape-correct.
       this.drawBody(body, proj.shape, proj.x, proj.y, radius, angle, color, lang.core, bodyAlpha);
@@ -199,8 +202,8 @@ export class ProjectileVfx {
       last.vy = proj.vy;
       last.element = proj.element;
       last.radius = radius;
-      last.impact = proj.impact ?? "none";
-      last.impactRadiusPx = proj.impactRadiusPx ?? 0;
+      last.impact = proj.impact;
+      last.impactRadiusPx = proj.impactRadiusPx;
       last.pathing = proj.pathing;
     }
 

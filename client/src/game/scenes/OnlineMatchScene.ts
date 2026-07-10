@@ -99,7 +99,13 @@ import { playCardPickFeel } from "../render/CardFeel.js";
 // too invasive for this scene. Framing is done entirely via the upward bias +
 // extended bottom bounds, which keeps the player in the upper play-area with
 // the ground below — no HUD breakage.
-const PORTRAIT_CAM_ZOOM = 1.0;
+// 0.7 after live phone playtest 2026-07-10 ("so little on screen"): a
+// narrow portrait viewport at 1.0 showed a letterbox slice of arena —
+// zooming OUT ~43% more world makes attackers visible before they land on
+// you. The old HUD-breakage concern is gone: the HUD now lives in a
+// renderScale-scaled root container on its own camera (HudCamera), so
+// world zoom never touches it.
+const PORTRAIT_CAM_ZOOM = 0.7;
 // Desktop crop-in: the world camera zooms to make the player the main event
 // (was 1.0 — the player read as a tiny figure showing almost the whole map).
 // 1.4 puts the ~56px character at ~11% of screen height with ~4.5
@@ -108,6 +114,9 @@ const PORTRAIT_CAM_ZOOM = 1.0;
 // scroll-fixed HUD is kept unzoomed). Portrait mobile stays 1.0 (small
 // screen already frames the player large enough, and vertical room is tight).
 const DESKTOP_CAM_ZOOM = 1.4;
+// Landscape phones were getting the DESKTOP crop-in — far too tight on a
+// 6-inch screen. Wider view for any touch device in landscape.
+const TOUCH_LANDSCAPE_CAM_ZOOM = 1.0;
 const PORTRAIT_CAM_Y_BIAS = 150; // world px: camera centres BELOW the player → player rides in the upper third, clear of the bottom control band
 import { PALETTE, ARENA_THEMES } from "../ui/palette";
 import type {
@@ -2094,7 +2103,12 @@ export class OnlineMatchScene extends Phaser.Scene {
     // × renderScale: the backing store is scaled, so the camera zooms by the
     // same factor to keep the WORLD framing identical at every resolution
     // (rs=1 today ⇒ no-op; the dial is the quality ladder's master knob).
-    const zoom = (isPortraitMobile() ? PORTRAIT_CAM_ZOOM : DESKTOP_CAM_ZOOM) * getRenderScale();
+    const base = isPortraitMobile()
+      ? PORTRAIT_CAM_ZOOM
+      : isTouchPrimary()
+        ? TOUCH_LANDSCAPE_CAM_ZOOM
+        : DESKTOP_CAM_ZOOM;
+    const zoom = base * getRenderScale();
     // Route through the ActionCamera so its punch-zoom returns to this base.
     // Guarded because applyMobileCamera also fires once in create() before
     // the ActionCamera exists (resize listener); the direct setZoom covers
