@@ -68,6 +68,13 @@ always wins.
   DPR-crisp text; slow-pan capture shows no whole-pixel stepping.
 - Rig A/B: a 5s clip of the live rig and the baked rig performing the same
   recorded actions, viewed at phone size — motion indistinguishable.
+  **A-SIDE BASELINE PINNED 2026-07-10**: live-vector rig rendered by the
+  ReplayScene from stored replay `world-1783689217085.jjr`, ticks
+  12000–13200 — clips `c144f036…` (1920×938) + `3cd60d29…` (vertical),
+  pinned in the clip store with reproduction notes. The B side is ONE
+  command once the baked backend exists: render the identical slice with
+  the baked rig — same replay, same ticks, same camera, only the painter
+  differs. The A/B is deterministic by construction.
 - Toggling every effect at Ultra changes look, never gameplay legibility.
 
 ## 3. Smoothness is engineered, not hoped for
