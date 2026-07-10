@@ -158,6 +158,13 @@ be recording.
   Known format gap for the renderer: the replay header rosters only
   match-start players — mid-match join/leave must be recorded (roster
   deltas) before world replays reconstruct every participant.
+  **GAP CLOSED same day**: roster events are recorded (join spawn / leave
+  playerId at their ticks) and the live host + re-sim share ONE pure
+  join/leave implementation (rosterOps.ts). Validated on a fresh real
+  match: a mid-match joiner absent from the boot roster was reconstructed
+  in the re-simmed timeline (fought, died, final state correct) at 515×
+  realtime. The replay substrate — record → persist → decode → roster →
+  deterministic timeline — is complete; only the visual renderer remains.
 - A player who joined from a phone gets a highlight clip of their own kill
   without their phone having encoded anything.
 
