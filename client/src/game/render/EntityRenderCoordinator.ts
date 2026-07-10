@@ -30,8 +30,13 @@ import type {
 } from "../../sim/types";
 import type { ParticlePool } from "../systems/ParticlePool";
 import { ProjectileVfx } from "./ProjectileVfx";
-
-const DAMAGE_FLASH_MS = 110;
+import {
+  makeDestructibleFlashState,
+  produceDestructibles,
+  produceSatellites,
+  type DestructibleRenderModel,
+  type SatelliteRenderModel,
+} from "./renderContract";
 
 /**
  * Resolves projectile colour. Caller injects so the coordinator
@@ -83,8 +88,9 @@ export class EntityRenderCoordinator {
    *  Replaces the old flat-circle sprites on the live path. */
   private readonly projectileVfx: ProjectileVfx;
 
-  private readonly prevDestructibleHealth = new Map<number, number>();
-  private readonly destructibleFlashUntilMs = new Map<number, number>();
+  private readonly flashState = makeDestructibleFlashState();
+  private readonly destructibleModels: DestructibleRenderModel[] = [];
+  private readonly satelliteModels: SatelliteRenderModel[] = [];
   /** Per-frame scratch — reused so the render loop allocates nothing
    *  (the old `new Set()` + `Object.entries()` pair churned every frame). */
   private readonly seenScratch = new Set<number>();
@@ -123,8 +129,8 @@ export class EntityRenderCoordinator {
     this.destructibleGraphics.destroy();
     this.fireGraphics.destroy();
     this.pickupGraphics.destroy();
-    this.prevDestructibleHealth.clear();
-    this.destructibleFlashUntilMs.clear();
+    this.flashState.prevHealth.clear();
+    this.flashState.flashUntilMs.clear();
   }
 
   private renderProjectiles(state: WorldState): void {
@@ -137,30 +143,11 @@ export class EntityRenderCoordinator {
   private renderDestructibles(state: WorldState, nowMs: number): void {
     const graphics = this.destructibleGraphics;
     graphics.clear();
-    const seen = this.seenScratch;
-    seen.clear();
-    for (const idStr in state.destructibles) {
-      const obj = state.destructibles[idStr as unknown as keyof typeof state.destructibles]!;
-      const id = Number(idStr);
-      seen.add(id);
-      const prev = this.prevDestructibleHealth.get(id);
-      if (prev !== undefined && obj.health < prev) {
-        this.destructibleFlashUntilMs.set(id, nowMs + DAMAGE_FLASH_MS);
-      }
-      this.prevDestructibleHealth.set(id, obj.health);
-      const flashing = (this.destructibleFlashUntilMs.get(id) ?? 0) > nowMs;
-      this.cfg.drawDestructible(graphics, obj, flashing);
-    }
-    // Two-pass delete via scratch list — deleting while iterating a Map's
-    // keys() is legal but the scratch keeps intent explicit and alloc-free.
-    const stale = this.staleScratch;
-    stale.length = 0;
-    for (const id of this.prevDestructibleHealth.keys()) {
-      if (!seen.has(id)) stale.push(id);
-    }
-    for (const id of stale) {
-      this.prevDestructibleHealth.delete(id);
-      this.destructibleFlashUntilMs.delete(id);
+    // Contract producer owns the damage-flash derivation + bookkeeping.
+    const count = produceDestructibles(state, nowMs, this.flashState, this.destructibleModels);
+    for (let i = 0; i < count; i++) {
+      const m = this.destructibleModels[i]!;
+      this.cfg.drawDestructible(graphics, m.entity, m.flashing);
     }
   }
 
@@ -181,24 +168,21 @@ export class EntityRenderCoordinator {
   }
 
   private renderSatellites(state: WorldState): void {
+    // Contract producer resolves the orbit (owner lookup + trig).
+    const count = produceSatellites(state, this.satelliteModels);
     const seen = this.seenScratch;
     seen.clear();
-    for (const idStr in state.satellites) {
-      const sat = state.satellites[idStr as unknown as keyof typeof state.satellites]!;
-      const id = Number(idStr);
-      seen.add(id);
-      const owner = sat.ownerId !== null ? state.players[sat.ownerId] : undefined;
-      if (!owner) continue;
-      const x = owner.x + Math.cos(sat.angle) * sat.orbitRadius;
-      const y = owner.y + Math.sin(sat.angle) * sat.orbitRadius;
-      let arc = this.satelliteSprites.get(id);
+    for (let i = 0; i < count; i++) {
+      const m = this.satelliteModels[i]!;
+      seen.add(m.id);
+      let arc = this.satelliteSprites.get(m.id);
       if (!arc) {
-        arc = this.scene.add.circle(x, y, 5, 0xfff7d6, 0.92);
+        arc = this.scene.add.circle(m.x, m.y, 5, 0xfff7d6, 0.92);
         arc.setStrokeStyle(2, 0xffd166, 0.7);
         arc.setDepth(7);
-        this.satelliteSprites.set(id, arc);
+        this.satelliteSprites.set(m.id, arc);
       }
-      arc.setPosition(x, y);
+      arc.setPosition(m.x, m.y);
     }
     const stale = this.staleScratch;
     stale.length = 0;

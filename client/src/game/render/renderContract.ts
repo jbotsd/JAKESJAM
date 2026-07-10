@@ -15,7 +15,12 @@
 // Adoption is incremental, safest layer first: projectiles (pure state
 // mapping) now; entities, combat FX and the rig pose follow.
 
-import type { PlayerId, ProjectileShape, WorldState } from "../../sim/types";
+import type {
+  DestructibleEntity,
+  PlayerId,
+  ProjectileShape,
+  WorldState,
+} from "../../sim/types";
 
 /** Everything a painter needs to draw one projectile. */
 export type ProjectileRenderModel = {
@@ -93,6 +98,110 @@ export function produceProjectiles(
     } else {
       m.bodyAlpha = 1;
     }
+  }
+  return n;
+}
+
+// ── Destructibles ─────────────────────────────────────────────────────────
+// FireEntity / PickupEntity are already plain engine-free data with zero
+// render-side derivation — painters consume them directly and that IS
+// contract-conformant. Destructibles carry temporal derivation (damage
+// flash), so the bookkeeping lives here, not in any one painter.
+
+const DAMAGE_FLASH_MS = 110;
+
+/** DestructibleEntity + the derived flash flag painters need. */
+export type DestructibleRenderModel = {
+  entity: DestructibleEntity;
+  /** True for DAMAGE_FLASH_MS after a health drop. */
+  flashing: boolean;
+};
+
+/** Explicit, engine-free flash bookkeeping (one per painter instance). */
+export type DestructibleFlashState = {
+  prevHealth: Map<number, number>;
+  flashUntilMs: Map<number, number>;
+  /** Scratch for stale-id sweep — reused, never reallocated. */
+  staleScratch: number[];
+};
+
+export function makeDestructibleFlashState(): DestructibleFlashState {
+  return { prevHealth: new Map(), flashUntilMs: new Map(), staleScratch: [] };
+}
+
+function blankDestructibleModel(): DestructibleRenderModel {
+  return { entity: null as unknown as DestructibleEntity, flashing: false };
+}
+
+/**
+ * Fill `out` with destructible models (flash derived from health drops
+ * since the previous call). Prunes bookkeeping for despawned ids. Returns
+ * the model count.
+ */
+export function produceDestructibles(
+  state: WorldState,
+  nowMs: number,
+  st: DestructibleFlashState,
+  out: DestructibleRenderModel[],
+): number {
+  let n = 0;
+  for (const idStr in state.destructibles) {
+    const obj = state.destructibles[idStr as unknown as keyof typeof state.destructibles]!;
+    const id = Number(idStr);
+    const prev = st.prevHealth.get(id);
+    if (prev !== undefined && obj.health < prev) {
+      st.flashUntilMs.set(id, nowMs + DAMAGE_FLASH_MS);
+    }
+    st.prevHealth.set(id, obj.health);
+    if (n >= out.length) out.push(blankDestructibleModel());
+    const m = out[n]!;
+    n += 1;
+    m.entity = obj;
+    m.flashing = (st.flashUntilMs.get(id) ?? 0) > nowMs;
+  }
+  // Prune despawned ids so the maps can't grow across a long session.
+  const stale = st.staleScratch;
+  stale.length = 0;
+  for (const id of st.prevHealth.keys()) {
+    if (!(id in state.destructibles)) stale.push(id);
+  }
+  for (const id of stale) {
+    st.prevHealth.delete(id);
+    st.flashUntilMs.delete(id);
+  }
+  return n;
+}
+
+// ── Satellites ────────────────────────────────────────────────────────────
+
+/** Resolved orbit position for one satellite (owner lookup + trig done). */
+export type SatelliteRenderModel = {
+  id: number;
+  x: number;
+  y: number;
+};
+
+function blankSatellite(): SatelliteRenderModel {
+  return { id: 0, x: 0, y: 0 };
+}
+
+/** Fill `out` with orbit-resolved satellite positions; ownerless (dead
+ *  owner) satellites are skipped, matching the previous painter rule. */
+export function produceSatellites(
+  state: WorldState,
+  out: SatelliteRenderModel[],
+): number {
+  let n = 0;
+  for (const idStr in state.satellites) {
+    const sat = state.satellites[idStr as unknown as keyof typeof state.satellites]!;
+    const owner = sat.ownerId !== null ? state.players[sat.ownerId] : undefined;
+    if (!owner) continue;
+    if (n >= out.length) out.push(blankSatellite());
+    const m = out[n]!;
+    n += 1;
+    m.id = Number(idStr);
+    m.x = owner.x + Math.cos(sat.angle) * sat.orbitRadius;
+    m.y = owner.y + Math.sin(sat.angle) * sat.orbitRadius;
   }
   return n;
 }
