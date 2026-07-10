@@ -240,6 +240,15 @@ funnel; the game is installable and feels native.
 - Adding a hypothetical new projectile type touches: sim, contract,
   one painter, one atlas entry — and it appears correctly on desktop,
   phone, Pi, and in a replay-rendered clip with no further work.
+  **INTEGRATED LITMUS EVIDENCE 2026-07-10**: the same contract producers
+  (projectiles, combat FX, destructibles, satellites) were verified
+  painting in all four consumer contexts in one night — standard desktop
+  (live probes), phone tier (live probe, vector rig + contract
+  projectiles), potato tier (live probe: BAKED rig firing a
+  contract-driven projectile mid-combat), and the replay renderer (the
+  pinned A/B clips are painted by the identical producers, one side per
+  rig backend). One producer change provably reaches every surface;
+  the real-Pi row remains the only unexercised hardware.
 
 ---
 
