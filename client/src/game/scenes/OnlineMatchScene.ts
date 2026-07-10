@@ -87,6 +87,7 @@ import { installHudCamera } from "../systems/HudCamera.js";
 import { getRenderScale, uiWidth, uiHeight } from "../render/renderResolution.js";
 import { RenderGovernor } from "../render/renderGovernor.js";
 import { getQualityProfile } from "../render/qualityProfile.js";
+import { BakedPlayerRig } from "../rendering/BakedPlayerRig.js";
 import { assistTouchAim } from "../input/touchAimAssist.js";
 import { autoWallHopKeys, makeAutoHopState } from "../input/autoWallHop.js";
 import {
@@ -1780,7 +1781,14 @@ export class OnlineMatchScene extends Phaser.Scene {
   private makePlayerRig(player: PlayerEntity, isLocal: boolean): ProceduralPlayerRig {
     const character = this.getCharacter(player.characterId);
     const bot = isBotId(player.id);
-    return new ProceduralPlayerRig(this, {
+    // Baked twin on the potato tier (or ?rig=baked / ?rig=live override for
+    // A/B renders): SAME pose solve, textured-quad painters.
+    const rigOverride = new URLSearchParams(window.location.search).get("rig");
+    const rigStyle = rigOverride === "baked" || rigOverride === "live"
+      ? rigOverride
+      : getQualityProfile().rigStyle;
+    const RigClass = rigStyle === "baked" ? BakedPlayerRig : ProceduralPlayerRig;
+    return new RigClass(this, {
       // Bots render AMBER with a "BOT · NAME" plate — unmistakable next to
       // the teal local / crimson remote rigs.
       color: bot

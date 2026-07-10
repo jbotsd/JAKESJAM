@@ -31,15 +31,18 @@ export type QualityProfile = {
   particleScale: number;
   /** 0 = no glow/lighting layers, 1 = selective, 2 = full stack. */
   fxLevel: 0 | 1 | 2;
+  /** Rig painter: live vector (the game's identity) or the baked twin
+   *  (same pose solve, textured-quad painters — see BakedPlayerRig). */
+  rigStyle: "live" | "baked";
 };
 
 const TIER_KEY = "jj_quality_tier";
 
 const TIERS: Record<QualityTier, Omit<QualityProfile, "tier" | "source">> = {
-  potato: { renderScale: 0.75, fpsLimit: 30, particleScale: 0.25, fxLevel: 0 },
-  phone: { renderScale: 1, fpsLimit: 60, particleScale: 0.6, fxLevel: 1 },
-  standard: { renderScale: 1, fpsLimit: 0, particleScale: 1, fxLevel: 2 },
-  ultra: { renderScale: 1.5, fpsLimit: 0, particleScale: 1, fxLevel: 2 },
+  potato: { renderScale: 0.75, fpsLimit: 30, particleScale: 0.25, fxLevel: 0, rigStyle: "baked" },
+  phone: { renderScale: 1, fpsLimit: 60, particleScale: 0.6, fxLevel: 1, rigStyle: "live" },
+  standard: { renderScale: 1, fpsLimit: 0, particleScale: 1, fxLevel: 2, rigStyle: "live" },
+  ultra: { renderScale: 1.5, fpsLimit: 0, particleScale: 1, fxLevel: 2, rigStyle: "live" },
 };
 
 function isTier(v: string | null): v is QualityTier {

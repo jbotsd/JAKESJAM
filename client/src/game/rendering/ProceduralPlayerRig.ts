@@ -54,7 +54,7 @@ type ProceduralPlayerPose = {
   platingGlow?: number;
 };
 
-type LimbSolve = {
+export type LimbSolve = {
   joint: Vec2;
   end: Vec2;
 };
@@ -68,11 +68,11 @@ const ACCENT = 0x8ff8ff; // Crystal cyan glow
 export class ProceduralPlayerRig {
   private readonly graphics: Phaser.GameObjects.Graphics;
   private readonly nameText: Phaser.GameObjects.Text;
-  private readonly color: number;
-  private readonly colorDark: number;
-  private readonly accentColor: number;
+  protected readonly color: number;
+  protected readonly colorDark: number;
+  protected readonly accentColor: number;
   private readonly name: string;
-  private readonly scale: number;
+  protected readonly scale: number;
   private readonly detail: "full" | "lite";
   private stepPhase = 0;
   /** Continuous facing −1..+1 (eases flips — no whole-body IK flip pop). */
@@ -685,7 +685,7 @@ export class ProceduralPlayerRig {
   /** The reflect moment: an impact ring expanding from the chest + (while
    *  sliding) the aegis arc overdriven to solid white. Progress eases out —
    *  violent at the instant of the turn, gone in a quarter second. */
-  private drawParryFlash(
+  protected drawParryFlash(
     g: Phaser.GameObjects.Graphics,
     chest: Vec2,
     aim: Vec2,
@@ -721,7 +721,7 @@ export class ProceduralPlayerRig {
   /** The deployed shield-dash shell: a curved energy arc centred on the chest,
    *  spanning the 120° block cone around the lunge (aim) direction, with a
    *  bright shimmering leading rim and a faint field behind it. */
-  private drawAegisShield(
+  protected drawAegisShield(
     g: Phaser.GameObjects.Graphics,
     chest: Vec2,
     aim: Vec2,
@@ -756,7 +756,7 @@ export class ProceduralPlayerRig {
   }
 
   // --- TRAIL: Fading body-color dots at past positions ---
-  private drawTrail(
+  protected drawTrail(
     g: Phaser.GameObjects.Graphics,
     currentPos: Vec2,
     velocity: Vec2,
@@ -807,7 +807,7 @@ export class ProceduralPlayerRig {
   /** Three staggered lines trailing opposite the launch vector, longest in the
    *  middle — the classic anime speed-line read. Length/alpha scale with
    *  speed so the tail end of the slide relaxes instead of cutting off. */
-  private drawDashStreaks(
+  protected drawDashStreaks(
     g: Phaser.GameObjects.Graphics,
     pos: Vec2,
     velocity: Vec2,
@@ -851,7 +851,7 @@ export class ProceduralPlayerRig {
   }
 
   // --- TORSO: Filled armored body ---
-  private drawTorso(g: Phaser.GameObjects.Graphics, pelvis: Vec2, chest: Vec2, s: number) {
+  protected drawTorso(g: Phaser.GameObjects.Graphics, pelvis: Vec2, chest: Vec2, s: number) {
     const w1 = 11 * s; // chest width — leaner vessel taper, not armored bulk
     const w2 = 7.5 * s; // pelvis width
 
@@ -905,7 +905,7 @@ export class ProceduralPlayerRig {
   }
 
   // --- SPINE GLOW: Energy filaments showing health ---
-  private drawSpineGlow(
+  protected drawSpineGlow(
     g: Phaser.GameObjects.Graphics,
     pelvis: Vec2,
     chest: Vec2,
@@ -944,7 +944,7 @@ export class ProceduralPlayerRig {
   // instead of a clean circular orbit — deliberately irregular, reads as
   // barely-contained energy rather than a decorative UI ring. Envelops the
   // whole body (pelvis to well above the head), not just the torso. ---
-  private drawAura(g: Phaser.GameObjects.Graphics, pelvis: Vec2, chest: Vec2, s: number) {
+  protected drawAura(g: Phaser.GameObjects.Graphics, pelvis: Vec2, chest: Vec2, s: number) {
     const n =
       this.detail === "full"
         ? ProceduralPlayerRig.AURA_MOTE_COUNT
@@ -991,7 +991,7 @@ export class ProceduralPlayerRig {
 
   // --- HIP DRAPE: a short cloth strip trailing off the pelvis — the
   // "wizard sash" that keeps the vessel from reading as pure armor plate.
-  private drawHipDrape(g: Phaser.GameObjects.Graphics, pelvis: Vec2, tip: Vec2, s: number) {
+  protected drawHipDrape(g: Phaser.GameObjects.Graphics, pelvis: Vec2, tip: Vec2, s: number) {
     const w = 5 * s;
     const nx = -(tip.y - pelvis.y);
     const ny = tip.x - pelvis.x;
@@ -1032,7 +1032,7 @@ export class ProceduralPlayerRig {
   // the single strongest identity marker the vessel was missing. Drawn
   // BEHIND the hood so the hood's base overlaps its root and only the
   // swept blade reads clearly above/behind the skull. ---
-  private drawHeadCrest(g: Phaser.GameObjects.Graphics, head: Vec2, s: number) {
+  protected drawHeadCrest(g: Phaser.GameObjects.Graphics, head: Vec2, s: number) {
     const f = this.facing;
     const rootX = head.x - f * 1 * s;
     const rootY = head.y - 8 * s;
@@ -1075,7 +1075,7 @@ export class ProceduralPlayerRig {
   }
 
   // --- HEAD: Hood + helmet + visor ---
-  private drawHead(g: Phaser.GameObjects.Graphics, head: Vec2, s: number, healthRatio: number) {
+  protected drawHead(g: Phaser.GameObjects.Graphics, head: Vec2, s: number, healthRatio: number) {
     const f = this.facing;
 
     this.drawHeadCrest(g, head, s);
@@ -1124,7 +1124,7 @@ export class ProceduralPlayerRig {
   }
 
   // --- SHOULDER STUB: crystal joint seal, not a bulky pauldron ---
-  private drawShoulderArmor(g: Phaser.GameObjects.Graphics, shoulder: Vec2, s: number) {
+  protected drawShoulderArmor(g: Phaser.GameObjects.Graphics, shoulder: Vec2, s: number) {
     g.fillStyle(DARK, 1);
     g.fillCircle(shoulder.x, shoulder.y, 4.5 * s);
     g.fillStyle(this.color, 0.9);
@@ -1140,7 +1140,7 @@ export class ProceduralPlayerRig {
   // `pulse` (0-1) is the ability/cast-trigger hook: triggerFire() drives
   // the lead hand's pulse today, but any future ability effect can drive
   // either hand's pulse the same way without touching this method. ---
-  private drawHandGlow(g: Phaser.GameObjects.Graphics, hand: Vec2, s: number, pulse: number) {
+  protected drawHandGlow(g: Phaser.GameObjects.Graphics, hand: Vec2, s: number, pulse: number) {
     // Bare palm — small dark disc, no barrel/weapon geometry.
     g.fillStyle(DARK, 1);
     g.fillCircle(hand.x, hand.y, 2.6 * s);
@@ -1167,7 +1167,7 @@ export class ProceduralPlayerRig {
   // (`throwAmount` 0-1) it brightens and stretches a motion streak along aim
   // — the shuriken leaving the hand. The shard spawn point IS this hand, so
   // a shot visibly launches from the exact hand mid-flick.
-  private drawShuriken(
+  protected drawShuriken(
     g: Phaser.GameObjects.Graphics,
     hand: Vec2,
     aim: Vec2,
@@ -1205,7 +1205,7 @@ export class ProceduralPlayerRig {
   }
 
   // --- THICK LIMB: Filled polygon instead of line ---
-  private drawThickLimb(
+  protected drawThickLimb(
     g: Phaser.GameObjects.Graphics,
     root: Vec2,
     solve: LimbSolve,
@@ -1251,7 +1251,7 @@ export class ProceduralPlayerRig {
   // walk-cycle lift this drove the user-visible flicker between "feet
   // floating" (lift trough) and "feet inside platform" (no-lift, sink).
   // See commit 7027a82 for the matching footPos gate.
-  private drawBoot(g: Phaser.GameObjects.Graphics, foot: Vec2, s: number) {
+  protected drawBoot(g: Phaser.GameObjects.Graphics, foot: Vec2, s: number) {
     const f = this.facing;
     const bw = 8 * s;
     const bh = 5 * s;

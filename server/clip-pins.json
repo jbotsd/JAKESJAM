@@ -7,15 +7,15 @@
       "pinnedAt": "2026-07-10"
     },
     {
-      "id": "c144f036-6915-40bb-9232-84cc5ed0c5b4",
+      "id": "5a8beb3c-d7b2-463a-8c2b-b87cbed458aa",
       "ext": "mp4",
-      "note": "PILLAR-2 A/B BASELINE: live-vector rig, replay world-1783689217085 ticks 12000-13200, ReplayScene render 2026-07-10. Same slice + baked backend = B side.",
+      "note": "PILLAR-2 A/B — A SIDE (live vector rig). replay world-1783689217085 ticks 12000-13200, LUT-gated deterministic render. Pair: 4facc5b6 (baked).",
       "pinnedAt": "2026-07-10"
     },
     {
-      "id": "3cd60d29-2c36-4081-b5dd-d0387b6ad463",
+      "id": "4facc5b6-a8f9-4950-b1fd-bc7014eaa909",
       "ext": "mp4",
-      "note": "PILLAR-2 A/B BASELINE vertical (pair of c144f036)",
+      "note": "PILLAR-2 A/B — B SIDE (baked rig, same pose solve by construction). Same slice as 5a8beb3c. Frame-300 framing verified identical.",
       "pinnedAt": "2026-07-10"
     }
   ]

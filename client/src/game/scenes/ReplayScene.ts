@@ -35,6 +35,7 @@ import type {
 } from "../../sim/types";
 import type { DirectorState } from "../../sim/spectatorDirector";
 import { ProceduralPlayerRig } from "../rendering/ProceduralPlayerRig";
+import { BakedPlayerRig } from "../rendering/BakedPlayerRig";
 import { EntityRenderCoordinator } from "../render/EntityRenderCoordinator";
 import { PlatformLayer } from "../render/PlatformPainter";
 import { CosmicArenaLayer } from "../render/CosmicArenaLayer";
@@ -58,6 +59,7 @@ import { BOT_RIG_COLOR, botLabel, isBotId } from "../ui/botIdentity";
 import { characters } from "../data/characters";
 import { ARENA_THEMES, PALETTE } from "../ui/palette";
 import { SceneKeys } from "./SceneKeys";
+import { getWasmSim } from "../../sim/wasm/runtime";
 
 const PLAYER_VISUAL_SCALE = 0.78;
 const RENDER_FPS = 30;
@@ -130,6 +132,13 @@ export class ReplayScene extends Phaser.Scene {
     const name = params.get("replay") ?? "latest";
     this.renderMode = params.get("render") === "1";
     this.publish({ status: "loading" });
+
+    // DETERMINISM GATE: the TS sim's trig delegates to Math.sin/cos until
+    // the wasm LUT tables install (the documented pre-wasm fallback hole).
+    // A replay stepped on the fallback diverges from one stepped on the
+    // LUT — caught red-handed 2026-07-10 when two renders of the SAME
+    // slice framed different bot positions. Never step before the LUT.
+    await getWasmSim();
 
     let file: ReplayFile;
     try {
@@ -271,7 +280,9 @@ export class ReplayScene extends Phaser.Scene {
       if (!rig) {
         const character =
           characters.find((c) => (c.id as string) === p.characterId) ?? characters[0]!;
-        rig = new ProceduralPlayerRig(this, {
+        const rigOverride = new URLSearchParams(window.location.search).get("rig");
+        const RigClass = rigOverride === "baked" ? BakedPlayerRig : ProceduralPlayerRig;
+        rig = new RigClass(this, {
           color: isBotId(pid) ? BOT_RIG_COLOR : 0x8ff8ff,
           name: isBotId(pid) ? botLabel(pid) : pid.slice(-4),
           scale: PLAYER_VISUAL_SCALE * character.sizeScale,
