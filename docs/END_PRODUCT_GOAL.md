@@ -130,12 +130,17 @@ be recording.
   NVENC buffer).
 - Kill → shareable vertical clip URL in < 60s, crisp enough that text/HUD
   in the clip is readable on a phone.
-  **LOOP EVIDENCE 2026-07-10** (automated player, not yet a human): probe
-  clicked the world URL → joined → fought via bot driver → trigger →
-  1920×938 mezzanine + NVENC 720×1280 vertical uploaded ≈13s later →
-  share page `/c/<id>` and vertical media both public 200 with og:video
-  tags. Capture ran with preserveDrawingBuffer:false via POST_RENDER;
-  frames verified non-black; HUD text readable in the vertical.
+  **LOOP EVIDENCE 2026-07-10** (automated player): probe clicked the world
+  URL → joined → fought via bot driver → trigger → 1920×938 mezzanine +
+  NVENC 720×1280 vertical uploaded ≈13s later → share page `/c/<id>` and
+  vertical media both public 200 with og:video tags. Capture ran with
+  preserveDrawingBuffer:false via POST_RENDER; frames verified non-black.
+  **REAL-USER LOOP 2026-07-10 19:50**: during Jake's live playtest his
+  own kills auto-produced TWO clip pairs through play.elyad.io (1920×962
+  mezzanines from his viewport + NVENC 720×1280 verticals, ~10s each),
+  share pages public 200 — the goal's one-sentence loop (click link →
+  fight → server hands you the highlight) has been completed by a human
+  at the standard tier.
 - Replay-rendered clip of a stored match is pixel-plausible against a live
   screen recording of the same match (same events, same positions, same
   camera behaviour) and renders ≥ 2× realtime on the 4080.
