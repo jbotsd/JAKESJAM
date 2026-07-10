@@ -92,8 +92,16 @@ tier.
   render path (performance timeline); p99 frame time within 1.5× median.
 - Kill-clip frame-by-frame analysis (the ffmpeg/centroid method) shows no
   velocity reversals on remote bodies during normal play.
+  **PASSED 2026-07-10** — rendered-position series sampled per rAF in the
+  live world during 8s of bot combat (176 samples × 3 bodies): remote
+  bodies showed 0 instantaneous velocity reversals and 0 discontinuities
+  across 133 sustained-motion pairs; the only direction changes were
+  smooth decelerate-through-zero turns (−238→−84→+220 px/s class). The
+  pre-fix signature (instant ±3900 px/s flips, 22 of 33 samples) is gone.
 - Artificially throttled CPU (4× slowdown): governor degrades resolution
   visibly but motion stays continuous — no freeze-leap, no rubber-banding.
+  **PASSED 2026-07-10** (8× CDP CPU throttle: renderScale stepped 1.0→0.5,
+  frame rate recovered, no motion freeze).
 
 ## 4. Every great moment becomes a clip — with zero recording tax
 
