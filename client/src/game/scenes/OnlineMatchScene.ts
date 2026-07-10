@@ -88,6 +88,7 @@ import { getRenderScale, uiWidth, uiHeight } from "../render/renderResolution.js
 import { RenderGovernor } from "../render/renderGovernor.js";
 import { getQualityProfile } from "../render/qualityProfile.js";
 import { assistTouchAim } from "../input/touchAimAssist.js";
+import { autoWallHopKeys, makeAutoHopState } from "../input/autoWallHop.js";
 import { playCardPickFeel } from "../render/CardFeel.js";
 
 // Portrait-mobile camera framing. The arena is 2:1 wide but a phone held
@@ -392,6 +393,7 @@ export class OnlineMatchScene extends Phaser.Scene {
   /** Previous frame's render state — touch aim assist reads it (aim input
    *  is assembled before pump, so this frame's state doesn't exist yet). */
   private lastStateForAssist: WorldState | null = null;
+  private autoHopState = makeAutoHopState();
   private wakeLock: WakeLockSentinel | null = null;
 
   /** visibilitychange/pageshow → resume watchdog + wake-lock re-acquire.
@@ -774,6 +776,17 @@ export class OnlineMatchScene extends Phaser.Scene {
       }
       aimX = ox + dir.x * AIM_REACH;
       aimY = oy + dir.y * AIM_REACH;
+      // AUTO WALL-HOP (mobile only): pushing into a touched wall pulses
+      // Jump — automatic wall climb, no thumb gymnastics (autoWallHop.ts).
+      const meForHop = this.lastStateForAssist?.players[this.localPlayerId];
+      if (meForHop) {
+        keys = autoWallHopKeys(
+          keys,
+          meForHop.touchingWallDir ?? 0,
+          performance.now(),
+          this.autoHopState,
+        );
+      }
     }
 
     this.loop.setLocalInput({ keys, aimX, aimY });
