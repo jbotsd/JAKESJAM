@@ -200,7 +200,7 @@ function pickupColor(kind: PickupKind): number {
 }
 
 /** Element-based projectile tint. */
-function projectileColorByElement(element: string, ownerId: string | null): number {
+export function projectileColorByElement(element: string, ownerId: string | null): number {
   switch (element) {
     case "fire":
       return 0xff7a18;
@@ -2356,7 +2356,7 @@ export class OnlineMatchScene extends Phaser.Scene {
 
 // ---------------- Drawing helpers (file-local) ----------------
 
-function drawDestructible(
+export function drawDestructible(
   graphics: Phaser.GameObjects.Graphics,
   obj: DestructibleEntity,
   flashing: boolean,
@@ -2389,7 +2389,7 @@ function drawDestructible(
   graphics.strokeRect(obj.x - halfW, obj.y - halfH, obj.width, obj.height);
 }
 
-function drawFirePatch(
+export function drawFirePatch(
   graphics: Phaser.GameObjects.Graphics,
   fire: FireEntity,
   nowMs: number,
@@ -2415,7 +2415,7 @@ function drawFirePatch(
   }
 }
 
-function drawPickup(
+export function drawPickup(
   graphics: Phaser.GameObjects.Graphics,
   pickup: PickupEntity,
   nowMs: number,

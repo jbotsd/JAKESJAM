@@ -9,6 +9,7 @@ export const SceneKeys = {
   Match: "MatchScene",
   OnlineMatch: "OnlineMatchScene",
   Draft: "DraftScene",
+  Replay: "ReplayScene",
   HUD: "HUDScene",
 } as const;
 

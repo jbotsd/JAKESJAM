@@ -1138,7 +1138,15 @@ function leaveMatchToHome(): void {
 
 // Auto-join Hot Lobby when the URL says so (`?world=1` / `/world`).
 const urlParams = new URLSearchParams(window.location.search);
-if (urlParams.get("world") === "1" || window.location.pathname === "/world") {
+if (urlParams.get("replay")) {
+  // Replay playback / offline render (ReplayScene) — no netcode, no lobby.
+  shell.goto("home");
+  document.title = "JAKESJAM — Replay";
+  setTimeout(() => {
+    game.scene.stop(SceneKeys.MainMenu);
+    game.scene.start(SceneKeys.Replay);
+  }, 0);
+} else if (urlParams.get("world") === "1" || window.location.pathname === "/world") {
   // Defer one tick so Phaser has a chance to register the scene.
   setTimeout(() => joinWorld(), 0);
 } else if (urlParams.get("room") || urlParams.get("code")) {
