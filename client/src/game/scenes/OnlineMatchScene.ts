@@ -1528,7 +1528,10 @@ export class OnlineMatchScene extends Phaser.Scene {
       { rx: 0.5, ry: 0.25, ew: width * 0.55, eh: height * 0.28, a: 0.09 },
     ];
     this.hazeEllipses = [];
-    for (const hd of hazeDefs) {
+    // fxLevel 0: three large blended ellipses are fullscreen-class fill —
+    // part of the Pi's measured 10→30fps gap (2026-07-10).
+    const hazeWanted = getQualityProfile().fxLevel > 0;
+    for (const hd of hazeWanted ? hazeDefs : []) {
       const ellipse = this.add
         .ellipse(width * hd.rx, height * hd.ry, hd.ew, hd.eh, hazeColor, hd.a)
         .setDepth(0.5);

@@ -22,7 +22,10 @@ const UP_FACTOR = 0.85;
 const DOWN_STREAK = 3; // 3 consecutive bad checks (~6s) before stepping
 const UP_HOLD_MS = 30_000;
 const UP_LOCKOUT_AFTER_DOWN_MS = 60_000;
+/** Weak-GPU tiers may trade far more resolution before motion: VideoCore
+ *  at 0.5 floor still ran out of fill on a real Pi 5 (2026-07-10). */
 const FLOOR = 0.5;
+const FLOOR_POTATO = 0.35;
 
 export class RenderGovernor {
   private readonly game: Phaser.Game;
@@ -34,11 +37,14 @@ export class RenderGovernor {
   private goodSinceMs: number | null = null;
   private lastDownAtMs = 0;
 
+  private readonly floor: number;
+
   constructor(game: Phaser.Game) {
     this.game = game;
     this.ceilingScale = getRenderScale();
-    const cap = getQualityProfile().fpsLimit;
-    this.targetDtMs = cap > 0 ? 1000 / cap : 1000 / 60;
+    const profile = getQualityProfile();
+    this.floor = profile.tier === "potato" ? FLOOR_POTATO : FLOOR;
+    this.targetDtMs = profile.fpsLimit > 0 ? 1000 / profile.fpsLimit : 1000 / 60;
   }
 
   /** Call once per frame with the render-loop dt EMA (NetStats.frameDtEmaMs). */
@@ -50,8 +56,8 @@ export class RenderGovernor {
     if (frameDtEmaMs > this.targetDtMs * DOWN_FACTOR) {
       this.goodSinceMs = null;
       this.badStreak += 1;
-      if (this.badStreak >= DOWN_STREAK && rs > FLOOR) {
-        setRenderScaleRuntime(this.game, Math.max(FLOOR, rs - 0.1));
+      if (this.badStreak >= DOWN_STREAK && rs > this.floor) {
+        setRenderScaleRuntime(this.game, Math.max(this.floor, rs - 0.1));
         this.badStreak = 0;
         this.lastDownAtMs = nowMs;
         console.log(`[governor] frame dt ${frameDtEmaMs.toFixed(1)}ms — renderScale → ${getRenderScale().toFixed(2)}`);

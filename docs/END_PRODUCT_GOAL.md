@@ -47,6 +47,11 @@ always wins.
   fullscreen glow). Remaining gap to 30fps target: platform-layer fill and
   ARM sim cost are the next suspects; row stays OPEN but is now measured,
   instrumented, and improving on real hardware.
+  **FOLLOW-UP same night**: haze ellipses gated at fxLevel 0 + governor
+  floor deepened to 0.35 on potato — fps stayed flat at ~20, which is the
+  key diagnostic: the Pi is now CPU-BOUND (ARM sim + engine overhead),
+  not fill-bound. The last 10fps is a profiling-led sim/engine
+  optimization, cleanly scoped for a follow-up session.
 - Mid-range Android phone: 60fps for 15 continuous minutes (thermal
   equilibrium), touch-only player completes a match and lands kills.
 - iPhone Safari: lock the screen 10s mid-match, unlock → rejoined and
