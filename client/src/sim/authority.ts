@@ -5,8 +5,8 @@
  * up a full match: import `transferAuthority` directly in tests.
  */
 
-import { EntityId } from "@sim/types.ts";
-import type { PlayerId, WorldState } from "@sim/types.ts";
+import { EntityId } from "./types";
+import type { PlayerId, WorldState } from "./types";
 
 /**
  * Rewrite ownership of every entity currently owned by `oldOwner` to

@@ -48,8 +48,8 @@ import {
 import { InterestGrid, CELL_SIZE_PX, OBSERVE_RADIUS_CELLS } from "./InterestGrid.ts";
 import { encodeDelta } from "@net/snapshotDelta.ts";
 import { makeHitSweepScratch } from "@sim/projectile.ts";
-import { transferAuthority } from "./authority.ts";
-import { applyMidMatchJoin, applyRosterLeave } from "./rosterOps.ts";
+import { transferAuthority } from "@sim/authority.ts";
+import { applyMidMatchJoin, applyRosterLeave } from "@sim/rosterOps.ts";
 import { maybeSignalHostClip } from "./hostReplayBuffer.ts";
 import { persistReplay } from "./replayStore.ts";
 import { ReplayRecorder } from "./ReplayRecorder.ts";

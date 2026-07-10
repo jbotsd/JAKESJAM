@@ -376,6 +376,41 @@ video{width:100%;height:100%;object-fit:contain;display:block}</style>
     }
 
     // Always-raw video stream for og:video / <video> / TikTok — never HTML.
+    // Replay files for the replay player / headless renderer. Same-box +
+    // player-facing "watch this match" both read here. `latest` resolves to
+    // the newest .jjr. Filenames are sanitized (no traversal); replays are
+    // inputs-only (no chat/PII) so public-read is acceptable like clips.
+    if (url.pathname.startsWith("/replays/") && req.method === "GET") {
+      const raw = url.pathname.slice("/replays/".length).split("?")[0] ?? "";
+      const { readdirSync } = await import("node:fs");
+      const { resolve } = await import("node:path");
+      const dir = resolve(import.meta.dir, "..", ".replays");
+      let name = raw;
+      try {
+        if (raw === "latest") {
+          const files = readdirSync(dir).filter((f) => f.endsWith(".jjr")).sort();
+          name = files[files.length - 1] ?? "";
+        }
+      } catch {
+        name = "";
+      }
+      if (!name || !/^[a-zA-Z0-9_-]+\.jjr$/.test(name)) {
+        return new Response("not found", { status: 404 });
+      }
+      const file = Bun.file(resolve(dir, name));
+      if (!(await file.exists())) {
+        return new Response("not found", { status: 404 });
+      }
+      return new Response(file, {
+        headers: {
+          "access-control-allow-origin": "*",
+          "content-type": "application/octet-stream",
+          "x-replay-name": name,
+          "cache-control": "no-store",
+        },
+      });
+    }
+
     // Paths: /v/<file> (preferred) and /media/<file> (alias).
     if (
       (url.pathname.startsWith("/v/") || url.pathname.startsWith("/media/")) &&

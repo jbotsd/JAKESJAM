@@ -18,7 +18,7 @@ import { createRuntime, stepWithRuntime } from "@sim/World.ts";
 import { resolveMap } from "@sim/data/maps.ts";
 import type { InputFrame, PlayerId } from "@sim/types.ts";
 import type { ReplayHeader, ReplayInputEntry, ReplayRosterEvent } from "../ReplayRecorder.ts";
-import { applyMidMatchJoin, applyRosterLeave } from "../rosterOps.ts";
+import { applyMidMatchJoin, applyRosterLeave } from "@sim/rosterOps.ts";
 
 const path = process.argv[2];
 if (!path) {

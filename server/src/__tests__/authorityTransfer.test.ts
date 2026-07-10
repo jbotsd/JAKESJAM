@@ -2,7 +2,7 @@
 // evicted from the reconnect-grace window.
 
 import { describe, test, expect } from "bun:test";
-import { transferAuthority } from "../authority.ts";
+import { transferAuthority } from "@sim/authority.ts";
 import { EntityId, InputSeq, PlayerId, Tick } from "@sim/types.ts";
 import type {
   FireEntity,

@@ -12,8 +12,8 @@
 // (2026-07-10); behavior-identical, only the host bookkeeping (playerInfo,
 // input queues, baseline rings) stays in matchHost.
 
-import type { MapDefinition, PlayerId, PlayerSpawnInfo, WorldState } from "@sim/types.ts";
-import { transferAuthority } from "./authority.ts";
+import type { MapDefinition, PlayerId, PlayerSpawnInfo, WorldState } from "./types";
+import { transferAuthority } from "./authority";
 
 /**
  * Insert a mid-match joiner into the world. Spawn point = the map spawn
