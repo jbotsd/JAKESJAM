@@ -75,6 +75,17 @@ always wins.
   command once the baked backend exists: render the identical slice with
   the baked rig — same replay, same ticks, same camera, only the painter
   differs. The A/B is deterministic by construction.
+  **BOTH SIDES EXIST + DETERMINISM PROVEN (later same night)**: the baked
+  twin shipped as BakedPlayerRig — a subclass overriding ONLY the leaf
+  painters (textured quads from canvas-baked parts), so every line of the
+  live rig's spring/IK pose pipeline executes unchanged: motion-identical
+  BY CONSTRUCTION. Canonical LUT-gated pair pinned: A = clip 5a8beb3c
+  (live), B = clip 4facc5b6 (baked), same replay slice, frame-300 framing
+  verified pixel-identical. Building the pair also CAUGHT the pre-wasm
+  trig fallback live (two renders of the same slice diverged) —
+  ReplayScene now awaits the LUT before stepping. Remaining: Jake's eye
+  on the pair at phone size + visual iteration on the baked part art
+  (potato tier only; desktop untouched).
 - Toggling every effect at Ultra changes look, never gameplay legibility.
 
 ## 3. Smoothness is engineered, not hoped for
