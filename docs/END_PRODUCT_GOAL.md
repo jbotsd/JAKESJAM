@@ -128,6 +128,13 @@ be recording.
 **Acceptance tests**
 - Host instance: frame-time delta with recording on vs off < 2% (native
   NVENC buffer).
+- Remote players: encode fully off the main thread.
+  **SHIPPED+VERIFIED 2026-07-10**: WebCodecs worker path live — per
+  captured frame the main thread does one VideoFrame(canvas) + transfer;
+  encode (latencyMode quality) + MP4 mux run in clipEncoderWorker.
+  Probe-verified end-to-end: trigger → worker mp4 → upload → NVENC
+  vertical → share URLs public, frames non-black. MediaRecorder remains
+  the no-WebCodecs fallback.
 - Kill → shareable vertical clip URL in < 60s, crisp enough that text/HUD
   in the clip is readable on a phone.
   **LOOP EVIDENCE 2026-07-10** (automated player): probe clicked the world
