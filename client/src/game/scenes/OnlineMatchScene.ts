@@ -87,6 +87,7 @@ import { installHudCamera } from "../systems/HudCamera.js";
 import { getRenderScale, uiWidth, uiHeight } from "../render/renderResolution.js";
 import { RenderGovernor } from "../render/renderGovernor.js";
 import { getQualityProfile } from "../render/qualityProfile.js";
+import { assistTouchAim } from "../input/touchAimAssist.js";
 import { playCardPickFeel } from "../render/CardFeel.js";
 
 // Portrait-mobile camera framing. The arena is 2:1 wide but a phone held
@@ -379,6 +380,9 @@ export class OnlineMatchScene extends Phaser.Scene {
   private newlyDeadScratch: string[] = [];
   private aimWorldScratch = new Phaser.Math.Vector2();
   private renderGovernor: RenderGovernor | null = null;
+  /** Previous frame's render state — touch aim assist reads it (aim input
+   *  is assembled before pump, so this frame's state doesn't exist yet). */
+  private lastStateForAssist: WorldState | null = null;
   private wakeLock: WakeLockSentinel | null = null;
 
   /** visibilitychange/pageshow → resume watchdog + wake-lock re-acquire.
@@ -746,8 +750,21 @@ export class OnlineMatchScene extends Phaser.Scene {
       const AIM_REACH = 420;
       const ox = this.lastLocalRenderX ?? aimX;
       const oy = this.lastLocalRenderY ?? aimY;
-      aimX = ox + this.lastTouchAim.x * AIM_REACH;
-      aimY = oy + this.lastTouchAim.y * AIM_REACH;
+      // Soft cone assist (touch only — an input transform, server-validated
+      // like any aim; see touchAimAssist.ts). Uses last frame's state:
+      // getRenderState can't run before pump, and 16ms of staleness is
+      // nothing against a thumb's precision.
+      let dir: { x: number; y: number } = this.lastTouchAim;
+      if (this.lastStateForAssist) {
+        dir = assistTouchAim(
+          this.lastStateForAssist,
+          this.localPlayerId,
+          { x: ox, y: oy },
+          this.lastTouchAim,
+        );
+      }
+      aimX = ox + dir.x * AIM_REACH;
+      aimY = oy + dir.y * AIM_REACH;
     }
 
     this.loop.setLocalInput({ keys, aimX, aimY });
@@ -782,6 +799,7 @@ export class OnlineMatchScene extends Phaser.Scene {
     this.lastFrameMs = now;
 
     this.renderWorld(state, deltaMs, now);
+    this.lastStateForAssist = state;
     this.followLocalPlayer(state, deltaMs);
     this.updateShieldAudio(state);
     this.updateHudSystem(state);
