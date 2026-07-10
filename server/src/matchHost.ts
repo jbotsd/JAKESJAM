@@ -50,6 +50,7 @@ import { encodeDelta } from "@net/snapshotDelta.ts";
 import { makeHitSweepScratch } from "@sim/projectile.ts";
 import { transferAuthority } from "./authority.ts";
 import { maybeSignalHostClip } from "./hostReplayBuffer.ts";
+import { persistReplay } from "./replayStore.ts";
 import { ReplayRecorder } from "./ReplayRecorder.ts";
 import { serverWasmHost } from "./serverWasmHost.ts";
 
@@ -1244,10 +1245,13 @@ export class MatchHost {
         roundsPlayed,
       });
       // Fire-and-forget replay upload — never blocks "GG" + results screen.
-      // Per replay-spectator SKILL: if Convex is down, drop the replay.
+      // Local disk FIRST (kilobytes; feeds the headless replay renderer and
+      // survives Convex being down), then the Convex cold copy.
       try {
         const bytes = this.replayRecorder.serialize();
         if (bytes.byteLength > 0) {
+          const saved = persistReplay(matchId, bytes);
+          if (saved) console.log(`[matchHost ${this.matchId}] replay persisted: ${saved}`);
           void convexClient.saveReplay(matchId, bytes);
         }
       } catch (err) {
