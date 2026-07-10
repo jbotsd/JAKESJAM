@@ -26,9 +26,10 @@ if (!path) {
 }
 
 const bytes = new Uint8Array(await Bun.file(path).arrayBuffer());
-const { header, inputs } = msgpackDecode(bytes) as {
+const { header, inputs, rosterEvents } = msgpackDecode(bytes) as {
   header: ReplayHeader;
   inputs: ReplayInputEntry[];
+  rosterEvents?: Array<{ atTick: number; t: string }>;
 };
 
 console.log(
@@ -36,6 +37,12 @@ console.log(
     `ticks=${header.totalTicks} inputs=${inputs.length} players=${header.players.length} ` +
     `backend=${header.simBackend ?? "unknown"} fallbackTicks=${header.backendFallbackTicks ?? 0}`,
 );
+if (rosterEvents && rosterEvents.length > 0) {
+  console.warn(
+    `warning: ${rosterEvents.length} mid-match roster events recorded — this tool does not ` +
+      `apply them yet, so joiners/leavers are missing from this reconstruction (renderer TODO)`,
+  );
+}
 if (header.simBackend === "wasm") {
   console.warn(
     "warning: live match ran the WASM backend; this TS re-sim is parity-tested but not bit-guaranteed",

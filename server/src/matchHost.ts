@@ -524,6 +524,9 @@ export class MatchHost {
    */
   addPlayer(spawn: PlayerSpawnInfo): void {
     if (this.playerInfo.has(spawn.playerId)) return;
+    // Roster event for the replay: without it a re-sim can't reconstruct
+    // mid-match joiners (the header roster is match-start only).
+    this.replayRecorder.noteJoin(this.state.tick as number, spawn);
     this.playerInfo.set(spawn.playerId, {
       playerId: spawn.playerId,
       characterId: spawn.characterId,
@@ -851,6 +854,7 @@ export class MatchHost {
     let evicted = false;
     for (const [playerId, disconnectedAt] of this.disconnectedAt) {
       if (now - disconnectedAt <= RECONNECT_GRACE_MS) continue;
+      this.replayRecorder.noteLeave(this.state.tick as number, playerId);
       this.disconnectedAt.delete(playerId);
       this.playerInfo.delete(playerId);
       this.lastProcessedInputSeq.delete(playerId);

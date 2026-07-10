@@ -65,6 +65,14 @@ export type ReplayHeader = {
   backendFallbackTicks?: number;
 };
 
+/** Mid-match roster change. The header roster is only the match-START
+ *  players; a re-sim must apply these at their ticks (before stepping that
+ *  tick) or joiners/leavers vanish from the reconstruction. Recording is
+ *  authoritative-order: events at the same tick apply in array order. */
+export type ReplayRosterEvent =
+  | { atTick: number; t: "join"; spawn: PlayerSpawnInfo }
+  | { atTick: number; t: "leave"; playerId: string };
+
 export type ReplayInputEntry = {
   /** Wall-clock or sim tick at which this frame was applied authoritatively.
    *  We record the SERVER TICK (state.tick at the moment we stamped it),
@@ -85,6 +93,7 @@ export type ReplayInputEntry = {
 export class ReplayRecorder {
   private readonly header: ReplayHeader;
   private readonly inputs: ReplayInputEntry[] = [];
+  private readonly rosterEvents: ReplayRosterEvent[] = [];
   /** Highest atTick seen — used to fill `header.totalTicks` at serialize. */
   private maxTick = 0;
   /** Set true on `serialize` so subsequent `record` calls are silently ignored
@@ -177,8 +186,24 @@ export class ReplayRecorder {
    * Live read-only view of the recording. Used by tests; production code
    * should call `serialize()` and treat the bytes as opaque.
    */
-  snapshot(): { header: ReplayHeader; inputs: readonly ReplayInputEntry[] } {
-    return { header: this.header, inputs: this.inputs };
+  snapshot(): {
+    header: ReplayHeader;
+    inputs: readonly ReplayInputEntry[];
+    rosterEvents: readonly ReplayRosterEvent[];
+  } {
+    return { header: this.header, inputs: this.inputs, rosterEvents: this.rosterEvents };
+  }
+
+  /** Record a mid-match join (matchHost.addPlayer). */
+  noteJoin(atTick: number, spawn: PlayerSpawnInfo): void {
+    if (this.finalized) return;
+    this.rosterEvents.push({ atTick, t: "join", spawn });
+  }
+
+  /** Record a mid-match departure (matchHost eviction). */
+  noteLeave(atTick: number, playerId: string): void {
+    if (this.finalized) return;
+    this.rosterEvents.push({ atTick, t: "leave", playerId });
   }
 }
 
