@@ -51,6 +51,18 @@ export type ReplayHeader = {
   }>;
   /** Chaos modifiers selected for this match. Empty array if none. */
   chaosModifierIds: readonly string[];
+  /**
+   * Which sim backend authoritatively stepped the LIVE match. A replay
+   * re-sim must run the SAME backend: the Zig wasm and TS paths are
+   * parity-tested but the TS path's pre-wasm Math.sin/cos/atan2 fallback
+   * (trig.ts) makes cross-backend bit-identity unguaranteed. Optional —
+   * absent on formatVersion-1 replays recorded before this field; treat
+   * absent as "unknown, prefer wasm".
+   */
+  simBackend?: "wasm" | "ts";
+  /** Ticks where a pinned-wasm match fell back to TS (step threw). 0/absent
+   *  = clean single-backend replay; >0 = re-sim will diverge, flag it. */
+  backendFallbackTicks?: number;
 };
 
 export type ReplayInputEntry = {
@@ -86,6 +98,7 @@ export class ReplayRecorder {
     players: PlayerSpawnInfo[];
     chaosModifierIds?: readonly string[];
     startedAtMs?: number;
+    simBackend?: "wasm" | "ts";
   }) {
     this.header = {
       formatVersion: REPLAY_FORMAT_VERSION,
@@ -103,7 +116,15 @@ export class ReplayRecorder {
         weaponId: p.weaponId,
       })),
       chaosModifierIds: args.chaosModifierIds ?? [],
+      simBackend: args.simBackend,
     };
+  }
+
+  /** A pinned-wasm tick fell back to TS — the replay is no longer bit-exactly
+   *  re-simulable by either backend alone. Recorded, not fatal. */
+  noteBackendFallback(): void {
+    if (this.finalized) return;
+    this.header.backendFallbackTicks = (this.header.backendFallbackTicks ?? 0) + 1;
   }
 
   /**

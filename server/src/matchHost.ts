@@ -213,6 +213,8 @@ export class MatchHost {
   /** Spatial grid for per-recipient snapshot filtering (AOI). Rebuilt each
    *  snapshot tick in broadcastSnapshot before per-client filtering runs. */
   private readonly grid: InterestGrid;
+  /** Sim backend pinned for the whole match (replay fidelity — see ctor). */
+  private readonly simBackend: "wasm" | "ts";
   /** Monotonically-increasing snapshot counter. Used to gate DEBUG_AOI logs
    *  to the first 30 snapshots only. */
   private snapshotCount = 0;
@@ -319,12 +321,18 @@ export class MatchHost {
       );
     }
     this.grid = new InterestGrid(this.map.size.x, this.map.size.y, CELL_SIZE_PX);
+    // Pin the sim backend for the WHOLE match. The old per-tick
+    // `isReady()` re-check meant the backend could switch mid-match when
+    // the wasm load finished — invisible live, but it makes the recorded
+    // replay non-re-simulable (no single backend reproduces every tick).
+    this.simBackend = USE_WASM_STEP_WORLD && serverWasmHost.isReady() ? "wasm" : "ts";
     this.replayRecorder = new ReplayRecorder({
       matchId: this.matchId,
       mapId: this.map.id,
       rngSeed: this.rngSeed,
       players,
       chaosModifierIds,
+      simBackend: this.simBackend,
     });
     for (const spawn of players) {
       this.playerInfo.set(spawn.playerId, {
@@ -1050,7 +1058,7 @@ export class MatchHost {
     state: WorldState,
     inputsByPlayer: Record<PlayerId, InputFrame | null>,
   ): { state: WorldState; events: SimEvent[]; matchComplete: boolean } {
-    if (USE_WASM_STEP_WORLD && serverWasmHost.isReady()) {
+    if (this.simBackend === "wasm") {
       try {
         // Build the per-player keys map so wasm sees fresh input.
         const inputsMap = new Map<
@@ -1086,6 +1094,9 @@ export class MatchHost {
         console.warn(
           `[matchHost] wasm step threw; falling back to TS for this tick: ${err instanceof Error ? err.message : String(err)}`,
         );
+        // The replay is no longer single-backend — record it so a future
+        // replay renderer can flag/refuse instead of silently diverging.
+        this.replayRecorder.noteBackendFallback();
       }
     }
     return stepWithRuntime(state, this.runtime, inputsByPlayer, STEP_MS);
