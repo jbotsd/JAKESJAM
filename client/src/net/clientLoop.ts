@@ -589,6 +589,12 @@ export class ClientLoop {
   }
 
   /** Latest network/prediction health snapshot for the stats HUD. */
+  /** Cheap per-frame accessor for the render governor — getNetStats()
+   *  builds a fresh object (fine at human rates, not per frame). */
+  frameDtEma(): number {
+    return this.frameDtEmaMs;
+  }
+
   getNetStats(): NetStats {
     const ping = this.pingMonitor.stats();
     let slewMsAvg = 0;

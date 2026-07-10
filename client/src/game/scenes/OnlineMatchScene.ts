@@ -85,6 +85,7 @@ import { stickyEnvelopeSubjects } from "../systems/actionCameraMath.js";
 import { CameraJuice } from "../systems/CameraJuice.js";
 import { installHudCamera } from "../systems/HudCamera.js";
 import { getRenderScale, uiWidth, uiHeight } from "../render/renderResolution.js";
+import { RenderGovernor } from "../render/renderGovernor.js";
 import { playCardPickFeel } from "../render/CardFeel.js";
 
 // Portrait-mobile camera framing. The arena is 2:1 wide but a phone held
@@ -375,6 +376,8 @@ export class OnlineMatchScene extends Phaser.Scene {
   // Per-frame scratch (renderWorld) — reused to keep the hot path zero-alloc.
   private seenPlayersScratch = new Set<string>();
   private newlyDeadScratch: string[] = [];
+  private aimWorldScratch = new Phaser.Math.Vector2();
+  private renderGovernor: RenderGovernor | null = null;
   // Per-killer kill count in the current round for escalating callouts.
   private killStreakCount = new Map<string, number>();
   // Clip 9:16 crop focus in WORLD space — envelopes local + a STICKY duel
@@ -694,8 +697,13 @@ export class OnlineMatchScene extends Phaser.Scene {
 
     const pointer = this.input.activePointer;
     const cam = this.cameras.main;
-    let aimX = pointer.x + cam.scrollX;
-    let aimY = pointer.y + cam.scrollY;
+    // getWorldPoint (screen→world through zoom), matching MatchScene. The
+    // old `pointer + scroll` form ignored camera zoom, so shots skewed away
+    // from the cursor off-centre — and the skew would have VARIED with
+    // renderScale (pointer is backing px, scroll is world units).
+    const aimWorld = cam.getWorldPoint(pointer.x, pointer.y, this.aimWorldScratch);
+    let aimX = aimWorld.x;
+    let aimY = aimWorld.y;
 
     // Mobile: touch controls REPLACE keyboard/mouse. Movement + fire/shield/
     // parry come from the bitfield; aim is the local player's position plus
@@ -769,6 +777,11 @@ export class OnlineMatchScene extends Phaser.Scene {
     }
     this.updateRttBadge();
     this.updateDetOverlay(state);
+
+    // Frame-time governor: trades render resolution for frame time under
+    // sustained pressure (encoder load, weak GPU, thermal throttle).
+    this.renderGovernor ??= new RenderGovernor(this.game);
+    this.renderGovernor.update(performance.now(), this.loop.frameDtEma());
   }
 
   // ---------------- HUD ----------------

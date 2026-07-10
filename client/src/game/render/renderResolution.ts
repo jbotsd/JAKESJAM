@@ -17,6 +17,7 @@
 // localStorage jj_render_scale.
 
 import Phaser from "phaser";
+import { getQualityProfile } from "./qualityProfile.js";
 
 const STORAGE_KEY = "jj_render_scale";
 const MIN_SCALE = 0.5;
@@ -28,16 +29,19 @@ function clamp(v: number): number {
   return Math.min(MAX_SCALE, Math.max(MIN_SCALE, v));
 }
 
-/** The active render scale. URL `?rs=` wins (and persists), else stored
- *  value, else 1.0. Read once — a change requires reload (the WebGL
- *  context itself survives resize, but every scene's layout assumes a
- *  boot-constant scale until the QualityProfile governor lands). */
+/** The active render scale. URL `?rs=` wins (raw override, persists), else
+ *  a stored raw value, else the QualityProfile tier's scale. Read once —
+ *  a change requires reload (context flags and boot-sized systems assume a
+ *  boot-constant scale until the runtime governor lands). */
 export function getRenderScale(): number {
   if (cachedScale !== null) return cachedScale;
-  let scale = 1;
+  let scale = getQualityProfile().renderScale;
   try {
     const fromUrl = new URLSearchParams(window.location.search).get("rs");
-    if (fromUrl !== null && Number.isFinite(Number(fromUrl))) {
+    if (fromUrl === "auto") {
+      // Clear a sticky raw override and fall back to the tier's scale.
+      localStorage.removeItem(STORAGE_KEY);
+    } else if (fromUrl !== null && Number.isFinite(Number(fromUrl))) {
       scale = clamp(Number(fromUrl));
       localStorage.setItem(STORAGE_KEY, String(scale));
     } else {
@@ -45,7 +49,7 @@ export function getRenderScale(): number {
       if (Number.isFinite(stored) && stored > 0) scale = clamp(stored);
     }
   } catch {
-    // Storage unavailable (private mode) — run at 1.
+    // Storage unavailable (private mode) — tier scale stands.
   }
   cachedScale = scale;
   return scale;
@@ -71,6 +75,21 @@ export function uiWidth(scene: Phaser.Scene): number {
 /** HUD-space (CSS px) height — see uiWidth. */
 export function uiHeight(scene: Phaser.Scene): number {
   return scene.scale.height / getRenderScale();
+}
+
+/** Runtime render-scale change (the frame-time governor's lever). Updates
+ *  the cached scale, rebuilds the backing store, and re-pins the canvas CSS
+ *  size via zoom — the RESIZE event this emits makes the HUD container,
+ *  world cameras (applyMobileCamera) and HUD camera re-derive themselves.
+ *  NOT persisted: governor adjustments are session-local pressure relief,
+ *  the user's stored choice stays what they picked. */
+export function setRenderScaleRuntime(game: Phaser.Game, scale: number): void {
+  const next = Math.min(MAX_SCALE, Math.max(MIN_SCALE, scale));
+  if (cachedScale !== null && Math.abs(next - cachedScale) < 0.001) return;
+  cachedScale = next;
+  game.scale.setZoom(1 / next);
+  const { width, height } = backingSize();
+  game.scale.resize(width, height);
 }
 
 /** Keep the backing store tracking the window. Scale.NONE mode does no

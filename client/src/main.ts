@@ -1,7 +1,8 @@
 import Phaser from "phaser";
 import "./style.css";
 import { buildGameConfig } from "./game/GameConfig";
-import { installRenderResolution } from "./game/render/renderResolution";
+import { installRenderResolution, getRenderScale } from "./game/render/renderResolution";
+import { getQualityProfile, setQualityTier, type QualityTier } from "./game/render/qualityProfile";
 import { LobbyController } from "./game/ui/LobbyController";
 import { MatchStatusBadge } from "./game/ui/MatchStatusBadge";
 import { fetchWorldSummary } from "./net/worldClient";
@@ -192,6 +193,25 @@ app.innerHTML = `
         </label>
         <p class="shell-hint">Records your gameplay to this server for shareable vertical video. On by default — uncheck to opt out.</p>
         <button data-open-clips type="button" class="shell-btn-secondary">Open clips</button>
+      </div>
+      <div class="shell-section">
+        <h3>Graphics</h3>
+        <label>
+          Quality
+          <select data-quality-tier>
+            <option value="auto">Auto</option>
+            <option value="potato">Potato (Pi / weak GPU)</option>
+            <option value="phone">Phone</option>
+            <option value="standard">Standard</option>
+            <option value="ultra">Ultra (supersampled)</option>
+          </select>
+        </label>
+        <label>
+          Resolution scale
+          <input data-render-scale type="range" min="50" max="200" step="5" />
+          <span data-render-scale-value></span>
+        </label>
+        <p class="shell-hint" data-quality-hint></p>
       </div>
       <div class="shell-section">
         <h3>Controls</h3>
@@ -793,6 +813,49 @@ musicMutedInput.addEventListener("change", () => {
   localStorage.setItem("jakesjam.musicMuted", JSON.stringify(musicMutedInput.checked));
   applyAudioOptions();
 });
+
+// ── Graphics quality (QualityProfile) ────────────────────────────────────
+// Context flags + boot-sized systems depend on these, so changes apply via
+// a reload. The user's explicit choice always wins over auto-detection.
+{
+  const tierSelect = queryRequired<HTMLSelectElement>("[data-quality-tier]");
+  const scaleInput = queryRequired<HTMLInputElement>("[data-render-scale]");
+  const scaleValue = queryRequired<HTMLElement>("[data-render-scale-value]");
+  const hint = queryRequired<HTMLElement>("[data-quality-hint]");
+
+  const storedTier = localStorage.getItem("jj_quality_tier");
+  tierSelect.value = storedTier ?? "auto";
+  const profile = getQualityProfile();
+  scaleInput.value = String(Math.round(getRenderScale() * 100));
+  scaleValue.textContent = `${scaleInput.value}%`;
+  hint.textContent =
+    storedTier === null
+      ? `Auto picked: ${profile.tier} (fps ${profile.fpsLimit || "uncapped"}). Changes reload the game.`
+      : `Changes reload the game.`;
+
+  let reloadTimer: number | null = null;
+  const scheduleReload = () => {
+    hint.textContent = "Applying — reloading…";
+    if (reloadTimer !== null) window.clearTimeout(reloadTimer);
+    reloadTimer = window.setTimeout(() => window.location.reload(), 650);
+  };
+
+  tierSelect.addEventListener("change", () => {
+    setQualityTier(tierSelect.value === "auto" ? null : (tierSelect.value as QualityTier));
+    // A tier choice supersedes any raw scale override.
+    localStorage.removeItem("jj_render_scale");
+    scheduleReload();
+  });
+
+  scaleInput.addEventListener("change", () => {
+    localStorage.setItem("jj_render_scale", String(Number(scaleInput.value) / 100));
+    scaleValue.textContent = `${scaleInput.value}%`;
+    scheduleReload();
+  });
+  scaleInput.addEventListener("input", () => {
+    scaleValue.textContent = `${scaleInput.value}%`;
+  });
+}
 
 // Highlight-clip consent toggle (see game/highlights/clipConsent.ts —
 // capture NEVER activates without this or the ?clips=1 dev override).

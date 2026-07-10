@@ -7,6 +7,7 @@
  */
 
 import Phaser from "phaser";
+import { getQualityProfile } from "./qualityProfile.js";
 
 /**
  * Draw a triangle "light beam" polygon, apex at (x, y), fanning down
@@ -98,6 +99,9 @@ export class LightBeamLayer {
     alpha: number,
   ): void {
     this.destroy();
+    // Additive fullscreen-height beams are pure fill-rate — the exact cost
+    // the potato tier can't pay (Pi budget: a few fullscreen blends TOTAL).
+    if (getQualityProfile().fxLevel === 0) return;
     this.baseAlpha = alpha;
     for (const def of defs) {
       const beam = drawLightBeam(this.scene, def.x, 0, def.w, height, color, alpha);

@@ -9,6 +9,7 @@
 
 import type Phaser from "phaser";
 import { GLOW_TEXTURE_KEY, ensureGlowTexture } from "../render/glowTexture";
+import { getQualityProfile } from "../render/qualityProfile.js";
 
 export const STATUS_VFX = {
   fire: { color: 0xff7a18, hotColor: 0xfde68a },
@@ -16,6 +17,10 @@ export const STATUS_VFX = {
   lightning: { color: 0xfef08a, glow: 0xfbbf24 },
 } as const satisfies Record<string, Readonly<Record<string, number>>>;
 
+// Base budgets — scaled by the QualityProfile's particleScale at create()
+// (potato 0.25 / phone 0.6 / desktop 1). Pool exhaustion is non-fatal by
+// design (acquireX returns null, effect skipped), so a smaller pool IS the
+// particle-count dial: weak devices simply skip the overflow effects.
 const POOL_SIZES = {
   spark: 64,
   shard: 32,
@@ -24,6 +29,10 @@ const POOL_SIZES = {
   blastCircle: 16,
   glow: 64,
 } as const;
+
+function scaled(base: number): number {
+  return Math.max(2, Math.ceil(base * getQualityProfile().particleScale));
+}
 
 const SPARK_W = 3;
 const SPARK_H = 7;
@@ -63,31 +72,31 @@ export class ParticlePool {
   private destroyed = false;
 
   constructor(scene: Phaser.Scene) {
-    for (let i = 0; i < POOL_SIZES.spark; i++) {
+    for (let i = 0; i < scaled(POOL_SIZES.spark); i++) {
       const r = scene.add.rectangle(0, 0, SPARK_W, SPARK_H, 0xffffff, 1);
       r.setVisible(false);
       this.origin.set(r, "spark");
       this.sparkFree.push(r);
     }
-    for (let i = 0; i < POOL_SIZES.shard; i++) {
+    for (let i = 0; i < scaled(POOL_SIZES.shard); i++) {
       const r = scene.add.rectangle(0, 0, SHARD_W, SHARD_H, 0xffffff, 1);
       r.setVisible(false);
       this.origin.set(r, "shard");
       this.shardFree.push(r);
     }
-    for (let i = 0; i < POOL_SIZES.ring; i++) {
+    for (let i = 0; i < scaled(POOL_SIZES.ring); i++) {
       const a = scene.add.circle(0, 0, RING_RADIUS, 0xffffff, 0);
       a.setVisible(false);
       this.origin.set(a, "ring");
       this.ringFree.push(a);
     }
-    for (let i = 0; i < POOL_SIZES.bolt; i++) {
+    for (let i = 0; i < scaled(POOL_SIZES.bolt); i++) {
       const g = scene.add.graphics();
       g.setVisible(false);
       this.origin.set(g, "bolt");
       this.boltFree.push(g);
     }
-    for (let i = 0; i < POOL_SIZES.blastCircle; i++) {
+    for (let i = 0; i < scaled(POOL_SIZES.blastCircle); i++) {
       // Radius 1 placeholder — caller sets radius + colour at acquire time.
       const a = scene.add.circle(0, 0, 1, 0xffffff, 1);
       a.setVisible(false);
@@ -101,7 +110,7 @@ export class ParticlePool {
     // isn't available, so legacy callers still work.
     const sceneAdd = scene.add as { image?: (x: number, y: number, key: string) => Phaser.GameObjects.Image };
     if (typeof sceneAdd.image === "function" && ensureGlowTexture(scene)) {
-      for (let i = 0; i < POOL_SIZES.glow; i++) {
+      for (let i = 0; i < scaled(POOL_SIZES.glow); i++) {
         const img = sceneAdd.image(0, 0, GLOW_TEXTURE_KEY);
         img.setVisible(false);
         img.setBlendMode(1); // ADD

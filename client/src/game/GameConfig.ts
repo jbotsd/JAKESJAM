@@ -6,6 +6,7 @@ import { MatchScene } from "./scenes/MatchScene";
 import { OnlineMatchScene } from "./scenes/OnlineMatchScene";
 import { DraftScene } from "./scenes/DraftScene";
 import { backingSize, getRenderScale } from "./render/renderResolution.js";
+import { getQualityProfile } from "./render/qualityProfile.js";
 
 // Render config is tuned for VECTOR art, not pixel art: the whole game is
 // tessellated Graphics geometry, so context MSAA (antialias:true) is the only
@@ -18,7 +19,12 @@ import { backingSize, getRenderScale } from "./render/renderResolution.js";
 
 export function buildGameConfig(): Phaser.Types.Core.GameConfig {
   const { width, height } = backingSize();
+  const profile = getQualityProfile();
   return {
+    // Tiered fps cap: potato 30 (honest budget), phone 60 (thermals),
+    // desktop uncapped (rAF follows the display — 120-240Hz just works;
+    // the sim stays fixed-tick and render interpolates).
+    fps: profile.fpsLimit > 0 ? { limit: profile.fpsLimit } : undefined,
     type: Phaser.AUTO,
     parent: "game-root",
     // Right-click is the aegis power-slide — the browser context menu must NEVER
