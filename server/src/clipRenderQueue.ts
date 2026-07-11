@@ -127,6 +127,11 @@ async function runJob(job: RenderJob, port: number): Promise<void> {
   console.log(`[clip-render] rendering ${job.label} …`);
   const proc = Bun.spawn(
     [
+      // nice 15: the render must NEVER contend with the 60Hz sim tick —
+      // a highlight can wait; a live multiplayer frame cannot.
+      "nice",
+      "-n",
+      "15",
       chromium,
       "--headless=new",
       "--no-sandbox",
