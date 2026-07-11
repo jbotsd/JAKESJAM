@@ -12,7 +12,7 @@
 
 import type Phaser from "phaser";
 import type { ShardRenderModel, SoulRenderModel, UploadRenderModel } from "./renderContract.js";
-import { SOUL_ABSORB, SOUL_RELEASE } from "./renderContract.js";
+import { SOUL_ABSORB, SOUL_JOURNEY, SOUL_RELEASE } from "./renderContract.js";
 
 const CORE = 0xffffff;
 const INNER = 0x8ff8ff;
@@ -38,22 +38,40 @@ export function drawDeathFx(
     if (fxLevel >= 1 && m.dissolveT < 1) {
       const t = m.dissolveT;
       const fade = 1 - t;
-      // Explosive pop: a hot flash + fast spark ring in the first ~200ms.
+      // HEROIC pop: hot flash, DOUBLE shockwave, long radial rays — the
+      // dopamine hit. All envelopes off dissolveT (deterministic).
       const pop = Math.max(0, 1 - t * 4.5);
       if (pop > 0) {
-        g.fillStyle(CORE, 0.55 * pop);
-        g.fillCircle(m.originX, m.originY, 30 * (1 - pop) + 8);
-        g.lineStyle(3 * pop, HALO, 0.8 * pop);
-        g.strokeCircle(m.originX, m.originY, 12 + (1 - pop) * 58);
-        const sparks = fxLevel >= 2 ? 12 : 7;
+        g.fillStyle(CORE, 0.62 * pop);
+        g.fillCircle(m.originX, m.originY, 42 * (1 - pop) + 10);
+        g.lineStyle(4 * pop, HALO, 0.85 * pop);
+        g.strokeCircle(m.originX, m.originY, 14 + (1 - pop) * 96);
+        g.lineStyle(2.5 * pop, INNER, 0.6 * pop);
+        g.strokeCircle(m.originX, m.originY, 8 + (1 - pop) * 148);
+        const sparks = fxLevel >= 2 ? 14 : 8;
         for (let k = 0; k < sparks; k++) {
           const a = m.seed * 1.7 + (k * TWO_PI) / sparks;
-          const d0 = 10 + (1 - pop) * 76;
-          g.lineStyle(1.5, k % 2 ? HALO : INNER, 0.9 * pop);
+          const d0 = 12 + (1 - pop) * 104;
+          const len = 16 + ((k * 31) % 18);
+          g.lineStyle(1.8, k % 2 ? HALO : INNER, 0.95 * pop);
           g.beginPath();
           g.moveTo(m.originX + Math.cos(a) * d0, m.originY + Math.sin(a) * d0);
-          g.lineTo(m.originX + Math.cos(a) * (d0 + 14), m.originY + Math.sin(a) * (d0 + 14));
+          g.lineTo(m.originX + Math.cos(a) * (d0 + len), m.originY + Math.sin(a) * (d0 + len));
           g.strokePath();
+        }
+      }
+      // Ascending light pillar — the heroic beat: a column of light marks
+      // where they fell, rushing skyward and thinning out (~900ms).
+      const pillar = 1 - t;
+      if (pillar > 0.02) {
+        const ph = 150 + 90 * t;
+        g.fillStyle(INNER, 0.13 * pillar);
+        g.fillRect(m.originX - 13, m.originY - ph, 26, ph);
+        g.fillStyle(CORE, 0.22 * pillar);
+        g.fillRect(m.originX - 4, m.originY - ph, 8, ph);
+        if (fxLevel >= 1) {
+          g.fillStyle(HALO, 0.10 * pillar);
+          g.fillRect(m.originX - 22, m.originY - ph * 0.6, 44, ph * 0.6);
         }
       }
       for (let k = 0; k < (fxLevel >= 2 ? 7 : 4); k++) {
@@ -70,27 +88,65 @@ export function drawDeathFx(
       g.fillEllipse(m.originX, m.originY - 6 * t, 20 * fade, 40 * fade);
     }
 
-    // ── Trail ──
+    // ── Trail: glowing dots + a connected RIBBON (fx1+) ──
     const trailPts = fxLevel === 0 ? Math.min(5, m.trailLen) : m.trailLen;
+    let prevX = m.x;
+    let prevY = m.y;
     for (let k = 0; k < trailPts; k++) {
       // newest→oldest: head-1 is newest.
       const idx = (m.trailHead - 1 - k + m.trailX.length * 2) % m.trailX.length;
       const age = (k + 1) / (trailPts + 1);
-      const a = m.alpha * 0.34 * (1 - age);
-      if (a <= 0.01) continue;
-      g.fillStyle(INNER, a);
-      g.fillCircle(m.trailX[idx]!, m.trailY[idx]!, m.r * (1 - age * 0.75) * 0.7);
+      const a = m.alpha * 0.36 * (1 - age);
+      const tx = m.trailX[idx]!;
+      const ty = m.trailY[idx]!;
+      if (a > 0.01) {
+        g.fillStyle(INNER, a);
+        g.fillCircle(tx, ty, m.r * (1 - age * 0.75) * 0.7);
+        if (fxLevel >= 1) {
+          g.lineStyle(Math.max(0.8, m.r * 0.5 * (1 - age)), INNER, a * 0.9);
+          g.beginPath();
+          g.moveTo(prevX, prevY);
+          g.lineTo(tx, ty);
+          g.strokePath();
+        }
+      }
+      prevX = tx;
+      prevY = ty;
+    }
+    // Sparks shed along the journey (fx1+): tiny motes drifting off the path.
+    if (fxLevel >= 1 && m.stage === SOUL_JOURNEY && m.alpha > 0.5) {
+      for (let k = 0; k < (fxLevel >= 2 ? 4 : 2); k++) {
+        const ph = (m.progress * 7 + k * 0.37 + m.seed) % 1;
+        const idx = (m.trailHead - 1 - ((k * 2) % Math.max(1, m.trailLen)) + m.trailX.length * 2) % m.trailX.length;
+        const sx = m.trailX[idx]! + Math.sin(m.seed * 9 + k * 5) * 10 * ph;
+        const sy = m.trailY[idx]! - 14 * ph;
+        g.fillStyle(HALO, 0.55 * (1 - ph) * m.alpha);
+        g.fillCircle(sx, sy, 1.4 + (1 - ph));
+      }
     }
 
     // ── The soul mote (all tiers): halo → inner glow → hot core ──
     if (m.r > 0.2) {
-      const breathe = 1 + Math.sin(m.seed + m.progress * TWO_PI * 2) * 0.08;
-      g.fillStyle(HALO, 0.10 * m.alpha);
-      g.fillCircle(m.x, m.y, m.r * 3.1 * breathe);
-      g.fillStyle(INNER, 0.30 * m.alpha);
-      g.fillCircle(m.x, m.y, m.r * 1.8 * breathe);
-      g.fillStyle(CORE, 0.92 * m.alpha);
-      g.fillCircle(m.x, m.y, m.r * 0.85);
+      const breathe = 1 + Math.sin(m.seed + m.progress * TWO_PI * 2) * 0.09;
+      g.fillStyle(HALO, 0.12 * m.alpha);
+      g.fillCircle(m.x, m.y, m.r * 3.4 * breathe);
+      g.fillStyle(INNER, 0.32 * m.alpha);
+      g.fillCircle(m.x, m.y, m.r * 1.9 * breathe);
+      g.fillStyle(CORE, 0.94 * m.alpha);
+      g.fillCircle(m.x, m.y, m.r * 0.9);
+      // Halo ray crown (fx1+): four slow-turning rays of light.
+      if (fxLevel >= 1 && m.stage !== SOUL_RELEASE) {
+        const spin = m.seed + m.progress * TWO_PI * 0.75;
+        const rayLen = m.r * 3.8 * breathe;
+        g.lineStyle(1.2, CORE, 0.5 * m.alpha);
+        for (let k = 0; k < 4; k++) {
+          const a = spin + (k * Math.PI) / 2;
+          g.beginPath();
+          g.moveTo(m.x + Math.cos(a) * m.r, m.y + Math.sin(a) * m.r);
+          g.lineTo(m.x + Math.cos(a) * rayLen, m.y + Math.sin(a) * rayLen);
+          g.strokePath();
+        }
+      }
     }
 
     // ── Orbiting rune triangle (fx2): three points circling the mote ──
@@ -109,28 +165,38 @@ export function drawDeathFx(
       g.strokePath();
     }
 
-    // ── Absorption at the motif (all tiers; richer at fx2) ──
+    // ── Absorption at the motif — the AWE beat (all tiers; grand at fx2) ──
     if (m.absorbT > 0) {
       const t = m.absorbT;
       const fade = 1 - t;
-      // Expanding reception ring.
-      g.lineStyle(2 + 2 * fade, HALO, 0.75 * fade);
-      g.strokeCircle(m.motifX, m.motifY, 12 + t * 68);
+      // Motif BLOOM: a soft golden swell as the seal receives the soul.
+      g.fillStyle(HALO, 0.22 * fade);
+      g.fillCircle(m.motifX, m.motifY, 20 + Math.sqrt(t) * 92);
+      g.fillStyle(CORE, 0.18 * fade);
+      g.fillCircle(m.motifX, m.motifY, 10 + Math.sqrt(t) * 44);
+      // Triple staggered reception rings.
+      g.lineStyle(2.5 + 2 * fade, HALO, 0.8 * fade);
+      g.strokeCircle(m.motifX, m.motifY, 12 + t * 84);
       if (fxLevel >= 1) {
-        g.lineStyle(1.5, INNER, 0.5 * fade);
-        g.strokeCircle(m.motifX, m.motifY, 6 + t * 110);
+        g.lineStyle(1.6, INNER, 0.55 * fade);
+        g.strokeCircle(m.motifX, m.motifY, 6 + t * 132);
+        const t2 = Math.max(0, t - 0.25) / 0.75;
+        if (t2 > 0) {
+          g.lineStyle(1.2, CORE, 0.5 * (1 - t2));
+          g.strokeCircle(m.motifX, m.motifY, 8 + t2 * 108);
+        }
       }
       if (fxLevel >= 2) {
         // Inner counter-flare: a bright collapsing ring meeting the soul.
-        g.lineStyle(2, CORE, 0.6 * fade);
-        g.strokeCircle(m.motifX, m.motifY, 34 * fade + 4);
-        // Cross flare rays.
-        const ray = 26 + 44 * t;
-        g.lineStyle(1.5, HALO, 0.55 * fade);
-        for (let k = 0; k < 6; k++) {
-          const a = m.seed + (k * TWO_PI) / 6;
+        g.lineStyle(2.2, CORE, 0.65 * fade);
+        g.strokeCircle(m.motifX, m.motifY, 40 * fade + 4);
+        // Ray burst — ten spokes of light.
+        const ray = 30 + 74 * t;
+        g.lineStyle(1.6, HALO, 0.6 * fade);
+        for (let k = 0; k < 10; k++) {
+          const a = m.seed + (k * TWO_PI) / 10 + t * 0.5;
           g.beginPath();
-          g.moveTo(m.motifX + Math.cos(a) * 10, m.motifY + Math.sin(a) * 10);
+          g.moveTo(m.motifX + Math.cos(a) * 12, m.motifY + Math.sin(a) * 12);
           g.lineTo(m.motifX + Math.cos(a) * ray, m.motifY + Math.sin(a) * ray);
           g.strokePath();
         }

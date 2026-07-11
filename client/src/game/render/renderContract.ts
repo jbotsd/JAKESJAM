@@ -636,7 +636,7 @@ export function produceDeathFx(
       const p = easeOutCubic(progress);
       x = soul.x0;
       y = soul.y0 - RELEASE_RISE_PX * p;
-      r = 3.5 + 5.5 * p;
+      r = 4 + 7 * p;
       alpha = Math.min(1, progress * 2.2);
     } else if (age < RELEASE_MS + JOURNEY_MS) {
       stage = SOUL_JOURNEY;
@@ -655,7 +655,7 @@ export function produceDeathFx(
       const shimmer = Math.sin(p * Math.PI * 6 + soul.seed) * 7 * Math.sin(Math.PI * p);
       x = riseX + dx * p + px * (arc + shimmer);
       y = riseY + dy * p + py * (arc + shimmer);
-      r = 9;
+      r = 11;
       alpha = 1;
     } else {
       stage = SOUL_ABSORB;
@@ -663,7 +663,7 @@ export function produceDeathFx(
       const p = easeOutCubic(progress);
       x = st.motifX;
       y = st.motifY;
-      r = 9 * (1 - p);
+      r = 11 * (1 - p);
       alpha = 1 - p * 0.85;
       absorbT = progress;
     }

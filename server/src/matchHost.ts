@@ -52,6 +52,8 @@ import { transferAuthority } from "@sim/authority.ts";
 import { applyMidMatchJoin, applyRosterLeave } from "@sim/rosterOps.ts";
 import { maybeSignalHostClip } from "./hostReplayBuffer.ts";
 import { persistReplay } from "./replayStore.ts";
+import { enqueueMatchHighlights } from "./clipRenderQueue.ts";
+import { config } from "./config.ts";
 import { ReplayRecorder } from "./ReplayRecorder.ts";
 import { serverWasmHost } from "./serverWasmHost.ts";
 
@@ -252,6 +254,8 @@ export class MatchHost {
    *  Prevents duplicate writes (in addition to the idempotent server-side
    *  mutation). One flag per host == one write per match lifetime. */
   private matchCompletePosted = false;
+  /** Human-killer moments for host-rendered highlight clips. */
+  private humanKillMoments: Array<{ tick: number; killerId: string }> = [];
 
   private readonly map: MapDefinition;
 
@@ -924,6 +928,15 @@ export class MatchHost {
     // the streaming host runs gpu-screen-recorder (JJ_HOST_REPLAY=1).
     maybeSignalHostClip(events);
 
+    // Host-rendered clips: remember HUMAN kill moments; at replay persist
+    // they become full-quality headless renders (clipRenderQueue.ts) — a
+    // phone player's highlight is rendered by the 4080, not their phone.
+    for (const e of events) {
+      if (e.t === "player-killed" && e.killerId && !e.killerId.startsWith("bot_")) {
+        this.humanKillMoments.push({ tick: this.state.tick as number, killerId: e.killerId });
+      }
+    }
+
     // Arena spectator director — full-world view, every tick, before AOI.
     this.director = stepSpectatorDirector(
       this.director,
@@ -1156,8 +1169,12 @@ export class MatchHost {
       const bytes = this.replayRecorder.serialize();
       if (bytes.byteLength > 0) {
         const saved = persistReplay(this.matchId, bytes);
-        if (saved) console.log(`[matchHost ${this.matchId}] replay persisted: ${saved}`);
+        if (saved) {
+          console.log(`[matchHost ${this.matchId}] replay persisted: ${saved}`);
+          enqueueMatchHighlights(saved, this.humanKillMoments, config.port);
+        }
       }
+      this.humanKillMoments = [];
     } catch (err) {
       console.warn(
         `[matchHost ${this.matchId}] replay persist failed: ${err instanceof Error ? err.message : String(err)}`,

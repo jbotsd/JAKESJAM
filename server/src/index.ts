@@ -52,6 +52,7 @@ import {
 } from "./clipSharePage.ts";
 import { handleOps } from "./ops.ts";
 import { ingestTelemetryBatch } from "./telemetryStore.ts";
+import { listClips } from "./clipStore.ts";
 import {
   generatePkcePair,
   generateState,
@@ -282,6 +283,26 @@ function serveOnPort(port: number) {
       const stored = ingestTelemetryBatch(payload);
       return new Response(JSON.stringify({ stored }), {
         headers: { "content-type": "application/json", ...corsHeaders },
+      });
+    }
+
+    // ── Recent clips feed (public) — the Clips gallery's server side.
+    // Clips are already public-by-URL share pages; this lists the newest
+    // so every player (especially phones, whose highlights are rendered
+    // by the HOST) can find their clip. Cheap + cacheable.
+    if (url.pathname === "/clips/recent" && req.method === "GET") {
+      const { clips } = await listClips();
+      const recent = clips
+        .filter((c) => c.ext === "mp4" || c.ext === "webm")
+        .sort((a, b) => b.mtimeMs - a.mtimeMs)
+        .slice(0, 24)
+        .map((c) => ({ id: c.id, url: `/c/${c.id}`, mediaUrl: c.path, mtimeMs: c.mtimeMs }));
+      return new Response(JSON.stringify({ clips: recent }), {
+        headers: {
+          "content-type": "application/json",
+          "cache-control": "public, max-age=30",
+          ...corsHeaders,
+        },
       });
     }
 
