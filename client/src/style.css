@@ -729,6 +729,14 @@ button.btn-danger:hover:not(:disabled) {
   background: radial-gradient(circle, #ffd166, #d67a2f);
   box-shadow: 0 0 22px rgba(255, 209, 102, 0.6);
 }
+/* DASH mini-stick knob — smaller than the thumb sticks; dash-gold. */
+.tc-stick--dash {
+  width: 40px;
+  height: 40px;
+  margin: -20px 0 0 -20px;
+  background: radial-gradient(circle, #ffe9a8, #d6a02f);
+  box-shadow: 0 0 16px rgba(255, 209, 102, 0.7);
+}
 
 /* Thumb buttons, bottom-centre, reachable by either thumb. */
 .tc-btn {

@@ -443,9 +443,10 @@ function stepPlayerNative(
 
   // AEGIS DASH (card): an aim-directional shielded lunge on the Dash input.
   // Ground dash is always available on cooldown; air dashes are limited to
-  // `dashCharges` before landing. Direction = the AIM vector (8-way, incl.
-  // up/diagonal and off walls) — aim is the only directional intent the
-  // control scheme carries (A/D-only movement has no vertical axis). The
+  // `dashCharges` before landing. Direction = the AIM vector, fully analog
+  // (any angle — mouse-to-character on desktop, dash mini-stick on touch) —
+  // aim is the only directional intent the control scheme carries
+  // (A/D-only movement has no vertical axis). The
   // shield is deployed in the travel direction for the burst window; the
   // block lives in combat.tryDeflectDamage, keyed on `dashing` + velocity.
   if (dashPressed && dashCharges > 0 && mem.dashCooldownMs <= 0) {

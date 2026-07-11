@@ -1,14 +1,16 @@
 // On-screen touch controls for the live match (mobile).
 //
 // Research-backed layout for a twin-thumb platform-brawler (landscape):
-//   - LEFT thumb  → floating MOVE stick. Horizontal = walk L/R. Up-tilt =
-//     Jump (hold to sustain the jetpack). Down-tilt = crouch/down.
+//   - LEFT thumb  → floating MOVE stick. Horizontal = walk L/R. Up-tilt or
+//     flick = Jump; a quick TAP = spacebar (jump/wall-jump — how a wall
+//     climb starts). Down-tilt = crouch/down.
 //   - RIGHT thumb → floating AIM+FIRE stick. Drag sets aim direction and
 //     fires while held (twin-stick auto-fire — the smoothest mobile aim).
-//   - Two thumb buttons bottom-centre → SHIELD (hold) and DASH (hold —
-//     the aegis power-slide toward the current aim; replaced the old timed
-//     parry, which is human-unreachable now, exactly like desktop where
-//     right-click/C sends InputBit.Dash).
+//   - Two thumb buttons bottom-centre → SHIELD (hold) and DASH. The DASH
+//     button is a tiny joystick: drag it and the aegis dash fires in the
+//     drag direction the moment it crosses the trigger (fully analog, the
+//     same any-angle freedom as desktop mouse dash); a plain tap dashes in
+//     the move-stick direction.
 //
 // Floating joysticks (base spawns where the thumb lands) beat fixed pads —
 // more forgiving and no need to look down. Multi-touch is tracked by
@@ -24,6 +26,12 @@ export type TouchInputState = {
   /** Normalized aim direction from the right stick, or null when not aiming
    *  (caller keeps the last aim so shots keep their heading). */
   aimDir: { x: number; y: number } | null;
+  /** Normalized dash direction from the DASH mini-stick drag, or null when
+   *  the dash was a plain tap (caller falls back to the move direction). */
+  dashDir: { x: number; y: number } | null;
+  /** Normalized move-stick vector (null inside the deadzone) — the tap-dash
+   *  direction fallback. */
+  moveDir: { x: number; y: number } | null;
 };
 
 const MOVE_DEADZONE = 0.22;
@@ -41,6 +49,21 @@ const FLICK_DELTA = 0.26; // normalized dy drop that counts as a flick
 const CROUCH_TILT = 0.6; // down-tilt = crouch/down
 const STICK_RADIUS = 56; // px the knob travels from the base
 const AIM_DEADZONE = 0.3;
+// TAP-JUMP: a quick tap on the move zone = spacebar. The sim resolves it —
+// ground jump on the floor, WALL-JUMP when airborne against a wall — so
+// tapping is also how a wall climb starts (grounded-against-wall zeroes
+// touchingWallDir in the sim, so the auto-hop assist alone can never fire
+// the FIRST hop; a tap can).
+const TAP_MAX_MS = 180;
+const TAP_MAX_DRIFT_PX = 12;
+/** Held long enough to cross at least one 60Hz input tick edge. */
+const PULSE_MS = 90;
+// DASH mini-stick: dragging the DASH button is a tiny joystick — the dash
+// fires the instant the drag crosses the threshold, in that direction
+// (fully analog, matching desktop mouse dash). A plain tap dashes in the
+// move-stick direction instead.
+const DASH_STICK_RADIUS = 40;
+const DASH_TRIGGER_PX = 14;
 
 type Stick = {
   pointerId: number;
@@ -66,6 +89,19 @@ export class TouchControls {
   /** Flick-to-jump state: recent (t, dy) samples + the jump latch. */
   private moveDySamples: Array<{ t: number; dy: number }> = [];
   private jumpLatched = false;
+  /** Tap-jump: move-zone press bookkeeping + the short Jump pulse. */
+  private movePressedAtMs = 0;
+  private movePressX = 0;
+  private movePressY = 0;
+  private moveMaxDriftPx = 0;
+  private jumpPulseUntilMs = 0;
+  /** Dash mini-stick: press origin, live drag direction, tap pulse. */
+  private dashPressX = 0;
+  private dashPressY = 0;
+  private dashDir: { x: number; y: number } | null = null;
+  private dashEngaged = false; // drag crossed the trigger threshold
+  private dashPulseUntilMs = 0; // tap-dash: hold the bit long enough to tick
+  private dashKnob: Stick | null = null;
 
   private attached = false;
   private readonly mount: HTMLElement;
@@ -114,11 +150,15 @@ export class TouchControls {
 
   /** Current control state → sim input. Called once per frame by the scene. */
   getState(): TouchInputState {
+    const now = performance.now();
     let keys = 0;
+    let moveDir: { x: number; y: number } | null = null;
     if (this.moveStick) {
       const { dx, dy } = this.moveStick;
       if (dx < -MOVE_DEADZONE) keys |= InputBit.Left;
       if (dx > MOVE_DEADZONE) keys |= InputBit.Right;
+      const mlen = Math.hypot(dx, dy);
+      if (mlen > MOVE_DEADZONE) moveDir = { x: dx / mlen, y: dy / mlen };
       // Jump: latched by an upward flick (onMove), sustained while the
       // thumb stays up, or entered directly by a deliberate up-hold.
       if (this.jumpLatched) {
@@ -132,6 +172,8 @@ export class TouchControls {
         keys |= InputBit.Crouch;
       }
     }
+    // Tap-jump pulse (spacebar): short press on the move zone released.
+    if (now < this.jumpPulseUntilMs) keys |= InputBit.Jump;
     let aimDir: { x: number; y: number } | null = null;
     if (this.aimStick) {
       const { dx, dy } = this.aimStick;
@@ -142,10 +184,15 @@ export class TouchControls {
       }
     }
     if (this.shieldPointer !== null) keys |= InputBit.Shield;
-    // Aegis power-slide (aim-directional; the scene feeds aim from the right
-    // stick). Same bit as desktop right-click/C.
-    if (this.dashPointer !== null) keys |= InputBit.Dash;
-    return { keys, aimDir };
+    // Aegis dash (same bit as desktop right-click/C). The bit rises only
+    // once a direction is known: either the mini-stick drag crossed the
+    // trigger (dashDir carries it) or the tap pulse is live (dashDir null →
+    // scene falls back to the move direction). Never on bare pointerdown —
+    // that would fire the dash with a stale aim.
+    if ((this.dashPointer !== null && this.dashEngaged) || now < this.dashPulseUntilMs) {
+      keys |= InputBit.Dash;
+    }
+    return { keys, aimDir, dashDir: this.dashDir, moveDir };
   }
 
   destroy(): void {
@@ -166,6 +213,10 @@ export class TouchControls {
     if (this.moveStick) return; // already owned by another thumb
     e.preventDefault();
     this.moveStick = this.spawnStick(e, "tc-stick--move");
+    this.movePressedAtMs = e.timeStamp;
+    this.movePressX = e.clientX;
+    this.movePressY = e.clientY;
+    this.moveMaxDriftPx = 0;
   };
 
   private onRightDown = (e: PointerEvent): void => {
@@ -183,10 +234,34 @@ export class TouchControls {
   private onDashDown = (e: PointerEvent): void => {
     e.preventDefault();
     this.dashPointer = e.pointerId;
+    this.dashPressX = e.clientX;
+    this.dashPressY = e.clientY;
+    this.dashEngaged = false;
+    this.dashDir = null;
+    this.dashKnob = this.spawnStick(e, "tc-stick--dash");
     this.dashBtn.classList.add("tc-btn--active");
   };
 
   private onMove = (e: PointerEvent): void => {
+    // DASH mini-stick drag: a tiny joystick on the button. Crossing the
+    // trigger threshold fires the dash in the drag direction (fully analog).
+    if (this.dashPointer === e.pointerId) {
+      e.preventDefault();
+      const rx = e.clientX - this.dashPressX;
+      const ry = e.clientY - this.dashPressY;
+      const d = Math.hypot(rx, ry);
+      if (this.dashKnob) {
+        const c = Math.min(d, DASH_STICK_RADIUS);
+        const ux = d > 0 ? rx / d : 0;
+        const uy = d > 0 ? ry / d : 0;
+        this.dashKnob.knob.style.transform = `translate(${ux * c}px, ${uy * c}px)`;
+      }
+      if (d >= DASH_TRIGGER_PX) {
+        this.dashDir = { x: rx / d, y: ry / d };
+        this.dashEngaged = true;
+      }
+      return;
+    }
     const stick =
       this.moveStick?.pointerId === e.pointerId
         ? this.moveStick
@@ -225,6 +300,10 @@ export class TouchControls {
     // inside the window latches Jump (released in getState when the thumb
     // comes back toward centre).
     if (stick === this.moveStick) {
+      this.moveMaxDriftPx = Math.max(
+        this.moveMaxDriftPx,
+        Math.hypot(e.clientX - this.movePressX, e.clientY - this.movePressY),
+      );
       const now = e.timeStamp;
       this.moveDySamples.push({ t: now, dy: stick.dy });
       while (this.moveDySamples.length > 0 && now - this.moveDySamples[0]!.t > FLICK_WINDOW_MS) {
@@ -239,6 +318,15 @@ export class TouchControls {
 
   private onUp = (e: PointerEvent): void => {
     if (this.moveStick?.pointerId === e.pointerId) {
+      // TAP-JUMP: a quick, drift-free press on the move zone is spacebar —
+      // the sim picks ground jump vs wall-jump. Pulsed (not edge-frame) so
+      // at least one input tick sees the press.
+      if (
+        e.timeStamp - this.movePressedAtMs <= TAP_MAX_MS &&
+        this.moveMaxDriftPx <= TAP_MAX_DRIFT_PX
+      ) {
+        this.jumpPulseUntilMs = performance.now() + PULSE_MS;
+      }
       this.moveStick.base.remove();
       this.moveStick = null;
       this.moveDySamples.length = 0;
@@ -253,6 +341,17 @@ export class TouchControls {
       this.shieldBtn.classList.remove("tc-btn--active");
     }
     if (this.dashPointer === e.pointerId) {
+      // Plain tap (never crossed the drag trigger): dash in the move-stick
+      // direction — dashDir stays null and the scene supplies the fallback.
+      if (!this.dashEngaged) {
+        this.dashDir = null;
+        this.dashPulseUntilMs = performance.now() + PULSE_MS;
+      } else {
+        this.dashDir = null;
+      }
+      this.dashEngaged = false;
+      this.dashKnob?.base.remove();
+      this.dashKnob = null;
       this.dashPointer = null;
       this.dashBtn.classList.remove("tc-btn--active");
     }
@@ -271,12 +370,18 @@ export class TouchControls {
   private reset(): void {
     this.moveStick?.base.remove();
     this.aimStick?.base.remove();
+    this.dashKnob?.base.remove();
     this.moveStick = null;
     this.aimStick = null;
+    this.dashKnob = null;
     this.moveDySamples.length = 0;
     this.jumpLatched = false;
+    this.jumpPulseUntilMs = 0;
     this.shieldPointer = null;
     this.dashPointer = null;
+    this.dashDir = null;
+    this.dashEngaged = false;
+    this.dashPulseUntilMs = 0;
     this.shieldBtn.classList.remove("tc-btn--active");
     this.dashBtn.classList.remove("tc-btn--active");
   }

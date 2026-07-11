@@ -785,6 +785,19 @@ export class OnlineMatchScene extends Phaser.Scene {
       }
       aimX = ox + dir.x * AIM_REACH;
       aimY = oy + dir.y * AIM_REACH;
+      // DASH DIRECTION (mobile): the sim dashes toward AIM, and on touch
+      // the aim is stale whenever the right thumb is on the DASH button
+      // instead of the aim stick. While the dash bit is down, point the aim
+      // where the dash gesture says: the mini-stick drag direction, or for
+      // a plain tap the move-stick direction. An actively held aim stick
+      // still wins (live intent beats fallback).
+      if (keys & InputBit.Dash) {
+        const dd = t.dashDir ?? (t.aimDir ? null : t.moveDir);
+        if (dd) {
+          aimX = ox + dd.x * AIM_REACH;
+          aimY = oy + dd.y * AIM_REACH;
+        }
+      }
       // AUTO WALL-HOP (mobile only): pushing into a touched wall pulses
       // Jump — automatic wall climb, no thumb gymnastics (autoWallHop.ts).
       const meForHop = this.lastStateForAssist?.players[this.localPlayerId];

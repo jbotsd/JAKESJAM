@@ -108,18 +108,56 @@ describe("TouchControls mapping", () => {
     expect(Math.abs(s.aimDir!.y)).toBeLessThan(0.2);
   });
 
-  test("shield + dash buttons set their bits while held", async () => {
+  test("shield holds its bit; dash does NOT fire on bare press", async () => {
     const { tc, shieldBtn, dashBtn } = await makeControls();
     shieldBtn.fire("pointerdown", { pointerId: 3, preventDefault() {} });
-    dashBtn.fire("pointerdown", { pointerId: 4, preventDefault() {} });
+    dashBtn.fire("pointerdown", { pointerId: 4, clientX: 500, clientY: 400, preventDefault() {} });
     let s = tc.getState();
     expect(s.keys & InputBit.Shield).toBeTruthy();
-    expect(s.keys & InputBit.Dash).toBeTruthy();
-    // Release shield.
+    // Direction unknown yet — the bit must NOT rise (a rising edge here
+    // would dash with a stale aim).
+    expect(s.keys & InputBit.Dash).toBeFalsy();
     fireWindow("pointerup", { pointerId: 3, preventDefault() {} });
     s = tc.getState();
     expect(s.keys & InputBit.Shield).toBeFalsy();
-    expect(s.keys & InputBit.Dash).toBeTruthy(); // dash still held
+  });
+
+  test("dash mini-stick: drag past the trigger fires Dash in the drag direction", async () => {
+    const { tc, dashBtn } = await makeControls();
+    dashBtn.fire("pointerdown", { pointerId: 4, clientX: 500, clientY: 400, preventDefault() {} });
+    // Drag 20px up-right (past DASH_TRIGGER_PX).
+    fireWindow("pointermove", { pointerId: 4, clientX: 514, clientY: 386, preventDefault() {} });
+    const s = tc.getState();
+    expect(s.keys & InputBit.Dash).toBeTruthy();
+    expect(s.dashDir).not.toBeNull();
+    expect(s.dashDir!.x).toBeGreaterThan(0.6); // analog diagonal, not snapped
+    expect(s.dashDir!.y).toBeLessThan(-0.6);
+    fireWindow("pointerup", { pointerId: 4, timeStamp: 5000, preventDefault() {} });
+  });
+
+  test("dash tap: pulses Dash with dashDir null (move-direction fallback)", async () => {
+    const { tc, dashBtn } = await makeControls();
+    dashBtn.fire("pointerdown", { pointerId: 4, clientX: 500, clientY: 400, preventDefault() {} });
+    fireWindow("pointerup", { pointerId: 4, preventDefault() {} });
+    const s = tc.getState();
+    expect(s.keys & InputBit.Dash).toBeTruthy(); // pulse window
+    expect(s.dashDir).toBeNull();
+  });
+
+  test("move-zone tap pulses Jump (spacebar); a held drag does not", async () => {
+    const { tc, leftZone } = await makeControls();
+    leftZone.fire("pointerdown", { pointerId: 7, timeStamp: 0, clientX: 100, clientY: 300, preventDefault() {} });
+    fireWindow("pointerup", { pointerId: 7, timeStamp: 50, clientX: 100, clientY: 300, preventDefault() {} });
+    expect(tc.getState().keys & InputBit.Jump).toBeTruthy();
+  });
+
+  test("moveDir: deflected stick reports its normalized vector", async () => {
+    const { tc, leftZone } = await makeControls();
+    leftZone.fire("pointerdown", { pointerId: 8, clientX: 100, clientY: 300, preventDefault() {} });
+    fireWindow("pointermove", { pointerId: 8, clientX: 160, clientY: 300, preventDefault() {} });
+    const s = tc.getState();
+    expect(s.moveDir).not.toBeNull();
+    expect(s.moveDir!.x).toBeGreaterThan(0.9);
   });
 
   test("deadzone: tiny move-stick nudge produces no movement", async () => {
