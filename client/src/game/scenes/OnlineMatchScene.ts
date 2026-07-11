@@ -110,6 +110,7 @@ import {
 import { drawDeathFx, drawDeathShards, drawSpawnUploads } from "../render/deathFxPainter.js";
 import { crumb, record } from "../../telemetry.js";
 import { drawPlayerPresence } from "../render/presencePainter.js";
+import { announce } from "../audio/AnnouncerSystem.js";
 import { playCardPickFeel } from "../render/CardFeel.js";
 
 // Portrait-mobile camera framing. The arena is 2:1 wide but a phone held
@@ -324,6 +325,8 @@ export class OnlineMatchScene extends Phaser.Scene {
   private deathTipLocked: string | null | undefined = undefined;
   /** When the local player died (performance.now), null while alive. */
   private localDeathAtMs: number | null = null;
+  /** Round-phase memory for the FIGHT announce edge. */
+  private prevRoundPhase = "";
   /** Static arena geometry (platforms, walls, floor, vignette). Drawn
    *  once on hello receipt; never per-frame. */
   private arenaGraphics: Phaser.GameObjects.Graphics | null = null;
@@ -975,7 +978,14 @@ export class OnlineMatchScene extends Phaser.Scene {
     // the motif) plays unobscured — the overlay was hiding the best moment.
     if (this.deathOverlay) {
       if (vitals.isDead) {
-        if (this.localDeathAtMs === null) this.localDeathAtMs = performance.now();
+        if (this.localDeathAtMs === null) {
+          this.localDeathAtMs = performance.now();
+          announce("eliminated");
+          // The soul reaches the seal ~2.9s in — speak as it lands.
+          this.time.delayedCall(2_900, () => {
+            if (this.localDeathAtMs !== null) announce("soul-reclaimed");
+          });
+        }
         const riteDone = performance.now() - this.localDeathAtMs >= 3_000;
         const remainingSec = Math.max(0, Math.ceil(state.round.countdownRemainingMs / 1000));
         if (this.deathOverlay.isOpen()) {
@@ -998,6 +1008,10 @@ export class OnlineMatchScene extends Phaser.Scene {
       }
     }
 
+    if (this.prevRoundPhase === "countdown" && state.round.phase === "fighting") {
+      announce("fight");
+    }
+    this.prevRoundPhase = state.round.phase;
     if (!this.matchHasEnded) {
       this.roundBannerSystem.update({
         phase: state.round.phase,
@@ -1736,6 +1750,9 @@ export class OnlineMatchScene extends Phaser.Scene {
         const streak = prev + 1;
         this.killStreakCount.set(this.localPlayerId, streak);
         this.spawnKillCallout(state.players[PlayerId(deadPid)], streak);
+        // Announcer: YOUR kills only (Halo rule — the voice speaks to you).
+        const tiers = ["kill", "double-kill", "triple-kill", "multi-kill"] as const;
+        announce(tiers[Math.min(streak, tiers.length) - 1]!);
       }
     }
 

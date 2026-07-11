@@ -14,6 +14,7 @@
 // does this method touch" archaeology when reading the dispatch.
 
 import type Phaser from "phaser";
+import { announce } from "../audio/AnnouncerSystem.js";
 import type { PlayerId, SimEvent } from "../../sim/types";
 import type { ProceduralPlayerRig } from "../rendering/ProceduralPlayerRig";
 import type { ParticlePool } from "../systems/ParticlePool";
@@ -212,6 +213,7 @@ export class SimEventRouter {
       }
       case "round-end":
         audio.play("card");
+        announce("round-over");
         d.particlePool?.drainActive(scene);
         d.killStreakCount.clear();
         d.prevAlive.clear();
@@ -241,15 +243,14 @@ export class SimEventRouter {
         break;
       }
       case "first-blood":
-        // Reuses the "pickup" cue — a bright, positive sting for claiming
-        // the round's speed wager. No dedicated asset yet.
+        // Bright sting + Jake's announcer line (no-ops until recorded).
         audio.play("pickup");
+        announce("first-blood");
         break;
       case "sudden-death-started":
-        // Announces the round is a decider (design pillars: "the money
-        // moment"). Reuses "card" (already the round-transition cue) plus a
-        // bigger shake than chain-hit — no dedicated asset yet.
+        // The decider ("the money moment") — cue + voice.
         audio.play("card");
+        announce("sudden-death");
         d.safeShake(150, 0.01);
         break;
       default: {

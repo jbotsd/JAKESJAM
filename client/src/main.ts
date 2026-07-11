@@ -10,6 +10,7 @@ import {
   type QualityTier,
 } from "./game/render/qualityProfile";
 import { crumb, installTelemetry, watchContextLoss } from "./telemetry";
+import { announce, setAnnouncerVolume, silenceAnnouncer } from "./game/audio/AnnouncerSystem";
 import { LobbyController } from "./game/ui/LobbyController";
 import { MatchStatusBadge } from "./game/ui/MatchStatusBadge";
 import { fetchWorldSummary } from "./net/worldClient";
@@ -806,6 +807,7 @@ window.addEventListener(ShellEvents.CLIP_UPLOADED, ((e: CustomEvent) => {
 
 musicVolumeInput.addEventListener("input", () => {
   localStorage.setItem("jakesjam.musicVolume", musicVolumeInput.value);
+  setAnnouncerVolume(Number(musicVolumeInput.value) / 100);
   applyAudioOptions();
 });
 
@@ -1126,11 +1128,33 @@ function installFullscreenToggle(): void {
 }
 installFullscreenToggle();
 
+// ── Announcer (Jake's voice; no-ops until files are recorded) ─────────
+{
+  const stored = Number(localStorage.getItem("jakesjam.musicVolume") ?? "65");
+  setAnnouncerVolume(stored / 100);
+  // The lore diatribe: once per session, from the title screen, on the
+  // first gesture (autoplay policy needs one). Joining silences it.
+  let loreStarted = false;
+  window.addEventListener(
+    "pointerdown",
+    () => {
+      const splashVisible = !document.querySelector("[data-splash]")?.closest("[hidden]");
+      if (!loreStarted && splashVisible && !new URLSearchParams(location.search).has("world")) {
+        loreStarted = true;
+        announce("lore-intro");
+      }
+    },
+    { once: true },
+  );
+}
+
 function joinWorld(): void {
   // Soundtrack for Hot Lobby. Plays immediately if a gesture already
   // happened (e.g. the click that hit "Hot Lobby"); for bare `?world=1`
   // the global first-gesture starter picks up the first in-match input.
   startWorldMusic();
+  silenceAnnouncer(); // cut the diatribe if it's mid-flight
+  announce("welcome");
   requestGameFullscreen();
   // Bare `?world=1` auto-joins with no gesture (fullscreen rejects) — the
   // first in-match touch retries once.
