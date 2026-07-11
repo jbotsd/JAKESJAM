@@ -121,7 +121,7 @@ const worldHost = new WorldHost({
 });
 
 type SocketKind = "room" | "world";
-type SocketData = MatchSocketData & { kind: SocketKind };
+type SocketData = MatchSocketData & { kind: SocketKind; name?: string };
 
 // ── Self-contained hosting: optional static client serving ─────────────────
 // When SERVE_CLIENT_DIR points at a Vite build output (client/dist), any GET
@@ -893,10 +893,15 @@ video{width:100%;height:100%;object-fit:contain;display:block}</style>
       if (!token) return new Response("bad request", { status: 400 });
       const verified = await verifyWorldToken(token, config.gameServerSecret);
       if (!verified) return new Response("auth failed", { status: 401 });
+      // Chosen display name rides the ws URL (not the signed token — it's
+      // cosmetic). Sanitized hard: letters/digits/space/-_.' only, 2-14 ch.
+      const rawName = url.searchParams.get("name") ?? "";
+      const cleanName = rawName.replace(/[^\w \-.']/g, "").trim().slice(0, 14);
       const data: SocketData = {
         kind: "world",
         matchId: "world",
         playerId: verified.playerId,
+        name: cleanName.length >= 2 ? cleanName : undefined,
         authedAt: Date.now(),
       };
       const upgraded = srv.upgrade(req, { data });

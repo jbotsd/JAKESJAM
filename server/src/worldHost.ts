@@ -139,14 +139,15 @@ export class WorldHost {
   attach(ws: ServerWebSocket<MatchSocketData>): void {
     const playerId = PlayerId(ws.data.playerId);
     this.sockets.set(playerId, ws);
+    const chosenName = (ws.data as { name?: string }).name;
     if (!this.host) {
-      const spawn = this.spawnFor(ws.data.playerId);
+      const spawn = this.spawnFor(ws.data.playerId, chosenName);
       // WorldHost doesn't have a room to read chaos modifiers from, so we fall back
       // to the no-chaos baseline. Future workitem: add a lightweight Convex world token
       // endpoint that exposes a default/modifiable chaos set for the always-on world.
       this.host = this.buildHost([spawn]);
     } else if (!this.host.hasPlayer(playerId)) {
-      this.host.addPlayer(this.spawnFor(ws.data.playerId));
+      this.host.addPlayer(this.spawnFor(ws.data.playerId, chosenName));
     }
     this.host.attachClient(ws);
   }
@@ -277,11 +278,13 @@ export class WorldHost {
     return this.host ? this.host.summary() : null;
   }
 
-  private spawnFor(playerIdRaw: string): PlayerSpawnInfo {
+  private spawnFor(playerIdRaw: string, chosenName?: string): PlayerSpawnInfo {
     return {
       playerId: PlayerId(playerIdRaw),
       characterId: "balanced",
-      name: playerIdRaw,
+      // Player-chosen name (sanitized at the ws upgrade) — fallback stays
+      // the id so old clients keep working.
+      name: chosenName ?? playerIdRaw,
       color: pickColor(playerIdRaw),
       weaponId: "starter-pistol",
     };

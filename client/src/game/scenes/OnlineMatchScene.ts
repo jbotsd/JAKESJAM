@@ -347,6 +347,8 @@ export class OnlineMatchScene extends Phaser.Scene {
   private readonly spawnFxModels: UploadRenderModel[] = [];
   /** produceDeathFx count this frame — the model array is a pool. */
   private deathFxSoulCount = 0;
+  /** playerId → chosen display name (ServerHello roster). */
+  private readonly rosterNames = new Map<string, string>();
   private platformLayer: PlatformLayer | null = null;
   private lightBeams: LightBeamLayer | null = null;
   private cosmicArena: CosmicArenaLayer | null = null;
@@ -970,6 +972,7 @@ export class OnlineMatchScene extends Phaser.Scene {
       countdownRemainingMs: state.round.countdownRemainingMs,
       roundIndex: state.round.roundIndex,
       scores,
+      names: Object.fromEntries(this.rosterNames),
       winnerLabel,
     };
 
@@ -1162,6 +1165,8 @@ export class OnlineMatchScene extends Phaser.Scene {
           this.connectionOverlay?.hide();
         },
         onHello: (hello) => {
+          // Roster names (chosen at the splash) drive plates + scoreboard.
+          for (const p of hello.allPlayers) this.rosterNames.set(p.playerId, p.name);
           // Server told us which map this match runs on. Render its
           // geometry now so the player isn't dropped into a black void
           // before the first snapshot.
@@ -1201,7 +1206,10 @@ export class OnlineMatchScene extends Phaser.Scene {
   private async resolveWsUrl(data: OnlineMatchSceneInit): Promise<string> {
     if (data.mode === "world") {
       this.setStatus("Joining Hot Lobby...");
-      const assignment = await fetchWorldAssignment(data.localPlayerId);
+      const assignment = await fetchWorldAssignment(
+        data.localPlayerId,
+        localStorage.getItem("jakesjam.playerName") ?? undefined,
+      );
       return assignment.wsUrl;
     }
     // Server-native private room: token or full wsUrl from lobby start.
@@ -1920,9 +1928,9 @@ export class OnlineMatchScene extends Phaser.Scene {
           : REMOTE_PLAYER_FALLBACK_COLOR,
       // Local hero: gold seam instead of the default crystal cyan.
       accentColor: isLocal ? 0xffd166 : undefined,
-      // No room-roster lookup yet on the netcode path; fall back to the player
-      // id suffix + character name so the nameplate is stable + identifiable.
-      name: bot ? botLabel(player.id) : `${player.id.slice(-4)} / ${character.name}`,
+      // Chosen name from the hello roster; id-suffix fallback. The old
+      // "/ Balanced" archetype suffix was dev noise (Jake, 2026-07-11).
+      name: bot ? botLabel(player.id) : (this.rosterNames.get(player.id) ?? player.id.slice(-4)),
       scale: this.getVisualScale(character),
       // Full juice for local; lite path for remotes/bots (fewer Graphics
       // ops). Potato tier runs EVERY rig lite — per-frame vector

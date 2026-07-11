@@ -63,6 +63,7 @@ let lastLineEndedAt = 0;
 let volume = 0.9;
 
 function elementFor(key: AnnouncerKey): HTMLAudioElement | null {
+  if (typeof Audio === "undefined") return null; // node/test env
   if (audio.has(key)) return audio.get(key)!;
   const el = new Audio(`/audio/announcer/${key}.m4a`);
   el.preload = "auto";

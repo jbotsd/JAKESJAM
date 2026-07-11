@@ -56,6 +56,8 @@ export type HudRound = {
   countdownRemainingMs: number;
   roundIndex: number;
   scores: Record<PlayerId, number>;
+  /** playerId → display name (hello roster); ids fall back to tags. */
+  names?: Record<string, string>;
   winnerLabel?: string;
 };
 
@@ -265,19 +267,21 @@ export class HudSystem {
       .setScrollFactor(0)
       .setDepth(depth + 2);
 
-    // Compact puts the score on its own row BELOW the shield row — at 393px
-    // a centred score line horizontally collides with the shield label.
+    // Scoreboard: names + scores DOWN THE LEFT SIDE under the vitals
+    // (Jake 2026-07-11) — a centred strip fought the timer and read as
+    // debug text. Left-aligned column, local player marked.
     this.scoreText = s.add
-      .text(uiWidth(s) / 2, this.compact ? 47 : 42, "", {
+      .text(PAD_LEFT, PAD_TOP + LINE_H * 2 + 10, "", {
         fontFamily: "'Space Mono', Consolas, 'Courier New', monospace",
-        fontSize: this.compact ? "10px" : "13px",
+        fontSize: this.compact ? "10px" : "12px",
         fontStyle: "bold",
         color: "#8ff8ff",
+        align: "left",
+        lineSpacing: this.compact ? 3 : 5,
         stroke: "#05080f",
         strokeThickness: 3,
-        align: "center",
       })
-      .setOrigin(0.5, 0)
+      .setOrigin(0, 0)
       .setScrollFactor(0)
       .setDepth(depth + 2);
 
@@ -436,19 +440,23 @@ export class HudSystem {
     const secs = totalSec % 60;
     this.timerText.setText(`${mins}:${secs.toString().padStart(2, "0")}`);
 
-    // Score
-    const entries = Object.entries(round.scores).sort(([a], [b]) => a.localeCompare(b));
+    // Scoreboard column: sorted by score (leader first), local marked ▸.
+    const entries = Object.entries(round.scores).sort(
+      ([aId, a], [bId, b]) => b - a || aId.localeCompare(bId),
+    );
     if (entries.length === 0) {
       this.scoreText.setText(`ROUND ${round.roundIndex + 1}`);
     } else {
-      const parts = entries.map(([pid, score]) => {
-        let tag = pid === this.localPlayerId ? "YOU" : playerTag(pid);
-        // Phone widths: "BOT · PISTON 2   BOT · SPARK 0   YOU 0" overflows the
-        // 393px row into the FTUE legend / RTT pill — drop the "BOT · " prefix.
+      const lines = entries.map(([pid, score]) => {
+        let tag =
+          pid === this.localPlayerId
+            ? "YOU"
+            : (round.names?.[pid] ?? playerTag(pid));
         if (this.compact) tag = tag.replace("BOT · ", "");
-        return `${tag} ${score}`;
+        const mark = pid === this.localPlayerId ? "▸ " : "  ";
+        return `${mark}${tag.slice(0, 14).padEnd(this.compact ? 10 : 14)} ${score}`;
       });
-      this.scoreText.setText(parts.join(this.compact ? "  " : "   "));
+      this.scoreText.setText(lines.join("\n"));
     }
   }
 

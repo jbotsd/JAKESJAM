@@ -165,6 +165,18 @@ app.innerHTML = `
       <p class="splash-kicker">ELYAD</p>
       <h1>JAKESJAM</h1>
       <p class="splash-copy">Crystal-tech arena. Draft between rounds. Spawn in seconds.</p>
+      <div class="splash-name">
+        <label for="jj-name" class="splash-name-label">CALLSIGN</label>
+        <input
+          id="jj-name"
+          data-player-name
+          type="text"
+          maxlength="14"
+          autocomplete="nickname"
+          placeholder="choose your name"
+          spellcheck="false"
+        />
+      </div>
       <div class="splash-actions splash-actions--primary">
         <button data-menu-world type="button" class="primary shell-cta-primary">Hot Lobby</button>
       </div>
@@ -449,6 +461,17 @@ if (isTouchDevice()) {
     window.removeEventListener("pointerdown", goFullscreen);
   };
   window.addEventListener("pointerdown", goFullscreen);
+}
+
+// Chosen callsign — persisted, sanitized, rides the world join.
+const playerNameInput = app.querySelector<HTMLInputElement>("[data-player-name]");
+if (playerNameInput) {
+  playerNameInput.value = localStorage.getItem("jakesjam.playerName") ?? "";
+  playerNameInput.addEventListener("input", () => {
+    const clean = playerNameInput.value.replace(/[^\w \-.']/g, "").slice(0, 14);
+    if (clean !== playerNameInput.value) playerNameInput.value = clean;
+    localStorage.setItem("jakesjam.playerName", clean.trim());
+  });
 }
 
 const lobbyController = new LobbyController(app);

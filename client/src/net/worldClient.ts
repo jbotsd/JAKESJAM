@@ -27,7 +27,10 @@ export type WorldAssignment = {
   token: string;
 };
 
-export async function fetchWorldAssignment(playerId: string): Promise<WorldAssignment> {
+export async function fetchWorldAssignment(
+  playerId: string,
+  displayName?: string,
+): Promise<WorldAssignment> {
   const wsBase = readGameServerWsBase();
   const httpBase = wsToHttp(wsBase);
   const res = await fetch(`${httpBase}/world-token`, {
@@ -41,6 +44,7 @@ export async function fetchWorldAssignment(playerId: string): Promise<WorldAssig
   const json = (await res.json()) as { token: string; wsPath: string };
   const wsUrl = new URL(json.wsPath, wsBase);
   wsUrl.searchParams.set("token", json.token);
+  if (displayName) wsUrl.searchParams.set("name", displayName.slice(0, 14));
   return { wsUrl: wsUrl.toString(), token: json.token };
 }
 

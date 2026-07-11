@@ -1170,3 +1170,40 @@ button.btn-danger:hover:not(:disabled) {
 .fs-toggle:active {
   opacity: 1;
 }
+
+/* Callsign entry on the splash — make choosing a name feel first-class. */
+.splash-name {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.35rem;
+  margin: 0 0 1.1rem;
+}
+.splash-name-label {
+  font-family: "Space Mono", monospace;
+  font-size: 0.68rem;
+  letter-spacing: 0.22em;
+  color: #ffd166;
+  opacity: 0.85;
+}
+.splash-name input {
+  width: min(280px, 74vw);
+  padding: 0.6rem 0.9rem;
+  text-align: center;
+  font-family: "Space Mono", monospace;
+  font-size: 1.05rem;
+  font-weight: 700;
+  color: #fff3d6;
+  background: rgba(6, 14, 22, 0.72);
+  border: 1px solid rgba(255, 209, 102, 0.4);
+  border-radius: 10px;
+  outline: none;
+}
+.splash-name input:focus {
+  border-color: #ffd166;
+  box-shadow: 0 0 14px rgba(255, 209, 102, 0.28);
+}
+.splash-name input::placeholder {
+  color: rgba(143, 248, 255, 0.4);
+  font-weight: 400;
+}
