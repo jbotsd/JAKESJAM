@@ -31,6 +31,8 @@ type RigOptions = ConstructorParameters<typeof ProceduralPlayerRig>[1];
 
 const DARK = 0x07101c;
 const WHITE = 0xf7fbff;
+/** Crystal cyan — the game's gnostic signature glow. */
+const ACCENT = 0x8ff8ff;
 
 let bakeCounter = 0;
 
@@ -41,6 +43,7 @@ export class BakedPlayerRig extends ProceduralPlayerRig {
   private cursor = 0;
   private lastFrame = -1;
   private spin = 0;
+  private motePhase = 0;
   private bakedVisible = true;
 
   constructor(scene: Phaser.Scene, options: RigOptions) {
@@ -67,6 +70,7 @@ export class BakedPlayerRig extends ProceduralPlayerRig {
     const dark = css(DARK);
     const main = css(color);
     const white = css(WHITE);
+    const accent = css(ACCENT);
 
     // capsule (limb segment): dark outline, colored core, joint dots at
     // the ends (the live rig's glowing joints are half its articulated feel)
@@ -76,49 +80,52 @@ export class BakedPlayerRig extends ProceduralPlayerRig {
     ctx.fillStyle = main;
     roundRect(ctx, 2, 2, 28, 6, 3);
     ctx.fill();
-    ctx.fillStyle = white;
-    ctx.globalAlpha = 0.75;
+    ctx.fillStyle = accent;
+    ctx.globalAlpha = 0.85;
     ctx.beginPath(); ctx.arc(5, 5, 1.8, 0, Math.PI * 2); ctx.fill();
     ctx.beginPath(); ctx.arc(27, 5, 1.8, 0, Math.PI * 2); ctx.fill();
     ctx.globalAlpha = 1;
 
-    // torso: tapered mass — broad shoulders, narrow pelvis (drawn with
-    // chest at the RIGHT edge: quadBetween lays the long axis pelvis→chest)
+    // torso: ROBE silhouette — broad chest (right edge) flowing into a
+    // flared skirted hem at the pelvis end (left edge). Reads garment, not
+    // chassis. (quadBetween lays long axis pelvis→chest.)
     ctx.fillStyle = dark;
-    poly(ctx, [[33, 15], [38, 8], [56, 4], [58, 10], [58, 20], [56, 26], [38, 22]]);
+    poly(ctx, [[32, 6], [40, 11], [56, 4], [58, 10], [58, 20], [56, 26], [40, 19], [32, 24], [34, 15]]);
     ctx.fillStyle = main;
-    poly(ctx, [[35.5, 15], [39.5, 10], [55, 6.5], [56.5, 11], [56.5, 19], [55, 23.5], [39.5, 20]]);
-    // chest panel highlight
-    ctx.fillStyle = white;
-    ctx.globalAlpha = 0.4;
-    poly(ctx, [[49, 8], [55, 7.5], [55.5, 15], [49, 14.5]]);
+    poly(ctx, [[34.5, 8.5], [41, 12.5], [55, 6.5], [56.5, 11], [56.5, 19], [55, 23.5], [41, 17.5], [34.5, 21.5], [36.5, 15]]);
+    // chest sigil highlight (accent — the gnostic mark)
+    ctx.fillStyle = accent;
+    ctx.globalAlpha = 0.55;
+    poly(ctx, [[50, 11], [54.5, 12.8], [50, 14.6], [47.5, 12.8]]);
     ctx.globalAlpha = 1;
-    // belt line at pelvis end
-    ctx.fillStyle = dark;
-    ctx.fillRect(36, 12, 2.5, 6);
 
-    // head: hooded silhouette — dome + tapering hood skirt (the skirt
-    // overlaps the chest so there's no floating-disc neck gap) + visor slit
+    // head: gnostic COWL — peaked hood (wizard silhouette, not helmet),
+    // deep skirt overlapping the chest, narrow crystal-cyan visor glow
     ctx.fillStyle = dark;
     ctx.beginPath();
-    ctx.arc(70, 8, 9, Math.PI, 0);
-    ctx.lineTo(80, 16);
-    ctx.lineTo(76, 20);
-    ctx.lineTo(64, 20);
-    ctx.lineTo(60, 16);
+    ctx.moveTo(70, 0);            // hood peak
+    ctx.quadraticCurveTo(79, 3, 80, 12);
+    ctx.lineTo(78, 20);
+    ctx.lineTo(62, 20);
+    ctx.lineTo(60, 12);
+    ctx.quadraticCurveTo(61, 3, 70, 0);
     ctx.closePath();
     ctx.fill();
     ctx.fillStyle = main;
     ctx.beginPath();
-    ctx.arc(70, 8, 7, Math.PI, 0);
-    ctx.lineTo(78, 15);
-    ctx.lineTo(74.5, 18.5);
-    ctx.lineTo(65.5, 18.5);
-    ctx.lineTo(62, 15);
+    ctx.moveTo(70, 2);
+    ctx.quadraticCurveTo(77, 4.5, 78, 12);
+    ctx.lineTo(76.2, 18.5);
+    ctx.lineTo(63.8, 18.5);
+    ctx.lineTo(62, 12);
+    ctx.quadraticCurveTo(63, 4.5, 70, 2);
     ctx.closePath();
     ctx.fill();
-    ctx.fillStyle = white;
-    ctx.fillRect(64.5, 7.5, 11, 2.6);
+    // cowl shadow (face recess) + glowing visor slit
+    ctx.fillStyle = dark;
+    ctx.fillRect(63.5, 9, 13, 6);
+    ctx.fillStyle = accent;
+    ctx.fillRect(64.5, 10.6, 11, 2.2);
 
     // boot
     ctx.fillStyle = dark;
@@ -158,9 +165,24 @@ export class BakedPlayerRig extends ProceduralPlayerRig {
     poly(ctx, [[65.5, 36], [65.5, 50], [79.5, 43]]);
     ctx.globalAlpha = 1;
 
-    // spine strip (accent)
+    // soft mote (radial glow) — ONE cheap quad of gnostic energy at the
+    // chest (frame 0,32,16,16); the full 8-mote aura stays cut on this tier
+    const grad = ctx.createRadialGradient(8, 40, 0.5, 8, 40, 8);
+    grad.addColorStop(0, "rgba(143,248,255,0.85)");
+    grad.addColorStop(0.5, "rgba(143,248,255,0.28)");
+    grad.addColorStop(1, "rgba(143,248,255,0)");
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 32, 16, 16);
+
+    // spine strip — crystal-cyan rune column
+    ctx.fillStyle = accent;
+    ctx.fillRect(88.8, 0, 4.4, 18);
     ctx.fillStyle = white;
-    ctx.fillRect(88, 0, 6, 18);
+    ctx.globalAlpha = 0.7;
+    ctx.fillRect(90, 2, 2, 3);
+    ctx.fillRect(90, 8, 2, 3);
+    ctx.fillRect(90, 14, 2, 3);
+    ctx.globalAlpha = 1;
 
     this.bakedScene.textures.addCanvas(this.texKey, canvas);
   }
@@ -305,6 +327,15 @@ export class BakedPlayerRig extends ProceduralPlayerRig {
   ): void {
     const img = this.quadBetween(pelvis, chest, 3.5 * s, 88, 0, 6, 18);
     img.setAlpha((gripping ? 0.25 : 0.55) * Math.max(0.25, healthRatio));
+    // the gnostic mote — one soft additive glow breathing at the chest
+    this.motePhase += 0.06;
+    const mote = this.frame(0, 32, 16, 16);
+    mote.setPosition(chest.x, chest.y - 2 * s);
+    const pulse = 0.85 + 0.15 * Math.sin(this.motePhase);
+    mote.setDisplaySize(22 * s * pulse, 22 * s * pulse);
+    mote.setRotation(0);
+    mote.setBlendMode(Phaser.BlendModes.ADD);
+    mote.setAlpha(0.5 * Math.max(0.3, healthRatio));
   }
 
   // Fill-rate eaters: deliberately nothing on the baked tiers.
