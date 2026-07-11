@@ -159,11 +159,7 @@ for (let g = 0; g < Math.min(groups.length, KEYS.length); g++) {
       "acompressor=threshold=-18dB:ratio=3:attack=8:release=120:makeup=4",
       "aecho=0.7:0.45:70|110:0.18|0.10", // short arena tail
       "loudnorm=I=-16:TP=-1.2:LRA=9",
-      "afade=t=out:st=9999:d=0.03,atrim=0", // no-op guard; real fade below
-      "afade=t=out:d=0.05:start_time=0" /* replaced dynamically? keep simple */,
-    ]
-      .slice(0, 4)
-      .join(","),
+    ].join(","),
     "-ar",
     "48000",
     "-c:a",
