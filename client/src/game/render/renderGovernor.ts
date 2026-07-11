@@ -39,6 +39,11 @@ export class RenderGovernor {
   private lastDownAtMs = 0;
 
   private readonly floor: number;
+  /** Futility detection: dt before the last down-step, and how many
+   *  consecutive steps produced no measurable improvement. */
+  private dtBeforeStep = 0;
+  private futileSteps = 0;
+  private frozenUntilMs = 0;
 
   constructor(game: Phaser.Game) {
     this.game = game;
@@ -57,10 +62,43 @@ export class RenderGovernor {
     if (frameDtEmaMs > this.targetDtMs * DOWN_FACTOR) {
       this.goodSinceMs = null;
       this.badStreak += 1;
+      // FUTILITY DETECTION (2026-07-11, from Jake's 4080 console log): the
+      // governor walked 1.5→0.5 while dt sat at 24-37ms the whole way —
+      // when frame time is presentation- or CPU-bound, dropping resolution
+      // only blurs the game. If a down-step didn't improve dt ≥8%, count it
+      // futile; two futile steps → restore one step and FREEZE stepping.
+      if (this.dtBeforeStep > 0) {
+        const improved = frameDtEmaMs < this.dtBeforeStep * 0.92;
+        if (improved) {
+          this.futileSteps = 0;
+        } else {
+          this.futileSteps += 1;
+        }
+        this.dtBeforeStep = 0;
+        if (this.futileSteps >= 2) {
+          const restored = Math.min(this.ceilingScale, rs + 0.25);
+          setRenderScaleRuntime(this.game, restored);
+          this.frozenUntilMs = nowMs + 120_000;
+          this.futileSteps = 0;
+          console.log(
+            `[governor] resolution-insensitive (dt ${frameDtEmaMs.toFixed(1)}ms regardless) — restoring rs→${getRenderScale().toFixed(2)}, stepping frozen 120s`,
+          );
+          crumb("perf", `governor futile — not fill-bound, rs→${getRenderScale().toFixed(2)} frozen`);
+          record({
+            kind: "perf",
+            sig: "governor-futile",
+            message: `resolution-insensitive frame time (dt ${frameDtEmaMs.toFixed(1)}ms)`,
+            data: { dt: Math.round(frameDtEmaMs * 10) / 10, rs: getRenderScale() },
+          });
+          return;
+        }
+      }
+      if (nowMs < this.frozenUntilMs) return;
       if (this.badStreak >= DOWN_STREAK && rs > this.floor) {
         // Bigger steps from high (DPR-crisp) ceilings — walking 2.0→0.8
         // in 0.1 hops would take a minute of visible jank.
         const step = rs > 1.2 ? 0.25 : 0.1;
+        this.dtBeforeStep = frameDtEmaMs;
         setRenderScaleRuntime(this.game, Math.max(this.floor, rs - step));
         this.badStreak = 0;
         this.lastDownAtMs = nowMs;
