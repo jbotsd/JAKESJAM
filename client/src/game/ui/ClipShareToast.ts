@@ -21,7 +21,15 @@ export function showClipShareToast(url: string, originalUrl?: string): void {
   // Portrait touch: bottom-right 16px sits INSIDE the touch-control band, on
   // top of the right (aim) thumb zone — lift the toast above the band.
   if (isPortraitMobile()) {
-    root.style.bottom = "calc(34vh + env(safe-area-inset-bottom, 0px) + 12px)";
+    // TOP-centre in portrait: "above the band" still collided with the
+    // SHIELD/DASH buttons, which poke ~46px above the band line (phone
+    // screenshot 2026-07-11). The top strip only overlaps HUD chrome,
+    // and the toast auto-dismisses.
+    root.style.bottom = "auto";
+    root.style.top = "calc(env(safe-area-inset-top, 0px) + 64px)";
+    root.style.right = "50%";
+    root.style.transform = "translateX(50%)";
+    root.style.maxWidth = "94vw";
   }
 
   const closeBtn = document.createElement("button");

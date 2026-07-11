@@ -190,7 +190,9 @@ export class ProceduralPlayerRig {
       .text(0, 0, options.name, {
         color: `#${PALETTE.textHi.toString(16).padStart(6, "0")}`,
         fontFamily: "Inter, Arial, sans-serif",
-        fontSize: `${Math.round(11 * (options.scale ?? 1))}px`,
+        // Touch screens sit further from the eye per CSS px — 11px plates
+        // were illegible on phones (cosmetic only; no pose/draw change).
+        fontSize: `${Math.round((window.matchMedia?.("(pointer: coarse)")?.matches ? 14 : 11) * (options.scale ?? 1))}px`,
         fontStyle: "700",
         // Glyph texture density must match the DPR-aware backing store or
         // names blur on phones (crispness only — no pose/draw change).

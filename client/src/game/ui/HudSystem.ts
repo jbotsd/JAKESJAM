@@ -218,16 +218,32 @@ export class HudSystem {
       fontStyle: "bold",
     } as const;
 
-    const labelX = PAD_LEFT + this.barW + 8;
-    const vitalsFontSize = this.compact ? "9px" : "10px";
+    // Compact (phone portrait): numbers live INSIDE the bars — the label
+    // column collided with the centred timer at ~397px CSS width
+    // (phone screenshot 2026-07-11: "100/1:27" mash).
+    const labelX = this.compact ? PAD_LEFT + 4 : PAD_LEFT + this.barW + 8;
+    const vitalsFontSize = this.compact ? "8px" : "10px";
+    const vitalStroke = this.compact
+      ? { stroke: "#05080f", strokeThickness: 2 }
+      : {};
 
     this.hpLabel = s.add
-      .text(labelX, PAD_TOP + 1, "", { ...fontBase, fontSize: vitalsFontSize, color: "#b8f05a" })
+      .text(labelX, PAD_TOP + (this.compact ? 2 : 1), "", {
+        ...fontBase,
+        fontSize: vitalsFontSize,
+        color: "#b8f05a",
+        ...vitalStroke,
+      })
       .setScrollFactor(0)
       .setDepth(depth + 2);
 
     this.shLabel = s.add
-      .text(labelX, PAD_TOP + LINE_H + 1, "", { ...fontBase, fontSize: vitalsFontSize, color: "#93c5fd" })
+      .text(labelX, PAD_TOP + LINE_H + (this.compact ? 2 : 1), "", {
+        ...fontBase,
+        fontSize: vitalsFontSize,
+        color: "#93c5fd",
+        ...vitalStroke,
+      })
       .setScrollFactor(0)
       .setDepth(depth + 2);
 

@@ -127,7 +127,9 @@ import { playCardPickFeel } from "../render/CardFeel.js";
 // you. The old HUD-breakage concern is gone: the HUD now lives in a
 // renderScale-scaled root container on its own camera (HudCamera), so
 // world zoom never touches it.
-const PORTRAIT_CAM_ZOOM = 0.7;
+// 0.7 read "tiny character lost in backdrop" on a real phone — 0.8 keeps
+// enough arena context while the fighters actually read as figures.
+const PORTRAIT_CAM_ZOOM = 0.8;
 // Desktop crop-in: the world camera zooms to make the player the main event
 // (was 1.0 — the player read as a tiny figure showing almost the whole map).
 // 1.4 puts the ~56px character at ~11% of screen height with ~4.5
