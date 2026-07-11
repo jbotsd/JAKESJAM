@@ -73,6 +73,14 @@ always wins.
   playing within 3s, same entity, no manual refresh.
 - 4080 dev box: 165Hz monitor shows 165fps render with tick-interpolated
   motion; MSAA on; renderScale 1.5 sustained.
+  **MEASURED 2026-07-11 (this box: 1080p75 panel)**: ultra tier renders
+  supersampled (2304-2688 wide backing) with MSAA on the real RTX 4080
+  (renderer string verified) at 43-44fps visible — below the 75Hz panel
+  rate. WebGL runs on the 4080; the shortfall matches this box's KNOWN
+  NVIDIA/Wayland presentation quirks (see the Bitwig/Xwayland history),
+  not game cost. Standard tier is the daily driver and was play-verified
+  "feel great" by Jake. Full-rate high-refresh verification belongs on a
+  box without the quirk (or after the display-stack upgrade).4
 - The quality auto-pick is never final: a visible settings panel
   (Auto/Low/Med/High/Ultra + resolution slider, Krunker-style) persists and
   overrides detection on every device.
