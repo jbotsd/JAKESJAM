@@ -68,35 +68,57 @@ export class BakedPlayerRig extends ProceduralPlayerRig {
     const main = css(color);
     const white = css(WHITE);
 
-    // capsule (limb segment): dark outline, colored core
+    // capsule (limb segment): dark outline, colored core, joint dots at
+    // the ends (the live rig's glowing joints are half its articulated feel)
     ctx.fillStyle = dark;
     roundRect(ctx, 0, 0, 32, 10, 5);
     ctx.fill();
     ctx.fillStyle = main;
     roundRect(ctx, 2, 2, 28, 6, 3);
     ctx.fill();
-
-    // torso plate: hex-ish mass
-    ctx.fillStyle = dark;
-    poly(ctx, [[45, 0], [58, 6], [58, 24], [45, 30], [32, 24], [32, 6]]);
-    ctx.fillStyle = main;
-    poly(ctx, [[45, 3], [55, 8], [55, 22], [45, 27], [35, 22], [35, 8]]);
     ctx.fillStyle = white;
-    ctx.globalAlpha = 0.35;
-    poly(ctx, [[45, 5], [52, 9], [45, 13], [38, 9]]);
+    ctx.globalAlpha = 0.75;
+    ctx.beginPath(); ctx.arc(5, 5, 1.8, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.arc(27, 5, 1.8, 0, Math.PI * 2); ctx.fill();
     ctx.globalAlpha = 1;
 
-    // head: hooded silhouette + visor slit
+    // torso: tapered mass — broad shoulders, narrow pelvis (drawn with
+    // chest at the RIGHT edge: quadBetween lays the long axis pelvis→chest)
+    ctx.fillStyle = dark;
+    poly(ctx, [[33, 15], [38, 8], [56, 4], [58, 10], [58, 20], [56, 26], [38, 22]]);
+    ctx.fillStyle = main;
+    poly(ctx, [[35.5, 15], [39.5, 10], [55, 6.5], [56.5, 11], [56.5, 19], [55, 23.5], [39.5, 20]]);
+    // chest panel highlight
+    ctx.fillStyle = white;
+    ctx.globalAlpha = 0.4;
+    poly(ctx, [[49, 8], [55, 7.5], [55.5, 15], [49, 14.5]]);
+    ctx.globalAlpha = 1;
+    // belt line at pelvis end
+    ctx.fillStyle = dark;
+    ctx.fillRect(36, 12, 2.5, 6);
+
+    // head: hooded silhouette — dome + tapering hood skirt (the skirt
+    // overlaps the chest so there's no floating-disc neck gap) + visor slit
     ctx.fillStyle = dark;
     ctx.beginPath();
-    ctx.arc(70, 10, 10, 0, Math.PI * 2);
+    ctx.arc(70, 8, 9, Math.PI, 0);
+    ctx.lineTo(80, 16);
+    ctx.lineTo(76, 20);
+    ctx.lineTo(64, 20);
+    ctx.lineTo(60, 16);
+    ctx.closePath();
     ctx.fill();
     ctx.fillStyle = main;
     ctx.beginPath();
-    ctx.arc(70, 10, 7.5, 0, Math.PI * 2);
+    ctx.arc(70, 8, 7, Math.PI, 0);
+    ctx.lineTo(78, 15);
+    ctx.lineTo(74.5, 18.5);
+    ctx.lineTo(65.5, 18.5);
+    ctx.lineTo(62, 15);
+    ctx.closePath();
     ctx.fill();
     ctx.fillStyle = white;
-    ctx.fillRect(66, 8, 9, 2.5);
+    ctx.fillRect(64.5, 7.5, 11, 2.6);
 
     // boot
     ctx.fillStyle = dark;
@@ -126,12 +148,14 @@ export class BakedPlayerRig extends ProceduralPlayerRig {
     ctx.fillStyle = white;
     star(ctx, 55, 39, 4, 7, 3);
 
-    // drape (sash triangle)
+    // drape (sash) — drawn pointing RIGHT: quadBetween stretches the
+    // frame's long axis along pelvis→tip, so the apex must be at the
+    // frame's right edge (was bottom — the sash jutted sideways).
     ctx.fillStyle = dark;
-    poly(ctx, [[64, 32], [82, 32], [73, 54]]);
+    poly(ctx, [[64, 34], [64, 52], [82, 43]]);
     ctx.fillStyle = main;
     ctx.globalAlpha = 0.8;
-    poly(ctx, [[66, 33], [80, 33], [73, 51]]);
+    poly(ctx, [[65.5, 36], [65.5, 50], [79.5, 43]]);
     ctx.globalAlpha = 1;
 
     // spine strip (accent)
@@ -209,10 +233,8 @@ export class BakedPlayerRig extends ProceduralPlayerRig {
     chest: Vec2,
     s: number,
   ): void {
-    const img = this.quadBetween(pelvis, chest, 24 * s, 32, 0, 26, 30);
-    // torso quad runs along the spine — rotate frame 90° so the plate's
-    // vertical axis follows pelvis→chest.
-    img.setRotation(img.rotation + Math.PI / 2);
+    // Frame is drawn pelvis-left → chest-right along the quad axis.
+    this.quadBetween(pelvis, chest, 26 * s, 32, 0, 26, 30);
   }
 
   protected override drawHead(
@@ -222,7 +244,7 @@ export class BakedPlayerRig extends ProceduralPlayerRig {
     _healthRatio: number,
   ): void {
     const img = this.frame(60, 0, 20, 20);
-    img.setPosition(head.x, head.y);
+    img.setPosition(head.x, head.y + 1.5 * s);
     img.setDisplaySize(19 * s, 19 * s);
     img.setRotation(0);
   }
@@ -241,7 +263,7 @@ export class BakedPlayerRig extends ProceduralPlayerRig {
   ): void {
     const img = this.frame(16, 16, 10, 10);
     img.setPosition(shoulder.x, shoulder.y);
-    img.setDisplaySize(9 * s, 9 * s);
+    img.setDisplaySize(11 * s, 11 * s);
     img.setRotation(0);
   }
 

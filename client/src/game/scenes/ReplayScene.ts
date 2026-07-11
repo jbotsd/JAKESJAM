@@ -97,6 +97,9 @@ export class ReplayScene extends Phaser.Scene {
   private rosterByTick = new Map<number, NonNullable<ReplayFile["rosterEvents"]>>();
   private totalTicks = 0;
   private renderMode = false;
+  /** &follow=<playerId|first> locks the camera on one player (rig A/B). */
+  private followId: string | null = null;
+  private followZoom = 2.4;
   private playbackAccumulatorMs = 0;
   private done = false;
 
@@ -193,6 +196,15 @@ export class ReplayScene extends Phaser.Scene {
 
     // Clip-range rendering: &from=<tick>&ticks=<n> renders a slice — the
     // fast-forward to `from` runs at re-sim speed (hundreds × realtime).
+    const followParam = params.get("follow");
+    if (followParam) {
+      this.followId =
+        followParam === "first"
+          ? (header.players[0]?.playerId ?? null)
+          : followParam;
+      const z = Number(params.get("zoom"));
+      if (Number.isFinite(z) && z > 0.2) this.followZoom = z;
+    }
     const fromTick = Math.max(0, Number(params.get("from") ?? 0) || 0);
     const rangeTicks = Number(params.get("ticks") ?? 0) || 0;
     if (fromTick > 0) {
@@ -319,11 +331,20 @@ export class ReplayScene extends Phaser.Scene {
     this.entityRender!.update(state, deltaMs, performance.now());
     this.drawCombatFx(state);
 
-    // Spectator auto-camera (same director the arena stream uses).
-    const pose = directorToPose(this.director);
+    // Camera: follow-cam when requested (rig A/B showcases need the
+    // character filling the frame), else the spectator director.
     const cam = this.cameras.main;
-    cam.setZoom(pose.z);
-    cam.centerOn(pose.x, pose.y);
+    if (this.followId) {
+      const target = state.players[this.followId as PlayerId];
+      if (target) {
+        cam.setZoom(this.followZoom);
+        cam.centerOn(target.x, target.y - 20);
+      }
+    } else {
+      const pose = directorToPose(this.director);
+      cam.setZoom(pose.z);
+      cam.centerOn(pose.x, pose.y);
+    }
   }
 
   private drawCombatFx(state: WorldState): void {

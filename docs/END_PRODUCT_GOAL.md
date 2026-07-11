@@ -126,6 +126,13 @@ always wins.
   ReplayScene now awaits the LUT before stepping. Remaining: Jake's eye
   on the pair at phone size + visual iteration on the baked part art
   (potato tier only; desktop untouched).
+  **MOTION VERDICT PASSED 2026-07-11 (Jake, phone-size viewing)**: "not
+  bad at all… REALLY good in terms of animation" — the motion-identity
+  half of the A/B acceptance is human-accepted. Look verdict: "needs a
+  few more iterations" — art rounds in progress on the bake functions
+  (round 1: hooded head + neck-gap fill + sash axis; round 2: tapered
+  torso + joint dots + bigger pauldrons), each round re-rendered from the
+  same deterministic slice for like-for-like comparison.
 - Toggling every effect at Ultra changes look, never gameplay legibility.
 
 ## 3. Smoothness is engineered, not hoped for
