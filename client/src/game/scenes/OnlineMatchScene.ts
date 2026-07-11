@@ -174,7 +174,10 @@ const PLAYER_VISUAL_SCALE = 0.78;
 // PlayerEntity (x, y) is the body center; rig wants foot position.
 const SIM_BODY_HALF_HEIGHT = 28;
 const SIM_CROUCH_HALF_HEIGHT = 19;
-const LOCAL_PLAYER_FALLBACK_COLOR = 0x50e3c2;
+// Radiant white-gold — YOU are the gnostic light (Jake's pick 2026-07-11):
+// ivory body, gold accent; maximum value-contrast on every background and
+// the same language as the soul/motif.
+const LOCAL_PLAYER_FALLBACK_COLOR = 0xfff3d6;
 // Hot crimson (was soft pink — too close to both bots and warm terrain).
 const REMOTE_PLAYER_FALLBACK_COLOR = 0xff4d5e;
 // Match the offline target. Needed to format "First to N" in the results
@@ -1884,6 +1887,8 @@ export class OnlineMatchScene extends Phaser.Scene {
         : isLocal
           ? LOCAL_PLAYER_FALLBACK_COLOR
           : REMOTE_PLAYER_FALLBACK_COLOR,
+      // Local hero: gold seam instead of the default crystal cyan.
+      accentColor: isLocal ? 0xffd166 : undefined,
       // No room-roster lookup yet on the netcode path; fall back to the player
       // id suffix + character name so the nameplate is stable + identifiable.
       name: bot ? botLabel(player.id) : `${player.id.slice(-4)} / ${character.name}`,

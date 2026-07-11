@@ -13,7 +13,7 @@
 import type Phaser from "phaser";
 import type { PlayerId, WorldState } from "../../sim/types";
 
-const LOCAL_ACCENT = 0x50e3c2;
+const LOCAL_ACCENT = 0xffd166;
 
 /**
  * Draw the presence layer for every living player. `localId` may be null
