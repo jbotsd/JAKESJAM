@@ -192,7 +192,9 @@ async function runJob(job: RenderJob, port: number): Promise<void> {
         evalStatus(),
         Bun.sleep(10_000).then(() => "cdp-timeout"),
       ]);
-      if (status === "uploaded") {
+      if (status === "done" || status === "uploaded") {
+        // ReplayScene publishes "done" on upload completion ("uploaded" was
+        // never a real state — the mismatch cost two probe runs already).
         console.log(`[clip-render] ${job.label} uploaded (${Math.round((Date.now() - startedAt) / 1000)}s)`);
         return;
       }
