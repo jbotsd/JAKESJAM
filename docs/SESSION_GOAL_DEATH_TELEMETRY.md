@@ -70,3 +70,38 @@ sign (docs/TELEMETRY.md).
 - The kept-alive Claude QA/iteration loop itself (later session).
 - Any gameplay change: death timing, respawn rules, scoring are untouched —
   both pillars are pure observation/presentation layers.
+
+---
+
+## Evidence ledger (2026-07-11)
+
+**Pillar 1 — death sequences**
+- Tests 1+2 PASSED: producer+painter authored once (renderContract.ts +
+  deathFxPainter.ts), consumed by OnlineMatchScene AND ReplayScene;
+  ReplayScene events wired (was discarded); determinism locked by test
+  ("two identical runs trace identical souls") + replay-rendered proof
+  clip: https://play.elyad.io/c/d95edcd8-7148-471b-addc-8a360e39523a
+  (vertical /c/ca0c61e5) — real stored match, Jake's death @tick 1932.
+- Test 3 (tiered, never absent) PASSED by construction: fx0 core path
+  has no gate; fx1/fx2 additive; offline renders force fx2.
+- Test 4: pooled (16 souls / 48 shards / 12 uploads, ring trails), no
+  steady-state alloc; 8×-throttle multi-death soak NOT yet run.
+- Test 5 PASSED: ADD-blend only; overlay held 3s; respawn untouched.
+- Test 6 (the eye): AWAITING JAKE. Scope grew live: Doom-style burst +
+  damage-proportional homing shards (new hit-confirmed.attackerId) +
+  gnostic spawn-in upload — all shipped same-session.
+
+**Pillar 2 — sovereign telemetry: ALL TESTS PASSED**
+- Deliberate real-browser error on play.elyad.io → captured by
+  window.onerror → batched POST → JSONL store → visible in
+  /ops/api/telemetry/summary with stack, 40-crumb ring, build hash —
+  well inside 60s. Boot events flow (tier/renderer/DPR).
+- Privacy verified by grep: zero ip/uid fields in the store; session
+  UUID in-memory only; rate limit keyed on session, never IP.
+- Bounded: 50MB quota oldest-first, shape caps, signature dedupe index.
+- Claude-QA foundation documented (TELEMETRY.md flow section).
+
+**Bonus (user-directed, same session)**: host-rendered clips
+(clipRenderQueue, /clips/recent, phone tier stops encoding), DPR-crisp
+tiers + glyph resolution, share-page mp4 theater, fullscreen toggle,
+tap-jump + dash mini-stick + hold-dash.
