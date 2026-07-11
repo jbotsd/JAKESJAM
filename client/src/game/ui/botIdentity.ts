@@ -20,4 +20,8 @@ export function playerTag(playerId: string): string {
 }
 
 /** Amber — visually distinct from the teal local + crimson remote rigs. */
-export const BOT_RIG_COLOR = 0xffb454;
+// VIOLET, deliberately outside the terrain's ochre/gold family — amber
+// bots camouflaged against wood platforms (gestalt pass 2026-07-11).
+// Hue quadrants: teal = you, crimson = remote humans, violet = bots,
+// ochre = terrain.
+export const BOT_RIG_COLOR = 0xc879ff;

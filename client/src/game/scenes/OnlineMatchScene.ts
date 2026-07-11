@@ -109,6 +109,7 @@ import {
 } from "../render/renderContract.js";
 import { drawDeathFx, drawDeathShards, drawSpawnUploads } from "../render/deathFxPainter.js";
 import { crumb, record } from "../../telemetry.js";
+import { drawPlayerPresence } from "../render/presencePainter.js";
 import { playCardPickFeel } from "../render/CardFeel.js";
 
 // Portrait-mobile camera framing. The arena is 2:1 wide but a phone held
@@ -174,7 +175,8 @@ const PLAYER_VISUAL_SCALE = 0.78;
 const SIM_BODY_HALF_HEIGHT = 28;
 const SIM_CROUCH_HALF_HEIGHT = 19;
 const LOCAL_PLAYER_FALLBACK_COLOR = 0x50e3c2;
-const REMOTE_PLAYER_FALLBACK_COLOR = 0xff88aa;
+// Hot crimson (was soft pink — too close to both bots and warm terrain).
+const REMOTE_PLAYER_FALLBACK_COLOR = 0xff4d5e;
 // Match the offline target. Needed to format "First to N" in the results
 // overlay; ClientLoop doesn't expose targetScore, so we mirror the constant
 // used by World.create.
@@ -327,6 +329,8 @@ export class OnlineMatchScene extends Phaser.Scene {
   /** Per-player last shield charge + block-flash timer (shield-block VFX). */
   private readonly combatFxState = makeCombatFxState();
   private readonly combatFxModels: CombatFxRenderModel[] = [];
+  /** Figure-ground presence layer (gestalt pass; see presencePainter). */
+  private presence: Phaser.GameObjects.Graphics | null = null;
   /** Soul-return death sequences (contract producer; see deathFxPainter). */
   private deathFx: Phaser.GameObjects.Graphics | null = null;
   private readonly deathFxState = makeDeathFxState();
@@ -1730,6 +1734,9 @@ export class OnlineMatchScene extends Phaser.Scene {
       }
     }
 
+    if (!this.presence) this.presence = this.add.graphics().setDepth(11.5);
+    this.presence.clear();
+    drawPlayerPresence(this.presence, state, this.localPlayerId, getQualityProfile().fxLevel);
     this.drawCombatFx(state);
     this.drawDeathFxLayer(state, deltaMs);
 
@@ -1870,8 +1877,8 @@ export class OnlineMatchScene extends Phaser.Scene {
       : getQualityProfile().rigStyle;
     const RigClass = rigStyle === "baked" ? BakedPlayerRig : ProceduralPlayerRig;
     return new RigClass(this, {
-      // Bots render AMBER with a "BOT · NAME" plate — unmistakable next to
-      // the teal local / crimson remote rigs.
+      // Bots render VIOLET with a "BOT · NAME" plate — unmistakable next
+      // to the teal local / crimson remote rigs and the ochre terrain.
       color: bot
         ? BOT_RIG_COLOR
         : isLocal

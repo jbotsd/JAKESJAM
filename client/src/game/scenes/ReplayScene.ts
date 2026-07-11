@@ -58,6 +58,7 @@ import {
   type UploadRenderModel,
 } from "../render/renderContract";
 import { drawDeathFx, drawDeathShards, drawSpawnUploads } from "../render/deathFxPainter";
+import { drawPlayerPresence } from "../render/presencePainter";
 import { getQualityProfile } from "../render/qualityProfile";
 import {
   drawDestructible,
@@ -120,6 +121,7 @@ export class ReplayScene extends Phaser.Scene {
   private combatFx: Phaser.GameObjects.Graphics | null = null;
   private readonly combatFxState = makeCombatFxState();
   private readonly combatFxModels: CombatFxRenderModel[] = [];
+  private presence: Phaser.GameObjects.Graphics | null = null;
   /** Soul-return death sequences — SAME producer+painter as live play. */
   private deathFx: Phaser.GameObjects.Graphics | null = null;
   private readonly deathFxState = makeDeathFxState();
@@ -349,6 +351,9 @@ export class ReplayScene extends Phaser.Scene {
       }
     }
 
+    if (!this.presence) this.presence = this.add.graphics().setDepth(11.5);
+    this.presence.clear();
+    drawPlayerPresence(this.presence, state, this.followId, 2);
     this.entityRender!.update(state, deltaMs, performance.now());
     this.drawCombatFx(state);
     this.drawDeathFxLayer(state, deltaMs);
