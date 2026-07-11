@@ -46,12 +46,15 @@ export class GameAudioSystem {
     const pitch = (): number => 0.92 + Math.random() * 0.16;
 
     if (sound === "shoot") {
+      // Heaven-iron bolt: hammer-tap ring over the old body — the launch
+      // CLINKS like metal leaving metal.
       const p = pitch();
-      this.playTone(520 * p, 130, "square", 0.2, -340);
-      this.playNoise(38, 0.18, 1700 * p);
+      this.playMetal(1180 * p, 90, 0.14, { strike: 0.9 });
+      this.playTone(520 * p, 110, "square", 0.12, -340);
     } else if (sound === "hit") {
+      // Anvil tink — the strike landing on a vessel of heaven-metal.
       const p = pitch();
-      this.playTone(260 * p, 95, "triangle", 0.15, 220);
+      this.playMetal(720 * p, 150, 0.2, { strike: 0.7 });
     } else if (sound === "jump") {
       const p = pitch();
       this.playTone(330 * p, 120, "sine", 0.12, 260);
@@ -59,16 +62,19 @@ export class GameAudioSystem {
       const p = pitch();
       this.playNoise(70, 0.14, 420 * p);
     } else if (sound === "explosion") {
+      // Kill/shatter: the old boom + a deep GONG so the death rings.
       const p = pitch();
       this.playNoise(180, 0.32, 240 * p);
       this.playTone(86 * p, 180, "sawtooth", 0.18, -28);
+      this.playMetal(196 * p, 650, 0.16, { ratios: [1, 2.4, 4.1, 6.9], strike: 0.2 });
     } else if (sound === "fire") {
       const p = pitch();
       this.playNoise(140, 0.11, 980 * p);
     } else if (sound === "dash") {
-      // Aegis slide launch: a short air-cut whoosh. Quiet — it fires often.
+      // Aegis slide: blade-draw SCHWING — noise sweep + a whisper of ring.
       const p = pitch();
       this.playNoise(190, 0.1, 1500 * p);
+      this.playMetal(2350 * p, 120, 0.05, { ratios: [1, 1.5], strike: 0.15 });
     } else if (sound === "card") {
       // UI tones: use gentle jitter (±4%) so the two-note phrase stays musical.
       const p = 0.96 + Math.random() * 0.08;
@@ -101,6 +107,44 @@ export class GameAudioSystem {
 
     this.context = new AudioContextConstructor();
     return this.context;
+  }
+
+  /**
+   * METAL (the Binipe pass): real metallic timbre = a strike transient +
+   * INHARMONIC partials ringing out at different rates — that's the
+   * physics of a bell/anvil, not a chord. Ratios from classic anvil
+   * analysis (1, 2.76, 5.40, 8.93); jitter keeps repeats organic.
+   */
+  private playMetal(
+    baseHz: number,
+    durationMs: number,
+    gainValue: number,
+    opts: { ratios?: number[]; strike?: number; body?: OscillatorType } = {},
+  ) {
+    const context = this.context;
+    if (!context) return;
+    const ratios = opts.ratios ?? [1, 2.76, 5.4, 8.93];
+    const now = context.currentTime;
+    const durS = durationMs / 1000;
+    // Strike transient: a few ms of bright filtered noise — the hammer.
+    this.playNoise(Math.min(30, durationMs * 0.2), (opts.strike ?? 0.5) * gainValue, 6500);
+    for (let i = 0; i < ratios.length; i++) {
+      const osc = context.createOscillator();
+      const gain = context.createGain();
+      osc.type = opts.body ?? "sine";
+      const f = baseHz * ratios[i]! * (0.995 + Math.random() * 0.01);
+      osc.frequency.setValueAtTime(f, now);
+      // Higher partials die faster — the ring "cools" like real metal.
+      const partialDur = durS * (1 - i * 0.18);
+      const g = (gainValue * MASTER_GAIN) / (1 + i * 1.2);
+      gain.gain.setValueAtTime(0.0001, now);
+      gain.gain.exponentialRampToValueAtTime(g, now + 0.004);
+      gain.gain.exponentialRampToValueAtTime(0.0001, now + Math.max(0.03, partialDur));
+      osc.connect(gain);
+      gain.connect(context.destination);
+      osc.start(now);
+      osc.stop(now + durS + 0.05);
+    }
   }
 
   private playTone(

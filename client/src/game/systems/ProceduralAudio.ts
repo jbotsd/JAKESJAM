@@ -14,6 +14,8 @@
 // The engine is silent until the AudioContext is unlocked by a user gesture
 // (the scene wires unlock on first pointer/key).
 
+import { sampleEngine } from "../audio/SampleEngine.js";
+
 export type AudioCue =
   | "shoot"
   | "hit"
@@ -204,6 +206,9 @@ export class ProceduralAudio {
     this.reverbSend = send;
 
     this.noiseBuf = this.makeNoise(ctx, 1.0);
+    // Bitwig-designed sample pack rides the same context + master bus;
+    // cues with samples take over, the synth keeps the rest.
+    if (this.master) sampleEngine.init(ctx, this.master);
     return ctx;
   }
 
@@ -215,6 +220,16 @@ export class ProceduralAudio {
 
   play(cue: AudioCue, params: AudioParams = {}): void {
     if (!this.ensureContext() || this.ctx?.state !== "running") return;
+    // SAMPLE-FIRST (SampleEngine): if the Bitwig pack ships this cue, the
+    // studio version wins; intensity maps to gain. Synth = fallback.
+    if (
+      sampleEngine.play(cue, {
+        gain: 0.5 + clamp01(params.intensity ?? 0.5) * 0.5,
+        pitch: 1 - clamp01(params.charge ?? 0) * 0.15,
+      })
+    ) {
+      return;
+    }
     switch (cue) {
       case "shoot":
         this.weaponFire(params);
@@ -344,6 +359,24 @@ export class ProceduralAudio {
       bus.connect(panner).connect(tone).connect(master);
     } else {
       bus.connect(tone).connect(master);
+    }
+
+    // MECHANISM layer (Jake: "more tactile, more AK-47 — hooky lock
+    // machine"): a hard supersonic CRACK (8ms of highpassed noise) + the
+    // bolt clack. Constant across the round-robin — the crack varies with
+    // the body, the clack is the invariant hook your hands lock onto.
+    {
+      const crack = this.noiseSource();
+      const hp = ctx.createBiquadFilter();
+      hp.type = "highpass";
+      hp.frequency.value = 2600;
+      const cg = ctx.createGain();
+      cg.gain.setValueAtTime(0.22 * level, t);
+      cg.gain.exponentialRampToValueAtTime(0.0001, t + 0.012);
+      crack.connect(hp).connect(cg).connect(bus);
+      crack.start(t);
+      crack.stop(t + 0.02);
+      this.boltClack(t + 0.004, 0.10 * level);
     }
 
     // Body chain: detuned oscillators -> waveshaper distortion -> wobble
@@ -543,9 +576,11 @@ export class ProceduralAudio {
 
   private impact(p: AudioParams): void {
     const inten = clamp01(p.intensity ?? 0.5);
-    // Tonal thud + short bright noise, pitched by intensity.
+    // Tonal thud + short bright noise, pitched by intensity — plus an
+    // anvil TINK so hits land on heaven-metal, not on cloth.
     this.blip(220 + inten * 120, "triangle", 0.14 + inten * 0.1, 0.09, 200);
     this.noise(0.05, 0.12 + inten * 0.1, 1400 + inten * 1400, 2);
+    this.metalPing(680 * rand(0.94, 1.08), 0.13 + inten * 0.06, 0.12 + inten * 0.08, { reverb: 0.12 });
   }
 
   private explosion(p: AudioParams): void {
@@ -849,6 +884,52 @@ export class ProceduralAudio {
     g.gain.exponentialRampToValueAtTime(Math.max(0.0002, peak), t + Math.max(0.0005, attack));
     g.gain.exponentialRampToValueAtTime(0.0001, t + attack + decay);
     return g;
+  }
+
+  /**
+   * METAL PING (the Binipe pass): strike transient + inharmonic partials
+   * (anvil ratios 1/2.76/5.4/8.93) with per-partial decay — the physics of
+   * struck metal, not a chord. Feeds the same master/reverb bus.
+   */
+  private metalPing(
+    baseHz: number,
+    dur: number,
+    gain: number,
+    opts: { ratios?: number[]; reverb?: number; at?: number } = {},
+  ): void {
+    const ctx = this.ctx;
+    const master = this.master;
+    if (!ctx || !master) return;
+    const t = (opts.at ?? ctx.currentTime);
+    const ratios = opts.ratios ?? [1, 2.76, 5.4, 8.93];
+    const bus = ctx.createGain();
+    bus.connect(master);
+    if (opts.reverb) this.sendReverb(bus, opts.reverb);
+    for (let i = 0; i < ratios.length; i++) {
+      const osc = ctx.createOscillator();
+      const g = ctx.createGain();
+      osc.type = "sine";
+      osc.frequency.setValueAtTime(baseHz * ratios[i]! * rand(0.995, 1.005), t);
+      const partialDur = Math.max(0.03, dur * (1 - i * 0.18));
+      g.gain.setValueAtTime(0.0001, t);
+      g.gain.exponentialRampToValueAtTime(gain / (1 + i * 1.2), t + 0.003);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + partialDur);
+      osc.connect(g).connect(bus);
+      osc.start(t);
+      osc.stop(t + dur + 0.05);
+    }
+  }
+
+  /**
+   * BOLT CLACK — the AK tactility: two machined-metal ticks a breath apart
+   * (strike + carrier return). THE per-shot mechanical hook; rapid fire
+   * reads as a cycling lock machine.
+   */
+  private boltClack(at: number, gain: number): void {
+    const ctx = this.ctx;
+    if (!ctx) return;
+    this.metalPing(3150 * rand(0.97, 1.03), 0.035, gain, { ratios: [1, 1.83], at });
+    this.metalPing(2280 * rand(0.97, 1.03), 0.05, gain * 0.75, { ratios: [1, 2.1], at: at + 0.026 });
   }
 
   private noiseSource(): AudioBufferSourceNode {
