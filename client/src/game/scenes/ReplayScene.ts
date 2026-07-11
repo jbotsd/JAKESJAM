@@ -42,12 +42,19 @@ import { CosmicArenaLayer } from "../render/CosmicArenaLayer";
 import { ParticlePool } from "../systems/ParticlePool";
 import {
   makeCombatFxState,
+  makeDeathFxState,
+  noteDeathEvents,
   produceCombatFx,
+  produceDeathFx,
+  setDeathFxTarget,
   PARRY_ARC,
   PARRY_RANGE,
   SHIELD_RADIUS,
   type CombatFxRenderModel,
+  type SoulRenderModel,
 } from "../render/renderContract";
+import { drawDeathFx } from "../render/deathFxPainter";
+import { getQualityProfile } from "../render/qualityProfile";
 import {
   drawDestructible,
   drawFirePatch,
@@ -109,6 +116,10 @@ export class ReplayScene extends Phaser.Scene {
   private combatFx: Phaser.GameObjects.Graphics | null = null;
   private readonly combatFxState = makeCombatFxState();
   private readonly combatFxModels: CombatFxRenderModel[] = [];
+  /** Soul-return death sequences — SAME producer+painter as live play. */
+  private deathFx: Phaser.GameObjects.Graphics | null = null;
+  private readonly deathFxState = makeDeathFxState();
+  private readonly deathFxModels: SoulRenderModel[] = [];
   private readonly rigPose = {
     position: { x: 0, y: 0 },
     velocity: { x: 0, y: 0 },
@@ -281,8 +292,12 @@ export class ReplayScene extends Phaser.Scene {
     return events;
   }
 
-  private renderState(deltaMs: number, _events: SimEvent[]): void {
+  private renderState(deltaMs: number, events: SimEvent[]): void {
     const state = this.state;
+    // Death sequences are event-driven (dead players are skipped by state
+    // scans) — this consume makes replay-rendered clips show the same
+    // soul-return rite as live play.
+    noteDeathEvents(state, events, this.deathFxState);
     // Rigs (lite detail — replay is a broadcast view).
     const seen = new Set<string>();
     for (const pid in state.players) {
@@ -330,6 +345,7 @@ export class ReplayScene extends Phaser.Scene {
 
     this.entityRender!.update(state, deltaMs, performance.now());
     this.drawCombatFx(state);
+    this.drawDeathFxLayer(state, deltaMs);
 
     // Camera: follow-cam when requested (rig A/B showcases need the
     // character filling the frame), else the spectator director.
@@ -344,6 +360,25 @@ export class ReplayScene extends Phaser.Scene {
       const pose = directorToPose(this.director);
       cam.setZoom(pose.z);
       cam.centerOn(pose.x, pose.y);
+    }
+  }
+
+  /** Soul-return death sequences (shared painter). Offline renders always
+   *  get the full fx tier — the clip is painted by the host GPU, and a
+   *  headless chromium can misdetect as potato via its renderer string. */
+  private drawDeathFxLayer(state: WorldState, deltaMs: number): void {
+    if (!this.deathFx) {
+      this.deathFx = this.add
+        .graphics()
+        .setDepth(13)
+        .setBlendMode(Phaser.BlendModes.ADD);
+    }
+    const g = this.deathFx;
+    g.clear();
+    const count = produceDeathFx(state, deltaMs, this.deathFxState, this.deathFxModels);
+    if (count > 0) {
+      const fx = this.renderMode ? 2 : getQualityProfile().fxLevel;
+      drawDeathFx(g, this.deathFxModels, count, fx);
     }
   }
 
@@ -385,6 +420,7 @@ export class ReplayScene extends Phaser.Scene {
     platforms.repaint(this.map.platforms, theme);
     const cosmic = new CosmicArenaLayer(this);
     cosmic.spawn(width, height);
+    setDeathFxTarget(this.deathFxState, width * 0.5, height * 0.5);
 
     this.cameras.main.setBounds(
       -width / 6,

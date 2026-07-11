@@ -92,12 +92,18 @@ import { assistTouchAim } from "../input/touchAimAssist.js";
 import { autoWallHopKeys, makeAutoHopState } from "../input/autoWallHop.js";
 import {
   makeCombatFxState,
+  makeDeathFxState,
+  noteDeathEvents,
   produceCombatFx,
+  produceDeathFx,
+  setDeathFxTarget,
   PARRY_ARC,
   PARRY_RANGE,
   SHIELD_RADIUS,
   type CombatFxRenderModel,
+  type SoulRenderModel,
 } from "../render/renderContract.js";
+import { drawDeathFx } from "../render/deathFxPainter.js";
 import { playCardPickFeel } from "../render/CardFeel.js";
 
 // Portrait-mobile camera framing. The arena is 2:1 wide but a phone held
@@ -314,6 +320,10 @@ export class OnlineMatchScene extends Phaser.Scene {
   /** Per-player last shield charge + block-flash timer (shield-block VFX). */
   private readonly combatFxState = makeCombatFxState();
   private readonly combatFxModels: CombatFxRenderModel[] = [];
+  /** Soul-return death sequences (contract producer; see deathFxPainter). */
+  private deathFx: Phaser.GameObjects.Graphics | null = null;
+  private readonly deathFxState = makeDeathFxState();
+  private readonly deathFxModels: SoulRenderModel[] = [];
   private platformLayer: PlatformLayer | null = null;
   private lightBeams: LightBeamLayer | null = null;
   private cosmicArena: CosmicArenaLayer | null = null;
@@ -1181,6 +1191,12 @@ export class OnlineMatchScene extends Phaser.Scene {
     if (events.length > 0) {
       for (const e of events) this.pendingSimEvents.push(e);
     }
+    // Soul-return death sequences: birth a soul per player-killed. Uses
+    // last frame's state for the corpse position (dead players keep their
+    // final position in state; 16ms of staleness is invisible).
+    if (this.lastStateForAssist) {
+      noteDeathEvents(this.lastStateForAssist, events, this.deathFxState);
+    }
     // Death-tip evidence: only real sim signals (never fabricate diedToProjectile).
     const nowMs = performance.now();
     for (const e of events) {
@@ -1575,6 +1591,9 @@ export class OnlineMatchScene extends Phaser.Scene {
     // that pulse with live music amplitude + action intensity.
     if (!this.cosmicArena) this.cosmicArena = new CosmicArenaLayer(this);
     this.cosmicArena.spawn(width, height);
+    // Souls fly to the seal at the arena's center (matches motifX/motifY —
+    // world*0.5 — even on potato where the seal itself isn't drawn).
+    setDeathFxTarget(this.deathFxState, width * 0.5, height * 0.5);
 
     // Theme-independent environment reaction (see updateEnvironmentReactivity).
     // renderArena can re-run on a map change, so replace any prior bloom.
@@ -1687,8 +1706,24 @@ export class OnlineMatchScene extends Phaser.Scene {
     }
 
     this.drawCombatFx(state);
+    this.drawDeathFxLayer(state, deltaMs);
 
     this.entityRender?.update(state, deltaMs, nowMs);
+  }
+
+  /** Soul-return death sequences — contract producer + shared painter
+   *  (same code path as ReplayScene, so clips show the identical rite). */
+  private drawDeathFxLayer(state: WorldState, deltaMs: number): void {
+    if (!this.deathFx) {
+      this.deathFx = this.add
+        .graphics()
+        .setDepth(13)
+        .setBlendMode(Phaser.BlendModes.ADD);
+    }
+    const g = this.deathFx;
+    g.clear();
+    const count = produceDeathFx(state, deltaMs, this.deathFxState, this.deathFxModels);
+    if (count > 0) drawDeathFx(g, this.deathFxModels, count, getQualityProfile().fxLevel);
   }
 
   /**

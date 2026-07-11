@@ -290,3 +290,271 @@ export function produceSatellites(
   }
   return n;
 }
+
+// ── Death FX (the soul returns to the center motif) ──────────────────────
+//
+// A `player-killed` event births a SOUL at the corpse: a brief release
+// (rise + corpse dissolve), a curved journey to the arena's center motif,
+// and an absorption pulse when it arrives. Event-driven by necessity —
+// dead players are skipped by state scans and pruned at round transitions,
+// so the moment of death must be captured from the event stream.
+//
+// Deterministic BY CONSTRUCTION: the path is a pure function of (death
+// position, per-soul seed derived from tick+victim id, accumulated age).
+// No Math.random — two renders of the same replay slice trace identical
+// souls (SESSION_GOAL_DEATH_TELEMETRY pillar 1, test 2).
+
+/** Soul lifecycle stage. */
+export const SOUL_RELEASE = 0;
+export const SOUL_JOURNEY = 1;
+export const SOUL_ABSORB = 2;
+
+const RELEASE_MS = 620;
+const JOURNEY_MS = 1650;
+const ABSORB_MS = 620;
+const SOUL_TOTAL_MS = RELEASE_MS + JOURNEY_MS + ABSORB_MS;
+/** Rise during release (px). */
+const RELEASE_RISE_PX = 44;
+/** Trail ring size — positions sampled every producer call. */
+const TRAIL_N = 12;
+/** Max simultaneous souls (pool size); oldest is recycled beyond this. */
+const SOUL_POOL = 16;
+
+export type SoulRenderModel = {
+  /** Soul position (world px). */
+  x: number;
+  y: number;
+  /** Core radius (px). */
+  r: number;
+  /** Master alpha 0..1. */
+  alpha: number;
+  stage: number;
+  /** 0..1 progress within the current stage. */
+  progress: number;
+  /** Deterministic per-soul phase seed (radians-ish). */
+  seed: number;
+  /** Corpse dissolve origin + 0..1 envelope (death point, first ~900ms). */
+  originX: number;
+  originY: number;
+  dissolveT: number;
+  /** Absorption: 0..1 pulse envelope at the motif; fires once per soul. */
+  absorbT: number;
+  motifX: number;
+  motifY: number;
+  /** Recent path ring (oldest→newest wrap at trailHead). */
+  trailX: number[];
+  trailY: number[];
+  trailHead: number;
+  trailLen: number;
+};
+
+type Soul = {
+  active: boolean;
+  x0: number;
+  y0: number;
+  seed: number;
+  ageMs: number;
+  trailX: number[];
+  trailY: number[];
+  trailHead: number;
+  trailLen: number;
+  sampleAccum: number;
+};
+
+export type DeathFxState = {
+  souls: Soul[];
+  /** Center motif world position (CosmicArenaLayer's motifX/motifY). */
+  motifX: number;
+  motifY: number;
+};
+
+export function makeDeathFxState(): DeathFxState {
+  const souls: Soul[] = [];
+  for (let i = 0; i < SOUL_POOL; i++) {
+    souls.push({
+      active: false,
+      x0: 0,
+      y0: 0,
+      seed: 0,
+      ageMs: 0,
+      trailX: new Array(TRAIL_N).fill(0),
+      trailY: new Array(TRAIL_N).fill(0),
+      trailHead: 0,
+      trailLen: 0,
+      sampleAccum: 0,
+    });
+  }
+  return { souls, motifX: 0, motifY: 0 };
+}
+
+/** Point the souls at the arena's center motif (map.size * 0.5). */
+export function setDeathFxTarget(st: DeathFxState, x: number, y: number): void {
+  st.motifX = x;
+  st.motifY = y;
+}
+
+/** Feed this frame's sim events; births a soul per `player-killed`.
+ *  The victim is still present in `state` (alive=false) at event time. */
+export function noteDeathEvents(
+  state: WorldState,
+  events: ReadonlyArray<{ t: string; victimId?: string }>,
+  st: DeathFxState,
+): void {
+  for (const e of events) {
+    if (e.t !== "player-killed" || !e.victimId) continue;
+    const victim = state.players[e.victimId as PlayerId];
+    if (!victim) continue;
+    let soul = st.souls.find((s) => !s.active);
+    if (!soul) {
+      // Pool exhausted: recycle the oldest — a 17th simultaneous death is
+      // a mayhem frame where one missing soul is invisible.
+      soul = st.souls.reduce((a, b) => (a.ageMs >= b.ageMs ? a : b));
+    }
+    soul.active = true;
+    soul.x0 = victim.x;
+    soul.y0 = victim.y;
+    // Deterministic seed: tick + a tiny id hash. Same replay → same soul.
+    let h = 0;
+    for (let i = 0; i < e.victimId.length; i++) h = (h * 31 + e.victimId.charCodeAt(i)) | 0;
+    soul.seed = ((state.tick + (h >>> 0)) % 1024) / 1024 * Math.PI * 2;
+    soul.ageMs = 0;
+    soul.trailLen = 0;
+    soul.trailHead = 0;
+    soul.sampleAccum = 0;
+  }
+}
+
+function easeInOutCubic(t: number): number {
+  return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+}
+function easeOutCubic(t: number): number {
+  return 1 - Math.pow(1 - t, 3);
+}
+
+function blankSoul(): SoulRenderModel {
+  return {
+    x: 0,
+    y: 0,
+    r: 0,
+    alpha: 0,
+    stage: 0,
+    progress: 0,
+    seed: 0,
+    originX: 0,
+    originY: 0,
+    dissolveT: 0,
+    absorbT: 0,
+    motifX: 0,
+    motifY: 0,
+    trailX: new Array(TRAIL_N).fill(0),
+    trailY: new Array(TRAIL_N).fill(0),
+    trailHead: 0,
+    trailLen: 0,
+  };
+}
+
+/**
+ * Advance every active soul by `deltaMs` and fill `out` with render models.
+ * Pure per-frame advancement: position is a closed-form function of age, so
+ * variable frame rates change SAMPLING, never the path itself.
+ */
+export function produceDeathFx(
+  _state: WorldState,
+  deltaMs: number,
+  st: DeathFxState,
+  out: SoulRenderModel[],
+): number {
+  let n = 0;
+  for (const soul of st.souls) {
+    if (!soul.active) continue;
+    soul.ageMs += deltaMs;
+    if (soul.ageMs >= SOUL_TOTAL_MS) {
+      soul.active = false;
+      continue;
+    }
+    const age = soul.ageMs;
+    // Release end point (top of the rise) is the journey's start.
+    const riseX = soul.x0;
+    const riseY = soul.y0 - RELEASE_RISE_PX;
+
+    let x: number;
+    let y: number;
+    let r: number;
+    let alpha: number;
+    let stage: number;
+    let progress: number;
+    let absorbT = 0;
+
+    if (age < RELEASE_MS) {
+      stage = SOUL_RELEASE;
+      progress = age / RELEASE_MS;
+      const p = easeOutCubic(progress);
+      x = soul.x0;
+      y = soul.y0 - RELEASE_RISE_PX * p;
+      r = 3.5 + 5.5 * p;
+      alpha = Math.min(1, progress * 2.2);
+    } else if (age < RELEASE_MS + JOURNEY_MS) {
+      stage = SOUL_JOURNEY;
+      progress = (age - RELEASE_MS) / JOURNEY_MS;
+      const p = easeInOutCubic(progress);
+      const dx = st.motifX - riseX;
+      const dy = st.motifY - riseY;
+      const dist = Math.sqrt(dx * dx + dy * dy) || 1;
+      // Perpendicular bow — side chosen by the seed, scaled by distance.
+      const px = -dy / dist;
+      const py = dx / dist;
+      const bowSide = soul.seed < Math.PI ? 1 : -1;
+      const bow = bowSide * Math.min(220, dist * 0.28);
+      const arc = Math.sin(Math.PI * p) * bow;
+      // Fine shimmer riding the path (fades at both ends).
+      const shimmer = Math.sin(p * Math.PI * 6 + soul.seed) * 7 * Math.sin(Math.PI * p);
+      x = riseX + dx * p + px * (arc + shimmer);
+      y = riseY + dy * p + py * (arc + shimmer);
+      r = 9;
+      alpha = 1;
+    } else {
+      stage = SOUL_ABSORB;
+      progress = (age - RELEASE_MS - JOURNEY_MS) / ABSORB_MS;
+      const p = easeOutCubic(progress);
+      x = st.motifX;
+      y = st.motifY;
+      r = 9 * (1 - p);
+      alpha = 1 - p * 0.85;
+      absorbT = progress;
+    }
+
+    // Trail: sample ~every 30ms of soul time (deterministic in replay).
+    soul.sampleAccum += deltaMs;
+    while (soul.sampleAccum >= 30) {
+      soul.sampleAccum -= 30;
+      soul.trailX[soul.trailHead] = x;
+      soul.trailY[soul.trailHead] = y;
+      soul.trailHead = (soul.trailHead + 1) % TRAIL_N;
+      if (soul.trailLen < TRAIL_N) soul.trailLen += 1;
+    }
+
+    if (n >= out.length) out.push(blankSoul());
+    const m = out[n]!;
+    n += 1;
+    m.x = x;
+    m.y = y;
+    m.r = r;
+    m.alpha = alpha;
+    m.stage = stage;
+    m.progress = progress;
+    m.seed = soul.seed;
+    m.originX = soul.x0;
+    m.originY = soul.y0;
+    m.dissolveT = Math.min(1, age / 900);
+    m.absorbT = absorbT;
+    m.motifX = st.motifX;
+    m.motifY = st.motifY;
+    for (let i = 0; i < TRAIL_N; i++) {
+      m.trailX[i] = soul.trailX[i]!;
+      m.trailY[i] = soul.trailY[i]!;
+    }
+    m.trailHead = soul.trailHead;
+    m.trailLen = soul.trailLen;
+  }
+  return n;
+}
