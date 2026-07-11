@@ -139,6 +139,13 @@ always wins.
   A = 065c267e (live, follow-cam), B = 59f872a2 (baked round 3). The
   live rig remains byte-untouched on desktop (only private→protected
   modifiers); the accepted twin ships on the potato tier. PILLAR 2 PASSES.
+  **Round 4 (gnostic pass) superseded round 3 same night** — Jake's note
+  "too robot, less gnostic wizard" → cowled hood + crystal visor band,
+  robe-silhouette torso + cyan chest sigil, rune-column spine, breathing
+  additive chest mote. Verdict 2026-07-11: "good, will have to do for
+  now" — accepted. B-side re-pinned: 02bb89e6 (landscape) + e0350ca7
+  (vertical) replace 59f872a2 in clip-pins.json; same deterministic
+  slice (world-1783689217085 from=1500 ticks=1200 follow=bot_piston).
 - Toggling every effect at Ultra changes look, never gameplay legibility.
 
 ## 3. Smoothness is engineered, not hoped for

@@ -4,16 +4,14 @@ Everything code-shaped shipped 2026-07-10 (50 commits, evidence in
 [END_PRODUCT_GOAL.md](./END_PRODUCT_GOAL.md)). These five acts close the
 remaining acceptance rows. Ordered by payoff-per-minute.
 
-## 1. Watch two clips (~1 min) → closes pillar 2
-Same replay slice, same deterministic camera — only the rig painter differs.
-Judge at phone size: does B's motion read as A's?
-- A (live vector): https://play.elyad.io/c/5a8beb3c-d7b2-463a-8c2b-b87cbed458aa
-- B (baked twin): https://play.elyad.io/c/4facc5b6-a8f9-4950-b1fd-bc7014eaa909
+## 1. ~~Watch two clips → closes pillar 2~~ DONE 2026-07-11
+Accepted after 4 art rounds (motion "REALLY good", round-4 gnostic look
+"good, will have to do for now"). Canonical pair pinned:
+- A (live vector): https://play.elyad.io/c/065c267e-0be2-4b9e-b18d-f25173a70107
+- B (baked r4):    https://play.elyad.io/c/02bb89e6-bdcf-41f1-8eb6-8f806a17245e
 
-Verdict options: "indistinguishable" → row PASSES; or name what reads wrong
-→ it's a bake-function tweak in `BakedPlayerRig.bakeParts()`, then re-render
-the B side with:
-`?replay=world-1783689217085.jjr&render=1&from=12000&ticks=1200&rig=baked`
+Future art tweaks: edit `BakedPlayerRig.bakeParts()`, then re-render B with
+`?replay=world-1783689217085.jjr&render=1&from=1500&ticks=1200&rig=baked&follow=bot_piston&zoom=2.6`
 
 ## 2. Plug the TV into the Pi (~2 min) → closes pillar 1's Pi row
 The rpi renders the game hardware-accelerated but tonight both HDMI ports
