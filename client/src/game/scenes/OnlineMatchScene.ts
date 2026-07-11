@@ -1496,6 +1496,15 @@ export class OnlineMatchScene extends Phaser.Scene {
    * - 80px grid lines at 3% alpha — sells "geometric world" brief
    */
   private renderArena(mapId: string): void {
+    // World-recycle re-hellos every socket; if this scene is stopped or
+    // mid-shutdown the camera system is already gone and cam.setBounds
+    // throws (real phone crash, telemetry sig 2026-07-11: "Cannot read
+    // properties of undefined (reading 'setBounds')"). A hello for a dead
+    // scene is stale — drop it.
+    if (!this.cameras?.main || !this.scene.isActive()) {
+      crumb("scene", `renderArena skipped — scene inactive (map=${mapId})`);
+      return;
+    }
     const map: MapDefinition = resolveMap(mapId);
     this.currentMap = map;
     const { x: width, y: height } = map.size;

@@ -51,7 +51,10 @@ const DPR = Math.max(
 
 const TIERS: Record<QualityTier, Omit<QualityProfile, "tier" | "source">> = {
   potato: { renderScale: 0.75, fpsLimit: 30, particleScale: 0.25, fxLevel: 0, rigStyle: "baked" },
-  phone: { renderScale: Math.min(DPR, 2), fpsLimit: 60, particleScale: 0.6, fxLevel: 1, rigStyle: "live" },
+  // min(DPR,2) was a 4× fill jump over the old flat 1.0 — real-phone
+  // report 2026-07-11: "major perf hit". 1.5 is still 2.25× sharper than
+  // before and mid-range GPUs hold 60 there; the governor covers the rest.
+  phone: { renderScale: Math.min(DPR, 1.5), fpsLimit: 60, particleScale: 0.6, fxLevel: 1, rigStyle: "live" },
   standard: { renderScale: Math.min(DPR, 2), fpsLimit: 0, particleScale: 1, fxLevel: 2, rigStyle: "live" },
   ultra: { renderScale: Math.max(1.5, Math.min(DPR * 1.25, 3)), fpsLimit: 0, particleScale: 1, fxLevel: 2, rigStyle: "live" },
 };
