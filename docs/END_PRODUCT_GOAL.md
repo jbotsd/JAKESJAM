@@ -133,6 +133,12 @@ always wins.
   (round 1: hooded head + neck-gap fill + sash axis; round 2: tapered
   torso + joint dots + bigger pauldrons), each round re-rendered from the
   same deterministic slice for like-for-like comparison.
+  **ROW CLOSED 2026-07-11 ~01:00 — A/B ACCEPTED**: after round 3 (drape
+  removed at Jake's call) the look verdict came back "pretty good".
+  Motion: REALLY good. Look: pretty good. Canonical accepted pair pinned:
+  A = 065c267e (live, follow-cam), B = 59f872a2 (baked round 3). The
+  live rig remains byte-untouched on desktop (only private→protected
+  modifiers); the accepted twin ships on the potato tier. PILLAR 2 PASSES.
 - Toggling every effect at Ultra changes look, never gameplay legibility.
 
 ## 3. Smoothness is engineered, not hoped for

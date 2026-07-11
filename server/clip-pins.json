@@ -13,10 +13,16 @@
       "pinnedAt": "2026-07-10"
     },
     {
-      "id": "4facc5b6-a8f9-4950-b1fd-bc7014eaa909",
+      "id": "59f872a2-c27e-448e-8e10-666ebc9f7d2e",
       "ext": "mp4",
-      "note": "PILLAR-2 A/B — B SIDE (baked rig, same pose solve by construction). Same slice as 5a8beb3c. Frame-300 framing verified identical.",
-      "pinnedAt": "2026-07-10"
+      "note": "PILLAR-2 B SIDE — ACCEPTED by Jake 2026-07-11 (round 3: hooded head, tapered torso, joint dots, no drape). Motion: REALLY good. Look: pretty good. Pair: 065c267e (live A).",
+      "pinnedAt": "2026-07-11"
+    },
+    {
+      "id": "065c267e-0be2-4b9e-b18d-f25173a70107",
+      "ext": "mp4",
+      "note": "PILLAR-2 A SIDE (live vector, follow-cam) — pair of accepted B 59f872a2",
+      "pinnedAt": "2026-07-11"
     }
   ]
 }
