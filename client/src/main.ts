@@ -343,12 +343,6 @@ app.innerHTML = `
       </div>
     </aside>
   </main>
-  <div class="orientation-hint" data-orientation-hint aria-hidden="true">
-    <div class="rotate-icon">📱</div>
-    <h2>Hold your phone upright</h2>
-    <p>JAKESJAM is built for portrait.</p>
-    <p class="orientation-hint-dismiss">tap to play sideways anyway</p>
-  </div>
 `;
 
 // Vite HMR guard: `main.ts` has no accept boundary, so a change anywhere in
@@ -435,9 +429,9 @@ if (import.meta.hot) {
   });
 }
 
-// Mobile is PORTRAIT-first (game on top, controls in a bottom band). Nudge to
-// rotate upright when a touch device is held sideways. Purely a hint.
-const orientationHint = app.querySelector<HTMLElement>("[data-orientation-hint]");
+// Landscape and portrait are BOTH first-class on touch (2026-07-11): the
+// old "hold your phone upright" overlay + join-time orientation lock are
+// gone — the layout follows the hold, live.
 function isTouchDevice(): boolean {
   return (
     (navigator.maxTouchPoints ?? 0) > 0 &&
@@ -445,31 +439,6 @@ function isTouchDevice(): boolean {
     window.matchMedia("(pointer: coarse)").matches
   );
 }
-// The hint is dismissible: it's a full-screen opaque overlay, so without a
-// dismiss it doesn't "nudge" — it hard-blocks landscape play entirely.
-// Dismissing sticks for the whole session (the player has made their choice).
-let orientationHintDismissed = false;
-function updateOrientationHint(): void {
-  if (!orientationHint) return;
-  const landscape = window.innerWidth > window.innerHeight;
-  orientationHint.classList.toggle(
-    "show",
-    isTouchDevice() && landscape && !orientationHintDismissed,
-  );
-}
-// Dismiss on CLICK (not pointerdown): hiding the overlay mid-gesture lets
-// the tail of the same tap "click through" onto whatever sits underneath
-// (e.g. the splash's JOIN button) — hide only after the full tap completes,
-// and swallow the event so nothing below receives it.
-orientationHint?.addEventListener("click", (e) => {
-  e.preventDefault();
-  e.stopPropagation();
-  orientationHintDismissed = true;
-  updateOrientationHint();
-});
-updateOrientationHint();
-window.addEventListener("resize", updateOrientationHint);
-window.addEventListener("orientationchange", updateOrientationHint);
 
 // Kill the mobile browser chrome ("massive banner") on first tap: request
 // fullscreen + lock portrait. Best-effort, once, touch devices only.

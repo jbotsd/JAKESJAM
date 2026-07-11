@@ -58,15 +58,7 @@ export async function enterFullscreenPortrait(): Promise<void> {
   } catch {
     /* user denied or unsupported — game still runs, just with chrome */
   }
-  try {
-    const orientation = screen.orientation as ScreenOrientation & {
-      lock?: (o: string) => Promise<void>;
-    };
-    // Respect the player's current hold: locking hard to portrait while the
-    // phone is held sideways would yank the screen out from under someone
-    // who just dismissed the rotate hint ("play sideways anyway").
-    await orientation.lock?.(isPortrait() ? "portrait" : "landscape");
-  } catch {
-    /* orientation lock unsupported / not allowed */
-  }
+  // NO orientation lock (removed 2026-07-11): locking at join time meant
+  // rotating the phone mid-match could never swap layouts — landscape and
+  // portrait are both first-class now and the layout follows the hold.
 }
