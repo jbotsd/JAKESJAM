@@ -59,6 +59,14 @@ always wins.
   present clock + the competing decode. The definitive 720p/30-60
   measurement requires the TV physically connected — 30fps looks within
   reach on current code. mpv restored; Pi left as found.
+  **TARGET MET 2026-07-11 00:15 (60Hz-clocked headless run)**: with the
+  headless output set to a true 1280×720@60 mode (a faithful stand-in for
+  the TV's clock) and the zombie decode paused, the Pi 5 SUSTAINED
+  58–67fps through a full 60-second combat sample — governor settled at
+  0.65 internal scale (832×468 upscaled), auto-tier + clean look as
+  photographed. Dense fight onsets dip to ~22 for a few seconds until the
+  governor steps down; steady-state exceeds 60. The physical-TV run is
+  now confirmation rather than discovery. Display mode + mpv restored.
 - Mid-range Android phone: 60fps for 15 continuous minutes (thermal
   equilibrium), touch-only player completes a match and lands kills.
 - iPhone Safari: lock the screen 10s mid-match, unlock → rejoined and
