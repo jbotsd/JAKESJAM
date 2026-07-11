@@ -57,7 +57,10 @@ export class RenderGovernor {
       this.goodSinceMs = null;
       this.badStreak += 1;
       if (this.badStreak >= DOWN_STREAK && rs > this.floor) {
-        setRenderScaleRuntime(this.game, Math.max(this.floor, rs - 0.1));
+        // Bigger steps from high (DPR-crisp) ceilings — walking 2.0→0.8
+        // in 0.1 hops would take a minute of visible jank.
+        const step = rs > 1.2 ? 0.25 : 0.1;
+        setRenderScaleRuntime(this.game, Math.max(this.floor, rs - step));
         this.badStreak = 0;
         this.lastDownAtMs = nowMs;
         console.log(`[governor] frame dt ${frameDtEmaMs.toFixed(1)}ms — renderScale → ${getRenderScale().toFixed(2)}`);

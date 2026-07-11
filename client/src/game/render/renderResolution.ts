@@ -10,18 +10,17 @@
 // renderScale = devicePixelRatio → native-crisp on HiDPI displays.
 // renderScale > DPR → supersampling for strong GPUs (with MSAA on top).
 //
-// DEFAULT IS 1.0 — bit-identical to the pre-dial behavior — because HUD
-// layout still uses fixed px fonts/offsets that shrink at rs≠1; the UI
-// uiScale sweep (QualityProfile phase) has to land before DPR-crisp can be
-// the default. Until then the dial is an opt-in: `?rs=1.5` or
-// localStorage jj_render_scale.
+// Tier scales are DPR-aware (qualityProfile.ts) since 2026-07-11 — the
+// HUD is renderScale-invariant (scaled root container) and text objects
+// get setResolution(rs), so DPR-crisp is the default. `?rs=` and
+// localStorage jj_render_scale remain raw overrides.
 
 import Phaser from "phaser";
 import { getQualityProfile } from "./qualityProfile.js";
 
 const STORAGE_KEY = "jj_render_scale";
 const MIN_SCALE = 0.5;
-const MAX_SCALE = 2;
+const MAX_SCALE = 3;
 
 let cachedScale: number | null = null;
 

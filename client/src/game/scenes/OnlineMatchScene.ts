@@ -314,6 +314,8 @@ export class OnlineMatchScene extends Phaser.Scene {
   private lastLocalParryAtMs = 0;
   /** Locked tip for current death stretch (undefined = not yet computed). */
   private deathTipLocked: string | null | undefined = undefined;
+  /** When the local player died (performance.now), null while alive. */
+  private localDeathAtMs: number | null = null;
   /** Static arena geometry (platforms, walls, floor, vignette). Drawn
    *  once on hello receipt; never per-frame. */
   private arenaGraphics: Phaser.GameObjects.Graphics | null = null;
@@ -959,12 +961,16 @@ export class OnlineMatchScene extends Phaser.Scene {
     this.hudSystem.update(vitals, round);
 
     // Death overlay (teach tip ≤1 + optional share when clip URL known).
+    // HELD BACK ~3s so the death rite (burst → shards → soul returning to
+    // the motif) plays unobscured — the overlay was hiding the best moment.
     if (this.deathOverlay) {
       if (vitals.isDead) {
+        if (this.localDeathAtMs === null) this.localDeathAtMs = performance.now();
+        const riteDone = performance.now() - this.localDeathAtMs >= 3_000;
         const remainingSec = Math.max(0, Math.ceil(state.round.countdownRemainingMs / 1000));
         if (this.deathOverlay.isOpen()) {
           this.deathOverlay.updateTimer(remainingSec);
-        } else {
+        } else if (riteDone) {
           if (this.deathTipLocked === undefined) {
             this.deathTipLocked = this.computeDeathTip(state);
           }
@@ -973,9 +979,12 @@ export class OnlineMatchScene extends Phaser.Scene {
             shareUrl: this.lastShareClipUrl,
           });
         }
-      } else if (this.deathOverlay.isOpen()) {
-        this.deathOverlay.hide();
-        this.deathTipLocked = undefined;
+      } else {
+        this.localDeathAtMs = null;
+        if (this.deathOverlay.isOpen()) {
+          this.deathOverlay.hide();
+          this.deathTipLocked = undefined;
+        }
       }
     }
 

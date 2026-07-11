@@ -1,4 +1,5 @@
 // `import type` keeps the Phaser bundle out of Node-side test runs that
+import { getRenderScale } from "./renderResolution.js";
 // don't have a `window` (Bun's default test env). The runtime constant
 // previously read from `Phaser.BlendModes.ADD` is inlined as
 // `BLEND_MODE_ADD` below — frozen value from Phaser's enum, hasn't
@@ -129,6 +130,7 @@ export class RenderLayer {
         fontFamily: "Inter, Arial, sans-serif",
         fontSize: "11px",
         fontStyle: "900",
+        resolution: Math.max(1, getRenderScale()),
       })
       .setOrigin(0.5, 0.5);
 
@@ -158,6 +160,7 @@ export class RenderLayer {
         fontFamily: "Inter, Arial, sans-serif",
         fontSize: "13px",
         fontStyle: "900",
+        resolution: Math.max(1, getRenderScale()),
       })
       .setOrigin(0.5, 0.5);
 
@@ -194,6 +197,7 @@ export class RenderLayer {
         fontFamily: "Inter, Arial, sans-serif",
         fontSize: "13px",
         fontStyle: "900",
+        resolution: Math.max(1, getRenderScale()),
       })
       .setOrigin(0.5, 0.5);
 
@@ -240,6 +244,7 @@ export class RenderLayer {
         fontFamily: "Inter, Arial, sans-serif",
         fontSize: "11px",
         fontStyle: "900",
+        resolution: Math.max(1, getRenderScale()),
       })
       .setOrigin(0.5, 0.5);
 

@@ -1,6 +1,7 @@
 import Phaser from "phaser";
 import type { Vec2 } from "../types/game";
 import { PALETTE } from "../ui/palette.js";
+import { getRenderScale } from "../render/renderResolution.js";
 import { type SpringState, springKick, springState, springTo } from "./spring";
 
 /**
@@ -191,6 +192,9 @@ export class ProceduralPlayerRig {
         fontFamily: "Inter, Arial, sans-serif",
         fontSize: `${Math.round(11 * (options.scale ?? 1))}px`,
         fontStyle: "700",
+        // Glyph texture density must match the DPR-aware backing store or
+        // names blur on phones (crispness only — no pose/draw change).
+        resolution: Math.max(1, getRenderScale()),
       })
       .setOrigin(0.5, 1)
       .setDepth(13)

@@ -38,11 +38,22 @@ export type QualityProfile = {
 
 const TIER_KEY = "jj_quality_tier";
 
+// DPR-aware scales: renderScale = devicePixelRatio is what "native crisp"
+// means on HiDPI (see renderResolution.ts). Phones ship DPR 2-3 — the old
+// flat 1.0 rendered a THIRD of native and the browser upscaled it (the
+// "everything looks low-res on mobile" report, 2026-07-11). Start crisp,
+// capped for thermals; the frame-time governor walks it down if the
+// silicon can't hold it (ceiling = this starting scale).
+const DPR = Math.max(
+  1,
+  Math.min(typeof window === "undefined" ? 1 : window.devicePixelRatio || 1, 3),
+);
+
 const TIERS: Record<QualityTier, Omit<QualityProfile, "tier" | "source">> = {
   potato: { renderScale: 0.75, fpsLimit: 30, particleScale: 0.25, fxLevel: 0, rigStyle: "baked" },
-  phone: { renderScale: 1, fpsLimit: 60, particleScale: 0.6, fxLevel: 1, rigStyle: "live" },
-  standard: { renderScale: 1, fpsLimit: 0, particleScale: 1, fxLevel: 2, rigStyle: "live" },
-  ultra: { renderScale: 1.5, fpsLimit: 0, particleScale: 1, fxLevel: 2, rigStyle: "live" },
+  phone: { renderScale: Math.min(DPR, 2), fpsLimit: 60, particleScale: 0.6, fxLevel: 1, rigStyle: "live" },
+  standard: { renderScale: Math.min(DPR, 2), fpsLimit: 0, particleScale: 1, fxLevel: 2, rigStyle: "live" },
+  ultra: { renderScale: Math.max(1.5, Math.min(DPR * 1.25, 3)), fpsLimit: 0, particleScale: 1, fxLevel: 2, rigStyle: "live" },
 };
 
 function isTier(v: string | null): v is QualityTier {

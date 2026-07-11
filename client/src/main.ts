@@ -1121,6 +1121,42 @@ function requestGameFullscreen(): void {
   }
 }
 
+// ── Fullscreen toggle — all modes, all devices ─────────────────────────
+// A small persistent control (plus the auto-enter on touch join). Enter
+// AND exit both work everywhere the Fullscreen API exists; on iPhone
+// Safari (no API) the button hides itself — PWA install is that story.
+function installFullscreenToggle(): void {
+  const el = document.documentElement;
+  const supported = Boolean(
+    el.requestFullscreen ??
+      (el as HTMLElement & { webkitRequestFullscreen?: unknown }).webkitRequestFullscreen,
+  );
+  if (!supported) return;
+  const btn = document.createElement("button");
+  btn.className = "fs-toggle";
+  btn.type = "button";
+  btn.setAttribute("aria-label", "Toggle fullscreen");
+  const paint = (): void => {
+    btn.textContent = document.fullscreenElement ? "⤢" : "⛶";
+    btn.title = document.fullscreenElement ? "Exit fullscreen" : "Fullscreen";
+  };
+  paint();
+  btn.addEventListener("click", () => {
+    try {
+      if (document.fullscreenElement) {
+        void document.exitFullscreen?.().catch(() => {});
+      } else {
+        void el.requestFullscreen?.({ navigationUI: "hide" }).catch(() => {});
+      }
+    } catch {
+      // Denied — leave the browser chrome alone.
+    }
+  });
+  document.addEventListener("fullscreenchange", paint);
+  document.body.appendChild(btn);
+}
+installFullscreenToggle();
+
 function joinWorld(): void {
   // Soundtrack for Hot Lobby. Plays immediately if a gesture already
   // happened (e.g. the click that hit "Hot Lobby"); for bare `?world=1`

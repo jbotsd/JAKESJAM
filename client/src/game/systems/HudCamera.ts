@@ -52,6 +52,13 @@ export function installHudCamera(scene: Phaser.Scene): Phaser.Cameras.Scene2D.Ca
     if (sf === 0) {
       main.ignore(obj);
       hudRoot.add(obj as Phaser.GameObjects.GameObject & Phaser.GameObjects.Components.Transform);
+      // HUD text lives in CSS px inside an rs-scaled container: without a
+      // matching glyph resolution the texture upscales and blurs — the
+      // exact "UI looks low-res" report. Applies to Text-likes only.
+      const rs = getRenderScale();
+      if (rs > 1) {
+        (obj as { setResolution?: (r: number) => void }).setResolution?.(rs);
+      }
     } else {
       hud.ignore(obj);
     }
