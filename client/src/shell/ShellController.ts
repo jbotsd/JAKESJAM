@@ -181,7 +181,7 @@ export class ShellController {
       title.textContent = row.label ?? "Highlight";
       const actions = document.createElement("div");
       actions.className = "shell-clip-actions";
-      const shareUrl = row.vertical?.url ?? row.original?.url;
+      const shareUrl = row.original?.url ?? row.vertical?.url;
       if (shareUrl) {
         actions.append(
           makeAction("Watch", () => window.open(shareUrl, "_blank", "noopener")),

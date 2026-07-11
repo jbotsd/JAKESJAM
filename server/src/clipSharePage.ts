@@ -297,36 +297,34 @@ export function renderClipSharePage(opts: ClipShareOpts): string {
   <main class="wrap">
     <section class="hero">
       <div class="stage-col">
-        <div class="phone" id="player">
-          <div class="phone-bezel">
-            ${
-              exists
-                ? `<video
-              class="reel"
-              controls
-              playsinline
-              autoplay
-              muted
-              loop
-              preload="auto"
-              poster="${esc(ogImage)}"
-              aria-label="JAKESJAM highlight reel"
-            >
-              <source src="${esc(mediaUrl)}" type="${esc(mime)}" />
-              Your browser cannot play this clip.
-              <a href="${esc(mediaUrl)}">Download the file</a>.
-            </video>`
-                : `<div class="missing">
-              <p>Clip not found</p>
-              <p class="muted">It may have been rotated off the server. Grab a fresh one in Hot Lobby.</p>
-            </div>`
-            }
-          </div>
+        <div class="theater" id="player">
+          ${
+            exists
+              ? `<video
+            class="reel"
+            controls
+            playsinline
+            autoplay
+            muted
+            loop
+            preload="auto"
+            poster="${esc(ogImage)}"
+            aria-label="JAKESJAM highlight reel"
+          >
+            <source src="${esc(mediaUrl)}" type="${esc(mime)}" />
+            Your browser cannot play this clip.
+            <a href="${esc(mediaUrl)}">Download the file</a>.
+          </video>`
+              : `<div class="missing">
+            <p>Clip not found</p>
+            <p class="muted">It may have been rotated off the server. Grab a fresh one in Hot Lobby.</p>
+          </div>`
+          }
           <div class="phone-glow" aria-hidden="true"></div>
         </div>
         ${
           exists
-            ? `<p class="vid-meta muted"><span data-live>Live preview</span> · vertical highlight · <a href="${esc(mediaUrl)}" download="${esc(filename)}">download raw</a></p>`
+            ? `<p class="vid-meta muted"><span data-live>Live preview</span> · <a href="${esc(mediaUrl)}" download="${esc(filename)}">download mp4</a></p>`
             : ""
         }
       </div>
@@ -602,43 +600,41 @@ a:hover { color: var(--accent); }
 .btn-lg { padding: 0.75rem 1.35rem; font-size: 1.05rem; }
 .wrap { width: min(1120px, 100%); margin: 0 auto; padding: 1.5rem 1.15rem 3rem; }
 .hero {
-  display: grid; grid-template-columns: minmax(240px, 360px) 1fr;
-  gap: 2rem; align-items: start; margin-bottom: 2.5rem;
+  /* The CLIP is the main event: full-width theater on top, copy below. */
+  display: grid; grid-template-columns: 1fr;
+  gap: 1.75rem; align-items: start; margin-bottom: 2.5rem;
 }
 @media (max-width: 820px) {
-  .hero { grid-template-columns: 1fr; justify-items: center; }
   .copy-col { text-align: center; }
   .cta-row, .features { justify-content: center; }
   .features li { text-align: left; }
   .share-grid { justify-content: center; }
 }
-.phone {
-  position: relative; width: min(320px, 86vw); margin: 0 auto;
-}
-.phone-bezel {
-  position: relative; z-index: 1;
-  border-radius: 28px; padding: 10px;
+.stage-col { width: 100%; }
+.theater {
+  position: relative; width: 100%; margin: 0 auto;
+  border-radius: 16px; padding: 8px;
   background: linear-gradient(160deg, #1a2e38, #0a1218);
   border: 1px solid #2a4a55;
   box-shadow:
     0 0 0 1px #0008,
     0 30px 60px #000a,
     inset 0 1px 0 #ffffff18;
-  aspect-ratio: 9 / 16;
-  overflow: hidden;
 }
 .reel {
-  width: 100%; height: 100%; object-fit: cover;
-  border-radius: 20px; background: #000; display: block;
+  /* NEVER crop or upscale-past-native in presentation: the video keeps its
+     own aspect, bounded by the viewport. Fullscreen = raw pixels. */
+  width: 100%; max-height: 78vh; object-fit: contain;
+  border-radius: 10px; background: #000; display: block;
 }
 .phone-glow {
-  position: absolute; inset: 10% -20% auto; height: 60%;
+  position: absolute; inset: 10% -6% auto; height: 60%;
   background: radial-gradient(ellipse, var(--glow), transparent 70%);
-  filter: blur(20px); z-index: 0; pointer-events: none;
+  filter: blur(24px); z-index: -1; pointer-events: none;
 }
 .missing {
-  height: 100%; display: grid; place-content: center; text-align: center;
-  padding: 1.5rem; background: #061018; border-radius: 20px;
+  min-height: 240px; display: grid; place-content: center; text-align: center;
+  padding: 1.5rem; background: #061018; border-radius: 10px;
 }
 .vid-meta { text-align: center; font-size: 0.78rem; margin: 0.75rem 0 0; font-family: var(--mono); }
 .eyebrow {

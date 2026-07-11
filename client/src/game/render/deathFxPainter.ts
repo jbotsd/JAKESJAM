@@ -171,19 +171,19 @@ export function drawDeathFx(
       const fade = 1 - t;
       // Motif BLOOM: a soft golden swell as the seal receives the soul.
       g.fillStyle(HALO, 0.22 * fade);
-      g.fillCircle(m.motifX, m.motifY, 20 + Math.sqrt(t) * 92);
+      g.fillCircle(m.motifX, m.motifY, 30 + Math.sqrt(t) * 190);
       g.fillStyle(CORE, 0.18 * fade);
-      g.fillCircle(m.motifX, m.motifY, 10 + Math.sqrt(t) * 44);
+      g.fillCircle(m.motifX, m.motifY, 14 + Math.sqrt(t) * 90);
       // Triple staggered reception rings.
-      g.lineStyle(2.5 + 2 * fade, HALO, 0.8 * fade);
-      g.strokeCircle(m.motifX, m.motifY, 12 + t * 84);
+      g.lineStyle(3 + 2.5 * fade, HALO, 0.8 * fade);
+      g.strokeCircle(m.motifX, m.motifY, 16 + t * 170);
       if (fxLevel >= 1) {
-        g.lineStyle(1.6, INNER, 0.55 * fade);
-        g.strokeCircle(m.motifX, m.motifY, 6 + t * 132);
+        g.lineStyle(2, INNER, 0.55 * fade);
+        g.strokeCircle(m.motifX, m.motifY, 8 + t * 260);
         const t2 = Math.max(0, t - 0.25) / 0.75;
         if (t2 > 0) {
-          g.lineStyle(1.2, CORE, 0.5 * (1 - t2));
-          g.strokeCircle(m.motifX, m.motifY, 8 + t2 * 108);
+          g.lineStyle(1.6, CORE, 0.5 * (1 - t2));
+          g.strokeCircle(m.motifX, m.motifY, 10 + t2 * 215);
         }
       }
       if (fxLevel >= 2) {
@@ -191,7 +191,7 @@ export function drawDeathFx(
         g.lineStyle(2.2, CORE, 0.65 * fade);
         g.strokeCircle(m.motifX, m.motifY, 40 * fade + 4);
         // Ray burst — ten spokes of light.
-        const ray = 30 + 74 * t;
+        const ray = 40 + 150 * t;
         g.lineStyle(1.6, HALO, 0.6 * fade);
         for (let k = 0; k < 10; k++) {
           const a = m.seed + (k * TWO_PI) / 10 + t * 0.5;

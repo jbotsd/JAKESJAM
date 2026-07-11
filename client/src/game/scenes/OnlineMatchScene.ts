@@ -2330,7 +2330,7 @@ export class OnlineMatchScene extends Phaser.Scene {
       pendingVertical = null;
       pendingOriginal = null;
       if (vertical) {
-        this.lastShareClipUrl = vertical;
+        if (!original) this.lastShareClipUrl = vertical;
         emitClipUploaded({
           url: vertical,
           kind: "vertical",
@@ -2339,7 +2339,9 @@ export class OnlineMatchScene extends Phaser.Scene {
         });
       }
       if (original) {
-        if (!this.lastShareClipUrl) this.lastShareClipUrl = original;
+        // Full-res original is the primary share asset (the share page
+        // now presents the mp4 as the main event); vertical = Stories cut.
+        this.lastShareClipUrl = original;
         emitClipUploaded({
           url: original,
           kind: "original",
