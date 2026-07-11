@@ -161,6 +161,33 @@ export function installTelemetry(deps: {
   window.addEventListener("error", (e) => {
     recordError("window.onerror", String(e.message ?? e.error ?? "unknown"), e.error?.stack);
   });
+  // Handled-but-logged failures: most game errors surface via
+  // console.error (net failures, upload errors, WebGL warnings) rather
+  // than throwing — "I saw an error on my phone" must be catchable. The
+  // per-signature cap keeps a log-spam loop from becoming a firehose.
+  const origError = console.error.bind(console);
+  console.error = (...args: unknown[]): void => {
+    origError(...args);
+    try {
+      const msg = args
+        .map((a) => (a instanceof Error ? a.message : typeof a === "string" ? a : JSON.stringify(a)))
+        .join(" ")
+        .slice(0, 300);
+      const stack = args.find((a): a is Error => a instanceof Error)?.stack;
+      recordError("console.error", msg, stack);
+    } catch {
+      // Never let telemetry break logging.
+    }
+  };
+  const origWarn = console.warn.bind(console);
+  console.warn = (...args: unknown[]): void => {
+    origWarn(...args);
+    try {
+      crumb("error", `warn: ${args.map(String).join(" ").slice(0, 140)}`);
+    } catch {
+      // ignore
+    }
+  };
   window.addEventListener("unhandledrejection", (e) => {
     const r = e.reason;
     recordError(

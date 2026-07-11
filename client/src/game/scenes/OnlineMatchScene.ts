@@ -108,6 +108,7 @@ import {
   type UploadRenderModel,
 } from "../render/renderContract.js";
 import { drawDeathFx, drawDeathShards, drawSpawnUploads } from "../render/deathFxPainter.js";
+import { crumb, record } from "../../telemetry.js";
 import { playCardPickFeel } from "../render/CardFeel.js";
 
 // Portrait-mobile camera framing. The arena is 2:1 wide but a phone held
@@ -1150,12 +1151,21 @@ export class OnlineMatchScene extends Phaser.Scene {
           }
         },
         onEvents: (events) => this.handleSimEvents(events),
-        onReconnectAttempt: (attempt, nextDelayMs) =>
-          this.connectionOverlay?.show({ kind: "reconnecting", attempt, nextDelayMs }),
+        onReconnectAttempt: (attempt, nextDelayMs) => {
+          this.connectionOverlay?.show({ kind: "reconnecting", attempt, nextDelayMs });
+          crumb("net", `reconnect attempt ${attempt} (in ${nextDelayMs}ms)`);
+        },
       });
       transport.onClose((reason) => {
         this.setStatus(`Disconnected: ${reason}`);
         this.connectionOverlay?.show({ kind: "lost", reason });
+        crumb("net", `ws closed: ${reason}`);
+        record({
+          kind: "net",
+          sig: `ws-close-${reason}`.slice(0, 32),
+          message: `ws closed: ${reason}`,
+          crumbs: undefined,
+        });
       });
     } catch (err) {
       const msg = err instanceof Error ? err.message : "unknown error";

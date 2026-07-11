@@ -15,6 +15,7 @@
 import Phaser from "phaser";
 import { getQualityProfile } from "./qualityProfile.js";
 import { getRenderScale, setRenderScaleRuntime } from "./renderResolution.js";
+import { crumb, record } from "../../telemetry.js";
 
 const CHECK_INTERVAL_MS = 2_000;
 const DOWN_FACTOR = 1.35;
@@ -64,6 +65,15 @@ export class RenderGovernor {
         this.badStreak = 0;
         this.lastDownAtMs = nowMs;
         console.log(`[governor] frame dt ${frameDtEmaMs.toFixed(1)}ms — renderScale → ${getRenderScale().toFixed(2)}`);
+        crumb("perf", `governor down dt=${frameDtEmaMs.toFixed(1)}ms rs→${getRenderScale().toFixed(2)}`);
+        if (getRenderScale() <= this.floor + 0.001) {
+          record({
+            kind: "perf",
+            sig: "governor-floor",
+            message: `governor hit floor ${this.floor} (dt ${frameDtEmaMs.toFixed(1)}ms)`,
+            data: { dt: Math.round(frameDtEmaMs * 10) / 10, floor: this.floor },
+          });
+        }
       }
       return;
     }
