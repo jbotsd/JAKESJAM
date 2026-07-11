@@ -206,6 +206,15 @@ be recording.
 **Acceptance tests**
 - Host instance: frame-time delta with recording on vs off < 2% (native
   NVENC buffer).
+  **ROW CLOSED 2026-07-11 09:21**: gsr upgraded to 5.14.1 (5.13.9's EGL
+  SIGSEGV gone). Two launch fixes: 5.14 renamed the replay save dir to
+  `-o` (script updated), and EGL must init pure-Wayland (`env -u DISPLAY`
+  — Xwayland DRI3 fails on this box → llvmpipe abort). Buffer runs KMS
+  capture → NVENC h264 @60fps into a 20s RAM ring — a dedicated hardware
+  encoder block, nothing on the game's render thread. SIGUSR1 test save:
+  20s mp4 muxed in ~1s → on-replay-saved.sh auto-uploaded → share pair
+  live (/c/7c18fd7c + vertical /c/02115df9). Server restarted with
+  JJ_HOST_REPLAY=1 (pid-verified) — every kill now signals the buffer.
 - Remote players: encode fully off the main thread.
   **SHIPPED+VERIFIED 2026-07-10**: WebCodecs worker path live — per
   captured frame the main thread does one VideoFrame(canvas) + transfer;

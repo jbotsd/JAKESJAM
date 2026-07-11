@@ -25,15 +25,14 @@ chromium --app="https://play.elyad.io/?kiosk=1&world=1"
 Stats toggle shows FPS. Target: 30fps sustained (already at 24 under worse
 conditions). If short, the next lever is profiling with the display real.
 
-## 3. gsr upgrade + one command (~3 min) → closes pillar 4's host row
-5.13.9 segfaults in EGL init on nvidia-open 610 (three core dumps prove it).
-```
-paru -S gpu-screen-recorder-git       # or -bin; needs 5.14+
-cd /mnt/pulsechain-sata/Projects/oddpromts/gamejam/thegame/JAKESJAM
-./stream-kit/launch-replay-buffer.sh   # from a terminal IN the session
-```
-Then restart the game server with `JJ_HOST_REPLAY=1` added to its env block
-— every kill saves a free NVENC clip through the normal share pipeline.
+## 3. ~~gsr upgrade + one command → closes pillar 4's host row~~ DONE 2026-07-11
+gsr 5.14.1 installed (`yay -S gpu-screen-recorder-git`); script fixed for
+5.14 (`-o` = replay save dir) + launched with DISPLAY unset (Xwayland DRI3
+→ llvmpipe trap). SIGUSR1 test save auto-uploaded a share pair; server
+restarted with `JJ_HOST_REPLAY=1`. Kills now save free NVENC clips.
+Note: the buffer records the VISIBLE screen and dies with the session —
+after a reboot, relaunch `./stream-kit/launch-replay-buffer.sh` from a
+terminal inside the session (the script unsets DISPLAY itself now).
 
 ## 4. Play on the phone for 15 minutes → closes pillar 5's soak
 Just play. The frame-time telemetry (stats HUD / governor logs) is the

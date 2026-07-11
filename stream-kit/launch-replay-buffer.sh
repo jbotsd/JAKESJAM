@@ -41,7 +41,12 @@ if pgrep -f "gpu-screen-recorder -w" >/dev/null 2>&1; then
 fi
 
 echo "replay buffer: monitor=$MONITOR ${REPLAY_SECS}s @${FPS}fps → $OUT_DIR"
+# gsr 5.14: -o is the save DIRECTORY in replay mode (-ro is a different
+# feature: where regular recordings land while a replay buffer runs).
+# DISPLAY unset: with it set, gsr's EGL init goes through Xwayland where
+# DRI3 fails on this nvidia box → llvmpipe → abort. Pure-Wayland EGL works.
+unset DISPLAY
 exec gpu-screen-recorder -w "$MONITOR" -f "$FPS" -k h264 \
   -r "$REPLAY_SECS" -restart-replay-on-save yes \
   -c mp4 -a default_output \
-  -ro "$OUT_DIR" -sc "$HOOK"
+  -o "$OUT_DIR" -sc "$HOOK"
