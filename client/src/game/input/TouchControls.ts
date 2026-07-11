@@ -64,6 +64,9 @@ const PULSE_MS = 90;
 // move-stick direction instead.
 const DASH_STICK_RADIUS = 40;
 const DASH_TRIGGER_PX = 14;
+/** Press-and-HOLD without dragging also dashes (in the move-stick
+ *  direction) once the press is clearly a hold, not the start of a drag. */
+const DASH_HOLD_FIRE_MS = 150;
 
 type Stick = {
   pointerId: number;
@@ -98,6 +101,7 @@ export class TouchControls {
   /** Dash mini-stick: press origin, live drag direction, tap pulse. */
   private dashPressX = 0;
   private dashPressY = 0;
+  private dashPressAtMs = 0;
   private dashDir: { x: number; y: number } | null = null;
   private dashEngaged = false; // drag crossed the trigger threshold
   private dashPulseUntilMs = 0; // tap-dash: hold the bit long enough to tick
@@ -185,11 +189,14 @@ export class TouchControls {
     }
     if (this.shieldPointer !== null) keys |= InputBit.Shield;
     // Aegis dash (same bit as desktop right-click/C). The bit rises only
-    // once a direction is known: either the mini-stick drag crossed the
-    // trigger (dashDir carries it) or the tap pulse is live (dashDir null →
-    // scene falls back to the move direction). Never on bare pointerdown —
-    // that would fire the dash with a stale aim.
-    if ((this.dashPointer !== null && this.dashEngaged) || now < this.dashPulseUntilMs) {
+    // once a direction is known: the mini-stick drag crossed the trigger
+    // (dashDir carries it), the press turned into a clear HOLD (dashDir
+    // null → move-direction fallback), or the tap pulse is live. Never on
+    // bare pointerdown — that would fire the dash with a stale aim.
+    const dashHeld =
+      this.dashPointer !== null &&
+      (this.dashEngaged || now - this.dashPressAtMs >= DASH_HOLD_FIRE_MS);
+    if (dashHeld || now < this.dashPulseUntilMs) {
       keys |= InputBit.Dash;
     }
     return { keys, aimDir, dashDir: this.dashDir, moveDir };
@@ -236,6 +243,7 @@ export class TouchControls {
     this.dashPointer = e.pointerId;
     this.dashPressX = e.clientX;
     this.dashPressY = e.clientY;
+    this.dashPressAtMs = performance.now();
     this.dashEngaged = false;
     this.dashDir = null;
     this.dashKnob = this.spawnStick(e, "tc-stick--dash");
@@ -341,14 +349,14 @@ export class TouchControls {
       this.shieldBtn.classList.remove("tc-btn--active");
     }
     if (this.dashPointer === e.pointerId) {
-      // Plain tap (never crossed the drag trigger): dash in the move-stick
-      // direction — dashDir stays null and the scene supplies the fallback.
-      if (!this.dashEngaged) {
-        this.dashDir = null;
+      // Plain tap (no drag, released before the hold threshold): dash in
+      // the move-stick direction — dashDir stays null and the scene
+      // supplies the fallback. A hold that already fired needs no pulse.
+      const heldMs = performance.now() - this.dashPressAtMs;
+      if (!this.dashEngaged && heldMs < DASH_HOLD_FIRE_MS) {
         this.dashPulseUntilMs = performance.now() + PULSE_MS;
-      } else {
-        this.dashDir = null;
       }
+      this.dashDir = null;
       this.dashEngaged = false;
       this.dashKnob?.base.remove();
       this.dashKnob = null;
