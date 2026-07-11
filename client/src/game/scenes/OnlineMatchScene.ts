@@ -345,6 +345,8 @@ export class OnlineMatchScene extends Phaser.Scene {
   private readonly deathFxModels: SoulRenderModel[] = [];
   private readonly deathShardModels: ShardRenderModel[] = [];
   private readonly spawnFxModels: UploadRenderModel[] = [];
+  /** produceDeathFx count this frame — the model array is a pool. */
+  private deathFxSoulCount = 0;
   private platformLayer: PlatformLayer | null = null;
   private lightBeams: LightBeamLayer | null = null;
   private cosmicArena: CosmicArenaLayer | null = null;
@@ -1787,6 +1789,7 @@ export class OnlineMatchScene extends Phaser.Scene {
     g.clear();
     const fx = getQualityProfile().fxLevel;
     const souls = produceDeathFx(state, deltaMs, this.deathFxState, this.deathFxModels);
+    this.deathFxSoulCount = souls; // death-cam scans only LIVE models
     if (souls > 0) drawDeathFx(g, this.deathFxModels, souls, fx);
     const shards = produceDeathShards(state, deltaMs, this.deathFxState, this.deathShardModels);
     if (shards > 0) drawDeathShards(g, this.deathShardModels, shards, fx);
@@ -2109,7 +2112,22 @@ export class OnlineMatchScene extends Phaser.Scene {
     // closest fighter is usually right there), and the ActionCamera's own
     // snap threshold covers the rare far handoff.
     let anchor = local;
+    // DEATH-CAM: while YOUR soul is in flight, the camera rides it home to
+    // the motif — the rite is the anchor. The producer ran earlier this
+    // frame, so deathFxModels holds current soul positions.
+    let soulAnchor: { x: number; y: number } | null = null;
     if (!local.alive) {
+      for (let i = 0; i < this.deathFxSoulCount; i++) {
+        const m = this.deathFxModels[i]!;
+        if (m.pid === this.localPlayerId && m.alpha > 0.05) {
+          soulAnchor = m;
+          break;
+        }
+      }
+    }
+    if (soulAnchor) {
+      anchor = { ...local, x: soulAnchor.x, y: soulAnchor.y };
+    } else if (!local.alive) {
       const mid = this.cameras.main.midPoint;
       let bestD2 = Number.POSITIVE_INFINITY;
       let best: PlayerEntity | null = null;

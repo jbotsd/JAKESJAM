@@ -333,6 +333,8 @@ const UPLOAD_MS = 1_150;
 const UPLOAD_POOL = 12;
 
 export type SoulRenderModel = {
+  /** Victim the soul belongs to. */
+  pid: string;
   /** Soul position (world px). */
   x: number;
   y: number;
@@ -362,6 +364,8 @@ export type SoulRenderModel = {
 
 type Soul = {
   active: boolean;
+  /** Victim the soul belongs to (death-cam looks itself up by this). */
+  pid: string;
   x0: number;
   y0: number;
   seed: number;
@@ -415,6 +419,7 @@ export function makeDeathFxState(): DeathFxState {
   for (let i = 0; i < SOUL_POOL; i++) {
     souls.push({
       active: false,
+      pid: "",
       x0: 0,
       y0: 0,
       seed: 0,
@@ -511,6 +516,7 @@ export function noteDeathEvents(
       soul = st.souls.reduce((a, b) => (a.ageMs >= b.ageMs ? a : b));
     }
     soul.active = true;
+    soul.pid = e.victimId;
     soul.x0 = victim.x;
     soul.y0 = victim.y;
     // Deterministic seed: tick + a tiny id hash. Same replay → same soul.
@@ -578,6 +584,7 @@ function easeOutCubic(t: number): number {
 
 function blankSoul(): SoulRenderModel {
   return {
+    pid: "",
     x: 0,
     y: 0,
     r: 0,
@@ -681,6 +688,7 @@ export function produceDeathFx(
     if (n >= out.length) out.push(blankSoul());
     const m = out[n]!;
     n += 1;
+    m.pid = soul.pid;
     m.x = x;
     m.y = y;
     m.r = r;
