@@ -294,14 +294,6 @@ export class BakedPlayerRig extends ProceduralPlayerRig {
     img.setAlpha(0.7 + throwAmount * 0.3);
   }
 
-  protected override drawHipDrape(
-    _g: Phaser.GameObjects.Graphics,
-    pelvis: Vec2,
-    tip: Vec2,
-    s: number,
-  ): void {
-    this.quadBetween(pelvis, tip, 14 * s, 64, 32, 18, 22);
-  }
 
   protected override drawSpineGlow(
     _g: Phaser.GameObjects.Graphics,
@@ -316,6 +308,9 @@ export class BakedPlayerRig extends ProceduralPlayerRig {
   }
 
   // Fill-rate eaters: deliberately nothing on the baked tiers.
+  // (Hip drape also cut — Jake's call 2026-07-11: the optimised character
+  // reads cleaner without the loincloth, and it's one fewer quad.)
+  protected override drawHipDrape(): void {}
   protected override drawAura(): void {}
   protected override drawTrail(): void {}
   protected override drawDashStreaks(): void {}
