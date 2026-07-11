@@ -2,7 +2,14 @@ import Phaser from "phaser";
 import "./style.css";
 import { buildGameConfig } from "./game/GameConfig";
 import { installRenderResolution, getRenderScale } from "./game/render/renderResolution";
-import { getQualityProfile, setQualityTier, type QualityTier } from "./game/render/qualityProfile";
+import {
+  getQualityProfile,
+  isTouchMobile,
+  probeRendererString,
+  setQualityTier,
+  type QualityTier,
+} from "./game/render/qualityProfile";
+import { crumb, installTelemetry, watchContextLoss } from "./telemetry";
 import { LobbyController } from "./game/ui/LobbyController";
 import { MatchStatusBadge } from "./game/ui/MatchStatusBadge";
 import { fetchWorldSummary } from "./net/worldClient";
@@ -377,6 +384,22 @@ const game = new Phaser.Game(buildGameConfig());
 // Scale.NONE does no automatic window tracking — this owns it (backing
 // store = CSS × renderScale; see game/render/renderResolution.ts).
 installRenderResolution(game);
+
+// Sovereign telemetry (docs/TELEMETRY.md): global error capture + boot
+// facts. Installed after profile detection so the boot event carries the
+// tier decision; the canvas watch attaches once Phaser has one.
+{
+  const profile = getQualityProfile();
+  installTelemetry({
+    tier: profile.tier,
+    rendererString: probeRendererString(),
+    touch: isTouchMobile(),
+  });
+  game.events.once(Phaser.Core.Events.READY, () => {
+    if (game.canvas) watchContextLoss(game.canvas);
+    crumb("boot", `phaser ready rs=${getRenderScale()}`);
+  });
+}
 
 // PWA installability (public/sw.js is a deliberate no-cache pass-through —
 // a stale bundle is worse than a slow one for a live multiplayer game).

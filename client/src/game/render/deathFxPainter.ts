@@ -11,7 +11,7 @@
 // sacred-geometry seal without team-color confusion.
 
 import type Phaser from "phaser";
-import type { SoulRenderModel } from "./renderContract.js";
+import type { ShardRenderModel, SoulRenderModel, UploadRenderModel } from "./renderContract.js";
 import { SOUL_ABSORB, SOUL_RELEASE } from "./renderContract.js";
 
 const CORE = 0xffffff;
@@ -34,10 +34,28 @@ export function drawDeathFx(
   for (let i = 0; i < count; i++) {
     const m = models[i]!;
 
-    // ── Corpse dissolve (fx1+): motes lifting off the death point ──
+    // ── Corpse dissolve (fx1+): explosive flash, spark ring, rising motes ──
     if (fxLevel >= 1 && m.dissolveT < 1) {
       const t = m.dissolveT;
       const fade = 1 - t;
+      // Explosive pop: a hot flash + fast spark ring in the first ~200ms.
+      const pop = Math.max(0, 1 - t * 4.5);
+      if (pop > 0) {
+        g.fillStyle(CORE, 0.55 * pop);
+        g.fillCircle(m.originX, m.originY, 30 * (1 - pop) + 8);
+        g.lineStyle(3 * pop, HALO, 0.8 * pop);
+        g.strokeCircle(m.originX, m.originY, 12 + (1 - pop) * 58);
+        const sparks = fxLevel >= 2 ? 12 : 7;
+        for (let k = 0; k < sparks; k++) {
+          const a = m.seed * 1.7 + (k * TWO_PI) / sparks;
+          const d0 = 10 + (1 - pop) * 76;
+          g.lineStyle(1.5, k % 2 ? HALO : INNER, 0.9 * pop);
+          g.beginPath();
+          g.moveTo(m.originX + Math.cos(a) * d0, m.originY + Math.sin(a) * d0);
+          g.lineTo(m.originX + Math.cos(a) * (d0 + 14), m.originY + Math.sin(a) * (d0 + 14));
+          g.strokePath();
+        }
+      }
       for (let k = 0; k < (fxLevel >= 2 ? 7 : 4); k++) {
         // Deterministic scatter: angle/speed from seed+k only.
         const a = m.seed + (k * TWO_PI) / 7 + Math.sin(m.seed * 3 + k) * 0.6;
@@ -116,6 +134,118 @@ export function drawDeathFx(
           g.lineTo(m.motifX + Math.cos(a) * ray, m.motifY + Math.sin(a) * ray);
           g.strokePath();
         }
+      }
+    }
+  }
+}
+
+/** Reward shards — the shiny pour-out that locks onto whoever earned it. */
+export function drawDeathShards(
+  g: Phaser.GameObjects.Graphics,
+  models: ShardRenderModel[],
+  count: number,
+  fxLevel: number,
+): void {
+  const cap = fxLevel === 0 ? Math.min(5, count) : count;
+  for (let i = 0; i < cap; i++) {
+    const m = models[i]!;
+    if (m.arriveT > 0) {
+      // Arrival ping at the earner: expanding ring + brief gold flash.
+      const fade = 1 - m.arriveT;
+      g.lineStyle(2, HALO, 0.8 * fade);
+      g.strokeCircle(m.targetX, m.targetY, 10 + m.arriveT * 34);
+      g.fillStyle(CORE, 0.35 * fade);
+      g.fillCircle(m.targetX, m.targetY, 7 * fade);
+      continue;
+    }
+    if (m.alpha <= 0.02) continue;
+    const r = 4.6 * m.size;
+    // Gold diamond gem with a hot core.
+    g.fillStyle(HALO, 0.85 * m.alpha);
+    g.fillTriangle(m.x, m.y - r, m.x - r * 0.72, m.y, m.x + r * 0.72, m.y);
+    g.fillTriangle(m.x, m.y + r, m.x - r * 0.72, m.y, m.x + r * 0.72, m.y);
+    g.fillStyle(CORE, 0.95 * m.alpha);
+    g.fillCircle(m.x, m.y, r * 0.34);
+    if (fxLevel >= 1) {
+      // Glint: a rotating sparkle cross.
+      const gl = (Math.sin(m.glint) + 1) / 2;
+      if (gl > 0.55) {
+        const s = r * (0.9 + gl);
+        const a = gl * 0.7 * m.alpha;
+        g.lineStyle(1, CORE, a);
+        g.beginPath();
+        g.moveTo(m.x - s, m.y);
+        g.lineTo(m.x + s, m.y);
+        g.moveTo(m.x, m.y - s);
+        g.lineTo(m.x, m.y + s);
+        g.strokePath();
+      }
+      g.fillStyle(HALO, 0.16 * m.alpha);
+      g.fillCircle(m.x, m.y, r * 2.1);
+    }
+  }
+}
+
+/** Spawn-in: the digital gnostic upload — spirit streams into the vessel. */
+export function drawSpawnUploads(
+  g: Phaser.GameObjects.Graphics,
+  models: UploadRenderModel[],
+  count: number,
+  fxLevel: number,
+): void {
+  const GOLDEN = 2.399963;
+  for (let i = 0; i < count; i++) {
+    const m = models[i]!;
+    const p = m.progress;
+    // Envelope: quick arrival, sustained, dissolve at the end.
+    const env = Math.min(1, p * 5) * (1 - Math.max(0, (p - 0.78) / 0.22));
+
+    // Converging spirit motes: spiral inward as the upload completes.
+    const motes = fxLevel >= 2 ? 16 : fxLevel === 1 ? 10 : 6;
+    for (let k = 0; k < motes; k++) {
+      // Each mote starts its infall at a staggered time.
+      const phase = (p * 1.35 + k / motes) % 1;
+      const rad = (1 - phase) * 74;
+      if (rad < 2) continue;
+      const a = m.seed + k * GOLDEN + p * 2.2;
+      const mx = m.x + Math.cos(a) * rad;
+      const my = m.y - 26 + Math.sin(a) * rad * 0.85;
+      g.fillStyle(k % 3 === 0 ? HALO : INNER, 0.62 * env * phase);
+      g.fillCircle(mx, my, 1.6 + phase * 1.8);
+    }
+
+    // Vertical beam — the download column.
+    g.fillStyle(INNER, 0.10 * env);
+    g.fillRect(m.x - 9, m.y - 92, 18, 92);
+    g.fillStyle(CORE, 0.16 * env);
+    g.fillRect(m.x - 2.5, m.y - 92, 5, 92);
+    if (fxLevel >= 1) {
+      // Descending data-rune dashes inside the beam.
+      for (let k = 0; k < 5; k++) {
+        const dp = (p * 2.4 + k * 0.2) % 1;
+        g.fillStyle(HALO, 0.5 * env * (1 - dp));
+        g.fillRect(m.x - 5 + ((k * 37) % 10), m.y - 90 + dp * 82, 6, 2);
+      }
+    }
+
+    // Glyph ring at the feet: rotating; hexagram at fx2.
+    const feetY = m.y + 28;
+    const ringR = 20 + 6 * Math.sin(p * Math.PI);
+    g.lineStyle(1.5, HALO, 0.55 * env);
+    g.strokeEllipse(m.x, feetY, ringR * 2, ringR * 0.8);
+    if (fxLevel >= 2) {
+      const spin = m.seed + p * 3;
+      g.lineStyle(1, INNER, 0.5 * env);
+      for (let tri = 0; tri < 2; tri++) {
+        g.beginPath();
+        for (let k = 0; k <= 3; k++) {
+          const a = spin + tri * (Math.PI / 3) + (k % 3) * (TWO_PI / 3);
+          const px = m.x + Math.cos(a) * ringR;
+          const py = feetY + Math.sin(a) * ringR * 0.4;
+          if (k === 0) g.moveTo(px, py);
+          else g.lineTo(px, py);
+        }
+        g.strokePath();
       }
     }
   }

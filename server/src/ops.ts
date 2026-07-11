@@ -22,6 +22,7 @@
 // Not the TikTok player UI — operator-only, secret-gated.
 
 import { resolve, normalize, dirname } from "node:path";
+import { telemetrySummary } from "./telemetryStore.ts";
 import { fileURLToPath } from "node:url";
 import { constantTimeEquals } from "./auth.ts";
 import { config } from "./config.ts";
@@ -303,6 +304,12 @@ export async function handleOps(
 
   if (url.pathname === "/ops/api/world" && req.method === "GET") {
     return json({ world: deps.worldHost.summary() });
+  }
+
+  // Sovereign telemetry: top error signatures (docs/TELEMETRY.md).
+  if (url.pathname === "/ops/api/telemetry/summary" && req.method === "GET") {
+    const limit = Math.min(200, Number(url.searchParams.get("limit")) || 50);
+    return json(telemetrySummary(limit));
   }
 
   if (url.pathname.startsWith("/ops/api/")) {

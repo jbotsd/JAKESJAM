@@ -51,7 +51,7 @@ function isTier(v: string | null): v is QualityTier {
 
 /** Renderer string from a throwaway WebGL context (cheap, cached by the
  *  browser). Empty string when unavailable — detection falls through. */
-function probeRendererString(): string {
+export function probeRendererString(): string {
   try {
     const canvas = document.createElement("canvas");
     const gl =
@@ -68,7 +68,7 @@ function probeRendererString(): string {
   }
 }
 
-function isTouchMobile(): boolean {
+export function isTouchMobile(): boolean {
   const coarse = window.matchMedia?.("(pointer: coarse)")?.matches ?? false;
   const mobileUa = /android|iphone|ipad|ipod|mobile/i.test(navigator.userAgent);
   return coarse && (mobileUa || navigator.maxTouchPoints > 1);

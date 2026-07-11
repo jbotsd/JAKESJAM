@@ -83,6 +83,7 @@ export function stepFirePatches(
         victimId: pid,
         damage: patch.damagePerSecond * dtSec,
         sourceProjectileId: null,
+        attackerId: patch.ownerId ?? null,
       });
     }
 

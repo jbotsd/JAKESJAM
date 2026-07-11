@@ -677,6 +677,7 @@ export function stepWithRuntime(
             victimId: vid,
             damage: mit.damage,
             sourceProjectileId: null,
+            attackerId: aid,
           });
           if (wasAlive && newHealth === 0) {
             events.push({ t: "player-killed", victimId: vid, killerId: aid, cause: "bash" });
@@ -756,6 +757,7 @@ export function stepWithRuntime(
         victimId: pid,
         damage: p.health,
         sourceProjectileId: null,
+        attackerId: null,
       });
       events.push({
         t: "player-killed",
@@ -806,6 +808,7 @@ export function stepWithRuntime(
           victimId: pid,
           damage: dmg,
           sourceProjectileId: null,
+          attackerId: null,
         });
         if (wasAlive && newHealth === 0) {
           events.push({
@@ -1123,6 +1126,7 @@ export function stepWithRuntime(
                 victimId: bestId,
                 damage: chainDmg,
                 sourceProjectileId: ev.sourceProjectileId,
+                attackerId: proj.ownerId,
               });
               // Emit chain-hit so clients can render the lightning bolt arc.
               // Positions come from player entities at hit-time — deterministic.

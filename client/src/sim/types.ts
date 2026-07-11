@@ -462,6 +462,11 @@ export type SimEvent =
       victimId: PlayerId;
       damage: number;
       sourceProjectileId: EntityId | null;
+      /** Player credited with the damage (projectile owner / basher /
+       *  burn igniter), or null/absent for environmental sources. Feeds
+       *  the death-FX reward shards (damage-proportional). Additive wire
+       *  field — old clients ignore it. */
+      attackerId?: PlayerId | null;
     }
   | { t: 'destructible-broken'; entityId: EntityId; x: number; y: number }
   | { t: 'pickup-taken'; entityId: EntityId; playerId: PlayerId }

@@ -46,14 +46,18 @@ import {
   noteDeathEvents,
   produceCombatFx,
   produceDeathFx,
+  produceDeathShards,
+  produceSpawnFx,
   setDeathFxTarget,
   PARRY_ARC,
   PARRY_RANGE,
   SHIELD_RADIUS,
   type CombatFxRenderModel,
+  type ShardRenderModel,
   type SoulRenderModel,
+  type UploadRenderModel,
 } from "../render/renderContract";
-import { drawDeathFx } from "../render/deathFxPainter";
+import { drawDeathFx, drawDeathShards, drawSpawnUploads } from "../render/deathFxPainter";
 import { getQualityProfile } from "../render/qualityProfile";
 import {
   drawDestructible,
@@ -120,6 +124,8 @@ export class ReplayScene extends Phaser.Scene {
   private deathFx: Phaser.GameObjects.Graphics | null = null;
   private readonly deathFxState = makeDeathFxState();
   private readonly deathFxModels: SoulRenderModel[] = [];
+  private readonly deathShardModels: ShardRenderModel[] = [];
+  private readonly spawnFxModels: UploadRenderModel[] = [];
   private readonly rigPose = {
     position: { x: 0, y: 0 },
     velocity: { x: 0, y: 0 },
@@ -375,11 +381,13 @@ export class ReplayScene extends Phaser.Scene {
     }
     const g = this.deathFx;
     g.clear();
-    const count = produceDeathFx(state, deltaMs, this.deathFxState, this.deathFxModels);
-    if (count > 0) {
-      const fx = this.renderMode ? 2 : getQualityProfile().fxLevel;
-      drawDeathFx(g, this.deathFxModels, count, fx);
-    }
+    const fx = this.renderMode ? 2 : getQualityProfile().fxLevel;
+    const souls = produceDeathFx(state, deltaMs, this.deathFxState, this.deathFxModels);
+    if (souls > 0) drawDeathFx(g, this.deathFxModels, souls, fx);
+    const shards = produceDeathShards(state, deltaMs, this.deathFxState, this.deathShardModels);
+    if (shards > 0) drawDeathShards(g, this.deathShardModels, shards, fx);
+    const uploads = produceSpawnFx(state, deltaMs, this.deathFxState, this.spawnFxModels);
+    if (uploads > 0) drawSpawnUploads(g, this.spawnFxModels, uploads, fx);
   }
 
   private drawCombatFx(state: WorldState): void {

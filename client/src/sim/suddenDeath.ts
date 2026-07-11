@@ -87,6 +87,7 @@ export function stepSuddenDeathStorm(
       victimId: pid,
       damage: SUDDEN_DEATH_STORM_DPS * dtSec,
       sourceProjectileId: null,
+      attackerId: null,
     });
   }
 

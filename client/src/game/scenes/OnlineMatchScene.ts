@@ -96,14 +96,18 @@ import {
   noteDeathEvents,
   produceCombatFx,
   produceDeathFx,
+  produceDeathShards,
+  produceSpawnFx,
   setDeathFxTarget,
   PARRY_ARC,
   PARRY_RANGE,
   SHIELD_RADIUS,
   type CombatFxRenderModel,
+  type ShardRenderModel,
   type SoulRenderModel,
+  type UploadRenderModel,
 } from "../render/renderContract.js";
-import { drawDeathFx } from "../render/deathFxPainter.js";
+import { drawDeathFx, drawDeathShards, drawSpawnUploads } from "../render/deathFxPainter.js";
 import { playCardPickFeel } from "../render/CardFeel.js";
 
 // Portrait-mobile camera framing. The arena is 2:1 wide but a phone held
@@ -324,6 +328,8 @@ export class OnlineMatchScene extends Phaser.Scene {
   private deathFx: Phaser.GameObjects.Graphics | null = null;
   private readonly deathFxState = makeDeathFxState();
   private readonly deathFxModels: SoulRenderModel[] = [];
+  private readonly deathShardModels: ShardRenderModel[] = [];
+  private readonly spawnFxModels: UploadRenderModel[] = [];
   private platformLayer: PlatformLayer | null = null;
   private lightBeams: LightBeamLayer | null = null;
   private cosmicArena: CosmicArenaLayer | null = null;
@@ -1722,8 +1728,13 @@ export class OnlineMatchScene extends Phaser.Scene {
     }
     const g = this.deathFx;
     g.clear();
-    const count = produceDeathFx(state, deltaMs, this.deathFxState, this.deathFxModels);
-    if (count > 0) drawDeathFx(g, this.deathFxModels, count, getQualityProfile().fxLevel);
+    const fx = getQualityProfile().fxLevel;
+    const souls = produceDeathFx(state, deltaMs, this.deathFxState, this.deathFxModels);
+    if (souls > 0) drawDeathFx(g, this.deathFxModels, souls, fx);
+    const shards = produceDeathShards(state, deltaMs, this.deathFxState, this.deathShardModels);
+    if (shards > 0) drawDeathShards(g, this.deathShardModels, shards, fx);
+    const uploads = produceSpawnFx(state, deltaMs, this.deathFxState, this.spawnFxModels);
+    if (uploads > 0) drawSpawnUploads(g, this.spawnFxModels, uploads, fx);
   }
 
   /**

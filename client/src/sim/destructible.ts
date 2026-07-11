@@ -141,6 +141,7 @@ export function stepDestructibles(
               victimId: victim,
               damage: EXPLOSION_DAMAGE,
               sourceProjectileId: null,
+              attackerId: proj.ownerId,
             });
           }
         }

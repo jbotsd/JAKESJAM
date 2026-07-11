@@ -319,6 +319,18 @@ const RELEASE_RISE_PX = 44;
 const TRAIL_N = 12;
 /** Max simultaneous souls (pool size); oldest is recycled beyond this. */
 const SOUL_POOL = 16;
+/** Reward shards per death (Doom-style shiny pour-out, damage-homing). */
+const SHARDS_PER_DEATH = 9;
+const SHARD_POOL = 48;
+/** Free-flight time before homing locks on. */
+const SHARD_HOLD_MS = 260;
+const SHARD_MAX_MS = 2_600;
+const SHARD_ARRIVE_PX = 26;
+const SHARD_PING_MS = 300;
+const SHARD_GRAVITY = 480;
+/** Spawn-in "digital gnostic upload" duration. */
+const UPLOAD_MS = 1_150;
+const UPLOAD_POOL = 12;
 
 export type SoulRenderModel = {
   /** Soul position (world px). */
@@ -361,8 +373,38 @@ type Soul = {
   sampleAccum: number;
 };
 
+type Shard = {
+  active: boolean;
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  targetId: string;
+  ageMs: number;
+  seed: number;
+  size: number;
+  /** ageMs when the shard reached its target; -1 while in flight. */
+  arrivedAtMs: number;
+  /** Target died/left — fade out instead of homing. */
+  targetLost: boolean;
+};
+
+type Upload = {
+  active: boolean;
+  pid: string;
+  ageMs: number;
+  seed: number;
+};
+
 export type DeathFxState = {
   souls: Soul[];
+  shards: Shard[];
+  uploads: Upload[];
+  /** Damage ledger victim → attacker → total (fed by hit-confirmed). */
+  damage: Map<string, Map<string, number>>;
+  /** alive-flag memory for spawn-in detection. */
+  prevAlive: Map<string, boolean>;
+  staleScratch: string[];
   /** Center motif world position (CosmicArenaLayer's motifX/motifY). */
   motifX: number;
   motifY: number;
@@ -384,7 +426,36 @@ export function makeDeathFxState(): DeathFxState {
       sampleAccum: 0,
     });
   }
-  return { souls, motifX: 0, motifY: 0 };
+  const shards: Shard[] = [];
+  for (let i = 0; i < SHARD_POOL; i++) {
+    shards.push({
+      active: false,
+      x: 0,
+      y: 0,
+      vx: 0,
+      vy: 0,
+      targetId: "",
+      ageMs: 0,
+      seed: 0,
+      size: 1,
+      arrivedAtMs: -1,
+      targetLost: false,
+    });
+  }
+  const uploads: Upload[] = [];
+  for (let i = 0; i < UPLOAD_POOL; i++) {
+    uploads.push({ active: false, pid: "", ageMs: 0, seed: 0 });
+  }
+  return {
+    souls,
+    shards,
+    uploads,
+    damage: new Map(),
+    prevAlive: new Map(),
+    staleScratch: [],
+    motifX: 0,
+    motifY: 0,
+  };
 }
 
 /** Point the souls at the arena's center motif (map.size * 0.5). */
@@ -393,14 +464,43 @@ export function setDeathFxTarget(st: DeathFxState, x: number, y: number): void {
   st.motifY = y;
 }
 
-/** Feed this frame's sim events; births a soul per `player-killed`.
- *  The victim is still present in `state` (alive=false) at event time. */
+function idHash(id: string): number {
+  let h = 0;
+  for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) | 0;
+  return h >>> 0;
+}
+
+/**
+ * Feed this frame's sim events. `hit-confirmed` accumulates the damage
+ * ledger; `player-killed` births a soul + a burst of damage-proportional
+ * reward shards homing to the contributors; `round-end` clears the ledger.
+ * The victim is still present in `state` (alive=false) at event time.
+ */
 export function noteDeathEvents(
   state: WorldState,
-  events: ReadonlyArray<{ t: string; victimId?: string }>,
+  events: ReadonlyArray<{
+    t: string;
+    victimId?: string;
+    killerId?: string | null;
+    attackerId?: string | null;
+    damage?: number;
+  }>,
   st: DeathFxState,
 ): void {
   for (const e of events) {
+    if (e.t === "round-end") {
+      st.damage.clear();
+      continue;
+    }
+    if (e.t === "hit-confirmed" && e.victimId && e.attackerId && e.attackerId !== e.victimId) {
+      let ledger = st.damage.get(e.victimId);
+      if (!ledger) {
+        ledger = new Map();
+        st.damage.set(e.victimId, ledger);
+      }
+      ledger.set(e.attackerId, (ledger.get(e.attackerId) ?? 0) + (e.damage ?? 0));
+      continue;
+    }
     if (e.t !== "player-killed" || !e.victimId) continue;
     const victim = state.players[e.victimId as PlayerId];
     if (!victim) continue;
@@ -414,13 +514,58 @@ export function noteDeathEvents(
     soul.x0 = victim.x;
     soul.y0 = victim.y;
     // Deterministic seed: tick + a tiny id hash. Same replay → same soul.
-    let h = 0;
-    for (let i = 0; i < e.victimId.length; i++) h = (h * 31 + e.victimId.charCodeAt(i)) | 0;
-    soul.seed = ((state.tick + (h >>> 0)) % 1024) / 1024 * Math.PI * 2;
+    soul.seed = (((state.tick + idHash(e.victimId)) % 1024) / 1024) * Math.PI * 2;
     soul.ageMs = 0;
     soul.trailLen = 0;
     soul.trailHead = 0;
     soul.sampleAccum = 0;
+
+    // ── Reward shards: pour out, then lock onto the damagers ──
+    const ledger = st.damage.get(e.victimId);
+    // (attacker, cumulative-weight) list; fallback = 100% to the killer.
+    const entries: Array<[string, number]> = [];
+    let total = 0;
+    if (ledger) {
+      for (const [aid, dmg] of ledger) {
+        if (dmg <= 0) continue;
+        const alive = state.players[aid as PlayerId]?.alive;
+        if (!alive) continue;
+        total += dmg;
+        entries.push([aid, total]);
+      }
+    }
+    if (entries.length === 0 && e.killerId && e.killerId !== e.victimId) {
+      entries.push([e.killerId, 1]);
+      total = 1;
+    }
+    st.damage.delete(e.victimId);
+    if (entries.length === 0) continue; // pure environmental death: soul only
+    for (let k = 0; k < SHARDS_PER_DEATH; k++) {
+      let shard = st.shards.find((sh) => !sh.active);
+      if (!shard) shard = st.shards.reduce((a, b) => (a.ageMs >= b.ageMs ? a : b));
+      // Deterministic slot → attacker by cumulative damage share.
+      const slot = ((k + 0.5) / SHARDS_PER_DEATH) * total;
+      let target = entries[entries.length - 1]![0];
+      for (const [aid, cum] of entries) {
+        if (slot <= cum) {
+          target = aid;
+          break;
+        }
+      }
+      const a = soul.seed + (k * Math.PI * 2) / SHARDS_PER_DEATH + Math.sin(soul.seed * 5 + k) * 0.45;
+      const speed = 250 + ((k * 53) % 150);
+      shard.active = true;
+      shard.x = victim.x;
+      shard.y = victim.y - 14;
+      shard.vx = Math.cos(a) * speed;
+      shard.vy = Math.sin(a) * speed - 150;
+      shard.targetId = target;
+      shard.ageMs = 0;
+      shard.seed = soul.seed + k;
+      shard.size = 0.75 + ((k * 29) % 10) / 14;
+      shard.arrivedAtMs = -1;
+      shard.targetLost = false;
+    }
   }
 }
 
@@ -555,6 +700,173 @@ export function produceDeathFx(
     }
     m.trailHead = soul.trailHead;
     m.trailLen = soul.trailLen;
+  }
+  return n;
+}
+
+// ── Reward shards + spawn-in uploads (producers) ──────────────────────────
+
+export type ShardRenderModel = {
+  x: number;
+  y: number;
+  /** Visual scale 0.75..1.45. */
+  size: number;
+  alpha: number;
+  /** Sparkle phase (radians) — painter glints on it. */
+  glint: number;
+  /** >0 while pinging at the target (0..1 envelope). */
+  arriveT: number;
+  targetX: number;
+  targetY: number;
+};
+
+function blankShard(): ShardRenderModel {
+  return { x: 0, y: 0, size: 1, alpha: 1, glint: 0, arriveT: 0, targetX: 0, targetY: 0 };
+}
+
+/**
+ * Integrate shard flight: explosive free flight (gravity), then a homing
+ * lock onto the target's LIVE position (state lookup — deterministic in
+ * replay because the state evolution is). Arrival pings, loss fades.
+ */
+export function produceDeathShards(
+  state: WorldState,
+  deltaMs: number,
+  st: DeathFxState,
+  out: ShardRenderModel[],
+): number {
+  let n = 0;
+  const dt = Math.min(0.05, deltaMs / 1000);
+  for (const sh of st.shards) {
+    if (!sh.active) continue;
+    sh.ageMs += deltaMs;
+    if (sh.ageMs >= SHARD_MAX_MS) {
+      sh.active = false;
+      continue;
+    }
+    const target = state.players[sh.targetId as PlayerId];
+    if (!target || !target.alive) sh.targetLost = true;
+
+    let arriveT = 0;
+    if (sh.arrivedAtMs >= 0) {
+      const p = (sh.ageMs - sh.arrivedAtMs) / SHARD_PING_MS;
+      if (p >= 1) {
+        sh.active = false;
+        continue;
+      }
+      arriveT = p;
+      if (target) {
+        sh.x = target.x;
+        sh.y = target.y;
+      }
+    } else if (sh.targetLost) {
+      // No home to fly to: drift and fade.
+      sh.vy += SHARD_GRAVITY * dt * 0.4;
+      sh.x += sh.vx * dt;
+      sh.y += sh.vy * dt;
+    } else if (sh.ageMs < SHARD_HOLD_MS) {
+      sh.vy += SHARD_GRAVITY * dt;
+      sh.x += sh.vx * dt;
+      sh.y += sh.vy * dt;
+    } else if (target) {
+      // Homing: steer hard toward the live target, speed ramping with age.
+      const dx = target.x - sh.x;
+      const dy = target.y - sh.y;
+      const dist = Math.sqrt(dx * dx + dy * dy) || 1;
+      if (dist < SHARD_ARRIVE_PX) {
+        sh.arrivedAtMs = sh.ageMs;
+      } else {
+        const chase = 1400 + (sh.ageMs - SHARD_HOLD_MS) * 3;
+        sh.vx += (dx / dist) * chase * dt;
+        sh.vy += (dy / dist) * chase * dt;
+        const sp = Math.sqrt(sh.vx * sh.vx + sh.vy * sh.vy) || 1;
+        const max = 950;
+        if (sp > max) {
+          sh.vx = (sh.vx / sp) * max;
+          sh.vy = (sh.vy / sp) * max;
+        }
+        sh.x += sh.vx * dt;
+        sh.y += sh.vy * dt;
+      }
+    }
+
+    if (n >= out.length) out.push(blankShard());
+    const m = out[n]!;
+    n += 1;
+    m.x = sh.x;
+    m.y = sh.y;
+    m.size = sh.size;
+    m.alpha = sh.targetLost ? Math.max(0, 1 - (sh.ageMs - SHARD_HOLD_MS) / 500) : 1;
+    m.glint = sh.seed + sh.ageMs / 90;
+    m.arriveT = arriveT;
+    m.targetX = target?.x ?? sh.x;
+    m.targetY = target?.y ?? sh.y;
+  }
+  return n;
+}
+
+export type UploadRenderModel = {
+  x: number;
+  y: number;
+  /** 0..1 through the upload. */
+  progress: number;
+  seed: number;
+};
+
+function blankUpload(): UploadRenderModel {
+  return { x: 0, y: 0, progress: 0, seed: 0 };
+}
+
+/**
+ * Spawn-in: the "digital gnostic upload" — spirit streams into the vessel.
+ * State-driven (alive false→true, or a new player appearing alive), so it
+ * fires for round respawns, match start, and mid-match joins — and appears
+ * in replays with no event plumbing.
+ */
+export function produceSpawnFx(
+  state: WorldState,
+  deltaMs: number,
+  st: DeathFxState,
+  out: UploadRenderModel[],
+): number {
+  // Detect spawn-ins.
+  for (const pid in state.players) {
+    const p = state.players[pid as PlayerId]!;
+    const prev = st.prevAlive.get(pid);
+    if (p.alive && prev !== true) {
+      let up = st.uploads.find((u) => !u.active);
+      if (!up) up = st.uploads.reduce((a, b) => (a.ageMs >= b.ageMs ? a : b));
+      up.active = true;
+      up.pid = pid;
+      up.ageMs = 0;
+      up.seed = (((state.tick + idHash(pid)) % 1024) / 1024) * Math.PI * 2;
+    }
+    st.prevAlive.set(pid, p.alive);
+  }
+  // Prune departed players from the alive memory.
+  const stale = st.staleScratch;
+  stale.length = 0;
+  for (const pid of st.prevAlive.keys()) {
+    if (!(pid in state.players)) stale.push(pid);
+  }
+  for (const pid of stale) st.prevAlive.delete(pid);
+
+  let n = 0;
+  for (const up of st.uploads) {
+    if (!up.active) continue;
+    up.ageMs += deltaMs;
+    const p = state.players[up.pid as PlayerId];
+    if (up.ageMs >= UPLOAD_MS || !p || !p.alive) {
+      up.active = false;
+      continue;
+    }
+    if (n >= out.length) out.push(blankUpload());
+    const m = out[n]!;
+    n += 1;
+    m.x = p.x;
+    m.y = p.y;
+    m.progress = up.ageMs / UPLOAD_MS;
+    m.seed = up.seed;
   }
   return n;
 }

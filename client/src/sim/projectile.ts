@@ -404,6 +404,7 @@ function stepProjectileNative(
         victimId: hitPid,
         damage: proj.damage,
         sourceProjectileId: proj.id,
+        attackerId: proj.ownerId,
       });
       const stuck: ProjectileEntity = {
         ...proj,
@@ -741,6 +742,7 @@ function applyHitOn(
     victimId,
     damage: proj.damage,
     sourceProjectileId: proj.id,
+    attackerId: proj.ownerId,
   });
 
   if (impact === "slow-field") {
@@ -793,6 +795,7 @@ function detonateAt(
         victimId: pid,
         damage: proj.damage,
         sourceProjectileId: proj.id,
+        attackerId: proj.ownerId,
       });
       if (impact === "slow-field") {
         events.push({

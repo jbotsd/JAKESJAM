@@ -51,6 +51,7 @@ import {
   resolveClipFilename,
 } from "./clipSharePage.ts";
 import { handleOps } from "./ops.ts";
+import { ingestTelemetryBatch } from "./telemetryStore.ts";
 import {
   generatePkcePair,
   generateState,
@@ -257,6 +258,31 @@ function serveOnPort(port: number) {
         JSON.stringify(registry.summaryFor(id)),
         { headers: { "content-type": "application/json", ...corsHeaders } },
       );
+    }
+
+    // ── Sovereign telemetry ingest (docs/TELEMETRY.md) ──────────────────
+    // PRIVACY: rate-limit key is the client-chosen session UUID, NOT the
+    // ip — the remote address must never enter the telemetry path. The IP
+    // ceiling below (global 600/60s) still bounds raw abuse.
+    if (url.pathname === "/telemetry" && req.method === "POST") {
+      if ((Number(req.headers.get("content-length")) || 0) > 48 * 1024) {
+        return new Response("payload too large", { status: 413, headers: corsHeaders });
+      }
+      let payload: unknown;
+      try {
+        payload = await req.json();
+      } catch {
+        return new Response("bad json", { status: 400, headers: corsHeaders });
+      }
+      const session =
+        typeof (payload as { session?: unknown })?.session === "string"
+          ? ((payload as { session: string }).session.slice(0, 64))
+          : "anon";
+      if (!checkRateLimit(`telem:${session}`, 20, 60_000)) return RATE_LIMIT_429();
+      const stored = ingestTelemetryBatch(payload);
+      return new Response(JSON.stringify({ stored }), {
+        headers: { "content-type": "application/json", ...corsHeaders },
+      });
     }
 
     // ── Highlight clips (client/src/game/highlights/ClipRecorder.ts) ───
