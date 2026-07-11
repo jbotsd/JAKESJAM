@@ -104,6 +104,19 @@ export function installRenderResolution(game: Phaser.Game): void {
     }
   };
   window.addEventListener("resize", apply);
+  // ROTATION: on phones — especially inside the Fullscreen API — `resize`
+  // can fire with stale innerWidth/innerHeight or not at all. Listen to
+  // the orientation + visualViewport channels too, and re-apply on a
+  // settle delay (Android Chrome reports the new size up to ~300ms late).
+  const applySettled = (): void => {
+    apply();
+    setTimeout(apply, 120);
+    setTimeout(apply, 400);
+  };
+  window.addEventListener("orientationchange", applySettled);
+  screen.orientation?.addEventListener?.("change", applySettled);
+  window.visualViewport?.addEventListener("resize", apply);
+  document.addEventListener("fullscreenchange", applySettled);
   // Some mobile browsers settle innerWidth/innerHeight a tick after load
   // (URL bar collapse) — one deferred pass catches that.
   setTimeout(apply, 0);
