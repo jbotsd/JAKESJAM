@@ -2306,8 +2306,13 @@ export class OnlineMatchScene extends Phaser.Scene {
     // (2026-07-10): in-combat software encode dragged VideoCore from
     // playable to ~10fps. Pillar 4's whole design is that weak devices get
     // their highlights from the server-side replay renderer instead.
-    if (getQualityProfile().tier === "potato") {
-      console.log("[clips] potato tier — capture disabled (replay renderer covers highlights)");
+    const tier = getQualityProfile().tier;
+    if (tier === "potato" || tier === "phone") {
+      // Weak devices never encode: the HOST renders their highlights from
+      // the deterministic replay (clipRenderQueue) at full quality — "the
+      // host renders the clip and that is what gets used". Clips appear in
+      // the Clips gallery (/clips/recent) after the match.
+      console.log(`[clips] ${tier} tier — client capture off (host renders highlights)`);
       return;
     }
     this.highlightTracker = new HighlightTracker();

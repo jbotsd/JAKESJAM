@@ -170,6 +170,7 @@ export class ShellController {
         ? "No clips this session yet. Tap Save clip now (in Hot Lobby), or land a multi-kill / parry-kill / chain."
         : "Clips are off. Tap Save clip now (turns on + captures) or enable Auto-clip in Settings.";
       root.appendChild(empty);
+      this.appendRecentClips(root);
       return;
     }
     for (const row of pairs) {
@@ -206,6 +207,48 @@ export class ShellController {
       item.append(title, actions);
       root.appendChild(item);
     }
+    this.appendRecentClips(root);
+  }
+
+  /**
+   * Match highlights rendered by the HOST (clipRenderQueue) + everyone's
+   * recent uploads — the server-side half of the gallery. This is how a
+   * phone player finds their full-quality clip: their device never
+   * rendered or encoded it (pillar 4's end state).
+   */
+  private appendRecentClips(root: HTMLElement): void {
+    void fetch("/clips/recent")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data: { clips?: Array<{ id: string; url: string; mtimeMs: number }> } | null) => {
+        const clips = data?.clips ?? [];
+        if (clips.length === 0) return;
+        const heading = document.createElement("h3");
+        heading.className = "shell-clips-recent-heading";
+        heading.textContent = "Match highlights (rendered by the arena)";
+        root.appendChild(heading);
+        for (const c of clips.slice(0, 12)) {
+          const item = document.createElement("div");
+          item.className = "shell-clip-row";
+          const title = document.createElement("div");
+          title.className = "shell-clip-title";
+          const age = Math.max(0, Date.now() - c.mtimeMs);
+          const mins = Math.round(age / 60_000);
+          title.textContent = mins < 1 ? "Just now" : mins < 60 ? `${mins}m ago` : `${Math.round(mins / 60)}h ago`;
+          const actions = document.createElement("div");
+          actions.className = "shell-clip-actions";
+          actions.append(
+            makeAction("Watch", () => window.open(c.url, "_blank", "noopener")),
+            makeAction("Copy", () =>
+              void navigator.clipboard?.writeText(new URL(c.url, window.location.origin).toString()),
+            ),
+          );
+          item.append(title, actions);
+          root.appendChild(item);
+        }
+      })
+      .catch(() => {
+        // Offline / server old — session clips alone are fine.
+      });
   }
 }
 

@@ -296,7 +296,7 @@ function serveOnPort(port: number) {
         .filter((c) => c.ext === "mp4" || c.ext === "webm")
         .sort((a, b) => b.mtimeMs - a.mtimeMs)
         .slice(0, 24)
-        .map((c) => ({ id: c.id, url: `/c/${c.id}`, mediaUrl: c.path, mtimeMs: c.mtimeMs }));
+        .map((c) => ({ id: c.id, url: `/c/${c.id}`, mediaUrl: `/v/${c.id}.${c.ext}`, mtimeMs: c.mtimeMs }));
       return new Response(JSON.stringify({ clips: recent }), {
         headers: {
           "content-type": "application/json",
