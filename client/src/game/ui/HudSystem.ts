@@ -49,6 +49,9 @@ export type HudVitals = {
   /** Card ids in pick order — drives the build-summary pill grid. */
   cardIds?: string[];
   isDead: boolean;
+  /** Standing outside the storm-zone boundary — the answer to "why am I
+   *  taking damage with no explanation" (Jake, 2026-07-11). */
+  outsideStorm?: boolean;
 };
 
 export type HudRound = {
@@ -148,6 +151,10 @@ export class HudSystem {
   private vignette!: Phaser.GameObjects.Rectangle;
   private vignetteTween?: Phaser.Tweens.Tween;
   private vignetteActive = false;
+  private stormVignette!: Phaser.GameObjects.Rectangle;
+  private stormVignetteTween?: Phaser.Tweens.Tween;
+  private stormVignetteActive = false;
+  private stormWarningText!: Phaser.GameObjects.Text;
 
   // Phone-width compact layout (decided once at build; phones don't grow).
   private compact = false;
@@ -172,6 +179,7 @@ export class HudSystem {
     this.updateVitals(vitals);
     this.updateTopCenter(round);
     this.updateVignette(vitals);
+    this.updateStormWarning(vitals);
   }
 
   destroy(): void {
@@ -210,6 +218,30 @@ export class HudSystem {
       .setScrollFactor(0)
       .setDepth(depth - 1)
       .setBlendMode(Phaser.BlendModes.MULTIPLY);
+
+    // Storm warning glow — ADD (not MULTIPLY) so it reads as a warm
+    // encroaching light rather than another darkening layer; distinct from
+    // the low-health vignette so the two causes never look the same.
+    this.stormVignette = s.add
+      .rectangle(0, 0, uiWidth(s), uiHeight(s), 0xffd166, 0)
+      .setOrigin(0, 0)
+      .setScrollFactor(0)
+      .setDepth(depth - 1)
+      .setBlendMode(Phaser.BlendModes.ADD);
+
+    this.stormWarningText = s.add
+      .text(uiWidth(s) / 2, this.compact ? 62 : 58, "OUTSIDE THE SEAL", {
+        fontFamily: "'Space Mono', Consolas, 'Courier New', monospace",
+        fontSize: this.compact ? "11px" : "13px",
+        fontStyle: "bold",
+        color: "#ffd166",
+        stroke: "#05080f",
+        strokeThickness: 3,
+      })
+      .setOrigin(0.5, 0)
+      .setScrollFactor(0)
+      .setDepth(depth + 2)
+      .setAlpha(0);
 
     // Vital bars (redrawn each frame)
     this.vitalGraphics = s.add.graphics();
@@ -480,6 +512,32 @@ export class HudSystem {
       this.vignetteTween?.stop();
       this.vignetteTween = undefined;
       this.vignette.setAlpha(0);
+    }
+  }
+
+  /** "Why am I dying?" — the storm-zone answer, always on screen while it
+   *  applies (2026-07-11: the boundary itself was invisible before this
+   *  pass; this is the belt to the world-space ring's suspenders). */
+  private updateStormWarning(v: HudVitals): void {
+    const outside = Boolean(v.outsideStorm) && !v.isDead;
+    if (outside && !this.stormVignetteActive) {
+      this.stormVignetteActive = true;
+      this.stormVignetteTween?.stop();
+      this.stormVignetteTween = this.scene.tweens.add({
+        targets: this.stormVignette,
+        alpha: 0.16,
+        duration: 420,
+        yoyo: true,
+        repeat: -1,
+        ease: "Sine.easeInOut",
+      });
+      this.stormWarningText.setAlpha(1);
+    } else if (!outside && this.stormVignetteActive) {
+      this.stormVignetteActive = false;
+      this.stormVignetteTween?.stop();
+      this.stormVignetteTween = undefined;
+      this.stormVignette.setAlpha(0);
+      this.stormWarningText.setAlpha(0);
     }
   }
 

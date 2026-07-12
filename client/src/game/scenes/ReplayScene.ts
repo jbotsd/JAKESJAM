@@ -43,11 +43,13 @@ import { ParticlePool } from "../systems/ParticlePool";
 import {
   makeCombatFxState,
   makeDeathFxState,
+  makeStormZoneModel,
   noteDeathEvents,
   produceCombatFx,
   produceDeathFx,
   produceDeathShards,
   produceSpawnFx,
+  produceStormZone,
   setDeathFxTarget,
   PARRY_ARC,
   PARRY_RANGE,
@@ -58,6 +60,7 @@ import {
   type UploadRenderModel,
 } from "../render/renderContract";
 import { drawDeathFx, drawDeathShards, drawSpawnUploads } from "../render/deathFxPainter";
+import { drawStormZone } from "../render/stormZonePainter";
 import { drawPlayerPresence } from "../render/presencePainter";
 import { getQualityProfile } from "../render/qualityProfile";
 import {
@@ -122,6 +125,8 @@ export class ReplayScene extends Phaser.Scene {
   private readonly combatFxState = makeCombatFxState();
   private readonly combatFxModels: CombatFxRenderModel[] = [];
   private presence: Phaser.GameObjects.Graphics | null = null;
+  private stormZone: Phaser.GameObjects.Graphics | null = null;
+  private readonly stormZoneModel = makeStormZoneModel();
   /** Soul-return death sequences — SAME producer+painter as live play. */
   private deathFx: Phaser.GameObjects.Graphics | null = null;
   private readonly deathFxState = makeDeathFxState();
@@ -350,6 +355,11 @@ export class ReplayScene extends Phaser.Scene {
         this.rigs.delete(pid);
       }
     }
+
+    if (!this.stormZone) this.stormZone = this.add.graphics().setDepth(8);
+    this.stormZone.clear();
+    produceStormZone(state, this.map.size, this.stormZoneModel);
+    drawStormZone(this.stormZone, this.stormZoneModel, state.tick, 2);
 
     if (!this.presence) this.presence = this.add.graphics().setDepth(11.5);
     this.presence.clear();

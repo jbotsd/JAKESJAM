@@ -21,6 +21,7 @@ import type {
   ProjectileShape,
   WorldState,
 } from "../../sim/types";
+import { computeStormZone } from "../../sim/suddenDeath.js";
 
 /** Everything a painter needs to draw one projectile. */
 export type ProjectileRenderModel = {
@@ -877,4 +878,43 @@ export function produceSpawnFx(
     m.seed = up.seed;
   }
   return n;
+}
+
+// ── Storm zone (the shrinking safe circle) ──────────────────────────────
+//
+// Jake, 2026-07-11: "the big circle... invisible... you just start dying
+// with no explanation." computeStormZone (sim/suddenDeath.ts) is the SAME
+// pure geometry that damages players — this producer wraps it as a render
+// model so the boundary drawn is bit-identical to the one that hurts you,
+// in every context (live, phone, replay clips).
+
+export type StormZoneRenderModel = {
+  active: boolean;
+  centerX: number;
+  centerY: number;
+  radius: number;
+  /** 1.0 = full arena (safe) → shrinks toward the mechanic's end scale. */
+  scale: number;
+  kind: "endgame" | "sudden-death";
+};
+
+export function makeStormZoneModel(): StormZoneRenderModel {
+  return { active: false, centerX: 0, centerY: 0, radius: 0, scale: 1, kind: "endgame" };
+}
+
+/** Fills `out` in place (single model, no pool — one zone exists at most). */
+export function produceStormZone(
+  state: WorldState,
+  mapSize: { x: number; y: number },
+  out: StormZoneRenderModel,
+): void {
+  const zone = computeStormZone(state.round, mapSize);
+  out.active = zone !== null;
+  if (zone) {
+    out.centerX = zone.centerX;
+    out.centerY = zone.centerY;
+    out.radius = zone.radius;
+    out.scale = zone.scale;
+    out.kind = zone.kind;
+  }
 }

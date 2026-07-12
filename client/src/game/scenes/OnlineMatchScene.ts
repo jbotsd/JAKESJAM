@@ -93,11 +93,13 @@ import { autoWallHopKeys, makeAutoHopState } from "../input/autoWallHop.js";
 import {
   makeCombatFxState,
   makeDeathFxState,
+  makeStormZoneModel,
   noteDeathEvents,
   produceCombatFx,
   produceDeathFx,
   produceDeathShards,
   produceSpawnFx,
+  produceStormZone,
   setDeathFxTarget,
   PARRY_ARC,
   PARRY_RANGE,
@@ -108,6 +110,7 @@ import {
   type UploadRenderModel,
 } from "../render/renderContract.js";
 import { drawDeathFx, drawDeathShards, drawSpawnUploads } from "../render/deathFxPainter.js";
+import { drawStormZone } from "../render/stormZonePainter.js";
 import { crumb, record } from "../../telemetry.js";
 import { drawPlayerPresence } from "../render/presencePainter.js";
 import { announce } from "../audio/AnnouncerSystem.js";
@@ -339,6 +342,10 @@ export class OnlineMatchScene extends Phaser.Scene {
   private readonly combatFxModels: CombatFxRenderModel[] = [];
   /** Figure-ground presence layer (gestalt pass; see presencePainter). */
   private presence: Phaser.GameObjects.Graphics | null = null;
+  /** The shrinking safe-zone boundary — was drawn nowhere before 2026-07-11
+   *  (Jake: "you just start dying and there is no explanation for it"). */
+  private stormZone: Phaser.GameObjects.Graphics | null = null;
+  private readonly stormZoneModel = makeStormZoneModel();
   /** Soul-return death sequences (contract producer; see deathFxPainter). */
   private deathFx: Phaser.GameObjects.Graphics | null = null;
   private readonly deathFxState = makeDeathFxState();
@@ -704,7 +711,7 @@ export class OnlineMatchScene extends Phaser.Scene {
           ["WASD  move", "SPACE  jump"],
           ["MOUSE  aim & fire"],
           // Shift = hold-to-shield (InputBit.Shield); right mouse (or C) = the
-          // aegis shield power-slide bash (InputBit.Dash).
+          // dash-bash shield power-slide (InputBit.Dash).
           ["SHIFT  shield", "RIGHT CLICK  shield dash"],
         ];
     const STAGE_GAP_MS = 900;
@@ -777,7 +784,7 @@ export class OnlineMatchScene extends Phaser.Scene {
     // Shield power-slide bash on RIGHT MOUSE (aimable — slides toward the
     // cursor, blocks on the way in, bashes on contact). C stays as a keyboard
     // alternate. The old timed parry (InputBit.Ability) is subsumed by the
-    // aegis shield-dash and is no longer bound.
+    // dash-bash and is no longer bound.
     if (this.keys.dash.isDown || this.input.activePointer.rightButtonDown()) {
       keys |= InputBit.Dash;
     }
@@ -943,6 +950,16 @@ export class OnlineMatchScene extends Phaser.Scene {
       }
     }
 
+    // Outside the storm boundary right now? Reuses this frame's
+    // stormZoneModel (produced earlier in renderWorld) — zero extra work,
+    // and it's the exact geometry that's damaging the player.
+    let outsideStorm = false;
+    if (local && this.stormZoneModel.active) {
+      const dx = local.x - this.stormZoneModel.centerX;
+      const dy = local.y - this.stormZoneModel.centerY;
+      outsideStorm = dx * dx + dy * dy > this.stormZoneModel.radius * this.stormZoneModel.radius;
+    }
+
     const vitals: HudVitals = {
       health: local?.health ?? 0,
       maxHealth,
@@ -953,6 +970,7 @@ export class OnlineMatchScene extends Phaser.Scene {
       // bar was rendering a meaningless frozen "125%" forever.
       chips,
       isDead: !local || local.health <= 0 || !local.alive,
+      outsideStorm,
     };
 
     const scores = state.round.scores;
@@ -1775,6 +1793,13 @@ export class OnlineMatchScene extends Phaser.Scene {
       }
     }
 
+    if (this.currentMap) {
+      if (!this.stormZone) this.stormZone = this.add.graphics().setDepth(8);
+      this.stormZone.clear();
+      produceStormZone(state, this.currentMap.size, this.stormZoneModel);
+      drawStormZone(this.stormZone, this.stormZoneModel, state.tick, getQualityProfile().fxLevel);
+    }
+
     if (!this.presence) this.presence = this.add.graphics().setDepth(11.5);
     this.presence.clear();
     drawPlayerPresence(this.presence, state, this.localPlayerId, getQualityProfile().fxLevel);
@@ -2366,7 +2391,10 @@ export class OnlineMatchScene extends Phaser.Scene {
   }
 
   private setStatus(message: string) {
-    if (this.statusText) {
+    // `.scene` goes undefined once the Text is destroyed — a truthy check
+    // alone let late WebSocket callbacks setText() into a dead canvas
+    // (telemetry sig ulnt5l: null.drawImage via updateText after leave).
+    if (this.statusText?.scene) {
       this.statusText.setText(message);
       this.statusText.setVisible(message.length > 0);
     }
@@ -2461,6 +2489,10 @@ export class OnlineMatchScene extends Phaser.Scene {
   }
 
   private teardown() {
+    // Drop the status Text reference FIRST: late WebSocket/reconnect
+    // callbacks route through setStatus, and the destroyed Text must not
+    // be reachable (sig ulnt5l).
+    this.statusText = null;
     this.scale.off("resize", this.repositionHud, this);
     this.scale.off("resize", this.applyMobileCamera, this);
     document.removeEventListener("visibilitychange", this.onVisibilityResume);
