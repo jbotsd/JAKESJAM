@@ -70,6 +70,11 @@ export function record(ev: TelemetryEvent): void {
 
 /** Convenience: record an error-kind event with the crumb ring attached. */
 export function recordError(source: string, message: string, stack?: string): void {
+  // Browser-extension noise (wallets fighting over window.ethereum, etc.)
+  // is not ours to fix and burns the per-session event budget.
+  if (stack?.includes("chrome-extension://") || stack?.includes("moz-extension://")) {
+    return;
+  }
   crumb("error", message.slice(0, 120));
   record({
     kind: "error",
@@ -155,6 +160,9 @@ export function installTelemetry(deps: {
   touch: boolean;
 }): void {
   if (installed) return;
+  // Automation hygiene: headless/driven browsers (screenshot runs, e2e
+  // probes) must not pollute the error pipeline with software-GL noise.
+  if (typeof navigator !== "undefined" && navigator.webdriver) return;
   installed = true;
   bootAtMs = performance.now();
 

@@ -85,6 +85,12 @@ export function uiHeight(scene: Phaser.Scene): number {
 export function setRenderScaleRuntime(game: Phaser.Game, scale: number): void {
   const next = Math.min(MAX_SCALE, Math.max(MIN_SCALE, scale));
   if (cachedScale !== null && Math.abs(next - cachedScale) < 0.001) return;
+  // DIAGNOSTIC (camera-skew investigation): every governor-triggered
+  // rescale, timestamped, so a DevTools console log can be correlated
+  // against clip-recording timing. Cheap — remove once root-caused.
+  console.log(
+    `[diag:governor] rescale ${(cachedScale ?? 1).toFixed(3)} → ${next.toFixed(3)} at t=${performance.now().toFixed(0)}ms`,
+  );
   cachedScale = next;
   game.scale.setZoom(1 / next);
   const { width, height } = backingSize();
@@ -100,6 +106,12 @@ export function installRenderResolution(game: Phaser.Game): void {
   const apply = (): void => {
     const { width, height } = backingSize();
     if (game.scale.width !== width || game.scale.height !== height) {
+      // DIAGNOSTIC (camera-skew investigation): every actual backing-store
+      // resize, with old/new size and what triggered the pass. Cheap —
+      // remove once root-caused.
+      console.log(
+        `[diag:resize] ${game.scale.width}x${game.scale.height} → ${width}x${height} at t=${performance.now().toFixed(0)}ms`,
+      );
       game.scale.resize(width, height);
     }
   };

@@ -2137,6 +2137,25 @@ export class OnlineMatchScene extends Phaser.Scene {
   private followLocalPlayer(state: WorldState, deltaMs: number) {
     const local = state.players[this.localPlayerId];
     if (!local) return;
+
+    // ROUND-START ALIGNMENT: CosmicArenaLayer bakes its seal/rings ONCE at
+    // a fixed worldW*0.5, worldH*0.5 anchor (same point deathFx souls fly
+    // to — see renderArena) and never redraws them. During "countdown",
+    // players aren't "alive" fighters yet, so the extras-within-1100px
+    // centroid below has nothing to track and the camera instead anchors
+    // on the local player's raw spawn point — which visibly disagrees with
+    // the seal's fixed center. Snap once on the countdown transition so
+    // camera and backdrop agree for exactly the window they'd otherwise
+    // briefly fight (this.prevRoundPhase is read here, before
+    // updateHudSystem — called later this same frame — advances it).
+    if (
+      this.prevRoundPhase !== "countdown" &&
+      state.round.phase === "countdown" &&
+      this.currentMap
+    ) {
+      this.actionCamera.snap(this.currentMap.size.x * 0.5, this.currentMap.size.y * 0.5);
+    }
+
     // Portrait mobile: bias the player above screen centre so the bottom
     // control band doesn't cover them (centre the camera BELOW the player).
     const yBias = isPortraitMobile() ? PORTRAIT_CAM_Y_BIAS : 0;
@@ -2285,6 +2304,19 @@ export class OnlineMatchScene extends Phaser.Scene {
         ? TOUCH_LANDSCAPE_CAM_ZOOM
         : DESKTOP_CAM_ZOOM;
     const zoom = base * getRenderScale();
+    // DIAGNOSTIC (camera-skew investigation): every time this fires, with
+    // the zoom it's about to apply and the camera/canvas state at that
+    // instant — the ActionCamera only EASES toward baseZoom over time
+    // (envelopeZoom lerp, see ActionCamera.setBaseZoom), so if this fires
+    // again mid-transition (e.g. during a punch-zoom) there's a real
+    // window for camera state and canvas size to be transiently out of
+    // sync. Cheap — remove once root-caused.
+    console.log(
+      `[diag:camera] applyMobileCamera at t=${performance.now().toFixed(0)}ms — zoom→${zoom.toFixed(3)}, ` +
+        `canvas=${this.scale.width}x${this.scale.height}, cam=${this.cameras.main.width}x${this.cameras.main.height} ` +
+        `scroll=(${this.cameras.main.scrollX.toFixed(0)},${this.cameras.main.scrollY.toFixed(0)}) ` +
+        `currentZoom=${this.cameras.main.zoom.toFixed(3)}`,
+    );
     // Route through the ActionCamera so its punch-zoom returns to this base.
     // Guarded because applyMobileCamera also fires once in create() before
     // the ActionCamera exists (resize listener); the direct setZoom covers

@@ -1,7 +1,7 @@
 {
   "name": "JAKESJAM",
   "short_name": "JAKESJAM",
-  "description": "Crystal-tech arena brawler. Draft between rounds. Spawn in seconds.",
+  "description": "Ten space wizard ninjas, one arena, zero downloads. The ultimate 1v1-me destination.",
   "start_url": "/?world=1&source=pwa",
   "display": "fullscreen",
   "orientation": "any",

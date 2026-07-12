@@ -6,7 +6,7 @@
 //   - They play the CURRENT maps: full floor, cover pylons, hop plates
 //     (map-aware via botArenaNav — not blind stuck-jump only).
 //   - Combat: approach, cover peek, lead shots, LOS-gated fire, parry,
-//     shield, retreat, draft picks, tiered aegis-slide.
+//     shield, retreat, draft picks, tiered dash-bash slide.
 //   - Humanized: reaction delay + aim error; FTUE grace on fresh humans.
 //
 // Inputs go through MatchHost.injectInput (same queue as WS clients).

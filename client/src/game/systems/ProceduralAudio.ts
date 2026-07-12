@@ -768,7 +768,7 @@ export class ProceduralAudio {
     ret.stop(clangT + 0.24);
   }
 
-  /** The aegis power-slide launch: a short air-cut whoosh. Band-passed noise
+  /** The dash-bash power-slide launch: a short air-cut whoosh. Band-passed noise
    *  whose center sweeps up fast then falls away — cloth-through-air, not an
    *  engine. Quiet by design: the slide fires often, so the cue must read
    *  without fatiguing (same restraint as jump/land). */

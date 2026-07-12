@@ -120,7 +120,7 @@ function configView(cards: string[]): DataView {
 describe("cutover gate — card augments reach the Zig orchestrator's config", () => {
   test("struct size matches the 240B extended ResolvedFireConfig", () => {
     const ex = __getCachedEx()! as unknown as { sizeof_resolved_fire_config: () => number };
-    // 232 + dash_cooldown_mul (Quick Parry, repurposed onto the aegis slide).
+    // 232 + dash_cooldown_mul (Quick Parry, repurposed onto the dash-bash slide).
     expect(ex.sizeof_resolved_fire_config()).toBe(240);
   });
 

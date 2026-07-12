@@ -7,7 +7,7 @@
 //   - RIGHT thumb → floating AIM+FIRE stick. Drag sets aim direction and
 //     fires while held (twin-stick auto-fire — the smoothest mobile aim).
 //   - Two thumb buttons bottom-centre → SHIELD (hold) and DASH. The DASH
-//     button is a tiny joystick: drag it and the aegis dash fires in the
+//     button is a tiny joystick: drag it and the dash bash fires in the
 //     drag direction the moment it crosses the trigger (fully analog, the
 //     same any-angle freedom as desktop mouse dash); a plain tap dashes in
 //     the move-stick direction.
@@ -188,7 +188,7 @@ export class TouchControls {
       }
     }
     if (this.shieldPointer !== null) keys |= InputBit.Shield;
-    // Aegis dash (same bit as desktop right-click/C). The bit rises only
+    // Dash bash (same bit as desktop right-click/C). The bit rises only
     // once a direction is known: the mini-stick drag crossed the trigger
     // (dashDir carries it), the press turned into a clear HOLD (dashDir
     // null → move-direction fallback), or the tap pulse is live. Never on

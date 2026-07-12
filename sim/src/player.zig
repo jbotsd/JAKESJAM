@@ -10,7 +10,8 @@ const std = @import("std");
 const collision = @import("collision.zig");
 
 // ── Constants (mirror player.ts `M`) ──────────────────────────────────────
-const MAX_GROUND_SPEED: f64 = 330.0;
+// 330 → 362 (2026-07-12): mirrors player.ts maxGroundSpeed — keep in sync.
+const MAX_GROUND_SPEED: f64 = 362.0;
 const GROUND_ACCELERATION: f64 = 2700.0;
 const AIR_ACCELERATION: f64 = 2050.0;
 const GROUND_FRICTION: f64 = 3600.0;
@@ -41,6 +42,9 @@ const WALL_POWER_SLIDE_VX: f64 = 690.0;
 const WALL_RESTITUTION: f64 = 0.5;
 // Deep-movement augment constants (mirror player.ts).
 const DASH_SPEED: f64 = 940.0;
+/// Mid-dash steering lerp rate (per second) — mirrors player.ts
+/// DASH_STEER_LERP_PER_SEC. Keep in sync.
+const DASH_STEER_LERP_PER_SEC: f64 = 9.0;
 const DASH_COOLDOWN_MS: f64 = 520.0;
 const DASH_DURATION_MS: f64 = 210.0;
 const DASH_RECOVERY_MS: f64 = 200.0;
@@ -237,7 +241,7 @@ pub fn stepPlayer(
         if (wants_crouch) {
             s.vy = WALL_POWER_SLIDE_VY * s.wall_jump_mul;
             s.vx = -wall_dir * WALL_POWER_SLIDE_VX;
-            // INTEGRATION: the wall power-slide IS an aegis slide — mark it
+            // INTEGRATION: the wall power-slide IS an dash-bash slide — mark it
             // dash-active so it inherits the shield reflect + bash + arc +
             // flat carry via the same `dashing` gate. Mirrors player.ts.
             s.dash_active_ms = DASH_DURATION_MS;
@@ -284,6 +288,29 @@ pub fn stepPlayer(
         GRAVITY) * gravity_mul;
     if (!dash_active) {
         s.vy = @min(MAX_FALL_SPEED, s.vy + gravity_now * dt_sec);
+    } else {
+        // MID-DASH STEERING: while the burst is live, the lunge CURVES
+        // toward the current aim. Trig-free (unit-vector lerp + renormalize:
+        // only +-*/ and sqrt, IEEE-exact) for bit parity with player.ts —
+        // MIRRORS the `else` branch of the same gravity gate there.
+        const dash_speed = @sqrt(s.vx * s.vx + s.vy * s.vy);
+        const adx = aim_x - s.x;
+        const ady = aim_y - s.y;
+        const aim_len = @sqrt(adx * adx + ady * ady);
+        if (dash_speed > 1.0 and aim_len > 1e-3) {
+            const ux = s.vx / dash_speed;
+            const uy = s.vy / dash_speed;
+            const tx = adx / aim_len;
+            const ty = ady / aim_len;
+            const k = @min(1.0, DASH_STEER_LERP_PER_SEC * dt_sec);
+            const nx = ux + (tx - ux) * k;
+            const ny = uy + (ty - uy) * k;
+            const nl = @sqrt(nx * nx + ny * ny);
+            if (nl > 1e-6) {
+                s.vx = (nx / nl) * dash_speed;
+                s.vy = (ny / nl) * dash_speed;
+            }
+        }
     }
 
     // Grippy wall-slide / latch (Warframe/SMB): pressing INTO the wall while
@@ -293,7 +320,7 @@ pub fn stepPlayer(
         s.vy = @min(s.vy, WALL_SLIDE_MAX_FALL * s.wall_slide_mul);
     }
 
-    // AEGIS DASH (card): aim-directional shielded lunge on the Dash input.
+    // DASH BASH (card): aim-directional shielded lunge on the Dash input.
     // Ground dash always on cooldown; air dashes limited to dash_charges.
     // Direction = the AIM vector (8-way, incl. up/diagonal and off walls).
     // Mirrors player.ts byte-for-byte.

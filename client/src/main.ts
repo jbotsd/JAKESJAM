@@ -31,6 +31,9 @@ import {
   setClipsEnabled,
 } from "./game/highlights/clipConsent";
 import { ShellController } from "./shell/ShellController";
+import { installEmailGate } from "./shell/emailGate";
+import { installIdentShader } from "./shell/identShader";
+import { getAudioUrl } from "./game/audio/audioUrl";
 import {
   emitClipSaveNow,
   emitClipsConsentChanged,
@@ -120,6 +123,13 @@ if (!app) {
 // Chromium --app= + Hyprland fullscreen already hide OS/browser chrome.
 // ?kiosk=1 tightens the web surface: no cursor idle noise, Fullscreen API,
 // canvas edge-to-edge. Used by stream-kit/launch-game-kiosk.sh.
+// ?ui=instant — skip title-screen animations (dev/screenshot hook).
+try {
+  if (new URLSearchParams(window.location.search).get("ui") === "instant") {
+    document.documentElement.classList.add("ui-instant");
+  }
+} catch { /* ignore */ }
+
 const isKioskMode = (() => {
   try {
     return new URLSearchParams(window.location.search).get("kiosk") === "1";
@@ -162,9 +172,87 @@ if (isKioskMode) {
 
 app.innerHTML = `
   <section class="splash-screen" data-splash data-shell-home>
+    <video
+      class="splash-bg-video"
+      src="/video/splash-loop.mp4"
+      autoplay
+      muted
+      loop
+      playsinline
+      aria-hidden="true"
+    ></video>
+    <div class="splash-crt" aria-hidden="true"></div>
+    <div class="boot-gate" data-boot-gate>
+      <img class="boot-gate-sigil" src="/img/seal-gnostic.png" alt="" />
+      <p class="boot-gate-line">CLICK TO INITIATE</p>
+    </div>
+    <div class="boot-ident" data-boot-ident hidden aria-hidden="true">
+      <div class="boot-ident-rays" data-ident-rays-glow></div>
+      <canvas class="ident-shader" data-ident-shader aria-hidden="true"></canvas>
+      <div class="ident-quake" data-ident-quake>
+      <svg class="ident-seal" viewBox="0 0 1000 1000" fill="none" aria-hidden="true">
+        <defs>
+          <linearGradient id="liqGold" x1="0%" y1="0%" x2="100%" y2="100%">
+            <stop offset="0%" stop-color="#8a6a2a" />
+            <stop offset="45%" stop-color="#c9a84c" />
+            <stop offset="52%" stop-color="#ffedb0" />
+            <stop offset="60%" stop-color="#c9a84c" />
+            <stop offset="100%" stop-color="#7a5c22" />
+            <animateTransform attributeName="gradientTransform" type="rotate"
+              from="0 0.5 0.5" to="360 0.5 0.5" dur="9s" repeatCount="indefinite" />
+          </linearGradient>
+          <linearGradient id="liqTeal" x1="0%" y1="0%" x2="100%" y2="0%">
+            <stop offset="0%" stop-color="#2e8f7a" />
+            <stop offset="48%" stop-color="#7fe8d8" />
+            <stop offset="54%" stop-color="#d8fff6" />
+            <stop offset="62%" stop-color="#50e3c2" />
+            <stop offset="100%" stop-color="#2e8f7a" />
+            <animateTransform attributeName="gradientTransform" type="rotate"
+              from="360 0.5 0.5" to="0 0.5 0.5" dur="6s" repeatCount="indefinite" />
+          </linearGradient>
+        </defs>
+        <g class="is-hebdomad">
+          <circle class="is-h is-h1" cx="500" cy="500" r="95" />
+          <circle class="is-h is-h2" cx="500" cy="500" r="128" />
+          <circle class="is-h is-h3" cx="500" cy="500" r="160" />
+          <circle class="is-h is-h4" cx="500" cy="500" r="196" />
+          <circle class="is-h is-h5" cx="500" cy="500" r="238" />
+          <circle class="is-h is-h6" cx="500" cy="500" r="286" />
+          <circle class="is-h is-h7" cx="500" cy="500" r="340" />
+        </g>
+        <path class="is-boundary" d="M 545.9 11.6 A 490 490 0 1 1 454.1 11.6" />
+        <line class="is-radius" x1="500" y1="500" x2="500" y2="10" />
+        <circle class="is-dot" cx="500" cy="500" r="8" />
+        <polygon class="is-tri" points="500,160 794.4,670 205.6,670" />
+        <circle class="is-tri-loop" cx="794.4" cy="670" r="16" />
+        <g class="is-ticks" data-ident-ticks></g>
+        <g class="is-vowels" data-ident-vowels></g>
+        <g class="is-rays" data-ident-rays></g>
+        <g class="is-diamonds">
+          <polygon points="500,-8 520,12 500,32 480,12" />
+          <polygon points="1008,480 1028,500 1008,520 988,500" />
+          <polygon points="500,968 520,988 500,1008 480,988" />
+          <polygon points="-8,480 12,500 -8,520 -28,500" />
+        </g>
+      </svg>
+      <div class="ident-glow" data-ident-glow aria-hidden="true"></div>
+      <div class="ident-pulse" data-ident-pulse aria-hidden="true"></div>
+      <img class="ident-shimmer" data-ident-shimmer src="/img/seal-gnostic.png" alt="" aria-hidden="true" />
+      <p class="ident-name">JAKESJAM</p>
+      <img class="ident-ca ident-ca-r" src="/img/logo-jakesjam-gothic.png" alt="" aria-hidden="true" />
+      <img class="ident-ca ident-ca-c" src="/img/logo-jakesjam-gothic.png" alt="" aria-hidden="true" />
+      <img class="ident-logo" src="/img/logo-jakesjam-gothic.png" alt="" />
+      <img class="ident-plate" src="/img/logo-intrepid-gothic.png" alt="" />
+      </div>
+      <p class="ident-skip-hint">press any key to skip</p>
+      <div class="boot-ident-flash"></div>
+      <div class="ident-bridge" data-ident-bridge aria-hidden="true"></div>
+    </div>
     <div class="splash-stage">
-      <p class="splash-kicker">ELYAD</p>
-      <h1>JAKESJAM</h1>
+      <p class="splash-kicker splash-kicker--studio">INTREPID DEVELOPMENT PRESENTS</p>
+      <h1 class="splash-title">
+        <img class="splash-logo" src="/img/logo-jakesjam-gothic.png" alt="JAKESJAM" />
+      </h1>
       <p class="splash-copy">Crystal-tech arena. Draft between rounds. Spawn in seconds.</p>
       <div class="splash-name">
         <label for="jj-name" class="splash-name-label">CALLSIGN</label>
@@ -187,8 +275,14 @@ app.innerHTML = `
         <button data-menu-join type="button" class="shell-btn-secondary">Join room</button>
         <button data-menu-clips type="button" class="shell-btn-secondary">Clips</button>
         <button data-menu-options type="button" class="shell-btn-secondary">Settings</button>
+        <button data-menu-intro type="button" class="shell-btn-secondary">Intro</button>
+        <button data-menu-tutorial type="button" class="shell-btn-secondary">Showcase</button>
+        <button data-menu-credits type="button" class="shell-btn-secondary">Credits</button>
       </div>
       <div class="splash-status-slot" data-world-status></div>
+      <button type="button" class="splash-cta-blink" data-splash-cta>
+        ▶ ENTER THE ARENA · FIGHT NIGHT EVERY FRIDAY ◀
+      </button>
     </div>
   </section>
   <section class="shell-layer options-panel" data-options data-shell-settings hidden>
@@ -252,6 +346,63 @@ app.innerHTML = `
       <button data-clips-save-now type="button" class="primary">Save clip now</button>
       <div data-clips-list class="shell-clips-list"></div>
       <button data-clips-back type="button" class="shell-btn-secondary">Back</button>
+    </div>
+  </section>
+  <section class="shell-layer credits-panel" data-shell-credits hidden>
+    <div class="shell-frame credits-frame">
+      <p class="shell-kicker">INTREPID DEVELOPMENT</p>
+      <h2>Credits</h2>
+      <div class="credits-scroll">
+        <div class="credits-block">
+          <h3>JAKESJAM</h3>
+          <p class="credits-role">Senior Game Developer &amp; CTO — Peak Engineer</p>
+          <p class="credits-name">Jake Colson</p>
+          <p class="credits-role">Studio</p>
+          <p class="credits-name">Intrepid Development</p>
+        </div>
+        <div class="credits-block">
+          <h3>Origin</h3>
+          <p class="credits-hint">
+            Born at a game jam we hosted. The jam ended. The game refused to.
+          </p>
+        </div>
+        <div class="credits-block">
+          <h3>Game Development &amp; Engineering</h3>
+          <p class="credits-name">Jay Huxtable</p>
+          <p class="credits-role">
+            <a href="https://www.oraclesound.com/" target="_blank" rel="noopener noreferrer" class="credits-link">Oracle Sound</a>
+          </p>
+        </div>
+        <div class="credits-block">
+          <h3>Testing</h3>
+          <p class="credits-name">Ryan Kelly</p>
+          <p class="credits-name">Jordie Grasso</p>
+        </div>
+        <div class="credits-block">
+          <h3>Music</h3>
+          <p class="credits-role">Original Score &amp; Sound</p>
+          <p class="credits-name">BassRadian</p>
+        </div>
+        <div class="credits-block">
+          <h3>Built With</h3>
+          <p class="credits-hint">
+            Zig &amp; WebAssembly (deterministic simulation) · Phaser 4 (render) ·
+            Bun (server &amp; tooling) · Convex (rooms &amp; matchmaking) ·
+            TypeScript throughout.
+          </p>
+        </div>
+        <div class="credits-block">
+          <h3>Special Thanks</h3>
+          <p class="credits-hint">
+            Every player who joined the Hot Lobby before there was a reason to.
+            The Order of Perpetual Respawn. You, right now, reading this.
+          </p>
+        </div>
+        <div class="credits-block credits-seal-mark" aria-hidden="true">
+          <img src="/img/seal-gnostic.png" alt="" />
+        </div>
+      </div>
+      <button data-credits-back type="button" class="shell-btn-secondary">Back</button>
     </div>
   </section>
   <section class="shell-layer pause-panel" data-shell-pause hidden>
@@ -421,7 +572,7 @@ if ("serviceWorker" in navigator && window.location.protocol === "https:") {
 // behaviour depends on this — pure introspection hook.
 globalWithGame.__jakesjam_game__ = game;
 
-// Right-click is the PRIMARY combat action (the aegis power-slide), so the
+// Right-click is the PRIMARY combat action (the dash-bash power-slide), so the
 // browser context menu must NEVER appear — anywhere. The previous
 // canvas/#game-root-scoped version still let the menu through in some real
 // cases (overlays, drag targets), so this is UNCONDITIONAL: a game has no
@@ -486,6 +637,7 @@ const lobbyPanel = queryRequired<HTMLElement>("[data-lobby-panel]");
 const optionsPanel = queryRequired<HTMLElement>("[data-options]");
 const clipsPanel = queryRequired<HTMLElement>("[data-shell-clips]");
 const pausePanel = queryRequired<HTMLElement>("[data-shell-pause]");
+const creditsPanel = queryRequired<HTMLElement>("[data-shell-credits]");
 const clipsListEl = queryRequired<HTMLElement>("[data-clips-list]");
 const musicVolumeInput = queryRequired<HTMLInputElement>("[data-music-volume]");
 const musicMutedInput = queryRequired<HTMLInputElement>("[data-music-muted]");
@@ -497,6 +649,7 @@ const shell = new ShellController({
     settings: optionsPanel,
     clips: clipsPanel,
     pause: pausePanel,
+    credits: creditsPanel,
     clipsList: clipsListEl,
   },
   onEnterWorld: () => joinWorld(),
@@ -513,6 +666,370 @@ const shell = new ShellController({
   },
   onLeaveMatch: () => leaveMatchToHome(),
 });
+
+// Devlog funnel: email gate above the splash on first visit. Skips itself
+// for kiosk/world links and returning signups (see shell/emailGate.ts).
+installEmailGate();
+// Live DOM check (not a cached flag) — every gesture listener that could
+// start audio (boot-ident anthem, lore-intro voice, first-gesture menu
+// music) checks this at event time. The email gate auto-focuses its
+// input, so without this guard typing an email or hitting Enter to
+// submit bubbles a keydown/pointerdown to `window` and silently arms
+// audio while the form is still up. No music plays until the email step
+// is actually dismissed (submit or skip) and the splash screen is reached.
+function isEmailGateOpen(): boolean {
+  return document.querySelector(".email-gate") !== null;
+}
+
+// ── Boot ident: EA/THQ-style studio sting. The pre-boot gate captures
+// the user gesture browsers require for audio, then the ident runs WITH
+// sound, the splash theme takes over, and startMenuMusic() fades it out —
+// one music authority at a time (fixes the two-songs overlap).
+let fadeSplashTheme: () => void = () => {};
+let resumeSplashTheme: () => void = () => {};
+
+// ── MUSIC SINGLETON ENFORCER ──────────────────────────────────────────
+// Exactly ONE music track may be audible, ever. Every music element
+// registers here; a watchdog force-fades anything audible that isn't the
+// current owner. Voice/SFX (announcer, procedural audio) are exempt.
+const musicRegistry = new Set<HTMLAudioElement>();
+let musicOwner: HTMLAudioElement | null = null;
+window.setInterval(() => {
+  for (const el of musicRegistry) {
+    if (el !== musicOwner && !el.paused) {
+      el.volume = Math.max(0, el.volume - 0.15);
+      if (el.volume <= 0.02) el.pause();
+    }
+  }
+}, 250);
+{
+  const gate = app.querySelector<HTMLElement>("[data-boot-gate]");
+  const ident = app.querySelector<HTMLElement>("[data-boot-ident]");
+  const muted = localStorage.getItem("jakesjam.musicMuted") === "true";
+  const vol = Number(localStorage.getItem("jakesjam.musicVolume") ?? "65") / 100;
+  const instant = document.documentElement.classList.contains("ui-instant");
+  // "Intro" menu button lands here with ?intro=1 — a click already IS the
+  // gesture browsers require for audio, so this bypasses the click-to-
+  // initiate gate and always plays the full ceremony (ignores identSeen).
+  const forceIntro = new URLSearchParams(window.location.search).get("intro") === "1";
+  if (forceIntro) {
+    const url = new URL(window.location.href);
+    url.searchParams.delete("intro");
+    window.history.replaceState({}, "", url.toString()); // don't replay on refresh
+  }
+  const splashTheme = new Audio(getAudioUrl("splash-theme.m4a"));
+  musicRegistry.add(splashTheme);
+  splashTheme.loop = false; // the anthem plays ONCE — it IS the ident
+  const menuLight = new Audio(getAudioUrl("menu-light.m4a"));
+  menuLight.loop = true;
+  musicRegistry.add(menuLight);
+  const themeVol = Math.min(1, vol * 0.9);
+  let handed = false;
+  const menuVol = Math.min(1, vol * 0.55); // deliberately light vs the anthem
+  resumeSplashTheme = () => {
+    if (muted || menuVol <= 0) return;
+    handed = false;
+    musicOwner = menuLight;
+    void menuLight.play().catch(() => { /* gated */ });
+    const iv = window.setInterval(() => {
+      if (handed) return window.clearInterval(iv);
+      menuLight.volume = Math.min(menuVol, menuLight.volume + 0.04);
+      if (menuLight.volume >= menuVol) window.clearInterval(iv);
+    }, 80);
+  };
+  // zombie-tab silencer: hidden tabs must not keep looping the theme
+  document.addEventListener("visibilitychange", () => {
+    if (document.hidden) {
+      splashTheme.pause();
+      menuLight.pause();
+    } else if (!handed && document.documentElement.classList.contains("ident-done")) {
+      void menuLight.play().catch(() => { /* gated */ });
+    }
+  });
+  fadeSplashTheme = () => {
+    if (handed) return;
+    handed = true;
+    const iv = window.setInterval(() => {
+      let alive = false;
+      for (const el of [splashTheme, menuLight]) {
+        if (!el.paused) {
+          el.volume = Math.max(0, el.volume - 0.08);
+          if (el.volume <= 0.01) el.pause();
+          else alive = true;
+        }
+      }
+      if (!alive) window.clearInterval(iv);
+    }, 60);
+  };
+  const finishBoot = () => {
+    // Clean cut: instant black (the "cut"), a brief held beat, then a
+    // fast fade reveals the already-settled title underneath — not an
+    // abrupt pop, not a slow mushy cross-dissolve. Decoupled from the
+    // 27.93s master timeline entirely so the timing is exact regardless
+    // of where in that animation finishBoot() actually fires (full rite
+    // vs the short repeat-boot cut vs a manual skip).
+    const bridge = ident?.querySelector<HTMLElement>("[data-ident-bridge]");
+    if (bridge) {
+      bridge.style.transition = "none";
+      bridge.style.opacity = "1";
+      requestAnimationFrame(() => {
+        window.setTimeout(() => {
+          bridge.style.transition = "opacity 240ms cubic-bezier(0.4, 0, 0.2, 1)";
+          bridge.style.opacity = "0";
+        }, 140); // brief true-black hold — the "beat" that makes it read as a cut, not a glitch
+      });
+    }
+    document.documentElement.classList.add("ident-done");
+    window.setTimeout(() => {
+      gate?.remove();
+      ident?.remove();
+    }, 850);
+    // Juxtaposition: the anthem spends its energy exactly once, then the
+    // menu breathes with the LIGHT instrumental (Console Rainlight).
+    if (!splashTheme.paused) {
+      const iv = window.setInterval(() => {
+        splashTheme.volume = Math.max(0, splashTheme.volume - 0.1);
+        if (splashTheme.volume <= 0.01) { splashTheme.pause(); window.clearInterval(iv); }
+      }, 50);
+    }
+    if (!handed) resumeSplashTheme();
+  };
+  const IDENT_MS = 27_930; // the full anthem — the track IS the ident audio
+  const IDENT_SHORT_MS = 6_600; // repeat boots: voice → drop → strike → title
+  // forceIntro (the Credits-row "Intro" button) always gets the full rite.
+  const identSeen = !forceIntro && localStorage.getItem("jakesjam.identSeen") === "1";
+  const runIdent = () => {
+    if (!ident) return finishBoot();
+    gate?.remove();
+    ident.hidden = false;
+    // The fixed-star band: 48 ticks (Ptolemy's constellations), 12 majors
+    // on downbeats (Duodecad x Tetrad), minors in beat-runs between (9.5-14s).
+    const ticks = ident.querySelector("[data-ident-ticks]");
+    if (ticks) {
+      const BEAT = 0.41806; // 143.55 bpm
+      let markup = "";
+      for (let i = 0; i < 48; i++) {
+        const a = (i * Math.PI * 2) / 48 - Math.PI / 2;
+        const major = i % 4 === 0;
+        const r0 = major ? 432 : 452;
+        const x0 = 500 + r0 * Math.cos(a), y0 = 500 + r0 * Math.sin(a);
+        const x1 = 500 + 478 * Math.cos(a), y1 = 500 + 478 * Math.sin(a);
+        // majors stamp ON downbeats from 9.62s; minors run in the gaps
+        const at = major ? 9.62 + (i / 4) * BEAT : 9.72 + Math.floor(i / 4) * BEAT + (i % 4) * (BEAT / 4);
+        markup += `<line x1="${x0.toFixed(1)}" y1="${y0.toFixed(1)}" x2="${x1.toFixed(1)}" y2="${y1.toFixed(1)}" style="animation-delay:${at.toFixed(3)}s" stroke-width="${major ? 5 : 2}"/>`;
+      }
+      ticks.innerHTML = markup;
+    }
+    // Letters LAST (every historical seal): seven vowels = seven spheres,
+    // fading in at 24-25s on alternating major ticks.
+    const vowels = ident.querySelector("[data-ident-vowels]");
+    if (vowels) {
+      const GLYPHS = ["\u0391", "\u0395", "\u0397", "\u0399", "\u039F", "\u03A5", "\u03A9"];
+      let markup = "";
+      GLYPHS.forEach((g, i) => {
+        const a = ((i * 8 + 2) * Math.PI * 2) / 48 - Math.PI / 2;
+        const x = 500 + 405 * Math.cos(a), y = 500 + 405 * Math.sin(a);
+        markup += `<text x="${x.toFixed(1)}" y="${(y + 9).toFixed(1)}" text-anchor="middle" style="animation-delay:${(24 + i * 0.14).toFixed(2)}s">${g}</text>`;
+      });
+      vowels.innerHTML = markup;
+    }
+    // The ray crown at peak: seven short dim-gold rays (the Hebdomad) and
+    // ONE long teal ray escaping through the ouroboros seam (the way out).
+    const rays = ident.querySelector("[data-ident-rays]");
+    if (rays) {
+      let markup = "";
+      for (let i = 0; i < 7; i++) {
+        const a = ((i - 3) * 0.42) + Math.PI / 2; // fanned downward
+        const x0 = 500 + 500 * Math.cos(a), y0 = 500 + 500 * Math.sin(a);
+        const x1 = 500 + 620 * Math.cos(a), y1 = 500 + 620 * Math.sin(a);
+        markup += `<line class="ray-gold" x1="${x0.toFixed(1)}" y1="${y0.toFixed(1)}" x2="${x1.toFixed(1)}" y2="${y1.toFixed(1)}" style="animation-delay:${(19.4 + i * 0.09).toFixed(2)}s"/>`;
+      }
+      // the seam is at top (boundary gap) — the teal ray runs THROUGH it
+      markup += `<line class="ray-teal" x1="500" y1="490" x2="500" y2="-400" style="animation-delay:19.9s"/>`;
+      rays.innerHTML = markup;
+    }
+    requestAnimationFrame(() => ident.classList.add("run"));
+    // The anthem IS the ident audio. Play once; the ident visuals slave
+    // to the AUDIO clock (WAAPI resync — CSS and audio clocks start
+    // ±200ms apart and drift; see docs/research/IDENT-ENGINEERING.md).
+    const syncTracks = (force: boolean) => {
+      const tMs = splashTheme.currentTime * 1000;
+      for (const a of ident.getAnimations({ subtree: true })) {
+        try {
+          if (force || Math.abs(Number(a.currentTime ?? 0) - tMs) > 45) a.currentTime = tMs;
+        } catch { /* non-finite animation */ }
+      }
+    };
+    if (!muted && themeVol > 0) {
+      musicOwner = splashTheme;
+      splashTheme.volume = themeVol;
+      void splashTheme.play().catch(() => { /* kiosk: silent ident */ });
+      splashTheme.addEventListener("playing", () => syncTracks(true), { once: true });
+      splashTheme.addEventListener("timeupdate", () => {
+        if (!document.documentElement.classList.contains("ident-done")) syncTracks(false);
+      });
+      // music reactivity: bass envelope → glow layer (transform/opacity only)
+      try {
+        const identCtx = new AudioContext();
+        const src = identCtx.createMediaElementSource(splashTheme);
+        src.connect(identCtx.destination);
+        const an = identCtx.createAnalyser();
+        // 1024 gives ~47Hz/bin @48kHz — fine enough to isolate the synth
+        // lead ("croon") from generic mid/air, which 256 (187Hz/bin) blurs.
+        an.fftSize = 1024;
+        src.connect(an);
+        const bins = new Uint8Array(an.frequencyBinCount);
+        const glow = ident.querySelector<HTMLElement>("[data-ident-glow]");
+        const quake = ident.querySelector<HTMLElement>("[data-ident-quake]");
+        const seal = ident.querySelector<SVGElement>(".ident-seal");
+        const pulseEl = ident.querySelector<HTMLElement>("[data-ident-pulse]");
+        const shaderCanvas = ident.querySelector<HTMLCanvasElement>("[data-ident-shader]");
+        const shader = shaderCanvas ? installIdentShader(shaderCanvas) : null;
+        let raf = 0;
+        let t0 = 0;
+        let pulseEnv = 0; // sidechain-style envelope: snap up, decay out
+        let pulseGrowth = 0; // ratchets up across repeated stabs, then settles
+        const pump = (now: number) => {
+          if (document.documentElement.classList.contains("ident-done")) {
+            cancelAnimationFrame(raf);
+            void identCtx.close().catch(() => {});
+            shader?.dispose();
+            return;
+          }
+          if (!t0) t0 = now;
+          const tSec = (now - t0) / 1000;
+          an.getByteFrequencyData(bins);
+          // bands (48kHz/1024 → 46.9Hz/bin): sub/kick, synth-lead "croon"
+          // presence, and cymbal/noise air — four DIFFERENT elements react
+          // to four different things, not one number driving everything.
+          let bass = 0, lead = 0, air = 0, scream = 0;
+          for (let i = 1; i < 7; i++) bass += bins[i]!;          // ~47-330Hz
+          for (let i = 26; i < 86; i++) lead += bins[i]!;        // ~1.2-4kHz
+          for (let i = 160; i < 320; i++) air += bins[i]!;       // ~7.5-15kHz
+          for (let i = 86; i < 200; i++) scream += bins[i]!;     // ~4-9.4kHz — the searing/riff register
+          const pb = Math.min(1, bass / (6 * 255));
+          const pl = Math.min(1, lead / (60 * 175));
+          const pt = Math.min(1, air / (160 * 110));
+          // aggressive curve (squared): a screaming track should read as
+          // MOSTLY quiet with real spikes, not a constant hot floor.
+          const psRaw = Math.min(1, scream / (114 * 130));
+          const ps = psRaw * psRaw;
+          if (glow) {
+            glow.style.opacity = String(0.1 + pb * 0.6);
+            glow.style.transform = `translate(-50%, -50%) scale(${0.9 + pb * 0.28})`;
+          }
+          // bass → continuous quake, organic (two mistuned sines beat
+          // against each other) so it reads as tremor, not a metronome —
+          // lives on its own wrapper so it never fights the seal's own
+          // scripted rotate/scale keyframe (different element, no conflict).
+          // Cubed + tiny ceiling: only real punch registers, the sustained
+          // bassline underneath does not — a whisper of tremor, not a shake.
+          if (quake) {
+            const amp = pb * pb * pb * 1.3;
+            const dx = amp * Math.sin(tSec * 31) + amp * 0.4 * Math.sin(tSec * 47.3);
+            const dy = amp * 0.7 * Math.cos(tSec * 29) + amp * 0.3 * Math.cos(tSec * 53.1);
+            quake.style.transform = `translate(${dx.toFixed(2)}px, ${dy.toFixed(2)}px)`;
+          }
+          // ~9.3-14s: the staccato sidechained synth stab — a dedicated
+          // pulse reads the SAME lead band but through a gated envelope
+          // follower (fast attack on note-on, exponential decay = the
+          // classic sidechain "duck") instead of tracking the raw level,
+          // so it visibly PUMPS in time with the stab pattern rather than
+          // just glowing brighter. Size ratchets up across repeated hits
+          // inside the window, then settles once the section ends.
+          {
+            const gate = pl > 0.4 ? 1 : 0;
+            pulseEnv = gate ? Math.min(1, pulseEnv + 0.4) : pulseEnv * 0.82;
+            const inStabWindow = tSec > 9.3 && tSec < 14.2;
+            if (inStabWindow && gate && pulseEnv > 0.85) {
+              pulseGrowth = Math.min(1, pulseGrowth + 0.06);
+            } else if (!inStabWindow) {
+              pulseGrowth *= 0.97;
+            }
+            if (pulseEl) {
+              const baseScale = 0.55 + pulseGrowth * 0.6;
+              const scale = baseScale * (1 + pulseEnv * 0.4);
+              pulseEl.style.opacity = String(0.12 + pulseEnv * 0.5);
+              pulseEl.style.transform = `translate(-50%, -50%) scale(${scale.toFixed(3)})`;
+            }
+          }
+          // mid-band ray wash: filter, NOT opacity — the scripted
+          // rays-anthem keyframe already owns this element's opacity/rotate,
+          // and CSS animations always win a same-property fight against
+          // inline JS styles, so the old opacity-based pulse was inert.
+          const raysEl = ident.querySelector<HTMLElement>("[data-ident-rays-glow]");
+          if (raysEl) raysEl.style.filter = `brightness(${(0.75 + pl * 1.15).toFixed(2)})`;
+          // the "aggro croon": the synth lead line pulses SATURATION on the
+          // liquid-gold/teal strokes themselves — the geometry visibly
+          // sings along with the lead, not just a generic glow reacting.
+          if (seal) {
+            seal.style.filter =
+              `saturate(${(1 + pl * 1.4).toFixed(2)}) brightness(${(1 + pl * 0.35).toFixed(2)})`;
+          }
+          const shim = ident.querySelector<HTMLElement>("[data-ident-shimmer]");
+          if (shim) {
+            shim.style.opacity = String(pt * 0.6);
+            shim.style.transform = `translate(-50%, -50%) scale(${1 + pt * 0.02}) rotate(${pt * 1.1}deg)`;
+          }
+          // melting liquid-light wings, true per-pixel chromatic aberration —
+          // fed the SAME live bands as everything else above. progress is
+          // locked to the AUDIO clock (not tSec, which is rAF-relative from
+          // first paint) so the shader's ring-by-ring ignition stays exactly
+          // in sync with the CSS stroke-dashoffset draw-in even if a frame
+          // hitches — same source syncTracks() uses to resync the keyframes.
+          const progress = Math.min(1, splashTheme.currentTime / (IDENT_MS / 1000));
+          shader?.update({ bass: pb, lead: pl, air: pt, scream: ps, pulse: pulseEnv, growth: pulseGrowth, progress });
+          raf = requestAnimationFrame(pump);
+        };
+        raf = requestAnimationFrame(pump);
+      } catch { /* reactivity is garnish — never block the boot */ }
+    }
+    const t = window.setTimeout(finishBoot, identSeen ? IDENT_SHORT_MS : IDENT_MS);
+    try { localStorage.setItem("jakesjam.identSeen", "1"); } catch { /* fine */ }
+    const skip = () => {
+      window.clearTimeout(t);
+      finishBoot();
+    };
+    window.setTimeout(() => {
+      ident.addEventListener("pointerdown", skip, { once: true });
+      window.addEventListener("keydown", skip, { once: true });
+    }, identSeen ? 250 : 1500);
+  };
+  if (instant) {
+    gate?.remove();
+    ident?.remove();
+    document.documentElement.classList.add("ident-done");
+  } else if (forceIntro || isKioskMode) {
+    // forceIntro: the Intro-button click was already the required user
+    // gesture — skip the click-to-initiate gate and run straight in.
+    gate?.remove();
+    runIdent();
+  } else {
+    const arm = () => {
+      // The email-capture overlay sits ABOVE this gate (z-index 60 vs 50),
+      // so a real pointerdown on `gate` is already physically blocked
+      // while it's open. keydown is NOT blocked by z-index — it bubbles
+      // from wherever focus is, and the email input auto-focuses on
+      // open — so typing an email or hitting Enter to submit would
+      // otherwise arm the anthem while the form is still up. No music
+      // until the email step is actually done: ignore and DON'T consume
+      // this listener (isEmailGateOpen() re-checked live, not once) so
+      // the real gesture — a keypress on the revealed splash — still
+      // arms it correctly afterward.
+      if (isEmailGateOpen()) return;
+      window.removeEventListener("keydown", arm);
+      runIdent();
+    };
+    gate?.addEventListener("pointerdown", arm, { once: true });
+    window.addEventListener("keydown", arm);
+  }
+}
+
+// Title-screen CTA (the blinking "press start" line) = Hot Lobby.
+app.querySelector<HTMLButtonElement>("[data-splash-cta]")?.addEventListener(
+  "click",
+  () => app.querySelector<HTMLButtonElement>("[data-menu-world]")?.click(),
+);
 // ── Soundtrack state ─────────────────────────────────────────────────────
 // Two tracks that CROSSFADE rather than hard-cut: the "Jakes Jam" theme
 // underscores menu/lobby; the "bassradian" loops drive world/match. A context
@@ -545,6 +1062,8 @@ menuMusic.preload = "auto";
 const WORLD_MUSIC_TRACKS = ["epic-loop-1.mp3", "epic-loop-2.mp3", "epic-loop-3.mp3"] as const;
 let worldTrackIdx = 0;
 const worldMusic = new Audio(getAudioUrl(WORLD_MUSIC_TRACKS[0]));
+musicRegistry.add(menuMusic);
+musicRegistry.add(worldMusic);
 worldMusic.preload = "auto";
 worldMusic.addEventListener("ended", () => {
   worldTrackIdx = (worldTrackIdx + 1) % WORLD_MUSIC_TRACKS.length;
@@ -780,11 +1299,73 @@ queryRequired<HTMLButtonElement>("[data-menu-clips]").addEventListener("click", 
   shell.goto("clips");
 });
 
+queryRequired<HTMLButtonElement>("[data-menu-credits]").addEventListener("click", () => {
+  startMenuMusic();
+  shell.goto("credits");
+});
+
+// Intro replays the boot ident from scratch — simplest reliable way is a
+// full reload with a flag the boot controller checks (the ident graph is
+// constructed once at module load; re-triggering in place would mean
+// carrying a reset() API through 30+ animation tracks for one menu button).
+queryRequired<HTMLButtonElement>("[data-menu-intro]").addEventListener("click", () => {
+  const url = new URL(window.location.href);
+  url.searchParams.set("intro", "1");
+  window.location.assign(url.toString());
+});
+
+// The Pretennoia showcase — deliberately bypasses the jakesjam:start-match
+// CustomEvent path (forces startWorldMusic(), sets a real MatchMode, turns
+// on pause-menu/clip-recording chrome — none of which apply to a scripted
+// solo cinematic). Silences whatever's currently playing since the scene
+// owns its own dedicated <audio> from here on (see TutorialScene.ts).
+queryRequired<HTMLButtonElement>("[data-menu-tutorial]").addEventListener("click", () => {
+  // splashTheme/menuLight are block-scoped inside the boot-ident IIFE
+  // (main.ts's `{ const splashTheme = ...; ... }` block) — not reachable by
+  // name here. musicRegistry (the singleton enforcer's own tracking set)
+  // holds every music element the app ever creates, so fading everything in
+  // it is both reachable AND more complete than naming tracks individually.
+  for (const el of musicRegistry) fadeMusic(el, 0, 400);
+  // The raw fade above silences the AUDIO but doesn't set the ident IIFE's
+  // internal `handed` guard — only fadeSplashTheme() does that. Without it,
+  // the document-level visibilitychange listener still sees `handed ===
+  // false` and calls menuLight.play() again on the next tab-focus event
+  // (alt-tabbing to check a reference video mid-showcase was ALL it took) —
+  // the menu theme creeping back in under the showcase's own track, two
+  // songs at once. fadeSplashTheme() is idempotent (its own `if (handed)
+  // return` guard) so calling it here is always safe.
+  fadeSplashTheme();
+  musicStartedForContext = null;
+  if (game.scene.isActive(SceneKeys.MainMenu)) game.scene.stop(SceneKeys.MainMenu);
+  game.scene.start(SceneKeys.Tutorial);
+  // ShellController never learns about this scene (deliberately — see the
+  // comment above), so its own splash.hidden bookkeeping stays "home" the
+  // whole time. Without this, the splash overlay (with all its buttons)
+  // stays visible and clickable ON TOP of the running Tutorial canvas —
+  // the scene's audio/visuals were genuinely live underneath, just hidden
+  // behind the still-shown menu, which read as "nothing happened until I
+  // click something else." Hide it directly, bypassing ShellController the
+  // same way the rest of this entry already bypasses it.
+  splash.hidden = true;
+});
+
+window.addEventListener("jakesjam:tutorial-exit", () => {
+  if (game.scene.isActive(SceneKeys.Tutorial)) game.scene.stop(SceneKeys.Tutorial);
+  if (!game.scene.isActive(SceneKeys.MainMenu)) game.scene.start(SceneKeys.MainMenu);
+  document.title = "JAKESJAM";
+  splash.hidden = false;
+  startMenuMusic();
+});
+
 queryRequired<HTMLButtonElement>("[data-options-back]").addEventListener("click", () => {
   shell.closeLayer();
 });
 
 queryRequired<HTMLButtonElement>("[data-clips-back]").addEventListener("click", () => {
+  shell.closeLayer();
+});
+
+queryRequired<HTMLButtonElement>("[data-credits-back]").addEventListener("click", () => {
   shell.closeLayer();
 });
 
@@ -1000,7 +1581,8 @@ window.addEventListener(ShellEvents.CLIP_UPLOADED, () => {
 });
 // leaveMatchToHome hides chrome when returning home (defined below).
 
-splash.addEventListener("pointerdown", () => startMenuMusic(), { once: true });
+// (splash-phase music is owned by the boot ident controller now — the
+// old first-gesture menu-music autostart here caused stacked tracks.)
 
 // Soundtrack autoplay is blocked until a user gesture. The splash handler
 // above covers the menu path, but the primary entry is now the `?world=1`
@@ -1010,6 +1592,10 @@ splash.addEventListener("pointerdown", () => startMenuMusic(), { once: true });
 // No-op if already playing or muted.
 function armSoundtrackOnFirstGesture(): void {
   const start = () => {
+    // The email gate is skipped entirely for ?world=1 (see emailGate.ts
+    // shouldSkip), so this only ever holds back the primary menu path —
+    // clicking/typing in the email form must not start the soundtrack.
+    if (isEmailGateOpen()) return;
     // Play whichever track the current context wants — a bare `?world=1`
     // auto-join has already flipped the context to "world" by now.
     playCurrentMusic();
@@ -1040,6 +1626,16 @@ window.addEventListener("jakesjam:start-match", (event) => {
           : "private";
   emitMatchStarted(matchMode);
   game.scene.stop(SceneKeys.MainMenu);
+  // A real match starting must always win over a still-running Showcase —
+  // Phaser doesn't auto-stop unrelated active scenes (only the target scene
+  // gets shut down by game.scene.start), so without this a stray
+  // Practice/Hot-Lobby click while the Tutorial cinematic is still playing
+  // leaves BOTH scenes rendering into the same canvas simultaneously
+  // (whichever is later in the scene list keeps painting over the other —
+  // this was the "practice changes to the showcase" bug). emitMatchStarted
+  // above already drives ShellController.setMatchMode → splash.hidden=true
+  // for the normal case; stopping Tutorial here is the actual missing fix.
+  if (game.scene.isActive(SceneKeys.Tutorial)) game.scene.stop(SceneKeys.Tutorial);
   // Private rooms always use OnlineMatch + server token (no Convex).
   if (matchEvent.detail?.matchId && matchEvent.detail?.matchToken) {
     game.scene.start(SceneKeys.OnlineMatch, {
@@ -1164,17 +1760,20 @@ installFullscreenToggle();
   // The lore diatribe: once per session, from the title screen, on the
   // first gesture (autoplay policy needs one). Joining silences it.
   let loreStarted = false;
-  window.addEventListener(
-    "pointerdown",
-    () => {
-      const splashVisible = !document.querySelector("[data-splash]")?.closest("[hidden]");
-      if (!loreStarted && splashVisible && !new URLSearchParams(location.search).has("world")) {
-        loreStarted = true;
-        announce("lore-intro");
-      }
-    },
-    { once: true },
-  );
+  const armLore = () => {
+    // Clicking the email gate's own "Play now"/"maybe later" buttons IS
+    // a pointerdown on `window` — ignore it (and don't consume this
+    // listener) so the lore line waits for the real first click on the
+    // revealed splash instead of firing under the email form.
+    if (isEmailGateOpen()) return;
+    const splashVisible = !document.querySelector("[data-splash]")?.closest("[hidden]");
+    if (!loreStarted && splashVisible && !new URLSearchParams(location.search).has("world")) {
+      loreStarted = true;
+      announce("lore-intro");
+    }
+    window.removeEventListener("pointerdown", armLore);
+  };
+  window.addEventListener("pointerdown", armLore);
 }
 
 function joinWorld(): void {
@@ -1328,7 +1927,10 @@ function playCurrentMusic() {
   // it's the safe place to resume the AudioContext the bass filter lives
   // in (browsers create it suspended until a gesture happens). Resuming an
   // already-running context is a harmless no-op.
-  void audioCtx.resume();
+  // Some browsers CLOSE (not just suspend) a long-idle AudioContext, so
+  // resume() can reject outright — catch it or it's an unhandled
+  // rejection in telemetry every time (signature 1kfou88).
+  void audioCtx.resume().catch(() => {});
   // Arm mic for gnostic geometry (same gesture). Failures are silent.
   if (isVoiceWanted()) {
     void startVoiceReactive(audioCtx);
@@ -1366,22 +1968,19 @@ function playCurrentMusic() {
 }
 
 function startMenuMusic() {
+  // Menu music deleted (Jake, 2026-07-11): the splash theme IS the menu
+  // music. Fade any match music out and bring the theme back.
   musicContext = "menu";
-  playCurrentMusic();
+  musicStartedForContext = null;
+  fadeMusic(worldMusic, 0, CROSSFADE_MS);
+  fadeMusic(menuMusic, 0, CROSSFADE_MS);
+  resumeSplashTheme();
 }
 
 function startWorldMusic() {
+  fadeSplashTheme();
+  musicOwner = worldMusic;
   musicContext = "world";
   playCurrentMusic();
 }
 
-function getAudioUrl(file: string): string {
-  const assetBase = window.__JAKESJAM_ASSET_BASE__;
-  if (assetBase) {
-    return new URL(`audio/${file}`, assetBase).toString();
-  }
-  if (window.location.protocol === "file:") {
-    return new URL(`./audio/${file}`, window.location.href).toString();
-  }
-  return `${window.location.origin}/audio/${file}`;
-}

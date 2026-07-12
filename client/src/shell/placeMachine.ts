@@ -25,6 +25,9 @@ export function shellGoto(state: ShellState, place: PlaceId): ShellState {
   if (place === "clips") {
     return { ...state, layer: "clips" };
   }
+  if (place === "credits") {
+    return { ...state, layer: "credits" };
+  }
   if (place === "pause") {
     if (state.matchMode === "none") return state;
     return { ...state, layer: "pause" };
@@ -57,6 +60,7 @@ export type ShellVisibility = {
   settings: boolean;
   clips: boolean;
   pause: boolean;
+  credits: boolean;
   /** True when match chrome should own the screen (splash/lobby hidden). */
   matchActive: boolean;
 };
@@ -70,6 +74,7 @@ export function shellVisibility(state: ShellState): ShellVisibility {
     settings: state.layer === "settings",
     clips: state.layer === "clips",
     pause: state.layer === "pause" && matchActive,
+    credits: state.layer === "credits",
   };
 }
 

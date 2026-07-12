@@ -339,10 +339,14 @@ export function mergeProjectileModifier(
       modifier.count !== undefined
         ? Math.max(current.count, modifier.count)
         : current.count,
-    rangePx:
-      modifier.rangePx !== undefined
-        ? Math.max(current.rangePx, modifier.rangePx)
-        : current.rangePx,
+    // Direct override, not Math.max: a card explicitly setting rangePx may
+    // legitimately mean a REDUCTION (shard-bloom: "Close-range shard burst
+    // ... weak at range"), not just a floor. Math.max silently discarded
+    // every range nerf a card ever tried to apply — a real live-balance
+    // bug, not just a Zig-parity artifact (confirmed: only 3 cards ever set
+    // rangePx; the other two are increases either way, so this is a no-op
+    // change for them and only fixes shard-bloom's actually-broken intent).
+    rangePx: modifier.rangePx ?? current.rangePx,
     speedMultiplier: orthogonalScale(
       current.speedMultiplier,
       modifier.speedMultiplier ?? 1,

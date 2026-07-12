@@ -60,6 +60,35 @@ function ensureDir(): void {
   dirReady = true;
 }
 
+// ── New-signature alerting ──────────────────────────────────────────
+// When a NEVER-seen error signature lands, ping Jake (desktop + SimpleX)
+// so he can prompt a fix. Human in the loop — no automation beyond the
+// ping. Storm-capped so a Fight Night incident can't flood the channels.
+const ALERT_KINDS = new Set(["error", "context-loss"]);
+const alertTimes: number[] = [];
+const ALERT_CAP = 5; // max alerts per 10 minutes; overflow logs only
+
+function alertNewSignature(sig: string, kind: string, message: string, build: string): void {
+  const now = Date.now();
+  while (alertTimes.length > 0 && now - alertTimes[0]! > 600_000) alertTimes.shift();
+  if (alertTimes.length >= ALERT_CAP) {
+    console.warn(`[telemetry] new sig ${sig} (alert cap reached, logged only): ${message}`);
+    return;
+  }
+  alertTimes.push(now);
+  const text = `JAKESJAM new ${kind}: [${sig}] ${message.slice(0, 140)} (build ${build}) — ask Claude to check the error pipeline`;
+  try {
+    Bun.spawn(["notify-send", "-u", "critical", "-a", "JAKESJAM", "New game error", text], {
+      stdout: "ignore", stderr: "ignore",
+    });
+  } catch { /* headless host — fine */ }
+  try {
+    Bun.spawn(["/home/jimothy/.local/bin/simplex-alert", text], {
+      stdout: "ignore", stderr: "ignore",
+    });
+  } catch { /* channel down — desktop notify still fired */ }
+}
+
 function loadSigIndex(): SignatureIndex {
   if (sigIndex) return sigIndex;
   try {
@@ -181,6 +210,9 @@ export function ingestTelemetryBatch(payload: unknown): number {
           lastBuild: build,
           sample: { stack: ev.stack, crumbs: ev.crumbs, data: ev.data },
         };
+        if (ALERT_KINDS.has(ev.kind)) {
+          alertNewSignature(ev.sig, ev.kind, ev.message, build);
+        }
       }
       sigDirty = true;
     }

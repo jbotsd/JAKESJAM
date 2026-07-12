@@ -71,7 +71,7 @@ export class GameAudioSystem {
       const p = pitch();
       this.playNoise(140, 0.11, 980 * p);
     } else if (sound === "dash") {
-      // Aegis slide: blade-draw SCHWING — noise sweep + a whisper of ring.
+      // Dash-bash slide: blade-draw SCHWING — noise sweep + a whisper of ring.
       const p = pitch();
       this.playNoise(190, 0.1, 1500 * p);
       this.playMetal(2350 * p, 120, 0.05, { ratios: [1, 1.5], strike: 0.15 });

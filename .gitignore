@@ -37,6 +37,17 @@ server/.clips-host/
 server/.replays/
 server/.tiktok/
 server/.entitlements/
+server/.clips-quarantine/
+server/.telemetry/
+# Same runtime-data categories, but at repo root (client-side clip capture /
+# publishing state) — same reasoning as the server/ ones above.
+/.clips/
+/.tiktok/
+/.entitlements/
+*.m4a.bak
+# Auto-captured host replay screenshots — generated review artifacts, not
+# authored docs; regenerate on demand rather than tracking in git history.
+docs/clip-sheets/
 elm-stuff/
 # stream-kit runtime junk
 __pycache__/

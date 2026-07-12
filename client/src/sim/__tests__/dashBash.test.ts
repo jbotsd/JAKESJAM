@@ -1,4 +1,4 @@
-// Aegis Dash BASH — the offensive half of the shield-dash. A player mid-dash
+// DASH BASH — the offensive half of the shield-dash. A player mid-dash
 // that rams an enemy inside the shield's frontal arc deals damage + knockback
 // and their dash stops on impact. Deterministic; the attacker is pre-seeded
 // mid-dash so the test doesn't need a dash-card loadout.
@@ -73,7 +73,7 @@ function seedDashingAttacker(runtime: ReturnType<typeof createRuntime>, id: Play
   });
 }
 
-describe("aegis dash bash", () => {
+describe("dash bash", () => {
   test("dashing into an enemy in the front arc deals damage + knockback and stops the dash", () => {
     const attacker = mkPlayer(A, 500, 300, { vx: 600, vy: 0, aimX: 900, aimY: 300 });
     const victim = mkPlayer(B, 540, 300); // 40px ahead, within BASH_RANGE 46

@@ -411,6 +411,20 @@ A reviewer passes when:
 
 ---
 
+## Naming protocol — historical vs. invented
+
+When a new figure/entity needs a name, decide in this order. Don't default to "always use the real ancient name" — a clunky-but-authentic name and a great invented one are BOTH on the table; pick whichever actually reads better on screen.
+
+1. **Spelling confidence gate (hard rule, no exceptions).** Never render an invented Coptic/Greek script transliteration for a name you aren't independently confident is correctly attested. If unsure, use the Latin transliteration only (plain English letters), or invent an original name instead. Guessing at ancient orthography and presenting it as authoritative is worse than admitting uncertainty — see Estaphaios: named after a real, well-attested archon, but rendered in Latin only rather than fabricated Coptic glyphs.
+2. **Does the real name actually sound good said out loud, in this game's register?** Short, punchy, pronounceable on first read wins. A five-syllable theological compound that a player will silently mangle every time isn't earning its "authenticity" — swap it for an original name inspired by the same mythological *function* instead.
+3. **Does using the real name serve the mystery, or just flex research?** The payoff of a real name is "this could genuinely mean something — it's not just a made-up game word." If that numinous weight isn't landing (the term is too obscure to register as anything, real or invented), an original name serves the moment just as well without the research being wasted — the underlying myth-logic still informs the design even if the label is ours.
+4. **High-frequency, UI-critical names lean invented.** Anything said constantly, or that has to work in a HUD/health-bar/marketing context, should win on brand fit first, correctness second. Anything named ONCE, at a special beat (a gasp, a manifestation), can afford to spend real scholarly weight since it's not competing with legibility fatigue.
+5. **Always keep the mythological FUNCTION real even when the LABEL is invented.** An original name for "the third lesser ruler under the Demiurge, hyena-faced, governing a day of chaos" is still built from real Gnostic cosmology — the substance doesn't have to be sacrificed just because the label changes. Document the real referent in a code comment either way, so the design intent survives even if the on-screen name doesn't literally match it.
+
+Applied so far: Yeldabaoth (real, short, sounds genuinely alien — kept). Sephia (real, universally recognizable even to non-specialists — kept, one-shot naming). Estaphaios (real, confirmed as the third archon with a hyena's face in the Apocryphon of John — kept as Latin-only per rule 1; the hyena-face detail is real source material worth folding into the design even though the boss doesn't currently show it).
+
+---
+
 ## Appendix — Phrase bank (internal only; not player-facing)
 
 Use in design reviews, not splash copy:

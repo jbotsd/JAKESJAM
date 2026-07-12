@@ -411,7 +411,7 @@ pub const ResolvedFireConfig = extern struct {
     directional_shield: u8 = 0,
     _pad2: [6]u8 = .{ 0, 0, 0, 0, 0, 0 },
     // Appended — keeps every offset above stable (I25: repurposed Quick Parry
-    // from the dead timed-parry cooldown onto the aegis slide's cooldown).
+    // from the dead timed-parry cooldown onto the dash-bash slide's cooldown).
     dash_cooldown_mul: f64 = 1,
 };
 

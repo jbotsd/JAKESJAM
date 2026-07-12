@@ -23,6 +23,7 @@ export type ShellDom = {
   settings: HTMLElement;
   clips: HTMLElement;
   pause: HTMLElement;
+  credits: HTMLElement;
   clipsList: HTMLElement;
 };
 
@@ -156,6 +157,7 @@ export class ShellController {
     this.dom.settings.hidden = !v.settings;
     this.dom.clips.hidden = !v.clips;
     this.dom.pause.hidden = !v.pause;
+    this.dom.credits.hidden = !v.credits;
     if (v.clips) this.renderClips();
   }
 

@@ -109,7 +109,7 @@ export type WeaponCardModifier = {
   /** Dash charges granted: enables the Dash input and this many AIR dashes
    *  before landing (ground dash is always available on cooldown). Additive. */
   dashChargesAdd?: number;
-  /** Scales the aegis slide's cooldown (<1 = sooner). Floor-clamped in
+  /** Scales the dash-bash slide's cooldown (<1 = sooner). Floor-clamped in
    *  weaponBuild.ts and stepPlayer so the recovery-endlag window can never be
    *  squeezed out by stacking — Quick Parry (repurposed from the now-dead
    *  timed-parry cooldown onto this). */

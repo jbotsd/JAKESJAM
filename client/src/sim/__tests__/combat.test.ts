@@ -233,7 +233,7 @@ describe("tryDeflectDamage", () => {
     expect(r.damage).toBe(proj.damage);
   });
 
-  test("aegis power-slide PARRIES (deflects) a hit in the frontal arc, no charge cost", () => {
+  test("dash-bash power-slide PARRIES (deflects) a hit in the frontal arc, no charge cost", () => {
     // Sliding toward +x (vx>0) with no shield held and no charge — the parry
     // is the slide's own property, and it reflects like the timed parry.
     const p = mkPlayer({ x: 0, y: 0, vx: 700, vy: 0, dashing: true, shieldActive: false });
@@ -245,7 +245,7 @@ describe("tryDeflectDamage", () => {
     expect(r.player.shieldCharge).toBe(p.shieldCharge);
   });
 
-  test("aegis power-slide does NOT parry a hit from behind the slide (directional)", () => {
+  test("dash-bash power-slide does NOT parry a hit from behind the slide (directional)", () => {
     const p = mkPlayer({ x: 0, y: 0, vx: 700, vy: 0, dashing: true });
     const proj = mkProjectile({ x: -50, y: 0, vx: 300 }); // from behind
     const r = tryDeflectDamage(p, proj, proj.damage, Tick(0));
@@ -253,7 +253,7 @@ describe("tryDeflectDamage", () => {
     expect(r.damage).toBe(proj.damage);
   });
 
-  test("aegis parry is inactive when not sliding", () => {
+  test("dash-bash parry is inactive when not sliding", () => {
     const p = mkPlayer({ x: 0, y: 0, vx: 700, vy: 0, dashing: false });
     const proj = mkProjectile({ x: 50, y: 0 });
     const r = tryDeflectDamage(p, proj, proj.damage, Tick(0));
@@ -263,8 +263,8 @@ describe("tryDeflectDamage", () => {
 
   // Wide Parry lost its original target (the timed parry is human-
   // unreachable now) and was repurposed onto the slide's arc instead of
-  // left dead — parryCoverMultiplier now widens the aegis block too.
-  test("Wide Parry (parryCoverMultiplier) widens the aegis slide's arc", () => {
+  // left dead — parryCoverMultiplier now widens the dash-bash block too.
+  test("Wide Parry (parryCoverMultiplier) widens the dash-bash slide's arc", () => {
     // A shot arriving at 70° off the slide's travel direction: outside the
     // base 120° cone (half-arc 60°) but inside a 1.28x-widened one
     // (half-arc 76.8°).
@@ -310,7 +310,7 @@ describe("tryDeflectDamage", () => {
 
   // Void Fracture: the counter-pick to the turtle meta. Punches a held
   // shield untouched — no absorb, no charge drain — but must NOT bypass
-  // the ACTIVE, skill-gated defenses (timed parry, aegis slide block).
+  // the ACTIVE, skill-gated defenses (timed parry, dash-bash slide block).
   describe("voidPiercing — Void Fracture bypasses the held shield only", () => {
     test("pierces a held+charged shield: full damage, charge left untouched", () => {
       const p = mkPlayer({ shieldActive: true, shieldCharge: 100 });
@@ -349,7 +349,7 @@ describe("tryDeflectDamage", () => {
       expect(r.damage).toBe(0);
     });
 
-    test("does NOT bypass the aegis slide's active block", () => {
+    test("does NOT bypass the dash-bash slide's active block", () => {
       const p = mkPlayer({
         x: 0, y: 0, vx: 700, vy: 0, dashing: true,
         shieldActive: true, shieldCharge: 100,

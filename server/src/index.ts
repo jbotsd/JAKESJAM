@@ -51,6 +51,7 @@ import {
   resolveClipFilename,
 } from "./clipSharePage.ts";
 import { handleOps } from "./ops.ts";
+import { convexClient } from "./convexClient.ts";
 import { ingestTelemetryBatch } from "./telemetryStore.ts";
 import { listClips } from "./clipStore.ts";
 import {
@@ -283,6 +284,37 @@ function serveOnPort(port: number) {
       if (!checkRateLimit(`telem:${session}`, 20, 60_000)) return RATE_LIMIT_429();
       const stored = ingestTelemetryBatch(payload);
       return new Response(JSON.stringify({ stored }), {
+        headers: { "content-type": "application/json", ...corsHeaders },
+      });
+    }
+
+    // ── Devlog funnel: email signup (the video CTA — "drop your email
+    // and you're playing in about eight seconds"). Writes to the Convex
+    // `signups` table via convexClient; the list is the asset.
+    if (url.pathname === "/api/signup" && req.method === "POST") {
+      if (!checkRateLimit(`signup:${ip}`, 6, 10 * 60_000)) return RATE_LIMIT_429();
+      let payload: unknown;
+      try {
+        payload = await req.json();
+      } catch {
+        return new Response("bad json", { status: 400, headers: corsHeaders });
+      }
+      const email =
+        typeof (payload as { email?: unknown })?.email === "string"
+          ? (payload as { email: string }).email.trim().toLowerCase()
+          : "";
+      const source =
+        typeof (payload as { source?: unknown })?.source === "string"
+          ? (payload as { source: string }).source.slice(0, 32)
+          : "unknown";
+      if (email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+        return new Response(JSON.stringify({ ok: false, reason: "invalid_email" }), {
+          status: 400,
+          headers: { "content-type": "application/json", ...corsHeaders },
+        });
+      }
+      const ok = await convexClient.recordSignup(email, source);
+      return new Response(JSON.stringify({ ok }), {
         headers: { "content-type": "application/json", ...corsHeaders },
       });
     }

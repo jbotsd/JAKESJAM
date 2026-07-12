@@ -16,7 +16,7 @@
 import type Phaser from "phaser";
 import { announce } from "../audio/AnnouncerSystem.js";
 import type { PlayerId, SimEvent } from "../../sim/types";
-import type { ProceduralPlayerRig } from "../rendering/ProceduralPlayerRig";
+import type { CombatRig } from "../rendering/ProceduralPlayerRig";
 import type { ParticlePool } from "../systems/ParticlePool";
 import type { RenderLayer } from "./RenderLayer";
 
@@ -90,7 +90,11 @@ export type SimEventRouterDeps = {
   /** Hide the local card-draft overlay (other player just picked). */
   hideCardDraft: () => void;
 
-  playerRigs: Map<string, ProceduralPlayerRig>;
+  // Structural (just `.get`), not a real Map<CombatRig> — TutorialScene
+  // combines its hero/boss rigs AND its non-humanoid thrall rigs (two
+  // differently-typed maps, see TutorialShardThrall.ts) into one lookup
+  // without either map having to widen its own element type.
+  playerRigs: { get(id: string): CombatRig | undefined };
 
   /** Pool gets `drainActive` called on round-end. */
   particlePool: ParticlePool | null;
@@ -191,7 +195,7 @@ export class SimEventRouter {
         audio.play("pickup");
         break;
       case "parry-deflected": {
-        // The signature aegis moment (slide-parry reflect, timed parry, or a
+        // The signature dash-bash moment (slide-parry reflect, timed parry, or a
         // bash clash). Was audio-only — the flash/ring/hit-stop make it READ.
         audio.play("parry");
         d.playerRigs.get(event.playerId)?.triggerParryFlash();

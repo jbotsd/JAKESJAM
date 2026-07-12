@@ -419,7 +419,7 @@ describe("player parity (TS V8 vs Zig wasm)", () => {
     expect(Math.abs(powerSlide.vx)).toBeGreaterThan(Math.abs(plainKick.vx));
   });
 
-  test("aegis dash (aim up-right): wasm matches TS byte-for-byte and lunges diagonally with gravity suspended", () => {
+  test("dash bash (aim up-right): wasm matches TS byte-for-byte and lunges diagonally with gravity suspended", () => {
     const STATE_PTR = sim.statePtr;
     const STATICS_OFF = SIZEOF_PLAYER_STEP + 8;
     const packed = packStaticsAndOneWay(sim, STATICS_OFF + STATE_PTR, STATICS, ONE_WAY);

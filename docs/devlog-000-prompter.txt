@@ -1,0 +1,132 @@
+═ COLD OPEN ═
+
+[the best five seconds of gameplay footage, loud]
+
+This is JAKESJAM.
+Ten space wizard ninjas, one arena,
+and abilities that mutate
+into self-guided geometric war crimes.
+
+[hard cut: dashboard — PLAYERS ONLINE: 1]
+
+It has exactly one player.
+Me.
+
+[beat]
+
+I built the stadium first.
+This video is the invitation.
+
+═ THE GAME ═
+
+[gameplay montage synced to the beats]
+
+Every match starts fair.
+Everyone drops in with the same kit.
+You shield.
+You dash-bash across the arena.
+You parry rockets back into people's faces.
+You throw geometry at anything that moves.
+
+Then the cards drop,
+and your abilities mutate.
+Homing shots. Shots that bounce.
+Shots that split into five more shots.
+The cards stack,
+so a few minutes into a round
+your clean opening kit has turned into something
+the balance spreadsheet legally refuses to acknowledge.
+
+[absurd late-game build filling the screen]
+
+When you die, you lose everything and start fresh.
+Best design decision in the game:
+every life is a brand-new science accident.
+
+And the engineering got out of hand.
+The whole simulation is written in Zig
+and compiled to WebAssembly,
+so the server and your browser
+run the exact same match, tick for tick,
+down to the last random number.
+
+Two weeks ago, at two in the morning,
+the last piece — rollback netcode — finally worked,
+and I sat there watching a perfect match
+play itself.
+
+[beat — empty arena, one player idle in the middle]
+
+I had built the stadium.
+Laid the turf.
+Calibrated the floodlights.
+And I was standing in the middle of it, alone,
+kicking a ball against the wall.
+
+═ THE REALIZATION ═
+
+[slow scroll through store pages with zero reviews]
+
+Indie games have a graveyard,
+and it's mostly full of good ones.
+Clean mechanics, clever netcode, real craft —
+made by developers who spent two years polishing in a cave,
+surfaced, hit publish,
+and heard the sound of one hand clapping.
+
+My roadmap said:
+perfect the parry timing, then tell people.
+I was speedrunning my way into that graveyard
+with excellent test coverage.
+
+[voice seal avatar, deadpan]
+
+The ones who make it out
+build their audience while they build the game.
+For years that sounded like a distraction to me.
+It's the whole job.
+They show the mess —
+the desyncs, the broken builds,
+the bug where the physics let you parry your own rocket
+straight back into your own face.
+By the time they launch,
+actual humans are waiting at the door.
+
+═ THE PLAN ═
+
+So this video is me climbing out of the cave.
+
+From here on, I build in the open.
+Every week you get the real workbench:
+what worked, what exploded,
+and which card combo currently breaks the game.
+
+There's one link below.
+Drop your email
+and you're playing the prototype in your browser
+about eight seconds from now.
+You'll be shooting geometry with me while it's still rough —
+the funniest time to be here.
+
+═ OUTRO ═
+
+[gameplay — one clean kill, freeze frame]
+
+And every Friday night is Fight Night.
+The server goes live, the stream goes live,
+and everyone on the list gets the arena link —
+so you can shoot geometry at my actual face
+while I commentate my own deaths.
+Morning coffee in New York,
+lunchtime in London,
+beer o'clock in Sydney.
+
+First one's this Friday.
+I have no idea what state the build will be in by then.
+That's the show.
+
+[final beat — arena gates, lights up]
+
+The stadium's built.
+The floodlights are on.
+Friday night, we open the gates.

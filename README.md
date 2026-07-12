@@ -15,10 +15,11 @@ Playable locally as a browser game. The main loop currently supports:
 - Procedural character rig with standing, crouch, jump, recoil, aim, death, and respawn feedback.
 - Health, shield cells, overcharge, damage amp, speed boost, traps, boss core, and roaming card caches.
 - Destructible barrels, boxes, mines, cubes, explosions, and fire patches.
-- Held Space jetpack boost with fuel recharge for reaching higher blocks.
-- Held Shift shield and right-click directional parry with cooldown.
+- Wall movement (SMB/Warframe style): wall-jump, wall-slide, and power-slide chains for reaching higher blocks.
+- Held Shift aim-shield; blocked hits reflect the projectile back at the attacker.
+- Right-click dash-bash: an aimable shield power-slide that blocks on the way in and bashes on contact.
 - 3 second respawn after death, with weapon/card reset.
-- Held Tab kill/death scoreboard.
+- Always-on kill/death scoreboard down the left side of the HUD.
 
 ## Weapon And Card Direction
 
@@ -43,14 +44,13 @@ Recent card pass:
 | Action | Input |
 |---|---|
 | Move | A / D |
-| Jump | W or tap Space |
-| Jetpack boost | Hold Space while airborne |
+| Jump | W or Space |
 | Crouch / fast fall | S |
 | Aim | Mouse |
 | Fire | Left mouse |
-| Shield | Left Shift |
-| Directional parry | Right mouse button, C fallback |
-| Scoreboard | Tab |
+| Shield | Hold Left Shift |
+| Dash-bash (shield power-slide) | Right mouse button, C alternate |
+| Stats overlay | Backtick (`) |
 | Reset local match | R |
 
 ## Project Layout

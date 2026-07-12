@@ -1,0 +1,79 @@
+═ COLD OPEN — CTA FIRST ═
+
+[best 3 seconds of chaos, announcer voice on the first line]
+
+JAKESJAM is live.
+
+Ten space wizard ninjas, one arena,
+running in your browser right now.
+Link below — drop your email,
+you're in the arena in eight seconds.
+
+═ WHAT IT IS ═
+
+[gameplay synced to every beat]
+
+Every match starts fair.
+Everyone drops in with the same kit.
+You shield.
+You dash-bash across the arena.
+You parry rockets back into people's faces.
+
+[announcer]
+
+Then the cards drop.
+
+Homing shots. Shots that bounce.
+Shots that split into five more shots.
+The cards stack,
+so your clean opening kit turns into something
+the balance spreadsheet legally refuses to acknowledge.
+
+Die, lose it all, start fresh.
+Every life is a brand-new science accident.
+
+═ THE HONEST BIT — 20 SECONDS, NOT A SAGA ═
+
+[early jam-era footage or screenshots if any, else empty arena]
+
+This started at a game jam we hosted.
+The jam ended.
+The game refused to.
+
+Months later it's got deterministic netcode written in Zig —
+the server and your browser run the exact same match,
+down to the last random number.
+
+The engineering is done.
+The only thing this game is missing
+is you.
+
+═ FIGHT NIGHT ═
+
+[gameplay — one clean kill]
+
+Every Friday night the server goes live,
+the stream goes live,
+and everyone on the list gets the arena link —
+so you can shoot geometry at my actual face
+while I commentate my own deaths.
+
+Morning coffee in New York,
+lunchtime in London,
+beer o'clock in Sydney.
+
+First one's this Friday.
+
+═ CLOSE — SAY THE DOOR AGAIN ═
+
+Link below.
+Browser. Eight seconds. No install.
+And next time someone says "1v1 me" —
+you finally have a destination.
+
+[announcer]
+
+JAKESJAM.
+The ultimate 1v1-me destination.
+
+IT'S FIGHT NIGHT.

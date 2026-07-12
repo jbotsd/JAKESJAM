@@ -6,6 +6,7 @@ import { MatchScene } from "./scenes/MatchScene";
 import { OnlineMatchScene } from "./scenes/OnlineMatchScene";
 import { DraftScene } from "./scenes/DraftScene";
 import { ReplayScene } from "./scenes/ReplayScene";
+import { TutorialScene } from "./scenes/TutorialScene";
 import { backingSize, getRenderScale } from "./render/renderResolution.js";
 import { getQualityProfile } from "./render/qualityProfile.js";
 
@@ -28,7 +29,7 @@ export function buildGameConfig(): Phaser.Types.Core.GameConfig {
     fps: profile.fpsLimit > 0 ? { limit: profile.fpsLimit } : undefined,
     type: Phaser.AUTO,
     parent: "game-root",
-    // Right-click is the aegis power-slide — the browser context menu must NEVER
+    // Right-click is the dash-bash power-slide — the browser context menu must NEVER
     // appear. This is Phaser's own canvas-level suppressor (Mouse + Touch
     // managers), one of several independent layers (see index.html head script
     // and main.ts) so no single point of failure lets the menu through.
@@ -40,7 +41,7 @@ export function buildGameConfig(): Phaser.Types.Core.GameConfig {
     width,
     height,
     backgroundColor: "#05080f",
-    scene: [BootScene, PreloadScene, MainMenuScene, MatchScene, OnlineMatchScene, DraftScene, ReplayScene],
+    scene: [BootScene, PreloadScene, MainMenuScene, MatchScene, OnlineMatchScene, DraftScene, ReplayScene, TutorialScene],
     scale: {
       mode: Phaser.Scale.NONE,
       autoCenter: Phaser.Scale.NO_CENTER,

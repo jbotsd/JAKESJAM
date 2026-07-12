@@ -510,7 +510,7 @@ export function cardGlyphHtml(card: CardDefinition): string {
       );
 
     case "wide-parry":
-      // Wide aegis arc
+      // Wide dash-bash arc
       return svg(
         `<path d="M8 44 A28 28 0 0 1 56 44" ${ST(c, 3.2)}/>
          <path d="M14 44 A22 22 0 0 1 50 44" ${ST(c, 1.2)} opacity="0.4"/>

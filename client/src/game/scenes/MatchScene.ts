@@ -526,7 +526,7 @@ export class MatchScene extends Phaser.Scene {
     if (this.keys.w.isDown || this.keys.space.isDown) bits |= InputBit.Jump;
     if (this.keys.s.isDown) bits |= InputBit.Down;
     if (this.keys.s.isDown) bits |= InputBit.Crouch;
-    // Aegis power-slide: right mouse (matches the online path) or C.
+    // Dash-bash power-slide: right mouse (matches the online path) or C.
     if (this.keys.c.isDown || this.input.activePointer.rightButtonDown()) {
       bits |= InputBit.Dash;
     }

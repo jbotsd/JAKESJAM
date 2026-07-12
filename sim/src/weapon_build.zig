@@ -62,6 +62,11 @@ fn resolveMods(mods: []const gen.CardMod) world_state.ResolvedFireConfig {
     var dash_cooldown_mul: f64 = 1;
     var mirror = false;
     var directional = false;
+    // Delivery identity (0=projectile/default, 1=raycast, 2=continuous-beam,
+    // 3=area-pulse) — mirrors weaponBuild.ts's applyCard delivery merge:
+    // only upgrades from the default; a later "projectile" card never stomps
+    // an already-set raycast/beam/pulse identity.
+    var delivery: u8 = 0;
 
     var p_shape: u8 = B.p_shape;
     var p_element: u8 = B.p_element;
@@ -82,6 +87,9 @@ fn resolveMods(mods: []const gen.CardMod) world_state.ResolvedFireConfig {
     var p_slow = B.p_slow_mul;
 
     for (mods) |m| {
+        if (m.delivery) |d| {
+            if (delivery == 0 or d != 0) delivery = d;
+        }
         damage *= m.damage_mul;
         fire_rate *= m.fire_rate_mul;
         projectile_speed *= m.projectile_speed_mul;
@@ -126,9 +134,41 @@ fn resolveMods(mods: []const gen.CardMod) world_state.ResolvedFireConfig {
         p_homing += m.proj_homing_add;
     }
 
+    // applyDeliveryFeel (weaponBuild.ts) — runs BEFORE clampBuild there, same
+    // order here. Maps the rare delivery identity onto projectile params so
+    // raycast/beam/pulse cards feel distinct without a separate hitscan step.
+    // PATHING_RANK, by pathing enum index (0=straight..7=accelerate, see
+    // gen_card_data.ts's PATHING array order) — mirrors weaponBuild.ts's
+    // PATHING_RANK table exactly; unlisted indices (5=anti-homing,
+    // 7=accelerate) fall back to rank 0 same as TS's `?? 0`.
+    const pathing_rank = [8]u8{ 0, 3, 1, 2, 5, 0, 4, 0 };
+    if (delivery == 1) { // raycast
+        p_count = @max(1.0, p_count);
+        if (pathing_rank[p_pathing] == 0) p_pathing = 0; // → "straight"
+        p_speed_mul = @max(p_speed_mul, 3.2);
+        p_lifetime_mul = @min(p_lifetime_mul, 0.35);
+        p_range = @max(p_range, 880.0);
+        if (p_gravity_scale == 0 or p_pathing == 0) p_gravity_scale = 0;
+        p_size_mul = @max(0.55, p_size_mul);
+    } else if (delivery == 2) { // continuous-beam
+        if (pathing_rank[p_pathing] == 0) p_pathing = 0;
+        p_size_mul = @min(@max(p_size_mul, 0.55), @max(0.7, p_size_mul));
+        p_lifetime_mul = @min(p_lifetime_mul, 0.55);
+        p_range = @max(p_range, 720.0);
+        p_gravity_scale = 0;
+        fire_rate = @max(fire_rate, 8.0);
+    } else if (delivery == 3) { // area-pulse
+        // preferImpact(current, "explosive") always yields "explosive" —
+        // it's the max-rank impact in IMPACT_RANK, so ir>=cr is always true.
+        p_impact = 1; // "explosive" (IMPACT array index 1)
+        p_impact_radius = @max(p_impact_radius, 72.0);
+        p_speed_mul = @max(0.5, p_speed_mul);
+        p_size_mul = @max(p_size_mul, 1.25);
+    }
+
     // clampBuild (weaponBuild.ts). Positive values → @round matches Math.round.
     damage = round2(damage);
-    fire_rate = round2(@max(0.35, fire_rate));
+    fire_rate = round2(@max(0.35, @min(12.0, fire_rate)));
     projectile_speed = round2(@max(80.0, projectile_speed));
     const pls = round2(@max(0.1, B.projectile_lifetime_seconds));
     spread = @max(0.0, spread);
@@ -139,17 +179,48 @@ fn resolveMods(mods: []const gen.CardMod) world_state.ResolvedFireConfig {
     // Data-hygiene floor only — the gameplay-safe floor (cooldown can never
     // shrink below burst+recovery) is enforced in player.zig's stepPlayer.
     dash_cooldown_mul = round2(@max(0.5, dash_cooldown_mul));
-    p_count = @max(1.0, @round(p_count));
+    // Every one of these upper bounds (min-caps) was previously missing —
+    // the block below kept every clampBuild.ts LOWER bound but silently
+    // dropped almost every UPPER bound, a systematic gap, not an isolated
+    // typo. Found via weaponBuildParity's card-by-card failures (raycast
+    // delivery → shard-bloom range → seeker-facets homing, each revealing
+    // the next); cross-checked the rest directly against clampBuild.ts
+    // rather than waiting for a card to happen to hit each one.
+    p_count = @max(1.0, @min(8.0, @round(p_count)));
     p_range = @max(48.0, p_range);
-    p_size_mul = @max(0.35, p_size_mul);
-    p_speed_mul = @max(0.15, p_speed_mul);
+    p_size_mul = @max(0.35, @min(2.4, p_size_mul));
+    p_speed_mul = @max(0.15, @min(4.5, p_speed_mul));
     p_lifetime_mul = @max(0.1, p_lifetime_mul);
-    p_bounces = @max(0.0, @round(p_bounces));
-    p_homing = round2(@max(0.0, p_homing));
-    p_impact_radius = @max(0.0, p_impact_radius);
-    p_pierce = @max(0.0, @round(p_pierce));
-    p_split = @max(0.0, @round(p_split));
+    p_bounces = @max(0.0, @min(12.0, @round(p_bounces)));
+    p_homing = round2(@max(0.0, @min(2.5, p_homing)));
+    p_impact_radius = @max(0.0, @min(160.0, p_impact_radius));
+    p_pierce = @max(0.0, @min(6.0, @round(p_pierce)));
+    p_split = @max(0.0, @min(6.0, @round(p_split)));
     p_slow = @max(0.1, @min(1.0, p_slow));
+
+    // TTK balance clamp (weaponBuild.ts's clampBuild tail) — was missing
+    // entirely from the Zig side, which is the actual root cause of the
+    // parity gap on multi-projectile cards like shard-bloom: TS scales
+    // damage/fireRate DOWN when effective DPS exceeds the TTK ceiling
+    // (more pellets ≠ free extra damage), Zig just never applied it.
+    {
+        const player_base_hp: f64 = 100.0;
+        const ttk_floor_s: f64 = 1.55;
+        const ttk_ceiling_s: f64 = 4.0;
+        const floor_target = ttk_floor_s + 0.03;
+        const pellet_eff = 0.62 + 0.38 / @max(1.0, p_count);
+        const dps = damage * fire_rate * p_count * pellet_eff;
+        const max_dps = player_base_hp / floor_target;
+        const min_dps = player_base_hp / ttk_ceiling_s;
+        if (dps > max_dps and dps > 0) {
+            const s = @sqrt(max_dps / dps);
+            damage = round2(damage * s);
+            fire_rate = round2(@max(0.35, fire_rate * s));
+        } else if (dps < min_dps and dps > 0 and p_count <= 2) {
+            const s = @sqrt(min_dps / dps);
+            damage = round2(damage * @min(1.35, s));
+        }
+    }
 
     return .{
         .damage = damage,

@@ -43,10 +43,10 @@ function buildKey(player: PlayerEntity): string {
 
 /**
  * The Shielded character's innate ability: the aim-directional dash + shield
- * (dashCharges + directionalShield, both otherwise only granted by the Aegis
- * Dash card) is available from the start of the match — vanilla, no card
+ * (dashCharges + directionalShield, both otherwise only granted by the Dash
+ * Bash card) is available from the start of the match — vanilla, no card
  * required. Applied after card resolution so a Shielded player who ALSO
- * picks up Aegis Dash just stacks extra charges rather than double-counting
+ * picks up Dash Bash just stacks extra charges rather than double-counting
  * the base grant (Math.max, not addition).
  */
 function applyCharacterInnateAbility(
@@ -105,7 +105,7 @@ export function resolvePlayerBuild(player: PlayerEntity): ResolvedWeaponBuild {
   // will look up the WeaponDefinition by player.weaponId.
   const cards: CardDefinition[] = findCardsById(crystalRoundsCards, player.cards);
   const withInnate = applyCharacterInnateAbility(player, createWeaponBuild(starterWeapon, cards));
-  // BASELINE: the aegis power-slide (right-click) is a core move for EVERYONE,
+  // BASELINE: the dash-bash power-slide (right-click) is a core move for EVERYONE,
   // exactly like the parry it replaced — grant at least one dash charge so
   // every character can slide/parry/bash from match start. Cards + the
   // Shielded innate stack MORE on top (extra air-dashes). Applied here, after

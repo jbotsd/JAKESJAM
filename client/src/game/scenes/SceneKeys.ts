@@ -11,6 +11,7 @@ export const SceneKeys = {
   Draft: "DraftScene",
   Replay: "ReplayScene",
   HUD: "HUDScene",
+  Tutorial: "TutorialScene",
 } as const;
 
 export type SceneKey = (typeof SceneKeys)[keyof typeof SceneKeys];

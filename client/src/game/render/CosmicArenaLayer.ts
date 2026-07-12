@@ -195,8 +195,17 @@ export class CosmicArenaLayer {
     which: "far" | "deep" | "mid" | "floor" | "rose",
   ): void {
     if (!g) return;
-    // Allow deeper calm + brighter peaks so response has dynamic range
-    const v = a < 0.4 ? 0.4 : a > 1.55 ? 1.55 : a;
+    // Allow deeper calm + brighter peaks so response has dynamic range —
+    // but the old upper bound (1.55) let combined music/combat-intensity
+    // terms push this past Phaser's own alpha=1.0 ceiling, meaning a
+    // background decoration (normally 50-70% translucent) could hit FULL
+    // OPACITY during an intense beat/hit and suddenly render as a solid,
+    // vivid geometric shape — read live as "the camera going funny"
+    // (confirmed via screenshots: a bright lattice/pylon/triangle patch in
+    // a different screen region each time, exactly matching this layer's
+    // own geometry, not any camera/scale state). Capped well under 1.0 so
+    // peaks still read as "brighter," never as "suddenly solid."
+    const v = a < 0.4 ? 0.4 : a > 0.85 ? 0.85 : a;
     const q = ((v * 100) | 0) / 100;
     if (which === "far") {
       if (q === this.lastFarA) return;

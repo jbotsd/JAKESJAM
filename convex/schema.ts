@@ -30,6 +30,16 @@ export const chaosModifierId = v.union(
 );
 
 export default defineSchema({
+  // Devlog funnel list (convex/signups.ts): email → play. One row per
+  // email; re-signups bump lastSeenAt/visits.
+  signups: defineTable({
+    email: v.string(),
+    source: v.string(),
+    createdAt: v.number(),
+    lastSeenAt: v.number(),
+    visits: v.number(),
+  }).index("by_email", ["email"]),
+
   rooms: defineTable({
     code: v.string(),
     hostPlayerId: v.string(),

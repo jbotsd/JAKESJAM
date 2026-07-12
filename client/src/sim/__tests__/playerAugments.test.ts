@@ -95,7 +95,7 @@ describe("movement augments", () => {
     expect(r.memory.dashCooldownMs).toBeGreaterThan(0);
   });
 
-  test("aegis dash: lunges toward AIM (up-right → vx>0 AND vy<0)", () => {
+  test("dash bash: lunges toward AIM (up-right → vx>0 AND vy<0)", () => {
     const map = miniMap();
     const cache = buildStaticCache(map.platforms, map.size.x, map.size.y);
     const player = mkPlayer(); // at (400, 580)
@@ -111,7 +111,7 @@ describe("movement augments", () => {
     expect(r.memory.dashActiveMs).toBeGreaterThan(0);
   });
 
-  test("aegis dash: straight-up lunge is possible (aim directly above)", () => {
+  test("dash bash: straight-up lunge is possible (aim directly above)", () => {
     const map = miniMap();
     const cache = buildStaticCache(map.platforms, map.size.x, map.size.y);
     const player = mkPlayer(); // at (400, 580)
@@ -124,7 +124,7 @@ describe("movement augments", () => {
     expect(r.player.vy).toBeLessThan(-700); // near full DASH_SPEED upward
   });
 
-  test("aegis dash: gravity suspended during the burst (no vy sag)", () => {
+  test("dash bash: gravity suspended during the burst (no vy sag)", () => {
     const map = miniMap();
     const cache = buildStaticCache(map.platforms, map.size.x, map.size.y);
     const player = { ...mkPlayer(), y: 300 }; // airborne

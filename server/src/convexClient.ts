@@ -61,6 +61,12 @@ const replaysSaveRef = makeFunctionReference<
   { storageId: string }
 >("replays:saveReplay");
 
+const signupsRecordRef = makeFunctionReference<
+  "mutation",
+  { email: string; source: string },
+  { ok: boolean; isNew?: boolean; reason?: string }
+>("signups:record");
+
 export class ConvexClient {
   private readonly client: ConvexHttpClient | null;
   private warnedMissingUrl = false;
@@ -141,6 +147,31 @@ export class ConvexClient {
       console.error(
         `[convex] saveReplay FAILED matchId=${matchId} bytes=${bytes.byteLength}: ${message}`,
       );
+      return false;
+    }
+  }
+
+  /**
+   * Devlog-funnel email capture (POST /api/signup → here). Errors are
+   * logged, never thrown — losing one signup beats 500ing the front door.
+   */
+  async recordSignup(email: string, source: string): Promise<boolean> {
+    if (!this.client) {
+      console.warn("[convex] skipping recordSignup — no CONVEX_URL");
+      return false;
+    }
+    try {
+      const result = await this.client.mutation(signupsRecordRef, {
+        email,
+        source,
+      });
+      console.log(
+        `[convex] recordSignup ok source=${source} result=${JSON.stringify(result)}`,
+      );
+      return result.ok;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.error(`[convex] recordSignup FAILED: ${message}`);
       return false;
     }
   }

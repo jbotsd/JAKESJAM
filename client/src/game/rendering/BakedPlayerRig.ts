@@ -13,7 +13,7 @@
 // rotated/stretched Image — a handful of batched quads per player. Aura,
 // trail and dash streaks are deliberately NO-OPs: additive fill is exactly
 // the cost the weak tiers can't pay (the tier ladder's whole point).
-// Aegis shield + parry flash keep the BASE vector implementations — they
+// Dash-bash shield + parry flash keep the BASE vector implementations — they
 // are rare, brief, and gameplay-legibility-critical.
 //
 // Image pooling: painters run in a fixed order inside the base draw(); a

@@ -15,7 +15,11 @@ import type { PlayerEntity, PlatformDefinition, InputBitfield } from "./types.js
 import { MIN_PLATFORM_H_PX } from "./constants.js";
 
 const M = {
-  maxGroundSpeed: 330,
+  // 330 → 362 (2026-07-12): a ~10% global bump so full stride reads as a
+  // genuine sprint on screen (user call after the run-cycle restyle: the
+  // gait finally looked like sprinting but the ground speed undersold it).
+  // MIRRORED in sim/src/player.zig MAX_GROUND_SPEED — keep in sync.
+  maxGroundSpeed: 362,
   groundAcceleration: 2700,
   airAcceleration: 2050,
   groundFriction: 3600,
@@ -103,7 +107,7 @@ const Bit = {
 } as const;
 
 // Deep-movement augment constants (card-gated; 0/1 multipliers = inert).
-/** Aegis power-slide burst velocity (px/s). Bumped 780→940: the shield-dash
+/** Dash-bash power-slide burst velocity (px/s). Bumped 780→940: the shield-dash
  *  reads as a committed POWER SLIDE — fast and flat — not a floaty hop. */
 const DASH_SPEED = 940;
 /** Dash cooldown (ms) between uses. */
@@ -126,6 +130,11 @@ const DASH_RECOVERY_ACCEL_MULT = 0.4;
  *  cooldown can never shrink below burst+recovery, which guarantees the
  *  punish window survives no matter how many Quick Parrys are stacked. */
 const DASH_MIN_CYCLE_MS = DASH_DURATION_MS + DASH_RECOVERY_MS;
+/** Mid-dash steering responsiveness: per-second lerp rate of the burst's
+ *  velocity DIRECTION toward the live aim (magnitude untouched). ~9/s ≈
+ *  the lunge visibly carves toward a moved cursor within the 210ms burst
+ *  without ever reading as teleport-turning. MIRRORED in player.zig. */
+const DASH_STEER_LERP_PER_SEC = 9;
 
 /** Per-player movement memory the entity itself doesn't carry. */
 export type PlayerMovementMemory = {
@@ -201,7 +210,7 @@ export type PlayerStepOptions = {
   wallSlideMultiplier?: number;
   airJumps?: number;
   dashCharges?: number;
-  /** Scales the aegis slide's cooldown (<1 = sooner — Quick Parry,
+  /** Scales the dash-bash slide's cooldown (<1 = sooner — Quick Parry,
    *  repurposed). Floor-clamped against burst+recovery so stacking can
    *  never squeeze out the punish window (see DASH_MIN_CYCLE_MS). */
   dashCooldownMultiplier?: number;
@@ -377,11 +386,11 @@ function stepPlayerNative(
     if (wantsCrouch) {
       next.vy = M.wallPowerSlideVy * wallJumpMul;
       next.vx = -wallDir * M.wallPowerSlideVx;
-      // INTEGRATION: the wall power-slide IS an aegis slide. Marking it
+      // INTEGRATION: the wall power-slide IS an dash-bash slide. Marking it
       // dash-active gives it — for free, via the same `dashing` gate — the
       // shield reflect (combat.tryDeflectDamage), the bash (World.ts), the
       // deployed shield arc (rig), and the flat gravity-suspended carry. One
-      // "aegis slide" concept, two triggers: right-click, or crouch-off-wall.
+      // "dash-bash slide" concept, two triggers: right-click, or crouch-off-wall.
       // No dash charge consumed — it's the wall move, not the dash.
       mem.dashActiveMs = DASH_DURATION_MS;
     } else {
@@ -431,6 +440,33 @@ function stepPlayerNative(
       : M.gravity) * gravityMul;
   if (!dashActive) {
     next.vy = Math.min(M.maxFallSpeed, next.vy + gravity * dtSec);
+  } else {
+    // MID-DASH STEERING: while the burst is live, the lunge CURVES toward
+    // the current aim — move the mouse mid-dash and the trajectory follows.
+    // Formulated trig-free (unit-vector lerp + renormalize: only +-*/ and
+    // sqrt, all IEEE-exact) so the Zig wasm mirror is bit-identical without
+    // touching the trig LUT. MIRRORED in sim/src/player.zig — keep in sync.
+    // NOTE: sqrt(x*x+y*y), NOT Math.hypot — hypot's overflow-safe rounding
+    // is not bit-identical to Zig's @sqrt, and this block must stay in
+    // exact parity (same reason the dash trigger below uses Math.sqrt).
+    const dashSpeed = Math.sqrt(next.vx * next.vx + next.vy * next.vy);
+    const adx = aimX - next.x;
+    const ady = aimY - next.y;
+    const aimLen = Math.sqrt(adx * adx + ady * ady);
+    if (dashSpeed > 1 && aimLen > 1e-3) {
+      const ux = next.vx / dashSpeed;
+      const uy = next.vy / dashSpeed;
+      const tx = adx / aimLen;
+      const ty = ady / aimLen;
+      const k = Math.min(1, DASH_STEER_LERP_PER_SEC * dtSec);
+      const nx = ux + (tx - ux) * k;
+      const ny = uy + (ty - uy) * k;
+      const nl = Math.sqrt(nx * nx + ny * ny);
+      if (nl > 1e-6) {
+        next.vx = (nx / nl) * dashSpeed;
+        next.vy = (ny / nl) * dashSpeed;
+      }
+    }
   }
 
   // Grippy wall-slide / latch (Warframe/SMB): pressing INTO a wall while
@@ -441,7 +477,7 @@ function stepPlayerNative(
     next.vy = Math.min(next.vy, M.wallSlideMaxFall * wallSlideMul);
   }
 
-  // AEGIS DASH (card): an aim-directional shielded lunge on the Dash input.
+  // DASH BASH (card): an aim-directional shielded lunge on the Dash input.
   // Ground dash is always available on cooldown; air dashes are limited to
   // `dashCharges` before landing. Direction = the AIM vector, fully analog
   // (any angle — mouse-to-character on desktop, dash mini-stick on touch) —

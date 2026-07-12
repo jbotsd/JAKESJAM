@@ -615,7 +615,7 @@ export const crystalRoundsCards: CardDefinition[] = [
   {
     // Void's damage now punches a HELD shield untouched (combat.ts
     // voidPiercing) — the counter-pick to the turtle meta. Still a fair
-    // fight against SKILLED defense: the timed parry and the aegis slide's
+    // fight against SKILLED defense: the timed parry and the dash-bash slide's
     // active block still stop it same as anything else.
     id: "void-fracture",
     name: "Void Fracture",
@@ -744,14 +744,14 @@ export const crystalRoundsCards: CardDefinition[] = [
   // phase-soles REMOVED — pure moveSpeed with no visible gun/body language.
   // Sprint Coils already owns "go faster" and the trail reads it.
   {
-    // Widens the 120° aegis block arc (sim + rig). maxStacks 2 → ~197° at cap.
+    // Widens the 120° dash-bash block arc (sim + rig). maxStacks 2 → ~197° at cap.
     id: "wide-parry",
     name: "Wide Parry",
     category: "defense",
     rarity: "uncommon",
     buckets: ["utility"],
     essenceCost: 3,
-    description: "Wider aegis arc you can SEE on the shield shell. Catch more angles when you slide-block.",
+    description: "Wider dash-bash arc you can SEE on the shield shell. Catch more angles when you slide-block.",
     flavorText: "Your no covers more sky.",
     modifier: {
       parryCoverMultiplier: 1.28,
@@ -762,14 +762,14 @@ export const crystalRoundsCards: CardDefinition[] = [
     maxStacks: 2,
   },
   {
-    // Shorter aegis cooldown (floored in player.ts). maxStacks 2.
+    // Shorter dash-bash cooldown (floored in player.ts). maxStacks 2.
     id: "quick-parry",
     name: "Quick Parry",
     category: "defense",
     rarity: "uncommon",
     buckets: ["utility"],
     essenceCost: 3,
-    description: "Shorter aegis cooldown — slide-guard more often. Snappier square cores mark the tempo.",
+    description: "Shorter dash-bash cooldown — slide-guard more often. Snappier square cores mark the tempo.",
     flavorText: "Still rude. Sooner.",
     modifier: {
       dashCooldownMultiplier: 0.86,

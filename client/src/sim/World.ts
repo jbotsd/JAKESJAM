@@ -189,7 +189,7 @@ export type WorldRuntime = {
  *  safe over-estimate. */
 const PLAYER_HALF_HEIGHT = 28;
 
-// ── AEGIS DASH BASH (the offensive half of the shield-dash) ─────────────────
+// ── DASH BASH (the offensive half of the shield-dash) ─────────────────
 // A dashing player is a moving shield (see the block in combat.tryDeflect
 // Damage). Ram an enemy inside the shield's frontal arc and you BASH them:
 // damage + a hard knockback along the lunge, and your own dash STOPS on
@@ -621,7 +621,7 @@ export function stepWithRuntime(
   // add/remove ids — so this is byte-identical to each pass re-sorting.
   const sortedPlayerIdsForTick = (Object.keys(players) as PlayerId[]).sort();
 
-  // 1z. AEGIS DASH BASH — the offensive half of the shield-dash. Positions,
+  // 1z. DASH BASH — the offensive half of the shield-dash. Positions,
   //     velocity, and `dashing` are all current here (post-movement). For each
   //     player mid-dash, ram the first enemy inside the shield's frontal arc:
   //     damage (through the same shield/parry mitigation as a projectile, so

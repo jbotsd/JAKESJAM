@@ -1,4 +1,4 @@
-// WorldBots aegis-slide contract (balance audit): bots that never dash
+// WorldBots dash-bash slide contract (balance audit): bots that never dash
 // offensively and never perceive an inbound dashing body as a threat make
 // the slide invisible and uncounterable in the world players actually
 // duel bots in. Tiered offense (0 = never, 1 = occasional, 2 = aggressive)
@@ -73,7 +73,7 @@ function bashRangeState(
   } as unknown as WorldState;
 }
 
-describe("WorldBots aegis-slide offense (tiered)", () => {
+describe("WorldBots dash-bash slide offense (tiered)", () => {
   test("slideTier 0 (first spawned bot) NEVER presses Dash offensively at close range", () => {
     const bots = new WorldBots();
     const botId = bots.spawnInfosFor(1)[0]!.playerId as unknown as string;

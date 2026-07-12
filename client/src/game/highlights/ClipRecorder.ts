@@ -260,6 +260,13 @@ export class ClipRecorder {
     this.segmentStartedAtMs = performance.now();
     this.segEpochMs = this.segmentStartedAtMs;
     this.focusTrace = [];
+    // DIAGNOSTIC (camera-skew investigation): every clip segment start,
+    // timestamped and with the source canvas size at that instant — cheap,
+    // and lets you eyeball in DevTools whether [diag:governor]/[diag:resize]
+    // lines cluster right around this. Remove once root-caused.
+    console.log(
+      `[diag:clip] segment begin at t=${this.segmentStartedAtMs.toFixed(0)}ms, source ${this.sourceCanvas.width}x${this.sourceCanvas.height}`,
+    );
     this.encoderWorker.postMessage({
       t: "begin",
       width: this.sourceCanvas.width || 1280,

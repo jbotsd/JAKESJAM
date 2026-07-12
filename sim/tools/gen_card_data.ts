@@ -15,6 +15,9 @@ const SHAPE = ["circle", "triangle", "square", "hexagon", "orb", "x", "bar"];
 const ELEMENT = ["crystal", "neutral", "fire", "ice", "lightning", "void", "radiant", "electric", "toxic", "sticky", "explosive"];
 const PATHING = ["straight", "gravity", "bounce", "boomerang", "homing", "anti-homing", "float", "accelerate"];
 const IMPACT = ["none", "explosive", "sticky", "pierce-chain", "slow-field"];
+// Mirrors cardTypes.ts's WeaponDelivery union — index 0 ("projectile") is
+// the default/no-op delivery, matching weapons.ts's starterWeapon.delivery.
+const DELIVERY = ["projectile", "raycast", "continuous-beam", "area-pulse"];
 const idx = (arr: string[], v: string | undefined): number | null =>
   v === undefined ? null : Math.max(0, arr.indexOf(v));
 
@@ -53,6 +56,7 @@ function cardLiteral(id: string, mod: NonNullable<(typeof crystalRoundsCards)[nu
   add("dash_cooldown_mul", f(mod.dashCooldownMultiplier, 1), "1.0");
   add("mirror_shield", mod.mirrorShield ? "true" : "false", "false");
   add("directional_shield", mod.directionalShield ? "true" : "false", "false");
+  add("delivery", optI(idx(DELIVERY, mod.delivery)), "null");
   add("proj_count_add", f(mod.projectileCountAdd, 0), "0.0");
   add("proj_bounce_add", f(mod.projectileBounceAdd, 0), "0.0");
   add("proj_split_add", f(mod.projectileSplitAdd, 0), "0.0");
@@ -112,6 +116,7 @@ pub const CardMod = struct {
     dash_cooldown_mul: f64 = 1,
     mirror_shield: bool = false,
     directional_shield: bool = false,
+    delivery: ?u8 = null,
     proj_count_add: f64 = 0,
     proj_bounce_add: f64 = 0,
     proj_split_add: f64 = 0,

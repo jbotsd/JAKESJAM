@@ -213,7 +213,7 @@ export type DeflectOptions = {
   parryCoverMultiplier?: number;
   /** Void Fracture: the shot punches through a passively HELD shield
    *  untouched (no absorb, no charge drain) — the counter-pick to the
-   *  turtle meta. Does NOT bypass the timed parry or the aegis slide's
+   *  turtle meta. Does NOT bypass the timed parry or the dash-bash slide's
    *  active block/reflect — those are a skilled READ, not passive
    *  attrition, and stay a hard counter to void same as anything else. */
   voidPiercing?: boolean;
@@ -268,7 +268,7 @@ export function tryDeflectDamage(
     }
   }
 
-  // 1.5. AEGIS POWER-SLIDE (the right-click move) — a directional launch that
+  // 1.5. DASH-BASH POWER-SLIDE (the right-click move) — a directional launch that
   //      PARRIES on the way in: a shot arriving within the frontal arc of the
   //      slide is DEFLECTED (0 damage AND the shard is reflected back at the
   //      attacker, exactly like the timed parry) — the parry, kept, but bolted

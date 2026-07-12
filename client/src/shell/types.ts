@@ -1,14 +1,14 @@
 // Shell place + match-mode types and typed jakesjam:* event names.
 // Scenes emit these; they never import ShellController.
 
-export type PlaceId = "home" | "settings" | "clips" | "room" | "pause";
+export type PlaceId = "home" | "settings" | "clips" | "room" | "pause" | "credits";
 
 export type MatchMode = "none" | "practice" | "world" | "private";
 
 /** Exclusive full-screen places (mutually exclusive). Layers overlay them. */
 export type ExclusivePlace = "home" | "room";
 
-export type ShellLayer = null | "settings" | "clips" | "pause";
+export type ShellLayer = null | "settings" | "clips" | "pause" | "credits";
 
 export type ShellState = {
   exclusive: ExclusivePlace;

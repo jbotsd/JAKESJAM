@@ -192,14 +192,19 @@ input[type="color"] {
   overflow-y: auto;
   padding: 28px;
   background:
-    radial-gradient(ellipse at 50% 15%, rgba(143, 248, 255, 0.10) 0%, transparent 55%),
-    radial-gradient(ellipse at 20% 85%, rgba(167, 139, 250, 0.07) 0%, transparent 45%),
-    radial-gradient(ellipse at 80% 60%, rgba(80, 227, 194, 0.06) 0%, transparent 40%),
+    radial-gradient(ellipse at 50% 15%, rgba(143, 248, 255, 0.15) 0%, transparent 55%),
+    radial-gradient(ellipse at 20% 85%, rgba(167, 139, 250, 0.11) 0%, transparent 45%),
+    radial-gradient(ellipse at 80% 60%, rgba(80, 227, 194, 0.10) 0%, transparent 40%),
     /* ~opaque base: at 0.96 the Phaser menu scene's canvas text ("Pick
        character, chaos, and room on the right") ghosted through the splash. */
     linear-gradient(180deg, rgba(5, 8, 15, 0.995) 0%, rgba(5, 8, 15, 1) 100%);
   backdrop-filter: blur(8px);
   -webkit-backdrop-filter: blur(8px);
+  /* NO filter/color-grade here on purpose (removed) — a filter on this
+     ancestor tints EVERY descendant uniformly, including live UI text,
+     buttons, and input fields. Grading belongs on decorative/atmospheric
+     elements only (.splash-bg-video, the ident layers) — never on
+     anything a player reads or clicks. */
 }
 
 .splash-stage {
@@ -1206,4 +1211,1208 @@ button.btn-danger:hover:not(:disabled) {
 .splash-name input::placeholder {
   color: rgba(143, 248, 255, 0.4);
   font-weight: 400;
+}
+
+/* ── Email gate (shell/emailGate.ts — the devlog funnel CTA) ─────────── */
+.email-gate {
+  position: fixed;
+  z-index: 60; /* above .splash-screen (50) */
+  inset: 0;
+  display: flex;
+  overflow-y: auto;
+  padding: 28px;
+  background: linear-gradient(180deg, rgba(5, 8, 15, 0.995) 0%, rgba(5, 8, 15, 1) 100%);
+}
+
+.email-gate-frame {
+  display: grid;
+  gap: 18px;
+  width: min(520px, 100%);
+  margin: auto;
+  padding: 40px;
+  border: 1px solid rgba(143, 248, 255, 0.24);
+  border-radius: 16px;
+  background: linear-gradient(145deg, rgba(16, 21, 32, 0.94) 0%, rgba(10, 14, 22, 0.97) 100%);
+  box-shadow:
+    0 40px 100px rgba(0, 0, 0, 0.6),
+    0 0 1px rgba(143, 248, 255, 0.32),
+    inset 0 1px 0 rgba(143, 248, 255, 0.1);
+  text-align: center;
+}
+
+.email-gate-copy {
+  color: rgba(215, 221, 228, 0.8);
+  font-size: 0.95rem;
+  line-height: 1.5;
+}
+
+.email-gate-form {
+  display: grid;
+  gap: 12px;
+}
+
+.email-gate-input {
+  padding: 12px 16px;
+  border: 1px solid rgba(143, 248, 255, 0.3);
+  border-radius: 10px;
+  background: rgba(5, 8, 15, 0.8);
+  color: #d7dde4;
+  font: inherit;
+  text-align: center;
+}
+
+.email-gate-input:focus {
+  outline: none;
+  border-color: rgba(143, 248, 255, 0.7);
+  box-shadow: 0 0 16px rgba(143, 248, 255, 0.18);
+}
+
+.email-gate-error {
+  color: #fb923c;
+  font-size: 0.85rem;
+}
+
+.email-gate-skip {
+  justify-self: center;
+  padding: 4px 8px;
+  border: 0;
+  background: none;
+  color: rgba(215, 221, 228, 0.35);
+  font-size: 0.78rem;
+  cursor: pointer;
+}
+
+.email-gate-skip:hover {
+  color: rgba(215, 221, 228, 0.6);
+}
+
+/* ── Splash background loop (beat-cut gameplay montage, muted) ─────────── */
+.splash-bg-video {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  filter: brightness(0.55) saturate(1.1);
+  pointer-events: none;
+}
+
+.splash-stage {
+  position: relative; /* paint the menu card above the video */
+}
+
+/* ══ Y2K TITLE SCREEN (Quake-2000 treatment, scoped to the splash) ══════ */
+
+/* CRT: scanlines + vignette + slow flicker, above the bg video */
+.splash-crt {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  /* multiply always DARKENS — stacked on an already-dark scene it crushes
+     shadows fast, so both layers here are pulled back hard from the
+     original pass; texture should whisper, not black out the picture. */
+  background:
+    repeating-linear-gradient(
+      0deg,
+      rgba(0, 0, 0, 0.1) 0px,
+      rgba(0, 0, 0, 0.1) 1px,
+      transparent 1px,
+      transparent 3px
+    ),
+    radial-gradient(ellipse at 50% 50%, transparent 62%, rgba(0, 0, 0, 0.28) 100%);
+  mix-blend-mode: multiply;
+  animation: crt-flicker 6s steps(60) infinite;
+}
+
+@keyframes crt-flicker {
+  0%, 92%, 100% { opacity: 1; }
+  93% { opacity: 0.82; }
+  94% { opacity: 1; }
+  97% { opacity: 0.9; }
+}
+
+/* Boot sting: INTREPID DEVELOPMENT flickers out of the void, then clears */
+.boot-sting {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  display: grid;
+  place-content: center;
+  gap: 18px;
+  background: #04060a;
+  animation: sting-clear 2.6s ease forwards;
+  pointer-events: none;
+}
+
+.boot-sting-logo {
+  width: min(560px, 72vw);
+  animation: sting-flicker 1.9s steps(1) both;
+}
+
+.boot-sting-presents {
+  text-align: center;
+  color: rgba(215, 221, 228, 0.5);
+  font-size: 0.8rem;
+  font-weight: 900;
+  letter-spacing: 0.55em;
+  animation: sting-flicker 1.9s steps(1) both;
+  animation-delay: 0.25s;
+}
+
+@keyframes sting-flicker {
+  0%, 8% { opacity: 0; }
+  9% { opacity: 1; } 12% { opacity: 0.2; }
+  15% { opacity: 1; } 19% { opacity: 0.35; }
+  23%, 100% { opacity: 1; }
+}
+
+@keyframes sting-clear {
+  0%, 78% { opacity: 1; visibility: visible; }
+  100% { opacity: 0; visibility: hidden; }
+}
+
+/* Steel plate menu */
+.splash-screen .splash-stage {
+  border: 1px solid rgba(143, 248, 255, 0.18);
+  border-top: 1px solid rgba(230, 245, 255, 0.35);
+  border-bottom: 1px solid rgba(0, 0, 0, 0.9);
+  border-radius: 6px;
+  background:
+    linear-gradient(180deg, rgba(46, 58, 76, 0.55) 0%, rgba(14, 19, 30, 0.82) 9%, rgba(9, 13, 21, 0.86) 91%, rgba(2, 4, 8, 0.92) 100%),
+    repeating-linear-gradient(90deg, rgba(255, 255, 255, 0.014) 0 2px, transparent 2px 4px);
+  box-shadow:
+    0 30px 90px rgba(0, 0, 0, 0.75),
+    inset 0 0 60px rgba(0, 0, 0, 0.45);
+}
+
+.splash-kicker--studio {
+  color: rgba(190, 208, 224, 0.75);
+  letter-spacing: 0.4em;
+  font-size: 0.66rem;
+  text-shadow: 0 1px 0 #000;
+  animation: title-in 0.5s ease-out 2.35s both;
+}
+
+.splash-title { margin: 0; line-height: 0; }
+
+.splash-logo {
+  width: min(640px, 100%);
+  display: block;
+  margin: 0 auto;
+  filter: drop-shadow(0 12px 24px rgba(0, 0, 0, 0.7));
+  animation: logo-slam 0.55s cubic-bezier(0.16, 1.6, 0.4, 1) 2.45s both,
+             logo-sheen 7s ease-in-out 3.2s infinite;
+}
+
+@keyframes logo-slam {
+  0% { transform: scale(2.1); opacity: 0; }
+  55% { transform: scale(0.96); opacity: 1; }
+  100% { transform: scale(1); opacity: 1; }
+}
+
+@keyframes logo-sheen {
+  0%, 86%, 100% { filter: drop-shadow(0 12px 24px rgba(0, 0, 0, 0.7)) brightness(1); }
+  90% { filter: drop-shadow(0 12px 24px rgba(0, 0, 0, 0.7)) brightness(1.35); }
+  93% { filter: drop-shadow(0 12px 24px rgba(0, 0, 0, 0.7)) brightness(1); }
+}
+
+.splash-screen .splash-copy,
+.splash-screen .splash-name,
+.splash-screen .splash-actions,
+.splash-screen .splash-status-slot {
+  animation: title-in 0.45s ease-out both;
+}
+.splash-screen .splash-copy { animation-delay: 2.75s; }
+.splash-screen .splash-name { animation-delay: 2.9s; }
+.splash-screen .splash-actions--primary { animation-delay: 3.05s; }
+.splash-screen .splash-actions--secondary { animation-delay: 3.2s; }
+.splash-screen .splash-status-slot { animation-delay: 3.35s; }
+
+@keyframes title-in {
+  from { opacity: 0; transform: translateY(14px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* Q3 menu buttons: uppercase, tracked, hard edges, target-lock hover */
+.splash-screen .shell-btn-secondary,
+.splash-screen .shell-cta-primary {
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  border-radius: 3px;
+}
+
+.splash-screen .shell-btn-secondary:hover {
+  color: #0b0e11;
+  background: linear-gradient(180deg, #aef4e6, #50e3c2);
+  box-shadow: 0 0 18px rgba(80, 227, 194, 0.55);
+  text-shadow: none;
+}
+
+/* the blinking "press start" line */
+.splash-cta-blink {
+  margin: 6px auto 0;
+  padding: 10px 22px;
+  display: block;
+  border: 0;
+  background: none;
+  color: #ffd24a;
+  font: inherit;
+  font-size: 0.95rem;
+  font-weight: 900;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  text-shadow: 0 0 14px rgba(255, 210, 74, 0.6), 0 2px 0 #000;
+  cursor: pointer;
+  animation: title-in 0.45s ease-out 3.5s both, cta-blink 1.15s steps(1) 3.6s infinite;
+}
+
+.splash-cta-blink:hover { animation-play-state: paused, paused; opacity: 1; color: #ffe58f; }
+
+@keyframes cta-blink {
+  0%, 62% { opacity: 1; }
+  63%, 100% { opacity: 0.25; }
+}
+
+/* dev/screenshot hook: ?ui=instant kills title animations */
+.ui-instant .boot-sting { display: none; }
+.ui-instant .splash-screen * { animation: none !important; opacity: 1; }
+
+/* ── GOTHIC GNOSTIC retheme (over the Y2K base) ────────────────────────── */
+.splash-screen .splash-stage {
+  border: 1px solid rgba(201, 168, 76, 0.30);
+  border-top: 1px solid rgba(255, 236, 170, 0.45);
+  border-bottom: 1px solid rgba(0, 0, 0, 0.9);
+  box-shadow:
+    0 30px 90px rgba(0, 0, 0, 0.8),
+    0 0 40px rgba(201, 168, 76, 0.06),
+    inset 0 0 70px rgba(0, 0, 0, 0.55);
+}
+
+.splash-kicker--studio {
+  font-family: "Noto Serif Display", "Noto Serif", serif;
+  color: rgba(226, 222, 208, 0.7);
+  letter-spacing: 0.5em;
+}
+
+/* the gnostic seal turns slowly behind the logo */
+.splash-title {
+  position: relative;
+  padding: 26px 0 6px;
+}
+
+.splash-title::before {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: min(560px, 88vw);
+  aspect-ratio: 1;
+  transform: translate(-50%, -50%);
+  background: url("/img/seal-gnostic.png") center / contain no-repeat;
+  opacity: 0.4;
+  animation: seal-spin 120s linear infinite;
+  pointer-events: none;
+}
+
+@keyframes seal-spin {
+  from { transform: translate(-50%, -50%) rotate(0deg); }
+  to { transform: translate(-50%, -50%) rotate(360deg); }
+}
+
+.splash-logo { position: relative; }
+
+.splash-screen .shell-btn-secondary {
+  border-color: rgba(201, 168, 76, 0.35);
+  color: #e2ded0;
+}
+
+.splash-screen .shell-btn-secondary:hover {
+  color: #0b0e11;
+  background: linear-gradient(180deg, #ffe9a8, #c9a84c);
+  box-shadow: 0 0 20px rgba(201, 168, 76, 0.5);
+}
+
+.splash-screen .splash-name-label { color: rgba(201, 168, 76, 0.85); }
+
+/* ══ BOOT IDENT — the studio sting (EA/THQ ceremony, gnostic edition) ═══ */
+.boot-gate {
+  position: absolute;
+  inset: 0;
+  z-index: 220;
+  display: grid;
+  place-content: center;
+  gap: 26px;
+  background: #030408;
+  cursor: pointer;
+}
+
+.boot-gate-sigil {
+  width: 130px;
+  justify-self: center;
+  opacity: 0.8;
+  animation: gate-breathe 3.2s ease-in-out infinite;
+}
+
+@keyframes gate-breathe {
+  0%, 100% { transform: scale(1) rotate(0deg); opacity: 0.55; }
+  50% { transform: scale(1.06) rotate(4deg); opacity: 0.95; }
+}
+
+.boot-gate-line {
+  font-family: "Noto Serif Display", "Noto Serif", serif;
+  color: rgba(201, 168, 76, 0.9);
+  font-size: 0.95rem;
+  font-weight: 700;
+  letter-spacing: 0.6em;
+  text-shadow: 0 0 18px rgba(201, 168, 76, 0.5);
+  animation: cta-blink 1.6s steps(1) infinite;
+}
+
+.boot-ident {
+  position: absolute;
+  inset: 0;
+  z-index: 210;
+  display: grid;
+  place-content: center;
+  background: #030408;
+  overflow: hidden;
+}
+
+.boot-ident.run { animation: ident-shake 4.9s linear forwards, ident-out 4.9s ease forwards; }
+
+@keyframes ident-out {
+  0%, 90% { opacity: 1; visibility: visible; }
+  100% { opacity: 0; visibility: hidden; }
+}
+
+@keyframes ident-shake {
+  0%, 47.9% { transform: translate(0, 0); }
+  48% { transform: translate(-14px, 9px); }
+  49% { transform: translate(12px, -7px); }
+  50.5% { transform: translate(-8px, 5px); }
+  52% { transform: translate(5px, -3px); }
+  54% { transform: translate(-2px, 1px); }
+  56%, 100% { transform: translate(0, 0); }
+}
+
+.boot-ident-rays {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 240vmax;
+  height: 240vmax;
+  transform: translate(-50%, -50%);
+  background: conic-gradient(
+    from 0deg,
+    transparent 0deg 24deg, rgba(201, 168, 76, 0.07) 30deg,
+    transparent 36deg 80deg, rgba(80, 227, 194, 0.05) 86deg,
+    transparent 92deg 140deg, rgba(201, 168, 76, 0.08) 148deg,
+    transparent 156deg 210deg, rgba(201, 168, 76, 0.06) 218deg,
+    transparent 226deg 300deg, rgba(80, 227, 194, 0.05) 308deg,
+    transparent 316deg 360deg
+  );
+  opacity: 0;
+}
+
+.run .boot-ident-rays { animation: rays-in 4.9s linear forwards; }
+
+@keyframes rays-in {
+  0% { opacity: 0; rotate: 0deg; }
+  40% { opacity: 0.5; }
+  48% { opacity: 1; }
+  90% { opacity: 0.7; rotate: 34deg; }
+  100% { opacity: 0; rotate: 38deg; }
+}
+
+.boot-ident-seal {
+  grid-area: 1 / 1;
+  width: min(72vmin, 680px);
+  justify-self: center;
+  align-self: center;
+  opacity: 0;
+}
+
+.run .boot-ident-seal { animation: seal-forge 4.9s cubic-bezier(0.2, 0.8, 0.3, 1) forwards; }
+
+@keyframes seal-forge {
+  0% { opacity: 0; transform: scale(0.5) rotate(-30deg); }
+  46% { opacity: 0.55; transform: scale(0.96) rotate(4deg); }
+  48% { opacity: 1; transform: scale(1.05) rotate(6deg); }
+  52% { transform: scale(1) rotate(8deg); }
+  100% { opacity: 0.9; transform: scale(1.02) rotate(20deg); }
+}
+
+.boot-ident-plate {
+  grid-area: 1 / 1;
+  width: min(56vw, 760px);
+  justify-self: center;
+  align-self: center;
+  opacity: 0;
+}
+
+.run .boot-ident-plate { animation: plate-forge 4.9s steps(1) forwards, plate-pop 4.9s cubic-bezier(0.2, 0.9, 0.3, 1) forwards; }
+
+@keyframes plate-forge {
+  0%, 10% { opacity: 0; }
+  11% { opacity: 0.5; } 13% { opacity: 0.08; }
+  17% { opacity: 0.65; } 20% { opacity: 0.2; }
+  24% { opacity: 0.75; } 30% { opacity: 0.45; }
+  36% { opacity: 0.85; } 42% { opacity: 0.6; }
+  48%, 100% { opacity: 1; }
+}
+
+@keyframes plate-pop {
+  0%, 47.9% { scale: 0.94; filter: brightness(0.8); }
+  48% { scale: 1.1; filter: brightness(2.2); }
+  53% { scale: 1; filter: brightness(1.25); }
+  62%, 100% { scale: 1; filter: brightness(1); }
+}
+
+.boot-ident-presents {
+  grid-area: 1 / 1;
+  justify-self: center;
+  align-self: center;
+  translate: 0 min(19vmin, 180px);
+  font-family: "Noto Serif Display", "Noto Serif", serif;
+  color: rgba(226, 222, 208, 0.75);
+  font-weight: 700;
+  letter-spacing: 0.7em;
+  font-size: 0.85rem;
+  opacity: 0;
+}
+
+.run .boot-ident-presents { animation: presents-in 4.9s ease forwards; }
+
+@keyframes presents-in {
+  0%, 50% { opacity: 0; translate: 0 calc(min(19vmin, 180px) + 12px); }
+  58%, 92% { opacity: 1; translate: 0 min(19vmin, 180px); }
+  100% { opacity: 0; }
+}
+
+.boot-ident-flash {
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(circle at 50% 46%, rgba(80, 227, 194, 0.95) 0%, white 55%);
+  opacity: 0;
+  pointer-events: none;
+}
+
+.run .boot-ident-flash { animation: ident-flash 4.9s linear forwards; }
+
+@keyframes ident-flash {
+  0%, 47.7% { opacity: 0; }
+  48% { opacity: 0.95; }
+  49.5% { opacity: 0.35; }
+  53% { opacity: 0.08; }
+  56%, 100% { opacity: 0; }
+}
+
+/* Title reveal now waits for the ident: everything paused until
+   html.ident-done, then runs with tightened delays. */
+html:not(.ident-done):not(.ui-instant) .splash-stage,
+html:not(.ident-done):not(.ui-instant) .splash-stage * {
+  animation-play-state: paused !important;
+}
+
+html:not(.ident-done):not(.ui-instant) .splash-stage { opacity: 0; }
+/* Settles FAST and fully UNDER the black bridge (140ms hold + 240ms
+   fade ≈ 380ms) — by the time the bridge clears, the stage is already
+   done animating, so the reveal reads as "the lights come up on a
+   scene already in place," not a second fade layered on top of the
+   bridge's own fade (which is what made the old handoff feel mushy). */
+html.ident-done .splash-stage { opacity: 1; transition: opacity 0.2s ease; }
+
+html.ident-done .splash-kicker--studio { animation-delay: 0.15s; }
+html.ident-done .splash-logo { animation-delay: 0.25s, 1s; }
+html.ident-done .splash-screen .splash-copy { animation-delay: 0.55s; }
+html.ident-done .splash-screen .splash-name { animation-delay: 0.7s; }
+html.ident-done .splash-screen .splash-actions--primary { animation-delay: 0.85s; }
+html.ident-done .splash-screen .splash-actions--secondary { animation-delay: 1s; }
+html.ident-done .splash-screen .splash-status-slot { animation-delay: 1.15s; }
+html.ident-done .splash-cta-blink { animation-delay: 1.3s, 1.4s; }
+
+.ui-instant .boot-gate, .ui-instant .boot-ident { display: none; }
+
+/* footage stays subordinate to the UI, but "subordinate" ≠ "invisible" —
+   the earlier 0.30/0.65 pass crushed it to near-black once stacked under
+   the CRT multiply layer and the card's own dark gradient. */
+.splash-bg-video {
+  filter: brightness(0.62) saturate(1.05) blur(1px);
+  opacity: 0.88;
+}
+
+.splash-screen .splash-stage {
+  background:
+    linear-gradient(180deg, rgba(34, 44, 60, 0.68) 0%, rgba(14, 19, 30, 0.86) 9%, rgba(9, 13, 21, 0.87) 91%, rgba(3, 5, 10, 0.9) 100%),
+    repeating-linear-gradient(90deg, rgba(255, 255, 255, 0.012) 0 2px, transparent 2px 4px);
+}
+
+/* ══ THE ANTHEM IDENT — 27.93s, choreographed to the track ══════════════
+   0.0–1.9  voice: "Jakes Jam"      → monad + whispered name
+   2.0–4.8  voice: "…by Intrepid…"  → ghost plate attribution
+   4.81     THE DROP                → flash, shake, outer circle strikes
+   5–14     construction            → geometry draws itself, beat-ticked
+   14–19    the forge               → bone logo mask-reveals
+   19–26    glory                   → breathing, shimmer, plate slam
+   26–27.9  resolve                 → composition settles, title crossfades */
+
+.boot-ident.run {
+  animation: ident-shake-anthem 27.93s linear forwards,
+             ident-out-anthem 27.93s ease forwards;
+}
+
+@keyframes ident-out-anthem {
+  0%, 99.7% { opacity: 1; visibility: visible; }  /* held card... */
+  100% { opacity: 0; visibility: hidden; }        /* ...hard cut */
+}
+
+@keyframes ident-shake-anthem {
+  0%, 17.1% { transform: translate(0, 0); }
+  17.25% { transform: translate(-13px, 8px); }
+  17.6% { transform: translate(11px, -6px); }
+  18.1% { transform: translate(-6px, 4px); }
+  18.8% { transform: translate(3px, -2px); }
+  19.6% { transform: translate(0, 0); }
+  67.95% { transform: translate(0, 0); }
+  68.05% { transform: translate(-16px, 10px); }  /* stamp — biggest jolt */
+  68.4% { transform: translate(13px, -8px); }
+  68.9% { transform: translate(-7px, 4px); }
+  69.5% { transform: translate(3px, -2px); }
+  70.3%, 100% { transform: translate(0, 0); }
+}
+
+.run .boot-ident-rays { animation: rays-anthem 27.93s linear forwards; }
+
+@keyframes rays-anthem {
+  0%, 16.8% { opacity: 0; rotate: 0deg; }
+  17.3% { opacity: 0.9; }
+  24% { opacity: 0.35; rotate: 14deg; }
+  68% { opacity: 0.55; rotate: 42deg; }
+  94% { opacity: 0.4; rotate: 58deg; }
+  100% { opacity: 0; rotate: 60deg; }
+}
+
+.run .boot-ident-flash { animation: flash-anthem 27.93s linear forwards; }
+
+@keyframes flash-anthem {
+  0%, 17.05% { opacity: 0; }
+  17.25% { opacity: 0.95; }
+  17.8% { opacity: 0.3; }
+  19% { opacity: 0.05; }
+  20% { opacity: 0; }
+  67.95% { opacity: 0; }
+  68% { opacity: 1; }        /* the 19s stamp — biggest hit */
+  68.8% { opacity: 0.25; }
+  70%, 100% { opacity: 0; }
+}
+
+/* whispered name + attribution during the spoken line */
+.ident-name {
+  grid-area: 1 / 1;
+  place-self: center;
+  font-family: "Noto Serif Display", "Noto Serif", serif;
+  font-size: clamp(28px, 4.4vw, 64px);
+  font-weight: 900;
+  letter-spacing: 0.55em;
+  color: rgba(226, 222, 208, 0.32);
+  opacity: 0;
+}
+
+.run .ident-name { animation: name-whisper 27.93s ease forwards; }
+
+@keyframes name-whisper {
+  0% { opacity: 0; }
+  2.5% { opacity: 1; }
+  14% { opacity: 0.85; }   /* stable during the voice — no letter drift */
+  16.1% { opacity: 0.4; }  /* pre-drop dim at ~4.5s */
+  17.1%, 100% { opacity: 0; }
+}
+
+.ident-plate {
+  grid-area: 1 / 1;
+  place-self: center;
+  width: min(46vw, 620px);
+  translate: 0 min(16vmin, 150px);
+  opacity: 0;
+}
+
+.run .ident-plate { animation: plate-anthem 27.93s ease forwards; }
+
+@keyframes plate-anthem {
+  0%, 6.8% { opacity: 0; translate: 0 calc(min(16vmin, 150px) + 8px); }
+  8.5% { opacity: 0.34; translate: 0 min(16vmin, 150px); }   /* "…by Intrepid…" */
+  15.8% { opacity: 0; }
+  72.5% { opacity: 0; scale: 0.94; }
+  74% { opacity: 1; scale: 1.03; }                            /* peak slam ~20.5s */
+  76% { scale: 1; }
+  93% { opacity: 0.95; }
+  100% { opacity: 0; }
+}
+
+/* the seal draws itself */
+.ident-seal {
+  grid-area: 1 / 1;
+  place-self: center;
+  width: min(78vmin, 740px);
+  overflow: visible;
+}
+
+.is-c { stroke: rgba(201, 168, 76, 0.75); stroke-width: 3; }
+.is-c2 { stroke: rgba(80, 227, 194, 0.55); stroke-width: 2; }
+.is-c4 { stroke: rgba(255, 236, 170, 0.8); }
+.is-dot { fill: rgba(255, 236, 170, 0); }
+.is-tri { stroke: rgba(80, 227, 194, 0.7); stroke-width: 2.5; }
+.is-spokes line { stroke: rgba(201, 168, 76, 0.4); stroke-width: 1.5; }
+.is-ticks line { stroke: rgba(201, 168, 76, 0.8); opacity: 0; }
+.is-diamonds polygon {
+  fill: rgba(255, 236, 170, 0.9);
+  opacity: 0;
+  /* anchor scale/rotate on each diamond's own center, not the SVG's
+     viewBox origin — the missing piece that made the old pop drift
+     diagonally toward the corner instead of expanding cleanly in place */
+  transform-box: fill-box;
+  transform-origin: center;
+}
+/* clockwise stagger (top→right→bottom→left) so the four don't fire in
+   lockstep — order matches the polygon markup order */
+.is-diamonds polygon:nth-child(1) { animation-delay: 0s; }
+.is-diamonds polygon:nth-child(2) { animation-delay: 0.1s; }
+.is-diamonds polygon:nth-child(3) { animation-delay: 0.2s; }
+.is-diamonds polygon:nth-child(4) { animation-delay: 0.3s; }
+
+.is-c1 { stroke-dasharray: 3048; stroke-dashoffset: 3048; }
+.is-c2 { stroke-dasharray: 2325; stroke-dashoffset: 2325; }
+.is-c3 { stroke-dasharray: 1257; stroke-dashoffset: 1257; }
+.is-c4 { stroke-dasharray: 377; stroke-dashoffset: 377; }
+.is-tri { stroke-dasharray: 3330; stroke-dashoffset: 3330; }
+.is-spokes line { stroke-dasharray: 200; stroke-dashoffset: 200; }
+
+/* dot ignites instantly at 0 — the monad precedes everything */
+.run .is-dot { animation: monad-ignite 27.93s ease forwards; }
+@keyframes monad-ignite {
+  0% { fill: rgba(255, 236, 170, 0); r: 4; }
+  1.5% { fill: rgba(255, 236, 170, 0.95); r: 8; }
+  17.2% { r: 8; }
+  17.4% { r: 14; }
+  18.2% { r: 8; }
+  100% { fill: rgba(255, 236, 170, 0.9); }
+}
+
+/* outer circle STRIKES on the drop (17.2% of 27.93 = 4.81s) */
+.run .is-c1 { animation: draw-c1 27.93s linear forwards; }
+@keyframes draw-c1 {
+  0%, 17.2% { stroke-dashoffset: 3048; opacity: 0; }
+  17.25% { stroke-dashoffset: 0; opacity: 1; }  /* STRUCK, one frame, ON the hit */
+  100% { stroke-dashoffset: 0; }
+}
+
+.run .is-c2 { animation: draw-c2 27.93s linear forwards; }
+@keyframes draw-c2 {
+  0%, 20% { stroke-dashoffset: 2325; }
+  26% { stroke-dashoffset: 0; }
+  100% { stroke-dashoffset: 0; }
+}
+
+.run .is-c3 { animation: draw-c3 27.93s linear forwards; }
+@keyframes draw-c3 {
+  0%, 26.1% { stroke-dashoffset: 1257; }
+  31% { stroke-dashoffset: 0; }
+  100% { stroke-dashoffset: 0; }
+}
+
+.run .is-c4 { animation: draw-c4 27.93s linear forwards; }
+@keyframes draw-c4 {
+  0%, 32.2% { stroke-dashoffset: 377; }
+  35% { stroke-dashoffset: 0; }
+  100% { stroke-dashoffset: 0; }
+}
+
+/* triangle: three strokes through the mid build (10–13.4s ≈ 35.8–48%) */
+.run .is-tri { animation: draw-tri 27.93s linear forwards; }
+@keyframes draw-tri {
+  0%, 35.8% { stroke-dashoffset: 3330; }
+  48% { stroke-dashoffset: 0; }
+  100% { stroke-dashoffset: 0; }
+}
+
+.run .is-spokes line { animation: draw-spoke 27.93s linear forwards; }
+@keyframes draw-spoke {
+  0%, 48.3% { stroke-dashoffset: 200; }
+  50.5% { stroke-dashoffset: 0; }
+  100% { stroke-dashoffset: 0; }
+}
+
+/* ticks: per-line animation-delay set inline from the controller (12s+) */
+.is-ticks line { animation: tick-in 0.22s ease forwards paused; }
+.run .is-ticks line { animation-play-state: running; }
+@keyframes tick-in { from { opacity: 0; } to { opacity: 1; } }
+
+.run .is-diamonds polygon {
+  animation: diamond-pop 27.93s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+}
+@keyframes diamond-pop {
+  0%, 61.5% { opacity: 0; scale: 0.3; rotate: -35deg; }
+  62.2% { opacity: 0.7; scale: 0.3; rotate: -35deg; }  /* light before scale moves */
+  63.5% { opacity: 1; scale: 1; rotate: 0deg; }         /* the spring curve overshoots itself */
+  100% { opacity: 1; scale: 1; rotate: 0deg; }
+}
+
+/* seal breathing + slow rotation through glory */
+.run .ident-seal { animation: seal-anthem 27.93s linear forwards; }
+@keyframes seal-anthem {
+  0%, 17% { rotate: 0deg; scale: 1; opacity: 1; }
+  65.5% { opacity: 1; }   /* pens stop 18.3s — the pre-peak inhale */
+  67.9% { rotate: 9deg; scale: 1; opacity: 1; }
+  68.6% { scale: 0.93; opacity: 0.55; }  /* recede to halo at the stamp */
+  75% { scale: 0.93; opacity: 0.6; }
+  76% { scale: 0.938; }
+  77.5% { scale: 0.93; }
+  84% { scale: 0.938; }
+  85.5% { scale: 0.93; }
+  100% { rotate: 15deg; scale: 0.93; opacity: 0.6; }
+}
+
+/* the forge: bone logo mask-reveals at the high section (14s ≈ 50%) */
+.ident-logo {
+  grid-area: 1 / 1;
+  place-self: center;
+  width: min(58vw, 780px);
+  translate: 0 -2vmin;
+  opacity: 0;
+}
+
+.run .ident-logo { animation: logo-forge-anthem 27.93s ease forwards; }
+@keyframes logo-forge-anthem {
+  0%, 67.95% { opacity: 0; scale: 1.04; filter: brightness(2.4); }
+  68% { opacity: 1; scale: 1; filter: brightness(2.2); }  /* STAMP on the 19s hit */
+  70% { filter: brightness(1); }
+  74.5% { filter: brightness(1); }
+  78.5% { filter: brightness(1.55); }  /* one Bethesda specular sweep ~21.5-22s */
+  80.5% { filter: brightness(1); }
+  99.6% { opacity: 1; }
+  100% { opacity: 1; }
+}
+
+/* ── ident v2: emphasis, reactivity, perf & a11y (per research docs) ── */
+.boot-ident { contain: strict; }
+
+.boot-ident-rays { width: min(200vmax, 2048px); height: min(200vmax, 2048px); }
+
+.ident-glow {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: min(70vmin, 660px);
+  aspect-ratio: 1;
+  transform: translate(-50%, -50%);
+  background: radial-gradient(circle, rgba(80, 227, 194, 0.30) 0%, rgba(80, 227, 194, 0.08) 45%, transparent 70%);
+  opacity: 0.12;
+  pointer-events: none;
+}
+
+/* NAME EMPHASIS: the spoken words carry the intro */
+.ident-name {
+  font-size: clamp(36px, 5.6vw, 92px);
+  color: rgba(232, 228, 214, 0.5);
+  text-shadow: 0 0 30px rgba(226, 222, 208, 0.25);
+}
+
+.ident-plate { width: min(52vw, 700px); }
+
+@keyframes plate-anthem {
+  0%, 6.8% { opacity: 0; translate: 0 calc(min(16vmin, 150px) + 8px); }
+  8.5% { opacity: 0.55; translate: 0 min(16vmin, 150px); }
+  15.8% { opacity: 0; }
+  72.5% { opacity: 0; scale: 0.94; }
+  74% { opacity: 1; scale: 1.03; }
+  76% { scale: 1; }
+  99.7% { opacity: 1; }
+  100% { opacity: 1; }
+}
+
+.ident-skip-hint {
+  position: absolute;
+  bottom: 6vh;
+  left: 50%;
+  translate: -50% 0;
+  color: rgba(226, 222, 208, 0.35);
+  font-size: 0.72rem;
+  letter-spacing: 0.3em;
+  text-transform: uppercase;
+  opacity: 0;
+}
+
+.run .ident-skip-hint { animation: skip-hint 27.93s ease forwards; }
+@keyframes skip-hint {
+  0%, 10% { opacity: 0; }
+  14% { opacity: 0.6; }
+  22% { opacity: 0.25; }
+  90% { opacity: 0.25; }
+  100% { opacity: 0; }
+}
+
+/* WCAG 2.2.2: reduced motion = static card, audio untouched */
+@media (prefers-reduced-motion: reduce) {
+  .boot-ident.run *, .boot-ident.run { animation-duration: 0.01ms !important; }
+  .boot-ident.run { animation-name: none; opacity: 1; }
+  .run .ident-name, .run .ident-logo, .run .ident-plate { opacity: 1 !important; animation: none !important; }
+  .run .boot-ident-rays, .run .boot-ident-flash { display: none; }
+}
+
+/* bg video + CRT pin to the VIEWPORT — inside the scrollable splash they
+   sized to content and bled past the desktop edge on short windows */
+.splash-bg-video, .splash-crt {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+/* ══ IDENT v3 — the Ophite map, liquid light, 5 sync points ═════════════
+   (later definitions override the v1/v2 keyframes of the same name) */
+
+/* Hebdomad: seven archon rings emanate in syzygies, liquid-gold strokes */
+.is-h { stroke: url(#liqGold); stroke-width: 2; opacity: 0.8; }
+.is-h1 { stroke-dasharray: 597; stroke-dashoffset: 597; }
+.is-h2 { stroke-dasharray: 805; stroke-dashoffset: 805; }
+.is-h3 { stroke-dasharray: 1006; stroke-dashoffset: 1006; }
+.is-h4 { stroke-dasharray: 1232; stroke-dashoffset: 1232; }
+.is-h5 { stroke-dasharray: 1496; stroke-dashoffset: 1496; }
+.is-h6 { stroke-dasharray: 1798; stroke-dashoffset: 1798; }
+.is-h7 { stroke-dasharray: 2137; stroke-dashoffset: 2137; }
+.run .is-h1 { animation: dr-h1 27.93s linear forwards; }
+.run .is-h2 { animation: dr-h2 27.93s linear forwards; }
+.run .is-h3 { animation: dr-h3 27.93s linear forwards; }
+.run .is-h4 { animation: dr-h4 27.93s linear forwards; }
+.run .is-h5 { animation: dr-h5 27.93s linear forwards; }
+.run .is-h6 { animation: dr-h6 27.93s linear forwards; }
+.run .is-h7 { animation: dr-h7 27.93s linear forwards; }
+@keyframes dr-h1 { 0%, 17.9% { stroke-dashoffset: 597; } 23.6% { stroke-dashoffset: 0; } 100% { stroke-dashoffset: 0; } }
+@keyframes dr-h2 { 0%, 18.6% { stroke-dashoffset: 805; } 24.4% { stroke-dashoffset: 0; } 100% { stroke-dashoffset: 0; } }
+@keyframes dr-h3 { 0%, 24% { stroke-dashoffset: 1006; } 29.7% { stroke-dashoffset: 0; } 100% { stroke-dashoffset: 0; } }
+@keyframes dr-h4 { 0%, 24.7% { stroke-dashoffset: 1232; } 30.4% { stroke-dashoffset: 0; } 100% { stroke-dashoffset: 0; } }
+@keyframes dr-h5 { 0%, 30.1% { stroke-dashoffset: 1496; } 35.8% { stroke-dashoffset: 0; } 100% { stroke-dashoffset: 0; } }
+@keyframes dr-h6 { 0%, 30.8% { stroke-dashoffset: 1798; } 36.5% { stroke-dashoffset: 0; } 100% { stroke-dashoffset: 0; } }
+@keyframes dr-h7 { 0%, 36.2% { stroke-dashoffset: 2137; } 41.9% { stroke-dashoffset: 0; } 100% { stroke-dashoffset: 0; } }
+
+/* the ouroboros boundary: struck by the radius, swept by the compass */
+.is-boundary { stroke: url(#liqGold); stroke-width: 5; stroke-linecap: round;
+  stroke-dasharray: 3005; stroke-dashoffset: 3005; }
+.run .is-boundary { animation: dr-boundary 27.93s linear forwards; }
+@keyframes dr-boundary {
+  0%, 17.3% { stroke-dashoffset: 3005; }
+  23.2% { stroke-dashoffset: 0; }   /* compass sweep 4.83→6.5s */
+  100% { stroke-dashoffset: 0; }
+}
+
+.is-radius { stroke: rgba(255, 236, 170, 0.9); stroke-width: 2; opacity: 0; }
+.run .is-radius { animation: radius-strike 27.93s linear forwards; }
+@keyframes radius-strike {
+  0%, 17.15% { opacity: 0; }
+  17.25% { opacity: 1; }    /* the point strikes a radius — one frame */
+  20% { opacity: 0.5; }
+  24%, 100% { opacity: 0; }
+}
+
+/* Barbelo triad: teal chords, one vertex bearing the Autogenes loop */
+.is-tri { stroke: url(#liqTeal); stroke-width: 3;
+  stroke-dasharray: 3330; stroke-dashoffset: 3330; }
+.run .is-tri { animation: dr-tri 27.93s linear forwards; }
+@keyframes dr-tri {
+  0%, 50.13% { stroke-dashoffset: 3330; }
+  52% { stroke-dashoffset: 2220; }   /* chord I */
+  52.6% { stroke-dashoffset: 2220; } /* the hand pauses */
+  54.5% { stroke-dashoffset: 1110; } /* chord II */
+  55.1% { stroke-dashoffset: 1110; }
+  57% { stroke-dashoffset: 0; }      /* chord III */
+  100% { stroke-dashoffset: 0; }
+}
+
+.is-tri-loop { stroke: url(#liqTeal); stroke-width: 2.5;
+  stroke-dasharray: 101; stroke-dashoffset: 101; }
+.run .is-tri-loop { animation: dr-loop 27.93s linear forwards; }
+@keyframes dr-loop {
+  0%, 57.2% { stroke-dashoffset: 101; }
+  58.4% { stroke-dashoffset: 0; }
+  100% { stroke-dashoffset: 0; }
+}
+
+/* fixed-star band + vowels: liquid gold, letters LAST */
+.is-ticks line { stroke: url(#liqGold); }
+.is-vowels text {
+  font-family: "Noto Serif Display", "Noto Serif", serif;
+  font-size: 30px;
+  fill: rgba(232, 228, 214, 0.9);
+  opacity: 0;
+  animation: vowel-in 0.6s ease forwards paused;
+}
+.run .is-vowels text { animation-play-state: running; }
+@keyframes vowel-in { to { opacity: 1; } }
+
+/* the ray crown: seven gold, one teal through the seam */
+.is-rays line { opacity: 0; }
+.is-rays .ray-gold { stroke: rgba(201, 168, 76, 0.55); stroke-width: 6;
+  stroke-linecap: round; stroke-dasharray: 122; stroke-dashoffset: 122;
+  animation: ray-in 0.5s cubic-bezier(0.16, 1, 0.3, 1) forwards paused; }
+.is-rays .ray-teal { stroke: url(#liqTeal); stroke-width: 7;
+  stroke-linecap: round; stroke-dasharray: 900; stroke-dashoffset: 900;
+  animation: ray-in 1.4s cubic-bezier(0.16, 1, 0.3, 1) forwards paused; }
+.run .is-rays line { animation-play-state: running; }
+@keyframes ray-in { to { stroke-dashoffset: 0; opacity: 0.9; } }
+.run .is-rays { animation: rays-drain 27.93s linear forwards; }
+@keyframes rays-drain {
+  0%, 92% { opacity: 1; }
+  97% { opacity: 0; }  /* drain accelerates away */
+  100% { opacity: 0; }
+}
+
+/* treble shimmer: ghost seal, hue-shifted — vibrancy that costs nothing */
+.ident-shimmer {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: min(78vmin, 740px);
+  transform: translate(-50%, -50%);
+  filter: hue-rotate(155deg) saturate(1.9) brightness(1.2);
+  mix-blend-mode: screen;
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* monad: pricks in AS the name is spoken (~2s), strikes on the drop */
+@keyframes monad-ignite {
+  0%, 6.9% { fill: rgba(255, 236, 170, 0); r: 2; }
+  7.5% { fill: rgba(127, 232, 216, 0.9); r: 5; }   /* teal core: pneuma */
+  16.5% { fill: rgba(255, 236, 170, 0.8); r: 5; }
+  17.25% { r: 15; fill: rgba(216, 255, 246, 1); }
+  18.4% { r: 8; }
+  100% { fill: rgba(255, 236, 170, 0.9); r: 8; }
+}
+
+/* stamp: engraving compresses IN (0.965), one spring return, then frozen */
+@keyframes logo-forge-anthem {
+  0%, 68.6% { opacity: 0; scale: 1.05; filter: brightness(2.4); }
+  68.74% { opacity: 1; scale: 0.965; filter: brightness(2.2); }
+  69.6% { scale: 1.004; }
+  70.4% { scale: 1; filter: brightness(1.15); }
+  72% { filter: brightness(1); }
+  76.9% { filter: brightness(1); }
+  79.4% { filter: brightness(1.5); }   /* the one specular sweep, 21.5-22.2s */
+  81.9% { filter: brightness(1); }
+  100% { opacity: 1; scale: 1; }
+}
+
+/* retime the second flash/shake burst to the true stamp frame (19.2s) */
+@keyframes flash-anthem {
+  0%, 17.05% { opacity: 0; }
+  17.25% { opacity: 0.95; }
+  17.8% { opacity: 0.3; }
+  19% { opacity: 0.05; }
+  20% { opacity: 0; }
+  68.6% { opacity: 0; }
+  68.74% { opacity: 1; }
+  69.5% { opacity: 0.25; }
+  70.6%, 100% { opacity: 0; }
+}
+@keyframes ident-shake-anthem {
+  0%, 17.1% { transform: translate(0, 0); }
+  17.25% { transform: translate(-13px, 8px); }
+  17.6% { transform: translate(11px, -6px); }
+  18.1% { transform: translate(-6px, 4px); }
+  18.8% { transform: translate(3px, -2px); }
+  19.6% { transform: translate(0, 0); }
+  68.6% { transform: translate(0, 0); }
+  68.78% { transform: translate(-16px, 10px); }
+  69.1% { transform: translate(13px, -8px); }
+  69.6% { transform: translate(-7px, 4px); }
+  70.2% { transform: translate(3px, -2px); }
+  71%, 100% { transform: translate(0, 0); }
+}
+
+/* pre-stamp inhale: the whole seal dims 8% while the pens rest (18.3-19.2s) */
+@keyframes seal-anthem {
+  0%, 17% { rotate: 0deg; scale: 1; opacity: 1; }
+  65.5% { opacity: 1; }
+  66.5% { opacity: 0.92; }   /* inhale */
+  68.6% { opacity: 0.92; rotate: 9deg; }
+  69.3% { scale: 0.93; opacity: 0.55; }
+  100% { rotate: 15deg; scale: 0.93; opacity: 0.6; }
+}
+
+/* no scrollbar during the rite */
+html:not(.ident-done) .splash-screen { overflow: hidden; }
+
+/* chromatic aberration — only where the energy spikes, never at rest */
+.ident-ca {
+  grid-area: 1 / 1;
+  place-self: center;
+  width: min(58vw, 780px);
+  translate: 0 -2vmin;
+  mix-blend-mode: screen;
+  opacity: 0;
+  pointer-events: none;
+}
+.ident-ca-r { filter: sepia(1) saturate(9) hue-rotate(-48deg) brightness(0.9); }
+.ident-ca-c { filter: sepia(1) saturate(7) hue-rotate(150deg) brightness(0.95); }
+.run .ident-ca-r { animation: ca-r 27.93s linear forwards; }
+.run .ident-ca-c { animation: ca-c 27.93s linear forwards; }
+@keyframes ca-r {
+  0%, 68.6% { opacity: 0; transform: translateX(0); }
+  68.74% { opacity: 0.45; transform: translateX(-5px); }
+  69.6% { opacity: 0.14; transform: translateX(-2px); }
+  71% { opacity: 0; transform: translateX(0); }
+  78.9% { opacity: 0; }
+  79.4% { opacity: 0.18; transform: translateX(-2px); }  /* sweep echo */
+  80.6%, 100% { opacity: 0; transform: translateX(0); }
+}
+@keyframes ca-c {
+  0%, 68.6% { opacity: 0; transform: translateX(0); }
+  68.74% { opacity: 0.4; transform: translateX(5px); }
+  69.6% { opacity: 0.12; transform: translateX(2px); }
+  71% { opacity: 0; transform: translateX(0); }
+  78.9% { opacity: 0; }
+  79.4% { opacity: 0.16; transform: translateX(2px); }
+  80.6%, 100% { opacity: 0; transform: translateX(0); }
+}
+
+/* flash gains a magenta fringe rim — every hit carries the lens-split */
+.boot-ident-flash {
+  background: radial-gradient(circle at 50% 46%,
+    rgba(80, 227, 194, 0.95) 0%, white 48%,
+    rgba(255, 255, 255, 0.9) 62%, rgba(232, 121, 249, 0.4) 82%,
+    rgba(232, 121, 249, 0.15) 100%);
+}
+
+/* ── Credits panel — matches the shell-frame/gothic system ─────────────── */
+.credits-frame {
+  width: min(520px, 100%);
+  max-height: 82vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.credits-scroll {
+  overflow-y: auto;
+  padding-right: 4px;
+  margin-bottom: 14px;
+}
+
+.credits-block {
+  margin-bottom: 20px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid rgba(201, 168, 76, 0.14);
+  text-align: center;
+}
+
+.credits-block:last-of-type {
+  border-bottom: none;
+}
+
+.credits-block h3 {
+  margin: 0 0 10px;
+  font-family: "Noto Serif Display", "Noto Serif", serif;
+  font-size: 0.72rem;
+  letter-spacing: 0.28em;
+  text-transform: uppercase;
+  color: rgba(201, 168, 76, 0.85);
+}
+
+.credits-role {
+  margin: 10px 0 2px;
+  font-size: 0.68rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--shell-muted);
+}
+
+.credits-name {
+  margin: 0;
+  font-family: "Noto Serif Display", "Noto Serif", serif;
+  font-size: 1.05rem;
+  color: rgba(232, 228, 214, 0.92);
+}
+
+.credits-hint {
+  margin: 0;
+  font-size: 0.85rem;
+  line-height: 1.55;
+  color: var(--shell-muted);
+}
+
+.credits-seal-mark {
+  border-bottom: none;
+  opacity: 0.5;
+}
+
+.credits-seal-mark img {
+  width: 96px;
+  animation: seal-spin 120s linear infinite;
+}
+
+/* volumetric wrapper: JS sets a small continuous bass-driven translate
+   here every frame. Becomes its own grid so the existing grid-area:1/1
+   stacking of seal/logo/plate/glow/shimmer/CA-ghosts inside it is
+   unchanged — this only adds one more nesting level, not a new layout. */
+.ident-quake {
+  grid-area: 1 / 1;
+  display: grid;
+  place-items: center;
+  width: 100%;
+  height: 100%;
+  will-change: transform;
+}
+
+.credits-link {
+  color: rgba(127, 232, 216, 0.92);
+  text-decoration: none;
+  border-bottom: 1px solid rgba(127, 232, 216, 0.35);
+  transition: color 0.15s ease, border-color 0.15s ease;
+}
+
+.credits-link:hover {
+  color: rgba(216, 255, 246, 1);
+  border-bottom-color: rgba(216, 255, 246, 0.8);
+}
+
+/* the sidechain-pump synth-stab bloom (~9.3-14s) — JS-only opacity/
+   transform, no competing keyframe, matches ident-glow/ident-shimmer */
+.ident-pulse {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: min(56vmin, 520px);
+  aspect-ratio: 1;
+  border-radius: 50%;
+  background: radial-gradient(circle,
+    rgba(216, 255, 246, 0.55) 0%,
+    rgba(80, 227, 194, 0.35) 32%,
+    rgba(201, 168, 76, 0.18) 58%,
+    transparent 75%);
+  mix-blend-mode: screen;
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* WebGL liquid-light shader canvas (identShader.ts) — screen blend so it
+   reads as light adding to the scene, not a flat layer sitting on top.
+   Sized to fill the ident's grid cell like the rays/quake layers. */
+.ident-shader {
+  grid-area: 1 / 1;
+  width: 100%;
+  height: 100%;
+  mix-blend-mode: screen;
+  pointer-events: none;
+}
+
+/* clean cut-to-black bridge: NOT tied to the 27.93s master timeline —
+   finishBoot() drives it directly (instant black, brief hold, fast fade)
+   so the ident→title handoff reads as a deliberate film cut instead of
+   either a jarring instant pop or a mushy cross-dissolve. */
+.ident-bridge {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  background: #030408;
+  opacity: 0;
+  pointer-events: none;
 }
