@@ -66,6 +66,7 @@ import { saveToken, getToken, isAccessTokenStale } from "./tiktok/tokenStore.ts"
 import { createCheckoutSession, findSku, COSMETIC_CATALOG } from "./stripe/checkout.ts";
 import { requireStripeWebhookSecret, verifyStripeSignature, parseCheckoutCompleted } from "./stripe/webhook.ts";
 import { grantEntitlement, getEntitlements } from "./stripe/entitlements.ts";
+import { sanitizePlayerName } from "@net/playerName.ts";
 
 /** Process boot time — surfaced on /ops/api/status uptime. */
 const processStartedAtMs = Date.now();
@@ -894,14 +895,16 @@ video{width:100%;height:100%;object-fit:contain;display:block}</style>
       const verified = await verifyWorldToken(token, config.gameServerSecret);
       if (!verified) return new Response("auth failed", { status: 401 });
       // Chosen display name rides the ws URL (not the signed token — it's
-      // cosmetic). Sanitized hard: letters/digits/space/-_.' only, 2-14 ch.
+      // cosmetic). This server-side pass is AUTHORITATIVE — the client's
+      // copy (net/playerName.ts, same function) is UX only and must never
+      // be trusted; a request can hit this endpoint directly, bypassing
+      // the browser's input entirely.
       const rawName = url.searchParams.get("name") ?? "";
-      const cleanName = rawName.replace(/[^\w \-.']/g, "").trim().slice(0, 14);
       const data: SocketData = {
         kind: "world",
         matchId: "world",
         playerId: verified.playerId,
-        name: cleanName.length >= 2 ? cleanName : undefined,
+        name: sanitizePlayerName(rawName),
         authedAt: Date.now(),
       };
       const upgraded = srv.upgrade(req, { data });

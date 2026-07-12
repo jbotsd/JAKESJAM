@@ -14,6 +14,7 @@ import { announce, setAnnouncerVolume, silenceAnnouncer } from "./game/audio/Ann
 import { LobbyController } from "./game/ui/LobbyController";
 import { MatchStatusBadge } from "./game/ui/MatchStatusBadge";
 import { fetchWorldSummary } from "./net/worldClient";
+import { sanitizePlayerName, stripDisallowedChars } from "./net/playerName";
 import { SceneKeys } from "./game/scenes/SceneKeys";
 import {
   applyWasmCollisionFlag,
@@ -463,14 +464,19 @@ if (isTouchDevice()) {
   window.addEventListener("pointerdown", goFullscreen);
 }
 
-// Chosen callsign — persisted, sanitized, rides the world join.
+// Chosen callsign — persisted, sanitized, rides the world join. Character
+// filtering happens live (every keystroke); the full sanitizePlayerName
+// pass (length/reserved-word rejection) only runs at commit time — see
+// net/playerName.ts for why those are split. The SERVER re-applies
+// sanitizePlayerName independently and is the only authoritative pass;
+// this is UX only.
 const playerNameInput = app.querySelector<HTMLInputElement>("[data-player-name]");
 if (playerNameInput) {
   playerNameInput.value = localStorage.getItem("jakesjam.playerName") ?? "";
   playerNameInput.addEventListener("input", () => {
-    const clean = playerNameInput.value.replace(/[^\w \-.']/g, "").slice(0, 14);
-    if (clean !== playerNameInput.value) playerNameInput.value = clean;
-    localStorage.setItem("jakesjam.playerName", clean.trim());
+    const filtered = stripDisallowedChars(playerNameInput.value);
+    if (filtered !== playerNameInput.value) playerNameInput.value = filtered;
+    localStorage.setItem("jakesjam.playerName", sanitizePlayerName(filtered) ?? "");
   });
 }
 

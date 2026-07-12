@@ -20,6 +20,7 @@ import {
   buildGameServerWsUrl,
   fetchMatchAssignment,
   fetchWorldAssignment,
+  sanitizePlayerName,
   InputBit,
   type NetStats,
 } from "../../net";
@@ -1224,9 +1225,12 @@ export class OnlineMatchScene extends Phaser.Scene {
   private async resolveWsUrl(data: OnlineMatchSceneInit): Promise<string> {
     if (data.mode === "world") {
       this.setStatus("Joining Hot Lobby...");
+      // Re-sanitize at the join boundary too — localStorage is writable by
+      // devtools/extensions, and the server re-checks anyway, but this
+      // keeps every read site consistent with the one authoritative rule.
       const assignment = await fetchWorldAssignment(
         data.localPlayerId,
-        localStorage.getItem("jakesjam.playerName") ?? undefined,
+        sanitizePlayerName(localStorage.getItem("jakesjam.playerName") ?? ""),
       );
       return assignment.wsUrl;
     }

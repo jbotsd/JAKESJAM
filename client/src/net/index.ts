@@ -36,3 +36,4 @@ export {
   type WorldAssignment,
 } from "./worldClient.js";
 export { InterpolationBuffer } from "./interpolationBuffer.js";
+export { sanitizePlayerName, stripDisallowedChars } from "./playerName.js";
