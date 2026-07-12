@@ -15,10 +15,24 @@
 //
 // OFF unless JJ_HOST_REPLAY=1 — it only makes sense on the box that is
 // actually running the buffer (the streaming/kiosk host).
+//
+// ⚠️ 2026-07-12 INCIDENT: this signal drives gpu-screen-recorder's
+// FULL-MONITOR capture (stream-kit/launch-replay-buffer.sh — now refuses
+// to run). On this box (Jake's daily-driver desktop, not a dedicated
+// kiosk) it captured his real screen — browser tabs, a DM thread — and
+// uploaded 26 clips of it to the public store before anyone noticed. A
+// single-var accidental `JJ_HOST_REPLAY=1` in an env block is exactly how
+// that happened. The second var below is a deliberate typing tax so
+// re-enabling this requires reading this comment first — the capture
+// process itself is already blocked at the script level too. The
+// permanent replacement is clipRenderQueue.ts (isolated headless render,
+// never touches the real screen) — prefer that; it needs no flag at all.
 
 import type { SimEvent } from "@sim/types.ts";
 
-const ENABLED = process.env.JJ_HOST_REPLAY === "1";
+const ENABLED =
+  process.env.JJ_HOST_REPLAY === "1" &&
+  process.env.JJ_HOST_REPLAY_DEDICATED_KIOSK_BOX === "1";
 /** Aftermath window before saving — mirrors ClipRecorder's LOOKAHEAD_MS. */
 const LOOKAHEAD_MS = 3_000;
 /** Min spacing between saves: a multi-kill inside one window is one clip
