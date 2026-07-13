@@ -221,7 +221,7 @@ const CARD_STYLE: Partial<CSSStyleDeclaration> = {
   cursor: "pointer",
   textAlign: "left",
   boxShadow: "0 4px 14px rgba(0, 0, 0, 0.32)",
-  transition: "transform 120ms cubic-bezier(0.34,1.56,0.64,1), box-shadow 120ms ease, border-color 120ms ease, background 120ms ease",
+  transition: "box-shadow 120ms ease, border-color 120ms ease, background 120ms ease",
   fontFamily: "'Space Grotesk', Inter, Arial, sans-serif",
 };
 
