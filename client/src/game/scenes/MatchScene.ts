@@ -17,7 +17,7 @@ import { GameAudioSystem } from "../systems/AudioSystem";
 import { ParticlePool } from "../systems/ParticlePool";
 import { DeathOverlay } from "../ui/DeathOverlay";
 import { LocalPlayerController } from "../systems/LocalPlayerController.js";
-import type { InputBitfield } from "../../sim/types.js";
+import type { InputBitfield, MapDefinition } from "../../sim/types.js";
 import type {
   CharacterDefinition,
   CharacterId,
@@ -66,6 +66,12 @@ type MatchSceneInitData = {
   matchId?: MatchId;
   localPlayerId?: string;
   players?: RoomPlayer[];
+  /** Arena Forge "Test Play": drop straight into this map instead of the
+   *  curated boxworks-practice course. Any map other than boxworksPractice
+   *  itself disables the course's CHECKPOINTS system (map-specific hardcoded
+   *  coordinates) in favor of plain spawn-point respawn — see
+   *  checkpointsEnabled. */
+  map?: MapDefinition;
 };
 
 type MovementKeys = {
@@ -118,6 +124,14 @@ export class MatchScene extends Phaser.Scene {
   private roomPlayers: RoomPlayer[] = [];
   private deathOverlay?: DeathOverlay;
   private lastCheckpointIndex = 0;
+  /** boxworksPractice by default; Arena Forge Test Play passes its own
+   *  in-progress MapDefinition object directly (World.create-style — no
+   *  registry lookup needed, see docs/... Arena Forge plan). */
+  private map: MapDefinition = boxworksPractice;
+  /** Only the curated boxworks-practice course uses the hardcoded
+   *  CHECKPOINTS course-progress system — any other map (Test Play) falls
+   *  back to plain random-spawn-point respawn. */
+  private checkpointsEnabled = true;
 
   constructor() {
     super(SceneKeys.Match);
@@ -126,6 +140,9 @@ export class MatchScene extends Phaser.Scene {
   init(data: MatchSceneInitData = {}) {
     this.localPlayerId = PlayerId(data.localPlayerId ?? "offline-player");
     this.roomPlayers = data.players ?? [];
+    this.map = data.map ?? boxworksPractice;
+    this.checkpointsEnabled = this.map === boxworksPractice;
+    this.lastCheckpointIndex = 0;
   }
 
   create() {
@@ -158,7 +175,7 @@ export class MatchScene extends Phaser.Scene {
     transientVfx.attach(this);
     // Built once per scene create (collision cache is a bit of work);
     // resetPlayer() below and on every respawn just calls .reset() on it.
-    this.localPlayer = new LocalPlayerController(boxworksPractice, this.getLocalSpawn(), this.localPlayerId);
+    this.localPlayer = new LocalPlayerController(this.map, this.getLocalSpawn(), this.localPlayerId);
     this.resetPlayer();
     this.renderArena();
     this.configureCamera();
@@ -291,9 +308,9 @@ export class MatchScene extends Phaser.Scene {
   }
 
   private renderArena() {
-    const { x: width, y: height } = boxworksPractice.size;
+    const { x: width, y: height } = this.map.size;
     // Resolve theme from map metadata; fall back to jadeIsles.
-    const themeKey = (boxworksPractice.arenaTheme ?? "jadeIsles") as keyof typeof ARENA_THEMES;
+    const themeKey = (this.map.arenaTheme ?? "jadeIsles") as keyof typeof ARENA_THEMES;
     const theme: import("../ui/palette").ArenaTheme = ARENA_THEMES[themeKey] as import("../ui/palette").ArenaTheme;
 
     // Cool Forerunner void base under skybox.
@@ -334,8 +351,8 @@ export class MatchScene extends Phaser.Scene {
     }
 
     if (!this.platformLayer) this.platformLayer = new PlatformLayer(this);
-    this.platformLayer.repaint(boxworksPractice.platforms, theme);
-    for (const spawn of boxworksPractice.spawns) {
+    this.platformLayer.repaint(this.map.platforms, theme);
+    for (const spawn of this.map.spawns) {
       this.add.circle(spawn.x, spawn.y, 5, PALETTE.textMid, 0.5);
     }
 
@@ -431,8 +448,8 @@ export class MatchScene extends Phaser.Scene {
     cam.setBounds(
       -padX,
       -padY,
-      boxworksPractice.size.x + padX * 2,
-      boxworksPractice.size.y + padY + bottomPad,
+      this.map.size.x + padX * 2,
+      this.map.size.y + padY + bottomPad,
     );
     // OFF for vector art — camera rounding quantizes slow pans (see
     // OnlineMatchScene note); MSAA handles edges.
@@ -696,7 +713,9 @@ export class MatchScene extends Phaser.Scene {
   }
 
   private resetPlayer() {
-    const spawn = CHECKPOINTS[this.lastCheckpointIndex] ?? CHECKPOINTS[0]!;
+    const spawn = this.checkpointsEnabled
+      ? (CHECKPOINTS[this.lastCheckpointIndex] ?? CHECKPOINTS[0]!)
+      : this.getLocalSpawn();
     this.deathSequenceId += 1;
     this.clearRespawnText();
     this.localPlayer.reset(spawn.x, spawn.y);
@@ -717,7 +736,7 @@ export class MatchScene extends Phaser.Scene {
    * dash-landing).
    */
   private updateCheckpoint(): void {
-    if (!this.localPlayer.grounded) {
+    if (!this.checkpointsEnabled || !this.localPlayer.grounded) {
       return;
     }
     const x = this.localPlayer.position.x;
@@ -730,14 +749,14 @@ export class MatchScene extends Phaser.Scene {
   private isOutOfBounds(): boolean {
     const margin = 180;
     return (
-      this.localPlayer.position.y > boxworksPractice.size.y + margin ||
+      this.localPlayer.position.y > this.map.size.y + margin ||
       this.localPlayer.position.x < -margin ||
-      this.localPlayer.position.x > boxworksPractice.size.x + margin
+      this.localPlayer.position.x > this.map.size.x + margin
     );
   }
 
   private getLocalSpawn(): Vec2 {
-    const spawn = Phaser.Utils.Array.GetRandom(boxworksPractice.spawns);
+    const spawn = Phaser.Utils.Array.GetRandom(this.map.spawns);
     return { ...spawn };
   }
 

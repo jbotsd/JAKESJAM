@@ -285,6 +285,7 @@ app.innerHTML = `
         <button data-menu-options type="button" class="shell-btn-secondary">Settings</button>
         <button data-menu-intro type="button" class="shell-btn-secondary">Intro</button>
         <button data-menu-tutorial type="button" class="shell-btn-secondary">Showcase</button>
+        <button data-menu-forge type="button" class="shell-btn-secondary">Forge</button>
         <button data-menu-credits type="button" class="shell-btn-secondary">Credits</button>
       </div>
       <div class="splash-status-slot" data-world-status></div>
@@ -1363,6 +1364,22 @@ window.addEventListener("jakesjam:tutorial-exit", () => {
   document.title = "JAKESJAM";
   splash.hidden = false;
   startMenuMusic();
+});
+
+// Arena Forge — in-game map editor. Mirrors the Tutorial/Showcase entry
+// above (bypass ShellController's own splash bookkeeping, hide it directly)
+// but skips the music-fade choreography since the Forge doesn't own audio.
+queryRequired<HTMLButtonElement>("[data-menu-forge]").addEventListener("click", () => {
+  if (game.scene.isActive(SceneKeys.MainMenu)) game.scene.stop(SceneKeys.MainMenu);
+  game.scene.start(SceneKeys.ArenaForge);
+  splash.hidden = true;
+});
+
+window.addEventListener("jakesjam:forge-exit", () => {
+  if (game.scene.isActive(SceneKeys.ArenaForge)) game.scene.stop(SceneKeys.ArenaForge);
+  if (!game.scene.isActive(SceneKeys.MainMenu)) game.scene.start(SceneKeys.MainMenu);
+  document.title = "JAKESJAM";
+  splash.hidden = false;
 });
 
 queryRequired<HTMLButtonElement>("[data-options-back]").addEventListener("click", () => {

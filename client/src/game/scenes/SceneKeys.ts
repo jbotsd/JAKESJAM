@@ -12,6 +12,7 @@ export const SceneKeys = {
   Replay: "ReplayScene",
   HUD: "HUDScene",
   Tutorial: "TutorialScene",
+  ArenaForge: "ArenaForgeScene",
 } as const;
 
 export type SceneKey = (typeof SceneKeys)[keyof typeof SceneKeys];
