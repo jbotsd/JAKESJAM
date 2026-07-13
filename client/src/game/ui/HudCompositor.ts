@@ -203,6 +203,8 @@ export class HudCompositor {
       countdownRemainingMs: state.round.countdownRemainingMs,
       roundIndex: state.round.roundIndex,
       winnerLabel,
+      scores: state.round.scores,
+      localPlayerId: this.localPlayerId,
     });
   }
 

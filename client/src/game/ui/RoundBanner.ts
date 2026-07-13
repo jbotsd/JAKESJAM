@@ -10,12 +10,20 @@
 
 import Phaser from "phaser";
 import { uiWidth, uiHeight } from "../render/renderResolution.js";
+import { playerTag } from "./botIdentity";
 
 export type RoundBannerState = {
   phase: "countdown" | "fighting" | "round-over" | "drafting";
   countdownRemainingMs: number;
   roundIndex: number;
   winnerLabel?: string;
+  /** Round score per player — shown as a line under the round-over banner
+   *  so the point that was just scored isn't only visible in the small
+   *  peripheral scoreboard column. */
+  scores?: Record<string, number>;
+  /** playerId → display name (hello roster); ids fall back to tags. */
+  names?: Record<string, string>;
+  localPlayerId?: string;
 };
 
 // Which countdown "beat" is currently showing
@@ -28,6 +36,9 @@ export class RoundBanner {
   private mainText!: Phaser.GameObjects.Text;
   // Smaller above-label ("ROUND N")
   private subText!: Phaser.GameObjects.Text;
+  // Score line shown under the round-over label — the point that was just
+  // scored, so it's not only visible in the small peripheral scoreboard.
+  private scoreText!: Phaser.GameObjects.Text;
 
   private lastBeat: CountdownBeat = "none";
   private lastPhase: RoundBannerState["phase"] | "hidden" = "hidden";
@@ -51,7 +62,13 @@ export class RoundBanner {
 
     if (state.phase === "round-over") {
       if (this.lastPhase !== "round-over") {
-        this.showRoundOver(state.roundIndex, state.winnerLabel ?? "DRAW");
+        this.showRoundOver(
+          state.roundIndex,
+          state.winnerLabel ?? "DRAW",
+          state.scores,
+          state.names,
+          state.localPlayerId,
+        );
       }
       return;
     }
@@ -62,6 +79,18 @@ export class RoundBanner {
     this.popTween?.stop();
     this.mainText.destroy();
     this.subText.destroy();
+    this.scoreText.destroy();
+  }
+
+  /** Explicitly clears the banner. Normally implicit (fighting/drafting
+   *  phases call this from update()) — exposed so match-end can clear a
+   *  frozen round-over banner before it sits underneath the results modal. */
+  hide(): void {
+    this.mainText.setVisible(false);
+    this.subText.setVisible(false);
+    this.scoreText.setVisible(false);
+    this.lastPhase = "hidden";
+    this.lastBeat = "none";
   }
 
   // ─── Private ──────────────────────────────────────────────────────────────
@@ -102,6 +131,22 @@ export class RoundBanner {
       .setDepth(990)
       .setVisible(false);
 
+    this.scoreText = s.add
+      .text(cx, cy + 46, "", {
+        fontFamily: "'Space Mono', 'Courier New', monospace",
+        fontSize: "16px",
+        fontStyle: "bold",
+        color: "#ffd76b",
+        letterSpacing: 2,
+        stroke: "#05080f",
+        strokeThickness: 4,
+        align: "center",
+      })
+      .setOrigin(0.5, 0.5)
+      .setScrollFactor(0)
+      .setDepth(990)
+      .setVisible(false);
+
     s.scale.on("resize", this.onResize, this);
   }
 
@@ -110,13 +155,7 @@ export class RoundBanner {
     const cy = uiHeight(this.scene) * 0.32;
     this.mainText.setPosition(cx, cy);
     this.subText.setPosition(cx, cy - 44);
-  }
-
-  private hide(): void {
-    this.mainText.setVisible(false);
-    this.subText.setVisible(false);
-    this.lastPhase = "hidden";
-    this.lastBeat = "none";
+    this.scoreText.setPosition(cx, cy + 46);
   }
 
   private updateCountdown(remainingMs: number, roundIndex: number): void {
@@ -141,6 +180,7 @@ export class RoundBanner {
       const subLabel = `ROUND ${roundIndex}`;
 
       this.subText.setText(subLabel).setVisible(true);
+      this.scoreText.setVisible(false);
       this.mainText
         .setText(beat)
         .setFontSize(isFight ? "56px" : "88px")
@@ -159,7 +199,13 @@ export class RoundBanner {
     }
   }
 
-  private showRoundOver(roundIndex: number, winnerLabel: string): void {
+  private showRoundOver(
+    roundIndex: number,
+    winnerLabel: string,
+    scores?: Record<string, number>,
+    names?: Record<string, string>,
+    localPlayerId?: string,
+  ): void {
     this.lastPhase = "round-over";
     // roundIndex is 0-based sim state; display 1-based.
     roundIndex += 1;
@@ -177,6 +223,22 @@ export class RoundBanner {
       .setColor("#fff7d6")
       .setVisible(true)
       .setScale(0.7, 0.7);
+
+    // Score line — the point that was just scored, spelled out (not just
+    // inferable from the small peripheral scoreboard column). Sorted by
+    // score (leader first), local player tagged "YOU".
+    if (scores && Object.keys(scores).length > 0) {
+      const line = Object.entries(scores)
+        .sort(([aId, a], [bId, b]) => b - a || aId.localeCompare(bId))
+        .map(([pid, score]) => {
+          const tag = pid === localPlayerId ? "YOU" : (names?.[pid] ?? playerTag(pid));
+          return `${tag} ${score}`;
+        })
+        .join("  ·  ");
+      this.scoreText.setText(line).setVisible(true);
+    } else {
+      this.scoreText.setVisible(false);
+    }
 
     this.popTween?.stop();
     this.popTween = this.scene.tweens.add({

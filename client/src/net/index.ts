@@ -33,6 +33,7 @@ export {
   fetchWorldAssignment,
   fetchWorldSummary,
   fetchMatchSummary,
+  postRematchReady,
   type WorldAssignment,
 } from "./worldClient.js";
 export { InterpolationBuffer } from "./interpolationBuffer.js";

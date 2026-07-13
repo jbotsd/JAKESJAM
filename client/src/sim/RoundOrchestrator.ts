@@ -65,12 +65,13 @@ export class RoundOrchestrator {
     tick: Tick,
     rngState: number,
     dtMs: number,
+    targetScore: number = TARGET_SCORE_DEFAULT,
   ): OrchestratorStepResult {
     const result = stepRound({
       state: this._roundState,
       players,
       dtMs,
-      targetScore: TARGET_SCORE_DEFAULT,
+      targetScore,
       tick,
       rngState,
     });

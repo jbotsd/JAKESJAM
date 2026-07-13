@@ -79,8 +79,13 @@ export class WorldHost {
   /** Pending recycle timer (results-display hold). */
   private recycleTimer: ReturnType<typeof setTimeout> | null = null;
   /** How long the final scoreboard stays up before the world rolls a new
-   *  match. Overridable for tests. */
+   *  match — the ANTI-STALL CEILING for quiet/AFK lobbies, not the normal-
+   *  case wait (see markRematchReady, which recycles early once every
+   *  connected player has clicked Rematch). Overridable for tests. */
   private readonly resultsHoldMs: number;
+  /** Players who've clicked "Rematch" during the current results hold.
+   *  Cleared at the top of every recycle() — scoped to one match-end wait. */
+  private readonly rematchReady = new Set<PlayerId>();
   /** Server-side AI duelists that keep the world alive. Count via the
    *  WORLD_BOTS env (host-public.sh default 2 — enough motion, not a gang). */
   private readonly botCount: number;
@@ -91,7 +96,12 @@ export class WorldHost {
   private rotationCursor = 0;
 
   constructor(opts: { mapId?: MapId | string; rotateMaps?: boolean; resultsHoldMs?: number; bots?: number } = {}) {
-    this.resultsHoldMs = opts.resultsHoldMs ?? 6000;
+    // Was a flat 6000ms with no readiness gate — the "goes too fast into
+    // the next game" complaint (Jake, 2026-07-13). Raised to 12000ms as the
+    // fallback ceiling; markRematchReady() below recycles early once every
+    // connected player has actually clicked Rematch, so this only matters
+    // for a quiet/AFK lobby that never signals ready.
+    this.resultsHoldMs = opts.resultsHoldMs ?? 12000;
     // Cap 6 — 4+ on mega docks felt like a firing squad for solo humans.
     this.botCount = Math.max(0, Math.min(6, opts.bots ?? 0));
     if (this.botCount > 0) {
@@ -194,7 +204,28 @@ export class WorldHost {
     }, this.resultsHoldMs);
   }
 
+  /**
+   * A player clicked "Rematch" on the results overlay. Once every currently
+   * -connected socket has signaled ready, recycle right away instead of
+   * waiting out the rest of the resultsHoldMs anti-stall ceiling — this is
+   * what makes the Rematch button (previously a no-op `hide()`) actually do
+   * something (Jake, 2026-07-13: "it goes too fast... the rematch score
+   * screen and timing of it" — the fix is making the fast path opt-in and
+   * player-driven instead of a forced timer either way).
+   */
+  markRematchReady(playerId: PlayerId): void {
+    this.rematchReady.add(playerId);
+    if (!this.recycleTimer) return; // no match-over hold pending right now
+    const connected = [...this.sockets.values()].filter((ws) => ws.readyState === 1).length;
+    if (connected > 0 && this.rematchReady.size >= connected) {
+      clearTimeout(this.recycleTimer);
+      this.recycleTimer = null;
+      this.recycle();
+    }
+  }
+
   private recycle(): void {
+    this.rematchReady.clear();
     const old = this.host;
     if (!old) return;
     // Drop sockets that closed while the scoreboard was up.

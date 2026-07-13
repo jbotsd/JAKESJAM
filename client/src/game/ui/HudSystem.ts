@@ -145,6 +145,11 @@ export class HudSystem {
 
   // Top-center elements
   private timerText!: Phaser.GameObjects.Text;
+  // Small label above the timer saying WHAT it's counting down to (Jake,
+  // 2026-07-13: "confusing when a round ends" — the timer was reused
+  // verbatim across fighting/round-over/drafting/countdown with nothing
+  // distinguishing a 0:02 mid-fight from a 0:02 waiting-on-the-draft-timer).
+  private phaseTagText!: Phaser.GameObjects.Text;
   private scoreText!: Phaser.GameObjects.Text;
 
   // Low-health vignette
@@ -196,6 +201,7 @@ export class HudSystem {
     for (const t of this.pillTexts) t.destroy();
     this.pillTexts = [];
     this.timerText.destroy();
+    this.phaseTagText.destroy();
     this.scoreText.destroy();
     this.vignette.destroy();
     this.vignetteTween?.stop();
@@ -285,9 +291,23 @@ export class HudSystem {
     this.chipGraphics = s.add.graphics();
     this.chipGraphics.setScrollFactor(0).setDepth(depth + 1);
 
-    // Top-center: timer + score
+    // Top-center: phase tag + timer + score
+    this.phaseTagText = s.add
+      .text(uiWidth(s) / 2, this.compact ? 2 : 2, "", {
+        fontFamily: "'Space Mono', 'Courier New', monospace",
+        fontSize: this.compact ? "8px" : "9px",
+        fontStyle: "bold",
+        color: "#8ff8ff",
+        letterSpacing: 3,
+        stroke: "#05080f",
+        strokeThickness: 3,
+      })
+      .setOrigin(0.5, 0)
+      .setScrollFactor(0)
+      .setDepth(depth + 2);
+
     this.timerText = s.add
-      .text(uiWidth(s) / 2, this.compact ? 10 : 12, "", {
+      .text(uiWidth(s) / 2, this.compact ? 14 : 16, "", {
         fontFamily: "'Space Mono', Consolas, 'Courier New', monospace",
         fontSize: this.compact ? "17px" : "24px",
         fontStyle: "bold",
@@ -348,6 +368,7 @@ export class HudSystem {
   private onResize(): void {
     const w = uiWidth(this.scene);
     const h = uiHeight(this.scene);
+    this.phaseTagText.setX(w / 2);
     this.timerText.setX(w / 2);
     this.scoreText.setX(w / 2);
     this.vignette.setSize(w, h);
@@ -465,12 +486,23 @@ export class HudSystem {
   // ─── Top-center ───────────────────────────────────────────────────────────
 
   private updateTopCenter(round: HudRound): void {
-    // Timer
+    // Timer — countdownRemainingMs is reused across all four phases (round
+    // time limit while fighting, the round-over hold, the draft window, the
+    // pre-fight beat), so the bare number alone doesn't say what it's
+    // counting down TO. The phase tag above it disambiguates.
     const ms = Math.max(0, round.countdownRemainingMs);
     const totalSec = Math.ceil(ms / 1000);
     const mins = Math.floor(totalSec / 60);
     const secs = totalSec % 60;
     this.timerText.setText(`${mins}:${secs.toString().padStart(2, "0")}`);
+    const PHASE_TAG: Record<HudRound["phase"], { label: string; color: string }> = {
+      fighting: { label: "FIGHT", color: "#8ff8ff" },
+      "round-over": { label: "ROUND OVER", color: "#ffd76b" },
+      drafting: { label: "DRAFT PICK", color: "#c8a4ff" },
+      countdown: { label: "NEXT ROUND", color: "#8ff8ff" },
+    };
+    const tag = PHASE_TAG[round.phase];
+    this.phaseTagText.setText(tag.label).setColor(tag.color);
 
     // Scoreboard column: sorted by score (leader first), local marked ▸.
     const entries = Object.entries(round.scores).sort(

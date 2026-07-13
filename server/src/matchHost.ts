@@ -6,8 +6,9 @@ import type { ServerWebSocket } from "bun";
 import { SNAPSHOT_INTERVAL_TICKS, STEP_MS, World } from "@sim/index.ts";
 import { createRuntime, stepWithRuntime, type WorldRuntime } from "@sim/World.ts";
 import { KILL_PLANE_MARGIN_PX } from "@sim/player.ts";
-import { stepRound, enterDrafting, TARGET_SCORE_DEFAULT } from "@sim/round.ts";
+import { stepRound, enterDrafting } from "@sim/round.ts";
 import { resolveMap, type MapId } from "@sim/data/maps.ts";
+import { resolveModeConfig } from "@sim/data/modeConfig.ts";
 import {
   createDirectorState,
   defaultDirectorBounds,
@@ -507,7 +508,7 @@ export class MatchHost {
     snapshotsDroppedForBackpressure: number;
   } {
     const round = this.state.round;
-    const targetScore = Math.max(...Object.values(round.scores), 0) >= 0 ? 3 : 3;
+    const targetScore = resolveModeConfig(this.state.chaosModifierIds).targetScore;
     return {
       matchId: this.matchId,
       mapId: this.map.id,
@@ -1060,7 +1061,7 @@ export class MatchHost {
     stepped: WorldState,
   ): { state: WorldState; events: SimEvent[] } {
     const round = stepped.round;
-    const targetScore = TARGET_SCORE_DEFAULT;
+    const targetScore = resolveModeConfig(stepped.chaosModifierIds).targetScore;
 
     // CAPTURE: the Zig transition round-over → countdown becomes drafting,
     // unless the match just ended or nobody is present to draft.

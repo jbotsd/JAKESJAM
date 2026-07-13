@@ -54,7 +54,8 @@ import {
   stepSatellites,
 } from "./satellite.js";
 import { stepWeapon, resolvePlayerBuild } from "./weapon.js";
-import { stepRound, TARGET_SCORE_DEFAULT, FIRST_BLOOD_SPEED_MULTIPLIER } from "./round.js";
+import { stepRound, FIRST_BLOOD_SPEED_MULTIPLIER } from "./round.js";
+import { resolveModeConfig } from "./data/modeConfig.js";
 import {
   tickShield,
   tryDeflectDamage,
@@ -1418,18 +1419,19 @@ export function stepWithRuntime(
   // 5. Round state machine. Delegate to the orchestrator when present;
   //    fall back to the inline stepRound call for tests that don't wire
   //    up a runtime orchestrator.
+  const targetScore = resolveModeConfig(state.chaosModifierIds).targetScore;
   let roundResult;
   if (runtime.orchestrator) {
     // Sync the orchestrator from the world state before stepping, so any
     // external mutations (server card picks) are reflected.
     runtime.orchestrator.syncFromWorld(state);
-    roundResult = runtime.orchestrator.step(cleanedPlayers, nextTick, rngState, effDtMs);
+    roundResult = runtime.orchestrator.step(cleanedPlayers, nextTick, rngState, effDtMs, targetScore);
   } else {
     roundResult = stepRound({
       state: roundStateForStep,
       players: cleanedPlayers,
       dtMs: effDtMs,
-      targetScore: TARGET_SCORE_DEFAULT,
+      targetScore,
       tick: nextTick,
       rngState,
     });

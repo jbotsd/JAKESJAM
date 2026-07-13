@@ -79,6 +79,27 @@ export async function fetchMatchSummary(matchId: string): ReturnType<typeof fetc
 }
 
 /**
+ * Signal that this player clicked "Rematch" on the match-results overlay.
+ * Once every currently-connected player has signaled, the server recycles
+ * the world immediately instead of waiting out the full results-hold
+ * timer (worldHost.markRematchReady) — this is what makes the Rematch
+ * button do something instead of just hiding the overlay. Best-effort:
+ * swallow failures, since the anti-stall timer is still the fallback.
+ */
+export async function postRematchReady(playerId: string): Promise<void> {
+  const httpBase = wsToHttp(readGameServerWsBase());
+  try {
+    await fetch(`${httpBase}/world/rematch-ready`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ playerId }),
+    });
+  } catch {
+    // Best-effort — the resultsHoldMs ceiling still recycles eventually.
+  }
+}
+
+/**
  * Runtime game-server override via `?server=<ws-url>` query param —
  * mirrors the `?convex=` param in LobbyController. Lets a share link
  * point an already-deployed client at a self-hosted server (e.g. a

@@ -20,6 +20,7 @@ import { checkRateLimit, clientKey } from "./rateLimit.ts";
 import { MatchRegistry } from "./matchRegistry.ts";
 import { WorldHost } from "./worldHost.ts";
 import type { MatchSocketData } from "./matchHost.ts";
+import { PlayerId } from "@sim/types.ts";
 import {
   createPrivateLobby,
   getPrivateLobby,
@@ -891,6 +892,22 @@ video{width:100%;height:100%;object-fit:contain;display:block}</style>
           matchId: result.matchId,
           tokens: result.tokens,
         };
+      });
+    }
+
+    // ── World rematch-ready ─────────────────────────────────────────────
+    // Hot Lobby's results overlay Rematch button — see worldHost.markRematchReady.
+    // Not rate-limited: one call per player per match-end, same low-frequency
+    // shape as /private/ready.
+    if (url.pathname === "/world/rematch-ready" && req.method === "POST") {
+      const body = await readJsonBody();
+      const playerId = String(body.playerId ?? "");
+      if (!playerId) {
+        return new Response("bad playerId", { status: 400, headers: corsHeaders });
+      }
+      worldHost.markRematchReady(PlayerId(playerId));
+      return new Response(JSON.stringify({ ok: true }), {
+        headers: { "content-type": "application/json", ...corsHeaders },
       });
     }
 

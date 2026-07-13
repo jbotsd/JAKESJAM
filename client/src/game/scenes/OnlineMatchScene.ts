@@ -20,6 +20,7 @@ import {
   buildGameServerWsUrl,
   fetchMatchAssignment,
   fetchWorldAssignment,
+  postRematchReady,
   sanitizePlayerName,
   InputBit,
   type NetStats,
@@ -47,6 +48,7 @@ import {
 import {
   resolveMap,
 } from "../../sim/data/maps";
+import { resolveModeConfig } from "../../sim/data/modeConfig";
 import { createWeaponBuild, findCardsById } from "../../sim/data/weaponBuild";
 import { starterWeapon } from "../../sim/data/weapons";
 import { hashPlayerEntity } from "../../sim/hash";
@@ -187,10 +189,6 @@ const SIM_CROUCH_HALF_HEIGHT = 19;
 const LOCAL_PLAYER_FALLBACK_COLOR = 0xfff3d6;
 // Hot crimson (was soft pink — too close to both bots and warm terrain).
 const REMOTE_PLAYER_FALLBACK_COLOR = 0xff4d5e;
-// Match the offline target. Needed to format "First to N" in the results
-// overlay; ClientLoop doesn't expose targetScore, so we mirror the constant
-// used by World.create.
-const TARGET_SCORE_DEFAULT = 3;
 
 // DAMAGE_FLASH_MS moved to EntityRenderCoordinator (C2a).
 
@@ -1003,7 +1001,11 @@ export class OnlineMatchScene extends Phaser.Scene {
     // Death overlay (teach tip ≤1 + optional share when clip URL known).
     // HELD BACK ~3s so the death rite (burst → shards → soul returning to
     // the motif) plays unobscured — the overlay was hiding the best moment.
-    if (this.deathOverlay) {
+    // Gated by !matchHasEnded (mirrors the round-banner gate right below):
+    // without it, a player who dies on the match-winning point keeps
+    // ticking through the ~3s death rite reveal underneath the results
+    // modal that already popped up, and could flash stale on the next hello.
+    if (this.deathOverlay && !this.matchHasEnded) {
       if (vitals.isDead) {
         if (this.localDeathAtMs === null) {
           this.localDeathAtMs = performance.now();
@@ -1045,6 +1047,9 @@ export class OnlineMatchScene extends Phaser.Scene {
         countdownRemainingMs: state.round.countdownRemainingMs,
         roundIndex: state.round.roundIndex,
         winnerLabel,
+        scores,
+        names: Object.fromEntries(this.rosterNames),
+        localPlayerId: this.localPlayerId,
       });
     }
   }
@@ -2361,8 +2366,15 @@ export class OnlineMatchScene extends Phaser.Scene {
     const { winnerPlayerId } = state.round;
     if (winnerPlayerId === null) return;
     const winnerScore = state.round.scores[winnerPlayerId] ?? 0;
-    if (winnerScore < TARGET_SCORE_DEFAULT) return;
+    if (winnerScore < resolveModeConfig(state.chaosModifierIds).targetScore) return;
     this.matchHasEnded = true;
+    // The round-over banner and death overlay are only gated from FUTURE
+    // updates by matchHasEnded (see updateHudSystem) — neither is ever
+    // explicitly cleared, so whatever they last drew ("TO YOU", or a
+    // mid-reveal death rite) used to sit frozen underneath the results
+    // modal indefinitely. Clear both explicitly the instant the match ends.
+    this.roundBannerSystem?.hide();
+    this.deathOverlay?.hide();
     this.showMatchResults(state);
   }
 
@@ -2383,7 +2395,7 @@ export class OnlineMatchScene extends Phaser.Scene {
     this.matchResultsOverlay.show(
       {
         winnerPlayerId: state.round.winnerPlayerId,
-        targetScore: TARGET_SCORE_DEFAULT,
+        targetScore: resolveModeConfig(state.chaosModifierIds).targetScore,
         rows,
         shareUrl: this.lastShareClipUrl ?? undefined,
       },
@@ -2400,6 +2412,13 @@ export class OnlineMatchScene extends Phaser.Scene {
           // match actually starts.
           this.matchResultsOverlay?.hide();
           if (this.sceneMode === "world") {
+            // Previously a no-op beyond hiding the overlay — the world
+            // recycled on a flat, non-negotiable timer regardless of
+            // whether Rematch was ever clicked (Jake, 2026-07-13: "it goes
+            // too fast"). This actually signals readiness now: once every
+            // connected player has clicked it, the server recycles early
+            // instead of waiting out the full anti-stall ceiling.
+            void postRematchReady(this.localPlayerId);
             this.setStatus("Waiting for next round…");
             return;
           }
