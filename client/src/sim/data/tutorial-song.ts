@@ -143,15 +143,46 @@ export const tutorialSongCues: readonly SongCue[] = [
   // the previous stage's target went down.
   { id: "voice-dummy-spawn", atSec: 32.7, kind: "dummy:spawn", data: { x: 2500, y: 900, health: 150 } },
   { id: "voice-goal-idle", atSec: 32.8, kind: "dummy:goal", data: { mode: "idle-flinch" } },
-  { id: "voice-dummy-refresh-1", atSec: 60.1, kind: "dummy:spawn", data: { x: 2500, y: 900, health: 180 } },
-  { id: "voice-goal-return-fire", atSec: 60.163, kind: "dummy:goal", data: { mode: "return-fire", fireIntervalMs: 2200 } },
+  // First target callout — "this is a thing you shoot," before it has ever
+  // fired back. Fire itself was previously never taught at all.
+  { id: "voice-fire-invite", atSec: 33.0, kind: "diegetic:fire-invite", data: {} },
+  // Footage (2026-07-13, second review) found the player standing
+  // COMPLETELY still through this entire idle-flinch beat — 27.3s of a
+  // target that, by design, never fires back or forces any reaction. A
+  // stall watchdog in TutorialScene now force-promotes the fight if the
+  // player hasn't engaged within 1.3s of stillness, but the SCRIPT itself
+  // was also just too slow here regardless of player behavior — shrunk
+  // this stage from 27.3s to 15.3s so even an actively-engaged player
+  // isn't stuck dueling one passive target for half a minute.
+  { id: "voice-dummy-refresh-1", atSec: 48.1, kind: "dummy:spawn", data: { x: 2500, y: 900, health: 160 } },
+  { id: "voice-goal-return-fire", atSec: 48.163, kind: "dummy:goal", data: { mode: "return-fire", fireIntervalMs: 2200 } },
+  // A companion shard joins the instant the fight goes live — from here on
+  // the zone is never a single 1v1 duel with nothing else on screen; the
+  // player has to split attention between two live threats immediately,
+  // not just at the very tail end of the zone (old wave-1 was the only
+  // multi-enemy beat in the whole 64s, arriving with 9s left).
+  { id: "voice-wave-early", atSec: 48.5, kind: "horde:wave", data: { count: 1, xMin: 2820, xMax: 2820, fireIntervalMs: 3000, health: 20, tier: "splinter" } },
   // 64.087: measured onset in the first chorus — the call ("Ouoein!").
   { id: "chorus1-flash", atSec: 64.087, kind: "diegetic:coptic-flash", data: COPTIC_CHORUS },
-  { id: "voice-dummy-refresh-2", atSec: 78.05, kind: "dummy:spawn", data: { x: 2500, y: 900, health: 210 } },
-  { id: "voice-goal-parry-teach", atSec: 78.112, kind: "dummy:goal", data: { mode: "telegraphed-shot", fireIntervalMs: 1800 } },
+  { id: "voice-dummy-refresh-2", atSec: 74.0, kind: "dummy:spawn", data: { x: 2500, y: 900, health: 210 } },
+  { id: "voice-goal-parry-teach", atSec: 74.062, kind: "dummy:goal", data: { mode: "telegraphed-shot", fireIntervalMs: 1800 } },
+  // The passive answer — Shield (Shift): a real wind-up now precedes every
+  // shot in this mode (TutorialDummyDirector.telegraphProgress()), so this
+  // invite has an actual window to land in before the first charge fires.
+  { id: "voice-shield-invite", atSec: 74.25, kind: "diegetic:shield-invite", data: {} },
   // 85.333: measured onset — first shards slip in, weak and slow: the
-  // realm has noticed, but doesn't yet believe.
-  { id: "voice-wave-1", atSec: 85.333, kind: "horde:wave", data: { count: 2, xMin: 2100, xMax: 2700, fireIntervalMs: 2800, health: 22 } },
+  // realm has noticed, but doesn't yet believe. Bumped 2→3 and tightened
+  // cadence — by now the player's had two full stages of practice, this
+  // finale beat should feel like the busiest moment of the zone, not a
+  // repeat of the early-wave beat at the same intensity.
+  { id: "voice-wave-1", atSec: 85.333, kind: "horde:wave", data: { count: 3, xMin: 2050, xMax: 2750, fireIntervalMs: 2500, health: 22 } },
+  // First real build change — the tutorial has no draft UI (solo scripted
+  // rite), so card progression is diegetic pickups instead (see
+  // TutorialDuelController.addHeroCard() / cardManifest()). triple-fan
+  // mirrors what Estaphaios itself opens the climax with — the player
+  // earns a taste of the same power they'll eventually face at full
+  // strength. First of two; they STACK toward the climax fight.
+  { id: "voice-card-grant", atSec: 94.6, kind: "hero:card-grant", data: { card: "triple-fan" } },
 
   // ── (breather, 1:36-1:49) — camera relaxes, no gate. ──
   { id: "zone-breather-1", atSec: 96.0, kind: "zone:enter", data: { name: "breather" } },
@@ -181,6 +212,12 @@ export const tutorialSongCues: readonly SongCue[] = [
   { id: "chorus2-flash", atSec: 120.128, kind: "diegetic:coptic-flash", data: COPTIC_INTRO_1 },
   { id: "response-boss-homing", atSec: 124.25, kind: "dummy:cards", data: { cards: ["seeker-facets"] } },
   { id: "response-goal-harder", atSec: 124.25, kind: "dummy:goal", data: { mode: "telegraphed-shot", fireIntervalMs: 1200 } },
+  // The aggressive answer — the Aegis power-slide (right-click/C): faster
+  // volleys than Voice Speaks' shield-teaching moment justify reaching for
+  // the tool that blocks AND punishes on the way in, instead of just
+  // holding still behind Shield. Chevrons point INTO the threat on
+  // purpose — stepping back reads exactly wrong for how the dash works.
+  { id: "response-dash-invite", atSec: 124.45, kind: "diegetic:dash-invite", data: {} },
   { id: "response-accent-2", atSec: 128.395, kind: "camera:shake", data: { amount: 0.3 } },
   // The first real SQUAD: a warder (directional shield, see
   // TutorialShardThrall.ts / tutorialDuel.ts's SHIELD_* logic) holds the
@@ -193,6 +230,12 @@ export const tutorialSongCues: readonly SongCue[] = [
   // Board wipe before the climb — the shards return to light; what was
   // stolen becomes the material of the arena itself.
   { id: "response-clear", atSec: 138.867, kind: "horde:clear", data: {} },
+  // Second card — STACKS with triple-fan from The Voice Speaks. seeker-
+  // facets mirrors the boss's own response-boss-homing pickup at 124.25s.
+  // By The Vessel Answers the player is fighting with a real fan-of-
+  // homing-shots build, not the bare starter pistol — the "powerful
+  // moment toward the end" the climax needs to actually feel earned.
+  { id: "response-card-grant", atSec: 138.9, kind: "hero:card-grant", data: { card: "seeker-facets" } },
 
   // ── The Three Forms (2:19-2:56, 37s) — wall-jump shaft, three ignition
   //    points along ONE continuous climb (proven-safe geometry), lit in
@@ -202,18 +245,32 @@ export const tutorialSongCues: readonly SongCue[] = [
   { id: "three-forms-handoff", atSec: 138.9, kind: "camera:handoff-director" },
   // OPENED UP (was x4850/y700, no zoom — which held the combat-tight
   // framing and kept the shaft's TOP off-screen the whole climb, so the
-  // player had no way to read "this goes somewhere"): zoom out to 0.8 and
-  // center on the shaft's midpoint so the full 820px climb AND the vista
-  // ledge above it are in frame from the zone's first beat — the "oh,
-  // I'm meant to climb this" reveal, delivered by framing alone.
-  { id: "three-forms-pan", atSec: 139.2, kind: "camera:pan", data: { x: 4850, y: 540, ms: 3500, ease: "Sine.easeInOut", zoom: 0.8 } },
+  // player had no way to read "this goes somewhere"): zoom out and center
+  // on the shaft's midpoint so the full climb AND the vista ledge above it
+  // are in frame from the zone's first beat — the "oh, I'm meant to climb
+  // this" reveal, delivered by framing alone. Shaft grown 820px→1270px and
+  // re-centered (2026-07-13, "make the wall itself longer") — y and zoom
+  // both re-tuned to the new midpoint/span so the reveal still frames the
+  // whole climb instead of just its lower half.
+  { id: "three-forms-pan", atSec: 139.2, kind: "camera:pan", data: { x: 4850, y: 317, ms: 3500, ease: "Sine.easeInOut", zoom: 0.62 } },
+  // Demonstrates the actual bounce (L-wall → R-wall → L-wall, ascending)
+  // BEFORE the player needs to act — footage review found long dead time
+  // here with the shaft's 3 ignition rings alone doing nothing to teach
+  // the move itself. Fires right as the wide pan reveals the full shaft.
+  { id: "three-forms-wall-jump-invite", atSec: 139.6, kind: "diegetic:wall-jump-invite", data: {} },
   // Closer now — the shape re-anchors further along the level and grows
   // (stage 1), tracking the climb instead of sitting fixed behind it.
   { id: "demiurge-second-sighting", atSec: 139.3, kind: "demiurge:manifest", data: { x: 5700, y: 350 } },
   { id: "demiurge-stage-1-early", atSec: 139.35, kind: "demiurge:stage", data: { stage: 1 } },
-  { id: "form-voice-ignite", atSec: 142.141, kind: "diegetic:shaft-ignite", data: { form: 1, y: 850 } },
-  { id: "form-speech-ignite", atSec: 155.539, kind: "diegetic:shaft-ignite", data: { form: 2, y: 630 } },
-  { id: "form-word-ignite", atSec: 170.156, kind: "diegetic:shaft-ignite", data: { form: 3, y: 400 } },
+  // y values re-proportioned for the taller shaft (2026-07-13: climb grown
+  // 820px→1270px by extending UPWARD — bottom stays at GROUND=952
+  // unchanged, new top is -318 instead of 132) — same ~12/39/67% up-the-
+  // climb spacing as before, just against the new span so the three
+  // ignition beats still land at sensible heights instead of clustering
+  // near the (now much smaller, relatively) bottom third.
+  { id: "form-voice-ignite", atSec: 142.141, kind: "diegetic:shaft-ignite", data: { form: 1, y: 800 } },
+  { id: "form-speech-ignite", atSec: 155.539, kind: "diegetic:shaft-ignite", data: { form: 2, y: 457 } },
+  { id: "form-word-ignite", atSec: 170.156, kind: "diegetic:shaft-ignite", data: { form: 3, y: 101 } },
 
   // ── The Turn (2:56-3:06) — pure cinematic pull-back, no input. The
   //    biggest breakdown besides the intro; a bright riser under it. ──
@@ -289,6 +346,12 @@ export const tutorialSongCues: readonly SongCue[] = [
   { id: "vessel-accent-2", atSec: 201.004, kind: "camera:shake", data: { amount: 0.35 } },
   { id: "vessel-boss-cards-2", atSec: 206.135, kind: "dummy:cards", data: { cards: ["five-shard-spray", "seeker-facets"] } },
   { id: "vessel-goal-2", atSec: 206.135, kind: "dummy:goal", data: { mode: "telegraphed-shot", fireIntervalMs: 1000 } },
+  // The climax is where the Aegis dash/parry timing taught back in The
+  // Response (124.45s) actually gets TESTED under real stakes — 1000ms is
+  // the fastest telegraphed cadence of the whole level. Same real windup
+  // (TutorialDummyDirector.telegraphProgress()) as everywhere else, just
+  // less room between volleys to recover if the read is wrong.
+  { id: "vessel-dash-invite", atSec: 206.3, kind: "diegetic:dash-invite", data: {} },
   // First open window: the shield drops for ~5s right after cards-2 lands
   // — a real "it's open, capitalize" beat before the wave/cascade pressure
   // below forces attention elsewhere.

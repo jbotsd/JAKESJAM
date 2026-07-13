@@ -53,6 +53,11 @@ type ShardThrallPose = {
    *  undefined for non-shielded tiers. hitStacks/crackedMs drive the
    *  frontal-facet brightness and the crack/vulnerable flicker. */
   shield?: { hitStacks: number; crackedMs: number };
+  /** 0..1 wind-up toward a telegraphed shot (see TutorialDummyDirector's
+   *  telegraphProgress()) — undefined/0 when not charging. This is the
+   *  actual "dash-parry teaching" tell: a real, readable charge-up before
+   *  the shot fires, not a same-frame surprise. */
+  telegraph?: number;
 };
 
 type TierConfig = {
@@ -217,6 +222,32 @@ export class TutorialShardThrall implements CombatRig {
     if (hitT > 0) {
       g.fillStyle(ROSE_HOT, hitT * 0.6);
       g.fillCircle(cx, cy, coreSize * 0.4);
+    }
+
+    // Telegraph wind-up — the actual "read and react" tell (see
+    // TutorialDummyDirector's telegraphProgress()): a hot bolt grows out
+    // along the fire angle and an outer warning ring pulses FASTER as the
+    // charge climbs toward 1, so the accelerating rhythm itself communicates
+    // "now" without needing a text countdown. This is deliberately a
+    // DIFFERENT visual language than the shield's steady wall (above) or
+    // the instant fireFlashMs discharge (below) — the player has to learn
+    // to tell all three apart at a glance, same as the real Aegis kit asks.
+    const telegraph = pose.telegraph ?? 0;
+    if (telegraph > 0) {
+      const chargeLen = coreSize * (1.4 + telegraph * 2.6);
+      const pulseHz = 5 + telegraph * 16; // accelerates toward the fire moment
+      const pulse = 0.55 + 0.45 * Math.sin(this.t * pulseHz);
+      g.lineStyle(2 + telegraph * 2.5, ROSE_HOT, (0.35 + telegraph * 0.55) * pulse);
+      g.lineBetween(cx, cy, cx + Math.cos(this.fireAngle) * chargeLen, cy + Math.sin(this.fireAngle) * chargeLen);
+      const tipX = cx + Math.cos(this.fireAngle) * chargeLen;
+      const tipY = cy + Math.sin(this.fireAngle) * chargeLen;
+      g.fillStyle(0xffffff, telegraph * 0.5 * pulse);
+      g.fillCircle(tipX, tipY, 2 + telegraph * 4);
+      // A slowly-shrinking warning ring around the whole cluster — the
+      // "window closing" read, independent of aim direction so it's
+      // visible even off to the side of the screen.
+      g.lineStyle(1.4, ROSE_HOT, (0.2 + telegraph * 0.35) * pulse);
+      g.strokeCircle(cx, cy, coreSize * (3.2 - telegraph * 0.9));
     }
 
     // The shield: a facet arc facing the aim direction (SHIELD_FRONTAL_ARC

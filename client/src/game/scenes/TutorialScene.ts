@@ -116,6 +116,30 @@ export class TutorialScene extends Phaser.Scene {
   private bossMaxHealth = 100;
   private songAudio!: HTMLAudioElement;
   private cameraOwner: "director" | "action" = "director";
+  // Tracks the dummy's currently-scripted goal mode so handleCombatEvent
+  // can tell "was this kill during the defenseless idle-flinch teaching
+  // beat" — see the reactive early-kill respawn below.
+  private currentDummyGoalMode: "idle-flinch" | "return-fire" | "telegraphed-shot" = "idle-flinch";
+  // Stall detector for the wall-jump shaft — a ONE-SHOT invite proved
+  // insufficient against the seal's own brightness at this zone (confirmed
+  // twice on real footage: player stands at the shaft base doing nothing
+  // for 20+ seconds). Hard rule as of 2026-07-13: player stationary >1s is
+  // a bug. This re-fires the demonstration, escalating, for as long as the
+  // player sits at the shaft's base not climbing — it literally cannot go
+  // stale/fade away unanswered the way a single cue could.
+  private shaftStallMs = 0;
+  private shaftInviteCount = 0;
+  // Voice Speaks stall watchdog: footage review found the player standing
+  // completely still through the ENTIRE idle-flinch beat (27s+) because
+  // that stage is, by design, a target that never fires back or forces a
+  // reaction — a player who doesn't proactively engage gets zero stakes
+  // and zero content. The reactive early-kill respawn (handleCombatEvent)
+  // only helps a player who DOES kill it fast; this catches the opposite
+  // case — never firing at all — by force-promoting the fight the moment
+  // stillness crosses the 1s hard-rule threshold, regardless of why the
+  // player is standing there.
+  private voiceStallMs = 0;
+  private voiceStallProvoked = false;
   private keys!: {
     a: Phaser.Input.Keyboard.Key;
     d: Phaser.Input.Keyboard.Key;
@@ -162,7 +186,12 @@ export class TutorialScene extends Phaser.Scene {
 
     const cam = this.cameras.main;
     cam.setBackgroundColor(ARENA_THEMES.voidVessel.bg);
-    cam.setBounds(-200, -200, tutorialArena.size.x + 400, tutorialArena.size.y + 400);
+    // Top bound widened from -200: the Three Forms wall-jump shaft's own
+    // top (and its vista landing) now sit up at y≈-340 — the shaft was
+    // lengthened 2026-07-13 by growing upward into headroom above the
+    // (also raised) ceiling wall, so the camera needs to actually be able
+    // to follow the climb up there.
+    cam.setBounds(-200, -600, tutorialArena.size.x + 400, tutorialArena.size.y + 800);
     this.actionCamera = new ActionCamera(cam);
     this.actionCamera.setBaseZoom(COMBAT_ZOOM * getRenderScale());
     this.cineCamera = new CinematicCameraDirector(cam);
@@ -268,8 +297,38 @@ export class TutorialScene extends Phaser.Scene {
       localPlayerId: TUTORIAL_HERO_ID,
       safeShake: (ms, intensity) => cam.shake(ms, intensity),
       spawnDamageNumber: () => {},
-      spawnBlastAtPlayer: () => {},
-      killCinematic: () => {},
+      // Kills previously relied ENTIRELY on SimEventRouter's generic hit-
+      // stop/shake/audio (those already fired — see the "player-killed"
+      // case) plus the slower, narrative dummyDissolve() mote-shower — no
+      // sharp instant impact at all, which read as "doesn't pop." These
+      // two were stubbed no-ops; OnlineMatchScene's real RenderLayer
+      // (already instantiated here) covers both directly.
+      spawnBlastAtPlayer: (pid, radius, damage) => {
+        const e = this.duel.entity(pid);
+        if (e) this.renderLayer.spawnExplosionBlast({ x: e.x, y: e.y }, radius, damage);
+      },
+      killCinematic: (victimId) => {
+        cam.flash(90, 255, 240, 200, false);
+        if (this.cameraOwner === "action") this.actionCamera.punchZoom(cam.zoom * 0.05, 70, 220);
+        const e = this.duel.entity(victimId);
+        const glow = e ? this.particlePool.acquireGlow() : null;
+        if (glow && e) {
+          glow.setPosition(e.x, e.y);
+          glow.setScale(0.1);
+          glow.setAlpha(0.9);
+          glow.setTint(0xffedb0);
+          glow.setBlendMode(Phaser.BlendModes.ADD);
+          glow.setDepth(60);
+          this.tweens.add({
+            targets: glow,
+            scale: 1.4,
+            alpha: 0,
+            duration: 340,
+            ease: "Cubic.easeOut",
+            onComplete: () => this.particlePool.release(glow),
+          });
+        }
+      },
       spawnPlatformBlastTint: () => {},
       showCardDraft: () => {},
       hideCardDraft: () => {},
@@ -442,6 +501,55 @@ export class TutorialScene extends Phaser.Scene {
     for (const cue of cues) this.handleCue(cue);
 
     const hero = this.duel.hero();
+    // Shaft stall detector — see the field docblock. Only armed once the
+    // song has actually reached The Three Forms (139s) so it can't misfire
+    // during earlier zones, and only while the hero is grounded near the
+    // shaft's own base and hasn't started climbing yet (y still near the
+    // floor). Escalates every 2.4s of continued stillness instead of
+    // firing once and hoping.
+    if (
+      this.songAudio.currentTime >= 139.0 &&
+      this.songAudio.currentTime < 176.0 &&
+      hero.alive &&
+      (hero.grounded ?? true) &&
+      hero.y > 880 &&
+      Math.abs(hero.x - 4850) < 700
+    ) {
+      this.shaftStallMs += deltaMs;
+      if (this.shaftStallMs >= 2400) {
+        this.shaftStallMs = 0;
+        this.shaftInviteCount++;
+        this.diegeticCues.wallJumpInvite(4750, 4950, -318, 952, this.shaftInviteCount);
+      }
+    } else {
+      this.shaftStallMs = 0;
+    }
+    // Voice Speaks stall watchdog — see the field docblock. Armed only
+    // during the zone's own idle-flinch beat (before the FIRST scripted
+    // escalation would otherwise fire); once provoked it hands off to the
+    // normal goal machine for the rest of the zone, so this never fights
+    // the scripted return-fire/telegraphed-shot timeline once it's live.
+    if (
+      this.songAudio.currentTime >= 32.8 &&
+      this.songAudio.currentTime < 48.1 &&
+      this.currentDummyGoalMode === "idle-flinch" &&
+      !this.voiceStallProvoked &&
+      hero.alive &&
+      Math.abs(hero.vx) < 20 &&
+      Math.abs(hero.vy) < 20
+    ) {
+      this.voiceStallMs += deltaMs;
+      if (this.voiceStallMs >= 1300) {
+        this.voiceStallProvoked = true;
+        const dummy = this.duel.dummy();
+        this.dummyDirector.setGoal({ mode: "return-fire", fireIntervalMs: 2000 });
+        this.currentDummyGoalMode = "return-fire";
+        this.diegeticCues.fireInvite(dummy.x, dummy.y);
+        this.cineCamera.shake(160, 0.004);
+      }
+    } else {
+      this.voiceStallMs = 0;
+    }
     // No control until the body exists: during the spirit-descent opening
     // the hero entity is a mote of light mid-assembly — input arriving the
     // same instant the rig materializes IS the "you may move" cue.
@@ -510,6 +618,67 @@ export class TutorialScene extends Phaser.Scene {
     }
   }
 
+  /** A wave of archon shards — the realm noticing the theft. Each shard is
+   *  a real sim entity with real (weak) health and its own scripted AI;
+   *  fire cadences are deliberately staggered per shard so a wave reads as
+   *  a crowd, not a metronome firing squad. Factored out of the
+   *  "horde:wave" cue handler so the REACTIVE early-kill path (see
+   *  handleCombatEvent) can spawn genuine reinforcements too, not just a
+   *  scripted one — a fast/eager player who kills the safe first target
+   *  gets a real fight, not just a retargeted one. */
+  private spawnShardWave(opts: {
+    count: number;
+    xMin: number;
+    xMax: number;
+    fireIntervalMs: number;
+    health?: number;
+    cards: string[];
+    tier: ShardThrallTier;
+    cascade?: { spawnOnDeath?: number; maxGenerations?: number };
+    y?: number;
+  }): void {
+    const { count, xMin, xMax, fireIntervalMs: interval, cards, tier, cascade } = opts;
+    const y = opts.y ?? 900;
+    // "facet" tier (bigger, slower-spinning, more thorns) marks the later,
+    // tougher escalation waves — the visual rank is BACKED by real HP now
+    // (was a flat 24 regardless of tier, which made the bigger-looking
+    // wave no actually harder — a decorative escalation, not a real one).
+    const tierDefaultHealth: Record<ShardThrallTier, number> = {
+      splinter: 24,
+      facet: 55,
+      warder: 60,
+      estaphaios: 100,
+    };
+    for (let i = 0; i < count; i++) {
+      const id = `archon-shard-${this.minionCounter++}`;
+      const x = xMin + (xMax - xMin) * (count === 1 ? 0.5 : i / (count - 1));
+      this.minionTiers.set(id, tier);
+      this.duel.addMinion(
+        id,
+        { x, y },
+        { health: opts.health ?? tierDefaultHealth[tier], cards, shielded: tier === "warder" },
+      );
+      const director = new TutorialDummyDirector();
+      director.setGoal({
+        mode: "return-fire",
+        fireIntervalMs: interval + i * 340,
+        stopRangePx: 300 + i * 90,
+      });
+      this.minionDirectors.set(id, director);
+      this.diegeticCues.dummyDissolve(x, y, true); // arrival burst
+      if (cascade) {
+        this.minionCascade.set(id, {
+          spawnOnDeath: cascade.spawnOnDeath ?? 2,
+          maxGenerations: cascade.maxGenerations ?? 2,
+          tier,
+          cards,
+          fireIntervalMs: interval,
+          generation: 0,
+        });
+      }
+    }
+  }
+
   /** Narrative consequences of combat, on top of SimEventRouter's generic
    *  audio/VFX: shards dissolve back into light when broken; the hero's
    *  death is a stumble (respawn at the current zone's anchor), never a
@@ -530,6 +699,41 @@ export class TutorialScene extends Phaser.Scene {
     }
     const victim = this.duel.entity(victimId);
     if (victim) this.diegeticCues.dummyDissolve(victim.x, victim.y);
+    // Footage review found this exact gap: a fast player kills the very
+    // FIRST enemy in the level during its defenseless idle-flinch beat —
+    // trivial, since it never fights back — then gets up to ~27s of dead
+    // air waiting for the scripted 60.1s refresh, right as the song's own
+    // energy is climbing. Fixed reactively rather than by moving the
+    // timer: an early idle-flinch kill immediately reforms the vessel
+    // fighting back, so skill/speed is REWARDED with more content sooner
+    // instead of punished with silence. Slower players still hit the
+    // scripted refresh cues at their normal times as a backstop.
+    // A single retargeted dummy alone was confirmed (2026-07-13 footage,
+    // second review) as NOT enough — one respawned target barely changes
+    // what's on screen. This now also calls in a small reinforcement wave
+    // alongside the respawn, so an eager kill is answered with a genuinely
+    // bigger fight (two live threats from two angles), not just a
+    // re-skinned single duel.
+    if (victimId === (TUTORIAL_DUMMY_ID as string) && this.currentDummyGoalMode === "idle-flinch" && !this.finished) {
+      const spawnPos = victim ? { x: victim.x, y: victim.y } : { x: 2500, y: 900 };
+      this.time.delayedCall(900, () => {
+        if (this.finished) return;
+        this.bossMaxHealth = 165;
+        this.duel.respawnDummy(spawnPos, 165);
+        this.diegeticCues.dummyDissolve(spawnPos.x, spawnPos.y, true);
+        this.dummyDirector.setGoal({ mode: "return-fire", fireIntervalMs: 2000 });
+        this.currentDummyGoalMode = "return-fire";
+        this.voiceStallProvoked = true; // the fight's already live — the watchdog has nothing left to do here
+        this.spawnShardWave({
+          count: 2,
+          xMin: spawnPos.x - 420,
+          xMax: spawnPos.x + 420,
+          fireIntervalMs: 2600,
+          tier: "splinter",
+          cards: [],
+        });
+      });
+    }
     if (victimId !== (TUTORIAL_DUMMY_ID as string)) {
       // Cascade: this kill spawns MORE, escalating — fires immediately
       // (not after the prune delay) so the threat is visibly compounding
@@ -749,6 +953,7 @@ export class TutorialScene extends Phaser.Scene {
       // see respawnDummy/dummy:spawn, much bigger at the climax than the
       // early teaching fights); wave minions are the flat 24-hp fodder.
       const isEstaphaios = pid === (TUTORIAL_DUMMY_ID as string);
+      const director = isEstaphaios ? this.dummyDirector : this.minionDirectors.get(pid);
       rig.update(deltaMs, {
         position: { x: p.x, y: p.y },
         velocity: { x: p.vx, y: p.vy },
@@ -756,6 +961,7 @@ export class TutorialScene extends Phaser.Scene {
         health: this.displayedHealth.get(pid) ?? p.health,
         maxHealth: isEstaphaios ? this.bossMaxHealth : 24,
         shield: this.duel.shieldState(pid),
+        telegraph: director?.telegraphProgress(),
       });
     }
   }
@@ -841,13 +1047,16 @@ export class TutorialScene extends Phaser.Scene {
         this.duel.respawnDummy({ x: Number(data.x), y: Number(data.y) }, Number(data.health ?? 100));
         this.diegeticCues.dummyDissolve(Number(data.x), Number(data.y), true); // arrival burst — same light, arriving instead of leaving
         break;
-      case "dummy:goal":
+      case "dummy:goal": {
+        const mode = (data.mode as "idle-flinch" | "return-fire" | "telegraphed-shot") ?? "idle-flinch";
         this.dummyDirector.setGoal({
-          mode: (data.mode as "idle-flinch" | "return-fire" | "telegraphed-shot") ?? "idle-flinch",
+          mode,
           fireIntervalMs: data.fireIntervalMs !== undefined ? Number(data.fireIntervalMs) : undefined,
           stopRangePx: data.stopRangePx !== undefined ? Number(data.stopRangePx) : undefined,
         });
+        this.currentDummyGoalMode = mode;
         break;
+      }
       case "dummy:cards":
         // The Vessel's spell loadout escalates per extraction stage — real
         // card ids (sim/data/cards.ts), so homing/fan/fire/explosive shots
@@ -862,66 +1071,17 @@ export class TutorialScene extends Phaser.Scene {
         this.duel.setShield(TUTORIAL_DUMMY_ID as string, Number(data.on ?? 0) === 1);
         break;
       case "horde:wave": {
-        // A wave of archon shards — the realm noticing the theft. Each
-        // shard is a real sim entity with real (weak) health and its own
-        // scripted AI; fire cadences are deliberately staggered per shard
-        // so a wave reads as a crowd, not a metronome firing squad.
-        const count = Number(data.count ?? 2);
         const xMin = Number(data.xMin ?? this.duel.hero().x + 500);
-        const xMax = Number(data.xMax ?? xMin + 600);
-        const interval = Number(data.fireIntervalMs ?? 2400);
-        const cards = (data.cards as unknown as string[] | undefined) ?? [];
-        // "facet" tier (bigger, slower-spinning, more thorns) marks the
-        // later, tougher escalation waves — the visual rank is BACKED by
-        // real HP now (was a flat 24 regardless of tier, which made the
-        // bigger-looking wave no actually harder — a decorative escalation,
-        // not a real one). Difficulty scales through health/cadence, never
-        // through slowing down how much damage the player can land.
-        const tier = (String(data.tier ?? "splinter") as ShardThrallTier) ?? "splinter";
-        // Warder's a squad piece, not fodder — real HP so flanking (not
-        // just outlasting it) is the actual solve.
-        const tierDefaultHealth: Record<ShardThrallTier, number> = {
-          splinter: 24,
-          facet: 55,
-          warder: 60,
-          estaphaios: 100,
-        };
-        // Cascading escalation ("kill one, two more arrive"): opt-in per
-        // cue via data.cascade — only the finale waves carry it. Capped
-        // (maxGenerations) so it's a real snowball with an end, not
-        // infinite — the player should feel "I need to run," not "this
-        // never stops."
-        const cascade = data.cascade as
-          | { spawnOnDeath?: number; maxGenerations?: number }
-          | undefined;
-        for (let i = 0; i < count; i++) {
-          const id = `archon-shard-${this.minionCounter++}`;
-          const x = xMin + ((xMax - xMin) * (count === 1 ? 0.5 : i / (count - 1)));
-          this.minionTiers.set(id, tier);
-          this.duel.addMinion(
-            id,
-            { x, y: 900 },
-            { health: Number(data.health ?? tierDefaultHealth[tier]), cards, shielded: tier === "warder" },
-          );
-          const director = new TutorialDummyDirector();
-          director.setGoal({
-            mode: "return-fire",
-            fireIntervalMs: interval + i * 340,
-            stopRangePx: 300 + i * 90,
-          });
-          this.minionDirectors.set(id, director);
-          this.diegeticCues.dummyDissolve(x, 900, true); // arrival burst
-          if (cascade) {
-            this.minionCascade.set(id, {
-              spawnOnDeath: cascade.spawnOnDeath ?? 2,
-              maxGenerations: cascade.maxGenerations ?? 2,
-              tier,
-              cards,
-              fireIntervalMs: interval,
-              generation: 0,
-            });
-          }
-        }
+        this.spawnShardWave({
+          count: Number(data.count ?? 2),
+          xMin,
+          xMax: Number(data.xMax ?? xMin + 600),
+          fireIntervalMs: Number(data.fireIntervalMs ?? 2400),
+          health: data.health !== undefined ? Number(data.health) : undefined,
+          cards: (data.cards as unknown as string[] | undefined) ?? [],
+          tier: (String(data.tier ?? "splinter") as ShardThrallTier) ?? "splinter",
+          cascade: data.cascade as { spawnOnDeath?: number; maxGenerations?: number } | undefined,
+        });
         break;
       }
       case "demiurge:manifest":
@@ -981,6 +1141,36 @@ export class TutorialScene extends Phaser.Scene {
       case "diegetic:shaft-ignite":
         this.diegeticCues.shaftIgnite(4850, Number(data.y), Number(data.form) as 1 | 2 | 3);
         break;
+      case "diegetic:wall-jump-invite":
+        this.diegeticCues.wallJumpInvite(4750, 4950, -318, 952);
+        break;
+      case "diegetic:fire-invite": {
+        const target = this.duel.dummy();
+        this.diegeticCues.fireInvite(target.x, target.y);
+        break;
+      }
+      case "diegetic:shield-invite": {
+        const h = this.duel.hero();
+        const threat = this.duel.dummy();
+        const angle = Math.atan2(threat.y - h.y, threat.x - h.x);
+        this.diegeticCues.shieldInvite(h.x, h.y - 20, angle);
+        break;
+      }
+      case "diegetic:dash-invite": {
+        const h = this.duel.hero();
+        const threat = this.duel.dummy();
+        const angle = Math.atan2(threat.y - h.y, threat.x - h.x);
+        this.diegeticCues.dashInvite(h.x, h.y - 20, angle);
+        break;
+      }
+      case "hero:card-grant": {
+        const cardId = String(data.card ?? "");
+        if (!cardId) break;
+        this.duel.addHeroCard(cardId);
+        const h = this.duel.hero();
+        this.diegeticCues.cardManifest(h.x, h.y);
+        break;
+      }
       case "duel:complete":
         this.finish();
         break;

@@ -27,6 +27,14 @@ export type DummyGoal = {
 };
 
 const FIRE_PULSE_MS = 130; // long enough for stepWeapon's own cooldown gate to register one shot
+// "telegraphed-shot" was previously code-identical to "return-fire" — same
+// instant pulse-on-timer, zero visible difference — so the "teach dash-
+// parry by consequence" design intent (tutorial-song.ts's own comment)
+// never actually existed. This is the real fix: a genuine wind-up BEFORE
+// the shot fires, long enough to read and react to (block with Shield, or
+// dash through it with the Aegis power-slide), rendered by TutorialScene
+// reading telegraphProgress() into the thrall's charge-up glow.
+const TELEGRAPH_WINDUP_MS = 680;
 // Jump tell: a held key only triggers ONE jump on the rising edge (same
 // contract as a human's keypress — see stepPlayer's prevKeys/currKeys
 // edge check), so this pulse just needs to outlast one physics tick; the
@@ -51,10 +59,24 @@ export class TutorialDummyDirector {
   private jumpPulseRemainingMs = 0;
   private jumpCooldownMs = 0;
   private stuckMs = 0;
+  private telegraphMs = 0;
+  private telegraphing = false;
 
   setGoal(goal: DummyGoal): void {
     this.goal = goal;
     this.fireTimerMs = 0;
+    this.telegraphing = false;
+    this.telegraphMs = 0;
+  }
+
+  /** 0 = not winding up; 1 = about to fire. Only "telegraphed-shot" mode
+   *  ever winds up — return-fire and idle-flinch always report 0, so the
+   *  render layer can tell "this shot is dodgeable/blockable, react now"
+   *  apart from "this one wasn't telegraphed." */
+  telegraphProgress(): number {
+    if (!this.telegraphing) return 0;
+    const t = this.telegraphMs / TELEGRAPH_WINDUP_MS;
+    return t < 0 ? 0 : t > 1 ? 1 : t;
   }
 
   /** Advance the dummy's internal fire-cadence clock and compute this tick's
@@ -101,7 +123,34 @@ export class TutorialDummyDirector {
       keys |= InputBit.Jump;
     }
 
-    if (this.goal.mode !== "idle-flinch") {
+    if (this.goal.mode === "telegraphed-shot") {
+      // The real fix: a genuine wind-up BEFORE the shot fires (aim locks
+      // onto the hero — already true every frame, see `aim` above — while
+      // telegraphProgress() climbs 0→1), long enough to read and answer
+      // with Shield or the Aegis dash. Firing happens on windup completion,
+      // not on the interval tick itself — the interval now paces GAPS
+      // between windups, not raw shots.
+      const interval = this.goal.fireIntervalMs ?? 2000;
+      if (this.telegraphing) {
+        this.telegraphMs += dtMs;
+        if (this.telegraphMs >= TELEGRAPH_WINDUP_MS) {
+          this.telegraphing = false;
+          this.telegraphMs = 0;
+          this.fireTimerMs = 0;
+          this.firePulseRemainingMs = FIRE_PULSE_MS;
+          keys |= InputBit.Fire;
+        }
+      } else {
+        this.fireTimerMs += dtMs;
+        if (this.firePulseRemainingMs > 0) {
+          this.firePulseRemainingMs -= dtMs;
+          keys |= InputBit.Fire;
+        } else if (this.fireTimerMs >= interval) {
+          this.telegraphing = true;
+          this.telegraphMs = 0;
+        }
+      }
+    } else if (this.goal.mode !== "idle-flinch") {
       const interval = this.goal.fireIntervalMs ?? 2000;
       this.fireTimerMs += dtMs;
       if (this.firePulseRemainingMs > 0) {

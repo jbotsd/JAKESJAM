@@ -169,6 +169,19 @@ export class TutorialDuelController {
     };
   }
 
+  /** Grant the HERO a real card mid-run — the tutorial has no draft UI
+   *  (this is a solo scripted rite, not a match), so build progression
+   *  here is entirely diegetic pickups (see TutorialDiegeticCues'
+   *  cardManifest()) instead of a screen. Additive/stacking: each call
+   *  appends, same identity-cached resolution setDummyCards relies on. */
+  addHeroCard(cardId: string): void {
+    const hero = this.state.players[TUTORIAL_HERO_ID]!;
+    this.state = {
+      ...this.state,
+      players: { ...this.state.players, [TUTORIAL_HERO_ID]: { ...hero, cards: [...hero.cards, cardId] } },
+    };
+  }
+
   /** Insert a wave minion. The sim picks it up next tick automatically —
    *  movement memory and prevKeys are lazily created per-id inside
    *  stepTutorialDuel exactly like World.ts does for late joiners. */

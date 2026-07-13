@@ -199,6 +199,203 @@ export class TutorialDiegeticCues {
     this.shower(x, y, 8, GOLD_CORE, 34, 1200, { rising: true, scale: 0.2 });
   }
 
+  /** Shield invite — a translucent 120° arc-band hovering in front of the
+   *  hero (the SAME shape their own held-Shift shield renders as, see
+   *  ProceduralPlayerRig's drawAegisShield), previewed as an outline before
+   *  they've raised it. Teaches "you have a shield that looks like THIS"
+   *  by showing it once, unprompted, right as a telegraphed shot starts
+   *  its wind-up — so the invite and the reason for it land together. */
+  shieldInvite(x: number, y: number, aimAngle: number): void {
+    const g = this.scene.add.graphics();
+    g.setDepth(40);
+    this.layer.add(g);
+    const r = 34;
+    const half = (60 * Math.PI) / 180; // matches SHIELD_AIM_ARC_RADIANS/2
+    let elapsed = 0;
+    const DURATION = 1400;
+    const draw = () => {
+      g.clear();
+      const t = Math.min(1, elapsed / DURATION);
+      const pulse = 0.5 + 0.5 * Math.sin(elapsed / 90);
+      const alpha = (1 - t) * (0.35 + pulse * 0.3);
+      g.lineStyle(3, TEAL_CORE, alpha);
+      g.beginPath();
+      g.arc(x, y, r, aimAngle - half, aimAngle + half);
+      g.strokePath();
+      g.lineStyle(1.4, TEAL, alpha * 0.7);
+      g.beginPath();
+      g.arc(x, y, r * 0.82, aimAngle - half, aimAngle + half);
+      g.strokePath();
+    };
+    const timer = this.scene.time.addEvent({
+      delay: 16,
+      loop: true,
+      callback: () => {
+        elapsed += 16;
+        if (elapsed >= DURATION) {
+          timer.remove();
+          g.destroy();
+          return;
+        }
+        draw();
+      },
+    });
+    this.shower(x, y, 6, TEAL_CORE, 26, 900, { scale: 0.16 });
+  }
+
+  /** Aegis-dash invite — a chevron trail of motes streaking THROUGH the
+   *  invite point toward the incoming threat, teaching "commit forward
+   *  into it" (the dash blocks on the way in and bashes on contact — a
+   *  step-back read like the shield's would send exactly the wrong
+   *  message). Fired once, alongside the fastest telegraphed volleys in
+   *  The Response, where the stakes finally justify the more aggressive
+   *  tool over the passive block already taught in The Voice Speaks. */
+  dashInvite(x: number, y: number, dirAngle: number): void {
+    const chevrons = 3;
+    const spacing = 22;
+    for (let i = 0; i < chevrons; i++) {
+      const back = i * spacing;
+      const bx = x - Math.cos(dirAngle) * back;
+      const by = y - Math.sin(dirAngle) * back;
+      this.scene.time.delayedCall(i * 90, () => {
+        const g = this.scene.add.graphics();
+        g.setDepth(40);
+        this.layer.add(g);
+        const perp = dirAngle + Math.PI / 2;
+        const wing = 10;
+        const tip = { x: bx + Math.cos(dirAngle) * 14, y: by + Math.sin(dirAngle) * 14 };
+        const w1 = { x: bx + Math.cos(perp) * wing, y: by + Math.sin(perp) * wing };
+        const w2 = { x: bx - Math.cos(perp) * wing, y: by - Math.sin(perp) * wing };
+        g.lineStyle(2.4, EMBER, 0.85);
+        g.lineBetween(w1.x, w1.y, tip.x, tip.y);
+        g.lineBetween(w2.x, w2.y, tip.x, tip.y);
+        this.scene.tweens.add({
+          targets: g,
+          x: Math.cos(dirAngle) * 60,
+          y: Math.sin(dirAngle) * 60,
+          alpha: { from: 1, to: 0 },
+          duration: 750,
+          ease: "Sine.easeIn",
+          onComplete: () => g.destroy(),
+        });
+      });
+    }
+  }
+
+  /** Fire invite — the very first target callout: a crosshair that snaps
+   *  onto the dummy and holds, teaching "this is a thing you shoot" before
+   *  it has ever fired back (fires once, right as idle-flinch begins). */
+  fireInvite(x: number, y: number): void {
+    const g = this.scene.add.graphics();
+    g.setDepth(40);
+    this.layer.add(g);
+    let elapsed = 0;
+    const DURATION = 1600;
+    const timer = this.scene.time.addEvent({
+      delay: 16,
+      loop: true,
+      callback: () => {
+        elapsed += 16;
+        if (elapsed >= DURATION) {
+          timer.remove();
+          g.destroy();
+          return;
+        }
+        g.clear();
+        const t = elapsed / DURATION;
+        const r = 22 - t * 6;
+        const alpha = (1 - t) * 0.8;
+        g.lineStyle(2, GOLD_CORE, alpha);
+        g.strokeCircle(x, y, r);
+        const tick = 7;
+        g.lineBetween(x - r - tick, y, x - r + 2, y);
+        g.lineBetween(x + r - 2, y, x + r + tick, y);
+        g.lineBetween(x, y - r - tick, x, y - r + 2);
+        g.lineBetween(x, y + r - 2, x, y + r + tick);
+      },
+    });
+  }
+
+  /** A real card grant, made diegetic — no draft screen exists in this
+   *  solo scripted rite (see TutorialDuelController.addHeroCard()), so the
+   *  build change has to read entirely through light: a faceted crystal
+   *  glyph condenses out of a gathering swirl, holds bright for a beat
+   *  (long enough to register "something changed"), then collapses INTO
+   *  the hero — the same inward-absorb language the spirit-descent's
+   *  materialization already uses, at a smaller, single-beat scale. */
+  cardManifest(x: number, y: number): void {
+    const y0 = y - 46;
+    const g = this.scene.add.graphics();
+    g.setDepth(41);
+    this.layer.add(g);
+    const facets = 6;
+    let elapsed = 0;
+    const GATHER_MS = 500;
+    const HOLD_MS = 380;
+    const ABSORB_MS = 340;
+    const TOTAL = GATHER_MS + HOLD_MS + ABSORB_MS;
+    const timer = this.scene.time.addEvent({
+      delay: 16,
+      loop: true,
+      callback: () => {
+        elapsed += 16;
+        g.clear();
+        if (elapsed >= TOTAL) {
+          timer.remove();
+          g.destroy();
+          this.shower(x, y0, 10, GOLD_CORE, 40, 500, { scale: 0.2 });
+          return;
+        }
+        if (elapsed < GATHER_MS) {
+          const t = elapsed / GATHER_MS;
+          for (let i = 0; i < facets; i++) {
+            const a = (i / facets) * Math.PI * 2 + this.scene.time.now * 0.002;
+            const r = 46 * (1 - t);
+            const fx = x + Math.cos(a) * r;
+            const fy = y0 + Math.sin(a) * r * 0.7;
+            g.fillStyle(0xc4b5fd, 0.3 + t * 0.5);
+            g.fillCircle(fx, fy, 2 + t * 2);
+          }
+        } else if (elapsed < GATHER_MS + HOLD_MS) {
+          const ht = (elapsed - GATHER_MS) / HOLD_MS;
+          const pulse = 0.7 + 0.3 * Math.sin(ht * Math.PI * 6);
+          const rot = ht * 0.6;
+          // A faceted diamond — the "card" silhouette, geometric rather
+          // than a literal rectangle, consistent with the seal's own
+          // crystal-not-icon vocabulary.
+          const pts: { x: number; y: number }[] = [];
+          const rTop = 20, rSide = 13;
+          for (const [ang, rad] of [
+            [rot - Math.PI / 2, rTop],
+            [rot, rSide],
+            [rot + Math.PI / 2, rTop],
+            [rot + Math.PI, rSide],
+          ] as const) {
+            pts.push({ x: x + Math.cos(ang) * rad, y: y0 + Math.sin(ang) * rad * 1.3 });
+          }
+          g.fillStyle(0xc4b5fd, 0.85 * pulse);
+          g.beginPath();
+          g.moveTo(pts[0]!.x, pts[0]!.y);
+          for (let i = 1; i < pts.length; i++) g.lineTo(pts[i]!.x, pts[i]!.y);
+          g.closePath();
+          g.fillPath();
+          g.lineStyle(1.6, 0xffffff, pulse);
+          g.strokePath();
+          g.lineStyle(1, GOLD_CORE, 0.5 * pulse);
+          g.strokeCircle(x, y0, 30 + pulse * 4);
+        } else {
+          const at = (elapsed - GATHER_MS - HOLD_MS) / ABSORB_MS;
+          const s = 1 - at;
+          g.fillStyle(0xc4b5fd, 0.85 * s);
+          g.fillCircle(x, y0, 16 * s);
+          g.fillStyle(0xffffff, 0.9 * s);
+          g.fillCircle(x, y0, 6 * s);
+        }
+      },
+    });
+    this.scene.cameras.main.flash(140, 200, 180, 255, false);
+  }
+
   /** Short, vibrant flash of a Coptic invocation — center-screen-fixed
    *  (scroll-factor 0), brief, never blocking input. Per
    *  docs/visual-language-gnostic-vessel.md §5 ("untranslatable charge"),
@@ -370,6 +567,74 @@ export class TutorialDiegeticCues {
     // A slower, dimmer second wave so the dissolve has real duration and
     // doesn't read as a single flat pop.
     this.scene.time.delayedCall(180, () => this.shower(x, y, 18, soft, 320, 1600, { rising: !arrival, scale: 0.22 }));
+  }
+
+  /** The wall-jump shaft had THREE small ignition-ring markers (below) but
+   *  nothing that actually demonstrates the MOVE — footage review found the
+   *  player standing at the shaft's base for a long stretch, never
+   *  climbing, TWICE (same gap jump/move already had explicit invites for;
+   *  wall-jump never did, and a one-shot version of this still wasn't
+   *  enough against how bright the seal reads at this zone's openness).
+   *  This animates a bounce trail zigzagging L→R→L→R up BOTH walls before
+   *  the player ever needs to act, so the rhythm itself ("kick off one
+   *  side, then the other, going up") reads as demonstrated rather than
+   *  merely marked. TutorialScene now RE-FIRES this every 2.4s the player
+   *  sits at the shaft's base not climbing (hard rule: stationary >1s is a
+   *  bug) — `intensity` (1, 2, 3…) scales size/brightness/speed up each
+   *  repeat so persistence itself reads as "louder," never as a stuck
+   *  loop. The three shaft-ignite beats elsewhere stay as the narrative
+   *  "Three Forms" progress layer once the player is actually climbing. */
+  wallJumpInvite(leftX: number, rightX: number, topY: number, bottomY: number, intensity = 1): void {
+    const boost = Math.min(intensity, 4); // cap the escalation — loud, not absurd
+    const bounces = 6;
+    const stepY = (bottomY - topY) / bounces;
+    const stepMs = Math.max(120, 260 - boost * 30); // faster rhythm each repeat = more urgent
+    for (let i = 0; i < bounces; i++) {
+      const x = i % 2 === 0 ? leftX : rightX;
+      const y = bottomY - i * stepY;
+      const otherX = i % 2 === 0 ? rightX : leftX;
+      this.scene.time.delayedCall(i * stepMs, () => {
+        // A bright kick-off flare on the wall being pushed off of...
+        const ringColor = boost >= 3 ? 0xffffff : GOLD_CORE;
+        const ring = this.scene.add.circle(x, y, 8 + boost * 1.5, ringColor, 0.9);
+        ring.setStrokeStyle(2.5 + boost * 0.6, GOLD, 1);
+        ring.setDepth(40);
+        this.layer.add(ring);
+        this.scene.tweens.add({
+          targets: ring,
+          radius: 22 + boost * 6,
+          alpha: { from: 0.9, to: 0 },
+          duration: 500,
+          ease: "Sine.easeOut",
+          onComplete: () => ring.destroy(),
+        });
+        // ...and a streak arcing toward the OPPOSITE wall — the actual
+        // bounce trajectory, not just a marker on one side at a time.
+        if (this.texAvailable) {
+          const img = this.scene.add.image(x, y, GLOW_TEXTURE_KEY);
+          img.setTint(GOLD_CORE);
+          img.setBlendMode(Phaser.BlendModes.ADD);
+          img.setDepth(40);
+          img.setScale(0.22 + boost * 0.05);
+          img.setAlpha(0.85);
+          this.layer.add(img);
+          this.scene.tweens.add({
+            targets: img,
+            x: otherX,
+            y: y - stepY,
+            scale: 0.14,
+            alpha: 0,
+            duration: 420,
+            ease: "Sine.easeOut",
+            onComplete: () => img.destroy(),
+          });
+        }
+      });
+    }
+    // By the third repeat the player has been stuck for 5+ seconds — a
+    // small camera shake breaks the visual monotony and physically draws
+    // the eye back to the shaft even if attention had drifted.
+    if (boost >= 3) this.scene.cameras.main.shake(180, 0.003);
   }
 
   /** One of the three wall-jump-shaft ignition points ("The Three Forms") —

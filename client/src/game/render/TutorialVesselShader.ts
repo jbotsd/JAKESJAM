@@ -213,9 +213,16 @@ void main() {
   float tG = triField(p, uTime, heat, uOpenness);
   float tR = triField(p, uTime + 0.35, heat * 1.15, uOpenness);
   float tB = triField(p, uTime - 0.35, heat * 1.15, uOpenness);
+  // PERF: unlike the seal/triangle above, the flower is evaluated ONCE and
+  // reused across all three channels instead of 3x with time-offset
+  // chromatic aberration — it's a deeper, calmer background layer by
+  // design (see flowerOfLifeField's own docblock), so losing its own
+  // subtle color-fringe shimmer costs little visually while cutting a
+  // real fraction of this shader's total per-pixel cost (each evaluation
+  // is a flowWarp() call = 4 fbm() = 16 noise() samples, x19 circles).
   float fG = flowerOfLifeField(p, uTime, heat, uOpenness);
-  float fR = flowerOfLifeField(p, uTime + 0.35, heat * 1.15, uOpenness);
-  float fB = flowerOfLifeField(p, uTime - 0.35, heat * 1.15, uOpenness);
+  float fR = fG;
+  float fB = fG;
 
   vec3 warm = vec3(sR, sG, sB);
   vec3 teal = vec3(tR, tG, tB);

@@ -157,9 +157,17 @@ if (isKioskMode) {
     const el = document.documentElement;
     const req =
       el.requestFullscreen?.bind(el) ??
-      (el as HTMLElement & { webkitRequestFullscreen?: () => void }).webkitRequestFullscreen?.bind(el);
+      (el as HTMLElement & { webkitRequestFullscreen?: () => Promise<void> | void }).webkitRequestFullscreen?.bind(el);
     try {
-      void req?.();
+      // requestFullscreen() returns a Promise — a bare try/catch around an
+      // un-awaited call only catches SYNCHRONOUS throws, not the rejection
+      // (e.g. a Permissions-Policy denial under --app=/kiosk launch flags),
+      // which surfaces as an unhandled rejection instead. Every OTHER
+      // fullscreen call site in this file already chains .catch(() => {})
+      // (see requestGameFullscreen/installFullscreenToggle below) — this
+      // one was the sole omission, confirmed by a live telemetry report
+      // ("Permissions check failed", source: unhandledrejection).
+      void req?.()?.catch?.(() => {});
     } catch {
       /* ignore */
     }

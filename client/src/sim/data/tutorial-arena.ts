@@ -83,10 +83,18 @@ export const tutorialArena: MapDefinition = {
   size: { x: 8000, y: 1000 },
   spawns: [{ x: 150, y: 900 }],
   platforms: [
-    // Boundary.
+    // Boundary. Ceiling raised well above every zone's own furniture
+    // (2026-07-13: was y:16, right against the wall-jump shaft's old top —
+    // moved to y:-434 specifically to open real headroom for a taller
+    // shaft, see the shaft's own note below. Nothing else in the map goes
+    // anywhere near this height — the next-tallest thing anywhere is the
+    // vessel-chimney-cap at GROUND-3*STEP-26=602 — so this is a
+    // zero-blast-radius move for every other zone; the camera's own bounds
+    // already allow panning up to y:-200 (TutorialScene's cam.setBounds),
+    // extended slightly further by the shaft below.
     { id: "wall-left", kind: "wall", position: { x: 16, y: 500 }, size: { x: 32, y: 1000 } },
     { id: "wall-right", kind: "wall", position: { x: 7984, y: 500 }, size: { x: 32, y: 1000 } },
-    { id: "ceiling", kind: "wall", position: { x: 4000, y: 16 }, size: { x: 8000, y: 32 } },
+    { id: "ceiling", kind: "wall", position: { x: 4000, y: -434 }, size: { x: 8000, y: 32 } },
 
     // Silence — spawn sits here, long flat runway. `id: "floor"` specifically
     // — unreachablePlatforms seeds its BFS from whichever platform is
@@ -116,30 +124,52 @@ export const tutorialArena: MapDefinition = {
     // T1 ledges (different widths/heights, not mirrored) plus one real T2
     // shelf above them — a genuine vertical engagement, not a flat lane
     // with furniture.
+    // Combat furniture pulled back off the shaft's approach (was crowding
+    // right up to x=4645, leaving under 100px of clear floor before the
+    // wall) — see the runway note below.
     col("response-cover-a", 3600, 56, GROUND - 95, GROUND),
     col("response-cover-b", 4000, 60, GROUND - 115, GROUND),
-    col("response-cover-c", 4400, 52, GROUND - 90, GROUND),
+    col("response-cover-c", 4300, 52, GROUND - 90, GROUND),
     ledge("response-t1-l", 3520, 200, GROUND - STEP),
-    ledge("response-t1-r", 4560, 170, GROUND - STEP + 12),
+    ledge("response-t1-r", 4150, 170, GROUND - STEP + 12),
     ledge("response-t2", 4000, 240, GROUND - 2 * STEP),
 
+    // A genuinely CLEAR runway into the shaft — x ~4330-4730, ~400px of
+    // flat, obstacle-free floor-2 (already continuous underneath). The
+    // wall-jump shaft used to sit almost flush against Response's own
+    // combat clutter (the last pylon 350px out, a ledge 190px out), so the
+    // player arrived already stopped/turning rather than at a real run —
+    // one root of the long dead-air stall this whole zone measured on real
+    // footage. A real running start turns "walk up and fumble the first
+    // kick from a standstill" into "sprint in and leap onto the wall,"
+    // which is both more mechanically forgiving (momentum carries the
+    // first kick) and just plain reads as more fun — motion instead of
+    // another stop-start.
+
     // The Three Forms (x 4700-5150) — one continuous wall-jump shaft, 200px
-    // gap (under SHAFT_MAX=230), 820px tall (≈4-5 kicks at 178px/kick per
-    // WALL_JUMP_UP) — mirrors boxworks-practice.ts's proven shaft geometry.
-    { id: "shaft-left", kind: "platform", position: { x: 4750, y: 542 }, size: { x: 40, y: 820 } },
-    { id: "shaft-right", kind: "platform", position: { x: 4950, y: 542 }, size: { x: 40, y: 820 } },
+    // gap (under SHAFT_MAX=230), 1270px tall (≈7 kicks at 178px/kick per
+    // WALL_JUMP_UP) — a real "make the wall itself longer" request
+    // (2026-07-13): the runway fix from the same footage review only solved
+    // the APPROACH, the climb itself was still the original 820px/~4-5-kick
+    // boxworks-practice geometry. Grown by keeping the BOTTOM fixed at
+    // GROUND (unchanged — same runway hand-off, same floor for a whiffed
+    // wall-jump to fall back onto) and extending the TOP upward into the
+    // new headroom opened by moving the ceiling (see above) — old top was
+    // y=132, new top is y=-318.
+    { id: "shaft-left", kind: "platform", position: { x: 4750, y: 317 }, size: { x: 40, y: 1270 } },
+    { id: "shaft-right", kind: "platform", position: { x: 4950, y: 317 }, size: { x: 40, y: 1270 } },
 
     // The Turn — the shaft's exit doubles as the overlook vista. Sized and
     // positioned to actually land within the wall-jump reach envelope: the
-    // columns' own top sits at y=132, so a landing surface must sit within
-    // reachTop=132-178=-46 .. yClimb+24=156 vertically (mapGen.ts's
+    // columns' own top sits at y=-318, so a landing surface must sit within
+    // reachTop=-318-178=-496 .. yClimb+24=-294 vertically (mapGen.ts's
     // shaftReachable) AND have its CENTER within GRAB_REACH_SIDE=200 of the
     // columns horizontally (4530..5170) — the validator (and real physics)
     // test the platform's center point, so being merely "near" the shaft
     // isn't enough if the center sits past that window. The camera's
     // cinematic pull-back sells "wide overlook" visually; this platform
     // only needs to be physically standable right at the shaft's top.
-    { id: "vista", kind: "platform", position: { x: 5075, y: 110 }, size: { x: 750, y: 18 } },
+    { id: "vista", kind: "platform", position: { x: 5075, y: -340 }, size: { x: 750, y: 18 } },
     // One-way (thin platform), so after the pull-back the player can simply
     // drop through it back down to floor-2 for the final arena rather than
     // needing a separate descent path.
