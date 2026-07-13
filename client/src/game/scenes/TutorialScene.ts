@@ -44,6 +44,7 @@ import { TutorialShardThrall, type ShardThrallTier } from "../render/TutorialSha
 import { TutorialBeatQuantizer } from "../systems/TutorialBeatQuantizer.js";
 import { drawGothicOrnament } from "../render/TutorialGothicOrnament.js";
 import { TutorialSpiritDescent } from "../render/TutorialSpiritDescent.js";
+import { TutorialStemAnalyser } from "../systems/TutorialStemAnalyser.js";
 import { ARENA_THEMES } from "../ui/palette.js";
 import { getRenderScale } from "../render/renderResolution.js";
 import { getAudioUrl } from "../audio/audioUrl.js";
@@ -75,6 +76,20 @@ export class TutorialScene extends Phaser.Scene {
   private musicCtx: AudioContext | null = null;
   private musicAnalyser: AnalyserNode | null = null;
   private musicBins: Uint8Array<ArrayBuffer> | null = null;
+  // Real isolated-stem playback (muted, analysis-only) alongside the
+  // single audible master track — see TutorialStemAnalyser's own docblock.
+  private readonly stemAnalyser = new TutorialStemAnalyser();
+  // Held onto so the stem-driven effects below (backing vocals + "other")
+  // can breathe its radius/strength live — addVignette() returns the
+  // filter controller, not just fire-and-forget config.
+  private vignette: Phaser.Filters.Vignette | null = null;
+  // Drum-hit transient detector: fires a camera accent on a sudden RISE in
+  // the isolated drums envelope (a real attack, not "loud generally") —
+  // simple derivative-over-threshold, re-armed once the envelope falls
+  // back down so a single sustained hit can't machine-gun triggers.
+  private drumEnvPrev = 0;
+  private drumHitArmed = true;
+  private percHitArmed = true;
   private particlePool!: ParticlePool;
   private renderLayer!: RenderLayer;
   private audio!: ProceduralAudio;
@@ -259,7 +274,7 @@ export class TutorialScene extends Phaser.Scene {
     // Tuned against live captures: 0.58/0.42 crushed the whole frame into
     // murk — the filter's strength ramps far harder than the old shader's
     // gentle smoothstep did. Wide radius + light touch = a frame, not a fog.
-    cam.filters.internal.addVignette(0.5, 0.5, 0.72, 0.18, 0x10141f);
+    this.vignette = cam.filters.internal.addVignette(0.5, 0.5, 0.72, 0.18, 0x10141f);
     this.vesselMotif = this.vesselShader
       ? null
       : new TutorialVesselMotif(this, tutorialArena.size.x / 2, tutorialArena.size.y / 2);
@@ -383,6 +398,10 @@ export class TutorialScene extends Phaser.Scene {
       // gesture) — the skip button still works, and a stray click
       // anywhere resumes it via the browser's own retry-on-gesture.
     });
+    // Real isolated stems, muted, started in lockstep with the master —
+    // see TutorialStemAnalyser's own docblock.
+    this.stemAnalyser.install();
+    this.stemAnalyser.play();
     // Dev/verify seek: ?t=<seconds> jumps straight there on load — e.g.
     // jakesjam.elyad.io/?t=238 lands right at the outro's burst-out
     // instead of needing to sit through the full 4:06 to check one beat.
@@ -393,7 +412,9 @@ export class TutorialScene extends Phaser.Scene {
     if (seekParam) {
       const seekSec = Number(seekParam);
       if (Number.isFinite(seekSec) && seekSec > 0) {
-        this.songAudio.currentTime = Math.min(seekSec, TUTORIAL_SONG_DURATION_SEC - 0.2);
+        const clamped = Math.min(seekSec, TUTORIAL_SONG_DURATION_SEC - 0.2);
+        this.songAudio.currentTime = clamped;
+        this.stemAnalyser.seek(clamped);
       }
     }
     // Live analyser off the scene's OWN audio element — same pattern the
@@ -618,6 +639,70 @@ export class TutorialScene extends Phaser.Scene {
     this.vesselMotif?.update(deltaMs, bandBass, bandLead, bandScream);
     this.vesselShader?.update({ bass: bandBass, lead: bandLead, scream: bandScream });
     this.serpent?.update(deltaMs, bandBass, bandScream);
+
+    // Real isolated-stem reactivity — see TutorialStemAnalyser's own
+    // docblock. Additive on top of everything above (which only ever sees
+    // the finished mixdown): each stem drives ONE clearly-attributable
+    // effect instead of guessing an instrument off a frequency band.
+    this.stemAnalyser.resync(this.songAudio.currentTime);
+    const stems = this.stemAnalyser.read();
+    // Lead vocals — the hero visibly sings along: aura widens/brightens
+    // with the real vocal envelope, additive on top of whatever the
+    // dance-groove system (externalAudioBoost's other contributor) is
+    // already doing.
+    const heroRig = this.playerRigs.get(TUTORIAL_HERO_ID as string);
+    if (heroRig) heroRig.externalAudioBoost = Math.min(1, stems.leadVocals * 2.6);
+    // Drums — a real attack/transient detector (rising edge over a
+    // threshold, re-armed only once the envelope falls back down) drives a
+    // camera accent. Reads as the beat actually landing, not a generic
+    // "loud right now = shake" mapping a full-mix band would give.
+    const drumDelta = stems.drums - this.drumEnvPrev;
+    this.drumEnvPrev = stems.drums;
+    if (this.drumHitArmed && stems.drums > 0.22 && drumDelta > 0.05) {
+      this.drumHitArmed = false;
+      if (this.cameraOwner === "action") this.actionCamera.punchZoom(this.cameras.main.zoom * 0.012, 45, 140);
+      else this.cineCamera.shake(90, 0.0015);
+    } else if (stems.drums < 0.1) {
+      this.drumHitArmed = true;
+    }
+    // Bass — a continuous, subtle screen trauma while in combat: "the room
+    // breathes with the bassline" instead of a discrete trigger.
+    if (this.cameraOwner === "action") this.actionCamera.addTrauma(stems.bass * 0.01);
+    // Percussion — sparse by nature (shakers/claps/etc — see
+    // TutorialStemAnalyser's own volumedetect note), so same transient-gate
+    // shape as drums rather than a level threshold, spawning a small spark
+    // burst at the hero in the same visual language kill-feedback uses.
+    if (this.percHitArmed && stems.percussion > 0.12) {
+      this.percHitArmed = false;
+      const spark = this.particlePool.acquireSpark();
+      if (spark) {
+        spark
+          .setPosition(hero.x + (Math.random() - 0.5) * 40, hero.y - 40 - Math.random() * 30)
+          .setFillStyle(0x9be8ff, 0.85)
+          .setScale(0.6 + stems.percussion)
+          .setAlpha(0.85)
+          .setDepth(45);
+        this.tweens.add({
+          targets: spark,
+          y: spark.y - 30,
+          alpha: 0,
+          duration: 320,
+          onComplete: () => this.particlePool.release(spark),
+        });
+      }
+    } else if (stems.percussion < 0.05) {
+      this.percHitArmed = true;
+    }
+    // Backing vocals + "other" (the instrumental catch-all) — the vignette
+    // itself breathes, subtly, with the texture underneath the lead: a
+    // global atmospheric response distinct from any single point-source
+    // effect above. Baseline (0.72 radius / 0.18 strength) matches the
+    // values addVignette() was originally tuned with.
+    if (this.vignette) {
+      const ambient = (stems.backingVocals + stems.other) * 0.5;
+      this.vignette.strength = 0.18 + Math.min(0.12, ambient * 0.5);
+      this.vignette.radius = 0.72 - Math.min(0.08, ambient * 0.3);
+    }
 
     if (this.cameraOwner === "action") {
       const h = this.duel.hero();
@@ -1234,6 +1319,7 @@ export class TutorialScene extends Phaser.Scene {
     this.skipEl?.remove();
     this.skipEl = null;
     this.songAudio?.pause();
+    this.stemAnalyser.dispose();
     this.diegeticCues?.destroy();
     this.vesselMotif?.destroy();
     this.vesselShader?.destroy();

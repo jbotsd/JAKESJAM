@@ -140,6 +140,12 @@ export class ProceduralPlayerRig implements CombatRig {
    *  lift, never a snap. computeArmTargets blends the hang and raised
    *  targets by this value. */
   private danceRaise = 0;
+  /** Optional external audio-driven glow input, 0..~1 — e.g. TutorialScene
+   *  feeding a real isolated-vocal-stem envelope so the hero visibly sings
+   *  along (see TutorialStemAnalyser). Purely additive to danceGlowBoost;
+   *  never set by MatchScene/OnlineMatchScene, so it defaults to 0 and
+   *  changes nothing for them. */
+  externalAudioBoost = 0;
   /** Smoothed |vx| walk weight — kills step-phase stutter from sim velocity steps. */
   private walkBlend = 0;
   /** Smoothed SPRINT weight: 0 through walk speeds, 1 approaching max ground
@@ -730,7 +736,11 @@ export class ProceduralPlayerRig implements CombatRig {
     // instead of the glow just sitting flat at max.
     const miracleT = Phaser.Math.Clamp((this.danceRaise - 0.8) / 0.2, 0, 1);
     const miraclePulse = miracleT * (0.5 + 0.5 * Math.sin(this.groovePhase * 2.3));
-    const danceGlowBoost = Phaser.Math.Clamp(this.danceRaise * 0.85 + miraclePulse * 0.5, 0, 1.35);
+    const danceGlowBoost = Phaser.Math.Clamp(
+      this.danceRaise * 0.85 + miraclePulse * 0.5 + this.externalAudioBoost,
+      0,
+      1.35,
+    );
 
     const weightShift =
       Math.sin(this.idlePhase) * 2.2 * s * idleLife + grooveSway * 6.5 * s;
