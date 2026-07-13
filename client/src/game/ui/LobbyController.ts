@@ -15,6 +15,10 @@ import {
   GEN_RANDOM_PICKER_ID,
   type MapPickerId,
 } from "../../sim/data/maps";
+import { prefetchCustomMap } from "../../net/mapClient";
+
+const CUSTOM_MAP_PREFIX = "custom:";
+const CUSTOM_MAP_CODE_RE = /^[A-Z0-9]{6}$/;
 
 const PLAYER_ID_KEY = "jakesjam.playerId";
 const PLAYER_NAME_KEY = "jakesjam.playerName";
@@ -56,6 +60,8 @@ export class LobbyController {
   private readonly playerList: HTMLUListElement;
   private readonly chaosInputs: HTMLInputElement[];
   private readonly mapPicker?: MapPicker;
+  private readonly customMapCodeInput?: HTMLInputElement;
+  private readonly customMapLoadBtn?: HTMLButtonElement;
   private readonly roomShareBtn?: HTMLButtonElement;
   private readonly roomStatusMount?: HTMLElement;
   // Sections that hide while in a room (item 3).
@@ -75,6 +81,9 @@ export class LobbyController {
    * Host's locally-picked map id until server snapshot confirms it.
    */
   private pendingMapId: string | null = null;
+  /** Last "custom:<code>" mapId this client has prefetched — dedupes
+   *  against re-fetching on every lobby poll tick (see applyPrivateSnapshot). */
+  private prefetchedCustomMapId: string | null = null;
 
   constructor(root: ParentNode) {
     this.playerId = loadOrCreatePlayerId();
@@ -107,6 +116,12 @@ export class LobbyController {
       });
     }
 
+    this.customMapCodeInput = root.querySelector<HTMLInputElement>("[data-custom-map-code]") ?? undefined;
+    this.customMapLoadBtn = root.querySelector<HTMLButtonElement>("[data-custom-map-load]") ?? undefined;
+    this.customMapLoadBtn?.addEventListener("click", () => {
+      void this.onCustomMapCodeSubmit();
+    });
+
     this.roomShareBtn = root.querySelector<HTMLButtonElement>("[data-room-share]") ?? undefined;
     if (this.roomShareBtn) {
       this.roomShareBtn.addEventListener("click", () => {
@@ -123,6 +138,7 @@ export class LobbyController {
     this.colorInput.value = localStorage.getItem(PLAYER_COLOR_KEY) ?? this.colorInput.value;
     this.characterSelect.value = localStorage.getItem(PLAYER_CHARACTER_KEY) ?? DEFAULT_CHARACTER;
     this.restoreRoomCodeFromUrl();
+    this.restoreCustomMapCodeFromUrl();
     this.restoreChaosModifiers();
 
     this.setStatus("Private channel ready — host or join with a code.");
@@ -389,6 +405,18 @@ export class LobbyController {
     this.mapPicker?.setHostMode(isHost);
     if (snapshot.mapId) this.pendingMapId = null;
     this.mapPicker?.setSelected(snapshot.mapId || this.pendingMapId || DEFAULT_MAP_ID);
+    // EVERY room member watching this snapshot (host and joiners alike, not
+    // just whoever loaded the code) needs the custom map's real geometry
+    // cached client-side before the match starts — resolveMap() can't fetch
+    // it lazily (must stay synchronous, see maps.ts). Prefetch proactively
+    // here, deduped so a poll every few seconds doesn't refetch repeatedly.
+    if (
+      snapshot.mapId?.startsWith(CUSTOM_MAP_PREFIX) &&
+      snapshot.mapId !== this.prefetchedCustomMapId
+    ) {
+      this.prefetchedCustomMapId = snapshot.mapId;
+      void prefetchCustomMap(snapshot.mapId);
+    }
 
     const playersAsRoom: RoomPlayer[] = snapshot.players.map((p) => ({
       _id: p.playerId,
@@ -792,6 +820,41 @@ export class LobbyController {
     const code = params.get("room") ?? params.get("code");
     if (code) {
       this.codeInput.value = code.toUpperCase().slice(0, 6);
+    }
+  }
+
+  /** Arena Forge share link (?map=<code>) — same restraint as the room-code
+   *  restore above: prefill the input, never auto-load without an explicit
+   *  click (the host still has to confirm they actually want this map). */
+  private restoreCustomMapCodeFromUrl() {
+    if (!this.customMapCodeInput) return;
+    const code = new URLSearchParams(window.location.search).get("map");
+    if (code) {
+      this.customMapCodeInput.value = code.toUpperCase().slice(0, 6);
+    }
+  }
+
+  /** Host loads a Forge-authored map by its share code. Sets the room's
+   *  mapId to "custom:<code>" (setMapPrivate already accepts an arbitrary
+   *  string — no server change needed there) and prefetches the actual
+   *  geometry client-side so the host's own arena render updates
+   *  immediately instead of waiting on the next snapshot. */
+  private async onCustomMapCodeSubmit() {
+    if (!this.currentCode || !this.customMapCodeInput) return;
+    const code = this.customMapCodeInput.value.trim().toUpperCase();
+    if (!CUSTOM_MAP_CODE_RE.test(code)) {
+      this.setStatus("Enter the 6-character code from Arena Forge.", true);
+      return;
+    }
+    const wireMapId = `${CUSTOM_MAP_PREFIX}${code}`;
+    this.pendingMapId = wireMapId;
+    await prefetchCustomMap(wireMapId);
+    try {
+      const snap = await this.privateClient.setMap(this.currentCode, this.playerId, wireMapId);
+      this.applyPrivateSnapshot(snap);
+      this.setStatus(`Loaded custom map ${code}.`);
+    } catch (error) {
+      this.setStatus(readError(error), true);
     }
   }
 

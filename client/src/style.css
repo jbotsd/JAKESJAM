@@ -498,6 +498,25 @@ h2 {
   padding: 0;
 }
 
+.custom-map-box {
+  display: grid;
+  gap: 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: rgba(23, 27, 36, 0.6);
+  padding: 14px;
+}
+
+.custom-map-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 92px;
+  gap: 10px;
+}
+
+.custom-map-row input {
+  text-transform: uppercase;
+}
+
 .join-row {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 92px;

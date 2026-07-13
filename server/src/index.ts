@@ -56,6 +56,7 @@ import { convexClient } from "./convexClient.ts";
 import { recordSignupLocal } from "./signupStore.ts";
 import { ingestTelemetryBatch } from "./telemetryStore.ts";
 import { listClips } from "./clipStore.ts";
+import { saveCustomMap, loadCustomMap, isValidMapCode } from "./mapStore.ts";
 import {
   generatePkcePair,
   generateState,
@@ -920,6 +921,51 @@ video{width:100%;height:100%;object-fit:contain;display:block}</style>
       }
       worldHost.markRematchReady(PlayerId(playerId));
       return new Response(JSON.stringify({ ok: true }), {
+        headers: { "content-type": "application/json", ...corsHeaders },
+      });
+    }
+
+    // ── Arena Forge: save / fetch a custom map ──────────────────────────
+    // Rate-limited on save (disk write) like /private/create; unauthenticated
+    // reads follow the same precedent as GET /private/:code (no limit).
+    if (url.pathname === "/maps" && req.method === "POST") {
+      if (!checkRateLimit(`mapsave:${ip}`, 10, 60_000)) return RATE_LIMIT_429();
+      let body: unknown;
+      try {
+        body = await req.json();
+      } catch {
+        return new Response(JSON.stringify({ error: "bad request body" }), {
+          status: 400,
+          headers: { "content-type": "application/json", ...corsHeaders },
+        });
+      }
+      const result = saveCustomMap(body);
+      if (!result.ok) {
+        return new Response(JSON.stringify({ error: result.error, violations: result.violations }), {
+          status: 422,
+          headers: { "content-type": "application/json", ...corsHeaders },
+        });
+      }
+      return new Response(JSON.stringify({ code: result.code }), {
+        headers: { "content-type": "application/json", ...corsHeaders },
+      });
+    }
+    if (url.pathname.startsWith("/maps/") && req.method === "GET") {
+      const code = url.pathname.slice("/maps/".length).toUpperCase();
+      if (!isValidMapCode(code)) {
+        return new Response(JSON.stringify({ error: "bad code" }), {
+          status: 400,
+          headers: { "content-type": "application/json", ...corsHeaders },
+        });
+      }
+      const map = await loadCustomMap(code);
+      if (!map) {
+        return new Response(JSON.stringify({ error: "not found" }), {
+          status: 404,
+          headers: { "content-type": "application/json", ...corsHeaders },
+        });
+      }
+      return new Response(JSON.stringify(map), {
         headers: { "content-type": "application/json", ...corsHeaders },
       });
     }

@@ -18,6 +18,7 @@ import { CosmicArenaLayer } from "../render/CosmicArenaLayer";
 import { ARENA_THEMES } from "../ui/palette";
 import { ArenaForgeUI, type ForgeTool, type ForgeSelection } from "../ui/ArenaForgeUI";
 import { validateMap } from "../../sim/data/mapGen.js";
+import { saveCustomMap } from "../../net/mapClient.js";
 import type {
   MapDefinition,
   PlatformDefinition,
@@ -99,6 +100,7 @@ export class ArenaForgeScene extends Phaser.Scene {
         this.gridSnap = enabled;
       },
       onBack: () => this.exitToMenu(),
+      onSave: () => this.saveMap(),
     });
 
     this.input.mouse?.disableContextMenu();
@@ -605,6 +607,22 @@ export class ArenaForgeScene extends Phaser.Scene {
   private exitToMenu(): void {
     ArenaForgeScene.lastDraft = this.map;
     window.dispatchEvent(new CustomEvent("jakesjam:forge-exit"));
+  }
+
+  private async saveMap(): Promise<void> {
+    this.ui.showSaveOutcome({ pending: true });
+    const result = await saveCustomMap(this.map);
+    if (!result.ok) {
+      this.ui.showSaveOutcome({ pending: false, error: result.error });
+      return;
+    }
+    // The share link prefills the private-room "load custom map by code"
+    // input (LobbyController's ?map= restore) — a friend opens it, sees the
+    // code ready to load, and starts a real multiplayer match on it. It
+    // doesn't auto-load anything (same restraint as the existing ?room=
+    // restore: prefill, never act without an explicit click).
+    const shareUrl = `${window.location.origin}${window.location.pathname}?map=${result.code}`;
+    this.ui.showSaveOutcome({ pending: false, code: result.code, shareUrl });
   }
 
   private cleanup(): void {

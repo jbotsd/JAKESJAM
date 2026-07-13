@@ -500,6 +500,22 @@ app.innerHTML = `
 
         <section class="map-picker-box" data-map-picker aria-label="Map selection"></section>
 
+        <section class="custom-map-box" aria-label="Custom map from Arena Forge">
+          <label class="shell-hint" for="custom-map-code">Load custom map by code (from Arena Forge)</label>
+          <div class="custom-map-row">
+            <input
+              id="custom-map-code"
+              data-custom-map-code
+              type="text"
+              maxlength="6"
+              placeholder="ABC123"
+              autocomplete="off"
+              spellcheck="false"
+            />
+            <button data-custom-map-load type="button" class="shell-btn-secondary">Load</button>
+          </div>
+        </section>
+
         <section class="chaos-box" aria-label="Party modifiers">
           <h3 class="shell-section-title">Chaos</h3>
           <label><input data-chaos-modifier type="checkbox" value="low-gravity" /> Low Grav</label>

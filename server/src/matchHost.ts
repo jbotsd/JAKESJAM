@@ -289,12 +289,18 @@ export class MatchHost {
     // Now wired from Convex via matching registry / WorldHost. Room/host
     // defaults to [] if no room is available (e.g. IO world).
     chaosModifierIds: string[],
-    mapId: MapId | string | undefined = undefined,
+    // A pre-resolved MapDefinition (Arena Forge custom maps — see
+    // mapStore.ts/loadCustomMap) bypasses resolveMap() entirely; callers
+    // resolve "custom:<code>" to the real object BEFORE constructing this
+    // (matchRegistry.ts/worldHost.ts, both already async call sites), since
+    // resolveMap() itself must stay synchronous for the client's per-tick
+    // sim path and has no way to do a disk read.
+    mapId: MapId | string | MapDefinition | undefined = undefined,
     opts: { onMatchComplete?: () => void } = {},
   ) {
     this.onMatchComplete = opts.onMatchComplete;
     this.matchId = matchId;
-    this.map = resolveMap(mapId);
+    this.map = typeof mapId === "object" ? mapId : resolveMap(mapId);
     this.directorBounds = defaultDirectorBounds(
       this.map.size?.x ?? 3000,
       this.map.size?.y ?? 1100,

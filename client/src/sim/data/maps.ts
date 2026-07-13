@@ -76,6 +76,31 @@ export function isMapId(value: string): value is MapId {
  *  so caching is just an allocation saver for repeat lookups. */
 const genMapCache = new Map<number, MapDefinition>();
 
+/** Arena Forge custom maps: "custom:<code>". Unlike gen:<seed>, a custom
+ *  map's geometry is arbitrary Forge-authored content — it can't be
+ *  independently re-derived from the id, it has to actually be fetched
+ *  (server/src/mapStore.ts, via client/src/net/mapClient.ts's
+ *  prefetchCustomMap). resolveMap() itself STAYS SYNCHRONOUS (required —
+ *  client/src/net/clientLoop.ts calls it from inside the per-message sim
+ *  path), so the fetch has to happen separately, earlier, in the
+ *  connection-setup flow, before this id is ever passed to resolveMap().
+ *  A cache miss here (fetch hasn't completed / never happened) falls
+ *  through to the same DEFAULT_MAP_ID fallback an unknown gen:<seed>
+ *  already gets — graceful degradation, not a new failure mode. */
+const customMapCache = new Map<string, MapDefinition>();
+const CUSTOM_MAP_PREFIX = "custom:";
+
+export function isCustomMapId(id: string): boolean {
+  return id.startsWith(CUSTOM_MAP_PREFIX);
+}
+
+/** Populates the cache resolveMap() reads from. Called by
+ *  prefetchCustomMap() once the fetch completes — kept here (not in
+ *  net/mapClient.ts) so this module never needs a network import. */
+export function setCustomMap(code: string, map: MapDefinition): void {
+  customMapCache.set(code, map);
+}
+
 export function resolveMap(id: string | undefined): MapDefinition {
   if (id !== undefined) {
     if (isMapId(id)) return mapsById[id];
@@ -93,6 +118,10 @@ export function resolveMap(id: string | undefined): MapDefinition {
         }
         return map;
       }
+    }
+    if (isCustomMapId(id)) {
+      const cached = customMapCache.get(id.slice(CUSTOM_MAP_PREFIX.length));
+      if (cached) return cached;
     }
   }
   return mapsById[DEFAULT_MAP_ID];

@@ -10,6 +10,9 @@ import {
 } from "./matchHost.ts";
 import { convexClient, type ConvexId } from "./convexClient.ts";
 import { getMatchPrep } from "./privateLobby.ts";
+import { loadCustomMap } from "./mapStore.ts";
+
+const CUSTOM_MAP_PREFIX = "custom:";
 
 export class MatchRegistry {
   private readonly matches = new Map<string, MatchHost>();
@@ -26,7 +29,17 @@ export class MatchRegistry {
         ? null
         : ((await convexClient.getMatchSummary(matchId as ConvexId)) ?? null);
       const chaosModifierIds = prep?.chaosModifierIds ?? summary?.chaosModifierIds ?? [];
-      const mapId = prep?.mapId ?? summary?.mapId ?? undefined;
+      const rawMapId = prep?.mapId ?? summary?.mapId ?? undefined;
+      // Arena Forge custom map: resolve the real geometry from disk BEFORE
+      // constructing MatchHost (its own resolveMap() stays synchronous/
+      // registry-only — it can't do a disk read). Falls through to the
+      // rawMapId string (→ MatchHost's own default-map fallback) if the
+      // code is missing/expired, same graceful degradation an unknown
+      // gen:<seed> already gets.
+      const mapId =
+        rawMapId?.startsWith(CUSTOM_MAP_PREFIX)
+          ? ((await loadCustomMap(rawMapId.slice(CUSTOM_MAP_PREFIX.length))) ?? rawMapId)
+          : rawMapId;
       const prepPlayer = prep?.players.find((p) => p.playerId === rawPlayerId);
       host = new MatchHost(
         matchId,

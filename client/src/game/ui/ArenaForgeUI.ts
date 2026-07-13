@@ -62,7 +62,13 @@ export type ForgeUICallbacks = {
   onTestPlay: () => void;
   onGridSnapToggle: (enabled: boolean) => void;
   onBack: () => void;
+  onSave: () => void;
 };
+
+export type SaveOutcome =
+  | { pending: true }
+  | { pending: false; code: string; shareUrl: string }
+  | { pending: false; error: string };
 
 const PICKUP_KINDS: PickupKind[] = [
   "health-shard",
@@ -88,6 +94,7 @@ export class ArenaForgeUI {
   private destructibleKindSelect: HTMLSelectElement;
   private inspectorBody: HTMLDivElement;
   private validatorBody: HTMLDivElement;
+  private saveResultPanel: HTMLDivElement;
   private activeTool: ForgeTool = "select";
   private destroyed = false;
 
@@ -108,7 +115,11 @@ export class ArenaForgeUI {
     this.pickupKindSelect = document.createElement("select");
     this.destructibleKindSelect = document.createElement("select");
 
-    this.root.append(top, palette, inspector, validator);
+    this.saveResultPanel = document.createElement("div");
+    Object.assign(this.saveResultPanel.style, SAVE_RESULT_STYLE);
+    this.saveResultPanel.hidden = true;
+
+    this.root.append(top, palette, inspector, validator, this.saveResultPanel);
     document.body.appendChild(this.root);
   }
 
@@ -195,6 +206,50 @@ export class ArenaForgeUI {
     this.root.remove();
   }
 
+  showSaveOutcome(outcome: SaveOutcome): void {
+    const panel = this.saveResultPanel;
+    panel.innerHTML = "";
+    panel.hidden = false;
+    if ("pending" in outcome && outcome.pending) {
+      panel.textContent = "Saving…";
+      return;
+    }
+    if ("error" in outcome) {
+      const line = document.createElement("div");
+      line.textContent = `✗ ${outcome.error}`;
+      Object.assign(line.style, { color: "#fb7185", fontWeight: "700" });
+      panel.appendChild(line);
+      const hint = document.createElement("div");
+      hint.textContent = "Fix the validator issues above, then save again.";
+      Object.assign(hint.style, HINT_STYLE);
+      panel.appendChild(hint);
+      return;
+    }
+    const line = document.createElement("div");
+    line.textContent = `✓ Saved — code ${outcome.code}`;
+    Object.assign(line.style, { color: "#86efac", fontWeight: "900", fontSize: "12px" });
+    panel.appendChild(line);
+    const linkRow = document.createElement("div");
+    Object.assign(linkRow.style, { display: "flex", gap: "6px", marginTop: "6px" });
+    const linkInput = document.createElement("input");
+    linkInput.type = "text";
+    linkInput.readOnly = true;
+    linkInput.value = outcome.shareUrl;
+    Object.assign(linkInput.style, FIELD_INPUT_STYLE, { width: "180px" });
+    const copyBtn = document.createElement("button");
+    copyBtn.type = "button";
+    copyBtn.textContent = "Copy";
+    Object.assign(copyBtn.style, TOOL_BTN_STYLE);
+    copyBtn.onclick = () => {
+      void navigator.clipboard.writeText(outcome.shareUrl).then(() => {
+        copyBtn.textContent = "Copied!";
+        setTimeout(() => (copyBtn.textContent = "Copy"), 1200);
+      });
+    };
+    linkRow.append(linkInput, copyBtn);
+    panel.appendChild(linkRow);
+  }
+
   // ─── Private builders ───────────────────────────────────────────────────
 
   private buildTopBar(): HTMLDivElement {
@@ -219,13 +274,19 @@ export class ArenaForgeUI {
     snapCheck.onchange = () => this.cb.onGridSnapToggle(snapCheck.checked);
     snap.append(snapCheck, document.createTextNode(" Grid snap"));
 
+    const save = document.createElement("button");
+    save.type = "button";
+    save.textContent = "💾 Save & Share";
+    Object.assign(save.style, TOOL_BTN_STYLE);
+    save.onclick = () => this.cb.onSave();
+
     const test = document.createElement("button");
     test.type = "button";
     test.textContent = "▶ Test Play";
     Object.assign(test.style, TEST_PLAY_BTN_STYLE);
     test.onclick = () => this.cb.onTestPlay();
 
-    bar.append(back, title, snap, test);
+    bar.append(back, title, snap, save, test);
     return bar;
   }
 
@@ -411,6 +472,23 @@ const BOTTOM_PANEL_STYLE: Partial<CSSStyleDeclaration> = {
   left: "50%",
   transform: "translateX(-50%)",
   width: "320px",
+};
+
+const SAVE_RESULT_STYLE: Partial<CSSStyleDeclaration> = {
+  position: "fixed",
+  top: "58px",
+  left: "50%",
+  transform: "translateX(-50%)",
+  pointerEvents: "auto",
+  background: "linear-gradient(160deg, rgba(10, 14, 22, 0.95), rgba(6, 9, 15, 0.98))",
+  border: "1px solid rgba(143, 248, 255, 0.3)",
+  borderRadius: "8px",
+  padding: "10px 14px",
+  color: "#e8f6ff",
+  fontFamily: "'Space Mono', 'Courier New', monospace",
+  fontSize: "11px",
+  boxShadow: "0 0 24px rgba(0,0,0,0.5)",
+  zIndex: "7100",
 };
 
 const TOP_BAR_STYLE: Partial<CSSStyleDeclaration> = {
