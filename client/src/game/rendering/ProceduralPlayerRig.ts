@@ -113,7 +113,7 @@ export class ProceduralPlayerRig implements CombatRig {
   private prevAimAngleValid = false;
   /** Smoothed |dAimAngle/dt|, rad/s — "is the player circling the mouse". */
   private aimAngularVel = 0;
-  /** 0..1, springed — how much the dance flourish should show right now. */
+  /** 0..1, springed — how much the dance groove should show right now. */
   private danceEnergy = 0;
   private static readonly DANCE_SPIN_THRESHOLD_RADPS = 2.4;
   private static readonly DANCE_ATTACK_MS = 260;
@@ -125,6 +125,21 @@ export class ProceduralPlayerRig implements CombatRig {
    *  phase-lock drift/latency to fight. */
   private groovePhase = 0;
   private static readonly GROOVE_HZ = 2.1;
+  /** ms of sustained high dance energy, clamped to DANCE_RAISE_BUILD_MS —
+   *  climbs while dancing, falls back down (faster than it climbs) once
+   *  the energy gate drops. Not a one-shot trigger: this directly drives
+   *  danceRaise below, so a longer sustained groove keeps lifting the arms
+   *  higher and higher rather than popping into one fixed pose. */
+  private idleDanceMs = 0;
+  private static readonly DANCE_RAISE_GATE = 0.55;
+  private static readonly DANCE_RAISE_BUILD_MS = 4200;
+  private static readonly DANCE_RAISE_FALL_RATE = 2.4; // ms of idleDanceMs lost per ms once you stop
+  /** Smoothed 0..1 — how far up the arms have climbed toward the raised
+   *  "working miracles" overhead pose. Eased against idleDanceMs/BUILD_MS
+   *  so the climb (and the fall back to hanging) is a slow continuous
+   *  lift, never a snap. computeArmTargets blends the hang and raised
+   *  targets by this value. */
+  private danceRaise = 0;
   /** Smoothed |vx| walk weight — kills step-phase stutter from sim velocity steps. */
   private walkBlend = 0;
   /** Smoothed SPRINT weight: 0 through walk speeds, 1 approaching max ground
@@ -493,11 +508,21 @@ export class ProceduralPlayerRig implements CombatRig {
 
   /** Renderer-truth snapshot for the __rigDebug probe hook: what this rig
    *  last drew and whether it's currently visible. */
-  debugInfo(): { visible: boolean; x: number; y: number } {
+  debugInfo(): {
+    visible: boolean;
+    x: number;
+    y: number;
+    danceEnergy: number;
+    idleDanceMs: number;
+    danceRaise: number;
+  } {
     return {
       visible: this.graphics.visible,
       x: this.lastDrawX,
       y: this.lastDrawY,
+      danceEnergy: this.danceEnergy,
+      idleDanceMs: this.idleDanceMs,
+      danceRaise: this.danceRaise,
     };
   }
 
@@ -663,6 +688,30 @@ export class ProceduralPlayerRig implements CombatRig {
       const dk = 1 - Math.exp(-deltaMs / danceTau);
       this.danceEnergy += (danceTarget - this.danceEnergy) * dk;
     }
+    // Sustained-dance arm-raise: idleDanceMs climbs while the dance holds
+    // (clamped to the build window) and falls back FASTER once the energy
+    // gate drops — the longer you keep circling, the higher the arms
+    // climb; stopping eases them back down instead of a pop-and-snap.
+    if (this.danceEnergy > ProceduralPlayerRig.DANCE_RAISE_GATE) {
+      this.idleDanceMs = Math.min(
+        ProceduralPlayerRig.DANCE_RAISE_BUILD_MS,
+        this.idleDanceMs + deltaMs,
+      );
+    } else {
+      this.idleDanceMs = Math.max(
+        0,
+        this.idleDanceMs - deltaMs * ProceduralPlayerRig.DANCE_RAISE_FALL_RATE,
+      );
+    }
+    const raiseTarget = Phaser.Math.Clamp(
+      this.idleDanceMs / ProceduralPlayerRig.DANCE_RAISE_BUILD_MS,
+      0,
+      1,
+    );
+    if (deltaMs > 0) {
+      const rk = 1 - Math.exp(-deltaMs / 480);
+      this.danceRaise += (raiseTarget - this.danceRaise) * rk;
+    }
     // Always-ticking clock (silent-fallback tempo) so the groove reads as
     // intentional even muted; SonicField's live pulse/beat only scale the
     // AMPLITUDE (louder music = bigger groove), never re-time the phase.
@@ -676,6 +725,12 @@ export class ProceduralPlayerRig implements CombatRig {
     // doesn't bounce and sway in lockstep).
     const groove = Math.sin(this.groovePhase) * grooveAmp;
     const grooveSway = Math.sin(this.groovePhase * 0.5 + 0.6) * grooveAmp;
+    // Vibes lighting: brightens continuously with the raise, and once the
+    // arms are fully up a slow shimmer rides on top ("working miracles")
+    // instead of the glow just sitting flat at max.
+    const miracleT = Phaser.Math.Clamp((this.danceRaise - 0.8) / 0.2, 0, 1);
+    const miraclePulse = miracleT * (0.5 + 0.5 * Math.sin(this.groovePhase * 2.3));
+    const danceGlowBoost = Phaser.Math.Clamp(this.danceRaise * 0.85 + miraclePulse * 0.5, 0, 1.35);
 
     const weightShift =
       Math.sin(this.idlePhase) * 2.2 * s * idleLife + grooveSway * 6.5 * s;
@@ -824,20 +879,18 @@ export class ProceduralPlayerRig implements CombatRig {
         this.backHandSpringY = springKick(this.backHandSpringY, aim.y * kick);
       }
     }
-    this.leadHandSpringX = springTo(
-      this.leadHandSpringX,
-      armTargets.lead.x,
-      deltaMs,
+    // Smooth grooves: the more the dance has taken over (danceRaise), the
+    // softer/slower the arm springs get — a combat whip snaps taut, but
+    // working a miracle overhead should flow, not snap. Untouched (full
+    // combat snap) at danceRaise=0.
+    const armFreq = Phaser.Math.Linear(
       ProceduralPlayerRig.ARM_FREQUENCY_HZ,
-      ProceduralPlayerRig.ARM_DAMPING,
+      2.6,
+      this.danceRaise,
     );
-    this.leadHandSpringY = springTo(
-      this.leadHandSpringY,
-      armTargets.lead.y,
-      deltaMs,
-      ProceduralPlayerRig.ARM_FREQUENCY_HZ,
-      ProceduralPlayerRig.ARM_DAMPING,
-    );
+    const armDamp = Phaser.Math.Linear(ProceduralPlayerRig.ARM_DAMPING, 0.82, this.danceRaise);
+    this.leadHandSpringX = springTo(this.leadHandSpringX, armTargets.lead.x, deltaMs, armFreq, armDamp);
+    this.leadHandSpringY = springTo(this.leadHandSpringY, armTargets.lead.y, deltaMs, armFreq, armDamp);
     const handLead = vec(this.leadHandSpringX.value, this.leadHandSpringY.value);
 
     if (!this.backHandSpringReady) {
@@ -845,20 +898,8 @@ export class ProceduralPlayerRig implements CombatRig {
       this.backHandSpringY = springState(armTargets.back.y);
       this.backHandSpringReady = true;
     }
-    this.backHandSpringX = springTo(
-      this.backHandSpringX,
-      armTargets.back.x,
-      deltaMs,
-      ProceduralPlayerRig.ARM_FREQUENCY_HZ,
-      ProceduralPlayerRig.ARM_DAMPING,
-    );
-    this.backHandSpringY = springTo(
-      this.backHandSpringY,
-      armTargets.back.y,
-      deltaMs,
-      ProceduralPlayerRig.ARM_FREQUENCY_HZ,
-      ProceduralPlayerRig.ARM_DAMPING,
-    );
+    this.backHandSpringX = springTo(this.backHandSpringX, armTargets.back.x, deltaMs, armFreq, armDamp);
+    this.backHandSpringY = springTo(this.backHandSpringY, armTargets.back.y, deltaMs, armFreq, armDamp);
     const handBack = vec(this.backHandSpringX.value, this.backHandSpringY.value);
 
     // Feet — raw stepping targets (or a wall-plant target while gripping),
@@ -922,16 +963,19 @@ export class ProceduralPlayerRig implements CombatRig {
       g.fillEllipse(pelvis.x, ground + 2 * s, 30 * s, 10 * s);
     }
 
-    // 0b. Soft under-glow
-    g.fillStyle(this.color, full ? 0.12 : 0.08);
-    g.fillCircle(chest.x, chest.y, 28 * s);
+    // 0b. Soft under-glow — brightens and swells with the vibes-lighting
+    // boost (danceGlowBoost), same "the longer you dance the more it
+    // lights up" read as the aura below.
+    g.fillStyle(this.color, (full ? 0.12 : 0.08) + danceGlowBoost * 0.1);
+    g.fillCircle(chest.x, chest.y, (28 + danceGlowBoost * 7) * s);
     if (full) {
-      g.fillStyle(this.accentColor, 0.1);
-      g.fillCircle(chest.x, chest.y, 18 * s);
+      g.fillStyle(this.accentColor, 0.1 + danceGlowBoost * 0.12);
+      g.fillCircle(chest.x, chest.y, (18 + danceGlowBoost * 6) * s);
     }
 
-    // 0c. Mad aura — full only (or reduced for lite)
-    this.drawAura(g, pelvis, chest, s);
+    // 0c. Mad aura — full only (or reduced for lite); danceGlowBoost widens
+    // and brightens the orbit so a sustained dance visibly charges it up.
+    this.drawAura(g, pelvis, chest, s, danceGlowBoost);
 
     // 1. Nameplate + health bar (topmost layer visually but drawn first for z)
     this.drawNameplate(g, head.x, head.y - 24 * s, s, pose.health ?? 100, pose.maxHealth ?? 100);
@@ -1292,7 +1336,13 @@ export class ProceduralPlayerRig implements CombatRig {
   // instead of a clean circular orbit — deliberately irregular, reads as
   // barely-contained energy rather than a decorative UI ring. Envelops the
   // whole body (pelvis to well above the head), not just the torso. ---
-  protected drawAura(g: Phaser.GameObjects.Graphics, pelvis: Vec2, chest: Vec2, s: number) {
+  protected drawAura(
+    g: Phaser.GameObjects.Graphics,
+    pelvis: Vec2,
+    chest: Vec2,
+    s: number,
+    boost = 0,
+  ) {
     const n =
       this.detail === "full"
         ? ProceduralPlayerRig.AURA_MOTE_COUNT
@@ -1302,10 +1352,15 @@ export class ProceduralPlayerRig implements CombatRig {
     const cy = (pelvis.y + chest.y) / 2 - 10 * s;
     const t = this.stepPhase + this.auraSeed;
     const tails = this.detail === "full" ? 3 : 0;
+    // Vibes lighting: sustained dancing charges the aura wider and
+    // brighter, continuously — reads as the vessel visibly powering up
+    // the longer the groove holds, with a slow shimmer once fully raised.
+    const radiusBoost = 1 + boost * 0.32;
+    const glowBoost = Math.min(1.6, 1 + boost * 0.65);
 
     const motePos = (i: number, tt: number): { x: number; y: number } => {
       const off = (i / n) * Math.PI * 2;
-      const radius = (20 + 7 * Math.sin(tt * 0.7 + off * 2)) * s;
+      const radius = (20 + 7 * Math.sin(tt * 0.7 + off * 2)) * s * radiusBoost;
       const angle = tt * (1.1 + i * 0.17) + off;
       const wobbleR = radius + 4 * s * Math.sin(tt * 2.3 + off);
       return {
@@ -1316,7 +1371,7 @@ export class ProceduralPlayerRig implements CombatRig {
 
     for (let i = 0; i < n; i++) {
       const off = (i / n) * Math.PI * 2;
-      const twinkle = 0.6 + 0.4 * Math.sin(t * 3.1 + off * 3);
+      const twinkle = (0.6 + 0.4 * Math.sin(t * 3.1 + off * 3)) * glowBoost;
 
       for (let e = tails; e >= 1; e--) {
         const echo = motePos(i, t - e * 0.05);
@@ -1326,12 +1381,12 @@ export class ProceduralPlayerRig implements CombatRig {
       }
 
       const p = motePos(i, t);
-      g.fillStyle(this.accentColor, twinkle * 0.5);
-      g.fillCircle(p.x, p.y, 5 * s);
-      g.fillStyle(this.accentColor, twinkle * 0.95);
+      g.fillStyle(this.accentColor, Math.min(1, twinkle * 0.5));
+      g.fillCircle(p.x, p.y, (5 + boost * 1.5) * s);
+      g.fillStyle(this.accentColor, Math.min(1, twinkle * 0.95));
       g.fillCircle(p.x, p.y, 2.7 * s);
       if (this.detail === "full") {
-        g.fillStyle(WHITE, twinkle * 0.9);
+        g.fillStyle(WHITE, Math.min(1, twinkle * 0.9));
         g.fillCircle(p.x, p.y, 1.15 * s);
       }
     }
@@ -1762,10 +1817,31 @@ export class ProceduralPlayerRig implements CombatRig {
       // HANG (idle): lead half-cocked at the hip, back arm resting,
       // both drifting with the breath.
       const sway = Math.sin(this.idlePhase * 2.1) * 0.8 * s;
-      return {
-        lead: vec(shoulderLead.x + f * 4 * s, shoulderLead.y + 9 * s + sway),
-        back: vec(shoulderBack.x - f * 1.5 * s, shoulderBack.y + 16 * s + sway * 0.7),
-      };
+      const hangLead = vec(shoulderLead.x + f * 4 * s, shoulderLead.y + 9 * s + sway);
+      const hangBack = vec(shoulderBack.x - f * 1.5 * s, shoulderBack.y + 16 * s + sway * 0.7);
+      if (this.danceRaise > 0.01) {
+        // WORKING MIRACLES: the longer a sustained dance groove holds, the
+        // higher the arms slowly climb overhead — continuously blended
+        // against danceRaise (0..1), never a pop/snap. A gentle wave, half
+        // a beat apart per hand, keeps them alive once raised instead of
+        // freezing in place — reads as channeling, not a held pose.
+        const waveLead = Math.sin(this.groovePhase * 1.3);
+        const waveBack = Math.sin(this.groovePhase * 1.3 + Math.PI * 0.6);
+        const raisedLead = vec(shoulderLead.x + f * 10 * s, shoulderLead.y - (40 + waveLead * 6) * s);
+        const raisedBack = vec(shoulderBack.x - f * 6 * s, shoulderBack.y - (34 + waveBack * 6) * s);
+        const r = this.danceRaise;
+        return {
+          lead: vec(
+            Phaser.Math.Linear(hangLead.x, raisedLead.x, r),
+            Phaser.Math.Linear(hangLead.y, raisedLead.y, r),
+          ),
+          back: vec(
+            Phaser.Math.Linear(hangBack.x, raisedBack.x, r),
+            Phaser.Math.Linear(hangBack.y, raisedBack.y, r),
+          ),
+        };
+      }
+      return { lead: hangLead, back: hangBack };
     }
 
     // NINJA SWEEP (top speed): past ~¾ sprint both arms stream BACK behind

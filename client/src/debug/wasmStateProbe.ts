@@ -41,6 +41,9 @@ export type RigDebugRow = {
   stateX: number | null;
   stateY: number | null;
   alive: boolean | null;
+  danceEnergy: number;
+  idleDanceMs: number;
+  danceRaise: number;
 };
 
 const FNV1A_PRIME_32 = 0x01000193;
