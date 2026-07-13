@@ -14,9 +14,9 @@
 //   - narrative: TutorialDiegeticCues (ground glyphs, seal ignition, brief
 //     Coptic flashes) + TutorialDummyDirector (the scripted opponent)
 //
-// Desktop keyboard + mouse only for this first cut — touch/mobile input is a
-// known, deliberate gap (not wired to TouchControls yet), noted here rather
-// than silently missing.
+// Touch/mobile: TouchControls replaces keyboard/mouse wholesale on
+// isTouchPrimary() devices, same pattern OnlineMatchScene already proves —
+// see readHeroInput()'s touch branch for the aim-assist/auto-wall-hop reuse.
 
 import Phaser from "phaser";
 import { tutorialArena } from "../../sim/data/tutorial-arena.js";
@@ -54,6 +54,10 @@ import {
   drawFirePatch,
   drawPickup,
 } from "./OnlineMatchScene.js";
+import { TouchControls } from "../input/TouchControls.js";
+import { isTouchPrimary } from "../input/mobile.js";
+import { assistTouchAim } from "../input/touchAimAssist.js";
+import { autoWallHopKeys, makeAutoHopState, type AutoHopState } from "../input/autoWallHop.js";
 
 const HERO_SPAWN: Vec2 = { x: 150, y: 900 };
 const COMBAT_ZOOM = 1.05;
@@ -178,6 +182,11 @@ export class TutorialScene extends Phaser.Scene {
    *  late joiners) and destroyed on prune. */
   private minionDirectors = new Map<string, TutorialDummyDirector>();
   private minionCounter = 0;
+  private touchControls: TouchControls | null = null;
+  /** Kept across frames so a lifted aim thumb keeps the last heading — same
+   *  fallback OnlineMatchScene's touch aim uses. */
+  private lastTouchAim: { x: number; y: number } = { x: 1, y: 0 };
+  private autoHopState: AutoHopState = makeAutoHopState();
 
   constructor() {
     super("TutorialScene");
@@ -368,6 +377,11 @@ export class TutorialScene extends Phaser.Scene {
     });
 
     this.bindKeys();
+    if (isTouchPrimary()) {
+      this.touchControls = new TouchControls();
+      this.touchControls.attach();
+      this.touchControls.setVisible(true);
+    }
     this.buildSkipButton();
     this.bossHealthBar = this.add.graphics().setScrollFactor(0).setDepth(900);
     // Latin transliteration only — unlike the cue table's short common
@@ -503,7 +517,40 @@ export class TutorialScene extends Phaser.Scene {
     if (pointer.rightButtonDown() || this.keys.c.isDown) keys |= InputBit.Dash;
 
     const world = this.cameras.main.getWorldPoint(pointer.x, pointer.y);
-    return { keys, aimX: world.x, aimY: world.y };
+    let aimX = world.x;
+    let aimY = world.y;
+
+    // Mobile: touch REPLACES keyboard/mouse wholesale, same contract as
+    // OnlineMatchScene's touch branch — bitfield from the sticks, aim is
+    // hero position + right-stick direction (soft cone-assisted toward the
+    // dummy so it's a real input transform, not a lock-on). No prediction
+    // smoother here (single-player, no netcode), so the hero's own live sim
+    // position is the aim origin directly — no staleness to account for.
+    if (this.touchControls) {
+      const t = this.touchControls.getState();
+      keys = t.keys;
+      if (t.aimDir) this.lastTouchAim = t.aimDir;
+      const hero = this.duel.hero();
+      const AIM_REACH = 420;
+      const dir = assistTouchAim(this.duel.snapshot(), TUTORIAL_HERO_ID, { x: hero.x, y: hero.y }, this.lastTouchAim);
+      aimX = hero.x + dir.x * AIM_REACH;
+      aimY = hero.y + dir.y * AIM_REACH;
+      // DASH DIRECTION (mobile): aim is stale while the thumb's on the DASH
+      // button instead of the aim stick — point it where the dash gesture
+      // says instead (mini-stick drag, or move-stick for a plain tap).
+      if (keys & InputBit.Dash) {
+        const dd = t.dashDir ?? (t.aimDir ? null : t.moveDir);
+        if (dd) {
+          aimX = hero.x + dd.x * AIM_REACH;
+          aimY = hero.y + dd.y * AIM_REACH;
+        }
+      }
+      // AUTO WALL-HOP (mobile only): the Three Forms shaft is the whole
+      // reason this matters — pushing into a touched wall pulses Jump.
+      keys = autoWallHopKeys(keys, hero.touchingWallDir ?? 0, performance.now(), this.autoHopState);
+    }
+
+    return { keys, aimX, aimY };
   }
 
   /** [bass, lead, scream] 0-1, same band-split convention as the boot-ident
@@ -1345,5 +1392,7 @@ export class TutorialScene extends Phaser.Scene {
     this.bossNameLabel = null;
     this.particlePool?.destroy();
     this.entityRender?.destroy();
+    this.touchControls?.destroy();
+    this.touchControls = null;
   }
 }
