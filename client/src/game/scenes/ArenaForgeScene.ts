@@ -585,7 +585,21 @@ export class ArenaForgeScene extends Phaser.Scene {
 
   private testPlay(): void {
     ArenaForgeScene.lastDraft = this.map;
-    this.scene.start(SceneKeys.Match, { map: this.map });
+    // Route through the game's canonical match-entry event instead of a
+    // direct scene.start() — that's what turns on the pause/exit chrome
+    // (the "MENU" button → Leave, wired in main.ts's jakesjam:start-match
+    // listener via ShellController's MATCH_STARTED). A direct scene.start
+    // left Test Play with no way back out at all (Jake, 2026-07-13).
+    window.dispatchEvent(
+      new CustomEvent("jakesjam:start-match", {
+        detail: { mode: "practice", map: this.map },
+      }),
+    );
+    // The listener uses the game-level scene manager (game.scene.start),
+    // which does NOT auto-stop other active scenes (only a scene's own
+    // this.scene.start() does that) — stop ourselves explicitly so Forge
+    // doesn't keep running (and eating input) underneath MatchScene.
+    this.scene.stop();
   }
 
   private exitToMenu(): void {
