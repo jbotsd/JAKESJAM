@@ -53,6 +53,7 @@ import {
 } from "./clipSharePage.ts";
 import { handleOps } from "./ops.ts";
 import { convexClient } from "./convexClient.ts";
+import { recordSignupLocal } from "./signupStore.ts";
 import { ingestTelemetryBatch } from "./telemetryStore.ts";
 import { listClips } from "./clipStore.ts";
 import {
@@ -290,8 +291,16 @@ function serveOnPort(port: number) {
     }
 
     // ── Devlog funnel: email signup (the video CTA — "drop your email
-    // and you're playing in about eight seconds"). Writes to the Convex
-    // `signups` table via convexClient; the list is the asset.
+    // and you're playing in about eight seconds"). Writes to signupStore.ts
+    // (server/.signups/signups.json) FIRST and unconditionally — that's the
+    // guaranteed floor — then best-effort mirrors to the Convex `signups`
+    // table via convexClient if configured. Found 2026-07-13: the live
+    // deployment runs with CONVEX_URL unset by design (see
+    // docs/game-design-document.md's architecture note), and
+    // convexClient.recordSignup() was the ONLY write path — every real
+    // signup this funnel ever captured was silently discarded. This local
+    // store is what makes the endpoint's "ok" response true regardless of
+    // Convex's config state.
     if (url.pathname === "/api/signup" && req.method === "POST") {
       if (!checkRateLimit(`signup:${ip}`, 6, 10 * 60_000)) return RATE_LIMIT_429();
       let payload: unknown;
@@ -314,7 +323,11 @@ function serveOnPort(port: number) {
           headers: { "content-type": "application/json", ...corsHeaders },
         });
       }
-      const ok = await convexClient.recordSignup(email, source);
+      await recordSignupLocal(email, source);
+      // Convex is a best-effort mirror on top of the guaranteed local write
+      // above — its own success/failure no longer decides the response.
+      void convexClient.recordSignup(email, source).catch(() => {});
+      const ok = true;
       return new Response(JSON.stringify({ ok }), {
         headers: { "content-type": "application/json", ...corsHeaders },
       });

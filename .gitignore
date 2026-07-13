@@ -37,6 +37,7 @@ server/.clips-host/
 server/.replays/
 server/.tiktok/
 server/.entitlements/
+server/.signups/
 server/.clips-quarantine/
 server/.telemetry/
 # Same runtime-data categories, but at repo root (client-side clip capture /
@@ -44,6 +45,7 @@ server/.telemetry/
 /.clips/
 /.tiktok/
 /.entitlements/
+/.signups/
 *.m4a.bak
 # Auto-captured host replay screenshots — generated review artifacts, not
 # authored docs; regenerate on demand rather than tracking in git history.
