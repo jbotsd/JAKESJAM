@@ -268,4 +268,118 @@ describe("movement augments", () => {
       expect(r.memory.dashCooldownMs).toBe(410);
     });
   });
+
+  // "Fair and well tested" pass (2026-07-13): the multiplier/floor math above
+  // was already covered, but nothing exercised the actual base cycle a
+  // no-card-stack player lives with tick-by-tick, and nothing proved a
+  // player physically CANNOT out-dash the cooldown by mashing the button —
+  // both real fairness properties, not just the math backing them.
+  describe("dash cooldown — base cycle + spam resistance", () => {
+    test("base cooldown is exactly DASH_COOLDOWN_MS (520) with no card stack", () => {
+      const map = miniMap();
+      const cache = buildStaticCache(map.platforms, map.size.x, map.size.y);
+      const player = mkPlayer();
+      const mem = freshPlayerMovementMemory();
+      mem.groundedLastFrame = true;
+      const r = stepPlayer(player, 0, DASH, 900, 580, mem, map.platforms, STEP, {
+        collisionCache: cache, dashCharges: 1,
+      });
+      expect(r.memory.dashCooldownMs).toBe(520);
+    });
+
+    test("a second dash attempt (release + re-press) is refused while cooldown > 0, even mid-air with charges to spare", () => {
+      const map = miniMap();
+      const cache = buildStaticCache(map.platforms, map.size.x, map.size.y);
+      const opts = { collisionCache: cache, dashCharges: 3 }; // charges are plentiful; only cooldown should gate
+      let player = mkPlayer();
+      let mem = freshPlayerMovementMemory();
+      mem.groundedLastFrame = true;
+      // First dash.
+      let r = stepPlayer(player, 0, DASH, 900, 580, mem, map.platforms, STEP, opts);
+      player = r.player; mem = r.memory;
+      expect(mem.dashCooldownMs).toBeGreaterThan(0);
+      // Release the button for a tick (so a re-press is a genuine rising
+      // edge, not just held-key suppression), then try again almost
+      // immediately — cooldown is nowhere near elapsed.
+      r = stepPlayer(player, DASH, 0, 900, 580, mem, map.platforms, STEP, opts);
+      player = r.player; mem = r.memory;
+      const activeBeforeRetry = mem.dashActiveMs;
+      const cooldownBeforeRetry = mem.dashCooldownMs;
+      r = stepPlayer(player, 0, DASH, 900, 580, mem, map.platforms, STEP, opts);
+      // Refused: a granted dash always sets dashActiveMs to the FULL burst
+      // window (210) and dashCooldownMs to a fresh cycle (520, or shorter
+      // under a multiplier) — neither happens here. Both fields instead
+      // keep monotonically decreasing exactly as if this tick's input never
+      // mattered, which is the actual fairness property: the game state
+      // this tick is indistinguishable from one where Dash was never
+      // pressed at all.
+      expect(r.memory.dashActiveMs).toBeLessThanOrEqual(activeBeforeRetry);
+      expect(r.memory.dashCooldownMs).toBeLessThan(cooldownBeforeRetry);
+    });
+
+    test("dash is allowed again the instant cooldown reaches exactly 0, not before", () => {
+      const map = miniMap();
+      const cache = buildStaticCache(map.platforms, map.size.x, map.size.y);
+      const opts = { collisionCache: cache, dashCharges: 2 };
+      let player = mkPlayer();
+      let mem = freshPlayerMovementMemory();
+      mem.groundedLastFrame = true;
+      let r = stepPlayer(player, 0, DASH, 900, 580, mem, map.platforms, STEP, opts);
+      player = r.player; mem = r.memory;
+      expect(mem.dashCooldownMs).toBe(520);
+
+      // Release the dash bit and coast (grounded, no other input) until the
+      // cooldown ticks down to exactly 0 — release first is not itself
+      // dashing, it's just returning to a neutral state a real player would
+      // pass through between presses.
+      let ticks = 0;
+      while (mem.dashCooldownMs > 0 && ticks < 200) {
+        r = stepPlayer(player, DASH, 0, 900, 580, mem, map.platforms, STEP, opts);
+        player = r.player; mem = r.memory;
+        ticks += 1;
+      }
+      expect(mem.dashCooldownMs).toBe(0);
+
+      // One more tick with the dash bit freshly pressed (rising edge from
+      // the neutral tick above) — this MUST be allowed now.
+      r = stepPlayer(player, 0, DASH, 900, 580, mem, map.platforms, STEP, opts);
+      expect(r.memory.dashActiveMs).toBeGreaterThan(0);
+      expect(r.memory.dashCooldownMs).toBe(520);
+    });
+
+    test("mashing the dash bit every tick for 3 real seconds cannot beat the cooldown — bursts land at the cooldown's own cadence, not once per press", () => {
+      const map = miniMap();
+      const cache = buildStaticCache(map.platforms, map.size.x, map.size.y);
+      // Deliberately generous charges — if spam were possible, a generous
+      // charge count would expose it; a stingy count would hide the bug
+      // behind "ran out of charges" instead.
+      const opts = { collisionCache: cache, dashCharges: 999 };
+      let player = mkPlayer();
+      let mem = freshPlayerMovementMemory();
+      mem.groundedLastFrame = true;
+
+      let burstsFired = 0;
+      let wasActive = false;
+      const totalTicks = Math.round(3000 / STEP); // ~3 real seconds
+      for (let i = 0; i < totalTicks; i++) {
+        // Toggle the Dash bit on/off every tick — the fastest a human
+        // mashing a button could conceivably press it, and faster than any
+        // legitimate play pattern.
+        const keys = i % 2 === 0 ? DASH : 0;
+        const r = stepPlayer(player, i % 2 === 0 ? 0 : DASH, keys, 900, 580, mem, map.platforms, STEP, opts);
+        player = r.player;
+        mem = r.memory;
+        const isActive = mem.dashActiveMs > 0;
+        if (isActive && !wasActive) burstsFired += 1;
+        wasActive = isActive;
+      }
+
+      // Over 3000ms at the 520ms base cadence, the theoretical ceiling is
+      // floor(3000/520)+1 = 6 bursts (one at t≈0, then every ~520ms after).
+      // Real max observed should sit at or just under that — nowhere near
+      // the ~750 rising edges the toggle pattern above offers up.
+      expect(burstsFired).toBeLessThanOrEqual(6);
+      expect(burstsFired).toBeGreaterThan(0); // sanity: dashing is still possible at all
+    });
+  });
 });
