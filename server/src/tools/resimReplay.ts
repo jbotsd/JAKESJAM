@@ -16,7 +16,7 @@ import { decode as msgpackDecode } from "@msgpack/msgpack";
 import { STEP_MS, World } from "@sim/index.ts";
 import { createRuntime, stepWithRuntime } from "@sim/World.ts";
 import { resolveMap } from "@sim/data/maps.ts";
-import type { InputFrame, PlayerId } from "@sim/types.ts";
+import type { CharacterArchetype, InputFrame, PlayerId } from "@sim/types.ts";
 import type { ReplayHeader, ReplayInputEntry, ReplayRosterEvent } from "../ReplayRecorder.ts";
 import { applyMidMatchJoin, applyRosterLeave } from "@sim/rosterOps.ts";
 
@@ -50,7 +50,7 @@ if (header.simBackend === "wasm") {
 const map = resolveMap(header.mapId);
 const spawns = header.players.map((p) => ({
   playerId: p.playerId as PlayerId,
-  characterId: p.characterId,
+  characterId: p.characterId as CharacterArchetype,
   name: p.name,
   color: p.color,
   weaponId: p.weaponId,
