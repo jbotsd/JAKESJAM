@@ -19,9 +19,52 @@ export type CameraEase = "Sine.easeInOut" | "Sine.easeIn" | "Sine.easeOut" | "Li
 
 export class CinematicCameraDirector {
   private readonly cam: Phaser.Cameras.Scene2D.Camera;
+  // Vertical-follow state for scripted-but-tracking beats (the wall-jump
+  // shaft climb) — a real gap found 2026-07-13: the shaft's reveal pan was
+  // the ONLY camera movement for the entire ~37s Three Forms zone; once it
+  // finished, "director" ownership just sat static at that one framing for
+  // the whole climb (no handoff to ActionCamera ever fires there — see
+  // tutorial-song.ts). Player feedback: "we like cinematical follow them
+  // up." This is a lighter-weight, deliberately-damped follow (not
+  // ActionCamera's snappy multi-subject combat envelope) — smooth, centered
+  // on a fixed X (the shaft's own centerline, not the player's, so
+  // side-to-side wall-jump bouncing doesn't read as camera shake), tracking
+  // only the player's rising Y.
+  private followX = 0;
+  private followY = 0;
+  private followReady = false;
 
   constructor(cam: Phaser.Cameras.Scene2D.Camera) {
     this.cam = cam;
+  }
+
+  /** Call once when a follow beat begins (e.g. right as the reveal pan
+   *  finishes) so the first tracked frame doesn't jump from wherever the
+   *  camera was left. */
+  beginFollow(x: number, y: number): void {
+    this.followX = x;
+    this.followY = y;
+    this.followReady = true;
+  }
+
+  endFollow(): void {
+    this.followReady = false;
+  }
+
+  /** Exponential-smoothed centerOn, called every frame of a follow beat.
+   *  `k` is the smoothing rate (higher = snappier, lower = more lag/
+   *  "cinematic weight") — same shape ActionCamera already uses for its
+   *  own subject smoothing, just applied directly to the camera's own
+   *  center instead of a tracked subject. */
+  updateFollow(targetX: number, targetY: number, deltaMs: number, k = 2.0): void {
+    if (!this.followReady) {
+      this.beginFollow(targetX, targetY);
+    }
+    const dt = Math.min(deltaMs, 40) / 1000;
+    const a = 1 - Math.exp(-k * dt);
+    this.followX += (targetX - this.followX) * a;
+    this.followY += (targetY - this.followY) * a;
+    this.cam.centerOn(this.followX, this.followY);
   }
 
   snap(x: number, y: number, zoom?: number): void {

@@ -206,6 +206,16 @@ export const tutorialSongCues: readonly SongCue[] = [
   // that grows across the rest of the run. See TutorialDemiurgeSerpent.ts.
   { id: "demiurge-first-sighting", atSec: 110.0, kind: "demiurge:manifest", data: { x: 5100, y: 330 } },
   { id: "demiurge-stage-0", atSec: 110.05, kind: "demiurge:stage", data: { stage: 0 } },
+  // Foreshadow the shaft ~29s before the player actually reaches it
+  // (feedback 2026-07-13: "start this much earlier... maybe 30 seconds
+  // early"). The shaft's base sits right at the edge of this very
+  // fight (x=4700-4750, Response's own combat runs 3400-4700) so this
+  // reads naturally as something already glowing at the edge of the
+  // arena the player is fighting in, not a cutaway — by the time they
+  // physically arrive at 139.6s, they've already half-registered "that
+  // lights up and bounces," so the zone-entry demonstration reads as
+  // confirmation, not a cold intro.
+  { id: "response-shaft-foreshadow", atSec: 110.5, kind: "diegetic:wall-jump-invite", data: {} },
   { id: "response-wave-1", atSec: 113.255, kind: "horde:wave", data: { count: 2, xMin: 3550, xMax: 4500, fireIntervalMs: 2200, health: 28 } },
   { id: "response-accent-1", atSec: 117.377, kind: "camera:shake", data: { amount: 0.3 } },
   // 120.128: second chorus call — "Anok te!"
@@ -243,34 +253,34 @@ export const tutorialSongCues: readonly SongCue[] = [
   //    sit on measured onsets. ──
   { id: "zone-three-forms", atSec: 139.0, kind: "zone:enter", data: { name: "The Three Forms" } },
   { id: "three-forms-handoff", atSec: 138.9, kind: "camera:handoff-director" },
-  // OPENED UP (was x4850/y700, no zoom — which held the combat-tight
-  // framing and kept the shaft's TOP off-screen the whole climb, so the
-  // player had no way to read "this goes somewhere"): zoom out and center
-  // on the shaft's midpoint so the full climb AND the vista ledge above it
-  // are in frame from the zone's first beat — the "oh, I'm meant to climb
-  // this" reveal, delivered by framing alone. Shaft grown 820px→1270px and
-  // re-centered (2026-07-13, "make the wall itself longer") — y and zoom
-  // both re-tuned to the new midpoint/span so the reveal still frames the
-  // whole climb instead of just its lower half.
-  { id: "three-forms-pan", atSec: 139.2, kind: "camera:pan", data: { x: 4850, y: 317, ms: 3500, ease: "Sine.easeInOut", zoom: 0.62 } },
+  // A "look up there" glance, not a zoomed-out establishing shot (feedback
+  // 2026-07-13: "the camera should look up there but not zoom at like the
+  // way it does"). Panning from wherever Response's action-cam left off
+  // (down at the player, near the shaft's base) UP to a point ~60% of the
+  // way up the climb, at a mild 0.85 zoom, already reads as "craning your
+  // neck to see how high this goes" — it doesn't need to cram the entire
+  // shaft into frame to sell that. TutorialScene then hands off to a
+  // damped cinematic follow (CinematicCameraDirector.updateFollow, armed
+  // once this pan finishes) that tracks the player rising for the rest of
+  // the climb, instead of leaving the camera locked at this one framing.
+  { id: "three-forms-pan", atSec: 139.2, kind: "camera:pan", data: { x: 4850, y: -1328, ms: 3500, ease: "Sine.easeInOut", zoom: 0.85 } },
   // Demonstrates the actual bounce (L-wall → R-wall → L-wall, ascending)
   // BEFORE the player needs to act — footage review found long dead time
   // here with the shaft's 3 ignition rings alone doing nothing to teach
-  // the move itself. Fires right as the wide pan reveals the full shaft.
+  // the move itself. Fires right as the pan settles on the "look up" shot.
   { id: "three-forms-wall-jump-invite", atSec: 139.6, kind: "diegetic:wall-jump-invite", data: {} },
   // Closer now — the shape re-anchors further along the level and grows
   // (stage 1), tracking the climb instead of sitting fixed behind it.
   { id: "demiurge-second-sighting", atSec: 139.3, kind: "demiurge:manifest", data: { x: 5700, y: 350 } },
   { id: "demiurge-stage-1-early", atSec: 139.35, kind: "demiurge:stage", data: { stage: 1 } },
-  // y values re-proportioned for the taller shaft (2026-07-13: climb grown
-  // 820px→1270px by extending UPWARD — bottom stays at GROUND=952
-  // unchanged, new top is -318 instead of 132) — same ~12/39/67% up-the-
-  // climb spacing as before, just against the new span so the three
-  // ignition beats still land at sensible heights instead of clustering
-  // near the (now much smaller, relatively) bottom third.
-  { id: "form-voice-ignite", atSec: 142.141, kind: "diegetic:shaft-ignite", data: { form: 1, y: 800 } },
-  { id: "form-speech-ignite", atSec: 155.539, kind: "diegetic:shaft-ignite", data: { form: 2, y: 457 } },
-  { id: "form-word-ignite", atSec: 170.156, kind: "diegetic:shaft-ignite", data: { form: 3, y: 101 } },
+  // y values re-proportioned for the shaft's current 3800px span (bottom
+  // fixed at GROUND=952, top at -2848) — same ~12/39/67% up-the-climb
+  // spacing kept throughout this level's several resizes, so the three
+  // ignition beats land at sensible heights instead of clustering near
+  // one end regardless of how tall the shaft itself ends up.
+  { id: "form-voice-ignite", atSec: 142.141, kind: "diegetic:shaft-ignite", data: { form: 1, y: 496 } },
+  { id: "form-speech-ignite", atSec: 155.539, kind: "diegetic:shaft-ignite", data: { form: 2, y: -530 } },
+  { id: "form-word-ignite", atSec: 170.156, kind: "diegetic:shaft-ignite", data: { form: 3, y: -1594 } },
 
   // ── The Turn (2:56-3:06) — pure cinematic pull-back, no input. The
   //    biggest breakdown besides the intro; a bright riser under it. ──

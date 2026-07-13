@@ -94,7 +94,7 @@ export const tutorialArena: MapDefinition = {
     // extended slightly further by the shaft below.
     { id: "wall-left", kind: "wall", position: { x: 16, y: 500 }, size: { x: 32, y: 1000 } },
     { id: "wall-right", kind: "wall", position: { x: 7984, y: 500 }, size: { x: 32, y: 1000 } },
-    { id: "ceiling", kind: "wall", position: { x: 4000, y: -14404 }, size: { x: 8000, y: 32 } },
+    { id: "ceiling", kind: "wall", position: { x: 4000, y: -2964 }, size: { x: 8000, y: 32 } },
 
     // Silence — spawn sits here, long flat runway. `id: "floor"` specifically
     // — unreachablePlatforms seeds its BFS from whichever platform is
@@ -147,26 +147,22 @@ export const tutorialArena: MapDefinition = {
     // another stop-start.
 
     // The Three Forms (x 4700-5150) — one continuous wall-jump shaft, 200px
-    // gap (under SHAFT_MAX=230), 15240px tall (≈85 kicks at 178px/kick per
-    // WALL_JUMP_UP) — grown 12x from the prior 1270px pass per explicit
-    // instruction (2026-07-13: "about 12X longer than it currently is").
-    // Same technique as the prior pass: BOTTOM fixed at GROUND (unchanged
-    // — same runway hand-off), TOP extended further upward into headroom
-    // opened by moving the ceiling even further up. NOTE: at this height
-    // the climb's real traversal time (85 kicks, realistically 40-90+
-    // seconds even played well) almost certainly exceeds the 37s the song
-    // currently allocates to The Three Forms zone (139.0-176.0s) — the
-    // three form-ignite beats and the zone-turn/vessel cues after it were
-    // NOT re-timed to match, since stretching the back half of the song's
-    // own schedule is a bigger, separate call. See TutorialScene/
-    // tutorial-song.ts's own notes at the ignite cues.
-    { id: "shaft-left", kind: "platform", position: { x: 4750, y: -6668 }, size: { x: 40, y: 15240 } },
-    { id: "shaft-right", kind: "platform", position: { x: 4950, y: -6668 }, size: { x: 40, y: 15240 } },
+    // gap (under SHAFT_MAX=230), 3800px tall (≈21 kicks at 178px/kick per
+    // WALL_JUMP_UP). Pulled back down from the prior 15240px/12x pass
+    // (2026-07-13 feedback: "its now too high") — that height was real,
+    // but a genuinely long, dramatic climb doesn't need to blow past what
+    // fits the zone's real time budget. ~21 kicks at a realistic ~0.5-0.7s
+    // per kick lands around 12-16s of actual climbing, comfortably inside
+    // the 37s the song allocates (139.0-176.0s) with room for the reveal
+    // and the top-out beat. Same technique as before: BOTTOM fixed at
+    // GROUND (unchanged), TOP extended upward into ceiling headroom.
+    { id: "shaft-left", kind: "platform", position: { x: 4750, y: -948 }, size: { x: 40, y: 3800 } },
+    { id: "shaft-right", kind: "platform", position: { x: 4950, y: -948 }, size: { x: 40, y: 3800 } },
 
     // The Turn — the shaft's exit doubles as the overlook vista. Sized and
     // positioned to actually land within the wall-jump reach envelope: the
-    // columns' own top sits at y=-14288, so a landing surface must sit
-    // within reachTop=-14288-178=-14466 .. yClimb+24=-14264 vertically
+    // columns' own top sits at y=-2848, so a landing surface must sit
+    // within reachTop=-2848-178=-3026 .. yClimb+24=-2824 vertically
     // (mapGen.ts's shaftReachable) AND have its CENTER within
     // GRAB_REACH_SIDE=200 of the columns horizontally (4530..5170) — the
     // validator (and real physics) test the platform's center point, so
@@ -174,7 +170,7 @@ export const tutorialArena: MapDefinition = {
     // that window. The camera's cinematic pull-back sells "wide overlook"
     // visually; this platform only needs to be physically standable right
     // at the shaft's top.
-    { id: "vista", kind: "platform", position: { x: 5075, y: -14310 }, size: { x: 750, y: 18 } },
+    { id: "vista", kind: "platform", position: { x: 5075, y: -2870 }, size: { x: 750, y: 18 } },
     // One-way (thin platform), so after the pull-back the player can simply
     // drop through it back down to floor-2 for the final arena rather than
     // needing a separate descent path.

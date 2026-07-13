@@ -140,6 +140,11 @@ export class TutorialScene extends Phaser.Scene {
   // player is standing there.
   private voiceStallMs = 0;
   private voiceStallProvoked = false;
+  // Three Forms cinematic vertical-follow — see CinematicCameraDirector's
+  // own docblock. Armed once, right as the reveal pan finishes, so
+  // beginFollow() seeds from wherever that pan actually left the camera
+  // instead of guessing a start point.
+  private shaftFollowArmed = false;
   private keys!: {
     a: Phaser.Input.Keyboard.Key;
     d: Phaser.Input.Keyboard.Key;
@@ -187,13 +192,14 @@ export class TutorialScene extends Phaser.Scene {
     const cam = this.cameras.main;
     cam.setBackgroundColor(ARENA_THEMES.voidVessel.bg);
     // Top bound widened from the original -200: the Three Forms wall-jump
-    // shaft was lengthened 2026-07-13 (first to y≈-340, then 12x further
-    // to y≈-14310 for its vista landing) by growing upward into headroom
-    // above the ceiling wall, so the camera needs to actually be able to
-    // follow the climb all the way up there. Hardcoded rather than
-    // derived from tutorialArena.size.y (which never changed — only the
-    // shaft's own platforms moved into the headroom above it).
-    cam.setBounds(-200, -14500, tutorialArena.size.x + 400, 15700);
+    // shaft was lengthened 2026-07-13 by growing upward into headroom
+    // above the ceiling wall (settled at y≈-2870 for its vista landing
+    // after a too-tall 12x pass got pulled back), so the camera needs to
+    // actually be able to follow the climb all the way up there.
+    // Hardcoded rather than derived from tutorialArena.size.y (which
+    // never changed — only the shaft's own platforms moved into the
+    // headroom above it).
+    cam.setBounds(-200, -3100, tutorialArena.size.x + 400, 4300);
     this.actionCamera = new ActionCamera(cam);
     this.actionCamera.setBaseZoom(COMBAT_ZOOM * getRenderScale());
     this.cineCamera = new CinematicCameraDirector(cam);
@@ -524,10 +530,9 @@ export class TutorialScene extends Phaser.Scene {
         // topY here is a fixed LOCAL demo range (a few kicks' worth), not
         // the shaft's real top — wallJumpInvite spaces exactly 6 bounces
         // evenly across topY..bottomY to demonstrate the L/R bounce
-        // rhythm, so feeding it the shaft's true (now 15240px, 12x-grown)
-        // full height would space those 6 demo bounces ~2500px apart —
-        // nothing like the real ~178px-per-kick physics, unreadable as a
-        // "this is the move" teach. Stays -318 regardless of shaft height.
+        // rhythm, so feeding it the shaft's real full height would space
+        // those 6 demo bounces too far apart to read as "this is the
+        // move." Stays -318 regardless of shaft height.
         this.diegeticCues.wallJumpInvite(4750, 4950, -318, 952, this.shaftInviteCount);
       }
     } else {
@@ -558,6 +563,27 @@ export class TutorialScene extends Phaser.Scene {
       }
     } else {
       this.voiceStallMs = 0;
+    }
+    // Three Forms cinematic follow — see CinematicCameraDirector's own
+    // docblock and the shaftFollowArmed field comment. Armed once the
+    // reveal pan (139.2s, 3500ms) has had time to finish, and disarmed at
+    // the zone boundary (176.0s) so "The Turn"'s own scripted pull-back
+    // cue (turn-pull-back) can take clean ownership instead of fighting a
+    // still-active follow. Fixed X on the shaft's own centerline (not the
+    // hero's X) — wall-jump bouncing swings ~200px side to side each kick,
+    // and tracking that tightly would read as camera shake, not a climb.
+    // Y leads slightly ABOVE the hero (biased toward where they're headed,
+    // not where they are) so the next grab point is already in frame
+    // before they reach for it.
+    if (this.cameraOwner === "director" && this.songAudio.currentTime >= 142.8 && this.songAudio.currentTime < 176.0) {
+      if (!this.shaftFollowArmed) {
+        this.shaftFollowArmed = true;
+        this.cineCamera.beginFollow(this.cameras.main.midPoint.x, this.cameras.main.midPoint.y);
+      }
+      this.cineCamera.updateFollow(4850, hero.y - 260, deltaMs);
+    } else if (this.shaftFollowArmed) {
+      this.shaftFollowArmed = false;
+      this.cineCamera.endFollow();
     }
     // No control until the body exists: during the spirit-descent opening
     // the hero entity is a mote of light mid-assembly — input arriving the
