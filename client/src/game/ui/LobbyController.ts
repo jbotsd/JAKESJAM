@@ -16,6 +16,7 @@ import {
   type MapPickerId,
 } from "../../sim/data/maps";
 import { prefetchCustomMap } from "../../net/mapClient";
+import { shareInviteLink } from "../../shell/crazyGamesSdk";
 
 const CUSTOM_MAP_PREFIX = "custom:";
 const CUSTOM_MAP_CODE_RE = /^[A-Z0-9]{6}$/;
@@ -558,6 +559,11 @@ export class LobbyController {
     if (!code || !this.roomShareBtn) return;
     const url = this.buildRoomShareUrl(code);
     if (!url) return;
+    // Inside a live CrazyGames environment, ALSO surface the invite through
+    // their own native UI (friends list / share sheet) — additive, never a
+    // replacement for the clipboard-copy flow below. No-op everywhere else
+    // (play.elyad.io, local dev) — see shell/crazyGamesSdk.ts.
+    shareInviteLink(url);
     try {
       await navigator.clipboard.writeText(url);
       const original = this.roomShareBtn.textContent;

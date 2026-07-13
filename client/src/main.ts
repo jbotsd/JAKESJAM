@@ -57,6 +57,20 @@ import {
   tickVoiceReactive,
   writeMusicBands,
 } from "./game/systems/SonicField";
+import {
+  getInstantMultiplayerFlag,
+  installCrazyGamesSdk,
+  notifyLoadingDone,
+  onMuteAudioChange,
+} from "./shell/crazyGamesSdk";
+
+// CrazyGames SDK v3 (portal submission requirement). Fire-and-forget at the
+// very top of boot — "as early as possible when the game begins loading"
+// per their lifecycle docs. Always resolves (SDK absent / disabled / init
+// failure are all safe no-ops inside the module itself — see
+// shell/crazyGamesSdk.ts's docblock). loadingStop() is paired below, once
+// the splash/menu is actually interactive.
+void installCrazyGamesSdk();
 
 // Phase F3 Zig→WASM substrate. RNG, collision, and player physics
 // run in Zig wasm by DEFAULT. Boot-load the wasm sim ASAP so it's
@@ -1112,6 +1126,41 @@ worldMusic.addEventListener("ended", () => {
 globalWithGame.__jakesjam_music__ = [menuMusic, worldMusic];
 restoreOptions();
 
+// Splash/menu is DOM-driven and every button above is already wired by
+// this point — this is "the game is actually playable" for CrazyGames'
+// loadingStop() (pairs with the loadingStart() fired inside
+// installCrazyGamesSdk() at the top of this file). No-op outside a live
+// CrazyGames environment.
+notifyLoadingDone();
+
+// CrazyGames' `muteAudio` setting takes PRIORITY over the player's own
+// in-game mute checkbox per their docs. Hooked into the same
+// musicMutedInput/applyAudioOptions mechanism the checkbox already drives
+// (see applyAudioOptions below) rather than a second mute path — also
+// silences the announcer voice line system. Programmatic `.checked`
+// writes here deliberately do NOT go through the checkbox's own "change"
+// listener (so a portal-forced mute is never persisted to localStorage as
+// if the player chose it), and the player's own prior choice is restored
+// when the portal un-mutes.
+{
+  let crazyGamesForcedMute = false;
+  let musicMutedBeforeForce = false;
+  onMuteAudioChange((muted) => {
+    if (muted) {
+      if (!crazyGamesForcedMute) musicMutedBeforeForce = musicMutedInput.checked;
+      crazyGamesForcedMute = true;
+      musicMutedInput.checked = true;
+      silenceAnnouncer();
+      setAnnouncerVolume(0);
+    } else {
+      crazyGamesForcedMute = false;
+      musicMutedInput.checked = musicMutedBeforeForce;
+      setAnnouncerVolume(Number(musicVolumeInput.value) / 100);
+    }
+    applyAudioOptions();
+  });
+}
+
 // ── Action-intensity → music reactivity ─────────────────────────────────
 // Scenes dispatch `jakesjam:intensity` (throttled, see ActionIntensity
 // consumers) with a 0-1 "how much is happening" score. Rather than
@@ -1880,6 +1929,13 @@ if (urlParams.get("replay")) {
   // Shared room link → open lobby and auto-join the room (idempotent on server).
   shell.goto("room");
   setTimeout(() => lobbyController.autoJoinFromUrl(), 0);
+} else if (getInstantMultiplayerFlag()) {
+  // CrazyGames signals this session should drop straight into multiplayer
+  // with no extra menu friction. No explicit URL already decided the flow
+  // (checked above), so reuse the SAME auto-join path `?world=1` already
+  // uses — public Hot Lobby matchmaking, zero code-entry friction. False
+  // (never true) outside a live CrazyGames environment.
+  setTimeout(() => joinWorld(), 0);
 }
 
 // Back-to-splash button in the lobby panel → shell home.

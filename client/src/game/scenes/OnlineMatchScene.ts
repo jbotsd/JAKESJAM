@@ -30,6 +30,7 @@ import { HighlightTracker } from "../highlights/highlightRules";
 import { ClipRecorder } from "../highlights/ClipRecorder";
 import { isClipsEnabled } from "../highlights/clipConsent";
 import { emitClipUploaded, ShellEvents } from "../../shell/events";
+import { notifyGameplayStart, notifyGameplayStop } from "../../shell/crazyGamesSdk";
 import { pickDeathTip, type DeathTipSignal } from "../highlights/deathTip";
 import {
   STEP_MS,
@@ -500,6 +501,12 @@ export class OnlineMatchScene extends Phaser.Scene {
   }
 
   create() {
+    // CrazyGames SDK lifecycle: this scene is where BOTH public (Hot Lobby)
+    // and private-room matches actually begin real gameplay (see main.ts's
+    // joinWorld() and the private-room `game.scene.start(OnlineMatch, ...)`
+    // call — both land here). Paired with notifyGameplayStop() in
+    // teardown() below. No-op outside a live CrazyGames environment.
+    notifyGameplayStart();
     // Match jadeIsles arena theme background (PALETTE.voidDeep = 0x06181C).
     this.cameras.main.setBackgroundColor("#06181C");
     // Right-click triggers parry (InputBit.Ability) — suppress the browser
@@ -520,7 +527,7 @@ export class OnlineMatchScene extends Phaser.Scene {
     this.statusText = this.add
       .text(20, 20, "Connecting to game server...", {
         color: "#9aa5b1",
-        fontFamily: "Inter, Arial, sans-serif",
+        fontFamily: "'Space Mono', 'Courier New', monospace",
         fontSize: "14px",
       })
       .setScrollFactor(0)
@@ -727,7 +734,7 @@ export class OnlineMatchScene extends Phaser.Scene {
       const text = this.add
         .text(uiWidth(this) - 20, y, lines.join("\n"), {
           color: "#cffaff",
-          fontFamily: "Inter, Arial, sans-serif",
+          fontFamily: "'Space Mono', 'Courier New', monospace",
           fontSize: "14px",
           align: "right",
           backgroundColor: "rgba(5,8,15,0.45)",
@@ -2547,6 +2554,16 @@ export class OnlineMatchScene extends Phaser.Scene {
   }
 
   private teardown() {
+    // CrazyGames SDK lifecycle: pairs with notifyGameplayStart() in
+    // create() above. Covers every real exit path — leave-to-menu,
+    // rematch-away, scene-switch, and full disconnect-teardown — since
+    // they all funnel through this one shutdown handler. (Pause overlay,
+    // round-over, and card-draft screens do NOT trigger a stop/start pair
+    // here: this is a live real-time netcode match with no true local
+    // pause — the session stays open the whole time the scene is alive.)
+    // No-op outside a live CrazyGames environment; also guards against a
+    // stray unpaired call if teardown ever runs twice.
+    notifyGameplayStop();
     // Drop the status Text reference FIRST: late WebSocket/reconnect
     // callbacks route through setStatus, and the destroyed Text must not
     // be reachable (sig ulnt5l).

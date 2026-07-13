@@ -2,6 +2,15 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
+    <!-- CrazyGames SDK v3 (portal submission requirement). Loaded as an
+         ordinary synchronous script — NOT async/defer/module — so
+         window.CrazyGames exists (or definitively fails to load) before
+         the module bundle (main.ts) runs; module scripts are always
+         deferred until after synchronous scripts + DOM parsing. Every
+         call site is environment-gated in client/src/shell/crazyGamesSdk.ts:
+         this tag is harmless on play.elyad.io / local dev even if the
+         script 404s or the SDK reports environment "disabled" there. -->
+    <script src="https://sdk.crazygames.com/crazygames-sdk-v3.js"></script>
     <!-- Boot diagnostic (mobile has no devtools): surface ANY uncaught error /
          rejection as an on-screen red overlay so a black-screen failure is
          legible. Inline in <head> so it runs before the module bundle and
