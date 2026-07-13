@@ -3,6 +3,7 @@ import type { Vec2 } from "../types/game";
 import { PALETTE } from "../ui/palette.js";
 import { getRenderScale } from "../render/renderResolution.js";
 import { type SpringState, springKick, springState, springTo } from "./spring";
+import { getSonicField } from "../systems/SonicField.js";
 
 /** The minimal surface SimEventRouter drives on ANY on-screen combatant —
  *  hero, boss, or a non-humanoid thrall (see TutorialShardThrall.ts). Kept
@@ -96,6 +97,34 @@ export class ProceduralPlayerRig implements CombatRig {
   /** Smoothed crouch 0..1 — eases pelvis height so crouch/uncrouch doesn't pop. */
   private crouchBlend = 0;
   private static readonly CROUCH_BLEND_TAU_MS = 70;
+  // ── Dance groove (2026-07-13, Jake: "rotate my arms around like I
+  // rotate the mouse in a circle... lean deeply into that... rhythm sync
+  // and player-controllable motion has a dancing effect") ──────────────
+  // The aim-orbit shoulder rotation (perp vector, below) ALREADY swings
+  // the arms around the body as the mouse circles — that's the thing
+  // Jake is pointing at. This layer leans into it: grounded + idle +
+  // actively spinning the aim (not just re-aiming at a target) triggers
+  // a springed "danceEnergy" that drives a beat-synced hip sway + bounce
+  // riding the EXISTING idle-life pipeline (breathe/weightShift), so it
+  // composes with everything already there instead of fighting it.
+  /** Raw aim angle one frame ago (body-relative, NOT chest-relative — this
+   *  is only a spin-speed detector, precision doesn't matter). */
+  private prevAimAngle = 0;
+  private prevAimAngleValid = false;
+  /** Smoothed |dAimAngle/dt|, rad/s — "is the player circling the mouse". */
+  private aimAngularVel = 0;
+  /** 0..1, springed — how much the dance flourish should show right now. */
+  private danceEnergy = 0;
+  private static readonly DANCE_SPIN_THRESHOLD_RADPS = 2.4;
+  private static readonly DANCE_ATTACK_MS = 260;
+  private static readonly DANCE_RELEASE_MS = 900;
+  /** Always-ticking groove clock (~2.1Hz ≈ 126bpm quarter notes) — the
+   *  silent-fallback rhythm so dancing still reads as intentional with no
+   *  music playing; SonicField's live beat/pulse only modulates AMPLITUDE
+   *  (see groove computation), never re-times this phase, so there's no
+   *  phase-lock drift/latency to fight. */
+  private groovePhase = 0;
+  private static readonly GROOVE_HZ = 2.1;
   /** Smoothed |vx| walk weight — kills step-phase stutter from sim velocity steps. */
   private walkBlend = 0;
   /** Smoothed SPRINT weight: 0 through walk speeds, 1 approaching max ground
@@ -323,6 +352,27 @@ export class ProceduralPlayerRig implements CombatRig {
       this.facingSmooth += (facingTarget - this.facingSmooth) * fk;
     }
     this.facing = this.facingSmooth >= 0 ? 1 : -1;
+
+    // Aim spin-speed detector: body-relative (not chest-relative — a spin
+    // detector doesn't need that precision), sampled BEFORE pelvis/chest
+    // are known so it's cheap and independent of the rest of the pose.
+    if (deltaMs > 0) {
+      const rawAimAngle = Math.atan2(
+        pose.aimTarget.y - pose.position.y,
+        pose.aimTarget.x - pose.position.x,
+      );
+      if (this.prevAimAngleValid) {
+        // Wrap the delta to [-PI, PI] so crossing the +/-PI seam doesn't
+        // register as a huge spurious spin.
+        const rawDelta = rawAimAngle - this.prevAimAngle;
+        const dAngle = Math.atan2(Math.sin(rawDelta), Math.cos(rawDelta));
+        const instVelRadPs = Math.abs(dAngle) / (deltaMs / 1000);
+        const velK = 1 - Math.exp(-deltaMs / 140);
+        this.aimAngularVel += (instVelRadPs - this.aimAngularVel) * velK;
+      }
+      this.prevAimAngle = rawAimAngle;
+      this.prevAimAngleValid = true;
+    }
 
     // Ease crouch so half-height / pelvis drop isn't a hard step.
     const crouchTarget = pose.crouching ? 1 : 0;
@@ -590,17 +640,60 @@ export class ProceduralPlayerRig implements CombatRig {
     // moment real movement starts (walkAmount gate), grounded only.
     const idleLife = pose.grounded ? 1 - Math.min(1, walkAmount * 3) : 0;
     const breathe = Math.sin(this.idlePhase * 2.1) * 1.1 * s * idleLife;
-    const weightShift = Math.sin(this.idlePhase) * 2.2 * s * idleLife;
+
+    // Dance energy: grounded, idling (not walking), not mid-dash, and
+    // actively spinning the aim fast enough to read as a deliberate orbit
+    // rather than just re-aiming at a target. Asymmetric attack/release so
+    // it ramps in quickly once you start circling and eases out gently a
+    // beat after you stop, instead of snapping.
+    const danceTarget =
+      idleLife > 0.6 && !dashing
+        ? Phaser.Math.Clamp(
+            (this.aimAngularVel - 1.0) /
+              (ProceduralPlayerRig.DANCE_SPIN_THRESHOLD_RADPS - 1.0),
+            0,
+            1,
+          )
+        : 0;
+    if (deltaMs > 0) {
+      const danceTau =
+        danceTarget > this.danceEnergy
+          ? ProceduralPlayerRig.DANCE_ATTACK_MS
+          : ProceduralPlayerRig.DANCE_RELEASE_MS;
+      const dk = 1 - Math.exp(-deltaMs / danceTau);
+      this.danceEnergy += (danceTarget - this.danceEnergy) * dk;
+    }
+    // Always-ticking clock (silent-fallback tempo) so the groove reads as
+    // intentional even muted; SonicField's live pulse/beat only scale the
+    // AMPLITUDE (louder music = bigger groove), never re-time the phase.
+    this.groovePhase += deltaMs * 0.001 * Math.PI * 2 * ProceduralPlayerRig.GROOVE_HZ;
+    const sonic = getSonicField();
+    const musicEnergy = Math.max(sonic.pulse, sonic.beat * 0.8);
+    const grooveAmp = this.danceEnergy * Phaser.Math.Linear(0.4, 1, musicEnergy);
+    // groove = the bounce (pelvis/chest/head Y, applied below); grooveSway
+    // = the hip/shoulder counter-sway (half-time, phase-offset from the
+    // bounce — real weight-shift dancing alternates lean and lift, it
+    // doesn't bounce and sway in lockstep).
+    const groove = Math.sin(this.groovePhase) * grooveAmp;
+    const grooveSway = Math.sin(this.groovePhase * 0.5 + 0.6) * grooveAmp;
+
+    const weightShift =
+      Math.sin(this.idlePhase) * 2.2 * s * idleLife + grooveSway * 6.5 * s;
     // Key positions — head/chest lag hip for floppy chain.
     // gather dips the whole chain, slightly harder toward the head — the
     // upper body rounds over the coil, not a rigid elevator drop. cushion
     // rides the same shape (impacts dip the body, spring rebounds it).
+    // Deepened 2026-07-13 (Jake: "doesn't crouch very well") — the old
+    // 52->32/78->56/100->76 range barely outpaced the leg-length shrink
+    // below, so hip drop mostly read as a hunch, not a squat. Bigger drops
+    // here + less leg-length shrink (see legLen1/legLen2) force the IK
+    // solver into real, visible knee bend.
     const pelvisY =
-      ground - Phaser.Math.Linear(52, 32, cr) * sy - bob + gather * s + cushion + breathe * 0.4 + throwDrop;
+      ground - Phaser.Math.Linear(52, 28, cr) * sy - bob + gather * s + cushion + breathe * 0.4 + throwDrop - groove * 3.2 * sy;
     const chestYTarget =
-      ground - Phaser.Math.Linear(78, 56, cr) * sy - bob + gather * 1.2 * s + cushion * 1.15 + breathe + throwDrop * 0.5;
+      ground - Phaser.Math.Linear(78, 52, cr) * sy - bob + gather * 1.2 * s + cushion * 1.15 + breathe + throwDrop * 0.5 - groove * 2.4 * sy;
     const headYTarget =
-      ground - Phaser.Math.Linear(100, 76, cr) * sy - bob + gather * 1.4 * s + cushion * 1.25 + breathe * 1.4 + throwDrop * 0.3;
+      ground - Phaser.Math.Linear(100, 72, cr) * sy - bob + gather * 1.4 * s + cushion * 1.25 + breathe * 1.4 + throwDrop * 0.3 - groove * 2 * sy;
     const cx = pose.position.x + this.hitOffsetX * hitEased + drunkSway * 0.35;
     // Forward CENTRE OF MASS: the whole body chain (pelvis up) rides ahead
     // of the feet while moving — the falling-forward posture that makes a
@@ -797,8 +890,8 @@ export class ProceduralPlayerRig implements CombatRig {
     const footR = vec(this.footRSpringX.value, this.footRSpringY.value);
 
     // IK
-    const legLen1 = Phaser.Math.Linear(28, 22, cr) * s;
-    const legLen2 = Phaser.Math.Linear(28, 22, cr) * s;
+    const legLen1 = Phaser.Math.Linear(28, 23, cr) * s;
+    const legLen2 = Phaser.Math.Linear(28, 23, cr) * s;
     const legL = solveTwoBone(hipL, footL, legLen1, legLen2, -this.facing);
     const legR = solveTwoBone(hipR, footR, legLen1, legLen2, -this.facing);
     const armUpper = ProceduralPlayerRig.ARM_UPPER * s;
@@ -1805,7 +1898,7 @@ export class ProceduralPlayerRig implements CombatRig {
         s *
         walk
       : 0;
-    const spread = Phaser.Math.Linear(7.5, 8.5, cr) * s;
+    const spread = Phaser.Math.Linear(7.5, 11, cr) * s;
 
     // AIRBORNE POSE (fixes the "silly jump"): rising = both legs TUCK
     // (knees up under the body, lead knee higher), falling = the lead leg
