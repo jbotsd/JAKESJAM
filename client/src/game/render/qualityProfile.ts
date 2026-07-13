@@ -147,3 +147,37 @@ export function setQualityTier(tier: QualityTier | null): void {
 export function detectedTier(): QualityTier {
   return detectTier();
 }
+
+// Runtime rig downgrade — separate from the frozen boot-time profile above
+// ON PURPOSE (see this file's own "Resolved ONCE at boot" comment: every
+// system depends on that object never changing shape mid-session). Added
+// 2026-07-13: telemetry's own "resolution-insensitive frame time"
+// (governor-futile) signal — RenderGovernor's own admission that dropping
+// render SCALE didn't recover frame time, which only happens when the
+// bottleneck is CPU work, not GPU fill — fired on real "standard"/"ultra"
+// tier sessions (rigStyle "live" by default at those tiers; only "potato"
+// ever auto-selects the cheap baked rig). ProceduralPlayerRig fully
+// redraws ~150 vector paths per player per frame with no tier gate above
+// potato — exactly the kind of CPU cost the governor's own diagnosis
+// describes but had no lever to actually fix. This is that lever: a
+// SESSION-scoped (not persisted — a temporary slowdown from unrelated load
+// shouldn't permanently downgrade a device that's normally fine) override
+// RenderGovernor calls when it detects futility, so the game can actually
+// respond to its own diagnosis instead of just freezing and living with it.
+let runtimeRigDowngrade = false;
+
+/** Call when the frame-time governor concludes resolution scaling can't
+ *  help (CPU-bound, not fill-bound) — see renderGovernor.ts. */
+export function forceRigDowngrade(): void {
+  runtimeRigDowngrade = true;
+}
+
+export function isRigDowngraded(): boolean {
+  return runtimeRigDowngrade;
+}
+
+/** What rig style should actually be used right now — the frozen tier
+ *  profile's choice, UNLESS a runtime downgrade has fired since boot. */
+export function getEffectiveRigStyle(): "live" | "baked" {
+  return runtimeRigDowngrade ? "baked" : getQualityProfile().rigStyle;
+}

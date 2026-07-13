@@ -13,7 +13,7 @@
 //   - never within 60s of a step-down (thermal hysteresis)
 
 import Phaser from "phaser";
-import { getQualityProfile } from "./qualityProfile.js";
+import { getQualityProfile, forceRigDowngrade, isRigDowngraded } from "./qualityProfile.js";
 import { getRenderScale, setRenderScaleRuntime } from "./renderResolution.js";
 import { crumb, record } from "../../telemetry.js";
 
@@ -84,11 +84,22 @@ export class RenderGovernor {
             `[governor] resolution-insensitive (dt ${frameDtEmaMs.toFixed(1)}ms regardless) — restoring rs→${getRenderScale().toFixed(2)}, stepping frozen 120s`,
           );
           crumb("perf", `governor futile — not fill-bound, rs→${getRenderScale().toFixed(2)} frozen`);
+          // 2026-07-13: futility here specifically means CPU-bound, not
+          // fill-bound (see qualityProfile.ts's forceRigDowngrade docblock
+          // for the full chain — this was previously a diagnosis with no
+          // lever). The single biggest known CPU cost above "potato" tier
+          // is ProceduralPlayerRig's full per-frame vector redraw; drop to
+          // the baked (textured-quad) twin for the rest of this session.
+          // Takes effect on the next rig construction (respawn/match
+          // start), not instantly mid-frame — that's an acceptable soft
+          // transition, not a correctness requirement.
+          const rigWasDowngraded = isRigDowngraded();
+          if (!rigWasDowngraded) forceRigDowngrade();
           record({
             kind: "perf",
             sig: "governor-futile",
             message: `resolution-insensitive frame time (dt ${frameDtEmaMs.toFixed(1)}ms)`,
-            data: { dt: Math.round(frameDtEmaMs * 10) / 10, rs: getRenderScale() },
+            data: { dt: Math.round(frameDtEmaMs * 10) / 10, rs: getRenderScale(), rigDowngraded: !rigWasDowngraded },
           });
           return;
         }

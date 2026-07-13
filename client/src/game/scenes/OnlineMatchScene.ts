@@ -89,7 +89,7 @@ import { CameraJuice } from "../systems/CameraJuice.js";
 import { installHudCamera } from "../systems/HudCamera.js";
 import { getRenderScale, uiWidth, uiHeight } from "../render/renderResolution.js";
 import { RenderGovernor } from "../render/renderGovernor.js";
-import { getQualityProfile } from "../render/qualityProfile.js";
+import { getQualityProfile, getEffectiveRigStyle } from "../render/qualityProfile.js";
 import { BakedPlayerRig } from "../rendering/BakedPlayerRig.js";
 import { assistTouchAim } from "../input/touchAimAssist.js";
 import { autoWallHopKeys, makeAutoHopState } from "../input/autoWallHop.js";
@@ -1953,7 +1953,7 @@ export class OnlineMatchScene extends Phaser.Scene {
     const rigOverride = new URLSearchParams(window.location.search).get("rig");
     const rigStyle = rigOverride === "baked" || rigOverride === "live"
       ? rigOverride
-      : getQualityProfile().rigStyle;
+      : getEffectiveRigStyle();
     const RigClass = rigStyle === "baked" ? BakedPlayerRig : ProceduralPlayerRig;
     return new RigClass(this, {
       // Bots render VIOLET with a "BOT · NAME" plate — unmistakable next
