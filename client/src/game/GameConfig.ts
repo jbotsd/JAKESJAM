@@ -20,6 +20,25 @@ import { getQualityProfile } from "./render/qualityProfile.js";
 // driven from Phaser's POST_RENDER hook, in the same task as the WebGL draw,
 // so the drawing buffer is guaranteed intact when drawImage reads it.
 
+// Dev/recovery override: ?renderer=canvas forces Phaser's Canvas2D backend
+// instead of WebGL. Real production use, not just a dev flag — see
+// client/src/shell/rendererRecovery.ts, which appends this itself and
+// reloads on a confirmed Phaser-internal WebGL shader compile failure
+// (found 2026-07-13: a real, currently-unfixed ANGLE/Vulkan-backend GLSL
+// compiler gap kills Phaser's OWN core shaders — not any of this game's
+// custom ones — before Phaser.AUTO's coarse "can I get a WebGL context"
+// check would ever catch it, since that check passes and the failure only
+// surfaces once real shader compilation is attempted mid-boot). Canvas
+// mode has no shader effects and lower performance, but the alternative
+// on affected hardware today is a permanent black screen.
+function wantsCanvasRenderer(): boolean {
+  try {
+    return new URLSearchParams(window.location.search).get("renderer") === "canvas";
+  } catch {
+    return false;
+  }
+}
+
 export function buildGameConfig(): Phaser.Types.Core.GameConfig {
   const { width, height } = backingSize();
   const profile = getQualityProfile();
@@ -28,7 +47,7 @@ export function buildGameConfig(): Phaser.Types.Core.GameConfig {
     // desktop uncapped (rAF follows the display — 120-240Hz just works;
     // the sim stays fixed-tick and render interpolates).
     fps: profile.fpsLimit > 0 ? { limit: profile.fpsLimit } : undefined,
-    type: Phaser.AUTO,
+    type: wantsCanvasRenderer() ? Phaser.CANVAS : Phaser.AUTO,
     parent: "game-root",
     // Right-click is the dash-bash power-slide — the browser context menu must NEVER
     // appear. This is Phaser's own canvas-level suppressor (Mouse + Touch

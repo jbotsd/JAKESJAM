@@ -10,6 +10,7 @@ import {
   type QualityTier,
 } from "./game/render/qualityProfile";
 import { crumb, installTelemetry, watchContextLoss } from "./telemetry";
+import { installRendererRecovery } from "./shell/rendererRecovery";
 import { announce, setAnnouncerVolume, silenceAnnouncer } from "./game/audio/AnnouncerSystem";
 import { LobbyController } from "./game/ui/LobbyController";
 import { MatchStatusBadge } from "./game/ui/MatchStatusBadge";
@@ -547,6 +548,11 @@ globalWithGame.__jakesjam_music__?.forEach((audio) => {
   audio.pause();
   audio.currentTime = 0;
 });
+
+// Installed before Phaser exists at all — see rendererRecovery.ts's own
+// docblock. Must be listening before Phaser's first draw call, which can
+// happen synchronously-adjacent to construction below.
+installRendererRecovery();
 
 const game = new Phaser.Game(buildGameConfig());
 // Scale.NONE does no automatic window tracking — this owns it (backing
