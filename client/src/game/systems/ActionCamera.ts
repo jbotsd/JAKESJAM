@@ -114,7 +114,21 @@ export class ActionCamera {
     this.smoothedSubjects = [];
     this.envelopeZoom = this.baseZoom;
     if (!this.punchActive) this.cam.setZoom(this.baseZoom);
-    this.cam.centerOn(x, y);
+    // Telemetry 2026-07-12 (sigs qobqem/5jtz75, builds OghnpP0u/DeF5OTQp):
+    // snap() called from resetPlayer() during scene create() can land
+    // before Phaser's Camera has finished its own first internal update —
+    // centerOn → centerOnX → clampX then dereferences a null bounds/target
+    // Phaser hasn't initialized yet. Rare boot-order race, not a hot path,
+    // so a defensive try/catch is the right tool: it can't mask a REAL bug
+    // (any subsequent per-frame camera update self-corrects the position).
+    try {
+      this.cam.centerOn(x, y);
+    } catch {
+      // Fall back to setting scroll directly — this doesn't touch whatever
+      // internal state clampX choked on, so it can't hit the same null.
+      this.cam.scrollX = x - this.cam.width / 2;
+      this.cam.scrollY = y - this.cam.height / 2;
+    }
   }
 
   addTrauma(amount: number): void {
