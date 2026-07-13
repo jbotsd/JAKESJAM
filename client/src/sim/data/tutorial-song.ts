@@ -44,6 +44,23 @@
 // transients for a detector to find at all (expected for rubato solo
 // voice), so those two are set from the measured RMS energy envelope's
 // actual rise/dip instead of a blind guess — still real data, not invented.
+//
+// 2026-07-13 deep pass: with the real isolated stems now in the repo
+// (client/public/audio/tutorial-stems/), re-ran onset detection on the
+// LEAD and BACKING vocal stems specifically (uv run --with librosa),
+// instead of the full mixdown — the vocal-only signal finds the actual
+// word attack, not a coincident drum/instrumental transient. Found: The
+// Three Forms had zero lyric coverage despite being the zone whose whole
+// point IS the Voice/Speech/Word triad (added three-forms-voice-flash);
+// the Response's call-and-response structure was only half-flashed
+// (added response-echo-flash at the single strongest onset in the entire
+// track); turn-flash-coptic's original full-mix timestamp was ~1.6s off
+// the real vocal attack (retimed). The solo intro/outro and the two
+// already-precise cues (chorus2-flash, sephia-flash — the latter
+// deliberately offset from the raw vocal for narrative pacing, see its
+// own comment) were left untouched; changing an already-correct or
+// intentionally-offset cue on weaker justification would be a regression,
+// not an improvement.
 
 const COPTIC_INTRO_1 = { text: "ⲁⲛⲟⲕ ⲧⲉ", translit: "anok te", gloss: "I am" };
 const COPTIC_INTRO_2 = { text: "ⲡⲣⲱⲧⲉⲛⲛⲟⲓⲁ", translit: "pretennoia", gloss: "first thought" };
@@ -228,6 +245,19 @@ export const tutorialSongCues: readonly SongCue[] = [
   // holding still behind Shield. Chevrons point INTO the threat on
   // purpose — stepping back reads exactly wrong for how the dash works.
   { id: "response-dash-invite", atSec: 124.45, kind: "diegetic:dash-invite", data: {} },
+  // The response half of the call-and-response chorus2-flash started at
+  // 120.128 ("Anok te!") — found via onset detection run on the ISOLATED
+  // lead/backing vocal stems (2026-07-13, now that real stems exist
+  // instead of only the finished mixdown): 125.179s is, by a wide margin,
+  // the single strongest onset detected anywhere in the whole 246s track
+  // (onset-strength 2.11 vs a next-highest of 1.47 at the Turn), and it's
+  // a BACKING-vocal onset specifically — a different voice answering the
+  // lead's call, not a repeat of the same line. Reusing the already-
+  // verified COPTIC_CHORUS here (not inventing new script) reads as
+  // "I am — light": call and response, landing right where
+  // response-boss-homing/response-goal-harder already escalate the fight
+  // a second earlier — the lyric and the difficulty spike arrive together.
+  { id: "response-echo-flash", atSec: 125.179, kind: "diegetic:coptic-flash", data: COPTIC_CHORUS },
   { id: "response-accent-2", atSec: 128.395, kind: "camera:shake", data: { amount: 0.3 } },
   // The first real SQUAD: a warder (directional shield, see
   // TutorialShardThrall.ts / tutorialDuel.ts's SHIELD_* logic) holds the
@@ -279,6 +309,17 @@ export const tutorialSongCues: readonly SongCue[] = [
   // ignition beats land at sensible heights instead of clustering near
   // one end regardless of how tall the shaft itself ends up.
   { id: "form-voice-ignite", atSec: 142.141, kind: "diegetic:shaft-ignite", data: { form: 1, y: 496 } },
+  // The Three Forms had ZERO lyric coverage until this pass despite being
+  // the zone whose whole conceit IS the Voice/Speech/Word triad — found via
+  // onset detection on the isolated lead-vocal stem (2026-07-13): a clean,
+  // strong onset (strength 0.83) at 146.239s, inside a real sung phrase
+  // (cluster runs ~143-153s) with nothing else competing for attention
+  // there (climbing is the only input, no combat). Reuses the already-
+  // verified COPTIC_INTRO_2 ("pretennoia" / "first thought") rather than
+  // inventing new script for "voice"/"speech"/"word" specifically — the
+  // whole triad IS an aspect of Protennoia herself, so anchoring it to
+  // "first thought" is the textually honest choice, not a placeholder.
+  { id: "three-forms-voice-flash", atSec: 146.239, kind: "diegetic:coptic-flash", data: COPTIC_INTRO_2 },
   { id: "form-speech-ignite", atSec: 155.539, kind: "diegetic:shaft-ignite", data: { form: 2, y: -530 } },
   { id: "form-word-ignite", atSec: 170.156, kind: "diegetic:shaft-ignite", data: { form: 3, y: -1594 } },
 
@@ -292,8 +333,15 @@ export const tutorialSongCues: readonly SongCue[] = [
   // the breakdown, not empty sky.
   { id: "demiurge-third-sighting", atSec: 176.4, kind: "demiurge:manifest", data: { x: 6300, y: 420 } },
   { id: "demiurge-stage-2-early", atSec: 176.45, kind: "demiurge:stage", data: { stage: 2 } },
-  // 177.8s: real onset-detected transient (librosa), not a guess.
-  { id: "turn-flash-coptic", atSec: 177.8, kind: "diegetic:coptic-flash", data: COPTIC_TURN },
+  // Retimed 177.8 -> 179.397 (2026-07-13): the original 177.8 was onset-
+  // detected against the FULL MIX, which for a lyric flash risks landing
+  // on a drum/instrumental transient that merely coincides with the vocal
+  // rather than the word itself. Re-running detection on the ISOLATED
+  // lead-vocal stem found the real word attack at 179.397s, with an onset
+  // strength (1.47) more than 3x anything else within a second of it —
+  // "land ON the hit or don't land at all" (docs/IDENT-GRAMMAR.md Law 2)
+  // reads more literally with a vocal-only source than a full-mix one.
+  { id: "turn-flash-coptic", atSec: 179.397, kind: "diegetic:coptic-flash", data: COPTIC_TURN },
   // The recognition beat: for one instant the whole vessel unfurls to full
   // brightness — not a NEW power arriving, the realization that it was
   // always already whole — then recedes as the real fight approaches.
