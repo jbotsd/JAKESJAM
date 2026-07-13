@@ -28,10 +28,66 @@ const f = (n: number | undefined, dflt: number): string =>
 const optF = (n: number | undefined): string => (n === undefined ? "null" : f(n, 0));
 const optI = (n: number | null): string => (n === null ? "null" : `${n}`);
 
+// Mirrors weaponBuild.ts's cardHasVisibleSignature/ensureVisibleCardSignature
+// EXACTLY (kept as a separate static pass here rather than importing those —
+// they're private to weaponBuild.ts and operate on a live ResolvedWeaponBuild
+// accumulator, not a single static card). Safe to precompute per-card at
+// codegen time because the runtime function's inputs are ONLY this card's own
+// modifier + category + icon (no cross-card or RNG state) for every field
+// EXCEPT the "element === neutral" check, which never fires in practice —
+// starterWeapon's default projectile element is "crystal", and no card in
+// cards.ts ever sets element to "neutral" — so that branch is dead code
+// against current data and is deliberately NOT baked here.
+function cardHasVisibleSignature(mod: NonNullable<(typeof crystalRoundsCards)[number]["modifier"]>): boolean {
+  const p = mod.projectile;
+  if (mod.delivery) return true;
+  if (mod.orbitingSatellites) return true;
+  if (mod.mirrorShield || mod.directionalShield || mod.stolenFangs) return true;
+  if (mod.projectileCountAdd || mod.projectileBounceAdd) return true;
+  if (mod.projectileSplitAdd || mod.projectileHomingStrengthAdd) return true;
+  if (mod.airJumpsAdd || mod.dashChargesAdd) return true;
+  if (mod.gravityMultiplier !== undefined && mod.gravityMultiplier !== 1) return true;
+  if (mod.jumpMultiplier !== undefined && mod.jumpMultiplier !== 1) return true;
+  if (mod.wallJumpMultiplier !== undefined && mod.wallJumpMultiplier !== 1) return true;
+  if (mod.wallSlideMultiplier !== undefined && mod.wallSlideMultiplier !== 1) return true;
+  if (mod.moveSpeedMultiplier !== undefined && mod.moveSpeedMultiplier !== 1) return true;
+  if (mod.parryCoverMultiplier !== undefined && mod.parryCoverMultiplier !== 1) return true;
+  if (mod.maxHealthAdd) return true;
+  if (p?.shape || p?.pathing || p?.element || p?.impact) return true;
+  if (p?.bounces || p?.count || p?.splitCount || p?.pierceCount) return true;
+  if (p?.sizeMultiplier !== undefined && p.sizeMultiplier !== 1) return true;
+  if (p?.gravityScale !== undefined && p.gravityScale !== 1) return true;
+  if (p?.lifetimeMultiplier !== undefined && p.lifetimeMultiplier !== 1) return true;
+  if (p?.speedMultiplier !== undefined && p.speedMultiplier !== 1) return true;
+  if (mod.projectileSpeedMultiplier !== undefined && mod.projectileSpeedMultiplier !== 1) return true;
+  return false;
+}
+
+/** Returns the cosmetic size/speed/shape bump for a card with no visible
+ *  signature of its own, or null if the card already has one. */
+function visibleSignatureBump(
+  card: (typeof crystalRoundsCards)[number],
+  mod: NonNullable<(typeof crystalRoundsCards)[number]["modifier"]>,
+): { sizeMultiplier: number; speedMultiplier: number; shape?: string } | null {
+  if (cardHasVisibleSignature(mod)) return null;
+  const shape = card.visual?.iconShape;
+  if (card.category === "defense" || card.category === "utility") {
+    return { sizeMultiplier: 1.08, speedMultiplier: 1, shape };
+  } else if (mod.fireRateMultiplier && mod.fireRateMultiplier > 1) {
+    return { sizeMultiplier: 0.9, speedMultiplier: 1.05, shape };
+  } else if (mod.fireRateMultiplier && mod.fireRateMultiplier < 1) {
+    return { sizeMultiplier: 1.12, speedMultiplier: 1, shape };
+  }
+  return { sizeMultiplier: 1.06, speedMultiplier: 1, shape };
+}
+
 // The fields that reach ResolvedFireConfig (packResolvedFireConfig) — others
 // (reload/recoil/magazine/ammo) never cross the sim boundary and are skipped.
-function cardLiteral(id: string, mod: NonNullable<(typeof crystalRoundsCards)[number]["modifier"]>): string {
+function cardLiteral(card: (typeof crystalRoundsCards)[number]): string {
+  const id = card.id;
+  const mod = card.modifier!;
   const p = mod.projectile;
+  const bump = visibleSignatureBump(card, mod);
   const parts: string[] = [];
   const add = (name: string, val: string, isDefault: string) => {
     if (val !== isDefault) parts.push(`.${name} = ${val}`);
@@ -61,24 +117,31 @@ function cardLiteral(id: string, mod: NonNullable<(typeof crystalRoundsCards)[nu
   add("proj_bounce_add", f(mod.projectileBounceAdd, 0), "0.0");
   add("proj_split_add", f(mod.projectileSplitAdd, 0), "0.0");
   add("proj_homing_add", f(mod.projectileHomingStrengthAdd, 0), "0.0");
-  if (p) {
-    add("proj_speed_mul", f(p.speedMultiplier, 1), "1.0");
-    add("proj_size_mul", f(p.sizeMultiplier, 1), "1.0");
-    add("proj_lifetime_mul", f(p.lifetimeMultiplier, 1), "1.0");
-    add("proj_shape", optI(idx(SHAPE, p.shape)), "null");
-    add("proj_element", optI(idx(ELEMENT, p.element)), "null");
-    add("proj_pathing", optI(idx(PATHING, p.pathing)), "null");
-    add("proj_impact", optI(idx(IMPACT, p.impact)), "null");
-    add("proj_count_set", optF(p.count), "null");
-    add("proj_range_px_set", optF(p.rangePx), "null");
-    add("proj_gravity_scale_set", optF(p.gravityScale), "null");
-    add("proj_homing_strength_set", optF(p.homingStrength), "null");
-    add("proj_acceleration_mul_set", optF(p.accelerationMultiplier), "null");
-    add("proj_bounces_set", optF(p.bounces), "null");
-    add("proj_impact_radius_set", optF(p.impactRadiusPx), "null");
-    add("proj_pierce_count_set", optF(p.pierceCount), "null");
-    add("proj_split_count_set", optF(p.splitCount), "null");
-    add("proj_slow_mul_set", optF(p.slowMultiplier), "null");
+  if (p || bump) {
+    // sizeMultiplier/speedMultiplier/shape fold in ensureVisibleCardSignature's
+    // cosmetic bump (see visibleSignatureBump above) — a card with no visible
+    // signature of its own still needs to read as "something changed" in the
+    // arena, matching the TS runtime path exactly.
+    const sizeMul = (p?.sizeMultiplier ?? 1) * (bump?.sizeMultiplier ?? 1);
+    const speedMul = (p?.speedMultiplier ?? 1) * (bump?.speedMultiplier ?? 1);
+    const shape = p?.shape ?? bump?.shape;
+    add("proj_speed_mul", f(speedMul, 1), "1.0");
+    add("proj_size_mul", f(sizeMul, 1), "1.0");
+    add("proj_lifetime_mul", f(p?.lifetimeMultiplier, 1), "1.0");
+    add("proj_shape", optI(idx(SHAPE, shape)), "null");
+    add("proj_element", optI(idx(ELEMENT, p?.element)), "null");
+    add("proj_pathing", optI(idx(PATHING, p?.pathing)), "null");
+    add("proj_impact", optI(idx(IMPACT, p?.impact)), "null");
+    add("proj_count_set", optF(p?.count), "null");
+    add("proj_range_px_set", optF(p?.rangePx), "null");
+    add("proj_gravity_scale_set", optF(p?.gravityScale), "null");
+    add("proj_homing_strength_set", optF(p?.homingStrength), "null");
+    add("proj_acceleration_mul_set", optF(p?.accelerationMultiplier), "null");
+    add("proj_bounces_set", optF(p?.bounces), "null");
+    add("proj_impact_radius_set", optF(p?.impactRadiusPx), "null");
+    add("proj_pierce_count_set", optF(p?.pierceCount), "null");
+    add("proj_split_count_set", optF(p?.splitCount), "null");
+    add("proj_slow_mul_set", optF(p?.slowMultiplier), "null");
   }
   const body = parts.length ? ` ${parts.join(", ")} ` : "";
   return `    .{ .id = "${id}", .mod = .{${body}} },`;
@@ -88,7 +151,7 @@ const sw = starterWeapon;
 const swp = sw.projectile;
 const rows = crystalRoundsCards
   .filter((c) => c.modifier)
-  .map((c) => cardLiteral(c.id, c.modifier!))
+  .map((c) => cardLiteral(c))
   .join("\n");
 
 const out = `// GENERATED by sim/tools/gen_card_data.ts — DO NOT EDIT.
