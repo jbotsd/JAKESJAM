@@ -225,7 +225,9 @@ const ROOT_STYLE: Partial<CSSStyleDeclaration> = {
   borderRadius: "12px",
   border: "1px solid rgba(143, 248, 255, 0.18)",
   background: "linear-gradient(160deg, rgba(16, 22, 34, 0.92), rgba(10, 14, 22, 0.96))",
-  fontFamily: "Inter, Arial, sans-serif",
+  // HUD-readout content (status dots, live match numbers) — Space Mono is
+  // this project's established face for exactly this role.
+  fontFamily: "'Space Mono', 'Courier New', monospace",
   color: "#f7fbff",
   boxShadow: "0 4px 14px rgba(0, 0, 0, 0.32)",
   minWidth: "260px",

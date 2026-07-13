@@ -127,7 +127,7 @@ export class RenderLayer {
     const text = this.scene.add
       .text(position.x, position.y - sizeY / 2 - 10, Math.round(amount).toString(), {
         color,
-        fontFamily: "Inter, Arial, sans-serif",
+        fontFamily: "'Space Mono', 'Courier New', monospace",
         fontSize: "11px",
         fontStyle: "900",
         resolution: Math.max(1, getRenderScale()),
@@ -157,7 +157,7 @@ export class RenderLayer {
     const text = this.scene.add
       .text(position.x, position.y - 24, Math.round(amount).toString(), {
         color,
-        fontFamily: "Inter, Arial, sans-serif",
+        fontFamily: "'Space Mono', 'Courier New', monospace",
         fontSize: "13px",
         fontStyle: "900",
         resolution: Math.max(1, getRenderScale()),
@@ -194,7 +194,7 @@ export class RenderLayer {
     const text = this.scene.add
       .text(position.x, position.y - 34, Math.round(amount).toString(), {
         color,
-        fontFamily: "Inter, Arial, sans-serif",
+        fontFamily: "'Space Mono', 'Courier New', monospace",
         fontSize: "13px",
         fontStyle: "900",
         resolution: Math.max(1, getRenderScale()),
@@ -218,7 +218,7 @@ export class RenderLayer {
     const text = this.scene.add
       .text(position.x + spread, position.y - 32, Math.round(amount).toString(), {
         color: isLocal ? "#fb7185" : "#fff7d6",
-        fontFamily: "Inter, Arial, sans-serif",
+        fontFamily: "'Space Mono', 'Courier New', monospace",
         fontSize: amount >= 30 ? "18px" : "14px",
         fontStyle: "900",
         stroke: "#05080f",
@@ -241,7 +241,7 @@ export class RenderLayer {
     const text = this.scene.add
       .text(position.x, position.y - 22, label.toUpperCase(), {
         color,
-        fontFamily: "Inter, Arial, sans-serif",
+        fontFamily: "'Space Mono', 'Courier New', monospace",
         fontSize: "11px",
         fontStyle: "900",
         resolution: Math.max(1, getRenderScale()),

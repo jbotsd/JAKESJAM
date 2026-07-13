@@ -19,7 +19,9 @@ const ROOT_STYLE: Partial<CSSStyleDeclaration> = {
   backdropFilter: "blur(6px)",
   zIndex: "9000",
   pointerEvents: "none",
-  fontFamily: 'Inter, "Helvetica Neue", Arial, sans-serif',
+  // Carries a real display headline (TITLE_STYLE, 32px/900) — Space Grotesk
+  // is this project's established display face, not the generic default.
+  fontFamily: "'Space Grotesk', Inter, Arial, sans-serif",
 };
 
 const STAGE_STYLE: Partial<CSSStyleDeclaration> = {

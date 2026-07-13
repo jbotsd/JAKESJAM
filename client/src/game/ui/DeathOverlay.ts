@@ -200,7 +200,9 @@ const TIMER_STYLE: Partial<CSSStyleDeclaration> = {
 };
 
 const TIP_STYLE: Partial<CSSStyleDeclaration> = {
-  fontFamily: "Inter, Arial, sans-serif",
+  // Matches its siblings SUB_STYLE/TIMER_STYLE above — this was the one
+  // style in the file still defaulting to the generic Inter stack.
+  fontFamily: "'Space Mono', 'Courier New', monospace",
   fontSize: "12px",
   fontWeight: "600",
   color: "#9ba7b8",

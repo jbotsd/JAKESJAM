@@ -136,7 +136,9 @@ const ROOT_STYLE: Partial<CSSStyleDeclaration> = {
   borderRadius: "12px",
   border: "1px solid rgba(143, 248, 255, 0.18)",
   background: "linear-gradient(160deg, rgba(16, 22, 34, 0.95), rgba(10, 14, 22, 0.98))",
-  fontFamily: "Inter, Arial, sans-serif",
+  // Mirrors MatchStatusBadge.ts's HUD-readout role — Space Mono, not the
+  // generic Inter default.
+  fontFamily: "'Space Mono', 'Courier New', monospace",
   color: "#f7fbff",
   boxShadow: "0 8px 24px rgba(0, 0, 0, 0.4)",
   minWidth: "220px",

@@ -7,9 +7,15 @@
      instead of the browser-default blue — the Options panel's volume slider
      read as unstyled stock UI on phones. */
   accent-color: #50e3c2;
-  font-family:
-    Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
-    sans-serif;
+  /* The established identity (see index.html: "Space Grotesk (headers, card
+     titles) + Space Mono (numerics, HUD)") — Space Grotesk is already this
+     project's own leading proportional face everywhere it's used correctly
+     (`'Space Grotesk', Inter, Arial, sans-serif`, 9+ call sites); it belongs
+     at the root so unstyled DOM text inherits the real identity instead of
+     the generic Inter/system-ui default. Space Mono stays reserved for
+     numerics/HUD via explicit per-component override, same as today.
+     System-ui/sans-serif only as the web-font-load-failure fallback. */
+  font-family: "Space Grotesk", "Segoe UI", system-ui, sans-serif;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
