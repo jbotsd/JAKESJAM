@@ -16,7 +16,7 @@ import {
   type MapPickerId,
 } from "../../sim/data/maps";
 import { prefetchCustomMap } from "../../net/mapClient";
-import { shareInviteLink } from "../../shell/crazyGamesSdk";
+import { shareInviteLink, onJoinRoomInvite } from "../../shell/crazyGamesSdk";
 
 const CUSTOM_MAP_PREFIX = "custom:";
 const CUSTOM_MAP_CODE_RE = /^[A-Z0-9]{6}$/;
@@ -130,6 +130,12 @@ export class LobbyController {
       });
     }
     this.roomStatusMount = root.querySelector<HTMLElement>("[data-room-status]") ?? undefined;
+
+    // Inbound CrazyGames invite — fires when a player accepts another
+    // player's shareInviteLink() while THIS session is already running
+    // (their friends-drawer/notification flow). No-op everywhere outside a
+    // live CrazyGames environment — see shell/crazyGamesSdk.ts.
+    onJoinRoomInvite((roomCode) => this.joinRoomByCode(roomCode));
 
     // Per-playerId name slot so two tabs don't collide.
     const perPlayerNameKey = `${PLAYER_NAME_KEY}.${this.playerId}`;
@@ -288,6 +294,17 @@ export class LobbyController {
         chaosModifierIds: this.chaosModifierIds,
       },
     }));
+  }
+
+  /**
+   * Programmatic join entry point for a room code that didn't come from the
+   * code input — currently just the CrazyGames inbound-invite listener (see
+   * constructor). Fills the input for UI consistency, then reuses the exact
+   * same join path a manual "Join" click takes.
+   */
+  joinRoomByCode(code: string): void {
+    this.codeInput.value = code.toUpperCase().slice(0, 6);
+    void this.joinRoom();
   }
 
   private async joinRoom() {
@@ -562,8 +579,10 @@ export class LobbyController {
     // Inside a live CrazyGames environment, ALSO surface the invite through
     // their own native UI (friends list / share sheet) — additive, never a
     // replacement for the clipboard-copy flow below. No-op everywhere else
-    // (play.elyad.io, local dev) — see shell/crazyGamesSdk.ts.
-    shareInviteLink(url);
+    // (play.elyad.io, local dev) — see shell/crazyGamesSdk.ts. Its own
+    // returned URL is CrazyGames-hosted and portal-native; we still copy
+    // OUR url below regardless so the plain-web share path never changes.
+    shareInviteLink(code);
     try {
       await navigator.clipboard.writeText(url);
       const original = this.roomShareBtn.textContent;

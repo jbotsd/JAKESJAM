@@ -12,12 +12,15 @@ import {
   notifyGameplayStart,
   notifyGameplayStop,
   notifyLoadingDone,
+  onJoinRoomInvite,
   onMuteAudioChange,
   shareInviteLink,
 } from "../crazyGamesSdk.js";
 
 type ChangeEvent = { key: string; value: unknown };
 type ChangeListener = (event: ChangeEvent) => void;
+type InviteParams = Record<string, string>;
+type JoinListener = (params: InviteParams) => void;
 
 interface MockGame {
   loadingStart: () => void;
@@ -26,7 +29,8 @@ interface MockGame {
   gameplayStop: () => void;
   addSettingsChangeListener: (listener: ChangeListener) => void;
   isInstantMultiplayer?: boolean;
-  inviteLink: (params: { url: string }) => void;
+  inviteLink: (params: InviteParams) => string;
+  addJoinRoomListener: (listener: JoinListener) => void;
 }
 
 interface MockSdk {
@@ -40,9 +44,15 @@ interface MockSdk {
 function makeLiveSdk(
   environment: "local" | "crazygames",
   opts?: { isInstantMultiplayer?: boolean; failInit?: boolean },
-): { sdk: MockSdk; calls: string[]; fireSettingsChange: (e: ChangeEvent) => void } {
+): {
+  sdk: MockSdk;
+  calls: string[];
+  fireSettingsChange: (e: ChangeEvent) => void;
+  fireJoinRoom: (params: InviteParams) => void;
+} {
   const calls: string[] = [];
   let changeListener: ChangeListener | null = null;
+  let joinListener: JoinListener | null = null;
   const sdk: MockSdk = {
     environment,
     init: async () => {
@@ -59,13 +69,21 @@ function makeLiveSdk(
         calls.push("addSettingsChangeListener");
       },
       isInstantMultiplayer: opts?.isInstantMultiplayer ?? false,
-      inviteLink: (params) => calls.push(`inviteLink:${params.url}`),
+      inviteLink: (params) => {
+        calls.push(`inviteLink:${JSON.stringify(params)}`);
+        return `https://crazygames.com/invite?roomName=${params.roomName}`;
+      },
+      addJoinRoomListener: (listener) => {
+        joinListener = listener;
+        calls.push("addJoinRoomListener");
+      },
     },
   };
   return {
     sdk,
     calls,
     fireSettingsChange: (e) => changeListener?.(e),
+    fireJoinRoom: (params) => joinListener?.(params),
   };
 }
 
@@ -87,6 +105,7 @@ function makeDisabledSdk(): MockSdk {
       addSettingsChangeListener: boom,
       isInstantMultiplayer: undefined,
       inviteLink: boom,
+      addJoinRoomListener: boom,
     },
   };
 }
@@ -113,8 +132,9 @@ describe("crazyGamesSdk — no window.CrazyGames at all", () => {
     expect(() => notifyLoadingDone()).not.toThrow();
     expect(() => notifyGameplayStart()).not.toThrow();
     expect(() => notifyGameplayStop()).not.toThrow();
-    expect(() => shareInviteLink("https://example.com")).not.toThrow();
+    expect(shareInviteLink("ABC123")).toBeNull();
     expect(() => onMuteAudioChange(() => {})).not.toThrow();
+    expect(() => onJoinRoomInvite(() => {})).not.toThrow();
     expect(getInstantMultiplayerFlag()).toBe(false);
     expect(getCrazyGamesEnvironment()).toBeNull();
   });
@@ -137,19 +157,25 @@ describe("crazyGamesSdk — environment: disabled (e.g. play.elyad.io production
     expect(() => notifyLoadingDone()).not.toThrow();
     expect(() => notifyGameplayStart()).not.toThrow();
     expect(() => notifyGameplayStop()).not.toThrow();
-    expect(() => shareInviteLink("https://example.com")).not.toThrow();
+    expect(shareInviteLink("ABC123")).toBeNull();
     expect(() => onMuteAudioChange(() => {})).not.toThrow();
+    expect(() => onJoinRoomInvite(() => {})).not.toThrow();
     expect(getInstantMultiplayerFlag()).toBe(false);
     expect(getCrazyGamesEnvironment()).toBe("disabled");
   });
 });
 
 describe("crazyGamesSdk — live environment (local / crazygames)", () => {
-  test("installCrazyGamesSdk awaits init() then fires loadingStart exactly once", async () => {
+  test("installCrazyGamesSdk awaits init() then registers lifecycle + listeners", async () => {
     const { sdk, calls } = makeLiveSdk("local");
     setWindowCrazyGames(sdk);
     await installCrazyGamesSdk();
-    expect(calls).toEqual(["init", "loadingStart", "addSettingsChangeListener"]);
+    expect(calls).toEqual([
+      "init",
+      "loadingStart",
+      "addSettingsChangeListener",
+      "addJoinRoomListener",
+    ]);
   });
 
   test("notifyLoadingDone maps to loadingStop", async () => {
@@ -186,12 +212,66 @@ describe("crazyGamesSdk — live environment (local / crazygames)", () => {
     expect(getInstantMultiplayerFlag()).toBe(true);
   });
 
-  test("shareInviteLink forwards the url to SDK.game.inviteLink", async () => {
+  test("shareInviteLink sends {roomName} and returns the SDK's own URL", async () => {
     const { sdk, calls } = makeLiveSdk("local");
     setWindowCrazyGames(sdk);
     await installCrazyGamesSdk();
-    shareInviteLink("https://play.elyad.io/?room=ABC123");
-    expect(calls).toContain("inviteLink:https://play.elyad.io/?room=ABC123");
+    const url = shareInviteLink("ABC123");
+    expect(calls).toContain(`inviteLink:${JSON.stringify({ roomName: "ABC123" })}`);
+    expect(url).toBe("https://crazygames.com/invite?roomName=ABC123");
+  });
+
+  test("onJoinRoomInvite fires with the roomName from an incoming invite", async () => {
+    const { sdk, fireJoinRoom } = makeLiveSdk("crazygames");
+    setWindowCrazyGames(sdk);
+    await installCrazyGamesSdk();
+
+    const seen: string[] = [];
+    onJoinRoomInvite((code) => seen.push(code));
+
+    fireJoinRoom({ roomName: "XYZ789" });
+    expect(seen).toEqual(["XYZ789"]);
+  });
+
+  test("onJoinRoomInvite ignores a params payload with no roomName", async () => {
+    const { sdk, fireJoinRoom } = makeLiveSdk("crazygames");
+    setWindowCrazyGames(sdk);
+    await installCrazyGamesSdk();
+
+    const seen: string[] = [];
+    onJoinRoomInvite((code) => seen.push(code));
+
+    fireJoinRoom({ someOtherKey: "value" });
+    expect(seen).toEqual([]);
+  });
+
+  test("onJoinRoomInvite registered BEFORE install still receives events after install resolves", async () => {
+    const { sdk, fireJoinRoom } = makeLiveSdk("local");
+    setWindowCrazyGames(sdk);
+
+    const seen: string[] = [];
+    onJoinRoomInvite((code) => seen.push(code));
+    // Not installed yet — nothing to fire against, but must not throw.
+    expect(seen).toEqual([]);
+
+    await installCrazyGamesSdk();
+    fireJoinRoom({ roomName: "ABC123" });
+    expect(seen).toEqual(["ABC123"]);
+  });
+
+  test("a join listener that throws does not break other listeners", async () => {
+    const { sdk, fireJoinRoom } = makeLiveSdk("crazygames");
+    setWindowCrazyGames(sdk);
+    await installCrazyGamesSdk();
+
+    const seen: string[] = [];
+    onJoinRoomInvite(() => {
+      throw new Error("boom");
+    });
+    onJoinRoomInvite((code) => seen.push(code));
+
+    expect(() => fireJoinRoom({ roomName: "ABC123" })).not.toThrow();
+    expect(seen).toEqual(["ABC123"]);
   });
 
   test("onMuteAudioChange listener fires with the muteAudio boolean, ignores other keys", async () => {
@@ -226,7 +306,7 @@ describe("crazyGamesSdk — live environment (local / crazygames)", () => {
     expect(seen).toEqual([true]);
   });
 
-  test("a listener that throws does not break other listeners", async () => {
+  test("a mute listener that throws does not break other listeners", async () => {
     const { sdk, fireSettingsChange } = makeLiveSdk("crazygames");
     setWindowCrazyGames(sdk);
     await installCrazyGamesSdk();

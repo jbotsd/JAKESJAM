@@ -27,6 +27,11 @@ interface CrazyGamesSettingsChangeEvent {
   value: unknown;
 }
 
+/** Whatever the game passed to inviteLink() comes back verbatim to
+ *  addJoinRoomListener() on the receiving end — see joinInviteLink()'s
+ *  own docblock for why "roomName" is the one key both sides agree on. */
+type InviteParams = Record<string, string>;
+
 interface CrazyGamesGameApi {
   loadingStart(): void;
   loadingStop(): void;
@@ -36,7 +41,10 @@ interface CrazyGamesGameApi {
     listener: (event: CrazyGamesSettingsChangeEvent) => void,
   ): void;
   isInstantMultiplayer?: boolean;
-  inviteLink(params: { url: string }): void;
+  /** Takes a params object (NOT a URL) and RETURNS the shareable URL — the
+   *  params are what addJoinRoomListener() receives back on the other end. */
+  inviteLink(params: InviteParams): string;
+  addJoinRoomListener(listener: (params: InviteParams) => void): void;
 }
 
 interface CrazyGamesSdkApi {
@@ -54,6 +62,7 @@ declare global {
 }
 
 type MuteAudioListener = (muted: boolean) => void;
+type JoinRoomListener = (roomCode: string) => void;
 
 // Module state. `sdkReady` only flips true once init() has resolved inside
 // a non-"disabled" environment — that's the single gate every other
@@ -62,7 +71,9 @@ let sdkReady = false;
 let environment: CrazyGamesEnvironment | null = null;
 let gameplayActive = false; // guards against double-start / unpaired stop
 let underlyingMuteListenerRegistered = false;
+let underlyingJoinListenerRegistered = false;
 const muteListeners: MuteAudioListener[] = [];
+const joinListeners: JoinRoomListener[] = [];
 
 /** Defensive accessor — window.CrazyGames may not exist at all (script not
  *  loaded yet, stale cached HTML, ad-blocker, non-portal host). */
@@ -137,9 +148,11 @@ export async function installCrazyGamesSdk(): Promise<void> {
   } catch {
     // a loadingStart failure must never break boot
   }
-  // Register (or leave registered) the settings-change listener now that
-  // the SDK is actually ready — covers listeners added before init resolved.
+  // Register (or leave registered) the settings-change + join listeners now
+  // that the SDK is actually ready — covers listeners added before init
+  // resolved.
   ensureUnderlyingMuteListener();
+  ensureUnderlyingJoinListener();
 }
 
 /** Menu/first-frame interactive — pairs with the loadingStart() implicitly
@@ -207,17 +220,56 @@ export function getInstantMultiplayerFlag(): boolean {
 }
 
 /** Surface a room invite through the portal's own native UI (friends list,
- *  share sheet, etc.) IN ADDITION to whatever clipboard-copy the call site
- *  already does — this never replaces that fallback, only supplements it
- *  inside a live CrazyGames environment. */
-export function shareInviteLink(url: string): void {
+ *  share sheet, etc.) — additive, never a replacement for the call site's
+ *  own clipboard-copy fallback. inviteLink() takes a PARAMS object (not a
+ *  URL) and RETURNS the shareable URL; "roomName" is the one key we also
+ *  read back out in the join listener below, so the two must agree.
+ *  Returns null outside a live CrazyGames environment or on any failure —
+ *  callers fall back to their own already-working share URL. */
+export function shareInviteLink(roomCode: string): string | null {
+  const sdk = getSdk();
+  if (!sdk || !isLive()) return null;
+  try {
+    return sdk.game.inviteLink({ roomName: roomCode });
+  } catch {
+    return null;
+  }
+}
+
+function ensureUnderlyingJoinListener(): void {
+  if (underlyingJoinListenerRegistered) return;
   const sdk = getSdk();
   if (!sdk || !isLive()) return;
   try {
-    sdk.game.inviteLink({ url });
+    sdk.game.addJoinRoomListener((params) => {
+      const roomCode = params?.roomName;
+      if (!roomCode) return;
+      for (const listener of joinListeners.slice()) {
+        try {
+          listener(roomCode);
+        } catch {
+          // one bad listener must not break the others
+        }
+      }
+    });
+    underlyingJoinListenerRegistered = true;
   } catch {
-    // no-op — the clipboard-copy path already ran at the call site
+    // SDK present but registration failed — treat as unavailable.
   }
+}
+
+/** Register a listener for an INCOMING invite-join — fires when a player
+ *  accepts another player's invite link while this session is already
+ *  running (CrazyGames' friends-drawer / notification / link flow). Feeds
+ *  the room code straight back to whatever created the link via
+ *  shareInviteLink() above. Safe to call before installCrazyGamesSdk()
+ *  resolves — queued and wired up once (and if) the SDK goes live. This is
+ *  the exact thing CrazyGames' own QA tool's "Call join listener" button
+ *  tests for — an unregistered listener is a real submission requirement
+ *  gap, not just a nice-to-have. */
+export function onJoinRoomInvite(listener: JoinRoomListener): void {
+  joinListeners.push(listener);
+  ensureUnderlyingJoinListener();
 }
 
 /** Test-only: resets all module state between specs. Not called from
@@ -227,5 +279,7 @@ export function __resetCrazyGamesSdkForTests(): void {
   environment = null;
   gameplayActive = false;
   underlyingMuteListenerRegistered = false;
+  underlyingJoinListenerRegistered = false;
   muteListeners.length = 0;
+  joinListeners.length = 0;
 }
