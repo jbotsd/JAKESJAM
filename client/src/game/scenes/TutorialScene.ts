@@ -186,12 +186,14 @@ export class TutorialScene extends Phaser.Scene {
 
     const cam = this.cameras.main;
     cam.setBackgroundColor(ARENA_THEMES.voidVessel.bg);
-    // Top bound widened from -200: the Three Forms wall-jump shaft's own
-    // top (and its vista landing) now sit up at y≈-340 — the shaft was
-    // lengthened 2026-07-13 by growing upward into headroom above the
-    // (also raised) ceiling wall, so the camera needs to actually be able
-    // to follow the climb up there.
-    cam.setBounds(-200, -600, tutorialArena.size.x + 400, tutorialArena.size.y + 800);
+    // Top bound widened from the original -200: the Three Forms wall-jump
+    // shaft was lengthened 2026-07-13 (first to y≈-340, then 12x further
+    // to y≈-14310 for its vista landing) by growing upward into headroom
+    // above the ceiling wall, so the camera needs to actually be able to
+    // follow the climb all the way up there. Hardcoded rather than
+    // derived from tutorialArena.size.y (which never changed — only the
+    // shaft's own platforms moved into the headroom above it).
+    cam.setBounds(-200, -14500, tutorialArena.size.x + 400, 15700);
     this.actionCamera = new ActionCamera(cam);
     this.actionCamera.setBaseZoom(COMBAT_ZOOM * getRenderScale());
     this.cineCamera = new CinematicCameraDirector(cam);
@@ -519,6 +521,13 @@ export class TutorialScene extends Phaser.Scene {
       if (this.shaftStallMs >= 2400) {
         this.shaftStallMs = 0;
         this.shaftInviteCount++;
+        // topY here is a fixed LOCAL demo range (a few kicks' worth), not
+        // the shaft's real top — wallJumpInvite spaces exactly 6 bounces
+        // evenly across topY..bottomY to demonstrate the L/R bounce
+        // rhythm, so feeding it the shaft's true (now 15240px, 12x-grown)
+        // full height would space those 6 demo bounces ~2500px apart —
+        // nothing like the real ~178px-per-kick physics, unreadable as a
+        // "this is the move" teach. Stays -318 regardless of shaft height.
         this.diegeticCues.wallJumpInvite(4750, 4950, -318, 952, this.shaftInviteCount);
       }
     } else {

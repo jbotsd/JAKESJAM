@@ -94,7 +94,7 @@ export const tutorialArena: MapDefinition = {
     // extended slightly further by the shaft below.
     { id: "wall-left", kind: "wall", position: { x: 16, y: 500 }, size: { x: 32, y: 1000 } },
     { id: "wall-right", kind: "wall", position: { x: 7984, y: 500 }, size: { x: 32, y: 1000 } },
-    { id: "ceiling", kind: "wall", position: { x: 4000, y: -434 }, size: { x: 8000, y: 32 } },
+    { id: "ceiling", kind: "wall", position: { x: 4000, y: -14404 }, size: { x: 8000, y: 32 } },
 
     // Silence — spawn sits here, long flat runway. `id: "floor"` specifically
     // — unreachablePlatforms seeds its BFS from whichever platform is
@@ -147,29 +147,34 @@ export const tutorialArena: MapDefinition = {
     // another stop-start.
 
     // The Three Forms (x 4700-5150) — one continuous wall-jump shaft, 200px
-    // gap (under SHAFT_MAX=230), 1270px tall (≈7 kicks at 178px/kick per
-    // WALL_JUMP_UP) — a real "make the wall itself longer" request
-    // (2026-07-13): the runway fix from the same footage review only solved
-    // the APPROACH, the climb itself was still the original 820px/~4-5-kick
-    // boxworks-practice geometry. Grown by keeping the BOTTOM fixed at
-    // GROUND (unchanged — same runway hand-off, same floor for a whiffed
-    // wall-jump to fall back onto) and extending the TOP upward into the
-    // new headroom opened by moving the ceiling (see above) — old top was
-    // y=132, new top is y=-318.
-    { id: "shaft-left", kind: "platform", position: { x: 4750, y: 317 }, size: { x: 40, y: 1270 } },
-    { id: "shaft-right", kind: "platform", position: { x: 4950, y: 317 }, size: { x: 40, y: 1270 } },
+    // gap (under SHAFT_MAX=230), 15240px tall (≈85 kicks at 178px/kick per
+    // WALL_JUMP_UP) — grown 12x from the prior 1270px pass per explicit
+    // instruction (2026-07-13: "about 12X longer than it currently is").
+    // Same technique as the prior pass: BOTTOM fixed at GROUND (unchanged
+    // — same runway hand-off), TOP extended further upward into headroom
+    // opened by moving the ceiling even further up. NOTE: at this height
+    // the climb's real traversal time (85 kicks, realistically 40-90+
+    // seconds even played well) almost certainly exceeds the 37s the song
+    // currently allocates to The Three Forms zone (139.0-176.0s) — the
+    // three form-ignite beats and the zone-turn/vessel cues after it were
+    // NOT re-timed to match, since stretching the back half of the song's
+    // own schedule is a bigger, separate call. See TutorialScene/
+    // tutorial-song.ts's own notes at the ignite cues.
+    { id: "shaft-left", kind: "platform", position: { x: 4750, y: -6668 }, size: { x: 40, y: 15240 } },
+    { id: "shaft-right", kind: "platform", position: { x: 4950, y: -6668 }, size: { x: 40, y: 15240 } },
 
     // The Turn — the shaft's exit doubles as the overlook vista. Sized and
     // positioned to actually land within the wall-jump reach envelope: the
-    // columns' own top sits at y=-318, so a landing surface must sit within
-    // reachTop=-318-178=-496 .. yClimb+24=-294 vertically (mapGen.ts's
-    // shaftReachable) AND have its CENTER within GRAB_REACH_SIDE=200 of the
-    // columns horizontally (4530..5170) — the validator (and real physics)
-    // test the platform's center point, so being merely "near" the shaft
-    // isn't enough if the center sits past that window. The camera's
-    // cinematic pull-back sells "wide overlook" visually; this platform
-    // only needs to be physically standable right at the shaft's top.
-    { id: "vista", kind: "platform", position: { x: 5075, y: -340 }, size: { x: 750, y: 18 } },
+    // columns' own top sits at y=-14288, so a landing surface must sit
+    // within reachTop=-14288-178=-14466 .. yClimb+24=-14264 vertically
+    // (mapGen.ts's shaftReachable) AND have its CENTER within
+    // GRAB_REACH_SIDE=200 of the columns horizontally (4530..5170) — the
+    // validator (and real physics) test the platform's center point, so
+    // being merely "near" the shaft isn't enough if the center sits past
+    // that window. The camera's cinematic pull-back sells "wide overlook"
+    // visually; this platform only needs to be physically standable right
+    // at the shaft's top.
+    { id: "vista", kind: "platform", position: { x: 5075, y: -14310 }, size: { x: 750, y: 18 } },
     // One-way (thin platform), so after the pull-back the player can simply
     // drop through it back down to floor-2 for the final arena rather than
     // needing a separate descent path.
