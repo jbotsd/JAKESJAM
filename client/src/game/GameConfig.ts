@@ -76,6 +76,3 @@ export function buildGameConfig(): Phaser.Types.Core.GameConfig {
     },
   };
 }
-
-/** @deprecated Prefer buildGameConfig() — frozen snapshot for rare static imports. */
-export const gameConfig: Phaser.Types.Core.GameConfig = buildGameConfig();

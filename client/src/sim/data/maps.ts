@@ -148,17 +148,10 @@ export function getGenPreviewMap(): MapDefinition {
   if (!_genPreview) _genPreview = generateArena(0);
   return _genPreview;
 }
-/** @deprecated use getGenPreviewMap() — kept for call sites that import the const name. */
-export const GEN_PREVIEW_MAP: MapDefinition = new Proxy({} as MapDefinition, {
-  get(_t, prop) {
-    return (getGenPreviewMap() as unknown as Record<string | symbol, unknown>)[prop];
-  },
-});
-
 /** Resolves a picker id (real MapId or the gen-random sentinel) to the
  *  MapDefinition used for the card preview. */
 export function previewMapForPicker(id: MapPickerId): MapDefinition {
-  return id === GEN_RANDOM_PICKER_ID ? GEN_PREVIEW_MAP : mapsById[id];
+  return id === GEN_RANDOM_PICKER_ID ? getGenPreviewMap() : mapsById[id];
 }
 
 export const mapPickerOrder: ReadonlyArray<{

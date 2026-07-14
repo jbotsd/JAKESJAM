@@ -94,8 +94,11 @@ export function stickyEnvelopeSubjects(
   return out;
 }
 
-/** @deprecated use stickyEnvelopeSubjects — kept for simple tests. */
-export function envelopeSubjects(
+/** Used internally by fightPairFocus below. Not exported — nothing outside
+ *  this file references it (verified 2026-07-14; the prior `export` +
+ *  `@deprecated` labeling was stale and wrong — it's an active dependency,
+ *  not unused). */
+function envelopeSubjects(
   self: Point2,
   extras: ReadonlyArray<Point2>,
   maxOthers = ENVELOPE_MAX_OTHERS,
