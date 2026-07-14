@@ -1973,6 +1973,22 @@ export class OnlineMatchScene extends Phaser.Scene {
           : REMOTE_PLAYER_FALLBACK_COLOR,
       // Local hero: gold seam instead of the default crystal cyan.
       accentColor: isLocal ? 0xffd166 : undefined,
+      // TEMPORARY proof-of-concept for the Vessel Creator channel split
+      // (docs/vessel-creator-design.md) — local hero only, so there's
+      // something real on screen to look at while no creator UI exists
+      // yet. Three genuinely distinct hues (not just accentColor repeated)
+      // to prove visor/palm/joint are independently controllable: warm
+      // white-gold visor (matches the existing "aperture, not eyes"
+      // brightness), coral palm (loud on purpose — it's the highest-
+      // frequency-seen channel, visible on every shot), violet joint
+      // (ties to the already-documented "future void" cosmetic tier).
+      // Aura stays on the existing gold accentColor. Remove this block (or
+      // replace it with real per-player equipped-cosmetic data) once the
+      // actual creator/selection UI lands — this is a demo preset, not a
+      // design decision.
+      visorColor: isLocal ? 0xfff7d6 : undefined,
+      palmColor: isLocal ? 0xff6b4a : undefined,
+      jointColor: isLocal ? 0xa78bfa : undefined,
       // Chosen name from the hello roster; id-suffix fallback. The old
       // "/ Balanced" archetype suffix was dev noise (Jake, 2026-07-11).
       name: bot ? botLabel(player.id) : (this.rosterNames.get(player.id) ?? player.id.slice(-4)),
