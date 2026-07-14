@@ -135,8 +135,9 @@ export class HudSystem {
   // Cache so we don't re-call setColor every frame (string allocation).
   private hpLabelColorCache = 0;
 
-  // Dot-row ability charge
+  // Dot-row ability charge — currently the dash-bash readiness meter.
   private dotArcs: Phaser.GameObjects.Arc[] = [];
+  private dashLabel!: Phaser.GameObjects.Text;
 
   // Build-pill grid (top-right)
   private pillGraphics!: Phaser.GameObjects.Graphics;
@@ -197,6 +198,7 @@ export class HudSystem {
     this.chipTexts = [];
     for (const arc of this.dotArcs) arc.destroy();
     this.dotArcs = [];
+    this.dashLabel.destroy();
     this.pillGraphics.destroy();
     for (const t of this.pillTexts) t.destroy();
     this.pillTexts = [];
@@ -339,8 +341,22 @@ export class HudSystem {
 
     // Dot-row ammo arcs — created once, recolored each frame (hidden until
     // something actually feeds abilityCharge). Rows shifted up one LINE_H
-    // since the vestigial jetpack bar row was removed.
+    // since the vestigial jetpack bar row was removed. Currently fed by
+    // dash-bash readiness (0 = just used, 1 = ready) — dim dots = still on
+    // cooldown, bright = charge available (Jake, 2026-07-14).
     const dotY = PAD_TOP + LINE_H * 2 - 2;
+    const dotRowRight =
+      PAD_LEFT + DOT_RADIUS * 2 + (DOT_COUNT - 1) * (DOT_RADIUS * 2 + DOT_GAP);
+    this.dashLabel = s.add
+      .text(dotRowRight + 6, dotY, "DASH", {
+        ...fontBase,
+        fontSize: this.compact ? "7px" : "8px",
+        color: "#8ff8ff",
+        ...vitalStroke,
+      })
+      .setOrigin(0, 0.5)
+      .setScrollFactor(0)
+      .setDepth(depth + 2);
     for (let i = 0; i < DOT_COUNT; i++) {
       const arc = s.add
         .arc(
@@ -580,14 +596,21 @@ export class HudSystem {
     // permanently-dim dots to the HUD (dead UI, and precious space on phones).
     if (charge === undefined) {
       for (const arc of this.dotArcs) arc.setVisible(false);
+      this.dashLabel.setVisible(false);
       return;
     }
-    const filledCount = Math.round(Phaser.Math.Clamp(charge, 0, 1) * DOT_COUNT);
+    this.dashLabel.setVisible(true);
+    const ratio = Phaser.Math.Clamp(charge, 0, 1);
+    const filledCount = Math.round(ratio * DOT_COUNT);
+    // Ready (ratio===1) reads brighter than "almost ready" — cyan pulses in,
+    // not just another dim-to-bright dot, so "it's up" is unambiguous at a
+    // glance rather than needing to count dots.
+    const readyColor = ratio >= 1 ? 0x8ff8ff : PALETTE.textHi;
     for (let i = 0; i < this.dotArcs.length; i++) {
       const arc = this.dotArcs[i]!;
       const filled = i < filledCount;
       arc.setVisible(true);
-      arc.setFillStyle(filled ? PALETTE.textHi : PALETTE.textDim, filled ? 1 : 0.45);
+      arc.setFillStyle(filled ? readyColor : PALETTE.textDim, filled ? 1 : 0.45);
     }
   }
 

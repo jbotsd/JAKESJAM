@@ -270,6 +270,15 @@ export type PlayerEntity = {
    */
   dashing?: boolean;
   /**
+   * Dash-bash readiness, 0 (just used) .. 1 (ready to fire again), at
+   * end-of-tick. Sourced from `PlayerMovementMemory.dashCooldownMs` against
+   * the effective (card-scaled) cooldown window in `player.ts`. Render-only
+   * signal, same pattern as `dashing`/`touchingWallDir` above. Optional/
+   * additive: omitted hides the HUD indicator rather than defaulting to
+   * either state.
+   */
+  dashReadyFrac?: number;
+  /**
    * Alternating throwing-hand parity (0 = lead, 1 = back) for the last shot.
    * Toggled per fire in stepWeapon so the muzzle + shot-fired event pick the
    * hand that matches the rig's alternating throw. Runtime-only cosmetic

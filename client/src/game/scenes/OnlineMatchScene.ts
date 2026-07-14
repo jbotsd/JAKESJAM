@@ -977,6 +977,7 @@ export class OnlineMatchScene extends Phaser.Scene {
       // jetpackFuel deliberately NOT fed: the jetpack was removed from the
       // game (the sim field is pinned for ABI stability only), so the HUD
       // bar was rendering a meaningless frozen "125%" forever.
+      abilityCharge: local?.dashReadyFrac,
       chips,
       isDead: !local || local.health <= 0 || !local.alive,
       outsideStorm,

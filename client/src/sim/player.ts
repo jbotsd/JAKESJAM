@@ -574,6 +574,18 @@ function stepPlayerNative(
   // Wall state carried to next tick — cleared on the ground (a floor is not a
   // wall) so you can't wall-jump off level ground.
   mem.touchingWallDir = groundedAcc ? 0 : wallContactThisTick;
+  // Dash-bash HUD readiness — undefined (hides the HUD meter) until a card
+  // actually grants a dash charge; dashCharges===0 means the ability isn't
+  // reachable at all, not "on cooldown". dashCooldownMs above already
+  // accounts for the card-scaled effective window, so once unlocked this is
+  // the exact fraction the player needs to wait out (0 = just used, 1 =
+  // ready to fire again).
+  next.dashReadyFrac =
+    dashCharges > 0
+      ? dashCooldownMs > 0
+        ? 1 - Math.min(1, Math.max(0, mem.dashCooldownMs / dashCooldownMs))
+        : 1
+      : undefined;
 
   return { player: next, memory: mem, jumpedThisFrame, jetpackFuel: next.jetpackFuel };
 }
