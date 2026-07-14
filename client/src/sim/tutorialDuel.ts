@@ -251,7 +251,12 @@ export function stepTutorialDuel(
         dashCooldownMultiplier: build.dashCooldownMultiplier,
         collisionCache: runtime.collisionCache,
       });
-      nextEntity = mirrorMovementMemoryOntoEntity(moveResult.player, moveResult.memory);
+      nextEntity = mirrorMovementMemoryOntoEntity(
+        moveResult.player,
+        moveResult.memory,
+        build.dashCharges,
+        build.dashCooldownMultiplier,
+      );
       runtime.movement.set(pid, moveResult.memory);
     }
 

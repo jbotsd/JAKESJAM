@@ -183,20 +183,46 @@ export function freshPlayerMovementMemory(): PlayerMovementMemory {
 
 /**
  * Mirrors the host-only `PlayerMovementMemory` fields the render layer needs
- * onto the entity itself: `grounded`/`touchingWallDir`/`dashing`. Sim
- * correctness code always reads movement memory directly — these entity
- * copies exist only so the wire codec (snapshotDelta P_HI bits) and the
- * procedural rig (`ProceduralPlayerPose`) have something to read.
+ * onto the entity itself: `grounded`/`touchingWallDir`/`dashing`/
+ * `dashReadyFrac`. Sim correctness code always reads movement memory
+ * directly — these entity copies exist only so the wire codec (snapshotDelta
+ * P_HI bits) and the procedural rig (`ProceduralPlayerPose`) have something
+ * to read.
+ *
+ * Called from the SAME call site regardless of which `stepPlayer` backend
+ * ran (TS native or wasm — see `stepPlayer`/`setStepPlayerBackend`), which
+ * is why dashReadyFrac is computed HERE rather than inside
+ * `stepPlayerNative`: that function only runs for the TS backend, and
+ * player physics defaults to wasm-on for live matches (Phase F3), so a
+ * wasm-only cosmetic field would silently never appear for anyone.
+ *
+ * `dashCharges`/`dashCooldownMultiplier` come from the caller's already-
+ * resolved card build (World.ts's `resolvePlayerBuild`), not from `memory`
+ * — the effective cooldown window depends on the equipped build, not
+ * anything the sim step tracks per-tick.
  */
 export function mirrorMovementMemoryOntoEntity(
   entity: PlayerEntity,
   memory: PlayerMovementMemory,
+  dashCharges = 0,
+  dashCooldownMultiplier = 1,
 ): PlayerEntity {
+  const dashCooldownWindowMs = Math.max(
+    DASH_MIN_CYCLE_MS,
+    DASH_COOLDOWN_MS * dashCooldownMultiplier,
+  );
   return {
     ...entity,
     grounded: memory.groundedLastFrame,
     touchingWallDir: memory.touchingWallDir,
     dashing: memory.dashActiveMs > 0,
+    // Undefined (hides the HUD meter) until a card actually grants a dash
+    // charge — dashCharges===0 means the ability isn't reachable at all,
+    // not "on cooldown".
+    dashReadyFrac:
+      dashCharges > 0
+        ? 1 - Math.min(1, Math.max(0, memory.dashCooldownMs / dashCooldownWindowMs))
+        : undefined,
   };
 }
 
@@ -574,18 +600,6 @@ function stepPlayerNative(
   // Wall state carried to next tick — cleared on the ground (a floor is not a
   // wall) so you can't wall-jump off level ground.
   mem.touchingWallDir = groundedAcc ? 0 : wallContactThisTick;
-  // Dash-bash HUD readiness — undefined (hides the HUD meter) until a card
-  // actually grants a dash charge; dashCharges===0 means the ability isn't
-  // reachable at all, not "on cooldown". dashCooldownMs above already
-  // accounts for the card-scaled effective window, so once unlocked this is
-  // the exact fraction the player needs to wait out (0 = just used, 1 =
-  // ready to fire again).
-  next.dashReadyFrac =
-    dashCharges > 0
-      ? dashCooldownMs > 0
-        ? 1 - Math.min(1, Math.max(0, mem.dashCooldownMs / dashCooldownMs))
-        : 1
-      : undefined;
 
   return { player: next, memory: mem, jumpedThisFrame, jetpackFuel: next.jetpackFuel };
 }

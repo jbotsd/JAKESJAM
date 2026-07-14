@@ -91,7 +91,12 @@ export class LocalPlayerController {
       dtMs,
       { ...options, collisionCache: this.collisionCache },
     );
-    this.entity = mirrorMovementMemoryOntoEntity(result.player, result.memory);
+    this.entity = mirrorMovementMemoryOntoEntity(
+      result.player,
+      result.memory,
+      options.dashCharges,
+      options.dashCooldownMultiplier,
+    );
     this.memory = result.memory;
     this.prevKeys = currKeys;
 

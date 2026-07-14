@@ -542,7 +542,12 @@ export function stepWithRuntime(
       // Mirror grounded/touchingWallDir/dashing onto the entity for the
       // render layer — wire-encoded (snapshotDelta P_HI.grounded/
       // touchingWallDir/dashing) and consumed by ProceduralPlayerRig's pose.
-      nextEntity = mirrorMovementMemoryOntoEntity(nextEntity, moveResult.memory);
+      nextEntity = mirrorMovementMemoryOntoEntity(
+        nextEntity,
+        moveResult.memory,
+        build.dashCharges,
+        build.dashCooldownMultiplier,
+      );
     }
 
     // Fire (only when alive and fighting).
@@ -715,6 +720,12 @@ export function stepWithRuntime(
           vx: attacker.vx * BASH_ATTACKER_STOP,
           vy: attacker.vy * BASH_ATTACKER_STOP,
         };
+        // dashCharges/dashCooldownMultiplier omitted here (defaults to
+        // "no dash") — this is the post-bash attacker-stop path, not the
+        // main per-player step above, and doesn't have the attacker's own
+        // resolved build in scope. Worst case is a single-tick dashReadyFrac
+        // flicker to hidden; the main loop's own mirror call recomputes it
+        // correctly on the very next tick.
         players[aid] = aMem ? mirrorMovementMemoryOntoEntity(stopped, aMem) : stopped;
         break; // one bash per dash
       }
