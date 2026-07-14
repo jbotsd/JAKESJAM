@@ -117,17 +117,61 @@ Ruled out as the cause: the `chaos.randomShapes` RNG draw in
 `weapon.ts`'s `stepWeapon` (confirmed gated behind a condition that's
 false in this test — no chaos modifiers are enabled).
 
+**Follow-up diagnostic (same session, throwaway script, not committed)**:
+tracing seed=1 tick-by-tick found the divergence's proximate cause —
+`multiSeedDivergence.test.ts`'s harness never calls
+`setWorldArenaBounds`, so Zig's void-plane kill-plane gate
+(`g_kill_plane_y > 0`) is never armed, while TS's equivalent check reads
+`runtime.map.size.y` directly and needs no separate setup call. Result:
+two players who fell through the floor got correctly void-killed in TS
+(`alive=false, health=0`) but stayed alive-and-falling forever in Zig —
+exactly the "one side dead-and-frozen, one side alive-and-moving" pattern
+the linear-growth number showed.
+
+That looked like a clean, real fix — until adding the missing
+`setWorldArenaBounds` call to the diagnostic **also** froze TS's own
+movement entirely (all 4 players sat locked at their exact spawn
+coordinates for the full 1200-tick run, which is itself impossible given
+the scripted movement inputs). That is not a real product bug — TS's
+Layer-F wasm-backed `stepPlayer` and Zig's `step_world` orchestrator
+share ONE wasm module instance's linear memory in this test process, and
+this session's diagnostic never verified whether `world_state_set_arena_bounds`
+or the other world-backend setup calls have side effects that corrupt or
+reset state the Layer-F backend separately relies on. Production never
+runs both backends against the same wasm instance simultaneously (a given
+client/server process runs exactly one), so this is very plausibly a
+test-harness-only artifact — but "very plausibly" isn't proof, and I did
+not chase it further given the time already spent. **The honest state:
+the arena-bounds gap is a real, confirmed, low-risk fix (any production
+use of full step_world already calls setWorldArenaBounds via
+syncWorldStaticsToWasm, so this specific mechanism is not itself a
+production bug) — but re-verifying multiSeedDivergence.test.ts's own
+result required a cleaner harness (isolated wasm instances per backend,
+or a redesigned setup order) that a follow-up session should build before
+trusting either the original seed=1 number OR a "fixed" one.**
+
 Not yet investigated, in rough priority order for a follow-up session:
-1. Whether TS and Zig's exact damage/kill resolution order diverges when
+1. Build a divergence-sweep harness that doesn't share one wasm module
+   instance between TS's Layer-F backend and Zig's full orchestrator (the
+   cross-contamination risk found above) — likely by running each backend
+   in its own preload/instance rather than the shared module-level caches
+   `worldWasmBackend.ts` and `wasmHost.ts` currently use, or by driving
+   the TS side without the wasm player-swap for this specific test (pure
+   TS movement, accepting that trades away the "movement is provably
+   shared code" property).
+2. Once that harness is trustworthy, confirm whether the arena-bounds fix
+   alone resolves seed=1, or whether a real orchestration-level divergence
+   remains underneath it.
+3. Whether TS and Zig's exact damage/kill resolution order diverges when
    MULTIPLE projectiles could hit the same player in overlapping ticks
    (order-of-resolution matters for who gets credit / exact death tick
    when health is close to zero from more than one source).
-2. The fine-grained per-player sub-order within the combined movement+
+4. The fine-grained per-player sub-order within the combined movement+
    combat loop — TS: move → fire → parry → shield; Zig (still, after this
    session's fixes): move → shield/parry → fire. Explicitly deferred in
    commit `3d465f3`'s message as "not proven to matter" — this divergence
    sweep is the first evidence that something in this space might.
-3. Whether the deflect/parry/mirror-shield velocity-reflection math
+5. Whether the deflect/parry/mirror-shield velocity-reflection math
    (`vx = -vx * 1.15` pattern, present in both TS and Zig) produces
    identical results given the two implementations' aim/positions have
    now diverged slightly by the time a parry happens.
