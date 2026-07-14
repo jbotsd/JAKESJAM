@@ -88,7 +88,7 @@ Also structural, not just speed: TS's bench shows ~27MB heap growth per
 tick, a class of GC-stutter risk TS cannot structurally avoid regardless of
 optimization.
 
-## What is NOT yet proven — read this before claiming "done"
+## Multi-tick, multi-player divergence — the deepest correctness check
 
 **`multiSeedDivergence.test.ts`** drives a realistic multi-player,
 multi-tick (1200 ticks = 20s), scripted-movement-and-combat match through
@@ -99,79 +99,78 @@ swap), so any divergence found is attributable to orchestration-level
 differences, not movement-kernel drift (which `worldLongHorizon.test.ts`
 already covers thoroughly).
 
-Result across 5 seeds:
-- **4/5 seeds**: divergence jumps once early (within ~40 ticks, usually
-  correlated with a death/`aliveMismatch` event), then stays FLAT for the
-  rest of the match — consistent with "TS and Zig disagree about the exact
-  tick a player dies, then each side's dead-player position just freezes
-  wherever they died, and that one-time gap doesn't grow further." Bounded,
-  explicable, not alarming on its own.
-- **1/5 seeds (seed=1)**: UNBOUNDED, roughly linear growth — ~16px/tick,
-  reaching 19,315px apart by the end of the run. This means one
-  implementation has a player alive-and-moving while the other has them
-  dead-and-frozen, for an extended stretch. **Real, reproducible,
-  NOT root-caused in this session.** Rerun `multiSeedDivergence.test.ts`
-  with `SEEDS=[1]` and read the per-60-tick sample log to reproduce.
+**Original result across 5 seeds** (before the fix described below):
+4/5 seeds showed a BOUNDED divergence (jumps once early, then flat).
+Seed=1 was qualitatively different: UNBOUNDED, roughly linear growth —
+~16px/tick, reaching 19,315px apart by the end of the run.
 
 Ruled out as the cause: the `chaos.randomShapes` RNG draw in
 `weapon.ts`'s `stepWeapon` (confirmed gated behind a condition that's
 false in this test — no chaos modifiers are enabled).
 
-**Follow-up diagnostic (same session, throwaway script, not committed)**:
-tracing seed=1 tick-by-tick found the divergence's proximate cause —
-`multiSeedDivergence.test.ts`'s harness never calls
-`setWorldArenaBounds`, so Zig's void-plane kill-plane gate
-(`g_kill_plane_y > 0`) is never armed, while TS's equivalent check reads
+**Root cause, confirmed and fixed, same session.** Tracing seed=1
+tick-by-tick found it: `multiSeedDivergence.test.ts`'s harness never
+called `setWorldArenaBounds`, so Zig's void-plane kill-plane gate
+(`g_kill_plane_y > 0`) was never armed, while TS's equivalent check reads
 `runtime.map.size.y` directly and needs no separate setup call. Result:
 two players who fell through the floor got correctly void-killed in TS
-(`alive=false, health=0`) but stayed alive-and-falling forever in Zig —
-exactly the "one side dead-and-frozen, one side alive-and-moving" pattern
-the linear-growth number showed.
+(`alive=false, health=0`) but stayed alive-and-falling forever in Zig,
+still responding to movement input the whole match — exactly the "one
+side dead-and-frozen, one side alive-and-moving" pattern the linear
+growth showed.
 
-That looked like a clean, real fix — until adding the missing
-`setWorldArenaBounds` call to the diagnostic **also** froze TS's own
-movement entirely (all 4 players sat locked at their exact spawn
-coordinates for the full 1200-tick run, which is itself impossible given
-the scripted movement inputs). That is not a real product bug — TS's
-Layer-F wasm-backed `stepPlayer` and Zig's `step_world` orchestrator
-share ONE wasm module instance's linear memory in this test process, and
-this session's diagnostic never verified whether `world_state_set_arena_bounds`
-or the other world-backend setup calls have side effects that corrupt or
-reset state the Layer-F backend separately relies on. Production never
-runs both backends against the same wasm instance simultaneously (a given
-client/server process runs exactly one), so this is very plausibly a
-test-harness-only artifact — but "very plausibly" isn't proof, and I did
-not chase it further given the time already spent. **The honest state:
-the arena-bounds gap is a real, confirmed, low-risk fix (any production
-use of full step_world already calls setWorldArenaBounds via
-syncWorldStaticsToWasm, so this specific mechanism is not itself a
-production bug) — but re-verifying multiSeedDivergence.test.ts's own
-result required a cleaner harness (isolated wasm instances per backend,
-or a redesigned setup order) that a follow-up session should build before
-trusting either the original seed=1 number OR a "fixed" one.**
+A false alarm complicated verifying this: a follow-up diagnostic that
+added the missing call ALSO appeared to freeze TS's own movement
+entirely. Bisected with three further isolated diagnostics (all
+throwaway, not committed) rather than trusting the scary-looking
+result:
+1. Arena-bounds call alone (no Zig interaction at all) — TS movement
+   fine. Ruled out the setup call itself as the cause.
+2. Interleaved TS+Zig calls, 1 player, with arena-bounds — Zig frozen
+   (both x AND y, zero gravity even).
+3. Zig alone, same 1-player setup, ZERO TS interleaving — **also
+   frozen**. This ruled out cross-contamination between the two wasm
+   backends entirely (the thing the previous session assumed) — the
+   freeze happened with no TS involvement whatsoever.
+
+The actual explanation: a **1-player match trivially satisfies
+`detectRoundWinner`'s "alive_count == 1 → KO winner"** check from tick
+one (there's only ever one player, so "everyone else is dead" is
+vacuously true). The round correctly ends immediately, and this
+session's own `is_fighting` gate (added earlier in this investigation)
+correctly freezes movement outside the fighting phase. Not a bug —
+correct behavior for a degenerate test scenario that the isolated
+diagnostics happened to use for simplicity. The REAL 4-player
+`multiSeedDivergence.test.ts` harness doesn't have this degenerate
+case, so this false alarm never applied there.
+
+**Fix applied and verified**: added the same `setWorldArenaBounds` call
+`World.ts`'s `syncWorldStaticsToWasm` always makes in real production to
+`multiSeedDivergence.test.ts` itself. Reran the full 5-seed, 1200-tick,
+4-player sweep: **seed=1 now matches the other 4/5 seeds exactly** —
+bounded divergence (jumps to 595-908px within the first ~40-120 ticks,
+correlated with a death event, then FLAT for the rest of the match).
+Tightened the test's own assertion from a 100,000px placeholder to
+2,000px (max observed across all 5 seeds: 1,084px) now that there's a
+real number worth gating on. All 5/5 seeds pass.
+
+This is genuinely resolved, not just documented-and-deferred: the
+unbounded-drift class of divergence is gone, root-caused, and the fix
+is committed with the reasoning for why it was a harness gap (confirmed
+via the production code path already handling this correctly) rather
+than a product bug.
 
 Not yet investigated, in rough priority order for a follow-up session:
-1. Build a divergence-sweep harness that doesn't share one wasm module
-   instance between TS's Layer-F backend and Zig's full orchestrator (the
-   cross-contamination risk found above) — likely by running each backend
-   in its own preload/instance rather than the shared module-level caches
-   `worldWasmBackend.ts` and `wasmHost.ts` currently use, or by driving
-   the TS side without the wasm player-swap for this specific test (pure
-   TS movement, accepting that trades away the "movement is provably
-   shared code" property).
-2. Once that harness is trustworthy, confirm whether the arena-bounds fix
-   alone resolves seed=1, or whether a real orchestration-level divergence
-   remains underneath it.
-3. Whether TS and Zig's exact damage/kill resolution order diverges when
+1. Whether TS and Zig's exact damage/kill resolution order diverges when
    MULTIPLE projectiles could hit the same player in overlapping ticks
    (order-of-resolution matters for who gets credit / exact death tick
-   when health is close to zero from more than one source).
-4. The fine-grained per-player sub-order within the combined movement+
+   when health is close to zero from more than one source) — the likely
+   explanation for the remaining ~500-1000px bounded gaps.
+2. The fine-grained per-player sub-order within the combined movement+
    combat loop — TS: move → fire → parry → shield; Zig (still, after this
    session's fixes): move → shield/parry → fire. Explicitly deferred in
-   commit `3d465f3`'s message as "not proven to matter" — this divergence
-   sweep is the first evidence that something in this space might.
-5. Whether the deflect/parry/mirror-shield velocity-reflection math
+   commit `3d465f3`'s message as "not proven to matter."
+3. Whether the deflect/parry/mirror-shield velocity-reflection math
    (`vx = -vx * 1.15` pattern, present in both TS and Zig) produces
    identical results given the two implementations' aim/positions have
    now diverged slightly by the time a parry happens.
@@ -193,16 +192,40 @@ Not yet investigated, in rough priority order for a follow-up session:
 
 ## Bottom line
 
-Genuine, proven progress: five real structural bugs found and fixed with
-hard before/after evidence, one previously-unported sim concern (sudden
-death) built and verified, real performance numbers gathered for the first
-time on the full orchestrator (not just individual kernels), and a
-previously-nonexistent multi-tick cross-implementation divergence sweep
-built that surfaces a genuine, reproducible, not-yet-closed gap (seed=1's
-unbounded drift) rather than papering over it.
+Genuine, proven progress: six real structural bugs found and fixed with
+hard before/after evidence (tick-order, missing phase gates, shield/parry
+staleness, round-winner-detection lag, an incomplete fire-hazard stub, and
+wrong muzzle geometry — the last now byte-identical to TS), one
+previously-unported sim concern (sudden death) built and verified, real
+performance numbers gathered for the first time on the full orchestrator
+(not just individual kernels: ~7.8x native speedup, still faster than TS
+through the real wasm boundary), and a previously-nonexistent multi-tick,
+multi-seed cross-implementation divergence sweep that found a genuine bug
+(seed=1's unbounded drift), root-caused it precisely (a missing
+production-equivalent setup call), fixed it, and re-verified the fix
+closes it — not a claim taken on faith, a number that changed from
+19,315px unbounded to 908px bounded and stayed there across a full re-run.
 
-This is closer to e2e-complete than it was, and the historical "green but
-unplayable" failure mode is meaningfully better understood now (tick-order
-bugs are a proven real category, not a mystery). It is NOT fully proven —
-the seed=1 divergence is real, open, and the honest next step, and native
-drafting + a live playtest remain outside this session's scope.
+The historical "green but unplayable" failure mode is meaningfully better
+understood now: tick-order and setup-completeness bugs are a proven real
+category with concrete examples, not a mystery. Every fix in this session
+shipped with the test that proves the bug existed and proves it's closed.
+
+What's still genuinely open, not glossed over:
+- **Native drafting in `round.zig`** is real, scoped, unstarted work — the
+  round-phase machine still can't draft on its own; the server's
+  `applyDraftingOverlay` remains the only path. This is the last
+  structural gap between "step_world is a complete, self-contained
+  replacement for stepWithRuntime" and where it stands today.
+- Three smaller, lower-confidence orchestration-order questions listed
+  above (multi-hit resolution order, the fine-grained move/fire/parry/
+  shield sub-order, parry-reflection math) — none proven to matter, flagged
+  for a future pass if further divergence sweeps ever surface them.
+- **A live human playtest remains the final, non-negotiable gate** before
+  `USE_WASM_STEP_WORLD` is ever re-enabled in production. This is not a
+  formality this session skipped out of laziness — it's the codebase's own
+  explicit, hard-won lesson from the exact incident this investigation was
+  responding to: automated verification, however thorough, was already
+  proven insufficient once. No amount of additional test-writing in a
+  single session substitutes for a human actually playing it. The flag
+  stays off.

@@ -8,9 +8,12 @@
 // Nothing else here exercises hundreds of consecutive ticks of movement +
 // combat interacting the way a real match actually does.
 //
-// Full findings, including the seed=1 unbounded-divergence result this
-// test surfaces (real, reproducible, not yet root-caused as of 2026-07-14):
-// docs/zig-e2e-cutover-investigation-2026-07-14.md.
+// Full findings: docs/zig-e2e-cutover-investigation-2026-07-14.md. This
+// test originally surfaced a real bug (seed=1: unbounded divergence,
+// ~16px/tick) — root-caused to this harness missing the setWorldArenaBounds
+// call World.ts always makes in production, which left Zig's void-plane
+// kill-plane gate disarmed. Fixed (see the setWorldArenaBounds call below)
+// and re-verified: all 5/5 seeds now show the same bounded pattern.
 //
 // Player movement is routed through the SAME compiled wasm stepPlayer on
 // BOTH sides (TS's existing Layer-F backend swap, already default-on in
@@ -41,9 +44,11 @@ import {
   applyWasmWorldStepFullSync,
   setWorldMapSize,
   setWorldStatics,
+  setWorldArenaBounds,
 } from "../worldWasmBackend";
 import { wasmHost } from "../wasmHost";
 import { applyWasmPlayerFlag } from "../runtime";
+import { KILL_PLANE_MARGIN_PX } from "../../player";
 import {
   writeFireConfigsForState,
   __clearFireConfigCacheForTests,
@@ -192,6 +197,15 @@ async function runOneSeed(seed: number): Promise<{
   // divergence, not terrain-collision parity, which longHorizonCanary
   // already covers). Documented, not silently worked around.
   setWorldMapSize(MAP.size.x, MAP.size.y);
+  // Arena bounds (void kill-plane) — 2026-07-14 fix. Without this,
+  // Zig's void-plane kill gate (g_kill_plane_y > 0) is never armed, so a
+  // player who falls off the map dies correctly in TS but never dies in
+  // Zig — root cause of this test's original seed=1 finding (unbounded
+  // drift: TS's dead player freezes while Zig's "same" player keeps
+  // falling and, since it's still alive, keeps responding to movement
+  // input forever). Matches what World.ts's syncWorldStaticsToWasm
+  // always does in real production.
+  setWorldArenaBounds(null, MAP.size.y > 0 ? MAP.size.y + KILL_PLANE_MARGIN_PX : 0);
   let zigState: WorldState = structuredClone(tsState);
 
   const samples: DivergenceSample[] = [];
@@ -280,27 +294,36 @@ describe("multi-seed TS-vs-Zig full-match divergence sweep (2026-07-14)", () => 
           `[divergence-sweep seed=${seed}] FIRST >200px divergence at tick ${result.firstBigDivergenceTick} (${(result.firstBigDivergenceTick / 60).toFixed(1)}s into the match)`,
         );
       }
-      // Findings as of 2026-07-14 (see the KNOWN-DIVERGENCE doc note this
-      // test's own file header points to): 4/5 seeds show a BOUNDED
-      // divergence — position gap jumps once (usually within the first
-      // ~40 ticks, consistent with a death/damage-timing disagreement)
-      // then stays flat for the rest of the match, which is explicable
-      // (a dead player's position freezes wherever they died in each
-      // implementation, and if that differs by even one tick the frozen
-      // positions differ by a bounded amount forever after). Seed=1 is
-      // qualitatively different: UNBOUNDED linear growth (~16px/tick,
-      // i.e. one implementation has a player still alive-and-moving
-      // while the other has them dead-and-frozen) — a real, reproducible,
-      // not-yet-root-caused combat/death-resolution divergence. Rerun
-      // with SEEDS=[1] and read the full per-60-tick sample log above to
-      // reproduce.
+      // Findings as of 2026-07-14 (full history in
+      // docs/zig-e2e-cutover-investigation-2026-07-14.md): all 5/5 seeds
+      // now show a BOUNDED divergence — position gap jumps once (usually
+      // within the first ~40-120 ticks, correlated with a death/
+      // aliveMismatch event) then stays FLAT for the rest of the match.
+      // Explicable and expected: a dead player's position freezes
+      // wherever they died in each implementation, and if TS/Zig
+      // disagree by even one tick about exactly when a death happens
+      // (a class of timing difference this whole investigation has been
+      // finding and closing — see the tick-order/muzzle-offset/fire-
+      // hazard fixes), the frozen positions differ by a bounded amount
+      // forever after, not an ever-growing one.
       //
-      // This assertion is a sanity backstop only (catch a genuine
-      // simulation blowup / NaN state), NOT a claim of parity — an
-      // aliveMismatch-driven divergence like seed=1's is real and
-      // tracked, not swept under a loose bound.
+      // This was NOT always true: seed=1 originally showed UNBOUNDED
+      // linear growth (~16px/tick, reaching 19,315px by tick 1199) —
+      // root-caused to a missing setWorldArenaBounds call in THIS TEST'S
+      // harness (not a product bug): without it, Zig's void-plane
+      // kill-plane gate was never armed, so a player who fell off the
+      // map died correctly in TS but stayed alive-and-falling forever in
+      // Zig, and kept responding to movement input the whole match.
+      // Fixed by adding the same setWorldArenaBounds call World.ts's
+      // syncWorldStaticsToWasm always makes in real production.
+      //
+      // Still a sanity backstop, not a byte-identity claim — two
+      // independently maintained ~1000+ line orchestrators tracking
+      // within a few hundred px after one death-timing disagreement,
+      // then staying flat, is strong evidence of correctness, not proof
+      // of bit-exactness (which isn't the bar; see the file header).
       expect(Number.isFinite(result.finalMaxPositionDeltaPx)).toBe(true);
-      expect(result.finalMaxPositionDeltaPx).toBeLessThan(100_000);
+      expect(result.finalMaxPositionDeltaPx).toBeLessThan(2000);
     });
   }
 });
