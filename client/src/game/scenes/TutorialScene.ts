@@ -383,7 +383,9 @@ export class TutorialScene extends Phaser.Scene {
       this.touchControls.setVisible(true);
     }
     this.buildSkipButton();
-    this.bossHealthBar = this.add.graphics().setScrollFactor(0).setDepth(900);
+    // World-anchored (no scrollFactor(0)) — tracks the boss's own head each
+    // frame in drawBossHealthBar() below, not fixed to the screen.
+    this.bossHealthBar = this.add.graphics().setDepth(900);
     // Latin transliteration only — unlike the cue table's short common
     // Coptic words (already verified against the source text), I'm not
     // confident enough in Coptic orthography for this specific proper name
@@ -398,7 +400,6 @@ export class TutorialScene extends Phaser.Scene {
         color: "#ffd0c0",
         letterSpacing: 3,
       })
-      .setScrollFactor(0)
       .setDepth(900)
       .setOrigin(0.5, 1)
       .setAlpha(0.9)
@@ -1001,7 +1002,22 @@ export class TutorialScene extends Phaser.Scene {
    *  beat-locked reveal as the thralls' body-crack cohesion, so a hit
    *  reads as landing WITH the music instead of whenever it happened to
    *  connect. Hidden until Estaphaios actually exists in this zone. */
-  private drawBossHealthBar(players: Record<string, { health: number; alive: boolean }>): void {
+  /**
+   * Above the boss's own head, tracking it in world space — NOT the old
+   * fixed top-of-screen HUD bar. That version used scrollFactor(0) +
+   * per-frame 1/zoom scale correction to sit still on screen, which reads
+   * as "floating around the map" the instant the boss is anywhere except
+   * dead-center (a raid-style screen-bar makes sense bolted to a fixed
+   * boss arena; the tutorial's boss roams a wide arena, so it just looked
+   * disconnected — Jake's own read, 2026-07-14). Drawing both the bar and
+   * label in WORLD coordinates gets zoom/pan correctness for free (Phaser
+   * already transforms world-space objects with the camera) — no scale
+   * hack needed, which is why the old zoom-correction block is gone
+   * entirely, not just relocated.
+   */
+  private drawBossHealthBar(
+    players: Record<string, { x: number; y: number; health: number; alive: boolean }>,
+  ): void {
     const bar = this.bossHealthBar;
     if (!bar) return;
     bar.clear();
@@ -1012,35 +1028,22 @@ export class TutorialScene extends Phaser.Scene {
     }
     const shown = this.displayedHealth.get(TUTORIAL_DUMMY_ID as string) ?? boss.health;
     const frac = Phaser.Math.Clamp(shown / this.bossMaxHealth, 0, 1);
-    const cam = this.cameras.main;
-    // Same zoom-drift bug as TutorialPostFX's quad, same fix: scrollFactor(0)
-    // cancels panning but NOT the camera's zoom transform, so a scrollFactor(0)
-    // Graphics object drawn in raw screen-pixel coordinates drifts/shrinks the
-    // instant the combat camera zooms. Countering the object's own scale by
-    // 1/zoom cancels it exactly (object stays anchored at world-origin, so its
-    // absolute-pixel draw commands render at their true intended screen size).
-    const zoom = cam.zoom || 1;
-    bar.setScale(1 / zoom);
-    const w = Math.min(560, cam.width * 0.5);
-    const x = cam.width / 2 - w / 2;
-    const y = 28;
-    const h = 14;
+    // Wider/heavier than a regular thrall's above-head sliver (matches
+    // TutorialShardThrall.draw()'s own per-rank bar proportions) — this one
+    // still needs to read as "the boss," just anchored correctly now.
+    const w = 190;
+    const h = 7;
+    const x = boss.x - w / 2;
+    const y = boss.y - 118; // clears the estaphaios-tier thorn crown's outer ring
     bar.fillStyle(0x1a1024, 0.75);
     bar.fillRect(x - 3, y - 3, w + 6, h + 6);
     bar.fillStyle(0x3a2a52, 0.9);
     bar.fillRect(x, y, w, h);
     bar.fillStyle(0xd08a5a, 0.95);
     bar.fillRect(x, y, w * frac, h);
-    bar.lineStyle(2, 0xffd0c0, 0.9);
+    bar.lineStyle(1.5, 0xffd0c0, 0.9);
     bar.strokeRect(x, y, w, h);
-    // Text objects need BOTH corrections: scale (font size drifts with
-    // zoom same as the bar) AND position (setPosition targets are world
-    // coords, so they get re-multiplied by zoom on render — dividing by
-    // zoom up front cancels that out, same logic as TutorialPostFX's fit()).
-    this.bossNameLabel
-      ?.setScale(1 / zoom)
-      .setPosition(cam.width / (2 * zoom), (y - 6) / zoom)
-      .setVisible(true);
+    this.bossNameLabel?.setPosition(boss.x, y - 8).setVisible(true);
   }
 
   /** Soft ellipse under every grounded, living entity — the single
