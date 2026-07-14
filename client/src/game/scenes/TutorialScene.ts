@@ -1038,23 +1038,81 @@ export class TutorialScene extends Phaser.Scene {
       return;
     }
     const shown = this.displayedHealth.get(TUTORIAL_DUMMY_ID as string) ?? boss.health;
-    const frac = Phaser.Math.Clamp(shown / this.bossMaxHealth, 0, 1);
+    const rawFrac = Phaser.Math.Clamp(boss.health / this.bossMaxHealth, 0, 1);
+    const shownFrac = Phaser.Math.Clamp(shown / this.bossMaxHealth, 0, 1);
     // Wider/heavier than a regular thrall's above-head sliver (matches
     // TutorialShardThrall.draw()'s own per-rank bar proportions) — this one
     // still needs to read as "the boss," just anchored correctly now.
     const w = 190;
-    const h = 7;
+    const h = 9;
     const x = boss.x - w / 2;
     const y = boss.y - 118; // clears the estaphaios-tier thorn crown's outer ring
-    bar.fillStyle(0x1a1024, 0.75);
-    bar.fillRect(x - 3, y - 3, w + 6, h + 6);
+
+    // Outer shadow + frame — deeper inset than the old flat rect so the bar
+    // reads as a carved instrument, not a UI rectangle pasted over the boss.
+    bar.fillStyle(0x000000, 0.35);
+    bar.fillRoundedRect(x - 4, y - 4, w + 8, h + 8, 3);
+    bar.fillStyle(0x160c22, 0.92);
+    bar.fillRoundedRect(x - 2, y - 2, w + 4, h + 4, 2);
+
+    // Track (empty state).
     bar.fillStyle(0x3a2a52, 0.9);
     bar.fillRect(x, y, w, h);
+
+    // Ghost damage trail — the gap between the BEAT-QUANTIZED displayed
+    // health (shown, lags behind on a hit) and the real instantaneous
+    // health (rawFrac) reads as "damage just landed, catching up" — the
+    // same white-trail read every raid-boss bar since forever uses, gotten
+    // for free from displayedHealth's existing lag instead of a second
+    // tween system.
+    if (shownFrac > rawFrac + 0.002) {
+      bar.fillStyle(0xf7fbff, 0.55);
+      bar.fillRect(x + w * rawFrac, y, w * (shownFrac - rawFrac), h);
+    }
+
+    // Live fill.
     bar.fillStyle(0xd08a5a, 0.95);
-    bar.fillRect(x, y, w * frac, h);
+    bar.fillRect(x, y, w * rawFrac, h);
+
+    // Segment notches — divides the bar into phase-reading chunks (the
+    // classic boss-bar tell that this isn't just "a health value," it's a
+    // fight with beats to it) — thin dark cuts, not full gaps, so the fill
+    // still reads as one continuous bar underneath.
+    const segments = 10;
+    bar.fillStyle(0x160c22, 0.55);
+    for (let i = 1; i < segments; i++) {
+      bar.fillRect(x + (w / segments) * i - 0.5, y, 1, h);
+    }
+
     bar.lineStyle(1.5, 0xffd0c0, 0.9);
-    bar.strokeRect(x, y, w, h);
-    this.bossNameLabel?.setPosition(boss.x, y - 8).setVisible(true);
+    bar.strokeRoundedRect(x - 2, y - 2, w + 4, h + 4, 2);
+
+    // Diamond end-caps — the gem/crystal accent language used everywhere
+    // else in this game's UI (card rarity gems, splash sigil), so the bar
+    // reads as belonging to THIS game's world, not a generic RPG asset.
+    this.drawBarEndCap(bar, x - 2, y + h / 2, true);
+    this.drawBarEndCap(bar, x + w + 2, y + h / 2, false);
+
+    this.bossNameLabel?.setPosition(boss.x, y - 10).setVisible(true);
+  }
+
+  /** Small rotated-square gem marking a health-bar end — see drawBossHealthBar. */
+  private drawBarEndCap(
+    bar: Phaser.GameObjects.Graphics,
+    cx: number,
+    cy: number,
+    facingRight: boolean,
+  ): void {
+    const r = 4.5;
+    bar.fillStyle(0x160c22, 1);
+    bar.fillCircle(cx, cy, r + 1.5);
+    bar.fillStyle(0xffd0c0, 0.95);
+    bar.save();
+    bar.translateCanvas(cx, cy);
+    bar.rotateCanvas(Math.PI / 4);
+    bar.fillRect(-r * 0.62, -r * 0.62, r * 1.24, r * 1.24);
+    bar.restore();
+    void facingRight; // symmetric gem for now — kept for a future L/R accent variant
   }
 
   /** Soft ellipse under every grounded, living entity — the single

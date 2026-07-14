@@ -1684,6 +1684,10 @@ export class ProceduralPlayerRig implements CombatRig {
 
   // --- NAMEPLATE (plate-less) ---
   // No background rect. Name in textHi. Thin 2px hpLime underline as HP bar.
+  /** Portrait badge radius (world px, pre-scale) — sized to sit flush
+   *  against the plate's left edge without crowding short names. */
+  private static readonly BADGE_R = 9;
+
   private drawNameplate(
     g: Phaser.GameObjects.Graphics,
     x: number,
@@ -1694,20 +1698,77 @@ export class ProceduralPlayerRig implements CombatRig {
   ) {
     const nameWidth = Math.max(52, this.name.length * 6.5) * s;
     const healthRatio = Phaser.Math.Clamp(health / Math.max(1, maxHealth), 0, 1);
+    const badgeR = ProceduralPlayerRig.BADGE_R * s;
+    // Plate spans the badge + a gap + the name; badge sits at the LEFT edge,
+    // name text re-centers into the remaining width so short/long names both
+    // stay visually balanced against the badge rather than the badge
+    // floating off-center once names get long.
+    const gap = 5 * s;
+    const plateW = badgeR * 2 + gap + nameWidth;
+    const plateLeft = x - plateW / 2;
+    const badgeCx = plateLeft + badgeR;
+    const nameCx = plateLeft + badgeR * 2 + gap + nameWidth / 2;
+    const plateTop = y - 17 * s;
+    const plateH = 15 * s;
 
-    // Name text — no background, no health suffix
+    // Plate — soft drop shadow (directional, not a blur filter) then a
+    // dark chip with a colored top-edge rule. Grounds the badge+name as
+    // ONE unit instead of text just floating on the arena backdrop.
+    g.fillStyle(0x000000, 0.28);
+    g.fillRoundedRect(plateLeft - 3 * s + 1, plateTop + 1.5 * s, plateW + 6 * s, plateH, 6 * s);
+    g.fillStyle(0x0b0e16, 0.62);
+    g.fillRoundedRect(plateLeft - 3 * s, plateTop, plateW + 6 * s, plateH, 6 * s);
+
+    // Portrait badge — a solid disc in the player's OWN rig color (the
+    // "picture of the char" — this is literally their equipped color/
+    // silhouette identity, not a generic avatar) with a darker inner ring
+    // for depth and a small humanoid glyph so it doesn't read as a plain
+    // dot from a distance.
+    g.fillStyle(this.colorDark, 1);
+    g.fillCircle(badgeCx, y - 9.5 * s, badgeR + 1.2 * s);
+    g.fillStyle(this.color, 1);
+    g.fillCircle(badgeCx, y - 9.5 * s, badgeR);
+    g.lineStyle(1 * s, this.accentColor, 0.85);
+    g.strokeCircle(badgeCx, y - 9.5 * s, badgeR);
+    this.drawBadgeGlyph(g, badgeCx, y - 9.5 * s, badgeR);
+
+    // Name text — re-centered into the plate's name column (see nameCx).
     this.nameText.setText(this.name);
-    this.nameText.setPosition(x, y - 6 * s);
+    this.nameText.setPosition(nameCx, y - 6 * s);
 
-    // Gold instrument-rule underline (dim track + live gold fill) instead
-    // of a flat lime bar — matches the platform hull-chrome's own
+    // Gold instrument-rule underline (dim track + live gold fill) doubles
+    // as the health readout — matches the platform hull-chrome's own
     // gold-rule language (PlatformPainter's drawRimHighlight) rather than
-    // a disconnected default-HUD health-bar color.
+    // a disconnected default-HUD health-bar color. Now spans the FULL
+    // plate (badge included) so the health state reads for the whole
+    // identity chip, not just the name half.
     const lineY = y - 4 * s;
+    const lineX = plateLeft - 3 * s + 4 * s;
+    const lineW = plateW + 6 * s - 8 * s;
     g.fillStyle(0x3a3020, 0.7);
-    g.fillRect(x - nameWidth / 2, lineY, nameWidth, 2);
+    g.fillRect(lineX, lineY, lineW, 2);
     g.fillStyle(0xffd76b, 1);
-    g.fillRect(x - nameWidth / 2, lineY, nameWidth * healthRatio, 2);
+    g.fillRect(lineX, lineY, lineW * healthRatio, 2);
+  }
+
+  /** Tiny procedural glyph inside the portrait badge — a simplified
+   *  head+shoulders silhouette in the dark badge-ring tone, cheap enough
+   *  to draw every frame (a handful of primitives, no texture/atlas). */
+  private drawBadgeGlyph(
+    g: Phaser.GameObjects.Graphics,
+    cx: number,
+    cy: number,
+    r: number,
+  ) {
+    const glyphColor = shadeColor(this.color, -0.55);
+    g.fillStyle(glyphColor, 0.9);
+    // Head
+    g.fillCircle(cx, cy - r * 0.32, r * 0.34);
+    // Shoulders — a clipped disc (bottom arc) reads as shoulders inside
+    // the circular badge without needing a separate mask/stencil.
+    g.beginPath();
+    g.arc(cx, cy + r * 0.62, r * 0.62, Math.PI, Math.PI * 2, false);
+    g.fillPath();
   }
 
   // --- WALL-PLANT FOOT: a tucked knee bracing flat against the gripped
