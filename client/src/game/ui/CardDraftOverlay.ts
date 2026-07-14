@@ -694,7 +694,11 @@ const CARD_STYLE: Partial<CSSStyleDeclaration> = {
   border: "none",
   color: "#f7fbff",
   cursor: "pointer",
-  transition: "transform 200ms cubic-bezier(0.34,1.56,0.64,1), box-shadow 200ms ease, filter 200ms ease",
+  // Plain hover lift (mouseenter/leave below) — a 4px lift doesn't need
+  // spring overshoot; that curve is reserved for the winner's actual
+  // reveal beat (see the sequenced-reveal block further down), so the
+  // "presented to you" moment stays distinct from ordinary hover chrome.
+  transition: "transform 200ms cubic-bezier(0.16,1,0.3,1), box-shadow 200ms ease, filter 200ms ease",
   display: "flex",
   flexDirection: "column",
   gap: "12px",

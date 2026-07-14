@@ -75,6 +75,13 @@ export function recordError(source: string, message: string, stack?: string): vo
   if (stack?.includes("chrome-extension://") || stack?.includes("moz-extension://")) {
     return;
   }
+  // Browsers fire this as a real ErrorEvent even though it describes no
+  // actual failure (a ResizeObserver callback took too long to settle
+  // within one frame) — well-documented benign noise, same rationale as
+  // the boot-diagnostic filter in index.html.
+  if (message.includes("ResizeObserver loop")) {
+    return;
+  }
   crumb("error", message.slice(0, 120));
   record({
     kind: "error",

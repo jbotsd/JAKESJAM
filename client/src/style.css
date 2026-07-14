@@ -109,8 +109,13 @@ button {
   cursor: pointer;
   letter-spacing: 0.04em;
   box-shadow: 0 0 0 rgba(80, 227, 194, 0);
+  /* Plain -2px hover-lift, every button in the shell by default — spring
+     overshoot on a 2px move reads as noise, not intent. Clean ease-out
+     (matches .match-chrome-btn / MatchResultsOverlay's own buttons); the
+     overshoot curve stays reserved for actual reveal beats (card draft
+     winner step-forward, results-screen entrance). */
   transition:
-    transform 140ms cubic-bezier(0.34, 1.56, 0.64, 1),
+    transform 140ms cubic-bezier(0.16, 1, 0.3, 1),
     filter 120ms ease,
     opacity 120ms ease,
     box-shadow 150ms ease;
@@ -780,7 +785,7 @@ button.btn-danger:hover:not(:disabled) {
   display: flex;
   align-items: center;
   justify-content: center;
-  font: 700 13px/1 Inter, system-ui, sans-serif;
+  font: 700 13px/1 "Space Grotesk", "Segoe UI", system-ui, sans-serif;
   letter-spacing: 1px;
   color: #f7fbff;
   border: 2px solid rgba(143, 248, 255, 0.4);
@@ -1112,7 +1117,7 @@ button.btn-danger:hover:not(:disabled) {
   border: 1px solid rgba(201, 168, 76, 0.45);
   background: linear-gradient(160deg, rgba(22, 29, 47, 0.94), rgba(10, 14, 26, 0.96));
   color: var(--shell-text);
-  font: 700 0.78rem/1 system-ui, sans-serif;
+  font: 700 0.78rem/1 "Space Grotesk", "Segoe UI", system-ui, sans-serif;
   letter-spacing: 0.06em;
   text-transform: uppercase;
   cursor: pointer;

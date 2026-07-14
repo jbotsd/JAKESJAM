@@ -27,6 +27,13 @@
             return true;
           if (/Cannot redefine property:\s*ethereum/i.test(s)) return true;
           if (/evmAsk\.js|inpage\.js|contentscript/i.test(s)) return true;
+          // Browsers fire this as a real ErrorEvent even though it describes
+          // no actual failure (a ResizeObserver callback took too long to
+          // settle within one frame) — well-documented benign noise. Left
+          // unfiltered it paints the same "the game crashed" red overlay a
+          // real failure would, over live gameplay, which is worse than the
+          // silence it's meant to replace.
+          if (/ResizeObserver loop/i.test(s)) return true;
           return false;
         }
         function show(label, detail) {

@@ -334,7 +334,10 @@ const BASE_OVERLAY_STYLE: Partial<CSSStyleDeclaration> = {
   backdropFilter: "blur(10px)",
   fontFamily: "'Space Grotesk', Inter, Arial, sans-serif",
   pointerEvents: "auto",
-  transition: "opacity 280ms cubic-bezier(0.4,0,0.2,1), transform 280ms cubic-bezier(0.34,1.56,0.64,1)",
+  // transform never gets set on the root (only opacity, in show() below) —
+  // dropped the dead transform clause rather than transitioning a property
+  // nothing ever touches.
+  transition: "opacity 280ms cubic-bezier(0.4,0,0.2,1)",
 };
 
 const STAGE_STYLE: Partial<CSSStyleDeclaration> = {
@@ -448,7 +451,10 @@ const BUTTON_BASE_STYLE: Partial<CSSStyleDeclaration> = {
   textTransform: "uppercase",
   cursor: "pointer",
   border: "1px solid #50e3c2",
-  transition: "transform 140ms cubic-bezier(0.34,1.56,0.64,1), filter 120ms ease, box-shadow 120ms ease",
+  // Plain 1px hover-lift — too small for spring overshoot to read as
+  // anything but noise; clean ease-out matches .match-chrome-btn's own
+  // hover convention elsewhere in the shell.
+  transition: "transform 140ms cubic-bezier(0.16,1,0.3,1), filter 120ms ease, box-shadow 120ms ease",
 };
 
 const PRIMARY_BUTTON_STYLE: Partial<CSSStyleDeclaration> = {
