@@ -21,6 +21,9 @@
 // nameplate, HudSystem's screen-anchored vitals badge, and HudSystem's
 // per-row scoreboard.
 
+import Phaser from "phaser";
+import { drawFacetedRing, healthRingColor } from "./facetedRing.js";
+
 export function shadeColor(hex: number, amount: number): number {
   const r = Math.min(255, Math.max(0, ((hex >> 16) & 0xff) + Math.round(amount * 255)));
   const g = Math.min(255, Math.max(0, ((hex >> 8) & 0xff) + Math.round(amount * 255)));
@@ -142,4 +145,84 @@ function drawPlayerSigil(
   // convention), anchors the sigil visually so it doesn't read as loose
   // scattered lines.
   g.fillCircle(cx, cy, radius * 0.1);
+}
+
+// ─── Fused health/shield ring ───────────────────────────────────────────────
+//
+// Jake, 2026-07-14: "make our health shield and nameplate the whole thing" —
+// the badge was identity-only; health/shield lived as separate flat bars
+// elsewhere on screen. HUD-research finding #5 (Hades' pulse-on-low-health,
+// Destiny 2's fill-state-on-glyph): resource state should animate the SAME
+// object as identity, not a disconnected bar. This wraps the sigil badge in
+// a depleting ring instead — segmented/faceted (crystal-cut), not a smooth
+// arc, per the vessel doctrine's "chamfer or crystal cut, not iOS sausage"
+// rule and the HUD-chrome asset prompts' faceted timer-ring precedent.
+//
+// Doctrine constraint (docs/visual-language-gnostic-vessel.md): combat HUD
+// stays cyan/HP-lime, "gold almost never in combat HUD" — this ring never
+// reaches for the house-gold palette, only the existing HP good/warn/crit
+// hues plus the existing shield blue.
+
+// Set clear of the badge's own notched dial bezel (~radius*0.9) so the two
+// read as distinct instrument layers instead of one mushy double-ring.
+const RING_R_FACTOR = 1.55;
+const SHIELD_R_GAP_FACTOR = 0.26;
+
+export type NameplateVitals = {
+  /** 0-1 fraction of max health. */
+  healthRatio: number;
+  /** 0-1 fraction of max shield charge; undefined = no shield ring (character has none). */
+  shieldRatio?: number;
+  isDead?: boolean;
+  /** 0-1 — caller-driven pulse (e.g. a Sine tween) applied only when critical. 1 = no dimming. */
+  pulseAlpha?: number;
+};
+
+export { healthRingColor };
+
+/**
+ * Draws the fused health (+ optional shield) ring around a badge already
+ * drawn by `drawPortraitBadge` at the same (cx, cy, radius). Call this
+ * AFTER drawPortraitBadge so the ring sits outside the sigil/bezel.
+ */
+export function drawNameplateRing(
+  g: Phaser.GameObjects.Graphics,
+  cx: number,
+  cy: number,
+  badgeRadius: number,
+  vitals: NameplateVitals,
+): void {
+  // Bolder + set well clear of the badge's own notched dial bezel (which
+  // sits at ~radius*0.9) — the two were nearly touching at the old 1.38
+  // factor and mushed into one blurry double-ring; a real gap reads as two
+  // distinct instrument layers (identity dial inside, vitals ring outside).
+  const thickness = Math.max(2, badgeRadius * 0.24);
+  if (vitals.isDead) {
+    // Extinguished vessel — one dim grey ring, no facets, no shield.
+    g.lineStyle(thickness, 0x2a3550, 0.5);
+    g.strokeCircle(cx, cy, badgeRadius * RING_R_FACTOR);
+    return;
+  }
+
+  const ringR = badgeRadius * RING_R_FACTOR;
+  const critical = vitals.healthRatio <= 0.28;
+  const pulse = critical ? 0.65 + 0.35 * Phaser.Math.Clamp(vitals.pulseAlpha ?? 1, 0, 1) : 1;
+  const color = healthRingColor(vitals.healthRatio);
+
+  drawFacetedRing(g, cx, cy, ringR, thickness, vitals.healthRatio, color, 0.95 * pulse, 0x1f2937, 0.4);
+
+  if (vitals.shieldRatio !== undefined && vitals.shieldRatio > 0) {
+    const shieldR = ringR + badgeRadius * SHIELD_R_GAP_FACTOR;
+    const shieldThickness = Math.max(1.5, badgeRadius * 0.14);
+    drawFacetedRing(g, cx, cy, shieldR, shieldThickness, vitals.shieldRatio, 0x93c5fd, 0.85, 0x1f2937, 0);
+  }
+}
+
+/** Outer edge of the fused ring (health, or shield when present) — callers
+ *  laying out multiple badges use this to size row spacing so rings never
+ *  clip into the next row. */
+export function nameplateOuterRadius(badgeRadius: number, hasShield: boolean): number {
+  const ringR = badgeRadius * RING_R_FACTOR;
+  const outer = hasShield ? ringR + badgeRadius * SHIELD_R_GAP_FACTOR : ringR;
+  return outer + badgeRadius * 0.14; // half the thickest stroke, as padding
 }

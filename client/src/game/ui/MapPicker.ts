@@ -175,13 +175,15 @@ export class MapPicker {
     const card = this.cards.get(id);
     if (!card) return;
     if (on) {
+      // Selection stays cyan as a live/active cue (same judgment call as
+      // the ready-toggle) — glow-only shadow, no y-offset elevation.
       card.style.borderColor = "#8ff8ff";
-      card.style.boxShadow = "0 0 0 2px rgba(143, 248, 255, 0.45), 0 8px 22px rgba(0, 0, 0, 0.45)";
-      card.style.background = "linear-gradient(160deg, rgba(20, 32, 48, 0.95), rgba(11, 18, 28, 0.97))";
+      card.style.boxShadow = "0 0 0 2px rgba(143, 248, 255, 0.45), 0 0 20px rgba(143, 248, 255, 0.18)";
+      card.style.background = "rgba(15, 24, 36, 0.96)";
     } else {
       card.style.borderColor = "rgba(143, 248, 255, 0.18)";
-      card.style.boxShadow = "0 4px 14px rgba(0, 0, 0, 0.32)";
-      card.style.background = "linear-gradient(160deg, rgba(16, 22, 34, 0.92), rgba(10, 14, 22, 0.96))";
+      card.style.boxShadow = "none";
+      card.style.background = "rgba(11, 15, 24, 0.94)";
     }
   }
 }
@@ -200,7 +202,10 @@ const HEADING_STYLE: Partial<CSSStyleDeclaration> = {
   fontWeight: "900",
   letterSpacing: "0.18em",
   textTransform: "uppercase",
-  color: "#8ff8ff",
+  // House chrome leans gold at rest (axiom C1/C2) — this lives in the ROOM
+  // place, not combat HUD. Selection state below stays cyan as a live/
+  // active cue, same judgment call as the ready-toggle.
+  color: "#c9a84c",
 };
 
 const GRID_STYLE: Partial<CSSStyleDeclaration> = {
@@ -216,11 +221,13 @@ const CARD_STYLE: Partial<CSSStyleDeclaration> = {
   padding: "12px 12px 14px",
   borderRadius: "12px",
   border: "1px solid rgba(143, 248, 255, 0.18)",
-  background: "linear-gradient(160deg, rgba(16, 22, 34, 0.92), rgba(10, 14, 22, 0.96))",
+  // Void-and-seam depth (axiom G2/G3): flat void fill, not a directional
+  // gradient standing in for a lit plate; no elevation box-shadow.
+  background: "rgba(11, 15, 24, 0.94)",
   color: "#f7fbff",
   cursor: "pointer",
   textAlign: "left",
-  boxShadow: "0 4px 14px rgba(0, 0, 0, 0.32)",
+  boxShadow: "none",
   transition: "box-shadow 120ms ease, border-color 120ms ease, background 120ms ease",
   fontFamily: "'Space Grotesk', Inter, Arial, sans-serif",
 };

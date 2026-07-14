@@ -22,21 +22,28 @@ const ROOT_STYLE: Partial<CSSStyleDeclaration> = {
   // Carries a real display headline (TITLE_STYLE, 32px/900) — Space Grotesk
   // is this project's established display face, not the generic default.
   fontFamily: "'Space Grotesk', Inter, Arial, sans-serif",
+  // M1: settle in on open / withdraw (fade) on close.
+  transition: "opacity 200ms ease-out",
 };
 
 const STAGE_STYLE: Partial<CSSStyleDeclaration> = {
-  background: "linear-gradient(160deg, rgba(10,16,28,0.95), rgba(5,10,18,0.95))",
+  // Void interior, hollow seam border — no gradient fill, no elevation
+  // shadow (G2/G3), radius at the 12px DOM ceiling (G1).
+  background: "rgba(6, 11, 20, 0.95)",
   border: "1px solid rgba(143,248,255,0.18)",
-  borderRadius: "18px",
+  borderRadius: "12px",
   padding: "32px 40px",
   textAlign: "center",
   color: "#e3f3ff",
-  boxShadow: "0 32px 80px rgba(0,0,0,0.6), inset 0 1px 0 rgba(143,248,255,0.07)",
-  minWidth: "320px",
+  // S5: min() clamp so a narrow phone viewport isn't forced wider than
+  // itself — same convention as MatchResultsOverlay.ts's STAGE_STYLE.
+  minWidth: "min(320px, 92vw)",
+  maxWidth: "min(440px, 92vw)",
 };
 
 const KICKER_STYLE: Partial<CSSStyleDeclaration> = {
   fontSize: "11px",
+  fontWeight: "900",
   letterSpacing: "0.18em",
   textTransform: "uppercase",
   color: "#67e8f9",
@@ -44,7 +51,7 @@ const KICKER_STYLE: Partial<CSSStyleDeclaration> = {
 };
 
 const TITLE_STYLE: Partial<CSSStyleDeclaration> = {
-  fontSize: "32px",
+  fontSize: "clamp(24px, 7vw, 32px)",
   fontWeight: "900",
   letterSpacing: "0.04em",
   marginBottom: "12px",
@@ -105,12 +112,27 @@ export class ConnectionOverlay {
         this.subEl.textContent = state.reason;
         break;
     }
-    this.root.style.display = "flex";
+    if (this.root.style.display !== "flex") {
+      // M1: settle in — opacity fade only, no slide/scale/overshoot.
+      this.root.style.display = "flex";
+      this.root.style.opacity = "0";
+      requestAnimationFrame(() => {
+        this.root.style.opacity = "1";
+      });
+    } else {
+      this.root.style.opacity = "1";
+    }
   }
 
   hide(): void {
     if (this.destroyed) return;
-    this.root.style.display = "none";
+    if (this.root.style.display === "none") return;
+    // M1: withdraw — fade out before actually detaching from layout.
+    this.root.style.opacity = "0";
+    window.setTimeout(() => {
+      if (this.destroyed) return;
+      this.root.style.display = "none";
+    }, 200);
   }
 
   destroy(): void {

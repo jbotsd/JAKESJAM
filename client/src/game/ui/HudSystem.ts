@@ -6,13 +6,13 @@
 //
 // Layout (Crystal Cyan palette, anchored to viewport via setScrollFactor(0)):
 //
-//   ┌─ top-left (party-frame) ─────────────────────────────────────────────────┐
-//   │  (◕) [HP bar]  HP nnn/max                                                │
-//   │      [SH bar]  SH nnn/max         (hidden when no shield)                │
-//   │      [• • • • • •]  dot-row ability charge                               │
-//   │  [buff strip - outline chips per active buff/debuff]                     │
-//   │  (◕) ▸ YOU        2    ← scoreboard rows, one portrait badge per player  │
-//   │  (◕)   BOT · SPARK 0                                                     │
+//   ┌─ top-left (fused nameplate column) ───────────────────────────────────────┐
+//   │  (◕)══ ▸ YOU        2   84/100    ← badge + health/shield ring, one row   │
+//   │  (◕)══   R3F9       1              per player in the match (Jake,        │
+//   │  (◕)══   BOT · SPARK 0             2026-07-14: "give everyone the match  │
+//   │  [buff strip - outline chips per active buff/debuff]  a nameplate" —     │
+//   │                                     health+shield+name+score fused      │
+//   │                                     into one object, not a separate bar) │
 //   └──────────────────────────────────────────────────────────────────────────┘
 //
 //   ┌─ top-right ───────────────────────────────────────────────────────────────┐
@@ -25,7 +25,9 @@
 //   └───────────────────────────────────────────────────────────────────────────┘
 //
 // A low-health vignette (full-viewport rectangle, alpha-pulsed via tween)
-// kicks in below 30 % HP.
+// kicks in below 30 % HP. The dash-readiness meter this HUD used to draw as
+// a 6-dot row now lives on ActionBarSystem's bottom-center hotkey bar
+// instead (Jake, 2026-07-14) — no duplicate readiness indicator on screen.
 //
 // All Phaser objects are created on the scene passed to the constructor.
 
@@ -35,38 +37,20 @@ import { uiWidth, uiHeight } from "../render/renderResolution.js";
 import { PALETTE } from "./palette.js";
 import { crystalRoundsCards } from "../../sim/data/cards.js";
 import type { PlayerId } from "../../sim/types.js";
-import { drawPortraitBadge } from "../render/portraitBadge.js";
+import { drawPortraitBadge, drawNameplateRing, nameplateOuterRadius } from "../render/portraitBadge.js";
+import { RARITY_COLORS } from "./rarityColors.js";
 
 export type HudVitals = {
   health: number;
   maxHealth: number;
-  /** undefined = no shield for this character */
-  shieldCharge?: number;
-  shieldMaxCharge?: number;
   /** Active buff/debuff chip descriptors */
   chips: HudChip[];
-  /** 0-1 ability charge fraction — drives the dot-row ammo display. */
-  abilityCharge?: number;
   /** Card ids in pick order — drives the build-summary pill grid. */
   cardIds?: string[];
   isDead: boolean;
   /** Standing outside the storm-zone boundary — the answer to "why am I
    *  taking damage with no explanation" (Jake, 2026-07-11). */
   outsideStorm?: boolean;
-  /**
-   * Player-identity color for the portrait badge (party-frame layout,
-   * Jake 2026-07-14: "the nameplate goes on the left of the screen below
-   * — designed well like this" — reference was a WoW-style unit frame:
-   * portrait left, bars extending right, screen-anchored not floating
-   * above the head). Same badge recipe as ProceduralPlayerRig's in-world
-   * nameplate (dark ring + identity color + procedural glyph), just
-   * relocated here as a fixed HUD element. Undefined hides the badge and
-   * the vitals block falls back to its original left edge.
-   */
-  portraitColor?: number;
-  /** Seed for the badge's generated sigil (portraitBadge.ts) — the local
-   *  player's own id. Required whenever portraitColor is set. */
-  portraitSeed?: string;
 };
 
 export type HudRound = {
@@ -77,13 +61,33 @@ export type HudRound = {
   /** playerId → display name (hello roster); ids fall back to tags. */
   names?: Record<string, string>;
   /**
-   * playerId → identity color for the scoreboard's per-row portrait badge
-   * (same badge recipe as the vitals block and the in-world nameplate —
-   * portraitBadge.ts). Missing entries fall back to a dim neutral badge
-   * rather than skipping the row.
+   * playerId → identity color for the nameplate's per-row badge (same badge
+   * recipe as the in-world nameplate — portraitBadge.ts). Missing entries
+   * fall back to a dim neutral badge rather than skipping the row.
    */
   colors?: Record<string, number>;
+  /**
+   * playerId → live health/shield state for the fused nameplate ring
+   * (Jake, 2026-07-14: "make our health shield and nameplate the whole
+   * thing" — every player's ring, not just the local player's flat bars).
+   * Missing entries render a full, undamaged ring rather than an empty one.
+   */
+  healthByPlayer?: Record<string, { ratio: number; shieldRatio?: number; isDead: boolean }>;
+  /**
+   * playerId → active buff/debuff colors for the row's compact status ticks
+   * (Jake, 2026-07-14: "lobby/party member need... possibly status buffs
+   * and debuffs" — the full text chip strip stays local-only for detail/
+   * countdowns, but every row gets a glance-level tick summary, CS2-killfeed
+   * style: small stacked marks, not sentence-construction, since a row is
+   * one badge-height tall).
+   */
+  statusByPlayer?: Record<string, NameplateStatusTick[]>;
   winnerLabel?: string;
+};
+
+export type NameplateStatusTick = {
+  color: number;
+  isDebuff: boolean;
 };
 
 export type HudChip = {
@@ -97,54 +101,26 @@ export type HudChip = {
 
 const PAD_LEFT = 16;
 const PAD_TOP = 14;
-const BAR_W = 200;
-const BAR_H = 12;
-const BAR_SHIELD_W = 160;
-const BAR_SHIELD_H = 9;
-const LINE_H = 20;
 
 // Compact (phone-width) HUD: below this CSS-px viewport width the full-size
-// bars/fonts collide with the centred timer + score row (seen on a 393px
-// portrait phone: HP text under the timer, score under the RTT pill), so
-// everything in the top strip shrinks.
+// fonts/radii collide with the centred timer + score row (seen on a 393px
+// portrait phone), so the nameplate column shrinks.
 const COMPACT_MAX_WIDTH = 520;
-const BAR_W_COMPACT = 96;
-const BAR_SHIELD_W_COMPACT = 76;
-
-// Palette — Crystal Cyan (bars)
-const C_TRACK = 0x111827;
-const C_HP_GOOD = 0xb8f05a;
-const C_HP_WARN = 0xfde68a;
-const C_HP_CRIT = 0xfb7185;
-const C_SHIELD = 0x93c5fd;
-const C_VIGNETTE = 0xfb7185;
 
 // Chip layout (chip strip still uses a wrap boundary)
 const PANEL_W = 244;
 const PANEL_PAD = 8;
 
-// Rarity stroke colours for build pills
-const RARITY_COLORS: Record<string, number> = {
-  common: 0x9ca3af,
-  uncommon: PALETTE.textMid,
-  rare: 0x60a5fa,
-  legendary: 0xfbbf24,
-  cursed: PALETTE.hpDanger,
-};
-
-// Dot-row constants
-const DOT_COUNT = 6;
-const DOT_RADIUS = 4;
-const DOT_GAP = 6;
-
-// Portrait badge (party-frame layout) constants
-const PORTRAIT_R = 16;
-const PORTRAIT_RESERVED_W = PORTRAIT_R * 2 + 10;
-
-// Scoreboard row constants — smaller badge than the vitals portrait since
-// several rows stack vertically.
-const SCORE_ROW_R = 9;
-const SCORE_ROW_GAP = 4;
+// Fused nameplate column — badge + health ring + shield ring, one row per
+// player (portraitBadge.ts's drawNameplateRing). Radius is bigger than the
+// old plain scoreboard dot so the faceted health/shield rings read clearly.
+const NAMEPLATE_R = 15;
+const NAMEPLATE_R_COMPACT = 12;
+// Local player's row reads slightly bigger than the rest of the roster —
+// "your own vitals are the primary signal" (existence/vitality hierarchy,
+// docs/visual-language-gnostic-vessel.md), not just another list entry.
+const NAMEPLATE_R_LOCAL_BONUS = 3;
+const NAMEPLATE_ROW_GAP = 10;
 
 // Build-pill grid constants
 const PILL_W = 36;
@@ -155,24 +131,9 @@ const PILL_ROWS = 2;
 export class HudSystem {
   private readonly scene: Phaser.Scene;
 
-  // Vitals graphics (bars drawn each frame)
-  private vitalGraphics!: Phaser.GameObjects.Graphics;
-  // Portrait badge (party-frame layout) — see HudVitals.portraitColor docblock.
-  private portraitGraphics!: Phaser.GameObjects.Graphics;
-  private lastPortraitColor: number | undefined = undefined;
-  private lastPortraitSeed: string | undefined = undefined;
-
   // Vital text labels
-  private hpLabel!: Phaser.GameObjects.Text;
-  private shLabel!: Phaser.GameObjects.Text;
   private chipGraphics!: Phaser.GameObjects.Graphics;
   private chipTexts: Phaser.GameObjects.Text[] = [];
-  // Cache so we don't re-call setColor every frame (string allocation).
-  private hpLabelColorCache = 0;
-
-  // Dot-row ability charge — currently the dash-bash readiness meter.
-  private dotArcs: Phaser.GameObjects.Arc[] = [];
-  private dashLabel!: Phaser.GameObjects.Text;
 
   // Build-pill grid (top-right)
   private pillGraphics!: Phaser.GameObjects.Graphics;
@@ -187,9 +148,9 @@ export class HudSystem {
   // distinguishing a 0:02 mid-fight from a 0:02 waiting-on-the-draft-timer).
   private phaseTagText!: Phaser.GameObjects.Text;
 
-  // Scoreboard — portrait-badge rows (party-frame layout, replacing the old
-  // plain-text list). One shared Graphics for all badges (redrawn each
-  // update, same convention as vitalGraphics), text pool grows on demand.
+  // Fused nameplate column — one Graphics for all rows (badge + rings,
+  // redrawn each frame since health changes continuously), text pool grows
+  // on demand for the name/score (+ local player's numeric HP) label.
   private scoreGraphics!: Phaser.GameObjects.Graphics;
   private scoreRowTexts: Phaser.GameObjects.Text[] = [];
 
@@ -204,8 +165,22 @@ export class HudSystem {
 
   // Phone-width compact layout (decided once at build; phones don't grow).
   private compact = false;
-  private barW = BAR_W;
-  private barShieldW = BAR_SHIELD_W;
+  private nameplateR = NAMEPLATE_R;
+  // Y anchor for the chip strip — BELOW the entire nameplate column, not
+  // just the local player's row, so it never collides with row 1+
+  // regardless of roster size. Recomputed every frame in updateScoreRows()
+  // (runs first — see update()) since column height depends on how many
+  // players are in the match. (The dash-readiness dot-row that used to
+  // anchor here moved to ActionBarSystem's M2 slot — Jake, 2026-07-14 —
+  // so this doesn't duplicate that state in two places on screen.)
+  private chipStripY = 0;
+
+  // Local player's own live health, cached each frame in updateVitals() so
+  // the nameplate column can show it as a secondary numeric readout next to
+  // their ring (HUD-research finding: numbers are a confirming signal, not
+  // the primary one — the ring is primary).
+  private localHealth = 0;
+  private localMaxHealth = 1;
 
   private localPlayerId: string;
 
@@ -222,24 +197,19 @@ export class HudSystem {
   }
 
   update(vitals: HudVitals, round: HudRound): void {
-    this.updateVitals(vitals);
+    // Nameplate column first — it sets chipStripY for this frame, which
+    // updateVitals's chip-strip positioning reads below.
     this.updateTopCenter(round);
+    this.updateVitals(vitals);
     this.updateVignette(vitals);
     this.updateStormWarning(vitals);
   }
 
   destroy(): void {
     this.scene.scale.off("resize", this.onResize, this);
-    this.vitalGraphics.destroy();
-    this.portraitGraphics.destroy();
-    this.hpLabel.destroy();
-    this.shLabel.destroy();
     this.chipGraphics.destroy();
     for (const t of this.chipTexts) t.destroy();
     this.chipTexts = [];
-    for (const arc of this.dotArcs) arc.destroy();
-    this.dotArcs = [];
-    this.dashLabel.destroy();
     this.pillGraphics.destroy();
     for (const t of this.pillTexts) t.destroy();
     this.pillTexts = [];
@@ -259,8 +229,11 @@ export class HudSystem {
     const depth = 900;
 
     this.compact = uiWidth(s) < COMPACT_MAX_WIDTH;
-    this.barW = this.compact ? BAR_W_COMPACT : BAR_W;
-    this.barShieldW = this.compact ? BAR_SHIELD_W_COMPACT : BAR_SHIELD_W;
+    this.nameplateR = this.compact ? NAMEPLATE_R_COMPACT : NAMEPLATE_R;
+    // Placeholder — updateScoreRows() (called first every frame, see
+    // update()) recomputes this from the actual column height before
+    // drawChips() positions anything against it.
+    this.chipStripY = PAD_TOP + 80;
 
     // Full-screen vignette (behind HUD elements)
     this.vignette = s.add
@@ -294,49 +267,6 @@ export class HudSystem {
       .setDepth(depth + 2)
       .setAlpha(0);
 
-    // Vital bars (redrawn each frame)
-    this.vitalGraphics = s.add.graphics();
-    this.vitalGraphics.setScrollFactor(0).setDepth(depth + 1);
-
-    // Portrait badge — drawn once per color change (updateVitals), not
-    // every frame; same static "who is this" read as a party-frame icon.
-    this.portraitGraphics = s.add.graphics();
-    this.portraitGraphics.setScrollFactor(0).setDepth(depth + 2);
-
-    const fontBase = {
-      fontFamily: "'Space Mono', Consolas, 'Courier New', monospace",
-      fontStyle: "bold",
-    } as const;
-
-    // Compact (phone portrait): numbers live INSIDE the bars — the label
-    // column collided with the centred timer at ~397px CSS width
-    // (phone screenshot 2026-07-11: "100/1:27" mash).
-    const labelX = this.compact ? PAD_LEFT + 4 : PAD_LEFT + this.barW + 8;
-    const vitalsFontSize = this.compact ? "8px" : "10px";
-    const vitalStroke = this.compact
-      ? { stroke: "#05080f", strokeThickness: 2 }
-      : {};
-
-    this.hpLabel = s.add
-      .text(labelX, PAD_TOP + (this.compact ? 2 : 1), "", {
-        ...fontBase,
-        fontSize: vitalsFontSize,
-        color: "#b8f05a",
-        ...vitalStroke,
-      })
-      .setScrollFactor(0)
-      .setDepth(depth + 2);
-
-    this.shLabel = s.add
-      .text(labelX, PAD_TOP + LINE_H + (this.compact ? 2 : 1), "", {
-        ...fontBase,
-        fontSize: vitalsFontSize,
-        color: "#93c5fd",
-        ...vitalStroke,
-      })
-      .setScrollFactor(0)
-      .setDepth(depth + 2);
-
     // Chip strip — outline-only chips (plate-less)
     this.chipGraphics = s.add.graphics();
     this.chipGraphics.setScrollFactor(0).setDepth(depth + 1);
@@ -369,50 +299,15 @@ export class HudSystem {
       .setScrollFactor(0)
       .setDepth(depth + 2);
 
-    // Scoreboard: portrait-badge rows DOWN THE LEFT SIDE under the vitals
-    // (Jake 2026-07-11 moved this off the centred strip that fought the
-    // timer; Jake 2026-07-14 asked for the plain-text list itself to become
-    // per-row portrait badges, "this is the legacy name plate system" —
-    // same badge recipe as the vitals block, one row per player). Graphics
-    // + text pool built lazily in updateScoreRows(); nothing to create here
-    // beyond the shared Graphics object.
+    // Fused nameplate column — badge + health/shield ring + name/score, one
+    // row per player, down the left side (Jake 2026-07-11 moved the old
+    // plain-text scoreboard off the centred strip that fought the timer;
+    // Jake 2026-07-14 asked for health/shield to fuse into the SAME object
+    // as the nameplate, for every player, not just local). Graphics + text
+    // pool built lazily in updateScoreRows(); nothing to create here beyond
+    // the shared Graphics object.
     this.scoreGraphics = s.add.graphics();
     this.scoreGraphics.setScrollFactor(0).setDepth(depth + 2);
-
-    // Dot-row ammo arcs — created once, recolored each frame (hidden until
-    // something actually feeds abilityCharge). Rows shifted up one LINE_H
-    // since the vestigial jetpack bar row was removed. Currently fed by
-    // dash-bash readiness (0 = just used, 1 = ready) — dim dots = still on
-    // cooldown, bright = charge available (Jake, 2026-07-14).
-    const dotY = PAD_TOP + LINE_H * 2 - 2;
-    const dotRowRight =
-      PAD_LEFT + DOT_RADIUS * 2 + (DOT_COUNT - 1) * (DOT_RADIUS * 2 + DOT_GAP);
-    this.dashLabel = s.add
-      .text(dotRowRight + 6, dotY, "DASH", {
-        ...fontBase,
-        fontSize: this.compact ? "7px" : "8px",
-        color: "#8ff8ff",
-        ...vitalStroke,
-      })
-      .setOrigin(0, 0.5)
-      .setScrollFactor(0)
-      .setDepth(depth + 2);
-    for (let i = 0; i < DOT_COUNT; i++) {
-      const arc = s.add
-        .arc(
-          PAD_LEFT + DOT_RADIUS + i * (DOT_RADIUS * 2 + DOT_GAP),
-          dotY,
-          DOT_RADIUS,
-          0,
-          360,
-          false,
-          PALETTE.textDim,
-          1,
-        )
-        .setScrollFactor(0)
-        .setDepth(depth + 2);
-      this.dotArcs.push(arc);
-    }
 
     // Build-pill graphics (redrawn only when card list changes)
     this.pillGraphics = s.add.graphics();
@@ -431,71 +326,18 @@ export class HudSystem {
     this.lastCardIdsKey = "";
   }
 
-  // ─── Vitals ───────────────────────────────────────────────────────────────
+  // ─── Vitals (local-only widgets: chip strip, vignette source) ────────────
 
   private updateVitals(v: HudVitals): void {
-    const g = this.vitalGraphics;
-    g.clear();
-
-    // Portrait badge (party-frame layout) — drawn once per color change,
-    // not every frame; reserves space so bars/labels/dots shift right to
-    // make room, matching the reference (portrait left, bars extending
-    // right of it) instead of floating a nameplate above the head.
-    const vitalsX = v.portraitColor !== undefined ? PAD_LEFT + PORTRAIT_RESERVED_W : PAD_LEFT;
-    if (v.portraitColor !== this.lastPortraitColor || v.portraitSeed !== this.lastPortraitSeed) {
-      this.lastPortraitColor = v.portraitColor;
-      this.lastPortraitSeed = v.portraitSeed;
-      this.portraitGraphics.clear();
-      if (v.portraitColor !== undefined) {
-        drawPortraitBadge(
-          this.portraitGraphics,
-          PAD_LEFT + PORTRAIT_R,
-          PAD_TOP + PORTRAIT_R - 2,
-          PORTRAIT_R,
-          v.portraitColor,
-          v.portraitSeed ?? "local",
-        );
-      }
-    }
+    this.localHealth = v.health;
+    this.localMaxHealth = v.maxHealth;
 
     if (v.isDead) {
-      this.hpLabel.setText("");
-      this.shLabel.setVisible(false);
       this.drawChips([]);
-      this.updateDots(undefined);
       return;
     }
 
-    // ── Health bar ──────────────────────────────────────────────────────────
-    const hpRatio = Phaser.Math.Clamp(v.health / v.maxHealth, 0, 1);
-    const hpColor = hpRatio > 0.55 ? C_HP_GOOD : hpRatio > 0.28 ? C_HP_WARN : C_HP_CRIT;
-    this.drawBar(g, vitalsX, PAD_TOP, this.barW, BAR_H, hpRatio, hpColor);
-    if (hpColor !== this.hpLabelColorCache) {
-      this.hpLabel.setColor(numToHex(hpColor));
-      this.hpLabelColorCache = hpColor;
-    }
-    this.hpLabel.setText(`${Math.ceil(v.health)} / ${v.maxHealth}`);
-    this.hpLabel.setX(this.compact ? vitalsX + 4 : vitalsX + this.barW + 8);
-
-    // ── Shield bar ──────────────────────────────────────────────────────────
-    const shMax = v.shieldMaxCharge ?? 0;
-    if (shMax > 0 && v.shieldCharge !== undefined) {
-      const shRatio = Phaser.Math.Clamp(v.shieldCharge / shMax, 0, 1);
-      this.drawBar(g, vitalsX, PAD_TOP + LINE_H, this.barShieldW, BAR_SHIELD_H, shRatio, C_SHIELD);
-      this.shLabel.setText(`${Math.ceil(v.shieldCharge)}`);
-      this.shLabel.setX(this.compact ? vitalsX + 4 : vitalsX + this.barW + 8);
-      this.shLabel.setVisible(true);
-    } else {
-      this.shLabel.setVisible(false);
-    }
-
-    // ── Chip strip (outline-only, plate-less) ────────────────────────────────
     this.drawChips(v.chips);
-
-    // ── Dot-row ability charge ───────────────────────────────────────────────
-    this.updateDots(v.abilityCharge, vitalsX);
-
-    // ── Build-pill grid (only rebuilds when card list changes) ───────────────
     this.updateBuildPills(v.cardIds ?? []);
   }
 
@@ -524,7 +366,7 @@ export class HudSystem {
     }
 
     let cx = PAD_LEFT;
-    let cy = PAD_TOP + LINE_H * 2 + 16; // below dot row (jetpack row removed)
+    let cy = this.chipStripY;
     const chipH = 16;
     const chipPadX = 7;
     const gap = 4;
@@ -552,7 +394,7 @@ export class HudSystem {
       const chipAlpha = i === 0 ? baseBrightness : baseBrightness * 0.38;
       const textAlpha = i === 0 ? 1 : 0.45;
       g.lineStyle(1, chip.color, chipAlpha);
-      g.strokeRoundedRect(cx, cy, chipW, chipH, chipH / 2);
+      g.strokeRoundedRect(cx, cy, chipW, chipH, 4);
       text.setAlpha(textAlpha);
 
       text.setPosition(cx + chipPadX, cy + chipH / 2);
@@ -582,15 +424,17 @@ export class HudSystem {
     const tag = PHASE_TAG[round.phase];
     this.phaseTagText.setText(tag.label).setColor(tag.color);
 
-    // Scoreboard rows: sorted by score (leader first), local marked ▸.
+    // Nameplate rows: sorted by score (leader first), local pinned to the
+    // top regardless of rank — dash dots / chip strip anchor a fixed offset
+    // below row 0, so "you" always needs to be row 0.
     const entries = Object.entries(round.scores).sort(
       ([aId, a], [bId, b]) => b - a || aId.localeCompare(bId),
     );
     this.updateScoreRows(entries, round);
   }
 
-  /** One portrait badge + name/score label per row, replacing the old
-   *  plain-text scoreboard list. */
+  /** One fused badge + health/shield ring + name/score row per player,
+   *  down the left side under the timer. Local player pinned first. */
   private updateScoreRows(entries: [string, number][], round: HudRound): void {
     const g = this.scoreGraphics;
     g.clear();
@@ -600,11 +444,28 @@ export class HudSystem {
       return;
     }
 
-    const r = SCORE_ROW_R;
-    const rowH = r * 2 + SCORE_ROW_GAP;
-    const startY = PAD_TOP + LINE_H * 2 + 10;
+    // Float the local player to row 0 — Array.sort is stable in V8/JS spec,
+    // so this only reorders "is it local", preserving the score ordering
+    // already applied to `entries` for everyone else.
+    const sorted = [...entries].sort(([aId], [bId]) => {
+      if (aId === this.localPlayerId) return -1;
+      if (bId === this.localPlayerId) return 1;
+      return 0;
+    });
 
-    while (this.scoreRowTexts.length < entries.length) {
+    const rOther = this.nameplateR;
+    const rLocal = this.nameplateR + NAMEPLATE_R_LOCAL_BONUS;
+    // Row spacing always budgets for the bigger local radius AND a shield
+    // ring, so the grid never shifts when the local row's own shield toggles
+    // on/off mid-match.
+    const maxOuterR = nameplateOuterRadius(rLocal, true);
+    const rowH = maxOuterR * 2 + NAMEPLATE_ROW_GAP;
+    const startY = PAD_TOP + maxOuterR;
+    // Breathing pulse for critical-health rings (portraitBadge.ts dims
+    // between 65-100% alpha) — one shared clock, not per-row tweens.
+    const pulseAlpha = (Math.sin(this.scene.time.now / 140) + 1) / 2;
+
+    while (this.scoreRowTexts.length < sorted.length) {
       const t = this.scene.add
         .text(0, 0, "", {
           fontFamily: "'Space Mono', Consolas, 'Courier New', monospace",
@@ -619,29 +480,77 @@ export class HudSystem {
         .setDepth(902);
       this.scoreRowTexts.push(t);
     }
-    for (let i = entries.length; i < this.scoreRowTexts.length; i += 1) {
+    for (let i = sorted.length; i < this.scoreRowTexts.length; i += 1) {
       this.scoreRowTexts[i]!.setVisible(false);
     }
 
-    for (let i = 0; i < entries.length; i += 1) {
-      const [pid, score] = entries[i]!;
+    for (let i = 0; i < sorted.length; i += 1) {
+      const [pid, score] = sorted[i]!;
       const isLocal = pid === this.localPlayerId;
+      const r = isLocal ? rLocal : rOther;
       let tag = isLocal ? "YOU" : (round.names?.[pid] ?? playerTag(pid));
       if (this.compact) tag = tag.replace("BOT · ", "");
       tag = tag.slice(0, 14);
 
-      const cy = startY + r + i * rowH;
+      const cy = startY + i * rowH;
       const color = round.colors?.[pid] ?? PALETTE.textDim;
-      // Local player's badge gets a bright cyan ring (matches the "you"
-      // color used elsewhere) so it reads at a glance without needing to
-      // parse the ▸ mark; everyone else keeps the default darkened-shade ring.
+      const hv = round.healthByPlayer?.[pid];
+
+      // Identity badge (sigil + notched dial bezel) — unchanged recipe.
       drawPortraitBadge(g, PAD_LEFT + r, cy, r, color, pid, undefined, isLocal ? 0x8ff8ff : undefined);
+      // Fused health/shield ring, drawn outside the badge (Jake 2026-07-14:
+      // "make our health shield and nameplate the whole thing" — every
+      // player's live vitals, not just local's).
+      drawNameplateRing(g, PAD_LEFT + r, cy, r, {
+        healthRatio: hv?.ratio ?? 1,
+        shieldRatio: hv?.shieldRatio,
+        isDead: hv?.isDead ?? false,
+        pulseAlpha,
+      });
 
       const text = this.scoreRowTexts[i]!;
-      text.setText(`${isLocal ? "▸ " : "  "}${tag}  ${score}`);
-      text.setPosition(PAD_LEFT + r * 2 + 8, cy);
+      let label = `${isLocal ? "▸ " : "  "}${tag}  ${score}`;
+      // Numeric HP as a secondary confirming readout — only for local,
+      // since the ring already carries the primary signal for everyone.
+      if (isLocal) label += `   ${Math.ceil(this.localHealth)}/${this.localMaxHealth}`;
+      const textX = PAD_LEFT + rLocal * 2 + 10;
+      text.setText(label);
+      text.setPosition(textX, cy);
       text.setVisible(true);
+
+      // Thin underline seam beneath the label (doctrine: "floating type +
+      // thin underlines", not a filled plate) — ties name/score visually
+      // to the badge without adding a background box.
+      g.lineStyle(1, color, isLocal ? 0.5 : 0.28);
+      const underlineY = cy + text.height / 2 + 2;
+      g.lineBetween(textX, underlineY, textX + text.width, underlineY);
+
+      // Compact status ticks — small filled triangles after the label, one
+      // per active buff (▲) / debuff (▼), CS2-killfeed-style icon-stacking
+      // rather than the full text chip strip (no room for that per row).
+      const ticks = round.statusByPlayer?.[pid];
+      if (ticks && ticks.length > 0) {
+        const tickR = 3.5;
+        const tickGap = 4;
+        let tx = textX + text.width + 10;
+        const shown = ticks.slice(0, 5);
+        for (const tick of shown) {
+          g.fillStyle(tick.color, 0.9);
+          if (tick.isDebuff) {
+            g.fillTriangle(tx - tickR, cy - tickR * 0.6, tx + tickR, cy - tickR * 0.6, tx, cy + tickR * 0.9);
+          } else {
+            g.fillTriangle(tx - tickR, cy + tickR * 0.6, tx + tickR, cy + tickR * 0.6, tx, cy - tickR * 0.9);
+          }
+          tx += tickR * 2 + tickGap;
+        }
+      }
     }
+
+    // Chip strip anchors below the FULL column, not just row 0 — avoids
+    // colliding with row 1 when the roster grows past just "you" (Jake,
+    // 2026-07-14 iteration pass).
+    const columnBottom = startY + (sorted.length - 1) * rowH + maxOuterR;
+    this.chipStripY = columnBottom + 18;
   }
 
   // ─── Vignette ─────────────────────────────────────────────────────────────
@@ -690,40 +599,6 @@ export class HudSystem {
       this.stormVignetteTween = undefined;
       this.stormVignette.setAlpha(0);
       this.stormWarningText.setAlpha(0);
-    }
-  }
-
-  // ─── Dot-row ability charge ───────────────────────────────────────────────
-
-  private updateDots(charge: number | undefined, vitalsX = PAD_LEFT): void {
-    // Reposition every call (cheap — 6 arcs + 1 label) so the row shifts
-    // right when the portrait badge is reserving space, same as the bars.
-    const dotY = PAD_TOP + LINE_H * 2 - 2;
-    for (let i = 0; i < this.dotArcs.length; i++) {
-      this.dotArcs[i]!.setPosition(vitalsX + DOT_RADIUS + i * (DOT_RADIUS * 2 + DOT_GAP), dotY);
-    }
-    const dotRowRight = vitalsX + DOT_RADIUS * 2 + (DOT_COUNT - 1) * (DOT_RADIUS * 2 + DOT_GAP);
-    this.dashLabel.setPosition(dotRowRight + 6, dotY);
-
-    // Nothing feeds abilityCharge → hide the row entirely rather than pin six
-    // permanently-dim dots to the HUD (dead UI, and precious space on phones).
-    if (charge === undefined) {
-      for (const arc of this.dotArcs) arc.setVisible(false);
-      this.dashLabel.setVisible(false);
-      return;
-    }
-    this.dashLabel.setVisible(true);
-    const ratio = Phaser.Math.Clamp(charge, 0, 1);
-    const filledCount = Math.round(ratio * DOT_COUNT);
-    // Ready (ratio===1) reads brighter than "almost ready" — cyan pulses in,
-    // not just another dim-to-bright dot, so "it's up" is unambiguous at a
-    // glance rather than needing to count dots.
-    const readyColor = ratio >= 1 ? 0x8ff8ff : PALETTE.textHi;
-    for (let i = 0; i < this.dotArcs.length; i++) {
-      const arc = this.dotArcs[i]!;
-      const filled = i < filledCount;
-      arc.setVisible(true);
-      arc.setFillStyle(filled ? readyColor : PALETTE.textDim, filled ? 1 : 0.45);
     }
   }
 
@@ -788,36 +663,11 @@ export class HudSystem {
       label.setVisible(true);
     }
   }
-
-  // ─── Bar drawing helper ───────────────────────────────────────────────────
-
-  private drawBar(
-    g: Phaser.GameObjects.Graphics,
-    x: number,
-    y: number,
-    w: number,
-    h: number,
-    ratio: number,
-    fillColor: number,
-  ): void {
-    // Track
-    g.fillStyle(C_TRACK, 0.92);
-    g.fillRoundedRect(x, y, w, h, 3);
-    // Fill
-    if (ratio > 0) {
-      g.fillStyle(fillColor, 0.95);
-      g.fillRoundedRect(x, y, Math.max(3, w * ratio), h, 3);
-    }
-    // Shine overlay (top-half lighter strip)
-    g.fillStyle(0xffffff, 0.06);
-    g.fillRoundedRect(x, y, w, Math.floor(h / 2), 3);
-    // Border
-    g.lineStyle(1, 0xffffff, 0.12);
-    g.strokeRoundedRect(x, y, w, h, 3);
-  }
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
+
+const C_VIGNETTE = 0xfb7185;
 
 function numToHex(n: number): string {
   return `#${n.toString(16).padStart(6, "0")}`;

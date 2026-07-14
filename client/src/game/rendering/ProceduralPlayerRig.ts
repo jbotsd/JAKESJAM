@@ -111,7 +111,12 @@ export type LimbSolve = {
 const DARK = 0x07101c;
 const DARK2 = 0x0f1a2e;
 const WHITE = 0xf7fbff;
-const ACCENT = 0x8ff8ff; // Crystal cyan glow
+// Sapphire Conduit (2026-07-15 palette pivot) — the vessel's own inner-light
+// identity default, same hue family as the void/hull structure (H262°), not
+// a loadout property. See palette.ts's header comment for the full
+// rationale. A purchased cosmetic skin can still set accentColor to
+// anything (gold included) — only the *default* moved.
+const ACCENT = 0x3c79f0;
 
 export class ProceduralPlayerRig implements CombatRig {
   private readonly graphics: Phaser.GameObjects.Graphics;
@@ -137,14 +142,24 @@ export class ProceduralPlayerRig implements CombatRig {
   private static readonly CROUCH_BLEND_TAU_MS = 70;
   // ── Dance groove (2026-07-13, Jake: "rotate my arms around like I
   // rotate the mouse in a circle... lean deeply into that... rhythm sync
-  // and player-controllable motion has a dancing effect") ──────────────
+  // and player-controllable motion has a dancing effect"; restyled
+  // 2026-07-15, Jake: "study a bumpin club dude, like Skrillex — tempo
+  // sync to the current song") ──────────────────────────────────────────
   // The aim-orbit shoulder rotation (perp vector, below) ALREADY swings
-  // the arms around the body as the mouse circles — that's the thing
-  // Jake is pointing at. This layer leans into it: grounded + idle +
-  // actively spinning the aim (not just re-aiming at a target) triggers
-  // a springed "danceEnergy" that drives a beat-synced hip sway + bounce
-  // riding the EXISTING idle-life pipeline (breathe/weightShift), so it
-  // composes with everything already there instead of fighting it.
+  // the arms around the body as the mouse circles — that's the arm-swirl
+  // dubstep-dance reference points at, already wired as the trigger
+  // gesture. This layer leans into it: grounded + idle + actively
+  // spinning the aim (not just re-aiming at a target) triggers a springed
+  // "danceEnergy" that drives a beat-synced hip sway + bounce riding the
+  // EXISTING idle-life pipeline (breathe/weightShift). The 2026-07-15 pass
+  // adds a REAL beat-reactive hit: SonicField's `beat` transient (main.ts
+  // tickMusicIntensity — hard-attack/soft-decay bass onset envelope,
+  // computed from whatever's actually playing, no fake BPM guess) is
+  // rising-edge-detected below and kicks an underdamped impulse spring —
+  // headbang + chest-pop snap on the ACTUAL bass hits of the current
+  // song, not a canned loop. The always-ticking groovePhase sine stays as
+  // the silent-fallback base layer (never fully static with no music);
+  // the impulse is what makes it read as "going IN" on the drop.
   /** Raw aim angle one frame ago (body-relative, NOT chest-relative — this
    *  is only a spin-speed detector, precision doesn't matter). */
   private prevAimAngle = 0;
@@ -156,13 +171,119 @@ export class ProceduralPlayerRig implements CombatRig {
   private static readonly DANCE_SPIN_THRESHOLD_RADPS = 2.4;
   private static readonly DANCE_ATTACK_MS = 260;
   private static readonly DANCE_RELEASE_MS = 900;
-  /** Always-ticking groove clock (~2.1Hz ≈ 126bpm quarter notes) — the
-   *  silent-fallback rhythm so dancing still reads as intentional with no
-   *  music playing; SonicField's live beat/pulse only modulates AMPLITUDE
-   *  (see groove computation), never re-times this phase, so there's no
-   *  phase-lock drift/latency to fight. */
+  /** Always-ticking groove clock (~2.35Hz ≈ 141bpm quarter notes — EDM/
+   *  dubstep tempo territory) — the silent-fallback rhythm so dancing
+   *  still reads as intentional with no music playing. This is the SMOOTH
+   *  base layer only; the sharp "hit" character comes from beatHitSpring
+   *  below, which reacts to real transients rather than re-timing this
+   *  phase (avoids phase-lock drift/latency against imprecise audio
+   *  timing — see beatHitSpring's comment for the actual sync mechanism). */
   private groovePhase = 0;
-  private static readonly GROOVE_HZ = 2.1;
+  private static readonly GROOVE_HZ = 2.35;
+  /** Previous-frame SonicField.beat (bass-transient envelope, main.ts
+   *  tickMusicIntensity) — rising-edge detector for kicking beatHitSpring.
+   *  This is the REAL tempo-sync mechanism: no BPM is known or guessed for
+   *  in-match music (unlike TutorialScene's hand-authored SongDirector
+   *  cues, which only exist for that one fixed track), so instead of
+   *  faking a beat grid, the hit reaction fires directly off the live
+   *  audio analyser's actual detected bass onsets. */
+  private prevBeatEnv = 0;
+  /** Underdamped impulse spring — kicked hard on a detected beat onset,
+   *  rings down naturally (springTo below with a low damping ratio does
+   *  the "snap then settle" shape, no separate envelope needed). Drives
+   *  the headbang snap + chest-pop punch layered on top of the smooth
+   *  groove sine — this is what makes the reaction read as "hitting" the
+   *  actual drop instead of just swaying near it. */
+  private beatHitSpring: SpringState = springState(0);
+  private static readonly BEAT_HIT_THRESHOLD = 0.35;
+  private static readonly BEAT_HIT_RISE_DELTA = 0.12;
+  // Tuned so the underdamped spring below peaks at beatHitSpring.value ≈ 1.0
+  // at full kick (verified: peak ≈ kick * 0.0147 for FREQ_HZ=7.5/DAMP=0.32
+  // — an underdamped kicked spring's peak is NOT 1:1 with kick velocity,
+  // it's velDelta/omega_d scaled by the decay-to-peak-time factor). Keeping
+  // beatHit in a clean ~0..1 range makes the px multipliers downstream
+  // directly comparable to the existing groove-amplitude multipliers
+  // (which are also ~0..1-scaled), instead of needing their own arbitrary
+  // scale.
+  private static readonly BEAT_HIT_KICK = 68;
+  private static readonly BEAT_HIT_FREQ_HZ = 7.5;
+  private static readonly BEAT_HIT_DAMP = 0.32;
+  // ── Perth Shuffle footwork + spasmodic dotted-time throws (2026-07-15,
+  // Jake: "the Perth Shuffle... it's sentimental, it's significant" +
+  // "throw the arms out too rhythmically spasmodically... in dotted time
+  // SOME of the time") ───────────────────────────────────────────────────
+  // Researched, not guessed: Melbourne Shuffle's two core steps (Perth's
+  // scene ran the same core vocabulary — same footwork, local community,
+  // see the "Perth Shuffle Meetup"/"Shuffling In Perth City" reference
+  // videos) are the Running Man (one foot kicks forward while the other
+  // slides back, weight evenly shared, alternating — the "moving forward
+  // while staying in place" illusion) and the T-step (a lateral kick +
+  // pivot for side travel). This 2D side-view rig has no true depth axis
+  // for a literal lateral T-step, so it's approximated as a stance-width
+  // pulse (feet momentarily spread/narrow) riding on the same clock —
+  // this is the honest 2D-silhouette read of that move, not the literal
+  // 3-axis technique. Previously feet were COMPLETELY STATIC while
+  // idle-dancing (footPos's stride/lift/drunkFoot terms are all `* walk`,
+  // which is 0 when idle) — all motion was upper-body. This adds the
+  // first idle-dance leg motion the rig has ever had.
+  private static readonly SHUFFLE_STEP_HZ_MULT = 1.4; // relative to GROOVE_HZ — faster than the torso bounce, real shuffle footwork is busier than the beat itself
+  private static readonly SHUFFLE_STRIDE_PX = 13;
+  private static readonly SHUFFLE_LIFT_PX = 6;
+  private static readonly SHUFFLE_SPREAD_PULSE_PX = 4; // T-step approximation
+  /** Rising-edge-detected beat hits sometimes ALSO fire a wide, spasmodic
+   *  arm throw-out (not the smooth fist-pump punch — a sudden extended
+   *  fling) — genuinely randomized per hit (Math.random is fine here, this
+   *  is pure render/cosmetic code with zero determinism requirement,
+   *  unlike sim/ code), so it reads as spontaneous flailing rather than a
+   *  fixed pattern. A separate roll schedules some throws on a DOTTED
+   *  subdivision (1.5x the just-measured beat interval) instead of firing
+   *  immediately — syncopated, off the main pulse, "spasmodic" rather than
+   *  metronomic. prevBeatHitMs tracks wall-clock-equivalent (accumulated
+   *  deltaMs) time of the last hit to measure that interval live from
+   *  whatever's actually playing, same honesty rule as beatHitSpring. */
+  private msClock = 0;
+  private lastBeatHitMs = 0;
+  private beatIntervalEstimateMs = 500;
+  private dottedThrowAtMs = -1; // -1 = none scheduled
+  private dottedThrowHand: 0 | 1 = 0;
+  private static readonly THROW_CHANCE = 0.45;
+  private static readonly DOTTED_THROW_CHANCE = 0.22;
+  private static readonly THROW_KICK = 620;
+  // ── Pop-and-lock arm poses (2026-07-15, Jake: "elbows and hand pop and
+  // lock freely like the beat on each bar knocks them into the next
+  // motion") — researched: real popping/locking is a sharp muscle "hit"
+  // that snaps into a held freeze pose (locking) rather than continuous
+  // flowing motion; the snap itself matters as much as the pose. This
+  // REPLACES the old continuous sine-wobble raised-arm target: instead of
+  // a target that's always drifting, the target now only changes once per
+  // bar (every 4th detected beat hit — standard 4/4 assumption, matches
+  // house/EDM), landing on a freshly randomized WIDE elbows-out offset
+  // each time ("freely" — not a fixed repeating pattern), then holding
+  // completely still (locked) until the next bar. The already-tight
+  // armFreq/armDamp spring (see computeArmTargets) delivers the snap; this
+  // just makes the TARGET itself discrete instead of continuously moving. */
+  private barBeatCounter = 0;
+  private static readonly BAR_BEATS = 4;
+  // Non-zero defaults (not 0,0) so the pose reads as an intentional wide
+  // hold from the very first frame of dancing, not a collapsed pose while
+  // waiting for the first bar to complete.
+  private lockLeadOffsetX = 18;
+  private lockLeadOffsetY = -18;
+  private lockBackOffsetX = -16;
+  private lockBackOffsetY = -16;
+  // Second, SLOWER/softer oscillator layered on the elbow itself (not the
+  // hand) — a literal pendulum-on-a-pendulum: the hand spring (armFreq
+  // ~5.2-7.2Hz) is the fast outer swing, this is the lagging inner joint
+  // (Jake: "think of a pendulum on a pendulum, the end of a pendulum").
+  // Perturbs solveTwoBone's `bend` multiplier by a few % so the elbow
+  // visibly keeps swinging/settling on its own after the hand has already
+  // snapped onto its locked target, instead of the elbow being a mute
+  // point that's 100% geometrically implied by the hand position.
+  private leadElbowWobble: SpringState = springState(0);
+  private backElbowWobble: SpringState = springState(0);
+  private static readonly ELBOW_WOBBLE_FREQ_HZ = 2.6;
+  private static readonly ELBOW_WOBBLE_DAMP = 0.28;
+  private static readonly ELBOW_WOBBLE_KICK = 3.4;
   /** ms of sustained high dance energy, clamped to DANCE_RAISE_BUILD_MS —
    *  climbs while dancing, falls back down (faster than it climbs) once
    *  the energy gate drops. Not a one-shot trigger: this directly drives
@@ -172,11 +293,10 @@ export class ProceduralPlayerRig implements CombatRig {
   private static readonly DANCE_RAISE_GATE = 0.55;
   private static readonly DANCE_RAISE_BUILD_MS = 4200;
   private static readonly DANCE_RAISE_FALL_RATE = 2.4; // ms of idleDanceMs lost per ms once you stop
-  /** Smoothed 0..1 — how far up the arms have climbed toward the raised
-   *  "working miracles" overhead pose. Eased against idleDanceMs/BUILD_MS
-   *  so the climb (and the fall back to hanging) is a slow continuous
-   *  lift, never a snap. computeArmTargets blends the hang and raised
-   *  targets by this value. */
+  /** Smoothed 0..1 — how far the fists have climbed toward the raised
+   *  overhead pump pose. Eased against idleDanceMs/BUILD_MS so the climb
+   *  (and the fall back to hanging) is a continuous lift, never a snap.
+   *  computeArmTargets blends the hang and raised targets by this value. */
   private danceRaise = 0;
   /** Optional external audio-driven glow input, 0..~1 — e.g. TutorialScene
    *  feeding a real isolated-vocal-stem envelope so the hero visibly sings
@@ -793,6 +913,80 @@ export class ProceduralPlayerRig implements CombatRig {
     // doesn't bounce and sway in lockstep).
     const groove = Math.sin(this.groovePhase) * grooveAmp;
     const grooveSway = Math.sin(this.groovePhase * 0.5 + 0.6) * grooveAmp;
+    // Real tempo-sync: rising-edge detect SonicField's live beat-transient
+    // envelope (an actual bass-onset detector on whatever's playing, not a
+    // guessed BPM) and kick an underdamped impulse spring HARD on every
+    // detected hit — this is the "going IN on the drop" reaction. Gated on
+    // danceEnergy so it's silent unless the player is actually dancing.
+    this.msClock += deltaMs;
+    if (
+      this.danceEnergy > 0.05 &&
+      sonic.beat > ProceduralPlayerRig.BEAT_HIT_THRESHOLD &&
+      sonic.beat - this.prevBeatEnv > ProceduralPlayerRig.BEAT_HIT_RISE_DELTA
+    ) {
+      this.beatHitSpring = springKick(
+        this.beatHitSpring,
+        ProceduralPlayerRig.BEAT_HIT_KICK * this.danceEnergy,
+      );
+      // Spasmodic arm-throw roll (2026-07-15) — genuinely randomized per
+      // hit, SOME of the time, not every hit (Jake: "rhythmically
+      // spasmodically... in dotted time SOME of the time"). Three
+      // outcomes: fire immediately (on-beat), schedule for a dotted
+      // subdivision of the just-measured live beat interval (syncopated,
+      // off-beat), or nothing extra this hit — the existing headbang/
+      // chest-pop/fist-pump still happens regardless, this just layers an
+      // occasional wild fling on top.
+      const interval = this.msClock - this.lastBeatHitMs;
+      if (interval > 100 && interval < 2000) {
+        this.beatIntervalEstimateMs = interval;
+      }
+      this.lastBeatHitMs = this.msClock;
+      const roll = Math.random();
+      const hand: 0 | 1 = Math.random() < 0.5 ? 0 : 1;
+      if (roll < ProceduralPlayerRig.THROW_CHANCE) {
+        this.triggerArmThrow(hand);
+      } else if (roll < ProceduralPlayerRig.THROW_CHANCE + ProceduralPlayerRig.DOTTED_THROW_CHANCE) {
+        this.dottedThrowAtMs = this.msClock + this.beatIntervalEstimateMs * 1.5;
+        this.dottedThrowHand = hand;
+      }
+      // Pop-and-lock bar counter — every 4th detected beat hit (one bar,
+      // 4/4 assumption) rolls a fresh wide locked pose (see rollLockPose).
+      this.barBeatCounter += 1;
+      if (this.barBeatCounter >= ProceduralPlayerRig.BAR_BEATS) {
+        this.barBeatCounter = 0;
+        this.rollLockPose();
+      }
+    }
+    if (this.dottedThrowAtMs >= 0 && this.msClock >= this.dottedThrowAtMs) {
+      this.triggerArmThrow(this.dottedThrowHand);
+      this.dottedThrowAtMs = -1;
+    }
+    this.prevBeatEnv = sonic.beat;
+    this.beatHitSpring = springTo(
+      this.beatHitSpring,
+      0,
+      deltaMs,
+      ProceduralPlayerRig.BEAT_HIT_FREQ_HZ,
+      ProceduralPlayerRig.BEAT_HIT_DAMP,
+    );
+    this.leadElbowWobble = springTo(
+      this.leadElbowWobble,
+      0,
+      deltaMs,
+      ProceduralPlayerRig.ELBOW_WOBBLE_FREQ_HZ,
+      ProceduralPlayerRig.ELBOW_WOBBLE_DAMP,
+    );
+    this.backElbowWobble = springTo(
+      this.backElbowWobble,
+      0,
+      deltaMs,
+      ProceduralPlayerRig.ELBOW_WOBBLE_FREQ_HZ,
+      ProceduralPlayerRig.ELBOW_WOBBLE_DAMP,
+    );
+    // Clamped + rectified: only the downward punch of the ring-down reads
+    // as a hit (a hit that also produced upward recoil would look like a
+    // second bounce, not a snap-and-settle).
+    const beatHit = Math.max(0, this.beatHitSpring.value) * this.danceEnergy;
     // Vibes lighting: brightens continuously with the raise, and once the
     // arms are fully up a slow shimmer rides on top ("working miracles")
     // instead of the glow just sitting flat at max.
@@ -805,7 +999,11 @@ export class ProceduralPlayerRig implements CombatRig {
       (this.killPulseMs / ProceduralPlayerRig.KILL_PULSE_MS) *
       (this.killPulseMs / ProceduralPlayerRig.KILL_PULSE_MS);
     const danceGlowBoost = Phaser.Math.Clamp(
-      this.danceRaise * 0.85 + miraclePulse * 0.5 + this.externalAudioBoost + killBoost * 0.9,
+      this.danceRaise * 0.85 +
+        miraclePulse * 0.5 +
+        this.externalAudioBoost +
+        killBoost * 0.9 +
+        beatHit * 0.6,
       0,
       1.35,
     );
@@ -821,12 +1019,19 @@ export class ProceduralPlayerRig implements CombatRig {
     // below, so hip drop mostly read as a hunch, not a squat. Bigger drops
     // here + less leg-length shrink (see legLen1/legLen2) force the IK
     // solver into real, visible knee bend.
+    // beatHit adds a SHARP downward snap on top of the smooth groove sine —
+    // headbang is strongest at the head (inverted from the old damp-toward-
+    // head shape, since a real headbang is the head snapping hardest, not
+    // softest), chest gets a real pop, pelvis just grounds the hit. Bounce
+    // coefficients tightened 2026-07-15 (Jake: "close more vert bounce") —
+    // arms (pop-and-lock, below) are now the primary read; the body bounce
+    // is a grounding undertone, not competing for attention.
     const pelvisY =
-      ground - Phaser.Math.Linear(52, 28, cr) * sy - bob + gather * s + cushion + breathe * 0.4 + throwDrop - groove * 3.2 * sy;
+      ground - Phaser.Math.Linear(52, 28, cr) * sy - bob + gather * s + cushion + breathe * 0.4 + throwDrop - groove * 1.6 * sy + beatHit * 1 * sy;
     const chestYTarget =
-      ground - Phaser.Math.Linear(78, 52, cr) * sy - bob + gather * 1.2 * s + cushion * 1.15 + breathe + throwDrop * 0.5 - groove * 2.4 * sy;
+      ground - Phaser.Math.Linear(78, 52, cr) * sy - bob + gather * 1.2 * s + cushion * 1.15 + breathe + throwDrop * 0.5 - groove * 1.2 * sy + beatHit * 3 * sy;
     const headYTarget =
-      ground - Phaser.Math.Linear(100, 72, cr) * sy - bob + gather * 1.4 * s + cushion * 1.25 + breathe * 1.4 + throwDrop * 0.3 - groove * 2 * sy;
+      ground - Phaser.Math.Linear(100, 72, cr) * sy - bob + gather * 1.4 * s + cushion * 1.25 + breathe * 1.4 + throwDrop * 0.3 - groove * 1 * sy + beatHit * 5 * sy;
     const cx = pose.position.x + this.hitOffsetX * hitEased + drunkSway * 0.35;
     // Forward CENTRE OF MASS: the whole body chain (pelvis up) rides ahead
     // of the feet while moving — the falling-forward posture that makes a
@@ -957,16 +1162,18 @@ export class ProceduralPlayerRig implements CombatRig {
         this.backHandSpringY = springKick(this.backHandSpringY, aim.y * kick);
       }
     }
-    // Smooth grooves: the more the dance has taken over (danceRaise), the
-    // softer/slower the arm springs get — a combat whip snaps taut, but
-    // working a miracle overhead should flow, not snap. Untouched (full
-    // combat snap) at danceRaise=0.
+    // Fist-pump grooves (restyled 2026-07-15 from the old floaty-flow
+    // version): the more the dance has taken over (danceRaise), the
+    // SNAPPIER/tighter the arm springs get — a fist pump punches to a stop,
+    // it doesn't drift there. Slightly past combat's own snap at full
+    // raise, since a punched-up fist should feel harder than a readied
+    // weapon, not softer.
     const armFreq = Phaser.Math.Linear(
       ProceduralPlayerRig.ARM_FREQUENCY_HZ,
-      2.6,
+      7.2,
       this.danceRaise,
     );
-    const armDamp = Phaser.Math.Linear(ProceduralPlayerRig.ARM_DAMPING, 0.82, this.danceRaise);
+    const armDamp = Phaser.Math.Linear(ProceduralPlayerRig.ARM_DAMPING, 0.68, this.danceRaise);
     this.leadHandSpringX = springTo(this.leadHandSpringX, armTargets.lead.x, deltaMs, armFreq, armDamp);
     this.leadHandSpringY = springTo(this.leadHandSpringY, armTargets.lead.y, deltaMs, armFreq, armDamp);
     const handLead = vec(this.leadHandSpringX.value, this.leadHandSpringY.value);
@@ -1015,8 +1222,20 @@ export class ProceduralPlayerRig implements CombatRig {
     const legR = solveTwoBone(hipR, footR, legLen1, legLen2, -this.facing);
     const armUpper = ProceduralPlayerRig.ARM_UPPER * s;
     const armLower = ProceduralPlayerRig.ARM_LOWER * s;
-    const armLead = solveTwoBone(shoulderLead, handLead, armUpper, armLower, -this.facing);
-    const armBack = solveTwoBone(shoulderBack, handBack, armUpper, armLower, this.facing);
+    const armLead = solveTwoBone(
+      shoulderLead,
+      handLead,
+      armUpper,
+      armLower,
+      -this.facing * (1 + this.leadElbowWobble.value * 0.15),
+    );
+    const armBack = solveTwoBone(
+      shoulderBack,
+      handBack,
+      armUpper,
+      armLower,
+      this.facing * (1 + this.backElbowWobble.value * 0.15),
+    );
 
     const healthRatio = (pose.health ?? 100) / Math.max(1, pose.maxHealth ?? 100);
     const full = this.detail === "full";
@@ -1946,15 +2165,27 @@ export class ProceduralPlayerRig implements CombatRig {
       const hangLead = vec(shoulderLead.x + f * 4 * s, shoulderLead.y + 9 * s + sway);
       const hangBack = vec(shoulderBack.x - f * 1.5 * s, shoulderBack.y + 16 * s + sway * 0.7);
       if (this.danceRaise > 0.01) {
-        // WORKING MIRACLES: the longer a sustained dance groove holds, the
-        // higher the arms slowly climb overhead — continuously blended
-        // against danceRaise (0..1), never a pop/snap. A gentle wave, half
-        // a beat apart per hand, keeps them alive once raised instead of
-        // freezing in place — reads as channeling, not a held pose.
-        const waveLead = Math.sin(this.groovePhase * 1.3);
-        const waveBack = Math.sin(this.groovePhase * 1.3 + Math.PI * 0.6);
-        const raisedLead = vec(shoulderLead.x + f * 10 * s, shoulderLead.y - (40 + waveLead * 6) * s);
-        const raisedBack = vec(shoulderBack.x - f * 6 * s, shoulderBack.y - (34 + waveBack * 6) * s);
+        // POP AND LOCK (restyled 2026-07-15 from a continuous fist-pump
+        // wobble): the longer a sustained dance groove holds, the higher
+        // the arms climb toward ready-to-pop — continuously blended
+        // against danceRaise (0..1), same mechanism as before. What's
+        // different is the target itself: rollLockPose() only changes it
+        // once per bar (this.lockLeadOffsetX/Y etc — see its own comment),
+        // so between bars the target is COMPLETELY FIXED — the already-
+        // snappy armFreq/armDamp spring settles onto it and holds still
+        // (the "lock"), instead of continuously drifting/waving. The snap
+        // ITSELF is the beat reaction now, not an added wobble on top of
+        // one. beatHit still nudges the reach slightly for a little extra
+        // punch right on the hit that changes the lock.
+        const beatHit = Math.max(0, this.beatHitSpring.value) * this.danceEnergy;
+        const raisedLead = vec(
+          shoulderLead.x + this.lockLeadOffsetX * s * (1 + beatHit * 0.12),
+          shoulderLead.y + this.lockLeadOffsetY * s * (1 + beatHit * 0.12),
+        );
+        const raisedBack = vec(
+          shoulderBack.x + this.lockBackOffsetX * s * (1 + beatHit * 0.12),
+          shoulderBack.y + this.lockBackOffsetY * s * (1 + beatHit * 0.12),
+        );
         const r = this.danceRaise;
         return {
           lead: vec(
@@ -2074,6 +2305,70 @@ export class ProceduralPlayerRig implements CombatRig {
     return vec(shoulder.x + dir.x * reach, shoulder.y + dir.y * reach);
   }
 
+  /** Spasmodic arm-throw (2026-07-15) — kicks `hand`'s spring wide, up,
+   *  and outward with a randomized angle + magnitude so repeated throws
+   *  don't look identical (Jake: "spasmodically"). Called from the
+   *  beat-hit block above, both for immediate on-beat throws and for
+   *  throws scheduled on a dotted (syncopated) subdivision. Pure velocity
+   *  kick — armFreq/armDamp (already snappy at high danceRaise) pull it
+   *  back to the normal target afterward, so this reads as a sudden fling
+   *  that gets reeled back in, not a pose change. */
+  private triggerArmThrow(hand: 0 | 1): void {
+    const s = this.scale;
+    const outSign = hand === 0 ? this.facing : -this.facing;
+    const baseAngle = -Math.PI * 0.6; // mostly up, biased outward
+    const angle = baseAngle + (Math.random() - 0.5) * 1.1;
+    const mag = ProceduralPlayerRig.THROW_KICK * (0.7 + Math.random() * 0.55) * s;
+    const vx = Math.cos(angle) * mag * outSign;
+    const vy = Math.sin(angle) * mag;
+    const wobbleKick = ProceduralPlayerRig.ELBOW_WOBBLE_KICK * (Math.random() < 0.5 ? -1 : 1);
+    if (hand === 0) {
+      this.leadHandSpringX = springKick(this.leadHandSpringX, vx);
+      this.leadHandSpringY = springKick(this.leadHandSpringY, vy);
+      this.leadElbowWobble = springKick(this.leadElbowWobble, wobbleKick);
+    } else {
+      this.backHandSpringX = springKick(this.backHandSpringX, vx);
+      this.backHandSpringY = springKick(this.backHandSpringY, vy);
+      this.backElbowWobble = springKick(this.backElbowWobble, wobbleKick);
+    }
+  }
+
+  /** Pop-and-lock pose roll (2026-07-15) — picks a fresh WIDE, elbows-out
+   *  offset pair for both hands, called once per bar (every 4th detected
+   *  beat hit). "freely" (Jake) means genuinely randomized, not a fixed
+   *  rotation of a small pose set — every bar looks a little different.
+   *  Both hands always land outward (away from the body, via `this.facing`)
+   *  and at a varied height, echoing the "arms drawn above shoulder, held"
+   *  reference pose without repeating it exactly every time. */
+  private rollLockPose(): void {
+    // Budgeted to comfortably under ARM_REACH (40): worst case
+    // hypot(24, 28) ≈ 37. Past ~37-38 solveTwoBone's own reach clamp
+    // (upper+lower) pins the elbow dead-center on the shoulder→hand line
+    // (jointAngle → 0) — a rigid straight rod with NO visible elbow at
+    // all, which is exactly what "arms dont swing past the elbows" was
+    // catching (the old 20-42/-62-14 range hit ~75, nearly 2x reach,
+    // maxed out every single time). Staying under budget guarantees a
+    // real, visible elbow bend at every locked pose.
+    const wideMin = 10;
+    const wideMax = 24;
+    const highMin = -28; // most above the shoulder
+    const highMax = -6; // some closer to shoulder height
+    this.lockLeadOffsetX = (wideMin + Math.random() * (wideMax - wideMin)) * this.facing;
+    this.lockLeadOffsetY = highMin + Math.random() * (highMax - highMin);
+    this.lockBackOffsetX = -(wideMin + Math.random() * (wideMax - wideMin)) * this.facing;
+    this.lockBackOffsetY = highMin + Math.random() * (highMax - highMin);
+    // A fresh bar-lock is a big snap for both arms — kick both elbow
+    // wobblers (independently signed) so they trail into the new pose.
+    this.leadElbowWobble = springKick(
+      this.leadElbowWobble,
+      ProceduralPlayerRig.ELBOW_WOBBLE_KICK * (Math.random() < 0.5 ? -1 : 1),
+    );
+    this.backElbowWobble = springKick(
+      this.backElbowWobble,
+      ProceduralPlayerRig.ELBOW_WOBBLE_KICK * (Math.random() < 0.5 ? -1 : 1),
+    );
+  }
+
   // --- FOOT POSITION ---
   private footPos(
     cx: number,
@@ -2115,6 +2410,36 @@ export class ProceduralPlayerRig implements CombatRig {
       const tuckLift = (isLead ? 24 * up + 2 * down : 15 * up + 12 * down) * s;
       const push = (isLead ? f * (3 * up + 8 * down) : f * (-6 * up - 5 * down)) * s;
       return vec(cx + side * spread + push, ground - tuckLift);
+    }
+
+    // PERTH SHUFFLE footwork (2026-07-15) — only when truly idle (not
+    // blended with real walking) and actively dancing. Running Man:
+    // anti-phase per foot (same shape as the walk cycle above, but on
+    // groovePhase — tempo-synced to the beat — instead of the separate
+    // walk-cycle stepPhase, so footwork speeds up with the actual dance
+    // energy exactly like the torso bounce does). T-step is approximated
+    // as a stance-width pulse (see the class-field header comment on why
+    // — a 2D side-view rig has no true lateral axis for the literal
+    // 3-axis technique). Previously this branch didn't exist at all —
+    // feet were completely static while idle-dancing.
+    if (walk < 0.05 && this.danceEnergy > 0.05) {
+      const shuffleCycle =
+        this.groovePhase * ProceduralPlayerRig.SHUFFLE_STEP_HZ_MULT + (side === -1 ? 0 : Math.PI);
+      const shuffleLiftRaw = Math.max(0, Math.sin(shuffleCycle));
+      const shuffleLift =
+        Math.pow(shuffleLiftRaw, 1.6) * ProceduralPlayerRig.SHUFFLE_LIFT_PX * s * this.danceEnergy;
+      const shuffleStride =
+        -Math.cos(shuffleCycle) *
+        ProceduralPlayerRig.SHUFFLE_STRIDE_PX *
+        s *
+        this.danceEnergy *
+        this.facing;
+      const spreadPulse =
+        Math.sin(shuffleCycle * 0.5) *
+        ProceduralPlayerRig.SHUFFLE_SPREAD_PULSE_PX *
+        s *
+        this.danceEnergy;
+      return vec(cx + side * (spread + spreadPulse) + shuffleStride, ground - shuffleLift);
     }
 
     // Slight out-of-phase lateral wobble per foot for floppy gait.

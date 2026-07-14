@@ -519,19 +519,37 @@ function fmtBytes(n: number): string {
   return `${(n / (1024 * 1024)).toFixed(1)} MB`;
 }
 
+// Rebuilt from docs/ui-axioms.md, 2026-07-15 (Jake: "FROM THE AXIOMS UP" — this page
+// previously ran its own disconnected design system: teal/sky-blue palette with no
+// relation to palette.ts, 999px pill buttons everywhere (the literal "no sausage"
+// anti-pattern, axiom G1), and filled gradient cards with drop shadows for every
+// panel (axiom G2's "thick card" anti-pattern, textbook). Also fixed the actual bug
+// that triggered this pass: .theater was full-width with object-fit:contain around a
+// 9:16 video — on any wide viewport that's mostly black letterbox bars either side of
+// a narrow strip of video. .theater now sizes itself TO the video's own aspect ratio
+// instead of the video floating inside an oversized box.
 const SHARE_CSS = `
 :root {
-  --bg: #040a0e;
-  --bg2: #0a141c;
-  --panel: #0e1a22;
-  --line: #1e3a44;
-  --text: #e8f6f4;
-  --muted: #7fa3a8;
-  --accent: #50e3c2;
-  --accent2: #7ad7ff;
-  --warn: #ffc857;
-  --danger: #ff6b8a;
-  --glow: #50e3c255;
+  /* Tokens straight from docs/ui-axioms.md §9/§10 — repointed 2026-07-15 for the
+     Sapphire Conduit / Instrument Ink pivot (palette.ts header comment has the
+     full rationale). This page leans Instrument Ink at rest per C1/C2, with the
+     Play/Drop-in CTA using the same sapphire-fill + ink-seam dual accent Hot
+     Lobby uses (axiom §7a: "the one sanctioned dual-accent button"). --cyan/
+     --teal names kept as internal aliases so the rest of this file's rules
+     don't need renaming — both now hold sapphire, not cyan. */
+  --void-deep: #0a0e1a;
+  --void-edge: #0d1117;
+  --void-abyss: #05080f;
+  --gold: #897f69;
+  --gold-dim: #544c3c;
+  --cyan: #3c79f0;
+  --teal: #2750a2;
+  --hp-good: #b8f05a;
+  --hp-warn: #fde68a;
+  --hp-crit: #fb7185;
+  --text-hi: #e8ecf4;
+  --text-mid: #9fe0cb;
+  --text-dim: #7a8299;
   --font: "Space Grotesk", system-ui, sans-serif;
   --mono: "Space Mono", ui-monospace, monospace;
 }
@@ -541,18 +559,17 @@ body {
   margin: 0;
   min-height: 100vh;
   font-family: var(--font);
-  color: var(--text);
+  color: var(--text-hi);
   background:
-    radial-gradient(1200px 600px at 10% -10%, #0d3a3a66, transparent 60%),
-    radial-gradient(900px 500px at 100% 0%, #12305055, transparent 55%),
-    radial-gradient(800px 400px at 50% 100%, #1a104033, transparent 50%),
-    var(--bg);
+    radial-gradient(1200px 600px at 10% -10%, #3c79f014, transparent 60%),
+    radial-gradient(900px 500px at 100% 0%, #897f6910, transparent 55%),
+    var(--void-deep);
   line-height: 1.5;
 }
-a { color: var(--accent2); text-decoration-thickness: 1px; text-underline-offset: 3px; }
-a:hover { color: var(--accent); }
+a { color: var(--cyan); text-decoration-thickness: 1px; text-underline-offset: 3px; }
+a:hover { color: var(--text-hi); }
 .skip {
-  position: absolute; left: -999px; top: 0; background: var(--accent); color: #04120e;
+  position: absolute; left: -999px; top: 0; background: var(--gold); color: var(--void-abyss);
   padding: 0.5rem 1rem; z-index: 100;
 }
 .skip:focus { left: 0.5rem; top: 0.5rem; }
@@ -560,47 +577,56 @@ a:hover { color: var(--accent); }
   position: sticky; top: 0; z-index: 40;
   display: flex; align-items: center; justify-content: space-between;
   gap: 1rem; padding: 0.75rem 1.25rem;
-  background: #040a0ecc; backdrop-filter: blur(12px);
-  border-bottom: 1px solid var(--line);
+  background: #05080fcc; backdrop-filter: blur(12px);
+  border-bottom: 1px solid #2a3550;
 }
 .brand {
   display: flex; align-items: center; gap: 0.55rem;
-  text-decoration: none; color: var(--text); font-weight: 800; letter-spacing: 0.04em;
+  text-decoration: none; color: var(--text-hi); font-weight: 800; letter-spacing: 0.04em;
 }
+/* Chamfered diamond mark, not a rounded square — matches the ability-slot / seal
+   geometry vocabulary established across the rest of the HUD (facetedRing.ts /
+   ActionBarSystem.ts's chamfered diamonds). */
 .brand-mark {
-  width: 12px; height: 12px; border-radius: 3px;
-  background: linear-gradient(135deg, var(--accent), var(--accent2));
-  box-shadow: 0 0 16px var(--glow);
+  width: 13px; height: 13px;
+  background: var(--gold);
+  clip-path: polygon(50% 0%, 85% 15%, 100% 50%, 85% 85%, 50% 100%, 15% 85%, 0% 50%, 15% 15%);
+  box-shadow: 0 0 14px #897f6966;
 }
 .brand-tag {
-  font-size: 0.7rem; font-weight: 600; color: var(--muted);
-  border: 1px solid var(--line); border-radius: 999px; padding: 0.15rem 0.5rem;
-  letter-spacing: 0.06em; text-transform: uppercase;
+  font-family: var(--mono);
+  font-size: 0.7rem; font-weight: 700; color: var(--text-dim);
+  border: 1px solid #2a3550; padding: 0.15rem 0.55rem;
+  letter-spacing: 0.08em; text-transform: uppercase;
+  clip-path: polygon(6px 0, 100% 0, 100% 100%, 0 100%, 0 6px);
 }
 .btn {
   display: inline-flex; align-items: center; justify-content: center; gap: 0.35rem;
-  font: inherit; font-weight: 700; letter-spacing: 0.03em;
-  border-radius: 999px; padding: 0.55rem 1.1rem;
+  font: inherit; font-weight: 800; letter-spacing: 0.04em;
+  padding: 0.6rem 1.2rem;
   border: 1px solid transparent; cursor: pointer; text-decoration: none;
-  transition: transform 0.12s ease, box-shadow 0.12s ease, border-color 0.12s;
+  clip-path: polygon(8px 0, 100% 0, 100% calc(100% - 8px), calc(100% - 8px) 100%, 0 100%, 0 8px);
+  transition: filter 0.12s ease, border-color 0.12s ease;
 }
-.btn:active { transform: scale(0.98); }
+.btn:active { filter: brightness(0.92); }
 .btn-play {
-  background: linear-gradient(180deg, #3fd6b0, #1f8f78);
-  color: #03140f !important;
-  box-shadow: 0 0 24px #50e3c244, inset 0 1px 0 #9ff5e0;
+  /* Hot Lobby's own dual-accent: cyan fill, gold outer seam. */
+  background: linear-gradient(180deg, #6af4d8, #3fd4b2);
+  color: var(--void-abyss) !important;
+  border: 1px solid var(--gold-dim);
+  box-shadow: 0 0 0 1px #897f6940, 0 0 20px #3c79f022;
   text-decoration: none;
 }
-.btn-play:hover { box-shadow: 0 0 32px #50e3c266; color: #03140f !important; }
+.btn-play:hover { border-color: var(--gold); box-shadow: 0 0 0 1px #897f6988, 0 0 26px #3c79f033; }
 .btn-ghost {
-  background: transparent; border-color: var(--line); color: var(--text) !important;
+  background: transparent; border-color: #2a3550; color: var(--text-hi) !important;
   text-decoration: none;
 }
-.btn-ghost:hover { border-color: var(--accent); color: var(--accent) !important; }
-.btn-lg { padding: 0.75rem 1.35rem; font-size: 1.05rem; }
+.btn-ghost:hover { border-color: var(--gold-dim); color: var(--gold) !important; }
+.btn-lg { padding: 0.8rem 1.4rem; font-size: 1.05rem; }
 .wrap { width: min(1120px, 100%); margin: 0 auto; padding: 1.5rem 1.15rem 3rem; }
 .hero {
-  /* The CLIP is the main event: full-width theater on top, copy below. */
+  /* The CLIP is the main event: theater on top, copy below. */
   display: grid; grid-template-columns: 1fr;
   gap: 1.75rem; align-items: start; margin-bottom: 2.5rem;
 }
@@ -610,112 +636,126 @@ a:hover { color: var(--accent); }
   .features li { text-align: left; }
   .share-grid { justify-content: center; }
 }
-.stage-col { width: 100%; }
+.stage-col { width: 100%; display: flex; flex-direction: column; align-items: center; }
 .theater {
-  position: relative; width: 100%; margin: 0 auto;
-  border-radius: 16px; padding: 8px;
-  background: linear-gradient(160deg, #1a2e38, #0a1218);
-  border: 1px solid #2a4a55;
-  box-shadow:
-    0 0 0 1px #0008,
-    0 30px 60px #000a,
-    inset 0 1px 0 #ffffff18;
+  /* Sized TO the reel's own 9:16 aspect ratio — the reported bug was this
+     container being full-width with the video floating inside via
+     object-fit:contain, producing huge black letterbox bars on any wide
+     viewport. A hollow chamfered frame (void interior, thin cyan seam) per
+     axiom G2/G3 — no filled gradient card, no elevation drop-shadow. */
+  position: relative;
+  aspect-ratio: 9 / 16;
+  height: min(76vh, 720px);
+  max-width: 100%;
+  margin: 0 auto;
+  padding: 6px;
+  background: var(--void-abyss);
+  border: 1px solid #2a3550;
+  box-shadow: 0 0 0 1px #05080f, 0 0 32px #3c79f014;
+  clip-path: polygon(14px 0, 100% 0, 100% calc(100% - 14px), calc(100% - 14px) 100%, 0 100%, 0 14px);
+}
+@media (max-width: 480px) {
+  .theater { height: auto; width: min(92vw, 400px); }
 }
 .reel {
-  /* NEVER crop or upscale-past-native in presentation: the video keeps its
-     own aspect, bounded by the viewport. Fullscreen = raw pixels. */
-  width: 100%; max-height: 78vh; object-fit: contain;
-  border-radius: 10px; background: #000; display: block;
+  width: 100%; height: 100%; object-fit: cover;
+  background: #000; display: block;
 }
 .phone-glow {
   position: absolute; inset: 10% -6% auto; height: 60%;
-  background: radial-gradient(ellipse, var(--glow), transparent 70%);
+  background: radial-gradient(ellipse, #3c79f022, transparent 70%);
   filter: blur(24px); z-index: -1; pointer-events: none;
 }
 .missing {
   min-height: 240px; display: grid; place-content: center; text-align: center;
-  padding: 1.5rem; background: #061018; border-radius: 10px;
+  padding: 1.5rem; background: var(--void-abyss); border: 1px solid #2a3550;
 }
-.vid-meta { text-align: center; font-size: 0.78rem; margin: 0.75rem 0 0; font-family: var(--mono); }
+.vid-meta { text-align: center; font-size: 0.78rem; margin: 0.75rem 0 0; font-family: var(--mono); color: var(--text-dim); }
 .eyebrow {
-  font-family: var(--mono); font-size: 0.75rem; letter-spacing: 0.14em;
-  text-transform: uppercase; color: var(--accent); margin: 0 0 0.5rem;
+  font-family: var(--mono); font-size: 0.75rem; letter-spacing: 0.16em;
+  text-transform: uppercase; color: var(--gold); margin: 0 0 0.5rem; font-weight: 700;
 }
 h1 {
   font-size: clamp(1.85rem, 4vw, 2.6rem); line-height: 1.1;
   margin: 0 0 0.75rem; font-weight: 800; letter-spacing: -0.02em;
 }
-.lede { font-size: 1.08rem; color: #c5e0dc; margin: 0 0 1.25rem; max-width: 38rem; }
-.lede strong { color: var(--accent); font-weight: 700; }
+.lede { font-size: 1.08rem; color: var(--text-mid); margin: 0 0 1.25rem; max-width: 38rem; }
+.lede strong { color: var(--cyan); font-weight: 700; }
 .cta-row { display: flex; flex-wrap: wrap; gap: 0.65rem; margin-bottom: 1.5rem; }
 .features {
   list-style: none; padding: 0; margin: 1.5rem 0 0;
   display: grid; gap: 0.85rem;
 }
+/* Hollow bracket frame, not a filled panel — void interior, lit seam only. */
 .features li {
   display: grid; grid-template-columns: auto 1fr; gap: 0.75rem;
-  padding: 0.85rem 1rem; border-radius: 14px;
-  background: var(--panel); border: 1px solid var(--line);
+  padding: 0.85rem 1rem;
+  background: transparent; border: 1px solid #2a3550;
+  clip-path: polygon(10px 0, 100% 0, 100% calc(100% - 10px), calc(100% - 10px) 100%, 0 100%, 0 10px);
 }
 .f-ico { font-size: 1.25rem; line-height: 1.4; }
-.muted { color: var(--muted); }
+.muted { color: var(--text-dim); }
 .small { font-size: 0.9rem; }
 .tiny { font-size: 0.75rem; }
 .share-block {
   margin: 1.25rem 0; padding: 1rem 1.1rem;
-  border-radius: 16px; border: 1px solid var(--line);
-  background: linear-gradient(180deg, #102028, #0b151c);
+  border: 1px solid #2a3550; background: transparent;
+  clip-path: polygon(12px 0, 100% 0, 100% calc(100% - 12px), calc(100% - 12px) 100%, 0 100%, 0 12px);
 }
 .share-h {
-  font-size: 0.8rem; letter-spacing: 0.12em; text-transform: uppercase;
-  color: var(--muted); margin: 0 0 0.75rem; font-weight: 600;
+  font-family: var(--mono);
+  font-size: 0.8rem; letter-spacing: 0.14em; text-transform: uppercase;
+  color: var(--text-dim); margin: 0 0 0.75rem; font-weight: 700;
 }
 .share-grid {
-  display: flex; flex-wrap: wrap; gap: 0.45rem;
+  display: flex; flex-wrap: wrap; gap: 0.5rem;
 }
 .share-chip {
-  appearance: none; font: inherit; font-size: 0.82rem; font-weight: 600;
-  padding: 0.45rem 0.75rem; border-radius: 999px;
-  border: 1px solid var(--line); background: var(--bg2); color: var(--text);
+  appearance: none; font: inherit; font-size: 0.82rem; font-weight: 700;
+  padding: 0.45rem 0.8rem;
+  border: 1px solid #2a3550; background: var(--void-abyss); color: var(--text-hi);
   text-decoration: none; cursor: pointer;
+  clip-path: polygon(6px 0, 100% 0, 100% calc(100% - 6px), calc(100% - 6px) 100%, 0 100%, 0 6px);
 }
-.share-chip:hover { border-color: var(--accent); color: var(--accent); }
+.share-chip:hover { border-color: var(--gold-dim); color: var(--gold); }
 .share-chip.primary {
-  background: linear-gradient(180deg, #2a6a8a, #1a4058);
-  border-color: #3a8ab0; color: #e8f8ff;
+  background: linear-gradient(180deg, #6af4d8, #3fd4b2);
+  border-color: var(--gold-dim); color: var(--void-abyss);
 }
 .share-url {
   margin: 0.85rem 0 0; font-size: 0.72rem; word-break: break-all;
 }
 .share-url code {
-  font-family: var(--mono); color: var(--accent2);
-  background: #0006; padding: 0.2rem 0.4rem; border-radius: 6px;
+  font-family: var(--mono); color: var(--cyan);
+  background: var(--void-abyss); padding: 0.2rem 0.4rem;
 }
 .promo-band {
   display: grid; grid-template-columns: 1.2fr 1fr; gap: 1.5rem;
   align-items: center; margin: 2rem 0;
-  padding: 1.25rem; border-radius: 20px;
-  border: 1px solid var(--line); background: var(--panel);
+  padding: 1.25rem;
+  border: 1px solid #2a3550; background: var(--void-edge);
+  clip-path: polygon(16px 0, 100% 0, 100% calc(100% - 16px), calc(100% - 16px) 100%, 0 100%, 0 16px);
 }
 @media (max-width: 820px) { .promo-band { grid-template-columns: 1fr; } }
 .promo-art img {
-  width: 100%; height: auto; border-radius: 14px; display: block;
-  border: 1px solid var(--line);
+  width: 100%; height: auto; display: block;
+  border: 1px solid #2a3550;
+  clip-path: polygon(10px 0, 100% 0, 100% calc(100% - 10px), calc(100% - 10px) 100%, 0 100%, 0 10px);
 }
 .promo-copy h2 { margin: 0 0 0.65rem; font-size: 1.45rem; }
 .steps {
-  margin: 1rem 0 1.25rem; padding-left: 1.2rem; color: #c5e0dc;
+  margin: 1rem 0 1.25rem; padding-left: 1.2rem; color: var(--text-mid);
 }
 .steps li { margin: 0.35rem 0; }
 .seo-block {
-  margin-top: 2rem; padding-top: 1.5rem; border-top: 1px solid var(--line);
+  margin-top: 2rem; padding-top: 1.5rem; border-top: 1px solid #2a3550;
   max-width: 48rem;
 }
 .seo-block h2 { font-size: 1.15rem; margin: 0 0 0.75rem; }
-.seo-block p { color: #b8d0cc; }
+.seo-block p { color: var(--text-mid); }
 .foot {
-  border-top: 1px solid var(--line); padding: 1.5rem 1.15rem 2rem;
-  background: #020608;
+  border-top: 1px solid #2a3550; padding: 1.5rem 1.15rem 2rem;
+  background: var(--void-abyss);
 }
 .foot-inner {
   width: min(1120px, 100%); margin: 0 auto;
@@ -726,10 +766,12 @@ h1 {
 .foot .tiny { width: min(1120px, 100%); margin: 0.75rem auto 0; }
 #share-toast {
   position: fixed; bottom: 1.25rem; left: 50%; transform: translateX(-50%) translateY(120%);
-  background: #12352e; color: var(--accent); border: 1px solid #2a8f78;
-  padding: 0.55rem 1rem; border-radius: 999px; font-weight: 600; font-size: 0.9rem;
+  font-family: var(--mono);
+  background: var(--void-abyss); color: var(--cyan); border: 1px solid var(--teal);
+  padding: 0.55rem 1.1rem; font-weight: 700; font-size: 0.85rem;
   opacity: 0; transition: transform 0.25s ease, opacity 0.25s ease; z-index: 50;
   pointer-events: none;
+  clip-path: polygon(8px 0, 100% 0, 100% calc(100% - 8px), calc(100% - 8px) 100%, 0 100%, 0 8px);
 }
 #share-toast.show { transform: translateX(-50%) translateY(0); opacity: 1; }
 code { font-family: var(--mono); }

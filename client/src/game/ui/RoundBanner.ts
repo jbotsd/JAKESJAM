@@ -136,7 +136,7 @@ export class RoundBanner {
         fontFamily: "'Space Mono', 'Courier New', monospace",
         fontSize: "16px",
         fontStyle: "bold",
-        color: "#ffd76b",
+        color: "#8ff8ff",
         letterSpacing: 2,
         stroke: "#05080f",
         strokeThickness: 4,

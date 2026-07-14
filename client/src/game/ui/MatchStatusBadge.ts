@@ -94,6 +94,7 @@ export class MatchStatusBadge {
     } else {
       this.joinBtn = null;
     }
+    this.applyJoinBtnDisabledStyle();
 
     if (opts.shareUrl !== null) {
       const url = opts.shareUrl;
@@ -162,6 +163,7 @@ export class MatchStatusBadge {
         this.summaryEl.textContent = "hot lobby idle · be the first to spawn in";
         if (this.joinBtn) this.joinBtn.disabled = false; // empty lobby is joinable
       }
+      this.applyJoinBtnDisabledStyle();
       return;
     }
     const phaseLabel = phaseToLabel(s.phase);
@@ -176,8 +178,27 @@ export class MatchStatusBadge {
             ? "drafting cards"
             : "next round soon"; // phaseLabel already says "Round over"
     this.summaryEl.textContent = `${phaseLabel} · ${playersLabel} · round ${s.roundIndex + 1} · ${timerLabel}`;
-    this.statusDot.style.background = s.joinable ? "#86efac" : "#fde68a";
+    this.statusDot.style.background = s.joinable ? "#b8f05a" : "#fde68a";
     if (this.joinBtn) this.joinBtn.disabled = !s.joinable;
+    this.applyJoinBtnDisabledStyle();
+  }
+
+  /** S2: a disabled Join button must visually say "can't act right now",
+   *  not just silently ignore clicks (browser default disabled styling is
+   *  not an authored state per the axioms). */
+  private applyJoinBtnDisabledStyle(): void {
+    const btn = this.joinBtn;
+    if (!btn) return;
+    if (btn.disabled) {
+      btn.style.opacity = "0.4";
+      btn.style.border = "1px solid rgba(154, 165, 177, 0.35)";
+      btn.style.color = "#7a8aa3";
+      btn.style.cursor = "not-allowed";
+    } else {
+      Object.assign(btn.style, BTN_PRIMARY_STYLE);
+      btn.style.opacity = "1";
+      btn.style.cursor = "pointer";
+    }
   }
 
   private async copyShareLink(url: string): Promise<void> {
@@ -224,12 +245,13 @@ const ROOT_STYLE: Partial<CSSStyleDeclaration> = {
   padding: "12px 14px",
   borderRadius: "12px",
   border: "1px solid rgba(143, 248, 255, 0.18)",
-  background: "linear-gradient(160deg, rgba(16, 22, 34, 0.92), rgba(10, 14, 22, 0.96))",
+  // Void interior, no elevation shadow — hollow seam frame per G2/G3
+  // instead of a filled gradient "card" standing in for a physical panel.
+  background: "rgba(10, 14, 22, 0.94)",
   // HUD-readout content (status dots, live match numbers) — Space Mono is
   // this project's established face for exactly this role.
   fontFamily: "'Space Mono', 'Courier New', monospace",
   color: "#f7fbff",
-  boxShadow: "0 4px 14px rgba(0, 0, 0, 0.32)",
   minWidth: "260px",
 };
 

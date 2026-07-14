@@ -1,12 +1,23 @@
-/* ─── JAKESJAM — Cyberpunk-Sorcerer Crystal-Tech UI ──────────────────── */
+/* ─── JAKESJAM — Sapphire Conduit / Instrument Ink UI ─────────────────────
+   Palette pivot 2026-07-15 (~/Documents/JAKESJAM_UX_Research_20260715/
+   color_scheme_proposal.md) — retired cyan/teal as the UI accent (research:
+   the least distinctive sci-fi accent hue family available) and retired
+   gold as a second competing saturated accent. One hot accent now
+   ("Sapphire Conduit," H262° — the same hue family as this project's own
+   void/hull structure, so combat light reads as "the hull material,
+   charged"); gold's warmth is kept but demoted to "Instrument Ink" — text/
+   hairline/seam weight only, chroma cut ~60%, never a fill or glow.
+   Token NAMES are unchanged on purpose (churn-minimizing — every rule below
+   and every component reading these custom properties picks up the new
+   hue automatically); only the hex values moved. */
 
 :root {
   color: #f7fbff;
   background: #05080f;
-  /* Native controls (range slider, checkboxes) pick up the crystal accent
+  /* Native controls (range slider, checkboxes) pick up the sapphire accent
      instead of the browser-default blue — the Options panel's volume slider
      read as unstyled stock UI on phones. */
-  accent-color: #50e3c2;
+  accent-color: #3c79f0;
   /* The established identity (see index.html: "Space Grotesk (headers, card
      titles) + Space Mono (numerics, HUD)") — Space Grotesk is already this
      project's own leading proportional face everywhere it's used correctly
@@ -24,16 +35,16 @@
   --surface: #171b24;
   --surface-2: #202633;
   --border: #343c4d;
-  --border-glow: rgba(143, 248, 255, 0.20);
+  --border-glow: rgba(60, 121, 240, 0.24);
   --text: #f7fbff;
   --muted: #9ba7b8;
-  --accent: #50e3c2;
-  --accent-bright: #8ff8ff;
+  --accent: #2750a2;
+  --accent-bright: #3c79f0;
   --accent-violet: #a78bfa;
   --danger: #fb7185;
   --ready: #8adf70;
 
-  /* Crystal Cyan palette tokens used by lobby components */
+  /* Sapphire Conduit palette tokens used by lobby components */
   --panel-bg: rgba(15, 26, 46, 0.92);
   --panel-stroke: rgba(31, 58, 95, 0.9);
   --chip-bg: rgba(21, 40, 65, 0.85);
@@ -100,15 +111,21 @@ select {
 
 button {
   min-height: 42px;
-  border: 1px solid #59f0cf;
-  border-radius: 8px;
-  color: #071110;
-  background: linear-gradient(180deg, #6af4d8 0%, #3fd4b2 100%);
+  border: 1px solid #3c79f0;
+  /* Cut, not molded (manifesto law "wizard"): a chamfered corner is what a
+     blade-cut edge looks like; a rounded corner is injection-molded plastic.
+     Asymmetric single-pair cut (top-left + bottom-right), not all four —
+     a uniform round-rect substitute would still read as "softened," not
+     "forged." Colors stay on CSS custom properties elsewhere so a future
+     palette swap doesn't need to touch this geometry. */
+  clip-path: polygon(7px 0, 100% 0, 100% calc(100% - 7px), calc(100% - 7px) 100%, 0 100%, 0 7px);
+  color: #0a1020;
+  background: linear-gradient(180deg, #6ea0f7 0%, #3c79f0 100%);
   font-size: 0.9rem;
   font-weight: 800;
   cursor: pointer;
   letter-spacing: 0.04em;
-  box-shadow: 0 0 0 rgba(80, 227, 194, 0);
+  box-shadow: 0 0 0 rgba(39, 80, 162, 0);
   /* Plain -2px hover-lift, every button in the shell by default — spring
      overshoot on a 2px move reads as noise, not intent. Clean ease-out
      (matches .match-chrome-btn / MatchResultsOverlay's own buttons); the
@@ -124,7 +141,7 @@ button {
 button:hover:not(:disabled) {
   filter: brightness(1.1);
   transform: translateY(-2px);
-  box-shadow: 0 0 18px rgba(80, 227, 194, 0.4), 0 4px 12px rgba(0, 0, 0, 0.35);
+  box-shadow: 0 0 18px rgba(39, 80, 162, 0.4), 0 4px 12px rgba(0, 0, 0, 0.35);
 }
 
 button:active:not(:disabled) {
@@ -153,7 +170,7 @@ input:focus,
 select:focus {
   outline: none;
   border-color: var(--accent);
-  box-shadow: 0 0 0 2px rgba(80, 227, 194, 0.15);
+  box-shadow: 0 0 0 2px rgba(39, 80, 162, 0.15);
 }
 
 select {
@@ -203,9 +220,9 @@ input[type="color"] {
   overflow-y: auto;
   padding: 28px;
   background:
-    radial-gradient(ellipse at 50% 15%, rgba(143, 248, 255, 0.15) 0%, transparent 55%),
+    radial-gradient(ellipse at 50% 15%, rgba(60, 121, 240, 0.15) 0%, transparent 55%),
     radial-gradient(ellipse at 20% 85%, rgba(167, 139, 250, 0.11) 0%, transparent 45%),
-    radial-gradient(ellipse at 80% 60%, rgba(80, 227, 194, 0.10) 0%, transparent 40%),
+    radial-gradient(ellipse at 80% 60%, rgba(39, 80, 162, 0.10) 0%, transparent 40%),
     /* ~opaque base: at 0.96 the Phaser menu scene's canvas text ("Pick
        character, chaos, and room on the right") ghosted through the splash. */
     linear-gradient(180deg, rgba(5, 8, 15, 0.995) 0%, rgba(5, 8, 15, 1) 100%);
@@ -224,24 +241,26 @@ input[type="color"] {
   width: min(760px, 100%);
   margin: auto; /* centers in the flex splash-screen; see comment above */
   padding: 44px;
-  border: 1px solid rgba(143, 248, 255, 0.24);
-  border-radius: 16px;
-  background:
-    linear-gradient(145deg, rgba(16, 21, 32, 0.94) 0%, rgba(10, 14, 22, 0.97) 100%);
+  border: 1px solid rgba(60, 121, 240, 0.24);
+  /* Cut, not molded — same asymmetric chamfer language as buttons/panels
+     throughout the shell, scaled up for the hull's main hero container. */
+  clip-path: polygon(18px 0, 100% 0, 100% calc(100% - 18px), calc(100% - 18px) 100%, 0 100%, 0 18px);
+  /* Void-and-seam depth (axiom G2/G3): flat dark fill, not a directional
+     gradient standing in for a lit physical card. */
+  background: rgba(9, 12, 19, 0.94);
   box-shadow:
-    0 40px 100px rgba(0, 0, 0, 0.6),
-    0 0 1px rgba(143, 248, 255, 0.32),
-    0 0 60px rgba(80, 227, 194, 0.04),
-    inset 0 1px 0 rgba(143, 248, 255, 0.1);
+    0 0 0 1px rgba(60, 121, 240, 0.14),
+    0 0 32px rgba(39, 80, 162, 0.05);
 }
 
 .splash-kicker {
+  font-family: "Space Mono", ui-monospace, monospace;
   color: var(--accent-bright);
   font-size: 0.75rem;
-  font-weight: 900;
+  font-weight: 700;
   letter-spacing: 0.18em;
   text-transform: uppercase;
-  text-shadow: 0 0 12px rgba(143, 248, 255, 0.5);
+  text-shadow: 0 0 12px rgba(60, 121, 240, 0.5);
 }
 
 .splash-stage h1 {
@@ -313,7 +332,7 @@ input[type="color"] {
   overflow-x: hidden;
   padding: 28px 24px;
   border: 1px solid var(--border-glow);
-  border-radius: 14px;
+  border-radius: 12px;
   color: var(--text);
   background:
     linear-gradient(
@@ -326,16 +345,16 @@ input[type="color"] {
   -webkit-backdrop-filter: blur(20px) saturate(1.3);
   box-shadow:
     0 32px 80px rgba(0, 0, 0, 0.6),
-    0 0 1px rgba(143, 248, 255, 0.4),
-    0 0 40px rgba(80, 227, 194, 0.06),
-    inset 0 1px 0 rgba(143, 248, 255, 0.1);
+    0 0 1px rgba(60, 121, 240, 0.4),
+    0 0 40px rgba(39, 80, 162, 0.06),
+    inset 0 1px 0 rgba(60, 121, 240, 0.1);
 
   /* Show/hide transition */
   opacity: 1;
   pointer-events: auto;
   transition:
-    opacity 280ms cubic-bezier(0.4, 0, 0.2, 1),
-    transform 280ms cubic-bezier(0.4, 0, 0.2, 1);
+    opacity 200ms cubic-bezier(0.4, 0, 0.2, 1),
+    transform 200ms cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 /* Scrollbar styling for the lobby panel */
@@ -348,12 +367,12 @@ input[type="color"] {
 }
 
 .lobby-panel::-webkit-scrollbar-thumb {
-  background: rgba(143, 248, 255, 0.15);
+  background: rgba(60, 121, 240, 0.15);
   border-radius: 3px;
 }
 
 .lobby-panel::-webkit-scrollbar-thumb:hover {
-  background: rgba(143, 248, 255, 0.3);
+  background: rgba(60, 121, 240, 0.3);
 }
 
 .lobby-panel--hidden {
@@ -411,7 +430,7 @@ h2 {
   font-size: 0.75rem;
   font-weight: 900;
   letter-spacing: 0.06em;
-  text-shadow: 0 0 8px rgba(143, 248, 255, 0.4);
+  text-shadow: 0 0 8px rgba(60, 121, 240, 0.4);
 }
 
 .player-form,
@@ -526,12 +545,17 @@ h2 {
 
 .custom-map-row input {
   text-transform: uppercase;
+  font-family: "Space Mono", "Courier New", monospace; /* axiom T3: codes are monospace */
 }
 
 .join-row {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 92px;
   gap: 10px;
+}
+
+.join-row input {
+  font-family: "Space Mono", "Courier New", monospace; /* axiom T3: room codes are monospace */
 }
 
 .active-room {
@@ -541,21 +565,16 @@ h2 {
   padding: 14px;
 }
 
-/* Ready toggle: outlined when not-ready, filled-cyan when ready.
-   Removes the "is the label state or action?" ambiguity. */
-.active-room button[data-ready-toggle][data-ready="false"] {
-  background: transparent !important;
-  color: var(--accent-bright);
-  border: 1px solid rgba(143, 248, 255, 0.45) !important;
-}
-.active-room button[data-ready-toggle][data-ready="false"]:hover:not(:disabled) {
-  background: rgba(143, 248, 255, 0.08) !important;
-}
+/* Ready toggle: outlined house-gold when not-ready (inherits the
+   .shell-btn-secondary rest/hover treatment — was cyan-only in both
+   states, the systemic anti-pattern), filled cyan/teal only once
+   actually toggled ready (a live "confirmed" state cue, not a resting
+   default). Removes the "is the label state or action?" ambiguity. */
 .active-room button[data-ready-toggle][data-ready="true"] {
   background: linear-gradient(160deg, #2a8d7c, #156b5e) !important;
   color: #f7fbff !important;
-  border: 1px solid rgba(143, 248, 255, 0.6) !important;
-  box-shadow: 0 0 14px rgba(143, 248, 255, 0.25);
+  border: 1px solid rgba(60, 121, 240, 0.6) !important;
+  box-shadow: 0 0 14px rgba(60, 121, 240, 0.25);
 }
 
 /* Ghost button — subdued, used for nav actions like "← Splash". */
@@ -592,8 +611,8 @@ button.btn-danger:hover:not(:disabled) {
   justify-content: space-between;
   padding: 8px 10px;
   border-radius: 8px;
-  background: rgba(143, 248, 255, 0.05);
-  border: 1px solid rgba(143, 248, 255, 0.12);
+  background: rgba(60, 121, 240, 0.05);
+  border: 1px solid rgba(60, 121, 240, 0.12);
   color: var(--muted);
   font-size: 0.8rem;
   letter-spacing: 0.06em;
@@ -602,17 +621,18 @@ button.btn-danger:hover:not(:disabled) {
 
 .room-code-row strong {
   color: var(--accent-bright);
+  font-family: "Space Mono", "Courier New", monospace; /* axiom T3: room codes are monospace */
   font-size: 1.5rem;
   letter-spacing: 0.18em;
   font-variant-numeric: tabular-nums;
   text-shadow:
-    0 0 8px rgba(143, 248, 255, 0.45),
-    0 0 24px rgba(143, 248, 255, 0.18);
+    0 0 8px rgba(60, 121, 240, 0.45),
+    0 0 24px rgba(60, 121, 240, 0.18);
 }
 
 .players-box {
   min-height: 120px;
-  border-top: 1px solid rgba(143, 248, 255, 0.08);
+  border-top: 1px solid rgba(60, 121, 240, 0.08);
   padding-top: 18px;
 }
 
@@ -641,7 +661,24 @@ button.btn-danger:hover:not(:disabled) {
   height: 14px;
   border: 1px solid rgba(255, 255, 255, 0.55);
   border-radius: 50%;
-  box-shadow: 0 0 6px rgba(143, 248, 255, 0.2);
+  box-shadow: 0 0 6px rgba(60, 121, 240, 0.2);
+}
+
+/* Local player promotion (axiom H6) — same row recipe, brighter ring +
+   tint, mirroring HudSystem's in-match nameplate convention (bigger
+   badge + brighter cyan ring + "YOU" tag for the local player). */
+.player-row--local {
+  border-color: rgba(60, 121, 240, 0.5);
+  background: rgba(39, 80, 162, 0.08);
+}
+
+.player-row--local .player-swatch {
+  border-color: rgba(60, 121, 240, 0.9);
+  box-shadow: 0 0 10px rgba(60, 121, 240, 0.55);
+}
+
+.player-row--local .player-name {
+  color: var(--accent-bright);
 }
 
 .player-name {
@@ -742,8 +779,8 @@ button.btn-danger:hover:not(:disabled) {
   height: 132px;
   margin: -66px 0 0 -66px;
   border-radius: 50%;
-  border: 2px solid rgba(143, 248, 255, 0.35);
-  background: radial-gradient(circle, rgba(143, 248, 255, 0.10), rgba(5, 8, 15, 0.05) 70%);
+  border: 2px solid rgba(60, 121, 240, 0.35);
+  background: radial-gradient(circle, rgba(60, 121, 240, 0.10), rgba(5, 8, 15, 0.05) 70%);
   pointer-events: none;
 }
 .tc-stick-knob {
@@ -757,8 +794,8 @@ button.btn-danger:hover:not(:disabled) {
   will-change: transform;
 }
 .tc-stick--move {
-  background: radial-gradient(circle, #8ff8ff, #3aa8bf);
-  box-shadow: 0 0 22px rgba(143, 248, 255, 0.6);
+  background: radial-gradient(circle, #3c79f0, #3aa8bf);
+  box-shadow: 0 0 22px rgba(60, 121, 240, 0.6);
 }
 .tc-stick--aim {
   background: radial-gradient(circle, #ffd166, #d67a2f);
@@ -788,7 +825,7 @@ button.btn-danger:hover:not(:disabled) {
   font: 700 13px/1 "Space Grotesk", "Segoe UI", system-ui, sans-serif;
   letter-spacing: 1px;
   color: #f7fbff;
-  border: 2px solid rgba(143, 248, 255, 0.4);
+  border: 2px solid rgba(60, 121, 240, 0.4);
   background: rgba(15, 26, 46, 0.72);
   user-select: none;
 }
@@ -802,8 +839,8 @@ button.btn-danger:hover:not(:disabled) {
 }
 .tc-btn--active {
   transform: scale(0.92);
-  background: rgba(143, 248, 255, 0.28);
-  box-shadow: 0 0 18px rgba(143, 248, 255, 0.5);
+  background: rgba(60, 121, 240, 0.28);
+  box-shadow: 0 0 18px rgba(60, 121, 240, 0.5);
 }
 
 /* ── PORTRAIT (mobile-first) — game up top, controls in a bottom band ── */
@@ -823,7 +860,7 @@ button.btn-danger:hover:not(:disabled) {
       rgba(4, 8, 14, 0.9) 55%,
       rgba(4, 8, 14, 0) 100%
     );
-    border-top: 1px solid rgba(143, 248, 255, 0.14);
+    border-top: 1px solid rgba(60, 121, 240, 0.14);
     pointer-events: none;
   }
   /* Joystick zones live ONLY in the bottom band, so tapping the game field
@@ -854,15 +891,17 @@ button.btn-danger:hover:not(:disabled) {
   30% { transform: rotate(-90deg); }
 }
 
-/* ── Shell (sci-fi gnostic vessel) ─────────────────────────────────── */
+/* ── Shell (sci-fi gnostic vessel) ─────────────────────────────────────────
+   Sapphire Conduit (combat/vessel) + Instrument Ink (house) — see the root
+   :root block's header comment for the full pivot rationale. */
 :root {
   --shell-bg: #0a0e1a;
   --shell-surface: #161d2f;
-  --shell-border: #8a7033;
-  --shell-accent-house: #c9a84c;
-  --shell-accent-house-dim: #8a7033;
-  --shell-accent: #50e3c2;
-  --shell-accent-bright: #8ff8ff;
+  --shell-border: #544c3c;
+  --shell-accent-house: #897f69;
+  --shell-accent-house-dim: #544c3c;
+  --shell-accent: #2750a2;
+  --shell-accent-bright: #3c79f0;
   --shell-text: #e8ecf4;
   --shell-muted: #7a8299;
   --shell-z-layer: 70;
@@ -890,16 +929,35 @@ button.btn-danger:hover:not(:disabled) {
 .shell-cta-primary {
   min-width: min(100%, 280px);
   border-color: var(--shell-accent-house) !important;
-  box-shadow: 0 0 0 1px rgba(201, 168, 76, 0.35), 0 0 18px rgba(80, 227, 194, 0.25);
+  box-shadow: 0 0 0 1px rgba(137, 127, 105, 0.35), 0 0 18px rgba(39, 80, 162, 0.25);
 }
 
+/* Secondary shell buttons (Practice/Private room/Join room/Clips/Settings/
+   Intro/Showcase/Forge/Credits on HOME, plus most Settings/Clips/Credits/
+   Pause/Room panel buttons) — house chrome, so REST state leans gold
+   (axiom C1/C2/dual-accent rule), not the old cyan-at-rest anti-pattern.
+   Combat cyan is reserved for hover/focus "live" feedback instead. */
 .shell-btn-secondary {
   background: transparent !important;
-  color: var(--shell-accent-bright) !important;
-  border: 1px solid rgba(143, 248, 255, 0.22) !important;
+  color: var(--shell-text) !important;
+  border: 1px solid rgba(137, 127, 105, 0.38) !important;
   box-shadow: none !important;
   font-weight: 700 !important;
   min-height: 40px;
+  transition:
+    border-color 140ms ease,
+    color 140ms ease,
+    background 140ms ease,
+    box-shadow 140ms ease,
+    transform 140ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.shell-btn-secondary:hover:not(:disabled),
+.shell-btn-secondary:focus-visible:not(:disabled) {
+  color: var(--shell-accent-bright) !important;
+  border-color: rgba(60, 121, 240, 0.55) !important;
+  background: rgba(60, 121, 240, 0.06) !important;
+  box-shadow: 0 0 16px rgba(39, 80, 162, 0.22) !important;
 }
 
 .shell-layer {
@@ -913,10 +971,22 @@ button.btn-danger:hover:not(:disabled) {
   background: rgba(5, 8, 15, 0.72);
   backdrop-filter: blur(4px);
   overflow: auto;
+  opacity: 1;
+  transform: translateY(0);
+  transition: opacity 200ms ease-out, transform 200ms ease-out, visibility 0s linear 0s;
 }
 
 .shell-layer[hidden] {
-  display: none !important;
+  /* Override the blanket [hidden]{display:none} reset (line ~48) so open/
+     close can settle-in / withdraw (axiom M1) instead of hard-cutting —
+     display stays flex, opacity+transform do the hiding, and visibility
+     only flips to fully inert once the 200ms withdraw fade completes. */
+  display: flex !important;
+  opacity: 0;
+  transform: translateY(6px);
+  pointer-events: none;
+  visibility: hidden;
+  transition: opacity 200ms ease-out, transform 200ms ease-out, visibility 0s linear 200ms;
 }
 
 .pause-panel {
@@ -926,24 +996,32 @@ button.btn-danger:hover:not(:disabled) {
 .shell-frame {
   width: min(420px, 100%);
   padding: 22px 20px;
-  border-radius: 12px;
-  border: 1px solid rgba(201, 168, 76, 0.35);
-  background: linear-gradient(160deg, rgba(22, 29, 47, 0.96), rgba(10, 14, 26, 0.98));
+  /* Cut, not molded — same chamfer language as .splash-stage/button. */
+  clip-path: polygon(16px 0, 100% 0, 100% calc(100% - 16px), calc(100% - 16px) 100%, 0 100%, 0 16px);
+  border: 1px solid rgba(137, 127, 105, 0.35);
+  /* Void-and-seam depth (axiom G2/G3): flat void fill + lit seam border,
+     no directional gradient standing in for a physical plate, no elevation
+     box-shadow — a thin glow at most. Most-reused panel primitive in the
+     shell (Settings/Clips/Credits/Pause/Room all inherit this). */
+  background: rgba(11, 15, 25, 0.97);
   color: var(--shell-text);
-  box-shadow: 0 0 0 1px rgba(143, 248, 255, 0.06), 0 16px 40px rgba(0, 0, 0, 0.45);
+  box-shadow: 0 0 0 1px rgba(60, 121, 240, 0.06), 0 0 24px rgba(0, 0, 0, 0.3);
 }
 
 .shell-kicker {
   margin: 0 0 6px;
+  /* Coded transmission, not a friendly caption (manifesto "gnostic" law) —
+     monospace, like the rest of this project's data/HUD typography. */
+  font-family: "Space Mono", ui-monospace, monospace;
   font-size: 11px;
-  font-weight: 800;
+  font-weight: 700;
   letter-spacing: 0.28em;
   color: var(--shell-accent-house);
 }
 
 .shell-frame h2 {
   margin: 0 0 16px;
-  font-size: 1.35rem;
+  font-size: 1.8rem; /* axiom T4: shell Title spec is 28-38px */
   font-weight: 800;
   color: var(--shell-text);
 }
@@ -951,7 +1029,7 @@ button.btn-danger:hover:not(:disabled) {
 .shell-section {
   margin-bottom: 16px;
   padding-bottom: 12px;
-  border-bottom: 1px solid rgba(201, 168, 76, 0.12);
+  border-bottom: 1px solid rgba(137, 127, 105, 0.12);
 }
 
 .shell-section h3 {
@@ -1018,7 +1096,7 @@ button.btn-danger:hover:not(:disabled) {
   margin-bottom: 12px;
 }
 .shell-room .room-code-row {
-  border-color: rgba(201, 168, 76, 0.35);
+  border-color: rgba(137, 127, 105, 0.35);
   background: rgba(10, 14, 26, 0.65);
 }
 .shell-room .room-code-row strong {
@@ -1047,7 +1125,7 @@ button.btn-danger:hover:not(:disabled) {
 
 .shell-clip-row {
   padding: 10px 12px;
-  border: 1px solid rgba(143, 248, 255, 0.15);
+  border: 1px solid rgba(60, 121, 240, 0.15);
   border-radius: 8px;
   background: rgba(10, 14, 26, 0.6);
 }
@@ -1118,7 +1196,7 @@ button.btn-danger:hover:not(:disabled) {
   min-height: 34px !important;
   font-size: 0.78rem !important;
   opacity: 0.82;
-  border-color: rgba(143, 248, 255, 0.14) !important;
+  border-color: rgba(60, 121, 240, 0.14) !important;
 }
 
 .shell-btn-ghost:hover:not(:disabled) {
@@ -1130,7 +1208,7 @@ button.btn-danger:hover:not(:disabled) {
   gap: 8px;
   margin-top: 14px;
   padding-top: 12px;
-  border-top: 1px solid rgba(201, 168, 76, 0.12);
+  border-top: 1px solid rgba(137, 127, 105, 0.12);
 }
 
 .shell-pause-footer button {
@@ -1170,28 +1248,26 @@ button.btn-danger:hover:not(:disabled) {
   gap: 8px;
   min-height: 40px;
   padding: 8px 14px;
-  border-radius: 999px;
-  border: 1px solid rgba(201, 168, 76, 0.45);
+  border-radius: 10px; /* axiom G1: ≤12px chamfer, never a 999px capsule */
+  border: 1px solid rgba(137, 127, 105, 0.45);
   background: linear-gradient(160deg, rgba(22, 29, 47, 0.94), rgba(10, 14, 26, 0.96));
   color: var(--shell-text);
   font: 700 0.78rem/1 "Space Grotesk", "Segoe UI", system-ui, sans-serif;
   letter-spacing: 0.06em;
   text-transform: uppercase;
   cursor: pointer;
-  box-shadow:
-    0 0 0 1px rgba(143, 248, 255, 0.08),
-    0 8px 24px rgba(0, 0, 0, 0.45);
+  /* Thin seam only — the 0 8px 24px elevation blur was the G2 anti-pattern. */
+  box-shadow: 0 0 0 1px rgba(60, 121, 240, 0.08);
   backdrop-filter: blur(6px);
   transition: border-color 0.15s ease, box-shadow 0.15s ease, transform 0.12s ease;
 }
 
 .match-chrome-btn:hover,
 .match-chrome-btn:focus-visible {
-  border-color: rgba(143, 248, 255, 0.55);
+  border-color: rgba(60, 121, 240, 0.55);
   box-shadow:
-    0 0 0 1px rgba(143, 248, 255, 0.2),
-    0 0 18px rgba(80, 227, 194, 0.22),
-    0 8px 24px rgba(0, 0, 0, 0.45);
+    0 0 0 1px rgba(60, 121, 240, 0.2),
+    0 0 18px rgba(39, 80, 162, 0.22);
   outline: none;
   transform: translateY(-1px);
 }
@@ -1201,7 +1277,7 @@ button.btn-danger:hover:not(:disabled) {
 }
 
 .match-chrome-clips {
-  border-color: rgba(143, 248, 255, 0.28);
+  border-color: rgba(60, 121, 240, 0.28);
   color: var(--shell-accent-bright);
 }
 
@@ -1215,10 +1291,10 @@ button.btn-danger:hover:not(:disabled) {
 }
 
 .match-chrome-dot.is-on {
-  background: #50e3c2;
+  background: #2750a2;
   box-shadow:
-    0 0 0 1px rgba(80, 227, 194, 0.35),
-    0 0 10px rgba(80, 227, 194, 0.65);
+    0 0 0 1px rgba(39, 80, 162, 0.35),
+    0 0 10px rgba(39, 80, 162, 0.65);
 }
 
 @media (max-width: 520px) {
@@ -1244,9 +1320,9 @@ button.btn-danger:hover:not(:disabled) {
   width: 38px;
   height: 38px;
   border-radius: 10px;
-  border: 1px solid rgba(143, 248, 255, 0.35);
+  border: 1px solid rgba(60, 121, 240, 0.35);
   background: rgba(6, 12, 20, 0.45);
-  color: rgba(143, 248, 255, 0.85);
+  color: rgba(60, 121, 240, 0.85);
   font-size: 19px;
   line-height: 1;
   display: flex;
@@ -1296,7 +1372,7 @@ button.btn-danger:hover:not(:disabled) {
   box-shadow: 0 0 14px rgba(255, 209, 102, 0.28);
 }
 .splash-name input::placeholder {
-  color: rgba(143, 248, 255, 0.4);
+  color: rgba(60, 121, 240, 0.4);
   font-weight: 400;
 }
 
@@ -1317,13 +1393,13 @@ button.btn-danger:hover:not(:disabled) {
   width: min(520px, 100%);
   margin: auto;
   padding: 40px;
-  border: 1px solid rgba(143, 248, 255, 0.24);
-  border-radius: 16px;
-  background: linear-gradient(145deg, rgba(16, 21, 32, 0.94) 0%, rgba(10, 14, 22, 0.97) 100%);
+  border: 1px solid rgba(60, 121, 240, 0.24);
+  border-radius: 12px;
+  /* Void-and-seam depth: flat fill, thin glow, no elevation shadow (G2). */
+  background: rgba(11, 15, 24, 0.95);
   box-shadow:
-    0 40px 100px rgba(0, 0, 0, 0.6),
-    0 0 1px rgba(143, 248, 255, 0.32),
-    inset 0 1px 0 rgba(143, 248, 255, 0.1);
+    0 0 0 1px rgba(60, 121, 240, 0.18),
+    0 0 30px rgba(39, 80, 162, 0.04);
   text-align: center;
 }
 
@@ -1340,7 +1416,7 @@ button.btn-danger:hover:not(:disabled) {
 
 .email-gate-input {
   padding: 12px 16px;
-  border: 1px solid rgba(143, 248, 255, 0.3);
+  border: 1px solid rgba(60, 121, 240, 0.3);
   border-radius: 10px;
   background: rgba(5, 8, 15, 0.8);
   color: #d7dde4;
@@ -1350,8 +1426,8 @@ button.btn-danger:hover:not(:disabled) {
 
 .email-gate-input:focus {
   outline: none;
-  border-color: rgba(143, 248, 255, 0.7);
-  box-shadow: 0 0 16px rgba(143, 248, 255, 0.18);
+  border-color: rgba(60, 121, 240, 0.7);
+  box-shadow: 0 0 16px rgba(60, 121, 240, 0.18);
 }
 
 .email-gate-error {
@@ -1458,18 +1534,20 @@ button.btn-danger:hover:not(:disabled) {
   100% { opacity: 0; visibility: hidden; }
 }
 
-/* Steel plate menu */
+/* Steel plate menu — void-dark flat fill (keep only the hairline facet
+   texture as a second layer, axiom G5) instead of a directional "lit
+   plate" gradient; glow-only shadow instead of elevation (axiom G2). */
 .splash-screen .splash-stage {
-  border: 1px solid rgba(143, 248, 255, 0.18);
+  border: 1px solid rgba(60, 121, 240, 0.18);
   border-top: 1px solid rgba(230, 245, 255, 0.35);
   border-bottom: 1px solid rgba(0, 0, 0, 0.9);
-  border-radius: 6px;
+  border-radius: 12px;
   background:
-    linear-gradient(180deg, rgba(46, 58, 76, 0.55) 0%, rgba(14, 19, 30, 0.82) 9%, rgba(9, 13, 21, 0.86) 91%, rgba(2, 4, 8, 0.92) 100%),
+    linear-gradient(rgba(9, 12, 19, 0.9), rgba(9, 12, 19, 0.9)),
     repeating-linear-gradient(90deg, rgba(255, 255, 255, 0.014) 0 2px, transparent 2px 4px);
   box-shadow:
-    0 30px 90px rgba(0, 0, 0, 0.75),
-    inset 0 0 60px rgba(0, 0, 0, 0.45);
+    0 0 0 1px rgba(0, 0, 0, 0.4),
+    0 0 26px rgba(0, 0, 0, 0.25);
 }
 
 .splash-kicker--studio {
@@ -1530,8 +1608,8 @@ button.btn-danger:hover:not(:disabled) {
 
 .splash-screen .shell-btn-secondary:hover {
   color: #0b0e11;
-  background: linear-gradient(180deg, #aef4e6, #50e3c2);
-  box-shadow: 0 0 18px rgba(80, 227, 194, 0.55);
+  background: linear-gradient(180deg, #aef4e6, #2750a2);
+  box-shadow: 0 0 18px rgba(39, 80, 162, 0.55);
   text-shadow: none;
 }
 
@@ -1566,13 +1644,13 @@ button.btn-danger:hover:not(:disabled) {
 
 /* ── GOTHIC GNOSTIC retheme (over the Y2K base) ────────────────────────── */
 .splash-screen .splash-stage {
-  border: 1px solid rgba(201, 168, 76, 0.30);
+  border: 1px solid rgba(137, 127, 105, 0.30);
   border-top: 1px solid rgba(255, 236, 170, 0.45);
   border-bottom: 1px solid rgba(0, 0, 0, 0.9);
+  /* Thin lit seam + faint house glow — no elevation blur (axiom G2). */
   box-shadow:
-    0 30px 90px rgba(0, 0, 0, 0.8),
-    0 0 40px rgba(201, 168, 76, 0.06),
-    inset 0 0 70px rgba(0, 0, 0, 0.55);
+    0 0 0 1px rgba(137, 127, 105, 0.16),
+    0 0 30px rgba(137, 127, 105, 0.07);
 }
 
 .splash-kicker--studio {
@@ -1596,8 +1674,9 @@ button.btn-danger:hover:not(:disabled) {
   aspect-ratio: 1;
   transform: translate(-50%, -50%);
   background: url("/img/seal-gnostic.png") center / contain no-repeat;
+  /* Static, not perpetually spinning — ui-shell-goal.md: "No perpetual
+     large animations on HOME that steal GPU from world preview." */
   opacity: 0.4;
-  animation: seal-spin 120s linear infinite;
   pointer-events: none;
 }
 
@@ -1609,17 +1688,17 @@ button.btn-danger:hover:not(:disabled) {
 .splash-logo { position: relative; }
 
 .splash-screen .shell-btn-secondary {
-  border-color: rgba(201, 168, 76, 0.35);
+  border-color: rgba(137, 127, 105, 0.35);
   color: #e2ded0;
 }
 
 .splash-screen .shell-btn-secondary:hover {
   color: #0b0e11;
-  background: linear-gradient(180deg, #ffe9a8, #c9a84c);
-  box-shadow: 0 0 20px rgba(201, 168, 76, 0.5);
+  background: linear-gradient(180deg, #ffe9a8, #897f69);
+  box-shadow: 0 0 20px rgba(137, 127, 105, 0.5);
 }
 
-.splash-screen .splash-name-label { color: rgba(201, 168, 76, 0.85); }
+.splash-screen .splash-name-label { color: rgba(137, 127, 105, 0.85); }
 
 /* ══ BOOT IDENT — the studio sting (EA/THQ ceremony, gnostic edition) ═══ */
 .boot-gate {
@@ -1647,11 +1726,11 @@ button.btn-danger:hover:not(:disabled) {
 
 .boot-gate-line {
   font-family: "Noto Serif Display", "Noto Serif", serif;
-  color: rgba(201, 168, 76, 0.9);
+  color: rgba(137, 127, 105, 0.9);
   font-size: 0.95rem;
   font-weight: 700;
   letter-spacing: 0.6em;
-  text-shadow: 0 0 18px rgba(201, 168, 76, 0.5);
+  text-shadow: 0 0 18px rgba(137, 127, 105, 0.5);
   animation: cta-blink 1.6s steps(1) infinite;
 }
 
@@ -1691,11 +1770,11 @@ button.btn-danger:hover:not(:disabled) {
   transform: translate(-50%, -50%);
   background: conic-gradient(
     from 0deg,
-    transparent 0deg 24deg, rgba(201, 168, 76, 0.07) 30deg,
-    transparent 36deg 80deg, rgba(80, 227, 194, 0.05) 86deg,
-    transparent 92deg 140deg, rgba(201, 168, 76, 0.08) 148deg,
-    transparent 156deg 210deg, rgba(201, 168, 76, 0.06) 218deg,
-    transparent 226deg 300deg, rgba(80, 227, 194, 0.05) 308deg,
+    transparent 0deg 24deg, rgba(137, 127, 105, 0.07) 30deg,
+    transparent 36deg 80deg, rgba(39, 80, 162, 0.05) 86deg,
+    transparent 92deg 140deg, rgba(137, 127, 105, 0.08) 148deg,
+    transparent 156deg 210deg, rgba(137, 127, 105, 0.06) 218deg,
+    transparent 226deg 300deg, rgba(39, 80, 162, 0.05) 308deg,
     transparent 316deg 360deg
   );
   opacity: 0;
@@ -1779,7 +1858,7 @@ button.btn-danger:hover:not(:disabled) {
 .boot-ident-flash {
   position: absolute;
   inset: 0;
-  background: radial-gradient(circle at 50% 46%, rgba(80, 227, 194, 0.95) 0%, white 55%);
+  background: radial-gradient(circle at 50% 46%, rgba(39, 80, 162, 0.95) 0%, white 55%);
   opacity: 0;
   pointer-events: none;
 }
@@ -1829,8 +1908,10 @@ html.ident-done .splash-cta-blink { animation-delay: 1.3s, 1.4s; }
 }
 
 .splash-screen .splash-stage {
+  /* Flat void fill (not a directional "lit plate" gradient, axiom G2) +
+     the hairline facet texture layer. */
   background:
-    linear-gradient(180deg, rgba(34, 44, 60, 0.68) 0%, rgba(14, 19, 30, 0.86) 9%, rgba(9, 13, 21, 0.87) 91%, rgba(3, 5, 10, 0.9) 100%),
+    linear-gradient(rgba(10, 13, 20, 0.88), rgba(10, 13, 20, 0.88)),
     repeating-linear-gradient(90deg, rgba(255, 255, 255, 0.012) 0 2px, transparent 2px 4px);
 }
 
@@ -1944,13 +2025,13 @@ html.ident-done .splash-cta-blink { animation-delay: 1.3s, 1.4s; }
   overflow: visible;
 }
 
-.is-c { stroke: rgba(201, 168, 76, 0.75); stroke-width: 3; }
-.is-c2 { stroke: rgba(80, 227, 194, 0.55); stroke-width: 2; }
+.is-c { stroke: rgba(137, 127, 105, 0.75); stroke-width: 3; }
+.is-c2 { stroke: rgba(39, 80, 162, 0.55); stroke-width: 2; }
 .is-c4 { stroke: rgba(255, 236, 170, 0.8); }
 .is-dot { fill: rgba(255, 236, 170, 0); }
-.is-tri { stroke: rgba(80, 227, 194, 0.7); stroke-width: 2.5; }
-.is-spokes line { stroke: rgba(201, 168, 76, 0.4); stroke-width: 1.5; }
-.is-ticks line { stroke: rgba(201, 168, 76, 0.8); opacity: 0; }
+.is-tri { stroke: rgba(39, 80, 162, 0.7); stroke-width: 2.5; }
+.is-spokes line { stroke: rgba(137, 127, 105, 0.4); stroke-width: 1.5; }
+.is-ticks line { stroke: rgba(137, 127, 105, 0.8); opacity: 0; }
 .is-diamonds polygon {
   fill: rgba(255, 236, 170, 0.9);
   opacity: 0;
@@ -2092,7 +2173,7 @@ html.ident-done .splash-cta-blink { animation-delay: 1.3s, 1.4s; }
   width: min(70vmin, 660px);
   aspect-ratio: 1;
   transform: translate(-50%, -50%);
-  background: radial-gradient(circle, rgba(80, 227, 194, 0.30) 0%, rgba(80, 227, 194, 0.08) 45%, transparent 70%);
+  background: radial-gradient(circle, rgba(39, 80, 162, 0.30) 0%, rgba(39, 80, 162, 0.08) 45%, transparent 70%);
   opacity: 0.12;
   pointer-events: none;
 }
@@ -2238,7 +2319,7 @@ html.ident-done .splash-cta-blink { animation-delay: 1.3s, 1.4s; }
 
 /* the ray crown: seven gold, one teal through the seam */
 .is-rays line { opacity: 0; }
-.is-rays .ray-gold { stroke: rgba(201, 168, 76, 0.55); stroke-width: 6;
+.is-rays .ray-gold { stroke: rgba(137, 127, 105, 0.55); stroke-width: 6;
   stroke-linecap: round; stroke-dasharray: 122; stroke-dashoffset: 122;
   animation: ray-in 0.5s cubic-bezier(0.16, 1, 0.3, 1) forwards paused; }
 .is-rays .ray-teal { stroke: url(#liqTeal); stroke-width: 7;
@@ -2365,7 +2446,7 @@ html:not(.ident-done) .splash-screen { overflow: hidden; }
 /* flash gains a magenta fringe rim — every hit carries the lens-split */
 .boot-ident-flash {
   background: radial-gradient(circle at 50% 46%,
-    rgba(80, 227, 194, 0.95) 0%, white 48%,
+    rgba(39, 80, 162, 0.95) 0%, white 48%,
     rgba(255, 255, 255, 0.9) 62%, rgba(232, 121, 249, 0.4) 82%,
     rgba(232, 121, 249, 0.15) 100%);
 }
@@ -2387,7 +2468,7 @@ html:not(.ident-done) .splash-screen { overflow: hidden; }
 .credits-block {
   margin-bottom: 20px;
   padding-bottom: 16px;
-  border-bottom: 1px solid rgba(201, 168, 76, 0.14);
+  border-bottom: 1px solid rgba(137, 127, 105, 0.14);
   text-align: center;
 }
 
@@ -2401,7 +2482,7 @@ html:not(.ident-done) .splash-screen { overflow: hidden; }
   font-size: 0.72rem;
   letter-spacing: 0.28em;
   text-transform: uppercase;
-  color: rgba(201, 168, 76, 0.85);
+  color: rgba(137, 127, 105, 0.85);
 }
 
 .credits-role {
@@ -2433,7 +2514,7 @@ html:not(.ident-done) .splash-screen { overflow: hidden; }
 
 .credits-seal-mark img {
   width: 96px;
-  animation: seal-spin 120s linear infinite;
+  /* Static — same "no perpetual large animation" rule as the HOME seal. */
 }
 
 /* volumetric wrapper: JS sets a small continuous bass-driven translate
@@ -2472,8 +2553,8 @@ html:not(.ident-done) .splash-screen { overflow: hidden; }
   border-radius: 50%;
   background: radial-gradient(circle,
     rgba(216, 255, 246, 0.55) 0%,
-    rgba(80, 227, 194, 0.35) 32%,
-    rgba(201, 168, 76, 0.18) 58%,
+    rgba(39, 80, 162, 0.35) 32%,
+    rgba(137, 127, 105, 0.18) 58%,
     transparent 75%);
   mix-blend-mode: screen;
   opacity: 0;

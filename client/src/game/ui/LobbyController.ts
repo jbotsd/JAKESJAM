@@ -687,11 +687,16 @@ export class LobbyController {
       const name = document.createElement("span");
       const state = document.createElement("span");
 
-      row.className = "player-row";
+      // Axiom H6: the local player reads as primary (brighter ring, same
+      // recipe otherwise) without being a structurally different
+      // component — echoes HudSystem's in-match nameplate convention
+      // (bigger badge + "YOU" tag + brighter cyan ring for the local row).
+      const isLocal = player.playerId === this.playerId;
+      row.className = isLocal ? "player-row player-row--local" : "player-row";
       swatch.className = "player-swatch";
       swatch.style.background = player.color;
       name.className = "player-name";
-      name.textContent = `${player.name} / ${characterLabel(player.characterId)}`;
+      name.textContent = `${isLocal ? "▸ " : ""}${player.name} / ${characterLabel(player.characterId)}${isLocal ? "  (YOU)" : ""}`;
       state.className = player.ready ? "player-state ready" : "player-state";
       state.textContent = player.ready ? "Ready" : "Waiting";
 

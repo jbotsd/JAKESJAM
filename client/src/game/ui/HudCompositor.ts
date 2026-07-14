@@ -155,8 +155,6 @@ export class HudCompositor {
     const vitals: HudVitals = {
       health: local?.health ?? 0,
       maxHealth: character.maxHealth,
-      shieldCharge: local?.shieldCharge,
-      shieldMaxCharge: local?.shieldMaxCharge ?? 0,
       // jetpackFuel / abilityCharge deliberately not fed: the jetpack was
       // removed from the game and abilityCharge is a dead sim field that's
       // initialized to 0 and never written — both rendered as permanent

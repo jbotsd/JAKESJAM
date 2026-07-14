@@ -24,6 +24,7 @@ import {
   sealForCard,
   SEAL_ACCENT_HEX,
 } from "./cardSeals.js";
+import { rarityColorCss } from "./rarityColors.js";
 
 export type MatchResultsRow = {
   playerId: string;
@@ -139,7 +140,7 @@ export class MatchResultsOverlay {
     this.actionsEl.append(rematchButton, lobbyButton);
     if (view.shareUrl) {
       const shareUrl = view.shareUrl;
-      const shareButton = makeButton("Share highlight", SECONDARY_BUTTON_STYLE);
+      const shareButton = makeButton("Share highlight", SHARE_BUTTON_STYLE);
       shareButton.addEventListener("click", () => {
         void (async () => {
           try {
@@ -161,54 +162,47 @@ export class MatchResultsOverlay {
       this.actionsEl.appendChild(shareButton);
     }
 
-    // Orchestrated slam-in: backdrop fades, stage slams from below, then
-    // title crashes in overscale → settles, then scoreboard rows stagger in.
+    // M1: settle in on open — a single restrained opacity + scale move,
+    // plain ease-out, no spring/overshoot, no multi-stage cascade. Rows get
+    // a small capped stagger so a full roster still settles well inside the
+    // duration ceiling, instead of the old 80ms-per-row cascade.
     this.root.style.display = "flex";
     this.root.style.opacity = "0";
 
-    // Stage starts off-screen below
-    this.stage.style.transform = "translateY(60px) scale(0.88)";
+    this.stage.style.transform = "scale(0.98)";
     this.stage.style.opacity = "0";
     this.stage.style.transition = "none";
 
-    // Title starts overscale
-    this.titleEl.style.transform = "scale(1.6)";
+    this.titleEl.style.transform = "scale(1)";
     this.titleEl.style.opacity = "0";
     this.titleEl.style.transition = "none";
 
-    // Hide scoreboard rows for stagger
     const rowEls = Array.from(this.scoreboardEl.children) as HTMLElement[];
     for (const row of rowEls) {
       row.style.opacity = "0";
-      row.style.transform = "translateX(-18px)";
+      row.style.transform = "translateY(6px)";
       row.style.transition = "none";
     }
 
     requestAnimationFrame(() => {
-      // 1. Backdrop fade in
       this.root.style.opacity = "1";
 
-      // 2. Stage slams up (60ms after backdrop starts)
-      setTimeout(() => {
-        this.stage.style.transition = "transform 340ms cubic-bezier(0.22,1,0.36,1), opacity 200ms ease";
-        this.stage.style.transform = "translateY(0) scale(1)";
-        this.stage.style.opacity = "1";
-      }, 60);
+      this.stage.style.transition = "transform 200ms ease-out, opacity 200ms ease-out";
+      this.stage.style.transform = "scale(1)";
+      this.stage.style.opacity = "1";
 
-      // 3. Title crashes in
-      setTimeout(() => {
-        this.titleEl.style.transition = "transform 280ms cubic-bezier(0.34,1.56,0.64,1), opacity 160ms ease";
-        this.titleEl.style.transform = "scale(1)";
-        this.titleEl.style.opacity = "1";
-      }, 180);
+      this.titleEl.style.transition = "opacity 200ms ease-out";
+      this.titleEl.style.opacity = "1";
 
-      // 4. Scoreboard rows stagger in
+      // Capped stagger (20ms/row, max 80ms) — total sequence stays under
+      // ~260ms even for a full roster.
       rowEls.forEach((row, i) => {
+        const delay = Math.min(i * 20, 80);
         setTimeout(() => {
-          row.style.transition = "transform 240ms cubic-bezier(0.34,1.56,0.64,1), opacity 160ms ease";
-          row.style.transform = "translateX(0)";
+          row.style.transition = "transform 160ms ease-out, opacity 160ms ease-out";
+          row.style.transform = "translateY(0)";
           row.style.opacity = "1";
-        }, 380 + i * 80);
+        }, delay);
       });
     });
   }
@@ -271,7 +265,7 @@ export class MatchResultsOverlay {
   private makeCardChipElement(card: CardDefinition): HTMLSpanElement {
     const chip = document.createElement("span");
     Object.assign(chip.style, CARD_CHIP_STYLE);
-    const glow = card.visual?.glowColor ?? colorForRarity(card.rarity);
+    const glow = card.visual?.glowColor ?? rarityColorCss(card.rarity);
     chip.style.borderColor = glow;
     chip.style.color = glow;
     chip.style.display = "inline-flex";
@@ -346,12 +340,13 @@ const STAGE_STYLE: Partial<CSSStyleDeclaration> = {
   alignItems: "center",
   gap: "18px",
   padding: "36px 40px",
-  borderRadius: "20px",
+  borderRadius: "12px",
   border: "1px solid rgba(143, 248, 255, 0.28)",
-  background:
-    "linear-gradient(160deg, rgba(16, 20, 32, 0.96), rgba(10, 13, 22, 0.99))",
-  boxShadow:
-    "0 40px 100px rgba(0,0,0,0.65), 0 0 1px rgba(143,248,255,0.35), 0 0 50px rgba(80,227,194,0.07), inset 0 1px 0 rgba(143,248,255,0.09)",
+  // Void-dark flat interior, no gradient fill standing in for a physical
+  // card (G2/G3) — a hollow seam frame with content floating in void.
+  background: "rgba(9, 12, 20, 0.97)",
+  // Thin symmetric (no y-offset) glow only — no elevation boxShadow.
+  boxShadow: "0 0 40px rgba(80,227,194,0.07), inset 0 1px 0 rgba(143,248,255,0.09)",
   // min() so a 393px phone is not forced wider than its own viewport
   minWidth: "min(520px, 92vw)",
   maxWidth: "min(840px, 92vw)",
@@ -392,8 +387,10 @@ const ROW_STYLE: Partial<CSSStyleDeclaration> = {
   gap: "8px",
   padding: "14px 16px",
   borderRadius: "10px",
+  // Hollow seam frame, void/transparent interior — not a filled plate
+  // (G2/G3).
   border: "1px solid rgba(154, 165, 177, 0.35)",
-  background: "rgba(7, 16, 28, 0.7)",
+  background: "transparent",
 };
 
 const ROW_HEADER_STYLE: Partial<CSSStyleDeclaration> = {
@@ -428,7 +425,8 @@ const CARD_LIST_STYLE: Partial<CSSStyleDeclaration> = {
 
 const CARD_CHIP_STYLE: Partial<CSSStyleDeclaration> = {
   padding: "3px 8px",
-  borderRadius: "999px",
+  // Chamfer, not a capsule (G1 — "no sausage").
+  borderRadius: "6px",
   border: "1px solid #50e3c2",
   fontWeight: "700",
   letterSpacing: "0.04em",
@@ -470,20 +468,13 @@ const SECONDARY_BUTTON_STYLE: Partial<CSSStyleDeclaration> = {
   borderColor: "rgba(154,165,177,0.5)",
 };
 
-function colorForRarity(rarity: CardDefinition["rarity"]): string {
-  switch (rarity) {
-    case "legendary":
-      return "#fb923c";
-    case "rare":
-      return "#a78bfa";
-    case "uncommon":
-      return "#4ade80";
-    case "cursed":
-      return "#fb7185";
-    default:
-      return "#9aa5b1";
-  }
-}
+// C2: share/highlight CTAs are the sanctioned gold exception (house
+// feature, not combat) — matches DeathOverlay.ts's equivalent share button.
+const SHARE_BUTTON_STYLE: Partial<CSSStyleDeclaration> = {
+  background: "transparent",
+  color: "#c9a84c",
+  borderColor: "rgba(201, 168, 76, 0.45)",
+};
 
 function withAlpha(hex: string, alpha: number): string {
   const value = hex.replace("#", "");

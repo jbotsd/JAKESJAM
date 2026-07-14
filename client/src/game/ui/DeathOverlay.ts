@@ -4,6 +4,25 @@
 //   - You are dead (not a freeze / bug)
 //   - Respawn timer counting down
 //   - Context: waiting for the round to end (rogue-lite flow)
+//   - The score right now — this is the ONLY screen up during that wait
+//     (RoundBanner explicitly hides itself during "fighting" phase, and
+//     this overlay's own full-viewport blur darkens the peripheral
+//     nameplate column behind it), so "what else is going on" has to live
+//     HERE or it's genuinely not visible to a dead player (Jake, 2026-07-14
+//     UI pass: "does it need to [show] what else is going on when it
+//     happens" — audit found it didn't, added the score line below).
+//
+// Redesigned 2026-07-14 to match docs/visual-language-gnostic-vessel.md's
+// own "Death / results" section, which this screen predated: "Full void
+// wash (aperture). Single centered seal mark. No 'YOU DIED' soulless-souls
+// clone; keep ELIMINATED." The previous version was a bordered gradient
+// card with a 16px border-radius and a drop-shadow — exactly the "thick
+// card, Material elevation shadow" anti-pattern the doctrine calls out, and
+// past the doctrine's own 8-12px corner-radius ceiling. This version is a
+// void wash with content floating directly in it — no card, no plate — and
+// the "✦" text glyph replaced with a CSS ring that echoes the same
+// "extinguished vessel" ring drawFacetedRing draws elsewhere (badge disc +
+// dim dashed ring), so the seal reads as YOUR vessel, not a generic icon.
 //
 // DOM-based so it reads cleanly over any arena background.
 // Lifecycle: show() / updateTimer() / hide() / destroy()
@@ -13,6 +32,10 @@ export type DeathOverlayShowOpts = {
   tip?: string | null;
   /** Shareable highlight URL if a clip is known for this life. */
   shareUrl?: string | null;
+  /** Pre-formatted "YOU 1  ·  BOT · PISTON 2  ·  BOT · SPARK 0" line — same
+   *  format/order as RoundBanner's score line, so the two screens read as
+   *  one system. Omit to hide the row entirely (e.g. solo practice). */
+  scoreLine?: string | null;
 };
 
 export class DeathOverlay {
@@ -20,6 +43,7 @@ export class DeathOverlay {
   private stage: HTMLDivElement;
   private timerEl: HTMLSpanElement;
   private tipEl: HTMLDivElement;
+  private scoreEl: HTMLDivElement;
   private shareBtn: HTMLButtonElement;
   private destroyed = false;
 
@@ -38,9 +62,14 @@ export class DeathOverlay {
     this.stage = document.createElement("div");
     Object.assign(this.stage.style, STAGE_STYLE);
 
-    const skull = document.createElement("div");
-    skull.textContent = "✦";
-    Object.assign(skull.style, SKULL_STYLE);
+    // Extinguished-vessel seal — echoes the badge+ring recipe used
+    // everywhere else in the HUD (portraitBadge.ts / facetedRing.ts)
+    // instead of a generic "✦" glyph unrelated to that system.
+    const seal = document.createElement("div");
+    Object.assign(seal.style, SEAL_STYLE);
+    const sealCore = document.createElement("div");
+    Object.assign(sealCore.style, SEAL_CORE_STYLE);
+    seal.appendChild(sealCore);
 
     const titleEl = document.createElement("div");
     titleEl.textContent = title;
@@ -54,6 +83,10 @@ export class DeathOverlay {
     this.timerEl.textContent = "3";
     Object.assign(this.timerEl.style, TIMER_STYLE);
 
+    this.scoreEl = document.createElement("div");
+    Object.assign(this.scoreEl.style, SCORE_STYLE);
+    this.scoreEl.hidden = true;
+
     this.tipEl = document.createElement("div");
     Object.assign(this.tipEl.style, TIP_STYLE);
     this.tipEl.hidden = true;
@@ -65,7 +98,7 @@ export class DeathOverlay {
     this.shareBtn.hidden = true;
     this.shareBtn.style.pointerEvents = "auto";
 
-    this.stage.append(skull, titleEl, sub, this.timerEl, this.tipEl, this.shareBtn);
+    this.stage.append(seal, titleEl, sub, this.timerEl, this.scoreEl, this.tipEl, this.shareBtn);
     this.root.appendChild(this.stage);
 
     document.body.appendChild(this.root);
@@ -78,6 +111,9 @@ export class DeathOverlay {
     const tip = opts.tip?.trim() || "";
     this.tipEl.textContent = tip;
     this.tipEl.hidden = !tip;
+    const scoreLine = opts.scoreLine?.trim() || "";
+    this.scoreEl.textContent = scoreLine;
+    this.scoreEl.hidden = !scoreLine;
     const shareUrl = opts.shareUrl?.trim() || "";
     if (shareUrl) {
       this.shareBtn.hidden = false;
@@ -119,6 +155,16 @@ export class DeathOverlay {
     this.timerEl.textContent = remainingSec.toString();
   }
 
+  /** Score can change (another player scores) while this stays open for the
+   *  whole "fighting" phase — refreshed every frame from OnlineMatchScene
+   *  alongside updateTimer(), not just at show() time. */
+  updateScoreLine(scoreLine: string | null | undefined): void {
+    if (this.destroyed) return;
+    const line = scoreLine?.trim() || "";
+    if (this.scoreEl.textContent !== line) this.scoreEl.textContent = line;
+    this.scoreEl.hidden = !line;
+  }
+
   hide(): void {
     if (this.destroyed) return;
     this.root.style.display = "none";
@@ -144,8 +190,10 @@ const ROOT_STYLE: Partial<CSSStyleDeclaration> = {
   display: "flex",
   alignItems: "center",
   justifyContent: "center",
-  background: "rgba(5, 8, 15, 0.62)",
-  backdropFilter: "blur(3px)",
+  // Void wash (doctrine: "Full void wash (aperture)") — no card behind the
+  // content, this IS the whole background treatment.
+  background: "rgba(5, 8, 15, 0.72)",
+  backdropFilter: "blur(4px)",
   pointerEvents: "none",
   transition: "opacity 300ms ease",
 };
@@ -155,20 +203,29 @@ const STAGE_STYLE: Partial<CSSStyleDeclaration> = {
   flexDirection: "column",
   alignItems: "center",
   gap: "10px",
-  padding: "28px 40px",
-  borderRadius: "16px",
-  border: "1px solid rgba(251, 113, 133, 0.38)",
-  background:
-    "linear-gradient(160deg, rgba(20, 12, 18, 0.88), rgba(10, 6, 12, 0.94))",
-  boxShadow:
-    "0 0 40px rgba(251, 113, 133, 0.14), inset 0 1px 0 rgba(251, 113, 133, 0.12)",
+  // No border, no fill, no radius, no shadow — content floats directly in
+  // the void wash instead of a second "card" layer on top of it (was the
+  // exact anti-pattern docs/visual-language-gnostic-vessel.md calls out:
+  // "thick white cards, Material elevation shadows as primary depth").
 };
 
-const SKULL_STYLE: Partial<CSSStyleDeclaration> = {
-  fontSize: "32px",
-  color: "#fb7185",
-  lineHeight: "1",
-  textShadow: "0 0 16px rgba(251, 113, 133, 0.55)",
+const SEAL_STYLE: Partial<CSSStyleDeclaration> = {
+  width: "56px",
+  height: "56px",
+  borderRadius: "50%",
+  border: "2px dashed rgba(251, 113, 133, 0.55)",
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "center",
+  boxShadow: "0 0 18px rgba(251, 113, 133, 0.18)",
+};
+
+const SEAL_CORE_STYLE: Partial<CSSStyleDeclaration> = {
+  width: "10px",
+  height: "10px",
+  borderRadius: "50%",
+  background: "#fb7185",
+  boxShadow: "0 0 10px rgba(251, 113, 133, 0.7)",
 };
 
 const TITLE_STYLE: Partial<CSSStyleDeclaration> = {
@@ -199,9 +256,19 @@ const TIMER_STYLE: Partial<CSSStyleDeclaration> = {
   marginTop: "4px",
 };
 
+const SCORE_STYLE: Partial<CSSStyleDeclaration> = {
+  // Same face/color/tracking as RoundBanner's score line (RoundBanner.ts)
+  // so the two screens read as one system, not two different fonts for the
+  // same fact.
+  fontFamily: "'Space Mono', 'Courier New', monospace",
+  fontSize: "13px",
+  fontWeight: "700",
+  letterSpacing: "0.04em",
+  color: "#8ff8ff",
+  marginTop: "2px",
+};
+
 const TIP_STYLE: Partial<CSSStyleDeclaration> = {
-  // Matches its siblings SUB_STYLE/TIMER_STYLE above — this was the one
-  // style in the file still defaulting to the generic Inter stack.
   fontFamily: "'Space Mono', 'Courier New', monospace",
   fontSize: "12px",
   fontWeight: "600",

@@ -97,11 +97,16 @@ export class ArenaForgeUI {
   private saveResultPanel: HTMLDivElement;
   private activeTool: ForgeTool = "select";
   private destroyed = false;
+  /** S5: compact/phone layout branch — verified at ~400px viewport width. */
+  private readonly compact: boolean;
 
   constructor(cb: ForgeUICallbacks) {
     this.cb = cb;
+    this.compact = window.innerWidth < COMPACT_MAX_WIDTH;
     this.root = document.createElement("div");
     Object.assign(this.root.style, ROOT_STYLE);
+    // M1: settle-in on open, withdraw (fade) on close — never fly/ascend.
+    this.root.style.opacity = "0";
 
     const top = this.buildTopBar();
     const palette = this.buildPalette();
@@ -121,6 +126,9 @@ export class ArenaForgeUI {
 
     this.root.append(top, palette, inspector, validator, this.saveResultPanel);
     document.body.appendChild(this.root);
+    requestAnimationFrame(() => {
+      this.root.style.opacity = "1";
+    });
   }
 
   // ─── Public API (driven by the scene) ──────────────────────────────────
@@ -189,13 +197,13 @@ export class ArenaForgeUI {
     const headline = document.createElement("div");
     headline.textContent = v.ok ? "✓ PLAYABLE" : "✗ NOT PLAYABLE YET";
     Object.assign(headline.style, VALIDATOR_HEADLINE_STYLE, {
-      color: v.ok ? "#86efac" : "#fb7185",
+      color: v.ok ? "#b8f05a" : "#fb7185",
     });
     this.validatorBody.appendChild(headline);
     for (const [label, ok] of rules) {
       const line = document.createElement("div");
       line.textContent = `${ok ? "✓" : "✗"} ${label}`;
-      Object.assign(line.style, VALIDATOR_LINE_STYLE, { color: ok ? "#9ba7b8" : "#fb7185" });
+      Object.assign(line.style, VALIDATOR_LINE_STYLE, { color: ok ? "#7a8299" : "#fb7185" });
       this.validatorBody.appendChild(line);
     }
   }
@@ -203,7 +211,9 @@ export class ArenaForgeUI {
   destroy(): void {
     if (this.destroyed) return;
     this.destroyed = true;
-    this.root.remove();
+    // M1: withdraw = fade, never fly/whoosh. Node lingers briefly, then unmounts.
+    this.root.style.opacity = "0";
+    setTimeout(() => this.root.remove(), FADE_MS);
   }
 
   showSaveOutcome(outcome: SaveOutcome): void {
@@ -227,7 +237,7 @@ export class ArenaForgeUI {
     }
     const line = document.createElement("div");
     line.textContent = `✓ Saved — code ${outcome.code}`;
-    Object.assign(line.style, { color: "#86efac", fontWeight: "900", fontSize: "12px" });
+    Object.assign(line.style, { color: "#b8f05a", fontWeight: "900", fontSize: "12px" });
     panel.appendChild(line);
     const linkRow = document.createElement("div");
     Object.assign(linkRow.style, { display: "flex", gap: "6px", marginTop: "6px" });
@@ -293,6 +303,7 @@ export class ArenaForgeUI {
   private buildPalette(): HTMLDivElement {
     const panel = document.createElement("div");
     Object.assign(panel.style, LEFT_PANEL_STYLE);
+    this.applyCompactWidth(panel, LEFT_PANEL_STYLE.width);
     const heading = document.createElement("div");
     heading.textContent = "PALETTE";
     Object.assign(heading.style, PANEL_HEADING_STYLE);
@@ -364,11 +375,21 @@ export class ArenaForgeUI {
   private buildPanel(title: string, body: HTMLDivElement, positionStyle: Partial<CSSStyleDeclaration>): HTMLDivElement {
     const panel = document.createElement("div");
     Object.assign(panel.style, PANEL_BASE_STYLE, positionStyle);
+    this.applyCompactWidth(panel, positionStyle.width);
     const heading = document.createElement("div");
     heading.textContent = title;
     Object.assign(heading.style, PANEL_HEADING_STYLE);
     panel.append(heading, body);
     return panel;
+  }
+
+  /** S5: shrink a docked panel's fixed pixel width proportionally when the
+   *  viewport is narrow, so left+right docked panels don't clip/overlap. */
+  private applyCompactWidth(panel: HTMLDivElement, baseWidth: string | undefined): void {
+    if (!this.compact || !baseWidth) return;
+    const px = parseInt(baseWidth, 10);
+    if (Number.isNaN(px)) return;
+    panel.style.width = `${Math.round(px * COMPACT_SCALE)}px`;
   }
 
   private setInspectorEmpty(): void {
@@ -431,24 +452,36 @@ export class ArenaForgeUI {
 
 // ─── Styles ───────────────────────────────────────────────────────────────
 
+/** M1 settle-in/withdraw duration — inside the 160-220ms house window. */
+const FADE_MS = 180;
+/** S5 compact/phone layout threshold (matches the uiWidth(s) < 520 convention
+ *  used by HudSystem/ActionBarSystem on the Phaser side). */
+const COMPACT_MAX_WIDTH = 520;
+/** Proportional shrink applied to docked panel widths in compact mode. */
+const COMPACT_SCALE = 0.65;
+
 const ROOT_STYLE: Partial<CSSStyleDeclaration> = {
   position: "fixed",
   inset: "0",
   zIndex: "7000",
   pointerEvents: "none",
   fontFamily: "'Space Mono', 'Courier New', monospace",
+  transition: `opacity ${FADE_MS}ms ease-out`,
 };
 
 const PANEL_BASE_STYLE: Partial<CSSStyleDeclaration> = {
   position: "fixed",
   pointerEvents: "auto",
-  background: "linear-gradient(160deg, rgba(10, 14, 22, 0.92), rgba(6, 9, 15, 0.96))",
+  // Void-and-seam depth (G2/G3): flat void interior, no filled gradient card.
+  // The 1px cyan seam border is the primary depth cue; boxShadow is a thin
+  // seam glow only, never a diffuse black elevation shadow.
+  background: "rgba(8, 11, 18, 0.9)",
   border: "1px solid rgba(143, 248, 255, 0.22)",
   borderRadius: "10px",
   padding: "10px 12px",
-  color: "#e8f6ff",
+  color: "#e8ecf4",
   fontSize: "11px",
-  boxShadow: "0 0 24px rgba(0,0,0,0.4)",
+  boxShadow: "0 0 6px rgba(143, 248, 255, 0.1)",
 };
 
 const LEFT_PANEL_STYLE: Partial<CSSStyleDeclaration> = {
@@ -480,14 +513,15 @@ const SAVE_RESULT_STYLE: Partial<CSSStyleDeclaration> = {
   left: "50%",
   transform: "translateX(-50%)",
   pointerEvents: "auto",
-  background: "linear-gradient(160deg, rgba(10, 14, 22, 0.95), rgba(6, 9, 15, 0.98))",
+  // Same void-and-seam treatment as PANEL_BASE_STYLE — see comment there.
+  background: "rgba(8, 11, 18, 0.94)",
   border: "1px solid rgba(143, 248, 255, 0.3)",
   borderRadius: "8px",
   padding: "10px 14px",
-  color: "#e8f6ff",
+  color: "#e8ecf4",
   fontFamily: "'Space Mono', 'Courier New', monospace",
   fontSize: "11px",
-  boxShadow: "0 0 24px rgba(0,0,0,0.5)",
+  boxShadow: "0 0 6px rgba(143, 248, 255, 0.14)",
   zIndex: "7100",
 };
 
@@ -515,7 +549,7 @@ const FORGE_TITLE_STYLE: Partial<CSSStyleDeclaration> = {
 };
 
 const SNAP_LABEL_STYLE: Partial<CSSStyleDeclaration> = {
-  color: "#9ba7b8",
+  color: "#7a8299",
   fontSize: "11px",
   display: "flex",
   alignItems: "center",
@@ -525,7 +559,7 @@ const SNAP_LABEL_STYLE: Partial<CSSStyleDeclaration> = {
 const PANEL_HEADING_STYLE: Partial<CSSStyleDeclaration> = {
   fontWeight: "900",
   letterSpacing: "0.12em",
-  color: "#ffd76b",
+  color: "#c9a84c",
   fontSize: "10px",
   marginBottom: "6px",
 };
@@ -535,7 +569,7 @@ const TOOL_BTN_STYLE: Partial<CSSStyleDeclaration> = {
   borderRadius: "6px",
   border: "1px solid rgba(143, 248, 255, 0.25)",
   background: "transparent",
-  color: "#e8f6ff",
+  color: "#e8ecf4",
   cursor: "pointer",
   fontFamily: "inherit",
   fontSize: "11px",
@@ -547,7 +581,7 @@ const KIND_SELECT_STYLE: Partial<CSSStyleDeclaration> = {
   borderRadius: "6px",
   border: "1px solid rgba(143, 248, 255, 0.25)",
   background: "#0b0e14",
-  color: "#e8f6ff",
+  color: "#e8ecf4",
   fontFamily: "inherit",
   fontSize: "10px",
 };
@@ -555,9 +589,9 @@ const KIND_SELECT_STYLE: Partial<CSSStyleDeclaration> = {
 const TEST_PLAY_BTN_STYLE: Partial<CSSStyleDeclaration> = {
   padding: "8px 16px",
   borderRadius: "6px",
-  border: "1px solid rgba(134, 239, 172, 0.5)",
-  background: "rgba(134, 239, 172, 0.12)",
-  color: "#86efac",
+  border: "1px solid rgba(184, 240, 90, 0.5)",
+  background: "rgba(184, 240, 90, 0.12)",
+  color: "#b8f05a",
   cursor: "pointer",
   fontFamily: "inherit",
   fontWeight: "900",
@@ -565,7 +599,7 @@ const TEST_PLAY_BTN_STYLE: Partial<CSSStyleDeclaration> = {
 };
 
 const HINT_STYLE: Partial<CSSStyleDeclaration> = {
-  color: "#6b7788",
+  color: "#7a8299",
   fontSize: "9px",
   lineHeight: "1.4",
   marginTop: "4px",
@@ -580,7 +614,7 @@ const FIELD_ROW_STYLE: Partial<CSSStyleDeclaration> = {
 };
 
 const FIELD_LABEL_STYLE: Partial<CSSStyleDeclaration> = {
-  color: "#9ba7b8",
+  color: "#7a8299",
   fontSize: "10px",
 };
 
@@ -590,7 +624,7 @@ const FIELD_INPUT_STYLE: Partial<CSSStyleDeclaration> = {
   borderRadius: "5px",
   border: "1px solid rgba(143, 248, 255, 0.25)",
   background: "#0b0e14",
-  color: "#e8f6ff",
+  color: "#e8ecf4",
   fontFamily: "inherit",
   fontSize: "10px",
 };

@@ -88,11 +88,24 @@ export function showClipShareToast(url: string, originalUrl?: string): void {
   document.body.appendChild(root);
   currentToast = root;
 
+  // M1: settle in on open — opacity fade, no slide/scale.
+  requestAnimationFrame(() => {
+    root.style.opacity = "1";
+  });
+
   const timer = window.setTimeout(dismiss, AUTO_DISMISS_MS);
+  let dismissing = false;
   function dismiss(): void {
+    if (dismissing) return;
+    dismissing = true;
     window.clearTimeout(timer);
-    root.remove();
-    if (currentToast === root) currentToast = null;
+    // M1: withdraw (fade) before removal, both the manual close and the
+    // auto-timeout path go through here.
+    root.style.opacity = "0";
+    window.setTimeout(() => {
+      root.remove();
+      if (currentToast === root) currentToast = null;
+    }, 200);
   }
 }
 
@@ -135,14 +148,17 @@ const ROOT_STYLE: Partial<CSSStyleDeclaration> = {
   padding: "12px 14px",
   borderRadius: "12px",
   border: "1px solid rgba(143, 248, 255, 0.18)",
-  background: "linear-gradient(160deg, rgba(16, 22, 34, 0.95), rgba(10, 14, 22, 0.98))",
+  // Void interior, no elevation shadow — hollow seam frame per G2/G3
+  // instead of a filled gradient "card" standing in for a physical panel.
+  background: "rgba(10, 14, 22, 0.96)",
   // Mirrors MatchStatusBadge.ts's HUD-readout role — Space Mono, not the
   // generic Inter default.
   fontFamily: "'Space Mono', 'Courier New', monospace",
   color: "#f7fbff",
-  boxShadow: "0 8px 24px rgba(0, 0, 0, 0.4)",
   minWidth: "220px",
   maxWidth: "280px",
+  opacity: "0",
+  transition: "opacity 200ms ease-out",
 };
 
 const CLOSE_BTN_STYLE: Partial<CSSStyleDeclaration> = {
