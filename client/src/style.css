@@ -1064,7 +1064,38 @@ button.btn-danger:hover:not(:disabled) {
 }
 
 .splash-actions--primary {
+  position: relative;
+  /* Shrink-wrap to the button's own size — without this the container
+     stretches to the full grid-row width (the button itself caps at
+     min-width:280px), so the ::after motif aligned to the CONTAINER's
+     right edge instead of the button's, landing far off to the side. */
+  width: fit-content;
   margin-bottom: 12px;
+}
+
+/* Gnostic motif living BEHIND Hot Lobby, on the unclipped parent — see
+   .shell-cta-primary::before's comment for why it can't live inside the
+   button itself. Sits at default paint order (no z-index needed: a
+   DOM-earlier ::before paints under the DOM-later real button child),
+   visible only in the sliver the button's own chamfer cuts away. */
+.splash-actions--primary::before,
+.splash-actions--primary::after {
+  content: "";
+  position: absolute;
+  width: 26px;
+  height: 26px;
+  background-image: var(--crystal-fleur-sm);
+  background-repeat: no-repeat;
+  background-size: contain;
+  pointer-events: none;
+}
+
+.splash-actions--primary::before { top: 0; left: 0; }
+
+.splash-actions--primary::after {
+  right: -6px;
+  bottom: 18px; /* clears the container's own margin-bottom, nudged out */
+  transform: rotate(180deg);
 }
 
 .splash-actions--secondary {
@@ -1130,6 +1161,33 @@ button.btn-danger:hover:not(:disabled) {
   min-width: min(100%, 280px);
   border-color: var(--shell-accent-house) !important;
   box-shadow: 0 0 0 1px rgba(137, 127, 105, 0.35), 0 0 18px rgba(39, 80, 162, 0.25);
+}
+
+/* Two-layer bezel on the primary CTA, gnostic motif underneath — Jake:
+   "two layer bezier on top and gnostic motif underneath." The button's
+   own clip-path clips ALL of its descendants (confirmed the hard way —
+   see the corner-badge comment above); there is no way for a motif to
+   show THROUGH this button's own cut while living inside it. So the
+   motif moves to the PARENT (.splash-actions--primary / .email-gate-
+   form), which has no clip-path of its own — sits behind the button at
+   default paint order (DOM-earlier ::before under a DOM-later real
+   child needs no explicit z-index), visible exactly in the sliver the
+   button's own chamfer cuts away. The button itself gets a second,
+   inset hollow frame layer (::before, replacing the corner-badge use
+   of that pseudo here only) for the "two layer" cut look on its face. */
+.shell-cta-primary::before {
+  content: "";
+  position: absolute;
+  inset: 4px;
+  border: 1px solid rgba(206, 223, 253, 0.45);
+  clip-path: polygon(11px 0, 100% 0, 100% calc(100% - 11px), calc(100% - 11px) 100%, 0 100%, 0 11px);
+  background: none;
+  opacity: 1;
+  pointer-events: none;
+}
+
+.shell-cta-primary::after {
+  content: none;
 }
 
 /* Secondary shell buttons (Practice/Private room/Join room/Clips/Settings/
@@ -1648,8 +1706,36 @@ button.btn-danger:hover:not(:disabled) {
 }
 
 .email-gate-form {
+  position: relative;
   display: grid;
   gap: 12px;
+}
+
+/* Gnostic motif living BEHIND "Play now", on the unclipped form (see
+   .shell-cta-primary::before's comment). The form is a 2-row grid
+   (email input, then button) so its own top-left corner is the INPUT's,
+   not the button's — ::before is offset down past the input+gap to
+   align with the button's actual top edge instead. ::after aligns
+   naturally since the button is the form's last child (its bottom
+   edge = the form's own bottom edge). */
+.email-gate-form::before,
+.email-gate-form::after {
+  content: "";
+  position: absolute;
+  width: 26px;
+  height: 26px;
+  background-image: var(--crystal-fleur-sm);
+  background-repeat: no-repeat;
+  background-size: contain;
+  pointer-events: none;
+}
+
+.email-gate-form::before { top: 56px; left: 0; }
+
+.email-gate-form::after {
+  right: -6px;
+  bottom: -6px;
+  transform: rotate(180deg);
 }
 
 .email-gate-input {
