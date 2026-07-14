@@ -111,9 +111,12 @@ export function produceProjectiles(
 
 const DAMAGE_FLASH_MS = 110;
 
-/** DestructibleEntity + the derived flash flag painters need. */
+/** DestructibleEntity + the derived flash flag painters need.
+ *  `entity` is null only for pool slots beyond the count `produceDestructibles`
+ *  returns (leftover from a previous, larger frame) — always read `entity`
+ *  guarded by that count, never past it. */
 export type DestructibleRenderModel = {
-  entity: DestructibleEntity;
+  entity: DestructibleEntity | null;
   /** True for DAMAGE_FLASH_MS after a health drop. */
   flashing: boolean;
 };
@@ -131,7 +134,7 @@ export function makeDestructibleFlashState(): DestructibleFlashState {
 }
 
 function blankDestructibleModel(): DestructibleRenderModel {
-  return { entity: null as unknown as DestructibleEntity, flashing: false };
+  return { entity: null, flashing: false };
 }
 
 /**

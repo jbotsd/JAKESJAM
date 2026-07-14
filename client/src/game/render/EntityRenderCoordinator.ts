@@ -147,7 +147,9 @@ export class EntityRenderCoordinator {
     const count = produceDestructibles(state, nowMs, this.flashState, this.destructibleModels);
     for (let i = 0; i < count; i++) {
       const m = this.destructibleModels[i]!;
-      this.cfg.drawDestructible(graphics, m.entity, m.flashing);
+      // Non-null: produceDestructibles guarantees entity is set for every
+      // slot below the count it returns (see DestructibleRenderModel).
+      this.cfg.drawDestructible(graphics, m.entity!, m.flashing);
     }
   }
 
