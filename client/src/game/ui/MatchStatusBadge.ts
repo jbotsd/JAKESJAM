@@ -280,7 +280,7 @@ const BTN_PRIMARY_STYLE: Partial<CSSStyleDeclaration> = {
   fontSize: "11px",
   cursor: "pointer",
   textTransform: "uppercase",
-  transition: "transform 120ms cubic-bezier(0.34,1.56,0.64,1), box-shadow 120ms ease",
+  transition: "box-shadow 120ms ease",
 };
 
 const BTN_SECONDARY_STYLE: Partial<CSSStyleDeclaration> = {

@@ -276,7 +276,7 @@ export class ArenaForgeUI {
 
     const save = document.createElement("button");
     save.type = "button";
-    save.textContent = "💾 Save & Share";
+    save.textContent = "Save & Share";
     Object.assign(save.style, TOOL_BTN_STYLE);
     save.onclick = () => this.cb.onSave();
 
