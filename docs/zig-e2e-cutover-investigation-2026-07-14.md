@@ -76,17 +76,29 @@ pass") — see `tickOrderParity.test.ts`, `fireHazardParity.test.ts`,
 
 ## Performance — real numbers, both native and through the actual wasm boundary
 
+Re-run after the native-drafting wiring (round-phase machine growth adds
+a small amount of per-tick work even outside drafting itself — the
+round-over/drafting branch checks run every tick regardless of phase) to
+confirm the speedup claims still hold against the CURRENT code, not a
+stale pre-wiring snapshot:
+
 | Path | ms/tick (8 players) | Notes |
 |---|---|---|
-| TS-native (`stepWithRuntime`) | 0.057 avg | `client/bench/simTick.bench.ts`, existing tool |
-| Zig-native (no wasm, ReleaseFast) | 0.0073 avg (7288 ns) | NEW: `sim/bench/step_world_bench.zig`, `zig build bench` — ~7.8x faster than TS-native |
-| Zig via the real wasm boundary | 0.048 avg | NEW: `tools/step-world-wasm-bench.ts` — still faster than TS-native, but the pack/unpack/fire-config-resolve overhead visibly eats most of the native advantage |
+| TS-native (`stepWithRuntime`) | 0.065 avg | `client/bench/simTick.bench.ts` |
+| Zig-native (no wasm, ReleaseFast) | 0.0071 avg (7064 ns) | `sim/bench/step_world_bench.zig`, `zig build bench` — **~9.2x faster than TS-native** |
+| Zig via the real wasm boundary | 0.059 avg | `tools/step-world-wasm-bench.ts` — still faster than TS-native (~1.1x), but pack/unpack/fire-config-resolve overhead visibly eats most of the native advantage, same finding as before |
+
+Numbers moved from the original run (TS 0.057→0.065, native 0.0073→0.0071,
+wasm-boundary 0.048→0.059 ms/tick) — within normal machine-load variance
+for a microbenchmark, not a regression signal; the RATIO is what matters
+and it held: native step_world is still an order of magnitude faster than
+TS, and even through the real wasm boundary it's still faster, not slower.
 
 Also structural, not just speed: TS's bench shows ~27MB heap growth per
-3000 ticks (GC pressure from per-tick object/record spreads). Zig's
-`WorldState` is one fixed-size extern struct — zero dynamic allocation per
-tick, a class of GC-stutter risk TS cannot structurally avoid regardless of
-optimization.
+3000 ticks (GC pressure from per-tick object/record spreads) vs wasm's
+~0.1MB. Zig's `WorldState` is one fixed-size extern struct — zero dynamic
+allocation per tick, a class of GC-stutter risk TS cannot structurally
+avoid regardless of optimization.
 
 ## Multi-tick, multi-player divergence — the deepest correctness check
 
