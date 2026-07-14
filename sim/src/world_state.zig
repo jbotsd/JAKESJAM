@@ -248,8 +248,41 @@ pub const PlayerEntity = extern struct {
     /// need a DIFFERENT hand every shot to match TS bit-for-bit, but
     /// nothing tracked which hand fired last.
     throw_hand_parity: u8 = 0,
+    // Explicit 1-byte pad — card_ids below is a []u16 and needs 2-byte
+    // alignment; written out (rather than relying on the compiler's
+    // implicit extern-struct padding) so the byte offset is visible and
+    // the TS packer's manual offset math stays exact.
+    _pad_before_cards: [1]u8 = .{0},
+
+    /// Native drafting (2026-07-14): the player's actual held card hand,
+    /// as indices into `data/cards_gen.cards` — first `card_count` entries
+    /// are valid, the rest are unspecified. Until now `card_count` was the
+    /// ONLY card-related field on the wire; step_world had no way to know
+    /// WHICH cards a player held, only how many, because the host always
+    /// pre-resolved cards into a numeric `ResolvedFireConfig` before
+    /// crossing the wire. That's fine for applying a build, but drafting
+    /// needs the actual hand to enforce `unique`/`maxStacks` when rolling
+    /// new offers (round.ts's `enterDrafting` candidatePool filter).
+    card_ids: [MAX_PLAYER_CARDS]u16 = @splat(0),
+
+    /// This round's draft offers for this player, as indices into
+    /// `data/cards_gen.cards` — first `draft_offer_count` entries valid.
+    /// Rolled once at `round-over` -> `drafting` entry (world.zig, mirrors
+    /// round.ts's enterDrafting) and cleared on exit back to countdown.
+    draft_offers: [3]u16 = @splat(0xFFFF),
+    draft_offer_count: u8 = 0,
+    /// Index into `draft_offers` (NOT into cards_gen.cards) the player has
+    /// committed via `world_state_commit_draft_pick`. Mirrors round.ts
+    /// RoundState.draftingPicked keyed per player, PLUS a third state TS
+    /// doesn't need (it keys picks by a JS Record, so a missing key just
+    /// means "not present"): 0xFE = this player was NOT a drafter this
+    /// round (either drafting isn't active, or they joined after the
+    /// window opened — matches round.ts's "late joiners sit out" rule);
+    /// 0xFF = drafting, offered, not yet picked; 0..2 = committed pick.
+    /// world.zig's all-picked exit gate treats 0xFE as "doesn't block."
+    draft_picked_offer: u8 = 0xFE,
     // Future field landing zone. Today it's all zeros on the wire.
-    _reserved: [3]u8 = @splat(0),
+    _reserved: [2]u8 = @splat(0),
 };
 
 /// Mirrors `ProjectileEntity`.
@@ -439,6 +472,11 @@ pub const SimEventKind = enum(u32) {
     shield_popped = 8,
     explosion = 9,
     fire_hit = 10,
+    /// Native drafting (2026-07-14). Mirrors round.ts's `draft-resolved`
+    /// event. player_idx_a = who picked, entity_id = card index (into
+    /// data/cards_gen.cards) they picked, scalar = 1 if auto-picked on
+    /// window expiry, 0 if committed via world_state_commit_draft_pick.
+    draft_resolved = 11,
 };
 
 pub const SimEvent = extern struct {
@@ -514,6 +552,19 @@ pub const WorldStateHeader = extern struct {
     /// ≥ 0 = player array index that hit target_score.
     match_winner_idx: i32,
     countdown_remaining_ms: f64,
+    /// Native drafting (2026-07-14): persists the round-over winner's
+    /// player index across the round-over hold + drafting window —
+    /// mirrors World.ts round.ts's RoundState.winnerPlayerId. Needed
+    /// because winner detection only runs during `fighting`; by the time
+    /// the drafting entry point runs (a later tick, after
+    /// ROUND_OVER_HOLD_MS), that tick's own winner-detection pass reports
+    /// nothing, so classifyDraftRole's catch_up/winner split has nowhere
+    /// else to read "who won" from. -1 = draw or no round has ended yet.
+    round_winner_idx: i32 = -1,
+    /// Tick at which the active `drafting` phase's pick window
+    /// auto-resolves (mirrors RoundState.draftingExpiresAtTick). 0 when
+    /// not in drafting.
+    drafting_expires_at_tick: u32 = 0,
 };
 
 pub const WorldState = extern struct {
@@ -580,12 +631,12 @@ pub const WorldState = extern struct {
 // goes through a deliberate cut so callers stay in sync.
 
 comptime {
-    std.debug.assert(@sizeOf(WorldStateHeader) == 48);
+    std.debug.assert(@sizeOf(WorldStateHeader) == 56);
 
     // Each entity is 8-byte-aligned and tail-packed with explicit
     // _reserved bytes. These numbers are the wire contract — change
     // them only in a protocol-version bump.
-    std.debug.assert(@sizeOf(PlayerEntity) == 288);
+    std.debug.assert(@sizeOf(PlayerEntity) == 312);
     std.debug.assert(@sizeOf(ProjectileEntity) == 216);
     std.debug.assert(@sizeOf(SatelliteEntity) == 96);
     std.debug.assert(@sizeOf(DestructibleEntity) == 64);

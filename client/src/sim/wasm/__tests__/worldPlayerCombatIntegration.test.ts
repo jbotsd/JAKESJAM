@@ -15,7 +15,7 @@ import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 
 import { loadSimFromBytes } from "../loader";
-import { packWorldState } from "../worldStateBridge";
+import { packWorldState, HEADER_SIZE, ARRAY_PREAMBLE } from "../worldStateBridge";
 import { installLutTables } from "../../trig";
 import {
   EntityId,
@@ -50,7 +50,10 @@ installLutTables(
   new Float64Array(ex.memory.buffer, ex.lut_atan_table_ptr(), ex.lut_table_size()),
 );
 
-const PLAYERS_OFFSET = 48 + 8;
+// Derived from the shared layout constant (2026-07-14) rather than the
+// hand-copied 48 — the native-drafting header growth silently broke this
+// test's hardcoded formula the first time.
+const PLAYERS_OFFSET = HEADER_SIZE + ARRAY_PREAMBLE;
 const SHIELD_CHARGE_OFFSET = 11 * 8;
 const FLAGS_OFFSET = 17 * 8 + 15 * 4;
 const PARRY_ACTIVE_TICK_OFFSET = 17 * 8 + 4 * 4;

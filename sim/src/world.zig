@@ -37,6 +37,7 @@ const weapon = @import("weapon.zig");
 const weapons_data = @import("data/weapons.zig");
 const trig = @import("trig.zig");
 const rng = @import("rng.zig");
+const draft = @import("draft.zig");
 
 /// Per-tick step. Mutates `state` in place. Returns 0 on success;
 /// reserved non-zero values for future error reporting.
@@ -201,6 +202,78 @@ fn emitEvent(
         .y = y,
     };
     state.event_count += 1;
+}
+
+/// Native drafting entry (2026-07-14) — parity port of round.ts's
+/// enterDrafting. Rolls DRAFT_OFFER_COUNT offers for every roster player
+/// (universal draft: winner included) using draft.zig's weighted-retry
+/// algorithm, threading the SAME rng cursor across players in array order
+/// (which worldStateBridge.ts already packs sorted-by-id, matching TS's
+/// `Object.keys(players).sort()` iteration exactly — see its packWorldState
+/// comment). Every present player gets an entry (draft_picked_offer=0xFF,
+/// even with zero eligible cards) — TS's draftingOffers record does the
+/// same, which is why a zero-offer player still blocks the all-picked
+/// exit gate until the window expires (see the stepWorld call site).
+fn enterDraftingNative(state: *world_state.WorldState) void {
+    var cursor = state.header.rng_state;
+    const winner_idx = state.header.round_winner_idx;
+    const has_winner = winner_idx >= 0;
+
+    var i: u32 = 0;
+    while (i < state.player_count) : (i += 1) {
+        const player = &state.players[i];
+        const is_self = has_winner and @as(i32, @intCast(i)) == winner_idx;
+        const role = draft.classifyDraftRole(is_self, has_winner);
+
+        var owned: [draft.gen.cards.len]bool = @splat(false);
+        var copies: [draft.gen.cards.len]u32 = @splat(0);
+        var c: u32 = 0;
+        while (c < player.card_count) : (c += 1) {
+            const idx = player.card_ids[c];
+            if (idx < draft.gen.cards.len) {
+                owned[idx] = true;
+                copies[idx] += 1;
+            }
+        }
+        var pool_buf: [draft.gen.cards.len]u32 = undefined;
+        const pool_len = draft.poolIndices(&owned, &copies, &pool_buf);
+        const result = draft.rollOffers(cursor, pool_buf[0..pool_len], role);
+        cursor = result.cursor;
+
+        player.draft_offer_count = @intCast(result.count);
+        player.draft_picked_offer = 0xFF;
+        var oi: usize = 0;
+        while (oi < 3) : (oi += 1) {
+            player.draft_offers[oi] = if (oi < result.count) @intCast(result.offers[oi]) else 0xFFFF;
+        }
+    }
+    state.header.rng_state = cursor;
+}
+
+/// Commits `player_idx`'s pick of `offer_idx` (into their draft_offers
+/// slate) — grants the card into card_ids (dropped silently past
+/// MAX_PLAYER_CARDS, a wire-format cap TS's player.cards array doesn't
+/// share) and emits `draft_resolved`. Parity with round.ts's
+/// draft-resolved event (playerId/cardId/autoPicked).
+fn applyDraftPick(state: *world_state.WorldState, player_idx: u32, offer_idx: u8, auto: bool) void {
+    const player = &state.players[player_idx];
+    if (offer_idx >= player.draft_offer_count) return;
+    const card_idx = player.draft_offers[offer_idx];
+    player.draft_picked_offer = offer_idx;
+    if (player.card_count < world_state.MAX_PLAYER_CARDS) {
+        player.card_ids[player.card_count] = card_idx;
+        player.card_count += 1;
+    }
+    emitEvent(
+        state,
+        .draft_resolved,
+        @intCast(player_idx),
+        -1,
+        card_idx,
+        if (auto) 1 else 0,
+        0,
+        0,
+    );
 }
 
 pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
@@ -392,154 +465,154 @@ pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
         // This gate did not exist before — cooldown ticked down and shots
         // could fire during countdown/drafting.
         if (is_fighting) {
-        const fcfg = &state.player_fire_config[pi3];
-        const damage_v: f64 = if (fcfg.valid != 0) fcfg.damage else weapons_data.weaponBaseById(.starter_pistol).damage;
-        const fire_rate_v: f64 = if (fcfg.valid != 0) fcfg.fire_rate else weapons_data.weaponBaseById(.starter_pistol).fire_rate;
-        const proj_speed_base: f64 = if (fcfg.valid != 0) fcfg.projectile_speed else weapons_data.weaponBaseById(.starter_pistol).projectile_speed;
-        const proj_speed_mul: f64 = if (fcfg.valid != 0) fcfg.speed_multiplier else 1.0;
-        const proj_lifetime_sec: f64 = if (fcfg.valid != 0) fcfg.projectile_lifetime_seconds else weapons_data.weaponBaseById(.starter_pistol).projectile_lifetime_seconds;
-        const proj_lifetime_mul: f64 = if (fcfg.valid != 0) fcfg.lifetime_multiplier else 1.0;
-        const spread_total: f64 = if (fcfg.valid != 0) fcfg.spread_radians else weapons_data.weaponBaseById(.starter_pistol).spread_radians;
-        const proj_count: u32 = if (fcfg.valid != 0) @max(@as(u32, 1), fcfg.projectile_count) else 1;
-        const proj_size_mul: f64 = if (fcfg.valid != 0) fcfg.size_multiplier else 1.0;
-        const proj_range: f64 = if (fcfg.valid != 0) fcfg.range_px else weapons_data.weaponBaseById(.starter_pistol).projectile_range_px;
-        const proj_bounces: u32 = if (fcfg.valid != 0) fcfg.bounces else 0;
-        const proj_pierce: u32 = if (fcfg.valid != 0) fcfg.pierce_count else 0;
-        const proj_splits: u32 = if (fcfg.valid != 0) fcfg.split_count else 0;
-        const proj_homing: f64 = if (fcfg.valid != 0) fcfg.homing_strength else 0;
-        const proj_accel: f64 = if (fcfg.valid != 0) fcfg.acceleration_multiplier else 0;
-        const proj_gravity: f64 = if (fcfg.valid != 0) fcfg.gravity_scale else 0;
-        const proj_slow: f64 = if (fcfg.valid != 0) fcfg.slow_multiplier else 1.0;
-        const proj_impact_radius: f64 = if (fcfg.valid != 0) fcfg.impact_radius_px else 0;
-        const proj_shape = if (fcfg.valid != 0) fcfg.shape else weapons_data.weaponBaseById(.starter_pistol).projectile_shape;
-        const proj_element = if (fcfg.valid != 0) fcfg.element else weapons_data.weaponBaseById(.starter_pistol).projectile_element;
-        const proj_pathing = if (fcfg.valid != 0) fcfg.pathing else weapons_data.weaponBaseById(.starter_pistol).projectile_pathing;
-        const proj_impact_kind = if (fcfg.valid != 0) fcfg.impact else .none;
-        const cd_after = weapon.cooldownFromFireRate(
-            fire_rate_v * chaos_profile.fire_rate_multiplier,
-            1.0,
-        );
-        var fire_decision: weapon.FireDecision = undefined;
-        weapon.weapon_tick_fire_with_keys(
-            player_ptr,
-            player_ptr.current_keys,
-            eff_dt,
-            cd_after,
-            &fire_decision,
-        );
-        if (fire_decision.fired == 1 and
-            chaos_profile.disable_projectiles == 0)
-        {
-            // Muzzle offset + alternating-hand throws (2026-07-14 —
-            // previously spawned dead-center on the player, which is why
-            // tickOrderParity.test.ts's TS-vs-Zig same-tick travel numbers
-            // never matched exactly even after the ordering fix: parity
-            // with World.ts weapon.ts's playerMuzzlePosition + throwHand
-            // toggle). Hand toggles ONCE per fire event, not per pellet —
-            // a multi-shot spread's pellets all share one muzzle origin.
-            const throw_hand: u8 = (player_ptr.throw_hand_parity ^ 1) & 1;
-            player_ptr.throw_hand_parity = throw_hand;
-            const mcx = player_ptr.x;
-            const mcy = player_ptr.y - MUZZLE_ANCHOR_UP;
-            const mdx = player_ptr.aim_x - mcx;
-            const mdy = player_ptr.aim_y - mcy;
-            const mlen_raw = @sqrt(mdx * mdx + mdy * mdy);
-            const mlen = if (mlen_raw == 0) 1.0 else mlen_raw;
-            const mux = mdx / mlen;
-            const muy = mdy / mlen;
-            // Perpendicular to aim, toward the throwing hand (side=+1 for
-            // hand 0, -1 for hand 1 — matches TS's `hand === 0 ? 1 : -1`).
-            const mside: f64 = if (throw_hand == 0) 1.0 else -1.0;
-            const mpx = -muy;
-            const mpy = mux;
-            const muzzle_x = mcx + mux * MUZZLE_REACH + mpx * mside * MUZZLE_HAND_SPREAD;
-            const muzzle_y = mcy + muy * MUZZLE_REACH + mpy * mside * MUZZLE_HAND_SPREAD;
-            const adx = player_ptr.aim_x - muzzle_x;
-            const ady = player_ptr.aim_y - muzzle_y;
-            const aim_angle: f64 = if (adx == 0 and ady == 0) 0 else trig.lutAtan2(ady, adx);
-            const speed = proj_speed_base * proj_speed_mul;
-            const lifetime_ms = @max(
-                50.0,
-                proj_lifetime_sec * 1000.0 * proj_lifetime_mul,
+            const fcfg = &state.player_fire_config[pi3];
+            const damage_v: f64 = if (fcfg.valid != 0) fcfg.damage else weapons_data.weaponBaseById(.starter_pistol).damage;
+            const fire_rate_v: f64 = if (fcfg.valid != 0) fcfg.fire_rate else weapons_data.weaponBaseById(.starter_pistol).fire_rate;
+            const proj_speed_base: f64 = if (fcfg.valid != 0) fcfg.projectile_speed else weapons_data.weaponBaseById(.starter_pistol).projectile_speed;
+            const proj_speed_mul: f64 = if (fcfg.valid != 0) fcfg.speed_multiplier else 1.0;
+            const proj_lifetime_sec: f64 = if (fcfg.valid != 0) fcfg.projectile_lifetime_seconds else weapons_data.weaponBaseById(.starter_pistol).projectile_lifetime_seconds;
+            const proj_lifetime_mul: f64 = if (fcfg.valid != 0) fcfg.lifetime_multiplier else 1.0;
+            const spread_total: f64 = if (fcfg.valid != 0) fcfg.spread_radians else weapons_data.weaponBaseById(.starter_pistol).spread_radians;
+            const proj_count: u32 = if (fcfg.valid != 0) @max(@as(u32, 1), fcfg.projectile_count) else 1;
+            const proj_size_mul: f64 = if (fcfg.valid != 0) fcfg.size_multiplier else 1.0;
+            const proj_range: f64 = if (fcfg.valid != 0) fcfg.range_px else weapons_data.weaponBaseById(.starter_pistol).projectile_range_px;
+            const proj_bounces: u32 = if (fcfg.valid != 0) fcfg.bounces else 0;
+            const proj_pierce: u32 = if (fcfg.valid != 0) fcfg.pierce_count else 0;
+            const proj_splits: u32 = if (fcfg.valid != 0) fcfg.split_count else 0;
+            const proj_homing: f64 = if (fcfg.valid != 0) fcfg.homing_strength else 0;
+            const proj_accel: f64 = if (fcfg.valid != 0) fcfg.acceleration_multiplier else 0;
+            const proj_gravity: f64 = if (fcfg.valid != 0) fcfg.gravity_scale else 0;
+            const proj_slow: f64 = if (fcfg.valid != 0) fcfg.slow_multiplier else 1.0;
+            const proj_impact_radius: f64 = if (fcfg.valid != 0) fcfg.impact_radius_px else 0;
+            const proj_shape = if (fcfg.valid != 0) fcfg.shape else weapons_data.weaponBaseById(.starter_pistol).projectile_shape;
+            const proj_element = if (fcfg.valid != 0) fcfg.element else weapons_data.weaponBaseById(.starter_pistol).projectile_element;
+            const proj_pathing = if (fcfg.valid != 0) fcfg.pathing else weapons_data.weaponBaseById(.starter_pistol).projectile_pathing;
+            const proj_impact_kind = if (fcfg.valid != 0) fcfg.impact else .none;
+            const cd_after = weapon.cooldownFromFireRate(
+                fire_rate_v * chaos_profile.fire_rate_multiplier,
+                1.0,
             );
-            const radius_v: f64 = @max(2.0, 7.0 * proj_size_mul);
-
-            // Multi-shot spread fan: distribute proj_count
-            // projectiles evenly across spread_total radians centred
-            // on aim_angle. Single-shot (count == 1) fires straight.
-            var shot_i: u32 = 0;
-            while (shot_i < proj_count) : (shot_i += 1) {
-                if (state.projectile_count >= world_state.MAX_PROJECTILES) break;
-                const offset: f64 = if (proj_count <= 1)
-                    0
-                else blk: {
-                    const t: f64 = @as(f64, @floatFromInt(shot_i)) /
-                        @as(f64, @floatFromInt(proj_count - 1));
-                    break :blk -spread_total * 0.5 + t * spread_total;
-                };
-                const ang = aim_angle + offset;
-                const slot: u32 = state.projectile_count;
-                state.projectile_count += 1;
-                const new_id: u32 = state.header.next_entity_id;
-                state.header.next_entity_id += 1;
-                state.projectiles[slot] = .{
-                    .x = muzzle_x,
-                    .y = muzzle_y,
-                    .vx = trig.lutCos(ang) * speed,
-                    .vy = trig.lutSin(ang) * speed,
-                    .radius = radius_v,
-                    .damage = damage_v,
-                    .lifetime_ms = lifetime_ms,
-                    .age_ms = 0,
-                    .traveled_px = 0,
-                    .origin_x = muzzle_x,
-                    .origin_y = muzzle_y,
-                    .homing_strength = proj_homing,
-                    .acceleration_multiplier = proj_accel,
-                    .gravity_scale = proj_gravity,
-                    .range_px = proj_range,
-                    .slow_multiplier = proj_slow,
-                    .sticky_fuse_ms = 0,
-                    .impact_radius_px = proj_impact_radius,
-                    .id = new_id,
-                    .bounces_remaining = proj_bounces,
-                    .pierce_remaining = proj_pierce,
-                    .split_count = proj_splits,
-                    .flags = .{
-                        .has_owner = true,
-                        .has_impact = true,
-                        .has_split = proj_splits > 0,
-                        .has_slow = proj_slow != 1.0,
-                        .has_homing = proj_homing != 0,
-                        .has_acceleration = proj_accel != 0,
-                        .has_gravity_scale = proj_gravity != 0,
-                        .has_range = true,
-                        .has_age = true,
-                        .has_traveled = true,
-                        .has_origin = true,
-                        .returning = false,
-                        .has_sticky_fuse = false,
-                        .has_impact_radius = proj_impact_radius > 0,
-                    },
-                    .pathing = proj_pathing,
-                    .element = proj_element,
-                    .impact = proj_impact_kind,
-                    .shape = proj_shape,
-                    .owner_id_len = player_ptr.id_len,
-                    .owner_id_bytes = player_ptr.id_bytes,
-                };
-                emitEvent(
-                    state,
-                    .shot_fired,
-                    @intCast(pi3),
-                    -1,
-                    new_id,
-                    ang,
-                    player_ptr.x,
-                    player_ptr.y,
+            var fire_decision: weapon.FireDecision = undefined;
+            weapon.weapon_tick_fire_with_keys(
+                player_ptr,
+                player_ptr.current_keys,
+                eff_dt,
+                cd_after,
+                &fire_decision,
+            );
+            if (fire_decision.fired == 1 and
+                chaos_profile.disable_projectiles == 0)
+            {
+                // Muzzle offset + alternating-hand throws (2026-07-14 —
+                // previously spawned dead-center on the player, which is why
+                // tickOrderParity.test.ts's TS-vs-Zig same-tick travel numbers
+                // never matched exactly even after the ordering fix: parity
+                // with World.ts weapon.ts's playerMuzzlePosition + throwHand
+                // toggle). Hand toggles ONCE per fire event, not per pellet —
+                // a multi-shot spread's pellets all share one muzzle origin.
+                const throw_hand: u8 = (player_ptr.throw_hand_parity ^ 1) & 1;
+                player_ptr.throw_hand_parity = throw_hand;
+                const mcx = player_ptr.x;
+                const mcy = player_ptr.y - MUZZLE_ANCHOR_UP;
+                const mdx = player_ptr.aim_x - mcx;
+                const mdy = player_ptr.aim_y - mcy;
+                const mlen_raw = @sqrt(mdx * mdx + mdy * mdy);
+                const mlen = if (mlen_raw == 0) 1.0 else mlen_raw;
+                const mux = mdx / mlen;
+                const muy = mdy / mlen;
+                // Perpendicular to aim, toward the throwing hand (side=+1 for
+                // hand 0, -1 for hand 1 — matches TS's `hand === 0 ? 1 : -1`).
+                const mside: f64 = if (throw_hand == 0) 1.0 else -1.0;
+                const mpx = -muy;
+                const mpy = mux;
+                const muzzle_x = mcx + mux * MUZZLE_REACH + mpx * mside * MUZZLE_HAND_SPREAD;
+                const muzzle_y = mcy + muy * MUZZLE_REACH + mpy * mside * MUZZLE_HAND_SPREAD;
+                const adx = player_ptr.aim_x - muzzle_x;
+                const ady = player_ptr.aim_y - muzzle_y;
+                const aim_angle: f64 = if (adx == 0 and ady == 0) 0 else trig.lutAtan2(ady, adx);
+                const speed = proj_speed_base * proj_speed_mul;
+                const lifetime_ms = @max(
+                    50.0,
+                    proj_lifetime_sec * 1000.0 * proj_lifetime_mul,
                 );
+                const radius_v: f64 = @max(2.0, 7.0 * proj_size_mul);
+
+                // Multi-shot spread fan: distribute proj_count
+                // projectiles evenly across spread_total radians centred
+                // on aim_angle. Single-shot (count == 1) fires straight.
+                var shot_i: u32 = 0;
+                while (shot_i < proj_count) : (shot_i += 1) {
+                    if (state.projectile_count >= world_state.MAX_PROJECTILES) break;
+                    const offset: f64 = if (proj_count <= 1)
+                        0
+                    else blk: {
+                        const t: f64 = @as(f64, @floatFromInt(shot_i)) /
+                            @as(f64, @floatFromInt(proj_count - 1));
+                        break :blk -spread_total * 0.5 + t * spread_total;
+                    };
+                    const ang = aim_angle + offset;
+                    const slot: u32 = state.projectile_count;
+                    state.projectile_count += 1;
+                    const new_id: u32 = state.header.next_entity_id;
+                    state.header.next_entity_id += 1;
+                    state.projectiles[slot] = .{
+                        .x = muzzle_x,
+                        .y = muzzle_y,
+                        .vx = trig.lutCos(ang) * speed,
+                        .vy = trig.lutSin(ang) * speed,
+                        .radius = radius_v,
+                        .damage = damage_v,
+                        .lifetime_ms = lifetime_ms,
+                        .age_ms = 0,
+                        .traveled_px = 0,
+                        .origin_x = muzzle_x,
+                        .origin_y = muzzle_y,
+                        .homing_strength = proj_homing,
+                        .acceleration_multiplier = proj_accel,
+                        .gravity_scale = proj_gravity,
+                        .range_px = proj_range,
+                        .slow_multiplier = proj_slow,
+                        .sticky_fuse_ms = 0,
+                        .impact_radius_px = proj_impact_radius,
+                        .id = new_id,
+                        .bounces_remaining = proj_bounces,
+                        .pierce_remaining = proj_pierce,
+                        .split_count = proj_splits,
+                        .flags = .{
+                            .has_owner = true,
+                            .has_impact = true,
+                            .has_split = proj_splits > 0,
+                            .has_slow = proj_slow != 1.0,
+                            .has_homing = proj_homing != 0,
+                            .has_acceleration = proj_accel != 0,
+                            .has_gravity_scale = proj_gravity != 0,
+                            .has_range = true,
+                            .has_age = true,
+                            .has_traveled = true,
+                            .has_origin = true,
+                            .returning = false,
+                            .has_sticky_fuse = false,
+                            .has_impact_radius = proj_impact_radius > 0,
+                        },
+                        .pathing = proj_pathing,
+                        .element = proj_element,
+                        .impact = proj_impact_kind,
+                        .shape = proj_shape,
+                        .owner_id_len = player_ptr.id_len,
+                        .owner_id_bytes = player_ptr.id_bytes,
+                    };
+                    emitEvent(
+                        state,
+                        .shot_fired,
+                        @intCast(pi3),
+                        -1,
+                        new_id,
+                        ang,
+                        player_ptr.x,
+                        player_ptr.y,
+                    );
+                }
             }
-        }
         } // if (is_fighting) — weapon fire decision + spawn
 
         // Roll current → prev for the next tick's edge detection.
@@ -1477,6 +1550,7 @@ pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
             state.header.match_winner_idx = winner_idx;
         }
     }
+    const phase_before = state.header.round_phase;
     const phase_result = round.roundStepPhase(
         state.header.round_phase,
         state.header.countdown_remaining_ms,
@@ -1486,9 +1560,87 @@ pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
     state.header.round_phase = phase_result.new_phase;
     state.header.countdown_remaining_ms =
         phase_result.new_countdown_remaining_ms;
+
+    // Persist the round winner (2026-07-14, native drafting) across the
+    // round-over hold + drafting window — this tick's own winner
+    // detection has nothing to report by the time drafting entry runs,
+    // so draftWeights.ts's classifyDraftRole needs it read back from here.
     if (phase_result.transitioned == 1 and
+        phase_result.new_phase == @intFromEnum(round.RoundPhase.round_over))
+    {
+        state.header.round_winner_idx = winner_idx; // -1 on a draw, matches TS's null
+    }
+
+    var entering_countdown = false;
+
+    if (phase_before == @intFromEnum(round.RoundPhase.round_over) and
+        phase_result.transitioned == 1 and
         phase_result.new_phase == @intFromEnum(round.RoundPhase.countdown))
     {
+        // round.zig's pure timer always resolves round-over -> countdown
+        // once the hold expires (see its own module doc: "the orchestrator
+        // wraps this with score keeping + winner detection + drafting
+        // orchestration"). Parity with round.ts's "round-over" case:
+        // override into either "stay parked" (match already decided) or
+        // "roll into drafting" (match continues).
+        if (state.header.match_winner_idx >= 0) {
+            state.header.round_phase = @intFromEnum(round.RoundPhase.round_over);
+            state.header.countdown_remaining_ms = 0;
+        } else {
+            state.header.round_phase = @intFromEnum(round.RoundPhase.drafting);
+            state.header.countdown_remaining_ms = round.DRAFT_WINDOW_MS;
+            state.header.drafting_expires_at_tick = state.header.tick +
+                @as(u32, @intFromFloat(@ceil(round.DRAFT_WINDOW_MS / round.STEP_MS)));
+            enterDraftingNative(state);
+        }
+    } else if (phase_before == @intFromEnum(round.RoundPhase.drafting)) {
+        // round.zig's "drafting" branch never transitions on its own by
+        // design ("we wait" — orchestrator drives the exit). Parity with
+        // round.ts's "drafting" case: leave once every real drafter (a
+        // player present when offers were rolled — see draft_picked_offer's
+        // 0xFE/0xFF/pick-index tri-state) has picked, or the window
+        // expired, whichever comes first. A player who joined mid-window
+        // sits out (0xFE, never touched by enterDraftingNative) and can't
+        // block resolution — matches round.ts's "late joiners" comment.
+        var all_picked = true;
+        var any_drafter = false;
+        var gi: u32 = 0;
+        while (gi < state.player_count) : (gi += 1) {
+            const picked = state.players[gi].draft_picked_offer;
+            if (picked == 0xFE) continue;
+            any_drafter = true;
+            if (picked == 0xFF) all_picked = false;
+        }
+        const expired = state.header.tick >= state.header.drafting_expires_at_tick;
+        if (!any_drafter or (any_drafter and all_picked) or expired) {
+            if (expired) {
+                // Auto-pick the FIRST offer for every unpicked drafter
+                // (deterministic — offer order is the rolled order).
+                // Zero-offer drafters no-op here (applyDraftPick guards
+                // offer_idx >= draft_offer_count), same as TS's
+                // `offers[pid]?.[0] === undefined -> continue`.
+                var ei: u32 = 0;
+                while (ei < state.player_count) : (ei += 1) {
+                    if (state.players[ei].draft_picked_offer == 0xFF) {
+                        applyDraftPick(state, ei, 0, true);
+                    }
+                }
+            }
+            var ci: u32 = 0;
+            while (ci < state.player_count) : (ci += 1) {
+                state.players[ci].draft_offer_count = 0;
+                state.players[ci].draft_picked_offer = 0xFE;
+                state.players[ci].draft_offers = .{ 0xFFFF, 0xFFFF, 0xFFFF };
+            }
+            state.header.round_phase = @intFromEnum(round.RoundPhase.countdown);
+            state.header.countdown_remaining_ms = round.COUNTDOWN_MS;
+            state.header.drafting_expires_at_tick = 0;
+            state.header.round_winner_idx = -1;
+            entering_countdown = true;
+        }
+    }
+
+    if (entering_countdown) {
         state.header.round_index += 1;
         // Reset transient entities for the new round (I28).
         // Players keep their score + buff durations; everything
@@ -1589,4 +1741,38 @@ pub export fn world_state_set_target_score(
 ) void {
     state_ptr.header.target_score = target;
     state_ptr.header.match_winner_idx = -1;
+}
+
+/// Host-callable native-drafting pick commit (2026-07-14). Applies
+/// `player_idx`'s pick of `offer_idx` (0..2, an index into THEIR
+/// draft_offers slate, not a card id) if the world is currently in the
+/// `drafting` phase and that offer slot is valid and unpicked.
+///
+/// Returns the granted card's index into data/cards_gen.cards on success,
+/// or 0xFFFFFFFF on a no-op (wrong phase, bad index, already picked) —
+/// mirrors round.ts's manual-pick path (autoPicked=false); the expiry
+/// auto-pick path is entirely internal to stepWorld.
+///
+/// Returning the card index (not just success/fail) matters because this
+/// call mutates the LIVE WorldState sitting in wasm linear memory
+/// directly — it does NOT go through the host's own pack/unpack cycle.
+/// A host that calls this then blindly re-packs its OWN (stale, pre-
+/// commit) copy of the state on the next step_world call would silently
+/// wipe the commit before it's ever seen. Returning the grant lets the
+/// host patch its own copy (draftPickedOffer + cards) immediately instead
+/// of needing a raw memory re-read.
+pub export fn world_state_commit_draft_pick(
+    state_ptr: *world_state.WorldState,
+    player_idx: u32,
+    offer_idx: u8,
+) u32 {
+    const FAIL: u32 = 0xFFFFFFFF;
+    if (state_ptr.header.round_phase != @intFromEnum(round.RoundPhase.drafting)) return FAIL;
+    if (player_idx >= state_ptr.player_count) return FAIL;
+    const player = &state_ptr.players[player_idx];
+    if (player.draft_picked_offer != 0xFF) return FAIL; // not a drafter, or already picked
+    if (offer_idx >= player.draft_offer_count) return FAIL;
+    const card_idx = player.draft_offers[offer_idx];
+    applyDraftPick(state_ptr, player_idx, offer_idx, false);
+    return card_idx;
 }

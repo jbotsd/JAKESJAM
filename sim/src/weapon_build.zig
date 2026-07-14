@@ -283,6 +283,13 @@ pub export fn resolve_build_card_count() u32 {
 /// Host entry: resolve player[player_index]'s build from `count` card indices
 /// (into cards_gen.cards) and write it into state.player_fire_config[i]. Replaces
 /// the TS host-side writeFireConfigs — the build LOGIC now lives in Zig.
+///
+/// Also persists the same indices onto `players[player_index].card_ids`
+/// (2026-07-14, native drafting) — this is the ONLY per-tick channel that
+/// already carries a player's actual held-card list into wasm (every other
+/// path pre-resolves cards into the numeric ResolvedFireConfig and never
+/// crosses the raw list), so drafting's unique/maxStacks pool filter piggy-
+/// backs on it here rather than adding a second host->wasm card-list call.
 pub export fn resolve_player_fire_config(
     state_ptr: *world_state.WorldState,
     player_index: u32,
@@ -292,4 +299,9 @@ pub export fn resolve_player_fire_config(
     if (player_index >= world_state.MAX_PLAYERS) return;
     const n = @min(count, @as(u32, world_state.MAX_PLAYER_CARDS));
     state_ptr.player_fire_config[player_index] = resolveByIndices(indices_ptr[0..n]);
+
+    const player = &state_ptr.players[player_index];
+    player.card_count = @intCast(n);
+    var i: u32 = 0;
+    while (i < n) : (i += 1) player.card_ids[i] = indices_ptr[i];
 }

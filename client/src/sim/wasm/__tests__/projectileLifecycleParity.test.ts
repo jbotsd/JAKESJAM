@@ -18,6 +18,10 @@ import { loadSimFromBytes } from "../loader";
 import {
   packWorldState,
   WORLD_STATE_TOTAL_SIZE,
+  HEADER_SIZE,
+  PLAYER_ENTITY_SIZE,
+  ARRAY_PREAMBLE,
+  MAX_PLAYERS,
 } from "../worldStateBridge";
 import { installLutTables, lutAtan2, lutCos, lutSin } from "../../trig";
 import { nextU32 } from "../../rng";
@@ -78,10 +82,13 @@ const SPLIT_SPEED_MIN = 180;
 const SPLIT_SPEED_SCALE = 0.82;
 const SIZEOF_SPLIT_VEL = ex.sizeof_split_velocity();
 
-// Layout in the WorldState packed buffer: header (32) + player
-// preamble (8) + 16*288 player bytes + projectile preamble (8) +
-// projectile array start.
-const PROJECTILES_OFFSET = 48 + 8 + 16 * 288 + 8;
+// Layout in the WorldState packed buffer: header + player preamble +
+// player bytes + projectile preamble + projectile array start. Derived
+// from the shared layout constants (2026-07-14) rather than hand-copied
+// numbers — the native-drafting PlayerEntity/header growth silently
+// broke this test's hardcoded formula the first time.
+const PROJECTILES_OFFSET =
+  HEADER_SIZE + ARRAY_PREAMBLE + MAX_PLAYERS * PLAYER_ENTITY_SIZE + ARRAY_PREAMBLE;
 
 function makeBaseProjectile(): ProjectileEntity {
   return {

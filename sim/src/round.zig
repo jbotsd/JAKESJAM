@@ -19,6 +19,12 @@ const world_state = @import("world_state.zig");
 pub const COUNTDOWN_MS: f64 = 3000.0;
 pub const ROUND_TIME_LIMIT_MS: f64 = 90_000.0;
 pub const ROUND_OVER_HOLD_MS: f64 = 2500.0;
+// Mirrors client/src/sim/round.ts's DRAFT_WINDOW_MS and
+// client/src/sim/constants.ts's STEP_MS — used by the orchestrator
+// (world.zig) to compute draftingExpiresAtTick from a fixed cadence
+// rather than the actual per-call dt_ms, matching TS exactly.
+pub const DRAFT_WINDOW_MS: f64 = 15_000.0;
+pub const STEP_MS: f64 = 1000.0 / 60.0;
 
 // Shrink-zone storm constants (2026-07-14 port) — parity with
 // client/src/sim/round.ts's exports of the same names.

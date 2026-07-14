@@ -64,7 +64,10 @@ function makeFixtureState(): WorldState {
     crouching: false,
     alive: true,
     weaponId: "scrap-rifle",
-    cards: ["overcharge", "burn-rounds"],
+    // 2026-07-14: card_ids now round-trips via CARD_INDEX (real ids only,
+    // see cardIndex.ts) rather than as opaque count-only strings, so these
+    // must be real cards.ts ids — "burn-rounds" never existed there.
+    cards: ["overcharge", "crystal-volley"],
     fireCooldownMs: 120.5,
     ammo: 24,
     abilityCharge: 0.6,

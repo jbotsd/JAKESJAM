@@ -9,7 +9,15 @@ import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 
 import { loadSimFromBytes } from "../loader";
-import { packWorldState } from "../worldStateBridge";
+import {
+  packWorldState,
+  HEADER_SIZE,
+  PLAYER_ENTITY_SIZE,
+  PROJECTILE_ENTITY_SIZE,
+  ARRAY_PREAMBLE,
+  MAX_PLAYERS,
+  MAX_PROJECTILES,
+} from "../worldStateBridge";
 import { installLutTables } from "../../trig";
 import {
   EntityId,
@@ -58,8 +66,16 @@ installLutTables(
   new Float64Array(ex.memory.buffer, ex.lut_atan_table_ptr(), tableSize),
 );
 
+// Derived from the shared layout constants (2026-07-14) rather than
+// hand-copied numbers — the native-drafting PlayerEntity/header growth
+// silently broke this test's hardcoded formula the first time.
 const SAT_OFFSET =
-  48 + 8 + 16 * 288 + 8 + 256 * 216 + 8;
+  HEADER_SIZE +
+  ARRAY_PREAMBLE +
+  MAX_PLAYERS * PLAYER_ENTITY_SIZE +
+  ARRAY_PREAMBLE +
+  MAX_PROJECTILES * PROJECTILE_ENTITY_SIZE +
+  ARRAY_PREAMBLE;
 const ANGLE_OFFSET = 0;
 const COOLDOWN_OFFSET = 2 * 8;
 const LIFETIME_OFFSET = 3 * 8;

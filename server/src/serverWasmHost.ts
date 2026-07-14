@@ -19,6 +19,9 @@ import {
   packWorldState,
   unpackWorldState,
   WORLD_STATE_TOTAL_SIZE,
+  HEADER_SIZE,
+  PLAYER_ENTITY_SIZE,
+  ARRAY_PREAMBLE,
   type WasmSimEvent,
 } from "@sim/wasm/worldStateBridge.ts";
 import { loadServerSim } from "./wasmRuntime.ts";
@@ -290,8 +293,7 @@ class ServerWasmHost {
   private writeScoresIntoMemory(state: WorldState): void {
     if (!this.ex || this.statePtr === null) return;
     const view = new DataView(this.ex.memory.buffer);
-    const playersStart = this.statePtr + 48 + 8;
-    const PLAYER_ENTITY_SIZE = 288;
+    const playersStart = this.statePtr + HEADER_SIZE + ARRAY_PREAMBLE;
     const SCORE_OFF = 276;
     const sortedIds = Object.keys(state.players).sort();
     for (let i = 0; i < sortedIds.length; i++) {
@@ -341,8 +343,7 @@ class ServerWasmHost {
   private writeInputsIntoMemory(): void {
     if (!this.cachedInputs || !this.ex || this.statePtr === null) return;
     const view = new DataView(this.ex.memory.buffer);
-    const playersStart = this.statePtr + 48 + 8;
-    const PLAYER_ENTITY_SIZE = 288;
+    const playersStart = this.statePtr + HEADER_SIZE + ARRAY_PREAMBLE;
     const AIMX_OFF = 4 * 8;
     const AIMY_OFF = 5 * 8;
     const CURR_OFF = 268;
@@ -383,6 +384,15 @@ function mergeUnpacked(
       // Pass-through, not Zig-decided (2026-07-14) — see the matching
       // comment in client/src/sim/wasm/worldWasmBackend.ts's mergeUnpacked.
       suddenDeathActive: unpacked.round.suddenDeathActive,
+      // winnerPlayerId / draftingExpiresAtTick (2026-07-14, native
+      // drafting) — MUST come from `unpacked`, not the `...state.round`
+      // spread's stale pre-step value, or a multi-tick drafting window
+      // re-packs draftingExpiresAtTick as 0 every tick and stepWorld's
+      // `tick >= drafting_expires_at_tick` exit check collapses it back to
+      // countdown on the very next tick regardless of picks — see the
+      // matching comment in worldWasmBackend.ts's mergeUnpacked.
+      winnerPlayerId: unpacked.round.winnerPlayerId,
+      draftingExpiresAtTick: unpacked.round.draftingExpiresAtTick,
       scores: { ...state.round.scores, ...unpacked.scores },
     },
     players: stableMergeRecord(state.players, unpacked.players),

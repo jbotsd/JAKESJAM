@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 
 import { loadSimFromBytes } from "../loader";
-import { packWorldState } from "../worldStateBridge";
+import { packWorldState, HEADER_SIZE, ARRAY_PREAMBLE } from "../worldStateBridge";
 import {
   EntityId,
   InputSeq,
@@ -48,7 +48,7 @@ type WeaponExports = {
 };
 const ex = sim.exports as unknown as WeaponExports;
 
-const PLAYERS_OFFSET = 48 + 8;
+const PLAYERS_OFFSET = HEADER_SIZE + ARRAY_PREAMBLE; // 2026-07-14: derived, not hand-copied
 const FIRE_COOLDOWN_OFFSET = 7 * 8; // 7 f64s before fire_cooldown_ms
 
 function makePlayer(o: Partial<PlayerEntity> = {}): PlayerEntity {

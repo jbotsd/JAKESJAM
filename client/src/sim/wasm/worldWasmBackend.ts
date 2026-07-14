@@ -29,10 +29,14 @@
 
 import type { PlayerId, WorldState } from "../types.js";
 import { loadSim, type Sim } from "./loader.js";
+import { CARD_ID_AT_INDEX } from "./cardIndex.js";
 import {
   packWorldState,
   unpackWorldState,
   WORLD_STATE_TOTAL_SIZE,
+  HEADER_SIZE,
+  PLAYER_ENTITY_SIZE,
+  ARRAY_PREAMBLE,
   type UnpackedWorldState,
   type WasmSimEvent,
 } from "./worldStateBridge.js";
@@ -52,6 +56,11 @@ type WorldExports = {
     kill_plane_y: number,
   ) => void;
   world_state_set_map_size: (width: number, height: number) => void;
+  world_state_commit_draft_pick: (
+    state_ptr: number,
+    player_idx: number,
+    offer_idx: number,
+  ) => number;
   memory: WebAssembly.Memory;
 };
 
@@ -199,6 +208,18 @@ function mergeUnpacked(
       // drafting) — this just round-trips whatever value was packed in so
       // the NEW storm-damage code in world.zig can consume it.
       suddenDeathActive: unpacked.round.suddenDeathActive,
+      // winnerPlayerId / draftingExpiresAtTick (2026-07-14, native
+      // drafting) — Zig-decided (round-over sets the former, drafting
+      // entry sets the latter). MUST be threaded from `unpacked`, not left
+      // to the `...state.round` spread's stale pre-step value: a caller
+      // driving multiple ticks through a drafting window (the normal
+      // case — commitDraftPick spans several step_world calls) would
+      // otherwise re-pack draftingExpiresAtTick as undefined -> 0 every
+      // tick, making stepWorld's `tick >= drafting_expires_at_tick` exit
+      // check ALWAYS true and collapse the window back to countdown on
+      // the very next tick regardless of whether anyone had picked yet.
+      winnerPlayerId: unpacked.round.winnerPlayerId,
+      draftingExpiresAtTick: unpacked.round.draftingExpiresAtTick,
       scores: { ...state.round.scores, ...unpacked.scores },
     },
     players: stableMergeRecord(state.players, unpacked.players),
@@ -334,8 +355,7 @@ export function writeScoresIntoMemory(state: WorldState): void {
   const sim = cachedSim;
   const ex = cachedEx;
   const view = new DataView(ex.memory.buffer);
-  const playersStart = sim.statePtr + 48 + 8;
-  const PLAYER_ENTITY_SIZE = 288;
+  const playersStart = sim.statePtr + HEADER_SIZE + ARRAY_PREAMBLE;
   const SCORE_OFF = 276;
   const sortedIds = Object.keys(state.players).sort();
   for (let i = 0; i < sortedIds.length; i++) {
@@ -356,8 +376,7 @@ export function writePlayerInputsIntoMemory(
   const sim = cachedSim;
   const ex = cachedEx;
   const view = new DataView(ex.memory.buffer);
-  const playersStart = sim.statePtr + 48 + 8;
-  const PLAYER_ENTITY_SIZE = 288;
+  const playersStart = sim.statePtr + HEADER_SIZE + ARRAY_PREAMBLE;
   // aim_x + aim_y are at f64 slots 4 + 5 (offset 32 + 40).
   const AIMX_OFF = 4 * 8;
   const AIMY_OFF = 5 * 8;
@@ -491,6 +510,31 @@ export function setWorldTargetScore(target: number): void {
 function writeTargetScoreIntoMemory(): void {
   if (cachedTargetScore === null || !cachedSim || !cachedEx) return;
   cachedEx.world_state_set_target_score(cachedSim.statePtr, cachedTargetScore);
+}
+
+/**
+ * Native drafting (2026-07-14): commit `playerIdx`'s pick of `offerIdx`
+ * (0-2, an index into their OWN rolled draft_offers slate) against the
+ * state currently sitting in wasm linear memory. Unlike setWorldTargetScore
+ * et al, this is NOT a cached-and-reapplied-every-tick value — it mutates
+ * the live in-memory WorldState directly (world_state_commit_draft_pick).
+ *
+ * Returns the granted card's id on success, or null if the pick was
+ * rejected (wrong phase, bad index, already picked). IMPORTANT: this
+ * mutation lives ONLY in wasm memory — the next applyWasmWorldStepFull
+ * call re-packs from whatever TS state object the caller passes in and
+ * will silently wipe an uncommitted-to-TS-state pick. Callers MUST patch
+ * their own copy immediately after a successful commit, e.g.:
+ *   const cardId = commitDraftPick(idx, offerIdx);
+ *   if (cardId) state = { ...state, players: { ...state.players,
+ *     [pid]: { ...state.players[pid], draftPickedOffer: offerIdx,
+ *              cards: [...state.players[pid].cards, cardId] } } };
+ */
+export function commitDraftPick(playerIdx: number, offerIdx: number): string | null {
+  if (!cachedSim || !cachedEx) return null;
+  const cardIdx = cachedEx.world_state_commit_draft_pick(cachedSim.statePtr, playerIdx, offerIdx);
+  if (cardIdx === 0xffffffff) return null;
+  return CARD_ID_AT_INDEX[cardIdx] ?? null;
 }
 
 /**

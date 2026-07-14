@@ -286,6 +286,12 @@ export type PlayerEntity = {
    * via the shot-fired event, and predicted-local parity self-corrects).
    */
   throwHandParity?: number;
+  /** This round's rolled draft offers (world.zig's enterDraftingNative),
+   *  undefined when not currently drafting or this player has none. */
+  draftOffers?: string[];
+  /** Index into `draftOffers` this player has committed, undefined if
+   *  not drafting or not yet picked. */
+  draftPickedOffer?: number;
 };
 
 export type ProjectileEntity = {

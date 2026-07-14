@@ -9,7 +9,7 @@ import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 
 import { loadSimFromBytes } from "../loader";
-import { packWorldState } from "../worldStateBridge";
+import { packWorldState, HEADER_SIZE, ARRAY_PREAMBLE } from "../worldStateBridge";
 import { installLutTables } from "../../trig";
 import {
   EntityId,
@@ -71,7 +71,7 @@ installLutTables(
   new Float64Array(ex.memory.buffer, ex.lut_atan_table_ptr(), tableSize),
 );
 
-const PLAYERS_OFFSET = 48 + 8;
+const PLAYERS_OFFSET = HEADER_SIZE + ARRAY_PREAMBLE; // 2026-07-14: derived, not hand-copied
 const FLAGS_OFFSET = 17 * 8 + 15 * 4; // 17 f64s + 15 u32s
 const SHIELD_CHARGE_OFFSET = 11 * 8;
 const PARRY_FACING_OFFSET = 13 * 8;

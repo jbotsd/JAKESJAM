@@ -44,8 +44,11 @@ const ex = sim.exports as unknown as SizeofExports;
 
 describe("WorldState extern struct layout (Phase G1c)", () => {
   test("entity sizes match the wire contract", () => {
-    expect(ex.sizeof_world_state_header()).toBe(48);
-    expect(ex.sizeof_player_entity()).toBe(288);
+    // 2026-07-14: +8 (round_winner_idx, drafting_expires_at_tick) and
+    // +24 (card_ids, draft_offers, draft_offer_count, draft_picked_offer
+    // + padding) for native drafting — see world_state.zig.
+    expect(ex.sizeof_world_state_header()).toBe(56);
+    expect(ex.sizeof_player_entity()).toBe(312);
     expect(ex.sizeof_projectile_entity()).toBe(216);
     expect(ex.sizeof_satellite_entity()).toBe(96);
     expect(ex.sizeof_destructible_entity()).toBe(64);

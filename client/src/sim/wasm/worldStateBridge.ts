@@ -13,10 +13,10 @@
 // during pack so unpack ordering is deterministic.
 //
 // Strings: PlayerIds and weapon ids are encoded as fixed-size
-// u8 buffers + length prefix. Card ids are NOT yet packed (the
-// `cards: string[]` field is encoded as count-only for the
-// G1b struct; cards will land in a follow-on cut once we have
-// the data side ported).
+// u8 buffers + length prefix. Card ids are packed as u16 indices into
+// the codegen'd card table (cardIndex.ts's CARD_INDEX, same order as
+// cards_gen.zig) rather than as strings — see packPlayer's card_ids
+// block (2026-07-14, native drafting).
 //
 // Enums: TS uses string literals ('balanced', 'fighting',
 // 'straight'); the wire uses u8 tags. The encode/decode tables
@@ -44,17 +44,28 @@ import {
   type SatelliteEntity,
   type WorldState,
 } from "../types.js";
+import { CARD_INDEX, CARD_ID_AT_INDEX } from "./cardIndex.js";
 
 // -----------------------------------------------------------------
 // Layout constants — must match sim/src/world_state.zig.
 
-const HEADER_SIZE = 48;
-const PLAYER_ENTITY_SIZE = 288;
-const PROJECTILE_ENTITY_SIZE = 216;
-const SATELLITE_ENTITY_SIZE = 96;
-const DESTRUCTIBLE_ENTITY_SIZE = 64;
-const FIRE_ENTITY_SIZE = 88;
-const PICKUP_ENTITY_SIZE = 64;
+// 2026-07-14: +8 bytes (round_winner_idx: i32, drafting_expires_at_tick:
+// u32) for native drafting — see world_state.zig's WorldStateHeader.
+// Exported (previously module-private) so tests compute entity offsets
+// from these instead of re-hardcoding the layout formula themselves —
+// this exact growth broke five __tests__ files that had done that.
+export const HEADER_SIZE = 56;
+// 2026-07-14: +24 bytes (card_ids: [8]u16, draft_offers: [3]u16,
+// draft_offer_count: u8, draft_picked_offer: u8, + compiler padding) for
+// native drafting — see world_state.zig's PlayerEntity. Real offsets
+// pulled from the compiled struct via @offsetOf, not hand-counted: 288 to
+// 312, exact.
+export const PLAYER_ENTITY_SIZE = 312;
+export const PROJECTILE_ENTITY_SIZE = 216;
+export const SATELLITE_ENTITY_SIZE = 96;
+export const DESTRUCTIBLE_ENTITY_SIZE = 64;
+export const FIRE_ENTITY_SIZE = 88;
+export const PICKUP_ENTITY_SIZE = 64;
 // Must match sim/src/world_state.zig PlayerMovementMemory @sizeOf. Grew 24→40
 // with the deep-movement augment memory (dash timers + counters), then 40→48
 // with dash_recovery_ms (slide endlag); the TS bridge skips the array's
@@ -66,20 +77,20 @@ const PLAYER_MOVEMENT_MEMORY_SIZE = 48;
 // 4 × u32 + 4 × u8(enum) + 1 × u8(valid) + 3 × u8(pad) = 136.
 export const RESOLVED_FIRE_CONFIG_SIZE = 240; // +14 augment fields (movement/shield/parry) +dash_cooldown_mul
 
-const MAX_PLAYERS = 16;
+export const MAX_PLAYERS = 16;
 const MAX_STATICS = 256;
 const AABB_SIZE = 32;
-const MAX_PROJECTILES = 256;
-const MAX_SATELLITES = 32;
-const MAX_DESTRUCTIBLES = 64;
-const MAX_FIRE = 32;
+export const MAX_PROJECTILES = 256;
+export const MAX_SATELLITES = 32;
+export const MAX_DESTRUCTIBLES = 64;
+export const MAX_FIRE = 32;
 const MAX_PICKUPS = 32;
 
 const PLAYER_ID_BYTES = 32;
 const WEAPON_ID_BYTES = 24;
 
 // PER-ARRAY preamble: u32 count + 4-byte align-to-8 pad.
-const ARRAY_PREAMBLE = 8;
+export const ARRAY_PREAMBLE = 8;
 
 export const WORLD_STATE_TOTAL_SIZE =
   HEADER_SIZE +
@@ -471,12 +482,57 @@ function packPlayer(view: DataView, offset: number, p: PlayerEntity): void {
   off += 4;
 
   // throw_hand_parity (2026-07-14) — alternating-hand shuriken throws,
-  // parity with weapon.ts's throwHandParity. Steals 1 of the 4 _reserved
-  // bytes; struct size unchanged.
+  // parity with weapon.ts's throwHandParity.
   view.setUint8(off, (p.throwHandParity ?? 1) & 1);
   off += 1;
-  // _reserved 3 bytes — leave zero.
-  off += 3;
+  off += 1; // _pad_before_cards — leave zero (aligns card_ids to 2 bytes).
+
+  // card_ids (2026-07-14, native drafting) — NOTE: this is normally a
+  // no-op write here. The authoritative per-tick channel for a player's
+  // held cards is resolve_player_fire_config (fireConfigShared.ts's
+  // resolveFireConfigsViaZig), which ALSO persists card_ids as a side
+  // effect and runs immediately before this pack. Packing it here too
+  // keeps a fresh WorldState (never yet stepped through wasm) self-
+  // consistent for direct-unpack round-trip tests.
+  for (let i = 0; i < 8; i++) {
+    const cardId = p.cards[i];
+    const idx = cardId !== undefined ? (CARD_INDEX.get(cardId) ?? 0xffff) : 0xffff;
+    view.setUint16(off + i * 2, idx, true);
+  }
+  off += 16;
+
+  // draft_offers / draft_offer_count / draft_picked_offer (2026-07-14).
+  // step_world ORIGINATES these (rolled by enterDraftingNative on
+  // round-over -> drafting entry) but the full pack/unpack cycle every
+  // applyWasmWorldStepFull call does means they only SURVIVE a multi-tick
+  // drafting window if re-packed from whatever unpackPlayer decoded on the
+  // previous call — packPlayer must round-trip `p.draftOffers`/
+  // `p.draftPickedOffer`, not hardcode a sentinel, or a caller correctly
+  // threading the returned state forward would still see the drafting
+  // window silently reset (any_drafter=false) on the very next tick.
+  // `p.draftOffers === undefined` means "not a drafter this round" (0xFE);
+  // an empty array is a real drafter with zero eligible cards (0xFF,
+  // still blocks the all-picked exit gate until expiry) — see
+  // unpackPlayer's matching decode for why those two cases must stay
+  // distinguishable.
+  const isDrafter = p.draftOffers !== undefined;
+  const offers = p.draftOffers ?? [];
+  for (let i = 0; i < 3; i++) {
+    const cardId = offers[i];
+    const idx = cardId !== undefined ? (CARD_INDEX.get(cardId) ?? 0xffff) : 0xffff;
+    view.setUint16(off + i * 2, idx, true);
+  }
+  off += 6;
+  view.setUint8(off, Math.min(offers.length, 3));
+  off += 1;
+  view.setUint8(
+    off,
+    !isDrafter ? 0xfe : p.draftPickedOffer !== undefined && p.draftPickedOffer <= 2 ? p.draftPickedOffer : 0xff,
+  );
+  off += 1;
+  // _reserved tail (compiler padding to keep PlayerEntity 8-byte aligned)
+  // — leave zero. off is now 306; struct is 312 bytes.
+  off += 6;
 }
 
 function unpackPlayer(view: DataView, offset: number): PlayerEntity {
@@ -532,8 +588,8 @@ function unpackPlayer(view: DataView, offset: number): PlayerEntity {
     view.getUint8(off),
   ) as CharacterArchetype;
   off += 1;
-  const cardCount = view.getUint8(off);
-  off += 1;
+  off += 1; // card_count — superseded by the card_ids decode below (which
+  // carries the real ids, not just a length)
   off += 2; // pad
 
   const idLen = view.getUint8(off);
@@ -555,7 +611,58 @@ function unpackPlayer(view: DataView, offset: number): PlayerEntity {
   // throw_hand_parity (2026-07-14) — see packPlayer's matching comment.
   const throwHandParityRaw = view.getUint8(off) & 1;
   off += 1;
-  off += 3; // remaining _reserved bytes
+  off += 1; // _pad_before_cards
+
+  // card_ids (2026-07-14) — decoded straight into the returned `cards`
+  // below (real ids, not the previous cardCount-length empty-string
+  // placeholder). This IS the correct post-step readout: if step_world's
+  // native drafting granted a card this tick (world.zig's applyDraftPick),
+  // it shows up here, and threading THIS returned state forward (the
+  // documented calling convention every applyWasmWorldStepFull caller
+  // already follows) correctly propagates the grant into whatever
+  // resolveFireConfigsViaZig repacks on the next tick. The remaining risk
+  // (see docs/zig-e2e-cutover-investigation-2026-07-14.md) is narrower
+  // than it looks: a caller that keeps its OWN separate canonical player
+  // record (rather than threading this return value) would still miss
+  // the grant — true today for server/matchHost.ts, which doesn't call
+  // the full step_world path at all (USE_WASM_STEP_WORLD is off).
+  const zigCardIds: string[] = [];
+  for (let i = 0; i < 8; i++) {
+    const idx = view.getUint16(off + i * 2, true);
+    if (idx !== 0xffff && CARD_ID_AT_INDEX[idx] !== undefined) {
+      zigCardIds.push(CARD_ID_AT_INDEX[idx]!);
+    }
+  }
+  off += 16;
+
+  // draft_offers / draft_offer_count / draft_picked_offer (2026-07-14) —
+  // native drafting scratch state, originated by step_world but round-
+  // tripped through the host every tick (see packPlayer's matching
+  // comment on why). draft_picked_offer distinguishes "not a drafter this
+  // round" (0xFE) from "drafter, zero eligible offers" (0xFF with
+  // draftOfferCount 0) — the LATTER must still decode to a defined
+  // (empty) `draftOffers` array, not undefined, or packPlayer can't tell
+  // the two cases apart on the next pack and a real drafter with no
+  // offers would incorrectly stop blocking the all-picked exit gate.
+  const draftOfferIdxs: number[] = [];
+  for (let i = 0; i < 3; i++) {
+    draftOfferIdxs.push(view.getUint16(off + i * 2, true));
+  }
+  off += 6;
+  const draftOfferCount = view.getUint8(off);
+  off += 1;
+  const draftPickedOfferRaw = view.getUint8(off);
+  off += 1;
+  const isDrafter = draftPickedOfferRaw !== 0xfe;
+  const draftOffers: string[] | undefined = isDrafter
+    ? draftOfferIdxs
+        .slice(0, draftOfferCount)
+        .map((idx) => CARD_ID_AT_INDEX[idx])
+        .filter((id): id is string => id !== undefined)
+    : undefined;
+  const draftPickedOffer: number | undefined =
+    draftPickedOfferRaw <= 2 ? draftPickedOfferRaw : undefined;
+  off += 6; // _reserved tail
 
   const out: PlayerEntity = {
     id: PlayerId(id),
@@ -571,13 +678,20 @@ function unpackPlayer(view: DataView, offset: number): PlayerEntity {
     crouching: bit(flags, PLAYER_FLAG_BITS.crouching),
     alive: bit(flags, PLAYER_FLAG_BITS.alive),
     weaponId,
-    cards: new Array(cardCount).fill(""),
+    // 2026-07-14: real decoded card ids (via card_ids), not the previous
+    // cardCount-length empty-string placeholder — card_ids is packed from
+    // this same p.cards list AND is what step_world's native drafting
+    // grants land in, so this is also how a caller observes a pick that
+    // happened during the step (see the card_ids decode comment above).
+    cards: zigCardIds,
     fireCooldownMs,
     ammo,
     abilityCharge,
     lastProcessedInputSeq: InputSeq(lastProcessedInputSeq),
     throwHandParity: throwHandParityRaw,
   };
+  if (draftOffers !== undefined) out.draftOffers = draftOffers;
+  if (draftPickedOffer !== undefined) out.draftPickedOffer = draftPickedOffer;
   if (bit(flags, PLAYER_FLAG_BITS.grounded)) out.grounded = true;
   if (bit(flags, PLAYER_FLAG_BITS.hasSlow)) {
     out.slowedUntilTick = Tick(slowedRaw);
@@ -1098,6 +1212,14 @@ export function packWorldState(state: WorldState): Uint8Array {
   const view = new DataView(buf.buffer);
   let off = 0;
 
+  // Sorted once, up front, so both the header's round_winner_idx (needs
+  // the winner's ARRAY index, not their id string) and the players block
+  // below can use the same order — matches enterDrafting's/packPlayer's
+  // existing "sort by id" convention.
+  const players = Object.values(state.players).sort((a, b) =>
+    a.id.localeCompare(b.id),
+  );
+
   // Header — 40 bytes (I2 added round_index + countdown_remaining_ms)
   view.setUint32(off, state.tick, true);
   off += 4;
@@ -1135,11 +1257,24 @@ export function packWorldState(state: WorldState): Uint8Array {
   off += 4;
   view.setFloat64(off, state.round.countdownRemainingMs, true);
   off += 8;
+  // round_winner_idx (2026-07-14, native drafting) — the round-over
+  // winner's ARRAY index (matches world.zig's header.round_winner_idx),
+  // -1 on a draw or no round decided yet. step_world reads this back at
+  // the drafting-entry point for classifyDraftRole; a fresh pack always
+  // seeds it from the host's own state.round.winnerPlayerId so a
+  // mid-round-over pack stays self-consistent for direct tests.
+  {
+    const winnerIdx =
+      state.round.winnerPlayerId != null
+        ? players.findIndex((p) => p.id === state.round.winnerPlayerId)
+        : -1;
+    view.setInt32(off, winnerIdx, true);
+  }
+  off += 4;
+  view.setUint32(off, state.round.draftingExpiresAtTick ?? 0, true);
+  off += 4;
 
   // Players
-  const players = Object.values(state.players).sort((a, b) =>
-    a.id.localeCompare(b.id),
-  );
   view.setUint32(off, players.length, true);
   off += 4;
   off += 4;
@@ -1247,7 +1382,15 @@ export const SIM_EVENT_KIND = {
 export type UnpackedWorldState = {
   tick: Tick;
   rngState: number;
-  round: Pick<RoundState, "phase" | "countdownRemainingMs" | "roundIndex" | "suddenDeathActive">;
+  round: Pick<
+    RoundState,
+    | "phase"
+    | "countdownRemainingMs"
+    | "roundIndex"
+    | "suddenDeathActive"
+    | "winnerPlayerId"
+    | "draftingExpiresAtTick"
+  >;
   scores: Record<string, number>;
   targetScore: number;
   matchWinnerIdx: number; // -1 = no winner
@@ -1289,11 +1432,20 @@ export function unpackWorldState(buf: Uint8Array): UnpackedWorldState {
   off += 4;
   const countdownRemainingMs = view.getFloat64(off, true);
   off += 8;
+  // round_winner_idx / drafting_expires_at_tick (2026-07-14, native
+  // drafting) — round_winner_idx is an ARRAY index, resolved to a
+  // PlayerId string below once the (same-order) players array is
+  // unpacked.
+  const roundWinnerIdxRaw = view.getInt32(off, true);
+  off += 4;
+  const draftingExpiresAtTickRaw = view.getUint32(off, true);
+  off += 4;
 
   const players: Record<PlayerId, PlayerEntity> = {} as Record<
     PlayerId,
     PlayerEntity
   >;
+  const orderedPlayerIds: PlayerId[] = [];
   const playerCount = view.getUint32(off, true);
   off += 4;
   off += 4;
@@ -1301,8 +1453,13 @@ export function unpackWorldState(buf: Uint8Array): UnpackedWorldState {
   for (let i = 0; i < playerCount; i++) {
     const e = unpackPlayer(view, playersStart + i * PLAYER_ENTITY_SIZE);
     players[e.id] = e;
+    orderedPlayerIds.push(e.id);
   }
   off = playersStart + MAX_PLAYERS * PLAYER_ENTITY_SIZE;
+  const winnerPlayerId: PlayerId | null =
+    roundWinnerIdxRaw >= 0 ? (orderedPlayerIds[roundWinnerIdxRaw] ?? null) : null;
+  const draftingExpiresAtTick =
+    draftingExpiresAtTickRaw > 0 ? Tick(draftingExpiresAtTickRaw) : undefined;
 
   const projectiles: Record<EntityId, ProjectileEntity> = {} as Record<
     EntityId,
@@ -1426,7 +1583,14 @@ export function unpackWorldState(buf: Uint8Array): UnpackedWorldState {
   const out: UnpackedWorldState = {
     tick,
     rngState,
-    round: { phase, countdownRemainingMs, roundIndex, suddenDeathActive },
+    round: {
+      phase,
+      countdownRemainingMs,
+      roundIndex,
+      suddenDeathActive,
+      winnerPlayerId,
+      draftingExpiresAtTick,
+    },
     scores,
     targetScore,
     matchWinnerIdx,

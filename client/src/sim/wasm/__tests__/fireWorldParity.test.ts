@@ -8,7 +8,19 @@ import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 
 import { loadSimFromBytes } from "../loader";
-import { packWorldState } from "../worldStateBridge";
+import {
+  packWorldState,
+  HEADER_SIZE,
+  PLAYER_ENTITY_SIZE,
+  PROJECTILE_ENTITY_SIZE,
+  SATELLITE_ENTITY_SIZE,
+  DESTRUCTIBLE_ENTITY_SIZE,
+  ARRAY_PREAMBLE,
+  MAX_PLAYERS,
+  MAX_PROJECTILES,
+  MAX_SATELLITES,
+  MAX_DESTRUCTIBLES,
+} from "../worldStateBridge";
 import {
   EntityId,
   PlayerId,
@@ -41,8 +53,20 @@ type FireExports = {
 };
 const ex = sim.exports as unknown as FireExports;
 
+// Derived from the shared layout constants (2026-07-14) rather than
+// hand-copied numbers — the native-drafting PlayerEntity/header growth
+// silently broke this test's hardcoded formula the first time.
 const FIRES_OFFSET =
-  48 + 8 + 16 * 288 + 8 + 256 * 216 + 8 + 32 * 96 + 8 + 64 * 64 + 8;
+  HEADER_SIZE +
+  ARRAY_PREAMBLE +
+  MAX_PLAYERS * PLAYER_ENTITY_SIZE +
+  ARRAY_PREAMBLE +
+  MAX_PROJECTILES * PROJECTILE_ENTITY_SIZE +
+  ARRAY_PREAMBLE +
+  MAX_SATELLITES * SATELLITE_ENTITY_SIZE +
+  ARRAY_PREAMBLE +
+  MAX_DESTRUCTIBLES * DESTRUCTIBLE_ENTITY_SIZE +
+  ARRAY_PREAMBLE;
 
 function loadFireOnly(f: FireEntity): number {
   const state: WorldState = {

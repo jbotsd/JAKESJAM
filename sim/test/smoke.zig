@@ -259,6 +259,157 @@ test "draft.poolIndices: unique cards already owned are excluded" {
     try std.testing.expect(!found_in_owned);
 }
 
+// ── draft phase-machine wiring (2026-07-14) — full step_world E2E ────────
+// Unlike the golden-vector tests above (which call draft.rollOffers
+// directly), these drive the REAL stepWorld orchestrator through a
+// round-over -> drafting -> countdown cycle, proving the WIRING (phase
+// transitions, WorldState field read/write, pick-commit export, entity
+// reset timing) works end-to-end, not just the algorithm in isolation.
+
+fn makeDraftTestState(player_count: u32) root.world_state.WorldState {
+    var state: root.world_state.WorldState = std.mem.zeroes(root.world_state.WorldState);
+    state.header.match_winner_idx = -1;
+    state.header.round_winner_idx = -1;
+    state.player_count = player_count;
+    var i: u32 = 0;
+    while (i < player_count) : (i += 1) {
+        state.players[i].health = 100.0;
+        state.players[i].flags.alive = true;
+        state.players[i].draft_picked_offer = 0xFE;
+        state.players[i].draft_offers = .{ 0xFFFF, 0xFFFF, 0xFFFF };
+    }
+    return state;
+}
+
+test "draft phase machine: round-over timer expiry rolls into drafting and offers both players" {
+    var state = makeDraftTestState(2);
+    state.header.round_phase = @intFromEnum(root.round.RoundPhase.round_over);
+    state.header.countdown_remaining_ms = 1; // expires this tick
+    state.header.round_winner_idx = 0; // p0 won -> p1 gets catch_up weighting
+    state.header.rng_state = 12345;
+    state.header.tick = 100;
+
+    _ = root.world.stepWorld(&state, 16.667);
+
+    try std.testing.expectEqual(@intFromEnum(root.round.RoundPhase.drafting), state.header.round_phase);
+    try std.testing.expectEqual(@as(f64, root.round.DRAFT_WINDOW_MS), state.header.countdown_remaining_ms);
+    try std.testing.expectEqual(@as(u32, 3), state.players[0].draft_offer_count);
+    try std.testing.expectEqual(@as(u32, 3), state.players[1].draft_offer_count);
+    try std.testing.expectEqual(@as(u8, 0xFF), state.players[0].draft_picked_offer);
+    try std.testing.expectEqual(@as(u8, 0xFF), state.players[1].draft_picked_offer);
+    // tick is incremented to 101 at the top of stepWorld before this runs.
+    const expected_expiry: u32 = 101 + @as(u32, @intFromFloat(@ceil(root.round.DRAFT_WINDOW_MS / root.round.STEP_MS)));
+    try std.testing.expectEqual(expected_expiry, state.header.drafting_expires_at_tick);
+    // Different rng cursor per player role (winner vs catch_up) proven
+    // upstream by the golden-vector tests above; here just confirm no
+    // offer is the sentinel and offers are in-range card indices.
+    for (state.players[0].draft_offers) |idx| try std.testing.expect(idx < root.draft.gen.cards.len);
+    for (state.players[1].draft_offers) |idx| try std.testing.expect(idx < root.draft.gen.cards.len);
+}
+
+test "draft phase machine: match-already-won round-over parks instead of drafting" {
+    var state = makeDraftTestState(2);
+    state.header.round_phase = @intFromEnum(root.round.RoundPhase.round_over);
+    state.header.countdown_remaining_ms = 1;
+    state.header.match_winner_idx = 0; // match already decided
+    state.header.rng_state = 999;
+
+    _ = root.world.stepWorld(&state, 16.667);
+
+    try std.testing.expectEqual(@intFromEnum(root.round.RoundPhase.round_over), state.header.round_phase);
+    try std.testing.expectEqual(@as(f64, 0), state.header.countdown_remaining_ms);
+    try std.testing.expectEqual(@as(u32, 0), state.players[0].draft_offer_count);
+}
+
+test "draft phase machine: pick-commit grants the card and unblocks all-picked exit" {
+    var state = makeDraftTestState(2);
+    state.header.round_phase = @intFromEnum(root.round.RoundPhase.round_over);
+    state.header.countdown_remaining_ms = 1;
+    state.header.rng_state = 555;
+    state.header.tick = 0;
+    _ = root.world.stepWorld(&state, 16.667); // -> drafting, offers rolled
+
+    try std.testing.expectEqual(@intFromEnum(root.round.RoundPhase.drafting), state.header.round_phase);
+    const p0_pick = state.players[0].draft_offers[0];
+    const p1_pick = state.players[1].draft_offers[1];
+
+    const rc0 = root.world.world_state_commit_draft_pick(&state, 0, 0);
+    try std.testing.expectEqual(@as(u32, p0_pick), rc0);
+    try std.testing.expectEqual(@as(u8, 1), state.players[0].card_count);
+    try std.testing.expectEqual(p0_pick, state.players[0].card_ids[0]);
+    try std.testing.expectEqual(@as(u8, 0), state.players[0].draft_picked_offer);
+
+    // Double-commit is rejected (already picked).
+    const rc0_again = root.world.world_state_commit_draft_pick(&state, 0, 1);
+    try std.testing.expectEqual(@as(u32, 0xFFFFFFFF), rc0_again);
+    try std.testing.expectEqual(@as(u8, 1), state.players[0].card_count); // unchanged
+
+    const rc1 = root.world.world_state_commit_draft_pick(&state, 1, 1);
+    try std.testing.expectEqual(@as(u32, p1_pick), rc1);
+    try std.testing.expectEqual(p1_pick, state.players[1].card_ids[0]);
+
+    // Both players picked -> the very next tick should exit to countdown,
+    // even though drafting_expires_at_tick is still far in the future.
+    _ = root.world.stepWorld(&state, 16.667);
+    try std.testing.expectEqual(@intFromEnum(root.round.RoundPhase.countdown), state.header.round_phase);
+    try std.testing.expectEqual(@as(u8, 0xFE), state.players[0].draft_picked_offer);
+    try std.testing.expectEqual(@as(u8, 0xFE), state.players[1].draft_picked_offer);
+    try std.testing.expectEqual(@as(u32, 1), state.header.round_index);
+    // Cards persisted through the exit (not wiped by the new-round reset —
+    // only health/alive/timed-buffs are reset, matching the pre-existing
+    // "players keep score + buff durations" contract).
+    try std.testing.expectEqual(@as(u8, 1), state.players[0].card_count);
+    try std.testing.expectEqual(@as(u8, 1), state.players[1].card_count);
+    try std.testing.expectEqual(@as(f64, 100.0), state.players[0].health);
+}
+
+test "draft phase machine: expiry auto-picks the first offer for unpicked drafters" {
+    var state = makeDraftTestState(2);
+    state.header.round_phase = @intFromEnum(root.round.RoundPhase.round_over);
+    state.header.countdown_remaining_ms = 1;
+    state.header.rng_state = 42;
+    state.header.tick = 0;
+    _ = root.world.stepWorld(&state, 16.667); // -> drafting
+
+    const p0_first_offer = state.players[0].draft_offers[0];
+    const p1_first_offer = state.players[1].draft_offers[0];
+    // Nobody commits a pick. Fast-forward past drafting_expires_at_tick.
+    state.header.tick = state.header.drafting_expires_at_tick;
+
+    _ = root.world.stepWorld(&state, 16.667);
+
+    try std.testing.expectEqual(@intFromEnum(root.round.RoundPhase.countdown), state.header.round_phase);
+    try std.testing.expectEqual(@as(u8, 1), state.players[0].card_count);
+    try std.testing.expectEqual(p0_first_offer, state.players[0].card_ids[0]);
+    try std.testing.expectEqual(@as(u8, 1), state.players[1].card_count);
+    try std.testing.expectEqual(p1_first_offer, state.players[1].card_ids[0]);
+}
+
+test "draft phase machine: unique card already owned is excluded from a fresh offer roll" {
+    var state = makeDraftTestState(1);
+    // Find a real unique card and pre-grant it to player 0.
+    var unique_idx: ?u16 = null;
+    for (root.draft.gen.cards, 0..) |entry, idx| {
+        if (entry.unique) {
+            unique_idx = @intCast(idx);
+            break;
+        }
+    }
+    try std.testing.expect(unique_idx != null);
+    state.players[0].card_ids[0] = unique_idx.?;
+    state.players[0].card_count = 1;
+    state.header.round_phase = @intFromEnum(root.round.RoundPhase.round_over);
+    state.header.countdown_remaining_ms = 1;
+    state.header.rng_state = 8675309;
+
+    _ = root.world.stepWorld(&state, 16.667);
+
+    try std.testing.expectEqual(@intFromEnum(root.round.RoundPhase.drafting), state.header.round_phase);
+    for (state.players[0].draft_offers[0..state.players[0].draft_offer_count]) |idx| {
+        try std.testing.expect(idx != unique_idx.?);
+    }
+}
+
 test "draft.poolIndices: maxStacks cap excludes cards already at cap" {
     var capped_idx: ?usize = null;
     var cap_value: u32 = 0;

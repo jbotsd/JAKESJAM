@@ -10,7 +10,19 @@ import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 
 import { loadSimFromBytes } from "../loader";
-import { packWorldState } from "../worldStateBridge";
+import {
+  packWorldState,
+  HEADER_SIZE,
+  PLAYER_ENTITY_SIZE,
+  PROJECTILE_ENTITY_SIZE,
+  SATELLITE_ENTITY_SIZE,
+  DESTRUCTIBLE_ENTITY_SIZE,
+  ARRAY_PREAMBLE,
+  MAX_PLAYERS,
+  MAX_PROJECTILES,
+  MAX_SATELLITES,
+  MAX_DESTRUCTIBLES,
+} from "../worldStateBridge";
 import {
   EntityId,
   PlayerId,
@@ -38,10 +50,19 @@ type WorldExports = {
 };
 const ex = sim.exports as unknown as WorldExports;
 
-const FIRES_OFFSET =
-  48 + 8 + 16 * 288 + 8 + 256 * 216 + 8 + 32 * 96 + 8 + 64 * 64 + 8;
+// Derived from the shared layout constants (2026-07-14) rather than
+// hand-copied numbers — the native-drafting PlayerEntity/header growth
+// silently broke this test's hardcoded formula the first time.
+const PROJECTILES_OFFSET =
+  HEADER_SIZE + ARRAY_PREAMBLE + MAX_PLAYERS * PLAYER_ENTITY_SIZE + ARRAY_PREAMBLE;
 const DESTRUCTIBLES_OFFSET =
-  48 + 8 + 16 * 288 + 8 + 256 * 216 + 8 + 32 * 96 + 8;
+  PROJECTILES_OFFSET +
+  MAX_PROJECTILES * PROJECTILE_ENTITY_SIZE +
+  ARRAY_PREAMBLE +
+  MAX_SATELLITES * SATELLITE_ENTITY_SIZE +
+  ARRAY_PREAMBLE;
+const FIRES_OFFSET =
+  DESTRUCTIBLES_OFFSET + MAX_DESTRUCTIBLES * DESTRUCTIBLE_ENTITY_SIZE + ARRAY_PREAMBLE;
 const TICK_OFFSET = 0;
 const FIRE_REMAINING_OFFSET = 3 * 8;
 const DEST_HEALTH_OFFSET = 4 * 8;
@@ -208,7 +229,10 @@ describe("step_world orchestrator parity (Phase I1)", () => {
     // + 1 (card_count) + 2 (pad) + 8 (id_len + weapon_id_len + 6
     // pad) + 32 (id_bytes) + 24 (weapon_id_bytes) = 268.
     // current_keys is at +268.
-    const PLAYERS_OFFSET = 48 + 8;
+    // Derived from the shared layout constant (2026-07-14) rather than
+    // the hand-copied 48 — the native-drafting header growth silently
+    // broke this test's hardcoded formula the first time.
+    const PLAYERS_OFFSET = HEADER_SIZE + ARRAY_PREAMBLE;
     const view = new DataView(ex.memory.buffer);
     view.setUint32(ptr + PLAYERS_OFFSET + 268, 1 << 8, true);
     ex.step_world(ptr, 1000); // 1 sec tick

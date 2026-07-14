@@ -6,14 +6,7 @@
 
 import type { PlayerId, WorldState } from "../types.js";
 import { WORLD_STATE_TOTAL_SIZE } from "./worldStateBridge.js";
-import { crystalRoundsCards } from "../data/cards.js";
-
-// card id → index into the Zig card table. Mirrors cards_gen.zig ordering
-// (crystalRoundsCards filtered to those with a modifier).
-const CARD_INDEX = new Map<string, number>();
-crystalRoundsCards
-  .filter((c) => c.modifier)
-  .forEach((c, i) => CARD_INDEX.set(c.id, i));
+import { CARD_INDEX } from "./cardIndex.js";
 
 export type FireConfigResolverExports = {
   memory: WebAssembly.Memory;
