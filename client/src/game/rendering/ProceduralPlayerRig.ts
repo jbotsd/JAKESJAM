@@ -69,6 +69,15 @@ type ProceduralPlayerRigOptions = {
    *  no Warframe/Fortnite direct analog, native to JAKESJAM. */
   auraColor?: number;
   /**
+   * Seed for the nameplate portrait badge's generated sigil (portraitBadge.ts)
+   * — pass the actual playerId for real per-connection uniqueness; falls
+   * back to `name` when omitted (fine for bots, whose name IS already
+   * distinct per bot). Not a cosmetic choice — every distinct seed must
+   * produce a distinct sigil, or the badge collapses back into the
+   * color-only-differentiation failure mode this system replaced.
+   */
+  identitySeed?: string;
+  /**
    * `full` = local / hero (aura + trail + full secondary motion).
    * `lite` = remotes/bots — fewer path ops so multi-player frames stay smooth.
    */
@@ -116,6 +125,7 @@ export class ProceduralPlayerRig implements CombatRig {
   protected readonly jointColor: number;
   protected readonly auraColor: number;
   private readonly name: string;
+  private readonly identitySeed: string;
   protected readonly scale: number;
   private readonly detail: "full" | "lite";
   private stepPhase = 0;
@@ -356,6 +366,7 @@ export class ProceduralPlayerRig implements CombatRig {
     this.jointColor = options.jointColor ?? this.accentColor;
     this.auraColor = options.auraColor ?? this.accentColor;
     this.name = options.name;
+    this.identitySeed = options.identitySeed ?? options.name;
     this.scale = options.scale ?? 1;
     this.detail = options.detail ?? "full";
   }
@@ -1785,7 +1796,16 @@ export class ProceduralPlayerRig implements CombatRig {
     // HudSystem's screen-anchored badges (portraitBadge.ts) so the
     // in-world nameplate and the HUD frames read as the same identity
     // system, not two different avatar styles.
-    drawPortraitBadge(g, badgeCx, y - 9.5 * s, badgeR, this.color, this.colorDark, this.accentColor);
+    drawPortraitBadge(
+      g,
+      badgeCx,
+      y - 9.5 * s,
+      badgeR,
+      this.color,
+      this.identitySeed,
+      this.colorDark,
+      this.accentColor,
+    );
 
     // Name text — re-centered into the plate's name column (see nameCx).
     this.nameText.setText(this.name);

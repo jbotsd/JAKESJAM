@@ -64,6 +64,9 @@ export type HudVitals = {
    * the vitals block falls back to its original left edge.
    */
   portraitColor?: number;
+  /** Seed for the badge's generated sigil (portraitBadge.ts) — the local
+   *  player's own id. Required whenever portraitColor is set. */
+  portraitSeed?: string;
 };
 
 export type HudRound = {
@@ -157,6 +160,7 @@ export class HudSystem {
   // Portrait badge (party-frame layout) — see HudVitals.portraitColor docblock.
   private portraitGraphics!: Phaser.GameObjects.Graphics;
   private lastPortraitColor: number | undefined = undefined;
+  private lastPortraitSeed: string | undefined = undefined;
 
   // Vital text labels
   private hpLabel!: Phaser.GameObjects.Text;
@@ -438,8 +442,9 @@ export class HudSystem {
     // make room, matching the reference (portrait left, bars extending
     // right of it) instead of floating a nameplate above the head.
     const vitalsX = v.portraitColor !== undefined ? PAD_LEFT + PORTRAIT_RESERVED_W : PAD_LEFT;
-    if (v.portraitColor !== this.lastPortraitColor) {
+    if (v.portraitColor !== this.lastPortraitColor || v.portraitSeed !== this.lastPortraitSeed) {
       this.lastPortraitColor = v.portraitColor;
+      this.lastPortraitSeed = v.portraitSeed;
       this.portraitGraphics.clear();
       if (v.portraitColor !== undefined) {
         drawPortraitBadge(
@@ -448,6 +453,7 @@ export class HudSystem {
           PAD_TOP + PORTRAIT_R - 2,
           PORTRAIT_R,
           v.portraitColor,
+          v.portraitSeed ?? "local",
         );
       }
     }
@@ -629,7 +635,7 @@ export class HudSystem {
       // Local player's badge gets a bright cyan ring (matches the "you"
       // color used elsewhere) so it reads at a glance without needing to
       // parse the ▸ mark; everyone else keeps the default darkened-shade ring.
-      drawPortraitBadge(g, PAD_LEFT + r, cy, r, color, undefined, isLocal ? 0x8ff8ff : undefined);
+      drawPortraitBadge(g, PAD_LEFT + r, cy, r, color, pid, undefined, isLocal ? 0x8ff8ff : undefined);
 
       const text = this.scoreRowTexts[i]!;
       text.setText(`${isLocal ? "▸ " : "  "}${tag}  ${score}`);

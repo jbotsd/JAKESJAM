@@ -985,6 +985,7 @@ export class OnlineMatchScene extends Phaser.Scene {
       // makePlayerRig assigns the local hero's rig, so the HUD badge and
       // the in-world nameplate badge read as the same person.
       portraitColor: local ? LOCAL_PLAYER_FALLBACK_COLOR : undefined,
+      portraitSeed: local ? this.localPlayerId : undefined,
     };
 
     const scores = state.round.scores;
@@ -2009,6 +2010,9 @@ export class OnlineMatchScene extends Phaser.Scene {
       // Chosen name from the hello roster; id-suffix fallback. The old
       // "/ Balanced" archetype suffix was dev noise (Jake, 2026-07-11).
       name: bot ? botLabel(player.id) : (this.rosterNames.get(player.id) ?? player.id.slice(-4)),
+      // The real connection id, not the display name — two players who
+      // happen to pick the same name still get visually distinct sigils.
+      identitySeed: player.id,
       scale: this.getVisualScale(character),
       // Full juice for local; lite path for remotes/bots (fewer Graphics
       // ops). Potato tier runs EVERY rig lite — per-frame vector
