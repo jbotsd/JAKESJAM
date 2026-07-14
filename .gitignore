@@ -40,6 +40,12 @@ server/.entitlements/
 server/.signups/
 server/.clips-quarantine/
 server/.telemetry/
+# Data warehouse — rebuilt locally from the sources above + fresh research
+# agent runs (bun data-warehouse/ingest.ts), never hand-edited, so it's a
+# build artifact like any other, not something to diff/merge in git.
+data-warehouse/jakesjam.db
+data-warehouse/jakesjam.db-shm
+data-warehouse/jakesjam.db-wal
 # Same runtime-data categories, but at repo root (client-side clip capture /
 # publishing state) — same reasoning as the server/ ones above.
 /.clips/
