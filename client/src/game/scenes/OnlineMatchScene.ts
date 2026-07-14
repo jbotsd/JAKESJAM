@@ -317,7 +317,6 @@ export class OnlineMatchScene extends Phaser.Scene {
       console.warn("[clips] save-now: recorder unavailable (consent off or no MediaRecorder)");
       return;
     }
-    console.log("[clips] manual save — toast in a few seconds");
     this.clipRecorder.trigger();
   };
   /** Scene-local last shareable clip URL (no shell session import). */
@@ -1326,7 +1325,6 @@ export class OnlineMatchScene extends Phaser.Scene {
       const highlights = this.highlightTracker.ingest(events, performance.now());
       for (const h of highlights) {
         if (h.playerId !== this.localPlayerId) continue;
-        console.log(`[clips] highlight: ${h.label} (${h.playerId})`);
         this.clipRecorder.trigger();
       }
     }
@@ -2515,7 +2513,6 @@ export class OnlineMatchScene extends Phaser.Scene {
       // the deterministic replay (clipRenderQueue) at full quality — "the
       // host renders the clip and that is what gets used". Clips appear in
       // the Clips gallery (/clips/recent) after the match.
-      console.log(`[clips] ${tier} tier — client capture off (host renders highlights)`);
       return;
     }
     this.highlightTracker = new HighlightTracker();
@@ -2557,7 +2554,6 @@ export class OnlineMatchScene extends Phaser.Scene {
     this.clipRecorder = new ClipRecorder(this.game.canvas, {
       getFocus: () => this.clipFocusScreenPos(),
       onUploaded: (url, kind) => {
-        console.log(`[clips] uploaded (${kind}): ${url}`);
         if (kind === "vertical") pendingVertical = url;
         else pendingOriginal = url;
         if (pendingVertical && pendingOriginal) flushPair();
@@ -2572,7 +2568,6 @@ export class OnlineMatchScene extends Phaser.Scene {
     this.game.events.on(Phaser.Core.Events.POST_RENDER, this.onPostRenderClipCapture, this);
     (window as unknown as { __clipsTrigger?: () => void }).__clipsTrigger = () =>
       this.clipRecorder?.trigger();
-    console.log("[clips] recorder started (segment buffer rolling)");
   }
 
   private onPostRenderClipCapture(): void {

@@ -251,7 +251,6 @@ export class ClipRecorder {
     this.focusY = Number.NaN;
     this.lastDrawAtMs = 0;
     this.beginWorkerSegment();
-    console.log("[clips] WebCodecs worker capture active (off-main-thread encode)");
     return true;
   }
 
@@ -283,8 +282,6 @@ export class ClipRecorder {
         const trace = decimateTrace(this.focusTrace);
         if (blob.size >= MIN_UPLOAD_BYTES) {
           void this.upload(blob, trace, msg.width ?? 0, msg.height ?? 0);
-        } else {
-          console.log(`[clips] dropped dud worker segment (${blob.size} bytes — tab hidden?)`);
         }
       }
       if (!this.stopped) this.beginWorkerSegment();
@@ -475,8 +472,6 @@ export class ClipRecorder {
       // with 10-15 byte junk files. Drop anything implausibly small.
       if (blob.size >= MIN_UPLOAD_BYTES) {
         void this.upload(blob, trace, p.canvas.width, p.canvas.height);
-      } else {
-        console.log(`[clips] dropped dud ${p.kind} segment (${blob.size} bytes — tab hidden?)`);
       }
     }
     p.chunks = [];

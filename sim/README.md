@@ -58,6 +58,16 @@ unchanged.
 - E — weapon, satellite, combat, destructible, fire ✅
 - F — backend swap mechanisms + default-on rollout ✅
 - G — WorldState extern struct + bridge ✅ (G1a/G1b/G1c/G2/G3)
-- H — per-module full orchestration (in progress)
-- I — `step_world` orchestrator (pending)
-- J/K/L/M — production cutover, deletion, validation, decommission
+- H — per-module full orchestration (in progress — H8c-e card/map/pickup
+  data tables + round-machine drafting phase still TS-only, see
+  `sim/src/round.zig` and `sim/src/data/README.md`)
+- I — `step_world` orchestrator: **shipped**, not pending — fully
+  exported with an extensive test suite
+  (`client/src/sim/wasm/__tests__/`), but opt-in only (`?wasm-world`
+  client flag / `USE_WASM_STEP_WORLD` server env, both off by default).
+  Flipped on in production 2026-07-05, broke live play in ways the
+  automated suite didn't catch, reverted 2026-07-06 — see
+  `server/src/matchHost.ts`'s guard comment before re-attempting this.
+- J/K/L/M — production cutover, deletion, validation, decommission: not
+  started; gated on the H8c-e data tables above and a real multi-client
+  human playtest (see CLAUDE.md "Doc trust levels").
