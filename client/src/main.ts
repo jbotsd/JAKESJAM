@@ -1504,28 +1504,14 @@ queryRequired<HTMLButtonElement>("[data-pause-leave]").addEventListener("click",
   }
 });
 
-// Clip toast when match emits jakesjam:clip-uploaded (session list is ShellController).
-const pendingToast: { vertical?: string; original?: string; timer?: number } = {};
+// Clip toast when match emits jakesjam:clip-uploaded (session list is
+// ShellController). One upload per trigger now — no vertical crop to pair
+// with (2026-07-15: dropped the 9:16 transcode), so toast immediately
+// instead of waiting on a 5s pairing timeout that would never resolve early.
 window.addEventListener(ShellEvents.CLIP_UPLOADED, ((e: CustomEvent) => {
-  const d = e.detail as { url?: string; kind?: string };
+  const d = e.detail as { url?: string };
   if (!d?.url) return;
-  if (d.kind === "vertical") pendingToast.vertical = d.url;
-  if (d.kind === "original") pendingToast.original = d.url;
-  const flush = () => {
-    if (pendingToast.timer) window.clearTimeout(pendingToast.timer);
-    pendingToast.timer = undefined;
-    const v = pendingToast.vertical;
-    const o = pendingToast.original;
-    pendingToast.vertical = undefined;
-    pendingToast.original = undefined;
-    if (v) showClipShareToast(v, o);
-    else if (o) showClipShareToast(o);
-  };
-  if (pendingToast.vertical && pendingToast.original) flush();
-  else {
-    if (pendingToast.timer) window.clearTimeout(pendingToast.timer);
-    pendingToast.timer = window.setTimeout(flush, 5000);
-  }
+  showClipShareToast(d.url);
 }) as EventListener);
 
 musicVolumeInput.addEventListener("input", () => {
