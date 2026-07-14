@@ -24,6 +24,7 @@ pub const chaos = @import("data/chaos.zig");
 pub const weapons = @import("data/weapons.zig");
 pub const map_gen = @import("data/map_gen.zig");
 pub const weapon_build = @import("weapon_build.zig");
+pub const draft = @import("draft.zig");
 
 // Force wasm linker to include sub-modules' `export fn` symbols.
 comptime {
@@ -46,6 +47,7 @@ comptime {
     _ = chaos;
     _ = weapons;
     _ = map_gen;
+    _ = draft;
 }
 
 // 128 KB — sized for the full WorldState extern struct (72 KB

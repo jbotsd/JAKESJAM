@@ -18,6 +18,14 @@ const IMPACT = ["none", "explosive", "sticky", "pierce-chain", "slow-field"];
 // Mirrors cardTypes.ts's WeaponDelivery union — index 0 ("projectile") is
 // the default/no-op delivery, matching weapons.ts's starterWeapon.delivery.
 const DELIVERY = ["projectile", "raycast", "continuous-beam", "area-pulse"];
+// Mirrors cardTypes.ts's CardDefinition["rarity"] union — index used as the
+// Zig-side rarity byte.
+const RARITY = ["common", "uncommon", "rare", "legendary", "cursed"];
+// Mirrors draftWeights.ts's CATCH_UP_BUCKETS exactly. weightForCard only
+// ever asks "does this card have ANY bucket in this set" — never which one —
+// so it's precomputed here as a single bool rather than emitting the full
+// bucket array (a 7-entry union) into Zig.
+const CATCH_UP_BUCKETS = new Set(["impact", "utility", "element"]);
 const idx = (arr: string[], v: string | undefined): number | null =>
   v === undefined ? null : Math.max(0, arr.indexOf(v));
 
@@ -144,7 +152,12 @@ function cardLiteral(card: (typeof crystalRoundsCards)[number]): string {
     add("proj_slow_mul_set", optF(p?.slowMultiplier), "null");
   }
   const body = parts.length ? ` ${parts.join(", ")} ` : "";
-  return `    .{ .id = "${id}", .mod = .{${body}} },`;
+  const rarityIdx = RARITY.indexOf(card.rarity ?? "common");
+  const rarity = rarityIdx < 0 ? 0 : rarityIdx;
+  const catchUpEligible = (card.buckets ?? []).some((b) => CATCH_UP_BUCKETS.has(b));
+  const unique = card.unique ? "true" : "false";
+  const maxStacks = card.maxStacks === undefined ? "null" : `${card.maxStacks}`;
+  return `    .{ .id = "${id}", .mod = .{${body}}, .rarity = ${rarity}, .catch_up_eligible = ${catchUpEligible ? "true" : "false"}, .unique = ${unique}, .max_stacks = ${maxStacks} },`;
 }
 
 const sw = starterWeapon;
@@ -203,7 +216,18 @@ pub const CardMod = struct {
     proj_slow_mul_set: ?f64 = null,
 };
 
-pub const CardEntry = struct { id: []const u8, mod: CardMod };
+/// unique/max_stacks/rarity/catch_up_eligible mirror cardTypes.ts's
+/// CardDefinition draft-relevant metadata (see draftWeights.ts). buckets
+/// itself isn't emitted — weightForCard only ever tests set-membership
+/// against CATCH_UP_BUCKETS, so that test is precomputed here as a bool.
+pub const CardEntry = struct {
+    id: []const u8,
+    mod: CardMod,
+    rarity: u8 = 0,
+    catch_up_eligible: bool = false,
+    unique: bool = false,
+    max_stacks: ?u32 = null,
+};
 
 /// Starter-pistol base (the only weapon) — mirrors weapons.ts.
 pub const StarterBase = struct {
