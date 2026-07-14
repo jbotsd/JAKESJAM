@@ -981,6 +981,10 @@ export class OnlineMatchScene extends Phaser.Scene {
       chips,
       isDead: !local || local.health <= 0 || !local.alive,
       outsideStorm,
+      // Party-frame portrait badge (Jake 2026-07-14) — same identity color
+      // makePlayerRig assigns the local hero's rig, so the HUD badge and
+      // the in-world nameplate badge read as the same person.
+      portraitColor: local ? LOCAL_PLAYER_FALLBACK_COLOR : undefined,
     };
 
     const scores = state.round.scores;
@@ -995,12 +999,25 @@ export class OnlineMatchScene extends Phaser.Scene {
           })()
         : undefined;
 
+    // Scoreboard row colors — same role scheme makePlayerRig assigns
+    // (teal local / crimson remote / violet bot), so the badge next to a
+    // name always matches that player's actual in-world rig color.
+    const colors: Record<string, number> = {};
+    for (const pid of Object.keys(scores)) {
+      colors[pid] = isBotId(pid)
+        ? BOT_RIG_COLOR
+        : pid === this.localPlayerId
+          ? LOCAL_PLAYER_FALLBACK_COLOR
+          : REMOTE_PLAYER_FALLBACK_COLOR;
+    }
+
     const round: HudRound = {
       phase: state.round.phase,
       countdownRemainingMs: state.round.countdownRemainingMs,
       roundIndex: state.round.roundIndex,
       scores,
       names: Object.fromEntries(this.rosterNames),
+      colors,
       winnerLabel,
     };
 

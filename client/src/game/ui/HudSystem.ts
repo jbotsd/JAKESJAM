@@ -6,12 +6,13 @@
 //
 // Layout (Crystal Cyan palette, anchored to viewport via setScrollFactor(0)):
 //
-//   ┌─ top-left (plate-less) ──────────────────────────────────────────────────┐
-//   │  [HP bar 200px]  HP nnn/max                                              │
-//   │  [SH bar 160px]  SH nnn/max      (hidden when no shield)                 │
-//   │  [JET bar 120px] JET nn%         (hidden when no jetpack)                │
-//   │  [• • • • • •]  dot-row ability charge                                   │
+//   ┌─ top-left (party-frame) ─────────────────────────────────────────────────┐
+//   │  (◕) [HP bar]  HP nnn/max                                                │
+//   │      [SH bar]  SH nnn/max         (hidden when no shield)                │
+//   │      [• • • • • •]  dot-row ability charge                               │
 //   │  [buff strip - outline chips per active buff/debuff]                     │
+//   │  (◕) ▸ YOU        2    ← scoreboard rows, one portrait badge per player  │
+//   │  (◕)   BOT · SPARK 0                                                     │
 //   └──────────────────────────────────────────────────────────────────────────┘
 //
 //   ┌─ top-right ───────────────────────────────────────────────────────────────┐
@@ -21,7 +22,6 @@
 //
 //   ┌─ top-center ──────────────────────────────────────────────────────────────┐
 //   │  mm:ss (big timer, Consolas)                                               │
-//   │  YOU 2   THEM 1 (score row, Inter)                                         │
 //   └───────────────────────────────────────────────────────────────────────────┘
 //
 // A low-health vignette (full-viewport rectangle, alpha-pulsed via tween)
@@ -35,6 +35,7 @@ import { uiWidth, uiHeight } from "../render/renderResolution.js";
 import { PALETTE } from "./palette.js";
 import { crystalRoundsCards } from "../../sim/data/cards.js";
 import type { PlayerId } from "../../sim/types.js";
+import { drawPortraitBadge } from "../render/portraitBadge.js";
 
 export type HudVitals = {
   health: number;
@@ -52,6 +53,17 @@ export type HudVitals = {
   /** Standing outside the storm-zone boundary — the answer to "why am I
    *  taking damage with no explanation" (Jake, 2026-07-11). */
   outsideStorm?: boolean;
+  /**
+   * Player-identity color for the portrait badge (party-frame layout,
+   * Jake 2026-07-14: "the nameplate goes on the left of the screen below
+   * — designed well like this" — reference was a WoW-style unit frame:
+   * portrait left, bars extending right, screen-anchored not floating
+   * above the head). Same badge recipe as ProceduralPlayerRig's in-world
+   * nameplate (dark ring + identity color + procedural glyph), just
+   * relocated here as a fixed HUD element. Undefined hides the badge and
+   * the vitals block falls back to its original left edge.
+   */
+  portraitColor?: number;
 };
 
 export type HudRound = {
@@ -61,6 +73,13 @@ export type HudRound = {
   scores: Record<PlayerId, number>;
   /** playerId → display name (hello roster); ids fall back to tags. */
   names?: Record<string, string>;
+  /**
+   * playerId → identity color for the scoreboard's per-row portrait badge
+   * (same badge recipe as the vitals block and the in-world nameplate —
+   * portraitBadge.ts). Missing entries fall back to a dim neutral badge
+   * rather than skipping the row.
+   */
+  colors?: Record<string, number>;
   winnerLabel?: string;
 };
 
@@ -115,6 +134,15 @@ const DOT_COUNT = 6;
 const DOT_RADIUS = 4;
 const DOT_GAP = 6;
 
+// Portrait badge (party-frame layout) constants
+const PORTRAIT_R = 16;
+const PORTRAIT_RESERVED_W = PORTRAIT_R * 2 + 10;
+
+// Scoreboard row constants — smaller badge than the vitals portrait since
+// several rows stack vertically.
+const SCORE_ROW_R = 9;
+const SCORE_ROW_GAP = 4;
+
 // Build-pill grid constants
 const PILL_W = 36;
 const PILL_H = 20;
@@ -126,6 +154,9 @@ export class HudSystem {
 
   // Vitals graphics (bars drawn each frame)
   private vitalGraphics!: Phaser.GameObjects.Graphics;
+  // Portrait badge (party-frame layout) — see HudVitals.portraitColor docblock.
+  private portraitGraphics!: Phaser.GameObjects.Graphics;
+  private lastPortraitColor: number | undefined = undefined;
 
   // Vital text labels
   private hpLabel!: Phaser.GameObjects.Text;
@@ -151,7 +182,12 @@ export class HudSystem {
   // verbatim across fighting/round-over/drafting/countdown with nothing
   // distinguishing a 0:02 mid-fight from a 0:02 waiting-on-the-draft-timer).
   private phaseTagText!: Phaser.GameObjects.Text;
-  private scoreText!: Phaser.GameObjects.Text;
+
+  // Scoreboard — portrait-badge rows (party-frame layout, replacing the old
+  // plain-text list). One shared Graphics for all badges (redrawn each
+  // update, same convention as vitalGraphics), text pool grows on demand.
+  private scoreGraphics!: Phaser.GameObjects.Graphics;
+  private scoreRowTexts: Phaser.GameObjects.Text[] = [];
 
   // Low-health vignette
   private vignette!: Phaser.GameObjects.Rectangle;
@@ -191,6 +227,7 @@ export class HudSystem {
   destroy(): void {
     this.scene.scale.off("resize", this.onResize, this);
     this.vitalGraphics.destroy();
+    this.portraitGraphics.destroy();
     this.hpLabel.destroy();
     this.shLabel.destroy();
     this.chipGraphics.destroy();
@@ -204,7 +241,9 @@ export class HudSystem {
     this.pillTexts = [];
     this.timerText.destroy();
     this.phaseTagText.destroy();
-    this.scoreText.destroy();
+    this.scoreGraphics.destroy();
+    for (const t of this.scoreRowTexts) t.destroy();
+    this.scoreRowTexts = [];
     this.vignette.destroy();
     this.vignetteTween?.stop();
   }
@@ -254,6 +293,11 @@ export class HudSystem {
     // Vital bars (redrawn each frame)
     this.vitalGraphics = s.add.graphics();
     this.vitalGraphics.setScrollFactor(0).setDepth(depth + 1);
+
+    // Portrait badge — drawn once per color change (updateVitals), not
+    // every frame; same static "who is this" read as a party-frame icon.
+    this.portraitGraphics = s.add.graphics();
+    this.portraitGraphics.setScrollFactor(0).setDepth(depth + 2);
 
     const fontBase = {
       fontFamily: "'Space Mono', Consolas, 'Courier New', monospace",
@@ -321,23 +365,15 @@ export class HudSystem {
       .setScrollFactor(0)
       .setDepth(depth + 2);
 
-    // Scoreboard: names + scores DOWN THE LEFT SIDE under the vitals
-    // (Jake 2026-07-11) — a centred strip fought the timer and read as
-    // debug text. Left-aligned column, local player marked.
-    this.scoreText = s.add
-      .text(PAD_LEFT, PAD_TOP + LINE_H * 2 + 10, "", {
-        fontFamily: "'Space Mono', Consolas, 'Courier New', monospace",
-        fontSize: this.compact ? "10px" : "12px",
-        fontStyle: "bold",
-        color: "#8ff8ff",
-        align: "left",
-        lineSpacing: this.compact ? 3 : 5,
-        stroke: "#05080f",
-        strokeThickness: 3,
-      })
-      .setOrigin(0, 0)
-      .setScrollFactor(0)
-      .setDepth(depth + 2);
+    // Scoreboard: portrait-badge rows DOWN THE LEFT SIDE under the vitals
+    // (Jake 2026-07-11 moved this off the centred strip that fought the
+    // timer; Jake 2026-07-14 asked for the plain-text list itself to become
+    // per-row portrait badges, "this is the legacy name plate system" —
+    // same badge recipe as the vitals block, one row per player). Graphics
+    // + text pool built lazily in updateScoreRows(); nothing to create here
+    // beyond the shared Graphics object.
+    this.scoreGraphics = s.add.graphics();
+    this.scoreGraphics.setScrollFactor(0).setDepth(depth + 2);
 
     // Dot-row ammo arcs — created once, recolored each frame (hidden until
     // something actually feeds abilityCharge). Rows shifted up one LINE_H
@@ -386,7 +422,6 @@ export class HudSystem {
     const h = uiHeight(this.scene);
     this.phaseTagText.setX(w / 2);
     this.timerText.setX(w / 2);
-    this.scoreText.setX(w / 2);
     this.vignette.setSize(w, h);
     // Rebuild pills so they stay anchored to top-right
     this.lastCardIdsKey = "";
@@ -397,6 +432,25 @@ export class HudSystem {
   private updateVitals(v: HudVitals): void {
     const g = this.vitalGraphics;
     g.clear();
+
+    // Portrait badge (party-frame layout) — drawn once per color change,
+    // not every frame; reserves space so bars/labels/dots shift right to
+    // make room, matching the reference (portrait left, bars extending
+    // right of it) instead of floating a nameplate above the head.
+    const vitalsX = v.portraitColor !== undefined ? PAD_LEFT + PORTRAIT_RESERVED_W : PAD_LEFT;
+    if (v.portraitColor !== this.lastPortraitColor) {
+      this.lastPortraitColor = v.portraitColor;
+      this.portraitGraphics.clear();
+      if (v.portraitColor !== undefined) {
+        drawPortraitBadge(
+          this.portraitGraphics,
+          PAD_LEFT + PORTRAIT_R,
+          PAD_TOP + PORTRAIT_R - 2,
+          PORTRAIT_R,
+          v.portraitColor,
+        );
+      }
+    }
 
     if (v.isDead) {
       this.hpLabel.setText("");
@@ -409,19 +463,21 @@ export class HudSystem {
     // ── Health bar ──────────────────────────────────────────────────────────
     const hpRatio = Phaser.Math.Clamp(v.health / v.maxHealth, 0, 1);
     const hpColor = hpRatio > 0.55 ? C_HP_GOOD : hpRatio > 0.28 ? C_HP_WARN : C_HP_CRIT;
-    this.drawBar(g, PAD_LEFT, PAD_TOP, this.barW, BAR_H, hpRatio, hpColor);
+    this.drawBar(g, vitalsX, PAD_TOP, this.barW, BAR_H, hpRatio, hpColor);
     if (hpColor !== this.hpLabelColorCache) {
       this.hpLabel.setColor(numToHex(hpColor));
       this.hpLabelColorCache = hpColor;
     }
     this.hpLabel.setText(`${Math.ceil(v.health)} / ${v.maxHealth}`);
+    this.hpLabel.setX(this.compact ? vitalsX + 4 : vitalsX + this.barW + 8);
 
     // ── Shield bar ──────────────────────────────────────────────────────────
     const shMax = v.shieldMaxCharge ?? 0;
     if (shMax > 0 && v.shieldCharge !== undefined) {
       const shRatio = Phaser.Math.Clamp(v.shieldCharge / shMax, 0, 1);
-      this.drawBar(g, PAD_LEFT, PAD_TOP + LINE_H, this.barShieldW, BAR_SHIELD_H, shRatio, C_SHIELD);
+      this.drawBar(g, vitalsX, PAD_TOP + LINE_H, this.barShieldW, BAR_SHIELD_H, shRatio, C_SHIELD);
       this.shLabel.setText(`${Math.ceil(v.shieldCharge)}`);
+      this.shLabel.setX(this.compact ? vitalsX + 4 : vitalsX + this.barW + 8);
       this.shLabel.setVisible(true);
     } else {
       this.shLabel.setVisible(false);
@@ -431,7 +487,7 @@ export class HudSystem {
     this.drawChips(v.chips);
 
     // ── Dot-row ability charge ───────────────────────────────────────────────
-    this.updateDots(v.abilityCharge);
+    this.updateDots(v.abilityCharge, vitalsX);
 
     // ── Build-pill grid (only rebuilds when card list changes) ───────────────
     this.updateBuildPills(v.cardIds ?? []);
@@ -520,23 +576,65 @@ export class HudSystem {
     const tag = PHASE_TAG[round.phase];
     this.phaseTagText.setText(tag.label).setColor(tag.color);
 
-    // Scoreboard column: sorted by score (leader first), local marked ▸.
+    // Scoreboard rows: sorted by score (leader first), local marked ▸.
     const entries = Object.entries(round.scores).sort(
       ([aId, a], [bId, b]) => b - a || aId.localeCompare(bId),
     );
+    this.updateScoreRows(entries, round);
+  }
+
+  /** One portrait badge + name/score label per row, replacing the old
+   *  plain-text scoreboard list. */
+  private updateScoreRows(entries: [string, number][], round: HudRound): void {
+    const g = this.scoreGraphics;
+    g.clear();
+
     if (entries.length === 0) {
-      this.scoreText.setText(`ROUND ${round.roundIndex + 1}`);
-    } else {
-      const lines = entries.map(([pid, score]) => {
-        let tag =
-          pid === this.localPlayerId
-            ? "YOU"
-            : (round.names?.[pid] ?? playerTag(pid));
-        if (this.compact) tag = tag.replace("BOT · ", "");
-        const mark = pid === this.localPlayerId ? "▸ " : "  ";
-        return `${mark}${tag.slice(0, 14).padEnd(this.compact ? 10 : 14)} ${score}`;
-      });
-      this.scoreText.setText(lines.join("\n"));
+      for (const t of this.scoreRowTexts) t.setVisible(false);
+      return;
+    }
+
+    const r = SCORE_ROW_R;
+    const rowH = r * 2 + SCORE_ROW_GAP;
+    const startY = PAD_TOP + LINE_H * 2 + 10;
+
+    while (this.scoreRowTexts.length < entries.length) {
+      const t = this.scene.add
+        .text(0, 0, "", {
+          fontFamily: "'Space Mono', Consolas, 'Courier New', monospace",
+          fontSize: this.compact ? "10px" : "12px",
+          fontStyle: "bold",
+          color: "#8ff8ff",
+          stroke: "#05080f",
+          strokeThickness: 3,
+        })
+        .setOrigin(0, 0.5)
+        .setScrollFactor(0)
+        .setDepth(902);
+      this.scoreRowTexts.push(t);
+    }
+    for (let i = entries.length; i < this.scoreRowTexts.length; i += 1) {
+      this.scoreRowTexts[i]!.setVisible(false);
+    }
+
+    for (let i = 0; i < entries.length; i += 1) {
+      const [pid, score] = entries[i]!;
+      const isLocal = pid === this.localPlayerId;
+      let tag = isLocal ? "YOU" : (round.names?.[pid] ?? playerTag(pid));
+      if (this.compact) tag = tag.replace("BOT · ", "");
+      tag = tag.slice(0, 14);
+
+      const cy = startY + r + i * rowH;
+      const color = round.colors?.[pid] ?? PALETTE.textDim;
+      // Local player's badge gets a bright cyan ring (matches the "you"
+      // color used elsewhere) so it reads at a glance without needing to
+      // parse the ▸ mark; everyone else keeps the default darkened-shade ring.
+      drawPortraitBadge(g, PAD_LEFT + r, cy, r, color, undefined, isLocal ? 0x8ff8ff : undefined);
+
+      const text = this.scoreRowTexts[i]!;
+      text.setText(`${isLocal ? "▸ " : "  "}${tag}  ${score}`);
+      text.setPosition(PAD_LEFT + r * 2 + 8, cy);
+      text.setVisible(true);
     }
   }
 
@@ -591,7 +689,16 @@ export class HudSystem {
 
   // ─── Dot-row ability charge ───────────────────────────────────────────────
 
-  private updateDots(charge: number | undefined): void {
+  private updateDots(charge: number | undefined, vitalsX = PAD_LEFT): void {
+    // Reposition every call (cheap — 6 arcs + 1 label) so the row shifts
+    // right when the portrait badge is reserving space, same as the bars.
+    const dotY = PAD_TOP + LINE_H * 2 - 2;
+    for (let i = 0; i < this.dotArcs.length; i++) {
+      this.dotArcs[i]!.setPosition(vitalsX + DOT_RADIUS + i * (DOT_RADIUS * 2 + DOT_GAP), dotY);
+    }
+    const dotRowRight = vitalsX + DOT_RADIUS * 2 + (DOT_COUNT - 1) * (DOT_RADIUS * 2 + DOT_GAP);
+    this.dashLabel.setPosition(dotRowRight + 6, dotY);
+
     // Nothing feeds abilityCharge → hide the row entirely rather than pin six
     // permanently-dim dots to the HUD (dead UI, and precious space on phones).
     if (charge === undefined) {

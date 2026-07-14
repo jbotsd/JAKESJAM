@@ -4,6 +4,7 @@ import { PALETTE } from "../ui/palette.js";
 import { getRenderScale } from "../render/renderResolution.js";
 import { type SpringState, springKick, springState, springTo } from "./spring";
 import { getSonicField } from "../systems/SonicField.js";
+import { drawPortraitBadge, shadeColor } from "../render/portraitBadge.js";
 
 /** The minimal surface SimEventRouter drives on ANY on-screen combatant —
  *  hero, boss, or a non-humanoid thrall (see TutorialShardThrall.ts). Kept
@@ -1751,16 +1752,11 @@ export class ProceduralPlayerRig implements CombatRig {
 
     // Portrait badge — a solid disc in the player's OWN rig color (the
     // "picture of the char" — this is literally their equipped color/
-    // silhouette identity, not a generic avatar) with a darker inner ring
-    // for depth and a small humanoid glyph so it doesn't read as a plain
-    // dot from a distance.
-    g.fillStyle(this.colorDark, 1);
-    g.fillCircle(badgeCx, y - 9.5 * s, badgeR + 1.2 * s);
-    g.fillStyle(this.color, 1);
-    g.fillCircle(badgeCx, y - 9.5 * s, badgeR);
-    g.lineStyle(1 * s, this.accentColor, 0.85);
-    g.strokeCircle(badgeCx, y - 9.5 * s, badgeR);
-    this.drawBadgeGlyph(g, badgeCx, y - 9.5 * s, badgeR);
+    // silhouette identity, not a generic avatar). Shared recipe with
+    // HudSystem's screen-anchored badges (portraitBadge.ts) so the
+    // in-world nameplate and the HUD frames read as the same identity
+    // system, not two different avatar styles.
+    drawPortraitBadge(g, badgeCx, y - 9.5 * s, badgeR, this.color, this.colorDark, this.accentColor);
 
     // Name text — re-centered into the plate's name column (see nameCx).
     this.nameText.setText(this.name);
@@ -1779,26 +1775,6 @@ export class ProceduralPlayerRig implements CombatRig {
     g.fillRect(lineX, lineY, lineW, 2);
     g.fillStyle(0xffd76b, 1);
     g.fillRect(lineX, lineY, lineW * healthRatio, 2);
-  }
-
-  /** Tiny procedural glyph inside the portrait badge — a simplified
-   *  head+shoulders silhouette in the dark badge-ring tone, cheap enough
-   *  to draw every frame (a handful of primitives, no texture/atlas). */
-  private drawBadgeGlyph(
-    g: Phaser.GameObjects.Graphics,
-    cx: number,
-    cy: number,
-    r: number,
-  ) {
-    const glyphColor = shadeColor(this.color, -0.55);
-    g.fillStyle(glyphColor, 0.9);
-    // Head
-    g.fillCircle(cx, cy - r * 0.32, r * 0.34);
-    // Shoulders — a clipped disc (bottom arc) reads as shoulders inside
-    // the circular badge without needing a separate mask/stencil.
-    g.beginPath();
-    g.arc(cx, cy + r * 0.62, r * 0.62, Math.PI, Math.PI * 2, false);
-    g.fillPath();
   }
 
   // --- WALL-PLANT FOOT: a tucked knee bracing flat against the gripped
@@ -2126,13 +2102,6 @@ function solveTwoBone(
     joint: vec(root.x + Math.cos(ua) * upper, root.y + Math.sin(ua) * upper),
     end: target,
   };
-}
-
-function shadeColor(hex: number, amount: number): number {
-  const r = Math.min(255, Math.max(0, ((hex >> 16) & 0xff) + Math.round(amount * 255)));
-  const g = Math.min(255, Math.max(0, ((hex >> 8) & 0xff) + Math.round(amount * 255)));
-  const b = Math.min(255, Math.max(0, (hex & 0xff) + Math.round(amount * 255)));
-  return (r << 16) | (g << 8) | b;
 }
 
 function vec(x: number, y: number): Vec2 {
