@@ -67,4 +67,24 @@ pub fn build(b: *std.Build) void {
     const run_tests = b.addRunArtifact(tests);
     const test_step = b.step("test", "Run sim unit tests");
     test_step.dependOn(&run_tests.step);
+
+    // Native (non-wasm) step_world benchmark (2026-07-14). Always
+    // ReleaseFast regardless of -Doptimize — a benchmark run at Debug
+    // speed reports meaningless numbers, and this target's only job is
+    // producing an honest peak-throughput figure.
+    const sim_root_bench = b.createModule(.{
+        .root_source_file = b.path("src/root.zig"),
+        .target = test_target,
+        .optimize = .ReleaseFast,
+    });
+    const bench_module = b.createModule(.{
+        .root_source_file = b.path("bench/step_world_bench.zig"),
+        .target = test_target,
+        .optimize = .ReleaseFast,
+    });
+    bench_module.addImport("sim_root", sim_root_bench);
+    const bench_exe = b.addExecutable(.{ .name = "step_world_bench", .root_module = bench_module });
+    const run_bench = b.addRunArtifact(bench_exe);
+    const bench_step = b.step("bench", "Run the native step_world benchmark (ReleaseFast, no wasm boundary)");
+    bench_step.dependOn(&run_bench.step);
 }
