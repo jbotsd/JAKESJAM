@@ -43,8 +43,29 @@ type ProceduralPlayerRigOptions = {
   color: number;
   name: string;
   scale?: number;
-  /** Cosmetic accent (visor/spine/cannon glow). Defaults to crystal cyan. */
+  /**
+   * Cosmetic accent — the general "energy" channel: spine conduit, shield/
+   * parry FX, dash trail, hip-drape trim, nameplate badge ring. Defaults to
+   * crystal cyan. See visorColor/palmColor/jointColor/auraColor below for
+   * the anatomically-distinct channels split out from this one (Vessel
+   * Creator design, docs/vessel-creator-design.md §3/§6.1) — each of THOSE
+   * defaults to accentColor when unset, so a rig built with only
+   * `accentColor` (every rig today) renders pixel-identical to before this
+   * split: zero visual regression is the hard requirement this exists to
+   * satisfy, not a stylistic preference.
+   */
   accentColor?: number;
+  /** Visor seam + head-crest accent — the vessel's "face." */
+  visorColor?: number;
+  /** Hand-channel glow + shuriken — the palm projector, JAKESJAM's
+   *  Warframe-"Energy-on-weapon" / Syandana-adjacent highest-frequency-seen
+   *  channel (visible on every shot). */
+  palmColor?: number;
+  /** Shoulder stub — "crystal joint seal," the Warframe-Armor-slot analog. */
+  jointColor?: number;
+  /** Mad aura motes — the field-around-vessel effect; the one channel with
+   *  no Warframe/Fortnite direct analog, native to JAKESJAM. */
+  auraColor?: number;
   /**
    * `full` = local / hero (aura + trail + full secondary motion).
    * `lite` = remotes/bots — fewer path ops so multi-player frames stay smooth.
@@ -87,6 +108,11 @@ export class ProceduralPlayerRig implements CombatRig {
   protected readonly color: number;
   protected readonly colorDark: number;
   protected readonly accentColor: number;
+  /** Vessel Creator channels — see ProceduralPlayerRigOptions' docblock. */
+  protected readonly visorColor: number;
+  protected readonly palmColor: number;
+  protected readonly jointColor: number;
+  protected readonly auraColor: number;
   private readonly name: string;
   protected readonly scale: number;
   private readonly detail: "full" | "lite";
@@ -313,6 +339,10 @@ export class ProceduralPlayerRig implements CombatRig {
     this.color = options.color;
     this.colorDark = shadeColor(options.color, -0.4);
     this.accentColor = options.accentColor ?? ACCENT;
+    this.visorColor = options.visorColor ?? this.accentColor;
+    this.palmColor = options.palmColor ?? this.accentColor;
+    this.jointColor = options.jointColor ?? this.accentColor;
+    this.auraColor = options.auraColor ?? this.accentColor;
     this.name = options.name;
     this.scale = options.scale ?? 1;
     this.detail = options.detail ?? "full";
@@ -1386,14 +1416,14 @@ export class ProceduralPlayerRig implements CombatRig {
       for (let e = tails; e >= 1; e--) {
         const echo = motePos(i, t - e * 0.05);
         const tailAlpha = twinkle * (0.28 - e * 0.05);
-        g.fillStyle(this.accentColor, Math.max(0, tailAlpha));
+        g.fillStyle(this.auraColor, Math.max(0, tailAlpha));
         g.fillCircle(echo.x, echo.y, (2.5 - e * 0.4) * s);
       }
 
       const p = motePos(i, t);
-      g.fillStyle(this.accentColor, Math.min(1, twinkle * 0.5));
+      g.fillStyle(this.auraColor, Math.min(1, twinkle * 0.5));
       g.fillCircle(p.x, p.y, (5 + boost * 1.5) * s);
-      g.fillStyle(this.accentColor, Math.min(1, twinkle * 0.95));
+      g.fillStyle(this.auraColor, Math.min(1, twinkle * 0.95));
       g.fillCircle(p.x, p.y, 2.7 * s);
       if (this.detail === "full") {
         g.fillStyle(WHITE, Math.min(1, twinkle * 0.9));
@@ -1477,13 +1507,13 @@ export class ProceduralPlayerRig implements CombatRig {
     g.fillPath();
 
     // Accent glow edge along the leading (upper) side, plus a soft outer
-    // halo so the crest reads as energized, matching the visor/spine.
-    g.lineStyle(1.4 * s, this.accentColor, 0.8);
+    // halo so the crest reads as energized, matching the visor.
+    g.lineStyle(1.4 * s, this.visorColor, 0.8);
     g.beginPath();
     g.moveTo(rootX + f * 3 * s, rootY - 1 * s);
     g.lineTo(tipX + f * 1.5 * s, tipY + 1.5 * s);
     g.strokePath();
-    g.fillStyle(this.accentColor, 0.35);
+    g.fillStyle(this.visorColor, 0.35);
     g.fillCircle(tipX + f * 1.5 * s, tipY + 1.5 * s, 2 * s);
   }
 
@@ -1520,7 +1550,7 @@ export class ProceduralPlayerRig implements CombatRig {
 
     // VISOR SEAM — the vessel's "face" is a thin line of light, not a thick
     // eye-slit: longer and narrower than the old helmet visor.
-    const visorColor = healthRatio < 0.25 ? 0xfb7185 : this.accentColor;
+    const visorColor = healthRatio < 0.25 ? 0xfb7185 : this.visorColor;
     const visorAlpha = 0.7 + 0.3 * Math.sin(this.stepPhase * 2);
 
     // Outer glow
@@ -1544,7 +1574,7 @@ export class ProceduralPlayerRig implements CombatRig {
     g.fillCircle(shoulder.x, shoulder.y, 3.4 * s);
 
     // Crystal accent on shoulder
-    g.fillStyle(this.accentColor, 0.7);
+    g.fillStyle(this.jointColor, 0.7);
     g.fillCircle(shoulder.x, shoulder.y, 1.6 * s);
   }
 
@@ -1567,9 +1597,9 @@ export class ProceduralPlayerRig implements CombatRig {
     const pulseSize = 1 + pulse * 0.9;
     const radius = 3 * s * pulseSize;
 
-    g.fillStyle(this.accentColor, (baseGlow * 0.5 + pulse * 0.35));
+    g.fillStyle(this.palmColor, (baseGlow * 0.5 + pulse * 0.35));
     g.fillCircle(hand.x, hand.y, radius * 2.2);
-    g.fillStyle(this.accentColor, (baseGlow + pulse * 0.4));
+    g.fillStyle(this.palmColor, (baseGlow + pulse * 0.4));
     g.fillCircle(hand.x, hand.y, radius * 1.2);
     g.fillStyle(WHITE, (baseGlow * 0.6 + pulse * 0.4));
     g.fillCircle(hand.x, hand.y, radius * 0.5);
@@ -1602,7 +1632,7 @@ export class ProceduralPlayerRig implements CombatRig {
     }
 
     // 4-point star (two crossed blades) spinning.
-    g.lineStyle(1.8 * s, this.accentColor, bright);
+    g.lineStyle(1.8 * s, this.palmColor, bright);
     for (let i = 0; i < 2; i++) {
       const a = spin + (i * Math.PI) / 2;
       const dx = Math.cos(a) * size;
