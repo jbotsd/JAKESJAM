@@ -1080,6 +1080,63 @@ button.btn-danger:hover:not(:disabled) {
   width: 100%;
 }
 
+/* Pause panel — Resume gets standalone weight instead of being row 1 of 6
+   identical buttons; the clip actions get their own section (same
+   kicker+title convention Options already uses); Settings/Leave are a
+   compact ghost-styled footer since they're the rarest presses in the
+   panel. Jake, 2026-07-14: "so low budget" — a flat stack of six
+   same-shaped buttons was the actual problem, not the palette. */
+.shell-pause-resume {
+  width: 100%;
+  margin: 2px 0 2px;
+}
+
+.shell-pause-esc-hint {
+  margin: 0 0 14px;
+  text-align: center;
+  font-size: 0.7rem;
+  letter-spacing: 0.04em;
+  opacity: 0.7;
+}
+
+.shell-section--pause {
+  margin-top: 4px;
+}
+
+.shell-pause-row {
+  display: flex;
+  gap: 8px;
+  margin: 8px 0;
+}
+
+.shell-pause-row button {
+  flex: 1;
+  min-width: 0;
+}
+
+.shell-btn-ghost {
+  min-height: 34px !important;
+  font-size: 0.78rem !important;
+  opacity: 0.82;
+  border-color: rgba(143, 248, 255, 0.14) !important;
+}
+
+.shell-btn-ghost:hover:not(:disabled) {
+  opacity: 1;
+}
+
+.shell-pause-footer {
+  display: flex;
+  gap: 8px;
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid rgba(201, 168, 76, 0.12);
+}
+
+.shell-pause-footer button {
+  flex: 1;
+}
+
 /* Options panel was nested; now a shell-layer — keep inputs readable */
 .options-panel label {
   display: block;

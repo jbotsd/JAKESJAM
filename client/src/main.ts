@@ -433,17 +433,24 @@ app.innerHTML = `
     <div class="shell-frame">
       <p class="shell-kicker">APERTURE</p>
       <h2>Paused</h2>
-      <p class="shell-hint">You are still in Hot Lobby. Resume to keep playing, or leave.</p>
-      <p class="shell-hint" data-pause-clips-status>Clips: off</p>
-      <div class="shell-pause-actions">
-        <button data-pause-resume type="button" class="primary">Resume</button>
-        <button data-pause-toggle-clips type="button" class="shell-btn-secondary">Enable auto-clips</button>
-        <button data-pause-save-clip type="button" class="shell-btn-secondary">Save clip now</button>
-        <button data-pause-settings type="button" class="shell-btn-secondary">Settings</button>
-        <button data-pause-clips type="button" class="shell-btn-secondary">Clip library</button>
-        <button data-pause-leave type="button" class="btn-danger">Leave</button>
+      <p class="shell-hint">Still in Hot Lobby.</p>
+      <button data-pause-resume type="button" class="primary shell-cta-primary shell-pause-resume">Resume</button>
+      <p class="shell-hint shell-pause-esc-hint">Esc resumes too</p>
+
+      <div class="shell-section shell-section--pause">
+        <h3 class="shell-section-title">Clips</h3>
+        <p class="shell-hint" data-pause-clips-status>Clips: off</p>
+        <div class="shell-pause-row">
+          <button data-pause-toggle-clips type="button" class="shell-btn-secondary">Enable auto-clips</button>
+          <button data-pause-save-clip type="button" class="shell-btn-secondary">Save now</button>
+        </div>
+        <button data-pause-clips type="button" class="shell-btn-secondary shell-btn-ghost">Clip library</button>
       </div>
-      <p class="shell-hint">Tip: Esc · Save clip now (manual) · multi-kill/parry/chain auto-toast.</p>
+
+      <div class="shell-pause-footer">
+        <button data-pause-settings type="button" class="shell-btn-secondary shell-btn-ghost">Settings</button>
+        <button data-pause-leave type="button" class="btn-danger shell-btn-ghost">Leave</button>
+      </div>
     </div>
   </section>
   <!-- Always-on match chrome: world auto-join skips HOME, so clips must be reachable here. -->
