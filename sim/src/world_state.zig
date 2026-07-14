@@ -241,8 +241,15 @@ pub const PlayerEntity = extern struct {
     /// Bridged from / to TS `state.round.scores[playerId]`.
     score: u32,
 
+    /// Alternating-hand shuriken throws (2026-07-14, parity with
+    /// World.ts weapon.ts's throwHandParity): toggled 0/1 on every shot so
+    /// the muzzle position alternates left/right hand. Without this, the
+    /// spawn position formula in world.zig's weapon-fire section would
+    /// need a DIFFERENT hand every shot to match TS bit-for-bit, but
+    /// nothing tracked which hand fired last.
+    throw_hand_parity: u8 = 0,
     // Future field landing zone. Today it's all zeros on the wire.
-    _reserved: [4]u8 = @splat(0),
+    _reserved: [3]u8 = @splat(0),
 };
 
 /// Mirrors `ProjectileEntity`.

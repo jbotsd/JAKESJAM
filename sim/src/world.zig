@@ -51,6 +51,14 @@ const NO_HUMAN_SURVIVOR_END_MS: f64 = 6000;
 /// Half the player body height (parity with World.ts PLAYER_HALF_HEIGHT).
 const PLAYER_HALF_HEIGHT: f64 = 28;
 
+// Muzzle offset constants (2026-07-14 port — parity with
+// client/src/sim/weapon.ts's playerMuzzlePosition). Projectiles used to
+// spawn dead-center on the player; these three constants + the
+// throw_hand_parity toggle above reproduce TS's actual muzzle geometry.
+const MUZZLE_ANCHOR_UP: f64 = 60;
+const MUZZLE_REACH: f64 = 31;
+const MUZZLE_HAND_SPREAD: f64 = 6;
+
 // Arena bounds for the ceiling clamp + void-plane kill (parity with World.ts).
 // Module-level (not packed in WorldState) — one sim instance, same lifetime as
 // the statics cache; set by the host on match start.
@@ -398,9 +406,33 @@ pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
         if (fire_decision.fired == 1 and
             chaos_profile.disable_projectiles == 0)
         {
-            const dx = player_ptr.aim_x - player_ptr.x;
-            const dy = player_ptr.aim_y - player_ptr.y;
-            const aim_angle: f64 = if (dx == 0 and dy == 0) 0 else trig.lutAtan2(dy, dx);
+            // Muzzle offset + alternating-hand throws (2026-07-14 —
+            // previously spawned dead-center on the player, which is why
+            // tickOrderParity.test.ts's TS-vs-Zig same-tick travel numbers
+            // never matched exactly even after the ordering fix: parity
+            // with World.ts weapon.ts's playerMuzzlePosition + throwHand
+            // toggle). Hand toggles ONCE per fire event, not per pellet —
+            // a multi-shot spread's pellets all share one muzzle origin.
+            const throw_hand: u8 = (player_ptr.throw_hand_parity ^ 1) & 1;
+            player_ptr.throw_hand_parity = throw_hand;
+            const mcx = player_ptr.x;
+            const mcy = player_ptr.y - MUZZLE_ANCHOR_UP;
+            const mdx = player_ptr.aim_x - mcx;
+            const mdy = player_ptr.aim_y - mcy;
+            const mlen_raw = @sqrt(mdx * mdx + mdy * mdy);
+            const mlen = if (mlen_raw == 0) 1.0 else mlen_raw;
+            const mux = mdx / mlen;
+            const muy = mdy / mlen;
+            // Perpendicular to aim, toward the throwing hand (side=+1 for
+            // hand 0, -1 for hand 1 — matches TS's `hand === 0 ? 1 : -1`).
+            const mside: f64 = if (throw_hand == 0) 1.0 else -1.0;
+            const mpx = -muy;
+            const mpy = mux;
+            const muzzle_x = mcx + mux * MUZZLE_REACH + mpx * mside * MUZZLE_HAND_SPREAD;
+            const muzzle_y = mcy + muy * MUZZLE_REACH + mpy * mside * MUZZLE_HAND_SPREAD;
+            const adx = player_ptr.aim_x - muzzle_x;
+            const ady = player_ptr.aim_y - muzzle_y;
+            const aim_angle: f64 = if (adx == 0 and ady == 0) 0 else trig.lutAtan2(ady, adx);
             const speed = proj_speed_base * proj_speed_mul;
             const lifetime_ms = @max(
                 50.0,
@@ -427,8 +459,8 @@ pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
                 const new_id: u32 = state.header.next_entity_id;
                 state.header.next_entity_id += 1;
                 state.projectiles[slot] = .{
-                    .x = player_ptr.x,
-                    .y = player_ptr.y,
+                    .x = muzzle_x,
+                    .y = muzzle_y,
                     .vx = trig.lutCos(ang) * speed,
                     .vy = trig.lutSin(ang) * speed,
                     .radius = radius_v,
@@ -436,8 +468,8 @@ pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
                     .lifetime_ms = lifetime_ms,
                     .age_ms = 0,
                     .traveled_px = 0,
-                    .origin_x = player_ptr.x,
-                    .origin_y = player_ptr.y,
+                    .origin_x = muzzle_x,
+                    .origin_y = muzzle_y,
                     .homing_strength = proj_homing,
                     .acceleration_multiplier = proj_accel,
                     .gravity_scale = proj_gravity,

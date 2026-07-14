@@ -176,14 +176,19 @@ describe("tick-order parity — TS vs Zig orchestrator sequencing (2026-07-14 in
     console.log(
       `[tick-order-audit] Zig same-tick fired-projectile travel: ${traveled.toFixed(4)}px, ageMs=${proj.ageMs}, vx=${proj.vx.toFixed(2)}, vy=${proj.vy.toFixed(2)}`,
     );
-    // 2026-07-14: FIXED. Before the world.zig orchestrator reorder (player
-    // physics + weapon fire moved to run BEFORE projectile motion/impact,
-    // matching World.ts's actual per-tick sequence), this was 0.4028px /
-    // ageMs=0 — the projectile never got a real motion step on its spawn
-    // tick. Now real motion + a correctly-ticked age, matching TS's shape
-    // (though not byte-identical — a separate muzzle-offset investigation
-    // is tracked separately, not blocking this regression gate).
-    expect(proj.ageMs).toBeGreaterThan(0);
-    expect(traveled).toBeGreaterThan(0.5);
+    // 2026-07-14: FULLY FIXED, now byte-identical to TS. History:
+    //   - Before the tick-order reorder: 0.4028px / ageMs=0 — the
+    //     projectile never got a real motion step on its spawn tick
+    //     (weapon fire ran after projectile motion/impact that tick).
+    //   - After the reorder, before the muzzle-offset port: 10.8394px vs
+    //     TS's 47.3221px — real motion, but spawning dead-center on the
+    //     player instead of at World.ts's offset+alternating-hand muzzle
+    //     position, so both position AND the fired angle diverged.
+    //   - After the muzzle-offset port (world.zig now reproduces
+    //     playerMuzzlePosition + throwHandParity exactly): 47.3221px,
+    //     vx/vy exact match. This assertion is now exact equality, not a
+    //     threshold — a real regression here should fail loudly.
+    expect(proj.ageMs).toBeCloseTo(DT_MS, 3);
+    expect(traveled).toBeCloseTo(47.3221, 3);
   });
 });

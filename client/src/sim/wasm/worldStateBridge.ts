@@ -470,7 +470,13 @@ function packPlayer(view: DataView, offset: number, p: PlayerEntity): void {
   view.setUint32(off, 0, true); // populated by patcher per pack-callsite
   off += 4;
 
-  // _reserved 4 bytes — leave zero.
+  // throw_hand_parity (2026-07-14) — alternating-hand shuriken throws,
+  // parity with weapon.ts's throwHandParity. Steals 1 of the 4 _reserved
+  // bytes; struct size unchanged.
+  view.setUint8(off, (p.throwHandParity ?? 1) & 1);
+  off += 1;
+  // _reserved 3 bytes — leave zero.
+  off += 3;
 }
 
 function unpackPlayer(view: DataView, offset: number): PlayerEntity {
@@ -541,12 +547,15 @@ function unpackPlayer(view: DataView, offset: number): PlayerEntity {
   const weaponId = readString(view, off, wpnLen);
   off += WEAPON_ID_BYTES;
 
-  // current_keys + prev_keys + score + _reserved (Phase I4 + I5)
-  // — skipped on unpack since the TS-side PlayerEntity doesn't
-  // carry these fields directly. Score round-trips via
-  // state.round.scores keyed by player id; orchestrator writes
-  // back through the J0 shim if needed.
-  off += 4 + 4 + 4 + 4;
+  // current_keys + prev_keys + score (Phase I4 + I5) — skipped on unpack
+  // since the TS-side PlayerEntity doesn't carry current/prev keys
+  // directly and score round-trips via state.round.scores keyed by
+  // player id (orchestrator writes back through the J0 shim if needed).
+  off += 4 + 4 + 4;
+  // throw_hand_parity (2026-07-14) — see packPlayer's matching comment.
+  const throwHandParityRaw = view.getUint8(off) & 1;
+  off += 1;
+  off += 3; // remaining _reserved bytes
 
   const out: PlayerEntity = {
     id: PlayerId(id),
@@ -567,6 +576,7 @@ function unpackPlayer(view: DataView, offset: number): PlayerEntity {
     ammo,
     abilityCharge,
     lastProcessedInputSeq: InputSeq(lastProcessedInputSeq),
+    throwHandParity: throwHandParityRaw,
   };
   if (bit(flags, PLAYER_FLAG_BITS.grounded)) out.grounded = true;
   if (bit(flags, PLAYER_FLAG_BITS.hasSlow)) {
