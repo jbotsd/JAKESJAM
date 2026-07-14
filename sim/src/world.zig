@@ -154,6 +154,30 @@ fn detectRoundWinner(state: *const world_state.WorldState) i32 {
     return -1;
 }
 
+/// True sudden-death trigger (2026-07-14 port — parity with
+/// client/src/sim/round.ts's isSuddenDeathRound). Every player who has
+/// EVER scored (score > 0 — TS's sparse `scores` map only has entries for
+/// players who've won at least one round, so a player still at 0 is
+/// excluded, not counted as "tied at 0") is exactly one round away from
+/// winning. Needs at least 2 scored players — a single scorer can't have a
+/// decider round with themselves.
+fn isSuddenDeathRound(state: *const world_state.WorldState) bool {
+    if (state.header.target_score == 0) return false;
+    const threshold = state.header.target_score - 1;
+    var scored_count: u32 = 0;
+    var all_at_threshold = true;
+    var i: u32 = 0;
+    while (i < state.player_count) : (i += 1) {
+        const s = state.players[i].score;
+        if (s > 0) {
+            scored_count += 1;
+            if (s != threshold) all_at_threshold = false;
+        }
+    }
+    if (scored_count < 2) return false;
+    return all_at_threshold;
+}
+
 /// Push an event into state.events[event_count++]. Drops silently
 /// when the buffer is full (caller should drain every tick).
 fn emitEvent(
@@ -1484,6 +1508,18 @@ pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
             state.players[ri].flags.has_burn = false;
             state.players[ri].flags.has_freeze = false;
         }
+    }
+
+    // Sudden-death trigger (2026-07-14 port — parity with World.ts's
+    // round.ts: re-evaluated exactly on the countdown -> fighting
+    // transition, using the scores as they stand heading into the new
+    // round). Previously this orchestrator only CONSUMED
+    // header.sudden_death_active (set externally, e.g. by TS) — this is
+    // the first time step_world decides it independently.
+    if (phase_result.transitioned == 1 and
+        phase_result.new_phase == @intFromEnum(round.RoundPhase.fighting))
+    {
+        state.header.sudden_death_active = if (isSuddenDeathRound(state)) 1 else 0;
     }
 
     // 9. End-of-tick compaction (I29). Walk projectiles + fire

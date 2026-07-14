@@ -336,6 +336,11 @@ export class MatchHost {
       // Fire-hazard chaos modifier positioning needs the real map bounds —
       // must match the client's wasmHost.setMapSize call (2026-07-14).
       serverWasmHost.setMapSize(this.map.size.x, this.map.size.y);
+      // Match win-target — without this, step_world's match-end detection
+      // and sudden-death trigger are permanently inert (2026-07-14 fix).
+      serverWasmHost.setTargetScore(
+        resolveModeConfig(this.state.chaosModifierIds).targetScore,
+      );
     }
     this.grid = new InterestGrid(this.map.size.x, this.map.size.y, CELL_SIZE_PX);
     // Pin the sim backend for the WHOLE match. The old per-tick

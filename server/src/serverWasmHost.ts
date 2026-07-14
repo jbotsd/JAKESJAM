@@ -14,7 +14,7 @@
 // Reuses the already-shipped `loadServerSim` loader from
 // `wasmRuntime.ts` (which installs the trig LUT for parity).
 
-import type { WorldState } from "@sim/types.ts";
+import type { PlayerId, WorldState } from "@sim/types.ts";
 import {
   packWorldState,
   unpackWorldState,
@@ -63,6 +63,7 @@ type WorldExports = {
     kill_plane_y: number,
   ) => void;
   world_state_set_map_size?: (width: number, height: number) => void;
+  world_state_set_target_score?: (statePtr: number, target: number) => void;
   resolve_player_fire_config?: (
     state_ptr: number,
     player_index: number,
@@ -84,6 +85,7 @@ class ServerWasmHost {
     killPlaneY: number;
   } | null = null;
   private cachedMapSize: { width: number; height: number } | null = null;
+  private cachedTargetScore: number | null = null;
   private preloadPromise: Promise<void> | null = null;
   private resolvedReady = false;
   private readyResolvers: Array<() => void> = [];
@@ -173,6 +175,16 @@ class ServerWasmHost {
     this.cachedMapSize = { width, height };
   }
 
+  /** Match win-target. 2026-07-14 fix — see the matching client-side
+   *  setWorldTargetScore comment: world_state_set_target_score existed as
+   *  an export but nothing ever called it, and packWorldState hardcodes
+   *  target_score to 0 every pack anyway, so a one-off call would get
+   *  wiped by the next tick. Cached and reapplied every tick like arena
+   *  bounds / map size. */
+  setTargetScore(target: number): void {
+    this.cachedTargetScore = target;
+  }
+
   getStaticsSnapshot(): { aabbs: ReadonlyArray<StaticAABB>; oneWay: ReadonlyArray<number> } | null {
     return this.cachedStatics
       ? { aabbs: this.cachedStatics.aabbs, oneWay: this.cachedStatics.oneWay }
@@ -207,6 +219,8 @@ class ServerWasmHost {
     const heap = new Uint8Array(ex.memory.buffer);
     heap.set(buf, statePtr);
     this.writeStaticsIntoMemory();
+    this.writeTargetScoreIntoMemory();
+    this.writeScoresIntoMemory(state);
     // Card builds + arena bounds — MUST match the client (writeFireConfigsForState
     // + setArenaBounds). Without these the server runs every player's build inert
     // (no card augments) while the client predicts WITH them → desync.
@@ -266,6 +280,28 @@ class ServerWasmHost {
     ex.world_state_set_statics(this.statePtr, scratchPtr, oneWayPtr, count);
   }
 
+  /** Patch each player's score into linear memory. 2026-07-14 fix — see the
+   *  matching client-side writeScoresIntoMemory comment: packPlayer always
+   *  writes 0, so without this call every player's score silently resets to
+   *  0 every tick, permanently breaking match-end detection and the
+   *  sudden-death trigger for the whole match. Must match the client's
+   *  equivalent call exactly (same sorted-id ordering) or predict/reconcile
+   *  desyncs on score. */
+  private writeScoresIntoMemory(state: WorldState): void {
+    if (!this.ex || this.statePtr === null) return;
+    const view = new DataView(this.ex.memory.buffer);
+    const playersStart = this.statePtr + 48 + 8;
+    const PLAYER_ENTITY_SIZE = 288;
+    const SCORE_OFF = 276;
+    const sortedIds = Object.keys(state.players).sort();
+    for (let i = 0; i < sortedIds.length; i++) {
+      const pid = sortedIds[i]! as PlayerId;
+      const score = state.round.scores?.[pid] ?? 0;
+      const playerOff = playersStart + i * PLAYER_ENTITY_SIZE;
+      view.setUint32(playerOff + SCORE_OFF, score >>> 0, true);
+    }
+  }
+
   /** Resolve each player's build + write the ResolvedFireConfig array (shared
    *  bytes with the client) so world.zig applies the SAME card augments. Runs
    *  AFTER pack (pack skips the fire-config region) and before step_world. */
@@ -295,6 +331,11 @@ class ServerWasmHost {
       this.cachedMapSize.width,
       this.cachedMapSize.height,
     );
+  }
+
+  private writeTargetScoreIntoMemory(): void {
+    if (this.cachedTargetScore === null || !this.ex || this.statePtr === null) return;
+    this.ex.world_state_set_target_score?.(this.statePtr, this.cachedTargetScore);
   }
 
   private writeInputsIntoMemory(): void {
