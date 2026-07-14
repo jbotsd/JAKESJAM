@@ -17,6 +17,7 @@ export interface CombatRig {
   triggerFire(hand?: 0 | 1): void;
   triggerHit(dirX: number, dirY: number): void;
   triggerParryFlash(): void;
+  triggerKillPulse(): void;
   destroy(): void;
 }
 
@@ -243,6 +244,16 @@ export class ProceduralPlayerRig implements CombatRig {
   private parryFlashMs = 0;
   private static readonly PARRY_FLASH_MS = 240;
 
+  // Kill pulse — earned-not-bought reactive cosmetics (Vessel Creator
+  // design doc §5: "a brief intensity bump on a confirmed kill... reads
+  // instantly"). Set by triggerKillPulse() on the killer's rig from the
+  // player-killed sim event; briefly overdrives the palm glow and the mad
+  // aura's brightness/radius, same "vibes lighting" plumbing the dance
+  // system already uses, so it reads as one lighting language, not a new
+  // one. Zero persistence, purely a live render-layer reaction.
+  private killPulseMs = 0;
+  private static readonly KILL_PULSE_MS = 320;
+
   // Wobbly-leg secondary motion: each foot's IK target chases footPos()
   // through a spring instead of snapping to it, so plants/direction changes/
   // landings overshoot and settle. Pure render layer — solveTwoBone still
@@ -386,6 +397,7 @@ export class ProceduralPlayerRig implements CombatRig {
     this.shurikenSpin += deltaMs * 0.02;
     this.hitDecay = Math.max(0, this.hitDecay - deltaMs / ProceduralPlayerRig.HIT_DECAY_MS);
     this.parryFlashMs = Math.max(0, this.parryFlashMs - deltaMs);
+    this.killPulseMs = Math.max(0, this.killPulseMs - deltaMs);
     this.combatHoldMs = Math.max(0, this.combatHoldMs - deltaMs);
     this.victoryPoseMs = Math.max(0, this.victoryPoseMs - deltaMs);
 
@@ -609,6 +621,14 @@ export class ProceduralPlayerRig implements CombatRig {
     this.parryFlashMs = ProceduralPlayerRig.PARRY_FLASH_MS;
   }
 
+  /** A confirmed kill — earned reactive cosmetics, not a purchase (Vessel
+   *  Creator §5). Pure render; driven by the killer's own player-killed
+   *  sim event, resets every trigger so a fast multi-kill re-punches
+   *  rather than fading through a stale decay. */
+  triggerKillPulse() {
+    this.killPulseMs = ProceduralPlayerRig.KILL_PULSE_MS;
+  }
+
   /** The outro's induction beat — both arms raised wide overhead, held.
    *  Not a combat animation; the physical moment the recognition (Sephia's
    *  gasp, the self-authorship realized) gets SEALED. `holdMs` lets the
@@ -767,8 +787,14 @@ export class ProceduralPlayerRig implements CombatRig {
     // instead of the glow just sitting flat at max.
     const miracleT = Phaser.Math.Clamp((this.danceRaise - 0.8) / 0.2, 0, 1);
     const miraclePulse = miracleT * (0.5 + 0.5 * Math.sin(this.groovePhase * 2.3));
+    // Kill pulse rides the SAME "boost" channel the dance system charges —
+    // one lighting language, not a second bespoke one — eased out over its
+    // window rather than a hard cutoff so a kill doesn't visibly snap off.
+    const killBoost =
+      (this.killPulseMs / ProceduralPlayerRig.KILL_PULSE_MS) *
+      (this.killPulseMs / ProceduralPlayerRig.KILL_PULSE_MS);
     const danceGlowBoost = Phaser.Math.Clamp(
-      this.danceRaise * 0.85 + miraclePulse * 0.5 + this.externalAudioBoost,
+      this.danceRaise * 0.85 + miraclePulse * 0.5 + this.externalAudioBoost + killBoost * 0.9,
       0,
       1.35,
     );
@@ -1593,7 +1619,10 @@ export class ProceduralPlayerRig implements CombatRig {
 
     // Channeled energy point just past the fingertips — ambient even at
     // rest (a wizard's hand is never fully dark), brighter and pulsing
-    // when an ability/cast triggers.
+    // when an ability/cast triggers OR a kill just landed (both hands read
+    // the kill equally — it's not a hand-specific event).
+    const killPulse = this.killPulseMs / ProceduralPlayerRig.KILL_PULSE_MS;
+    pulse = Math.max(pulse, killPulse * 0.85);
     const baseGlow = 0.35;
     const pulseSize = 1 + pulse * 0.9;
     const radius = 3 * s * pulseSize;

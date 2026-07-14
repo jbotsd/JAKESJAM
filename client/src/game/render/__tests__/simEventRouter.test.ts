@@ -27,6 +27,7 @@ function makeDeps(): {
   rigHits: Array<{ pid: string; dirX: number; dirY: number }>;
   rigFires: string[];
   rigParryFlashes: string[];
+  rigKillPulses: string[];
   killStreaks: Map<string, number>;
   prevAlive: Set<string>;
   tweens: { timeScale: number };
@@ -45,6 +46,7 @@ function makeDeps(): {
   const rigHits: Array<{ pid: string; dirX: number; dirY: number }> = [];
   const rigFires: string[] = [];
   const rigParryFlashes: string[] = [];
+  const rigKillPulses: string[] = [];
   const killStreaks = new Map<string, number>();
   const prevAlive = new Set<string>();
   const tweens = { timeScale: 1 };
@@ -60,6 +62,9 @@ function makeDeps(): {
       },
       triggerParryFlash() {
         rigParryFlashes.push(pid);
+      },
+      triggerKillPulse() {
+        rigKillPulses.push(pid);
       },
     }) as unknown as ProceduralPlayerRig;
 
@@ -143,6 +148,7 @@ function makeDeps(): {
     rigHits,
     rigFires,
     rigParryFlashes,
+    rigKillPulses,
     killStreaks,
     prevAlive,
     tweens,
@@ -261,9 +267,10 @@ describe("SimEventRouter — C2b contract", () => {
       [180, 0.012],
       [120, 0.006],
     ]);
+    expect(env.rigKillPulses).toEqual(["local"]);
   });
 
-  test("player-killed by remote: no killer kick for local", () => {
+  test("player-killed by remote: no killer kick for local, but killer's own rig still pulses", () => {
     const ev: SimEvent = {
       t: "player-killed",
       victimId: PlayerId("local"),
@@ -272,6 +279,7 @@ describe("SimEventRouter — C2b contract", () => {
     };
     router.dispatch(ev);
     expect(env.shakeCalls).toEqual([[180, 0.012]]);
+    expect(env.rigKillPulses).toEqual(["remote"]);
   });
 
   test("destructible-broken: explosion SFX + blast tint + render layer blast", () => {

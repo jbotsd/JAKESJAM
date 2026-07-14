@@ -158,6 +158,10 @@ export class TutorialShardThrall implements CombatRig {
    *  SimEventRouter's generic combatant path without special-casing. */
   triggerParryFlash(): void {}
 
+  /** Thralls have no palm/aura reactive-cosmetics layer (no vessel identity
+   *  to react with) — no-op for the same reason as triggerParryFlash. */
+  triggerKillPulse(): void {}
+
   update(deltaMs: number, pose: ShardThrallPose): void {
     const dt = deltaMs / 1000;
     this.t += dt;

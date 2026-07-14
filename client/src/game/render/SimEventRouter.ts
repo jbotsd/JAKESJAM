@@ -178,8 +178,15 @@ export class SimEventRouter {
         d.killCinematic(event.victimId);
         audio.play("explosion");
         audio.play("hit");
-        if (event.killerId !== null && event.killerId === d.localPlayerId) {
-          d.safeShake(120, 0.006);
+        if (event.killerId !== null) {
+          // Earned reactive cosmetics (Vessel Creator §5) — the killer's
+          // own palm glow + mad aura briefly overdrive. Every killer, not
+          // just local, so watching a bot or a remote player score a kill
+          // reads the same "vessel responds to you" moment they get.
+          d.playerRigs.get(event.killerId)?.triggerKillPulse();
+          if (event.killerId === d.localPlayerId) {
+            d.safeShake(120, 0.006);
+          }
         }
         break;
       }
