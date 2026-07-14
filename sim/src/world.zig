@@ -490,6 +490,33 @@ pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
         player_ptr.prev_keys = player_ptr.current_keys;
     }
 
+    // 8b. Burn DoT (I32). Players with has_burn + burn_until_tick
+    //     > tick take burn_dps every ~1 second (timed via
+    //     burn_tick_last_applied).
+    var bi: u32 = 0;
+    while (bi < state.player_count) : (bi += 1) {
+        const pp = &state.players[bi];
+        if (!pp.flags.alive) continue;
+        if (!pp.flags.has_burn) continue;
+        if (pp.burn_until_tick <= state.header.tick) {
+            pp.flags.has_burn = false;
+            continue;
+        }
+        // Tick at 1s cadence.
+        const tick_dt: f64 = if (eff_dt > 0) eff_dt else 1.0;
+        const ticks_per_second: u32 = @intFromFloat(@ceil(1000.0 / tick_dt));
+        const last = pp.burn_tick_last_applied;
+        if (state.header.tick - last >= ticks_per_second) {
+            pp.health -= pp.burn_dps;
+            pp.burn_tick_last_applied = state.header.tick;
+            if (pp.health <= 0) {
+                pp.health = 0;
+                pp.flags.alive = false;
+                emitEvent(state, .player_killed, @intCast(bi), -1, 0, 0, pp.x, pp.y);
+            }
+        }
+    }
+
     // 5. Satellites — orbit advance + fire decision (I8). Owner
     //    lookup walks the players array matching owner_id_bytes;
     //    target lookup picks the closest non-owner alive player.
@@ -1299,33 +1326,6 @@ pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
             };
         } else {
             state.header.fire_hazard_timer_ms = @intFromFloat(next_timer);
-        }
-    }
-
-    // 8b. Burn DoT (I32). Players with has_burn + burn_until_tick
-    //     > tick take burn_dps every ~1 second (timed via
-    //     burn_tick_last_applied).
-    var bi: u32 = 0;
-    while (bi < state.player_count) : (bi += 1) {
-        const pp = &state.players[bi];
-        if (!pp.flags.alive) continue;
-        if (!pp.flags.has_burn) continue;
-        if (pp.burn_until_tick <= state.header.tick) {
-            pp.flags.has_burn = false;
-            continue;
-        }
-        // Tick at 1s cadence.
-        const tick_dt: f64 = if (eff_dt > 0) eff_dt else 1.0;
-        const ticks_per_second: u32 = @intFromFloat(@ceil(1000.0 / tick_dt));
-        const last = pp.burn_tick_last_applied;
-        if (state.header.tick - last >= ticks_per_second) {
-            pp.health -= pp.burn_dps;
-            pp.burn_tick_last_applied = state.header.tick;
-            if (pp.health <= 0) {
-                pp.health = 0;
-                pp.flags.alive = false;
-                emitEvent(state, .player_killed, @intCast(bi), -1, 0, 0, pp.x, pp.y);
-            }
         }
     }
 
