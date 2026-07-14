@@ -264,6 +264,9 @@ export function syncWorldStaticsToWasm(map: MapDefinition): void {
     computeCeilingClampY(map),
     map.size.y > 0 ? map.size.y + KILL_PLANE_MARGIN_PX : 0,
   );
+  // Fire-hazard chaos modifier positioning needs the real map bounds —
+  // see world_state_set_map_size in sim/src/world.zig (2026-07-14).
+  wasmHost.setMapSize(map.size.x, map.size.y);
 }
 
 /**

@@ -36,6 +36,7 @@ const player_mod = @import("player.zig");
 const weapon = @import("weapon.zig");
 const weapons_data = @import("data/weapons.zig");
 const trig = @import("trig.zig");
+const rng = @import("rng.zig");
 
 /// Per-tick step. Mutates `state` in place. Returns 0 on success;
 /// reserved non-zero values for future error reporting.
@@ -68,6 +69,21 @@ pub export fn world_state_set_arena_bounds(
     g_ceiling_clamp_y = ceiling_y;
     g_has_ceiling = has_ceiling != 0;
     g_kill_plane_y = kill_plane_y;
+}
+
+// Map size (parity with World.ts's fire-hazard positioning, which uses
+// runtime.map.size directly). 0 = not yet set by host; the fire-hazard
+// spawn skips positioning until this is populated (added 2026-07-14 — see
+// the fire-hazard section below for why the old hardcoded -800..800 /
+// -400..400 box was a real bug, not a design choice).
+var g_map_width: f64 = 0;
+var g_map_height: f64 = 0;
+
+/// Host sets the map's logical size (map.size.x, map.size.y) on match
+/// start, same lifetime as the statics cache and arena bounds above.
+pub export fn world_state_set_map_size(width: f64, height: f64) void {
+    g_map_width = width;
+    g_map_height = height;
 }
 
 /// A player whose id begins with "bot_" is AI (parity with round.ts BOT_ID_PREFIX).
@@ -474,121 +490,133 @@ pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
         player_ptr.prev_keys = player_ptr.current_keys;
     }
 
-    // 2a. Fire-hazard chaos modifier (I33): spawn fire patches at
-    //     random map positions on the configured interval.
-    if (chaos_profile.fire_hazard_active != 0 and
-        chaos_profile.fire_hazard_interval_ms > 0 and
-        state.fire_count < world_state.MAX_FIRE)
-    {
-        const cur_timer: f64 = @floatFromInt(state.header.fire_hazard_timer_ms);
-        const next_timer = cur_timer + eff_dt;
-        if (next_timer >= chaos_profile.fire_hazard_interval_ms) {
-            state.header.fire_hazard_timer_ms = 0;
-            // Use the rng_state for jitter; advance it.
-            state.header.rng_state +%= 0x6d2b79f5;
-            const rx_raw = state.header.rng_state ^ (state.header.rng_state >> 15);
-            const ry_raw = state.header.rng_state ^ (state.header.rng_state >> 7);
-            // Map to a rough -800..+800 / -400..+400 range. Caller
-            // can clamp via map AABB later.
-            const fx: f64 = @as(f64, @floatFromInt(rx_raw)) /
-                @as(f64, @floatFromInt(@as(u32, 0xFFFFFFFF))) * 1600.0 - 800.0;
-            const fy: f64 = @as(f64, @floatFromInt(ry_raw)) /
-                @as(f64, @floatFromInt(@as(u32, 0xFFFFFFFF))) * 800.0 - 400.0;
-            const slot = state.fire_count;
-            state.fire_count += 1;
+    // 5. Satellites — orbit advance + fire decision (I8). Owner
+    //    lookup walks the players array matching owner_id_bytes;
+    //    target lookup picks the closest non-owner alive player.
+    var si: u32 = 0;
+    while (si < state.satellite_count) : (si += 1) {
+        const sat_ptr = &state.satellites[si];
+        // Find owner index by id_bytes match.
+        var owner_x: f64 = 0;
+        var owner_y: f64 = 0;
+        var owner_idx: i32 = -1;
+        var oj: u32 = 0;
+        while (oj < state.player_count) : (oj += 1) {
+            if (state.players[oj].id_len == sat_ptr.owner_id_len and
+                std.mem.eql(u8, state.players[oj].id_bytes[0..sat_ptr.owner_id_len], sat_ptr.owner_id_bytes[0..sat_ptr.owner_id_len]))
+            {
+                owner_x = state.players[oj].x;
+                owner_y = state.players[oj].y;
+                owner_idx = @intCast(oj);
+                break;
+            }
+        }
+        // Closest non-owner alive player.
+        var target_x: f64 = 0;
+        var target_y: f64 = 0;
+        var has_target: u8 = 0;
+        var best_dist_sq: f64 = std.math.inf(f64);
+        var ti: u32 = 0;
+        while (ti < state.player_count) : (ti += 1) {
+            if (@as(i32, @intCast(ti)) == owner_idx) continue;
+            if (!state.players[ti].flags.alive) continue;
+            const dx = state.players[ti].x - owner_x;
+            const dy = state.players[ti].y - owner_y;
+            const d2 = dx * dx + dy * dy;
+            if (d2 < best_dist_sq) {
+                best_dist_sq = d2;
+                target_x = state.players[ti].x;
+                target_y = state.players[ti].y;
+                has_target = 1;
+            }
+        }
+        const can_fire: u8 = if (state.header.round_phase ==
+            @intFromEnum(round.RoundPhase.fighting)) 1 else 0;
+        const sat_out = satellite.satelliteTickWorld(
+            sat_ptr,
+            owner_x,
+            owner_y,
+            target_x,
+            target_y,
+            has_target,
+            can_fire,
+            eff_dt,
+        );
+        // Satellite projectile spawn (I22). Fire at the position
+        // satellite_tick_world reported with the same starter-
+        // pistol base stats as I21.
+        if (sat_out.wants_fire == 1 and
+            state.projectile_count < world_state.MAX_PROJECTILES and
+            chaos_profile.disable_projectiles == 0)
+        {
+            const sat_weapon = weapons_data.weaponBaseById(.starter_pistol);
+            const sat_speed = sat_weapon.projectile_speed *
+                sat_weapon.projectile_speed_multiplier;
+            const slot: u32 = state.projectile_count;
+            state.projectile_count += 1;
             const new_id: u32 = state.header.next_entity_id;
             state.header.next_entity_id += 1;
-            state.fires[slot] = .{
-                .x = fx,
-                .y = fy,
-                .radius = 36.0,
-                .remaining_ms = 1800.0,
-                .damage_per_second = 14.0,
+            state.projectiles[slot] = .{
+                .x = sat_out.fire_x,
+                .y = sat_out.fire_y,
+                .vx = trig.lutCos(sat_out.fire_aim_angle) * sat_speed,
+                .vy = trig.lutSin(sat_out.fire_aim_angle) * sat_speed,
+                .radius = @max(2.0, 7.0 * sat_weapon.projectile_size_multiplier),
+                .damage = sat_weapon.damage,
+                .lifetime_ms = @max(
+                    50.0,
+                    sat_weapon.projectile_lifetime_seconds * 1000.0 *
+                        sat_weapon.projectile_lifetime_multiplier,
+                ),
+                .age_ms = 0,
+                .traveled_px = 0,
+                .origin_x = sat_out.fire_x,
+                .origin_y = sat_out.fire_y,
+                .homing_strength = 0,
+                .acceleration_multiplier = 0,
+                .gravity_scale = 0,
+                .range_px = sat_weapon.projectile_range_px,
+                .slow_multiplier = 1,
+                .sticky_fuse_ms = 0,
+                .impact_radius_px = 0,
                 .id = new_id,
-                .has_owner = 0,
-                .owner_id_len = 0,
-                .owner_id_bytes = @splat(0),
+                .bounces_remaining = 0,
+                .pierce_remaining = 0,
+                .split_count = 0,
+                .flags = .{
+                    .has_owner = true,
+                    .has_impact = false,
+                    .has_split = false,
+                    .has_slow = false,
+                    .has_homing = false,
+                    .has_acceleration = false,
+                    .has_gravity_scale = false,
+                    .has_range = true,
+                    .has_age = true,
+                    .has_traveled = true,
+                    .has_origin = true,
+                    .returning = false,
+                    .has_sticky_fuse = false,
+                    .has_impact_radius = false,
+                },
+                .pathing = sat_weapon.projectile_pathing,
+                .element = sat_weapon.projectile_element,
+                .impact = .none,
+                .shape = sat_weapon.projectile_shape,
+                .owner_id_len = sat_ptr.owner_id_len,
+                .owner_id_bytes = sat_ptr.owner_id_bytes,
             };
-        } else {
-            state.header.fire_hazard_timer_ms = @intFromFloat(next_timer);
+            emitEvent(
+                state,
+                .shot_fired,
+                -1,
+                -1,
+                new_id,
+                sat_out.fire_aim_angle,
+                sat_out.fire_x,
+                sat_out.fire_y,
+            );
         }
-    }
-
-    // 2. Fire patches (I10): tick lifetime in place + apply DPS
-    //    damage to overlapping non-owner alive players.
-    //    Player AABB is approximated as 30×56 centered on (x,y).
-    const PLAYER_HALF_W: f64 = 15.0;
-    const PLAYER_HALF_H: f64 = 28.0;
-    var fi: u32 = 0;
-    while (fi < state.fire_count) : (fi += 1) {
-        const patch_ptr = &state.fires[fi];
-        if (patch_ptr.remaining_ms <= 0) continue;
-        const damage_this_tick = patch_ptr.damage_per_second * (eff_dt / 1000.0);
-        var ph: u32 = 0;
-        while (ph < state.player_count) : (ph += 1) {
-            if (!state.players[ph].flags.alive) continue;
-            // Skip owner self-damage.
-            if (patch_ptr.has_owner != 0 and
-                state.players[ph].id_len == patch_ptr.owner_id_len and
-                std.mem.eql(u8, state.players[ph].id_bytes[0..patch_ptr.owner_id_len], patch_ptr.owner_id_bytes[0..patch_ptr.owner_id_len]))
-            {
-                continue;
-            }
-            if (fire.fireEntityHitsPlayerAABB(
-                patch_ptr,
-                state.players[ph].x - PLAYER_HALF_W,
-                state.players[ph].y - PLAYER_HALF_H,
-                PLAYER_HALF_W * 2.0,
-                PLAYER_HALF_H * 2.0,
-            )) {
-                // Shield-first absorption (I38) — fire DPS drains
-                // shield before health if shield active + has charge.
-                var dmg_to_apply = damage_this_tick;
-                const pp = &state.players[ph];
-                if (pp.flags.shield_active and
-                    pp.flags.has_shield_charge and
-                    pp.shield_charge > 0)
-                {
-                    pp.shield_charge -= dmg_to_apply;
-                    if (pp.shield_charge <= 0) {
-                        const overflow = -pp.shield_charge;
-                        pp.shield_charge = 0;
-                        pp.flags.shield_active = false;
-                        emitEvent(
-                            state,
-                            .shield_popped,
-                            @intCast(ph),
-                            -1,
-                            patch_ptr.id,
-                            0,
-                            pp.x,
-                            pp.y,
-                        );
-                        dmg_to_apply = overflow;
-                    } else {
-                        dmg_to_apply = 0;
-                    }
-                }
-                if (dmg_to_apply > 0) {
-                    pp.health -= dmg_to_apply;
-                    if (pp.health <= 0) {
-                        pp.health = 0;
-                        pp.flags.alive = false;
-                        emitEvent(
-                            state,
-                            .player_killed,
-                            @intCast(ph),
-                            -1,
-                            patch_ptr.id,
-                            0,
-                            pp.x,
-                            pp.y,
-                        );
-                    }
-                }
-            }
-        }
-        _ = fire.fireEntityTick(patch_ptr, eff_dt);
     }
 
     // 3. Projectile pre-step lifecycle + motion (I7). Sticky /
@@ -1017,133 +1045,81 @@ pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
         }
     }
 
-    // 5. Satellites — orbit advance + fire decision (I8). Owner
-    //    lookup walks the players array matching owner_id_bytes;
-    //    target lookup picks the closest non-owner alive player.
-    var si: u32 = 0;
-    while (si < state.satellite_count) : (si += 1) {
-        const sat_ptr = &state.satellites[si];
-        // Find owner index by id_bytes match.
-        var owner_x: f64 = 0;
-        var owner_y: f64 = 0;
-        var owner_idx: i32 = -1;
-        var oj: u32 = 0;
-        while (oj < state.player_count) : (oj += 1) {
-            if (state.players[oj].id_len == sat_ptr.owner_id_len and
-                std.mem.eql(u8, state.players[oj].id_bytes[0..sat_ptr.owner_id_len], sat_ptr.owner_id_bytes[0..sat_ptr.owner_id_len]))
+    // 2. Fire patches (I10): tick lifetime in place + apply DPS
+    //    damage to overlapping non-owner alive players.
+    //    Player AABB is approximated as 30×56 centered on (x,y).
+    const PLAYER_HALF_W: f64 = 15.0;
+    const PLAYER_HALF_H: f64 = 28.0;
+    var fi: u32 = 0;
+    while (fi < state.fire_count) : (fi += 1) {
+        const patch_ptr = &state.fires[fi];
+        if (patch_ptr.remaining_ms <= 0) continue;
+        const damage_this_tick = patch_ptr.damage_per_second * (eff_dt / 1000.0);
+        var ph: u32 = 0;
+        while (ph < state.player_count) : (ph += 1) {
+            if (!state.players[ph].flags.alive) continue;
+            // Skip owner self-damage.
+            if (patch_ptr.has_owner != 0 and
+                state.players[ph].id_len == patch_ptr.owner_id_len and
+                std.mem.eql(u8, state.players[ph].id_bytes[0..patch_ptr.owner_id_len], patch_ptr.owner_id_bytes[0..patch_ptr.owner_id_len]))
             {
-                owner_x = state.players[oj].x;
-                owner_y = state.players[oj].y;
-                owner_idx = @intCast(oj);
-                break;
+                continue;
+            }
+            if (fire.fireEntityHitsPlayerAABB(
+                patch_ptr,
+                state.players[ph].x - PLAYER_HALF_W,
+                state.players[ph].y - PLAYER_HALF_H,
+                PLAYER_HALF_W * 2.0,
+                PLAYER_HALF_H * 2.0,
+            )) {
+                // Shield-first absorption (I38) — fire DPS drains
+                // shield before health if shield active + has charge.
+                var dmg_to_apply = damage_this_tick;
+                const pp = &state.players[ph];
+                if (pp.flags.shield_active and
+                    pp.flags.has_shield_charge and
+                    pp.shield_charge > 0)
+                {
+                    pp.shield_charge -= dmg_to_apply;
+                    if (pp.shield_charge <= 0) {
+                        const overflow = -pp.shield_charge;
+                        pp.shield_charge = 0;
+                        pp.flags.shield_active = false;
+                        emitEvent(
+                            state,
+                            .shield_popped,
+                            @intCast(ph),
+                            -1,
+                            patch_ptr.id,
+                            0,
+                            pp.x,
+                            pp.y,
+                        );
+                        dmg_to_apply = overflow;
+                    } else {
+                        dmg_to_apply = 0;
+                    }
+                }
+                if (dmg_to_apply > 0) {
+                    pp.health -= dmg_to_apply;
+                    if (pp.health <= 0) {
+                        pp.health = 0;
+                        pp.flags.alive = false;
+                        emitEvent(
+                            state,
+                            .player_killed,
+                            @intCast(ph),
+                            -1,
+                            patch_ptr.id,
+                            0,
+                            pp.x,
+                            pp.y,
+                        );
+                    }
+                }
             }
         }
-        // Closest non-owner alive player.
-        var target_x: f64 = 0;
-        var target_y: f64 = 0;
-        var has_target: u8 = 0;
-        var best_dist_sq: f64 = std.math.inf(f64);
-        var ti: u32 = 0;
-        while (ti < state.player_count) : (ti += 1) {
-            if (@as(i32, @intCast(ti)) == owner_idx) continue;
-            if (!state.players[ti].flags.alive) continue;
-            const dx = state.players[ti].x - owner_x;
-            const dy = state.players[ti].y - owner_y;
-            const d2 = dx * dx + dy * dy;
-            if (d2 < best_dist_sq) {
-                best_dist_sq = d2;
-                target_x = state.players[ti].x;
-                target_y = state.players[ti].y;
-                has_target = 1;
-            }
-        }
-        const can_fire: u8 = if (state.header.round_phase ==
-            @intFromEnum(round.RoundPhase.fighting)) 1 else 0;
-        const sat_out = satellite.satelliteTickWorld(
-            sat_ptr,
-            owner_x,
-            owner_y,
-            target_x,
-            target_y,
-            has_target,
-            can_fire,
-            eff_dt,
-        );
-        // Satellite projectile spawn (I22). Fire at the position
-        // satellite_tick_world reported with the same starter-
-        // pistol base stats as I21.
-        if (sat_out.wants_fire == 1 and
-            state.projectile_count < world_state.MAX_PROJECTILES and
-            chaos_profile.disable_projectiles == 0)
-        {
-            const sat_weapon = weapons_data.weaponBaseById(.starter_pistol);
-            const sat_speed = sat_weapon.projectile_speed *
-                sat_weapon.projectile_speed_multiplier;
-            const slot: u32 = state.projectile_count;
-            state.projectile_count += 1;
-            const new_id: u32 = state.header.next_entity_id;
-            state.header.next_entity_id += 1;
-            state.projectiles[slot] = .{
-                .x = sat_out.fire_x,
-                .y = sat_out.fire_y,
-                .vx = trig.lutCos(sat_out.fire_aim_angle) * sat_speed,
-                .vy = trig.lutSin(sat_out.fire_aim_angle) * sat_speed,
-                .radius = @max(2.0, 7.0 * sat_weapon.projectile_size_multiplier),
-                .damage = sat_weapon.damage,
-                .lifetime_ms = @max(
-                    50.0,
-                    sat_weapon.projectile_lifetime_seconds * 1000.0 *
-                        sat_weapon.projectile_lifetime_multiplier,
-                ),
-                .age_ms = 0,
-                .traveled_px = 0,
-                .origin_x = sat_out.fire_x,
-                .origin_y = sat_out.fire_y,
-                .homing_strength = 0,
-                .acceleration_multiplier = 0,
-                .gravity_scale = 0,
-                .range_px = sat_weapon.projectile_range_px,
-                .slow_multiplier = 1,
-                .sticky_fuse_ms = 0,
-                .impact_radius_px = 0,
-                .id = new_id,
-                .bounces_remaining = 0,
-                .pierce_remaining = 0,
-                .split_count = 0,
-                .flags = .{
-                    .has_owner = true,
-                    .has_impact = false,
-                    .has_split = false,
-                    .has_slow = false,
-                    .has_homing = false,
-                    .has_acceleration = false,
-                    .has_gravity_scale = false,
-                    .has_range = true,
-                    .has_age = true,
-                    .has_traveled = true,
-                    .has_origin = true,
-                    .returning = false,
-                    .has_sticky_fuse = false,
-                    .has_impact_radius = false,
-                },
-                .pathing = sat_weapon.projectile_pathing,
-                .element = sat_weapon.projectile_element,
-                .impact = .none,
-                .shape = sat_weapon.projectile_shape,
-                .owner_id_len = sat_ptr.owner_id_len,
-                .owner_id_bytes = sat_ptr.owner_id_bytes,
-            };
-            emitEvent(
-                state,
-                .shot_fired,
-                -1,
-                -1,
-                new_id,
-                sat_out.fire_aim_angle,
-                sat_out.fire_x,
-                sat_out.fire_y,
-            );
-        }
+        _ = fire.fireEntityTick(patch_ptr, eff_dt);
     }
 
     // 7. Pickups (I13): for each ACTIVE pickup, check overlap
@@ -1260,6 +1236,69 @@ pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
                 pickup_ptr.respawn_at_tick = state.header.tick + respawn_ticks;
                 break;
             }
+        }
+    }
+
+    // 2a. Fire-hazard chaos modifier (I33): spawn fire patches at
+    //     random map positions on the configured interval.
+    //
+    // Rewritten 2026-07-14 — the previous version had THREE real bugs,
+    // found by direct comparison against World.ts's equivalent (the
+    // "4b. Fire-hazard" section):
+    //   1. No is_fighting gate at all (TS: "only fires during the
+    //      fighting phase") — hazards could spawn during countdown/draft.
+    //   2. Position used a hardcoded -800..800 / -400..400 box via an
+    //      ad-hoc xorshift derivation, NOT the shared parity-tested RNG
+    //      and NOT the actual map size — the code's own old comment
+    //      admitted this ("rough range... caller can clamp later"), i.e.
+    //      it was a known-incomplete stub, not a finished feature.
+    //   3. radius/damage/lifetime were hardcoded to DIFFERENT values than
+    //      TS (radius always 36 vs TS's randomized 36-62; damage 14 vs
+    //      TS's 13; lifetime 1800ms vs TS's 3000ms) — this chaos modifier
+    //      would have played completely differently between backends.
+    // Now: three draws from the SAME shared RNG World.ts uses (mulberry32
+    // via rng.zig's nextU32, bit-exact ported — see docs/zig-wasm-*), real
+    // map-size-based positioning (g_map_width/g_map_height, host-set via
+    // world_state_set_map_size), and TS's exact radius/damage/lifetime
+    // constants.
+    if (is_fighting and
+        chaos_profile.fire_hazard_active != 0 and
+        chaos_profile.fire_hazard_interval_ms > 0 and
+        state.fire_count < world_state.MAX_FIRE and
+        g_map_width > 0 and g_map_height > 0)
+    {
+        const cur_timer: f64 = @floatFromInt(state.header.fire_hazard_timer_ms);
+        const next_timer = cur_timer + eff_dt;
+        if (next_timer >= chaos_profile.fire_hazard_interval_ms) {
+            state.header.fire_hazard_timer_ms =
+                @intFromFloat(next_timer - chaos_profile.fire_hazard_interval_ms);
+            var rs = state.header.rng_state;
+            rs = rng.nextU32(rs);
+            const fx: f64 = @as(f64, @floatFromInt(rs)) / 0x100000000;
+            rs = rng.nextU32(rs);
+            const fy: f64 = @as(f64, @floatFromInt(rs)) / 0x100000000;
+            rs = rng.nextU32(rs);
+            const fr: f64 = @as(f64, @floatFromInt(rs)) / 0x100000000;
+            state.header.rng_state = rs;
+            const fx_span = @max(1.0, g_map_width - 160.0);
+            const fy_span = @max(1.0, g_map_height - 250.0);
+            const slot = state.fire_count;
+            state.fire_count += 1;
+            const new_id: u32 = state.header.next_entity_id;
+            state.header.next_entity_id += 1;
+            state.fires[slot] = .{
+                .x = 80.0 + fx * fx_span,
+                .y = 160.0 + fy * fy_span,
+                .radius = 36.0 + fr * 26.0,
+                .remaining_ms = 3000.0,
+                .damage_per_second = 13.0,
+                .id = new_id,
+                .has_owner = 0,
+                .owner_id_len = 0,
+                .owner_id_bytes = @splat(0),
+            };
+        } else {
+            state.header.fire_hazard_timer_ms = @intFromFloat(next_timer);
         }
     }
 

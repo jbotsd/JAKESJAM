@@ -51,6 +51,7 @@ type WorldExports = {
     has_ceiling: number,
     kill_plane_y: number,
   ) => void;
+  world_state_set_map_size: (width: number, height: number) => void;
   memory: WebAssembly.Memory;
 };
 
@@ -411,6 +412,19 @@ export function setWorldArenaBounds(
   };
 }
 
+let cachedMapSize: { width: number; height: number } | null = null;
+
+/**
+ * Cache the map's logical size for this match. Added 2026-07-14 — the
+ * fire-hazard chaos modifier's position roll needs the real map bounds
+ * (parity with World.ts, which uses runtime.map.size directly); without
+ * this call step_world's fire-hazard spawn stays disabled rather than
+ * falling back to a wrong hardcoded box.
+ */
+export function setWorldMapSize(width: number, height: number): void {
+  cachedMapSize = { width, height };
+}
+
 /**
  * Set the static-AABB cache for this match. The host (World.ts
  * createRuntime, OnlineMatchScene boot) calls this once after the
@@ -462,6 +476,9 @@ function writeStaticsIntoMemory(): void {
       cachedArenaBounds.hasCeiling,
       cachedArenaBounds.killPlaneY,
     );
+  }
+  if (cachedMapSize) {
+    ex.world_state_set_map_size(cachedMapSize.width, cachedMapSize.height);
   }
 }
 

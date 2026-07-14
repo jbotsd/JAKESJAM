@@ -62,6 +62,7 @@ type WorldExports = {
     has_ceiling: number,
     kill_plane_y: number,
   ) => void;
+  world_state_set_map_size?: (width: number, height: number) => void;
   resolve_player_fire_config?: (
     state_ptr: number,
     player_index: number,
@@ -82,6 +83,7 @@ class ServerWasmHost {
     hasCeiling: number;
     killPlaneY: number;
   } | null = null;
+  private cachedMapSize: { width: number; height: number } | null = null;
   private preloadPromise: Promise<void> | null = null;
   private resolvedReady = false;
   private readyResolvers: Array<() => void> = [];
@@ -163,6 +165,14 @@ class ServerWasmHost {
     };
   }
 
+  /** Map's logical size — needed for the fire-hazard chaos modifier's
+   *  position roll (parity with World.ts, which uses runtime.map.size
+   *  directly). Must match the client's setMapSize call or fire-hazard
+   *  patches predict/reconcile at different positions. */
+  setMapSize(width: number, height: number): void {
+    this.cachedMapSize = { width, height };
+  }
+
   getStaticsSnapshot(): { aabbs: ReadonlyArray<StaticAABB>; oneWay: ReadonlyArray<number> } | null {
     return this.cachedStatics
       ? { aabbs: this.cachedStatics.aabbs, oneWay: this.cachedStatics.oneWay }
@@ -202,6 +212,7 @@ class ServerWasmHost {
     // (no card augments) while the client predicts WITH them → desync.
     this.writeFireConfigsIntoMemory(state);
     this.writeArenaBoundsIntoMemory();
+    this.writeMapSizeIntoMemory();
     this.writeInputsIntoMemory();
     const rc = ex.step_world(statePtr, dtMs);
     if (rc !== 0) {
@@ -275,6 +286,14 @@ class ServerWasmHost {
       this.cachedArenaBounds.ceilingY,
       this.cachedArenaBounds.hasCeiling,
       this.cachedArenaBounds.killPlaneY,
+    );
+  }
+
+  private writeMapSizeIntoMemory(): void {
+    if (!this.cachedMapSize || !this.ex) return;
+    this.ex.world_state_set_map_size?.(
+      this.cachedMapSize.width,
+      this.cachedMapSize.height,
     );
   }
 

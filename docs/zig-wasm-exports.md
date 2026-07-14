@@ -235,6 +235,7 @@ spawn, satellite owner-lookup land in I2-I4.
 | `world_state_set_statics(state, aabbs, one_way, count) → u32` | bulk-write static AABB cache; returns actual count written (clamped) | I30 |
 | `world_state_set_target_score(state, target)` | set match target_score + reset match_winner_idx | I30 |
 | `world_state_set_arena_bounds(ceiling_y, has_ceiling, kill_plane_y)` | ceiling-clamp + void kill-plane bounds (module-level; host sets per match) | B3 |
+| `world_state_set_map_size(width, height)` | map's logical size (module-level; host sets per match) — fire-hazard chaos modifier's position roll needs real map bounds | 2026-07-14 |
 | `resolve_player_fire_config(state, player_index, indices_ptr, count)` | resolve player's build from card indices → player_fire_config (weapon_build.zig; replaces TS createWeaponBuild) | B4 |
 | `resolve_build_test(card_index, out_ptr)` | test-only: resolve base (idx<0) or base+cards[idx] into out | B4 |
 | `resolve_build_card_count() → u32` | test-only: count of cards in the generated table | B4 |

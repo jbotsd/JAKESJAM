@@ -249,6 +249,15 @@ export class WasmHost {
     );
   }
 
+  /** Mirror the map's logical size to the world backend — needed for the
+   *  fire-hazard chaos modifier's position roll (parity with World.ts,
+   *  which uses runtime.map.size directly). */
+  setMapSize(width: number, height: number): void {
+    void import("./worldWasmBackend.js").then((m) =>
+      m.setWorldMapSize(width, height),
+    );
+  }
+
   /**
    * Cache per-player input for the next `step()`. Replaces the
    * `globalThis.__jakesjam_wasm_inputs__` stash. The wasm step

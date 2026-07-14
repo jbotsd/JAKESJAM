@@ -333,6 +333,9 @@ export class MatchHost {
         this.runtime.ceilingClampY,
         this.map.size.y > 0 ? this.map.size.y + KILL_PLANE_MARGIN_PX : 0,
       );
+      // Fire-hazard chaos modifier positioning needs the real map bounds —
+      // must match the client's wasmHost.setMapSize call (2026-07-14).
+      serverWasmHost.setMapSize(this.map.size.x, this.map.size.y);
     }
     this.grid = new InterestGrid(this.map.size.x, this.map.size.y, CELL_SIZE_PX);
     // Pin the sim backend for the WHOLE match. The old per-tick
