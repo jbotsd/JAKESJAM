@@ -18,6 +18,9 @@ bun data-warehouse/ingest.ts
 # Refresh the CRM mirror (press/streamer outreach lists)
 bun data-warehouse/seed-crm.ts
 
+# Load partnership/BD/showcase/community leads (run once per new research batch)
+bun data-warehouse/seed-leads.ts
+
 # Ask it anything
 bun data-warehouse/query.ts "SELECT * FROM market_research WHERE domain = 'genre-market-size' ORDER BY confidence DESC"
 ```
@@ -31,7 +34,7 @@ bun data-warehouse/query.ts "SELECT * FROM market_research WHERE domain = 'genre
 | `session_fingerprints` | One row per boot event, pre-computed with `is_jake_rtx4080` / `is_automation_signature` / `is_candidate_real_external` flags — the same device-fingerprint dedup the growth brief did by hand, now a query away |
 | `signups` | Email capture funnel (`server/.signups/signups.json`) |
 | `entitlements_raw` | Latest snapshot of Stripe cosmetic entitlements |
-| `crm_contacts` | Mirror of the Apollo "JAKESJAM Press Outreach" + "JAKESJAM Streamer Outreach" lists (59 contacts: 21 press, 38 tiered streamers) |
+| `crm_contacts` | Apollo press/streamer lists (21 press, 38 tiered streamers) PLUS non-Apollo partnership/BD leads seeded via `seed-leads.ts` (9 partnership contacts — Landfall, Aggro Crab, Boneloaf, named CrazyGames/Poki BD people; 6 showcases — Evo Indie Dev Gallery, Day of the Devs, Gamedev.js Jam, etc.; 4 genre-relevant Discord communities). `category` column distinguishes press / streamer / partnership / showcase / community. |
 | `clips` | Every rendered highlight clip + pin status |
 
 **External market intelligence — always cited, confidence-rated:**
