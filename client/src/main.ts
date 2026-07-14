@@ -294,14 +294,16 @@ app.innerHTML = `
       </div>
       <div class="splash-actions splash-actions--secondary">
         <button data-menu-practice type="button" class="shell-btn-secondary">Practice</button>
-        <button data-menu-host type="button" class="shell-btn-secondary">Private room</button>
         <button data-menu-join type="button" class="shell-btn-secondary">Join room</button>
-        <button data-menu-clips type="button" class="shell-btn-secondary">Clips</button>
-        <button data-menu-options type="button" class="shell-btn-secondary">Settings</button>
-        <button data-menu-intro type="button" class="shell-btn-secondary">Intro</button>
-        <button data-menu-tutorial type="button" class="shell-btn-secondary">Showcase</button>
-        <button data-menu-forge type="button" class="shell-btn-secondary">Forge</button>
-        <button data-menu-credits type="button" class="shell-btn-secondary">Credits</button>
+        <button data-menu-host type="button" class="shell-btn-secondary">Private room</button>
+      </div>
+      <div class="splash-actions splash-actions--ghost">
+        <button data-menu-options type="button" class="shell-btn-ghost">Settings</button>
+        <button data-menu-clips type="button" class="shell-btn-ghost">Clips</button>
+        <button data-menu-forge type="button" class="shell-btn-ghost">Forge</button>
+        <button data-menu-tutorial type="button" class="shell-btn-ghost">Showcase</button>
+        <button data-menu-intro type="button" class="shell-btn-ghost">Intro</button>
+        <button data-menu-credits type="button" class="shell-btn-ghost">Credits</button>
       </div>
       <div class="splash-status-slot" data-world-status></div>
       <button type="button" class="splash-cta-blink" data-splash-cta>

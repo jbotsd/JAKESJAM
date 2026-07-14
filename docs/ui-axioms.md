@@ -76,7 +76,7 @@ above it) made checkable.
 
 | # | Axiom | Check |
 |---|-------|-------|
-| G1 | **Corners are chamfered or crystal-cut, never iOS-rounded.** Max radius **12px**, and only on DOM shell chrome (`--shell-radius: 8–12px`). Phaser-canvas game/HUD elements use hard edges, chamfers, or facet cuts — never `strokeRoundedRect`/`fillRoundedRect` with a radius chosen for "friendliness." | grep for `borderRadius` > 12px in DOM CSS; grep for `RoundedRect(` with a radius param > ~6px in Phaser draw code. |
+| G1 | **Corners are cut via `clip-path` polygon (`--chamfer-sm/md/lg`), never `border-radius`, on any DOM shell chrome element — full stop, no size exception.** (Previous wording allowed "≤12px" `border-radius` as if that satisfied the rule; it doesn't — a rounded arc under 12px is still a rounded arc, not a cut, and that exact loophole is why `.match-chrome-btn`/`.fs-toggle` and two later cascade layers re-rounded already-chamfered elements, shipping live as "the chiseled edges don't work uniformly," 2026-07-15.) Phaser-canvas game/HUD elements use hard edges, chamfers, or facet cuts — never `strokeRoundedRect`/`fillRoundedRect` with a radius chosen for "friendliness." | grep for `border-radius` in DOM CSS outside the three sanctioned circle/pill exceptions (avatar dots, `50%` circles, the one scrollbar-thumb cosmetic radius) — any hit on shell chrome (button, panel, chip, row, input) is a straight violation, not a judgment call. |
 | G2 | **No filled card/plate as primary depth.** Depth comes from **stacked voids** (darker layers) and **seam brightness** (a lit 1px border), never from `box-shadow` elevation or a filled gradient rectangle standing in for a physical card. | Any DOM style with `boxShadow` used for elevation (not glow) + a `background: gradient` fill + a `border-radius` together = the exact "thick card" anti-pattern. Reject. |
 | G3 | **Bracket / L-frame / thin filament border over filled box.** Prefer a hollow frame with a bright seam to a solid-fill panel. | Does the element have a filled interior with no void/transparency reasoning, or is the frame itself hollow with content floating in void behind it? |
 | G4 | **Faceted, segmented state — not smooth bars/arcs.** Anything that depletes/fills (health, shield, cooldown, timer) draws as discrete faceted segments with hairline gaps (`facetedRing.ts` is the canonical implementation), not a smooth `fillRect`/`arc` sweep. Numeral readout is a secondary confirming signal next to the shape, never the only signal. | Is there a plain rectangular progress bar or smooth pie-wedge anywhere still shipping? That's pre-doctrine debt. |
@@ -110,10 +110,22 @@ above it) made checkable.
 
 ## 2. Colour axioms — dual accent, never mixed on one control
 
+**Pivot note (2026-07-15):** the dual accent used to be cyan/teal (combat) + bright gold
+(house) — retired per `~/Documents/JAKESJAM_UX_Research_20260715/color_scheme_proposal.md`
+(OKLCH gamut audit: cyan/teal was the least-distinctive sci-fi accent hue family available,
+and two co-equal saturated accents was a structural mistake independent of which hues were
+picked). Same *semantic split* (house vs. combat), new hues: **Sapphire Conduit** (`#3c79f0`
+family — same H258-269° hue as the void/hull structure, so combat light reads as "this
+material, charged," not an arbitrary colored light) replaces cyan; **Instrument Ink**
+(`#897f69` family — gold's hue, chroma cut ~60%, text/seam/hairline weight only, never a
+fill or glow) replaces gold. Full rationale + before/after inventory in `palette.ts`'s header
+comment and the proposal doc above. HP ladder, shield, dead-grey, and the element-colour
+table were audited in the same pass and found sound — not touched.
+
 | # | Axiom | Check |
 |---|-------|-------|
-| C1 | **Gold (`#c9a84c` family) = house / self-generated / Autogenes cosmetic tier. Cyan (`#8ff8ff` family) = combat / crystal rounds / live arena.** They never compete as primary on the same control. | Does a combat-HUD element (health, shield, ability, kill-feed, in-match nameplate) use gold as its dominant fill/stroke? That's a violation — gold is "almost never in combat HUD." |
-| C2 | **In-match HUD stays cyan / element-colour / HP-lime. Gold is reserved for house surfaces** (HOME, SETTINGS, CLIPS, Elyad kicker, Autogenes cosmetic `accentColor`, share/highlight CTAs — clips are a "house" feature, not combat). | Audit every in-match overlay (draft, death, results, HUD) for stray gold outside a share/highlight button. |
+| C1 | **Instrument Ink (`#897f69` family) = house / self-generated / Autogenes cosmetic tier. Sapphire Conduit (`#3c79f0` family) = combat / crystal rounds / live arena.** They never compete as primary on the same control. | Does a combat-HUD element (health, shield, ability, kill-feed, in-match nameplate) use ink as its dominant fill/stroke? That's a violation — ink is "almost never in combat HUD." |
+| C2 | **In-match HUD stays sapphire / element-colour / HP-lime. Ink is reserved for house surfaces** (HOME, SETTINGS, CLIPS, Elyad kicker, Autogenes cosmetic `accentColor`, share/highlight CTAs — clips are a "house" feature, not combat). | Audit every in-match overlay (draft, death, results, HUD) for stray ink outside a share/highlight button. |
 | C3 | **One hot accent per element at a time, 1-2 per palette total** (Mirror's Edge discipline). Never five saturated colours competing in one panel. | Count distinct saturated accent hues in a single component. >2 without a semantic reason (element-colour table is the sanctioned exception) fails. |
 | C4 | **HP/status colour ladder is fixed:** good `#b8f05a` (lime) → warn `#fde68a` (amber) → crit `#fb7185` (rose), shield `#93c5fd` (ice blue). Don't invent a fourth health colour language per component. | Grep new health-adjacent code for hex literals outside this ladder. |
 | C5 | **Dead/extinguished state is desaturated grey (`#2a3550` family), not black, not the element's own dimmed hue.** An extinguished vessel reads as "off," not "darker." | Every `isDead`/eliminated visual state should converge on this one grey, everywhere it appears (nameplate ring, action-bar orb, world rig). |
@@ -295,13 +307,15 @@ regardless of how polished it otherwise looks:
 ## 10. Reference tokens (for quick lookup, not the source of truth — that's `palette.ts` / `style.css`)
 
 ```
-House gold        #c9a84c      Gold dim        #8a7033
-Void deep          #0a0e1a      Void edge        #0d1117
-Combat cyan        #8ff8ff      Teal support     #50e3c2 / #2d8a7e
-HP good (lime)      #b8f05a      HP warn (amber)  #fde68a
-HP crit (rose)      #fb7185      Shield (ice)     #93c5fd
-Dead/extinguished  #2a3550      Text hi          #e8ecf4
-Text mid            #9fe0cb      Text dim         #7a8299
+Instrument Ink (bright) #aa9e7f   Instrument Ink (mid)   #897f69
+Instrument Ink (dim)    #544c3c   Void deep              #0a0e1a
+Void edge               #0d1117  Sapphire (dim/idle)     #2750a2
+Sapphire (steady/accent) #3c79f0 Sapphire (pulse)        #6b98f4
+Sapphire (bloom)        #cedffd
+HP good (lime)          #b8f05a  HP warn (amber)         #fde68a
+HP crit (rose)          #fb7185  Shield (ice)            #93c5fd
+Dead/extinguished       #2a3550  Text hi                 #e8ecf4
+Text mid                #9fe0cb  Text dim                #7a8299
 ```
 
 Element-colour table (`art-direction.md` §Colour) and per-theme overrides (`themes.md`) are
