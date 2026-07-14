@@ -656,6 +656,25 @@ export class TutorialScene extends Phaser.Scene {
       this.shaftFollowArmed = false;
       this.cineCamera.endFollow();
     }
+    // Rubber-band safety net (Jake, 2026-07-14) — runs on EVERY scripted
+    // beat, not just the follow above: a panTo/zoomTo/snap authored slightly
+    // off, or a subject moving somewhere a beat didn't anticipate, must
+    // never actually push hero/boss off camera. Gated on hasMaterialized()
+    // so the abstract mote-of-light opening keeps its own wide, deliberately
+    // off-center framing with zero interference. See CinematicCameraDirector
+    // .clampToKeepVisible's own docblock for exactly what this does and
+    // doesn't override (dramatic pull-outs are untouched).
+    if (this.cameraOwner === "director" && this.spiritDescent.hasMaterialized()) {
+      const dummy = this.duel.dummy();
+      const subjects = hero.alive
+        ? dummy.alive
+          ? [hero, dummy]
+          : [hero]
+        : dummy.alive
+          ? [dummy]
+          : [];
+      this.cineCamera.clampToKeepVisible(subjects, deltaMs);
+    }
     // No control until the body exists: during the spirit-descent opening
     // the hero entity is a mote of light mid-assembly — input arriving the
     // same instant the rig materializes IS the "you may move" cue.
