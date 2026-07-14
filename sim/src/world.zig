@@ -166,66 +166,312 @@ pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
     const chaos_profile = chaos.chaosProfileFromMask(state.header.chaos_mask);
     const eff_dt = dt_ms * chaos_profile.time_scale;
 
-    // 1. Round phase machine + winner detection (I6). When a
-    //    winner emerges (KO or time-out), increment that player's
-    //    score and signal the phase machine so it transitions
-    //    fighting → round_over even before the time-out.
-    const winner_idx = detectRoundWinner(state);
-    if (winner_idx >= 0 and
-        state.header.round_phase == @intFromEnum(round.RoundPhase.fighting))
-    {
-        const idx: u32 = @intCast(winner_idx);
-        state.players[idx].score += 1;
-        emitEvent(
-            state,
-            .round_end,
-            winner_idx,
-            -1,
-            0,
-            @floatFromInt(state.players[idx].score),
-            0,
-            0,
-        );
-        // Match-end check (I9): if this player hit target_score,
-        // mark match winner. orchestrator stops advancing past
-        // round_over once match_winner_idx is set.
-        if (state.header.target_score > 0 and
-            state.players[idx].score >= state.header.target_score)
-        {
-            state.header.match_winner_idx = winner_idx;
+    // Read the round phase as of the START of this tick (parity with
+    // World.ts's `fightingPhase` const, read once at the top before its own
+    // round machine call runs at the END of the tick). Player movement +
+    // weapon fire gate on this — see the 2026-07-14 tick-order fix note
+    // below, at the round machine's new position, for why the round
+    // machine itself moved to run LAST instead of first.
+    const is_fighting = state.header.round_phase ==
+        @intFromEnum(round.RoundPhase.fighting);
+
+    // 8. Player physics (I16). Bridge PlayerEntity +
+    //    PlayerMovementMemory → PlayerStep, run stepPlayer with
+    //    the statics + one_way cache, write motion + memory back.
+    const statics_slice = state.statics[0..state.static_count];
+    const one_way_slice = state.one_way[0..state.static_count];
+    var pmi: u32 = 0;
+    while (pmi < state.player_count) : (pmi += 1) {
+        if (!state.players[pmi].flags.alive) continue;
+        // Host-resolved card build for this player (movement/shield/parry
+        // augments) — parity with the TS orchestrator's resolvePlayerBuild.
+        const fcfg = &state.player_fire_config[pmi];
+        const has_cfg = fcfg.valid != 0;
+        var ps = player_mod.PlayerStep{
+            .x = state.players[pmi].x,
+            .y = state.players[pmi].y,
+            .vx = state.players[pmi].vx,
+            .vy = state.players[pmi].vy,
+            .aim_x = state.players[pmi].aim_x,
+            .aim_y = state.players[pmi].aim_y,
+            .jetpack_fuel = if (state.players[pmi].flags.has_jetpack_fuel)
+                state.players[pmi].jetpack_fuel
+            else
+                100.0,
+            .crouching = if (state.players[pmi].flags.crouching) 1 else 0,
+            .coyote_ms = state.player_movement[pmi].coyote_ms,
+            .jump_buffer_ms = state.player_movement[pmi].jump_buffer_ms,
+            .jump_cut_applied = @intCast(state.player_movement[pmi].jump_cut_applied),
+            .jump_released_since_jump = @intCast(state.player_movement[pmi].jump_released_since_jump),
+            .grounded_last_frame = @intCast(state.player_movement[pmi].grounded_last_frame),
+            .jetpack_active = @intCast(state.player_movement[pmi].jetpack_active),
+            .touching_wall_dir = @intCast(state.player_movement[pmi].touching_wall_dir),
+            // Augment INPUTS from the host-resolved card build.
+            .jump_mul = if (has_cfg) fcfg.jump_mul else 1.0,
+            .wall_jump_mul = if (has_cfg) fcfg.wall_jump_mul else 1.0,
+            .wall_slide_mul = if (has_cfg) fcfg.wall_slide_mul else 1.0,
+            .air_jumps = if (has_cfg) @intCast(fcfg.air_jumps) else 0,
+            .dash_charges = if (has_cfg) @intCast(fcfg.dash_charges) else 0,
+            .dash_cooldown_mul = if (has_cfg) fcfg.dash_cooldown_mul else 1.0,
+            // Augment MEMORY carried from world state.
+            .dash_cooldown_ms = state.player_movement[pmi].dash_cooldown_ms,
+            .dash_active_ms = state.player_movement[pmi].dash_active_ms,
+            .dash_recovery_ms = state.player_movement[pmi].dash_recovery_ms,
+            .air_jumps_used = @intCast(state.player_movement[pmi].air_jumps_used),
+            .dash_used_in_air = @intCast(state.player_movement[pmi].dash_used_in_air),
+        };
+        // Compose per-player movement speed (I37). Defaults 1.0;
+        // speed_boost buff multiplies, slow_debuff / freeze /
+        // slow_field debuffs multiply (≤1).
+        var speed_mul: f64 = 1.0;
+        const ple = &state.players[pmi];
+        if (ple.flags.has_speed_boost and ple.speed_boost_until_tick > state.header.tick) {
+            speed_mul *= 1.4;
+        }
+        if (ple.flags.has_slow_debuff and ple.slow_debuff_until_tick > state.header.tick) {
+            speed_mul *= 0.5;
+        }
+        if (ple.flags.has_slow and ple.slowed_until_tick > state.header.tick) {
+            speed_mul *= ple.slow_multiplier;
+        }
+        if (ple.flags.has_freeze and ple.freeze_until_tick > state.header.tick) {
+            speed_mul *= ple.freeze_multiplier;
+        }
+        // Card move-speed + gravity augments ride the existing step multipliers.
+        if (has_cfg) speed_mul *= fcfg.move_speed_mul;
+        const grav_mul = chaos_profile.gravity_multiplier *
+            (if (has_cfg) fcfg.gravity_mul else 1.0);
+        // NB: stepPlayer RETURNS jumped-this-frame, not grounded. The grounded
+        // state lives in ps.grounded_last_frame (mutated in place). The world
+        // orchestrator emits no jump event, so the return is discarded.
+        //
+        // Gated on is_fighting (added 2026-07-14): parity with World.ts,
+        // which only calls stepPlayer "if (entity.alive && fightingPhase)" —
+        // players freeze during countdown/drafting. This gate did not exist
+        // before; players could walk/jump/fire during the draft-pick screen.
+        if (is_fighting) {
+            _ = player_mod.stepPlayer(
+                &ps,
+                state.players[pmi].prev_keys,
+                state.players[pmi].current_keys,
+                state.players[pmi].aim_x,
+                state.players[pmi].aim_y,
+                speed_mul,
+                grav_mul,
+                eff_dt,
+                statics_slice,
+                one_way_slice,
+            );
+            state.players[pmi].x = ps.x;
+            state.players[pmi].y = ps.y;
+            state.players[pmi].vx = ps.vx;
+            state.players[pmi].vy = ps.vy;
+            state.players[pmi].jetpack_fuel = ps.jetpack_fuel;
+            state.players[pmi].flags.has_jetpack_fuel = true;
+            state.players[pmi].flags.crouching = ps.crouching != 0;
+            state.players[pmi].flags.grounded = ps.grounded_last_frame != 0;
+            state.player_movement[pmi].coyote_ms = ps.coyote_ms;
+            state.player_movement[pmi].jump_buffer_ms = ps.jump_buffer_ms;
+            state.player_movement[pmi].jump_cut_applied = @intCast(ps.jump_cut_applied);
+            state.player_movement[pmi].jump_released_since_jump = @intCast(ps.jump_released_since_jump);
+            state.player_movement[pmi].grounded_last_frame = @intCast(ps.grounded_last_frame);
+            state.player_movement[pmi].jetpack_active = @intCast(ps.jetpack_active);
+            state.player_movement[pmi].touching_wall_dir = @intCast(ps.touching_wall_dir);
+            state.player_movement[pmi].dash_cooldown_ms = ps.dash_cooldown_ms;
+            state.player_movement[pmi].dash_active_ms = ps.dash_active_ms;
+            state.player_movement[pmi].dash_recovery_ms = ps.dash_recovery_ms;
+            state.player_movement[pmi].air_jumps_used = @intCast(ps.air_jumps_used);
+            state.player_movement[pmi].dash_used_in_air = @intCast(ps.dash_used_in_air);
+        }
+        // Ceiling clamp (parity with World.ts computeCeilingClampY): head pushed
+        // above the ceiling → shove back under + kill upward velocity.
+        if (g_has_ceiling) {
+            const min_center_y = g_ceiling_clamp_y + PLAYER_HALF_HEIGHT;
+            if (state.players[pmi].y < min_center_y) {
+                state.players[pmi].y = min_center_y;
+                if (state.players[pmi].vy < 0) state.players[pmi].vy = 0;
+            }
+        }
+        // Void-plane kill (parity with World.ts): fell past the map bottom +
+        // KILL_PLANE_MARGIN → force-kill so the death→respawn flow runs. Player
+        // is alive here (checked at loop top). Emit hit_confirmed (damage =
+        // remaining health) + player_killed like any other death.
+        if (g_kill_plane_y > 0 and state.players[pmi].y > g_kill_plane_y) {
+            const rem = state.players[pmi].health;
+            state.players[pmi].health = 0;
+            state.players[pmi].flags.alive = false;
+            emitEvent(state, .hit_confirmed, @intCast(pmi), -1, 0, rem, state.players[pmi].x, state.players[pmi].y);
+            emitEvent(state, .player_killed, @intCast(pmi), -1, 0, 0, state.players[pmi].x, state.players[pmi].y);
         }
     }
-    const phase_result = round.roundStepPhase(
-        state.header.round_phase,
-        state.header.countdown_remaining_ms,
-        eff_dt,
-        winner_idx >= 0,
-    );
-    state.header.round_phase = phase_result.new_phase;
-    state.header.countdown_remaining_ms =
-        phase_result.new_countdown_remaining_ms;
-    if (phase_result.transitioned == 1 and
-        phase_result.new_phase == @intFromEnum(round.RoundPhase.countdown))
-    {
-        state.header.round_index += 1;
-        // Reset transient entities for the new round (I28).
-        // Players keep their score + buff durations; everything
-        // else clears so the next round starts clean.
-        state.projectile_count = 0;
-        state.fire_count = 0;
-        state.satellite_count = 0;
-        // Heal alive players to full + clear timed buffs that
-        // shouldn't carry across rounds (slow, burn, freeze).
-        // Buff pickups (overcharge, damage_amp etc) DO carry per
-        // the offline TS behavior.
-        var ri: u32 = 0;
-        while (ri < state.player_count) : (ri += 1) {
-            state.players[ri].health = 100.0;
-            state.players[ri].flags.alive = true;
-            state.players[ri].flags.has_slow = false;
-            state.players[ri].flags.has_burn = false;
-            state.players[ri].flags.has_freeze = false;
+
+    // 6. Combat — per-player shield drain + parry start (I4 +
+    //    I4b). Defaults match `combat_*` exports.
+    var pi3: u32 = 0;
+    while (pi3 < state.player_count) : (pi3 += 1) {
+        const player_ptr = &state.players[pi3];
+        // Card shield/parry augments from the host-resolved build. Match the TS
+        // orchestrator: maxCharge = SHIELD_MAX_CHARGE_DEFAULT × chargeMul (NOT
+        // the stored max), recharge × rechargeMul, parry cooldown × cooldownMul.
+        const cfg3 = &state.player_fire_config[pi3];
+        const has3 = cfg3.valid != 0;
+        combat.tickShield(
+            player_ptr,
+            player_ptr.current_keys,
+            eff_dt,
+            combat.SHIELD_MAX_CHARGE_DEFAULT * (if (has3) cfg3.shield_charge_mul else 1.0),
+            combat.SHIELD_DRAIN_PER_SECOND,
+            combat.SHIELD_RECHARGE_PER_SECOND * (if (has3) cfg3.shield_recharge_mul else 1.0),
+        );
+        _ = combat.tryStartParry(
+            player_ptr,
+            player_ptr.current_keys,
+            player_ptr.prev_keys,
+            state.header.tick,
+            eff_dt,
+            combat.PARRY_ACTIVE_MS,
+            combat.PARRY_COOLDOWN_MS_DEFAULT * (if (has3) cfg3.parry_cooldown_mul else 1.0),
+        );
+        // Weapon fire decision + projectile spawn (I21 + I45).
+        // Use the host-resolved fire config when valid, else fall
+        // back to the starter-pistol base from data/weapons.zig.
+        // The host (J0 shim) patches state.player_fire_config[i]
+        // each tick from createWeaponBuild(player.cards) so card
+        // mutations (multi-shot, damage scale, etc) take effect.
+        //
+        // Gated on is_fighting (added 2026-07-14): parity with World.ts,
+        // where stepWeapon only runs "if (entity.alive && fightingPhase)".
+        // This gate did not exist before — cooldown ticked down and shots
+        // could fire during countdown/drafting.
+        if (is_fighting) {
+        const fcfg = &state.player_fire_config[pi3];
+        const damage_v: f64 = if (fcfg.valid != 0) fcfg.damage else weapons_data.weaponBaseById(.starter_pistol).damage;
+        const fire_rate_v: f64 = if (fcfg.valid != 0) fcfg.fire_rate else weapons_data.weaponBaseById(.starter_pistol).fire_rate;
+        const proj_speed_base: f64 = if (fcfg.valid != 0) fcfg.projectile_speed else weapons_data.weaponBaseById(.starter_pistol).projectile_speed;
+        const proj_speed_mul: f64 = if (fcfg.valid != 0) fcfg.speed_multiplier else 1.0;
+        const proj_lifetime_sec: f64 = if (fcfg.valid != 0) fcfg.projectile_lifetime_seconds else weapons_data.weaponBaseById(.starter_pistol).projectile_lifetime_seconds;
+        const proj_lifetime_mul: f64 = if (fcfg.valid != 0) fcfg.lifetime_multiplier else 1.0;
+        const spread_total: f64 = if (fcfg.valid != 0) fcfg.spread_radians else weapons_data.weaponBaseById(.starter_pistol).spread_radians;
+        const proj_count: u32 = if (fcfg.valid != 0) @max(@as(u32, 1), fcfg.projectile_count) else 1;
+        const proj_size_mul: f64 = if (fcfg.valid != 0) fcfg.size_multiplier else 1.0;
+        const proj_range: f64 = if (fcfg.valid != 0) fcfg.range_px else weapons_data.weaponBaseById(.starter_pistol).projectile_range_px;
+        const proj_bounces: u32 = if (fcfg.valid != 0) fcfg.bounces else 0;
+        const proj_pierce: u32 = if (fcfg.valid != 0) fcfg.pierce_count else 0;
+        const proj_splits: u32 = if (fcfg.valid != 0) fcfg.split_count else 0;
+        const proj_homing: f64 = if (fcfg.valid != 0) fcfg.homing_strength else 0;
+        const proj_accel: f64 = if (fcfg.valid != 0) fcfg.acceleration_multiplier else 0;
+        const proj_gravity: f64 = if (fcfg.valid != 0) fcfg.gravity_scale else 0;
+        const proj_slow: f64 = if (fcfg.valid != 0) fcfg.slow_multiplier else 1.0;
+        const proj_impact_radius: f64 = if (fcfg.valid != 0) fcfg.impact_radius_px else 0;
+        const proj_shape = if (fcfg.valid != 0) fcfg.shape else weapons_data.weaponBaseById(.starter_pistol).projectile_shape;
+        const proj_element = if (fcfg.valid != 0) fcfg.element else weapons_data.weaponBaseById(.starter_pistol).projectile_element;
+        const proj_pathing = if (fcfg.valid != 0) fcfg.pathing else weapons_data.weaponBaseById(.starter_pistol).projectile_pathing;
+        const proj_impact_kind = if (fcfg.valid != 0) fcfg.impact else .none;
+        const cd_after = weapon.cooldownFromFireRate(
+            fire_rate_v * chaos_profile.fire_rate_multiplier,
+            1.0,
+        );
+        var fire_decision: weapon.FireDecision = undefined;
+        weapon.weapon_tick_fire_with_keys(
+            player_ptr,
+            player_ptr.current_keys,
+            eff_dt,
+            cd_after,
+            &fire_decision,
+        );
+        if (fire_decision.fired == 1 and
+            chaos_profile.disable_projectiles == 0)
+        {
+            const dx = player_ptr.aim_x - player_ptr.x;
+            const dy = player_ptr.aim_y - player_ptr.y;
+            const aim_angle: f64 = if (dx == 0 and dy == 0) 0 else trig.lutAtan2(dy, dx);
+            const speed = proj_speed_base * proj_speed_mul;
+            const lifetime_ms = @max(
+                50.0,
+                proj_lifetime_sec * 1000.0 * proj_lifetime_mul,
+            );
+            const radius_v: f64 = @max(2.0, 7.0 * proj_size_mul);
+
+            // Multi-shot spread fan: distribute proj_count
+            // projectiles evenly across spread_total radians centred
+            // on aim_angle. Single-shot (count == 1) fires straight.
+            var shot_i: u32 = 0;
+            while (shot_i < proj_count) : (shot_i += 1) {
+                if (state.projectile_count >= world_state.MAX_PROJECTILES) break;
+                const offset: f64 = if (proj_count <= 1)
+                    0
+                else blk: {
+                    const t: f64 = @as(f64, @floatFromInt(shot_i)) /
+                        @as(f64, @floatFromInt(proj_count - 1));
+                    break :blk -spread_total * 0.5 + t * spread_total;
+                };
+                const ang = aim_angle + offset;
+                const slot: u32 = state.projectile_count;
+                state.projectile_count += 1;
+                const new_id: u32 = state.header.next_entity_id;
+                state.header.next_entity_id += 1;
+                state.projectiles[slot] = .{
+                    .x = player_ptr.x,
+                    .y = player_ptr.y,
+                    .vx = trig.lutCos(ang) * speed,
+                    .vy = trig.lutSin(ang) * speed,
+                    .radius = radius_v,
+                    .damage = damage_v,
+                    .lifetime_ms = lifetime_ms,
+                    .age_ms = 0,
+                    .traveled_px = 0,
+                    .origin_x = player_ptr.x,
+                    .origin_y = player_ptr.y,
+                    .homing_strength = proj_homing,
+                    .acceleration_multiplier = proj_accel,
+                    .gravity_scale = proj_gravity,
+                    .range_px = proj_range,
+                    .slow_multiplier = proj_slow,
+                    .sticky_fuse_ms = 0,
+                    .impact_radius_px = proj_impact_radius,
+                    .id = new_id,
+                    .bounces_remaining = proj_bounces,
+                    .pierce_remaining = proj_pierce,
+                    .split_count = proj_splits,
+                    .flags = .{
+                        .has_owner = true,
+                        .has_impact = true,
+                        .has_split = proj_splits > 0,
+                        .has_slow = proj_slow != 1.0,
+                        .has_homing = proj_homing != 0,
+                        .has_acceleration = proj_accel != 0,
+                        .has_gravity_scale = proj_gravity != 0,
+                        .has_range = true,
+                        .has_age = true,
+                        .has_traveled = true,
+                        .has_origin = true,
+                        .returning = false,
+                        .has_sticky_fuse = false,
+                        .has_impact_radius = proj_impact_radius > 0,
+                    },
+                    .pathing = proj_pathing,
+                    .element = proj_element,
+                    .impact = proj_impact_kind,
+                    .shape = proj_shape,
+                    .owner_id_len = player_ptr.id_len,
+                    .owner_id_bytes = player_ptr.id_bytes,
+                };
+                emitEvent(
+                    state,
+                    .shot_fired,
+                    @intCast(pi3),
+                    -1,
+                    new_id,
+                    ang,
+                    player_ptr.x,
+                    player_ptr.y,
+                );
+            }
         }
+        } // if (is_fighting) — weapon fire decision + spawn
+
+        // Roll current → prev for the next tick's edge detection.
+        player_ptr.prev_keys = player_ptr.current_keys;
     }
 
     // 2a. Fire-hazard chaos modifier (I33): spawn fire patches at
@@ -1017,291 +1263,6 @@ pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
         }
     }
 
-    // 8. Player physics (I16). Bridge PlayerEntity +
-    //    PlayerMovementMemory → PlayerStep, run stepPlayer with
-    //    the statics + one_way cache, write motion + memory back.
-    const statics_slice = state.statics[0..state.static_count];
-    const one_way_slice = state.one_way[0..state.static_count];
-    var pmi: u32 = 0;
-    while (pmi < state.player_count) : (pmi += 1) {
-        if (!state.players[pmi].flags.alive) continue;
-        // Host-resolved card build for this player (movement/shield/parry
-        // augments) — parity with the TS orchestrator's resolvePlayerBuild.
-        const fcfg = &state.player_fire_config[pmi];
-        const has_cfg = fcfg.valid != 0;
-        var ps = player_mod.PlayerStep{
-            .x = state.players[pmi].x,
-            .y = state.players[pmi].y,
-            .vx = state.players[pmi].vx,
-            .vy = state.players[pmi].vy,
-            .aim_x = state.players[pmi].aim_x,
-            .aim_y = state.players[pmi].aim_y,
-            .jetpack_fuel = if (state.players[pmi].flags.has_jetpack_fuel)
-                state.players[pmi].jetpack_fuel
-            else
-                100.0,
-            .crouching = if (state.players[pmi].flags.crouching) 1 else 0,
-            .coyote_ms = state.player_movement[pmi].coyote_ms,
-            .jump_buffer_ms = state.player_movement[pmi].jump_buffer_ms,
-            .jump_cut_applied = @intCast(state.player_movement[pmi].jump_cut_applied),
-            .jump_released_since_jump = @intCast(state.player_movement[pmi].jump_released_since_jump),
-            .grounded_last_frame = @intCast(state.player_movement[pmi].grounded_last_frame),
-            .jetpack_active = @intCast(state.player_movement[pmi].jetpack_active),
-            .touching_wall_dir = @intCast(state.player_movement[pmi].touching_wall_dir),
-            // Augment INPUTS from the host-resolved card build.
-            .jump_mul = if (has_cfg) fcfg.jump_mul else 1.0,
-            .wall_jump_mul = if (has_cfg) fcfg.wall_jump_mul else 1.0,
-            .wall_slide_mul = if (has_cfg) fcfg.wall_slide_mul else 1.0,
-            .air_jumps = if (has_cfg) @intCast(fcfg.air_jumps) else 0,
-            .dash_charges = if (has_cfg) @intCast(fcfg.dash_charges) else 0,
-            .dash_cooldown_mul = if (has_cfg) fcfg.dash_cooldown_mul else 1.0,
-            // Augment MEMORY carried from world state.
-            .dash_cooldown_ms = state.player_movement[pmi].dash_cooldown_ms,
-            .dash_active_ms = state.player_movement[pmi].dash_active_ms,
-            .dash_recovery_ms = state.player_movement[pmi].dash_recovery_ms,
-            .air_jumps_used = @intCast(state.player_movement[pmi].air_jumps_used),
-            .dash_used_in_air = @intCast(state.player_movement[pmi].dash_used_in_air),
-        };
-        // Compose per-player movement speed (I37). Defaults 1.0;
-        // speed_boost buff multiplies, slow_debuff / freeze /
-        // slow_field debuffs multiply (≤1).
-        var speed_mul: f64 = 1.0;
-        const ple = &state.players[pmi];
-        if (ple.flags.has_speed_boost and ple.speed_boost_until_tick > state.header.tick) {
-            speed_mul *= 1.4;
-        }
-        if (ple.flags.has_slow_debuff and ple.slow_debuff_until_tick > state.header.tick) {
-            speed_mul *= 0.5;
-        }
-        if (ple.flags.has_slow and ple.slowed_until_tick > state.header.tick) {
-            speed_mul *= ple.slow_multiplier;
-        }
-        if (ple.flags.has_freeze and ple.freeze_until_tick > state.header.tick) {
-            speed_mul *= ple.freeze_multiplier;
-        }
-        // Card move-speed + gravity augments ride the existing step multipliers.
-        if (has_cfg) speed_mul *= fcfg.move_speed_mul;
-        const grav_mul = chaos_profile.gravity_multiplier *
-            (if (has_cfg) fcfg.gravity_mul else 1.0);
-        // NB: stepPlayer RETURNS jumped-this-frame, not grounded. The grounded
-        // state lives in ps.grounded_last_frame (mutated in place). The world
-        // orchestrator emits no jump event, so the return is discarded.
-        _ = player_mod.stepPlayer(
-            &ps,
-            state.players[pmi].prev_keys,
-            state.players[pmi].current_keys,
-            state.players[pmi].aim_x,
-            state.players[pmi].aim_y,
-            speed_mul,
-            grav_mul,
-            eff_dt,
-            statics_slice,
-            one_way_slice,
-        );
-        state.players[pmi].x = ps.x;
-        state.players[pmi].y = ps.y;
-        state.players[pmi].vx = ps.vx;
-        state.players[pmi].vy = ps.vy;
-        state.players[pmi].jetpack_fuel = ps.jetpack_fuel;
-        state.players[pmi].flags.has_jetpack_fuel = true;
-        state.players[pmi].flags.crouching = ps.crouching != 0;
-        state.players[pmi].flags.grounded = ps.grounded_last_frame != 0;
-        state.player_movement[pmi].coyote_ms = ps.coyote_ms;
-        state.player_movement[pmi].jump_buffer_ms = ps.jump_buffer_ms;
-        state.player_movement[pmi].jump_cut_applied = @intCast(ps.jump_cut_applied);
-        state.player_movement[pmi].jump_released_since_jump = @intCast(ps.jump_released_since_jump);
-        state.player_movement[pmi].grounded_last_frame = @intCast(ps.grounded_last_frame);
-        state.player_movement[pmi].jetpack_active = @intCast(ps.jetpack_active);
-        state.player_movement[pmi].touching_wall_dir = @intCast(ps.touching_wall_dir);
-        state.player_movement[pmi].dash_cooldown_ms = ps.dash_cooldown_ms;
-        state.player_movement[pmi].dash_active_ms = ps.dash_active_ms;
-        state.player_movement[pmi].dash_recovery_ms = ps.dash_recovery_ms;
-        state.player_movement[pmi].air_jumps_used = @intCast(ps.air_jumps_used);
-        state.player_movement[pmi].dash_used_in_air = @intCast(ps.dash_used_in_air);
-        // Ceiling clamp (parity with World.ts computeCeilingClampY): head pushed
-        // above the ceiling → shove back under + kill upward velocity.
-        if (g_has_ceiling) {
-            const min_center_y = g_ceiling_clamp_y + PLAYER_HALF_HEIGHT;
-            if (state.players[pmi].y < min_center_y) {
-                state.players[pmi].y = min_center_y;
-                if (state.players[pmi].vy < 0) state.players[pmi].vy = 0;
-            }
-        }
-        // Void-plane kill (parity with World.ts): fell past the map bottom +
-        // KILL_PLANE_MARGIN → force-kill so the death→respawn flow runs. Player
-        // is alive here (checked at loop top). Emit hit_confirmed (damage =
-        // remaining health) + player_killed like any other death.
-        if (g_kill_plane_y > 0 and state.players[pmi].y > g_kill_plane_y) {
-            const rem = state.players[pmi].health;
-            state.players[pmi].health = 0;
-            state.players[pmi].flags.alive = false;
-            emitEvent(state, .hit_confirmed, @intCast(pmi), -1, 0, rem, state.players[pmi].x, state.players[pmi].y);
-            emitEvent(state, .player_killed, @intCast(pmi), -1, 0, 0, state.players[pmi].x, state.players[pmi].y);
-        }
-    }
-
-    // 6. Combat — per-player shield drain + parry start (I4 +
-    //    I4b). Defaults match `combat_*` exports.
-    var pi3: u32 = 0;
-    while (pi3 < state.player_count) : (pi3 += 1) {
-        const player_ptr = &state.players[pi3];
-        // Card shield/parry augments from the host-resolved build. Match the TS
-        // orchestrator: maxCharge = SHIELD_MAX_CHARGE_DEFAULT × chargeMul (NOT
-        // the stored max), recharge × rechargeMul, parry cooldown × cooldownMul.
-        const cfg3 = &state.player_fire_config[pi3];
-        const has3 = cfg3.valid != 0;
-        combat.tickShield(
-            player_ptr,
-            player_ptr.current_keys,
-            eff_dt,
-            combat.SHIELD_MAX_CHARGE_DEFAULT * (if (has3) cfg3.shield_charge_mul else 1.0),
-            combat.SHIELD_DRAIN_PER_SECOND,
-            combat.SHIELD_RECHARGE_PER_SECOND * (if (has3) cfg3.shield_recharge_mul else 1.0),
-        );
-        _ = combat.tryStartParry(
-            player_ptr,
-            player_ptr.current_keys,
-            player_ptr.prev_keys,
-            state.header.tick,
-            eff_dt,
-            combat.PARRY_ACTIVE_MS,
-            combat.PARRY_COOLDOWN_MS_DEFAULT * (if (has3) cfg3.parry_cooldown_mul else 1.0),
-        );
-        // Weapon fire decision + projectile spawn (I21 + I45).
-        // Use the host-resolved fire config when valid, else fall
-        // back to the starter-pistol base from data/weapons.zig.
-        // The host (J0 shim) patches state.player_fire_config[i]
-        // each tick from createWeaponBuild(player.cards) so card
-        // mutations (multi-shot, damage scale, etc) take effect.
-        const fcfg = &state.player_fire_config[pi3];
-        const damage_v: f64 = if (fcfg.valid != 0) fcfg.damage else weapons_data.weaponBaseById(.starter_pistol).damage;
-        const fire_rate_v: f64 = if (fcfg.valid != 0) fcfg.fire_rate else weapons_data.weaponBaseById(.starter_pistol).fire_rate;
-        const proj_speed_base: f64 = if (fcfg.valid != 0) fcfg.projectile_speed else weapons_data.weaponBaseById(.starter_pistol).projectile_speed;
-        const proj_speed_mul: f64 = if (fcfg.valid != 0) fcfg.speed_multiplier else 1.0;
-        const proj_lifetime_sec: f64 = if (fcfg.valid != 0) fcfg.projectile_lifetime_seconds else weapons_data.weaponBaseById(.starter_pistol).projectile_lifetime_seconds;
-        const proj_lifetime_mul: f64 = if (fcfg.valid != 0) fcfg.lifetime_multiplier else 1.0;
-        const spread_total: f64 = if (fcfg.valid != 0) fcfg.spread_radians else weapons_data.weaponBaseById(.starter_pistol).spread_radians;
-        const proj_count: u32 = if (fcfg.valid != 0) @max(@as(u32, 1), fcfg.projectile_count) else 1;
-        const proj_size_mul: f64 = if (fcfg.valid != 0) fcfg.size_multiplier else 1.0;
-        const proj_range: f64 = if (fcfg.valid != 0) fcfg.range_px else weapons_data.weaponBaseById(.starter_pistol).projectile_range_px;
-        const proj_bounces: u32 = if (fcfg.valid != 0) fcfg.bounces else 0;
-        const proj_pierce: u32 = if (fcfg.valid != 0) fcfg.pierce_count else 0;
-        const proj_splits: u32 = if (fcfg.valid != 0) fcfg.split_count else 0;
-        const proj_homing: f64 = if (fcfg.valid != 0) fcfg.homing_strength else 0;
-        const proj_accel: f64 = if (fcfg.valid != 0) fcfg.acceleration_multiplier else 0;
-        const proj_gravity: f64 = if (fcfg.valid != 0) fcfg.gravity_scale else 0;
-        const proj_slow: f64 = if (fcfg.valid != 0) fcfg.slow_multiplier else 1.0;
-        const proj_impact_radius: f64 = if (fcfg.valid != 0) fcfg.impact_radius_px else 0;
-        const proj_shape = if (fcfg.valid != 0) fcfg.shape else weapons_data.weaponBaseById(.starter_pistol).projectile_shape;
-        const proj_element = if (fcfg.valid != 0) fcfg.element else weapons_data.weaponBaseById(.starter_pistol).projectile_element;
-        const proj_pathing = if (fcfg.valid != 0) fcfg.pathing else weapons_data.weaponBaseById(.starter_pistol).projectile_pathing;
-        const proj_impact_kind = if (fcfg.valid != 0) fcfg.impact else .none;
-        const cd_after = weapon.cooldownFromFireRate(
-            fire_rate_v * chaos_profile.fire_rate_multiplier,
-            1.0,
-        );
-        var fire_decision: weapon.FireDecision = undefined;
-        weapon.weapon_tick_fire_with_keys(
-            player_ptr,
-            player_ptr.current_keys,
-            eff_dt,
-            cd_after,
-            &fire_decision,
-        );
-        if (fire_decision.fired == 1 and
-            chaos_profile.disable_projectiles == 0)
-        {
-            const dx = player_ptr.aim_x - player_ptr.x;
-            const dy = player_ptr.aim_y - player_ptr.y;
-            const aim_angle: f64 = if (dx == 0 and dy == 0) 0 else trig.lutAtan2(dy, dx);
-            const speed = proj_speed_base * proj_speed_mul;
-            const lifetime_ms = @max(
-                50.0,
-                proj_lifetime_sec * 1000.0 * proj_lifetime_mul,
-            );
-            const radius_v: f64 = @max(2.0, 7.0 * proj_size_mul);
-
-            // Multi-shot spread fan: distribute proj_count
-            // projectiles evenly across spread_total radians centred
-            // on aim_angle. Single-shot (count == 1) fires straight.
-            var shot_i: u32 = 0;
-            while (shot_i < proj_count) : (shot_i += 1) {
-                if (state.projectile_count >= world_state.MAX_PROJECTILES) break;
-                const offset: f64 = if (proj_count <= 1)
-                    0
-                else blk: {
-                    const t: f64 = @as(f64, @floatFromInt(shot_i)) /
-                        @as(f64, @floatFromInt(proj_count - 1));
-                    break :blk -spread_total * 0.5 + t * spread_total;
-                };
-                const ang = aim_angle + offset;
-                const slot: u32 = state.projectile_count;
-                state.projectile_count += 1;
-                const new_id: u32 = state.header.next_entity_id;
-                state.header.next_entity_id += 1;
-                state.projectiles[slot] = .{
-                    .x = player_ptr.x,
-                    .y = player_ptr.y,
-                    .vx = trig.lutCos(ang) * speed,
-                    .vy = trig.lutSin(ang) * speed,
-                    .radius = radius_v,
-                    .damage = damage_v,
-                    .lifetime_ms = lifetime_ms,
-                    .age_ms = 0,
-                    .traveled_px = 0,
-                    .origin_x = player_ptr.x,
-                    .origin_y = player_ptr.y,
-                    .homing_strength = proj_homing,
-                    .acceleration_multiplier = proj_accel,
-                    .gravity_scale = proj_gravity,
-                    .range_px = proj_range,
-                    .slow_multiplier = proj_slow,
-                    .sticky_fuse_ms = 0,
-                    .impact_radius_px = proj_impact_radius,
-                    .id = new_id,
-                    .bounces_remaining = proj_bounces,
-                    .pierce_remaining = proj_pierce,
-                    .split_count = proj_splits,
-                    .flags = .{
-                        .has_owner = true,
-                        .has_impact = true,
-                        .has_split = proj_splits > 0,
-                        .has_slow = proj_slow != 1.0,
-                        .has_homing = proj_homing != 0,
-                        .has_acceleration = proj_accel != 0,
-                        .has_gravity_scale = proj_gravity != 0,
-                        .has_range = true,
-                        .has_age = true,
-                        .has_traveled = true,
-                        .has_origin = true,
-                        .returning = false,
-                        .has_sticky_fuse = false,
-                        .has_impact_radius = proj_impact_radius > 0,
-                    },
-                    .pathing = proj_pathing,
-                    .element = proj_element,
-                    .impact = proj_impact_kind,
-                    .shape = proj_shape,
-                    .owner_id_len = player_ptr.id_len,
-                    .owner_id_bytes = player_ptr.id_bytes,
-                };
-                emitEvent(
-                    state,
-                    .shot_fired,
-                    @intCast(pi3),
-                    -1,
-                    new_id,
-                    ang,
-                    player_ptr.x,
-                    player_ptr.y,
-                );
-            }
-        }
-
-        // Roll current → prev for the next tick's edge detection.
-        player_ptr.prev_keys = player_ptr.current_keys;
-    }
-
     // 8b. Burn DoT (I32). Players with has_burn + burn_until_tick
     //     > tick take burn_dps every ~1 second (timed via
     //     burn_tick_last_applied).
@@ -1326,6 +1287,76 @@ pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
                 pp.flags.alive = false;
                 emitEvent(state, .player_killed, @intCast(bi), -1, 0, 0, pp.x, pp.y);
             }
+        }
+    }
+
+    // 1. Round phase machine + winner detection (I6). MOVED HERE
+    //    2026-07-14 (tick-order fix — was section "1" at the very top
+    //    of the tick). Winner detection reads state.players[].health/
+    //    .alive; running it BEFORE this tick's combat/projectile
+    //    resolution meant a kill landed this tick wasn't reflected in
+    //    round-winner detection until the FOLLOWING tick — a real,
+    //    silent one-tick delay in round-end/match-end detection.
+    //    Parity with World.ts, whose round-machine call is also its
+    //    LAST per-tick step (section 5). When a winner emerges (KO or
+    //    time-out), increment that player's score and signal the phase
+    //    machine so it transitions fighting → round_over even before
+    //    the time-out.
+    const winner_idx = detectRoundWinner(state);
+    if (winner_idx >= 0 and
+        state.header.round_phase == @intFromEnum(round.RoundPhase.fighting))
+    {
+        const idx: u32 = @intCast(winner_idx);
+        state.players[idx].score += 1;
+        emitEvent(
+            state,
+            .round_end,
+            winner_idx,
+            -1,
+            0,
+            @floatFromInt(state.players[idx].score),
+            0,
+            0,
+        );
+        // Match-end check (I9): if this player hit target_score,
+        // mark match winner. orchestrator stops advancing past
+        // round_over once match_winner_idx is set.
+        if (state.header.target_score > 0 and
+            state.players[idx].score >= state.header.target_score)
+        {
+            state.header.match_winner_idx = winner_idx;
+        }
+    }
+    const phase_result = round.roundStepPhase(
+        state.header.round_phase,
+        state.header.countdown_remaining_ms,
+        eff_dt,
+        winner_idx >= 0,
+    );
+    state.header.round_phase = phase_result.new_phase;
+    state.header.countdown_remaining_ms =
+        phase_result.new_countdown_remaining_ms;
+    if (phase_result.transitioned == 1 and
+        phase_result.new_phase == @intFromEnum(round.RoundPhase.countdown))
+    {
+        state.header.round_index += 1;
+        // Reset transient entities for the new round (I28).
+        // Players keep their score + buff durations; everything
+        // else clears so the next round starts clean.
+        state.projectile_count = 0;
+        state.fire_count = 0;
+        state.satellite_count = 0;
+        // Heal alive players to full + clear timed buffs that
+        // shouldn't carry across rounds (slow, burn, freeze).
+        // Buff pickups (overcharge, damage_amp etc) DO carry per
+        // the offline TS behavior.
+        var ri: u32 = 0;
+        while (ri < state.player_count) : (ri += 1) {
+            state.players[ri].health = 100.0;
+            state.players[ri].flags.alive = true;
+            state.players[ri].flags.has_slow = false;
+            state.players[ri].flags.has_burn = false;
+            state.players[ri].flags.has_freeze = false;
         }
     }
 
