@@ -40,10 +40,18 @@ export function pickGameServerUrl(requestedRegion: string | undefined): {
   if (override) {
     return { region: "home", url: override };
   }
-  const region: GameRegion =
-    requestedRegion && (GAME_REGIONS as readonly string[]).includes(requestedRegion)
-      ? (requestedRegion as GameRegion)
-      : DEFAULT_REGION;
+  const isKnownDeployedRegion =
+    !!requestedRegion && (GAME_REGIONS as readonly string[]).includes(requestedRegion);
+  if (requestedRegion && !isKnownDeployedRegion) {
+    // Silent fallback used to be genuinely silent — no way to tell from
+    // logs that a client asked for a region we don't deploy. Surface it.
+    console.warn(
+      `[matchmaker] requested region "${requestedRegion}" is not deployed (deployed: ${GAME_REGIONS.join(", ")}) — falling back to "${DEFAULT_REGION}"`,
+    );
+  }
+  const region: GameRegion = isKnownDeployedRegion
+    ? (requestedRegion as GameRegion)
+    : DEFAULT_REGION;
   return { region, url: GAME_SERVERS[region] ?? "" };
 }
 

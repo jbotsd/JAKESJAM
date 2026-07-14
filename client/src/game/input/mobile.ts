@@ -62,3 +62,18 @@ export async function enterFullscreenPortrait(): Promise<void> {
   // rotating the phone mid-match could never swap layouts — landscape and
   // portrait are both first-class now and the layout follows the hold.
 }
+
+/**
+ * Best-effort haptic pulse for hit/kill feedback. `navigator.vibrate` only
+ * exists on Android Chrome — iOS Safari has no Vibration API at all, so
+ * this silently no-ops there rather than needing a platform check at every
+ * call site. Never throws: some browsers reject the call entirely when it's
+ * not triggered from a user gesture, which combat events routinely aren't.
+ */
+export function vibrate(pattern: number | number[]): void {
+  try {
+    navigator.vibrate?.(pattern);
+  } catch {
+    /* unsupported or rejected — no haptic this time, game unaffected */
+  }
+}

@@ -82,7 +82,7 @@ import { transientVfx } from "../render/TransientVfx";
 import { EntityRenderCoordinator } from "../render/EntityRenderCoordinator";
 import { SimEventRouter } from "../render/SimEventRouter";
 import { TouchControls } from "../input/TouchControls";
-import { isTouchPrimary, isPortraitMobile } from "../input/mobile";
+import { isTouchPrimary, isPortraitMobile, vibrate } from "../input/mobile";
 import { ActionIntensity } from "../systems/ActionIntensity.js";
 import { ActionCamera } from "../systems/ActionCamera.js";
 import { stickyEnvelopeSubjects } from "../systems/actionCameraMath.js";
@@ -1411,6 +1411,7 @@ export class OnlineMatchScene extends Phaser.Scene {
     const victim = state.players[PlayerId(victimId)];
     if (!victim || damage < 1) return;
     const isLocal = victimId === this.localPlayerId;
+    if (isLocal) vibrate(15);
     const spread = (Math.random() - 0.5) * 22;
 
     // Damage tiers: light <15, medium 15–29, heavy 30+.
@@ -1809,6 +1810,7 @@ export class OnlineMatchScene extends Phaser.Scene {
         (e) => e.t === "hit-confirmed" && e.victimId === deadPid,
       );
       if (wasLocalKill) {
+        vibrate([10, 30, 10]);
         const prev = this.killStreakCount.get(this.localPlayerId) ?? 0;
         const streak = prev + 1;
         this.killStreakCount.set(this.localPlayerId, streak);
