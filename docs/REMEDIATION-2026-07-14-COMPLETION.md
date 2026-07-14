@@ -103,8 +103,36 @@ touching these was skipped to avoid colliding with his in-progress work:
   netcode bugs. Existing unit tests call `tick()` directly, never
   through the real timer, so green tests don't exercise the new
   accumulator path. Built it, verified `tick()` is fully synchronous
-  (safe for a catch-up burst), but it's sitting on its own branch
-  pending a live playtest, not merged.
+  (safe for a catch-up burst), sat it on its own branch pending a live
+  playtest.
+
+  **Update — live-playtested 2026-07-14, ~18:00.** Stood up an
+  isolated server on :8089 (this branch's code, `WORLD_BOTS=0`,
+  separate from the real :8088 process) to run the automated two-bot
+  Playwright multiplayer spec against it. That spec failed — but on
+  inspection the failure was the test fixture (`?world=1` doesn't
+  match the actual client entry flow anymore, which routes through
+  the Home → "HOT LOBBY" button), not the server. Confirmed this isn't
+  a tierB regression by running the identical spec against a tierA
+  control build (no accumulator change) — same failure there too, so
+  it's a pre-existing test/product drift, unrelated to this change and
+  out of scope for this remediation pass.
+
+  Jake then played the actual :8089 server directly (2 OBS recordings,
+  ~65s combined): joined Hot Lobby, played through a full countdown →
+  fighting → round-over → drafting cycle (Blink Dash / Cluster Bomb /
+  Stolen Fangs offered), picked an upgrade, round 2 started clean with
+  the score correctly carried over, paused/resumed mid-session with no
+  issues. Server log for that session: 156 lines, zero
+  error/warn/exception/fatal/throw entries, clean `SIGTERM` graceful
+  shutdown when the test server was torn down afterward. This is real
+  evidence under real wall-clock jitter (the exact thing unit tests
+  couldn't cover), not just "it typechecks."
+
+  Given that, **this branch is now playtest-cleared** per the safety
+  rail that gated it — ready to merge on your say-so, not doing it
+  unilaterally since it's still touching the live game's authoritative
+  tick loop.
 
 ## Corrected from Tier A to "needs Jake directly" after reading the doc
 
