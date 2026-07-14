@@ -302,16 +302,18 @@ export class TutorialScene extends Phaser.Scene {
     // The real hero rig stays hidden (updateRigs gates it on
     // hasMaterialized()) until the light actually resolves into it.
     this.spiritDescent = new TutorialSpiritDescent(this, HERO_SPAWN.x, HERO_SPAWN.y);
-    // Estaphaios is NOT a humanoid rig — "archons can't be ninjas too."
-    // It's the top of the same thorn-cluster race as the wave minions (see
-    // TutorialShardThrall's "estaphaios" tier), just pre-registered here
-    // instead of lazily spawned so it exists from frame one. Named after
-    // one of the lesser rulers subordinate to Yeldabaoth in the source
-    // text this project already draws Coptic terms from — deliberately
-    // NOT "Archon" (a generic title that explains itself; the game's own
-    // house rule is to never explain the sigil).
-    this.minionTiers.set(TUTORIAL_DUMMY_ID as string, "estaphaios");
-    this.thrallRigs.set(TUTORIAL_DUMMY_ID as string, new TutorialShardThrall(this, "estaphaios"));
+    // NOT a humanoid rig — "archons can't be ninjas too." It's the same
+    // thorn-cluster race as the wave minions (TutorialShardThrall), just
+    // pre-registered here instead of lazily spawned so it exists from frame
+    // one. Starts at the WEAKEST tier deliberately: the "estaphaios" name
+    // and its top-tier thorn-crown design are reserved for the real reveal
+    // at the vessel-dummy-spawn cue (186.329s) — every earlier dummy:spawn
+    // cue (see tutorial-song.ts) carries its own lesser tier and ramps this
+    // up as the fight escalates. Showing the finale boss's full identity on
+    // the very first practice hit undercut the "nothing named who's
+    // actually attacking you" build-up the song's own cues describe.
+    this.minionTiers.set(TUTORIAL_DUMMY_ID as string, "splinter");
+    this.thrallRigs.set(TUTORIAL_DUMMY_ID as string, new TutorialShardThrall(this, "splinter"));
 
     this.entityRender = new EntityRenderCoordinator(
       this,
@@ -1022,7 +1024,16 @@ export class TutorialScene extends Phaser.Scene {
     if (!bar) return;
     bar.clear();
     const boss = players[TUTORIAL_DUMMY_ID as string];
-    if (!boss || !boss.alive) {
+    // The big above-head bar + name is reserved for the real "estaphaios"
+    // reveal (see create()'s and dummy:spawn's own comments on the tier
+    // ramp) — every lesser tier already gets its own modest per-entity bar
+    // from TutorialShardThrall.draw() (which explicitly skips ONLY the
+    // "estaphaios" tier for exactly this reason: drawing both would double
+    // up). Bailing out here for any other tier is what keeps that split
+    // clean instead of stacking two bars once the boss.alive check below
+    // would otherwise pass.
+    const isEstaphaios = this.minionTiers.get(TUTORIAL_DUMMY_ID as string) === "estaphaios";
+    if (!boss || !boss.alive || !isEstaphaios) {
       this.bossNameLabel?.setVisible(false);
       return;
     }
@@ -1216,6 +1227,21 @@ export class TutorialScene extends Phaser.Scene {
         if (data.health !== undefined) this.bossMaxHealth = Number(data.health);
         this.duel.respawnDummy({ x: Number(data.x), y: Number(data.y) }, Number(data.health ?? 100));
         this.diegeticCues.dummyDissolve(Number(data.x), Number(data.y), true); // arrival burst — same light, arriving instead of leaving
+        // Tier ramp (see this scene's own minionTiers.set() comment in
+        // create()): every dummy:spawn cue in tutorial-song.ts now carries
+        // its own tier, "estaphaios" only on the real reveal. TutorialShardThrall's
+        // tier is constructor-only (readonly), so a tier change means
+        // destroying and relazily-recreating the rig, not mutating it in place —
+        // updateRigs() already lazily (re)creates any thrallRig id missing
+        // from the map on its very next call.
+        if (data.tier !== undefined) {
+          const tier = String(data.tier) as ShardThrallTier;
+          if (this.minionTiers.get(TUTORIAL_DUMMY_ID as string) !== tier) {
+            this.minionTiers.set(TUTORIAL_DUMMY_ID as string, tier);
+            this.thrallRigs.get(TUTORIAL_DUMMY_ID as string)?.destroy();
+            this.thrallRigs.delete(TUTORIAL_DUMMY_ID as string);
+          }
+        }
         break;
       case "dummy:goal": {
         const mode = (data.mode as "idle-flinch" | "return-fire" | "telegraphed-shot") ?? "idle-flinch";

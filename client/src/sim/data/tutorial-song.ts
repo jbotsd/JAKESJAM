@@ -158,7 +158,16 @@ export const tutorialSongCues: readonly SongCue[] = [
   // already makes) a fresh target sized for its OWN stage, so every
   // teaching beat actually gets its full window regardless of how fast
   // the previous stage's target went down.
-  { id: "voice-dummy-spawn", atSec: 32.7, kind: "dummy:spawn", data: { x: 2500, y: 900, health: 150 } },
+  // tier progression across the whole tutorial: the "estaphaios" name/design
+  // (thorn crown, outer ring, the big above-head bar) is reserved for the
+  // real reveal at vessel-dummy-spawn below — every earlier dummy.spawn is
+  // narratively unnamed ("nothing named who's actually doing the [attacking]",
+  // "a faint shape... unnamed" — see this file's own COPTIC_DEMIURGE/
+  // COPTIC_SEPHIA comments above), so it must not wear the finale's face or
+  // title from the very first hit. splinter → facet → warder ramps the
+  // visual menace alongside the difficulty ramp that already exists via
+  // rising health values.
+  { id: "voice-dummy-spawn", atSec: 32.7, kind: "dummy:spawn", data: { x: 2500, y: 900, health: 150, tier: "splinter" } },
   { id: "voice-goal-idle", atSec: 32.8, kind: "dummy:goal", data: { mode: "idle-flinch" } },
   // First target callout — "this is a thing you shoot," before it has ever
   // fired back. Fire itself was previously never taught at all.
@@ -171,7 +180,7 @@ export const tutorialSongCues: readonly SongCue[] = [
   // was also just too slow here regardless of player behavior — shrunk
   // this stage from 27.3s to 15.3s so even an actively-engaged player
   // isn't stuck dueling one passive target for half a minute.
-  { id: "voice-dummy-refresh-1", atSec: 48.1, kind: "dummy:spawn", data: { x: 2500, y: 900, health: 160 } },
+  { id: "voice-dummy-refresh-1", atSec: 48.1, kind: "dummy:spawn", data: { x: 2500, y: 900, health: 160, tier: "facet" } },
   { id: "voice-goal-return-fire", atSec: 48.163, kind: "dummy:goal", data: { mode: "return-fire", fireIntervalMs: 2200 } },
   // A companion shard joins the instant the fight goes live — from here on
   // the zone is never a single 1v1 duel with nothing else on screen; the
@@ -181,7 +190,7 @@ export const tutorialSongCues: readonly SongCue[] = [
   { id: "voice-wave-early", atSec: 48.5, kind: "horde:wave", data: { count: 1, xMin: 2820, xMax: 2820, fireIntervalMs: 3000, health: 20, tier: "splinter" } },
   // 64.087: measured onset in the first chorus — the call ("Ouoein!").
   { id: "chorus1-flash", atSec: 64.087, kind: "diegetic:coptic-flash", data: COPTIC_CHORUS },
-  { id: "voice-dummy-refresh-2", atSec: 74.0, kind: "dummy:spawn", data: { x: 2500, y: 900, health: 210 } },
+  { id: "voice-dummy-refresh-2", atSec: 74.0, kind: "dummy:spawn", data: { x: 2500, y: 900, health: 210, tier: "warder" } },
   { id: "voice-goal-parry-teach", atSec: 74.062, kind: "dummy:goal", data: { mode: "telegraphed-shot", fireIntervalMs: 1800 } },
   // The passive answer — Shield (Shift): a real wind-up now precedes every
   // shot in this mode (TutorialDummyDirector.telegraphProgress()), so this
@@ -215,7 +224,7 @@ export const tutorialSongCues: readonly SongCue[] = [
   // survives long enough to see its own mid-zone escalation
   // (response-goal-harder/response-boss-homing at 124.25) instead of
   // dying before that ever fires.
-  { id: "response-dummy-spawn", atSec: 109.145, kind: "dummy:spawn", data: { x: 4350, y: 900, health: 220 } },
+  { id: "response-dummy-spawn", atSec: 109.145, kind: "dummy:spawn", data: { x: 4350, y: 900, health: 220, tier: "warder" } },
   { id: "response-goal", atSec: 109.2, kind: "dummy:goal", data: { mode: "return-fire", fireIntervalMs: 1500 } },
   // FIRST SIGHTING — a faint shape in the far background, unnamed, easy to
   // miss the first time and unmistakable on a replay. This is the realm
@@ -380,7 +389,12 @@ export const tutorialSongCues: readonly SongCue[] = [
   // (vessel-shield-on/off, split into two pulses so it reads as a
   // repeating ability/rhythm, not one long DPS-suppression block): raw HP
   // alone just makes a fight feel spongy, not hard.
-  { id: "vessel-dummy-spawn", atSec: 186.329, kind: "dummy:spawn", data: { x: 7000, y: 900, health: 900 } },
+  // THE REVEAL — the only dummy:spawn in the whole tutorial carrying
+  // tier: "estaphaios". Everything before this point was deliberately
+  // unnamed/lesser (see voice-dummy-spawn's own comment); this is where
+  // the design and the name both arrive for the first time, in lockstep
+  // with the Demiurge manifesting one line below.
+  { id: "vessel-dummy-spawn", atSec: 186.329, kind: "dummy:spawn", data: { x: 7000, y: 900, health: 900, tier: "estaphaios" } },
   // YELDABAOTH MANIFESTS — the crystalline lion-headed serpent coils over
   // the whole finale (render-only presence; the fight stays the archon +
   // waves — the serpent is why the fight MATTERS). Named exactly once.
