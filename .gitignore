@@ -60,3 +60,8 @@ elm-stuff/
 # stream-kit runtime junk
 __pycache__/
 stream-kit/obs/*.bak-*
+
+# Portal submission build (scripts/build-portal-zip.sh output) — rebuilt
+# on demand, never hand-edited, so it's a build artifact like dist/.
+dist-portal/
+jakesjam-portal-build.zip
