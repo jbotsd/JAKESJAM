@@ -481,7 +481,15 @@ pub const WorldStateHeader = extern struct {
     tick: u32,
     rng_state: u32,
     round_phase: u8,
-    _pad0: [3]u8 = .{ 0, 0, 0 },
+    /// True sudden death (2026-07-14): a 2-2 game-point tie shrinks the
+    /// WHOLE round. Steals one of the 3 header pad bytes rather than
+    /// growing the struct — parity with World.ts's round.suddenDeathActive.
+    /// Pass-through today: the TRIGGER decision (when to set this true)
+    /// still lives in TS's round.ts, same "overlay" pattern the drafting
+    /// phase uses — this orchestrator only consumes it to apply storm
+    /// damage (see the "Shrink-zone storm" section in stepWorld).
+    sudden_death_active: u8 = 0,
+    _pad0: [2]u8 = .{ 0, 0 },
     next_entity_id: u32,
     map_id: u32,
     /// Bitmask of active chaos modifier ids (Phase I3). Bit N

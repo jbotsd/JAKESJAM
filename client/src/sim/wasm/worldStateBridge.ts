@@ -1095,7 +1095,13 @@ export function packWorldState(state: WorldState): Uint8Array {
   off += 4;
   view.setUint8(off, encEnum(ROUND_PHASES, state.round.phase));
   off += 1;
-  off += 3;
+  // sudden_death_active (2026-07-14) — steals one of the 3 header pad
+  // bytes rather than growing WORLD_STATE_TOTAL_SIZE. Parity with
+  // World.ts's round.suddenDeathActive (true sudden death: a 2-2 tie
+  // shrinks the WHOLE round; see sim/src/world.zig's storm-zone section).
+  view.setUint8(off, state.round.suddenDeathActive ? 1 : 0);
+  off += 1;
+  off += 2;
   // next_entity_id + map_id stay placeholders until the
   // data-table-driven orchestrator owns them.
   view.setUint32(off, 0, true);
@@ -1231,7 +1237,7 @@ export const SIM_EVENT_KIND = {
 export type UnpackedWorldState = {
   tick: Tick;
   rngState: number;
-  round: Pick<RoundState, "phase" | "countdownRemainingMs" | "roundIndex">;
+  round: Pick<RoundState, "phase" | "countdownRemainingMs" | "roundIndex" | "suddenDeathActive">;
   scores: Record<string, number>;
   targetScore: number;
   matchWinnerIdx: number; // -1 = no winner
@@ -1255,7 +1261,9 @@ export function unpackWorldState(buf: Uint8Array): UnpackedWorldState {
   off += 4;
   const phase = decEnum(ROUND_PHASES, view.getUint8(off)) as RoundPhase;
   off += 1;
-  off += 3;
+  const suddenDeathActive = view.getUint8(off) !== 0 ? true : undefined;
+  off += 1;
+  off += 2;
   off += 4 + 4; // next_entity_id, map_id (placeholders)
   const chaosMask = view.getUint32(off, true);
   off += 4;
@@ -1408,7 +1416,7 @@ export function unpackWorldState(buf: Uint8Array): UnpackedWorldState {
   const out: UnpackedWorldState = {
     tick,
     rngState,
-    round: { phase, countdownRemainingMs, roundIndex },
+    round: { phase, countdownRemainingMs, roundIndex, suddenDeathActive },
     scores,
     targetScore,
     matchWinnerIdx,

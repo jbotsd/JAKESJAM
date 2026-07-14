@@ -339,6 +339,9 @@ function mergeUnpacked(
       phase: unpacked.round.phase,
       countdownRemainingMs: unpacked.round.countdownRemainingMs,
       roundIndex: unpacked.round.roundIndex,
+      // Pass-through, not Zig-decided (2026-07-14) — see the matching
+      // comment in client/src/sim/wasm/worldWasmBackend.ts's mergeUnpacked.
+      suddenDeathActive: unpacked.round.suddenDeathActive,
       scores: { ...state.round.scores, ...unpacked.scores },
     },
     players: stableMergeRecord(state.players, unpacked.players),

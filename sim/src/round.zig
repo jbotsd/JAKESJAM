@@ -20,6 +20,14 @@ pub const COUNTDOWN_MS: f64 = 3000.0;
 pub const ROUND_TIME_LIMIT_MS: f64 = 90_000.0;
 pub const ROUND_OVER_HOLD_MS: f64 = 2500.0;
 
+// Shrink-zone storm constants (2026-07-14 port) — parity with
+// client/src/sim/round.ts's exports of the same names.
+pub const SUDDEN_DEATH_SCALE_START: f64 = 1.0;
+pub const SUDDEN_DEATH_SCALE_END: f64 = 0.6;
+pub const SUDDEN_DEATH_STORM_DPS: f64 = 8.0;
+pub const ENDGAME_ZONE_TRIGGER_MS: f64 = 15_000.0;
+pub const ENDGAME_ZONE_SCALE_END: f64 = 0.75;
+
 pub const RoundPhase = world_state.RoundPhase;
 
 /// Per-tick result of `roundStepPhase`. Tells the orchestrator

@@ -181,6 +181,12 @@ function mergeUnpacked(
       phase: unpacked.round.phase,
       countdownRemainingMs: unpacked.round.countdownRemainingMs,
       roundIndex: unpacked.round.roundIndex,
+      // Pass-through, not Zig-decided (2026-07-14): step_world's round
+      // machine doesn't yet independently trigger sudden death (that
+      // decision still lives in TS's round.ts, same "overlay" pattern as
+      // drafting) — this just round-trips whatever value was packed in so
+      // the NEW storm-damage code in world.zig can consume it.
+      suddenDeathActive: unpacked.round.suddenDeathActive,
       scores: { ...state.round.scores, ...unpacked.scores },
     },
     players: stableMergeRecord(state.players, unpacked.players),

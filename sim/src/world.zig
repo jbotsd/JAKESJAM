@@ -1149,6 +1149,61 @@ pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
         _ = fire.fireEntityTick(patch_ptr, eff_dt);
     }
 
+    // 3d. Shrink-zone storm (2026-07-14 port — parity with World.ts's
+    //     suddenDeath.ts computeStormZone + stepSuddenDeathStorm, the ONE
+    //     sim concern that had zero Zig code at all before this). Two
+    //     mutually-exclusive zones, sudden death wins ties:
+    //       - True sudden death (header.sudden_death_active, a 2-2 tie):
+    //         shrinks the WHOLE round, START->END (harder, 0.6).
+    //       - Soft endgame zone (every round, unconditionally): only
+    //         active in the final ENDGAME_ZONE_TRIGGER_MS, eases from full
+    //         coverage to a gentler ENDGAME_ZONE_SCALE_END (0.75) — counter-
+    //         pressure against timeout-camping without a hard punish.
+    //     Gated the same way fire-hazard is: is_fighting + real map size
+    //     (fail-closed, not fail-open with a wrong box, if the host never
+    //     called world_state_set_map_size).
+    if (is_fighting and g_map_width > 0 and g_map_height > 0) {
+        var zone_scale: f64 = 0;
+        var zone_active = false;
+        if (state.header.sudden_death_active != 0) {
+            const elapsed_ms = round.ROUND_TIME_LIMIT_MS - state.header.countdown_remaining_ms;
+            const frac = @max(0.0, @min(1.0, elapsed_ms / round.ROUND_TIME_LIMIT_MS));
+            zone_scale = round.SUDDEN_DEATH_SCALE_START +
+                (round.SUDDEN_DEATH_SCALE_END - round.SUDDEN_DEATH_SCALE_START) * frac;
+            zone_active = true;
+        } else if (state.header.countdown_remaining_ms <= round.ENDGAME_ZONE_TRIGGER_MS) {
+            const local_elapsed_ms = round.ENDGAME_ZONE_TRIGGER_MS - state.header.countdown_remaining_ms;
+            const frac = @max(0.0, @min(1.0, local_elapsed_ms / round.ENDGAME_ZONE_TRIGGER_MS));
+            zone_scale = 1.0 + (round.ENDGAME_ZONE_SCALE_END - 1.0) * frac;
+            zone_active = true;
+        }
+        if (zone_active) {
+            // Half-diagonal so scale=1.0 comfortably covers every corner —
+            // nobody takes storm damage the instant sudden death triggers.
+            const base_radius = @sqrt(g_map_width * g_map_width + g_map_height * g_map_height) / 2.0;
+            const zone_radius = base_radius * zone_scale;
+            const zone_cx = g_map_width / 2.0;
+            const zone_cy = g_map_height / 2.0;
+            const safe_radius_sq = zone_radius * zone_radius;
+            const dmg_per_sec = round.SUDDEN_DEATH_STORM_DPS * (eff_dt / 1000.0);
+            var sdi: u32 = 0;
+            while (sdi < state.player_count) : (sdi += 1) {
+                const sp = &state.players[sdi];
+                if (!sp.flags.alive) continue;
+                const sdx = sp.x - zone_cx;
+                const sdy = sp.y - zone_cy;
+                if (sdx * sdx + sdy * sdy <= safe_radius_sq) continue;
+                sp.health -= dmg_per_sec;
+                emitEvent(state, .hit_confirmed, @intCast(sdi), -1, 0, dmg_per_sec, sp.x, sp.y);
+                if (sp.health <= 0) {
+                    sp.health = 0;
+                    sp.flags.alive = false;
+                    emitEvent(state, .player_killed, @intCast(sdi), -1, 0, 0, sp.x, sp.y);
+                }
+            }
+        }
+    }
+
     // 7. Pickups (I13): for each ACTIVE pickup, check overlap
     //    against every alive player. On overlap apply the
     //    pickup's effect (health-shard heals, shield-cell adds
