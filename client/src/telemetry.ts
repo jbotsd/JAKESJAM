@@ -108,7 +108,7 @@ function scheduleFlush(): void {
   }, wait);
 }
 
-function takeBatch(): string | null {
+function takeBatch(): { body: string; count: number } | null {
   if (queue.length === 0) return null;
   const events: Array<TelemetryEvent & { seq: number }> = [];
   let size = 200; // envelope overhead
@@ -121,25 +121,37 @@ function takeBatch(): string | null {
     size += evSize;
     if (size > BATCH_MAX_BYTES) break;
   }
-  sentCount += events.length;
-  return JSON.stringify({ v: 1, session: sessionId, build: buildHash(), events });
+  return {
+    body: JSON.stringify({ v: 1, session: sessionId, build: buildHash(), events }),
+    count: events.length,
+  };
 }
 
 async function flush(pagehide: boolean): Promise<void> {
-  const body = takeBatch();
-  if (!body) return;
+  const batch = takeBatch();
+  if (!batch) return;
   lastFlushAt = performance.now();
+  // sentCount only advances on CONFIRMED delivery — a failed/offline/
+  // rejected attempt must not silently spend the per-session event budget
+  // (MAX_EVENTS_PER_SESSION), or a network blip / server hiccup permanently
+  // silences the rest of the session's error reporting despite nothing
+  // ever having reached the server.
   try {
     if (pagehide && "sendBeacon" in navigator) {
-      navigator.sendBeacon("/telemetry", new Blob([body], { type: "application/json" }));
+      const queued = navigator.sendBeacon(
+        "/telemetry",
+        new Blob([batch.body], { type: "application/json" }),
+      );
+      if (queued) sentCount += batch.count;
       return;
     }
-    await fetch("/telemetry", {
+    const res = await fetch("/telemetry", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body,
+      body: batch.body,
       keepalive: pagehide,
     });
+    if (res.ok) sentCount += batch.count;
   } catch {
     // Offline or server down: DROP (privacy contract — never hoard in storage).
   }
