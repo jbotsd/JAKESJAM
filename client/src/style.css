@@ -57,10 +57,12 @@
      .match-chrome-btn/.fs-toggle, and two later cascade layers that silently
      re-rounded .splash-stage/.shell-btn-secondary/.shell-cta-primary on top
      of their own correct chamfer). One small/medium/large scale, reused
-     everywhere, single-corner-pair asymmetric cut (top-left + bottom-right). */
-  --chamfer-sm: polygon(6px 0, 100% 0, 100% calc(100% - 6px), calc(100% - 6px) 100%, 0 100%, 0 6px);
-  --chamfer-md: polygon(10px 0, 100% 0, 100% calc(100% - 10px), calc(100% - 10px) 100%, 0 100%, 0 10px);
-  --chamfer-lg: polygon(18px 0, 100% 0, 100% calc(100% - 18px), calc(100% - 18px) 100%, 0 100%, 0 18px);
+     everywhere, single-corner-pair asymmetric cut (top-left + bottom-right).
+     Sized up 2026-07-15 (Jake: "go harder on those... make it bigger") —
+     a 6-10px cut on a 40-48px control read as barely-there. */
+  --chamfer-sm: polygon(10px 0, 100% 0, 100% calc(100% - 10px), calc(100% - 10px) 100%, 0 100%, 0 10px);
+  --chamfer-md: polygon(16px 0, 100% 0, 100% calc(100% - 16px), calc(100% - 16px) 100%, 0 100%, 0 16px);
+  --chamfer-lg: polygon(28px 0, 100% 0, 100% calc(100% - 28px), calc(100% - 28px) 100%, 0 100%, 0 28px);
 }
 
 * {
@@ -122,6 +124,7 @@ select {
 }
 
 button {
+  position: relative;
   min-height: 42px;
   border: 1px solid #3c79f0;
   /* Cut, not molded (manifesto law "wizard"): a chamfered corner is what a
@@ -130,7 +133,7 @@ button {
      a uniform round-rect substitute would still read as "softened," not
      "forged." Colors stay on CSS custom properties elsewhere so a future
      palette swap doesn't need to touch this geometry. */
-  clip-path: polygon(7px 0, 100% 0, 100% calc(100% - 7px), calc(100% - 7px) 100%, 0 100%, 0 7px);
+  clip-path: var(--chamfer-sm);
   color: #0a1020;
   background: linear-gradient(180deg, #6ea0f7 0%, #3c79f0 100%);
   font-size: 0.9rem;
@@ -148,6 +151,34 @@ button {
     filter 120ms ease,
     opacity 120ms ease,
     box-shadow 150ms ease;
+}
+
+/* Corner motif — the chamfer cut opens a triangular notch that used to just
+   be empty; a tiny diamond tick inlaid in the trailing (bottom-right) notch
+   reuses the same mark already anchoring the splash title/identity sigil
+   (axiom H3: reuse the one seal, never invent a second glyph). Quiet by
+   default (H2: light is scarce) — brightens with the button on hover. */
+button::after {
+  content: "";
+  position: absolute;
+  right: 4px;
+  bottom: 4px;
+  width: 10px;
+  height: 10px;
+  background: currentColor;
+  opacity: 0.4;
+  transform: rotate(45deg);
+  pointer-events: none;
+  transition: opacity 140ms ease;
+  /* Deliberately NOT fully inside the surviving polygon — its near tip
+     falls inside the cut-away triangle and gets sliced off by the same
+     clip-path, so the mark reads as bisected by the blade that made the
+     cut, not just decoration floating near it. */
+}
+
+button:hover::after,
+button:focus-visible::after {
+  opacity: 0.85;
 }
 
 button:hover:not(:disabled) {
@@ -248,6 +279,7 @@ input[type="color"] {
 }
 
 .splash-stage {
+  position: relative;
   display: grid;
   gap: 22px;
   width: min(760px, 100%);
@@ -256,13 +288,27 @@ input[type="color"] {
   border: 1px solid rgba(60, 121, 240, 0.24);
   /* Cut, not molded — same asymmetric chamfer language as buttons/panels
      throughout the shell, scaled up for the hull's main hero container. */
-  clip-path: polygon(18px 0, 100% 0, 100% calc(100% - 18px), calc(100% - 18px) 100%, 0 100%, 0 18px);
+  clip-path: var(--chamfer-lg);
   /* Void-and-seam depth (axiom G2/G3): flat dark fill, not a directional
      gradient standing in for a lit physical card. */
   background: rgba(9, 12, 19, 0.94);
   box-shadow:
     0 0 0 1px rgba(60, 121, 240, 0.14),
     0 0 32px rgba(39, 80, 162, 0.05);
+}
+
+/* Bolder corner motif for the hero panel — same reused mark as the button
+   one, scaled up to match the bigger cut. */
+.splash-stage::after {
+  content: "";
+  position: absolute;
+  right: 10px;
+  bottom: 10px;
+  width: 22px;
+  height: 22px;
+  background: rgba(137, 127, 105, 0.5);
+  transform: rotate(45deg);
+  pointer-events: none;
 }
 
 .splash-kicker {
@@ -954,7 +1000,11 @@ button.btn-danger:hover:not(:disabled) {
   margin-top: 2px;
 }
 
-.shell-btn-ghost {
+/* Named .shell-btn-quiet, NOT .shell-btn-ghost — that name was already taken
+   (pause menu's bordered/dimmed variant, line ~1280) and means something
+   different there (Secondary + faint border, not no-border/no-fill). Reusing
+   it would have silently merged two different button kinds' rules. */
+.shell-btn-quiet {
   min-height: 32px;
   padding: 4px 2px;
   border: 0 !important;
@@ -969,8 +1019,10 @@ button.btn-danger:hover:not(:disabled) {
   transition: color 140ms ease;
 }
 
-.shell-btn-ghost:hover:not(:disabled),
-.shell-btn-ghost:focus-visible:not(:disabled) {
+.shell-btn-quiet::after { content: none; } /* no chamfer here, no motif either */
+
+.shell-btn-quiet:hover:not(:disabled),
+.shell-btn-quiet:focus-visible:not(:disabled) {
   color: var(--shell-accent-bright) !important;
   text-decoration: underline;
   text-underline-offset: 3px;
@@ -979,7 +1031,7 @@ button.btn-danger:hover:not(:disabled) {
   box-shadow: none !important;
 }
 
-.shell-btn-ghost:active:not(:disabled) {
+.shell-btn-quiet:active:not(:disabled) {
   transform: none;
   filter: none;
 }
@@ -1453,6 +1505,7 @@ button.btn-danger:hover:not(:disabled) {
 }
 
 .email-gate-frame {
+  position: relative;
   display: grid;
   gap: 18px;
   width: min(520px, 100%);
@@ -1462,13 +1515,25 @@ button.btn-danger:hover:not(:disabled) {
   /* Cut, not molded — this frame never got the chamfer pass the rest of the
      shell did; same asymmetric clip-path as .splash-stage/button, not a
      rounded corner (manifesto law "wizard"). */
-  clip-path: polygon(16px 0, 100% 0, 100% calc(100% - 16px), calc(100% - 16px) 100%, 0 100%, 0 16px);
+  clip-path: var(--chamfer-lg);
   /* Void-and-seam depth: flat fill, thin glow, no elevation shadow (G2). */
   background: rgba(11, 15, 24, 0.95);
   box-shadow:
     0 0 0 1px rgba(60, 121, 240, 0.18),
     0 0 30px rgba(39, 80, 162, 0.04);
   text-align: center;
+}
+
+.email-gate-frame::after {
+  content: "";
+  position: absolute;
+  right: 10px;
+  bottom: 10px;
+  width: 22px;
+  height: 22px;
+  background: rgba(137, 127, 105, 0.5);
+  transform: rotate(45deg);
+  pointer-events: none;
 }
 
 .email-gate-copy {
@@ -1507,11 +1572,14 @@ button.btn-danger:hover:not(:disabled) {
   justify-self: center;
   padding: 4px 8px;
   border: 0;
+  clip-path: none;
   background: none;
   color: rgba(215, 221, 228, 0.35);
   font-size: 0.78rem;
   cursor: pointer;
 }
+
+.email-gate-skip::after { content: none; }
 
 .email-gate-skip:hover {
   color: rgba(215, 221, 228, 0.6);
@@ -1693,6 +1761,7 @@ button.btn-danger:hover:not(:disabled) {
   padding: 10px 22px;
   display: block;
   border: 0;
+  clip-path: none;
   background: none;
   color: #aa9e7f;
   font: inherit;
@@ -1704,6 +1773,8 @@ button.btn-danger:hover:not(:disabled) {
   cursor: pointer;
   animation: title-in 0.45s ease-out 3.5s both, cta-blink 1.15s steps(1) 3.6s infinite;
 }
+
+.splash-cta-blink::after { content: none; }
 
 .splash-cta-blink:hover { animation-play-state: paused, paused; opacity: 1; color: #e8ecf4; }
 
