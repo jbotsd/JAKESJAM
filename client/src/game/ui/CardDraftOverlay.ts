@@ -184,7 +184,26 @@ export class CardDraftOverlay {
     }
   }
 
+  /**
+   * Public hide — also called externally (SimEventRouter's hideCardDraft)
+   * whenever the server-authoritative round phase moves on. A single-
+   * player-vs-bots match can satisfy "everyone picked" the instant the
+   * local player clicks, so that external call can land within tens of
+   * ms of a pick — well before the reveal sequence below has had its
+   * ~860ms to play. Deferring to an in-flight sequence here (rather than
+   * force-hiding underneath it) is what makes the sequence actually
+   * finish playing instead of getting cut off almost every time (Jake,
+   * 2026-07-14: "animate it all together with sequence" — found via a
+   * live CDP check: the overlay was vanishing after ~300ms of a ~860ms
+   * sequence). The sequence's own completion calls forceHide() directly,
+   * which always actually hides — this only guards the EXTERNAL path.
+   */
   hide(): void {
+    if (this.destroyed || this.pickInFlight) return;
+    this.forceHide();
+  }
+
+  private forceHide(): void {
     if (this.destroyed) return;
     this.root.style.display = "none";
     this.currentHandler = null;
@@ -243,7 +262,13 @@ export class CardDraftOverlay {
     }
   }
 
+  /** True while a pick sequence is playing — guards against a second
+   *  click/auto-pick firing mid-sequence and stomping the timers below. */
+  private pickInFlight = false;
+
   private handlePick(card: CardDefinition): void {
+    if (this.pickInFlight) return;
+    this.pickInFlight = true;
     const handler = this.currentHandler;
     // Pick juice BEFORE hide so the scene can still flash while overlay fades.
     try {
@@ -251,26 +276,96 @@ export class CardDraftOverlay {
     } catch {
       // never block the pick path on juice errors
     }
-    // Brief white flash on the whole stage so every pick "lands".
-    const flash = document.createElement("div");
-    Object.assign(flash.style, {
-      position: "fixed",
-      inset: "0",
-      zIndex: "9001",
-      pointerEvents: "none",
-      background: card.visual?.glowColor
-        ? `radial-gradient(circle at 50% 50%, ${card.visual.glowColor}88 0%, transparent 55%)`
-        : "rgba(255,255,255,0.35)",
-      opacity: "1",
-      transition: "opacity 280ms ease",
-    } as Partial<CSSStyleDeclaration>);
-    document.body.appendChild(flash);
-    requestAnimationFrame(() => {
-      flash.style.opacity = "0";
-      setTimeout(() => flash.remove(), 320);
+
+    // ── Sequenced reveal (Jake, 2026-07-14: "animate it all together with
+    // sequence") — was a single instant flash+dismiss; now the winning
+    // card gets its own short beat before the overlay closes, staging
+    // through the SAME plates already on screen (no separate confirmation
+    // modal to build/maintain):
+    //   1. every OTHER card dims + settles back (spotlight the winner)
+    //   2. the winner steps forward (scale/elevate, Nijman overshoot —
+    //      matches the entry animation's own motion language above)
+    //   3. rarity label flashes, icon pops, name+rule reveals, seal fades
+    //   4. the existing whole-stage glow flash, then hide()
+    const winnerEl = this.cardsContainer.querySelector<HTMLElement>(
+      `[data-card-plate="${card.id}"]`,
+    );
+    const others = Array.from(
+      this.cardsContainer.querySelectorAll<HTMLElement>("[data-card-plate]"),
+    ).filter((el) => el !== winnerEl);
+
+    for (const el of others) {
+      el.style.transition = "opacity 260ms ease, transform 260ms ease";
+      el.style.opacity = "0.16";
+      el.style.transform = "scale(0.92)";
+      el.style.pointerEvents = "none";
+    }
+
+    const glow = card.visual?.glowColor ?? colorForRarity(card.rarity);
+    const timers: ReturnType<typeof setTimeout>[] = [];
+    const after = (ms: number, fn: () => void) => {
+      timers.push(setTimeout(() => { if (!this.destroyed) fn(); }, ms));
+    };
+
+    if (winnerEl) {
+      winnerEl.style.position = "relative";
+      winnerEl.style.zIndex = "3";
+      winnerEl.style.pointerEvents = "none";
+      // Step forward — same overshoot curve as the entry spawn (Nijman),
+      // not a different bounce, so the two beats read as one motion voice.
+      winnerEl.style.transition =
+        "transform 260ms cubic-bezier(0.34,1.4,0.64,1), box-shadow 260ms ease";
+      winnerEl.style.transform = "translateY(-6px) scale(1.07)";
+      winnerEl.style.boxShadow = `0 0 0 1px ${withAlpha(glow, 0.55)}, 0 16px 40px rgba(0,0,0,0.55), 0 0 32px ${withAlpha(glow, 0.35)}`;
+
+      const rarityEl = winnerEl.querySelector<HTMLElement>("[data-card-rarity]");
+      const orbEl = winnerEl.querySelector<HTMLElement>("[data-card-orb]");
+      const nameEl = winnerEl.querySelector<HTMLElement>("[data-card-name]");
+      const sealEl = winnerEl.querySelector<HTMLElement>(`[data-card-seal="${card.id}"]`);
+      for (const el of [rarityEl, orbEl, nameEl, sealEl]) {
+        if (!el) continue;
+        el.style.transition = "none";
+        el.style.opacity = "0.35";
+        el.style.transform = el === orbEl ? "scale(0.8)" : "translateY(4px)";
+      }
+      const reveal = (el: HTMLElement | null, delayMs: number, scalePop: boolean) => {
+        if (!el) return;
+        after(delayMs, () => {
+          el.style.transition = scalePop
+            ? "opacity 180ms ease, transform 220ms cubic-bezier(0.34,1.4,0.64,1)"
+            : "opacity 180ms ease, transform 220ms ease";
+          el.style.opacity = "1";
+          el.style.transform = scalePop ? "scale(1)" : "translateY(0)";
+        });
+      };
+      reveal(rarityEl, 80, false);
+      reveal(orbEl, 160, true);
+      reveal(nameEl, 280, false);
+      reveal(sealEl, 380, false);
+    }
+
+    after(560, () => {
+      // Brief whole-stage glow so every pick "lands" — now the CLOSING
+      // beat of the sequence rather than the only beat.
+      const flash = document.createElement("div");
+      Object.assign(flash.style, {
+        position: "fixed",
+        inset: "0",
+        zIndex: "9001",
+        pointerEvents: "none",
+        background: `radial-gradient(circle at 50% 50%, ${withAlpha(glow, 0.55)} 0%, transparent 55%)`,
+        opacity: "1",
+        transition: "opacity 280ms ease",
+      } as Partial<CSSStyleDeclaration>);
+      document.body.appendChild(flash);
+      requestAnimationFrame(() => {
+        flash.style.opacity = "0";
+        setTimeout(() => flash.remove(), 320);
+      });
+      this.pickInFlight = false;
+      this.hide();
+      handler?.(card);
     });
-    this.hide();
-    handler?.(card);
   }
 
   private makeCardElement(card: CardDefinition): HTMLDivElement {
@@ -313,6 +408,7 @@ export class CardDraftOverlay {
     el.style.overflow = "hidden";
 
     const rarity = document.createElement("div");
+    rarity.dataset.cardRarity = "";
     rarity.textContent = card.rarity.toUpperCase();
     Object.assign(rarity.style, RARITY_STYLE);
     rarity.style.color = rarityColor;
@@ -322,6 +418,7 @@ export class CardDraftOverlay {
 
     // Glyph only — no aura halo. Symbol is the icon.
     const orbWrap = document.createElement("div");
+    orbWrap.dataset.cardOrb = "";
     Object.assign(orbWrap.style, {
       position: "relative",
       width: "76px",
@@ -345,6 +442,7 @@ export class CardDraftOverlay {
     // ── Card identity stack (this IS the plate, not a header footnote) ──
     // Name → seal (Coptic · latin) → english gloss → buckets
     const name = document.createElement("div");
+    name.dataset.cardName = "";
     name.textContent = card.name;
     Object.assign(name.style, NAME_STYLE);
     name.style.textAlign = "center";
