@@ -736,10 +736,43 @@ export class MatchHost {
     });
   }
 
+  /** Fixed-timestep accumulator, ms of un-simulated game time banked. */
+  private accumulatorMs = 0;
+  private lastPumpAtMs = 0;
+  /** After a real stall (GC pause, event-loop block, tab backgrounding),
+   *  cap catch-up instead of trying to replay hundreds of missed ticks in
+   *  one synchronous burst. The accumulator drops the excess — same
+   *  tradeoff every fixed-timestep loop makes. */
+  private static readonly MAX_CATCHUP_TICKS = 5;
+
   private maybeStartLoop(): void {
     if (this.interval) return;
     this.startedAt = this.now();
-    this.interval = setInterval(() => this.tick(), STEP_MS);
+    this.accumulatorMs = 0;
+    this.lastPumpAtMs = this.now();
+    // Poll faster than STEP_MS so real elapsed time is tracked precisely
+    // (accumulator/fixed-timestep pattern) instead of trusting setInterval's
+    // own nominal firing rate, which drifts under event-loop jitter over a
+    // long-running match. tick() itself is unchanged — always assumes
+    // exactly STEP_MS of simulated time per call; this only decides HOW
+    // MANY times to call it based on real elapsed wall-clock time.
+    this.interval = setInterval(() => this.pumpTicks(), Math.max(1, STEP_MS / 4));
+  }
+
+  private pumpTicks(): void {
+    const nowMs = this.now();
+    this.accumulatorMs += nowMs - this.lastPumpAtMs;
+    this.lastPumpAtMs = nowMs;
+
+    const maxAccumulatedMs = STEP_MS * MatchHost.MAX_CATCHUP_TICKS;
+    if (this.accumulatorMs > maxAccumulatedMs) {
+      this.accumulatorMs = maxAccumulatedMs;
+    }
+
+    while (this.accumulatorMs >= STEP_MS) {
+      this.tick();
+      this.accumulatorMs -= STEP_MS;
+    }
   }
 
   private stop(): void {
