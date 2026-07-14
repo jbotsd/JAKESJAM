@@ -367,7 +367,7 @@ app.innerHTML = `
       <p class="shell-hint" data-clips-save-status>
         Auto: multi-kill / parry-kill / chain · or tap Save clip now in Hot Lobby.
       </p>
-      <button data-clips-save-now type="button" class="primary">Save clip now</button>
+      <button data-clips-save-now type="button" class="primary shell-cta-primary">Save clip now</button>
       <div data-clips-list class="shell-clips-list"></div>
       <button data-clips-back type="button" class="shell-btn-secondary">Back</button>
     </div>
@@ -420,6 +420,14 @@ app.innerHTML = `
           <p class="credits-hint">
             Every player who joined the Hot Lobby before there was a reason to.
             The Order of Perpetual Respawn. You, right now, reading this.
+          </p>
+        </div>
+        <div class="credits-block">
+          <h3>Legal</h3>
+          <p class="credits-role">
+            <a href="/privacy" target="_blank" rel="noopener noreferrer" class="credits-link">Privacy Policy</a>
+            &nbsp;·&nbsp;
+            <a href="/terms" target="_blank" rel="noopener noreferrer" class="credits-link">Terms of Service</a>
           </p>
         </div>
         <div class="credits-block credits-seal-mark" aria-hidden="true">
@@ -490,7 +498,7 @@ app.innerHTML = `
         </form>
 
         <div class="room-actions" data-room-actions>
-          <button data-create-room type="button" class="primary">Host private room</button>
+          <button data-create-room type="button" class="primary shell-cta-primary">Host private room</button>
           <button data-back-to-splash type="button" class="shell-btn-secondary">← Home</button>
         </div>
         <!-- hidden practice hook for legacy LobbyController (practice is on HOME) -->
@@ -514,7 +522,7 @@ app.innerHTML = `
           <div class="room-status-slot" data-room-status></div>
           <div class="shell-pause-actions">
             <button data-ready-toggle type="button" class="shell-btn-secondary">Ready</button>
-            <button data-start-match type="button" class="primary">Start match</button>
+            <button data-start-match type="button" class="primary shell-cta-primary">Start match</button>
             <button data-leave-room type="button" class="btn-danger">Leave</button>
           </div>
         </section>

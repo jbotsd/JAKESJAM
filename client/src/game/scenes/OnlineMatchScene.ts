@@ -68,6 +68,7 @@ import {
   type MatchResultsRow,
 } from "../ui/MatchResultsOverlay";
 import { HudSystem, type HudChip, type HudVitals, type HudRound } from "../ui/HudSystem";
+import { ActionBarSystem, type ActionBarVitals } from "../ui/ActionBarSystem";
 import { RoundBanner } from "../ui/RoundBanner";
 import { DeathOverlay } from "../ui/DeathOverlay";
 import { ConnectionOverlay } from "../ui/ConnectionOverlay";
@@ -384,6 +385,7 @@ export class OnlineMatchScene extends Phaser.Scene {
 
   // ---- New shared UI systems ----
   private hudSystem: HudSystem | null = null;
+  private actionBar: ActionBarSystem | null = null;
   private roundBannerSystem: RoundBanner | null = null;
   private deathOverlay: DeathOverlay | null = null;
   private connectionOverlay: ConnectionOverlay | null = null;
@@ -603,6 +605,7 @@ export class OnlineMatchScene extends Phaser.Scene {
     this.createStatsHud();
     // Shared HUD/banner/death systems (replace inline text with polished versions)
     this.hudSystem = new HudSystem(this, this.localPlayerId);
+    this.actionBar = new ActionBarSystem(this);
     this.roundBannerSystem = new RoundBanner(this);
     this.deathOverlay = new DeathOverlay();
     this.connectionOverlay = new ConnectionOverlay();
@@ -972,20 +975,9 @@ export class OnlineMatchScene extends Phaser.Scene {
     const vitals: HudVitals = {
       health: local?.health ?? 0,
       maxHealth,
-      shieldCharge: local?.shieldCharge,
-      shieldMaxCharge: local?.shieldMaxCharge ?? 0,
-      // jetpackFuel deliberately NOT fed: the jetpack was removed from the
-      // game (the sim field is pinned for ABI stability only), so the HUD
-      // bar was rendering a meaningless frozen "125%" forever.
-      abilityCharge: local?.dashReadyFrac,
       chips,
       isDead: !local || local.health <= 0 || !local.alive,
       outsideStorm,
-      // Party-frame portrait badge (Jake 2026-07-14) — same identity color
-      // makePlayerRig assigns the local hero's rig, so the HUD badge and
-      // the in-world nameplate badge read as the same person.
-      portraitColor: local ? LOCAL_PLAYER_FALLBACK_COLOR : undefined,
-      portraitSeed: local ? this.localPlayerId : undefined,
     };
 
     const scores = state.round.scores;
@@ -1012,6 +1004,45 @@ export class OnlineMatchScene extends Phaser.Scene {
           : REMOTE_PLAYER_FALLBACK_COLOR;
     }
 
+    // Fused nameplate ring data (Jake, 2026-07-14: "give everyone the match
+    // a nameplate" — every roster player's live health/shield, not just
+    // local's). Each player has their own character (and thus maxHealth), so
+    // this can't reuse the local `maxHealth` computed above.
+    const healthByPlayer: Record<string, { ratio: number; shieldRatio?: number; isDead: boolean }> = {};
+    for (const pid of Object.keys(scores)) {
+      const p = state.players[pid as PlayerId];
+      if (!p) {
+        healthByPlayer[pid] = { ratio: 0, isDead: true };
+        continue;
+      }
+      const pMaxHealth = this.getCharacter(p.characterId).maxHealth;
+      const shMax = p.shieldMaxCharge ?? 0;
+      healthByPlayer[pid] = {
+        ratio: pMaxHealth > 0 ? Phaser.Math.Clamp(p.health / pMaxHealth, 0, 1) : 0,
+        shieldRatio: shMax > 0 && p.shieldCharge !== undefined ? Phaser.Math.Clamp(p.shieldCharge / shMax, 0, 1) : undefined,
+        isDead: p.health <= 0 || !p.alive,
+      };
+    }
+
+    // Compact per-row status ticks (Jake, 2026-07-14: "lobby/party member
+    // need... possibly status buffs and debuffs" — every player, reusing
+    // the same descriptors the local-only text chip strip already reads).
+    const statusByPlayer: Record<string, { color: number; isDebuff: boolean }[]> = {};
+    for (const pid of Object.keys(scores)) {
+      const p = state.players[pid as PlayerId];
+      if (!p) continue;
+      const ticks: { color: number; isDebuff: boolean }[] = [];
+      for (const buff of BUFF_DESCRIPTORS) {
+        const tickValue = p[buff.field] as number | undefined;
+        if (typeof tickValue === "number" && tickValue > state.tick) ticks.push({ color: buff.color, isDebuff: false });
+      }
+      for (const debuff of DEBUFF_DESCRIPTORS) {
+        const tickValue = p[debuff.field] as number | undefined;
+        if (typeof tickValue === "number" && tickValue > state.tick) ticks.push({ color: debuff.color, isDebuff: true });
+      }
+      if (ticks.length > 0) statusByPlayer[pid] = ticks;
+    }
+
     const round: HudRound = {
       phase: state.round.phase,
       countdownRemainingMs: state.round.countdownRemainingMs,
@@ -1019,10 +1050,28 @@ export class OnlineMatchScene extends Phaser.Scene {
       scores,
       names: Object.fromEntries(this.rosterNames),
       colors,
+      healthByPlayer,
+      statusByPlayer,
       winnerLabel,
     };
 
     this.hudSystem.update(vitals, round);
+
+    // Diablo-style bottom-center hotkey bar (Jake, 2026-07-14) — resource
+    // orbs use the same local player state as `vitals` above; separate call
+    // since it's a structurally distinct screen region (bottom vs top-left).
+    if (this.actionBar) {
+      const shMax = local?.shieldMaxCharge ?? 0;
+      const actionBarVitals: ActionBarVitals = {
+        health: local?.health ?? 0,
+        maxHealth,
+        shieldCharge: local?.shieldCharge ?? 0,
+        shieldMaxCharge: shMax,
+        dashReadyFrac: local?.dashReadyFrac ?? 1,
+        isDead: vitals.isDead,
+      };
+      this.actionBar.update(actionBarVitals, chips);
+    }
 
     // Death overlay (teach tip ≤1 + optional share when clip URL known).
     // HELD BACK ~3s so the death rite (burst → shards → soul returning to
@@ -1043,8 +1092,22 @@ export class OnlineMatchScene extends Phaser.Scene {
         }
         const riteDone = performance.now() - this.localDeathAtMs >= 3_000;
         const remainingSec = Math.max(0, Math.ceil(state.round.countdownRemainingMs / 1000));
+        // RoundBanner explicitly hides itself during "fighting" phase (the
+        // exact window this overlay is up), and this overlay's own
+        // full-viewport blur darkens the peripheral nameplate column behind
+        // it — score context otherwise has nowhere to show while dead
+        // (Jake, 2026-07-14 UI pass). Recomputed every frame since another
+        // player can score while you're still waiting to respawn.
+        const scoreLine = Object.entries(scores)
+          .sort(([aId, a], [bId, b]) => b - a || aId.localeCompare(bId))
+          .map(([pid, score]) => {
+            const tag = pid === this.localPlayerId ? "YOU" : (round.names?.[pid] ?? playerTag(pid));
+            return `${tag} ${score}`;
+          })
+          .join("  ·  ");
         if (this.deathOverlay.isOpen()) {
           this.deathOverlay.updateTimer(remainingSec);
+          this.deathOverlay.updateScoreLine(scoreLine);
         } else if (riteDone) {
           if (this.deathTipLocked === undefined) {
             this.deathTipLocked = this.computeDeathTip(state);
@@ -1052,6 +1115,7 @@ export class OnlineMatchScene extends Phaser.Scene {
           this.deathOverlay.show(remainingSec, {
             tip: this.deathTipLocked,
             shareUrl: this.lastShareClipUrl,
+            scoreLine,
           });
         }
       } else {
@@ -2348,6 +2412,22 @@ export class OnlineMatchScene extends Phaser.Scene {
    * Called on create and whenever the viewport resizes (orientation change).
    */
   private applyMobileCamera(): void {
+    // Explicitly re-sync the world camera's VIEWPORT to the current canvas
+    // size on every resize — Jake, 2026-07-15, "sometimes when it just
+    // downgrades [resolution]" bug report (governor rescale → black gap on
+    // one side of the canvas). Root cause: this method only ever called
+    // setZoom(), never setSize(); keeping cameras.main's viewport in sync
+    // was left entirely to Phaser's own CameraManager.onResize, which only
+    // auto-tracks a camera whose _width/_height exactly equalled the game's
+    // size at the instant BEFORE this resize fired — any other code that
+    // transiently touches camera state (ActionCamera's zoom-easing is the
+    // prime suspect per the [diag:camera] log below) can desync that check
+    // permanently, freezing the viewport at a stale size while the canvas
+    // keeps moving. HudCamera.ts already sidesteps this the same way (see
+    // its onResize) — the world camera should too, not depend on an
+    // undocumented Phaser internal heuristic holding forever.
+    this.cameras.main.setSize(this.scale.width, this.scale.height);
+
     // × renderScale: the backing store is scaled, so the camera zooms by the
     // same factor to keep the WORLD framing identical at every resolution
     // (rs=1 today ⇒ no-op; the dial is the quality ladder's master knob).
@@ -2366,6 +2446,8 @@ export class OnlineMatchScene extends Phaser.Scene {
     // sync. Cheap — remove once root-caused.
     console.log(
       `[diag:camera] applyMobileCamera at t=${performance.now().toFixed(0)}ms — zoom→${zoom.toFixed(3)}, ` +
+        `preset=${isPortraitMobile() ? "portrait" : isTouchPrimary() ? "touch-landscape" : "desktop"} ` +
+        `(cached touchPrimary=${isTouchPrimary()}), ` +
         `canvas=${this.scale.width}x${this.scale.height}, cam=${this.cameras.main.width}x${this.cameras.main.height} ` +
         `scroll=(${this.cameras.main.scrollX.toFixed(0)},${this.cameras.main.scrollY.toFixed(0)}) ` +
         `currentZoom=${this.cameras.main.zoom.toFixed(3)}`,
@@ -2646,6 +2728,8 @@ export class OnlineMatchScene extends Phaser.Scene {
     this.cosmicArena = null;
     this.hudSystem?.destroy();
     this.hudSystem = null;
+    this.actionBar?.destroy();
+    this.actionBar = null;
     this.roundBannerSystem?.destroy();
     this.roundBannerSystem = null;
     this.deathOverlay?.destroy();

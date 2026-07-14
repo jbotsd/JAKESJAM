@@ -74,7 +74,6 @@ export class ActionCamera {
   private static readonly DEADZONE_FRAC = 0.04;
   private static readonly TRAUMA_DECAY = 1.8;
   private static readonly MAX_SHAKE_PX = 18;
-  private static readonly SNAP_DIST = 1150;
   /** On-screen guarantee margins (fraction of half-view kept clear between
    *  the player and the screen edge). */
   private static readonly SAFE_MARGIN_FRAC = 0.16;
@@ -93,12 +92,16 @@ export class ActionCamera {
   }
 
   setBaseZoom(zoom: number): void {
+    // No instant cam.setZoom() here — update()'s per-frame envelopeZoom
+    // easing (same ZOOM_OUT_K/ZOOM_IN_K path the envelope-fit zoom already
+    // uses) carries the camera to the new base smoothly. This used to
+    // hard-snap envelopeZoom and apply it same-frame whenever the new zoom
+    // was smaller, which fires on every renderGovernor-triggered resize
+    // (frame-time pressure → renderScale steps down → applyMobileCamera
+    // recomputes zoom → this ran mid-match with zero tween) — precisely
+    // when the game was already stuttering, the camera would also lock to
+    // a different resolution with no easing. See renderGovernor.ts.
     this.baseZoom = zoom;
-    if (!this.punchActive) {
-      // Don't instantly jump envelopeZoom up with base; ease next frames.
-      if (this.envelopeZoom > zoom) this.envelopeZoom = zoom;
-      this.cam.setZoom(this.envelopeZoom);
-    }
   }
 
   snap(x: number, y: number): void {
@@ -156,10 +159,24 @@ export class ActionCamera {
     const yBias = focus.yBias ?? 0;
 
     if (!this.ready) {
-      this.snap(self.x, self.y + yBias);
-      return;
-    }
-    if (Math.hypot(self.x - this.cx, self.y - this.cy) > ActionCamera.SNAP_DIST) {
+      // Nothing on screen yet (first frame of the match) — the only
+      // legitimate hard cut left. Every other position change, however
+      // large, flows through the normal continuous-follow pipeline below
+      // (converges in ~150-250ms at FOLLOW_K) rather than a snap.
+      //
+      // Jake, 2026-07-15: a prior version hard-cut (or fade-hid) the camera
+      // whenever the local player moved further than SNAP_DIST in one tick
+      // — which fired on nearly every respawn, since assignSpawnPoints
+      // deliberately max-spreads spawn points across the whole map (to kill
+      // spawn-camping) and every live map (1280-2600px wide) routinely
+      // exceeds that in a single tick. Both the bare hard-cut ("swap to a
+      // different camera") and a fade-covered version of it ("the cut is
+      // likely worse") read as a disruptive event on a frame that's
+      // supposed to be an ordinary respawn. Letting the existing eased
+      // follow (this.cx/cy lerp toward the target) handle it instead means
+      // there's no special-cased transition to notice at all — just a fast
+      // continuous re-frame, the same mechanism already used for normal
+      // play.
       this.snap(self.x, self.y + yBias);
       return;
     }

@@ -236,6 +236,24 @@ function serveOnPort(port: number) {
       );
     }
 
+    // Stable legal-doc URLs (no .html) — required by CrazyGames/Poki portal
+    // review. Backed by client/public/{privacy,terms}.html, copied verbatim
+    // into the Vite build; served straight off disk here rather than via
+    // serveStatic() since that function's extension-sniffing SPA-fallbacks
+    // any extensionless path to index.html.
+    if (
+      (url.pathname === "/privacy" || url.pathname === "/terms") &&
+      req.method === "GET" &&
+      serveClientDir
+    ) {
+      const file = Bun.file(resolve(serveClientDir, `${url.pathname.slice(1)}.html`));
+      if (await file.exists()) {
+        return new Response(file, {
+          headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-cache" },
+        });
+      }
+    }
+
     // ── Operator console (ADMIN_SECRET) ───────────────────────────────
     // Deep backend UI + JSON API for the host owner — clips pin/unpin,
     // world/rooms status, env flags. Never part of the player SPA.

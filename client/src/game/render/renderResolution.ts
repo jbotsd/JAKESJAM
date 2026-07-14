@@ -17,6 +17,7 @@
 
 import Phaser from "phaser";
 import { getQualityProfile } from "./qualityProfile.js";
+import { invalidateMobileDetectionCache } from "../input/mobile.js";
 
 const STORAGE_KEY = "jj_render_scale";
 const MIN_SCALE = 0.5;
@@ -104,6 +105,12 @@ export function setRenderScaleRuntime(game: Phaser.Game, scale: number): void {
  *  Phaser.Scale.Events.RESIZE all existing HUD/camera listeners rely on. */
 export function installRenderResolution(game: Phaser.Game): void {
   const apply = (): void => {
+    // Genuine external signal (window/orientation/fullscreen/visualViewport)
+    // — refresh the touch/pointer-type cache here so applyMobileCamera's
+    // preset selection reflects reality. Deliberately NOT called from the
+    // governor's own resize path (setRenderScaleRuntime below), which isn't
+    // a real device change and shouldn't be able to flip the camera preset.
+    invalidateMobileDetectionCache();
     const { width, height } = backingSize();
     if (game.scale.width !== width || game.scale.height !== height) {
       // DIAGNOSTIC (camera-skew investigation): every actual backing-store

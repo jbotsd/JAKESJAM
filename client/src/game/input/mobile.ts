@@ -7,8 +7,36 @@
 // excludes touch-screen laptops that still have a trackpad/mouse. A URL
 // override (?touch=1 / ?touch=0) forces it either way for testing on
 // desktop and for the rare device the heuristic misreads.
+//
+// CACHED (2026-07-15, camera-skew investigation): `matchMedia("(pointer:
+// coarse)")` is a LIVE query — its `.matches` value is allowed to change at
+// any time the UA thinks the "primary pointer" changed, independent of any
+// resize. OnlineMatchScene.applyMobileCamera() re-derives its zoom PRESET
+// (desktop 1.4 / touch-landscape 1.0 / portrait 0.8 — a 40%+ jump, not a
+// subtle one) from isTouchPrimary() on every Phaser "resize" event —
+// including the frame-time governor's own internal renderScale resizes
+// (setRenderScaleRuntime → game.scale.resize), which fire whether or not
+// the device actually changed. If the coarse-pointer query is ever
+// momentarily true for an unrelated reason, the NEXT governor resize
+// (not a real device change) would apply a completely different camera
+// preset — reading as "camera cuts to the wrong view" — and it would only
+// self-correct once a LATER resize happened to re-read the query as false
+// again ("fixes itself after a while"). Caching this and only refreshing it
+// on genuine external resize/orientation/fullscreen signals (see
+// invalidateMobileDetectionCache, called from installRenderResolution's
+// real listeners — never from the governor's own resize) removes that
+// window entirely while still tracking real device/orientation changes.
+let cachedTouchPrimary: boolean | null = null;
 
-export function isTouchPrimary(): boolean {
+/** Force a re-read of touch/pointer state on the next isTouchPrimary() call.
+ *  Call ONLY from genuine external signals (window resize, orientationchange,
+ *  fullscreenchange, visualViewport resize) — never from the render
+ *  governor's internal resize, which isn't a real device change. */
+export function invalidateMobileDetectionCache(): void {
+  cachedTouchPrimary = null;
+}
+
+function readTouchPrimary(): boolean {
   const params = new URLSearchParams(
     typeof window !== "undefined" ? window.location.search : "",
   );
@@ -23,6 +51,11 @@ export function isTouchPrimary(): boolean {
     typeof window.matchMedia === "function" &&
     window.matchMedia("(pointer: coarse)").matches;
   return hasTouch && coarse;
+}
+
+export function isTouchPrimary(): boolean {
+  if (cachedTouchPrimary === null) cachedTouchPrimary = readTouchPrimary();
+  return cachedTouchPrimary;
 }
 
 /** True when the viewport is taller than wide. Portrait is the mobile-first

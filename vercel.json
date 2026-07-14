@@ -4,6 +4,7 @@
   "outputDirectory": "client/dist",
   "installCommand": "bun install --frozen-lockfile",
   "framework": null,
+  "cleanUrls": true,
   "headers": [
     {
       "source": "/assets/(.*)",
