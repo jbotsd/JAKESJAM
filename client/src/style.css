@@ -60,7 +60,11 @@
      everywhere, single-corner-pair asymmetric cut (top-left + bottom-right).
      Sized up 2026-07-15 (Jake: "go harder on those... make it bigger") —
      a 6-10px cut on a 40-48px control read as barely-there. */
-  --chamfer-sm: polygon(10px 0, 100% 0, 100% calc(100% - 10px), calc(100% - 10px) 100%, 0 100%, 0 10px);
+  /* sm bumped 10px -> 16px (2026-07-15, Jake: "increase the bezier cut in
+     the small portion of the golden ratio") — 10 * PHI (1.618) = 16.18,
+     rounded. Bigger void for the corner motif to actually sit in without
+     crossing the seam. */
+  --chamfer-sm: polygon(16px 0, 100% 0, 100% calc(100% - 16px), calc(100% - 16px) 100%, 0 100%, 0 16px);
   --chamfer-md: polygon(16px 0, 100% 0, 100% calc(100% - 16px), calc(100% - 16px) 100%, 0 100%, 0 16px);
   --chamfer-lg: polygon(28px 0, 100% 0, 100% calc(100% - 28px), calc(100% - 28px) 100%, 0 100%, 0 28px);
 
@@ -74,8 +78,13 @@
      the game's own "Crystal-tech arena" flavor line. Sits diagonally in
      the cut corner, tip pointing outward along the same 45deg the
      chamfer itself cuts on. */
-  --crystal-fleur-sm: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 28.20 28.20'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0' stop-color='%23aecbfb'/%3E%3Cstop offset='0.45' stop-color='%233c79f0'/%3E%3Cstop offset='1' stop-color='%231a3f80'/%3E%3C/linearGradient%3E%3C/defs%3E%3Cg stroke='%23cedffd' stroke-width='0.5' stroke-linejoin='round'%3E%3Cpolygon points='1.75,1.75 9.38,4.86 15.89,15.89 4.86,9.38' fill='url(%23g)' opacity='0.95'/%3E%3Cpolygon points='1.00,14.06 6.97,12.17 15.89,15.89 6.34,17.34' fill='url(%23g)' opacity='0.8'/%3E%3Cpolygon points='14.06,1.00 17.34,6.34 15.89,15.89 12.17,6.97' fill='url(%23g)' opacity='0.65'/%3E%3Cpolygon points='7.40,22.96 22.96,7.40 26.49,8.11 27.20,11.65 11.65,27.20 8.11,26.49' fill='url(%23g)' opacity='0.85'/%3E%3Cpolygon points='17.30,21.55 21.55,17.30 25.08,25.08' fill='url(%23g)' opacity='0.7'/%3E%3C/g%3E%3C/svg%3E");
-  --crystal-fleur-lg: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 28.20 28.20'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0' stop-color='%23aecbfb'/%3E%3Cstop offset='0.45' stop-color='%233c79f0'/%3E%3Cstop offset='1' stop-color='%231a3f80'/%3E%3C/linearGradient%3E%3C/defs%3E%3Cg stroke='%23cedffd' stroke-width='0.35' stroke-linejoin='round'%3E%3Cpolygon points='1.75,1.75 9.38,4.86 15.89,15.89 4.86,9.38' fill='url(%23g)' opacity='0.95'/%3E%3Cpolygon points='1.00,14.06 6.97,12.17 15.89,15.89 6.34,17.34' fill='url(%23g)' opacity='0.8'/%3E%3Cpolygon points='14.06,1.00 17.34,6.34 15.89,15.89 12.17,6.97' fill='url(%23g)' opacity='0.65'/%3E%3Cpolygon points='7.40,22.96 22.96,7.40 26.49,8.11 27.20,11.65 11.65,27.20 8.11,26.49' fill='url(%23g)' opacity='0.85'/%3E%3Cpolygon points='17.30,21.55 21.55,17.30 25.08,25.08' fill='url(%23g)' opacity='0.7'/%3E%3C/g%3E%3C/svg%3E");
+  /* A real static file, not a data-URI — the data-URI version hit an
+     unresolved rendering bug in production specifically (worked in every
+     isolated repro, never on the actual page; cost a lot of debugging
+     time before switching approaches rather than keep chasing it blind).
+     Same file for both scales; sizing is just the display box. */
+  --crystal-fleur-sm: url("/img/crystal-fleur.svg");
+  --crystal-fleur-lg: url("/img/crystal-fleur.svg");
 }
 
 * {
@@ -188,40 +197,49 @@ button {
    find (checked SVG validity, transform-origin, clip-path escaping,
    var() indirection — all fine in isolation — before diffing the actual
    built/minified CSS against source and finding the merge). */
-/* Size floor: 16px triggered a real Chromium rendering bug — SVG
-   data-URI backgrounds at background-size:contain around ~16px and
-   under render as fully invisible (confirmed via isolated repro: same
-   markup, same asset, 16px = blank, 64px = renders correctly). 28px is
-   comfortably clear of that threshold. Also just bigger/bolder per
-   Jake ("ramp it up"). */
+/* Corner badge, NOT floating in the cut-away gap — that would need a
+   real DOM sibling. `clip-path` on the button clips ALL of its own
+   descendants (background, border, ::before/::after alike) to the same
+   cut polygon, full stop; there is no CSS-only way for a child of the
+   clipped button to paint inside the triangle the cut removes. Confirmed
+   the hard way: swapped through a golden-ratio-tapered ray-fan, then a
+   faceted crystal fleur-de-lis, through both a data-URI and a real
+   static SVG file, at 5 different sizes up to 48px, and even a plain
+   solid-color real (non-pseudo) DOM div forced into the button — every
+   single one gets clipped down to nothing but a sub-pixel sliver at the
+   exact cut vertex. A true floating-in-the-gap motif requires wrapping
+   the button in an unclipped sibling container; that's a real, larger
+   change (touches every button template) held for later if wanted.
+   This instead sits the motif ON the button's own visible corner,
+   which is the only region a clipped descendant can ever render in. */
 button::before {
   content: "";
   position: absolute;
-  width: 28px;
-  height: 28px;
+  width: 22px;
+  height: 22px;
   background-image: var(--crystal-fleur-sm);
   background-repeat: no-repeat;
   background-size: contain;
   opacity: 0.85;
   pointer-events: none;
   transition: opacity 140ms ease;
-  top: -12px;
-  left: -12px;
+  top: 2px;
+  left: 2px;
 }
 
 button::after {
   content: "";
   position: absolute;
-  width: 28px;
-  height: 28px;
+  width: 22px;
+  height: 22px;
   background-image: var(--crystal-fleur-sm);
   background-repeat: no-repeat;
   background-size: contain;
   opacity: 0.85;
   pointer-events: none;
   transition: opacity 140ms ease;
-  right: -12px;
-  bottom: -12px;
+  right: 2px;
+  bottom: 2px;
   transform: rotate(180deg);
 }
 
