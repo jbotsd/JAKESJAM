@@ -4,7 +4,7 @@
 
 import { describe, expect, test } from "bun:test";
 import { buildStaticCache } from "../collision.js";
-import { stepPlayer, freshPlayerMovementMemory } from "../player.js";
+import { stepPlayer, freshPlayerMovementMemory, DASH_COOLDOWN_MS } from "../player.js";
 import { PlayerId, type PlayerEntity, type InputSeq, type PlatformDefinition } from "../types.js";
 
 const STEP = 1000 / 60;
@@ -228,6 +228,14 @@ describe("movement augments", () => {
   // never squeeze the recovery-endlag punish window out of existence — the
   // Risk of Rain stacking lesson, enforced structurally rather than by card
   // balance alone.
+  //
+  // DASH_COOLDOWN_MS tripled 520ms -> 3000ms (2026-07-15). That moved the
+  // floor out of reach of any REAL card stack: Quick Parry is maxStacks:2
+  // (0.86^2 ~= 0.7396), and 3000*0.7396 ~= 2219ms is nowhere near the
+  // 410ms floor (it was 384.6ms — below the floor — at the old 520ms
+  // base). The floor-clamp code path itself is still covered below via an
+  // explicitly synthetic multiplier, since real gameplay can no longer
+  // reach it.
   describe("dash cooldown multiplier (Quick Parry) + hard floor", () => {
     test("a single stack (0.86x) shortens the cooldown, still above the floor", () => {
       const map = miniMap();
@@ -238,22 +246,24 @@ describe("movement augments", () => {
       const r = stepPlayer(player, 0, DASH, 900, 580, mem, map.platforms, STEP, {
         collisionCache: cache, dashCharges: 1, dashCooldownMultiplier: 0.86,
       });
-      // 520 * 0.86 = 447.2ms — above the 410ms floor, so the multiplier
-      // actually applies (not just clamped).
-      expect(r.memory.dashCooldownMs).toBeCloseTo(447.2, 0);
+      // DASH_COOLDOWN_MS * 0.86 = 2580ms — above the 410ms floor, so the
+      // multiplier actually applies (not just clamped).
+      expect(r.memory.dashCooldownMs).toBeCloseTo(DASH_COOLDOWN_MS * 0.86, 0);
     });
 
-    test("two stacks (0.86^2) would fall below the floor — the floor wins", () => {
+    test("two real Quick Parry stacks (0.86^2) no longer reach the floor at the new base cooldown", () => {
       const map = miniMap();
       const cache = buildStaticCache(map.platforms, map.size.x, map.size.y);
       let player = mkPlayer();
       let mem = freshPlayerMovementMemory();
       mem.groundedLastFrame = true;
-      const twoStacks = 0.86 * 0.86; // 0.7396 -> 520*0.7396=384.6ms, below 410
+      const twoStacks = 0.86 * 0.86; // 0.7396 -> the real maxStacks:2 ceiling
       const r = stepPlayer(player, 0, DASH, 900, 580, mem, map.platforms, STEP, {
         collisionCache: cache, dashCharges: 1, dashCooldownMultiplier: twoStacks,
       });
-      expect(r.memory.dashCooldownMs).toBe(210 + 200); // DASH_MIN_CYCLE_MS
+      // Multiplier applies fully now (no floor clamp) — a behavior change
+      // from the old 520ms base, where this exact stack DID hit the floor.
+      expect(r.memory.dashCooldownMs).toBeCloseTo(DASH_COOLDOWN_MS * twoStacks, 0);
     });
 
     test("even an absurd multiplier can't shrink the cycle below burst+recovery", () => {
@@ -275,7 +285,7 @@ describe("movement augments", () => {
   // player physically CANNOT out-dash the cooldown by mashing the button —
   // both real fairness properties, not just the math backing them.
   describe("dash cooldown — base cycle + spam resistance", () => {
-    test("base cooldown is exactly DASH_COOLDOWN_MS (520) with no card stack", () => {
+    test("base cooldown is exactly DASH_COOLDOWN_MS with no card stack", () => {
       const map = miniMap();
       const cache = buildStaticCache(map.platforms, map.size.x, map.size.y);
       const player = mkPlayer();
@@ -284,7 +294,7 @@ describe("movement augments", () => {
       const r = stepPlayer(player, 0, DASH, 900, 580, mem, map.platforms, STEP, {
         collisionCache: cache, dashCharges: 1,
       });
-      expect(r.memory.dashCooldownMs).toBe(520);
+      expect(r.memory.dashCooldownMs).toBe(DASH_COOLDOWN_MS);
     });
 
     test("a second dash attempt (release + re-press) is refused while cooldown > 0, even mid-air with charges to spare", () => {
@@ -326,7 +336,7 @@ describe("movement augments", () => {
       mem.groundedLastFrame = true;
       let r = stepPlayer(player, 0, DASH, 900, 580, mem, map.platforms, STEP, opts);
       player = r.player; mem = r.memory;
-      expect(mem.dashCooldownMs).toBe(520);
+      expect(mem.dashCooldownMs).toBe(DASH_COOLDOWN_MS);
 
       // Release the dash bit and coast (grounded, no other input) until the
       // cooldown ticks down to exactly 0 — release first is not itself
@@ -344,7 +354,7 @@ describe("movement augments", () => {
       // the neutral tick above) — this MUST be allowed now.
       r = stepPlayer(player, 0, DASH, 900, 580, mem, map.platforms, STEP, opts);
       expect(r.memory.dashActiveMs).toBeGreaterThan(0);
-      expect(r.memory.dashCooldownMs).toBe(520);
+      expect(r.memory.dashCooldownMs).toBe(DASH_COOLDOWN_MS);
     });
 
     test("mashing the dash bit every tick for 3 real seconds cannot beat the cooldown — bursts land at the cooldown's own cadence, not once per press", () => {
@@ -374,10 +384,14 @@ describe("movement augments", () => {
         wasActive = isActive;
       }
 
-      // Over 3000ms at the 520ms base cadence, the theoretical ceiling is
-      // floor(3000/520)+1 = 6 bursts (one at t≈0, then every ~520ms after).
-      // Real max observed should sit at or just under that — nowhere near
-      // the ~750 rising edges the toggle pattern above offers up.
+      // Over a 3000ms window at DASH_COOLDOWN_MS's now-3000ms cadence, the
+      // theoretical ceiling is floor(3000/DASH_COOLDOWN_MS)+1 = 2 bursts
+      // (one at t≈0, maybe one more right at the window's edge). Keeping
+      // the assertion at <=6 rather than tightening to <=2 — it's a looser
+      // bound now than the cadence strictly requires, but still nowhere
+      // near the ~750 rising edges the toggle pattern offers up, and it
+      // stays correct regardless of future DASH_COOLDOWN_MS retuning
+      // without needing to recompute an exact edge-of-window burst count.
       expect(burstsFired).toBeLessThanOrEqual(6);
       expect(burstsFired).toBeGreaterThan(0); // sanity: dashing is still possible at all
     });

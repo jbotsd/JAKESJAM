@@ -473,9 +473,15 @@ describe("player parity (TS V8 vs Zig wasm)", () => {
     const STATICS_OFF = SIZEOF_PLAYER_STEP + 8;
     const packed = packStaticsAndOneWay(sim, STATICS_OFF + STATE_PTR, STATICS, ONE_WAY);
     const DT = 1000 / 60;
-    // Two Quick Parry stacks (0.86^2 ≈ 0.7396) — below the floor, so both
-    // sides must land on the SAME clamped 410ms cycle, not diverge.
-    const dashCooldownMultiplier = 0.86 * 0.86;
+    // DASH_COOLDOWN_MS tripled 520ms -> 3000ms (2026-07-15); the real max
+    // card stack (Quick Parry, maxStacks:2, 0.86^2 ~= 0.7396) no longer
+    // reaches the floor at all (3000*0.7396 ~= 2219ms, nowhere near the
+    // 410ms floor — it did at the old 520ms base: 520*0.7396 ~= 385ms).
+    // The floor-clamp code path itself still needs coverage even though
+    // no real card combo can trigger it anymore, so this multiplier is
+    // now a synthetic stress value chosen to land under the floor
+    // (410/3000 ~= 0.137), not a real achievable-in-game stack.
+    const dashCooldownMultiplier = 0.1;
     const opts = { collisionCache: cache, dashCharges: 1, dashCooldownMultiplier };
     let tsP = makePlayer(700, 580);
     let tsM = { ...freshPlayerMovementMemory(), groundedLastFrame: true };

@@ -160,8 +160,10 @@ const Bit = {
 /** Dash-bash power-slide burst velocity (px/s). Bumped 780→940: the shield-dash
  *  reads as a committed POWER SLIDE — fast and flat — not a floaty hop. */
 const DASH_SPEED = 940;
-/** Dash cooldown (ms) between uses. */
-const DASH_COOLDOWN_MS = 3000;
+/** Dash cooldown (ms) between uses. Exported so tests assert against the
+ *  live constant instead of duplicating its value as a magic number — a
+ *  hardcoded literal is exactly what broke when this last changed. */
+export const DASH_COOLDOWN_MS = 3000;
 /** How long the slide holds full speed before the normal clamp resumes.
  *  Bumped 150→210: a longer slide = a more committed, readable power-slide
  *  bash (you can see it coming and it carries you through the block window). */
