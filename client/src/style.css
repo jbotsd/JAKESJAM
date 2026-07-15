@@ -60,31 +60,13 @@
      everywhere, single-corner-pair asymmetric cut (top-left + bottom-right).
      Sized up 2026-07-15 (Jake: "go harder on those... make it bigger") —
      a 6-10px cut on a 40-48px control read as barely-there. */
-  /* sm bumped 10px -> 16px (2026-07-15, Jake: "increase the bezier cut in
-     the small portion of the golden ratio") — 10 * PHI (1.618) = 16.18,
-     rounded. Bigger void for the corner motif to actually sit in without
-     crossing the seam. */
-  --chamfer-sm: polygon(16px 0, 100% 0, 100% calc(100% - 16px), calc(100% - 16px) 100%, 0 100%, 0 16px);
-  --chamfer-md: polygon(16px 0, 100% 0, 100% calc(100% - 16px), calc(100% - 16px) 100%, 0 100%, 0 16px);
-  --chamfer-lg: polygon(28px 0, 100% 0, 100% calc(100% - 28px), calc(100% - 28px) 100%, 0 100%, 0 28px);
-
-  /* Corner crystal-fleur motif (replaces the ray-fan, 2026-07-15 — Jake
-     referenced a heraldic fleur-de-lis emblem: "one of these but with
-     vibrant crystal"). A faceted (straight-edged, "cut not molded")
-     fleur-de-lis silhouette — 3 lance shapes fanned from a shared base
-     pivot + a crossbar + a base spike — filled with a sapphire gradient
-     (--accent-bright family) and varying per-facet opacity to read as a
-     cut gem catching light, not a flat heraldic stamp. Ties directly into
-     the game's own "Crystal-tech arena" flavor line. Sits diagonally in
-     the cut corner, tip pointing outward along the same 45deg the
-     chamfer itself cuts on. */
-  /* A real static file, not a data-URI — the data-URI version hit an
-     unresolved rendering bug in production specifically (worked in every
-     isolated repro, never on the actual page; cost a lot of debugging
-     time before switching approaches rather than keep chasing it blind).
-     Same file for both scales; sizing is just the display box. */
-  --crystal-fleur-sm: url("/img/crystal-fleur.svg");
-  --crystal-fleur-lg: url("/img/crystal-fleur.svg");
+  /* Deepened again 2026-07-15 (Jake: "cut motif entirely for now and just
+     have a deeper bezier") — motif removed below; the cut itself carries
+     the visual weight now, so it goes bolder: sm 16->22, md 16->24,
+     lg 28->36. */
+  --chamfer-sm: polygon(22px 0, 100% 0, 100% calc(100% - 22px), calc(100% - 22px) 100%, 0 100%, 0 22px);
+  --chamfer-md: polygon(24px 0, 100% 0, 100% calc(100% - 24px), calc(100% - 24px) 100%, 0 100%, 0 24px);
+  --chamfer-lg: polygon(36px 0, 100% 0, 100% calc(100% - 36px), calc(100% - 36px) 100%, 0 100%, 0 36px);
 }
 
 * {
@@ -175,80 +157,16 @@ button {
     box-shadow 150ms ease;
 }
 
-/* Corner crystal-fleur — the chamfer cut opens a triangular notch that used
-   to just be empty; a faceted sapphire fleur-de-lis (--crystal-fleur-sm)
-   sits in it, tip pointing outward, on BOTH chamfered corners. Quiet by
-   default (H2: light is scarce) — brightens with the button on hover.
-   The tip's -45deg orientation is BAKED INTO the SVG's own coordinates
-   (not a CSS transform) so ::before uses it as-is; ::after is the exact
-   same asset simply rotated 180deg around its own center (default
-   transform-origin) — a non-default transform-origin here previously
-   made the whole motif silently vanish (rotation math got tangled with
-   the negative-offset positioning; never debug that combination blind
-   again — bake the angle into the asset instead). Pulled OUTSIDE the
-   border box via negative offset (Jake's red/green annotation on the
-   earlier ray-fan: it was straddling the border seam, half on/half off). */
-/* Each written as one fully self-contained rule, NOT a shared
-   `::before, ::after {...}` block plus per-side overrides — the build's
-   CSS minifier mangled that pattern, silently attaching the shared
-   content/background-image/size properties to :after ONLY and leaving
-   :before with nothing but its top/left, making it vanish from the built
-   CSS while the source looked completely correct. Cost real time to
-   find (checked SVG validity, transform-origin, clip-path escaping,
-   var() indirection — all fine in isolation — before diffing the actual
-   built/minified CSS against source and finding the merge). */
-/* Corner badge, NOT floating in the cut-away gap — that would need a
-   real DOM sibling. `clip-path` on the button clips ALL of its own
-   descendants (background, border, ::before/::after alike) to the same
-   cut polygon, full stop; there is no CSS-only way for a child of the
-   clipped button to paint inside the triangle the cut removes. Confirmed
-   the hard way: swapped through a golden-ratio-tapered ray-fan, then a
-   faceted crystal fleur-de-lis, through both a data-URI and a real
-   static SVG file, at 5 different sizes up to 48px, and even a plain
-   solid-color real (non-pseudo) DOM div forced into the button — every
-   single one gets clipped down to nothing but a sub-pixel sliver at the
-   exact cut vertex. A true floating-in-the-gap motif requires wrapping
-   the button in an unclipped sibling container; that's a real, larger
-   change (touches every button template) held for later if wanted.
-   This instead sits the motif ON the button's own visible corner,
-   which is the only region a clipped descendant can ever render in. */
-button::before {
-  content: "";
-  position: absolute;
-  width: 22px;
-  height: 22px;
-  background-image: var(--crystal-fleur-sm);
-  background-repeat: no-repeat;
-  background-size: contain;
-  opacity: 0.85;
-  pointer-events: none;
-  transition: opacity 140ms ease;
-  top: 2px;
-  left: 2px;
-}
-
-button::after {
-  content: "";
-  position: absolute;
-  width: 22px;
-  height: 22px;
-  background-image: var(--crystal-fleur-sm);
-  background-repeat: no-repeat;
-  background-size: contain;
-  opacity: 0.85;
-  pointer-events: none;
-  transition: opacity 140ms ease;
-  right: 2px;
-  bottom: 2px;
-  transform: rotate(180deg);
-}
-
-button:hover::before,
-button:hover::after,
-button:focus-visible::before,
-button:focus-visible::after {
-  opacity: 1;
-}
+/* Corner motif cut entirely for now (2026-07-15, Jake: "cut motif
+   entirely for now and just have a deeper bezier") — the deepened
+   --chamfer-sm/md/lg cut above carries the corner treatment alone.
+   History if this gets revisited: clip-path on the button clips ALL of
+   its own descendants (background, border, ::before/::after alike) to
+   the same cut polygon — there is no CSS-only way for a child of the
+   clipped button to paint inside the triangle the cut removes. A motif
+   genuinely floating in that gap needs an unclipped sibling wrapper
+   (see .btn-inset-frame's era in git history for the two-layer-bezel +
+   underneath-motif version that briefly shipped here). */
 
 button:hover:not(:disabled) {
   filter: brightness(1.1);
@@ -364,40 +282,6 @@ input[type="color"] {
   box-shadow:
     0 0 0 1px rgba(60, 121, 240, 0.14),
     0 0 32px rgba(39, 80, 162, 0.05);
-}
-
-/* Bolder crystal-fleur for the hero panel — same asset as the button one
-   (--crystal-fleur-lg), scaled up to match the bigger cut. Orientation is
-   baked into the SVG itself; ::after is a plain 180deg turn around its own
-   default center — see the button rule's comment for why a non-default
-   transform-origin here silently killed the whole motif before. */
-/* Each a fully self-contained rule, not a shared block + overrides — see
-   the button rule's comment for why (minifier mangled the shared form). */
-.splash-stage::before {
-  content: "";
-  position: absolute;
-  width: 58px;
-  height: 58px;
-  background-image: var(--crystal-fleur-lg);
-  background-repeat: no-repeat;
-  background-size: contain;
-  pointer-events: none;
-  top: -26px;
-  left: -26px;
-}
-
-.splash-stage::after {
-  content: "";
-  position: absolute;
-  width: 58px;
-  height: 58px;
-  background-image: var(--crystal-fleur-lg);
-  background-repeat: no-repeat;
-  background-size: contain;
-  pointer-events: none;
-  right: -26px;
-  bottom: -26px;
-  transform: rotate(180deg);
 }
 
 .splash-kicker {
@@ -1064,38 +948,7 @@ button.btn-danger:hover:not(:disabled) {
 }
 
 .splash-actions--primary {
-  position: relative;
-  /* Shrink-wrap to the button's own size — without this the container
-     stretches to the full grid-row width (the button itself caps at
-     min-width:280px), so the ::after motif aligned to the CONTAINER's
-     right edge instead of the button's, landing far off to the side. */
-  width: fit-content;
   margin-bottom: 12px;
-}
-
-/* Gnostic motif living BEHIND Hot Lobby, on the unclipped parent — see
-   .shell-cta-primary::before's comment for why it can't live inside the
-   button itself. Sits at default paint order (no z-index needed: a
-   DOM-earlier ::before paints under the DOM-later real button child),
-   visible only in the sliver the button's own chamfer cuts away. */
-.splash-actions--primary::before,
-.splash-actions--primary::after {
-  content: "";
-  position: absolute;
-  width: 26px;
-  height: 26px;
-  background-image: var(--crystal-fleur-sm);
-  background-repeat: no-repeat;
-  background-size: contain;
-  pointer-events: none;
-}
-
-.splash-actions--primary::before { top: 0; left: 0; }
-
-.splash-actions--primary::after {
-  right: -6px;
-  bottom: 18px; /* clears the container's own margin-bottom, nudged out */
-  transform: rotate(180deg);
 }
 
 .splash-actions--secondary {
@@ -1105,63 +958,17 @@ button.btn-danger:hover:not(:disabled) {
   justify-content: center;
 }
 
-/* .btn-frame: reusable unclipped wrapper for the "motif genuinely
-   underneath" pattern (same architecture as .splash-actions--primary/
-   .email-gate-form, generalized so any button can opt in — see
-   .shell-cta-primary::before's comment for why the motif can't live
-   inside the button itself). display:inline-flex so it shrink-wraps
-   to the button's own size and sits inline in a flex row without
-   disturbing sibling layout (a plain span would size to content fine
-   too, but inline-flex keeps the button filling it edge-to-edge). */
-.btn-frame {
-  position: relative;
-  display: inline-flex;
-}
-
-.btn-frame::before,
-.btn-frame::after {
+/* .btn-frame (the unclipped motif-wrapper) is retired along with the
+   motif — .btn-inset-frame alone now supplies the bezel look, no
+   wrapper needed for a hollow inset border. Kept the class name/
+   selector plain again since the specificity workaround it needed
+   (matching .btn-frame > button::before) no longer applies. */
+.btn-inset-frame::before {
   content: "";
   position: absolute;
-  width: 20px;
-  height: 20px;
-  background-image: var(--crystal-fleur-sm);
-  background-repeat: no-repeat;
-  background-size: contain;
-  pointer-events: none;
-}
-
-.btn-frame::before { top: -4px; left: -4px; }
-
-.btn-frame::after {
-  right: -4px;
-  bottom: -4px;
-  transform: rotate(180deg);
-}
-
-/* The wrapped button's own universal corner-badge is redundant now
-   that .btn-frame supplies the motif from behind — without this it'd
-   double up (badge on the face AND motif behind, at slightly
-   different positions). */
-.btn-frame > button::before,
-.btn-frame > button::after {
-  content: none;
-}
-
-/* Two-layer bezel, reusable — the inset hollow frame line that reads as
-   a second cut on the button's own face, same technique as
-   .shell-cta-primary::before but usable on any button, not just the
-   primary CTA. Selector specificity matters here: `.btn-frame > button
-   ::before` above is (0,1,2) and would otherwise beat a plain
-   `.btn-inset-frame::before` (0,1,1) regardless of source order —
-   `button.btn-inset-frame::before` matches it at (0,1,2) so this,
-   being later in the file, correctly wins for buttons that have both
-   classes. */
-button.btn-inset-frame::before {
-  content: "";
-  position: absolute;
-  inset: 4px;
+  inset: 5px;
   border: 1px solid rgba(206, 223, 253, 0.35);
-  clip-path: polygon(9px 0, 100% 0, 100% calc(100% - 9px), calc(100% - 9px) 100%, 0 100%, 0 9px);
+  clip-path: polygon(14px 0, 100% 0, 100% calc(100% - 14px), calc(100% - 14px) 100%, 0 100%, 0 14px);
   background: none;
   pointer-events: none;
 }
@@ -1224,31 +1031,18 @@ button.btn-inset-frame::before {
   box-shadow: 0 0 0 1px rgba(137, 127, 105, 0.35), 0 0 18px rgba(39, 80, 162, 0.25);
 }
 
-/* Two-layer bezel on the primary CTA, gnostic motif underneath — Jake:
-   "two layer bezier on top and gnostic motif underneath." The button's
-   own clip-path clips ALL of its descendants (confirmed the hard way —
-   see the corner-badge comment above); there is no way for a motif to
-   show THROUGH this button's own cut while living inside it. So the
-   motif moves to the PARENT (.splash-actions--primary / .email-gate-
-   form), which has no clip-path of its own — sits behind the button at
-   default paint order (DOM-earlier ::before under a DOM-later real
-   child needs no explicit z-index), visible exactly in the sliver the
-   button's own chamfer cuts away. The button itself gets a second,
-   inset hollow frame layer (::before, replacing the corner-badge use
-   of that pseudo here only) for the "two layer" cut look on its face. */
+/* Two-layer bezel on the primary CTA — motif cut for now (2026-07-15),
+   this inset hollow frame is the part that's staying: a second, deeper
+   cut line inside the button's own outer chamfer. */
 .shell-cta-primary::before {
   content: "";
   position: absolute;
-  inset: 4px;
+  inset: 5px;
   border: 1px solid rgba(206, 223, 253, 0.45);
-  clip-path: polygon(11px 0, 100% 0, 100% calc(100% - 11px), calc(100% - 11px) 100%, 0 100%, 0 11px);
+  clip-path: polygon(16px 0, 100% 0, 100% calc(100% - 16px), calc(100% - 16px) 100%, 0 100%, 0 16px);
   background: none;
   opacity: 1;
   pointer-events: none;
-}
-
-.shell-cta-primary::after {
-  content: none;
 }
 
 /* Secondary shell buttons (Practice/Private room/Join room/Clips/Settings/
@@ -1714,7 +1508,6 @@ button.btn-inset-frame::before {
 }
 
 .email-gate-frame {
-  position: relative;
   display: grid;
   gap: 18px;
   width: min(520px, 100%);
@@ -1733,33 +1526,6 @@ button.btn-inset-frame::before {
   text-align: center;
 }
 
-.email-gate-frame::before {
-  content: "";
-  position: absolute;
-  width: 58px;
-  height: 58px;
-  background-image: var(--crystal-fleur-lg);
-  background-repeat: no-repeat;
-  background-size: contain;
-  pointer-events: none;
-  top: -26px;
-  left: -26px;
-}
-
-.email-gate-frame::after {
-  content: "";
-  position: absolute;
-  width: 58px;
-  height: 58px;
-  background-image: var(--crystal-fleur-lg);
-  background-repeat: no-repeat;
-  background-size: contain;
-  pointer-events: none;
-  right: -26px;
-  bottom: -26px;
-  transform: rotate(180deg);
-}
-
 .email-gate-copy {
   color: rgba(215, 221, 228, 0.8);
   font-size: 0.95rem;
@@ -1767,36 +1533,8 @@ button.btn-inset-frame::before {
 }
 
 .email-gate-form {
-  position: relative;
   display: grid;
   gap: 12px;
-}
-
-/* Gnostic motif living BEHIND "Play now", on the unclipped form (see
-   .shell-cta-primary::before's comment). The form is a 2-row grid
-   (email input, then button) so its own top-left corner is the INPUT's,
-   not the button's — ::before is offset down past the input+gap to
-   align with the button's actual top edge instead. ::after aligns
-   naturally since the button is the form's last child (its bottom
-   edge = the form's own bottom edge). */
-.email-gate-form::before,
-.email-gate-form::after {
-  content: "";
-  position: absolute;
-  width: 26px;
-  height: 26px;
-  background-image: var(--crystal-fleur-sm);
-  background-repeat: no-repeat;
-  background-size: contain;
-  pointer-events: none;
-}
-
-.email-gate-form::before { top: 56px; left: 0; }
-
-.email-gate-form::after {
-  right: -6px;
-  bottom: -6px;
-  transform: rotate(180deg);
 }
 
 .email-gate-input {
