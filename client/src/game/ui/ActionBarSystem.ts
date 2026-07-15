@@ -60,6 +60,19 @@ const C_SHIELD = 0x93c5fd;
 const C_FRAME = 0x2a3550;
 const C_FRAME_DIM = 0x1c2438;
 
+/** Linear RGB lerp between two 0xRRGGBB ints — used to make the ability
+ *  slot's color/alpha genuinely track `ready` across the whole cooldown
+ *  instead of snapping at the very last instant (see drawLiveSlot). */
+function lerpHexColor(from: number, to: number, t: number): number {
+  const k = Phaser.Math.Clamp(t, 0, 1);
+  const fr = (from >> 16) & 0xff, fg = (from >> 8) & 0xff, fb = from & 0xff;
+  const tr = (to >> 16) & 0xff, tg = (to >> 8) & 0xff, tb = to & 0xff;
+  const r = Math.round(fr + (tr - fr) * k);
+  const gr = Math.round(fg + (tg - fg) * k);
+  const b = Math.round(fb + (tb - fb) * k);
+  return (r << 16) | (gr << 8) | b;
+}
+
 type LiveSlot = { keyLabel: string; glyph: "shuriken" | "dash" };
 const LIVE_SLOTS: LiveSlot[] = [
   { keyLabel: "M1", glyph: "shuriken" }, // Fire — no cooldown today, reads always-ready.
@@ -307,10 +320,22 @@ export class ActionBarSystem {
     // Cooldown ring inside the diamond frame — same faceted-ring language
     // as the resource orbs and nameplate rings, sized to sit clear of the
     // diamond's own tips.
-    const readyColor = ready >= 1 ? 0x8ff8ff : PALETTE.textHi;
-    drawFacetedRing(g, cx, cy, r * 0.62, Math.max(2, r * 0.12), ready, readyColor, ready >= 1 ? 1 : 0.75, 0x1f2937, 0.35);
+    //
+    // Color/alpha track `ready` continuously (textDim -> sapphireSteady,
+    // 0.6/0.75 -> 0.85/1 alpha) instead of a binary ready>=1 switch — the
+    // old switch meant the icon sat at its single "not ready" tint for the
+    // ENTIRE cooldown and only snapped bright the instant it hit exactly
+    // 1.0. Invisible at the old 520ms dash cooldown; unmissably "stuck" at
+    // the current 3000ms one (Jake, 2026-07-15). The faceted ring's own
+    // fill amount was always driven by `ready` correctly — only the
+    // color/alpha around it were static.
+    const readyColor = lerpHexColor(PALETTE.textDim, PALETTE.sapphireSteady, ready);
+    const ringAlpha = 0.75 + 0.25 * Phaser.Math.Clamp(ready, 0, 1);
+    drawFacetedRing(g, cx, cy, r * 0.62, Math.max(2, r * 0.12), ready, readyColor, ringAlpha, 0x1f2937, 0.35);
 
-    g.lineStyle(1.5, ready >= 1 ? 0x8ff8ff : C_FRAME, ready >= 1 ? 0.85 : 0.6);
+    const frameColor = lerpHexColor(C_FRAME, PALETTE.sapphireSteady, ready);
+    const frameAlpha = 0.6 + 0.25 * Phaser.Math.Clamp(ready, 0, 1);
+    g.lineStyle(1.5, frameColor, frameAlpha);
     g.strokePoints(pts, true);
 
     // Small vector glyph — shuriken for the throw, chevron-burst for dash —
