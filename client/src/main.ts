@@ -293,9 +293,9 @@ app.innerHTML = `
         <button data-menu-world type="button" class="primary shell-cta-primary">Hot Lobby</button>
       </div>
       <div class="splash-actions splash-actions--secondary">
-        <button data-menu-practice type="button" class="shell-btn-secondary">Practice</button>
-        <button data-menu-join type="button" class="shell-btn-secondary">Join room</button>
-        <button data-menu-host type="button" class="shell-btn-secondary">Private room</button>
+        <span class="btn-frame"><button data-menu-practice type="button" class="shell-btn-secondary btn-inset-frame">Practice</button></span>
+        <span class="btn-frame"><button data-menu-join type="button" class="shell-btn-secondary btn-inset-frame">Join room</button></span>
+        <span class="btn-frame"><button data-menu-host type="button" class="shell-btn-secondary btn-inset-frame">Private room</button></span>
       </div>
       <div class="splash-actions splash-actions--ghost">
         <button data-menu-options type="button" class="shell-btn-quiet">Settings</button>

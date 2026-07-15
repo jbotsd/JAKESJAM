@@ -1105,6 +1105,67 @@ button.btn-danger:hover:not(:disabled) {
   justify-content: center;
 }
 
+/* .btn-frame: reusable unclipped wrapper for the "motif genuinely
+   underneath" pattern (same architecture as .splash-actions--primary/
+   .email-gate-form, generalized so any button can opt in — see
+   .shell-cta-primary::before's comment for why the motif can't live
+   inside the button itself). display:inline-flex so it shrink-wraps
+   to the button's own size and sits inline in a flex row without
+   disturbing sibling layout (a plain span would size to content fine
+   too, but inline-flex keeps the button filling it edge-to-edge). */
+.btn-frame {
+  position: relative;
+  display: inline-flex;
+}
+
+.btn-frame::before,
+.btn-frame::after {
+  content: "";
+  position: absolute;
+  width: 20px;
+  height: 20px;
+  background-image: var(--crystal-fleur-sm);
+  background-repeat: no-repeat;
+  background-size: contain;
+  pointer-events: none;
+}
+
+.btn-frame::before { top: -4px; left: -4px; }
+
+.btn-frame::after {
+  right: -4px;
+  bottom: -4px;
+  transform: rotate(180deg);
+}
+
+/* The wrapped button's own universal corner-badge is redundant now
+   that .btn-frame supplies the motif from behind — without this it'd
+   double up (badge on the face AND motif behind, at slightly
+   different positions). */
+.btn-frame > button::before,
+.btn-frame > button::after {
+  content: none;
+}
+
+/* Two-layer bezel, reusable — the inset hollow frame line that reads as
+   a second cut on the button's own face, same technique as
+   .shell-cta-primary::before but usable on any button, not just the
+   primary CTA. Selector specificity matters here: `.btn-frame > button
+   ::before` above is (0,1,2) and would otherwise beat a plain
+   `.btn-inset-frame::before` (0,1,1) regardless of source order —
+   `button.btn-inset-frame::before` matches it at (0,1,2) so this,
+   being later in the file, correctly wins for buttons that have both
+   classes. */
+button.btn-inset-frame::before {
+  content: "";
+  position: absolute;
+  inset: 4px;
+  border: 1px solid rgba(206, 223, 253, 0.35);
+  clip-path: polygon(9px 0, 100% 0, 100% calc(100% - 9px), calc(100% - 9px) 100%, 0 100%, 0 9px);
+  background: none;
+  pointer-events: none;
+}
+
 /* Ghost tier (axiom §7a: "no fill, no border, muted text only") — Settings/
    Clips/Forge/Showcase/Intro/Credits are real actions but none of them are
    "start a match," so they don't belong at Secondary's visual weight (that
