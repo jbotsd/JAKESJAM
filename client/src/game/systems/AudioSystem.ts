@@ -1,4 +1,5 @@
 import Phaser from "phaser";
+import { getSfxVolume01, onSfxVolumeChange } from "../audio/sfxVolume.js";
 
 export type GameSound =
   | "shoot"
@@ -20,6 +21,11 @@ const MASTER_GAIN = 0.16;
 export class GameAudioSystem {
   private readonly scene: Phaser.Scene;
   private context?: AudioContext;
+  /** Every voice connects here instead of straight to `destination` now,
+   *  so the settings-panel SFX volume/mute actually reaches this (legacy,
+   *  Practice-mode) audio path too, not just ProceduralAudio's. */
+  private master?: GainNode;
+  private unsubscribeSfxVolume?: () => void;
 
   constructor(scene: Phaser.Scene) {
     this.scene = scene;
@@ -30,6 +36,8 @@ export class GameAudioSystem {
   destroy() {
     this.scene.input.off("pointerdown", this.unlock);
     this.scene.input.keyboard?.off("keydown", this.unlock);
+    this.unsubscribeSfxVolume?.();
+    this.unsubscribeSfxVolume = undefined;
     void this.context?.close();
     this.context = undefined;
   }
@@ -105,8 +113,16 @@ export class GameAudioSystem {
       return undefined;
     }
 
-    this.context = new AudioContextConstructor();
-    return this.context;
+    const context = new AudioContextConstructor();
+    this.context = context;
+    const master = context.createGain();
+    master.gain.value = getSfxVolume01();
+    master.connect(context.destination);
+    this.master = master;
+    this.unsubscribeSfxVolume = onSfxVolumeChange((v01) => {
+      master.gain.value = v01;
+    });
+    return context;
   }
 
   /**
@@ -141,7 +157,7 @@ export class GameAudioSystem {
       gain.gain.exponentialRampToValueAtTime(g, now + 0.004);
       gain.gain.exponentialRampToValueAtTime(0.0001, now + Math.max(0.03, partialDur));
       osc.connect(gain);
-      gain.connect(context.destination);
+      gain.connect(this.master ?? context.destination);
       osc.start(now);
       osc.stop(now + durS + 0.05);
     }
@@ -176,7 +192,7 @@ export class GameAudioSystem {
     gain.gain.exponentialRampToValueAtTime(0.0001, now + durationSeconds);
 
     oscillator.connect(gain);
-    gain.connect(context.destination);
+    gain.connect(this.master ?? context.destination);
     oscillator.start(now);
     oscillator.stop(now + durationSeconds + 0.02);
   }
@@ -208,7 +224,7 @@ export class GameAudioSystem {
     source.buffer = buffer;
     source.connect(filter);
     filter.connect(gain);
-    gain.connect(context.destination);
+    gain.connect(this.master ?? context.destination);
     source.start(now);
   }
 }

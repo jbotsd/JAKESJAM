@@ -12,6 +12,7 @@ import {
 import { crumb, installTelemetry, watchContextLoss } from "./telemetry";
 import { installRendererRecovery } from "./shell/rendererRecovery";
 import { announce, setAnnouncerVolume, silenceAnnouncer } from "./game/audio/AnnouncerSystem";
+import { setSfxVolume01 } from "./game/audio/sfxVolume";
 import { LobbyController } from "./game/ui/LobbyController";
 import { MatchStatusBadge } from "./game/ui/MatchStatusBadge";
 import { fetchWorldSummary } from "./net/worldClient";
@@ -325,6 +326,14 @@ app.innerHTML = `
           <input data-music-muted type="checkbox" />
           Mute Music
         </label>
+        <label>
+          Sound Effects Volume
+          <input data-sfx-volume type="range" min="0" max="100" value="65" />
+        </label>
+        <label class="option-check">
+          <input data-sfx-muted type="checkbox" />
+          Mute Sound Effects
+        </label>
       </div>
       <div class="shell-section">
         <h3>Clips</h3>
@@ -522,9 +531,8 @@ app.innerHTML = `
             <button data-room-share type="button" class="shell-btn-secondary room-share-btn">Copy link</button>
           </div>
           <div class="room-status-slot" data-room-status></div>
+          <p class="shell-hint">Walk into the READY totem to ready up, LAUNCH to start — no buttons, just walk in.</p>
           <div class="shell-pause-actions">
-            <button data-ready-toggle type="button" class="shell-btn-secondary">Ready</button>
-            <button data-start-match type="button" class="primary shell-cta-primary">Start match</button>
             <button data-leave-room type="button" class="btn-danger">Leave</button>
           </div>
         </section>
@@ -703,6 +711,8 @@ const creditsPanel = queryRequired<HTMLElement>("[data-shell-credits]");
 const clipsListEl = queryRequired<HTMLElement>("[data-clips-list]");
 const musicVolumeInput = queryRequired<HTMLInputElement>("[data-music-volume]");
 const musicMutedInput = queryRequired<HTMLInputElement>("[data-music-muted]");
+const sfxVolumeInput = queryRequired<HTMLInputElement>("[data-sfx-volume]");
+const sfxMutedInput = queryRequired<HTMLInputElement>("[data-sfx-muted]");
 
 const shell = new ShellController({
   dom: {
@@ -1525,6 +1535,16 @@ musicMutedInput.addEventListener("change", () => {
   applyAudioOptions();
 });
 
+sfxVolumeInput.addEventListener("input", () => {
+  localStorage.setItem("jakesjam.sfxVolume", sfxVolumeInput.value);
+  applySfxOptions();
+});
+
+sfxMutedInput.addEventListener("change", () => {
+  localStorage.setItem("jakesjam.sfxMuted", JSON.stringify(sfxMutedInput.checked));
+  applySfxOptions();
+});
+
 // ── Graphics quality (QualityProfile) ────────────────────────────────────
 // Context flags + boot-sized systems depend on these, so changes apply via
 // a reload. The user's explicit choice always wins over auto-detection.
@@ -1735,6 +1755,10 @@ window.addEventListener("jakesjam:start-match", (event) => {
   // above already drives ShellController.setMatchMode → splash.hidden=true
   // for the normal case; stopping Tutorial here is the actual missing fix.
   if (game.scene.isActive(SceneKeys.Tutorial)) game.scene.stop(SceneKeys.Tutorial);
+  // The hangout pre-stage world (totem walked into → real match handed
+  // off) must not keep running alongside the real match — two active
+  // scenes would mean two live WS connections to the same room.
+  if (game.scene.isActive(SceneKeys.Hangout)) game.scene.stop(SceneKeys.Hangout);
   // Private rooms always use OnlineMatch + server token (no Convex).
   if (matchEvent.detail?.matchId && matchEvent.detail?.matchToken) {
     game.scene.start(SceneKeys.OnlineMatch, {
@@ -1949,12 +1973,30 @@ window.addEventListener("jakesjam:back-to-splash", () => {
 
 // Tab title reflects which room the player is in (item 9).
 window.addEventListener("jakesjam:room-joined", (event) => {
-  const code = (event as CustomEvent<{ code: string }>).detail.code;
-  document.title = `JAKESJAM — Lobby ${code}`;
+  const detail = (event as CustomEvent<{ code: string; playerId: string }>).detail;
+  document.title = `JAKESJAM — Lobby ${detail.code}`;
+  // Party Hangout: the walkable pre-match world replaces the old DOM
+  // Ready/Start buttons (totems drive both, server-side). The lobby DOM
+  // panel (code/chaos/map-picker) is a separate overlay and keeps working
+  // untouched alongside this — same coexistence MainMenuScene already has
+  // with it. Uses LobbyController's own playerId (carried on the event) —
+  // NOT this file's localPlayerId() helper, which is a different id scheme
+  // and isn't the id the server actually knows as a member of this room.
+  game.scene.stop(SceneKeys.MainMenu);
+  game.scene.start(SceneKeys.Hangout, {
+    roomCode: detail.code,
+    localPlayerId: detail.playerId,
+  });
 });
 
 window.addEventListener("jakesjam:room-left", () => {
   document.title = "JAKESJAM";
+  if (game.scene.isActive(SceneKeys.Hangout)) {
+    game.scene.stop(SceneKeys.Hangout);
+  }
+  if (!game.scene.isActive(SceneKeys.MainMenu)) {
+    game.scene.start(SceneKeys.MainMenu);
+  }
 });
 
 window.addEventListener("jakesjam:chaos-change", (event) => {
@@ -1991,10 +2033,22 @@ function restoreOptions() {
   musicVolumeInput.value = localStorage.getItem("jakesjam.musicVolume") ?? "65";
   musicMutedInput.checked = localStorage.getItem("jakesjam.musicMuted") === "true";
   applyAudioOptions();
+  sfxVolumeInput.value = localStorage.getItem("jakesjam.sfxVolume") ?? "65";
+  sfxMutedInput.checked = localStorage.getItem("jakesjam.sfxMuted") === "true";
+  applySfxOptions();
 }
 
 function musicVol(): number {
   return Number(musicVolumeInput.value) / 100;
+}
+
+/** Mirrors applyAudioOptions' shape but for SFX — no fade/crossfade
+ *  complexity to manage (gameplay one-shots, not looping music tracks),
+ *  just broadcasts the effective 0..1 level to whichever ProceduralAudio/
+ *  GameAudioSystem instance(s) currently exist via the shared setter. */
+function applySfxOptions(): void {
+  const muted = sfxMutedInput.checked;
+  setSfxVolume01(muted ? 0 : Number(sfxVolumeInput.value) / 100);
 }
 
 /** RAF volume ramp on an Audio element; pauses it when it reaches silence.

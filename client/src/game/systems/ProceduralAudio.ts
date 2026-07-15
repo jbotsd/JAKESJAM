@@ -15,6 +15,7 @@
 // (the scene wires unlock on first pointer/key).
 
 import { sampleEngine } from "../audio/SampleEngine.js";
+import { getSfxVolume01, onSfxVolumeChange } from "../audio/sfxVolume.js";
 
 export type AudioCue =
   | "shoot"
@@ -151,6 +152,9 @@ export class ProceduralAudio {
   private noiseBuf?: AudioBuffer;
   /** Active shield drone voice (started on shield-up, stopped on shield down). */
   private shieldDrone: { stop: (t: number) => void } | null = null;
+  /** Unsubscribes this instance from the shared SFX-volume broadcaster;
+   *  set once the audio context (and therefore `master`) exists. */
+  private unsubscribeSfxVolume?: () => void;
 
   // Anti-fatigue weapon variation: round-robin index + last-shot time. Every
   // shot advances the round-robin (guaranteed non-repeat) and the inter-shot
@@ -172,6 +176,8 @@ export class ProceduralAudio {
     } catch {
       /* context may be gone */
     }
+    this.unsubscribeSfxVolume?.();
+    this.unsubscribeSfxVolume = undefined;
     void this.ctx?.close();
     this.ctx = undefined;
   }
@@ -185,9 +191,15 @@ export class ProceduralAudio {
     const ctx = new Ctor();
     this.ctx = ctx;
 
-    // Master → soft limiter → out.
+    // Master → soft limiter → out. Scaled by the shared SFX-volume setting
+    // (settings panel, main.ts) on top of the fixed MASTER mix level —
+    // live-updates via onSfxVolumeChange so dragging the slider mid-match
+    // takes effect immediately, not just on the next scene/context.
     const master = ctx.createGain();
-    master.gain.value = MASTER;
+    master.gain.value = MASTER * getSfxVolume01();
+    this.unsubscribeSfxVolume = onSfxVolumeChange((v01) => {
+      master.gain.value = MASTER * v01;
+    });
     const limiter = ctx.createDynamicsCompressor();
     limiter.threshold.value = -10;
     limiter.knee.value = 6;
