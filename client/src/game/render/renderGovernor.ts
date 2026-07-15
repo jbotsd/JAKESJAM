@@ -21,6 +21,18 @@ const CHECK_INTERVAL_MS = 2_000;
 const DOWN_FACTOR = 1.35;
 const UP_FACTOR = 0.85;
 const DOWN_STREAK = 3; // 3 consecutive bad checks (~6s) before stepping
+/** Ultra-tier (detected discrete GPU — RTX/Radeon RX etc.) gets 3x the
+ *  streak requirement (~18s) before EVER touching resolution. This is a
+ *  SECOND, PROACTIVE fix on top of the futility-detection safety net
+ *  below — that net already proved (2026-07-11, Jake's 4080) that on this
+ *  hardware class, elevated dt is never fill-bound, only CPU/presentation-
+ *  bound, so dropping resolution doesn't help AND still visibly degrades
+ *  the game for the ~12+ seconds it takes the net to notice and revert.
+ *  A much longer fuse means brief periodic hitches (GC, network snapshot
+ *  processing, clip-encoder work) get far more room to pass on their own
+ *  before the game ever blurs itself — the net still exists underneath
+ *  for genuine sustained struggle (e.g. thermal-throttled gaming laptops). */
+const ULTRA_DOWN_STREAK_MULT = 3;
 const UP_HOLD_MS = 30_000;
 const UP_LOCKOUT_AFTER_DOWN_MS = 60_000;
 /** Weak-GPU tiers may trade far more resolution before motion: VideoCore
@@ -39,6 +51,11 @@ export class RenderGovernor {
   private lastDownAtMs = 0;
 
   private readonly floor: number;
+  private readonly downStreakNeeded: number;
+  /** Ultra tier self-corrects after 1 futile step instead of 2 — if the
+   *  much longer fuse above still wasn't enough to avoid a bad down-step,
+   *  don't make it wait through a second one before reverting. */
+  private readonly futileStepsToRestore: number;
   /** Futility detection: dt before the last down-step, and how many
    *  consecutive steps produced no measurable improvement. */
   private dtBeforeStep = 0;
@@ -51,6 +68,9 @@ export class RenderGovernor {
     const profile = getQualityProfile();
     this.floor = profile.tier === "potato" ? FLOOR_POTATO : FLOOR;
     this.targetDtMs = profile.fpsLimit > 0 ? 1000 / profile.fpsLimit : 1000 / 60;
+    const isUltra = profile.tier === "ultra";
+    this.downStreakNeeded = isUltra ? DOWN_STREAK * ULTRA_DOWN_STREAK_MULT : DOWN_STREAK;
+    this.futileStepsToRestore = isUltra ? 1 : 2;
   }
 
   /** Call once per frame with the render-loop dt EMA (NetStats.frameDtEmaMs). */
@@ -75,7 +95,7 @@ export class RenderGovernor {
           this.futileSteps += 1;
         }
         this.dtBeforeStep = 0;
-        if (this.futileSteps >= 2) {
+        if (this.futileSteps >= this.futileStepsToRestore) {
           const restored = Math.min(this.ceilingScale, rs + 0.25);
           setRenderScaleRuntime(this.game, restored);
           this.frozenUntilMs = nowMs + 120_000;
@@ -105,7 +125,7 @@ export class RenderGovernor {
         }
       }
       if (nowMs < this.frozenUntilMs) return;
-      if (this.badStreak >= DOWN_STREAK && rs > this.floor) {
+      if (this.badStreak >= this.downStreakNeeded && rs > this.floor) {
         // Bigger steps from high (DPR-crisp) ceilings — walking 2.0→0.8
         // in 0.1 hops would take a minute of visible jank.
         const step = rs > 1.2 ? 0.25 : 0.1;
