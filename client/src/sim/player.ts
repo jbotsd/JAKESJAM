@@ -71,6 +71,56 @@ export const PLAYER_BODY_HEIGHT = M.bodyHeight;
 export const PLAYER_CROUCH_HEIGHT = M.crouchHeight;
 
 /**
+ * Fraction of the (crouch-aware) body height, measured from the top, that
+ * counts as the head zone for headshot detection (projectile.ts). Generous
+ * on purpose — this is an arcade arena brawler, not a tactical shooter;
+ * "aim high and get rewarded" should feel achievable, not pixel-perfect.
+ */
+export const HEADSHOT_ZONE_FRAC = 0.32;
+/** Slight boon, per design ask — a noticeable but not dominant reward
+ *  (biggest existing card damageMultiplier in data/cards.ts is 1.16). */
+export const HEADSHOT_DAMAGE_MULTIPLIER = 1.2;
+
+/**
+ * The player's REAL combat hitbox — same box movement collision already
+ * uses (bodyWidth × crouch-aware bodyHeight, centred on player.x/y), not a
+ * hand-rolled approximation. Jake, 2026-07-15: projectile.ts/fire.ts/
+ * destructible.ts each independently hard-coded their own `PLAYER_RADIUS =
+ * 18` square hitbox (36×36) — this is exactly the "hand-duplicating these
+ * numbers as magic constants" anti-pattern the export above already exists
+ * to prevent, and the SQUARE shape was badly wrong besides: the real body
+ * is 26w × 56h (or 38h crouched). A 36-tall square hitbox is 20px SHORTER
+ * than the standing body, meaning shots that visually land on the head or
+ * feet — the outer ~36% of the character's real vertical profile — missed
+ * outright. That's the "we miss often when we should" bug.
+ */
+export function playerHitboxAABB(player: Pick<PlayerEntity, "x" | "y" | "crouching">): AABB {
+  const h = player.crouching ? M.crouchHeight : M.bodyHeight;
+  return {
+    x: player.x - M.bodyWidth / 2,
+    y: player.y - h / 2,
+    w: M.bodyWidth,
+    h,
+  };
+}
+
+/**
+ * True when a hit at world-space `hitY` landed in the victim's head zone
+ * (top HEADSHOT_ZONE_FRAC of their real, crouch-aware hitbox — see
+ * playerHitboxAABB). Pure Y-band check: a projectile that's already
+ * confirmed to hit the body only needs the vertical placement to qualify,
+ * not a second full AABB test.
+ */
+export function isHeadshot(
+  hitY: number,
+  victim: Pick<PlayerEntity, "y" | "crouching">,
+): boolean {
+  const h = victim.crouching ? M.crouchHeight : M.bodyHeight;
+  const top = victim.y - h / 2;
+  return hitY <= top + h * HEADSHOT_ZONE_FRAC;
+}
+
+/**
  * Distance below the map's bottom edge (`map.size.y`) at which a player is
  * considered "in the void" and force-killed. Prevents the
  * "fall-through-the-floor → stuck forever" bug when a map has a hole, an
@@ -111,7 +161,7 @@ const Bit = {
  *  reads as a committed POWER SLIDE — fast and flat — not a floaty hop. */
 const DASH_SPEED = 940;
 /** Dash cooldown (ms) between uses. */
-const DASH_COOLDOWN_MS = 520;
+const DASH_COOLDOWN_MS = 3000;
 /** How long the slide holds full speed before the normal clamp resumes.
  *  Bumped 150→210: a longer slide = a more committed, readable power-slide
  *  bash (you can see it coming and it carries you through the block window). */

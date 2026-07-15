@@ -45,7 +45,7 @@ const DASH_SPEED: f64 = 940.0;
 /// Mid-dash steering lerp rate (per second) — mirrors player.ts
 /// DASH_STEER_LERP_PER_SEC. Keep in sync.
 const DASH_STEER_LERP_PER_SEC: f64 = 9.0;
-const DASH_COOLDOWN_MS: f64 = 520.0;
+const DASH_COOLDOWN_MS: f64 = 3000.0;
 const DASH_DURATION_MS: f64 = 210.0;
 const DASH_RECOVERY_MS: f64 = 200.0;
 const DASH_RECOVERY_ACCEL_MULT: f64 = 0.4;
