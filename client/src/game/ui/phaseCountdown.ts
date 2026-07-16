@@ -64,3 +64,20 @@ export function deathWaitCountdown(
 function toSec(ms: number): number {
   return Math.max(0, Math.ceil(ms / 1000));
 }
+
+/**
+ * How long to arm the draft overlay's timer bar for (venue-goal Pillar
+ * 0.3): the server-authoritative remaining draft time, never zero. Offers
+ * can arrive a beat after drafting began (snapshot timing) — clamp into
+ * (0, DRAFT_WINDOW_MS] — or on the edge before the phase flips, where the
+ * full window is the honest arm. The old call path passed a literal 0,
+ * which left the bar at width 0 forever while the hint text promised
+ * "auto-selects when the timer expires".
+ */
+export function draftTimerArmMs(
+  phase: RoundPhase,
+  countdownRemainingMs: number,
+): number {
+  if (phase !== "drafting") return DRAFT_WINDOW_MS;
+  return Math.min(DRAFT_WINDOW_MS, Math.max(0, countdownRemainingMs)) || DRAFT_WINDOW_MS;
+}

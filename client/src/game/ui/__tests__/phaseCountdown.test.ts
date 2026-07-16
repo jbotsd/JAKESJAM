@@ -6,7 +6,7 @@
 // upper-bound estimate that only ever jumps down.
 
 import { describe, expect, test } from "bun:test";
-import { deathWaitCountdown } from "../phaseCountdown.js";
+import { deathWaitCountdown, draftTimerArmMs } from "../phaseCountdown.js";
 import { DRAFT_WINDOW_MS, ROUND_OVER_HOLD_MS } from "../../../sim/round.js";
 
 describe("deathWaitCountdown — all four phases", () => {
@@ -54,5 +54,24 @@ describe("deathWaitCountdown — all four phases", () => {
 
   test("negative remaining clamps to 0, never renders a negative number", () => {
     expect(deathWaitCountdown("drafting", -500).seconds).toBe(0);
+  });
+});
+
+describe("draftTimerArmMs — the overlay's timer bar is never armed at zero (Pillar 0.3)", () => {
+  test("mid-draft: arms the authoritative remaining time", () => {
+    expect(draftTimerArmMs("drafting", 9_400)).toBe(9_400);
+  });
+
+  test("remaining above the window clamps to the window", () => {
+    expect(draftTimerArmMs("drafting", 99_000)).toBe(DRAFT_WINDOW_MS);
+  });
+
+  test("offer landing before the phase flips arms the full window", () => {
+    expect(draftTimerArmMs("fighting", 42_000)).toBe(DRAFT_WINDOW_MS);
+  });
+
+  test("zero/negative remaining never arms zero — the width-0 bug stays dead", () => {
+    expect(draftTimerArmMs("drafting", 0)).toBeGreaterThan(0);
+    expect(draftTimerArmMs("drafting", -1)).toBeGreaterThan(0);
   });
 });

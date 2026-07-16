@@ -73,7 +73,7 @@ import { HudSystem, type HudChip, type HudVitals, type HudRound } from "../ui/Hu
 import { ActionBarSystem, type ActionBarVitals } from "../ui/ActionBarSystem";
 import { RoundBanner } from "../ui/RoundBanner";
 import { DeathOverlay } from "../ui/DeathOverlay";
-import { deathWaitCountdown } from "../ui/phaseCountdown";
+import { deathWaitCountdown, draftTimerArmMs } from "../ui/phaseCountdown";
 import { ConnectionOverlay } from "../ui/ConnectionOverlay";
 import { ParticlePool } from "../systems/ParticlePool";
 import { StatusVfxController } from "../systems/StatusVfxController";
@@ -1490,7 +1490,15 @@ export class OnlineMatchScene extends Phaser.Scene {
       if (!state || !this.loop) return;
       this.loop.sendCardPick(state.round.roundIndex, card.id);
     };
-    this.cardDraftOverlay.show(candidates, onPick);
+    // Arm the overlay's timer bar with the server-authoritative remaining
+    // draft time (venue-goal Pillar 0.3, audit seam #10): the old path
+    // called show() → showWithTimer(..., 0), leaving the bar at width 0
+    // forever while the hint promised "auto-selects when the timer
+    // expires" — and the HUD's real countdown sat blurred out behind this
+    // overlay's own backdrop.
+    const round = this.loop?.getRenderState()?.round;
+    const armMs = draftTimerArmMs(round?.phase ?? "drafting", round?.countdownRemainingMs ?? 0);
+    this.cardDraftOverlay.showWithTimer(candidates, onPick, armMs);
   }
 
   /** Full juice stack for every card pick — color from card.visual. */
