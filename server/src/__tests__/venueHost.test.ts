@@ -15,6 +15,7 @@ import { VenueHost, VENUE_LOBBY_MATCH_ID } from "../venueHost.ts";
 import { WorldHost } from "../worldHost.ts";
 import type { MatchSocketData } from "../matchHost.ts";
 import { DRAFT_WINDOW_MS, ROUND_OVER_HOLD_MS } from "@sim/round.ts";
+import { decodeMessage } from "@net/protocol.ts";
 
 function makeFakeWs(playerId: string, name?: string): ServerWebSocket<MatchSocketData> {
   return {
@@ -109,6 +110,64 @@ describe("VenueHost lobby lifecycle (Pillar 1.2)", () => {
     const ids = Object.keys(lobby.state.players).sort();
     expect(ids).toEqual(["p_a", "p_b"]);
     expect(venue.summary().lobby.present).toBe(2);
+    venue.dispose();
+  });
+
+  test("totem events toggle the bell queue; disconnect dequeues (S2.B)", () => {
+    const { venue } = makeVenue(0);
+    const ws = makeFakeWs("p_q", "QUE");
+    venue.attachLobby(ws);
+    type SimEventSink = { onSimEvent?: (e: { t: string; playerId: string }) => void };
+    const lobbyOpts = venue.lobbyHostForTest() as unknown as SimEventSink;
+    // Drive the same hook stepTotems fires through (the totem overlap
+    // itself is covered by totem.test.ts) — both event kinds mean "toggle".
+    lobbyOpts.onSimEvent?.({ t: "launch-requested", playerId: "p_q" });
+    expect(venue.queuedForTest() as string[]).toEqual(["p_q"]);
+    lobbyOpts.onSimEvent?.({ t: "launch-requested", playerId: "p_q" });
+    expect(venue.queuedForTest() as string[]).toEqual([]);
+    lobbyOpts.onSimEvent?.({ t: "ready-toggled", playerId: "p_q" });
+    expect(venue.queuedForTest() as string[]).toEqual(["p_q"]);
+    venue.detachLobby(ws);
+    expect(venue.queuedForTest() as string[]).toEqual([]); // no ghost entrants at the drain
+    venue.dispose();
+  });
+
+  test("status frames push to lobby sockets with the bell countdown and queue (S2.B)", () => {
+    const { venue } = makeVenue(2); // bots boot the arena so a frame exists
+    const sent: Uint8Array[] = [];
+    const ws = {
+      data: { matchId: VENUE_LOBBY_MATCH_ID, playerId: "p_f", name: "FEED", authedAt: Date.now() },
+      send: (buf: Uint8Array) => {
+        sent.push(buf);
+        return 1;
+      },
+      close: () => {},
+      getBufferedAmount: () => 0,
+    } as unknown as ServerWebSocket<MatchSocketData>;
+    venue.attachLobby(ws);
+    type Broadcaster = { broadcastStatus(): void };
+    (venue as unknown as Broadcaster).broadcastStatus();
+    // attachClient sends a hello frame first — find the venue-status among
+    // everything the socket received.
+    const frames = sent
+      .map((buf) => decodeMessage(buf)?.message as { t: string } | undefined)
+      .filter((m): m is { t: string } => m !== undefined);
+    const frame = frames.find((m) => m.t === "venue-status") as
+      | {
+          t: string;
+          arenaPhase: string;
+          nextBellMs: number;
+          humans: number;
+          bots: number;
+          queued: string[];
+        }
+      | undefined;
+    expect(frame).toBeDefined();
+    if (!frame) throw new Error("unreachable");
+    expect(typeof frame.nextBellMs).toBe("number");
+    expect(frame.bots).toBe(2);
+    expect(frame.humans).toBe(0);
+    expect(frame.queued).toEqual([]);
     venue.dispose();
   });
 

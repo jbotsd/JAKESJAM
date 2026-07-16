@@ -94,6 +94,14 @@ export class WorldHost {
   /** Index into ROTATION_MAPS used by `nextMapId`. Reset alongside host
    *  rebuild when the existing host is torn down for any reason. */
   private rotationCursor = 0;
+  /** Venue tap on the arena's round-phase edges (set by VenueHost after
+   *  construction — index.ts builds WorldHost first, then wraps it).
+   *  Mutable on purpose; buildHost forwards through a closure so hosts
+   *  built before the venue attaches still fire once it has. */
+  onRoundPhaseChange?: (
+    prev: "countdown" | "fighting" | "round-over" | "drafting",
+    next: "countdown" | "fighting" | "round-over" | "drafting",
+  ) => void;
 
   constructor(opts: { mapId?: MapId | string; rotateMaps?: boolean; resultsHoldMs?: number; bots?: number } = {}) {
     // Was a flat 6000ms with no readiness gate — the "goes too fast into
@@ -173,6 +181,10 @@ export class WorldHost {
     this.bots.bindMap(resolveMap(mapId));
     return new MatchHost(WORLD_MATCH_ID, [...spawns, ...botSpawns], [], mapId, {
       onMatchComplete: () => this.scheduleRecycle(),
+      // Threaded through EVERY host build (recycles included) so venue
+      // status frames / the bell drain never silently detach after a
+      // cycle end (venue-sprint2-goal S2.B/S2.D).
+      onRoundPhaseChange: (prev, next) => this.onRoundPhaseChange?.(prev, next),
     });
   }
 

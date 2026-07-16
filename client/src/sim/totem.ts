@@ -123,6 +123,23 @@ export function resolveHangoutTotems(map: MapDefinition): TotemDefinition[] {
 }
 
 /**
+ * The public venue lobby's totem set (venue-sprint2-goal S2.B): ONE
+ * arena-queue portal, not the room-hangout READY/LAUNCH pair — venue
+ * queueing is a single toggle ("in at the next bell"), so a second totem
+ * would be a second meaning with no second action. Kind "launch" keeps
+ * the SimEvent vocabulary (`launch-requested` = queue toggle in venue
+ * semantics; VenueHost maps it). Shared pure function: the server places
+ * it, the client renders it at identical coordinates.
+ */
+export function resolveVenueTotems(map: MapDefinition): TotemDefinition[] {
+  if (map.id === "vessel-nexus") {
+    const groundY = map.size.y - 36 - TOTEM_STAND_OFFSET;
+    return [{ id: "totem-bell", kind: "launch", x: map.size.x * 0.5, y: groundY, radius: 80 }];
+  }
+  return [{ id: "totem-bell", kind: "launch", radius: 80, ...snapToStandable(map, map.size.x * 0.5) }];
+}
+
+/**
  * Snap a target x onto the top of a real standable surface (floor or
  * platform — walls excluded). Preference order: surfaces in the map's
  * lower half (totems belong at ground level, not on a sky ledge), then

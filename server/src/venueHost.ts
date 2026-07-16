@@ -22,8 +22,11 @@ import type { ServerWebSocket } from "bun";
 import { MatchHost, type MatchSocketData } from "./matchHost.ts";
 import type { WorldHost } from "./worldHost.ts";
 import { msUntilNextBell } from "@sim/round.ts";
+import { resolveVenueTotems } from "@sim/totem.ts";
+import { resolveMap } from "@sim/data/maps.ts";
 import { PlayerId, type PlayerSpawnInfo } from "@sim/types.ts";
 import type { MapId } from "@sim/data/maps.ts";
+import { encodeMessage, type VenueStatus } from "@net/protocol.ts";
 
 export const VENUE_LOBBY_MATCH_ID = "lobby";
 
@@ -60,10 +63,21 @@ export class VenueHost {
   private lobbyHost: MatchHost;
   /** Live lobby sockets by player — presence, honestly counted. */
   private readonly lobbySockets = new Map<PlayerId, ServerWebSocket<MatchSocketData>>();
+  /** Players queued at the bell totem — drained into the arena at the
+   *  countdown-entry edge (S2.D); until then it drives the totem UI. */
+  private readonly readyQueue = new Set<PlayerId>();
+  /** 1Hz status push (S2.B) — phase edges push immediately on top. */
+  private statusTimer: ReturnType<typeof setInterval> | null = null;
 
   constructor(opts: { arena: WorldHost }) {
     this.arenaHost = opts.arena;
     this.lobbyHost = this.buildLobby();
+    // Tap the arena's round-phase edges (threaded through every WorldHost
+    // rebuild, recycles included) — an edge means the bell countdown just
+    // re-based, so push a fresh frame immediately rather than waiting out
+    // the 1Hz tick.
+    this.arenaHost.onRoundPhaseChange = () => this.broadcastStatus();
+    this.statusTimer = setInterval(() => this.broadcastStatus(), 1000);
   }
 
   /** The arena half — index.ts keeps routing /ws/world here unchanged. */
@@ -74,14 +88,56 @@ export class VenueHost {
   private buildLobby(): MatchHost {
     const host = new MatchHost(VENUE_LOBBY_MATCH_ID, [], [], LOBBY_MAP_ID, {
       mode: "hangout",
-      // Totem SimEvents fire here (same hook privateLobby uses). The venue
-      // lobby has no host-gate and no room bookkeeping — Pillar 3 maps
-      // these to bell-queue enqueue/dequeue. Until then they're inert by
-      // design, NOT an error: a walk-over does nothing yet.
-      onSimEvent: () => {},
+      // The venue lobby's single bell-portal totem replaces the room
+      // hangout's READY/LAUNCH pair (resolveVenueTotems — shared pure
+      // function, client renders identical coordinates).
+      totems: resolveVenueTotems(resolveMap(LOBBY_MAP_ID)),
+      // Totem SimEvents (same hook privateLobby uses): in venue semantics
+      // BOTH event kinds mean "toggle my place in the bell queue" — one
+      // totem, one meaning, no host gate, no room bookkeeping. The actual
+      // arena admission drain is S2.D; queueing is immediately visible via
+      // the pushed status frames either way.
+      onSimEvent: (event) => {
+        if (event.t === "ready-toggled" || event.t === "launch-requested") {
+          this.toggleQueue(PlayerId(event.playerId));
+        }
+      },
     });
     host.ensureTickLoop();
     return host;
+  }
+
+  private toggleQueue(playerId: PlayerId): void {
+    if (this.readyQueue.has(playerId)) this.readyQueue.delete(playerId);
+    else this.readyQueue.add(playerId);
+    this.broadcastStatus();
+  }
+
+  /** Compose + push the S2.B status frame to every connected lobby socket.
+   *  Cheap by construction (a dozen scalar fields + one encode per second);
+   *  arena summary is the same call /venue/summary makes. */
+  private broadcastStatus(): void {
+    if (this.lobbySockets.size === 0) return;
+    const arena = this.arenaHost.summary();
+    if (!arena) return;
+    const frame: VenueStatus = {
+      t: "venue-status",
+      arenaPhase: arena.phase,
+      roundIndex: arena.roundIndex,
+      scores: arena.scores,
+      humans: arena.humans,
+      bots: arena.bots,
+      nextBellMs: Math.round(msUntilNextBell(arena.phase, arena.countdownRemainingMs)),
+      queued: [...this.readyQueue] as string[],
+    };
+    const encoded = encodeMessage(frame);
+    for (const [playerId, ws] of this.lobbySockets) {
+      try {
+        ws.send(encoded);
+      } catch {
+        this.lobbySockets.delete(playerId);
+      }
+    }
   }
 
   // ── Lobby WS lifecycle (mirrors WorldHost.attach/route/detach shape so
@@ -106,6 +162,9 @@ export class VenueHost {
   detachLobby(ws: ServerWebSocket<MatchSocketData>): void {
     const playerId = PlayerId(ws.data.playerId);
     if (this.lobbySockets.get(playerId) === ws) this.lobbySockets.delete(playerId);
+    // A departed player must not be drained into the arena at the next
+    // bell — dequeue on disconnect (no ghost entrants).
+    this.readyQueue.delete(playerId);
     this.lobbyHost.detachClient(ws);
     // Deliberately NO dispose-on-empty (the WorldHost discipline, applied
     // to the antechamber): the lobby is the venue's front room — it exists
@@ -132,7 +191,16 @@ export class VenueHost {
     return this.lobbyHost;
   }
 
+  /** Test surface: the bell queue's current membership. */
+  queuedForTest(): PlayerId[] {
+    return [...this.readyQueue];
+  }
+
   dispose(): void {
+    if (this.statusTimer) {
+      clearInterval(this.statusTimer);
+      this.statusTimer = null;
+    }
     this.lobbyHost.dispose();
   }
 

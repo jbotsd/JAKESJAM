@@ -22,7 +22,7 @@ import { ClientLoop, WsTransport, InputBit } from "../../net";
 import { PlayerId, type PlayerEntity, type SimEvent, type WorldState } from "../../sim/types.js";
 import type { MapDefinition } from "../../sim/types.js";
 import { resolveMap } from "../../sim/data/maps.js";
-import { resolveHangoutTotems, type TotemDefinition } from "../../sim/totem.js";
+import { resolveHangoutTotems, resolveVenueTotems, type TotemDefinition } from "../../sim/totem.js";
 import { PrivateRoomClient } from "../net/PrivateRoomClient";
 import { fetchVenueLobbyAssignment } from "../../net/worldClient";
 import { sanitizePlayerName } from "../../net/playerName";
@@ -92,6 +92,13 @@ export class HangoutScene extends Phaser.Scene {
 
   private lastFrameMs = 0;
   private readyFlashUntilMs = 0;
+
+  // Venue mode (S2.B): latest pushed status frame + when it arrived, so the
+  // bell countdown renders smoothly between 1Hz frames instead of jumping.
+  private venueStatus: import("../../net/protocol.js").VenueStatus | null = null;
+  private venueStatusAtMs = 0;
+  private feedText: Phaser.GameObjects.Text | null = null;
+  private bellLabel: Phaser.GameObjects.Text | null = null;
 
   constructor() {
     super(SceneKeys.Hangout);
@@ -204,6 +211,12 @@ export class HangoutScene extends Phaser.Scene {
         onReconnectAttempt: (attempt) => {
           this.setStatus(`Reconnecting (attempt ${attempt})...`);
         },
+        // Pushed venue-status frames (S2.B) — only the venue lobby's host
+        // ever sends these; private hangouts simply never fire it.
+        onVenueStatus: (status) => {
+          this.venueStatus = status;
+          this.venueStatusAtMs = performance.now();
+        },
       });
       transport.onClose((reason) => {
         this.setStatus(`Disconnected: ${reason}`);
@@ -293,7 +306,10 @@ export class HangoutScene extends Phaser.Scene {
     this.totemGraphics?.destroy();
     for (const label of this.totemLabels) label.destroy();
     this.totemLabels = [];
-    this.totems = resolveHangoutTotems(map);
+    this.bellLabel = null;
+    // Venue lobby: ONE bell-portal totem (queue toggle); private hangout:
+    // the READY/LAUNCH pair. Same pure functions the server places with.
+    this.totems = this.mode === "venue" ? resolveVenueTotems(map) : resolveHangoutTotems(map);
 
     const g = this.add.graphics().setDepth(2);
     this.totemGraphics = g;
@@ -306,11 +322,12 @@ export class HangoutScene extends Phaser.Scene {
       g.fillStyle(ring, 0.06);
       g.fillCircle(totem.x, totem.y, totem.radius);
 
+      const isBell = this.mode === "venue";
       const label = this.add
         .text(
           totem.x,
           totem.y - totem.radius - 26,
-          totem.kind === "ready" ? "READY" : "LAUNCH",
+          isBell ? "THE BELL" : totem.kind === "ready" ? "READY" : "LAUNCH",
           {
             color: totem.kind === "ready" ? "#aa9e7f" : "#6b98f4",
             fontFamily: "'Space Grotesk', Inter, Arial, sans-serif",
@@ -321,16 +338,22 @@ export class HangoutScene extends Phaser.Scene {
         .setOrigin(0.5)
         .setDepth(2.1);
       this.totemLabels.push(label);
+      if (isBell) this.bellLabel = label;
     }
   }
 
   /** Ready totem flash feedback — walking-into-it feel while no combat
-   *  cinematic exists to carry the beat. Cheap sin pulse, no tween churn. */
+   *  cinematic exists to carry the beat. Cheap sin pulse, no tween churn.
+   *  Venue mode adds a steady "queued" glow: while the local player is in
+   *  the bell queue, the portal ring holds bright (state, not a flash —
+   *  axiom H2: light is scarce and state-driven). */
   private updateTotemPulse(nowMs: number): void {
-    if (!this.totemGraphics) return;
+    if (!this.totemGraphics || this.totems.length === 0) return;
     const flashing = nowMs < this.readyFlashUntilMs;
     const readyTotem = this.totems.find((t) => t.kind === "ready");
-    if (!readyTotem) return;
+    const localQueued =
+      this.mode === "venue" &&
+      (this.venueStatus?.queued.includes(this.localPlayerId as string) ?? false);
     const scale = flashing ? 1 + 0.12 * Math.sin(nowMs * 0.03) : 1;
     // Redraw is cheap at this scale (two rings + a fill per totem, once a
     // frame only while flashing would be ideal, but two totems total makes
@@ -338,7 +361,9 @@ export class HangoutScene extends Phaser.Scene {
     const pulse = 0.5 + 0.5 * Math.sin(nowMs * 0.0025);
     this.totemGraphics.clear();
     for (const totem of this.totems) {
-      const isFlashingRing = flashing && totem.id === readyTotem.id;
+      const isFlashingRing =
+        (flashing && readyTotem !== undefined && totem.id === readyTotem.id) ||
+        (localQueued && totem.id === "totem-bell");
       const ring = totem.kind === "ready" ? PALETTE.inkBright : PALETTE.sapphireSteady;
       const r = isFlashingRing ? totem.radius * scale : totem.radius;
       const alpha = 0.55 + 0.3 * pulse;
@@ -348,6 +373,61 @@ export class HangoutScene extends Phaser.Scene {
       this.totemGraphics.strokeCircle(totem.x, totem.y, r * 0.6);
       this.totemGraphics.fillStyle(ring, isFlashingRing ? 0.14 : 0.06 * alpha * 2);
       this.totemGraphics.fillCircle(totem.x, totem.y, r);
+    }
+  }
+
+  /** Venue feed + bell countdown (S2.B): renders the latest pushed
+   *  venue-status frame — the arena's phase/scores top-center and the live
+   *  bell countdown on the totem label. The countdown interpolates locally
+   *  between 1Hz frames (nextBellMs minus elapsed-since-frame) so it ticks
+   *  smoothly instead of jumping; estimates only ever jump DOWN on the next
+   *  frame (same monotonicity contract as the death overlay's wait). */
+  private updateVenueFeed(nowMs: number): void {
+    if (this.mode !== "venue") return;
+    const s = this.venueStatus;
+    if (!s) return;
+
+    if (!this.feedText) {
+      this.feedText = this.add
+        .text(this.scale.width / 2, 14, "", {
+          color: "#7a8299",
+          fontFamily: "'Space Mono', 'Courier New', monospace",
+          fontSize: "13px",
+          align: "center",
+        })
+        .setOrigin(0.5, 0)
+        .setScrollFactor(0)
+        .setDepth(1000);
+    }
+
+    const bellMs = Math.max(0, s.nextBellMs - (nowMs - this.venueStatusAtMs));
+    const bellSec = Math.ceil(bellMs / 1000);
+    const mm = Math.floor(bellSec / 60);
+    const ss = (bellSec % 60).toString().padStart(2, "0");
+    const phaseLabel =
+      s.arenaPhase === "fighting"
+        ? "FIGHTING"
+        : s.arenaPhase === "drafting"
+          ? "DRAFTING"
+          : s.arenaPhase === "round-over"
+            ? "ROUND OVER"
+            : "STARTING";
+    const fighters = s.humans === 1 ? "1 FIGHTER" : `${s.humans} FIGHTERS`;
+    const bots = s.bots > 0 ? ` · ${s.bots} BOT${s.bots === 1 ? "" : "S"}` : "";
+    this.feedText.setText(
+      `THE ARENA — ${phaseLabel} · ROUND ${s.roundIndex + 1} · ${fighters}${bots}\nNEXT BELL ${mm}:${ss}`,
+    );
+    this.feedText.setPosition(this.scale.width / 2, 14);
+
+    if (this.bellLabel) {
+      const queuedCount = s.queued.length;
+      const localQueued = s.queued.includes(this.localPlayerId as string);
+      const suffix = localQueued
+        ? " · QUEUED"
+        : queuedCount > 0
+          ? ` · ${queuedCount} QUEUED`
+          : "";
+      this.bellLabel.setText(`THE BELL · ${mm}:${ss}${suffix}`);
     }
   }
 
@@ -398,6 +478,7 @@ export class HangoutScene extends Phaser.Scene {
     this.renderWorld(state, deltaMs);
     this.followLocalPlayer(state, deltaMs);
     this.updateTotemPulse(now);
+    this.updateVenueFeed(now);
   }
 
   private renderWorld(state: WorldState, deltaMs: number): void {
@@ -525,6 +606,12 @@ export class HangoutScene extends Phaser.Scene {
 
   private teardown(): void {
     this.statusText = null;
+    // Scene instances are reused across starts — stale venue state must not
+    // leak into the next session (display objects die with the scene; the
+    // references and the last frame must be cleared by hand).
+    this.feedText = null;
+    this.bellLabel = null;
+    this.venueStatus = null;
     this.scale.off("resize", this.applyCameraZoom, this);
     this.touchControls?.destroy();
     this.touchControls = null;

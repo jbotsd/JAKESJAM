@@ -3,7 +3,7 @@
 // See docs/netcode-architecture.md "Message Protocol".
 
 import { decode, encode } from "@msgpack/msgpack";
-import type { InputSeq, SimEvent, Tick, WorldState } from "../sim/types.js";
+import type { InputSeq, SimEvent, Tick, VesselCosmetics, WorldState } from "../sim/types.js";
 import type { SpectatorCamPose } from "../sim/spectatorDirector.js";
 import type { DeltaPayload } from "./snapshotDelta.js";
 
@@ -59,6 +59,7 @@ export type PlayerLobbyInfo = {
   characterId: string;
   color: string;
   name: string;
+  cosmetics?: VesselCosmetics;
 };
 
 export type ServerHello = {
@@ -165,7 +166,25 @@ export type Disconnect = {
     | "server-shutdown";
 };
 
-export type ServerMessage = ServerHello | Snapshot | Pong | Disconnect;
+/**
+ * Venue lobby status frame (venue-sprint2-goal S2.B) — PUSHED by VenueHost
+ * to every lobby socket at ~1Hz and immediately on arena phase edges;
+ * never polled. Drives the lobby's diegetic arena feed and the queue
+ * totem's bell countdown. `queued` carries player ids so the totem can
+ * glow per queued player and the local client knows its own queue state.
+ */
+export type VenueStatus = {
+  t: "venue-status";
+  arenaPhase: "countdown" | "fighting" | "round-over" | "drafting";
+  roundIndex: number;
+  scores: Record<string, number>;
+  humans: number;
+  bots: number;
+  nextBellMs: number;
+  queued: string[];
+};
+
+export type ServerMessage = ServerHello | Snapshot | Pong | Disconnect | VenueStatus;
 
 // ---------------- Codec ----------------
 
@@ -201,6 +220,7 @@ const REQUIRED_FIELDS: Record<string, ReadonlyArray<readonly [string, "string" |
   "card-pick": [["roundIndex", "number"], ["cardId", "string"]],
   snap: [["tick", "number"]],
   bye: [["reason", "string"]],
+  "venue-status": [["arenaPhase", "string"], ["nextBellMs", "number"]],
 };
 
 const warnedUnknown = new Set<string>();

@@ -289,6 +289,11 @@ export class MatchHost {
   private readonly mode: "combat" | "hangout";
   /** External reaction hook — see the constructor opts doc. */
   private readonly onSimEvent?: (event: SimEvent) => void;
+  /** Fired on every round-phase transition — see the constructor opts doc. */
+  private readonly onRoundPhaseChange?: (
+    prev: WorldState["round"]["phase"],
+    next: WorldState["round"]["phase"],
+  ) => void;
   /** Ready/Launch totem positions for this match's map. Empty outside
    *  hangout mode (stepTotems is only ever called when `mode === "hangout"`,
    *  so an empty array there is inert either way). */
@@ -323,14 +328,30 @@ export class MatchHost {
        *  combat/world hosts never pass it, so this is a zero-cost no-op
        *  there. */
       onSimEvent?: (event: SimEvent) => void;
+      /** Fired once per round-phase transition (venue-sprint2-goal S2.B/
+       *  S2.D): the venue taps this for pushed status frames and — via
+       *  WorldHost — the bell-admission drain at countdown entry. Same
+       *  hook discipline as onSimEvent/onMatchComplete: unset = no-op. */
+      onRoundPhaseChange?: (
+        prev: WorldState["round"]["phase"],
+        next: WorldState["round"]["phase"],
+      ) => void;
+      /** Hangout-mode totem override (venue lobby's single arena-queue
+       *  portal). Unset = the map's default READY/LAUNCH pair. */
+      totems?: TotemDefinition[];
     } = {},
   ) {
     this.onMatchComplete = opts.onMatchComplete;
     this.mode = opts.mode ?? "combat";
     this.onSimEvent = opts.onSimEvent;
+    this.onRoundPhaseChange = opts.onRoundPhaseChange;
     this.matchId = matchId;
     this.map = typeof mapId === "object" ? mapId : resolveMap(mapId);
-    this.hangoutTotems = this.mode === "hangout" ? resolveHangoutTotems(this.map) : [];
+    // Venue lobby overrides the room-hangout READY/LAUNCH pair with its own
+    // totem set (one arena-queue portal — venueHost.ts). Same stepTotems
+    // machinery either way.
+    this.hangoutTotems =
+      this.mode === "hangout" ? (opts.totems ?? resolveHangoutTotems(this.map)) : [];
     this.directorBounds = defaultDirectorBounds(
       this.map.size?.x ?? 3000,
       this.map.size?.y ?? 1100,
@@ -555,6 +576,8 @@ export class MatchHost {
      *  "2 players · Live"). */
     humans: number;
     bots: number;
+    /** Live round scores by player id — the venue feed's data (S2.B). */
+    scores: Record<string, number>;
     targetScore: number;
     joinable: boolean;
     chaosModifierIds: string[];
@@ -572,6 +595,7 @@ export class MatchHost {
       countdownRemainingMs: round.countdownRemainingMs,
       humans: ids.length - bots,
       bots,
+      scores: { ...round.scores },
       targetScore,
       joinable: round.phase !== "round-over",
       chaosModifierIds: this.state.chaosModifierIds ?? [],
@@ -981,6 +1005,12 @@ export class MatchHost {
     }
 
     this.state = nextState;
+
+    // Round-phase edge hook (venue-sprint2-goal S2.B/S2.D) — compared on
+    // the post-step state so it sees the drafting overlay's phases too.
+    if (this.onRoundPhaseChange && preStepState.round.phase !== this.state.round.phase) {
+      this.onRoundPhaseChange(preStepState.round.phase, this.state.round.phase);
+    }
 
     // Hangout-mode Ready/Launch totems (plan A3). Deliberately run OUTSIDE
     // stepWithRuntime/runStep — server-authoritative-only interaction, same

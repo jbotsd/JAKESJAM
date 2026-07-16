@@ -86,6 +86,8 @@ export type ClientLoopOptions = {
    * progress in the UI.
    */
   onReconnectAttempt?: (attemptNumber: number, nextDelayMs: number) => void;
+  /** Venue lobby only: pushed venue-status frames (S2.B). */
+  onVenueStatus?: (status: import("./protocol.js").VenueStatus) => void;
 };
 
 export type LocalInput = {
@@ -201,6 +203,7 @@ export class ClientLoop {
   private readonly reconnectUrl?: string;
   private readonly onConnectionLost?: (reason: string) => void;
   private readonly onReconnectAttempt?: (attemptNumber: number, nextDelayMs: number) => void;
+  private readonly onVenueStatus?: (status: import("./protocol.js").VenueStatus) => void;
 
   private predictedState: WorldState | null = null;
   private authoritativeState: WorldState | null = null;
@@ -314,6 +317,7 @@ export class ClientLoop {
     this.reconnectUrl = opts.reconnectUrl;
     this.onConnectionLost = opts.onConnectionLost;
     this.onReconnectAttempt = opts.onReconnectAttempt;
+    this.onVenueStatus = opts.onVenueStatus;
 
     this.reconnect = new ReconnectSupervisor(this.reconnectUrl !== undefined, {
       onAttempt: () => this.attemptReconnect(),
@@ -805,6 +809,12 @@ export class ClientLoop {
         // "replaced" into a generic code:1006 retry loop.
         this.pendingByeReason = message.reason;
         this.transport.close(message.reason);
+        break;
+      case "venue-status":
+        // Venue lobby feed frame (venue-sprint2-goal S2.B) — pushed by
+        // VenueHost at 1Hz + on arena phase edges. Only the lobby scene
+        // wires the callback; arena/room loops never receive this type.
+        this.onVenueStatus?.(message);
         break;
     }
   }
