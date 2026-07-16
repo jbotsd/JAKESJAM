@@ -1029,7 +1029,9 @@ export class OnlineMatchScene extends Phaser.Scene {
             const wid = state.round.winnerPlayerId;
             if (!wid) return "DRAW";
             if (wid === this.localPlayerId) return "YOU";
-            return playerTag(wid);
+            // Same name the nameplates use — "TO VERA", never "TO 3F2A"
+            // (venue-goal Pillar 0.4).
+            return this.displayName(wid);
           })()
         : undefined;
 
@@ -1145,7 +1147,7 @@ export class OnlineMatchScene extends Phaser.Scene {
         const scoreLine = Object.entries(scores)
           .sort(([aId, a], [bId, b]) => b - a || aId.localeCompare(bId))
           .map(([pid, score]) => {
-            const tag = pid === this.localPlayerId ? "YOU" : (round.names?.[pid] ?? playerTag(pid));
+            const tag = pid === this.localPlayerId ? "YOU" : (round.names?.[pid] ?? this.displayName(pid));
             return `${tag} ${score}`;
           })
           .join("  ·  ");
@@ -2572,6 +2574,16 @@ export class OnlineMatchScene extends Phaser.Scene {
     this.showMatchResults(state);
   }
 
+  /** One name source for every surface (venue-goal Pillar 0.4, audit seam
+   *  #13): the roster name the player fought under all match, bot label
+   *  for bots, id-tail tag only as the true last resort. Before this, the
+   *  results screen renamed everyone to id tails — you fight "VERA" and
+   *  the podium says "3F2A". */
+  private displayName(pid: string): string {
+    if (isBotId(pid)) return botLabel(pid);
+    return this.rosterNames.get(pid) ?? playerTag(pid);
+  }
+
   private showMatchResults(state: WorldState) {
     if (!this.matchResultsOverlay) return;
     const rows: MatchResultsRow[] = Object.entries(state.round.scores)
@@ -2580,7 +2592,7 @@ export class OnlineMatchScene extends Phaser.Scene {
         const player = state.players[pid];
         return {
           playerId: pid,
-          name: pid === this.localPlayerId ? "You" : playerTag(pid),
+          name: pid === this.localPlayerId ? "You" : this.displayName(pid),
           score,
           cardIds: player?.cards ?? [],
           isLocal: pid === this.localPlayerId,
