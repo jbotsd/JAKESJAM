@@ -21,7 +21,11 @@ export type MatchSummary = {
   phase: "countdown" | "fighting" | "round-over" | "drafting";
   roundIndex: number;
   countdownRemainingMs: number;
-  players: number;
+  /** Human players only — bots reported separately, rendered separately.
+   *  The badge is the funnel's one liveness signal; it never counts bots
+   *  as people (venue-goal Pillar 0.1). */
+  humans: number;
+  bots: number;
   targetScore: number;
   joinable: boolean;
   chaosModifierIds: string[];
@@ -167,7 +171,16 @@ export class MatchStatusBadge {
       return;
     }
     const phaseLabel = phaseToLabel(s.phase);
-    const playersLabel = s.players === 1 ? "1 player" : `${s.players} players`;
+    // Honest population: humans are "fighters", bots are named as bots.
+    // "2 fighters · 1 bot" — never a blended count pretending bots are
+    // people (the old `players` field did exactly that).
+    const fightersLabel = s.humans === 1 ? "1 fighter" : `${s.humans} fighters`;
+    const playersLabel =
+      s.bots > 0
+        ? s.humans > 0
+          ? `${fightersLabel} · ${s.bots} bot${s.bots === 1 ? "" : "s"}`
+          : `${s.bots} bot${s.bots === 1 ? "" : "s"} warming up`
+        : fightersLabel;
     const seconds = Math.max(0, Math.ceil(s.countdownRemainingMs / 1000));
     const timerLabel =
       s.phase === "fighting"

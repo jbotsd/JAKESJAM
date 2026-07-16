@@ -1,11 +1,11 @@
 // Bot identity helpers — server bots carry the "bot_" id prefix; every
 // player-facing surface (rig color, nameplate, scoreboard, banners) uses
-// these so bots are UNMISTAKABLY bots.
-export const BOT_ID_PREFIX = "bot_";
+// these so bots are UNMISTAKABLY bots. The prefix itself lives in
+// @sim/botId (single source shared with the server) — this module keeps
+// the presentation helpers.
+import { BOT_ID_PREFIX, isBotId } from "../../sim/botId.js";
 
-export function isBotId(playerId: string): boolean {
-  return playerId.startsWith(BOT_ID_PREFIX);
-}
+export { BOT_ID_PREFIX, isBotId };
 
 /** "bot_spark" -> "BOT · SPARK" */
 export function botLabel(playerId: string): string {

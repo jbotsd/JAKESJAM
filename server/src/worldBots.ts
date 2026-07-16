@@ -13,6 +13,7 @@
 
 import { InputBit } from "@net/protocol.ts";
 import type { MatchHost } from "./matchHost.ts";
+import { BOT_ID_PREFIX } from "@sim/botId.ts";
 import { PlayerId, type MapDefinition, type PlayerEntity, type WorldState } from "@sim/types.ts";
 import {
   buildArenaNav,
@@ -24,7 +25,7 @@ import {
   type ArenaNav,
 } from "./botArenaNav.ts";
 
-export const BOT_ID_PREFIX = "bot_";
+export { BOT_ID_PREFIX };
 
 const ROSTER = [
   "SPARK", "PISTON", "GIZMO", "RATCHET", "JOLT", "WIDGET", "SOCKET", "DYNAMO",

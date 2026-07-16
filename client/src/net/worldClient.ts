@@ -14,7 +14,9 @@ type WorldSummary = {
   phase: "countdown" | "fighting" | "round-over" | "drafting";
   roundIndex: number;
   countdownRemainingMs: number;
-  players: number;
+  /** Human players only — bots reported separately (badge honesty). */
+  humans: number;
+  bots: number;
   targetScore: number;
   joinable: boolean;
   chaosModifierIds: string[];

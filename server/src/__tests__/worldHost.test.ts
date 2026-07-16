@@ -33,7 +33,11 @@ describe("WorldHost construction", () => {
     const wh = new WorldHost({ bots: 2 });
     const summary = wh.summary();
     expect(summary).not.toBeNull();
-    expect(summary!.players).toBeGreaterThanOrEqual(2);
+    // Eager-boot population is bots, honestly reported as bots — the
+    // humans/bots split (Pillar 0.1) means an empty server never claims
+    // human players.
+    expect(summary!.bots).toBeGreaterThanOrEqual(2);
+    expect(summary!.humans).toBe(0);
     expect(wh.size()).toBe(1);
   });
 });

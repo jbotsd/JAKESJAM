@@ -5,8 +5,10 @@
 import type { ServerWebSocket } from "bun";
 import { SNAPSHOT_INTERVAL_TICKS, STEP_MS, World } from "@sim/index.ts";
 import { createRuntime, stepWithRuntime, type WorldRuntime } from "@sim/World.ts";
+import { isBotId } from "@sim/botId.ts";
 import { KILL_PLANE_MARGIN_PX } from "@sim/player.ts";
 import { stepRound, enterDrafting } from "@sim/round.ts";
+import { resolveHangoutTotems, stepTotems, type TotemDefinition } from "@sim/totem.ts";
 import { resolveMap, type MapId } from "@sim/data/maps.ts";
 import { resolveModeConfig } from "@sim/data/modeConfig.ts";
 import {
@@ -283,6 +285,19 @@ export class MatchHost {
    *  a fresh match; room mode leaves it unset (registry tears down). */
   private readonly onMatchComplete?: () => void;
 
+  /** `"combat"` (default) or `"hangout"` — see the constructor opts doc. */
+  private readonly mode: "combat" | "hangout";
+  /** External reaction hook — see the constructor opts doc. */
+  private readonly onSimEvent?: (event: SimEvent) => void;
+  /** Ready/Launch totem positions for this match's map. Empty outside
+   *  hangout mode (stepTotems is only ever called when `mode === "hangout"`,
+   *  so an empty array there is inert either way). */
+  private readonly hangoutTotems: TotemDefinition[];
+  /** Per-player totem retrigger debounce — host-local scratch, mirrors
+   *  `WorldRuntime.movement`'s "mutated in place, never part of
+   *  WorldState" convention. See `totem.ts`. */
+  private readonly totemCooldowns = new Map<PlayerId, Tick>();
+
   constructor(
     matchId: string,
     players: PlayerSpawnInfo[],
@@ -296,11 +311,26 @@ export class MatchHost {
     // resolveMap() itself must stay synchronous for the client's per-tick
     // sim path and has no way to do a disk read.
     mapId: MapId | string | MapDefinition | undefined = undefined,
-    opts: { onMatchComplete?: () => void } = {},
+    opts: {
+      onMatchComplete?: () => void;
+      /** `"combat"` (default, today's behavior) or `"hangout"` (graceful-
+       *  gliding-flame plan A1) — a no-combat, permanently-"fighting"
+       *  walking space. See `stepWithRuntime`'s `hangoutMode` branch. */
+      mode?: "combat" | "hangout";
+      /** Fired for every SimEvent this tick, in addition to the normal
+       *  snapshot broadcast. Only hangout hosts wire this up today (A2/A3
+       *  privateLobby.ts wiring reacts to `ready-toggled`/`launch-requested`);
+       *  combat/world hosts never pass it, so this is a zero-cost no-op
+       *  there. */
+      onSimEvent?: (event: SimEvent) => void;
+    } = {},
   ) {
     this.onMatchComplete = opts.onMatchComplete;
+    this.mode = opts.mode ?? "combat";
+    this.onSimEvent = opts.onSimEvent;
     this.matchId = matchId;
     this.map = typeof mapId === "object" ? mapId : resolveMap(mapId);
+    this.hangoutTotems = this.mode === "hangout" ? resolveHangoutTotems(this.map) : [];
     this.directorBounds = defaultDirectorBounds(
       this.map.size?.x ?? 3000,
       this.map.size?.y ?? 1100,
@@ -311,8 +341,9 @@ export class MatchHost {
       players,
       this.rngSeed,
       chaosModifierIds,
+      this.mode,
     );
-    this.runtime = createRuntime(this.map);
+    this.runtime = createRuntime(this.map, this.mode);
     // B3: also push the map's static-AABB cache to the wasm host
     // so step_world has terrain. Idempotent; no-op when wasm path
     // is disabled. The host buffers if not yet ready.
@@ -339,7 +370,16 @@ export class MatchHost {
     // `isReady()` re-check meant the backend could switch mid-match when
     // the wasm load finished — invisible live, but it makes the recorded
     // replay non-re-simulable (no single backend reproduces every tick).
-    this.simBackend = USE_WASM_STEP_WORLD && serverWasmHost.isReady() ? "wasm" : "ts";
+    // Hangout matches are HARD-PINNED to TS regardless of
+    // USE_WASM_STEP_WORLD — no anti-cheat/competitive-integrity stakes in a
+    // non-combat lobby space, so there's no reason to route through wasm,
+    // and this sidesteps ever needing to mirror hangout-mode logic into Zig.
+    this.simBackend =
+      this.mode === "hangout"
+        ? "ts"
+        : USE_WASM_STEP_WORLD && serverWasmHost.isReady()
+          ? "wasm"
+          : "ts";
     this.replayRecorder = new ReplayRecorder({
       matchId: this.matchId,
       mapId: this.map.id,
@@ -354,6 +394,7 @@ export class MatchHost {
         characterId: spawn.characterId,
         color: spawn.color ?? "#ffffff",
         name: spawn.name ?? spawn.playerId,
+        cosmetics: spawn.cosmetics,
       });
       this.lastProcessedInputSeq.set(spawn.playerId, 0 as InputSeq);
     }
@@ -507,7 +548,13 @@ export class MatchHost {
     phase: WorldState["round"]["phase"];
     roundIndex: number;
     countdownRemainingMs: number;
-    players: number;
+    /** Human players only — bots are reported separately, never blended in.
+     *  The badge is the one place a prospective player decides whether the
+     *  game is alive; counting bots as people there was the venue-goal
+     *  Pillar 0 "funnel dishonesty" bug (an empty server advertised
+     *  "2 players · Live"). */
+    humans: number;
+    bots: number;
     targetScore: number;
     joinable: boolean;
     chaosModifierIds: string[];
@@ -515,13 +562,16 @@ export class MatchHost {
   } {
     const round = this.state.round;
     const targetScore = resolveModeConfig(this.state.chaosModifierIds).targetScore;
+    const ids = Object.keys(this.state.players);
+    const bots = ids.filter((id) => isBotId(id)).length;
     return {
       matchId: this.matchId,
       mapId: this.map.id,
       phase: round.phase,
       roundIndex: round.roundIndex,
       countdownRemainingMs: round.countdownRemainingMs,
-      players: Object.keys(this.state.players).length,
+      humans: ids.length - bots,
+      bots,
       targetScore,
       joinable: round.phase !== "round-over",
       chaosModifierIds: this.state.chaosModifierIds ?? [],
@@ -544,6 +594,7 @@ export class MatchHost {
       characterId: spawn.characterId,
       color: spawn.color ?? "#ffffff",
       name: spawn.name ?? spawn.playerId,
+      cosmetics: spawn.cosmetics,
     });
     this.lastProcessedInputSeq.set(spawn.playerId, 0 as InputSeq);
 
@@ -930,6 +981,24 @@ export class MatchHost {
     }
 
     this.state = nextState;
+
+    // Hangout-mode Ready/Launch totems (plan A3). Deliberately run OUTSIDE
+    // stepWithRuntime/runStep — server-authoritative-only interaction, same
+    // pattern as the spectator director below (stepped here, not part of
+    // the shared/predicted sim step). See totem.ts's module doc for why.
+    if (this.mode === "hangout" && this.hangoutTotems.length > 0) {
+      const totemResult = stepTotems({
+        totems: this.hangoutTotems,
+        players: this.state.players,
+        tick: this.state.tick,
+        dtMs: STEP_MS,
+        cooldowns: this.totemCooldowns,
+      });
+      if (totemResult.events.length > 0) events.push(...totemResult.events);
+    }
+    if (this.onSimEvent) {
+      for (const e of events) this.onSimEvent(e);
+    }
 
     // Host-box replay buffer: kill events save a zero-cost NVENC clip when
     // the streaming host runs gpu-screen-recorder (JJ_HOST_REPLAY=1).
@@ -1490,6 +1559,7 @@ function snapshotRuntime(runtime: WorldRuntime): WorldRuntime {
     scratchDeflectedProjectiles: new Map(),
     scratchHitSweep: makeHitSweepScratch(),
     ceilingClampY: runtime.ceilingClampY,
+    mode: runtime.mode,
   };
 }
 

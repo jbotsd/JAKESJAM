@@ -6,6 +6,7 @@
 // Authority: server-side. Clients reflect whatever the server says — no client
 // prediction of round transitions, no race-y client-side timers.
 
+import { BOT_ID_PREFIX } from "./botId.js";
 import { STEP_MS } from "./constants.js";
 import { crystalRoundsCards } from "./data/cards.js";
 import {
@@ -83,7 +84,6 @@ function isSuddenDeathRound(scores: Record<PlayerId, number>, targetScore: numbe
  * bot rigs). Round authority is server-side, so this needs no client parity.
  */
 export const NO_HUMAN_SURVIVOR_END_MS = 6_000;
-const BOT_ID_PREFIX = "bot_";
 
 /**
  * How long the drafting phase stays open before auto-resolving any
