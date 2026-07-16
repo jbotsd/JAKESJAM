@@ -362,3 +362,34 @@ clip URLs, soak results; the SESSION_GOAL_DEATH_TELEMETRY.md discipline)*
 
 Suites at pillar close: client 921 pass / server 172 pass; typecheck
 clean both workspaces; deployed live same day.
+
+**Pillar 1 — COMPLETE (2026-07-16, commit 06eb8ae)**
+1. PASSED — GET /venue/summary live: `{"lobby":{"present":N},"arena":
+   {...humans/bots, "nextBellMs"}}`; bell math verified against phase
+   clock by hand on the live server (63716 fighting + 2500 + 15000 =
+   81217 ✓) and by unit test against the shared @sim/round.ts
+   msUntilNextBell (also refactored under the death overlay — one
+   source).
+2. PASSED — lobby survives arena recycle: object-identity test through a
+   forced recycle (exercised the strongest case: full arena teardown with
+   zero sockets); attached player + presence intact. Never disposes on
+   empty (attach → detach → re-attach test).
+3. PASSED — /venue-token mints the stateless world token, returns both
+   ws paths; /ws/lobby verifies it. Live probe: token → WS open →
+   server frames received → lobby.present 1 → close → 0.
+4. PASSED at state level — two attached clients mutually present in the
+   lobby sim (venueHost.test.ts). Scene-level (Phaser) connect explicitly
+   deferred to Pillar 2's VenueLobbyScene work, where the client half
+   concentrates.
+5. PASSED — full private-room suite + all server tests green (178).
+6. PASSED — resolveHangoutTotems: non-vessel maps snap onto a validated
+   standable surface (lower-half preferred, width-dominant, edge margin)
+   instead of the blind center guess; test sweeps all curated rotation
+   maps + 3 gen seeds asserting every totem sits exactly at standing
+   height on a real floor/platform span.
+
+Suites at pillar close: server 178 / client 922, typechecks clean,
+deployed + live-probed same day. Ops note: server restarts must WAIT
+for the graceful-shutdown grace ("SIGTERM — beginning graceful
+shutdown" → "shutdown grace expired") before rebinding :8088 — racing
+it EADDRINUSEs the replacement and leaves the old code serving.
