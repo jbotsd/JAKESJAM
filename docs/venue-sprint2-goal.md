@@ -217,3 +217,25 @@ leave ONLY at the bell. Displaced bots don't idle in the lobby this sprint
 ## Evidence ledger
 
 *(append per pillar as work lands)*
+
+**S2.A — COMPLETE (2026-07-16, commit 6ad2cd0)**
+HangoutScene gains mode:"private"|"venue" (one param, no fork); venue mode
+fetches /venue-token → /ws/lobby with callsign + reconnect armed. Reachable
+via ?venue=1 dev entry; main world flow deliberately unflipped until S2.F.
+Live-probed: canvas scene walking, lobby.present=1 while connected. Private
+suite green (firewall). Note: the S2.A.3 Playwright time-to-play measurement
+is deferred to S2.F when the venue path becomes the real flow (measuring the
+dev entry now would measure scaffolding).
+
+**S2.B — COMPLETE (2026-07-16, commit b2ae6d1)**
+venue-status protocol frame pushed at 1Hz + on phase edges (MatchHost
+onRoundPhaseChange hook, threaded through WorldHost rebuilds/recycles);
+VenueHost bell queue toggled by totem events (single bell-portal totem via
+resolveVenueTotems + MatchHost opts.totems override; disconnect dequeues);
+summary() gains scores. Client: onVenueStatus → diegetic feed + bell label
+with locally-interpolated countdown + queued glow. Live probe: 4 frames/
+3.5s on a real /ws/lobby socket, phase match, 417ms bell drift (tol 1500);
+feed screenshot in-scene. Suites server 180 / client 922. Deployed.
+Ops note repeated the hard way: pgrep|head -1 killed a WRAPPER pid, not
+the server — always verify via `ss -ltnp | grep 8088` before starting the
+replacement.
