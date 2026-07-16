@@ -76,6 +76,11 @@ export class WorldHost {
   /** Live sockets by player — maintained across host recycles so a
    *  completed match can migrate everyone into the replacement host. */
   private readonly sockets = new Map<PlayerId, ServerWebSocket<MatchSocketData>>();
+  /** The bell gate's waiting room (S2.D): NEW players who attached mid-
+   *  fight, keyed to their chosen name. Drained into the sim at the next
+   *  countdown edge; disconnect dequeues. Spectator-pending in the
+   *  meantime — attached (hello + snapshots) but no entity. */
+  private readonly pendingEntrants = new Map<PlayerId, string | undefined>();
   /** Pending recycle timer (results-display hold). */
   private recycleTimer: ReturnType<typeof setTimeout> | null = null;
   /** How long the final scoreboard stays up before the world rolls a new
@@ -148,6 +153,16 @@ export class WorldHost {
    * on first connect using the new player as the seed spawn (MatchHost
    * requires at least one PlayerSpawnInfo at construction).
    *
+   * THE BELL GATE (venue-sprint2-goal S2.D): a NEW player only ever
+   * enters the fight at a round boundary. Attaching mid-fight (fighting/
+   * round-over/drafting) parks them as a spectator-pending entrant —
+   * they get hello + snapshots (they can watch) but NO entity until the
+   * next countdown entry drains the pending set. Attaching during
+   * countdown drains immediately (countdown IS the entry edge). A
+   * reconnect within RECONNECT_GRACE_MS bypasses the gate by
+   * construction: their entity still exists, so `hasPlayer` short-
+   * circuits to a pure socket re-attach — entity continuity, no re-queue.
+   *
    * Race safety: JS is single-threaded so concurrent attach calls cannot
    * race the `if (!this.host)` check, BUT `MatchHost`'s constructor is
    * synchronous in current code — if it ever becomes async (e.g. if it
@@ -160,14 +175,43 @@ export class WorldHost {
     const chosenName = (ws.data as { name?: string }).name;
     if (!this.host) {
       const spawn = this.spawnFor(ws.data.playerId, chosenName);
+      // A fresh host boots into countdown — seeding the first player here
+      // IS a countdown entry, not a gate exception.
       // WorldHost doesn't have a room to read chaos modifiers from, so we fall back
       // to the no-chaos baseline. Future workitem: add a lightweight Convex world token
       // endpoint that exposes a default/modifiable chaos set for the always-on world.
       this.host = this.buildHost([spawn]);
     } else if (!this.host.hasPlayer(playerId)) {
-      this.host.addPlayer(this.spawnFor(ws.data.playerId, chosenName));
+      // The ONLY insertion path for a new world player is the pending
+      // drain — attach never calls addPlayer directly (S2.D.4). During
+      // countdown the drain runs immediately; any other phase waits for
+      // the next countdown edge.
+      this.pendingEntrants.set(playerId, chosenName);
+      if (this.host.summary().phase === "countdown") {
+        this.drainPendingEntrants();
+      }
     }
     this.host.attachClient(ws);
+  }
+
+  /**
+   * Countdown-entry drain (S2.D): insert every pending entrant whose
+   * socket is still live. Runs on the phase edge INTO countdown (wired in
+   * buildHost) and synchronously from attach() when the world is already
+   * in countdown. Disconnected pendings were already dequeued by detach();
+   * the readyState check is belt-and-braces for a socket that died without
+   * a close event yet.
+   */
+  private drainPendingEntrants(): void {
+    if (!this.host || this.pendingEntrants.size === 0) return;
+    for (const [playerId, chosenName] of this.pendingEntrants) {
+      const ws = this.sockets.get(playerId);
+      if (!ws || ws.readyState !== 1) continue;
+      if (!this.host.hasPlayer(playerId)) {
+        this.host.addPlayer(this.spawnFor(playerId, chosenName));
+      }
+    }
+    this.pendingEntrants.clear();
   }
 
   private buildHost(spawns: PlayerSpawnInfo[]): MatchHost {
@@ -184,7 +228,12 @@ export class WorldHost {
       // Threaded through EVERY host build (recycles included) so venue
       // status frames / the bell drain never silently detach after a
       // cycle end (venue-sprint2-goal S2.B/S2.D).
-      onRoundPhaseChange: (prev, next) => this.onRoundPhaseChange?.(prev, next),
+      onRoundPhaseChange: (prev, next) => {
+        // The bell rings: entering countdown is THE entry edge — admit
+        // everyone the gate parked during the last fight (S2.D).
+        if (next === "countdown") this.drainPendingEntrants();
+        this.onRoundPhaseChange?.(prev, next);
+      },
     });
   }
 
@@ -251,7 +300,14 @@ export class WorldHost {
       console.log("[worldHost] match complete with no players — world reset (lazy reboot)");
       return;
     }
-    const spawns = [...this.sockets.keys()].map((pid) => this.spawnFor(pid));
+    // A recycle IS a countdown entry (the fresh host boots into countdown):
+    // every connected socket — including gate-parked pending entrants —
+    // spawns into the new cycle. Chosen names ride the socket data (they
+    // previously fell back to machine ids across recycles).
+    const spawns = [...this.sockets.entries()].map(([pid, ws]) =>
+      this.spawnFor(pid, (ws.data as { name?: string }).name),
+    );
+    this.pendingEntrants.clear();
     this.host = this.buildHost(spawns);
     old.dispose();
     for (const ws of this.sockets.values()) {
@@ -295,7 +351,12 @@ export class WorldHost {
 
   detach(ws: ServerWebSocket<MatchSocketData>): void {
     const playerId = PlayerId(ws.data.playerId);
-    if (this.sockets.get(playerId) === ws) this.sockets.delete(playerId);
+    if (this.sockets.get(playerId) === ws) {
+      this.sockets.delete(playerId);
+      // A pending spectator who leaves before the bell is cleanly
+      // dequeued — no ghost entrants at the drain (S2.D.5).
+      this.pendingEntrants.delete(playerId);
+    }
     if (!this.host) return;
     this.host.detachClient(ws);
     // Note: unlike MatchRegistry, we deliberately do NOT tear down the

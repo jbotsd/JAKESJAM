@@ -266,3 +266,32 @@ clean, built, deployed. Live probe (server/probe-s2c.ts): nameless roster
 name RECRUIT, dummy state decoded on a real /ws/lobby socket (interest-
 filtered to the near dummy, full count of 3 pinned by unit test),
 venue-status flowing, named connect rides "VERAPROBE". public /health 200.
+(Committed 0b6e5cb.)
+
+**S2.D — COMPLETE (2026-07-16)**
+The bell gate lives in WorldHost: attach() NEVER calls addPlayer — a new
+player is parked in pendingEntrants (spectator-pending: attachClient still
+runs, so hello + snapshots flow) and the ONLY insertion path is
+drainPendingEntrants(), invoked (a) synchronously from attach when the
+world is already in countdown and (b) on the real onRoundPhaseChange edge
+into countdown (threaded through every host rebuild). Reconnect-grace
+bypass falls out of construction: within RECONNECT_GRACE_MS the entity
+still exists, hasPlayer short-circuits to a pure socket re-attach.
+detach() dequeues pendings (no ghost entrants); recycle() counts as a
+countdown entry (fresh host boots into countdown, all sockets spawn) and
+now carries chosen names across cycles (previously fell back to machine
+ids). Tests (worldBellGate.test.ts, 8 pass): spectator-pending across all
+three non-countdown phases (hello + snapshots + hand-driven ticks, no
+entity), insertion exactly at the drafting→countdown edge via the real
+hook, countdown attach immediate, pending disconnect dequeued at the
+bell, grace reconnect continuous, and a source-scan proving worldHost.ts
+has exactly one addPlayer call site, inside the drain (S2.D.4). Server
+suite 191, typecheck clean, deployed. Live probe (server/probe-s2d.ts):
+hello +3ms, 2150 snapshots as a spectator through a full fighting phase,
+entity absent until phase flipped, inserted at "countdown" after 106s.
+Probe lessons burned in: liveness refreshes ONLY on input frames (pings
+don't count — probes must pump inputs like a real client), and a botsy
+world lazily reboots to null after a humanless match completes, so probes
+boot it with a keeper socket first. Client untouched (spectator-pending
+rides the existing !local dead/spectate path — all prediction reads are
+null-guarded).
