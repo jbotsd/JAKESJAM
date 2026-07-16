@@ -329,3 +329,36 @@ constant; the funnel lands in the lobby; the fast path auto-readies.
 
 *(append per pillar as work lands — test names, grep outputs, screenshot/
 clip URLs, soak results; the SESSION_GOAL_DEATH_TELEMETRY.md discipline)*
+
+**Pillar 0 — COMPLETE (2026-07-16, commits 0555738..f9697e1)**
+1. PASSED — summary() splits humans/bots, combined `players` key deleted
+   (asserted gone, not renamed); badge renders "N fighters · M bots" /
+   "M bots warming up". matchHostSummary.test.ts (3 rosters) + updated
+   worldHost eager-boot test. BOT_ID_PREFIX consolidated 4 copies → @sim/botId.
+2. PASSED — deathWaitCountdown(): one "NEXT BELL" upper-bound estimate
+   (only ever jumps down — monotonicity unit-tested) instead of the raw
+   phase clock re-meaning itself; "~" marks estimates; grep: "respawning"
+   only in the defensive countdown branch. phaseCountdown.test.ts (6).
+3. PASSED — draftTimerArmMs() arms the bar with authoritative remaining
+   time, structurally never 0. DOM-width assertion adapted: no DOM test
+   infra in repo, so acceptance is one level down (computation unit-tested,
+   4 cases incl. zero-arm regression) + the tutorial exercises the
+   totalMs>0 render path.
+4. PASSED — displayName(pid) single name source (results rows, round-over
+   winner banner, death score-line fallback); playerTag survives only as
+   displayName's last-resort interior. Grep clean.
+5. PASSED — reconnectUrl wired (stateless HMAC tokens re-auth; 10s grace
+   restores in place, later = fresh join); scene's raw onClose (fired
+   "lost" on every close, watched only the first transport) replaced by
+   terminal-only onConnectionLost with honest "reload to rejoin" copy.
+   reconnectWiring.test.ts pins retry/terminal/opt-out contract.
+6. PASSED — ClientLoop.disconnect() (supervisor.dispose() first → close
+   "client-leave" → stop) on both scene teardowns; stop() untouched
+   because it's the tab blur/focus pair and must never close the socket.
+   Tests pin: reason carried, post-disconnect close event inert, stop()
+   never touches socket. The ~30s ghost-leaver window is gone.
+7. PASSED — two-step in-shell leave confirm (axiom B4 separation, state
+   reset per open, venue vocabulary); grep: zero confirm( call sites.
+
+Suites at pillar close: client 921 pass / server 172 pass; typecheck
+clean both workspaces; deployed live same day.
