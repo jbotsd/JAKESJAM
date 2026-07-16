@@ -346,19 +346,25 @@ input[type="color"] {
   padding: 0;
 }
 
-/* ─── Lobby panel: centered floating overlay with glassmorphism ──────── */
+/* ─── Lobby panel: right-edge dock with glassmorphism ────────────────── */
+/* Docked right (was dead-centered) so the party-hangout world behind it —
+   your rig, party members, the READY/LAUNCH totems — stays visible while
+   the room card handles code/map/chaos. Same side the Vessel Creator
+   overlay already docks to. */
 
 .lobby-panel {
   position: fixed;
   z-index: 30;
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%, -50%);
+  top: 16px;
+  right: 16px;
+  bottom: 16px;
+  left: auto;
+  transform: none;
   display: flex;
   flex-direction: column;
   gap: 20px;
-  width: min(420px, calc(100vw - 32px));
-  max-height: calc(100vh - 48px);
+  width: min(360px, calc(100vw - 32px));
+  max-height: calc(100vh - 32px);
   overflow-y: auto;
   overflow-x: hidden;
   padding: 28px 24px;
@@ -409,7 +415,8 @@ input[type="color"] {
 .lobby-panel--hidden {
   opacity: 0;
   pointer-events: none;
-  transform: translate(-50%, -46%) scale(0.97);
+  /* Slide toward the right edge it docks from (withdraw, not ascend). */
+  transform: translateX(12px) scale(0.97);
 }
 
 /* ─── Lobby panel inner elements ─────────────────────────────────────── */
@@ -1171,13 +1178,16 @@ button.btn-danger:hover:not(:disabled) {
   margin: 8px 0 14px;
 }
 
-/* Private room shell — vessel frame over the old lobby panel */
+/* Private room shell — full-viewport composition (Jake, 2026-07-16:
+   "redesign from the ground up to maximise screen size"). The panel fills
+   the screen (minus margin) instead of floating as a 440px column in a
+   void; content is a three-column grid with a spanning header. */
 .shell-room {
   z-index: var(--shell-z-layer) !important;
   background: transparent !important;
   border: none !important;
   box-shadow: none !important;
-  width: min(440px, calc(100vw - 24px)) !important;
+  width: min(1560px, calc(100vw - 32px)) !important;
   max-height: calc(100vh - 24px) !important;
   overflow: auto !important;
   top: 50% !important;
@@ -1191,7 +1201,69 @@ button.btn-danger:hover:not(:disabled) {
 }
 .shell-frame--room {
   width: 100%;
-  max-width: 440px;
+  max-width: none;
+  display: grid;
+  /* Identity narrow · Arena widest (map picker is the star) · Session
+     fixed-comfortable (the Primary CTA + squad). */
+  grid-template-columns: minmax(230px, 300px) minmax(0, 1fr) minmax(280px, 360px);
+  grid-template-areas:
+    "head head head"
+    "identity arena session";
+  align-items: start;
+  column-gap: 36px;
+  row-gap: 18px;
+}
+
+.room-head {
+  grid-area: head;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 18px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid rgba(60, 121, 240, 0.14);
+}
+
+.room-head h2 {
+  margin: 2px 0 0;
+}
+
+.room-col {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-width: 0;
+}
+
+.room-col--identity { grid-area: identity; }
+.room-col--arena { grid-area: arena; }
+.room-col--session { grid-area: session; }
+
+/* The wide arena column gives chaos room to breathe — flow the toggles
+   instead of the narrow two-column stack. */
+.room-col--arena .chaos-box {
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+}
+
+/* Under 1080px: collapse back to the single-column flow (axiom S5) —
+   session (host/join) directly after identity, arena config after. */
+@media (max-width: 1080px) {
+  .shell-room {
+    width: min(440px, calc(100vw - 24px)) !important;
+  }
+  .shell-frame--room {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas:
+      "head"
+      "identity"
+      "session"
+      "arena";
+  }
+  .room-head {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 4px;
+  }
 }
 .shell-section-title {
   margin: 14px 0 8px;

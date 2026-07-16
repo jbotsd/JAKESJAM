@@ -493,12 +493,27 @@ app.innerHTML = `
   </div>
   <main class="app-shell">
     <div id="game-root" class="game-root"></div>
+    <!-- Private room — full-viewport composition (Jake, 2026-07-16:
+         "redesign from the ground up to maximise screen size"). Was a
+         440px centered sausage floating in a void; now a three-column
+         grid: IDENTITY (who you are) · ARENA (what you'll fight in —
+         widest column, the map picker is the visual star) · SESSION
+         (host/join/squad — the one Primary CTA lives here, axiom B1).
+         Column wrappers are layout-only; every data-* hook
+         LobbyController queries is untouched. Collapses back to the
+         single-column flow under 1080px (axiom S5). -->
     <aside class="lobby-panel lobby-panel--hidden shell-room" data-lobby-panel data-shell-room aria-label="Private room">
       <div class="shell-frame shell-frame--room">
-        <p class="shell-kicker">PRIVATE CHANNEL</p>
-        <h2>Private Room</h2>
-        <p class="status-line" data-status>Booting channel...</p>
+        <header class="room-head">
+          <div>
+            <p class="shell-kicker">PRIVATE CHANNEL</p>
+            <h2>Private Room</h2>
+          </div>
+          <p class="status-line" data-status>Booting channel...</p>
+        </header>
 
+        <div class="room-col room-col--identity">
+        <h3 class="shell-section-title">Identity</h3>
         <form class="player-form" data-player-form>
           <label>
             Callsign
@@ -518,13 +533,15 @@ app.innerHTML = `
             </select>
           </label>
         </form>
+        <!-- hidden practice hook for legacy LobbyController (practice is on HOME) -->
+        <button data-practice type="button" hidden>Practice</button>
+        </div>
 
+        <div class="room-col room-col--session">
         <div class="room-actions" data-room-actions>
           <button data-create-room type="button" class="primary shell-cta-primary">Host private room</button>
           <button data-back-to-splash type="button" class="shell-btn-secondary">← Home</button>
         </div>
-        <!-- hidden practice hook for legacy LobbyController (practice is on HOME) -->
-        <button data-practice type="button" hidden>Practice</button>
 
         <section class="player-connect" data-player-connect>
           <h3 class="shell-section-title">Join with code</h3>
@@ -548,6 +565,13 @@ app.innerHTML = `
           </div>
         </section>
 
+        <section class="players-box" aria-label="Players in room">
+          <h3 class="shell-section-title">Squad</h3>
+          <ul data-player-list></ul>
+        </section>
+        </div>
+
+        <div class="room-col room-col--arena">
         <section class="map-picker-box" data-map-picker aria-label="Map selection"></section>
 
         <section class="custom-map-box" aria-label="Custom map from Arena Forge">
@@ -576,11 +600,7 @@ app.innerHTML = `
           <label><input data-chaos-modifier type="checkbox" value="random-shapes" /> Random Shapes</label>
           <label><input data-chaos-modifier type="checkbox" value="max-recoil" /> Max Recoil</label>
         </section>
-
-        <section class="players-box" aria-label="Players in room">
-          <h3 class="shell-section-title">Squad</h3>
-          <ul data-player-list></ul>
-        </section>
+        </div>
       </div>
     </aside>
   </main>
