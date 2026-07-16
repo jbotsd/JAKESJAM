@@ -169,7 +169,7 @@ export class ShellController {
       const empty = document.createElement("p");
       empty.className = "shell-empty";
       empty.textContent = isClipsEnabled()
-        ? "No clips this session yet. Tap Save clip now (in Hot Lobby), or land a multi-kill / parry-kill / chain."
+        ? "No clips this session yet. Tap Save clip now (in the Arena), or land a multi-kill / parry-kill / chain."
         : "Clips are off. Tap Save clip now (turns on + captures) or enable Auto-clip in Settings.";
       root.appendChild(empty);
       this.appendRecentClips(root);

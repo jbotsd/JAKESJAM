@@ -222,7 +222,7 @@ re-learn where the important button is.
 
 | Kind | Look | When |
 |------|------|------|
-| **Primary** | Filled cyan (combat CTA) or gold (pure house CTA) — never both fighting on one button; 1px bright seam; spring press. Hot Lobby's specific rule: **cyan fill + gold 1px outer seam** (house holds the combat button) — this is the one sanctioned dual-accent button, not a pattern to copy elsewhere. | Exactly one per screen/panel. The single action you want taken. |
+| **Primary** | Filled cyan (combat CTA) or gold (pure house CTA) — never both fighting on one button; 1px bright seam; spring press. the Lobby button's specific rule: **cyan fill + gold 1px outer seam** (house holds the combat button) — this is the one sanctioned dual-accent button, not a pattern to copy elsewhere. | Exactly one per screen/panel. The single action you want taken. |
 | **Secondary** | Hollow hull (no fill), dim seam at rest, brightens on hover/focus. | Alternative but non-primary actions (Practice, Create Room, Settings from HOME). |
 | **Ghost** | No fill, no border, muted text only. | Low-commitment/escape actions (Cancel, Maybe later, Back) that shouldn't visually compete with anything. |
 | **Danger** | Rose/copper seam (`#fb7185` family), never a screaming solid-red fill. | Leave/Delete/Disconnect-style destructive actions. |
@@ -234,7 +234,7 @@ filled/bright button on the same panel, one of them is mis-classified — demote
 
 | # | Axiom | Check |
 |---|-------|-------|
-| B1 | **Primary CTA position is consistent across every panel of the same Place-tier.** Pick one convention (e.g. "primary sits first/top-left of its group, or centered as its own row above secondary actions" — whichever HOME already establishes) and never swap sides screen-to-screen. | Compare HOME's Hot Lobby placement against every other panel's primary action — same relative position within its panel? |
+| B1 | **Primary CTA position is consistent across every panel of the same Place-tier.** Pick one convention (e.g. "primary sits first/top-left of its group, or centered as its own row above secondary actions" — whichever HOME already establishes) and never swap sides screen-to-screen. | Compare HOME's Lobby (primary CTA) placement against every other panel's primary action — same relative position within its panel? |
 | B2 | **Secondary actions share one row/group, same visual weight as each other.** Never render two secondary actions at different sizes, weights, or one bordered/one not, on the same screen. | |
 | B3 | **Ghost/ escape actions (Cancel, Back, Maybe later) occupy a consistent corner or trailing position** — never the same slot a Primary button uses on another screen. A player's muscle memory for "the button in this spot is safe to misclick" must never be violated by putting a destructive or primary action there instead. | |
 | B4 | **Danger actions are always spatially separated from Primary/Secondary** (extra gap, own row, or a confirm step) — never adjacent enough to invite a misclick between "Leave" and "Resume." | |

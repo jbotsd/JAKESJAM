@@ -15,7 +15,7 @@ update explicitly."
 
 | Button | Data attr | Tier | Line | Notes |
 |---|---|---|---|---|
-| Hot Lobby | `data-menu-world` | **Primary** | 293 | `primary shell-cta-primary` — the one sanctioned dual-accent button (cyan fill + gold seam). The only Primary on this screen. |
+| Lobby (was "Hot Lobby", renamed 2026-07-16) | `data-menu-world` | **Primary** | 293 | `primary shell-cta-primary` — the one sanctioned dual-accent button (cyan fill + gold seam). The only Primary on this screen. Lands in the venue lobby since the S2.F flow flip. |
 | Practice | `data-menu-practice` | Secondary | 296 | `shell-btn-secondary` |
 | Private room | `data-menu-host` | Secondary | 297 | " |
 | Join room | `data-menu-join` | Secondary | 298 | " |
@@ -25,7 +25,7 @@ update explicitly."
 | Showcase | `data-menu-tutorial` | Secondary | 302 | " |
 | Forge | `data-menu-forge` | Secondary | 303 | " |
 | Credits | `data-menu-credits` | Secondary | 304 | " |
-| "▶ ENTER THE ARENA…" blink banner | `data-splash-cta` | Secondary (decorative dup) | 307 | Re-fires the Hot Lobby click handler — not a second destination. Flagged in the audit as ornamentation duplication (two visually distinct triggers for one action); left as-is, not a hard violation. |
+| "▶ ENTER THE ARENA…" blink banner | `data-splash-cta` | Secondary (decorative dup) | 307 | Re-fires the Lobby click handler — not a second destination. Flagged in the audit as ornamentation duplication (two visually distinct triggers for one action); left as-is, not a hard violation. |
 
 **Fix landed:** `.shell-btn-secondary`'s resting state was cyan-only (systemic C1/C2 violation);
 now rests gold-tinted border + warm text, cyan reserved for hover/focus. All 9 rows above inherit
@@ -37,7 +37,7 @@ this automatically from the one CSS rule.
 
 | Button | Data attr | Tier | Line | Notes |
 |---|---|---|---|---|
-| Host private room | `data-create-room` | **Primary** | 501 | Now `primary shell-cta-primary` (was plain cyan `primary` only — fixed to match Hot Lobby's dual-accent). |
+| Host private room | `data-create-room` | **Primary** | 501 | Now `primary shell-cta-primary` (was plain cyan `primary` only — fixed to match the Lobby button's dual-accent). |
 | Start match | `data-start-match` | **Primary** | 525 | Same fix applied. |
 | ← Home | `data-back-to-splash` | Ghost/Secondary | 502 | `shell-btn-secondary` |
 | Join | `data-join-room` | Secondary | 511 | " |
@@ -71,7 +71,7 @@ this automatically from the one CSS rule.
 
 | Button | Data attr | Tier | Line | Notes |
 |---|---|---|---|---|
-| Resume | `data-pause-resume` | **Primary** | 445 | `primary shell-cta-primary shell-pause-resume` — already correct pre-fix, the one other place besides Hot Lobby using the dual-accent pattern natively. |
+| Resume | `data-pause-resume` | **Primary** | 445 | `primary shell-cta-primary shell-pause-resume` — already correct pre-fix, the one other place besides the Lobby button using the dual-accent pattern natively. |
 | Enable auto-clips | `data-pause-toggle-clips` | Secondary | 452 | |
 | Save now | `data-pause-save-clip` | Secondary | 453 | |
 | Clip library | `data-pause-clips` | Ghost | 455 | `shell-btn-secondary shell-btn-ghost` |
@@ -97,7 +97,9 @@ this automatically from the one CSS rule.
 
 ---
 
-## MatchStatusBadge (world-status card, embedded in splash/lobby) — `client/src/game/ui/MatchStatusBadge.ts`
+## MatchStatusBadge — `client/src/game/ui/MatchStatusBadge.ts`
+
+ROOM-ONLY since 2026-07-16: the splash world-status instance was removed (Jake: "remove this add player stats") — the splash slot now renders the button-less player-record strip (`shell/playerStats.ts`, `[data-player-stats]`). The badge class survives for LobbyController's room status card.
 
 | Button | Tier | Line | Notes |
 |---|---|---|---|

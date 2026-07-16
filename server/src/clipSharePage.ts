@@ -110,16 +110,19 @@ export function renderClipSharePage(opts: ClipShareOpts): string {
   const ogImage = `${origin}/og-image.png`;
   const favicon = `${origin}/favicon.png`;
   const mime = filename.toLowerCase().endsWith(".mp4") ? "video/mp4" : "video/webm";
-  // Portrait reel — 9:16. FB/X use these for the player chrome.
-  const vidW = 720;
-  const vidH = 1280;
+  // Landscape native capture — no vertical crop anymore (2026-07-15: the
+  // 9:16 crop was cutting real action out of frame). Only used as the
+  // og:video:width/height hint for FB/X's player chrome; the actual <video>
+  // element sizes itself to whatever the file really is (see .theater CSS).
+  const vidW = 1920;
+  const vidH = 1080;
   const titleBase = note?.trim()
     ? `${note.trim().slice(0, 80)} · JAKESJAM highlight`
     : "JAKESJAM highlight — crystal arena clip";
   const title = exists ? titleBase : "Clip not found · JAKESJAM";
   const description = exists
-    ? "Watch this Hot Lobby highlight from JAKESJAM — free browser arena brawler. Predict, parry, draft roguelite cards. Drop in now — no install."
-    : "This highlight is gone or expired. Jump into JAKESJAM Hot Lobby and make your own.";
+    ? "Watch this Arena highlight from JAKESJAM — free browser arena brawler. Predict, parry, draft roguelite cards. Drop in now — no install."
+    : "This highlight is gone or expired. Jump into the JAKESJAM Arena and make your own.";
   const keywords = [
     "JAKESJAM",
     "arena brawler",
@@ -127,7 +130,7 @@ export function renderClipSharePage(opts: ClipShareOpts): string {
     "multiplayer",
     "roguelite cards",
     "parry",
-    "Hot Lobby",
+    "The Arena",
     "free online game",
     "highlight clip",
     "play.elyad.io",
@@ -287,7 +290,7 @@ export function renderClipSharePage(opts: ClipShareOpts): string {
     <a class="brand" href="${esc(homeUrl)}" title="JAKESJAM home">
       <span class="brand-mark" aria-hidden="true"></span>
       <span class="brand-text">JAKESJAM</span>
-      <span class="brand-tag">Hot Lobby</span>
+      <span class="brand-tag">The Arena</span>
     </a>
     <nav class="top-nav" aria-label="Primary">
       <a href="${esc(playUrl)}" class="btn btn-play">▶ Play free</a>
@@ -317,7 +320,7 @@ export function renderClipSharePage(opts: ClipShareOpts): string {
           </video>`
               : `<div class="missing">
             <p>Clip not found</p>
-            <p class="muted">It may have been rotated off the server. Grab a fresh one in Hot Lobby.</p>
+            <p class="muted">It may have been rotated off the server. Grab a fresh one in the Arena.</p>
           </div>`
           }
           <div class="phone-glow" aria-hidden="true"></div>
@@ -335,11 +338,11 @@ export function renderClipSharePage(opts: ClipShareOpts): string {
         <p class="lede">
           Crystal-arena brawler. <strong>Predict</strong> your opponent,
           <strong>parry</strong> at the last frame, <strong>draft</strong> roguelite weapon cards between rounds.
-          Always-on Hot Lobby — no install, no account wall.
+          Always-on Arena — no install, no account wall.
         </p>
 
         <div class="cta-row">
-          <a class="btn btn-play btn-lg" href="${esc(playUrl)}">Drop into Hot Lobby</a>
+          <a class="btn btn-play btn-lg" href="${esc(playUrl)}">Drop into the Arena</a>
           <a class="btn btn-ghost btn-lg" href="${esc(homeUrl)}">Game home</a>
         </div>
 
@@ -349,7 +352,7 @@ export function renderClipSharePage(opts: ClipShareOpts): string {
           <li><span class="f-ico">⚔</span><div><strong>Skill-forward combat</strong><br/><span class="muted">Parry windows, movement tech, readable arena geometry</span></div></li>
           <li><span class="f-ico">🃏</span><div><strong>Roguelite drafts</strong><br/><span class="muted">Mutate your weapon every round — unique builds, not static loadouts</span></div></li>
           <li><span class="f-ico">🌐</span><div><strong>Always-on world</strong><br/><span class="muted">Click a link, land in live action. Bots keep the lobby warm</span></div></li>
-          <li><span class="f-ico">📱</span><div><strong>Phone + desktop</strong><br/><span class="muted">Touch controls or keyboard — share vertical clips like this one</span></div></li>
+          <li><span class="f-ico">📱</span><div><strong>Phone + desktop</strong><br/><span class="muted">Touch controls or keyboard — share highlight clips like this one</span></div></li>
         </ul>
       </div>
     </section>
@@ -366,7 +369,7 @@ export function renderClipSharePage(opts: ClipShareOpts): string {
         </p>
         <ol class="steps">
           <li><strong>Open</strong> play.elyad.io in any browser</li>
-          <li><strong>Join</strong> Hot Lobby (or private room code)</li>
+          <li><strong>Join</strong> the Lobby (or a private room code)</li>
           <li><strong>Fight</strong>, draft, and export your best moments</li>
         </ol>
         <a class="btn btn-play" href="${esc(playUrl)}">Play JAKESJAM free →</a>
@@ -379,7 +382,7 @@ export function renderClipSharePage(opts: ClipShareOpts): string {
         <strong>JAKESJAM</strong> is a free-to-play multiplayer arena brawler you run in the browser at
         <a href="${esc(homeUrl)}">play.elyad.io</a>.
         It mixes precise platforming combat with roguelite <em>card drafts</em> that reshape your weapon between rounds.
-        Matches live in an always-on <em>Hot Lobby</em> world — open a shared link and you are already in the fight.
+        Matches live in an always-on <em>The Arena</em> world — open a shared link and you are already in the fight.
       </p>
       <p>
         Highlight clips (like this page) are recorded client-side and hosted on the game server so friends,
@@ -387,7 +390,7 @@ export function renderClipSharePage(opts: ClipShareOpts): string {
       </p>
       <p class="muted small">
         Related: <a href="https://elyad.io/">elyad.io</a> ·
-        <a href="${esc(playUrl)}">Hot Lobby</a> ·
+        <a href="${esc(playUrl)}">The Arena</a> ·
         <a href="${esc(origin)}/health">server status</a> ·
         clip id <code>${esc(idShort)}…</code>
         ${opts.sizeBytes != null ? ` · ${esc(fmtBytes(opts.sizeBytes))}` : ""}
@@ -638,15 +641,17 @@ a:hover { color: var(--text-hi); }
 }
 .stage-col { width: 100%; display: flex; flex-direction: column; align-items: center; }
 .theater {
-  /* Sized TO the reel's own 9:16 aspect ratio — the reported bug was this
-     container being full-width with the video floating inside via
-     object-fit:contain, producing huge black letterbox bars on any wide
-     viewport. A hollow chamfered frame (void interior, thin cyan seam) per
-     axiom G2/G3 — no filled gradient card, no elevation drop-shadow. */
+  /* Landscape native capture (2026-07-15: dropped the 9:16 crop — it was
+     cutting real action out of frame in a fast multi-player arena). Sized
+     to a 16:9 default so the box roughly matches the reel without needing
+     to probe each file's exact dimensions; .reel below uses object-fit:
+     contain (not cover) so an exact mismatch letterboxes instead of ever
+     cropping content — a thin bar beats losing the action a second time.
+     A hollow chamfered frame (void interior, thin cyan seam) per axiom
+     G2/G3 — no filled gradient card, no elevation drop-shadow. */
   position: relative;
-  aspect-ratio: 9 / 16;
-  height: min(76vh, 720px);
-  max-width: 100%;
+  aspect-ratio: 16 / 9;
+  width: min(100%, 1120px);
   margin: 0 auto;
   padding: 6px;
   background: var(--void-abyss);
@@ -654,11 +659,8 @@ a:hover { color: var(--text-hi); }
   box-shadow: 0 0 0 1px #05080f, 0 0 32px #3c79f014;
   clip-path: polygon(14px 0, 100% 0, 100% calc(100% - 14px), calc(100% - 14px) 100%, 0 100%, 0 14px);
 }
-@media (max-width: 480px) {
-  .theater { height: auto; width: min(92vw, 400px); }
-}
 .reel {
-  width: 100%; height: 100%; object-fit: cover;
+  width: 100%; height: 100%; object-fit: contain;
   background: #000; display: block;
 }
 .phone-glow {

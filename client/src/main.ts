@@ -14,8 +14,7 @@ import { installRendererRecovery } from "./shell/rendererRecovery";
 import { announce, setAnnouncerVolume, silenceAnnouncer } from "./game/audio/AnnouncerSystem";
 import { setSfxVolume01 } from "./game/audio/sfxVolume";
 import { LobbyController } from "./game/ui/LobbyController";
-import { MatchStatusBadge } from "./game/ui/MatchStatusBadge";
-import { fetchWorldSummary } from "./net/worldClient";
+import { loadPlayerStats, statLines } from "./shell/playerStats";
 import { sanitizePlayerName, stripDisallowedChars } from "./net/playerName";
 import { SceneKeys } from "./game/scenes/SceneKeys";
 import {
@@ -297,7 +296,7 @@ app.innerHTML = `
         />
       </div>
       <div class="splash-actions splash-actions--primary">
-        <button data-menu-world type="button" class="primary shell-cta-primary">Hot Lobby</button>
+        <button data-menu-world type="button" class="primary shell-cta-primary">Lobby</button>
       </div>
       <div class="splash-actions splash-actions--secondary">
         <button data-menu-practice type="button" class="shell-btn-secondary btn-inset-frame">Practice</button>
@@ -312,7 +311,10 @@ app.innerHTML = `
         <button data-menu-intro type="button" class="shell-btn-quiet">Intro</button>
         <button data-menu-credits type="button" class="shell-btn-quiet">Credits</button>
       </div>
-      <div class="splash-status-slot" data-world-status></div>
+      <!-- Player record (replaced the world status badge — Jake,
+           2026-07-16: "remove this add player stats"). Rendered from
+           shell/playerStats.ts on load + every return home. -->
+      <div class="splash-stats" data-player-stats aria-label="Your record"></div>
       <button type="button" class="splash-cta-blink" data-splash-cta>
         ▶ ENTER THE ARENA · FIGHT NIGHT EVERY FRIDAY ◀
       </button>
@@ -382,7 +384,7 @@ app.innerHTML = `
       <p class="shell-kicker">HIGHLIGHTS</p>
       <h2>Clips</h2>
       <p class="shell-hint" data-clips-save-status>
-        Auto: multi-kill / parry-kill / chain · or tap Save clip now in Hot Lobby.
+        Auto: multi-kill / parry-kill / chain · or tap Save clip now in the Arena.
       </p>
       <button data-clips-save-now type="button" class="primary shell-cta-primary">Save clip now</button>
       <div data-clips-list class="shell-clips-list"></div>
@@ -435,7 +437,7 @@ app.innerHTML = `
         <div class="credits-block">
           <h3>Special Thanks</h3>
           <p class="credits-hint">
-            Every player who joined the Hot Lobby before there was a reason to.
+            Every player who joined the Lobby before there was a reason to.
             The Order of Perpetual Respawn. You, right now, reading this.
           </p>
         </div>
@@ -458,7 +460,7 @@ app.innerHTML = `
     <div class="shell-frame">
       <p class="shell-kicker">APERTURE</p>
       <h2>Paused</h2>
-      <p class="shell-hint">Still in Hot Lobby.</p>
+      <p class="shell-hint">The game keeps running without you.</p>
       <button data-pause-resume type="button" class="primary shell-cta-primary shell-pause-resume">Resume</button>
       <p class="shell-hint shell-pause-esc-hint">Esc resumes too</p>
 
@@ -1411,21 +1413,29 @@ queryRequired<HTMLButtonElement>("[data-menu-world]").addEventListener("click", 
   joinWorld();
 });
 
-// Live status pill on the splash. Polls /world/summary every 3s — if the
-// world is mid-round, we show how far through; if joinable we light the
-// "Join" CTA. The "Copy link" button copies a `?world=1` shareable URL.
-const worldStatusMount = queryRequired<HTMLElement>("[data-world-status]");
-const worldShareUrl = `${window.location.origin}${window.location.pathname.replace(/\/$/, "")}/?world=1`;
-const worldStatusBadge = new MatchStatusBadge({
-  mount: worldStatusMount,
-  title: "Hot Lobby",
-  shareUrl: worldShareUrl,
-  fetchSummary: () => fetchWorldSummary(),
-  onJoin: () => {
-    joinWorld();
-    worldStatusBadge.refresh();
-  },
-});
+// Player record on the splash — replaced the polling world-status badge
+// (Jake, 2026-07-16: "remove this add player stats"). Pure local render,
+// no network; refreshed on every return home so a finished match's
+// kills/wins show the moment the splash is back.
+const playerStatsMount = queryRequired<HTMLElement>("[data-player-stats]");
+function renderPlayerStats(): void {
+  const lines = statLines(loadPlayerStats());
+  playerStatsMount.replaceChildren(
+    ...lines.map(({ label, value }) => {
+      const item = document.createElement("span");
+      item.className = "splash-stat";
+      const v = document.createElement("b");
+      v.textContent = value;
+      const l = document.createElement("small");
+      l.textContent = label;
+      item.append(v, l);
+      return item;
+    }),
+  );
+}
+renderPlayerStats();
+window.addEventListener(ShellEvents.MATCH_ENDED, () => renderPlayerStats());
+window.addEventListener(ShellEvents.GOTO, () => renderPlayerStats());
 
 queryRequired<HTMLButtonElement>("[data-menu-practice]").addEventListener("click", () => {
   startMenuMusic();
@@ -1686,7 +1696,7 @@ function requestSaveClipNow(): void {
     applyClipsConsent(true);
   }
   clipsSaveStatus.textContent =
-    "Capturing… toast + library entry in ~3–12s (stay in Hot Lobby, tab focused).";
+    "Capturing… toast + library entry in ~3–12s (stay in the match, tab focused).";
   emitClipSaveNow();
   // Brief status refresh after upload window
   window.setTimeout(() => syncClipsChrome(), 4_000);
@@ -1713,7 +1723,7 @@ function syncClipsChrome(): void {
     clipsSaveStatus.textContent = `${n} clip file(s) this session — Watch / Copy / Share below.`;
   } else if (on) {
     clipsSaveStatus.textContent =
-      "Auto: multi-kill / parry / chain · or Save clip now in Hot Lobby.";
+      "Auto: multi-kill / parry / chain · or Save clip now in the Arena.";
   } else {
     clipsSaveStatus.textContent =
       "Clips off. Save clip now turns them on and captures the current moment.";
@@ -2125,7 +2135,6 @@ window.addEventListener(ShellEvents.REQUEST_LEAVE_MATCH, () => {
 });
 
 window.addEventListener("beforeunload", () => {
-  worldStatusBadge.destroy();
   lobbyController.destroy();
   shell.destroy();
   game.destroy(true);

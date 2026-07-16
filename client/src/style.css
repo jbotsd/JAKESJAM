@@ -1561,6 +1561,34 @@ button.btn-danger:hover:not(:disabled) {
   font-weight: 400;
 }
 
+/* ── Player record strip (shell/playerStats.ts) — replaced the polling
+      world-status badge. Instrument-register data: house tan labels,
+      bright values, one quiet row. ─────────────────────────────────── */
+.splash-stats {
+  display: flex;
+  justify-content: center;
+  gap: 1.6rem;
+  flex-wrap: wrap;
+  margin: 0.9rem 0 0.4rem;
+  font-family: "Space Mono", monospace;
+}
+.splash-stat {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.15rem;
+}
+.splash-stat b {
+  font-size: 1.05rem;
+  font-weight: 700;
+  color: #e8ecf4;
+}
+.splash-stat small {
+  font-size: 0.58rem;
+  letter-spacing: 0.2em;
+  color: rgba(170, 158, 127, 0.85);
+}
+
 /* ── Venue callsign gate (HangoutScene venue mode, S2.C.3) — identity
       precedes commitment: prompt-before-connect so the name always rides
       /ws/lobby. Same input language as the splash CALLSIGN field. ─────── */
@@ -1810,14 +1838,14 @@ button.btn-danger:hover:not(:disabled) {
 .splash-screen .splash-copy,
 .splash-screen .splash-name,
 .splash-screen .splash-actions,
-.splash-screen .splash-status-slot {
+.splash-screen .splash-stats {
   animation: title-in 0.45s ease-out both;
 }
 .splash-screen .splash-copy { animation-delay: 2.75s; }
 .splash-screen .splash-name { animation-delay: 2.9s; }
 .splash-screen .splash-actions--primary { animation-delay: 3.05s; }
 .splash-screen .splash-actions--secondary { animation-delay: 3.2s; }
-.splash-screen .splash-status-slot { animation-delay: 3.35s; }
+.splash-screen .splash-stats { animation-delay: 3.35s; }
 
 @keyframes title-in {
   from { opacity: 0; transform: translateY(14px); }
@@ -2126,7 +2154,7 @@ html.ident-done .splash-screen .splash-copy { animation-delay: 0.55s; }
 html.ident-done .splash-screen .splash-name { animation-delay: 0.7s; }
 html.ident-done .splash-screen .splash-actions--primary { animation-delay: 0.85s; }
 html.ident-done .splash-screen .splash-actions--secondary { animation-delay: 1s; }
-html.ident-done .splash-screen .splash-status-slot { animation-delay: 1.15s; }
+html.ident-done .splash-screen .splash-stats { animation-delay: 1.15s; }
 html.ident-done .splash-cta-blink { animation-delay: 1.3s, 1.4s; }
 
 .ui-instant .boot-gate, .ui-instant .boot-ident { display: none; }

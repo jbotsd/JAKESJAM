@@ -31,6 +31,7 @@ import { ClipRecorder } from "../highlights/ClipRecorder";
 import { isClipsEnabled } from "../highlights/clipConsent";
 import { emitClipUploaded, ShellEvents } from "../../shell/events";
 import { notifyGameplayStart, notifyGameplayStop } from "../../shell/crazyGamesSdk";
+import { recordKill, recordDeath, recordStreak, recordMatch } from "../../shell/playerStats";
 import { pickDeathTip, type DeathTipSignal } from "../highlights/deathTip";
 import {
   STEP_MS,
@@ -1390,7 +1391,7 @@ export class OnlineMatchScene extends Phaser.Scene {
 
   private async resolveWsUrl(data: OnlineMatchSceneInit): Promise<string> {
     if (data.mode === "world") {
-      this.setStatus("Joining Hot Lobby...");
+      this.setStatus("Joining the Arena...");
       // Re-sanitize at the join boundary too — localStorage is writable by
       // devtools/extensions, and the server re-checks anyway, but this
       // keeps every read site consistent with the one authoritative rule.
@@ -1489,6 +1490,16 @@ export class OnlineMatchScene extends Phaser.Scene {
     }
     for (const event of events) {
       this.simEventRouter.dispatch(event);
+    }
+    // Persistent player record (splash stats panel). After dispatch so the
+    // router's killStreakCount already includes this event's kill.
+    for (const event of events) {
+      if (event.t !== "player-killed") continue;
+      if (event.killerId === this.localPlayerId && event.victimId !== this.localPlayerId) {
+        recordKill();
+        recordStreak(this.killStreakCount.get(this.localPlayerId) ?? 0);
+      }
+      if (event.victimId === this.localPlayerId) recordDeath();
     }
   }
 
@@ -2583,6 +2594,8 @@ export class OnlineMatchScene extends Phaser.Scene {
     const winnerScore = state.round.scores[winnerPlayerId] ?? 0;
     if (winnerScore < resolveModeConfig(state.chaosModifierIds).targetScore) return;
     this.matchHasEnded = true;
+    // Persistent player record (splash stats panel) — one match, won or not.
+    recordMatch(winnerPlayerId === this.localPlayerId);
     // The round-over banner and death overlay are only gated from FUTURE
     // updates by matchHasEnded (see updateHudSystem) — neither is ever
     // explicitly cleared, so whatever they last drew ("TO YOU", or a

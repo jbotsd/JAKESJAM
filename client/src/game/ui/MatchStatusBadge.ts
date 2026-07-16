@@ -164,7 +164,7 @@ export class MatchStatusBadge {
       } else {
         // Fetch succeeded with !ok or returned null — server is up but world hasn't booted.
         this.statusDot.style.background = "#7a8aa3";
-        this.summaryEl.textContent = "hot lobby idle · be the first to spawn in";
+        this.summaryEl.textContent = "arena idle · be the first to spawn in";
         if (this.joinBtn) this.joinBtn.disabled = false; // empty lobby is joinable
       }
       this.applyJoinBtnDisabledStyle();

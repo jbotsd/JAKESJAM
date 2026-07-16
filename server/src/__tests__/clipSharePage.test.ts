@@ -47,7 +47,7 @@ describe("clipSharePage", () => {
     expect(html).toContain("application/ld+json");
     expect(html).toContain("VideoObject");
     expect(html).toContain("VideoGame");
-    expect(html).toContain("Drop into Hot Lobby");
+    expect(html).toContain("Drop into the Arena");
     expect(html).toContain("twitter.com/intent/tweet");
     expect(html).toContain("facebook.com/sharer");
     expect(html).toContain("reddit.com/submit");
@@ -66,6 +66,6 @@ describe("clipSharePage", () => {
     });
     expect(html).toContain("Clip not found");
     expect(html).toContain("Play free");
-    expect(html).toContain("Hot Lobby");
+    expect(html).toContain("The Arena");
   });
 });

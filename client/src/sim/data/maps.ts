@@ -168,7 +168,7 @@ export const mapPickerOrder: ReadonlyArray<{
 }> = [
   {
     id: "vessel-nexus",
-    blurb: "Hot Lobby mega-dock. Sixteen vessel pads, hull shafts, sci-fi gnostic chrome.",
+    blurb: "The Arena's mega-dock. Sixteen vessel pads, hull shafts, sci-fi gnostic chrome.",
     recommendedPlayers: "8-16",
   },
   {
