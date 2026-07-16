@@ -179,6 +179,13 @@ a hittable target one step away, the live arena visible with zero clicks.
 6. **Presence floor:** with zero humans, idle persona bots stand in the
    lobby (wandering is enough) — screenshot evidence; the lobby is never an
    empty room.
+7. **The venue's music:** the lobby plays its own track — Jake supplied it
+   2026-07-16: `client/public/audio/venue-lobby.mp3` ("A Table Set", 2:58,
+   already staged in assets). Crossfades with world music on lobby↔arena
+   transitions using the existing `fadeMusic` machinery (no new audio
+   category); respects the existing music volume/mute settings (test: mute
+   music → lobby track muted; grep: track loaded via `getAudioUrl`, no
+   hardcoded path).
 
 ## Pillar 3 — The bell (admission with dignity)
 
