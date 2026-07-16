@@ -115,6 +115,11 @@ export class VenueHost {
    *  leftmost auto-picked at admission. Drained into the arena at the
    *  countdown-entry edge; until then it drives the totem UI. */
   private readonly readyQueue = new Map<PlayerId, { offers: string[]; pick: string | null }>();
+  /** Admitted-but-not-yet-spawned picks (S2.F): the bell moves queue
+   *  entries here so the client's lobby-close / arena-attach order can't
+   *  race the card application. TTL'd — a client that never shows up at
+   *  the arena forfeits the pick. */
+  private readonly admittedCards = new Map<PlayerId, { cards: string[]; expiresAt: number }>();
   /** 1Hz status push (S2.B) — phase edges push immediately on top. */
   private statusTimer: ReturnType<typeof setInterval> | null = null;
   /** S2.C: practice dummies come back after being broken. */
@@ -127,10 +132,24 @@ export class VenueHost {
     // rebuild, recycles included) — an edge means the bell countdown just
     // re-based, so push a fresh frame immediately rather than waiting out
     // the 1Hz tick.
-    this.arenaHost.onRoundPhaseChange = () => this.broadcastStatus();
+    this.arenaHost.onRoundPhaseChange = (_prev, next) => {
+      // THE BELL (S2.F): the countdown-entry edge admits everyone queued —
+      // picks move to the TTL'd admitted map, each socket gets its one-shot
+      // venue-admitted frame, and the queue empties in the same breath.
+      if (next === "countdown") this.admitQueue();
+      this.broadcastStatus();
+    };
     // Starter cards ride admission (S2.E): the arena consults this at every
-    // entrant insertion; non-venue entrants (no queue entry) spawn plain.
+    // entrant insertion. Admitted picks win; a still-queued player who
+    // reaches the arena during a countdown some other way keeps their pick
+    // too; everyone else spawns plain.
     this.arenaHost.getEntrantCards = (playerId) => {
+      const admitted = this.admittedCards.get(playerId);
+      if (admitted) {
+        this.admittedCards.delete(playerId); // one spawn per admission
+        if (admitted.expiresAt > Date.now()) return admitted.cards;
+        return undefined;
+      }
       const entry = this.readyQueue.get(playerId);
       if (!entry || entry.offers.length === 0) return undefined;
       return [entry.pick ?? entry.offers[0]!];
@@ -170,6 +189,33 @@ export class VenueHost {
     return host;
   }
 
+  /** The bell's queue drain (S2.F): every queued player is admitted at
+   *  once — pick banked in admittedCards (30s TTL), venue-admitted pushed
+   *  to their lobby socket, queue entry removed. Runs on the arena's
+   *  countdown-entry edge only. */
+  private admitQueue(): void {
+    if (this.readyQueue.size === 0) return;
+    const expiresAt = Date.now() + 30_000;
+    for (const [playerId, entry] of this.readyQueue) {
+      if (entry.offers.length > 0) {
+        this.admittedCards.set(playerId, {
+          cards: [entry.pick ?? entry.offers[0]!],
+          expiresAt,
+        });
+      }
+      const ws = this.lobbySockets.get(playerId);
+      if (ws) {
+        try {
+          ws.send(encodeMessage({ t: "venue-admitted", arenaWsPath: "/ws/world" }));
+        } catch {
+          /* dead socket — the TTL forfeits the pick */
+        }
+      }
+    }
+    this.readyQueue.clear();
+    console.log(`[venue] the bell — admitted ${this.admittedCards.size} entrant(s) to the arena`);
+  }
+
   private toggleQueue(playerId: PlayerId): void {
     if (this.readyQueue.has(playerId)) {
       this.readyQueue.delete(playerId);
@@ -191,6 +237,7 @@ export class VenueHost {
       } catch {
         /* dead socket — detach path will dequeue */
       }
+      console.log(`[venue] ${playerId} queued at the bell — offer: ${offers.join(", ")}`);
     }
     this.broadcastStatus();
   }

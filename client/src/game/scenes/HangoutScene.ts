@@ -266,6 +266,12 @@ export class HangoutScene extends Phaser.Scene {
         // the bell; the pick rides back as an ordinary card-pick and lands
         // on the venue queue entry (roundIndex is venue-ignored).
         onVenueDraft: (offers) => this.showStarterDraft(offers),
+        // The bell (S2.F): admission crosses the membrane. main.ts owns the
+        // scene handoff (stop Hangout → its teardown closes this socket →
+        // start OnlineMatchScene mode:"world").
+        onVenueAdmitted: () => {
+          window.dispatchEvent(new CustomEvent("jakesjam:venue-admitted"));
+        },
       });
       transport.onClose((reason) => {
         this.setStatus(`Disconnected: ${reason}`);

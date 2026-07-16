@@ -1574,7 +1574,10 @@ queryRequired<HTMLButtonElement>("[data-pause-leave-confirm-no]").addEventListen
 queryRequired<HTMLButtonElement>("[data-pause-leave-confirm-yes]").addEventListener("click", () => {
   pauseLeaveConfirm.hidden = true;
   pauseLeaveBtn.disabled = false;
-  leaveMatchToHome();
+  // Arena exits return to the VENUE lobby, not the splash (S2.F) — the
+  // same branch the REQUEST_LEAVE_MATCH / return-to-lobby listeners take.
+  if (currentMatchMode === "world") joinWorld();
+  else leaveMatchToHome();
 });
 
 // Clip toast when match emits jakesjam:clip-uploaded (session list is
@@ -1755,7 +1758,10 @@ queryRequired<HTMLButtonElement>("[data-pause-save-clip]").addEventListener("cli
 });
 
 // Keep chrome in sync with shell match mode
-window.addEventListener(ShellEvents.MATCH_STARTED, () => {
+let currentMatchMode: import("./shell/types.js").MatchMode = "none";
+window.addEventListener(ShellEvents.MATCH_STARTED, (event) => {
+  currentMatchMode = (event as CustomEvent<{ mode: import("./shell/types.js").MatchMode }>)
+    .detail.mode;
   showMatchChrome(true);
   syncClipsChrome();
 });
@@ -1966,13 +1972,16 @@ installFullscreenToggle();
   window.addEventListener("pointerdown", armLore);
 }
 
+/**
+ * The venue lobby is the world's front room (venue-sprint2-goal S2.F):
+ * every "play online" path lands HERE — the walkable antechamber with the
+ * bell totem — and the ARENA is entered only through admission
+ * (enterArenaFromVenue). joinWorld keeps its name so every caller
+ * (Hot Lobby button, ?world=1, CrazyGames instant-join) inherits the flip.
+ */
 function joinWorld(): void {
-  // Soundtrack for Hot Lobby. Plays immediately if a gesture already
-  // happened (e.g. the click that hit "Hot Lobby"); for bare `?world=1`
-  // the global first-gesture starter picks up the first in-match input.
-  startWorldMusic();
+  startVenueMusic();
   silenceAnnouncer(); // cut the diatribe if it's mid-flight
-  announce("welcome");
   requestGameFullscreen();
   // Bare `?world=1` auto-joins with no gesture (fullscreen rejects) — the
   // first in-match touch retries once.
@@ -1980,14 +1989,40 @@ function joinWorld(): void {
     once: true,
     capture: true,
   });
-  emitMatchStarted("world");
+  emitMatchStarted("lobby");
   game.scene.stop(SceneKeys.MainMenu); // see start-match handler note
-  document.title = "JAKESJAM — Hot Lobby";
+  if (game.scene.isActive(SceneKeys.OnlineMatch)) {
+    // Returning from the arena (Menu→Leave / Back to Lobby) — the round
+    // trip's second half. Stopping the scene closes the arena socket.
+    game.scene.stop(SceneKeys.OnlineMatch);
+  }
+  document.title = "JAKESJAM — The Venue";
+  game.scene.start(SceneKeys.Hangout, {
+    mode: "venue",
+    localPlayerId: localPlayerId(),
+  });
+}
+
+/**
+ * The bell rang and this player was admitted (venue-admitted frame) —
+ * hand the lobby off to the arena. Stopping Hangout tears down the lobby
+ * socket (loop.disconnect in its teardown); OnlineMatchScene opens its own
+ * /ws/world connection, which the arena inserts during the countdown with
+ * the banked starter pick (VenueHost.admittedCards, 30s TTL — safe in
+ * either close/attach order).
+ */
+function enterArenaFromVenue(): void {
+  startWorldMusic();
+  announce("welcome");
+  emitMatchStarted("world");
+  game.scene.stop(SceneKeys.Hangout);
+  document.title = "JAKESJAM — The Arena";
   game.scene.start(SceneKeys.OnlineMatch, {
     mode: "world",
     localPlayerId: localPlayerId(),
   });
 }
+window.addEventListener("jakesjam:venue-admitted", () => enterArenaFromVenue());
 
 function leaveMatchToHome(): void {
   if (game.scene.isActive(SceneKeys.Match)) {
@@ -2020,21 +2055,9 @@ if (urlParams.get("replay")) {
   // Defer one tick so Phaser has a chance to register the scene.
   setTimeout(() => joinWorld(), 0);
 } else if (urlParams.get("venue") === "1") {
-  // Venue lobby dev entry (venue-sprint2-goal S2.A) — reaches the public
-  // walkable lobby WITHOUT flipping the main world flow, which stays on
-  // OnlineMatchScene until S2.F's full lobby→bell→arena round trip works.
-  // Becomes the real front door in Pillar 6.
-  emitMatchStarted("lobby");
-  // No user gesture yet on a deep link — armSoundtrackOnFirstGesture's net
-  // retries on the first click, same as the ?world=1 path.
-  startVenueMusic();
-  setTimeout(() => {
-    game.scene.stop(SceneKeys.MainMenu);
-    game.scene.start(SceneKeys.Hangout, {
-      mode: "venue",
-      localPlayerId: localPlayerId(),
-    });
-  }, 0);
+  // Venue lobby deep link — same landing as ?world=1 since the S2.F flow
+  // flip (joinWorld IS the venue now); kept as a stable alias.
+  setTimeout(() => joinWorld(), 0);
 } else if (urlParams.get("room") || urlParams.get("code")) {
   // Shared room link → open lobby and auto-join the room (idempotent on server).
   shell.goto("room");
@@ -2088,13 +2111,17 @@ window.addEventListener("jakesjam:chaos-change", (event) => {
 });
 
 // Fired by MatchScene's results overlay when the player picks "Back to
-// Lobby" after a match.
+// Lobby" after a match. Arena (world-mode) exits return to the VENUE, not
+// the splash (venue-sprint2-goal S2.F — the lobby is the world's home);
+// every other match type keeps the original home flow.
 window.addEventListener("jakesjam:return-to-lobby", () => {
-  leaveMatchToHome();
+  if (currentMatchMode === "world") joinWorld();
+  else leaveMatchToHome();
 });
 
 window.addEventListener(ShellEvents.REQUEST_LEAVE_MATCH, () => {
-  leaveMatchToHome();
+  if (currentMatchMode === "world") joinWorld();
+  else leaveMatchToHome();
 });
 
 window.addEventListener("beforeunload", () => {

@@ -358,7 +358,21 @@ export class WorldHost {
       if (ws.readyState !== 1) this.sockets.delete(pid);
     }
     if (this.sockets.size === 0) {
-      // Nobody connected — tear down and lazy-boot on the next attach.
+      if (this.botCount > 0 || this.botFloor > 0) {
+        // ALWAYS-ON ARENA (venue-sprint2-goal S2.F): with the venue as the
+        // front room, nobody direct-joins the arena anymore — if the world
+        // lazily rebooted to null here, venue-status would go dark and the
+        // bell could never ring (no phase edges → queued lobby players
+        // deadlock). A bots-configured world rolls a fresh cycle instead.
+        this.host = this.buildHost([]);
+        old.dispose();
+        this.host.ensureTickLoop();
+        console.log(
+          `[worldHost] match complete with no humans — bots roll the next cycle (map=${this.host.summary().mapId})`,
+        );
+        return;
+      }
+      // No bots configured — tear down and lazy-boot on the next attach.
       old.dispose();
       this.host = null;
       console.log("[worldHost] match complete with no players — world reset (lazy reboot)");

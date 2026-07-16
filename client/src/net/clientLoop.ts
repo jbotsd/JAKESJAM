@@ -90,6 +90,8 @@ export type ClientLoopOptions = {
   onVenueStatus?: (status: import("./protocol.js").VenueStatus) => void;
   /** Venue lobby only: one-shot starter draft offer (S2.E). */
   onVenueDraft?: (offers: string[]) => void;
+  /** Venue lobby only: the bell admitted this player to the arena (S2.F). */
+  onVenueAdmitted?: () => void;
 };
 
 export type LocalInput = {
@@ -207,6 +209,7 @@ export class ClientLoop {
   private readonly onReconnectAttempt?: (attemptNumber: number, nextDelayMs: number) => void;
   private readonly onVenueStatus?: (status: import("./protocol.js").VenueStatus) => void;
   private readonly onVenueDraft?: (offers: string[]) => void;
+  private readonly onVenueAdmitted?: () => void;
 
   private predictedState: WorldState | null = null;
   private authoritativeState: WorldState | null = null;
@@ -322,6 +325,7 @@ export class ClientLoop {
     this.onReconnectAttempt = opts.onReconnectAttempt;
     this.onVenueStatus = opts.onVenueStatus;
     this.onVenueDraft = opts.onVenueDraft;
+    this.onVenueAdmitted = opts.onVenueAdmitted;
 
     this.reconnect = new ReconnectSupervisor(this.reconnectUrl !== undefined, {
       onAttempt: () => this.attemptReconnect(),
@@ -824,6 +828,11 @@ export class ClientLoop {
         // One-shot starter offer (S2.E) — pushed the moment this player
         // queues at the bell. Same lobby-only contract as venue-status.
         this.onVenueDraft?.(message.offers);
+        break;
+      case "venue-admitted":
+        // The bell (S2.F) — this player crosses into the arena now. The
+        // scene owns the handoff (close lobby, start the arena scene).
+        this.onVenueAdmitted?.();
         break;
     }
   }

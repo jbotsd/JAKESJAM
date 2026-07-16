@@ -290,6 +290,66 @@ describe("VenueHost lobby lifecycle (Pillar 1.2)", () => {
     venue.dispose();
   });
 
+  test("the bell admits the whole queue: venue-admitted pushed, picks banked, queue cleared (S2.F)", () => {
+    const { venue, arena } = makeVenue(0);
+    const sent: Uint8Array[] = [];
+    const ws = {
+      data: { matchId: VENUE_LOBBY_MATCH_ID, playerId: "p_adm", name: "ADMIT", authedAt: Date.now() },
+      send: (buf: Uint8Array) => {
+        sent.push(buf);
+        return 1;
+      },
+      close: () => {},
+      getBufferedAmount: () => 0,
+    } as unknown as ServerWebSocket<MatchSocketData>;
+    venue.attachLobby(ws);
+    type SimEventSink = { onSimEvent?: (e: { t: string; playerId: string }) => void };
+    (venue.lobbyHostForTest() as unknown as SimEventSink).onSimEvent?.({
+      t: "launch-requested",
+      playerId: "p_adm",
+    });
+    const offers = venue.queueEntryForTest("p_adm" as never)!.offers;
+    venue.routeLobby(ws, encodeMessage({ t: "card-pick", roundIndex: 0, cardId: offers[1]! }));
+
+    // The arena's phase edge into countdown IS the bell (the same hook the
+    // live tick fires) — drive it directly.
+    arena.onRoundPhaseChange?.("drafting", "countdown");
+
+    // Queue emptied; the admitted frame reached the lobby socket.
+    expect(venue.queuedForTest()).toEqual([]);
+    const frames = sent
+      .map((buf) => decodeMessage(buf)?.message as { t: string; arenaWsPath?: string } | undefined)
+      .filter((m): m is { t: string; arenaWsPath?: string } => m !== undefined);
+    const admitted = frames.find((m) => m.t === "venue-admitted");
+    expect(admitted).toBeDefined();
+    expect(admitted!.arenaWsPath).toBe("/ws/world");
+    // The banked pick survives the dequeue and is consumed exactly once.
+    expect(arena.getEntrantCards!("p_adm" as never)).toEqual([offers[1]!]);
+    expect(arena.getEntrantCards!("p_adm" as never)).toBeUndefined();
+    venue.dispose();
+  });
+
+  test("no double-presence accounting: admission dequeues even with the lobby socket still open (S2.F)", () => {
+    const { venue, arena } = makeVenue(0);
+    const ws = makeFakeWs("p_dp", "DOUBLE");
+    venue.attachLobby(ws);
+    type SimEventSink = { onSimEvent?: (e: { t: string; playerId: string }) => void };
+    (venue.lobbyHostForTest() as unknown as SimEventSink).onSimEvent?.({
+      t: "launch-requested",
+      playerId: "p_dp",
+    });
+    expect(venue.queuedForTest() as string[]).toEqual(["p_dp"]);
+    arena.onRoundPhaseChange?.("drafting", "countdown");
+    // Still standing in the lobby (socket open) but no longer queued —
+    // the venue-status `queued` list and `present` count stay honest
+    // through the handoff window.
+    expect(venue.queuedForTest()).toEqual([]);
+    expect(venue.summary().lobby.present).toBe(1);
+    venue.detachLobby(ws);
+    expect(venue.summary().lobby.present).toBe(0);
+    venue.dispose();
+  });
+
   test("attach spawns the chosen name; re-attach of a known player doesn't double-add", () => {
     const { venue } = makeVenue(0);
     const ws = makeFakeWs("p_named", "VERA");

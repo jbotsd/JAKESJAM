@@ -132,11 +132,16 @@ export function resolveHangoutTotems(map: MapDefinition): TotemDefinition[] {
  * it, the client renders it at identical coordinates.
  */
 export function resolveVenueTotems(map: MapDefinition): TotemDefinition[] {
+  // 0.75, not center: lobby entrants spawn at the map-center fallback, and
+  // a bell sitting ON the spawn point queued people the instant they landed
+  // (S2.F — queueing must be a deliberate walk, not a side effect of
+  // arriving). Clear of the practice-dummy band (0.3/0.35/0.65) too.
+  const BELL_X = 0.75;
   if (map.id === "vessel-nexus") {
     const groundY = map.size.y - 36 - TOTEM_STAND_OFFSET;
-    return [{ id: "totem-bell", kind: "launch", x: map.size.x * 0.5, y: groundY, radius: 80 }];
+    return [{ id: "totem-bell", kind: "launch", x: map.size.x * BELL_X, y: groundY, radius: 80 }];
   }
-  return [{ id: "totem-bell", kind: "launch", radius: 80, ...snapToStandable(map, map.size.x * 0.5) }];
+  return [{ id: "totem-bell", kind: "launch", radius: 80, ...snapToStandable(map, map.size.x * BELL_X) }];
 }
 
 /**

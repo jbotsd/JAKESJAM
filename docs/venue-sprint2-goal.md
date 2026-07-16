@@ -330,3 +330,45 @@ deployed. Live: /venue/summary shows the elastic floor working (bots: 4
 with 0 humans at boot — was fixed 2 before). The full queue-at-totem live
 loop (walk → queue → offer → pick → admitted with card) lands with
 S2.F's Playwright round trip, which drives a real avatar.
+(Committed f1482a6.)
+
+**S2.F — COMPLETE (2026-07-16) — SPRINT CLOSED**
+The bell admits: VenueHost taps the arena's countdown edge → admitQueue()
+banks each queued pick in a 30s-TTL admittedCards map (consumed once per
+spawn — so the client's lobby-close / arena-attach order can never race
+the card application), pushes a one-shot venue-admitted frame, clears the
+queue in the same breath. Flow flip in main.ts: joinWorld() IS the venue
+now (every play-online path — Hot Lobby button, ?world=1, ?venue=1 alias,
+CrazyGames instant-join — lands in the walkable lobby); admission
+(jakesjam:venue-admitted event from HangoutScene) → enterArenaFromVenue()
+stops Hangout (teardown closes the lobby socket) and starts
+OnlineMatchScene mode:"world"; ALL THREE arena exits (pause-leave confirm,
+REQUEST_LEAVE_MATCH, return-to-lobby) branch on currentMatchMode —
+"world" returns to the VENUE, everything else keeps the home flow.
+Playwright round trip (tests/e2e/venueRoundTrip.spec.ts, PASSES against
+the deployed build): ?world=1 lands in HangoutScene (arena scene inactive)
+→ steers to the bell by reading its own render-state x (spawns come from
+the lattice FARTHEST from occupied players — a fixed walk direction is
+wrong whenever anyone else is in the room; jump-while-holding-direction
+clears cover pylons) → starter overlay appears (queue confirmed) → picks
+a card → admitted to OnlineMatchScene carrying the pick → pause→Leave →
+back in HangoutScene — one session, reload sentinel intact throughout.
+S2.A.3 time-to-play, measured on the now-real flow: 1770ms load → venue
+lobby scene. Two real design bugs found and fixed on the way: (1) the
+ALWAYS-ON ARENA — a bots-configured world used to lazy-reboot to null
+after a humanless match completed; with the venue as front room nobody
+direct-joins to reboot it, so venue-status went dark and the bell could
+never ring (queued players deadlocked) — recycle now rolls a fresh
+bots-only cycle instead; (2) the bell totem sat AT the map-center spawn
+fallback, queueing people the instant they landed — moved to 0.75W
+(queueing is a deliberate walk, clear of the dummy band). Tests: venue
+16 (bell drain: frames pushed, picks banked+consumed-once, queue cleared,
+no double-presence accounting through the handoff window), server 201 /
+client 925, typechecks clean, built, deployed. Live probes at close:
+/venue/summary local+public 200, lobby WS probe (RECRUIT/dummies/status/
+named) ALL PASS, round-trip e2e green against the live :8088. Jake
+live-tested concurrently — server log shows his real session queueing at
+the bell, drafting, and being admitted ("the bell — admitted 1
+entrant(s) to the arena"). Ops note: cloudflared pools upstream
+connections, so public curls can hit the DYING process for a few seconds
+after a restart — don't diagnose from the public URL mid-restart.

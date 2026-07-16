@@ -195,7 +195,26 @@ export type VenueDraft = {
   offers: string[];
 };
 
-export type ServerMessage = ServerHello | Snapshot | Pong | Disconnect | VenueStatus | VenueDraft;
+/**
+ * The bell (venue-sprint2-goal S2.F) — pushed once to each queued lobby
+ * socket at the arena's countdown-entry edge. The client hands off to the
+ * arena scene; the shared world token already grants /ws/world, and the
+ * starter pick waits server-side in the admitted map (TTL'd), so the lobby
+ * socket may close before or after the arena attach without racing it.
+ */
+export type VenueAdmitted = {
+  t: "venue-admitted";
+  arenaWsPath: string;
+};
+
+export type ServerMessage =
+  | ServerHello
+  | Snapshot
+  | Pong
+  | Disconnect
+  | VenueStatus
+  | VenueDraft
+  | VenueAdmitted;
 
 // ---------------- Codec ----------------
 
@@ -233,6 +252,7 @@ const REQUIRED_FIELDS: Record<string, ReadonlyArray<readonly [string, "string" |
   bye: [["reason", "string"]],
   "venue-status": [["arenaPhase", "string"], ["nextBellMs", "number"]],
   "venue-draft": [["offers", "object"]],
+  "venue-admitted": [["arenaWsPath", "string"]],
 };
 
 const warnedUnknown = new Set<string>();
