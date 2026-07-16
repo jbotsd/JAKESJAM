@@ -97,9 +97,12 @@ export class ConnectionOverlay {
     if (this.destroyed) return;
     switch (state.kind) {
       case "lost":
+        // No retry promise in this copy — whether a reconnect is actually
+        // coming is the supervisor's call, and it announces itself through
+        // the "reconnecting" state. This state just reports the fact.
         this.kickerEl.textContent = "Connection";
         this.titleEl.textContent = "Connection lost";
-        this.subEl.textContent = `Reason: ${state.reason}. Trying to reconnect…`;
+        this.subEl.textContent = `Reason: ${state.reason}`;
         break;
       case "reconnecting":
         this.kickerEl.textContent = "Reconnecting";

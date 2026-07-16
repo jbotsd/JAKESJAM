@@ -1323,6 +1323,15 @@ export class OnlineMatchScene extends Phaser.Scene {
         transport,
         matchId: data.matchId ?? "world",
         playerId: data.localPlayerId,
+        // Arms the ReconnectSupervisor (venue-goal Pillar 0.5, audit seam
+        // #16): without this the supervisor was constructed disabled and
+        // the "Trying to reconnect…" overlay was a promise the code could
+        // not keep — any WS drop meant a dead client until manual reload.
+        // World tokens are stateless HMAC (no TTL, not one-time), so the
+        // same URL re-auths; within the server's 10s grace the entity is
+        // restored in place, beyond it the world re-adds us as a fresh
+        // join — both are live outcomes, not a frozen screen.
+        reconnectUrl: wsUrl,
         onAuthoritativeApplied: () => {
           this.setStatus(""); // hide status once we start receiving snapshots
           this.connectionOverlay?.hide();
@@ -1351,17 +1360,27 @@ export class OnlineMatchScene extends Phaser.Scene {
           this.connectionOverlay?.show({ kind: "reconnecting", attempt, nextDelayMs });
           crumb("net", `reconnect attempt ${attempt} (in ${nextDelayMs}ms)`);
         },
-      });
-      transport.onClose((reason) => {
-        this.setStatus(`Disconnected: ${reason}`);
-        this.connectionOverlay?.show({ kind: "lost", reason });
-        crumb("net", `ws closed: ${reason}`);
-        record({
-          kind: "net",
-          sig: `ws-close-${reason}`.slice(0, 32),
-          message: `ws closed: ${reason}`,
-          crumbs: undefined,
-        });
+        // Fires only when reconnect is genuinely over (terminal close
+        // reason, or all backoff attempts exhausted) — the one honest
+        // moment for "you're out". The old code hung a raw
+        // transport.onClose here that declared "Connection lost" on EVERY
+        // close (including ones the supervisor would have retried) and
+        // only ever saw the FIRST transport — a replacement socket's later
+        // drop showed nothing at all.
+        onConnectionLost: (reason) => {
+          this.setStatus(`Disconnected: ${reason}`);
+          this.connectionOverlay?.show({
+            kind: "terminal",
+            reason: `${reason} — reload the page to rejoin`,
+          });
+          crumb("net", `connection lost (terminal): ${reason}`);
+          record({
+            kind: "net",
+            sig: `ws-lost-${reason}`.slice(0, 32),
+            message: `connection lost after reconnect abandoned: ${reason}`,
+            crumbs: undefined,
+          });
+        },
       });
     } catch (err) {
       const msg = err instanceof Error ? err.message : "unknown error";
