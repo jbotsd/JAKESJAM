@@ -15,7 +15,7 @@ import { VenueHost, VENUE_LOBBY_MATCH_ID } from "../venueHost.ts";
 import { WorldHost } from "../worldHost.ts";
 import type { MatchSocketData } from "../matchHost.ts";
 import { DRAFT_WINDOW_MS, ROUND_OVER_HOLD_MS } from "@sim/round.ts";
-import { decodeMessage } from "@net/protocol.ts";
+import { decodeMessage, encodeMessage } from "@net/protocol.ts";
 
 function makeFakeWs(playerId: string, name?: string): ServerWebSocket<MatchSocketData> {
   return {
@@ -217,6 +217,76 @@ describe("VenueHost lobby lifecycle (Pillar 1.2)", () => {
     const me = lobby.playerInfo.get("p_opaque_id_123")!;
     expect(me.name).toBe("RECRUIT");
     expect(me.name).not.toBe("p_opaque_id_123");
+    venue.dispose();
+  });
+
+  test("queueing rolls a 3-card starter offer and pushes venue-draft (S2.E)", () => {
+    const { venue } = makeVenue(0);
+    const sent: Uint8Array[] = [];
+    const ws = {
+      data: { matchId: VENUE_LOBBY_MATCH_ID, playerId: "p_d", name: "DRAFTY", authedAt: Date.now() },
+      send: (buf: Uint8Array) => {
+        sent.push(buf);
+        return 1;
+      },
+      close: () => {},
+      getBufferedAmount: () => 0,
+    } as unknown as ServerWebSocket<MatchSocketData>;
+    venue.attachLobby(ws);
+    type SimEventSink = { onSimEvent?: (e: { t: string; playerId: string }) => void };
+    (venue.lobbyHostForTest() as unknown as SimEventSink).onSimEvent?.({
+      t: "launch-requested",
+      playerId: "p_d",
+    });
+    const entry = venue.queueEntryForTest("p_d" as never);
+    expect(entry).toBeDefined();
+    expect(entry!.offers.length).toBe(3);
+    expect(new Set(entry!.offers).size).toBe(3); // distinct
+    expect(entry!.pick).toBeNull();
+    const frames = sent
+      .map((buf) => decodeMessage(buf)?.message as { t: string; offers?: string[] } | undefined)
+      .filter((m): m is { t: string; offers?: string[] } => m !== undefined);
+    const draft = frames.find((m) => m.t === "venue-draft");
+    expect(draft).toBeDefined();
+    expect(draft!.offers).toEqual(entry!.offers);
+    venue.dispose();
+  });
+
+  test("card-pick over the lobby socket lands on the queue entry; bad ids ignored (S2.E)", () => {
+    const { venue } = makeVenue(0);
+    const ws = makeFakeWs("p_p", "PICKY");
+    venue.attachLobby(ws);
+    type SimEventSink = { onSimEvent?: (e: { t: string; playerId: string }) => void };
+    (venue.lobbyHostForTest() as unknown as SimEventSink).onSimEvent?.({
+      t: "launch-requested",
+      playerId: "p_p",
+    });
+    const entry = venue.queueEntryForTest("p_p" as never)!;
+    const chosen = entry.offers[1]!;
+    venue.routeLobby(ws, encodeMessage({ t: "card-pick", roundIndex: 0, cardId: "not-offered" }));
+    expect(venue.queueEntryForTest("p_p" as never)!.pick).toBeNull();
+    venue.routeLobby(ws, encodeMessage({ t: "card-pick", roundIndex: 0, cardId: chosen }));
+    expect(venue.queueEntryForTest("p_p" as never)!.pick).toBe(chosen);
+    venue.dispose();
+  });
+
+  test("getEntrantCards provider: pick wins, leftmost auto-pick otherwise, non-queued plain (S2.E)", () => {
+    const { venue, arena } = makeVenue(0);
+    const ws = makeFakeWs("p_q2", "QUEUER");
+    venue.attachLobby(ws);
+    type SimEventSink = { onSimEvent?: (e: { t: string; playerId: string }) => void };
+    (venue.lobbyHostForTest() as unknown as SimEventSink).onSimEvent?.({
+      t: "launch-requested",
+      playerId: "p_q2",
+    });
+    const entry = venue.queueEntryForTest("p_q2" as never)!;
+    // No pick yet → leftmost auto-pick.
+    expect(arena.getEntrantCards!("p_q2" as never)).toEqual([entry.offers[0]!]);
+    // Picked → exactly the pick.
+    venue.routeLobby(ws, encodeMessage({ t: "card-pick", roundIndex: 0, cardId: entry.offers[2]! }));
+    expect(arena.getEntrantCards!("p_q2" as never)).toEqual([entry.offers[2]!]);
+    // Never queued → plain spawn.
+    expect(arena.getEntrantCards!("p_stranger" as never)).toBeUndefined();
     venue.dispose();
   });
 

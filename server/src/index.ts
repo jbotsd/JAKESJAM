@@ -129,6 +129,11 @@ const worldHost = new WorldHost({
   // AI duelists keeping the Hot Lobby alive. Default 2 (host-public.sh
   // same). Set WORLD_BOTS=0 for deterministic probes / quiet local.
   bots: Number(process.env.WORLD_BOTS ?? 2),
+  // Elastic bots (venue-sprint2-goal S2.E): adjust toward
+  // max(0, floor - humansFighting) at bell edges only, cap 6. Default
+  // floor 4 = "a full room's worth of combatants"; WORLD_BOT_FLOOR=0
+  // restores the fixed WORLD_BOTS behavior.
+  botFloor: Number(process.env.WORLD_BOT_FLOOR ?? 4),
 });
 // The Venue (venue-goal.md Pillar 1): composes the always-on walkable
 // lobby (antechamber) with the arena above. The arena's own lifecycle —

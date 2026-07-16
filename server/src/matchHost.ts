@@ -605,6 +605,28 @@ export class MatchHost {
   }
 
   /**
+   * Remove a sim citizen with no socket (server-side bots — venue-sprint2-
+   * goal S2.E elastic bots). Mirrors the grace-eviction ritual minus the
+   * disconnect bookkeeping: replay notes the leave, every per-player map is
+   * cleared, and the shared roster op strips entity + score + drafting
+   * state. Callers own WHEN (the bell edge); this owns HOW.
+   */
+  removeRosterPlayer(playerId: PlayerId): void {
+    if (!this.playerInfo.has(playerId)) return;
+    this.replayRecorder.noteLeave(this.state.tick as number, playerId);
+    this.disconnectedAt.delete(playerId);
+    this.playerInfo.delete(playerId);
+    this.lastProcessedInputSeq.delete(playerId);
+    this.lastSeenAt.delete(playerId);
+    this.lastInputDropLogAt.delete(playerId);
+    this.pendingInputs.delete(playerId);
+    this.lastAppliedInput.delete(playerId);
+    this.heldInputTicks.delete(playerId);
+    this.baselineRing.delete(playerId);
+    this.state = applyRosterLeave(this.state, playerId);
+  }
+
+  /**
    * Hangout-only: re-seed the map's destructibles into the live state
    * (venue-sprint2-goal S2.C — the lobby's practice dummies respawn after
    * being broken; a permanent debris field teaches "don't bother firing").

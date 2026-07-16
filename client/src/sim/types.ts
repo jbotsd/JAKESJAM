@@ -146,6 +146,17 @@ export type PickupKind =
  */
 export type RoundPhase = 'countdown' | 'fighting' | 'round-over' | 'drafting';
 
+/**
+ * Sim mode, carried on `WorldRuntime` (host/client-local — NOT part of
+ * `WorldState`, so it never needs wire-protocol/delta-snapshot changes).
+ * `'combat'` is today's only behavior, unchanged. `'hangout'` (party
+ * lobby walking space, graceful-gliding-flame plan A1) pins the round
+ * machine to a permanent `'fighting'` phase (see `World.ts`'s
+ * `stepWithRuntime`), no-ops `stepWeapon`, and treats the void kill-plane
+ * as a respawn-in-place safety net instead of a death.
+ */
+export type WorldMode = 'combat' | 'hangout';
+
 export type PlayerEntity = {
   id: PlayerId;
   characterId: CharacterArchetype;
@@ -476,6 +487,11 @@ export type SimEvent =
        *  the death-FX reward shards (damage-proportional). Additive wire
        *  field — old clients ignore it. */
       attackerId?: PlayerId | null;
+      /** True when this hit landed in the victim's head zone (see
+       *  isHeadshot/playerHitboxAABB, player.ts) — `damage` already has the
+       *  slight boon baked in; this is purely for the renderer's distinct
+       *  headshot VFX/audio cue. Additive wire field — old clients ignore it. */
+      headshot?: boolean;
     }
   | { t: 'destructible-broken'; entityId: EntityId; x: number; y: number }
   | { t: 'pickup-taken'; entityId: EntityId; playerId: PlayerId }
@@ -558,7 +574,20 @@ export type SimEvent =
       toX: number;
       toY: number;
       damage: number;
-    };
+    }
+  /**
+   * Hangout mode only (graceful-gliding-flame plan A3): a player overlapped
+   * the Ready totem. Server-only reaction — `matchHost.ts`'s hangout host
+   * flips the room's `LobbyPlayer.ready` boolean directly; the client only
+   * needs this for a local flash/SFX cue.
+   */
+  | { t: 'ready-toggled'; playerId: PlayerId }
+  /**
+   * Hangout mode only: a player overlapped the Launch totem. Server-only
+   * reaction — triggers the existing `startPrivateMatch` handoff when the
+   * gating (host + all-ready) is satisfied; a no-op event otherwise.
+   */
+  | { t: 'launch-requested'; playerId: PlayerId };
 
 export type StepResult = {
   state: WorldState;
@@ -571,12 +600,35 @@ export type StepResult = {
   matchComplete: boolean;
 };
 
+/**
+ * The vessel's 5 independently-recolorable channels (Vessel Creator design,
+ * docs/vessel-creator-design.md §3/§6.1) — mirrors
+ * ProceduralPlayerRigOptions' accentColor/visorColor/palmColor/jointColor/
+ * auraColor exactly, but as wire-safe hex strings rather than Phaser's
+ * numeric color. All optional and additive: an absent field (or an absent
+ * `cosmetics` object entirely) renders identically to today, since the rig
+ * itself already defaults every channel to accentColor when unset.
+ */
+export type VesselCosmetics = {
+  accentColor?: string;
+  visorColor?: string;
+  palmColor?: string;
+  jointColor?: string;
+  auraColor?: string;
+};
+
 export type PlayerSpawnInfo = {
   playerId: PlayerId;
   characterId: CharacterArchetype;
   name: string;
   color: string;
   weaponId: string;
+  cosmetics?: VesselCosmetics;
+  /** Starter cards applied at insertion (venue-sprint2-goal S2.E — the
+   *  lobby draft pick rides admission). Omitted = plain spawn. Replay-safe:
+   *  the recorder serializes the whole spawn, so re-sims apply the same
+   *  cards at the same join tick. */
+  cards?: string[];
 };
 
 export type Vec2 = { x: number; y: number };

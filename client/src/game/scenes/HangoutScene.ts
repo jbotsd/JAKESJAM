@@ -37,6 +37,8 @@ import { isTouchPrimary, isPortraitMobile } from "../input/mobile";
 import { getRenderScale } from "../render/renderResolution.js";
 import { characters } from "../data/characters";
 import { PALETTE, ARENA_THEMES } from "../ui/palette";
+import { CardDraftOverlay } from "../ui/CardDraftOverlay";
+import { crystalRoundsCards } from "../../sim/data/cards.js";
 import { EntityRenderCoordinator } from "../render/EntityRenderCoordinator.js";
 import {
   projectileColorByElement,
@@ -113,6 +115,9 @@ export class HangoutScene extends Phaser.Scene {
   // Venue mode (S2.C.3): DOM callsign prompt, alive only while awaiting a
   // name — must not outlive the scene.
   private callsignOverlay: HTMLElement | null = null;
+  // Venue mode (S2.E): the one-shot starter offer shown while queued —
+  // same DOM overlay the arena's between-round draft uses.
+  private draftOverlay: CardDraftOverlay | null = null;
 
   constructor() {
     super(SceneKeys.Hangout);
@@ -251,7 +256,16 @@ export class HangoutScene extends Phaser.Scene {
         onVenueStatus: (status) => {
           this.venueStatus = status;
           this.venueStatusAtMs = performance.now();
+          // Leaving the queue (or being admitted) retires any open offer —
+          // the overlay must not outlive queue membership.
+          if (!status.queued.includes(this.localPlayerId as string)) {
+            this.draftOverlay?.hide();
+          }
         },
+        // Starter draft (S2.E): the offer arrives the moment we queue at
+        // the bell; the pick rides back as an ordinary card-pick and lands
+        // on the venue queue entry (roundIndex is venue-ignored).
+        onVenueDraft: (offers) => this.showStarterDraft(offers),
       });
       transport.onClose((reason) => {
         this.setStatus(`Disconnected: ${reason}`);
@@ -264,6 +278,21 @@ export class HangoutScene extends Phaser.Scene {
 
   private setStatus(message: string): void {
     this.statusText?.setText(message);
+  }
+
+  /** Starter draft (S2.E): show the queued player their one-shot offer.
+   *  Picking sends a card-pick over the lobby socket; not picking is fine —
+   *  the bell auto-picks leftmost server-side. */
+  private showStarterDraft(offerIds: string[]): void {
+    const cards = offerIds
+      .map((id) => crystalRoundsCards.find((c) => c.id === id))
+      .filter((c): c is NonNullable<typeof c> => c !== undefined);
+    if (cards.length === 0) return;
+    if (!this.draftOverlay) this.draftOverlay = new CardDraftOverlay();
+    this.draftOverlay.show(cards, (card) => {
+      this.loop?.sendCardPick(this.venueStatus?.roundIndex ?? 0, card.id);
+      this.draftOverlay?.hide();
+    });
   }
 
   /** DOM overlay callsign prompt (S2.C.3) — splash-input language, scene-
@@ -697,6 +726,8 @@ export class HangoutScene extends Phaser.Scene {
     this.entityRender = null;
     this.callsignOverlay?.remove();
     this.callsignOverlay = null;
+    this.draftOverlay?.destroy();
+    this.draftOverlay = null;
     this.scale.off("resize", this.applyCameraZoom, this);
     this.touchControls?.destroy();
     this.touchControls = null;

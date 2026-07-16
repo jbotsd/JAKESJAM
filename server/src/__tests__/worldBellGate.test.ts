@@ -154,12 +154,111 @@ describe("world bell gate (S2.D)", () => {
     expect(wi.pendingEntrants.has("p_seed")).toBe(false); // never gated
   });
 
-  test("structural: the ONLY addPlayer call in worldHost.ts is the countdown drain (S2.D.4)", async () => {
+  test("structural: every addPlayer call in worldHost.ts lives on the bell edge (S2.D.4)", async () => {
     const src = await Bun.file(new URL("../worldHost.ts", import.meta.url).pathname).text();
     const calls = src.match(/\.addPlayer\(/g) ?? [];
-    expect(calls.length).toBe(1);
-    // And that one call sits inside drainPendingEntrants, not attach().
-    const drainBody = src.slice(src.indexOf("private drainPendingEntrants"));
-    expect(drainBody.slice(0, drainBody.indexOf("\n  }")).includes(".addPlayer(")).toBe(true);
+    // Exactly two insertion sites: human entrants (drainPendingEntrants)
+    // and elastic bots (adjustElasticBots) — both run ONLY from the
+    // countdown-entry edge. attach() must never insert directly.
+    expect(calls.length).toBe(2);
+    const bellEdgeStart = src.indexOf("private drainPendingEntrants");
+    const bellEdgeEnd = src.indexOf("private scheduleRecycle");
+    expect(bellEdgeStart).toBeGreaterThan(-1);
+    const bellEdgeRegion = src.slice(bellEdgeStart, bellEdgeEnd);
+    expect((bellEdgeRegion.match(/\.addPlayer\(/g) ?? []).length).toBe(2);
+  });
+});
+
+describe("starter cards ride admission (S2.E)", () => {
+  test("getEntrantCards provider → spawned entity carries exactly the picked card", () => {
+    const { wh, wi, hi } = makeWorld();
+    wh.getEntrantCards = (pid) => ((pid as string) === "p_carded" ? ["quick-parry"] : undefined);
+    setPhase(hi, { phase: "fighting", countdownRemainingMs: 60_000 });
+    const carded = fakeWs("p_carded", "CARDED");
+    const plain = fakeWs("p_plain", "PLAIN");
+    wh.attach(carded);
+    wh.attach(plain);
+    // The bell rings.
+    setPhase(hi, { phase: "drafting", countdownRemainingMs: 0, draftingOffers: {} });
+    hi.tick();
+    expect(hi.state.round.phase).toBe("countdown");
+    expect(hi.state.players["p_carded" as never]!.cards).toEqual(["quick-parry"]);
+    expect(hi.state.players["p_plain" as never]!.cards).toEqual([]);
+  });
+
+  test("gate-admitted players participate in the NEXT drafting offer roll (S2.E.2)", () => {
+    const { wh, wi, hi } = makeWorld();
+    setPhase(hi, { phase: "fighting", countdownRemainingMs: 60_000 });
+    const joiner = fakeWs("p_late", "LATE");
+    wh.attach(joiner);
+    setPhase(hi, { phase: "drafting", countdownRemainingMs: 0, draftingOffers: {} });
+    hi.tick(); // admitted at countdown
+    expect(wi.host!.hasPlayer("p_late" as never)).toBe(true);
+    // Next round ends → drafting entry rolls offers for EVERY roster seat,
+    // the late joiner included (universal draft) — never a naked veteran gap.
+    setPhase(hi, { phase: "round-over", countdownRemainingMs: 1 });
+    hi.tick();
+    hi.tick();
+    expect(hi.state.round.phase).toBe("drafting");
+    expect(hi.state.round.draftingOffers?.["p_late" as never]).toBeDefined();
+    expect(hi.state.round.draftingOffers!["p_late" as never]!.length).toBeGreaterThan(0);
+  });
+});
+
+describe("elastic bots (S2.E.3)", () => {
+  function botCountIn(hi: HostInternals): number {
+    return Object.keys(hi.state.players).filter((id) => id.startsWith("bot_")).length;
+  }
+
+  test("bot deltas land exclusively on bell edges across joins", () => {
+    const wh = new WorldHost({ mapId: "boxworks-mini", resultsHoldMs: 60_000, botFloor: 4 });
+    const wi = wh as unknown as WorldInternals;
+    // Eager boot (floor active, 0 humans) → 4 bots immediately.
+    const hi = wi.host as unknown as HostInternals;
+    hi.stop();
+    expect(botCountIn(hi)).toBe(4);
+
+    // Human joins during countdown → same-edge adjustment to 3 bots.
+    wh.attach(fakeWs("h1", "H1"));
+    expect(hi.state.round.phase).toBe("countdown");
+    expect(botCountIn(hi)).toBe(3);
+
+    // Mid-fight: three more humans arrive — NO bot change until the bell.
+    setPhase(hi, { phase: "fighting", countdownRemainingMs: 60_000 });
+    wh.attach(fakeWs("h2", "H2"));
+    wh.attach(fakeWs("h3", "H3"));
+    wh.attach(fakeWs("h4", "H4"));
+    for (let i = 0; i < 20; i += 1) {
+      hi.tick();
+      expect(botCountIn(hi)).toBe(3); // frozen through the fight
+    }
+
+    // Bell: 4 humans fighting → bots drop to 0, humans all inserted.
+    setPhase(hi, { phase: "drafting", countdownRemainingMs: 0, draftingOffers: {} });
+    hi.tick();
+    expect(hi.state.round.phase).toBe("countdown");
+    expect(botCountIn(hi)).toBe(0);
+    expect(Object.keys(hi.state.players).filter((id) => !id.startsWith("bot_")).length).toBe(4);
+  });
+
+  test("constructor clamps the floor at the existing cap of 6", () => {
+    const wh = new WorldHost({ mapId: "boxworks-mini", resultsHoldMs: 60_000, botFloor: 9 });
+    const wi = wh as unknown as WorldInternals;
+    const hi = wi.host as unknown as HostInternals;
+    hi.stop();
+    expect(botCountIn(hi)).toBe(6);
+  });
+
+  test("botFloor 0 (default) keeps the legacy fixed-bot behavior", () => {
+    const wh = new WorldHost({ mapId: "boxworks-mini", resultsHoldMs: 60_000, bots: 2 });
+    const wi = wh as unknown as WorldInternals;
+    const hi = wi.host as unknown as HostInternals;
+    hi.stop();
+    expect(botCountIn(hi)).toBe(2);
+    // A bell edge does NOT reshape the roster when elasticity is off.
+    wh.attach(fakeWs("h1", "H1"));
+    setPhase(hi, { phase: "drafting", countdownRemainingMs: 0, draftingOffers: {} });
+    hi.tick();
+    expect(botCountIn(hi)).toBe(2);
   });
 });

@@ -184,7 +184,18 @@ export type VenueStatus = {
   queued: string[];
 };
 
-export type ServerMessage = ServerHello | Snapshot | Pong | Disconnect | VenueStatus;
+/**
+ * One-shot starter draft offer (venue-sprint2-goal S2.E) — pushed by
+ * VenueHost to a lobby socket the moment that player queues at the bell.
+ * The pick returns as an ordinary `card-pick` (roundIndex ignored on the
+ * venue path); no pick by the bell = leftmost auto-pick at admission.
+ */
+export type VenueDraft = {
+  t: "venue-draft";
+  offers: string[];
+};
+
+export type ServerMessage = ServerHello | Snapshot | Pong | Disconnect | VenueStatus | VenueDraft;
 
 // ---------------- Codec ----------------
 
@@ -221,6 +232,7 @@ const REQUIRED_FIELDS: Record<string, ReadonlyArray<readonly [string, "string" |
   snap: [["tick", "number"]],
   bye: [["reason", "string"]],
   "venue-status": [["arenaPhase", "string"], ["nextBellMs", "number"]],
+  "venue-draft": [["offers", "object"]],
 };
 
 const warnedUnknown = new Set<string>();

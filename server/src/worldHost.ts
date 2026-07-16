@@ -18,6 +18,7 @@ import {
 } from "./matchHost.ts";
 import { WorldBots } from "./worldBots.ts";
 import { STEP_MS } from "@sim/index.ts";
+import { isBotId } from "@sim/botId.ts";
 import { PlayerId, type PlayerSpawnInfo } from "@sim/types.ts";
 import { DEFAULT_MAP_ID, isMapId, resolveMap, type MapId } from "@sim/data/maps.ts";
 import { convexClient, type ConvexId } from "./convexClient.ts";
@@ -107,8 +108,26 @@ export class WorldHost {
     prev: "countdown" | "fighting" | "round-over" | "drafting",
     next: "countdown" | "fighting" | "round-over" | "drafting",
   ) => void;
+  /** Starter-card provider (S2.E) — set by VenueHost after construction,
+   *  same late-binding pattern as onRoundPhaseChange. Consulted once per
+   *  entrant at insertion; undefined (or a null return) = plain spawn, so
+   *  WorldHost stays venue-agnostic (tests, legacy, direct connects). */
+  getEntrantCards?: (playerId: PlayerId) => string[] | undefined;
+  /** Elastic-bot floor (S2.E): bot count adjusts toward
+   *  `max(0, botFloor - humansFighting)` at bell edges ONLY, capped at 6.
+   *  0 (default) disables elasticity — the legacy fixed `bots` count rules. */
+  private readonly botFloor: number;
 
-  constructor(opts: { mapId?: MapId | string; rotateMaps?: boolean; resultsHoldMs?: number; bots?: number } = {}) {
+  constructor(
+    opts: {
+      mapId?: MapId | string;
+      rotateMaps?: boolean;
+      resultsHoldMs?: number;
+      bots?: number;
+      botFloor?: number;
+    } = {},
+  ) {
+    this.botFloor = Math.max(0, Math.min(6, opts.botFloor ?? 0));
     // Was a flat 6000ms with no readiness gate — the "goes too fast into
     // the next game" complaint (Jake, 2026-07-13). Raised to 12000ms as the
     // fallback ceiling; markRematchReady() below recycles early once every
@@ -117,7 +136,7 @@ export class WorldHost {
     this.resultsHoldMs = opts.resultsHoldMs ?? 12000;
     // Cap 6 — 4+ on mega docks felt like a firing squad for solo humans.
     this.botCount = Math.max(0, Math.min(6, opts.bots ?? 0));
-    if (this.botCount > 0) {
+    if (this.botCount > 0 || this.botFloor > 0) {
       // Bot brains tick at sim rate; think() no-ops while the host loop
       // is stopped (empty world), so idle cost is a timer wakeup.
       this.botTimer = setInterval(() => {
@@ -139,11 +158,10 @@ export class WorldHost {
     // live (rounds advancing, drafting cycling) before the first human opens
     // the share link — otherwise /health shows world=null and visitors land
     // in a frozen arena.
-    if (this.botCount > 0) {
-      const botSpawns = this.bots
-        .spawnInfosFor(this.botCount)
-        .map((b) => this.botSpawn(b.playerId, b.name));
-      this.host = this.buildHost(botSpawns);
+    if (this.botCount > 0 || this.botFloor > 0) {
+      // buildHost tops the roster up to the elastic target (botFloor) or
+      // the legacy fixed count — an empty spawn list is fine either way.
+      this.host = this.buildHost([]);
       this.host.ensureTickLoop();
     }
   }
@@ -203,21 +221,67 @@ export class WorldHost {
    * a close event yet.
    */
   private drainPendingEntrants(): void {
-    if (!this.host || this.pendingEntrants.size === 0) return;
+    if (!this.host) return;
     for (const [playerId, chosenName] of this.pendingEntrants) {
       const ws = this.sockets.get(playerId);
       if (!ws || ws.readyState !== 1) continue;
       if (!this.host.hasPlayer(playerId)) {
-        this.host.addPlayer(this.spawnFor(playerId, chosenName));
+        // Starter cards ride the spawn (S2.E): the venue's provider hands
+        // back the lobby draft pick (or its leftmost auto-pick); no
+        // provider / no entry = plain spawn.
+        const cards = this.getEntrantCards?.(playerId);
+        this.host.addPlayer({
+          ...this.spawnFor(playerId, chosenName),
+          ...(cards && cards.length > 0 ? { cards } : {}),
+        });
       }
     }
     this.pendingEntrants.clear();
+    this.adjustElasticBots();
+  }
+
+  /**
+   * Elastic persona bots (S2.E): one formula, one edge. Runs ONLY from the
+   * countdown-entry drain above — bots enter and leave at the bell, never
+   * mid-fight. Target = max(0, botFloor - humansFighting), cap 6; botFloor
+   * 0 (default) disables the whole mechanism (fixed-bot worlds, tests).
+   */
+  private adjustElasticBots(): void {
+    if (!this.host || this.botFloor === 0) return;
+    const state = this.host.getStateSnapshot();
+    const ids = Object.keys(state.players);
+    const humans = ids.filter((id) => !isBotId(id)).length;
+    const liveBots = ids.filter((id) => isBotId(id));
+    const target = Math.max(0, Math.min(6, this.botFloor - humans));
+    if (liveBots.length < target) {
+      // spawnInfosFor returns the full persona roster up to `target` —
+      // existing brains keep their identity, new ones register on demand.
+      for (const b of this.bots.spawnInfosFor(target)) {
+        if (!this.host.hasPlayer(b.playerId)) {
+          this.host.addPlayer(this.botSpawn(b.playerId, b.name));
+        }
+      }
+    } else if (liveBots.length > target) {
+      // Displaced bots simply sit out (no lobby idling this sprint) —
+      // remove the roster tail so persona identities stay stable.
+      for (const id of liveBots.sort().slice(target)) {
+        this.host.removeRosterPlayer(PlayerId(id));
+      }
+    }
   }
 
   private buildHost(spawns: PlayerSpawnInfo[]): MatchHost {
-    // Bots ride along in every host build (including recycles).
+    // Bots ride along in every host build (including recycles). A fresh
+    // build IS a bell edge, so with elasticity on (botFloor > 0) the count
+    // sizes to the humans actually spawning; otherwise the legacy fixed
+    // count rules.
+    const humanSpawns = spawns.filter((sp) => !isBotId(sp.playerId)).length;
+    const botTarget =
+      this.botFloor > 0
+        ? Math.max(0, Math.min(6, this.botFloor - humanSpawns))
+        : this.botCount;
     const botSpawns = this.bots
-      .spawnInfosFor(this.botCount)
+      .spawnInfosFor(botTarget)
       .filter((b) => !spawns.some((sp) => sp.playerId === b.playerId))
       .map((b) => this.botSpawn(b.playerId, b.name));
     const mapId = this.nextMapId();

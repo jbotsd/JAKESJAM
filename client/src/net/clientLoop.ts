@@ -88,6 +88,8 @@ export type ClientLoopOptions = {
   onReconnectAttempt?: (attemptNumber: number, nextDelayMs: number) => void;
   /** Venue lobby only: pushed venue-status frames (S2.B). */
   onVenueStatus?: (status: import("./protocol.js").VenueStatus) => void;
+  /** Venue lobby only: one-shot starter draft offer (S2.E). */
+  onVenueDraft?: (offers: string[]) => void;
 };
 
 export type LocalInput = {
@@ -204,6 +206,7 @@ export class ClientLoop {
   private readonly onConnectionLost?: (reason: string) => void;
   private readonly onReconnectAttempt?: (attemptNumber: number, nextDelayMs: number) => void;
   private readonly onVenueStatus?: (status: import("./protocol.js").VenueStatus) => void;
+  private readonly onVenueDraft?: (offers: string[]) => void;
 
   private predictedState: WorldState | null = null;
   private authoritativeState: WorldState | null = null;
@@ -318,6 +321,7 @@ export class ClientLoop {
     this.onConnectionLost = opts.onConnectionLost;
     this.onReconnectAttempt = opts.onReconnectAttempt;
     this.onVenueStatus = opts.onVenueStatus;
+    this.onVenueDraft = opts.onVenueDraft;
 
     this.reconnect = new ReconnectSupervisor(this.reconnectUrl !== undefined, {
       onAttempt: () => this.attemptReconnect(),
@@ -815,6 +819,11 @@ export class ClientLoop {
         // VenueHost at 1Hz + on arena phase edges. Only the lobby scene
         // wires the callback; arena/room loops never receive this type.
         this.onVenueStatus?.(message);
+        break;
+      case "venue-draft":
+        // One-shot starter offer (S2.E) — pushed the moment this player
+        // queues at the bell. Same lobby-only contract as venue-status.
+        this.onVenueDraft?.(message.offers);
         break;
     }
   }

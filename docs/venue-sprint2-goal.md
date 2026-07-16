@@ -294,4 +294,39 @@ don't count — probes must pump inputs like a real client), and a botsy
 world lazily reboots to null after a humanless match completes, so probes
 boot it with a keeper socket first. Client untouched (spectator-pending
 rides the existing !local dead/spectate path — all prediction reads are
-null-guarded).
+null-guarded). (Committed c47dccb.)
+
+**S2.E — COMPLETE (2026-07-16)**
+Starter draft rides admission: PlayerSpawnInfo gains optional cards[]
+(applied in applyMidMatchJoin — the shared live/replay code path, so
+re-sims stay deterministic); WorldHost gains a late-bound getEntrantCards
+provider (same pattern as onRoundPhaseChange) consulted once per entrant
+in the countdown drain; VenueHost supplies it (pick ?? leftmost
+auto-pick). Queueing at the bell rolls a 3-distinct-card offer from the
+same crystal-rounds pool the arena drafts (uniform server-side roll —
+lobby ceremony, not sim state) and pushes a new venue-draft protocol
+frame; the pick returns as an ordinary card-pick which routeLobby
+intercepts onto the queue entry (never touches the hangout host's round
+state; ids outside the offer refused). Client: HangoutScene venue mode
+shows the offer through the arena's own CardDraftOverlay (pure DOM,
+scene-agnostic) and hides it when venue-status shows the player left the
+queue. Direct joiners are never naked: gate admission puts them in the
+roster, and the next round-over→drafting entry rolls offers for every
+seat (test pins draftingOffers includes a gate-admitted late joiner).
+Elastic bots: WorldHost botFloor opt (env WORLD_BOT_FLOOR, default 4,
+clamped ≤6; 0 = legacy fixed count) — target max(0, floor −
+humansFighting) applied ONLY in the bell-edge drain (adjustElasticBots)
+plus fresh builds (a recycle IS a bell edge); removal via new
+MatchHost.removeRosterPlayer (mirrors the grace-eviction ritual, replay
+noteLeave included); WorldBots brains no-op when their entity is absent,
+so displaced personas just sit out. Structural test updated: exactly two
+addPlayer sites in worldHost.ts, both inside the bell-edge region. Tests:
+venueHost 15 (offer rolled+pushed, pick recorded, bad ids refused,
+provider pick/auto-pick/plain), worldBellGate 14 (entity carries exactly
+the picked card, plain spawns empty, late joiner drafted next round, bot
+deltas exclusively on edges across a 0→4-human sweep, cap 6, floor 0
+legacy). Suites server 199 / client 925, typechecks clean, built,
+deployed. Live: /venue/summary shows the elastic floor working (bots: 4
+with 0 humans at boot — was fixed 2 before). The full queue-at-totem live
+loop (walk → queue → offer → pick → admitted with card) lands with
+S2.F's Playwright round trip, which drives a real avatar.

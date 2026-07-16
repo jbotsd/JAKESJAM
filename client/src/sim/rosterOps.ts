@@ -62,7 +62,9 @@ export function applyMidMatchJoin(
         crouching: false,
         alive: true,
         weaponId: spawn.weaponId,
-        cards: [],
+        // Starter cards ride the spawn (S2.E) — the lobby draft pick lands
+        // here, on the shared live/replay code path.
+        cards: spawn.cards ? [...spawn.cards] : [],
         fireCooldownMs: 0,
         ammo: 0,
         abilityCharge: 0,

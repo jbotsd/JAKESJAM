@@ -26,7 +26,9 @@ import { resolveVenueTotems } from "@sim/totem.ts";
 import { resolveMap } from "@sim/data/maps.ts";
 import { PlayerId, type DestructibleDefinition, type MapDefinition, type PlayerSpawnInfo } from "@sim/types.ts";
 import type { MapId } from "@sim/data/maps.ts";
-import { encodeMessage, type VenueStatus } from "@net/protocol.ts";
+import { decodeMessage, encodeMessage, type ClientMessage, type VenueStatus } from "@net/protocol.ts";
+import { crystalRoundsCards } from "@sim/data/cards.ts";
+import { DRAFT_OFFER_COUNT } from "@sim/round.ts";
 
 export const VENUE_LOBBY_MATCH_ID = "lobby";
 
@@ -62,6 +64,23 @@ function venueLobbyMap(): MapDefinition {
 /** How often the lobby checks whether its dummies need respawning. */
 const DUMMY_RESPAWN_CHECK_MS = 8000;
 
+/**
+ * Roll a fresh player's one-shot starter offer (S2.E): DRAFT_OFFER_COUNT
+ * distinct cards from the same crystal-rounds pool the arena drafts from.
+ * A starter owns nothing, so every card is eligible (unique/maxStacks caps
+ * bind against an empty hand). Uniform server-side roll — this is lobby
+ * ceremony, not sim state, so it doesn't ride the deterministic RNG stream.
+ */
+function rollStarterOffer(): string[] {
+  const pool = [...crystalRoundsCards];
+  const offers: string[] = [];
+  while (offers.length < DRAFT_OFFER_COUNT && pool.length > 0) {
+    const idx = Math.floor(Math.random() * pool.length);
+    offers.push(pool.splice(idx, 1)[0]!.id);
+  }
+  return offers;
+}
+
 const LOBBY_COLOR_PALETTE = [
   "#88ccff", "#ff88aa", "#ffd166", "#9bf6ff", "#a0e7a0",
   "#caa7ff", "#ff9f6b", "#ffe39b", "#9affd1", "#ff7676",
@@ -91,9 +110,11 @@ export class VenueHost {
   private lobbyHost: MatchHost;
   /** Live lobby sockets by player — presence, honestly counted. */
   private readonly lobbySockets = new Map<PlayerId, ServerWebSocket<MatchSocketData>>();
-  /** Players queued at the bell totem — drained into the arena at the
-   *  countdown-entry edge (S2.D); until then it drives the totem UI. */
-  private readonly readyQueue = new Set<PlayerId>();
+  /** Players queued at the bell totem, each with their one-shot starter
+   *  offer (S2.E) — rolled at queue time, picked over the lobby socket,
+   *  leftmost auto-picked at admission. Drained into the arena at the
+   *  countdown-entry edge; until then it drives the totem UI. */
+  private readonly readyQueue = new Map<PlayerId, { offers: string[]; pick: string | null }>();
   /** 1Hz status push (S2.B) — phase edges push immediately on top. */
   private statusTimer: ReturnType<typeof setInterval> | null = null;
   /** S2.C: practice dummies come back after being broken. */
@@ -107,6 +128,13 @@ export class VenueHost {
     // re-based, so push a fresh frame immediately rather than waiting out
     // the 1Hz tick.
     this.arenaHost.onRoundPhaseChange = () => this.broadcastStatus();
+    // Starter cards ride admission (S2.E): the arena consults this at every
+    // entrant insertion; non-venue entrants (no queue entry) spawn plain.
+    this.arenaHost.getEntrantCards = (playerId) => {
+      const entry = this.readyQueue.get(playerId);
+      if (!entry || entry.offers.length === 0) return undefined;
+      return [entry.pick ?? entry.offers[0]!];
+    };
     this.statusTimer = setInterval(() => this.broadcastStatus(), 1000);
     // Lobby never rebuilds (Pillar 1), so the direct reference stays valid.
     this.dummyTimer = setInterval(
@@ -150,9 +178,19 @@ export class VenueHost {
       // visitor can walk the room and break dummies, but cannot queue for
       // the arena. The client prompts before connecting; this is the
       // server-side truth a probe can't route around.
-      const name = (this.lobbySockets.get(playerId)?.data as { name?: string } | undefined)?.name;
-      if (!name) return;
-      this.readyQueue.add(playerId);
+      const ws = this.lobbySockets.get(playerId);
+      const name = (ws?.data as { name?: string } | undefined)?.name;
+      if (!ws || !name) return;
+      // Starter draft (S2.E): queueing rolls the one-shot 3-card offer and
+      // pushes it immediately over the lobby socket. Re-queue re-rolls —
+      // leaving the queue forfeits the old offer, same as walking away.
+      const offers = rollStarterOffer();
+      this.readyQueue.set(playerId, { offers, pick: null });
+      try {
+        ws.send(encodeMessage({ t: "venue-draft", offers }));
+      } catch {
+        /* dead socket — detach path will dequeue */
+      }
     }
     this.broadcastStatus();
   }
@@ -172,7 +210,7 @@ export class VenueHost {
       humans: arena.humans,
       bots: arena.bots,
       nextBellMs: Math.round(msUntilNextBell(arena.phase, arena.countdownRemainingMs)),
-      queued: [...this.readyQueue] as string[],
+      queued: [...this.readyQueue.keys()] as string[],
     };
     const encoded = encodeMessage(frame);
     for (const [playerId, ws] of this.lobbySockets) {
@@ -200,6 +238,20 @@ export class VenueHost {
   }
 
   routeLobby(ws: ServerWebSocket<MatchSocketData>, raw: Buffer | ArrayBuffer | Uint8Array): void {
+    // Starter-draft picks (S2.E) are venue business, not lobby-sim business:
+    // a queued player's card-pick lands on their queue entry (roundIndex is
+    // meaningless here) and never reaches the hangout host's round state.
+    const decoded = decodeMessage<ClientMessage>(
+      raw instanceof Buffer ? new Uint8Array(raw.buffer, raw.byteOffset, raw.byteLength) : raw,
+    );
+    if (decoded?.message.t === "card-pick") {
+      const playerId = PlayerId(ws.data.playerId);
+      const entry = this.readyQueue.get(playerId);
+      if (entry && entry.offers.includes(decoded.message.cardId)) {
+        entry.pick = decoded.message.cardId;
+      }
+      return;
+    }
     this.lobbyHost.routeMessage(ws, raw);
   }
 
@@ -237,7 +289,12 @@ export class VenueHost {
 
   /** Test surface: the bell queue's current membership. */
   queuedForTest(): PlayerId[] {
-    return [...this.readyQueue];
+    return [...this.readyQueue.keys()];
+  }
+
+  /** Test surface: a queued player's rolled offer + recorded pick. */
+  queueEntryForTest(playerId: PlayerId): { offers: string[]; pick: string | null } | undefined {
+    return this.readyQueue.get(playerId);
   }
 
   dispose(): void {
