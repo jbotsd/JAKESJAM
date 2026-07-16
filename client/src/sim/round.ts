@@ -93,6 +93,35 @@ export const NO_HUMAN_SURVIVOR_END_MS = 6_000;
 export const DRAFT_WINDOW_MS = 15000;
 
 /**
+ * Milliseconds until the next BELL — the countdown-entry round boundary
+ * where fighters (re-)enter the arena (respawns happen at countdown entry,
+ * i.e. when drafting ends). One source for the phase-sum math shared by
+ * the death overlay's wait estimate (client, ui/phaseCountdown.ts) and the
+ * venue summary's `nextBellMs` (server, venueHost.ts). Estimates from
+ * fighting/round-over are UPPER bounds — a round can end early and a draft
+ * can resolve early, so the value only ever jumps down.
+ */
+export function msUntilNextBell(
+  phase: "countdown" | "fighting" | "round-over" | "drafting",
+  countdownRemainingMs: number,
+): number {
+  const remaining = Math.max(0, countdownRemainingMs);
+  switch (phase) {
+    case "fighting":
+      return remaining + ROUND_OVER_HOLD_MS + DRAFT_WINDOW_MS;
+    case "round-over":
+      return remaining + DRAFT_WINDOW_MS;
+    case "drafting":
+      return remaining;
+    case "countdown":
+      // The bell just rang — entrants admitted at countdown entry are
+      // already in; the next admission window is a full round away, but
+      // for "can I join now" purposes this reads as 0 (joinable moment).
+      return 0;
+  }
+}
+
+/**
  * Cards offered to every roster player when the round transitions into
  * drafting (winner included — Escalation Engine / universal draft).
  * Dead / mid-respawn players still draft. Bumping this requires UI tweaks

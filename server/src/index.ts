@@ -19,14 +19,20 @@ import { config } from "./config.ts";
 import { checkRateLimit, clientKey } from "./rateLimit.ts";
 import { MatchRegistry } from "./matchRegistry.ts";
 import { WorldHost } from "./worldHost.ts";
+import { VenueHost, VENUE_LOBBY_MATCH_ID } from "./venueHost.ts";
 import type { MatchSocketData } from "./matchHost.ts";
-import { PlayerId } from "@sim/types.ts";
+import { PlayerId, type VesselCosmetics } from "@sim/types.ts";
 import {
+  attachHangoutClient,
   createPrivateLobby,
+  detachHangoutClient,
   getPrivateLobby,
   heartbeatPrivateLobby,
+  isHangoutMatchId,
   joinPrivateLobby,
   leavePrivateLobby,
+  mintHangoutToken,
+  routeHangoutMessage,
   setChaosPrivate,
   setMapPrivate,
   setReadyPrivate,
@@ -124,8 +130,13 @@ const worldHost = new WorldHost({
   // same). Set WORLD_BOTS=0 for deterministic probes / quiet local.
   bots: Number(process.env.WORLD_BOTS ?? 2),
 });
+// The Venue (venue-goal.md Pillar 1): composes the always-on walkable
+// lobby (antechamber) with the arena above. The arena's own lifecycle —
+// recycles, socket migration, bots — stays entirely WorldHost's; the venue
+// adds the lobby half and the membrane between them.
+const venueHost = new VenueHost({ arena: worldHost });
 
-type SocketKind = "room" | "world";
+type SocketKind = "room" | "world" | "lobby";
 type SocketData = MatchSocketData & { kind: SocketKind; name?: string };
 
 // ── Self-contained hosting: optional static client serving ─────────────────
@@ -275,6 +286,14 @@ function serveOnPort(port: number) {
         { headers: { "content-type": "application/json", ...corsHeaders } },
       );
     }
+    // Venue-wide summary (venue-goal Pillar 1.1): lobby presence + arena
+    // state with the shared next-bell countdown.
+    if (url.pathname === "/venue/summary") {
+      return new Response(
+        JSON.stringify(venueHost.summary()),
+        { headers: { "content-type": "application/json", ...corsHeaders } },
+      );
+    }
     if (url.pathname === "/match/summary") {
       const id = url.searchParams.get("matchId");
       if (!id) return new Response("bad request", { status: 400, headers: corsHeaders });
@@ -390,13 +409,11 @@ function serveOnPort(port: number) {
         return new Response(result.message, { status: result.status, headers: corsHeaders });
       }
       // `url` is the human/SEO share page; `mediaUrl` is raw bytes for embeds/TikTok.
-      // vertical* fields are present when the server-side NVENC crop ran.
+      // Native resolution only — no vertical crop (see clipStore.ts).
       return new Response(
         JSON.stringify({
           url: result.url,
           mediaUrl: result.mediaUrl,
-          verticalUrl: result.verticalUrl,
-          verticalMediaUrl: result.verticalMediaUrl,
         }),
         { headers: { "content-type": "application/json", ...corsHeaders } },
       );
@@ -830,6 +847,13 @@ video{width:100%;height:100%;object-fit:contain;display:block}</style>
         return {};
       }
     };
+    // Cosmetics is a client-side cosmetic preference (never read by the
+    // sim), so only a shallow shape check is worth doing here — same trust
+    // level as the other `String(body.x ?? ...)` passthroughs on this path.
+    const readCosmetics = (body: Record<string, unknown>): VesselCosmetics | undefined =>
+      body.cosmetics && typeof body.cosmetics === "object"
+        ? (body.cosmetics as VesselCosmetics)
+        : undefined;
 
     if (url.pathname === "/private/create" && req.method === "POST") {
       if (!checkRateLimit(`privcreate:${ip}`, 10, 60_000)) return RATE_LIMIT_429();
@@ -844,6 +868,7 @@ video{width:100%;height:100%;object-fit:contain;display:block}</style>
           chaosModifierIds: Array.isArray(body.chaosModifierIds)
             ? body.chaosModifierIds.map(String)
             : undefined,
+          cosmetics: readCosmetics(body),
         }),
       );
     }
@@ -857,6 +882,7 @@ video{width:100%;height:100%;object-fit:contain;display:block}</style>
           name: String(body.name ?? "Player"),
           color: String(body.color ?? "#50e3c2"),
           characterId: String(body.characterId ?? "balanced"),
+          cosmetics: readCosmetics(body),
         }),
       );
     }
@@ -924,6 +950,23 @@ video{width:100%;height:100%;object-fit:contain;display:block}</style>
           matchId: result.matchId,
           tokens: result.tokens,
         };
+      });
+    }
+    // A4: hangout world join token — same-room membership required (see
+    // mintHangoutToken). The client connects with this over the SAME
+    // legacy `/ws?matchId=...&token=...` upgrade path a real match uses;
+    // no new WS endpoint needed, just a matchId that happens to start with
+    // "hangout_" (see the websocket handlers below).
+    if (url.pathname === "/private/hangout-token" && req.method === "POST") {
+      if (!checkRateLimit(`privhangout:${ip}`, 30, 60_000)) return RATE_LIMIT_429();
+      const body = await readJsonBody();
+      return privateJson(async () => {
+        const result = await mintHangoutToken(
+          String(body.code ?? ""),
+          String(body.playerId ?? ""),
+          config.gameServerSecret,
+        );
+        return { matchId: result.matchId, token: result.token, wsPath: "/ws" };
       });
     }
 
@@ -1011,6 +1054,33 @@ video{width:100%;height:100%;object-fit:contain;display:block}</style>
       );
     }
 
+    // ── Venue token mint (venue-goal Pillar 1.3) ──────────────────────
+    // The SAME stateless world token grants both halves of the venue —
+    // the lobby is exactly as open as the arena, deliberately unlike
+    // private-room hangout tokens (room-membership-scoped). Returns both
+    // paths so a client can hold one credential for its whole visit.
+    if (url.pathname === "/venue-token" && req.method === "POST") {
+      if (!checkRateLimit(`worldtoken:${ip}`, 20, 60_000)) return RATE_LIMIT_429();
+      let body: unknown;
+      try {
+        body = await req.json();
+      } catch {
+        return new Response("bad request", { status: 400, headers: corsHeaders });
+      }
+      const playerId =
+        body && typeof body === "object" && "playerId" in body
+          ? String((body as { playerId: unknown }).playerId)
+          : "";
+      if (!playerId || playerId.length > 64) {
+        return new Response("bad playerId", { status: 400, headers: corsHeaders });
+      }
+      const token = await mintWorldToken(playerId, config.gameServerSecret);
+      return new Response(
+        JSON.stringify({ token, lobbyWsPath: "/ws/lobby", arenaWsPath: "/ws/world" }),
+        { headers: { "content-type": "application/json", ...corsHeaders } },
+      );
+    }
+
     // ── World WS upgrade ──────────────────────────────────────────────
     if (url.pathname === "/ws/world") {
       if (!checkRateLimit(`wsconnect:${ip}`, 30, 5 * 60_000)) {
@@ -1029,6 +1099,28 @@ video{width:100%;height:100%;object-fit:contain;display:block}</style>
       const data: SocketData = {
         kind: "world",
         matchId: "world",
+        playerId: verified.playerId,
+        name: sanitizePlayerName(rawName),
+        authedAt: Date.now(),
+      };
+      const upgraded = srv.upgrade(req, { data });
+      return upgraded ? undefined : new Response("upgrade failed", { status: 500 });
+    }
+
+    // ── Venue lobby WS upgrade (venue-goal Pillar 1) ──────────────────
+    // Same token verification as /ws/world — one credential, both halves.
+    if (url.pathname === "/ws/lobby") {
+      if (!checkRateLimit(`wsconnect:${ip}`, 30, 5 * 60_000)) {
+        return new Response("rate limited", { status: 429 });
+      }
+      const token = url.searchParams.get("token");
+      if (!token) return new Response("bad request", { status: 400 });
+      const verified = await verifyWorldToken(token, config.gameServerSecret);
+      if (!verified) return new Response("auth failed", { status: 401 });
+      const rawName = url.searchParams.get("name") ?? "";
+      const data: SocketData = {
+        kind: "lobby",
+        matchId: VENUE_LOBBY_MATCH_ID,
         playerId: verified.playerId,
         name: sanitizePlayerName(rawName),
         authedAt: Date.now(),
@@ -1086,6 +1178,16 @@ video{width:100%;height:100%;object-fit:contain;display:block}</style>
     open(ws) {
       if (ws.data.kind === "world") {
         worldHost.attach(ws);
+      } else if (ws.data.kind === "lobby") {
+        venueHost.attachLobby(ws);
+      } else if (isHangoutMatchId(ws.data.matchId)) {
+        // A2/A4: hangout worlds live in privateLobby.ts, not MatchRegistry —
+        // same `/ws` upgrade path (matchId+token), different owner. Reject
+        // (close) if the room/host no longer exists (expired, or the real
+        // match already started and tore the hangout world down).
+        if (!attachHangoutClient(ws)) {
+          try { ws.close(1011, "hangout world gone"); } catch { /* already closed */ }
+        }
       } else {
         registry.attach(ws);
       }
@@ -1094,6 +1196,10 @@ video{width:100%;height:100%;object-fit:contain;display:block}</style>
       const buf = raw as Buffer | ArrayBuffer | Uint8Array;
       if (ws.data.kind === "world") {
         worldHost.route(ws, buf);
+      } else if (ws.data.kind === "lobby") {
+        venueHost.routeLobby(ws, buf);
+      } else if (isHangoutMatchId(ws.data.matchId)) {
+        routeHangoutMessage(ws, buf);
       } else {
         registry.route(ws, buf);
       }
@@ -1101,6 +1207,10 @@ video{width:100%;height:100%;object-fit:contain;display:block}</style>
     close(ws) {
       if (ws.data.kind === "world") {
         worldHost.detach(ws);
+      } else if (ws.data.kind === "lobby") {
+        venueHost.detachLobby(ws);
+      } else if (isHangoutMatchId(ws.data.matchId)) {
+        detachHangoutClient(ws);
       } else {
         registry.detach(ws);
       }

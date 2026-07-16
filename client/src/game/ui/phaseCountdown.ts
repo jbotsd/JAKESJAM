@@ -23,7 +23,7 @@
 // ever jumps DOWN, never up. `approx` marks the estimate phases so the
 // UI can render "~41" instead of asserting false precision.
 
-import { DRAFT_WINDOW_MS, ROUND_OVER_HOLD_MS } from "../../sim/round.js";
+import { DRAFT_WINDOW_MS, msUntilNextBell } from "../../sim/round.js";
 
 export type RoundPhase = "countdown" | "fighting" | "round-over" | "drafting";
 
@@ -42,23 +42,17 @@ export function deathWaitCountdown(
   phase: RoundPhase,
   countdownRemainingMs: number,
 ): DeathWaitCountdown {
-  const remaining = Math.max(0, countdownRemainingMs);
-  switch (phase) {
-    case "fighting":
-      return {
-        label: "NEXT BELL",
-        seconds: toSec(remaining + ROUND_OVER_HOLD_MS + DRAFT_WINDOW_MS),
-        approx: true,
-      };
-    case "round-over":
-      return { label: "NEXT BELL", seconds: toSec(remaining + DRAFT_WINDOW_MS), approx: true };
-    case "drafting":
-      return { label: "NEXT BELL", seconds: toSec(remaining), approx: false };
-    case "countdown":
-      // Everyone respawns at countdown ENTRY, so a dead player should never
-      // see this — kept honest anyway for defensive completeness.
-      return { label: "RESPAWNING", seconds: toSec(remaining), approx: false };
+  if (phase === "countdown") {
+    // Everyone respawns at countdown ENTRY, so a dead player should never
+    // see this — kept honest anyway for defensive completeness.
+    return { label: "RESPAWNING", seconds: toSec(Math.max(0, countdownRemainingMs)), approx: false };
   }
+  // Shared phase-sum math with the server's venue summary (@sim/round.ts).
+  return {
+    label: "NEXT BELL",
+    seconds: toSec(msUntilNextBell(phase, countdownRemainingMs)),
+    approx: phase !== "drafting",
+  };
 }
 
 function toSec(ms: number): number {
