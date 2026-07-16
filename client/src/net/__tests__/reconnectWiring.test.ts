@@ -14,10 +14,12 @@ import type { Transport, TransportState } from "../transport";
 
 type MockTransport = Transport & {
   fireClose: (reason: string) => void;
+  closedWith: string[];
 };
 
 function makeTransport(): MockTransport {
   let closeHandler: ((reason: string) => void) | null = null;
+  const closedWith: string[] = [];
   const t = {
     state: "open" as TransportState,
     send: () => {},
@@ -26,7 +28,10 @@ function makeTransport(): MockTransport {
     onClose: (h: (reason: string) => void) => {
       closeHandler = h;
     },
-    close: () => {},
+    close: (reason?: string) => {
+      closedWith.push(reason ?? "");
+    },
+    closedWith,
     fireClose: (reason: string) => closeHandler?.(reason),
   };
   return t as unknown as MockTransport;
@@ -75,5 +80,33 @@ describe("ClientLoop reconnect wiring (Pillar 0.5)", () => {
     expect(lost).toEqual(["transport-error"]);
     expect(attempts).toEqual([]);
     loop.stop();
+  });
+});
+
+describe("ClientLoop.disconnect — leave means leave (Pillar 0.6)", () => {
+  test("closes the transport with the leave reason", () => {
+    const t = makeTransport();
+    const { loop } = makeLoop(t, { reconnectUrl: "ws://localhost:1/ws/world" });
+    loop.disconnect("client-leave");
+    expect(t.closedWith).toEqual(["client-leave"]);
+  });
+
+  test("the socket's own close event after disconnect neither retries nor reports a lost connection", () => {
+    const t = makeTransport();
+    const { loop, lost, attempts } = makeLoop(t, { reconnectUrl: "ws://localhost:1/ws/world" });
+    loop.disconnect();
+    // The real WS close event lands asynchronously after close() — it must
+    // not resurrect the connection (supervisor disposed) and must not show
+    // "connection lost" UI (leaving is not a failure).
+    t.fireClose("client-leave");
+    expect(attempts).toEqual([]);
+    expect(lost).toEqual([]);
+  });
+
+  test("stop() alone still never touches the socket (tab blur/focus safety)", () => {
+    const t = makeTransport();
+    const { loop } = makeLoop(t, { reconnectUrl: "ws://localhost:1/ws/world" });
+    loop.stop();
+    expect(t.closedWith).toEqual([]);
   });
 });

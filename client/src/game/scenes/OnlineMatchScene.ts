@@ -2778,7 +2778,10 @@ export class OnlineMatchScene extends Phaser.Scene {
     this.combatFx = null;
     this.touchControls?.destroy();
     this.touchControls = null;
-    this.loop?.stop();
+    // disconnect(), not stop(): scene teardown means the player is LEAVING —
+    // close the socket now instead of leaving a frozen ghost in-world for
+    // the ~30s liveness+grace window (venue-goal Pillar 0.6).
+    this.loop?.disconnect("client-leave");
     this.loop = null;
     void this.convex?.close();
     this.convex = null;

@@ -103,6 +103,15 @@ export class ReconnectSupervisor {
     }
   }
 
+  /** Deliberate shutdown (player left, scene tearing down): mark abandoned
+   *  WITHOUT firing onAbandon — this is not a connection failure, so no
+   *  "connection lost" UI/telemetry should follow, and the close event the
+   *  socket is about to emit must not schedule a resurrection. */
+  dispose(): void {
+    this.abandoned = true;
+    this.cancel();
+  }
+
   /** Caller surface for UI (mirrors prior ClientLoop.getReconnectState). */
   state(): ReconnectState {
     return {

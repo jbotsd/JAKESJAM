@@ -386,6 +386,30 @@ export class ClientLoop {
   }
 
   /**
+   * Deliberate teardown — the player is LEAVING, not backgrounding.
+   *
+   * Distinct from stop() on purpose: stop()/start() are the tab
+   * blur/focus pair (renderHostStop/renderHostStart) and must never touch
+   * the socket, or backgrounding the tab would disconnect the player.
+   * Before this method existed, scene shutdown called stop() — which
+   * never closes the transport — so Menu→Leave left the WS idling open:
+   * the server held the last input 15 ticks, the entity stood frozen
+   * in-world, and only the 20s liveness backstop + 10s reconnect grace
+   * finally evicted it. Other players watched a departed player's ghost
+   * for ~30 seconds (venue-goal Pillar 0.6, audit seam #17 — closing the
+   * tab was literally cleaner than using the Leave button).
+   *
+   * Supervisor is disposed FIRST so the close event this triggers can't
+   * schedule a reconnect, and onConnectionLost stays silent — leaving is
+   * not a connection failure.
+   */
+  disconnect(reason = "client-leave"): void {
+    this.reconnect.dispose();
+    this.transport.close(reason);
+    this.stop();
+  }
+
+  /**
    * Drain the fixed-step accumulator with the latest setLocalInput.
    * Call from the render loop AFTER sampling keys so prediction responds
    * in the same frame (setInterval alone adds up to ~STEP_MS of lag).
@@ -816,7 +840,16 @@ export class ClientLoop {
       this.slewMsHistory.length = 0;
       this.lastFullReconcileAt = 0;
     }
-    this.runtime = createRuntime(resolveMap(message.mapId));
+    // Hangout matches are keyed "hangout_<code>" (privateLobby.ts) — inferred
+    // from the matchId string rather than a wire field, mirroring how the
+    // server derives it too (WorldRuntime.mode is host/client-local, never
+    // part of WorldState; see sim/types.ts's WorldMode doc). Without this,
+    // local prediction would run this player's movement in "combat" mode
+    // (harmless — hangout's void-plane respawn-in-place is a server-only
+    // divergence corrected on the next snapshot — but matching it exactly
+    // avoids even a one-snapshot mispredict if a player ever falls off).
+    const mode = this.matchId.startsWith("hangout_") ? "hangout" : "combat";
+    this.runtime = createRuntime(resolveMap(message.mapId), mode);
     this.onHello?.(message);
     this.start();
   }
