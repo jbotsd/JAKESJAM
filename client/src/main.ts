@@ -470,6 +470,17 @@ app.innerHTML = `
         <button data-pause-settings type="button" class="shell-btn-secondary shell-btn-ghost">Settings</button>
         <button data-pause-leave type="button" class="btn-danger shell-btn-ghost">Leave</button>
       </div>
+      <!-- In-shell leave confirm (venue-goal Pillar 0.7): replaces the native
+           browser confirm() — the only OS-chrome dialog in an otherwise fully
+           art-directed shell. Hidden until Leave is clicked; axiom B4 keeps
+           the destructive confirm spatially separated on its own row. -->
+      <div class="shell-pause-leave-confirm" data-pause-leave-confirm hidden>
+        <p class="shell-hint">Leave the arena? It keeps running without you.</p>
+        <div class="shell-pause-row">
+          <button data-pause-leave-confirm-yes type="button" class="btn-danger">Leave</button>
+          <button data-pause-leave-confirm-no type="button" class="shell-btn-secondary">Stay</button>
+        </div>
+      </div>
     </div>
   </section>
   <!-- Always-on match chrome: world auto-join skips HOME, so clips must be reachable here. -->
@@ -1508,10 +1519,23 @@ queryRequired<HTMLButtonElement>("[data-pause-clips]").addEventListener("click",
   shell.goto("clips");
 });
 
-queryRequired<HTMLButtonElement>("[data-pause-leave]").addEventListener("click", () => {
-  if (confirm("Leave Hot Lobby? It keeps running without you.")) {
-    leaveMatchToHome();
-  }
+// Two-step in-shell leave confirm (venue-goal Pillar 0.7) — the native
+// browser confirm() was the only OS-chrome dialog in the whole product.
+// Leave reveals the confirm row; Stay (or reopening the panel) hides it.
+const pauseLeaveConfirm = queryRequired<HTMLElement>("[data-pause-leave-confirm]");
+const pauseLeaveBtn = queryRequired<HTMLButtonElement>("[data-pause-leave]");
+pauseLeaveBtn.addEventListener("click", () => {
+  pauseLeaveConfirm.hidden = false;
+  pauseLeaveBtn.disabled = true;
+});
+queryRequired<HTMLButtonElement>("[data-pause-leave-confirm-no]").addEventListener("click", () => {
+  pauseLeaveConfirm.hidden = true;
+  pauseLeaveBtn.disabled = false;
+});
+queryRequired<HTMLButtonElement>("[data-pause-leave-confirm-yes]").addEventListener("click", () => {
+  pauseLeaveConfirm.hidden = true;
+  pauseLeaveBtn.disabled = false;
+  leaveMatchToHome();
 });
 
 // Clip toast when match emits jakesjam:clip-uploaded (session list is
@@ -1662,6 +1686,10 @@ function showMatchChrome(show: boolean): void {
 queryRequired<HTMLButtonElement>("[data-match-menu]").addEventListener("click", () => {
   shell.goto("pause");
   syncClipsChrome();
+  // Fresh open = fresh confirm state — a half-finished leave confirm from
+  // a previous open must not greet the player.
+  pauseLeaveConfirm.hidden = true;
+  pauseLeaveBtn.disabled = false;
 });
 
 queryRequired<HTMLButtonElement>("[data-match-clips]").addEventListener("click", () => {
