@@ -3,7 +3,10 @@
 
 export type PlaceId = "home" | "settings" | "clips" | "room" | "pause" | "credits";
 
-export type MatchMode = "none" | "practice" | "world" | "private";
+/** "lobby" = the walkable public venue lobby (venue-sprint2-goal S2.A) —
+ *  a live networked place, so the shell treats it like a match (splash
+ *  hidden, match chrome up), distinct from "world" (the arena itself). */
+export type MatchMode = "none" | "practice" | "world" | "private" | "lobby";
 
 /** Exclusive full-screen places (mutually exclusive). Layers overlay them. */
 export type ExclusivePlace = "home" | "room";

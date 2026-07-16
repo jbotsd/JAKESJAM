@@ -24,6 +24,8 @@ import type { MapDefinition } from "../../sim/types.js";
 import { resolveMap } from "../../sim/data/maps.js";
 import { resolveHangoutTotems, type TotemDefinition } from "../../sim/totem.js";
 import { PrivateRoomClient } from "../net/PrivateRoomClient";
+import { fetchVenueLobbyAssignment } from "../../net/worldClient";
+import { sanitizePlayerName } from "../../net/playerName";
 import { ProceduralPlayerRig } from "../rendering/ProceduralPlayerRig";
 import { colorToNumber } from "../render/colorToNumber.js";
 import { ProceduralAudio } from "../systems/ProceduralAudio";
@@ -38,7 +40,19 @@ import { PALETTE, ARENA_THEMES } from "../ui/palette";
 import type { CharacterDefinition, CharacterId } from "../types/game";
 
 export type HangoutSceneInit = {
-  roomCode: string;
+  /**
+   * "private" (default): a room's pre-match hangout — room-scoped token via
+   * PrivateRoomClient, torn down when the room launches. Exactly the
+   * original behavior; the private suite is the regression firewall.
+   *
+   * "venue": the public venue LOBBY (venue-sprint2-goal S2.A) — open world
+   * token via /venue-token, connects /ws/lobby, no room, no
+   * LobbyController coupling. One scene class, one mode param, no fork
+   * (practice-zone-goal §6 discipline).
+   */
+  mode?: "private" | "venue";
+  /** Required in private mode; unused in venue mode. */
+  roomCode?: string;
   localPlayerId: string;
 };
 
@@ -52,6 +66,7 @@ const REMOTE_PLAYER_FALLBACK_COLOR = 0xff4d5e;
 const PORTRAIT_CAM_Y_BIAS = 150;
 
 export class HangoutScene extends Phaser.Scene {
+  private mode: "private" | "venue" = "private";
   private roomCode!: string;
   private localPlayerId!: PlayerId;
   private loop: ClientLoop | null = null;
@@ -83,7 +98,8 @@ export class HangoutScene extends Phaser.Scene {
   }
 
   init(data: HangoutSceneInit) {
-    this.roomCode = data.roomCode;
+    this.mode = data.mode ?? "private";
+    this.roomCode = data.roomCode ?? "";
     this.localPlayerId = PlayerId(data.localPlayerId);
     void this.connect();
   }
@@ -145,19 +161,34 @@ export class HangoutScene extends Phaser.Scene {
 
   private async connect(): Promise<void> {
     try {
-      const client = new PrivateRoomClient();
-      this.setStatus("Requesting hangout access...");
-      const { matchId, token } = await client.hangoutToken(
-        this.roomCode,
-        this.localPlayerId as string,
-      );
+      let wsUrl: string;
+      let matchId: string;
+      if (this.mode === "venue") {
+        // Public venue lobby: open world credential, no room membership
+        // (venue-sprint2-goal S2.A / venue-goal Pillar 1.3).
+        this.setStatus("Entering the lobby...");
+        const assignment = await fetchVenueLobbyAssignment(
+          this.localPlayerId as string,
+          sanitizePlayerName(localStorage.getItem("jakesjam.playerName") ?? ""),
+        );
+        wsUrl = assignment.wsUrl;
+        matchId = "lobby";
+      } else {
+        const client = new PrivateRoomClient();
+        this.setStatus("Requesting hangout access...");
+        const grant = await client.hangoutToken(this.roomCode, this.localPlayerId as string);
+        matchId = grant.matchId;
+        wsUrl = client.buildWsUrl(grant.matchId, grant.token);
+      }
       this.setStatus("Opening WebSocket...");
-      const wsUrl = client.buildWsUrl(matchId, token);
       const transport = new WsTransport({ url: wsUrl });
       this.loop = new ClientLoop({
         transport,
         matchId,
         playerId: this.localPlayerId as string,
+        // Lobby drops should self-heal like the arena's do (P0.5 pattern) —
+        // same stateless token, same URL re-auths.
+        reconnectUrl: wsUrl,
         onAuthoritativeApplied: () => {
           this.setStatus("");
         },

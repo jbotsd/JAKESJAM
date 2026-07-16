@@ -1980,6 +1980,19 @@ if (urlParams.get("replay")) {
 } else if (urlParams.get("world") === "1" || window.location.pathname === "/world") {
   // Defer one tick so Phaser has a chance to register the scene.
   setTimeout(() => joinWorld(), 0);
+} else if (urlParams.get("venue") === "1") {
+  // Venue lobby dev entry (venue-sprint2-goal S2.A) — reaches the public
+  // walkable lobby WITHOUT flipping the main world flow, which stays on
+  // OnlineMatchScene until S2.F's full lobby→bell→arena round trip works.
+  // Becomes the real front door in Pillar 6.
+  emitMatchStarted("lobby");
+  setTimeout(() => {
+    game.scene.stop(SceneKeys.MainMenu);
+    game.scene.start(SceneKeys.Hangout, {
+      mode: "venue",
+      localPlayerId: localPlayerId(),
+    });
+  }, 0);
 } else if (urlParams.get("room") || urlParams.get("code")) {
   // Shared room link → open lobby and auto-join the room (idempotent on server).
   shell.goto("room");

@@ -51,6 +51,33 @@ export async function fetchWorldAssignment(
 }
 
 /**
+ * Venue lobby assignment (venue-sprint2-goal S2.A): same shape as
+ * fetchWorldAssignment but against /venue-token → /ws/lobby. One stateless
+ * credential grants both halves of the venue; this returns the LOBBY
+ * socket URL (the arena side keeps using fetchWorldAssignment unchanged).
+ */
+export async function fetchVenueLobbyAssignment(
+  playerId: string,
+  displayName?: string,
+): Promise<WorldAssignment> {
+  const wsBase = readGameServerWsBase();
+  const httpBase = wsToHttp(wsBase);
+  const res = await fetch(`${httpBase}/venue-token`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ playerId }),
+  });
+  if (!res.ok) {
+    throw new Error(`venue-token failed: ${res.status} ${await res.text().catch(() => "")}`);
+  }
+  const json = (await res.json()) as { token: string; lobbyWsPath: string };
+  const wsUrl = new URL(json.lobbyWsPath, wsBase);
+  wsUrl.searchParams.set("token", json.token);
+  if (displayName) wsUrl.searchParams.set("name", displayName.slice(0, 14));
+  return { wsUrl: wsUrl.toString(), token: json.token };
+}
+
+/**
  * Lightweight summary fetcher used by MatchStatusBadge. Hits the bun
  * server's `/world/summary` endpoint directly — no Convex involvement.
  * Returns `null` if the world hasn't booted yet OR the request fails
