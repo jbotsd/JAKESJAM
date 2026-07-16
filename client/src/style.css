@@ -1561,6 +1561,29 @@ button.btn-danger:hover:not(:disabled) {
   font-weight: 400;
 }
 
+/* ── Venue callsign gate (HangoutScene venue mode, S2.C.3) — identity
+      precedes commitment: prompt-before-connect so the name always rides
+      /ws/lobby. Same input language as the splash CALLSIGN field. ─────── */
+.venue-callsign {
+  position: fixed;
+  inset: 0;
+  z-index: 240;
+  display: grid;
+  place-content: center;
+  gap: 0.9rem;
+  background: rgba(3, 4, 8, 0.88);
+  text-align: center;
+}
+.venue-callsign .splash-name {
+  margin: 0;
+}
+.venue-callsign-kicker {
+  font-family: "Space Mono", monospace;
+  font-size: 0.68rem;
+  letter-spacing: 0.22em;
+  color: rgba(137, 127, 105, 0.85);
+}
+
 /* ── Email gate (shell/emailGate.ts — the devlog funnel CTA) ─────────── */
 .email-gate {
   position: fixed;

@@ -30,6 +30,7 @@ import type {
   Tick,
   WorldState,
 } from "@sim/types.ts";
+import { EntityId } from "@sim/types.ts";
 import { LagCompensator, LAG_COMP_MAX_TICKS, type RewindPlan } from "./LagCompensator.ts";
 
 /**
@@ -601,6 +602,41 @@ export class MatchHost {
       chaosModifierIds: this.state.chaosModifierIds ?? [],
       snapshotsDroppedForBackpressure: this.snapshotsDroppedForBackpressure,
     };
+  }
+
+  /**
+   * Hangout-only: re-seed the map's destructibles into the live state
+   * (venue-sprint2-goal S2.C — the lobby's practice dummies respawn after
+   * being broken; a permanent debris field teaches "don't bother firing").
+   * No-op unless something is actually missing, so callers can poll it.
+   */
+  respawnDestructibles(): void {
+    if (this.mode !== "hangout") return;
+    const defs = this.map.destructibles ?? [];
+    if (defs.length === 0) return;
+    const live = Object.keys(this.state.destructibles).length;
+    if (live >= defs.length) return;
+    const destructibles: WorldState["destructibles"] = {};
+    let nextId = 1;
+    for (const id of Object.keys(this.state.destructibles)) {
+      nextId = Math.max(nextId, Number(id) + 1);
+    }
+    for (const object of defs) {
+      const id = EntityId(nextId);
+      nextId += 1;
+      destructibles[id] = {
+        id,
+        kind: object.kind,
+        x: object.position.x,
+        y: object.position.y,
+        width: object.size.x,
+        height: object.size.y,
+        health: object.health,
+        explosive: object.explosive,
+        flammable: object.flammable,
+      };
+    }
+    this.state = { ...this.state, destructibles };
   }
 
   /**

@@ -239,3 +239,30 @@ feed screenshot in-scene. Suites server 180 / client 922. Deployed.
 Ops note repeated the hard way: pgrep|head -1 killed a WRAPPER pid, not
 the server — always verify via `ss -ltnp | grep 8088` before starting the
 replacement.
+
+**S2.C — COMPLETE (2026-07-16)**
+Targets-only carve-out in World.ts: firing is LIVE in hangout mode but
+players take zero damage from any source (projectile hit candidates empty →
+shots ghost through players; dash-bash gated; belt-and-braces guards at
+projectile-drain, destructible-splash, fire-patch drains). Practice dummies:
+venueLobbyMap() injects 3 box dummies (60hp, center-coord on the ground
+band) as a resolved MapDefinition — dummy state reaches clients via
+ordinary snapshots, zero client map fork; MatchHost.respawnDestructibles()
+(hangout-only) + VenueHost 8s timer restock the room. Client: HangoutScene
+venue mode constructs EntityRenderCoordinator with OnlineMatchScene's
+painters (TutorialScene precedent, pool null) + LMB fires venue-only
+(private hangouts stay walk-only). Music: venue context in the shared
+crossfade machinery; mute law extracted to shell/musicMute.ts (compile-time
+exhaustive Record over contexts) + 4 tests; grep: venue-lobby.mp3 only via
+getAudioUrl, no new audio category; HMR registry now includes venueMusic.
+Callsign gate: server refuses nameless queue entry (toggleQueue checks the
+socket's name), nameless spawns read "RECRUIT" (machine names unreachable),
+client prompts-before-connect via DOM overlay so the name always rides
+/ws/lobby. Tests: hangoutMode.test.ts rewritten for the new contract
+(8 pass — fire live, target immune through a bystander in the line of
+fire, dummy breaks), venueHost.test.ts 11 pass (dummies/respawn/no-dup,
+gate refuse/allow, RECRUIT). Suites server 183 / client 925, typechecks
+clean, built, deployed. Live probe (server/probe-s2c.ts): nameless roster
+name RECRUIT, dummy state decoded on a real /ws/lobby socket (interest-
+filtered to the near dummy, full count of 3 pinned by unit test),
+venue-status flowing, named connect rides "VERAPROBE". public /health 200.

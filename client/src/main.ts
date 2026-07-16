@@ -45,6 +45,12 @@ import {
 import { showClipShareToast } from "./game/ui/ClipShareToast";
 import { globalClipSession } from "./shell/clipSession";
 import {
+  applyMusicMute,
+  activeTrack,
+  inactiveTracks,
+  type MusicContext,
+} from "./shell/musicMute";
+import {
   applyWasmWorldFlag,
   applyWasmWorldStepFullSync,
   applyWasmWorldStepSync,
@@ -1139,7 +1145,6 @@ app.querySelector<HTMLButtonElement>("[data-splash-cta]")?.addEventListener(
 // flag decides which is live; a per-element RAF fade smooths every transition
 // (menu↔world and loop→loop) so nothing clicks or drops out — the main
 // game-feel win over the initial hard-switch.
-type MusicContext = "menu" | "world";
 let musicContext: MusicContext = "menu";
 const CROSSFADE_MS = 900;
 const musicFades = new WeakMap<HTMLAudioElement, number>();
@@ -1165,8 +1170,22 @@ menuMusic.preload = "auto";
 const WORLD_MUSIC_TRACKS = ["epic-loop-1.mp3", "epic-loop-2.mp3", "epic-loop-3.mp3"] as const;
 let worldTrackIdx = 0;
 const worldMusic = new Audio(getAudioUrl(WORLD_MUSIC_TRACKS[0]));
+// Venue lobby music — "A Table Set" (Jake, 2026-07-16; venue-sprint2-goal
+// S2.C.2). Its own context in the same crossfade system: lobby↔arena
+// transitions fade through the one machinery, no new audio category.
+const venueMusic = new Audio(getAudioUrl("venue-lobby.mp3"));
+venueMusic.loop = true;
+venueMusic.preload = "auto";
 musicRegistry.add(menuMusic);
 musicRegistry.add(worldMusic);
+musicRegistry.add(venueMusic);
+// One track per context — the shared law lives in shell/musicMute.ts, and
+// this Record is compile-time exhaustive over MusicContext.
+const contextTracks: Record<MusicContext, HTMLAudioElement> = {
+  menu: menuMusic,
+  world: worldMusic,
+  venue: venueMusic,
+};
 worldMusic.preload = "auto";
 worldMusic.addEventListener("ended", () => {
   worldTrackIdx = (worldTrackIdx + 1) % WORLD_MUSIC_TRACKS.length;
@@ -1181,7 +1200,7 @@ worldMusic.addEventListener("ended", () => {
 });
 // So the NEXT HMR re-execution (see the guard above) can find and pause
 // these before creating their replacements.
-globalWithGame.__jakesjam_music__ = [menuMusic, worldMusic];
+globalWithGame.__jakesjam_music__ = [menuMusic, worldMusic, venueMusic];
 restoreOptions();
 
 // Splash/menu is DOM-driven and every button above is already wired by
@@ -2006,6 +2025,9 @@ if (urlParams.get("replay")) {
   // OnlineMatchScene until S2.F's full lobby→bell→arena round trip works.
   // Becomes the real front door in Pillar 6.
   emitMatchStarted("lobby");
+  // No user gesture yet on a deep link — armSoundtrackOnFirstGesture's net
+  // retries on the first click, same as the ?world=1 path.
+  startVenueMusic();
   setTimeout(() => {
     game.scene.stop(SceneKeys.MainMenu);
     game.scene.start(SceneKeys.Hangout, {
@@ -2133,12 +2155,10 @@ function fadeMusic(el: HTMLAudioElement, to: number, ms: number): void {
 }
 
 function applyAudioOptions() {
-  const muted = musicMutedInput.checked;
-  menuMusic.muted = muted;
-  worldMusic.muted = muted;
+  applyMusicMute(contextTracks, musicMutedInput.checked);
   // Live slider: jump the ACTIVE track to the new level (unless it's mid-fade,
   // where the fade already targets the current level).
-  const active = musicContext === "world" ? worldMusic : menuMusic;
+  const active = activeTrack(contextTracks, musicContext);
   if (!musicFades.has(active)) active.volume = musicVol();
 }
 
@@ -2157,8 +2177,8 @@ function playCurrentMusic() {
     void startVoiceReactive(audioCtx);
   }
   const requestedContext = musicContext;
-  const active = requestedContext === "world" ? worldMusic : menuMusic;
-  const other = requestedContext === "world" ? menuMusic : worldMusic;
+  const active = activeTrack(contextTracks, requestedContext);
+  const others = inactiveTracks(contextTracks, requestedContext);
   // Already settled on this exact context — see musicStartedForContext's
   // doc comment. Only skip once the track is actually audibly running
   // (not just non-paused): if an earlier attempt is still stuck mid-way
@@ -2168,10 +2188,9 @@ function playCurrentMusic() {
     return;
   }
   musicStartedForContext = requestedContext;
-  menuMusic.muted = musicMutedInput.checked;
-  worldMusic.muted = musicMutedInput.checked;
-  // Crossfade: bring the active track up from wherever it is, fade the other
-  // out (and pause it at the end).
+  applyMusicMute(contextTracks, musicMutedInput.checked);
+  // Crossfade: bring the active track up from wherever it is, fade every
+  // other context's track out (and pause it at the end).
   if (active.paused) active.volume = 0;
   void active
     .play()
@@ -2185,7 +2204,9 @@ function playCurrentMusic() {
       }
     })
     .catch(() => undefined);
-  if (!other.paused) fadeMusic(other, 0, CROSSFADE_MS);
+  for (const other of others) {
+    if (!other.paused) fadeMusic(other, 0, CROSSFADE_MS);
+  }
 }
 
 function startMenuMusic() {
@@ -2195,6 +2216,7 @@ function startMenuMusic() {
   musicStartedForContext = null;
   fadeMusic(worldMusic, 0, CROSSFADE_MS);
   fadeMusic(menuMusic, 0, CROSSFADE_MS);
+  fadeMusic(venueMusic, 0, CROSSFADE_MS);
   resumeSplashTheme();
 }
 
@@ -2202,6 +2224,15 @@ function startWorldMusic() {
   fadeSplashTheme();
   musicOwner = worldMusic;
   musicContext = "world";
+  playCurrentMusic();
+}
+
+/** Venue lobby music (S2.C.2) — "A Table Set", crossfaded through the same
+ *  machinery as menu/world so lobby↔arena transitions never hard-cut. */
+function startVenueMusic() {
+  fadeSplashTheme();
+  musicOwner = venueMusic;
+  musicContext = "venue";
   playCurrentMusic();
 }
 

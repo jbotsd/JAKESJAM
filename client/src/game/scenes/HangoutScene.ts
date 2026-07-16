@@ -37,6 +37,13 @@ import { isTouchPrimary, isPortraitMobile } from "../input/mobile";
 import { getRenderScale } from "../render/renderResolution.js";
 import { characters } from "../data/characters";
 import { PALETTE, ARENA_THEMES } from "../ui/palette";
+import { EntityRenderCoordinator } from "../render/EntityRenderCoordinator.js";
+import {
+  projectileColorByElement,
+  drawDestructible,
+  drawFirePatch,
+  drawPickup,
+} from "./OnlineMatchScene.js";
 import type { CharacterDefinition, CharacterId } from "../types/game";
 
 export type HangoutSceneInit = {
@@ -99,6 +106,13 @@ export class HangoutScene extends Phaser.Scene {
   private venueStatusAtMs = 0;
   private feedText: Phaser.GameObjects.Text | null = null;
   private bellLabel: Phaser.GameObjects.Text | null = null;
+  // Venue mode (S2.C): projectiles + practice dummies render through the
+  // same coordinator the arena uses (pool null — no combat frame budget to
+  // amortize here, straight Graphics is fine).
+  private entityRender: EntityRenderCoordinator | null = null;
+  // Venue mode (S2.C.3): DOM callsign prompt, alive only while awaiting a
+  // name — must not outlive the scene.
+  private callsignOverlay: HTMLElement | null = null;
 
   constructor() {
     super(SceneKeys.Hangout);
@@ -150,6 +164,22 @@ export class HangoutScene extends Phaser.Scene {
     this.applyCameraZoom();
     this.scale.on("resize", this.applyCameraZoom, this);
 
+    if (this.mode === "venue") {
+      // S2.C: the venue lobby is a live-fire room — projectiles and the
+      // practice dummies are ordinary snapshot state, so the arena's own
+      // painters render them (TutorialScene's cross-scene import precedent).
+      this.entityRender = new EntityRenderCoordinator(
+        this,
+        {
+          projectileColor: (element, ownerId) => projectileColorByElement(element, ownerId),
+          drawDestructible: (g, obj, flashing) => drawDestructible(g, obj, flashing),
+          drawFirePatch: (g, fire, nowMs) => drawFirePatch(g, fire, nowMs),
+          drawPickup: (g, pickup, nowMs) => drawPickup(g, pickup, nowMs),
+        },
+        null,
+      );
+    }
+
     this.lastFrameMs = performance.now();
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => this.teardown());
   }
@@ -173,11 +203,16 @@ export class HangoutScene extends Phaser.Scene {
       if (this.mode === "venue") {
         // Public venue lobby: open world credential, no room membership
         // (venue-sprint2-goal S2.A / venue-goal Pillar 1.3).
+        // Callsign gate (S2.C.3), prompt-before-connect: the name must ride
+        // /ws/lobby, so a nameless visitor is asked HERE — the server
+        // refuses nameless queue entry regardless.
+        let name = sanitizePlayerName(localStorage.getItem("jakesjam.playerName") ?? "");
+        if (!name) {
+          this.setStatus("");
+          name = await this.promptForCallsign();
+        }
         this.setStatus("Entering the lobby...");
-        const assignment = await fetchVenueLobbyAssignment(
-          this.localPlayerId as string,
-          sanitizePlayerName(localStorage.getItem("jakesjam.playerName") ?? ""),
-        );
+        const assignment = await fetchVenueLobbyAssignment(this.localPlayerId as string, name);
         wsUrl = assignment.wsUrl;
         matchId = "lobby";
       } else {
@@ -229,6 +264,45 @@ export class HangoutScene extends Phaser.Scene {
 
   private setStatus(message: string): void {
     this.statusText?.setText(message);
+  }
+
+  /** DOM overlay callsign prompt (S2.C.3) — splash-input language, scene-
+   *  owned lifetime. Resolves only with a sanitized non-empty name; the
+   *  overlay also persists it so the splash field shows the same callsign. */
+  private promptForCallsign(): Promise<string> {
+    return new Promise((resolve) => {
+      const overlay = document.createElement("div");
+      overlay.className = "venue-callsign";
+      overlay.innerHTML = `
+        <p class="venue-callsign-kicker">THE VENUE ASKS YOUR NAME</p>
+        <div class="splash-name">
+          <label for="jj-venue-name" class="splash-name-label">CALLSIGN</label>
+          <input id="jj-venue-name" type="text" maxlength="14"
+            autocomplete="nickname" placeholder="choose your name" spellcheck="false" />
+        </div>
+        <div><button type="button" class="primary shell-cta-primary">ENTER</button></div>
+      `;
+      document.body.appendChild(overlay);
+      this.callsignOverlay = overlay;
+      const input = overlay.querySelector("input")!;
+      const button = overlay.querySelector("button")!;
+      const submit = () => {
+        const name = sanitizePlayerName(input.value);
+        if (!name) {
+          input.focus();
+          return;
+        }
+        localStorage.setItem("jakesjam.playerName", name);
+        overlay.remove();
+        this.callsignOverlay = null;
+        resolve(name);
+      };
+      button.addEventListener("click", submit);
+      input.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") submit();
+      });
+      input.focus();
+    });
   }
 
   // ---------------- Sim event -> audio ----------------
@@ -440,11 +514,17 @@ export class HangoutScene extends Phaser.Scene {
     if (this.keys?.a.isDown) keys |= InputBit.Left;
     if (this.keys?.d.isDown) keys |= InputBit.Right;
     if (this.keys?.w.isDown || this.keys?.space.isDown) keys |= InputBit.Jump;
+    // Venue lobby only (S2.C): firing is live — players are immune (the
+    // hangout sim carve-out), so shots exist to break the practice dummies.
+    // Private hangouts stay walk-only, exactly the original contract.
+    if (this.mode === "venue" && this.input.activePointer.leftButtonDown()) {
+      keys |= InputBit.Fire;
+    }
 
-    // Aim is cosmetic-only in hangout mode (no weapon ever fires server-
-    // side) — it just orients the rig. Mouse position on desktop, last
-    // known local position on touch (touch aim stick still exists per the
-    // combatButtons:false precedent, but nothing requires it here).
+    // Aim orients the rig — and in venue mode it aims live practice fire.
+    // Mouse position on desktop, last known local position on touch (touch
+    // aim stick still exists per the combatButtons:false precedent; touch
+    // stays walk-only until the venue gets real touch combat controls).
     const pointer = this.input.activePointer;
     const cam = this.cameras.main;
     const aimWorld = cam.getWorldPoint(pointer.x, pointer.y);
@@ -476,6 +556,7 @@ export class HangoutScene extends Phaser.Scene {
     this.lastFrameMs = now;
 
     this.renderWorld(state, deltaMs);
+    this.entityRender?.update(state, deltaMs, now);
     this.followLocalPlayer(state, deltaMs);
     this.updateTotemPulse(now);
     this.updateVenueFeed(now);
@@ -612,6 +693,10 @@ export class HangoutScene extends Phaser.Scene {
     this.feedText = null;
     this.bellLabel = null;
     this.venueStatus = null;
+    this.entityRender?.destroy();
+    this.entityRender = null;
+    this.callsignOverlay?.remove();
+    this.callsignOverlay = null;
     this.scale.off("resize", this.applyCameraZoom, this);
     this.touchControls?.destroy();
     this.touchControls = null;

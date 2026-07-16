@@ -24,7 +24,7 @@ import type { WorldHost } from "./worldHost.ts";
 import { msUntilNextBell } from "@sim/round.ts";
 import { resolveVenueTotems } from "@sim/totem.ts";
 import { resolveMap } from "@sim/data/maps.ts";
-import { PlayerId, type PlayerSpawnInfo } from "@sim/types.ts";
+import { PlayerId, type DestructibleDefinition, type MapDefinition, type PlayerSpawnInfo } from "@sim/types.ts";
 import type { MapId } from "@sim/data/maps.ts";
 import { encodeMessage, type VenueStatus } from "@net/protocol.ts";
 
@@ -33,6 +33,34 @@ export const VENUE_LOBBY_MATCH_ID = "lobby";
 /** The lobby's fixed map. vessel-nexus is the one map with hand-tuned totem
  *  anchors today (totem.ts) — Pillar 2 gives the lobby its own space. */
 const LOBBY_MAP_ID: MapId = "vessel-nexus";
+
+/**
+ * The lobby's map with its practice dummies injected (venue-sprint2-goal
+ * S2.C.1): three non-explosive target crates near the spawn band. Injected
+ * as a resolved MapDefinition (MatchHost accepts the object form) so the
+ * DUMMY STATE arrives at clients via ordinary snapshots — the client keeps
+ * resolving plain "vessel-nexus" for geometry and renders destructibles
+ * from state, no client-side map fork.
+ */
+function venueLobbyMap(): MapDefinition {
+  const base = resolveMap(LOBBY_MAP_ID);
+  const groundY = base.size.y - 36; // vessel-nexus FLOOR_H → standing surface
+  // Destructible x/y is the CENTER (centerToAABB) — a 44px box resting on
+  // the ground has its center half a box above the standing surface.
+  const dummy = (i: number, fx: number): DestructibleDefinition => ({
+    id: `dummy_${i}`,
+    kind: "box",
+    health: 60,
+    position: { x: Math.round(base.size.x * fx), y: groundY - 22 },
+    size: { x: 44, y: 44 },
+    explosive: false,
+    flammable: false,
+  });
+  return { ...base, destructibles: [dummy(0, 0.3), dummy(1, 0.35), dummy(2, 0.65)] };
+}
+
+/** How often the lobby checks whether its dummies need respawning. */
+const DUMMY_RESPAWN_CHECK_MS = 8000;
 
 const LOBBY_COLOR_PALETTE = [
   "#88ccff", "#ff88aa", "#ffd166", "#9bf6ff", "#a0e7a0",
@@ -68,6 +96,8 @@ export class VenueHost {
   private readonly readyQueue = new Set<PlayerId>();
   /** 1Hz status push (S2.B) — phase edges push immediately on top. */
   private statusTimer: ReturnType<typeof setInterval> | null = null;
+  /** S2.C: practice dummies come back after being broken. */
+  private dummyTimer: ReturnType<typeof setInterval> | null = null;
 
   constructor(opts: { arena: WorldHost }) {
     this.arenaHost = opts.arena;
@@ -78,6 +108,11 @@ export class VenueHost {
     // the 1Hz tick.
     this.arenaHost.onRoundPhaseChange = () => this.broadcastStatus();
     this.statusTimer = setInterval(() => this.broadcastStatus(), 1000);
+    // Lobby never rebuilds (Pillar 1), so the direct reference stays valid.
+    this.dummyTimer = setInterval(
+      () => this.lobbyHost.respawnDestructibles(),
+      DUMMY_RESPAWN_CHECK_MS,
+    );
   }
 
   /** The arena half — index.ts keeps routing /ws/world here unchanged. */
@@ -86,7 +121,7 @@ export class VenueHost {
   }
 
   private buildLobby(): MatchHost {
-    const host = new MatchHost(VENUE_LOBBY_MATCH_ID, [], [], LOBBY_MAP_ID, {
+    const host = new MatchHost(VENUE_LOBBY_MATCH_ID, [], [], venueLobbyMap(), {
       mode: "hangout",
       // The venue lobby's single bell-portal totem replaces the room
       // hangout's READY/LAUNCH pair (resolveVenueTotems — shared pure
@@ -108,8 +143,17 @@ export class VenueHost {
   }
 
   private toggleQueue(playerId: PlayerId): void {
-    if (this.readyQueue.has(playerId)) this.readyQueue.delete(playerId);
-    else this.readyQueue.add(playerId);
+    if (this.readyQueue.has(playerId)) {
+      this.readyQueue.delete(playerId);
+    } else {
+      // Callsign gate (S2.C.3): identity precedes commitment — a nameless
+      // visitor can walk the room and break dummies, but cannot queue for
+      // the arena. The client prompts before connecting; this is the
+      // server-side truth a probe can't route around.
+      const name = (this.lobbySockets.get(playerId)?.data as { name?: string } | undefined)?.name;
+      if (!name) return;
+      this.readyQueue.add(playerId);
+    }
     this.broadcastStatus();
   }
 
@@ -201,6 +245,10 @@ export class VenueHost {
       clearInterval(this.statusTimer);
       this.statusTimer = null;
     }
+    if (this.dummyTimer) {
+      clearInterval(this.dummyTimer);
+      this.dummyTimer = null;
+    }
     this.lobbyHost.dispose();
   }
 
@@ -208,7 +256,10 @@ export class VenueHost {
     return {
       playerId: PlayerId(playerIdRaw),
       characterId: "balanced",
-      name: chosenName ?? playerIdRaw,
+      // Machine names are unreachable on the venue path (S2.C.3): a
+      // nameless visitor reads as an anonymous recruit, never as their
+      // opaque player id leaking into the room.
+      name: chosenName ?? "RECRUIT",
       color: pickColor(playerIdRaw),
       weaponId: "starter-pistol",
     };

@@ -171,6 +171,55 @@ describe("VenueHost lobby lifecycle (Pillar 1.2)", () => {
     venue.dispose();
   });
 
+  test("lobby map carries practice dummies; respawnDestructibles restores them (S2.C)", () => {
+    const { venue } = makeVenue(0);
+    const lobby = venue.lobbyHostForTest();
+    type DestructibleInternals = {
+      state: { destructibles: Record<string, unknown> };
+      respawnDestructibles(): void;
+    };
+    const internals = lobby as unknown as DestructibleInternals;
+    expect(Object.keys(internals.state.destructibles).length).toBe(3);
+    // Break them all (the sim-level break path is covered by
+    // hangoutMode.test.ts — here we pin the venue's respawn contract).
+    internals.state = { ...internals.state, destructibles: {} };
+    expect(Object.keys(internals.state.destructibles).length).toBe(0);
+    internals.respawnDestructibles();
+    expect(Object.keys(internals.state.destructibles).length).toBe(3);
+    // Fully-stocked lobby: respawn is a no-op, not a duplicate-spawner.
+    internals.respawnDestructibles();
+    expect(Object.keys(internals.state.destructibles).length).toBe(3);
+    venue.dispose();
+  });
+
+  test("callsign gate: a nameless client cannot queue; a named one can (S2.C.3)", () => {
+    const { venue } = makeVenue(0);
+    const nameless = makeFakeWs("p_anon"); // no name rides the socket
+    const named = makeFakeWs("p_vera", "VERA");
+    venue.attachLobby(nameless);
+    venue.attachLobby(named);
+    type SimEventSink = { onSimEvent?: (e: { t: string; playerId: string }) => void };
+    const lobbyOpts = venue.lobbyHostForTest() as unknown as SimEventSink;
+    lobbyOpts.onSimEvent?.({ t: "launch-requested", playerId: "p_anon" });
+    expect(venue.queuedForTest() as string[]).toEqual([]); // refused
+    lobbyOpts.onSimEvent?.({ t: "launch-requested", playerId: "p_vera" });
+    expect(venue.queuedForTest() as string[]).toEqual(["p_vera"]);
+    venue.dispose();
+  });
+
+  test("machine-name spawns are unreachable: nameless attach spawns as RECRUIT (S2.C.3)", () => {
+    const { venue } = makeVenue(0);
+    venue.attachLobby(makeFakeWs("p_opaque_id_123"));
+    // Names live on the roster (playerInfo → hello frames), not in sim state.
+    const lobby = venue.lobbyHostForTest() as unknown as {
+      playerInfo: Map<string, { name: string }>;
+    };
+    const me = lobby.playerInfo.get("p_opaque_id_123")!;
+    expect(me.name).toBe("RECRUIT");
+    expect(me.name).not.toBe("p_opaque_id_123");
+    venue.dispose();
+  });
+
   test("attach spawns the chosen name; re-attach of a known player doesn't double-add", () => {
     const { venue } = makeVenue(0);
     const ws = makeFakeWs("p_named", "VERA");

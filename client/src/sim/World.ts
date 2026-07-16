@@ -91,6 +91,7 @@ import type {
   SimEvent,
   StepResult,
   Vec2,
+  WorldMode,
   WorldState,
 } from "./types.js";
 
@@ -154,6 +155,13 @@ export type WorldRuntime = {
   nextEntityId: number;
   /** Cached map (platforms etc.) for the current match. */
   map: MapDefinition;
+  /**
+   * `'combat'` (default) or `'hangout'` (graceful-gliding-flame plan A1).
+   * Host/client-local — deliberately NOT part of `WorldState`, so it needs
+   * no wire-protocol/delta-snapshot change. See `stepWithRuntime` for the
+   * gating this drives.
+   */
+  mode: WorldMode;
   /** Pre-computed collision cache — spatial grid + one-way flags. Built
    *  once at runtime creation and reused for the match lifetime.
    *  Always populated by createRuntime (post-H2; the brute-force fallback
@@ -217,12 +225,13 @@ function computeCeilingClampY(map: MapDefinition): number | null {
   return bottom;
 }
 
-export function createRuntime(map: MapDefinition): WorldRuntime {
+export function createRuntime(map: MapDefinition, mode: WorldMode = "combat"): WorldRuntime {
   const runtime: WorldRuntime = {
     prevKeys: new Map(),
     movement: new Map(),
     nextEntityId: 1,
     map,
+    mode,
     // Always build a cache, even for stub maps. An empty cache (no
     // platforms) is fine — the swept resolve gracefully reports "no hit"
     // and the player falls into the void. The previous `undefined`
@@ -290,6 +299,12 @@ export class World {
     players: PlayerSpawnInfo[],
     rngSeed: number,
     chaosModifierIds?: readonly string[],
+    // Hangout mode (graceful-gliding-flame plan A1): players should be
+    // moving from tick 0, not frozen through a combat countdown that never
+    // resolves (stepWithRuntime never runs the round machine in hangout
+    // mode — see the `hangoutMode` branch there). Purely additive: omitted
+    // / `"combat"` keeps today's `countdown` start unchanged.
+    mode: WorldMode = "combat",
   ): WorldState {
     let nextEntityId: EntityId = EntityId(1);
     const playerEntities: WorldState["players"] = {};
@@ -377,8 +392,11 @@ export class World {
       pickups,
       satellites: {},
       round: {
-        phase: "countdown",
-        countdownRemainingMs: 3000,
+        // Hangout mode starts already `"fighting"` — the round machine
+        // never steps in this mode (stepWithRuntime's hangoutMode branch),
+        // so there's no countdown/drafting phase to transition out of.
+        phase: mode === "hangout" ? "fighting" : "countdown",
+        countdownRemainingMs: mode === "hangout" ? 0 : 3000,
         scores,
         roundIndex: 0,
         winnerPlayerId: null,
@@ -434,7 +452,13 @@ export function stepWithRuntime(
   dtMs: number,
 ): StepResult {
   const events: SimEvent[] = [];
-  const fightingPhase = state.round.phase === "fighting";
+  // Hangout mode (graceful-gliding-flame plan A1): pinned "fighting" so
+  // stepPlayer runs every tick regardless of round.phase — World.create
+  // already starts hangout matches at "fighting" and the round-step branch
+  // below never transitions away from it, but this OR keeps movement alive
+  // even if something upstream ever left round.phase stale for this mode.
+  const hangoutMode = runtime.mode === "hangout";
+  const fightingPhase = hangoutMode || state.round.phase === "fighting";
   // Drafting phase = rogue-lite card pick interlude between rounds. Players
   // freeze, projectiles stop integrating (so a shard still in flight as the
   // round ended doesn't drift across the picker UI), and pickup logic is
@@ -550,7 +574,19 @@ export function stepWithRuntime(
       );
     }
 
-    // Fire (only when alive and fighting).
+    // Fire (only when alive and fighting). Hangout mode: single choke
+    // point that no-ops stepWeapon entirely — no cards are ever granted
+    // there either (no drafting phase), so this plus the round-step skip
+    // below is sufficient to keep 7 of the 8 damage sites in this file
+    // (bash, burn, projectile hit, chain-lightning, destructible splash,
+    // fire-patch, storm) unreachable without touching them individually.
+    // The 8th (void kill-plane) is handled separately as a respawn-in-place
+    // safety net further down.
+    // Firing is LIVE in hangout mode as of the venue lobby's target dummies
+    // (venue-sprint2-goal S2.C) — player immunity is enforced at the damage
+    // sites instead: projectiles get zero player candidates (hit sweep),
+    // dash-bash/destructible-splash/fire-patch player damage are gated, and
+    // the storm was already hangout-gated. Destructibles remain hittable.
     if (nextEntity.alive && fightingPhase) {
       const fireResult = stepWeapon(
         nextEntity,
@@ -634,7 +670,10 @@ export function stepWithRuntime(
   //     two shields clashing cancels) + a hard knockback along the lunge, and
   //     the attacker's dash STOPS on impact (one bash per dash). Iterated over
   //     sorted ids for determinism (client + server agree).
-  if (fightingPhase) {
+  //     Hangout carve-out (venue-sprint2-goal S2.C): players are IMMUNE in
+  //     hangout mode — firing is live for the lobby's target dummies, but no
+  //     player-vs-player damage path may run.
+  if (fightingPhase && !hangoutMode) {
     const bashTick = Tick(state.tick + 1);
     const bashIds = sortedPlayerIdsForTick;
     for (const aid of bashIds) {
@@ -764,6 +803,17 @@ export function stepWithRuntime(
       const fellSide =
         runtime.map.size.x > 0 && (p.x < killMinX || p.x > killMaxX);
       if (!fellDown && !fellSide) continue;
+      if (hangoutMode) {
+        // No combat/death concept in hangout — the void plane is a generic
+        // safety net (plan A1), so a fall is a silent respawn-in-place
+        // rather than a kill. `assignSpawnPoints` with a single id is
+        // deterministic (always the map's first spawn point — no
+        // "already placed" competitors to spread away from).
+        const spawnAssignment = assignSpawnPoints(runtime.map, [pid as string]);
+        const respawn = spawnAssignment.get(pid as string) ?? { x: p.x, y: p.y };
+        players[pid] = { ...p, x: respawn.x, y: respawn.y, vx: 0, vy: 0 };
+        continue;
+      }
       events.push({
         t: "hit-confirmed",
         victimId: pid,
@@ -911,8 +961,13 @@ export function stepWithRuntime(
   // rngState changes between iterations), sharing the tick's sorted ids
   // and the prebuilt hit-sweep AABBs (positions are stable for the whole
   // pass — movement and bash already ran; aliveness is re-read live).
+  // Hangout carve-out (S2.C): projectiles get ZERO player hit candidates —
+  // they pass straight through avatars (ghosts) and only ever connect with
+  // destructibles/platforms. The empty candidate list makes every
+  // projectile-vs-player damage path structurally unreachable in the lobby.
+  const projectilePlayerIds = hangoutMode ? [] : sortedPlayerIdsForTick;
   if (runtime.scratchHitSweep) {
-    fillHitSweepScratch(runtime.scratchHitSweep, players, sortedPlayerIdsForTick);
+    fillHitSweepScratch(runtime.scratchHitSweep, players, projectilePlayerIds);
   }
   const projCtx = {
     platforms: runtime.map.platforms,
@@ -921,7 +976,7 @@ export function stepWithRuntime(
     tick: nextTick,
     rngState,
     collisionCache: runtime.collisionCache,
-    sortedPlayerIds: sortedPlayerIdsForTick,
+    sortedPlayerIds: projectilePlayerIds,
     hitScratch: runtime.scratchHitSweep,
   };
 
@@ -941,7 +996,11 @@ export function stepWithRuntime(
         // post-chaos number too.
         const scaledDamage = ev.damage * chaosProfile.damageMultiplier;
         ev.damage = scaledDamage;
-        if (victim.alive) {
+        // Belt-and-braces for the hangout player-immunity carve-out: the
+        // empty candidate list above already makes this unreachable, but a
+        // future projectile source that bypasses the hit sweep must not
+        // quietly reopen player damage in the lobby.
+        if (victim.alive && !hangoutMode) {
           // Run parry/shield mitigation BEFORE applying damage. Pass the live
           // projectile so the parry arc check has direction info; falls back to
           // null when the source projectile already despawned this tick.
@@ -1245,7 +1304,8 @@ export function stepWithRuntime(
     nextDestructibles = destResult.destructibles;
     projectilesAfterDestructibles = destResult.projectiles;
     for (const ev of destResult.events) {
-      if (ev.t === "hit-confirmed" && players[ev.victimId]) {
+      // Hangout player immunity (S2.C): dummies break, blasts never hurt.
+      if (ev.t === "hit-confirmed" && players[ev.victimId] && !hangoutMode) {
         const victim = players[ev.victimId]!;
         if (victim.alive) {
           const scaledDamage = ev.damage * chaosProfile.damageMultiplier;
@@ -1281,7 +1341,8 @@ export function stepWithRuntime(
     const fireResult = stepFirePatches(nextFirePatches, players, effDtMs);
     nextFirePatches = fireResult.firePatches;
     for (const ev of fireResult.events) {
-      if (ev.t === "hit-confirmed" && players[ev.victimId]) {
+      // Hangout player immunity (S2.C) — same carve-out as blasts above.
+      if (ev.t === "hit-confirmed" && players[ev.victimId] && !hangoutMode) {
         const victim = players[ev.victimId]!;
         if (victim.alive) {
           const scaledDamage = ev.damage * chaosProfile.damageMultiplier;
@@ -1316,7 +1377,11 @@ export function stepWithRuntime(
   //     DoT, no parry/shield mitigation. Uses `state.round`, not
   //     `roundStateForStep` (not computed yet at this point in the tick) —
   //     one-tick lag on a shrink that unfolds over seconds is imperceptible.
-  {
+  //     Hangout: skipped entirely — its trigger math reads
+  //     countdownRemainingMs as time-left-in-round, and hangout pins that
+  //     to 0 (no round machine), which reads as "final seconds" and turns
+  //     the soft endgame zone on permanently at full strength.
+  if (!hangoutMode) {
     const stormResult = stepSuddenDeathStorm(players, state.round, runtime.map.size, effDtMs);
     for (const ev of stormResult.events) {
       if (ev.t === "hit-confirmed" && players[ev.victimId]) {
@@ -1432,7 +1497,15 @@ export function stepWithRuntime(
   //    up a runtime orchestrator.
   const targetScore = resolveModeConfig(state.chaosModifierIds).targetScore;
   let roundResult;
-  if (runtime.orchestrator) {
+  if (hangoutMode) {
+    // Hangout mode never steps the round machine at all — no
+    // countdown/round-over/drafting transitions, ever (plan A1). Pass the
+    // (already-"fighting") round state straight through unchanged: no
+    // events, no score/rng mutation, no player patches (so no cards are
+    // ever granted). This is the single early-return the plan calls for —
+    // round.ts itself is untouched.
+    roundResult = { state: roundStateForStep, events: [], matchComplete: false };
+  } else if (runtime.orchestrator) {
     // Sync the orchestrator from the world state before stepping, so any
     // external mutations (server card picks) are reflected.
     runtime.orchestrator.syncFromWorld(state);
