@@ -44,6 +44,7 @@ import {
   type PlayerEntity,
   PlayerId,
   type SimEvent,
+  type VesselCosmetics,
   type WorldState,
 } from "../../sim";
 import {
@@ -58,6 +59,7 @@ import { computeBotInput } from "../../debug/botDriver";
 import { BOT_RIG_COLOR, botLabel, isBotId, playerTag } from "../ui/botIdentity";
 import { characters } from "../data/characters";
 import { ProceduralPlayerRig } from "../rendering/ProceduralPlayerRig";
+import { colorToNumber } from "../render/colorToNumber.js";
 import { ProceduralAudio } from "../systems/ProceduralAudio";
 import {
   CardDraftOverlay,
@@ -71,6 +73,7 @@ import { HudSystem, type HudChip, type HudVitals, type HudRound } from "../ui/Hu
 import { ActionBarSystem, type ActionBarVitals } from "../ui/ActionBarSystem";
 import { RoundBanner } from "../ui/RoundBanner";
 import { DeathOverlay } from "../ui/DeathOverlay";
+import { deathWaitCountdown } from "../ui/phaseCountdown";
 import { ConnectionOverlay } from "../ui/ConnectionOverlay";
 import { ParticlePool } from "../systems/ParticlePool";
 import { StatusVfxController } from "../systems/StatusVfxController";
@@ -85,6 +88,8 @@ import { SimEventRouter } from "../render/SimEventRouter";
 import { TouchControls } from "../input/TouchControls";
 import { isTouchPrimary, isPortraitMobile } from "../input/mobile";
 import { ActionIntensity } from "../systems/ActionIntensity.js";
+import { CameraHype } from "../systems/CameraHype.js";
+import { SlowMotion } from "../systems/SlowMotion.js";
 import { ActionCamera } from "../systems/ActionCamera.js";
 import { stickyEnvelopeSubjects } from "../systems/actionCameraMath.js";
 import { CameraJuice } from "../systems/CameraJuice.js";
@@ -357,6 +362,9 @@ export class OnlineMatchScene extends Phaser.Scene {
   private deathFxSoulCount = 0;
   /** playerId → chosen display name (ServerHello roster). */
   private readonly rosterNames = new Map<string, string>();
+  /** playerId → chosen Vessel Creator cosmetics (ServerHello roster). Same
+   *  population site as rosterNames — see onHello below. */
+  private readonly rosterCosmetics = new Map<string, VesselCosmetics>();
   private platformLayer: PlatformLayer | null = null;
   private lightBeams: LightBeamLayer | null = null;
   private cosmicArena: CosmicArenaLayer | null = null;
@@ -411,6 +419,19 @@ export class OnlineMatchScene extends Phaser.Scene {
   private actionCamera!: ActionCamera;
   private cameraJuice!: CameraJuice;
   private readonly actionIntensity = new ActionIntensity();
+  /** ~20s sustained-action build to the peak "dance mode" camera treatment.
+   *  Driven below by the local player rig's own "circle the mouse" dance
+   *  energy (ProceduralPlayerRig.getDanceState()) — the same gesture the
+   *  rig's own animation already responds to, not a separate detector. */
+  private readonly cameraHype = new CameraHype();
+  /** Edge-detects CameraHype.isPeak() so the acknowledgment flash fires
+   *  exactly once on entry, not every frame the peak state holds. */
+  private cameraHypePeakPrev = false;
+  /** Render-only bullet-time dip (see SlowMotion.ts) — not wired to any
+   *  trigger yet, just the per-frame input-cancel plumbing (any meaningful
+   *  key press ends it instantly). Call .trigger(scale, maxHoldMs) from
+   *  wherever a big moment should get it. */
+  private readonly slowMotion = new SlowMotion(this);
   /** Local-player movement-juice edge detection (landing/wall-jump/dash). */
   private prevLocalGrounded = true;
   private prevLocalWallDir = 0;
@@ -800,6 +821,8 @@ export class OnlineMatchScene extends Phaser.Scene {
     if (this.keys.dash.isDown || this.input.activePointer.rightButtonDown()) {
       keys |= InputBit.Dash;
     }
+    // Any real input ends a slow-motion dip instantly — see SlowMotion.ts.
+    this.slowMotion.update(keys);
 
     const pointer = this.input.activePointer;
     const cam = this.cameras.main;
@@ -905,6 +928,24 @@ export class OnlineMatchScene extends Phaser.Scene {
     this.updateLocalMovementJuice(state);
     this.actionIntensity.update(deltaMs);
     this.actionIntensity.dispatchToMusic(deltaMs);
+    // CameraHype's drive is the local player rig's OWN dance-energy read —
+    // reusing the exact "circle the mouse" gesture detector the rig's
+    // animation already computes, not a second implementation of it.
+    const localRig = this.playerRigs.get(this.localPlayerId as string);
+    this.cameraHype.update(deltaMs, localRig?.getDanceState().energy ?? 0);
+    if (localRig) localRig.externalHypeBoost = this.cameraHype.get();
+    // Peak treatment: per docs/ui-axioms.md's own doctrine ("almost total
+    // void, one point of light earning its keep, never ambient glow") a
+    // sustained screen-wide strobe would be a straight violation — the
+    // reward for a real 20s of sustained dancing is ONE quiet acknowledgment
+    // on the rising edge (a restrained Instrument-Ink-gold flash), not a
+    // repeating effect. The sustained part of the payoff already lives in
+    // the rig's own light (externalHypeBoost feeding danceGlowBoost, above).
+    const hypePeakNow = this.cameraHype.isPeak();
+    if (hypePeakNow && !this.cameraHypePeakPrev) {
+      this.cameras.main.flash(180, 0x89, 0x7f, 0x69, false);
+    }
+    this.cameraHypePeakPrev = hypePeakNow;
     this.updateEnvironmentReactivity();
 
     if (this.statusVfx) {
@@ -1091,7 +1132,10 @@ export class OnlineMatchScene extends Phaser.Scene {
           });
         }
         const riteDone = performance.now() - this.localDeathAtMs >= 3_000;
-        const remainingSec = Math.max(0, Math.ceil(state.round.countdownRemainingMs / 1000));
+        // Phase-honest wait: one "NEXT BELL" estimate of when the player
+        // actually fights again, instead of the raw round clock silently
+        // re-meaning itself across phases (venue-goal Pillar 0.2).
+        const wait = deathWaitCountdown(state.round.phase, state.round.countdownRemainingMs);
         // RoundBanner explicitly hides itself during "fighting" phase (the
         // exact window this overlay is up), and this overlay's own
         // full-viewport blur darkens the peripheral nameplate column behind
@@ -1106,13 +1150,13 @@ export class OnlineMatchScene extends Phaser.Scene {
           })
           .join("  ·  ");
         if (this.deathOverlay.isOpen()) {
-          this.deathOverlay.updateTimer(remainingSec);
+          this.deathOverlay.updateTimer(wait);
           this.deathOverlay.updateScoreLine(scoreLine);
         } else if (riteDone) {
           if (this.deathTipLocked === undefined) {
             this.deathTipLocked = this.computeDeathTip(state);
           }
-          this.deathOverlay.show(remainingSec, {
+          this.deathOverlay.show(wait, {
             tip: this.deathTipLocked,
             shareUrl: this.lastShareClipUrl,
             scoreLine,
@@ -1283,7 +1327,10 @@ export class OnlineMatchScene extends Phaser.Scene {
         },
         onHello: (hello) => {
           // Roster names (chosen at the splash) drive plates + scoreboard.
-          for (const p of hello.allPlayers) this.rosterNames.set(p.playerId, p.name);
+          for (const p of hello.allPlayers) {
+            this.rosterNames.set(p.playerId, p.name);
+            if (p.cosmetics) this.rosterCosmetics.set(p.playerId, p.cosmetics);
+          }
           // Server told us which map this match runs on. Render its
           // geometry now so the player isn't dropped into a black void
           // before the first snapshot.
@@ -1405,7 +1452,7 @@ export class OnlineMatchScene extends Phaser.Scene {
         audio: this.audio,
         localPlayerId: this.localPlayerId,
         safeShake: (durationMs, intensity) => this.safeShake(durationMs, intensity),
-        spawnDamageNumber: (vid, dmg) => this.spawnDamageNumber(vid, dmg),
+        spawnDamageNumber: (vid, dmg, headshot) => this.spawnDamageNumber(vid, dmg, headshot),
         spawnBlastAtPlayer: (pid, r, d) => this.spawnBlastAtPlayer(pid, r, d),
         killCinematic: (vid) => this.killCinematic(vid),
         shotAudioParams: (pid) => this.resolveShotAudioParams(pid),
@@ -1472,7 +1519,7 @@ export class OnlineMatchScene extends Phaser.Scene {
     });
   }
 
-  private spawnDamageNumber(victimId: string, damage: number) {
+  private spawnDamageNumber(victimId: string, damage: number, headshot = false) {
     const state = this.loop?.getRenderState();
     if (!state) return;
     const victim = state.players[PlayerId(victimId)];
@@ -1486,11 +1533,18 @@ export class OnlineMatchScene extends Phaser.Scene {
     const isMedium = damage >= 15;
     const fontSize = isHeavy ? "22px" : isMedium ? "17px" : "13px";
     // Overshoot scale: punch in at 1.4× then settle to 1.0 (Nijman's "tweened spawning").
-    const spawnScale = isHeavy ? 1.6 : isMedium ? 1.35 : 1.2;
-    const color = isLocal ? "#fb7185" : isHeavy ? "#ffffff" : "#fff7d6";
+    // Headshot reads a notch bigger than a same-tier body shot — the slight
+    // damage boon (player.ts's HEADSHOT_DAMAGE_MULTIPLIER) should also FEEL
+    // distinct, not just tally differently.
+    const spawnScale = (isHeavy ? 1.6 : isMedium ? 1.35 : 1.2) * (headshot ? 1.15 : 1);
+    // Headshot: Instrument Ink gold (PALETTE.hullGold) — the game's own
+    // established "something special" accent (kill-pulse, share-page
+    // highlights), not a new colour invented for this one case.
+    const color = headshot ? "#897f69" : isLocal ? "#fb7185" : isHeavy ? "#ffffff" : "#fff7d6";
+    const label = headshot ? `${Math.round(damage)} HEADSHOT` : Math.round(damage).toString();
 
     const text = this.add
-      .text(victim.x + spread, victim.y - 36, Math.round(damage).toString(), {
+      .text(victim.x + spread, victim.y - 36, label, {
         color,
         fontFamily: "'Space Grotesk', Inter, Arial, sans-serif",
         fontSize,
@@ -1595,11 +1649,13 @@ export class OnlineMatchScene extends Phaser.Scene {
     const cam = this.cameras.main;
     // Brief warm flash — sells the "everything pops" beat over the hit-stop.
     cam.flash(90, 255, 240, 200, false);
-    // Zoom-punch: snap in ~4% then ease back.
-    this.cameraJuice.punchZoom(cam.zoom * 0.04, 70, 200);
     // Additive bloom pop at the victim.
     const state = this.loop?.getRenderState();
     const victim = state?.players[PlayerId(victimId)];
+    // Zoom-punch: snap in ~4% then ease back, biased toward the actual
+    // point of impact (the victim) rather than only ever punching in on
+    // wherever the local player's own camera already happened to be.
+    this.cameraJuice.punchZoom(cam.zoom * 0.04, 70, 200, victim?.x, victim?.y);
     const pool = this.particlePool;
     if (victim && pool) {
       const glow = pool.acquireGlow();
@@ -2045,6 +2101,12 @@ export class OnlineMatchScene extends Phaser.Scene {
       ? rigOverride
       : getEffectiveRigStyle();
     const RigClass = rigStyle === "baked" ? BakedPlayerRig : ProceduralPlayerRig;
+    // Real per-player cosmetics from the hello roster (Vessel Creator,
+    // docs/vessel-creator-design.md) — bots never have any. A player who
+    // never opened the creator has every channel undefined here, which
+    // reproduces the exact pre-cosmetics look (see the per-field fallbacks
+    // below), so this is zero-regression for the common case.
+    const cosmetics = bot ? undefined : this.rosterCosmetics.get(player.id);
     return new RigClass(this, {
       // Bots render VIOLET with a "BOT · NAME" plate — unmistakable next
       // to the teal local / crimson remote rigs and the ochre terrain.
@@ -2053,24 +2115,18 @@ export class OnlineMatchScene extends Phaser.Scene {
         : isLocal
           ? LOCAL_PLAYER_FALLBACK_COLOR
           : REMOTE_PLAYER_FALLBACK_COLOR,
-      // Local hero: gold seam instead of the default crystal cyan.
-      accentColor: isLocal ? 0xffd166 : undefined,
-      // TEMPORARY proof-of-concept for the Vessel Creator channel split
-      // (docs/vessel-creator-design.md) — local hero only, so there's
-      // something real on screen to look at while no creator UI exists
-      // yet. Three genuinely distinct hues (not just accentColor repeated)
-      // to prove visor/palm/joint are independently controllable: warm
-      // white-gold visor (matches the existing "aperture, not eyes"
-      // brightness), coral palm (loud on purpose — it's the highest-
-      // frequency-seen channel, visible on every shot), violet joint
-      // (ties to the already-documented "future void" cosmetic tier).
-      // Aura stays on the existing gold accentColor. Remove this block (or
-      // replace it with real per-player equipped-cosmetic data) once the
-      // actual creator/selection UI lands — this is a demo preset, not a
-      // design decision.
-      visorColor: isLocal ? 0xfff7d6 : undefined,
-      palmColor: isLocal ? 0xff6b4a : undefined,
-      jointColor: isLocal ? 0xa78bfa : undefined,
+      // Local hero keeps its gold-seam default unless the player picked
+      // their own hull tone; remote/bot accent stays unset (rig default)
+      // unless that player picked one.
+      accentColor: cosmetics?.accentColor
+        ? colorToNumber(cosmetics.accentColor)
+        : isLocal
+          ? 0xffd166
+          : undefined,
+      visorColor: cosmetics?.visorColor ? colorToNumber(cosmetics.visorColor) : undefined,
+      palmColor: cosmetics?.palmColor ? colorToNumber(cosmetics.palmColor) : undefined,
+      jointColor: cosmetics?.jointColor ? colorToNumber(cosmetics.jointColor) : undefined,
+      auraColor: cosmetics?.auraColor ? colorToNumber(cosmetics.auraColor) : undefined,
       // Chosen name from the hello roster; id-suffix fallback. The old
       // "/ Balanced" archetype suffix was dev noise (Jake, 2026-07-11).
       name: bot ? botLabel(player.id) : (this.rosterNames.get(player.id) ?? player.id.slice(-4)),
@@ -2338,6 +2394,9 @@ export class OnlineMatchScene extends Phaser.Scene {
       aimY: anchor.aimY,
       extra: extra.slice(0, 3).map(({ x, y }) => ({ x, y })),
       yBias,
+      hype: this.cameraHype.get(),
+      peak: this.cameraHype.isPeak(),
+      beatPulse: getMusicLevel().beat,
     });
   }
 
@@ -2605,49 +2664,21 @@ export class OnlineMatchScene extends Phaser.Scene {
       return;
     }
     this.highlightTracker = new HighlightTracker();
-    // Each trigger produces TWO uploads (vertical + original). Pair them
-    // for one toast; if partner never lands, toast whatever arrived.
-    let pairId = `pair_${Date.now()}`;
-    let pendingVertical: string | null = null;
-    let pendingOriginal: string | null = null;
-    let pairTimer: ReturnType<typeof setTimeout> | null = null;
-    const flushPair = () => {
-      if (pairTimer !== null) clearTimeout(pairTimer);
-      pairTimer = null;
-      const vertical = pendingVertical;
-      const original = pendingOriginal;
-      pendingVertical = null;
-      pendingOriginal = null;
-      if (vertical) {
-        if (!original) this.lastShareClipUrl = vertical;
-        emitClipUploaded({
-          url: vertical,
-          kind: "vertical",
-          pairId,
-          label: "Highlight",
-        });
-      }
-      if (original) {
-        // Full-res original is the primary share asset (the share page
-        // now presents the mp4 as the main event); vertical = Stories cut.
-        this.lastShareClipUrl = original;
-        emitClipUploaded({
-          url: original,
-          kind: "original",
-          pairId,
-          label: "Highlight",
-        });
-      }
-      pairId = `pair_${Date.now()}`;
-    };
+    // One upload per trigger — native landscape only, no vertical crop
+    // (2026-07-15: dropped the 9:16 transcode, it was cutting real action
+    // out of frame). Used to pair a vertical+original upload for one toast;
+    // nothing to pair anymore, just toast on arrival.
     this.clipRecorder = new ClipRecorder(this.game.canvas, {
       getFocus: () => this.clipFocusScreenPos(),
       onUploaded: (url, kind) => {
         console.log(`[clips] uploaded (${kind}): ${url}`);
-        if (kind === "vertical") pendingVertical = url;
-        else pendingOriginal = url;
-        if (pendingVertical && pendingOriginal) flushPair();
-        else if (pairTimer === null) pairTimer = setTimeout(flushPair, 5_000);
+        this.lastShareClipUrl = url;
+        emitClipUploaded({
+          url,
+          kind,
+          pairId: `clip_${Date.now()}`,
+          label: "Highlight",
+        });
       },
       onError: (err) => console.warn("[clips] capture/upload failed:", err),
     });

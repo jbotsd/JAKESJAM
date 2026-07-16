@@ -38,10 +38,20 @@ export type DeathOverlayShowOpts = {
   scoreLine?: string | null;
 };
 
+/** What the big number means right now — label + whether it's an upper-bound
+ *  estimate (rendered with a "~"). See phaseCountdown.ts for the semantics;
+ *  omitting a label keeps the bare-number rendering (practice/tutorial). */
+export type DeathTimer = {
+  seconds: number;
+  label?: string;
+  approx?: boolean;
+};
+
 export class DeathOverlay {
   private root: HTMLDivElement;
   private stage: HTMLDivElement;
   private timerEl: HTMLSpanElement;
+  private timerLabelEl: HTMLDivElement;
   private tipEl: HTMLDivElement;
   private scoreEl: HTMLDivElement;
   private shareBtn: HTMLButtonElement;
@@ -49,12 +59,14 @@ export class DeathOverlay {
 
   /**
    * `title`/`subtitle` default to the online-match copy ("ELIMINATED" /
-   * "Respawning next round") — combat-coded language that assumes an
-   * opponent and a round. Practice mode (no enemies, no round/match wrapper
-   * — docs/practice-zone-goal.md item 3) passes its own copy so a solo fall
-   * doesn't read as being killed by someone.
+   * "Back in at the next bell") — combat-coded language that assumes an
+   * opponent and a round; "the bell" is the venue vocabulary for the round
+   * boundary where fighters re-enter (docs/venue-design.md §3). Practice
+   * mode (no enemies, no round/match wrapper — docs/practice-zone-goal.md
+   * item 3) passes its own copy so a solo fall doesn't read as being
+   * killed by someone.
    */
-  constructor(title = "ELIMINATED", subtitle = "Respawning next round") {
+  constructor(title = "ELIMINATED", subtitle = "Back in at the next bell") {
     this.root = document.createElement("div");
     this.root.dataset.deathOverlay = "true";
     Object.assign(this.root.style, ROOT_STYLE);
@@ -79,6 +91,10 @@ export class DeathOverlay {
     sub.textContent = subtitle;
     Object.assign(sub.style, SUB_STYLE);
 
+    this.timerLabelEl = document.createElement("div");
+    Object.assign(this.timerLabelEl.style, TIMER_LABEL_STYLE);
+    this.timerLabelEl.hidden = true;
+
     this.timerEl = document.createElement("span");
     this.timerEl.textContent = "3";
     Object.assign(this.timerEl.style, TIMER_STYLE);
@@ -98,16 +114,16 @@ export class DeathOverlay {
     this.shareBtn.hidden = true;
     this.shareBtn.style.pointerEvents = "auto";
 
-    this.stage.append(seal, titleEl, sub, this.timerEl, this.scoreEl, this.tipEl, this.shareBtn);
+    this.stage.append(seal, titleEl, sub, this.timerLabelEl, this.timerEl, this.scoreEl, this.tipEl, this.shareBtn);
     this.root.appendChild(this.stage);
 
     document.body.appendChild(this.root);
     this.root.style.display = "none";
   }
 
-  show(remainingSec: number, opts: DeathOverlayShowOpts = {}): void {
+  show(timer: number | DeathTimer, opts: DeathOverlayShowOpts = {}): void {
     if (this.destroyed) return;
-    this.timerEl.textContent = remainingSec.toString();
+    this.applyTimer(timer);
     const tip = opts.tip?.trim() || "";
     this.tipEl.textContent = tip;
     this.tipEl.hidden = !tip;
@@ -150,9 +166,20 @@ export class DeathOverlay {
     });
   }
 
-  updateTimer(remainingSec: number): void {
+  updateTimer(timer: number | DeathTimer): void {
     if (this.destroyed) return;
-    this.timerEl.textContent = remainingSec.toString();
+    this.applyTimer(timer);
+  }
+
+  /** Bare number (legacy practice/tutorial callers) or the labeled,
+   *  honesty-aware shape from phaseCountdown.ts — "~" marks upper-bound
+   *  estimates so the number never asserts precision it doesn't have. */
+  private applyTimer(timer: number | DeathTimer): void {
+    const t: DeathTimer = typeof timer === "number" ? { seconds: timer } : timer;
+    this.timerEl.textContent = `${t.approx ? "~" : ""}${t.seconds}`;
+    const label = t.label?.trim() || "";
+    if (this.timerLabelEl.textContent !== label) this.timerLabelEl.textContent = label;
+    this.timerLabelEl.hidden = !label;
   }
 
   /** Score can change (another player scores) while this stays open for the
@@ -254,6 +281,17 @@ const TIMER_STYLE: Partial<CSSStyleDeclaration> = {
   lineHeight: "1.1",
   textShadow: "0 0 18px rgba(255, 247, 214, 0.35)",
   marginTop: "4px",
+};
+/** Caption over the big number ("NEXT BELL") — same quiet-mono voice as the
+ *  subtitle so the number + caption read as one instrument. */
+const TIMER_LABEL_STYLE: Partial<CSSStyleDeclaration> = {
+  fontFamily: "'Space Mono', 'Courier New', monospace",
+  fontSize: "10px",
+  fontWeight: "700",
+  letterSpacing: "0.14em",
+  color: "#7a8299",
+  textTransform: "uppercase",
+  marginTop: "10px",
 };
 
 const SCORE_STYLE: Partial<CSSStyleDeclaration> = {

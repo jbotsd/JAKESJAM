@@ -22,6 +22,7 @@ import type { CharacterDefinition } from "../types/game.js";
 import { HudSystem, type HudChip, type HudVitals, type HudRound } from "./HudSystem.js";
 import { RoundBanner } from "./RoundBanner.js";
 import { DeathOverlay } from "./DeathOverlay.js";
+import { deathWaitCountdown } from "./phaseCountdown.js";
 import { CardDraftOverlay } from "./CardDraftOverlay.js";
 import {
   MatchResultsOverlay,
@@ -218,20 +219,18 @@ export class HudCompositor {
       return;
     }
 
-    // Show countdown based on round phase. During fighting the respawn is
-    // "end of round"; report seconds remaining in the fighting timer.
-    const remainingSec = Math.max(
-      0,
-      Math.ceil(state.round.countdownRemainingMs / 1000),
-    );
+    // Phase-honest wait (venue-goal Pillar 0.2): one "NEXT BELL" estimate
+    // of when the player fights again, not the raw phase clock silently
+    // re-meaning itself across fighting/round-over/drafting.
+    const wait = deathWaitCountdown(state.round.phase, state.round.countdownRemainingMs);
     if (this.deathOverlay.isOpen()) {
-      this.deathOverlay.updateTimer(remainingSec);
+      this.deathOverlay.updateTimer(wait);
     } else {
       if (this.deathTipLocked === undefined) {
         const signal = this.callbacks.getDeathTipSignal?.() ?? null;
         this.deathTipLocked = pickDeathTip(signal);
       }
-      this.deathOverlay.show(remainingSec, {
+      this.deathOverlay.show(wait, {
         tip: this.deathTipLocked,
         shareUrl: globalClipSession.primaryShareUrl(),
       });
