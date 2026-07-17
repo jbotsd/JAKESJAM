@@ -11,10 +11,13 @@
 // row ABOVE the bar — capped and prioritized from day one, since D4 players
 // have filed live complaints about that row hiding stacks when uncapped.
 //
-// JAKESJAM today has exactly two hotkeyable actions (Fire/M1, Dash/M2) —
-// the other four slots render RESERVED (dim outline, no glyph) rather than
-// being omitted, so the bar is already sized for the ability count Jake
-// expects the card system to grow into, instead of a redesign later.
+// Slot layout: Fire/M1, Dash/M2, then the EMISSION (E — the Emission
+// Engine's composed cast, docs/emission-engine-goal.md; its diamond fills
+// with abilityCharge and shows the point-of-light at full), then acquired
+// card-granted capabilities claiming the remaining diamonds in hand order
+// (acquiredAbilities.ts). Any still-unclaimed slots render RESERVED (dim
+// outline) — the bar was pre-sized for the ability count Jake expects the
+// card system to grow into, instead of a redesign later.
 //
 // Visual language matches the rest of the HUD, not a new style: chamfered
 // "crystal-cut" diamonds (docs/asset-prompts/02-hud-chrome.md, "Ability
@@ -27,6 +30,17 @@ import { uiWidth, uiHeight } from "../render/renderResolution.js";
 import { PALETTE } from "./palette.js";
 import { drawFacetedRing, healthRingColor } from "../render/facetedRing.js";
 import type { HudChip } from "./HudSystem.js";
+import type { AcquiredAbility, AcquiredAbilityKind } from "./acquiredAbilities.js";
+
+/** One drafted-active slot (six-axes-goal.md Layer 2): keys 1..4 in pick
+ *  order. readyFrac drives the cooldown sweep (0 = just used → 1 = ready);
+ *  windowFrac > 0 means the effect window is live (Tithe's crimson beat). */
+export type ActiveSlotVital = {
+  kind: string;
+  keyLabel: string;
+  readyFrac: number;
+  windowFrac: number;
+};
 
 export type ActionBarVitals = {
   health: number;
@@ -35,6 +49,19 @@ export type ActionBarVitals = {
   shieldMaxCharge: number;
   /** 0-1, dash-bash readiness (0 = just used, 1 = ready) — drives the M2 slot's ring. */
   dashReadyFrac: number;
+  /** 0-1, Emission charge (abilityCharge / EMISSION_CHARGE_MAX — the
+   *  Emission Engine meter, docs/emission-engine-goal.md). P0: the slot
+   *  fills and pulses at full; the cast input ships in P1. */
+  emissionChargeFrac: number;
+  /** Drafted actives in pick order — claim the diamonds right after the
+   *  Emission slot, keyed 1..4 (six-axes Layer 2). */
+  actives: ActiveSlotVital[];
+  /** Card-granted capabilities in acquisition order (acquiredAbilities.ts)
+   *  — fill the remaining diamonds after the actives. */
+  acquired: AcquiredAbility[];
+  /** Live banked Stolen Fangs lock charges (player.pendingLockCharges) —
+   *  drives that slot's ready ring when the fangs are acquired. */
+  stolenFangsCharges: number;
   isDead: boolean;
 };
 
@@ -87,6 +114,13 @@ export class ActionBarSystem {
   private slotKeyLabels: Phaser.GameObjects.Text[] = [];
 
   private compact = false;
+  /** First-seen wall-clock per acquired kind — drives the acquisition
+   *  pop-in (render-only; cleared when a kind leaves the build). */
+  private readonly acquiredFirstSeenMs = new Map<AcquiredAbilityKind, number>();
+  /** Presentation-side cooldown animator state, keyed per slot (see
+   *  animateFrac) — display value + event timestamps, render-only. */
+  private readonly slotAnim = new Map<string, { display: number; usedAtMs: number; readyAtMs: number }>();
+  private lastAnimMs = 0;
   // Resolved sizes (compact vs full) — set once in build() from viewport
   // width, same convention as HudSystem's nameplateR.
   private orbR = ORB_R;
@@ -140,11 +174,15 @@ export class ActionBarSystem {
       .setDepth(depth + 2);
 
     for (let i = 0; i < SLOT_COUNT; i++) {
+      // Slot order: live slots, then the Emission (E — cast ships P1,
+      // docs/emission-engine-goal.md), then reserved dashes.
+      const labelText =
+        i < LIVE_SLOTS.length ? LIVE_SLOTS[i]!.keyLabel : i === LIVE_SLOTS.length ? "E" : "—";
       const label = s.add
-        .text(0, 0, i < LIVE_SLOTS.length ? LIVE_SLOTS[i]!.keyLabel : "—", {
+        .text(0, 0, labelText, {
           ...fontBase,
           fontSize: this.compact ? "7px" : "8px",
-          color: i < LIVE_SLOTS.length ? "#8ff8ff" : "#4b5568",
+          color: i <= LIVE_SLOTS.length ? "#8ff8ff" : "#4b5568",
         })
         .setOrigin(0.5, 0)
         .setScrollFactor(0)
@@ -230,10 +268,56 @@ export class ActionBarSystem {
     // dead, ALL live slots render disabled — the bar shouldn't keep reading
     // "ready to fire" when the input is actually inert (caught in a UI pass,
     // 2026-07-14: the bar only dimmed the HP orb, never the abilities). ──
+    // Track acquisition pop-ins (render-only wall clock): a kind seen for
+    // the first time this match gets a ~260ms scale-in + flash ring; kinds
+    // that left the set (match reset / new hand) drop their timestamps so
+    // a re-acquisition pops again.
+    const nowMs = this.scene.time.now;
+    const animDtMs = this.lastAnimMs === 0 ? 16.7 : Math.min(100, nowMs - this.lastAnimMs);
+    this.lastAnimMs = nowMs;
+    const liveKinds = new Set(vitals.acquired.map((a) => a.kind));
+    for (const kind of [...this.acquiredFirstSeenMs.keys()]) {
+      if (!liveKinds.has(kind)) this.acquiredFirstSeenMs.delete(kind);
+    }
+    for (const a of vitals.acquired) {
+      if (!this.acquiredFirstSeenMs.has(a.kind)) {
+        this.acquiredFirstSeenMs.set(a.kind, nowMs);
+      }
+    }
+
     for (let i = 0; i < SLOT_COUNT; i++) {
       const sx = rowLeft + this.slotR + i * (this.slotR * 2 + this.slotGap);
       const live = LIVE_SLOTS[i];
       if (!live) {
+        // Slot layout after the live pair (six-axes Layer 2):
+        // [Emission][actives 1..4…][acquired passives…][reserved…].
+        // The Emission meter fills with charge (Emission Engine P0/P1);
+        // drafted ACTIVES claim the next diamonds in pick order (keys 1-4,
+        // cooldown sweep); acquired passive capabilities take what's left.
+        if (i === LIVE_SLOTS.length) {
+          // Emission is a charge meter, but the same animator applies: the
+          // cast slams it to empty (use-pop), hits stair-step it up
+          // (smoothed), full stamps the ready-ping.
+          const em = this.animateFrac("emission", vitals.emissionChargeFrac, nowMs, animDtMs);
+          this.drawEmissionSlot(g, sx, barY, this.slotR, em.frac, vitals.isDead);
+          if (!vitals.isDead) this.drawSlotBeats(g, sx, barY, this.slotR, em.usePop, em.readyPing);
+          continue;
+        }
+        const postEmission = i - LIVE_SLOTS.length - 1;
+        const activeSlot = vitals.actives[postEmission];
+        if (activeSlot) {
+          const anim = this.animateFrac(`active:${activeSlot.keyLabel}`, activeSlot.readyFrac, nowMs, animDtMs);
+          this.drawActiveSlot(g, sx, barY, this.slotR, { ...activeSlot, readyFrac: anim.frac }, vitals.isDead);
+          if (!vitals.isDead) this.drawSlotBeats(g, sx, barY, this.slotR, anim.usePop, anim.readyPing);
+          continue;
+        }
+        const acquired = vitals.acquired[postEmission - vitals.actives.length];
+        if (acquired) {
+          const firstSeen = this.acquiredFirstSeenMs.get(acquired.kind) ?? nowMs;
+          const popT = Phaser.Math.Clamp((nowMs - firstSeen) / 260, 0, 1);
+          this.drawAcquiredSlot(g, sx, barY, this.slotR, acquired, vitals, popT);
+          continue;
+        }
         this.drawReservedSlot(g, sx, barY, this.slotR);
         continue;
       }
@@ -241,8 +325,42 @@ export class ActionBarSystem {
         this.drawDisabledSlot(g, sx, barY, this.slotR, live.glyph);
         continue;
       }
-      const ready = live.glyph === "dash" ? vitals.dashReadyFrac : 1;
-      this.drawLiveSlot(g, sx, barY, this.slotR, ready, live.glyph);
+      if (live.glyph === "dash") {
+        const anim = this.animateFrac("dash", vitals.dashReadyFrac, nowMs, animDtMs);
+        this.drawLiveSlot(g, sx, barY, this.slotR, anim.frac, live.glyph);
+        this.drawSlotBeats(g, sx, barY, this.slotR, anim.usePop, anim.readyPing);
+      } else {
+        this.drawLiveSlot(g, sx, barY, this.slotR, 1, live.glyph);
+      }
+    }
+
+    // Key-label row: active slots show their HOTKEY (1-4 — they're
+    // pressable); acquired passives show stack count (×N) — a count is
+    // the honest label for a capability with no key.
+    for (let i = LIVE_SLOTS.length + 1; i < SLOT_COUNT; i++) {
+      const postEmission = i - LIVE_SLOTS.length - 1;
+      const label = this.slotKeyLabels[i];
+      if (!label) continue;
+      const activeSlot = vitals.actives[postEmission];
+      if (activeSlot) {
+        label.setText(activeSlot.keyLabel);
+        label.setColor(activeSlot.readyFrac >= 1 ? "#8ff8ff" : "#4b5568");
+        continue;
+      }
+      const acquired = vitals.acquired[postEmission - vitals.actives.length];
+      if (acquired) {
+        // Passives are ALWAYS-ON card capabilities, not unbound hotkeys —
+        // "•" read as a missing shortcut (Jake, mid-playtest 2026-07-17).
+        // "on" is state language; stacks show their count. Dimmer than the
+        // hotkey labels so only pressable slots carry key-bright text.
+        label.setText(
+          acquired.count !== undefined && acquired.count > 1 ? `×${acquired.count}` : "on",
+        );
+        label.setColor("#5f7ba6");
+      } else {
+        label.setText("—");
+        label.setColor("#4b5568");
+      }
     }
 
     // ── Buff/debuff row above the bar — capped + priority-ordered (D4's
@@ -258,6 +376,78 @@ export class ActionBarSystem {
         this.drawBuffTick(g, tx, ty, tickR, chip);
         tx += tickR * 2 + tickGap;
       }
+    }
+  }
+
+  /**
+   * Presentation-side cooldown animator (Jake, 2026-07-17: cooldowns "don't
+   * smoothly count down… very jitter"). The raw frac reaches the bar on
+   * whatever cadence the state pipeline produces — 30Hz snapshot staircases,
+   * wire quantization, and brief reconcile regressions all render as jitter
+   * if drawn raw. The DISPLAY value is what gets drawn:
+   *
+   *   - smoothed toward the target (~90ms exponential), so staircases ramp;
+   *   - MONOTONE while recovering — small regressions are absorbed entirely
+   *     (a reconcile that walks the frac back 5% must not wiggle the ring);
+   *   - a real use (target slams low) snaps down instantly and stamps the
+   *     USE-POP (the "hit" moment must punch, never ease);
+   *   - reaching full stamps the READY-PING (one clear "it's back" beat).
+   *
+   * Returns the display frac plus 1→0 decay envelopes for both events.
+   */
+  private animateFrac(
+    key: string,
+    target: number,
+    nowMs: number,
+    dtMs: number,
+  ): { frac: number; usePop: number; readyPing: number } {
+    let a = this.slotAnim.get(key);
+    if (!a) {
+      a = { display: Phaser.Math.Clamp(target, 0, 1), usedAtMs: -1e9, readyAtMs: -1e9 };
+      this.slotAnim.set(key, a);
+    }
+    const t = Phaser.Math.Clamp(target, 0, 1);
+    if (t < 0.35 && t < a.display - 0.25) {
+      // Ability fired (a genuine slam to empty, not sensor noise): snap.
+      a.display = t;
+      a.usedAtMs = nowMs;
+    } else {
+      const wasReady = a.display >= 0.999;
+      const k = 1 - Math.exp(-dtMs / 90);
+      // Monotone-up: chase only upward; regressions hold the line.
+      a.display = Math.min(1, a.display + Math.max(0, t - a.display) * k);
+      if (t >= 0.999 && a.display > 0.99) a.display = 1;
+      if (!wasReady && a.display >= 0.999) a.readyAtMs = nowMs;
+    }
+    return {
+      frac: a.display,
+      usePop: Math.max(0, 1 - (nowMs - a.usedAtMs) / 240),
+      readyPing: Math.max(0, 1 - (nowMs - a.readyAtMs) / 340),
+    };
+  }
+
+  /** The use-pop / ready-ping strokes shared by every cooldown slot —
+   *  drawn AFTER the slot body so the flash sits on top. */
+  private drawSlotBeats(
+    g: Phaser.GameObjects.Graphics,
+    cx: number,
+    cy: number,
+    r: number,
+    usePop: number,
+    readyPing: number,
+  ): void {
+    if (usePop > 0) {
+      // The hit: a hot flash collapsing with the pop envelope.
+      g.lineStyle(2.5, 0xe8ecf4, 0.85 * usePop);
+      g.strokePoints(this.diamondPoints(cx, cy, r * (1 + 0.22 * usePop)), true);
+      g.fillStyle(0xe8ecf4, 0.18 * usePop);
+      g.fillPoints(this.diamondPoints(cx, cy, r), true);
+    }
+    if (readyPing > 0) {
+      // The return: one ring expanding out of the diamond and fading.
+      const t = 1 - readyPing;
+      g.lineStyle(2, PALETTE.sapphirePulse, 0.9 * readyPing);
+      g.strokeCircle(cx, cy, r * (0.72 + 0.55 * t));
     }
   }
 
@@ -362,12 +552,245 @@ export class ActionBarSystem {
     }
   }
 
+  /** A drafted-active slot (six-axes Layer 2). Same diamond + faceted-ring
+   *  language as every other slot: the ring IS the cooldown sweep
+   *  (readyFrac 0→1, continuous color/alpha lerp — the drawLiveSlot
+   *  lesson), and a live effect window (Tithe's 3s) draws a crimson outer
+   *  pulse so "my active is ON" reads without looking at the chips row.
+   *  Glyphs are per-kind stroke drawings (house convention). */
+  private drawActiveSlot(
+    g: Phaser.GameObjects.Graphics,
+    cx: number,
+    cy: number,
+    r: number,
+    slot: ActiveSlotVital,
+    isDead: boolean,
+  ): void {
+    const pts = this.diamondPoints(cx, cy, r);
+    g.fillStyle(0x0a0e1a, isDead ? 0.55 : 0.92);
+    g.fillPoints(pts, true);
+
+    const ready = Phaser.Math.Clamp(slot.readyFrac, 0, 1);
+    const readyColor = lerpHexColor(PALETTE.textDim, PALETTE.sapphireSteady, ready);
+    const ringAlpha = isDead ? 0.5 : 0.75 + 0.25 * ready;
+    drawFacetedRing(g, cx, cy, r * 0.62, Math.max(2, r * 0.12), ready, readyColor, ringAlpha, 0x1f2937, 0.35);
+
+    g.lineStyle(1.5, lerpHexColor(C_FRAME, PALETTE.sapphireSteady, ready), isDead ? 0.5 : 0.6 + 0.25 * ready);
+    g.strokePoints(pts, true);
+
+    // Effect window live: crimson pulse ring outside the diamond.
+    if (slot.windowFrac > 0 && !isDead) {
+      const pulse = 0.55 + 0.35 * Math.sin(this.scene.time.now / 90);
+      g.lineStyle(2, 0xdc2626, pulse);
+      g.strokeCircle(cx, cy, r * (0.92 + 0.1 * slot.windowFrac));
+    }
+
+    // Per-kind glyph — the mechanic drawn in strokes (house convention).
+    const glyphColor = slot.windowFrac > 0 ? 0xdc2626 : readyColor;
+    g.lineStyle(Math.max(1.2, r * 0.09), glyphColor, 0.9);
+    const gr = r * 0.26;
+    if (slot.kind === "crimson-tithe") {
+      // The tithe cross — two crossed cuts (the card's X sigil).
+      g.beginPath();
+      g.moveTo(cx - gr, cy - gr);
+      g.lineTo(cx + gr, cy + gr);
+      g.moveTo(cx + gr, cy - gr);
+      g.lineTo(cx - gr, cy + gr);
+      g.strokePath();
+    } else if (slot.kind === "shadow-step") {
+      // Double chevron — the step past the step.
+      for (const off of [-gr * 0.55, gr * 0.45]) {
+        g.beginPath();
+        g.moveTo(cx + off - gr * 0.5, cy - gr * 0.7);
+        g.lineTo(cx + off + gr * 0.5, cy);
+        g.lineTo(cx + off - gr * 0.5, cy + gr * 0.7);
+        g.strokePath();
+      }
+    } else if (slot.kind === "veil-of-nought") {
+      // The nought — an empty circle where a target would be.
+      g.strokeCircle(cx, cy, gr * 0.85);
+    } else if (slot.kind === "severing-answer") {
+      // A cut answer — one bar, severed.
+      g.beginPath();
+      g.moveTo(cx - gr, cy);
+      g.lineTo(cx - gr * 0.2, cy);
+      g.moveTo(cx + gr * 0.2, cy);
+      g.lineTo(cx + gr, cy);
+      g.strokePath();
+    } else if (slot.kind === "shelter-seal") {
+      // The seal — a small held diamond.
+      g.beginPath();
+      g.moveTo(cx, cy - gr);
+      g.lineTo(cx + gr, cy);
+      g.lineTo(cx, cy + gr);
+      g.lineTo(cx - gr, cy);
+      g.closePath();
+      g.strokePath();
+    } else {
+      g.fillStyle(glyphColor, 0.9);
+      g.fillCircle(cx, cy, r * 0.1);
+    }
+  }
+
   private drawReservedSlot(g: Phaser.GameObjects.Graphics, cx: number, cy: number, r: number): void {
     const pts = this.diamondPoints(cx, cy, r);
     g.fillStyle(0x0a0e1a, 0.55);
     g.fillPoints(pts, true);
     g.lineStyle(1, C_FRAME_DIM, 0.4);
     g.strokePoints(pts, true);
+  }
+
+  /** A card-granted capability slot (acquiredAbilities.ts). Same diamond +
+   *  faceted-ring language as every live slot; the glyph is the mechanic
+   *  drawn in strokes (house convention — no icon asset pipeline). Most
+   *  acquired capabilities are passive → ring sits full; Stolen Fangs is
+   *  the exception: its ring is the banked lock charges (0–2). The pop-in
+   *  (popT 0→1 over ~260ms) scales the slot in with a fading flash ring —
+   *  the acquisition moment should read from the corner of an eye. */
+  private drawAcquiredSlot(
+    g: Phaser.GameObjects.Graphics,
+    cx: number,
+    cy: number,
+    baseR: number,
+    ability: AcquiredAbility,
+    vitals: ActionBarVitals,
+    popT: number,
+  ): void {
+    // Ease-out-back-ish overshoot on entry.
+    const pop = popT >= 1 ? 1 : 0.7 + 0.42 * popT - 0.12 * popT * popT;
+    const r = baseR * pop;
+    const isDead = vitals.isDead;
+    const ready =
+      ability.kind === "stolen-fangs"
+        ? Phaser.Math.Clamp(vitals.stolenFangsCharges / 2, 0, 1)
+        : 1;
+
+    const pts = this.diamondPoints(cx, cy, r);
+    g.fillStyle(0x0a0e1a, isDead ? 0.55 : 0.92);
+    g.fillPoints(pts, true);
+    const readyColor = lerpHexColor(PALETTE.textDim, PALETTE.sapphireSteady, ready);
+    drawFacetedRing(
+      g, cx, cy, r * 0.62, Math.max(2, r * 0.12), ready,
+      readyColor, isDead ? 0.5 : 0.75 + 0.25 * ready, 0x1f2937, 0.35,
+    );
+    g.lineStyle(1.5, lerpHexColor(C_FRAME, PALETTE.sapphireSteady, ready), isDead ? 0.5 : 0.85);
+    g.strokePoints(pts, true);
+
+    // Acquisition flash: a bright expanding ring during the pop window.
+    if (popT < 1 && !isDead) {
+      g.lineStyle(2, 0xcedffd, 0.8 * (1 - popT));
+      g.strokeCircle(cx, cy, r * (0.5 + 0.6 * popT));
+    }
+
+    // Glyph — strokes only, the mechanic itself.
+    const gw = Math.max(1.2, r * 0.09);
+    g.lineStyle(gw, readyColor, isDead ? 0.55 : 0.9);
+    const s = r * 0.3;
+    switch (ability.kind) {
+      case "satellites": {
+        // Orbit ring + companion dot.
+        g.strokeCircle(cx, cy, s);
+        g.fillStyle(readyColor, 0.95);
+        g.fillCircle(cx + s, cy, Math.max(1.5, r * 0.09));
+        g.fillCircle(cx, cy, Math.max(1.2, r * 0.06));
+        break;
+      }
+      case "stolen-fangs": {
+        // Two fangs, points down.
+        g.fillStyle(readyColor, 0.9);
+        g.fillTriangle(cx - s * 0.7, cy - s * 0.5, cx - s * 0.2, cy - s * 0.5, cx - s * 0.45, cy + s * 0.7);
+        g.fillTriangle(cx + s * 0.2, cy - s * 0.5, cx + s * 0.7, cy - s * 0.5, cx + s * 0.45, cy + s * 0.7);
+        break;
+      }
+      case "mirror-shield": {
+        // Mirrored brackets: ] [
+        g.beginPath();
+        g.moveTo(cx - s * 0.9, cy - s * 0.7);
+        g.lineTo(cx - s * 0.4, cy);
+        g.lineTo(cx - s * 0.9, cy + s * 0.7);
+        g.strokePath();
+        g.beginPath();
+        g.moveTo(cx + s * 0.9, cy - s * 0.7);
+        g.lineTo(cx + s * 0.4, cy);
+        g.lineTo(cx + s * 0.9, cy + s * 0.7);
+        g.strokePath();
+        break;
+      }
+      case "aim-shield": {
+        // Aim cone opening toward the right.
+        g.beginPath();
+        g.moveTo(cx - s * 0.5, cy);
+        g.lineTo(cx + s * 0.9, cy - s * 0.75);
+        g.strokePath();
+        g.beginPath();
+        g.moveTo(cx - s * 0.5, cy);
+        g.lineTo(cx + s * 0.9, cy + s * 0.75);
+        g.strokePath();
+        g.fillStyle(readyColor, 0.95);
+        g.fillCircle(cx - s * 0.5, cy, Math.max(1.2, r * 0.07));
+        break;
+      }
+      case "air-jumps": {
+        // Double chevron up.
+        for (const dy of [s * 0.45, -s * 0.25]) {
+          g.beginPath();
+          g.moveTo(cx - s * 0.7, cy + dy + s * 0.35);
+          g.lineTo(cx, cy + dy - s * 0.35);
+          g.lineTo(cx + s * 0.7, cy + dy + s * 0.35);
+          g.strokePath();
+        }
+        break;
+      }
+    }
+  }
+
+  /** The Emission meter (Emission Engine P0 — docs/emission-engine-goal.md).
+   *  Same chamfered diamond as every other slot, with the house faceted-ring
+   *  resource language inside tracking charge — no new visual vocabulary.
+   *  No glyph: the payload is composed from the card hand, so the slot shows
+   *  a single point of light that only exists at full charge (ui-axioms:
+   *  "one point of light earning its keep"), breathing on a slow sine.
+   *  While dead the frame dims like other live slots but the RING keeps its
+   *  fill — charge persists through death by doctrine, and the meter
+   *  claiming otherwise would lie. */
+  private drawEmissionSlot(
+    g: Phaser.GameObjects.Graphics,
+    cx: number,
+    cy: number,
+    r: number,
+    chargeFrac: number,
+    isDead: boolean,
+  ): void {
+    const frac = Phaser.Math.Clamp(chargeFrac, 0, 1);
+    const pts = this.diamondPoints(cx, cy, r);
+    g.fillStyle(0x0a0e1a, isDead ? 0.55 : 0.92);
+    g.fillPoints(pts, true);
+    const full = frac >= 1;
+    // Frame brightens with charge; sapphire at full (combat register).
+    const frameColor = full ? 0x3c79f0 : lerpHexColor(C_FRAME_DIM, C_FRAME, frac);
+    g.lineStyle(full ? 1.5 : 1, frameColor, isDead ? 0.45 : 0.4 + 0.5 * frac);
+    g.strokePoints(pts, true);
+    if (frac <= 0) return;
+    // Charge ring — same faceted language as the orbs/nameplates.
+    drawFacetedRing(
+      g,
+      cx,
+      cy,
+      r * 0.62,
+      Math.max(2, r * 0.14),
+      frac,
+      full ? 0x6b98f4 : 0x3c79f0,
+      isDead ? 0.55 : 0.9,
+      0x1f2937,
+      0.35,
+    );
+    if (full && !isDead) {
+      // The point of light: exists only at full charge, breathing slowly.
+      // Render-only wall-clock (scene.time.now) — never sim state.
+      const breathe = 0.65 + 0.35 * Math.sin(this.scene.time.now / 420);
+      g.fillStyle(0xcedffd, breathe);
+      g.fillCircle(cx, cy, Math.max(2, r * 0.16));
+    }
   }
 
   /** A live ability while dead — distinct from `drawReservedSlot`: this one
