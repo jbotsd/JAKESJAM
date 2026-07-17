@@ -14,15 +14,13 @@
 // world), bounded queue, hard per-job timeout, off-switch JJ_RENDER_CLIPS=0.
 
 import { basename } from "node:path";
+import { computeClipWindows, type KillMoment, type RoundMark } from "./clipWindow.ts";
 
 const ENABLED = process.env.JJ_RENDER_CLIPS !== "0";
 const MAX_QUEUE = 12;
 /** Per-job wall clock: render + encode + upload of a ~12s clip. */
 const JOB_TIMEOUT_MS = 6 * 60_000;
 const CDP_PORT = 9231;
-/** 9s of lead-up, 3s of aftermath — 720 ticks @60Hz → 360 frames @30fps. */
-const PRE_TICKS = 540;
-const CLIP_TICKS = 720;
 /** Renders per match cap — a 12-kill stomp shouldn't camp the GPU. */
 const MAX_PER_MATCH = 3;
 
@@ -31,6 +29,9 @@ export type RenderJob = {
   fromTick: number;
   ticks: number;
   followId: string;
+  /** Cluster kill ticks relative to fromTick (clip-goal CL.C/CL.D) —
+   *  rides the render URL for the lower-third + probes. */
+  killTicks: number[];
   label: string;
 };
 
@@ -58,37 +59,36 @@ async function findChromium(): Promise<string | null> {
 
 /**
  * Turn a match's kill moments into render jobs. Call once per match after
- * its replay persisted. `kills` = human-killer moments in tick order.
+ * its replay persisted. `kills` = human-killer moments in tick order;
+ * `roundMarks` = round-phase edges (clip-goal CL.C) so a window can never
+ * end on a banner crediting someone other than the star.
  */
 export function enqueueMatchHighlights(
   replayPath: string,
-  kills: Array<{ tick: number; killerId: string }>,
+  kills: KillMoment[],
+  roundMarks: RoundMark[],
   port: number,
 ): void {
   if (!ENABLED || kills.length === 0) return;
   const file = basename(replayPath);
-  // Best-spread selection: dedupe kills within one clip window, keep the
-  // LAST kill of each cluster (multi-kills end on the biggest moment).
-  const moments: Array<{ tick: number; killerId: string }> = [];
-  for (const k of kills) {
-    const prev = moments[moments.length - 1];
-    if (prev && k.tick - prev.tick < CLIP_TICKS) moments[moments.length - 1] = k;
-    else moments.push(k);
-  }
-  for (const m of moments.slice(0, MAX_PER_MATCH)) {
+  const windows = computeClipWindows(kills, roundMarks, { maxWindows: MAX_PER_MATCH });
+  let queued = 0;
+  for (const w of windows) {
     if (queue.length >= MAX_QUEUE) {
-      console.warn(`[clip-render] queue full — dropping ${file}@${m.tick}`);
+      console.warn(`[clip-render] queue full — dropping ${file}@${w.fromTick}`);
       break;
     }
     queue.push({
       replayFile: file,
-      fromTick: Math.max(0, m.tick - PRE_TICKS),
-      ticks: CLIP_TICKS,
-      followId: m.killerId,
-      label: `${m.killerId}@${m.tick}`,
+      fromTick: w.fromTick,
+      ticks: w.ticks,
+      followId: w.followId,
+      killTicks: w.killTicks,
+      label: `${w.followId}@${w.fromTick}+${w.ticks}`,
     });
+    queued += 1;
   }
-  console.log(`[clip-render] queued ${Math.min(moments.length, MAX_PER_MATCH)} job(s) from ${file}`);
+  console.log(`[clip-render] queued ${queued} job(s) from ${file}`);
   void pump(port);
 }
 
@@ -123,7 +123,8 @@ async function runJob(job: RenderJob, port: number): Promise<void> {
   const url =
     `http://127.0.0.1:${port}/?replay=${encodeURIComponent(job.replayFile)}` +
     `&render=1&from=${job.fromTick}&ticks=${job.ticks}` +
-    `&follow=${encodeURIComponent(job.followId)}&rs=1`;
+    `&follow=${encodeURIComponent(job.followId)}` +
+    `&kills=${job.killTicks.join(",")}&rs=1`;
   console.log(`[clip-render] rendering ${job.label} …`);
   const proc = Bun.spawn(
     [

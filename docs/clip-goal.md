@@ -381,6 +381,32 @@ lands exactly on a projectile connecting between the two bots on the
 video track. Suites 1070 green. No third-party SFX anywhere — grep
 clean; no music bed this pillar (goal marks it optional).
 
+**CL.C — COMPLETE (2026-07-17)**
+Trim discipline is a pure module (`server/src/clipWindow.ts`):
+IN = first cluster kill − 90 ticks (1.5s approach, not 9s of standing),
+OUT = last kill + 120 ticks (2s aftermath), 720-tick cap END-anchored
+(long clusters shed lead-up, never the biggest beat), and THE LAW — a
+window never contains a round-over edge whose winner isn't the star
+(foreign banner shrinks the window; the star's own victory banner rides;
+a window that would lose its final kill to clamping is dropped entirely
+rather than rendering a kill-less "highlight"). MatchHost records
+round-over/fighting edges at its existing phase-edge site
+(`roundMarks`), passes them with the kill moments at replay persist;
+clipRenderQueue routes through computeClipWindows and rides each
+window's relative kill ticks on the render URL (`&kills=`); ReplayScene
+publishes them as `killFrames` in every `__replayRender` status (the
+probe surface CL.D/E also use). Tests: 12 (window law, END-anchored cap
+with in-window killTicks filtering, foreign-banner property sweep across
+700 positions, between-round lead-in clamp, drop-not-broken, MatchHost
+mark recording via the real tick path). Fixed by the tests: the cap
+could emit killTicks before the window start, and a fully-clamped
+window could render without its kill. Live verification: a real kill
+from Jake's own session (replay world-1784283166126, kill@1526)
+rendered through the production command with the computed window —
+probe-clip ALL PASS 8/8 (3.520s duration exact), and the extracted
+frame at the declared kill offset (t=1.5s) shows the star firing with
+the victim mid-death-burst. Server suites 219 green, deployed.
+
 **BASELINE (2026-07-17)** — study of `/c/dff7f450-55dc-4316-8df7-654ebf4e2ccb`:
 1896×950 @ 21.6fps real (215/360 expected frames, 9.96s of 12s intent),
 57600/1 fps metadata, zero audio streams, 10.8Mbps, ends on a bot's

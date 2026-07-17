@@ -79,6 +79,36 @@ const USE_WASM_STEP_WORLD =
   process.env.USE_WASM_STEP_WORLD === "1" ||
   process.env.USE_WASM_STEP_WORLD === "true";
 
+/** Emission Engine kill-switch (docs/emission-engine-goal.md "ship
+ *  safely"). Default ON — shipped enabled 2026-07-16 by direct user call
+ *  ("go"); set EMISSIONS=off to strip the Ability bit at input
+ *  sanitization, disabling the cast for humans AND bots in one lever. */
+const EMISSIONS_DISABLED = process.env.EMISSIONS === "off";
+
+/** Six Axes Layer 2 kill-switch (docs/six-axes-goal.md "ship safely"):
+ *  ABILITIES=off strips input bits 10..13 (drafted active slots 1-4) at
+ *  input sanitization — one lever for humans AND bots, no client redeploy.
+ *  Delete after the Phase 4 gate passes. */
+const ABILITIES_DISABLED = process.env.ABILITIES === "off";
+
+/** Input-key sanitization: bits 0..13 are known (Left..Dash + ability
+ *  slots 1-4); everything above is stripped so a client can't smuggle
+ *  out-of-band signals through the input frame. */
+export const KNOWN_KEY_BITS = 0x3fff;
+
+/** Exported for tests: the admission mask under the kill-switch levers
+ *  (EMISSIONS=off strips the Emission bit, ABILITIES=off strips the four
+ *  drafted-active bits — humans AND bots, one gate). */
+export function sanitizeKeyMaskFor(
+  emissionsOff: boolean,
+  abilitiesOff: boolean,
+): number {
+  let keyMask = KNOWN_KEY_BITS;
+  if (emissionsOff) keyMask &= ~(1 << 7);
+  if (abilitiesOff) keyMask &= ~(0b1111 << 10);
+  return keyMask;
+}
+
 if (USE_WASM_STEP_WORLD) {
   // Fire-and-forget preload so the first tick after construction
   // doesn't await. If the load fails, serverWasmHost.isReady()
@@ -260,6 +290,8 @@ export class MatchHost {
   private matchCompletePosted = false;
   /** Human-killer moments for host-rendered highlight clips. */
   private humanKillMoments: Array<{ tick: number; killerId: string }> = [];
+  /** Round-phase edges for clip trim discipline (clip-goal CL.C). */
+  private roundMarks: Array<import("./clipWindow.ts").RoundMark> = [];
 
   private readonly map: MapDefinition;
 
@@ -386,6 +418,12 @@ export class MatchHost {
         this.runtime.ceilingClampY,
         this.map.size.y > 0 ? this.map.size.y + KILL_PLANE_MARGIN_PX : 0,
       );
+      // Launch pads — static map geometry (world.zig §8c), same host-set
+      // cadence as the statics/bounds. Empty array clears stale pads.
+      serverWasmHost.setLaunchPads(this.map.launchPads ?? []);
+      // True slopes — same host-set cadence (player.zig module-level,
+      // stepped inside the wasm player pass). Empty array clears.
+      serverWasmHost.setSlopes(this.map.slopes ?? []);
     }
     this.grid = new InterestGrid(this.map.size.x, this.map.size.y, CELL_SIZE_PX);
     // Pin the sim backend for the WHOLE match. The old per-tick
@@ -811,11 +849,14 @@ export class MatchHost {
     // - tick: must be within [serverTick - LAG_COMP_MAX_TICKS - 4,
     //   serverTick + 4]. Outside this window, lag-comp can't honor it anyway,
     //   AND it indicates either clock drift or a tampered client.
-    // - keys: bitmask is 9 bits used (InputBit values up to 1<<8). Strip
-    //   unknown bits so a client can't smuggle out-of-band signals through
-    //   the input frame.
-    const KNOWN_KEY_BITS = 0x3ff; // bits 0..9 inclusive (Left..Dash)
-    const sanitizedKeys = input.keys & KNOWN_KEY_BITS;
+    // - keys: strip unknown bits + kill-switch levers (see
+    //   sanitizeKeyMaskFor at module scope — exported so the mask is
+    //   testable without env-flip module gymnastics). Both levers apply to
+    //   humans AND bots (bot casts route through this same applyInput)
+    //   with no client redeploy; clients may briefly mispredict, reconcile
+    //   corrects it.
+    const keyMask = sanitizeKeyMaskFor(EMISSIONS_DISABLED, ABILITIES_DISABLED);
+    const sanitizedKeys = input.keys & keyMask;
     const sanitizedDt = Math.max(1, Math.min(STEP_MS * 4, Number.isFinite(input.dt) ? input.dt : STEP_MS));
 
     const serverTick = this.state.tick;
@@ -1066,8 +1107,20 @@ export class MatchHost {
 
     // Round-phase edge hook (venue-sprint2-goal S2.B/S2.D) — compared on
     // the post-step state so it sees the drafting overlay's phases too.
-    if (this.onRoundPhaseChange && preStepState.round.phase !== this.state.round.phase) {
-      this.onRoundPhaseChange(preStepState.round.phase, this.state.round.phase);
+    if (preStepState.round.phase !== this.state.round.phase) {
+      this.onRoundPhaseChange?.(preStepState.round.phase, this.state.round.phase);
+      // Clip trim discipline (clip-goal CL.C): the highlight windows must
+      // never contain a round-over banner crediting someone other than
+      // the star — record the edges the window math clamps against.
+      if (this.state.round.phase === "round-over") {
+        this.roundMarks.push({
+          tick: this.state.tick as number,
+          kind: "round-over",
+          winnerId: (this.state.round.winnerPlayerId as string | null) ?? null,
+        });
+      } else if (this.state.round.phase === "fighting") {
+        this.roundMarks.push({ tick: this.state.tick as number, kind: "fighting" });
+      }
     }
 
     // Hangout-mode Ready/Launch totems (plan A3). Deliberately run OUTSIDE
@@ -1335,10 +1388,11 @@ export class MatchHost {
         const saved = persistReplay(this.matchId, bytes);
         if (saved) {
           console.log(`[matchHost ${this.matchId}] replay persisted: ${saved}`);
-          enqueueMatchHighlights(saved, this.humanKillMoments, config.port);
+          enqueueMatchHighlights(saved, this.humanKillMoments, this.roundMarks, config.port);
         }
       }
       this.humanKillMoments = [];
+      this.roundMarks = [];
     } catch (err) {
       console.warn(
         `[matchHost ${this.matchId}] replay persist failed: ${err instanceof Error ? err.message : String(err)}`,

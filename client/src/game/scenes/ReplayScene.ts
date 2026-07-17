@@ -168,6 +168,8 @@ export class ReplayScene extends Phaser.Scene {
   private offlineAudioCtx: OfflineAudioContext | null = null;
   private audioRouter: SimEventRouter | null = null;
   private renderStartTick = 0;
+  /** Kill ticks relative to the window start (&kills= from the queue). */
+  private killTicks: number[] = [];
 
   constructor() {
     super(SceneKeys.Replay);
@@ -256,6 +258,13 @@ export class ReplayScene extends Phaser.Scene {
     }
     const fromTick = Math.max(0, Number(params.get("from") ?? 0) || 0);
     const rangeTicks = Number(params.get("ticks") ?? 0) || 0;
+    // Cluster kill ticks relative to `from` (clip-goal CL.C) — the queue
+    // computes them from the trim window; the lower-third + probes key
+    // off these (published as frame indexes in every status).
+    this.killTicks = (params.get("kills") ?? "")
+      .split(",")
+      .map((s) => Number(s))
+      .filter((n) => Number.isFinite(n) && n >= 0);
     if (fromTick > 0) {
       while ((this.state.tick as number) < Math.min(fromTick, this.totalTicks)) {
         this.stepTicks(60);
@@ -478,7 +487,7 @@ export class ReplayScene extends Phaser.Scene {
     for (let gy = 0; gy <= height; gy += 96) g.lineBetween(0, gy, width, gy);
 
     const platforms = new PlatformLayer(this);
-    platforms.repaint(this.map.platforms, theme, this.map.launchPads);
+    platforms.repaint(this.map.platforms, theme, this.map.launchPads, this.map.slopes);
     const cosmic = new CosmicArenaLayer(this);
     cosmic.spawn(width, height);
     setDeathFxTarget(this.deathFxState, width * 0.5, height * 0.5);
@@ -623,7 +632,13 @@ export class ReplayScene extends Phaser.Scene {
   }
 
   private publish(v: Record<string, unknown>): void {
-    (window as unknown as { __replayRender?: unknown }).__replayRender = v;
-    console.log("[replay]", JSON.stringify(v));
+    const enriched = {
+      ...v,
+      // Probe surface (clip-goal CL.C.4): where the cluster's kills land,
+      // as encoded-frame indexes.
+      killFrames: this.killTicks.map((t) => Math.floor(t / TICKS_PER_FRAME)),
+    };
+    (window as unknown as { __replayRender?: unknown }).__replayRender = enriched;
+    console.log("[replay]", JSON.stringify(enriched));
   }
 }
