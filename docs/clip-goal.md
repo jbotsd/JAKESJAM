@@ -477,6 +477,38 @@ spawnKillCallout, no seal-chip imports) — B9's clutter/ghost/seal
 defects were client-capture artifacts, retired with the provenance
 finding. Suites 1092 client green, built.
 
+**CL.G — COMPLETE + SPRINT CLOSED (2026-07-17)**
+The rig already owned the liveliness vocabulary — triggerFire() = muzzle
+whip + a 1.6s weapon-hot combat-stance hold decaying back to idle
+(inside the goal's 2s window), triggerHit() = knockback — but
+ReplayScene's event router passed a STUB rigs map, so rendered clips
+never fired any of it: the AFK-sway-while-shooting look was one missing
+wire. Fixed (router now drives the real rigs; render-gated by
+construction since the router only exists in render mode) + a wiring
+test (shot-fired → rig.triggerFire with the sim's hand). Death pop at
+follow zoom: the shared death-fx painter at 2.2× renders the gold
+soul-burst at ~150px — evidence frames from CL.C/E dwarf the 48px bar.
+Final production-command render: probe-clip **ALL PASS 8/8**
+(`/c/01de8b0f-0510-4568-ac75-9bc69070022a` — playable on the share
+page); the extracted firing frame shows the star mid-throw in combat
+stance with both duelists framed. Suites at close: client 1093, server
+221, probe self-tests 2 — all green; typechecks clean; deployed.
+
+**Baseline→retirement map:** B1 resolution → CL.A (probe PASS)。B2
+fps/duration/metadata → CL.A (30/1, frame-exact, load-independent).
+B3 audio → CL.B (engine audio, opus, sync-checked). B4 bitrate → CL.A
+(7.4Mbps). B5 foreign-banner ending → CL.C (window law + property
+sweep). B6 static camera/off-frame kills → CL.E (zoom-to-fit pinned) +
+CL.G (stance/muzzle). B7 spectator chrome/latency badge → provenance
+(host renders were always chrome-free; identity ADDED in CL.D). B8 dup
+damage text → CL.F (single-spawn pinned; sequential-hits explanation).
+B9 banner clutter/ghosts/seal labels → CL.F (absent in render mode by
+construction; provenance). B10 illegible damage numbers/unreadable
+deaths → CL.F (absent in clips) + CL.G (zoom-scaled death pop). B11 no
+identity → CL.D (lower-third + watermark). Note for the next organic
+match: production queue jobs now carry `&kills=` and the probe gains
+`--slowmo 15` when killTicks are present.
+
 **BASELINE (2026-07-17)** — study of `/c/dff7f450-55dc-4316-8df7-654ebf4e2ccb`:
 1896×950 @ 21.6fps real (215/360 expected frames, 9.96s of 12s intent),
 57600/1 fps metadata, zero audio streams, 10.8Mbps, ends on a bot's

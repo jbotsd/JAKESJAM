@@ -67,6 +67,38 @@ describe("damage-text single-spawn (CL.F.1 / B8)", () => {
     expect(spawns[0]).toEqual({ victimId: "p_victim", damage: 14, headshot: true });
   });
 
+  test("shot-fired drives the rig's muzzle beat + combat stance (CL.G wiring)", () => {
+    const fired: Array<0 | 1 | undefined> = [];
+    const scene = {
+      tweens: { timeScale: 1 },
+      time: { delayedCall: (_ms: number, fn: () => void) => fn() },
+    } as unknown as Phaser.Scene;
+    const router = new SimEventRouter({
+      scene,
+      audio: { play: () => {}, setShieldHum: () => {} } as never,
+      localPlayerId: "p_local" as never,
+      safeShake: () => {},
+      spawnDamageNumber: () => {},
+      spawnBlastAtPlayer: () => {},
+      killCinematic: () => {},
+      spawnPlatformBlastTint: () => {},
+      showCardDraft: () => {},
+      hideCardDraft: () => {},
+      playerRigs: {
+        get: (id: string) =>
+          id === "p_star"
+            ? ({ triggerFire: (hand?: 0 | 1) => fired.push(hand) } as never)
+            : undefined,
+      },
+      particlePool: null,
+      renderLayer: null,
+      killStreakCount: new Map(),
+      prevAlive: new Set(),
+    });
+    router.dispatch({ t: "shot-fired", playerId: "p_star", hand: 1 } as unknown as SimEvent);
+    expect(fired).toEqual([1]);
+  });
+
   test("N distinct hits → exactly N texts (the B8 'stack' is sequential hits, not dup spawns)", () => {
     const { router, spawns } = makeRouter();
     for (let i = 0; i < 3; i++) {

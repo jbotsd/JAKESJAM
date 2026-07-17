@@ -713,7 +713,12 @@ export class ReplayScene extends Phaser.Scene {
         spawnPlatformBlastTint: () => {},
         showCardDraft: () => {},
         hideCardDraft: () => {},
-        playerRigs: { get: () => undefined },
+        // The REAL rigs (clip-goal CL.G): shot-fired drives triggerFire —
+        // muzzle whip + the 1.6s weapon-hot combat stance — and hits drive
+        // knockback, so the star fights instead of idling through its own
+        // highlight. This was a stub, which is exactly why rendered clips
+        // showed shots appearing from an AFK sway.
+        playerRigs: this.rigs,
         particlePool: null,
         renderLayer: null,
         killStreakCount: new Map(),
