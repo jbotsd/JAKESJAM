@@ -433,6 +433,30 @@ shows SHADY_BASS_MAN — THE KILL + full chrome, final frame shows chrome
 without the lower-third, probe ALL PASS 8/8 throughout. Live game
 untouched (every change gated in ReplayScene render mode).
 
+**CL.E — COMPLETE (2026-07-17)**
+Highlight camera as pure math (`render/highlightCamera.ts`) + ReplayScene
+integration (render mode only): star↔victim anchor (35% victim weight)
+with BOTH-on-screen clamping; **zoom-to-fit** — a separated duel widens
+the camera down to a 1.25 floor instead of letting the victim leave the
+frame (the tests reproduced B6 exactly and forced this design: a fixed
+2.2 zoom can only show 872 world px); kill punch-ins (+15%, final kill
++25%) driven by a per-frame beat envelope (ease-in 200ms/hold 350ms/
+ease-out 400ms) keyed off killTicks mapped to VIDEO frames; 2× slow-mo
+across 30 sim ticks leading the final kill (1 tick/frame → exactly +15
+encoded frames — deterministic, so the duration gate stays EXACT via
+probe-clip's new `--slowmo N`); victim-hold keeps a fresh corpse framed
+~0.6s; audio now schedules on the VIDEO clock (frameIndex/fps) so the
+stretch can never desync later cues; exponential chase on position and
+zoom — no cuts by construction. Tests: 7 (B6 pinned, star-wins on
+impossible separation, vertical re-frame ≥100px, punch ≥1.12×/≥1.2× and
+release, bounded per-frame deltas across a worst-case target teleport,
+slow-mo schedule = exactly +15 frames clamped to the window). Suites
+1088 client green; live production-command render probes **ALL PASS**
+with `--ticks 210 --slowmo 15` (119 frames, 4.020s exact); extracted
+post-kill frame shows the widened two-actor composition holding the
+death-soul in frame. Realtime playback and the rig-showcase follow-cam
+untouched.
+
 **BASELINE (2026-07-17)** — study of `/c/dff7f450-55dc-4316-8df7-654ebf4e2ccb`:
 1896×950 @ 21.6fps real (215/360 expected frames, 9.96s of 12s intent),
 57600/1 fps metadata, zero audio streams, 10.8Mbps, ends on a bot's

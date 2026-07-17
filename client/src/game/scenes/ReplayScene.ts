@@ -78,6 +78,13 @@ import { ARENA_THEMES, PALETTE } from "../ui/palette";
 import { SceneKeys } from "./SceneKeys";
 import { getWasmSim } from "../../sim/wasm/runtime";
 import { installHudCamera } from "../systems/HudCamera.js";
+import {
+  killBeatEnvelope,
+  makeHighlightCamState,
+  slowMoTickRange,
+  stepHighlightCamera,
+  type HighlightCamState,
+} from "../render/highlightCamera.js";
 
 const PLAYER_VISUAL_SCALE = 0.78;
 const RENDER_FPS = 30;
@@ -171,6 +178,16 @@ export class ReplayScene extends Phaser.Scene {
   private renderStartTick = 0;
   /** Kill ticks relative to the window start (&kills= from the queue). */
   private killTicks: number[] = [];
+  // Highlight camera (clip-goal CL.E) — render-mode follow becomes a
+  // beat-aware camera: star↔victim framing, kill punch-ins, and a 2×
+  // slow-mo stretch around the final kill (1 sim tick per frame across
+  // slowMo's range; frame count grows by exactly SLOWMO_EXTRA_FRAMES,
+  // which the duration gate accounts for).
+  private highlightCam: HighlightCamState | null = null;
+  private slowMo: { start: number; end: number } | null = null;
+  /** Victim hold: last engaged/killed opponent position lingers briefly
+   *  so the camera doesn't snap away the instant they die. */
+  private victimHold: { x: number; y: number; untilFrame: number } | null = null;
   // Clip chrome (clip-goal CL.D) — broadcast dressing owned by the clip,
   // not a spectator's HUD: ~4% letterbox, corner watermark, and a
   // lower-third (star + feat) that enters on the first kill and leaves
@@ -284,6 +301,7 @@ export class ReplayScene extends Phaser.Scene {
 
     if (this.renderMode) {
       this.renderStartTick = this.state.tick as number;
+      this.slowMo = slowMoTickRange(this.killTicks, this.totalTicks - this.renderStartTick);
       // Chrome rides the house HUD-camera split (HudCamera.ts): the follow
       // camera's zoom would otherwise scale the scroll-fixed letterbox/
       // watermark/lower-third straight off the broadcast box. Replay's
@@ -308,12 +326,17 @@ export class ReplayScene extends Phaser.Scene {
         this.finishRender();
         return;
       }
-      const events = this.stepTicks(TICKS_PER_FRAME);
-      // Clip audio: schedule this frame's cues at the replay clock (CL.B).
+      // Slow-mo (CL.E): 1 sim tick per frame across the final-kill span —
+      // 2× time dilation, +SLOWMO_EXTRA_FRAMES on the clip, offline-free.
+      const relTick = (this.state.tick as number) - this.renderStartTick;
+      const inSlowMo =
+        this.slowMo !== null && relTick >= this.slowMo.start && relTick < this.slowMo.end;
+      const events = this.stepTicks(inSlowMo ? 1 : TICKS_PER_FRAME);
+      // Clip audio: schedule this frame's cues at the VIDEO clock (CL.B/E)
+      // — frameIndex/fps, not sim time, so the slow-mo stretch can never
+      // desync later cues.
       if (this.audioRouter && this.offlineAudio) {
-        this.offlineAudio.setOfflineTime(
-          ((this.state.tick as number) - this.renderStartTick) / 60,
-        );
+        this.offlineAudio.setOfflineTime(this.frameIndex / RENDER_FPS);
         for (const e of events) this.audioRouter.dispatch(e);
       }
       this.updateClipChrome();
@@ -431,10 +454,44 @@ export class ReplayScene extends Phaser.Scene {
     this.drawCombatFx(state);
     this.drawDeathFxLayer(state, deltaMs);
 
-    // Camera: follow-cam when requested (rig A/B showcases need the
-    // character filling the frame), else the spectator director.
+    // Camera: highlight camera in render mode (CL.E — star↔victim
+    // framing, kill punch-ins, final-kill slow-mo pairing); realtime
+    // playback keeps the plain follow-cam (rig showcases) / director.
     const cam = this.cameras.main;
-    if (this.followId) {
+    if (this.renderMode && this.followId) {
+      const star = state.players[this.followId as PlayerId];
+      if (star) {
+        // Engaged victim: nearest living opponent; a fresh corpse holds
+        // the camera's attention briefly (kill framing must not snap).
+        let victim: { x: number; y: number } | null = null;
+        let best = Infinity;
+        for (const pid in state.players) {
+          if (pid === (this.followId as string)) continue;
+          const p = state.players[pid as PlayerId]!;
+          if (!p.alive) continue;
+          const d = Math.hypot(p.x - star.x, p.y - star.y);
+          if (d < best && d < 1500) {
+            best = d;
+            victim = { x: p.x, y: p.y };
+          }
+        }
+        if (victim) {
+          this.victimHold = { ...victim, untilFrame: this.frameIndex + 18 };
+        } else if (this.victimHold && this.frameIndex < this.victimHold.untilFrame) {
+          victim = { x: this.victimHold.x, y: this.victimHold.y };
+        }
+        const beat = killBeatEnvelope(this.frameIndex, this.killVideoFrames());
+        if (!this.highlightCam) this.highlightCam = makeHighlightCamState(star.x, star.y - 20);
+        this.highlightCam = stepHighlightCamera(
+          this.highlightCam,
+          { star: { x: star.x, y: star.y }, victim, punch: beat.punch, finalPunch: beat.finalPunch },
+          RENDER_W,
+          RENDER_H,
+        );
+        cam.setZoom(this.highlightCam.zoom);
+        cam.centerOn(this.highlightCam.x, this.highlightCam.y);
+      }
+    } else if (this.followId) {
       const target = state.players[this.followId as PlayerId];
       if (target) {
         cam.setZoom(this.followZoom);
@@ -445,6 +502,17 @@ export class ReplayScene extends Phaser.Scene {
       cam.setZoom(pose.z);
       cam.centerOn(pose.x, pose.y);
     }
+  }
+
+  /** Kill ticks mapped to VIDEO frames, slow-mo stretch included — the
+   *  beat envelope and the probe surface both use this mapping. */
+  private killVideoFrames(): number[] {
+    return this.killTicks.map((t) => {
+      if (!this.slowMo || t <= this.slowMo.start) return Math.floor(t / TICKS_PER_FRAME);
+      const inSpan = Math.min(t, this.slowMo.end) - this.slowMo.start;
+      const after = Math.max(0, t - this.slowMo.end);
+      return Math.floor(this.slowMo.start / TICKS_PER_FRAME + inSpan + after / TICKS_PER_FRAME);
+    });
   }
 
   /** Soul-return death sequences (shared painter). Offline renders always
@@ -625,11 +693,11 @@ export class ReplayScene extends Phaser.Scene {
     try {
       const clipTicks = Math.max(1, this.totalTicks - this.renderStartTick);
       const sampleRate = 48_000;
-      const ctx = new OfflineAudioContext(
-        2,
-        Math.ceil((clipTicks / 60) * sampleRate),
-        sampleRate,
-      );
+      // Video duration = frames/fps — the slow-mo stretch (CL.E) adds
+      // frames, and audio schedules on the VIDEO clock, so size for it.
+      const slowMoExtra = this.slowMo ? (this.slowMo.end - this.slowMo.start) / 2 : 0;
+      const videoS = (clipTicks / TICKS_PER_FRAME + slowMoExtra) / RENDER_FPS;
+      const ctx = new OfflineAudioContext(2, Math.ceil(videoS * sampleRate), sampleRate);
       const audio = new ProceduralAudio(ctx);
       await audio.prepareOffline();
       this.offlineAudioCtx = ctx;
@@ -749,7 +817,8 @@ export class ReplayScene extends Phaser.Scene {
       ...v,
       // Probe surface (clip-goal CL.C.4): where the cluster's kills land,
       // as encoded-frame indexes.
-      killFrames: this.killTicks.map((t) => Math.floor(t / TICKS_PER_FRAME)),
+      killFrames: this.killVideoFrames(),
+      slowMoExtraFrames: this.renderMode && this.slowMo ? (this.slowMo.end - this.slowMo.start) / 2 : 0,
       // Chrome contract (CL.D): what the clip is dressed with.
       chrome: this.renderMode
         ? { hud: false, letterbox: true, watermark: true, lowerThird: this.lowerThirdVisible }

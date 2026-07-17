@@ -180,7 +180,7 @@ async function staticFramePairs(
 
 export async function probeClip(
   file: string,
-  opts: { ticks?: number; targetFps?: number } = {},
+  opts: { ticks?: number; targetFps?: number; slowmoFrames?: number } = {},
 ): Promise<ProbeResult> {
   const targetFps = opts.targetFps ?? 30;
   const checks: ProbeCheck[] = [];
@@ -214,9 +214,10 @@ export async function probeClip(
   const nominal = den ? num / den : 0;
   add("fps-meta", nominal > 0 && nominal <= 120, `nominal ${v?.r_frame_rate} = ${nominal.toFixed(1)}fps (want ≤120)`);
 
-  // duration vs ticks
+  // duration vs ticks (+ the deterministic slow-mo stretch, clip-goal CL.E:
+  // the final-kill dilation adds exactly N extra frames)
   if (opts.ticks !== undefined) {
-    const want = opts.ticks / 60;
+    const want = opts.ticks / 60 + (opts.slowmoFrames ?? 0) / targetFps;
     const frameDur = 1 / targetFps;
     add(
       "duration",
@@ -273,7 +274,11 @@ if (import.meta.main) {
     const i = args.indexOf(`--${name}`);
     return i >= 0 && args[i + 1] ? Number(args[i + 1]) : undefined;
   };
-  const result = await probeClip(file, { ticks: optOf("ticks"), targetFps: optOf("fps") });
+  const result = await probeClip(file, {
+    ticks: optOf("ticks"),
+    targetFps: optOf("fps"),
+    slowmoFrames: optOf("slowmo"),
+  });
   console.log(`\nprobe-clip — ${result.file}`);
   console.log("─".repeat(72));
   for (const c of result.checks) {
