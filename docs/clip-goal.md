@@ -457,6 +457,26 @@ post-kill frame shows the widened two-actor composition holding the
 death-soul in frame. Realtime playback and the rig-showcase follow-cam
 untouched.
 
+**CL.F — COMPLETE (2026-07-17)**
+B8 investigated to ground truth: the event pipeline has NO duplicate
+path — the server flushes each SimEvent exactly once per snapshot window
+(pendingEvents → one broadcast), the client dispatches once, and the
+router's hit-confirmed case is the single damage-text spawn site. The
+"stacked 14 HEADSHOT" still is two SEQUENTIAL headshots at rising float
+offsets (fire cadence ≈ text lifetime). Pinned rather than guessed:
+SimEventRouter unit tests — one hit-confirmed → exactly one spawn
+(headshot flag intact), N hits → exactly N (found and documented that
+dispatch() no-ops entirely on null audio). Escalation ladder extracted
+to `ui/killstreakLabels.ts` (single source, OnlineMatchScene consumes)
+with monotone + order-pinned tests; the footage's TRIPLE→MULTI sequence
+was CORRECT escalation misread against a countdown timer. Render-mode
+banner/seal/damage-text discipline is satisfied by construction — the
+broadcast view draws none of them (grep: ReplayScene's only
+spawnDamageNumber reference is the audio-router stub; no
+spawnKillCallout, no seal-chip imports) — B9's clutter/ghost/seal
+defects were client-capture artifacts, retired with the provenance
+finding. Suites 1092 client green, built.
+
 **BASELINE (2026-07-17)** — study of `/c/dff7f450-55dc-4316-8df7-654ebf4e2ccb`:
 1896×950 @ 21.6fps real (215/360 expected frames, 9.96s of 12s intent),
 57600/1 fps metadata, zero audio streams, 10.8Mbps, ends on a bot's

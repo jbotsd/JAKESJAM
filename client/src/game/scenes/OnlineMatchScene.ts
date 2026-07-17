@@ -52,6 +52,12 @@ import {
   resolveMap,
 } from "../../sim/data/maps";
 import { resolveModeConfig } from "../../sim/data/modeConfig";
+import { EMISSION_CHARGE_MAX } from "../../sim/constants";
+import { resolvePlayerBuild } from "../../sim/weapon";
+import { acquiredAbilities } from "../ui/acquiredAbilities";
+import { activeSlotVitals } from "../ui/activeSlots";
+import { sealForCard } from "../ui/cardSeals";
+import { ELEMENT_COLORS } from "../ui/elementColors";
 import { createWeaponBuild, findCardsById } from "../../sim/data/weaponBuild";
 import { starterWeapon } from "../../sim/data/weapons";
 import { hashPlayerEntity } from "../../sim/hash";
@@ -95,6 +101,7 @@ import { ActionCamera } from "../systems/ActionCamera.js";
 import { stickyEnvelopeSubjects } from "../systems/actionCameraMath.js";
 import { CameraJuice } from "../systems/CameraJuice.js";
 import { installHudCamera } from "../systems/HudCamera.js";
+import { killstreakLabel } from "../ui/killstreakLabels.js";
 import { getRenderScale, uiWidth, uiHeight } from "../render/renderResolution.js";
 import { RenderGovernor } from "../render/renderGovernor.js";
 import { getQualityProfile, getEffectiveRigStyle } from "../render/qualityProfile.js";
@@ -273,20 +280,44 @@ type BuffDescriptor = {
   field: keyof PlayerEntity;
   label: string;
   color: number;
+  /** Standard application duration — the nameplate decay arc's full scale
+   *  (a READ of roughly-how-long-left, not a stopwatch). */
+  nominalMs: number;
 };
 
 const BUFF_DESCRIPTORS: BuffDescriptor[] = [
-  { key: "overcharge", field: "overchargeUntilTick", label: "OC", color: 0xffd166 },
-  { key: "damage-amp", field: "damageAmpUntilTick", label: "DMG", color: 0xfb7185 },
-  { key: "speed", field: "speedBoostUntilTick", label: "SPD", color: 0x67e8f9 },
-  { key: "melee", field: "meleeModeUntilTick", label: "MEL", color: 0xf97316 },
-  { key: "boss", field: "bossModeUntilTick", label: "BOSS", color: 0xfff7d6 },
+  { key: "overcharge", field: "overchargeUntilTick", label: "OC", color: 0xffd166, nominalMs: 8000 },
+  { key: "damage-amp", field: "damageAmpUntilTick", label: "DMG", color: 0xfb7185, nominalMs: 8000 },
+  { key: "speed", field: "speedBoostUntilTick", label: "SPD", color: 0x67e8f9, nominalMs: 8000 },
+  { key: "melee", field: "meleeModeUntilTick", label: "MEL", color: 0xf97316, nominalMs: 9000 },
+  { key: "boss", field: "bossModeUntilTick", label: "BOSS", color: 0xfff7d6, nominalMs: 16000 },
+  // Ward shell (six-axes Layer 1): the post-cast damage gate a Ward hand
+  // earns. Sapphire — the shield/EMIT resource family, not an element.
+  { key: "ward", field: "wardShellUntilTick", label: "WARD", color: 0x38bdf8, nominalMs: 700 },
+  // Crimson Tithe window (six-axes Layer 2): shots leech while live.
+  // Crimson — the Drain register, deliberately not an element color.
+  { key: "tithe", field: "titheUntilTick", label: "TITHE", color: 0xdc2626, nominalMs: 3000 },
+  // Veil of Nought: unmade — homing/satellites blind. Violet Mystery register.
+  { key: "veil", field: "veilUntilTick", label: "VEIL", color: 0x8b5cf6, nominalMs: 1500 },
+  // Severing Answer stance: next hit negated + returned. Amber Technique register.
+  { key: "answer", field: "counterUntilTick", label: "CNTR", color: 0xf59e0b, nominalMs: 500 },
 ];
 
+// Element statuses (burn/freeze/slow-field) included since 2026-07-16 —
+// they were the ONLY combat statuses with no nameplate read (ambient
+// particles via StatusVfxController only), and they're exactly the marks
+// the Emission applies at scale (emission-engine-goal P2 victim-side
+// legibility). Colors match elementColors.ts. nominalMs = the status's
+// standard application duration (burn 3s, freeze up to the 2s emission
+// cap, slow-field 1.5s base ×2 emission scale) — the decay arc is a read,
+// not a stopwatch; a refreshed status simply snaps the arc full again.
 const DEBUFF_DESCRIPTORS: BuffDescriptor[] = [
-  { key: "slow", field: "slowDebuffUntilTick", label: "SLOW", color: 0xbfdbfe },
-  { key: "vuln", field: "vulnerabilityUntilTick", label: "VULN", color: 0xfca5a5 },
-  { key: "no-block", field: "blockJammerUntilTick", label: "JAM", color: 0xc084fc },
+  { key: "burn", field: "burnUntilTick", label: "BURN", color: 0xff7a18, nominalMs: 3000 },
+  { key: "freeze", field: "freezeUntilTick", label: "FRZ", color: 0x93c5fd, nominalMs: 2000 },
+  { key: "slowed", field: "slowedUntilTick", label: "SLOW", color: 0x7dd3fc, nominalMs: 3000 },
+  { key: "slow", field: "slowDebuffUntilTick", label: "SLOW", color: 0xbfdbfe, nominalMs: 5500 },
+  { key: "vuln", field: "vulnerabilityUntilTick", label: "VULN", color: 0xfca5a5, nominalMs: 5500 },
+  { key: "no-block", field: "blockJammerUntilTick", label: "JAM", color: 0xc084fc, nominalMs: 6500 },
 ];
 
 export class OnlineMatchScene extends Phaser.Scene {
@@ -376,7 +407,13 @@ export class OnlineMatchScene extends Phaser.Scene {
   /** Last rendered local feet (for touch aim origin without pre-pump getRenderState). */
   private lastLocalRenderX: number | null = null;
   private lastLocalRenderY: number | null = null;
-  private keys!: Record<"a" | "d" | "w" | "s" | "space" | "shift" | "dash", Phaser.Input.Keyboard.Key>;
+  private keys!: Record<
+    "a" | "d" | "w" | "s" | "space" | "shift" | "dash" | "emission" | "slot1" | "slot2" | "slot3" | "slot4",
+    Phaser.Input.Keyboard.Key
+  >;
+  /** Last frame's local abilityCharge (updated in the HUD pass, read by the
+   *  input assembly's full-charge gate — last-frame convention, see there). */
+  private lastKnownEmissionCharge = 0;
   private statsVisible = false;
   private statsText: Phaser.GameObjects.Text | null = null;
   private statsBg: Phaser.GameObjects.Rectangle | null = null;
@@ -567,6 +604,14 @@ export class OnlineMatchScene extends Phaser.Scene {
         shift: this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.SHIFT),
         // Dash (card-gated: inert without a dash card). C is free + reachable.
         dash: this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.C),
+        // Emission cast (Emission Engine P1 — docs/emission-engine-goal.md).
+        // E is adjacent to WASD and unbound elsewhere in-match.
+        emission: this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.E),
+        // Drafted actives (six-axes Layer 2): action-bar slots in pick order.
+        slot1: this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.ONE),
+        slot2: this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.TWO),
+        slot3: this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.THREE),
+        slot4: this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.FOUR),
       };
       this.statsToggleKey = this.input.keyboard.addKey(
         Phaser.Input.Keyboard.KeyCodes.BACKTICK,
@@ -747,6 +792,10 @@ export class OnlineMatchScene extends Phaser.Scene {
           // Shift = hold-to-shield (InputBit.Shield); right mouse (or C) = the
           // dash-bash shield power-slide (InputBit.Dash).
           ["SHIFT  shield", "RIGHT CLICK  shield dash"],
+          // The QA tape caught the legend teaching shield/dash but never the
+          // Emission or drafted actives (six-axes) — exactly the "no keyboard
+          // shortcut for some things" confusion (Jake, 2026-07-17).
+          ["E  emission (at full meter)", "1-4  drafted abilities"],
         ];
     const STAGE_GAP_MS = 900;
     const LEGEND_LIFE_MS = 9_000;
@@ -822,6 +871,25 @@ export class OnlineMatchScene extends Phaser.Scene {
     if (this.keys.dash.isDown || this.input.activePointer.rightButtonDown()) {
       keys |= InputBit.Dash;
     }
+    // Emission cast (E) — the Ability bit is only SENT at full predicted
+    // charge. Below full, the sim's Ability edge falls through to the
+    // legacy tryStartParry (bot defense); gating here keeps that parry
+    // human-unreachable per CLAUDE.md without the sim branching on
+    // identity. Reads LAST frame's charge (updated in the HUD pass after
+    // pump — same last-frame convention as lastTouchAim below; calling
+    // getRenderState here, before pump, would advance the smoother twice).
+    // One frame of staleness at worst, and the server re-validates anyway.
+    if (this.keys.emission.isDown && this.lastKnownEmissionCharge >= EMISSION_CHARGE_MAX) {
+      keys |= InputBit.Ability;
+    }
+    // Drafted actives (six-axes Layer 2): keys 1-4 press bar slots in pick
+    // order — bits 10..13, raw edges (no client gate needed: the sim
+    // validates slot existence + cooldown, and there's no fall-through
+    // hazard like the Emission/parry bit share).
+    if (this.keys.slot1.isDown) keys |= 1 << 10;
+    if (this.keys.slot2.isDown) keys |= 1 << 11;
+    if (this.keys.slot3.isDown) keys |= 1 << 12;
+    if (this.keys.slot4.isDown) keys |= 1 << 13;
     // Any real input ends a slow-motion dip instantly — see SlowMotion.ts.
     this.slowMotion.update(keys);
 
@@ -1071,18 +1139,35 @@ export class OnlineMatchScene extends Phaser.Scene {
     // Compact per-row status ticks (Jake, 2026-07-14: "lobby/party member
     // need... possibly status buffs and debuffs" — every player, reusing
     // the same descriptors the local-only text chip strip already reads).
-    const statusByPlayer: Record<string, { color: number; isDebuff: boolean }[]> = {};
+    const statusByPlayer: Record<
+      string,
+      { color: number; isDebuff: boolean; remainingFrac: number }[]
+    > = {};
     for (const pid of Object.keys(scores)) {
       const p = state.players[pid as PlayerId];
       if (!p) continue;
-      const ticks: { color: number; isDebuff: boolean }[] = [];
+      const ticks: { color: number; isDebuff: boolean; remainingFrac: number }[] = [];
       for (const buff of BUFF_DESCRIPTORS) {
         const tickValue = p[buff.field] as number | undefined;
-        if (typeof tickValue === "number" && tickValue > state.tick) ticks.push({ color: buff.color, isDebuff: false });
+        if (typeof tickValue === "number" && tickValue > state.tick) {
+          const remainingMs = (tickValue - state.tick) * STEP_MS;
+          ticks.push({
+            color: buff.color,
+            isDebuff: false,
+            remainingFrac: Math.min(1, remainingMs / buff.nominalMs),
+          });
+        }
       }
       for (const debuff of DEBUFF_DESCRIPTORS) {
         const tickValue = p[debuff.field] as number | undefined;
-        if (typeof tickValue === "number" && tickValue > state.tick) ticks.push({ color: debuff.color, isDebuff: true });
+        if (typeof tickValue === "number" && tickValue > state.tick) {
+          const remainingMs = (tickValue - state.tick) * STEP_MS;
+          ticks.push({
+            color: debuff.color,
+            isDebuff: true,
+            remainingFrac: Math.min(1, remainingMs / debuff.nominalMs),
+          });
+        }
       }
       if (ticks.length > 0) statusByPlayer[pid] = ticks;
     }
@@ -1106,12 +1191,34 @@ export class OnlineMatchScene extends Phaser.Scene {
     // since it's a structurally distinct screen region (bottom vs top-left).
     if (this.actionBar) {
       const shMax = local?.shieldMaxCharge ?? 0;
+      // Last-frame charge for the input path's full-charge gate (see the
+      // Emission block in the input assembly — reading render state there
+      // would double-advance the smoother). Touch mirrors the same gate.
+      this.lastKnownEmissionCharge = local?.abilityCharge ?? 0;
+      this.touchControls?.setEmissionReady(
+        this.lastKnownEmissionCharge >= EMISSION_CHARGE_MAX && !vitals.isDead,
+      );
+      const localActives = local ? activeSlotVitals(local, state.tick) : [];
+      this.touchControls?.setActiveSlots(
+        localActives.map((a) => ({ ready: a.readyFrac >= 1 && !vitals.isDead })),
+      );
       const actionBarVitals: ActionBarVitals = {
         health: local?.health ?? 0,
         maxHealth,
         shieldCharge: local?.shieldCharge ?? 0,
         shieldMaxCharge: shMax,
         dashReadyFrac: local?.dashReadyFrac ?? 1,
+        emissionChargeFrac: (local?.abilityCharge ?? 0) / EMISSION_CHARGE_MAX,
+        // Card-granted capabilities claim the reserved diamonds in hand
+        // order (Jake, 2026-07-16). resolvePlayerBuild + acquiredAbilities
+        // are both identity-cached on the cards array — allocation-free
+        // per frame until a draft pick swaps the hand.
+        // Drafted actives claim the diamonds right after E, keyed 1-4
+        // (six-axes Layer 2) — cooldown sweep + Tithe window derived from
+        // the same render state as everything else in this pass.
+        actives: localActives,
+        acquired: local ? acquiredAbilities(resolvePlayerBuild(local)) : [],
+        stolenFangsCharges: local?.pendingLockCharges ?? 0,
         isDead: vitals.isDead,
       };
       this.actionBar.update(actionBarVitals, chips);
@@ -1138,7 +1245,16 @@ export class OnlineMatchScene extends Phaser.Scene {
         // Phase-honest wait: one "NEXT BELL" estimate of when the player
         // actually fights again, instead of the raw round clock silently
         // re-meaning itself across phases (venue-goal Pillar 0.2).
-        const wait = deathWaitCountdown(state.round.phase, state.round.countdownRemainingMs);
+        const deadLocal = state.players[this.localPlayerId];
+        const respawnSeconds =
+          deadLocal?.respawnAtTick !== undefined && state.round.suddenDeathActive !== true
+            ? Math.ceil(Math.max(0, (deadLocal.respawnAtTick as number) - state.tick) / 60)
+            : null;
+        const wait = deathWaitCountdown(
+          state.round.phase,
+          state.round.countdownRemainingMs,
+          respawnSeconds,
+        );
         // RoundBanner explicitly hides itself during "fighting" phase (the
         // exact window this overlay is up), and this overlay's own
         // full-viewport blur darkens the peripheral nameplate column behind
@@ -1477,6 +1593,8 @@ export class OnlineMatchScene extends Phaser.Scene {
         spawnDamageNumber: (vid, dmg, headshot) => this.spawnDamageNumber(vid, dmg, headshot),
         spawnBlastAtPlayer: (pid, r, d) => this.spawnBlastAtPlayer(pid, r, d),
         killCinematic: (vid) => this.killCinematic(vid),
+        emissionCastFeel: (pid, x, y, element) =>
+          this.emissionCastFeel(pid as string, x, y, element),
         shotAudioParams: (pid) => this.resolveShotAudioParams(pid),
         spawnPlatformBlastTint: (pos) => this.spawnPlatformBlastTint(pos),
         showCardDraft: (cardIds) => this.showCardDraft(cardIds),
@@ -1564,6 +1682,11 @@ export class OnlineMatchScene extends Phaser.Scene {
     if (!state) return;
     const victim = state.players[PlayerId(victimId)];
     if (!victim || damage < 1) return;
+    // A2 (docs/footage-removal-list.md): a dead victim's render-state
+    // position can already be the fresh spawn seal (fast respawn) — the
+    // popup would float in empty air, orphaned from the fight. The death
+    // FX owns the killing blow's read; numbers are for the living.
+    if (!victim.alive) return;
     const isLocal = victimId === this.localPlayerId;
     const spread = (Math.random() - 0.5) * 22;
 
@@ -1684,6 +1807,61 @@ export class OnlineMatchScene extends Phaser.Scene {
    * fragment-shader bloom — the additive-glow layer is the bloom). Gated by
    * `combatCinematics` so it's off on Canvas fallback or `?fx=off`.
    */
+  /** Emission cast feel (emission-engine-goal P1/P2 UI contract): the
+   *  caster's dominant Coptic seal flashes at the vessel — the seal
+   *  grammar IS the casting grammar, no new iconography — plus the same
+   *  punch-zoom family the kill moment uses, biased toward the cast.
+   *  Element-tinted flash for the local caster only (a remote cast
+   *  shouldn't strobe your screen). Render-only; tweened text object. */
+  private emissionCastFeel(casterId: string, x: number, y: number, element: string): void {
+    if (!this.combatCinematics) return;
+    const cam = this.cameras.main;
+    this.cameraJuice.punchZoom(cam.zoom * 0.05, 70, 220, x, y);
+    if (casterId === this.localPlayerId) {
+      const tint = ELEMENT_COLORS[element as keyof typeof ELEMENT_COLORS] ?? 0x3c79f0;
+      cam.flash(110, (tint >> 16) & 0xff, (tint >> 8) & 0xff, tint & 0xff, false);
+    }
+    // Dominant seal = the seal of the card that gave the hand its element
+    // (last element-bucket card), else the hand's last card, else the
+    // sphragis default the draft overlay already uses.
+    const state = this.loop?.getRenderState();
+    const caster = state?.players[PlayerId(casterId)];
+    const hand = caster ? findCardsById(crystalRoundsCards, caster.cards) : [];
+    const dominant =
+      [...hand].reverse().find((c) => (c.buckets ?? []).includes("element")) ??
+      hand[hand.length - 1];
+    const seal = dominant ? sealForCard(dominant) : null;
+    const sealText = seal ? seal.coptic : "ⲤⲪⲢⲀⲄⲒⲤ";
+    const t = this.add
+      .text(x, y - 64, sealText, {
+        fontFamily: "'Segoe UI Historic', 'Noto Sans Coptic', 'Noto Sans', serif",
+        fontSize: "22px",
+        color: "#c9a84c",
+        stroke: "#05080f",
+        strokeThickness: 4,
+      })
+      .setOrigin(0.5, 0.5)
+      .setDepth(950)
+      .setAlpha(0);
+    this.tweens.add({
+      targets: t,
+      alpha: { from: 0, to: 1 },
+      y: y - 92,
+      duration: 180,
+      ease: "Quad.easeOut",
+      onComplete: () => {
+        this.tweens.add({
+          targets: t,
+          alpha: 0,
+          y: y - 116,
+          duration: 420,
+          ease: "Quad.easeIn",
+          onComplete: () => t.destroy(),
+        });
+      },
+    });
+  }
+
   private killCinematic(victimId: string): void {
     if (!this.combatCinematics) return;
     const cam = this.cameras.main;
@@ -1868,7 +2046,7 @@ export class OnlineMatchScene extends Phaser.Scene {
     }
 
     if (!this.platformLayer) this.platformLayer = new PlatformLayer(this);
-    this.platformLayer.repaint(map.platforms, theme);
+    this.platformLayer.repaint(map.platforms, theme, map.launchPads, map.slopes);
 
     // Cosmic death-arena vault — choir of angels, elemental orbs, rings
     // that pulse with live music amplitude + action intensity.
@@ -2079,8 +2257,7 @@ export class OnlineMatchScene extends Phaser.Scene {
    */
   private spawnKillCallout(victim: PlayerEntity | undefined, streak: number): void {
     if (!victim) return;
-    const labels = ["KILL", "DOUBLE KILL", "TRIPLE KILL", "MULTI KILL"];
-    const label = labels[Math.min(streak - 1, labels.length - 1)]!;
+    const label = killstreakLabel(streak);
     const scale = 1 + (streak - 1) * 0.3;
     const fontSize = `${Math.round(14 + (streak - 1) * 5)}px`;
     const color = streak === 1 ? "#fff7d6" : streak === 2 ? "#ffd166" : "#fb7185";
