@@ -407,6 +407,32 @@ probe-clip ALL PASS 8/8 (3.520s duration exact), and the extracted
 frame at the declared kill offset (t=1.5s) shows the star firing with
 the victim mid-death-burst. Server suites 219 green, deployed.
 
+**CL.D — COMPLETE (2026-07-17)**
+Broadcast chrome, owned by the clip and rendered on the house HUD-camera
+split (installHudCamera — the follow camera's 2.4× zoom scales
+scroll-fixed objects off-screen otherwise; replay world layers use
+scrollFactors 0.65–1 so the partition captures exactly the chrome): 4%
+letterbox bars, "JAKESJAM · play.elyad.io" watermark living inside the
+bottom bar (≤4% height by construction, instrument-ink quiet, every
+frame), and a lower-third — star callsign + feat (THE KILL / DOUBLE /
+TRIPLE / MULTI KILL from the window's killTicks) entering on the first
+kill with a 300ms render-clock fade and exiting 0.6s before the
+out-point. `__replayRender.chrome` publishes
+{hud, letterbox, watermark, lowerThird} per status. The renderer was
+already HUD-free (CL.A discovery) — no roster, no hotbar, no timer, no
+latency badge; the goal's strip-the-HUD criteria were satisfied by
+provenance, the ADD-the-identity criteria by this pillar. Two real bugs
+eaten en route: (1) container children created via this.add fire
+ADDED_TO_SCENE and HudCamera's partition camera-filtered them away from
+the HUD cam even after reparenting (cameraFilter=2 on the texts — fixed
+by make.text add:false, unparented construction); (2) discovered the
+EMAIL GATE DOM overlay sits over the render page in headless — harmless
+(VideoFrame captures the canvas only) but documented for future
+page-level captures. Verified on production-command renders: mid-frame
+shows SHADY_BASS_MAN — THE KILL + full chrome, final frame shows chrome
+without the lower-third, probe ALL PASS 8/8 throughout. Live game
+untouched (every change gated in ReplayScene render mode).
+
 **BASELINE (2026-07-17)** — study of `/c/dff7f450-55dc-4316-8df7-654ebf4e2ccb`:
 1896×950 @ 21.6fps real (215/360 expected frames, 9.96s of 12s intent),
 57600/1 fps metadata, zero audio streams, 10.8Mbps, ends on a bot's

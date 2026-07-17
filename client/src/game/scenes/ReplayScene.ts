@@ -77,6 +77,7 @@ import { characters } from "../data/characters";
 import { ARENA_THEMES, PALETTE } from "../ui/palette";
 import { SceneKeys } from "./SceneKeys";
 import { getWasmSim } from "../../sim/wasm/runtime";
+import { installHudCamera } from "../systems/HudCamera.js";
 
 const PLAYER_VISUAL_SCALE = 0.78;
 const RENDER_FPS = 30;
@@ -170,6 +171,13 @@ export class ReplayScene extends Phaser.Scene {
   private renderStartTick = 0;
   /** Kill ticks relative to the window start (&kills= from the queue). */
   private killTicks: number[] = [];
+  // Clip chrome (clip-goal CL.D) — broadcast dressing owned by the clip,
+  // not a spectator's HUD: ~4% letterbox, corner watermark, and a
+  // lower-third (star + feat) that enters on the first kill and leaves
+  // before the out-point. Render mode only; the live game never sees any
+  // of this (regression firewall by construction).
+  private lowerThird: Phaser.GameObjects.Container | null = null;
+  private lowerThirdVisible = false;
 
   constructor() {
     super(SceneKeys.Replay);
@@ -276,6 +284,13 @@ export class ReplayScene extends Phaser.Scene {
 
     if (this.renderMode) {
       this.renderStartTick = this.state.tick as number;
+      // Chrome rides the house HUD-camera split (HudCamera.ts): the follow
+      // camera's zoom would otherwise scale the scroll-fixed letterbox/
+      // watermark/lower-third straight off the broadcast box. Replay's
+      // world layers use scrollFactors 0.65–1, never 0, so the partition
+      // rule captures exactly the chrome.
+      installHudCamera(this);
+      this.buildClipChrome(file.header.players);
       await this.startOfflineAudio();
       this.startEncoder();
     }
@@ -301,6 +316,7 @@ export class ReplayScene extends Phaser.Scene {
         );
         for (const e of events) this.audioRouter.dispatch(e);
       }
+      this.updateClipChrome();
       this.renderState(deltaMs, events);
       this.capturePending = true;
       this.game.events.once(Phaser.Core.Events.POST_RENDER, () => {
@@ -501,6 +517,103 @@ export class ReplayScene extends Phaser.Scene {
     this.cameras.main.setRoundPixels(false);
   }
 
+  // ── Clip chrome (clip-goal CL.D) ────────────────────────────────────────
+
+  /** Letterbox bar height — 4% of the broadcast box per side. */
+  private static readonly LETTERBOX_H = Math.round(RENDER_H * 0.04);
+
+  /** Broadcast dressing: letterbox + watermark built once; the lower-third
+   *  is built hidden and toggled by the kill timeline in update(). */
+  private buildClipChrome(players: ReplayFile["header"]["players"]): void {
+    const depth = 5000; // above everything the world draws
+    const g = this.add.graphics().setScrollFactor(0).setDepth(depth);
+    g.fillStyle(0x000000, 1);
+    g.fillRect(0, 0, RENDER_W, ReplayScene.LETTERBOX_H);
+    g.fillRect(0, RENDER_H - ReplayScene.LETTERBOX_H, RENDER_W, ReplayScene.LETTERBOX_H);
+
+    // Watermark — house instrument ink, quiet, lives inside the bottom bar
+    // (≤4% screen height by construction: the bar IS 4%).
+    this.add
+      .text(RENDER_W - 18, RENDER_H - ReplayScene.LETTERBOX_H / 2, "JAKESJAM · play.elyad.io", {
+        fontFamily: "'Space Mono', 'Courier New', monospace",
+        fontSize: "17px",
+        color: "#897f69",
+      })
+      .setOrigin(1, 0.5)
+      .setScrollFactor(0)
+      .setDepth(depth + 1);
+
+    // Lower-third: star callsign + feat, house ink/gold. Hidden until the
+    // first kill lands; removed shortly before the out-point.
+    const starName =
+      players.find((p) => p.playerId === this.followId)?.name ??
+      (this.followId ?? "").slice(-4).toUpperCase();
+    const feat =
+      this.killTicks.length >= 4
+        ? "MULTI KILL"
+        : this.killTicks.length === 3
+          ? "TRIPLE KILL"
+          : this.killTicks.length === 2
+            ? "DOUBLE KILL"
+            : "THE KILL";
+    const lt = this.add.container(36, RENDER_H - ReplayScene.LETTERBOX_H - 64).setDepth(depth + 1);
+    // Children are built UNPARENTED (`add: false`): objects created via
+    // this.add fire ADDED_TO_SCENE and the HudCamera partition classifies
+    // them by their own scrollFactor (1 = world) — which camera-filtered
+    // these texts away from the HUD cam even after reparenting into the
+    // container (found via cameraFilter=2 on the children, 2026-07-17).
+    const nameText = this.make
+      .text({
+        x: 0,
+        y: 0,
+        text: starName.toUpperCase(),
+        style: {
+          fontFamily: "'Space Mono', 'Courier New', monospace",
+          fontStyle: "bold",
+          fontSize: "30px",
+          color: "#e8ecf4",
+          stroke: "#05080f",
+          strokeThickness: 5,
+        },
+        add: false,
+      })
+      .setOrigin(0, 1);
+    const featText = this.make
+      .text({
+        x: 2,
+        y: 6,
+        text: feat,
+        style: {
+          fontFamily: "'Space Mono', 'Courier New', monospace",
+          fontSize: "17px",
+          color: "#aa9e7f",
+          stroke: "#05080f",
+          strokeThickness: 4,
+        },
+        add: false,
+      })
+      .setOrigin(0, 0);
+    lt.add([nameText, featText]);
+    lt.setScrollFactor(0);
+    lt.setAlpha(0);
+    this.lowerThird = lt;
+  }
+
+  /** Kill-timeline chrome: lower-third enters on the first kill (300ms
+   *  fade via per-frame step — offline render, wall clock is meaningless),
+   *  exits 0.6s before the out-point. */
+  private updateClipChrome(): void {
+    if (!this.lowerThird || this.killTicks.length === 0) return;
+    const rel = (this.state.tick as number) - this.renderStartTick;
+    const clipTicks = this.totalTicks - this.renderStartTick;
+    const shouldShow = rel >= this.killTicks[0]! && rel < clipTicks - 36;
+    this.lowerThirdVisible = shouldShow;
+    const target = shouldShow ? 1 : 0;
+    // ~300ms fade at 30fps render cadence = ~0.11/frame.
+    const a = this.lowerThird.alpha;
+    this.lowerThird.setAlpha(a + Math.sign(target - a) * Math.min(0.12, Math.abs(target - a)));
+  }
+
   // ── Offline render (WebCodecs worker — same one the live recorder uses) ──
 
   /** Build the clip's audio pipeline (clip-goal CL.B): the game's own
@@ -637,6 +750,10 @@ export class ReplayScene extends Phaser.Scene {
       // Probe surface (clip-goal CL.C.4): where the cluster's kills land,
       // as encoded-frame indexes.
       killFrames: this.killTicks.map((t) => Math.floor(t / TICKS_PER_FRAME)),
+      // Chrome contract (CL.D): what the clip is dressed with.
+      chrome: this.renderMode
+        ? { hud: false, letterbox: true, watermark: true, lowerThird: this.lowerThirdVisible }
+        : null,
     };
     (window as unknown as { __replayRender?: unknown }).__replayRender = enriched;
     console.log("[replay]", JSON.stringify(enriched));
