@@ -58,6 +58,12 @@ export class MatchResultsOverlay {
   private stage: HTMLDivElement;
   private titleEl: HTMLDivElement;
   private subtitleEl: HTMLDivElement;
+  /** Second subtitle line ("First to N · match over") — a PERSISTENT
+   *  element, not appended per show(): this overlay instance outlives
+   *  world recycles, and an append-per-show leaked one extra line per
+   *  finished match all session (12 stacked lines on Jake's screenshot,
+   *  2026-07-17). */
+  private secondaryEl: HTMLDivElement;
   private scoreboardEl: HTMLDivElement;
   private actionsEl: HTMLDivElement;
   private destroyed = false;
@@ -77,13 +83,20 @@ export class MatchResultsOverlay {
     this.subtitleEl = document.createElement("div");
     Object.assign(this.subtitleEl.style, SUBTITLE_STYLE);
 
+    this.secondaryEl = document.createElement("div");
+    Object.assign(this.secondaryEl.style, SUBTITLE_STYLE);
+    // Tuck against the primary subtitle — the two caption lines read as one
+    // block, not two gapped rows fighting the stage's 18px flex gap.
+    this.secondaryEl.style.marginTop = "-12px";
+    this.secondaryEl.style.display = "none";
+
     this.scoreboardEl = document.createElement("div");
     Object.assign(this.scoreboardEl.style, SCOREBOARD_STYLE);
 
     this.actionsEl = document.createElement("div");
     Object.assign(this.actionsEl.style, ACTIONS_STYLE);
 
-    stage.append(this.titleEl, this.subtitleEl, this.scoreboardEl, this.actionsEl);
+    stage.append(this.titleEl, this.subtitleEl, this.secondaryEl, this.scoreboardEl, this.actionsEl);
     this.root.appendChild(stage);
 
     document.body.appendChild(this.root);
@@ -109,12 +122,12 @@ export class MatchResultsOverlay {
       this.subtitleEl.textContent = `First to ${view.targetScore}`;
     }
 
-    // Secondary subtitle line
+    // Secondary subtitle line — persistent element, toggled per show.
     if (winnerRow) {
-      const secondary = document.createElement("div");
-      secondary.textContent = `First to ${view.targetScore} · match over`;
-      Object.assign(secondary.style, SUBTITLE_STYLE);
-      this.subtitleEl.after(secondary);
+      this.secondaryEl.textContent = `First to ${view.targetScore} · match over`;
+      this.secondaryEl.style.display = "";
+    } else {
+      this.secondaryEl.style.display = "none";
     }
 
     this.scoreboardEl.replaceChildren();
