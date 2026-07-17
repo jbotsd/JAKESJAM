@@ -33,7 +33,9 @@
     "host:public": "./scripts/host-public.sh",
     "combat:probe": "bun tools/combat-probe.mjs",
     "match:probe": "bun tools/match-probe.mjs",
-    "gen:cards": "bun run sim/tools/gen_card_data.ts"
+    "gen:cards": "bun run sim/tools/gen_card_data.ts",
+    "autoplay": "bun scripts/autoplay.ts",
+    "autoplay:heavy": "bun scripts/autoplay.ts --heavy"
   },
   "devDependencies": {
     "@playwright/test": "^1.59.1",
