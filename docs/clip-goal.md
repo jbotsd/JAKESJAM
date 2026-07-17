@@ -315,6 +315,25 @@ probes pass against a clip rendered by the REAL queue on this machine —
 
 *(append per pillar as work lands)*
 
+**CL.0 — COMPLETE (2026-07-17)**
+`scripts/probe-clip.ts` (CLI + importable module): eight checks —
+resolution 1920×1080, real fps (counted frames ÷ duration) within 2% of
+target, nominal fps metadata ≤120, duration = ticks/60 ±1 frame, audio
+present AND non-silent (mean volume > −60dB over the middle 50%), bitrate
+≤9Mbps, faststart via top-level MP4 box walk (moov before mdat), and a
+motion check (10fps sampling across the middle 60%, zero byte-identical
+consecutive frames). PASS/FAIL table, exit code. Self-test both
+directions (scripts/__tests__/probeClip.test.ts, 2 pass): a known-good
+ffmpeg synthetic (1920×1080@30 + sine audio + faststart) passes ALL
+checks; the studied baseline clip fails EXACTLY its indexed defects —
+resolution (B1), fps-real/fps-meta/duration (B2), audio (B3), bitrate
+(B4) — and passes faststart, which production already had right. Run
+against the real baseline: 6 FAIL / 2 PASS as predicted. Environment
+lesson: /usr/local/bin/ffprobe on this box is a stale firecfg firejail
+symlink whose private-tmp makes /tmp files invisible — the verifier pins
+/usr/bin/{ffprobe,ffmpeg} explicitly (Jake: `sudo rm
+/usr/local/bin/ffprobe` per the house firecfg policy when convenient).
+
 **BASELINE (2026-07-17)** — study of `/c/dff7f450-55dc-4316-8df7-654ebf4e2ccb`:
 1896×950 @ 21.6fps real (215/360 expected frames, 9.96s of 12s intent),
 57600/1 fps metadata, zero audio streams, 10.8Mbps, ends on a bot's
