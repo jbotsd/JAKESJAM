@@ -334,6 +334,28 @@ symlink whose private-tmp makes /tmp files invisible — the verifier pins
 /usr/bin/{ffprobe,ffmpeg} explicitly (Jake: `sudo rm
 /usr/local/bin/ffprobe` per the house firecfg policy when convenient).
 
+**CL.A — COMPLETE (2026-07-17)**
+Provenance discovery first: a REAL production render captured mid-flight
+(the live queue rendered player_u993qx62's highlight while we watched)
+proved today's host path already produces exactly 360 frames @ 30/1
+nominal, 11.967s duration, faststart — the studied dff7f450 baseline
+(21.6fps, 57600/1, wrong duration) was a CLIENT-side capture, not the
+host renderer. The host path's real defects were resolution (canvas
+inherited the page's shell layout: 1920×937 → encoder even-rounded to
+938) and bitrate (CLIP_BITRATE 16Mbps → 13.4 measured). Fix: render mode
+pins the canvas to the broadcast box before any camera math
+(`scale.resize(RENDER_W=1920, RENDER_H=1080)` under Scale.NONE — window
+and page layout become irrelevant, no CDP dependency), encoder `begin`
+declares the box explicitly, CLIP_BITRATE 7.5Mbps. Verified through
+probe-clip on a fresh production-command render made WHILE an autoplay
+match hammered the box: resolution 1920×1080 PASS, fps-real 30.08 PASS,
+fps-meta 30/1 PASS, duration 11.967s PASS, bitrate 7.23Mbps PASS,
+faststart PASS, motion PASS — 7/8, audio the sole remaining FAIL (CL.B's
+job). Frame-exactness pinned on two ticks values (720→360 frames,
+360→180 frames, ffprobe-counted) with the 360 run under load. Extracted
+frame eyeballed: undistorted 16:9, broadcast view confirmed chrome-free.
+(Noted for CL.D/F: adjacent bot nameplates collide/overlap.)
+
 **BASELINE (2026-07-17)** — study of `/c/dff7f450-55dc-4316-8df7-654ebf4e2ccb`:
 1896×950 @ 21.6fps real (215/360 expected frames, 9.96s of 12s intent),
 57600/1 fps metadata, zero audio streams, 10.8Mbps, ends on a bot's

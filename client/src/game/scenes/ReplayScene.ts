@@ -79,7 +79,16 @@ import { getWasmSim } from "../../sim/wasm/runtime";
 const PLAYER_VISUAL_SCALE = 0.78;
 const RENDER_FPS = 30;
 const TICKS_PER_FRAME = 2; // 60Hz sim → 30fps video
-const CLIP_BITRATE = 16_000_000;
+// ≤9Mbps is the probe-clip gate (clip-goal CL.A/H); dark arena content
+// looks identical at 7.5 vs the old 16 — the studied artifacts shipped
+// 10-13Mbps for nothing.
+const CLIP_BITRATE = 7_500_000;
+/** The broadcast box (clip-goal CL.A): render mode pins the canvas to
+ *  exactly this, independent of window/page layout — the production
+ *  headless capture came out 1920×937 because the canvas inherited the
+ *  page's shell chrome layout. */
+const RENDER_W = 1920;
+const RENDER_H = 1080;
 
 type ReplayFile = {
   header: {
@@ -158,6 +167,12 @@ export class ReplayScene extends Phaser.Scene {
     const params = new URLSearchParams(window.location.search);
     const name = params.get("replay") ?? "latest";
     this.renderMode = params.get("render") === "1";
+    if (this.renderMode) {
+      // Pin the canvas to the broadcast box BEFORE any camera/layout math
+      // (Scale.NONE → resize sets game size + backing store directly).
+      // Everything downstream (cameras, capture) reads the final size.
+      this.scale.resize(RENDER_W, RENDER_H);
+    }
     this.publish({ status: "loading" });
 
     // DETERMINISM GATE: the TS sim's trig delegates to Math.sin/cos until
@@ -440,7 +455,7 @@ export class ReplayScene extends Phaser.Scene {
     for (let gy = 0; gy <= height; gy += 96) g.lineBetween(0, gy, width, gy);
 
     const platforms = new PlatformLayer(this);
-    platforms.repaint(this.map.platforms, theme);
+    platforms.repaint(this.map.platforms, theme, this.map.launchPads);
     const cosmic = new CosmicArenaLayer(this);
     cosmic.spawn(width, height);
     setDeathFxTarget(this.deathFxState, width * 0.5, height * 0.5);
@@ -463,15 +478,19 @@ export class ReplayScene extends Phaser.Scene {
     );
     this.encoder.onmessage = (e: MessageEvent) => {
       const msg = e.data as { t: string; buffer?: ArrayBuffer; width?: number; height?: number; message?: string };
-      if (msg.t === "file" && msg.buffer) void this.uploadRender(msg.buffer, msg.width ?? 0, msg.height ?? 0);
+      if (msg.t === "file" && msg.buffer) void this.uploadRender(msg.buffer);
       if (msg.t === "error") this.publish({ status: "error", message: msg.message });
     };
     this.encoder.onerror = (e: ErrorEvent) =>
       this.publish({ status: "error", message: `worker: ${e.message}` });
+    // The broadcast box, not the canvas's current size: the canvas was
+    // pinned to RENDER_W×RENDER_H in create(), and declaring the box
+    // explicitly means even a rogue late resize gets normalized by the
+    // worker's transform instead of changing the output container.
     this.encoder.postMessage({
       t: "begin",
-      width: this.game.canvas.width || 1280,
-      height: this.game.canvas.height || 720,
+      width: RENDER_W,
+      height: RENDER_H,
       bitrate: CLIP_BITRATE,
     });
   }
@@ -499,18 +518,15 @@ export class ReplayScene extends Phaser.Scene {
     this.encoder?.postMessage({ t: "finish" });
   }
 
-  private async uploadRender(buffer: ArrayBuffer, w: number, h: number): Promise<void> {
+  private async uploadRender(buffer: ArrayBuffer): Promise<void> {
     try {
       const blob = new Blob([buffer], { type: "video/mp4" });
       const form = new FormData();
       form.append("file", blob, "replay-render.mp4");
-      form.append("focusTrace", JSON.stringify([{ t: 0, x: Math.round(w / 2) }]));
-      form.append("srcW", String(w));
-      form.append("srcH", String(h));
       const res = await fetch("/clips/upload", { method: "POST", body: form });
       if (!res.ok) throw new Error(`upload ${res.status}`);
-      const { url, verticalUrl } = (await res.json()) as { url: string; verticalUrl?: string };
-      this.publish({ status: "done", url, verticalUrl, frames: this.frameIndex, bytes: blob.size });
+      const { url } = (await res.json()) as { url: string };
+      this.publish({ status: "done", url, frames: this.frameIndex, bytes: blob.size });
     } catch (err) {
       this.publish({ status: "error", message: String(err) });
     }
