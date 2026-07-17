@@ -356,6 +356,31 @@ job). Frame-exactness pinned on two ticks values (720→360 frames,
 frame eyeballed: undistorted 16:9, broadcast view confirmed chrome-free.
 (Noted for CL.D/F: adjacent bot nameplates collide/overlap.)
 
+**CL.B — COMPLETE (2026-07-17)**
+The clip's audio IS the game's audio engine replaying the replay:
+ProceduralAudio gained an offline mode (constructed over an
+OfflineAudioContext sized to the clip exactly; every cue schedules at
+`offlineAt` = (tick − startTick)/60 instead of ctx.currentTime; realtime
+gates — context-state, voice caps, setTimeout second-layers — bypassed
+or re-expressed as scheduled offsets; SFX level pinned to a fixed
+broadcast mix, never this box's slider). SampleEngine (the Bitwig pack)
+gained `at` scheduling + a whenReady() gate so sample-first cues can't
+race the pack load. ReplayScene render mode routes every stepped tick's
+events through the SAME SimEventRouter mapping live play uses (visual
+deps stubbed — the HangoutScene precedent), renders the graph to PCM at
+finish, and hands planar f32 to the encoder worker, which registers the
+audio track at begin (tracks must precede Output.start) and muxes.
+Codec: AAC when the encoder exists, Opus fallback — discovered live
+that headless/Linux Chromium ships NO mp4a.40.2 encoder (decode ≠
+encode; the config rejects at first sample). Bug fixed en route:
+stepTicks returned only the LAST tick's events per 2-tick frame — half
+of all audio/fx cues were silently dropped; now accumulates. Verified:
+production-command render → probe-clip **ALL PASS 8/8** (audio: 1 opus
+stream, mean −34.9dB). Sync spot-check: loudest 250ms window (0.38s)
+lands exactly on a projectile connecting between the two bots on the
+video track. Suites 1070 green. No third-party SFX anywhere — grep
+clean; no music bed this pillar (goal marks it optional).
+
 **BASELINE (2026-07-17)** — study of `/c/dff7f450-55dc-4316-8df7-654ebf4e2ccb`:
 1896×950 @ 21.6fps real (215/360 expected frames, 9.96s of 12s intent),
 57600/1 fps metadata, zero audio streams, 10.8Mbps, ends on a bot's

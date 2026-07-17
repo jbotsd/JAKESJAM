@@ -36,6 +36,8 @@ import type {
 import type { DirectorState } from "../../sim/spectatorDirector";
 import { ProceduralPlayerRig } from "../rendering/ProceduralPlayerRig";
 import { BakedPlayerRig } from "../rendering/BakedPlayerRig";
+import { ProceduralAudio } from "../systems/ProceduralAudio";
+import { SimEventRouter } from "../render/SimEventRouter";
 import { EntityRenderCoordinator } from "../render/EntityRenderCoordinator";
 import { PlatformLayer } from "../render/PlatformPainter";
 import { CosmicArenaLayer } from "../render/CosmicArenaLayer";
@@ -158,6 +160,14 @@ export class ReplayScene extends Phaser.Scene {
   private encoder: Worker | null = null;
   private frameIndex = 0;
   private capturePending = false;
+  // Offline clip audio (clip-goal CL.B): the game's own audio engine driven
+  // from the replay's events into an OfflineAudioContext, rendered to PCM
+  // at finish and muxed as the clip's AAC track. Sync is by construction —
+  // both clocks are `(tick − startTick)/60`.
+  private offlineAudio: ProceduralAudio | null = null;
+  private offlineAudioCtx: OfflineAudioContext | null = null;
+  private audioRouter: SimEventRouter | null = null;
+  private renderStartTick = 0;
 
   constructor() {
     super(SceneKeys.Replay);
@@ -255,7 +265,11 @@ export class ReplayScene extends Phaser.Scene {
       this.totalTicks = Math.min(this.totalTicks, (this.state.tick as number) + rangeTicks);
     }
 
-    if (this.renderMode) this.startEncoder();
+    if (this.renderMode) {
+      this.renderStartTick = this.state.tick as number;
+      await this.startOfflineAudio();
+      this.startEncoder();
+    }
     this.publish({ status: this.renderMode ? "rendering" : "playing", startTick: this.state.tick as number, totalTicks: this.totalTicks });
   }
 
@@ -271,6 +285,13 @@ export class ReplayScene extends Phaser.Scene {
         return;
       }
       const events = this.stepTicks(TICKS_PER_FRAME);
+      // Clip audio: schedule this frame's cues at the replay clock (CL.B).
+      if (this.audioRouter && this.offlineAudio) {
+        this.offlineAudio.setOfflineTime(
+          ((this.state.tick as number) - this.renderStartTick) / 60,
+        );
+        for (const e of events) this.audioRouter.dispatch(e);
+      }
       this.renderState(deltaMs, events);
       this.capturePending = true;
       this.game.events.once(Phaser.Core.Events.POST_RENDER, () => {
@@ -291,9 +312,11 @@ export class ReplayScene extends Phaser.Scene {
     this.renderState(deltaMs, events);
   }
 
-  /** Step N ticks (roster events + inputs applied like the live host). */
+  /** Step N ticks (roster events + inputs applied like the live host).
+   *  Returns ALL ticks' events — a 2-tick frame step used to return only
+   *  the last tick's, silently dropping half the audio/fx cues (CL.B). */
   private stepTicks(n: number): SimEvent[] {
-    let events: SimEvent[] = [];
+    const events: SimEvent[] = [];
     for (let i = 0; i < n && this.state.tick < this.totalTicks; i++) {
       const roster = this.rosterByTick.get(this.state.tick as number);
       if (roster) {
@@ -314,8 +337,8 @@ export class ReplayScene extends Phaser.Scene {
       }
       const result = stepWithRuntime(this.state, this.runtime, inputs, STEP_MS);
       this.state = result.state;
-      events = result.events;
-      this.director = stepSpectatorDirector(this.director, this.state, events, STEP_MS / 1000);
+      events.push(...result.events);
+      this.director = stepSpectatorDirector(this.director, this.state, result.events, STEP_MS / 1000);
     }
     return events;
   }
@@ -471,6 +494,49 @@ export class ReplayScene extends Phaser.Scene {
 
   // ── Offline render (WebCodecs worker — same one the live recorder uses) ──
 
+  /** Build the clip's audio pipeline (clip-goal CL.B): the game's own
+   *  ProceduralAudio + SampleEngine on an OfflineAudioContext sized to the
+   *  clip exactly, events routed through the same SimEventRouter mapping
+   *  live play uses (visual deps stubbed — HangoutScene precedent). Any
+   *  failure degrades to a silent clip, never a failed render. */
+  private async startOfflineAudio(): Promise<void> {
+    try {
+      const clipTicks = Math.max(1, this.totalTicks - this.renderStartTick);
+      const sampleRate = 48_000;
+      const ctx = new OfflineAudioContext(
+        2,
+        Math.ceil((clipTicks / 60) * sampleRate),
+        sampleRate,
+      );
+      const audio = new ProceduralAudio(ctx);
+      await audio.prepareOffline();
+      this.offlineAudioCtx = ctx;
+      this.offlineAudio = audio;
+      this.audioRouter = new SimEventRouter({
+        scene: this,
+        audio,
+        localPlayerId: (this.followId ?? "") as PlayerId,
+        safeShake: () => {},
+        spawnDamageNumber: () => {},
+        spawnBlastAtPlayer: () => {},
+        killCinematic: () => {},
+        spawnPlatformBlastTint: () => {},
+        showCardDraft: () => {},
+        hideCardDraft: () => {},
+        playerRigs: { get: () => undefined },
+        particlePool: null,
+        renderLayer: null,
+        killStreakCount: new Map(),
+        prevAlive: new Set(),
+      });
+    } catch (err) {
+      console.warn("[replay] offline audio unavailable — rendering silent:", err);
+      this.offlineAudioCtx = null;
+      this.offlineAudio = null;
+      this.audioRouter = null;
+    }
+  }
+
   private startEncoder(): void {
     this.encoder = new Worker(
       new URL("../highlights/clipEncoderWorker.ts", import.meta.url),
@@ -492,6 +558,9 @@ export class ReplayScene extends Phaser.Scene {
       width: RENDER_W,
       height: RENDER_H,
       bitrate: CLIP_BITRATE,
+      // Track registration must precede Output.start(); the PCM itself
+      // arrives at finish (startOfflineAudio decides whether audio exists).
+      audio: this.offlineAudioCtx !== null,
     });
   }
 
@@ -515,6 +584,27 @@ export class ReplayScene extends Phaser.Scene {
     if (this.done) return;
     this.done = true;
     this.publish({ status: "encoding", frames: this.frameIndex });
+    void this.finalizeEncode();
+  }
+
+  /** Render the scheduled audio graph to PCM, hand it to the muxer, then
+   *  finish. Audio failure ships a silent clip rather than no clip. */
+  private async finalizeEncode(): Promise<void> {
+    try {
+      if (this.offlineAudioCtx) {
+        const buf = await this.offlineAudioCtx.startRendering();
+        const channels: Float32Array[] = [];
+        for (let c = 0; c < buf.numberOfChannels; c++) {
+          channels.push(buf.getChannelData(c));
+        }
+        this.encoder?.postMessage(
+          { t: "audio", sampleRate: buf.sampleRate, channels },
+          channels.map((ch) => ch.buffer as ArrayBuffer),
+        );
+      }
+    } catch (err) {
+      console.warn("[replay] audio render failed — shipping silent:", err);
+    }
     this.encoder?.postMessage({ t: "finish" });
   }
 

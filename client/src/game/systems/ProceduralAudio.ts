@@ -141,8 +141,41 @@ function weaponPatch(el?: string): WeaponPatch {
 }
 
 export class ProceduralAudio {
-  private ctx?: AudioContext;
+  private ctx?: AudioContext | OfflineAudioContext;
   private master?: GainNode;
+  /** OFFLINE RENDER MODE (clip-goal CL.B): constructed with an
+   *  OfflineAudioContext, every cue schedules at `offlineAt` (set per sim
+   *  tick by the replay renderer) instead of ctx.currentTime, realtime
+   *  gates (context state, voice caps, setTimeout layers) are bypassed,
+   *  and the SFX volume is a fixed broadcast level — the clip must not
+   *  inherit whatever slider position this box happens to have. */
+  private readonly offlineCtx?: OfflineAudioContext;
+  private offlineAt = 0;
+
+  constructor(offlineCtx?: OfflineAudioContext) {
+    this.offlineCtx = offlineCtx;
+  }
+
+  private get offline(): boolean {
+    return this.offlineCtx !== undefined;
+  }
+
+  /** Replay renderer sets the current cue time (seconds from clip start). */
+  setOfflineTime(seconds: number): void {
+    this.offlineAt = seconds;
+  }
+
+  /** Cue-schedule time: explicit offline clock, else the live context's. */
+  private cueNow(ctx: BaseAudioContext): number {
+    return this.offline ? this.offlineAt : ctx.currentTime;
+  }
+
+  /** Offline setup: build the graph on the offline context and wait for
+   *  the sample pack so sample-first cues don't race the load. */
+  async prepareOffline(): Promise<void> {
+    this.ensureContext();
+    await sampleEngine.whenReady();
+  }
   /** Concurrent weapon voices — a hard cap prevents audio-thread overload
    *  (crackle/"lag distortion") when fire rate + player count spikes. */
   private activeShots = 0;
@@ -166,6 +199,7 @@ export class ProceduralAudio {
 
   /** Call from a user-gesture handler to create/resume the context. */
   unlock(): void {
+    if (this.offline) return; // offline contexts render, they don't resume
     const ctx = this.ensureContext();
     if (ctx && ctx.state === "suspended") void ctx.resume();
   }
@@ -178,28 +212,41 @@ export class ProceduralAudio {
     }
     this.unsubscribeSfxVolume?.();
     this.unsubscribeSfxVolume = undefined;
-    void this.ctx?.close();
+    // Offline contexts are owned by the replay renderer (it still needs
+    // startRendering after we're done) — only close a realtime context.
+    if (this.ctx && !this.offline) void (this.ctx as AudioContext).close();
     this.ctx = undefined;
   }
 
-  private ensureContext(): AudioContext | undefined {
+  private ensureContext(): AudioContext | OfflineAudioContext | undefined {
     if (this.ctx) return this.ctx;
-    const Ctor =
-      (window as { AudioContext?: typeof AudioContext }).AudioContext ??
-      (window as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
-    if (!Ctor) return undefined;
-    const ctx = new Ctor();
+    let ctx: AudioContext | OfflineAudioContext;
+    if (this.offlineCtx) {
+      ctx = this.offlineCtx;
+    } else {
+      const Ctor =
+        (window as { AudioContext?: typeof AudioContext }).AudioContext ??
+        (window as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+      if (!Ctor) return undefined;
+      ctx = new Ctor();
+    }
     this.ctx = ctx;
 
     // Master → soft limiter → out. Scaled by the shared SFX-volume setting
     // (settings panel, main.ts) on top of the fixed MASTER mix level —
     // live-updates via onSfxVolumeChange so dragging the slider mid-match
     // takes effect immediately, not just on the next scene/context.
+    // Offline renders pin a fixed broadcast level instead (the clip's mix
+    // must not depend on this box's slider).
     const master = ctx.createGain();
-    master.gain.value = MASTER * getSfxVolume01();
-    this.unsubscribeSfxVolume = onSfxVolumeChange((v01) => {
-      master.gain.value = MASTER * v01;
-    });
+    if (this.offline) {
+      master.gain.value = MASTER * 0.8;
+    } else {
+      master.gain.value = MASTER * getSfxVolume01();
+      this.unsubscribeSfxVolume = onSfxVolumeChange((v01) => {
+        master.gain.value = MASTER * v01;
+      });
+    }
     const limiter = ctx.createDynamicsCompressor();
     limiter.threshold.value = -10;
     limiter.knee.value = 6;
@@ -225,19 +272,29 @@ export class ProceduralAudio {
   }
 
   private now(): number {
+    if (this.offline) return this.offlineAt;
     return this.ctx?.currentTime ?? 0;
+  }
+
+  /** Realtime-ready gate: a live context must be running (user-gesture
+   *  unlocked); an offline context is always schedulable. */
+  private ready(): boolean {
+    if (!this.ensureContext()) return false;
+    return this.offline || (this.ctx as AudioContext).state === "running";
   }
 
   // ── Public cue API (router-compatible) ──────────────────────────────
 
   play(cue: AudioCue, params: AudioParams = {}): void {
-    if (!this.ensureContext() || this.ctx?.state !== "running") return;
+    if (!this.ready()) return;
     // SAMPLE-FIRST (SampleEngine): if the Bitwig pack ships this cue, the
     // studio version wins; intensity maps to gain. Synth = fallback.
     if (
       sampleEngine.play(cue, {
         gain: 0.5 + clamp01(params.intensity ?? 0.5) * 0.5,
         pitch: 1 - clamp01(params.charge ?? 0) * 0.15,
+        // Offline renders schedule at the replay clock, not "now".
+        at: this.offline ? this.offlineAt : undefined,
       })
     ) {
       return;
@@ -275,11 +332,15 @@ export class ProceduralAudio {
         break;
       case "pickup":
         this.blip(740, "sine", 0.09, 0.05, 260);
-        window.setTimeout(() => this.blip(980, "triangle", 0.08, 0.07, 180), 42);
+        // Second layer: wall-clock delay live; replay-clock offset offline
+        // (setTimeout never fires inside the offline stepping loop).
+        if (this.offline) this.blip(980, "triangle", 0.08, 0.07, 180, 0.042);
+        else window.setTimeout(() => this.blip(980, "triangle", 0.08, 0.07, 180), 42);
         break;
       case "card":
         this.blip(430, "sine", 0.1, 0.07, 420);
-        window.setTimeout(() => this.blip(650, "sine", 0.09, 0.09, 240), 55);
+        if (this.offline) this.blip(650, "sine", 0.09, 0.09, 240, 0.055);
+        else window.setTimeout(() => this.blip(650, "sine", 0.09, 0.09, 240), 55);
         break;
       case "fire":
         this.noise(0.12, 0.1, 980, 1.2);
@@ -289,7 +350,7 @@ export class ProceduralAudio {
 
   /** Start/stop the continuous shield energy hum (call on shield up/down). */
   setShieldHum(on: boolean): void {
-    if (!this.ensureContext() || this.ctx?.state !== "running") return;
+    if (!this.ready()) return;
     if (on && !this.shieldDrone) this.startShieldHum();
     else if (!on && this.shieldDrone) {
       this.shieldDrone.stop(this.now());
@@ -323,12 +384,16 @@ export class ProceduralAudio {
     if (!ctx || !master) return;
     // Voice cap — skip the synth if too many shots are already ringing out.
     // Overlapping heavy (distorted) voices are what crackle the audio thread.
-    if (this.activeShots > 12) return;
-    this.activeShots += 1;
-    window.setTimeout(() => {
-      this.activeShots = Math.max(0, this.activeShots - 1);
-    }, 260);
-    const t = ctx.currentTime;
+    // REALTIME protection only: offline rendering isn't on the audio thread
+    // and its setTimeout bookkeeping never fires inside the stepping loop.
+    if (!this.offline) {
+      if (this.activeShots > 12) return;
+      this.activeShots += 1;
+      window.setTimeout(() => {
+        this.activeShots = Math.max(0, this.activeShots - 1);
+      }, 260);
+    }
+    const t = this.cueNow(ctx);
     const v = elementVoice(p.element);
     const charge = clamp01(p.charge ?? 0);
     const inten = clamp01(p.intensity ?? 0.5);
@@ -599,7 +664,7 @@ export class ProceduralAudio {
     const ctx = this.ctx;
     const master = this.master;
     if (!ctx || !master) return;
-    const t = ctx.currentTime;
+    const t = this.cueNow(ctx);
     const inten = clamp01(p.intensity ?? 0.6);
     // Big filtered noise body + downward sawtooth boom + sub.
     const bus = ctx.createGain();
@@ -620,7 +685,7 @@ export class ProceduralAudio {
     const ctx = this.ctx;
     const master = this.master;
     if (!ctx || !master) return;
-    const t = ctx.currentTime;
+    const t = this.cueNow(ctx);
     const bus = ctx.createGain();
     bus.connect(master);
     this.sendReverb(bus, 0.14);
@@ -653,7 +718,7 @@ export class ProceduralAudio {
     const ctx = this.ctx;
     const master = this.master;
     if (!ctx || !master) return;
-    const t = ctx.currentTime;
+    const t = this.cueNow(ctx);
     const out = ctx.createGain();
     out.gain.setValueAtTime(0.0001, t);
     out.gain.exponentialRampToValueAtTime(0.05, t + 0.25); // low, sits under gameplay
@@ -694,7 +759,7 @@ export class ProceduralAudio {
     const ctx = this.ctx;
     const master = this.master;
     if (!ctx || !master) return;
-    const t = ctx.currentTime;
+    const t = this.cueNow(ctx);
     const bus = ctx.createGain();
     bus.connect(master);
     this.sendReverb(bus, 0.16);
@@ -709,7 +774,7 @@ export class ProceduralAudio {
     const ctx = this.ctx;
     const master = this.master;
     if (!ctx || !master) return;
-    const t = ctx.currentTime;
+    const t = this.cueNow(ctx);
     const bus = ctx.createGain();
     bus.connect(master);
     this.sendReverb(bus, 0.2);
@@ -741,7 +806,7 @@ export class ProceduralAudio {
     const ctx = this.ctx;
     const master = this.master;
     if (!ctx || !master) return;
-    const t = ctx.currentTime;
+    const t = this.cueNow(ctx);
     const bus = ctx.createGain();
     bus.connect(master);
     this.sendReverb(bus, 0.2);
@@ -788,7 +853,7 @@ export class ProceduralAudio {
     const ctx = this.ctx;
     const master = this.master;
     if (!ctx || !master) return;
-    const t = ctx.currentTime;
+    const t = this.cueNow(ctx);
     const src = this.noiseSource();
     const f = ctx.createBiquadFilter();
     f.type = "bandpass";
@@ -807,12 +872,13 @@ export class ProceduralAudio {
 
   // ── Synth primitives ────────────────────────────────────────────────
 
-  /** A quick pitched blip with exp pitch slide. */
-  private blip(freq: number, type: OscillatorType, gain: number, dur: number, slide: number): void {
+  /** A quick pitched blip with exp pitch slide. `delayS` offsets the cue
+   *  time — used by offline renders in place of setTimeout layers. */
+  private blip(freq: number, type: OscillatorType, gain: number, dur: number, slide: number, delayS = 0): void {
     const ctx = this.ctx;
     const master = this.master;
     if (!ctx || !master) return;
-    const t = ctx.currentTime;
+    const t = this.cueNow(ctx) + delayS;
     const o = ctx.createOscillator();
     o.type = type;
     o.frequency.setValueAtTime(freq, t);
@@ -912,7 +978,7 @@ export class ProceduralAudio {
     const ctx = this.ctx;
     const master = this.master;
     if (!ctx || !master) return;
-    const t = (opts.at ?? ctx.currentTime);
+    const t = (opts.at ?? this.cueNow(ctx));
     const ratios = opts.ratios ?? [1, 2.76, 5.4, 8.93];
     const bus = ctx.createGain();
     bus.connect(master);

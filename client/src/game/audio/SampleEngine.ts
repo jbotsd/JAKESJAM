@@ -15,22 +15,33 @@ const PITCH_JITTER = 0.06;
 const MAX_VOICES = 24;
 
 export class SampleEngine {
-  private ctx: AudioContext | null = null;
+  private ctx: BaseAudioContext | null = null;
   private master: GainNode | null = null;
   private buffers = new Map<CueName, AudioBuffer[]>();
   private rr = new Map<CueName, number>();
   private loading = false;
   private manifest: Record<CueName, number> | null = null;
   private activeVoices = 0;
+  /** Resolves when the pack finished loading (or was found absent) —
+   *  offline renders (clip-goal CL.B) must await this before stepping so
+   *  sample-first cues don't silently fall back to synth mid-load. */
+  private loadedPromise: Promise<void> | null = null;
 
-  /** Attach to the game's AudioContext (share ProceduralAudio's). */
-  init(ctx: AudioContext, master: GainNode): void {
+  /** Attach to the game's AudioContext (share ProceduralAudio's).
+   *  Re-init with a different context is allowed (offline clip render) —
+   *  decoded AudioBuffers are context-independent PCM. */
+  init(ctx: BaseAudioContext, master: GainNode): void {
     this.ctx = ctx;
     this.master = master;
     if (!this.loading) {
       this.loading = true;
-      void this.loadAll();
+      this.loadedPromise = this.loadAll();
     }
+  }
+
+  /** Await pack readiness (no-op resolve when init never ran). */
+  whenReady(): Promise<void> {
+    return this.loadedPromise ?? Promise.resolve();
   }
 
   private async loadAll(): Promise<void> {
@@ -71,13 +82,16 @@ export class SampleEngine {
    */
   play(
     cue: CueName,
-    opts: { gain?: number; pitch?: number; pan?: number } = {},
+    opts: { gain?: number; pitch?: number; pan?: number; at?: number } = {},
   ): boolean {
     const ctx = this.ctx;
     const master = this.master;
     const list = this.buffers.get(cue);
     if (!ctx || !master || !list || list.length === 0) return false;
-    if (this.activeVoices >= MAX_VOICES) return true; // swallowed, not synth-doubled
+    // Voice cap is a REALTIME audio-thread protection; offline renders
+    // (explicit `at` scheduling, clip-goal CL.B) build the whole graph up
+    // front and the cap's onended bookkeeping never fires between cues.
+    if (opts.at === undefined && this.activeVoices >= MAX_VOICES) return true; // swallowed, not synth-doubled
     const idx = (this.rr.get(cue) ?? 0) % list.length;
     this.rr.set(cue, idx + 1);
     const src = ctx.createBufferSource();
@@ -95,11 +109,13 @@ export class SampleEngine {
     }
     src.connect(g);
     head.connect(master);
-    this.activeVoices += 1;
-    src.onended = () => {
-      this.activeVoices = Math.max(0, this.activeVoices - 1);
-    };
-    src.start();
+    if (opts.at === undefined) {
+      this.activeVoices += 1;
+      src.onended = () => {
+        this.activeVoices = Math.max(0, this.activeVoices - 1);
+      };
+    }
+    src.start(opts.at);
     return true;
   }
 }

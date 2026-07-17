@@ -19,6 +19,8 @@
 //                                            MediaRecorder for the session
 
 import {
+  AudioSample,
+  AudioSampleSource,
   BufferTarget,
   Mp4OutputFormat,
   Output,
@@ -30,12 +32,25 @@ import {
  *  renderScale > 1 would otherwise upload 2880px masters). */
 const MAX_WIDTH = 1920;
 
-type BeginMsg = { t: "begin"; width: number; height: number; bitrate: number };
+type BeginMsg = {
+  t: "begin";
+  width: number;
+  height: number;
+  bitrate: number;
+  /** Announce an audio track (offline replay renders, clip-goal CL.B) —
+   *  tracks must be registered before Output.start(), but the rendered
+   *  PCM only exists at the end, so begin declares and finish delivers. */
+  audio?: boolean;
+};
 type FrameMsg = { t: "frame"; frame: VideoFrame };
-type InMsg = BeginMsg | FrameMsg | { t: "finish" } | { t: "cancel" };
+/** Planar f32 PCM from an OfflineAudioContext render — one channel per
+ *  entry, all the same length, scheduled from timestamp 0. */
+type AudioMsg = { t: "audio"; sampleRate: number; channels: Float32Array[] };
+type InMsg = BeginMsg | FrameMsg | AudioMsg | { t: "finish" } | { t: "cancel" };
 
 let output: Output | null = null;
 let source: VideoSampleSource | null = null;
+let audioSource: AudioSampleSource | null = null;
 let encodedW = 0;
 let encodedH = 0;
 /** Serialize async handling — messages must apply in arrival order. */
@@ -66,7 +81,48 @@ async function handleBegin(msg: BeginMsg): Promise<void> {
     transform: { width: encodedW, height: encodedH, fit: "fill" },
   });
   output.addVideoTrack(source);
+  if (msg.audio) {
+    // AAC when the encoder exists (Chrome proper), Opus otherwise —
+    // headless/Linux Chromium ships no mp4a.40.2 ENCODER (decode ≠ encode),
+    // and Opus-in-MP4 plays everywhere modern. Verified live 2026-07-17:
+    // the AAC config rejects at first sample on this box's chromium.
+    let codec: "aac" | "opus" = "aac";
+    try {
+      const support = await AudioEncoder.isConfigSupported({
+        codec: "mp4a.40.2",
+        sampleRate: 48_000,
+        numberOfChannels: 2,
+        bitrate: 128_000,
+      });
+      if (!support.supported) codec = "opus";
+    } catch {
+      codec = "opus";
+    }
+    audioSource = new AudioSampleSource({ codec, bitrate: 128_000 });
+    output.addAudioTrack(audioSource);
+  }
   await output.start();
+}
+
+async function handleAudio(msg: AudioMsg): Promise<void> {
+  if (!audioSource || msg.channels.length === 0) return;
+  // One AudioSample carrying the whole rendered track, planar f32,
+  // starting at 0 — the OfflineAudioContext timeline IS the clip timeline.
+  const frames = msg.channels[0]!.length;
+  const data = new Float32Array(frames * msg.channels.length);
+  msg.channels.forEach((ch, i) => data.set(ch, i * frames));
+  const sample = new AudioSample({
+    data,
+    format: "f32-planar",
+    numberOfChannels: msg.channels.length,
+    sampleRate: msg.sampleRate,
+    timestamp: 0,
+  });
+  try {
+    await audioSource.add(sample);
+  } finally {
+    sample.close();
+  }
 }
 
 async function handleFrame(msg: FrameMsg): Promise<void> {
@@ -89,6 +145,7 @@ async function handleFinish(): Promise<void> {
   const out = output;
   output = null;
   source = null;
+  audioSource = null;
   await out.finalize();
   const buffer = (out.target as BufferTarget).buffer;
   if (buffer) {
@@ -103,6 +160,7 @@ async function handleCancel(): Promise<void> {
   const out = output;
   output = null;
   source = null;
+  audioSource = null;
   await out.cancel();
 }
 
@@ -115,6 +173,8 @@ self.onmessage = (e: MessageEvent<InMsg>) => {
           return handleBegin(msg);
         case "frame":
           return handleFrame(msg);
+        case "audio":
+          return handleAudio(msg);
         case "finish":
           return handleFinish();
         case "cancel":
