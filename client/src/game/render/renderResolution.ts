@@ -83,6 +83,20 @@ export function uiHeight(scene: Phaser.Scene): number {
  *  world cameras (applyMobileCamera) and HUD camera re-derive themselves.
  *  NOT persisted: governor adjustments are session-local pressure relief,
  *  the user's stored choice stays what they picked. */
+/** Explicitly pin the canvas CSS size to the window. Boot gets this from
+ *  the config `zoom`, but Scale.NONE does NOT re-style the canvas on
+ *  runtime setZoom/resize — the first governor rescale left the canvas at
+ *  backing size, letterboxing the game inside the page (caught on the
+ *  2026-07-17 autoplay QA tape: full-bleed at boot, ~1024×576 in a
+ *  1280×720 page from the first rescale on). Input stays correct: the
+ *  zoom transform already maps pointer coords for exactly this CSS size. */
+function pinCanvasToWindow(game: Phaser.Game): void {
+  const canvas = game.canvas;
+  if (!canvas) return;
+  canvas.style.width = `${window.innerWidth}px`;
+  canvas.style.height = `${window.innerHeight}px`;
+}
+
 export function setRenderScaleRuntime(game: Phaser.Game, scale: number): void {
   const next = Math.min(MAX_SCALE, Math.max(MIN_SCALE, scale));
   if (cachedScale !== null && Math.abs(next - cachedScale) < 0.001) return;
@@ -96,6 +110,7 @@ export function setRenderScaleRuntime(game: Phaser.Game, scale: number): void {
   game.scale.setZoom(1 / next);
   const { width, height } = backingSize();
   game.scale.resize(width, height);
+  pinCanvasToWindow(game);
 }
 
 /** Keep the backing store tracking the window. Scale.NONE mode does no
@@ -121,6 +136,9 @@ export function installRenderResolution(game: Phaser.Game): void {
       );
       game.scale.resize(width, height);
     }
+    // Always re-pin (cheap): rotation/fullscreen paths change the window
+    // without changing the backing size when rs compensates.
+    pinCanvasToWindow(game);
   };
   window.addEventListener("resize", apply);
   // ROTATION: on phones — especially inside the Fullscreen API — `resize`

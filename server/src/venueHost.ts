@@ -110,11 +110,19 @@ export class VenueHost {
   private lobbyHost: MatchHost;
   /** Live lobby sockets by player — presence, honestly counted. */
   private readonly lobbySockets = new Map<PlayerId, ServerWebSocket<MatchSocketData>>();
-  /** Players queued at the bell totem, each with their one-shot starter
-   *  offer (S2.E) — rolled at queue time, picked over the lobby socket,
-   *  leftmost auto-picked at admission. Drained into the arena at the
-   *  countdown-entry edge; until then it drives the totem UI. */
-  private readonly readyQueue = new Map<PlayerId, { offers: string[]; pick: string | null }>();
+  /** Players queued at the bell totem — a clean countdown queue and
+   *  NOTHING else (Jake 2026-07-17: "seperate the card selector test room
+   *  thing with the bell queue" — the old design rolled the starter offer
+   *  here, slamming a draft modal at whoever touched the bell). Drained
+   *  into the arena at the countdown-entry edge. */
+  private readonly readyQueue = new Set<PlayerId>();
+  /** The LOADOUT STATION (the bell's separated other half): a walk-up
+   *  card selector by the practice dummies. First touch rolls the 3-card
+   *  offer; the pick lands over the lobby socket; the pick rides the
+   *  player's NEXT admission and is consumed by it. No pick = spawn with
+   *  none — never auto-picked (auto-select is a mid-run round-timer
+   *  convention, not a lobby one). */
+  private readonly loadouts = new Map<PlayerId, { offers: string[]; pick: string | null }>();
   /** Admitted-but-not-yet-spawned picks (S2.F): the bell moves queue
    *  entries here so the client's lobby-close / arena-attach order can't
    *  race the card application. TTL'd — a client that never shows up at
@@ -140,9 +148,11 @@ export class VenueHost {
       this.broadcastStatus();
     };
     // Starter cards ride admission (S2.E): the arena consults this at every
-    // entrant insertion. Admitted picks win; a still-queued player who
-    // reaches the arena during a countdown some other way keeps their pick
-    // too; everyone else spawns plain.
+    // entrant insertion. Admitted picks win; a player with an un-banked
+    // loadout pick who reaches the arena during a countdown some other way
+    // keeps their pick too; everyone else — including a queued player who
+    // never visited the loadout station — spawns plain (no auto-pick;
+    // they draft with everyone else at the next drafting phase).
     this.arenaHost.getEntrantCards = (playerId) => {
       const admitted = this.admittedCards.get(playerId);
       if (admitted) {
@@ -150,9 +160,10 @@ export class VenueHost {
         if (admitted.expiresAt > Date.now()) return admitted.cards;
         return undefined;
       }
-      const entry = this.readyQueue.get(playerId);
-      if (!entry || entry.offers.length === 0) return undefined;
-      return [entry.pick ?? entry.offers[0]!];
+      const loadout = this.loadouts.get(playerId);
+      if (!loadout?.pick) return undefined;
+      this.loadouts.delete(playerId); // the pick rides exactly one run
+      return [loadout.pick];
     };
     this.statusTimer = setInterval(() => this.broadcastStatus(), 1000);
     // Lobby never rebuilds (Pillar 1), so the direct reference stays valid.
@@ -174,13 +185,15 @@ export class VenueHost {
       // hangout's READY/LAUNCH pair (resolveVenueTotems — shared pure
       // function, client renders identical coordinates).
       totems: resolveVenueTotems(resolveMap(LOBBY_MAP_ID)),
-      // Totem SimEvents (same hook privateLobby uses): in venue semantics
-      // BOTH event kinds mean "toggle my place in the bell queue" — one
-      // totem, one meaning, no host gate, no room bookkeeping. The actual
-      // arena admission drain is S2.D; queueing is immediately visible via
-      // the pushed status frames either way.
+      // Totem SimEvents (same hook privateLobby uses), one meaning per
+      // kind: `ready-toggled` = the LOADOUT STATION (walk-up card
+      // selector), `launch-requested` = the bell-queue toggle. No host
+      // gate, no room bookkeeping; queueing is immediately visible via
+      // the pushed status frames.
       onSimEvent: (event) => {
-        if (event.t === "ready-toggled" || event.t === "launch-requested") {
+        if (event.t === "ready-toggled") {
+          this.touchLoadoutStation(PlayerId(event.playerId));
+        } else if (event.t === "launch-requested") {
           this.toggleQueue(PlayerId(event.playerId));
         }
       },
@@ -190,18 +203,20 @@ export class VenueHost {
   }
 
   /** The bell's queue drain (S2.F): every queued player is admitted at
-   *  once — pick banked in admittedCards (30s TTL), venue-admitted pushed
-   *  to their lobby socket, queue entry removed. Runs on the arena's
+   *  once — their loadout-station pick (if they made one) banked in
+   *  admittedCards (30s TTL), venue-admitted pushed to their lobby socket,
+   *  queue entry removed. No pick = admitted with none; the arena's
+   *  ordinary drafting phase covers them next round. Runs on the arena's
    *  countdown-entry edge only. */
   private admitQueue(): void {
     if (this.readyQueue.size === 0) return;
+    const admittedCount = this.readyQueue.size;
     const expiresAt = Date.now() + 30_000;
-    for (const [playerId, entry] of this.readyQueue) {
-      if (entry.offers.length > 0) {
-        this.admittedCards.set(playerId, {
-          cards: [entry.pick ?? entry.offers[0]!],
-          expiresAt,
-        });
+    for (const playerId of this.readyQueue) {
+      const loadout = this.loadouts.get(playerId);
+      if (loadout?.pick) {
+        this.admittedCards.set(playerId, { cards: [loadout.pick], expiresAt });
+        this.loadouts.delete(playerId); // the pick rides exactly one run
       }
       const ws = this.lobbySockets.get(playerId);
       if (ws) {
@@ -213,7 +228,30 @@ export class VenueHost {
       }
     }
     this.readyQueue.clear();
-    console.log(`[venue] the bell — admitted ${this.admittedCards.size} entrant(s) to the arena`);
+    console.log(`[venue] the bell — admitted ${admittedCount} entrant(s) to the arena`);
+  }
+
+  /** The LOADOUT STATION: walking into the station totem opens (or
+   *  re-opens) the player's card selector. First touch rolls the offer;
+   *  the same offer is re-pushed on the totem's retrigger cadence while
+   *  they stand there (idempotent content — the CLIENT arbitrates overlay
+   *  visibility by station proximity, so re-pushes never re-slam a modal).
+   *  Deliberately NO callsign gate: the station is practice furniture,
+   *  commitment to the arena is the bell's business. */
+  private touchLoadoutStation(playerId: PlayerId): void {
+    const ws = this.lobbySockets.get(playerId);
+    if (!ws) return;
+    let entry = this.loadouts.get(playerId);
+    if (!entry) {
+      entry = { offers: rollStarterOffer(), pick: null };
+      this.loadouts.set(playerId, entry);
+      console.log(`[venue] ${playerId} at the loadout station — offer: ${entry.offers.join(", ")}`);
+    }
+    try {
+      ws.send(encodeMessage({ t: "venue-draft", offers: entry.offers }));
+    } catch {
+      /* dead socket — detach path will clean up */
+    }
   }
 
   private toggleQueue(playerId: PlayerId): void {
@@ -227,17 +265,10 @@ export class VenueHost {
       const ws = this.lobbySockets.get(playerId);
       const name = (ws?.data as { name?: string } | undefined)?.name;
       if (!ws || !name) return;
-      // Starter draft (S2.E): queueing rolls the one-shot 3-card offer and
-      // pushes it immediately over the lobby socket. Re-queue re-rolls —
-      // leaving the queue forfeits the old offer, same as walking away.
-      const offers = rollStarterOffer();
-      this.readyQueue.set(playerId, { offers, pick: null });
-      try {
-        ws.send(encodeMessage({ t: "venue-draft", offers }));
-      } catch {
-        /* dead socket — detach path will dequeue */
-      }
-      console.log(`[venue] ${playerId} queued at the bell — offer: ${offers.join(", ")}`);
+      // The queue is JUST a queue — the starter offer lives at the loadout
+      // station, not here (Jake 2026-07-17).
+      this.readyQueue.add(playerId);
+      console.log(`[venue] ${playerId} queued at the bell`);
     }
     this.broadcastStatus();
   }
@@ -257,7 +288,7 @@ export class VenueHost {
       humans: arena.humans,
       bots: arena.bots,
       nextBellMs: Math.round(msUntilNextBell(arena.phase, arena.countdownRemainingMs)),
-      queued: [...this.readyQueue.keys()] as string[],
+      queued: [...this.readyQueue] as string[],
     };
     const encoded = encodeMessage(frame);
     for (const [playerId, ws] of this.lobbySockets) {
@@ -285,15 +316,17 @@ export class VenueHost {
   }
 
   routeLobby(ws: ServerWebSocket<MatchSocketData>, raw: Buffer | ArrayBuffer | Uint8Array): void {
-    // Starter-draft picks (S2.E) are venue business, not lobby-sim business:
-    // a queued player's card-pick lands on their queue entry (roundIndex is
-    // meaningless here) and never reaches the hangout host's round state.
+    // Loadout-station picks (S2.E, separated 2026-07-17) are venue
+    // business, not lobby-sim business: the card-pick lands on the
+    // player's loadout entry (roundIndex is meaningless here) and never
+    // reaches the hangout host's round state. Re-picking overwrites —
+    // walking back to the station lets you change your mind.
     const decoded = decodeMessage<ClientMessage>(
       raw instanceof Buffer ? new Uint8Array(raw.buffer, raw.byteOffset, raw.byteLength) : raw,
     );
     if (decoded?.message.t === "card-pick") {
       const playerId = PlayerId(ws.data.playerId);
-      const entry = this.readyQueue.get(playerId);
+      const entry = this.loadouts.get(playerId);
       if (entry && entry.offers.includes(decoded.message.cardId)) {
         entry.pick = decoded.message.cardId;
       }
@@ -306,8 +339,10 @@ export class VenueHost {
     const playerId = PlayerId(ws.data.playerId);
     if (this.lobbySockets.get(playerId) === ws) this.lobbySockets.delete(playerId);
     // A departed player must not be drained into the arena at the next
-    // bell — dequeue on disconnect (no ghost entrants).
+    // bell — dequeue on disconnect (no ghost entrants). Their loadout
+    // offer goes with them: a fresh visit rolls fresh cards.
     this.readyQueue.delete(playerId);
+    this.loadouts.delete(playerId);
     this.lobbyHost.detachClient(ws);
     // Deliberately NO dispose-on-empty (the WorldHost discipline, applied
     // to the antechamber): the lobby is the venue's front room — it exists
@@ -336,12 +371,12 @@ export class VenueHost {
 
   /** Test surface: the bell queue's current membership. */
   queuedForTest(): PlayerId[] {
-    return [...this.readyQueue.keys()];
+    return [...this.readyQueue];
   }
 
-  /** Test surface: a queued player's rolled offer + recorded pick. */
-  queueEntryForTest(playerId: PlayerId): { offers: string[]; pick: string | null } | undefined {
-    return this.readyQueue.get(playerId);
+  /** Test surface: a player's loadout-station offer + recorded pick. */
+  loadoutForTest(playerId: PlayerId): { offers: string[]; pick: string | null } | undefined {
+    return this.loadouts.get(playerId);
   }
 
   dispose(): void {

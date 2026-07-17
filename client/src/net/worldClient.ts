@@ -94,6 +94,50 @@ export async function fetchWorldSummary(): Promise<WorldSummary | null> {
   return (await res.json() as WorldSummary | null) ?? null;
 }
 
+/** Venue-wide presence (lobby + arena) — the splash's live ONLINE /
+ *  IN MATCH stat items (Jake, 2026-07-17). Same error contract as
+ *  fetchWorldSummary: null = not live / unreachable. */
+export type VenueSummary = {
+  lobby: { present: number };
+  arena: { humans: number };
+};
+
+/** True when a hostname is in a private/local address space per Chromium's
+ *  Local Network Access rules (RFC1918, loopback, CGNAT/Tailscale 100.x,
+ *  .local/.ts.net). Fetching one of these from a PUBLIC page throws the
+ *  scary "access devices on your local network" permission prompt. */
+function isPrivateHost(hostname: string): boolean {
+  return (
+    hostname === "localhost" ||
+    /^(127\.|10\.|192\.168\.|100\.|169\.254\.|172\.(1[6-9]|2\d|3[01])\.)/.test(hostname) ||
+    hostname.endsWith(".local") ||
+    hostname.endsWith(".ts.net")
+  );
+}
+
+export async function fetchVenueSummary(): Promise<VenueSummary | null> {
+  const httpBase = wsToHttp(readGameServerWsBase());
+  // Ambient polling must never be the thing that triggers the browser's
+  // local-network permission prompt (seen live 2026-07-17): if the page is
+  // public but the resolved base is private (stale ?server= override, LAN
+  // dev leftovers), skip quietly — presence is a nicety, not worth a
+  // permission dialog. Deliberate gameplay connections are unaffected.
+  try {
+    const pageHost = browserLocation()?.hostname ?? "";
+    const baseHost = new URL(httpBase).hostname;
+    if (!isPrivateHost(pageHost) && isPrivateHost(baseHost)) return null;
+  } catch {
+    return null;
+  }
+  try {
+    const res = await fetch(`${httpBase}/venue/summary`, { method: "GET" });
+    if (!res.ok) return null;
+    return ((await res.json()) as VenueSummary | null) ?? null;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Per-room summary fetcher. Same endpoint shape as the world variant
  * so MatchStatusBadge can use them interchangeably.

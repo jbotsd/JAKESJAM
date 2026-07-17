@@ -17,6 +17,7 @@ import {
 } from "../../sim/data/maps";
 import { prefetchCustomMap } from "../../net/mapClient";
 import { shareInviteLink, onJoinRoomInvite } from "../../shell/crazyGamesSdk";
+import { readStoredCosmetics } from "../cosmetics/vesselCosmeticsStore";
 
 const CUSTOM_MAP_PREFIX = "custom:";
 const CUSTOM_MAP_CODE_RE = /^[A-Z0-9]{6}$/;
@@ -54,8 +55,6 @@ export class LobbyController {
   private readonly practiceButton: HTMLButtonElement;
   private readonly createButton: HTMLButtonElement;
   private readonly joinButton: HTMLButtonElement;
-  private readonly readyButton: HTMLButtonElement;
-  private readonly startButton: HTMLButtonElement;
   private readonly activeRoomBox: HTMLElement;
   private readonly activeCode: HTMLElement;
   private readonly playerList: HTMLUListElement;
@@ -97,8 +96,6 @@ export class LobbyController {
       document.createElement("button");
     this.createButton = queryRequired(root, "[data-create-room]");
     this.joinButton = queryRequired(root, "[data-join-room]");
-    this.readyButton = queryRequired(root, "[data-ready-toggle]");
-    this.startButton = queryRequired(root, "[data-start-match]");
     this.activeRoomBox = queryRequired(root, "[data-active-room]");
     this.activeCode = queryRequired(root, "[data-active-code]");
     this.playerList = queryRequired(root, "[data-player-list]");
@@ -220,12 +217,6 @@ export class LobbyController {
     this.joinButton.addEventListener("click", () => {
       void this.joinRoom();
     });
-    this.readyButton.addEventListener("click", () => {
-      void this.toggleReady();
-    });
-    this.startButton.addEventListener("click", () => {
-      void this.startMatch();
-    });
 
     // Leave Room button (item 1).
     const leaveBtn = this.activeRoomBox.querySelector<HTMLButtonElement>("[data-leave-room]");
@@ -264,6 +255,7 @@ export class LobbyController {
         characterId: this.characterId,
         mapId: this.pendingMapId ?? DEFAULT_MAP_ID,
         chaosModifierIds: this.chaosModifierIds,
+        cosmetics: readStoredCosmetics(),
       });
       this.activatePrivate(snap);
       this.setStatus(`Channel ${snap.code} open — share the code.`);
@@ -286,6 +278,7 @@ export class LobbyController {
           name: this.playerName,
           color: this.colorInput.value,
           characterId: this.characterId,
+          cosmetics: readStoredCosmetics(),
           ready: true,
           connected: true,
           joinedAt: Date.now(),
@@ -321,6 +314,7 @@ export class LobbyController {
         name: this.playerName,
         color: this.colorInput.value,
         characterId: this.characterId,
+        cosmetics: readStoredCosmetics(),
       });
       this.activatePrivate(snap);
       this.setStatus(`Joined channel ${snap.code}.`);
@@ -389,7 +383,13 @@ export class LobbyController {
     }
 
     document.title = `JAKESJAM — Private ${snap.code}`;
-    window.dispatchEvent(new CustomEvent("jakesjam:room-joined", { detail: { code: snap.code } }));
+    // playerId travels with the event so the hangout scene (main.ts) can
+    // mint its own hangout token as the SAME room member — this controller's
+    // playerId (sessionStorage-based) is a different id scheme than main.ts's
+    // own localPlayerId() helper, so main.ts can't regenerate it.
+    window.dispatchEvent(
+      new CustomEvent("jakesjam:room-joined", { detail: { code: snap.code, playerId: this.playerId } }),
+    );
     this.syncButtons();
   }
 
@@ -510,40 +510,6 @@ export class LobbyController {
     if (!pick) return;
     this.colorInput.value = pick;
     localStorage.setItem(PLAYER_COLOR_KEY, pick);
-  }
-
-  private async toggleReady() {
-    if (!this.currentCode || !this.currentSnapshot) return;
-    const currentPlayer = this.currentSnapshot.players.find(
-      (player) => player.playerId === this.playerId,
-    );
-    try {
-      const snap = await this.privateClient.ready(
-        this.currentCode,
-        this.playerId,
-        !currentPlayer?.ready,
-      );
-      this.applyPrivateSnapshot(snap);
-    } catch (error) {
-      this.setStatus(readError(error));
-    }
-  }
-
-  private async startMatch() {
-    if (!this.currentCode) return;
-    try {
-      // Push map pick before start if host selected one.
-      const mapId = this.pendingMapId ?? this.currentSnapshot?.mapId ?? DEFAULT_MAP_ID;
-      if (this.currentSnapshot?.hostPlayerId === this.playerId) {
-        await this.privateClient.setMap(this.currentCode, this.playerId, mapId);
-      }
-      const snap = await this.privateClient.start(this.currentCode, this.playerId);
-      const token = snap.tokens?.[this.playerId];
-      if (token) this.pendingMatchToken = token;
-      this.applyPrivateSnapshot(snap);
-    } catch (error) {
-      this.setStatus(readError(error));
-    }
   }
 
   private syncRoomStatusBadge(snapshot: PrivateLobbySnapshot | null): void {
@@ -708,11 +674,6 @@ export class LobbyController {
   private syncButtons() {
     const hasClient = true; // always-on private server path
     const hasRoom = Boolean(this.currentCode);
-    const currentPlayer = this.currentSnapshot?.players.find(
-      (player) => player.playerId === this.playerId,
-    );
-    const players = this.currentSnapshot?.players ?? [];
-    const allReady = players.length >= 1 && players.every((player) => player.ready);
     const isHost = this.currentSnapshot?.hostPlayerId === this.playerId;
 
     if (this.roomActionsBox) {
@@ -724,41 +685,12 @@ export class LobbyController {
 
     this.createButton.disabled = !hasClient || hasRoom;
     this.joinButton.disabled = !hasClient || hasRoom;
-    this.readyButton.disabled = !hasClient || !hasRoom;
-    // Host can start alone (private 1p) once ready — invite friends any time.
-    this.startButton.disabled = !hasClient || !hasRoom || !isHost || !allReady;
 
-    // Ready button: label = STATE (not action verb). Toggle via filled vs
-    // outlined visual + a checkmark. Removes the "Unready button means I'm
-    // unready or the button unreadies me?" confusion.
-    const isReady = Boolean(currentPlayer?.ready);
-    this.readyButton.textContent = isReady ? "✓  Ready" : "Mark Ready";
-    this.readyButton.dataset.ready = isReady ? "true" : "false";
-    this.readyButton.setAttribute("aria-pressed", isReady ? "true" : "false");
-
-    // Surface WHY Start is disabled — the most-asked lobby question is
-    // "the button's grey, what am I missing." Status line is the cheap fix.
-    if (hasRoom && isHost) {
-      const notReady = players.filter((p) => !p.ready);
-      if (players.length < 1) {
-        this.setStartHint("Need at least one player to start.");
-      } else if (notReady.length > 0) {
-        const names = notReady.map((p) => p.name).join(", ");
-        // Item 6: single-player rooms — the host IS the unready player.
-        const isSoloHost = players.length === 1 && notReady.length === 1 && notReady[0]?.playerId === this.playerId;
-        if (isSoloHost) {
-          this.setStartHint("Mark yourself ready first.");
-        } else {
-          this.setStartHint(`Waiting on: ${names}`);
-        }
-      } else {
-        this.setStartHint("Everyone ready — start when you like.");
-      }
-    } else if (hasRoom && !isHost) {
-      this.setStartHint("Only the host can start the match.");
-    } else {
-      this.setStartHint("");
-    }
+    // Ready/Start are diegetic now — walk into the Ready/Launch totems in
+    // the hangout world (party-hangout plan, A3/A5). No button state to
+    // manage here anymore; the player-list row still shows each player's
+    // live Ready/Waiting status (renderPlayers), driven by the same server
+    // state the totems flip.
 
     // Chaos modifiers are room-wide settings — only the room host can edit them.
     // Outside a room everyone can preview their default selection.
@@ -767,29 +699,9 @@ export class LobbyController {
     }
   }
 
-  private setStartHint(message: string): void {
-    let hint = this.startButton.parentElement?.querySelector<HTMLElement>(
-      "[data-start-hint]",
-    );
-    if (!hint && this.startButton.parentElement) {
-      hint = document.createElement("div");
-      hint.dataset.startHint = "true";
-      Object.assign(hint.style, {
-        fontSize: "11px",
-        color: "#7a8aa3",
-        marginTop: "4px",
-        letterSpacing: "0.04em",
-      });
-      this.startButton.parentElement.appendChild(hint);
-    }
-    if (hint) hint.textContent = message;
-  }
-
   private setBusy(isBusy: boolean) {
     this.createButton.disabled = isBusy;
     this.joinButton.disabled = isBusy;
-    this.readyButton.disabled = isBusy;
-    this.startButton.disabled = isBusy;
     if (!isBusy) {
       this.syncButtons();
     }

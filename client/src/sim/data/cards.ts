@@ -1039,6 +1039,93 @@ export const crystalRoundsCards: CardDefinition[] = [
     visual: visual("triangle", "#a78bfa"),
     unique: true,
   },
+  // ── Ability cards (six-axes-goal.md Layer 2): drafted actives on keys
+  //    1-4. WORKING names — the war-crimes copy pass owns the final
+  //    register (never rename ids; they're wire-load-bearing). ──────────────
+  {
+    id: "crimson-tithe",
+    name: "Crimson Tithe",
+    category: "ability",
+    rarity: "rare",
+    buckets: ["ability"],
+    essenceCost: 6,
+    description: "Active (3s, 14s cooldown): your shots tithe half the damage they deal back to you as health.",
+    flavorText: "The congregation pays in what it bleeds.",
+    active: {
+      kind: "crimson-tithe",
+      cooldownMs: 14000,
+      durationMs: 3000,
+    },
+    visual: visual("x", "#dc2626"),
+    unique: true,
+  },
+  {
+    id: "shadow-step", // id is wire-load-bearing — display name signed off 2026-07-17
+    name: "Interstice Writ",
+    category: "ability",
+    rarity: "rare",
+    buckets: ["ability"],
+    essenceCost: 6,
+    description: "Active (9s cooldown): blink toward your aim. Walls are a suggestion; landing inside one is not.",
+    flavorText: "Filed in the space between spaces. Approved before it was asked.",
+    active: {
+      kind: "shadow-step",
+      cooldownMs: 9000,
+    },
+    visual: visual("triangle", "#7dd3fc"),
+    unique: true,
+  },
+  {
+    id: "veil-of-nought",
+    name: "Veil of Nought",
+    category: "ability",
+    rarity: "legendary",
+    buckets: ["ability"],
+    essenceCost: 7,
+    description: "Active (1.5s, 16s cooldown): unmade — homing and satellites lose you; firing ends it early.",
+    flavorText: "The archons cannot audit what is not.",
+    active: {
+      kind: "veil-of-nought",
+      cooldownMs: 16000,
+      durationMs: 1500,
+    },
+    visual: visual("orb", "#8b5cf6"),
+    unique: true,
+  },
+  {
+    id: "severing-answer",
+    name: "Severing Answer",
+    category: "ability",
+    rarity: "legendary",
+    buckets: ["ability"],
+    essenceCost: 7,
+    description: "Active (0.5s, 12s cooldown): a counter-stance — the next hit taken is negated and returned (capped).",
+    flavorText: "Ask again.",
+    active: {
+      kind: "severing-answer",
+      cooldownMs: 12000,
+      durationMs: 500,
+    },
+    visual: visual("bar", "#f59e0b"),
+    unique: true,
+  },
+  {
+    id: "shelter-seal", // id is wire-load-bearing — display name signed off 2026-07-17
+    name: "Shelter Writ",
+    category: "ability",
+    rarity: "legendary",
+    buckets: ["ability"],
+    essenceCost: 7,
+    description: "Active (2.5s, 12s cooldown): a ward shell — damage you take is halved while it holds.",
+    flavorText: "Here, the writ of violence does not run.",
+    active: {
+      kind: "shelter-seal",
+      cooldownMs: 12000,
+      durationMs: 2500,
+    },
+    visual: visual("hexagon", "#38bdf8"),
+    unique: true,
+  },
 ];
 
 export const prototypeCards = crystalRoundsCards;

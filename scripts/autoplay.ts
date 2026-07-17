@@ -54,7 +54,7 @@ type GameHandle = {
 // ── page-side probes (single evaluate each — keep CDP chatter low) ─────
 function probeArena(page: Page) {
   return page.evaluate(() => {
-    type P = { x: number; y: number; alive: boolean; health: number };
+    type P = { x: number; y: number; alive: boolean; health: number; abilityCharge?: number };
     type Scene = {
       loop: { getRenderState(): { players: Record<string, P>; round: { phase: string } } | null } | null;
       localPlayerId: string;
@@ -94,7 +94,9 @@ function probeArena(page: Page) {
     return {
       inArena,
       phase: state.round.phase,
-      me: me ? { x: me.x, alive: me.alive, health: me.health } : null,
+      me: me
+        ? { x: me.x, alive: me.alive, health: me.health, charge: me.abilityCharge ?? 0 }
+        : null,
       enemy,
       draftOpen: visible("[data-card-draft]"),
       ended: visible("[data-match-results]"),
@@ -195,6 +197,8 @@ let strafeDir: "a" | "d" = "d";
 let strafeFlipAt = 0;
 let arenaPrevX: number | null = null;
 let roundsSeen = new Set<string>();
+let slotTapAt = 0;
+let slotCursor = 0;
 
 while (Date.now() < deadline) {
   const probe = await probeArena(page);
@@ -253,6 +257,22 @@ while (Date.now() < deadline) {
     await page.mouse.down({ button: "right" });
     await page.waitForTimeout(60);
     await page.mouse.up({ button: "right" });
+  }
+  // EMISSION (six-axes): cast the moment the meter fills — the client only
+  // sends the Ability bit at full predicted charge, so tapping E below
+  // full is inert by design; gate here anyway to log real casts.
+  if (probe.me.charge >= 100) {
+    await page.keyboard.press("e").catch(() => {});
+    console.log(`[autoplay] EMISSION cast at +${Date.now() - startedAt}ms`);
+  }
+  // Drafted actives (six-axes): rotate a tap across slots 1-4 every ~3s —
+  // sim-validated no-ops for empty/cooling slots, real activations when a
+  // drafted ability card is ready.
+  if (Date.now() > slotTapAt) {
+    slotTapAt = Date.now() + 3000 + Math.random() * 2000;
+    slotCursor = (slotCursor % 4) + 1;
+    await page.keyboard.press(String(slotCursor)).catch(() => {});
+    console.log(`[autoplay] slot ${slotCursor} tap at +${Date.now() - startedAt}ms`);
   }
   await page.waitForTimeout(200); // ~5Hz decisions
 }

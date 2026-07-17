@@ -60,6 +60,18 @@ export const P_HI = {
   // the patch object, never in the bit pattern itself.
   touchingWallDir: 1 << 5,
   dashing: 1 << 6,
+  /** Six Axes Ward shell (sim-read damage gate, docs/six-axes-goal.md). */
+  wardShellUntilTick: 1 << 7,
+  /** Drafted actives (six-axes Layer 2): per-slot cooldowns + effect windows. */
+  slot1CooldownUntilTick: 1 << 8,
+  slot2CooldownUntilTick: 1 << 9,
+  slot3CooldownUntilTick: 1 << 10,
+  slot4CooldownUntilTick: 1 << 11,
+  titheUntilTick: 1 << 12,
+  veilUntilTick: 1 << 13,
+  counterUntilTick: 1 << 14,
+  /** Mid-round respawn timer (fast-respawn ruling, 2026-07-17). */
+  respawnAtTick: 1 << 15,
 } as const;
 
 export const PROJ = {

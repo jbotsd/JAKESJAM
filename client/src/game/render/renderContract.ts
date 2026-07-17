@@ -22,6 +22,10 @@ import type {
   WorldState,
 } from "../../sim/types";
 import { computeStormZone } from "../../sim/suddenDeath.js";
+// Ascension denial reads the killer's build element at soul birth —
+// identity-cached resolver, so the per-kill cost is a WeakMap hit.
+import { resolvePlayerBuild } from "../../sim/weapon.js";
+import { resolveEmission } from "../../sim/data/emission.js";
 
 /** Everything a painter needs to draw one projectile. */
 export type ProjectileRenderModel = {
@@ -309,11 +313,19 @@ export function produceSatellites(
 export const SOUL_RELEASE = 0;
 export const SOUL_JOURNEY = 1;
 export const SOUL_ABSORB = 2;
+/** ASCENSION DENIED (void-hand kill): the soul's ONLY stage — a short
+ *  rise that reverses into an unmaking collapse. Never journeys, never
+ *  reaches the motif. */
+export const SOUL_DENIED = 3;
 
 const RELEASE_MS = 620;
 const JOURNEY_MS = 1650;
 const ABSORB_MS = 620;
 const SOUL_TOTAL_MS = RELEASE_MS + JOURNEY_MS + ABSORB_MS;
+/** Denied souls live briefly: rise ~35% of the window, then the collapse. */
+const DENIED_TOTAL_MS = 760;
+const DENIED_RISE_FRAC = 0.35;
+const DENIED_RISE_PX = 18;
 /** Rise during release (px). */
 const RELEASE_RISE_PX = 44;
 /** Trail ring size — positions sampled every producer call. */
@@ -376,6 +388,12 @@ type Soul = {
   trailHead: number;
   trailLen: number;
   sampleAccum: number;
+  /** ASCENSION DENIAL (emission-engine-goal P2 / the war-crimes arc):
+   *  true when the killer's resolved build element was void — the soul is
+   *  UNMADE instead of released: a brief rise that reverses into a void-
+   *  tinted collapse, no journey, no motif absorption. The gnostic war
+   *  crime made legible in one frame of grammar the game already taught. */
+  denied: boolean;
 };
 
 type Shard = {
@@ -430,6 +448,7 @@ export function makeDeathFxState(): DeathFxState {
       trailHead: 0,
       trailLen: 0,
       sampleAccum: 0,
+      denied: false,
     });
   }
   const shards: Shard[] = [];
@@ -526,6 +545,24 @@ export function noteDeathEvents(
     soul.trailLen = 0;
     soul.trailHead = 0;
     soul.sampleAccum = 0;
+    // ASCENSION DENIAL: a killer whose hand charges the Mystery axis
+    // UNMAKES the victim's soul (emission-engine-goal P2). Derived through
+    // resolveEmission's mystery section so the renderer and the sim share
+    // ONE derivation (six-axes-goal.md doctrine #1 — today that means the
+    // killer's resolved element is void). Read from the killer's snapshot
+    // entry at event time — deterministic, and identical in replay-rendered
+    // clips (same code path). Environmental kills (killerId null) always
+    // ascend.
+    soul.denied = false;
+    if (e.killerId && e.killerId !== e.victimId) {
+      const killer = state.players[e.killerId as PlayerId];
+      // cards-array guard: render-side code must not throw on a minimal
+      // snapshot (tests / partial reconciles) — no cards, no denial.
+      if (killer && Array.isArray(killer.cards)) {
+        soul.denied = resolveEmission(resolvePlayerBuild(killer)).mystery
+          .denyAscension;
+      }
+    }
 
     // ── Reward shards: pour out, then lock onto the damagers ──
     const ledger = st.damage.get(e.victimId);
@@ -621,7 +658,7 @@ export function produceDeathFx(
   for (const soul of st.souls) {
     if (!soul.active) continue;
     soul.ageMs += deltaMs;
-    if (soul.ageMs >= SOUL_TOTAL_MS) {
+    if (soul.ageMs >= (soul.denied ? DENIED_TOTAL_MS : SOUL_TOTAL_MS)) {
       soul.active = false;
       continue;
     }
@@ -638,7 +675,27 @@ export function produceDeathFx(
     let progress: number;
     let absorbT = 0;
 
-    if (age < RELEASE_MS) {
+    if (soul.denied) {
+      // ASCENSION DENIED: one short stage. The soul starts to rise the way
+      // every player has learned souls rise — then the rise REVERSES, the
+      // light is dragged back below the death point and crushed out. It
+      // never journeys, never reaches the motif, no absorption bloom fires.
+      // Closed-form like every other stage (replay-identical).
+      stage = SOUL_DENIED;
+      progress = age / DENIED_TOTAL_MS;
+      const riseP = Math.min(1, progress / DENIED_RISE_FRAC);
+      const fallP =
+        progress <= DENIED_RISE_FRAC
+          ? 0
+          : (progress - DENIED_RISE_FRAC) / (1 - DENIED_RISE_FRAC);
+      x = soul.x0 + Math.sin(progress * Math.PI * 9 + soul.seed) * 3 * fallP;
+      y =
+        soul.y0 -
+        DENIED_RISE_PX * easeOutCubic(riseP) +
+        (DENIED_RISE_PX + 14) * easeInOutCubic(fallP);
+      r = (4 + 5 * easeOutCubic(riseP)) * (1 - fallP * 0.85);
+      alpha = Math.min(1, progress * 3) * (1 - fallP * fallP);
+    } else if (age < RELEASE_MS) {
       stage = SOUL_RELEASE;
       progress = age / RELEASE_MS;
       const p = easeOutCubic(progress);

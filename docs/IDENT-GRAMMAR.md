@@ -1,7 +1,11 @@
 # IDENT-GRAMMAR — The Design Grammar of Legendary Studio Idents
 
 Research dossier for the 27.9s JAKESJAM boot ident.
-Aesthetic frame: gnostic sacred geometry (circles, inscribed triangle, radial ticks, monad) in bone-ivory + dim gold over obsidian, teal as the single energy accent. Track is the entire soundtrack — no foley, no UI blips.
+Aesthetic frame: vessel instrument geometry (concentric dial rings, inscribed crystal DIAMOND, radial ticks, monad spark) in bone-ivory + dim gold over obsidian, teal as the single energy accent. Track is the entire soundtrack — no foley, no UI blips.
+
+> **SYMBOLISM CONSTRAINT (owner's hard line, 2026-07 — applies to ALL JAKESJAM visuals, not just the ident).**
+> The banned thing is the **composition**, not the elements: **no Eye-of-Providence read** (an eye/pupil element under or inside a triangle), **no triangle capping ring geometry around a focal center**, and **no hexagram/pentagram** (including accidental composites — the shader once mirrored the SVG triangle and the two read as a hexagram; that class of bug is a content violation, not just a render bug).
+> Eyes/apertures **alone** are fine (the visor-seam "aperture, not a face" motif is core vessel grammar) and triangles **alone** are fine elsewhere (projectiles, beams). Do not reintroduce a triangle as the seal's centerpiece over the ring stack. The centerpiece is the inscribed crystal **diamond** (rotated square, vertices on the cardinal axes) — avionics/crystal-munitions grammar per `visual-language-gnostic-vessel.md`.
 
 Track structure (fixed):
 
@@ -167,14 +171,14 @@ The researched idents split into **ceremony** (Valve, PS1, Blizzard, Bethesda �
 - WHY: law 2 at maximum strictness. The drop is a discrete event; it must be instantaneous. The circle appearing complete-in-one-frame (vs animating on) is what separates "struck" from "rendered."
 
 **PHASE 1 — "The construction" (5 → 14s) — hype grammar. A24 construction + Blizzard forge + THPS beat-density.**
-- Compass-and-straightedge drawing, one operation per musical bar: arcs sweep to find intersections; chords connect them; the inscribed triangle is drawn **vertex by vertex, each vertex landing on a beat**; radial tick groups stamp in on sub-hits (id-style, with micro-flash + 1–2px micro-shake per stamp).
+- Compass-and-straightedge drawing, one operation per musical bar: arcs sweep to find intersections; chords connect them; the inscribed crystal diamond is cut **facet by facet, each edge landing on a beat**; radial tick groups stamp in on sub-hits (id-style, with micro-flash + 1–2px micro-shake per stamp).
 - Teal exists ONLY as the moving pen-tip / active drawing edge; strokes cool to dim gold within ~400ms of being drawn (energy → matter, the Blizzard forge idea in color).
 - Construction lines that are scaffolding (arcs used to find a point) fade to ~15% after use — honest drafting leaves ghost marks; it does not delete its work.
 - Event density tracks musical density (THPS law): if the track adds a layer at ~9–10s, add a second concurrent drawing pen there.
 - WHY: law 3. This is the longest phase because withholding the finished sigil is the tension engine (Blizzard's ~70% withhold ratio: sigil completes at ~14s ≈ 50%, lockup at 19s ≈ 68% — on target).
 
 **PHASE 2 — "Ignition" (14 → 19s) — escalation hinge.**
-- ON the 14s hit: the inscribed triangle SNAPS into final registration with the circle (THQ red-bar thud moment) — flash, shake, particle ring.
+- ON the 14s hit: the inscribed crystal diamond SNAPS into final registration with the circle (THQ red-bar thud moment) — flash, shake, particle ring.
 - 14–19s: construction accelerates past human drafting speed (multiple pens, arcs completing in half-bars); the full monad sigil assembles; slow rotation of the whole geometry begins; god-rays fade in from behind the sigil, low intensity, raking; particles begin drifting upward through the rays.
 - 18.3–19s: second pre-hit inhale — pens finish, drawing STOPS, rays dip. One breath of stillness before the biggest event (same trick as 4.5s; the grammar repeating teaches the audience the language).
 - WHY: laws 2 + 3. The phase is a controlled loss of control — the geometry starts to exceed the draftsman, which is the emotional pivot from "made thing" to "revealed thing" (Destiny's feeling-over-meaning).
@@ -199,7 +203,7 @@ The researched idents split into **ceremony** (Valve, PS1, Blizzard, Bethesda �
 | 4.5s | pre-drop | inhale dim | continuous |
 | **4.8s** | **DROP** | **flash+shake; first circle struck complete; teal debut** | discrete, ON hit |
 | 5–14s | bars/sub-hits | one construction op per bar; tick stamps on sub-hits | discrete ON hits; drawing between |
-| **14s** | high begins | **triangle snaps to registration; flash+ring** | discrete, ON hit |
+| **14s** | high begins | **crystal diamond snaps to registration; flash+ring** | discrete, ON hit |
 | 14–18.3s | escalation | multi-pen accel; sigil completes; rays + rotation begin | continuous |
 | 18.3s | pre-peak | pens stop; inhale | continuous |
 | **19s** | **peak hit** | **JAKESJAM lockup stamps in; max flash/shake; geometry → halo** | discrete, ON hit |
@@ -319,3 +323,23 @@ Numbering continues from the five laws in Part 2.
 20. **The mark can be a gesture or a character's act** (Riot's fist-bump — an action performed toward the audience, re-illustratable forever; Spider-Man webbing Insomniac's crescent back into place; Uka Uka vouching for Naughty Dog). A logo that *does* something — or has something done to it by the world's hero — transfers affection from character to studio. Riot is also the cautionary tale: a motion mark with no locked sonic signature.
 
 *Canon II research date: 2026-07-12. Sources verified per-row; approximations and unattributed credits flagged in §II.5.*
+
+---
+
+## Stem channels — per-instrument audio-reactivity (2026-07-17)
+
+The ident's reactivity runs on **per-stem envelopes** when `client/public/audio/splash-theme-stems.json` is present: 60Hz 0-255 envelopes + onset frame indices from a 6-stem separation of the anthem, indexed by `Math.floor(splashTheme.currentTime * fps)` — the same audio clock the WAAPI resync and shader `progress` already slave to (one clock, always). If the JSON is missing or fails to load, the live-FFT analyser path (mixed-track band guessing) drives the identical uniforms — the stems replace the *guessing*, never the grammar. `window.__identStems` reports `"live"` or `"fallback"`.
+
+**The grammar holds: hits = springs, beds = envelopes.** Onsets kick the same underdamped springs (7.5Hz, ζ≈0.3, 130ms kick refractory); envelopes drive sustained levels. And "spark, not flood" still applies at REST — silence stays near-dark; the stems buy dynamic *range*, not a raised floor.
+
+| Stem | Envelope drives | Onsets drive |
+|---|---|---|
+| **drums** | ring excursion / aperture / quake / glow (`uBass`) | the kick spring (`uKick`) — sample-accurate, replaces the FFT rising-edge detector |
+| **bass** | **the wisp/melting-light bed (`uWisp`) — the headline channel.** Brightness (~10x range: near-invisible in bass silence → dominant molten at peaks), strand reach, drift speed (integrated clock `uWispT`), and chromatic fringe width ALL ride this envelope. The envelope IS the light. | — |
+| **guitar + piano** (summed, clamped — piano is nearly silent in this track) | lead presence (`uLead`): crystal facet glint, ring highlights, seal saturation, pulse gate | the stab spring (`uStab`) — crystal diamond punches (guitar onsets) |
+| **vocals** | SVG rays group brightness (the crown sings with the voice) | — |
+| **other** | chroma width / saturation swell (`uChroma`) — composed INSIDE the existing growth escalation, growth stays the macro arc | — |
+
+`air`/`scream` (shimmer + whiteout) stay FFT-derived in both modes — they're timbral registers of the whole mix, not separable instruments.
+
+**Pipeline / regenerating.** `extract-envelopes.ts` (session scratchpad, 2026-07-17): htdemucs 6-stem WAVs → ffmpeg mono f32 → 1/60s RMS windows → `pow(v, 0.6)` perceptual curve → per-stem peak-normalize → 0-255 quantize; onsets = half-wave-rectified envelope delta ≥ 35% of that stem's max delta, 130ms refractory. Real DAW stems can replace the separated ones at any time: drop WAVs in, re-run extraction — same JSON shape (`{ fps, durationMs, stems: {drums,bass,guitar,piano,vocals,other}, onsets: {…} }`), no code change. Loader/consumer: `client/src/shell/identShader.ts` (`loadIdentStems`, `IdentBands` stem fields) + the ident block in `client/src/main.ts`.

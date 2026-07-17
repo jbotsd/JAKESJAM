@@ -88,6 +88,11 @@ export type HudRound = {
 export type NameplateStatusTick = {
   color: number;
   isDebuff: boolean;
+  /** 0-1 remaining fraction of the status's nominal duration — drawn as a
+   *  radial decay arc around the mark (never numbers; docs/emission-engine-
+   *  goal.md P2 victim-side legibility / the war-crimes arc's "a war crime
+   *  needs witnesses"). Absent = no decay ring (legacy callers). */
+  remainingFrac?: number;
 };
 
 export type HudChip = {
@@ -525,14 +530,18 @@ export class HudSystem {
       const underlineY = cy + text.height / 2 + 2;
       g.lineBetween(textX, underlineY, textX + text.width, underlineY);
 
-      // Compact status ticks — small filled triangles after the label, one
+      // Compact status marks — small filled triangles after the label, one
       // per active buff (▲) / debuff (▼), CS2-killfeed-style icon-stacking
       // rather than the full text chip strip (no room for that per row).
+      // Each mark wears a thin radial DECAY arc (remaining fraction of the
+      // status's nominal duration) — duration as shape, never numbers
+      // (ui-axioms; emission-engine-goal P2: statuses the Emission lands at
+      // scale must be readable on the victim's nameplate by everyone).
       const ticks = round.statusByPlayer?.[pid];
       if (ticks && ticks.length > 0) {
         const tickR = 3.5;
-        const tickGap = 4;
-        let tx = textX + text.width + 10;
+        const tickGap = 7;
+        let tx = textX + text.width + 12;
         const shown = ticks.slice(0, 5);
         for (const tick of shown) {
           g.fillStyle(tick.color, 0.9);
@@ -540,6 +549,22 @@ export class HudSystem {
             g.fillTriangle(tx - tickR, cy - tickR * 0.6, tx + tickR, cy - tickR * 0.6, tx, cy + tickR * 0.9);
           } else {
             g.fillTriangle(tx - tickR, cy + tickR * 0.6, tx + tickR, cy + tickR * 0.6, tx, cy - tickR * 0.9);
+          }
+          const frac = tick.remainingFrac;
+          if (frac !== undefined && frac > 0) {
+            // Decay arc: starts at 12 o'clock, drains clockwise with the
+            // status. Thin, same color as the mark — no new vocabulary.
+            g.beginPath();
+            g.lineStyle(1.2, tick.color, 0.75);
+            g.arc(
+              tx,
+              cy,
+              tickR + 2.2,
+              -Math.PI / 2,
+              -Math.PI / 2 + Math.PI * 2 * Phaser.Math.Clamp(frac, 0, 1),
+              false,
+            );
+            g.strokePath();
           }
           tx += tickR * 2 + tickGap;
         }

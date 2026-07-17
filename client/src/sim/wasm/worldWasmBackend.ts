@@ -27,7 +27,8 @@
 // shim grows; eventually World.step becomes a thin wrapper
 // around `applyWasmWorldStep` (Phase J1).
 
-import type { WorldState } from "../types.js";
+import type { LaunchPadDefinition, WorldState } from "../types.js";
+import { MAX_SLOPES, type SlopeStatic } from "../collision.js";
 import { loadSim, type Sim } from "./loader.js";
 import {
   packWorldState,
@@ -51,6 +52,13 @@ type WorldExports = {
     has_ceiling: number,
     kill_plane_y: number,
   ) => void;
+  /** Optional — older sim.wasm builds predate launch pads. Flat f64
+   *  array, 6 per pad: [x, y, w, h, impulse_x, impulse_y]. */
+  world_state_set_launch_pads?: (pads_ptr: number, count: number) => number;
+  /** Optional — older sim.wasm builds predate slopes. Flat f64 array,
+   *  7 per slope (deriveSlopeStatics bits):
+   *  [span_min_x, span_max_x, base_x, base_y, dy_dx, tx, ty]. */
+  world_state_set_slopes?: (slopes_ptr: number, count: number) => number;
   memory: WebAssembly.Memory;
 };
 
@@ -181,6 +189,10 @@ function mergeUnpacked(
       countdownRemainingMs: unpacked.round.countdownRemainingMs,
       roundIndex: unpacked.round.roundIndex,
       scores: { ...state.round.scores, ...unpacked.scores },
+      // Kill tally REPLACES rather than spread-merges (unlike scores,
+      // which are match-monotonic): the tally resets every round, so
+      // stale prior-round entries must not survive the merge.
+      roundKills: unpacked.roundKills,
     },
     players: stableMergeRecord(state.players, unpacked.players),
     firePatches: stableMergeRecord(state.firePatches, unpacked.firePatches),
@@ -427,6 +439,34 @@ export function setWorldStatics(
   };
 }
 
+/**
+ * Cache the map's static launch pads (same cadence as setWorldStatics —
+ * World.ts syncWorldStaticsToWasm). Written into the wasm module's
+ * module-level pad array (world.zig §8c) alongside the statics each step.
+ * Array order = map.launchPads order = event entity_id on both sides.
+ */
+let cachedLaunchPads: LaunchPadDefinition[] | null = null;
+
+export function setWorldLaunchPads(
+  pads: ReadonlyArray<LaunchPadDefinition>,
+): void {
+  cachedLaunchPads = pads.slice();
+}
+
+/**
+ * Cache the map's true slopes as PRE-DERIVED statics (collision.ts
+ * deriveSlopeStatics — the single derivation site, so the f64 bits that
+ * reach wasm are identical to the ones the TS slope pass reads). Same
+ * cadence as setWorldStatics (World.ts syncWorldStaticsToWasm); written
+ * into the wasm module's module-level slope array (player.zig) alongside
+ * the statics each step. An empty array clears.
+ */
+let cachedSlopes: SlopeStatic[] | null = null;
+
+export function setWorldSlopes(slopes: ReadonlyArray<SlopeStatic>): void {
+  cachedSlopes = slopes.slice();
+}
+
 const AABB_SIZE_BYTES = 32;
 
 function writeStaticsIntoMemory(): void {
@@ -462,6 +502,44 @@ function writeStaticsIntoMemory(): void {
       cachedArenaBounds.hasCeiling,
       cachedArenaBounds.killPlaneY,
     );
+  }
+  // Launch pads (world.zig §8c). Scratch sits past the max statics region
+  // (256×32 AABB + 256 one_way = 8448 bytes, 8-aligned) so the two writes
+  // can never trample each other. 6 f64 per pad, order = map order.
+  if (cachedLaunchPads && typeof ex.world_state_set_launch_pads === "function") {
+    const padScratchPtr = scratchPtr + 256 * AABB_SIZE_BYTES + 256;
+    const padView = new DataView(ex.memory.buffer, padScratchPtr);
+    const padCount = Math.min(cachedLaunchPads.length, 16);
+    for (let i = 0; i < padCount; i++) {
+      const pad = cachedLaunchPads[i]!;
+      padView.setFloat64(i * 48 + 0, pad.position.x, true);
+      padView.setFloat64(i * 48 + 8, pad.position.y, true);
+      padView.setFloat64(i * 48 + 16, pad.size.x, true);
+      padView.setFloat64(i * 48 + 24, pad.size.y, true);
+      padView.setFloat64(i * 48 + 32, pad.impulse.x, true);
+      padView.setFloat64(i * 48 + 40, pad.impulse.y, true);
+    }
+    ex.world_state_set_launch_pads(padScratchPtr, padCount);
+  }
+  // True slopes (player.zig module-level statics). Scratch sits past the
+  // pad region (16×48 = 768 bytes) so statics/pads/slopes never trample
+  // each other. 7 f64 per slope, order = map order. Always written when
+  // the cache is set — count 0 clears the previous match's slopes.
+  if (cachedSlopes && typeof ex.world_state_set_slopes === "function") {
+    const slopeScratchPtr = scratchPtr + 256 * AABB_SIZE_BYTES + 256 + 16 * 48;
+    const slopeView = new DataView(ex.memory.buffer, slopeScratchPtr);
+    const slopeCount = Math.min(cachedSlopes.length, MAX_SLOPES);
+    for (let i = 0; i < slopeCount; i++) {
+      const s = cachedSlopes[i]!;
+      slopeView.setFloat64(i * 56 + 0, s.spanMinX, true);
+      slopeView.setFloat64(i * 56 + 8, s.spanMaxX, true);
+      slopeView.setFloat64(i * 56 + 16, s.baseX, true);
+      slopeView.setFloat64(i * 56 + 24, s.baseY, true);
+      slopeView.setFloat64(i * 56 + 32, s.dyDx, true);
+      slopeView.setFloat64(i * 56 + 40, s.tx, true);
+      slopeView.setFloat64(i * 56 + 48, s.ty, true);
+    }
+    ex.world_state_set_slopes(slopeScratchPtr, slopeCount);
   }
 }
 

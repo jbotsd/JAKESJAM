@@ -10,7 +10,6 @@
 
 import Phaser from "phaser";
 import { uiWidth, uiHeight } from "../render/renderResolution.js";
-import { playerTag } from "./botIdentity";
 
 export type RoundBannerState = {
   phase: "countdown" | "fighting" | "round-over" | "drafting";
@@ -98,7 +97,9 @@ export class RoundBanner {
   private build(): void {
     const s = this.scene;
     const cx = uiWidth(s) / 2;
-    const cy = uiHeight(s) * 0.32;
+    // A8 (footage list): 0.32 sat the beat text on top of mid-arena rigs
+    // in real spawns — lift above the platform band.
+    const cy = uiHeight(s) * 0.22;
 
     this.subText = s.add
       .text(cx, cy - 44, "", {
@@ -224,21 +225,14 @@ export class RoundBanner {
       .setVisible(true)
       .setScale(0.7, 0.7);
 
-    // Score line — the point that was just scored, spelled out (not just
-    // inferable from the small peripheral scoreboard column). Sorted by
-    // score (leader first), local player tagged "YOU".
-    if (scores && Object.keys(scores).length > 0) {
-      const line = Object.entries(scores)
-        .sort(([aId, a], [bId, b]) => b - a || aId.localeCompare(bId))
-        .map(([pid, score]) => {
-          const tag = pid === localPlayerId ? "YOU" : (names?.[pid] ?? playerTag(pid));
-          return `${tag} ${score}`;
-        })
-        .join("  ·  ");
-      this.scoreText.setText(line).setVisible(true);
-    } else {
-      this.scoreText.setVisible(false);
-    }
+    // A3 (docs/footage-removal-list.md): the score line duplicated the
+    // roster column that's on screen the whole time — two renderings of
+    // the same numbers mid-screen read as clutter on tape. The banner
+    // keeps the beat ("ROUND N / TO X"); the roster owns the numbers.
+    void scores;
+    void names;
+    void localPlayerId;
+    this.scoreText.setVisible(false);
 
     this.popTween?.stop();
     this.popTween = this.scene.tweens.add({

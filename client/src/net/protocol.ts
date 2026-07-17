@@ -185,10 +185,14 @@ export type VenueStatus = {
 };
 
 /**
- * One-shot starter draft offer (venue-sprint2-goal S2.E) — pushed by
- * VenueHost to a lobby socket the moment that player queues at the bell.
- * The pick returns as an ordinary `card-pick` (roundIndex ignored on the
- * venue path); no pick by the bell = leftmost auto-pick at admission.
+ * Loadout-station starter offer (venue-sprint2-goal S2.E; separated from
+ * the bell queue 2026-07-17 per Jake) — pushed by VenueHost to a lobby
+ * socket when that player walks into the LOADOUT STATION totem, and
+ * re-pushed with identical content on the totem's retrigger cadence
+ * while they stand there (the client arbitrates overlay visibility by
+ * station proximity). The pick returns as an ordinary `card-pick`
+ * (roundIndex ignored on the venue path) and rides the player's next
+ * arena admission. No pick = spawn with none — the bell never auto-picks.
  */
 export type VenueDraft = {
   t: "venue-draft";

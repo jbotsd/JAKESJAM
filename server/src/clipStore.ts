@@ -8,7 +8,6 @@ import { copyFile, mkdir, readdir, readFile, stat, unlink } from "node:fs/promis
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { randomUUID } from "node:crypto";
-import { parseFocusTrace, transcodeVertical } from "./clipTranscode.ts";
 
 const CLIPS_DIR = resolve(process.cwd(), ".clips");
 /** Durable keepers — never auto-evicted. Mirrors pins from clip-pins.json. */
@@ -176,10 +175,6 @@ export type ClipUploadResult =
       ok: true;
       url: string;
       mediaUrl: string;
-      /** Present when the upload carried a focus trace and the server-side
-       *  NVENC vertical transcode succeeded (clipTranscode.ts). */
-      verticalUrl?: string;
-      verticalMediaUrl?: string;
     }
   | { ok: false; status: number; message: string };
 
@@ -264,34 +259,11 @@ export async function handleClipUpload(
   const full = resolve(CLIPS_DIR, filename);
   await Bun.write(full, file);
 
-  // GPU vertical: when the upload carries a crop-focus trace, produce the
-  // 720x1280 deliverable here with NVENC (clipTranscode.ts). The browser
-  // no longer records a second vertical stream — Linux Chromium can only
-  // software-encode, and the dual realtime encode stalled the game.
-  let verticalUrl: string | undefined;
-  let verticalMediaUrl: string | undefined;
-  const traceRaw = form.get("focusTrace");
-  const srcW = Number(form.get("srcW") ?? 0);
-  const srcH = Number(form.get("srcH") ?? 0);
-  if (typeof traceRaw === "string" && srcW > 15 && srcH > 15) {
-    const trace = parseFocusTrace(traceRaw);
-    if (trace) {
-      const vid = randomUUID();
-      const vFilename = `${vid}.mp4`;
-      const okV = await transcodeVertical({
-        srcPath: full,
-        dstPath: resolve(CLIPS_DIR, vFilename),
-        trace,
-        srcW,
-        srcH,
-      });
-      if (okV) {
-        await enforceQuota(0); // vertical landed after the quota check — re-settle
-        verticalUrl = `${originStr}/c/${vid}`;
-        verticalMediaUrl = `${originStr}/v/${vFilename}`;
-      }
-    }
-  }
+  // Native resolution only — Jake, 2026-07-15: the 720x1280 vertical crop
+  // (formerly produced here via NVENC, clipTranscode.ts) was cutting real
+  // action out of the frame in a fast, multi-player arena (ClipRecorder.ts's
+  // own v1/v2 history already flagged this: "the crop is lossy by nature").
+  // Every clip is now just the uploaded landscape mezzanine, unmodified.
 
   // Share page without .mp4 suffix (Facebook treats *.mp4 share URLs as bare
   // video and skips the HTML card / og:video pipeline). Media is always raw.
@@ -299,8 +271,6 @@ export async function handleClipUpload(
     ok: true,
     url: `${originStr}/c/${id}`,
     mediaUrl: `${originStr}/v/${filename}`,
-    verticalUrl,
-    verticalMediaUrl,
   };
 }
 

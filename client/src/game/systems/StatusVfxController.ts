@@ -1,8 +1,11 @@
 // Sim-authoritative status VFX driver. Reads burnUntilTick / freezeUntilTick
-// from each player in the snapshot WorldState and spawns fire sparks / freeze
-// shards / frost rings via a shared ParticlePool. Lightning chain arcs come
-// from `chain-hit` SimEvents. Wall-clock cadence is per-player so tab focus
-// changes don't all spawn together.
+// / wardShellUntilTick from each player in the snapshot WorldState and spawns
+// fire sparks / freeze shards / frost rings / ward rings via a shared
+// ParticlePool. Lightning chain arcs come from `chain-hit` SimEvents; crimson
+// leech threads from `emission-leech` (six-axes Drain — same arc language,
+// re-tinted). Wall-clock cadence is per-player so tab focus changes don't all
+// spawn together. Legibility law (six-axes-goal.md): every axis effect gets a
+// world-space read at its site.
 
 import Phaser from "phaser";
 import { ParticlePool, STATUS_VFX } from "./ParticlePool";
@@ -11,6 +14,15 @@ import type { PlayerId, SimEvent, Vec2, WorldState } from "../../sim";
 
 const BURN_SPARK_INTERVAL_MS = 80;
 const FREEZE_SHARD_INTERVAL_MS = 160;
+const WARD_RING_INTERVAL_MS = 130;
+
+// Ward shell sapphire — the shield/EMIT resource family (matches the
+// nameplate WARD chip in OnlineMatchScene's BUFF_DESCRIPTORS).
+const WARD_COLOR = 0x38bdf8;
+// Drain thread crimson — vampire register, deliberately NOT an element color.
+const LEECH_COLOR = 0xdc2626;
+const LEECH_GLOW = 0x7f1d1d;
+const LEECH_THREAD_DURATION_MS = 260;
 
 const SPARK_DURATION_MS = 420;
 const SHARD_DURATION_MS = 520;
@@ -23,6 +35,7 @@ export class StatusVfxController {
   private readonly pool: ParticlePool;
   private readonly burnCadence: Map<string, number> = new Map();
   private readonly freezeCadence: Map<string, number> = new Map();
+  private readonly wardCadence: Map<string, number> = new Map();
 
   constructor(_scene: Phaser.Scene, pool: ParticlePool) {
     // Scene is no longer held — transientVfx owns scene routing now.
@@ -39,6 +52,7 @@ export class StatusVfxController {
   ): void {
     const seenBurn = new Set<string>();
     const seenFreeze = new Set<string>();
+    const seenWard = new Set<string>();
 
     for (const [pidStr, player] of Object.entries(state.players)) {
       if (!player.alive) continue;
@@ -69,6 +83,23 @@ export class StatusVfxController {
           this.freezeCadence.set(pidStr, next);
         }
       }
+
+      // Ward shell (six-axes Drain sibling — the Ward axis' post-cast damage
+      // gate). Sapphire rings pulse around the vessel while the shell lives
+      // so attackers can SEE why their damage halved.
+      if (
+        player.wardShellUntilTick !== undefined &&
+        player.wardShellUntilTick > state.tick
+      ) {
+        seenWard.add(pidStr);
+        const next = (this.wardCadence.get(pidStr) ?? 0) + deltaMs;
+        if (next >= WARD_RING_INTERVAL_MS) {
+          this.wardCadence.set(pidStr, 0);
+          this.spawnWardRing(pos);
+        } else {
+          this.wardCadence.set(pidStr, next);
+        }
+      }
     }
 
     // Drop cadence entries for players that no longer have an active status.
@@ -78,10 +109,19 @@ export class StatusVfxController {
     for (const key of this.freezeCadence.keys()) {
       if (!seenFreeze.has(key)) this.freezeCadence.delete(key);
     }
+    for (const key of this.wardCadence.keys()) {
+      if (!seenWard.has(key)) this.wardCadence.delete(key);
+    }
 
     for (const ev of events) {
       if (ev.t === "chain-hit") {
         this.spawnLightningChainArc(
+          { x: ev.fromX, y: ev.fromY },
+          { x: ev.toX, y: ev.toY },
+        );
+      }
+      if (ev.t === "emission-leech") {
+        this.spawnLeechThread(
           { x: ev.fromX, y: ev.fromY },
           { x: ev.toX, y: ev.toY },
         );
@@ -92,6 +132,7 @@ export class StatusVfxController {
   destroy(): void {
     this.burnCadence.clear();
     this.freezeCadence.clear();
+    this.wardCadence.clear();
   }
 
   private spawnBurnSpark(position: Vec2): void {
@@ -173,6 +214,76 @@ export class StatusVfxController {
         r.setScale(s, s);
       },
       release: () => this.pool.release(ring),
+    });
+  }
+
+  private spawnWardRing(position: Vec2): void {
+    const ring = this.pool.acquireRing();
+    if (!ring) return;
+    ring.setPosition(position.x, position.y - 6);
+    ring.setFillStyle(WARD_COLOR, 0.0);
+    ring.setStrokeStyle(2, WARD_COLOR, 0.45);
+    ring.setScale(1.4);
+    ring.setAlpha(1);
+    // Contract inward — a shell holding, not a blast leaving (the frost
+    // ring expands; inverting the motion keeps the two reads distinct).
+    const finalScale = 0.9;
+    transientVfx.spawn({
+      factory: () => ring,
+      lifetimeMs: RING_DURATION_MS,
+      startAlpha: 1,
+      ease: "Sine.easeOut",
+      onTick: (obj, t) => {
+        const r = obj as Phaser.GameObjects.Arc;
+        const s = 1.4 + (finalScale - 1.4) * t;
+        r.setScale(s, s);
+      },
+      release: () => this.pool.release(ring),
+    });
+  }
+
+  /** Drain-axis read: the victim's stolen vitality travels to the caster as
+   *  a crimson thread — the chain-arc geometry re-tinted, slower and softer
+   *  (a siphon, not a strike). */
+  private spawnLeechThread(from: Vec2, to: Vec2): void {
+    const graphics = this.pool.acquireBolt();
+    if (!graphics) return;
+    graphics.setPosition(0, 0);
+    graphics.setAlpha(1);
+    graphics.setScale(1);
+    graphics.setRotation(0);
+    graphics.setBlendMode(Phaser.BlendModes.ADD);
+
+    const dx = to.x - from.x;
+    const dy = to.y - from.y;
+    const len = Math.max(1, Math.hypot(dx, dy));
+    const px = -dy / len;
+    const py = dx / len;
+    // One smooth sag (a drawn thread), not lightning jitter.
+    const sag = len * 0.12;
+    const pts: Vec2[] = [
+      from,
+      { x: from.x + dx * 0.5 + px * sag, y: from.y + dy * 0.5 + py * sag },
+      to,
+    ];
+
+    graphics.lineStyle(4, LEECH_GLOW, 0.35);
+    graphics.beginPath();
+    graphics.moveTo(pts[0]!.x, pts[0]!.y);
+    for (let i = 1; i < pts.length; i++) graphics.lineTo(pts[i]!.x, pts[i]!.y);
+    graphics.strokePath();
+
+    graphics.lineStyle(1.5, LEECH_COLOR, 0.9);
+    graphics.beginPath();
+    graphics.moveTo(pts[0]!.x, pts[0]!.y);
+    for (let i = 1; i < pts.length; i++) graphics.lineTo(pts[i]!.x, pts[i]!.y);
+    graphics.strokePath();
+
+    transientVfx.spawn({
+      factory: () => graphics,
+      lifetimeMs: LEECH_THREAD_DURATION_MS,
+      ease: "Sine.easeOut",
+      release: () => this.pool.release(graphics),
     });
   }
 

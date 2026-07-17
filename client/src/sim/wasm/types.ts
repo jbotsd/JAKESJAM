@@ -105,6 +105,14 @@ export interface SimExports {
     oneWayPtr: number,
     oneWayCount: number,
   ): number;
+  /**
+   * True slopes (player.zig module-level statics, launch-pad pattern —
+   * zero WorldState bytes). Flat f64 array, 7 per slope:
+   * [span_min_x, span_max_x, base_x, base_y, dy_dx, tx, ty] — the exact
+   * bits of collision.ts deriveSlopeStatics, map array order. Count 0
+   * clears. Optional — older sim.wasm builds predate slopes.
+   */
+  world_state_set_slopes?(slopesPtr: number, count: number): number;
   sizeof_aabb(): number;
   sizeof_sweep_hit(): number;
   sizeof_resolve_move_out(): number;

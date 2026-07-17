@@ -130,9 +130,21 @@ describe("convertWasmEventsToTs", () => {
     expect(out[0]).toEqual({ t: "round-end", winnerId: null });
   });
 
-  test("kind=6 player_killed → killerId is null (not yet wire-encoded)", () => {
+  test("kind=6 player_killed → killerId resolved from playerIdxB (kill attribution 2026-07-17)", () => {
     const out = convertWasmEventsToTs(
-      [ev({ kind: 6, playerIdxA: 0 })],
+      [ev({ kind: 6, playerIdxA: 0, playerIdxB: 1 })],
+      fakeState(["alpha", "bravo"]),
+    );
+    expect(out[0]).toMatchObject({
+      t: "player-killed",
+      victimId: PlayerId("alpha"),
+      killerId: PlayerId("bravo"),
+    });
+  });
+
+  test("kind=6 player_killed with playerIdxB=-1 (attacker-less death) → killerId null", () => {
+    const out = convertWasmEventsToTs(
+      [ev({ kind: 6, playerIdxA: 0, playerIdxB: -1 })],
       fakeState(["alpha"]),
     );
     expect(out[0]).toMatchObject({

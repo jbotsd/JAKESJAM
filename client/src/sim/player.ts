@@ -8,7 +8,11 @@
 
 import {
   resolveMoveCached,
+  SLOPE_MAX_SUBSTEP_L1,
+  SLOPE_SNAP_TOL,
+  SLOPE_START_SLACK,
   type AABB,
+  type SlopeStatic,
   type StaticCollisionCache,
 } from "./collision.js";
 import type { PlayerEntity, PlatformDefinition, InputBitfield } from "./types.js";
@@ -27,7 +31,11 @@ const M = {
   // M1 (docs/game-feel-tuning.md): asymmetric jump gravity — mirrors
   // sim/src/player.zig exactly (wasm parity).
   descentGravity: 2175,
-  fastFallGravity: 2800,
+  // 2800 → 3600 (2026-07-17): measured with the sim harness, fast-fall was
+  // saving only ~34ms on a full jump arc (766→733ms) — nearly cosmetic. The
+  // vertical map wave (sky archipelagos, wall shafts) needs a real
+  // down-tempo answer. MIRRORED in sim/src/player.zig FAST_FALL_GRAVITY.
+  fastFallGravity: 3600,
   jumpVelocity: -635,
   jumpCutMultiplier: 0.48,
   coyoteMs: 110,
@@ -618,18 +626,42 @@ function stepPlayerNative(
   // there's no overflow risk, so the simpler form is fine. Both
   // sides now compute this identically. See ADR-0006.
   const totalDisp = Math.sqrt(next.vx * next.vx + next.vy * next.vy) * dtSec;
-  const subSteps = Math.max(1, Math.ceil(totalDisp / maxStepDisp));
+  let subSteps = Math.max(1, Math.ceil(totalDisp / maxStepDisp));
+  // Slope-aware guard extension: the foot-point pass samples once per
+  // sub-step, and on a 45° surface the foot-vs-surface penetration can grow
+  // by up to the L1 displacement (|dx|+|dy|) in one sub-step — a diagonal
+  // dash at 940 px/s would overshoot the euclidean-bounded sub-step's snap
+  // band and tunnel. Bounding L1 at SLOPE_MAX_SUBSTEP_L1 (6 < SNAP_TOL −
+  // START_SLACK) guarantees every from-above crossing is caught in-band.
+  // GATED on slopes existing: slope-less maps keep the EXACT legacy
+  // sub-step count, so every pre-slope trajectory stays bit-identical.
+  // MIRRORED in sim/src/player.zig — keep op order in sync:
+  //   l1Disp = (abs(vx) + abs(vy)) * dtSec
+  //   slopeSubSteps = max(1, ceil(l1Disp / SLOPE_MAX_SUBSTEP_L1))
+  //   subSteps = max(subSteps, slopeSubSteps)
+  const slopes = options.collisionCache.slopes;
+  if (slopes.length > 0) {
+    const l1Disp = (Math.abs(next.vx) + Math.abs(next.vy)) * dtSec;
+    const slopeSubSteps = Math.max(1, Math.ceil(l1Disp / SLOPE_MAX_SUBSTEP_L1));
+    if (slopeSubSteps > subSteps) subSteps = slopeSubSteps;
+  }
   const subDt = dtSec / subSteps;
   let groundedAcc = false;
   let wallContactThisTick = 0;
   for (let i = 0; i < subSteps; i++) {
     const preVx = next.vx;
+    // Foot position at sub-step START — the slope pass's one-way crossing
+    // gate (same discipline as the rect one-way "+2 slack from start of
+    // frame" test in sweepAABBCached).
+    const startFootX = aabb.x + M.bodyWidth / 2;
+    const startFootY = aabb.y + bodyHeight;
     const resolved = resolveMoveCached(
       aabb, next.vx, next.vy, subDt, options.collisionCache, true,
     );
     aabb = { x: resolved.x, y: resolved.y, w: aabb.w, h: aabb.h };
     // A horizontal collision zeroes vx — that's a WALL. Direction = the way we
     // were moving into it.
+    let latchedWallThisSubStep = false;
     if (preVx !== 0 && resolved.vx === 0 && (preVx > 1 || preVx < -1)) {
       const hitDir = preVx > 0 ? 1 : -1;
       if (direction !== hitDir && (preVx > 120 || preVx < -120)) {
@@ -639,12 +671,93 @@ function stepPlayerNative(
         // Stuck to the wall → eligible to slide / wall-jump next tick.
         next.vx = resolved.vx;
         wallContactThisTick = hitDir;
+        latchedWallThisSubStep = true;
       }
     } else {
       next.vx = resolved.vx;
     }
     next.vy = resolved.vy;
     if (resolved.groundedThisFrame) groundedAcc = true;
+
+    // ── TRUE SLOPE grounding pass (foot-point, one-way) ──────────────────
+    // Runs AFTER the rect resolve (precedence: rects resolve exactly as
+    // before, then the slope pass may override grounded/y). Tie-breaks:
+    //   - wall latch wins over slope grounding within a sub-step (walls
+    //     are vertical, slopes ≤45°, overlap is rare — a latch this
+    //     sub-step skips the pass; a slope ground on ANY sub-step still
+    //     clears the latch at tick end, same as floors);
+    //   - rect-vs-slope: whichever grounds HIGHER wins — the penetration
+    //     band (slope surface at/above the foot) may override a rect
+    //     ground upward; the above-band snap-down never fires when the
+    //     rect already grounded this sub-step;
+    //   - slope-vs-slope: highest surface (min sy) wins; equal-sy ties go
+    //     to the lowest array index (strict <).
+    // MIRRORED in sim/src/player.zig — both sides carry this pseudocode
+    // and MUST keep the operation order identical:
+    //   footX = aabb.x + bodyWidth/2 ; footY = aabb.y + bodyHeight
+    //   sy    = baseY + dyDx*(footX - baseX)          // one mul + one add
+    //   pen   = footY - sy
+    //   pen ≥ 0 (at/inside surface, from-above crossing):
+    //     require pen ≤ SNAP_TOL, and if the START foot was in-span,
+    //     require startFootY − startSy ≤ START_SLACK (one-way: was not
+    //     below the surface at sub-step start)
+    //   pen < 0 (hovering above, walk-down glue):
+    //     require pen ≥ −SNAP_TOL, was-grounded (tick start or any earlier
+    //     sub-step), vy ≥ 0 (a jump/dash-up leaves cleanly), and the rect
+    //     resolve did NOT ground this sub-step
+    //   ground: aabb.y = sy − bodyHeight; grounded = true; then project
+    //   velocity onto the tangent PRESERVING MAGNITUDE:
+    //     speed = sqrt(vx*vx + vy*vy)
+    //     along = vx*tx + vy*ty
+    //     if (along < 0) { vx = -(speed*tx); vy = -(speed*ty); }
+    //     else           { vx =   speed*tx ; vy =   speed*ty ; }
+    if (slopes.length > 0 && !latchedWallThisSubStep) {
+      const footX = aabb.x + M.bodyWidth / 2;
+      const footY = aabb.y + bodyHeight;
+      const wasGrounded = memory.groundedLastFrame || groundedAcc;
+      let best: SlopeStatic | null = null;
+      let bestSy = Infinity;
+      for (let si = 0; si < slopes.length; si++) {
+        const s = slopes[si]!;
+        if (footX < s.spanMinX || footX > s.spanMaxX) continue;
+        const sy = s.baseY + s.dyDx * (footX - s.baseX);
+        const pen = footY - sy;
+        if (pen >= 0) {
+          // At/inside the surface — legit only as a from-above crossing.
+          if (pen > SLOPE_SNAP_TOL) continue; // too deep = from below
+          if (startFootX >= s.spanMinX && startFootX <= s.spanMaxX) {
+            const startSy = s.baseY + s.dyDx * (startFootX - s.baseX);
+            if (startFootY - startSy > SLOPE_START_SLACK) continue; // one-way
+          }
+        } else {
+          // Hovering above within the band — the walk-down glue.
+          if (pen < -SLOPE_SNAP_TOL) continue;
+          if (!wasGrounded) continue;
+          if (next.vy < 0) continue; // jumping/dashing up — leave cleanly
+          if (resolved.groundedThisFrame) continue; // rect grounds higher
+        }
+        if (sy < bestSy) {
+          bestSy = sy;
+          best = s;
+        }
+      }
+      if (best !== null) {
+        aabb = { x: aabb.x, y: bestSy - bodyHeight, w: aabb.w, h: aabb.h };
+        groundedAcc = true;
+        // Magnitude-preserving tangent projection — the entire point:
+        // run speed converts to climb; leaving the slope carries the
+        // tangent velocity ballistically with no special-casing.
+        const speed = Math.sqrt(next.vx * next.vx + next.vy * next.vy);
+        const along = next.vx * best.tx + next.vy * best.ty;
+        if (along < 0) {
+          next.vx = -(speed * best.tx);
+          next.vy = -(speed * best.ty);
+        } else {
+          next.vx = speed * best.tx;
+          next.vy = speed * best.ty;
+        }
+      }
+    }
   }
   next.x = aabb.x + M.bodyWidth / 2;
   next.y = aabb.y + bodyHeight / 2;

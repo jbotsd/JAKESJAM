@@ -98,6 +98,7 @@ export function makeStepPlayerWasmBackend(sim: SimHandle): StepPlayerFn {
     const cache = options.collisionCache;
     const aabbs = cache.aabbs;
     const oneWay = cache.oneWay;
+    const slopes = cache.slopes;
     const count = aabbs.length;
     const oneWayOff = STATICS_OFF + count * SIZEOF_AABB + 8;
 
@@ -145,6 +146,30 @@ export function makeStepPlayerWasmBackend(sim: SimHandle): StepPlayerFn {
     }
     for (let i = 0; i < oneWay.length; i++) {
       u8[oneWayOff + i] = oneWay[i] ? 1 : 0;
+    }
+
+    // True slopes — module-level statics in player.zig (launch-pad
+    // pattern). Written PER CALL from the cache (like the statics above)
+    // rather than once per match: the module statics persist across maps
+    // in a shared wasm instance, so per-call set (count 0 clears) makes
+    // stale cross-map/cross-match slopes structurally impossible on both
+    // hosts. 7 f64 per slope, exact deriveSlopeStatics bits — see
+    // collision.ts SLOPE_F64_COUNT. Optional export: older sim.wasm
+    // builds predate slopes (and carry no slope pass to feed).
+    if (typeof ex.world_state_set_slopes === "function") {
+      const slopesOff = oneWayOff + oneWay.length + (8 - ((oneWayOff + oneWay.length) % 8)) % 8;
+      for (let i = 0; i < slopes.length; i++) {
+        const s = slopes[i]!;
+        const off = slopesOff + i * 56;
+        dv.setFloat64(off + 0, s.spanMinX, true);
+        dv.setFloat64(off + 8, s.spanMaxX, true);
+        dv.setFloat64(off + 16, s.baseX, true);
+        dv.setFloat64(off + 24, s.baseY, true);
+        dv.setFloat64(off + 32, s.dyDx, true);
+        dv.setFloat64(off + 40, s.tx, true);
+        dv.setFloat64(off + 48, s.ty, true);
+      }
+      ex.world_state_set_slopes(sim.statePtr + slopesOff, slopes.length);
     }
 
     const jumped = ex.step_player(

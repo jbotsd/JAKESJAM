@@ -372,3 +372,35 @@ the bell, drafting, and being admitted ("the bell — admitted 1
 entrant(s) to the arena"). Ops note: cloudflared pools upstream
 connections, so public curls can hit the DYING process for a few seconds
 after a restart — don't diagnose from the public URL mid-restart.
+
+**AMENDMENT — 2026-07-17 (Jake's overrule of venue-goal contested call #3):
+the loadout station / bell separation.** Jake, verbatim: "seperate the card
+selector test room thing with the bell queue." The S2.E/S2.F shape (offer
+rolled AT queue time, draft overlay slammed on whoever touched the bell,
+leftmost auto-pick at admission) is retired. The separated shape, live in
+code:
+- `resolveVenueTotems` places TWO stations: `totem-loadout` (kind "ready",
+  0.25W — flanking the practice dummies so a picked card can be tried
+  immediately) and `totem-bell` (kind "launch", 0.75W, unchanged). One
+  meaning per kind: `ready-toggled` = open the loadout station,
+  `launch-requested` = bell-queue toggle (VenueHost maps them).
+- VenueHost: `readyQueue` is now a bare Set (a queue and NOTHING else);
+  `loadouts` map holds per-player {offers, pick} — rolled once at first
+  station touch, re-pushed idempotently on the totem retrigger, pick
+  recorded via the same card-pick frame, consumed by the next admission.
+  NO auto-pick anywhere in the lobby: unpicked = admitted plain (the
+  arena's ordinary drafting phase covers them next round — the S2.E.2
+  late-joiner contract already pins this).
+- Client (HangoutScene venue mode): the CardDraftOverlay opens on WALKING
+  INTO the station and closes on walking out (client-side proximity
+  arbitration with hysteresis; modal-on-spawn structurally prevented — the
+  overlay only opens after the player has been seen OUTSIDE the ring).
+  Station copy is "LOADOUT / CHOOSE YOUR CARD" with a no-timer hint —
+  "BETWEEN ROUNDS" stays exclusively mid-run. A recorded pick holds the
+  station ring bright (loadout armed), mirroring the bell's queued glow.
+- Tests updated/added: venueHost.test.ts (queue pushes NO venue-draft;
+  station rolls once + re-pushes idempotently; pick lands on loadout entry,
+  re-pick overwrites; provider = pick-or-nothing, consumed once; bell
+  admits no-pick queuers with nothing), totem.test.ts (venue station
+  set/placement), venueRoundTrip.spec.ts rewritten for the two-walk flow.
+  Suites at amendment: server 223 / client 1092, typechecks clean, built.

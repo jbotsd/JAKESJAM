@@ -12,7 +12,7 @@ let currentToast: HTMLDivElement | null = null;
 
 const AUTO_DISMISS_MS = 15_000;
 
-export function showClipShareToast(url: string, originalUrl?: string): void {
+export function showClipShareToast(url: string): void {
   currentToast?.remove();
 
   const root = document.createElement("div");
@@ -69,19 +69,6 @@ export function showClipShareToast(url: string, originalUrl?: string): void {
     Object.assign(shareBtn.style, BTN_PRIMARY_STYLE);
     shareBtn.addEventListener("click", () => void nativeShare(url));
     actions.appendChild(shareBtn);
-  }
-
-  // The uncropped landscape recording of the same moment (the vertical is
-  // the shareable; the original is for review/devlogs/YouTube).
-  if (originalUrl) {
-    const origBtn = document.createElement("button");
-    origBtn.type = "button";
-    origBtn.textContent = "Original (landscape)";
-    Object.assign(origBtn.style, BTN_SECONDARY_STYLE);
-    origBtn.addEventListener("click", () => {
-      window.open(originalUrl, "_blank", "noopener");
-    });
-    actions.appendChild(origBtn);
   }
 
   root.append(closeBtn, heading, actions);

@@ -337,6 +337,16 @@ describe("worldStateBridge — pack/unpack round-trip (Phase G2)", () => {
     expect(back.chaosModifierIds).toHaveLength(2);
   });
 
+  test("round.roundKills round-trips via PlayerEntity.round_kills (kill tally 2026-07-17)", () => {
+    const state = makeFixtureState();
+    // Non-zero tally for one player; the other stays at zero — unpack
+    // mirrors the `scores` pattern and only emits non-zero entries.
+    state.round.roundKills = { [PlayerId("p_alpha")]: 3 };
+    const buf = packWorldState(state);
+    const back = unpackWorldState(buf);
+    expect(back.roundKills).toEqual({ p_alpha: 3 });
+  });
+
   test("idempotent — pack→unpack→pack produces identical bytes", () => {
     const state = makeFixtureState();
     const buf1 = packWorldState(state);

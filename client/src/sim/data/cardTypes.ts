@@ -30,7 +30,8 @@ export type WeaponBucket =
   | "quantity"
   | "impact"
   | "element"
-  | "utility";
+  | "utility"
+  | "ability";
 
 export type ProjectileModifier = {
   shape: ProjectileShape;
@@ -129,6 +130,39 @@ export type WeaponCardModifier = {
   stolenFangs?: boolean;
 };
 
+// ── Drafted actives (six-axes-goal.md Layer 2) ─────────────────────────────
+// Ability cards ARE actives: drafted through the same round-end picker,
+// they land on the action bar in pick order (keys 1-4), cooldown-gated.
+// `kind` is a closed union — deriveAxisProfile maps kind → axis (doctrine
+// #1: one derivation, no hand-authored axis tags).
+
+/** Hard slot cap: four keys, five axes — the draft chooses identity under
+ *  scarcity. Enforced at offer-roll time (round.ts), never by silently
+ *  failing a pick. */
+export const MAX_ABILITY_SLOTS = 4;
+
+export type AbilityKind =
+  | "crimson-tithe"
+  | "shelter-seal"
+  | "shadow-step"
+  | "veil-of-nought"
+  | "severing-answer";
+
+export type AbilityActiveSpec = {
+  kind: AbilityKind;
+  cooldownMs: number;
+  /** Effect window; omitted = instant. */
+  durationMs?: number;
+};
+
+/** One action-bar slot, resolved from the hand in pick order. */
+export type ResolvedActive = {
+  cardId: CardId;
+  kind: AbilityKind;
+  cooldownMs: number;
+  durationMs: number;
+};
+
 // Visual hints used by UI overlays. Pure data, no Phaser refs — shapes /
 // colors are interpreted by the renderer.
 export type CardVisualDefinition = {
@@ -146,13 +180,18 @@ export type StatModifier = {
 export type CardDefinition = {
   id: CardId;
   name: string;
-  category: "weapon" | "projectile" | "movement" | "defense" | "utility" | "tradeoff";
+  category: "weapon" | "projectile" | "movement" | "defense" | "utility" | "tradeoff" | "ability";
   rarity: "common" | "uncommon" | "rare" | "legendary" | "cursed";
   description: string;
   flavorText?: string;
   buckets?: WeaponBucket[];
   essenceCost?: number;
   modifier?: WeaponCardModifier;
+  /** Drafted active (six-axes Layer 2). A card may carry both a modifier
+   *  AND an active — every ability card also deepens its axis in the
+   *  Emission (goal doctrine #7: no active-only cards in spirit; the axis
+   *  coupling rides deriveAxisProfile off `active.kind`). */
+  active?: AbilityActiveSpec;
   
   // ROUNDS-style: Explicit benefits and penalties for tradeoffs
   benefits?: StatModifier[];
@@ -198,4 +237,8 @@ export type ResolvedWeaponBuild = {
   dashCooldownMultiplier: number;
   cards: CardDefinition[];
   occupiedBuckets: WeaponBucket[];
+  /** Drafted actives in pick order — action-bar slots 1..N (≤
+   *  MAX_ABILITY_SLOTS; the offer roll stops offering ability cards when
+   *  the hand holds four). */
+  actives: ResolvedActive[];
 };

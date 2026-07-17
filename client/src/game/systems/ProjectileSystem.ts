@@ -842,6 +842,7 @@ function projectileToBuild(projectile: ActiveProjectile): ResolvedWeaponBuild {
     dashCooldownMultiplier: 1,
     cards: [],
     occupiedBuckets: [],
+    actives: [],
   };
 }
 

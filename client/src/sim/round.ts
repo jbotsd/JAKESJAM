@@ -9,6 +9,8 @@
 import { BOT_ID_PREFIX } from "./botId.js";
 import { STEP_MS } from "./constants.js";
 import { crystalRoundsCards } from "./data/cards.js";
+import { MAX_ABILITY_SLOTS } from "./data/cardTypes.js";
+import { resolvePlayerBuild } from "./weapon.js";
 import {
   classifyDraftRole,
   pickWeighted,
@@ -87,10 +89,14 @@ export const NO_HUMAN_SURVIVOR_END_MS = 6_000;
 
 /**
  * How long the drafting phase stays open before auto-resolving any
- * unpicked offers. Generous on purpose — the rogue-lite picker is the
- * "moment of progression", we'd rather pause longer than rush the read.
+ * unpicked offers. The draft resolves EARLY the moment every offer-holder
+ * has picked (bots pick in 1.5-4.5s), so this ceiling only bites when a
+ * human idles — and at the original 15s one AFK human taxed the whole
+ * arena 15 frozen seconds per round (Jake, mid-playtest 2026-07-17: "why
+ * does it need to be so long"). 8s is still a comfortable read for three
+ * plates; the auto-pick keeps AFKs progressing either way.
  */
-export const DRAFT_WINDOW_MS = 15000;
+export const DRAFT_WINDOW_MS = 8000;
 
 /**
  * Milliseconds until the next BELL — the countdown-entry round boundary
@@ -176,7 +182,10 @@ export type RoundStepResult = {
  *
  * Phase transitions:
  *   countdown  → fighting    (when countdownRemainingMs hits 0)
- *   fighting   → round-over  (last alive player or time limit reached)
+ *   fighting   → round-over  (sudden death: last alive player; ordinary
+ *                             rounds: time limit / bot-shootout force-resolve
+ *                             only — most round-kills wins, see
+ *                             decideRoundWinner)
  *   round-over → drafting    (after ROUND_OVER_HOLD_MS, when tick+rngState
  *                             are supplied; rolls DRAFT_OFFER_COUNT cards
  *                             per alive player)
@@ -206,6 +215,7 @@ export function stepRound(input: RoundStepInput): RoundStepResult {
     draftingPicked: state.draftingPicked,
     draftingOffers: state.draftingOffers,
     firstBloodPlayerId: state.firstBloodPlayerId,
+    roundKills: state.roundKills,
     suddenDeathActive: state.suddenDeathActive,
   };
 
@@ -215,9 +225,11 @@ export function stepRound(input: RoundStepInput): RoundStepResult {
       if (next.countdownRemainingMs <= 0) {
         next.phase = "fighting";
         next.countdownRemainingMs = ROUND_TIME_LIMIT_MS;
-        // Fresh round: first-blood is unclaimed, and sudden death is
-        // re-evaluated from the scores heading into it.
+        // Fresh round: first-blood is unclaimed, the kill tally starts
+        // empty, and sudden death is re-evaluated from the scores heading
+        // into it.
         next.firstBloodPlayerId = undefined;
+        next.roundKills = undefined;
         const suddenDeath = isSuddenDeathRound(state.scores, targetScore);
         next.suddenDeathActive = suddenDeath;
         if (suddenDeath) events.push({ t: "sudden-death-started" });
@@ -243,6 +255,14 @@ export function stepRound(input: RoundStepInput): RoundStepResult {
       const winner = decideRoundWinner(
         players,
         next.countdownRemainingMs <= 0 || forceByBotShootout,
+        // Last-alive resolution belongs to SUDDEN DEATH only (fast-respawn
+        // ruling 2026-07-17): in ordinary rounds the fallen re-form after
+        // RESPAWN_DELAY_MS, so "one alive" is a moment, not an ending.
+        next.suddenDeathActive === true,
+        // Per-round kill tally — World.ts folds this tick's qualifying
+        // player-killed events in BEFORE stepRound runs, so a buzzer-beater
+        // kill counts in this very resolution.
+        next.roundKills ?? {},
       );
       if (winner === undefined) {
         return finalize(next, events, false, rngState);
@@ -289,6 +309,7 @@ export function stepRound(input: RoundStepInput): RoundStepResult {
       next.draftingPicked = undefined;
       next.draftingOffers = undefined;
       next.firstBloodPlayerId = undefined;
+      next.roundKills = undefined;
       next.suddenDeathActive = undefined;
       return finalize(next, events, false, rngState);
     }
@@ -404,6 +425,7 @@ export function stepRound(input: RoundStepInput): RoundStepResult {
       next.draftingPicked = undefined;
       next.draftingOffers = undefined;
       next.firstBloodPlayerId = undefined;
+      next.roundKills = undefined;
       next.suddenDeathActive = undefined;
       return finalize(next, events, false, rngState, playerPatches);
     }
@@ -458,6 +480,11 @@ export function enterDrafting(
     // Copies held per card id — `player.cards` keeps one entry per stack.
     const copies = new Map<string, number>();
     for (const id of player.cards) copies.set(id, (copies.get(id) ?? 0) + 1);
+    // Ability-slot cap (six-axes-goal.md doctrine #6): four action-bar
+    // slots, enforced HERE at the offer roll — a full hand simply stops
+    // seeing ability offers, never fails a pick. Count actives the same
+    // way the build resolves them (cards carrying an `active` spec).
+    const heldActives = resolvePlayerBuild(player).actives.length;
     const candidatePool = crystalRoundsCards.filter((c) => {
       // `unique: true` cards must not appear twice in a hand.
       if (c.unique && owned.has(c.id)) return false;
@@ -467,6 +494,7 @@ export function enterDrafting(
       if (c.maxStacks !== undefined && (copies.get(c.id) ?? 0) >= c.maxStacks) {
         return false;
       }
+      if (c.active && heldActives >= MAX_ABILITY_SLOTS) return false;
       return true;
     });
     const offered: string[] = [];
@@ -490,6 +518,29 @@ export function enterDrafting(
         }
         attempts += 1;
       }
+      // Ability pity floor (Jake, 2026-07-17: "don't see new abilities drop
+      // any more"): the drafted actives are the draft's identity layer — a
+      // hand holding NONE is guaranteed at least one ability offer per
+      // draft. Measured without this: ~23% of drafts showed one, so whole
+      // matches could pass ability-blind on fair dice. Replaces the last
+      // offer slot with a weighted pick over eligible ability cards; same
+      // rng cursor, so determinism holds. Hands already holding an active
+      // draft on normal weights.
+      if (heldActives === 0 && offered.length > 0) {
+        const offersAbility = offered.some((id) =>
+          candidatePool.some((c) => c.id === id && c.active !== undefined),
+        );
+        const abilityPool = candidatePool.filter(
+          (c) => c.active !== undefined && !offered.includes(c.id),
+        );
+        if (!offersAbility && abilityPool.length > 0) {
+          const [nextCursor, picked] = pickWeighted(cursor, abilityPool, (c) =>
+            weightForCard(c, role),
+          );
+          cursor = nextCursor;
+          offered[offered.length - 1] = picked.id;
+        }
+      }
     }
     draftingOffers[pid] = offered;
     events.push({ t: "card-offered", playerId: pid, cardIds: offered });
@@ -512,13 +563,26 @@ export function enterDrafting(
  * Returns the winning player id, or null on a draw, or undefined if the round
  * is still in progress.
  *
- * Last-alive rules: as soon as ≤1 alive player remains the round resolves.
- * Time-out rules: when forceResolve is true, the player with most kills (or
- * any tiebreaker — for now, alphabetical first id) wins; null on full draw.
+ * Last-alive rules apply ONLY in sudden death (`lastAliveResolves` — the
+ * fast-respawn ruling 2026-07-17): the fallen are benched, so ≤1 alive
+ * resolves the round (one alive → they win; zero alive → mutual-KO draw).
+ * In ordinary rounds the fallen re-form after RESPAWN_DELAY_MS, so a wiped
+ * field is a moment, not an ending — the round resolves by force only.
+ *
+ * Force-resolve rules (time-out / bot-shootout guard), in order:
+ *   1. Most kills this round (`roundKills`) wins — dead or alive. Landing
+ *      kills is the round's work; a fresh respawn's full health bar isn't.
+ *   2. Kill-tie: an ALIVE tied leader beats a dead one (being alive at the
+ *      bell matters); among alive tied leaders, most health wins, then
+ *      lowest id. All tied leaders dead → lowest id among them.
+ *   3. Zero kills all round: most health among alive wins, tiebreak lowest
+ *      id (the pre-tally convention). Nobody alive either → draw (null).
  */
 function decideRoundWinner(
   players: Record<PlayerId, PlayerEntity>,
   forceResolve: boolean,
+  lastAliveResolves: boolean,
+  roundKills: Record<PlayerId, number>,
 ): PlayerId | null | undefined {
   const playerIds = (Object.keys(players) as PlayerId[]).sort();
   // Empty match: keep the round in-progress on a normal tick, but on a forced
@@ -528,15 +592,43 @@ function decideRoundWinner(
 
   const alive = playerIds.filter((id) => players[id]!.alive);
 
-  if (alive.length === 0) {
-    // Mutual KO this tick.
-    return null;
-  }
-  if (alive.length === 1 && playerIds.length > 1) {
-    return alive[0]!;
+  // Last-alive rules only apply when nobody is coming back (sudden death —
+  // fast-respawn ruling 2026-07-17). In ordinary rounds a wiped field just
+  // means everyone is mid-respawn; the clock decides.
+  if (lastAliveResolves) {
+    if (alive.length === 0) {
+      // Mutual KO this tick.
+      return null;
+    }
+    if (alive.length === 1 && playerIds.length > 1) {
+      return alive[0]!;
+    }
   }
   if (forceResolve) {
-    // Time-out resolution: most-health-remaining among alive wins; tiebreak by id.
+    // Most-kills resolution. Only roster players can win — a departed
+    // player's tally entry (if any) is ignored by iterating roster ids.
+    let maxKills = 0;
+    for (const id of playerIds) {
+      maxKills = Math.max(maxKills, roundKills[id] ?? 0);
+    }
+    if (maxKills > 0) {
+      const leaders = playerIds.filter(
+        (id) => (roundKills[id] ?? 0) === maxKills,
+      );
+      const aliveLeaders = leaders.filter((id) => players[id]!.alive);
+      if (aliveLeaders.length === 0) {
+        // Every tied kill-leader died before the bell: lowest id among
+        // them (playerIds is sorted, so filter order is id order).
+        return leaders[0]!;
+      }
+      // Alive tied leaders: most health, then lowest id (first-seen wins
+      // ties because iteration is in sorted-id order).
+      return aliveLeaders.reduce((best, id) =>
+        players[id]!.health > players[best]!.health ? id : best,
+      );
+    }
+    // Zero kills all round: most-health-remaining among alive wins;
+    // tiebreak by lowest id; null (draw) when nobody is alive.
     const best = alive.reduce((best, id) => {
       if (best === null) return id;
       const a = players[best]!;

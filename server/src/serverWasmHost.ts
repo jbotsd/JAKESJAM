@@ -14,7 +14,8 @@
 // Reuses the already-shipped `loadServerSim` loader from
 // `wasmRuntime.ts` (which installs the trig LUT for parity).
 
-import type { WorldState } from "@sim/types.ts";
+import type { LaunchPadDefinition, SlopeDefinition, WorldState } from "@sim/types.ts";
+import { deriveSlopeStatics, MAX_SLOPES, type SlopeStatic } from "@sim/collision.ts";
 import {
   packWorldState,
   unpackWorldState,
@@ -62,6 +63,13 @@ type WorldExports = {
     has_ceiling: number,
     kill_plane_y: number,
   ) => void;
+  /** Optional — older sim.wasm builds predate launch pads. Flat f64
+   *  array, 6 per pad: [x, y, w, h, impulse_x, impulse_y]. */
+  world_state_set_launch_pads?: (pads_ptr: number, count: number) => number;
+  /** Optional — older sim.wasm builds predate slopes. Flat f64 array,
+   *  7 per slope (deriveSlopeStatics bits):
+   *  [span_min_x, span_max_x, base_x, base_y, dy_dx, tx, ty]. */
+  world_state_set_slopes?: (slopes_ptr: number, count: number) => number;
   resolve_player_fire_config?: (
     state_ptr: number,
     player_index: number,
@@ -82,6 +90,8 @@ class ServerWasmHost {
     hasCeiling: number;
     killPlaneY: number;
   } | null = null;
+  private cachedLaunchPads: LaunchPadDefinition[] | null = null;
+  private cachedSlopes: SlopeStatic[] | null = null;
   private preloadPromise: Promise<void> | null = null;
   private resolvedReady = false;
   private readyResolvers: Array<() => void> = [];
@@ -163,6 +173,22 @@ class ServerWasmHost {
     };
   }
 
+  /** Static launch pads (map.launchPads, world.zig §8c — module-level like
+   *  the arena bounds, zero WorldState bytes). Set once per match; pad
+   *  ARRAY ORDER is the wire identity (event entity_id = index). Empty
+   *  array clears the previous match's pads. */
+  setLaunchPads(pads: ReadonlyArray<LaunchPadDefinition>): void {
+    this.cachedLaunchPads = pads.slice();
+  }
+
+  /** True slopes (map.slopes, player.zig module-level — zero WorldState
+   *  bytes, launch-pad pattern). Derived here via deriveSlopeStatics
+   *  (single TS derivation site) so wasm consumes the exact f64 bits the
+   *  TS slope pass reads. Set once per match; empty array clears. */
+  setSlopes(slopes: ReadonlyArray<SlopeDefinition>): void {
+    this.cachedSlopes = deriveSlopeStatics(slopes);
+  }
+
   getStaticsSnapshot(): { aabbs: ReadonlyArray<StaticAABB>; oneWay: ReadonlyArray<number> } | null {
     return this.cachedStatics
       ? { aabbs: this.cachedStatics.aabbs, oneWay: this.cachedStatics.oneWay }
@@ -202,6 +228,8 @@ class ServerWasmHost {
     // (no card augments) while the client predicts WITH them → desync.
     this.writeFireConfigsIntoMemory(state);
     this.writeArenaBoundsIntoMemory();
+    this.writeLaunchPadsIntoMemory();
+    this.writeSlopesIntoMemory();
     this.writeInputsIntoMemory();
     const rc = ex.step_world(statePtr, dtMs);
     if (rc !== 0) {
@@ -226,6 +254,8 @@ class ServerWasmHost {
     this.ex = null;
     this.cachedStatics = null;
     this.cachedInputs = null;
+    this.cachedLaunchPads = null;
+    this.cachedSlopes = null;
     this.preloadPromise = null;
     this.resolvedReady = false;
     this.readyResolvers.length = 0;
@@ -276,6 +306,53 @@ class ServerWasmHost {
       this.cachedArenaBounds.hasCeiling,
       this.cachedArenaBounds.killPlaneY,
     );
+  }
+
+  /** Launch pads (world.zig §8c). Scratch sits past the max statics region
+   *  (256×32 AABB + 256 one_way = 8448 bytes, 8-aligned past scratchPtr) so
+   *  the statics and pad writes can never trample each other. 6 f64 per
+   *  pad, order = map order (mirrors the client backend's write). */
+  private writeLaunchPadsIntoMemory(): void {
+    if (!this.cachedLaunchPads || !this.ex || this.statePtr === null) return;
+    if (typeof this.ex.world_state_set_launch_pads !== "function") return;
+    const scratchPtr = this.statePtr + WORLD_STATE_TOTAL_SIZE + 64;
+    const padScratchPtr = scratchPtr + 256 * 32 + 256;
+    const view = new DataView(this.ex.memory.buffer, padScratchPtr);
+    const count = Math.min(this.cachedLaunchPads.length, 16);
+    for (let i = 0; i < count; i++) {
+      const pad = this.cachedLaunchPads[i]!;
+      view.setFloat64(i * 48 + 0, pad.position.x, true);
+      view.setFloat64(i * 48 + 8, pad.position.y, true);
+      view.setFloat64(i * 48 + 16, pad.size.x, true);
+      view.setFloat64(i * 48 + 24, pad.size.y, true);
+      view.setFloat64(i * 48 + 32, pad.impulse.x, true);
+      view.setFloat64(i * 48 + 40, pad.impulse.y, true);
+    }
+    this.ex.world_state_set_launch_pads(padScratchPtr, count);
+  }
+
+  /** True slopes (player.zig module-level). Scratch sits past the pad
+   *  region (16×48 = 768 bytes past the pad scratch) — statics, pads and
+   *  slopes never trample each other. 7 f64 per slope, exact
+   *  deriveSlopeStatics bits, map array order. Count 0 clears. */
+  private writeSlopesIntoMemory(): void {
+    if (!this.cachedSlopes || !this.ex || this.statePtr === null) return;
+    if (typeof this.ex.world_state_set_slopes !== "function") return;
+    const scratchPtr = this.statePtr + WORLD_STATE_TOTAL_SIZE + 64;
+    const slopeScratchPtr = scratchPtr + 256 * 32 + 256 + 16 * 48;
+    const view = new DataView(this.ex.memory.buffer, slopeScratchPtr);
+    const count = Math.min(this.cachedSlopes.length, MAX_SLOPES);
+    for (let i = 0; i < count; i++) {
+      const s = this.cachedSlopes[i]!;
+      view.setFloat64(i * 56 + 0, s.spanMinX, true);
+      view.setFloat64(i * 56 + 8, s.spanMaxX, true);
+      view.setFloat64(i * 56 + 16, s.baseX, true);
+      view.setFloat64(i * 56 + 24, s.baseY, true);
+      view.setFloat64(i * 56 + 32, s.dyDx, true);
+      view.setFloat64(i * 56 + 40, s.tx, true);
+      view.setFloat64(i * 56 + 48, s.ty, true);
+    }
+    this.ex.world_state_set_slopes(slopeScratchPtr, count);
   }
 
   private writeInputsIntoMemory(): void {

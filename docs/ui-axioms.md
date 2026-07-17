@@ -262,6 +262,21 @@ by the UX spatial-memory literature (NN/g and others): breaking a learned button
 users to relearn a mental map, the same mechanism as "a Windows user clicking bottom-left out of
 habit." Full citations: `~/Documents/JAKESJAM_UX_Research_20260715/`.
 
+### 7d. Touch combat-button registry (exhaustive — a new button MUST be added here)
+
+Every in-match touch button, its class, states, and placement law. Source: `TouchControls.ts` + `style.css`.
+
+| Button | Class | States | Placement (landscape / portrait) | Ships since |
+|---|---|---|---|---|
+| SHIELD | `tc-btn--shield` | held | right of centre-left / band top | pre-venue |
+| DASH | `tc-btn--dash` | tap-pulse, mini-stick drag | left of centre-right / band top | pre-venue |
+| EMIT | `tc-btn--emission` (+`--emission-ready`) | dormant→ready (full charge), tap-pulse | right of DASH / band top | 2026-07-16 |
+| Active slots 1–4 | `tc-btn--slot` `--slot1..4` (+`--slot-ready`) | hidden until drafted, dormant→ready (cooldown), tap-pulse | row right of EMIT; 2×2 fold ≤900px landscape / column above EMIT portrait | 2026-07-17 |
+
+Laws: slots appear ONLY as drafted (no dead zones on an undrafted layout); a lit response to a
+dead press is forbidden (ready-gated flash); the four-viewport screenshot pass
+(390×844 / 844×390 / 820×1180 / 1440×900) is the merge gate for placement changes.
+
 ---
 
 ## 8. Layout & system axioms

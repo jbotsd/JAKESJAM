@@ -21,7 +21,8 @@ const GRAVITY: f64 = 1450.0;
 // genre benchmark falls 1.4-2x faster than it rises. Apex height and
 // rise time are unchanged; full hop is now ~730ms.
 const DESCENT_GRAVITY: f64 = 2175.0;
-const FAST_FALL_GRAVITY: f64 = 2800.0;
+// 2800 → 3600 (2026-07-17): mirrors client/src/sim/player.ts M.fastFallGravity.
+const FAST_FALL_GRAVITY: f64 = 3600.0;
 const JUMP_VELOCITY: f64 = -635.0;
 const JUMP_CUT_MULTIPLIER: f64 = 0.48;
 const COYOTE_MS: f64 = 110.0;
@@ -64,6 +65,97 @@ const JETPACK_MIN_UPWARD_VELOCITY: f64 = -640.0;
 // Must match `client/src/sim/constants.ts` exactly — different values
 // produce different sub_step counts, which diverge the integration.
 const MIN_PLATFORM_H_PX: f64 = 12.0;
+
+// ── True slopes (mirror client/src/sim/collision.ts SLOPE_* exactly) ──────
+// Foot-point one-way grounding pass inside stepPlayer. Slopes are STATIC
+// map geometry with ZERO WorldState bytes (launch-pad precedent): they live
+// as module-level statics here, host-set via `world_state_set_slopes`, and
+// never touch the packed extern WorldState struct.
+//
+// PARITY: the tangent constants are irrational (1/√5, 2/√5, 1/√2). NO
+// runtime sqrt derives them — the exact f64 literals below are defined
+// byte-identically here and in collision.ts. The host additionally ships
+// PRE-DERIVED f64s (deriveSlopeStatics in collision.ts) through
+// world_state_set_slopes, so the values used at runtime are the same bits
+// by construction; the literals here exist for native tests + the
+// derivation cross-check in sim/test/smoke.zig.
+
+/// 1/√5 — exact f64 literal. MIRRORS collision.ts INV_SQRT5.
+pub const INV_SQRT5: f64 = 0.4472135954999579;
+/// 2/√5 — exact f64 literal. MIRRORS collision.ts TWO_INV_SQRT5.
+pub const TWO_INV_SQRT5: f64 = 0.8944271909999159;
+/// 1/√2 — exact f64 literal. MIRRORS collision.ts INV_SQRT2.
+pub const INV_SQRT2: f64 = 0.7071067811865476;
+/// Snap band (px) both sides of the surface line. MIRRORS collision.ts
+/// SLOPE_SNAP_TOL (see there for the 8px rationale).
+const SLOPE_SNAP_TOL: f64 = 8.0;
+/// One-way crossing slack from sub-step start (px). MIRRORS collision.ts
+/// SLOPE_START_SLACK (the rect one-way +2 discipline).
+const SLOPE_START_SLACK: f64 = 2.0;
+/// L1 displacement bound per sub-step when slopes exist. MIRRORS
+/// collision.ts SLOPE_MAX_SUBSTEP_L1.
+const SLOPE_MAX_SUBSTEP_L1: f64 = 6.0;
+
+pub const MAX_SLOPES: usize = 32;
+
+/// One derived slope — mirrors collision.ts `SlopeStatic` field-for-field
+/// (the wasm transport is these 7 f64s in this order).
+pub const Slope = extern struct {
+    span_min_x: f64,
+    span_max_x: f64,
+    base_x: f64,
+    base_y: f64,
+    /// surfaceY(x) = base_y + dy_dx * (x - base_x); exact ±0.5 / ±1.0.
+    dy_dx: f64,
+    /// Unit tangent with tx > 0; projection preserves |v| along ±(tx, ty).
+    tx: f64,
+    ty: f64,
+};
+
+var g_slopes: [MAX_SLOPES]Slope = undefined;
+var g_slope_count: u32 = 0;
+
+/// Host sets the map's slopes (same cadence as world_state_set_statics /
+/// world_state_set_launch_pads; ALSO written per-call by the step_player
+/// host backend so the player path can never observe stale slopes across
+/// map/match switches). `slopes_ptr` is a flat f64 array, 7 per slope:
+/// [span_min_x, span_max_x, base_x, base_y, dy_dx, tx, ty] — the exact
+/// bits of collision.ts's deriveSlopeStatics output, in map array order.
+/// An empty count clears. Returns the count actually written (clamped).
+pub export fn world_state_set_slopes(
+    slopes_ptr: [*]const f64,
+    count: u32,
+) u32 {
+    const clamped: u32 = @min(count, @as(u32, @intCast(MAX_SLOPES)));
+    var i: u32 = 0;
+    while (i < clamped) : (i += 1) {
+        const base = i * 7;
+        g_slopes[i] = .{
+            .span_min_x = slopes_ptr[base + 0],
+            .span_max_x = slopes_ptr[base + 1],
+            .base_x = slopes_ptr[base + 2],
+            .base_y = slopes_ptr[base + 3],
+            .dy_dx = slopes_ptr[base + 4],
+            .tx = slopes_ptr[base + 5],
+            .ty = slopes_ptr[base + 6],
+        };
+    }
+    g_slope_count = clamped;
+    return clamped;
+}
+
+/// Native-test helper (zig build test): set slopes without going through
+/// the flat-array export.
+pub fn setSlopesForTest(slopes: []const Slope) void {
+    const n: u32 = @intCast(@min(slopes.len, MAX_SLOPES));
+    var i: u32 = 0;
+    while (i < n) : (i += 1) g_slopes[i] = slopes[i];
+    g_slope_count = n;
+}
+
+pub fn slopeCount() u32 {
+    return g_slope_count;
+}
 
 const Bit = struct {
     const left: u32 = 1 << 0;
@@ -372,16 +464,40 @@ pub fn stepPlayer(
             sub_steps = @intCast(ceil_int);
         }
     }
+    // Slope-aware guard extension — MIRRORS player.ts exactly (see the
+    // comment there: L1 bound so a diagonal dash can't outrun the snap
+    // band on a 45° surface). GATED on slopes existing so slope-less maps
+    // keep the exact legacy sub-step count (bit-identical trajectories).
+    //   l1Disp = (abs(vx) + abs(vy)) * dtSec
+    //   slopeSubSteps = max(1, ceil(l1Disp / SLOPE_MAX_SUBSTEP_L1))
+    //   subSteps = max(subSteps, slopeSubSteps)
+    if (g_slope_count > 0) {
+        const l1_disp = (@abs(s.vx) + @abs(s.vy)) * dt_sec;
+        const slope_ceil = @ceil(l1_disp / SLOPE_MAX_SUBSTEP_L1);
+        const slope_ceil_int: i64 = @intFromFloat(slope_ceil);
+        if (slope_ceil_int > sub_steps) {
+            sub_steps = @intCast(slope_ceil_int);
+        }
+    }
     const sub_dt = dt_sec / @as(f64, @floatFromInt(sub_steps));
     var grounded_acc = false;
     var wall_contact_this_tick: i32 = 0;
+    // Tick-start grounded — s.grounded_last_frame isn't overwritten until
+    // after the loop, but hoist it for clarity (the slope pass's walk-down
+    // gate reads "grounded at tick start OR any earlier sub-step").
+    const grounded_at_tick_start = boolFromInt(s.grounded_last_frame);
 
     var i: u32 = 0;
     while (i < sub_steps) : (i += 1) {
         const pre_vx = s.vx;
+        // Foot position at sub-step START — the slope pass's one-way
+        // crossing gate (rect one-way "+2 from start of frame" discipline).
+        const start_foot_x = aabb.x + BODY_WIDTH / 2.0;
+        const start_foot_y = aabb.y + body_height;
         const resolved = collision.resolveMoveCached(aabb, s.vx, s.vy, sub_dt, statics, one_way);
         aabb = .{ .x = resolved.x, .y = resolved.y, .w = aabb.w, .h = aabb.h };
         // A horizontal collision zeroes vx — that's a WALL.
+        var latched_wall_this_sub_step = false;
         if (pre_vx != 0.0 and resolved.vx == 0.0 and (pre_vx > 1.0 or pre_vx < -1.0)) {
             const hit_dir: i32 = if (pre_vx > 0.0) 1 else -1;
             const hit_dir_f: f64 = @floatFromInt(hit_dir);
@@ -392,12 +508,83 @@ pub fn stepPlayer(
                 // Stuck to the wall → eligible to slide / wall-jump next tick.
                 s.vx = resolved.vx;
                 wall_contact_this_tick = hit_dir;
+                latched_wall_this_sub_step = true;
             }
         } else {
             s.vx = resolved.vx;
         }
         s.vy = resolved.vy;
         if (resolved.grounded_this_frame == 1) grounded_acc = true;
+
+        // ── TRUE SLOPE grounding pass — MIRRORS player.ts exactly. Both
+        // sides carry this pseudocode and MUST keep the op order identical:
+        //   footX = aabb.x + bodyWidth/2 ; footY = aabb.y + bodyHeight
+        //   sy    = baseY + dyDx*(footX - baseX)        // one mul + one add
+        //   pen   = footY - sy
+        //   pen ≥ 0 (from-above crossing): require pen ≤ SNAP_TOL, and if
+        //     the START foot was in-span, startFootY − startSy ≤ START_SLACK
+        //   pen < 0 (walk-down glue): require pen ≥ −SNAP_TOL, was-grounded
+        //     (tick start or earlier sub-step), vy ≥ 0, and the rect resolve
+        //     did NOT ground this sub-step
+        //   best slope = min sy (strict <, first index wins ties)
+        //   ground: aabb.y = sy − bodyHeight; grounded = true; project
+        //   velocity onto tangent PRESERVING MAGNITUDE:
+        //     speed = sqrt(vx*vx + vy*vy)
+        //     along = vx*tx + vy*ty
+        //     if (along < 0) { vx = -(speed*tx); vy = -(speed*ty); }
+        //     else           { vx =   speed*tx ; vy =   speed*ty ; }
+        // Tie-break: a wall latch this sub-step skips the pass (wall latch
+        // wins); a slope ground on any sub-step still clears the latch at
+        // tick end via grounded_acc, same as floors.
+        if (g_slope_count > 0 and !latched_wall_this_sub_step) {
+            const foot_x = aabb.x + BODY_WIDTH / 2.0;
+            const foot_y = aabb.y + body_height;
+            const was_grounded = grounded_at_tick_start or grounded_acc;
+            var best_idx: i32 = -1;
+            var best_sy: f64 = std.math.inf(f64);
+            var si: u32 = 0;
+            while (si < g_slope_count) : (si += 1) {
+                const sl = &g_slopes[si];
+                if (foot_x < sl.span_min_x or foot_x > sl.span_max_x) continue;
+                const sy = sl.base_y + sl.dy_dx * (foot_x - sl.base_x);
+                const pen = foot_y - sy;
+                if (pen >= 0.0) {
+                    // At/inside the surface — legit only from above.
+                    if (pen > SLOPE_SNAP_TOL) continue; // too deep = from below
+                    if (start_foot_x >= sl.span_min_x and start_foot_x <= sl.span_max_x) {
+                        const start_sy = sl.base_y + sl.dy_dx * (start_foot_x - sl.base_x);
+                        if (start_foot_y - start_sy > SLOPE_START_SLACK) continue; // one-way
+                    }
+                } else {
+                    // Hovering above within the band — the walk-down glue.
+                    if (pen < -SLOPE_SNAP_TOL) continue;
+                    if (!was_grounded) continue;
+                    if (s.vy < 0.0) continue; // jump/dash-up leaves cleanly
+                    if (resolved.grounded_this_frame == 1) continue; // rect grounds higher
+                }
+                if (sy < best_sy) {
+                    best_sy = sy;
+                    best_idx = @intCast(si);
+                }
+            }
+            if (best_idx >= 0) {
+                const sl = &g_slopes[@intCast(best_idx)];
+                aabb = .{ .x = aabb.x, .y = best_sy - body_height, .w = aabb.w, .h = aabb.h };
+                grounded_acc = true;
+                // Magnitude-preserving tangent projection — run speed
+                // converts to climb; leaving the slope carries the tangent
+                // velocity ballistically with no special-casing.
+                const speed = @sqrt(s.vx * s.vx + s.vy * s.vy);
+                const along = s.vx * sl.tx + s.vy * sl.ty;
+                if (along < 0.0) {
+                    s.vx = -(speed * sl.tx);
+                    s.vy = -(speed * sl.ty);
+                } else {
+                    s.vx = speed * sl.tx;
+                    s.vy = speed * sl.ty;
+                }
+            }
+        }
     }
     s.x = aabb.x + BODY_WIDTH / 2.0;
     s.y = aabb.y + body_height / 2.0;

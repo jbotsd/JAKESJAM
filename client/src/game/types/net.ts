@@ -1,4 +1,5 @@
 import type { ChaosModifierId, CharacterId, MatchId, RoomId, Vec2 } from "./game";
+import type { VesselCosmetics } from "../../sim/types";
 
 export type RoomStatus = "lobby" | "starting" | "in_match" | "complete";
 
@@ -23,6 +24,7 @@ export type RoomPlayer = {
   name: string;
   color: string;
   characterId: CharacterId;
+  cosmetics?: VesselCosmetics;
   ready: boolean;
   connected: boolean;
   joinedAt: number;
@@ -46,6 +48,7 @@ export type CreateRoomArgs = {
   color: string;
   characterId: CharacterId;
   chaosModifierIds: ChaosModifierId[];
+  cosmetics?: VesselCosmetics;
 };
 
 export type JoinRoomArgs = {
@@ -54,6 +57,7 @@ export type JoinRoomArgs = {
   name: string;
   color: string;
   characterId: CharacterId;
+  cosmetics?: VesselCosmetics;
 };
 
 export type MatchPlayerSnapshot = {

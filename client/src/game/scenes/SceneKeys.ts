@@ -13,6 +13,7 @@ export const SceneKeys = {
   HUD: "HUDScene",
   Tutorial: "TutorialScene",
   ArenaForge: "ArenaForgeScene",
+  Hangout: "HangoutScene",
 } as const;
 
 export type SceneKey = (typeof SceneKeys)[keyof typeof SceneKeys];

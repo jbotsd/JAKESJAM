@@ -26,11 +26,14 @@ export function classifyDraftRole(
   return "catch_up";
 }
 
-/** Buckets that catch-up seats weight more heavily. */
+/** Buckets that catch-up seats weight more heavily. Ability cards are
+ *  identity-rich (six-axes Layer 2) — non-winners see them more often,
+ *  which also self-corrects any cooldown-snowball toward the leader. */
 const CATCH_UP_BUCKETS: ReadonlySet<WeaponBucket> = new Set([
   "impact",
   "utility",
   "element",
+  "ability",
 ]);
 
 /**

@@ -272,6 +272,39 @@ describe("snapshotDelta", () => {
       expect(result.players[p1]?.slowMultiplier).toBe(0.5);
     });
 
+    test("six-axes fields round-trip (ward shell, slot cooldowns, tithe window)", () => {
+      // Additive-contract proof (six-axes-goal.md acceptance B2): the new
+      // Layer 1/2 player fields ride the P_HI tail like every buff tick —
+      // present when changed, absent otherwise, no wire format change.
+      const p1 = PlayerId("p1");
+      const prev = makeWorld({ players: { [p1]: makePlayer({ id: p1 }) } });
+      const next = makeWorld({
+        players: {
+          [p1]: {
+            ...prev.players[p1]!,
+            wardShellUntilTick: Tick(90),
+            slot1CooldownUntilTick: Tick(700),
+            slot3CooldownUntilTick: Tick(950),
+            titheUntilTick: Tick(240),
+          },
+        },
+      });
+
+      const delta = encodeDelta(prev, next);
+      const result = applyDelta(prev, delta);
+
+      expect(result.players[p1]?.wardShellUntilTick).toBe(Tick(90));
+      expect(result.players[p1]?.slot1CooldownUntilTick).toBe(Tick(700));
+      expect(result.players[p1]?.slot2CooldownUntilTick).toBeUndefined();
+      expect(result.players[p1]?.slot3CooldownUntilTick).toBe(Tick(950));
+      expect(result.players[p1]?.titheUntilTick).toBe(Tick(240));
+      // And an old-shape state (fields absent) still decodes untouched.
+      const noop = encodeDelta(prev, prev);
+      const same = applyDelta(prev, noop);
+      expect(same.players[p1]?.wardShellUntilTick).toBeUndefined();
+      expect(same.players[p1]?.titheUntilTick).toBeUndefined();
+    });
+
     test("grounded flag transition round-trips (false → true)", () => {
       const p1 = PlayerId("p1");
       const basePlayer = makePlayer({ id: p1, grounded: false });

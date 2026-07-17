@@ -1,9 +1,12 @@
-// The venue round trip (venue-sprint2-goal S2.F.1/S2.F.2), one unbroken
-// session with NO page reload:
+// The venue round trip (venue-sprint2-goal S2.F.1/S2.F.2; stations
+// separated 2026-07-17 per Jake — "seperate the card selector test room
+// thing with the bell queue"), one unbroken session with NO page reload:
 //
 //   splash-less ?world=1 entry → VENUE LOBBY (HangoutScene mode:"venue")
-//   → walk right to the bell totem → queued (starter draft overlay appears)
-//   → pick a card → wait for the bell (arena countdown edge)
+//   → walk to the LOADOUT STATION (card selector opens on arrival)
+//   → pick a card (overlay closes; pick armed for admission)
+//   → walk to the bell totem → queued (clean countdown — NO draft overlay)
+//   → wait for the bell (arena countdown edge)
 //   → ADMITTED → OnlineMatchScene (world) → pause → Leave
 //   → BACK in the venue lobby.
 //
@@ -65,13 +68,10 @@ test("venue round trip: lobby → queue → bell → arena → leave → lobby, 
     (window as unknown as { __e2e_no_reload__?: boolean }).__e2e_no_reload__ = true;
   });
 
-  // 2. Walk to the bell (x=2250 on vessel-nexus). Spawns come from the
-  //    map's lattice picked FARTHEST from occupied players, so we can land
-  //    anywhere — steer toward the totem by reading our own render-state x
-  //    each step. Queue confirmation = the starter draft overlay showing
-  //    (the venue-draft frame is pushed the moment the totem toggles us in).
+  // Steering helper: spawns come from the map's lattice picked FARTHEST
+  // from occupied players, so we can land anywhere — steer toward a target
+  // x by reading our own render-state x each step, until `done()` is true.
   await page.waitForTimeout(2000); // land + settle on the floor
-  const BELL_X = 2250;
   const myX = () =>
     page.evaluate(() => {
       type Loop = { getRenderState(): { players: Record<string, { x: number }> } | null };
@@ -87,44 +87,79 @@ test("venue round trip: lobby → queue → bell → arena → leave → lobby, 
       const el = document.querySelector("[data-card-draft]") as HTMLElement | null;
       return el !== null && el.style.display !== "none";
     });
-  let queued = false;
-  let prevX: number | null = null;
-  for (let i = 0; i < 80 && !queued; i += 1) {
-    const x = await myX();
-    if (x === null) {
-      await page.waitForTimeout(500);
-      continue;
+  const localQueued = () =>
+    page.evaluate(() => {
+      type Scene = { venueStatus: { queued: string[] } | null; localPlayerId: string };
+      const g = (window as unknown as { __jakesjam_game__?: { scene: { getScene(k: string): unknown } } })
+        .__jakesjam_game__;
+      const scene = g?.scene.getScene("HangoutScene") as Scene | undefined;
+      return scene?.venueStatus?.queued.includes(scene.localPlayerId) ?? false;
+    });
+  const walkUntil = async (targetX: number, done: () => Promise<boolean>): Promise<boolean> => {
+    let prevX: number | null = null;
+    for (let i = 0; i < 80; i += 1) {
+      if (await done()) return true;
+      const x = await myX();
+      if (x === null) {
+        await page.waitForTimeout(500);
+        continue;
+      }
+      const stalled = prevX !== null && Math.abs(x - prevX) < 12;
+      prevX = x;
+      const key = x < targetX ? "d" : "a";
+      await page.keyboard.down(key);
+      if (stalled) {
+        // Cover pylons block the ground path — jump WHILE holding the
+        // direction so the arc actually clears the obstacle. Held, not
+        // tapped: a press() can fall between input-sampling frames.
+        await page.keyboard.down("w");
+        await page.waitForTimeout(220);
+        await page.keyboard.up("w");
+        await page.waitForTimeout(280);
+        await page.keyboard.down("w"); // wall-hop assist if still pinned
+        await page.waitForTimeout(220);
+        await page.keyboard.up("w");
+      }
+      await page.waitForTimeout(400);
+      await page.keyboard.up(key);
+      if (Math.abs(x - targetX) < 60) await page.waitForTimeout(600); // linger in the ring
     }
-    const stalled = prevX !== null && Math.abs(x - prevX) < 12;
-    prevX = x;
-    const key = x < BELL_X ? "d" : "a";
-    await page.keyboard.down(key);
-    if (stalled) {
-      // Cover pylons block the ground path — jump WHILE holding the
-      // direction so the arc actually clears the obstacle. Held, not
-      // tapped: a press() can fall between input-sampling frames.
-      await page.keyboard.down("w");
-      await page.waitForTimeout(220);
-      await page.keyboard.up("w");
-      await page.waitForTimeout(280);
-      await page.keyboard.down("w"); // wall-hop assist if still pinned
-      await page.waitForTimeout(220);
-      await page.keyboard.up("w");
-    }
-    await page.waitForTimeout(400);
-    await page.keyboard.up(key);
-    if (Math.abs(x - BELL_X) < 60) await page.waitForTimeout(600); // linger in the ring
-    queued = await overlayVisible();
-  }
-  expect(queued).toBe(true);
+    return done();
+  };
 
-  // 3. Pick the middle card.
+  // 2. Walk to the LOADOUT STATION (x=750 on vessel-nexus, by the practice
+  //    dummies). Arrival opens the card selector — the walk-up station that
+  //    replaced the modal-on-queue (2026-07-17 separation).
+  const LOADOUT_X = 750;
+  const BELL_X = 2250;
+  // The station only opens on a real WALK-IN (modal-on-spawn is
+  // structurally prevented client-side) — if the lattice dropped us inside
+  // the ring, step out first so the entry edge exists.
+  {
+    const x0 = await myX();
+    if (x0 !== null && Math.abs(x0 - LOADOUT_X) < 160) {
+      await walkUntil(LOADOUT_X + 500, async () => {
+        const x = await myX();
+        return x !== null && x > LOADOUT_X + 300;
+      });
+    }
+  }
+  expect(await walkUntil(LOADOUT_X, overlayVisible)).toBe(true);
+  // Not queued — the station must never touch the bell queue.
+  expect(await localQueued()).toBe(false);
+
+  // 3. Pick the middle card. Overlay closes on pick; the pick is armed
+  //    server-side for the next admission.
   const plates = page.locator("[data-card-draft] [data-card-plate]");
   await expect(plates).toHaveCount(3);
   const pickedId = await plates.nth(1).getAttribute("data-card-plate");
   await plates.nth(1).click();
 
-  // 4. The bell: admission hands off to the arena scene (may take a full
+  // 4. Walk to the bell and queue — a clean countdown, NO draft overlay.
+  expect(await walkUntil(BELL_X, localQueued)).toBe(true);
+  expect(await overlayVisible()).toBe(false);
+
+  // 5. The bell: admission hands off to the arena scene (may take a full
   //    round). No reload — the same JS heap crosses the membrane.
   await page.waitForFunction(
     () =>
@@ -144,7 +179,7 @@ test("venue round trip: lobby → queue → bell → arena → leave → lobby, 
   // Let the arena run a moment (spawned, snapshots flowing).
   await page.waitForTimeout(4000);
 
-  // 5. Leave via the pause menu — the arena exit must return to the VENUE.
+  // 6. Leave via the pause menu — the arena exit must return to the VENUE.
   await page.click("[data-match-menu]");
   await page.click("[data-pause-leave]");
   await page.click("[data-pause-leave-confirm-yes]");
@@ -158,7 +193,7 @@ test("venue round trip: lobby → queue → bell → arena → leave → lobby, 
   );
   expect(await sceneActive(page, "OnlineMatchScene")).toBe(false);
 
-  // 6. Still the same page — the whole loop ran without a reload.
+  // 7. Still the same page — the whole loop ran without a reload.
   expect(
     await page.evaluate(
       () => (window as unknown as { __e2e_no_reload__?: boolean }).__e2e_no_reload__ ?? false,

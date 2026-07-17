@@ -80,14 +80,16 @@ describe("RoundOrchestrator.step", () => {
     expect(result.state.phase).toBe("fighting");
   });
 
-  test("emits round-end when one player dies in fighting phase", () => {
-    // Start in fighting phase with player B dead.
+  test("emits round-end when one player dies in a SUDDEN DEATH fighting phase", () => {
+    // Fast-respawn ruling 2026-07-17: last-alive resolution is sudden-death
+    // only; ordinary rounds respawn the fallen and run the clock.
     const fighting: RoundState = {
       phase: "fighting",
       countdownRemainingMs: 90_000,
       scores: { [A]: 0, [B]: 0 },
       roundIndex: 0,
       winnerPlayerId: null,
+      suddenDeathActive: true,
     };
     const orch = new RoundOrchestrator(fighting);
     const deadPlayers: Record<PlayerId, PlayerEntity> = {

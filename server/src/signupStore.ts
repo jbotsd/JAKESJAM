@@ -19,8 +19,17 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 
-const DIR = resolve(process.cwd(), ".signups");
-const FILE = resolve(DIR, "signups.json");
+// Env override exists so tests (and any tooling) can point the store at a
+// throwaway dir — before this, every `bun test` run wrote its fake
+// @example.com signups into the PRODUCTION list (260 junk rows by the time
+// it was caught, 2026-07-17). Resolved lazily, not at module load, so a
+// test file can set the env before its first store call.
+function storeFile(): string {
+  return resolve(process.env.JAKESJAM_SIGNUPS_DIR ?? resolve(process.cwd(), ".signups"), "signups.json");
+}
+function storeDir(): string {
+  return resolve(process.env.JAKESJAM_SIGNUPS_DIR ?? resolve(process.cwd(), ".signups"));
+}
 
 export type StoredSignup = {
   email: string;
@@ -30,15 +39,15 @@ export type StoredSignup = {
 
 async function readAll(): Promise<StoredSignup[]> {
   try {
-    return JSON.parse(await readFile(FILE, "utf8")) as StoredSignup[];
+    return JSON.parse(await readFile(storeFile(), "utf8")) as StoredSignup[];
   } catch {
     return [];
   }
 }
 
 async function writeAll(all: StoredSignup[]): Promise<void> {
-  await mkdir(DIR, { recursive: true });
-  await writeFile(FILE, JSON.stringify(all, null, 2));
+  await mkdir(storeDir(), { recursive: true });
+  await writeFile(storeFile(), JSON.stringify(all, null, 2));
 }
 
 /** Idempotent on email (case-insensitive — the caller already lowercases,

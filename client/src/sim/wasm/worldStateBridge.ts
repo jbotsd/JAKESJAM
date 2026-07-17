@@ -319,7 +319,12 @@ function set(flags: number, b: number, v: boolean | undefined): number {
   return v ? flags | (1 << b) : flags & ~(1 << b);
 }
 
-function packPlayer(view: DataView, offset: number, p: PlayerEntity): void {
+function packPlayer(
+  view: DataView,
+  offset: number,
+  p: PlayerEntity,
+  roundKills: number,
+): void {
   // f64 block — 17 fields, offsets 0..136
   let off = offset;
   const f = (v: number) => {
@@ -470,7 +475,13 @@ function packPlayer(view: DataView, offset: number, p: PlayerEntity): void {
   view.setUint32(off, 0, true); // populated by patcher per pack-callsite
   off += 4;
 
-  // _reserved 4 bytes — leave zero.
+  // round_kills — per-round kill tally, mirrored from
+  // state.round.roundKills[p.id] (packWorldState passes it in). Landed in
+  // the former 4-byte _reserved tail, so PLAYER_ENTITY_SIZE (288) and
+  // WORLD_STATE_TOTAL_SIZE are unchanged. Matches world_state.zig
+  // PlayerEntity.round_kills.
+  view.setUint32(off, roundKills >>> 0, true);
+  off += 4;
 }
 
 function unpackPlayer(view: DataView, offset: number): PlayerEntity {
@@ -541,11 +552,11 @@ function unpackPlayer(view: DataView, offset: number): PlayerEntity {
   const weaponId = readString(view, off, wpnLen);
   off += WEAPON_ID_BYTES;
 
-  // current_keys + prev_keys + score + _reserved (Phase I4 + I5)
-  // — skipped on unpack since the TS-side PlayerEntity doesn't
-  // carry these fields directly. Score round-trips via
-  // state.round.scores keyed by player id; orchestrator writes
-  // back through the J0 shim if needed.
+  // current_keys + prev_keys + score + round_kills (Phase I4 + I5,
+  // kill tally 2026-07-17) — skipped on unpack since the TS-side
+  // PlayerEntity doesn't carry these fields directly. Score and
+  // round_kills round-trip via state.round.scores / .roundKills keyed
+  // by player id (extracted separately in unpackWorldState).
   off += 4 + 4 + 4 + 4;
 
   const out: PlayerEntity = {
@@ -1129,7 +1140,12 @@ export function packWorldState(state: WorldState): Uint8Array {
   off += 4;
   const playersStart = off;
   for (let i = 0; i < players.length; i++) {
-    packPlayer(view, playersStart + i * PLAYER_ENTITY_SIZE, players[i]!);
+    packPlayer(
+      view,
+      playersStart + i * PLAYER_ENTITY_SIZE,
+      players[i]!,
+      state.round.roundKills?.[players[i]!.id] ?? 0,
+    );
   }
   off = playersStart + MAX_PLAYERS * PLAYER_ENTITY_SIZE;
 
@@ -1233,6 +1249,9 @@ export type UnpackedWorldState = {
   rngState: number;
   round: Pick<RoundState, "phase" | "countdownRemainingMs" | "roundIndex">;
   scores: Record<string, number>;
+  /** Per-round kill tally (PlayerEntity.round_kills), keyed by player id.
+   *  Only players with a non-zero tally get an entry — mirrors `scores`. */
+  roundKills: Record<string, number>;
   targetScore: number;
   matchWinnerIdx: number; // -1 = no winner
   chaosModifierIds?: string[];
@@ -1395,13 +1414,19 @@ export function unpackWorldState(buf: Uint8Array): UnpackedWorldState {
 
   // I24 — extract the per-player score field into a separate
   // record so the J0 shim can mirror it into state.round.scores.
+  // Same treatment for round_kills (kill tally 2026-07-17) →
+  // state.round.roundKills.
   const scores: Record<string, number> = {};
+  const roundKills: Record<string, number> = {};
   let pi = 0;
   for (const pid of Object.keys(players).sort()) {
-    // PlayerEntity score is at offset 276 from the player's start.
+    // PlayerEntity score is at offset 276 from the player's start;
+    // round_kills directly after at 280 (former _reserved bytes).
     const playerStart = playersStart + pi * PLAYER_ENTITY_SIZE;
     const score = view.getUint32(playerStart + 276, true);
     if (score > 0) scores[pid] = score;
+    const kills = view.getUint32(playerStart + 280, true);
+    if (kills > 0) roundKills[pid] = kills;
     pi++;
   }
 
@@ -1410,6 +1435,7 @@ export function unpackWorldState(buf: Uint8Array): UnpackedWorldState {
     rngState,
     round: { phase, countdownRemainingMs, roundIndex },
     scores,
+    roundKills,
     targetScore,
     matchWinnerIdx,
     players,

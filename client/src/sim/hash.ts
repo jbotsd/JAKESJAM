@@ -73,7 +73,9 @@ function quantiseMs(value: number): number {
  *   overchargeUntilTick (int), damageAmpUntilTick (int),
  *   speedBoostUntilTick (int), meleeModeUntilTick (int),
  *   slowDebuffUntilTick (int), vulnerabilityUntilTick (int),
- *   blockJammerUntilTick (int), bossModeUntilTick (int).
+ *   blockJammerUntilTick (int), bossModeUntilTick (int),
+ *   wardShellUntilTick (int), slot1..4CooldownUntilTick (int),
+ *   titheUntilTick (int), grounded (0/1).
  *
  * Fields deliberately skipped: aimX/aimY (presentation only, changes every
  * frame without gameplay consequence), lastProcessedInputSeq (reconcile
@@ -104,6 +106,18 @@ export function hashPlayerEntity(p: PlayerEntity): number {
   h = mixU32(h, (p.vulnerabilityUntilTick ?? 0) | 0);
   h = mixU32(h, (p.blockJammerUntilTick ?? 0) | 0);
   h = mixU32(h, (p.bossModeUntilTick ?? 0) | 0);
+  // Ward shell (six-axes Layer 1) — sim-read damage gate, same absent-as-0
+  // treatment as the buff ticks above.
+  h = mixU32(h, (p.wardShellUntilTick ?? 0) | 0);
+  // Drafted actives (six-axes Layer 2): slot cooldowns + Tithe window.
+  h = mixU32(h, (p.slot1CooldownUntilTick ?? 0) | 0);
+  h = mixU32(h, (p.slot2CooldownUntilTick ?? 0) | 0);
+  h = mixU32(h, (p.slot3CooldownUntilTick ?? 0) | 0);
+  h = mixU32(h, (p.slot4CooldownUntilTick ?? 0) | 0);
+  h = mixU32(h, (p.titheUntilTick ?? 0) | 0);
+  h = mixU32(h, (p.veilUntilTick ?? 0) | 0);
+  h = mixU32(h, (p.counterUntilTick ?? 0) | 0);
+  h = mixU32(h, (p.respawnAtTick ?? 0) | 0);
   // Render-only flag, but per-entity reconcile uses this hash to detect
   // divergence; without grounded mixed in, a remote rig that just landed
   // would NOT trigger reconcile and would keep its stale grounded=false

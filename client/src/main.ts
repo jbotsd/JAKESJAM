@@ -15,6 +15,7 @@ import { announce, setAnnouncerVolume, silenceAnnouncer } from "./game/audio/Ann
 import { setSfxVolume01 } from "./game/audio/sfxVolume";
 import { LobbyController } from "./game/ui/LobbyController";
 import { loadPlayerStats, statLines } from "./shell/playerStats";
+import { fetchVenueSummary } from "./net/worldClient";
 import { sanitizePlayerName, stripDisallowedChars } from "./net/playerName";
 import { SceneKeys } from "./game/scenes/SceneKeys";
 import {
@@ -33,7 +34,7 @@ import {
 } from "./game/highlights/clipConsent";
 import { ShellController } from "./shell/ShellController";
 import { installEmailGate } from "./shell/emailGate";
-import { installIdentShader } from "./shell/identShader";
+import { installIdentShader, loadIdentStems, type IdentStems, type IdentStemName } from "./shell/identShader";
 import { getAudioUrl } from "./game/audio/audioUrl";
 import {
   emitClipSaveNow,
@@ -212,7 +213,7 @@ app.innerHTML = `
     ></video>
     <div class="splash-crt" aria-hidden="true"></div>
     <div class="boot-gate" data-boot-gate>
-      <img class="boot-gate-sigil" src="/img/seal-gnostic.png" alt="" />
+      <img class="boot-gate-sigil" src="/img/seal-vessel.svg" alt="" />
       <p class="boot-gate-line">CLICK TO INITIATE</p>
     </div>
     <div class="boot-ident" data-boot-ident hidden aria-hidden="true">
@@ -252,8 +253,14 @@ app.innerHTML = `
         <path class="is-boundary" d="M 545.9 11.6 A 490 490 0 1 1 454.1 11.6" />
         <line class="is-radius" x1="500" y1="500" x2="500" y2="10" />
         <circle class="is-dot" cx="500" cy="500" r="8" />
-        <polygon class="is-tri" points="500,160 794.4,670 205.6,670" />
-        <circle class="is-tri-loop" cx="794.4" cy="670" r="16" />
+        <!-- THE CRYSTAL: large inscribed diamond (rotated square), vertices
+             on the cardinal axes, inscribed exactly in the r=340 seventh
+             ring — avionics/crystal-munitions read, drawn edge by edge in
+             the same choreography slot the old centerpiece occupied.
+             Owner's hard line (docs/IDENT-GRAMMAR.md): no eye-under/inside-
+             triangle, no triangle over radial focal geometry, no hexagram. -->
+        <polygon class="is-gem" points="500,160 840,500 500,840 160,500" />
+        <circle class="is-gem-loop" cx="840" cy="500" r="16" />
         <g class="is-ticks" data-ident-ticks></g>
         <g class="is-vowels" data-ident-vowels></g>
         <g class="is-rays" data-ident-rays></g>
@@ -266,7 +273,7 @@ app.innerHTML = `
       </svg>
       <div class="ident-glow" data-ident-glow aria-hidden="true"></div>
       <div class="ident-pulse" data-ident-pulse aria-hidden="true"></div>
-      <img class="ident-shimmer" data-ident-shimmer src="/img/seal-gnostic.png" alt="" aria-hidden="true" />
+      <img class="ident-shimmer" data-ident-shimmer src="/img/seal-vessel.svg" alt="" aria-hidden="true" />
       <p class="ident-name">JAKESJAM</p>
       <img class="ident-ca ident-ca-r" src="/img/logo-jakesjam-gothic.png" alt="" aria-hidden="true" />
       <img class="ident-ca ident-ca-c" src="/img/logo-jakesjam-gothic.png" alt="" aria-hidden="true" />
@@ -450,7 +457,7 @@ app.innerHTML = `
           </p>
         </div>
         <div class="credits-block credits-seal-mark" aria-hidden="true">
-          <img src="/img/seal-gnostic.png" alt="" />
+          <img src="/img/seal-vessel.svg" alt="" />
         </div>
       </div>
       <button data-credits-back type="button" class="shell-btn-secondary">Back</button>
@@ -996,6 +1003,30 @@ window.setInterval(() => {
         const pulseEl = ident.querySelector<HTMLElement>("[data-ident-pulse]");
         const shaderCanvas = ident.querySelector<HTMLCanvasElement>("[data-ident-shader]");
         const shader = shaderCanvas ? installIdentShader(shaderCanvas) : null;
+        // ── per-stem envelope control (audio/splash-theme-stems.json):
+        // 60Hz envelopes + onset frames from a 6-stem separation of the
+        // anthem. Fetched non-blocking; until it arrives — or forever, if
+        // it 404s — the live-FFT path below keeps driving everything
+        // exactly as before. Both paths feed the SAME band values into the
+        // SAME uniforms; the stems just replace the FFT's guessing with
+        // per-instrument truth. Channel map (docs/IDENT-GRAMMAR.md §Stem
+        // channels): drums→rings/kick-spring, bass→wisp bed ("cracked up
+        // mega"), guitar+piano→lead/crystal, vocals→rays, other→chroma.
+        // window.__identStems tells the smoke probe which path is live.
+        const stemDbg = window as unknown as { __identStems?: "live" | "fallback" };
+        stemDbg.__identStems = "fallback";
+        let stems: IdentStems | null = null;
+        // onset cursors = index of the NEXT unfired onset per stem. They're
+        // fast-forwarded past the audio clock when the JSON lands mid-run,
+        // so a late fetch can't machine-gun every already-missed onset.
+        let drumOnsetCur = 0;
+        let stabOnsetCur = 0;
+        let stemArmed = false;
+        void loadIdentStems(getAudioUrl("splash-theme-stems.json")).then((s) => {
+          if (!s || document.documentElement.classList.contains("ident-done")) return;
+          stems = s;
+          stemDbg.__identStems = "live";
+        });
         let raf = 0;
         let t0 = 0;
         let pulseEnv = 0; // sidechain-style envelope: snap up, decay out
@@ -1018,13 +1049,57 @@ window.setInterval(() => {
           for (let i = 26; i < 86; i++) lead += bins[i]!;        // ~1.2-4kHz
           for (let i = 160; i < 320; i++) air += bins[i]!;       // ~7.5-15kHz
           for (let i = 86; i < 200; i++) scream += bins[i]!;     // ~4-9.4kHz — the searing/riff register
-          const pb = Math.min(1, bass / (6 * 255));
-          const pl = Math.min(1, lead / (60 * 175));
+          let pb = Math.min(1, bass / (6 * 255));
+          let pl = Math.min(1, lead / (60 * 175));
           const pt = Math.min(1, air / (160 * 110));
           // aggressive curve (squared): a screaming track should read as
           // MOSTLY quiet with real spikes, not a constant hot floor.
           const psRaw = Math.min(1, scream / (114 * 130));
           const ps = psRaw * psRaw;
+          // ── stem override: when the per-stem JSON is live it replaces
+          // the FFT guesses for the channels it owns. air (pt) and scream
+          // (ps) stay FFT-derived in BOTH modes — they're timbral registers
+          // of the whole mix, not separable instruments, and the whiteout/
+          // shimmer they drive should keep tracking the mix. Frame index
+          // comes off splashTheme.currentTime — the ONE clock everything
+          // in this ident (WAAPI resync, shader progress) already slaves
+          // to; no second clock is introduced here.
+          let wisp = 0; // bass stem env → the melting-light bed
+          let chroma = 0; // other stem env → chroma width swell
+          let raysLevel = pl; // vocals stem env in stem mode; lead in fallback
+          let kickOnset = 0; // drums onset strength this frame
+          let stabOnset = 0; // guitar onset strength this frame
+          if (stems) {
+            const s = stems;
+            const frame = Math.max(0, Math.min(s.frameCount - 1, Math.floor(splashTheme.currentTime * s.fps)));
+            const env = (n: IdentStemName) => (s.stems[n][frame] ?? 0) / 255;
+            if (!stemArmed) {
+              stemArmed = true;
+              while (drumOnsetCur < s.onsets.drums.length && (s.onsets.drums[drumOnsetCur] ?? 0) <= frame) drumOnsetCur++;
+              while (stabOnsetCur < s.onsets.guitar.length && (s.onsets.guitar[stabOnsetCur] ?? 0) <= frame) stabOnsetCur++;
+            }
+            pb = env("drums"); // rings/quake/glow punch with the DRUM stem
+            // lead = guitar with the near-silent piano folded in (sum,
+            // clamped) — crystal glint + ring highlights + seal saturation
+            pl = Math.min(1, env("guitar") + env("piano"));
+            wisp = env("bass"); // the headline channel — the envelope IS the light
+            chroma = env("other");
+            raysLevel = env("vocals"); // the ray crown sings with the voice
+            // sample-accurate onsets: fire every onset frame the audio
+            // clock crossed since last rAF. Strength = that stem's envelope
+            // AT the onset frame, floored at 0.4 so an attack transient
+            // caught mid-rise still lands a real kick.
+            while (drumOnsetCur < s.onsets.drums.length && (s.onsets.drums[drumOnsetCur] ?? Infinity) <= frame) {
+              const f = s.onsets.drums[drumOnsetCur]!;
+              kickOnset = Math.max(kickOnset, Math.max(0.4, (s.stems.drums[f] ?? 0) / 255));
+              drumOnsetCur++;
+            }
+            while (stabOnsetCur < s.onsets.guitar.length && (s.onsets.guitar[stabOnsetCur] ?? Infinity) <= frame) {
+              const f = s.onsets.guitar[stabOnsetCur]!;
+              stabOnset = Math.max(stabOnset, Math.max(0.4, (s.stems.guitar[f] ?? 0) / 255));
+              stabOnsetCur++;
+            }
+          }
           if (glow) {
             glow.style.opacity = String(0.1 + pb * 0.6);
             glow.style.transform = `translate(-50%, -50%) scale(${0.9 + pb * 0.28})`;
@@ -1068,8 +1143,10 @@ window.setInterval(() => {
           // rays-anthem keyframe already owns this element's opacity/rotate,
           // and CSS animations always win a same-property fight against
           // inline JS styles, so the old opacity-based pulse was inert.
+          // stem mode: the VOCALS stem owns the rays group intensity (the
+          // crown sings with the voice); fallback keeps the lead band.
           const raysEl = ident.querySelector<HTMLElement>("[data-ident-rays-glow]");
-          if (raysEl) raysEl.style.filter = `brightness(${(0.75 + pl * 1.15).toFixed(2)})`;
+          if (raysEl) raysEl.style.filter = `brightness(${(0.75 + raysLevel * 1.15).toFixed(2)})`;
           // the "aggro croon": the synth lead line pulses SATURATION on the
           // liquid-gold/teal strokes themselves — the geometry visibly
           // sings along with the lead, not just a generic glow reacting.
@@ -1089,7 +1166,12 @@ window.setInterval(() => {
           // in sync with the CSS stroke-dashoffset draw-in even if a frame
           // hitches — same source syncTracks() uses to resync the keyframes.
           const progress = Math.min(1, splashTheme.currentTime / (IDENT_MS / 1000));
-          shader?.update({ bass: pb, lead: pl, air: pt, scream: ps, pulse: pulseEnv, growth: pulseGrowth, progress });
+          shader?.update({
+            bass: pb, lead: pl, air: pt, scream: ps, pulse: pulseEnv,
+            growth: pulseGrowth, progress,
+            // stem-only channels — inert (0/false) on the FFT fallback
+            stemLive: stems !== null, wisp, chroma, kickOnset, stabOnset,
+          });
           raf = requestAnimationFrame(pump);
         };
         raf = requestAnimationFrame(pump);
@@ -1418,8 +1500,19 @@ queryRequired<HTMLButtonElement>("[data-menu-world]").addEventListener("click", 
 // no network; refreshed on every return home so a finished match's
 // kills/wins show the moment the splash is back.
 const playerStatsMount = queryRequired<HTMLElement>("[data-player-stats]");
+// Live presence in the same row (Jake, 2026-07-17: "put current players
+// and current players in a match in the stats"): ONLINE = lobby + arena
+// humans, IN MATCH = arena humans, from /venue/summary. Polled only while
+// the splash is actually on screen, at the old status-badge cadence.
+let venuePresence: { online: number; inMatch: number } | null = null;
 function renderPlayerStats(): void {
   const lines = statLines(loadPlayerStats());
+  if (venuePresence !== null) {
+    lines.push(
+      { label: "ONLINE", value: String(venuePresence.online) },
+      { label: "IN MATCH", value: String(venuePresence.inMatch) },
+    );
+  }
   playerStatsMount.replaceChildren(
     ...lines.map(({ label, value }) => {
       const item = document.createElement("span");
@@ -1436,6 +1529,22 @@ function renderPlayerStats(): void {
 renderPlayerStats();
 window.addEventListener(ShellEvents.MATCH_ENDED, () => renderPlayerStats());
 window.addEventListener(ShellEvents.GOTO, () => renderPlayerStats());
+
+async function pollVenuePresence(): Promise<void> {
+  // Skip entirely while the splash is hidden (in a match / another shell
+  // page) or the tab is backgrounded — presence is a splash read.
+  if (document.visibilityState !== "visible" || playerStatsMount.offsetParent === null) return;
+  const venue = await fetchVenueSummary();
+  if (venue === null) return; // unreachable/not live — keep the last read
+  venuePresence = {
+    online: (venue.lobby?.present ?? 0) + (venue.arena?.humans ?? 0),
+    inMatch: venue.arena?.humans ?? 0,
+  };
+  renderPlayerStats();
+}
+void pollVenuePresence();
+setInterval(() => void pollVenuePresence(), 5_000);
+window.addEventListener(ShellEvents.GOTO, () => void pollVenuePresence());
 
 queryRequired<HTMLButtonElement>("[data-menu-practice]").addEventListener("click", () => {
   startMenuMusic();

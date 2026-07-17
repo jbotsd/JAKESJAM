@@ -41,9 +41,12 @@ export class CameraJuice {
     this.intensity?.bump(Phaser.Math.Clamp(amount * 0.5, 0.03, 0.35));
   }
 
-  /** RARE zoom-punch only (a kill). Never for frequent movement. */
-  punchZoom(scaleDelta: number, outMs = 70, backMs = 200): void {
-    this.cam.punchZoom(scaleDelta, outMs, backMs);
+  /** RARE zoom-punch only (a kill). Never for frequent movement. `lockOnX/Y`,
+   *  when given, is the actual point of impact (the victim, not necessarily
+   *  the local player) — the frame briefly biases toward it instead of only
+   *  ever punching in on wherever the camera already happened to be centred. */
+  punchZoom(scaleDelta: number, outMs = 70, backMs = 200, lockOnX?: number, lockOnY?: number): void {
+    this.cam.punchZoom(scaleDelta, outMs, backMs, lockOnX, lockOnY);
     this.intensity?.bump(Phaser.Math.Clamp(Math.abs(scaleDelta) * 3, 0.05, 0.3));
   }
 }

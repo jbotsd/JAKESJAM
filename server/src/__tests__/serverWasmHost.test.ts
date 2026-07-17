@@ -14,10 +14,12 @@ import { describe, expect, test, beforeAll } from "bun:test";
 import { serverWasmHost } from "../serverWasmHost";
 import {
   EntityId,
+  InputSeq,
   PlayerId,
   Tick,
   type DestructibleEntity,
   type FireEntity,
+  type PlayerEntity,
   type ProjectileEntity,
   type WorldState,
 } from "@sim/types.ts";
@@ -148,6 +150,210 @@ describe("serverWasmHost — B3 contract", () => {
     const b = serverWasmHost.step({ ...s }, 16.667);
     expect(a.state.tick).toBe(b.state.tick);
     expect(a.state.rngState).toBe(b.state.rngState);
+  });
+
+  test("launch pads fire inside step_world (world.zig §8c executes)", () => {
+    // End-to-end zig-execution gate for the launch-pad mirror: pads reach
+    // the module via setLaunchPads (same host-set path as statics/arena
+    // bounds — zero WorldState bytes), and step_world applies the
+    // launchPad.ts formula. Not a TS↔zig full-tick parity claim (those
+    // gates are quarantined while TS is sim authority) — this pins that
+    // the wasm path genuinely EXECUTES pads with the exact impulse math.
+    const mkPlayer = (id: string, x: number): PlayerEntity => ({
+      id: PlayerId(id),
+      characterId: "balanced",
+      x,
+      y: 442,
+      vx: 0,
+      vy: 0,
+      aimX: x + 100,
+      aimY: 442,
+      health: 100,
+      shieldActive: false,
+      crouching: false,
+      alive: true,
+      weaponId: "starter-pistol",
+      cards: [],
+      fireCooldownMs: 0,
+      ammo: 0,
+      abilityCharge: 0,
+      lastProcessedInputSeq: InputSeq(0),
+    });
+    const onPad = mkPlayer("a", 500); // inside the pad AABB below
+    const bystander = mkPlayer("b", 900); // keeps detectRoundWinner from a KO
+    const state: WorldState = {
+      ...fixtureState(),
+      projectiles: {},
+      destructibles: {},
+      firePatches: {},
+      players: {
+        [onPad.id]: onPad,
+        [bystander.id]: bystander,
+      } as WorldState["players"],
+    };
+    serverWasmHost.setStatics([], []);
+    // Neutral inputs (earlier tests cache a held-left input map).
+    serverWasmHost.writeInputs(
+      new Map([
+        ["a", { keys: 0, prevKeys: 0, aimX: 600, aimY: 442 }],
+        ["b", { keys: 0, prevKeys: 0, aimX: 1000, aimY: 442 }],
+      ]),
+    );
+    serverWasmHost.setLaunchPads([
+      {
+        id: "pad-0",
+        position: { x: 500, y: 464 },
+        size: { x: 96, y: 12 },
+        impulse: { x: 0, y: -700 },
+      },
+    ]);
+    try {
+      const result = serverWasmHost.step(state, 16.667);
+      // The zig pad pass runs AFTER zig player physics: one tick of rise
+      // gravity leaves vAlong ≈ −24 (< the 0.5·|i| retrigger gate), the
+      // ADD lands under the |impulse| floor, so the launch is EXACTLY the
+      // pad impulse — bit-checkable.
+      const launched = result.state.players[PlayerId("a")]!;
+      expect(launched.vy).toBe(-700);
+      expect(launched.vx).toBe(0);
+      // Bystander untouched by the pad.
+      expect(result.state.players[PlayerId("b")]!.vy).not.toBe(-700);
+      // launch_pad_fired = kind 11 (world_state.zig SimEventKind), pad
+      // index 0, player_idx_a = sorted index of "a" = 0.
+      const fired = result.events.filter((e) => e.kind === 11);
+      expect(fired.length).toBe(1);
+      expect(fired[0]!.entityId).toBe(0);
+      expect(fired[0]!.playerIdxA).toBe(0);
+    } finally {
+      // Module-level pad array persists in the wasm instance — clear so
+      // later steps in this process see a pad-less world again.
+      serverWasmHost.setLaunchPads([]);
+    }
+  });
+
+  test("true slopes execute inside step_world — bit-exact vs TS stepPlayer, both grades both directions", async () => {
+    // End-to-end zig-execution + parity gate for the slope mirror
+    // (launch-pad precedent, upgraded to a bit-exactness claim): slopes
+    // reach the module via setSlopes (host-set, zero WorldState bytes),
+    // the wasm player pass grounds/projects on them, and across N ticks
+    // the positions are EXACTLY the TS stepPlayer trajectory.
+    //
+    // The TS mirror replicates the full-cycle wasm quirk that the packed
+    // player_movement region is re-zeroed by every pack (movement memory
+    // lives in wasm linear memory; packWorldState allocates a fresh
+    // zeroed buffer) — so the reference steps with ZEROED memory per
+    // tick, exactly what step_world sees. NOTE: zeroed ≠
+    // freshPlayerMovementMemory() — fresh sets jumpReleasedSinceJump=true
+    // which jump-cuts any rising velocity every tick; the packed region
+    // is all-zero (false).
+    const { stepPlayer, setStepPlayerBackend } = await import("@sim/player.ts");
+    const { buildStaticCache } = await import("@sim/collision.ts");
+    setStepPlayerBackend(null);
+    const zeroedMemory = () => ({
+      coyoteMs: 0,
+      jumpBufferMs: 0,
+      jumpCutApplied: false,
+      jumpReleasedSinceJump: false,
+      groundedLastFrame: false,
+      jetpackActive: false,
+      touchingWallDir: 0,
+      airJumpsUsed: 0,
+      dashCooldownMs: 0,
+      dashUsedInAir: 0,
+      dashActiveMs: 0,
+      dashRecoveryMs: 0,
+    });
+
+    const mkPlayer = (id: string, x: number): PlayerEntity => ({
+      id: PlayerId(id),
+      characterId: "balanced",
+      x,
+      y: 572, // standing on the floor (top 600, half-height 28)
+      vx: 0,
+      vy: 0,
+      aimX: x + 100,
+      aimY: 572,
+      health: 100,
+      shieldActive: false,
+      crouching: false,
+      alive: true,
+      weaponId: "starter-pistol",
+      cards: [],
+      fireCooldownMs: 0,
+      ammo: 0,
+      abilityCharge: 0,
+      lastProcessedInputSeq: InputSeq(0),
+    });
+
+    const scenarios = [
+      { name: "2:1 ascending right", slope: { id: "s", base: { x: 500, y: 600 }, run: 240, grade: "2:1" as const, dir: 1 as const }, startX: 380, keys: 0b10 /* Right */ },
+      { name: "2:1 ascending left", slope: { id: "s", base: { x: 780, y: 600 }, run: 240, grade: "2:1" as const, dir: -1 as const }, startX: 900, keys: 0b01 /* Left */ },
+      { name: "1:1 ascending right", slope: { id: "s", base: { x: 500, y: 600 }, run: 160, grade: "1:1" as const, dir: 1 as const }, startX: 380, keys: 0b10 },
+      { name: "1:1 ascending left", slope: { id: "s", base: { x: 780, y: 600 }, run: 160, grade: "1:1" as const, dir: -1 as const }, startX: 900, keys: 0b01 },
+    ];
+
+    const DT = 16.667;
+    try {
+      for (const sc of scenarios) {
+        serverWasmHost.setStatics([{ x: 0, y: 600, w: 1280, h: 40 }], [0]);
+        serverWasmHost.setArenaBounds(null, 0); // no ceiling, no kill plane
+        serverWasmHost.setLaunchPads([]);
+        serverWasmHost.setSlopes([sc.slope]);
+        const mover = mkPlayer("a", sc.startX);
+        const bystander = mkPlayer("b", sc.slope.dir === 1 ? 100 : 1180);
+        let state: WorldState = {
+          ...fixtureState(),
+          projectiles: {},
+          destructibles: {},
+          firePatches: {},
+          players: {
+            [mover.id]: mover,
+            [bystander.id]: bystander,
+          } as WorldState["players"],
+        };
+        serverWasmHost.writeInputs(
+          new Map([
+            ["a", { keys: sc.keys, prevKeys: sc.keys, aimX: sc.startX + 100, aimY: 572 }],
+            ["b", { keys: 0, prevKeys: 0, aimX: 0, aimY: 572 }],
+          ]),
+        );
+
+        // TS reference — same statics, same slope, fresh memory per tick.
+        const cache = buildStaticCache(
+          [{ id: "floor", kind: "floor", position: { x: 640, y: 620 }, size: { x: 1280, y: 40 } }],
+          1280, 720,
+          [sc.slope],
+        );
+        let ref: PlayerEntity = mover;
+        let groundedProjectionTicks = 0;
+        for (let t = 0; t < 60; t++) {
+          const result = serverWasmHost.step(state, DT);
+          state = result.state;
+          const r = stepPlayer(
+            ref, sc.keys, sc.keys, ref.aimX, ref.aimY,
+            zeroedMemory(), [], DT,
+            { collisionCache: cache },
+          );
+          ref = r.player;
+          const w = state.players[PlayerId("a")]!;
+          expect(w.x, `${sc.name} t=${t} x`).toBe(ref.x);
+          expect(w.y, `${sc.name} t=${t} y`).toBe(ref.y);
+          expect(w.vx, `${sc.name} t=${t} vx`).toBe(ref.vx);
+          expect(w.vy, `${sc.name} t=${t} vy`).toBe(ref.vy);
+          if (r.memory.groundedLastFrame && Math.abs(ref.vy) > 50) {
+            groundedProjectionTicks++;
+          }
+        }
+        // The run genuinely rode the slope (grounded + tangent climb),
+        // otherwise this parity pass would be vacuous.
+        expect(groundedProjectionTicks, sc.name).toBeGreaterThan(5);
+      }
+    } finally {
+      // Module-level slope array persists in the wasm instance — clear so
+      // later steps in this process see a slope-less world again.
+      serverWasmHost.setSlopes([]);
+      serverWasmHost.setStatics([], []);
+    }
   });
 
   test("step throws when not ready (after reset)", async () => {

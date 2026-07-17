@@ -88,7 +88,8 @@ export type ClientLoopOptions = {
   onReconnectAttempt?: (attemptNumber: number, nextDelayMs: number) => void;
   /** Venue lobby only: pushed venue-status frames (S2.B). */
   onVenueStatus?: (status: import("./protocol.js").VenueStatus) => void;
-  /** Venue lobby only: one-shot starter draft offer (S2.E). */
+  /** Venue lobby only: loadout-station starter offer (S2.E; separated
+   *  from the bell queue 2026-07-17). */
   onVenueDraft?: (offers: string[]) => void;
   /** Venue lobby only: the bell admitted this player to the arena (S2.F). */
   onVenueAdmitted?: () => void;
@@ -825,8 +826,9 @@ export class ClientLoop {
         this.onVenueStatus?.(message);
         break;
       case "venue-draft":
-        // One-shot starter offer (S2.E) — pushed the moment this player
-        // queues at the bell. Same lobby-only contract as venue-status.
+        // Loadout-station starter offer (S2.E; station-separated from the
+        // bell queue 2026-07-17) — pushed while this player stands at the
+        // loadout totem. Same lobby-only contract as venue-status.
         this.onVenueDraft?.(message.offers);
         break;
       case "venue-admitted":

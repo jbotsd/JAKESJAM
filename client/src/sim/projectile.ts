@@ -23,6 +23,7 @@ import {
   aabbOverlap,
   type StaticCollisionCache,
 } from "./collision.js";
+import { playerHitboxAABB, isHeadshot, HEADSHOT_DAMAGE_MULTIPLIER } from "./player.js";
 import { nextFloat } from "./rng.js";
 import { lutAtan2, lutCos, lutSin } from "./trig.js";
 import { PlayerId } from "./types.js";
@@ -37,6 +38,10 @@ import type {
   Vec2,
 } from "./types.js";
 
+/** AOE/explosion-radius checks only (detonateAt) — a circle approximation
+ *  of "was the player caught in the blast" is a defensible simplification
+ *  for splash damage, unlike a direct aimed hit (see playerHitboxAABB in
+ *  player.js, which is what direct projectile collision uses now). */
 const PLAYER_RADIUS = 18;
 const GRAVITY_PATHING_ACCEL_DEFAULT = 1450;
 const HOMING_TURN_RATE_DEFAULT = 4; // rad/s — capped per offline reference
@@ -144,10 +149,11 @@ export function fillHitSweepScratch(
       box = { x: 0, y: 0, w: 0, h: 0 };
       scratch.baseAABBs[n] = box;
     }
-    box.x = player.x - PLAYER_RADIUS;
-    box.y = player.y - PLAYER_RADIUS;
-    box.w = PLAYER_RADIUS * 2;
-    box.h = PLAYER_RADIUS * 2;
+    const real = playerHitboxAABB(player);
+    box.x = real.x;
+    box.y = real.y;
+    box.w = real.w;
+    box.h = real.h;
     n += 1;
   }
   scratch.baseAABBs.length = n;
@@ -283,7 +289,7 @@ function stepProjectileNative(
     }
     case "homing":
     case "anti-homing": {
-      const target = closestNonOwnerPlayer(proj.x, proj.y, proj.ownerId, players, ctx.sortedPlayerIds);
+      const target = closestNonOwnerPlayer(proj.x, proj.y, proj.ownerId, players, ctx.sortedPlayerIds, ctx.tick);
       if (target) {
         const tx = proj.pathing === "anti-homing"
           ? proj.x * 2 - target.x
@@ -355,12 +361,7 @@ function stepProjectileNative(
       const player = players[pid]!;
       if (!player.alive) continue;
       candidatePids.push(pid);
-      candidateAABBs.push({
-        x: player.x - PLAYER_RADIUS,
-        y: player.y - PLAYER_RADIUS,
-        w: PLAYER_RADIUS * 2,
-        h: PLAYER_RADIUS * 2,
-      });
+      candidateAABBs.push(playerHitboxAABB(player));
     }
   }
   if (candidateAABBs.length > 0) {
@@ -731,18 +732,26 @@ function applyHitOn(
   const impact: ProjectileImpact = proj.impact ?? "none";
 
   if (impact === "explosive") {
-    // AOE — damage all alive non-owner players within the radius.
+    // AOE — damage all alive non-owner players within the radius. Splash
+    // damage isn't an aimed shot — no headshot bonus applies here.
     events.push(...detonateAt(proj, hitX, hitY, players, tick, sortedIds));
     return events;
   }
 
-  // Direct hit on this victim.
+  // Direct hit on this victim. Headshot: a slight damage boon (see
+  // HEADSHOT_DAMAGE_MULTIPLIER, player.js) for landing in the victim's
+  // real head zone, now that the hitbox correctly extends the full body
+  // height instead of the old undersized square (see playerHitboxAABB).
+  const victim = players[victimId];
+  const headshot = victim ? isHeadshot(hitY, victim) : false;
+  const damage = headshot ? proj.damage * HEADSHOT_DAMAGE_MULTIPLIER : proj.damage;
   events.push({
     t: "hit-confirmed",
     victimId,
-    damage: proj.damage,
+    damage,
     sourceProjectileId: proj.id,
     attackerId: proj.ownerId,
+    headshot,
   });
 
   if (impact === "slow-field") {
@@ -926,6 +935,7 @@ function closestNonOwnerPlayer(
   ownerId: PlayerId | null,
   players: Record<PlayerId, PlayerEntity>,
   sortedIds?: readonly PlayerId[],
+  tick?: number,
 ): { x: number; y: number } | null {
   // Iterate in id-sorted order for deterministic tiebreaks.
   const ids = sortedIds ?? Object.keys(players).sort();
@@ -936,6 +946,14 @@ function closestNonOwnerPlayer(
     if (ownerId !== null && id === ownerId) continue;
     const p = players[id]!;
     if (!p.alive) continue;
+    // Veil of Nought (six-axes Layer 2): homing cannot audit the unmade.
+    if (
+      tick !== undefined &&
+      p.veilUntilTick !== undefined &&
+      p.veilUntilTick > tick
+    ) {
+      continue;
+    }
     const dx = p.x - fromX;
     const dy = p.y - fromY;
     const d2 = dx * dx + dy * dy;

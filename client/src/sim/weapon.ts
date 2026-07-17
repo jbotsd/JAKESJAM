@@ -20,6 +20,7 @@ import { spawnProjectile, type ProjectileSpawnParams } from "./projectile.js";
 import {
   STOLEN_FANGS_HOMING_STRENGTH,
   STOLEN_FANGS_DAMAGE_MULTIPLIER,
+  ABILITY_TITHE_LEECH_FRACTION,
 } from "./constants.js";
 import { nextInt } from "./rng.js";
 import { lutAtan2, lutCos, lutSin } from "./trig.js";
@@ -148,6 +149,10 @@ export type StepWeaponOptions = {
   chaos?: ChaosProfile;
   /** Initial RNG cursor for any chaos-driven random draws this tick. */
   rngState?: number;
+  /** Current sim tick — used for tick-windowed fire buffs (Crimson Tithe's
+   *  leech window, six-axes Layer 2). Optional/additive: omitted means "no
+   *  tick-windowed buffs apply" (offline/legacy callers). */
+  currentTick?: number;
 };
 
 /**
@@ -258,6 +263,14 @@ function stepWeaponNative(
   if (spendStolenFangsCharge) {
     next.pendingLockCharges = (next.pendingLockCharges ?? 0) - 1;
   }
+  // Crimson Tithe (six-axes Layer 2): while the active window is live, every
+  // fired shot leeches — the shard carries leechFraction exactly like a
+  // Drain-hand Emission shard, so the hit site, the crimson-thread read, and
+  // the emission-leech event are all the SAME machinery (one damage model).
+  const titheActive =
+    options.currentTick !== undefined &&
+    next.titheUntilTick !== undefined &&
+    next.titheUntilTick > options.currentTick;
   const damage = spendStolenFangsCharge
     ? build.damage * STOLEN_FANGS_DAMAGE_MULTIPLIER
     : build.damage;
@@ -307,6 +320,9 @@ function stepWeaponNative(
       projectile.accelerationMultiplier = build.projectile.accelerationMultiplier;
       projectile.gravityScale = build.projectile.gravityScale;
       projectile.rangePx = build.projectile.rangePx;
+      if (titheActive) {
+        projectile.leechFraction = ABILITY_TITHE_LEECH_FRACTION;
+      }
       projectiles.push(projectile);
     }
   }

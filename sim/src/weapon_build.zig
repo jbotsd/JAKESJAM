@@ -266,6 +266,67 @@ fn resolveMods(mods: []const gen.CardMod) world_state.ResolvedFireConfig {
 
 pub const card_count: u32 = gen.cards.len;
 
+// ── Emission derivation (docs/emission-engine-goal.md) ──────────────────
+// Mirrors client/src/sim/data/emission.ts resolveEmission: the cast is
+// derived ENTIRELY from the already-resolved fire config — the parameters
+// crossed the wasm boundary once (player_fire_config); no second config
+// struct, no new host writer, no ABI change. Constants must move in
+// lock-step with emission.ts.
+
+pub const EMISSION_DAMAGE_BUDGET: f64 = 70;
+pub const EMISSION_VOLLEY_MIN: u32 = 6;
+pub const EMISSION_VOLLEY_MAX: u32 = 16;
+pub const EMISSION_SPEED_MULT: f64 = 0.85;
+pub const EMISSION_RANGE_PX: f64 = 520;
+pub const EMISSION_LIFETIME_MS: f64 = 900;
+pub const EMISSION_IMPACT_RADIUS_MULT: f64 = 1.6;
+pub const EMISSION_IMPACT_RADIUS_MIN_PX: f64 = 48;
+
+pub const EmissionParams = struct {
+    volley_count: u32,
+    damage_per_shard: f64,
+    speed: f64,
+    radius_px: f64,
+    impact_radius_px: f64,
+};
+
+/// Derive the cast payload from a resolved fire config. Pure math —
+/// identical rounding to emission.ts (round-to-2-decimals via *100).
+pub fn emissionFromConfig(cfg: *const world_state.ResolvedFireConfig) EmissionParams {
+    const count_f: f64 = @floatFromInt(@max(@as(u32, 1), cfg.projectile_count));
+    const raw: f64 = @round(count_f * 4.0);
+    const volley: u32 = @min(
+        EMISSION_VOLLEY_MAX,
+        @max(EMISSION_VOLLEY_MIN, @as(u32, @intFromFloat(raw))),
+    );
+    const damage = @round((EMISSION_DAMAGE_BUDGET / @as(f64, @floatFromInt(volley))) * 100.0) / 100.0;
+    return .{
+        .volley_count = volley,
+        .damage_per_shard = damage,
+        .speed = cfg.projectile_speed * cfg.speed_multiplier * EMISSION_SPEED_MULT,
+        .radius_px = @max(2.0, 7.0 * cfg.size_multiplier),
+        .impact_radius_px = @max(
+            EMISSION_IMPACT_RADIUS_MIN_PX,
+            cfg.impact_radius_px * EMISSION_IMPACT_RADIUS_MULT,
+        ),
+    };
+}
+
+/// Parity-test export: emission derivation for base (index<0) or
+/// base+cards[index]. Writes [volley_count, damage_per_shard, speed,
+/// radius_px, impact_radius_px] — compared against resolveEmission by the
+/// TS parity suite (docs/emission-engine-goal.md `resolve_emission_test`).
+pub export fn resolve_emission_test(card_index: i32, out_ptr: *[5]f64) void {
+    var cfg: world_state.ResolvedFireConfig = undefined;
+    resolve_build_test(card_index, &cfg);
+    const e = emissionFromConfig(&cfg);
+    out_ptr[0] = @floatFromInt(e.volley_count);
+    out_ptr[1] = e.damage_per_shard;
+    out_ptr[2] = e.speed;
+    out_ptr[3] = e.radius_px;
+    out_ptr[4] = e.impact_radius_px;
+}
+
 /// Parity-test export: resolve base (index<0) or base+cards[index] into `out`.
 pub export fn resolve_build_test(card_index: i32, out_ptr: *world_state.ResolvedFireConfig) void {
     if (card_index < 0) {

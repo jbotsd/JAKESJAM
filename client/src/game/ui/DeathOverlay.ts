@@ -66,7 +66,14 @@ export class DeathOverlay {
    * item 3) passes its own copy so a solo fall doesn't read as being
    * killed by someone.
    */
-  constructor(title = "ELIMINATED", subtitle = "Back in at the next bell") {
+  // Subtitle stays TRUE in both death modes (fast-respawn ruling,
+  // 2026-07-17): ordinary rounds re-form you in seconds (timer label
+  // RESPAWNING), sudden death benches you to the bell (NEXT BELL). The
+  // rule-specific part is carried by the timer label, not this line —
+  // a subtitle asserting one rule read as an arbitrary punishment under
+  // the other (Jake, mid-playtest: "why does that happen its not even
+  // clear").
+  constructor(title = "ELIMINATED", subtitle = "Watch the arena — you're going back in") {
     this.root = document.createElement("div");
     this.root.dataset.deathOverlay = "true";
     Object.assign(this.root.style, ROOT_STYLE);

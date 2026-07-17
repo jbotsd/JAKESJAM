@@ -62,6 +62,9 @@ export type StepSatellitesFn = (
   roundPhase: RoundPhase,
   dtMs: number,
   nextEntityId: () => EntityId,
+  /** Current world tick — veil-window checks (six-axes Layer 2). Optional/
+   *  additive: omitted means "no veil awareness" (legacy callers). */
+  tick?: number,
 ) => StepSatellitesResult;
 
 let stepSatellitesBackend: StepSatellitesFn | null = null;
@@ -82,11 +85,12 @@ export function stepSatellites(
   roundPhase: RoundPhase,
   dtMs: number,
   nextEntityId: () => EntityId,
+  tick?: number,
 ): StepSatellitesResult {
   if (stepSatellitesBackend !== null) {
-    return stepSatellitesBackend(satellites, players, roundPhase, dtMs, nextEntityId);
+    return stepSatellitesBackend(satellites, players, roundPhase, dtMs, nextEntityId, tick);
   }
-  return stepSatellitesNative(satellites, players, roundPhase, dtMs, nextEntityId);
+  return stepSatellitesNative(satellites, players, roundPhase, dtMs, nextEntityId, tick);
 }
 
 function stepSatellitesNative(
@@ -95,6 +99,7 @@ function stepSatellitesNative(
   roundPhase: RoundPhase,
   dtMs: number,
   nextEntityId: () => EntityId,
+  tick?: number,
 ): StepSatellitesResult {
   const dtSec = dtMs / 1000;
   const next: Record<EntityId, SatelliteEntity> = {};
@@ -129,7 +134,7 @@ function stepSatellitesNative(
 
     // Try to fire.
     if (fireCooldownMs <= 0 && roundPhase === "fighting") {
-      const target = nearestEnemy(owner, players);
+      const target = nearestEnemy(owner, players, tick);
       if (target) {
         const sx = owner.x + lutCos(angle) * sat.orbitRadius;
         const sy = owner.y + lutSin(angle) * sat.orbitRadius;
@@ -230,6 +235,7 @@ export function despawnSatellitesForDeadOwners(
 function nearestEnemy(
   owner: PlayerEntity,
   players: Record<PlayerId, PlayerEntity>,
+  tick?: number,
 ): PlayerEntity | null {
   let best: PlayerEntity | null = null;
   let bestDist2 = Infinity;
@@ -239,6 +245,10 @@ function nearestEnemy(
     if (pid === owner.id) continue;
     const p = players[pid]!;
     if (!p.alive) continue;
+    // Veil of Nought (six-axes Layer 2): bound aeons cannot see the unmade.
+    if (tick !== undefined && p.veilUntilTick !== undefined && p.veilUntilTick > tick) {
+      continue;
+    }
     const dx = p.x - owner.x;
     const dy = p.y - owner.y;
     const d2 = dx * dx + dy * dy;

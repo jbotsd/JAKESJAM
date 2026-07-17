@@ -29,6 +29,19 @@ export type CardDraftJuice = {
   onPicked?: (card: CardDefinition) => void;
 };
 
+/**
+ * Optional copy override (venue loadout station, 2026-07-17): the default
+ * "BETWEEN ROUNDS — CHOOSE YOUR UPGRADE" header is mid-run draft language
+ * and must never front a lobby surface. A fixed hint also opts out of the
+ * timer/auto-select wording AND the FTUE first-draft teaching line — both
+ * are round-draft conventions, not station ones.
+ */
+export type CardDraftCopy = {
+  kicker?: string;
+  title?: string;
+  hint?: string;
+};
+
 /** Card copy lives in sim data (cards.ts) and is written for desktop
  *  ("press C"). Rewrite input references at render time for touch players —
  *  the data file feeds the Zig codegen and must stay input-agnostic. */
@@ -50,9 +63,13 @@ export class CardDraftOverlay {
   private timerStartMs = 0;
   private timerTotalMs = 0;
   private juice: CardDraftJuice = {};
+  /** Non-null when the constructor supplied station copy — show() must not
+   *  overwrite it with the round-draft/FTUE hint variants. */
+  private readonly fixedHint: string | null;
 
-  constructor(juice: CardDraftJuice = {}) {
+  constructor(juice: CardDraftJuice = {}, copy: CardDraftCopy = {}) {
     this.juice = juice;
+    this.fixedHint = copy.hint ?? null;
     this.root = document.createElement("div");
     this.root.dataset.cardDraft = "true";
     Object.assign(this.root.style, BASE_OVERLAY_STYLE);
@@ -65,11 +82,11 @@ export class CardDraftOverlay {
     Object.assign(header.style, HEADER_STYLE);
 
     const kicker = document.createElement("div");
-    kicker.textContent = "BETWEEN ROUNDS";
+    kicker.textContent = copy.kicker ?? "BETWEEN ROUNDS";
     Object.assign(kicker.style, KICKER_STYLE);
 
     this.titleEl = document.createElement("div");
-    this.titleEl.textContent = "CHOOSE YOUR UPGRADE";
+    this.titleEl.textContent = copy.title ?? "CHOOSE YOUR UPGRADE";
     Object.assign(this.titleEl.style, TITLE_STYLE);
 
     // Instrument imprint — Coptic seal with English gloss (not a sermon).
@@ -103,7 +120,7 @@ export class CardDraftOverlay {
     sealImprint.append(sealCoptic, sealGloss);
 
     this.hintEl = document.createElement("div");
-    this.hintEl.textContent = "Pick one card. Auto-selects when the timer expires.";
+    this.hintEl.textContent = this.fixedHint ?? "Pick one card. Auto-selects when the timer expires.";
     Object.assign(this.hintEl.style, HINT_STYLE);
 
     header.append(kicker, this.titleEl, sealImprint, this.hintEl);
@@ -135,18 +152,21 @@ export class CardDraftOverlay {
     this.currentHandler = onPick;
     // Per onboarding-ftue/SKILL.md: the FIRST draft ever gets one extra
     // teaching line, then never again (localStorage-gated, same pattern as
-    // the controls legend).
-    const FIRST_DRAFT_KEY = "jakesjam-ftue-first-draft-shown";
-    let firstDraftEver = false;
-    try {
-      firstDraftEver = localStorage.getItem(FIRST_DRAFT_KEY) !== "1";
-      if (firstDraftEver) localStorage.setItem(FIRST_DRAFT_KEY, "1");
-    } catch {
-      // localStorage unavailable — skip the extra line rather than nag forever.
+    // the controls legend). A fixed station hint opts out entirely — the
+    // timer/auto-select wording would be a lie at the loadout station.
+    if (this.fixedHint === null) {
+      const FIRST_DRAFT_KEY = "jakesjam-ftue-first-draft-shown";
+      let firstDraftEver = false;
+      try {
+        firstDraftEver = localStorage.getItem(FIRST_DRAFT_KEY) !== "1";
+        if (firstDraftEver) localStorage.setItem(FIRST_DRAFT_KEY, "1");
+      } catch {
+        // localStorage unavailable — skip the extra line rather than nag forever.
+      }
+      this.hintEl.textContent = firstDraftEver
+        ? "Pick one. It stacks with your weapon for the rest of the match. Auto-selects when the timer expires."
+        : "Pick one card. Auto-selects when the timer expires.";
     }
-    this.hintEl.textContent = firstDraftEver
-      ? "Pick one. It stacks with your weapon for the rest of the match. Auto-selects when the timer expires."
-      : "Pick one card. Auto-selects when the timer expires.";
     this.cardsContainer.replaceChildren();
 
     cards.forEach((card, i) => {

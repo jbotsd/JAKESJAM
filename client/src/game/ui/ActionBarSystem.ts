@@ -123,6 +123,9 @@ export class ActionBarSystem {
   private lastAnimMs = 0;
   // Resolved sizes (compact vs full) — set once in build() from viewport
   // width, same convention as HudSystem's nameplateR.
+  /** Slots visible this frame: live pair + Emission + actives + acquired
+   *  (A4 — capped at SLOT_COUNT; reserved placeholders no longer render). */
+  private visibleSlotCount = LIVE_SLOTS.length + 1;
   private orbR = ORB_R;
   private orbGap = ORB_GAP;
   private slotR = SLOT_R;
@@ -206,7 +209,11 @@ export class ActionBarSystem {
     const h = uiHeight(s);
     const centerX = w / 2;
     const barY = h - this.padBottom - Math.max(this.orbR, this.slotR);
-    const rowW = SLOT_COUNT * this.slotR * 2 + (SLOT_COUNT - 1) * this.slotGap;
+    // A4 (docs/footage-removal-list.md): the bar GROWS as the hand earns
+    // keys — no reserved placeholder diamonds. Row width derives from the
+    // slots actually visible this frame (min: M1/M2/E).
+    const count = this.visibleSlotCount;
+    const rowW = count * this.slotR * 2 + (count - 1) * this.slotGap;
     const rowLeft = centerX - rowW / 2;
 
     this.hpText.setPosition(centerX - rowW / 2 - this.orbGap - this.orbR, barY);
@@ -214,11 +221,16 @@ export class ActionBarSystem {
 
     for (let i = 0; i < SLOT_COUNT; i++) {
       const sx = rowLeft + this.slotR + i * (this.slotR * 2 + this.slotGap);
+      this.slotKeyLabels[i]!.setVisible(i < count);
       this.slotKeyLabels[i]!.setPosition(sx, barY + this.slotR + 4);
     }
   }
 
   update(vitals: ActionBarVitals, chips: HudChip[]): void {
+    this.visibleSlotCount = Math.min(
+      SLOT_COUNT,
+      LIVE_SLOTS.length + 1 + vitals.actives.length + vitals.acquired.length,
+    );
     this.layout(); // cheap; keeps labels correct if uiWidth changed without a resize event
     const g = this.g;
     g.clear();
@@ -228,7 +240,8 @@ export class ActionBarSystem {
     const h = uiHeight(s);
     const centerX = w / 2;
     const barY = h - this.padBottom - Math.max(this.orbR, this.slotR);
-    const rowW = SLOT_COUNT * this.slotR * 2 + (SLOT_COUNT - 1) * this.slotGap;
+    const slotCount = this.visibleSlotCount;
+    const rowW = slotCount * this.slotR * 2 + (slotCount - 1) * this.slotGap;
     const rowLeft = centerX - rowW / 2;
     const hpOrbX = centerX - rowW / 2 - this.orbGap - this.orbR;
     const shOrbX = centerX + rowW / 2 + this.orbGap + this.orbR;
@@ -285,7 +298,7 @@ export class ActionBarSystem {
       }
     }
 
-    for (let i = 0; i < SLOT_COUNT; i++) {
+    for (let i = 0; i < slotCount; i++) {
       const sx = rowLeft + this.slotR + i * (this.slotR * 2 + this.slotGap);
       const live = LIVE_SLOTS[i];
       if (!live) {
@@ -337,7 +350,7 @@ export class ActionBarSystem {
     // Key-label row: active slots show their HOTKEY (1-4 — they're
     // pressable); acquired passives show stack count (×N) — a count is
     // the honest label for a capability with no key.
-    for (let i = LIVE_SLOTS.length + 1; i < SLOT_COUNT; i++) {
+    for (let i = LIVE_SLOTS.length + 1; i < slotCount; i++) {
       const postEmission = i - LIVE_SLOTS.length - 1;
       const label = this.slotKeyLabels[i];
       if (!label) continue;

@@ -83,7 +83,8 @@ export.
 
 | Export | Purpose | Parity test |
 |---|---|---|
-| `step_player(...)` | full stepPlayer (gravity, jump, jetpack, sub-stepped collision) | `playerParity.test.ts`, `longHorizonCanary.test.ts` |
+| `step_player(...)` | full stepPlayer (gravity, jump, jetpack, sub-stepped collision, true-slope foot-point pass) | `playerParity.test.ts`, `longHorizonCanary.test.ts`, `slopeParity.test.ts` |
+| `world_state_set_slopes(slopes_ptr, count) → u32` | true slopes (module-level like launch pads — zero WorldState bytes; 7×f64 per slope `[span_min_x, span_max_x, base_x, base_y, dy_dx, tx, ty]`, the exact `deriveSlopeStatics` bits from collision.ts, order = `map.slopes`); read by the stepPlayer slope pass in BOTH `step_player` and `step_world`'s player pass | `slopeParity.test.ts`, `serverWasmHost.test.ts` "true slopes execute inside step_world" |
 
 ## Projectile (`projectile.zig`)
 
@@ -235,9 +236,11 @@ spawn, satellite owner-lookup land in I2-I4.
 | `world_state_set_statics(state, aabbs, one_way, count) → u32` | bulk-write static AABB cache; returns actual count written (clamped) | I30 |
 | `world_state_set_target_score(state, target)` | set match target_score + reset match_winner_idx | I30 |
 | `world_state_set_arena_bounds(ceiling_y, has_ceiling, kill_plane_y)` | ceiling-clamp + void kill-plane bounds (module-level; host sets per match) | B3 |
+| `world_state_set_launch_pads(pads_ptr, count) → u32` | static launch pads (module-level like arena bounds — zero WorldState bytes; 6×f64 per pad `[x,y,w,h,ix,iy]`, order = `map.launchPads` = event `entity_id`); mirrors `sim/launchPad.ts`, stepped in world.zig §8c | `serverWasmHost.test.ts` “launch pads fire inside step_world” |
 | `resolve_player_fire_config(state, player_index, indices_ptr, count)` | resolve player's build from card indices → player_fire_config (weapon_build.zig; replaces TS createWeaponBuild) | B4 |
 | `resolve_build_test(card_index, out_ptr)` | test-only: resolve base (idx<0) or base+cards[idx] into out | B4 |
 | `resolve_build_card_count() → u32` | test-only: count of cards in the generated table | B4 |
+| `resolve_emission_test(card_index, out_ptr)` | test-only: emission cast derivation (weapon_build.emissionFromConfig, mirrors emission.ts resolveEmission) → [volley, damage, speed, radius, impactRadius] as 5×f64 | `emissionParity.test.ts` |
 | `gen_arena_geometry(seed, out_ptr) → u32` | test-only: write generated arena geometry (platforms+spawns) for parity vs mapGen.ts | B4 |
 | `world_state_generate_arena(state, seed)` | generate arena into state.statics/spawns (map_gen.zig) — mapgen authority | B4 |
 

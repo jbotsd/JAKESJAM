@@ -7,10 +7,12 @@
 // except countdown.
 //
 // The fix is not four labels for four clocks — it's ONE question answered
-// honestly: "when do I fight again?" Respawn happens at countdown entry,
-// i.e. when drafting ends (World.ts's countdown-entry respawn), so the
-// time-to-next-bell from any phase is the remaining phase time plus the
-// fixed phases still ahead of it:
+// honestly: "when do I fight again?" Under the fast-respawn ruling
+// (2026-07-17) an ordinary-round death re-forms after RESPAWN_DELAY_MS —
+// the caller passes that as respawnSeconds and the label is RESPAWNING,
+// exact. With no respawn coming (sudden death), the answer is the bell:
+// everyone respawns at countdown entry, so the time-to-next-bell from any
+// phase is the remaining phase time plus the fixed phases ahead of it:
 //
 //   fighting    remaining + ROUND_OVER_HOLD + DRAFT_WINDOW   (estimate)
 //   round-over  remaining + DRAFT_WINDOW                     (estimate)
@@ -41,7 +43,15 @@ export type DeathWaitCountdown = {
 export function deathWaitCountdown(
   phase: RoundPhase,
   countdownRemainingMs: number,
+  /** Seconds until this player's mid-round respawn (fast-respawn ruling,
+   *  2026-07-17: ordinary-round deaths re-form after RESPAWN_DELAY_MS).
+   *  null/undefined = no respawn coming this round (sudden death) — fall
+   *  back to the next-bell math. */
+  respawnSeconds?: number | null,
 ): DeathWaitCountdown {
+  if (phase === "fighting" && respawnSeconds != null) {
+    return { label: "RESPAWNING", seconds: Math.max(0, respawnSeconds), approx: false };
+  }
   if (phase === "countdown") {
     // Everyone respawns at countdown ENTRY, so a dead player should never
     // see this — kept honest anyway for defensive completeness.

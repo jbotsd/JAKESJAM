@@ -156,10 +156,13 @@ export class HudCompositor {
     const vitals: HudVitals = {
       health: local?.health ?? 0,
       maxHealth: character.maxHealth,
-      // jetpackFuel / abilityCharge deliberately not fed: the jetpack was
-      // removed from the game and abilityCharge is a dead sim field that's
-      // initialized to 0 and never written — both rendered as permanent
-      // frozen HUD noise ("125%" fuel bar, six always-dim dots).
+      // jetpackFuel deliberately not fed: the jetpack was removed from the
+      // game (field pinned for ABI stability only) and rendered as a
+      // permanently frozen "125%" fuel bar. abilityCharge is LIVE as of the
+      // Emission Engine P0 (docs/emission-engine-goal.md — fills from
+      // combat damage in World.stepWithRuntime) but renders on the
+      // bottom-center ActionBarSystem's Emission diamond, not through this
+      // top-left vitals block.
       chips,
       cardIds: local?.cards,
       isDead: !local || local.health <= 0 || !local.alive,
@@ -222,7 +225,16 @@ export class HudCompositor {
     // Phase-honest wait (venue-goal Pillar 0.2): one "NEXT BELL" estimate
     // of when the player fights again, not the raw phase clock silently
     // re-meaning itself across fighting/round-over/drafting.
-    const wait = deathWaitCountdown(state.round.phase, state.round.countdownRemainingMs);
+    const deadLocal = state.players[this.localPlayerId];
+    const respawnSeconds =
+      deadLocal?.respawnAtTick !== undefined && state.round.suddenDeathActive !== true
+        ? Math.ceil(Math.max(0, (deadLocal.respawnAtTick as number) - state.tick) / 60)
+        : null;
+    const wait = deathWaitCountdown(
+      state.round.phase,
+      state.round.countdownRemainingMs,
+      respawnSeconds,
+    );
     if (this.deathOverlay.isOpen()) {
       this.deathOverlay.updateTimer(wait);
     } else {

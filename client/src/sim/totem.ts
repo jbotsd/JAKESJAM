@@ -123,25 +123,43 @@ export function resolveHangoutTotems(map: MapDefinition): TotemDefinition[] {
 }
 
 /**
- * The public venue lobby's totem set (venue-sprint2-goal S2.B): ONE
- * arena-queue portal, not the room-hangout READY/LAUNCH pair — venue
- * queueing is a single toggle ("in at the next bell"), so a second totem
- * would be a second meaning with no second action. Kind "launch" keeps
- * the SimEvent vocabulary (`launch-requested` = queue toggle in venue
- * semantics; VenueHost maps it). Shared pure function: the server places
- * it, the client renders it at identical coordinates.
+ * The public venue lobby's totem set (venue-sprint2-goal S2.B, amended
+ * 2026-07-17 per Jake: "seperate the card selector test room thing with
+ * the bell queue"): TWO stations, two meanings —
+ *
+ *   totem-loadout (kind "ready"  → `ready-toggled`  = open the loadout
+ *     station): a walk-up card selector beside the practice-dummy band,
+ *     so a picked card can be tried on the dummies immediately. Walking
+ *     away without picking is fine; nothing nags, nothing auto-picks.
+ *   totem-bell    (kind "launch" → `launch-requested` = bell-queue
+ *     toggle): a clean countdown queue. NO draft rides it — the modal-
+ *     on-queue coupling is gone.
+ *
+ * The kinds keep the existing SimEvent vocabulary (no protocol/sim
+ * change); VenueHost maps each kind to its venue meaning. Shared pure
+ * function: the server places them, the client renders identical
+ * coordinates.
  */
 export function resolveVenueTotems(map: MapDefinition): TotemDefinition[] {
-  // 0.75, not center: lobby entrants spawn at the map-center fallback, and
-  // a bell sitting ON the spawn point queued people the instant they landed
-  // (S2.F — queueing must be a deliberate walk, not a side effect of
-  // arriving). Clear of the practice-dummy band (0.3/0.35/0.65) too.
+  // Bell at 0.75, not center: lobby entrants spawn at the map-center
+  // fallback, and a bell sitting ON the spawn point queued people the
+  // instant they landed (S2.F — queueing must be a deliberate walk, not a
+  // side effect of arriving). The same law binds the loadout station:
+  // 0.25 is clear of the center spawn AND flanks the practice dummies
+  // (0.3/0.35) so the card selector is literally at the test range.
+  const LOADOUT_X = 0.25;
   const BELL_X = 0.75;
   if (map.id === "vessel-nexus") {
     const groundY = map.size.y - 36 - TOTEM_STAND_OFFSET;
-    return [{ id: "totem-bell", kind: "launch", x: map.size.x * BELL_X, y: groundY, radius: 80 }];
+    return [
+      { id: "totem-loadout", kind: "ready", x: map.size.x * LOADOUT_X, y: groundY, radius: 80 },
+      { id: "totem-bell", kind: "launch", x: map.size.x * BELL_X, y: groundY, radius: 80 },
+    ];
   }
-  return [{ id: "totem-bell", kind: "launch", radius: 80, ...snapToStandable(map, map.size.x * BELL_X) }];
+  return [
+    { id: "totem-loadout", kind: "ready", radius: 80, ...snapToStandable(map, map.size.x * LOADOUT_X) },
+    { id: "totem-bell", kind: "launch", radius: 80, ...snapToStandable(map, map.size.x * BELL_X) },
+  ];
 }
 
 /**

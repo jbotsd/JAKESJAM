@@ -19,13 +19,131 @@
 // sweeping all 80+ platforms every tick. At 60Hz with 10 players that's ~4800
 // fewer comparisons per second.
 
-import type { PlatformDefinition } from "./types.js";
+import type { PlatformDefinition, SlopeDefinition } from "./types.js";
 
 // ---------------------------------------------------------------------------
 // Core AABB type
 // ---------------------------------------------------------------------------
 
 export type AABB = { x: number; y: number; w: number; h: number };
+
+// ---------------------------------------------------------------------------
+// True slopes — foot-point one-way grounding (docs/map-design.md
+// "Diagonals & sky", greenlit 2026-07-17). The collision model is the
+// classic platformer approach, deliberately NOT AABB-vs-triangle SAT:
+// rect resolution runs first exactly as before, then a per-sub-step slope
+// pass in stepPlayer samples the player's bottom-center foot point and may
+// ground/snap them onto the highest candidate surface. See player.ts for
+// the pass itself; this module owns the constants + the derived statics.
+//
+// ── PARITY (the critical discipline) ─────────────────────────────────────
+// Both grades have irrational tangent normals (1/√5, 2/√5, 1/√2). NO
+// runtime sqrt derives them: the exact f64 literals below are defined ONCE
+// here and ONCE in sim/src/player.zig, byte-identically. The derived
+// SlopeStatic f64s computed here are shipped verbatim into wasm memory
+// (flat f64 array → `world_state_set_slopes`), so wasm consumes the exact
+// same bits — there is no second derivation that could drift.
+// ---------------------------------------------------------------------------
+
+/** 1/√5 — exact f64 literal. MIRRORED in sim/src/player.zig INV_SQRT5. */
+export const INV_SQRT5 = 0.4472135954999579;
+/** 2/√5 — exact f64 literal. MIRRORED in sim/src/player.zig TWO_INV_SQRT5. */
+export const TWO_INV_SQRT5 = 0.8944271909999159;
+/** 1/√2 — exact f64 literal. MIRRORED in sim/src/player.zig INV_SQRT2. */
+export const INV_SQRT2 = 0.7071067811865476;
+
+/**
+ * Snap tolerance (px) for the foot-point grounding band, both sides of the
+ * surface line. Why 8:
+ *   - it must exceed the max per-sub-step L1 displacement when slopes are
+ *     present (SLOPE_MAX_SUBSTEP_L1 = 6, see player.ts's guard) plus the
+ *     2px start-of-step drift slack, so a legitimate from-above crossing
+ *     is ALWAYS caught inside the band — no tunneling at dash speed;
+ *   - it stays well under half the body height (28) and under one tick of
+ *     terminal fall (900 px/s ≈ 15 px), so a snap is never visible as a
+ *     teleport.
+ * MIRRORED in sim/src/player.zig SLOPE_SNAP_TOL.
+ */
+export const SLOPE_SNAP_TOL = 8;
+
+/**
+ * One-way crossing slack (px): grounding via the penetration band requires
+ * the foot to have been at-or-above the surface at sub-step start, within
+ * this slack. Same value + same discipline as the rect one-way platforms'
+ * +2px drift slack (ONE_WAY_DRIFT_SLACK_PX in collision.zig). MIRRORED in
+ * sim/src/player.zig SLOPE_START_SLACK.
+ */
+export const SLOPE_START_SLACK = 2;
+
+/**
+ * L1 (|dx|+|dy|) displacement bound per sub-step when the map has slopes.
+ * On a 45° surface the foot-vs-surface penetration can grow by up to the
+ * L1 displacement in one sub-step (worst case: moving diagonally straight
+ * into the surface), so bounding L1 at 6 < SLOPE_SNAP_TOL − SLOPE_START_SLACK
+ * guarantees every from-above crossing lands inside the snap band. Only
+ * applied when slopes exist — maps without slopes keep the EXACT legacy
+ * sub-step count (bit-identical trajectories). MIRRORED in
+ * sim/src/player.zig SLOPE_MAX_SUBSTEP_L1.
+ */
+export const SLOPE_MAX_SUBSTEP_L1 = 6;
+
+/**
+ * Precomputed per-slope statics for the hot grounding pass. All fields are
+ * plain f64s derived from the SlopeDefinition with EXACT operations
+ * (add/sub of map coordinates, sign selection, literal constants) — no
+ * runtime sqrt, no trig. This exact struct, flattened to 7 f64s in this
+ * field order, is what crosses into wasm memory.
+ */
+export type SlopeStatic = {
+  /** Inclusive horizontal span of the walkable surface. */
+  spanMinX: number;
+  spanMaxX: number;
+  /** Bottom corner (surface passes through it). */
+  baseX: number;
+  baseY: number;
+  /** Surface line slope: surfaceY(x) = baseY + dyDx · (x − baseX).
+   *  Exact in binary: ±0.5 or ±1.0. */
+  dyDx: number;
+  /** Unit tangent along the surface with tx > 0 (pointing +x). The
+   *  velocity projection preserves magnitude along ±(tx, ty). */
+  tx: number;
+  ty: number;
+};
+
+/** Flat f64 count per slope for the wasm transport (field order above).
+ *  MIRRORED by sim/src/player.zig's Slope extern struct. */
+export const SLOPE_F64_COUNT = 7;
+
+/** Max slopes a map may carry (wasm module-level array bound). MIRRORED in
+ *  sim/src/player.zig MAX_SLOPES. */
+export const MAX_SLOPES = 32;
+
+/**
+ * Derive the hot-pass statics from slope definitions. The single TS
+ * derivation site: buildStaticCache, the wasm host writers
+ * (playerWasmBackend / worldWasmBackend / serverWasmHost) and tests all
+ * consume THIS function's output, so client, server and wasm agree bit-
+ * for-bit by construction.
+ */
+export function deriveSlopeStatics(
+  slopes: readonly SlopeDefinition[],
+): SlopeStatic[] {
+  const out: SlopeStatic[] = [];
+  for (const s of slopes) {
+    if (!(s.run > 0)) continue; // degenerate authoring — inert slope
+    const t = s.grade === "2:1" ? 0.5 : 1.0;
+    const spanMinX = s.dir === 1 ? s.base.x : s.base.x - s.run;
+    const spanMaxX = s.dir === 1 ? s.base.x + s.run : s.base.x;
+    // dyDx = −t·dir — exact (t and dir are exact binary values).
+    const dyDx = -t * s.dir;
+    const tx = s.grade === "2:1" ? TWO_INV_SQRT5 : INV_SQRT2;
+    const ty = s.grade === "2:1"
+      ? (s.dir === 1 ? -INV_SQRT5 : INV_SQRT5)
+      : (s.dir === 1 ? -INV_SQRT2 : INV_SQRT2);
+    out.push({ spanMinX, spanMaxX, baseX: s.base.x, baseY: s.base.y, dyDx, tx, ty });
+  }
+  return out;
+}
 
 /**
  * Height threshold (px) at or below which a `kind: "platform"` entry is
@@ -228,6 +346,10 @@ export type StaticCollisionCache = {
   grid: SpatialGrid;
   /** Bitmask: true = one-way (pass-through from below). */
   oneWay: readonly boolean[];
+  /** Derived slope statics (empty for slope-less maps — the slope pass and
+   *  the slope-aware sub-step guard in stepPlayer are both gated on
+   *  `slopes.length > 0`, so legacy maps step bit-identically). */
+  slopes: readonly SlopeStatic[];
   /** Query scratch set — reuse across frames to avoid GC. */
   _seen: Set<number>;
 };
@@ -235,11 +357,14 @@ export type StaticCollisionCache = {
 /**
  * Build the static collision cache from a platform array + world size.
  * Call once at match start — the result is immutable for the match lifetime.
+ * `slopes` is optional/additive: omitted = slope-less (all pre-slope call
+ * sites compile and behave unchanged).
  */
 export function buildStaticCache(
   platforms: readonly PlatformDefinition[],
   worldWidth: number,
   worldHeight: number,
+  slopes: readonly SlopeDefinition[] = [],
 ): StaticCollisionCache {
   const aabbs: AABB[] = [];
   const oneWay: boolean[] = [];
@@ -263,6 +388,7 @@ export function buildStaticCache(
     aabbs,
     grid,
     oneWay,
+    slopes: deriveSlopeStatics(slopes),
     _seen: new Set(),
   };
 }

@@ -1,14 +1,17 @@
 import { describe, expect, test } from "bun:test";
 import { randomUUID } from "node:crypto";
-import { recordSignupLocal, listSignupsLocal } from "../signupStore.ts";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
-// signupStore reads/writes a real persisted JSON file (server/.signups/) —
-// same un-mocked-disk-state pattern stripe/entitlements.test.ts uses. That
-// file survives across separate `bun test` invocations, so — unlike a
-// fresh-per-test in-memory store — assertions here must never depend on
-// the store's TOTAL size (which accumulates run over run) and must use a
-// freshly-random email per test so a rerun can never collide with a
-// previous run's leftover data. Membership/value checks only.
+// Point the store at a throwaway dir BEFORE the store module's first call —
+// without this, every test run wrote its fake signups into the PRODUCTION
+// server/.signups/signups.json (260 junk rows before it was caught,
+// 2026-07-17). The env is read lazily by signupStore, so setting it here,
+// before the import's functions ever run, is sufficient.
+process.env.JAKESJAM_SIGNUPS_DIR = mkdtempSync(join(tmpdir(), "signups-test-"));
+
+import { recordSignupLocal, listSignupsLocal } from "../signupStore.ts";
 function uniqueEmail(): string {
   return `${randomUUID()}@example.com`;
 }

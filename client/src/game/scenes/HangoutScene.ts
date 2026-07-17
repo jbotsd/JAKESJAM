@@ -74,6 +74,15 @@ const LOCAL_PLAYER_FALLBACK_COLOR = 0xfff3d6;
 const REMOTE_PLAYER_FALLBACK_COLOR = 0xff4d5e;
 const PORTRAIT_CAM_Y_BIAS = 150;
 
+// Loadout-station copy (Jake 2026-07-17: the station is NOT "BETWEEN
+// ROUNDS" — that header belongs to actual mid-run drafts only). When P6's
+// venueNames.ts lands (one constant per name, grep-enforced), these move
+// there with the rest of the venue vocabulary.
+const LOADOUT_KICKER = "LOADOUT";
+const LOADOUT_TITLE = "CHOOSE YOUR CARD";
+const LOADOUT_HINT =
+  "Pick one card — it rides with you into your next arena run. Try it on the dummies. Walk away any time.";
+
 export class HangoutScene extends Phaser.Scene {
   private mode: "private" | "venue" = "private";
   private roomCode!: string;
@@ -115,9 +124,27 @@ export class HangoutScene extends Phaser.Scene {
   // Venue mode (S2.C.3): DOM callsign prompt, alive only while awaiting a
   // name — must not outlive the scene.
   private callsignOverlay: HTMLElement | null = null;
-  // Venue mode (S2.E): the one-shot starter offer shown while queued —
-  // same DOM overlay the arena's between-round draft uses.
+  // Venue mode: the LOADOUT STATION (S2.E, separated from the bell queue
+  // 2026-07-17 per Jake — "seperate the card selector test room thing with
+  // the bell queue"). Same DOM overlay class the arena's between-round
+  // draft uses, but with station copy, and opened/closed by walking into/
+  // out of the loadout totem — never slammed at a joiner or a queuer.
   private draftOverlay: CardDraftOverlay | null = null;
+  /** Latest offers pushed by the server (stable per station visit). */
+  private loadoutOffers: string[] | null = null;
+  /** The card id picked this lobby session — armed for the next admission
+   *  (drives the station totem's steady "loadout armed" glow). */
+  private loadoutPickId: string | null = null;
+  /** Local proximity state for the station zone (with exit hysteresis). */
+  private loadoutInZone = false;
+  /** Armed only after the player has been observed OUTSIDE the zone once —
+   *  structurally prevents a modal-on-spawn if the spawn lattice ever
+   *  lands someone inside the ring (the exact failure the station exists
+   *  to kill). */
+  private loadoutSeenOutside = false;
+  /** Picked (or otherwise done) this visit — suppresses re-opens until the
+   *  player walks out and back in. */
+  private loadoutDismissed = false;
 
   constructor() {
     super(SceneKeys.Hangout);
@@ -256,16 +283,17 @@ export class HangoutScene extends Phaser.Scene {
         onVenueStatus: (status) => {
           this.venueStatus = status;
           this.venueStatusAtMs = performance.now();
-          // Leaving the queue (or being admitted) retires any open offer —
-          // the overlay must not outlive queue membership.
-          if (!status.queued.includes(this.localPlayerId as string)) {
-            this.draftOverlay?.hide();
-          }
         },
-        // Starter draft (S2.E): the offer arrives the moment we queue at
-        // the bell; the pick rides back as an ordinary card-pick and lands
-        // on the venue queue entry (roundIndex is venue-ignored).
-        onVenueDraft: (offers) => this.showStarterDraft(offers),
+        // Loadout station (S2.E, separated 2026-07-17): offers arrive while
+        // standing at the loadout totem (re-pushed on its retrigger
+        // cadence with identical content — store, then let station
+        // proximity decide visibility). The pick rides back as an ordinary
+        // card-pick and lands on the venue loadout entry (roundIndex is
+        // venue-ignored).
+        onVenueDraft: (offers) => {
+          this.loadoutOffers = offers;
+          this.maybeShowLoadout();
+        },
         // The bell (S2.F): admission crosses the membrane. main.ts owns the
         // scene handoff (stop Hangout → its teardown closes this socket →
         // start OnlineMatchScene mode:"world").
@@ -286,19 +314,64 @@ export class HangoutScene extends Phaser.Scene {
     this.statusText?.setText(message);
   }
 
-  /** Starter draft (S2.E): show the queued player their one-shot offer.
-   *  Picking sends a card-pick over the lobby socket; not picking is fine —
-   *  the bell auto-picks leftmost server-side. */
-  private showStarterDraft(offerIds: string[]): void {
-    const cards = offerIds
+  /** Loadout station (S2.E, separated 2026-07-17): open the card selector
+   *  iff the player is standing at the station, hasn't already picked this
+   *  visit, and the overlay isn't already up. Picking sends a card-pick
+   *  over the lobby socket and arms the totem glow; not picking and
+   *  walking away is fine — no nag, no auto-pick, the bell admits with
+   *  none. */
+  private maybeShowLoadout(): void {
+    if (this.mode !== "venue") return;
+    if (!this.loadoutInZone || !this.loadoutSeenOutside || this.loadoutDismissed) return;
+    if (this.draftOverlay?.isOpen()) return;
+    const cards = (this.loadoutOffers ?? [])
       .map((id) => crystalRoundsCards.find((c) => c.id === id))
       .filter((c): c is NonNullable<typeof c> => c !== undefined);
     if (cards.length === 0) return;
-    if (!this.draftOverlay) this.draftOverlay = new CardDraftOverlay();
+    if (!this.draftOverlay) {
+      this.draftOverlay = new CardDraftOverlay(
+        {},
+        {
+          kicker: LOADOUT_KICKER,
+          title: LOADOUT_TITLE,
+          hint: LOADOUT_HINT,
+        },
+      );
+    }
     this.draftOverlay.show(cards, (card) => {
       this.loop?.sendCardPick(this.venueStatus?.roundIndex ?? 0, card.id);
+      this.loadoutPickId = card.id;
+      this.loadoutDismissed = true;
       this.draftOverlay?.hide();
     });
+  }
+
+  /** Station proximity (client-side UI arbitration only — offers and picks
+   *  stay server-authoritative): enter opens, exit closes and re-arms.
+   *  Enter radius matches the server overlap scan's reach (totem radius +
+   *  player footprint); exit adds hysteresis so edge-standing doesn't
+   *  flicker the overlay. */
+  private updateLoadoutZone(state: WorldState): void {
+    if (this.mode !== "venue") return;
+    const totem = this.totems.find((t) => t.id === "totem-loadout");
+    const me = state.players[this.localPlayerId];
+    if (!totem || !me) return;
+    const dist = Math.hypot(me.x - totem.x, me.y - totem.y);
+    const enterR = totem.radius + 18; // PLAYER_FOOTPRINT_RADIUS (totem.ts)
+    const exitR = enterR + 48;
+    const inZone = this.loadoutInZone ? dist < exitR : dist < enterR;
+    if (!inZone) {
+      this.loadoutSeenOutside = true;
+      if (this.loadoutInZone) {
+        // Exit edge: walking away closes the selector without ceremony and
+        // re-arms the next visit.
+        this.draftOverlay?.hide();
+        this.loadoutDismissed = false;
+      }
+    }
+    const entered = inZone && !this.loadoutInZone;
+    this.loadoutInZone = inZone;
+    if (entered) this.maybeShowLoadout();
   }
 
   /** DOM overlay callsign prompt (S2.C.3) — splash-input language, scene-
@@ -401,7 +474,7 @@ export class HangoutScene extends Phaser.Scene {
     g.fillRect(0, 0, width, height);
 
     if (!this.platformLayer) this.platformLayer = new PlatformLayer(this);
-    this.platformLayer.repaint(map.platforms, theme);
+    this.platformLayer.repaint(map.platforms, theme, map.launchPads, map.slopes);
 
     this.renderTotems(map);
   }
@@ -416,8 +489,10 @@ export class HangoutScene extends Phaser.Scene {
     for (const label of this.totemLabels) label.destroy();
     this.totemLabels = [];
     this.bellLabel = null;
-    // Venue lobby: ONE bell-portal totem (queue toggle); private hangout:
-    // the READY/LAUNCH pair. Same pure functions the server places with.
+    // Venue lobby: the LOADOUT station (card selector by the dummies) +
+    // the bell portal (queue toggle) — separated stations, separated
+    // meanings (2026-07-17); private hangout: the READY/LAUNCH pair. Same
+    // pure functions the server places with.
     this.totems = this.mode === "venue" ? resolveVenueTotems(map) : resolveHangoutTotems(map);
 
     const g = this.add.graphics().setDepth(2);
@@ -431,23 +506,26 @@ export class HangoutScene extends Phaser.Scene {
       g.fillStyle(ring, 0.06);
       g.fillCircle(totem.x, totem.y, totem.radius);
 
-      const isBell = this.mode === "venue";
+      const isBell = totem.id === "totem-bell";
+      const text =
+        this.mode === "venue"
+          ? isBell
+            ? "THE BELL"
+            : LOADOUT_KICKER
+          : totem.kind === "ready"
+            ? "READY"
+            : "LAUNCH";
       const label = this.add
-        .text(
-          totem.x,
-          totem.y - totem.radius - 26,
-          isBell ? "THE BELL" : totem.kind === "ready" ? "READY" : "LAUNCH",
-          {
-            color: totem.kind === "ready" ? "#aa9e7f" : "#6b98f4",
-            fontFamily: "'Space Grotesk', Inter, Arial, sans-serif",
-            fontSize: "16px",
-            fontStyle: "bold",
-          },
-        )
+        .text(totem.x, totem.y - totem.radius - 26, text, {
+          color: totem.kind === "ready" ? "#aa9e7f" : "#6b98f4",
+          fontFamily: "'Space Grotesk', Inter, Arial, sans-serif",
+          fontSize: "16px",
+          fontStyle: "bold",
+        })
         .setOrigin(0.5)
         .setDepth(2.1);
       this.totemLabels.push(label);
-      if (isBell) this.bellLabel = label;
+      if (this.mode === "venue" && isBell) this.bellLabel = label;
     }
   }
 
@@ -472,7 +550,11 @@ export class HangoutScene extends Phaser.Scene {
     for (const totem of this.totems) {
       const isFlashingRing =
         (flashing && readyTotem !== undefined && totem.id === readyTotem.id) ||
-        (localQueued && totem.id === "totem-bell");
+        (localQueued && totem.id === "totem-bell") ||
+        // Loadout armed (2026-07-17): a picked starter card holds the
+        // station ring bright — state, not a flash (axiom H2), mirroring
+        // the bell's queued glow.
+        (this.loadoutPickId !== null && totem.id === "totem-loadout");
       const ring = totem.kind === "ready" ? PALETTE.inkBright : PALETTE.sapphireSteady;
       const r = isFlashingRing ? totem.radius * scale : totem.radius;
       const alpha = 0.55 + 0.3 * pulse;
@@ -593,6 +675,7 @@ export class HangoutScene extends Phaser.Scene {
     this.renderWorld(state, deltaMs);
     this.entityRender?.update(state, deltaMs, now);
     this.followLocalPlayer(state, deltaMs);
+    this.updateLoadoutZone(state);
     this.updateTotemPulse(now);
     this.updateVenueFeed(now);
   }
@@ -734,6 +817,11 @@ export class HangoutScene extends Phaser.Scene {
     this.callsignOverlay = null;
     this.draftOverlay?.destroy();
     this.draftOverlay = null;
+    this.loadoutOffers = null;
+    this.loadoutPickId = null;
+    this.loadoutInZone = false;
+    this.loadoutSeenOutside = false;
+    this.loadoutDismissed = false;
     this.scale.off("resize", this.applyCameraZoom, this);
     this.touchControls?.destroy();
     this.touchControls = null;

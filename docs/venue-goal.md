@@ -26,7 +26,7 @@ one constant or one module; Jake can overrule any without unwinding the rest):
 |---|---|---|
 | 1 | First-to-3 demoted from "the match" to "the cycle win line" | YES — run framing is the point |
 | 2 | Round-boundary admission (no mid-fight spawns) | YES — the single highest-leverage rule |
-| 3 | Starter draft for entrants | YES — one pick from three |
+| 3 | Starter draft for entrants | **OVERRULED BY JAKE 2026-07-17** ("seperate the card selector test room thing with the bell queue"): the one-pick-from-three offer stays, but as a walk-up LOADOUT STATION totem in the lobby (by the practice dummies), NOT attached to queueing/admission. The bell queue is a clean countdown; no pick = enter with none (never auto-picked at the lobby — auto-select stays a mid-run round-timer convention only). |
 | 4 | Elastic persona bots, floor of 4 combatants | YES — boundaries only |
 | 5 | Name | **THE ARENA** / button "ENTER THE ARENA" — one constant (`VENUE_NAME`), swap to THE SHARD is a one-line change |
 | 6 | Lobby-first landing as default path | YES — menu becomes an overlay |
@@ -198,10 +198,14 @@ boundaries carrying a starter card; every waiting state explains itself.
    enqueue during fighting/drafting/round-over → admitted exactly at next
    countdown, never sooner. The old instant-insert path remains ONLY for
    reconnect-grace re-attach (test covers that too).
-2. **Starter draft:** admission delivers a one-shot 3-card offer (existing
-   draft machinery, single-player roll) resolved before first spawn; test:
-   admitted player's entity carries exactly one drafted card at spawn.
-   Auto-pick on bell if unpicked (never delays the bell).
+2. **Starter draft:** ~~admission delivers a one-shot 3-card offer~~
+   **AMENDED per contested call #3's overrule (Jake 2026-07-17):** the
+   3-card offer lives at the lobby's walk-up LOADOUT STATION (by the
+   practice dummies — pick, then try it); a recorded pick rides the next
+   admission (test: admitted player's entity carries exactly the picked
+   card at spawn). Unpicked = spawn with none, covered by the next
+   ordinary drafting phase — NO auto-pick at the bell, and the bell UI
+   carries no draft.
 3. **The joiner is never confused:** between totem-touch and spawn, the
    client shows the queue state (countdown + "watching the arena" framing).
    The frozen-world-no-explanation state (audit seam #4) is structurally

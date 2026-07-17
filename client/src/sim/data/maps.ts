@@ -15,12 +15,14 @@ export { isGenMapId };
 import { boxworksMini } from "./boxworks-mini.js";
 import { boxworksTower } from "./boxworks-tower.js";
 import { vesselNexus } from "./vessel-nexus.js";
+import { skyseam } from "./skyseam.js";
 import type { MapDefinition } from "../types.js";
 
-export type MapId = "vessel-nexus" | "boxworks" | "boxworks-mini" | "boxworks-tower";
+export type MapId = "vessel-nexus" | "skyseam" | "boxworks" | "boxworks-mini" | "boxworks-tower";
 
 export const mapsById: Record<MapId, MapDefinition> = {
   "vessel-nexus": vesselNexus,
+  "skyseam": skyseam,
   "boxworks": boxworksWorld as MapDefinition,
   "boxworks-mini": boxworksMini,
   "boxworks-tower": boxworksTower,
@@ -169,6 +171,11 @@ export const mapPickerOrder: ReadonlyArray<{
   {
     id: "vessel-nexus",
     blurb: "The Arena's mega-dock. Sixteen vessel pads, hull shafts, sci-fi gnostic chrome.",
+    recommendedPlayers: "8-16",
+  },
+  {
+    id: "skyseam",
+    blurb: "Two crossing seam-ramps under a sky archipelago. Hold the high line.",
     recommendedPlayers: "8-16",
   },
   {

@@ -44,7 +44,20 @@ code. Last verified: 2026-07-08.
 - **Right-click (or C) = the aegis power-slide**: aim-directional dash
   that blocks/reflects in a 120° front arc on the way in, bashes on
   contact, with recovery endlag after the burst. It **replaced the timed
-  parry** — `tryStartParry` is human-unreachable (bots still use it).
+  parry** — `tryStartParry` is human-unreachable (bots still use it): the
+  sim's Ability edge casts at full charge and falls through to the parry
+  below full, but the CLIENT only sends the Ability bit at full predicted
+  charge (OnlineMatchScene input assembly + TouchControls arm gate), so
+  humans can only ever reach the cast.
+- **E (or the EMIT touch button) = the Emission cast** — only lit/armed at
+  full charge; see the Emission bullet below.
+- **Keys 1-4 (touch: numbered buttons) = drafted actives**
+  (`docs/six-axes-goal.md` Layer 2): ability CARDS drafted through the
+  normal round-end picker land on the action bar in pick order, cooldown-
+  gated, input bits 10..13, server-validated (`ability-activated` events).
+  Max 4 held — the offer roll stops offering ability cards at a full hand.
+  Kill-switch: `ABILITIES=off` (server env) strips bits 10..13 at
+  `matchHost.applyInput`, same lever shape as `EMISSIONS=off`.
 - Shift = held shield. Left-click = alternating-hand shuriken throws.
 - Jetpack: **removed** (fuel field pinned for ABI stability only).
   Magazine/reload: **data-only, deliberately unenforced** (explicit
@@ -55,6 +68,16 @@ code. Last verified: 2026-07-08.
   for non-winners (`draftWeights.ts`), never winner silence. Draws: all
   draft at standard weights. `maxStacks` / `unique` enforced at the offer
   roll. Death is **not** the picker primary loop.
+- **Ability = the Emission** (Emission Engine —
+  `docs/emission-engine-goal.md`): COMPOSED from the card hand, never
+  picked from a menu. `abilityCharge` (0–100, already wire-synced +
+  hash-mixed) fills from damage dealt/taken; `InputBit.Ability` (1<<7)
+  casts at full charge, server-authoritative; damage budget below a kill.
+  Ability-space is **six orthogonal axes** (Drain / Ward / Stride /
+  Sorcery / Mystery / Technique) that stack and never cancel — axis
+  membership derives from modifier fields, not hand-tags. Zig receives
+  parameters via the `player_fire_config` pattern, never per-ability
+  behavior.
 
 ## Testing / tooling
 

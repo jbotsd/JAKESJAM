@@ -149,7 +149,7 @@ export class WorldHost {
     // running but wrong-arena world. Now we throw at boot.
     if (opts.mapId !== undefined && !isMapId(opts.mapId) && !opts.mapId.startsWith("gen:")) {
       throw new Error(
-        `WorldHost: unknown mapId "${opts.mapId}". Known: vessel-nexus, boxworks, boxworks-mini, boxworks-tower, gen:<seed>`,
+        `WorldHost: unknown mapId "${opts.mapId}". Known: vessel-nexus, skyseam, boxworks, boxworks-mini, boxworks-tower, gen:<seed>`,
       );
     }
     this.mapId = (opts.mapId as MapId | undefined) ?? DEFAULT_MAP_ID;

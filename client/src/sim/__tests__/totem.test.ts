@@ -4,7 +4,12 @@
 // this deliberately isn't wired into World.ts/stepWithRuntime).
 
 import { describe, test, expect } from "bun:test";
-import { stepTotems, resolveHangoutTotems, type TotemDefinition } from "../totem.js";
+import {
+  stepTotems,
+  resolveHangoutTotems,
+  resolveVenueTotems,
+  type TotemDefinition,
+} from "../totem.js";
 import { resolveMap } from "../data/maps.js";
 import { InputSeq, PlayerId, Tick, type PlayerEntity, type WorldState } from "../types.js";
 
@@ -179,6 +184,57 @@ describe("resolveHangoutTotems", () => {
         if (!under) {
           throw new Error(
             `totem ${t.id} on ${id} floats at (${t.x},${t.y}) with no standable surface under it`,
+          );
+        }
+      }
+    }
+  });
+});
+
+// The venue lobby's separated stations (Jake 2026-07-17: "seperate the card
+// selector test room thing with the bell queue") — the loadout station is
+// its own walk-up totem by the practice-dummy band; the bell is only a bell.
+describe("resolveVenueTotems", () => {
+  test("vessel-nexus: loadout station + bell portal, distinct kinds, both off the center spawn", () => {
+    const map = resolveMap("vessel-nexus");
+    const totems = resolveVenueTotems(map);
+    expect(totems.map((t) => t.id)).toEqual(["totem-loadout", "totem-bell"]);
+    expect(totems.map((t) => t.kind)).toEqual(["ready", "launch"]); // station opens, bell queues
+    const [loadout, bell] = totems as [TotemDefinition, TotemDefinition];
+    // Neither station may sit on the map-center spawn fallback — a totem on
+    // the spawn point fires its interaction the instant someone lands (the
+    // S2.F bell lesson, now a law for BOTH stations: no modal-on-arrival).
+    const center = map.size.x / 2;
+    expect(Math.abs(loadout.x - center)).toBeGreaterThan(loadout.radius + 100);
+    expect(Math.abs(bell.x - center)).toBeGreaterThan(bell.radius + 100);
+    // The loadout station flanks the practice-dummy band (dummies at
+    // 0.3/0.35W, venueHost.venueLobbyMap) — pick, turn, try it on a dummy.
+    expect(Math.abs(loadout.x - map.size.x * 0.3)).toBeLessThan(300);
+    // Ground band, both.
+    expect(loadout.y).toBe(map.size.y - 36 - 68);
+    expect(bell.y).toBe(loadout.y);
+  });
+
+  test("non-vessel maps snap both venue stations onto standable ground", () => {
+    const STAND_OFFSET = 68;
+    // NB: "gen:venueN" seeds are non-numeric → resolveMap falls back to
+    // vessel-nexus (the rotation-map test above leans on that); use a real
+    // numeric gen seed here so the non-vessel snap path is what's tested.
+    for (const id of ["boxworks-tower", "gen:12345"]) {
+      const map = resolveMap(id);
+      const totems = resolveVenueTotems(map);
+      expect(totems.length).toBe(2);
+      for (const t of totems) {
+        const under = map.platforms.find(
+          (p) =>
+            p.kind !== "wall" &&
+            t.x >= p.position.x &&
+            t.x <= p.position.x + p.size.x &&
+            t.y === p.position.y - STAND_OFFSET,
+        );
+        if (!under) {
+          throw new Error(
+            `venue totem ${t.id} on ${id} floats at (${t.x},${t.y}) with no standable surface under it`,
           );
         }
       }

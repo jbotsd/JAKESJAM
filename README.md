@@ -50,6 +50,8 @@ Recent card pass:
 | Fire | Left mouse |
 | Shield | Hold Left Shift |
 | Dash-bash (shield power-slide) | Right mouse button, C alternate |
+| Emission cast (at full charge) | E — touch: EMIT button |
+| Drafted actives (ability cards, pick order) | 1-4 — touch: numbered buttons |
 | Stats overlay | Backtick (`) |
 | Reset local match | R |
 

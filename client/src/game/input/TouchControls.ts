@@ -106,6 +106,20 @@ export class TouchControls {
   private dashEngaged = false; // drag crossed the trigger threshold
   private dashPulseUntilMs = 0; // tap-dash: hold the bit long enough to tick
   private dashKnob: Stick | null = null;
+  /** Emission cast (docs/emission-engine-goal.md): a tap PULSE (held long
+   *  enough for one input tick), gated by setEmissionReady — the scene arms
+   *  it only at full predicted charge, same reason the desktop E binding
+   *  gates (keeps the legacy parry fall-through human-unreachable). */
+  private readonly emissionBtn: HTMLDivElement;
+  private emissionPulseUntilMs = 0;
+  private emissionReady = false;
+  /** Drafted actives (six-axes Layer 2): one button per OWNED slot (0-4
+   *  present), keyed to input bits 10..13. Same tap-pulse contract as EMIT;
+   *  ready-arming driven by setActiveSlots each frame. Buttons appear as
+   *  drafted — round 1 touch UI is exactly yesterday's. */
+  private readonly slotBtns: HTMLDivElement[] = [];
+  private readonly slotPulseUntilMs: number[] = [0, 0, 0, 0];
+  private slotStates: { ready: boolean }[] = [];
 
   private attached = false;
   private readonly mount: HTMLElement;
@@ -124,9 +138,17 @@ export class TouchControls {
     this.shieldBtn.textContent = "SHIELD";
     this.dashBtn = el("div", "tc-btn tc-btn--dash");
     this.dashBtn.textContent = "DASH";
+    this.emissionBtn = el("div", "tc-btn tc-btn--emission");
+    this.emissionBtn.textContent = "EMIT";
+    for (let i = 0; i < 4; i++) {
+      const btn = el("div", `tc-btn tc-btn--slot tc-btn--slot${i + 1}`);
+      btn.textContent = `${i + 1}`;
+      btn.style.display = "none"; // hidden until the slot is drafted
+      this.slotBtns.push(btn);
+    }
     this.root.append(this.leftZone, this.rightZone);
     if (this.combatButtons) {
-      this.root.append(this.shieldBtn, this.dashBtn);
+      this.root.append(this.shieldBtn, this.dashBtn, this.emissionBtn, ...this.slotBtns);
     }
   }
 
@@ -141,6 +163,12 @@ export class TouchControls {
     if (this.combatButtons) {
       this.shieldBtn.addEventListener("pointerdown", this.onShieldDown, { passive: false });
       this.dashBtn.addEventListener("pointerdown", this.onDashDown, { passive: false });
+      this.emissionBtn.addEventListener("pointerdown", this.onEmissionDown, { passive: false });
+      this.slotBtns.forEach((btn, i) => {
+        btn.addEventListener("pointerdown", (e: PointerEvent) => this.onSlotDown(e, i), {
+          passive: false,
+        });
+      });
     }
     window.addEventListener("pointermove", this.onMove, { passive: false });
     window.addEventListener("pointerup", this.onUp, { passive: false });
@@ -199,7 +227,38 @@ export class TouchControls {
     if (dashHeld || now < this.dashPulseUntilMs) {
       keys |= InputBit.Dash;
     }
+    // Emission tap pulse (see onEmissionDown — only armable at full charge).
+    if (now < this.emissionPulseUntilMs) keys |= InputBit.Ability;
+    // Drafted-active tap pulses → bits 10..13 (six-axes Layer 2).
+    for (let i = 0; i < 4; i++) {
+      if (now < this.slotPulseUntilMs[i]!) keys |= 1 << (10 + i);
+    }
     return { keys, aimDir, dashDir: this.dashDir, moveDir };
+  }
+
+  /** Show/arm one button per owned active (scene calls each frame from the
+   *  same vitals the action bar draws). Hidden buttons don't exist to the
+   *  thumb — no dead zones on an undrafted layout. */
+  setActiveSlots(slots: { ready: boolean }[]): void {
+    for (let i = 0; i < 4; i++) {
+      const btn = this.slotBtns[i]!;
+      const slot = slots[i];
+      const wanted = slot !== undefined && this.combatButtons;
+      const visible = btn.style.display !== "none";
+      if (wanted !== visible) btn.style.display = wanted ? "" : "none";
+      const prevReady = this.slotStates[i]?.ready ?? false;
+      const ready = slot?.ready ?? false;
+      if (ready !== prevReady) btn.classList.toggle("tc-btn--slot-ready", ready);
+    }
+    this.slotStates = slots.map((s) => ({ ready: s.ready }));
+  }
+
+  /** Arm/disarm the Emission button (scene calls this each frame from the
+   *  predicted charge — full = ready). Disarmed taps no-op entirely. */
+  setEmissionReady(ready: boolean): void {
+    if (ready === this.emissionReady) return;
+    this.emissionReady = ready;
+    this.emissionBtn.classList.toggle("tc-btn--emission-ready", ready);
   }
 
   destroy(): void {
@@ -249,6 +308,31 @@ export class TouchControls {
     this.dashKnob = this.spawnStick(e, "tc-stick--dash");
     this.dashBtn.classList.add("tc-btn--active");
   };
+
+  private onEmissionDown = (e: PointerEvent): void => {
+    e.preventDefault();
+    if (!this.emissionReady) return; // disarmed — the tap does nothing
+    // Pulse long enough for at least one fixed-step input tick; the sim's
+    // rising-edge detection makes a longer pulse harmless (one cast).
+    this.emissionPulseUntilMs = performance.now() + 120;
+    this.emissionBtn.classList.add("tc-btn--active");
+    setTimeout(() => this.emissionBtn.classList.remove("tc-btn--active"), 160);
+  };
+
+  private onSlotDown(e: PointerEvent, slot: number): void {
+    e.preventDefault();
+    // Unlike EMIT there's no fall-through hazard: the sim validates slot
+    // existence + cooldown, so an unready tap is a harmless no-op. Still,
+    // only flash the button when it will actually fire (legibility law —
+    // a lit response to a dead press is a lie).
+    const ready = this.slotStates[slot]?.ready ?? false;
+    this.slotPulseUntilMs[slot] = performance.now() + 120;
+    if (ready) {
+      const btn = this.slotBtns[slot]!;
+      btn.classList.add("tc-btn--active");
+      setTimeout(() => btn.classList.remove("tc-btn--active"), 160);
+    }
+  }
 
   private onMove = (e: PointerEvent): void => {
     // DASH mini-stick drag: a tiny joystick on the button. Crossing the

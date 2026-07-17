@@ -48,6 +48,33 @@ export const STOLEN_FANGS_CHARGE_EXPIRY_MS = 4000;
 export const STOLEN_FANGS_HOMING_STRENGTH = 5.0;
 export const STOLEN_FANGS_DAMAGE_MULTIPLIER = 0.75;
 
+// Emission Engine (docs/emission-engine-goal.md) — charge economy.
+// abilityCharge fills from combat participation only (no passive trickle):
+// dealt is the primary source, taken the lesser. Full bar ≈ ~200 damage
+// dealt at the 0.5 rate (less in a real fight — taken-side fill mixes in).
+// Charge persists through death and across rounds
+// (respawnAll spreads the player and deliberately does not touch it);
+// resets only at match creation (spawn sites init 0). Phase 3 of the goal
+// owns retuning these numbers — do not tweak casually, the state hash
+// mixes abilityCharge so TS and the opt-in Zig world must move together.
+export const EMISSION_CHARGE_MAX = 100;
+export const EMISSION_FILL_PER_DAMAGE_DEALT = 0.5;
+export const EMISSION_FILL_PER_DAMAGE_TAKEN = 0.2;
+
+// Drafted actives (docs/six-axes-goal.md Layer 2). Card data owns
+// cooldown/duration (cards.ts `active` specs); sim effect magnitudes live
+// here. The tune pass edits data, never logic (goal elegance bar).
+export const ABILITY_TITHE_LEECH_FRACTION = 0.5;
+export const ABILITY_STEP_RANGE_PX = 240;
+export const ABILITY_COUNTER_RETURN_CAP = 35;
+
+// Mid-round respawn (Jake ruled "A", 2026-07-17, reverting the venue-era
+// bench-until-bell): death costs a short fixed delay, then you're back at
+// a spawn seal — EXCEPT in sudden death, where last-one-standing is the
+// whole point (design-pillars "money moment"). Arena ADMISSION stays
+// boundary-only (venue-goal pillar 3 — that rule was always about joiners).
+export const RESPAWN_DELAY_MS = 3000;
+
 // satellite.ts
 export const ORBIT_RADIUS_PX = 80;
 export const ORBIT_RAD_PER_SEC = Math.PI / 1.5;

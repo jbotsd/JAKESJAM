@@ -1,0 +1,116 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="-30 -30 1060 1060" fill="none">
+  <!-- JAKESJAM vessel seal — avionics-dial grammar (docs/visual-language-gnostic-vessel.md).
+       Concentric hebdomad rings + tick band + compass diamonds + one large
+       inscribed CRYSTAL DIAMOND (rotated square, vertices on the cardinal
+       axes, inscribed in the seventh ring) with the gold monad spark at its
+       heart. Replaces seal-gnostic.png. HARD CONSTRAINT (owner): no
+       eye-under/inside-triangle, no triangle capping ring geometry around a
+       focal center, no hexagram/pentagram — see docs/IDENT-GRAMMAR.md. -->
+  <defs>
+    <linearGradient id="svGold" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#8a6a2a"/>
+      <stop offset="45%" stop-color="#c9a84c"/>
+      <stop offset="52%" stop-color="#ffedb0"/>
+      <stop offset="60%" stop-color="#c9a84c"/>
+      <stop offset="100%" stop-color="#7a5c22"/>
+    </linearGradient>
+    <linearGradient id="svTeal" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#2e8f7a"/>
+      <stop offset="48%" stop-color="#7fe8d8"/>
+      <stop offset="54%" stop-color="#d8fff6"/>
+      <stop offset="62%" stop-color="#50e3c2"/>
+      <stop offset="100%" stop-color="#2e8f7a"/>
+    </linearGradient>
+  </defs>
+  <!-- hebdomad ring stack: pure dial/instrument read -->
+  <g stroke="url(#svGold)" stroke-width="2" opacity="0.8">
+    <circle cx="500" cy="500" r="95"/>
+    <circle cx="500" cy="500" r="128"/>
+    <circle cx="500" cy="500" r="160"/>
+    <circle cx="500" cy="500" r="196"/>
+    <circle cx="500" cy="500" r="238"/>
+    <circle cx="500" cy="500" r="286"/>
+    <circle cx="500" cy="500" r="340"/>
+  </g>
+  <!-- boundary ring with the seam at top (the way out) -->
+  <path d="M 545.9 11.6 A 490 490 0 1 1 454.1 11.6" stroke="url(#svGold)" stroke-width="5" stroke-linecap="round"/>
+  <!-- radius line: center to the seam, faint (instrument needle at rest) -->
+  <line x1="500" y1="500" x2="500" y2="10" stroke="#ffecaa" stroke-width="2" opacity="0.35"/>
+  <!-- fixed-star tick band -->
+  <g stroke="url(#svGold)" opacity="0.85">
+    <line x1="500.0" y1="68.0" x2="500.0" y2="22.0" stroke-width="5"/>
+    <line x1="559.0" y1="51.9" x2="562.4" y2="26.1" stroke-width="2"/>
+    <line x1="617.0" y1="63.4" x2="623.7" y2="38.3" stroke-width="2"/>
+    <line x1="673.0" y1="82.4" x2="682.9" y2="58.4" stroke-width="2"/>
+    <line x1="716.0" y1="125.9" x2="739.0" y2="86.0" stroke-width="5"/>
+    <line x1="775.2" y1="141.4" x2="791.0" y2="120.8" stroke-width="2"/>
+    <line x1="819.6" y1="180.4" x2="838.0" y2="162.0" stroke-width="2"/>
+    <line x1="858.6" y1="224.8" x2="879.2" y2="209.0" stroke-width="2"/>
+    <line x1="874.1" y1="284.0" x2="914.0" y2="261.0" stroke-width="5"/>
+    <line x1="917.6" y1="327.0" x2="941.6" y2="317.1" stroke-width="2"/>
+    <line x1="936.6" y1="383.0" x2="961.7" y2="376.3" stroke-width="2"/>
+    <line x1="948.1" y1="441.0" x2="973.9" y2="437.6" stroke-width="2"/>
+    <line x1="932.0" y1="500.0" x2="978.0" y2="500.0" stroke-width="5"/>
+    <line x1="948.1" y1="559.0" x2="973.9" y2="562.4" stroke-width="2"/>
+    <line x1="936.6" y1="617.0" x2="961.7" y2="623.7" stroke-width="2"/>
+    <line x1="917.6" y1="673.0" x2="941.6" y2="682.9" stroke-width="2"/>
+    <line x1="874.1" y1="716.0" x2="914.0" y2="739.0" stroke-width="5"/>
+    <line x1="858.6" y1="775.2" x2="879.2" y2="791.0" stroke-width="2"/>
+    <line x1="819.6" y1="819.6" x2="838.0" y2="838.0" stroke-width="2"/>
+    <line x1="775.2" y1="858.6" x2="791.0" y2="879.2" stroke-width="2"/>
+    <line x1="716.0" y1="874.1" x2="739.0" y2="914.0" stroke-width="5"/>
+    <line x1="673.0" y1="917.6" x2="682.9" y2="941.6" stroke-width="2"/>
+    <line x1="617.0" y1="936.6" x2="623.7" y2="961.7" stroke-width="2"/>
+    <line x1="559.0" y1="948.1" x2="562.4" y2="973.9" stroke-width="2"/>
+    <line x1="500.0" y1="932.0" x2="500.0" y2="978.0" stroke-width="5"/>
+    <line x1="441.0" y1="948.1" x2="437.6" y2="973.9" stroke-width="2"/>
+    <line x1="383.0" y1="936.6" x2="376.3" y2="961.7" stroke-width="2"/>
+    <line x1="327.0" y1="917.6" x2="317.1" y2="941.6" stroke-width="2"/>
+    <line x1="284.0" y1="874.1" x2="261.0" y2="914.0" stroke-width="5"/>
+    <line x1="224.8" y1="858.6" x2="209.0" y2="879.2" stroke-width="2"/>
+    <line x1="180.4" y1="819.6" x2="162.0" y2="838.0" stroke-width="2"/>
+    <line x1="141.4" y1="775.2" x2="120.8" y2="791.0" stroke-width="2"/>
+    <line x1="125.9" y1="716.0" x2="86.0" y2="739.0" stroke-width="5"/>
+    <line x1="82.4" y1="673.0" x2="58.4" y2="682.9" stroke-width="2"/>
+    <line x1="63.4" y1="617.0" x2="38.3" y2="623.7" stroke-width="2"/>
+    <line x1="51.9" y1="559.0" x2="26.1" y2="562.4" stroke-width="2"/>
+    <line x1="68.0" y1="500.0" x2="22.0" y2="500.0" stroke-width="5"/>
+    <line x1="51.9" y1="441.0" x2="26.1" y2="437.6" stroke-width="2"/>
+    <line x1="63.4" y1="383.0" x2="38.3" y2="376.3" stroke-width="2"/>
+    <line x1="82.4" y1="327.0" x2="58.4" y2="317.1" stroke-width="2"/>
+    <line x1="125.9" y1="284.0" x2="86.0" y2="261.0" stroke-width="5"/>
+    <line x1="141.4" y1="224.8" x2="120.8" y2="209.0" stroke-width="2"/>
+    <line x1="180.4" y1="180.4" x2="162.0" y2="162.0" stroke-width="2"/>
+    <line x1="224.8" y1="141.4" x2="209.0" y2="120.8" stroke-width="2"/>
+    <line x1="284.0" y1="125.9" x2="261.0" y2="86.0" stroke-width="5"/>
+    <line x1="327.0" y1="82.4" x2="317.1" y2="58.4" stroke-width="2"/>
+    <line x1="383.0" y1="63.4" x2="376.3" y2="38.3" stroke-width="2"/>
+    <line x1="441.0" y1="51.9" x2="437.6" y2="26.1" stroke-width="2"/>
+  </g>
+  <!-- seven vowels = seven spheres -->
+  <g font-family="'Noto Serif Display','Noto Serif',serif" font-size="30" fill="#e8e4d6" fill-opacity="0.9">
+    <text x="604.8" y="117.8" text-anchor="middle">Α</text>
+    <text x="891.2" y="404.2" text-anchor="middle">Ε</text>
+    <text x="786.4" y="795.4" text-anchor="middle">Η</text>
+    <text x="395.2" y="900.2" text-anchor="middle">Ι</text>
+    <text x="108.8" y="613.8" text-anchor="middle">Ο</text>
+    <text x="213.6" y="222.6" text-anchor="middle">Υ</text>
+    <text x="604.8" y="117.8" text-anchor="middle">Ω</text>
+  </g>
+  <!-- THE CRYSTAL: large inscribed diamond (rotated square), vertices on the
+       cardinal axes, inscribed exactly in the r=340 seventh ring. Hard-edged,
+       instrument-like — the game's crystal-munitions grammar at seal scale. -->
+  <polygon points="500,160 840,500 500,840 160,500" stroke="url(#svTeal)" stroke-width="3"/>
+  <!-- vertex loop on the east point (the maker's pause — carried over from
+       the old seal's single vertex detail so the mark stays authored) -->
+  <circle cx="840" cy="500" r="16" stroke="url(#svTeal)" stroke-width="2.5"/>
+  <!-- monad spark at the heart of the crystal -->
+  <circle cx="500" cy="500" r="8" fill="#ffecaa" fill-opacity="0.9"/>
+  <!-- compass diamonds at the four cardinal points -->
+  <g fill="#ffecaa" fill-opacity="0.9">
+    <polygon points="500,-8 520,12 500,32 480,12"/>
+    <polygon points="1008,480 1028,500 1008,520 988,500"/>
+    <polygon points="500,968 520,988 500,1008 480,988"/>
+    <polygon points="-8,480 12,500 -8,520 -28,500"/>
+  </g>
+</svg>

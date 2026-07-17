@@ -280,9 +280,8 @@ export class ClipRecorder {
     if (msg.t === "file" && msg.buffer) {
       if (this.workerUploadOnFile) {
         const blob = new Blob([msg.buffer], { type: "video/mp4" });
-        const trace = decimateTrace(this.focusTrace);
         if (blob.size >= MIN_UPLOAD_BYTES) {
-          void this.upload(blob, trace, msg.width ?? 0, msg.height ?? 0);
+          void this.upload(blob);
         } else {
           console.log(`[clips] dropped dud worker segment (${blob.size} bytes — tab hidden?)`);
         }
@@ -467,14 +466,11 @@ export class ClipRecorder {
   private onPipelineStopped(p: Pipeline): void {
     if (this.uploadOnStop && this.mimeType) {
       const blob = new Blob(p.chunks, { type: this.mimeType });
-      // Snapshot the trace NOW — beginSegment() below resets it before the
-      // async upload reads it.
-      const trace = decimateTrace(this.focusTrace);
       // Dud guard: a hidden tab freezes the rAF crop loop → the recorder
       // emits a header-only blob. Uploading those littered server/.clips
       // with 10-15 byte junk files. Drop anything implausibly small.
       if (blob.size >= MIN_UPLOAD_BYTES) {
-        void this.upload(blob, trace, p.canvas.width, p.canvas.height);
+        void this.upload(blob);
       } else {
         console.log(`[clips] dropped dud ${p.kind} segment (${blob.size} bytes — tab hidden?)`);
       }
@@ -484,49 +480,20 @@ export class ClipRecorder {
     if (this.pendingStops <= 0 && !this.stopped) this.beginSegment();
   }
 
-  private async upload(
-    blob: Blob,
-    trace: Array<{ t: number; x: number }>,
-    mezzW: number,
-    mezzH: number,
-  ): Promise<void> {
+  private async upload(blob: Blob): Promise<void> {
     try {
       const form = new FormData();
       const ext = blob.type.includes("webm") ? "webm" : "mp4";
       form.append("file", blob, `clip-original.${ext}`);
-      // The server produces the vertical from this stream + the trace
-      // (NVENC — see server/src/clipTranscode.ts).
-      form.append("focusTrace", JSON.stringify(trace));
-      form.append("srcW", String(mezzW));
-      form.append("srcH", String(mezzH));
       const res = await fetch(this.deps.uploadPath ?? "/clips/upload", {
         method: "POST",
         body: form,
       });
       if (!res.ok) throw new Error(`clip upload failed: ${res.status}`);
-      const { url, verticalUrl } = (await res.json()) as {
-        url: string;
-        verticalUrl?: string;
-      };
+      const { url } = (await res.json()) as { url: string };
       this.deps.onUploaded?.(url, "original");
-      if (verticalUrl) this.deps.onUploaded?.(verticalUrl, "vertical");
     } catch (err) {
       this.deps.onError?.(err);
     }
   }
-}
-
-/** Cap the uploaded trace at ~600 points (30Hz × 20s max segment) — evenly
- *  strided so long segments still cover the whole timeline. */
-function decimateTrace(
-  trace: Array<{ t: number; x: number }>,
-): Array<{ t: number; x: number }> {
-  const MAX_POINTS = 600;
-  if (trace.length <= MAX_POINTS) return trace.slice();
-  const out: Array<{ t: number; x: number }> = [];
-  const stride = trace.length / MAX_POINTS;
-  for (let i = 0; i < MAX_POINTS; i++) {
-    out.push(trace[Math.floor(i * stride)]!);
-  }
-  return out;
 }

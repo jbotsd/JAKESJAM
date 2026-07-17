@@ -120,12 +120,16 @@ describe("VenueHost lobby lifecycle (Pillar 1.2)", () => {
     type SimEventSink = { onSimEvent?: (e: { t: string; playerId: string }) => void };
     const lobbyOpts = venue.lobbyHostForTest() as unknown as SimEventSink;
     // Drive the same hook stepTotems fires through (the totem overlap
-    // itself is covered by totem.test.ts) — both event kinds mean "toggle".
+    // itself is covered by totem.test.ts). Since 2026-07-17 the kinds are
+    // separated: launch-requested = bell-queue toggle, ready-toggled =
+    // loadout station (must NOT touch the queue).
     lobbyOpts.onSimEvent?.({ t: "launch-requested", playerId: "p_q" });
     expect(venue.queuedForTest() as string[]).toEqual(["p_q"]);
     lobbyOpts.onSimEvent?.({ t: "launch-requested", playerId: "p_q" });
     expect(venue.queuedForTest() as string[]).toEqual([]);
     lobbyOpts.onSimEvent?.({ t: "ready-toggled", playerId: "p_q" });
+    expect(venue.queuedForTest() as string[]).toEqual([]); // station ≠ queue
+    lobbyOpts.onSimEvent?.({ t: "launch-requested", playerId: "p_q" });
     expect(venue.queuedForTest() as string[]).toEqual(["p_q"]);
     venue.detachLobby(ws);
     expect(venue.queuedForTest() as string[]).toEqual([]); // no ghost entrants at the drain
@@ -220,7 +224,10 @@ describe("VenueHost lobby lifecycle (Pillar 1.2)", () => {
     venue.dispose();
   });
 
-  test("queueing rolls a 3-card starter offer and pushes venue-draft (S2.E)", () => {
+  // ── The loadout station / bell separation (Jake 2026-07-17: "seperate
+  //    the card selector test room thing with the bell queue") ──────────
+
+  test("queueing at the bell is JUST queueing: no offer rolled, no venue-draft pushed", () => {
     const { venue } = makeVenue(0);
     const sent: Uint8Array[] = [];
     const ws = {
@@ -238,54 +245,88 @@ describe("VenueHost lobby lifecycle (Pillar 1.2)", () => {
       t: "launch-requested",
       playerId: "p_d",
     });
-    const entry = venue.queueEntryForTest("p_d" as never);
+    expect(venue.queuedForTest() as string[]).toEqual(["p_d"]);
+    expect(venue.loadoutForTest("p_d" as never)).toBeUndefined();
+    const frames = sent
+      .map((buf) => decodeMessage(buf)?.message as { t: string } | undefined)
+      .filter((m): m is { t: string } => m !== undefined);
+    expect(frames.find((m) => m.t === "venue-draft")).toBeUndefined();
+    venue.dispose();
+  });
+
+  test("the loadout station rolls a 3-card offer once and re-pushes it idempotently (S2.E)", () => {
+    const { venue } = makeVenue(0);
+    const sent: Uint8Array[] = [];
+    const ws = {
+      data: { matchId: VENUE_LOBBY_MATCH_ID, playerId: "p_l", name: "LOADY", authedAt: Date.now() },
+      send: (buf: Uint8Array) => {
+        sent.push(buf);
+        return 1;
+      },
+      close: () => {},
+      getBufferedAmount: () => 0,
+    } as unknown as ServerWebSocket<MatchSocketData>;
+    venue.attachLobby(ws);
+    type SimEventSink = { onSimEvent?: (e: { t: string; playerId: string }) => void };
+    const sink = venue.lobbyHostForTest() as unknown as SimEventSink;
+    sink.onSimEvent?.({ t: "ready-toggled", playerId: "p_l" });
+    const entry = venue.loadoutForTest("p_l" as never);
     expect(entry).toBeDefined();
     expect(entry!.offers.length).toBe(3);
     expect(new Set(entry!.offers).size).toBe(3); // distinct
     expect(entry!.pick).toBeNull();
-    const frames = sent
+    // Standing there (totem retrigger) re-pushes the SAME offer, no re-roll.
+    sink.onSimEvent?.({ t: "ready-toggled", playerId: "p_l" });
+    expect(venue.loadoutForTest("p_l" as never)!.offers).toEqual(entry!.offers);
+    const drafts = sent
       .map((buf) => decodeMessage(buf)?.message as { t: string; offers?: string[] } | undefined)
-      .filter((m): m is { t: string; offers?: string[] } => m !== undefined);
-    const draft = frames.find((m) => m.t === "venue-draft");
-    expect(draft).toBeDefined();
-    expect(draft!.offers).toEqual(entry!.offers);
+      .filter((m): m is { t: string; offers?: string[] } => m?.t === "venue-draft");
+    expect(drafts.length).toBe(2);
+    expect(drafts[0]!.offers).toEqual(entry!.offers);
+    expect(drafts[1]!.offers).toEqual(entry!.offers);
+    // The station never queues anyone.
+    expect(venue.queuedForTest()).toEqual([]);
     venue.dispose();
   });
 
-  test("card-pick over the lobby socket lands on the queue entry; bad ids ignored (S2.E)", () => {
+  test("card-pick over the lobby socket lands on the loadout entry; bad ids ignored (S2.E)", () => {
     const { venue } = makeVenue(0);
     const ws = makeFakeWs("p_p", "PICKY");
     venue.attachLobby(ws);
     type SimEventSink = { onSimEvent?: (e: { t: string; playerId: string }) => void };
     (venue.lobbyHostForTest() as unknown as SimEventSink).onSimEvent?.({
-      t: "launch-requested",
+      t: "ready-toggled",
       playerId: "p_p",
     });
-    const entry = venue.queueEntryForTest("p_p" as never)!;
+    const entry = venue.loadoutForTest("p_p" as never)!;
     const chosen = entry.offers[1]!;
     venue.routeLobby(ws, encodeMessage({ t: "card-pick", roundIndex: 0, cardId: "not-offered" }));
-    expect(venue.queueEntryForTest("p_p" as never)!.pick).toBeNull();
+    expect(venue.loadoutForTest("p_p" as never)!.pick).toBeNull();
     venue.routeLobby(ws, encodeMessage({ t: "card-pick", roundIndex: 0, cardId: chosen }));
-    expect(venue.queueEntryForTest("p_p" as never)!.pick).toBe(chosen);
+    expect(venue.loadoutForTest("p_p" as never)!.pick).toBe(chosen);
+    // Re-picking overwrites (walk back, change your mind).
+    venue.routeLobby(ws, encodeMessage({ t: "card-pick", roundIndex: 0, cardId: entry.offers[2]! }));
+    expect(venue.loadoutForTest("p_p" as never)!.pick).toBe(entry.offers[2]!);
     venue.dispose();
   });
 
-  test("getEntrantCards provider: pick wins, leftmost auto-pick otherwise, non-queued plain (S2.E)", () => {
+  test("getEntrantCards provider: loadout pick rides, no pick = plain spawn (NEVER auto-picked)", () => {
     const { venue, arena } = makeVenue(0);
     const ws = makeFakeWs("p_q2", "QUEUER");
     venue.attachLobby(ws);
     type SimEventSink = { onSimEvent?: (e: { t: string; playerId: string }) => void };
     (venue.lobbyHostForTest() as unknown as SimEventSink).onSimEvent?.({
-      t: "launch-requested",
+      t: "ready-toggled",
       playerId: "p_q2",
     });
-    const entry = venue.queueEntryForTest("p_q2" as never)!;
-    // No pick yet → leftmost auto-pick.
-    expect(arena.getEntrantCards!("p_q2" as never)).toEqual([entry.offers[0]!]);
-    // Picked → exactly the pick.
+    const entry = venue.loadoutForTest("p_q2" as never)!;
+    // Offer rolled but NOT picked → plain spawn, never a silent leftmost.
+    expect(arena.getEntrantCards!("p_q2" as never)).toBeUndefined();
+    // Picked → exactly the pick, consumed by the spawn.
     venue.routeLobby(ws, encodeMessage({ t: "card-pick", roundIndex: 0, cardId: entry.offers[2]! }));
     expect(arena.getEntrantCards!("p_q2" as never)).toEqual([entry.offers[2]!]);
-    // Never queued → plain spawn.
+    expect(arena.getEntrantCards!("p_q2" as never)).toBeUndefined(); // consumed
+    // Never visited the station → plain spawn.
     expect(arena.getEntrantCards!("p_stranger" as never)).toBeUndefined();
     venue.dispose();
   });
@@ -304,12 +345,13 @@ describe("VenueHost lobby lifecycle (Pillar 1.2)", () => {
     } as unknown as ServerWebSocket<MatchSocketData>;
     venue.attachLobby(ws);
     type SimEventSink = { onSimEvent?: (e: { t: string; playerId: string }) => void };
-    (venue.lobbyHostForTest() as unknown as SimEventSink).onSimEvent?.({
-      t: "launch-requested",
-      playerId: "p_adm",
-    });
-    const offers = venue.queueEntryForTest("p_adm" as never)!.offers;
+    const sink = venue.lobbyHostForTest() as unknown as SimEventSink;
+    // Visit the loadout station (pick a card), THEN queue at the bell —
+    // two separate walk-ups, two separate meanings (2026-07-17).
+    sink.onSimEvent?.({ t: "ready-toggled", playerId: "p_adm" });
+    const offers = venue.loadoutForTest("p_adm" as never)!.offers;
     venue.routeLobby(ws, encodeMessage({ t: "card-pick", roundIndex: 0, cardId: offers[1]! }));
+    sink.onSimEvent?.({ t: "launch-requested", playerId: "p_adm" });
 
     // The arena's phase edge into countdown IS the bell (the same hook the
     // live tick fires) — drive it directly.
@@ -323,9 +365,29 @@ describe("VenueHost lobby lifecycle (Pillar 1.2)", () => {
     const admitted = frames.find((m) => m.t === "venue-admitted");
     expect(admitted).toBeDefined();
     expect(admitted!.arenaWsPath).toBe("/ws/world");
-    // The banked pick survives the dequeue and is consumed exactly once.
+    // The banked pick survives the dequeue and is consumed exactly once;
+    // the loadout entry was consumed by the admission (next visit re-rolls).
+    expect(venue.loadoutForTest("p_adm" as never)).toBeUndefined();
     expect(arena.getEntrantCards!("p_adm" as never)).toEqual([offers[1]!]);
     expect(arena.getEntrantCards!("p_adm" as never)).toBeUndefined();
+    venue.dispose();
+  });
+
+  test("the bell admits a no-pick queuer with NOTHING — clean countdown, no draft attached", () => {
+    const { venue, arena } = makeVenue(0);
+    const ws = makeFakeWs("p_bare", "BARE");
+    venue.attachLobby(ws);
+    type SimEventSink = { onSimEvent?: (e: { t: string; playerId: string }) => void };
+    // Straight to the bell — never visited the loadout station.
+    (venue.lobbyHostForTest() as unknown as SimEventSink).onSimEvent?.({
+      t: "launch-requested",
+      playerId: "p_bare",
+    });
+    arena.onRoundPhaseChange?.("drafting", "countdown");
+    expect(venue.queuedForTest()).toEqual([]);
+    // Admitted plain — the arena's ordinary drafting phase covers them
+    // next round (worldBellGate late-joiner contract).
+    expect(arena.getEntrantCards!("p_bare" as never)).toBeUndefined();
     venue.dispose();
   });
 

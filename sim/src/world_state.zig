@@ -241,8 +241,14 @@ pub const PlayerEntity = extern struct {
     /// Bridged from / to TS `state.round.scores[playerId]`.
     score: u32,
 
-    // Future field landing zone. Today it's all zeros on the wire.
-    _reserved: [4]u8 = @splat(0),
+    /// Per-round kill tally (2026-07-17, parity with TS
+    /// `RoundState.roundKills[playerId]`): kills credited to this
+    /// player THIS round — attacker known and not the victim
+    /// (void/storm/unattributed-burn deaths credit nobody). Reset
+    /// when a round's fighting phase begins; drives the time-out
+    /// most-kills resolution (world.zig timeoutWinnerIdx). Landed
+    /// in the former `_reserved` bytes — struct size unchanged.
+    round_kills: u32 = 0,
 };
 
 /// Mirrors `ProjectileEntity`.
@@ -432,6 +438,15 @@ pub const SimEventKind = enum(u32) {
     shield_popped = 8,
     explosion = 9,
     fire_hit = 10,
+    /// Launch pad fired (world.zig §8c / TS launchPad.ts). Additive tag —
+    /// player_idx_a = launched player, entity_id = pad INDEX in the host's
+    /// pad array (pads are static map data, not WorldState entities).
+    launch_pad_fired = 11,
+    /// Emission cast (world.zig §6 cast branch / TS World.ts cast —
+    /// docs/emission-engine-goal.md). player_idx_a = caster, scalar =
+    /// volley count, x/y = cast origin. Element is NOT carried — the TS
+    /// event converter resolves it from the caster's build.
+    emission_cast = 12,
 };
 
 pub const SimEvent = extern struct {

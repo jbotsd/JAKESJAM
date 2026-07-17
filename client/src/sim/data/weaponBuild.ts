@@ -10,6 +10,7 @@ import type {
   WeaponBucket,
   WeaponDefinition,
 } from "./cardTypes.js";
+import { MAX_ABILITY_SLOTS } from "./cardTypes.js";
 
 /**
  * Compute the neutral time-to-kill (seconds) for a base weapon definition.
@@ -83,6 +84,7 @@ export function createWeaponBuild(
     dashCooldownMultiplier: 1,
     cards: [],
     occupiedBuckets: [],
+    actives: [],
   };
 
   const bucketOwners = new Set<WeaponBucket>();
@@ -90,7 +92,9 @@ export function createWeaponBuild(
   const appliedCounts = new Map<string, number>();
 
   for (const card of cards) {
-    if (!card.modifier) {
+    // A card must DO something to enter the hand: a gun modifier, an
+    // active, or both (ability cards may carry either combination).
+    if (!card.modifier && !card.active) {
       continue;
     }
 
@@ -104,7 +108,18 @@ export function createWeaponBuild(
       bucketOwners.add(bucket);
     }
 
-    applyCard(build, card);
+    if (card.modifier) applyCard(build, card);
+    // Drafted actives fill slots in pick order (six-axes Layer 2). The
+    // offer roll stops offering ability cards at MAX_ABILITY_SLOTS, so the
+    // length guard here is belt-and-braces, never the enforcement site.
+    if (card.active && build.actives.length < MAX_ABILITY_SLOTS) {
+      build.actives.push({
+        cardId: card.id,
+        kind: card.active.kind,
+        cooldownMs: card.active.cooldownMs,
+        durationMs: card.active.durationMs ?? 0,
+      });
+    }
     build.cards.push(card);
   }
 

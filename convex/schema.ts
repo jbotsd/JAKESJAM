@@ -29,6 +29,19 @@ export const chaosModifierId = v.union(
   ]),
 );
 
+// Vessel Creator's 5 cosmetic channels (docs/vessel-creator-design.md §3) —
+// shared between the roomPlayers table below and convex/rooms.ts's
+// playerArgs so the wire shape only lives in one place.
+export const cosmeticsValidator = v.optional(
+  v.object({
+    accentColor: v.optional(v.string()),
+    visorColor: v.optional(v.string()),
+    palmColor: v.optional(v.string()),
+    jointColor: v.optional(v.string()),
+    auraColor: v.optional(v.string()),
+  }),
+);
+
 export default defineSchema({
   // Devlog funnel list (convex/signups.ts): email → play. One row per
   // email; re-signups bump lastSeenAt/visits.
@@ -62,6 +75,7 @@ export default defineSchema({
     name: v.string(),
     color: v.string(),
     characterId: v.string(),
+    cosmetics: cosmeticsValidator,
     ready: v.boolean(),
     connected: v.boolean(),
     joinedAt: v.number(),

@@ -59,7 +59,9 @@ describe("deathWaitCountdown — all four phases", () => {
 
 describe("draftTimerArmMs — the overlay's timer bar is never armed at zero (Pillar 0.3)", () => {
   test("mid-draft: arms the authoritative remaining time", () => {
-    expect(draftTimerArmMs("drafting", 9_400)).toBe(9_400);
+    // In-range for the current DRAFT_WINDOW_MS (8s since 2026-07-17 —
+    // remaining above the window is covered by the clamp test below).
+    expect(draftTimerArmMs("drafting", 5_400)).toBe(5_400);
   });
 
   test("remaining above the window clamps to the window", () => {

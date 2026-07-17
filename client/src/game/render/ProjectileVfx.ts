@@ -158,6 +158,18 @@ export class ProjectileVfx {
           py = y;
           return;
         }
+        // Discontinuity guard: a wrap-flagged shard (six-axes Mystery)
+        // teleports across the map rect between frames — connecting those
+        // samples would smear a screen-wide streak that reads as a hitscan
+        // laser. Any segment far longer than one frame of flight is a
+        // teleport, not motion: break the trail there.
+        const segX = x - px;
+        const segY = y - py;
+        if (segX * segX + segY * segY > 200 * 200) {
+          px = x;
+          py = y;
+          return;
+        }
         const a = (1 - i / total) * 0.5;
         trail.lineStyle(Math.max(1, radius * lang.trailWidth * (1 - i / total)), color, a);
         trail.lineBetween(px, py, x, y);

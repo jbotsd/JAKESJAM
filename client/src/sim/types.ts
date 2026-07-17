@@ -53,8 +53,9 @@ export function entityIdsOf<T>(record: Record<EntityId, T>): EntityId[] {
 /**
  * Bitfield layout, least significant bit first:
  *  0 left, 1 right, 2 up, 3 down, 4 jump,
- *  5 crouch, 6 fire, 7 ability, 8 shield,
- *  9..15 reserved.
+ *  5 crouch, 6 fire, 7 ability, 8 shield, 9 dash,
+ *  10..13 drafted ability slots 1..4 (six-axes-goal.md Layer 2),
+ *  14..15 reserved.
  */
 export type InputBitfield = number;
 
@@ -245,6 +246,39 @@ export type PlayerEntity = {
   blockJammerUntilTick?: Tick;
   bossModeUntilTick?: Tick;
   /**
+   * Ward shell (six-axes-goal.md Layer 1): set at Emission cast when the
+   * hand's Ward axis is charged. While `wardShellUntilTick > tick`, incoming
+   * damage is multiplied by EMISSION_WARD_DAMAGE_MULT before shield absorb
+   * (mitigation order: parry > shell > shield). Additive/optional — older
+   * snapshots read "no shell". Hash-mixed (buff-tick precedent).
+   */
+  wardShellUntilTick?: Tick;
+  /**
+   * Drafted actives (six-axes-goal.md Layer 2) — per-slot cooldowns + the
+   * Crimson Tithe window. All additive/optional (older snapshots read "no
+   * cooldown, no window"), all hash-mixed. Slots map to input bits 10..13
+   * in pick order; the slot's card lives in the resolved build's `actives`.
+   */
+  slot1CooldownUntilTick?: Tick;
+  slot2CooldownUntilTick?: Tick;
+  slot3CooldownUntilTick?: Tick;
+  slot4CooldownUntilTick?: Tick;
+  /** Crimson Tithe active window: while set and in the future, fired shots
+   *  carry leechFraction (weapon.ts stamps it at spawn). */
+  titheUntilTick?: Tick;
+  /** Veil of Nought window: homing and satellites cannot target this
+   *  player; firing ends it early (weapon fire clears it). */
+  veilUntilTick?: Tick;
+  /** Severing Answer stance: the next hit taken while live is negated and
+   *  returned to the attacker (capped) — consumed on use. Mitigation
+   *  order: parry > counter > ward shell > shield. */
+  counterUntilTick?: Tick;
+  /** Mid-round respawn timer: stamped when the player dies during the
+   *  fighting phase; the sim respawns them at this tick (RESPAWN_DELAY_MS)
+   *  unless sudden death is active (last-one-standing rounds never
+   *  respawn). Cleared on respawn / round boundary. Additive/optional. */
+  respawnAtTick?: Tick;
+  /**
    * Stolen Fangs (legendary defense card): banked lock charges from
    * absorbing a shielded hit. The next fired shot(s) consume one charge and
    * become homing at reduced damage (see sim/weapon.ts). Cap 2; expires
@@ -328,6 +362,25 @@ export type ProjectileEntity = {
   accelerationMultiplier?: number;
   gravityScale?: number;
   rangePx?: number;
+  /** Element-status duration multiplier applied at the hit site (Emission
+   *  cast shards carry ×2, capped per-status — docs/emission-engine-goal.md).
+   *  Absent/1 = ordinary gunfire statuses. Additive optional contract like
+   *  every extra above; prediction-only nuance: snapshot-reconciled remote
+   *  projectiles may omit it, but status OUTCOMES on players are server-
+   *  authoritative fields anyway (burnUntilTick etc.), so the divergence
+   *  window is a frame of local cosmetic prediction at most. */
+  statusScale?: number;
+  /** Six Axes shard extras (docs/six-axes-goal.md Layer 1) — spawn-time
+   *  config from the caster's resolved EmissionConfig, same additive /
+   *  statusScale contract (absent = ordinary gunfire, no axis expression).
+   *  - leechFraction: Drain — post-mitigation damage healed to the owner.
+   *  - executeBelowFrac: Technique — a hit on a player below this health
+   *    fraction finishes them.
+   *  - wrapShots: Mystery — the shard wraps the map rect instead of flying
+   *    off it. */
+  leechFraction?: number;
+  executeBelowFrac?: number;
+  wrapShots?: boolean;
   /** Tracking state set/maintained by the projectile stepper. */
   ageMs?: number;
   traveledPx?: number;
@@ -439,6 +492,19 @@ export type RoundState = {
    */
   firstBloodPlayerId?: PlayerId;
   /**
+   * Per-round kill tally (fast-respawn ruling 2026-07-17 follow-up): playerId
+   * → kills credited to that player THIS round. A kill = a `player-killed`
+   * SimEvent whose `killerId` is non-null and differs from `victimId` —
+   * suicides and attacker-less deaths (void plane, storm, unattributed burn)
+   * credit nobody. Folded in by World.ts's stepWithRuntime from the tick's
+   * events BEFORE stepRound runs; drives `decideRoundWinner`'s timeout /
+   * force-resolve rule (most kills wins). Same lifecycle as
+   * `firstBloodPlayerId`: reset when a round's fighting phase begins
+   * (countdown → fighting) and wiped on every round transition. Optional /
+   * additive — older snapshots simply omit it (treated as "no kills yet").
+   */
+  roundKills?: Record<PlayerId, number>;
+  /**
    * Sudden-death shrinking arena (design pillars doc): set true when this
    * round begins with every scored player tied at `targetScore - 1` — a
    * true decider round. While true, `World.ts`'s sudden-death storm zone
@@ -534,6 +600,53 @@ export type SimEvent =
    */
   | { t: 'first-blood'; playerId: PlayerId }
   /**
+   * Emitted when a player's Emission casts (docs/emission-engine-goal.md —
+   * Ability input at full charge; charge consumed to 0 the same tick).
+   * Drives the renderer's cast feel (seal-flash, camera punch, SFX);
+   * the volley itself is ordinary projectiles already in the snapshot.
+   * Additive wire type — old clients ignore unknown event tags.
+   */
+  | {
+      t: 'emission-cast';
+      playerId: PlayerId;
+      x: number;
+      y: number;
+      element: ElementType;
+      volleyCount: number;
+    }
+  /**
+   * Emitted when a drafted active fires (six-axes Layer 2: input bits
+   * 10..13, validated against the slot's cooldown). Drives the router's
+   * activation cue + the scene's slot flash; the effect itself is ordinary
+   * sim state (buff ticks / entities) already in the snapshot. Additive
+   * wire type — old clients ignore unknown event tags.
+   */
+  | {
+      t: 'ability-activated';
+      playerId: PlayerId;
+      slot: number;
+      kind: string;
+      x: number;
+      y: number;
+    }
+  /**
+   * Emitted when a Drain-axis Emission shard heals its caster at the hit
+   * site (six-axes-goal.md Layer 1: leech reads the SAME post-mitigation
+   * applied damage the charge fill reads). Drives the crimson-thread read —
+   * the heal itself is already in the snapshot's health. Additive wire type.
+   * fromX/fromY = victim (thread source), toX/toY = caster at heal time.
+   */
+  | {
+      t: 'emission-leech';
+      casterId: PlayerId;
+      victimId: PlayerId;
+      amount: number;
+      fromX: number;
+      fromY: number;
+      toX: number;
+      toY: number;
+    }
+  /**
    * Emitted exactly once when a round enters sudden death (every scored
    * player tied at `targetScore - 1`). Purely informational — the actual
    * shrinking-storm damage is carried by ordinary `hit-confirmed` events
@@ -587,7 +700,18 @@ export type SimEvent =
    * reaction — triggers the existing `startPrivateMatch` handoff when the
    * gating (host + all-ready) is satisfied; a no-op event otherwise.
    */
-  | { t: 'launch-requested'; playerId: PlayerId };
+  | { t: 'launch-requested'; playerId: PlayerId }
+  /**
+   * A launch pad fired (map-static geometry, `sim/launchPad.ts`): the
+   * player overlapped the pad and passed the stateless retrigger gate, so
+   * the impulse was applied this tick. Drives client SFX/VFX only — the
+   * velocity change itself is ordinary player state already in the
+   * snapshot. `entityId` is the pad's INDEX in `map.launchPads` (pads are
+   * static map data, not WorldState entities, so the index is the stable
+   * cross-host identifier). Additive wire type — old clients ignore
+   * unknown event tags (same precedent as `emission-cast`).
+   */
+  | { t: 'launch-pad-fired'; entityId: EntityId; playerId: PlayerId };
 
 export type StepResult = {
   state: WorldState;
@@ -660,6 +784,71 @@ export type PickupDefinition = {
   durationMs?: number;
 };
 
+/**
+ * Launch pad — STATIC map geometry (like platforms/pickups definitions).
+ * A player overlapping the pad's AABB gets a velocity impulse along
+ * `impulse` (see `sim/launchPad.ts` for the exact formula: additive along
+ * the pad direction with a cap, approach speed preserved — the "hitting a
+ * ramp at speed" feel).
+ *
+ * DELIBERATELY NOT part of `WorldState`: pads carry zero dynamic state.
+ * The retrigger condition is STATELESS (derived from the player's current
+ * velocity relative to the pad direction — see `launchPad.ts`), so pads
+ * never ride the snapshot, never touch `worldStateBridge.ts`'s extern
+ * layout, and imply no wire/protocol change. Both sides derive them from
+ * the mapId, exactly like platforms.
+ */
+export type LaunchPadDefinition = {
+  id: string;
+  /** Center of the pad AABB (world px). */
+  position: Vec2;
+  /** Full width/height of the pad AABB (world px). */
+  size: Vec2;
+  /** Velocity impulse (px/s) applied along this vector's direction. */
+  impulse: Vec2;
+};
+
+/**
+ * True slope — STATIC angled ground (docs/map-design.md "Diagonals & sky":
+ * the deliberately-deferred piece, greenlit 2026-07-17). Only TWO blessed
+ * grades exist, each in two directions — a fixed grammar like the fixed
+ * tier heights, never arbitrary angles:
+ *
+ *   grade "2:1" — run:rise 2:1 (rise = run / 2, ≈26.565°)
+ *   grade "1:1" — run:rise 1:1 (rise = run,     45°)
+ *
+ * `base` is the BOTTOM corner of the walkable surface; the surface ascends
+ * from it in direction `dir` over horizontal extent `run` (rise derives
+ * from the grade). The derived surface line (y-down coordinates):
+ *
+ *   dir = +1 (ascends left→right):  x ∈ [base.x, base.x + run]
+ *   dir = −1 (ascends right→left):  x ∈ [base.x − run, base.x]
+ *   surfaceY(x) = base.y + dyDx · (x − base.x),  dyDx = −grade_t · dir
+ *   (grade_t = 0.5 for "2:1", 1.0 for "1:1" — both exact in binary)
+ *
+ * ONE-WAY, walkable side up only — no slope ceilings/undersides. Collision
+ * is a foot-point grounding pass inside `stepPlayer` (player.ts /
+ * sim/src/player.zig), NOT an AABB shape: see SLOPE_* in collision.ts.
+ *
+ * DELIBERATELY NOT part of `WorldState` (launch-pad precedent): slopes are
+ * pure static geometry with zero dynamic state, so they never ride the
+ * snapshot, never touch worldStateBridge's extern layout, and imply no
+ * wire/protocol change. Both sides derive them from the mapId, exactly
+ * like platforms. They reach wasm via `world_state_set_slopes` (the
+ * launch-pad module-level pattern).
+ */
+export type SlopeDefinition = {
+  id: string;
+  /** Bottom corner of the walkable surface (world px). */
+  base: Vec2;
+  /** Horizontal extent of the surface (px, > 0). Rise = run · grade_t. */
+  run: number;
+  /** Blessed grade — "2:1" (≈26.565°) or "1:1" (45°). Nothing else. */
+  grade: '2:1' | '1:1';
+  /** Ascent direction: +1 = ascends left-to-right, −1 = right-to-left. */
+  dir: 1 | -1;
+};
+
 export type MapDefinition = {
   id: string;
   name: string;
@@ -668,6 +857,20 @@ export type MapDefinition = {
   platforms: PlatformDefinition[];
   destructibles?: DestructibleDefinition[];
   pickups?: PickupDefinition[];
+  /**
+   * Launch pads (optional / additive — maps without pads behave exactly
+   * as before). Static geometry, never in `WorldState`; stepped by
+   * `World.stepWithRuntime` §4a via `sim/launchPad.ts`.
+   */
+  launchPads?: LaunchPadDefinition[];
+  /**
+   * True slopes (optional / additive — maps without slopes step
+   * byte-identically to before: the slope pass AND the slope-aware
+   * sub-step guard are both gated on `slopes.length > 0`). Static
+   * geometry, never in `WorldState`; resolved inside `stepPlayer` via
+   * the collision cache (`buildStaticCache`'s `slopes` argument).
+   */
+  slopes?: SlopeDefinition[];
   /** Arena theme key from `ARENA_THEMES`. Defaults to voidVessel when omitted. */
   arenaTheme?:
     | "voidVessel"

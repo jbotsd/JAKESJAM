@@ -147,6 +147,61 @@ describe("produceDeathShards", () => {
   });
 });
 
+describe("ascension denial (emission-engine-goal P2)", () => {
+  /** A killer with a real enough entity for resolvePlayerBuild. */
+  function stateWithKiller(cards: string[]): WorldState {
+    return {
+      tick: 50,
+      players: {
+        v: { x: 200, y: 800, alive: false, cards: [], characterId: "balanced", weaponId: "starter-pistol" },
+        k: { x: 500, y: 800, alive: true, cards, characterId: "balanced", weaponId: "starter-pistol" },
+      },
+    } as unknown as WorldState;
+  }
+  const KILLED_BY_K = [{ t: "player-killed", victimId: "v", killerId: "k" }];
+
+  test("a void-hand killer DENIES the soul: short life, never absorbs", () => {
+    const st = makeDeathFxState();
+    setDeathFxTarget(st, 1000, 500);
+    const state = stateWithKiller(["void-fracture"]);
+    noteDeathEvents(state, KILLED_BY_K, st);
+    const soul = st.souls.find((s) => s.active)!;
+    expect(soul.denied).toBe(true);
+
+    const out: SoulRenderModel[] = [];
+    // Mid-life: the denied stage, and it stays AT the death point — no
+    // journey toward the motif, absorbT never fires.
+    expect(produceDeathFx(state, 500, st, out)).toBe(1);
+    expect(out[0]!.stage).toBe(3); // SOUL_DENIED
+    expect(out[0]!.absorbT).toBe(0);
+    expect(Math.abs(out[0]!.y - 800)).toBeLessThan(60); // never journeys away
+    // Denied souls are gone in under a second — no journey, no absorption.
+    expect(produceDeathFx(state, 400, st, out)).toBe(0);
+  });
+
+  test("a non-void killer's victim still ascends (denied=false, full arc)", () => {
+    const st = makeDeathFxState();
+    setDeathFxTarget(st, 1000, 500);
+    const state = stateWithKiller(["molten-core"]);
+    noteDeathEvents(state, KILLED_BY_K, st);
+    expect(st.souls.find((s) => s.active)!.denied).toBe(false);
+
+    const out: SoulRenderModel[] = [];
+    produceDeathFx(state, 100, st, out);
+    expect(out[0]!.stage).toBe(SOUL_RELEASE);
+    produceDeathFx(state, 2500, st, out); // deep into the arc → absorbing
+    expect(out[0]!.stage).toBe(SOUL_ABSORB);
+    expect(out[0]!.absorbT).toBeGreaterThan(0);
+  });
+
+  test("environmental kills always ascend", () => {
+    const st = makeDeathFxState();
+    const state = fakeState(1, { v: { x: 0, y: 0 } });
+    noteDeathEvents(state, [{ t: "player-killed", victimId: "v", killerId: null }], st);
+    expect(st.souls.find((s) => s.active)!.denied).toBe(false);
+  });
+});
+
 describe("produceSpawnFx", () => {
   test("alive transition and new player both trigger the upload; dead does not", () => {
     const st = makeDeathFxState();

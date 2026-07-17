@@ -17,6 +17,8 @@ Every feature has to support at least one. If it does not, cut it or redesign it
 
 One starter pistol, a pile of orthogonal mutators. The picker between rounds (`sim/data/cards.ts`, resolved by `weaponBuild.ts`, rolled by `sim/round.ts` `enterDrafting`) is the entire content engine. **Everyone escalates every round** — winners included. Catch-up is richer offer weights for non-winners (`sim/draftWeights.ts`), not silence for the lead. By round three the gun should look like a joke; by round five a war crime. New content means new orthogonal axes, not new base weapons. Snowball is bounded by `maxStacks` / unique / TTK caps — never by denying the winner the picker.
 
+The same hand also composes the **Emission** (`docs/emission-engine-goal.md`): `abilityCharge` fills from combat, and the Ability input (E / EMIT) releases the hand's own volley — element, impacts, bounce/homing identity, amplified under a below-a-kill damage budget. **Composed from the draft, never picked from a menu** — every card is a dual-purpose decision (gun AND cast), so the picker's decision weight multiplies without a second selection surface.
+
 ### 2. Death is clean recovery — the draft is the choice
 
 Death is quick, clean, and rewarding (respawn, juice). **It is not the primary picker trigger.** The most interesting decision is the **round-end draft** after the hold: every roster player (alive or mid-respawn) sees three offers. Pickups stay deleted — all build progression flows through that phase. See Escalation Engine goal.

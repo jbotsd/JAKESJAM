@@ -34,7 +34,8 @@ export type AudioPlayer = {
       | "pickup"
       | "card"
       | "parry"
-      | "shield-break",
+      | "shield-break"
+      | "dash",
     params?: {
       element?: string;
       charge?: number;
@@ -60,7 +61,7 @@ export type SimEventRouterDeps = {
   safeShake: (durationMs: number, intensity: number) => void;
 
   /** Float a damage number above the victim's rig. */
-  spawnDamageNumber: (victimId: PlayerId | string, damage: number) => void;
+  spawnDamageNumber: (victimId: PlayerId | string, damage: number, headshot?: boolean) => void;
 
   /** Render-time impact blast at the player's last-known position. */
   spawnBlastAtPlayer: (
@@ -72,6 +73,18 @@ export type SimEventRouterDeps = {
   /** P3 cinematic kill moment (flash + zoom-punch + bloom). No-op when
    *  cinematics are disabled (Canvas fallback / ?fx=off). */
   killCinematic: (victimId: PlayerId | string) => void;
+
+  /** Emission cast feel (emission-engine-goal P1/P2 UI contract): the
+   *  scene draws the caster's dominant Coptic seal flashing at the vessel
+   *  and punches the camera toward the cast. Optional — scenes without
+   *  the full juice stack (Tutorial) simply omit it. */
+  emissionCastFeel?: (
+    casterId: PlayerId | string,
+    x: number,
+    y: number,
+    element: string,
+  ) => void;
+
 
   /** Resolve procedural-audio params (element/charge) for a shot by its
    *  firing player — the scene looks these up from sim state. */
@@ -159,7 +172,7 @@ export class SimEventRouter {
         if (event.victimId === d.localPlayerId) {
           d.safeShake(80, 0.008);
         }
-        d.spawnDamageNumber(event.victimId, event.damage);
+        d.spawnDamageNumber(event.victimId, event.damage, event.headshot);
         d.spawnBlastAtPlayer(event.victimId, 22, event.damage);
         const victimRig = d.playerRigs.get(event.victimId);
         if (victimRig) {
@@ -264,6 +277,61 @@ export class SimEventRouter {
         announce("sudden-death");
         d.safeShake(150, 0.01);
         break;
+      case "ready-toggled":
+        // Hangout mode only — light confirmation cue; the hangout scene's
+        // own totem visual carries the real feedback.
+        audio.play("pickup");
+        break;
+      case "launch-requested":
+        // Hangout mode only — no router-level feedback; the scene
+        // transition itself (real match handoff) is the feedback.
+        break;
+      case "emission-cast":
+        // The seal presses (Emission Engine P1/P2). Weight without a new
+        // vocabulary — the heavy card cue CARRIES THE HAND'S ELEMENT (a
+        // fire hand's cast sounds like fire; the procedural synth already
+        // nuances cues by element), plus a real shake. The scene layers
+        // the seal-flash + camera punch via emissionCastFeel (same split
+        // as killCinematic vs the router's kill handling).
+        audio.play("card", { heavy: true, element: event.element });
+        d.safeShake(180, 0.012);
+        d.emissionCastFeel?.(event.playerId, event.x, event.y, event.element);
+        break;
+      case "ability-activated": {
+        // A drafted active fired (six-axes Layer 2). The router owns the
+        // audio moment; the action-bar slot flash + buff chips carry the
+        // sustained read (legibility law: every press has an instant cue).
+        audio.play("card", { heavy: false });
+        if (event.playerId === d.localPlayerId) {
+          d.safeShake(60, 0.004);
+        }
+        break;
+      }
+      case "emission-leech": {
+        // Drain axis (six-axes-goal.md Layer 1): a shard fed its caster.
+        // The crimson-thread world read lives in StatusVfxController (it
+        // consumes the same event, beside its chain-arc sibling); the
+        // router's share is the CASTER-side audio — a soft pickup cue for
+        // the local leecher only. Victim-side hit audio already played
+        // from hit-confirmed.
+        if (event.casterId === d.localPlayerId) {
+          audio.play("pickup");
+        }
+        break;
+      }
+      case "launch-pad-fired": {
+        // Static map geometry threw a player (sim/launchPad.ts). Reuse the
+        // dash whoosh — no bespoke launch SFX asset exists, and we never
+        // synthesize new audio (hard rule); dash is the closest recorded
+        // "body flung" read. TODO(audio): rip a dedicated launch cue.
+        audio.play("dash", { intensity: 1 });
+        // Kick VFX at the launched body so the impulse reads as a THROW.
+        d.spawnBlastAtPlayer(event.playerId, 20, 8);
+        if (event.playerId === d.localPlayerId) {
+          d.safeShake(60, 0.004);
+        }
+        break;
+      }
       default: {
         // Exhaustiveness check.
         const _exhaustive: never = event;

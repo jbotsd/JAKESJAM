@@ -6,14 +6,13 @@
 // patches in EntityId order for cross-runtime determinism.
 
 import { aabbOverlap, type AABB } from "./collision.js";
+import { playerHitboxAABB } from "./player.js";
 import { EntityId, PlayerId } from "./types.js";
 import type {
   FireEntity,
   PlayerEntity,
   SimEvent,
 } from "./types.js";
-
-const PLAYER_RADIUS = 18;
 
 export type StepFirePatchesResult = {
   /** Surviving fire patches (replaces state.firePatches). */
@@ -71,12 +70,11 @@ export function stepFirePatches(
       if (patch.ownerId !== null && pid === patch.ownerId) continue;
       const p = players[pid]!;
       if (!p.alive) continue;
-      const playerAABB: AABB = {
-        x: p.x - PLAYER_RADIUS,
-        y: p.y - PLAYER_RADIUS,
-        w: PLAYER_RADIUS * 2,
-        h: PLAYER_RADIUS * 2,
-      };
+      // Real body box (see player.ts's playerHitboxAABB doc) — was a
+      // 36×36 square 20px shorter than the standing body, so a fire patch
+      // only reaching a standing player's feet/lower legs could miss
+      // entirely despite the player visibly standing in the flames.
+      const playerAABB: AABB = playerHitboxAABB(p);
       if (!aabbOverlap(patchAABB, playerAABB)) continue;
       events.push({
         t: "hit-confirmed",

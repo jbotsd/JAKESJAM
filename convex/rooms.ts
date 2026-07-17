@@ -3,7 +3,7 @@ import { v } from "convex/values";
 import type { Doc, Id } from "./_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "./_generated/server";
 import { assignGameServer } from "./matchmaker";
-import { chaosModifierId } from "./schema";
+import { chaosModifierId, cosmeticsValidator } from "./schema";
 import type { ChaosModifierId } from "./chaosIds";
 
 const MAX_PLAYERS = 10;
@@ -15,6 +15,7 @@ const playerArgs = {
   name: v.string(),
   color: v.string(),
   characterId: v.string(),
+  cosmetics: cosmeticsValidator,
 };
 
 const roomSettingsArgs = {
@@ -45,6 +46,7 @@ export const create = mutation({
       name: cleanName(args.name),
       color: args.color,
       characterId: args.characterId,
+      cosmetics: args.cosmetics,
       ready: false,
       connected: true,
       joinedAt: now,
@@ -129,6 +131,7 @@ export const join = mutation({
         name: cleanName(args.name),
         color: args.color,
         characterId: args.characterId,
+        cosmetics: args.cosmetics,
         connected: true,
         lastSeenAt: now,
       });
@@ -146,6 +149,7 @@ export const join = mutation({
       name: cleanName(args.name),
       color: args.color,
       characterId: args.characterId,
+      cosmetics: args.cosmetics,
       ready: false,
       connected: true,
       joinedAt: now,
@@ -242,7 +246,7 @@ export const leave = mutation({
 // Validated server-side so a tampered client can't pick a missing map.
 // "gen:<seed>" (any non-negative integer seed) is also allowed — those
 // expand deterministically via mapGen.ts on both client and server.
-const ALLOWED_MAP_IDS = ["boxworks", "boxworks-mini", "boxworks-tower"] as const;
+const ALLOWED_MAP_IDS = ["boxworks", "boxworks-mini", "boxworks-tower", "skyseam"] as const;
 const GEN_MAP_ID_RE = /^gen:\d+$/;
 const DEFAULT_START_MAP_ID = "boxworks-mini" as const;
 

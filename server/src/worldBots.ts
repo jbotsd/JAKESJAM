@@ -14,6 +14,8 @@
 import { InputBit } from "@net/protocol.ts";
 import type { MatchHost } from "./matchHost.ts";
 import { BOT_ID_PREFIX } from "@sim/botId.ts";
+import { EMISSION_CHARGE_MAX } from "@sim/constants.ts";
+import { resolvePlayerBuild } from "@sim/weapon.ts";
 import { PlayerId, type MapDefinition, type PlayerEntity, type WorldState } from "@sim/types.ts";
 import {
   buildArenaNav,
@@ -56,6 +58,13 @@ type BotState = {
   aimY: number;
   parryReadyAt: number;
   draftPickAt: number | null;
+  /** Pending Emission cast time (null = not armed). Same humanized-delay
+   *  shape as draftPickAt — armed when charge fills with a target in
+   *  range, fired on expiry (docs/emission-engine-goal.md bot policy). */
+  castAt: number | null;
+  /** Pending drafted-active presses per slot (six-axes Layer 2) — same
+   *  humanized-delay shape as castAt, one timer per action-bar slot. */
+  slotPressAt: (number | null)[];
   lastDraftRound: number;
   lastX: number;
   lastY: number;
@@ -149,6 +158,8 @@ export class WorldBots {
         aimY: 0,
         parryReadyAt: 0,
         draftPickAt: null,
+        castAt: null,
+        slotPressAt: [null, null, null, null],
         lastDraftRound: -1,
         lastX: 0,
         lastY: 0,
@@ -387,6 +398,55 @@ export class WorldBots {
       bot.rand() < BOT_TUNING.dashOffenseChance[bot.slideTier]
     ) {
       keys |= InputBit.Dash;
+    }
+
+    // Emission cast (docs/emission-engine-goal.md bot policy): at full
+    // charge with a live target in range, press Ability after a humanizing
+    // delay — bots must not be the only ones NOT testing the cast path.
+    // The same bit doubles as the legacy defensive parry below full charge
+    // (World.ts's cast-then-parry fall-through), so nothing was removed.
+    if (me.abilityCharge >= EMISSION_CHARGE_MAX && dist <= 600) {
+      if (bot.castAt === null) {
+        bot.castAt = nowMs + 1000 + bot.rand() * 2000;
+      } else if (nowMs >= bot.castAt) {
+        keys |= InputBit.Ability;
+        bot.castAt = null;
+        bot.jumpHeldPrev = (keys & InputBit.Jump) !== 0;
+        return { keys, aimX: foe.x, aimY: foe.y };
+      }
+    } else if (me.abilityCharge < EMISSION_CHARGE_MAX) {
+      bot.castAt = null;
+    }
+
+    // Drafted actives (six-axes Layer 2 bot policy): press a ready slot
+    // when a target is in range, with a humanizing delay per slot — bots
+    // draft ability cards under normal weights, so they must exercise the
+    // press path too. v1 heuristic is kind-agnostic (Crimson Tithe wants
+    // exactly this: target in range, about to deal damage).
+    // cards-array guard: minimal test fixtures omit it; no cards, no actives.
+    const actives = Array.isArray(me.cards) ? resolvePlayerBuild(me).actives : [];
+    // Lazy-init keeps hand-built BotState fixtures (tests) valid.
+    const slotPressAt = (bot.slotPressAt ??= [null, null, null, null]);
+    for (let slot = 0; slot < actives.length && slot < 4; slot++) {
+      const cdUntil =
+        slot === 0
+          ? me.slot1CooldownUntilTick
+          : slot === 1
+            ? me.slot2CooldownUntilTick
+            : slot === 2
+              ? me.slot3CooldownUntilTick
+              : me.slot4CooldownUntilTick;
+      const ready = cdUntil === undefined || cdUntil <= state.tick;
+      if (!ready || dist > 520) {
+        slotPressAt[slot] = null;
+        continue;
+      }
+      if (slotPressAt[slot] == null) {
+        slotPressAt[slot] = nowMs + 600 + bot.rand() * 1800;
+      } else if (nowMs >= slotPressAt[slot]!) {
+        keys |= 1 << (10 + slot);
+        slotPressAt[slot] = null;
+      }
     }
 
     // Projectile threat → parry / hop / shield (parry less often = more open).

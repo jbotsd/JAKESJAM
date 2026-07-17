@@ -77,7 +77,9 @@ describe("stepRound", () => {
     expect(result.state.countdownRemainingMs).toBe(ROUND_TIME_LIMIT_MS);
   });
 
-  test("last-alive resolution: kill one of two → round-over, winner +1, round-end event", () => {
+  test("last-alive resolution (SUDDEN DEATH): kill one of two → round-over, winner +1, round-end event", () => {
+    // Fast-respawn ruling 2026-07-17: last-alive only resolves the round in
+    // sudden death — ordinary rounds respawn the fallen and run the clock.
     const players = {
       a: mkPlayer("a", { alive: true, health: 100 }),
       b: mkPlayer("b", { alive: false, health: 0 }),
@@ -88,6 +90,7 @@ describe("stepRound", () => {
       scores: { [A]:0, [B]:0 },
       roundIndex: 0,
       winnerPlayerId: null,
+      suddenDeathActive: true,
     };
     const result = stepRound({ state, players, dtMs: 16, targetScore: 3 });
     expect(result.state.phase).toBe("round-over");
@@ -172,7 +175,9 @@ describe("stepRound", () => {
     expect(result.state.countdownRemainingMs).toBe(ROUND_TIME_LIMIT_MS - 16);
   });
 
-  test("mutual KO: winnerId is null and no scores change", () => {
+  test("mutual KO (SUDDEN DEATH): winnerId is null and no scores change", () => {
+    // A wiped field only resolves the round in sudden death — in ordinary
+    // rounds everyone is just mid-respawn (fast-respawn ruling 2026-07-17).
     const players = {
       a: mkPlayer("a", { alive: false, health: 0 }),
       b: mkPlayer("b", { alive: false, health: 0 }),
@@ -183,6 +188,7 @@ describe("stepRound", () => {
       scores: { [A]:0, [B]:0 },
       roundIndex: 0,
       winnerPlayerId: null,
+      suddenDeathActive: true,
     };
     const result = stepRound({ state, players, dtMs: 16, targetScore: 3 });
     expect(result.state.phase).toBe("round-over");
@@ -228,8 +234,171 @@ describe("stepRound", () => {
     expect(healthResult.state.winnerPlayerId).toBe(B);
   });
 
+  // ── Time-out kill-tally resolution (fast-respawn follow-up 2026-07-17) ──
+  // With mid-round respawns, ordinary rounds resolve by TIMER — and the
+  // buzzer must reward the round's work (kills), not the freshest health
+  // bar. Regression context: a freshly-respawned victim at 100hp used to
+  // beat the player who killed them.
+
+  const timeoutState = (roundKills?: Record<PlayerId, number>): RoundState => ({
+    phase: "fighting",
+    countdownRemainingMs: 1, // drops to 0 this tick → forceResolve
+    scores: { [A]: 0, [B]: 0 },
+    roundIndex: 0,
+    winnerPlayerId: null,
+    roundKills,
+  });
+
+  test("time-out kill tally: most kills beats most health (respawned victim can't out-heal the killer)", () => {
+    const players = {
+      a: mkPlayer("a", { alive: true, health: 10 }), // the killer, worn down
+      b: mkPlayer("b", { alive: true, health: 100 }), // fresh respawn
+    };
+    const result = stepRound({
+      state: timeoutState({ [A]: 1 }),
+      players,
+      dtMs: 16,
+      targetScore: 3,
+    });
+    expect(result.state.phase).toBe("round-over");
+    expect(result.state.winnerPlayerId).toBe(A);
+    expect(result.state.scores[A]).toBe(1);
+    expect(result.state.scores[B]).toBe(0);
+  });
+
+  test("time-out kill tally: strictly more kills wins even from the grave", () => {
+    const players = {
+      a: mkPlayer("a", { alive: false, health: 0 }),
+      b: mkPlayer("b", { alive: true, health: 100 }),
+    };
+    const result = stepRound({
+      state: timeoutState({ [A]: 2, [B]: 1 }),
+      players,
+      dtMs: 16,
+      targetScore: 3,
+    });
+    expect(result.state.winnerPlayerId).toBe(A);
+  });
+
+  test("time-out kill tally: on a kill TIE, an alive leader beats a dead one", () => {
+    const players = {
+      a: mkPlayer("a", { alive: false, health: 0 }),
+      b: mkPlayer("b", { alive: true, health: 25 }),
+    };
+    const result = stepRound({
+      state: timeoutState({ [A]: 1, [B]: 1 }),
+      players,
+      dtMs: 16,
+      targetScore: 3,
+    });
+    expect(result.state.winnerPlayerId).toBe(B);
+  });
+
+  test("time-out kill tally: alive tied leaders tiebreak by health, then lowest id", () => {
+    // b outguns a on health among the tied kill-leaders; c's full bar is
+    // irrelevant (zero kills gates them out entirely).
+    const playersHealthTiebreak = {
+      a: mkPlayer("a", { alive: true, health: 30 }),
+      b: mkPlayer("b", { alive: true, health: 80 }),
+      c: mkPlayer("c", { alive: true, health: 100 }),
+    };
+    const r1 = stepRound({
+      state: timeoutState({ [A]: 1, [B]: 1 }),
+      players: playersHealthTiebreak,
+      dtMs: 16,
+      targetScore: 3,
+    });
+    expect(r1.state.winnerPlayerId).toBe(B);
+    // Equal health among tied alive leaders → lowest id (existing
+    // convention).
+    const playersIdTiebreak = {
+      b: mkPlayer("b", { alive: true, health: 50 }),
+      a: mkPlayer("a", { alive: true, health: 50 }),
+    };
+    const r2 = stepRound({
+      state: timeoutState({ [A]: 1, [B]: 1 }),
+      players: playersIdTiebreak,
+      dtMs: 16,
+      targetScore: 3,
+    });
+    expect(r2.state.winnerPlayerId).toBe(A);
+  });
+
+  test("time-out kill tally: all tied leaders dead → lowest id among them", () => {
+    const players = {
+      a: mkPlayer("a", { alive: false, health: 0 }),
+      b: mkPlayer("b", { alive: false, health: 0 }),
+    };
+    const result = stepRound({
+      state: timeoutState({ [A]: 1, [B]: 1 }),
+      players,
+      dtMs: 16,
+      targetScore: 3,
+    });
+    expect(result.state.winnerPlayerId).toBe(A);
+  });
+
+  test("time-out with zero kills and nobody alive → draw (null winner, no score)", () => {
+    // Non-sudden-death wipe right at the bell: nothing to reward.
+    const players = {
+      a: mkPlayer("a", { alive: false, health: 0 }),
+      b: mkPlayer("b", { alive: false, health: 0 }),
+    };
+    const result = stepRound({
+      state: timeoutState(undefined),
+      players,
+      dtMs: 16,
+      targetScore: 3,
+    });
+    expect(result.state.phase).toBe("round-over");
+    expect(result.state.winnerPlayerId).toBeNull();
+    expect(result.state.scores[A]).toBe(0);
+    expect(result.state.scores[B]).toBe(0);
+  });
+
+  test("kill tally lifecycle: carried through fighting, reset when the next fighting phase begins", () => {
+    const players = { [A]: mkPlayer("a"), [B]: mkPlayer("b") };
+    // Mid-fighting tick: the scaffold carries the tally forward untouched.
+    const fighting: RoundState = {
+      phase: "fighting",
+      countdownRemainingMs: ROUND_TIME_LIMIT_MS,
+      scores: { [A]: 0, [B]: 0 },
+      roundIndex: 0,
+      winnerPlayerId: null,
+      roundKills: { [A]: 1 },
+    };
+    const mid = stepRound({ state: fighting, players, dtMs: 16, targetScore: 3 });
+    expect(mid.state.roundKills).toEqual({ [A]: 1 });
+    // Legacy round-over → countdown wipes it…
+    const roundOver: RoundState = {
+      phase: "round-over",
+      countdownRemainingMs: 1,
+      scores: { [A]: 1, [B]: 0 },
+      roundIndex: 0,
+      winnerPlayerId: A,
+      roundKills: { [A]: 1 },
+    };
+    const toCountdown = stepRound({ state: roundOver, players, dtMs: 16, targetScore: 3 });
+    expect(toCountdown.state.phase).toBe("countdown");
+    expect(toCountdown.state.roundKills).toBeUndefined();
+    // …and countdown → fighting starts the new round's tally empty even if
+    // a stale tally somehow survived.
+    const countdown: RoundState = {
+      phase: "countdown",
+      countdownRemainingMs: 1,
+      scores: { [A]: 1, [B]: 0 },
+      roundIndex: 1,
+      winnerPlayerId: null,
+      roundKills: { [A]: 1 },
+    };
+    const toFighting = stepRound({ state: countdown, players, dtMs: 16, targetScore: 3 });
+    expect(toFighting.state.phase).toBe("fighting");
+    expect(toFighting.state.roundKills).toBeUndefined();
+  });
+
   test("score-to-target → matchComplete:true is returned", () => {
-    // 'a' is one win away from victory (target 3, currently 2). Last-alive tick.
+    // 'a' is one win away from victory (target 3, currently 2). Last-alive
+    // tick — which resolves because a match point IS a sudden-death round.
     const players = {
       a: mkPlayer("a", { alive: true }),
       b: mkPlayer("b", { alive: false, health: 0 }),
@@ -240,6 +409,7 @@ describe("stepRound", () => {
       scores: { [A]:2, [B]:0 },
       roundIndex: 2,
       winnerPlayerId: null,
+      suddenDeathActive: true,
     };
     const result = stepRound({ state, players, dtMs: 16, targetScore: 3 });
     expect(result.state.scores[A]).toBe(3);

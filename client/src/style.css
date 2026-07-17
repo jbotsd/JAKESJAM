@@ -876,10 +876,59 @@ button.btn-danger:hover:not(:disabled) {
   left: calc(50% + 8px);
   border-color: rgba(255, 209, 102, 0.7);
 }
+/* Emission cast (docs/emission-engine-goal.md) — dormant until the meter
+   fills; the ready state is the ONLY lit state (one point of light earning
+   its keep, not an always-on button). */
+.tc-btn--emission {
+  left: calc(50% + 108px);
+  border-color: rgba(60, 121, 240, 0.25);
+  color: rgba(247, 251, 255, 0.35);
+}
+.tc-btn--emission-ready {
+  border-color: rgba(107, 152, 244, 0.9);
+  color: #f7fbff;
+  background: rgba(31, 58, 95, 0.8);
+  box-shadow: 0 0 20px rgba(60, 121, 240, 0.55);
+}
 .tc-btn--active {
   transform: scale(0.92);
   background: rgba(60, 121, 240, 0.28);
   box-shadow: 0 0 18px rgba(60, 121, 240, 0.5);
+}
+/* Drafted-active slots (six-axes Layer 2): appear only as drafted (0-4
+   present), continuing the bottom row right of EMIT. Dormant = dim
+   (cooling); ready = lit crimson (the Drain register introduced the
+   family; slots keep one shared ready style). Slightly smaller than the
+   primary trio — earned keys, not core verbs. */
+.tc-btn--slot {
+  width: 64px;
+  height: 64px;
+  border-color: rgba(220, 38, 38, 0.25);
+  color: rgba(247, 251, 255, 0.4);
+  font-size: 15px;
+}
+.tc-btn--slot1 { left: calc(50% + 204px); }
+.tc-btn--slot2 { left: calc(50% + 276px); }
+.tc-btn--slot3 { left: calc(50% + 348px); }
+.tc-btn--slot4 { left: calc(50% + 420px); }
+/* Narrow landscape (phones): a straight row of four runs off an ~844px
+   viewport (50% + 420 + 64 > width) — fold slots into a 2×2 block right
+   of EMIT instead. Verified by the four-viewport screenshot pass. */
+@media (orientation: landscape) and (max-width: 900px) {
+  .tc-btn--slot {
+    width: 56px;
+    height: 56px;
+  }
+  .tc-btn--slot1 { left: calc(50% + 200px); }
+  .tc-btn--slot2 { left: calc(50% + 264px); }
+  .tc-btn--slot3 { left: calc(50% + 200px); bottom: calc(84px + var(--tc-safe-b)); }
+  .tc-btn--slot4 { left: calc(50% + 264px); bottom: calc(84px + var(--tc-safe-b)); }
+}
+.tc-btn--slot-ready {
+  border-color: rgba(248, 113, 113, 0.9);
+  color: #fff5f5;
+  background: rgba(76, 18, 18, 0.8);
+  box-shadow: 0 0 20px rgba(220, 38, 38, 0.55);
 }
 
 /* ── PORTRAIT (mobile-first) — game up top, controls in a bottom band ── */
@@ -923,6 +972,21 @@ button.btn-danger:hover:not(:disabled) {
   .tc-btn--dash {
     left: calc(50% + 14px);
   }
+  .tc-btn--emission {
+    left: calc(50% + 104px);
+  }
+  /* Portrait: the bottom row has no width to spare — slots stack in a
+     column above EMIT instead (still thumb-reachable, never over the
+     joystick zones). */
+  .tc-btn--slot {
+    width: 60px;
+    height: 60px;
+    left: calc(50% + 112px);
+  }
+  .tc-btn--slot1 { bottom: calc(var(--tc-band, 34vh) + 52px + var(--tc-safe-b)); }
+  .tc-btn--slot2 { bottom: calc(var(--tc-band, 34vh) + 120px + var(--tc-safe-b)); }
+  .tc-btn--slot3 { bottom: calc(var(--tc-band, 34vh) + 188px + var(--tc-safe-b)); }
+  .tc-btn--slot4 { bottom: calc(var(--tc-band, 34vh) + 256px + var(--tc-safe-b)); }
 }
 
 @keyframes rotate-nudge {
@@ -1919,7 +1983,7 @@ button.btn-danger:hover:not(:disabled) {
   letter-spacing: 0.5em;
 }
 
-/* the gnostic seal turns slowly behind the logo */
+/* the vessel seal sits quietly behind the logo */
 .splash-title {
   position: relative;
   padding: 26px 0 6px;
@@ -1933,7 +1997,7 @@ button.btn-danger:hover:not(:disabled) {
   width: min(560px, 88vw);
   aspect-ratio: 1;
   transform: translate(-50%, -50%);
-  background: url("/img/seal-gnostic.png") center / contain no-repeat;
+  background: url("/img/seal-vessel.svg") center / contain no-repeat;
   /* Static, not perpetually spinning — ui-shell-goal.md: "No perpetual
      large animations on HOME that steal GPU from world preview." */
   opacity: 0.4;
@@ -2289,7 +2353,7 @@ html.ident-done .splash-cta-blink { animation-delay: 1.3s, 1.4s; }
 .is-c2 { stroke: rgba(39, 80, 162, 0.55); stroke-width: 2; }
 .is-c4 { stroke: rgba(255, 236, 170, 0.8); }
 .is-dot { fill: rgba(255, 236, 170, 0); }
-.is-tri { stroke: rgba(39, 80, 162, 0.7); stroke-width: 2.5; }
+.is-gem { stroke: rgba(39, 80, 162, 0.7); stroke-width: 2.5; }
 .is-spokes line { stroke: rgba(137, 127, 105, 0.4); stroke-width: 1.5; }
 .is-ticks line { stroke: rgba(137, 127, 105, 0.8); opacity: 0; }
 .is-diamonds polygon {
@@ -2312,7 +2376,9 @@ html.ident-done .splash-cta-blink { animation-delay: 1.3s, 1.4s; }
 .is-c2 { stroke-dasharray: 2325; stroke-dashoffset: 2325; }
 .is-c3 { stroke-dasharray: 1257; stroke-dashoffset: 1257; }
 .is-c4 { stroke-dasharray: 377; stroke-dashoffset: 377; }
-.is-tri { stroke-dasharray: 3330; stroke-dashoffset: 3330; }
+/* crystal diamond perimeter: 4 × 340√2 ≈ 1923 (dasharray 1924 → each
+   quarter-offset step lands exactly on one edge) */
+.is-gem { stroke-dasharray: 1924; stroke-dashoffset: 1924; }
 .is-spokes line { stroke-dasharray: 200; stroke-dashoffset: 200; }
 
 /* dot ignites instantly at 0 — the monad precedes everything */
@@ -2355,10 +2421,11 @@ html.ident-done .splash-cta-blink { animation-delay: 1.3s, 1.4s; }
   100% { stroke-dashoffset: 0; }
 }
 
-/* triangle: three strokes through the mid build (10–13.4s ≈ 35.8–48%) */
-.run .is-tri { animation: draw-tri 27.93s linear forwards; }
-@keyframes draw-tri {
-  0%, 35.8% { stroke-dashoffset: 3330; }
+/* crystal: strokes through the mid build (10–13.4s ≈ 35.8–48%) —
+   v1 fallback; the v3 dr-gem schedule below overrides this */
+.run .is-gem { animation: draw-gem 27.93s linear forwards; }
+@keyframes draw-gem {
+  0%, 35.8% { stroke-dashoffset: 1924; }
   48% { stroke-dashoffset: 0; }
   100% { stroke-dashoffset: 0; }
 }
@@ -2542,23 +2609,29 @@ html.ident-done .splash-cta-blink { animation-delay: 1.3s, 1.4s; }
   24%, 100% { opacity: 0; }
 }
 
-/* Barbelo triad: teal chords, one vertex bearing the Autogenes loop */
-.is-tri { stroke: url(#liqTeal); stroke-width: 3;
-  stroke-dasharray: 3330; stroke-dashoffset: 3330; }
-.run .is-tri { animation: dr-tri 27.93s linear forwards; }
-@keyframes dr-tri {
-  0%, 50.13% { stroke-dashoffset: 3330; }
-  52% { stroke-dashoffset: 2220; }   /* chord I */
-  52.6% { stroke-dashoffset: 2220; } /* the hand pauses */
-  54.5% { stroke-dashoffset: 1110; } /* chord II */
-  55.1% { stroke-dashoffset: 1110; }
-  57% { stroke-dashoffset: 0; }      /* chord III */
+/* The crystal: teal diamond cut edge by edge (four facets, the hand
+   pausing between cuts), east vertex bearing the maker's loop. Same
+   choreography window the old centerpiece owned (14–15.9s ≈ 50.13–57%).
+   Each facet = 481 dash units (perimeter 1924 ÷ 4), so every quarter
+   offset step completes exactly one edge: top→east→south→west→top. */
+.is-gem { stroke: url(#liqTeal); stroke-width: 3;
+  stroke-dasharray: 1924; stroke-dashoffset: 1924; }
+.run .is-gem { animation: dr-gem 27.93s linear forwards; }
+@keyframes dr-gem {
+  0%, 50.13% { stroke-dashoffset: 1924; }
+  51.6% { stroke-dashoffset: 1443; }  /* facet I: top → east */
+  52.1% { stroke-dashoffset: 1443; }  /* the hand pauses */
+  53.6% { stroke-dashoffset: 962; }   /* facet II: east → south */
+  54.1% { stroke-dashoffset: 962; }
+  55.5% { stroke-dashoffset: 481; }   /* facet III: south → west */
+  56% { stroke-dashoffset: 481; }
+  57% { stroke-dashoffset: 0; }       /* facet IV closes the crystal */
   100% { stroke-dashoffset: 0; }
 }
 
-.is-tri-loop { stroke: url(#liqTeal); stroke-width: 2.5;
+.is-gem-loop { stroke: url(#liqTeal); stroke-width: 2.5;
   stroke-dasharray: 101; stroke-dashoffset: 101; }
-.run .is-tri-loop { animation: dr-loop 27.93s linear forwards; }
+.run .is-gem-loop { animation: dr-loop 27.93s linear forwards; }
 @keyframes dr-loop {
   0%, 57.2% { stroke-dashoffset: 101; }
   58.4% { stroke-dashoffset: 0; }
@@ -2843,4 +2916,12 @@ html:not(.ident-done) .splash-screen { overflow: hidden; }
   background: #030408;
   opacity: 0;
   pointer-events: none;
+}
+
+/* Footage subtraction A6 (docs/footage-removal-list.md): the OS arrow
+   floating over combat read as desktop noise on tape. In-arena the mouse
+   IS the aim — crosshair everywhere the canvas is the surface (same read
+   the kiosk mode already uses); DOM chrome keeps its own cursors. */
+#game-root canvas {
+  cursor: crosshair;
 }

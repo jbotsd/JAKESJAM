@@ -1,12 +1,14 @@
 // Server-native private room client (no Convex). Talks to bun /private/*.
 
 import { readGameServerUrlOverride } from "../../net/worldClient.js";
+import type { VesselCosmetics } from "../../sim/types.js";
 
 export type PrivateLobbyPlayer = {
   playerId: string;
   name: string;
   color: string;
   characterId: string;
+  cosmetics?: VesselCosmetics;
   ready: boolean;
   lastSeenAt: number;
 };
@@ -59,6 +61,7 @@ export class PrivateRoomClient {
     characterId: string;
     mapId?: string;
     chaosModifierIds?: string[];
+    cosmetics?: VesselCosmetics;
   }): Promise<PrivateLobbySnapshot> {
     return post("/private/create", args);
   }
@@ -69,6 +72,7 @@ export class PrivateRoomClient {
     name: string;
     color: string;
     characterId: string;
+    cosmetics?: VesselCosmetics;
   }): Promise<PrivateLobbySnapshot> {
     return post("/private/join", args);
   }
@@ -108,6 +112,15 @@ export class PrivateRoomClient {
 
   start(code: string, playerId: string): Promise<PrivateLobbySnapshot> {
     return post("/private/start", { code, playerId });
+  }
+
+  /** A4: join token for the room's hangout (party) world — same-room
+   *  membership required server-side (mintHangoutToken). */
+  hangoutToken(
+    code: string,
+    playerId: string,
+  ): Promise<{ matchId: string; token: string; wsPath: string }> {
+    return post("/private/hangout-token", { code, playerId });
   }
 
   buildWsUrl(matchId: string, token: string): string {

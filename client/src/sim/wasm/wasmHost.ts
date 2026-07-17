@@ -27,7 +27,8 @@
 //
 // Tests: see `__tests__/wasmHost.test.ts` (Phase A3).
 
-import type { WorldState } from "../types.js";
+import type { LaunchPadDefinition, SlopeDefinition, WorldState } from "../types.js";
+import { deriveSlopeStatics } from "../collision.js";
 import type { WasmSimEvent } from "./worldStateBridge.js";
 import { resolveFireConfigsViaZig, type FireConfigResolverExports } from "./fireConfigShared.js";
 
@@ -246,6 +247,32 @@ export class WasmHost {
   setArenaBounds(ceilingY: number | null, killPlaneY: number): void {
     void import("./worldWasmBackend.js").then((m) =>
       m.setWorldArenaBounds(ceilingY, killPlaneY),
+    );
+  }
+
+  /** Mirror the map's static launch pads to the world backend (world.zig
+   *  §8c — module-level like the arena bounds above, zero WorldState
+   *  bytes). Pad ARRAY ORDER is the wire identity (`launch-pad-fired`
+   *  entityId = index), so callers pass `map.launchPads` verbatim. An
+   *  empty array clears the previous match's pads. */
+  setLaunchPads(pads: ReadonlyArray<LaunchPadDefinition>): void {
+    const sliced = pads.slice();
+    void import("./worldWasmBackend.js").then((m) =>
+      m.setWorldLaunchPads(sliced),
+    );
+  }
+
+  /** Mirror the map's true slopes to the world backend, PRE-DERIVED via
+   *  collision.ts deriveSlopeStatics (single derivation site — the f64
+   *  bits reaching wasm are identical to the TS slope pass's). Module-
+   *  level in player.zig like the launch pads; zero WorldState bytes.
+   *  An empty array clears. The step_player prediction path does NOT
+   *  depend on this call — playerWasmBackend re-writes slopes per call
+   *  from the collision cache — this feeds the step_world path. */
+  setSlopes(slopes: ReadonlyArray<SlopeDefinition>): void {
+    const derived = deriveSlopeStatics(slopes);
+    void import("./worldWasmBackend.js").then((m) =>
+      m.setWorldSlopes(derived),
     );
   }
 

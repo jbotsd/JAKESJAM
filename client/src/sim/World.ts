@@ -35,17 +35,33 @@ import {
   JETPACK_MAX_FUEL,
   KILL_PLANE_MARGIN_PX,
   DASH_RECOVERY_MS,
+  PLAYER_BODY_WIDTH,
+  PLAYER_BODY_HEIGHT,
   type PlayerMovementMemory,
 } from "./player.js";
 import { buildFireEntity, stepDestructibles } from "./destructible.js";
 import { stepFirePatches } from "./fire.js";
 import { stepSuddenDeathStorm } from "./suddenDeath.js";
 import { clearExpiredBuffs, stepPickups } from "./pickup.js";
+import { stepLaunchPads } from "./launchPad.js";
 import {
   STOLEN_FANGS_MAX_CHARGES,
   STOLEN_FANGS_CHARGE_EXPIRY_MS,
+  EMISSION_CHARGE_MAX,
+  EMISSION_FILL_PER_DAMAGE_DEALT,
+  EMISSION_FILL_PER_DAMAGE_TAKEN,
+  ABILITY_STEP_RANGE_PX,
+  ABILITY_COUNTER_RETURN_CAP,
+  RESPAWN_DELAY_MS,
 } from "./constants.js";
-import { stepProjectile, makeHitSweepScratch, fillHitSweepScratch, type HitSweepScratch } from "./projectile.js";
+import { stepProjectile, spawnProjectile, makeHitSweepScratch, fillHitSweepScratch, type HitSweepScratch } from "./projectile.js";
+import {
+  resolveEmission,
+  EMISSION_BURN_CAP_MS,
+  EMISSION_FREEZE_CAP_MS,
+  EMISSION_WARD_DAMAGE_MULT,
+  EMISSION_STRIDE_SURGE_MS,
+} from "./data/emission.js";
 import { CowRecord } from "./cowRecord.js";
 import { nextFloat } from "./rng.js";
 import {
@@ -68,6 +84,8 @@ import {
 import {
   buildStaticCache,
   platformToAABB,
+  centerToAABB,
+  aabbOverlap,
   type StaticCollisionCache,
 } from "./collision.js";
 import {
@@ -85,6 +103,7 @@ import type {
   InputBitfield,
   InputFrame,
   MapDefinition,
+  PlayerEntity,
   PlayerSpawnInfo,
   ProjectileEntity,
   SatelliteEntity,
@@ -140,6 +159,9 @@ export function assignSpawnPoints(
 }
 
 const FireBit = 1 << 6;
+/** InputBit.Ability — the Emission cast (full charge) with legacy-parry
+ *  fall-through below full (see the cast branch in stepWithRuntime). */
+const AbilityBit = 1 << 7;
 
 /**
  * Per-tick scratch state the WorldState doesn't carry. The host (server or
@@ -241,6 +263,11 @@ export function createRuntime(map: MapDefinition, mode: WorldMode = "combat"): W
       map.platforms,
       Math.max(1, map.size.x),
       Math.max(1, map.size.y),
+      // True slopes ride the collision cache into stepPlayer (both the TS
+      // native pass and the wasm step_player backend, which re-packs the
+      // cache — including slopes — per call). Prediction gets them for
+      // free: clientLoop builds its runtime via this same createRuntime.
+      map.slopes ?? [],
     ),
     scratchSortedProjectileIds: [],
     scratchHitSweep: makeHitSweepScratch(),
@@ -273,6 +300,15 @@ export function syncWorldStaticsToWasm(map: MapDefinition): void {
     computeCeilingClampY(map),
     map.size.y > 0 ? map.size.y + KILL_PLANE_MARGIN_PX : 0,
   );
+  // Launch pads — static map geometry, same host-set pattern as the arena
+  // bounds (module-level in world.zig, zero WorldState bytes). Always
+  // called (empty array clears the previous match's pads).
+  wasmHost.setLaunchPads(map.launchPads ?? []);
+  // True slopes — same module-level host-set pattern (player.zig). Always
+  // called (empty array clears the previous match's slopes). Feeds the
+  // step_world path; the step_player backend re-writes slopes per call
+  // from the collision cache regardless.
+  wasmHost.setSlopes(map.slopes ?? []);
 }
 
 /**
@@ -594,11 +630,19 @@ export function stepWithRuntime(
         { x: aimX, y: aimY },
         effDtMs,
         allocId,
-        { chaos: chaosProfile, rngState: runtimeRngState },
+        { chaos: chaosProfile, rngState: runtimeRngState, currentTick: state.tick },
       );
       runtimeRngState = fireResult.rngState;
       nextEntity = fireResult.player;
       if (fireResult.fired) {
+        // Veil of Nought breaks on firing (six-axes doctrine: veiling is a
+        // window, never a state — shooting while unmade re-makes you).
+        if (
+          nextEntity.veilUntilTick !== undefined &&
+          nextEntity.veilUntilTick > state.tick
+        ) {
+          nextEntity = { ...nextEntity, veilUntilTick: undefined };
+        }
         events.push({
           t: "shot-fired",
           playerId: pid,
@@ -631,10 +675,253 @@ export function stepWithRuntime(
       }
     }
 
+    // Emission cast (Emission Engine P1 — docs/emission-engine-goal.md).
+    // The Ability rising edge attempts the cast FIRST: at full charge it
+    // fires (radial volley composed from the hand via resolveEmission,
+    // charge consumed to 0, edge consumed — no parry this press). Below
+    // full charge the edge falls through to the legacy tryStartParry so
+    // bot defensive behavior (worldBots presses Ability vs projectile
+    // threats) is untouched. Humans stay unable to reach the parry per
+    // CLAUDE.md because the client only SENDS the Ability bit at full
+    // predicted charge (see the scenes' input assembly) — the sim itself
+    // stays identity-blind. Hangout: charge never fills there (no combat
+    // events), but the guard is explicit per doctrine, not emergent.
+    let castConsumedAbilityEdge = false;
+    const abilityEdge =
+      (currKeys & AbilityBit) !== 0 && (prevKeys & AbilityBit) === 0;
+    if (
+      abilityEdge &&
+      nextEntity.alive &&
+      fightingPhase &&
+      !hangoutMode &&
+      nextEntity.abilityCharge >= EMISSION_CHARGE_MAX
+    ) {
+      const emission = resolveEmission(build);
+      for (let i = 0; i < emission.volleyCount; i++) {
+        // Deterministic radial fan; lut trig per sim determinism rules.
+        const angle = (i / emission.volleyCount) * 2 * Math.PI;
+        const shard = spawnProjectile(allocId(), {
+          ownerId: pid,
+          origin: { x: nextEntity.x, y: nextEntity.y - 30 },
+          aimAngle: angle,
+          speed: emission.speed,
+          damage: emission.damagePerShard,
+          lifetimeMs: emission.lifetimeMs,
+          radius: emission.radiusPx,
+          shape: emission.shape,
+          pathing: emission.pathing,
+          element: emission.element,
+        });
+        shard.bouncesRemaining = emission.bounces;
+        shard.impact = emission.impact;
+        shard.impactRadiusPx = emission.impactRadiusPx;
+        shard.homingStrength = emission.homingStrength;
+        shard.rangePx = emission.rangePx;
+        shard.statusScale = emission.statusScale;
+        // Six Axes shard extras (docs/six-axes-goal.md Layer 1) — set only
+        // when the hand charges the axis, absent otherwise (statusScale's
+        // additive contract). Consumed at the hit site / projectile step.
+        if (emission.drain.leechFraction > 0) {
+          shard.leechFraction = emission.drain.leechFraction;
+        }
+        if (emission.technique.executeBelowFrac > 0) {
+          shard.executeBelowFrac = emission.technique.executeBelowFrac;
+        }
+        if (emission.mystery.wrapShots) {
+          shard.wrapShots = true;
+        }
+        projectilesCow.set(shard.id, shard);
+      }
+      nextEntity = { ...nextEntity, abilityCharge: 0 };
+      // Ward axis: the cast leaves a shell on the vessel — incoming damage
+      // is halved at the projectile-mitigation site while it lives (order:
+      // parry > shell > shield).
+      if (emission.ward.fieldMs > 0) {
+        const shellTicks = Math.ceil(emission.ward.fieldMs / Math.max(1, dtMs));
+        nextEntity = {
+          ...nextEntity,
+          wardShellUntilTick: (state.tick + 1 + shellTicks) as Tick,
+        };
+      }
+      // Stride axis: the cast refunds spent air movement — the exact reset
+      // landing performs (player.ts), written into the same host-side
+      // memory the next player step reads. No new ABI: the wasm player
+      // step already receives these counters every tick.
+      if (emission.stride.dashReset) {
+        const mem = runtime.movement.get(pid);
+        if (mem) {
+          mem.airJumpsUsed = 0;
+          mem.dashUsedInAir = 0;
+        }
+      }
+      // E-coupling cast effects (doctrine #7): Shadow Step held → the cast
+      // grants a brief speed surge (existing buff tick); Veil held → a
+      // short self-veil on release (mystery.markMs carries the duration).
+      const heldStepCard = build.actives.some((a) => a.kind === "shadow-step");
+      if (heldStepCard) {
+        const surgeTicks = Math.ceil(EMISSION_STRIDE_SURGE_MS / Math.max(1, dtMs));
+        nextEntity = {
+          ...nextEntity,
+          speedBoostUntilTick: (state.tick + 1 + surgeTicks) as Tick,
+        };
+      }
+      if (emission.mystery.markMs > 0) {
+        const veilTicks = Math.ceil(emission.mystery.markMs / Math.max(1, dtMs));
+        nextEntity = {
+          ...nextEntity,
+          veilUntilTick: (state.tick + 1 + veilTicks) as Tick,
+        };
+      }
+      castConsumedAbilityEdge = true;
+      events.push({
+        t: "emission-cast",
+        playerId: pid,
+        x: nextEntity.x,
+        y: nextEntity.y,
+        element: emission.element,
+        volleyCount: emission.volleyCount,
+      });
+    }
+
+    // Drafted actives (six-axes-goal.md Layer 2): input bits 10..13 press
+    // action-bar slots 1..4 in pick order. Rising-edge + alive + fighting +
+    // !hangout + cooldown expired → activate. Effects are ordinary buff
+    // ticks / entities; the cooldown lives on the entity (hash-mixed,
+    // delta-synced) so prediction and authority agree.
+    for (let slot = 0; slot < build.actives.length && slot < 4; slot++) {
+      const slotBit = 1 << (10 + slot);
+      const slotEdge =
+        (currKeys & slotBit) !== 0 && (prevKeys & slotBit) === 0;
+      if (!slotEdge) continue;
+      if (!nextEntity.alive || !fightingPhase || hangoutMode) continue;
+      const active = build.actives[slot]!;
+      const cdUntil =
+        slot === 0
+          ? nextEntity.slot1CooldownUntilTick
+          : slot === 1
+            ? nextEntity.slot2CooldownUntilTick
+            : slot === 2
+              ? nextEntity.slot3CooldownUntilTick
+              : nextEntity.slot4CooldownUntilTick;
+      if (cdUntil !== undefined && cdUntil > state.tick) continue;
+
+      let activated = false;
+      switch (active.kind) {
+        case "crimson-tithe": {
+          // 3s window: fired shots carry leechFraction (weapon.ts stamps
+          // it at spawn — the SAME machinery as a Drain-hand Emission).
+          const durTicks = Math.ceil(active.durationMs / Math.max(1, dtMs));
+          nextEntity = {
+            ...nextEntity,
+            titheUntilTick: (state.tick + 1 + durTicks) as Tick,
+          };
+          activated = true;
+          break;
+        }
+        case "shadow-step": {
+          // Blink toward aim: farthest collision-free landing within range,
+          // sampled backward from the maximum in fixed steps (deterministic,
+          // no RNG). Passing THROUGH walls is the fantasy ("the path
+          // between"); landing inside one is the only forbidden outcome. A
+          // fully-blocked blink does nothing and must not burn its cooldown
+          // (legibility law: a press that does nothing is a dead press).
+          const dx0 = aimX - nextEntity.x;
+          const dy0 = aimY - nextEntity.y;
+          const dLen = Math.sqrt(dx0 * dx0 + dy0 * dy0);
+          const dirX = dLen > 0.001 ? dx0 / dLen : 1;
+          const dirY = dLen > 0.001 ? dy0 / dLen : 0;
+          for (let d = ABILITY_STEP_RANGE_PX; d >= 24; d -= 12) {
+            const cx = nextEntity.x + dirX * d;
+            const cy = nextEntity.y + dirY * d;
+            if (
+              cx < PLAYER_BODY_WIDTH / 2 ||
+              cx > runtime.map.size.x - PLAYER_BODY_WIDTH / 2 ||
+              cy < PLAYER_BODY_HEIGHT / 2 ||
+              cy > runtime.map.size.y - PLAYER_BODY_HEIGHT / 2
+            ) {
+              continue;
+            }
+            const box = centerToAABB(cx, cy, PLAYER_BODY_WIDTH, PLAYER_BODY_HEIGHT);
+            let blocked = false;
+            for (const plat of runtime.map.platforms) {
+              if (aabbOverlap(box, platformToAABB(plat))) {
+                blocked = true;
+                break;
+              }
+            }
+            if (!blocked) {
+              nextEntity = { ...nextEntity, x: cx, y: cy };
+              activated = true;
+              break;
+            }
+          }
+          break;
+        }
+        case "veil-of-nought": {
+          // Unmade: homing + satellites cannot target this player while the
+          // window lives; firing ends it early (see the post-fire clear).
+          const durTicks = Math.ceil(active.durationMs / Math.max(1, dtMs));
+          nextEntity = {
+            ...nextEntity,
+            veilUntilTick: (state.tick + 1 + durTicks) as Tick,
+          };
+          activated = true;
+          break;
+        }
+        case "severing-answer": {
+          // Counter-stance: the next hit taken in the window is negated and
+          // returned, capped (consumed at the hit site — mitigation order
+          // parry > counter > ward shell > shield).
+          const durTicks = Math.ceil(active.durationMs / Math.max(1, dtMs));
+          nextEntity = {
+            ...nextEntity,
+            counterUntilTick: (state.tick + 1 + durTicks) as Tick,
+          };
+          activated = true;
+          break;
+        }
+        case "shelter-seal": {
+          // v1 = self-bulwark (six-axes risk-register fallback, recorded):
+          // the caster gains the Phase-1 ward shell for the window — halved
+          // damage, WARD chip, sapphire rings, all existing machinery. The
+          // PLACED ward-field entity is the recorded upgrade, gated on
+          // playtest demand (it needs a new entity kind + wire surface).
+          const durTicks = Math.ceil(active.durationMs / Math.max(1, dtMs));
+          nextEntity = {
+            ...nextEntity,
+            wardShellUntilTick: (state.tick + 1 + durTicks) as Tick,
+          };
+          activated = true;
+          break;
+        }
+      }
+      if (!activated) continue;
+
+      const cdTicks = Math.ceil(active.cooldownMs / Math.max(1, dtMs));
+      const cdTick = (state.tick + 1 + cdTicks) as Tick;
+      nextEntity =
+        slot === 0
+          ? { ...nextEntity, slot1CooldownUntilTick: cdTick }
+          : slot === 1
+            ? { ...nextEntity, slot2CooldownUntilTick: cdTick }
+            : slot === 2
+              ? { ...nextEntity, slot3CooldownUntilTick: cdTick }
+              : { ...nextEntity, slot4CooldownUntilTick: cdTick };
+      events.push({
+        t: "ability-activated",
+        playerId: pid,
+        slot,
+        kind: active.kind,
+        x: nextEntity.x,
+        y: nextEntity.y,
+      });
+    }
+
     // Parry + shield. Both run regardless of round phase so the shield can
     // recharge between rounds; tryStartParry is gated on alive internally.
-    // Parry trigger is rising-edge from prevKeys → currKeys (InputBit.Ability).
-    {
+    // Parry trigger is rising-edge from prevKeys → currKeys (InputBit.Ability)
+    // — skipped when the Emission cast consumed this press (above).
+    if (!castConsumedAbilityEdge) {
       const parryResult = tryStartParry(nextEntity, currKeys, prevKeys, state.tick, {
         dtMs,
         cooldownMs: PARRY_COOLDOWN_MS_DEFAULT * build.parryCooldownMultiplier,
@@ -916,6 +1203,7 @@ export function stepWithRuntime(
     state.round.phase,
     effDtMs,
     allocId,
+    state.tick,
   );
   nextSatellites = satStep.satellites;
   for (const p of satStep.projectiles) {
@@ -986,6 +1274,28 @@ export function stepWithRuntime(
     const result = stepProjectile(proj, projCtx);
     rngState = result.rngState;
 
+    // Mystery axis (six-axes-goal.md Layer 1): wrap-flagged shards cross
+    // the map rect and reappear on the opposite edge instead of flying off
+    // it. Position-only fold — velocity, lifetime, and range accounting
+    // untouched; interior statics still block/bounce normally.
+    if (result.projectile && proj.wrapShots) {
+      const mapW = runtime.map.size.x;
+      const mapH = runtime.map.size.y;
+      let wx = result.projectile.x;
+      let wy = result.projectile.y;
+      if (mapW > 0) {
+        if (wx < 0) wx += mapW;
+        else if (wx > mapW) wx -= mapW;
+      }
+      if (mapH > 0) {
+        if (wy < 0) wy += mapH;
+        else if (wy > mapH) wy -= mapH;
+      }
+      if (wx !== result.projectile.x || wy !== result.projectile.y) {
+        result.projectile = { ...result.projectile, x: wx, y: wy };
+      }
+    }
+
     // Drain events: damage on hit-confirmed, slow on player-slowed.
     for (const ev of result.events) {
       if (ev.t === "hit-confirmed" && players[ev.victimId]) {
@@ -1001,6 +1311,71 @@ export function stepWithRuntime(
         // future projectile source that bypasses the hit sweep must not
         // quietly reopen player damage in the lobby.
         if (victim.alive && !hangoutMode) {
+          // Ward shell (six-axes-goal.md Layer 1): a post-cast shell halves
+          // incoming damage BEFORE the shield absorbs it. Order is
+          // parry > shell > shield — parry zeroes regardless, so applying
+          // the shell to the pre-mitigation number here is order-exact.
+          // Scope: the projectile path (direct + AOE) — bash/DoT keep their
+          // own sites untouched in Layer 1.
+          // Severing Answer (six-axes Layer 2): counter-stance consumes the
+          // hit — negated, and the raw (post-chaos, pre-shell) damage is
+          // returned to the attacker, capped. Order: parry > counter >
+          // shell > shield — a live parry wins the frame, so the stance
+          // only answers when no parry is up.
+          const parryLive =
+            victim.parryActiveUntilTick !== undefined &&
+            victim.parryActiveUntilTick > nextTick;
+          const counterLive =
+            victim.counterUntilTick !== undefined &&
+            victim.counterUntilTick > nextTick;
+          if (counterLive && !parryLive) {
+            players[ev.victimId] = { ...victim, counterUntilTick: undefined };
+            const counterTarget =
+              proj.ownerId !== null && proj.ownerId !== ev.victimId
+                ? players[proj.ownerId]
+                : undefined;
+            if (counterTarget && counterTarget.alive) {
+              const returned = Math.min(ABILITY_COUNTER_RETURN_CAP, scaledDamage);
+              const tHealth = Math.max(0, counterTarget.health - returned);
+              players[proj.ownerId!] = {
+                ...counterTarget,
+                health: tHealth,
+                alive: tHealth > 0,
+              };
+              if (tHealth === 0) {
+                events.push({
+                  t: "player-killed",
+                  victimId: proj.ownerId!,
+                  killerId: ev.victimId,
+                  cause: "projectile",
+                });
+              }
+              // The returned damage is a real hit: it flows through
+              // hit-confirmed so charge fill / kill feed / audio all read
+              // it with zero bespoke plumbing.
+              events.push({
+                t: "hit-confirmed",
+                victimId: proj.ownerId!,
+                damage: returned,
+                sourceProjectileId: null,
+                attackerId: ev.victimId,
+              });
+            }
+            // The answered read: the parry-deflect flash at the stancer.
+            events.push({
+              t: "parry-deflected",
+              playerId: ev.victimId,
+              projectileId: ev.sourceProjectileId,
+            });
+            continue; // original hit suppressed entirely
+          }
+          const wardActive =
+            victim.wardShellUntilTick !== undefined &&
+            victim.wardShellUntilTick > nextTick;
+          const intoMitigation = wardActive
+            ? scaledDamage * EMISSION_WARD_DAMAGE_MULT
+            : scaledDamage;
+          ev.damage = intoMitigation;
           // Run parry/shield mitigation BEFORE applying damage. Pass the live
           // projectile so the parry arc check has direction info; falls back to
           // null when the source projectile already despawned this tick.
@@ -1011,7 +1386,7 @@ export function stepWithRuntime(
           const mitigation = tryDeflectDamage(
             victim,
             sourceProj,
-            scaledDamage,
+            intoMitigation,
             nextTick,
             {
               mirrorShield: victimBuild.mirrorShield,
@@ -1102,6 +1477,18 @@ export function stepWithRuntime(
             // TODO: when `armor` is added to PlayerEntity, multiply
             // finalDamage by 1 / (1 - 0.5 * armor). For now: no-op.
           }
+          // Technique axis (six-axes-goal.md Layer 1): an execute-flagged
+          // shard finishes a player already below the threshold fraction of
+          // spawn health (100, rosterOps.ts) — never from above it, so the
+          // no-100-0 law holds by construction.
+          const executeFrac = proj.executeBelowFrac ?? 0;
+          if (
+            executeFrac > 0 &&
+            postPlayer.health > 0 &&
+            postPlayer.health < executeFrac * 100
+          ) {
+            finalDamage = Math.max(finalDamage, postPlayer.health);
+          }
           ev.damage = finalDamage;
           // First-blood wager: this is a real, non-self, attacker-attributed
           // hit landing during the fighting phase — claim it if nobody has
@@ -1132,8 +1519,14 @@ export function stepWithRuntime(
             });
           }
           // Fire: 3-second burn DoT at damage * 0.4 per second. Tick-quantized.
+          // Emission cast shards carry statusScale ×2, hard-capped per status
+          // (docs/emission-engine-goal.md) — burn's cap equals its base 3s,
+          // so the cast's fire identity reads through impact size + coverage
+          // rather than a longer burn; freeze genuinely doubles (≤2s).
+          const statusScale = proj.statusScale ?? 1;
           if (element === "fire") {
-            const burnTicks = Math.ceil((3 * 1000) / Math.max(1, effDtMs));
+            const burnMs = Math.min(3 * 1000 * statusScale, EMISSION_BURN_CAP_MS);
+            const burnTicks = Math.ceil(burnMs / Math.max(1, effDtMs));
             nextVictim = {
               ...nextVictim,
               burnUntilTick: (nextTick + burnTicks) as Tick,
@@ -1141,9 +1534,10 @@ export function stepWithRuntime(
               burnTickLastApplied: nextTick,
             };
           }
-          // Ice: 1-second freeze at 0.5x movement.
+          // Ice: 1-second freeze at 0.5x movement (Emission-scaled, capped).
           if (element === "ice") {
-            const freezeTicks = Math.ceil((1 * 1000) / Math.max(1, effDtMs));
+            const freezeMs = Math.min(1 * 1000 * statusScale, EMISSION_FREEZE_CAP_MS);
+            const freezeTicks = Math.ceil(freezeMs / Math.max(1, effDtMs));
             nextVictim = {
               ...nextVictim,
               freezeUntilTick: (nextTick + freezeTicks) as Tick,
@@ -1151,6 +1545,41 @@ export function stepWithRuntime(
             };
           }
           players[ev.victimId] = nextVictim;
+
+          // Drain axis (six-axes-goal.md Layer 1): a leech-flagged shard
+          // heals its caster a fraction of the post-mitigation damage that
+          // actually landed — the SAME number the charge fill reads (one
+          // damage model). Self-damage never leeches; the heal is monotone
+          // and capped at spawn health (never reduces, so a boss-mode body
+          // above 100 is safe). Chain-lightning secondaries deliberately
+          // excluded — the chain is a derived hit, not the shard.
+          const leechFrac = proj.leechFraction ?? 0;
+          if (
+            leechFrac > 0 &&
+            proj.ownerId !== null &&
+            proj.ownerId !== ev.victimId
+          ) {
+            const leechCaster = players[proj.ownerId];
+            if (leechCaster && leechCaster.alive) {
+              const healed = Math.min(
+                Math.max(100, leechCaster.health),
+                leechCaster.health + finalDamage * leechFrac,
+              );
+              if (healed > leechCaster.health) {
+                events.push({
+                  t: "emission-leech",
+                  casterId: proj.ownerId,
+                  victimId: ev.victimId,
+                  amount: healed - leechCaster.health,
+                  fromX: nextVictim.x,
+                  fromY: nextVictim.y,
+                  toX: leechCaster.x,
+                  toY: leechCaster.y,
+                });
+                players[proj.ownerId] = { ...leechCaster, health: healed };
+              }
+            }
+          }
 
           // Lightning: chain half damage to the nearest OTHER alive player
           // within radius. Depth 1 only (no recursion). Bypasses parry/shield
@@ -1320,7 +1749,12 @@ export function stepWithRuntime(
             events.push({
               t: "player-killed",
               victimId: ev.victimId,
-              killerId: null,
+              // The blast IS attributed: destructible.ts stamps the
+              // triggering projectile's owner as `attackerId` on the
+              // hit-confirmed (barrels exclude their owner from the AOE, so
+              // this is never a self-kill). Was hardcoded null — the killer
+              // got no credit (kill feed, camera kick, round kill tally).
+              killerId: ev.attackerId ?? null,
               cause: "explosion",
             });
           }
@@ -1357,7 +1791,13 @@ export function stepWithRuntime(
             events.push({
               t: "player-killed",
               victimId: ev.victimId,
-              killerId: null,
+              // Fire patches carry their igniter: fire.ts stamps
+              // `patch.ownerId` as `attackerId` on the hit-confirmed
+              // (patches never damage their owner, so never a self-kill).
+              // Was hardcoded null — destructible.ts even documents that
+              // patches "inherit the originating shooter as ownerId for
+              // kill credit", and this site dropped that credit.
+              killerId: ev.attackerId ?? null,
               cause: "fire",
             });
           }
@@ -1432,6 +1872,40 @@ export function stepWithRuntime(
     }
   }
 
+  // 4a. Launch pads: STATIC map geometry (runtime.map.launchPads — never in
+  //     WorldState, both sides derive them from mapId like platforms). Player
+  //     overlaps a pad → velocity impulse from OUTSIDE stepPlayer, additive
+  //     only (see sim/launchPad.ts for the formula + the stateless retrigger
+  //     gate). TICK-ORDER POSITION: after movement, mirroring the pickup
+  //     section — the boosted velocity integrates on the NEXT tick's
+  //     stepPlayer, never mid-tick. Zig mirror: sim/src/world.zig §8c (which
+  //     sits directly after ITS player-physics pass — Zig's pickup pass runs
+  //     pre-movement, a pre-existing quarantined divergence, so "directly
+  //     post-movement" is the invariant both engines share). Runs in hangout
+  //     too (fightingPhase is pinned true there) — pads are a movement toy,
+  //     no damage path.
+  if (fightingPhase) {
+    const launchPadDefs = runtime.map.launchPads;
+    if (launchPadDefs !== undefined && launchPadDefs.length > 0) {
+      const padResult = stepLaunchPads({ pads: launchPadDefs, players });
+      for (const [pid_, patched] of Object.entries(padResult.players)) {
+        const pid = pid_ as PlayerId;
+        players[pid] = patched;
+        // A pad launch is NOT a jump — mark the variable-jump-height cut as
+        // consumed so stepPlayer doesn't halve the rising velocity next tick
+        // (it fires on any vy<0 with jump released). Same outside-the-step
+        // memory poke the dash uses for its upward lunge (player.ts) and the
+        // bash uses to end a dash (§1z above). Zig mirror: world.zig §8c
+        // sets player_movement[i].jump_cut_applied the same way.
+        const mem = runtime.movement.get(pid);
+        if (mem) mem.jumpCutApplied = true;
+      }
+      for (const ev of padResult.events) {
+        events.push(ev);
+      }
+    }
+  }
+
   // 4b. Fire-hazard chaos modifier: every `intervalMs` of in-sim time, drop a
   //     fresh fire patch at a random arena location. Position rolls use the
   //     seeded RNG so replays land patches at the same spots. Only fires
@@ -1472,6 +1946,47 @@ export function stepWithRuntime(
     nextFireHazardTimerMs = undefined;
   }
 
+  // 4b. Emission charge fill (Emission Engine P0 — docs/emission-engine-goal.md).
+  // ONE site by doctrine: every damage source this tick (projectile, chain,
+  // bash, satellite, destructible blast, fire patch, storm) has already
+  // drained its FINAL post-mitigation, post-chaos damage into `events` as
+  // hit-confirmed — parried/shielded hits are suppressed before the push,
+  // so this pass never credits refused damage. Attacker credit requires a
+  // non-self attackerId; the victim always credits the taken side (the
+  // killing blow included — participation is participation, and charge
+  // persists through death by doctrine). Hangout emits no combat events,
+  // but the guard keeps a future lobby damage source from quietly charging
+  // meters. Charge mutates ONLY here, at cast, and at match creation —
+  // any other writer is a bug (goal-doc invariant).
+  if (!hangoutMode) {
+    for (const ev of events) {
+      if (ev.t !== "hit-confirmed" || ev.damage <= 0) continue;
+      const victim = players[ev.victimId];
+      if (victim) {
+        players[ev.victimId] = {
+          ...victim,
+          abilityCharge: Math.min(
+            EMISSION_CHARGE_MAX,
+            victim.abilityCharge + ev.damage * EMISSION_FILL_PER_DAMAGE_TAKEN,
+          ),
+        };
+      }
+      const attackerId = ev.attackerId ?? null;
+      if (attackerId !== null && attackerId !== ev.victimId) {
+        const attacker = players[attackerId];
+        if (attacker) {
+          players[attackerId] = {
+            ...attacker,
+            abilityCharge: Math.min(
+              EMISSION_CHARGE_MAX,
+              attacker.abilityCharge + ev.damage * EMISSION_FILL_PER_DAMAGE_DEALT,
+            ),
+          };
+        }
+      }
+    }
+  }
+
   // Buff cleanup: revert expired pickup-buff fields to undefined so renderers
   // and combat code see "no buff" cleanly.
   let cleanedPlayers = clearExpiredBuffs(players, nextTick);
@@ -1492,6 +2007,29 @@ export function stepWithRuntime(
     events.push({ t: "first-blood", playerId: firstBloodAwardThisTick });
   }
 
+  // Per-round kill tally: fold this tick's qualifying player-killed events
+  // into the round-state input BEFORE stepping the round machine, so a
+  // buzzer-beater kill counts in this very tick's timeout resolution
+  // (decideRoundWinner's most-kills rule). A kill = killerId non-null and
+  // not the victim — void/storm/unattributed-burn deaths and self-kills
+  // credit nobody. Single deterministic increment point: `events` is the
+  // tick's full accumulated stream in sim order, and pure counting is
+  // order-independent anyway. round.ts's `next` scaffold carries the tally
+  // forward; the countdown→fighting transition resets it (same lifecycle
+  // as firstBloodPlayerId).
+  if (!hangoutMode) {
+    let tally: Record<PlayerId, number> | null = null;
+    for (const ev of events) {
+      if (ev.t !== "player-killed") continue;
+      if (ev.killerId === null || ev.killerId === ev.victimId) continue;
+      tally ??= { ...(roundStateForStep.roundKills ?? {}) };
+      tally[ev.killerId] = (tally[ev.killerId] ?? 0) + 1;
+    }
+    if (tally !== null) {
+      roundStateForStep = { ...roundStateForStep, roundKills: tally };
+    }
+  }
+
   // 5. Round state machine. Delegate to the orchestrator when present;
   //    fall back to the inline stepRound call for tests that don't wire
   //    up a runtime orchestrator.
@@ -1507,8 +2045,11 @@ export function stepWithRuntime(
     roundResult = { state: roundStateForStep, events: [], matchComplete: false };
   } else if (runtime.orchestrator) {
     // Sync the orchestrator from the world state before stepping, so any
-    // external mutations (server card picks) are reflected.
-    runtime.orchestrator.syncFromWorld(state);
+    // external mutations (server card picks) are reflected. Sync with the
+    // FOLDED round state (`roundStateForStep`) — plain `state.round` would
+    // silently drop this tick's first-blood award and kill-tally increments
+    // on the orchestrator path.
+    runtime.orchestrator.syncFromWorld({ ...state, round: roundStateForStep });
     roundResult = runtime.orchestrator.step(cleanedPlayers, nextTick, rngState, effDtMs, targetScore);
   } else {
     roundResult = stepRound({
@@ -1554,6 +2095,45 @@ export function stepWithRuntime(
     if (chaosProfile.fireHazardActive) {
       nextFireHazardTimerMs = 0;
     }
+  }
+
+  // Mid-round fast respawn (Jake ruled "A", 2026-07-17, reverting the
+  // venue-era bench-until-bell): a death stamps `respawnAtTick`
+  // (RESPAWN_DELAY_MS out); when it comes due during the FIGHTING phase the
+  // player re-forms at a spawn seal. Never in sudden death — last one
+  // standing is the money moment (design-pillars) — and never in hangout
+  // (players are damage-immune there). Arena ADMISSION stays boundary-only:
+  // venue-goal pillar 3 governs joiners, not the fallen. One stamp site
+  // catches every death cause (projectile, chain, burn, storm, bash,
+  // kill-plane) by diffing alive across the tick.
+  if (!hangoutMode) {
+    const roundNow = roundResult.state;
+    let mutated: WorldState["players"] | null = null;
+    const idsNow = Object.keys(respawnedPlayers).sort();
+    for (const pid_ of idsNow) {
+      const pid = pid_ as PlayerId;
+      const p = respawnedPlayers[pid]!;
+      const wasAlive = state.players[pid]?.alive ?? false;
+      if (wasAlive && !p.alive && p.respawnAtTick === undefined) {
+        const delayTicks = Math.ceil(RESPAWN_DELAY_MS / Math.max(1, effDtMs));
+        mutated = mutated ?? { ...respawnedPlayers };
+        mutated[pid] = { ...p, respawnAtTick: (nextTick + delayTicks) as Tick };
+        continue;
+      }
+      if (
+        !p.alive &&
+        p.respawnAtTick !== undefined &&
+        nextTick >= p.respawnAtTick &&
+        roundNow.phase === "fighting" &&
+        roundNow.suddenDeathActive !== true
+      ) {
+        const spawn =
+          assignSpawnPoints(runtime.map, idsNow).get(pid as string) ?? { x: 0, y: 0 };
+        mutated = mutated ?? { ...respawnedPlayers };
+        mutated[pid] = respawnPlayerAt(p, spawn);
+      }
+    }
+    if (mutated) respawnedPlayers = mutated;
   }
 
   const result: StepResult = {
@@ -1752,6 +2332,42 @@ function maybeWasmMonitor(
   })();
 }
 
+/** The one respawn reset — shared by the round-boundary respawnAll and the
+ *  mid-round fast respawn so the two paths can never drift. Slot cooldowns
+ *  and abilityCharge deliberately persist (same law as round carry-over). */
+function respawnPlayerAt(
+  player: PlayerEntity,
+  spawn: { x: number; y: number },
+): PlayerEntity {
+  return {
+    ...player,
+    x: spawn.x,
+    y: spawn.y,
+    vx: 0,
+    vy: 0,
+    health: 100,
+    alive: true,
+    crouching: false,
+    shieldActive: false,
+    fireCooldownMs: 0,
+    jetpackFuel: JETPACK_MAX_FUEL,
+    // Clear parry timers on respawn (mirrors MatchScene's
+    // clearTemporaryCombatEffects). Shield charge resets to full.
+    parryActiveUntilTick: undefined,
+    parryCooldownUntilTick: undefined,
+    parryFacing: undefined,
+    shieldCharge: player.shieldMaxCharge ?? 100,
+    // Element status effects clear on respawn.
+    burnUntilTick: undefined,
+    burnDps: undefined,
+    burnTickLastApplied: undefined,
+    freezeUntilTick: undefined,
+    freezeMultiplier: undefined,
+    // The pending mid-round respawn is consumed by re-forming.
+    respawnAtTick: undefined,
+  };
+}
+
 function respawnAll(
   players: WorldState["players"],
   map: MapDefinition,
@@ -1759,36 +2375,10 @@ function respawnAll(
   const out: WorldState["players"] = {};
   const ids = Object.keys(players).sort();
   const spawnAssignment = assignSpawnPoints(map, ids);
-  for (const [index, pid_] of ids.entries()) {
-    void index;
+  for (const pid_ of ids) {
     const pid = pid_ as PlayerId;
     const spawn = spawnAssignment.get(pid as string) ?? { x: 0, y: 0 };
-    const player = players[pid]!;
-    out[pid] = {
-      ...player,
-      x: spawn.x,
-      y: spawn.y,
-      vx: 0,
-      vy: 0,
-      health: 100,
-      alive: true,
-      crouching: false,
-      shieldActive: false,
-      fireCooldownMs: 0,
-      jetpackFuel: JETPACK_MAX_FUEL,
-      // Clear parry timers on round transition (mirrors MatchScene's
-      // clearTemporaryCombatEffects). Shield charge resets to full.
-      parryActiveUntilTick: undefined,
-      parryCooldownUntilTick: undefined,
-      parryFacing: undefined,
-      shieldCharge: player.shieldMaxCharge ?? 100,
-      // Element status effects clear on respawn.
-      burnUntilTick: undefined,
-      burnDps: undefined,
-      burnTickLastApplied: undefined,
-      freezeUntilTick: undefined,
-      freezeMultiplier: undefined,
-    };
+    out[pid] = respawnPlayerAt(players[pid]!, spawn);
   }
   return out;
 }

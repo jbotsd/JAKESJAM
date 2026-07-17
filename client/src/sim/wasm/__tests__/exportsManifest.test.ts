@@ -45,6 +45,8 @@ const REQUIRED_EXPORTS: ReadonlyArray<string> = [
   "spatial_cell_size_default", "spatial_max_aabbs",
   // player
   "step_player",
+  // true slopes (module-level statics, launch-pad pattern)
+  "world_state_set_slopes",
   // projectile motion + helpers
   "step_projectile",
   "projectile_apply_float", "projectile_apply_accelerate",

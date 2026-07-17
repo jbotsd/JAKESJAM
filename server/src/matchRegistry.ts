@@ -50,6 +50,7 @@ export class MatchRegistry {
             name: prepPlayer?.name ?? rawPlayerId,
             color: prepPlayer?.color ?? "#88ccff",
             weaponId: "starter-pistol",
+            cosmetics: prepPlayer?.cosmetics,
           },
         ],
         chaosModifierIds,
@@ -66,6 +67,7 @@ export class MatchRegistry {
         name: prepPlayer?.name ?? rawPlayerId,
         color: prepPlayer?.color ?? pickColor(rawPlayerId),
         weaponId: "starter-pistol",
+        cosmetics: prepPlayer?.cosmetics,
       });
     }
     // Else: returning player, possibly mid-grace-window. attachClient handles

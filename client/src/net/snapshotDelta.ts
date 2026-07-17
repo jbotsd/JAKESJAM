@@ -30,6 +30,7 @@
  *  P_HI tail (bits 4-6): grounded, touchingWallDir (-1/0/+1 — the bit only
  *  flags "changed"; the actual signed value rides in the patch), dashing.
  *  All render-only signals for the procedural rig, not read by sim logic.
+ *  P_HI bit 7: wardShellUntilTick (six-axes Ward — sim-read damage gate).
  *
  * NOTE: For simplicity, since PlayerEntity has ~30 optional/frequent fields,
  * we use a two-number bitmask pair (lo: bits 0-30, hi: bits 0-7) rather than
@@ -202,6 +203,15 @@ function diffPlayer(
   if ((prev.grounded ?? false) !== (next.grounded ?? false)) { bitsHi |= P_HI.grounded; patch.grounded = next.grounded; }
   if ((prev.touchingWallDir ?? 0) !== (next.touchingWallDir ?? 0)) { bitsHi |= P_HI.touchingWallDir; patch.touchingWallDir = next.touchingWallDir ?? 0; }
   if ((prev.dashing ?? false) !== (next.dashing ?? false)) { bitsHi |= P_HI.dashing; patch.dashing = next.dashing; }
+  if (prev.wardShellUntilTick !== next.wardShellUntilTick) { bitsHi |= P_HI.wardShellUntilTick; patch.wardShellUntilTick = next.wardShellUntilTick; }
+  if (prev.slot1CooldownUntilTick !== next.slot1CooldownUntilTick) { bitsHi |= P_HI.slot1CooldownUntilTick; patch.slot1CooldownUntilTick = next.slot1CooldownUntilTick; }
+  if (prev.slot2CooldownUntilTick !== next.slot2CooldownUntilTick) { bitsHi |= P_HI.slot2CooldownUntilTick; patch.slot2CooldownUntilTick = next.slot2CooldownUntilTick; }
+  if (prev.slot3CooldownUntilTick !== next.slot3CooldownUntilTick) { bitsHi |= P_HI.slot3CooldownUntilTick; patch.slot3CooldownUntilTick = next.slot3CooldownUntilTick; }
+  if (prev.slot4CooldownUntilTick !== next.slot4CooldownUntilTick) { bitsHi |= P_HI.slot4CooldownUntilTick; patch.slot4CooldownUntilTick = next.slot4CooldownUntilTick; }
+  if (prev.titheUntilTick !== next.titheUntilTick) { bitsHi |= P_HI.titheUntilTick; patch.titheUntilTick = next.titheUntilTick; }
+  if (prev.veilUntilTick !== next.veilUntilTick) { bitsHi |= P_HI.veilUntilTick; patch.veilUntilTick = next.veilUntilTick; }
+  if (prev.counterUntilTick !== next.counterUntilTick) { bitsHi |= P_HI.counterUntilTick; patch.counterUntilTick = next.counterUntilTick; }
+  if (prev.respawnAtTick !== next.respawnAtTick) { bitsHi |= P_HI.respawnAtTick; patch.respawnAtTick = next.respawnAtTick; }
 
   // Always send abilityCharge and lastProcessedInputSeq (change almost every tick)
   patch.abilityCharge = next.abilityCharge;

@@ -19,6 +19,9 @@ function fakeCam(opts: { throwOnCenterOn?: boolean } = {}) {
       this.zoom = z;
       return this;
     },
+    setRotation(_r: number) {
+      return this;
+    },
     centerOn(_x: number, _y: number) {
       if (opts.throwOnCenterOn) {
         // Mirrors the real failure: Phaser's clampX dereferences a null

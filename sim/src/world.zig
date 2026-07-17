@@ -34,6 +34,7 @@ const collision_types = @import("collision.zig");
 const satellite = @import("satellite.zig");
 const player_mod = @import("player.zig");
 const weapon = @import("weapon.zig");
+const weapon_build = @import("weapon_build.zig");
 const weapons_data = @import("data/weapons.zig");
 const trig = @import("trig.zig");
 
@@ -41,11 +42,22 @@ const trig = @import("trig.zig");
 /// reserved non-zero values for future error reporting.
 /// Decide a round winner during fighting phase. Returns:
 ///   * winner index ≥ 0 if exactly one player alive (KO)
-///   * winner index ≥ 0 if time-out (highest health)
-///   * -1 if no winner yet
+///   * winner index ≥ 0 if time-out / bot-shootout force-resolve —
+///     most round_kills wins, then alive-health tiebreaks (see
+///     timeoutWinnerIdx; kill-tally rule 2026-07-17)
+///   * -1 if no winner yet (or a time-out draw: zero kills + nobody alive)
 /// Grace after ALL humans die before the bot-shootout guard ends the round
 /// (parity with round.ts NO_HUMAN_SURVIVOR_END_MS).
 const NO_HUMAN_SURVIVOR_END_MS: f64 = 6000;
+
+/// Emission Engine charge economy (parity with constants.ts —
+/// EMISSION_CHARGE_MAX / EMISSION_FILL_PER_DAMAGE_DEALT /
+/// EMISSION_FILL_PER_DAMAGE_TAKEN; docs/emission-engine-goal.md).
+/// The TS state hash mixes ability_charge — these must move in
+/// lock-step with constants.ts or reconcile hashes diverge.
+const EMISSION_CHARGE_MAX: f64 = 100;
+const EMISSION_FILL_PER_DAMAGE_DEALT: f64 = 0.5;
+const EMISSION_FILL_PER_DAMAGE_TAKEN: f64 = 0.2;
 
 /// Half the player body height (parity with World.ts PLAYER_HALF_HEIGHT).
 const PLAYER_HALF_HEIGHT: f64 = 28;
@@ -70,6 +82,62 @@ pub export fn world_state_set_arena_bounds(
     g_kill_plane_y = kill_plane_y;
 }
 
+// ── Launch pads (§8c — parity with client/src/sim/launchPad.ts) ─────────────
+// STATIC map geometry, module-level like the arena bounds above: pads carry
+// ZERO WorldState bytes (the retrigger condition is stateless — see the TS
+// header for the proof), so they live outside the packed extern struct and
+// imply no worldStateBridge layout / wire change. Host sets them on match
+// start next to the statics/arena-bounds calls.
+
+pub const MAX_LAUNCH_PADS: usize = 16;
+
+/// One pad: AABB center + full size + impulse vector. Mirrors the TS
+/// `LaunchPadDefinition` field-for-field.
+pub const LaunchPad = extern struct {
+    x: f64,
+    y: f64,
+    w: f64,
+    h: f64,
+    impulse_x: f64,
+    impulse_y: f64,
+};
+
+/// MIRROR of launchPad.ts constants — change both or neither.
+const LAUNCH_PLAYER_HALF_W: f64 = 15;
+const LAUNCH_PLAYER_HALF_H: f64 = 28;
+const LAUNCH_RETRIGGER_FRACTION: f64 = 0.5;
+const LAUNCH_ALONG_CAP_FACTOR: f64 = 1.35;
+
+var g_launch_pads: [MAX_LAUNCH_PADS]LaunchPad = undefined;
+var g_launch_pad_count: u32 = 0;
+
+/// Host sets the map's launch pads on match start (same cadence as
+/// world_state_set_statics / world_state_set_arena_bounds). `pads_ptr`
+/// is a flat f64 array of 6 values per pad: [x, y, w, h, impulse_x,
+/// impulse_y] — pad order MUST be the map's `launchPads` array order
+/// (the index doubles as the event entity_id on both sides). Returns
+/// the count actually written (clamped at MAX_LAUNCH_PADS).
+pub export fn world_state_set_launch_pads(
+    pads_ptr: [*]const f64,
+    count: u32,
+) u32 {
+    const clamped: u32 = @min(count, @as(u32, @intCast(MAX_LAUNCH_PADS)));
+    var i: u32 = 0;
+    while (i < clamped) : (i += 1) {
+        const base = i * 6;
+        g_launch_pads[i] = .{
+            .x = pads_ptr[base + 0],
+            .y = pads_ptr[base + 1],
+            .w = pads_ptr[base + 2],
+            .h = pads_ptr[base + 3],
+            .impulse_x = pads_ptr[base + 4],
+            .impulse_y = pads_ptr[base + 5],
+        };
+    }
+    g_launch_pad_count = clamped;
+    return clamped;
+}
+
 /// A player whose id begins with "bot_" is AI (parity with round.ts BOT_ID_PREFIX).
 fn isBotPlayer(p: *const world_state.PlayerEntity) bool {
     if (p.id_len < 4) return false;
@@ -77,15 +145,81 @@ fn isBotPlayer(p: *const world_state.PlayerEntity) bool {
         p.id_bytes[2] == 't' and p.id_bytes[3] == '_';
 }
 
-/// Highest-health player index (time-out / force-resolve tiebreak).
-fn highestHealthIdx(state: *const world_state.WorldState) i32 {
-    var best_idx: i32 = 0;
-    var best_health: f64 = state.players[0].health;
-    var k: u32 = 1;
-    while (k < state.player_count) : (k += 1) {
-        if (state.players[k].health > best_health) {
-            best_health = state.players[k].health;
-            best_idx = @intCast(k);
+/// Resolve a player array index from raw owner-id bytes (projectile /
+/// fire-patch owners). Returns -1 when no roster player matches.
+fn playerIdxById(
+    state: *const world_state.WorldState,
+    id_bytes: []const u8,
+) i32 {
+    var i: u32 = 0;
+    while (i < state.player_count) : (i += 1) {
+        const p = &state.players[i];
+        if (p.id_len == id_bytes.len and
+            std.mem.eql(u8, p.id_bytes[0..p.id_len], id_bytes))
+        {
+            return @intCast(i);
+        }
+    }
+    return -1;
+}
+
+/// Credit a kill to the round tally (parity with World.ts's fold rule:
+/// killerId non-null and != victimId). No-op for attacker-less deaths
+/// (void, burn, storm) and self-kills — they credit nobody.
+fn creditKill(
+    state: *world_state.WorldState,
+    attacker_idx: i32,
+    victim_idx: i32,
+) void {
+    if (attacker_idx < 0 or attacker_idx == victim_idx) return;
+    state.players[@intCast(attacker_idx)].round_kills += 1;
+}
+
+/// Time-out / force-resolve winner (parity with round.ts
+/// decideRoundWinner's forceResolve branch — kill-tally rule 2026-07-17):
+///   1. most `round_kills` wins, dead or alive (landing kills is the
+///      round's work; a fresh respawn's health bar isn't);
+///   2. kill-tie: an ALIVE tied leader beats a dead one; among alive
+///      tied leaders most health wins, then lowest index (players are
+///      sorted by id at pack time, so lowest index = lowest id — the
+///      TS tiebreak); all tied leaders dead → lowest index among them;
+///   3. zero kills all round: most health among ALIVE, first-seen wins
+///      health ties; nobody alive → -1 (draw, round ends unscored).
+fn timeoutWinnerIdx(state: *const world_state.WorldState) i32 {
+    if (state.player_count == 0) return -1;
+    var max_kills: u32 = 0;
+    var i: u32 = 0;
+    while (i < state.player_count) : (i += 1) {
+        if (state.players[i].round_kills > max_kills)
+            max_kills = state.players[i].round_kills;
+    }
+    if (max_kills > 0) {
+        var first_leader: i32 = -1;
+        var best_alive: i32 = -1;
+        var best_alive_health: f64 = 0;
+        var k: u32 = 0;
+        while (k < state.player_count) : (k += 1) {
+            const p = &state.players[k];
+            if (p.round_kills != max_kills) continue;
+            if (first_leader < 0) first_leader = @intCast(k);
+            if (p.flags.alive and (best_alive < 0 or p.health > best_alive_health)) {
+                best_alive = @intCast(k);
+                best_alive_health = p.health;
+            }
+        }
+        return if (best_alive >= 0) best_alive else first_leader;
+    }
+    // Zero kills all round: most health among alive; -1 = draw when
+    // nobody is alive at the bell.
+    var best_idx: i32 = -1;
+    var best_health: f64 = 0;
+    var a: u32 = 0;
+    while (a < state.player_count) : (a += 1) {
+        const p = &state.players[a];
+        if (!p.flags.alive) continue;
+        if (best_idx < 0 or p.health > best_health) {
+            best_idx = @intCast(a);
+            best_health = p.health;
         }
     }
     return best_idx;
@@ -120,12 +254,13 @@ fn detectRoundWinner(state: *const world_state.WorldState) i32 {
         }
         const elapsed = round.ROUND_TIME_LIMIT_MS - state.header.countdown_remaining_ms;
         if (humans > 0 and alive_humans == 0 and elapsed >= NO_HUMAN_SURVIVOR_END_MS) {
-            return highestHealthIdx(state);
+            return timeoutWinnerIdx(state);
         }
     }
-    // Time-out path: highest health among the dead/alive set wins.
+    // Time-out path (kill-tally rule 2026-07-17): most round_kills wins,
+    // then alive-health tiebreaks — see timeoutWinnerIdx. -1 = draw.
     if (state.header.countdown_remaining_ms <= 0 and state.player_count > 0) {
-        return highestHealthIdx(state);
+        return timeoutWinnerIdx(state);
     }
     return -1;
 }
@@ -204,6 +339,17 @@ pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
     state.header.round_phase = phase_result.new_phase;
     state.header.countdown_remaining_ms =
         phase_result.new_countdown_remaining_ms;
+    if (phase_result.transitioned == 1 and
+        phase_result.new_phase == @intFromEnum(round.RoundPhase.fighting))
+    {
+        // New round's fighting phase begins: kill tally starts empty
+        // (parity with round.ts's countdown → fighting reset — same
+        // lifecycle as firstBloodPlayerId on the TS side).
+        var ki: u32 = 0;
+        while (ki < state.player_count) : (ki += 1) {
+            state.players[ki].round_kills = 0;
+        }
+    }
     if (phase_result.transitioned == 1 and
         phase_result.new_phase == @intFromEnum(round.RoundPhase.countdown))
     {
@@ -325,14 +471,43 @@ pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
                 }
                 if (dmg_to_apply > 0) {
                     pp.health -= dmg_to_apply;
+                    // Parity with World.ts: fire-patch damage emits
+                    // hit_confirmed (no attacker — environmental), which
+                    // ALSO feeds the emission-charge fill (step 10). Without
+                    // this, TS fills the victim's taken-side charge for fire
+                    // ticks and the wasm world silently doesn't.
+                    emitEvent(
+                        state,
+                        .hit_confirmed,
+                        @intCast(ph),
+                        -1,
+                        patch_ptr.id,
+                        dmg_to_apply,
+                        pp.x,
+                        pp.y,
+                    );
                     if (pp.health <= 0) {
                         pp.health = 0;
                         pp.flags.alive = false;
+                        // Kill attribution (2026-07-17, parity with
+                        // World.ts + fire.ts): the patch carries its
+                        // igniter as owner — credit the kill (tally +
+                        // player_idx_b for the TS event converter).
+                        // Patches never damage their owner, so this is
+                        // never a self-kill.
+                        const igniter_idx: i32 = if (patch_ptr.has_owner != 0)
+                            playerIdxById(
+                                state,
+                                patch_ptr.owner_id_bytes[0..patch_ptr.owner_id_len],
+                            )
+                        else
+                            -1;
+                        creditKill(state, igniter_idx, @intCast(ph));
                         emitEvent(
                             state,
                             .player_killed,
                             @intCast(ph),
-                            -1,
+                            igniter_idx,
                             patch_ptr.id,
                             0,
                             pp.x,
@@ -475,10 +650,28 @@ pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
                         }
                         if (aoe_dmg > 0) {
                             ape.health -= aoe_dmg;
+                            // Parity with World.ts: blast damage emits
+                            // hit_confirmed (no attacker on the TS
+                            // destructible path either) — feeds the
+                            // emission-charge fill (step 10).
+                            emitEvent(state, .hit_confirmed, @intCast(ex_p), -1, dest_ptr.id, aoe_dmg, ape.x, ape.y);
                             if (ape.health <= 0) {
                                 ape.health = 0;
                                 ape.flags.alive = false;
-                                emitEvent(state, .player_killed, @intCast(ex_p), -1, dest_ptr.id, 0, ape.x, ape.y);
+                                // Kill attribution (2026-07-17): the blast
+                                // is credited to the triggering projectile's
+                                // owner (parity with World.ts / destructible
+                                // .ts attackerId). Owner is excluded from
+                                // the AOE loop above, so never a self-kill.
+                                const blast_idx: i32 = if (proj_ptr.flags.has_owner)
+                                    playerIdxById(
+                                        state,
+                                        proj_ptr.owner_id_bytes[0..proj_ptr.owner_id_len],
+                                    )
+                                else
+                                    -1;
+                                creditKill(state, blast_idx, @intCast(ex_p));
+                                emitEvent(state, .player_killed, @intCast(ex_p), blast_idx, dest_ptr.id, 0, ape.x, ape.y);
                             }
                         }
                     }
@@ -510,10 +703,13 @@ pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
                 // Compose damage multipliers (I36):
                 //   chaos × shooter damage_amp × victim vulnerability
                 var final_dmg = proj_ptr.damage * chaos_profile.damage_multiplier;
-                // Shooter buff: damage_amp doubles damage while
-                // active. Look up shooter by owner_id_bytes.
+                // Shooter lookup by owner_id_bytes — feeds the damage_amp/
+                // overcharge/boss buffs below AND is stamped into the
+                // hit_confirmed event's player_idx_b so the end-of-step
+                // emission-charge fill can credit the attacker (mirrors
+                // World.ts's hit-confirmed attackerId — see step 10 below).
+                var shooter_idx: i32 = -1;
                 if (proj_ptr.flags.has_owner) {
-                    var shooter_idx: i32 = -1;
                     var sj: u32 = 0;
                     while (sj < state.player_count) : (sj += 1) {
                         if (state.players[sj].id_len == proj_ptr.owner_id_len and
@@ -662,7 +858,7 @@ pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
                     state,
                     .hit_confirmed,
                     @intCast(ph2),
-                    -1,
+                    shooter_idx,
                     proj_ptr.id,
                     final_dmg,
                     state.players[ph2].x,
@@ -671,11 +867,16 @@ pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
                 if (state.players[ph2].health <= 0) {
                     state.players[ph2].health = 0;
                     state.players[ph2].flags.alive = false;
+                    // Kill attribution (2026-07-17): shooter_idx is the
+                    // projectile owner's index (-1 when unowned) — credit
+                    // the tally + stamp player_idx_b (parity with
+                    // World.ts's killerId: proj.ownerId).
+                    creditKill(state, shooter_idx, @intCast(ph2));
                     emitEvent(
                         state,
                         .player_killed,
                         @intCast(ph2),
-                        -1,
+                        shooter_idx,
                         proj_ptr.id,
                         0,
                         state.players[ph2].x,
@@ -713,11 +914,15 @@ pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
                         if (best >= 0) {
                             const cb: u32 = @intCast(best);
                             state.players[cb].health -= chain_dmg;
-                            emitEvent(state, .hit_confirmed, best, -1, proj_ptr.id, chain_dmg, state.players[cb].x, state.players[cb].y);
+                            emitEvent(state, .hit_confirmed, best, shooter_idx, proj_ptr.id, chain_dmg, state.players[cb].x, state.players[cb].y);
                             if (state.players[cb].health <= 0) {
                                 state.players[cb].health = 0;
                                 state.players[cb].flags.alive = false;
-                                emitEvent(state, .player_killed, best, -1, proj_ptr.id, 0, state.players[cb].x, state.players[cb].y);
+                                // Kill attribution (2026-07-17): chain kills
+                                // credit the projectile owner (parity with
+                                // World.ts's chain-lightning killerId).
+                                creditKill(state, shooter_idx, best);
+                                emitEvent(state, .player_killed, best, shooter_idx, proj_ptr.id, 0, state.players[cb].x, state.players[cb].y);
                             }
                         }
                     },
@@ -1140,6 +1345,66 @@ pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
         }
     }
 
+    // 8c. Launch pads — mirror of World.ts §4a / client/src/sim/launchPad.ts.
+    //     TICK-ORDER POSITION: directly AFTER the player-physics pass, so
+    //     the impulse modifies the player's post-movement velocity and
+    //     integrates on the NEXT tick's stepPlayer — the exact invariant the
+    //     TS orchestrator establishes by running its pad pass after movement
+    //     (TS anchors it to the pickup section §4a; Zig's own pickup pass §7
+    //     runs pre-movement, a pre-existing quarantined divergence, so the
+    //     shared anchor is "post-movement", not "post-pickups").
+    //     Formula + stateless retrigger gate: see launchPad.ts's header.
+    //     Pads iterate in host array order (== map.launchPads order ==
+    //     event entity_id); players in packed order (packed from sorted ids
+    //     by worldStateBridge — same order TS iterates).
+    if (state.header.round_phase == @intFromEnum(round.RoundPhase.fighting)) {
+        var lpi: u32 = 0;
+        while (lpi < g_launch_pad_count) : (lpi += 1) {
+            const pad = &g_launch_pads[lpi];
+            const magnitude = @sqrt(pad.impulse_x * pad.impulse_x +
+                pad.impulse_y * pad.impulse_y);
+            if (magnitude <= 0) continue; // degenerate authoring — inert pad
+            const ux = pad.impulse_x / magnitude;
+            const uy = pad.impulse_y / magnitude;
+            const retrigger_gate = LAUNCH_RETRIGGER_FRACTION * magnitude;
+            const along_cap = LAUNCH_ALONG_CAP_FACTOR * magnitude;
+            var lpp: u32 = 0;
+            while (lpp < state.player_count) : (lpp += 1) {
+                const lp = &state.players[lpp];
+                if (!lp.flags.alive) continue;
+                // AABB overlap, strict inequalities (TS aabbOverlap parity).
+                if (!(lp.x - LAUNCH_PLAYER_HALF_W < pad.x + pad.w / 2 and
+                    lp.x + LAUNCH_PLAYER_HALF_W > pad.x - pad.w / 2 and
+                    lp.y - LAUNCH_PLAYER_HALF_H < pad.y + pad.h / 2 and
+                    lp.y + LAUNCH_PLAYER_HALF_H > pad.y - pad.h / 2)) continue;
+                const v_along = lp.vx * ux + lp.vy * uy;
+                if (v_along >= retrigger_gate) continue; // launched / moving away
+                // ADD with floor + cap; perpendicular velocity preserved.
+                const v_perp_x = lp.vx - v_along * ux;
+                const v_perp_y = lp.vy - v_along * uy;
+                const boosted = @min(v_along + magnitude, along_cap);
+                const new_along = @max(magnitude, boosted);
+                lp.vx = v_perp_x + new_along * ux;
+                lp.vy = v_perp_y + new_along * uy;
+                // A pad launch is NOT a jump — consume the variable-jump-
+                // height cut so next tick's stepPlayer doesn't halve the
+                // rising velocity (parity with World.ts §4a's memory poke;
+                // same trick the dash lunge uses in player.ts/player.zig).
+                state.player_movement[lpp].jump_cut_applied = 1;
+                emitEvent(
+                    state,
+                    .launch_pad_fired,
+                    @intCast(lpp),
+                    -1,
+                    lpi,
+                    magnitude,
+                    pad.x,
+                    pad.y,
+                );
+            }
+        }
+    }
+
     // 6. Combat — per-player shield drain + parry start (I4 +
     //    I4b). Defaults match `combat_*` exports.
     var pi3: u32 = 0;
@@ -1158,15 +1423,110 @@ pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
             combat.SHIELD_DRAIN_PER_SECOND,
             combat.SHIELD_RECHARGE_PER_SECOND * (if (has3) cfg3.shield_recharge_mul else 1.0),
         );
-        _ = combat.tryStartParry(
-            player_ptr,
-            player_ptr.current_keys,
-            player_ptr.prev_keys,
-            state.header.tick,
-            eff_dt,
-            combat.PARRY_ACTIVE_MS,
-            combat.PARRY_COOLDOWN_MS_DEFAULT * (if (has3) cfg3.parry_cooldown_mul else 1.0),
-        );
+        // Emission cast (docs/emission-engine-goal.md — mirror of the TS
+        // cast branch in World.stepWithRuntime): the Ability rising edge
+        // at full charge fires a radial volley derived from the fire
+        // config (weapon_build.emissionFromConfig — parameters already
+        // crossed the boundary, no second config), zeroes the charge, and
+        // CONSUMES the edge (no parry this press). Below full charge the
+        // edge falls through to tryStartParry — bot defensive behavior.
+        // Known v1 parity gap vs TS: cast shards don't carry statusScale
+        // (freeze ×2) — the projectile ABI has no such field yet; the
+        // opt-in wasm world accepts base-duration statuses until a later
+        // ABI cut (documented in emission.ts too).
+        const ABILITY_BIT: u32 = 1 << 7;
+        const ability_edge = (player_ptr.current_keys & ABILITY_BIT) != 0 and
+            (player_ptr.prev_keys & ABILITY_BIT) == 0;
+        var cast_consumed_edge = false;
+        if (ability_edge and
+            player_ptr.flags.alive and
+            state.header.round_phase == @intFromEnum(round.RoundPhase.fighting) and
+            player_ptr.ability_charge >= EMISSION_CHARGE_MAX)
+        {
+            const em = weapon_build.emissionFromConfig(&state.player_fire_config[pi3]);
+            const ecfg = &state.player_fire_config[pi3];
+            const e_valid = ecfg.valid != 0;
+            var ei2: u32 = 0;
+            while (ei2 < em.volley_count) : (ei2 += 1) {
+                if (state.projectile_count >= world_state.MAX_PROJECTILES) break;
+                const ang = (@as(f64, @floatFromInt(ei2)) /
+                    @as(f64, @floatFromInt(em.volley_count))) * 2.0 * std.math.pi;
+                const slot: u32 = state.projectile_count;
+                state.projectile_count += 1;
+                const new_id: u32 = state.header.next_entity_id;
+                state.header.next_entity_id += 1;
+                state.projectiles[slot] = .{
+                    .x = player_ptr.x,
+                    .y = player_ptr.y - 30,
+                    .vx = trig.lutCos(ang) * em.speed,
+                    .vy = trig.lutSin(ang) * em.speed,
+                    .radius = em.radius_px,
+                    .damage = em.damage_per_shard,
+                    .lifetime_ms = weapon_build.EMISSION_LIFETIME_MS,
+                    .age_ms = 0,
+                    .traveled_px = 0,
+                    .origin_x = player_ptr.x,
+                    .origin_y = player_ptr.y - 30,
+                    .homing_strength = if (e_valid) ecfg.homing_strength else 0,
+                    .acceleration_multiplier = 0,
+                    .gravity_scale = 0,
+                    .range_px = weapon_build.EMISSION_RANGE_PX,
+                    .slow_multiplier = if (e_valid) ecfg.slow_multiplier else 1.0,
+                    .sticky_fuse_ms = 0,
+                    .impact_radius_px = em.impact_radius_px,
+                    .id = new_id,
+                    .bounces_remaining = if (e_valid) ecfg.bounces else 0,
+                    .pierce_remaining = 0,
+                    .split_count = 0,
+                    .flags = .{
+                        .has_owner = true,
+                        .has_impact = true,
+                        .has_split = false,
+                        .has_slow = e_valid and ecfg.slow_multiplier != 1.0,
+                        .has_homing = e_valid and ecfg.homing_strength != 0,
+                        .has_acceleration = false,
+                        .has_gravity_scale = false,
+                        .has_range = true,
+                        .has_age = true,
+                        .has_traveled = true,
+                        .has_origin = true,
+                        .returning = false,
+                        .has_sticky_fuse = false,
+                        .has_impact_radius = true,
+                    },
+                    .pathing = if (e_valid) ecfg.pathing else .straight,
+                    .element = if (e_valid) ecfg.element else .crystal,
+                    .impact = if (e_valid) ecfg.impact else .none,
+                    .shape = if (e_valid) ecfg.shape else .circle,
+                    .owner_id_len = player_ptr.id_len,
+                    .owner_id_bytes = player_ptr.id_bytes,
+                };
+            }
+            player_ptr.ability_charge = 0;
+            cast_consumed_edge = true;
+            emitEvent(
+                state,
+                .emission_cast,
+                @intCast(pi3),
+                -1,
+                0,
+                @floatFromInt(em.volley_count),
+                player_ptr.x,
+                player_ptr.y,
+            );
+        }
+
+        if (!cast_consumed_edge) {
+            _ = combat.tryStartParry(
+                player_ptr,
+                player_ptr.current_keys,
+                player_ptr.prev_keys,
+                state.header.tick,
+                eff_dt,
+                combat.PARRY_ACTIVE_MS,
+                combat.PARRY_COOLDOWN_MS_DEFAULT * (if (has3) cfg3.parry_cooldown_mul else 1.0),
+            );
+        }
         // Weapon fire decision + projectile spawn (I21 + I45).
         // Use the host-resolved fire config when valid, else fall
         // back to the starter-pistol base from data/weapons.zig.
@@ -1356,6 +1716,39 @@ pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
         }
     }
     state.fire_count = fwrite;
+
+    // 10. Emission charge fill (P0 — docs/emission-engine-goal.md; mirror of
+    //     World.ts's post-pass over this tick's hit-confirmed events).
+    //     player_idx_a = victim (taken fill, killing blow included — charge
+    //     persists through death by doctrine); player_idx_b = attacker when
+    //     the source resolved one (dealt fill, never for self-hits).
+    //     Parried/shielded hits never emit hit_confirmed, so refused damage
+    //     cannot charge meters. Charge mutates ONLY here, at cast, and at
+    //     player insertion (goal-doc invariant).
+    const pc_i32: i32 = @intCast(state.player_count);
+    var ei: u32 = 0;
+    while (ei < state.event_count) : (ei += 1) {
+        const ev = &state.events[ei];
+        if (ev.kind != @intFromEnum(world_state.SimEventKind.hit_confirmed)) continue;
+        if (ev.scalar <= 0) continue;
+        if (ev.player_idx_a >= 0 and ev.player_idx_a < pc_i32) {
+            const vp = &state.players[@intCast(ev.player_idx_a)];
+            vp.ability_charge = @min(
+                EMISSION_CHARGE_MAX,
+                vp.ability_charge + ev.scalar * EMISSION_FILL_PER_DAMAGE_TAKEN,
+            );
+        }
+        if (ev.player_idx_b >= 0 and
+            ev.player_idx_b < pc_i32 and
+            ev.player_idx_b != ev.player_idx_a)
+        {
+            const ap = &state.players[@intCast(ev.player_idx_b)];
+            ap.ability_charge = @min(
+                EMISSION_CHARGE_MAX,
+                ap.ability_charge + ev.scalar * EMISSION_FILL_PER_DAMAGE_DEALT,
+            );
+        }
+    }
 
     return 0;
 }

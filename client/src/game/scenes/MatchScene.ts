@@ -27,10 +27,14 @@ import type {
 } from "../types/game";
 import { RenderLayer } from "../render/RenderLayer";
 import { ActionIntensity } from "../systems/ActionIntensity.js";
+import { CameraHype } from "../systems/CameraHype.js";
+import { SlowMotion } from "../systems/SlowMotion.js";
 import { ActionCamera } from "../systems/ActionCamera.js";
 import { CameraJuice } from "../systems/CameraJuice.js";
 import { installHudCamera } from "../systems/HudCamera.js";
 import { getRenderScale } from "../render/renderResolution.js";
+import { colorToNumber } from "../render/colorToNumber.js";
+import { readStoredCosmetics } from "../cosmetics/vesselCosmeticsStore.js";
 import type { RoomPlayer } from "../types/net";
 
 const PLAYER_VISUAL_SCALE = 0.78;
@@ -102,6 +106,15 @@ export class MatchScene extends Phaser.Scene {
   private actionCamera!: ActionCamera;
   private cameraJuice!: CameraJuice;
   private readonly actionIntensity = new ActionIntensity();
+  /** Same ~20s sustained-dance camera-hype system as OnlineMatchScene — the
+   *  gesture (circle the mouse) and its rig-level payoff work identically in
+   *  Practice, so the camera-level payoff should too, not be online-only. */
+  private readonly cameraHype = new CameraHype();
+  private cameraHypePeakPrev = false;
+  /** Render-only bullet-time dip (see SlowMotion.ts) — not wired to any
+   *  trigger yet, just the per-frame input-cancel plumbing. Call
+   *  .trigger(scale, maxHoldMs) from wherever a big moment should get it. */
+  private readonly slowMotion = new SlowMotion(this);
   private prevWallDir = 0;
   private prevDashing = false;
   /** Ambient haze ellipses (renderArena) + their resting alpha, retained so
@@ -147,6 +160,7 @@ export class MatchScene extends Phaser.Scene {
 
   create() {
     this.events.once("shutdown", () => {
+      this.scale.off("resize", this.applyPracticeCamera, this);
       this.touchControls?.destroy();
       this.touchControls = null;
       this.audio?.destroy();
@@ -212,6 +226,8 @@ export class MatchScene extends Phaser.Scene {
     const wasGrounded = this.localPlayer.grounded;
     const fallSpeedBeforeStep = this.localPlayer.velocity.y;
     const currKeys = this.readInput();
+    // Any real input ends a slow-motion dip instantly — see SlowMotion.ts.
+    this.slowMotion.update(currKeys);
     const aimTarget = this.getAimTarget();
     // Clamp the physics step like the online path does (1/30s spike guard).
     const physicsStepMs = Math.min(deltaMs, 1000 / 30);
@@ -228,6 +244,13 @@ export class MatchScene extends Phaser.Scene {
     this.actionIntensity.dispatchToMusic(deltaMs);
     this.updateEnvironmentReactivity();
     this.updateCheckpoint();
+    this.cameraHype.update(deltaMs, this.playerRig?.getDanceState().energy ?? 0);
+    if (this.playerRig) this.playerRig.externalHypeBoost = this.cameraHype.get();
+    const hypePeakNow = this.cameraHype.isPeak();
+    if (hypePeakNow && !this.cameraHypePeakPrev) {
+      this.cameras.main.flash(180, 0x89, 0x7f, 0x69, false);
+    }
+    this.cameraHypePeakPrev = hypePeakNow;
 
     if (this.isOutOfBounds()) {
       this.killPlayer();
@@ -241,6 +264,9 @@ export class MatchScene extends Phaser.Scene {
       aimY: aimTarget.y,
       // Portrait mobile: keep the player above the bottom control band.
       yBias: isPortraitMobile() ? PORTRAIT_CAM_Y_BIAS : 0,
+      hype: this.cameraHype.get(),
+      peak: hypePeakNow,
+      beatPulse: getMusicLevel().beat,
     });
     this.syncPlayerVisuals(deltaMs);
   }
@@ -351,7 +377,7 @@ export class MatchScene extends Phaser.Scene {
     }
 
     if (!this.platformLayer) this.platformLayer = new PlatformLayer(this);
-    this.platformLayer.repaint(this.map.platforms, theme);
+    this.platformLayer.repaint(this.map.platforms, theme, this.map.launchPads, this.map.slopes);
     for (const spawn of this.map.spawns) {
       this.add.circle(spawn.x, spawn.y, 5, PALETTE.textMid, 0.5);
     }
@@ -466,13 +492,42 @@ export class MatchScene extends Phaser.Scene {
     // No ActionIntensity passed: Practice bumps intensity explicitly in
     // updateMovementJuice, so routing it here too would double-count.
     this.cameraJuice = new CameraJuice(this.actionCamera);
+    // Jake, 2026-07-15: "full screen breaks dance cam" — Practice never had
+    // ANY resize/fullscreen handling (unlike OnlineMatchScene's
+    // applyMobileCamera), so cameras.main's viewport stayed frozen at
+    // create()-time dimensions while the canvas itself kept growing on
+    // resize/fullscreen. Every ActionCamera calculation (safe margins,
+    // envelope zoom-to-fit, AI-lock offsets, orbit radius, beat-cut preset
+    // offsets — all of "dance cam") reads cam.width/height, so a stale
+    // viewport size quietly broke all of it, not just left a black gap.
+    this.scale.on("resize", this.applyPracticeCamera, this);
+  }
+
+  /** Keep the world camera's viewport and zoom in sync with the canvas on
+   *  every resize (window resize, orientation change, fullscreen enter/exit
+   *  — see installRenderResolution). Mirrors OnlineMatchScene.applyMobileCamera. */
+  private applyPracticeCamera(): void {
+    const cam = this.cameras.main;
+    cam.setSize(this.scale.width, this.scale.height);
+    const zoom = (isTouchPrimary() ? 1.0 : PRACTICE_CAM_ZOOM) * getRenderScale();
+    if (this.actionCamera) this.actionCamera.setBaseZoom(zoom);
+    else cam.setZoom(zoom);
   }
 
   private createPlayerVisuals() {
     const localPlayer = this.getLocalRoomPlayer();
     const character = this.getLocalCharacter();
+    // Practice is offline (no room/lobby round-trip), so the room player
+    // object rarely carries cosmetics — fall back to the same localStorage
+    // key the Vessel Creator screen writes (see cosmetics/vesselCosmeticsStore.ts).
+    const cosmetics = localPlayer?.cosmetics ?? readStoredCosmetics();
     this.playerRig = new ProceduralPlayerRig(this, {
       color: colorToNumber(localPlayer?.color ?? "#50e3c2"),
+      accentColor: cosmetics?.accentColor ? colorToNumber(cosmetics.accentColor) : undefined,
+      visorColor: cosmetics?.visorColor ? colorToNumber(cosmetics.visorColor) : undefined,
+      palmColor: cosmetics?.palmColor ? colorToNumber(cosmetics.palmColor) : undefined,
+      jointColor: cosmetics?.jointColor ? colorToNumber(cosmetics.jointColor) : undefined,
+      auraColor: cosmetics?.auraColor ? colorToNumber(cosmetics.auraColor) : undefined,
       name: `${localPlayer?.name ?? "jakesjam"} / ${character.name}`,
       scale: this.getVisualScale(character),
     });
@@ -781,11 +836,4 @@ export class MatchScene extends Phaser.Scene {
     this.playerRig = undefined;
   }
 
-}
-
-
-function colorToNumber(color: string): number {
-  const normalized = color.startsWith("#") ? color.slice(1) : color;
-  const parsed = Number.parseInt(normalized, 16);
-  return Number.isFinite(parsed) ? parsed : 0x50e3c2;
 }

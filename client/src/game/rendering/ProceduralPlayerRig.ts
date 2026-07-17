@@ -304,6 +304,13 @@ export class ProceduralPlayerRig implements CombatRig {
    *  never set by MatchScene/OnlineMatchScene, so it defaults to 0 and
    *  changes nothing for them. */
   externalAudioBoost = 0;
+  /** Optional external CameraHype input, 0..1 — OnlineMatchScene feeds the
+   *  local player's ~20s sustained-dance camera-hype accumulator here so the
+   *  peak "you kept it going" moment reads through the SAME lighting
+   *  language as everything else (danceGlowBoost, below), not a separate
+   *  screen-space effect. Purely additive; defaults to 0, so scenes that
+   *  never set it (Tutorial, practice) are unaffected. */
+  externalHypeBoost = 0;
   /** Smoothed |vx| walk weight — kills step-phase stutter from sim velocity steps. */
   private walkBlend = 0;
   /** Smoothed SPRINT weight: 0 through walk speeds, 1 approaching max ground
@@ -686,6 +693,17 @@ export class ProceduralPlayerRig implements CombatRig {
     this.nameText.destroy();
   }
 
+  /** Public read of the "circle the mouse to dance" state (see aimAngularVel
+   *  above) — danceEnergy is "is the player doing it right now" (0-1,
+   *  springed over ~260ms attack / 900ms release), danceRaise is "how long
+   *  has it been sustained" (0-1, climbs over DANCE_RAISE_BUILD_MS ≈ 4.2s of
+   *  held groove). Consumed by camera systems that want to react to the same
+   *  gesture the rig's own animation already responds to, without
+   *  reimplementing the spin-speed detector. */
+  getDanceState(): { energy: number; raise: number } {
+    return { energy: this.danceEnergy, raise: this.danceRaise };
+  }
+
   /** Renderer-truth snapshot for the __rigDebug probe hook: what this rig
    *  last drew and whether it's currently visible. */
   debugInfo(): {
@@ -1002,6 +1020,7 @@ export class ProceduralPlayerRig implements CombatRig {
       this.danceRaise * 0.85 +
         miraclePulse * 0.5 +
         this.externalAudioBoost +
+        this.externalHypeBoost * 0.7 +
         killBoost * 0.9 +
         beatHit * 0.6,
       0,
