@@ -509,6 +509,18 @@ identity → CL.D (lower-third + watermark). Note for the next organic
 match: production queue jobs now carry `&kills=` and the probe gains
 `--slowmo 15` when killTicks are present.
 
+**STUDY 2 (2026-07-17, post-sprint)** — footage-study loop on
+`/c/01de8b0f` (the sprint-close clip): B1–B11 all hold retired (probe
+ALL PASS; chrome, trim, camera, stance verified in-frame). One NEW
+defect indexed and fixed same-loop: **C1 — opening rig-streak**: rig
+limb springs initialize unconverged, so every clip's first ~15 frames
+opened on vertical noodle-rigs and colliding nameplate boxes (the first
+thing every viewer saw). Fix: 20 un-captured warm-up render passes
+before the first encoded frame (springs settle onto the real pose;
+frame budget untouched). Re-taped: frame 0 now opens on both duelists
+fully formed mid-fight; probe ALL PASS 8/8. RETIRED: C1. REGRESSED:
+none. NEW: none outstanding.
+
 **BASELINE (2026-07-17)** — study of `/c/dff7f450-55dc-4316-8df7-654ebf4e2ccb`:
 1896×950 @ 21.6fps real (215/360 expected frames, 9.96s of 12s intent),
 57600/1 fps metadata, zero audio streams, 10.8Mbps, ends on a bot's

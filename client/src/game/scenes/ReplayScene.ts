@@ -168,6 +168,12 @@ export class ReplayScene extends Phaser.Scene {
   private encoder: Worker | null = null;
   private frameIndex = 0;
   private capturePending = false;
+  /** Un-captured warm-up passes before the first encoded frame (footage
+   *  study C1, 2026-07-17): rig limb springs initialize unconverged, so
+   *  clips opened on ~15 frames of vertical noodle-streaks — the first
+   *  thing every viewer saw. Rendering without capturing lets the springs
+   *  settle onto the real pose; frame count is untouched. */
+  private warmupFrames = 0;
   // Offline clip audio (clip-goal CL.B): the game's own audio engine driven
   // from the replay's events into an OfflineAudioContext, rendered to PCM
   // at finish and muxed as the clip's AAC track. Sync is by construction —
@@ -301,6 +307,7 @@ export class ReplayScene extends Phaser.Scene {
 
     if (this.renderMode) {
       this.renderStartTick = this.state.tick as number;
+      this.warmupFrames = 20; // ~660ms of spring convergence at 33ms/pass
       this.slowMo = slowMoTickRange(this.killTicks, this.totalTicks - this.renderStartTick);
       // Chrome rides the house HUD-camera split (HudCamera.ts): the follow
       // camera's zoom would otherwise scale the scroll-fixed letterbox/
@@ -319,6 +326,14 @@ export class ReplayScene extends Phaser.Scene {
     if (this.done || !this.state || !this.entityRender) return;
 
     if (this.renderMode) {
+      // Warm-up passes (C1): render the standing state repeatedly so rig
+      // springs converge BEFORE the first captured frame — no sim ticks,
+      // no capture, frame budget untouched.
+      if (this.warmupFrames > 0) {
+        this.warmupFrames -= 1;
+        this.renderState(33, []);
+        return;
+      }
       // One displayed frame per rAF: step TICKS_PER_FRAME, render, capture
       // in POST_RENDER (same-task guarantee, like the live recorder).
       if (this.capturePending) return; // last frame not captured yet
