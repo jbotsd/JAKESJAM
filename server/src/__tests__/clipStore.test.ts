@@ -1,7 +1,32 @@
 import { describe, expect, test } from "bun:test";
+import { existsSync, readdirSync } from "node:fs";
+import { resolve } from "node:path";
 import { handleClipUpload, publicClipOrigin, serveClip } from "../clipStore.ts";
 
 const ORIGIN = "https://example-tunnel.ts.net";
+
+describe("test isolation (2026-07-18 incident)", () => {
+  test("JAKESJAM_CLIPS_DIR is set to a throwaway dir, not the real server/.clips", () => {
+    // Set by server/bunfig.toml's [test] preload (clipsDirIsolation.ts),
+    // which MUST run before this module (and clipStore.ts) is ever
+    // imported. If this is unset, every upload in this file just wrote
+    // into the real production clip store again.
+    const dir = process.env.JAKESJAM_CLIPS_DIR;
+    expect(dir).toBeTruthy();
+    expect(dir).not.toBe(resolve(process.cwd(), ".clips"));
+  });
+
+  test("an upload in this suite never lands in the real server/.clips", async () => {
+    const before = existsSync("./.clips")
+      ? new Set(readdirSync("./.clips"))
+      : new Set<string>();
+    const result = await handleClipUpload(uploadRequest("isolation-canary", "clip.webm"), ORIGIN);
+    expect(result.ok).toBe(true);
+    const after = existsSync("./.clips") ? new Set(readdirSync("./.clips")) : new Set<string>();
+    // Nothing new appeared in the REAL directory relative to cwd.
+    expect([...after].filter((f) => !before.has(f))).toEqual([]);
+  });
+});
 
 function uploadRequest(fileContent: string, filename: string): Request {
   const form = new FormData();

@@ -9,9 +9,20 @@ import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { randomUUID } from "node:crypto";
 
-const CLIPS_DIR = resolve(process.cwd(), ".clips");
+// Overridable so tests never write into the real production clip store —
+// discovered live 2026-07-18: clipStore.test.ts and ops.test.ts called
+// handleClipUpload/pinClip directly against this exact path with no
+// isolation, and every `bun test` run left 2-3 junk files behind (one via
+// pin/unpin into kept/, which never got cleaned up either). 258 fixture
+// files (5/10/15-byte payloads: "hello clip", "fake-webm-bytes", \x01..\x05)
+// had accumulated on disk and were reachable at real /c/<uuid> share pages —
+// a nameless UUID from a passing test is indistinguishable from a real
+// highlight once written. server/bunfig.toml's test preload sets this env
+// var to a throwaway temp dir before any test file (and thus this module)
+// is ever imported.
+const CLIPS_DIR = resolve(process.env.JAKESJAM_CLIPS_DIR ?? resolve(process.cwd(), ".clips"));
 /** Durable keepers — never auto-evicted. Mirrors pins from clip-pins.json. */
-const KEPT_DIR = resolve(process.cwd(), ".clips/kept");
+const KEPT_DIR = resolve(CLIPS_DIR, "kept");
 /** Pin list lives next to server package (committed). */
 const PINS_PATH = resolve(dirname(fileURLToPath(import.meta.url)), "../clip-pins.json");
 /** Generous but bounded — a ~20s 720p webm clip is a few MB; this guards
