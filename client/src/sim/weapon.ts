@@ -274,6 +274,19 @@ function stepWeaponNative(
     next.overclockUntilTick !== undefined &&
     next.overclockUntilTick > options.currentTick;
   const totalSpread = build.spreadRadians * (overclockActive ? GEO_OVERCLOCK_SPREAD_MULTIPLIER : 1);
+  // Syzygist haste (class-overhaul-workboard.md chunk 3.1, buff role): fire
+  // rate up while the window is live — same currentTick-gated pattern as
+  // Overclock immediately above, but reads the per-entity `hasteMultiplier`
+  // (set by World.ts's `applyHasteToAlly`) rather than a fixed constant,
+  // since haste's strength varies by cast (e.g. "self half if solo" per
+  // docs/class-ability-catalogs-v1.md's Haste Gift). Only affects fire
+  // rate here; the move-speed half of haste composes in World.ts's
+  // speedMul chain.
+  const hasteActive =
+    options.currentTick !== undefined &&
+    next.hasteUntilTick !== undefined &&
+    next.hasteUntilTick > options.currentTick;
+  const hasteFireRateMul = hasteActive ? next.hasteMultiplier ?? 1 : 1;
   // Damage is left at the build value here; the chaos damageMultiplier is
   // applied post-hit in World.stepWithRuntime so satellites and any other
   // projectile sources get the same scaling without each spawn site reading
@@ -381,11 +394,12 @@ function stepWeaponNative(
   next.vy -= lutSin(baseAngle) * recoil * 0.45;
 
   // Cooldown derived from build.fireRate (shots per second), scaled by the
-  // chaos fire-rate multiplier (golden-gun slows it, future buffs raise it)
-  // and Overclock's window (Geometrician catalog v1) when live.
+  // chaos fire-rate multiplier (golden-gun slows it, future buffs raise it),
+  // Overclock's window (Geometrician catalog v1), and Syzygist haste
+  // (class-overhaul-workboard.md chunk 3.1) when live.
   const fireRate = Math.max(
     MIN_FIRE_RATE,
-    build.fireRate * chaos.fireRateMultiplier * (overclockActive ? GEO_OVERCLOCK_FIRE_RATE_MULTIPLIER : 1),
+    build.fireRate * chaos.fireRateMultiplier * (overclockActive ? GEO_OVERCLOCK_FIRE_RATE_MULTIPLIER : 1) * hasteFireRateMul,
   );
   next.fireCooldownMs = 1000 / fireRate;
   next.ammo = Math.max(0, next.ammo - 1);

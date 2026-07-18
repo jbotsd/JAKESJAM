@@ -85,6 +85,35 @@ export const P_HI = {
    *  activation, six-axes and Geometrician-catalog kinds alike. */
   resonanceUntilTick: 1 << 20,
   resonanceSourceKind: 1 << 21,
+  /** Kindred catalog v1 (docs/class-ability-catalogs-v1.md, paladin-only —
+   *  class-overhaul-workboard.md chunk 2.6). Bits 22..25 — same "plain
+   *  number, no protocol change" headroom as the Geometrician block above. */
+  judgmentTargetId: 1 << 22,
+  judgmentMarkUntilTick: 1 << 23,
+  sealUntilTick: 1 << 24,
+  aegisShareUntilTick: 1 << 25,
+  /** Syzygist status substrate extension (class-overhaul-workboard.md
+   *  chunk 3.1) — regen (heal-over-time) and haste (move/fire-rate) windows,
+   *  the first BUFF fields a DIFFERENT player's cast can write onto this
+   *  entity. Bits 26..29 — same "plain number, no protocol change" headroom
+   *  as the Geometrician/Kindred blocks above. */
+  regenUntilTick: 1 << 26,
+  regenHps: 1 << 27,
+  hasteUntilTick: 1 << 28,
+  hasteMultiplier: 1 << 29,
+  /** Syzygist Ward (class-overhaul-workboard.md chunk 3.3) — the LAST free
+   *  bit in this 32-bit mask (bit 31 would go negative in JS's signed
+   *  32-bit bitwise ops, per this file's own header note: "kept < 32 for
+   *  safe JS bitwise int"). A deliberate budget-driven consolidation: THREE
+   *  fields (`wardAbsorbUntilTick`, `wardAbsorbRemaining`,
+   *  `wardAbsorbSourceId`) share this ONE bit rather than each getting its
+   *  own — they're always written together by `applyWardToAlly` (or the
+   *  self-cast catalog cases), so a change to any one of them always rides
+   *  the same patch as the other two; unlike `facetTargetId`/
+   *  `judgmentTargetId`, which each got a dedicated bit earlier in this
+   *  file when budget allowed, this is the honest "we ran out of headroom"
+   *  call, not a stylistic inconsistency. */
+  wardAbsorb: 1 << 30,
 } as const;
 
 export const PROJ = {

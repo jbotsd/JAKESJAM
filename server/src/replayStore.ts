@@ -8,7 +8,15 @@
 import { mkdirSync, readdirSync, statSync, unlinkSync } from "node:fs";
 import { resolve } from "node:path";
 
-const REPLAYS_DIR = resolve(import.meta.dir, "..", ".replays");
+// Perf audit N5 test-isolation fix (2026-07-18): the new bot-only-match
+// persist-gate test calls postMatchResult() for real, which reaches
+// persistReplay() — without an override this wrote junk .jjr files into the
+// REAL production .replays dir (same class of bug the .clips test-isolation
+// fix addressed 2026-07-18 earlier the same day). See
+// __tests__/setup/replaysDirIsolation.ts (server/bunfig.toml [test] preload).
+const REPLAYS_DIR = process.env.JAKESJAM_REPLAYS_DIR
+  ? resolve(process.env.JAKESJAM_REPLAYS_DIR)
+  : resolve(import.meta.dir, "..", ".replays");
 /** Inputs are kilobytes; 100MB holds tens of thousands of matches. */
 const MAX_TOTAL_BYTES = 100 * 1024 * 1024;
 

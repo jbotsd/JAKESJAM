@@ -35,7 +35,6 @@ import { notifyGameplayStart, notifyGameplayStop } from "../../shell/crazyGamesS
 import { recordKill, recordDeath, recordStreak, recordMatch } from "../../shell/playerStats";
 import { pickDeathTip, type DeathTipSignal } from "../highlights/deathTip";
 import {
-  STEP_MS,
   crystalRoundsCards,
   type DestructibleEntity,
   type DestructibleKind,
@@ -55,10 +54,13 @@ import {
 import { resolveModeConfig } from "../../sim/data/modeConfig";
 import { EMISSION_CHARGE_MAX } from "../../sim/constants";
 import { resolvePlayerBuild } from "../../sim/weapon";
+import { classIdForArchetype } from "../../sim/data/cardTypes";
 import { acquiredAbilities } from "../ui/acquiredAbilities";
 import { activeSlotVitals } from "../ui/activeSlots";
+import { deriveHudChips, deriveNameplateTicks } from "../ui/statusChips";
 import { sealForCard } from "../ui/cardSeals";
 import { ELEMENT_COLORS } from "../ui/elementColors";
+import { classAccentPalette } from "../ui/classAccentColors";
 import { createWeaponBuild, findCardsById } from "../../sim/data/weaponBuild";
 import { starterWeapon } from "../../sim/data/weapons";
 import { hashPlayerEntity } from "../../sim/hash";
@@ -77,7 +79,7 @@ import {
   MatchResultsOverlay,
   type MatchResultsRow,
 } from "../ui/MatchResultsOverlay";
-import { HudSystem, type HudChip, type HudVitals, type HudRound } from "../ui/HudSystem";
+import { HudSystem, type HudChip, type HudVitals, type HudRound, type NameplateStatusTick } from "../ui/HudSystem";
 import { ActionBarSystem, type ActionBarVitals } from "../ui/ActionBarSystem";
 import { RoundBanner } from "../ui/RoundBanner";
 import { DeathOverlay } from "../ui/DeathOverlay";
@@ -85,6 +87,7 @@ import { deathWaitCountdown, draftTimerArmMs } from "../ui/phaseCountdown";
 import { ConnectionOverlay } from "../ui/ConnectionOverlay";
 import { ParticlePool } from "../systems/ParticlePool";
 import { StatusVfxController } from "../systems/StatusVfxController";
+import { ConstructVfxController } from "../systems/ConstructVfxController";
 import { PlatformLayer } from "../render/PlatformPainter";
 import { LightBeamLayer } from "../render/LightingLayer";
 import { CosmicArenaLayer } from "../render/CosmicArenaLayer";
@@ -276,51 +279,6 @@ function colorForOwner(ownerId: string | null): number {
   return palette[hash % palette.length]!;
 }
 
-type BuffDescriptor = {
-  key: string;
-  field: keyof PlayerEntity;
-  label: string;
-  color: number;
-  /** Standard application duration — the nameplate decay arc's full scale
-   *  (a READ of roughly-how-long-left, not a stopwatch). */
-  nominalMs: number;
-};
-
-const BUFF_DESCRIPTORS: BuffDescriptor[] = [
-  { key: "overcharge", field: "overchargeUntilTick", label: "OC", color: 0xffd166, nominalMs: 8000 },
-  { key: "damage-amp", field: "damageAmpUntilTick", label: "DMG", color: 0xfb7185, nominalMs: 8000 },
-  { key: "speed", field: "speedBoostUntilTick", label: "SPD", color: 0x67e8f9, nominalMs: 8000 },
-  { key: "melee", field: "meleeModeUntilTick", label: "MEL", color: 0xf97316, nominalMs: 9000 },
-  { key: "boss", field: "bossModeUntilTick", label: "BOSS", color: 0xfff7d6, nominalMs: 16000 },
-  // Ward shell (six-axes Layer 1): the post-cast damage gate a Ward hand
-  // earns. Sapphire — the shield/EMIT resource family, not an element.
-  { key: "ward", field: "wardShellUntilTick", label: "WARD", color: 0x38bdf8, nominalMs: 700 },
-  // Crimson Tithe window (six-axes Layer 2): shots leech while live.
-  // Crimson — the Drain register, deliberately not an element color.
-  { key: "tithe", field: "titheUntilTick", label: "TITHE", color: 0xdc2626, nominalMs: 3000 },
-  // Veil of Nought: unmade — homing/satellites blind. Violet Mystery register.
-  { key: "veil", field: "veilUntilTick", label: "VEIL", color: 0x8b5cf6, nominalMs: 1500 },
-  // Severing Answer stance: next hit negated + returned. Amber Technique register.
-  { key: "answer", field: "counterUntilTick", label: "CNTR", color: 0xf59e0b, nominalMs: 500 },
-];
-
-// Element statuses (burn/freeze/slow-field) included since 2026-07-16 —
-// they were the ONLY combat statuses with no nameplate read (ambient
-// particles via StatusVfxController only), and they're exactly the marks
-// the Emission applies at scale (emission-engine-goal P2 victim-side
-// legibility). Colors match elementColors.ts. nominalMs = the status's
-// standard application duration (burn 3s, freeze up to the 2s emission
-// cap, slow-field 1.5s base ×2 emission scale) — the decay arc is a read,
-// not a stopwatch; a refreshed status simply snaps the arc full again.
-const DEBUFF_DESCRIPTORS: BuffDescriptor[] = [
-  { key: "burn", field: "burnUntilTick", label: "BURN", color: 0xff7a18, nominalMs: 3000 },
-  { key: "freeze", field: "freezeUntilTick", label: "FRZ", color: 0x93c5fd, nominalMs: 2000 },
-  { key: "slowed", field: "slowedUntilTick", label: "SLOW", color: 0x7dd3fc, nominalMs: 3000 },
-  { key: "slow", field: "slowDebuffUntilTick", label: "SLOW", color: 0xbfdbfe, nominalMs: 5500 },
-  { key: "vuln", field: "vulnerabilityUntilTick", label: "VULN", color: 0xfca5a5, nominalMs: 5500 },
-  { key: "no-block", field: "blockJammerUntilTick", label: "JAM", color: 0xc084fc, nominalMs: 6500 },
-];
-
 export class OnlineMatchScene extends Phaser.Scene {
   private loop: ClientLoop | null = null;
   private convex: ConvexClient | null = null;
@@ -454,6 +412,7 @@ export class OnlineMatchScene extends Phaser.Scene {
   // ---- Status VFX + render helpers (sim-authoritative) ----
   private particlePool: ParticlePool | null = null;
   private statusVfx: StatusVfxController | null = null;
+  private constructVfx: ConstructVfxController | null = null;
   private renderLayer: RenderLayer | null = null;
   /** P3: cinematic combat FX (kill flash/zoom-punch/bloom). Enabled when the
    *  renderer is WebGL and not disabled via ?fx=off. */
@@ -504,6 +463,15 @@ export class OnlineMatchScene extends Phaser.Scene {
   // Per-frame scratch (renderWorld) — reused to keep the hot path zero-alloc.
   private seenPlayersScratch = new Set<string>();
   private newlyDeadScratch: string[] = [];
+  /** Perf audit M4 (2026-07-18): updateClipFocusWorld and followLocalPlayer
+   *  each independently rebuilt an alive-non-local-players array from
+   *  Object.entries(state.players) every frame. Whenever local is alive
+   *  (the common case — updateClipFocusWorld early-returns entirely
+   *  otherwise, and followLocalPlayer's anchor is only ever something OTHER
+   *  than local while local is dead), both consumers want the exact same
+   *  base set. Filled once by updateClipFocusWorld (which runs first, see
+   *  renderWorld), consumed by followLocalPlayer instead of re-scanning. */
+  private readonly aliveNonLocalScratch: Array<{ x: number; y: number }> = [];
   private aimWorldScratch = new Phaser.Math.Vector2();
   private renderGovernor: RenderGovernor | null = null;
   /** Previous frame's render state — touch aim assist reads it (aim input
@@ -685,6 +653,9 @@ export class OnlineMatchScene extends Phaser.Scene {
     // Status VFX driven by sim state (burnUntilTick / freezeUntilTick) plus
     // chain-hit SimEvents.
     this.statusVfx = new StatusVfxController(this, this.particlePool);
+    // Self-light construct VFX (Syzygist entanglement tether, driven by sim
+    // state — focusHexMark). Off-pool tether layer; occasional pooled bursts.
+    this.constructVfx = new ConstructVfxController(this, this.particlePool);
     this.renderLayer = new RenderLayer(this, this.particlePool);
     // C1a: bind TransientVfx so all spawned visuals route here +
     // drain on shutdown.
@@ -1032,6 +1003,18 @@ export class OnlineMatchScene extends Phaser.Scene {
       if (events.length > 0) events.length = 0;
     }
 
+    if (this.constructVfx) {
+      this.constructVfx.update(
+        state,
+        deltaMs,
+        (id) => {
+          const p = state.players[id];
+          return p ? { x: p.x, y: p.y } : undefined;
+        },
+        classIdForArchetype,
+      );
+    }
+
     if (this.statsVisible) {
       this.updateStatsHud();
     }
@@ -1060,23 +1043,7 @@ export class OnlineMatchScene extends Phaser.Scene {
     const character = this.getCharacter(local?.characterId);
     const maxHealth = character.maxHealth;
 
-    const chips: HudChip[] = [];
-    if (local) {
-      for (const buff of BUFF_DESCRIPTORS) {
-        const tickValue = local[buff.field] as number | undefined;
-        if (typeof tickValue === "number" && tickValue > state.tick) {
-          const remainingMs = Math.max(0, (tickValue - state.tick) * STEP_MS);
-          chips.push({ label: buff.label, color: buff.color, remainingSec: remainingMs / 1000, isDebuff: false });
-        }
-      }
-      for (const debuff of DEBUFF_DESCRIPTORS) {
-        const tickValue = local[debuff.field] as number | undefined;
-        if (typeof tickValue === "number" && tickValue > state.tick) {
-          const remainingMs = Math.max(0, (tickValue - state.tick) * STEP_MS);
-          chips.push({ label: debuff.label, color: debuff.color, remainingSec: remainingMs / 1000, isDebuff: true });
-        }
-      }
-    }
+    const chips: HudChip[] = deriveHudChips(local, state.tick);
 
     // Outside the storm boundary right now? Reuses this frame's
     // stormZoneModel (produced earlier in renderWorld) — zero extra work,
@@ -1144,37 +1111,15 @@ export class OnlineMatchScene extends Phaser.Scene {
 
     // Compact per-row status ticks (Jake, 2026-07-14: "lobby/party member
     // need... possibly status buffs and debuffs" — every player, reusing
-    // the same descriptors the local-only text chip strip already reads).
-    const statusByPlayer: Record<
-      string,
-      { color: number; isDebuff: boolean; remainingFrac: number }[]
-    > = {};
+    // the same descriptor table the local-only text chip strip reads —
+    // see statusChips.ts. This is the actual "nameplate chip" surface
+    // class-overhaul-workboard.md chunk 4.2 names: the only place a
+    // window-buff is legible to anyone other than the buffed player.
+    const statusByPlayer: Record<string, NameplateStatusTick[]> = {};
     for (const pid of Object.keys(scores)) {
       const p = state.players[pid as PlayerId];
       if (!p) continue;
-      const ticks: { color: number; isDebuff: boolean; remainingFrac: number }[] = [];
-      for (const buff of BUFF_DESCRIPTORS) {
-        const tickValue = p[buff.field] as number | undefined;
-        if (typeof tickValue === "number" && tickValue > state.tick) {
-          const remainingMs = (tickValue - state.tick) * STEP_MS;
-          ticks.push({
-            color: buff.color,
-            isDebuff: false,
-            remainingFrac: Math.min(1, remainingMs / buff.nominalMs),
-          });
-        }
-      }
-      for (const debuff of DEBUFF_DESCRIPTORS) {
-        const tickValue = p[debuff.field] as number | undefined;
-        if (typeof tickValue === "number" && tickValue > state.tick) {
-          const remainingMs = (tickValue - state.tick) * STEP_MS;
-          ticks.push({
-            color: debuff.color,
-            isDebuff: true,
-            remainingFrac: Math.min(1, remainingMs / debuff.nominalMs),
-          });
-        }
-      }
+      const ticks = deriveNameplateTicks(p, state.tick);
       if (ticks.length > 0) statusByPlayer[pid] = ticks;
     }
 
@@ -1227,6 +1172,9 @@ export class OnlineMatchScene extends Phaser.Scene {
         acquired: local ? acquiredAbilities(resolvePlayerBuild(local)) : [],
         stolenFangsCharges: local?.pendingLockCharges ?? 0,
         isDead: vitals.isDead,
+        // Chassis-verb name labels (2026-07-18 legibility pass) — drives
+        // the M2/Dash and shield-orb name text in ActionBarSystem.
+        classId: local ? classIdForArchetype(local.characterId) : undefined,
       };
       this.actionBar.update(actionBarVitals, chips);
     }
@@ -1603,6 +1551,7 @@ export class OnlineMatchScene extends Phaser.Scene {
         safeShake: (durationMs, intensity) => this.safeShake(durationMs, intensity),
         spawnDamageNumber: (vid, dmg, headshot) => this.spawnDamageNumber(vid, dmg, headshot),
         spawnBlastAtPlayer: (pid, r, d) => this.spawnBlastAtPlayer(pid, r, d),
+        spawnWardAbsorbFlash: (pid, isPeel) => this.spawnWardAbsorbFlash(pid as string, isPeel),
         killCinematic: (vid) => this.killCinematic(vid),
         emissionCastFeel: (pid, x, y, element) =>
           this.emissionCastFeel(pid as string, x, y, element),
@@ -1809,6 +1758,34 @@ export class OnlineMatchScene extends Phaser.Scene {
     const player = state.players[PlayerId(playerId)];
     if (!player) return;
     this.renderLayer.spawnExplosionBlast({ x: player.x, y: player.y }, radius, damage);
+  }
+
+  /**
+   * Gold-forward absorb flash — the heaven-tank VFX pass (class-overhaul-
+   * workboard.md chunk 2.7). Reuses `RenderLayer.spawnExplosionBlastBig`'s
+   * existing `baseColor` param (the SAME big-blast/spike-overlay primitive
+   * kill/player-killed already use) with the house gold
+   * (`0xc9a84c` — matches `emissionCastFeel`'s Coptic seal color and
+   * `PlatformPainter`'s vessel-seal gold, the established hex across this
+   * codebase's render layer) instead of the default reddish blast color —
+   * no new asset, no new render primitive, just a different color/read at
+   * an existing call shape. `isPeel` only changes the radius (a peel flash
+   * reads slightly larger — "the light that covered someone else") since
+   * `spawnWardAbsorbFlash`'s CALLER already picks a different target
+   * (blocker vs warder) for the two cases, which alone makes them visually
+   * distinct in a clip. Per this session's hard rule (never synthesize
+   * audio), no SFX is attached — no ripped "shield-board catches a hit"
+   * asset exists in this project's audio directories; ship the visual only.
+   */
+  private spawnWardAbsorbFlash(playerId: string, isPeel: boolean): void {
+    if (!this.renderLayer) return;
+    const state = this.loop?.getRenderState();
+    if (!state) return;
+    const player = state.players[PlayerId(playerId)];
+    if (!player) return;
+    const KINDRED_GOLD = 0xc9a84c;
+    const radius = isPeel ? 46 : 34;
+    this.renderLayer.spawnExplosionBlastBig({ x: player.x, y: player.y }, radius, KINDRED_GOLD);
   }
 
   /**
@@ -2126,6 +2103,7 @@ export class OnlineMatchScene extends Phaser.Scene {
     // Detect alive→dead transitions this frame for kill-streak callouts.
     const newlyDead = this.newlyDeadScratch;
     newlyDead.length = 0;
+    this.retrofitRigDowngradeIfNeeded(state);
     for (const pid in state.players) {
       const player = state.players[PlayerId(pid)]!;
       seenPlayers.add(pid);
@@ -2319,15 +2297,53 @@ export class OnlineMatchScene extends Phaser.Scene {
 
   // ---------------- Player rig wiring ----------------
 
+  /** Shared by makePlayerRig and the retrofit sweep below — one resolution
+   *  of "baked vs live" so the ?rig= override contract can't drift between
+   *  the two call sites. */
+  private resolveRigStyle(): "live" | "baked" {
+    const rigOverride = new URLSearchParams(window.location.search).get("rig");
+    if (rigOverride === "baked" || rigOverride === "live") return rigOverride;
+    return getEffectiveRigStyle();
+  }
+
+  /** Perf audit R2 (2026-07-18): forceRigDowngrade() only affected rigs
+   *  CONSTRUCTED after it fired — every rig already alive when the governor
+   *  detected futility kept paying full ProceduralPlayerRig cost for the
+   *  rest of its life (i.e. the rest of the match, for anyone who doesn't
+   *  die). Swap any live rig over to the baked twin the instant the
+   *  effective style flips, so the governor's own diagnosis actually
+   *  relieves the session it fired for, not just future respawns. */
+  /** Once every currently-known rig is confirmed baked, later frames can
+   *  skip the sweep entirely — new joiners always resolve their style
+   *  correctly at construction (makePlayerRig), and `runtimeRigDowngrade`
+   *  never resets mid-session (qualityProfile.ts), so "baked" never flips
+   *  back to "live" without a full reload. */
+  private rigDowngradeFullySwept = false;
+
+  private retrofitRigDowngradeIfNeeded(state: WorldState): void {
+    if (this.rigDowngradeFullySwept) return;
+    if (this.resolveRigStyle() !== "baked") return;
+    let anyStillLive = false;
+    for (const [pid, rig] of this.playerRigs) {
+      if (rig instanceof BakedPlayerRig) continue;
+      const player = state.players[PlayerId(pid)];
+      if (!player) {
+        anyStillLive = true;
+        continue;
+      }
+      const replacement = this.makePlayerRig(player, pid === this.localPlayerId);
+      rig.destroy();
+      this.playerRigs.set(pid, replacement);
+    }
+    if (!anyStillLive) this.rigDowngradeFullySwept = true;
+  }
+
   private makePlayerRig(player: PlayerEntity, isLocal: boolean): ProceduralPlayerRig {
     const character = this.getCharacter(player.characterId);
     const bot = isBotId(player.id);
     // Baked twin on the potato tier (or ?rig=baked / ?rig=live override for
     // A/B renders): SAME pose solve, textured-quad painters.
-    const rigOverride = new URLSearchParams(window.location.search).get("rig");
-    const rigStyle = rigOverride === "baked" || rigOverride === "live"
-      ? rigOverride
-      : getEffectiveRigStyle();
+    const rigStyle = this.resolveRigStyle();
     const RigClass = rigStyle === "baked" ? BakedPlayerRig : ProceduralPlayerRig;
     // Real per-player cosmetics from the hello roster (Vessel Creator,
     // docs/vessel-creator-design.md) — bots never have any. A player who
@@ -2335,26 +2351,50 @@ export class OnlineMatchScene extends Phaser.Scene {
     // reproduces the exact pre-cosmetics look (see the per-field fallbacks
     // below), so this is zero-regression for the common case.
     const cosmetics = bot ? undefined : this.rosterCosmetics.get(player.id);
+    // Chassis color register (docs/chassis-design-axioms.md CA2, arena-only
+    // pass 2026-07-18). Priority, decided this session:
+    //   1. The player's OWN Vessel Creator cosmetic pick (cosmetics?.xColor)
+    //      — a paid/chosen personalization always wins.
+    //   2. The class-derived default (classAccentColors.ts) — cyan for
+    //      Geometrician/Interstice, gold for Kindred, cool-white for
+    //      Syzygist. This REPLACES the old "local player defaults to gold
+    //      (0xffd166), remote/bot defaults to the rig's built-in cyan"
+    //      convention: that rule predates the class system and was a
+    //      class-blind "this is YOUR hero" marker. Keeping it would now
+    //      actively fight the class signal — e.g. a local Geometrician
+    //      would render gold (wrong register) while a remote Geometrician
+    //      renders correctly. Class now carries the "this matters" signal
+    //      CA2 wants, so the old local/remote accent rule is retired here.
+    //      Bots ARE class-aware for this glow (they have a real
+    //      characterId/classId) — only their BODY tint stays hardcoded
+    //      violet (below), which is a separate "unmistakable bot" signal,
+    //      not a light-quality register CA2 governs.
+    const classPalette = classAccentPalette(character.classId);
     return new RigClass(this, {
       // Bots render VIOLET with a "BOT · NAME" plate — unmistakable next
       // to the teal local / crimson remote rigs and the ochre terrain.
+      // Deliberately NOT class-derived: this is a "who/what is this"
+      // identity signal (friend/foe/bot at a glance), the same job the
+      // local-gold/remote-crimson split below does for real players — CA1
+      // ("black vessel-suit... nothing about the SILHOUETTE MATERIAL
+      // changes between classes") already says the body plate itself
+      // isn't a class-color surface; only the glow channels are.
       color: bot
         ? BOT_RIG_COLOR
         : isLocal
           ? LOCAL_PLAYER_FALLBACK_COLOR
           : REMOTE_PLAYER_FALLBACK_COLOR,
-      // Local hero keeps its gold-seam default unless the player picked
-      // their own hull tone; remote/bot accent stays unset (rig default)
-      // unless that player picked one.
       accentColor: cosmetics?.accentColor
         ? colorToNumber(cosmetics.accentColor)
-        : isLocal
-          ? 0xffd166
-          : undefined,
-      visorColor: cosmetics?.visorColor ? colorToNumber(cosmetics.visorColor) : undefined,
-      palmColor: cosmetics?.palmColor ? colorToNumber(cosmetics.palmColor) : undefined,
-      jointColor: cosmetics?.jointColor ? colorToNumber(cosmetics.jointColor) : undefined,
-      auraColor: cosmetics?.auraColor ? colorToNumber(cosmetics.auraColor) : undefined,
+        : classPalette.accentColor,
+      visorColor: cosmetics?.visorColor
+        ? colorToNumber(cosmetics.visorColor)
+        : classPalette.visorColor,
+      palmColor: cosmetics?.palmColor ? colorToNumber(cosmetics.palmColor) : classPalette.palmColor,
+      jointColor: cosmetics?.jointColor
+        ? colorToNumber(cosmetics.jointColor)
+        : classPalette.jointColor,
+      auraColor: cosmetics?.auraColor ? colorToNumber(cosmetics.auraColor) : classPalette.auraColor,
       // Chosen name from the hello roster; id-suffix fallback. The old
       // "/ Balanced" archetype suffix was dev noise (Jake, 2026-07-11).
       name: bot ? botLabel(player.id) : (this.rosterNames.get(player.id) ?? player.id.slice(-4)),
@@ -2362,6 +2402,11 @@ export class OnlineMatchScene extends Phaser.Scene {
       // happen to pick the same name still get visually distinct sigils.
       identitySeed: player.id,
       scale: this.getVisualScale(character),
+      // Chassis silhouette (CA3) — branches the head-crest/hood geometry.
+      // Arena-only for this pass; MainMenuScene/TutorialScene/MatchScene/
+      // HangoutScene are untouched and keep omitting classId, which
+      // defaults the rig to "wizard" geometry (byte-identical to before).
+      classId: character.classId,
       // Full juice for local; lite path for remotes/bots (fewer Graphics
       // ops). Potato tier runs EVERY rig lite — per-frame vector
       // tessellation is the tier's biggest CPU line item until the baked
@@ -2515,20 +2560,27 @@ export class OnlineMatchScene extends Phaser.Scene {
    */
   private updateClipFocusWorld(state: WorldState): void {
     const local = state.players[this.localPlayerId];
+    this.aliveNonLocalScratch.length = 0;
     if (!local?.alive) {
       this.clipFocusWorld = null;
       this.clipFocusSubjects = [];
       return;
     }
-    const extras: Array<{ x: number; y: number }> = [];
+    // Perf audit M4 (2026-07-18): shared with followLocalPlayer (runs right
+    // after this, same frame — see renderWorld/update call order) so the
+    // alive-non-local scan only happens once, not twice. Fresh {x,y}
+    // literals each frame (not reused object instances) — stickyEnvelope
+    // Subjects retains some of these across frames via this.clipFocusSubjects,
+    // so mutating shared object instances in place next frame would corrupt
+    // that hysteresis state.
     for (const [id, p] of Object.entries(state.players)) {
       if (id === (this.localPlayerId as string)) continue;
-      if (p?.alive) extras.push({ x: p.x, y: p.y });
+      if (p?.alive) this.aliveNonLocalScratch.push({ x: p.x, y: p.y });
     }
     const self = { x: local.x, y: local.y };
     // Sticky partner pick (enter 750px / exit 950px hysteresis) — keeps the
     // crop on the same duel partner instead of thrashing between foes.
-    this.clipFocusSubjects = stickyEnvelopeSubjects(self, extras, this.clipFocusSubjects, 1);
+    this.clipFocusSubjects = stickyEnvelopeSubjects(self, this.aliveNonLocalScratch, this.clipFocusSubjects, 1);
     const partner = this.clipFocusSubjects[0];
     this.clipFocusWorld = partner
       ? { x: (self.x + partner.x) / 2, y: (self.y + partner.y) / 2 }
@@ -2604,10 +2656,17 @@ export class OnlineMatchScene extends Phaser.Scene {
     }
 
     // Nearest few within mid range — sticky pick still caps to 1 duel partner.
+    // Perf audit M4: `anchor === local` exactly when local is alive (the
+    // only reassignment happens inside `if (!local.alive)` above) — the
+    // exact same condition updateClipFocusWorld used to populate
+    // aliveNonLocalScratch this same frame (it runs first). Reuse that scan
+    // instead of a second full Object.entries(state.players) pass.
     const extra: Array<{ x: number; y: number; d: number }> = [];
-    for (const [id, p] of Object.entries(state.players)) {
-      if (id === (anchor.id as string)) continue;
-      if (!p?.alive) continue;
+    const source: Iterable<{ x: number; y: number }> =
+      anchor === local
+        ? this.aliveNonLocalScratch
+        : Object.values(state.players).filter((p) => p.id !== anchor.id && p.alive);
+    for (const p of source) {
       const d = Math.hypot(p.x - anchor.x, p.y - anchor.y);
       if (d > 1100) continue;
       extra.push({ x: p.x, y: p.y, d });
@@ -3012,6 +3071,8 @@ export class OnlineMatchScene extends Phaser.Scene {
     this.connectionOverlay = null;
     this.statusVfx?.destroy();
     this.statusVfx = null;
+    this.constructVfx?.destroy();
+    this.constructVfx = null;
     this.particlePool?.destroy();
     this.particlePool = null;
     this.pendingSimEvents.length = 0;

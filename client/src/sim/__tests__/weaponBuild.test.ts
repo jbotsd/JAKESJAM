@@ -276,10 +276,14 @@ describe("createWeaponBuild", () => {
     });
   });
 
-  // Balance audit: these three were trap picks (crystal-volley = zero stat
-  // change; x-rounds = strictly boring next to its uncommon peers;
-  // dual-splitter = strictly dominated by +1 Projectile). Locks in the fix
-  // so a future edit can't silently re-flatten them back to traps.
+  // Balance audit: crystal-volley was a trap pick (zero stat change).
+  // dual-splitter's old "strictly dominated by +1 Projectile" fix and
+  // x-rounds' old "strictly boring, needs a damage bump" fix are SUPERSEDED
+  // by the 2026-07-18 design-axioms.md A7 split-cluster/shape-card rework
+  // below — dual-splitter is cut outright (redundant with one-more-shard
+  // even after the fire-rate patch), and x-rounds is redesigned onto a
+  // SIZE identity instead of a bigger damage number. Locks in the fix so a
+  // future edit can't silently re-flatten crystal-volley back to a trap.
   describe("trap-card fixes have real, non-zero effect", () => {
     const find = (id: string): CardDefinition => {
       const c = crystalRoundsCards.find((c) => c.id === id);
@@ -295,24 +299,108 @@ describe("createWeaponBuild", () => {
         base.projectile.speedMultiplier,
       );
     });
+  });
 
-    test("x-rounds now beats its uncommon peer's damage-only baseline", () => {
-      const base = createWeaponBuild(starterWeapon, []);
-      const build = createWeaponBuild(starterWeapon, [find("x-rounds")]);
-      // Was +6%; must now be a real step up (>=+10%) and also grants
-      // recoil control, not damage alone.
-      expect(build.damage).toBeGreaterThanOrEqual(base.damage * 1.1 - 1e-6);
-      expect(build.recoilImpulse).toBeLessThan(base.recoilImpulse);
+  // 2026-07-18 split-cluster + shape-card rework (design-axioms.md A7 —
+  // Jake's live playtest note: shape cards were "small dmg/speed/knockback
+  // tradeoffs" with no real identity, and 11 of 65 universal cards competed
+  // on the exact same "more pellets, less damage" lever). Locks in the new
+  // orthogonal identities so a future edit can't silently flatten them back
+  // into reskins of each other.
+  describe("shape cards (circle/triangle/square/x/i-rounds) now own distinct physics axes", () => {
+    const find = (id: string): CardDefinition => {
+      const c = crystalRoundsCards.find((c) => c.id === id);
+      if (!c) throw new Error(`missing card: ${id}`);
+      return c;
+    };
+    const base = () => createWeaponBuild(starterWeapon, []);
+
+    test("circle-rounds owns RANGE (short) — a real distance cut, not a speed nudge", () => {
+      const b = createWeaponBuild(starterWeapon, [find("circle-rounds")]);
+      expect(b.projectile.rangePx).toBeLessThan(starterWeapon.projectile.rangePx);
     });
 
-    test("dual-splitter no longer strictly loses to +1 Projectile", () => {
-      const oneMore = createWeaponBuild(starterWeapon, [find("one-more-shard")]);
-      const dual = createWeaponBuild(starterWeapon, [find("dual-splitter")]);
-      // Both add exactly 1 projectile — dual-splitter must now win on at
-      // least one axis (fire rate) to justify its higher essence cost,
-      // where before it strictly lost on every axis.
-      expect(dual.projectile.count).toBe(oneMore.projectile.count);
-      expect(dual.fireRate).toBeGreaterThan(oneMore.fireRate);
+    test("triangle-rounds owns RANGE (long) — reaches farther and persists longer, not more damage", () => {
+      const b = createWeaponBuild(starterWeapon, [find("triangle-rounds")]);
+      expect(b.projectile.rangePx).toBeGreaterThan(starterWeapon.projectile.rangePx);
+      expect(b.projectile.lifetimeMultiplier).toBeGreaterThan(1);
+      // No damage bonus — reach is the whole point, not a bundled dmg trade.
+      expect(b.damage).toBe(base().damage);
+    });
+
+    test("square-rounds owns KNOCKBACK-FEEL, sharpened above its old value", () => {
+      const b = createWeaponBuild(starterWeapon, [find("square-rounds")]);
+      expect(b.knockbackImpulse).toBeGreaterThan(base().knockbackImpulse * 1.18);
+    });
+
+    test("x-rounds owns SIZE (hitbox), not damage+recoil — supersedes the old trap-fix assertion", () => {
+      const b = createWeaponBuild(starterWeapon, [find("x-rounds")]);
+      expect(b.projectile.sizeMultiplier).toBeGreaterThan(base().projectile.sizeMultiplier * 1.4);
+      // The old fix's damage/recoil claim no longer applies — size is the axis now.
+      expect(b.damage).toBe(base().damage);
+    });
+
+    test("i-rounds owns SPEED-PROFILE via the accelerate pathing — genuinely new to the pool", () => {
+      const b = createWeaponBuild(starterWeapon, [find("i-rounds")]);
+      expect(b.projectile.pathing).toBe("accelerate");
+      expect(b.projectile.accelerationMultiplier).toBeGreaterThan(0);
+      // Launches slower than baseline — the ramp is the payoff, not the start.
+      expect(b.projectileSpeed).toBeLessThan(starterWeapon.projectileSpeed);
+    });
+  });
+
+  describe("split-cluster audit: cut cards are gone, kept cards own distinct axes", () => {
+    test("dual-splitter, needle-hose, magnet-spray are cut — redundant with a surviving sibling", () => {
+      expect(crystalRoundsCards.find((c) => c.id === "dual-splitter")).toBeUndefined();
+      expect(crystalRoundsCards.find((c) => c.id === "needle-hose")).toBeUndefined();
+      expect(crystalRoundsCards.find((c) => c.id === "magnet-spray")).toBeUndefined();
+    });
+
+    test("triple-fan now owns bounce+fan (corners), distinct from wide-barrage's raw width", () => {
+      const find = (id: string): CardDefinition => {
+        const c = crystalRoundsCards.find((c) => c.id === id);
+        if (!c) throw new Error(`missing card: ${id}`);
+        return c;
+      };
+      const b = createWeaponBuild(starterWeapon, [find("triple-fan")]);
+      expect(b.projectile.pathing).toBe("bounce");
+      expect(b.projectile.bounces).toBeGreaterThan(0);
+    });
+
+    test("five-shard-spray now owns size+speed (micro-fragments), distinct from shard-bloom's range cut", () => {
+      const find = (id: string): CardDefinition => {
+        const c = crystalRoundsCards.find((c) => c.id === id);
+        if (!c) throw new Error(`missing card: ${id}`);
+        return c;
+      };
+      const b = createWeaponBuild(starterWeapon, [find("five-shard-spray")]);
+      const base = createWeaponBuild(starterWeapon, []);
+      expect(b.projectile.sizeMultiplier).toBeLessThan(base.projectile.sizeMultiplier);
+      expect(b.projectileSpeed).toBeGreaterThan(base.projectileSpeed);
+    });
+  });
+
+  describe("new physics-axis cards (2026-07-18): deadfall-mortar (gravity) and falling-star (decel)", () => {
+    const find = (id: string): CardDefinition => {
+      const c = crystalRoundsCards.find((c) => c.id === id);
+      if (!c) throw new Error(`missing card: ${id}`);
+      return c;
+    };
+
+    test("deadfall-mortar is a steeper arc + explosive payload than arc-shards", () => {
+      const mortar = createWeaponBuild(starterWeapon, [find("deadfall-mortar")]);
+      const arc = createWeaponBuild(starterWeapon, [find("arc-shards")]);
+      expect(mortar.projectile.pathing).toBe("gravity");
+      expect(mortar.projectile.gravityScale).toBeGreaterThan(arc.projectile.gravityScale);
+      expect(mortar.projectile.impact).toBe("explosive");
+    });
+
+    test("falling-star decelerates (mirror image of i-rounds' accelerate)", () => {
+      const b = createWeaponBuild(starterWeapon, [find("falling-star")]);
+      expect(b.projectile.pathing).toBe("accelerate");
+      expect(b.projectile.accelerationMultiplier).toBeLessThan(0);
+      // Launches well above baseline — the burst is front-loaded.
+      expect(b.projectileSpeed).toBeGreaterThan(starterWeapon.projectileSpeed);
     });
   });
 });

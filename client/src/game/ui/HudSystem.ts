@@ -189,6 +189,15 @@ export class HudSystem {
 
   private localPlayerId: string;
 
+  // Perf audit R4 (2026-07-18): updateScoreRows did a full unculled
+  // Graphics.clear()+redraw (badge + ring + underline + status ticks per
+  // player) on EVERY render frame, driven mostly by the health-ring's
+  // breathing pulse — a slow ~0.9s-period sine that doesn't need 60Hz to
+  // read smoothly. Throttled to 20Hz; still far faster than the ~20-30Hz
+  // rate authoritative health/score data itself arrives at over the wire.
+  private static readonly SCORE_ROWS_THROTTLE_MS = 50;
+  private lastScoreRowsUpdateAt = -Infinity;
+
   constructor(scene: Phaser.Scene, localPlayerId: string) {
     this.scene = scene;
     this.localPlayerId = localPlayerId;
@@ -432,6 +441,10 @@ export class HudSystem {
     // Nameplate rows: sorted by score (leader first), local pinned to the
     // top regardless of rank — dash dots / chip strip anchor a fixed offset
     // below row 0, so "you" always needs to be row 0.
+    const nowMs = this.scene.time.now;
+    if (nowMs - this.lastScoreRowsUpdateAt < HudSystem.SCORE_ROWS_THROTTLE_MS) return;
+    this.lastScoreRowsUpdateAt = nowMs;
+
     const entries = Object.entries(round.scores).sort(
       ([aId, a], [bId, b]) => b - a || aId.localeCompare(bId),
     );

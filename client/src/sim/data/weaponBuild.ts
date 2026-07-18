@@ -428,8 +428,23 @@ export function mergeProjectileModifier(
       current.homingStrength,
       modifier.homingStrength ?? 0,
     ),
+    // Direct override, not multiply — same rationale as rangePx above, and
+    // NOT just a style nit: the base weapon's neutral value for this field
+    // is 0 (weapons.ts; projectile.ts reads `factor = 1 + k*dtSec`, so k=0
+    // means "no acceleration"), but multiplying against a base of 0 can
+    // NEVER produce a nonzero result — every card that ever tried to set
+    // this field would silently resolve to 0 no matter what value it
+    // authored. That's why "accelerate" pathing (fully wired end-to-end:
+    // projectile.ts's own case, the Zig `applyAcceleratePathing`/
+    // `step_projectile_v2` dispatch, gen_card_data.ts's
+    // `proj_acceleration_mul_set`) has never been usable by any card before
+    // this pass (falling-star / i-rounds, below) — confirmed by the Zig side
+    // itself, which already treats this as a SET (weapon_build.zig:
+    // `if (m.proj_acceleration_mul_set) |v| p_accel_mul = v;`), never a
+    // multiply. This fix makes TS match the Zig semantics that were already
+    // shipped, not a new invention.
     accelerationMultiplier:
-      current.accelerationMultiplier * (modifier.accelerationMultiplier ?? 1),
+      modifier.accelerationMultiplier ?? current.accelerationMultiplier,
     bounces:
       modifier.bounces !== undefined
         ? Math.max(current.bounces, modifier.bounces)
@@ -500,6 +515,14 @@ function preferShape(
 
 const PATHING_RANK: Record<string, number> = {
   straight: 0,
+  // "accelerate" (speed-profile axis, falling-star/i-rounds): ranked
+  // alongside bounce, a real trajectory-shaping identity that must survive
+  // a later weak/default card, same protection every other exotic pathing
+  // already gets — without this it would silently rank as 0 (tied with
+  // "straight") and get stomped by literally any other pathing card drafted
+  // afterward, or force-reset to "straight" by applyDeliveryFeel's raycast/
+  // beam branch (which checks `PATHING_RANK[...] === 0`).
+  accelerate: 1,
   bounce: 1,
   boomerang: 2,
   gravity: 3,
@@ -592,6 +615,15 @@ export function clampBuild(build: ResolvedWeaponBuild) {
   build.projectile.sizeMultiplier = Math.max(0.35, Math.min(2.4, build.projectile.sizeMultiplier));
   build.projectile.speedMultiplier = Math.max(0.15, Math.min(4.5, build.projectile.speedMultiplier));
   build.projectile.lifetimeMultiplier = Math.max(0.1, build.projectile.lifetimeMultiplier);
+  // Hygiene floor/ceiling for the newly-live accelerate axis (falling-star/
+  // i-rounds), matching every other field's exhaustive clamp here — Zig
+  // applies no ceiling of its own (raw SET passthrough), so this is a TS-
+  // only safety net against a future card authoring an absurd ramp; every
+  // card this pass ships is comfortably inside it.
+  build.projectile.accelerationMultiplier = roundTo(
+    Math.max(-3, Math.min(3, build.projectile.accelerationMultiplier)),
+    2,
+  );
   build.projectile.bounces = Math.max(0, Math.min(12, Math.round(build.projectile.bounces)));
   build.projectile.homingStrength = roundTo(Math.max(0, Math.min(2.5, build.projectile.homingStrength)), 2);
   build.projectile.impactRadiusPx = Math.max(0, Math.min(160, build.projectile.impactRadiusPx));

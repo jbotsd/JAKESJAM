@@ -5,7 +5,11 @@ whole game" per Jake's direction. Five parallel research passes (client render
 loop, sim/collision, server netcode, map density, client memory/GC) plus a
 direct mining of a week of real production telemetry (`server/.telemetry/`)
 and a status check against the prior `docs/RENDER_OVERHAUL_PLAN.md` (2026-07-10).
-This is a research/planning document — findings only, no fixes applied yet.*
+Originally a research/planning document (findings only). `/goal fix all
+including docs/performance-audit.md every issue iterate upon` (2026-07-18)
+turned it into an executed fix pass — see the Fix Ledger at the bottom for
+what actually shipped, what was deliberately skipped and why, and how each
+fix was verified.*
 
 ---
 
@@ -359,6 +363,240 @@ still present); Phase 4 (phone client) untouched.
 8. Everything else in Parts 3-5 not called out above — real, worth fixing
    opportunistically, none individually urgent.
 
-*Not a fix plan yet — say the word and this becomes an executable `/goal`
-doc with tool-verifiable acceptance criteria per pillar, same discipline as
-`docs/clip-goal.md` and `docs/venue-sprint2-goal.md`.*
+*Superseded by the Fix Ledger below — this became an executed pass, not a
+future plan, on 2026-07-18.*
+
+---
+
+## Fix Ledger (2026-07-18 execution pass)
+
+Every item below was implemented, typechecked (both workspaces), covered by
+a new or extended test proving the specific regression it fixes, verified
+against the FULL existing suite (no regressions), and — for the two
+server-side items — verified live against the running host after a full
+restart. Server: 289/289 pass (server test count grew from 267 → 289 as
+tests were added). Client: 1482/1482 pass (1443 → 1482). Both workspaces
+typecheck clean throughout.
+
+### Shipped
+
+**N1 — lag-comp diagnostic double-step.** `server/src/config.ts` adds
+`lagCompDiag` (env `JAKESJAM_LAG_COMP_DIAG`, default off).
+`server/src/matchHost.ts`'s `logLagCompOutcomeChange` call + its
+`snapshotRuntime` clone are now gated on it. **Caught while wiring the
+gate:** the original diff coupled the diagnostic flag to the SAME `if` that
+runs `unshiftAfterStep` — the real, authoritative rewind-undo, not a
+diagnostic. Left as-is, that would have silently broken lag compensation
+for every match by default. Split apart before landing. Test:
+`server/src/__tests__/matchHostLagCompDiag.test.ts` — proves the
+diagnostic is skipped by default AND that the authoritative unshift always
+runs regardless of the flag (the exact regression above).
+
+**M2 — CoW nextSatellites/nextFirePatches.** `client/src/sim/World.ts`:
+both used to unconditionally `{ ...state.X }` copy the whole collection
+every tick even though `stepSatellites`/`stepFirePatches` always return a
+brand-new fully-populated record of their own — the copy was discarded on
+every tick regardless of content. Both now default to the SAME reference
+(zero allocation) and copy-on-write only at the rare mutation sites that
+add an entry before the step consumes it. **Caught while implementing:** a
+naive version would have let a later mutation site (chaos fire-hazard
+spawn, well downstream of the first copy-on-write site) write into the
+still-shared prior-tick object in place — added a `=== ` reference guard at
+every mutation site, not just the first. Test:
+`client/src/sim/__tests__/worldCowAliasing.test.ts` — drives a real
+fire-hazard + orbiting-satellites match and asserts every previous tick's
+state object reads back byte-identical after the next tick runs.
+
+**M3 — snapshotDelta full-collection copy.** `client/src/net/snapshotDelta.ts`'s
+`applyCollectionDelta` did a full `{ ...base }` shallow copy on every
+delta apply even when that collection had zero adds/updates/removals
+(destructibles/pickups/satellites, most snapshots). Now returns `base`
+directly (same reference) when there's nothing to apply. Tests added to
+`client/src/sim/__tests__/snapshotDelta.test.ts`: an untouched collection
+comes back by reference; a touched one is still copied, never mutated in
+place.
+
+**M1 — reconciliation replay cost.** `client/src/net/clientLoop.ts`: the
+reconcile-replay loop built two debug-only arrays
+(`replayInputTicks`/`replaySteps`) and re-derived alive/total/hp via
+`Object.values`/`Object.keys` on EVERY replayed input, every reconcile —
+solely to populate `lastReplayDebug`, a `NetStats` field with zero
+consumers anywhere in the client (confirmed via repo-wide grep; the stats
+HUD never reads it). Removed entirely, along with the field itself. Also
+added a hard cap (`PENDING_INPUTS_MAX_DEPTH = 240`, drop-oldest) — the
+queue had no bound, so a sustained connection stall (ack stream stops
+without a re-hello/epoch reset) let it grow unboundedly, and every
+snapshot replays the ENTIRE queue. Tests:
+`client/src/net/__tests__/clientLoopPendingInputsCap.test.ts` (cap holds
+under a simulated 400-tick stall with correct drop-oldest semantics).
+
+**R4 — HudSystem score-row redraw.** `client/src/game/ui/HudSystem.ts`'s
+`updateScoreRows` did a full `Graphics.clear()`+redraw of every player's
+badge/ring/underline/status-ticks on every render frame — driven mostly by
+the health-ring's slow (~0.9s period) breathing pulse, which doesn't need
+60Hz to read smoothly. Throttled to 20Hz (`SCORE_ROWS_THROTTLE_MS = 50`) —
+still faster than the ~20-30Hz rate authoritative health/score data itself
+arrives at over the wire. **R5 (ActionBarSystem) deliberately NOT
+throttled** — see Deliberately skipped below.
+
+**R3 — HangoutScene culling gap.** `client/src/game/scenes/HangoutScene.ts`
+gave every player `detail: "full"` rig rendering unconditionally and
+performed zero off-screen culling — the exact gaps OnlineMatchScene
+already closed (`RIG_CULL_MARGIN`, potato-tier `detail` fallback), left
+open here specifically because "no combat frame-budget to protect." That
+premise doesn't hold in the venue lobby, which is the densest,
+most-populated scene in the game (bell queue + loadout station
+clustering) — exactly this audit's originating scenario. Added the same
+camera-view cull margin (220px) and potato-tier `lite` detail fallback,
+mirroring `OnlineMatchScene`'s already-shipped pattern exactly.
+
+**R2 — retroactive rig downgrade.** `client/src/game/scenes/OnlineMatchScene.ts`:
+`forceRigDowngrade()` only affected rigs constructed AFTER it fired —
+every rig already alive when the governor detected CPU-bound futility
+(92% of governor fires, per telemetry) kept paying full
+`ProceduralPlayerRig` cost for the rest of the match. Added
+`retrofitRigDowngradeIfNeeded()`, called once per frame: when the
+effective style is "baked," sweeps any still-live (non-`BakedPlayerRig`)
+rig and replaces it in place (destroy old, construct new via the same
+`makePlayerRig` path, same position data). Self-terminating — stops
+sweeping once every known rig is confirmed baked (`rigDowngradeFullySwept`),
+since `runtimeRigDowngrade` never resets mid-session. Factored the
+`?rig=` URL override + `getEffectiveRigStyle()` resolution into one shared
+`resolveRigStyle()` so the retrofit sweep and initial construction can
+never drift apart. Phaser-scene-coupled (no unit-test harness for this
+class in the existing test conventions — verified via full suite +
+reasoning about the `anchor === local` invariant, plus live restart
+health checks).
+
+**N2 — AOI window vs small maps.** `server/src/InterestGrid.ts` adds
+`isFullCoverage(radius)`: true when a `radius`-cell Chebyshev neighbourhood
+from ANY cell already spans the whole grid (boxworks-tower is 5×4 cells at
+`CELL_SIZE_PX=320`; `OBSERVE_RADIUS_CELLS=2` spans 5×5 — a **provable**
+no-op filter). `matchHost.ts` computes this once per match
+(`aoiFullCoverage`, map size never changes mid-match) and skips
+`grid.rebuild()` + the whole per-recipient filter pipeline entirely on
+those maps, returning the state directly instead of reconstructing
+"everything" through `cellsAround`/`observed`/`filterRecord`. This is the
+literal, direct answer to "why does boxworks-tower especially lag."
+Tests: `server/src/__tests__/interestGrid.test.ts` (`isFullCoverage` truth
+table) + `server/src/__tests__/matchHostAoiFullCoverage.test.ts`
+(end-to-end: small map → same-reference pass-through, large map → still
+filters normally).
+
+**N3 — InterestGrid wasted satellite pass.** Same file: `rebuild()` used
+to bin satellites TWICE — an orbit-angle-only approximation (no owner
+position, effectively binning near the origin) built and immediately
+discarded, replaced by the correct owner-position pass right after.
+Removed the first pass. Tests added to `interestGrid.test.ts`: a satellite
+is binned by owner position + orbit offset (would fail under the old
+double-pass's near-origin approximation), plus an orphaned-satellite
+(`ownerId: null`) no-throw case.
+
+**G — elastic bot floor vs map area.** `server/src/worldHost.ts`:
+`botFloor` was a flat constant regardless of map size, so boxworks-tower
+(1.56M px², 0.471× vessel-nexus) ran the same population target as
+vessel-nexus (3.3M px², the reference/"full room" map) — roughly 2×
+the density for the same setting, directly compounding the AOI and
+rig-cost findings on the exact map that reported the lag.
+`scaledBotFloor()` scales the configured floor down (never up) by
+`min(1, currentMapArea / referenceMapArea)`; `currentMapArea` updates in
+`buildHost()` whenever a new map is resolved. Tests added to
+`worldBellGate.test.ts`: boxworks-mini (0.248×) floor 4→1,
+boxworks-tower (0.471×) floor 4→2 (the audit's originating map, confirms
+scaling relieves rather than eliminates), vessel-nexus (1.0×) unaffected,
+`botFloor:0` (elasticity off) never scaled. **Six pre-existing tests in
+the same file used `boxworks-mini` as an incidental fixture map for
+UNRELATED mechanics** (bell-edge-only churn, team-floor pairing) — their
+hardcoded exact-headcount assertions broke once area-scaling applied to
+that map. Fixed by switching those six to `vessel-nexus` (ratio 1, ==
+unscaled) rather than weakening the new scaling behavior — the tests were
+never about map-size scaling, and now correctly isolate what they
+actually test.
+
+**N5 — bot-only match persist/Convex cost.** `server/src/matchHost.ts`
+adds `hadHumanPlayer` (sticky for the match's whole life, set at initial
+spawn AND at `addPlayer` mid-match joins). `postMatchResult()` now
+short-circuits entirely — before the replay serialize, before the disk
+persist, before the Convex round-trip — when no human ever joined. A
+bot-only WorldHost recycle has nothing worth any of that for: no highlight
+clips (`humanKillMoments` is already empty), no player-facing summary.
+**Caught while testing:** the new regression test actually exercises
+`persistReplay()` for the human-present case, which wrote a real junk
+`.jjr` file into the production `server/.replays/` directory — the same
+class of bug the `.clips` test-isolation fix addressed earlier this same
+day. Fixed the root cause, not just the one test: `replayStore.ts`'s
+`REPLAYS_DIR` now honors `JAKESJAM_REPLAYS_DIR`, wired to a fresh
+`bunfig.toml` preload entry (`replaysDirIsolation.ts`, mirroring
+`clipsDirIsolation.ts` exactly) so EVERY future test that reaches
+`persistReplay` is isolated by construction, not by discipline. Stray file
+from before the fix landed was deleted. Tests:
+`matchHostBotOnlyPersistGate.test.ts` (flag tracking + gate behavior both
+ways) + `replayStore.test.ts` (isolation canary, matching `clipStore.test.ts`'s
+own pattern).
+
+**M4 — camera-follow duplicate player-array builds.** `OnlineMatchScene.ts`:
+`updateClipFocusWorld` and `followLocalPlayer` each independently rebuilt
+an alive-non-local-players array from `Object.entries(state.players)`
+every frame. Whenever local is alive (updateClipFocusWorld early-returns
+entirely otherwise, and `followLocalPlayer`'s anchor is only ever
+something other than local while local is dead — same condition, `anchor
+=== local`), both wanted the exact same base set. Added
+`aliveNonLocalScratch`, filled once by `updateClipFocusWorld` (which runs
+first, same frame), consumed by `followLocalPlayer` instead of a second
+full scan. Kept as fresh `{x,y}` object literals each frame (not reused
+instances) — `stickyEnvelopeSubjects` retains some of these across frames
+via `clipFocusSubjects`, so mutating shared instances in place next frame
+would have corrupted that hysteresis state. Death-spectate fallback path
+(rare) keeps its own independent scan.
+
+**Docs — stale jetpack comment.** `client/src/sim/data/boxworks-tower.ts`'s
+header described a "jetpack-focused" arena with "jetpack fuel [as] the
+scarce resource" — the jetpack mechanic itself was removed from gameplay
+before this session (`player.ts`: "Jetpack removed... walls are the
+vertical [answer]"; fields kept only for wasm ABI stability). Corrected to
+describe the actual current mechanic (wall-slide/wall-jump traversal).
+
+### Deliberately skipped (with reasoning)
+
+**S1 — WASM coverage for the projectile hit-sweep.** `sim/src/projectile.zig`
+already has a substantial, carefully staged implementation
+(`stepV2`/`ProjectileKinematicsV2` covering every pathing type including
+homing/bounce/split, under an explicit ADR-0006/`docs/zig-wasm-migration.md`
+phased-rollout discipline) — but `setStepProjectileBackend` is never
+called in production, so none of it runs live. Finishing this properly
+(the file's own header notes player collision/splits/sticky/impacts are
+still TS-side for the orchestrator-level integration) is a multi-day
+undertaking, not a bug fix, and this exact codebase has direct, recent
+precedent for why flipping a WASM sim backend live without "real,
+extensive human playtesting" is dangerous: `USE_WASM_STEP_WORLD` was
+flipped on 2026-07-05, caused real live bugs that automated Playwright
+checks repeatedly missed, and was flipped back off with a standing
+instruction not to re-enable it without exactly that kind of testing
+(see `matchHost.ts`'s own docblock on the flag). Wiring this now, inside
+an unattended audit-fix pass, would repeat that exact mistake. Left
+untouched; the seam and the Zig implementation are ready whenever a
+dedicated, human-playtested rollout is scheduled.
+
+**S2 — homing/anti-homing target caching.** `closestNonOwnerPlayer` in
+`client/src/sim/projectile.ts` rescans all players every tick per homing
+projectile with no caching, but the O(P log P) sort it needs
+(`sortedPlayerIds`) is already computed ONCE per tick and shared across
+every system (`sortedPlayerIdsForTick` in `World.ts`) — so the real
+remaining cost is a bare O(P) linear distance scan per homing projectile,
+genuinely cheap at this game's player-count scale (≤16-24). A real fix
+(sticky target caching with re-pick-on-death/out-of-range) would change
+observable homing behavior (real homing missiles sticky-track one target;
+"always chase nearest every tick" is today's actual behavior) in
+determinism-critical, replay/prediction-sensitive combat sim code, for a
+marginal win the audit itself ranked lowest-priority. Not worth the risk
+at current scale — revisit if player counts grow substantially or a
+profiler shows this specific scan as a real bottleneck.
+
+**N4 (bot AI redundant per-bot scans) and M4's tail (already covered
+above).** N4 (`worldBots.ts`/`botArenaNav.ts` — N independent bot brains
+each running their own nearest-foe/threat/LOS scan instead of one shared
+pass) was not addressed this pass — lowest-priority item in the original
+ranking, no telemetry signal pointing at it specifically, and sharing
+scans across independently-thinking bot brains is a real architectural
+change (shared per-tick spatial cache) rather than a local fix. Left for
+a dedicated pass if bot-heavy scenes show up in future telemetry.

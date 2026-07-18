@@ -22,8 +22,8 @@ import {
 import {
   GEO_SUNLANCE_DAMAGE_MULTIPLIER,
   GEO_OVERCLOCK_FIRE_RATE_MULTIPLIER,
-  GEO_PRISM_FAN_COUNT,
-  GEO_LATTICE_COUNT,
+  GEO_PRISM_FAN_RANGE_PX,
+  GEO_LATTICE_ZONE_RADIUS_PX,
   GEO_RETURN_GLASS_SHIELD_REFUND,
   GEO_SLIP_NODE_RANGE_PX,
 } from "../constants.js";
@@ -355,35 +355,84 @@ describe("Geometrician catalog v1 — representative sim effects", () => {
     expect(res.state.players[A]!.slot1CooldownUntilTick).toBeUndefined();
   });
 
-  test("Prism Fan: an instant cone burst spawns GEO_PRISM_FAN_COUNT shards", () => {
+  test("Prism Fan: an instant cone radius-check hits an enemy in the cone, spawns no projectiles", () => {
     const caster = mkPlayer(A, 400, 400);
     caster.cards = ["prism-fan"];
-    const state = mkState([caster]);
+    // Aimed at +x (700,400) — inCone sits directly along that aim, well
+    // inside GEO_PRISM_FAN_RANGE_PX; behindCaster sits at the SAME distance
+    // but 180° off the aim — inside radius, outside the 50° cone, proving
+    // this is a real cone+radius check, not a bare radius check.
+    const inCone = mkPlayer(B, 550, 400);
+    const behindCaster = mkPlayer(PlayerId("c"), 250, 400);
+    const state = mkState([caster, inCone, behindCaster]);
     const runtime = createRuntime(flatMap);
     const res = stepWithRuntime(
       state,
       runtime,
-      inputsWith([caster], { [A as string]: frame(SLOT1_BIT, 1, 700, 400) }),
+      inputsWith([caster, inCone, behindCaster], { [A as string]: frame(SLOT1_BIT, 1, 700, 400) }),
       DT_MS,
     );
-    expect(Object.keys(res.state.projectiles).length).toBe(GEO_PRISM_FAN_COUNT);
+    expect(Object.keys(res.state.projectiles).length).toBe(0);
     expect(res.events.some((e) => e.t === "ability-activated" && e.kind === "prism-fan")).toBe(
       true,
     );
+    expect(res.state.players[B]!.health).toBeLessThan(100);
+    expect(res.state.players[PlayerId("c")]!.health).toBe(100);
   });
 
-  test("Lattice: an instant 360 burst spawns GEO_LATTICE_COUNT shards", () => {
+  test("Prism Fan: an enemy beyond GEO_PRISM_FAN_RANGE_PX is unaffected", () => {
     const caster = mkPlayer(A, 400, 400);
-    caster.cards = ["lattice"];
-    const state = mkState([caster]);
+    caster.cards = ["prism-fan"];
+    const farAway = mkPlayer(B, 400 + GEO_PRISM_FAN_RANGE_PX + 100, 400);
+    const state = mkState([caster, farAway]);
     const runtime = createRuntime(flatMap);
     const res = stepWithRuntime(
       state,
       runtime,
-      inputsWith([caster], { [A as string]: frame(SLOT1_BIT, 1) }),
+      inputsWith([caster, farAway], { [A as string]: frame(SLOT1_BIT, 1, 700, 400) }),
       DT_MS,
     );
-    expect(Object.keys(res.state.projectiles).length).toBe(GEO_LATTICE_COUNT);
+    expect(res.state.players[B]!.health).toBe(100);
+  });
+
+  test("Lattice: a genuine lingering zone (no projectiles) damages an enemy standing in it over multiple ticks, leaves a distant enemy untouched", () => {
+    const caster = mkPlayer(A, 400, 400);
+    caster.cards = ["lattice"];
+    const nearby = mkPlayer(B, 400 + GEO_LATTICE_ZONE_RADIUS_PX - 20, 400);
+    // Outside the zone radius, same y as caster/nearby (so it lands on the
+    // SAME floor the same way they do — no unrelated free-fall-to-void
+    // over the long tick loop below) but on the OPPOSITE side, still well
+    // within the floor platform's span (this file's flatMap fixture).
+    const farAway = mkPlayer(PlayerId("c"), 400 - GEO_LATTICE_ZONE_RADIUS_PX - 40, 400);
+    let state = mkState([caster, nearby, farAway]);
+    const runtime = createRuntime(flatMap);
+    let res = stepWithRuntime(
+      state,
+      runtime,
+      inputsWith([caster, nearby, farAway], { [A as string]: frame(SLOT1_BIT, 1) }),
+      DT_MS,
+    );
+    state = res.state;
+    // No shard-fan projectiles — the zone itself is a firePatches entity.
+    expect(Object.keys(state.projectiles).length).toBe(0);
+    expect(Object.keys(state.firePatches).length).toBe(1);
+    // Tick forward WITHOUT re-pressing the ability — the zone alone must
+    // keep re-applying damage tick after tick (proves "lingering", not a
+    // one-shot burst tagged as a zone).
+    let firstTickHealth = 100;
+    let laterTickHealth = 100;
+    for (let i = 0; i < 170; i++) {
+      res = stepWithRuntime(state, runtime, inputsWith([caster, nearby, farAway], {}), DT_MS);
+      state = res.state;
+      if (i === 5) firstTickHealth = state.players[B]!.health;
+      if (i === 40) laterTickHealth = state.players[B]!.health;
+    }
+    expect(firstTickHealth).toBeLessThan(100);
+    // Damage kept accruing after the first sample — re-applies over time.
+    expect(laterTickHealth).toBeLessThan(firstTickHealth);
+    expect(state.players[PlayerId("c")]!.health).toBe(100);
+    // The zone eventually burns out (remainingMs exhausted).
+    expect(Object.keys(state.firePatches).length).toBe(0);
   });
 
   test("Return Glass: grants an instant shield charge tick, capped at max", () => {

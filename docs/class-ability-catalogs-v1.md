@@ -12,7 +12,7 @@ identity non-obsolescence), character sheets (feel contracts).
 | Display names | Geometrician · Interstice · Kindred · Syzygist |
 | Syzygist color | cool-white |
 | Rack | **3** slots, keys 1–3 |
-| Catalog size | **10** per chassis here (within 8–12) |
+| Catalog size | **10** per chassis at first pass (within 8–12); Kindred grew to **12** in its 2026-07-18 coverage-floor fast-follow, still within range |
 | Catalog availability | **Full day one** at loadout |
 | Specialization | Loadout equip; recommend + pure freedom |
 | Roles (exactly six) | defense · offense · buff · aoe · single · movement |
@@ -76,10 +76,20 @@ Catalog may add movement tools; **slash remains the engine**.
 
 ---
 
-## Kindred (`paladin`) — 10
+## Kindred (`paladin`) — 12
 
 Always-on sacred: Kindled Ward (hold) + Kindled Edge weight. Heaven-tank
 feel. Catalog **extends** peel/field; never “skip the board.”
+
+**2026-07-18 coverage-floor fast-follow** (docs/axiom-deviations-audit.md
+"Kindred — two structural gaps"): the original 10 shipped buff×1 (Rally
+Light) and movement×1 (Plant Charge), both below this file's own ≥2-per-
+role floor (the Locks table above), and Aegis Share/Rally Light were
+team-only with no solo fallback. #11-12 close the coverage gap; Aegis
+Share/Rally Light both now carry a solo clause too (see their rows below
+and constants.ts's KIN_AEGIS_SHARE_SOLO_KINDLING_FEED /
+KIN_KINDLED_RESOLVE_*/KIN_BULWARK_STEP_* header comments for the full
+numbers). 12 is still inside the locked 8-12 catalog-size range.
 
 | # | Name | Role | Effect (sketch) | Feel / notes |
 |---|------|------|-----------------|--------------|
@@ -90,14 +100,17 @@ feel. Catalog **extends** peel/field; never “skip the board.”
 | 5 | **Consecrated Field** | aoe | Settled self-light field at feet (moves slowly or sticks); damages / slows lightly | Consecration *feel*, self-sourced |
 | 6 | **Shock Ring** | aoe | Slam shock on ground after short hop (keep hop modest — not sky-god) | Space claim; heaven-tank weight |
 | 7 | **Bastion Pulse** | defense | Instant small self-absorb; stronger if Ward is held | Ward synergy, not a second shield identity |
-| 8 | **Aegis Share** | defense | Brief: projectiles that would hit allies in ward shadow also feed your Kindling | Peel readable |
-| 9 | **Rally Light** | buff | Allies in aura: small damage amp + move tick (Conjuration *feel* lite) | Team peak |
-| 10 | **Plant Charge** | movement | Short directional charge (board-first); ends in ward-ready stance | Plant-to-plant, not freeflow ninja |
+| 8 | **Aegis Share** | defense | Brief: projectiles that would hit allies in ward shadow also feed your Kindling. **Solo fallback:** no ally in range → feeds the caster a reduced Kindling tick instead | Peel readable; no dead solo press |
+| 9 | **Rally Light** | buff | Allies in aura (including yourself, solo-safe): small damage amp + move tick (Conjuration *feel* lite) | Team peak; already self-covers solo |
+| 10 | **Plant Charge** | movement | Short directional charge (board-first, aim-directed); ends in ward-ready stance, tips shield charge up | Plant-to-plant, not freeflow ninja; the committed reposition |
+| 11 | **Kindled Resolve** | buff | Spend Kindling for a self stagger-resist + small self-damage-amp window | Solo, resource-gated stance — cash in the block-meter |
+| 12 | **Bulwark Step** | movement | Short lateral shuffle in whatever direction you're currently walking (input-facing, NOT aim-directed); Ward never drops | Cheap, reflexive reposition — the low-commitment counterpart to Plant Charge |
 
 **Example racks:**  
 - Peel: Aegis Share + Rally Light + Retribution Edge  
 - Punish: Unbroken Seal + Bastion Pulse + Sunspike  
 - Field: Consecrated Field + Shock Ring + Plant Charge  
+- Solo heaven-tank: Kindled Resolve + Bulwark Step + Bastion Pulse — every pick has a real, non-team-gated payoff  
 
 ---
 

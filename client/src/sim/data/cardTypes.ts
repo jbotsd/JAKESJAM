@@ -211,7 +211,89 @@ export type AbilityKind =
   | "overclock"
   | "measure"
   | "slip-node"
-  | "recoil-step";
+  | "recoil-step"
+  // ── Kindred catalog v1 (docs/class-ability-catalogs-v1.md) ──────────────
+  // classId-gated to paladin at the offer roll (round.ts enterDrafting) —
+  // same discipline as the Geometrician ten above. All 10 of the doc's 10
+  // (now 12 — see the coverage-floor fast-follow further down this union)
+  // are wired as of the class-overhaul-workboard.md chunk 2.6 fast-follow
+  // (2026-07-18) — the original pass shipped 7; Retribution Edge, Shock
+  // Ring, and Rally Light (deferred that pass for "timing/hop-slam
+  // complexity" and "cross-player buff-aura machinery" respectively) are
+  // now wired too. Retribution Edge/Shock Ring stay self-only (their own
+  // window-buff fields, TS-only, never cross the ABI, same "the Zig line"
+  // precedent as sealUntilTick/aegisShareUntilTick). Rally Light needed NO
+  // cross-player write at all in the end — it's a read-only continuous aura
+  // check (every reader only ever reads a nearby live source and multiplies
+  // its OWN output), so it doesn't use the pendingSyzygistCasts deferred-
+  // queue shape syzygistCatalog's ally-targeted buffs need — see
+  // constants.ts's KIN_RALLY_LIGHT_* header comment for the full reasoning.
+  | "unbroken-seal"
+  | "sunspike"
+  | "judgment-line"
+  | "consecrated-field"
+  | "bastion-pulse"
+  | "aegis-share"
+  | "plant-charge"
+  | "retribution-edge"
+  | "shock-ring"
+  | "rally-light"
+  // Kindred coverage-floor + solo-viability fast-follow (docs/axiom-
+  // deviations-audit.md "Kindred (paladin) — two structural gaps",
+  // 2026-07-18): the catalog's 2nd buff and 2nd movement, closing the
+  // ≥2-per-role floor every other catalog already met (docs/classes-
+  // goal.md's coverage lock). Grows Kindred to 12/12 (still inside the
+  // locked 8-12 catalog-size range) rather than replacing two of the
+  // existing 10 — see constants.ts's KIN_KINDLED_RESOLVE_*/KIN_BULWARK_
+  // STEP_* header comments for the full "why ADD, not replace" reasoning.
+  | "kindled-resolve"
+  | "bulwark-step"
+  // Crater (docs/card-pool-v2.md #26, exclusive: Paladin) — a draft-pool
+  // "ability" card, a SEPARATE system from the Kindred catalog above (same
+  // pool this Sunlance/Borrowed Time entries elsewhere in this union
+  // belong to), but its sim effect still rides an `active.kind` switch case
+  // like every other ability card, so it joins this union too.
+  | "crater"
+  // ── Syzygist catalog v1 (docs/class-ability-catalogs-v1.md) ─────────────
+  // classId-gated to priest at the offer roll (round.ts enterDrafting) —
+  // same discipline as the Geometrician/Kindred blocks above. All 10 of the
+  // doc's 10 are wired this pass (class-overhaul-workboard.md chunk 3.4) —
+  // unlike Kindred's 7/10, every ability here reuses ONE of a small set of
+  // shared low-aim auto-target helpers (World.ts's findNearestAlly/
+  // findNearestEnemy, SYZ_ALLY_SEARCH_RANGE_PX/SYZ_ENEMY_SEARCH_RANGE_PX),
+  // so there was no per-ability aim-cone tuning left to defer.
+  | "bleed-tithe"
+  | "severance"
+  | "borrowed-time"
+  | "focus-hex"
+  | "contagion"
+  | "flock-pulse"
+  | "self-lattice"
+  | "glass-ward"
+  | "haste-gift"
+  | "drift-step"
+  // ── Interstice catalog v1 (docs/class-ability-catalogs-v1.md) ───────────
+  // classId-gated to ninja at the offer roll (round.ts enterDrafting) —
+  // same discipline as the Geometrician/Kindred/Syzygist blocks above. 9 of
+  // the doc's 10 are wired this pass (class-overhaul-workboard.md ninja-
+  // catalog chunk) — "paper-double" (movement) is NOT in this union: it
+  // needs a new decoy/summon ENTITY type in WorldState (own hitbox/health/
+  // input-echo AI + a resonance-gated swap), a genuinely new ABI-crossing
+  // entity concept none of the other 36 catalog abilities shipped this
+  // session needed — every one of them reuses a self-window-buff / mark /
+  // projectile-spawn shape an existing verb already proves out. Recorded
+  // deferral, not a silent stub — same discipline as Kindred's own 7/10
+  // (Retribution Edge/Shock Ring/Rally Light left out of this union
+  // entirely rather than stubbed to a no-op case).
+  | "undercut"
+  | "edge-storm"
+  | "needle"
+  | "read-mark"
+  | "shard-ring"
+  | "wall-bloom"
+  | "ghost-guard"
+  | "second-wind"
+  | "razor-route";
 
 /** Catalog role tag (docs/classes-goal.md "Ability role range" — exactly
  *  six locked roles, no seventh "utility" catch-all). Only meaningful on

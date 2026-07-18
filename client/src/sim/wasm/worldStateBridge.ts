@@ -59,7 +59,35 @@ const HEADER_SIZE = 48;
 // elsewhere. Exporting it (and MAX_PLAYERS below) lets those tests derive
 // the offset instead of re-hardcoding it, so the next struct-size change
 // can't silently desync them again.
-export const PLAYER_ENTITY_SIZE = 296;
+// 296 → 328 (2026-07-18, class-overhaul-workboard.md chunk 1.1): +25
+// content bytes for PlayerEntity.teamId (team_id_len + team_id_bytes[24],
+// appended after energy — no alignment pad needed, u8 fields don't require
+// 8-byte alignment), rounded up to 328 by the struct's own trailing
+// alignment padding (7 implicit bytes). See world_state.zig's comptime
+// assert and packPlayer/unpackPlayer's trailing teamId read/write below.
+// 328 → 336 (2026-07-18, class-overhaul-workboard.md chunk 2.3): +8 bytes
+// for PlayerEntity.kindling (paladin class resource, f64) — reclaims the 7
+// bytes of trailing padding above as real 8-byte alignment space for the
+// new field rather than adding a fresh pad on top of a pad. See
+// world_state.zig's comptime assert and packPlayer/unpackPlayer's trailing
+// kindling read/write below.
+// 336 → 360 (2026-07-18, class-overhaul-workboard.md chunk 3.1): +24 bytes
+// for PlayerEntity.regen_until_tick/haste_until_tick (u32 x2, offsets
+// [336,344)) + regen_hps/haste_multiplier (f64 x2, offsets [344,360)) — no
+// alignment padding needed anywhere (336 and 344 are both already aligned
+// for what follows). See world_state.zig's comptime assert and
+// packPlayer/unpackPlayer's trailing regen/haste read/write below.
+// 360 → 368 (2026-07-18, class-overhaul-workboard.md chunk 3.2): +8 bytes
+// for PlayerEntity.devotion (f64, offset [360,368)) — 360 already 8-byte-
+// aligned, no padding. See world_state.zig's comptime assert and
+// packPlayer/unpackPlayer's trailing devotion read/write below.
+// 368 → 384 (2026-07-18, class-overhaul-workboard.md chunk 3.3): +16 bytes
+// for PlayerEntity.syz_ward_absorb_until_tick (u32, offset [368,372)) +
+// syz_ward_absorb_remaining (f64, offset [376,384)) — 4 bytes of implicit
+// alignment padding between the two (372 → 376). See world_state.zig's
+// comptime assert and packPlayer/unpackPlayer's trailing Ward read/write
+// below.
+export const PLAYER_ENTITY_SIZE = 384;
 const PROJECTILE_ENTITY_SIZE = 216;
 const SATELLITE_ENTITY_SIZE = 96;
 const DESTRUCTIBLE_ENTITY_SIZE = 64;
@@ -87,6 +115,10 @@ const MAX_PICKUPS = 32;
 
 const PLAYER_ID_BYTES = 32;
 const WEAPON_ID_BYTES = 24;
+// Duos-queue team id (class-overhaul-workboard.md chunk 1.1) — same "medium
+// generated id" bucket as WEAPON_ID_BYTES. Must match
+// world_state.zig's TEAM_ID_BYTES.
+const TEAM_ID_BYTES = 24;
 
 // PER-ARRAY preamble: u32 count + 4-byte align-to-8 pad.
 const ARRAY_PREAMBLE = 8;
@@ -319,6 +351,19 @@ const PLAYER_FLAG_BITS = {
   hasBossMode: 17,
   hasJetpackFuel: 18,
   hasParryFacing: 19,
+  // Duos-queue team identity (class-overhaul-workboard.md chunk 1.1) —
+  // mirrors world_state.zig's PlayerFlags.has_team_id (bit 20).
+  hasTeamId: 20,
+  // Syzygist status substrate extension (class-overhaul-workboard.md chunk
+  // 3.1) — mirrors world_state.zig's PlayerFlags.has_regen/has_haste
+  // (bits 21-22).
+  hasRegen: 21,
+  hasHaste: 22,
+  // Syzygist Ward (class-overhaul-workboard.md chunk 3.3) — mirrors
+  // world_state.zig's PlayerFlags.has_syz_ward (bit 23). Devotion needs no
+  // flag (always-valid resource, same "no gate" contract as energy/
+  // kindling below).
+  hasSyzWard: 23,
 } as const;
 
 function bit(flags: number, b: number): boolean {
@@ -446,6 +491,10 @@ function packPlayer(
   );
   flags = set(flags, PLAYER_FLAG_BITS.hasJetpackFuel, p.jetpackFuel != null);
   flags = set(flags, PLAYER_FLAG_BITS.hasParryFacing, p.parryFacing != null);
+  flags = set(flags, PLAYER_FLAG_BITS.hasTeamId, p.teamId != null);
+  flags = set(flags, PLAYER_FLAG_BITS.hasRegen, p.regenUntilTick != null);
+  flags = set(flags, PLAYER_FLAG_BITS.hasHaste, p.hasteUntilTick != null);
+  flags = set(flags, PLAYER_FLAG_BITS.hasSyzWard, p.wardAbsorbUntilTick != null);
   view.setUint32(off, flags >>> 0, true);
   off += 4;
 
@@ -503,6 +552,70 @@ function packPlayer(
   view.setUint32(off, 0, true); // alignment pad
   off += 4;
   view.setFloat64(off, p.energy ?? 0, true);
+  off += 8;
+
+  // teamId (2026-07-18, class-overhaul-workboard.md chunk 1.1) — duos-queue
+  // team identity, identity/roster metadata (crosses the ABI, unlike
+  // ability/window state — see PlayerEntity.teamId's doc comment in
+  // types.ts). No alignment pad needed: u8 fields don't require 8-byte
+  // alignment, so team_id_len sits directly after energy's f64. Mirrors
+  // world_state.zig's PlayerEntity.team_id_len/team_id_bytes exactly.
+  const teamIdLen = p.teamId
+    ? Math.min(textEncoder.encode(p.teamId).length, TEAM_ID_BYTES)
+    : 0;
+  view.setUint8(off, teamIdLen & 0xff);
+  off += 1;
+  writeString(view, off, TEAM_ID_BYTES, p.teamId ?? "");
+  off += TEAM_ID_BYTES;
+
+  // kindling (2026-07-18, class-overhaul-workboard.md chunk 2.3) — paladin
+  // class resource, TS-owned like energy/abilityCharge. team_id_bytes ends
+  // at relative offset 321; an f64 needs 8-byte alignment, so Zig inserts a
+  // 7-byte pad here (this WAS team_id_bytes's own trailing pad before
+  // kindling existed — see world_state.zig's PlayerEntity.kindling doc
+  // comment for the full "reclaimed padding" accounting). Write it
+  // explicitly (zeros — pure alignment filler, never read) so the byte
+  // layout matches exactly.
+  for (let i = 0; i < 7; i++) view.setUint8(off + i, 0);
+  off += 7;
+  view.setFloat64(off, p.kindling ?? 0, true);
+  off += 8;
+
+  // Syzygist status substrate extension (2026-07-18, class-overhaul-
+  // workboard.md chunk 3.1) — regen/haste windows, TS-owned/TS-applied
+  // like energy/kindling (no alignment pad needed: kindling's f64 ends at
+  // an 8-aligned offset, and two u32s followed by two f64s need no gap
+  // from there either — see world_state.zig's PlayerEntity.regen_until_tick
+  // doc comment for the exact accounting). Gated by the flags bits set
+  // just above (hasRegen/hasHaste), same "unset vs tick 0" convention as
+  // hasBurn/hasFreeze.
+  view.setUint32(off, p.regenUntilTick ?? 0, true);
+  off += 4;
+  view.setUint32(off, p.hasteUntilTick ?? 0, true);
+  off += 4;
+  view.setFloat64(off, p.regenHps ?? 0, true);
+  off += 8;
+  view.setFloat64(off, p.hasteMultiplier ?? 0, true);
+  off += 8;
+
+  // Syzygist Devotion (2026-07-18, class-overhaul-workboard.md chunk 3.2)
+  // — TS-owned resource, same "no alignment pad needed, no flag" contract
+  // as energy/kindling: haste_multiplier's f64 ends at an 8-aligned
+  // offset, so devotion needs no gap.
+  view.setFloat64(off, p.devotion ?? 0, true);
+  off += 8;
+
+  // Syzygist Ward (2026-07-18, class-overhaul-workboard.md chunk 3.3) —
+  // TS-owned/TS-applied window, same contract as regen/haste above. No
+  // alignment pad before the u32 (devotion's f64 ends 4-aligned already);
+  // a 4-byte pad IS needed before the trailing f64 (a lone u32 precedes
+  // it) — write it explicitly, matching world_state.zig's
+  // syz_ward_absorb_until_tick doc comment exactly.
+  view.setUint32(off, p.wardAbsorbUntilTick ?? 0, true);
+  off += 4;
+  view.setUint32(off, 0, true); // alignment pad
+  off += 4;
+  view.setFloat64(off, p.wardAbsorbRemaining ?? 0, true);
   off += 8;
 }
 
@@ -588,6 +701,57 @@ function unpackPlayer(view: DataView, offset: number): PlayerEntity {
   const energy = view.getFloat64(off, true);
   off += 8;
 
+  // teamId (2026-07-18, class-overhaul-workboard.md chunk 1.1) — no
+  // alignment pad needed (u8 fields don't require 8-byte alignment),
+  // mirrors the pack-side layout and world_state.zig's
+  // PlayerEntity.team_id_len/team_id_bytes (appended after energy).
+  const teamIdLen = view.getUint8(off);
+  off += 1;
+  const teamId = readString(view, off, teamIdLen);
+  off += TEAM_ID_BYTES;
+
+  // kindling (2026-07-18, class-overhaul-workboard.md chunk 2.3) — paladin
+  // class resource, TS-owned like energy. 7-byte alignment pad (team_id_bytes
+  // ends at relative offset 321, the f64 needs offset 328 — see
+  // world_state.zig's PlayerEntity.kindling doc comment) then the f64,
+  // mirroring the pack-side layout above exactly. Always round-tripped
+  // (no PlayerFlags gate bit), same "TS-owned resource, unconditionally
+  // carried" precedent as energy just above.
+  off += 7; // alignment pad
+  const kindling = view.getFloat64(off, true);
+  off += 8;
+
+  // Syzygist status substrate extension (2026-07-18, class-overhaul-
+  // workboard.md chunk 3.1) — no alignment pad needed (kindling's f64 ends
+  // 8-aligned; the two u32s + two f64s that follow need no gap from
+  // there — see world_state.zig's PlayerEntity.regen_until_tick doc
+  // comment), mirrors the pack-side layout above exactly. Gated by
+  // hasRegen/hasHaste below (unlike energy/kindling), same "unset vs tick
+  // 0" convention as hasBurn/hasFreeze.
+  const regenUntilRaw = view.getUint32(off, true);
+  off += 4;
+  const hasteUntilRaw = view.getUint32(off, true);
+  off += 4;
+  const regenHpsRaw = view.getFloat64(off, true);
+  off += 8;
+  const hasteMultiplierRaw = view.getFloat64(off, true);
+  off += 8;
+
+  // Syzygist Devotion (2026-07-18, class-overhaul-workboard.md chunk 3.2)
+  // — no alignment pad needed (hasteMultiplier's f64 ends 8-aligned),
+  // always round-tripped (no flag gate), same precedent as energy/kindling.
+  const devotion = view.getFloat64(off, true);
+  off += 8;
+
+  // Syzygist Ward (2026-07-18, class-overhaul-workboard.md chunk 3.3) —
+  // mirrors the pack-side layout exactly: u32 tick, 4-byte alignment pad,
+  // then the f64 pool. Gated by hasSyzWard below.
+  const syzWardUntilRaw = view.getUint32(off, true);
+  off += 4;
+  off += 4; // alignment pad
+  const syzWardRemainingRaw = view.getFloat64(off, true);
+  off += 8;
+
   const out: PlayerEntity = {
     id: PlayerId(id),
     characterId,
@@ -607,6 +771,8 @@ function unpackPlayer(view: DataView, offset: number): PlayerEntity {
     ammo,
     abilityCharge,
     energy,
+    kindling,
+    devotion,
     lastProcessedInputSeq: InputSeq(lastProcessedInputSeq),
   };
   if (bit(flags, PLAYER_FLAG_BITS.grounded)) out.grounded = true;
@@ -650,6 +816,19 @@ function unpackPlayer(view: DataView, offset: number): PlayerEntity {
     out.blockJammerUntilTick = Tick(blockJammerRaw);
   if (bit(flags, PLAYER_FLAG_BITS.hasBossMode))
     out.bossModeUntilTick = Tick(bossModeRaw);
+  if (bit(flags, PLAYER_FLAG_BITS.hasTeamId)) out.teamId = teamId;
+  if (bit(flags, PLAYER_FLAG_BITS.hasRegen)) {
+    out.regenUntilTick = Tick(regenUntilRaw);
+    out.regenHps = regenHpsRaw;
+  }
+  if (bit(flags, PLAYER_FLAG_BITS.hasHaste)) {
+    out.hasteUntilTick = Tick(hasteUntilRaw);
+    out.hasteMultiplier = hasteMultiplierRaw;
+  }
+  if (bit(flags, PLAYER_FLAG_BITS.hasSyzWard)) {
+    out.wardAbsorbUntilTick = Tick(syzWardUntilRaw);
+    out.wardAbsorbRemaining = syzWardRemainingRaw;
+  }
   return out;
 }
 

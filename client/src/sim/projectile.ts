@@ -49,7 +49,13 @@ const BOOMERANG_TURN_RATE = 8.4;
 const BOOMERANG_RANGE_FRACTION = 0.55;
 const BOOMERANG_RETURN_RADIUS = 16; // ~ proj.radius + 8 in offline
 const STICKY_FUSE_MS = 720;
-const SLOW_FIELD_DURATION_MS = 1500;
+// Exported (2026-07-18, aoe role rework): World.ts's new instant radius-
+// check AoE resolution (Consecrated Field/Crater's stagger) reuses this
+// SAME duration for its own directly-applied slow, rather than inventing a
+// second "how long does a stagger last" number — the shared formula
+// constants.ts's own KIN_CONSECRATED_FIELD_DAMAGE/KIN_CRATER_SLAM_STAGGER_
+// MULTIPLIER comments already point to.
+export const SLOW_FIELD_DURATION_MS = 1500;
 const FLOAT_OSC_LATERAL = 22;
 const FLOAT_OSC_FORWARD = 11;
 const FLOAT_OSC_LATERAL_HZ = 9;

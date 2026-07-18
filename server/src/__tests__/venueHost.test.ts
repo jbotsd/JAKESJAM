@@ -13,10 +13,10 @@ import { describe, test, expect } from "bun:test";
 import type { ServerWebSocket } from "bun";
 import { VenueHost, VENUE_LOBBY_MATCH_ID } from "../venueHost.ts";
 import { WorldHost } from "../worldHost.ts";
-import type { MatchSocketData } from "../matchHost.ts";
+import { MatchHost, type MatchSocketData } from "../matchHost.ts";
 import { DRAFT_WINDOW_MS, ROUND_OVER_HOLD_MS } from "@sim/round.ts";
-import { crystalRoundsCards } from "@sim/data/cards.ts";
 import { decodeMessage, encodeMessage } from "@net/protocol.ts";
+import { PlayerId } from "@sim/types.ts";
 
 function makeFakeWs(playerId: string, name?: string): ServerWebSocket<MatchSocketData> {
   return {
@@ -228,7 +228,7 @@ describe("VenueHost lobby lifecycle (Pillar 1.2)", () => {
   // ── The loadout station / bell separation (Jake 2026-07-17: "seperate
   //    the card selector test room thing with the bell queue") ──────────
 
-  test("queueing at the bell is JUST queueing: no offer rolled, no venue-draft pushed", () => {
+  test("queueing at the bell is JUST queueing: no loadout entry created, no venue-draft pushed", () => {
     const { venue } = makeVenue(0);
     const sent: Uint8Array[] = [];
     const ws = {
@@ -255,7 +255,7 @@ describe("VenueHost lobby lifecycle (Pillar 1.2)", () => {
     venue.dispose();
   });
 
-  test("the loadout station rolls a 3-card offer once and re-pushes it idempotently (S2.E)", () => {
+  test("the loadout station derives classId once and re-pushes idempotently (universal offer removed 2026-07-18)", () => {
     const { venue } = makeVenue(0);
     const sent: Uint8Array[] = [];
     const ws = {
@@ -273,24 +273,36 @@ describe("VenueHost lobby lifecycle (Pillar 1.2)", () => {
     sink.onSimEvent?.({ t: "ready-toggled", playerId: "p_l" });
     const entry = venue.loadoutForTest("p_l" as never);
     expect(entry).toBeDefined();
-    expect(entry!.offers.length).toBe(3);
-    expect(new Set(entry!.offers).size).toBe(3); // distinct
     expect(entry!.picks).toEqual([]);
-    // Standing there (totem retrigger) re-pushes the SAME offer, no re-roll.
+    expect(entry!.classId).toBe("wizard"); // default chassis (no character on the socket)
+    // Standing there (totem retrigger) re-pushes idempotently — untouched.
     sink.onSimEvent?.({ t: "ready-toggled", playerId: "p_l" });
-    expect(venue.loadoutForTest("p_l" as never)!.offers).toEqual(entry!.offers);
+    expect(venue.loadoutForTest("p_l" as never)!.picks).toEqual([]);
+    expect(venue.loadoutForTest("p_l" as never)!.classId).toBe("wizard");
     const drafts = sent
-      .map((buf) => decodeMessage(buf)?.message as { t: string; offers?: string[] } | undefined)
-      .filter((m): m is { t: string; offers?: string[] } => m?.t === "venue-draft");
+      .map(
+        (buf) =>
+          decodeMessage(buf)?.message as
+            | { t: string; picks?: string[]; classId?: string }
+            | undefined,
+      )
+      .filter(
+        (m): m is { t: string; picks?: string[]; classId?: string } => m?.t === "venue-draft",
+      );
     expect(drafts.length).toBe(2);
-    expect(drafts[0]!.offers).toEqual(entry!.offers);
-    expect(drafts[1]!.offers).toEqual(entry!.offers);
+    for (const d of drafts) {
+      expect(d.picks).toEqual([]);
+      expect(d.classId).toBe("wizard");
+      // The universal-offer field is gone from the wire entirely (not
+      // sent-empty) — see protocol.ts's VenueDraft doc.
+      expect((d as { offers?: unknown }).offers).toBeUndefined();
+    }
     // The station never queues anyone.
     expect(venue.queuedForTest()).toEqual([]);
     venue.dispose();
   });
 
-  test("card-pick over the lobby socket lands on the loadout entry; bad ids ignored (S2.E)", () => {
+  test("card-pick over the lobby socket is a harmless no-op now (universal offer removed 2026-07-18) — catalog-toggle is the only way to arm picks", () => {
     const { venue } = makeVenue(0);
     const ws = makeFakeWs("p_p", "PICKY");
     venue.attachLobby(ws);
@@ -299,103 +311,14 @@ describe("VenueHost lobby lifecycle (Pillar 1.2)", () => {
       t: "ready-toggled",
       playerId: "p_p",
     });
-    const entry = venue.loadoutForTest("p_p" as never)!;
-    const chosen = entry.offers[1]!;
-    venue.routeLobby(ws, encodeMessage({ t: "card-pick", roundIndex: 0, cardId: "not-offered" }));
     expect(venue.loadoutForTest("p_p" as never)!.picks).toEqual([]);
-    venue.routeLobby(ws, encodeMessage({ t: "card-pick", roundIndex: 0, cardId: chosen }));
-    expect(venue.loadoutForTest("p_p" as never)!.picks).toEqual([chosen]);
-    // A stale id from the FIRST offer (already superseded by the reroll
-    // below) is ignored — picks does not grow.
-    venue.routeLobby(ws, encodeMessage({ t: "card-pick", roundIndex: 0, cardId: "not-offered" }));
-    expect(venue.loadoutForTest("p_p" as never)!.picks).toEqual([chosen]);
-    venue.dispose();
-  });
-
-  test("multi-pick (chunk 1.3): each valid pick fills the NEXT rack slot and rerolls the offer for the one after it, capped at the rack size", () => {
-    const { venue } = makeVenue(0);
-    const ws = makeFakeWs("p_rack", "RACKER");
-    venue.attachLobby(ws);
-    type SimEventSink = { onSimEvent?: (e: { t: string; playerId: string }) => void };
-    (venue.lobbyHostForTest() as unknown as SimEventSink).onSimEvent?.({
-      t: "ready-toggled",
-      playerId: "p_rack",
-    });
-    // Slot 1.
-    const firstOffers = venue.loadoutForTest("p_rack" as never)!.offers;
-    expect(firstOffers.length).toBe(3);
-    const first = firstOffers[0]!;
-    venue.routeLobby(ws, encodeMessage({ t: "card-pick", roundIndex: 0, cardId: first }));
-    expect(venue.loadoutForTest("p_rack" as never)!.picks).toEqual([first]);
-    // A fresh offer landed for slot 2 WITHOUT another totem touch — the
-    // pick handler rerolls immediately (docs/classes-goal.md "Loadout
-    // station owns the 3 slots": one continuous visit can fill the rack).
-    const secondOffers = venue.loadoutForTest("p_rack" as never)!.offers;
-    expect(secondOffers.length).toBeGreaterThan(0);
-
-    // Slot 2.
-    const second = secondOffers[0]!;
-    venue.routeLobby(ws, encodeMessage({ t: "card-pick", roundIndex: 0, cardId: second }));
-    expect(venue.loadoutForTest("p_rack" as never)!.picks).toEqual([first, second]);
-
-    // Slot 3 — the rack's last slot (MAX_ABILITY_SLOTS = 3).
-    const thirdOffers = venue.loadoutForTest("p_rack" as never)!.offers;
-    const third = thirdOffers[0]!;
-    venue.routeLobby(ws, encodeMessage({ t: "card-pick", roundIndex: 0, cardId: third }));
-    expect(venue.loadoutForTest("p_rack" as never)!.picks).toEqual([first, second, third]);
-
-    // Rack full — no further offer, no further picks accepted.
-    expect(venue.loadoutForTest("p_rack" as never)!.offers).toEqual([]);
-    venue.routeLobby(ws, encodeMessage({ t: "card-pick", roundIndex: 0, cardId: first }));
-    expect(venue.loadoutForTest("p_rack" as never)!.picks).toEqual([first, second, third]);
-
-    // A fresh totem touch (re-entering the zone) re-pushes the completed
-    // rack's [] offer idempotently — it does not reopen a 4th slot.
-    (venue.lobbyHostForTest() as unknown as SimEventSink).onSimEvent?.({
-      t: "ready-toggled",
-      playerId: "p_rack",
-    });
-    expect(venue.loadoutForTest("p_rack" as never)!.offers).toEqual([]);
-    venue.dispose();
-  });
-
-  test("multi-pick stays classId-gated across every reroll, not just the first offer (docs/class-ability-catalogs-v1.md)", () => {
-    const { venue } = makeVenue(0);
-    // sprinter → ninja (cardTypes.ts's ARCHETYPE_CLASS_ID) — a ninja must
-    // never see a wizard-exclusive Geometrician catalog card (e.g.
-    // "sunlance"), at slot 1 OR at any rerolled later slot.
-    const ws = {
-      data: {
-        matchId: VENUE_LOBBY_MATCH_ID,
-        playerId: "p_ninja",
-        name: "NINJA",
-        authedAt: Date.now(),
-        character: "sprinter",
-      },
-      send: () => 1,
-      close: () => {},
-      getBufferedAmount: () => 0,
-    } as unknown as ServerWebSocket<MatchSocketData>;
-    venue.attachLobby(ws);
-    type SimEventSink = { onSimEvent?: (e: { t: string; playerId: string }) => void };
-    (venue.lobbyHostForTest() as unknown as SimEventSink).onSimEvent?.({
-      t: "ready-toggled",
-      playerId: "p_ninja",
-    });
-    const wizardOnlyIds = new Set(
-      crystalRoundsCards.filter((c) => c.classId === "wizard").map((c) => c.id),
-    );
-    const assertNoWizardCards = () => {
-      const offers = venue.loadoutForTest("p_ninja" as never)!.offers;
-      for (const id of offers) expect(wizardOnlyIds.has(id)).toBe(false);
-    };
-    assertNoWizardCards(); // slot 1's initial offer
-    for (let i = 0; i < 3; i += 1) {
-      const offers = venue.loadoutForTest("p_ninja" as never)!.offers;
-      if (offers.length === 0) break; // rack filled before exhausting the loop
-      venue.routeLobby(ws, encodeMessage({ t: "card-pick", roundIndex: 0, cardId: offers[0]! }));
-      assertNoWizardCards(); // every rerolled offer after that pick
-    }
+    // card-pick is no longer intercepted at the venue level — it falls
+    // through to the hangout host's own routeMessage, whose applyCardPick
+    // (matchHost.ts) is gated to `round.phase === "drafting"`, and the
+    // venue lobby's round phase is permanently pinned to "fighting"
+    // (never drafting) — a guaranteed no-op, not a lucky one.
+    venue.routeLobby(ws, encodeMessage({ t: "card-pick", roundIndex: 0, cardId: "sunlance" }));
+    expect(venue.loadoutForTest("p_p" as never)!.picks).toEqual([]);
     venue.dispose();
   });
 
@@ -408,16 +331,12 @@ describe("VenueHost lobby lifecycle (Pillar 1.2)", () => {
       t: "ready-toggled",
       playerId: "p_q2",
     });
-    const entry = venue.loadoutForTest("p_q2" as never)!;
-    // Offer rolled but NOT picked → plain spawn, never a silent leftmost.
+    // Visited but equipped nothing → plain spawn, never a silent auto-pick.
     expect(arena.getEntrantCards!("p_q2" as never)).toBeUndefined();
-    // Picked → exactly the pick, consumed by the spawn. Snapshot the card
-    // BEFORE routing: the pick handler re-rolls `entry.offers` for the next
-    // rack slot (rotation system, venueHost card-pick handler), so reading
-    // `entry.offers[2]` after the pick would see the fresh roll, not the pick.
-    const picked = entry.offers[2]!;
-    venue.routeLobby(ws, encodeMessage({ t: "card-pick", roundIndex: 0, cardId: picked }));
-    expect(arena.getEntrantCards!("p_q2" as never)).toEqual([picked]);
+    // Equip a catalog card (default chassis → wizard) → exactly that card,
+    // consumed by the spawn.
+    venue.routeLobby(ws, encodeMessage({ t: "catalog-toggle", cardId: "sunlance" }));
+    expect(arena.getEntrantCards!("p_q2" as never)).toEqual(["sunlance"]);
     expect(arena.getEntrantCards!("p_q2" as never)).toBeUndefined(); // consumed
     // Never visited the station → plain spawn.
     expect(arena.getEntrantCards!("p_stranger" as never)).toBeUndefined();
@@ -439,11 +358,10 @@ describe("VenueHost lobby lifecycle (Pillar 1.2)", () => {
     venue.attachLobby(ws);
     type SimEventSink = { onSimEvent?: (e: { t: string; playerId: string }) => void };
     const sink = venue.lobbyHostForTest() as unknown as SimEventSink;
-    // Visit the loadout station (pick a card), THEN queue at the bell —
-    // two separate walk-ups, two separate meanings (2026-07-17).
+    // Visit the loadout station (equip a catalog card), THEN queue at the
+    // bell — two separate walk-ups, two separate meanings (2026-07-17).
     sink.onSimEvent?.({ t: "ready-toggled", playerId: "p_adm" });
-    const offers = venue.loadoutForTest("p_adm" as never)!.offers;
-    venue.routeLobby(ws, encodeMessage({ t: "card-pick", roundIndex: 0, cardId: offers[1]! }));
+    venue.routeLobby(ws, encodeMessage({ t: "catalog-toggle", cardId: "sunlance" }));
     sink.onSimEvent?.({ t: "launch-requested", playerId: "p_adm" });
 
     // The arena's phase edge into countdown IS the bell (the same hook the
@@ -459,9 +377,9 @@ describe("VenueHost lobby lifecycle (Pillar 1.2)", () => {
     expect(admitted).toBeDefined();
     expect(admitted!.arenaWsPath).toBe("/ws/world");
     // The banked pick survives the dequeue and is consumed exactly once;
-    // the loadout entry was consumed by the admission (next visit re-rolls).
+    // the loadout entry was consumed by the admission (next visit starts fresh).
     expect(venue.loadoutForTest("p_adm" as never)).toBeUndefined();
-    expect(arena.getEntrantCards!("p_adm" as never)).toEqual([offers[1]!]);
+    expect(arena.getEntrantCards!("p_adm" as never)).toEqual(["sunlance"]);
     expect(arena.getEntrantCards!("p_adm" as never)).toBeUndefined();
     venue.dispose();
   });
@@ -513,6 +431,235 @@ describe("VenueHost lobby lifecycle (Pillar 1.2)", () => {
     const lobby = venue.lobbyHostForTest() as unknown as LobbyInternals;
     const ids = Object.keys(lobby.state.players);
     expect(ids.filter((id) => id === "p_named").length).toBe(1);
+    venue.dispose();
+  });
+});
+
+// ── Class ability catalog (docs/classes-goal.md "Loadout station owns the
+//    3 slots" — live playtest finding 2026-07-18: Jake pulled up the
+//    loadout station with Kindred/paladin selected, saw a 3-card random
+//    offer mixing a universal weapon card with a class catalog card, and
+//    said "this should show all cards for that class when its selected
+//    not just three and this should have the concept of selecting them").
+//    The full catalog is equipped via the `catalog-toggle` message, landing
+//    on `entry.picks` — the SAME array/admission plumbing the universal
+//    offer used to fill before it was cut from the station entirely
+//    (2026-07-18, see the "loadout station" describe block above and
+//    `catalog-toggle` is now the ONLY way to arm a pick at the station). ──
+
+describe("VenueHost class ability catalog", () => {
+  type SimEventSink = { onSimEvent?: (e: { t: string; playerId: string }) => void };
+
+  test("catalog-toggle equips a class catalog card into picks and pushes venue-draft with classId + picks", () => {
+    const { venue } = makeVenue(0);
+    const sent: Uint8Array[] = [];
+    const ws = {
+      data: { matchId: VENUE_LOBBY_MATCH_ID, playerId: "p_cat2", name: "CAT2", authedAt: Date.now() },
+      send: (buf: Uint8Array) => {
+        sent.push(buf);
+        return 1;
+      },
+      close: () => {},
+      getBufferedAmount: () => 0,
+    } as unknown as ServerWebSocket<MatchSocketData>;
+    venue.attachLobby(ws);
+    const sink = venue.lobbyHostForTest() as unknown as SimEventSink;
+    sink.onSimEvent?.({ t: "ready-toggled", playerId: "p_cat2" }); // default classId = wizard
+    venue.routeLobby(ws, encodeMessage({ t: "catalog-toggle", cardId: "sunlance" }));
+    expect(venue.loadoutForTest("p_cat2" as never)!.picks).toEqual(["sunlance"]);
+    const drafts = sent
+      .map(
+        (buf) =>
+          decodeMessage(buf)?.message as
+            | { t: string; picks?: string[]; classId?: string }
+            | undefined,
+      )
+      .filter(
+        (m): m is { t: string; picks?: string[]; classId?: string } => m?.t === "venue-draft",
+      );
+    const last = drafts[drafts.length - 1]!;
+    expect(last.picks).toEqual(["sunlance"]);
+    expect(last.classId).toBe("wizard");
+    // Toggling the SAME card again deselects it — one message, both directions.
+    venue.routeLobby(ws, encodeMessage({ t: "catalog-toggle", cardId: "sunlance" }));
+    expect(venue.loadoutForTest("p_cat2" as never)!.picks).toEqual([]);
+    venue.dispose();
+  });
+
+  test("catalog-toggle ignores a card outside the player's locked class, and ignores non-catalog ids", () => {
+    const { venue } = makeVenue(0);
+    const ws = makeFakeWs("p_cat3", "CAT3"); // default classId = wizard
+    venue.attachLobby(ws);
+    const sink = venue.lobbyHostForTest() as unknown as SimEventSink;
+    sink.onSimEvent?.({ t: "ready-toggled", playerId: "p_cat3" });
+    // "unbroken-seal" is paladin-exclusive — a wizard-locked entry ignores it.
+    venue.routeLobby(ws, encodeMessage({ t: "catalog-toggle", cardId: "unbroken-seal" }));
+    expect(venue.loadoutForTest("p_cat3" as never)!.picks).toEqual([]);
+    // A universal (non-classId) card id is also ignored on THIS message —
+    // that's what card-pick is for, not catalog-toggle.
+    venue.routeLobby(ws, encodeMessage({ t: "catalog-toggle", cardId: "crystal-volley" }));
+    expect(venue.loadoutForTest("p_cat3" as never)!.picks).toEqual([]);
+    venue.dispose();
+  });
+
+  test("catalog-toggle never creates a 4th rack slot; deselecting an equipped card always frees one", () => {
+    const { venue } = makeVenue(0);
+    const ws = makeFakeWs("p_cat4", "CAT4"); // default classId = wizard
+    venue.attachLobby(ws);
+    const sink = venue.lobbyHostForTest() as unknown as SimEventSink;
+    sink.onSimEvent?.({ t: "ready-toggled", playerId: "p_cat4" });
+    for (const id of ["sunlance", "facet-break", "prism-fan"]) {
+      venue.routeLobby(ws, encodeMessage({ t: "catalog-toggle", cardId: id }));
+    }
+    expect(venue.loadoutForTest("p_cat4" as never)!.picks).toEqual([
+      "sunlance",
+      "facet-break",
+      "prism-fan",
+    ]);
+    // A 4th catalog card is refused — the rack stays at exactly 3
+    // (docs/classes-goal.md "Draft never creates a 4th slot").
+    venue.routeLobby(ws, encodeMessage({ t: "catalog-toggle", cardId: "lattice" }));
+    expect(venue.loadoutForTest("p_cat4" as never)!.picks).toEqual([
+      "sunlance",
+      "facet-break",
+      "prism-fan",
+    ]);
+    // Deselecting one frees a slot for a different card.
+    venue.routeLobby(ws, encodeMessage({ t: "catalog-toggle", cardId: "facet-break" }));
+    expect(venue.loadoutForTest("p_cat4" as never)!.picks).toEqual(["sunlance", "prism-fan"]);
+    venue.routeLobby(ws, encodeMessage({ t: "catalog-toggle", cardId: "lattice" }));
+    expect(venue.loadoutForTest("p_cat4" as never)!.picks).toEqual([
+      "sunlance",
+      "prism-fan",
+      "lattice",
+    ]);
+    venue.dispose();
+  });
+
+  test("catalog-toggle before ever touching the loadout station is a harmless no-op", () => {
+    const { venue } = makeVenue(0);
+    const ws = makeFakeWs("p_cat5", "CAT5");
+    venue.attachLobby(ws);
+    venue.routeLobby(ws, encodeMessage({ t: "catalog-toggle", cardId: "sunlance" }));
+    expect(venue.loadoutForTest("p_cat5" as never)).toBeUndefined();
+    venue.dispose();
+  });
+
+  test("multiple catalog picks ride the SAME getEntrantCards admission plumbing (unchanged mechanism)", () => {
+    const { venue, arena } = makeVenue(0);
+    const ws = makeFakeWs("p_cat6", "CAT6");
+    venue.attachLobby(ws);
+    const sink = venue.lobbyHostForTest() as unknown as SimEventSink;
+    sink.onSimEvent?.({ t: "ready-toggled", playerId: "p_cat6" });
+    venue.routeLobby(ws, encodeMessage({ t: "catalog-toggle", cardId: "sunlance" }));
+    venue.routeLobby(ws, encodeMessage({ t: "catalog-toggle", cardId: "prism-fan" }));
+    expect(venue.loadoutForTest("p_cat6" as never)!.picks).toEqual(["sunlance", "prism-fan"]);
+    sink.onSimEvent?.({ t: "launch-requested", playerId: "p_cat6" });
+    arena.onRoundPhaseChange?.("drafting", "countdown");
+    expect(arena.getEntrantCards!("p_cat6" as never)).toEqual(["sunlance", "prism-fan"]);
+    venue.dispose();
+  });
+});
+
+// ── Loadout station: mid-visit class switch (Bug fix, live playtest
+//    2026-07-18 — Jake selected Interstice/ninja in the class row but the
+//    ability catalog grid below kept showing Geometrician/wizard's
+//    abilities; `classId` used to be captured once at first totem touch
+//    and never re-derived on a mid-visit class-row click). `class-pick`
+//    fixes this: sent live over the lobby socket the instant the class
+//    row is clicked, re-deriving `classId` and re-pushing `venue-draft`
+//    without needing a totem re-entry. ────────────────────────────────
+
+describe("VenueHost loadout station: mid-visit class switch", () => {
+  type SimEventSink = { onSimEvent?: (e: { t: string; playerId: string }) => void };
+
+  test("class-pick before ever touching the station creates a fresh entry locked to the new class", () => {
+    const { venue } = makeVenue(0);
+    const ws = makeFakeWs("p_cp1", "CP1");
+    venue.attachLobby(ws);
+    expect(venue.loadoutForTest("p_cp1" as never)).toBeUndefined();
+    venue.routeLobby(ws, encodeMessage({ t: "class-pick", characterId: "sprinter" })); // → ninja
+    const entry = venue.loadoutForTest("p_cp1" as never);
+    expect(entry).toBeDefined();
+    expect(entry!.classId).toBe("ninja");
+    expect(entry!.picks).toEqual([]);
+    venue.dispose();
+  });
+
+  test("class-pick mid-visit re-derives classId immediately and DROPS catalog picks that belonged to the old class", () => {
+    const { venue } = makeVenue(0);
+    const ws = makeFakeWs("p_cp2", "CP2"); // default chassis → wizard
+    venue.attachLobby(ws);
+    const sink = venue.lobbyHostForTest() as unknown as SimEventSink;
+    sink.onSimEvent?.({ t: "ready-toggled", playerId: "p_cp2" });
+    expect(venue.loadoutForTest("p_cp2" as never)!.classId).toBe("wizard");
+    // Equip a wizard catalog card.
+    venue.routeLobby(ws, encodeMessage({ t: "catalog-toggle", cardId: "sunlance" }));
+    expect(venue.loadoutForTest("p_cp2" as never)!.picks).toEqual(["sunlance"]);
+    // Switch to paladin (heavy) mid-visit — no totem re-touch.
+    venue.routeLobby(ws, encodeMessage({ t: "class-pick", characterId: "heavy" }));
+    const entry = venue.loadoutForTest("p_cp2" as never)!;
+    expect(entry.classId).toBe("paladin");
+    // The wizard-only pick doesn't belong to paladin anymore — dropped.
+    expect(entry.picks).toEqual([]);
+    venue.dispose();
+  });
+
+  test("class-pick immediately re-pushes venue-draft so the client's catalog grid updates without leaving the totem zone", () => {
+    const { venue } = makeVenue(0);
+    const sent: Uint8Array[] = [];
+    const ws = {
+      data: { matchId: VENUE_LOBBY_MATCH_ID, playerId: "p_cp3", name: "CP3", authedAt: Date.now() },
+      send: (buf: Uint8Array) => {
+        sent.push(buf);
+        return 1;
+      },
+      close: () => {},
+      getBufferedAmount: () => 0,
+    } as unknown as ServerWebSocket<MatchSocketData>;
+    venue.attachLobby(ws);
+    const sink = venue.lobbyHostForTest() as unknown as SimEventSink;
+    sink.onSimEvent?.({ t: "ready-toggled", playerId: "p_cp3" });
+    venue.routeLobby(ws, encodeMessage({ t: "class-pick", characterId: "shielded" })); // → priest
+    const drafts = sent
+      .map(
+        (buf) =>
+          decodeMessage(buf)?.message as
+            | { t: string; classId?: string; picks?: string[] }
+            | undefined,
+      )
+      .filter(
+        (m): m is { t: string; classId?: string; picks?: string[] } => m?.t === "venue-draft",
+      );
+    // At least the totem-touch push AND the class-pick push.
+    expect(drafts.length).toBeGreaterThanOrEqual(2);
+    expect(drafts[drafts.length - 1]!.classId).toBe("priest");
+    expect(drafts[drafts.length - 1]!.picks).toEqual([]);
+    venue.dispose();
+  });
+
+  test("class-pick to the SAME class the entry is already locked to is a harmless no-op on picks", () => {
+    const { venue } = makeVenue(0);
+    const ws = makeFakeWs("p_cp4", "CP4"); // default chassis → wizard
+    venue.attachLobby(ws);
+    const sink = venue.lobbyHostForTest() as unknown as SimEventSink;
+    sink.onSimEvent?.({ t: "ready-toggled", playerId: "p_cp4" });
+    venue.routeLobby(ws, encodeMessage({ t: "catalog-toggle", cardId: "sunlance" }));
+    venue.routeLobby(ws, encodeMessage({ t: "class-pick", characterId: "balanced" })); // still wizard
+    const entry = venue.loadoutForTest("p_cp4" as never)!;
+    expect(entry.classId).toBe("wizard");
+    expect(entry.picks).toEqual(["sunlance"]); // unchanged — same class, nothing invalidated
+    venue.dispose();
+  });
+
+  test("class-pick sanitizes a garbage characterId to the default chassis rather than erroring", () => {
+    const { venue } = makeVenue(0);
+    const ws = makeFakeWs("p_cp5", "CP5");
+    venue.attachLobby(ws);
+    venue.routeLobby(ws, encodeMessage({ t: "class-pick", characterId: "not-a-real-archetype" }));
+    const entry = venue.loadoutForTest("p_cp5" as never);
+    expect(entry).toBeDefined();
+    expect(entry!.classId).toBe("wizard"); // sanitizeCharacterId → "balanced" → wizard
     venue.dispose();
   });
 });
@@ -630,14 +777,13 @@ describe("VenueHost duos queue", () => {
     venue.attachLobby(wsB);
     const sink = venue.lobbyHostForTest() as unknown as SimEventSink;
     sink.onSimEvent?.({ t: "ready-toggled", playerId: "p_dc1" });
-    const offers = venue.loadoutForTest("p_dc1" as never)!.offers;
-    venue.routeLobby(wsA, encodeMessage({ t: "card-pick", roundIndex: 0, cardId: offers[0]! }));
+    venue.routeLobby(wsA, encodeMessage({ t: "catalog-toggle", cardId: "sunlance" }));
     venue.routeLobby(wsA, encodeMessage({ t: "duo-toggle" }));
     venue.routeLobby(wsB, encodeMessage({ t: "duo-toggle" }));
     sink.onSimEvent?.({ t: "launch-requested", playerId: "p_dc1" });
     sink.onSimEvent?.({ t: "launch-requested", playerId: "p_dc2" });
     arena.onRoundPhaseChange?.("drafting", "countdown");
-    expect(arena.getEntrantCards!("p_dc1" as never)).toEqual([offers[0]!]);
+    expect(arena.getEntrantCards!("p_dc1" as never)).toEqual(["sunlance"]);
     expect(arena.getEntrantCards!("p_dc2" as never)).toBeUndefined();
     venue.dispose();
   });
@@ -687,5 +833,117 @@ describe("VenueHost duos queue", () => {
     expect(frame.queued).toEqual([]);
     expect(frame.duoQueued).toEqual(["p_stat"]);
     venue.dispose();
+  });
+});
+
+// ── Live loadout sync (Fix 1, live playtest 2026-07-18 — Jake, looking at
+//    the lobby: "the abilities and load out should be active in this
+//    world"). Root cause: catalog-toggle/class-pick only ever mutated
+//    VenueHost's OWN `loadouts` bookkeeping — the lobby player's live
+//    PlayerEntity.cards (what resolvePlayerBuild actually reads every
+//    tick) never moved, so an equipped ability stayed permanently inert
+//    on the dummies. `pushLoadoutDraft` now also calls
+//    `MatchHost.setPlayerCards` (additive, hangout-mode-only primitive) on
+//    every picks/classId change — these tests pin THAT live sync, on top
+//    of (not instead of) the `loadoutForTest` bookkeeping already pinned
+//    above. ──────────────────────────────────────────────────────────────
+
+describe("VenueHost live loadout sync onto the lobby PlayerEntity (Fix 1)", () => {
+  type SimEventSink = { onSimEvent?: (e: { t: string; playerId: string }) => void };
+
+  test("catalog-toggle equips a card into picks() AND the live lobby PlayerEntity.cards immediately", () => {
+    const { venue } = makeVenue(0);
+    const ws = makeFakeWs("p_cards1", "CARDS1"); // default chassis → wizard
+    venue.attachLobby(ws);
+    const pid = PlayerId("p_cards1");
+    // Freshly spawned, before ever touching the station: no cards.
+    expect(venue.lobbyHostForTest().getStateSnapshot().players[pid]?.cards).toEqual([]);
+    const sink = venue.lobbyHostForTest() as unknown as SimEventSink;
+    sink.onSimEvent?.({ t: "ready-toggled", playerId: "p_cards1" });
+    venue.routeLobby(ws, encodeMessage({ t: "catalog-toggle", cardId: "sunlance" }));
+    // Live — no need to leave and rejoin the lobby, no arena admission.
+    expect(venue.lobbyHostForTest().getStateSnapshot().players[pid]?.cards).toEqual([
+      "sunlance",
+    ]);
+    venue.dispose();
+  });
+
+  test("toggling a card back OFF removes it from the live PlayerEntity.cards too", () => {
+    const { venue } = makeVenue(0);
+    const ws = makeFakeWs("p_cards2", "CARDS2");
+    venue.attachLobby(ws);
+    const pid = PlayerId("p_cards2");
+    const sink = venue.lobbyHostForTest() as unknown as SimEventSink;
+    sink.onSimEvent?.({ t: "ready-toggled", playerId: "p_cards2" });
+    venue.routeLobby(ws, encodeMessage({ t: "catalog-toggle", cardId: "sunlance" }));
+    venue.routeLobby(ws, encodeMessage({ t: "catalog-toggle", cardId: "prism-fan" }));
+    expect(venue.lobbyHostForTest().getStateSnapshot().players[pid]?.cards).toEqual([
+      "sunlance",
+      "prism-fan",
+    ]);
+    venue.routeLobby(ws, encodeMessage({ t: "catalog-toggle", cardId: "sunlance" }));
+    expect(venue.lobbyHostForTest().getStateSnapshot().players[pid]?.cards).toEqual([
+      "prism-fan",
+    ]);
+    venue.dispose();
+  });
+
+  test("a mid-visit class-pick that drops invalidated picks (entry.picks filtering) also clears them live", () => {
+    const { venue } = makeVenue(0);
+    const ws = makeFakeWs("p_cards3", "CARDS3"); // default chassis → wizard
+    venue.attachLobby(ws);
+    const pid = PlayerId("p_cards3");
+    const sink = venue.lobbyHostForTest() as unknown as SimEventSink;
+    sink.onSimEvent?.({ t: "ready-toggled", playerId: "p_cards3" });
+    venue.routeLobby(ws, encodeMessage({ t: "catalog-toggle", cardId: "sunlance" }));
+    expect(venue.lobbyHostForTest().getStateSnapshot().players[pid]?.cards).toEqual([
+      "sunlance",
+    ]);
+    // Switch to paladin ("heavy") mid-visit — the wizard-only pick no
+    // longer belongs to the locked class and is dropped (same
+    // `catalogForClass` filter class-pick's bookkeeping already uses),
+    // and that drop is now live on the PlayerEntity too, not just
+    // `loadoutForTest`'s picks array.
+    venue.routeLobby(ws, encodeMessage({ t: "class-pick", characterId: "heavy" }));
+    expect(venue.loadoutForTest("p_cards3" as never)!.picks).toEqual([]);
+    expect(venue.lobbyHostForTest().getStateSnapshot().players[pid]?.cards).toEqual([]);
+    venue.dispose();
+  });
+
+  test("class-pick to the SAME class leaves the live cards untouched (nothing invalidated)", () => {
+    const { venue } = makeVenue(0);
+    const ws = makeFakeWs("p_cards4", "CARDS4"); // default chassis → wizard
+    venue.attachLobby(ws);
+    const pid = PlayerId("p_cards4");
+    const sink = venue.lobbyHostForTest() as unknown as SimEventSink;
+    sink.onSimEvent?.({ t: "ready-toggled", playerId: "p_cards4" });
+    venue.routeLobby(ws, encodeMessage({ t: "catalog-toggle", cardId: "sunlance" }));
+    venue.routeLobby(ws, encodeMessage({ t: "class-pick", characterId: "balanced" })); // still wizard
+    expect(venue.lobbyHostForTest().getStateSnapshot().players[pid]?.cards).toEqual([
+      "sunlance",
+    ]);
+    venue.dispose();
+  });
+
+  test("MatchHost.setPlayerCards is a no-op on an ordinary combat-mode host (arena's between-round draft stays untouched)", () => {
+    // setPlayerCards is deliberately additive and hangout-only — this
+    // pins the guard directly on MatchHost (mode defaults to "combat"
+    // when unset, exactly like the arena's real WorldHost matches),
+    // independent of VenueHost, so the new primitive can never be
+    // repurposed to bypass applyCardPick's drafting-phase gate.
+    const spawn = {
+      playerId: PlayerId("p_combat1"),
+      characterId: "balanced" as const,
+      name: "COMBAT1",
+      color: "#ffffff",
+      weaponId: "starter-pistol",
+    };
+    const host = new MatchHost("combat-test", [spawn], [], "boxworks-mini");
+    const internals = host as unknown as { stop(): void };
+    internals.stop(); // no real tick loop needed for this assertion
+    expect(host.getStateSnapshot().players[PlayerId("p_combat1")]?.cards).toEqual([]);
+    host.setPlayerCards(PlayerId("p_combat1"), ["sunlance"]);
+    expect(host.getStateSnapshot().players[PlayerId("p_combat1")]?.cards).toEqual([]);
+    host.dispose();
   });
 });

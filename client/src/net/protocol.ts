@@ -65,7 +65,55 @@ export type DuoToggle = {
   t: "duo-toggle";
 };
 
-export type ClientMessage = ClientHello | Input | Ack | Ping | CardPick | DuoToggle;
+/**
+ * Class ability catalog toggle (docs/classes-goal.md "Loadout station owns
+ * the 3 slots" — live playtest finding 2026-07-18, Jake: "this should show
+ * all cards for that class when its selected not just three and this
+ * should have the concept of selecting them"). Lobby-only, venue business
+ * (same interception discipline as `card-pick`/`duo-toggle`: VenueHost
+ * handles it in `routeLobby` before the message ever reaches the hangout
+ * MatchHost). No `add`/`remove` discriminant — the server flips membership:
+ * `cardId` already in the player's loadout picks → removed; otherwise
+ * added (rejected silently if the rack's active slots are already full,
+ * or `cardId` isn't a catalog card belonging to the player's locked
+ * loadout classId). Distinct from `card-pick`, which stays the UNIVERSAL
+ * random-offer-and-reroll flow, completely unchanged by this feature.
+ */
+export type CatalogToggle = {
+  t: "catalog-toggle";
+  cardId: string;
+};
+
+/**
+ * Loadout-station class switch (Bug fix, live playtest 2026-07-18 — Jake
+ * selected Interstice/ninja in the class row but the ability catalog grid
+ * below kept showing Geometrician/wizard's abilities). Lobby-only, venue
+ * business — same interception discipline as `catalog-toggle`/`duo-toggle`:
+ * VenueHost's `routeLobby` handles it before the message ever reaches the
+ * hangout MatchHost. `characterId` is the RAW archetype id the client-side
+ * class row picked; it rides client-sanitized (`sanitizeCharacterId`) but
+ * the server re-sanitizes on receipt — the wire is never trusted. The
+ * server re-derives `classId` (`classIdForArchetype`) for the player's
+ * loadout entry, drops any armed catalog pick that no longer belongs to
+ * the new class, and immediately re-pushes a fresh `venue-draft` — the
+ * whole point being the catalog grid updates WITHOUT leaving and
+ * re-entering the totem zone. A pick before ever touching the station
+ * simply creates a fresh entry locked to the new class (empty picks).
+ */
+export type ClassPick = {
+  t: "class-pick";
+  characterId: string;
+};
+
+export type ClientMessage =
+  | ClientHello
+  | Input
+  | Ack
+  | Ping
+  | CardPick
+  | DuoToggle
+  | CatalogToggle
+  | ClassPick;
 
 // ---------------- Server → Client ----------------
 
@@ -217,18 +265,37 @@ export type VenueStatus = {
 };
 
 /**
- * Loadout-station starter offer (venue-sprint2-goal S2.E; separated from
- * the bell queue 2026-07-17 per Jake) — pushed by VenueHost to a lobby
- * socket when that player walks into the LOADOUT STATION totem, and
- * re-pushed with identical content on the totem's retrigger cadence
- * while they stand there (the client arbitrates overlay visibility by
- * station proximity). The pick returns as an ordinary `card-pick`
- * (roundIndex ignored on the venue path) and rides the player's next
- * arena admission. No pick = spawn with none — the bell never auto-picks.
+ * Loadout-station state (venue-sprint2-goal S2.E; separated from the bell
+ * queue 2026-07-17 per Jake) — pushed by VenueHost to a lobby socket when
+ * that player walks into the LOADOUT STATION totem, re-pushed on the
+ * totem's retrigger cadence while they stand there, and again after every
+ * `catalog-toggle`/`class-pick`. `picks` is the player's FULL current rack
+ * (exactly what `getEntrantCards` will hand the arena) and `classId` is the
+ * chassis this loadout entry is currently locked to. No pick = spawn with
+ * none — the bell never auto-picks.
+ *
+ * The UNIVERSAL random-offer-and-reroll flow this frame used to carry
+ * (`offers: string[]`, resolved via `card-pick`) was CUT FROM THE STATION
+ * ENTIRELY 2026-07-18 (Jake, live playtest — with the catalog grid AND the
+ * old "UNIVERSAL OFFER" 3-card section on screen together: "delete this
+ * mechanic and gameplay and focus on the other things on this ui ... I
+ * mean in the load out picker"). Universal cards are acquired ONLY through
+ * the in-match between-round draft now (round.ts's `enterDrafting`,
+ * `matchHost.ts`'s `card-pick` handling — a completely separate code path,
+ * untouched by this). The `offers` field is removed from the wire rather
+ * than always-sent-empty: nothing downstream reads it anymore, so keeping
+ * it would just be dead surface pretending to still mean something.
+ *
+ * `classId` LIVE-updates on a `class-pick` message (Bug fix, live playtest
+ * 2026-07-18): a mid-visit class-row click re-derives it immediately
+ * instead of waiting for a fresh station visit, and any armed catalog pick
+ * that no longer belongs to the new class is dropped from `picks` in the
+ * same push.
  */
 export type VenueDraft = {
   t: "venue-draft";
-  offers: string[];
+  picks: string[];
+  classId: string;
 };
 
 /**
@@ -285,10 +352,12 @@ const REQUIRED_FIELDS: Record<string, ReadonlyArray<readonly [string, "string" |
   pong: [["clientTime", "number"], ["serverTime", "number"]],
   "card-pick": [["roundIndex", "number"], ["cardId", "string"]],
   "duo-toggle": [],
+  "catalog-toggle": [["cardId", "string"]],
+  "class-pick": [["characterId", "string"]],
   snap: [["tick", "number"]],
   bye: [["reason", "string"]],
   "venue-status": [["arenaPhase", "string"], ["nextBellMs", "number"]],
-  "venue-draft": [["offers", "object"]],
+  "venue-draft": [["picks", "object"], ["classId", "string"]],
   "venue-admitted": [["arenaWsPath", "string"]],
 };
 

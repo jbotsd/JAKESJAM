@@ -4,7 +4,7 @@
 // IMPORTANT: do not import from Phaser, the DOM, Convex, or client/src/game/.
 // This module must compile inside the Bun runtime.
 
-import type { CardDefinition } from "./cardTypes.js";
+import type { CardDefinition, ClassId } from "./cardTypes.js";
 import type { ProjectileShape } from "../types.js";
 
 function visual(iconShape: ProjectileShape, glowColor: string): CardDefinition["visual"] {
@@ -56,89 +56,149 @@ export const crystalRoundsCards: CardDefinition[] = [
     visual: visual("hexagon", "#50e3c2"),
     unique: true,
   },
+  // ── The five "shape" cards (design-axioms.md A7 rework, 2026-07-18) ──────
+  // Jake's live playtest note, verbatim: "these suck ... shape swaps with
+  // small dmg/speed/knockback tradeoffs ... think more distance too other
+  // factors that are fun physics stuff." A7's mechanism names exactly why:
+  // five cards ranking on the SAME axis (a shape reskin + a fractional stat
+  // nudge) isn't five choices, it's one choice with four decoys — none of
+  // them gave a player a REASON to pick it over the others beyond "slightly
+  // bigger number." Rather than cut all five (crystalRoundsCards.length is
+  // asserted >20 in cardFeel.test.ts, comfortably clear either way, and the
+  // ids are read directly by cardGlyphs.ts/cardIcons.test.ts/round.test.ts —
+  // safe to keep, cheap to redesign in place), each now OWNS a genuinely
+  // orthogonal physics verb — the exact "fun physics stuff" list Jake named
+  // (distance/range, speed profile) plus the pool's other underused axes
+  // (knockback, size). Shape/name/id/visual are UNCHANGED (still cosmetic,
+  // per A7 — "a shape change is cosmetic unless it's tied to a real
+  // mechanical difference"); only the modifier payload changed, so nothing
+  // that reads these ids by string (glyphs, the draft offer, save data)
+  // breaks. Numbers are first-draft, per this session's discipline.
   {
+    // RANGE axis, SHORT end. Committed close-range dart — the shot is
+    // already there. Pairs with triangle-rounds (below) as the pool's first
+    // explicit range-tradeoff DIAL: circle trades reach for immediacy,
+    // triangle trades immediacy for reach. Was: "round shots fly faster and
+    // sit a touch smaller" — a sub-5%-of-anything reskin with zero real
+    // reason to exist next to crystal-volley's honest speed pick.
     id: "circle-rounds",
     name: "Circle Rounds",
     category: "projectile",
     rarity: "common",
     buckets: ["shape"],
     essenceCost: 1,
-    description: "Round shots fly faster and sit a touch smaller — easy to read, hard to miss.",
-    flavorText: "The simplest shape still kills.",
+    description: "Short-fused rounds — much less range, but they're already there. Win it up close before it becomes a poke war.",
+    flavorText: "Close is a choice.",
     modifier: {
-      projectileSpeedMultiplier: 1.08,
-      projectile: { shape: "circle", sizeMultiplier: 0.92 },
+      projectileSpeedMultiplier: 1.1,
+      projectile: { shape: "circle", rangePx: 480, sizeMultiplier: 0.92 },
     },
     visual: visual("circle", "#5eead4"),
     unique: true,
   },
   {
+    // RANGE axis, LONG end. A slower, farther-reaching bolt that persists
+    // (lifetimeMultiplier keeps it alive well past where a normal shot
+    // would time out, so it's the range increase, not just a race against
+    // the clock, doing the work) — the honest "poke" pick raycast-prism's
+    // hitscan doesn't cover (this still travels, still can be dodged/
+    // outran, just goes much farther before it gives up). Was: "pointy
+    // crystals hit harder" — a flat damage/recoil trade indistinguishable
+    // in FEEL from x-rounds' old damage/recoil trade one bucket over.
     id: "triangle-rounds",
     name: "Triangle Rounds",
     category: "projectile",
     rarity: "common",
     buckets: ["shape"],
     essenceCost: 1,
-    description: "Pointy crystals hit harder. More damage, more recoil — lean into the kick.",
-    flavorText: "Three edges. One purpose.",
+    description: "Long-hafted shards built to cross the whole map. Slower off the hand, but distance is the whole point.",
+    flavorText: "Patience, sharpened.",
     modifier: {
-      damageMultiplier: 1.12,
-      recoilMultiplier: 1.14,
-      projectile: { shape: "triangle", sizeMultiplier: 1.02 },
+      projectileSpeedMultiplier: 0.95,
+      projectile: { shape: "triangle", rangePx: 1080, lifetimeMultiplier: 1.4 },
     },
     visual: visual("triangle", "#fef08a"),
     unique: true,
   },
   {
+    // KNOCKBACK-FEEL axis, sharpened into its dedicated owner. This card
+    // already leaned here ("mass over manners", knockbackMultiplier 1.18)
+    // more than any other card in the pool — the redesign just commits: the
+    // shove goes up hard, speed goes down further to pay for it, and the
+    // legacy damage-adjacent framing is dropped entirely so "knockback" is
+    // unambiguously the reason to draft this over x-rounds (size) or any
+    // damage-shape card. THE space-control / edgeguard pick.
     id: "square-rounds",
     name: "Square Rounds",
     category: "projectile",
     rarity: "uncommon",
     buckets: ["shape"],
     essenceCost: 2,
-    description: "Big slow squares. Knockback thumps enemies off platforms.",
+    description: "Heavy slabs built to shove. Massive knockback punts enemies off platforms and out of position — slow to arrive.",
     flavorText: "Mass over manners.",
     modifier: {
-      projectileSpeedMultiplier: 0.88,
-      knockbackMultiplier: 1.18,
-      projectile: { shape: "square", sizeMultiplier: 1.22 },
+      projectileSpeedMultiplier: 0.8,
+      knockbackMultiplier: 1.45,
+      projectile: { shape: "square", sizeMultiplier: 1.3 },
     },
     visual: visual("square", "#c49a6c"),
     unique: true,
   },
   {
-    // Was strictly boring next to its uncommon-tier peers (I-Rounds: +16%
-    // dmg / -6% speed at the same cost). Bumped damage and added recoil
-    // control so it earns a real niche: a punchier, steadier shot.
+    // SIZE axis, dedicated owner. sizeMultiplier directly scales the live
+    // collision/hit radius (weapon.ts: `radius = 7 * build.projectile.
+    // sizeMultiplier`), not just the sprite — so "biggest standard round in
+    // the pool" is a real hitbox claim, not a paint job. Deliberately pays
+    // with fire-rate/speed instead of a knockback tax, so it reads as a
+    // DIFFERENT reason than square-rounds' mass-and-shove identity even
+    // though both grow the projectile: square = size+shove combo (a
+    // brawler's card), x-rounds = size ALONE (a board-presence/harder-to-
+    // dodge card, no shove). Was a flat damage+recoil trap this session's
+    // earlier balance pass already flagged as "strictly boring" — this
+    // supersedes that fix with a real orthogonal identity instead of a
+    // bigger number (see weaponBuild.test.ts's updated assertion).
     id: "x-rounds",
     name: "X Rounds",
     category: "projectile",
     rarity: "uncommon",
     buckets: ["shape"],
     essenceCost: 2,
-    description: "X-cut shards: more damage and calmer recoil. Wide edges for messy angles.",
-    flavorText: "Crossed out.",
+    description: "The biggest standard round in the pool — a wide X-cut slab that's hard to miss and hard to dodge. Slower to throw, impossible to ignore.",
+    flavorText: "Big enough to matter.",
     modifier: {
-      damageMultiplier: 1.1,
-      recoilMultiplier: 0.92,
-      projectile: { shape: "x", sizeMultiplier: 1.08 },
+      fireRateMultiplier: 0.92,
+      projectileSpeedMultiplier: 0.9,
+      projectile: { shape: "x", sizeMultiplier: 1.55 },
     },
     visual: visual("x", "#fca5a5"),
     unique: true,
   },
   {
+    // SPEED-PROFILE axis — brand new to the pool. Uses `pathing:
+    // "accelerate"` (projectile.ts's own case, Zig's applyAcceleratePathing/
+    // step_projectile_v2, gen_card_data.ts's proj_acceleration_mul_set):
+    // fully wired end-to-end since this field was added, but never actually
+    // usable by any card until this pass fixed weaponBuild.ts's
+    // mergeProjectileModifier (accelerationMultiplier was being merged
+    // MULTIPLICATIVELY against a base of 0 — 0 × anything is always 0, so
+    // no card could ever set it; see that function's own comment). The read:
+    // launches BELOW normal speed and ramps up the longer it flies — the
+    // literal opposite feel of every other card in the pool (which are all
+    // instant-speed, decaying-relevance-with-distance). Rewards long
+    // sightlines and patience over point-blank spam; pairs naturally with
+    // triangle-rounds' long range. Falling Star (new card, below) is this
+    // card's mirror-image (decelerate instead of accelerate).
     id: "i-rounds",
     name: "I Rounds",
     category: "projectile",
     rarity: "uncommon",
-    buckets: ["shape"],
+    buckets: ["shape", "trajectory"],
     essenceCost: 2,
-    description: "Tall bar crystals pack serious damage. Slightly slower — reward clean lines.",
-    flavorText: "A straight answer, violently.",
+    description: "Slow off the hand, then it isn't — bar-crystals that build speed the longer they fly. Lean into long sightlines; lead less at range, more up close.",
+    flavorText: "A straight answer, delayed on purpose.",
     modifier: {
-      damageMultiplier: 1.16,
-      projectileSpeedMultiplier: 0.94,
-      projectile: { shape: "bar", sizeMultiplier: 1.12 },
+      projectileSpeedMultiplier: 0.78,
+      projectile: { shape: "bar", pathing: "accelerate", accelerationMultiplier: 1.4, lifetimeMultiplier: 1.15 },
     },
     visual: visual("bar", "#ddd6fe"),
     unique: true,
@@ -180,13 +240,22 @@ export const crystalRoundsCards: CardDefinition[] = [
     unique: true,
   },
   {
+    // Split-cluster audit (design-axioms.md A7, 2026-07-18 — Jake: "the ones
+    // split WAAAAAAAAAAAAAY TO MUCH ... its like the only gimmick"): of the
+    // 11 quantity-bucket cards flagged, this one already had a REAL
+    // orthogonal hook underneath the "more pellets" surface — the explicit
+    // rangePx: 390 cut nobody else in the quantity bucket had. Kept and
+    // sharpened rather than cut: its reason to exist isn't "5 pellets," it's
+    // RANGE (the close-quarters shotgun that trades reach for density) —
+    // the same axis circle-rounds now owns at common tier, expressed here
+    // as a full weapon replacement instead of a single-dart nudge.
     id: "shard-bloom",
     name: "Shard Bloom",
     category: "weapon",
     rarity: "rare",
     buckets: ["quantity"],
     essenceCost: 5,
-    description: "Close-range shard burst instead of a pulse wave. Devastating in faces, weak at range.",
+    description: "Close-range shard burst instead of a pulse wave. Severe range cut — devastating in faces, useless at distance.",
     flavorText: "The core empties its pockets.",
     modifier: {
       delivery: "projectile",
@@ -216,6 +285,42 @@ export const crystalRoundsCards: CardDefinition[] = [
     visual: visual("hexagon", "#ffd166"),
   },
   {
+    // NEW CARD (design-axioms.md A7 / A2, 2026-07-18 physics-axis pass).
+    // Gravity/arc was a single-owner axis before this pass (arc-shards, a
+    // GENTLE lob for clearing ledges — 560 gravity scale, below even the
+    // sim's own unset-default of 1450, GRAVITY_PATHING_ACCEL_DEFAULT in
+    // projectile.ts/weapon_build.zig). This is the axis's other extreme: a
+    // true mortar — much steeper drop than the default, paid for with a
+    // real payload (explosive impact) rather than just being "arc-shards
+    // but more." Distinct FEEL, not a bigger number on the same read:
+    // arc-shards pokes over cover and keeps flying; this drops dead-center
+    // and detonates. No new sim mechanic — reuses the existing "gravity"
+    // pathing + "explosive" impact substrate exactly as molten-core/
+    // explosive-facet already do, per this task's own steering to scope
+    // down to what the projectile substrate already supports.
+    id: "deadfall-mortar",
+    name: "Deadfall Mortar",
+    category: "projectile",
+    rarity: "rare",
+    buckets: ["trajectory", "impact"],
+    essenceCost: 4,
+    description: "A true lob: steep drop, big boom. Arc it over cover and walls — the impact does the rest.",
+    flavorText: "What goes up, negotiates.",
+    modifier: {
+      projectileSpeedMultiplier: 0.6,
+      fireRateMultiplier: 0.8,
+      projectile: {
+        pathing: "gravity",
+        gravityScale: 2100,
+        impact: "explosive",
+        impactRadiusPx: 82,
+        sizeMultiplier: 1.15,
+      },
+    },
+    visual: visual("orb", "#fb923c"),
+    unique: true,
+  },
+  {
     id: "seeker-facets",
     name: "Seeker Facets",
     category: "projectile",
@@ -233,15 +338,57 @@ export const crystalRoundsCards: CardDefinition[] = [
     // reborn from this exact card — same 4.4 rad/s figure). Grudge's spec
     // is the capped-turn homing seeker-facets already ships PLUS the −10%
     // damage the redesign prices it at ("assists, never auto-wins" costs
-    // something). Ninja/Paladin/Priest have no entry yet (their Grudge
-    // readings — bent slash waves, arc forgiveness, dual ally/enemy homing
-    // — need melee/heal verbs that don't exist; classes-goal.md P2-P4) so
-    // they fall back to the class-blind modifier above, i.e. today's
-    // Seeker Facets, unchanged.
+    // something). Ninja has no entry yet (its Grudge reading — bent slash
+    // waves — needs the melee/wave verb; classes-goal.md P2 territory) so
+    // it falls back to the class-blind modifier above, unchanged.
+    //
+    // Paladin expression = card-pool-v2.md's own line: "(melee can't
+    // home) — arc forgiveness instead" — Kindled Edge doesn't read a
+    // homing field at all (it's a swing, not a shot), so a literal port
+    // is impossible; this card's only LIVE consumer for Paladin is the
+    // Unveiling ultimate's composed Emission (resolveEmission reads
+    // build.projectile.homingStrength directly — 0.2/2.5's verified
+    // wiring, emissionClassAware.test.ts). Reading chosen: the ultimate
+    // does NOT seek — "arc forgiveness" reframed as "the paladin doesn't
+    // need to track, the field claims the space instead" (heaven-tank
+    // flood, not a homing storm) — a real, testable, class-true
+    // difference from Wizard's seeking cast, with no damage tax since
+    // Paladin isn't gaining anything to pay for.
+    //
+    // Priest expression = card-pool-v2.md's own line: "bolts seek enemies
+    // AND heals seek allies — dual homing, the full shepherd read" —
+    // "heals seek allies" needs a homing HEAL projectile type that doesn't
+    // exist (out of this chunk's field budget, same "no entry" gap Ninja's
+    // wave-homing has above); the honest LIVE half is the enemy-seeking
+    // bolt, which this session's low-aim design direction (Jake,
+    // 2026-07-18: "tendrils that ooze out and self guide to its correct
+    // destination... less about aiming with the priest") makes a MUCH
+    // better fit for Priest than for Wizard — so Priest gets the homing
+    // WITHOUT Wizard's −10% damage tax (the tax exists to price "assists,
+    // never auto-wins" as a bonus on TOP of an aim-first kit; for Priest,
+    // self-guiding IS the kit, not an add-on, so it isn't priced as one).
+    // NOTE on homingStrength: weaponBuild.ts hard-clamps
+    // `projectile.homingStrength` to a 2.5 ceiling at resolve time (its own
+    // tail-clamp pass) — ANY value ≥2.5 on the card (Wizard's 4.4 included)
+    // resolves identically post-clamp, so a bigger raw number here would be
+    // a fictional, untestable "difference." The REAL, testable Priest
+    // differentiator is projectileSpeedMultiplier: Wizard pays 0.82 (the
+    // class-blind default) on top of the damage tax; Priest pays neither —
+    // full 0.9 travel speed AND no damage cut, since the shot finds its own
+    // way instead of needing careful tracking to justify the tax.
     classModifiers: {
       wizard: {
         projectileSpeedMultiplier: 0.82,
         damageMultiplier: 0.9,
+        projectile: { pathing: "homing", homingStrength: 4.4 },
+        projectileHomingStrengthAdd: 1.2,
+      },
+      paladin: {
+        projectile: { pathing: "straight", homingStrength: 0 },
+        projectileHomingStrengthAdd: 0,
+      },
+      priest: {
+        projectileSpeedMultiplier: 0.9,
         projectile: { pathing: "homing", homingStrength: 4.4 },
         projectileHomingStrengthAdd: 1.2,
       },
@@ -250,6 +397,14 @@ export const crystalRoundsCards: CardDefinition[] = [
     maxStacks: 4,
   },
   {
+    // Split-cluster audit: kept as the pool's ONE accessible homing-swarm
+    // entry (uncommon tier). magnet-spray (cut, see below) and homing-
+    // cluster (kept, legendary) were the same "more homing pellets, less
+    // damage each" lever at three different price points — a rarity ladder
+    // on ONE axis, not three choices (A7). This is the affordable rung;
+    // homing-cluster is the legendary capstone that COMBINES this axis with
+    // raw count (a legitimate legendary pattern — "reward for holding two
+    // ideas at once" — rather than a fourth reskin of the same idea).
     id: "micro-seekers",
     name: "Micro Seekers",
     category: "projectile",
@@ -269,27 +424,15 @@ export const crystalRoundsCards: CardDefinition[] = [
     visual: visual("triangle", "#f5d0fe"),
     maxStacks: 5,
   },
-  {
-    id: "magnet-spray",
-    name: "Magnet Spray",
-    category: "weapon",
-    rarity: "rare",
-    buckets: ["trajectory", "quantity"],
-    essenceCost: 5,
-    description: "Wide scatter of weak seekers. Spray the room; spite steers the shards.",
-    flavorText: "Point roughly. Commit fully.",
-    modifier: {
-      damageMultiplier: 0.58,
-      fireRateMultiplier: 0.9,
-      projectileSpeedMultiplier: 0.84,
-      spreadRadiansAdd: degrees(34),
-      projectileCountAdd: 4,
-      projectileHomingStrengthAdd: 1.1,
-      projectile: { pathing: "homing", homingStrength: 2.8, sizeMultiplier: 0.68 },
-    },
-    visual: visual("circle", "#e879f9"),
-    maxStacks: 4,
-  },
+  // magnet-spray CUT (design-axioms.md A7, 2026-07-18 split-cluster audit):
+  // sat directly between micro-seekers (uncommon) and homing-cluster
+  // (legendary) doing the exact same "more homing pellets, less damage,
+  // wider spread" lever with no hook of its own — the textbook A7 violation
+  // ("a card that's a weaker version of another isn't a choice"). Not
+  // referenced by tutorial-song.ts's scripted sequence or any test beyond
+  // its own glyph case (removed from cardGlyphs.ts) — safe, clean cut per
+  // A2 ("ship the missing feature, never the broken one" — permission to
+  // cut aggressively).
   {
     id: "bouncy-prism",
     name: "Bouncy Prism",
@@ -355,6 +498,34 @@ export const crystalRoundsCards: CardDefinition[] = [
     maxStacks: 7,
   },
   {
+    // NEW CARD (design-axioms.md A7 / A2, 2026-07-18 physics-axis pass).
+    // Speed-profile axis, decelerate end — the mirror image of i-rounds'
+    // ramp-up read (above): launches WAY above normal speed and burns off
+    // fast (pathing: "accelerate" with a NEGATIVE accelerationMultiplier —
+    // same substrate, opposite sign, genuinely different play pattern: a
+    // front-loaded burst that rewards point-blank commits and punishes a
+    // miss, versus i-rounds' patient long-sightline read). +X Velocity
+    // (above) already owns "uniformly faster" as a flat, honest common
+    // pick; this owns the TIME-VARYING version of speed — a new axis, not
+    // a bigger number on X Velocity's existing one. Requires the same
+    // weaponBuild.ts accelerationMultiplier merge fix as i-rounds (see that
+    // card's comment and mergeProjectileModifier's own note).
+    id: "falling-star",
+    name: "Falling Star",
+    category: "projectile",
+    rarity: "rare",
+    buckets: ["trajectory"],
+    essenceCost: 4,
+    description: "Blistering point-blank speed that burns off fast. Everything up close, nothing at range.",
+    flavorText: "All at once, then nothing.",
+    modifier: {
+      projectileSpeedMultiplier: 1.5,
+      projectile: { pathing: "accelerate", accelerationMultiplier: -1.8, lifetimeMultiplier: 1.1 },
+    },
+    visual: visual("orb", "#fca5a5"),
+    unique: true,
+  },
+  {
     id: "zero-g-floaters",
     name: "Zero-G Floaters",
     category: "projectile",
@@ -370,67 +541,81 @@ export const crystalRoundsCards: CardDefinition[] = [
     visual: visual("orb", "#a7f3d0"),
     unique: true,
   },
+  // dual-splitter CUT (design-axioms.md A7, 2026-07-18 split-cluster audit).
+  // This session's earlier balance pass already tried to save it (fire-rate
+  // hook vs +1 Projectile) but it stayed a thin variation of the SAME "add
+  // 1 pellet" lever one-more-shard (below) already owns at a cheaper cost —
+  // exactly the A7 failure mode ("a weaker version of another isn't a
+  // choice"). Not referenced by tutorial-song.ts; the one guarding test
+  // (weaponBuild.test.ts's "dual-splitter no longer strictly loses to +1
+  // Projectile") is removed with a comment explaining why, not silently
+  // deleted — the trap it guarded against no longer exists because the
+  // card doesn't either.
   {
-    // Was strictly dominated by +1 Projectile (cheaper, less damage loss,
-    // tighter spread) — the only differentiator (SET vs ADD spread) never
-    // mattered in practice. Given its own niche: a controlled twin-shot
-    // burst (fire-rate up, damage retained better) instead of a worse
-    // swarm-starter.
-    id: "dual-splitter",
-    name: "Dual Splitter",
-    category: "weapon",
-    rarity: "common",
-    buckets: ["quantity"],
-    essenceCost: 2,
-    description: "Two shards at a tight angle, faster cadence. Cover more width without full spray.",
-    flavorText: "One thought, two edges.",
-    modifier: {
-      damageMultiplier: 0.92,
-      fireRateMultiplier: 1.06,
-      spreadRadians: degrees(26),
-      projectileCountAdd: 1,
-    },
-    visual: visual("triangle", "#67e8f9"),
-    maxStacks: 6,
-  },
-  {
+    // Split-cluster audit: kept, REDESIGNED off pure count onto a real
+    // second axis — bounce. Was "three-way fan, more pellets, less damage,"
+    // functionally identical to wide-barrage (below) at a smaller spread
+    // angle with no reason to prefer it once wide-barrage existed. Now: the
+    // fan that also ricochets, an area-control tool that owns CORNERS
+    // (bank shots off walls) where wide-barrage owns straight-line WIDTH —
+    // genuinely different tactical use, not a smaller number. Kept (not
+    // cut) because tutorial-song.ts's scripted boss encounter grants this
+    // id by name (vessel-boss-cards-1) — the id/rarity/cost stay stable,
+    // only the payload changed.
     id: "triple-fan",
     name: "Triple Fan",
     category: "weapon",
     rarity: "uncommon",
-    buckets: ["quantity"],
+    buckets: ["quantity", "trajectory"],
     essenceCost: 3,
-    description: "Three-way fan. Control space and punish groups — less laser, more weather.",
-    flavorText: "The core spreads its hands.",
+    description: "Three-way fan that also ricochets twice. Bank shots around corners — own the room, not just the lane.",
+    flavorText: "The core spreads its hands. The walls don't stop it.",
     modifier: {
-      damageMultiplier: 0.68,
-      spreadRadiansAdd: degrees(18),
+      damageMultiplier: 0.74,
+      spreadRadiansAdd: degrees(16),
       projectileCountAdd: 2,
+      projectile: { pathing: "bounce" },
+      projectileBounceAdd: 2,
     },
     visual: visual("hexagon", "#38bdf8"),
     maxStacks: 4,
   },
   {
+    // Split-cluster audit: kept, REDESIGNED onto SIZE+SPEED instead of pure
+    // count. Was a near-duplicate of wide-barrage (same rare-adjacent
+    // "more pellets, wide spread, less damage" shape at a different number)
+    // — now owns "many tiny FAST fragments," a genuinely different read
+    // (micro-shrapnel pressure at range) from shard-bloom's RANGE-cut burst
+    // and wide-barrage's WIDTH-flood. Kept (not cut) because tutorial-
+    // song.ts's scripted boss encounters grant this id by name twice
+    // (vessel-boss-cards-2/3) — id/rarity/cost stable, payload changed.
     id: "five-shard-spray",
     name: "Five Shard Spray",
     category: "weapon",
     rarity: "rare",
     buckets: ["quantity"],
     essenceCost: 5,
-    description: "Five-projectile spray. Pressure over precision. Melt doors and double-downs.",
-    flavorText: "Accuracy left. Pressure stayed.",
+    description: "Five tiny, fast fragments — hard to see, harder to dodge. Pressure at range, not just up close.",
+    flavorText: "Accuracy left. Velocity stayed.",
     modifier: {
-      damageMultiplier: 0.58,
-      fireRateMultiplier: 0.88,
-      recoilMultiplier: 1.22,
-      spreadRadiansAdd: degrees(26),
+      damageMultiplier: 0.6,
+      fireRateMultiplier: 0.9,
+      projectileSpeedMultiplier: 1.22,
+      spreadRadiansAdd: degrees(20),
       projectileCountAdd: 4,
-      projectile: { sizeMultiplier: 0.86 },
+      projectile: { sizeMultiplier: 0.6 },
     },
     visual: visual("circle", "#67e8f9"),
     maxStacks: 2,
   },
   {
+    // Split-cluster audit: kept UNCHANGED. This is the pool's honest "raw
+    // pellet count" primitive — cheap, stackable to 8, no secondary axis
+    // pretending to be one. A7 doesn't require every card to be exotic; it
+    // requires each SURVIVING card to have a real reason to exist relative
+    // to its neighbors, and "the cheap uncomplicated +1" is a legitimate
+    // reason next to triple-fan's bounce, wide-barrage's width, and five-
+    // shard-spray's size+speed — the baseline the others deviate from.
     id: "one-more-shard",
     name: "+1 Projectile",
     category: "weapon",
@@ -448,6 +633,10 @@ export const crystalRoundsCards: CardDefinition[] = [
     maxStacks: 8,
   },
   {
+    // Split-cluster audit: kept UNCHANGED — already the pool's clearest
+    // "maximum spread width, flood a lane" identity (widest fan angle of
+    // any quantity card), a real reason to exist next to triple-fan's now-
+    // bounce-flavored narrower fan.
     id: "wide-barrage",
     name: "Wide Barrage",
     category: "weapon",
@@ -467,26 +656,14 @@ export const crystalRoundsCards: CardDefinition[] = [
     visual: visual("bar", "#67e8f9"),
     maxStacks: 5,
   },
-  {
-    id: "needle-hose",
-    name: "Needle Hose",
-    category: "weapon",
-    rarity: "common",
-    buckets: ["quantity"],
-    essenceCost: 2,
-    description: "Fast micro needles on the sides. Chip damage and fill while your core shot lands.",
-    flavorText: "A polite sentence, shouted.",
-    modifier: {
-      damageMultiplier: 0.82,
-      fireRateMultiplier: 1.1,
-      projectileSpeedMultiplier: 1.08,
-      spreadRadiansAdd: degrees(11),
-      projectileCountAdd: 2,
-      projectile: { shape: "bar", sizeMultiplier: 0.62 },
-    },
-    visual: visual("bar", "#a7f3d0"),
-    maxStacks: 6,
-  },
+  // needle-hose CUT (design-axioms.md A7, 2026-07-18 split-cluster audit):
+  // "add pellets + shrink shape" duplicated five-shard-spray's now-sharpened
+  // size+speed identity while being strictly less committed to it (smaller
+  // size cut, no speed gain), and its "chip damage while your core shot
+  // lands" framing already belongs to needle-compressor (utility bucket,
+  // fire-rate axis) — two cards named after the same idea, one real. Not
+  // referenced by tutorial-song.ts or any test beyond its own glyph case
+  // (removed from cardGlyphs.ts).
   {
     id: "orbiting-satellites",
     name: "Orbiting Satellites",
@@ -504,6 +681,13 @@ export const crystalRoundsCards: CardDefinition[] = [
     unique: true,
   },
   {
+    // Split-cluster audit (design-axioms.md A7, 2026-07-18): kept UNCHANGED
+    // — the audit's own exemplar of a legitimate split-flavored card.
+    // "Split ON IMPACT" (one shot, then children at the hit point) is a
+    // mechanically different EVENT than "fires N pellets at the muzzle"
+    // (every other quantity-bucket card above) — it rewards positioning a
+    // single shot to land somewhere useful, not spray density. classModifiers
+    // (wizard/paladin, both this session's earlier work) preserved exactly.
     id: "cluster-bomb",
     name: "Cluster Bomb",
     category: "projectile",
@@ -523,14 +707,30 @@ export const crystalRoundsCards: CardDefinition[] = [
     // range/fan-angle (5 dmg, 240px, 40°) are governed by the shared split
     // substrate's global constants (projectile.ts spawnSplit), not a
     // per-card lever — first-draft numbers in the doc note this explicitly
-    // ("playtest will move them"). Ninja/Paladin/Priest readings (wave
-    // shatter, stone-chip ranged echo, heal motes) need melee/heal verbs
-    // that don't exist yet — no entry, falls back to today's Cluster Bomb.
+    // ("playtest will move them"). Ninja/Priest readings (wave shatter,
+    // heal motes) need melee/heal verbs that don't exist yet — no entry,
+    // falls back to today's Cluster Bomb.
+    //
+    // Paladin expression = card-pool-v2.md's own line: "slam impacts throw
+    // stone chips — his melee arc gains a ranged echo" — Kindled Edge has
+    // no ranged rider to graft that onto (World.ts's own header comment:
+    // "tighter arc, harder hit" is the whole verb, no ranged rider), so
+    // this card's only LIVE consumer for Paladin is again the Unveiling
+    // ultimate (resolveEmission reads build.projectile.sizeMultiplier for
+    // the cast's blast radius). Reading chosen: FEWER, BIGGER stone chips
+    // — heavier-tank flavor over Wizard's many-small-shards read — a real,
+    // testable emission-radius difference (bigger radiusPx) for the same
+    // fire-rate cost.
     classModifiers: {
       wizard: {
         fireRateMultiplier: 0.72,
         projectileSplitAdd: 3,
         projectile: { sizeMultiplier: 1.12 },
+      },
+      paladin: {
+        fireRateMultiplier: 0.72,
+        projectileSplitAdd: 2,
+        projectile: { sizeMultiplier: 1.35 },
       },
     },
     visual: visual("hexagon", "#fde68a"),
@@ -643,9 +843,23 @@ export const crystalRoundsCards: CardDefinition[] = [
     // scope). Ninja's burning-edge-leaves-a-flame-line and Priest's fever-
     // inversion (burn lowers healing received) need substrate this session
     // doesn't build — no entry, falls back to today's Molten Core.
+    //
+    // Paladin expression = card-pool-v2.md's own line: "the brand —
+    // burning enemies take +10% from paladin melee" — no amp-vs-burning
+    // field exists on Kindled Edge (out of this chunk's field budget), so
+    // this card's only LIVE consumer for Paladin is the Unveiling
+    // ultimate's composed Emission (resolveEmission reads
+    // build.projectile.impactRadiusPx for the cast's impact size — verified
+    // wiring, emissionClassAware.test.ts). Reading chosen: a heavier ground
+    // fire pool (bigger impactRadiusPx than Wizard's textbook 42) — "the
+    // brand" reads as more ground claimed, not more damage, matching
+    // heaven-tank's settled-field identity — a real, testable difference.
     classModifiers: {
       wizard: {
         projectile: { element: "fire", impactRadiusPx: 42 },
+      },
+      paladin: {
+        projectile: { element: "fire", impactRadiusPx: 58 },
       },
     },
     visual: visual("triangle", "#ff7a18"),
@@ -675,9 +889,22 @@ export const crystalRoundsCards: CardDefinition[] = [
     // blind modifier — real authored content, zero numeric change. Ninja's
     // regen-pause and Priest's ally frost-ward-from-your-gun need substrate
     // this session doesn't build — no entry, falls back to today's Frost Prism.
+    //
+    // Paladin expression = card-pool-v2.md's own line: "frost brand —
+    // chilled enemies deal −10% damage" — no damage-dealt-reduction field
+    // exists yet (out of this chunk's field budget), so this card's only
+    // LIVE consumer for Paladin is again the Unveiling ultimate
+    // (resolveEmission reads build.projectile.slowMultiplier straight
+    // through). Reading chosen: a STRONGER slow than Wizard's textbook
+    // 0.68 — "the weight of law" (card-pool-v2.md's own Undertow-Paladin
+    // phrase, borrowed here for the same frost-lineage flavor) — a real,
+    // testable difference.
     classModifiers: {
       wizard: {
         projectile: { element: "ice", impact: "slow-field", slowMultiplier: 0.68 },
+      },
+      paladin: {
+        projectile: { element: "ice", impact: "slow-field", slowMultiplier: 0.55 },
       },
     },
     visual: visual("hexagon", "#93c5fd"),
@@ -829,17 +1056,31 @@ export const crystalRoundsCards: CardDefinition[] = [
     // passive, reborn from this exact card): "+20 max health, −3% move
     // speed" — the redesign tightens the speed cost from this card's
     // current −2% to the doc's −3%. Small, genuine, tested difference.
-    // Ninja/Paladin/Priest per-class lines (105/145/120 max health) are
-    // the SAME +20 add read against each chassis's different base HP —
-    // no distinct mechanic to author, but left unset deliberately so the
-    // fallback (today's Crystal Plating) stays the single source of truth
-    // until those chassis' base HP is confirmed live in the sim (currently
-    // only Wizard/balanced ships combat-ready per classes-goal.md staging).
+    // Ninja/Priest per-class lines (105/120 max health) are the SAME +20
+    // add read against each chassis's different base HP — no distinct
+    // mechanic to author, no entry, fall back to today's Crystal Plating.
+    //
+    // Paladin ships combat-ready this session (Kindled Edge/Ward,
+    // class-overhaul-workboard.md chunks 2.1-2.3) — "125 → 145, the wall
+    // gets taller" per card-pool-v2.md is the SAME +20 read (no distinct
+    // HP value to author), but the move-speed COST is re-tuned lighter
+    // than Wizard's (0.99 vs 0.97): a chassis that already accepts a slow
+    // profile (0.88x base speed, classes-goal.md) barely notices more
+    // plate, unlike a wizard whose mobility IS the build. Also bumps the
+    // hex-core sizeMultiplier higher (1.2 vs 1.14) — the only other LIVE
+    // consumer for Paladin is the Unveiling ultimate (resolveEmission
+    // reads build.projectile.sizeMultiplier), so a heavier-plated cast
+    // reads bigger too. Both are real, testable differences.
     classModifiers: {
       wizard: {
         maxHealthAdd: 20,
         moveSpeedMultiplier: 0.97,
         projectile: { shape: "hexagon", sizeMultiplier: 1.14, element: "crystal" },
+      },
+      paladin: {
+        maxHealthAdd: 20,
+        moveSpeedMultiplier: 0.99,
+        projectile: { shape: "hexagon", sizeMultiplier: 1.2, element: "crystal" },
       },
     },
     visual: visual("hexagon", "#86efac"),
@@ -939,6 +1180,10 @@ export const crystalRoundsCards: CardDefinition[] = [
     unique: true,
   },
   {
+    // Split-cluster audit: kept UNCHANGED as the legendary capstone of the
+    // homing-swarm sub-axis (micro-seekers → cut magnet-spray → this) — a
+    // legendary combining two ideas at once (homing + a fixed 3-fan) is a
+    // legitimate reward pattern, not a fourth reskin of the same lever.
     id: "homing-cluster",
     name: "Homing Cluster",
     category: "projectile",
@@ -1028,15 +1273,22 @@ export const crystalRoundsCards: CardDefinition[] = [
     // passive — "the name survives; nothing else does"): re-authored to
     // +10%/+10% (jump apex 134→~162px, wall-kick rise 173→~190px) rather
     // than this card's current +18%/+16%. A genuine, tested numeric
-    // difference — the redesign's stat, not a placeholder. Ninja/Paladin/
-    // Priest per-class flavor (wall-kick-chain compounding, higher slam
-    // arrival, overwatch positioning) is pure re-description of the SAME
-    // jump/wall-kick numbers for those chassis, not a different mechanic —
-    // still deferred (no entry) because the honest per-class VALUE for
-    // those bodies hasn't been separately authored/tuned this session;
-    // they fall back to today's Spring Heel unchanged.
+    // difference — the redesign's stat, not a placeholder. Ninja/Priest
+    // per-class flavor is pure re-description of the same numbers for
+    // those chassis — still deferred (no entry), fall back to today's
+    // Spring Heel unchanged.
+    //
+    // Paladin expression = card-pool-v2.md's own line: "the slam class
+    // gets to pick higher places to arrive from" — re-tuned LOWER jump,
+    // HIGHER wall-jump than Wizard's flat +10%/+10% (jumpMultiplier 1.04,
+    // wallJumpMultiplier 1.14): a heaven-tank prioritizes wall-plant
+    // routes over airtime ("less freeflow, more wall presence" — the same
+    // reasoning World.ts's EDGE_RANGE doc comment gives for Kindled Edge's
+    // own "committed, not forgiving" numbers). A real, tested, DIFFERENT
+    // split from Wizard's, not a re-description of the same pair.
     classModifiers: {
       wizard: { jumpMultiplier: 1.1, wallJumpMultiplier: 1.1 },
+      paladin: { jumpMultiplier: 1.04, wallJumpMultiplier: 1.14 },
     },
     visual: visual("triangle", "#5eead4"),
     maxStacks: 2,
@@ -1068,13 +1320,34 @@ export const crystalRoundsCards: CardDefinition[] = [
     // passive — same name AND same +1 air jump this card already ships;
     // "a glyph flickers underfoot" is pure visual-read flavor, zero
     // mechanical change). Override intentionally identical to the class-
-    // blind modifier — real authored content, zero numeric change. Ninja's
-    // wall-kick-chain combo, Paladin's stomp-jump damage ring, and Priest's
-    // self-cleanse-on-jump ARE mechanically distinct (damage-on-land,
-    // status removal) and need substrate this session doesn't build — no
-    // entry, falls back to today's Second Wind.
+    // blind modifier — real authored content, zero numeric change.
+    //
+    // Paladin expression (class-overhaul-workboard.md chunk 2.6 fast-follow,
+    // 2026-07-18) = docs/card-pool-v2.md's "stomp-jump": "his air jump
+    // deals 6 damage in a 70px ring beneath him (arriving twice)" — now
+    // REAL, not a cosmetic-only override like Wizard's glyph-flicker. The
+    // substrate the original pass said this needed ("a damage-on-landing
+    // field") turned out unnecessary: World.ts already tracks
+    // `mem.airJumpsUsed` before/after `stepPlayer` (the exact signal the
+    // ninja wall-kick energy grant reads) — comparing it catches "an air
+    // jump was just consumed THIS tick" precisely, no heuristic, no new
+    // PlayerEntity field. The ring fires at the moment of the AIR jump
+    // itself (the departure, matching "his air jump deals damage" literally
+    // — not a landing event, despite the card's own name), gated on both
+    // classId === "paladin" AND this card actually being equipped
+    // (`entity.cards.includes("double-jump")`), so a paladin without the
+    // card never sees the ring even though `airJumpsAdd` alone wouldn't be
+    // true for them anyway (no card, no extra air jump, no trigger).
+    //
+    // Ninja's wall-kick-chain combo and Priest's self-cleanse-on-jump remain
+    // deferred (still need substrate this pass doesn't build: a chained-
+    // wall-kick counter, and a "cleanse one slow" status-removal hook) — no
+    // entry for either, falls back to today's Second Wind for those two
+    // classes, same honest-partial discipline as every other recorded
+    // deferral this session.
     classModifiers: {
       wizard: { airJumpsAdd: 1 },
+      paladin: { airJumpsAdd: 1 },
     },
     visual: visual("circle", "#7dd3fc"),
     maxStacks: 3,
@@ -1309,7 +1582,7 @@ export const crystalRoundsCards: CardDefinition[] = [
     classId: "wizard",
     role: "offense",
     description:
-      "Active (0.7s window, 7s cooldown): shots deal 1.6x damage while it holds. (v1: a burst window, not a true charge-hold — see doc.)",
+      "Active (0.7s window, 7s cooldown): shots deal 1.6x damage while it holds.",
     flavorText: "I finished a sentence the crystal started.",
     active: {
       kind: "sunlance",
@@ -1348,7 +1621,7 @@ export const crystalRoundsCards: CardDefinition[] = [
     essenceCost: 5,
     classId: "wizard",
     role: "aoe",
-    description: "Active (9s cooldown): a cone burst of shard projectiles fans out from your aim.",
+    description: "Active (9s cooldown): a cone of crystal force erupts from your aim, striking everyone caught in it at once.",
     flavorText: "Still crystal munitions — just more of the angle.",
     active: {
       kind: "prism-fan",
@@ -1367,7 +1640,7 @@ export const crystalRoundsCards: CardDefinition[] = [
     classId: "wizard",
     role: "aoe",
     description:
-      "Active (9s cooldown): an instant ring of shards bursts around you. (v1: a nova, not the doc's persisting plane — see doc.)",
+      "Active (9s cooldown): a crystal lattice plane settles around you, damaging anyone standing in it for a few seconds.",
     flavorText: "Space denial, angle-first.",
     active: {
       kind: "lattice",
@@ -1386,7 +1659,7 @@ export const crystalRoundsCards: CardDefinition[] = [
     classId: "wizard",
     role: "defense",
     description:
-      "Active (10s cooldown): an instant tick of shield charge. (v1: not gated behind a live parry yet — see doc.)",
+      "Active (10s cooldown): an instant tick of shield charge.",
     flavorText: "What broke, mends — a little.",
     active: {
       kind: "return-glass",
@@ -1444,7 +1717,7 @@ export const crystalRoundsCards: CardDefinition[] = [
     classId: "wizard",
     role: "buff",
     description:
-      "Active (9s cooldown): banks one free shot — your next shot costs no ammo. (v1: no mana system exists yet to refund — see doc.)",
+      "Active (9s cooldown): banks one free shot — your next shot costs no ammo.",
     flavorText: "Information and confidence.",
     active: {
       kind: "measure",
@@ -1481,7 +1754,7 @@ export const crystalRoundsCards: CardDefinition[] = [
     classId: "wizard",
     role: "movement",
     description:
-      "Active (6s cooldown): hop opposite your aim on cast. (v1: no next-shot recoil discount yet — see doc.)",
+      "Active (6s cooldown): hop opposite your aim on cast.",
     flavorText: "Micro-kiting, the geometrician's way.",
     active: {
       kind: "recoil-step",
@@ -1490,6 +1763,728 @@ export const crystalRoundsCards: CardDefinition[] = [
     visual: visual("circle", "#fca5a5"),
     unique: true,
   },
+  // ── Kindred catalog v1 (docs/class-ability-catalogs-v1.md) ──────────────
+  // classId: "paladin" — offer-roll gated (round.ts enterDrafting); every
+  // other chassis sees zero of these. All 10 of the doc's 10 are wired as of
+  // the class-overhaul-workboard.md chunk 2.6 fast-follow (2026-07-18) — the
+  // original pass shipped 7 (below); Retribution Edge, Shock Ring, and Rally
+  // Light (previously deferred) are further down this block, after
+  // Plant Charge. Gold-forward visual family (classes-goal.md: "Gold-forward
+  // combat kit unlocked" — the one chassis where gold reads as combat, not
+  // house/cosmetic tier).
+  {
+    id: "bastion-pulse",
+    name: "Bastion Pulse",
+    category: "ability",
+    rarity: "uncommon",
+    buckets: ["ability"],
+    essenceCost: 5,
+    classId: "paladin",
+    role: "defense",
+    description:
+      "Active (8s cooldown): instant shield-charge tick, doubled if Ward is actively held.",
+    flavorText: "Ward synergy, not a second shield identity.",
+    active: {
+      kind: "bastion-pulse",
+      cooldownMs: 8000,
+    },
+    visual: visual("hexagon", "#fbbf24"),
+    unique: true,
+  },
+  {
+    id: "sunspike",
+    name: "Sunspike",
+    category: "ability",
+    rarity: "rare",
+    buckets: ["ability"],
+    essenceCost: 6,
+    classId: "paladin",
+    role: "single",
+    description:
+      "Active (7s cooldown): an aimed thrust — a single fast, narrow, short-range hit. High single-target damage.",
+    flavorText: "Focus the one who ignored the line.",
+    active: {
+      kind: "sunspike",
+      cooldownMs: 7000,
+    },
+    visual: visual("triangle", "#f59e0b"),
+    unique: true,
+  },
+  {
+    id: "judgment-line",
+    name: "Judgment Line",
+    category: "ability",
+    rarity: "rare",
+    buckets: ["ability"],
+    essenceCost: 6,
+    classId: "paladin",
+    role: "single",
+    description:
+      "Active (3s mark, 8s cooldown): marks the nearest foe in your aim cone — your Kindled Edge hits on them are amplified.",
+    flavorText: "Duel the tank.",
+    active: {
+      kind: "judgment-line",
+      cooldownMs: 8000,
+      durationMs: 3000,
+    },
+    visual: visual("triangle", "#fcd34d"),
+    unique: true,
+  },
+  {
+    id: "unbroken-seal",
+    name: "Unbroken Seal",
+    category: "ability",
+    rarity: "rare",
+    buckets: ["ability"],
+    essenceCost: 6,
+    classId: "paladin",
+    role: "offense",
+    description:
+      "Active (5s window, 7s cooldown): your next landed Kindled Edge hit is amplified and staggers the victim.",
+    flavorText: "One committed overhead that lands.",
+    active: {
+      kind: "unbroken-seal",
+      cooldownMs: 7000,
+      durationMs: 5000,
+    },
+    visual: visual("square", "#eab308"),
+    unique: true,
+  },
+  {
+    id: "consecrated-field",
+    name: "Consecrated Field",
+    category: "ability",
+    rarity: "uncommon",
+    buckets: ["ability"],
+    essenceCost: 5,
+    classId: "paladin",
+    role: "aoe",
+    description:
+      "Active (9s cooldown): self-light settles at your feet, slowing everyone it catches and lingering to damage anyone who stays in it.",
+    flavorText: "Settled self-light, self-sourced.",
+    active: {
+      kind: "consecrated-field",
+      cooldownMs: 9000,
+    },
+    visual: visual("hexagon", "#fde68a"),
+    unique: true,
+  },
+  {
+    id: "aegis-share",
+    name: "Aegis Share",
+    category: "ability",
+    rarity: "uncommon",
+    buckets: ["ability"],
+    essenceCost: 5,
+    classId: "paladin",
+    role: "defense",
+    description:
+      "Active (3s window, 8s cooldown): your team-peel shadow (Kindled Ward's reach for allies) widens.",
+    flavorText: "Peel readable, peel real.",
+    active: {
+      kind: "aegis-share",
+      cooldownMs: 8000,
+      durationMs: 3000,
+    },
+    visual: visual("circle", "#d97706"),
+    unique: true,
+  },
+  {
+    id: "plant-charge",
+    name: "Plant Charge",
+    category: "ability",
+    rarity: "uncommon",
+    buckets: ["ability"],
+    essenceCost: 5,
+    classId: "paladin",
+    role: "movement",
+    description:
+      "Active (6s cooldown): a short board-first charge that ends in a ready stance, tipping your shield charge up.",
+    flavorText: "Plant to plant, not freeflow.",
+    active: {
+      kind: "plant-charge",
+      cooldownMs: 6000,
+    },
+    visual: visual("square", "#facc15"),
+    unique: true,
+  },
+  // ── Kindred catalog v1 fast-follow (class-overhaul-workboard.md chunk
+  // 2.6, 2026-07-18) — the 3 abilities the original pass deferred, now
+  // wired. Same classId gate, same gold-forward visual family as the 7
+  // above.
+  {
+    id: "retribution-edge",
+    name: "Retribution Edge",
+    category: "ability",
+    rarity: "rare",
+    buckets: ["ability"],
+    essenceCost: 6,
+    classId: "paladin",
+    role: "offense",
+    description:
+      "Active (3s arm window, 8s cooldown): the next Ward block you land while armed readies your next Kindled Edge hit for bonus damage and a Kindling refund.",
+    flavorText: "You said enough. Now you pay for it.",
+    active: {
+      kind: "retribution-edge",
+      cooldownMs: 8000,
+      durationMs: 3000,
+    },
+    visual: visual("triangle", "#f97316"),
+    unique: true,
+  },
+  {
+    id: "shock-ring",
+    name: "Shock Ring",
+    category: "ability",
+    rarity: "uncommon",
+    buckets: ["ability"],
+    essenceCost: 5,
+    classId: "paladin",
+    role: "aoe",
+    description:
+      "Active (9s cooldown): a modest hop, then a slam shock on landing. Space claim, not sky-god.",
+    flavorText: "Ground that answers when you arrive.",
+    active: {
+      kind: "shock-ring",
+      cooldownMs: 9000,
+      durationMs: 1500,
+    },
+    visual: visual("hexagon", "#fb923c"),
+    unique: true,
+  },
+  {
+    id: "rally-light",
+    name: "Rally Light",
+    category: "ability",
+    rarity: "uncommon",
+    buckets: ["ability"],
+    essenceCost: 5,
+    classId: "paladin",
+    role: "buff",
+    description:
+      "Active (5s window, 9s cooldown): allies near you (including you, solo-safe) fight harder and move quicker.",
+    flavorText: "Stand with me. That's the whole shield.",
+    active: {
+      kind: "rally-light",
+      cooldownMs: 9000,
+      durationMs: 5000,
+    },
+    visual: visual("circle", "#fdba74"),
+    unique: true,
+  },
+  // ── Kindred coverage-floor + solo-viability fast-follow (docs/axiom-
+  // deviations-audit.md "Kindred (paladin) — two structural gaps",
+  // 2026-07-18). The catalog's 2nd buff and 2nd movement — closes the
+  // ≥2-per-role floor (docs/classes-goal.md), grows Kindred to 12/12
+  // (still inside the locked 8-12 catalog-size range) rather than
+  // replacing two of the existing 10. See constants.ts's KIN_KINDLED_
+  // RESOLVE_*/KIN_BULWARK_STEP_* header comments for the full design.
+  {
+    id: "kindled-resolve",
+    name: "Kindled Resolve",
+    category: "ability",
+    rarity: "rare",
+    buckets: ["ability"],
+    essenceCost: 6,
+    classId: "paladin",
+    role: "buff",
+    description:
+      "Active (4s window, 12s cooldown, spends 40 Kindling): harden your resolve — resist stagger, hit a little harder. No Kindling banked, no effect.",
+    flavorText: "Spend the block. Keep the line.",
+    active: {
+      kind: "kindled-resolve",
+      cooldownMs: 12000,
+      durationMs: 4000,
+    },
+    visual: visual("hexagon", "#fcd34d"),
+    unique: true,
+  },
+  {
+    id: "bulwark-step",
+    name: "Bulwark Step",
+    category: "ability",
+    rarity: "uncommon",
+    buckets: ["ability"],
+    essenceCost: 5,
+    classId: "paladin",
+    role: "movement",
+    description:
+      "Active (4s cooldown): a quick lateral shuffle in whatever direction you're already walking — the board never drops.",
+    flavorText: "Feet move. The wall doesn't.",
+    active: {
+      kind: "bulwark-step",
+      cooldownMs: 4000,
+    },
+    visual: visual("square", "#fde68a"),
+    unique: true,
+  },
+  // ── Paladin exclusives (docs/card-pool-v2.md #26-28) — the draft-pool
+  // cards, a SEPARATE system from the Kindred catalog above: picked from
+  // the universal/class-exclusive pool at round end, not the loadout-
+  // station catalog. classId-gated the same way. Crater is a rack ability
+  // (has `active`); Retort is a shield-board spec (always-on once equipped,
+  // no cast — reads `entity.cards.includes("retort")` directly in
+  // combat.ts/World.ts, no `modifier` needed); Bastion is a passive aura
+  // (always-on, same "no modifier needed, read the card id directly" shape
+  // — World.ts's `applyBastionAura`).
+  {
+    id: "crater",
+    name: "Crater",
+    category: "ability",
+    rarity: "rare",
+    buckets: ["ability"],
+    essenceCost: 7,
+    classId: "paladin",
+    role: "aoe",
+    description:
+      "Active (9s cooldown): leap above your normal jump, then slam — a heavy epicenter burst plus a wider shock ring. The verdict arrives from above.",
+    flavorText: "A gavel with a flight path.",
+    active: {
+      kind: "crater",
+      cooldownMs: 9000,
+      durationMs: 1800,
+    },
+    visual: visual("hexagon", "#f59e0b"),
+    unique: true,
+  },
+  {
+    id: "retort",
+    name: "Retort",
+    category: "defense",
+    rarity: "uncommon",
+    buckets: ["utility"],
+    essenceCost: 4,
+    classId: "paladin",
+    role: "defense",
+    description:
+      "Spec on the shield-board: banks half of blocked damage (capped). Your next Kindled Edge swing within 3s spends the bank as bonus damage and knockback.",
+    flavorText: "You said enough.",
+    visual: visual("triangle", "#fbbf24"),
+    unique: true,
+  },
+  {
+    id: "bastion",
+    name: "Bastion",
+    category: "defense",
+    rarity: "uncommon",
+    buckets: ["utility"],
+    essenceCost: 4,
+    classId: "paladin",
+    role: "defense",
+    description:
+      "Passive aura (220px): allies inside take less damage, you take a little less too. Damage allies absorb in your light feeds your Kindling.",
+    flavorText: "The line holds where he stands.",
+    visual: visual("circle", "#d97706"),
+    unique: true,
+  },
+  // ── Syzygist catalog v1 (docs/class-ability-catalogs-v1.md) — the
+  //    priest's 10-ability class catalog (class-overhaul-workboard.md
+  //    chunk 3.4). Same substrate-reuse discipline as the Geometrician/
+  //    Kindred blocks above; every low-aim auto-target ability reuses
+  //    World.ts's findNearestAlly/findNearestEnemy (see constants.ts's
+  //    SYZ_ALLY_SEARCH_RANGE_PX/SYZ_ENEMY_SEARCH_RANGE_PX header note).
+  //    Cool-white visual family throughout (docs/character-sheets-v1.md:
+  //    Syzygist LOCKED "cool-white... not violet, not Kindred gold") —
+  //    distinct from every other class's color family on this pool.
+  {
+    id: "bleed-tithe",
+    name: "Bleed Tithe",
+    category: "ability",
+    rarity: "uncommon",
+    buckets: ["ability"],
+    essenceCost: 4,
+    classId: "priest",
+    role: "offense",
+    description:
+      "Active (6s cooldown): a self-guiding fire-tendril finds the nearest enemy on its own — burns them and tithes a fraction of the damage back to you.",
+    flavorText: "It finds them. You don't have to.",
+    active: {
+      kind: "bleed-tithe",
+      cooldownMs: 6000,
+    },
+    visual: visual("orb", "#dff7ff"),
+    unique: true,
+  },
+  {
+    id: "severance",
+    name: "Severance",
+    category: "ability",
+    rarity: "uncommon",
+    buckets: ["ability"],
+    essenceCost: 5,
+    classId: "priest",
+    role: "offense",
+    description:
+      "Active (7s cooldown): detonates the nearest already-cursed enemy — no cursed target, no cast, no cooldown burned.",
+    flavorText: "The debt comes due on its own schedule.",
+    active: {
+      kind: "severance",
+      cooldownMs: 7000,
+    },
+    visual: visual("triangle", "#b9ecff"),
+    unique: true,
+  },
+  {
+    id: "borrowed-time",
+    name: "Borrowed Time",
+    category: "ability",
+    rarity: "rare",
+    buckets: ["ability"],
+    essenceCost: 6,
+    classId: "priest",
+    role: "single",
+    description:
+      "Active (8s cooldown): heals the nearest hurt ally on its own — some of it drains back a few seconds later, whether or not they earned it. Self-cast if you're alone, weaker both ways.",
+    flavorText: "I already gave you more than you'll pay back.",
+    active: {
+      kind: "borrowed-time",
+      cooldownMs: 8000,
+    },
+    visual: visual("hexagon", "#e0f2fe"),
+    unique: true,
+  },
+  {
+    id: "focus-hex",
+    name: "Focus Hex",
+    category: "ability",
+    rarity: "uncommon",
+    buckets: ["ability"],
+    essenceCost: 4,
+    classId: "priest",
+    role: "single",
+    description:
+      "Active (6s cooldown): marks the nearest enemy without needing to aim at them — your hits on the marked target amplify while it lasts.",
+    flavorText: "You were already the closest thing to me.",
+    active: {
+      kind: "focus-hex",
+      cooldownMs: 6000,
+      durationMs: 4000,
+    },
+    visual: visual("x", "#a5f3fc"),
+    unique: true,
+  },
+  {
+    id: "contagion",
+    name: "Contagion",
+    category: "ability",
+    rarity: "rare",
+    buckets: ["ability"],
+    essenceCost: 6,
+    classId: "priest",
+    role: "aoe",
+    description:
+      "Active (9s cooldown): every burning enemy nearby passes their fire on to the nearest un-burned enemy — the word spreads on its own.",
+    flavorText: "It only ever touches what was already lawfully applied.",
+    active: {
+      kind: "contagion",
+      cooldownMs: 9000,
+    },
+    visual: visual("circle", "#7dd3fc"),
+    unique: true,
+  },
+  {
+    id: "flock-pulse",
+    name: "Flock Pulse",
+    category: "ability",
+    rarity: "uncommon",
+    buckets: ["ability"],
+    essenceCost: 5,
+    classId: "priest",
+    role: "aoe",
+    description:
+      "Active (7s cooldown): a weak cool-white nova around you — grows with every ally or bond currently carrying your effects.",
+    flavorText: "The congregation, counted.",
+    active: {
+      kind: "flock-pulse",
+      cooldownMs: 7000,
+    },
+    visual: visual("circle", "#dff7ff"),
+    unique: true,
+  },
+  {
+    id: "self-lattice",
+    name: "Self-Lattice",
+    category: "ability",
+    rarity: "common",
+    buckets: ["ability"],
+    essenceCost: 3,
+    classId: "priest",
+    role: "defense",
+    description:
+      "Active (6s cooldown): a small absorb barrier on yourself — deliberately weaker than what you'd cast on an ally. Solo still has a button.",
+    flavorText: "Invest outward. This is what's left for you.",
+    active: {
+      kind: "self-lattice",
+      cooldownMs: 6000,
+    },
+    visual: visual("hexagon", "#b9ecff"),
+    unique: true,
+  },
+  {
+    id: "glass-ward",
+    name: "Glass Ward",
+    category: "ability",
+    rarity: "uncommon",
+    buckets: ["ability"],
+    essenceCost: 5,
+    classId: "priest",
+    role: "defense",
+    description:
+      "Active (7s cooldown): a stronger absorb barrier finds the nearest ally on its own — falls back to a weaker self-cast if nobody's close enough.",
+    flavorText: "Teams peak here. Solo still has a floor.",
+    active: {
+      kind: "glass-ward",
+      cooldownMs: 7000,
+    },
+    visual: visual("hexagon", "#e0f2fe"),
+    unique: true,
+  },
+  {
+    id: "haste-gift",
+    name: "Haste Gift",
+    category: "ability",
+    rarity: "uncommon",
+    buckets: ["ability"],
+    essenceCost: 4,
+    classId: "priest",
+    role: "buff",
+    description:
+      "Active (7s cooldown): a haste tendril finds the nearest ally on its own — self-cast at half strength if you're alone.",
+    flavorText: "Keep pace with what I gave you.",
+    active: {
+      kind: "haste-gift",
+      cooldownMs: 7000,
+      durationMs: 5000,
+    },
+    visual: visual("triangle", "#a5f3fc"),
+    unique: true,
+  },
+  {
+    id: "drift-step",
+    name: "Drift Step",
+    category: "ability",
+    rarity: "uncommon",
+    buckets: ["ability"],
+    essenceCost: 4,
+    classId: "priest",
+    role: "movement",
+    description:
+      "Active (6s cooldown): a short reposition toward your aim — keep curse/gift uptime alive without leaving the fight.",
+    flavorText: "Not Interstice speed. Just enough.",
+    active: {
+      kind: "drift-step",
+      cooldownMs: 6000,
+    },
+    visual: visual("square", "#7dd3fc"),
+    unique: true,
+  },
+  // ── Interstice catalog v1 (docs/class-ability-catalogs-v1.md) — the
+  //    ninja's 10-ability class catalog, 9 wired this pass (see
+  //    cardTypes.ts's AbilityKind header comment for why "Paper Double" is
+  //    not in this pool at all). Same substrate-reuse discipline as the
+  //    Geometrician/Kindred/Syzygist blocks above. Crystal-cyan-adjacent
+  //    but distinctly sharper/higher-frequency than the Geometrician family
+  //    (character-sheets-v1.md: "energy-resource glow — sharper, higher-
+  //    frequency pulse than wizard cyan") — insidious-precise tone (C4):
+  //    names read as precision/opportunism, never flashy.
+  {
+    id: "undercut",
+    name: "Undercut",
+    category: "ability",
+    rarity: "rare",
+    buckets: ["ability"],
+    essenceCost: 6,
+    classId: "ninja",
+    role: "offense",
+    description:
+      "Active (8s cooldown, 4s window): a landed arc hit against anyone already below 15% health finishes them outright.",
+    flavorText: "You were already gone. This just made it official.",
+    active: {
+      kind: "undercut",
+      cooldownMs: 8000,
+      durationMs: 4000,
+    },
+    visual: visual("bar", "#67e8f9"),
+    unique: true,
+  },
+  {
+    id: "edge-storm",
+    name: "Edge Storm",
+    category: "ability",
+    rarity: "uncommon",
+    buckets: ["ability"],
+    essenceCost: 5,
+    classId: "ninja",
+    role: "offense",
+    description:
+      "Active (8s cooldown, 6s window): your next three wave-off-swings hit hard — still has to land the swing first.",
+    flavorText: "Every cut, a little heavier than the last.",
+    active: {
+      kind: "edge-storm",
+      cooldownMs: 8000,
+      durationMs: 6000,
+    },
+    visual: visual("triangle", "#22d3ee"),
+    unique: true,
+  },
+  {
+    id: "needle",
+    name: "Needle",
+    category: "ability",
+    rarity: "uncommon",
+    buckets: ["ability"],
+    essenceCost: 4,
+    classId: "ninja",
+    role: "single",
+    description:
+      "Active (6s cooldown): close the last few feet on the nearest enemy and put a fast, hard shard through them — no target, no cast.",
+    flavorText: "The gap was never really there.",
+    active: {
+      kind: "needle",
+      cooldownMs: 6000,
+    },
+    visual: visual("x", "#5ac8fa"),
+    unique: true,
+  },
+  {
+    id: "read-mark",
+    name: "Read Mark",
+    category: "ability",
+    rarity: "uncommon",
+    buckets: ["ability"],
+    essenceCost: 5,
+    classId: "ninja",
+    role: "single",
+    description:
+      "Active (6s cooldown, 5s window): mark the nearest enemy without needing to aim at them — your next arc hits on them cut harder.",
+    flavorText: "I already modeled you. This is just showing my work.",
+    active: {
+      kind: "read-mark",
+      cooldownMs: 6000,
+      durationMs: 5000,
+    },
+    visual: visual("hexagon", "#38bdf8"),
+    unique: true,
+  },
+  {
+    id: "shard-ring",
+    name: "Shard Ring",
+    category: "ability",
+    rarity: "uncommon",
+    buckets: ["ability"],
+    essenceCost: 5,
+    classId: "ninja",
+    role: "aoe",
+    description:
+      "Active (7s cooldown): a full-circle wave ring off a still blade — short radius, everyone close pays for it.",
+    flavorText: "The air kept cutting after I stopped moving.",
+    active: {
+      kind: "shard-ring",
+      cooldownMs: 7000,
+    },
+    visual: visual("circle", "#67e8f9"),
+    unique: true,
+  },
+  {
+    id: "wall-bloom",
+    name: "Wall Bloom",
+    category: "ability",
+    rarity: "common",
+    buckets: ["ability"],
+    essenceCost: 3,
+    classId: "ninja",
+    role: "aoe",
+    description:
+      "Active (7s cooldown, 9s window): your next wall-kick blooms a shard burst off the wall you left.",
+    flavorText: "The wall remembers the kick longer than you do.",
+    active: {
+      kind: "wall-bloom",
+      cooldownMs: 7000,
+      durationMs: 9000,
+    },
+    visual: visual("square", "#22d3ee"),
+    unique: true,
+  },
+  {
+    id: "ghost-guard",
+    name: "Ghost Guard",
+    category: "ability",
+    rarity: "rare",
+    buckets: ["ability"],
+    essenceCost: 5,
+    classId: "ninja",
+    role: "defense",
+    description:
+      "Active (9s cooldown, 6s window): banks one near-miss — the next hit that lands while you're moving simply doesn't.",
+    flavorText: "You hit where I was.",
+    active: {
+      kind: "ghost-guard",
+      cooldownMs: 9000,
+      durationMs: 6000,
+    },
+    visual: visual("hexagon", "#5ac8fa"),
+    unique: true,
+  },
+  {
+    id: "second-wind",
+    name: "Second Wind",
+    category: "ability",
+    rarity: "common",
+    buckets: ["ability"],
+    essenceCost: 3,
+    classId: "ninja",
+    role: "buff",
+    description:
+      "Active (8s cooldown, 1.5s window): land a hit in the next 1.5s and take some of it back — health and energy both.",
+    flavorText: "Aggression, paid forward.",
+    active: {
+      kind: "second-wind",
+      cooldownMs: 8000,
+      durationMs: 1500,
+    },
+    visual: visual("triangle", "#38bdf8"),
+    unique: true,
+  },
+  {
+    id: "razor-route",
+    name: "Razor Route",
+    category: "ability",
+    rarity: "uncommon",
+    buckets: ["ability"],
+    essenceCost: 4,
+    classId: "ninja",
+    role: "movement",
+    description:
+      "Active (7s cooldown, 3s window): your next dash carries further and marks the first body it crosses.",
+    flavorText: "Faster than the read that was supposed to catch me.",
+    active: {
+      kind: "razor-route",
+      cooldownMs: 7000,
+      durationMs: 3000,
+    },
+    visual: visual("bar", "#22d3ee"),
+    unique: true,
+  },
 ];
 
 export const prototypeCards = crystalRoundsCards;
+
+/**
+ * All classId-gated catalog cards for one chassis (docs/classes-goal.md
+ * "Loadout station owns the 3 slots" — live playtest finding 2026-07-18,
+ * Jake: "this should show all cards for that class when its selected not
+ * just three"). This is the FULL-CATALOG view — every ability card that
+ * chassis has authored, not a random offer/reroll. Server (venueHost.ts's
+ * catalog-toggle handler) and client (HangoutScene/CardDraftOverlay) both
+ * call this so the equip surface and the validation gate read the exact
+ * same list, never two independently-filtered copies. Empty for classes
+ * with no catalog authored yet (none remain as of the Interstice catalog
+ * landing — all four chassis now have an authored catalog) — callers must
+ * still render an empty result as an honest empty state, not an error, in
+ * case a fifth chassis is ever added ahead of its own catalog.
+ * Order is definition order (stable, matches class-ability-catalogs-v1.md's
+ * table order) — callers should not re-sort.
+ */
+export function catalogForClass(classId: ClassId): CardDefinition[] {
+  return crystalRoundsCards.filter((c) => c.classId === classId);
+}

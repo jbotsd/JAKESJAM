@@ -58,6 +58,20 @@ const WORLD_COLOR_PALETTE = [
   "#ff7676",
 ] as const;
 
+/**
+ * Perf audit G (2026-07-18): `botFloor` was a flat constant regardless of
+ * map area, so boxworks-tower (the smaller of the two ROTATION_MAPS) ran
+ * roughly 2x the elastic-bot population DENSITY of vessel-nexus for the
+ * same floor setting — directly compounding the AOI/rig-cost findings
+ * elsewhere in this audit on the exact map that reported the lag. Reference
+ * area = the default/"a full room's worth of combatants" map, vessel-nexus;
+ * smaller maps scale the effective floor down, never up.
+ */
+const REFERENCE_MAP_AREA = (() => {
+  const m = resolveMap(DEFAULT_MAP_ID);
+  return m.size.x * m.size.y;
+})();
+
 function pickColor(playerId: string): string {
   let hash = 0;
   for (let i = 0; i < playerId.length; i += 1) {
@@ -127,6 +141,11 @@ export class WorldHost {
   /** Uniqueness counter for bot-only duo teamIds minted by
    *  `planBotTeams` — see its doc for the pairing rule. */
   private botTeamCounter = 0;
+  /** Area (px²) of the map the live host is currently on — updated in
+   *  `buildHost()` whenever a new map is resolved. Feeds `scaledBotFloor`
+   *  (perf audit G). Defaults to the reference area so the very first
+   *  boot (before any buildHost() call) scales as if on vessel-nexus. */
+  private currentMapArea: number = REFERENCE_MAP_AREA;
 
   constructor(
     opts: {
@@ -288,13 +307,22 @@ export class WorldHost {
    * matches the plan, so a steady-state team-mode bell (nothing changed
    * since last time) causes zero churn.
    */
+  /** Perf audit G (2026-07-18): scale the configured floor down for a map
+   *  smaller than the reference (vessel-nexus) — never up for a bigger one,
+   *  since `botFloor` is a ceiling/target, not a minimum. */
+  private scaledBotFloor(): number {
+    if (this.botFloor === 0) return 0;
+    const ratio = Math.min(1, this.currentMapArea / REFERENCE_MAP_AREA);
+    return Math.max(0, Math.min(this.botFloor, Math.round(this.botFloor * ratio)));
+  }
+
   private adjustElasticBots(): void {
     if (!this.host || this.botFloor === 0) return;
     const state = this.host.getStateSnapshot();
     const ids = Object.keys(state.players);
     const humans = ids.filter((id) => !isBotId(id)).length;
     const liveBots = ids.filter((id) => isBotId(id));
-    const target = Math.max(0, Math.min(6, this.botFloor - humans));
+    const target = Math.max(0, Math.min(6, this.scaledBotFloor() - humans));
     const humanTeams = this.humanTeamCounts(ids);
 
     if (humanTeams.size === 0) {
@@ -404,6 +432,11 @@ export class WorldHost {
   }
 
   private buildHost(spawns: PlayerSpawnInfo[]): MatchHost {
+    const mapId = this.nextMapId();
+    // Resolved once, up front, so both the area-scaled bot floor (below)
+    // and the nav-mesh bind (bindMap) use the SAME map object.
+    const map = resolveMap(mapId);
+    this.currentMapArea = map.size.x * map.size.y;
     // Bots ride along in every host build (including recycles). A fresh
     // build IS a bell edge, so with elasticity on (botFloor > 0) the count
     // sizes to the humans actually spawning; otherwise the legacy fixed
@@ -411,15 +444,14 @@ export class WorldHost {
     const humanSpawns = spawns.filter((sp) => !isBotId(sp.playerId)).length;
     const botTarget =
       this.botFloor > 0
-        ? Math.max(0, Math.min(6, this.botFloor - humanSpawns))
+        ? Math.max(0, Math.min(6, this.scaledBotFloor() - humanSpawns))
         : this.botCount;
     const botSpawns = this.bots
       .spawnInfosFor(botTarget)
       .filter((b) => !spawns.some((sp) => sp.playerId === b.playerId))
       .map((b) => this.botSpawn(b.playerId, b.name));
-    const mapId = this.nextMapId();
     // Map-aware brains: cover / hop / LOS for the arena they're actually on.
-    this.bots.bindMap(resolveMap(mapId));
+    this.bots.bindMap(map);
     return new MatchHost(WORLD_MATCH_ID, [...spawns, ...botSpawns], [], mapId, {
       onMatchComplete: () => this.scheduleRecycle(),
       // Threaded through EVERY host build (recycles included) so venue

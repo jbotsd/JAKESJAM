@@ -255,6 +255,16 @@ export class MatchHost {
   /** Spatial grid for per-recipient snapshot filtering (AOI). Rebuilt each
    *  snapshot tick in broadcastSnapshot before per-client filtering runs. */
   private readonly grid: InterestGrid;
+  /** Perf audit N2: true when this map is small enough that AOI filtering
+   *  can never actually reduce a snapshot (set once in the ctor). */
+  private aoiFullCoverage = false;
+  /** Perf audit N5 (2026-07-18): true once ANY human has ever joined this
+   *  match (initial spawn or mid-match). Sticky for the match's whole life —
+   *  a human who disconnects before completion still "counts," since the
+   *  replay/Convex persist this gates is about what happened in the match,
+   *  not who's connected at the exact instant it ends. Bot-only WorldHost
+   *  cycles (0 humans ever) skip the expensive persist path entirely. */
+  private hadHumanPlayer = false;
   /** Sim backend pinned for the whole match (replay fidelity — see ctor). */
   private readonly simBackend: "wasm" | "ts";
   /** Monotonically-increasing snapshot counter. Used to gate DEBUG_AOI logs
@@ -429,6 +439,12 @@ export class MatchHost {
       serverWasmHost.setSlopes(this.map.slopes ?? []);
     }
     this.grid = new InterestGrid(this.map.size.x, this.map.size.y, CELL_SIZE_PX);
+    // Perf audit N2 (2026-07-18): on a map small enough that the observe
+    // radius already spans the whole grid from any cell (e.g. boxworks-
+    // tower), AOI filtering is a provable no-op — every recipient sees
+    // every entity regardless. Computed once; map size never changes
+    // mid-match. See InterestGrid.isFullCoverage's doc for the full case.
+    this.aoiFullCoverage = this.grid.isFullCoverage(OBSERVE_RADIUS_CELLS);
     // Pin the sim backend for the WHOLE match. The old per-tick
     // `isReady()` re-check meant the backend could switch mid-match when
     // the wasm load finished — invisible live, but it makes the recorded
@@ -461,6 +477,7 @@ export class MatchHost {
         teamId: spawn.teamId,
       });
       this.lastProcessedInputSeq.set(spawn.playerId, 0 as InputSeq);
+      if (!isBotId(spawn.playerId)) this.hadHumanPlayer = true;
     }
   }
 
@@ -589,6 +606,36 @@ export class MatchHost {
   /** Server-side card pick for AI players during drafting. */
   injectCardPick(playerId: PlayerId, roundIndex: number, cardId: string): void {
     this.applyCardPick(playerId, { t: "card-pick", roundIndex, cardId });
+  }
+
+  /**
+   * Hangout-only: directly overwrite a live player's `cards`, independent
+   * of the drafting-phase pick path (`applyCardPick` above, which only
+   * ever APPENDS one drafted pick while `round.phase === "drafting"` and
+   * also stamps `round.draftingPicked`). The venue lobby's round phase is
+   * permanently pinned to "fighting" (never drafting — see the class doc
+   * at the top of this file / venueHost.ts), so a lobby visitor toggling
+   * catalog picks at the loadout station has no phase-gated path to make
+   * their `PlayerEntity.cards` reflect the change live — this is that
+   * path (live playtest 2026-07-18, Jake: "the abilities and load out
+   * should be active in this world").
+   *
+   * Deliberately additive and narrow: only mutates `state.players[id]
+   * .cards`, touches nothing round/drafting-related, and no-ops outside
+   * `mode: "hangout"` — the arena's own between-round draft mechanism
+   * (`applyCardPick`) is completely untouched by this.
+   */
+  setPlayerCards(playerId: PlayerId, cards: string[]): void {
+    if (this.mode !== "hangout") return;
+    const player = this.state.players[playerId];
+    if (!player) return;
+    this.state = {
+      ...this.state,
+      players: {
+        ...this.state.players,
+        [playerId]: { ...player, cards: [...cards] },
+      },
+    };
   }
 
   /** True while at least one player is in their reconnect grace window. */
@@ -734,6 +781,7 @@ export class MatchHost {
       teamId: spawn.teamId,
     });
     this.lastProcessedInputSeq.set(spawn.playerId, 0 as InputSeq);
+    if (!isBotId(spawn.playerId)) this.hadHumanPlayer = true;
 
     // Shared roster op — the replay re-sim must apply the IDENTICAL state
     // surgery (rosterOps.ts), so the live host and playback run one code path.
@@ -776,10 +824,25 @@ export class MatchHost {
         // Venue business, not lobby-sim business (classes-goal.md "Venue
         // integration"): VenueHost intercepts this in its own routeLobby
         // BEFORE it ever reaches here (same interception the loadout
-        // station's card-pick uses). An ordinary MatchHost — private room,
-        // combat arena — has nothing to do with a duo-queue toggle, so a
-        // message that somehow reaches this switch (a stray client, a
-        // stale connection) is a harmless no-op, same precedent as hello.
+        // station's catalog-toggle/class-pick use). An ordinary MatchHost
+        // — private room, combat arena — has nothing to do with a
+        // duo-queue toggle, so a message that somehow reaches this switch
+        // (a stray client, a stale connection) is a harmless no-op, same
+        // precedent as hello.
+        break;
+      case "catalog-toggle":
+        // Same interception discipline as duo-toggle above — VenueHost's
+        // routeLobby handles the class ability catalog toggle (classes-
+        // goal.md "Loadout station owns the 3 slots"; live playtest
+        // finding 2026-07-18) before it ever reaches here. Harmless no-op
+        // if it somehow arrives at an ordinary MatchHost.
+        break;
+      case "class-pick":
+        // Same interception discipline as duo-toggle/catalog-toggle above
+        // — VenueHost's routeLobby handles the loadout station's class
+        // switch (Bug fix, live playtest 2026-07-18) before it ever
+        // reaches here. Harmless no-op if it somehow arrives at an
+        // ordinary MatchHost.
         break;
       case "hello":
         // Hello is implicit on connect; ignore extras.
@@ -1106,15 +1169,18 @@ export class MatchHost {
 
     // Snapshot a runtime clone BEFORE the authoritative step so the
     // diagnostic replay below starts from the same runtime state, not the
-    // post-step one.
-    const runtimeSnapshotForDiag = rewindPlan ? snapshotRuntime(this.runtime) : null;
+    // post-step one. Perf audit N1 (2026-07-18): this clone + the second
+    // full step in logLagCompOutcomeChange roughly doubles sim cost on any
+    // tick with a rewind — gate behind config.lagCompDiag, default off.
+    const runtimeSnapshotForDiag =
+      rewindPlan && config.lagCompDiag ? snapshotRuntime(this.runtime) : null;
     const preStepState = this.state;
 
     const result = this.runStep(stepInputState, inputsByPlayer);
     let nextState = result.state;
     const events = result.events;
 
-    if (rewindPlan && runtimeSnapshotForDiag) {
+    if (rewindPlan) {
       // Restore opponents' future-going positions: they were stepped from a
       // rewound starting position, so subtract the shift vector to put them
       // back on their real trajectory. Velocities are unchanged by the
@@ -1125,8 +1191,11 @@ export class MatchHost {
       // Diagnostics: replay the same tick WITHOUT the rewind on a clean
       // runtime clone and compare hit-confirmed events for the shooter(s).
       // This is purely an observation; the authoritative result is the
-      // rewound one above.
-      this.logLagCompOutcomeChange(rewindPlan, events, inputsByPlayer, preStepState, runtimeSnapshotForDiag);
+      // rewound one above. Perf audit N1: gated behind config.lagCompDiag —
+      // runtimeSnapshotForDiag is only non-null when that flag is on.
+      if (runtimeSnapshotForDiag) {
+        this.logLagCompOutcomeChange(rewindPlan, events, inputsByPlayer, preStepState, runtimeSnapshotForDiag);
+      }
     }
 
     this.state = nextState;
@@ -1403,6 +1472,16 @@ export class MatchHost {
    * (logged in convexClient) so a Convex outage never crashes the sim.
    */
   private async postMatchResult(): Promise<void> {
+    // Perf audit N5 (2026-07-18): a bot-only WorldHost cycle (0 humans ever
+    // joined) has nothing worth a full replay-serialize + disk-persist +
+    // Convex round-trip for — no highlight clips (humanKillMoments is
+    // already empty), no player-facing match summary to record. Skip the
+    // whole persist path; the always-on world still recycles normally via
+    // onMatchComplete regardless of this early return.
+    if (!this.hadHumanPlayer) {
+      console.log(`[matchHost ${this.matchId}] bot-only match — skipping replay/Convex persist`);
+      return;
+    }
     // LOCAL replay persist FIRST — it must not sit behind any Convex call:
     // on a self-hosted box with no CONVEX_URL, getMatchSummary() returns
     // null and the early-return below used to silently skip persistence
@@ -1471,8 +1550,9 @@ export class MatchHost {
     for (const [pid, seq] of this.lastProcessedInputSeq) lastProcessed[pid] = seq;
 
     // Rebuild the spatial grid once per snapshot tick. All per-recipient
-    // observe() calls below share this rebuilt state.
-    this.grid.rebuild(this.state);
+    // observe() calls below share this rebuilt state. Skipped entirely on
+    // full-coverage maps (perf audit N2) — nothing downstream reads it.
+    if (!this.aoiFullCoverage) this.grid.rebuild(this.state);
     this.snapshotCount += 1;
     const debugAoi = process.env.DEBUG_AOI === "1" && this.snapshotCount <= 30;
 
@@ -1635,6 +1715,14 @@ export class MatchHost {
     recipientId: PlayerId,
     debugAoi: boolean,
   ): WorldState {
+    // Perf audit N2: on a full-coverage map every recipient sees every
+    // entity regardless of position — cellsAround/observed/filterRecord
+    // would just reconstruct the same collections at real cost. Return the
+    // state as-is (still a fresh object per recipient courtesy of the
+    // caller's spread below being unnecessary here — state itself is never
+    // mutated downstream, see pushBaseline's read-only usage).
+    if (this.aoiFullCoverage) return state;
+
     const player = state.players[recipientId];
     // If the recipient player entity is missing (race between connect and first
     // tick), fall back to world-center so they still get a useful snapshot.
@@ -1721,6 +1809,10 @@ function snapshotRuntime(runtime: WorldRuntime): WorldRuntime {
     // doesn't invoke the NINJA MELEE step, so the same sharing the
     // `movement` comment already accepts for dash-bash applies here too.
     melee: new Map(runtime.melee),
+    // Same shallow-clone treatment (class-overhaul-workboard.md chunk 2.1,
+    // Kindled Edge) — this diagnostic path doesn't invoke the PALADIN
+    // MELEE step either, same reasoning as `melee` immediately above.
+    paladinMelee: new Map(runtime.paladinMelee),
     nextEntityId: runtime.nextEntityId,
     map: runtime.map,
     // Cache is immutable for the match lifetime — share the reference;

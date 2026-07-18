@@ -101,3 +101,4 @@ export {
   hashWorldStateLite,
 } from './hash.js';
 export type { WorldHashLite } from './hash.js';
+export { isAlly } from './team.js';

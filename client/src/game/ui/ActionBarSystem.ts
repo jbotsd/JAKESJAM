@@ -31,6 +31,76 @@ import { PALETTE } from "./palette.js";
 import { drawFacetedRing, healthRingColor } from "../render/facetedRing.js";
 import type { HudChip } from "./HudSystem.js";
 import type { AcquiredAbility, AcquiredAbilityKind } from "./acquiredAbilities.js";
+import { drawActiveGlyph } from "./actionBarGlyphs.js";
+import type { ClassId } from "../types/game.js";
+
+// ── Chassis-verb naming (2026-07-18 legibility pass, Jake: "we still have
+// shift shield and mouse right click in the game what do we do about those
+// those should be abilities") — Shield (held Shift) and Dash (right-click/C,
+// the "dash-bash shield power-slide") are ALREADY class-specific mechanics
+// under the hood (combat.ts's Kindled Ward branch, World.ts's ninja dash-
+// through/evasion, weapon.ts's Priest innate directionalShield) but were
+// rendering as an unlabeled resource orb and a bare "M2" slot with no name
+// anywhere in the UI. This is a NAMING/LABELING pass only — no mechanic,
+// number, or gating changes.
+//
+// "Kindled Ward" (paladin) is the session's own established name
+// (combat.ts's WARD_* doc comments, class-overhaul-workboard.md chunks
+// 2.2/2.3). "Slipstream" (ninja Dash) is pulled verbatim from
+// docs/character-sheets-v1.md ("Slipstream / Read: Dash through them...")
+// and is ALSO a currently-dead-code draft card of the same name
+// (docs/card-pool-v2.md — CardSystem.ts/DraftScene.ts are dead per the
+// class-overhaul session) with an IDENTICAL effect (dash-through grants
+// energy + tags Read) — flagged as a future collision risk if the draft-
+// card layer is ever revived. The remaining six (wizard's two, ninja's
+// Shield, priest's two, paladin's Dash) have no established name in
+// classes-goal.md / character-sheets-v1.md / class-ability-catalogs-v1.md,
+// so these are freshly authored to each class's C4 tone register
+// (classes-goal.md: wizard technical-awesome, ninja insidious-precise,
+// paladin epic-settled/self-lit-not-liturgical, priest unsettling-
+// benevolent) and checked against that class's own catalog vocabulary for
+// collisions (Geometrician/Interstice/Kindred/Syzygist catalogs,
+// docs/class-ability-catalogs-v1.md).
+//
+// Known gap this naming surfaces rather than hides: wizard's held-Shield is
+// still the plain pre-class-split omnidirectional block today (see
+// combat.ts's tryDeflectDamage step 2) — classes-goal.md's "DEFENSE IS A
+// CLASS PROPERTY" section says wizard's true defense is parry, but it
+// hasn't actually been retired from the universal Shield input yet. Only
+// Paladin (Kindled Ward) and Priest (innate directional aim-shield) have a
+// real classId-gated override for Shield's damage math.
+//
+// Ninja/Interstice is DIFFERENT from wizard's gap, not the same one: its
+// Shield now HAS a real classId-gated override (combat.ts's
+// tryDeflectDamage, "ninja" branch, 2026-07-18) — but the override is "deal
+// zero mitigation, always", per the LOCKED doctrine that this class's whole
+// defense IS the dash i-frame ("Dash i-frames only — never block",
+// docs/character-sheets-v1.md's DI-Tempest/WoW-Rogue table; "dash
+// i-frames — never blocks, only isn't there", docs/classes-goal.md). A
+// previous pass here gave ninja's Shield-key the display name "Raised
+// Guard" as a cosmetic kindness matching every other class — that actively
+// misled players into believing Interstice has a real guard/block
+// mechanic. Per docs/design-axioms.md A2 ("ship the missing feature, never
+// the broken one"): rather than name a fake ability, the shield orb AND
+// its name label are hidden entirely for ninja (see `shieldDisplayMax`
+// below) — reusing the existing "no shield resource on this character"
+// dim-empty-frame treatment this bar already has for that exact situation.
+// SHIELD_NAME_BY_CLASS keeps a ninja entry anyway as a defense-in-depth
+// fallback string (in case some future caller ever renders the name
+// without going through `shieldDisplayMax`'s gate) — it must read as an
+// honest absence, not an ability, in Interstice's insidious-precise voice.
+const DASH_NAME_BY_CLASS: Record<ClassId, string> = {
+  paladin: "Kindled Charge",
+  wizard: "Vector Charge",
+  ninja: "Slipstream",
+  priest: "Tethered Charge",
+};
+const SHIELD_NAME_BY_CLASS: Record<ClassId, string> = {
+  paladin: "Kindled Ward",
+  wizard: "Prism Wall",
+  ninja: "Nothing to Guard",
+  priest: "Open Hand",
+};
 
 /** One drafted-active slot (six-axes-goal.md Layer 2): keys 1..3 in pick
  *  order (rack locked at exactly 3, docs/classes-goal.md "Rotation
@@ -65,6 +135,12 @@ export type ActionBarVitals = {
    *  drives that slot's ready ring when the fangs are acquired. */
   stolenFangsCharges: number;
   isDead: boolean;
+  /** Local player's classId (classIdForArchetype(characterId)) — drives the
+   *  Dash/Shield chassis-verb name labels (DASH_NAME_BY_CLASS /
+   *  SHIELD_NAME_BY_CLASS above). Optional/absent-means-hidden so existing
+   *  callers that don't resolve a classId (e.g. HangoutScene's lobby HUD)
+   *  keep rendering exactly as before — no forced touch on that file. */
+  classId?: ClassId;
 };
 
 const PAD_BOTTOM = 20;
@@ -114,6 +190,15 @@ export class ActionBarSystem {
   private hpText!: Phaser.GameObjects.Text;
   private shText!: Phaser.GameObjects.Text;
   private slotKeyLabels: Phaser.GameObjects.Text[] = [];
+  /** Chassis-verb name labels (2026-07-18 legibility pass) — dashNameText
+   *  sits just above the M2 diamond, shieldNameText just above the shield
+   *  orb. Both hidden when vitals.classId is absent (see that field's doc
+   *  comment). wordWrap lets a two-word name (e.g. "Kindled Charge") break
+   *  onto a second line instead of overflowing into the neighboring M1/E
+   *  diamonds — this HUD row is tight, and pixel-perfect single-line fit
+   *  isn't verifiable without a live screenshot (see task report). */
+  private dashNameText!: Phaser.GameObjects.Text;
+  private shieldNameText!: Phaser.GameObjects.Text;
 
   private compact = false;
   /** First-seen wall-clock per acquired kind — drives the acquisition
@@ -144,6 +229,8 @@ export class ActionBarSystem {
     this.g.destroy();
     this.hpText.destroy();
     this.shText.destroy();
+    this.dashNameText.destroy();
+    this.shieldNameText.destroy();
     for (const t of this.slotKeyLabels) t.destroy();
     this.slotKeyLabels = [];
   }
@@ -177,6 +264,33 @@ export class ActionBarSystem {
       .setOrigin(0.5, 0.5)
       .setScrollFactor(0)
       .setDepth(depth + 2);
+
+    // Chassis-verb name labels — same fontBase convention as every other
+    // small HUD text here, just smaller/dimmer than the resource numbers
+    // (this is flavor identification, not a stat the player reads mid-fight).
+    const nameFontSize = this.compact ? "7px" : "8px";
+    this.dashNameText = s.add
+      .text(0, 0, "", {
+        ...fontBase,
+        fontSize: nameFontSize,
+        color: "#8ff8ff",
+        align: "center",
+      })
+      .setOrigin(0.5, 1)
+      .setScrollFactor(0)
+      .setDepth(depth + 2)
+      .setVisible(false);
+    this.shieldNameText = s.add
+      .text(0, 0, "", {
+        ...fontBase,
+        fontSize: nameFontSize,
+        color: "#93c5fd",
+        align: "center",
+      })
+      .setOrigin(0.5, 1)
+      .setScrollFactor(0)
+      .setDepth(depth + 2)
+      .setVisible(false);
 
     for (let i = 0; i < SLOT_COUNT; i++) {
       // Slot order: live slots, then the Emission (E — cast ships P1,
@@ -219,15 +333,38 @@ export class ActionBarSystem {
     const rowLeft = centerX - rowW / 2;
 
     this.hpText.setPosition(centerX - rowW / 2 - this.orbGap - this.orbR, barY);
-    this.shText.setPosition(centerX + rowW / 2 + this.orbGap + this.orbR, barY);
+    const shOrbX = centerX + rowW / 2 + this.orbGap + this.orbR;
+    this.shText.setPosition(shOrbX, barY);
+    // Shield name sits above its orb — plenty of clearance out there (it's
+    // the outermost element, nothing else shares that space).
+    this.shieldNameText.setPosition(shOrbX, barY - this.orbR - 6);
+    this.shieldNameText.setWordWrapWidth(this.orbR * 2.6, true);
 
     for (let i = 0; i < SLOT_COUNT; i++) {
       const sx = rowLeft + this.slotR + i * (this.slotR * 2 + this.slotGap);
       this.slotKeyLabels[i]!.setVisible(i < count);
       this.slotKeyLabels[i]!.setPosition(sx, barY + this.slotR + 4);
+      if (i === 1) {
+        // M2/Dash slot — name label tucked just above the diamond, wrapped
+        // to roughly one slot-cell width so a two-word name breaks onto a
+        // second line instead of bleeding into the M1/E diamonds either
+        // side of it.
+        this.dashNameText.setPosition(sx, barY - this.slotR - 4);
+        this.dashNameText.setWordWrapWidth(this.slotR * 2.4, true);
+      }
     }
   }
 
+  // Perf audit R5 (2026-07-18): flagged this full-clear-every-frame redraw
+  // as a flat per-frame tax (~150-200 Graphics ops) independent of player
+  // count. Deliberately left un-throttled: every slot's fill is driven by
+  // `animateFrac`'s continuous lerp + usePop/readyPing pulses — the exact
+  // mechanism this session's earlier fix ("cooldown animations don't
+  // smoothly count down / don't pop off when hit") made correct. Gating this
+  // redraw on a timer or a dirty-check would reintroduce that stutter for a
+  // flat cost far smaller than the R1-R3 rig-cost cluster this audit
+  // prioritizes above it. Revisit only alongside a real animation-state
+  // "settled" signal, not a blind throttle.
   update(vitals: ActionBarVitals, chips: HudChip[]): void {
     this.visibleSlotCount = Math.min(
       SLOT_COUNT,
@@ -252,17 +389,28 @@ export class ActionBarSystem {
     // held across D2/D3/D4; ratio-only fill, no liquid-sim, matching the
     // rest of the HUD's faceted-ring language rather than a new widget) ──
     const hpRatio = vitals.maxHealth > 0 ? Phaser.Math.Clamp(vitals.health / vitals.maxHealth, 0, 1) : 0;
-    const shRatio = vitals.shieldMaxCharge > 0 ? Phaser.Math.Clamp(vitals.shieldCharge / vitals.shieldMaxCharge, 0, 1) : 0;
+    // Ninja/Interstice (2026-07-18, "no block" fix): the shield charge
+    // resource still exists underneath (tickShield keeps draining/
+    // recharging it class-agnostically — combat.ts is untouched there) but
+    // it never mitigates a single point of damage for this class
+    // (combat.ts's tryDeflectDamage "ninja" branch). Displaying a live orb
+    // for a resource that does nothing defensively would be exactly the
+    // "broken feature" docs/design-axioms.md A2 says to never ship — so the
+    // bar treats ninja as if it had no shield resource at all, reusing the
+    // existing "no shield resource on this character" dim-empty-frame path
+    // below rather than inventing a new visual state.
+    const shieldDisplayMax = vitals.classId === "ninja" ? 0 : vitals.shieldMaxCharge;
+    const shRatio = shieldDisplayMax > 0 ? Phaser.Math.Clamp(vitals.shieldCharge / shieldDisplayMax, 0, 1) : 0;
 
     this.drawOrb(g, hpOrbX, barY, this.orbR, hpRatio, healthRingColor(hpRatio), vitals.isDead);
     this.hpText.setText(vitals.isDead ? "—" : `${Math.ceil(vitals.health)}`);
     this.hpText.setVisible(true);
 
-    if (vitals.shieldMaxCharge > 0 && !vitals.isDead) {
+    if (shieldDisplayMax > 0 && !vitals.isDead) {
       this.drawOrb(g, shOrbX, barY, this.orbR, shRatio, C_SHIELD, false);
       this.shText.setText(`${Math.ceil(vitals.shieldCharge)}`);
       this.shText.setVisible(true);
-    } else if (vitals.shieldMaxCharge > 0) {
+    } else if (shieldDisplayMax > 0) {
       // Dead — shield exists but isn't usable right now; show it extinguished
       // rather than a normal charged orb (the bar shouldn't claim you can
       // still block while eliminated).
@@ -271,9 +419,23 @@ export class ActionBarSystem {
     } else {
       // No shield resource on this character — dim empty frame, not a lit
       // "0" orb (a real absence reads differently from a drained resource).
+      // Also the ninja path (shieldDisplayMax forced to 0 above): a real
+      // charge resource exists underneath, but it does nothing, so it reads
+      // as absent here rather than as a live-but-pointless orb.
       this.drawEmptyOrbFrame(g, shOrbX, barY, this.orbR);
       this.shText.setVisible(false);
     }
+
+    // ── Chassis-verb name labels (2026-07-18 legibility pass) — only shown
+    // once a classId is known; every existing caller that doesn't resolve
+    // one (e.g. HangoutScene) just keeps the old unlabeled look. ──
+    const dashName = vitals.classId ? DASH_NAME_BY_CLASS[vitals.classId] : undefined;
+    this.dashNameText.setText(dashName ?? "");
+    this.dashNameText.setVisible(dashName !== undefined && !vitals.isDead);
+    const shieldName =
+      vitals.classId && shieldDisplayMax > 0 ? SHIELD_NAME_BY_CLASS[vitals.classId] : undefined;
+    this.shieldNameText.setText(shieldName ?? "");
+    this.shieldNameText.setVisible(shieldName !== undefined && !vitals.isDead);
 
     // ── Ability slots — chamfered "crystal-cut" diamonds. Slot 0 = Fire
     // (M1, no cooldown today → always reads ready). Slot 1 = Dash (M2,
@@ -602,50 +764,13 @@ export class ActionBarSystem {
     }
 
     // Per-kind glyph — the mechanic drawn in strokes (house convention).
+    // Dispatch lives in actionBarGlyphs.ts (extracted for unit-testability —
+    // a real Phaser Graphics can't be constructed under `bun test`, see that
+    // file's header) and covers both the five class-blind six-axes kinds and
+    // the ten Geometrician catalog kinds (docs/class-ability-catalogs-v1.md,
+    // chunk 4.3 — these previously fell through to the generic dot below).
     const glyphColor = slot.windowFrac > 0 ? 0xdc2626 : readyColor;
-    g.lineStyle(Math.max(1.2, r * 0.09), glyphColor, 0.9);
-    const gr = r * 0.26;
-    if (slot.kind === "crimson-tithe") {
-      // The tithe cross — two crossed cuts (the card's X sigil).
-      g.beginPath();
-      g.moveTo(cx - gr, cy - gr);
-      g.lineTo(cx + gr, cy + gr);
-      g.moveTo(cx + gr, cy - gr);
-      g.lineTo(cx - gr, cy + gr);
-      g.strokePath();
-    } else if (slot.kind === "shadow-step") {
-      // Double chevron — the step past the step.
-      for (const off of [-gr * 0.55, gr * 0.45]) {
-        g.beginPath();
-        g.moveTo(cx + off - gr * 0.5, cy - gr * 0.7);
-        g.lineTo(cx + off + gr * 0.5, cy);
-        g.lineTo(cx + off - gr * 0.5, cy + gr * 0.7);
-        g.strokePath();
-      }
-    } else if (slot.kind === "veil-of-nought") {
-      // The nought — an empty circle where a target would be.
-      g.strokeCircle(cx, cy, gr * 0.85);
-    } else if (slot.kind === "severing-answer") {
-      // A cut answer — one bar, severed.
-      g.beginPath();
-      g.moveTo(cx - gr, cy);
-      g.lineTo(cx - gr * 0.2, cy);
-      g.moveTo(cx + gr * 0.2, cy);
-      g.lineTo(cx + gr, cy);
-      g.strokePath();
-    } else if (slot.kind === "shelter-seal") {
-      // The seal — a small held diamond.
-      g.beginPath();
-      g.moveTo(cx, cy - gr);
-      g.lineTo(cx + gr, cy);
-      g.lineTo(cx, cy + gr);
-      g.lineTo(cx - gr, cy);
-      g.closePath();
-      g.strokePath();
-    } else {
-      g.fillStyle(glyphColor, 0.9);
-      g.fillCircle(cx, cy, r * 0.1);
-    }
+    drawActiveGlyph(g, cx, cy, r, slot.kind, glyphColor);
   }
 
   private drawReservedSlot(g: Phaser.GameObjects.Graphics, cx: number, cy: number, r: number): void {

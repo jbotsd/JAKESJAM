@@ -24,6 +24,7 @@ function makeDeps(): {
   hideCardCalls: number;
   drainActiveCalls: number;
   explosionBlasts: Array<{ x: number; y: number; r: number; d: number }>;
+  wardAbsorbFlashes: Array<{ pid: string; isPeel: boolean }>;
   rigHits: Array<{ pid: string; dirX: number; dirY: number }>;
   rigFires: string[];
   rigParryFlashes: string[];
@@ -43,6 +44,7 @@ function makeDeps(): {
   let hideCardCalls = 0;
   let drainActiveCalls = 0;
   const explosionBlasts: Array<{ x: number; y: number; r: number; d: number }> = [];
+  const wardAbsorbFlashes: Array<{ pid: string; isPeel: boolean }> = [];
   const rigHits: Array<{ pid: string; dirX: number; dirY: number }> = [];
   const rigFires: string[] = [];
   const rigParryFlashes: string[] = [];
@@ -110,6 +112,9 @@ function makeDeps(): {
     spawnBlastAtPlayer(pid, r, d) {
       blasts.push([String(pid), r, d]);
     },
+    spawnWardAbsorbFlash(pid, isPeel) {
+      wardAbsorbFlashes.push({ pid: String(pid), isPeel });
+    },
     killCinematic(vid) {
       killCinematics.push(String(vid));
     },
@@ -145,6 +150,7 @@ function makeDeps(): {
       return drainActiveCalls;
     },
     explosionBlasts,
+    wardAbsorbFlashes,
     rigHits,
     rigFires,
     rigParryFlashes,
@@ -294,6 +300,46 @@ describe("SimEventRouter — C2b contract", () => {
     expect(env.shakeCalls).toEqual([[60, 0.0025]]);
     expect(env.blastTints).toEqual([{ x: 100, y: 200 }]);
     expect(env.explosionBlasts).toEqual([{ x: 100, y: 200, r: 48, d: 30 }]);
+  });
+
+  test("ward-absorbed: gold flash at the BLOCKER, no audio (no ripped asset — hard rule), small local shake", () => {
+    const ev: SimEvent = {
+      t: "ward-absorbed",
+      playerId: PlayerId("local"),
+      damageBlocked: 12,
+      kindlingGranted: 12,
+    };
+    router.dispatch(ev);
+    expect(env.audioCalls).toEqual([]);
+    expect(env.wardAbsorbFlashes).toEqual([{ pid: "local", isPeel: false }]);
+    expect(env.shakeCalls).toEqual([[40, 0.003]]);
+  });
+
+  test("ward-absorbed on a REMOTE player: flash still fires (world-space read), but no LOCAL shake", () => {
+    const ev: SimEvent = {
+      t: "ward-absorbed",
+      playerId: PlayerId("remote"),
+      damageBlocked: 12,
+      kindlingGranted: 12,
+    };
+    router.dispatch(ev);
+    expect(env.wardAbsorbFlashes).toEqual([{ pid: "remote", isPeel: false }]);
+    expect(env.shakeCalls).toEqual([]);
+  });
+
+  test("team-peel-absorbed: gold flash at the WARDER (not the victim) — distinct read from self-ward", () => {
+    const ev: SimEvent = {
+      t: "team-peel-absorbed",
+      victimId: PlayerId("local"),
+      warderId: PlayerId("remote"),
+      damageBlocked: 8,
+      kindlingGranted: 8,
+    };
+    router.dispatch(ev);
+    expect(env.audioCalls).toEqual([]);
+    expect(env.wardAbsorbFlashes).toEqual([{ pid: "remote", isPeel: true }]);
+    // Victim is local even though the warder isn't — shake still fires.
+    expect(env.shakeCalls).toEqual([[50, 0.004]]);
   });
 
   test("pickup-taken: just pickup SFX", () => {

@@ -199,6 +199,57 @@ describe("snapshotDelta", () => {
     });
   });
 
+  describe("applyCollectionDelta reference reuse (perf audit M3, 2026-07-18)", () => {
+    test("an untouched collection comes back as the SAME object, not a copy", () => {
+      // Two players moving, but nothing ever touches destructibles/firePatches/
+      // pickups/satellites — those four collections should be returned by
+      // reference, not shallow-copied, on every one of these deltas.
+      const p1 = PlayerId("p1");
+      let prev = makeWorld({ players: { [p1]: makePlayer({ id: p1 }) } });
+      for (let i = 0; i < 5; i += 1) {
+        const next = makeWorld({
+          ...prev,
+          players: { [p1]: { ...prev.players[p1]!, x: prev.players[p1]!.x + 10 } },
+        });
+        const delta = encodeDelta(prev, next);
+        const result = applyDelta(prev, delta);
+        expect(result.destructibles).toBe(prev.destructibles);
+        expect(result.firePatches).toBe(prev.firePatches);
+        expect(result.pickups).toBe(prev.pickups);
+        expect(result.satellites).toBe(prev.satellites);
+        // The touched collection DOES change identity — proves the
+        // reference-reuse path isn't just returning everything unconditionally.
+        expect(result.players).not.toBe(prev.players);
+        prev = result;
+      }
+    });
+
+    test("a collection that DOES change is still copied, not mutated on the input", () => {
+      const eid = EntityId(7);
+      const prev = makeWorld({ destructibles: {} });
+      const next = makeWorld({
+        destructibles: {
+          [eid]: {
+            id: eid,
+            kind: "box",
+            x: 10,
+            y: 20,
+            width: 40,
+            height: 40,
+            health: 50,
+            explosive: false,
+            flammable: false,
+          },
+        },
+      });
+      const delta = encodeDelta(prev, next);
+      const result = applyDelta(prev, delta);
+      expect(result.destructibles).not.toBe(prev.destructibles);
+      expect(Object.keys(prev.destructibles).length).toBe(0);
+      expect(result.destructibles[eid]).toBeDefined();
+    });
+  });
+
   describe("added entities", () => {
     test("new player id appears in added with full state", () => {
       const p1 = PlayerId("p1");
@@ -303,6 +354,66 @@ describe("snapshotDelta", () => {
       const same = applyDelta(prev, noop);
       expect(same.players[p1]?.wardShellUntilTick).toBeUndefined();
       expect(same.players[p1]?.titheUntilTick).toBeUndefined();
+    });
+
+    test("resonance fields round-trip (class-overhaul-workboard.md chunk 0.1)", () => {
+      // Same additive-contract proof as the six-axes test above, for the
+      // new resonanceUntilTick/resonanceSourceKind pair (P_HI bits 20-21).
+      const p1 = PlayerId("p1");
+      const prev = makeWorld({ players: { [p1]: makePlayer({ id: p1 }) } });
+      const next = makeWorld({
+        players: {
+          [p1]: {
+            ...prev.players[p1]!,
+            resonanceUntilTick: Tick(120),
+            resonanceSourceKind: "recoil-step",
+          },
+        },
+      });
+
+      const delta = encodeDelta(prev, next);
+      const result = applyDelta(prev, delta);
+
+      expect(result.players[p1]?.resonanceUntilTick).toBe(Tick(120));
+      expect(result.players[p1]?.resonanceSourceKind).toBe("recoil-step");
+      // Old-shape state (fields absent) still decodes untouched.
+      const noop = encodeDelta(prev, prev);
+      const same = applyDelta(prev, noop);
+      expect(same.players[p1]?.resonanceUntilTick).toBeUndefined();
+      expect(same.players[p1]?.resonanceSourceKind).toBeUndefined();
+    });
+
+    test("Kindred catalog v1 fields round-trip (class-overhaul-workboard.md chunk 2.6)", () => {
+      // Same additive-contract proof as the resonance/six-axes tests above,
+      // for the new judgmentTargetId/judgmentMarkUntilTick/sealUntilTick/
+      // aegisShareUntilTick quartet (P_HI bits 22-25).
+      const p1 = PlayerId("p1");
+      const p2 = PlayerId("p2");
+      const prev = makeWorld({ players: { [p1]: makePlayer({ id: p1 }) } });
+      const next = makeWorld({
+        players: {
+          [p1]: {
+            ...prev.players[p1]!,
+            judgmentTargetId: p2,
+            judgmentMarkUntilTick: Tick(90),
+            sealUntilTick: Tick(150),
+            aegisShareUntilTick: Tick(60),
+          },
+        },
+      });
+
+      const delta = encodeDelta(prev, next);
+      const result = applyDelta(prev, delta);
+
+      expect(result.players[p1]?.judgmentTargetId).toBe(p2);
+      expect(result.players[p1]?.judgmentMarkUntilTick).toBe(Tick(90));
+      expect(result.players[p1]?.sealUntilTick).toBe(Tick(150));
+      expect(result.players[p1]?.aegisShareUntilTick).toBe(Tick(60));
+      // Old-shape state (fields absent) still decodes untouched.
+      const noop = encodeDelta(prev, prev);
+      const same = applyDelta(prev, noop);
+      expect(same.players[p1]?.judgmentTargetId).toBeUndefined();
+      expect(same.players[p1]?.sealUntilTick).toBeUndefined();
     });
 
     test("grounded flag transition round-trips (false → true)", () => {

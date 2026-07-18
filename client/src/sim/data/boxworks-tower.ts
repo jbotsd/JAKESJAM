@@ -1,12 +1,14 @@
-// Boxworks-tower — vertical jetpack-focused FFA arena.
+// Boxworks-tower — vertical FFA arena.
 //
 // 1440×1080 — taller than wide. 6 spawn points spread across 3 vertical
-// tiers. Many drop-through platforms reward jetpack management. No
-// horizontal sniping lanes longer than ~600px.
+// tiers. Many drop-through platforms reward wall-slide/wall-jump traversal
+// (player.ts — the jetpack this map was originally designed around was
+// removed from gameplay; walls replaced it, see player.ts's "Wall movement"
+// comment. Doc corrected 2026-07-18, perf audit cleanup — the mechanic
+// itself was already gone). No horizontal sniping lanes longer than ~600px.
 //
-// Design intent: chaotic vertical engagements; jetpack fuel is the
-// scarce resource. Boss-mode + slow-motion chaos modifiers make this
-// map sing.
+// Design intent: chaotic vertical engagements via wall traversal. Boss-mode
+// + slow-motion chaos modifiers make this map sing.
 
 import type { MapDefinition } from "../types.js";
 

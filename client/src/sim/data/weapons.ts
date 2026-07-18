@@ -68,6 +68,37 @@ export const priestStarterWeapon: WeaponDefinition = {
 };
 
 /**
+ * Paladin/Kindred baseline (class-overhaul-workboard.md chunk 2.5,
+ * docs/classes-goal.md "E-KEY RULING": the ultimate IS the composed
+ * Emission through the resolved build). Kindled Edge REPLACES this weapon
+ * entirely for Paladin's actual Fire input (World.ts: "Ninja/Paladin: Fire
+ * is the SAME 'primary attack' input as every other class, but the chassis
+ * verb is a melee arc... this branch captures the rising edge for loop 2's
+ * FSM instead of ever calling stepWeapon") — so `paladinStarterWeapon`'s
+ * ONLY live consumer is `resolveEmission` (verified class-aware wiring,
+ * emissionClassAware.test.ts / 0.2), which reads the resolved build
+ * regardless of whether the chassis ever fires it conventionally. A copy
+ * of `starterWeapon` re-tuned toward "heavier, slower, bigger" — the task
+ * brief's explicit "heavier/tankier cast" ask — rather than the wizard's
+ * fast/light bolt: damage 12→15, fireRate 4→3 (TTK stays inside the
+ * combat-balance-ttk band: 100/(15×3)≈2.22s, same neighbourhood as
+ * starterWeapon's ~2.08s — weaponBuild.ts's TTK_FLOOR_S/TTK_CEILING_S,
+ * verified even though Paladin never actually fires this weapon, the same
+ * "still a real, functional gun" discipline priestStarterWeapon's own test
+ * applies), projectileSpeed 650→520 (a heavier bolt arrives slower),
+ * sizeMultiplier 1→1.15 (reads bigger). Same SAME-wire-id contract as
+ * priestStarterWeapon (never appears in the `weapons` export below;
+ * weaponDataParity.test.ts's `weapon_count() === 1` is unaffected).
+ */
+export const paladinStarterWeapon: WeaponDefinition = {
+  ...starterWeapon,
+  damage: 15,
+  fireRate: 3,
+  projectileSpeed: 520,
+  projectile: { ...starterWeapon.projectile, sizeMultiplier: 1.15 },
+};
+
+/**
  * Class-gated base-weapon selection. Same doctrine as `classModifiers` on
  * CardDefinition (cardTypes.ts header: "REPLACES wholesale... class-blind
  * fallback is total and silent-by-design") applied one level up — to the
@@ -78,6 +109,7 @@ export const priestStarterWeapon: WeaponDefinition = {
  */
 const CLASS_BASE_WEAPON: Partial<Record<ClassId, WeaponDefinition>> = {
   priest: priestStarterWeapon,
+  paladin: paladinStarterWeapon,
 };
 
 export function baseWeaponForClass(classId?: ClassId): WeaponDefinition {

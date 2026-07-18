@@ -190,6 +190,38 @@ export type PlayerEntity = {
    * world_state.zig's PlayerEntity.energy (appended field, 2026-07-18).
    */
   energy?: number;
+  /**
+   * Paladin/Kindred class-resource pool (docs/classes-goal.md MANA section:
+   * "Resource: Kindling from blocked damage... Defense IS the engine",
+   * class-overhaul-workboard.md chunk 2.3). 0..KINDLING_MAX
+   * (combat.ts) — granted by `tryDeflectDamage`'s Kindled Ward branch,
+   * proportional to the damage Ward actually blocked (KINDLING_PER_
+   * DAMAGE_BLOCKED). Only paladin (classId) chassis ever move this off 0.
+   * TS-owned, same contract as `energy`: mutated exclusively by sim combat
+   * code, never touched by the physics step (TS or wasm), just carried
+   * through. Optional/additive: absent/undefined reads as 0.
+   *
+   * Deliberately a SEPARATE field rather than a generalized "resource
+   * pool" abstraction shared with `energy` — class-overhaul-workboard.md
+   * chunk 1.2 asks for that decision to be made explicitly, not defaulted
+   * into. Call: defer 1.2's generalization. Reasoning (full version in
+   * this chunk's report): (1) this is a live, concurrently-edited repo —
+   * refactoring the widely-referenced `energy` field for a purely
+   * structural unification carries real blast-radius for zero functional
+   * payoff (energy and kindling are used by mutually-exclusive
+   * classId-gated code paths, so two separate fields can never collide);
+   * (2) only 2 of the 4 planned resources exist even after this chunk
+   * (energy, kindling) — Devotion's generation rule (chunk 3.2: "count how
+   * many other players currently carry my effects") is a fundamentally
+   * different SHAPE of rule (counting, not hit/block-accrual), so
+   * generalizing now risks guessing the abstraction wrong before its
+   * hardest case is even designed. Repeating the additive-tail pattern a
+   * second time (as `energy` itself did after `teamId`) is cheap and
+   * proven; unifying is better done once all four shapes are known.
+   * Wire-mirrored in world_state.zig's PlayerEntity.kindling (appended
+   * field, 2026-07-18).
+   */
+  kindling?: number;
   lastProcessedInputSeq: InputSeq;
   /**
    * Slow-field debuff. When set and `slowedUntilTick > state.tick`, the
@@ -216,6 +248,270 @@ export type PlayerEntity = {
   burnTickLastApplied?: Tick;
   freezeUntilTick?: Tick;
   freezeMultiplier?: number;
+  /**
+   * Syzygist status substrate extension (class-overhaul-workboard.md chunk
+   * 3.1, docs/classes-goal.md Priest/Syzygist: "extends the existing
+   * status-effect substrate... add regen, haste"). Same additive/optional
+   * contract as burnUntilTick/freezeUntilTick above, but OPPOSITE polarity
+   * — these are BUFFS — and (the actually new capability this chunk adds)
+   * a caster's ability can write them onto a DIFFERENT player's entity, not
+   * just their own. Every window-buff field shipped before this chunk
+   * (titheUntilTick, veilUntilTick, sunlanceUntilTick, overclockUntilTick,
+   * resonanceUntilTick, judgment/seal/aegis) is self-only; regen/haste are
+   * the first fields any player's cast can legally set on someone ELSE's
+   * PlayerEntity — gated by `isAlly` (team.ts), never set on a non-ally.
+   * See World.ts's `applyRegenToAlly`/`applyHasteToAlly` for the mutation
+   * mechanism (deliberately unwired to any real input/card this chunk — no
+   * Priest ability catalog exists yet, that's chunk 3.4) and World.ts's
+   * per-tick regen block (mirrors the burn DoT tick pattern above) /
+   * speedMul chain + weapon.ts's fire-rate composition (mirrors Overclock)
+   * for how the numbers actually apply.
+   *
+   * - `regenUntilTick` / `regenHps` / `regenTickLastApplied`: heal-over-
+   *   time. While `regenUntilTick > tick`, the player heals `regenHps` once
+   *   per second of sim time (same once-per-second rate-limit convention as
+   *   `burnDps`, via `regenTickLastApplied`), capped at max health.
+   * - `hasteUntilTick` / `hasteMultiplier`: while live, multiplies the
+   *   player's move speed (World.ts's speedMul chain, composing alongside
+   *   slow/freeze/first-blood/card move-speed exactly like every other
+   *   multiplier there) AND fire rate (weapon.ts, composing alongside
+   *   Overclock) by `hasteMultiplier`. One multiplier drives both — "haste"
+   *   reads as a single coherent buff, not two separately-tuned numbers.
+   *
+   * Wire-visibility / ABI call (made deliberately, not defaulted): unlike
+   * the ability-window fields above (TS-only per six-axes-goal.md's "Zig
+   * line" — resonanceUntilTick, judgmentMarkUntilTick, etc. never cross the
+   * WASM ABI because they're ability/window state), regen/haste DO cross
+   * into world_state.zig's PlayerEntity. An ally needs to SEE their own
+   * buff status originating from ANOTHER player's cast — that's closer to
+   * `wardShellUntilTick`'s "sim-read, cross-visible" precedent than
+   * `sunlanceUntilTick`'s "self-only cosmetic tell" one. Hash-mixed
+   * (hash.ts) and delta-bit-mixed (snapshotDeltaBits.ts/snapshotDelta.ts)
+   * for the same reason. The Zig mirror itself is a structural/byte-layout
+   * carry-through only (same contract as `energy`/`kindling`, NOT the
+   * `burnUntilTick`/`freezeUntilTick` precedent): Zig's `step_world` does
+   * not compute regen or haste — all mutation happens in TS (World.ts /
+   * weapon.ts). Player-movement speed already crosses into the live wasm
+   * physics backend (player.ts's `stepPlayer`, on by default per Phase F3)
+   * via the existing `speedMultiplier` scalar parameter computed entirely
+   * in TS at World.ts's speedMul chain — so folding `hasteMultiplier` in
+   * there is sufficient for haste to affect movement identically on both
+   * backends, with no Zig-side movement recomputation needed. (The OTHER
+   * Zig entry point, the full `step_world` orchestrator that independently
+   * recomputes its own speed_mul from flags like `has_speed_boost`, is not
+   * the live path for production movement — see World.ts's file-header
+   * comment; it is not touched by this chunk.)
+   */
+  regenUntilTick?: Tick;
+  regenHps?: number;
+  regenTickLastApplied?: Tick;
+  hasteUntilTick?: Tick;
+  hasteMultiplier?: number;
+  /**
+   * Attribution for the regen/haste windows immediately above (class-
+   * overhaul-workboard.md chunk 3.2, "Devotion resource" — "count how many
+   * OTHER players currently carry my effects"). Stamped by
+   * `applyRegenToAlly`/`applyHasteToAlly` alongside the window fields they
+   * already write — `regenSourceId`/`hasteSourceId` record WHICH caster
+   * opened the currently-live window on this (the TARGET's) entity, so that
+   * caster's own devotion-accrual pass (World.ts's per-tick Devotion block)
+   * can answer "is this ally currently carrying MY buff, or someone else's"
+   * without ambiguity in a 3+-person team. Deliberately NOT hash-mixed
+   * (hash.ts) and NOT delta-bit-tracked (P_HI, snapshotDeltaBits.ts): the
+   * devotion count is computed identically by every full-prediction client
+   * from the SAME replayed cast input (the deterministic sim, not the wire),
+   * so — like `facetTargetId`/`judgmentTargetId`'s existing "covered by a
+   * numeric sibling" precedent — no wire visibility is needed for
+   * correctness. The difference from that precedent: those two live on the
+   * CASTER and are read only by the caster's own client; these live on the
+   * TARGET, but are still only ever READ by the SOURCE caster's own
+   * deterministic devotion pass, which every full-prediction client already
+   * replays identically — so the same "no wire sync needed" conclusion
+   * holds for a different reason. TS-only: does NOT cross the WASM ABI
+   * (six-axes-goal.md "Zig line" — ability/window-adjacent bookkeeping,
+   * never computed by `step_world`).
+   */
+  regenSourceId?: PlayerId;
+  hasteSourceId?: PlayerId;
+  /**
+   * Syzygist Devotion — class-resource pool (class-overhaul-workboard.md
+   * chunk 3.2, docs/classes-goal.md MANA section: "priest = devotion,
+   * generated by buff/heal uptime on others... with a slow solo trickle").
+   * 0..SYZ_DEVOTION_MAX (constants.ts). Mutated ONLY by World.ts's per-tick
+   * Devotion-accrual pass (counts OTHER players currently carrying a live
+   * regen/haste/Ward window sourced from THIS player, via
+   * regenSourceId/hasteSourceId/wardAbsorbSourceId immediately above/below)
+   * — same TS-owned-resource contract as `energy`/`kindling`: the physics
+   * step never touches it, just carries it through. Only priest (classId)
+   * chassis ever move this field off 0. Optional/additive: absent/undefined
+   * reads as 0.
+   *
+   * Wire-visibility call (deliberate, matching energy/kindling's own
+   * precedent exactly, NOT regen/haste's): hash-mixed (hash.ts, so a
+   * divergence still triggers the reconcile-skip heuristic to fail safe)
+   * but NOT delta-bit-tracked (snapshotDeltaBits.ts) — devotion is a
+   * SELF-view HUD resource like energy/kindling (a Syzygist watches their
+   * OWN meter; there is no "an ally needs to see my devotion" requirement
+   * the way regen/haste's cross-player buff visibility has), and the local
+   * owning client's own full-prediction replay already keeps it accurate
+   * without needing a dedicated real-time wire channel — any drift from a
+   * missed edge case self-corrects within the existing
+   * FULL_RECONCILE_INTERVAL_MS safety sweep, exactly like energy/kindling
+   * already accept. DOES cross into world_state.zig's PlayerEntity
+   * (byte-layout carry-through only, no flag needed — `step_world` never
+   * computes it, same "always-valid resource" contract as energy/kindling,
+   * not the has_regen/has_haste "optional window" contract).
+   */
+  devotion?: number;
+  /**
+   * Syzygist Ward — small absorb barrier, cast-and-forget on self OR an
+   * ally (class-overhaul-workboard.md chunk 3.3, docs/classes-goal.md
+   * defense-verb section: "priest = wards, small absorb barriers, castable
+   * on ALLIES — self-ward weak, team-ward real"). Opened by
+   * `applyWardToAlly` (World.ts, the same isAlly-gated cross-player-write
+   * shape as `applyRegenToAlly`/`applyHasteToAlly`), consumed by
+   * `combat.ts`'s `tryDeflectDamage` — a flat absorb POOL (not a
+   * mitigation FRACTION like Paladin's Kindled Ward): while
+   * `wardAbsorbUntilTick > tick` and `wardAbsorbRemaining > 0`, an incoming
+   * hit is reduced by `min(damage, wardAbsorbRemaining)`, draining the
+   * pool; the ward breaks (fields cleared) the moment the pool hits 0, or
+   * passively at `wardAbsorbUntilTick` if never fully spent. Deliberately
+   * NO facing/aim requirement, unlike Kindled Ward's mandatory frontal
+   * cone — "cast-and-forget... no aim/facing required after cast", the
+   * low-aim design direction applied to Priest's whole kit.
+   * `wardAbsorbSourceId` records which caster opened the window — read by
+   * that caster's own devotion-accrual pass (same TS-only-for-ABI-purposes
+   * shape as `regenSourceId`/`hasteSourceId`: does NOT cross the WASM ABI,
+   * not hash-mixed, "covered by its numeric sibling" for hash purposes)
+   * BUT, unlike those two, it rides the SAME wire delta bit as
+   * `wardAbsorbUntilTick`/`wardAbsorbRemaining` below (see
+   * snapshotDeltaBits.ts's `wardAbsorb` bit comment) — worth the free ride
+   * since the warded ally's own client benefits from a legible "who gave me
+   * this" read (the `syz-ward-absorbed` SimEvent's `casterId` reads this
+   * same field), at zero extra bit cost.
+   *
+   * Wire-visibility call for `wardAbsorbUntilTick`/`wardAbsorbRemaining`
+   * (deliberate, matching regen/haste's precedent, NOT energy/kindling's):
+   * hash-mixed (`wardAbsorbUntilTick` only — see hash.ts's comment for why
+   * `wardAbsorbRemaining` is deliberately excluded, the same "changes on
+   * nearly every combat tick, delta-sync it instead" reasoning `shieldCharge`
+   * already established) AND delta-bit-tracked (P_HI, snapshotDeltaBits.ts
+   * — all three fields share ONE bit, `wardAbsorb`, a deliberate budget-
+   * driven consolidation: P_HI had exactly one free bit left after the
+   * Kindred/Syzygist-3.1 additions; see that file's comment). The warded
+   * ally needs to SEE their own absorb pool deplete in real time — same "an
+   * ally needs to see a buff originating from ANOTHER player's cast"
+   * requirement regen/haste's own doc comment gives. DOES cross into
+   * world_state.zig's PlayerEntity (byte-layout carry-through only, gated
+   * by a new `PlayerFlags.has_syz_ward` bit — same "unset vs tick 0"
+   * ambiguity every other optional `*_until_tick` field resolves with an
+   * explicit flag, matching `has_regen`/`has_haste`'s precedent exactly;
+   * `wardAbsorbSourceId` itself does NOT cross the ABI, matching
+   * `facetTargetId`).
+   */
+  wardAbsorbUntilTick?: Tick;
+  wardAbsorbRemaining?: number;
+  wardAbsorbSourceId?: PlayerId;
+  /**
+   * Focus Hex mark (Syzygist catalog v1, single role, class-overhaul-
+   * workboard.md chunk 3.4) — lives on the CASTER (not the victim), same
+   * cross-player-write-hazard-avoidance shape as `facetTargetId`/
+   * `judgmentTargetId`: while `focusHexMarkUntilTick > tick`, this player's
+   * hits landing on `focusHexTargetId` are amplified
+   * (SYZ_FOCUS_HEX_AMP_MULTIPLIER, constants.ts), checked at the same
+   * post-mitigation projectile-hit site Facet Break's amp already uses.
+   * TS-only ability state — does NOT cross the WASM ABI, matching
+   * `facetTargetId`. Not hash-mixed for the identical "covered by its
+   * numeric sibling" reason `facetTargetId` itself gives.
+   */
+  focusHexTargetId?: PlayerId;
+  focusHexMarkUntilTick?: Tick;
+  /**
+   * Borrowed Time debt (Syzygist catalog v1 + Priest exclusive draft card,
+   * class-overhaul-workboard.md chunk 3.4, docs/card-pool-v2.md "Borrowed
+   * Time": "heal 30 instantly; over the next 6s, 15 of it drains back").
+   * SELF-only bookkeeping (lives on whoever RECEIVED the heal, ally or
+   * caster — never a cross-player write after the initial heal): at
+   * `debtUntilTick`, World.ts's per-tick expiry pass subtracts `debtAmount`
+   * from this player's own health (floor 0). v1 deliberately omits the
+   * doc's "unless the target lands a hit every 2s" aggression-gate nuance
+   * (no existing "last dealt damage" bookkeeping to hook — a recorded v1
+   * deferral, same shape as Sunlance's "burst window, not true charge-hold"
+   * gap) — the drain is unconditional, so every cast still nets strictly
+   * positive health (heal amount always exceeds the later drain). TS-only,
+   * does not cross the WASM ABI (self-only window-tick state, same
+   * category as `sunlanceUntilTick`).
+   */
+  debtUntilTick?: Tick;
+  debtAmount?: number;
+  /**
+   * Interstice catalog v1 (docs/class-ability-catalogs-v1.md, ninja-only) —
+   * nine self-only window-buff/mark fields, consumed entirely inside
+   * World.ts's NINJA MELEE section (arc-hit-resolution / wave-spawn /
+   * wall-kick / dash-through sites) or (Ghost Guard only) combat.ts's
+   * `tryDeflectDamage`. Same category as `judgmentMarkUntilTick`/
+   * `sealUntilTick`/`focusHexMarkUntilTick` above: TS-only, does NOT cross
+   * the WASM ABI (six-axes-goal.md "Zig line" — ability/window state, never
+   * computed by `step_world`).
+   *
+   * Wire-visibility call: P_HI (snapshotDeltaBits.ts) had exactly ZERO free
+   * bits left after Syzygist's `wardAbsorb` consumed the last one (bit 30 —
+   * see that file's own "LAST free bit" comment) — so, matching
+   * `focusHexMarkUntilTick`/`debtUntilTick`'s own established fallback
+   * (the precedent set the moment the bit budget ran out), these nine are
+   * NOT delta-bit-tracked and NOT hash-mixed. Every full-prediction client
+   * replays the same cast input deterministically, and any drift self-
+   * corrects within the existing FULL_RECONCILE_INTERVAL_MS safety sweep —
+   * identical reasoning to `devotion`'s own "self-view resource, no
+   * dedicated real-time wire channel needed" call, just applied to
+   * self-only mark state instead of a self-view meter.
+   *
+   * - `undercutUntilTick`: Undercut's execute window — while live, a landed
+   *   NINJA MELEE arc hit (wave excluded, a recorded v1 deferral — see
+   *   World.ts's own case comment) against a victim already at or below
+   *   `NINJA_UNDERCUT_HEALTH_THRESHOLD` becomes a guaranteed kill.
+   * - `edgeStormUntilTick` / `edgeStormChargesRemaining`: Edge Storm's
+   *   charge bank — while live and charges remain, the wave-off-swing spawn
+   *   deals `NINJA_EDGE_STORM_WAVE_DAMAGE_MULTIPLIER` damage, decrementing
+   *   one charge per wave (cleared at 0, same as Judgment/Seal's "consumed
+   *   on the landed hit, not just on timeout" convention).
+   * - `readTargetId` / `readMarkUntilTick`: Read Mark's mark, lives on the
+   *   CASTER (not the victim) — same cross-player-write-hazard-avoidance
+   *   shape `facetTargetId`/`judgmentTargetId`/`focusHexTargetId` already
+   *   establish: while `readMarkUntilTick > tick`, this player's NINJA
+   *   MELEE arc hits landing on `readTargetId` amplify
+   *   (`NINJA_READ_MARK_AMP_MULTIPLIER`). Razor Route (below) reuses this
+   *   SAME pair of fields for its own "marks Read on cross" line — the two
+   *   abilities share one mark slot by design, not an accident.
+   * - `wallBloomUntilTick`: Wall Bloom's window — the NEXT wall-kick (the
+   *   chassis's existing energy-grant site) also spawns a shard burst at
+   *   the wall-contact point; single-use, cleared on that wall-kick.
+   * - `ghostGuardChargeUntilTick`: Ghost Guard's banked evasion charge —
+   *   consumed by `combat.ts`'s `tryDeflectDamage` (a new branch right
+   *   after the always-on dash-i-frame check), not by anything in
+   *   World.ts: one incoming hit becomes a near-miss if the player is
+   *   currently moving (`NINJA_GHOST_GUARD_MOVE_SPEED_THRESHOLD`,
+   *   combat.ts), 1 charge.
+   * - `secondWindUntilTick`: Second Wind's window — the NEXT landed NINJA
+   *   MELEE arc hit within the window also heals
+   *   (`NINJA_SECOND_WIND_HEAL`) and dumps bonus energy
+   *   (`NINJA_SECOND_WIND_ENERGY`) on top of the ordinary energy-from-
+   *   contact grant; single-use, cleared on that hit.
+   * - `razorRouteUntilTick`: Razor Route's window — the NEXT dash-trigger
+   *   (NINJA MELEE section's own dash-through detection) gets an additive
+   *   velocity boost (`NINJA_RAZOR_ROUTE_BOOST_SPEED`) along the dash
+   *   direction, plus a Read mark (above) on the first body crossed during
+   *   that dash; single-use, cleared the moment the empowered dash starts.
+   */
+  undercutUntilTick?: Tick;
+  edgeStormUntilTick?: Tick;
+  edgeStormChargesRemaining?: number;
+  readTargetId?: PlayerId;
+  readMarkUntilTick?: Tick;
+  wallBloomUntilTick?: Tick;
+  ghostGuardChargeUntilTick?: Tick;
+  secondWindUntilTick?: Tick;
+  razorRouteUntilTick?: Tick;
   /**
    * Jetpack fuel reservoir. Range [0, JETPACK_MAX_FUEL]; defaults to MAX
    * when absent (older snapshots) and is reset to MAX on respawn. Drains
@@ -319,6 +615,107 @@ export type PlayerEntity = {
   facetMarkUntilTick?: Tick;
   overclockUntilTick?: Tick;
   /**
+   * Kindred catalog v1 (docs/class-ability-catalogs-v1.md, paladin-only —
+   * classId-gated at the offer roll, class-overhaul-workboard.md chunk
+   * 2.6). All additive/optional, all hash-mixed (except the id-typed
+   * `judgmentTargetId`, same "covered by its numeric sibling" precedent as
+   * `facetTargetId`), same window-buff contract as the Geometrician fields
+   * immediately above.
+   *
+   * - judgmentTargetId / judgmentMarkUntilTick: Judgment Line's mark,
+   *   stored on the CASTER (not the victim — same cross-player mid-loop
+   *   write hazard `facetTargetId` avoids). While live, this player's
+   *   Kindled Edge / dash-bash hits on `judgmentTargetId` are amplified
+   *   (checked at each hit-resolution site in World.ts).
+   * - sealUntilTick: Unbroken Seal window — the NEXT Kindled Edge hit this
+   *   player lands is amplified + applies a stagger (heavy slow) to the
+   *   victim, then the window is consumed early (on that hit), not just on
+   *   timeout. "Big hit-stop" is render-only juice (character-sheets-v1.md
+   *   Paladin ability feel contract), not sim state.
+   * - aegisShareUntilTick: Aegis Share window — while live, THIS player's
+   *   team-peel eligibility radius (combat.ts's WARD_PEEL_RADIUS_PX) is
+   *   widened for allies checking whether this player's Ward shadow covers
+   *   them (World.ts's `findTeamPeelWarder`).
+   */
+  judgmentTargetId?: PlayerId;
+  judgmentMarkUntilTick?: Tick;
+  sealUntilTick?: Tick;
+  aegisShareUntilTick?: Tick;
+  /**
+   * Kindred catalog v1 fast-follow (class-overhaul-workboard.md chunk 2.6,
+   * 2026-07-18) — the 3 abilities the original pass deferred. All additive/
+   * optional, TS-only ("the Zig line" — never cross the ABI, same category
+   * as judgmentMarkUntilTick/sealUntilTick/aegisShareUntilTick above), self-
+   * only fields (never written by another player's cast — Rally Light and
+   * Shock Ring need no NEW fields beyond what's already here or on other
+   * catalog entries).
+   *
+   * - retributionArmedUntilTick: Retribution Edge's cast-opened window — a
+   *   self-Ward-block landing while this is live arms
+   *   `retributionReadyUntilTick` (combat.ts's `tryDeflectDamage`, the
+   *   paladin Ward branch — see its own inline comment). Two windows, not
+   *   one: "cast to arm, block to ready, swing to consume" (constants.ts's
+   *   KIN_RETRIBUTION_EDGE_* header comment has the full brake reasoning).
+   * - retributionReadyUntilTick: opened by the block described above. While
+   *   live, this player's NEXT landed Kindled Edge hit is amplified and
+   *   refunds Kindling, then the window is consumed early (same "consumed
+   *   on the hit, not just on timeout" shape as `sealUntilTick`).
+   * - shockRingArmedUntilTick: Shock Ring's cast-opened window, covering the
+   *   hop's airtime. World.ts's per-player movement step detects "just
+   *   landed" the same way it already detects "just wall-kicked" (grounded-
+   *   before/after comparison around `stepPlayer`) and, while this window is
+   *   live, fires the slam nova then clears the flag.
+   */
+  retributionArmedUntilTick?: Tick;
+  retributionReadyUntilTick?: Tick;
+  shockRingArmedUntilTick?: Tick;
+  /**
+   * Rally Light (Kindred catalog v1 fast-follow) — this player is an aura
+   * SOURCE while live. Deliberately the ONLY field the ability needs: every
+   * beneficiary (self or ally, World.ts's `hasRallyLightBoost`) reads this
+   * field off a nearby player and multiplies its OWN speed/damage — nothing
+   * ever WRITES a buff onto another player's entity, so this is safe to
+   * read directly inside the main per-player loop (unlike the Syzygist
+   * ally-buff fields, which need `pendingSyzygistCasts` because THEY write
+   * cross-player). See constants.ts's KIN_RALLY_LIGHT_* header comment.
+   */
+  rallyLightUntilTick?: Tick;
+  /**
+   * Crater (docs/card-pool-v2.md #26, exclusive: Paladin — a draft-pool
+   * ability card, not a Kindred catalog entry, but its sim effect is the
+   * SAME "arm on cast, resolve on landing" shape as Shock Ring immediately
+   * above, so it reuses the pattern rather than inventing a second one).
+   */
+  craterArmedUntilTick?: Tick;
+  /**
+   * Retort (docs/card-pool-v2.md #27, exclusive: Paladin — a "spec" on the
+   * shield-board itself, always active once equipped, no cast/cooldown;
+   * read via `entity.cards.includes("retort")` directly at the point Ward
+   * absorbs a hit, same "no new WeaponBuild plumbing" economy Recoil Step's
+   * own deferred-nuance precedent argues for). `retortBank` is the banked
+   * bonus-damage pool (capped, constants.ts's KIN_RETORT_BANK_CAP);
+   * `retortBankUntilTick` is the "spend within 3s" window — the NEXT landed
+   * Kindled Edge hit while it's live spends the whole bank as bonus damage
+   * AND equal bonus knockback, then both fields reset (World.ts's "PALADIN
+   * MELEE" section, alongside Judgment/Seal/Retribution Edge consumption).
+   */
+  retortBank?: number;
+  retortBankUntilTick?: Tick;
+  /**
+   * Kindled Resolve (Kindred catalog v1 coverage-floor fast-follow,
+   * docs/axiom-deviations-audit.md, 2026-07-18) — self-only buff window
+   * opened by spending Kindling (constants.ts's KIN_KINDLED_RESOLVE_*
+   * header comment has the full design). While live: this player's
+   * outgoing damage is amplified (World.ts's `kindledResolveDamageMultiplier`,
+   * checked at every hit-resolution site rallyLightDamageMultiplier already
+   * is) and incoming stagger/slow multipliers aimed at them are softened
+   * toward 1 (`applyKindledResolveStaggerResist`, checked at every site
+   * that WRITES a stagger onto a victim). Same TS-only, hash-mixed-not-
+   * delta-synced contract as retributionArmedUntilTick/shockRingArmed
+   * UntilTick/rallyLightUntilTick above (never crosses the Zig ABI).
+   */
+  kindledResolveUntilTick?: Tick;
+  /**
    * Resonance (docs/classes-goal.md "Rotation system", class-overhaul-
    * workboard.md chunk 0.1 — "chain unlike abilities for a bonus").
    * `resonanceUntilTick`/`resonanceSourceKind` are stamped by EVERY
@@ -410,6 +807,45 @@ export type PlayerEntity = {
    * via the shot-fired event, and predicted-local parity self-corrects).
    */
   throwHandParity?: number;
+  /**
+   * Duos-queue team assignment (docs/classes-goal.md "Venue integration",
+   * class-overhaul-workboard.md chunk 1.1 — "Team identity threading into
+   * the sim"). Populated ONCE at entity construction from
+   * `PlayerSpawnInfo.teamId` (World.create for the initial roster,
+   * rosterOps.applyMidMatchJoin for mid-match joiners — the same shared
+   * spawn code path both live host and replay re-sim use) and never
+   * mutated afterward by any sim code. Absent = an ordinary FFA combatant,
+   * same additive/optional contract as every other field on this type.
+   * `team.ts`'s `isAlly(a, b)` is the one sanctioned way to read this pair-
+   * wise; callers should not compare `.teamId` directly.
+   *
+   * Wire treatment (deliberately NOT the window-buff pattern most fields on
+   * this type follow):
+   *   - NOT hash-mixed (hash.ts): the hash exists to catch PREDICTION
+   *     divergence from client-side ticking. teamId is never written by
+   *     World.step / stepWithRuntime — it's an input, not simulation
+   *     output — so it can't diverge the way x/health/cooldowns can. Same
+   *     precedent as `characterId`/`weaponId` (also un-hashed): identity
+   *     fields set from spawn data, not stepped.
+   *   - NOT delta-bitmask-mixed (snapshotDeltaBits.ts P_LO/P_HI): it never
+   *     changes after spawn, so there's no "update" to diff — it reaches a
+   *     recipient once, in full, via whichever channel first hands them
+   *     this entity (FullSnapshot's whole-`WorldState` spread, or a
+   *     `CollectionDelta.added` entry, which copies the entire entity
+   *     object rather than a bit-selected patch). Exactly how `characterId`
+   *     already reaches clients today — no precedent-breaking here.
+   *
+   * ABI: DOES cross into `sim/src/world_state.zig`'s `PlayerEntity` (unlike
+   * Resonance, which six-axes-goal.md's "Zig line" keeps TS-only because
+   * it's ABILITY/window state). teamId is ROSTER/IDENTITY metadata — the
+   * same category as `character_id`/`weapon_id_bytes`/`id_bytes`, which
+   * already cross the ABI — not ability state, so the "Zig line" doesn't
+   * exclude it. It needs to be visible to any future Zig-side combat code
+   * (friendly-fire / ally-targeting checks physics-adjacent enough to ever
+   * move into `step_world`), so it's mirrored as `team_id_len` +
+   * `team_id_bytes` (+ `PlayerFlags.has_team_id`), appended after `energy`.
+   */
+  teamId?: string;
 };
 
 export type ProjectileEntity = {
@@ -669,7 +1105,14 @@ export type SimEvent =
       t: 'player-killed';
       victimId: PlayerId;
       killerId: PlayerId | null;
-      cause: 'projectile' | 'void' | 'burn' | 'fire' | 'explosion' | 'chain-lightning' | 'storm' | 'bash';
+      /**
+       * 'aoe' (2026-07-18, aoe role rework): the 9 "aoe"-tagged class
+       * abilities' new instant radius-check resolution (World.ts's
+       * pendingInstantAoe pass) — a null-projectile hit, same shape as
+       * 'bash' (dash-bash/melee), just kill-feed-distinguishable from a
+       * physical ram/slash.
+       */
+      cause: 'projectile' | 'void' | 'burn' | 'fire' | 'explosion' | 'chain-lightning' | 'storm' | 'bash' | 'aoe';
     }
   /**
    * Emitted exactly once per round when the first hit-confirmed of the
@@ -846,7 +1289,67 @@ export type SimEvent =
    * Read tag / +20% melee bonus that CONSUMES this event is Slipstream (a
    * card, fast-follow), not implemented here. Additive wire type.
    */
-  | { t: 'dash-through'; attackerId: PlayerId; victimId: PlayerId };
+  | { t: 'dash-through'; attackerId: PlayerId; victimId: PlayerId }
+  /**
+   * KINDLED WARD (2026-07-18, docs/classes-goal.md Paladin/Kindred verb —
+   * "directional frontal hold... generates Kindling on absorb",
+   * class-overhaul-workboard.md chunks 2.2/2.3). Emitted once per hit that
+   * Ward partially mitigated (WARD_MITIGATION_FRACTION, combat.ts) — a
+   * warded hit still deals reduced damage (unlike `shield-popped`'s full
+   * block), tracked here for clip legibility / the deferred VFX pass
+   * (chunk 2.7) and as the Kindling-grant tell. `kindlingGranted` mirrors
+   * the resource delta already reflected in `players[playerId].kindling`
+   * in the snapshot — carried on the event too so a spectator overlay
+   * doesn't need to diff two snapshots to show "+N". Additive wire type —
+   * old clients ignore unknown event tags.
+   */
+  | {
+      t: 'ward-absorbed';
+      playerId: PlayerId;
+      damageBlocked: number;
+      kindlingGranted: number;
+    }
+  /**
+   * TEAM PEEL (2026-07-18, class-overhaul-workboard.md chunk 2.4 — "block
+   * for allies in ward shadow"). Emitted once per hit that a warding ally's
+   * Kindled Ward mitigated on someone ELSE's behalf — distinct from
+   * `ward-absorbed` (self-ward: the hit victim and the resource-earner are
+   * the SAME player). Here `victimId` (whose damage was reduced) and
+   * `warderId` (who was holding Ward, in cone+radius, and who banks the
+   * Kindling) are two different players — always teammates, per `isAlly`
+   * (team.ts) at the site that resolved this. Never fires for a solo/FFA
+   * player (no `teamId` ⇒ `isAlly` is false for every pairing, so this
+   * event tag is a true no-op outside team modes, same as every other
+   * team-1.1-consuming chunk). Additive wire type — old clients ignore
+   * unknown event tags, same precedent as `ward-absorbed`.
+   */
+  | {
+      t: 'team-peel-absorbed';
+      victimId: PlayerId;
+      warderId: PlayerId;
+      damageBlocked: number;
+      kindlingGranted: number;
+    }
+  /**
+   * SYZYGIST WARD (2026-07-18, class-overhaul-workboard.md chunk 3.3 —
+   * "Wards defense verb: small absorb barriers, castable on allies").
+   * Emitted once per hit that a Priest's Ward pool partially or fully
+   * absorbed — the cast-and-forget, non-directional counterpart to
+   * `ward-absorbed` (Paladin's Kindled Ward, which requires facing).
+   * `casterId` is who OPENED the window (`wardAbsorbSourceId`) — may equal
+   * `playerId` (self-cast) or differ (an ally cast it on them), giving
+   * spectators a legible "who gave them that shield" read. `wardBroke` is
+   * true when this hit exhausted the absorb pool (fields cleared this
+   * tick). Additive wire type — old clients ignore unknown event tags,
+   * same precedent as `ward-absorbed`/`team-peel-absorbed`.
+   */
+  | {
+      t: 'syz-ward-absorbed';
+      playerId: PlayerId;
+      casterId: PlayerId;
+      damageBlocked: number;
+      wardBroke: boolean;
+    };
 
 export type StepResult = {
   state: WorldState;
@@ -891,14 +1394,17 @@ export type PlayerSpawnInfo = {
   /**
    * Duos-queue team assignment (docs/classes-goal.md "Venue integration":
    * "Duos queue: VenueHost bell admission gains a team variant... Elastic
-   * bots respect team floors"). Bookkeeping only — NOT mirrored onto
-   * `PlayerEntity`/`WorldState` (no wire/delta-snapshot change, no wasm ABI
-   * surface), same discipline the run-record fields use (World.ts stays
-   * untouched). Server-side roster metadata: stamped into `PlayerLobbyInfo`
-   * at spawn (matchHost.ts) and consulted by WorldHost's elastic-bot fill
-   * to pair opposing/ally bots into a matching team. Omitted = an ordinary
-   * FFA combatant — every existing spawn path (private rooms, plain world
-   * joins, tests) never sets this, so it's byte-for-byte unchanged there.
+   * bots respect team floors"). Stamped into `PlayerLobbyInfo` at spawn
+   * (matchHost.ts) AND, since class-overhaul-workboard.md chunk 1.1,
+   * mirrored onto the constructed `PlayerEntity.teamId` (World.create /
+   * rosterOps.applyMidMatchJoin) — the sim itself can now answer
+   * `isAlly(a, b)` (see `sim/team.ts`), including the wasm ABI
+   * (`world_state.zig`'s `team_id_len`/`team_id_bytes`). Also consulted by
+   * WorldHost's elastic-bot fill to pair opposing/ally bots into a matching
+   * team — bots ride this exact same field (`worldHost.ts`'s `botSpawn`),
+   * not a separate bot-only structure. Omitted = an ordinary FFA combatant
+   * — every existing spawn path (private rooms, plain world joins, tests)
+   * never sets this, so it's byte-for-byte unchanged there.
    */
   teamId?: string;
 };

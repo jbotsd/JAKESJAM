@@ -1,2 +1,5 @@
 [test]
-preload = ["./src/__tests__/setup/clipsDirIsolation.ts"]
+preload = [
+  "./src/__tests__/setup/clipsDirIsolation.ts",
+  "./src/__tests__/setup/replaysDirIsolation.ts",
+]

@@ -57,19 +57,119 @@ import {
   GEO_FACET_BREAK_AMP_MULTIPLIER,
   GEO_FACET_BREAK_RANGE_PX,
   GEO_FACET_BREAK_CONE_RADIANS,
-  GEO_PRISM_FAN_COUNT,
   GEO_PRISM_FAN_CONE_RADIANS,
   GEO_PRISM_FAN_DAMAGE_MULTIPLIER,
-  GEO_LATTICE_COUNT,
-  GEO_LATTICE_DAMAGE_MULTIPLIER,
-  GEO_LATTICE_RANGE_PX,
+  GEO_PRISM_FAN_RANGE_PX,
+  GEO_LATTICE_ZONE_RADIUS_PX,
+  GEO_LATTICE_ZONE_DURATION_MS,
+  GEO_LATTICE_ZONE_DPS,
   GEO_RETURN_GLASS_SHIELD_REFUND,
   GEO_SLIP_NODE_RANGE_PX,
   GEO_RECOIL_STEP_HOP_SPEED,
   RESONANCE_WINDOW_MS,
   RESONANCE_CD_REFUND_FRACTION,
+  KIN_BASTION_PULSE_SHIELD_REFUND,
+  KIN_BASTION_PULSE_WARD_HELD_MULTIPLIER,
+  KIN_SUNSPIKE_DAMAGE,
+  KIN_SUNSPIKE_RANGE_PX,
+  KIN_SUNSPIKE_SPEED,
+  KIN_JUDGMENT_AMP_MULTIPLIER,
+  KIN_JUDGMENT_RANGE_PX,
+  KIN_JUDGMENT_CONE_RADIANS,
+  KIN_SEAL_DAMAGE_MULTIPLIER,
+  KIN_SEAL_STAGGER_MS,
+  KIN_SEAL_STAGGER_MULTIPLIER,
+  KIN_CONSECRATED_FIELD_DAMAGE,
+  KIN_CONSECRATED_FIELD_RADIUS_PX,
+  KIN_CONSECRATED_FIELD_SLOW_MULTIPLIER,
+  KIN_CONSECRATED_FIELD_ZONE_DURATION_MS,
+  KIN_AEGIS_SHARE_RADIUS_MULTIPLIER,
+  KIN_AEGIS_SHARE_SOLO_KINDLING_FEED,
+  KIN_PLANT_CHARGE_RANGE_PX,
+  KIN_PLANT_CHARGE_SHIELD_REFUND,
+  KIN_RETRIBUTION_EDGE_AMP_MULTIPLIER,
+  KIN_RETRIBUTION_EDGE_KINDLING_REFUND,
+  KIN_SHOCK_RING_HOP_VY,
+  KIN_SHOCK_RING_ARM_WINDOW_MS,
+  KIN_SHOCK_RING_DAMAGE,
+  KIN_SHOCK_RING_RADIUS_PX,
+  KIN_RALLY_LIGHT_RADIUS_PX,
+  KIN_RALLY_LIGHT_DAMAGE_MULTIPLIER,
+  KIN_RALLY_LIGHT_MOVE_MULTIPLIER,
+  KIN_KINDLED_RESOLVE_KINDLING_COST,
+  KIN_KINDLED_RESOLVE_DAMAGE_MULTIPLIER,
+  KIN_KINDLED_RESOLVE_STAGGER_RESIST_FRACTION,
+  KIN_BULWARK_STEP_RANGE_PX,
+  KIN_CRATER_LEAP_VY,
+  KIN_CRATER_SLAM_DAMAGE,
+  KIN_CRATER_SLAM_RADIUS_PX,
+  KIN_CRATER_SLAM_STAGGER_MULTIPLIER,
+  KIN_CRATER_RING_DAMAGE,
+  KIN_CRATER_RING_RADIUS_PX,
+  KIN_CRATER_ARM_WINDOW_MS,
+  KIN_BASTION_RADIUS_PX,
+  KIN_BASTION_ALLY_DAMAGE_REDUCTION,
+  KIN_BASTION_SELF_DAMAGE_REDUCTION,
+  KIN_BASTION_KINDLING_FEED_RATE,
+  KIN_STOMP_JUMP_DAMAGE,
+  KIN_STOMP_JUMP_RADIUS_PX,
+  SYZ_REGEN_HPS_DEFAULT,
+  SYZ_REGEN_DURATION_TICKS_DEFAULT,
+  SYZ_REGEN_HEALTH_CAP,
+  SYZ_HASTE_MULTIPLIER_DEFAULT,
+  SYZ_HASTE_DURATION_TICKS_DEFAULT,
+  SYZ_DEVOTION_MAX,
+  SYZ_DEVOTION_PER_BUFFED_ALLY_PER_SEC,
+  SYZ_DEVOTION_MAX_COUNTED_SOURCES,
+  SYZ_SNOWBALL_BRAKE_PER_KILL_LEAD,
+  SYZ_SNOWBALL_BRAKE_FLOOR,
+  SYZ_WARD_DURATION_TICKS_DEFAULT,
+  SYZ_WARD_ABSORB_DEFAULT,
+  SYZ_SELF_LATTICE_ABSORB,
+  SYZ_GLASS_WARD_ALLY_ABSORB,
+  SYZ_GLASS_WARD_SELF_FALLBACK_ABSORB,
+  SYZ_ALLY_SEARCH_RANGE_PX,
+  SYZ_ENEMY_SEARCH_RANGE_PX,
+  SYZ_BLEED_TITHE_DAMAGE,
+  SYZ_BLEED_TITHE_LEECH_FRACTION,
+  SYZ_BLEED_TITHE_SPEED,
+  SYZ_BLEED_TITHE_HOMING_STRENGTH,
+  SYZ_SEVERANCE_DAMAGE,
+  SYZ_SEVERANCE_SPEED,
+  SYZ_BORROWED_TIME_HEAL_ALLY,
+  SYZ_BORROWED_TIME_DRAIN_ALLY,
+  SYZ_BORROWED_TIME_HEAL_SELF,
+  SYZ_BORROWED_TIME_DRAIN_SELF,
+  SYZ_BORROWED_TIME_DEBT_DELAY_TICKS,
+  SYZ_FOCUS_HEX_AMP_MULTIPLIER,
+  SYZ_CONTAGION_RADIUS_PX,
+  SYZ_CONTAGION_JUMP_RADIUS_PX,
+  SYZ_FLOCK_PULSE_BASE_DAMAGE,
+  SYZ_FLOCK_PULSE_PER_SOURCE_DAMAGE,
+  SYZ_FLOCK_PULSE_RADIUS_PX,
+  SYZ_FLOCK_PULSE_SLOW_MULTIPLIER,
+  SYZ_FLOCK_PULSE_SLOW_DURATION_MS,
+  SYZ_HASTE_GIFT_SELF_MULTIPLIER,
+  SYZ_DRIFT_STEP_RANGE_PX,
+  NINJA_UNDERCUT_HEALTH_THRESHOLD,
+  NINJA_EDGE_STORM_CHARGES,
+  NINJA_EDGE_STORM_WAVE_DAMAGE_MULTIPLIER,
+  NINJA_NEEDLE_RANGE_PX,
+  NINJA_NEEDLE_LUNGE_PX,
+  NINJA_NEEDLE_DAMAGE,
+  NINJA_NEEDLE_SPEED,
+  NINJA_READ_MARK_RANGE_PX,
+  NINJA_READ_MARK_AMP_MULTIPLIER,
+  NINJA_RAZOR_ROUTE_READ_MARK_MS,
+  NINJA_SHARD_RING_RADIUS_PX,
+  NINJA_SHARD_RING_DAMAGE,
+  NINJA_WALL_BLOOM_RADIUS_PX,
+  NINJA_WALL_BLOOM_DAMAGE,
+  NINJA_SECOND_WIND_HEAL,
+  NINJA_SECOND_WIND_ENERGY,
+  NINJA_RAZOR_ROUTE_BOOST_SPEED,
 } from "./constants.js";
-import { stepProjectile, spawnProjectile, makeHitSweepScratch, fillHitSweepScratch, type HitSweepScratch } from "./projectile.js";
+import { stepProjectile, spawnProjectile, makeHitSweepScratch, fillHitSweepScratch, SLOW_FIELD_DURATION_MS, type HitSweepScratch } from "./projectile.js";
 import {
   resolveEmission,
   EMISSION_BURN_CAP_MS,
@@ -96,7 +196,12 @@ import {
   SHIELD_RECHARGE_PER_SECOND,
   PARRY_COOLDOWN_MS_DEFAULT,
   SHIELD_AIM_ARC_RADIANS,
+  isAllyBodyInWardCone,
+  computeTeamPeelMitigation,
+  WARD_PEEL_RADIUS_PX,
+  KINDLING_MAX,
 } from "./combat.js";
+import { isAlly } from "./team.js";
 import {
   buildStaticCache,
   platformToAABB,
@@ -183,6 +288,13 @@ const AbilityBit = 1 << 7;
  *  detection (NINJA MELEE section); movement itself reads it inside
  *  stepPlayer via player.ts's own private `Bit.Jump`. */
 const JumpBit = 1 << 4;
+/** InputBit.Left/Right — read here only for Bulwark Step's facing-
+ *  direction derivation (Kindred coverage-floor fast-follow, docs/axiom-
+ *  deviations-audit.md, 2026-07-18); movement itself reads the same bits
+ *  inside stepPlayer via player.ts's own private `Bit.Left`/`Bit.Right`,
+ *  same "read here only for X" precedent as JumpBit above. */
+const LeftBit = 1 << 0;
+const RightBit = 1 << 1;
 
 /**
  * Per-tick scratch state the WorldState doesn't carry. The host (server or
@@ -240,6 +352,12 @@ export type WorldRuntime = {
    *  wire-visible CONSEQUENCES (health/energy/events) are what reconcile.
    *  Only ninjas ever get an entry; other classes never touch this map. */
   melee: Map<PlayerId, NinjaMeleeMemory>;
+  /** Paladin Kindled Edge swing FSM, per player (class-overhaul-workboard.md
+   *  chunk 2.1). Deliberately a SEPARATE map/type from `melee` above rather
+   *  than a shared generic one — see the "PALADIN MELEE" section's header
+   *  comment for the thin-vs-fork judgment call. Same host-only off-wire-
+   *  truth contract as `melee`/`movement`. Only paladins ever get an entry. */
+  paladinMelee: Map<PlayerId, PaladinMeleeMemory>;
 };
 
 /** 0 = idle/ready, 1 = windup (readable tell), 2 = active (hit-checked
@@ -275,6 +393,15 @@ export type NinjaMeleeMemory = {
    *  (for clearing dashThroughTagged) without reading movement memory's
    *  ms-precision timer directly. */
   wasDashing: boolean;
+  /** Razor Route (Interstice catalog v1, movement role): true for the
+   *  duration of the CURRENT dash burst if `razorRouteUntilTick` was live
+   *  the moment this burst started (the velocity boost + "marks Read on
+   *  cross" both key off this, not off `razorRouteUntilTick` itself, which
+   *  is cleared at dash-start — see World.ts's dash-through section). Reset
+   *  false the moment the burst ends OR the first victim is Read-tagged
+   *  ("one body, one lie" — one mark per empowered dash). Host-only, same
+   *  off-wire contract as `wasDashing`/`dashThroughTagged`. */
+  razorRouteActiveDash: boolean;
 };
 
 export function freshNinjaMeleeMemory(): NinjaMeleeMemory {
@@ -286,6 +413,47 @@ export function freshNinjaMeleeMemory(): NinjaMeleeMemory {
     hitThisSwing: new Set(),
     dashThroughTagged: new Set(),
     wasDashing: false,
+    razorRouteActiveDash: false,
+  };
+}
+
+/** 0 = idle/ready, 1 = windup, 2 = active (hit-checked every tick), 3 =
+ *  recovery (endlag). Same 4-phase shape as `NinjaSlashPhase` — the FSM
+ *  SHAPE is shared conceptually (both are "commit frames you can feel"
+ *  swing verbs), but see "PALADIN MELEE" below for why the TYPE isn't. */
+export type PaladinEdgePhase = 0 | 1 | 2 | 3;
+
+/**
+ * Per-player Kindled Edge memory — Paladin's melee swing FSM, off-wire
+ * source of truth (class-overhaul-workboard.md chunk 2.1). Trimmed relative
+ * to `NinjaMeleeMemory`: no `dashThroughTagged`/`wasDashing` (Paladin has no
+ * dash-i-frame-evasion verb — that's ninja's defense identity, not
+ * Kindred's; Kindred's defense verb is Kindled Ward, an entirely separate
+ * held-input mechanic in combat.ts, not part of this FSM at all), and no
+ * wave-spawn bookkeeping (Kindled Edge doesn't emit an aftermath projectile
+ * — "tighter arc, harder hit" is the whole verb, no ranged rider).
+ */
+export type PaladinMeleeMemory = {
+  phase: PaladinEdgePhase;
+  /** ms remaining in the current phase; irrelevant when phase === 0. */
+  phaseMs: number;
+  /** Swing direction captured at windup start (unit vector) — same
+   *  "doesn't steer mid-swing" reasoning as NinjaMeleeMemory.aimX/aimY. */
+  aimX: number;
+  aimY: number;
+  /** Victim ids already hit by the CURRENT swing's active window — same
+   *  "hit-checked every tick, once per victim per swing" contract as
+   *  NinjaMeleeMemory.hitThisSwing. */
+  hitThisSwing: Set<PlayerId>;
+};
+
+export function freshPaladinMeleeMemory(): PaladinMeleeMemory {
+  return {
+    phase: 0,
+    phaseMs: 0,
+    aimX: 1,
+    aimY: 0,
+    hitThisSwing: new Set(),
   };
 }
 
@@ -391,6 +559,89 @@ const NINJA_ENERGY_ON_DASH_THROUGH = 15;
  *  reasoning as dash-through above. */
 const NINJA_ENERGY_ON_WALL_KICK = 12;
 
+// ── PALADIN MELEE (2026-07-18) — Kindled Edge, class-overhaul-workboard.md
+// chunk 2.1. Reuses `isBodyInMeleeArc` (below) VERBATIM — the actual "arc
+// hit-detection primitive" the task singles out — with Paladin's own
+// numbers (tighter arc, harder hit). The primitive genuinely is thin: same
+// function, zero forking, zero paladin-specific branches inside it.
+//
+// What's NOT shared with ninja's FSM, and why that's a deliberate call and
+// not a silent fork: Kindled Edge's per-tick swing STATE (PaladinMeleeMemory
+// above) is a parallel structure, not a generalized "MeleeConfig" runner
+// shared with `NinjaMeleeMemory`. The two verbs diverge in real behavior,
+// not just numbers:
+//   - Ninja's slash spawns a WAVE projectile aftermath; Edge does not (no
+//     ranged rider — "tighter arc, harder hit" is the whole verb).
+//   - Ninja's slash grants ENERGY on a landed hit ("aggression feeds the
+//     rack"); Edge grants NOTHING on a landed hit — Kindred's resource
+//     (Kindling) comes exclusively from Ward absorbing damage, not from
+//     Edge dealing it ("Defense IS the engine", classes-goal.md). Landing
+//     a hit and blocking a hit are opposite resource triggers for these
+//     two classes, not the same trigger with different numbers.
+//   - Ninja's melee section also owns dash-through body-cross detection,
+//     entangled with the FSM's `wasDashing` debounce; Paladin has no
+//     analogous verb at all.
+// A single generalized FSM runner covering both would need 3+ per-class
+// behavior hooks (spawnsWave?, grantsEnergyOnHit?, doesDashThrough?) for
+// what's actually a small, easy-to-read block of tick logic either way —
+// that's speculative generality for exactly two call sites, not a real
+// abstraction win. Flagging this explicitly per the task's own instruction
+// ("flag that rather than forking silently") rather than silently
+// duplicating the FSM shape without comment.
+//
+// Gated on classId === "paladin" (classIdForArchetype) EVERYWHERE below —
+// zero cost, zero behavior change for the other three chassis (see
+// paladinMelee.test.ts's classId-gating proof, mirroring
+// ninjaMeleeGating.test.ts's pattern).
+
+/** Melee arc reach (px, centre-to-centre). Slightly LONGER than ninja's
+ *  SLASH_RANGE (78) — a heavier weapon (docs/character-sheets-v1.md: DI
+ *  Crusader heaven-tank read, not dual daggers) plausibly reaches a touch
+ *  further even as its arc narrows. Not a huge delta; "tighter arc, harder
+ *  hit" is the load-bearing pair of numbers, range is a minor accompanying
+ *  bump. First-draft/playtest-pending. */
+const EDGE_RANGE = 84;
+/** Full cone width in front of the swing's captured aim direction. TIGHTER
+ *  than ninja's SLASH_ARC_RADIANS (100° = 5π/9) per the task's explicit
+ *  "tighter arc" requirement — 70° = 7π/18, narrower cone consistent with a
+ *  heavier, more committed swing (a big weapon reads as more precise/
+ *  telegraphed, not more forgiving, versus dual light blades). First-
+ *  draft/playtest-pending. */
+const EDGE_ARC_RADIANS = (7 * Math.PI) / 18;
+/** A landed arc hit. NOTICEABLY more than ninja's SLASH_DAMAGE (22) per the
+ *  task's explicit "harder hit" requirement — chosen alongside the commit-
+ *  frame constants below so sustained arc DPS (EDGE_DAMAGE / cycle seconds,
+ *  see below) lands in the SAME neighbourhood as ninja's own ~51 sustained
+ *  slash DPS, not above it: Paladin's tank identity is delivered through
+ *  Ward's mitigation (combat.ts WARD_MITIGATION_FRACTION), not through
+ *  out-damaging every other chassis on top of also out-tanking them ("higher
+ *  effective toughness via mitigation, not raw damage output" — task
+ *  doctrine). 32 damage / 0.65s cycle ≈ 49.2 DPS, matching ninja's ~51.
+ *  First-draft/playtest-pending. */
+const EDGE_DAMAGE = 32;
+/** Meaningfully more than ninja's SLASH_KNOCKBACK/SLASH_KNOCK_UP (260/60)
+ *  per "harder hit... more knockback than Ninja's slash" — a heavy weapon
+ *  shoves harder, short of BASH's full lance-charge launch (660/240, a
+ *  wholly different distinct move gated by the 3s dash cooldown). First-
+ *  draft/playtest-pending. */
+const EDGE_KNOCKBACK = 420;
+const EDGE_KNOCK_UP = 110;
+
+// Commit-frame structure (ms). Heavier than ninja's (120/90/220, total 430ms
+// ~2.3 swings/sec) on every axis — "heavier weapon read" per the task:
+// longer windup (a bigger, more visible tell — fair warning for a harder
+// hit), similar active window, and noticeably longer recovery (whiffing a
+// big committed swing should cost more than whiffing a quick dagger flick).
+// Total cycle 650ms (~1.54 swings/sec cap) — see EDGE_DAMAGE's doc comment
+// for how this cadence was chosen alongside the damage number to land Edge's
+// sustained DPS in the same neighbourhood as ninja's, not above it. No
+// additional ability-style cooldown layered on top — same "recovery IS the
+// re-swing gate" contract as ninja's slash (this is the always-on chassis
+// verb, not a card-gated active).
+const EDGE_WINDUP_MS = 200;
+const EDGE_ACTIVE_MS = 110;
+const EDGE_RECOVERY_MS = 340;
+
 /**
  * Melee arc hit test — more rigorous than DASH BASH's plain centre-point
  * distance+angle check (canon: "arc hit detection vs player AABBs"), but
@@ -429,6 +680,511 @@ function isBodyInMeleeArc(
   return false;
 }
 
+// ── TEAM PEEL (2026-07-18, class-overhaul-workboard.md chunk 2.4) ──────────
+// See combat.ts's "TEAM PEEL" header comment for the geometry definition
+// (`isAllyBodyInWardCone`: victim's body in the warder's frontal cone AND
+// within a "standing next to them" radius) and why it's a DIFFERENT check
+// from Ward's own self-cone test (`isSourceInWardCone`), not a trivial
+// reuse. This function is the one place that COMBINES that pure geometry
+// test with `isAlly` (team.ts) to answer "is there an eligible warding
+// ally for this victim right now" — team-membership logic itself stays
+// entirely inside `team.ts`'s `isAlly`, never reimplemented here.
+/**
+ * Scan for the closest OTHER player who is: alive, a paladin, currently
+ * holding Kindled Ward (`shieldActive`), an ally of `victim` (`isAlly`,
+ * team.ts), and whose Ward shadow (`isAllyBodyInWardCone`) covers
+ * `victim`'s current position. Returns `null` when no such warder exists —
+ * including, by construction, every solo/FFA victim (`isAlly` is false
+ * for any pairing when either side lacks a `teamId`, per team.ts's own
+ * doc comment), so this is a true no-op outside team modes.
+ *
+ * A warder never peels for themselves (self-ward, combat.ts's
+ * `isSourceInWardCone`, is the separate existing mechanism for that).
+ * Multiple eligible warders (needs 2+ paladins on one team, both holding
+ * Ward, both in range) resolve to the CLOSEST one, scanned over
+ * `sortedIds` for the same cross-platform (client/server) determinism
+ * guarantee every other multi-candidate scan in this file already uses
+ * (facet-break's target search is the precedent).
+ *
+ * Aegis Share (Kindred catalog v1): a candidate warder with a live
+ * `aegisShareUntilTick` window gets its peel radius widened by
+ * `KIN_AEGIS_SHARE_RADIUS_MULTIPLIER` for this check only — the window
+ * lives on the WARDER, not the victim, so it's read directly off the
+ * candidate being tested.
+ */
+function findTeamPeelWarder(
+  victim: PlayerEntity,
+  players: Record<PlayerId, PlayerEntity>,
+  sortedIds: readonly PlayerId[],
+  tick: Tick,
+): PlayerEntity | null {
+  if (victim.teamId === undefined) return null;
+  let best: PlayerEntity | null = null;
+  let bestDist = Infinity;
+  for (const wid of sortedIds) {
+    if (wid === victim.id) continue;
+    const candidate = players[wid];
+    if (!candidate) continue;
+    if (!candidate.alive || !candidate.shieldActive) continue;
+    if (classIdForArchetype(candidate.characterId) !== "paladin") continue;
+    if (!isAlly(candidate, victim)) continue;
+    const dx = victim.x - candidate.x;
+    const dy = victim.y - candidate.y;
+    const dist = Math.hypot(dx, dy);
+    const aegisActive =
+      candidate.aegisShareUntilTick !== undefined && candidate.aegisShareUntilTick > tick;
+    const radiusPx = aegisActive
+      ? WARD_PEEL_RADIUS_PX * KIN_AEGIS_SHARE_RADIUS_MULTIPLIER
+      : WARD_PEEL_RADIUS_PX;
+    if (!isAllyBodyInWardCone(candidate, victim, radiusPx)) continue;
+    if (dist < bestDist) {
+      bestDist = dist;
+      best = candidate;
+    }
+  }
+  return best;
+}
+
+/**
+ * Apply team peel to a hit that landed on `victim` for `rawDamage`, IFF an
+ * eligible warding ally exists (`findTeamPeelWarder`) — callers are
+ * responsible for only invoking this on a hit no OTHER mitigation already
+ * fully handled (self-Ward, parry/dash-bash deflect, and the generic
+ * shield are all upstream, higher-priority outcomes at every call site
+ * below; peel only ever extends Ward's reach to a hit that would
+ * otherwise have landed raw on the victim). Mutates `players[warder.id]`
+ * in place (grants Kindling — "your block, your Kindling", same contract
+ * as self-ward) and returns the mitigated damage + a ready-to-push
+ * SimEvent, or `null` when peel doesn't apply (including every non-team
+ * hit, by construction — see `findTeamPeelWarder`).
+ */
+function applyTeamPeel(
+  victim: PlayerEntity,
+  rawDamage: number,
+  players: Record<PlayerId, PlayerEntity>,
+  sortedIds: readonly PlayerId[],
+  tick: Tick,
+): { damage: number; event: SimEvent } | null {
+  if (rawDamage <= 0) return null;
+  const warder = findTeamPeelWarder(victim, players, sortedIds, tick);
+  if (!warder) return null;
+  const { mitigatedDamage, damageBlocked, kindlingGranted } =
+    computeTeamPeelMitigation(rawDamage);
+  const kindling = Math.min(KINDLING_MAX, (warder.kindling ?? 0) + kindlingGranted);
+  players[warder.id] = { ...warder, kindling };
+  return {
+    damage: mitigatedDamage,
+    event: {
+      t: "team-peel-absorbed",
+      victimId: victim.id,
+      warderId: warder.id,
+      damageBlocked,
+      kindlingGranted,
+    },
+  };
+}
+
+// ── RALLY LIGHT (2026-07-18, class-overhaul-workboard.md chunk 2.6 fast-
+// follow) ────────────────────────────────────────────────────────────────
+// Read-only continuous aura — see constants.ts's KIN_RALLY_LIGHT_* header
+// comment for why this needs NO cross-player write (and therefore no
+// pendingSyzygistCasts-style deferred queue): every beneficiary only ever
+// reads a nearby SOURCE's own `rallyLightUntilTick` field and multiplies
+// its OWN speed/damage. Solo/FFA clause: a player always counts as their
+// OWN eligible source (self at distance 0), so `isAlly` is only consulted
+// for OTHER candidates — closes the axiom-deviations audit's AX.2
+// "Rally Light is solo-dead" flag.
+//
+// Takes a generic `players` record so it works identically from BOTH call
+// shapes this file already has: the main per-player loop's stable
+// pre-tick `state.players` (movement speed, read during the aura
+// BENEFICIARY's own turn) and the post-loop hit-resolution passes' live
+// mutable `players` (damage amp, alongside `applyTeamPeel`) — same
+// generic-over-the-players-record shape `findTeamPeelWarder`/
+// `findNearestAlly` already use.
+function hasRallyLightSource(
+  beneficiary: PlayerEntity,
+  players: Record<PlayerId, PlayerEntity>,
+  tick: Tick,
+): boolean {
+  if (
+    beneficiary.rallyLightUntilTick !== undefined &&
+    beneficiary.rallyLightUntilTick > tick
+  ) {
+    return true;
+  }
+  for (const other of Object.values(players)) {
+    if (other.id === beneficiary.id || !other.alive) continue;
+    if (other.rallyLightUntilTick === undefined || other.rallyLightUntilTick <= tick) continue;
+    if (!isAlly(other, beneficiary)) continue;
+    const dist = Math.hypot(other.x - beneficiary.x, other.y - beneficiary.y);
+    if (dist <= KIN_RALLY_LIGHT_RADIUS_PX) return true;
+  }
+  return false;
+}
+
+/** Damage multiplier for a hit dealt BY `attacker` — 1 (no-op) unless a live
+ *  Rally Light aura (self or ally) currently covers them. */
+function rallyLightDamageMultiplier(
+  attacker: PlayerEntity,
+  players: Record<PlayerId, PlayerEntity>,
+  tick: Tick,
+): number {
+  return hasRallyLightSource(attacker, players, tick) ? KIN_RALLY_LIGHT_DAMAGE_MULTIPLIER : 1;
+}
+
+// ── KINDLED RESOLVE (Kindred coverage-floor fast-follow, docs/axiom-
+// deviations-audit.md "Kindred (paladin) — two structural gaps",
+// 2026-07-18) ────────────────────────────────────────────────────────────
+// Self-only buff — no aura/ally reach at all (constants.ts's KIN_KINDLED_
+// RESOLVE_* header comment has the full "why this differs from Rally
+// Light" reasoning). Both helpers are pure no-ops (return the input
+// unchanged) for any player without a live window, so they're safe to call
+// unconditionally at every site the equivalent Rally Light/stagger-write
+// checks already run at — zero behavior change for every non-Paladin (or
+// Paladin-without-the-card) player.
+/** Damage multiplier for a hit dealt BY `attacker` — 1 (no-op) unless a
+ *  live Kindled Resolve window currently covers them. */
+function kindledResolveDamageMultiplier(attacker: PlayerEntity, tick: Tick): number {
+  return attacker.kindledResolveUntilTick !== undefined && attacker.kindledResolveUntilTick > tick
+    ? KIN_KINDLED_RESOLVE_DAMAGE_MULTIPLIER
+    : 1;
+}
+
+/** Softens an incoming stagger/slow `multiplier` toward 1 (less severe)
+ *  when `victim` currently holds a live Kindled Resolve window — "resist",
+ *  not immune (constants.ts's KIN_KINDLED_RESOLVE_STAGGER_RESIST_FRACTION
+ *  doc comment). Returns `multiplier` unchanged for every victim without
+ *  the buff. */
+function applyKindledResolveStaggerResist(
+  victim: PlayerEntity,
+  multiplier: number,
+  tick: Tick,
+): number {
+  if (victim.kindledResolveUntilTick === undefined || victim.kindledResolveUntilTick <= tick) {
+    return multiplier;
+  }
+  return multiplier + (1 - multiplier) * KIN_KINDLED_RESOLVE_STAGGER_RESIST_FRACTION;
+}
+
+// ── BASTION (docs/card-pool-v2.md #28, exclusive: Paladin — a passive
+// aura, always on once equipped, resolved at the SAME post-loop hit-
+// resolution sites `applyTeamPeel` already runs at) ─────────────────────
+// Two effects, both keyed off `entity.cards.includes("bastion")` directly
+// (no WeaponBuild plumbing — same "read the card id, don't thread a new
+// modifier field" economy Retort uses in combat.ts):
+//   - Self: a victim WEARING Bastion themselves takes
+//     KIN_BASTION_SELF_DAMAGE_REDUCTION less — works solo, no teamId/isAlly
+//     needed (the doc's own "solo: the −5% self-reduction stands alone").
+//   - Ally: the NEAREST ally (`isAlly`) wearing Bastion within
+//     KIN_BASTION_RADIUS_PX of the victim reduces the victim's damage by
+//     KIN_BASTION_ALLY_DAMAGE_REDUCTION AND is granted Kindling equal to
+//     KIN_BASTION_KINDLING_FEED_RATE of the (already-mitigated) damage —
+//     "their endurance funds his engine". Self takes priority over ally
+//     (a Bastion-wearing victim mitigates their own hit directly; it does
+//     not ALSO search for a separate ally source on the same hit).
+// Deliberately does not emit a SimEvent — no VFX/audio consumes this yet
+// (class-overhaul-workboard.md chunk 2.7 is scoped to the ALREADY-wired
+// ward-absorbed/team-peel-absorbed events this session; a dedicated
+// "bastion-mitigated" event is a clean fast-follow, not built here to keep
+// this chunk's new-event-type surface area lean).
+function applyBastionAura(
+  victim: PlayerEntity,
+  rawDamage: number,
+  players: Record<PlayerId, PlayerEntity>,
+  sortedIds: readonly PlayerId[],
+  // Unused — kept for call-site symmetry with `applyTeamPeel`/
+  // `rallyLightDamageMultiplier` (every hit-resolution site already threads
+  // a `tick` through; Bastion's own aura check needs no tick-gated window).
+  _tick: Tick,
+): number {
+  if (rawDamage <= 0) return rawDamage;
+  if (victim.cards.includes("bastion")) {
+    return rawDamage * (1 - KIN_BASTION_SELF_DAMAGE_REDUCTION);
+  }
+  let best: PlayerEntity | null = null;
+  let bestDist = Infinity;
+  for (const cid of sortedIds) {
+    if (cid === victim.id) continue;
+    const candidate = players[cid];
+    if (!candidate || !candidate.alive) continue;
+    if (!candidate.cards.includes("bastion")) continue;
+    if (!isAlly(candidate, victim)) continue;
+    const dist = Math.hypot(candidate.x - victim.x, candidate.y - victim.y);
+    if (dist > KIN_BASTION_RADIUS_PX) continue;
+    if (dist < bestDist) {
+      bestDist = dist;
+      best = candidate;
+    }
+  }
+  if (!best) return rawDamage;
+  const mitigated = rawDamage * (1 - KIN_BASTION_ALLY_DAMAGE_REDUCTION);
+  const feed = mitigated * KIN_BASTION_KINDLING_FEED_RATE;
+  const kindling = Math.min(KINDLING_MAX, (best.kindling ?? 0) + feed);
+  players[best.id] = { ...best, kindling };
+  return mitigated;
+}
+
+// ── SYZYGIST STATUS SUBSTRATE (2026-07-18, class-overhaul-workboard.md
+// chunk 3.1: "Status substrate extension (buffs, not just debuffs)") ──────
+// Priest/Syzygist needs the OPPOSITE direction from the existing debuff
+// substrate (burn/freeze/slow): a caster applying a BUFF to a DIFFERENT
+// player's entity, not just their own. Every window-buff field in this
+// file up to this chunk (tithe, veil, sunlance, overclock, resonance,
+// judgment/seal/aegis) only ever mutates the CASTER's own `nextEntity` —
+// nothing before this chunk lets one player's cast modify a different
+// player's PlayerEntity for a BUFF (the closest precedent is `applyTeamPeel`
+// just above, which mutates `players[warder.id]` — but that's the sim
+// GRANTING a resource to a bystander mid-hit-resolution, not a player's
+// CAST targeting an ally by choice).
+//
+// These two functions are the mechanism, not the ability: no Priest card or
+// catalog entry calls them yet (that's chunk 3.4 — see
+// docs/class-ability-catalogs-v1.md's "Borrowed Time"/"Haste Gift"). They
+// exist so the mechanism itself — "can player A's cast legally write a
+// buff onto player B's entity, and does the sim then apply it correctly
+// over time" — can be proven with a direct unit test
+// (`__tests__/syzygistBuffs.test.ts`) against a bare `players` record, the
+// same "prove the mechanism, don't author the content" scope this chunk's
+// workboard entry describes for the Priest's own solo-floor chunk (0.3).
+//
+// Both functions:
+//   - Are gated on `isAlly(caster, target)` (team.ts) — the ONE sanctioned
+//     way to check team membership. In FFA/solo (no `teamId` on either
+//     player), `isAlly` is always false, so these calls are unconditional
+//     no-ops for every match that doesn't have team identity — exactly
+//     mirroring `findTeamPeelWarder`'s "every solo/FFA hit is unaffected by
+//     construction" guarantee. Note `isAlly(a, a)` is `true` when `a` has a
+//     `teamId` (team.ts's own documented self-ally precedent) — a duos
+//     Syzygist CAN self-target through this gate (a real, intended use —
+//     "self half if solo" per Haste Gift's catalog entry, docs/class-
+//     ability-catalogs-v1.md); a caster with no `teamId` (solo/FFA) cannot
+//     buff ANYONE, including themselves, through this mechanism — buffs are
+//     teams-native by construction, exactly as docs/classes-goal.md's MANA
+//     section states ("priest = devotion, generated by buff/heal uptime on
+//     others... teams-native").
+//   - Refuse a dead target (a dead ally regenerating/hasting is meaningless
+//     — they respawn through a separate code path).
+//   - Mutate `players[target.id]` in place and return `true` on success,
+//     `false` on a no-op — same boolean-outcome shape as the rest of this
+//     file's mid-loop mutators; callers that need "why didn't this apply"
+//     detail can re-check `isAlly`/`alive` themselves, same as
+//     `applyTeamPeel`'s callers do for its own preconditions.
+
+/**
+ * Apply (or refresh) a regen (heal-over-time) window onto `target`, IFF
+ * `target` is an ally of `caster` (`isAlly`, team.ts) and alive. Refreshing
+ * an already-active window simply overwrites the tick/rate (no stacking —
+ * same "last cast wins" convention as every other window-buff field on
+ * PlayerEntity). The actual per-tick healing happens in `stepWithRuntime`'s
+ * element-status-effects pass (mirrors the burn DoT tick exactly, opposite
+ * sign, capped at `SYZ_REGEN_HEALTH_CAP`) — this function only opens the
+ * window.
+ */
+export function applyRegenToAlly(
+  caster: PlayerEntity,
+  target: PlayerEntity,
+  players: Record<PlayerId, PlayerEntity>,
+  tick: Tick,
+  regenHps: number = SYZ_REGEN_HPS_DEFAULT,
+  durationTicks: number = SYZ_REGEN_DURATION_TICKS_DEFAULT,
+): boolean {
+  if (!target.alive) return false;
+  if (!isAlly(caster, target)) return false;
+  players[target.id] = {
+    ...target,
+    regenUntilTick: (tick + 1 + durationTicks) as Tick,
+    regenHps,
+    // Stamped at application, same as the Burn DoT's own apply site
+    // (World.ts's fire-element hit branch: `burnTickLastApplied: nextTick`)
+    // — the first real heal tick lands a full ONE_SECOND_TICKS after THIS
+    // tick, not instantly on the tick the window opens.
+    regenTickLastApplied: tick,
+    // Devotion attribution (class-overhaul-workboard.md chunk 3.2) — see
+    // regenSourceId's doc comment in types.ts.
+    regenSourceId: caster.id,
+  };
+  return true;
+}
+
+/**
+ * Apply (or refresh) a haste window onto `target`, IFF `target` is an ally
+ * of `caster` (`isAlly`, team.ts) and alive. Same refresh-overwrites, no-
+ * stacking convention as `applyRegenToAlly`. The move-speed effect is read
+ * live off `hasteUntilTick`/`hasteMultiplier` at `stepWithRuntime`'s speedMul
+ * composition site (alongside slow/freeze/first-blood); the fire-rate effect
+ * is read live in `weapon.ts`'s fire-rate composition (alongside Overclock)
+ * — this function only opens the window, it does not itself touch speed or
+ * fire rate.
+ */
+export function applyHasteToAlly(
+  caster: PlayerEntity,
+  target: PlayerEntity,
+  players: Record<PlayerId, PlayerEntity>,
+  tick: Tick,
+  hasteMultiplier: number = SYZ_HASTE_MULTIPLIER_DEFAULT,
+  durationTicks: number = SYZ_HASTE_DURATION_TICKS_DEFAULT,
+): boolean {
+  if (!target.alive) return false;
+  if (!isAlly(caster, target)) return false;
+  players[target.id] = {
+    ...target,
+    hasteUntilTick: (tick + 1 + durationTicks) as Tick,
+    hasteMultiplier,
+    // Devotion attribution (class-overhaul-workboard.md chunk 3.2) — see
+    // hasteSourceId's doc comment in types.ts.
+    hasteSourceId: caster.id,
+  };
+  return true;
+}
+
+/**
+ * Apply (or refresh) a Syzygist Ward absorb pool onto `target`, IFF
+ * `target` is an ally of `caster` (`isAlly`, team.ts) and alive. Same
+ * refresh-overwrites, no-stacking convention as `applyRegenToAlly`/
+ * `applyHasteToAlly`, and the SAME "solo/FFA caster with no teamId cannot
+ * buff anyone, including themselves" gate. Unlike those two, this opens a
+ * flat absorb POOL rather than a rate — the pool itself is consumed by
+ * `combat.ts`'s `trySyzygistWard` (called from `tryDeflectDamage`), not by
+ * a per-tick World.ts pass.
+ */
+export function applyWardToAlly(
+  caster: PlayerEntity,
+  target: PlayerEntity,
+  players: Record<PlayerId, PlayerEntity>,
+  tick: Tick,
+  absorbAmount: number = SYZ_WARD_ABSORB_DEFAULT,
+  durationTicks: number = SYZ_WARD_DURATION_TICKS_DEFAULT,
+): boolean {
+  if (!target.alive) return false;
+  if (!isAlly(caster, target)) return false;
+  players[target.id] = {
+    ...target,
+    wardAbsorbUntilTick: (tick + 1 + durationTicks) as Tick,
+    wardAbsorbRemaining: absorbAmount,
+    wardAbsorbSourceId: caster.id,
+  };
+  return true;
+}
+
+/**
+ * Shared Syzygist snowball brake (2026-07-18, D3 fix — docs/axiom-
+ * deviations-audit.md's Syzygist entry, "one shared stopping mechanism...
+ * brakes [Devotion accrual and Flock Pulse] at once"). Both callers below
+ * (the Devotion-accrual pass and the flock-pulse case block) count the SAME
+ * "distinct other player currently carrying this caster's live regen/haste/
+ * Ward window" set — this function is the ONE place that set's payoff gets
+ * throttled, so both consumers brake identically by construction rather
+ * than risking two hand-tuned copies drifting apart.
+ *
+ * Difference-fed per A3's stated preference ("tie the friction to how far
+ * AHEAD the loop's owner is... invisible when you're even, firm when you're
+ * snowballing") rather than a flat magnitude cap: reads `roundKills`
+ * (types.ts's `RoundState.roundKills` — IN-ROUND kills, reset every round,
+ * already folded in by `stepWithRuntime` every tick from that tick's kill
+ * events — the exact in-round signal D3 asks for, since the draft's
+ * cross-round `scores` catch-up brake is too slow to reach a same-round
+ * runaway) — zero new state, reusing a field World.ts already maintains for
+ * `decideRoundWinner`'s own timeout rule.
+ *
+ * `lead` = this caster's roundKills minus the AVERAGE roundKills of every
+ * other currently-alive player. Even or behind the field (`lead <= 0`)
+ * returns 1 — full strength, brake genuinely invisible, not just small.
+ * Each whole kill of lead beyond that costs `SYZ_SNOWBALL_BRAKE_PER_KILL_
+ * LEAD`, floored at `SYZ_SNOWBALL_BRAKE_FLOOR` (never fully zeroes the
+ * payoff — brake the snowballing portion, don't delete the ability).
+ */
+function syzygistLeadBrakeMultiplier(
+  casterId: PlayerId,
+  players: Record<PlayerId, PlayerEntity>,
+  roundKills: Record<PlayerId, number> | undefined,
+): number {
+  if (!roundKills) return 1;
+  let othersTotal = 0;
+  let othersCount = 0;
+  for (const otherId of Object.keys(players)) {
+    if ((otherId as PlayerId) === casterId) continue;
+    if (!players[otherId as PlayerId]!.alive) continue;
+    othersTotal += roundKills[otherId as PlayerId] ?? 0;
+    othersCount++;
+  }
+  if (othersCount === 0) return 1; // last one standing — nobody to be ahead OF
+  const ownKills = roundKills[casterId] ?? 0;
+  const lead = ownKills - othersTotal / othersCount;
+  if (lead <= 0) return 1;
+  const mult = 1 - lead * SYZ_SNOWBALL_BRAKE_PER_KILL_LEAD;
+  return Math.max(SYZ_SNOWBALL_BRAKE_FLOOR, mult);
+}
+
+/**
+ * Low-aim auto-target helpers (2026-07-18, class-overhaul-workboard.md
+ * chunk 3.4 — Jake's live design direction: "tendrils that ooze out and
+ * self guide to its correct destination... less about aiming with the
+ * priest"). Both scan `state.players` (the stable pre-tick read every
+ * other cross-player scan this tick uses — Facet Break/Judgment Line's own
+ * precedent) for the NEAREST valid target within range, no aim-cone check
+ * at all (the deliberate difference from those two marks — see
+ * SYZ_ALLY_SEARCH_RANGE_PX/SYZ_ENEMY_SEARCH_RANGE_PX's own doc comment for
+ * why this session shares ONE helper per polarity instead of N hand-rolled
+ * near-duplicate loops). Pure functions — no player-entity mutation.
+ */
+function findNearestAlly(
+  caster: PlayerEntity,
+  players: Record<PlayerId, PlayerEntity>,
+  rangePx: number,
+  options: { requireInjured?: boolean; excludeSelf?: boolean } = {},
+): PlayerEntity | null {
+  let best: PlayerEntity | null = null;
+  let bestDist = Infinity;
+  for (const [otherId, other] of Object.entries(players)) {
+    if (options.excludeSelf !== false && (otherId as PlayerId) === caster.id) continue;
+    if (!other.alive) continue;
+    if (!isAlly(caster, other)) continue;
+    if (options.requireInjured && other.health >= 100) continue;
+    const dx = other.x - caster.x;
+    const dy = other.y - caster.y;
+    const dist = Math.hypot(dx, dy);
+    if (dist > rangePx) continue;
+    if (dist < bestDist) {
+      bestDist = dist;
+      best = other;
+    }
+  }
+  return best;
+}
+
+function findNearestEnemy(
+  caster: PlayerEntity,
+  players: Record<PlayerId, PlayerEntity>,
+  rangePx: number,
+  options: { requireCursed?: boolean; tick?: Tick } = {},
+): PlayerEntity | null {
+  let best: PlayerEntity | null = null;
+  let bestDist = Infinity;
+  for (const [otherId, other] of Object.entries(players)) {
+    if ((otherId as PlayerId) === caster.id) continue;
+    if (!other.alive) continue;
+    if (isAlly(caster, other)) continue;
+    if (options.requireCursed) {
+      const tick = options.tick ?? 0;
+      const cursed =
+        (other.burnUntilTick !== undefined && other.burnUntilTick > tick) ||
+        (other.freezeUntilTick !== undefined && other.freezeUntilTick > tick) ||
+        (other.slowedUntilTick !== undefined && other.slowedUntilTick > tick);
+      if (!cursed) continue;
+    }
+    const dx = other.x - caster.x;
+    const dy = other.y - caster.y;
+    const dist = Math.hypot(dx, dy);
+    if (dist > rangePx) continue;
+    if (dist < bestDist) {
+      bestDist = dist;
+      best = other;
+    }
+  }
+  return best;
+}
+
 /** Underside of the map's ceiling (a wide solid wall whose top sits at the map
  *  top). null when there's no such platform (open-top map). */
 function computeCeilingClampY(map: MapDefinition): number | null {
@@ -449,6 +1205,7 @@ export function createRuntime(map: MapDefinition, mode: WorldMode = "combat"): W
     prevKeys: new Map(),
     movement: new Map(),
     melee: new Map(),
+    paladinMelee: new Map(),
     nextEntityId: 1,
     map,
     mode,
@@ -571,6 +1328,11 @@ export class World {
         abilityCharge: 0,
         lastProcessedInputSeq: InputSeq(0),
         jetpackFuel: JETPACK_MAX_FUEL,
+        // Duos-queue team identity (class-overhaul-workboard.md chunk 1.1) —
+        // mirrors PlayerSpawnInfo.teamId onto the entity once, at
+        // construction. Omitted key when absent, same optional-spread
+        // convention as every other additive PlayerEntity field.
+        ...(spawn.teamId ? { teamId: spawn.teamId } : {}),
       };
       scores[spawn.playerId] = 0;
     }
@@ -727,11 +1489,15 @@ export function stepWithRuntime(
   // Copy-on-write so a fighting tick with no new shots costs zero
   // allocations on the projectiles record. See client/src/sim/cowRecord.ts.
   const projectilesCow = new CowRecord<EntityId, ProjectileEntity>(state.projectiles);
-  // Mutable copy of satellites — fire-on-first-shot may add new entries; the
-  // satellite step later this tick rotates and ticks them. Not CoW-wrapped
-  // because stepSatellites returns a freshly-allocated record at line ~513
-  // anyway, so a CoW would save nothing.
-  let nextSatellites: WorldState["satellites"] = { ...(state.satellites ?? {}) };
+  // fire-on-first-shot may add new entries before the satellite step later
+  // this tick rotates and ticks them. stepSatellites (satellite.ts) is
+  // called UNCONDITIONALLY every tick and always returns a freshly-allocated
+  // record — so an eagerly-copied `nextSatellites` is discarded on every
+  // single tick regardless of content (perf audit M2, 2026-07-18). Default
+  // to the same reference (zero allocation) and copy-on-write only at the
+  // rare mutation site that needs to add an entry before stepSatellites runs.
+  const baseSatellites: WorldState["satellites"] = state.satellites ?? {};
+  let nextSatellites: WorldState["satellites"] = baseSatellites;
 
   // NINJA MELEE trigger capture (see the "1z2. NINJA MELEE" section below,
   // right after DASH BASH): the Fire rising-edge has to be read HERE, in
@@ -742,6 +1508,107 @@ export function stepWithRuntime(
   // map only carries "did a ninja just press Fire this tick, and what was
   // their aim" across that gap. Cleared implicitly each tick (fresh Map).
   const ninjaSlashEdges = new Map<PlayerId, { aimX: number; aimY: number }>();
+  /** Same capture contract as `ninjaSlashEdges` above, for Paladin's Kindled
+   *  Edge (class-overhaul-workboard.md chunk 2.1) — see the "1z3. PALADIN
+   *  MELEE" section below, right after the ninja melee block. */
+  const paladinEdgeEdges = new Map<PlayerId, { aimX: number; aimY: number }>();
+
+  /**
+   * Syzygist deferred ally-target casts (class-overhaul-workboard.md chunk
+   * 3.4). The main per-player loop below iterates `state.players` (the
+   * FROZEN pre-tick snapshot — see `entity` immediately below) and only
+   * commits each player's own result at the END of their own iteration
+   * (`players[pid] = nextEntity`). A cross-player write into
+   * `players[otherId]` made DURING one player's turn is silently LOST the
+   * moment that other player's OWN turn runs later this same loop — their
+   * `nextEntity` starts from the stale `entity` (not the live `players`
+   * record), so their own commit overwrites whatever an earlier caster
+   * just wrote. This is the exact hazard Facet Break's own comment
+   * documents ("a cross-player write here would be lost the moment that
+   * victim's own turn... runs") — this session's regen/haste/Ward
+   * mechanism functions (`applyRegenToAlly` etc.) are safe to call BETWEEN
+   * ticks (as chunk 3.1's own tests do) but are NOT safe to call directly
+   * from inside this loop for a target that hasn't had its turn yet.
+   * Borrowed Time / Glass Ward / Haste Gift / Contagion queue their
+   * cross-player effect here instead of writing immediately; a dedicated
+   * pass right after this loop closes (once EVERY player has committed)
+   * applies them safely, using the now-fully-current `players` record —
+   * the same "defer cross-player effects to a pass that runs after the
+   * loop" shape `applyTeamPeel`'s own hit-resolution-time call already
+   * proves out.
+   */
+  type PendingSyzygistCast =
+    | { kind: "haste-gift"; casterId: PlayerId; targetId: PlayerId; multiplier: number; durationTicks: number }
+    | { kind: "glass-ward"; casterId: PlayerId; targetId: PlayerId; absorb: number; durationTicks: number }
+    | { kind: "borrowed-time"; targetId: PlayerId; heal: number; drain: number; debtDelayTick: Tick }
+    | { kind: "contagion"; sourceId: PlayerId; jumpTargetId: PlayerId };
+  const pendingSyzygistCasts: PendingSyzygistCast[] = [];
+
+  /**
+   * Instant-AoE queue (aoe role rework, 2026-07-18, docs/design-axioms.md
+   * A7): every "aoe"-tagged ability in this file used to spawn a fan/ring of
+   * discrete ProjectileEntity objects — a burst of bullets, not a real area
+   * effect (exactly the "split-spam" pattern A7 already named and fixed
+   * once in the universal card-pool rework, just wearing the aoe role tag
+   * here instead). Each now queues ONE entry here — an epicenter, a radius
+   * (optionally narrowed to a cone), a flat damage, and an optional slow —
+   * instead of spawning entities. A dedicated pass right after the main
+   * loop closes (same "every player has committed their own turn" timing
+   * pendingSyzygistCasts's own doc comment above establishes, and the SAME
+   * post-loop site applyTeamPeel/applyBastionAura already resolve hits at)
+   * resolves every entry: a plain center-to-center distance check (no
+   * raycast/LOS — the same simplification findNearestEnemy/hasRallyLight
+   * Source/applyBastionAura already use for every other ability range in
+   * this file) against every OTHER player, routed through the exact same
+   * tryDeflectDamage + rallyLightDamageMultiplier + applyBastionAura +
+   * applyTeamPeel mitigation chain DASH BASH/NINJA MELEE/PALADIN MELEE use,
+   * so shield/parry counterplay and every existing damage-amp/mitigation
+   * aura still applies to these hits exactly as it did when they were
+   * projectiles. Casting inside THIS loop (queuing here, not writing
+   * `players[otherId]` directly) avoids the cross-player-write-mid-loop
+   * hazard Facet Break's own comment documents; the entries themselves
+   * carry no player-entity references, just plain data, so queuing is safe
+   * even for the LANDING-gated casts (Shock Ring/Crater) that resolve many
+   * ticks after the original press.
+   */
+  type PendingInstantAoe = {
+    /** Ability kind — carried through only for future debugging/telemetry,
+     *  never branched on in the resolution pass (every entry is resolved
+     *  identically regardless of which ability queued it). */
+    kind: string;
+    casterId: PlayerId;
+    x: number;
+    y: number;
+    radius: number;
+    damage: number;
+    /** Cone half-shape (Prism Fan only) — both present or both absent. */
+    aimAngle?: number;
+    coneRadians?: number;
+    slowMultiplier?: number;
+    slowDurationMs?: number;
+  };
+  const pendingInstantAoe: PendingInstantAoe[] = [];
+
+  /**
+   * Lingering-zone queue (aoe role rework, Tier B — Lattice/Consecrated
+   * Field only, the two abilities whose OWN case comments already flagged
+   * "not the doc's persisting plane/field" as the real gap). Reuses the
+   * EXACT `FireEntity`/`firePatches` primitive fire hazards and broken
+   * flammable destructibles already spawn into — no new entity kind, no new
+   * Zig ABI surface (FireEntity's shape/wire size is untouched; this only
+   * adds more instances of it). Collected here (a plain array, not written
+   * into `state.firePatches` directly) for the same reason projectiles get
+   * a COW record instead of a direct write — spawning is safe mid-loop
+   * (firePatches are WORLD-owned entities, exactly like projectiles, not
+   * another player's PlayerEntity), but merging happens once, at the single
+   * site below (section 3c) that already owns `nextFirePatches` construction.
+   * `stepFirePatches` (fire.ts) is what actually ticks/damages these every
+   * tick — pure radius+DPS+duration, no shield/parry mitigation (same
+   * "environmental DoT" category fire patches and the sudden-death storm
+   * already are), excluding only the exact owner (never allies — matches
+   * fire patches' own existing, pre-existing-to-this-pass behavior).
+   */
+  const pendingZoneSpawns: FireEntity[] = [];
 
   for (const [pid_, entity] of Object.entries(state.players)) {
     const pid = pid_ as PlayerId;
@@ -782,9 +1649,31 @@ export function stepWithRuntime(
       // one that awards it (see the hit-confirmed drain below), the boost
       // takes effect starting next tick, which is imperceptible.
       const firstBloodMul = state.round.firstBloodPlayerId === pid ? FIRST_BLOOD_SPEED_MULTIPLIER : 1;
+      // Syzygist haste (class-overhaul-workboard.md chunk 3.1): while
+      // hasteUntilTick is in the future, multiply movement by
+      // hasteMultiplier — same tick-gated read as slow/freeze immediately
+      // above, just a buff (>1) instead of a debuff (<1). Composes into the
+      // SAME speedMul scalar every other multiplier here does, so it
+      // crosses into the live wasm `step_player` physics backend for free
+      // via the existing `speedMultiplier` option below (no Zig-side
+      // movement change needed — see hasteUntilTick's doc comment in
+      // types.ts for the full ABI reasoning).
+      const hasteActive =
+        entity.hasteUntilTick !== undefined &&
+        entity.hasteUntilTick > state.tick;
+      const hasteMul = hasteActive ? entity.hasteMultiplier ?? 1 : 1;
+      // Rally Light (Kindred catalog v1 fast-follow, class-overhaul-
+      // workboard.md chunk 2.6): "move tick" for anyone the aura currently
+      // covers — READS `state.players` (the stable pre-tick snapshot every
+      // other other-player scan this tick uses, e.g. Judgment Line's target
+      // search), never writes another player's entity, so it's safe inside
+      // this per-player loop (see `hasRallyLightSource`'s own doc comment).
+      const rallyMul = hasRallyLightSource(entity, state.players, state.tick)
+        ? KIN_RALLY_LIGHT_MOVE_MULTIPLIER
+        : 1;
       // Card augments: move-speed + gravity (glide/heavy) ride the existing
       // step multipliers, so they cross into the Zig player step for free.
-      const speedMul = slowMul * freezeMul * firstBloodMul * build.moveSpeedMultiplier;
+      const speedMul = slowMul * freezeMul * firstBloodMul * hasteMul * rallyMul * build.moveSpeedMultiplier;
       // Captured BEFORE stepPlayer mutates movement memory — the ninja
       // wall-kick energy grant (below) needs the PRE-step wall-contact
       // state to detect "a wall-jump just happened", the same signal
@@ -794,8 +1683,13 @@ export function stepWithRuntime(
       // stepPlayer dispatches to the TS-native path or the wasm physics
       // backend (which defaults on for live matches) — a callback hook
       // into stepPlayerNative would silently never fire under wasm.
+      // Shock Ring/Crater's landing detection and the Second Wind Paladin
+      // stomp-jump (below) reuse this EXACT before/after idiom for
+      // groundedLastFrame/airJumpsUsed — same "read INPUT and OUTPUT only"
+      // backend-agnostic reasoning.
       const wallDirBeforeStep = mem.touchingWallDir;
       const groundedBeforeStep = mem.groundedLastFrame;
+      const airJumpsUsedBeforeStep = mem.airJumpsUsed;
       const moveResult = stepPlayer(
         entity,
         prevKeys,
@@ -841,13 +1735,140 @@ export function stepWithRuntime(
       if (classId === "ninja") {
         const jumpEdge = (currKeys & JumpBit) !== 0 && (prevKeys & JumpBit) === 0;
         if (jumpEdge && wallDirBeforeStep !== 0 && !groundedBeforeStep) {
+          // Wall Bloom (Interstice catalog v1, aoe role): while the window
+          // lives, THIS wall-kick also blooms a shard burst at the wall-
+          // contact point — single-use, cleared on this wall-kick (not
+          // just on timeout).
+          const wallBloomLive =
+            nextEntity.wallBloomUntilTick !== undefined &&
+            nextEntity.wallBloomUntilTick > state.tick;
           nextEntity = {
             ...nextEntity,
             energy: Math.min(
               NINJA_ENERGY_MAX,
               (nextEntity.energy ?? 0) + NINJA_ENERGY_ON_WALL_KICK,
             ),
+            wallBloomUntilTick: wallBloomLive ? undefined : nextEntity.wallBloomUntilTick,
           };
+          if (wallBloomLive) {
+            // Aoe role rework (2026-07-18): was a burst of discrete shard
+            // projectiles off the wall; now an instant radius check
+            // centered on the wall-contact point (queued for the post-loop
+            // resolution pass below — same "everyone in range takes it in
+            // one tick" fix as every other aoe-tagged ability this pass).
+            const wallX = nextEntity.x + wallDirBeforeStep * (PLAYER_BODY_WIDTH / 2 + 6);
+            pendingInstantAoe.push({
+              kind: "wall-bloom",
+              casterId: pid,
+              x: wallX,
+              y: nextEntity.y,
+              radius: NINJA_WALL_BLOOM_RADIUS_PX,
+              damage: NINJA_WALL_BLOOM_DAMAGE,
+            });
+          }
+        }
+      }
+
+      // Paladin landing/air-jump hooks (class-overhaul-workboard.md chunk
+      // 2.6 fast-follow): Shock Ring/Crater resolve on landing, Second
+      // Wind's Paladin expression resolves on the AIR JUMP itself. Same
+      // before/after `stepPlayer` idiom the ninja wall-kick grant above
+      // uses — backend-agnostic (works under both the TS-native and wasm
+      // physics paths).
+      if (classId === "paladin" && !hangoutMode) {
+        const groundedAfterStep = moveResult.memory.groundedLastFrame;
+        const justLanded = !groundedBeforeStep && groundedAfterStep;
+        if (justLanded) {
+          // Shock Ring: the hop's arm window is still live → slam. Aoe role
+          // rework (2026-07-18): was a ring of discrete shard projectiles;
+          // now a single instant radius check queued for the post-loop
+          // resolution pass — same damage/radius, no status effect (a plain
+          // "space claim" thump).
+          if (
+            nextEntity.shockRingArmedUntilTick !== undefined &&
+            nextEntity.shockRingArmedUntilTick > state.tick
+          ) {
+            pendingInstantAoe.push({
+              kind: "shock-ring",
+              casterId: pid,
+              x: nextEntity.x,
+              y: nextEntity.y,
+              radius: KIN_SHOCK_RING_RADIUS_PX,
+              damage: KIN_SHOCK_RING_DAMAGE,
+            });
+            nextEntity = { ...nextEntity, shockRingArmedUntilTick: undefined };
+          }
+          // Crater (card-pool-v2.md #26): the leap's arm window is still
+          // live → epicenter burst (small radius, high damage, stagger) +
+          // a traveling ring (larger radius, lower damage). Aoe role rework
+          // (2026-07-18): both novas were rings of discrete shard
+          // projectiles (the epicenter burst even SPLIT KIN_CRATER_SLAM_
+          // DAMAGE across all 8 shards, so a target had to eat nearly every
+          // shard to see the doc's full 24 — a real damage bug this fix
+          // also corrects) — now two instant radius checks, queued for the
+          // post-loop resolution pass, each dealing its FULL doc damage to
+          // everyone in range in one tick. The ring's own doc text
+          // ("travels the floor... at 480px/s") describes a gradually-
+          // expanding wavefront this pass does NOT build (a bigger lift
+          // than Tier A's budget for an ability that wasn't one of the two
+          // flagged Tier-B zones — see constants.ts's KIN_CRATER_RING_*
+          // comment) — v1 collapses it to an instant check at its full
+          // 240px reach, still a real radius check, just not a traveling
+          // one. Epicenter carries the stagger (a strong, short slow);
+          // the ring carries none — matches the doc's "epicenter vs
+          // traveling ring" damage/control split.
+          if (
+            nextEntity.craterArmedUntilTick !== undefined &&
+            nextEntity.craterArmedUntilTick > state.tick
+          ) {
+            pendingInstantAoe.push({
+              kind: "crater-epicenter",
+              casterId: pid,
+              x: nextEntity.x,
+              y: nextEntity.y,
+              radius: KIN_CRATER_SLAM_RADIUS_PX,
+              damage: KIN_CRATER_SLAM_DAMAGE,
+              slowMultiplier: KIN_CRATER_SLAM_STAGGER_MULTIPLIER,
+              slowDurationMs: SLOW_FIELD_DURATION_MS,
+            });
+            pendingInstantAoe.push({
+              kind: "crater-ring",
+              casterId: pid,
+              x: nextEntity.x,
+              y: nextEntity.y,
+              radius: KIN_CRATER_RING_RADIUS_PX,
+              damage: KIN_CRATER_RING_DAMAGE,
+            });
+            nextEntity = { ...nextEntity, craterArmedUntilTick: undefined };
+          }
+        }
+        // Second Wind — Paladin expression (docs/card-pool-v2.md "the
+        // stomp-jump"): fires on the AIR JUMP itself (the departure), not
+        // on landing — "his air jump deals 6 damage in a 70px ring beneath
+        // him". Gated on the card actually being equipped, same "read the
+        // card id directly" economy Retort/Bastion use.
+        if (
+          moveResult.memory.airJumpsUsed > airJumpsUsedBeforeStep &&
+          nextEntity.cards.includes("double-jump")
+        ) {
+          const stompCount = 6;
+          for (let i = 0; i < stompCount; i++) {
+            const angle = (i / stompCount) * 2 * Math.PI;
+            const shard = spawnProjectile(allocId(), {
+              ownerId: pid,
+              origin: { x: nextEntity.x, y: nextEntity.y + 20 },
+              aimAngle: angle,
+              speed: 220,
+              damage: KIN_STOMP_JUMP_DAMAGE / stompCount,
+              lifetimeMs: Math.max(50, (KIN_STOMP_JUMP_RADIUS_PX / 220) * 1000),
+              radius: 6,
+              shape: build.projectile.shape,
+              pathing: "straight",
+              element: build.projectile.element,
+            });
+            shard.rangePx = KIN_STOMP_JUMP_RADIUS_PX;
+            projectilesCow.set(shard.id, shard);
+          }
         }
       }
     }
@@ -866,27 +1887,38 @@ export function stepWithRuntime(
     // dash-bash/destructible-splash/fire-patch player damage are gated, and
     // the storm was already hangout-gated. Destructibles remain hittable.
     //
-    // Ninja: Fire is the SAME "primary attack" input as every other class,
-    // but the chassis verb is a melee arc, not stepWeapon's ranged shot —
-    // this branch captures the rising edge for loop 2's FSM instead of
-    // ever calling stepWeapon. Zero behavior change for non-ninja classes
-    // (they take the untouched branch below exactly as before).
-    if (classId === "ninja" && nextEntity.alive && fightingPhase) {
-      const slashEdge = (currKeys & FireBit) !== 0 && (prevKeys & FireBit) === 0;
-      if (slashEdge) {
-        ninjaSlashEdges.set(pid, { aimX, aimY });
+    // Ninja/Paladin: Fire is the SAME "primary attack" input as every other
+    // class, but the chassis verb is a melee arc, not stepWeapon's ranged
+    // shot — this branch captures the rising edge for loop 2's FSM instead
+    // of ever calling stepWeapon. Zero behavior change for the other two
+    // classes (wizard/priest still take the untouched branch below exactly
+    // as before) — and Paladin joining this branch (2026-07-18, chunk 2.1)
+    // is a real, in-scope behavior change for Paladin specifically (it
+    // previously fell through to stepWeapon's ranged shot like everyone
+    // else; Kindled Edge replaces that, matching how ninja's own melee
+    // verb replaced its ranged shot in the prior chunk).
+    if ((classId === "ninja" || classId === "paladin") && nextEntity.alive && fightingPhase) {
+      const meleeEdge = (currKeys & FireBit) !== 0 && (prevKeys & FireBit) === 0;
+      if (meleeEdge) {
+        if (classId === "ninja") {
+          ninjaSlashEdges.set(pid, { aimX, aimY });
+        } else {
+          paladinEdgeEdges.set(pid, { aimX, aimY });
+        }
       }
-      // Passive energy regen ("fast regen" — classes-goal.md MANA section).
-      // Deliberately the only source that ISN'T contact-gated; kept small
-      // (see NINJA_ENERGY_PASSIVE_REGEN_PER_SEC) so it stays a top-up, not
-      // the loop (character-sheets-v1.md's explicit fail-state warning).
-      nextEntity = {
-        ...nextEntity,
-        energy: Math.min(
-          NINJA_ENERGY_MAX,
-          (nextEntity.energy ?? 0) + NINJA_ENERGY_PASSIVE_REGEN_PER_SEC * (effDtMs / 1000),
-        ),
-      };
+      // Passive energy regen ("fast regen" — classes-goal.md MANA section)
+      // is a NINJA-ONLY resource source. Paladin has no analogous passive
+      // trickle here — Kindling comes exclusively from Ward absorbing
+      // damage (combat.ts), not from any per-tick regen tied to Fire/Edge.
+      if (classId === "ninja") {
+        nextEntity = {
+          ...nextEntity,
+          energy: Math.min(
+            NINJA_ENERGY_MAX,
+            (nextEntity.energy ?? 0) + NINJA_ENERGY_PASSIVE_REGEN_PER_SEC * (effDtMs / 1000),
+          ),
+        };
+      }
     } else if (nextEntity.alive && fightingPhase) {
       const fireResult = stepWeapon(
         nextEntity,
@@ -931,6 +1963,9 @@ export function stepWithRuntime(
               owned,
               allocId,
             );
+            if (newSats.length > 0 && nextSatellites === baseSatellites) {
+              nextSatellites = { ...nextSatellites };
+            }
             for (const sat of newSats) {
               nextSatellites[sat.id] = sat;
             }
@@ -1050,16 +2085,30 @@ export function stepWithRuntime(
     // Drafted actives (six-axes-goal.md Layer 2): input bits 10..12 press
     // action-bar slots 1..3 in pick order (docs/classes-goal.md "Rotation
     // system" — rack is exactly 3 slots, bit 13 / a 4th slot is unused).
-    // Rising-edge + alive + fighting + !hangout + cooldown expired →
-    // activate. Effects are ordinary buff ticks / entities; the cooldown
-    // lives on the entity (hash-mixed, delta-synced) so prediction and
-    // authority agree.
+    // Rising-edge + alive + fighting + cooldown expired → activate. Effects
+    // are ordinary buff ticks / entities; the cooldown lives on the entity
+    // (hash-mixed, delta-synced) so prediction and authority agree.
+    // LIVE in hangout mode (live playtest 2026-07-18, Jake: "the button
+    // presses dont fire off the spells") — this used to hard-block every
+    // class's abilities in the lobby unconditionally (a leftover from
+    // before the lobby had any cards to activate at all). Same "activation
+    // is live, PvP damage is blocked at each individual damage site"
+    // precedent as the Fire gate above: every ability here either (a)
+    // writes only `nextEntity` / spawns a projectile — and hangout's
+    // `projectilePlayerIds = []` already makes projectiles pass through
+    // other players as ghosts — or (b) is a Syzygist ally-target write via
+    // pendingSyzygistCasts, gated on `isAlly`, which is unconditionally
+    // false in hangout (lobby `PlayerEntity`s never get a `teamId` —
+    // venueHost.ts's `spawnFor` never sets one; only the arena's duo-bell
+    // admission does). See the ninja-catalog/Kindred/Syzygist safety audit
+    // (chunk: hangout-ability-activation-fix) — no ability here mutates
+    // another player's `health` directly.
     for (let slot = 0; slot < build.actives.length && slot < MAX_ABILITY_SLOTS; slot++) {
       const slotBit = 1 << (10 + slot);
       const slotEdge =
         (currKeys & slotBit) !== 0 && (prevKeys & slotBit) === 0;
       if (!slotEdge) continue;
-      if (!nextEntity.alive || !fightingPhase || hangoutMode) continue;
+      if (!nextEntity.alive || !fightingPhase) continue;
       const active = build.actives[slot]!;
       const cdUntil =
         slot === 0
@@ -1219,64 +2268,50 @@ export function stepWithRuntime(
           break;
         }
         case "prism-fan": {
-          // Instant cone burst — the emission cast's radial-fan shape, just
-          // aimed at the cursor instead of 360°. Reuses the resolved build's
-          // own projectile identity so the burst always matches the current
-          // loadout (element, shape, speed).
+          // Aoe role rework (2026-07-18, docs/design-axioms.md A7): was a
+          // fan of discrete shard projectiles (split-spam wearing the aoe
+          // tag). Now an instant cone radius-check, queued for the post-loop
+          // resolution pass below — everyone standing inside the cone at
+          // cast time takes the hit in one tick, no shard travel, no gap
+          // between projectile paths a body could stand in without being
+          // "hit". Forward-aimed (not 360°) — "still crystal munitions,
+          // just more of the angle" — the differentiation from Lattice's
+          // self-centered nova below.
           const dx0 = aimX - nextEntity.x;
           const dy0 = aimY - nextEntity.y;
           const baseAngle = lutAtan2(dy0, dx0);
-          for (let i = 0; i < GEO_PRISM_FAN_COUNT; i++) {
-            // GEO_PRISM_FAN_COUNT is a fixed constant > 1 (see constants.ts);
-            // no single-shot special case needed, unlike weapon.ts's
-            // variable projectileCount.
-            const offset =
-              -GEO_PRISM_FAN_CONE_RADIANS / 2 +
-              (GEO_PRISM_FAN_CONE_RADIANS * i) / (GEO_PRISM_FAN_COUNT - 1);
-            const shard = spawnProjectile(allocId(), {
-              ownerId: pid,
-              origin: { x: nextEntity.x, y: nextEntity.y - 20 },
-              aimAngle: baseAngle + offset,
-              speed: build.projectileSpeed * build.projectile.speedMultiplier,
-              damage: build.damage * GEO_PRISM_FAN_DAMAGE_MULTIPLIER,
-              lifetimeMs: Math.max(50, build.projectileLifetimeSeconds * 1000),
-              radius: Math.max(2, 7 * build.projectile.sizeMultiplier),
-              shape: build.projectile.shape,
-              pathing: "straight",
-              element: build.projectile.element,
-            });
-            projectilesCow.set(shard.id, shard);
-          }
+          pendingInstantAoe.push({
+            kind: "prism-fan",
+            casterId: pid,
+            x: nextEntity.x,
+            y: nextEntity.y,
+            radius: GEO_PRISM_FAN_RANGE_PX,
+            damage: build.damage * GEO_PRISM_FAN_DAMAGE_MULTIPLIER,
+            aimAngle: baseAngle,
+            coneRadians: GEO_PRISM_FAN_CONE_RADIANS,
+          });
           activated = true;
           break;
         }
         case "lattice": {
-          // v1 = an instant 360° nova, not the doc's persisting damaging
-          // plane (recorded upgrade — needs a new entity kind + wire
-          // surface, same shape of deferral as Shelter Seal's placed-ward
-          // fallback above). Self-centered, short range, so it reads as
-          // distinct from Prism Fan's aimed cone.
-          for (let i = 0; i < GEO_LATTICE_COUNT; i++) {
-            const angle = (i / GEO_LATTICE_COUNT) * 2 * Math.PI;
-            const shard = spawnProjectile(allocId(), {
-              ownerId: pid,
-              origin: { x: nextEntity.x, y: nextEntity.y - 20 },
-              aimAngle: angle,
-              speed: build.projectileSpeed * build.projectile.speedMultiplier * 0.7,
-              damage: build.damage * GEO_LATTICE_DAMAGE_MULTIPLIER,
-              lifetimeMs: Math.max(
-                50,
-                (GEO_LATTICE_RANGE_PX /
-                  Math.max(1, build.projectileSpeed * build.projectile.speedMultiplier * 0.7)) *
-                  1000,
-              ),
-              radius: Math.max(2, 7 * build.projectile.sizeMultiplier),
-              shape: build.projectile.shape,
-              pathing: "straight",
-              element: build.projectile.element,
-            });
-            projectilesCow.set(shard.id, shard);
-          }
+          // Aoe role rework (2026-07-18): this ability's OWN v1 comment
+          // already flagged the gap — "an instant 360° nova, not the doc's
+          // persisting damaging plane". Tier B fix: a genuine lingering
+          // zone, built on the SAME `firePatches`/`FireEntity` primitive
+          // fire hazards already use (radius + damagePerSecond +
+          // remainingMs, ticked every tick by `stepFirePatches` against
+          // anyone overlapping) — no new entity kind, no new Zig ABI
+          // surface. Pure damage, no status (space denial via damage alone
+          // — Consecrated Field below is the damage+slow sibling).
+          pendingZoneSpawns.push({
+            id: allocId(),
+            ownerId: pid,
+            x: nextEntity.x,
+            y: nextEntity.y,
+            radius: GEO_LATTICE_ZONE_RADIUS_PX,
+            remainingMs: GEO_LATTICE_ZONE_DURATION_MS,
+            damagePerSecond: GEO_LATTICE_ZONE_DPS,
+          });
           activated = true;
           break;
         }
@@ -1389,6 +2424,927 @@ export function stepWithRuntime(
           activated = true;
           break;
         }
+        // ── Kindred catalog v1 (docs/class-ability-catalogs-v1.md) ─────────
+        // classId-gated to paladin at the offer roll (round.ts). Same
+        // substrate-reuse discipline as the Geometrician block above — see
+        // constants.ts's KIN_* header note for the per-ability reasoning.
+        // Every case here only ever writes `nextEntity` (self) or spawns a
+        // projectile (`projectilesCow`) — never another player's entity —
+        // for the SAME reason Facet Break's own comment gives above: a
+        // cross-player write inside this per-player loop would be lost the
+        // moment that OTHER player's own turn runs later this tick.
+        // Sunspike and Consecrated Field's actual damage therefore rides
+        // the existing projectile-hit-resolution pass (which runs AFTER
+        // every player's turn this tick, and is already team-peel-aware —
+        // chunk 2.4) rather than hand-rolling a second damage path; Kindled
+        // Edge-side consumption for Judgment Line / Unbroken Seal happens
+        // at the "1z3. PALADIN MELEE" section below, which also runs after
+        // every player's turn.
+        case "bastion-pulse": {
+          // Instant self-absorb tick, doubled if Ward is actively held at
+          // cast time ("stronger if Ward is held", doc) — reuses Return
+          // Glass's exact shield-charge-tick shape (constants.ts).
+          const maxCharge = SHIELD_MAX_CHARGE_DEFAULT * build.shieldChargeMultiplier;
+          const refund = nextEntity.shieldActive
+            ? KIN_BASTION_PULSE_SHIELD_REFUND * KIN_BASTION_PULSE_WARD_HELD_MULTIPLIER
+            : KIN_BASTION_PULSE_SHIELD_REFUND;
+          nextEntity = {
+            ...nextEntity,
+            shieldCharge: Math.min(maxCharge, (nextEntity.shieldCharge ?? 0) + refund),
+          };
+          activated = true;
+          break;
+        }
+        case "sunspike": {
+          // v1 = a single fast, narrow, short-range shot through the
+          // existing projectile system (constants.ts KIN_SUNSPIKE_* header
+          // note) — arrives in ≈0.1s, reading as a thrust rather than a
+          // lobbed shot. Inherits the resolved build's own element/shape
+          // identity, same as Prism Fan/Lattice above, so a fire-handed
+          // paladin's Sunspike burns too.
+          const dx0 = aimX - nextEntity.x;
+          const dy0 = aimY - nextEntity.y;
+          const aimAngle = lutAtan2(dy0, dx0);
+          const shard = spawnProjectile(allocId(), {
+            ownerId: pid,
+            origin: { x: nextEntity.x, y: nextEntity.y - 20 },
+            aimAngle,
+            speed: KIN_SUNSPIKE_SPEED,
+            damage: KIN_SUNSPIKE_DAMAGE,
+            lifetimeMs: Math.max(50, (KIN_SUNSPIKE_RANGE_PX / KIN_SUNSPIKE_SPEED) * 1000),
+            radius: Math.max(2, 9 * build.projectile.sizeMultiplier),
+            shape: build.projectile.shape,
+            pathing: "straight",
+            element: build.projectile.element,
+          });
+          shard.rangePx = KIN_SUNSPIKE_RANGE_PX;
+          projectilesCow.set(shard.id, shard);
+          activated = true;
+          break;
+        }
+        case "judgment-line": {
+          // Mark lives on the CASTER (judgmentTargetId/judgmentMarkUntilTick),
+          // never the victim — the exact Facet Break cross-player write
+          // hazard this file's own comment documents above. Scan shape
+          // (nearest target within range+cone of the aim) is a verbatim
+          // copy of Facet Break's, over `state.players` (the stable
+          // pre-tick read every other-player scan this tick uses).
+          const dx0 = aimX - nextEntity.x;
+          const dy0 = aimY - nextEntity.y;
+          const aimAngle = lutAtan2(dy0, dx0);
+          let bestId: PlayerId | null = null;
+          let bestDist = Infinity;
+          for (const [otherId, other] of Object.entries(state.players)) {
+            if ((otherId as PlayerId) === pid || !other.alive) continue;
+            const ddx = other.x - nextEntity.x;
+            const ddy = other.y - nextEntity.y;
+            const dist = Math.hypot(ddx, ddy);
+            if (dist > KIN_JUDGMENT_RANGE_PX || dist < 1e-3) continue;
+            let da = lutAtan2(ddy, ddx) - aimAngle;
+            da = Math.atan2(Math.sin(da), Math.cos(da));
+            if (Math.abs(da) > KIN_JUDGMENT_CONE_RADIANS / 2) continue;
+            if (dist < bestDist) {
+              bestDist = dist;
+              bestId = otherId as PlayerId;
+            }
+          }
+          if (bestId !== null) {
+            const durTicks = Math.ceil(active.durationMs / Math.max(1, dtMs));
+            nextEntity = {
+              ...nextEntity,
+              judgmentTargetId: bestId,
+              judgmentMarkUntilTick: (state.tick + 1 + durTicks) as Tick,
+            };
+            activated = true;
+          }
+          // No target in the cone: a press that does nothing is a dead
+          // press (legibility law — shadow-step/facet-break precedent) —
+          // no cooldown burn, checked via `activated` below.
+          break;
+        }
+        case "unbroken-seal": {
+          // Window consumed by the NEXT landed Kindled Edge hit (amp +
+          // stagger), at the "1z3. PALADIN MELEE" section below — see
+          // types.ts's sealUntilTick doc comment.
+          const durTicks = Math.ceil(active.durationMs / Math.max(1, dtMs));
+          nextEntity = {
+            ...nextEntity,
+            sealUntilTick: (state.tick + 1 + durTicks) as Tick,
+          };
+          activated = true;
+          break;
+        }
+        case "consecrated-field": {
+          // Aoe role rework (2026-07-18): this ability's OWN v1 comment
+          // already flagged the gap — "an instant self-centered nova, not
+          // the doc's persisting field". Tier B fix, same primitive Lattice
+          // now uses: a genuine lingering `firePatches`/`FireEntity` zone
+          // for the damage-over-time half ("damages... lightly" per the
+          // doc) — KIN_CONSECRATED_FIELD_DAMAGE keeps its old meaning
+          // (total damage over a FULL dwell, same number the old one-shot
+          // burst dealt). The slow half ("...and slows lightly") is applied
+          // ONCE, instantly, to whoever's already standing in the radius at
+          // cast time (the SAME pendingInstantAoe pass Shock Ring/Crater's
+          // stagger use, damage:0 so it doesn't double up with the zone) —
+          // re-checking every tick the zone lingers would need a second,
+          // bespoke per-tick scan on top of `stepFirePatches`' own damage
+          // tick; a documented v1 simplification, not a silent gap. This
+          // damage+slow combination is the differentiation from Lattice's
+          // pure-damage zone: Consecrated Field also tags whoever's caught
+          // at the moment it goes off, costing them an escape option
+          // Lattice doesn't take.
+          pendingZoneSpawns.push({
+            id: allocId(),
+            ownerId: pid,
+            x: nextEntity.x,
+            y: nextEntity.y,
+            radius: KIN_CONSECRATED_FIELD_RADIUS_PX,
+            remainingMs: KIN_CONSECRATED_FIELD_ZONE_DURATION_MS,
+            damagePerSecond:
+              KIN_CONSECRATED_FIELD_DAMAGE / (KIN_CONSECRATED_FIELD_ZONE_DURATION_MS / 1000),
+          });
+          pendingInstantAoe.push({
+            kind: "consecrated-field",
+            casterId: pid,
+            x: nextEntity.x,
+            y: nextEntity.y,
+            radius: KIN_CONSECRATED_FIELD_RADIUS_PX,
+            damage: 0,
+            slowMultiplier: KIN_CONSECRATED_FIELD_SLOW_MULTIPLIER,
+            slowDurationMs: SLOW_FIELD_DURATION_MS,
+          });
+          activated = true;
+          break;
+        }
+        case "aegis-share": {
+          // Window widening THIS player's team-peel radius for allies
+          // (World.ts's findTeamPeelWarder reads aegisShareUntilTick
+          // directly off the candidate warder being tested). The window
+          // opens unconditionally either way — an ally who wanders into
+          // range later during the window still gets peeled for, exactly
+          // as before this fast-follow.
+          //
+          // Solo fallback (docs/axiom-deviations-audit.md "Kindred — two
+          // structural gaps", 2026-07-18): unlike Haste Gift/Glass Ward
+          // (Syzygist), this ability never targeted an ally at cast time to
+          // begin with — it's a passive window a DIFFERENT player's later
+          // hit-resolution reads (findTeamPeelWarder), so a solo caster got
+          // literally nothing from pressing it. Mirrors the Syzygist shape
+          // as closely as this ability's own structure allows: search for
+          // an ally inside the SAME radius the window actually widens
+          // (WARD_PEEL_RADIUS_PX * KIN_AEGIS_SHARE_RADIUS_MULTIPLIER); none
+          // found → grant a flat Kindling tick instead (constants.ts's
+          // KIN_AEGIS_SHARE_SOLO_KINDLING_FEED doc comment — "reduced but
+          // real"). Purely additive: does not touch the ally branch above.
+          const durTicks = Math.ceil(active.durationMs / Math.max(1, dtMs));
+          const soloAlly = findNearestAlly(
+            nextEntity,
+            state.players,
+            WARD_PEEL_RADIUS_PX * KIN_AEGIS_SHARE_RADIUS_MULTIPLIER,
+          );
+          nextEntity = {
+            ...nextEntity,
+            aegisShareUntilTick: (state.tick + 1 + durTicks) as Tick,
+            ...(soloAlly === null
+              ? {
+                  kindling: Math.min(
+                    KINDLING_MAX,
+                    (nextEntity.kindling ?? 0) + KIN_AEGIS_SHARE_SOLO_KINDLING_FEED,
+                  ),
+                }
+              : {}),
+          };
+          activated = true;
+          break;
+        }
+        case "plant-charge": {
+          // Same farthest-collision-free-landing search as shadow-step/
+          // slip-node above, shorter range ("plant-to-plant, not freeflow
+          // ninja") — plus a small shield-charge tick for "ends in
+          // ward-ready stance" (the doc's exact stance/pose timing is a
+          // recorded v1 deferral, same shape as Return Glass's own gap).
+          const dx0 = aimX - nextEntity.x;
+          const dy0 = aimY - nextEntity.y;
+          const dLen = Math.sqrt(dx0 * dx0 + dy0 * dy0);
+          const dirX = dLen > 0.001 ? dx0 / dLen : 1;
+          const dirY = dLen > 0.001 ? dy0 / dLen : 0;
+          for (let d = KIN_PLANT_CHARGE_RANGE_PX; d >= 24; d -= 12) {
+            const cx = nextEntity.x + dirX * d;
+            const cy = nextEntity.y + dirY * d;
+            if (
+              cx < PLAYER_BODY_WIDTH / 2 ||
+              cx > runtime.map.size.x - PLAYER_BODY_WIDTH / 2 ||
+              cy < PLAYER_BODY_HEIGHT / 2 ||
+              cy > runtime.map.size.y - PLAYER_BODY_HEIGHT / 2
+            ) {
+              continue;
+            }
+            const box = centerToAABB(cx, cy, PLAYER_BODY_WIDTH, PLAYER_BODY_HEIGHT);
+            let blocked = false;
+            for (const plat of runtime.map.platforms) {
+              if (aabbOverlap(box, platformToAABB(plat))) {
+                blocked = true;
+                break;
+              }
+            }
+            if (!blocked) {
+              const maxCharge = SHIELD_MAX_CHARGE_DEFAULT * build.shieldChargeMultiplier;
+              nextEntity = {
+                ...nextEntity,
+                x: cx,
+                y: cy,
+                shieldCharge: Math.min(
+                  maxCharge,
+                  (nextEntity.shieldCharge ?? 0) + KIN_PLANT_CHARGE_SHIELD_REFUND,
+                ),
+              };
+              activated = true;
+              break;
+            }
+          }
+          break;
+        }
+        // ── Kindred catalog v1 fast-follow (class-overhaul-workboard.md
+        // chunk 2.6, 2026-07-18) — Retribution Edge, Shock Ring, Rally
+        // Light: the 3 abilities the original pass deferred. Retribution
+        // Edge/Shock Ring only ever write `nextEntity` (self) here — the
+        // same "never another player's entity inside this per-player loop"
+        // discipline the Kindred block above documents. Rally Light writes
+        // `nextEntity` too (it just OPENS the aura-source window; every
+        // beneficiary reads it later, never a write onto them — see
+        // `hasRallyLightSource`'s own doc comment above `applyTeamPeel`).
+        case "retribution-edge": {
+          // Opens the "armed" window. The SECOND window (`retributionReady
+          // UntilTick`) is opened by a landed self-Ward-block while this one
+          // is live (combat.ts's tryDeflectDamage, paladin Ward branch) —
+          // consumed by the next landed Kindled Edge hit ("PALADIN MELEE"
+          // section below, alongside Judgment/Seal consumption).
+          const durTicks = Math.ceil(active.durationMs / Math.max(1, dtMs));
+          nextEntity = {
+            ...nextEntity,
+            retributionArmedUntilTick: (state.tick + 1 + durTicks) as Tick,
+          };
+          activated = true;
+          break;
+        }
+        case "shock-ring": {
+          // A modest upward hop (KIN_SHOCK_RING_HOP_VY, well under a full
+          // jump — "keep hop modest, not sky-god") plus an arm window
+          // covering the hop's airtime. Landing detection + the actual slam
+          // nova happen in the per-player MOVEMENT section above (this
+          // switch runs AFTER movement each tick, so "just landed" for THIS
+          // press can only be detected on a LATER tick — same "the window
+          // persists across ticks until consumed" shape as sealUntilTick/
+          // aegisShareUntilTick).
+          nextEntity = {
+            ...nextEntity,
+            vy: -KIN_SHOCK_RING_HOP_VY,
+            shockRingArmedUntilTick: (state.tick + 1 + Math.ceil(KIN_SHOCK_RING_ARM_WINDOW_MS / Math.max(1, dtMs))) as Tick,
+          };
+          activated = true;
+          break;
+        }
+        case "rally-light": {
+          // Opens the aura-SOURCE window on the caster — no cross-player
+          // write, see `hasRallyLightSource`'s own doc comment (above
+          // `applyTeamPeel`) for why this needs no pendingSyzygistCasts-
+          // style deferred queue.
+          const durTicks = Math.ceil(active.durationMs / Math.max(1, dtMs));
+          nextEntity = {
+            ...nextEntity,
+            rallyLightUntilTick: (state.tick + 1 + durTicks) as Tick,
+          };
+          activated = true;
+          break;
+        }
+        // ── Kindred coverage-floor + solo-viability fast-follow (docs/
+        // axiom-deviations-audit.md "Kindred (paladin) — two structural
+        // gaps", 2026-07-18) — the catalog's 2nd buff and 2nd movement,
+        // closing the ≥2-per-role floor. See constants.ts's KIN_KINDLED_
+        // RESOLVE_*/KIN_BULWARK_STEP_* header comments for the full design.
+        case "kindled-resolve": {
+          // Self-only: spends Kindling for a self stagger-resist + small
+          // self-damage-amp window (kindledResolveDamageMultiplier/
+          // applyKindledResolveStaggerResist above). Insufficient Kindling
+          // is a dead press — no cooldown burn, no spend (legibility law,
+          // same precedent as Shadow Step's blocked-blink/Judgment Line's
+          // no-target case above): `activated` only flips true inside the
+          // affordability branch.
+          const kindlingNow = nextEntity.kindling ?? 0;
+          if (kindlingNow >= KIN_KINDLED_RESOLVE_KINDLING_COST) {
+            const durTicks = Math.ceil(active.durationMs / Math.max(1, dtMs));
+            nextEntity = {
+              ...nextEntity,
+              kindling: kindlingNow - KIN_KINDLED_RESOLVE_KINDLING_COST,
+              kindledResolveUntilTick: (state.tick + 1 + durTicks) as Tick,
+            };
+            activated = true;
+          }
+          break;
+        }
+        case "bulwark-step": {
+          // Same farthest-collision-free-landing search SHAPE as Plant
+          // Charge/Shadow Step above, but direction comes from currently-
+          // HELD movement input (LeftBit/RightBit), never aim — "board-
+          // facing shuffle-reposition" per the audit, the orthogonal-in-
+          // KIND differentiation from Plant Charge's aim-directed charge
+          // (constants.ts's KIN_BULWARK_STEP_* header comment has the full
+          // reasoning). Horizontal-only (cy fixed at the caster's own y —
+          // a lateral shuffle, not a leap), so no vertical map-bounds check
+          // is needed (y is unchanged, already valid). Falls back to the
+          // caster's current horizontal velocity sign, then +X, when
+          // neither left nor right is held — same "always resolves a
+          // direction, never a dead press for lack of aim" contract Plant
+          // Charge's own dx0/dy0 fallback uses just above.
+          const leftHeld = (currKeys & LeftBit) !== 0;
+          const rightHeld = (currKeys & RightBit) !== 0;
+          let stepDirX: number;
+          if (rightHeld && !leftHeld) stepDirX = 1;
+          else if (leftHeld && !rightHeld) stepDirX = -1;
+          else if (Math.abs(nextEntity.vx) > 0.01) stepDirX = Math.sign(nextEntity.vx);
+          else stepDirX = 1;
+          for (let d = KIN_BULWARK_STEP_RANGE_PX; d >= 24; d -= 12) {
+            const cx = nextEntity.x + stepDirX * d;
+            const cy = nextEntity.y;
+            if (cx < PLAYER_BODY_WIDTH / 2 || cx > runtime.map.size.x - PLAYER_BODY_WIDTH / 2) {
+              continue;
+            }
+            const box = centerToAABB(cx, cy, PLAYER_BODY_WIDTH, PLAYER_BODY_HEIGHT);
+            let blocked = false;
+            for (const plat of runtime.map.platforms) {
+              if (aabbOverlap(box, platformToAABB(plat))) {
+                blocked = true;
+                break;
+              }
+            }
+            if (!blocked) {
+              // Deliberately does NOT touch `shieldActive` (and no field
+              // here needs to "preserve" it) — World.ts's `tickShield`
+              // runs AFTER this whole switch and recomputes shieldActive
+              // fresh from held input every tick regardless of what this
+              // case does, so Ward already survives every reposition in
+              // this file. See constants.ts's KIN_BULWARK_STEP_RANGE_PX
+              // doc comment for the full "keeps Ward up" verification.
+              nextEntity = { ...nextEntity, x: cx };
+              activated = true;
+              break;
+            }
+          }
+          break;
+        }
+        // ── Crater (docs/card-pool-v2.md #26, exclusive: Paladin — a
+        // draft-pool ability card, not a Kindred catalog entry, but same
+        // "arm on cast, resolve on landing" shape as Shock Ring above). ────
+        case "crater": {
+          // Leap above the measured 134px jump apex (constants.ts's
+          // KIN_CRATER_LEAP_VY header comment has the height math) plus an
+          // arm window covering the leap's airtime. The doc's "25% air
+          // steer" nuance is a recorded v1 deferral (no new air-control
+          // field this pass). Landing resolution (epicenter burst + the
+          // traveling ring) happens in the per-player MOVEMENT section
+          // above, same landing-detection hook Shock Ring uses.
+          nextEntity = {
+            ...nextEntity,
+            vy: -KIN_CRATER_LEAP_VY,
+            craterArmedUntilTick: (state.tick + 1 + Math.ceil(KIN_CRATER_ARM_WINDOW_MS / Math.max(1, dtMs))) as Tick,
+          };
+          activated = true;
+          break;
+        }
+        // ── Syzygist catalog v1 (docs/class-ability-catalogs-v1.md) ────────
+        // classId-gated to priest at the offer roll (round.ts). Every case
+        // reuses the low-aim auto-target helpers (findNearestAlly/
+        // findNearestEnemy, just above applyRegenToAlly) or an existing
+        // substrate (spawnProjectile + fire-element burn, leechFraction,
+        // applyRegenToAlly/applyHasteToAlly/applyWardToAlly, the Facet-
+        // Break-style caster-side mark) — same discipline as the
+        // Geometrician/Kindred blocks above. Abilities that write onto an
+        // ALLY's entity (Borrowed Time, Haste Gift, Glass Ward, Self-
+        // Lattice) call the exported `applyXToAlly` helpers, which write
+        // directly into `players[target.id]` — safe from the same cross-
+        // player-write-mid-loop hazard Facet Break's own comment documents,
+        // because (like `applyTeamPeel`) they mutate the shared `players`
+        // record immediately rather than deferring through `nextEntity`.
+        case "bleed-tithe": {
+          // Curse DoT + lifesteal, auto-targeted at the nearest enemy — a
+          // fire-element shard reuses World.ts's OWN existing
+          // element==="fire" burn-on-hit branch (below, in the projectile
+          // hit-resolution pass) and ProjectileEntity.leechFraction's
+          // existing self-heal-on-hit path (Crimson Tithe/Stolen Fangs'
+          // own field) for zero new hit-resolution code. Devotion-from-
+          // curse-uptime is a recorded v1 deferral — see constants.ts's
+          // SYZ_DEVOTION_* header note.
+          //
+          // Genuine homing (2026-07-18, Jake: "genu[in]e homing" — see
+          // SYZ_BLEED_TITHE_HOMING_STRENGTH's own doc comment): `pathing:
+          // "homing"` re-targets the nearest enemy EVERY tick via
+          // projectile.ts's existing `closestNonOwnerPlayer` machinery (the
+          // same one seeker-facets/micro-seekers already use), not just at
+          // cast time — the shard genuinely curves to follow if the target
+          // moves, matching the card's own "self-guiding" description
+          // instead of a one-shot auto-aimed straight line.
+          const target = findNearestEnemy(nextEntity, state.players, SYZ_ENEMY_SEARCH_RANGE_PX);
+          if (target !== null) {
+            const dx0 = target.x - nextEntity.x;
+            const dy0 = target.y - nextEntity.y;
+            const aimAngle = lutAtan2(dy0, dx0);
+            const shard = spawnProjectile(allocId(), {
+              ownerId: pid,
+              origin: { x: nextEntity.x, y: nextEntity.y - 20 },
+              aimAngle,
+              speed: SYZ_BLEED_TITHE_SPEED,
+              damage: SYZ_BLEED_TITHE_DAMAGE,
+              lifetimeMs: 1200,
+              radius: 8,
+              shape: build.projectile.shape,
+              pathing: "homing",
+              element: "fire",
+            });
+            shard.leechFraction = SYZ_BLEED_TITHE_LEECH_FRACTION;
+            shard.homingStrength = SYZ_BLEED_TITHE_HOMING_STRENGTH;
+            projectilesCow.set(shard.id, shard);
+            activated = true;
+          }
+          break;
+        }
+        case "severance": {
+          // Burst curse detonate on the nearest ALREADY-cursed enemy —
+          // "execute-adjacent; take polarity". No cursed target in range =
+          // a dead press (legibility law), no cooldown burn.
+          const target = findNearestEnemy(nextEntity, state.players, SYZ_ENEMY_SEARCH_RANGE_PX, {
+            requireCursed: true,
+            tick: state.tick,
+          });
+          if (target !== null) {
+            const dx0 = target.x - nextEntity.x;
+            const dy0 = target.y - nextEntity.y;
+            const aimAngle = lutAtan2(dy0, dx0);
+            const shard = spawnProjectile(allocId(), {
+              ownerId: pid,
+              origin: { x: nextEntity.x, y: nextEntity.y - 20 },
+              aimAngle,
+              speed: SYZ_SEVERANCE_SPEED,
+              damage: SYZ_SEVERANCE_DAMAGE,
+              lifetimeMs: 1000,
+              radius: 8,
+              shape: build.projectile.shape,
+              pathing: "straight",
+              element: build.projectile.element,
+            });
+            projectilesCow.set(shard.id, shard);
+            activated = true;
+          }
+          break;
+        }
+        case "borrowed-time": {
+          // Instant heal to the nearest INJURED ally (auto-target), self
+          // if none found; a flat, UNCONDITIONAL drain lands
+          // SYZ_BORROWED_TIME_DEBT_DELAY_TICKS later (types.ts's
+          // debtUntilTick doc comment — the doc's aggression-gate nuance is
+          // a recorded v1 deferral). Self-cast uses the doc's own weaker
+          // "solo/self" figures. The ally branch is a CROSS-PLAYER write —
+          // deferred to pendingSyzygistCasts (see its own doc comment
+          // above) rather than written directly; the self branch mutates
+          // only `nextEntity`, so it's safe to apply immediately.
+          const ally = findNearestAlly(nextEntity, state.players, SYZ_ALLY_SEARCH_RANGE_PX, {
+            requireInjured: true,
+          });
+          const debtDelayTick = (state.tick + 1 + SYZ_BORROWED_TIME_DEBT_DELAY_TICKS) as Tick;
+          if (ally !== null) {
+            pendingSyzygistCasts.push({
+              kind: "borrowed-time",
+              targetId: ally.id,
+              heal: SYZ_BORROWED_TIME_HEAL_ALLY,
+              drain: SYZ_BORROWED_TIME_DRAIN_ALLY,
+              debtDelayTick,
+            });
+          } else {
+            nextEntity = {
+              ...nextEntity,
+              health: Math.min(100, nextEntity.health + SYZ_BORROWED_TIME_HEAL_SELF),
+              debtUntilTick: debtDelayTick,
+              debtAmount: SYZ_BORROWED_TIME_DRAIN_SELF,
+            };
+          }
+          activated = true;
+          break;
+        }
+        case "focus-hex": {
+          // Omnidirectional mark on the nearest enemy — no aim cone (the
+          // low-aim direction), unlike Facet Break/Judgment Line. Mark
+          // lives on the CASTER, same cross-player-write-hazard-avoidance
+          // shape those two document; consumed at the projectile hit-
+          // resolution site below (SYZ_FOCUS_HEX_AMP_MULTIPLIER).
+          const target = findNearestEnemy(nextEntity, state.players, SYZ_ENEMY_SEARCH_RANGE_PX);
+          if (target !== null) {
+            const durTicks = Math.ceil(active.durationMs / Math.max(1, dtMs));
+            nextEntity = {
+              ...nextEntity,
+              focusHexTargetId: target.id,
+              focusHexMarkUntilTick: (state.tick + 1 + durTicks) as Tick,
+            };
+            activated = true;
+          }
+          break;
+        }
+        case "contagion": {
+          // Instant pulse: every enemy within SYZ_CONTAGION_RADIUS_PX who
+          // is ALREADY burning has that burn copied onto the nearest
+          // un-burning enemy within SYZ_CONTAGION_JUMP_RADIUS_PX — reuses
+          // the exact burnUntilTick/burnDps fields, one jump per source
+          // (constants.ts's SYZ_CONTAGION_* header note). No source found
+          // = a dead press, no cooldown burn. Every jump is a CROSS-PLAYER
+          // write (source and jump-target are both OTHER players, never
+          // the caster) — deferred to pendingSyzygistCasts (see its own
+          // doc comment above) instead of written directly here.
+          let jumped = false;
+          for (const [srcId, source] of Object.entries(state.players)) {
+            if (!source.alive) continue;
+            if (isAlly(nextEntity, source)) continue;
+            if (source.burnUntilTick === undefined || source.burnUntilTick <= state.tick) continue;
+            const dSrc = Math.hypot(source.x - nextEntity.x, source.y - nextEntity.y);
+            if (dSrc > SYZ_CONTAGION_RADIUS_PX) continue;
+            let bestId: PlayerId | null = null;
+            let bestDist = Infinity;
+            for (const [otherId, other] of Object.entries(state.players)) {
+              if (otherId === srcId) continue;
+              if (!other.alive) continue;
+              if (isAlly(nextEntity, other)) continue;
+              if (other.burnUntilTick !== undefined && other.burnUntilTick > state.tick) continue;
+              const dist = Math.hypot(other.x - source.x, other.y - source.y);
+              if (dist > SYZ_CONTAGION_JUMP_RADIUS_PX) continue;
+              if (dist < bestDist) {
+                bestDist = dist;
+                bestId = otherId as PlayerId;
+              }
+            }
+            if (bestId !== null) {
+              pendingSyzygistCasts.push({
+                kind: "contagion",
+                sourceId: srcId as PlayerId,
+                jumpTargetId: bestId,
+              });
+              jumped = true;
+            }
+          }
+          activated = jumped;
+          break;
+        }
+        case "flock-pulse": {
+          // Instant nova (Lattice-style ring), damage scaled by how many
+          // OTHER players currently carry this caster's live buffs — the
+          // same dedup-by-target-id count Devotion's own accrual pass
+          // computes (constants.ts's SYZ_FLOCK_PULSE_* header note).
+          let sourceCount = 0;
+          for (const [otherId, other] of Object.entries(state.players)) {
+            if ((otherId as PlayerId) === pid || !other.alive) continue;
+            const carriesRegen =
+              other.regenSourceId === pid &&
+              other.regenUntilTick !== undefined &&
+              other.regenUntilTick > state.tick;
+            const carriesHaste =
+              other.hasteSourceId === pid &&
+              other.hasteUntilTick !== undefined &&
+              other.hasteUntilTick > state.tick;
+            const carriesWard =
+              other.wardAbsorbSourceId === pid &&
+              other.wardAbsorbUntilTick !== undefined &&
+              other.wardAbsorbUntilTick > state.tick;
+            if (carriesRegen || carriesHaste || carriesWard) sourceCount++;
+          }
+          sourceCount = Math.min(sourceCount, SYZ_DEVOTION_MAX_COUNTED_SOURCES);
+          // Aoe role rework (2026-07-18): was a ring of SYZ_FLOCK_PULSE_
+          // COUNT discrete shards, the scaled total split evenly across
+          // them (so any one target usually only caught one shard's
+          // fraction); now an instant radius check — the FULL scaled total
+          // lands on every enemy in range in one tick.
+          //
+          // D3 brake (2026-07-18, docs/axiom-deviations-audit.md — see
+          // `syzygistLeadBrakeMultiplier`'s own doc comment above): only the
+          // PER-SOURCE bonus is braked by this caster's in-round kill lead,
+          // never SYZ_FLOCK_PULSE_BASE_DAMAGE — a snowballing Syzygist's
+          // nova still always does SOMETHING, it just stops scaling as hard
+          // with ally count the further ahead this round they already are.
+          const brake = syzygistLeadBrakeMultiplier(pid, state.players, state.round.roundKills);
+          const totalDamage =
+            SYZ_FLOCK_PULSE_BASE_DAMAGE + sourceCount * SYZ_FLOCK_PULSE_PER_SOURCE_DAMAGE * brake;
+          pendingInstantAoe.push({
+            kind: "flock-pulse",
+            casterId: pid,
+            x: nextEntity.x,
+            y: nextEntity.y,
+            radius: SYZ_FLOCK_PULSE_RADIUS_PX,
+            damage: totalDamage,
+            slowMultiplier: SYZ_FLOCK_PULSE_SLOW_MULTIPLIER,
+            slowDurationMs: SYZ_FLOCK_PULSE_SLOW_DURATION_MS,
+          });
+          activated = true;
+          break;
+        }
+        case "self-lattice": {
+          // Weak self-ward — "deliberately weaker than ally ward... solo
+          // still has a button". Self-cast always succeeds when alive: a
+          // teamed caster's isAlly(self, self) is true (applyWardToAlly's
+          // own gate), and an FFA/solo caster still needs a real solo
+          // floor here — so self-lattice bypasses applyWardToAlly's team
+          // gate entirely and writes the caster's own fields directly,
+          // exactly like Return Glass/Bastion Pulse's self-only shield-
+          // charge ticks above (never routed through an isAlly check).
+          nextEntity = {
+            ...nextEntity,
+            wardAbsorbUntilTick: (state.tick + 1 + SYZ_WARD_DURATION_TICKS_DEFAULT) as Tick,
+            wardAbsorbRemaining: SYZ_SELF_LATTICE_ABSORB,
+            wardAbsorbSourceId: pid,
+          };
+          activated = true;
+          break;
+        }
+        case "glass-ward": {
+          // Stronger absorb on the nearest ally (auto-target); self at
+          // reduced strength if none in range — "teams peak; solo
+          // fallback" per the doc. The ally branch is a CROSS-PLAYER write
+          // (deferred to pendingSyzygistCasts, see its own doc comment
+          // above — applyWardToAlly is only safe to call from the
+          // post-loop resolution pass, not from inside this loop for a
+          // target that may not have had its own turn yet); the self
+          // fallback mutates only `nextEntity`, so it applies immediately.
+          const ally = findNearestAlly(nextEntity, state.players, SYZ_ALLY_SEARCH_RANGE_PX);
+          if (ally !== null) {
+            pendingSyzygistCasts.push({
+              kind: "glass-ward",
+              casterId: pid,
+              targetId: ally.id,
+              absorb: SYZ_GLASS_WARD_ALLY_ABSORB,
+              durationTicks: SYZ_WARD_DURATION_TICKS_DEFAULT,
+            });
+          } else {
+            nextEntity = {
+              ...nextEntity,
+              wardAbsorbUntilTick: (state.tick + 1 + SYZ_WARD_DURATION_TICKS_DEFAULT) as Tick,
+              wardAbsorbRemaining: SYZ_GLASS_WARD_SELF_FALLBACK_ABSORB,
+              wardAbsorbSourceId: pid,
+            };
+          }
+          activated = true;
+          break;
+        }
+        case "haste-gift": {
+          // Ally haste (auto-target), half-strength self if solo — "self
+          // half if solo" per the doc, literal. Window length reads the
+          // card's own `active.durationMs` (5000, cards.ts) rather than
+          // SYZ_HASTE_DURATION_TICKS_DEFAULT, matching Aegis Share's own
+          // card-owns-its-window precedent. The ally branch is a
+          // CROSS-PLAYER write — deferred to pendingSyzygistCasts, same
+          // reasoning as Glass Ward immediately above.
+          const durTicks = Math.ceil(active.durationMs / Math.max(1, dtMs));
+          const ally = findNearestAlly(nextEntity, state.players, SYZ_ALLY_SEARCH_RANGE_PX);
+          if (ally !== null) {
+            pendingSyzygistCasts.push({
+              kind: "haste-gift",
+              casterId: pid,
+              targetId: ally.id,
+              multiplier: SYZ_HASTE_MULTIPLIER_DEFAULT,
+              durationTicks: durTicks,
+            });
+          } else {
+            nextEntity = {
+              ...nextEntity,
+              hasteUntilTick: (state.tick + 1 + durTicks) as Tick,
+              hasteMultiplier: SYZ_HASTE_GIFT_SELF_MULTIPLIER,
+              hasteSourceId: pid,
+            };
+          }
+          activated = true;
+          break;
+        }
+        case "drift-step": {
+          // The ONE catalog ability the doc tags "(player aim)" — same
+          // farthest-collision-free-landing search as Slip Node/Shadow
+          // Step/Plant Charge, aimed by the player like those (NOT an
+          // auto-target — deliberate exception, see constants.ts's
+          // SYZ_DRIFT_STEP_RANGE_PX header note).
+          const dx0 = aimX - nextEntity.x;
+          const dy0 = aimY - nextEntity.y;
+          const dLen = Math.sqrt(dx0 * dx0 + dy0 * dy0);
+          const dirX = dLen > 0.001 ? dx0 / dLen : 1;
+          const dirY = dLen > 0.001 ? dy0 / dLen : 0;
+          for (let d = SYZ_DRIFT_STEP_RANGE_PX; d >= 24; d -= 12) {
+            const cx = nextEntity.x + dirX * d;
+            const cy = nextEntity.y + dirY * d;
+            if (
+              cx < PLAYER_BODY_WIDTH / 2 ||
+              cx > runtime.map.size.x - PLAYER_BODY_WIDTH / 2 ||
+              cy < PLAYER_BODY_HEIGHT / 2 ||
+              cy > runtime.map.size.y - PLAYER_BODY_HEIGHT / 2
+            ) {
+              continue;
+            }
+            const box = centerToAABB(cx, cy, PLAYER_BODY_WIDTH, PLAYER_BODY_HEIGHT);
+            let blocked = false;
+            for (const plat of runtime.map.platforms) {
+              if (aabbOverlap(box, platformToAABB(plat))) {
+                blocked = true;
+                break;
+              }
+            }
+            if (!blocked) {
+              nextEntity = { ...nextEntity, x: cx, y: cy };
+              activated = true;
+              break;
+            }
+          }
+          break;
+        }
+        // ── Interstice catalog v1 (docs/class-ability-catalogs-v1.md) ──────
+        // classId-gated to ninja at the offer roll (round.ts). Every case
+        // below is EITHER a self-only window-buff (Undercut/Edge Storm/Read
+        // Mark/Wall Bloom/Ghost Guard/Second Wind/Razor Route — consumed at
+        // the NINJA MELEE section's own arc-hit/wave-spawn/wall-kick/
+        // dash-through sites below, or — Ghost Guard only —
+        // combat.ts's tryDeflectDamage) OR an auto-targeted projectile
+        // spawn (Needle/Shard Ring — the SAME findNearestEnemy/
+        // spawnProjectile substrate the Geometrician/Syzygist blocks above
+        // already reuse). None of the nine writes into another player's
+        // entity from inside THIS loop — the pendingSyzygistCasts
+        // deferred-write hazard that block's own comment documents doesn't
+        // come up here (audited case by case; see the ninja-catalog
+        // report).
+        case "undercut": {
+          // Window — consumed by the NINJA MELEE arc-hit-resolution section
+          // below (types.ts's undercutUntilTick doc comment). v1 scope: arc
+          // hits only, not the wave — the wave lands via the generic
+          // projectile hit-resolution pass, a much larger shared surface
+          // touched by every class; extending an execute check there is a
+          // recorded v1 deferral, same "don't widen a shared pass for one
+          // ability" discipline as Contagion's burn-only scope above.
+          const durTicks = Math.ceil(active.durationMs / Math.max(1, dtMs));
+          nextEntity = {
+            ...nextEntity,
+            undercutUntilTick: (state.tick + 1 + durTicks) as Tick,
+          };
+          activated = true;
+          break;
+        }
+        case "edge-storm": {
+          // Charge bank — consumed at the wave-spawn site (NINJA MELEE
+          // section below) for up to NINJA_EDGE_STORM_CHARGES swings. The
+          // doc's "reduced cost" half is N/A in v1 (see this case's
+          // constants.ts header note); only "+wave damage" is implemented.
+          const durTicks = Math.ceil(active.durationMs / Math.max(1, dtMs));
+          nextEntity = {
+            ...nextEntity,
+            edgeStormUntilTick: (state.tick + 1 + durTicks) as Tick,
+            edgeStormChargesRemaining: NINJA_EDGE_STORM_CHARGES,
+          };
+          activated = true;
+          break;
+        }
+        case "needle": {
+          // Auto-targeted gap-finish: a short self-lunge (flavor: "already
+          // closed the distance") plus a fast, short-range, high-damage
+          // shard — spawns a real projectile (Sunspike/Bleed Tithe/
+          // Severance's own shape) so shield/parry/ward mitigation applies
+          // for free via the existing hit-resolution pass, rather than a
+          // hand-rolled direct-damage write that would need a cross-player
+          // deferred-write queue this chassis's kit otherwise never needs.
+          const target = findNearestEnemy(nextEntity, state.players, NINJA_NEEDLE_RANGE_PX);
+          if (target !== null) {
+            const dx0 = target.x - nextEntity.x;
+            const dy0 = target.y - nextEntity.y;
+            const dist = Math.hypot(dx0, dy0);
+            const dirX = dist > 0.001 ? dx0 / dist : 1;
+            const dirY = dist > 0.001 ? dy0 / dist : 0;
+            const lunge = Math.min(NINJA_NEEDLE_LUNGE_PX, Math.max(0, dist - 20));
+            nextEntity = {
+              ...nextEntity,
+              x: nextEntity.x + dirX * lunge,
+              y: nextEntity.y + dirY * lunge,
+            };
+            const aimAngle = lutAtan2(dy0, dx0);
+            const shard = spawnProjectile(allocId(), {
+              ownerId: pid,
+              origin: { x: nextEntity.x, y: nextEntity.y - 20 },
+              aimAngle,
+              speed: NINJA_NEEDLE_SPEED,
+              damage: NINJA_NEEDLE_DAMAGE,
+              lifetimeMs: Math.max(50, (NINJA_NEEDLE_RANGE_PX / NINJA_NEEDLE_SPEED) * 1000),
+              radius: 7,
+              shape: build.projectile.shape,
+              pathing: "straight",
+              element: "crystal",
+            });
+            shard.rangePx = NINJA_NEEDLE_RANGE_PX;
+            projectilesCow.set(shard.id, shard);
+            activated = true;
+          }
+          break;
+        }
+        case "read-mark": {
+          // Omnidirectional auto-target mark, lives on the CASTER
+          // (readTargetId/readMarkUntilTick) — same cross-player-write-
+          // hazard-avoidance shape Facet Break/Judgment Line/Focus Hex
+          // already establish. Consumed by the NEXT landed ninja melee arc
+          // hit on that specific target (NINJA MELEE section below); the
+          // window itself is NOT consumed on use (a per-target amp while
+          // live, same non-consuming-window shape as Undercut above). v1
+          // scope: the CAST half only — the doc's "dash-through also tags
+          // Read" nuance is a recorded deferral (would thread catalog-
+          // ability state into the always-on chassis dash-through
+          // detector, a bigger touch surface on already-shipped baseline
+          // chassis code than this pass takes on). Razor Route (below)
+          // reuses this SAME pair of fields for its own "marks Read on
+          // cross" line — the two abilities share one mark slot by design.
+          const target = findNearestEnemy(nextEntity, state.players, NINJA_READ_MARK_RANGE_PX);
+          if (target !== null) {
+            const durTicks = Math.ceil(active.durationMs / Math.max(1, dtMs));
+            nextEntity = {
+              ...nextEntity,
+              readTargetId: target.id,
+              readMarkUntilTick: (state.tick + 1 + durTicks) as Tick,
+            };
+            activated = true;
+          }
+          break;
+        }
+        case "shard-ring": {
+          // Aoe role rework (2026-07-18): was a full-circle ring of
+          // discrete shard projectiles; now an instant radius check queued
+          // for the post-loop resolution pass — the blade's aftermath in
+          // every direction at once landing in one tick, guaranteed, on
+          // everyone in range. Pure damage, no status (a raw punish, not a
+          // control tool — the differentiation from Wall Bloom's smaller,
+          // cheaper wall-contact burst).
+          pendingInstantAoe.push({
+            kind: "shard-ring",
+            casterId: pid,
+            x: nextEntity.x,
+            y: nextEntity.y,
+            radius: NINJA_SHARD_RING_RADIUS_PX,
+            damage: NINJA_SHARD_RING_DAMAGE,
+          });
+          activated = true;
+          break;
+        }
+        case "wall-bloom": {
+          // Window — consumed at the wall-kick energy-grant site (loop 1,
+          // right after mirrorMovementMemoryOntoEntity), single-use
+          // (cleared on the next wall-kick, not just on timeout).
+          const durTicks = Math.ceil(active.durationMs / Math.max(1, dtMs));
+          nextEntity = {
+            ...nextEntity,
+            wallBloomUntilTick: (state.tick + 1 + durTicks) as Tick,
+          };
+          activated = true;
+          break;
+        }
+        case "ghost-guard": {
+          // Banked evasion charge — consumed by combat.ts's
+          // tryDeflectDamage (a new branch right after the always-on dash-
+          // i-frame check), not by anything in this file. "If moving" is
+          // checked there against the player's OWN current velocity at hit
+          // time, not at cast time.
+          const durTicks = Math.ceil(active.durationMs / Math.max(1, dtMs));
+          nextEntity = {
+            ...nextEntity,
+            ghostGuardChargeUntilTick: (state.tick + 1 + durTicks) as Tick,
+          };
+          activated = true;
+          break;
+        }
+        case "second-wind": {
+          // Window — consumed by the NEXT landed ninja melee arc hit
+          // (self-heal + energy, NINJA MELEE section below). Self-only
+          // write on the attacker's own turn, same safety as Bastion
+          // Pulse/Return Glass's self-only shield ticks above.
+          const durTicks = Math.ceil(active.durationMs / Math.max(1, dtMs));
+          nextEntity = {
+            ...nextEntity,
+            secondWindUntilTick: (state.tick + 1 + durTicks) as Tick,
+          };
+          activated = true;
+          break;
+        }
+        case "razor-route": {
+          // Window — consumed by the NEXT dash-trigger inside the NINJA
+          // MELEE section's own dash-through detection (below): an extra
+          // velocity impulse along the dash direction (TS-side, additive
+          // on top of whatever the movement backend already computed —
+          // the same "post-hoc velocity nudge" shape Recoil Step already
+          // proves out) plus a Read mark on the first body crossed.
+          // Deliberately does NOT touch player.ts's DASH_SPEED/
+          // DASH_DURATION_MS (the Zig-mirrored dash physics itself) —
+          // six-axes-goal.md's "Zig line" doctrine keeps ability/window
+          // state off that surface. The doc's "through-platforms soft"
+          // nuance is a recorded v1 deferral (a collision-layer change on
+          // the always-on dash, out of scope here).
+          const durTicks = Math.ceil(active.durationMs / Math.max(1, dtMs));
+          nextEntity = {
+            ...nextEntity,
+            razorRouteUntilTick: (state.tick + 1 + durTicks) as Tick,
+          };
+          activated = true;
+          break;
+        }
       }
       if (!activated) continue;
 
@@ -1480,12 +3436,217 @@ export function stepWithRuntime(
     players[pid] = nextEntity;
   }
 
+  // Resolve deferred Syzygist ally-target casts (class-overhaul-workboard.md
+  // chunk 3.4) — NOW safe, since every player above has committed their own
+  // turn into `players`. Re-reads caster/target fresh off the now-current
+  // `players` record (not the stale per-iteration `entity` the loop above
+  // used) so a target who ALSO took damage/healing this same tick from
+  // another source is handled correctly. See pendingSyzygistCasts's own
+  // doc comment (declared just above the loop) for why this two-phase
+  // shape exists at all.
+  for (const cast of pendingSyzygistCasts) {
+    switch (cast.kind) {
+      case "haste-gift": {
+        const caster = players[cast.casterId];
+        const target = players[cast.targetId];
+        if (caster && target) {
+          applyHasteToAlly(caster, target, players, state.tick, cast.multiplier, cast.durationTicks);
+        }
+        break;
+      }
+      case "glass-ward": {
+        const caster = players[cast.casterId];
+        const target = players[cast.targetId];
+        if (caster && target) {
+          applyWardToAlly(caster, target, players, state.tick, cast.absorb, cast.durationTicks);
+        }
+        break;
+      }
+      case "borrowed-time": {
+        const target = players[cast.targetId];
+        if (target && target.alive) {
+          players[cast.targetId] = {
+            ...target,
+            health: Math.min(100, target.health + cast.heal),
+            debtUntilTick: cast.debtDelayTick,
+            debtAmount: cast.drain,
+          };
+        }
+        break;
+      }
+      case "contagion": {
+        const source = players[cast.sourceId];
+        const jumpTarget = players[cast.jumpTargetId];
+        // Re-check the source is STILL burning (defensive — another pass
+        // this tick could in principle have cleared it; none currently
+        // does, but this keeps the write honest rather than trusting a
+        // stale read).
+        if (
+          source &&
+          jumpTarget &&
+          source.burnUntilTick !== undefined &&
+          source.burnUntilTick > state.tick
+        ) {
+          players[cast.jumpTargetId] = {
+            ...jumpTarget,
+            burnUntilTick: source.burnUntilTick,
+            burnDps: source.burnDps,
+            burnTickLastApplied: state.tick,
+          };
+        }
+        break;
+      }
+    }
+  }
+
   // Perf hoist: id-sorted player list, computed ONCE per tick and shared by
   // every pass that needs deterministic player iteration (bash, per-
   // projectile hit sweeps, AOE, homing, chain-lightning). The key SET is
   // stable for the rest of the tick — passes mutate player VALUES, never
   // add/remove ids — so this is byte-identical to each pass re-sorting.
   const sortedPlayerIdsForTick = (Object.keys(players) as PlayerId[]).sort();
+
+  // 1y. INSTANT AOE RESOLUTION (aoe role rework, 2026-07-18) — resolves
+  //     `pendingInstantAoe`, queued above by Prism Fan/Lattice's instant
+  //     slow/Consecrated Field's instant slow/Shock Ring/Crater/Flock
+  //     Pulse/Shard Ring/Wall Bloom. Same post-loop timing and mitigation
+  //     chain as DASH BASH/NINJA MELEE/PALADIN MELEE below (tryDeflectDamage
+  //     → rallyLightDamageMultiplier → applyBastionAura → applyTeamPeel),
+  //     just a plain center-to-center radius (+ optional cone) check instead
+  //     of a frontal-arc/dash-collision shape. A target standing in range
+  //     always takes the hit — there is no projectile path to dodge around,
+  //     which IS the fix (a real area check, not projectile-vs-player
+  //     collision).
+  if (fightingPhase && !hangoutMode) {
+    const aoeTick = Tick(state.tick + 1);
+    for (const cast of pendingInstantAoe) {
+      const caster = players[cast.casterId];
+      if (!caster) continue;
+      for (const vid of sortedPlayerIdsForTick) {
+        if (vid === cast.casterId) continue;
+        const victim = players[vid]!;
+        if (!victim.alive) continue;
+        const dx = victim.x - cast.x;
+        const dy = victim.y - cast.y;
+        const dist = Math.hypot(dx, dy);
+        if (dist > cast.radius) continue;
+        if (cast.coneRadians !== undefined && cast.aimAngle !== undefined) {
+          let da = Math.atan2(dy, dx) - cast.aimAngle;
+          da = Math.atan2(Math.sin(da), Math.cos(da));
+          if (Math.abs(da) > cast.coneRadians / 2) continue;
+        }
+
+        const victimBuild = resolvePlayerBuild(victim);
+        // A status-only entry (cast.damage === 0, Consecrated Field's
+        // instant slow) still needs the REAL mitigation chain evaluated —
+        // tryDeflectDamage short-circuits into a no-op passthrough for
+        // damage<=0 (skipping shield/parry/ninja-evasion entirely), which
+        // would let the slow ignore a raised shield or a dashing ninja's
+        // i-frames. Feed it a nominal 1 damage purely so shielded/deflected/
+        // evaded resolve correctly, then discard that nominal amount below
+        // — only cast.damage (the REAL damage) ever reaches health.
+        const nominalDamage = cast.damage > 0 ? cast.damage : 1;
+        const mit = tryDeflectDamage(victim, null, nominalDamage, aoeTick, {
+          mirrorShield: victimBuild.mirrorShield,
+          directionalShield: victimBuild.directionalShield,
+          parryCoverMultiplier: victimBuild.parryCoverMultiplier,
+          attackerPos: { x: cast.x, y: cast.y },
+        });
+        const blocked = mit.shielded || mit.deflected;
+        let post = mit.player;
+        if (mit.evaded || blocked) {
+          if (!mit.evaded) {
+            events.push({ t: "parry-deflected", playerId: vid, projectileId: null });
+            if (mit.shielded && mit.shieldPopped) {
+              events.push({
+                t: "shield-popped",
+                playerId: vid,
+                remainingCharge: post.shieldCharge ?? 0,
+              });
+            }
+          }
+          players[vid] = post;
+          continue;
+        }
+
+        if (cast.damage > 0) {
+          const liveCaster = players[cast.casterId]!;
+          let finalDamage = mit.damage;
+          finalDamage *= rallyLightDamageMultiplier(liveCaster, players, aoeTick);
+          finalDamage *= kindledResolveDamageMultiplier(liveCaster, aoeTick);
+          finalDamage = applyBastionAura(victim, finalDamage, players, sortedPlayerIdsForTick, aoeTick);
+          if (!mit.warded) {
+            const peel = applyTeamPeel(victim, finalDamage, players, sortedPlayerIdsForTick, aoeTick);
+            if (peel) {
+              finalDamage = peel.damage;
+              events.push(peel.event);
+            }
+          }
+          const newHealth = Math.max(0, post.health - finalDamage);
+          const wasAlive = post.alive;
+          post = { ...post, health: newHealth, alive: newHealth > 0 };
+          events.push({
+            t: "hit-confirmed",
+            victimId: vid,
+            damage: finalDamage,
+            sourceProjectileId: null,
+            attackerId: cast.casterId,
+          });
+          if (wasAlive && newHealth === 0) {
+            events.push({ t: "player-killed", victimId: vid, killerId: cast.casterId, cause: "aoe" });
+          }
+          if (mit.warded) {
+            events.push({
+              t: "ward-absorbed",
+              playerId: vid,
+              damageBlocked: mit.wardDamageBlocked,
+              kindlingGranted: mit.wardKindlingGranted,
+            });
+          }
+          if (mit.syzWarded) {
+            events.push({
+              t: "syz-ward-absorbed",
+              playerId: vid,
+              casterId: victim.wardAbsorbSourceId ?? vid,
+              damageBlocked: mit.syzWardDamageBlocked ?? 0,
+              wardBroke: mit.syzWardBroke ?? false,
+            });
+          }
+        }
+
+        // Status (slow/stagger) — applied whenever the hit wasn't evaded or
+        // blocked above, regardless of whether real damage also landed
+        // (Consecrated Field/Crater carry both; Flock Pulse too). Same
+        // "keep whichever ends later, take the lower (more punishing)
+        // multiplier" stacking policy the projectile-sourced player-slowed
+        // consumer already uses (below, section 3a).
+        if (cast.slowMultiplier !== undefined && cast.slowDurationMs !== undefined) {
+          const ticksDuration = Math.ceil(cast.slowDurationMs / effDtMs);
+          const until = Tick(aoeTick + ticksDuration);
+          const prevUntil = post.slowedUntilTick ?? Tick(0);
+          const prevMul = post.slowMultiplier ?? 1;
+          // Kindled Resolve (coverage-floor fast-follow): resist BEFORE the
+          // stacking comparison, so a resisted stagger competes fairly
+          // against any pre-existing slow using its actually-applied
+          // strength — a no-op for every victim without the buff.
+          const resistedMul = applyKindledResolveStaggerResist(post, cast.slowMultiplier, aoeTick);
+          post = {
+            ...post,
+            slowedUntilTick: Tick(Math.max(prevUntil, until)),
+            slowMultiplier: Math.min(prevMul, resistedMul),
+          };
+          events.push({
+            t: "player-slowed",
+            victimId: vid,
+            multiplier: resistedMul,
+            durationMs: cast.slowDurationMs,
+          });
+        }
+
+        players[vid] = post;
+      }
+    }
+  }
 
   // 1z. DASH BASH — the offensive half of the shield-dash. Positions,
   //     velocity, and `dashing` are all current here (post-movement). For each
@@ -1541,6 +3702,11 @@ export function stepWithRuntime(
           mirrorShield: victimBuild.mirrorShield,
           directionalShield: victimBuild.directionalShield,
           parryCoverMultiplier: victimBuild.parryCoverMultiplier,
+          // Kindled Ward's frontal-cone check needs a source position for
+          // this null-projectile hit (combat.ts's DeflectOptions.attackerPos
+          // doc comment) — a warding Paladin can block a bash the same way
+          // they'd block a projectile or a slash.
+          attackerPos: { x: attacker.x, y: attacker.y },
         });
         // Ninja evasion (dash i-frames): "wasn't there" — no damage, no
         // knockback, no event. The bash still costs the ATTACKER their
@@ -1556,18 +3722,56 @@ export function stepWithRuntime(
         if (mit.evaded) {
           // no-op: victim phased through, nothing to apply or announce.
         } else if (!blocked) {
-          const newHealth = Math.max(0, post.health - mit.damage);
+          // Team peel (class-overhaul-workboard.md chunk 2.4): the victim's
+          // OWN Ward didn't cover this hit (mit.warded is false) — check
+          // whether a warding ALLY's shadow does. `victim` (pre-mitigation,
+          // still in scope) carries the id/teamId/position the check needs;
+          // `players` may already reflect an earlier peel grant to the same
+          // warder this tick (findTeamPeelWarder always reads it fresh).
+          let bashFinalDamage = mit.damage;
+          // Rally Light (chunk 2.6 fast-follow) — attacker-side amp, same
+          // read-only aura check at every hit-resolution site.
+          bashFinalDamage *= rallyLightDamageMultiplier(players[aid]!, players, bashTick);
+          bashFinalDamage *= kindledResolveDamageMultiplier(players[aid]!, bashTick);
+          // Bastion (card-pool-v2.md #28) — victim-side mitigation +
+          // Kindling feed, same post-loop `players` mutation shape peel uses.
+          bashFinalDamage = applyBastionAura(victim, bashFinalDamage, players, bashIds, bashTick);
+          if (!mit.warded) {
+            const peel = applyTeamPeel(victim, bashFinalDamage, players, bashIds, bashTick);
+            if (peel) {
+              bashFinalDamage = peel.damage;
+              events.push(peel.event);
+            }
+          }
+          const newHealth = Math.max(0, post.health - bashFinalDamage);
           const wasAlive = post.alive;
           post = { ...post, health: newHealth, alive: newHealth > 0 };
           events.push({
             t: "hit-confirmed",
             victimId: vid,
-            damage: mit.damage,
+            damage: bashFinalDamage,
             sourceProjectileId: null,
             attackerId: aid,
           });
           if (wasAlive && newHealth === 0) {
             events.push({ t: "player-killed", victimId: vid, killerId: aid, cause: "bash" });
+          }
+          if (mit.warded) {
+            events.push({
+              t: "ward-absorbed",
+              playerId: vid,
+              damageBlocked: mit.wardDamageBlocked,
+              kindlingGranted: mit.wardKindlingGranted,
+            });
+          }
+          if (mit.syzWarded) {
+            events.push({
+              t: "syz-ward-absorbed",
+              playerId: vid,
+              casterId: victim.wardAbsorbSourceId ?? vid,
+              damageBlocked: mit.syzWardDamageBlocked ?? 0,
+              wardBroke: mit.syzWardBroke ?? false,
+            });
           }
         } else {
           // The CLANG: a blocked bash is a shield-on-shield clash — the
@@ -1639,11 +3843,42 @@ export function stepWithRuntime(
 
       // ---- Dash-through body-cross (independent of the swing FSM) ----
       // "Dash-through is a body-cross (hitbox intersection), not a fog."
-      // v1 scope: detect + energy grant only — the Read tag / +20% melee
-      // bonus that CONSUMES this event is Slipstream (a card, fast-follow).
+      // v1 scope: detect + energy grant, PLUS Razor Route's own empowered-
+      // dash consumption (below) — the general "any dash-through also tags
+      // Read" nuance (Read Mark's own doc line) stays a recorded deferral,
+      // see that case's own comment in the drafted-actives switch above.
       const dashingNow = attacker.dashing === true;
       if (dashingNow && !mem.wasDashing) {
         mem.dashThroughTagged.clear(); // new dash burst — fresh tags
+        // Razor Route (Interstice catalog v1, movement role): empower THIS
+        // dash — an extra velocity impulse along the dash direction,
+        // additive on top of whatever the movement backend already
+        // computed this tick (see World.ts's razor-route case for why this
+        // doesn't touch player.ts's own dash physics). Single-use: the
+        // window is cleared the moment a dash actually starts, whether or
+        // not a body ends up crossed during it; `mem.razorRouteActiveDash`
+        // carries the "this burst is empowered" fact forward to the
+        // per-victim loop below (and to the Read-mark-on-cross line) since
+        // `razorRouteUntilTick` itself is already gone by the time a
+        // victim is found.
+        const razorRouteLive =
+          attacker.razorRouteUntilTick !== undefined &&
+          attacker.razorRouteUntilTick > state.tick;
+        mem.razorRouteActiveDash = razorRouteLive;
+        if (razorRouteLive) {
+          const liveAttacker = players[aid]!;
+          const dashSpeed = Math.hypot(liveAttacker.vx, liveAttacker.vy);
+          if (dashSpeed > 1e-3) {
+            players[aid] = {
+              ...liveAttacker,
+              vx: liveAttacker.vx + (liveAttacker.vx / dashSpeed) * NINJA_RAZOR_ROUTE_BOOST_SPEED,
+              vy: liveAttacker.vy + (liveAttacker.vy / dashSpeed) * NINJA_RAZOR_ROUTE_BOOST_SPEED,
+              razorRouteUntilTick: undefined,
+            };
+          } else {
+            players[aid] = { ...liveAttacker, razorRouteUntilTick: undefined };
+          }
+        }
       }
       if (dashingNow && !hangoutMode) {
         const attackerAABB = playerHitboxAABB(attacker);
@@ -1661,6 +3896,18 @@ export function stepWithRuntime(
             ),
           };
           events.push({ t: "dash-through", attackerId: aid, victimId: vid });
+          // Razor Route's "marks Read on cross" — one tag per empowered
+          // dash ("one body, one lie"), reusing Read Mark's OWN fields
+          // (constants.ts's NINJA_RAZOR_ROUTE_READ_MARK_MS header note).
+          if (mem.razorRouteActiveDash) {
+            const durTicks = Math.ceil(NINJA_RAZOR_ROUTE_READ_MARK_MS / Math.max(1, dtMs));
+            players[aid] = {
+              ...players[aid]!,
+              readTargetId: vid,
+              readMarkUntilTick: (state.tick + 1 + durTicks) as Tick,
+            };
+            mem.razorRouteActiveDash = false;
+          }
         }
       }
       mem.wasDashing = dashingNow;
@@ -1719,6 +3966,10 @@ export function stepWithRuntime(
             mirrorShield: victimBuild.mirrorShield,
             directionalShield: victimBuild.directionalShield,
             parryCoverMultiplier: victimBuild.parryCoverMultiplier,
+            // Kindled Ward's frontal-cone check needs a source position for
+            // this null-projectile hit — a warding Paladin can block a ninja
+            // slash the same way they'd block a projectile or a bash.
+            attackerPos: { x: attacker.x, y: attacker.y },
           });
           let post = mit.evaded
             ? mit.player
@@ -1731,28 +3982,100 @@ export function stepWithRuntime(
           if (mit.evaded) {
             // no-op: victim phased through.
           } else if (!blocked) {
-            const newHealth = Math.max(0, post.health - mit.damage);
+            // Interstice catalog v1: Read Mark's amp and Undercut's execute
+            // both apply to a landed arc hit, ahead of team peel — same
+            // "re-read the attacker's LIVE state, not the outer-loop
+            // `attacker` const" shape Kindled Edge's own Judgment/Seal
+            // consumption uses (a swing that clips two victims in one tick
+            // must not double-consume a single-charge window on the first).
+            const liveAttackerForMark = players[aid]!;
+            let slashFinalDamage = mit.damage;
+            if (
+              liveAttackerForMark.readTargetId === vid &&
+              liveAttackerForMark.readMarkUntilTick !== undefined &&
+              liveAttackerForMark.readMarkUntilTick > meleeTick
+            ) {
+              slashFinalDamage *= NINJA_READ_MARK_AMP_MULTIPLIER;
+            }
+            // Undercut: a landed arc hit against a target already at or
+            // below the execute threshold becomes a guaranteed kill while
+            // the window lives — a non-consuming window (see this ability's
+            // own case comment above), so no clearing here.
+            if (
+              liveAttackerForMark.undercutUntilTick !== undefined &&
+              liveAttackerForMark.undercutUntilTick > meleeTick &&
+              victim.health <= NINJA_UNDERCUT_HEALTH_THRESHOLD
+            ) {
+              slashFinalDamage = Math.max(slashFinalDamage, victim.health);
+            }
+            // Rally Light / Bastion (chunk 2.6 fast-follow) — same
+            // attacker-amp / victim-mitigate shape as DASH BASH above.
+            slashFinalDamage *= rallyLightDamageMultiplier(liveAttackerForMark, players, meleeTick);
+            slashFinalDamage *= kindledResolveDamageMultiplier(liveAttackerForMark, meleeTick);
+            slashFinalDamage = applyBastionAura(victim, slashFinalDamage, players, meleeIds, meleeTick);
+            // Team peel (class-overhaul-workboard.md chunk 2.4) — same gate
+            // as DASH BASH's own peel check above: only when the victim's
+            // OWN Ward didn't already cover this hit.
+            if (!mit.warded) {
+              const peel = applyTeamPeel(victim, slashFinalDamage, players, meleeIds, meleeTick);
+              if (peel) {
+                slashFinalDamage = peel.damage;
+                events.push(peel.event);
+              }
+            }
+            const newHealth = Math.max(0, post.health - slashFinalDamage);
             const wasAlive = post.alive;
             post = { ...post, health: newHealth, alive: newHealth > 0 };
-            events.push({ t: "slash-hit", attackerId: aid, victimId: vid, damage: mit.damage });
+            events.push({ t: "slash-hit", attackerId: aid, victimId: vid, damage: slashFinalDamage });
             events.push({
               t: "hit-confirmed",
               victimId: vid,
-              damage: mit.damage,
+              damage: slashFinalDamage,
               sourceProjectileId: null,
               attackerId: aid,
             });
             if (wasAlive && newHealth === 0) {
               events.push({ t: "player-killed", victimId: vid, killerId: aid, cause: "bash" });
             }
+            if (mit.warded) {
+              events.push({
+                t: "ward-absorbed",
+                playerId: vid,
+                damageBlocked: mit.wardDamageBlocked,
+                kindlingGranted: mit.wardKindlingGranted,
+              });
+            }
+            if (mit.syzWarded) {
+              events.push({
+                t: "syz-ward-absorbed",
+                playerId: vid,
+                casterId: victim.wardAbsorbSourceId ?? vid,
+                damageBlocked: mit.syzWardDamageBlocked ?? 0,
+                wardBroke: mit.syzWardBroke ?? false,
+              });
+            }
             // Energy from contact — the attacker's own landed hit restores
-            // the rack ("aggression feeds the rack").
+            // the rack ("aggression feeds the rack"). Second Wind
+            // (Interstice catalog v1, buff role) piggybacks on this SAME
+            // self-write: a landed hit while its window lives also heals +
+            // dumps bonus energy, single-use (window cleared on the
+            // qualifying hit, not just on timeout).
+            const liveAttackerPostHit = players[aid]!;
+            const secondWindLive =
+              liveAttackerPostHit.secondWindUntilTick !== undefined &&
+              liveAttackerPostHit.secondWindUntilTick > meleeTick;
             players[aid] = {
-              ...players[aid]!,
+              ...liveAttackerPostHit,
               energy: Math.min(
                 NINJA_ENERGY_MAX,
-                (players[aid]!.energy ?? 0) + NINJA_ENERGY_ON_MELEE_HIT,
+                (liveAttackerPostHit.energy ?? 0) +
+                  NINJA_ENERGY_ON_MELEE_HIT +
+                  (secondWindLive ? NINJA_SECOND_WIND_ENERGY : 0),
               ),
+              health: secondWindLive
+                ? Math.min(100, liveAttackerPostHit.health + NINJA_SECOND_WIND_HEAL)
+                : liveAttackerPostHit.health,
+              secondWindUntilTick: secondWindLive ? undefined : liveAttackerPostHit.secondWindUntilTick,
             };
           } else {
             events.push({ t: "parry-deflected", playerId: vid, projectileId: null });
@@ -1778,12 +4101,23 @@ export function stepWithRuntime(
       // compose onto it for free later (fast-follow) — no bespoke shape.
       if (waveShouldSpawn) {
         const liveAttacker = players[aid]!;
+        // Edge Storm (Interstice catalog v1, offense role): while the
+        // charge bank is live, THIS wave deals amplified damage and
+        // consumes one charge (cleared at 0 — "consumed on the landed
+        // hit/spawn, not just on timeout").
+        const edgeStormLive =
+          liveAttacker.edgeStormUntilTick !== undefined &&
+          liveAttacker.edgeStormUntilTick > meleeTick &&
+          (liveAttacker.edgeStormChargesRemaining ?? 0) > 0;
+        const waveDamage = edgeStormLive
+          ? WAVE_DAMAGE * NINJA_EDGE_STORM_WAVE_DAMAGE_MULTIPLIER
+          : WAVE_DAMAGE;
         const wave = spawnProjectile(allocId(), {
           ownerId: aid,
           origin: { x: liveAttacker.x, y: liveAttacker.y - 20 },
           aimAngle: Math.atan2(mem.aimY, mem.aimX),
           speed: WAVE_SPEED,
-          damage: WAVE_DAMAGE,
+          damage: waveDamage,
           lifetimeMs: WAVE_LIFETIME_MS,
           radius: WAVE_RADIUS,
           element: "crystal",
@@ -1791,6 +4125,261 @@ export function stepWithRuntime(
         wave.rangePx = WAVE_RANGE;
         projectilesCow.set(wave.id, wave);
         events.push({ t: "wave-spawned", playerId: aid, projectileId: wave.id, x: wave.x, y: wave.y });
+        if (edgeStormLive) {
+          const remaining = (liveAttacker.edgeStormChargesRemaining ?? 0) - 1;
+          players[aid] = {
+            ...players[aid]!,
+            edgeStormChargesRemaining: remaining,
+            edgeStormUntilTick: remaining > 0 ? liveAttacker.edgeStormUntilTick : undefined,
+          };
+        }
+      }
+    }
+  }
+
+  // 1z3. PALADIN MELEE — Kindled Edge, the tighter/harder arc swing
+  //      (class-overhaul-workboard.md chunk 2.1). Runs right after ninja
+  //      melee, sharing its post-movement/sorted-id determinism guarantees.
+  //      Gated on classId === "paladin" at the very top of the per-attacker
+  //      loop — zero cost, zero behavior change for the other three
+  //      chassis (see paladinMelee.test.ts's classId-gating proof). See the
+  //      "PALADIN MELEE" header comment above the EDGE_* constants for the
+  //      thin-vs-fork judgment call on why this is a parallel FSM rather
+  //      than a shared one with ninja's.
+  //      Hangout carve-out identical to ninja melee's: no player-vs-player
+  //      damage path runs there, but the FSM itself still advances so a
+  //      paladin's swing doesn't get stuck mid-animation across a mode
+  //      transition.
+  if (fightingPhase) {
+    const edgeTick = Tick(state.tick + 1);
+    const edgeIds = sortedPlayerIdsForTick;
+    for (const aid of edgeIds) {
+      const attacker = players[aid]!;
+      if (classIdForArchetype(attacker.characterId) !== "paladin") continue;
+      if (!attacker.alive) continue;
+
+      let mem = runtime.paladinMelee.get(aid);
+      if (!mem) {
+        mem = freshPaladinMeleeMemory();
+        runtime.paladinMelee.set(aid, mem);
+      }
+
+      // ---- Swing FSM (same 4-phase shape as ninja's, own constants) ----
+      const wasActive = mem.phase === 2;
+      if (mem.phase === 0) {
+        const edge = paladinEdgeEdges.get(aid);
+        if (edge) {
+          const len = Math.hypot(edge.aimX - attacker.x, edge.aimY - attacker.y);
+          mem.phase = 1;
+          mem.phaseMs = EDGE_WINDUP_MS;
+          mem.aimX = len > 1e-3 ? (edge.aimX - attacker.x) / len : 1;
+          mem.aimY = len > 1e-3 ? (edge.aimY - attacker.y) / len : 0;
+          mem.hitThisSwing.clear();
+          events.push({ t: "slash-started", playerId: aid, x: attacker.x, y: attacker.y });
+        }
+      } else {
+        mem.phaseMs -= effDtMs;
+        if (mem.phaseMs <= 0) {
+          if (mem.phase === 1) {
+            mem.phase = 2;
+            mem.phaseMs = EDGE_ACTIVE_MS;
+          } else if (mem.phase === 2) {
+            mem.phase = 3;
+            mem.phaseMs = EDGE_RECOVERY_MS;
+          } else if (mem.phase === 3) {
+            mem.phase = 0;
+            mem.phaseMs = 0;
+          }
+        }
+      }
+      const isActiveNow = mem.phase === 2;
+
+      // ---- Arc hit-check (every active tick, all victims in the cone) ----
+      if ((wasActive || isActiveNow) && !hangoutMode) {
+        const aimAngle = Math.atan2(mem.aimY, mem.aimX);
+        for (const vid of edgeIds) {
+          if (vid === aid) continue;
+          const victim = players[vid]!;
+          if (!victim.alive || mem.hitThisSwing.has(vid)) continue;
+          if (!isBodyInMeleeArc(attacker.x, attacker.y, aimAngle, EDGE_ARC_RADIANS / 2, EDGE_RANGE, victim)) {
+            continue;
+          }
+          mem.hitThisSwing.add(vid);
+
+          const victimBuild = resolvePlayerBuild(victim);
+          const mit = tryDeflectDamage(victim, null, EDGE_DAMAGE, edgeTick, {
+            mirrorShield: victimBuild.mirrorShield,
+            directionalShield: victimBuild.directionalShield,
+            parryCoverMultiplier: victimBuild.parryCoverMultiplier,
+            attackerPos: { x: attacker.x, y: attacker.y },
+          });
+          let post = mit.evaded
+            ? mit.player
+            : {
+                ...mit.player,
+                vx: mem.aimX * EDGE_KNOCKBACK,
+                vy: mem.aimY * EDGE_KNOCKBACK - EDGE_KNOCK_UP,
+              };
+          const blocked = mit.shielded || mit.deflected;
+          if (mit.evaded) {
+            // no-op: victim phased through (e.g. a dashing ninja's i-frames).
+          } else if (!blocked) {
+            // Kindred catalog v1 (class-overhaul-workboard.md chunk 2.6):
+            // Judgment Line's mark-amp and Unbroken Seal's window-amp both
+            // apply to a landed Edge hit, ahead of team peel. Re-read the
+            // attacker's LIVE state (not the outer-loop `attacker` const,
+            // stale once Seal is consumed below) so a swing that clips two
+            // victims in the same tick only consumes Seal on the first.
+            const liveAttacker = players[aid]!;
+            let edgeDamage = mit.damage;
+            if (
+              liveAttacker.judgmentTargetId === vid &&
+              liveAttacker.judgmentMarkUntilTick !== undefined &&
+              liveAttacker.judgmentMarkUntilTick > edgeTick
+            ) {
+              edgeDamage *= KIN_JUDGMENT_AMP_MULTIPLIER;
+            }
+            let staggerVictim = false;
+            if (
+              liveAttacker.sealUntilTick !== undefined &&
+              liveAttacker.sealUntilTick > edgeTick
+            ) {
+              edgeDamage *= KIN_SEAL_DAMAGE_MULTIPLIER;
+              staggerVictim = true;
+              // Consumed on this landed hit, not just on timeout — "the
+              // NEXT Kindled Edge hit" (class-ability-catalogs-v1.md).
+              players[aid] = { ...liveAttacker, sealUntilTick: undefined };
+            }
+            // Retribution Edge (chunk 2.6 fast-follow): a landed Edge hit
+            // while the block-armed "ready" window lives (combat.ts's
+            // tryDeflectDamage, paladin Ward branch, opens this) is amped
+            // and refunds Kindling — consumed on the hit, same "not just on
+            // timeout" shape as Seal above. Re-reads `players[aid]` fresh
+            // (Seal's own write just above may have already touched it).
+            const liveAttackerForRetribution = players[aid]!;
+            if (
+              liveAttackerForRetribution.retributionReadyUntilTick !== undefined &&
+              liveAttackerForRetribution.retributionReadyUntilTick > edgeTick
+            ) {
+              edgeDamage *= KIN_RETRIBUTION_EDGE_AMP_MULTIPLIER;
+              const kindling = Math.min(
+                KINDLING_MAX,
+                (liveAttackerForRetribution.kindling ?? 0) + KIN_RETRIBUTION_EDGE_KINDLING_REFUND,
+              );
+              players[aid] = {
+                ...liveAttackerForRetribution,
+                kindling,
+                retributionReadyUntilTick: undefined,
+              };
+            }
+            // Retort (card-pool-v2.md #27): a shield-board SPEC, always on
+            // once equipped (no cast, no cooldown — read directly off the
+            // card id, same "no new WeaponBuild plumbing" economy as
+            // GEO_RECOIL_STEP's own deferred-nuance precedent). Spends the
+            // WHOLE bank as bonus damage AND, per the doc's own "equal
+            // bonus knockback" wording, the SAME number added as extra
+            // knockback velocity along the swing direction.
+            const liveAttackerForRetort = players[aid]!;
+            if (
+              liveAttackerForRetort.cards.includes("retort") &&
+              liveAttackerForRetort.retortBankUntilTick !== undefined &&
+              liveAttackerForRetort.retortBankUntilTick > edgeTick &&
+              (liveAttackerForRetort.retortBank ?? 0) > 0
+            ) {
+              const bank = liveAttackerForRetort.retortBank ?? 0;
+              edgeDamage += bank;
+              post = {
+                ...post,
+                vx: post.vx + mem.aimX * bank,
+                vy: post.vy + mem.aimY * bank,
+              };
+              players[aid] = {
+                ...liveAttackerForRetort,
+                retortBank: 0,
+                retortBankUntilTick: undefined,
+              };
+            }
+            // Rally Light / Bastion (chunk 2.6 fast-follow) — same
+            // attacker-amp / victim-mitigate shape as DASH BASH/slash above.
+            edgeDamage *= rallyLightDamageMultiplier(players[aid]!, players, edgeTick);
+            edgeDamage *= kindledResolveDamageMultiplier(players[aid]!, edgeTick);
+            edgeDamage = applyBastionAura(victim, edgeDamage, players, edgeIds, edgeTick);
+            // Team peel (chunk 2.4) — same gate as bash/slash above: only
+            // when the victim's OWN Ward didn't already cover this hit.
+            if (!mit.warded) {
+              const peel = applyTeamPeel(victim, edgeDamage, players, edgeIds, edgeTick);
+              if (peel) {
+                edgeDamage = peel.damage;
+                events.push(peel.event);
+              }
+            }
+            const newHealth = Math.max(0, post.health - edgeDamage);
+            const wasAlive = post.alive;
+            post = { ...post, health: newHealth, alive: newHealth > 0 };
+            if (staggerVictim) {
+              const staggerTicks = Math.ceil(KIN_SEAL_STAGGER_MS / Math.max(1, effDtMs));
+              // Kindled Resolve (coverage-floor fast-follow): softens the
+              // stagger's SEVERITY toward 1 if the victim currently holds
+              // the buff — "resist", not immune (a no-op multiplier change
+              // for every victim without it).
+              post = {
+                ...post,
+                slowedUntilTick: (edgeTick + staggerTicks) as Tick,
+                slowMultiplier: applyKindledResolveStaggerResist(
+                  post,
+                  KIN_SEAL_STAGGER_MULTIPLIER,
+                  edgeTick,
+                ),
+              };
+            }
+            // Reuses "slash-hit"/"slash-started" (not bespoke "edge-hit"
+            // events) — spectator/renderer treatment is identical (a landed
+            // melee arc hit), and the hard-reject naming table only
+            // constrains DISPLAY-facing text, not this internal wire tag.
+            events.push({ t: "slash-hit", attackerId: aid, victimId: vid, damage: edgeDamage });
+            events.push({
+              t: "hit-confirmed",
+              victimId: vid,
+              damage: edgeDamage,
+              sourceProjectileId: null,
+              attackerId: aid,
+            });
+            if (wasAlive && newHealth === 0) {
+              events.push({ t: "player-killed", victimId: vid, killerId: aid, cause: "bash" });
+            }
+            if (mit.warded) {
+              events.push({
+                t: "ward-absorbed",
+                playerId: vid,
+                damageBlocked: mit.wardDamageBlocked,
+                kindlingGranted: mit.wardKindlingGranted,
+              });
+            }
+            if (mit.syzWarded) {
+              events.push({
+                t: "syz-ward-absorbed",
+                playerId: vid,
+                casterId: victim.wardAbsorbSourceId ?? vid,
+                damageBlocked: mit.syzWardDamageBlocked ?? 0,
+                wardBroke: mit.syzWardBroke ?? false,
+              });
+            }
+            // Deliberately NO resource grant to the attacker here — unlike
+            // ninja's energy-from-contact, Kindled Edge does not generate
+            // Kindling. Kindling comes exclusively from Ward absorbing
+            // damage (combat.ts) — "Defense IS the engine" (classes-goal.md).
+          } else {
+            events.push({ t: "parry-deflected", playerId: vid, projectileId: null });
+            if (mit.shielded && mit.shieldPopped) {
+              events.push({
+                t: "shield-popped",
+                playerId: vid,
+                remainingCharge: post.shieldCharge ?? 0,
+              });
+            }
+          }
+          players[vid] = post;
+        }
       }
     }
   }
@@ -1927,7 +4516,184 @@ export function stepWithRuntime(
         freezeMultiplier: undefined,
       };
     }
+    // Regen HoT (class-overhaul-workboard.md chunk 3.1) — the exact mirror
+    // of the Burn DoT block above, opposite sign: once per second of sim
+    // time (same ONE_SECOND_TICKS rate-limit, via `regenTickLastApplied`),
+    // heals `regenHps`, capped at SYZ_REGEN_HEALTH_CAP rather than floored
+    // at 0. Regen never revives a dead player: the `!p.alive` guard at the
+    // top of this loop skips players who were ALREADY dead entering this
+    // tick, and the explicit `next.alive` check here additionally covers
+    // the same-tick case where the Burn DoT block immediately above just
+    // killed this player — `next` reflects that death before regen ever
+    // runs, since both blocks share the same `next` accumulator in order.
+    if (
+      next.alive &&
+      next.regenUntilTick !== undefined &&
+      next.regenUntilTick > state.tick &&
+      next.regenHps !== undefined &&
+      next.regenHps > 0
+    ) {
+      const last = next.regenTickLastApplied ?? -ONE_SECOND_TICKS;
+      if (state.tick - last >= ONE_SECOND_TICKS) {
+        const heal = next.regenHps;
+        const newHealth = Math.min(SYZ_REGEN_HEALTH_CAP, next.health + heal);
+        next = {
+          ...next,
+          health: newHealth,
+          regenTickLastApplied: state.tick,
+        };
+      }
+    } else if (
+      next.regenUntilTick !== undefined &&
+      next.regenUntilTick <= state.tick
+    ) {
+      next = {
+        ...next,
+        regenUntilTick: undefined,
+        regenHps: undefined,
+        regenTickLastApplied: undefined,
+      };
+    }
+    // Haste expiry. No per-tick VALUE mutation needed (unlike regen) —
+    // hasteMultiplier is read live wherever it composes (speedMul chain
+    // below, weapon.ts's fire-rate composition), so this block only clears
+    // the window once it lapses, same shape as Freeze expiry above.
+    if (
+      next.hasteUntilTick !== undefined &&
+      next.hasteUntilTick <= state.tick
+    ) {
+      next = {
+        ...next,
+        hasteUntilTick: undefined,
+        hasteMultiplier: undefined,
+      };
+    }
+    // Syzygist Ward expiry (class-overhaul-workboard.md chunk 3.3): a pool
+    // that lapses unspent (never hit KINDLING-style zero via
+    // trySyzygistWard's own break-clear, combat.ts) is cleared here on a
+    // timer, same shape as every other window-buff expiry in this block.
+    if (
+      next.wardAbsorbUntilTick !== undefined &&
+      next.wardAbsorbUntilTick <= state.tick
+    ) {
+      next = {
+        ...next,
+        wardAbsorbUntilTick: undefined,
+        wardAbsorbRemaining: undefined,
+        wardAbsorbSourceId: undefined,
+      };
+    }
+    // Focus Hex mark expiry (class-overhaul-workboard.md chunk 3.4) — same
+    // shape as Facet Break/Judgment Line's own marks (no dedicated expiry
+    // block exists for THOSE because the consuming site itself re-checks
+    // `...MarkUntilTick > tick` every hit; Focus Hex's amp consumption site
+    // does the identical live re-check, so this block is purely cosmetic
+    // field hygiene — included for parity/statusChips legibility, not
+    // correctness (an expired-but-uncleared mark would already read as
+    // inert at the consumption site).
+    if (
+      next.focusHexMarkUntilTick !== undefined &&
+      next.focusHexMarkUntilTick <= state.tick
+    ) {
+      next = {
+        ...next,
+        focusHexTargetId: undefined,
+        focusHexMarkUntilTick: undefined,
+      };
+    }
+    // Borrowed Time debt resolution (class-overhaul-workboard.md chunk
+    // 3.4): the flat, unconditional drain lands here, once, at
+    // `debtUntilTick` — floored at 0 health (never lethal by construction,
+    // since every Borrowed Time cast heals strictly more than it later
+    // drains — see constants.ts's SYZ_BORROWED_TIME_* header note).
+    if (
+      next.alive &&
+      next.debtUntilTick !== undefined &&
+      next.debtUntilTick <= state.tick
+    ) {
+      const drained = Math.max(0, next.health - (next.debtAmount ?? 0));
+      next = {
+        ...next,
+        health: drained,
+        debtUntilTick: undefined,
+        debtAmount: undefined,
+      };
+    } else if (
+      next.debtUntilTick !== undefined &&
+      next.debtUntilTick <= state.tick
+    ) {
+      // Dead before the debt landed (or already resolved) — just clear the
+      // bookkeeping, never apply a drain to a corpse.
+      next = { ...next, debtUntilTick: undefined, debtAmount: undefined };
+    }
     if (next !== p) players[pid] = next;
+  }
+
+  // 1c. Syzygist Devotion accrual (class-overhaul-workboard.md chunk 3.2):
+  //     continuous per-tick income, +SYZ_DEVOTION_PER_BUFFED_ALLY_PER_SEC
+  //     per DISTINCT other ally currently carrying THIS player's live
+  //     regen/haste/Ward window (deduped by target id — an ally holding
+  //     two of this caster's buffs at once still counts once), capped at
+  //     SYZ_DEVOTION_MAX_COUNTED_SOURCES sources and SYZ_DEVOTION_MAX
+  //     total. Runs AFTER the expiry block above so a window that just
+  //     lapsed this tick no longer counts (byte-consistent with "does not
+  //     generate when no one carries it"). A player with NO teamId (solo/
+  //     FFA) can never satisfy `isAlly` for anyone (team.ts), so this loop
+  //     is a true no-op for every non-team match — same "unaffected by
+  //     construction" guarantee every other 1.1-consuming chunk gives.
+  //     Two-phase (count-then-write) so no caster's own devotion write can
+  //     affect another caster's count computed from the SAME pre-write
+  //     `players` snapshot this tick.
+  //
+  //     D3 brake (2026-07-18, docs/axiom-deviations-audit.md — see
+  //     `syzygistLeadBrakeMultiplier`'s own doc comment above for the full
+  //     rationale): the counted source total is scaled by this caster's
+  //     in-round kill-lead brake BEFORE the per-second rate is applied, so
+  //     a Syzygist already pulling ahead this round earns Devotion slower
+  //     from the exact same buff uptime a leaderless/behind Syzygist earns
+  //     at full rate.
+  {
+    const devotionGain = new Map<PlayerId, number>();
+    for (const casterIdStr of Object.keys(players)) {
+      const casterId = casterIdStr as PlayerId;
+      const caster = players[casterId]!;
+      if (!caster.alive || caster.teamId === undefined) continue;
+      let sourceCount = 0;
+      for (const otherIdStr of Object.keys(players)) {
+        const otherId = otherIdStr as PlayerId;
+        if (otherId === casterId) continue;
+        const other = players[otherId]!;
+        if (!other.alive) continue;
+        const carriesRegen =
+          other.regenSourceId === casterId &&
+          other.regenUntilTick !== undefined &&
+          other.regenUntilTick > state.tick;
+        const carriesHaste =
+          other.hasteSourceId === casterId &&
+          other.hasteUntilTick !== undefined &&
+          other.hasteUntilTick > state.tick;
+        const carriesWard =
+          other.wardAbsorbSourceId === casterId &&
+          other.wardAbsorbUntilTick !== undefined &&
+          other.wardAbsorbUntilTick > state.tick;
+        if (carriesRegen || carriesHaste || carriesWard) sourceCount++;
+      }
+      if (sourceCount > 0) {
+        const brake = syzygistLeadBrakeMultiplier(casterId, players, state.round.roundKills);
+        devotionGain.set(casterId, Math.min(sourceCount, SYZ_DEVOTION_MAX_COUNTED_SOURCES) * brake);
+      }
+    }
+    if (devotionGain.size > 0) {
+      const dtSec = effDtMs / 1000;
+      for (const [casterId, sources] of devotionGain) {
+        const caster = players[casterId]!;
+        const gained = sources * SYZ_DEVOTION_PER_BUFFED_ALLY_PER_SEC * dtSec;
+        players[casterId] = {
+          ...caster,
+          devotion: Math.min(SYZ_DEVOTION_MAX, (caster.devotion ?? 0) + gained),
+        };
+      }
+    }
   }
 
   // 2. Satellites: rotate around their owners, fire projectiles when their
@@ -2227,6 +4993,18 @@ export function stepWithRuntime(
           ) {
             finalDamage *= GEO_FACET_BREAK_AMP_MULTIPLIER;
           }
+          // Focus Hex (Syzygist catalog v1, single role, class-overhaul-
+          // workboard.md chunk 3.4): the EXACT same amp shape as Facet
+          // Break immediately above, just a different mark field pair and
+          // multiplier — mark lives on the CASTER (focusHexTargetId), not
+          // the victim, same reasoning.
+          if (
+            attackerEntity?.focusHexTargetId === ev.victimId &&
+            attackerEntity.focusHexMarkUntilTick !== undefined &&
+            attackerEntity.focusHexMarkUntilTick > nextTick
+          ) {
+            finalDamage *= SYZ_FOCUS_HEX_AMP_MULTIPLIER;
+          }
           // Void's HELD-SHIELD pierce already happened above (voidPiercing
           // short-circuits tryDeflectDamage's shield step entirely — a void
           // hit that reaches here either had no shield in the way or already
@@ -2248,7 +5026,50 @@ export function stepWithRuntime(
           ) {
             finalDamage = Math.max(finalDamage, postPlayer.health);
           }
+          // Rally Light / Bastion (chunk 2.6 fast-follow) — same attacker-
+          // amp / victim-mitigate shape every other hit-resolution site in
+          // this file uses (bash/slash/edge above).
+          if (attackerEntity) {
+            finalDamage *= rallyLightDamageMultiplier(attackerEntity, players, nextTick);
+            finalDamage *= kindledResolveDamageMultiplier(attackerEntity, nextTick);
+          }
+          finalDamage = applyBastionAura(victim, finalDamage, players, sortedPlayerIdsForTick, nextTick);
+          // Team peel (class-overhaul-workboard.md chunk 2.4) — same gate as
+          // every other damage-resolution site in this file: only when the
+          // victim's OWN Ward didn't already cover this hit (`mitigation.
+          // warded` false). `victim` (captured pre-mitigation, above) still
+          // carries the id/teamId/position the check needs.
+          if (!mitigation.warded) {
+            const peel = applyTeamPeel(
+              victim,
+              finalDamage,
+              players,
+              sortedPlayerIdsForTick,
+              nextTick,
+            );
+            if (peel) {
+              finalDamage = peel.damage;
+              events.push(peel.event);
+            }
+          }
           ev.damage = finalDamage;
+          if (mitigation.warded) {
+            events.push({
+              t: "ward-absorbed",
+              playerId: ev.victimId,
+              damageBlocked: mitigation.wardDamageBlocked,
+              kindlingGranted: mitigation.wardKindlingGranted,
+            });
+          }
+          if (mitigation.syzWarded) {
+            events.push({
+              t: "syz-ward-absorbed",
+              playerId: ev.victimId,
+              casterId: victim.wardAbsorbSourceId ?? ev.victimId,
+              damageBlocked: mitigation.syzWardDamageBlocked ?? 0,
+              wardBroke: mitigation.syzWardBroke ?? false,
+            });
+          }
           // First-blood wager: this is a real, non-self, attacker-attributed
           // hit landing during the fighting phase — claim it if nobody has
           // this round yet. `firstBloodAwardThisTick` also guards against a
@@ -2478,7 +5299,23 @@ export function stepWithRuntime(
   //     flammable boxes hit by a fire-element shard seed a fire patch. AOE
   //     and direct hit-confirmed events are drained into players here.
   let nextDestructibles: WorldState["destructibles"] = state.destructibles;
-  let nextFirePatches: WorldState["firePatches"] = { ...state.firePatches };
+  // Perf audit M2 (2026-07-18): stepFirePatches (fire.ts) always returns a
+  // brand-new fully-populated record, same as stepSatellites — any copy we
+  // hand it is discarded wholesale, never merged. So default to the SAME
+  // reference (no allocation) and only actually copy-on-write in the rare
+  // tick a new zone/spawnedFire entry needs to be added before the step.
+  let nextFirePatches: WorldState["firePatches"] = state.firePatches;
+  // Aoe role rework (2026-07-18): Lattice/Consecrated Field's lingering
+  // zones, queued into `pendingZoneSpawns` during the main per-player loop
+  // above — merged in here, same site + same "included THIS tick, before
+  // `stepFirePatches` runs below" timing `destResult.spawnedFire` (flammable
+  // destructibles breaking) already uses.
+  if (pendingZoneSpawns.length > 0) {
+    nextFirePatches = { ...nextFirePatches };
+    for (const zone of pendingZoneSpawns) {
+      nextFirePatches[zone.id] = zone;
+    }
+  }
   let projectilesAfterDestructibles = remainingProjectiles;
 
   if (Object.keys(state.destructibles).length > 0 || Object.keys(remainingProjectiles).length > 0) {
@@ -2522,6 +5359,7 @@ export function stepWithRuntime(
       events.push(ev);
     }
     for (const spec of destResult.spawnedFire) {
+      if (nextFirePatches === state.firePatches) nextFirePatches = { ...nextFirePatches };
       const fid = EntityId(runtime.nextEntityId);
       runtime.nextEntityId += 1;
       nextFirePatches[fid] = buildFireEntity(fid, spec);
@@ -2694,6 +5532,10 @@ export function stepWithRuntime(
         ownerId: PlayerId("__chaos__"),
         damagePerSecond: 13,
       };
+      // Perf audit M2 guard: nextFirePatches may still be the SAME reference
+      // as state.firePatches (no earlier mutation this tick) — never write
+      // into that shared prior-tick object in place.
+      if (nextFirePatches === state.firePatches) nextFirePatches = { ...nextFirePatches };
       nextFirePatches[fireId] = patch;
       nextFireHazardTimerMs = accum - interval;
     } else {

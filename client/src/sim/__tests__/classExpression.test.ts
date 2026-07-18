@@ -14,7 +14,12 @@ import {
 } from "../data/weaponBuild.js";
 import { classIdForArchetype } from "../data/cardTypes.js";
 import type { CardDefinition } from "../data/cardTypes.js";
-import { starterWeapon, priestStarterWeapon, baseWeaponForClass } from "../data/weapons.js";
+import {
+  starterWeapon,
+  priestStarterWeapon,
+  paladinStarterWeapon,
+  baseWeaponForClass,
+} from "../data/weapons.js";
 import { crystalRoundsCards } from "../data/cards.js";
 import { resolvePlayerBuild } from "../weapon.js";
 import { stepWeapon } from "../weapon.js";
@@ -235,7 +240,16 @@ describe("authored Wizard cards (docs/card-pool-v2.md universal specs/passives)"
     expect(wizardBuild.damage).toBeCloseTo(ninjaBuild.damage * 0.9, 2);
   });
 
-  test("Ninja/Paladin/Priest fall back cleanly on every authored Wizard card — never a Wizard-flavored effect", () => {
+  test("Ninja falls back cleanly on every authored Wizard card — never a Wizard-flavored effect", () => {
+    // Paladin is asserted SEPARATELY below (docs/card-pool-v2.md § Paladin
+    // exclusives / universal per-class lines, class-overhaul-workboard.md
+    // chunk 2.6) — 6 of these 7 ids now carry a real, authored `paladin:`
+    // expression (double-jump is the one deliberate exception, still
+    // deferred — see its own card-level comment for why). Priest is
+    // asserted separately below TOO (class-overhaul-workboard.md chunk
+    // 3.4) — seeker-facets now carries a real `priest:` entry (the
+    // low-aim design direction), so it's excluded from THIS "still falls
+    // back" list; every other id here still has no Priest entry.
     const authoredIds = [
       "seeker-facets",
       "cluster-bomb",
@@ -248,11 +262,105 @@ describe("authored Wizard cards (docs/card-pool-v2.md universal specs/passives)"
     for (const id of authoredIds) {
       const card = findCard(id);
       const classBlind = createWeaponBuild(starterWeapon, [card]);
-      for (const other of ["ninja", "paladin", "priest"] as const) {
-        const build = createWeaponBuild(starterWeapon, [card], other);
-        expect(build).toEqual(classBlind);
-      }
+      const build = createWeaponBuild(starterWeapon, [card], "ninja");
+      expect(build).toEqual(classBlind);
     }
+  });
+
+  test("Priest falls back cleanly on every authored Wizard card EXCEPT seeker-facets (chunk 3.4's one authored entry)", () => {
+    const stillFallsBackIds = [
+      "cluster-bomb",
+      "molten-core",
+      "frost-prism",
+      "spring-heel",
+      "double-jump",
+      "crystal-plating",
+    ];
+    for (const id of stillFallsBackIds) {
+      const card = findCard(id);
+      const classBlind = createWeaponBuild(starterWeapon, [card]);
+      const build = createWeaponBuild(starterWeapon, [card], "priest");
+      expect(build).toEqual(classBlind);
+    }
+  });
+
+  test("double-jump is the one deliberate Paladin fallback (Second Wind's stomp-jump ring needs substrate this session doesn't build)", () => {
+    const card = findCard("double-jump");
+    const classBlind = createWeaponBuild(starterWeapon, [card]);
+    const paladin = createWeaponBuild(starterWeapon, [card], "paladin");
+    expect(paladin).toEqual(classBlind);
+  });
+});
+
+// ── Paladin / Kindred (class-overhaul-workboard.md chunk 2.6) — universal
+//    card "Paladin:" classModifiers expressions, authored against
+//    card-pool-v2.md's Paladin per-class lines on the SAME 6 cards Wizard's
+//    own 7-card pass already proved the mechanism on (double-jump is the
+//    documented 7th exception, asserted above). Every reading here changes
+//    a field `resolveEmission` reads (chunk 2.5's verified wiring,
+//    emissionClassAware.test.ts) and/or a field consumed live by movement
+//    or Kindled Ward (shieldChargeMultiplier-adjacent fields), so — unlike
+//    Wizard's own molten-core/frost-prism/double-jump entries, which are
+//    "intentionally identical" per their own comments — every Paladin
+//    entry here is a REAL, numerically different reading, not just
+//    authored-but-inert content. ──────────────────────────────────────────
+describe("authored Paladin cards (docs/card-pool-v2.md universal per-class lines)", () => {
+  test("Grudge (seeker-facets): Paladin rejects homing entirely (\"arc forgiveness\" reframed) — the ultimate claims space, it doesn't seek", () => {
+    const card = findCard("seeker-facets");
+    const classBlind = createWeaponBuild(starterWeapon, [card]);
+    const paladin = createWeaponBuild(starterWeapon, [card], "paladin");
+    expect(classBlind.projectile.homingStrength).toBeGreaterThan(0);
+    expect(paladin.projectile.homingStrength).toBe(0);
+    expect(paladin.projectile.pathing).toBe("straight");
+    // No damage tax, unlike Wizard's −10% — Paladin isn't gaining anything.
+    expect(paladin.damage).toBe(classBlind.damage);
+  });
+
+  test("Splinterhead (cluster-bomb): Paladin's children are FEWER and BIGGER than Wizard's — heavier-tank read", () => {
+    const card = findCard("cluster-bomb");
+    const wizard = createWeaponBuild(starterWeapon, [card], "wizard");
+    const paladin = createWeaponBuild(starterWeapon, [card], "paladin");
+    expect(paladin.projectile.splitCount).toBeLessThan(wizard.projectile.splitCount);
+    expect(paladin.projectile.sizeMultiplier).toBeGreaterThan(wizard.projectile.sizeMultiplier);
+  });
+
+  test("Cinder (molten-core): Paladin's brand carries a bigger impact radius than Wizard's textbook cast", () => {
+    const card = findCard("molten-core");
+    const wizard = createWeaponBuild(starterWeapon, [card], "wizard");
+    const paladin = createWeaponBuild(starterWeapon, [card], "paladin");
+    expect(paladin.projectile.element).toBe("fire");
+    expect(paladin.projectile.impactRadiusPx).toBeGreaterThan(wizard.projectile.impactRadiusPx);
+  });
+
+  test("Hoarfrost (frost-prism): Paladin's frost brand is a STRONGER slow than Wizard's textbook cast", () => {
+    const card = findCard("frost-prism");
+    const wizard = createWeaponBuild(starterWeapon, [card], "wizard");
+    const paladin = createWeaponBuild(starterWeapon, [card], "paladin");
+    expect(paladin.projectile.element).toBe("ice");
+    expect(paladin.projectile.slowMultiplier).toBeLessThan(wizard.projectile.slowMultiplier);
+  });
+
+  test("Plating (crystal-plating): Paladin's move-speed cost is LIGHTER than Wizard's, size reads bigger", () => {
+    const card = findCard("crystal-plating");
+    const wizard = createWeaponBuild(starterWeapon, [card], "wizard");
+    const paladin = createWeaponBuild(starterWeapon, [card], "paladin");
+    expect(paladin.maxHealthAdd).toBe(20);
+    expect(paladin.moveSpeedMultiplier).toBeGreaterThan(wizard.moveSpeedMultiplier);
+    expect(paladin.projectile.sizeMultiplier).toBeGreaterThan(wizard.projectile.sizeMultiplier);
+  });
+
+  test("Spring Heel: Paladin's split is LOWER jump, HIGHER wall-jump than Wizard's flat +10%/+10%", () => {
+    const card = findCard("spring-heel");
+    const wizard = createWeaponBuild(starterWeapon, [card], "wizard");
+    const paladin = createWeaponBuild(starterWeapon, [card], "paladin");
+    expect(paladin.jumpMultiplier).toBeLessThan(wizard.jumpMultiplier);
+    expect(paladin.wallJumpMultiplier).toBeGreaterThan(wizard.wallJumpMultiplier);
+  });
+
+  test("resolvePlayerBuild wires Paladin classId LIVE from characterId (heavy archetype)", () => {
+    const paladinPlayer = mkPlayer({ characterId: "heavy", cards: ["frost-prism"] });
+    const build = resolvePlayerBuild(paladinPlayer);
+    expect(build.projectile.slowMultiplier).toBeCloseTo(0.55, 5);
   });
 });
 
@@ -261,11 +369,11 @@ describe("authored Wizard cards (docs/card-pool-v2.md universal specs/passives)"
 //    the part of Priest's kit that ships into pure FFA with no teammate. ──
 
 describe("Priest baseline: detuned starter bolt (docs/classes-goal.md 'modest projectile, wizard's starter, detuned')", () => {
-  test("baseWeaponForClass falls back to starterWeapon for every class but priest", () => {
+  test("baseWeaponForClass falls back to starterWeapon for Wizard/Ninja; Priest/Paladin have their own baseline", () => {
     expect(baseWeaponForClass(undefined)).toBe(starterWeapon);
     expect(baseWeaponForClass("wizard")).toBe(starterWeapon);
     expect(baseWeaponForClass("ninja")).toBe(starterWeapon);
-    expect(baseWeaponForClass("paladin")).toBe(starterWeapon);
+    expect(baseWeaponForClass("paladin")).toBe(paladinStarterWeapon);
     expect(baseWeaponForClass("priest")).toBe(priestStarterWeapon);
   });
 
@@ -277,14 +385,14 @@ describe("Priest baseline: detuned starter bolt (docs/classes-goal.md 'modest pr
     expect(priestStarterWeapon.id).toBe(starterWeapon.id);
   });
 
-  test("createWeaponBuild(baseWeaponForClass(classId), ...) with no cards: only Priest is detuned", () => {
+  test("createWeaponBuild(baseWeaponForClass(classId), ...) with no cards: only Wizard/Ninja stay at the flat-pool baseline", () => {
     const wizard = createWeaponBuild(baseWeaponForClass("wizard"), [], "wizard");
     const ninja = createWeaponBuild(baseWeaponForClass("ninja"), [], "ninja");
     const paladin = createWeaponBuild(baseWeaponForClass("paladin"), [], "paladin");
     const priest = createWeaponBuild(baseWeaponForClass("priest"), [], "priest");
     expect(wizard.damage).toBe(starterWeapon.damage);
     expect(ninja.damage).toBe(starterWeapon.damage);
-    expect(paladin.damage).toBe(starterWeapon.damage);
+    expect(paladin.damage).toBeGreaterThan(starterWeapon.damage);
     expect(priest.damage).toBeLessThan(starterWeapon.damage);
   });
 
@@ -305,13 +413,79 @@ describe("Priest baseline: detuned starter bolt (docs/classes-goal.md 'modest pr
     expect(ttk).toBeLessThan(3.5);
   });
 
-  test("Ninja/Paladin/Wizard resolvePlayerBuild damage is unaffected by the Priest baseline change", () => {
+  test("Ninja/Wizard resolvePlayerBuild damage is unaffected by the Priest/Paladin baseline changes", () => {
     const wizardPlayer = mkPlayer({ characterId: "balanced" });
     const ninjaPlayer = mkPlayer({ id: "p2" as PlayerId, characterId: "sprinter" });
-    const paladinPlayer = mkPlayer({ id: "p3" as PlayerId, characterId: "heavy" });
     expect(resolvePlayerBuild(wizardPlayer).damage).toBe(starterWeapon.damage);
     expect(resolvePlayerBuild(ninjaPlayer).damage).toBe(starterWeapon.damage);
-    expect(resolvePlayerBuild(paladinPlayer).damage).toBe(starterWeapon.damage);
+  });
+});
+
+// ── Paladin / Kindred baseline (class-overhaul-workboard.md chunk 2.5,
+//    docs/classes-goal.md "E-KEY RULING") — Kindled Edge replaces this
+//    weapon for Paladin's actual Fire input (World.ts), so its ONLY live
+//    consumer is the Unveiling ultimate's composed Emission
+//    (resolveEmission). Re-tuned "heavier, slower, bigger" per the task
+//    brief's explicit ask, not detuned like Priest's. ────────────────────
+describe("Paladin baseline: heavier starter bolt feeding the Unveiling ultimate only", () => {
+  test("paladinStarterWeapon is a same-shape, heavier/slower/bigger copy of starterWeapon", () => {
+    expect(paladinStarterWeapon.damage).toBeGreaterThan(starterWeapon.damage);
+    expect(paladinStarterWeapon.fireRate).toBeLessThan(starterWeapon.fireRate);
+    expect(paladinStarterWeapon.projectileSpeed).toBeLessThan(starterWeapon.projectileSpeed);
+    expect(paladinStarterWeapon.projectile.sizeMultiplier).toBeGreaterThan(
+      starterWeapon.projectile.sizeMultiplier,
+    );
+    expect(paladinStarterWeapon.delivery).toBe(starterWeapon.delivery);
+    expect(paladinStarterWeapon.id).toBe(starterWeapon.id);
+  });
+
+  test("still inside the combat-balance-ttk band even though Paladin never actually fires it conventionally", () => {
+    const ttk = 100 / (paladinStarterWeapon.damage * paladinStarterWeapon.fireRate);
+    expect(ttk).toBeGreaterThan(1.8);
+    expect(ttk).toBeLessThan(3.5);
+  });
+
+  test("resolvePlayerBuild: a bare Heavy (paladin) player's build.damage is heavier than a bare Balanced (wizard) player's", () => {
+    const wizardPlayer = mkPlayer({ characterId: "balanced", cards: [] });
+    const paladinPlayer = mkPlayer({
+      id: "p2" as PlayerId,
+      characterId: "heavy",
+      cards: [],
+    });
+    const wizardBuild = resolvePlayerBuild(wizardPlayer);
+    const paladinBuild = resolvePlayerBuild(paladinPlayer);
+    expect(paladinBuild.damage).toBeGreaterThan(wizardBuild.damage);
+    expect(paladinBuild.projectileSpeed).toBeLessThan(wizardBuild.projectileSpeed);
+  });
+});
+
+// ── Priest / Syzygist universal card expression (class-overhaul-workboard.md
+//    chunk 3.4) — the ONE universal-card `priest:` classModifiers sibling
+//    added this chunk (seeker-facets), embodying Jake's live low-aim design
+//    direction ("tendrils that ooze out and self guide... less about
+//    aiming with the priest") rather than Wizard's aim-first "assists,
+//    never auto-wins" pricing. ──────────────────────────────────────────
+describe("Grudge (seeker-facets): Priest keeps full homing WITHOUT Wizard's damage/speed tax", () => {
+  test("Priest pays neither the −10% damage tax NOR the 0.82 speed cut Wizard pays for the same homing", () => {
+    const card = findCard("seeker-facets");
+    const wizard = createWeaponBuild(starterWeapon, [card], "wizard");
+    const priest = createWeaponBuild(starterWeapon, [card], "priest");
+    expect(priest.damage).toBeGreaterThan(wizard.damage);
+    expect(priest.projectileSpeed).toBeGreaterThan(wizard.projectileSpeed);
+    // Both still genuinely home (the low-aim identity survives on Priest,
+    // same as Wizard) — homingStrength itself clamps identically for both
+    // (weaponBuild.ts's own 2.5 ceiling), so speed/damage are the real,
+    // observable differentiators, not the raw homing number.
+    expect(priest.projectile.homingStrength).toBeGreaterThan(0);
+    expect(wizard.projectile.homingStrength).toBeGreaterThan(0);
+  });
+
+  test("Priest's reading differs from the class-blind default too (a real authored entry, not a silent no-op)", () => {
+    const card = findCard("seeker-facets");
+    const classBlind = createWeaponBuild(starterWeapon, [card]);
+    const priest = createWeaponBuild(starterWeapon, [card], "priest");
+    expect(priest.projectileSpeed).toBeGreaterThan(classBlind.projectileSpeed);
+    expect(priest).not.toEqual(classBlind);
   });
 });
 

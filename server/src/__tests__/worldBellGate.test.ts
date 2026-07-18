@@ -211,7 +211,12 @@ describe("elastic bots (S2.E.3)", () => {
   }
 
   test("bot deltas land exclusively on bell edges across joins", () => {
-    const wh = new WorldHost({ mapId: "boxworks-mini", resultsHoldMs: 60_000, botFloor: 4 });
+    // vessel-nexus (perf audit G, 2026-07-18): the reference map for
+    // botFloor scaling — ratio 1, so these exact-headcount assertions are
+    // unaffected by the area-scaling fix. boxworks-mini's tiny size would
+    // otherwise scale floor:4 down to floor:1 here, which is testing an
+    // unrelated mechanism (bell-edge-only churn), not map-size scaling.
+    const wh = new WorldHost({ mapId: "vessel-nexus", resultsHoldMs: 60_000, botFloor: 4 });
     const wi = wh as unknown as WorldInternals;
     // Eager boot (floor active, 0 humans) → 4 bots immediately.
     const hi = wi.host as unknown as HostInternals;
@@ -242,7 +247,8 @@ describe("elastic bots (S2.E.3)", () => {
   });
 
   test("constructor clamps the floor at the existing cap of 6", () => {
-    const wh = new WorldHost({ mapId: "boxworks-mini", resultsHoldMs: 60_000, botFloor: 9 });
+    // vessel-nexus: reference map, unaffected by area scaling (perf audit G).
+    const wh = new WorldHost({ mapId: "vessel-nexus", resultsHoldMs: 60_000, botFloor: 9 });
     const wi = wh as unknown as WorldInternals;
     const hi = wi.host as unknown as HostInternals;
     hi.stop();
@@ -260,6 +266,48 @@ describe("elastic bots (S2.E.3)", () => {
     setPhase(hi, { phase: "drafting", countdownRemainingMs: 0, draftingOffers: {} });
     hi.tick();
     expect(botCountIn(hi)).toBe(2);
+  });
+});
+
+describe("elastic bot floor scales with map area (perf audit G, 2026-07-18)", () => {
+  function botCountIn(hi: HostInternals): number {
+    return Object.keys(hi.state.players).filter((id) => id.startsWith("bot_")).length;
+  }
+
+  test("boxworks-mini (0.248x vessel-nexus area): floor 4 scales down to 1", () => {
+    // 1280×640 / 3000×1100 ≈ 0.248 → round(4 * 0.248) = round(0.99) = 1.
+    const wh = new WorldHost({ mapId: "boxworks-mini", resultsHoldMs: 60_000, botFloor: 4 });
+    const wi = wh as unknown as WorldInternals;
+    const hi = wi.host as unknown as HostInternals;
+    hi.stop();
+    expect(botCountIn(hi)).toBe(1);
+  });
+
+  test("vessel-nexus (the reference map): floor is never scaled down", () => {
+    const wh = new WorldHost({ mapId: "vessel-nexus", resultsHoldMs: 60_000, botFloor: 4 });
+    const wi = wh as unknown as WorldInternals;
+    const hi = wi.host as unknown as HostInternals;
+    hi.stop();
+    expect(botCountIn(hi)).toBe(4);
+  });
+
+  test("boxworks-tower (0.471x vessel-nexus area): floor 4 scales down to 2, not eliminated", () => {
+    // 1440×1080 / 3000×1100 ≈ 0.471 → round(4 * 0.471) = round(1.88) = 2.
+    // This is the exact map the originating lag report and this whole
+    // audit were about — scaling relieves it without zeroing bots out.
+    const wh = new WorldHost({ mapId: "boxworks-tower", resultsHoldMs: 60_000, botFloor: 4 });
+    const wi = wh as unknown as WorldInternals;
+    const hi = wi.host as unknown as HostInternals;
+    hi.stop();
+    expect(botCountIn(hi)).toBe(2);
+  });
+
+  test("botFloor 0 (elasticity off) is never scaled — legacy fixed count on any map", () => {
+    const wh = new WorldHost({ mapId: "boxworks-mini", resultsHoldMs: 60_000, bots: 3 });
+    const wi = wh as unknown as WorldInternals;
+    const hi = wi.host as unknown as HostInternals;
+    hi.stop();
+    expect(botCountIn(hi)).toBe(3);
   });
 });
 
@@ -282,7 +330,8 @@ describe("elastic bots respect team floors (classes-goal.md Venue integration)",
   }
 
   test("no teamed humans (ordinary FFA bell): every bot spawns teamless — byte-identical to pre-duos behavior", () => {
-    const wh = new WorldHost({ mapId: "boxworks-mini", resultsHoldMs: 60_000, botFloor: 4 });
+    // vessel-nexus: reference map, unaffected by area scaling (perf audit G).
+    const wh = new WorldHost({ mapId: "vessel-nexus", resultsHoldMs: 60_000, botFloor: 4 });
     const wi = wh as unknown as WorldInternals;
     const hi = wi.host as unknown as HostInternals;
     hi.stop();
@@ -295,7 +344,8 @@ describe("elastic bots respect team floors (classes-goal.md Venue integration)",
   });
 
   test("a duo pair admitted together → the OTHER bot slots pair up into their own opposing team", () => {
-    const wh = new WorldHost({ mapId: "boxworks-mini", resultsHoldMs: 60_000, botFloor: 4 });
+    // vessel-nexus: reference map, unaffected by area scaling (perf audit G).
+    const wh = new WorldHost({ mapId: "vessel-nexus", resultsHoldMs: 60_000, botFloor: 4 });
     const wi = wh as unknown as WorldInternals;
     const hi = wi.host as unknown as HostInternals;
     hi.stop();
@@ -325,7 +375,8 @@ describe("elastic bots respect team floors (classes-goal.md Venue integration)",
   });
 
   test("a lone duo queuer (auto-pair, no human partner) gets exactly ONE bot ally sharing their team", () => {
-    const wh = new WorldHost({ mapId: "boxworks-mini", resultsHoldMs: 60_000, botFloor: 4 });
+    // vessel-nexus: reference map, unaffected by area scaling (perf audit G).
+    const wh = new WorldHost({ mapId: "vessel-nexus", resultsHoldMs: 60_000, botFloor: 4 });
     const wi = wh as unknown as WorldInternals;
     const hi = wi.host as unknown as HostInternals;
     hi.stop();
@@ -345,7 +396,8 @@ describe("elastic bots respect team floors (classes-goal.md Venue integration)",
   });
 
   test("odd bot-slot remainder stays teamless rather than crash or half-pair", () => {
-    const wh = new WorldHost({ mapId: "boxworks-mini", resultsHoldMs: 60_000, botFloor: 5 });
+    // vessel-nexus: reference map, unaffected by area scaling (perf audit G).
+    const wh = new WorldHost({ mapId: "vessel-nexus", resultsHoldMs: 60_000, botFloor: 5 });
     const wi = wh as unknown as WorldInternals;
     const hi = wi.host as unknown as HostInternals;
     hi.stop();

@@ -19,6 +19,7 @@ import {
   SEAL_ACCENT_HEX,
 } from "./cardSeals.js";
 import { cardGlyphHtml } from "./cardGlyphs.js";
+import { MAX_ABILITY_SLOTS } from "../../sim/data/cardTypes.js";
 
 export type CardPickHandler = (card: CardDefinition) => void;
 
@@ -100,6 +101,14 @@ export class CardDraftOverlay {
   /** Non-null when the constructor supplied station copy — show() must not
    *  overwrite it with the round-draft/FTUE hint variants. */
   private readonly fixedHint: string | null;
+  /** Class ability catalog grid (classes-goal.md "Loadout station owns the
+   *  3 slots" — live playtest finding 2026-07-18). Built ONLY when the
+   *  constructor receives a `classRow` (the loadout-station call site);
+   *  the round-draft/HUD call sites never pass one and never call
+   *  `setCatalog`, so this stays null and the section never renders for
+   *  them — zero behavior change to the existing draft surfaces. */
+  private catalogHeading: HTMLDivElement | null = null;
+  private catalogGrid: HTMLDivElement | null = null;
 
   constructor(juice: CardDraftJuice = {}, copy: CardDraftCopy = {}, classRow?: ClassRowConfig) {
     this.juice = juice;
@@ -169,15 +178,31 @@ export class CardDraftOverlay {
     this.cardsContainer = document.createElement("div");
     Object.assign(this.cardsContainer.style, CARDS_CONTAINER_STYLE);
 
-    // Class row sits ABOVE the card offer: chassis first, spec second —
-    // same order the canon reads (class = body, cards = spec layer).
+    // Class row sits ABOVE the catalog: chassis first, spec second — same
+    // order the canon reads (class = body, cards = spec layer).
     const classRowEl = classRow ? this.makeClassRow(classRow) : null;
 
+    // Class ability catalog (classes-goal.md "Loadout station owns the 3
+    // slots" — live playtest finding 2026-07-18): the FULL classId-gated
+    // catalog, a toggle grid, sits below the class row. Station-only
+    // (classRow gate); `setCatalog` populates it once server data (classId
+    // + current picks) arrives.
+    const catalogSectionEl = classRow ? this.buildCatalogSection() : null;
+
+    // The universal random-offer-and-reroll section (timer bar + card
+    // grid below) is CUT FROM THE STATION ENTIRELY (Jake, live playtest
+    // 2026-07-18 — seeing the catalog grid AND the old "UNIVERSAL OFFER"
+    // 3-card section together: "delete this mechanic and gameplay and
+    // focus on the other things on this ui ... I mean in the load out
+    // picker"). `classRow` is present ONLY at the station call site
+    // (HangoutScene) — the round-draft (OnlineMatchScene) and
+    // HudCompositor call sites never pass one, so they keep the timer bar
+    // + card grid exactly as before, completely unaffected by this.
     stage.append(
       header,
       ...(classRowEl ? [classRowEl] : []),
-      timerTrack,
-      this.cardsContainer,
+      ...(catalogSectionEl ? [catalogSectionEl] : []),
+      ...(classRow ? [] : [timerTrack, this.cardsContainer]),
     );
     this.root.appendChild(stage);
 
@@ -245,6 +270,28 @@ export class CardDraftOverlay {
     } else {
       this.timerBar.style.width = "0%";
     }
+  }
+
+  /**
+   * Station-only open (Task 2, live playtest 2026-07-18: Jake — "delete
+   * this mechanic and gameplay and focus on the other things on this ui
+   * ... I mean in the load out picker" — cut the universal random-offer-
+   * and-reroll section from the loadout station entirely). Unlike
+   * show()/showWithTimer(), there is no card list to reveal and no timer
+   * — this just fades the panel in over whatever's already built into the
+   * DOM (header + class row + catalog grid, populated separately by
+   * `setCatalog`). Station-only; the round-draft/HUD call sites keep using
+   * show()/showWithTimer() completely unchanged.
+   */
+  showStation(): void {
+    if (this.destroyed) return;
+    this.root.style.display = "flex";
+    this.root.style.opacity = "0";
+    this.root.style.transform = "scale(0.96)";
+    requestAnimationFrame(() => {
+      this.root.style.opacity = "1";
+      this.root.style.transform = "scale(1)";
+    });
   }
 
   /**
@@ -520,6 +567,168 @@ export class CardDraftOverlay {
 
     wrap.append(title, row);
     return wrap;
+  }
+
+  /** Builds the (initially empty) class ability catalog section — heading
+   *  + grid — populated later by `setCatalog` once server data arrives.
+   *  Station-only (see the `catalogHeading`/`catalogGrid` field docs). */
+  private buildCatalogSection(): HTMLDivElement {
+    const wrap = document.createElement("div");
+    wrap.dataset.catalogSection = "true";
+    Object.assign(wrap.style, CATALOG_SECTION_STYLE);
+
+    this.catalogHeading = document.createElement("div");
+    this.catalogHeading.textContent = `CLASS ABILITY CATALOG — 0 / ${MAX_ABILITY_SLOTS} EQUIPPED`;
+    Object.assign(this.catalogHeading.style, CATALOG_HEADING_STYLE);
+
+    this.catalogGrid = document.createElement("div");
+    Object.assign(this.catalogGrid.style, CATALOG_GRID_STYLE);
+
+    wrap.append(this.catalogHeading, this.catalogGrid);
+    return wrap;
+  }
+
+  /**
+   * Populate (or re-populate) the class ability catalog grid — the FULL
+   * classId-gated catalog for the player's locked chassis, each card an
+   * independent toggle (classes-goal.md "Loadout station owns the 3
+   * slots"; live playtest finding 2026-07-18, Jake: "this should show all
+   * cards for that class when its selected not just three and this should
+   * have the concept of selecting them"). Rebuilds the grid from scratch
+   * every call — catalogs are small (0–10 cards today) so a full rebuild
+   * is cheap and avoids diffing bugs; call it as often as the caller's
+   * source of truth changes (server push, optimistic local toggle).
+   *
+   * No-op if the overlay wasn't constructed with a `classRow` — the
+   * round-draft/HUD call sites never call this.
+   *
+   * `activesHeld` counts EVERY active ability card currently in the
+   * player's rack (universal six-axes ability cards from the offer below
+   * included, not just catalog picks) — same shared-cap discipline
+   * venueHost.ts's catalog-toggle handler enforces server-side. A
+   * not-yet-selected card is rendered disabled once the cap is hit
+   * ("Draft never creates a 4th slot"); an already-selected card stays
+   * clickable so it can always be removed.
+   */
+  setCatalog(
+    cards: readonly CardDefinition[],
+    selectedIds: readonly string[],
+    activesHeld: number,
+    onToggle: CardPickHandler,
+  ): void {
+    if (!this.catalogGrid || !this.catalogHeading) return; // no classRow at construction
+    this.catalogHeading.textContent = `CLASS ABILITY CATALOG — ${activesHeld} / ${MAX_ABILITY_SLOTS} EQUIPPED`;
+    this.catalogGrid.replaceChildren();
+
+    if (cards.length === 0) {
+      const empty = document.createElement("div");
+      empty.textContent = "No abilities catalogued yet for this class.";
+      Object.assign(empty.style, CATALOG_EMPTY_STYLE);
+      this.catalogGrid.appendChild(empty);
+      return;
+    }
+
+    const selected = new Set(selectedIds);
+    for (const card of cards) {
+      const isSelected = selected.has(card.id);
+      const disabled = !isSelected && activesHeld >= MAX_ABILITY_SLOTS;
+      const tile = this.makeCatalogTile(card, isSelected, disabled);
+      if (!disabled) {
+        tile.addEventListener("click", () => onToggle(card));
+      }
+      this.catalogGrid.appendChild(tile);
+    }
+  }
+
+  /** One catalog grid tile — compact (unlike the big offer plates below;
+   *  up to 10 need to fit at once), toggle-styled: gold/selected vs
+   *  cyan/unselected register (visual-language-gnostic-vessel.md — stroke-
+   *  based accents, no new imagery). */
+  private makeCatalogTile(card: CardDefinition, selected: boolean, disabled: boolean): HTMLDivElement {
+    const el = document.createElement("div");
+    el.dataset.catalogTile = card.id;
+    el.setAttribute("aria-pressed", selected ? "true" : "false");
+    Object.assign(el.style, CATALOG_TILE_STYLE);
+
+    const accentHex = selected ? "#c9a84c" : "#5DCFD9";
+    el.style.border = selected
+      ? "1px solid rgba(201, 168, 76, 0.85)"
+      : "1px solid rgba(93, 207, 217, 0.18)";
+    el.style.background = selected
+      ? "linear-gradient(165deg, rgba(26, 24, 16, 0.95), rgba(12, 12, 10, 0.98))"
+      : "linear-gradient(165deg, rgba(14, 18, 28, 0.92), rgba(8, 10, 16, 0.96))";
+    el.style.boxShadow = selected
+      ? "0 0 0 1px rgba(201,168,76,0.25), 0 8px 20px rgba(0,0,0,0.4)"
+      : "none";
+    el.style.opacity = disabled ? "0.4" : "1";
+    el.style.cursor = disabled ? "not-allowed" : "pointer";
+
+    const top = document.createElement("div");
+    Object.assign(top.style, {
+      display: "flex",
+      alignItems: "center",
+      gap: "8px",
+    } as Partial<CSSStyleDeclaration>);
+    const glyph = document.createElement("div");
+    glyph.innerHTML = cardGlyphHtml(card);
+    Object.assign(glyph.style, {
+      lineHeight: "0",
+      width: "26px",
+      height: "26px",
+      flexShrink: "0",
+      opacity: "0.95",
+    } as Partial<CSSStyleDeclaration>);
+    const name = document.createElement("div");
+    name.textContent = card.name;
+    Object.assign(name.style, {
+      fontSize: "13px",
+      fontWeight: "800",
+      color: "#e8eef4",
+      fontFamily: "'Space Grotesk', Inter, Arial, sans-serif",
+    } as Partial<CSSStyleDeclaration>);
+    top.append(glyph, name);
+
+    const roleTag = document.createElement("div");
+    roleTag.textContent = (card.role ?? "").toUpperCase();
+    Object.assign(roleTag.style, {
+      fontSize: "9px",
+      fontWeight: "700",
+      letterSpacing: "0.14em",
+      color: withAlpha(accentHex, 0.85),
+      fontFamily: "'Space Mono', 'Courier New', monospace",
+    } as Partial<CSSStyleDeclaration>);
+
+    const desc = document.createElement("div");
+    desc.textContent = localizeDescriptionForInput(card.description);
+    Object.assign(desc.style, {
+      fontSize: "11px",
+      lineHeight: "1.4",
+      color: "#b7c4d6",
+    } as Partial<CSSStyleDeclaration>);
+
+    const badge = document.createElement("div");
+    badge.textContent = selected ? "EQUIPPED" : disabled ? "RACK FULL" : "TAP TO EQUIP";
+    Object.assign(badge.style, {
+      fontSize: "9px",
+      fontWeight: "700",
+      letterSpacing: "0.12em",
+      color: selected ? "#c9a84c" : disabled ? "#6b7280" : "#5DCFD9",
+      fontFamily: "'Space Mono', 'Courier New', monospace",
+      marginTop: "2px",
+    } as Partial<CSSStyleDeclaration>);
+
+    el.append(top, roleTag, desc, badge);
+
+    if (!disabled) {
+      el.addEventListener("mouseenter", () => {
+        if (!selected) el.style.borderColor = "rgba(93, 207, 217, 0.4)";
+      });
+      el.addEventListener("mouseleave", () => {
+        if (!selected) el.style.borderColor = "rgba(93, 207, 217, 0.18)";
+      });
+    }
+
+    return el;
   }
 
   private makeCardElement(card: CardDefinition): HTMLDivElement {
@@ -989,6 +1198,52 @@ const CLASS_TILE_TAG_STYLE: Partial<CSSStyleDeclaration> = {
   letterSpacing: "0.18em",
   color: "rgba(201, 168, 76, 0.75)",
   fontFamily: "'Space Mono', 'Courier New', monospace",
+};
+
+// ── Class ability catalog (classes-goal.md "Loadout station owns the 3
+//    slots" — live playtest finding 2026-07-18) ─────────────────────────
+
+const CATALOG_SECTION_STYLE: Partial<CSSStyleDeclaration> = {
+  display: "flex",
+  flexDirection: "column",
+  alignItems: "center",
+  gap: "8px",
+  width: "100%",
+};
+
+const CATALOG_HEADING_STYLE: Partial<CSSStyleDeclaration> = {
+  fontSize: "11px",
+  fontWeight: "700",
+  letterSpacing: "0.22em",
+  color: "#aa9e7f", // Instrument Ink — same register as the class-row title
+  textTransform: "uppercase",
+  fontFamily: "'Space Mono', 'Courier New', monospace",
+};
+
+const CATALOG_GRID_STYLE: Partial<CSSStyleDeclaration> = {
+  display: "grid",
+  gridTemplateColumns: "repeat(auto-fill, minmax(160px, 1fr))",
+  gap: "8px",
+  width: "100%",
+  maxWidth: "820px",
+};
+
+const CATALOG_TILE_STYLE: Partial<CSSStyleDeclaration> = {
+  display: "flex",
+  flexDirection: "column",
+  gap: "4px",
+  padding: "10px 12px",
+  borderRadius: "8px",
+  transition: "border-color 140ms ease, opacity 140ms ease",
+};
+
+const CATALOG_EMPTY_STYLE: Partial<CSSStyleDeclaration> = {
+  fontSize: "11px",
+  color: "#7a8aa3",
+  letterSpacing: "0.04em",
+  padding: "10px 4px",
+  gridColumn: "1 / -1",
+  textAlign: "center",
 };
 
 /**

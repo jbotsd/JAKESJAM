@@ -69,6 +69,12 @@ export function applyMidMatchJoin(
         ammo: 0,
         abilityCharge: 0,
         lastProcessedInputSeq: 0,
+        // Duos-queue team identity (class-overhaul-workboard.md chunk 1.1) —
+        // mirrors World.create's treatment so a mid-match joiner (e.g. a
+        // duo partner reconnecting) gets the same teamId their spawn info
+        // carries. Omitted key when absent, same optional-spread convention
+        // used throughout PlayerEntity.
+        ...(spawn.teamId ? { teamId: spawn.teamId } : {}),
       },
     },
     round: {

@@ -177,16 +177,9 @@ export function cardGlyphHtml(card: CardDefinition): string {
         c,
       );
 
-    case "magnet-spray":
-      // Wide fan + each tip bent toward a shared target
-      return svg(
-        `<circle cx="50" cy="32" r="7" ${ST(c, 1.3)} stroke-dasharray="2 1.5"/>
-         <line x1="10" y1="16" x2="42" y2="28" ${ST(c, 1.6)}/>
-         <line x1="10" y1="32" x2="44" y2="32" ${ST(c, 1.6)}/>
-         <line x1="10" y1="48" x2="42" y2="36" ${ST(c, 1.6)}/>
-         <circle cx="50" cy="32" r="2" fill="${ink(c)}" opacity="0.7"/>`,
-        c,
-      );
+    // magnet-spray glyph case removed — card cut 2026-07-18 split-cluster
+    // audit (design-axioms.md A7). Unknown ids fall back to the generic
+    // bucket-glyph default below (same path ~36 other cards already use).
 
     case "homing-cluster":
       // Triple fan that all curve to one mark
@@ -230,15 +223,8 @@ export function cardGlyphHtml(card: CardDefinition): string {
       );
 
     // ── Quantity / pattern ──────────────────────────────────────────
-    case "dual-splitter":
-      return svg(
-        `<line x1="10" y1="32" x2="48" y2="16" ${ST(c, 2.2)}/>
-         <line x1="10" y1="32" x2="48" y2="48" ${ST(c, 2.2)}/>
-         <circle cx="10" cy="32" r="3.5" fill="${ink(c)}" opacity="0.65"/>
-         <circle cx="48" cy="16" r="3" fill="${ink(c)}" opacity="0.5"/>
-         <circle cx="48" cy="48" r="3" fill="${ink(c)}" opacity="0.5"/>`,
-        c,
-      );
+    // dual-splitter glyph case removed — card cut 2026-07-18 split-cluster
+    // audit (design-axioms.md A7). Falls back to the generic bucket-glyph.
 
     case "triple-fan":
       return svg(
@@ -277,15 +263,8 @@ export function cardGlyphHtml(card: CardDefinition): string {
         c,
       );
 
-    case "needle-hose":
-      // Core fat + two thin side needles
-      return svg(
-        `<line x1="8" y1="32" x2="52" y2="32" ${ST(c, 3)}/>
-         <line x1="10" y1="18" x2="48" y2="14" ${ST(c, 1.2)}/>
-         <line x1="10" y1="46" x2="48" y2="50" ${ST(c, 1.2)}/>
-         <circle cx="54" cy="32" r="2.5" fill="${ink(c)}" opacity="0.6"/>`,
-        c,
-      );
+    // needle-hose glyph case removed — card cut 2026-07-18 split-cluster
+    // audit (design-axioms.md A7). Falls back to the generic bucket-glyph.
 
     case "shard-bloom":
       // Close-range burst from center

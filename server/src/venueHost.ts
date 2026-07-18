@@ -27,9 +27,9 @@ import { resolveMap } from "@sim/data/maps.ts";
 import { PlayerId, type DestructibleDefinition, type MapDefinition, type PlayerSpawnInfo } from "@sim/types.ts";
 import type { MapId } from "@sim/data/maps.ts";
 import { decodeMessage, encodeMessage, type ClientMessage, type VenueStatus } from "@net/protocol.ts";
-import { crystalRoundsCards } from "@sim/data/cards.ts";
+import { sanitizeCharacterId } from "@net/playerCharacter.ts";
+import { crystalRoundsCards, catalogForClass } from "@sim/data/cards.ts";
 import { classIdForArchetype, MAX_ABILITY_SLOTS, type ClassId } from "@sim/data/cardTypes.ts";
-import { DRAFT_OFFER_COUNT } from "@sim/round.ts";
 
 export const VENUE_LOBBY_MATCH_ID = "lobby";
 
@@ -65,60 +65,16 @@ function venueLobbyMap(): MapDefinition {
 /** How often the lobby checks whether its dummies need respawning. */
 const DUMMY_RESPAWN_CHECK_MS = 8000;
 
-/** One player's loadout-station progress (chunk 1.3). `picks` fills in
- *  visit order, capped implicitly by `rollStarterOffer`'s own gates (see
- *  below) rather than a hard length check here — the same "enforced at
- *  the offer roll, never by failing a pick" discipline round.ts's
- *  enterDrafting documents for MAX_ABILITY_SLOTS. */
-type LoadoutEntry = { offers: string[]; picks: string[]; classId: ClassId };
-
-/**
- * Roll a player's loadout-station offer (S2.E, extended chunk 1.3 — see
- * docs/class-overhaul-workboard.md § 1.3): DRAFT_OFFER_COUNT distinct
- * cards from the same crystal-rounds pool the arena drafts from, minus
- * whatever the player has ALREADY equipped this station visit
- * (`alreadyPicked`). Uniform server-side roll — this is lobby ceremony,
- * not sim state, so it doesn't ride the deterministic RNG stream.
- *
- * classId gate (docs/class-ability-catalogs-v1.md): mirrors round.ts
- * enterDrafting's offer-roll gate exactly — a classId-gated card (the
- * Geometrician catalog today) only ever appears for a player of that class.
- * `classId` omitted (character not yet resolved on the lobby's own
- * WorldState) falls back to "wizard" — the same default `spawnFor` uses
- * for an unpicked chassis, so a not-yet-spawned visitor sees exactly what
- * they'd see as the default chassis, never every class's catalog at once.
- *
- * `alreadyPicked` gating (chunk 1.3): SAME exclusion rules round.ts's
- * enterDrafting applies to an in-match hand — `unique` cards already held
- * don't reappear, `maxStacks` caps bind against copies already picked, and
- * once the picked hand already holds MAX_ABILITY_SLOTS actives (the rack
- * — docs/classes-goal.md "Rotation system", "Loadout station owns the 3
- * slots"), no further active-bearing (ability) card is offered — mirrors
- * the exact `heldActives >= MAX_ABILITY_SLOTS` gate round.ts's draft uses,
- * so the station and the between-round draft never disagree about what
- * "the rack is full" means. Non-active universal cards (weapon/stat
- * tradeoffs) stay eligible past that point — they aren't rack slots.
- */
-function rollStarterOffer(classId: ClassId = "wizard", alreadyPicked: readonly string[] = []): string[] {
-  const copies = new Map<string, number>();
-  for (const id of alreadyPicked) copies.set(id, (copies.get(id) ?? 0) + 1);
-  const activesHeld = alreadyPicked.filter((id) =>
-    crystalRoundsCards.some((c) => c.id === id && c.active !== undefined),
-  ).length;
-  const pool = crystalRoundsCards.filter((c) => {
-    if (c.classId !== undefined && c.classId !== classId) return false;
-    if (c.unique && (copies.get(c.id) ?? 0) > 0) return false;
-    if (c.maxStacks !== undefined && (copies.get(c.id) ?? 0) >= c.maxStacks) return false;
-    if (c.active && activesHeld >= MAX_ABILITY_SLOTS) return false;
-    return true;
-  });
-  const offers: string[] = [];
-  while (offers.length < DRAFT_OFFER_COUNT && pool.length > 0) {
-    const idx = Math.floor(Math.random() * pool.length);
-    offers.push(pool.splice(idx, 1)[0]!.id);
-  }
-  return offers;
-}
+/** One player's loadout-station progress. `picks` is the player's current
+ *  rack — every id in it is a `catalogForClass` catalog card as of
+ *  2026-07-18 (the universal random-offer-and-reroll flow that used to
+ *  also land picks here, `rollStarterOffer`, was cut from the station
+ *  entirely — see the `loadouts` field doc below and `routeLobby`'s
+ *  `catalog-toggle`/`class-pick` handlers). Capped implicitly at
+ *  MAX_ABILITY_SLOTS by `catalog-toggle`'s own gate rather than a hard
+ *  length check here — the same "enforced at the point of adding, never by
+ *  failing a pick" discipline round.ts's enterDrafting documents. */
+type LoadoutEntry = { picks: string[]; classId: ClassId };
 
 const LOBBY_COLOR_PALETTE = [
   "#88ccff", "#ff88aa", "#ffd166", "#9bf6ff", "#a0e7a0",
@@ -184,18 +140,33 @@ export class VenueHost {
   /** Uniqueness counter for freshly-minted duo teamIds. */
   private duoTeamCounter = 0;
   /** The LOADOUT STATION (the bell's separated other half): a walk-up
-   *  card selector by the practice dummies. First touch rolls the offer;
-   *  each valid pick lands over the lobby socket, fills the NEXT open
-   *  `picks` slot, and immediately rerolls `offers` for the following slot
-   *  (chunk 1.3, docs/classes-goal.md "Loadout station owns the 3 slots" —
-   *  the station equips up to MAX_ABILITY_SLOTS cards across as many picks
-   *  as the visitor makes, not just one starter card). `picks` rides the
-   *  player's NEXT admission (in pick order) and is consumed by it. No
-   *  picks = spawn with none — never auto-picked (auto-select is a mid-run
-   *  round-timer convention, not a lobby one). `classId` is captured at
-   *  first touch so every reroll during the same visit stays gated to the
-   *  chassis the player armed at, even if they flip the class row mid-
-   *  visit (the NEXT fresh visit re-derives it). */
+   *  class + ability-catalog selector by the practice dummies. First touch
+   *  derives `classId` from the visitor's current chassis pick and opens
+   *  an empty rack; each `catalog-toggle` lands over the lobby socket and
+   *  adds/removes a catalog card from `picks` (docs/classes-goal.md
+   *  "Loadout station owns the 3 slots" — up to MAX_ABILITY_SLOTS cards
+   *  across as many toggles as the visitor makes). `picks` rides the
+   *  player's NEXT admission and is consumed by it. No picks = spawn with
+   *  none — never auto-picked (auto-select is a mid-run round-timer
+   *  convention, not a lobby one).
+   *
+   *  `classId` LIVE-updates on a `class-pick` message (Bug fix, live
+   *  playtest 2026-07-18 — Jake selected Interstice/ninja in the class row
+   *  but the catalog grid kept showing Geometrician/wizard's abilities,
+   *  because `classId` used to be captured once at first touch and never
+   *  re-derived): switching class mid-visit re-derives `classId`
+   *  immediately and drops any armed `picks` that no longer belong to the
+   *  new class — no need to leave and re-enter the totem zone.
+   *
+   *  The UNIVERSAL random-offer-and-reroll flow this station used to also
+   *  run (`rollStarterOffer`, resolved via `card-pick` over the lobby
+   *  socket) is GONE as of 2026-07-18 (Jake, live playtest, seeing the
+   *  catalog grid AND the old offer section together: "delete this
+   *  mechanic and gameplay and focus on the other things on this ui ... I
+   *  mean in the load out picker"). Universal cards are acquired ONLY
+   *  through the in-match between-round draft now (round.ts's
+   *  `enterDrafting`, matchHost.ts's `card-pick` handling — a completely
+   *  separate code path, untouched by any of this). */
   private readonly loadouts = new Map<PlayerId, LoadoutEntry>();
   /** Admitted-but-not-yet-spawned picks (S2.F): the bell moves queue
    *  entries here so the client's lobby-close / arena-attach order can't
@@ -370,12 +341,13 @@ export class VenueHost {
   }
 
   /** The LOADOUT STATION: walking into the station totem opens (or
-   *  re-opens) the player's card selector. First touch rolls the offer;
-   *  the same offer is re-pushed on the totem's retrigger cadence while
-   *  they stand there (idempotent content — the CLIENT arbitrates overlay
-   *  visibility by station proximity, so re-pushes never re-slam a modal).
-   *  Deliberately NO callsign gate: the station is practice furniture,
-   *  commitment to the arena is the bell's business. */
+   *  re-opens) the player's class + ability-catalog selector. First touch
+   *  derives `classId` from the visitor's current chassis and opens an
+   *  empty rack; the same state is re-pushed on the totem's retrigger
+   *  cadence while they stand there (idempotent — the CLIENT arbitrates
+   *  overlay visibility by station proximity, so re-pushes never re-slam a
+   *  modal). Deliberately NO callsign gate: the station is practice
+   *  furniture, commitment to the arena is the bell's business. */
   private touchLoadoutStation(playerId: PlayerId): void {
     const ws = this.lobbySockets.get(playerId);
     if (!ws) return;
@@ -384,21 +356,54 @@ export class VenueHost {
       // Read the visitor's CURRENT chassis pick off the lobby's own live
       // WorldState (classes-goal.md P1 class-select — HangoutScene sends it
       // at lobby connect, spawnFor threads it into the lobby player's
-      // characterId). Catalog offers must match the class they'll actually
+      // characterId). The catalog must match the class they'll actually
       // arm at the station, same discipline as round.ts enterDrafting.
       const characterId = this.lobbyHost.getStateSnapshot().players[playerId]?.characterId;
       const classId = characterId ? classIdForArchetype(characterId) : "wizard";
-      entry = { offers: rollStarterOffer(classId), picks: [], classId };
+      entry = { picks: [], classId };
       this.loadouts.set(playerId, entry);
-      console.log(`[venue] ${playerId} at the loadout station — offer: ${entry.offers.join(", ")}`);
+      console.log(`[venue] ${playerId} at the loadout station (class: ${classId})`);
     }
     // Re-pushing an EXISTING entry is deliberately idempotent — same
-    // `entry.offers` every retrigger — so standing there deciding never
-    // reshuffles the plates underneath the player. `entry.offers` only
-    // ever changes inside the card-pick handler below (a fresh roll for
-    // the next open slot, or `[]` once the rack is full).
+    // `entry.picks`/`entry.classId` every retrigger — so standing there
+    // deciding never reshuffles anything underneath the player. `picks`
+    // only ever changes inside the catalog-toggle handler below; `classId`
+    // only ever changes inside the class-pick handler.
+    this.pushLoadoutDraft(playerId, entry);
+  }
+
+  /**
+   * Push the loadout station's current wire state to one lobby socket
+   * (venue-draft: `picks` for the player's FULL current rack, `classId`
+   * for the locked chassis). Called on totem touch/retrigger and after
+   * every catalog-toggle/class-pick — one send site, so the wire shape can
+   * never drift between call sites.
+   */
+  private pushLoadoutDraft(playerId: PlayerId, entry: LoadoutEntry): void {
+    // Live loadout sync (Fix 1, live playtest 2026-07-18 — Jake: "the
+    // abilities and load out should be active in this world"): every
+    // picks/classId change reaches the lobby player's LIVE PlayerEntity
+    // here too, not just the wire push to the DOM overlay below — so an
+    // ability equipped at the station is immediately usable if the
+    // visitor is already standing on a dummy, no totem re-touch or
+    // reconnect required. One call site (this method, called from
+    // touchLoadoutStation/class-pick/catalog-toggle), same "one send site"
+    // discipline the wire-push comment already applies. Idempotent when
+    // `entry.picks` hasn't actually changed (touchLoadoutStation's
+    // retrigger re-push). No-op if the player has already left the lobby
+    // host's live WorldState (MatchHost.setPlayerCards no-ops on a missing
+    // player), independent of whether their socket is still around.
+    this.lobbyHost.setPlayerCards(playerId, entry.picks);
+    const ws = this.lobbySockets.get(playerId);
+    if (!ws) return;
     try {
-      ws.send(encodeMessage({ t: "venue-draft", offers: entry.offers }));
+      ws.send(
+        encodeMessage({
+          t: "venue-draft",
+          picks: [...entry.picks],
+          classId: entry.classId,
+        }),
+      );
     } catch {
       /* dead socket — detach path will clean up */
     }
@@ -495,44 +500,102 @@ export class VenueHost {
   }
 
   routeLobby(ws: ServerWebSocket<MatchSocketData>, raw: Buffer | ArrayBuffer | Uint8Array): void {
-    // Loadout-station picks (S2.E, separated 2026-07-17; multi-slot chunk
-    // 1.3) are venue business, not lobby-sim business: the card-pick lands
-    // on the player's loadout entry (roundIndex is meaningless here) and
-    // never reaches the hangout host's round state. Each valid pick fills
-    // the NEXT open rack slot (monotonic — this chunk does not add a
-    // swap/undo affordance for an already-filled slot; see chunk 1.3's
-    // report for why that's out of scope here) and immediately rerolls the
-    // offer for whichever slot comes after it, so a single station visit
-    // can walk all the way to a full MAX_ABILITY_SLOTS rack without
-    // leaving and re-entering the totem zone.
+    // The loadout station's own messages (catalog-toggle, class-pick) and
+    // the duos-queue intent toggle are venue business, not lobby-sim
+    // business: they land on VenueHost's own state and never reach the
+    // hangout host's round-message switch.
+    //
+    // `card-pick` used to be intercepted here too, for the station's
+    // universal random-offer-and-reroll flow (`rollStarterOffer`) — CUT
+    // 2026-07-18 (Jake, live playtest, seeing the class ability catalog
+    // grid AND the old "UNIVERSAL OFFER" 3-card section together: "delete
+    // this mechanic and gameplay and focus on the other things on this ui
+    // ... I mean in the load out picker"). A `card-pick` arriving over the
+    // LOBBY socket now simply falls through to `this.lobbyHost.routeMessage`
+    // below — a guaranteed no-op there, since the hangout host's own
+    // `applyCardPick` (matchHost.ts) is gated to `round.phase === "drafting"`
+    // and the venue lobby's round phase is permanently pinned to "fighting"
+    // (never drafting). `card-pick` itself is NOT removed from the wire —
+    // it's the message type the completely separate in-match between-round
+    // draft still uses, over the ARENA/world socket (matchHost.ts, untouched
+    // by any of this).
     const decoded = decodeMessage<ClientMessage>(
       raw instanceof Buffer ? new Uint8Array(raw.buffer, raw.byteOffset, raw.byteLength) : raw,
     );
-    if (decoded?.message.t === "card-pick") {
-      const playerId = PlayerId(ws.data.playerId);
-      const entry = this.loadouts.get(playerId);
-      if (entry && entry.picks.length < MAX_ABILITY_SLOTS && entry.offers.includes(decoded.message.cardId)) {
-        entry.picks.push(decoded.message.cardId);
-        entry.offers =
-          entry.picks.length < MAX_ABILITY_SLOTS
-            ? rollStarterOffer(entry.classId, entry.picks)
-            : [];
-        try {
-          ws.send(encodeMessage({ t: "venue-draft", offers: entry.offers }));
-        } catch {
-          /* dead socket — detach path will clean up */
-        }
-      }
-      return;
-    }
     // Duos-queue intent toggle (classes-goal.md "Venue integration") —
-    // same interception shape as card-pick: venue business, never reaches
-    // the hangout host's round-message switch. Flips intent only; it does
-    // NOT touch either queue's current membership (see toggleQueue's doc).
+    // venue business, never reaches the hangout host's round-message
+    // switch. Flips intent only; it does NOT touch either queue's current
+    // membership (see toggleQueue's doc).
     if (decoded?.message.t === "duo-toggle") {
       const playerId = PlayerId(ws.data.playerId);
       if (this.duoIntent.has(playerId)) this.duoIntent.delete(playerId);
       else this.duoIntent.add(playerId);
+      return;
+    }
+    // Loadout-station class switch (Bug fix, live playtest 2026-07-18 —
+    // Jake selected Interstice/ninja in the class row but the catalog grid
+    // below kept showing Geometrician/wizard's abilities: `classId` used
+    // to be captured once at first totem touch and never re-derived on a
+    // mid-visit class-row click). Same venue-business interception shape
+    // as duo-toggle/catalog-toggle. `characterId` rides client-sanitized
+    // but is re-sanitized here — the wire is never trusted. A pick before
+    // ever touching the station simply creates a fresh entry locked to the
+    // new class (empty picks); a pick mid-visit re-derives `classId` and
+    // DROPS every armed catalog pick that no longer belongs to it (the
+    // only thing that can be in `picks` post-2026-07-18 is a catalog pick
+    // — the universal offer is gone, see the `loadouts` field doc above —
+    // so in practice this resets `picks` to `[]` on an actual class
+    // change; the `catalogForClass` filter below is what keeps this
+    // correct in general, e.g. if a future class ever shared a catalog
+    // card id with another).
+    if (decoded?.message.t === "class-pick") {
+      const playerId = PlayerId(ws.data.playerId);
+      const characterId = sanitizeCharacterId(decoded.message.characterId);
+      const classId = classIdForArchetype(characterId);
+      let entry = this.loadouts.get(playerId);
+      if (!entry) {
+        entry = { picks: [], classId };
+        this.loadouts.set(playerId, entry);
+      } else if (entry.classId !== classId) {
+        const validIds = new Set(catalogForClass(classId).map((c) => c.id));
+        entry.classId = classId;
+        entry.picks = entry.picks.filter((id) => validIds.has(id));
+      }
+      this.pushLoadoutDraft(playerId, entry);
+      return;
+    }
+    // Class ability catalog toggle (docs/classes-goal.md "Loadout station
+    // owns the 3 slots" — live playtest finding 2026-07-18: Jake saw a
+    // random 3-card offer mixing a universal weapon card with a class
+    // catalog card and asked for the full catalog + a select/deselect
+    // concept instead). Same venue-business interception shape as
+    // duo-toggle/class-pick. `cardId` must be a catalog card (`classId`
+    // set) belonging to the player's currently-locked loadout classId — a
+    // foreign/mistyped/universal id is silently ignored.
+    if (decoded?.message.t === "catalog-toggle") {
+      const playerId = PlayerId(ws.data.playerId);
+      const entry = this.loadouts.get(playerId);
+      if (!entry) return;
+      const cardId = decoded.message.cardId;
+      const card = catalogForClass(entry.classId).find((c) => c.id === cardId);
+      if (!card) return;
+      const alreadyIdx = entry.picks.indexOf(cardId);
+      if (alreadyIdx !== -1) {
+        // Deselect — always allowed, no cap to check on the way out.
+        entry.picks.splice(alreadyIdx, 1);
+      } else {
+        // Rack cap is shared across every active catalog card already
+        // armed (docs/classes-goal.md "Draft never creates a 4th slot"). A
+        // full rack silently refuses the add — no error frame, the
+        // client's own disabled-tile state already prevents the click in
+        // the ordinary case; this is the authoritative backstop.
+        const activesHeld = entry.picks.filter((id) =>
+          crystalRoundsCards.some((c) => c.id === id && c.active !== undefined),
+        ).length;
+        if (activesHeld >= MAX_ABILITY_SLOTS) return;
+        entry.picks.push(cardId);
+      }
+      this.pushLoadoutDraft(playerId, entry);
       return;
     }
     this.lobbyHost.routeMessage(ws, raw);
@@ -543,7 +606,7 @@ export class VenueHost {
     if (this.lobbySockets.get(playerId) === ws) this.lobbySockets.delete(playerId);
     // A departed player must not be drained into the arena at the next
     // bell — dequeue on disconnect (no ghost entrants). Their loadout
-    // offer goes with them: a fresh visit rolls fresh cards.
+    // picks go with them: a fresh visit starts an empty rack.
     this.readyQueue.delete(playerId);
     this.duoQueue.delete(playerId);
     this.duoIntent.delete(playerId);
@@ -627,6 +690,18 @@ export class VenueHost {
       name: chosenName ?? "RECRUIT",
       color: pickColor(playerIdRaw),
       weaponId: "starter-pistol",
+      // Defensive completeness (Fix 1, live playtest 2026-07-18): in the
+      // ordinary case `loadouts` has no entry yet at first connect (a
+      // fresh visit starts an empty rack, and `detachLobby` deletes any
+      // entry on disconnect), so this is normally `undefined` — spawnFor
+      // only ever runs once per lobby socket (`attachLobby`'s
+      // `!hasPlayer` gate). The LIVE sync that actually matters (equip at
+      // the station → cards go live without leaving) happens in
+      // `pushLoadoutDraft` below, via `MatchHost.setPlayerCards`. This
+      // just makes spawnFor's own PlayerSpawnInfo honest rather than
+      // silently always zero, for any future path that re-spawns without
+      // going through the loadout station's live-sync call site.
+      cards: this.loadouts.get(PlayerId(playerIdRaw))?.picks,
     };
   }
 }

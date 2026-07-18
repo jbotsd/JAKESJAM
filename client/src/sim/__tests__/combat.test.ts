@@ -261,6 +261,62 @@ describe("tryDeflectDamage", () => {
     expect(r.damage).toBe(proj.damage);
   });
 
+  describe("Ghost Guard (Interstice catalog v1, defense role, 2026-07-18)", () => {
+    test("a moving ninja with a live banked charge evades — the charge is consumed", () => {
+      const p = mkPlayer({
+        characterId: "sprinter",
+        vx: 200,
+        vy: 0,
+        ghostGuardChargeUntilTick: Tick(100),
+      });
+      const proj = mkProjectile({ x: 50, y: 0 });
+      const r = tryDeflectDamage(p, proj, proj.damage, Tick(10));
+      expect(r.evaded).toBe(true);
+      expect(r.damage).toBe(0);
+      expect(r.player.ghostGuardChargeUntilTick).toBeUndefined();
+    });
+
+    test("a STATIONARY ninja with a live charge does NOT evade — 'if moving' is a real gate", () => {
+      const p = mkPlayer({
+        characterId: "sprinter",
+        vx: 0,
+        vy: 0,
+        ghostGuardChargeUntilTick: Tick(100),
+      });
+      const proj = mkProjectile({ x: 50, y: 0 });
+      const r = tryDeflectDamage(p, proj, proj.damage, Tick(10));
+      expect(r.evaded).toBe(false);
+      expect(r.damage).toBe(proj.damage);
+      expect(r.player.ghostGuardChargeUntilTick).toBe(Tick(100)); // untouched
+    });
+
+    test("a non-ninja (wizard) holding the field never evades — classId gated", () => {
+      const p = mkPlayer({
+        characterId: "balanced",
+        vx: 200,
+        vy: 0,
+        ghostGuardChargeUntilTick: Tick(100),
+      });
+      const proj = mkProjectile({ x: 50, y: 0 });
+      const r = tryDeflectDamage(p, proj, proj.damage, Tick(10));
+      expect(r.evaded).toBe(false);
+      expect(r.damage).toBe(proj.damage);
+    });
+
+    test("an EXPIRED charge does not evade", () => {
+      const p = mkPlayer({
+        characterId: "sprinter",
+        vx: 200,
+        vy: 0,
+        ghostGuardChargeUntilTick: Tick(5),
+      });
+      const proj = mkProjectile({ x: 50, y: 0 });
+      const r = tryDeflectDamage(p, proj, proj.damage, Tick(10));
+      expect(r.evaded).toBe(false);
+      expect(r.damage).toBe(proj.damage);
+    });
+  });
+
   // Wide Parry lost its original target (the timed parry is human-
   // unreachable now) and was repurposed onto the slide's arc instead of
   // left dead — parryCoverMultiplier now widens the dash-bash block too.

@@ -84,6 +84,22 @@ export class InterestGrid {
   // --------------------------------------------------------------------------
 
   /**
+   * Perf audit N2 (2026-07-18): on a map small enough that a `radius`
+   * Chebyshev neighbourhood from ANY cell already spans the whole grid (a
+   * 5×5 window at radius 2 covers a <=5×5-cell map — e.g. boxworks-tower's
+   * 1440×1080 at CELL_SIZE_PX=320 is 5×4 cells), every observer sees every
+   * cell regardless of where they stand. The filter is then a provable
+   * no-op: rebuild()/cellsAround()/observed() all still pay full O(E) cost
+   * for zero payload reduction. Callers should skip the whole grid pipeline
+   * and broadcast full collections directly when this is true — map size
+   * never changes mid-match, so this only needs checking once.
+   */
+  isFullCoverage(radius: number): boolean {
+    const span = radius * 2 + 1;
+    return this.cols <= span && this.rows <= span;
+  }
+
+  /**
    * Reset & rebuild from current world state. Call once per snapshot tick,
    * before any per-recipient `observed()` calls.
    */
@@ -110,31 +126,11 @@ export class InterestGrid {
       const id = Number(idStr) as EntityId;
       this.insertEntity(this.pickupBins, pickup.x, pickup.y, id);
     }
-    for (const [idStr, sat] of Object.entries(state.satellites)) {
-      const id = Number(idStr) as EntityId;
-      // Satellite world position: owner.x + cos(angle)*orbitRadius.
-      // We store the owner lookup in the grid using the satellite's owner
-      // position when available; fall back to (0,0) for orphaned sats.
-      // The ownerId position is NOT looked up here to keep rebuild O(E) — we
-      // use the satellite's orbit parameters to approximate position instead,
-      // which is accurate within one orbit-radius unit (always < CELL_SIZE_PX
-      // given typical orbit radii of ~60-100px).
-      const approxX = sat.orbitRadius * Math.cos(sat.angle);
-      const approxY = sat.orbitRadius * Math.sin(sat.angle);
-      // Position is relative to owner; we don't have owner x/y here without a
-      // second pass. Use a sentinel (0,0) approximation: satellites always end
-      // up in the owner's observed neighbourhood anyway since the owner IS a
-      // player and v1 includes ALL players. This field is therefore filtered
-      // only against the high-cardinality collections. If we later filter
-      // players too, we'd need owner position here.
-      this.insertEntity(this.satelliteBins, approxX, approxY, id);
-      // Suppress TS unused-var for orbit computation (kept for correctness doc).
-      void approxX; void approxY;
-    }
-
-    // Satellites: re-insert using actual owner positions if available.
-    // Replace the orbit-angle approximation above with precise owner x/y lookup.
-    this.satelliteBins.clear();
+    // Satellites: bin by actual owner position (owner.x/y + orbit offset).
+    // Perf audit N3 (2026-07-18): this used to run TWICE — an orbit-angle-
+    // only approximation (no owner position, effectively binning near the
+    // origin) immediately discarded and replaced by this exact same
+    // owner-position pass. The first pass was pure waste; removed.
     for (const [idStr, sat] of Object.entries(state.satellites)) {
       const id = Number(idStr) as EntityId;
       const owner = sat.ownerId !== null ? state.players[sat.ownerId] : undefined;

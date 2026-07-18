@@ -63,16 +63,29 @@ describe("characters.ts — class-era display layer over stable ids", () => {
     }
   });
 
-  test("only the wizard ships its full kit in P1 (honesty rule)", () => {
+  test("kitComing tracks which classes have shipped their full kit (honesty rule, updated 2026-07-18)", () => {
+    // Wizard (P1), Kindred, and Syzygist have shipped 10/10 of their class
+    // catalog — kitComing removed. Interstice ships 9/10 (Paper Double is a
+    // recorded deferral — see characters.ts's UPDATE comment and
+    // cardTypes.ts's AbilityKind header) — kitComing stays true until it
+    // lands.
+    const shipped = new Set(["wizard", "paladin", "priest"]);
     for (const c of characters) {
-      if (c.classId === "wizard") expect(c.kitComing).toBeUndefined();
+      if (shipped.has(c.classId)) expect(c.kitComing).toBeUndefined();
       else expect(c.kitComing).toBe(true);
     }
-    // Kit summaries describe what's true TODAY — no future verbs.
+    // Interstice (the one remaining kitComing:true class) must not claim
+    // future verbs in its summary — it hasn't shipped its full kit yet.
     for (const c of characters) {
+      if (c.kitComing !== true) continue;
       expect(c.kitSummary.toLowerCase()).not.toMatch(
         /sword|slash|blade|heal|buff|curse|board|melee/,
       );
     }
+    // Kindred and Syzygist DID ship — their kitSummary is allowed (and
+    // expected) to name real, live abilities by name now.
+    const byId = new Map(characters.map((c) => [c.id, c]));
+    expect(byId.get("heavy")?.kitSummary).toContain("Kindled Edge");
+    expect(byId.get("shielded")?.kitSummary).toContain("Bleed Tithe");
   });
 });

@@ -97,6 +97,16 @@ export type SimEventRouterDeps = {
   /** Warm-tint the platforms within blast range of `pos`. */
   spawnPlatformBlastTint: (pos: { x: number; y: number }) => void;
 
+  /** Gold-forward absorb flash (Kindled Ward / team peel — class-overhaul-
+   *  workboard.md chunk 2.7, the heaven-tank VFX pass). `isPeel` picks a
+   *  distinct read: a self-Ward block flashes at the BLOCKER; a team peel
+   *  flashes at the WARDER (the one whose light actually covered the hit)
+   *  — position alone tells "blocked for themselves" from "saved a
+   *  teammate" apart in a clip, no new asset needed. Optional — scenes
+   *  without the full juice stack (Tutorial) simply omit it, same
+   *  precedent as `emissionCastFeel`. */
+  spawnWardAbsorbFlash?: (playerId: PlayerId | string, isPeel: boolean) => void;
+
   /** Show the local card-draft overlay with the given offered ids. */
   showCardDraft: (cardIds: string[]) => void;
 
@@ -372,6 +382,41 @@ export class SimEventRouter {
         // you can hear"). Reuse the dash whoosh at partial intensity, same
         // "closest recorded body-fling read" reasoning as launch-pad-fired.
         audio.play("dash", { intensity: 0.5 });
+        break;
+      }
+      case "ward-absorbed": {
+        // Kindled Ward absorb tell (2026-07-18, class-overhaul-workboard.md
+        // chunk 2.2/2.3, VFX landed in chunk 2.7's heaven-tank pass). No
+        // bespoke "shield-board catches a hit" audio asset exists and the
+        // hard rule is never synthesize audio (rip only) — left silent;
+        // the gold flash + a small local shake carry the read instead.
+        d.spawnWardAbsorbFlash?.(event.playerId, false);
+        if (event.playerId === d.localPlayerId) {
+          d.safeShake(40, 0.003);
+        }
+        break;
+      }
+      case "team-peel-absorbed": {
+        // Team peel tell (2026-07-18, class-overhaul-workboard.md chunk
+        // 2.4, VFX landed in chunk 2.7's heaven-tank pass) — same "no
+        // bespoke audio asset, never synthesize" silence as ward-absorbed
+        // above. Flash lands at the WARDER (not the victim) so a clip
+        // reads "that Paladin just saved their teammate" — see
+        // `spawnWardAbsorbFlash`'s own doc comment.
+        d.spawnWardAbsorbFlash?.(event.warderId, true);
+        if (event.warderId === d.localPlayerId || event.victimId === d.localPlayerId) {
+          d.safeShake(50, 0.004);
+        }
+        break;
+      }
+      case "syz-ward-absorbed": {
+        // Syzygist Ward absorb tell (2026-07-18, class-overhaul-workboard.md
+        // chunk 3.3 — sim correctness pass, minimal rendering per scope,
+        // identical precedent to ward-absorbed/team-peel-absorbed above).
+        // No bespoke cool-white barrier asset exists and the hard rule is
+        // never synthesize audio (rip only) — left silent. Fast-follow: a
+        // future Syzygist VFX pass (mirrors chunk 2.7's heaven-tank pass)
+        // gives this a readable cool-white absorb flash + SFX.
         break;
       }
       default: {

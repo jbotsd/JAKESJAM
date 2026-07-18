@@ -5,6 +5,12 @@ round-end draft — see `docs/escalation-engine-goal.md` and `CLAUDE.md`.
 Also: rogue-lite progression, always-on world, per-round chaos, first-blood
 wager, pity boss, sudden-death shrink, crystal-tech wizard direction.
 
+**Reasoning layer:** these pillars say *what* JAKESJAM is; `docs/design-axioms.md`
+(2026-07-18) says *how to reason about its substance* — the generative,
+non-restrictive design axioms (feel, feedback/economy, depth, pacing, reward)
+grounded in the game-design corpus. Reach for it when a decision needs a
+mechanism, not just a pillar.
+
 ## What JAKESJAM is
 
 JAKESJAM is a browser-first 2D arena shooter you join by clicking a URL. Spawn into a live FFA, fight tiny crystal-tech wizards with kinetic guns, die and respawn fast, and **between rounds everyone drafts** a card that bends their weapon into something stupider. Rounds are short, chaos modifiers reroll between them, and the build curve is fast enough that round five looks nothing like round one — **including for the player who is winning**. The simulation is a deterministic shared package (`client/src/sim/`) running on both the Bun authority server and the client predictor.

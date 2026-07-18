@@ -1,10 +1,11 @@
 import Phaser from "phaser";
-import type { Vec2 } from "../types/game";
+import type { ClassId, Vec2 } from "../types/game";
 import { PALETTE } from "../ui/palette.js";
 import { getRenderScale } from "../render/renderResolution.js";
 import { type SpringState, springKick, springState, springTo } from "./spring";
 import { getSonicField } from "../systems/SonicField.js";
 import { drawPortraitBadge, shadeColor } from "../render/portraitBadge.js";
+import { headCrestGeometry, headHoodGeometry } from "./chassisSilhouette";
 
 /** The minimal surface SimEventRouter drives on ANY on-screen combatant —
  *  hero, boss, or a non-humanoid thrall (see TutorialShardThrall.ts). Kept
@@ -69,6 +70,18 @@ type ProceduralPlayerRigOptions = {
    *  no Warframe/Fortnite direct analog, native to JAKESJAM. */
   auraColor?: number;
   /**
+   * Chassis silhouette (docs/chassis-design-axioms.md CA3) — branches the
+   * head-crest + hood geometry per class (chassisSilhouette.ts). Defaults
+   * to `"wizard"` when omitted, which reproduces the EXACT pre-existing
+   * helmet geometry every caller drew before this option existed: a rig
+   * built without `classId` (every caller today — MainMenuScene,
+   * TutorialScene, MatchScene, HangoutScene) is byte-identical to before
+   * this option was added. Only OnlineMatchScene.makePlayerRig passes a
+   * real classId as of this pass (arena-only scope). Never touches
+   * body/torso/limb geometry (CA1 — "one body, four accents").
+   */
+  classId?: ClassId;
+  /**
    * Seed for the nameplate portrait badge's generated sigil (portraitBadge.ts)
    * — pass the actual playerId for real per-connection uniqueness; falls
    * back to `name` when omitted (fine for bots, whose name IS already
@@ -129,6 +142,8 @@ export class ProceduralPlayerRig implements CombatRig {
   protected readonly palmColor: number;
   protected readonly jointColor: number;
   protected readonly auraColor: number;
+  /** Chassis silhouette branch — see ProceduralPlayerRigOptions.classId. */
+  protected readonly classId: ClassId;
   private readonly name: string;
   private readonly identitySeed: string;
   protected readonly scale: number;
@@ -492,6 +507,7 @@ export class ProceduralPlayerRig implements CombatRig {
     this.palmColor = options.palmColor ?? this.accentColor;
     this.jointColor = options.jointColor ?? this.accentColor;
     this.auraColor = options.auraColor ?? this.accentColor;
+    this.classId = options.classId ?? "wizard";
     this.name = options.name;
     this.identitySeed = options.identitySeed ?? options.name;
     this.scale = options.scale ?? 1;
@@ -1753,21 +1769,23 @@ export class ProceduralPlayerRig implements CombatRig {
   // swept blade reads clearly above/behind the skull. ---
   protected drawHeadCrest(g: Phaser.GameObjects.Graphics, head: Vec2, s: number) {
     const f = this.facing;
-    const rootX = head.x - f * 1 * s;
-    const rootY = head.y - 8 * s;
-    // Sweeps mostly BACKWARD (opposite facing) rather than steeply upward,
-    // so the tip clears the nameplate/health-bar line drawn just above the
-    // head instead of visually tangling with it.
-    const tipX = head.x - f * 19 * s;
-    const tipY = head.y - 19 * s;
+    // Chassis silhouette (docs/chassis-design-axioms.md CA3): per-class
+    // crest geometry lives in chassisSilhouette.ts as pure, unit-tested
+    // point math. `classId` defaults to "wizard" (see the constructor),
+    // which returns the EXACT pre-existing swept-fin geometry — a rig with
+    // no classId passed draws byte-identical to before this branch
+    // existed. Syzygist (priest) returns null: CA3's "no crest, no crown,
+    // no fins... the quietest silhouette" — draw nothing.
+    const crest = headCrestGeometry(this.classId, head, s, f);
+    if (!crest) return;
 
     // Dark base — bigger swept silhouette than the first pass, so it reads
     // as a real fin/horn rather than a hood wrinkle.
     g.fillStyle(DARK, 1);
     g.beginPath();
-    g.moveTo(rootX - f * 3 * s, rootY + 3 * s);
-    g.lineTo(tipX, tipY);
-    g.lineTo(rootX + f * 4 * s, rootY - 1.5 * s);
+    g.moveTo(crest.darkBase[0].x, crest.darkBase[0].y);
+    g.lineTo(crest.darkBase[1].x, crest.darkBase[1].y);
+    g.lineTo(crest.darkBase[2].x, crest.darkBase[2].y);
     g.closePath();
     g.fillPath();
 
@@ -1776,9 +1794,9 @@ export class ProceduralPlayerRig implements CombatRig {
     // into it.
     g.fillStyle(this.color, 1);
     g.beginPath();
-    g.moveTo(rootX - f * 1.5 * s, rootY + 1.5 * s);
-    g.lineTo(tipX + f * 1.5 * s, tipY + 1.5 * s);
-    g.lineTo(rootX + f * 3 * s, rootY - 1 * s);
+    g.moveTo(crest.brightPlate[0].x, crest.brightPlate[0].y);
+    g.lineTo(crest.brightPlate[1].x, crest.brightPlate[1].y);
+    g.lineTo(crest.brightPlate[2].x, crest.brightPlate[2].y);
     g.closePath();
     g.fillPath();
 
@@ -1786,11 +1804,11 @@ export class ProceduralPlayerRig implements CombatRig {
     // halo so the crest reads as energized, matching the visor.
     g.lineStyle(1.4 * s, this.visorColor, 0.8);
     g.beginPath();
-    g.moveTo(rootX + f * 3 * s, rootY - 1 * s);
-    g.lineTo(tipX + f * 1.5 * s, tipY + 1.5 * s);
+    g.moveTo(crest.edgeLine[0].x, crest.edgeLine[0].y);
+    g.lineTo(crest.edgeLine[1].x, crest.edgeLine[1].y);
     g.strokePath();
     g.fillStyle(this.visorColor, 0.35);
-    g.fillCircle(tipX + f * 1.5 * s, tipY + 1.5 * s, 2 * s);
+    g.fillCircle(crest.tipGlow.x, crest.tipGlow.y, 2 * s);
   }
 
   // --- HEAD: Hood + helmet + visor ---
@@ -1799,24 +1817,29 @@ export class ProceduralPlayerRig implements CombatRig {
 
     this.drawHeadCrest(g, head, s);
 
+    // Chassis silhouette (CA3): per-class hood outline, same
+    // classId-defaults-to-"wizard" byte-identical-default-path guarantee
+    // as drawHeadCrest above — see chassisSilhouette.ts.
+    const hood = headHoodGeometry(this.classId, head, s, f);
+
     // Hood shadow (larger dark shape behind head) — narrower than the old
     // helmet build, reads as a sealed vessel-hull rather than a hard helmet.
     g.fillStyle(DARK, 1);
     g.beginPath();
-    g.moveTo(head.x - 8.5 * s, head.y + 6 * s);
-    g.lineTo(head.x + f * 2 * s - 6.5 * s, head.y - 14 * s);
-    g.lineTo(head.x + f * 2 * s + 6.5 * s, head.y - 14 * s);
-    g.lineTo(head.x + 8.5 * s, head.y + 6 * s);
+    g.moveTo(hood.shadow[0].x, hood.shadow[0].y);
+    g.lineTo(hood.shadow[1].x, hood.shadow[1].y);
+    g.lineTo(hood.shadow[2].x, hood.shadow[2].y);
+    g.lineTo(hood.shadow[3].x, hood.shadow[3].y);
     g.closePath();
     g.fillPath();
 
     // Hood main (player colored)
     g.fillStyle(this.colorDark, 1);
     g.beginPath();
-    g.moveTo(head.x - 6.5 * s, head.y + 4 * s);
-    g.lineTo(head.x + f * 2 * s - 5 * s, head.y - 12 * s);
-    g.lineTo(head.x + f * 2 * s + 5 * s, head.y - 12 * s);
-    g.lineTo(head.x + 6.5 * s, head.y + 4 * s);
+    g.moveTo(hood.main[0].x, hood.main[0].y);
+    g.lineTo(hood.main[1].x, hood.main[1].y);
+    g.lineTo(hood.main[2].x, hood.main[2].y);
+    g.lineTo(hood.main[3].x, hood.main[3].y);
     g.closePath();
     g.fillPath();
 

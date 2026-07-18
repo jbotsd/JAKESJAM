@@ -31,16 +31,27 @@ import { colorToNumber } from "../render/colorToNumber.js";
 import { ProceduralAudio } from "../systems/ProceduralAudio";
 import { PlatformLayer } from "../render/PlatformPainter";
 import { ActionCamera } from "../systems/ActionCamera.js";
+import { CameraHype } from "../systems/CameraHype.js";
+import { getMusicLevel } from "../systems/MusicAmplitude";
 import { SimEventRouter } from "../render/SimEventRouter";
 import { TouchControls } from "../input/TouchControls";
 import { isTouchPrimary, isPortraitMobile } from "../input/mobile";
-import { getRenderScale } from "../render/renderResolution.js";
+import { getRenderScale, uiWidth } from "../render/renderResolution.js";
+import { installHudCamera } from "../systems/HudCamera.js";
+import { getQualityProfile } from "../render/qualityProfile.js";
 import { characters } from "../data/characters";
 import { PALETTE, ARENA_THEMES } from "../ui/palette";
 import { CardDraftOverlay, type ClassRowConfig } from "../ui/CardDraftOverlay";
 import { sanitizeCharacterId } from "../../net/playerCharacter.js";
-import { crystalRoundsCards } from "../../sim/data/cards.js";
+import { crystalRoundsCards, catalogForClass } from "../../sim/data/cards.js";
+import type { ClassId } from "../../sim/data/cardTypes.js";
 import { EntityRenderCoordinator } from "../render/EntityRenderCoordinator.js";
+import { ActionBarSystem, type ActionBarVitals } from "../ui/ActionBarSystem.js";
+import { activeSlotVitals } from "../ui/activeSlots.js";
+import { acquiredAbilities } from "../ui/acquiredAbilities.js";
+import { deriveHudChips } from "../ui/statusChips.js";
+import { resolvePlayerBuild } from "../../sim/weapon.js";
+import { EMISSION_CHARGE_MAX } from "../../sim/constants.js";
 import {
   projectileColorByElement,
   drawDestructible,
@@ -80,12 +91,14 @@ const PORTRAIT_CAM_Y_BIAS = 150;
 // venueNames.ts lands (one constant per name, grep-enforced), these move
 // there with the rest of the venue vocabulary.
 const LOADOUT_KICKER = "LOADOUT";
-const LOADOUT_TITLE = "CHOOSE YOUR CARD";
-// Multi-pick (chunk 1.3, docs/classes-goal.md "Loadout station owns the
-// 3 slots"): each pick arms the next open rack slot and rolls a fresh
-// offer for the one after it — up to MAX_ABILITY_SLOTS across one visit.
+const LOADOUT_TITLE = "CHOOSE YOUR LOADOUT";
+// Universal random-offer-and-reroll copy removed 2026-07-18 (Jake, live
+// playtest: "delete this mechanic and gameplay and focus on the other
+// things on this ui ... I mean in the load out picker") — the station is
+// class row + class ability catalog only now (docs/classes-goal.md
+// "Loadout station owns the 3 slots").
 const LOADOUT_HINT =
-  "Pick a card to arm your rack — up to 3 across this visit, picking again after each. Try it on the dummies. Walk away any time.";
+  "Tap an ability below to equip it — up to 3 across your rack. Try it on the dummies. Walk away any time.";
 // Class era P1 (docs/classes-goal.md): class select joins card select at
 // the SAME station — the pre-arena identity moment. Plain UI label, no
 // Coptic (naming protocol: lore names never in HUD-critical copy). Moves
@@ -104,7 +117,10 @@ export class HangoutScene extends Phaser.Scene {
   private loop: ClientLoop | null = null;
   private audio?: ProceduralAudio;
   private touchControls: TouchControls | null = null;
-  private keys!: Record<"a" | "d" | "w" | "space", Phaser.Input.Keyboard.Key>;
+  private keys!: Record<
+    "a" | "d" | "w" | "space" | "slot1" | "slot2" | "slot3",
+    Phaser.Input.Keyboard.Key
+  >;
   // Duos queue (classes-goal.md "Venue integration" — venue-only, a lighter
   // touch than a DOM overlay: press [T] at the bell to toggle "queue as
   // duo" intent, same walk-up-and-toggle spirit as the totems themselves.
@@ -122,6 +138,18 @@ export class HangoutScene extends Phaser.Scene {
   private statusText: Phaser.GameObjects.Text | null = null;
   private actionCamera!: ActionCamera;
   private simEventRouter: SimEventRouter | null = null;
+  /** Loadout station live-fire (Fix 1, live playtest 2026-07-18 — Jake:
+   *  "the abilities and load out should be active in this world"): the
+   *  same bottom-center hotkey bar OnlineMatchScene renders, venue-mode
+   *  only (private hangouts carry no loadout station — nothing on the
+   *  rack to show). */
+  private actionBar: ActionBarSystem | null = null;
+  /** Dance camera (Fix 2, same live playtest — Jake: "as well as the
+   *  dance camera"): identical ~20s sustained-action accumulator
+   *  OnlineMatchScene drives its orbital "pop and lock" motion from,
+   *  ported byte-for-byte (see `updateCameraHype`). */
+  private readonly cameraHype = new CameraHype();
+  private cameraHypePeakPrev = false;
 
   private readonly playerRigs = new Map<string, ProceduralPlayerRig>();
   private readonly rosterNames = new Map<string, string>();
@@ -158,11 +186,23 @@ export class HangoutScene extends Phaser.Scene {
   // draft uses, but with station copy, and opened/closed by walking into/
   // out of the loadout totem — never slammed at a joiner or a queuer.
   private draftOverlay: CardDraftOverlay | null = null;
-  /** Latest offers pushed by the server (stable per station visit). */
-  private loadoutOffers: string[] | null = null;
-  /** The card id picked this lobby session — armed for the next admission
-   *  (drives the station totem's steady "loadout armed" glow). */
-  private loadoutPickId: string | null = null;
+  /** Server-authoritative FULL rack (classes-goal.md "Loadout station owns
+   *  the 3 slots" — live playtest finding 2026-07-18): the same array
+   *  `getEntrantCards` will hand the arena, mirrored to the client purely
+   *  for rendering the class ability catalog's selected/equipped state and
+   *  the shared 3-slot counter. As of 2026-07-18 every entry in here is a
+   *  catalog pick — the universal random-offer-and-reroll flow that used
+   *  to also land picks here was cut from the station entirely (Jake,
+   *  live playtest: "delete this mechanic and gameplay ... I mean in the
+   *  load out picker"). */
+  private loadoutPicks: string[] = [];
+  /** The chassis the server currently has this loadout entry locked to
+   *  (venueHost.ts's `entry.classId`) — drives which catalog `setCatalog`
+   *  renders. LIVE as of the class-pick fix (Bug 1, live playtest
+   *  2026-07-18): a mid-visit class-row click sends `class-pick` over the
+   *  lobby socket immediately, so this updates on the very next
+   *  `venue-draft` push instead of waiting for a fresh station visit. */
+  private loadoutClassId: ClassId | null = null;
   /** Local proximity state for the station zone (with exit hysteresis). */
   private loadoutInZone = false;
   /** Armed only after the player has been observed OUTSIDE the zone once —
@@ -204,6 +244,11 @@ export class HangoutScene extends Phaser.Scene {
         d: this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.D),
         w: this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.W),
         space: this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.SPACE),
+        // Drafted actives (loadout station catalog abilities) — same three
+        // keys/bits OnlineMatchScene binds (see update()'s input assembly).
+        slot1: this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.ONE),
+        slot2: this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.TWO),
+        slot3: this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.THREE),
       };
       this.duoKey = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.T);
     }
@@ -239,10 +284,30 @@ export class HangoutScene extends Phaser.Scene {
         },
         null,
       );
+      // Loadout station live-fire (Fix 1): the same hotkey bar the arena
+      // renders, so cooldowns/glyphs for whatever's equipped are visible
+      // while standing at a dummy — venue-only, mirroring entityRender's
+      // gate immediately above (private hangouts have no loadout station).
+      this.actionBar = new ActionBarSystem(this);
     }
 
     this.lastFrameMs = performance.now();
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => this.teardown());
+
+    // Split the HUD onto its own 1:1 camera — SAME reason OnlineMatchScene
+    // installs this (HudCamera.ts's own doc comment): the world camera here
+    // ALSO zooms (applyCameraZoom's `base` is 1.1 desktop / 0.8 portrait,
+    // never exactly 1), so every scrollFactor(0) HUD object (the action
+    // bar, status/feed text) was rendering through that zoom factor with no
+    // corrective camera — Phaser's scrollFactor(0) cancels camera PAN, not
+    // camera ZOOM. That's the live playtest 2026-07-18 "ui wrong scale or
+    // something" report: the action bar wasn't reliably pinned to the
+    // bottom-center of the actual viewport, so it could visually read as
+    // colliding with the world-space loadout totem's marker depending on
+    // camera framing. Installed last, same placement rule as the arena's
+    // own call, so the initial partition pass sees the full HUD (action bar
+    // included, built above in the venue-mode branch).
+    installHudCamera(this);
   }
 
   private applyCameraZoom(): void {
@@ -332,15 +397,19 @@ export class HangoutScene extends Phaser.Scene {
           this.venueStatus = { ...status, duoQueued: status.duoQueued ?? [] };
           this.venueStatusAtMs = performance.now();
         },
-        // Loadout station (S2.E, separated 2026-07-17): offers arrive while
+        // Loadout station (S2.E, separated 2026-07-17): state arrives while
         // standing at the loadout totem (re-pushed on its retrigger
-        // cadence with identical content — store, then let station
-        // proximity decide visibility). The pick rides back as an ordinary
-        // card-pick and lands on the venue loadout entry (roundIndex is
-        // venue-ignored).
-        onVenueDraft: (offers) => {
-          this.loadoutOffers = offers;
+        // cadence, and again after every catalog-toggle/class-pick — store,
+        // then let station proximity decide visibility). `picks`/`classId`
+        // are server-authoritative; the universal `offers` field this used
+        // to also carry was removed from the wire 2026-07-18 (Jake, live
+        // playtest — cut the random-offer-and-reroll section from the
+        // station entirely).
+        onVenueDraft: (picks, classId) => {
+          this.loadoutPicks = picks;
+          this.loadoutClassId = classId as ClassId;
           this.maybeShowLoadout();
+          this.syncCatalog();
         },
         // The bell (S2.F): admission crosses the membrane. main.ts owns the
         // scene handoff (stop Hangout → its teardown closes this socket →
@@ -362,33 +431,27 @@ export class HangoutScene extends Phaser.Scene {
     this.statusText?.setText(message);
   }
 
-  /** Loadout station (S2.E, separated 2026-07-17; multi-pick chunk 1.3):
-   *  open the card selector iff the player is standing at the station, the
-   *  server still has an offer for them (an empty `offers` array means the
-   *  rack is full or nothing's eligible — see venueHost.ts's
-   *  `rollStarterOffer`), and the overlay isn't already up. Picking sends
-   *  a card-pick over the lobby socket and arms the totem glow.
-   *
-   *  Deliberately does NOT set a "dismissed this visit" flag on pick
-   *  (unlike the pre-chunk-1.3 single-pick station): the server rerolls
-   *  and re-pushes a fresh `venue-draft` for the NEXT open rack slot
-   *  immediately after a valid pick (venueHost.ts's card-pick handler), so
-   *  the next `onVenueDraft` call re-invokes this method and reopens with
-   *  the new offer — one continuous station visit can fill the whole rack
-   *  (docs/classes-goal.md "Loadout station owns the 3 slots"). The loop
-   *  ends itself the moment the server offers nothing (`cards.length ===
-   *  0` below), whether that's a full rack or an exhausted pool. Walking
-   *  away mid-visit is still fine — no nag, no auto-pick; the bell admits
-   *  with however many slots got filled, and `updateLoadoutZone`'s exit
-   *  edge re-arms `loadoutDismissed` for a fresh visit either way. */
+  /**
+   * Loadout station (S2.E, separated 2026-07-17; Task 2, live playtest
+   * 2026-07-18): open the class + ability-catalog panel iff the player is
+   * standing at the station and it isn't already up. The universal
+   * random-offer-and-reroll flow this used to gate on (an `offers` array
+   * arriving) is GONE — Jake, seeing the catalog grid AND the old
+   * "UNIVERSAL OFFER" 3-card section together: "delete this mechanic and
+   * gameplay and focus on the other things on this ui ... I mean in the
+   * load out picker". The panel now holds ONLY the class row + whatever
+   * `setCatalog` renders; there is no pick-from-a-list step here anymore,
+   * so opening is a plain fade-in (`CardDraftOverlay.showStation()`), not
+   * the sequenced reveal `show()` plays for an actual card offer — that
+   * method (and the timer/card-grid DOM it drives) is still used, byte-
+   * for-byte unchanged, by the in-match between-round draft
+   * (OnlineMatchScene.ts / HudCompositor.ts's call sites, which never pass
+   * a `classRow` so `CardDraftOverlay` never even builds the station-only
+   * DOM this method drives).
+   */
   private maybeShowLoadout(): void {
     if (this.mode !== "venue") return;
     if (!this.loadoutInZone || !this.loadoutSeenOutside || this.loadoutDismissed) return;
-    if (this.draftOverlay?.isOpen()) return;
-    const cards = (this.loadoutOffers ?? [])
-      .map((id) => crystalRoundsCards.find((c) => c.id === id))
-      .filter((c): c is NonNullable<typeof c> => c !== undefined);
-    if (cards.length === 0) return;
     if (!this.draftOverlay) {
       this.draftOverlay = new CardDraftOverlay(
         {},
@@ -400,17 +463,44 @@ export class HangoutScene extends Phaser.Scene {
         this.buildClassRowConfig(),
       );
     }
-    this.draftOverlay.show(cards, (card) => {
-      this.loop?.sendCardPick(this.venueStatus?.roundIndex ?? 0, card.id);
-      this.loadoutPickId = card.id;
-      this.draftOverlay?.hide();
-      // The server's rerolled next-slot offer (or `[]` once full) almost
-      // always lands in `this.loadoutOffers` via onVenueDraft WHILE the
-      // overlay's own ~560ms pick-reveal sequence is still playing — that
-      // push's own maybeShowLoadout() call no-ops against `isOpen()` still
-      // being true. Re-check here, once the overlay has actually closed,
-      // so the loop continues instead of stalling after slot 1.
-      this.maybeShowLoadout();
+    if (!this.draftOverlay.isOpen()) this.draftOverlay.showStation();
+    this.syncCatalog();
+  }
+
+  /**
+   * Class ability catalog sync (classes-goal.md "Loadout station owns the
+   * 3 slots" — live playtest finding 2026-07-18, Jake: "this should show
+   * all cards for that class when its selected not just three and this
+   * should have the concept of selecting them"). Unlike `maybeShowLoadout`
+   * (which gates on zone proximity + guards against re-opening a sequence
+   * mid-reveal), this ALWAYS re-renders the catalog grid from the current
+   * `loadoutPicks`/`loadoutClassId` — the grid isn't a one-shot reveal
+   * sequence, it's a persistent toggle surface that must reflect the
+   * latest server truth (or the optimistic local guess below) on every
+   * call, whether the overlay just opened or was already sitting there.
+   * No-op before the overlay exists (constructed lazily by
+   * `maybeShowLoadout` once the universal offer arrives) or outside venue
+   * mode.
+   */
+  private syncCatalog(): void {
+    if (this.mode !== "venue" || !this.draftOverlay) return;
+    const classId = this.loadoutClassId ?? "wizard";
+    const catalog = catalogForClass(classId);
+    const activesHeld = this.loadoutPicks.filter(
+      (id) => crystalRoundsCards.find((c) => c.id === id)?.active !== undefined,
+    ).length;
+    this.draftOverlay.setCatalog(catalog, this.loadoutPicks, activesHeld, (card) => {
+      this.loop?.sendCatalogToggle(card.id);
+      // Optimistic local flip (no round-trip wait — same instant-feedback
+      // spirit as the rest of the station) so the tile responds the
+      // instant you click; the next authoritative `venue-draft` push
+      // reconciles `loadoutPicks` and re-renders (idempotent if it agrees,
+      // self-correcting if the server rejected the add — e.g. a rack-full
+      // race between two rapid clicks).
+      const idx = this.loadoutPicks.indexOf(card.id);
+      if (idx !== -1) this.loadoutPicks = this.loadoutPicks.filter((id) => id !== card.id);
+      else this.loadoutPicks = [...this.loadoutPicks, card.id];
+      this.syncCatalog();
     });
   }
 
@@ -422,7 +512,16 @@ export class HangoutScene extends Phaser.Scene {
    *  (OnlineMatchScene → /ws/world → WorldHost.spawnFor). No live respawn
    *  here: the lobby vessel keeps its connect-time chassis until the next
    *  socket, which is fine — the station arms the future, the bell cashes
-   *  it in. */
+   *  it in.
+   *
+   *  ALSO sends `class-pick` over the live lobby socket (Bug 1 fix, live
+   *  playtest 2026-07-18): the localStorage write + DOM event above only
+   *  ever reached the private-room dropdown, never the server — a class
+   *  switch mid-visit at the station left the server's loadout entry (and
+   *  therefore the ability catalog grid below) locked to whatever class
+   *  was picked at first totem touch. `sendClassPick` re-derives it live;
+   *  the server's reply (`venue-draft`) re-renders the catalog via
+   *  `onVenueDraft` → `syncCatalog()`, no totem re-entry required. */
   private buildClassRowConfig(): ClassRowConfig {
     return {
       title: CLASS_ROW_TITLE,
@@ -440,6 +539,7 @@ export class HangoutScene extends Phaser.Scene {
         window.dispatchEvent(
           new CustomEvent("jakesjam:class-change", { detail: { characterId } }),
         );
+        this.loop?.sendClassPick(characterId);
       },
     };
   }
@@ -650,10 +750,10 @@ export class HangoutScene extends Phaser.Scene {
       const isFlashingRing =
         (flashing && readyTotem !== undefined && totem.id === readyTotem.id) ||
         (localQueued && totem.id === "totem-bell") ||
-        // Loadout armed (2026-07-17): a picked starter card holds the
-        // station ring bright — state, not a flash (axiom H2), mirroring
-        // the bell's queued glow.
-        (this.loadoutPickId !== null && totem.id === "totem-loadout");
+        // Loadout armed (2026-07-17): at least one equipped catalog
+        // ability holds the station ring bright — state, not a flash
+        // (axiom H2), mirroring the bell's queued glow.
+        (this.loadoutPicks.length > 0 && totem.id === "totem-loadout");
       const ring = totem.kind === "ready" ? PALETTE.inkBright : PALETTE.sapphireSteady;
       const r = isFlashingRing ? totem.radius * scale : totem.radius;
       const alpha = 0.55 + 0.3 * pulse;
@@ -678,8 +778,14 @@ export class HangoutScene extends Phaser.Scene {
     if (!s) return;
 
     if (!this.feedText) {
+      // CSS px (uiWidth), not raw backing-store scale.width: this object is
+      // scrollFactor(0), so installHudCamera reparents it into the HUD
+      // root container, which is itself scaled by renderScale — a position
+      // already pre-multiplied by renderScale (scale.width) would get
+      // double-scaled and drift off-center. Same basis ActionBarSystem's
+      // own layout() already uses.
       this.feedText = this.add
-        .text(this.scale.width / 2, 14, "", {
+        .text(uiWidth(this) / 2, 14, "", {
           color: "#7a8299",
           fontFamily: "'Space Mono', 'Courier New', monospace",
           fontSize: "13px",
@@ -707,7 +813,7 @@ export class HangoutScene extends Phaser.Scene {
     this.feedText.setText(
       `THE ARENA — ${phaseLabel} · ROUND ${s.roundIndex + 1} · ${fighters}${bots}\nNEXT BELL ${mm}:${ss}`,
     );
-    this.feedText.setPosition(this.scale.width / 2, 14);
+    this.feedText.setPosition(uiWidth(this) / 2, 14);
 
     if (this.bellLabel) {
       const queuedCount = s.queued.length;
@@ -768,6 +874,18 @@ export class HangoutScene extends Phaser.Scene {
     if (this.mode === "venue" && this.input.activePointer.leftButtonDown()) {
       keys |= InputBit.Fire;
     }
+    // Drafted actives (loadout station catalog abilities, Fix 1 live
+    // playtest 2026-07-18 — Jake: "the abilities and load out should be
+    // active in this world"): keys 1-3 press bar slots in pick order —
+    // bits 10..12, byte-identical to OnlineMatchScene's input assembly
+    // (raw edges, no client gate: the sim validates slot existence +
+    // cooldown). Venue-only — private hangouts carry no loadout station,
+    // so there is nothing on the rack to trigger.
+    if (this.mode === "venue") {
+      if (this.keys?.slot1.isDown) keys |= 1 << 10;
+      if (this.keys?.slot2.isDown) keys |= 1 << 11;
+      if (this.keys?.slot3.isDown) keys |= 1 << 12;
+    }
 
     // Aim orients the rig — and in venue mode it aims live practice fire.
     // Mouse position on desktop, last known local position on touch (touch
@@ -806,9 +924,66 @@ export class HangoutScene extends Phaser.Scene {
     this.renderWorld(state, deltaMs);
     this.entityRender?.update(state, deltaMs, now);
     this.followLocalPlayer(state, deltaMs);
+    // Dance camera (Fix 2) — same relative order as OnlineMatchScene's
+    // update() (cameraHype.update() runs AFTER the followLocalPlayer call
+    // that reads it, so a peak's very first triggering frame reads last
+    // frame's hype; matching upstream's exact order rather than
+    // "fixing" a one-frame lag that isn't this port's job to change).
+    this.updateCameraHype(deltaMs);
     this.updateLoadoutZone(state);
     this.updateTotemPulse(now);
     this.updateVenueFeed(now);
+    this.updateActionBar(state);
+  }
+
+  /** Dance camera (Fix 2, live playtest 2026-07-18 — Jake: "as well as the
+   *  dance camera"): identical ~20s sustained-action accumulator driving
+   *  ActionCamera's orbital "pop and lock" motion, ported byte-for-byte
+   *  from OnlineMatchScene's update() — same drive signal (the local
+   *  player rig's own "circle the mouse" dance-energy read), same
+   *  restrained rising-edge acknowledgment flash on reaching peak (axiom
+   *  H2: one quiet flash, not a repeating strobe). Runs in every mode —
+   *  ActionCamera silently no-ops idle hype (0 by default), so a private
+   *  hangout visitor who never dances just never sees it, same as before. */
+  private updateCameraHype(deltaMs: number): void {
+    const localRig = this.playerRigs.get(this.localPlayerId as string);
+    this.cameraHype.update(deltaMs, localRig?.getDanceState().energy ?? 0);
+    if (localRig) localRig.externalHypeBoost = this.cameraHype.get();
+    const hypePeakNow = this.cameraHype.isPeak();
+    if (hypePeakNow && !this.cameraHypePeakPrev) {
+      this.cameras.main.flash(180, 0x89, 0x7f, 0x69, false);
+    }
+    this.cameraHypePeakPrev = hypePeakNow;
+  }
+
+  /** Loadout station live-fire (Fix 1): renders the same bottom-center
+   *  hotkey bar OnlineMatchScene does, from the local player's live
+   *  resolved build — cooldowns/glyphs for the drafted actives on 1/2/3
+   *  plus any acquired-capability diamonds, exactly what "try it on the
+   *  dummies" promises. Venue-only, mirrors `actionBar`'s own
+   *  construction gate in `create()`. */
+  private updateActionBar(state: WorldState): void {
+    if (this.mode !== "venue" || !this.actionBar) return;
+    const local = state.players[this.localPlayerId];
+    const character = this.getCharacter(local?.characterId);
+    const chips = deriveHudChips(local, state.tick);
+    const localActives = local ? activeSlotVitals(local, state.tick) : [];
+    const vitals: ActionBarVitals = {
+      health: local?.health ?? 0,
+      maxHealth: character.maxHealth,
+      shieldCharge: local?.shieldCharge ?? 0,
+      shieldMaxCharge: local?.shieldMaxCharge ?? 0,
+      dashReadyFrac: local?.dashReadyFrac ?? 1,
+      emissionChargeFrac: (local?.abilityCharge ?? 0) / EMISSION_CHARGE_MAX,
+      // Drafted actives claim the diamonds right after E, keyed 1-3 (same
+      // resolvePlayerBuild-derived source the input assembly above reads
+      // for prediction — one build per player.cards, no second source).
+      actives: localActives,
+      acquired: local ? acquiredAbilities(resolvePlayerBuild(local)) : [],
+      stolenFangsCharges: local?.pendingLockCharges ?? 0,
+      isDead: local ? !local.alive : false,
+    };
+    this.actionBar.update(vitals, chips);
   }
 
   private renderWorld(state: WorldState, deltaMs: number): void {
@@ -846,6 +1021,15 @@ export class HangoutScene extends Phaser.Scene {
       aimY: local.aimY,
       extra: [],
       yBias,
+      // Dance camera (Fix 2) — same fields OnlineMatchScene's
+      // followLocalPlayer feeds ActionCamera; the orbital "pop and lock"
+      // motion (ActionCamera's hype^2-scaled orbit) needs only `hype`,
+      // `peak`/`beatPulse` additionally gate the beat-cut cinematic (a
+      // no-op without music playing, which the lobby doesn't loop today —
+      // still passed for parity so it activates for free the moment it does).
+      hype: this.cameraHype.get(),
+      peak: this.cameraHype.isPeak(),
+      beatPulse: getMusicLevel().beat,
     });
   }
 
@@ -889,15 +1073,36 @@ export class HangoutScene extends Phaser.Scene {
       scale: this.getVisualScale(character),
       // No combat frame-budget to protect (that's the whole reason
       // OnlineMatchScene restricts "full" detail to the local player only)
-      // — every hangout rig gets the full-juice treatment.
-      detail: "full",
+      // — every hangout rig gets the full-juice treatment, EXCEPT potato
+      // tier (perf audit R3, 2026-07-18): the venue lobby is the densest,
+      // most player-populated scene in the game (bell queue + loadout
+      // station clustering), so it's exactly where a potato-tier device
+      // needs the same relief combat scenes already give it, not none.
+      detail: getQualityProfile().tier !== "potato" ? "full" : "lite",
     });
   }
+
+  /** Cull margin (world px) beyond the camera's view — mirrors
+   *  OnlineMatchScene.RIG_CULL_MARGIN (perf audit R3, 2026-07-18): an
+   *  out-of-view rig still cost a full procedural redraw every frame here,
+   *  and the venue lobby is the densest scene in the game. */
+  private static readonly RIG_CULL_MARGIN = 220;
 
   private updatePlayerRig(rig: ProceduralPlayerRig, player: PlayerEntity, deltaMs: number): void {
     if (!player.alive) {
       rig.setVisible(false);
       this.crouchHalfByPid.delete(player.id as string);
+      return;
+    }
+    const view = this.cameras.main.worldView;
+    const M = HangoutScene.RIG_CULL_MARGIN;
+    if (
+      player.x < view.x - M ||
+      player.x > view.right + M ||
+      player.y < view.y - M ||
+      player.y > view.bottom + M
+    ) {
+      rig.setVisible(false);
       return;
     }
     rig.setVisible(true);
@@ -925,10 +1130,17 @@ export class HangoutScene extends Phaser.Scene {
       maxHealth: character.maxHealth,
       touchingWallDir: player.touchingWallDir ?? 0,
       dashing: player.dashing ?? false,
-      // No cards ever granted in hangout mode — plating/parry-cover stay
-      // at their rest values.
-      shieldArcScale: 1,
-      platingGlow: 0,
+      // Venue mode (Fix 1, live playtest 2026-07-18): cards ARE now live on
+      // the venue lobby player (VenueHost.pushLoadoutDraft → setPlayerCards)
+      // — plating glow/parry-cover must track the resolved build here too,
+      // same source `resolvePlayerBuild` the action bar and the input path
+      // both read (one derivation, allocation-free after the first resolve
+      // per cards-array identity). Private hangouts never grant cards
+      // (no loadout station there), so `player.cards` stays empty and this
+      // reads the same rest values (1 / 0) as before — byte-identical for
+      // that mode.
+      shieldArcScale: resolvePlayerBuild(player).parryCoverMultiplier,
+      platingGlow: Math.min(1, resolvePlayerBuild(player).maxHealthAdd / 40),
     });
   }
 
@@ -947,12 +1159,16 @@ export class HangoutScene extends Phaser.Scene {
     this.lobbyTransport = null;
     this.entityRender?.destroy();
     this.entityRender = null;
+    this.actionBar?.destroy();
+    this.actionBar = null;
+    this.cameraHype.reset();
+    this.cameraHypePeakPrev = false;
     this.callsignOverlay?.remove();
     this.callsignOverlay = null;
     this.draftOverlay?.destroy();
     this.draftOverlay = null;
-    this.loadoutOffers = null;
-    this.loadoutPickId = null;
+    this.loadoutPicks = [];
+    this.loadoutClassId = null;
     this.loadoutInZone = false;
     this.loadoutSeenOutside = false;
     this.loadoutDismissed = false;

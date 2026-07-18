@@ -1,7 +1,7 @@
 import { describe, test, expect, beforeEach } from "bun:test";
 import { InterestGrid, CELL_SIZE_PX, OBSERVE_RADIUS_CELLS } from "../InterestGrid.ts";
-import type { WorldState } from "@sim/types.ts";
-import { EntityId, PlayerId, Tick } from "@sim/types.ts";
+import type { PlayerEntity, WorldState } from "@sim/types.ts";
+import { EntityId, InputSeq, PlayerId, Tick } from "@sim/types.ts";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -54,6 +54,47 @@ function projectile(id: number, x: number, y: number): WorldState["projectiles"]
       element: "neutral",
       bouncesRemaining: 0,
       pierceRemaining: 0,
+    },
+  };
+}
+
+function player(id: string, x: number, y: number): PlayerEntity {
+  return {
+    id: PlayerId(id),
+    characterId: "balanced",
+    x,
+    y,
+    vx: 0,
+    vy: 0,
+    aimX: x,
+    aimY: y,
+    health: 100,
+    shieldActive: false,
+    crouching: false,
+    alive: true,
+    weaponId: "starter-pistol",
+    cards: [],
+    fireCooldownMs: 0,
+    ammo: 0,
+    abilityCharge: 0,
+    lastProcessedInputSeq: InputSeq(0),
+  };
+}
+
+function satellite(
+  id: number,
+  ownerId: string,
+  angle: number,
+  orbitRadius: number,
+): WorldState["satellites"] {
+  return {
+    [EntityId(id)]: {
+      id: EntityId(id),
+      ownerId: PlayerId(ownerId),
+      angle,
+      orbitRadius,
+      fireCooldownMs: 0,
+      lifetimeMs: Infinity,
     },
   };
 }
@@ -219,5 +260,62 @@ describe("InterestGrid", () => {
   test("CELL_SIZE_PX and OBSERVE_RADIUS_CELLS constants have expected values", () => {
     expect(CELL_SIZE_PX).toBe(320);
     expect(OBSERVE_RADIUS_CELLS).toBe(2);
+  });
+
+  test("satellite is binned by owner position + orbit offset, not orbit angle alone (perf audit N3)", () => {
+    // Owner sits far from the world origin; if the satellite were binned
+    // using only its orbit-relative offset (the old, wasted first pass),
+    // it would land near cell (0,0) instead of near the owner.
+    const owner = player("p1", 900, 500);
+    const state = makeState({
+      players: { [PlayerId("p1")]: owner },
+      satellites: satellite(30, "p1", 0, 50), // angle=0 → offset (+50, 0)
+    });
+    grid.rebuild(state);
+    // Satellite world position ≈ (950, 500) — cell (2,1) for a 960×540 world.
+    const cellsNearOwner = grid.cellsAround(950, 500, 0);
+    expect(grid.observed(cellsNearOwner).satelliteIds.has(EntityId(30))).toBe(true);
+    // Cell (0,0), where the discarded orbit-only approximation would have
+    // placed it, must NOT see it.
+    const cellsAtOrigin = grid.cellsAround(0, 0, 0);
+    expect(grid.observed(cellsAtOrigin).satelliteIds.has(EntityId(30))).toBe(false);
+  });
+
+  test("orphaned satellite (ownerId null) falls back to (0,0) without throwing", () => {
+    const state = makeState({
+      satellites: {
+        [EntityId(31)]: {
+          id: EntityId(31),
+          ownerId: null,
+          angle: 0,
+          orbitRadius: 50,
+          fireCooldownMs: 0,
+          lifetimeMs: Infinity,
+        },
+      },
+    });
+    expect(() => grid.rebuild(state)).not.toThrow();
+    const cells = grid.cellsAround(0, 0, 0);
+    expect(grid.observed(cells).satelliteIds.has(EntityId(31))).toBe(true);
+  });
+
+  describe("isFullCoverage (perf audit N2)", () => {
+    test("a map small enough that radius already spans the whole grid is full-coverage", () => {
+      // 960×540 at CELL_SIZE_PX=320 → 3×2 cells; radius 2 spans 5×5.
+      expect(grid.isFullCoverage(2)).toBe(true);
+      // Even radius 1 (3×3 span) already covers a 3×2 grid.
+      expect(grid.isFullCoverage(1)).toBe(true);
+    });
+
+    test("a large map is NOT full-coverage at the production radius", () => {
+      const bigGrid = new InterestGrid(6000, 6000, CELL_SIZE_PX);
+      expect(bigGrid.isFullCoverage(OBSERVE_RADIUS_CELLS)).toBe(false);
+    });
+
+    test("radius 0 is only full-coverage for a single-cell map", () => {
+      expect(grid.isFullCoverage(0)).toBe(false);
+      const oneCell = new InterestGrid(200, 200, CELL_SIZE_PX);
+      expect(oneCell.isFullCoverage(0)).toBe(true);
+    });
   });
 });

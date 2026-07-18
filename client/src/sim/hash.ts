@@ -70,6 +70,7 @@ function quantiseMs(value: number): number {
  *   cards.length,
  *   fireCooldownMs (STEP_MS grid),
  *   abilityCharge (int), energy (int, ninja class resource),
+ *   kindling (int, paladin class resource),
  *   overchargeUntilTick (int), damageAmpUntilTick (int),
  *   speedBoostUntilTick (int), meleeModeUntilTick (int),
  *   slowDebuffUntilTick (int), vulnerabilityUntilTick (int),
@@ -77,14 +78,24 @@ function quantiseMs(value: number): number {
  *   wardShellUntilTick (int), slot1..4CooldownUntilTick (int),
  *   titheUntilTick (int), veilUntilTick (int), counterUntilTick (int),
  *   respawnAtTick (int), sunlanceUntilTick (int), facetMarkUntilTick (int),
- *   overclockUntilTick (int), resonanceUntilTick (int), grounded (0/1).
+ *   overclockUntilTick (int), resonanceUntilTick (int),
+ *   regenUntilTick (int, Syzygist substrate), hasteUntilTick (int, Syzygist
+ *   substrate), devotion (int, priest class resource), wardAbsorbUntilTick
+ *   (int, Syzygist Ward window), grounded (0/1), retributionArmedUntilTick /
+ *   retributionReadyUntilTick / shockRingArmedUntilTick / rallyLightUntilTick
+ *   / craterArmedUntilTick (int, Kindred catalog v1 fast-follow +
+ *   card-pool-v2.md exclusives), retortBank (int), retortBankUntilTick (int),
+ *   kindledResolveUntilTick (int, Kindred coverage-floor fast-follow).
  *
  * Fields deliberately skipped: aimX/aimY (presentation only, changes every
  * frame without gameplay consequence), lastProcessedInputSeq (reconcile
  * bookkeeping on server side, not local prediction state),
  * shieldActive / crouching (derived from input each tick — fast-path collision
  * unchanged by their omission since any divergence in those booleans always
- * accompanies a position/velocity divergence within one step).
+ * accompanies a position/velocity divergence within one step), teamId
+ * (class-overhaul-workboard.md chunk 1.1 — same precedent as characterId/
+ * weaponId: set once from spawn data, never written by World.step, so it
+ * cannot diverge via local prediction the way stepped fields can).
  */
 export function hashPlayerEntity(p: PlayerEntity): number {
   let h = FNV1A_BASIS_32;
@@ -99,6 +110,9 @@ export function hashPlayerEntity(p: PlayerEntity): number {
   h = mixU32(h, quantiseMs(p.fireCooldownMs));
   h = mixU32(h, Math.round(p.abilityCharge) | 0);
   h = mixU32(h, Math.round(p.energy ?? 0) | 0);
+  // Kindling (paladin class resource, class-overhaul-workboard.md chunk
+  // 2.3) — same TS-owned-resource treatment as energy immediately above.
+  h = mixU32(h, Math.round(p.kindling ?? 0) | 0);
 
   // Optional tick-based buffs — treat absent as 0 (no buff active).
   h = mixU32(h, (p.overchargeUntilTick ?? 0) | 0);
@@ -131,6 +145,34 @@ export function hashPlayerEntity(p: PlayerEntity): number {
   h = mixU32(h, (p.sunlanceUntilTick ?? 0) | 0);
   h = mixU32(h, (p.facetMarkUntilTick ?? 0) | 0);
   h = mixU32(h, (p.overclockUntilTick ?? 0) | 0);
+  // Kindred catalog v1 (docs/class-ability-catalogs-v1.md, class-overhaul-
+  // workboard.md chunk 2.6). Same absent-as-0 treatment as the Geometrician
+  // fields above; judgmentTargetId (a PlayerId string) is deliberately NOT
+  // mixed for the identical "covered by its numeric sibling" reasoning as
+  // facetTargetId.
+  h = mixU32(h, (p.judgmentMarkUntilTick ?? 0) | 0);
+  h = mixU32(h, (p.sealUntilTick ?? 0) | 0);
+  h = mixU32(h, (p.aegisShareUntilTick ?? 0) | 0);
+  // Kindred catalog v1 fast-follow (class-overhaul-workboard.md chunk 2.6,
+  // 2026-07-18: Retribution Edge, Shock Ring, Rally Light, plus Crater/
+  // Retort from the separate card-pool-v2.md exclusives). Same absent-as-0
+  // treatment as every other window-buff field above. `retortBank` is a
+  // depletable numeric pool, not a boolean/tick — mixed like `kindling`
+  // above (rounded, not quantised) rather than skipped like `shieldCharge`,
+  // because unlike shieldCharge it changes only on discrete block/swing
+  // events (not "nearly every combat tick"), so it doesn't defeat the
+  // reconcile-skip heuristic the way a continuously-draining pool would.
+  h = mixU32(h, (p.retributionArmedUntilTick ?? 0) | 0);
+  h = mixU32(h, (p.retributionReadyUntilTick ?? 0) | 0);
+  h = mixU32(h, (p.shockRingArmedUntilTick ?? 0) | 0);
+  h = mixU32(h, (p.rallyLightUntilTick ?? 0) | 0);
+  h = mixU32(h, (p.craterArmedUntilTick ?? 0) | 0);
+  h = mixU32(h, Math.round(p.retortBank ?? 0) | 0);
+  h = mixU32(h, (p.retortBankUntilTick ?? 0) | 0);
+  // Kindled Resolve (Kindred catalog v1 coverage-floor fast-follow,
+  // docs/axiom-deviations-audit.md, 2026-07-18). Same absent-as-0
+  // treatment as every other window-buff field above.
+  h = mixU32(h, (p.kindledResolveUntilTick ?? 0) | 0);
   // Resonance (class-overhaul-workboard.md chunk 0.1). Same absent-as-0
   // treatment; resonanceSourceKind (a string) is deliberately NOT mixed,
   // same precedent as facetTargetId above — it's set deterministically off
@@ -138,6 +180,35 @@ export function hashPlayerEntity(p: PlayerEntity): number {
   // divergence in "which kind resonated" would necessarily accompany a
   // divergence in resonanceUntilTick itself (or an earlier hashed field).
   h = mixU32(h, (p.resonanceUntilTick ?? 0) | 0);
+  // Syzygist status substrate extension (class-overhaul-workboard.md chunk
+  // 3.1) — regen/haste windows, the first BUFF fields another player's cast
+  // can write onto THIS entity. Same absent-as-0 treatment as every other
+  // window-buff field above. regenHps/hasteMultiplier are deliberately NOT
+  // mixed — a divergence in either would necessarily also diverge
+  // regenUntilTick/hasteUntilTick (both are stamped together, in the same
+  // write, by applyRegenToAlly/applyHasteToAlly), matching this file's
+  // existing "covered by its numeric sibling" precedent (facetTargetId,
+  // resonanceSourceKind).
+  h = mixU32(h, (p.regenUntilTick ?? 0) | 0);
+  h = mixU32(h, (p.hasteUntilTick ?? 0) | 0);
+  // Syzygist Devotion (class-overhaul-workboard.md chunk 3.2) — TS-owned
+  // resource, same "mix it in, no flag needed" treatment as energy/kindling
+  // immediately above (this file's own precedent, NOT regen/haste's window-
+  // tick treatment): a self-view HUD resource, not a cross-player buff a
+  // remote ally needs a real-time wire channel for.
+  h = mixU32(h, Math.round(p.devotion ?? 0) | 0);
+  // Syzygist Ward (class-overhaul-workboard.md chunk 3.3) —
+  // wardAbsorbUntilTick mixed (a window-tick field, same treatment as
+  // regenUntilTick/hasteUntilTick immediately above); wardAbsorbRemaining
+  // deliberately NOT mixed — like `shieldCharge` (this file's own EXISTING
+  // precedent: shieldCharge is never mixed into this hash despite being a
+  // depletable resource), a pool that changes on nearly every combat tick
+  // is expected to be delta-synced in real time (P_HI.wardAbsorb,
+  // snapshotDeltaBits.ts) rather than safety-net-hashed — hash-mixing a
+  // field that changes almost every tick would make the reconcile-skip
+  // heuristic nearly useless for a warded player, defeating this
+  // function's own performance purpose.
+  h = mixU32(h, (p.wardAbsorbUntilTick ?? 0) | 0);
   // Render-only flag, but per-entity reconcile uses this hash to detect
   // divergence; without grounded mixed in, a remote rig that just landed
   // would NOT trigger reconcile and would keep its stale grounded=false

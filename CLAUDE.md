@@ -92,6 +92,11 @@ code. Last verified: 2026-07-08.
 
 - Current: this file, `AGENTS.md` (rules + determinism discipline),
   `docs/dev-stream-sim.md` (maintained), ADRs (statuses are honest).
+- Design reasoning: `docs/design-axioms.md` (2026-07-18) — generative,
+  non-restrictive axioms (feel, feedback/economy, depth, pacing, reward)
+  grounded in the game-design corpus (`qdrant-find` over `book_extractions`).
+  Consult it for the *mechanism* behind a design call; it complements the
+  pillars (identity) and the goal docs (specific systems).
 - Historical/superseded (banners added 2026-07-08): the zig-wasm status
   docs (`zig-wasm-conversion-status.md`, `zig-wasm-migration-complete.md`)
   and the Convex-era architecture sections of `technical-design.md` /

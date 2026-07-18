@@ -88,9 +88,12 @@ export type ClientLoopOptions = {
   onReconnectAttempt?: (attemptNumber: number, nextDelayMs: number) => void;
   /** Venue lobby only: pushed venue-status frames (S2.B). */
   onVenueStatus?: (status: import("./protocol.js").VenueStatus) => void;
-  /** Venue lobby only: loadout-station starter offer (S2.E; separated
-   *  from the bell queue 2026-07-17). */
-  onVenueDraft?: (offers: string[]) => void;
+  /** Venue lobby only: loadout-station state (S2.E; separated from the
+   *  bell queue 2026-07-17). `picks`/`classId` added 2026-07-18 (live
+   *  playtest finding) — see protocol.ts's VenueDraft doc. The universal
+   *  `offers` field was removed from the wire 2026-07-18 (Jake: cut the
+   *  random-offer-and-reroll section from the station entirely). */
+  onVenueDraft?: (picks: string[], classId: string) => void;
   /** Venue lobby only: the bell admitted this player to the arena (S2.F). */
   onVenueAdmitted?: () => void;
 };
@@ -130,7 +133,6 @@ export type NetStats = {
   /** Diagnostics: predicted sim steps with Fire held / local spawns produced. */
   diagFireSteps?: number;
   diagPredictedSpawns?: number;
-  lastReplayDebug?: Record<string, unknown> | null;
   /**
    * EMA of the render-frame delta (ms) — the same signal the adaptive
    * interpolation delay keys off. 60fps ≈ 16.7; sustained > ~20 means the
@@ -173,6 +175,18 @@ export const EMPTY_NET_STATS: NetStats = {
 const FULL_RECONCILE_INTERVAL_MS = 5000;
 
 /**
+ * Perf audit M1 (2026-07-18): pendingInputs had no hard cap. Under normal
+ * jitter it stays tens of entries deep (bounded by RTT), but a genuine
+ * connection stall (ack stream stops without a re-hello/epoch reset) let it
+ * grow unbounded — every incoming snapshot replays the ENTIRE queue via a
+ * full stepWithRuntime per entry, so an unbounded queue means unbounded (and
+ * worsening) reconcile cost. 240 ticks = 4s at 60Hz — several times any
+ * realistic RTT-driven depth, so this never trims a healthy connection; it
+ * only backstops a stalled one until the next full reconcile / epoch reset.
+ */
+const PENDING_INPUTS_MAX_DEPTH = 240;
+
+/**
  * How far in the past remote players are rendered (entity interpolation).
  * Remote entities always render at estimated-server-now minus this delay so
  * the renderer lerps BETWEEN two received snapshots instead of showing the
@@ -209,7 +223,7 @@ export class ClientLoop {
   private readonly onConnectionLost?: (reason: string) => void;
   private readonly onReconnectAttempt?: (attemptNumber: number, nextDelayMs: number) => void;
   private readonly onVenueStatus?: (status: import("./protocol.js").VenueStatus) => void;
-  private readonly onVenueDraft?: (offers: string[]) => void;
+  private readonly onVenueDraft?: (picks: string[], classId: string) => void;
   private readonly onVenueAdmitted?: () => void;
 
   private predictedState: WorldState | null = null;
@@ -257,8 +271,6 @@ export class ClientLoop {
    *  predicted spawns stay 0, client fire prediction is broken. */
   private diagFireSteps = 0;
   private diagPredictedSpawns = 0;
-  /** Diagnostics: what the most recent reconcile replay did to round state. */
-  private lastReplayDebug: Record<string, unknown> | null = null;
 
   // ---- Delta snapshot ring ----
   /** Last N received WorldStates keyed by their tick. Used to resolve baseline
@@ -441,6 +453,34 @@ export class ClientLoop {
     this.transport.send(
       encodeMessage({ t: "card-pick", roundIndex, cardId }),
     );
+  }
+
+  /**
+   * Venue lobby only: toggle a class ability catalog card in/out of the
+   * loadout station's rack (docs/classes-goal.md "Loadout station owns
+   * the 3 slots" — live playtest finding 2026-07-18). Server flips
+   * membership; no local round-trip wait required — the caller applies
+   * its own optimistic UI update and reconciles on the next `venue-draft`
+   * push (see HangoutScene's `syncCatalog`).
+   */
+  sendCatalogToggle(cardId: string): void {
+    this.transport.send(encodeMessage({ t: "catalog-toggle", cardId }));
+  }
+
+  /**
+   * Venue lobby only: switch the loadout station's locked chassis mid-visit
+   * (Bug fix, live playtest 2026-07-18 — a class-row click used to only
+   * persist to localStorage and announce a DOM event for the private-room
+   * dropdown; the server's loadout entry never heard about it, so the
+   * catalog grid kept showing the OLD class's abilities until the totem
+   * zone was re-entered). Server re-derives `classId`, drops any armed
+   * catalog pick that no longer belongs to it, and re-pushes a fresh
+   * `venue-draft` — no local optimistic update needed here, `syncCatalog()`
+   * renders straight off `loadoutClassId`/`loadoutPicks`, which
+   * `onVenueDraft` sets from that authoritative push.
+   */
+  sendClassPick(characterId: string): void {
+    this.transport.send(encodeMessage({ t: "class-pick", characterId }));
   }
 
   /** Updated by the input capture layer every frame before the next tick. */
@@ -670,7 +710,6 @@ export class ClientLoop {
       lastReconcileSkippedEntities: this.lastReconcileSkippedEntities,
       diagFireSteps: this.diagFireSteps,
       diagPredictedSpawns: this.diagPredictedSpawns,
-      lastReplayDebug: this.lastReplayDebug,
       frameDtEmaMs: this.frameDtEmaMs,
     };
   }
@@ -752,6 +791,11 @@ export class ClientLoop {
       dtMs: STEP_MS,
     };
     this.pendingInputs.push(input);
+    // Drop-oldest backstop against unbounded growth during a connection
+    // stall (perf audit M1) — never trims a healthy, RTT-bounded queue.
+    while (this.pendingInputs.length > PENDING_INPUTS_MAX_DEPTH) {
+      this.pendingInputs.shift();
+    }
 
     const inputs: Record<PlayerId, InputFrame | null> = {};
     inputs[this.playerId] = input;
@@ -826,10 +870,10 @@ export class ClientLoop {
         this.onVenueStatus?.(message);
         break;
       case "venue-draft":
-        // Loadout-station starter offer (S2.E; station-separated from the
-        // bell queue 2026-07-17) — pushed while this player stands at the
+        // Loadout-station state (S2.E; station-separated from the bell
+        // queue 2026-07-17) — pushed while this player stands at the
         // loadout totem. Same lobby-only contract as venue-status.
-        this.onVenueDraft?.(message.offers);
+        this.onVenueDraft?.(message.picks, message.classId);
         break;
       case "venue-admitted":
         // The bell (S2.F) — this player crosses into the arena now. The
@@ -1107,32 +1151,17 @@ export class ClientLoop {
     if (this.runtime) {
       this.runtime.nextEntityId = nextEntityIdSeed(replayState);
     }
-    const replayBasePhase = replayState.round.phase;
-    const replayBaseAlive = Object.values(replayState.players).filter((p) => p.alive).length;
-    const replayBaseTick = replayState.tick;
-    const replayInputTicks: number[] = [];
-    const replaySteps: string[] = [];
+    // Perf audit M1 (2026-07-18): this loop used to build two debug-only
+    // arrays (replayInputTicks/replaySteps) and re-derive alive/total/hp via
+    // Object.values/Object.keys on EVERY replayed input, every reconcile —
+    // purely to populate `lastReplayDebug`, a NetStats field with no
+    // consumer anywhere in the client (the stats HUD never reads it). Gone.
     for (const input of this.pendingInputs) {
-      replayInputTicks.push(input.tick as number);
       const inputs: Record<PlayerId, InputFrame | null> = {};
       inputs[this.playerId] = input;
       if (!this.runtime) break;
       replayState = stepWithRuntime(replayState, this.runtime, inputs, STEP_MS).state;
-      const alive = Object.values(replayState.players).filter((p) => p.alive).length;
-      const total = Object.keys(replayState.players).length;
-      replaySteps.push(
-        `${replayState.round.phase}:${alive}/${total}:hp=${Object.values(replayState.players)[0]?.health}:k=${input.keys}`,
-      );
     }
-    this.lastReplayDebug = {
-      basePhase: replayBasePhase,
-      baseAlive: replayBaseAlive,
-      baseTick: replayBaseTick as number,
-      postPhase: replayState.round.phase,
-      postWinner: replayState.round.winnerPlayerId,
-      inputTicks: replayInputTicks,
-      steps: replaySteps,
-    };
     this.predictedState = replayState;
 
     // Recompute the smoothing offset so rendered = previous-rendered, then

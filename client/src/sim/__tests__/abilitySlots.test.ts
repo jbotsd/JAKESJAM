@@ -253,18 +253,7 @@ describe("drafted active slots (bits 10..12, rack locked at 3)", () => {
     expect(res.state.players[A]!.titheUntilTick).toBeUndefined();
   });
 
-  test("hangout mode and death both no-op the press", () => {
-    const inHangout = mkPlayer(A, 400, 400);
-    inHangout.cards = ["crimson-tithe"];
-    const res1 = stepWithRuntime(
-      mkState([inHangout]),
-      createRuntime(flatMap, "hangout"),
-      inputsWith([inHangout], { [A as string]: frame(SLOT1_BIT, 1) }),
-      DT_MS,
-    );
-    expect(res1.events.some((e) => e.t === "ability-activated")).toBe(false);
-    expect(res1.state.players[A]!.titheUntilTick).toBeUndefined();
-
+  test("death no-ops the press", () => {
     const dead = mkPlayer(A, 400, 400);
     dead.cards = ["crimson-tithe"];
     dead.alive = false;
@@ -277,6 +266,63 @@ describe("drafted active slots (bits 10..12, rack locked at 3)", () => {
     );
     expect(res2.events.some((e) => e.t === "ability-activated")).toBe(false);
     expect(res2.state.players[A]!.titheUntilTick).toBeUndefined();
+  });
+
+  // Hangout mode: abilities ARE live in the venue lobby (live playtest
+  // 2026-07-18, Jake: "the button presses dont fire off the spells" — a
+  // stale `|| hangoutMode` clause on this gate predated the lobby ever
+  // having cards to activate at all). Player-vs-player safety is enforced
+  // at each individual damage site (projectilePlayerIds = [] in hangout,
+  // plus the melee arc-hit/bash/splash/fire-patch/storm sites' own
+  // `!hangoutMode` guards) — NOT by blocking activation here. Crimson
+  // Tithe is self-only (titheUntilTick), so it's a clean self-effect probe
+  // for "did activation actually happen".
+  test("hangout mode activates a self-only ability normally", () => {
+    const inHangout = mkPlayer(A, 400, 400);
+    inHangout.cards = ["crimson-tithe"];
+    const res = stepWithRuntime(
+      mkState([inHangout]),
+      createRuntime(flatMap, "hangout"),
+      inputsWith([inHangout], { [A as string]: frame(SLOT1_BIT, 1) }),
+      DT_MS,
+    );
+    expect(res.events.some((e) => e.t === "ability-activated")).toBe(true);
+    expect(res.state.players[A]!.titheUntilTick).toBeDefined();
+  });
+
+  // A damage-dealing ability (Crimson Tithe's leech only matters once a
+  // shot lands) still deals zero damage to another PLAYER in hangout: the
+  // existing player-immunity mechanism (empty projectile candidate list)
+  // holds even though the ability itself now activates.
+  test("hangout mode: a damage-dealing ability still deals zero damage to another player", () => {
+    const caster = mkPlayer(A, 400, 400);
+    caster.cards = ["crimson-tithe"];
+    const victim = mkPlayer(B, 460, 400);
+    let state = mkState([caster, victim]);
+    const runtime = createRuntime(flatMap, "hangout");
+    // Activate Crimson Tithe, then fire at the victim.
+    let res = stepWithRuntime(
+      state,
+      runtime,
+      inputsWith([caster, victim], { [A as string]: frame(SLOT1_BIT, 1) }),
+      DT_MS,
+    );
+    state = res.state;
+    expect(state.players[A]!.titheUntilTick).toBeDefined();
+    const victimHealthBefore = state.players[B]!.health;
+    for (let t = 0; t < 30; t++) {
+      res = stepWithRuntime(
+        state,
+        runtime,
+        inputsWith([caster, victim], {
+          [A as string]: frame(FIRE_BIT, 400 + t, victim.x, victim.y),
+        }),
+        DT_MS,
+      );
+      state = res.state;
+    }
+    expect(state.players[B]!.health).toBe(victimHealthBefore);
+    expect(res.events.some((e) => e.t === "hit-confirmed")).toBe(false);
   });
 
   test("ability pity floor: a hand with no actives ALWAYS sees at least one ability offer", () => {

@@ -82,6 +82,10 @@ function makeFixtureState(): WorldState {
     shieldCharge: 50,
     shieldMaxCharge: 100,
     overchargeUntilTick: Tick(240),
+    // Duos-queue team identity (class-overhaul-workboard.md chunk 1.1) —
+    // present on player1, absent on player2 below, so this round-trip test
+    // exercises both the "has a team" and "ordinary FFA combatant" paths.
+    teamId: "duo-7",
   };
   const player2: PlayerEntity = {
     id: PlayerId("p_bravo"),
@@ -282,11 +286,17 @@ describe("worldStateBridge — pack/unpack round-trip (Phase G2)", () => {
     expect(p1!.shieldMaxCharge).toBe(o1!.shieldMaxCharge);
     expect(p1!.overchargeUntilTick).toBe(o1!.overchargeUntilTick);
     expect(p1!.cards.length).toBe(o1!.cards.length);
+    expect(o1!.teamId).toBe("duo-7");
+    expect(p1!.teamId).toBe(o1!.teamId);
 
     const p2 = back.players[PlayerId("p_bravo")]!;
     expect(p2.shieldActive).toBe(false);
     expect(p2.crouching).toBe(true);
     expect(p2.weaponId).toBe("heavy-launcher");
+    // player2 never set teamId (class-overhaul-workboard.md chunk 1.1) — an
+    // ordinary FFA combatant round-trips with the field left undefined, not
+    // an empty string or a stray "has team" flag.
+    expect(p2.teamId).toBeUndefined();
 
     const pr1 = back.projectiles[EntityId(1001)]!;
     expect(pr1.x).toBe(110);

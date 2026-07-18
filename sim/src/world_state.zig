@@ -38,6 +38,11 @@ pub const PLAYER_ID_BYTES: usize = 32;
 pub const WEAPON_ID_BYTES: usize = 24;
 pub const CARD_ID_BYTES: usize = 24;
 pub const MAX_PLAYER_CARDS: usize = 8;
+/// Duos-queue team id (class-overhaul-workboard.md chunk 1.1). Generated
+/// ids look like `duo-3` / `bot-duo-7` (server/src/venueHost.ts,
+/// worldHost.ts) — well under 24 bytes; sized the same as WEAPON_ID_BYTES,
+/// the codebase's existing "medium generated id" bucket.
+pub const TEAM_ID_BYTES: usize = 24;
 
 /// Round phase tag — mirrors `RoundState.phase` in
 /// `client/src/sim/types.ts`. Wire as a single byte.
@@ -150,7 +155,26 @@ pub const PlayerFlags = packed struct(u32) {
     has_boss_mode: bool,
     has_jetpack_fuel: bool,
     has_parry_facing: bool,
-    _reserved: u12 = 0,
+    /// Duos-queue team identity (class-overhaul-workboard.md chunk 1.1).
+    /// Gates team_id_len/team_id_bytes below — absent (bit 0) is an
+    /// ordinary FFA combatant.
+    has_team_id: bool,
+    /// Syzygist status substrate extension (class-overhaul-workboard.md
+    /// chunk 3.1) — gates regen_until_tick/regen_hps below. Same "unset vs
+    /// tick 0" explicit-flag convention as has_burn/has_freeze (these are
+    /// window-tick fields, not always-valid resources like energy/kindling,
+    /// which need no flag).
+    has_regen: bool,
+    /// Gates haste_until_tick/haste_multiplier below. Same convention as
+    /// has_regen immediately above.
+    has_haste: bool,
+    /// Syzygist Ward (class-overhaul-workboard.md chunk 3.3) — gates
+    /// syz_ward_absorb_until_tick/syz_ward_absorb_remaining below. Same
+    /// "unset vs tick 0" explicit-flag convention as has_regen/has_haste
+    /// (an optional WINDOW field, not an always-valid resource like
+    /// devotion, which needs no flag).
+    has_syz_ward: bool,
+    _reserved: u8 = 0,
 };
 
 pub const ProjectileFlags = packed struct(u32) {
@@ -259,6 +283,119 @@ pub const PlayerEntity = extern struct {
     /// padding before it (284 → 288) — struct grows 288 → 296. Non-ninja
     /// players simply never move this field off 0.
     energy: f64 = 0,
+
+    /// Duos-queue team identity (2026-07-18, class-overhaul-workboard.md
+    /// chunk 1.1, docs/classes-goal.md "Venue integration"). Mirrors TS
+    /// `PlayerEntity.teamId` exactly — length-prefixed fixed buffer, same
+    /// pattern as `id_bytes`/`weapon_id_bytes` above. This is
+    /// IDENTITY/ROSTER metadata (same category as character_id/weapon_id),
+    /// not ability/window state, so it crosses the ABI unlike Resonance
+    /// (six-axes-goal.md "Zig line" excludes only ability state) — any
+    /// future Zig-side combat code (friendly-fire / ally-targeting) needs
+    /// it visible every tick. `PlayerFlags.has_team_id` gates validity;
+    /// absent = ordinary FFA combatant, team_id_bytes reads all zero.
+    /// u8 fields need no alignment padding after `energy` (f64, 8-aligned);
+    /// struct grows 296 → 321 content bytes, then Zig's implicit tail
+    /// padding (extern struct alignment = 8, from the f64 fields) rounds
+    /// up to 328 — see the comptime assert below and
+    /// worldStateBridge.ts's PLAYER_ENTITY_SIZE.
+    team_id_len: u8 = 0,
+    team_id_bytes: [TEAM_ID_BYTES]u8 = @splat(0),
+
+    /// Paladin/Kindred class-resource pool (2026-07-18, class-overhaul-
+    /// workboard.md chunk 2.3, docs/classes-goal.md MANA section:
+    /// "Resource: Kindling from blocked damage... Defense IS the engine").
+    /// Mutated ONLY by TS `combat.ts`'s Kindled Ward branch of
+    /// `tryDeflectDamage` — same TS-owned-resource contract as `energy`
+    /// above (physics step never touches it, just carries it through).
+    /// Appended after `team_id_bytes`: that field's own doc comment notes
+    /// content ends at byte 321 with 7 bytes of IMPLICIT tail padding
+    /// (321 → 328) purely because it used to be the last field. Adding
+    /// `kindling` (f64, needs 8-byte alignment) reclaims that padding as
+    /// real alignment space instead — Zig places it at offset 328 (321
+    /// rounds up to 328), occupying [328, 336). 336 is already an 8-byte
+    /// multiple, so there's no further tail padding this time: struct size
+    /// grows 328 → 336 exactly (+8, not +7-padding-then-+8 — the old
+    /// padding IS the new field's alignment gap). See the comptime assert
+    /// below and worldStateBridge.ts's PLAYER_ENTITY_SIZE. Non-paladin
+    /// players simply never move this field off 0 — same "additive, zero-
+    /// cost for other chassis" contract as `energy`.
+    kindling: f64 = 0,
+
+    /// Syzygist status substrate extension (2026-07-18, class-overhaul-
+    /// workboard.md chunk 3.1, docs/classes-goal.md Priest/Syzygist:
+    /// "extends the existing status-effect substrate... add regen,
+    /// haste"). Mirrors TS `PlayerEntity.regenUntilTick`/`regenHps`/
+    /// `hasteUntilTick`/`hasteMultiplier` exactly. Unlike `burn_until_tick`/
+    /// `freeze_until_tick` above, these are TS-owned/TS-applied (World.ts's
+    /// per-tick regen block + speedMul chain, weapon.ts's fire-rate
+    /// composition — same "carried through, never computed here" contract
+    /// as `energy`/`kindling`, NOT the burn/freeze contract): `step_world`
+    /// does not read or mutate these fields. They still need
+    /// `PlayerFlags.has_regen`/`has_haste` gates (unlike energy/kindling)
+    /// because they're optional WINDOW-tick fields, same "unset vs tick 0"
+    /// ambiguity every other `*_until_tick` field on this struct resolves
+    /// with an explicit flag.
+    ///
+    /// Layout: two u32 ticks land at [336, 344) — still 4-byte-aligned
+    /// after `kindling`'s f64 (336 is already a multiple of 4), so no gap.
+    /// The two f64 rate fields that follow need 8-byte alignment; 344 is
+    /// already a multiple of 8, so THEY need no gap either — this is the
+    /// one field addition this session that requires zero explicit padding
+    /// bytes anywhere. Struct size grows 336 → 360 (+24, no padding). See
+    /// the comptime assert below and worldStateBridge.ts's
+    /// PLAYER_ENTITY_SIZE.
+    regen_until_tick: u32 = 0,
+    haste_until_tick: u32 = 0,
+    /// Heal-per-second while `regen_until_tick` is live (`has_regen`).
+    regen_hps: f64 = 0,
+    /// Move-speed + fire-rate multiplier while `haste_until_tick` is live
+    /// (`has_haste`).
+    haste_multiplier: f64 = 0,
+
+    /// Syzygist Devotion (2026-07-18, class-overhaul-workboard.md chunk
+    /// 3.2, docs/classes-goal.md MANA section: "priest = devotion,
+    /// generated by buff/heal uptime on others"). Mutated ONLY by TS
+    /// World.ts's per-tick Devotion-accrual pass — same TS-owned-resource
+    /// contract as `energy`/`kindling`: `step_world` never computes it,
+    /// just carries it through. No flag needed (always-valid resource, NOT
+    /// an optional window field — same "no gate" contract as
+    /// `energy`/`kindling`, not `regen_until_tick`'s). Only priest
+    /// (classId) chassis ever move this off 0.
+    ///
+    /// Layout: `haste_multiplier`'s f64 ends at offset 360, already an
+    /// 8-byte multiple, so `devotion` (f64) needs no alignment padding —
+    /// struct grows 360 → 368. See the comptime assert below and
+    /// worldStateBridge.ts's PLAYER_ENTITY_SIZE.
+    devotion: f64 = 0,
+
+    /// Syzygist Ward (2026-07-18, class-overhaul-workboard.md chunk 3.3,
+    /// docs/classes-goal.md defense-verb section: "priest = wards, small
+    /// absorb barriers, castable on ALLIES"). Mirrors TS
+    /// `PlayerEntity.wardAbsorbUntilTick`/`wardAbsorbRemaining` exactly —
+    /// same TS-owned/TS-applied contract as `regen_until_tick`/
+    /// `regen_hps` above (`step_world` does not compute or consume this;
+    /// `combat.ts`'s `trySyzygistWard` does). `PlayerFlags.has_syz_ward`
+    /// gates validity, same "unset vs tick 0" ambiguity every other
+    /// optional `*_until_tick` field on this struct resolves with an
+    /// explicit flag. `wardAbsorbSourceId` (TS-only ability-adjacent
+    /// bookkeeping, same category as `facetTargetId`) deliberately has NO
+    /// Zig mirror — it never crosses the WASM ABI.
+    ///
+    /// Layout: `devotion`'s f64 ends at offset 368, already 4-byte-aligned
+    /// for the u32 tick that follows (no gap); the f64 remaining-pool field
+    /// after IT needs 8-byte alignment, so there's a 4-byte implicit pad
+    /// between the two (372 → 376) — the SAME "one leftover u32" shape
+    /// `team_id_bytes`→`kindling`'s own transition hit, just smaller.
+    /// Struct grows 368 → 384 (+4 content bytes for the u32, +4 bytes
+    /// implicit alignment pad, +8 content bytes for the f64 = +16 total).
+    /// See the comptime assert below and worldStateBridge.ts's
+    /// PLAYER_ENTITY_SIZE.
+    syz_ward_absorb_until_tick: u32 = 0,
+    /// Absorb pool remaining (`has_syz_ward`). Depleted per-hit by
+    /// `combat.ts`'s `trySyzygistWard`, mirrored here as a byte-layout
+    /// carry-through only.
+    syz_ward_absorb_remaining: f64 = 0,
 };
 
 /// Mirrors `ProjectileEntity`.
@@ -595,7 +732,29 @@ comptime {
     // Each entity is 8-byte-aligned and tail-packed with explicit
     // _reserved bytes. These numbers are the wire contract — change
     // them only in a protocol-version bump.
-    std.debug.assert(@sizeOf(PlayerEntity) == 296);
+    // 296 → 328 (2026-07-18, class-overhaul-workboard.md chunk 1.1): +25
+    // content bytes (team_id_len + team_id_bytes[24]) rounded up to the
+    // next 8-byte multiple by the struct's own alignment (7 bytes implicit
+    // tail padding). See PlayerEntity.team_id_bytes's doc comment.
+    // 328 → 336 (2026-07-18, class-overhaul-workboard.md chunk 2.3): +8
+    // bytes for PlayerEntity.kindling (f64) — reclaims the 7 bytes of
+    // tail padding above as real alignment space rather than adding a
+    // fresh 8-byte-aligned pad on top. See PlayerEntity.kindling's doc
+    // comment.
+    // 336 → 360 (2026-07-18, class-overhaul-workboard.md chunk 3.1): +24
+    // bytes for PlayerEntity.regen_until_tick/haste_until_tick (u32 ×2) +
+    // regen_hps/haste_multiplier (f64 ×2) — no padding needed anywhere
+    // (336 and 344 are both already aligned for what follows them). See
+    // PlayerEntity.regen_until_tick's doc comment.
+    // 360 → 368 (2026-07-18, class-overhaul-workboard.md chunk 3.2): +8
+    // bytes for PlayerEntity.devotion (f64) — 360 already 8-byte-aligned,
+    // no padding. See PlayerEntity.devotion's doc comment.
+    // 368 → 384 (2026-07-18, class-overhaul-workboard.md chunk 3.3): +16
+    // bytes for PlayerEntity.syz_ward_absorb_until_tick (u32) +
+    // syz_ward_absorb_remaining (f64) — 4 bytes of implicit alignment
+    // padding between the two (372 → 376) since a lone u32 precedes an f64.
+    // See PlayerEntity.syz_ward_absorb_until_tick's doc comment.
+    std.debug.assert(@sizeOf(PlayerEntity) == 384);
     std.debug.assert(@sizeOf(ProjectileEntity) == 216);
     std.debug.assert(@sizeOf(SatelliteEntity) == 96);
     std.debug.assert(@sizeOf(DestructibleEntity) == 64);

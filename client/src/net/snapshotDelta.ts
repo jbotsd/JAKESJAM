@@ -38,6 +38,30 @@
  *  P_HI bits 20-21: Resonance (class-overhaul-workboard.md chunk 0.1,
  *  class-agnostic — six-axes and catalog kinds alike) — resonanceUntilTick,
  *  resonanceSourceKind.
+ *  P_HI bits 22-25: Kindred catalog v1 (docs/class-ability-catalogs-v1.md,
+ *  paladin-only) — judgmentTargetId, judgmentMarkUntilTick, sealUntilTick,
+ *  aegisShareUntilTick.
+ *  P_HI bits 26-29: Syzygist status substrate extension (class-overhaul-
+ *  workboard.md chunk 3.1) — regenUntilTick, regenHps, hasteUntilTick,
+ *  hasteMultiplier. The first BUFF fields a DIFFERENT player's cast can
+ *  write onto this entity (gated by team.ts's isAlly) — every prior window-
+ *  buff field above is self-only.
+ *  P_HI bit 30 (the LAST free bit in this 32-bit mask): Syzygist Ward
+ *  (class-overhaul-workboard.md chunk 3.3) — wardAbsorbUntilTick,
+ *  wardAbsorbRemaining, wardAbsorbSourceId ALL share this one bit (a
+ *  deliberate budget-driven consolidation, not a stylistic inconsistency
+ *  with facetTargetId/judgmentTargetId's own dedicated bits earlier — see
+ *  snapshotDeltaBits.ts's `wardAbsorb` comment).
+ *
+ *  teamId (class-overhaul-workboard.md chunk 1.1) deliberately has NO bit
+ *  here — same treatment as id/characterId (also bit-less; unlike weaponId,
+ *  which DOES carry a bit below since a weapon can actually swap mid-match):
+ *  teamId is set once at spawn and never mutated afterward, so there's
+ *  never an "update" to diff. It reaches a
+ *  recipient exactly once, in full, via whichever channel first hands them
+ *  the entity (FullSnapshot's whole-WorldState spread, or this file's own
+ *  `added` collection-delta path, which copies the entire entity object
+ *  rather than a bit-selected patch).
  *
  * NOTE: For simplicity, since PlayerEntity has ~30 optional/frequent fields,
  * we use a two-number bitmask pair (lo: bits 0-30, hi: bits 0-7) rather than
@@ -225,6 +249,27 @@ function diffPlayer(
   if (prev.overclockUntilTick !== next.overclockUntilTick) { bitsHi |= P_HI.overclockUntilTick; patch.overclockUntilTick = next.overclockUntilTick; }
   if (prev.resonanceUntilTick !== next.resonanceUntilTick) { bitsHi |= P_HI.resonanceUntilTick; patch.resonanceUntilTick = next.resonanceUntilTick; }
   if (prev.resonanceSourceKind !== next.resonanceSourceKind) { bitsHi |= P_HI.resonanceSourceKind; patch.resonanceSourceKind = next.resonanceSourceKind; }
+  if (prev.judgmentTargetId !== next.judgmentTargetId) { bitsHi |= P_HI.judgmentTargetId; patch.judgmentTargetId = next.judgmentTargetId; }
+  if (prev.judgmentMarkUntilTick !== next.judgmentMarkUntilTick) { bitsHi |= P_HI.judgmentMarkUntilTick; patch.judgmentMarkUntilTick = next.judgmentMarkUntilTick; }
+  if (prev.sealUntilTick !== next.sealUntilTick) { bitsHi |= P_HI.sealUntilTick; patch.sealUntilTick = next.sealUntilTick; }
+  if (prev.aegisShareUntilTick !== next.aegisShareUntilTick) { bitsHi |= P_HI.aegisShareUntilTick; patch.aegisShareUntilTick = next.aegisShareUntilTick; }
+  if (prev.regenUntilTick !== next.regenUntilTick) { bitsHi |= P_HI.regenUntilTick; patch.regenUntilTick = next.regenUntilTick; }
+  if (prev.regenHps !== next.regenHps) { bitsHi |= P_HI.regenHps; patch.regenHps = next.regenHps; }
+  if (prev.hasteUntilTick !== next.hasteUntilTick) { bitsHi |= P_HI.hasteUntilTick; patch.hasteUntilTick = next.hasteUntilTick; }
+  if (prev.hasteMultiplier !== next.hasteMultiplier) { bitsHi |= P_HI.hasteMultiplier; patch.hasteMultiplier = next.hasteMultiplier; }
+  // Syzygist Ward (class-overhaul-workboard.md chunk 3.3) — three fields,
+  // one shared bit (snapshotDeltaBits.ts's `wardAbsorb` comment): a change
+  // to ANY of the three sends all three (they're always written together).
+  if (
+    prev.wardAbsorbUntilTick !== next.wardAbsorbUntilTick ||
+    prev.wardAbsorbRemaining !== next.wardAbsorbRemaining ||
+    prev.wardAbsorbSourceId !== next.wardAbsorbSourceId
+  ) {
+    bitsHi |= P_HI.wardAbsorb;
+    patch.wardAbsorbUntilTick = next.wardAbsorbUntilTick;
+    patch.wardAbsorbRemaining = next.wardAbsorbRemaining;
+    patch.wardAbsorbSourceId = next.wardAbsorbSourceId;
+  }
 
   // Always send abilityCharge and lastProcessedInputSeq (change almost every tick)
   patch.abilityCharge = next.abilityCharge;
@@ -454,6 +499,19 @@ function applyCollectionDelta<K extends string | number, V>(
   delta: CollectionDelta<K, V>,
   applyUpdate: (base: V, update: EntityUpdate<V>) => V,
 ): Record<K, V> {
+  // Perf audit M3 (2026-07-18): this ran an unconditional full-collection
+  // shallow copy on EVERY incoming delta snapshot (~20-30Hz) x 6 collections,
+  // even when a given collection (destructibles/pickups/satellites most
+  // ticks) had zero adds/updates/removals. Skip the copy entirely when
+  // there's nothing to apply — same reference back, zero allocation.
+  if (
+    Object.keys(delta.added).length === 0 &&
+    Object.keys(delta.updated).length === 0 &&
+    delta.removed.length === 0
+  ) {
+    return base;
+  }
+
   const out: Record<K, V> = { ...base };
 
   // Apply additions

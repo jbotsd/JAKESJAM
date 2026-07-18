@@ -5,14 +5,90 @@ is a self-contained brief a fresh agent (or a different AI entirely) can
 pick up without needing this whole session's context. Dependencies are
 marked explicitly. Canon: `docs/classes-goal.md`, `docs/character-sheets-
 v1.md`, `docs/class-ability-catalogs-v1.md`, `docs/six-axes-goal.md`,
-`docs/card-pool-v2.md`. Read those before touching any chunk below — this
-doc is the map, not the spec.
+`docs/card-pool-v2.md`. Design reasoning: `docs/design-axioms.md` (the
+generative levers) + `docs/axiom-deviations-audit.md` (where this system
+currently deviates from them — READ IT, it binds the chunks below). Read
+those before touching any chunk below — this doc is the map, not the spec.
 
-**State as of 2026-07-18:** P1 shipped (chassis, names, station, 3-slot
-rack). Wizard/Geometrician has real depth (7 spec cards, 10 abilities).
-P2 (Ninja melee core) and the Duos queue are IN FLIGHT right now — check
-`git status`/recent commits before starting anything below that assumes
-either is done; if still running, treat their outputs as unconfirmed.
+**State as of 2026-07-18 (end-of-session update):** Tiers 0, 1, and 3 are
+now DONE — Resonance (0.1), Emission class-awareness (0.2), Priest solo
+floor (0.3), bot loadout awareness (0.4), team identity in the sim (1.1),
+the loadout station's live catalog-browse UI (1.3), and all of Priest's
+kit (3.1-3.4: Devotion, Ward, full 10-ability catalog) shipped and are
+live. Tier 2 (Paladin) is fully done including the 2.6/2.7 fast-follow
+notes below. Ninja/Interstice also has a full 9-of-10 catalog (Paper
+Double deferred — needs a new decoy entity type) even though it was never
+its own workboard tier. The AOE role tag across all 4 classes was
+reworked into real area effects (was projectile-burst spam). 1.2 (unified
+resource pass) was deliberately NOT done — Kindling/Devotion/energy stay
+separate `PlayerEntity` fields; see combat.ts/constants.ts doc comments
+for why generalizing now was judged premature. **Remaining real work is
+now defined by `docs/axiom-deviations-audit.md`'s D1/D2/D3 findings, not
+by tiers below** — that audit supersedes this doc's Tier 4 for anything
+it also covers (4.2/4.3 are done; 4.1 Ninja VFX and 4.4 balance pass are
+still open, but D2/D3's specific fixes are higher-priority and more
+concrete than either).
+
+---
+
+## Axiom deviations — cross-cutting constraints on the chunks below
+
+From `docs/axiom-deviations-audit.md` (combed 2026-07-18 against
+`design-axioms.md`). These are **stack-level design leaks**, not bugs — none
+block the build, but every chunk they name must close its slice or the leak
+ships. Each is a *constraint to satisfy*, not a new feature.
+
+### AX.1 — Fold the loop count (binds 0.2, 1.2, 1.3) — A5
+The player already juggles chassis base + rack rotation + Resonance window +
+Emission charge + the draft + chaos/first-blood/sudden-death. That is well past
+the ~4 *major* loops a player can hold, and it collides with the five-second
+onboarding promise (A12). **Constraint:** when building the class resource pass
+(1.2), decide whether the Emission charge is a *separate* meter from the class
+0–100 pool or the **same** one — one meter learned once beats two juggled;
+default to folding unless a doc reason says otherwise. When wiring Resonance
+(0.1) and the loadout (1.3), keep the *decisions* a player makes per fight ≤4
+(which rack / which target / when to E / when to draft) — make regen and
+resonance detection legible-but-passive, not another timer to manage. **Accept
+when:** a first-time player in round 1 is asked to actively track ≤4 things.
+
+### AX.2 — Guarantee the rack can't collapse to one meta (binds 0.5, 1.3) — A7
+"Pick any 3 of 10, pure freedom" only *asserts* that two same-chassis racks play
+differently; nothing yet *enforces* it. **The per-class sweep is DONE — see the
+per-class table in `axiom-deviations-audit.md`.** Concrete results to act on:
+- **Geometrician:** re-job **Measure (#8)** (confirmed filler) and check **Recoil Step
+  (#10)** vs Slip Node — give each an orthogonal reason or cut.
+- **Kindred [NEW]:** coverage-lock **miss** — only **buff ×1, movement ×1** (spec requires
+  ≥2 per role); and **Aegis Share (#8) + Rally Light (#9) are solo-dead** in FFA (team-only,
+  no solo fallback). Add second buff/movement + solo clauses, or declare Kindred team-leaning.
+- **Interstice:** clean — no filler. **Use it as the template.**
+- **Syzygist:** solo design is the model (every team tool has a fallback); shares the
+  buff×1/movement×1 coverage gap.
+**Constraint:** add to 0.5 an **orthogonal-balance acceptance test** — no rack strictly
+dominates; every ability is the best pick in *some* context; ≥2 per role actually met.
+Design intransitivity in (rush > planted > zone > rush) so the meta *rotates*, not *solves*.
+**Accept when:** ≥3 viable non-dominated racks per class, every ability appears in one, and
+the ≥2-per-role floor holds for all four.
+
+### AX.3 — Every self-fueling ability needs a difference-fed brake (binds 0.3, 0.5, 1.2, 2.x/3.x resources) — A3
+The draft's catch-up weights brake the *roster* snowball (the model to copy), but
+several *in-round* ability economies self-fuel with no brake the roster reaches
+in time: **Bleed Tithe** (curse → Devotion + lifesteal → more curses), amplified
+by Flock Pulse + Contagion; **Retribution Edge** (block → amp + Kindling → more).
+In FFA this buries whoever loses the opening exchange before the draft can
+rebalance. **The per-class sweep is DONE — priority order:**
+- **Syzygist [HOTSPOT]:** **Bleed Tithe (#1) + Contagion (#5) + Flock Pulse (#6)** don't just
+  each self-fuel — they *amplify each other* (curse → Devotion+lifesteal → Contagion spreads
+  → Flock scales with count → more Devotion). One shared stopping mechanism (diminishing
+  Devotion / Flock scaling past N entangled) brakes all three at once — do this in 0.3 / 3.2.
+- **Kindred:** **Retribution Edge (#2)** block→amp+Kindling loop — brake in 2.3.
+- **Geometrician:** **Return Glass (#5)** mild mana loop — low priority.
+- **Interstice:** Second Wind / Read Mark self-fuel but are **hit-gated = already braked** — no
+  action; this is the pattern to copy (gate the payout on landing a hit).
+**Constraint:** when building each resource (0.3, 1.2, 2.3, 3.2), name each self-improving
+loop's brake — a stopping mechanism, a slow cycle, or a cost rising with the loop's own
+output — and prefer **difference-fed** brakes (leech falls off vs. low-health targets;
+refunds shrink while you're ahead). **Accept when:** no ability's economy compounds
+unboundedly within a single round.
 
 ---
 
@@ -142,19 +218,35 @@ Depends on 0.2 (E-key/Emission system) being complete — Kindred's
 ultimate is the Kindled kit transfigured through the emission composer,
 same mechanism every class uses.
 
-### 2.6 — Wire Paladin's cards + catalog
-Once 2.1-2.3 exist: the 3 exclusives (Crater, Retort, Bastion), the 11
-universal card "Paladin:" expressions via `classModifiers` (same pattern
-Wizard's 7 cards already proved), and Kindred's 10-ability catalog
-(Unbroken Seal, Retribution Edge, Sunspike, Judgment Line, Consecrated
-Field, Shock Ring, Bastion Pulse, Aegis Share, Rally Light, Plant Charge)
-— same shape as the Geometrician catalog chunk, just later.
+### 2.6 — Wire Paladin's cards + catalog — DONE (2026-07-18 fast-follow)
+Kindred's 10-ability catalog is now complete: the original pass shipped 7
+(Unbroken Seal, Sunspike, Judgment Line, Consecrated Field, Bastion Pulse,
+Aegis Share, Plant Charge); this fast-follow added the 3 it deferred
+(Retribution Edge, Shock Ring, Rally Light — see cardTypes.ts's AbilityKind
+header comment). The 3 draft-pool exclusives (Crater, Retort, Bastion,
+card-pool-v2.md #26-28) are wired too. Universal-card "Paladin:" expressions:
+7 of the doc's "11" now exist (seeker-facets, cluster-bomb, molten-core,
+frost-prism, crystal-plating, spring-heel from earlier chunks + double-jump/
+Second Wind's "stomp-jump" from this fast-follow) — the remaining ~4 were
+outside this chunk's assigned scope (Second Wind was the one specifically
+handed off) and stay open for a future pass. Rally Light needed no
+cross-player write in the end (read-only continuous aura — see
+constants.ts's KIN_RALLY_LIGHT_* comment); Retribution Edge/Shock Ring/
+Crater are self-only. Full test coverage in kindredCatalog.test.ts.
 
-### 2.7 — Heaven-tank VFX pass
+### 2.7 — Heaven-tank VFX pass — PARTIAL (2026-07-18 fast-follow)
 Gold-forward per the locked DI-Crusader-feel/Autogenes-source reframe.
-Deferred until 2.1-2.3 give it something to render onto. Full steal/reject
-table in `docs/character-sheets-v1.md` (Paladin section) — read the DI
-Crusader anti-moodboard before drawing anything.
+`ward-absorbed` (self-block) and `team-peel-absorbed` (peel — flashes at
+the WARDER, distinct from self-ward's blocker-position flash) now get a
+real gold flash (`RenderLayer.spawnExplosionBlastBig`, house gold
+`0xc9a84c`) + a small local shake, wired through `SimEventRouter`/
+`OnlineMatchScene.spawnWardAbsorbFlash`. No audio: no ripped "shield-board
+catches a hit" asset exists in this project (hard rule — never synthesize),
+so both stay visual-only. `syz-ward-absorbed` (Syzygist, cool-white) is
+still untouched — out of scope for this Paladin-only pass, left for a
+future Syzygist VFX chunk. Kindled Edge/Ward/Unveiling's OWN juice (block
+thunk, edge scrape, ult flood) is still unbuilt beyond this absorb-flash
+slice — a fuller pass remains open.
 
 ---
 

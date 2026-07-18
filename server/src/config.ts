@@ -62,4 +62,11 @@ export const config = {
   // ADR-0006, docs/zig-wasm-migration.md.
   wasmCollision: process.env.JAKESJAM_WASM_COLLISION !== "0",
   wasmPlayer: process.env.JAKESJAM_WASM_PLAYER !== "0",
+
+  // Performance audit N1 (2026-07-18): the lag-comp outcome-diagnostic
+  // (matchHost.logLagCompOutcomeChange) runs a full second stepWithRuntime
+  // PLUS a runtime clone on every tick with any rewind — purely to console.log
+  // a hit-gained/lost comparison. Roughly doubles authoritative sim cost
+  // during real combat. Default OFF; opt in for lag-comp debugging only.
+  lagCompDiag: process.env.JAKESJAM_LAG_COMP_DIAG === "1",
 } as const;

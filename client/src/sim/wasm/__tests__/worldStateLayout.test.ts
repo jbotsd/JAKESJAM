@@ -48,7 +48,27 @@ describe("WorldState extern struct layout (Phase G1c)", () => {
     // 288 → 296 (2026-07-18, deliberate bump): +8 bytes for
     // PlayerEntity.energy (ninja class resource) — see world_state.zig's
     // comptime assert and worldStateBridge.ts's PLAYER_ENTITY_SIZE.
-    expect(ex.sizeof_player_entity()).toBe(296);
+    // 296 → 328 (2026-07-18, class-overhaul-workboard.md chunk 1.1):
+    // +team_id_len/team_id_bytes (duos-queue team identity), rounded up to
+    // the next 8-byte multiple by the struct's own trailing alignment pad.
+    // 328 → 336 (2026-07-18, class-overhaul-workboard.md chunk 2.3):
+    // +PlayerEntity.kindling (paladin class resource, f64) — reclaims the
+    // prior trailing pad as the new field's alignment gap. See
+    // world_state.zig's comptime assert and worldStateBridge.ts's
+    // PLAYER_ENTITY_SIZE.
+    // 336 → 360 (2026-07-18, class-overhaul-workboard.md chunk 3.1):
+    // +PlayerEntity.regen_until_tick/haste_until_tick (u32 x2) +
+    // regen_hps/haste_multiplier (f64 x2) — no padding needed anywhere.
+    // See world_state.zig's comptime assert and worldStateBridge.ts's
+    // PLAYER_ENTITY_SIZE.
+    // 360 → 368 (2026-07-18, class-overhaul-workboard.md chunk 3.2):
+    // +PlayerEntity.devotion (f64) — no padding needed.
+    // 368 → 384 (2026-07-18, class-overhaul-workboard.md chunk 3.3):
+    // +PlayerEntity.syz_ward_absorb_until_tick (u32) +
+    // syz_ward_absorb_remaining (f64) — 4 bytes of implicit alignment pad
+    // between the two. See world_state.zig's comptime assert and
+    // worldStateBridge.ts's PLAYER_ENTITY_SIZE.
+    expect(ex.sizeof_player_entity()).toBe(384);
     expect(ex.sizeof_projectile_entity()).toBe(216);
     expect(ex.sizeof_satellite_entity()).toBe(96);
     expect(ex.sizeof_destructible_entity()).toBe(64);
