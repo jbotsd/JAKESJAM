@@ -30,6 +30,7 @@ import { decodeMessage, encodeMessage, type ClientMessage, type VenueStatus } fr
 import { sanitizeCharacterId } from "@net/playerCharacter.ts";
 import { crystalRoundsCards, catalogForClass } from "@sim/data/cards.ts";
 import { classIdForArchetype, MAX_ABILITY_SLOTS, type ClassId } from "@sim/data/cardTypes.ts";
+import { lobbyAllyNpcId, LOBBY_PRACTICE_TEAM_ID } from "@sim/botId.ts";
 
 export const VENUE_LOBBY_MATCH_ID = "lobby";
 
@@ -39,28 +40,61 @@ const LOBBY_MAP_ID: MapId = "vessel-nexus";
 
 /**
  * The lobby's map with its practice dummies injected (venue-sprint2-goal
- * S2.C.1): three non-explosive target crates near the spawn band. Injected
- * as a resolved MapDefinition (MatchHost accepts the object form) so the
- * DUMMY STATE arrives at clients via ordinary snapshots — the client keeps
- * resolving plain "vessel-nexus" for geometry and renders destructibles
- * from state, no client-side map fork.
+ * S2.C.1, repositioned per docs/venue-lobby-tableau-goal.md Part 3,
+ * 2026-07-18): three "bad" (hostile, damage-testing) target crates
+ * flanking the loadout table symmetrically — was two nearly-stacked at
+ * 0.30/0.35 plus one isolated at 0.65 with no relationship to anything;
+ * now three, evenly spaced around the table at 0.25, matching the "good"
+ * ally NPCs' flanking positions (see LOBBY_ALLY_NPC_FRACTIONS below) so the
+ * whole practice band reads as one symmetric row, not scattered furniture.
+ * Injected as a resolved MapDefinition (MatchHost accepts the object form)
+ * so the DUMMY STATE arrives at clients via ordinary snapshots — the
+ * client keeps resolving plain "vessel-nexus" for geometry and renders
+ * destructibles from state, no client-side map fork.
  */
 function venueLobbyMap(): MapDefinition {
   const base = resolveMap(LOBBY_MAP_ID);
   const groundY = base.size.y - 36; // vessel-nexus FLOOR_H → standing surface
   // Destructible x/y is the CENTER (centerToAABB) — a 44px box resting on
   // the ground has its center half a box above the standing surface.
+  // kind "trainingDummy" (not "box"): the definition's own string `id`
+  // ("dummy_0" etc.) does NOT survive into the runtime DestructibleEntity
+  // (World.create reassigns a fresh sequential numeric EntityId — see its
+  // own comment), so `kind` is the only field a data-driven client render
+  // distinction can key off. Behaviorally identical to "box" (same health/
+  // explosive/flammable semantics, destructible.ts never branches on this
+  // kind) — purely a hostile-tint hook, OnlineMatchScene.ts's
+  // destructibleColor().
   const dummy = (i: number, fx: number): DestructibleDefinition => ({
     id: `dummy_${i}`,
-    kind: "box",
+    kind: "trainingDummy",
     health: 60,
     position: { x: Math.round(base.size.x * fx), y: groundY - 22 },
     size: { x: 44, y: 44 },
     explosive: false,
     flammable: false,
   });
-  return { ...base, destructibles: [dummy(0, 0.3), dummy(1, 0.35), dummy(2, 0.65)] };
+  return {
+    ...base,
+    destructibles: [dummy(0, LOBBY_TABLEAU_FRACTIONS.badOuterLeft), dummy(1, LOBBY_TABLEAU_FRACTIONS.badInnerRight), dummy(2, LOBBY_TABLEAU_FRACTIONS.badOuterRight)],
+  };
 }
+
+/**
+ * The loadout table's symmetric flanking positions (docs/venue-lobby-
+ * tableau-goal.md Part 3) — one shared source so the destructible dummies
+ * (above) and the ally NPCs (spawnAllyNpc, below) agree on the same row.
+ * Fractions of vessel-nexus's map width; "anchor" is the loadout table/
+ * totem position itself (unchanged from pre-tableau LOADOUT_X, totem.ts).
+ */
+const LOBBY_TABLEAU_FRACTIONS = {
+  badOuterLeft: 0.19,
+  goodInnerLeft: 0.22,
+  anchor: 0.25,
+  goodInnerRight: 0.28,
+  badInnerRight: 0.31,
+  badOuterRight: 0.35,
+} as const;
 
 /** How often the lobby checks whether its dummies need respawning. */
 const DUMMY_RESPAWN_CHECK_MS = 8000;
@@ -87,6 +121,34 @@ function pickColor(playerId: string): string {
     hash = (hash * 31 + playerId.charCodeAt(i)) >>> 0;
   }
   return LOBBY_COLOR_PALETTE[hash % LOBBY_COLOR_PALETTE.length]!;
+}
+
+/** Autogenes house gold (docs/visual-language-gnostic-vessel.md's dual-
+ *  accent table) — the loadout table's two ally NPCs are permanent house
+ *  fixtures, not combatants, so gold (not the arena's combat cyan) is the
+ *  correct register per chassis-design-axioms.md CA2. */
+const LOBBY_ALLY_ACCENT = "#c9a84c";
+
+/**
+ * The loadout table's two flanking "good" (ally) NPCs — stationary
+ * forever (nothing ever calls `applyInput` for their ids), carrying
+ * LOBBY_PRACTICE_TEAM_ID so `isAlly()` reads true against any visitor
+ * (who gets the same teamId in `spawnFor` below), giving Aegis Share/Rally
+ * Light/Borrowed Time/Glass Ward/Haste Gift a real ally target instead of
+ * only their solo-fallback (docs/venue-lobby-tableau-goal.md Part 2).
+ * `bot_`-prefixed id (`lobbyAllyNpcId`) so every existing "is this a real
+ * human" check already excludes them for free — no new exclusion logic.
+ */
+function allyNpcSpawn(index: 1 | 2): PlayerSpawnInfo {
+  return {
+    playerId: PlayerId(lobbyAllyNpcId(index)),
+    characterId: "balanced",
+    name: "ALLY",
+    color: LOBBY_ALLY_ACCENT,
+    weaponId: "starter-pistol",
+    cosmetics: { accentColor: LOBBY_ALLY_ACCENT },
+    teamId: LOBBY_PRACTICE_TEAM_ID,
+  };
 }
 
 export type VenueSummary = {
@@ -259,6 +321,22 @@ export class VenueHost {
       },
     });
     host.ensureTickLoop();
+    // The loadout table's two "good" ally NPCs (docs/venue-lobby-tableau-
+    // goal.md Part 3) — added once, at construction, permanent for the
+    // lobby's whole (never-recycling) life. Pinned to exact flanking
+    // positions via setPlayerPosition since the normal spawn-point
+    // algorithm (farthest-from-occupants) has no way to express "land
+    // exactly here."
+    const map = resolveMap(LOBBY_MAP_ID);
+    const groundY = map.size.y - 36; // vessel-nexus FLOOR_H → standing surface (matches venueLobbyMap's dummy math)
+    const playerStandY = groundY - 28; // SIM_BODY_HALF_HEIGHT (HangoutScene.ts) — feet at the floor surface
+    for (const index of [1, 2] as const) {
+      const npcId = PlayerId(lobbyAllyNpcId(index));
+      host.addPlayer(allyNpcSpawn(index));
+      const fx =
+        index === 1 ? LOBBY_TABLEAU_FRACTIONS.goodInnerLeft : LOBBY_TABLEAU_FRACTIONS.goodInnerRight;
+      host.setPlayerPosition(npcId, Math.round(map.size.x * fx), playerStandY);
+    }
     return host;
   }
 
@@ -690,6 +768,14 @@ export class VenueHost {
       name: chosenName ?? "RECRUIT",
       color: pickColor(playerIdRaw),
       weaponId: "starter-pistol",
+      // Loadout table ally NPCs (docs/venue-lobby-tableau-goal.md Part 2,
+      // 2026-07-18): every lobby visitor shares LOBBY_PRACTICE_TEAM_ID with
+      // the two stationary ally NPCs so `isAlly()` reads true and ally-
+      // targeted abilities (Aegis Share, Rally Light, Borrowed Time, Glass
+      // Ward, Haste Gift) can be tested for real, not just their solo-
+      // fallback. Safe: the lobby has zero PvP/scoring, so "everyone's on
+      // one team" here has no gameplay meaning beyond this.
+      teamId: LOBBY_PRACTICE_TEAM_ID,
       // Defensive completeness (Fix 1, live playtest 2026-07-18): in the
       // ordinary case `loadouts` has no entry yet at first connect (a
       // fresh visit starts an empty rack, and `detachLobby` deletes any

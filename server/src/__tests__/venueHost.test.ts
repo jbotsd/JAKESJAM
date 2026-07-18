@@ -109,7 +109,12 @@ describe("VenueHost lobby lifecycle (Pillar 1.2)", () => {
     venue.attachLobby(makeFakeWs("p_b", "BEA"));
     const lobby = venue.lobbyHostForTest() as unknown as LobbyInternals;
     const ids = Object.keys(lobby.state.players).sort();
-    expect(ids).toEqual(["p_a", "p_b"]);
+    // Plus the two permanent loadout-table ally NPCs (docs/venue-lobby-
+    // tableau-goal.md Part 2) — always present, bot_-prefixed, never real
+    // connections. `venue.summary().lobby.present` (below) is keyed off
+    // real WEBSOCKETS, not the sim roster, so it stays a true "2 humans"
+    // count regardless.
+    expect(ids).toEqual(["bot_practice_ally_1", "bot_practice_ally_2", "p_a", "p_b"]);
     expect(venue.summary().lobby.present).toBe(2);
     venue.dispose();
   });

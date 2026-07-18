@@ -638,6 +638,30 @@ export class MatchHost {
     };
   }
 
+  /**
+   * Hangout-only: directly pin a live player's position, independent of
+   * the normal spawn-point-selection path (`rosterOps.applyMidMatchJoin`'s
+   * farthest-from-occupants algorithm, which has no way to express "land
+   * exactly here"). Venue lobby tableau (docs/venue-lobby-tableau-goal.md,
+   * 2026-07-18): the loadout table's flanking ally NPCs need EXACT
+   * compositional positions, not the nearest thing the normal spawn
+   * algorithm would pick. Same narrow/additive discipline as
+   * `setPlayerCards` above: only mutates x/y, no-ops outside
+   * `mode: "hangout"`, touches nothing else about the player.
+   */
+  setPlayerPosition(playerId: PlayerId, x: number, y: number): void {
+    if (this.mode !== "hangout") return;
+    const player = this.state.players[playerId];
+    if (!player) return;
+    this.state = {
+      ...this.state,
+      players: {
+        ...this.state.players,
+        [playerId]: { ...player, x, y },
+      },
+    };
+  }
+
   /** True while at least one player is in their reconnect grace window. */
   hasPendingDisconnects(): boolean {
     return this.disconnectedAt.size > 0;

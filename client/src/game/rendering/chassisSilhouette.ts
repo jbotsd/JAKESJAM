@@ -65,28 +65,43 @@ export function headCrestGeometry(
   const rootY = head.y - 8 * s;
 
   if (classId === "paladin") {
-    // Kindred: a TALL, CONICAL crown point — centered (no facing sweep,
+    // Kindred: a TALL, THIN blade-spike — centered (no facing sweep,
     // unlike every other class's crest), the tallest/most-vertical
-    // silhouette of the four (kindled-v2.jpg's tall pointed crown).
-    // Tip magnitude is capped at 25*s (vs wizard's 19*s) so it stays
-    // clear of the nameplate badge, which occupies roughly [-41s, -26s]
-    // above head.y (see ProceduralPlayerRig.drawNameplate) — a taller
-    // spike would visually poke through the name/HP plate.
+    // silhouette of the four (kindled-v2.jpg's tall pointed crown), echoing
+    // the sword this class actually wields rather than reading as a
+    // generic crown-spike. REVISED 2026-07-18 (Jake, live playtest: "no
+    // triangle head" — the original version was a wide, flat, symmetric,
+    // solid-filled isosceles triangle, which reads as literally "a
+    // triangle" the way this rig's other, asymmetric/swept crests don't;
+    // see feedback_no_illuminati_symbolism memory's 2026-07-18 tightening).
+    // Fix: cut the base width by ~55-60% (dark ±4/+5 -> ±1.7/+2.2, bright
+    // ±2/+3.5 -> ±0.8/+1.3) so the same silhouette reads as a thin blade,
+    // not a filled wedge — verified by rendering candidate geometries to a
+    // standalone SVG/PNG and comparing side-by-side (this rig can't be
+    // constructed under `bun test`, see this file's own header comment, so
+    // this was the only way to actually SEE the shape before committing).
+    // A twin-horn candidate was tried and rejected (reads as devil horns);
+    // a needle+cross-guard candidate was tried and rejected (the guard bar
+    // crossing the blade reads as a literal cross, a second banned motif).
+    // Tip magnitude stays at 25*s (unchanged) so it stays clear of the
+    // nameplate badge, which occupies roughly [-41s, -26s] above head.y
+    // (see ProceduralPlayerRig.drawNameplate) — a taller spike would
+    // visually poke through the name/HP plate.
     const tipX = head.x;
     const tipY = head.y - 25 * s;
     return {
       darkBase: [
-        { x: rootX - f * 4 * s, y: rootY + 4 * s },
+        { x: rootX - f * 1.7 * s, y: rootY + 4 * s },
         { x: tipX, y: tipY },
-        { x: rootX + f * 5 * s, y: rootY - 2 * s },
+        { x: rootX + f * 2.2 * s, y: rootY - 2 * s },
       ],
       brightPlate: [
-        { x: rootX - f * 2 * s, y: rootY + 2 * s },
+        { x: rootX - f * 0.8 * s, y: rootY + 2 * s },
         { x: tipX, y: tipY + 2 * s },
-        { x: rootX + f * 3.5 * s, y: rootY - 1 * s },
+        { x: rootX + f * 1.3 * s, y: rootY - 1 * s },
       ],
       edgeLine: [
-        { x: rootX + f * 3.5 * s, y: rootY - 1 * s },
+        { x: rootX + f * 1.3 * s, y: rootY - 1 * s },
         { x: tipX, y: tipY + 2 * s },
       ],
       tipGlow: { x: tipX, y: tipY + 2 * s },

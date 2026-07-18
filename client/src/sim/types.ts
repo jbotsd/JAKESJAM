@@ -119,7 +119,16 @@ export type ProjectileImpact =
   | 'pierce-chain'
   | 'slow-field';
 
-export type DestructibleKind = 'barrel' | 'box' | 'mine' | 'cube';
+// 'trainingDummy' (venue-lobby-tableau, 2026-07-18): the venue lobby's
+// "bad" practice targets — behaves identically to 'box' (non-explosive,
+// non-flammable, see server/src/venueHost.ts's dummy() helper), distinct
+// only so the client can give it a hostile (rose/copper) tint instead of
+// the neutral tan every other destructible kind gets — see
+// OnlineMatchScene.ts's destructibleColor(). Map-editor-unreachable by
+// design (not added to game/types/game.ts's ArenaForgeUI kind list) —
+// this is lobby-only furniture, baked directly into venueLobbyMap(), never
+// something a custom map author places.
+export type DestructibleKind = 'barrel' | 'box' | 'mine' | 'cube' | 'trainingDummy';
 
 /**
  * Pickup kinds known to the sim. The original three (health-shard, shield-cell,

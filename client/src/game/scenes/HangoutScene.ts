@@ -41,6 +41,7 @@ import { installHudCamera } from "../systems/HudCamera.js";
 import { getQualityProfile } from "../render/qualityProfile.js";
 import { characters } from "../data/characters";
 import { PALETTE, ARENA_THEMES } from "../ui/palette";
+import { classAccentPalette } from "../ui/classAccentColors";
 import { CardDraftOverlay, type ClassRowConfig } from "../ui/CardDraftOverlay";
 import { sanitizeCharacterId } from "../../net/playerCharacter.js";
 import { crystalRoundsCards, catalogForClass } from "../../sim/data/cards.js";
@@ -160,6 +161,9 @@ export class HangoutScene extends Phaser.Scene {
 
   private platformLayer: PlatformLayer | null = null;
   private arenaGraphics: Phaser.GameObjects.Graphics | null = null;
+  /** Venue-lobby-tableau (2026-07-18): grand-hall ribs/light-shaft + the
+   *  loadout table prop — venue mode only, drawn once per arena load. */
+  private tableauGraphics: Phaser.GameObjects.Graphics | null = null;
   private totemGraphics: Phaser.GameObjects.Graphics | null = null;
   private totemLabels: Phaser.GameObjects.Text[] = [];
   private totems: TotemDefinition[] = [];
@@ -675,6 +679,82 @@ export class HangoutScene extends Phaser.Scene {
     this.platformLayer.repaint(map.platforms, theme, map.launchPads, map.slopes);
 
     this.renderTotems(map);
+    // Venue-lobby-tableau (docs/venue-lobby-tableau-goal.md, 2026-07-18) —
+    // private hangouts keep today's plain look; the public venue gets the
+    // grand-hall backdrop + literal loadout table.
+    if (this.mode === "venue") this.renderTableau(map, theme);
+  }
+
+  /**
+   * The "gnostic cathedral of sorts" pass (docs/venue-lobby-tableau-goal.md
+   * Parts 3/3b) — cathedral SCALE, never cathedral ICONOGRAPHY: tall crystal
+   * ribs + soft light shafts (vertical drama, no arches/pointed vaulting/
+   * rose windows), and a literal long table at the loadout station's
+   * position (replacing nothing functionally — `renderTotems`'s ring still
+   * marks the real interaction trigger zone; this is a decorative prop
+   * drawn beneath/around it). Drawn once per arena load, same static-graphics
+   * discipline as the platform layer — never touched again per-frame.
+   */
+  private renderTableau(map: MapDefinition, theme: import("../ui/palette").ArenaTheme): void {
+    this.tableauGraphics?.destroy();
+    const g = this.add.graphics().setDepth(-9); // above the base gradient, below platforms/totems
+    this.tableauGraphics = g;
+    const { x: width, y: height } = map.size;
+    const floorY = height - 36; // vessel-nexus FLOOR_H — matches venueLobbyMap's own ground math
+    const hallTop = -Math.round(this.scale.height / 4); // reaches well above the camera's usual view — "vaulted," not just tall
+
+    // ---- Crystal ribs: tall vertical structural members, evenly spaced
+    //      across the WHOLE hall (not just the practice band) — the
+    //      "vaulted ceiling" read comes from scale + repetition, never an
+    //      arch shape. ----
+    const ribSpacing = 340;
+    const ribWidth = 18;
+    for (let x = ribSpacing / 2; x < width; x += ribSpacing) {
+      g.fillStyle(theme.bg === PALETTE.voidAbyss ? PALETTE.hullSlate : theme.bg, 0.55);
+      g.fillRect(x - ribWidth / 2, hallTop, ribWidth, floorY - hallTop);
+      // Seam of light down the rib's center — thin, dim (axiom H2: spark,
+      // not flood — a hall full of bright verticals would scream, not awe).
+      g.lineStyle(1.5, PALETTE.inkMid, 0.4);
+      g.lineBetween(x, hallTop, x, floorY);
+    }
+
+    // ---- Light shaft over the table specifically — reinforces it as the
+    //      compositional AND lighting anchor. A few shafts, not a wash. ----
+    const loadoutTotem = this.totems.find((t) => t.id === "totem-loadout");
+    if (loadoutTotem) {
+      const shaftHalfW = 90;
+      g.fillGradientStyle(
+        PALETTE.lightBeamCyan,
+        PALETTE.lightBeamCyan,
+        theme.bg,
+        theme.bg,
+        0.16,
+        0.16,
+        0,
+        0,
+      );
+      g.fillRect(loadoutTotem.x - shaftHalfW, hallTop, shaftHalfW * 2, floorY - hallTop);
+
+      // ---- The table itself: a literal long, low, crystal-plated surface
+      //      (docs/venue-lobby-tableau-goal.md Part 3) — replaces the
+      //      totem's old bare-ring anchor. Hull-plate dark base + a bright
+      //      instrument seam along the top edge (ShellFrame's own "sealed
+      //      hull, thin filament seam" language), never a held ritual
+      //      object or cloth. ----
+      const tableHalfW = 130;
+      const tableH = 22;
+      const tableY = loadoutTotem.y + 4; // sits just below the totem ring's center, reads as "on the floor"
+      g.fillStyle(PALETTE.voidCharcoal, 0.9);
+      g.fillRoundedRect(loadoutTotem.x - tableHalfW - 2, tableY - tableH / 2 - 2, tableHalfW * 2 + 4, tableH + 4, 4);
+      g.fillStyle(PALETTE.hullSlate, 1);
+      g.fillRoundedRect(loadoutTotem.x - tableHalfW, tableY - tableH / 2, tableHalfW * 2, tableH, 3);
+      g.lineStyle(2, PALETTE.sapphireSteady, 0.75);
+      g.lineBetween(loadoutTotem.x - tableHalfW + 6, tableY - tableH / 2 + 2, loadoutTotem.x + tableHalfW - 6, tableY - tableH / 2 + 2);
+      // Table legs — short verticals to the floor, same dark hull material.
+      g.fillStyle(PALETTE.hullSlate, 0.85);
+      g.fillRect(loadoutTotem.x - tableHalfW + 10, tableY + tableH / 2, 8, floorY - (tableY + tableH / 2));
+      g.fillRect(loadoutTotem.x + tableHalfW - 18, tableY + tableH / 2, 8, floorY - (tableY + tableH / 2));
+    }
   }
 
   /** Simple glowing-ring markers — Phase A only, bespoke art is Phase B
@@ -1057,20 +1137,29 @@ export class HangoutScene extends Phaser.Scene {
       this.rosterCharacterIds.get(player.id as string) ?? player.characterId,
     );
     const cosmetics = this.rosterCosmetics.get(player.id as string);
+    // Chassis color register (docs/chassis-design-axioms.md CA2), mirrored
+    // from OnlineMatchScene.makePlayerRig's arena-only pass (2026-07-18):
+    // cosmetic pick still wins; the class-derived default (classAccentColors.ts)
+    // replaces the old local-gold/remote-undefined convention below.
+    const classPalette = classAccentPalette(character.classId);
     return new ProceduralPlayerRig(this, {
       color: isLocal ? LOCAL_PLAYER_FALLBACK_COLOR : REMOTE_PLAYER_FALLBACK_COLOR,
       accentColor: cosmetics?.accentColor
         ? colorToNumber(cosmetics.accentColor)
-        : isLocal
-          ? 0xffd166
-          : undefined,
-      visorColor: cosmetics?.visorColor ? colorToNumber(cosmetics.visorColor) : undefined,
-      palmColor: cosmetics?.palmColor ? colorToNumber(cosmetics.palmColor) : undefined,
-      jointColor: cosmetics?.jointColor ? colorToNumber(cosmetics.jointColor) : undefined,
-      auraColor: cosmetics?.auraColor ? colorToNumber(cosmetics.auraColor) : undefined,
+        : classPalette.accentColor,
+      visorColor: cosmetics?.visorColor
+        ? colorToNumber(cosmetics.visorColor)
+        : classPalette.visorColor,
+      palmColor: cosmetics?.palmColor ? colorToNumber(cosmetics.palmColor) : classPalette.palmColor,
+      jointColor: cosmetics?.jointColor
+        ? colorToNumber(cosmetics.jointColor)
+        : classPalette.jointColor,
+      auraColor: cosmetics?.auraColor ? colorToNumber(cosmetics.auraColor) : classPalette.auraColor,
       name: this.rosterNames.get(player.id as string) ?? (player.id as string).slice(-4),
       identitySeed: player.id as string,
       scale: this.getVisualScale(character),
+      // Chassis silhouette (CA3) — mirrors OnlineMatchScene's arena pass.
+      classId: character.classId,
       // No combat frame-budget to protect (that's the whole reason
       // OnlineMatchScene restricts "full" detail to the local player only)
       // — every hangout rig gets the full-juice treatment, EXCEPT potato
@@ -1190,6 +1279,8 @@ export class HangoutScene extends Phaser.Scene {
     this.crouchHalfByPid.clear();
     this.arenaGraphics?.destroy();
     this.arenaGraphics = null;
+    this.tableauGraphics?.destroy();
+    this.tableauGraphics = null;
     this.totemGraphics?.destroy();
     this.totemGraphics = null;
     for (const label of this.totemLabels) label.destroy();

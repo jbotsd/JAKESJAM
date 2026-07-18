@@ -78,9 +78,17 @@ export function cardGlyphHtml(card: CardDefinition): string {
       );
 
     case "triangle-rounds":
+      // Long-range shard: an elongated diamond (the approved crystal/diamond
+      // seal grammar — rotated squares/diamonds, chevrons, bracket seals —
+      // per memory/feedback_no_illuminati_symbolism.md), not a filled
+      // triangle. Reads as a pointed dart/shard for "distance" without the
+      // banned dominant-triangle silhouette (2026-07-18 content-sensitivity
+      // pass). Card id/name stay "Triangle Rounds" — matched-set naming
+      // (circle/triangle/square/x/i-rounds, docs/design-axioms.md A7) is
+      // wire-load-bearing and out of scope; only the drawn icon changed.
       return svg(
-        `<polygon points="32,10 52,50 12,50" ${FL(c, 0.3)} stroke="${ink(c)}" stroke-width="2"/>
-         <line x1="32" y1="22" x2="32" y2="42" stroke="#fff" stroke-width="1" opacity="0.25"/>`,
+        `<polygon points="32,6 44,32 32,58 20,32" ${FL(c, 0.3)} stroke="${ink(c)}" stroke-width="2"/>
+         <line x1="32" y1="16" x2="32" y2="48" stroke="#fff" stroke-width="1" opacity="0.25"/>`,
         c,
       );
 

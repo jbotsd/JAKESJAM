@@ -33,7 +33,7 @@ export const crystalRoundsCards: CardDefinition[] = [
       recoilMultiplier: 0.8,
       projectile: { rangePx: 880, impactRadiusPx: 12 },
     },
-    visual: visual("triangle", "#8ff8ff"),
+    visual: visual("bar", "#8ff8ff"),
     unique: true,
   },
   {
@@ -117,7 +117,7 @@ export const crystalRoundsCards: CardDefinition[] = [
       projectileSpeedMultiplier: 0.95,
       projectile: { shape: "triangle", rangePx: 1080, lifetimeMultiplier: 1.4 },
     },
-    visual: visual("triangle", "#fef08a"),
+    visual: visual("hexagon", "#fef08a"),
     unique: true,
   },
   {
@@ -393,7 +393,7 @@ export const crystalRoundsCards: CardDefinition[] = [
         projectileHomingStrengthAdd: 1.2,
       },
     },
-    visual: visual("triangle", "#f0abfc"),
+    visual: visual("x", "#f0abfc"),
     maxStacks: 4,
   },
   {
@@ -421,7 +421,7 @@ export const crystalRoundsCards: CardDefinition[] = [
       projectileHomingStrengthAdd: 0.9,
       projectile: { pathing: "homing", homingStrength: 3.2, sizeMultiplier: 0.74 },
     },
-    visual: visual("triangle", "#f5d0fe"),
+    visual: visual("circle", "#f5d0fe"),
     maxStacks: 5,
   },
   // magnet-spray CUT (design-axioms.md A7, 2026-07-18 split-cluster audit):
@@ -780,7 +780,7 @@ export const crystalRoundsCards: CardDefinition[] = [
     modifier: {
       projectile: { impact: "pierce-chain", pierceCount: 3, splitCount: 2 },
     },
-    visual: visual("triangle", "#e879f9"),
+    visual: visual("bar", "#e879f9"),
     unique: true,
   },
   {
@@ -862,7 +862,7 @@ export const crystalRoundsCards: CardDefinition[] = [
         projectile: { element: "fire", impactRadiusPx: 58 },
       },
     },
-    visual: visual("triangle", "#ff7a18"),
+    visual: visual("orb", "#ff7a18"),
     unique: true,
   },
   {
@@ -923,7 +923,7 @@ export const crystalRoundsCards: CardDefinition[] = [
       projectileSpeedMultiplier: 1.08,
       projectile: { element: "lightning", impact: "pierce-chain", pierceCount: 1 },
     },
-    visual: visual("triangle", "#fef08a"),
+    visual: visual("x", "#fef08a"),
     unique: true,
   },
   {
@@ -1198,7 +1198,7 @@ export const crystalRoundsCards: CardDefinition[] = [
       spreadRadians: degrees(28),
       projectile: { count: 3, pathing: "homing", homingStrength: 5.2 },
     },
-    visual: visual("triangle", "#f0abfc"),
+    visual: visual("hexagon", "#f0abfc"),
     unique: true,
   },
   {
@@ -1243,7 +1243,7 @@ export const crystalRoundsCards: CardDefinition[] = [
     description: "Lower gravity: floatier jumps, longer hang for wall routes and aim windows.",
     flavorText: "Falling as a choice.",
     modifier: { gravityMultiplier: 0.74 },
-    visual: visual("triangle", "#a5f3fc"),
+    visual: visual("orb", "#a5f3fc"),
     maxStacks: 2,
   },
   {
@@ -1290,7 +1290,7 @@ export const crystalRoundsCards: CardDefinition[] = [
       wizard: { jumpMultiplier: 1.1, wallJumpMultiplier: 1.1 },
       paladin: { jumpMultiplier: 1.04, wallJumpMultiplier: 1.14 },
     },
-    visual: visual("triangle", "#5eead4"),
+    visual: visual("hexagon", "#5eead4"),
     maxStacks: 2,
   },
   {
@@ -1405,7 +1405,7 @@ export const crystalRoundsCards: CardDefinition[] = [
     description: "Shield only covers where you aim — but that frontal wall is huge. Point the no.",
     flavorText: "Mean the angle.",
     modifier: { directionalShield: true, shieldChargeMultiplier: 2.2 },
-    visual: visual("triangle", "#93c5fd"),
+    visual: visual("square", "#7ec8e3"),
     unique: true,
   },
   {
@@ -1472,7 +1472,7 @@ export const crystalRoundsCards: CardDefinition[] = [
         leechFraction: 0.08,
       },
     },
-    visual: visual("triangle", "#a78bfa"),
+    visual: visual("x", "#a78bfa"),
     unique: true,
   },
   // ── Ability cards (six-axes-goal.md Layer 2): drafted actives on keys
@@ -1508,7 +1508,7 @@ export const crystalRoundsCards: CardDefinition[] = [
       kind: "shadow-step",
       cooldownMs: 9000,
     },
-    visual: visual("triangle", "#7dd3fc"),
+    visual: visual("bar", "#7dd3fc"),
     unique: true,
   },
   {
@@ -1609,7 +1609,7 @@ export const crystalRoundsCards: CardDefinition[] = [
       cooldownMs: 8000,
       durationMs: 4000,
     },
-    visual: visual("triangle", "#f472b6"),
+    visual: visual("x", "#f472b6"),
     unique: true,
   },
   {
@@ -1741,7 +1741,7 @@ export const crystalRoundsCards: CardDefinition[] = [
       kind: "slip-node",
       cooldownMs: 6000,
     },
-    visual: visual("triangle", "#c4b5fd"),
+    visual: visual("bar", "#c4b5fd"),
     unique: true,
   },
   {
@@ -1807,7 +1807,7 @@ export const crystalRoundsCards: CardDefinition[] = [
       kind: "sunspike",
       cooldownMs: 7000,
     },
-    visual: visual("triangle", "#f59e0b"),
+    visual: visual("bar", "#f59e0b"),
     unique: true,
   },
   {
@@ -1827,7 +1827,7 @@ export const crystalRoundsCards: CardDefinition[] = [
       cooldownMs: 8000,
       durationMs: 3000,
     },
-    visual: visual("triangle", "#fcd34d"),
+    visual: visual("x", "#fcd34d"),
     unique: true,
   },
   {
@@ -1929,7 +1929,7 @@ export const crystalRoundsCards: CardDefinition[] = [
       cooldownMs: 8000,
       durationMs: 3000,
     },
-    visual: visual("triangle", "#f97316"),
+    visual: visual("hexagon", "#f97316"),
     unique: true,
   },
   {
@@ -2059,7 +2059,7 @@ export const crystalRoundsCards: CardDefinition[] = [
     description:
       "Spec on the shield-board: banks half of blocked damage (capped). Your next Kindled Edge swing within 3s spends the bank as bonus damage and knockback.",
     flavorText: "You said enough.",
-    visual: visual("triangle", "#fbbf24"),
+    visual: visual("square", "#fbbf24"),
     unique: true,
   },
   {
@@ -2121,7 +2121,7 @@ export const crystalRoundsCards: CardDefinition[] = [
       kind: "severance",
       cooldownMs: 7000,
     },
-    visual: visual("triangle", "#b9ecff"),
+    visual: visual("x", "#b9ecff"),
     unique: true,
   },
   {
@@ -2256,7 +2256,7 @@ export const crystalRoundsCards: CardDefinition[] = [
       cooldownMs: 7000,
       durationMs: 5000,
     },
-    visual: visual("triangle", "#a5f3fc"),
+    visual: visual("bar", "#a5f3fc"),
     unique: true,
   },
   {
@@ -2324,7 +2324,7 @@ export const crystalRoundsCards: CardDefinition[] = [
       cooldownMs: 8000,
       durationMs: 6000,
     },
-    visual: visual("triangle", "#22d3ee"),
+    visual: visual("x", "#22d3ee"),
     unique: true,
   },
   {
@@ -2442,7 +2442,7 @@ export const crystalRoundsCards: CardDefinition[] = [
       cooldownMs: 8000,
       durationMs: 1500,
     },
-    visual: visual("triangle", "#38bdf8"),
+    visual: visual("circle", "#38bdf8"),
     unique: true,
   },
   {

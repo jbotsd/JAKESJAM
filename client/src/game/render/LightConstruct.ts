@@ -345,109 +345,169 @@ export function spawnBindBurst(
 // is a *construct*, not a rigid model — light the fighter generates. Rough by
 // intent; the harness pass dials weight/intensity (presentation-completion).
 
-/** Interstice — a swept dual-blade crescent: two self-light arcs pivoting off
- *  the fighter along `aimRad`, bright leading edge, short life (a flick, no
- *  drag). `reach` px is the blade length; `sweepRad` the arc it cuts. */
-export function spawnBladeArc(
-  pool: ParticlePool,
-  origin: Vec2,
+/** The juiced slash-sweep easing (animation principles, researched 2026-07-18):
+ *  a brief ANTICIPATION pull-back (returns < 0), then ACCELERATE through the arc
+ *  with peak velocity mid-swing, OVERSHOOT past the target (returns > 1), then
+ *  SETTLE to 1 (follow-through). Maps t∈[0,1] to a sweep fraction; the caller
+ *  places the blade at aStart + (aEnd-aStart)*slashSweep(t). */
+function slashSweep(t: number): number {
+  if (t < 0.16) return -0.18 * (t / 0.16); // coil back (anticipation)
+  const u = (t - 0.16) / 0.84;
+  const c = 1.6; // overshoot strength
+  const uu = u - 1;
+  const eb = 1 + uu * uu * ((c + 1) * uu + c); // easeOutBack: overshoots then settles
+  return -0.18 + 1.18 * eb;
+}
+/** Bell curve peaking mid-swing (0 at the ends, 1 in the middle) — drives the
+ *  smear (blade elongates at peak speed) and the trail length. */
+function slashSpeed(t: number): number {
+  return Math.sin(Math.max(0, Math.min(1, (t - 0.16) / 0.84)) * Math.PI);
+}
+
+/** One SOLID tapered dagger/knife blade drawn from `pivot` pointing along angle
+ *  `a`, `len` px long, `hw` half-width. Reads as a real blade — a bright wedge
+ *  body, a brighter inner core, a lit cutting edge, a stubby crossguard, and a
+ *  tip glint — NOT a glow smear. Returns the tip so the caller can flash impact
+ *  there. Alpha `al` fades ghosts/off-hand copies. */
+function drawDagger(
+  g: Phaser.GameObjects.Graphics,
+  pivot: Vec2,
+  a: number,
+  len: number,
+  hw: number,
+  tint: ConstructTint,
+  al: number,
+): { tipX: number; tipY: number } {
+  const dx = Math.cos(a);
+  const dy = Math.sin(a);
+  const px = -dy;
+  const py = dx;
+  const hilt = 5; // blade starts a touch out from the fist
+  const P = (r: number, w: number): Phaser.Math.Vector2 =>
+    new Phaser.Math.Vector2(pivot.x + dx * r + px * w, pivot.y + dy * r + py * w);
+  // Asymmetric wedge: straight spine, curved belly → a knife, not a spindle.
+  const body = [P(hilt, 2.0), P(len * 0.55, hw), P(len, 0.5), P(len * 0.55, -hw * 0.45), P(hilt, -1.8)];
+  g.fillStyle(tint.glow, 0.5 * al);
+  g.fillPoints(body, true);
+  g.fillStyle(tint.core, 0.95 * al);
+  g.fillPoints(
+    [P(hilt, 1.0), P(len * 0.55, hw * 0.5), P(len, 0.35), P(len * 0.55, -hw * 0.24), P(hilt, -0.9)],
+    true,
+  );
+  // Lit cutting edge along the belly, into the point.
+  g.lineStyle(2.2, tint.core, al);
+  g.beginPath();
+  g.moveTo(pivot.x + dx * hilt + px * hw * 0.5, pivot.y + dy * hilt + py * hw * 0.5);
+  g.lineTo(pivot.x + dx * len, pivot.y + dy * len);
+  g.strokePath();
+  // Crossguard nub at the hilt (a short perpendicular bar).
+  g.lineStyle(3, tint.glow, 0.65 * al);
+  g.beginPath();
+  g.moveTo(pivot.x + dx * hilt + px * 4, pivot.y + dy * hilt + py * 4);
+  g.lineTo(pivot.x + dx * hilt - px * 4, pivot.y + dy * hilt - py * 4);
+  g.strokePath();
+  return { tipX: pivot.x + dx * len, tipY: pivot.y + dy * len };
+}
+
+/** How long one ninja twin-slash / paladin edge takes to sweep (ms). Progress
+ *  t ∈ [0,1] is elapsed/duration; the controller advances it each frame. */
+export const BLADE_SWING_MS = 190;
+export const EDGE_SWING_MS = 220;
+
+/** Fade envelope so the swing doesn't pop out — full through the whip, fading
+ *  over the last ~22% (follow-through settle). */
+function swingEnv(t: number): number {
+  return t < 0.78 ? 1 : Math.max(0, (1 - t) / 0.22);
+}
+
+/** Interstice — TWIN daggers that SLASH through the arc (animated), pivoting
+ *  from the HAND: a coil-back, a fast whip with a swoosh trail + trailing
+ *  after-images, an overshoot, and a contact spark burst. PURE per-frame paint:
+ *  draws ONE frame at progress `t` into the caller's persistent layer (the
+ *  controller owns the Graphics + clears it once per frame, like the tether).
+ *  This is the render path that renders reliably; a short-lived tween transient
+ *  did NOT paint at all in-engine. `pivot` is the hand; `reach` the blade len;
+ *  `dir` flips it for combos. */
+export function drawBladeSwing(
+  g: Phaser.GameObjects.Graphics,
+  pivot: Vec2,
   aimRad: number,
   reach: number,
   tint: ConstructTint,
-  sweepRad = 1.4, // curvier scimitar arc (interstice-v2.jpg)
+  sweepRad: number,
+  dir: number, // combo direction: +1 / -1 alternates the sweep for rapid slashes
+  t: number,
 ): void {
-  const g = pool.acquireBolt();
-  if (!g) return;
-  g.setPosition(0, 0);
-  g.setAlpha(1);
-  g.setScale(1);
-  g.setRotation(0);
-  g.setBlendMode(Phaser.BlendModes.ADD);
-
-  const a0 = aimRad - sweepRad / 2;
-  const a1 = aimRad + sweepRad / 2;
-  const N = 12;
-
-  // A blade has BODY: a filled crescent between an outer and inner radius, with
-  // a bright leading edge — not a thin line. (Verified in constructPreview.)
-  const crescent = (ea0: number, ea1: number, rOut: number, rIn: number): Phaser.Math.Vector2[] => {
+  // The blades ROTATE through the arc from a coiled start to an overshoot end,
+  // pivoting at the fist — a real swing, not a crescent popping into the air.
+  const aStart = aimRad - dir * (sweepRad / 2);
+  const aEnd = aimRad + dir * (sweepRad / 2);
+  const env = swingEnv(t);
+  const band = (from: number, to: number, rO: number, rI: number): Phaser.Math.Vector2[] => {
     const pts: Phaser.Math.Vector2[] = [];
-    for (let i = 0; i <= N; i++) {
-      const a = ea0 + (ea1 - ea0) * (i / N);
-      pts.push(new Phaser.Math.Vector2(origin.x + Math.cos(a) * rOut, origin.y + Math.sin(a) * rOut));
+    const n = 12;
+    for (let i = 0; i <= n; i++) {
+      const a = from + (to - from) * (i / n);
+      pts.push(new Phaser.Math.Vector2(pivot.x + Math.cos(a) * rO, pivot.y + Math.sin(a) * rO));
     }
-    for (let i = N; i >= 0; i--) {
-      const a = ea0 + (ea1 - ea0) * (i / N);
-      pts.push(new Phaser.Math.Vector2(origin.x + Math.cos(a) * rIn, origin.y + Math.sin(a) * rIn));
+    for (let i = n; i >= 0; i--) {
+      const a = from + (to - from) * (i / n);
+      pts.push(new Phaser.Math.Vector2(pivot.x + Math.cos(a) * rI, pivot.y + Math.sin(a) * rI));
     }
     return pts;
   };
-  const edge = (rOut: number, ea0: number, ea1: number): void => {
+  const arcStroke = (from: number, to: number, r: number): void => {
     g.beginPath();
-    for (let i = 0; i <= 10; i++) {
-      const a = ea0 + (ea1 - ea0) * (i / 10);
-      const x = origin.x + Math.cos(a) * rOut;
-      const y = origin.y + Math.sin(a) * rOut;
+    const n = 10;
+    for (let i = 0; i <= n; i++) {
+      const a = from + (to - from) * (i / n);
+      const x = pivot.x + Math.cos(a) * r;
+      const y = pivot.y + Math.sin(a) * r;
       if (i === 0) g.moveTo(x, y);
       else g.lineTo(x, y);
     }
     g.strokePath();
   };
-  const blade = (rOut: number, rIn: number, ea0: number, ea1: number): void => {
-    g.fillStyle(tint.glow, 0.28);
-    g.fillPoints(crescent(ea0, ea1, rOut, rIn), true);
-    // A wide glow edge under the bright edge — the live-Phaser harness showed
-    // the thin edge alone read near-invisible against the dark arena.
-    g.lineStyle(6, tint.glow, 0.32);
-    edge(rOut, ea0, ea1);
-    g.lineStyle(2.5, tint.core, 1);
-    edge(rOut, ea0, ea1);
-  };
 
-  // Faint motion smear (the flick), then the two blades (dual read).
-  g.fillStyle(tint.glow, 0.07);
-  g.fillPoints(crescent(a0 - 0.25, a1 - 0.25, reach, reach * 0.8), true);
-  blade(reach, reach * 0.82, a0, a1);
-  blade(reach * 0.7, reach * 0.56, a0 + 0.12, a1 - 0.05);
-
-  // Bright tip glint at the leading edge — where the cut lands.
-  const tip = { x: origin.x + Math.cos(a1) * reach, y: origin.y + Math.sin(a1) * reach };
-  g.fillStyle(tint.glow, 0.4);
-  g.fillCircle(tip.x, tip.y, 6);
-  g.fillStyle(tint.core, 0.95);
-  g.fillCircle(tip.x, tip.y, 3);
-
-  // Cyan crystal-shard debris flung off the edge (interstice-v2.jpg scatters
-  // shards along the blades).
-  const ddx = Math.cos(a1);
-  const ddy = Math.sin(a1);
-  const dpx = -ddy;
-  const dpy = ddx;
-  for (let i = 0; i < 3; i++) {
-    const along = 8 + i * 10;
-    const side = (i - 1) * 10;
-    const cx = tip.x + ddx * along + dpx * side;
-    const cy = tip.y + ddy * along + dpy * side;
-    const dl = 5;
-    const dw = 2.5;
-    const pts = [
-      new Phaser.Math.Vector2(cx + ddx * dl, cy + ddy * dl),
-      new Phaser.Math.Vector2(cx + dpx * dw, cy + dpy * dw),
-      new Phaser.Math.Vector2(cx - ddx * dl, cy - ddy * dl),
-      new Phaser.Math.Vector2(cx - dpx * dw, cy - dpy * dw),
-    ];
-    g.fillStyle(tint.glow, 0.42);
-    g.fillPoints(pts, true);
-    g.lineStyle(1.2, tint.core, 0.85);
-    strokeClosed(g, pts);
+  const eased = slashSweep(t); // anticipation → whip → overshoot → settle
+  const speedN = slashSpeed(t); // 0 at the ends, 1 at peak velocity
+  const lead = aStart + (aEnd - aStart) * eased;
+  const rO = reach * (1 + 0.14 * speedN); // slight smear-elongation at peak speed
+  // The swoosh — a bright ribbon the tip cut through, longest at peak speed.
+  const trailSpan = Math.abs(aEnd - aStart) * (0.3 + 0.5 * speedN);
+  const tailA = dir > 0 ? Math.max(aStart, lead - trailSpan) : Math.min(aStart, lead + trailSpan);
+  g.fillStyle(tint.glow, 0.14 * (0.35 + 0.65 * speedN) * env);
+  g.fillPoints(band(tailA, lead, rO, rO * 0.8), true);
+  g.lineStyle(2, tint.core, 0.45 * speedN * env);
+  arcStroke(tailA, lead, rO * 0.9);
+  // Trailing after-images of the blade (the whip smear) — 3 fading ghosts.
+  const ghosts = 3;
+  for (let i = ghosts; i >= 1; i--) {
+    const ga = lead - (lead - tailA) * (i / (ghosts + 1));
+    const gAlpha = (0.08 + 0.09 * (1 - i / (ghosts + 1))) * env;
+    drawDagger(g, pivot, ga, rO * 0.95, 4.4, tint, gAlpha);
   }
-
-  transientVfx.spawn({
-    factory: () => g,
-    lifetimeMs: 190, // snap, minimal drag — but long enough to actually read
-    ease: "Sine.easeIn",
-    release: () => pool.release(g),
-  });
+  // The two LIVE daggers — lead blade + off-hand blade trailing a hair behind.
+  drawDagger(g, pivot, lead - dir * 0.24, rO * 0.85, 4.8, tint, 0.8 * env);
+  const main = drawDagger(g, pivot, lead, rO, 6.4, tint, env);
+  // Leading tip glint.
+  g.fillStyle(tint.glow, 0.6 * env);
+  g.fillCircle(main.tipX, main.tipY, 6.5);
+  g.fillStyle(tint.core, env);
+  g.fillCircle(main.tipX, main.tipY, 2.8);
+  // Impact: a flash + spark fan flung tangentially as the edge lands.
+  if (t > 0.5) {
+    const dt = (t - 0.5) / 0.5;
+    g.fillStyle(tint.core, (1 - dt) * 0.5);
+    g.fillCircle(main.tipX, main.tipY, 4 + dt * 8);
+    const tang = lead + dir * (Math.PI / 2);
+    for (let i = 0; i < 5; i++) {
+      const a = tang + (i - 2) * 0.26;
+      const d = 5 + dt * 26;
+      g.fillStyle(tint.mote, (1 - dt) * 0.9);
+      g.fillCircle(main.tipX + Math.cos(a) * d, main.tipY + Math.sin(a) * d, Math.max(0.5, 2.6 - dt * 1.4));
+    }
+  }
 }
 
 /** Geometrician — a projected lance/prism: a tapered self-light spike from
@@ -772,95 +832,94 @@ export function spawnWardDrop(pool: ParticlePool, center: Vec2, tint: ConstructT
   });
 }
 
-/** Kindred weapon — the Kindled Edge: a DENSE overhead sweep. Heavier than the
- *  Interstice flick (the paladin commits): thicker body, longer follow, a heavy
- *  bright edge. Reuses the crescent body idiom at higher weight. */
-export function spawnKindledEdge(
-  pool: ParticlePool,
-  origin: Vec2,
+/** Kindred weapon — the Kindled Edge: a HELD faceted gold crystal greatsword
+ *  that swings THROUGH the arc, pivoting from the hand. Heavier and slower than
+ *  the Interstice twin-flick (the paladin commits): thicker body, longer follow,
+ *  a heavy bright edge + a gold swoosh trail. PURE per-frame paint at progress
+ *  `t` into the caller's persistent layer (same reliable path as the tether). */
+export function drawKindledSwing(
+  g: Phaser.GameObjects.Graphics,
+  pivot: Vec2,
   aimRad: number,
   reach: number,
   tint: ConstructTint,
+  sweepRad: number,
+  dir: number,
+  t: number,
 ): void {
-  const g = pool.acquireBolt();
-  if (!g) return;
-  g.setPosition(0, 0);
-  g.setAlpha(1);
-  g.setScale(1);
-  g.setRotation(0);
-  g.setBlendMode(Phaser.BlendModes.ADD);
-
-  const sweep = 1.5; // committed overhead arc
-  const a0 = aimRad - sweep / 2;
-  const a1 = aimRad + sweep / 2; // leading edge — the blade points HERE this frame
-  const N = 12;
-
-  // Motion trail — the faint arc the blade has swept through (the weight/follow).
-  const trail: Phaser.Math.Vector2[] = [];
-  for (let i = 0; i <= N; i++) {
-    const a = a0 + (a1 - a0) * (i / N);
-    trail.push(new Phaser.Math.Vector2(origin.x + Math.cos(a) * reach, origin.y + Math.sin(a) * reach));
-  }
-  for (let i = N; i >= 0; i--) {
-    const a = a0 + (a1 - a0) * (i / N);
-    trail.push(new Phaser.Math.Vector2(origin.x + Math.cos(a) * reach * 0.5, origin.y + Math.sin(a) * reach * 0.5));
-  }
-  g.fillStyle(tint.glow, 0.12);
-  g.fillPoints(trail, true);
-
-  // The Kindled Edge itself — a FACETED GOLD CRYSTAL BLADE along the leading
-  // angle (kindled-v2.jpg: a crystalline sword, not a bare motion arc).
-  const dx = Math.cos(a1);
-  const dy = Math.sin(a1);
-  const px = -dy;
-  const py = dx;
+  const aStart = aimRad - dir * (sweepRad / 2);
+  const aEnd = aimRad + dir * (sweepRad / 2);
   const hiltR = 10;
   const midR = reach * 0.5;
-  const hw = 8.5; // widest half-width, near mid — a leaf/crystal blade
+  const hw = 9;
+  const env = swingEnv(t);
+
+  const bandPts = (from: number, to: number, rOut: number, rIn: number): Phaser.Math.Vector2[] => {
+    const pts: Phaser.Math.Vector2[] = [];
+    const n = 10;
+    for (let i = 0; i <= n; i++) {
+      const a = from + (to - from) * (i / n);
+      pts.push(new Phaser.Math.Vector2(pivot.x + Math.cos(a) * rOut, pivot.y + Math.sin(a) * rOut));
+    }
+    for (let i = n; i >= 0; i--) {
+      const a = from + (to - from) * (i / n);
+      pts.push(new Phaser.Math.Vector2(pivot.x + Math.cos(a) * rIn, pivot.y + Math.sin(a) * rIn));
+    }
+    return pts;
+  };
+
+  // Anticipation → heavy whip → overshoot → settle (the paladin commits).
+  const eased = slashSweep(t);
+  const lead = aStart + (aEnd - aStart) * eased;
+  const dx = Math.cos(lead);
+  const dy = Math.sin(lead);
+  const px = -dy;
+  const py = dx;
   const P = (r: number, w: number): Phaser.Math.Vector2 =>
-    new Phaser.Math.Vector2(origin.x + dx * r + px * w, origin.y + dy * r + py * w);
-
+    new Phaser.Math.Vector2(pivot.x + dx * r + px * w, pivot.y + dy * r + py * w);
+  // heavy swept-arc trail behind the blade (gold, fading)
+  const trailSpan = Math.abs(aEnd - aStart) * 0.55;
+  const tailA = dir > 0 ? Math.max(aStart, lead - trailSpan) : Math.min(aStart, lead + trailSpan);
+  g.fillStyle(tint.glow, 0.18 * env);
+  g.fillPoints(bandPts(tailA, lead, reach, reach * 0.5), true);
+  // the faceted crystal blade at the leading angle
   const blade = [P(hiltR, 3.5), P(midR, hw), P(reach, 0), P(midR, -hw), P(hiltR, -3.5)];
-  g.fillStyle(tint.glow, 0.58);
+  g.fillStyle(tint.glow, 0.55 * env);
   g.fillPoints(blade, true);
-  g.fillStyle(tint.core, 0.28);
+  g.fillStyle(tint.core, 0.3 * env);
   g.fillPoints([P(hiltR, 1.5), P(midR, hw * 0.5), P(reach, 0), P(midR, -hw * 0.5), P(hiltR, -1.5)], true);
-  // Bright faceted outline.
-  g.lineStyle(6, tint.glow, 0.32);
+  g.lineStyle(6, tint.glow, 0.34 * env);
   strokeClosed(g, blade);
-  g.lineStyle(2.5, tint.core, 1);
+  g.lineStyle(3, tint.core, env);
   strokeClosed(g, blade);
-  // Crystalline spine + facet chevrons pointing to the tip.
-  g.lineStyle(1.5, tint.core, 0.9);
+  // spine
+  g.lineStyle(1.5, tint.core, 0.9 * env);
   g.beginPath();
-  g.moveTo(origin.x + dx * hiltR, origin.y + dy * hiltR);
-  g.lineTo(origin.x + dx * reach, origin.y + dy * reach);
+  g.moveTo(pivot.x + dx * hiltR, pivot.y + dy * hiltR);
+  g.lineTo(pivot.x + dx * reach, pivot.y + dy * reach);
   g.strokePath();
-  for (const fr of [0.36, 0.6, 0.82]) {
-    const r = hiltR + (reach - hiltR) * fr;
-    const w = hw * (1 - fr);
-    const apex = hiltR + (reach - hiltR) * (fr + 0.08);
-    g.beginPath();
-    g.moveTo(P(r, w).x, P(r, w).y);
-    g.lineTo(origin.x + dx * apex, origin.y + dy * apex);
-    g.lineTo(P(r, -w).x, P(r, -w).y);
-    g.strokePath();
+  // hilt glow + heavy tip
+  g.fillStyle(tint.glow, 0.5 * env);
+  g.fillCircle(pivot.x + dx * hiltR, pivot.y + dy * hiltR, 5);
+  const tipX = pivot.x + dx * reach;
+  const tipY = pivot.y + dy * reach;
+  g.fillStyle(tint.glow, 0.55 * env);
+  g.fillCircle(tipX, tipY, 9);
+  g.fillStyle(tint.core, env);
+  g.fillCircle(tipX, tipY, 4);
+  // heavy contact sparks flung as the edge lands
+  if (t > 0.55) {
+    const dt = (t - 0.55) / 0.45;
+    const tang = lead + dir * (Math.PI / 2);
+    for (let i = 0; i < 5; i++) {
+      const a = tang + (i - 2) * 0.28;
+      const d = 5 + dt * 26;
+      const sx = tipX + Math.cos(a) * d;
+      const sy = tipY + Math.sin(a) * d;
+      g.fillStyle(tint.mote, (1 - dt) * 0.9);
+      g.fillCircle(sx, sy, Math.max(0.6, 3 - dt * 1.5));
+    }
   }
-  // Hilt glow at the hand + a bright tip glint.
-  g.fillStyle(tint.glow, 0.5);
-  g.fillCircle(origin.x + dx * hiltR, origin.y + dy * hiltR, 5);
-  const tip = P(reach, 0);
-  g.fillStyle(tint.glow, 0.5);
-  g.fillCircle(tip.x, tip.y, 7);
-  g.fillStyle(tint.core, 0.95);
-  g.fillCircle(tip.x, tip.y, 3);
-
-  transientVfx.spawn({
-    factory: () => g,
-    lifetimeMs: 240, // longer follow-through — commits, no snap-back
-    ease: "Sine.easeOut",
-    release: () => pool.release(g),
-  });
 }
 
 /** Geometrician — a volley of faceted cyan crystal shards conjured from an open

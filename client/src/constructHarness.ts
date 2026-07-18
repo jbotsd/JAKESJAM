@@ -20,14 +20,11 @@ import { ParticlePool } from "./game/systems/ParticlePool";
 import { transientVfx } from "./game/render/TransientVfx";
 import { ConstructVfxController } from "./game/systems/ConstructVfxController";
 import {
-  spawnBladeArc,
   spawnCrystalShards,
   drawWardSlab,
   spawnWardRaise,
   spawnWardAbsorb,
   spawnWardDrop,
-  spawnKindledEdge,
-  INTERSTICE_TINT,
   GEOMETRICIAN_TINT,
   KINDRED_TINT,
 } from "./game/render/LightConstruct";
@@ -138,7 +135,9 @@ class HarnessScene extends Phaser.Scene {
           this.markActive = false;
           break;
         case "blade":
-          spawnBladeArc(this.pool, { x: 360, y: 330 }, -0.35, 78, INTERSTICE_TINT);
+          // Interstice twin-dagger slash — driven through the controller's
+          // persistent swing layer (advanced each frame in controller.update).
+          this.controller.triggerSwing("ninja", { x: 360, y: 330 }, -0.35);
           break;
         case "shards":
           // Geometrician conjures a volley of cyan crystal shards from the palm.
@@ -156,8 +155,9 @@ class HarnessScene extends Phaser.Scene {
           spawnWardDrop(this.pool, KINDRED_SLAB, KINDRED_TINT);
           break;
         case "edge":
-          // Swung to the LEFT, clear of the shield held on the right.
-          spawnKindledEdge(this.pool, KINDRED_POS, 2.3, 72, KINDRED_TINT);
+          // Kindred crystal-edge swing to the LEFT, clear of the shield held on
+          // the right — driven through the controller's persistent swing layer.
+          this.controller.triggerSwing("paladin", KINDRED_POS, 2.3);
           break;
       }
     }
@@ -191,7 +191,7 @@ class HarnessScene extends Phaser.Scene {
         : id === ("victim" as PlayerId)
           ? this.victimPos
           : undefined;
-    this.controller.update(state, delta, getPos, resolveClassId);
+    this.controller.update(state, [], delta, getPos, resolveClassId);
   }
 }
 

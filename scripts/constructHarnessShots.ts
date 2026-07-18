@@ -57,11 +57,15 @@ await page.waitForTimeout(260);
 // Drop the entanglement first so these read in isolation (no tether overlap).
 await fire("unmark");
 await page.waitForTimeout(400); // let the snap fire + the thread clear
-// Interstice blade / Geometrician shards — direct render checks (no controller hook yet).
+// Interstice blade — burst-capture the animated SWEEP (whips through the arc).
+// Fire, let the scene's next update consume the command + spawn, THEN sample.
 await fire("blade");
-await page.waitForTimeout(80);
-await canvas.screenshot({ path: `${OUT}/interstice-blade.png` });
-await page.waitForTimeout(220);
+await page.waitForTimeout(12);
+for (let i = 0; i < 9; i++) {
+  await canvas.screenshot({ path: `${OUT}/blade-sweep-${String(i).padStart(2, "0")}.png` });
+  await page.waitForTimeout(16);
+}
+await page.waitForTimeout(200);
 await fire("shards");
 await page.waitForTimeout(90);
 await canvas.screenshot({ path: `${OUT}/geo-shards.png` });

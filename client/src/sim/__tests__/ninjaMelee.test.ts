@@ -247,8 +247,11 @@ describe("ninja melee — arc hit detection", () => {
   });
 });
 
-describe("ninja melee — wave-off-swing (aftermath of the swing, not a hit-confirm)", () => {
-  test("a WHIFFED swing (no enemy in range) still spawns a wave projectile", () => {
+describe("ninja melee — the basic swing is PURE MELEE (the wave rides Edge Storm only)", () => {
+  // 2026-07-18 (Jake): "not projectile at all on rogue for mouse button" — a
+  // basic mouse swing spawns NO aftermath wave; the crystal wave now only fires
+  // while the Edge Storm ability is live (see ninjaCatalog.test.ts for that path).
+  test("a basic swing spawns NO wave projectile (mouse is pure melee)", () => {
     const attacker = mkPlayer(A, 500, 300, { aimX: 900, aimY: 300 });
     const state = mkState([attacker]); // nobody else on the map — cannot land a hit
     const runtime = createRuntime(flatMap);
@@ -261,8 +264,8 @@ describe("ninja melee — wave-off-swing (aftermath of the swing, not a hit-conf
       s = res.state;
       if (res.events.some((e) => e.t === "wave-spawned")) sawWave = true;
     }
-    expect(sawWave).toBe(true);
-    expect(Object.keys(s.projectiles).length).toBeGreaterThan(0);
+    expect(sawWave).toBe(false);
+    expect(Object.keys(s.projectiles).length).toBe(0);
   });
 });
 

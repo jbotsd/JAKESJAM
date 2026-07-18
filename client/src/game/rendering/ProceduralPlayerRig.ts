@@ -458,6 +458,11 @@ export class ProceduralPlayerRig implements CombatRig {
   private backHandSpringReady = false;
   private backHandSpringX: SpringState = springState(0);
   private backHandSpringY: SpringState = springState(0);
+  // Last drawn hand positions in WORLD coords — exposed read-only so the melee
+  // construct VFX can anchor a swung blade to the actual hand (not the feet).
+  // Updated every draw(); read via getHandWorld(). Null until first draw.
+  private lastLeadHandWorld: { x: number; y: number } | null = null;
+  private lastBackHandWorld: { x: number; y: number } | null = null;
   // Floppy arms — hang late, overshoot on throw, settle soft (drunken master).
   private static readonly ARM_FREQUENCY_HZ = 5.2;
   private static readonly ARM_DAMPING = 0.52;
@@ -765,6 +770,13 @@ export class ProceduralPlayerRig implements CombatRig {
    *  1 = back. Whichever hand's flick is furthest along is the active one. */
   activeThrowHandIndex(): 0 | 1 {
     return this.leadThrow >= this.backThrow ? 0 : 1;
+  }
+
+  /** Live world position of a hand from the last draw() — for anchoring melee
+   *  construct VFX (a swung blade) to the actual hand, not the feet. Returns
+   *  null before the first draw. hand: 0 = lead (dominant), 1 = back. */
+  getHandWorld(hand: 0 | 1 = 0): { x: number; y: number } | null {
+    return hand === 0 ? this.lastLeadHandWorld : this.lastBackHandWorld;
   }
 
   /**
@@ -1221,6 +1233,9 @@ export class ProceduralPlayerRig implements CombatRig {
     this.backHandSpringX = springTo(this.backHandSpringX, armTargets.back.x, deltaMs, armFreq, armDamp);
     this.backHandSpringY = springTo(this.backHandSpringY, armTargets.back.y, deltaMs, armFreq, armDamp);
     const handBack = vec(this.backHandSpringX.value, this.backHandSpringY.value);
+    // Publish the live hand positions (world coords) for the melee VFX anchor.
+    this.lastLeadHandWorld = { x: handLead.x, y: handLead.y };
+    this.lastBackHandWorld = { x: handBack.x, y: handBack.y };
 
     // Feet — raw stepping targets (or a wall-plant target while gripping),
     // then run through a spring so the IK end effector chases the target

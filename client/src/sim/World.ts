@@ -40,7 +40,7 @@ import {
   playerHitboxAABB,
   type PlayerMovementMemory,
 } from "./player.js";
-import { buildFireEntity, stepDestructibles } from "./destructible.js";
+import { buildFireEntity, destructibleAABB, stepDestructibles } from "./destructible.js";
 import { stepFirePatches } from "./fire.js";
 import { stepSuddenDeathStorm } from "./suddenDeath.js";
 import { clearExpiredBuffs, stepPickups } from "./pickup.js";
@@ -385,6 +385,12 @@ export type NinjaMeleeMemory = {
    *  is hit-checked every tick while active (a target drifting in mid-
    *  window still gets hit), but each victim only takes the hit once. */
   hitThisSwing: Set<PlayerId>;
+  /** Destructible ids already hit by the CURRENT swing (venue-lobby-
+   *  tableau fast-follow, 2026-07-18 — hangout-mode-only: real matches
+   *  never populate this, since player-vs-player damage covers everything
+   *  there). Same "once per swing" contract as `hitThisSwing`, separate
+   *  Set because destructible ids and PlayerIds aren't the same brand. */
+  hitDestructiblesThisSwing: Set<string>;
   /** Victim ids already dash-through-tagged during the CURRENT dash burst
    *  — cleared on the burst's rising edge so a body-cross fires once per
    *  dash per victim, not once per tick of overlap. */
@@ -411,6 +417,7 @@ export function freshNinjaMeleeMemory(): NinjaMeleeMemory {
     aimX: 1,
     aimY: 0,
     hitThisSwing: new Set(),
+    hitDestructiblesThisSwing: new Set(),
     dashThroughTagged: new Set(),
     wasDashing: false,
     razorRouteActiveDash: false,
@@ -445,6 +452,9 @@ export type PaladinMeleeMemory = {
    *  "hit-checked every tick, once per victim per swing" contract as
    *  NinjaMeleeMemory.hitThisSwing. */
   hitThisSwing: Set<PlayerId>;
+  /** Destructible ids already hit by the CURRENT swing — same hangout-
+   *  mode-only contract as NinjaMeleeMemory.hitDestructiblesThisSwing. */
+  hitDestructiblesThisSwing: Set<string>;
 };
 
 export function freshPaladinMeleeMemory(): PaladinMeleeMemory {
@@ -454,6 +464,7 @@ export function freshPaladinMeleeMemory(): PaladinMeleeMemory {
     aimX: 1,
     aimY: 0,
     hitThisSwing: new Set(),
+    hitDestructiblesThisSwing: new Set(),
   };
 }
 
@@ -660,9 +671,31 @@ function isBodyInMeleeArc(
   range: number,
   victim: Pick<PlayerEntity, "x" | "y" | "crouching">,
 ): boolean {
-  const box = playerHitboxAABB(victim);
+  return isAABBInMeleeArc(originX, originY, aimAngle, halfArc, range, victim.x, victim.y, playerHitboxAABB(victim));
+}
+
+/**
+ * Generalized core of `isBodyInMeleeArc` (perf audit / venue-lobby-tableau
+ * fast-follow, 2026-07-18): the player-specific wrapper above computes its
+ * own AABB via `playerHitboxAABB` and delegates here, so a destructible
+ * (or any other AABB'd entity — `destructibleAABB(d)` returns the same
+ * `{x,y,w,h}` shape) can reuse the EXACT same 5-point sample-and-test
+ * geometry instead of duplicating it. Same contract: hit if ANY of
+ * center + 4 corners lands within `range` of the origin AND within
+ * `halfArc` of `aimAngle`.
+ */
+function isAABBInMeleeArc(
+  originX: number,
+  originY: number,
+  aimAngle: number,
+  halfArc: number,
+  range: number,
+  centerX: number,
+  centerY: number,
+  box: { x: number; y: number; w: number; h: number },
+): boolean {
   const points: Array<[number, number]> = [
-    [victim.x, victim.y],
+    [centerX, centerY],
     [box.x, box.y],
     [box.x + box.w, box.y],
     [box.x, box.y + box.h],
@@ -1609,6 +1642,23 @@ export function stepWithRuntime(
    * fire patches' own existing, pre-existing-to-this-pass behavior).
    */
   const pendingZoneSpawns: FireEntity[] = [];
+
+  /**
+   * Venue-lobby-tableau fast-follow (2026-07-18): hangout mode's practice
+   * dummies (destructibles) previously had NO hit path for ninja/paladin
+   * melee arcs or any of the 7 instant-AOE catalog abilities — those blocks
+   * only ever checked players, and player-damage is (correctly) suppressed
+   * in hangout mode entirely. Accumulated here (one entry per hit, NOT
+   * pre-summed — attacker attribution matters for emission-charge crediting
+   * below, section 4b) by both the melee arc blocks and the instant-AOE
+   * resolution block below, then applied once, as an adjustment to
+   * `state.destructibles` right before `stepDestructibles` runs (section
+   * 3b) — `stepDestructibles` always returns a fully-fresh destructibles
+   * record regardless of what it's handed, so pre-reducing health here is
+   * the correct (and only) place damage from these sources can land.
+   * Empty (and free) outside hangout mode — nothing pushes into it.
+   */
+  const pendingHangoutDestructibleDamage: Array<{ destructibleId: string; attackerId: PlayerId; damage: number }> = [];
 
   for (const [pid_, entity] of Object.entries(state.players)) {
     const pid = pid_ as PlayerId;
@@ -3648,6 +3698,37 @@ export function stepWithRuntime(
     }
   }
 
+  // 1y2. INSTANT AOE vs. DESTRUCTIBLES (venue-lobby-tableau fast-follow,
+  //      2026-07-18) — hangout mode only. The block above resolves
+  //      `pendingInstantAoe` against PLAYERS and is itself gated
+  //      `!hangoutMode` (player damage is suppressed there); nothing filled
+  //      the gap for the practice dummies, so all 7 instant-AOE catalog
+  //      abilities (Prism Fan, Lattice, Consecrated Field, Shock Ring,
+  //      Flock Pulse, Shard Ring, Wall Bloom) did nothing when tried on
+  //      them. Same center-distance (+ optional cone) geometry as the
+  //      player check above, reused directly rather than duplicated —
+  //      status-only casts (cast.damage === 0, e.g. Consecrated Field's
+  //      instant slow) are skipped here: a destructible doesn't move, so a
+  //      slow has no destructible-facing meaning.
+  if (fightingPhase && hangoutMode) {
+    for (const cast of pendingInstantAoe) {
+      if (cast.damage <= 0) continue;
+      for (const [did, d] of Object.entries(state.destructibles)) {
+        if (d.health <= 0) continue;
+        const dx = d.x - cast.x;
+        const dy = d.y - cast.y;
+        const dist = Math.hypot(dx, dy);
+        if (dist > cast.radius) continue;
+        if (cast.coneRadians !== undefined && cast.aimAngle !== undefined) {
+          let da = Math.atan2(dy, dx) - cast.aimAngle;
+          da = Math.atan2(Math.sin(da), Math.cos(da));
+          if (Math.abs(da) > cast.coneRadians / 2) continue;
+        }
+        pendingHangoutDestructibleDamage.push({ destructibleId: did, attackerId: cast.casterId, damage: cast.damage });
+      }
+    }
+  }
+
   // 1z. DASH BASH — the offensive half of the shield-dash. Positions,
   //     velocity, and `dashing` are all current here (post-movement). For each
   //     player mid-dash, ram the first enemy inside the shield's frontal arc:
@@ -3928,6 +4009,7 @@ export function stepWithRuntime(
           mem.aimX = len > 1e-3 ? (edge.aimX - attacker.x) / len : 1;
           mem.aimY = len > 1e-3 ? (edge.aimY - attacker.y) / len : 0;
           mem.hitThisSwing.clear();
+          mem.hitDestructiblesThisSwing.clear();
           events.push({ t: "slash-started", playerId: aid, x: attacker.x, y: attacker.y });
         }
       } else {
@@ -4091,6 +4173,30 @@ export function stepWithRuntime(
         }
       }
 
+      // ---- Arc hit-check vs. destructibles (venue-lobby-tableau fast-
+      //      follow, 2026-07-18) — hangout mode only. Ninja's melee arc
+      //      had NO destructible-hit path at all before this: player
+      //      damage is (correctly) suppressed in hangout, but nothing
+      //      filled the gap for the practice dummies, so Interstice's
+      //      entire primary attack did nothing there. Reuses the exact
+      //      same 5-point arc-sample geometry (isAABBInMeleeArc) the
+      //      player check above uses, just against destructibleAABB(d)
+      //      instead of a player hitbox. Damage is accumulated, not
+      //      applied directly — see pendingHangoutDestructibleDamage's doc
+      //      comment for why (stepDestructibles fully replaces the
+      //      destructibles record later this tick regardless).
+      if ((wasActive || isActiveNow) && hangoutMode) {
+        const aimAngle = Math.atan2(mem.aimY, mem.aimX);
+        for (const [did, d] of Object.entries(state.destructibles)) {
+          if (d.health <= 0 || mem.hitDestructiblesThisSwing.has(did)) continue;
+          if (!isAABBInMeleeArc(attacker.x, attacker.y, aimAngle, SLASH_ARC_RADIANS / 2, SLASH_RANGE, d.x, d.y, destructibleAABB(d))) {
+            continue;
+          }
+          mem.hitDestructiblesThisSwing.add(did);
+          pendingHangoutDestructibleDamage.push({ destructibleId: did, attackerId: aid, damage: SLASH_DAMAGE });
+        }
+      }
+
       // ---- Wave-off-swing ----
       // "Wave is aftermath of contact, not a free cast: spawns from a swing
       // that had commit." Fires at the active→recovery transition
@@ -4101,31 +4207,30 @@ export function stepWithRuntime(
       // compose onto it for free later (fast-follow) — no bespoke shape.
       if (waveShouldSpawn) {
         const liveAttacker = players[aid]!;
-        // Edge Storm (Interstice catalog v1, offense role): while the
-        // charge bank is live, THIS wave deals amplified damage and
-        // consumes one charge (cleared at 0 — "consumed on the landed
-        // hit/spawn, not just on timeout").
+        // The rogue's mouse is PURE MELEE — a basic slash spawns NO aftermath
+        // wave (Jake 2026-07-18: "not projectile at all on rogue for mouse
+        // button"). The crystal wave now rides ONLY the Edge Storm ability (a
+        // drafted key, not the mouse), where it deals amplified damage and
+        // consumes one charge. Without Edge Storm live, the swing is melee-only.
         const edgeStormLive =
           liveAttacker.edgeStormUntilTick !== undefined &&
           liveAttacker.edgeStormUntilTick > meleeTick &&
           (liveAttacker.edgeStormChargesRemaining ?? 0) > 0;
-        const waveDamage = edgeStormLive
-          ? WAVE_DAMAGE * NINJA_EDGE_STORM_WAVE_DAMAGE_MULTIPLIER
-          : WAVE_DAMAGE;
-        const wave = spawnProjectile(allocId(), {
-          ownerId: aid,
-          origin: { x: liveAttacker.x, y: liveAttacker.y - 20 },
-          aimAngle: Math.atan2(mem.aimY, mem.aimX),
-          speed: WAVE_SPEED,
-          damage: waveDamage,
-          lifetimeMs: WAVE_LIFETIME_MS,
-          radius: WAVE_RADIUS,
-          element: "crystal",
-        });
-        wave.rangePx = WAVE_RANGE;
-        projectilesCow.set(wave.id, wave);
-        events.push({ t: "wave-spawned", playerId: aid, projectileId: wave.id, x: wave.x, y: wave.y });
         if (edgeStormLive) {
+          const waveDamage = WAVE_DAMAGE * NINJA_EDGE_STORM_WAVE_DAMAGE_MULTIPLIER;
+          const wave = spawnProjectile(allocId(), {
+            ownerId: aid,
+            origin: { x: liveAttacker.x, y: liveAttacker.y - 20 },
+            aimAngle: Math.atan2(mem.aimY, mem.aimX),
+            speed: WAVE_SPEED,
+            damage: waveDamage,
+            lifetimeMs: WAVE_LIFETIME_MS,
+            radius: WAVE_RADIUS,
+            element: "crystal",
+          });
+          wave.rangePx = WAVE_RANGE;
+          projectilesCow.set(wave.id, wave);
+          events.push({ t: "wave-spawned", playerId: aid, projectileId: wave.id, x: wave.x, y: wave.y });
           const remaining = (liveAttacker.edgeStormChargesRemaining ?? 0) - 1;
           players[aid] = {
             ...players[aid]!,
@@ -4175,6 +4280,7 @@ export function stepWithRuntime(
           mem.aimX = len > 1e-3 ? (edge.aimX - attacker.x) / len : 1;
           mem.aimY = len > 1e-3 ? (edge.aimY - attacker.y) / len : 0;
           mem.hitThisSwing.clear();
+          mem.hitDestructiblesThisSwing.clear();
           events.push({ t: "slash-started", playerId: aid, x: attacker.x, y: attacker.y });
         }
       } else {
@@ -4379,6 +4485,23 @@ export function stepWithRuntime(
             }
           }
           players[vid] = post;
+        }
+      }
+
+      // ---- Arc hit-check vs. destructibles (venue-lobby-tableau fast-
+      //      follow, 2026-07-18) — hangout mode only, mirrors ninja's own
+      //      block above exactly (same reasoning: Kindled Edge had no
+      //      destructible-hit path at all, so Kindred's entire primary
+      //      attack did nothing to the practice dummies). ----
+      if ((wasActive || isActiveNow) && hangoutMode) {
+        const aimAngle = Math.atan2(mem.aimY, mem.aimX);
+        for (const [did, d] of Object.entries(state.destructibles)) {
+          if (d.health <= 0 || mem.hitDestructiblesThisSwing.has(did)) continue;
+          if (!isAABBInMeleeArc(attacker.x, attacker.y, aimAngle, EDGE_ARC_RADIANS / 2, EDGE_RANGE, d.x, d.y, destructibleAABB(d))) {
+            continue;
+          }
+          mem.hitDestructiblesThisSwing.add(did);
+          pendingHangoutDestructibleDamage.push({ destructibleId: did, attackerId: aid, damage: EDGE_DAMAGE });
         }
       }
     }
@@ -5298,12 +5421,49 @@ export function stepWithRuntime(
   //     applies damage and despawns. Broken explosive boxes deal AOE; broken
   //     flammable boxes hit by a fire-element shard seed a fire patch. AOE
   //     and direct hit-confirmed events are drained into players here.
-  let nextDestructibles: WorldState["destructibles"] = state.destructibles;
-  // Perf audit M2 (2026-07-18): stepFirePatches (fire.ts) always returns a
-  // brand-new fully-populated record, same as stepSatellites — any copy we
-  // hand it is discarded wholesale, never merged. So default to the SAME
-  // reference (no allocation) and only actually copy-on-write in the rare
-  // tick a new zone/spawnedFire entry needs to be added before the step.
+  //
+  // Apply melee/AOE hangout-mode damage (accumulated above by ninja/paladin
+  // arc checks + instant-AOE resolution) BEFORE stepDestructibles runs —
+  // it always returns a brand-new fully-populated record regardless of what
+  // it's handed (perf audit M2's same discovery, applied here), so this is
+  // the only place this damage can land. A destructible melee/AOE brings to
+  // <=0 health is deleted here (matching stepDestructibles's OWN delete-on-
+  // break behavior for a projectile kill exactly — never deleting would
+  // leave a permanently-dead entry that respawnDestructibles' live-count
+  // check would count as "still present," so the dummy would never
+  // respawn) and gets its own destructible-broken event (the same
+  // explosion sound/shake/blast-tint payoff a projectile kill gets — see
+  // SimEventRouter.ts — so a melee/AOE kill on a practice dummy feels the
+  // same as any other kill, not a silent disappearance).
+  let destructiblesForStep = state.destructibles;
+  if (pendingHangoutDestructibleDamage.length > 0) {
+    const totalDamageByDestructible = new Map<string, number>();
+    for (const hit of pendingHangoutDestructibleDamage) {
+      totalDamageByDestructible.set(
+        hit.destructibleId,
+        (totalDamageByDestructible.get(hit.destructibleId) ?? 0) + hit.damage,
+      );
+    }
+    destructiblesForStep = { ...destructiblesForStep };
+    for (const [did, dmg] of totalDamageByDestructible) {
+      const d = destructiblesForStep[EntityId(Number(did))];
+      if (!d) continue;
+      const newHealth = Math.max(0, d.health - dmg);
+      if (newHealth <= 0) {
+        delete destructiblesForStep[EntityId(Number(did))];
+        events.push({ t: "destructible-broken", entityId: d.id, x: d.x, y: d.y });
+      } else {
+        destructiblesForStep[EntityId(Number(did))] = { ...d, health: newHealth };
+      }
+    }
+  }
+  // Perf audit M2 (2026-07-18): stepFirePatches/stepDestructibles always
+  // return a brand-new fully-populated record — default to the (possibly
+  // melee/AOE-adjusted) input reference (no extra allocation) rather than
+  // state.destructibles directly, so a hangout-mode kill still lands even
+  // in the rare case neither destructibles nor projectiles exist below and
+  // stepDestructibles never runs.
+  let nextDestructibles: WorldState["destructibles"] = destructiblesForStep;
   let nextFirePatches: WorldState["firePatches"] = state.firePatches;
   // Aoe role rework (2026-07-18): Lattice/Consecrated Field's lingering
   // zones, queued into `pendingZoneSpawns` during the main per-player loop
@@ -5318,9 +5478,9 @@ export function stepWithRuntime(
   }
   let projectilesAfterDestructibles = remainingProjectiles;
 
-  if (Object.keys(state.destructibles).length > 0 || Object.keys(remainingProjectiles).length > 0) {
+  if (Object.keys(destructiblesForStep).length > 0 || Object.keys(remainingProjectiles).length > 0) {
     const destResult = stepDestructibles(
-      state.destructibles,
+      destructiblesForStep,
       remainingProjectiles,
       players,
       effDtMs,
@@ -5555,10 +5715,14 @@ export function stepWithRuntime(
   // so this pass never credits refused damage. Attacker credit requires a
   // non-self attackerId; the victim always credits the taken side (the
   // killing blow included — participation is participation, and charge
-  // persists through death by doctrine). Hangout emits no combat events,
-  // but the guard keeps a future lobby damage source from quietly charging
-  // meters. Charge mutates ONLY here, at cast, and at match creation —
-  // any other writer is a bug (goal-doc invariant).
+  // persists through death by doctrine). Hangout emits no player-vs-player
+  // combat events (this block stays `!hangoutMode`, a real player never
+  // gets `abilityCharge` from another player there), but hangout-mode
+  // destructible damage IS a real charge source now — see the dedicated
+  // block right below, which is exactly the "future lobby damage source"
+  // this guard's comment used to anticipate (venue-lobby-tableau fast-
+  // follow, 2026-07-18). Charge mutates ONLY at these two sites, at cast,
+  // and at match creation — any other writer is a bug (goal-doc invariant).
   if (!hangoutMode) {
     for (const ev of events) {
       if (ev.t !== "hit-confirmed" || ev.damage <= 0) continue;
@@ -5585,6 +5749,24 @@ export function stepWithRuntime(
           };
         }
       }
+    }
+  } else {
+    // Hangout-mode-only counterpart: destructible (practice dummy) damage
+    // credits the ATTACKER exactly like the player-damage-dealt half above
+    // (same EMISSION_FILL_PER_DAMAGE_DEALT constant) — there's no victim
+    // side since destructibles don't have abilityCharge. This is what
+    // finally lets Emission (E key) be tested in the venue lobby at all;
+    // previously it could never fill there by any means.
+    for (const hit of pendingHangoutDestructibleDamage) {
+      const attacker = players[hit.attackerId];
+      if (!attacker) continue;
+      players[hit.attackerId] = {
+        ...attacker,
+        abilityCharge: Math.min(
+          EMISSION_CHARGE_MAX,
+          attacker.abilityCharge + hit.damage * EMISSION_FILL_PER_DAMAGE_DEALT,
+        ),
+      };
     }
   }
 

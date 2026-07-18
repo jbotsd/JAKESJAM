@@ -218,6 +218,11 @@ function destructibleColor(kind: DestructibleKind): number {
     box: 0x8b5a2b, // brown
     mine: 0xff3b3b, // red
     cube: 0x8a8f99, // gray
+    // Venue-lobby-tableau (2026-07-18): the "bad" practice dummies — the
+    // game's existing rose token (ProceduralPlayerRig's low-health glow,
+    // DeathOverlay, facetedRing's danger tier — all 0xfb7185), not a new
+    // color invented for "hostile."
+    trainingDummy: 0xfb7185,
   };
   return colors[kind];
 }
@@ -994,26 +999,24 @@ export class OnlineMatchScene extends Phaser.Scene {
     this.cameraHypePeakPrev = hypePeakNow;
     this.updateEnvironmentReactivity();
 
+    const simEvents = this.pendingSimEvents;
+    const resolvePos = (id: PlayerId): { x: number; y: number } | undefined => {
+      const p = state.players[id];
+      return p ? { x: p.x, y: p.y } : undefined;
+    };
     if (this.statusVfx) {
-      const events = this.pendingSimEvents;
-      this.statusVfx.update(state, events, deltaMs, (id) => {
-        const p = state.players[id];
-        return p ? { x: p.x, y: p.y } : undefined;
-      });
-      if (events.length > 0) events.length = 0;
+      this.statusVfx.update(state, simEvents, deltaMs, resolvePos);
     }
-
     if (this.constructVfx) {
-      this.constructVfx.update(
-        state,
-        deltaMs,
-        (id) => {
-          const p = state.players[id];
-          return p ? { x: p.x, y: p.y } : undefined;
-        },
-        classIdForArchetype,
-      );
+      // Same events the statusVfx reads (slash-started drives the melee
+      // constructs); cleared once below after both consumers have run. The
+      // hand resolver anchors a swung blade to the rig's live lead hand so the
+      // slash reads as HELD, not a projectile sweeping around the feet.
+      const resolveHand = (id: PlayerId): { x: number; y: number } | undefined =>
+        this.playerRigs.get(id as string)?.getHandWorld(0) ?? undefined;
+      this.constructVfx.update(state, simEvents, deltaMs, resolvePos, classIdForArchetype, resolveHand);
     }
+    if (simEvents.length > 0) simEvents.length = 0;
 
     if (this.statsVisible) {
       this.updateStatsHud();
