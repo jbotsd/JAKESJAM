@@ -31,6 +31,13 @@
  *  flags "changed"; the actual signed value rides in the patch), dashing.
  *  All render-only signals for the procedural rig, not read by sim logic.
  *  P_HI bit 7: wardShellUntilTick (six-axes Ward — sim-read damage gate).
+ *  P_HI bits 16-19: Geometrician catalog v1 (docs/class-ability-catalogs-v1.md,
+ *  wizard-only) — sunlanceUntilTick, facetTargetId, facetMarkUntilTick,
+ *  overclockUntilTick. Plain `number` bitwise ops, so bits up to 30 are free
+ *  without any wire-width/protocol change.
+ *  P_HI bits 20-21: Resonance (class-overhaul-workboard.md chunk 0.1,
+ *  class-agnostic — six-axes and catalog kinds alike) — resonanceUntilTick,
+ *  resonanceSourceKind.
  *
  * NOTE: For simplicity, since PlayerEntity has ~30 optional/frequent fields,
  * we use a two-number bitmask pair (lo: bits 0-30, hi: bits 0-7) rather than
@@ -212,6 +219,12 @@ function diffPlayer(
   if (prev.veilUntilTick !== next.veilUntilTick) { bitsHi |= P_HI.veilUntilTick; patch.veilUntilTick = next.veilUntilTick; }
   if (prev.counterUntilTick !== next.counterUntilTick) { bitsHi |= P_HI.counterUntilTick; patch.counterUntilTick = next.counterUntilTick; }
   if (prev.respawnAtTick !== next.respawnAtTick) { bitsHi |= P_HI.respawnAtTick; patch.respawnAtTick = next.respawnAtTick; }
+  if (prev.sunlanceUntilTick !== next.sunlanceUntilTick) { bitsHi |= P_HI.sunlanceUntilTick; patch.sunlanceUntilTick = next.sunlanceUntilTick; }
+  if (prev.facetTargetId !== next.facetTargetId) { bitsHi |= P_HI.facetTargetId; patch.facetTargetId = next.facetTargetId; }
+  if (prev.facetMarkUntilTick !== next.facetMarkUntilTick) { bitsHi |= P_HI.facetMarkUntilTick; patch.facetMarkUntilTick = next.facetMarkUntilTick; }
+  if (prev.overclockUntilTick !== next.overclockUntilTick) { bitsHi |= P_HI.overclockUntilTick; patch.overclockUntilTick = next.overclockUntilTick; }
+  if (prev.resonanceUntilTick !== next.resonanceUntilTick) { bitsHi |= P_HI.resonanceUntilTick; patch.resonanceUntilTick = next.resonanceUntilTick; }
+  if (prev.resonanceSourceKind !== next.resonanceSourceKind) { bitsHi |= P_HI.resonanceSourceKind; patch.resonanceSourceKind = next.resonanceSourceKind; }
 
   // Always send abilityCharge and lastProcessedInputSeq (change almost every tick)
   patch.abilityCharge = next.abilityCharge;

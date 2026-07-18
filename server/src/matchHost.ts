@@ -86,19 +86,22 @@ const USE_WASM_STEP_WORLD =
 const EMISSIONS_DISABLED = process.env.EMISSIONS === "off";
 
 /** Six Axes Layer 2 kill-switch (docs/six-axes-goal.md "ship safely"):
- *  ABILITIES=off strips input bits 10..13 (drafted active slots 1-4) at
- *  input sanitization — one lever for humans AND bots, no client redeploy.
+ *  ABILITIES=off strips input bits 10..13 (drafted active slots 1-3, plus
+ *  the unused 4th-slot bit 13 for good measure — the rack is locked at
+ *  exactly 3, docs/classes-goal.md "Rotation system") at input
+ *  sanitization — one lever for humans AND bots, no client redeploy.
  *  Delete after the Phase 4 gate passes. */
 const ABILITIES_DISABLED = process.env.ABILITIES === "off";
 
 /** Input-key sanitization: bits 0..13 are known (Left..Dash + ability
- *  slots 1-4); everything above is stripped so a client can't smuggle
- *  out-of-band signals through the input frame. */
+ *  slots 1-3, bit 13 reserved/unused); everything above is stripped so a
+ *  client can't smuggle out-of-band signals through the input frame. */
 export const KNOWN_KEY_BITS = 0x3fff;
 
 /** Exported for tests: the admission mask under the kill-switch levers
- *  (EMISSIONS=off strips the Emission bit, ABILITIES=off strips the four
- *  drafted-active bits — humans AND bots, one gate). */
+ *  (EMISSIONS=off strips the Emission bit, ABILITIES=off strips the whole
+ *  4-bit drafted-active range 10..13, though only 10..12/slots 1-3 are
+ *  ever set by a real client — humans AND bots, one gate). */
 export function sanitizeKeyMaskFor(
   emissionsOff: boolean,
   abilitiesOff: boolean,
@@ -455,6 +458,7 @@ export class MatchHost {
         color: spawn.color ?? "#ffffff",
         name: spawn.name ?? spawn.playerId,
         cosmetics: spawn.cosmetics,
+        teamId: spawn.teamId,
       });
       this.lastProcessedInputSeq.set(spawn.playerId, 0 as InputSeq);
     }
@@ -597,6 +601,18 @@ export class MatchHost {
   }
 
   /**
+   * Read-only roster metadata for a live/known player — the same shape
+   * `ServerHello.allPlayers` carries (name/characterId/color/cosmetics/
+   * teamId). Undefined for an unknown playerId. Added for the venue's
+   * team-floor elastic-bot logic (classes-goal.md "Venue integration"):
+   * WorldHost needs to read a just-admitted human's `teamId` to decide
+   * whether the bot fill should pair an opposing/ally bot team too.
+   */
+  rosterInfo(playerId: PlayerId): PlayerLobbyInfo | undefined {
+    return this.playerInfo.get(playerId);
+  }
+
+  /**
    * Public read-only snapshot for HTTP `/health` consumers. Tiny by
    * design — only the fields a status badge needs. Joinability is
    * permissive: any phase that isn't `round-over` accepts late joins,
@@ -715,6 +731,7 @@ export class MatchHost {
       color: spawn.color ?? "#ffffff",
       name: spawn.name ?? spawn.playerId,
       cosmetics: spawn.cosmetics,
+      teamId: spawn.teamId,
     });
     this.lastProcessedInputSeq.set(spawn.playerId, 0 as InputSeq);
 
@@ -754,6 +771,15 @@ export class MatchHost {
         break;
       case "card-pick":
         this.applyCardPick(ws.data.playerId as PlayerId, message);
+        break;
+      case "duo-toggle":
+        // Venue business, not lobby-sim business (classes-goal.md "Venue
+        // integration"): VenueHost intercepts this in its own routeLobby
+        // BEFORE it ever reaches here (same interception the loadout
+        // station's card-pick uses). An ordinary MatchHost — private room,
+        // combat arena — has nothing to do with a duo-queue toggle, so a
+        // message that somehow reaches this switch (a stray client, a
+        // stale connection) is a harmless no-op, same precedent as hello.
         break;
       case "hello":
         // Hello is implicit on connect; ignore extras.
@@ -1690,6 +1716,11 @@ function snapshotRuntime(runtime: WorldRuntime): WorldRuntime {
   return {
     prevKeys: new Map(runtime.prevKeys),
     movement: new Map(runtime.movement),
+    // Same shallow-clone treatment as `movement` immediately above — new
+    // Map, shared memory-object references. This diagnostic snapshot path
+    // doesn't invoke the NINJA MELEE step, so the same sharing the
+    // `movement` comment already accepts for dash-bash applies here too.
+    melee: new Map(runtime.melee),
     nextEntityId: runtime.nextEntityId,
     map: runtime.map,
     // Cache is immutable for the match lifetime — share the reference;

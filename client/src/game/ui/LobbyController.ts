@@ -18,6 +18,7 @@ import {
 import { prefetchCustomMap } from "../../net/mapClient";
 import { shareInviteLink, onJoinRoomInvite } from "../../shell/crazyGamesSdk";
 import { readStoredCosmetics } from "../cosmetics/vesselCosmeticsStore";
+import { characters } from "../data/characters";
 
 const CUSTOM_MAP_PREFIX = "custom:";
 const CUSTOM_MAP_CODE_RE = /^[A-Z0-9]{6}$/;
@@ -204,6 +205,18 @@ export class LobbyController {
     });
     this.characterSelect.addEventListener("change", () => {
       localStorage.setItem(PLAYER_CHARACTER_KEY, this.characterId);
+    });
+    // Class era P1: the venue loadout station's class row writes the SAME
+    // persisted value this dropdown reads (two views, one selection). The
+    // station announces its writes so an already-constructed dropdown
+    // doesn't go stale within a session (this select initializes from
+    // localStorage only once, in the constructor).
+    window.addEventListener("jakesjam:class-change", (event) => {
+      const characterId = (event as CustomEvent<{ characterId?: string }>).detail
+        ?.characterId;
+      if (characterId && characterId !== this.characterSelect.value) {
+        this.characterSelect.value = characterId;
+      }
     });
     for (const input of this.chaosInputs) {
       input.addEventListener("change", () => this.applyChaosChange());
@@ -879,14 +892,16 @@ function readError(error: unknown): string {
   return "Unexpected lobby error.";
 }
 
+/** Class-era display name (Geometrician/Interstice/Kindred/Syzygist — the
+ *  locked persona names, docs/classes-goal.md § Naming) for a sim-stable
+ *  archetype id — sourced from the one characters.ts truth, never a second
+ *  hand-kept map (docs/classes-goal.md P1). */
 function characterLabel(characterId: CharacterId): string {
-  const labels: Record<CharacterId, string> = {
-    balanced: "Balanced",
-    heavy: "Heavy",
-    sprinter: "Sprinter",
-    shielded: "Shielded",
-  };
-  return labels[characterId] ?? "Balanced";
+  return (
+    characters.find((c) => c.id === characterId)?.name ??
+    characters[0]?.name ??
+    "Geometrician"
+  );
 }
 
 function readStoredChaosModifiers(): ChaosModifierId[] {

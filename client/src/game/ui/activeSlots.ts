@@ -37,9 +37,15 @@ export function activeSlotVitals(
           ? player.veilUntilTick
           : active.kind === "severing-answer"
             ? player.counterUntilTick
-            : active.kind === "shelter-seal"
+            : active.kind === "shelter-seal" || active.kind === "hard-aperture"
               ? player.wardShellUntilTick
-              : undefined;
+              : active.kind === "sunlance"
+                ? player.sunlanceUntilTick
+                : active.kind === "overclock"
+                  ? player.overclockUntilTick
+                  : active.kind === "facet-break"
+                    ? player.facetMarkUntilTick
+                    : undefined;
     let windowFrac = 0;
     if (
       active.durationMs > 0 &&

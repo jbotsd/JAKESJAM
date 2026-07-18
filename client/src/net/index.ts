@@ -38,3 +38,8 @@ export {
 } from "./worldClient.js";
 export { InterpolationBuffer } from "./interpolationBuffer.js";
 export { sanitizePlayerName, stripDisallowedChars } from "./playerName.js";
+export {
+  sanitizeCharacterId,
+  CHARACTER_ARCHETYPE_IDS,
+  DEFAULT_CHARACTER_ID,
+} from "./playerCharacter.js";

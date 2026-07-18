@@ -127,22 +127,24 @@ export class ShellController {
       this.goto("home");
     }) as EventListener);
 
-    // Esc toggles pause while match active; closes layer otherwise.
+    // Esc: close any open layer; if exclusive room is up (or match active
+    // with no layer), route to match-menu handler in main (closes stuck
+    // private-room panel / toggles hangout menu / opens pause).
     const onKey = (ev: KeyboardEvent) => {
       if (ev.key !== "Escape") return;
-      if (this.state.matchMode !== "none") {
-        // Draft/overlays may also listen — only toggle if not typing.
-        const t = ev.target as HTMLElement | null;
-        if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable)) {
-          return;
-        }
-        this.togglePause();
-        ev.preventDefault();
+      const t = ev.target as HTMLElement | null;
+      if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable)) {
         return;
       }
       if (this.state.layer) {
         this.closeLayer();
         ev.preventDefault();
+        return;
+      }
+      if (this.state.matchMode !== "none" || this.state.exclusive === "room") {
+        window.dispatchEvent(new CustomEvent(ShellEvents.MATCH_MENU));
+        ev.preventDefault();
+        return;
       }
     };
     window.addEventListener("keydown", onKey);
@@ -152,8 +154,11 @@ export class ShellController {
   private apply(): void {
     const v = shellVisibility(this.state);
     this.dom.home.hidden = !v.home;
-    // Lobby uses class for historical CSS
+    // Lobby uses class for historical CSS; also set `hidden` so a missed
+    // opacity rule can't leave the private-room panel clickable/visible.
     this.dom.room.classList.toggle("lobby-panel--hidden", !v.room);
+    this.dom.room.hidden = !v.room;
+    this.dom.room.setAttribute("aria-hidden", v.room ? "false" : "true");
     this.dom.settings.hidden = !v.settings;
     this.dom.clips.hidden = !v.clips;
     this.dom.pause.hidden = !v.pause;

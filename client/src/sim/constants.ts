@@ -68,6 +68,54 @@ export const ABILITY_TITHE_LEECH_FRACTION = 0.5;
 export const ABILITY_STEP_RANGE_PX = 240;
 export const ABILITY_COUNTER_RETURN_CAP = 35;
 
+// Geometrician catalog v1 (docs/class-ability-catalogs-v1.md — the wizard's
+// 10-ability class catalog, docs/classes-goal.md "Rotation system"). Each
+// ability is a real, working v1 that reuses six-axes Layer 2 substrate as
+// hard as possible (window buffs on the existing PlayerEntity tick-field
+// pattern, the existing spawnProjectile burst shape, the existing ward
+// shell); doc-spec fidelity gaps (true charge-hold, a persisting lattice
+// plane, parry-hooked refunds) are RECORDED deferrals, same discipline as
+// six-axes Phase 3's Shelter Seal fallback — never silently invented, never
+// stubbed to a no-op. classId-gated to wizard only (round.ts enterDrafting);
+// other chassis see zero catalog-sourced offers until their own catalogs are
+// authored (classes-goal.md P2-P4).
+export const GEO_SUNLANCE_DAMAGE_MULTIPLIER = 1.6;
+export const GEO_FACET_BREAK_AMP_MULTIPLIER = 1.25;
+export const GEO_FACET_BREAK_RANGE_PX = 900;
+/** Half-cone width is half of this — mirrors combat.ts's PARRY_ARC_RADIANS
+ *  convention (full arc constant, halved at the check site). */
+export const GEO_FACET_BREAK_CONE_RADIANS = (60 * Math.PI) / 180;
+export const GEO_PRISM_FAN_COUNT = 5;
+export const GEO_PRISM_FAN_CONE_RADIANS = (50 * Math.PI) / 180;
+export const GEO_PRISM_FAN_DAMAGE_MULTIPLIER = 0.5;
+export const GEO_LATTICE_COUNT = 8;
+export const GEO_LATTICE_DAMAGE_MULTIPLIER = 0.35;
+export const GEO_LATTICE_RANGE_PX = 260;
+export const GEO_RETURN_GLASS_SHIELD_REFUND = 22;
+export const GEO_OVERCLOCK_FIRE_RATE_MULTIPLIER = 1.35;
+export const GEO_OVERCLOCK_SPREAD_MULTIPLIER = 0.7;
+export const GEO_SLIP_NODE_RANGE_PX = 280;
+export const GEO_RECOIL_STEP_HOP_SPEED = 220;
+
+// Resonance (docs/classes-goal.md "Rotation system" — class-overhaul-
+// workboard.md chunk 0.1: "chain unlike abilities for a bonus"). Every
+// successful ability activation (six-axes Layer 2 actives above AND the
+// Geometrician catalog v1 — same `active.kind` switch in World.ts) opens a
+// resonance window naming itself. Casting a DIFFERENT kind while that
+// window is still live consumes it for a bonus; the v1 bonus shape (picked
+// from the three the design doc offers — empowered effect / CD refund /
+// emission rider) is a flat fractional discount off the CONSUMING ability's
+// own freshly-computed cooldown. Chosen because it's the only shape that
+// applies uniformly to all 15 kinds without a bespoke per-case "empowered"
+// branch in each switch arm (would 15x the surface area of this v1) and is
+// trivially assertable in a test (compare the resulting cooldown tick to
+// the un-resonated baseline). Casting the SAME kind again never resonates
+// — "chain UNLIKE abilities" excludes same-ability spam by construction
+// (see World.ts's activation block + resonanceUntilTick's field comment in
+// types.ts for the exact check).
+export const RESONANCE_WINDOW_MS = 2000;
+export const RESONANCE_CD_REFUND_FRACTION = 0.3;
+
 // Mid-round respawn (Jake ruled "A", 2026-07-17, reverting the venue-era
 // bench-until-bell): death costs a short fixed delay, then you're back at
 // a spawn seal — EXCEPT in sudden death, where last-one-standing is the

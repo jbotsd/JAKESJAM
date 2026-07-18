@@ -11,7 +11,7 @@ export type MatchMode = "none" | "practice" | "world" | "private" | "lobby";
 /** Exclusive full-screen places (mutually exclusive). Layers overlay them. */
 export type ExclusivePlace = "home" | "room";
 
-export type ShellLayer = null | "settings" | "clips" | "pause" | "credits";
+export type ShellLayer = null | "settings" | "clips" | "pause" | "credits" | "room";
 
 export type ShellState = {
   exclusive: ExclusivePlace;
@@ -35,6 +35,8 @@ export const ShellEvents = {
   /** Manual "Save clip now" — no multi-kill required. */
   CLIP_SAVE_NOW: "jakesjam:clip-save-now",
   PAUSE_TOGGLE: "jakesjam:pause-toggle",
+  /** Esc/Menu with no layer open while match/hangout active — main routes. */
+  MATCH_MENU: "jakesjam:match-menu",
   REQUEST_LEAVE_MATCH: "jakesjam:request-leave-match",
   START_MATCH: "jakesjam:start-match",
 } as const;

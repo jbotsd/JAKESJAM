@@ -37,6 +37,7 @@ import {
   DASH_RECOVERY_MS,
   PLAYER_BODY_WIDTH,
   PLAYER_BODY_HEIGHT,
+  playerHitboxAABB,
   type PlayerMovementMemory,
 } from "./player.js";
 import { buildFireEntity, stepDestructibles } from "./destructible.js";
@@ -53,6 +54,20 @@ import {
   ABILITY_STEP_RANGE_PX,
   ABILITY_COUNTER_RETURN_CAP,
   RESPAWN_DELAY_MS,
+  GEO_FACET_BREAK_AMP_MULTIPLIER,
+  GEO_FACET_BREAK_RANGE_PX,
+  GEO_FACET_BREAK_CONE_RADIANS,
+  GEO_PRISM_FAN_COUNT,
+  GEO_PRISM_FAN_CONE_RADIANS,
+  GEO_PRISM_FAN_DAMAGE_MULTIPLIER,
+  GEO_LATTICE_COUNT,
+  GEO_LATTICE_DAMAGE_MULTIPLIER,
+  GEO_LATTICE_RANGE_PX,
+  GEO_RETURN_GLASS_SHIELD_REFUND,
+  GEO_SLIP_NODE_RANGE_PX,
+  GEO_RECOIL_STEP_HOP_SPEED,
+  RESONANCE_WINDOW_MS,
+  RESONANCE_CD_REFUND_FRACTION,
 } from "./constants.js";
 import { stepProjectile, spawnProjectile, makeHitSweepScratch, fillHitSweepScratch, type HitSweepScratch } from "./projectile.js";
 import {
@@ -64,6 +79,7 @@ import {
 } from "./data/emission.js";
 import { CowRecord } from "./cowRecord.js";
 import { nextFloat } from "./rng.js";
+import { lutAtan2, lutCos, lutSin } from "./trig.js";
 import {
   despawnSatellitesForDeadOwners,
   spawnMissingSatellites,
@@ -94,6 +110,7 @@ import {
   Tick,
   InputSeq,
 } from "./types.js";
+import { MAX_ABILITY_SLOTS, classIdForArchetype } from "./data/cardTypes.js";
 import { RoundOrchestrator } from "./RoundOrchestrator.js";
 import { wasmHost } from "./wasm/wasmHost.js";
 import { writeFireConfigsForState } from "./wasm/writeFireConfigs.js";
@@ -162,6 +179,10 @@ const FireBit = 1 << 6;
 /** InputBit.Ability — the Emission cast (full charge) with legacy-parry
  *  fall-through below full (see the cast branch in stepWithRuntime). */
 const AbilityBit = 1 << 7;
+/** InputBit.Jump — read here only for the ninja wall-kick energy-grant
+ *  detection (NINJA MELEE section); movement itself reads it inside
+ *  stepPlayer via player.ts's own private `Bit.Jump`. */
+const JumpBit = 1 << 4;
 
 /**
  * Per-tick scratch state the WorldState doesn't carry. The host (server or
@@ -213,7 +234,60 @@ export type WorldRuntime = {
    *  map has no ceiling. Players are clamped below this each tick so a fast
    *  wall-jump into the wall/ceiling corner can't tunnel them ONTO the roof. */
   ceilingClampY: number | null;
+  /** Ninja melee swing FSM + dash-through/energy-grant debounce, per player.
+   *  Host-only "off-wire truth" — same split as `movement`
+   *  (PlayerMovementMemory): swing timing never touches WorldState, its
+   *  wire-visible CONSEQUENCES (health/energy/events) are what reconcile.
+   *  Only ninjas ever get an entry; other classes never touch this map. */
+  melee: Map<PlayerId, NinjaMeleeMemory>;
 };
+
+/** 0 = idle/ready, 1 = windup (readable tell), 2 = active (hit-checked
+ *  every tick), 3 = recovery (endlag — no re-swing). See the NINJA MELEE
+ *  FSM comment above the SLASH_* constants. */
+export type NinjaSlashPhase = 0 | 1 | 2 | 3;
+
+/** Per-player ninja melee memory — the swing FSM's off-wire source of
+ *  truth, plus dash-through per-burst debounce. Never wire-encoded (same
+ *  reasoning as PlayerMovementMemory's dash counters): it's a deterministic
+ *  function of replayed inputs, so client prediction and server authority
+ *  agree without needing to sync the counters themselves — only the
+ *  gameplay-visible consequences (health/energy/wave projectiles/events)
+ *  are wire state and get corrected by ordinary reconciliation. */
+export type NinjaMeleeMemory = {
+  phase: NinjaSlashPhase;
+  /** ms remaining in the current phase; irrelevant when phase === 0. */
+  phaseMs: number;
+  /** Swing direction captured at windup start (unit vector) — reused by
+   *  both the arc hit-check and the wave's launch angle, so a swing you
+   *  started facing one way doesn't "steer" mid-animation. */
+  aimX: number;
+  aimY: number;
+  /** Victim ids already hit by the CURRENT swing's active window — the arc
+   *  is hit-checked every tick while active (a target drifting in mid-
+   *  window still gets hit), but each victim only takes the hit once. */
+  hitThisSwing: Set<PlayerId>;
+  /** Victim ids already dash-through-tagged during the CURRENT dash burst
+   *  — cleared on the burst's rising edge so a body-cross fires once per
+   *  dash per victim, not once per tick of overlap. */
+  dashThroughTagged: Set<PlayerId>;
+  /** Last tick's dashActiveMs > 0, to detect the dash burst's rising edge
+   *  (for clearing dashThroughTagged) without reading movement memory's
+   *  ms-precision timer directly. */
+  wasDashing: boolean;
+};
+
+export function freshNinjaMeleeMemory(): NinjaMeleeMemory {
+  return {
+    phase: 0,
+    phaseMs: 0,
+    aimX: 1,
+    aimY: 0,
+    hitThisSwing: new Set(),
+    dashThroughTagged: new Set(),
+    wasDashing: false,
+  };
+}
 
 /** Half the standing player body height (bodyHeight 56 / 2). Used for the
  *  ceiling clamp; crouching is shorter so clamping to the standing half is a
@@ -231,6 +305,129 @@ const BASH_DAMAGE = 34; // a committed melee hit; bounded by dash cooldown + cha
 const BASH_KNOCKBACK = 660; // px/s shove along the lunge direction
 const BASH_KNOCK_UP = 240; // px/s upward pop so the victim is launched, not just slid
 const BASH_ATTACKER_STOP = 0.22; // attacker keeps this fraction of velocity on impact
+
+// ── NINJA MELEE (2026-07-18) — the dual-blade slash + wave-off-swing verb ──
+// docs/classes-goal.md ninja chassis: "a melee arc that emits a short-range
+// WAVE projectile off the swing... wave is aftermath of contact, not a free
+// cast: spawns from a swing that had commit; short range; inherits swing
+// direction." docs/character-sheets-v1.md tactile ability contract: "commit
+// frames you can feel... contact first... energy from contact."
+//
+// FSM per ninja player (host-only, WorldRuntime.melee — see
+// NinjaMeleeMemory below, same off-wire-truth/wire-mirror split as dash's
+// PlayerMovementMemory): idle(0) --Fire rising edge--> windup(1)
+// --SLASH_WINDUP_MS--> active(2) --SLASH_ACTIVE_MS, arc hit-checked every
+// tick--> recovery(3) [wave spawns on this transition] --SLASH_RECOVERY_MS
+// --> idle(0). Re-trigger only accepted from idle — "gate re-swinging
+// during recovery" (task doctrine) is satisfied by construction (any Fire
+// press while phase != 0 is simply not read as a new swing).
+//
+// Gated on classId === "ninja" (classIdForArchetype(player.characterId))
+// EVERYWHERE below — zero cost, zero behavior change for the other three
+// chassis (see ninjaMeleeGating.test.ts).
+
+/** Melee arc reach (px, centre-to-centre). BASH_RANGE (46) is point-blank
+ *  lance contact; a dual-blade sweep reaches further — ~1.7×, still
+ *  unambiguously melee (compare WAVE_RANGE 260 / Echo Bolt 340). */
+const SLASH_RANGE = 78;
+/** Full cone width in front of the swing's captured aim direction (±50°).
+ *  Wider than PARRY_ARC_RADIANS (60°, a flick) — a sword swing has to be
+ *  more forgiving than a timed parry read — but narrower than the shield's
+ *  120° wall, since this is a directional attack, not an omnidirectional
+ *  guard. 100° = (5π)/9. */
+const SLASH_ARC_RADIANS = (5 * Math.PI) / 9;
+/** A landed arc hit. Lower than BASH_DAMAGE (34) because the swing cadence
+ *  (~2.3/s, see the commit-frame constants below) is far higher than a
+ *  dash-bash's (~0.33/s, gated by DASH_COOLDOWN_MS=3000) — per-hit damage is
+ *  tuned down so sustained arc DPS (~51) lands in the same neighbourhood as
+ *  bash's burst, not multiplies it. */
+const SLASH_DAMAGE = 22;
+/** Gentle shove + pop on a landed arc hit — "hit-stop + scrape... victim
+ *  micro-knock" (character-sheets-v1.md), NOT a heavy bash-style launch. */
+const SLASH_KNOCKBACK = 260;
+const SLASH_KNOCK_UP = 60;
+
+// Commit-frame structure (ms). "Commit frames you can feel" / "no free
+// cast" — recovery IS the re-swing gate; there is no additional ability-
+// style cooldown layered on top (this is the always-on chassis verb, not a
+// card-gated active). Total cycle 430ms (~2.3 swings/sec cap) sits close to
+// dash's own ~410ms burst+recovery rhythm (DASH_DURATION_MS 210 +
+// DASH_RECOVERY_MS 200) — the whole kit reads at one cadence.
+const SLASH_WINDUP_MS = 120; // the readable tell before the arc goes live
+const SLASH_ACTIVE_MS = 90; // hit-checked every tick while true
+const SLASH_RECOVERY_MS = 220; // endlag; whiffing costs
+
+// Wave-off-swing (spawned via the existing spawnProjectile machinery so
+// element/impact card modifiers compose onto it for free later — no
+// bespoke per-category shape, per the emission-engine doctrine). Fires at
+// the active→recovery transition REGARDLESS of whether the arc landed a
+// hit (see the FSM comment above / the ninja-verb report for the doc-
+// ambiguity resolution: "spawns from a swing that had commit" reads as
+// swing-commit-gated, not hit-confirm-gated).
+const WAVE_RANGE = 260; // px — short enough to read as "still in melee"
+const WAVE_SPEED = 780; // px/s
+const WAVE_LIFETIME_MS = Math.round((WAVE_RANGE / WAVE_SPEED) * 1000);
+const WAVE_DAMAGE = 10; // lighter than the arc — the wave is the aftermath
+const WAVE_RADIUS = 10; // a wide blade-wave, not a thin shard (default 7)
+
+// Ninja class resource ("energy, fast regen, melee hits restore" — MANA
+// section, classes-goal.md). v1 is pure plumbing: nothing SPENDS energy
+// yet (no abilities/cards wired this pass — see report's fast-follow
+// scope), only the regen sources the task calls out are implemented.
+const NINJA_ENERGY_MAX = 100; // matches Deep Well's implied base (100→125)
+/** Deliberately modest — "Energy from contact... never stood in stealth
+ *  regen... passive regen while disengaged as the main loop" is an explicit
+ *  FAIL STATE in the tactile contract table, so the passive trickle stays a
+ *  minor top-up, not the primary loop. */
+const NINJA_ENERGY_PASSIVE_REGEN_PER_SEC = 6;
+const NINJA_ENERGY_ON_MELEE_HIT = 10;
+/** Matches Slipstream's (fast-follow card) documented dash-through grant —
+ *  adopted as the CHASSIS BASELINE rather than inventing a separate smaller
+ *  number, since it's the only concrete figure either doc gives. Slipstream
+ *  fast-follow work should confirm whether the card is meant to be additive
+ *  on top of this or just adds the Read tag to what's already baseline. */
+const NINJA_ENERGY_ON_DASH_THROUGH = 15;
+/** Matches Slipstream's documented wall-kick grant — same baseline-adoption
+ *  reasoning as dash-through above. */
+const NINJA_ENERGY_ON_WALL_KICK = 12;
+
+/**
+ * Melee arc hit test — more rigorous than DASH BASH's plain centre-point
+ * distance+angle check (canon: "arc hit detection vs player AABBs"), but
+ * short of a full cone-vs-rectangle intersection: sample the victim's real
+ * crouch-aware hitbox (playerHitboxAABB) at its 4 corners + centre, and hit
+ * if ANY sampled point is within `range` of the origin AND within `halfArc`
+ * of `aimAngle`. Cheap (5 point tests), deterministic, and meaningfully
+ * more forgiving/accurate for a wide body than a single centre check —
+ * a victim whose corner just pokes into the cone is a fair hit.
+ */
+function isBodyInMeleeArc(
+  originX: number,
+  originY: number,
+  aimAngle: number,
+  halfArc: number,
+  range: number,
+  victim: Pick<PlayerEntity, "x" | "y" | "crouching">,
+): boolean {
+  const box = playerHitboxAABB(victim);
+  const points: Array<[number, number]> = [
+    [victim.x, victim.y],
+    [box.x, box.y],
+    [box.x + box.w, box.y],
+    [box.x, box.y + box.h],
+    [box.x + box.w, box.y + box.h],
+  ];
+  for (const [px, py] of points) {
+    const dx = px - originX;
+    const dy = py - originY;
+    const dist = Math.hypot(dx, dy);
+    if (dist > range || dist < 1e-3) continue;
+    let da = Math.atan2(dy, dx) - aimAngle;
+    da = Math.atan2(Math.sin(da), Math.cos(da)); // normalize to [-π, π]
+    if (Math.abs(da) <= halfArc) return true;
+  }
+  return false;
+}
 
 /** Underside of the map's ceiling (a wide solid wall whose top sits at the map
  *  top). null when there's no such platform (open-top map). */
@@ -251,6 +448,7 @@ export function createRuntime(map: MapDefinition, mode: WorldMode = "combat"): W
   const runtime: WorldRuntime = {
     prevKeys: new Map(),
     movement: new Map(),
+    melee: new Map(),
     nextEntityId: 1,
     map,
     mode,
@@ -535,6 +733,16 @@ export function stepWithRuntime(
   // anyway, so a CoW would save nothing.
   let nextSatellites: WorldState["satellites"] = { ...(state.satellites ?? {}) };
 
+  // NINJA MELEE trigger capture (see the "1z2. NINJA MELEE" section below,
+  // right after DASH BASH): the Fire rising-edge has to be read HERE, in
+  // the same loop that still has the pre-overwrite `prevKeys` in scope —
+  // by loop 2 `runtime.prevKeys` already holds THIS tick's value. The FSM
+  // itself (phase countdown/transitions/hit-check) runs entirely in loop 2
+  // since it needs every player's finalized post-movement position; this
+  // map only carries "did a ninja just press Fire this tick, and what was
+  // their aim" across that gap. Cleared implicitly each tick (fresh Map).
+  const ninjaSlashEdges = new Map<PlayerId, { aimX: number; aimY: number }>();
+
   for (const [pid_, entity] of Object.entries(state.players)) {
     const pid = pid_ as PlayerId;
     const input = inputsByPlayer[pid] ?? null;
@@ -542,6 +750,7 @@ export function stepWithRuntime(
     const currKeys = input ? input.keys : 0;
     const aimX = input?.aimX ?? entity.aimX;
     const aimY = input?.aimY ?? entity.aimY;
+    const classId = classIdForArchetype(entity.characterId);
 
     let mem = runtime.movement.get(pid);
     if (!mem) {
@@ -576,6 +785,17 @@ export function stepWithRuntime(
       // Card augments: move-speed + gravity (glide/heavy) ride the existing
       // step multipliers, so they cross into the Zig player step for free.
       const speedMul = slowMul * freezeMul * firstBloodMul * build.moveSpeedMultiplier;
+      // Captured BEFORE stepPlayer mutates movement memory — the ninja
+      // wall-kick energy grant (below) needs the PRE-step wall-contact
+      // state to detect "a wall-jump just happened", the same signal
+      // player.ts's own (Zig-mirrored) wall-jump branch reads internally.
+      // Deliberately backend-agnostic: this reads stepPlayer's INPUT and
+      // OUTPUT only, never its internals, so it works identically whether
+      // stepPlayer dispatches to the TS-native path or the wasm physics
+      // backend (which defaults on for live matches) — a callback hook
+      // into stepPlayerNative would silently never fire under wasm.
+      const wallDirBeforeStep = mem.touchingWallDir;
+      const groundedBeforeStep = mem.groundedLastFrame;
       const moveResult = stepPlayer(
         entity,
         prevKeys,
@@ -608,6 +828,28 @@ export function stepWithRuntime(
         build.dashCharges,
         build.dashCooldownMultiplier,
       );
+
+      // Ninja wall-kick energy grant ("wall-kick restore energy" —
+      // character-sheets-v1.md tactile contract table). Heuristic, not a
+      // hook into player.ts's own wall-jump branch (see the comment above
+      // wallDirBeforeStep): a Jump rising-edge while airborne and touching
+      // a wall last tick. Known v1 approximation — doesn't exclude the
+      // rare case where the press diverts to a double-jump instead (facing
+      // away from the wall with an air-jump charge available); flagged in
+      // the ninja-verb report, not gated further to keep this TS-only and
+      // Zig-parity-free.
+      if (classId === "ninja") {
+        const jumpEdge = (currKeys & JumpBit) !== 0 && (prevKeys & JumpBit) === 0;
+        if (jumpEdge && wallDirBeforeStep !== 0 && !groundedBeforeStep) {
+          nextEntity = {
+            ...nextEntity,
+            energy: Math.min(
+              NINJA_ENERGY_MAX,
+              (nextEntity.energy ?? 0) + NINJA_ENERGY_ON_WALL_KICK,
+            ),
+          };
+        }
+      }
     }
 
     // Fire (only when alive and fighting). Hangout mode: single choke
@@ -623,7 +865,29 @@ export function stepWithRuntime(
     // sites instead: projectiles get zero player candidates (hit sweep),
     // dash-bash/destructible-splash/fire-patch player damage are gated, and
     // the storm was already hangout-gated. Destructibles remain hittable.
-    if (nextEntity.alive && fightingPhase) {
+    //
+    // Ninja: Fire is the SAME "primary attack" input as every other class,
+    // but the chassis verb is a melee arc, not stepWeapon's ranged shot —
+    // this branch captures the rising edge for loop 2's FSM instead of
+    // ever calling stepWeapon. Zero behavior change for non-ninja classes
+    // (they take the untouched branch below exactly as before).
+    if (classId === "ninja" && nextEntity.alive && fightingPhase) {
+      const slashEdge = (currKeys & FireBit) !== 0 && (prevKeys & FireBit) === 0;
+      if (slashEdge) {
+        ninjaSlashEdges.set(pid, { aimX, aimY });
+      }
+      // Passive energy regen ("fast regen" — classes-goal.md MANA section).
+      // Deliberately the only source that ISN'T contact-gated; kept small
+      // (see NINJA_ENERGY_PASSIVE_REGEN_PER_SEC) so it stays a top-up, not
+      // the loop (character-sheets-v1.md's explicit fail-state warning).
+      nextEntity = {
+        ...nextEntity,
+        energy: Math.min(
+          NINJA_ENERGY_MAX,
+          (nextEntity.energy ?? 0) + NINJA_ENERGY_PASSIVE_REGEN_PER_SEC * (effDtMs / 1000),
+        ),
+      };
+    } else if (nextEntity.alive && fightingPhase) {
       const fireResult = stepWeapon(
         nextEntity,
         (currKeys & FireBit) !== 0,
@@ -783,12 +1047,14 @@ export function stepWithRuntime(
       });
     }
 
-    // Drafted actives (six-axes-goal.md Layer 2): input bits 10..13 press
-    // action-bar slots 1..4 in pick order. Rising-edge + alive + fighting +
-    // !hangout + cooldown expired → activate. Effects are ordinary buff
-    // ticks / entities; the cooldown lives on the entity (hash-mixed,
-    // delta-synced) so prediction and authority agree.
-    for (let slot = 0; slot < build.actives.length && slot < 4; slot++) {
+    // Drafted actives (six-axes-goal.md Layer 2): input bits 10..12 press
+    // action-bar slots 1..3 in pick order (docs/classes-goal.md "Rotation
+    // system" — rack is exactly 3 slots, bit 13 / a 4th slot is unused).
+    // Rising-edge + alive + fighting + !hangout + cooldown expired →
+    // activate. Effects are ordinary buff ticks / entities; the cooldown
+    // lives on the entity (hash-mixed, delta-synced) so prediction and
+    // authority agree.
+    for (let slot = 0; slot < build.actives.length && slot < MAX_ABILITY_SLOTS; slot++) {
       const slotBit = 1 << (10 + slot);
       const slotEdge =
         (currKeys & slotBit) !== 0 && (prevKeys & slotBit) === 0;
@@ -894,11 +1160,272 @@ export function stepWithRuntime(
           activated = true;
           break;
         }
+        // ── Geometrician catalog v1 (docs/class-ability-catalogs-v1.md) ────
+        // classId-gated to wizard at the offer roll (round.ts). Every case
+        // below reuses six-axes substrate as hard as possible; doc-fidelity
+        // gaps are recorded in the comment + cards.ts description, never
+        // silent (constants.ts GEO_* header note).
+        case "sunlance": {
+          // v1 = a burst window, not the doc's true charge-hold: fired shots
+          // deal GEO_SUNLANCE_DAMAGE_MULTIPLIER while live (weapon.ts stamps
+          // it — the exact Crimson Tithe pattern).
+          const durTicks = Math.ceil(active.durationMs / Math.max(1, dtMs));
+          nextEntity = {
+            ...nextEntity,
+            sunlanceUntilTick: (state.tick + 1 + durTicks) as Tick,
+          };
+          activated = true;
+          break;
+        }
+        case "facet-break": {
+          // Mark lives on the CASTER (facetTargetId/facetMarkUntilTick),
+          // never the victim — a cross-player write here would be lost the
+          // moment that victim's own turn in THIS per-player loop runs
+          // (players[pid] = nextEntity only commits at the end of each
+          // iteration, and victims processed later this tick haven't run
+          // yet). state.players is the stable pre-tick read source for the
+          // scan, matching every other read of "other players" this tick.
+          const dx0 = aimX - nextEntity.x;
+          const dy0 = aimY - nextEntity.y;
+          const aimAngle = lutAtan2(dy0, dx0);
+          let bestId: PlayerId | null = null;
+          let bestDist = Infinity;
+          for (const [otherId, other] of Object.entries(state.players)) {
+            if ((otherId as PlayerId) === pid || !other.alive) continue;
+            const ddx = other.x - nextEntity.x;
+            const ddy = other.y - nextEntity.y;
+            const dist = Math.hypot(ddx, ddy);
+            if (dist > GEO_FACET_BREAK_RANGE_PX || dist < 1e-3) continue;
+            let da = lutAtan2(ddy, ddx) - aimAngle;
+            da = Math.atan2(Math.sin(da), Math.cos(da));
+            if (Math.abs(da) > GEO_FACET_BREAK_CONE_RADIANS / 2) continue;
+            if (dist < bestDist) {
+              bestDist = dist;
+              bestId = otherId as PlayerId;
+            }
+          }
+          if (bestId !== null) {
+            const durTicks = Math.ceil(active.durationMs / Math.max(1, dtMs));
+            nextEntity = {
+              ...nextEntity,
+              facetTargetId: bestId,
+              facetMarkUntilTick: (state.tick + 1 + durTicks) as Tick,
+            };
+            activated = true;
+          }
+          // No target in the cone: a press that does nothing is a dead press
+          // (legibility law — shadow-step's "fully-blocked blink" precedent)
+          // — no cooldown burn, checked via `activated` below.
+          break;
+        }
+        case "prism-fan": {
+          // Instant cone burst — the emission cast's radial-fan shape, just
+          // aimed at the cursor instead of 360°. Reuses the resolved build's
+          // own projectile identity so the burst always matches the current
+          // loadout (element, shape, speed).
+          const dx0 = aimX - nextEntity.x;
+          const dy0 = aimY - nextEntity.y;
+          const baseAngle = lutAtan2(dy0, dx0);
+          for (let i = 0; i < GEO_PRISM_FAN_COUNT; i++) {
+            // GEO_PRISM_FAN_COUNT is a fixed constant > 1 (see constants.ts);
+            // no single-shot special case needed, unlike weapon.ts's
+            // variable projectileCount.
+            const offset =
+              -GEO_PRISM_FAN_CONE_RADIANS / 2 +
+              (GEO_PRISM_FAN_CONE_RADIANS * i) / (GEO_PRISM_FAN_COUNT - 1);
+            const shard = spawnProjectile(allocId(), {
+              ownerId: pid,
+              origin: { x: nextEntity.x, y: nextEntity.y - 20 },
+              aimAngle: baseAngle + offset,
+              speed: build.projectileSpeed * build.projectile.speedMultiplier,
+              damage: build.damage * GEO_PRISM_FAN_DAMAGE_MULTIPLIER,
+              lifetimeMs: Math.max(50, build.projectileLifetimeSeconds * 1000),
+              radius: Math.max(2, 7 * build.projectile.sizeMultiplier),
+              shape: build.projectile.shape,
+              pathing: "straight",
+              element: build.projectile.element,
+            });
+            projectilesCow.set(shard.id, shard);
+          }
+          activated = true;
+          break;
+        }
+        case "lattice": {
+          // v1 = an instant 360° nova, not the doc's persisting damaging
+          // plane (recorded upgrade — needs a new entity kind + wire
+          // surface, same shape of deferral as Shelter Seal's placed-ward
+          // fallback above). Self-centered, short range, so it reads as
+          // distinct from Prism Fan's aimed cone.
+          for (let i = 0; i < GEO_LATTICE_COUNT; i++) {
+            const angle = (i / GEO_LATTICE_COUNT) * 2 * Math.PI;
+            const shard = spawnProjectile(allocId(), {
+              ownerId: pid,
+              origin: { x: nextEntity.x, y: nextEntity.y - 20 },
+              aimAngle: angle,
+              speed: build.projectileSpeed * build.projectile.speedMultiplier * 0.7,
+              damage: build.damage * GEO_LATTICE_DAMAGE_MULTIPLIER,
+              lifetimeMs: Math.max(
+                50,
+                (GEO_LATTICE_RANGE_PX /
+                  Math.max(1, build.projectileSpeed * build.projectile.speedMultiplier * 0.7)) *
+                  1000,
+              ),
+              radius: Math.max(2, 7 * build.projectile.sizeMultiplier),
+              shape: build.projectile.shape,
+              pathing: "straight",
+              element: build.projectile.element,
+            });
+            projectilesCow.set(shard.id, shard);
+          }
+          activated = true;
+          break;
+        }
+        case "return-glass": {
+          // v1 = an instant self-shield-charge tick, not gated behind a live
+          // parry (recorded upgrade: hooking the parry-deflected event site
+          // is a deeper change than this pass's risk budget — see
+          // constants.ts GEO_* header). Capped at the build's own max charge
+          // so this never exceeds what a full shield bar would hold.
+          const maxCharge = SHIELD_MAX_CHARGE_DEFAULT * build.shieldChargeMultiplier;
+          nextEntity = {
+            ...nextEntity,
+            shieldCharge: Math.min(
+              maxCharge,
+              (nextEntity.shieldCharge ?? 0) + GEO_RETURN_GLASS_SHIELD_REFUND,
+            ),
+          };
+          activated = true;
+          break;
+        }
+        case "hard-aperture": {
+          // v1 reuses the exact ward-shell mechanic Shelter Seal/the Ward
+          // axis already ship (×0.5 incoming damage while live) — a shorter
+          // window, a different cooldown/cost shape on the catalog. The
+          // doc's "breaks if you fire" + "move slow while aiming" nuances
+          // are a deferred v2 (would need a live continuous-input read this
+          // press-based activation doesn't have).
+          const durTicks = Math.ceil(active.durationMs / Math.max(1, dtMs));
+          nextEntity = {
+            ...nextEntity,
+            wardShellUntilTick: (state.tick + 1 + durTicks) as Tick,
+          };
+          activated = true;
+          break;
+        }
+        case "overclock": {
+          const durTicks = Math.ceil(active.durationMs / Math.max(1, dtMs));
+          nextEntity = {
+            ...nextEntity,
+            overclockUntilTick: (state.tick + 1 + durTicks) as Tick,
+          };
+          activated = true;
+          break;
+        }
+        case "measure": {
+          // v1 = banks one guaranteed free shot (ammo+1, capped at magazine
+          // size) — the closest existing analog to "refunds mana" (no mana
+          // resource exists yet, classes-goal.md future work). The doc's
+          // aim-assist "true line" VFX is a render-only follow-up; the
+          // generic ability-activated event already gives spectators a read.
+          nextEntity = {
+            ...nextEntity,
+            ammo: Math.min(build.magazineSize, nextEntity.ammo + 1),
+          };
+          activated = true;
+          break;
+        }
+        case "slip-node": {
+          // Same farthest-collision-free-landing search as shadow-step
+          // (kept as its own small loop rather than a shared helper, so
+          // tuning one never silently retunes the other), with its own
+          // range/cooldown. The doc's "leaves a fading node enemies can
+          // read" is satisfied today by the generic ability-activated event
+          // (carries x/y) — a bespoke lingering marker entity is a v2.
+          const dx0 = aimX - nextEntity.x;
+          const dy0 = aimY - nextEntity.y;
+          const dLen = Math.sqrt(dx0 * dx0 + dy0 * dy0);
+          const dirX = dLen > 0.001 ? dx0 / dLen : 1;
+          const dirY = dLen > 0.001 ? dy0 / dLen : 0;
+          for (let d = GEO_SLIP_NODE_RANGE_PX; d >= 24; d -= 12) {
+            const cx = nextEntity.x + dirX * d;
+            const cy = nextEntity.y + dirY * d;
+            if (
+              cx < PLAYER_BODY_WIDTH / 2 ||
+              cx > runtime.map.size.x - PLAYER_BODY_WIDTH / 2 ||
+              cy < PLAYER_BODY_HEIGHT / 2 ||
+              cy > runtime.map.size.y - PLAYER_BODY_HEIGHT / 2
+            ) {
+              continue;
+            }
+            const box = centerToAABB(cx, cy, PLAYER_BODY_WIDTH, PLAYER_BODY_HEIGHT);
+            let blocked = false;
+            for (const plat of runtime.map.platforms) {
+              if (aabbOverlap(box, platformToAABB(plat))) {
+                blocked = true;
+                break;
+              }
+            }
+            if (!blocked) {
+              nextEntity = { ...nextEntity, x: cx, y: cy };
+              activated = true;
+              break;
+            }
+          }
+          break;
+        }
+        case "recoil-step": {
+          // Instant hop opposite the aim direction. The doc's "next shot
+          // gets knock-self reduction" nuance is a deferred v2 (would need
+          // its own weapon.ts window field — left out to keep this pass's
+          // new-field count lean).
+          const dx0 = aimX - nextEntity.x;
+          const dy0 = aimY - nextEntity.y;
+          const hopAngle = lutAtan2(dy0, dx0) + Math.PI;
+          nextEntity = {
+            ...nextEntity,
+            vx: nextEntity.vx + lutCos(hopAngle) * GEO_RECOIL_STEP_HOP_SPEED,
+            vy: nextEntity.vy + lutSin(hopAngle) * GEO_RECOIL_STEP_HOP_SPEED * 0.6,
+          };
+          activated = true;
+          break;
+        }
       }
       if (!activated) continue;
 
+      // Resonance (class-overhaul-workboard.md chunk 0.1, docs/classes-
+      // goal.md "Rotation system" — "chain unlike abilities for a bonus").
+      // Class-agnostic by construction: this reads/writes generic
+      // `active.kind`/resonance* fields, never branches on classId or a
+      // specific kind. A DIFFERENT kind cast while the previous cast's
+      // window is still open (resonanceUntilTick > tick) consumes it for
+      // the v1 bonus (RESONANCE_CD_REFUND_FRACTION off THIS cast's own
+      // cooldown, see constants.ts for why this shape was picked over an
+      // empowered-effect or emission-rider shape). The SAME kind cast
+      // twice never resonates — resonanceSourceKind === active.kind fails
+      // the inequality, which is the entire enforcement of "chain UNLIKE
+      // abilities" (no separate same-ability guard needed).
+      const resonated =
+        nextEntity.resonanceUntilTick !== undefined &&
+        nextEntity.resonanceUntilTick > state.tick &&
+        nextEntity.resonanceSourceKind !== undefined &&
+        nextEntity.resonanceSourceKind !== active.kind;
+      const priorResonanceSourceKind = nextEntity.resonanceSourceKind;
+
       const cdTicks = Math.ceil(active.cooldownMs / Math.max(1, dtMs));
-      const cdTick = (state.tick + 1 + cdTicks) as Tick;
+      const effectiveCdTicks = resonated
+        ? Math.max(0, Math.round(cdTicks * (1 - RESONANCE_CD_REFUND_FRACTION)))
+        : cdTicks;
+      const cdTick = (state.tick + 1 + effectiveCdTicks) as Tick;
+      const resonanceWindowTicks = Math.ceil(RESONANCE_WINDOW_MS / Math.max(1, dtMs));
+      nextEntity = {
+        ...nextEntity,
+        // Every activation (resonated or not) opens/refreshes ITS OWN
+        // window, naming itself as the new source — the next different
+        // cast chains off THIS one, not off whatever opened the window
+        // that just got consumed.
+        resonanceUntilTick: (state.tick + 1 + resonanceWindowTicks) as Tick,
+        resonanceSourceKind: active.kind,
+      };
       nextEntity =
         slot === 0
           ? { ...nextEntity, slot1CooldownUntilTick: cdTick }
@@ -915,6 +1442,16 @@ export function stepWithRuntime(
         x: nextEntity.x,
         y: nextEntity.y,
       });
+      if (resonated && priorResonanceSourceKind !== undefined) {
+        events.push({
+          t: "resonance-triggered",
+          playerId: pid,
+          sourceKind: priorResonanceSourceKind,
+          kind: active.kind,
+          x: nextEntity.x,
+          y: nextEntity.y,
+        });
+      }
     }
 
     // Parry + shield. Both run regardless of round phase so the shield can
@@ -960,12 +1497,23 @@ export function stepWithRuntime(
   //     Hangout carve-out (venue-sprint2-goal S2.C): players are IMMUNE in
   //     hangout mode — firing is live for the lobby's target dummies, but no
   //     player-vs-player damage path may run.
+  //     Ninja EXCLUDED (2026-07-18): a ninja's dash-collision is its own
+  //     distinct signature mechanic — dash-through, a light body-cross that
+  //     tags + feeds energy (docs/classes-goal.md: "not a fog"), NOT the
+  //     heavy ram/knockback this block deals. Without this exclusion,
+  //     DASH BASH's point-blank BASH_RANGE (46px) always fires FIRST and
+  //     ends the dash (aMem.dashActiveMs=0) before the NINJA MELEE section
+  //     below ever observes `attacker.dashing === true` — body-cross AABB
+  //     overlap only happens well inside BASH_RANGE (~26px, bodyWidth), so
+  //     the race was unconditional, not an edge case. Other classes keep
+  //     today's unchanged behavior.
   if (fightingPhase && !hangoutMode) {
     const bashTick = Tick(state.tick + 1);
     const bashIds = sortedPlayerIdsForTick;
     for (const aid of bashIds) {
       const attacker = players[aid]!;
       if (!attacker.alive || attacker.dashing !== true) continue;
+      if (classIdForArchetype(attacker.characterId) === "ninja") continue;
       const speed = Math.hypot(attacker.vx, attacker.vy);
       if (speed < 1) continue;
       const ux = attacker.vx / speed;
@@ -994,13 +1542,20 @@ export function stepWithRuntime(
           directionalShield: victimBuild.directionalShield,
           parryCoverMultiplier: victimBuild.parryCoverMultiplier,
         });
-        let post = {
-          ...mit.player,
-          vx: ux * BASH_KNOCKBACK,
-          vy: uy * BASH_KNOCKBACK - BASH_KNOCK_UP,
-        };
+        // Ninja evasion (dash i-frames): "wasn't there" — no damage, no
+        // knockback, no event. The bash still costs the ATTACKER their
+        // dash (below); only the victim-side effects are suppressed.
+        let post = mit.evaded
+          ? mit.player
+          : {
+              ...mit.player,
+              vx: ux * BASH_KNOCKBACK,
+              vy: uy * BASH_KNOCKBACK - BASH_KNOCK_UP,
+            };
         const blocked = mit.shielded || mit.deflected;
-        if (!blocked) {
+        if (mit.evaded) {
+          // no-op: victim phased through, nothing to apply or announce.
+        } else if (!blocked) {
           const newHealth = Math.max(0, post.health - mit.damage);
           const wasAlive = post.alive;
           post = { ...post, health: newHealth, alive: newHealth > 0 };
@@ -1054,6 +1609,188 @@ export function stepWithRuntime(
         // correctly on the very next tick.
         players[aid] = aMem ? mirrorMovementMemoryOntoEntity(stopped, aMem) : stopped;
         break; // one bash per dash
+      }
+    }
+  }
+
+  // 1z2. NINJA MELEE — the dual-blade slash + wave-off-swing verb, and
+  //      dash-through body-cross. Runs right after DASH BASH so it shares
+  //      the same finalized post-movement positions/`dashing` state and the
+  //      same sorted-id determinism. Gated on classId === "ninja" at the
+  //      very top of the per-attacker loop — zero cost, zero behavior
+  //      change for the other three chassis (see ninjaMeleeGating.test.ts).
+  //      Hangout carve-out identical to DASH BASH's: no player-vs-player
+  //      damage path runs there, but the FSM itself (phase/energy) still
+  //      advances so a ninja's swing doesn't get stuck mid-animation when
+  //      a match transitions into hangout.
+  if (fightingPhase) {
+    const meleeTick = Tick(state.tick + 1);
+    const meleeIds = sortedPlayerIdsForTick;
+    for (const aid of meleeIds) {
+      const attacker = players[aid]!;
+      if (classIdForArchetype(attacker.characterId) !== "ninja") continue;
+      if (!attacker.alive) continue;
+
+      let mem = runtime.melee.get(aid);
+      if (!mem) {
+        mem = freshNinjaMeleeMemory();
+        runtime.melee.set(aid, mem);
+      }
+
+      // ---- Dash-through body-cross (independent of the swing FSM) ----
+      // "Dash-through is a body-cross (hitbox intersection), not a fog."
+      // v1 scope: detect + energy grant only — the Read tag / +20% melee
+      // bonus that CONSUMES this event is Slipstream (a card, fast-follow).
+      const dashingNow = attacker.dashing === true;
+      if (dashingNow && !mem.wasDashing) {
+        mem.dashThroughTagged.clear(); // new dash burst — fresh tags
+      }
+      if (dashingNow && !hangoutMode) {
+        const attackerAABB = playerHitboxAABB(attacker);
+        for (const vid of meleeIds) {
+          if (vid === aid) continue;
+          const victim = players[vid]!;
+          if (!victim.alive || mem.dashThroughTagged.has(vid)) continue;
+          if (!aabbOverlap(attackerAABB, playerHitboxAABB(victim))) continue;
+          mem.dashThroughTagged.add(vid);
+          players[aid] = {
+            ...players[aid]!,
+            energy: Math.min(
+              NINJA_ENERGY_MAX,
+              (players[aid]!.energy ?? 0) + NINJA_ENERGY_ON_DASH_THROUGH,
+            ),
+          };
+          events.push({ t: "dash-through", attackerId: aid, victimId: vid });
+        }
+      }
+      mem.wasDashing = dashingNow;
+
+      // ---- Swing FSM ----
+      const wasActive = mem.phase === 2;
+      let waveShouldSpawn = false;
+      if (mem.phase === 0) {
+        const edge = ninjaSlashEdges.get(aid);
+        if (edge) {
+          const len = Math.hypot(edge.aimX - attacker.x, edge.aimY - attacker.y);
+          mem.phase = 1;
+          mem.phaseMs = SLASH_WINDUP_MS;
+          // aimX/aimY on the input are an absolute cursor point, not a unit
+          // vector — capture the normalized swing DIRECTION from attacker
+          // toward that point (falls back to facing +X if the cursor is
+          // exactly on the player, e.g. a controller with no stick push).
+          mem.aimX = len > 1e-3 ? (edge.aimX - attacker.x) / len : 1;
+          mem.aimY = len > 1e-3 ? (edge.aimY - attacker.y) / len : 0;
+          mem.hitThisSwing.clear();
+          events.push({ t: "slash-started", playerId: aid, x: attacker.x, y: attacker.y });
+        }
+      } else {
+        mem.phaseMs -= effDtMs;
+        if (mem.phaseMs <= 0) {
+          if (mem.phase === 1) {
+            mem.phase = 2;
+            mem.phaseMs = SLASH_ACTIVE_MS;
+          } else if (mem.phase === 2) {
+            mem.phase = 3;
+            mem.phaseMs = SLASH_RECOVERY_MS;
+            waveShouldSpawn = true;
+          } else if (mem.phase === 3) {
+            mem.phase = 0;
+            mem.phaseMs = 0;
+          }
+        }
+      }
+      const isActiveNow = mem.phase === 2;
+
+      // ---- Arc hit-check (every active tick, all victims in the cone —
+      //      not "first hit only" like bash) ----
+      if ((wasActive || isActiveNow) && !hangoutMode) {
+        const aimAngle = Math.atan2(mem.aimY, mem.aimX);
+        for (const vid of meleeIds) {
+          if (vid === aid) continue;
+          const victim = players[vid]!;
+          if (!victim.alive || mem.hitThisSwing.has(vid)) continue;
+          if (!isBodyInMeleeArc(attacker.x, attacker.y, aimAngle, SLASH_ARC_RADIANS / 2, SLASH_RANGE, victim)) {
+            continue;
+          }
+          mem.hitThisSwing.add(vid);
+
+          const victimBuild = resolvePlayerBuild(victim);
+          const mit = tryDeflectDamage(victim, null, SLASH_DAMAGE, meleeTick, {
+            mirrorShield: victimBuild.mirrorShield,
+            directionalShield: victimBuild.directionalShield,
+            parryCoverMultiplier: victimBuild.parryCoverMultiplier,
+          });
+          let post = mit.evaded
+            ? mit.player
+            : {
+                ...mit.player,
+                vx: mem.aimX * SLASH_KNOCKBACK,
+                vy: mem.aimY * SLASH_KNOCKBACK - SLASH_KNOCK_UP,
+              };
+          const blocked = mit.shielded || mit.deflected;
+          if (mit.evaded) {
+            // no-op: victim phased through.
+          } else if (!blocked) {
+            const newHealth = Math.max(0, post.health - mit.damage);
+            const wasAlive = post.alive;
+            post = { ...post, health: newHealth, alive: newHealth > 0 };
+            events.push({ t: "slash-hit", attackerId: aid, victimId: vid, damage: mit.damage });
+            events.push({
+              t: "hit-confirmed",
+              victimId: vid,
+              damage: mit.damage,
+              sourceProjectileId: null,
+              attackerId: aid,
+            });
+            if (wasAlive && newHealth === 0) {
+              events.push({ t: "player-killed", victimId: vid, killerId: aid, cause: "bash" });
+            }
+            // Energy from contact — the attacker's own landed hit restores
+            // the rack ("aggression feeds the rack").
+            players[aid] = {
+              ...players[aid]!,
+              energy: Math.min(
+                NINJA_ENERGY_MAX,
+                (players[aid]!.energy ?? 0) + NINJA_ENERGY_ON_MELEE_HIT,
+              ),
+            };
+          } else {
+            events.push({ t: "parry-deflected", playerId: vid, projectileId: null });
+            if (mit.shielded && mit.shieldPopped) {
+              events.push({
+                t: "shield-popped",
+                playerId: vid,
+                remainingCharge: post.shieldCharge ?? 0,
+              });
+            }
+          }
+          players[vid] = post;
+        }
+      }
+
+      // ---- Wave-off-swing ----
+      // "Wave is aftermath of contact, not a free cast: spawns from a swing
+      // that had commit." Fires at the active→recovery transition
+      // REGARDLESS of whether the arc landed a hit — the aftermath is the
+      // swing's own contact with the air, not contact with a body (see the
+      // ninja-verb report for the full doc-ambiguity resolution). Reuses
+      // the ordinary projectile machinery so element/impact card modifiers
+      // compose onto it for free later (fast-follow) — no bespoke shape.
+      if (waveShouldSpawn) {
+        const liveAttacker = players[aid]!;
+        const wave = spawnProjectile(allocId(), {
+          ownerId: aid,
+          origin: { x: liveAttacker.x, y: liveAttacker.y - 20 },
+          aimAngle: Math.atan2(mem.aimY, mem.aimX),
+          speed: WAVE_SPEED,
+          damage: WAVE_DAMAGE,
+          lifetimeMs: WAVE_LIFETIME_MS,
+          radius: WAVE_RADIUS,
+          element: "crystal",
+        });
+        wave.rangePx = WAVE_RANGE;
+        projectilesCow.set(wave.id, wave);
+        events.push({ t: "wave-spawned", playerId: aid, projectileId: wave.id, x: wave.x, y: wave.y });
       }
     }
   }
@@ -1396,6 +2133,14 @@ export function stepWithRuntime(
             },
           );
           let postPlayer = mitigation.player;
+          if (mitigation.evaded) {
+            // Ninja dash i-frames: "wasn't there" — zero damage, no event,
+            // no reflect (evasion is not a counter). The projectile is
+            // still consumed by this hit resolution (v1 simplification —
+            // it doesn't visually pass through the dodging body).
+            players[ev.victimId] = postPlayer;
+            continue;
+          }
           if (mitigation.deflected) {
             // Parry: zero damage; tell the caller (and downstream listeners)
             // by emitting a parry-deflected event. Damage event is suppressed.
@@ -1467,6 +2212,20 @@ export function stepWithRuntime(
               (postPlayer.vulnerabilityUntilTick !== undefined &&
                 postPlayer.vulnerabilityUntilTick > nextTick);
             if (hasStatus) finalDamage *= 1.4;
+          }
+          // Facet Break (Geometrician catalog v1, single role): a hit from
+          // the marking player on their still-marked target is amplified.
+          // Additive/composable, same post-mitigation site as the Radiant
+          // status-amp just above — default-inert (facetTargetId is
+          // undefined on every hand that never drafted the card, so this is
+          // a true no-op for every existing test/build).
+          const attackerEntity = proj.ownerId !== null ? players[proj.ownerId] : undefined;
+          if (
+            attackerEntity?.facetTargetId === ev.victimId &&
+            attackerEntity.facetMarkUntilTick !== undefined &&
+            attackerEntity.facetMarkUntilTick > nextTick
+          ) {
+            finalDamage *= GEO_FACET_BREAK_AMP_MULTIPLIER;
           }
           // Void's HELD-SHIELD pierce already happened above (voidPiercing
           // short-circuits tryDeflectDamage's shield step entirely — a void

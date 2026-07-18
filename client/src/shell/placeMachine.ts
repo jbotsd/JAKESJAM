@@ -16,7 +16,15 @@ export function shellGoto(state: ShellState, place: PlaceId): ShellState {
     return { exclusive: "home", layer: null, matchMode: "none" };
   }
   if (place === "room") {
-    if (state.matchMode !== "none") return state;
+    // Pre-join: exclusive private-room place. In-match / hangout: toggle
+    // room as an overlay layer so Menu/Esc can open+close it without
+    // leaving the walkable hangout (Jake 2026-07-17).
+    if (state.matchMode !== "none") {
+      return {
+        ...state,
+        layer: state.layer === "room" ? null : "room",
+      };
+    }
     return { exclusive: "room", layer: null, matchMode: "none" };
   }
   if (place === "settings") {
@@ -70,7 +78,9 @@ export function shellVisibility(state: ShellState): ShellVisibility {
   return {
     matchActive,
     home: !matchActive && state.exclusive === "home",
-    room: !matchActive && state.exclusive === "room",
+    // Exclusive room (pre-join) OR room layer overlay (in hangout / match).
+    room:
+      (!matchActive && state.exclusive === "room") || state.layer === "room",
     settings: state.layer === "settings",
     clips: state.layer === "clips",
     pause: state.layer === "pause" && matchActive,

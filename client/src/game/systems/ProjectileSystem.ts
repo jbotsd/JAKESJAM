@@ -840,6 +840,7 @@ function projectileToBuild(projectile: ActiveProjectile): ResolvedWeaponBuild {
     airJumps: 0,
     dashCharges: 0,
     dashCooldownMultiplier: 1,
+    leechFraction: 0,
     cards: [],
     occupiedBuckets: [],
     actives: [],

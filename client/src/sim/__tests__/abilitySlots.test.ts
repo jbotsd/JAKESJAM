@@ -1,5 +1,6 @@
 // Drafted actives (docs/six-axes-goal.md Layer 2, Phase 2 pilot).
-// Input bits 10..13 press action-bar slots 1..4 in pick order: rising edge +
+// Input bits 10..12 press action-bar slots 1..3 in pick order (rack locked
+// at exactly 3, docs/classes-goal.md "Rotation system"): rising edge +
 // alive + fighting + cooldown expired → activate; the effect is ordinary sim
 // state. Crimson Tithe is the end-to-end pilot: a 3s window during which the
 // gun's own shots carry leechFraction — the SAME machinery (hit site, event,
@@ -9,6 +10,8 @@ import { describe, expect, test } from "bun:test";
 import { createRuntime, stepWithRuntime } from "../World.js";
 import { ABILITY_TITHE_LEECH_FRACTION } from "../constants.js";
 import { enterDrafting } from "../round.js";
+import { resolvePlayerBuild } from "../weapon.js";
+import { MAX_ABILITY_SLOTS } from "../data/cardTypes.js";
 import {
   InputSeq,
   PlayerId,
@@ -103,7 +106,7 @@ function frame(keys: number, seq: number, aimX = 0, aimY = 0): InputFrame {
   return { seq: InputSeq(seq), tick: Tick(0), keys, aimX, aimY, dtMs: DT_MS };
 }
 
-describe("drafted active slots (bits 10..13)", () => {
+describe("drafted active slots (bits 10..12, rack locked at 3)", () => {
   test("pressing slot 1 activates Crimson Tithe: window set, cooldown set, event emitted", () => {
     const caster = mkPlayer(A, 400, 400);
     caster.cards = ["crimson-tithe"];
@@ -295,7 +298,26 @@ describe("drafted active slots (bits 10..13)", () => {
       );
       const offer = roll.state.draftingOffers?.[A] ?? [];
       expect(offer.length).toBeGreaterThan(0);
-      const abilityIds = ["crimson-tithe", "shadow-step", "veil-of-nought", "severing-answer", "shelter-seal"];
+      const abilityIds = [
+        "crimson-tithe",
+        "shadow-step",
+        "veil-of-nought",
+        "severing-answer",
+        "shelter-seal",
+        // Geometrician catalog v1 (docs/class-ability-catalogs-v1.md,
+        // classId:"wizard") — this suite's `mkPlayer` default characterId
+        // is "balanced" (wizard), so these ten are eligible offers too.
+        "sunlance",
+        "facet-break",
+        "prism-fan",
+        "lattice",
+        "return-glass",
+        "hard-aperture",
+        "overclock",
+        "measure",
+        "slip-node",
+        "recoil-step",
+      ];
       expect(offer.some((id) => abilityIds.includes(id))).toBe(true);
     }
   });
@@ -323,6 +345,70 @@ describe("drafted active slots (bits 10..13)", () => {
       const offer = roll.state.draftingOffers?.[A] ?? [];
       expect(offer.length).toBeGreaterThan(0); // guard against a vacuous pass
       expect(offer.includes("crimson-tithe")).toBe(false);
+    }
+  });
+
+  // Rack size (docs/classes-goal.md "Rotation system", soft lock
+  // 2026-07-17): exactly 3 slots, never 4. These pin both enforcement
+  // sites (weaponBuild resolve + round.ts offer-roll) to the canonical
+  // constant so a future edit can't silently drift the two apart.
+  test("MAX_ABILITY_SLOTS is locked at 3 (docs/classes-goal.md Rotation system)", () => {
+    expect(MAX_ABILITY_SLOTS).toBe(3);
+  });
+
+  test("a hand holding four+ ability cards resolves to exactly 3 actives (weaponBuild cap)", () => {
+    const holder = mkPlayer(A, 400, 400);
+    holder.cards = [
+      "crimson-tithe",
+      "shadow-step",
+      "veil-of-nought",
+      "severing-answer",
+      "shelter-seal",
+    ];
+    const build = resolvePlayerBuild(holder);
+    expect(build.actives.length).toBe(3);
+  });
+
+  test("the draft stops offering ability cards once 3 slots are held (offer-roll cap)", () => {
+    const holder = mkPlayer(A, 400, 400);
+    holder.cards = ["crimson-tithe", "shadow-step", "veil-of-nought"];
+    const other = mkPlayer(B, 600, 400);
+    const round = {
+      phase: "round-over" as const,
+      countdownRemainingMs: 0,
+      scores: { [A]: 1, [B]: 0 },
+      roundIndex: 1,
+      winnerPlayerId: A,
+    };
+    const abilityIds = [
+        "crimson-tithe",
+        "shadow-step",
+        "veil-of-nought",
+        "severing-answer",
+        "shelter-seal",
+        // Geometrician catalog v1 (docs/class-ability-catalogs-v1.md,
+        // classId:"wizard") — this suite's `mkPlayer` default characterId
+        // is "balanced" (wizard), so these ten are eligible offers too.
+        "sunlance",
+        "facet-break",
+        "prism-fan",
+        "lattice",
+        "return-glass",
+        "hard-aperture",
+        "overclock",
+        "measure",
+        "slip-node",
+        "recoil-step",
+      ];
+    for (let seed = 1; seed <= 40; seed++) {
+      const roll = enterDrafting(
+        round,
+        { [A]: holder, [B]: other },
+        Tick(100),
+        seed >>> 0,
+      );
+      const offer = roll.state.draftingOffers?.[A] ?? [];
+      expect(offer.some((id) => abilityIds.includes(id))).toBe(false);
     }
   });
 });

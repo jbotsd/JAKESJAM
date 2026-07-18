@@ -49,7 +49,17 @@ import {
 // Layout constants — must match sim/src/world_state.zig.
 
 const HEADER_SIZE = 48;
-const PLAYER_ENTITY_SIZE = 288;
+// 288 → 296 (2026-07-18): +8 bytes for PlayerEntity.energy (ninja class
+// resource) plus the 4-byte alignment pad Zig inserts before an f64 that
+// follows a run of u32 tail fields. See world_state.zig's comptime assert
+// and packPlayer/unpackPlayer's trailing energy read/write below.
+// Exported (2026-07-18): several wasm ABI tests hand-computed buffer
+// offsets by hardcoding `16 * 288` instead of importing this — exactly the
+// "duplicated magic number" drift this file's own doctrine warns about
+// elsewhere. Exporting it (and MAX_PLAYERS below) lets those tests derive
+// the offset instead of re-hardcoding it, so the next struct-size change
+// can't silently desync them again.
+export const PLAYER_ENTITY_SIZE = 296;
 const PROJECTILE_ENTITY_SIZE = 216;
 const SATELLITE_ENTITY_SIZE = 96;
 const DESTRUCTIBLE_ENTITY_SIZE = 64;
@@ -66,7 +76,7 @@ const PLAYER_MOVEMENT_MEMORY_SIZE = 48;
 // 4 × u32 + 4 × u8(enum) + 1 × u8(valid) + 3 × u8(pad) = 136.
 export const RESOLVED_FIRE_CONFIG_SIZE = 240; // +14 augment fields (movement/shield/parry) +dash_cooldown_mul
 
-const MAX_PLAYERS = 16;
+export const MAX_PLAYERS = 16;
 const MAX_STATICS = 256;
 const AABB_SIZE = 32;
 const MAX_PROJECTILES = 256;
@@ -477,11 +487,23 @@ function packPlayer(
 
   // round_kills — per-round kill tally, mirrored from
   // state.round.roundKills[p.id] (packWorldState passes it in). Landed in
-  // the former 4-byte _reserved tail, so PLAYER_ENTITY_SIZE (288) and
-  // WORLD_STATE_TOTAL_SIZE are unchanged. Matches world_state.zig
+  // the former 4-byte _reserved tail (struct size was unchanged for THIS
+  // field — energy below is what grew it 288 → 296). Matches world_state.zig
   // PlayerEntity.round_kills.
   view.setUint32(off, roundKills >>> 0, true);
   off += 4;
+
+  // energy (2026-07-18, docs/classes-goal.md MANA section) — ninja class
+  // resource, TS-owned like abilityCharge (physics step never touches it).
+  // Zig's extern struct inserts 4 bytes of alignment padding here because
+  // an f64 field follows a run of u32 fields at a non-8-aligned offset
+  // (284 → 288); write that pad explicitly so the byte layout matches
+  // world_state.zig's PlayerEntity.energy exactly. PLAYER_ENTITY_SIZE grew
+  // 288 → 296 for this field (see comment on the constant).
+  view.setUint32(off, 0, true); // alignment pad
+  off += 4;
+  view.setFloat64(off, p.energy ?? 0, true);
+  off += 8;
 }
 
 function unpackPlayer(view: DataView, offset: number): PlayerEntity {
@@ -559,6 +581,13 @@ function unpackPlayer(view: DataView, offset: number): PlayerEntity {
   // by player id (extracted separately in unpackWorldState).
   off += 4 + 4 + 4 + 4;
 
+  // energy (ninja class resource) — 4 bytes alignment pad then the f64,
+  // mirroring the pack-side layout above and world_state.zig's
+  // PlayerEntity.energy (appended after round_kills).
+  off += 4; // alignment pad
+  const energy = view.getFloat64(off, true);
+  off += 8;
+
   const out: PlayerEntity = {
     id: PlayerId(id),
     characterId,
@@ -577,6 +606,7 @@ function unpackPlayer(view: DataView, offset: number): PlayerEntity {
     fireCooldownMs,
     ammo,
     abilityCharge,
+    energy,
     lastProcessedInputSeq: InputSeq(lastProcessedInputSeq),
   };
   if (bit(flags, PLAYER_FLAG_BITS.grounded)) out.grounded = true;

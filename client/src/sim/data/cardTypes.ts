@@ -6,6 +6,7 @@
 // the exact same weapon build from a player's card hand.
 
 import type {
+  CharacterArchetype,
   ElementType,
   ProjectilePathing,
   ProjectileShape,
@@ -13,6 +14,44 @@ import type {
 
 export type CardId = string;
 export type WeaponId = string;
+
+// ── Class-expression infrastructure (docs/classes-goal.md, card-pool-v2.md) ─
+// A card's mechanical effect (`modifier`) is class-blind by default — every
+// chassis reads it identically, exactly today's flat-pool behavior. This is
+// the hook a class's SPEC layer plugs into when its per-class expression is
+// actually built: `classModifiers[classId]` REPLACES `modifier` wholesale
+// for that class only (never merges with it — a card has one active reading
+// per class, not a base-plus-diff). Absent = that class hasn't been
+// authored yet; resolution falls back to the class-blind `modifier`
+// (today's behavior), never to another class's reading and never to a
+// placeholder. See `effectiveCardModifier` in weaponBuild.ts for the one
+// place this map is read.
+//
+// `ClassId` is the dev-id vocabulary from docs/classes-goal.md § Naming
+// (wizard/ninja/paladin/priest — code/docs/sigil lookup, never the display
+// persona name). `client/src/game/types/game.ts` re-exports this exact type
+// so the display layer and the sim layer share one definition.
+export type ClassId = "wizard" | "ninja" | "paladin" | "priest";
+
+/** archetype (sim/wire id, PlayerEntity.characterId) → class dev-id. Mirrors
+ *  the authoritative display table in client/src/game/data/characters.ts
+ *  (balanced→wizard, heavy→paladin, sprinter→ninja, shielded→priest) — kept
+ *  as a tiny standalone map rather than importing that table because sim/
+ *  must not depend on game/ (cards.ts's own header comment: "must compile
+ *  inside the Bun runtime", no Phaser/DOM/client imports). Keep both tables
+ *  in sync if a fifth chassis is ever added. */
+const ARCHETYPE_CLASS_ID: Record<CharacterArchetype, ClassId> = {
+  balanced: "wizard",
+  heavy: "paladin",
+  sprinter: "ninja",
+  shielded: "priest",
+};
+
+/** Total, pure lookup — unknown archetypes (shouldn't happen; the union is
+ *  closed) fall back to wizard, the class-blind default chassis. */
+export function classIdForArchetype(characterId: CharacterArchetype): ClassId {
+  return ARCHETYPE_CLASS_ID[characterId] ?? "wizard";
+}
 
 export type WeaponDelivery = "projectile" | "raycast" | "continuous-beam" | "area-pulse";
 
@@ -86,6 +125,14 @@ export type WeaponCardModifier = {
   magazineSizeAdd?: number;
   spreadRadians?: number;
   recoilMultiplier?: number;
+  /** Tithe (docs/card-pool-v2.md "Tithe"): fraction of post-mitigation
+   *  damage a damaging hit heals back to the shooter. Read at projectile
+   *  spawn (weapon.ts) and stamped onto `ProjectileEntity.leechFraction`,
+   *  the SAME field the six-axes Crimson Tithe ability window already uses
+   *  (types.ts) — World.ts's hit resolution already knows how to pay out a
+   *  leech-flagged shard (self-heal, capped, self-damage excluded), so this
+   *  card only needs to populate the existing field, never touch World.ts. */
+  leechFraction?: number;
   knockbackMultiplier?: number;
   ammoRegenPerSecond?: number;
   overchargeMultiplier?: number;
@@ -132,21 +179,52 @@ export type WeaponCardModifier = {
 
 // ── Drafted actives (six-axes-goal.md Layer 2) ─────────────────────────────
 // Ability cards ARE actives: drafted through the same round-end picker,
-// they land on the action bar in pick order (keys 1-4), cooldown-gated.
+// they land on the action bar in pick order (keys 1-3), cooldown-gated.
 // `kind` is a closed union — deriveAxisProfile maps kind → axis (doctrine
 // #1: one derivation, no hand-authored axis tags).
 
-/** Hard slot cap: four keys, five axes — the draft chooses identity under
- *  scarcity. Enforced at offer-roll time (round.ts), never by silently
- *  failing a pick. */
-export const MAX_ABILITY_SLOTS = 4;
+/** Hard slot cap: three keys (1-3), five non-Sorcery axes — the draft
+ *  chooses identity under scarcity (docs/classes-goal.md "Rotation system":
+ *  rack slots keys 1-3, exactly 3, never 4 — soft lock 2026-07-17; restated
+ *  docs/six-axes-goal.md doctrine #6). Enforced at offer-roll time
+ *  (round.ts), never by silently failing a pick. */
+export const MAX_ABILITY_SLOTS = 3;
 
 export type AbilityKind =
   | "crimson-tithe"
   | "shelter-seal"
   | "shadow-step"
   | "veil-of-nought"
-  | "severing-answer";
+  | "severing-answer"
+  // ── Geometrician catalog v1 (docs/class-ability-catalogs-v1.md) ─────────
+  // classId-gated to wizard at the offer roll (round.ts enterDrafting) —
+  // these ten are NOT class-blind like the five above. See cards.ts for the
+  // CardDefinitions and World.ts's ability-activation switch for the v1
+  // sim effects (each reuses six-axes substrate; doc-fidelity gaps are
+  // recorded deferrals, not silent stubs).
+  | "sunlance"
+  | "facet-break"
+  | "prism-fan"
+  | "lattice"
+  | "return-glass"
+  | "hard-aperture"
+  | "overclock"
+  | "measure"
+  | "slip-node"
+  | "recoil-step";
+
+/** Catalog role tag (docs/classes-goal.md "Ability role range" — exactly
+ *  six locked roles, no seventh "utility" catch-all). Only meaningful on
+ *  classId-gated catalog ability cards (below); the five class-blind
+ *  six-axes ability cards predate the role/catalog system and stay
+ *  untagged. */
+export type AbilityRole =
+  | "defense"
+  | "offense"
+  | "buff"
+  | "aoe"
+  | "single"
+  | "movement";
 
 export type AbilityActiveSpec = {
   kind: AbilityKind;
@@ -161,6 +239,12 @@ export type ResolvedActive = {
   kind: AbilityKind;
   cooldownMs: number;
   durationMs: number;
+  /** Catalog role tag, carried through from `CardDefinition.role` (see
+   *  above). Undefined for the five class-blind six-axes ability cards,
+   *  which predate the role/catalog system — callers that key behavior off
+   *  role (e.g. worldBots.ts's target-required heuristic) must treat
+   *  undefined as "unknown, assume target-required" rather than crash. */
+  role?: AbilityRole;
 };
 
 // Visual hints used by UI overlays. Pure data, no Phaser refs — shapes /
@@ -192,7 +276,26 @@ export type CardDefinition = {
    *  Emission (goal doctrine #7: no active-only cards in spirit; the axis
    *  coupling rides deriveAxisProfile off `active.kind`). */
   active?: AbilityActiveSpec;
-  
+  /** Per-class expression overrides (docs/classes-goal.md C3, card-pool-v2.md
+   *  "Per-class expression" sections). When the resolving player's class has
+   *  an entry here, it REPLACES `modifier` for that card; classes with no
+   *  entry fall back to `modifier` (today's class-blind behavior — never a
+   *  placeholder, never another class's reading). See `classIdForArchetype`
+   *  + `effectiveCardModifier` (weaponBuild.ts). Keyed by dev-id `ClassId`,
+   *  not archetype — a card is authored once per CLASS, not per body. */
+  classModifiers?: Partial<Record<ClassId, WeaponCardModifier>>;
+  /** Class-EXCLUSIVE gating (docs/class-ability-catalogs-v1.md — the
+   *  catalog layer, distinct from `classModifiers`' per-class EXPRESSION of
+   *  a universal card). When set, only players of this class are ever
+   *  offered or may hold this card — enforced once, at the offer roll
+   *  (round.ts enterDrafting), the single gate point, same discipline as
+   *  the MAX_ABILITY_SLOTS cap. Absent = universal (every existing card,
+   *  including the five class-blind six-axes ability cards, is unaffected). */
+  classId?: ClassId;
+  /** Catalog role tag — see `AbilityRole`. Set on classId-gated catalog
+   *  ability cards; absent on universal cards. */
+  role?: AbilityRole;
+
   // ROUNDS-style: Explicit benefits and penalties for tradeoffs
   benefits?: StatModifier[];
   penalties?: StatModifier[];
@@ -235,10 +338,14 @@ export type ResolvedWeaponBuild = {
   airJumps: number;
   dashCharges: number;
   dashCooldownMultiplier: number;
+  /** Tithe passive accumulation — see WeaponCardModifier.leechFraction. 0 =
+   *  no passive lifesteal (today's behavior for every build without a Tithe
+   *  card, byte-identical to pre-Tithe resolution). */
+  leechFraction: number;
   cards: CardDefinition[];
   occupiedBuckets: WeaponBucket[];
   /** Drafted actives in pick order — action-bar slots 1..N (≤
    *  MAX_ABILITY_SLOTS; the offer roll stops offering ability cards when
-   *  the hand holds four). */
+   *  the hand holds three). */
   actives: ResolvedActive[];
 };

@@ -14,13 +14,17 @@ import type {
   CardDefinition,
   ResolvedWeaponBuild,
 } from "./data/cardTypes.js";
-import { starterWeapon } from "./data/weapons.js";
+import { classIdForArchetype } from "./data/cardTypes.js";
+import { baseWeaponForClass } from "./data/weapons.js";
 import { createWeaponBuild, findCardsById } from "./data/weaponBuild.js";
 import { spawnProjectile, type ProjectileSpawnParams } from "./projectile.js";
 import {
   STOLEN_FANGS_HOMING_STRENGTH,
   STOLEN_FANGS_DAMAGE_MULTIPLIER,
   ABILITY_TITHE_LEECH_FRACTION,
+  GEO_SUNLANCE_DAMAGE_MULTIPLIER,
+  GEO_OVERCLOCK_FIRE_RATE_MULTIPLIER,
+  GEO_OVERCLOCK_SPREAD_MULTIPLIER,
 } from "./constants.js";
 import { nextInt } from "./rng.js";
 import { lutAtan2, lutCos, lutSin } from "./trig.js";
@@ -102,10 +106,22 @@ export function resolvePlayerBuild(player: PlayerEntity): ResolvedWeaponBuild {
     identityCacheSet(player, cached);
     return cached;
   }
-  // For now the only weapon is starter-pistol. When more weapons exist this
-  // will look up the WeaponDefinition by player.weaponId.
+  // For now the only weapon SLOT is starter-pistol (player.weaponId never
+  // varies). When more weapons exist this will look up the WeaponDefinition
+  // by player.weaponId too.
   const cards: CardDefinition[] = findCardsById(crystalRoundsCards, player.cards);
-  const withInnate = applyCharacterInnateAbility(player, createWeaponBuild(starterWeapon, cards));
+  // Class-expression resolution (docs/classes-goal.md C3): classIdForArchetype
+  // is a pure function of characterId, which the build cache above already
+  // partitions on — no cache-key change needed, distinct archetypes already
+  // can't collide.
+  const classId = classIdForArchetype(player.characterId);
+  // baseWeaponForClass (docs/classes-goal.md "Priest / Syzygist" baseline):
+  // class-blind for every chassis except Priest, which starts from the
+  // detuned priestStarterWeapon instead of starterWeapon.
+  const withInnate = applyCharacterInnateAbility(
+    player,
+    createWeaponBuild(baseWeaponForClass(classId), cards, classId),
+  );
   // BASELINE: the dash-bash power-slide (right-click) is a core move for EVERYONE,
   // exactly like the parry it replaced — grant at least one dash charge so
   // every character can slide/parry/bash from match start. Cards + the
@@ -250,7 +266,14 @@ function stepWeaponNative(
   const lifetimeMs = Math.max(50, build.projectileLifetimeSeconds * 1000 * build.projectile.lifetimeMultiplier);
   const radius = Math.max(2, 7 * build.projectile.sizeMultiplier);
   const projectileCount = Math.max(1, build.projectile.count | 0);
-  const totalSpread = build.spreadRadians;
+  // Overclock (Geometrician catalog v1, buff role): fire rate up + spread
+  // tighter while the window is live — same currentTick-gated pattern as
+  // Crimson Tithe's titheActive just below.
+  const overclockActive =
+    options.currentTick !== undefined &&
+    next.overclockUntilTick !== undefined &&
+    next.overclockUntilTick > options.currentTick;
+  const totalSpread = build.spreadRadians * (overclockActive ? GEO_OVERCLOCK_SPREAD_MULTIPLIER : 1);
   // Damage is left at the build value here; the chaos damageMultiplier is
   // applied post-hit in World.stepWithRuntime so satellites and any other
   // projectile sources get the same scaling without each spawn site reading
@@ -271,9 +294,21 @@ function stepWeaponNative(
     options.currentTick !== undefined &&
     next.titheUntilTick !== undefined &&
     next.titheUntilTick > options.currentTick;
+  // Sunlance (Geometrician catalog v1, offense role): v1 = a burst window,
+  // not the doc's true charge-hold (cards.ts description notes the
+  // deviation) — shots fired while live deal GEO_SUNLANCE_DAMAGE_MULTIPLIER.
+  // Stolen Fangs takes priority when both are somehow live (a legendary
+  // defense proc outranking a catalog offense window is the existing
+  // precedent for this damage-multiplier slot).
+  const sunlanceActive =
+    options.currentTick !== undefined &&
+    next.sunlanceUntilTick !== undefined &&
+    next.sunlanceUntilTick > options.currentTick;
   const damage = spendStolenFangsCharge
     ? build.damage * STOLEN_FANGS_DAMAGE_MULTIPLIER
-    : build.damage;
+    : sunlanceActive
+      ? build.damage * GEO_SUNLANCE_DAMAGE_MULTIPLIER
+      : build.damage;
   // Per-shot offset: spread the count evenly across [-totalSpread/2, +totalSpread/2].
   // Single-shot shots ignore spread entirely (consistent with the offline path).
   const projectiles: ProjectileEntity[] = [];
@@ -320,8 +355,17 @@ function stepWeaponNative(
       projectile.accelerationMultiplier = build.projectile.accelerationMultiplier;
       projectile.gravityScale = build.projectile.gravityScale;
       projectile.rangePx = build.projectile.rangePx;
+      // Tithe (docs/card-pool-v2.md "Tithe", card-pool-v2.md "Priest" solo
+      // floor): an always-on passive leech from build.leechFraction, layered
+      // under the six-axes Crimson Tithe ABILITY window (titheActive) rather
+      // than replaced by it — whichever is stronger this shot wins, so a
+      // player holding both never sees the passive silently disappear while
+      // the timed window is live.
+      const passiveLeechFraction = build.leechFraction ?? 0;
       if (titheActive) {
-        projectile.leechFraction = ABILITY_TITHE_LEECH_FRACTION;
+        projectile.leechFraction = Math.max(passiveLeechFraction, ABILITY_TITHE_LEECH_FRACTION);
+      } else if (passiveLeechFraction > 0) {
+        projectile.leechFraction = passiveLeechFraction;
       }
       projectiles.push(projectile);
     }
@@ -337,10 +381,11 @@ function stepWeaponNative(
   next.vy -= lutSin(baseAngle) * recoil * 0.45;
 
   // Cooldown derived from build.fireRate (shots per second), scaled by the
-  // chaos fire-rate multiplier (golden-gun slows it, future buffs raise it).
+  // chaos fire-rate multiplier (golden-gun slows it, future buffs raise it)
+  // and Overclock's window (Geometrician catalog v1) when live.
   const fireRate = Math.max(
     MIN_FIRE_RATE,
-    build.fireRate * chaos.fireRateMultiplier,
+    build.fireRate * chaos.fireRateMultiplier * (overclockActive ? GEO_OVERCLOCK_FIRE_RATE_MULTIPLIER : 1),
   );
   next.fireCooldownMs = 1000 / fireRate;
   next.ammo = Math.max(0, next.ammo - 1);

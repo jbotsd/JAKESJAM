@@ -77,6 +77,7 @@ import { createCheckoutSession, findSku, COSMETIC_CATALOG } from "./stripe/check
 import { requireStripeWebhookSecret, verifyStripeSignature, parseCheckoutCompleted } from "./stripe/webhook.ts";
 import { grantEntitlement, getEntitlements } from "./stripe/entitlements.ts";
 import { sanitizePlayerName } from "@net/playerName.ts";
+import { sanitizeCharacterId } from "@net/playerCharacter.ts";
 
 /** Process boot time — surfaced on /ops/api/status uptime. */
 const processStartedAtMs = Date.now();
@@ -142,7 +143,11 @@ const worldHost = new WorldHost({
 const venueHost = new VenueHost({ arena: worldHost });
 
 type SocketKind = "room" | "world" | "lobby";
-type SocketData = MatchSocketData & { kind: SocketKind; name?: string };
+// `character` (classes-goal.md P1): the sanitized chassis/archetype id the
+// player picked at the venue loadout station or the private-room dropdown —
+// whitelisted at the upgrade (sanitizeCharacterId), duck-read by
+// WorldHost/VenueHost spawnFor the same way `name` is.
+type SocketData = MatchSocketData & { kind: SocketKind; name?: string; character?: string };
 
 // ── Self-contained hosting: optional static client serving ─────────────────
 // When SERVE_CLIENT_DIR points at a Vite build output (client/dist), any GET
@@ -1106,6 +1111,10 @@ video{width:100%;height:100%;object-fit:contain;display:block}</style>
         matchId: "world",
         playerId: verified.playerId,
         name: sanitizePlayerName(rawName),
+        // Chassis pick (classes-goal.md P1) — same URL side-channel and
+        // same authoritative-pass rule as the name: whitelisted against
+        // the four archetype ids, anything else spawns the default.
+        character: sanitizeCharacterId(url.searchParams.get("character")),
         authedAt: Date.now(),
       };
       const upgraded = srv.upgrade(req, { data });
@@ -1128,6 +1137,9 @@ video{width:100%;height:100%;object-fit:contain;display:block}</style>
         matchId: VENUE_LOBBY_MATCH_ID,
         playerId: verified.playerId,
         name: sanitizePlayerName(rawName),
+        // Chassis rides the lobby half too so the venue vessel wears the
+        // picked class's body (same whitelist as /ws/world above).
+        character: sanitizeCharacterId(url.searchParams.get("character")),
         authedAt: Date.now(),
       };
       const upgraded = srv.upgrade(req, { data });

@@ -69,13 +69,15 @@ function quantiseMs(value: number): number {
  *   health (int), alive (0/1),
  *   cards.length,
  *   fireCooldownMs (STEP_MS grid),
- *   abilityCharge (int),
+ *   abilityCharge (int), energy (int, ninja class resource),
  *   overchargeUntilTick (int), damageAmpUntilTick (int),
  *   speedBoostUntilTick (int), meleeModeUntilTick (int),
  *   slowDebuffUntilTick (int), vulnerabilityUntilTick (int),
  *   blockJammerUntilTick (int), bossModeUntilTick (int),
  *   wardShellUntilTick (int), slot1..4CooldownUntilTick (int),
- *   titheUntilTick (int), grounded (0/1).
+ *   titheUntilTick (int), veilUntilTick (int), counterUntilTick (int),
+ *   respawnAtTick (int), sunlanceUntilTick (int), facetMarkUntilTick (int),
+ *   overclockUntilTick (int), resonanceUntilTick (int), grounded (0/1).
  *
  * Fields deliberately skipped: aimX/aimY (presentation only, changes every
  * frame without gameplay consequence), lastProcessedInputSeq (reconcile
@@ -96,6 +98,7 @@ export function hashPlayerEntity(p: PlayerEntity): number {
   h = mixU32(h, p.cards.length | 0);
   h = mixU32(h, quantiseMs(p.fireCooldownMs));
   h = mixU32(h, Math.round(p.abilityCharge) | 0);
+  h = mixU32(h, Math.round(p.energy ?? 0) | 0);
 
   // Optional tick-based buffs — treat absent as 0 (no buff active).
   h = mixU32(h, (p.overchargeUntilTick ?? 0) | 0);
@@ -118,6 +121,23 @@ export function hashPlayerEntity(p: PlayerEntity): number {
   h = mixU32(h, (p.veilUntilTick ?? 0) | 0);
   h = mixU32(h, (p.counterUntilTick ?? 0) | 0);
   h = mixU32(h, (p.respawnAtTick ?? 0) | 0);
+  // Geometrician catalog v1 (docs/class-ability-catalogs-v1.md). Same
+  // absent-as-0 treatment; facetTargetId (a PlayerId string) is deliberately
+  // NOT mixed — its practical divergence is fully captured by
+  // facetMarkUntilTick (set once, deterministically, at the same cast tick
+  // on both client-predicted and server-authoritative paths), matching the
+  // file's existing precedent of not hashing id-typed fields (weaponId,
+  // characterId) that are set once rather than diverging per-tick.
+  h = mixU32(h, (p.sunlanceUntilTick ?? 0) | 0);
+  h = mixU32(h, (p.facetMarkUntilTick ?? 0) | 0);
+  h = mixU32(h, (p.overclockUntilTick ?? 0) | 0);
+  // Resonance (class-overhaul-workboard.md chunk 0.1). Same absent-as-0
+  // treatment; resonanceSourceKind (a string) is deliberately NOT mixed,
+  // same precedent as facetTargetId above — it's set deterministically off
+  // the same input edge that already drives resonanceUntilTick, so any
+  // divergence in "which kind resonated" would necessarily accompany a
+  // divergence in resonanceUntilTick itself (or an earlier hashed field).
+  h = mixU32(h, (p.resonanceUntilTick ?? 0) | 0);
   // Render-only flag, but per-entity reconcile uses this hash to detect
   // divergence; without grounded mixed in, a remote rig that just landed
   // would NOT trigger reconcile and would keep its stale grounded=false

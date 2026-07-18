@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 
 import { loadSimFromBytes } from "../loader";
-import { packWorldState } from "../worldStateBridge";
+import { packWorldState, PLAYER_ENTITY_SIZE, MAX_PLAYERS } from "../worldStateBridge";
 import {
   EntityId,
   PlayerId,
@@ -41,8 +41,11 @@ type FireExports = {
 };
 const ex = sim.exports as unknown as FireExports;
 
+// Player-block size derived from the live constant (2026-07-18) — see
+// projectileLifecycleParity.test.ts's PROJECTILES_OFFSET comment for why
+// this must never be a re-hardcoded literal again.
 const FIRES_OFFSET =
-  48 + 8 + 16 * 288 + 8 + 256 * 216 + 8 + 32 * 96 + 8 + 64 * 64 + 8;
+  48 + 8 + MAX_PLAYERS * PLAYER_ENTITY_SIZE + 8 + 256 * 216 + 8 + 32 * 96 + 8 + 64 * 64 + 8;
 
 function loadFireOnly(f: FireEntity): number {
   const state: WorldState = {

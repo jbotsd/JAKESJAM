@@ -72,6 +72,19 @@ export const P_HI = {
   counterUntilTick: 1 << 14,
   /** Mid-round respawn timer (fast-respawn ruling, 2026-07-17). */
   respawnAtTick: 1 << 15,
+  /** Geometrician catalog v1 (docs/class-ability-catalogs-v1.md, wizard-
+   *  only). Bits 16..19 — well within the safe 31-bit JS bitwise range, no
+   *  protocol/wire-width change (bitsHi is a plain `number`, not a packed
+   *  byte). */
+  sunlanceUntilTick: 1 << 16,
+  facetTargetId: 1 << 17,
+  facetMarkUntilTick: 1 << 18,
+  overclockUntilTick: 1 << 19,
+  /** Resonance (class-overhaul-workboard.md chunk 0.1, docs/classes-goal.md
+   *  "Rotation system") — window + source kind stamped by every ability
+   *  activation, six-axes and Geometrician-catalog kinds alike. */
+  resonanceUntilTick: 1 << 20,
+  resonanceSourceKind: 1 << 21,
 } as const;
 
 export const PROJ = {

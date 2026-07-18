@@ -32,6 +32,7 @@ export type WorldAssignment = {
 export async function fetchWorldAssignment(
   playerId: string,
   displayName?: string,
+  characterId?: string,
 ): Promise<WorldAssignment> {
   const wsBase = readGameServerWsBase();
   const httpBase = wsToHttp(wsBase);
@@ -47,6 +48,11 @@ export async function fetchWorldAssignment(
   const wsUrl = new URL(json.wsPath, wsBase);
   wsUrl.searchParams.set("token", json.token);
   if (displayName) wsUrl.searchParams.set("name", displayName.slice(0, 14));
+  // Chassis pick (classes-goal.md P1) — rides the ws URL like the name
+  // (cosmetic-side channel, not the signed token); the server whitelists it
+  // at the upgrade (net/playerCharacter.ts) so a bad value falls back to
+  // the default chassis instead of blocking entry.
+  if (characterId) wsUrl.searchParams.set("character", characterId);
   return { wsUrl: wsUrl.toString(), token: json.token };
 }
 
@@ -59,6 +65,7 @@ export async function fetchWorldAssignment(
 export async function fetchVenueLobbyAssignment(
   playerId: string,
   displayName?: string,
+  characterId?: string,
 ): Promise<WorldAssignment> {
   const wsBase = readGameServerWsBase();
   const httpBase = wsToHttp(wsBase);
@@ -74,6 +81,8 @@ export async function fetchVenueLobbyAssignment(
   const wsUrl = new URL(json.lobbyWsPath, wsBase);
   wsUrl.searchParams.set("token", json.token);
   if (displayName) wsUrl.searchParams.set("name", displayName.slice(0, 14));
+  // Same chassis side-channel as fetchWorldAssignment above.
+  if (characterId) wsUrl.searchParams.set("character", characterId);
   return { wsUrl: wsUrl.toString(), token: json.token };
 }
 

@@ -824,7 +824,7 @@ export class MatchScene extends Phaser.Scene {
   }
 
   private getCharacter(characterId: CharacterId = "balanced"): CharacterDefinition {
-    return characters.find((character) => character.id === characterId) ?? characters[0] ?? { id: "balanced", name: "Balanced", maxHealth: 100, moveSpeedMultiplier: 1, sizeScale: 1, recoilControlMultiplier: 1, abilityType: "shield" as const, weakness: "" };
+    return characters.find((character) => character.id === characterId) ?? characters[0] ?? { id: "balanced", name: "Geometrician", classId: "wizard" as const, kitSummary: "", maxHealth: 100, moveSpeedMultiplier: 1, sizeScale: 1, recoilControlMultiplier: 1, abilityType: "shield" as const, weakness: "" };
   }
 
   private getVisualScale(character: CharacterDefinition): number {

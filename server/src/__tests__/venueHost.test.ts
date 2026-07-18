@@ -15,6 +15,7 @@ import { VenueHost, VENUE_LOBBY_MATCH_ID } from "../venueHost.ts";
 import { WorldHost } from "../worldHost.ts";
 import type { MatchSocketData } from "../matchHost.ts";
 import { DRAFT_WINDOW_MS, ROUND_OVER_HOLD_MS } from "@sim/round.ts";
+import { crystalRoundsCards } from "@sim/data/cards.ts";
 import { decodeMessage, encodeMessage } from "@net/protocol.ts";
 
 function makeFakeWs(playerId: string, name?: string): ServerWebSocket<MatchSocketData> {
@@ -274,7 +275,7 @@ describe("VenueHost lobby lifecycle (Pillar 1.2)", () => {
     expect(entry).toBeDefined();
     expect(entry!.offers.length).toBe(3);
     expect(new Set(entry!.offers).size).toBe(3); // distinct
-    expect(entry!.pick).toBeNull();
+    expect(entry!.picks).toEqual([]);
     // Standing there (totem retrigger) re-pushes the SAME offer, no re-roll.
     sink.onSimEvent?.({ t: "ready-toggled", playerId: "p_l" });
     expect(venue.loadoutForTest("p_l" as never)!.offers).toEqual(entry!.offers);
@@ -301,12 +302,100 @@ describe("VenueHost lobby lifecycle (Pillar 1.2)", () => {
     const entry = venue.loadoutForTest("p_p" as never)!;
     const chosen = entry.offers[1]!;
     venue.routeLobby(ws, encodeMessage({ t: "card-pick", roundIndex: 0, cardId: "not-offered" }));
-    expect(venue.loadoutForTest("p_p" as never)!.pick).toBeNull();
+    expect(venue.loadoutForTest("p_p" as never)!.picks).toEqual([]);
     venue.routeLobby(ws, encodeMessage({ t: "card-pick", roundIndex: 0, cardId: chosen }));
-    expect(venue.loadoutForTest("p_p" as never)!.pick).toBe(chosen);
-    // Re-picking overwrites (walk back, change your mind).
-    venue.routeLobby(ws, encodeMessage({ t: "card-pick", roundIndex: 0, cardId: entry.offers[2]! }));
-    expect(venue.loadoutForTest("p_p" as never)!.pick).toBe(entry.offers[2]!);
+    expect(venue.loadoutForTest("p_p" as never)!.picks).toEqual([chosen]);
+    // A stale id from the FIRST offer (already superseded by the reroll
+    // below) is ignored — picks does not grow.
+    venue.routeLobby(ws, encodeMessage({ t: "card-pick", roundIndex: 0, cardId: "not-offered" }));
+    expect(venue.loadoutForTest("p_p" as never)!.picks).toEqual([chosen]);
+    venue.dispose();
+  });
+
+  test("multi-pick (chunk 1.3): each valid pick fills the NEXT rack slot and rerolls the offer for the one after it, capped at the rack size", () => {
+    const { venue } = makeVenue(0);
+    const ws = makeFakeWs("p_rack", "RACKER");
+    venue.attachLobby(ws);
+    type SimEventSink = { onSimEvent?: (e: { t: string; playerId: string }) => void };
+    (venue.lobbyHostForTest() as unknown as SimEventSink).onSimEvent?.({
+      t: "ready-toggled",
+      playerId: "p_rack",
+    });
+    // Slot 1.
+    const firstOffers = venue.loadoutForTest("p_rack" as never)!.offers;
+    expect(firstOffers.length).toBe(3);
+    const first = firstOffers[0]!;
+    venue.routeLobby(ws, encodeMessage({ t: "card-pick", roundIndex: 0, cardId: first }));
+    expect(venue.loadoutForTest("p_rack" as never)!.picks).toEqual([first]);
+    // A fresh offer landed for slot 2 WITHOUT another totem touch — the
+    // pick handler rerolls immediately (docs/classes-goal.md "Loadout
+    // station owns the 3 slots": one continuous visit can fill the rack).
+    const secondOffers = venue.loadoutForTest("p_rack" as never)!.offers;
+    expect(secondOffers.length).toBeGreaterThan(0);
+
+    // Slot 2.
+    const second = secondOffers[0]!;
+    venue.routeLobby(ws, encodeMessage({ t: "card-pick", roundIndex: 0, cardId: second }));
+    expect(venue.loadoutForTest("p_rack" as never)!.picks).toEqual([first, second]);
+
+    // Slot 3 — the rack's last slot (MAX_ABILITY_SLOTS = 3).
+    const thirdOffers = venue.loadoutForTest("p_rack" as never)!.offers;
+    const third = thirdOffers[0]!;
+    venue.routeLobby(ws, encodeMessage({ t: "card-pick", roundIndex: 0, cardId: third }));
+    expect(venue.loadoutForTest("p_rack" as never)!.picks).toEqual([first, second, third]);
+
+    // Rack full — no further offer, no further picks accepted.
+    expect(venue.loadoutForTest("p_rack" as never)!.offers).toEqual([]);
+    venue.routeLobby(ws, encodeMessage({ t: "card-pick", roundIndex: 0, cardId: first }));
+    expect(venue.loadoutForTest("p_rack" as never)!.picks).toEqual([first, second, third]);
+
+    // A fresh totem touch (re-entering the zone) re-pushes the completed
+    // rack's [] offer idempotently — it does not reopen a 4th slot.
+    (venue.lobbyHostForTest() as unknown as SimEventSink).onSimEvent?.({
+      t: "ready-toggled",
+      playerId: "p_rack",
+    });
+    expect(venue.loadoutForTest("p_rack" as never)!.offers).toEqual([]);
+    venue.dispose();
+  });
+
+  test("multi-pick stays classId-gated across every reroll, not just the first offer (docs/class-ability-catalogs-v1.md)", () => {
+    const { venue } = makeVenue(0);
+    // sprinter → ninja (cardTypes.ts's ARCHETYPE_CLASS_ID) — a ninja must
+    // never see a wizard-exclusive Geometrician catalog card (e.g.
+    // "sunlance"), at slot 1 OR at any rerolled later slot.
+    const ws = {
+      data: {
+        matchId: VENUE_LOBBY_MATCH_ID,
+        playerId: "p_ninja",
+        name: "NINJA",
+        authedAt: Date.now(),
+        character: "sprinter",
+      },
+      send: () => 1,
+      close: () => {},
+      getBufferedAmount: () => 0,
+    } as unknown as ServerWebSocket<MatchSocketData>;
+    venue.attachLobby(ws);
+    type SimEventSink = { onSimEvent?: (e: { t: string; playerId: string }) => void };
+    (venue.lobbyHostForTest() as unknown as SimEventSink).onSimEvent?.({
+      t: "ready-toggled",
+      playerId: "p_ninja",
+    });
+    const wizardOnlyIds = new Set(
+      crystalRoundsCards.filter((c) => c.classId === "wizard").map((c) => c.id),
+    );
+    const assertNoWizardCards = () => {
+      const offers = venue.loadoutForTest("p_ninja" as never)!.offers;
+      for (const id of offers) expect(wizardOnlyIds.has(id)).toBe(false);
+    };
+    assertNoWizardCards(); // slot 1's initial offer
+    for (let i = 0; i < 3; i += 1) {
+      const offers = venue.loadoutForTest("p_ninja" as never)!.offers;
+      if (offers.length === 0) break; // rack filled before exhausting the loop
+      venue.routeLobby(ws, encodeMessage({ t: "card-pick", roundIndex: 0, cardId: offers[0]! }));
+      assertNoWizardCards(); // every rerolled offer after that pick
+    }
     venue.dispose();
   });
 
@@ -322,9 +411,13 @@ describe("VenueHost lobby lifecycle (Pillar 1.2)", () => {
     const entry = venue.loadoutForTest("p_q2" as never)!;
     // Offer rolled but NOT picked → plain spawn, never a silent leftmost.
     expect(arena.getEntrantCards!("p_q2" as never)).toBeUndefined();
-    // Picked → exactly the pick, consumed by the spawn.
-    venue.routeLobby(ws, encodeMessage({ t: "card-pick", roundIndex: 0, cardId: entry.offers[2]! }));
-    expect(arena.getEntrantCards!("p_q2" as never)).toEqual([entry.offers[2]!]);
+    // Picked → exactly the pick, consumed by the spawn. Snapshot the card
+    // BEFORE routing: the pick handler re-rolls `entry.offers` for the next
+    // rack slot (rotation system, venueHost card-pick handler), so reading
+    // `entry.offers[2]` after the pick would see the fresh roll, not the pick.
+    const picked = entry.offers[2]!;
+    venue.routeLobby(ws, encodeMessage({ t: "card-pick", roundIndex: 0, cardId: picked }));
+    expect(arena.getEntrantCards!("p_q2" as never)).toEqual([picked]);
     expect(arena.getEntrantCards!("p_q2" as never)).toBeUndefined(); // consumed
     // Never visited the station → plain spawn.
     expect(arena.getEntrantCards!("p_stranger" as never)).toBeUndefined();
@@ -420,6 +513,179 @@ describe("VenueHost lobby lifecycle (Pillar 1.2)", () => {
     const lobby = venue.lobbyHostForTest() as unknown as LobbyInternals;
     const ids = Object.keys(lobby.state.players);
     expect(ids.filter((id) => id === "p_named").length).toBe(1);
+    venue.dispose();
+  });
+});
+
+// ── Duos queue (classes-goal.md "Venue integration": "Duos queue:
+//    VenueHost bell admission gains a team variant (queue as pair /
+//    auto-pair). FFA bell unchanged. Elastic bots respect team floors.") ──
+
+describe("VenueHost duos queue", () => {
+  type SimEventSink = { onSimEvent?: (e: { t: string; playerId: string }) => void };
+
+  test("FFA bell queue is BYTE-FOR-BYTE unchanged for a player who never toggles duo intent", () => {
+    const { venue } = makeVenue(0);
+    const ws = makeFakeWs("p_ffa", "FFA");
+    venue.attachLobby(ws);
+    const sink = venue.lobbyHostForTest() as unknown as SimEventSink;
+    expect(venue.duoIntentForTest("p_ffa" as never)).toBe(false);
+    sink.onSimEvent?.({ t: "launch-requested", playerId: "p_ffa" });
+    // Exactly the pre-duos contract: lands in the FFA queue, duo queue
+    // untouched, same log-visible behavior as every other FFA test above.
+    expect(venue.queuedForTest() as string[]).toEqual(["p_ffa"]);
+    expect(venue.duoQueuedForTest()).toEqual([]);
+    sink.onSimEvent?.({ t: "launch-requested", playerId: "p_ffa" });
+    expect(venue.queuedForTest()).toEqual([]);
+    venue.dispose();
+  });
+
+  test("duo-toggle flips intent without touching either queue's membership", () => {
+    const { venue } = makeVenue(0);
+    const ws = makeFakeWs("p_int", "INTENT");
+    venue.attachLobby(ws);
+    expect(venue.duoIntentForTest("p_int" as never)).toBe(false);
+    venue.routeLobby(ws, encodeMessage({ t: "duo-toggle" }));
+    expect(venue.duoIntentForTest("p_int" as never)).toBe(true);
+    expect(venue.queuedForTest()).toEqual([]);
+    expect(venue.duoQueuedForTest()).toEqual([]);
+    venue.routeLobby(ws, encodeMessage({ t: "duo-toggle" }));
+    expect(venue.duoIntentForTest("p_int" as never)).toBe(false);
+    venue.dispose();
+  });
+
+  test("with duo intent on, the bell totem queues into duoQueue, not readyQueue", () => {
+    const { venue } = makeVenue(0);
+    const ws = makeFakeWs("p_duo", "DUO");
+    venue.attachLobby(ws);
+    venue.routeLobby(ws, encodeMessage({ t: "duo-toggle" }));
+    const sink = venue.lobbyHostForTest() as unknown as SimEventSink;
+    sink.onSimEvent?.({ t: "launch-requested", playerId: "p_duo" });
+    expect(venue.duoQueuedForTest() as string[]).toEqual(["p_duo"]);
+    expect(venue.queuedForTest()).toEqual([]);
+    // Touching again dequeues (same toggle shape as FFA).
+    sink.onSimEvent?.({ t: "launch-requested", playerId: "p_duo" });
+    expect(venue.duoQueuedForTest()).toEqual([]);
+    venue.dispose();
+  });
+
+  test("callsign gate applies to the duo queue too", () => {
+    const { venue } = makeVenue(0);
+    const nameless = makeFakeWs("p_anon2");
+    venue.attachLobby(nameless);
+    venue.routeLobby(nameless, encodeMessage({ t: "duo-toggle" }));
+    const sink = venue.lobbyHostForTest() as unknown as SimEventSink;
+    sink.onSimEvent?.({ t: "launch-requested", playerId: "p_anon2" });
+    expect(venue.duoQueuedForTest()).toEqual([]);
+    venue.dispose();
+  });
+
+  test("two duo queuers are paired at the bell with a SHARED teamId", () => {
+    const { venue, arena } = makeVenue(0);
+    const wsA = makeFakeWs("p_a1", "AONE");
+    const wsB = makeFakeWs("p_b1", "BONE");
+    venue.attachLobby(wsA);
+    venue.attachLobby(wsB);
+    venue.routeLobby(wsA, encodeMessage({ t: "duo-toggle" }));
+    venue.routeLobby(wsB, encodeMessage({ t: "duo-toggle" }));
+    const sink = venue.lobbyHostForTest() as unknown as SimEventSink;
+    sink.onSimEvent?.({ t: "launch-requested", playerId: "p_a1" });
+    sink.onSimEvent?.({ t: "launch-requested", playerId: "p_b1" });
+    expect((venue.duoQueuedForTest() as string[]).sort()).toEqual(["p_a1", "p_b1"]);
+
+    // The bell rings — same real hook the live tick fires.
+    arena.onRoundPhaseChange?.("drafting", "countdown");
+
+    expect(venue.duoQueuedForTest()).toEqual([]);
+    const teamA = venue.admittedTeamForTest("p_a1" as never);
+    const teamB = venue.admittedTeamForTest("p_b1" as never);
+    expect(teamA).toBeDefined();
+    expect(teamA).toBe(teamB);
+    // getEntrantTeamId consumes one-shot, same TTL/consume discipline as
+    // getEntrantCards.
+    expect(arena.getEntrantTeamId!("p_a1" as never)).toBe(teamA);
+    expect(arena.getEntrantTeamId!("p_a1" as never)).toBeUndefined();
+    venue.dispose();
+  });
+
+  test("an odd-one-out duo queuer is admitted alone with their OWN teamId (auto-pair falls to the elastic bot floor)", () => {
+    const { venue, arena } = makeVenue(0);
+    const ws = makeFakeWs("p_solo", "SOLO");
+    venue.attachLobby(ws);
+    venue.routeLobby(ws, encodeMessage({ t: "duo-toggle" }));
+    const sink = venue.lobbyHostForTest() as unknown as SimEventSink;
+    sink.onSimEvent?.({ t: "launch-requested", playerId: "p_solo" });
+    arena.onRoundPhaseChange?.("drafting", "countdown");
+    const teamId = venue.admittedTeamForTest("p_solo" as never);
+    expect(teamId).toBeDefined();
+    expect(arena.getEntrantTeamId!("p_solo" as never)).toBe(teamId);
+    venue.dispose();
+  });
+
+  test("duo pick rides admission exactly like FFA (loadout station is shared)", () => {
+    const { venue, arena } = makeVenue(0);
+    const wsA = makeFakeWs("p_dc1", "DCONE");
+    const wsB = makeFakeWs("p_dc2", "DCTWO");
+    venue.attachLobby(wsA);
+    venue.attachLobby(wsB);
+    const sink = venue.lobbyHostForTest() as unknown as SimEventSink;
+    sink.onSimEvent?.({ t: "ready-toggled", playerId: "p_dc1" });
+    const offers = venue.loadoutForTest("p_dc1" as never)!.offers;
+    venue.routeLobby(wsA, encodeMessage({ t: "card-pick", roundIndex: 0, cardId: offers[0]! }));
+    venue.routeLobby(wsA, encodeMessage({ t: "duo-toggle" }));
+    venue.routeLobby(wsB, encodeMessage({ t: "duo-toggle" }));
+    sink.onSimEvent?.({ t: "launch-requested", playerId: "p_dc1" });
+    sink.onSimEvent?.({ t: "launch-requested", playerId: "p_dc2" });
+    arena.onRoundPhaseChange?.("drafting", "countdown");
+    expect(arena.getEntrantCards!("p_dc1" as never)).toEqual([offers[0]!]);
+    expect(arena.getEntrantCards!("p_dc2" as never)).toBeUndefined();
+    venue.dispose();
+  });
+
+  test("duo queuer who disconnects before the bell is dequeued (no ghost entrants)", () => {
+    const { venue, arena } = makeVenue(0);
+    const ws = makeFakeWs("p_ghost2", "GHOST2");
+    venue.attachLobby(ws);
+    venue.routeLobby(ws, encodeMessage({ t: "duo-toggle" }));
+    const sink = venue.lobbyHostForTest() as unknown as SimEventSink;
+    sink.onSimEvent?.({ t: "launch-requested", playerId: "p_ghost2" });
+    expect(venue.duoQueuedForTest() as string[]).toEqual(["p_ghost2"]);
+    venue.detachLobby(ws);
+    expect(venue.duoQueuedForTest()).toEqual([]);
+    expect(venue.duoIntentForTest("p_ghost2" as never)).toBe(false);
+    arena.onRoundPhaseChange?.("drafting", "countdown");
+    expect(venue.admittedTeamForTest("p_ghost2" as never)).toBeUndefined();
+    venue.dispose();
+  });
+
+  test("venue-status frame carries duoQueued alongside the unchanged FFA queued list", () => {
+    const { venue } = makeVenue(2);
+    const sent: Uint8Array[] = [];
+    const ws = {
+      data: { matchId: VENUE_LOBBY_MATCH_ID, playerId: "p_stat", name: "STAT", authedAt: Date.now() },
+      send: (buf: Uint8Array) => {
+        sent.push(buf);
+        return 1;
+      },
+      close: () => {},
+      getBufferedAmount: () => 0,
+    } as unknown as ServerWebSocket<MatchSocketData>;
+    venue.attachLobby(ws);
+    venue.routeLobby(ws, encodeMessage({ t: "duo-toggle" }));
+    const sink = venue.lobbyHostForTest() as unknown as SimEventSink;
+    sink.onSimEvent?.({ t: "launch-requested", playerId: "p_stat" });
+    type Broadcaster = { broadcastStatus(): void };
+    (venue as unknown as Broadcaster).broadcastStatus();
+    const frames = sent
+      .map((buf) => decodeMessage(buf)?.message as { t: string } | undefined)
+      .filter((m): m is { t: string } => m !== undefined);
+    const frame = frames.find((m) => m.t === "venue-status") as
+      | { t: string; queued: string[]; duoQueued: string[] }
+      | undefined;
+    expect(frame).toBeDefined();
+    if (!frame) throw new Error("unreachable");
+    expect(frame.queued).toEqual([]);
+    expect(frame.duoQueued).toEqual(["p_stat"]);
     venue.dispose();
   });
 });

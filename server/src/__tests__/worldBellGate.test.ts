@@ -16,7 +16,7 @@ import { describe, test, expect } from "bun:test";
 import type { ServerWebSocket } from "bun";
 import { WorldHost } from "../worldHost.ts";
 import type { MatchHost, MatchSocketData } from "../matchHost.ts";
-import type { RoundState, WorldState } from "@sim/types.ts";
+import { PlayerId, type RoundState, type WorldState } from "@sim/types.ts";
 
 type HostInternals = {
   state: WorldState;
@@ -260,5 +260,103 @@ describe("elastic bots (S2.E.3)", () => {
     setPhase(hi, { phase: "drafting", countdownRemainingMs: 0, draftingOffers: {} });
     hi.tick();
     expect(botCountIn(hi)).toBe(2);
+  });
+});
+
+// ── Elastic bots respect team floors (classes-goal.md "Venue integration":
+//    "Duos queue: VenueHost bell admission gains a team variant... Elastic
+//    bots respect team floors.") — WorldHost's own contract, independent
+//    of VenueHost (which is what actually stamps getEntrantTeamId in
+//    production; here it's driven directly, same precedent
+//    getEntrantCards's tests already use). ────────────────────────────────
+
+describe("elastic bots respect team floors (classes-goal.md Venue integration)", () => {
+  function botCountIn(hi: HostInternals): number {
+    return Object.keys(hi.state.players).filter((id) => id.startsWith("bot_")).length;
+  }
+  function botIdsIn(hi: HostInternals): string[] {
+    return Object.keys(hi.state.players).filter((id) => id.startsWith("bot_"));
+  }
+  function teamIdOf(wi: WorldInternals, id: string): string | undefined {
+    return wi.host!.rosterInfo(PlayerId(id))?.teamId;
+  }
+
+  test("no teamed humans (ordinary FFA bell): every bot spawns teamless — byte-identical to pre-duos behavior", () => {
+    const wh = new WorldHost({ mapId: "boxworks-mini", resultsHoldMs: 60_000, botFloor: 4 });
+    const wi = wh as unknown as WorldInternals;
+    const hi = wi.host as unknown as HostInternals;
+    hi.stop();
+    wh.attach(fakeWs("h1", "H1"));
+    setPhase(hi, { phase: "drafting", countdownRemainingMs: 0, draftingOffers: {} });
+    hi.tick();
+    expect(hi.state.round.phase).toBe("countdown");
+    expect(botCountIn(hi)).toBe(3);
+    for (const id of botIdsIn(hi)) expect(teamIdOf(wi, id)).toBeUndefined();
+  });
+
+  test("a duo pair admitted together → the OTHER bot slots pair up into their own opposing team", () => {
+    const wh = new WorldHost({ mapId: "boxworks-mini", resultsHoldMs: 60_000, botFloor: 4 });
+    const wi = wh as unknown as WorldInternals;
+    const hi = wi.host as unknown as HostInternals;
+    hi.stop();
+    wh.getEntrantTeamId = (pid) =>
+      pid === ("h1" as never) || pid === ("h2" as never) ? "team-humans" : undefined;
+    // Both duo members must be admitted TOGETHER at one edge — same
+    // real-world shape as VenueHost's admitDuoQueue admitting a pair at
+    // the same bell (park them as pending-during-fight, then ring the
+    // bell once, so adjustElasticBots sees BOTH humans in one call
+    // instead of racing a bot-count adjustment between two separate
+    // attach()-during-countdown drains).
+    setPhase(hi, { phase: "fighting", countdownRemainingMs: 60_000 });
+    wh.attach(fakeWs("h1", "H1"));
+    wh.attach(fakeWs("h2", "H2"));
+    setPhase(hi, { phase: "drafting", countdownRemainingMs: 0, draftingOffers: {} });
+    hi.tick();
+    expect(hi.state.round.phase).toBe("countdown");
+    // Headcount floor is UNCHANGED: 2 humans, floor 4 → 2 bots.
+    expect(botCountIn(hi)).toBe(2);
+    const botIds = botIdsIn(hi);
+    const botTeams = botIds.map((id) => teamIdOf(wi, id));
+    // Both bots share ONE team, and it's NOT the humans' team (an
+    // opposing duo, not a third wheel joining the human pair).
+    expect(botTeams[0]).toBeDefined();
+    expect(botTeams[0]).toBe(botTeams[1]);
+    expect(botTeams[0]).not.toBe("team-humans");
+  });
+
+  test("a lone duo queuer (auto-pair, no human partner) gets exactly ONE bot ally sharing their team", () => {
+    const wh = new WorldHost({ mapId: "boxworks-mini", resultsHoldMs: 60_000, botFloor: 4 });
+    const wi = wh as unknown as WorldInternals;
+    const hi = wi.host as unknown as HostInternals;
+    hi.stop();
+    wh.getEntrantTeamId = (pid) => (pid === ("h1" as never) ? "team-solo" : undefined);
+    wh.attach(fakeWs("h1", "H1"));
+    setPhase(hi, { phase: "drafting", countdownRemainingMs: 0, draftingOffers: {} });
+    hi.tick();
+    expect(hi.state.round.phase).toBe("countdown");
+    // 1 human, floor 4 → 3 bots: one ally (team-solo) + a fresh opposing pair.
+    expect(botCountIn(hi)).toBe(3);
+    const botTeams = botIdsIn(hi).map((id) => teamIdOf(wi, id));
+    expect(botTeams.filter((t) => t === "team-solo").length).toBe(1);
+    const others = botTeams.filter((t) => t !== "team-solo");
+    expect(others.length).toBe(2);
+    expect(others[0]).toBeDefined();
+    expect(others[0]).toBe(others[1]);
+  });
+
+  test("odd bot-slot remainder stays teamless rather than crash or half-pair", () => {
+    const wh = new WorldHost({ mapId: "boxworks-mini", resultsHoldMs: 60_000, botFloor: 5 });
+    const wi = wh as unknown as WorldInternals;
+    const hi = wi.host as unknown as HostInternals;
+    hi.stop();
+    wh.getEntrantTeamId = (pid) => (pid === ("h1" as never) ? "team-odd" : undefined);
+    wh.attach(fakeWs("h1", "H1"));
+    setPhase(hi, { phase: "drafting", countdownRemainingMs: 0, draftingOffers: {} });
+    hi.tick();
+    // 1 human, floor 5 → 4 bots: 1 ally + 1 opposing pair + 1 leftover teamless.
+    expect(botCountIn(hi)).toBe(4);
+    const botTeams = botIdsIn(hi).map((id) => teamIdOf(wi, id));
+    expect(botTeams.filter((t) => t === "team-odd").length).toBe(1);
+    expect(botTeams.filter((t) => t === undefined).length).toBe(1);
   });
 });

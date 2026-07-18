@@ -249,6 +249,16 @@ pub const PlayerEntity = extern struct {
     /// most-kills resolution (world.zig timeoutWinnerIdx). Landed
     /// in the former `_reserved` bytes — struct size unchanged.
     round_kills: u32 = 0,
+
+    /// Ninja class-resource pool (2026-07-18, docs/classes-goal.md MANA
+    /// section: "ninja = energy, fast regen, melee hits restore"). Mutated
+    /// ONLY by TS World.ts combat code (melee-hit / dash-through / wall-kick
+    /// grants + passive regen) — mirrors how `ability_charge` is a TS-owned
+    /// resource that the physics step never touches, just carries through.
+    /// f64 after a run of u32 tail fields forces 4 bytes of alignment
+    /// padding before it (284 → 288) — struct grows 288 → 296. Non-ninja
+    /// players simply never move this field off 0.
+    energy: f64 = 0,
 };
 
 /// Mirrors `ProjectileEntity`.
@@ -585,7 +595,7 @@ comptime {
     // Each entity is 8-byte-aligned and tail-packed with explicit
     // _reserved bytes. These numbers are the wire contract — change
     // them only in a protocol-version bump.
-    std.debug.assert(@sizeOf(PlayerEntity) == 288);
+    std.debug.assert(@sizeOf(PlayerEntity) == 296);
     std.debug.assert(@sizeOf(ProjectileEntity) == 216);
     std.debug.assert(@sizeOf(SatelliteEntity) == 96);
     std.debug.assert(@sizeOf(DestructibleEntity) == 64);

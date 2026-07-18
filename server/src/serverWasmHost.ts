@@ -20,6 +20,7 @@ import {
   packWorldState,
   unpackWorldState,
   WORLD_STATE_TOTAL_SIZE,
+  PLAYER_ENTITY_SIZE,
   type WasmSimEvent,
 } from "@sim/wasm/worldStateBridge.ts";
 import { loadServerSim } from "./wasmRuntime.ts";
@@ -359,7 +360,12 @@ class ServerWasmHost {
     if (!this.cachedInputs || !this.ex || this.statePtr === null) return;
     const view = new DataView(this.ex.memory.buffer);
     const playersStart = this.statePtr + 48 + 8;
-    const PLAYER_ENTITY_SIZE = 288;
+    // PLAYER_ENTITY_SIZE now imported from worldStateBridge.ts (2026-07-18)
+    // — this used to shadow-declare a local `= 288` copy, which silently
+    // desynced (and would have corrupted every input write past player
+    // index 0) the moment the shared constant grew to 296 for the ninja
+    // energy field. Exactly the "duplicated magic number" trap this
+    // codebase's own doctrine warns about elsewhere.
     const AIMX_OFF = 4 * 8;
     const AIMY_OFF = 5 * 8;
     const CURR_OFF = 268;

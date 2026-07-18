@@ -3,6 +3,7 @@
 // are re-exported here to keep existing client imports stable.
 import type {
   CardId as SimCardId,
+  ClassId,
   WeaponId as SimWeaponId,
 } from "../../sim/data/cardTypes";
 
@@ -10,6 +11,7 @@ export type {
   CardDefinition,
   CardId,
   CardVisualDefinition,
+  ClassId,
   ImpactBehavior,
   ProjectileModifier,
   ResolvedWeaponBuild,
@@ -59,9 +61,43 @@ export type PlayerState = {
   alive: boolean;
 };
 
+/**
+ * Class-era display layer (docs/classes-goal.md, P1). The four archetypes
+ * EVOLVE into class chassis — Balanced→wizard, Sprinter→ninja,
+ * Heavy→paladin, Shielded→priest — but the sim-visible `CharacterId`s stay
+ * the original archetype ids (wire/replay compat; see
+ * net/playerCharacter.ts). `classId` is dev-id vocabulary (code/docs/sigil
+ * lookup) — the LOCKED player-facing persona name (Geometrician/Interstice/
+ * Kindred/Syzygist, docs/classes-goal.md § Naming) lives on
+ * `CharacterDefinition.name`, never here.
+ *
+ * UPDATE 2026-07-17 (class-expression infra): `ClassId` is no longer
+ * "zero sim meaning" — it's re-exported above from
+ * `sim/data/cardTypes.ts`, the new canonical definition, because
+ * `CardDefinition.classModifiers` and `createWeaponBuild`'s resolution now
+ * key on it for real (see `classIdForArchetype` + `effectiveCardModifier`).
+ * Single-sourced there so the display layer and the sim layer can never
+ * drift onto two different unions.
+ */
+
 export type CharacterDefinition = {
   id: CharacterId;
+  /** Player-facing display name — the LOCKED persona ("Geometrician",
+   *  "Interstice", "Kindred", "Syzygist"; docs/classes-goal.md § Naming,
+   *  2026-07-17), never the old archetype word and never the bare dev-id
+   *  class word (that's `classId` below). */
   name: string;
+  /** Display-layer class id (P1: labels/sigils only, zero sim meaning). */
+  classId: ClassId;
+  /**
+   * One-line chassis summary for selection surfaces. Must describe what is
+   * TRUE TODAY (stats — the proto-chassis), never future verbs: no "sword
+   * and board" until the kit actually ships (classes-goal.md staging).
+   */
+  kitSummary: string;
+  /** True until the class's full kit phase ships — selection surfaces show
+   *  a quiet "full kit coming" note, nothing more (P1 honesty rule). */
+  kitComing?: boolean;
   maxHealth: number;
   moveSpeedMultiplier: number;
   sizeScale: number;

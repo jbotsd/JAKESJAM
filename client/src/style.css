@@ -412,9 +412,23 @@ input[type="color"] {
   background: rgba(60, 121, 240, 0.3);
 }
 
+/* `[hidden]` alone does nothing here: `.lobby-panel`'s own `display: flex`
+   is equal-specificity author CSS, and author rules always beat the UA
+   stylesheet's `[hidden] { display: none }` regardless of declaration
+   order — so the native attribute ShellController.apply() sets was
+   silently a no-op. This makes it authoritative again. */
+.lobby-panel[hidden] {
+  display: none;
+}
+
 .lobby-panel--hidden {
   opacity: 0;
   pointer-events: none;
+  /* Belt-and-suspenders alongside [hidden]/display:none above: a stray
+     transition, a missed class-toggle race, or a future rule that beats
+     [hidden]'s specificity must still be unable to leave this focusable
+     or hit-testable. opacity:0 alone does neither on its own. */
+  visibility: hidden;
   /* Slide toward the right edge it docks from (withdraw, not ascend). */
   transform: translateX(12px) scale(0.97);
 }
@@ -1262,6 +1276,7 @@ button.btn-danger:hover:not(:disabled) {
 .shell-room.lobby-panel--hidden {
   opacity: 0 !important;
   pointer-events: none !important;
+  visibility: hidden !important;
 }
 .shell-frame--room {
   width: 100%;

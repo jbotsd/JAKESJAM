@@ -25,6 +25,7 @@ import type {
   PlayerEntity,
   ProjectileEntity,
 } from "./types.js";
+import { classIdForArchetype } from "./data/cardTypes.js";
 
 // ----- Constants -------------------------------------------------------------
 
@@ -202,6 +203,15 @@ export type DeflectResult = {
   /** True if a MIRROR shield absorbed the hit AND should bounce the shard back
    *  at the attacker (caller reflects it, like a parry). */
   shieldReflected: boolean;
+  /**
+   * True if a ninja's dash i-frames evaded the hit entirely (docs/
+   * classes-goal.md: "ninja = evasion — dash i-frames — never blocks, only
+   * isn't there"). Zero damage, distinct from `deflected` (parry/dash-bash
+   * self-parry): evasion is NOT a counter — the caller must NOT reflect the
+   * projectile or play the parry-deflect CLANG, just suppress the hit.
+   * 2026-07-18, ninja melee verb.
+   */
+  evaded: boolean;
 };
 
 export type DeflectOptions = {
@@ -246,6 +256,32 @@ export function tryDeflectDamage(
       shielded: false,
       shieldPopped: false,
       shieldReflected: false,
+      evaded: false,
+    };
+  }
+
+  // 0.5. NINJA EVASION (docs/classes-goal.md defense verb: "ninja =
+  //      evasion — dash i-frames — never blocks, only isn't there"). Ahead
+  //      of parry/shield: a dodge means the hit never reaches the body, so
+  //      it pre-empts every other mitigation path, not just adds to them.
+  //      Omnidirectional (unlike parry/dash-bash-self-parry's frontal arc)
+  //      — "wasn't there" doesn't have a blind side. Applies to ANY damage
+  //      source routed through this function (projectiles here, plus
+  //      dash-bash and the ninja's own melee arc in World.ts, both of which
+  //      pass `projectile: null`) — a dashing ninja is untouchable by every
+  //      damage path that already funnels through tryDeflectDamage. Known
+  //      gap: burn DoT / void-plane / chain-lightning / AOE-leech apply
+  //      damage directly in World.ts without going through this function,
+  //      so i-frames don't cover those (flagged in the ninja-verb report).
+  if (player.dashing === true && classIdForArchetype(player.characterId) === "ninja") {
+    return {
+      player,
+      damage: 0,
+      deflected: false,
+      shielded: false,
+      shieldPopped: false,
+      shieldReflected: false,
+      evaded: true,
     };
   }
 
@@ -264,6 +300,7 @@ export function tryDeflectDamage(
         shielded: false,
         shieldPopped: false,
         shieldReflected: false,
+        evaded: false,
       };
     }
   }
@@ -297,6 +334,7 @@ export function tryDeflectDamage(
         shielded: false,
         shieldPopped: false,
         shieldReflected: false,
+        evaded: false,
       };
     }
   }
@@ -312,6 +350,7 @@ export function tryDeflectDamage(
       shielded: false,
       shieldPopped: false,
       shieldReflected: false,
+      evaded: false,
     };
   }
   if (player.shieldActive) {
@@ -331,6 +370,7 @@ export function tryDeflectDamage(
             shielded: false,
             shieldPopped: false,
             shieldReflected: false,
+            evaded: false,
           };
         }
       }
@@ -346,6 +386,7 @@ export function tryDeflectDamage(
         deflected: false,
         shielded: true,
         shieldPopped: popped,
+        evaded: false,
         // Mirror shield bounces the shard back at the attacker.
         shieldReflected: options.mirrorShield === true,
       };
@@ -360,6 +401,7 @@ export function tryDeflectDamage(
     shielded: false,
     shieldPopped: false,
     shieldReflected: false,
+    evaded: false,
   };
 }
 

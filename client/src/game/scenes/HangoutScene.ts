@@ -18,7 +18,7 @@
 
 import Phaser from "phaser";
 import { SceneKeys } from "./SceneKeys";
-import { ClientLoop, WsTransport, InputBit } from "../../net";
+import { ClientLoop, WsTransport, InputBit, encodeMessage } from "../../net";
 import { PlayerId, type PlayerEntity, type SimEvent, type WorldState } from "../../sim/types.js";
 import type { MapDefinition } from "../../sim/types.js";
 import { resolveMap } from "../../sim/data/maps.js";
@@ -37,7 +37,8 @@ import { isTouchPrimary, isPortraitMobile } from "../input/mobile";
 import { getRenderScale } from "../render/renderResolution.js";
 import { characters } from "../data/characters";
 import { PALETTE, ARENA_THEMES } from "../ui/palette";
-import { CardDraftOverlay } from "../ui/CardDraftOverlay";
+import { CardDraftOverlay, type ClassRowConfig } from "../ui/CardDraftOverlay";
+import { sanitizeCharacterId } from "../../net/playerCharacter.js";
 import { crystalRoundsCards } from "../../sim/data/cards.js";
 import { EntityRenderCoordinator } from "../render/EntityRenderCoordinator.js";
 import {
@@ -80,8 +81,21 @@ const PORTRAIT_CAM_Y_BIAS = 150;
 // there with the rest of the venue vocabulary.
 const LOADOUT_KICKER = "LOADOUT";
 const LOADOUT_TITLE = "CHOOSE YOUR CARD";
+// Multi-pick (chunk 1.3, docs/classes-goal.md "Loadout station owns the
+// 3 slots"): each pick arms the next open rack slot and rolls a fresh
+// offer for the one after it — up to MAX_ABILITY_SLOTS across one visit.
 const LOADOUT_HINT =
-  "Pick one card — it rides with you into your next arena run. Try it on the dummies. Walk away any time.";
+  "Pick a card to arm your rack — up to 3 across this visit, picking again after each. Try it on the dummies. Walk away any time.";
+// Class era P1 (docs/classes-goal.md): class select joins card select at
+// the SAME station — the pre-arena identity moment. Plain UI label, no
+// Coptic (naming protocol: lore names never in HUD-critical copy). Moves
+// to venueNames.ts with the constants above when that file lands.
+const CLASS_ROW_TITLE = "CHOOSE YOUR CLASS";
+// Same persisted slot LobbyController's "Class" dropdown reads/writes
+// (PLAYER_CHARACTER_KEY there) — the station class row and the private-room
+// dropdown are two views of ONE selection. Same literal-key precedent as
+// "jakesjam.playerName" below.
+const PLAYER_CHARACTER_KEY = "jakesjam.playerCharacter";
 
 export class HangoutScene extends Phaser.Scene {
   private mode: "private" | "venue" = "private";
@@ -91,6 +105,20 @@ export class HangoutScene extends Phaser.Scene {
   private audio?: ProceduralAudio;
   private touchControls: TouchControls | null = null;
   private keys!: Record<"a" | "d" | "w" | "space", Phaser.Input.Keyboard.Key>;
+  // Duos queue (classes-goal.md "Venue integration" — venue-only, a lighter
+  // touch than a DOM overlay: press [T] at the bell to toggle "queue as
+  // duo" intent, same walk-up-and-toggle spirit as the totems themselves.
+  // A raw transport reference (not routed through ClientLoop) keeps this
+  // message off the predicted/reconciled input path entirely — it's venue
+  // bookkeeping, not gameplay input.
+  private lobbyTransport: WsTransport | null = null;
+  private duoKey?: Phaser.Input.Keyboard.Key;
+  /** Optimistic local echo — the server is the actual source of truth
+   *  (VenueHost's duoIntent Set), but there's no round-trip ack message
+   *  for a toggle this cheap; a dropped packet would only desync the
+   *  displayed state until the next press, never the server's behavior. */
+  private duoIntentLocal = false;
+  private duoHintText: Phaser.GameObjects.Text | null = null;
   private statusText: Phaser.GameObjects.Text | null = null;
   private actionCamera!: ActionCamera;
   private simEventRouter: SimEventRouter | null = null;
@@ -177,6 +205,7 @@ export class HangoutScene extends Phaser.Scene {
         w: this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.W),
         space: this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.SPACE),
       };
+      this.duoKey = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.T);
     }
 
     this.statusText = this.add
@@ -244,7 +273,14 @@ export class HangoutScene extends Phaser.Scene {
           name = await this.promptForCallsign();
         }
         this.setStatus("Entering the lobby...");
-        const assignment = await fetchVenueLobbyAssignment(this.localPlayerId as string, name);
+        const assignment = await fetchVenueLobbyAssignment(
+          this.localPlayerId as string,
+          name,
+          // Chassis rides the lobby socket too (classes-goal.md P1) so the
+          // venue vessel spawns with the picked class's body. Server pass
+          // is authoritative (net/playerCharacter.ts, same function).
+          sanitizeCharacterId(localStorage.getItem(PLAYER_CHARACTER_KEY)),
+        );
         wsUrl = assignment.wsUrl;
         matchId = "lobby";
       } else {
@@ -256,6 +292,10 @@ export class HangoutScene extends Phaser.Scene {
       }
       this.setStatus("Opening WebSocket...");
       const transport = new WsTransport({ url: wsUrl });
+      // Held directly (not routed through ClientLoop) so the duo-toggle
+      // send doesn't need any new surface on the shared netcode loop —
+      // see the field's doc.
+      this.lobbyTransport = transport;
       this.loop = new ClientLoop({
         transport,
         matchId,
@@ -280,8 +320,16 @@ export class HangoutScene extends Phaser.Scene {
         },
         // Pushed venue-status frames (S2.B) — only the venue lobby's host
         // ever sends these; private hangouts simply never fire it.
+        //
+        // Normalize ONCE here rather than at every read site: a long-lived
+        // dev server process (Bun doesn't hot-reload) can still be running
+        // pre-duoQueued venueHost.ts while a freshly-built client expects
+        // the field unconditionally — caught live 2026-07-18, crashed
+        // updateTotemPulse's `.duoQueued.includes(...)` on undefined. Any
+        // future additive field on this frame gets the same protection by
+        // defaulting it here instead of trusting the wire byte-for-byte.
         onVenueStatus: (status) => {
-          this.venueStatus = status;
+          this.venueStatus = { ...status, duoQueued: status.duoQueued ?? [] };
           this.venueStatusAtMs = performance.now();
         },
         // Loadout station (S2.E, separated 2026-07-17): offers arrive while
@@ -314,12 +362,25 @@ export class HangoutScene extends Phaser.Scene {
     this.statusText?.setText(message);
   }
 
-  /** Loadout station (S2.E, separated 2026-07-17): open the card selector
-   *  iff the player is standing at the station, hasn't already picked this
-   *  visit, and the overlay isn't already up. Picking sends a card-pick
-   *  over the lobby socket and arms the totem glow; not picking and
-   *  walking away is fine — no nag, no auto-pick, the bell admits with
-   *  none. */
+  /** Loadout station (S2.E, separated 2026-07-17; multi-pick chunk 1.3):
+   *  open the card selector iff the player is standing at the station, the
+   *  server still has an offer for them (an empty `offers` array means the
+   *  rack is full or nothing's eligible — see venueHost.ts's
+   *  `rollStarterOffer`), and the overlay isn't already up. Picking sends
+   *  a card-pick over the lobby socket and arms the totem glow.
+   *
+   *  Deliberately does NOT set a "dismissed this visit" flag on pick
+   *  (unlike the pre-chunk-1.3 single-pick station): the server rerolls
+   *  and re-pushes a fresh `venue-draft` for the NEXT open rack slot
+   *  immediately after a valid pick (venueHost.ts's card-pick handler), so
+   *  the next `onVenueDraft` call re-invokes this method and reopens with
+   *  the new offer — one continuous station visit can fill the whole rack
+   *  (docs/classes-goal.md "Loadout station owns the 3 slots"). The loop
+   *  ends itself the moment the server offers nothing (`cards.length ===
+   *  0` below), whether that's a full rack or an exhausted pool. Walking
+   *  away mid-visit is still fine — no nag, no auto-pick; the bell admits
+   *  with however many slots got filled, and `updateLoadoutZone`'s exit
+   *  edge re-arms `loadoutDismissed` for a fresh visit either way. */
   private maybeShowLoadout(): void {
     if (this.mode !== "venue") return;
     if (!this.loadoutInZone || !this.loadoutSeenOutside || this.loadoutDismissed) return;
@@ -336,14 +397,51 @@ export class HangoutScene extends Phaser.Scene {
           title: LOADOUT_TITLE,
           hint: LOADOUT_HINT,
         },
+        this.buildClassRowConfig(),
       );
     }
     this.draftOverlay.show(cards, (card) => {
       this.loop?.sendCardPick(this.venueStatus?.roundIndex ?? 0, card.id);
       this.loadoutPickId = card.id;
-      this.loadoutDismissed = true;
       this.draftOverlay?.hide();
+      // The server's rerolled next-slot offer (or `[]` once full) almost
+      // always lands in `this.loadoutOffers` via onVenueDraft WHILE the
+      // overlay's own ~560ms pick-reveal sequence is still playing — that
+      // push's own maybeShowLoadout() call no-ops against `isOpen()` still
+      // being true. Re-check here, once the overlay has actually closed,
+      // so the loop continues instead of stalling after slot 1.
+      this.maybeShowLoadout();
     });
+  }
+
+  /** Class-select row config (classes-goal.md P1): the four chassis from
+   *  characters.ts, selected = the persisted value the private-room "Class"
+   *  dropdown also reads. Picking persists locally and announces via
+   *  `jakesjam:class-change` (LobbyController listens) — the pick rides the
+   *  NEXT arena admission through the world-join `character` param
+   *  (OnlineMatchScene → /ws/world → WorldHost.spawnFor). No live respawn
+   *  here: the lobby vessel keeps its connect-time chassis until the next
+   *  socket, which is fine — the station arms the future, the bell cashes
+   *  it in. */
+  private buildClassRowConfig(): ClassRowConfig {
+    return {
+      title: CLASS_ROW_TITLE,
+      options: characters.map((c) => ({
+        id: c.id as string,
+        name: c.name,
+        classId: c.classId,
+        summary: c.kitSummary,
+        kitComing: c.kitComing,
+      })),
+      selectedId: sanitizeCharacterId(localStorage.getItem(PLAYER_CHARACTER_KEY)),
+      onSelect: (id) => {
+        const characterId = sanitizeCharacterId(id);
+        localStorage.setItem(PLAYER_CHARACTER_KEY, characterId);
+        window.dispatchEvent(
+          new CustomEvent("jakesjam:class-change", { detail: { characterId } }),
+        );
+      },
+    };
   }
 
   /** Station proximity (client-side UI arbitration only — offers and picks
@@ -540,7 +638,8 @@ export class HangoutScene extends Phaser.Scene {
     const readyTotem = this.totems.find((t) => t.kind === "ready");
     const localQueued =
       this.mode === "venue" &&
-      (this.venueStatus?.queued.includes(this.localPlayerId as string) ?? false);
+      ((this.venueStatus?.queued.includes(this.localPlayerId as string) ?? false) ||
+        (this.venueStatus?.duoQueued.includes(this.localPlayerId as string) ?? false));
     const scale = flashing ? 1 + 0.12 * Math.sin(nowMs * 0.03) : 1;
     // Redraw is cheap at this scale (two rings + a fill per totem, once a
     // frame only while flashing would be ideal, but two totems total makes
@@ -613,19 +712,51 @@ export class HangoutScene extends Phaser.Scene {
     if (this.bellLabel) {
       const queuedCount = s.queued.length;
       const localQueued = s.queued.includes(this.localPlayerId as string);
+      const localDuoQueued = s.duoQueued.includes(this.localPlayerId as string);
       const suffix = localQueued
         ? " · QUEUED"
-        : queuedCount > 0
-          ? ` · ${queuedCount} QUEUED`
-          : "";
-      this.bellLabel.setText(`THE BELL · ${mm}:${ss}${suffix}`);
+        : localDuoQueued
+          ? " · QUEUED (DUO)"
+          : queuedCount > 0
+            ? ` · ${queuedCount} QUEUED`
+            : "";
+      const duoCount = s.duoQueued.length > 0 ? ` · ${s.duoQueued.length} DUO` : "";
+      this.bellLabel.setText(`THE BELL · ${mm}:${ss}${suffix}${duoCount}`);
     }
+
+    // Duos-queue hint (classes-goal.md "Venue integration") — a persistent
+    // corner label, not a modal: the toggle is meant to be set once before
+    // ever walking to the bell, not negotiated in a dialog each visit.
+    if (!this.duoHintText) {
+      this.duoHintText = this.add
+        .text(20, 44, "", {
+          color: "#9aa5b1",
+          fontFamily: "'Space Mono', 'Courier New', monospace",
+          fontSize: "13px",
+        })
+        .setScrollFactor(0)
+        .setDepth(1000);
+    }
+    this.duoHintText.setText(`[T] DUO QUEUE: ${this.duoIntentLocal ? "ON" : "OFF"}`);
   }
 
   // ---------------- Update ----------------
 
   update() {
     if (!this.loop) return;
+
+    // Duos queue toggle (classes-goal.md "Venue integration") — venue
+    // lobby only, a walk-up-and-press affordance rather than a menu:
+    // press [T] any time to flip "queue as duo" intent before touching
+    // the bell totem. JustDown so a held key toggles once, not every frame.
+    if (
+      this.mode === "venue" &&
+      this.duoKey &&
+      Phaser.Input.Keyboard.JustDown(this.duoKey)
+    ) {
+      this.duoIntentLocal = !this.duoIntentLocal;
+      this.lobbyTransport?.send(encodeMessage({ t: "duo-toggle" }));
+    }
 
     let keys = 0;
     if (this.keys?.a.isDown) keys |= InputBit.Left;
@@ -811,6 +942,9 @@ export class HangoutScene extends Phaser.Scene {
     this.feedText = null;
     this.bellLabel = null;
     this.venueStatus = null;
+    this.duoHintText = null;
+    this.duoIntentLocal = false;
+    this.lobbyTransport = null;
     this.entityRender?.destroy();
     this.entityRender = null;
     this.callsignOverlay?.remove();

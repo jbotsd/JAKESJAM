@@ -54,8 +54,9 @@ export function entityIdsOf<T>(record: Record<EntityId, T>): EntityId[] {
  * Bitfield layout, least significant bit first:
  *  0 left, 1 right, 2 up, 3 down, 4 jump,
  *  5 crouch, 6 fire, 7 ability, 8 shield, 9 dash,
- *  10..13 drafted ability slots 1..4 (six-axes-goal.md Layer 2),
- *  14..15 reserved.
+ *  10..12 drafted ability slots 1..3 (six-axes-goal.md Layer 2; rack
+ *  locked at exactly 3, docs/classes-goal.md "Rotation system" — bit 13
+ *  is unused, no 4th slot), 13..15 reserved.
  */
 export type InputBitfield = number;
 
@@ -176,6 +177,19 @@ export type PlayerEntity = {
   fireCooldownMs: number;
   ammo: number;
   abilityCharge: number;
+  /**
+   * Ninja class-resource pool (docs/classes-goal.md MANA section: "ninja =
+   * energy, fast regen, melee hits restore"). 0..NINJA_ENERGY_MAX
+   * (World.ts). Only ninja (classId) chassis ever move this off 0 — other
+   * classes' resources (wizard mana, paladin resolve, priest devotion) are
+   * future work on the same substrate shape, not this field. TS-owned:
+   * mutated exclusively by World.ts combat code (melee-hit / dash-through /
+   * wall-kick grants + passive regen), the same way abilityCharge is —
+   * physics steps (TS or wasm) never touch it, just carry it through.
+   * Optional/additive: absent/undefined reads as 0. Wire-mirrored in
+   * world_state.zig's PlayerEntity.energy (appended field, 2026-07-18).
+   */
+  energy?: number;
   lastProcessedInputSeq: InputSeq;
   /**
    * Slow-field debuff. When set and `slowedUntilTick > state.tick`, the
@@ -256,8 +270,13 @@ export type PlayerEntity = {
   /**
    * Drafted actives (six-axes-goal.md Layer 2) — per-slot cooldowns + the
    * Crimson Tithe window. All additive/optional (older snapshots read "no
-   * cooldown, no window"), all hash-mixed. Slots map to input bits 10..13
+   * cooldown, no window"), all hash-mixed. Slots map to input bits 10..12
    * in pick order; the slot's card lives in the resolved build's `actives`.
+   * The rack is locked at exactly 3 slots (MAX_ABILITY_SLOTS,
+   * docs/classes-goal.md "Rotation system") — `slot4CooldownUntilTick` is
+   * kept as a reserved/inert wire field (never set by World.ts) rather
+   * than removed, to avoid a protocol-shape change for a slot that will
+   * never exist; it always reads `undefined`.
    */
   slot1CooldownUntilTick?: Tick;
   slot2CooldownUntilTick?: Tick;
@@ -278,6 +297,66 @@ export type PlayerEntity = {
    *  unless sudden death is active (last-one-standing rounds never
    *  respawn). Cleared on respawn / round boundary. Additive/optional. */
   respawnAtTick?: Tick;
+  /**
+   * Geometrician catalog v1 (docs/class-ability-catalogs-v1.md, wizard-only
+   * — classId-gated at the offer roll). All additive/optional, all
+   * hash-mixed, same window-buff contract as titheUntilTick/veilUntilTick
+   * above.
+   *
+   * - sunlanceUntilTick: Sunlance window — fired shots deal
+   *   GEO_SUNLANCE_DAMAGE_MULTIPLIER while live (weapon.ts stamps it,
+   *   mirrors the Crimson Tithe pattern exactly).
+   * - facetTargetId / facetMarkUntilTick: Facet Break's mark, stored on the
+   *   CASTER (not the victim — avoids a cross-player mid-loop write hazard
+   *   in World.ts's per-player step). While live, a hit this player lands
+   *   on `facetTargetId` is amplified (checked at the hit-confirmed site).
+   * - overclockUntilTick: Overclock window — fire rate up / spread tighter
+   *   while live (weapon.ts), ends naturally at the tick rather than early
+   *   on a stop-shooting read (doc's "ends early" nuance is a deferred v2).
+   */
+  sunlanceUntilTick?: Tick;
+  facetTargetId?: PlayerId;
+  facetMarkUntilTick?: Tick;
+  overclockUntilTick?: Tick;
+  /**
+   * Resonance (docs/classes-goal.md "Rotation system", class-overhaul-
+   * workboard.md chunk 0.1 — "chain unlike abilities for a bonus").
+   * `resonanceUntilTick`/`resonanceSourceKind` are stamped by EVERY
+   * successful ability activation in World.ts's drafted-actives block
+   * (six-axes Layer 2 kinds AND the Geometrician catalog v1 alike — the
+   * mechanism reads `active.kind` off whichever ability just fired and is
+   * otherwise class-blind, per the doc's "the mechanism itself must be
+   * class-agnostic" requirement):
+   *   - `resonanceSourceKind` = the `AbilityKind` that opened/most-recently
+   *     refreshed the window.
+   *   - `resonanceUntilTick` = the tick the window closes
+   *     (RESONANCE_WINDOW_MS, constants.ts).
+   * A cast resonates (consumes the window for the v1 bonus — a fractional
+   * cooldown refund, RESONANCE_CD_REFUND_FRACTION) only when
+   * `resonanceUntilTick > tick` AND the new cast's kind differs from
+   * `resonanceSourceKind`. Casting the SAME kind twice in a row never
+   * resonates — the field is simply overwritten with the same value, which
+   * is indistinguishable from "no bonus" at the check site. This is the
+   * literal enforcement of "chain UNLIKE abilities": same-ability spam is
+   * excluded by the inequality check, not by a separate cooldown/flag.
+   * "Resonance only chains across the equipped 3" (classes-goal.md) needs
+   * no separate enforcement here: only kinds present in the resolved
+   * build's `actives` (capped at MAX_ABILITY_SLOTS) ever reach the
+   * activation switch that reads/writes these fields — an ability that
+   * isn't equipped can never open or consume a window.
+   * Additive/optional: older snapshots read "no window open" (matches
+   * every other window-buff field on this type). Hash-mixed
+   * (`resonanceUntilTick` only — `resonanceSourceKind` is a string set
+   * deterministically from the same input edge both sides already replay,
+   * the same "don't hash id-typed fields whose divergence is covered by a
+   * numeric sibling" precedent as `facetTargetId`/`facetMarkUntilTick`
+   * above). TS-only: does NOT cross the WASM ABI, matching every other
+   * six-axes/catalog ability field — six-axes-goal.md's "The Zig line"
+   * rules actives (and their window state) TS-authoritative, full stop;
+   * the opt-in wasm dev step never sees ability state at all.
+   */
+  resonanceUntilTick?: Tick;
+  resonanceSourceKind?: string;
   /**
    * Stolen Fangs (legendary defense card): banked lock charges from
    * absorbing a shielded hit. The next fired shot(s) consume one charge and
@@ -630,6 +709,28 @@ export type SimEvent =
       y: number;
     }
   /**
+   * Emitted when an ability activation resonates (class-overhaul-
+   * workboard.md chunk 0.1 — a DIFFERENT ability cast inside the previous
+   * cast's resonance window, consuming it for the v1 bonus: a fractional
+   * cooldown refund on `kind`, RESONANCE_CD_REFUND_FRACTION in
+   * constants.ts). `sourceKind` is the ability that opened the window;
+   * `kind` is the one that just consumed it. Fired alongside (immediately
+   * after) the `ability-activated` event for the same press — spectator/
+   * legibility read + test hook; the bonus itself is already reflected in
+   * the entity's own cooldown field in the snapshot. Additive wire type —
+   * old clients ignore unknown event tags. Render/audio treatment is
+   * deferred (Tier 4 polish, class-overhaul-workboard.md 4.2 nameplate-
+   * legibility gap) — this event exists so that pass has something to hook.
+   */
+  | {
+      t: 'resonance-triggered';
+      playerId: PlayerId;
+      sourceKind: string;
+      kind: string;
+      x: number;
+      y: number;
+    }
+  /**
    * Emitted when a Drain-axis Emission shard heals its caster at the hit
    * site (six-axes-goal.md Layer 1: leech reads the SAME post-mitigation
    * applied damage the charge fill reads). Drives the crimson-thread read —
@@ -711,7 +812,41 @@ export type SimEvent =
    * cross-host identifier). Additive wire type — old clients ignore
    * unknown event tags (same precedent as `emission-cast`).
    */
-  | { t: 'launch-pad-fired'; entityId: EntityId; playerId: PlayerId };
+  | { t: 'launch-pad-fired'; entityId: EntityId; playerId: PlayerId }
+  /**
+   * NINJA MELEE (2026-07-18, docs/classes-goal.md ninja verb — the dual-
+   * blade slash). A ninja's swing entered its ACTIVE (hit-check) frames —
+   * fired once per swing at the windup→active transition, before any hits
+   * resolve. Drives local wind-up/whiff SFX; no gameplay state change.
+   * Additive wire type — old clients ignore unknown event tags.
+   */
+  | { t: 'slash-started'; playerId: PlayerId; x: number; y: number }
+  /**
+   * A ninja's melee arc landed on a player this tick (arc-vs-AABB test,
+   * SLASH_RANGE/SLASH_ARC_RADIANS in World.ts). One event per victim hit —
+   * the arc can hit several players in one active window. Damage already
+   * reflects shield/parry mitigation (tryDeflectDamage) and evasion
+   * (blocked hits never reach here). Additive wire type.
+   */
+  | { t: 'slash-hit'; attackerId: PlayerId; victimId: PlayerId; damage: number }
+  /**
+   * The short-range WAVE projectile spawned off a completed ninja swing
+   * (docs: "wave is aftermath of contact... spawns from a swing that had
+   * commit" — fires at the active→recovery transition regardless of
+   * whether the arc landed a hit). `projectileId` is the spawned
+   * ProjectileEntity's id (ordinary projectile — element/impact modifiers
+   * compose onto it for free via the existing card system, fast-follow).
+   * Additive wire type.
+   */
+  | { t: 'wave-spawned'; playerId: PlayerId; projectileId: EntityId; x: number; y: number }
+  /**
+   * Dash-through body-cross (docs: "Dash-through is a body-cross (hitbox
+   * intersection), not a fog"): a ninja's dash swept their hitbox through
+   * an enemy's this tick. v1 scope is detection + energy grant only — the
+   * Read tag / +20% melee bonus that CONSUMES this event is Slipstream (a
+   * card, fast-follow), not implemented here. Additive wire type.
+   */
+  | { t: 'dash-through'; attackerId: PlayerId; victimId: PlayerId };
 
 export type StepResult = {
   state: WorldState;
@@ -753,6 +888,19 @@ export type PlayerSpawnInfo = {
    *  the recorder serializes the whole spawn, so re-sims apply the same
    *  cards at the same join tick. */
   cards?: string[];
+  /**
+   * Duos-queue team assignment (docs/classes-goal.md "Venue integration":
+   * "Duos queue: VenueHost bell admission gains a team variant... Elastic
+   * bots respect team floors"). Bookkeeping only — NOT mirrored onto
+   * `PlayerEntity`/`WorldState` (no wire/delta-snapshot change, no wasm ABI
+   * surface), same discipline the run-record fields use (World.ts stays
+   * untouched). Server-side roster metadata: stamped into `PlayerLobbyInfo`
+   * at spawn (matchHost.ts) and consulted by WorldHost's elastic-bot fill
+   * to pair opposing/ally bots into a matching team. Omitted = an ordinary
+   * FFA combatant — every existing spawn path (private rooms, plain world
+   * joins, tests) never sets this, so it's byte-for-byte unchanged there.
+   */
+  teamId?: string;
 };
 
 export type Vec2 = { x: number; y: number };

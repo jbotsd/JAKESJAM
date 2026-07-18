@@ -16,6 +16,7 @@ import type { MatchHost } from "./matchHost.ts";
 import { BOT_ID_PREFIX } from "@sim/botId.ts";
 import { EMISSION_CHARGE_MAX } from "@sim/constants.ts";
 import { resolvePlayerBuild } from "@sim/weapon.ts";
+import { MAX_ABILITY_SLOTS } from "@sim/data/cardTypes.ts";
 import { PlayerId, type MapDefinition, type PlayerEntity, type WorldState } from "@sim/types.ts";
 import {
   buildArenaNav,
@@ -159,7 +160,7 @@ export class WorldBots {
         parryReadyAt: 0,
         draftPickAt: null,
         castAt: null,
-        slotPressAt: [null, null, null, null],
+        slotPressAt: new Array<number | null>(MAX_ABILITY_SLOTS).fill(null),
         lastDraftRound: -1,
         lastX: 0,
         lastY: 0,
@@ -418,16 +419,39 @@ export class WorldBots {
       bot.castAt = null;
     }
 
-    // Drafted actives (six-axes Layer 2 bot policy): press a ready slot
-    // when a target is in range, with a humanizing delay per slot — bots
-    // draft ability cards under normal weights, so they must exercise the
-    // press path too. v1 heuristic is kind-agnostic (Crimson Tithe wants
-    // exactly this: target in range, about to deal damage).
+    // Drafted actives (six-axes Layer 2 + class-ability-catalogs-v1 bot
+    // policy, chunk 0.4 "Bot loadout tables"): press a ready slot with a
+    // humanizing delay, class-agnostic — this drives whatever ability cards
+    // are actually equipped in ResolvedWeaponBuild.actives, the SAME
+    // resolution a human's action bar reads (client/src/game/ui/
+    // ActionBarSystem.ts), and presses via the SAME input bits World.ts's
+    // ability-activation loop reads (1 << (10 + slot)), so bots exercise the
+    // exact human press path — no bot-only shortcut into sim effects.
+    //
+    // Role-aware target gate: reading every catalog case in World.ts's
+    // ability switch shows only the "single" role (Facet Break — marks the
+    // nearest foe in the aim cone) actually requires a live target nearby to
+    // do anything; every other role today (offense/aoe/defense/buff/
+    // movement) is self-centered or self-aimed and fires unconditionally
+    // once off cooldown (Sunlance/Prism Fan/Lattice/Return Glass/Hard
+    // Aperture/Overclock/Measure/Slip Node/Recoil Step). So "single" is
+    // range-gated on the nearest foe; everything else presses on cooldown
+    // alone. The five pre-catalog six-axes actives (crimson-tithe,
+    // shelter-seal, shadow-step, veil-of-nought, severing-answer) predate
+    // the role tag (`role` is undefined for them) — conservatively treated
+    // as target-required here too, matching this heuristic's pre-existing
+    // behavior for them (no behavior change to already-tuned bots).
+    // v1 is deliberately basic: no priority/rotation ordering between
+    // slots, no synergy/resonance awareness, no "save the defensive one"
+    // logic — every ready+valid slot gets the same humanized roll.
+    // Rack is locked at MAX_ABILITY_SLOTS (3, docs/classes-goal.md
+    // "Rotation system") — never 4.
     // cards-array guard: minimal test fixtures omit it; no cards, no actives.
     const actives = Array.isArray(me.cards) ? resolvePlayerBuild(me).actives : [];
     // Lazy-init keeps hand-built BotState fixtures (tests) valid.
-    const slotPressAt = (bot.slotPressAt ??= [null, null, null, null]);
-    for (let slot = 0; slot < actives.length && slot < 4; slot++) {
+    const slotPressAt = (bot.slotPressAt ??= new Array<number | null>(MAX_ABILITY_SLOTS).fill(null));
+    for (let slot = 0; slot < actives.length && slot < MAX_ABILITY_SLOTS; slot++) {
+      const active = actives[slot]!;
       const cdUntil =
         slot === 0
           ? me.slot1CooldownUntilTick
@@ -437,7 +461,8 @@ export class WorldBots {
               ? me.slot3CooldownUntilTick
               : me.slot4CooldownUntilTick;
       const ready = cdUntil === undefined || cdUntil <= state.tick;
-      if (!ready || dist > 520) {
+      const needsTarget = active.role === undefined || active.role === "single";
+      if (!ready || (needsTarget && dist > 520)) {
         slotPressAt[slot] = null;
         continue;
       }

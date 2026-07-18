@@ -45,7 +45,10 @@ const ex = sim.exports as unknown as SizeofExports;
 describe("WorldState extern struct layout (Phase G1c)", () => {
   test("entity sizes match the wire contract", () => {
     expect(ex.sizeof_world_state_header()).toBe(48);
-    expect(ex.sizeof_player_entity()).toBe(288);
+    // 288 → 296 (2026-07-18, deliberate bump): +8 bytes for
+    // PlayerEntity.energy (ninja class resource) — see world_state.zig's
+    // comptime assert and worldStateBridge.ts's PLAYER_ENTITY_SIZE.
+    expect(ex.sizeof_player_entity()).toBe(296);
     expect(ex.sizeof_projectile_entity()).toBe(216);
     expect(ex.sizeof_satellite_entity()).toBe(96);
     expect(ex.sizeof_destructible_entity()).toBe(64);

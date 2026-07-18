@@ -82,9 +82,10 @@ export type InputBitfield = number;           // bit 0 left, 1 right, 2 up, 3 do
                                               // 5 crouch, 6 fire, 7 ability (LIVE 2026-07-16:
                                               // the Emission cast at full charge, legacy-parry
                                               // fall-through below — docs/emission-engine-goal.md),
-                                              // 8 shield, 9 dash, 10-13 drafted ability
-                                              // slots 1-4 (LIVE 2026-07-17 —
-                                              // docs/six-axes-goal.md Layer 2), 14-15 reserved
+                                              // 8 shield, 9 dash, 10-12 drafted ability
+                                              // slots 1-3 (LIVE 2026-07-17 —
+                                              // docs/six-axes-goal.md Layer 2; rack locked
+                                              // at exactly 3, docs/classes-goal.md), 13-15 reserved
 export type InputFrame = {
   seq: InputSeq;
   tick: Tick;                                 // tick this input was generated for

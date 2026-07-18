@@ -307,6 +307,15 @@ export class SimEventRouter {
         }
         break;
       }
+      case "resonance-triggered": {
+        // Chain-unlike-abilities bonus fired (class-overhaul-workboard.md
+        // chunk 0.1). Minimal audio accent on top of ability-activated's
+        // own cue so a chain is at least AUDIBLE today — a bespoke world-
+        // space read (nameplate chip / VFX) is Tier 4 polish
+        // (class-overhaul-workboard.md 4.2), deliberately not built here.
+        audio.play("card", { heavy: true });
+        break;
+      }
       case "emission-leech": {
         // Drain axis (six-axes-goal.md Layer 1): a shard fed its caster.
         // The crimson-thread world read lives in StatusVfxController (it
@@ -330,6 +339,39 @@ export class SimEventRouter {
         if (event.playerId === d.localPlayerId) {
           d.safeShake(60, 0.004);
         }
+        break;
+      }
+      case "slash-started": {
+        // Ninja windup tell (2026-07-18, verb v1 — sim correctness pass,
+        // minimal rendering per scope). No bespoke whoosh asset exists and
+        // the hard rule is never synthesize audio (rip only) — left silent
+        // rather than reusing an unrelated cue. Fast-follow: a real swing
+        // SFX + rig animation once assets exist.
+        break;
+      }
+      case "slash-hit": {
+        // The landed-hit feedback (hit-stop, sound, damage number) already
+        // comes from the paired `hit-confirmed` event this same tick (see
+        // World.ts's NINJA MELEE section — every non-evaded slash-hit is
+        // always emitted alongside one). This event exists so fast-follow
+        // ninja-specific VFX (blade scrape / Read-tag flash) has a hook
+        // without re-deriving "was this hit a ninja slash" from
+        // hit-confirmed's generic shape.
+        break;
+      }
+      case "wave-spawned": {
+        // "The wave rides existing projectile tech" (classes-goal.md) —
+        // reuse the ordinary shoot cue at reduced intensity rather than a
+        // bespoke asset; the projectile itself renders via the normal
+        // projectile pipeline (spawnProjectile), no special-casing needed.
+        audio.play("shoot", { intensity: 0.6 });
+        break;
+      }
+      case "dash-through": {
+        // Body-cross tactile beat (character-sheets-v1.md: "energy tick
+        // you can hear"). Reuse the dash whoosh at partial intensity, same
+        // "closest recorded body-fling read" reasoning as launch-pad-fired.
+        audio.play("dash", { intensity: 0.5 });
         break;
       }
       default: {

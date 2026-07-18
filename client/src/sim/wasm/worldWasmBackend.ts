@@ -34,6 +34,7 @@ import {
   packWorldState,
   unpackWorldState,
   WORLD_STATE_TOTAL_SIZE,
+  PLAYER_ENTITY_SIZE,
   type UnpackedWorldState,
   type WasmSimEvent,
 } from "./worldStateBridge.js";
@@ -320,7 +321,11 @@ export function writePlayerInputsIntoMemory(
   const ex = cachedEx;
   const view = new DataView(ex.memory.buffer);
   const playersStart = sim.statePtr + 48 + 8;
-  const PLAYER_ENTITY_SIZE = 288;
+  // PLAYER_ENTITY_SIZE now imported from worldStateBridge.ts (2026-07-18)
+  // — this used to shadow-declare a local `= 288` copy (same bug fixed in
+  // the server's serverWasmHost.ts twin of this function); a stale local
+  // copy would have silently corrupted every player's input write past
+  // index 0 the moment the shared constant grew to 296.
   // aim_x + aim_y are at f64 slots 4 + 5 (offset 32 + 40).
   const AIMX_OFF = 4 * 8;
   const AIMY_OFF = 5 * 8;

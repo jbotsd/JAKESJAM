@@ -539,12 +539,19 @@ app.innerHTML = `
             <input data-player-color type="color" value="#50e3c2" />
           </label>
           <label>
-            Vessel
+            Class
+            <!-- Class era P1 (docs/classes-goal.md): option VALUES are the
+                 sim/wire-stable archetype ids; the labels speak the LOCKED
+                 persona display names (docs/classes-goal.md § Naming,
+                 2026-07-17) — never the dev-id class words. This dropdown
+                 and the venue loadout station's class row are two views of
+                 ONE selection (localStorage jakesjam.playerCharacter —
+                 LobbyController persists, both read). -->
             <select data-player-character>
-              <option value="balanced">Balanced</option>
-              <option value="heavy">Heavy</option>
-              <option value="sprinter">Sprinter</option>
-              <option value="shielded">Shielded</option>
+              <option value="balanced">Geometrician</option>
+              <option value="sprinter">Interstice</option>
+              <option value="heavy">Kindred</option>
+              <option value="shielded">Syzygist</option>
             </select>
           </label>
         </form>
@@ -1844,13 +1851,41 @@ function showMatchChrome(show: boolean): void {
   if (show) syncClipsChrome();
 }
 
-queryRequired<HTMLButtonElement>("[data-match-menu]").addEventListener("click", () => {
+function openMatchMenu(): void {
+  // Hangout (private-room pre-stage): Menu/Esc toggles the PRIVATE ROOM
+  // panel as an overlay — join no longer leaves it stuck open
+  // (Jake 2026-07-17). Real fights still open the pause menu.
+  if (game.scene.isActive(SceneKeys.Hangout)) {
+    const st = shell.getState();
+    // Stuck open: exclusive room still up, matchMode never flipped (or
+    // race). Enter private match-mode → exclusive chrome hides. One
+    // press closes; next press toggles the room layer open again.
+    if (st.matchMode === "none") {
+      emitMatchStarted("private");
+      return;
+    }
+    shell.goto("room");
+    return;
+  }
+  // Pre-join private room screen (no hangout yet): Esc/Menu → home.
+  if (shell.getState().exclusive === "room" && shell.getState().matchMode === "none") {
+    shell.goto("home");
+    return;
+  }
   shell.goto("pause");
   syncClipsChrome();
   // Fresh open = fresh confirm state — a half-finished leave confirm from
   // a previous open must not greet the player.
   pauseLeaveConfirm.hidden = true;
   pauseLeaveBtn.disabled = false;
+}
+
+queryRequired<HTMLButtonElement>("[data-match-menu]").addEventListener("click", () => {
+  openMatchMenu();
+});
+
+window.addEventListener(ShellEvents.MATCH_MENU, () => {
+  openMatchMenu();
 });
 
 queryRequired<HTMLButtonElement>("[data-match-clips]").addEventListener("click", () => {
@@ -2200,11 +2235,16 @@ window.addEventListener("jakesjam:back-to-splash", () => {
 window.addEventListener("jakesjam:room-joined", (event) => {
   const detail = (event as CustomEvent<{ code: string; playerId: string }>).detail;
   document.title = `JAKESJAM — Lobby ${detail.code}`;
+  // Enter "private" match mode so the exclusive PRIVATE ROOM chrome
+  // hides and match chrome (Menu) shows. Room UI reopens via Menu/Esc
+  // as a layer overlay — not stuck open over hangout.
+  emitMatchStarted("private");
+  // Belt-and-suspenders: force-hide even if a race re-applied exclusive room.
+  shell.closeLayer();
   // Party Hangout: the walkable pre-match world replaces the old DOM
   // Ready/Start buttons (totems drive both, server-side). The lobby DOM
-  // panel (code/chaos/map-picker) is a separate overlay and keeps working
-  // untouched alongside this — same coexistence MainMenuScene already has
-  // with it. Uses LobbyController's own playerId (carried on the event) —
+  // panel is a Menu-toggled overlay (same data-* hooks).
+  // Uses LobbyController's own playerId (carried on the event) —
   // NOT this file's localPlayerId() helper, which is a different id scheme
   // and isn't the id the server actually knows as a member of this room.
   game.scene.stop(SceneKeys.MainMenu);
@@ -2219,6 +2259,9 @@ window.addEventListener("jakesjam:room-left", () => {
   if (game.scene.isActive(SceneKeys.Hangout)) {
     game.scene.stop(SceneKeys.Hangout);
   }
+  // Leave private hangout → clear match mode so splash/chrome reset.
+  window.dispatchEvent(new CustomEvent(ShellEvents.MATCH_ENDED));
+  shell.goto("home");
   if (!game.scene.isActive(SceneKeys.MainMenu)) {
     game.scene.start(SceneKeys.MainMenu);
   }

@@ -50,7 +50,22 @@ export type CardPick = {
   cardId: string;
 };
 
-export type ClientMessage = ClientHello | Input | Ack | Ping | CardPick;
+/**
+ * Duos-queue intent toggle (classes-goal.md "Venue integration" — the bell
+ * gains a team variant). Lobby-only, venue business rather than lobby-sim
+ * business (same discipline as `card-pick`: VenueHost intercepts it in
+ * `routeLobby` before the message ever reaches the hangout MatchHost's
+ * `routeMessage` switch). Flips the sender's "queue as duo" intent; it does
+ * NOT by itself join/leave a queue — walking into the bell totem still does
+ * that, using whichever intent is current at the moment of the walk-up.
+ * No payload: the server tracks intent as a boolean per lobby-connected
+ * player, toggled on receipt.
+ */
+export type DuoToggle = {
+  t: "duo-toggle";
+};
+
+export type ClientMessage = ClientHello | Input | Ack | Ping | CardPick | DuoToggle;
 
 // ---------------- Server → Client ----------------
 
@@ -60,6 +75,16 @@ export type PlayerLobbyInfo = {
   color: string;
   name: string;
   cosmetics?: VesselCosmetics;
+  /**
+   * Duos-queue team assignment (classes-goal.md "Venue integration") —
+   * mirrors `PlayerSpawnInfo.teamId` (sim/types.ts) exactly, same additive/
+   * optional contract as `cosmetics`: absent = an ordinary FFA combatant,
+   * old clients simply never see the field. Reaches the client via
+   * `ServerHello.allPlayers` only (never the per-tick snapshot/delta path),
+   * so consuming it is a future client concern (Priest's ally-awareness) —
+   * this wire hop is the full extent of what this pass does with it.
+   */
+  teamId?: string;
 };
 
 export type ServerHello = {
@@ -181,7 +206,14 @@ export type VenueStatus = {
   humans: number;
   bots: number;
   nextBellMs: number;
+  /** The FFA bell queue — UNCHANGED shape/semantics (classes-goal.md's
+   *  duos call is additive: "FFA bell unchanged"). */
   queued: string[];
+  /** The duo bell queue (classes-goal.md "Venue integration") — a player
+   *  toggled duo intent on, then walked into the bell totem. Paired up
+   *  (or auto-paired with an elastic bot) at the same countdown edge the
+   *  FFA queue drains at; see venueHost.ts's `admitDuoQueue`. */
+  duoQueued: string[];
 };
 
 /**
@@ -252,6 +284,7 @@ const REQUIRED_FIELDS: Record<string, ReadonlyArray<readonly [string, "string" |
   ping: [["clientTime", "number"]],
   pong: [["clientTime", "number"], ["serverTime", "number"]],
   "card-pick": [["roundIndex", "number"], ["cardId", "string"]],
+  "duo-toggle": [],
   snap: [["tick", "number"]],
   bye: [["reason", "string"]],
   "venue-status": [["arenaPhase", "string"], ["nextBellMs", "number"]],
@@ -311,3 +344,8 @@ export const InputBit = {
   Shield: 1 << 8,
   Dash: 1 << 9,
 } as const;
+// Note (2026-07-18): the ninja melee slash does NOT get a new input bit —
+// it reuses Fire (bit 6), the existing universal "primary attack" input.
+// World.ts branches on classId at the stepWeapon call site: ninja chassis
+// route the Fire rising-edge into the slash FSM instead of stepWeapon; all
+// other classes are untouched. See World.ts's "1. Players" fire block.

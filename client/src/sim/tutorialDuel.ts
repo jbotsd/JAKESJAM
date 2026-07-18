@@ -361,6 +361,11 @@ export function stepTutorialDuel(
             parryCoverMultiplier: victimBuild.parryCoverMultiplier,
           });
           let postPlayer = mitigation.player;
+          if (mitigation.evaded) {
+            // Ninja dash i-frames — zero damage, no event (see combat.ts).
+            players[ev.victimId] = postPlayer;
+            continue;
+          }
           if (mitigation.deflected) {
             events.push({ t: "parry-deflected", playerId: ev.victimId, projectileId: ev.sourceProjectileId });
             if (ev.sourceProjectileId !== null) deflected.set(ev.sourceProjectileId, ev.victimId);

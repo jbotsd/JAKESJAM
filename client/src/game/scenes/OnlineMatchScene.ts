@@ -22,6 +22,7 @@ import {
   fetchWorldAssignment,
   postRematchReady,
   sanitizePlayerName,
+  sanitizeCharacterId,
   InputBit,
   type NetStats,
 } from "../../net";
@@ -407,8 +408,11 @@ export class OnlineMatchScene extends Phaser.Scene {
   /** Last rendered local feet (for touch aim origin without pre-pump getRenderState). */
   private lastLocalRenderX: number | null = null;
   private lastLocalRenderY: number | null = null;
+  // Drafted-active hotkeys: exactly 3 (docs/classes-goal.md "Rotation
+  // system" — rack slots keys 1-3, never 4; MAX_ABILITY_SLOTS in
+  // sim/data/cardTypes.ts is the canonical constant this mirrors).
   private keys!: Record<
-    "a" | "d" | "w" | "s" | "space" | "shift" | "dash" | "emission" | "slot1" | "slot2" | "slot3" | "slot4",
+    "a" | "d" | "w" | "s" | "space" | "shift" | "dash" | "emission" | "slot1" | "slot2" | "slot3",
     Phaser.Input.Keyboard.Key
   >;
   /** Last frame's local abilityCharge (updated in the HUD pass, read by the
@@ -607,11 +611,12 @@ export class OnlineMatchScene extends Phaser.Scene {
         // Emission cast (Emission Engine P1 — docs/emission-engine-goal.md).
         // E is adjacent to WASD and unbound elsewhere in-match.
         emission: this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.E),
-        // Drafted actives (six-axes Layer 2): action-bar slots in pick order.
+        // Drafted actives (six-axes Layer 2): action-bar slots in pick
+        // order — exactly 3 (docs/classes-goal.md "Rotation system" soft
+        // lock 2026-07-17). No key 4: the rack never fills a 4th slot.
         slot1: this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.ONE),
         slot2: this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.TWO),
         slot3: this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.THREE),
-        slot4: this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.FOUR),
       };
       this.statsToggleKey = this.input.keyboard.addKey(
         Phaser.Input.Keyboard.KeyCodes.BACKTICK,
@@ -795,7 +800,7 @@ export class OnlineMatchScene extends Phaser.Scene {
           // The QA tape caught the legend teaching shield/dash but never the
           // Emission or drafted actives (six-axes) — exactly the "no keyboard
           // shortcut for some things" confusion (Jake, 2026-07-17).
-          ["E  emission (at full meter)", "1-4  drafted abilities"],
+          ["E  emission (at full meter)", "1-3  drafted abilities"],
         ];
     const STAGE_GAP_MS = 900;
     const LEGEND_LIFE_MS = 9_000;
@@ -882,14 +887,15 @@ export class OnlineMatchScene extends Phaser.Scene {
     if (this.keys.emission.isDown && this.lastKnownEmissionCharge >= EMISSION_CHARGE_MAX) {
       keys |= InputBit.Ability;
     }
-    // Drafted actives (six-axes Layer 2): keys 1-4 press bar slots in pick
-    // order — bits 10..13, raw edges (no client gate needed: the sim
+    // Drafted actives (six-axes Layer 2): keys 1-3 press bar slots in pick
+    // order — bits 10..12, raw edges (no client gate needed: the sim
     // validates slot existence + cooldown, and there's no fall-through
-    // hazard like the Emission/parry bit share).
+    // hazard like the Emission/parry bit share). Bit 13 (a would-be 4th
+    // slot) is never sent — the rack is locked at exactly 3
+    // (docs/classes-goal.md "Rotation system").
     if (this.keys.slot1.isDown) keys |= 1 << 10;
     if (this.keys.slot2.isDown) keys |= 1 << 11;
     if (this.keys.slot3.isDown) keys |= 1 << 12;
-    if (this.keys.slot4.isDown) keys |= 1 << 13;
     // Any real input ends a slow-motion dip instantly — see SlowMotion.ts.
     this.slowMotion.update(keys);
 
@@ -1213,9 +1219,10 @@ export class OnlineMatchScene extends Phaser.Scene {
         // order (Jake, 2026-07-16). resolvePlayerBuild + acquiredAbilities
         // are both identity-cached on the cards array — allocation-free
         // per frame until a draft pick swaps the hand.
-        // Drafted actives claim the diamonds right after E, keyed 1-4
-        // (six-axes Layer 2) — cooldown sweep + Tithe window derived from
-        // the same render state as everything else in this pass.
+        // Drafted actives claim the diamonds right after E, keyed 1-3
+        // (six-axes Layer 2; rack locked at 3, docs/classes-goal.md) —
+        // cooldown sweep + Tithe window derived from the same render state
+        // as everything else in this pass.
         actives: localActives,
         acquired: local ? acquiredAbilities(resolvePlayerBuild(local)) : [],
         stolenFangsCharges: local?.pendingLockCharges ?? 0,
@@ -1514,6 +1521,10 @@ export class OnlineMatchScene extends Phaser.Scene {
       const assignment = await fetchWorldAssignment(
         data.localPlayerId,
         sanitizePlayerName(localStorage.getItem("jakesjam.playerName") ?? ""),
+        // Chassis pick (classes-goal.md P1): the venue station / private-room
+        // dropdown both persist to this one key; the arena spawn honors it
+        // (server whitelists — same authoritative-pass split as the name).
+        sanitizeCharacterId(localStorage.getItem("jakesjam.playerCharacter")),
       );
       return assignment.wsUrl;
     }

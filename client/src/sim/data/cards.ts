@@ -229,6 +229,23 @@ export const crystalRoundsCards: CardDefinition[] = [
       projectile: { pathing: "homing", homingStrength: 4.4 },
       projectileHomingStrengthAdd: 1.2,
     },
+    // Wizard expression = docs/card-pool-v2.md "Grudge" (universal spec,
+    // reborn from this exact card — same 4.4 rad/s figure). Grudge's spec
+    // is the capped-turn homing seeker-facets already ships PLUS the −10%
+    // damage the redesign prices it at ("assists, never auto-wins" costs
+    // something). Ninja/Paladin/Priest have no entry yet (their Grudge
+    // readings — bent slash waves, arc forgiveness, dual ally/enemy homing
+    // — need melee/heal verbs that don't exist; classes-goal.md P2-P4) so
+    // they fall back to the class-blind modifier above, i.e. today's
+    // Seeker Facets, unchanged.
+    classModifiers: {
+      wizard: {
+        projectileSpeedMultiplier: 0.82,
+        damageMultiplier: 0.9,
+        projectile: { pathing: "homing", homingStrength: 4.4 },
+        projectileHomingStrengthAdd: 1.2,
+      },
+    },
     visual: visual("triangle", "#f0abfc"),
     maxStacks: 4,
   },
@@ -500,6 +517,22 @@ export const crystalRoundsCards: CardDefinition[] = [
       projectileSplitAdd: 6,
       projectile: { sizeMultiplier: 1.12 },
     },
+    // Wizard expression = docs/card-pool-v2.md "Splinterhead" (universal
+    // spec, reborn from this exact card). Splinterhead re-authors the split
+    // count down to 3 (from 6) as part of the redesign; per-child damage/
+    // range/fan-angle (5 dmg, 240px, 40°) are governed by the shared split
+    // substrate's global constants (projectile.ts spawnSplit), not a
+    // per-card lever — first-draft numbers in the doc note this explicitly
+    // ("playtest will move them"). Ninja/Paladin/Priest readings (wave
+    // shatter, stone-chip ranged echo, heal motes) need melee/heal verbs
+    // that don't exist yet — no entry, falls back to today's Cluster Bomb.
+    classModifiers: {
+      wizard: {
+        fireRateMultiplier: 0.72,
+        projectileSplitAdd: 3,
+        projectile: { sizeMultiplier: 1.12 },
+      },
+    },
     visual: visual("hexagon", "#fde68a"),
     maxStacks: 3,
   },
@@ -563,6 +596,26 @@ export const crystalRoundsCards: CardDefinition[] = [
       damageMultiplier: 0.86,
       projectile: { impact: "slow-field", impactRadiusPx: 70, slowMultiplier: 0.58 },
     },
+    // Priest's "curse" reading (docs/class-overhaul-workboard.md chunk 0.3;
+    // docs/classes-goal.md "Priest / Syzygist": "extends the existing
+    // status-effect substrate ... add regen, haste, weaken, curse"). A true
+    // standalone curse status type would mean a new PlayerEntity field +
+    // World.ts status-application changes — both forbidden for this chunk
+    // (do not add new debuff types, do not touch World.ts). Honest
+    // approximation: reuse the EXISTING slow-field debuff — the one debuff
+    // whose strength/radius live on the card modifier itself rather than a
+    // World.ts global constant (unlike burn/freeze's DPS-and-duration; see
+    // molten-core/frost-prism's own Priest-blocked comments below) — and
+    // let Priest lean harder into it: bigger radius, stronger slow, paid
+    // for with a bigger damage cut. This is the same shape as Wizard's
+    // Grudge/Splinterhead re-tunes (classExpression.test.ts), just on the
+    // debuff axis instead of homing/split.
+    classModifiers: {
+      priest: {
+        damageMultiplier: 0.76,
+        projectile: { impact: "slow-field", impactRadiusPx: 92, slowMultiplier: 0.46 },
+      },
+    },
     visual: visual("hexagon", "#bfdbfe"),
     unique: true,
   },
@@ -578,6 +631,23 @@ export const crystalRoundsCards: CardDefinition[] = [
     modifier: {
       projectile: { element: "fire", impactRadiusPx: 42 },
     },
+    // Wizard expression = docs/card-pool-v2.md "Cinder" (universal spec,
+    // reborn from this exact card): "fire shots, molten trails — zone
+    // control with heat", i.e. the textbook fire-element cast this card
+    // already is. Burn's DPS/duration (World.ts: damage×0.4 for 3s,
+    // Emission-scaled) are global per-element constants, not a per-card
+    // lever, so this override is intentionally identical to the class-
+    // blind modifier — real authored content, zero numeric change (the
+    // doc's "3/s for 2s" first-draft figure isn't independently tunable
+    // without touching the shared burn formula, out of this session's
+    // scope). Ninja's burning-edge-leaves-a-flame-line and Priest's fever-
+    // inversion (burn lowers healing received) need substrate this session
+    // doesn't build — no entry, falls back to today's Molten Core.
+    classModifiers: {
+      wizard: {
+        projectile: { element: "fire", impactRadiusPx: 42 },
+      },
+    },
     visual: visual("triangle", "#ff7a18"),
     unique: true,
   },
@@ -592,6 +662,23 @@ export const crystalRoundsCards: CardDefinition[] = [
     flavorText: "Cold light cuts clean.",
     modifier: {
       projectile: { element: "ice", impact: "slow-field", slowMultiplier: 0.68 },
+    },
+    // Wizard expression = docs/card-pool-v2.md "Hoarfrost" (universal spec,
+    // reborn from this exact card): "freezing facets — lock movement, then
+    // finish", the textbook ice-element cast this card already is. Chill
+    // strength/duration and the 3-stack brittle-freeze escalation are
+    // World.ts global ice-element constants (freezeUntilTick/freezeMultiplier),
+    // not a per-card lever — implementing the doc's exact "0.8×/1.2s +
+    // brittle-freeze" figures would mean changing the shared freeze formula
+    // for every ice card in the game, out of this session's scope (not a
+    // per-class reskin). Override is intentionally identical to the class-
+    // blind modifier — real authored content, zero numeric change. Ninja's
+    // regen-pause and Priest's ally frost-ward-from-your-gun need substrate
+    // this session doesn't build — no entry, falls back to today's Frost Prism.
+    classModifiers: {
+      wizard: {
+        projectile: { element: "ice", impact: "slow-field", slowMultiplier: 0.68 },
+      },
     },
     visual: visual("hexagon", "#93c5fd"),
     unique: true,
@@ -737,6 +824,23 @@ export const crystalRoundsCards: CardDefinition[] = [
       moveSpeedMultiplier: 0.98,
       // Visible: plated hex cores + longer health bar on the rig.
       projectile: { shape: "hexagon", sizeMultiplier: 1.14, element: "crystal" },
+    },
+    // Wizard expression = docs/card-pool-v2.md "Plating" (universal
+    // passive, reborn from this exact card): "+20 max health, −3% move
+    // speed" — the redesign tightens the speed cost from this card's
+    // current −2% to the doc's −3%. Small, genuine, tested difference.
+    // Ninja/Paladin/Priest per-class lines (105/145/120 max health) are
+    // the SAME +20 add read against each chassis's different base HP —
+    // no distinct mechanic to author, but left unset deliberately so the
+    // fallback (today's Crystal Plating) stays the single source of truth
+    // until those chassis' base HP is confirmed live in the sim (currently
+    // only Wizard/balanced ships combat-ready per classes-goal.md staging).
+    classModifiers: {
+      wizard: {
+        maxHealthAdd: 20,
+        moveSpeedMultiplier: 0.97,
+        projectile: { shape: "hexagon", sizeMultiplier: 1.14, element: "crystal" },
+      },
     },
     visual: visual("hexagon", "#86efac"),
     maxStacks: 5,
@@ -920,6 +1024,20 @@ export const crystalRoundsCards: CardDefinition[] = [
     description: "Higher jump and wall-jump. Reach routes others cannot; dive from above.",
     flavorText: "The ground pushes back.",
     modifier: { jumpMultiplier: 1.18, wallJumpMultiplier: 1.16 },
+    // Wizard expression = docs/card-pool-v2.md "Spring Heel" (universal
+    // passive — "the name survives; nothing else does"): re-authored to
+    // +10%/+10% (jump apex 134→~162px, wall-kick rise 173→~190px) rather
+    // than this card's current +18%/+16%. A genuine, tested numeric
+    // difference — the redesign's stat, not a placeholder. Ninja/Paladin/
+    // Priest per-class flavor (wall-kick-chain compounding, higher slam
+    // arrival, overwatch positioning) is pure re-description of the SAME
+    // jump/wall-kick numbers for those chassis, not a different mechanic —
+    // still deferred (no entry) because the honest per-class VALUE for
+    // those bodies hasn't been separately authored/tuned this session;
+    // they fall back to today's Spring Heel unchanged.
+    classModifiers: {
+      wizard: { jumpMultiplier: 1.1, wallJumpMultiplier: 1.1 },
+    },
     visual: visual("triangle", "#5eead4"),
     maxStacks: 2,
   },
@@ -946,6 +1064,18 @@ export const crystalRoundsCards: CardDefinition[] = [
     description: "Mid-air jump. Stacks for triple+ jumps. Recover from bad falls and fake commits.",
     flavorText: "Who said one?",
     modifier: { airJumpsAdd: 1 },
+    // Wizard expression = docs/card-pool-v2.md "Second Wind" (universal
+    // passive — same name AND same +1 air jump this card already ships;
+    // "a glyph flickers underfoot" is pure visual-read flavor, zero
+    // mechanical change). Override intentionally identical to the class-
+    // blind modifier — real authored content, zero numeric change. Ninja's
+    // wall-kick-chain combo, Paladin's stomp-jump damage ring, and Priest's
+    // self-cleanse-on-jump ARE mechanically distinct (damage-on-land,
+    // status removal) and need substrate this session doesn't build — no
+    // entry, falls back to today's Second Wind.
+    classModifiers: {
+      wizard: { airJumpsAdd: 1 },
+    },
     visual: visual("circle", "#7dd3fc"),
     maxStacks: 3,
   },
@@ -1036,6 +1166,39 @@ export const crystalRoundsCards: CardDefinition[] = [
       stolenFangs: true,
       projectile: { element: "crystal" },
     },
+    // Priest's solo-floor lifesteal (docs/class-overhaul-workboard.md chunk
+    // 0.3; docs/card-pool-v2.md "Tithe": "Drain reborn — the lineage of
+    // Crimson Tithe AND STOLEN FANGS, folded into one always-on law").
+    // card-pool-v2.md's new "Tithe" (an always-on 8%-of-damage-dealt heal,
+    // universal) can't be added as a brand-new CardDefinition in this
+    // chunk: the Zig-side card table (sim/src/data/cards_gen.zig — inside
+    // the forbidden sim/src/ tree, and owned by the concurrently-running
+    // Ninja-melee pass right now) is a generated snapshot of this file, and
+    // any new id desyncs the wasm-parity suites (confirmed by trial: a
+    // trial "tithe" CardDefinition broke weaponBuildParity.test.ts's
+    // card-count assertion and emissionParity.test.ts's per-card sweep,
+    // both comparing against the stale compiled table) — regenerating that
+    // table means touching sim/src/, explicitly forbidden for this chunk.
+    // Grafting the SAME mechanic onto Stolen Fangs' EXISTING id — the card
+    // the doc itself names as Tithe's own lineage ancestor — delivers real,
+    // live, tested Priest lifesteal with zero new ids: Priest trades the
+    // block-charge/homing verb (REPLACED wholesale, never merged, same
+    // classModifiers doctrine every other authored card in this pool
+    // follows) for an always-on drain read directly off `leechFraction`
+    // (types.ts's existing ProjectileEntity field — the SAME field the
+    // six-axes Crimson Tithe ability already stamps; World.ts's hit
+    // resolution already knows how to pay it out, self-heal only, capped,
+    // self-damage excluded — no World.ts edit needed). The doc's OTHER
+    // half of Tithe's Priest reading ("50% flows onward to the nearest
+    // injured ally") needs sim team identity (chunk 1.1, unbuilt) and a
+    // second-player payout in World.ts — both out of this chunk's
+    // forbidden-file boundary, so this ships the honest solo-only slice
+    // ("Solo Syzygist takes" — character-sheets-v1.md), not the teams half.
+    classModifiers: {
+      priest: {
+        leechFraction: 0.08,
+      },
+    },
     visual: visual("triangle", "#a78bfa"),
     unique: true,
   },
@@ -1124,6 +1287,207 @@ export const crystalRoundsCards: CardDefinition[] = [
       durationMs: 2500,
     },
     visual: visual("hexagon", "#38bdf8"),
+    unique: true,
+  },
+  // ── Geometrician catalog v1 (docs/class-ability-catalogs-v1.md) ─────────
+  // classId: "wizard" — offer-roll gated (round.ts enterDrafting); every
+  // other chassis sees zero of these until its own catalog is authored
+  // (classes-goal.md P2-P4). Fill into the SAME rack keys 1-3 as the five
+  // universal ability cards above via the existing draft/offer mechanism —
+  // no new UI, no new slot system. v1 sim effects (World.ts / weapon.ts)
+  // reuse six-axes substrate as hard as possible; doc-fidelity gaps
+  // (true charge-hold, a persisting lattice plane, parry-hooked refunds)
+  // are recorded deferrals in-line, same discipline as Shelter Seal's own
+  // "self-bulwark fallback" precedent above — never silent stubs.
+  {
+    id: "sunlance",
+    name: "Sunlance",
+    category: "ability",
+    rarity: "rare",
+    buckets: ["ability"],
+    essenceCost: 6,
+    classId: "wizard",
+    role: "offense",
+    description:
+      "Active (0.7s window, 7s cooldown): shots deal 1.6x damage while it holds. (v1: a burst window, not a true charge-hold — see doc.)",
+    flavorText: "I finished a sentence the crystal started.",
+    active: {
+      kind: "sunlance",
+      cooldownMs: 7000,
+      durationMs: 700,
+    },
+    visual: visual("bar", "#fbbf24"),
+    unique: true,
+  },
+  {
+    id: "facet-break",
+    name: "Facet Break",
+    category: "ability",
+    rarity: "rare",
+    buckets: ["ability"],
+    essenceCost: 6,
+    classId: "wizard",
+    role: "single",
+    description:
+      "Active (4s mark, 8s cooldown): marks the nearest foe in your aim cone — your hits on them are amplified.",
+    flavorText: "One facet, cut true, breaks the whole gem.",
+    active: {
+      kind: "facet-break",
+      cooldownMs: 8000,
+      durationMs: 4000,
+    },
+    visual: visual("triangle", "#f472b6"),
+    unique: true,
+  },
+  {
+    id: "prism-fan",
+    name: "Prism Fan",
+    category: "ability",
+    rarity: "uncommon",
+    buckets: ["ability"],
+    essenceCost: 5,
+    classId: "wizard",
+    role: "aoe",
+    description: "Active (9s cooldown): a cone burst of shard projectiles fans out from your aim.",
+    flavorText: "Still crystal munitions — just more of the angle.",
+    active: {
+      kind: "prism-fan",
+      cooldownMs: 9000,
+    },
+    visual: visual("hexagon", "#67e8f9"),
+    unique: true,
+  },
+  {
+    id: "lattice",
+    name: "Lattice",
+    category: "ability",
+    rarity: "uncommon",
+    buckets: ["ability"],
+    essenceCost: 5,
+    classId: "wizard",
+    role: "aoe",
+    description:
+      "Active (9s cooldown): an instant ring of shards bursts around you. (v1: a nova, not the doc's persisting plane — see doc.)",
+    flavorText: "Space denial, angle-first.",
+    active: {
+      kind: "lattice",
+      cooldownMs: 9000,
+    },
+    visual: visual("square", "#a3e635"),
+    unique: true,
+  },
+  {
+    id: "return-glass",
+    name: "Return Glass",
+    category: "ability",
+    rarity: "uncommon",
+    buckets: ["ability"],
+    essenceCost: 5,
+    classId: "wizard",
+    role: "defense",
+    description:
+      "Active (10s cooldown): an instant tick of shield charge. (v1: not gated behind a live parry yet — see doc.)",
+    flavorText: "What broke, mends — a little.",
+    active: {
+      kind: "return-glass",
+      cooldownMs: 10000,
+    },
+    visual: visual("circle", "#93c5fd"),
+    unique: true,
+  },
+  {
+    id: "hard-aperture",
+    name: "Hard Aperture",
+    category: "ability",
+    rarity: "rare",
+    buckets: ["ability"],
+    essenceCost: 6,
+    classId: "wizard",
+    role: "defense",
+    description:
+      "Active (0.6s window, 9s cooldown): a damage gate — incoming hits are halved while it holds.",
+    flavorText: "Hold the proof.",
+    active: {
+      kind: "hard-aperture",
+      cooldownMs: 9000,
+      durationMs: 600,
+    },
+    visual: visual("square", "#38bdf8"),
+    unique: true,
+  },
+  {
+    id: "overclock",
+    name: "Overclock",
+    category: "ability",
+    rarity: "rare",
+    buckets: ["ability"],
+    essenceCost: 6,
+    classId: "wizard",
+    role: "buff",
+    description: "Active (3s window, 10s cooldown): fire rate up, spread tighter while it holds.",
+    flavorText: "Cast-weave fuel.",
+    active: {
+      kind: "overclock",
+      cooldownMs: 10000,
+      durationMs: 3000,
+    },
+    visual: visual("x", "#fde047"),
+    unique: true,
+  },
+  {
+    id: "measure",
+    name: "Measure",
+    category: "ability",
+    rarity: "uncommon",
+    buckets: ["ability"],
+    essenceCost: 5,
+    classId: "wizard",
+    role: "buff",
+    description:
+      "Active (9s cooldown): banks one free shot — your next shot costs no ammo. (v1: no mana system exists yet to refund — see doc.)",
+    flavorText: "Information and confidence.",
+    active: {
+      kind: "measure",
+      cooldownMs: 9000,
+    },
+    visual: visual("orb", "#e2e8f0"),
+    unique: true,
+  },
+  {
+    id: "slip-node",
+    name: "Slip Node",
+    category: "ability",
+    rarity: "rare",
+    buckets: ["ability"],
+    essenceCost: 6,
+    classId: "wizard",
+    role: "movement",
+    description: "Active (6s cooldown): a short blink along your aim.",
+    flavorText: "Reposition, not freeflow.",
+    active: {
+      kind: "slip-node",
+      cooldownMs: 6000,
+    },
+    visual: visual("triangle", "#c4b5fd"),
+    unique: true,
+  },
+  {
+    id: "recoil-step",
+    name: "Recoil Step",
+    category: "ability",
+    rarity: "uncommon",
+    buckets: ["ability"],
+    essenceCost: 5,
+    classId: "wizard",
+    role: "movement",
+    description:
+      "Active (6s cooldown): hop opposite your aim on cast. (v1: no next-shot recoil discount yet — see doc.)",
+    flavorText: "Micro-kiting, the geometrician's way.",
+    active: {
+      kind: "recoil-step",
+      cooldownMs: 6000,
+    },
+    visual: visual("circle", "#fca5a5"),
     unique: true,
   },
 ];

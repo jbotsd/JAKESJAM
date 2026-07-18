@@ -1,5 +1,15 @@
-import Phaser from "phaser";
+// `import type` keeps the Phaser bundle out of Node-side test runs that
+// don't have a `window` (Bun's default test env) — same rationale as
+// RenderLayer.ts's BLEND_MODE_ADD inline. The four Scene/Scale event-name
+// strings below are frozen Phaser API constants (unchanged across 3.x →
+// 4.x), so inlining them costs nothing at runtime.
+import type Phaser from "phaser";
 import { getRenderScale } from "../render/renderResolution.js";
+
+const EVT_ADDED_TO_SCENE = "addedtoscene"; // Phaser.Scenes.Events.ADDED_TO_SCENE
+const EVT_POST_UPDATE = "postupdate"; // Phaser.Scenes.Events.POST_UPDATE
+const EVT_SHUTDOWN = "shutdown"; // Phaser.Scenes.Events.SHUTDOWN
+const EVT_RESIZE = "resize"; // Phaser.Scale.Events.RESIZE
 
 /**
  * installHudCamera — split rendering between a zoomed WORLD camera
@@ -78,6 +88,18 @@ export function installHudCamera(scene: Phaser.Scene): Phaser.Cameras.Scene2D.Ca
     if (pending.length === 0) return;
     let addedHud = false;
     for (const obj of pending) {
+      // ADDED_TO_SCENE queues here; POST_UPDATE (this callback) drains it a
+      // step later. An object created and destroy()'d again inside that
+      // same gap (e.g. a HUD banner/text superseded while the client
+      // fast-forwards a backlog of buffered ticks after a stall/reconnect)
+      // is still in `pending` but is no longer live — Phaser's own
+      // destroy() clears `.scene` to undefined. Passing that stale
+      // reference into `hudRoot.add()` walks into Phaser's DisplayList
+      // internals (Container.addHandler -> removeFromDisplayList) and
+      // throws reading `.sys` off the undefined scene. Same defensive
+      // shape as the statusText/combatFx null-before-use guards in
+      // OnlineMatchScene.teardown() — check liveness before touching it.
+      if (!(obj as unknown as { scene?: Phaser.Scene }).scene) continue;
       const wasHud = (obj as unknown as { scrollFactorX?: number }).scrollFactorX === 0;
       partition(obj);
       addedHud ||= wasHud;
@@ -91,13 +113,13 @@ export function installHudCamera(scene: Phaser.Scene): Phaser.Cameras.Scene2D.Ca
     hudRoot.setScale(getRenderScale());
   };
 
-  scene.events.on(Phaser.Scenes.Events.ADDED_TO_SCENE, onAdded);
-  scene.events.on(Phaser.Scenes.Events.POST_UPDATE, onPostUpdate);
-  scene.scale.on(Phaser.Scale.Events.RESIZE, onResize);
-  scene.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
-    scene.events.off(Phaser.Scenes.Events.ADDED_TO_SCENE, onAdded);
-    scene.events.off(Phaser.Scenes.Events.POST_UPDATE, onPostUpdate);
-    scene.scale.off(Phaser.Scale.Events.RESIZE, onResize);
+  scene.events.on(EVT_ADDED_TO_SCENE, onAdded);
+  scene.events.on(EVT_POST_UPDATE, onPostUpdate);
+  scene.scale.on(EVT_RESIZE, onResize);
+  scene.events.once(EVT_SHUTDOWN, () => {
+    scene.events.off(EVT_ADDED_TO_SCENE, onAdded);
+    scene.events.off(EVT_POST_UPDATE, onPostUpdate);
+    scene.scale.off(EVT_RESIZE, onResize);
   });
 
   return hud;

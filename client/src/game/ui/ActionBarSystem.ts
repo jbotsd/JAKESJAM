@@ -32,9 +32,11 @@ import { drawFacetedRing, healthRingColor } from "../render/facetedRing.js";
 import type { HudChip } from "./HudSystem.js";
 import type { AcquiredAbility, AcquiredAbilityKind } from "./acquiredAbilities.js";
 
-/** One drafted-active slot (six-axes-goal.md Layer 2): keys 1..4 in pick
- *  order. readyFrac drives the cooldown sweep (0 = just used → 1 = ready);
- *  windowFrac > 0 means the effect window is live (Tithe's crimson beat). */
+/** One drafted-active slot (six-axes-goal.md Layer 2): keys 1..3 in pick
+ *  order (rack locked at exactly 3, docs/classes-goal.md "Rotation
+ *  system"). readyFrac drives the cooldown sweep (0 = just used → 1 =
+ *  ready); windowFrac > 0 means the effect window is live (Tithe's
+ *  crimson beat). */
 export type ActiveSlotVital = {
   kind: string;
   keyLabel: string;
@@ -54,7 +56,7 @@ export type ActionBarVitals = {
    *  fills and pulses at full; the cast input ships in P1. */
   emissionChargeFrac: number;
   /** Drafted actives in pick order — claim the diamonds right after the
-   *  Emission slot, keyed 1..4 (six-axes Layer 2). */
+   *  Emission slot, keyed 1..3 (six-axes Layer 2; rack locked at 3). */
   actives: ActiveSlotVital[];
   /** Card-granted capabilities in acquisition order (acquiredAbilities.ts)
    *  — fill the remaining diamonds after the actives. */
@@ -303,10 +305,11 @@ export class ActionBarSystem {
       const live = LIVE_SLOTS[i];
       if (!live) {
         // Slot layout after the live pair (six-axes Layer 2):
-        // [Emission][actives 1..4…][acquired passives…][reserved…].
+        // [Emission][actives 1..3…][acquired passives…][reserved…].
         // The Emission meter fills with charge (Emission Engine P0/P1);
-        // drafted ACTIVES claim the next diamonds in pick order (keys 1-4,
-        // cooldown sweep); acquired passive capabilities take what's left.
+        // drafted ACTIVES claim the next diamonds in pick order (keys 1-3,
+        // rack locked at 3, cooldown sweep); acquired passive capabilities
+        // take what's left.
         if (i === LIVE_SLOTS.length) {
           // Emission is a charge meter, but the same animator applies: the
           // cast slams it to empty (use-pop), hits stair-step it up
@@ -347,7 +350,7 @@ export class ActionBarSystem {
       }
     }
 
-    // Key-label row: active slots show their HOTKEY (1-4 — they're
+    // Key-label row: active slots show their HOTKEY (1-3 — they're
     // pressable); acquired passives show stack count (×N) — a count is
     // the honest label for a capability with no key.
     for (let i = LIVE_SLOTS.length + 1; i < slotCount; i++) {

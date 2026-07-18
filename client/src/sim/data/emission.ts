@@ -88,10 +88,16 @@ const profileCache = new WeakMap<ResolvedWeaponBuild, AxisProfile>();
 
 /** Ability cards charge their axis through `active.kind` (six-axes Layer 2,
  *  doctrine #7: every ability card also deepens its axis in the caster's
- *  Emission). Closed union → exhaustive map; still ONE derivation. */
-const ACTIVE_KIND_AXIS: Record<
-  AbilityKind,
-  "drain" | "ward" | "stride" | "mystery" | "technique"
+ *  Emission). Partial, not exhaustive: the Geometrician catalog v1
+ *  (docs/class-ability-catalogs-v1.md, `classId: "wizard"` ability cards —
+ *  sunlance/facet-break/prism-fan/lattice/return-glass/hard-aperture/
+ *  overclock/measure/slip-node/recoil-step) is a DIFFERENT layer per
+ *  docs/classes-goal.md's catalog-vs-cards distinction — catalog buttons,
+ *  not six-axes spec cards — and deliberately light no axis here. Still
+ *  ONE derivation (doctrine #1): every kind not listed reads as "no axis
+ *  coupling", never a silent default to one. */
+const ACTIVE_KIND_AXIS: Partial<
+  Record<AbilityKind, "drain" | "ward" | "stride" | "mystery" | "technique">
 > = {
   "crimson-tithe": "drain",
   "shelter-seal": "ward",

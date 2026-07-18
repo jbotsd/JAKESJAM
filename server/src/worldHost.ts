@@ -113,10 +113,20 @@ export class WorldHost {
    *  entrant at insertion; undefined (or a null return) = plain spawn, so
    *  WorldHost stays venue-agnostic (tests, legacy, direct connects). */
   getEntrantCards?: (playerId: PlayerId) => string[] | undefined;
+  /** Duos-queue team provider (classes-goal.md "Venue integration") — set
+   *  by VenueHost after construction, same late-binding pattern as
+   *  getEntrantCards. Consulted once per entrant at insertion; undefined =
+   *  an ordinary FFA combatant, so WorldHost stays venue-agnostic (tests,
+   *  legacy, direct connects never set this and never see any behavior
+   *  change). */
+  getEntrantTeamId?: (playerId: PlayerId) => string | undefined;
   /** Elastic-bot floor (S2.E): bot count adjusts toward
    *  `max(0, botFloor - humansFighting)` at bell edges ONLY, capped at 6.
    *  0 (default) disables elasticity — the legacy fixed `bots` count rules. */
   private readonly botFloor: number;
+  /** Uniqueness counter for bot-only duo teamIds minted by
+   *  `planBotTeams` — see its doc for the pairing rule. */
+  private botTeamCounter = 0;
 
   constructor(
     opts: {
@@ -192,7 +202,7 @@ export class WorldHost {
     this.sockets.set(playerId, ws);
     const chosenName = (ws.data as { name?: string }).name;
     if (!this.host) {
-      const spawn = this.spawnFor(ws.data.playerId, chosenName);
+      const spawn = this.spawnFor(ws.data.playerId, chosenName, characterOf(ws));
       // A fresh host boots into countdown — seeding the first player here
       // IS a countdown entry, not a gate exception.
       // WorldHost doesn't have a room to read chaos modifiers from, so we fall back
@@ -230,9 +240,16 @@ export class WorldHost {
         // back the lobby draft pick (or its leftmost auto-pick); no
         // provider / no entry = plain spawn.
         const cards = this.getEntrantCards?.(playerId);
+        // Duos-queue team assignment (classes-goal.md "Venue integration")
+        // rides the same admission moment, same optional-provider shape.
+        const teamId = this.getEntrantTeamId?.(playerId);
         this.host.addPlayer({
-          ...this.spawnFor(playerId, chosenName),
+          // Chassis rides SocketData like the name (classes-goal.md P1) —
+          // read from the live socket, not the pending map, so a reconnect
+          // between queue and drain still carries the latest pick.
+          ...this.spawnFor(playerId, chosenName, characterOf(ws)),
           ...(cards && cards.length > 0 ? { cards } : {}),
+          ...(teamId ? { teamId } : {}),
         });
       }
     }
@@ -245,6 +262,31 @@ export class WorldHost {
    * countdown-entry drain above — bots enter and leave at the bell, never
    * mid-fight. Target = max(0, botFloor - humansFighting), cap 6; botFloor
    * 0 (default) disables the whole mechanism (fixed-bot worlds, tests).
+   *
+   * Team floors (classes-goal.md "Venue integration" — "Elastic bots
+   * respect team floors"): the headcount formula above is UNCHANGED.
+   *
+   * FFA bell (nobody fighting carries a `teamId`): the EXACT pre-duos
+   * add/remove-the-tail logic, untouched code path, byte-identical
+   * behavior to before this feature existed.
+   *
+   * Team-mode bell (at least one human carries a `teamId` — stamped via
+   * `getEntrantTeamId` in `drainPendingEntrants` above, readable off the
+   * live roster via `MatchHost.rosterInfo`): the whole bot slate is
+   * reconciled against `planBotTeams`'s plan rather than only patching
+   * newly-added slots. Reason: the arena is always eager-booted to
+   * `botFloor` teamless bots with 0 humans, so a duo admission is
+   * ALWAYS a headcount *shrink* from that baseline (never a pure add) —
+   * the "add-only" version of this method left survivors of the shrink
+   * with whatever stale (usually teamless) assignment they already had,
+   * which fails the acceptance case ("2 humans duo + floor 4 → the other
+   * 2 bot-filled as an opposing duo") on the very first bell. Bots are
+   * cheap, stateless-enough server citizens — `WorldBots.spawnInfosFor`
+   * keeps each persona's identity (id/name) stable across this remove+
+   * re-add regardless, so this only costs a position reset, not an
+   * identity change. Skipped entirely when the live slate already
+   * matches the plan, so a steady-state team-mode bell (nothing changed
+   * since last time) causes zero churn.
    */
   private adjustElasticBots(): void {
     if (!this.host || this.botFloor === 0) return;
@@ -253,21 +295,112 @@ export class WorldHost {
     const humans = ids.filter((id) => !isBotId(id)).length;
     const liveBots = ids.filter((id) => isBotId(id));
     const target = Math.max(0, Math.min(6, this.botFloor - humans));
-    if (liveBots.length < target) {
-      // spawnInfosFor returns the full persona roster up to `target` —
-      // existing brains keep their identity, new ones register on demand.
-      for (const b of this.bots.spawnInfosFor(target)) {
-        if (!this.host.hasPlayer(b.playerId)) {
-          this.host.addPlayer(this.botSpawn(b.playerId, b.name));
+    const humanTeams = this.humanTeamCounts(ids);
+
+    if (humanTeams.size === 0) {
+      // Ordinary FFA bell — exact pre-duos body.
+      if (liveBots.length < target) {
+        // spawnInfosFor returns the full persona roster up to `target` —
+        // existing brains keep their identity, new ones register on demand.
+        for (const b of this.bots.spawnInfosFor(target)) {
+          if (!this.host.hasPlayer(b.playerId)) {
+            this.addBot(b.playerId, b.name);
+          }
+        }
+      } else if (liveBots.length > target) {
+        // Displaced bots simply sit out (no lobby idling this sprint) —
+        // remove the roster tail so persona identities stay stable.
+        for (const id of liveBots.sort().slice(target)) {
+          this.host.removeRosterPlayer(PlayerId(id));
         }
       }
-    } else if (liveBots.length > target) {
-      // Displaced bots simply sit out (no lobby idling this sprint) —
-      // remove the roster tail so persona identities stay stable.
-      for (const id of liveBots.sort().slice(target)) {
-        this.host.removeRosterPlayer(PlayerId(id));
+      return;
+    }
+
+    // Team mode: reconcile the whole bot slate against the plan.
+    const desc = this.bots.spawnInfosFor(target);
+    const teamPlan = this.planBotTeams(desc.length, humanTeams);
+    const desiredIds = desc.map((b) => b.playerId as string).sort();
+    const currentIds = liveBots.slice().sort();
+    const idsMatch =
+      currentIds.length === desiredIds.length &&
+      currentIds.every((id, i) => id === desiredIds[i]);
+    const currentTeams = currentIds
+      .map((id) => this.host!.rosterInfo(PlayerId(id))?.teamId)
+      .sort();
+    const desiredTeams = [...teamPlan].sort();
+    const teamsMatch = JSON.stringify(currentTeams) === JSON.stringify(desiredTeams);
+    if (idsMatch && teamsMatch) return; // already correct — no churn
+
+    for (const id of liveBots) this.host.removeRosterPlayer(PlayerId(id));
+    desc.forEach((b, index) => this.addBot(b.playerId, b.name, teamPlan[index]));
+  }
+
+  /** The one bot-insertion call site (structural test S2.D.4 counts every
+   *  roster-insertion call in this file) — both branches of
+   *  `adjustElasticBots` funnel through here. */
+  private addBot(playerId: PlayerId, name: string, teamId?: string): void {
+    this.host!.addPlayer(this.botSpawn(playerId, name, teamId));
+  }
+
+  /** Team composition of currently-known humans, keyed by teamId — feeds
+   *  `planBotTeams`. Humans with no teamId (ordinary FFA combatants) are
+   *  excluded, so a bell with zero duo admissions yields an empty map and
+   *  `planBotTeams`'s short-circuit keeps every bot teamless (byte-
+   *  identical to pre-duos behavior). */
+  private humanTeamCounts(ids: readonly string[]): Map<string, number> {
+    const counts = new Map<string, number>();
+    for (const id of ids) {
+      if (isBotId(id)) continue;
+      const teamId = this.host?.rosterInfo(PlayerId(id))?.teamId;
+      if (teamId) counts.set(teamId, (counts.get(teamId) ?? 0) + 1);
+    }
+    return counts;
+  }
+
+  /**
+   * Team-floor pairing plan for `slotCount` bot slots (classes-goal.md
+   * "Venue integration" — "Elastic bots respect team floors"): a duo-mode
+   * match wants bots filling out TEAM SLOTS, not a raw headcount floor.
+   *
+   * Rule, applied once per bell edge, deterministic:
+   *   1. `humanTeams.size === 0` (no duo admission this bell — the
+   *      ordinary FFA case): every slot stays `undefined`. This is the
+   *      branch that matters for regression safety — an FFA bell's bots
+   *      are byte-identical to before this feature existed.
+   *   2. Any human team sitting at exactly 1 member (a lone duo-mode
+   *      queuer who reached the bell with no human partner — "auto-pair
+   *      … with an elastic bot partner", classes-goal.md) is topped up:
+   *      the next available slot gets that SAME teamId (an ally bot).
+   *   3. Remaining slots pair up two at a time into fresh bot-only teams
+   *      (`bot-duo-<n>`) — "the other 2 should be bot-filled as an
+   *      opposing duo". A trailing odd slot (the floor doesn't divide
+   *      evenly) stays teamless rather than crash or half-pair.
+   *
+   * TEAM_SIZE is fixed at 2 (duos) — classes-goal.md's roadmap is duos
+   * first; nothing here assumes it can't grow to larger teams later.
+   */
+  private planBotTeams(
+    slotCount: number,
+    humanTeams: ReadonlyMap<string, number>,
+  ): (string | undefined)[] {
+    const plan: (string | undefined)[] = new Array(slotCount).fill(undefined);
+    if (humanTeams.size === 0) return plan;
+    let cursor = 0;
+    for (const [teamId, count] of humanTeams) {
+      if (count === 1 && cursor < slotCount) {
+        plan[cursor] = teamId;
+        cursor += 1;
       }
     }
+    while (cursor + 1 < slotCount) {
+      const teamId = `bot-duo-${this.botTeamCounter}`;
+      this.botTeamCounter += 1;
+      plan[cursor] = teamId;
+      plan[cursor + 1] = teamId;
+      cursor += 2;
+    }
+    return plan;
   }
 
   private buildHost(spawns: PlayerSpawnInfo[]): MatchHost {
@@ -301,7 +434,7 @@ export class WorldHost {
     });
   }
 
-  private botSpawn(playerId: PlayerId, name: string): PlayerSpawnInfo {
+  private botSpawn(playerId: PlayerId, name: string, teamId?: string): PlayerSpawnInfo {
     return {
       playerId,
       characterId: "balanced",
@@ -310,6 +443,10 @@ export class WorldHost {
       // the roster color keeps room-mode consistent too.
       color: "#ffb454",
       weaponId: "starter-pistol",
+      // Team-floor pairing (classes-goal.md "Venue integration") — see
+      // planBotTeams. Omitted key when undefined, same object shape as
+      // every FFA bell before this feature existed.
+      ...(teamId ? { teamId } : {}),
     };
   }
 
@@ -381,10 +518,21 @@ export class WorldHost {
     // A recycle IS a countdown entry (the fresh host boots into countdown):
     // every connected socket — including gate-parked pending entrants —
     // spawns into the new cycle. Chosen names ride the socket data (they
-    // previously fell back to machine ids across recycles).
-    const spawns = [...this.sockets.entries()].map(([pid, ws]) =>
-      this.spawnFor(pid, (ws.data as { name?: string }).name),
-    );
+    // previously fell back to machine ids across recycles). Team
+    // assignment (classes-goal.md "Venue integration") rides along too —
+    // read off the OLD host's roster before it's disposed, so a duo mid-
+    // cycle isn't shuffled apart by a match-complete rollover. Elastic
+    // bots for the fresh cycle's FIRST round stay teamless regardless
+    // (buildHost's own bot construction, not adjustElasticBots — see its
+    // doc); they pick up the correct team pairing at the next round-
+    // boundary bell within the new cycle.
+    const spawns = [...this.sockets.entries()].map(([pid, ws]) => {
+      const teamId = old.rosterInfo(PlayerId(pid))?.teamId;
+      return {
+        ...this.spawnFor(pid, (ws.data as { name?: string }).name, characterOf(ws)),
+        ...(teamId ? { teamId } : {}),
+      };
+    });
     this.pendingEntrants.clear();
     this.host = this.buildHost(spawns);
     old.dispose();
@@ -460,10 +608,17 @@ export class WorldHost {
     return this.host ? this.host.summary() : null;
   }
 
-  private spawnFor(playerIdRaw: string, chosenName?: string): PlayerSpawnInfo {
+  private spawnFor(
+    playerIdRaw: string,
+    chosenName?: string,
+    characterId?: PlayerSpawnInfo["characterId"],
+  ): PlayerSpawnInfo {
     return {
       playerId: PlayerId(playerIdRaw),
-      characterId: "balanced",
+      // Chassis pick (classes-goal.md P1): sanitized at the ws upgrade
+      // (index.ts, net/playerCharacter.ts whitelist) — fallback stays the
+      // default chassis so old clients keep working.
+      characterId: characterId ?? "balanced",
       // Player-chosen name (sanitized at the ws upgrade) — fallback stays
       // the id so old clients keep working.
       name: chosenName ?? playerIdRaw,
@@ -471,6 +626,15 @@ export class WorldHost {
       weaponId: "starter-pistol",
     };
   }
+}
+
+/** Duck-read the upgrade-sanitized chassis off SocketData — the same shape
+ *  trick the `name` reads use (index.ts owns the widened type). Exported
+ *  for VenueHost's lobby-side spawn (one read, one rule). */
+export function characterOf(
+  ws: ServerWebSocket<MatchSocketData>,
+): PlayerSpawnInfo["characterId"] | undefined {
+  return (ws.data as { character?: PlayerSpawnInfo["characterId"] }).character;
 }
 
 // Construction is now done in server/src/index.ts at boot time and the

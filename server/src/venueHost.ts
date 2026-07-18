@@ -20,7 +20,7 @@
 
 import type { ServerWebSocket } from "bun";
 import { MatchHost, type MatchSocketData } from "./matchHost.ts";
-import type { WorldHost } from "./worldHost.ts";
+import { characterOf, type WorldHost } from "./worldHost.ts";
 import { msUntilNextBell } from "@sim/round.ts";
 import { resolveVenueTotems } from "@sim/totem.ts";
 import { resolveMap } from "@sim/data/maps.ts";
@@ -28,6 +28,7 @@ import { PlayerId, type DestructibleDefinition, type MapDefinition, type PlayerS
 import type { MapId } from "@sim/data/maps.ts";
 import { decodeMessage, encodeMessage, type ClientMessage, type VenueStatus } from "@net/protocol.ts";
 import { crystalRoundsCards } from "@sim/data/cards.ts";
+import { classIdForArchetype, MAX_ABILITY_SLOTS, type ClassId } from "@sim/data/cardTypes.ts";
 import { DRAFT_OFFER_COUNT } from "@sim/round.ts";
 
 export const VENUE_LOBBY_MATCH_ID = "lobby";
@@ -64,15 +65,53 @@ function venueLobbyMap(): MapDefinition {
 /** How often the lobby checks whether its dummies need respawning. */
 const DUMMY_RESPAWN_CHECK_MS = 8000;
 
+/** One player's loadout-station progress (chunk 1.3). `picks` fills in
+ *  visit order, capped implicitly by `rollStarterOffer`'s own gates (see
+ *  below) rather than a hard length check here — the same "enforced at
+ *  the offer roll, never by failing a pick" discipline round.ts's
+ *  enterDrafting documents for MAX_ABILITY_SLOTS. */
+type LoadoutEntry = { offers: string[]; picks: string[]; classId: ClassId };
+
 /**
- * Roll a fresh player's one-shot starter offer (S2.E): DRAFT_OFFER_COUNT
- * distinct cards from the same crystal-rounds pool the arena drafts from.
- * A starter owns nothing, so every card is eligible (unique/maxStacks caps
- * bind against an empty hand). Uniform server-side roll — this is lobby
- * ceremony, not sim state, so it doesn't ride the deterministic RNG stream.
+ * Roll a player's loadout-station offer (S2.E, extended chunk 1.3 — see
+ * docs/class-overhaul-workboard.md § 1.3): DRAFT_OFFER_COUNT distinct
+ * cards from the same crystal-rounds pool the arena drafts from, minus
+ * whatever the player has ALREADY equipped this station visit
+ * (`alreadyPicked`). Uniform server-side roll — this is lobby ceremony,
+ * not sim state, so it doesn't ride the deterministic RNG stream.
+ *
+ * classId gate (docs/class-ability-catalogs-v1.md): mirrors round.ts
+ * enterDrafting's offer-roll gate exactly — a classId-gated card (the
+ * Geometrician catalog today) only ever appears for a player of that class.
+ * `classId` omitted (character not yet resolved on the lobby's own
+ * WorldState) falls back to "wizard" — the same default `spawnFor` uses
+ * for an unpicked chassis, so a not-yet-spawned visitor sees exactly what
+ * they'd see as the default chassis, never every class's catalog at once.
+ *
+ * `alreadyPicked` gating (chunk 1.3): SAME exclusion rules round.ts's
+ * enterDrafting applies to an in-match hand — `unique` cards already held
+ * don't reappear, `maxStacks` caps bind against copies already picked, and
+ * once the picked hand already holds MAX_ABILITY_SLOTS actives (the rack
+ * — docs/classes-goal.md "Rotation system", "Loadout station owns the 3
+ * slots"), no further active-bearing (ability) card is offered — mirrors
+ * the exact `heldActives >= MAX_ABILITY_SLOTS` gate round.ts's draft uses,
+ * so the station and the between-round draft never disagree about what
+ * "the rack is full" means. Non-active universal cards (weapon/stat
+ * tradeoffs) stay eligible past that point — they aren't rack slots.
  */
-function rollStarterOffer(): string[] {
-  const pool = [...crystalRoundsCards];
+function rollStarterOffer(classId: ClassId = "wizard", alreadyPicked: readonly string[] = []): string[] {
+  const copies = new Map<string, number>();
+  for (const id of alreadyPicked) copies.set(id, (copies.get(id) ?? 0) + 1);
+  const activesHeld = alreadyPicked.filter((id) =>
+    crystalRoundsCards.some((c) => c.id === id && c.active !== undefined),
+  ).length;
+  const pool = crystalRoundsCards.filter((c) => {
+    if (c.classId !== undefined && c.classId !== classId) return false;
+    if (c.unique && (copies.get(c.id) ?? 0) > 0) return false;
+    if (c.maxStacks !== undefined && (copies.get(c.id) ?? 0) >= c.maxStacks) return false;
+    if (c.active && activesHeld >= MAX_ABILITY_SLOTS) return false;
+    return true;
+  });
   const offers: string[] = [];
   while (offers.length < DRAFT_OFFER_COUNT && pool.length > 0) {
     const idx = Math.floor(Math.random() * pool.length);
@@ -116,13 +155,48 @@ export class VenueHost {
    *  here, slamming a draft modal at whoever touched the bell). Drained
    *  into the arena at the countdown-entry edge. */
   private readonly readyQueue = new Set<PlayerId>();
+  /**
+   * Duos-queue intent (classes-goal.md "Venue integration": "Duos queue:
+   * VenueHost bell admission gains a team variant (queue as pair / auto-
+   * pair). FFA bell unchanged."). A per-lobby-connected-player toggle,
+   * flipped by the `duo-toggle` client message (routeLobby below) — NOT a
+   * queue membership by itself. Walking into the bell totem still does the
+   * actual queueing (toggleQueue), reading whichever intent is current at
+   * that moment: intent ON routes the totem-touch into `duoQueue` instead
+   * of `readyQueue`. Cleared on disconnect (a fresh visit starts FFA).
+   */
+  private readonly duoIntent = new Set<PlayerId>();
+  /**
+   * The duo bell queue — same totem, same countdown-edge drain as
+   * `readyQueue`, but admitted in PAIRS (`admitDuoQueue`) instead of
+   * individually. Kept as a fully separate Set (not a flag on
+   * `readyQueue`'s entries) so the FFA path above is untouched code,
+   * provably byte-for-byte unchanged (venueHost.test.ts pins this).
+   */
+  private readonly duoQueue = new Set<PlayerId>();
+  /**
+   * Admitted duo team assignments, TTL'd exactly like `admittedCards` (same
+   * race the comment there explains: the client's lobby-close / arena-
+   * attach ordering can't be trusted to be atomic). Consumed one-shot by
+   * `getEntrantTeamId` at WorldHost's gate-drain.
+   */
+  private readonly admittedTeams = new Map<PlayerId, { teamId: string; expiresAt: number }>();
+  /** Uniqueness counter for freshly-minted duo teamIds. */
+  private duoTeamCounter = 0;
   /** The LOADOUT STATION (the bell's separated other half): a walk-up
-   *  card selector by the practice dummies. First touch rolls the 3-card
-   *  offer; the pick lands over the lobby socket; the pick rides the
-   *  player's NEXT admission and is consumed by it. No pick = spawn with
-   *  none — never auto-picked (auto-select is a mid-run round-timer
-   *  convention, not a lobby one). */
-  private readonly loadouts = new Map<PlayerId, { offers: string[]; pick: string | null }>();
+   *  card selector by the practice dummies. First touch rolls the offer;
+   *  each valid pick lands over the lobby socket, fills the NEXT open
+   *  `picks` slot, and immediately rerolls `offers` for the following slot
+   *  (chunk 1.3, docs/classes-goal.md "Loadout station owns the 3 slots" —
+   *  the station equips up to MAX_ABILITY_SLOTS cards across as many picks
+   *  as the visitor makes, not just one starter card). `picks` rides the
+   *  player's NEXT admission (in pick order) and is consumed by it. No
+   *  picks = spawn with none — never auto-picked (auto-select is a mid-run
+   *  round-timer convention, not a lobby one). `classId` is captured at
+   *  first touch so every reroll during the same visit stays gated to the
+   *  chassis the player armed at, even if they flip the class row mid-
+   *  visit (the NEXT fresh visit re-derives it). */
+  private readonly loadouts = new Map<PlayerId, LoadoutEntry>();
   /** Admitted-but-not-yet-spawned picks (S2.F): the bell moves queue
    *  entries here so the client's lobby-close / arena-attach order can't
    *  race the card application. TTL'd — a client that never shows up at
@@ -144,7 +218,13 @@ export class VenueHost {
       // THE BELL (S2.F): the countdown-entry edge admits everyone queued —
       // picks move to the TTL'd admitted map, each socket gets its one-shot
       // venue-admitted frame, and the queue empties in the same breath.
-      if (next === "countdown") this.admitQueue();
+      // admitQueue (FFA) is untouched by the duos feature; admitDuoQueue
+      // runs the SAME edge for the separate duo queue (classes-goal.md
+      // "Venue integration") — two queues, one bell, one edge.
+      if (next === "countdown") {
+        this.admitQueue();
+        this.admitDuoQueue();
+      }
       this.broadcastStatus();
     };
     // Starter cards ride admission (S2.E): the arena consults this at every
@@ -161,9 +241,18 @@ export class VenueHost {
         return undefined;
       }
       const loadout = this.loadouts.get(playerId);
-      if (!loadout?.pick) return undefined;
-      this.loadouts.delete(playerId); // the pick rides exactly one run
-      return [loadout.pick];
+      if (!loadout || loadout.picks.length === 0) return undefined;
+      this.loadouts.delete(playerId); // the picks ride exactly one run
+      return [...loadout.picks];
+    };
+    // Duos-queue team assignment (classes-goal.md "Venue integration") —
+    // same one-shot/TTL'd consult-at-insertion shape as getEntrantCards
+    // above, on a fully separate map so the cards path is untouched.
+    this.arenaHost.getEntrantTeamId = (playerId) => {
+      const admitted = this.admittedTeams.get(playerId);
+      if (!admitted) return undefined;
+      this.admittedTeams.delete(playerId); // one spawn per admission
+      return admitted.expiresAt > Date.now() ? admitted.teamId : undefined;
     };
     this.statusTimer = setInterval(() => this.broadcastStatus(), 1000);
     // Lobby never rebuilds (Pillar 1), so the direct reference stays valid.
@@ -214,21 +303,70 @@ export class VenueHost {
     const expiresAt = Date.now() + 30_000;
     for (const playerId of this.readyQueue) {
       const loadout = this.loadouts.get(playerId);
-      if (loadout?.pick) {
-        this.admittedCards.set(playerId, { cards: [loadout.pick], expiresAt });
-        this.loadouts.delete(playerId); // the pick rides exactly one run
+      if (loadout && loadout.picks.length > 0) {
+        this.admittedCards.set(playerId, { cards: [...loadout.picks], expiresAt });
+        this.loadouts.delete(playerId); // the picks ride exactly one run
       }
       const ws = this.lobbySockets.get(playerId);
       if (ws) {
         try {
           ws.send(encodeMessage({ t: "venue-admitted", arenaWsPath: "/ws/world" }));
         } catch {
-          /* dead socket — the TTL forfeits the pick */
+          /* dead socket — the TTL forfeits the picks */
         }
       }
     }
     this.readyQueue.clear();
     console.log(`[venue] the bell — admitted ${admittedCount} entrant(s) to the arena`);
+  }
+
+  /**
+   * The duo bell's queue drain (classes-goal.md "Venue integration") —
+   * same countdown-entry edge as `admitQueue`, same per-player admission
+   * mechanics (loadout pick banked, one `venue-admitted` push, TTL'd),
+   * but processes `duoQueue` instead and additionally assigns a shared
+   * `teamId` per pair.
+   *
+   * Pairing rule (queue order — a Set iterates in insertion order, so
+   * this is FIFO, "first two to queue are paired together"):
+   *   - Two players queued as duo → paired, fresh `teamId`.
+   *   - An odd one out (nobody left to pair with by the time the bell
+   *     rings) → "auto-pair … with an elastic bot partner" (classes-
+   *     goal.md contested call #1): given their OWN fresh `teamId` alone;
+   *     WorldHost's elastic-bot fill (`planBotTeams`) sees a human team
+   *     sitting at exactly 1 member and tops it up with an ally bot.
+   *
+   * Runs on the arena's countdown-entry edge only, immediately after
+   * `admitQueue` — same edge, independent queues, independent state.
+   */
+  private admitDuoQueue(): void {
+    if (this.duoQueue.size === 0) return;
+    const admittedCount = this.duoQueue.size;
+    const expiresAt = Date.now() + 30_000;
+    const pending = [...this.duoQueue];
+    for (let i = 0; i < pending.length; i += 2) {
+      const teamId = `duo-${this.duoTeamCounter}`;
+      this.duoTeamCounter += 1;
+      const pair = pending[i + 1] !== undefined ? [pending[i]!, pending[i + 1]!] : [pending[i]!];
+      for (const playerId of pair) {
+        this.admittedTeams.set(playerId, { teamId, expiresAt });
+        const loadout = this.loadouts.get(playerId);
+        if (loadout && loadout.picks.length > 0) {
+          this.admittedCards.set(playerId, { cards: [...loadout.picks], expiresAt });
+          this.loadouts.delete(playerId);
+        }
+        const ws = this.lobbySockets.get(playerId);
+        if (ws) {
+          try {
+            ws.send(encodeMessage({ t: "venue-admitted", arenaWsPath: "/ws/world" }));
+          } catch {
+            /* dead socket — the TTL forfeits the pick and the team slot */
+          }
+        }
+      }
+    }
+    this.duoQueue.clear();
+    console.log(`[venue] the bell — admitted ${admittedCount} duo entrant(s) to the arena`);
   }
 
   /** The LOADOUT STATION: walking into the station totem opens (or
@@ -243,10 +381,22 @@ export class VenueHost {
     if (!ws) return;
     let entry = this.loadouts.get(playerId);
     if (!entry) {
-      entry = { offers: rollStarterOffer(), pick: null };
+      // Read the visitor's CURRENT chassis pick off the lobby's own live
+      // WorldState (classes-goal.md P1 class-select — HangoutScene sends it
+      // at lobby connect, spawnFor threads it into the lobby player's
+      // characterId). Catalog offers must match the class they'll actually
+      // arm at the station, same discipline as round.ts enterDrafting.
+      const characterId = this.lobbyHost.getStateSnapshot().players[playerId]?.characterId;
+      const classId = characterId ? classIdForArchetype(characterId) : "wizard";
+      entry = { offers: rollStarterOffer(classId), picks: [], classId };
       this.loadouts.set(playerId, entry);
       console.log(`[venue] ${playerId} at the loadout station — offer: ${entry.offers.join(", ")}`);
     }
+    // Re-pushing an EXISTING entry is deliberately idempotent — same
+    // `entry.offers` every retrigger — so standing there deciding never
+    // reshuffles the plates underneath the player. `entry.offers` only
+    // ever changes inside the card-pick handler below (a fresh roll for
+    // the next open slot, or `[]` once the rack is full).
     try {
       ws.send(encodeMessage({ t: "venue-draft", offers: entry.offers }));
     } catch {
@@ -254,7 +404,18 @@ export class VenueHost {
     }
   }
 
+  /**
+   * The bell totem's SimEvent handler. Branches ONCE, at the top, on
+   * `duoIntent` (classes-goal.md "Venue integration") — the FFA branch
+   * below is the exact pre-duos body, untouched, so a player who never
+   * toggles duo mode gets byte-for-byte the original bell behavior
+   * (venueHost.test.ts pins this with a regression test).
+   */
   private toggleQueue(playerId: PlayerId): void {
+    if (this.duoIntent.has(playerId)) {
+      this.toggleDuoQueue(playerId);
+      return;
+    }
     if (this.readyQueue.has(playerId)) {
       this.readyQueue.delete(playerId);
     } else {
@@ -269,6 +430,21 @@ export class VenueHost {
       // station, not here (Jake 2026-07-17).
       this.readyQueue.add(playerId);
       console.log(`[venue] ${playerId} queued at the bell`);
+    }
+    this.broadcastStatus();
+  }
+
+  /** The duo-mode mirror of the FFA branch above — same callsign gate,
+   *  same toggle-on-touch shape, separate Set. */
+  private toggleDuoQueue(playerId: PlayerId): void {
+    if (this.duoQueue.has(playerId)) {
+      this.duoQueue.delete(playerId);
+    } else {
+      const ws = this.lobbySockets.get(playerId);
+      const name = (ws?.data as { name?: string } | undefined)?.name;
+      if (!ws || !name) return;
+      this.duoQueue.add(playerId);
+      console.log(`[venue] ${playerId} queued at the bell (duo)`);
     }
     this.broadcastStatus();
   }
@@ -289,6 +465,7 @@ export class VenueHost {
       bots: arena.bots,
       nextBellMs: Math.round(msUntilNextBell(arena.phase, arena.countdownRemainingMs)),
       queued: [...this.readyQueue] as string[],
+      duoQueued: [...this.duoQueue] as string[],
     };
     const encoded = encodeMessage(frame);
     for (const [playerId, ws] of this.lobbySockets) {
@@ -306,30 +483,56 @@ export class VenueHost {
   attachLobby(ws: ServerWebSocket<MatchSocketData>): void {
     const playerId = PlayerId(ws.data.playerId);
     if (!this.lobbyHost.hasPlayer(playerId)) {
-      // Chosen name rides SocketData (index.ts adds it over MatchSocketData) —
-      // same duck-read WorldHost.attach uses.
+      // Chosen name + chassis ride SocketData (index.ts adds them over
+      // MatchSocketData) — same duck-reads WorldHost.attach uses.
       const chosenName = (ws.data as { name?: string }).name;
-      this.lobbyHost.addPlayer(this.spawnFor(ws.data.playerId, chosenName));
+      this.lobbyHost.addPlayer(
+        this.spawnFor(ws.data.playerId, chosenName, characterOf(ws)),
+      );
     }
     this.lobbySockets.set(playerId, ws);
     this.lobbyHost.attachClient(ws);
   }
 
   routeLobby(ws: ServerWebSocket<MatchSocketData>, raw: Buffer | ArrayBuffer | Uint8Array): void {
-    // Loadout-station picks (S2.E, separated 2026-07-17) are venue
-    // business, not lobby-sim business: the card-pick lands on the
-    // player's loadout entry (roundIndex is meaningless here) and never
-    // reaches the hangout host's round state. Re-picking overwrites —
-    // walking back to the station lets you change your mind.
+    // Loadout-station picks (S2.E, separated 2026-07-17; multi-slot chunk
+    // 1.3) are venue business, not lobby-sim business: the card-pick lands
+    // on the player's loadout entry (roundIndex is meaningless here) and
+    // never reaches the hangout host's round state. Each valid pick fills
+    // the NEXT open rack slot (monotonic — this chunk does not add a
+    // swap/undo affordance for an already-filled slot; see chunk 1.3's
+    // report for why that's out of scope here) and immediately rerolls the
+    // offer for whichever slot comes after it, so a single station visit
+    // can walk all the way to a full MAX_ABILITY_SLOTS rack without
+    // leaving and re-entering the totem zone.
     const decoded = decodeMessage<ClientMessage>(
       raw instanceof Buffer ? new Uint8Array(raw.buffer, raw.byteOffset, raw.byteLength) : raw,
     );
     if (decoded?.message.t === "card-pick") {
       const playerId = PlayerId(ws.data.playerId);
       const entry = this.loadouts.get(playerId);
-      if (entry && entry.offers.includes(decoded.message.cardId)) {
-        entry.pick = decoded.message.cardId;
+      if (entry && entry.picks.length < MAX_ABILITY_SLOTS && entry.offers.includes(decoded.message.cardId)) {
+        entry.picks.push(decoded.message.cardId);
+        entry.offers =
+          entry.picks.length < MAX_ABILITY_SLOTS
+            ? rollStarterOffer(entry.classId, entry.picks)
+            : [];
+        try {
+          ws.send(encodeMessage({ t: "venue-draft", offers: entry.offers }));
+        } catch {
+          /* dead socket — detach path will clean up */
+        }
       }
+      return;
+    }
+    // Duos-queue intent toggle (classes-goal.md "Venue integration") —
+    // same interception shape as card-pick: venue business, never reaches
+    // the hangout host's round-message switch. Flips intent only; it does
+    // NOT touch either queue's current membership (see toggleQueue's doc).
+    if (decoded?.message.t === "duo-toggle") {
+      const playerId = PlayerId(ws.data.playerId);
+      if (this.duoIntent.has(playerId)) this.duoIntent.delete(playerId);
+      else this.duoIntent.add(playerId);
       return;
     }
     this.lobbyHost.routeMessage(ws, raw);
@@ -342,6 +545,8 @@ export class VenueHost {
     // bell — dequeue on disconnect (no ghost entrants). Their loadout
     // offer goes with them: a fresh visit rolls fresh cards.
     this.readyQueue.delete(playerId);
+    this.duoQueue.delete(playerId);
+    this.duoIntent.delete(playerId);
     this.loadouts.delete(playerId);
     this.lobbyHost.detachClient(ws);
     // Deliberately NO dispose-on-empty (the WorldHost discipline, applied
@@ -374,8 +579,23 @@ export class VenueHost {
     return [...this.readyQueue];
   }
 
-  /** Test surface: a player's loadout-station offer + recorded pick. */
-  loadoutForTest(playerId: PlayerId): { offers: string[]; pick: string | null } | undefined {
+  /** Test surface: the duo bell queue's current membership. */
+  duoQueuedForTest(): PlayerId[] {
+    return [...this.duoQueue];
+  }
+
+  /** Test surface: whether a player currently has duo intent toggled on. */
+  duoIntentForTest(playerId: PlayerId): boolean {
+    return this.duoIntent.has(playerId);
+  }
+
+  /** Test surface: a player's admitted team assignment (pre-consume). */
+  admittedTeamForTest(playerId: PlayerId): string | undefined {
+    return this.admittedTeams.get(playerId)?.teamId;
+  }
+
+  /** Test surface: a player's loadout-station offer + recorded picks. */
+  loadoutForTest(playerId: PlayerId): LoadoutEntry | undefined {
     return this.loadouts.get(playerId);
   }
 
@@ -391,10 +611,16 @@ export class VenueHost {
     this.lobbyHost.dispose();
   }
 
-  private spawnFor(playerIdRaw: string, chosenName?: string): PlayerSpawnInfo {
+  private spawnFor(
+    playerIdRaw: string,
+    chosenName?: string,
+    characterId?: PlayerSpawnInfo["characterId"],
+  ): PlayerSpawnInfo {
     return {
       playerId: PlayerId(playerIdRaw),
-      characterId: "balanced",
+      // Chassis pick (classes-goal.md P1) — upgrade-sanitized, default
+      // chassis for old clients (same rule as WorldHost.spawnFor).
+      characterId: characterId ?? "balanced",
       // Machine names are unreachable on the venue path (S2.C.3): a
       // nameless visitor reads as an anonymous recruit, never as their
       // opaque player id leaking into the room.

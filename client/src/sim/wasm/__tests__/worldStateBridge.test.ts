@@ -68,6 +68,11 @@ function makeFixtureState(): WorldState {
     fireCooldownMs: 120.5,
     ammo: 24,
     abilityCharge: 0.6,
+    // Ninja class resource (2026-07-18) — non-zero + non-integer so this
+    // round-trip test actually exercises the field rather than trivially
+    // passing on the 0 default (see packPlayer/unpackPlayer's trailing
+    // energy read/write, appended after round_kills).
+    energy: 42.5,
     lastProcessedInputSeq: InputSeq(42),
     grounded: true,
     burnUntilTick: Tick(180),
@@ -265,6 +270,8 @@ describe("worldStateBridge — pack/unpack round-trip (Phase G2)", () => {
     expect(p1!.fireCooldownMs).toBe(o1!.fireCooldownMs);
     expect(p1!.ammo).toBe(o1!.ammo);
     expect(p1!.abilityCharge).toBe(o1!.abilityCharge);
+    expect(o1!.energy).toBe(42.5);
+    expect(p1!.energy).toBe(o1!.energy);
     expect(p1!.lastProcessedInputSeq).toBe(o1!.lastProcessedInputSeq);
     expect(p1!.grounded).toBe(o1!.grounded);
     expect(p1!.burnUntilTick).toBe(o1!.burnUntilTick);

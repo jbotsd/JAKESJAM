@@ -14,9 +14,9 @@ The Emission currently shouts only the **Sorcery** axis (element / impact / coun
 
 **Layer 1 — the cast reads the WHOLE hand.** Every axis section in `EmissionConfig` goes live, derived from modifier fields hands *already* carry today (`stolenFangs` → Drain, shield mults → Ward, dash/air-jump/speed → Stride, void/cursed → Mystery, pierce → Technique). A fangs + double-jump + bounce hand casts a *leeching, dash-refunding shrapnel cage* — with zero new cards.
 
-**Layer 2 — ability cards.** A new card category `"ability"`: cards that ARE actives. Drafted through the **same round-end picker** (the draft keeps its monopoly on choice), they land on the action bar in pick order, bound to keys **1–4**, cooldown-based. Each belongs to one axis, and *also* deepens that axis's section of the caster's Emission — every card stays a multi-purpose decision (active + cast + identity).
+**Layer 2 — ability cards.** A new card category `"ability"`: cards that ARE actives. Drafted / loadout-equipped onto the rack (see `docs/classes-goal.md` catalog > slots), bound to keys **1–3** (exactly **3** slots — Jake soft lock 2026-07-17), cooldown-based. Each belongs to one axis, and *also* deepens that axis's section of the caster's Emission — every card stays a multi-purpose decision (active + cast + identity).
 
-**Done =** the Emission's payload visibly changes with non-Sorcery picks; five starter actives (one per non-Sorcery axis) are draftable, castable on keys 1–4 / touch, server-authoritative, cooldown-synced, bot-used, kill-switchable; the four ability slots are scarcer than the five axes so the draft — not a menu — decides which powers you are; live humans confirm it on the real host.
+**Done =** the Emission's payload visibly changes with non-Sorcery picks; five starter actives (one per non-Sorcery axis) are draftable, castable on keys 1–3 / touch, server-authoritative, cooldown-synced, bot-used, kill-switchable; the **three** ability slots (classes-goal soft lock 2026-07-17) are scarcer than the five axes so loadout + draft — not a menu of everything — decides which powers you are; live humans confirm it on the real host.
 
 ---
 
@@ -25,7 +25,7 @@ The Emission currently shouts only the **Sorcery** axis (element / impact / coun
 | Not this | Why |
 |----------|-----|
 | A loadout / hero-kit screen | Acquisition is the draft, only the draft. Actives are CARDS — offered, picked, stacked into the same hand |
-| A mana/resource system for 1–4 | Actives are cooldown-gated only. The Emission keeps the one charge meter; two resource languages is one too many |
+| A mana/resource system for 1–3 | Actives are cooldown + class resource (classes-goal); Emission keeps the charge meter for E |
 | A 5th slot or 6th active | Four slots, five non-Sorcery axes. Scarcity IS the design — you can never hold every answer |
 | Axis #7 | The vocabulary is closed (parent doctrine). All new ability content files under an existing axis |
 | A Zig ability framework | Actives are TS-authoritative like all weapon/hit/event logic (`CLAUDE.md` sim authority). Zig learns nothing new in this goal |
@@ -50,7 +50,7 @@ A loadout would compete with the draft; ability cards make the draft deeper retr
 3. **Empty axis = silent, never penalized.** A pure-Sorcery hand's cast is exactly today's cast. Layer 1 only ADDS expression.
 4. **Actives are server-authoritative, cooldown-gated, hangout-no-op'd** — the exact Emission cast contract, four more times.
 5. **Slots fill in draft order and never reorder.** Slot 1 is your first ability pick forever (same law as the acquired-glyph row). Muscle memory is sacred.
-6. **The picker stops offering ability cards when 4 slots are full.** Enforced at offer-roll time (`enterDrafting` candidate pool), never by silently failing a pick.
+6. **The picker stops offering ability *fills* when 3 slots are full** (may still offer specs/swaps). Enforced at offer-roll time (`enterDrafting` candidate pool), never by silently failing a pick. Slot count: `docs/classes-goal.md` (catalog > 3 slots).
 7. **Every ability card deepens its axis in the Emission.** No active-only cards: picking Crimson Tithe makes your CAST leech harder too. The dual-purpose law (gun AND cast) becomes triple-purpose (active AND cast AND identity).
 8. **No 100-0 anywhere.** Execute thresholds, counters, and leech are finishers/sustain under the parent's budget philosophy — nothing in this goal can delete a full-health player in one press.
 9. **Working numbers below are starting values.** Phase 4's playtest + the tune pass own them. Ship the machinery, tune the constants.
@@ -81,7 +81,7 @@ One row per axis: what marks membership, what the cast does when the axis is cha
 
 Names are working names (copy pass = separate deliverable). Cooldowns are per-slot, tick-based, additive-optional on the wire. `[E-coupling]` = what the card ALSO does to your Emission's axis section.
 
-| # | Card (axis) | Active (press 1–4) | CD | E-coupling |
+| # | Card (axis) | Active (press 1–3) | CD | E-coupling |
 |---|-------------|--------------------|----|------------|
 | 1 | **Crimson Tithe** (Drain) | 3 s window: your gun's shots leech 50% of post-mitigation damage as health | 14 s | `drain.leechFraction` → 0.6 |
 | 2 | **Shelter Seal** (Ward) | Plant a ward field at the aim point: eats enemy projectiles (absorb budget ~120 damage), expires 2.5 s | 12 s | `ward.fieldMs` → 1200; `ward.storedReturnFraction` → 0.25 (damage the shell ate returns in your next cast's budget, capped) |
@@ -150,7 +150,7 @@ Prod combat steps in TS (`stepWithRuntime`); Zig owns player-movement physics + 
 
 ### UI / UX contract
 
-- **Action bar**: ability slots appear ON ACQUISITION (pick lands → slot pops in, same ease as acquired glyphs), key-labeled 1–4, cooldown drawn as a radial sweep — the same decay-arc language the nameplate status row uses. Ready = the EMIT ready-flash pattern. No new visual style (ui-axioms §7 owns form; register every new button in the button registry).
+- **Action bar**: ability slots appear ON ACQUISITION (pick/loadout lands → slot pops in), key-labeled **1–3**, cooldown drawn as a radial sweep — the same decay-arc language the nameplate status row uses. Ready = the EMIT ready-flash pattern. No new visual style (ui-axioms §7 owns form; register every new button in the button registry).
 - **Touch**: one button per owned active (0–4 present), same arm/pulse contract as EMIT. Portrait AND landscape verified at the four canonical viewports before done (sizing-on-fleek is a hard house rule).
 - **Draft overlay**: an ability card must read as "this is an ACTIVE on a key" in under a second — glyph + key hint + axis seal. Copy register (war-crimes pass) is drafted as a table for Jake's review, never shipped unreviewed.
 - **Spectator legibility**: every active emits a SimEvent and every event gets a read (Tithe = crimson thread from victim to caster; Seal = the planted ward's own body; Step = exit seal; Veil = spectral shimmer; Answer = the returned hit's flash). If a spectator can't tell WHAT was pressed, it isn't done.
@@ -162,8 +162,8 @@ Prod combat steps in TS (`stepWithRuntime`); Zig owns player-movement physics + 
 | File | Action | Status |
 |------|--------|--------|
 | `docs/emission-engine-goal.md` | Axis sections "inert until their phases land" → point here as that phase; Phase 3 `abilityModifier` row notes this goal took the axis half | ✅ 2026-07-17 |
-| `CLAUDE.md` | Controls: keys 1–4; mechanics bullet: ability cards + axis-live Emission; `ABILITIES=off` lever beside `EMISSIONS=off` | ☐ |
-| `README.md` | Controls table gains 1–4 | ☐ |
+| `CLAUDE.md` | Controls: keys 1–3; mechanics bullet: ability cards + axis-live Emission; `ABILITIES=off` lever beside `EMISSIONS=off` | ☐ |
+| `README.md` | Controls table gains 1–3 | ☐ |
 | `docs/dev-stream-sim.md` | InputBitfield table: bits 10–13 reserved → live | ☐ |
 | `client/src/sim/types.ts` | Bitfield doc comment (bits 10..13) | ☐ |
 | `docs/jakesjam-design-pillars.md` | Pillar 1 paragraph: the hand also grants actives; "every card is a dual-purpose decision" → triple | ☐ |
@@ -213,11 +213,11 @@ Prod combat steps in TS (`stepWithRuntime`); Zig owns player-movement physics + 
 
   | id (never changes) | Working name | Proposed name | Proposed flavor (tribunal register) | Draft-overlay gloss |
   |---|---|---|---|---|
-  | `crimson-tithe` | Crimson Tithe | **Crimson Tithe** (keep) | *"The congregation pays in what it bleeds."* (keep) | ACTIVE 1-4 — 3s: your shots collect |
-  | `shadow-step` | Shadow Step | **Interstice Writ** | *"Filed in the space between spaces. Approved before it was asked."* | ACTIVE 1-4 — blink to your aim |
-  | `veil-of-nought` | Veil of Nought | **Veil of Nought** (keep) | *"The archons cannot audit what is not."* (keep) | ACTIVE 1-4 — 1.5s: unfindable; firing re-makes you |
-  | `severing-answer` | Severing Answer | **Severing Answer** (keep) | *"Ask again."* (keep) | ACTIVE 1-4 — 0.5s: the next hit is returned |
-  | `shelter-seal` | Shelter Seal | **Shelter Writ** | *"Here, the writ of violence does not run."* (keep) | ACTIVE 1-4 — 2.5s: damage halved |
+  | `crimson-tithe` | Crimson Tithe | **Crimson Tithe** (keep) | *"The congregation pays in what it bleeds."* (keep) | ACTIVE 1-3 — 3s: your shots collect |
+  | `shadow-step` | Shadow Step | **Interstice Writ** | *"Filed in the space between spaces. Approved before it was asked."* | ACTIVE 1-3 — blink to your aim |
+  | `veil-of-nought` | Veil of Nought | **Veil of Nought** (keep) | *"The archons cannot audit what is not."* (keep) | ACTIVE 1-3 — 1.5s: unfindable; firing re-makes you |
+  | `severing-answer` | Severing Answer | **Severing Answer** (keep) | *"Ask again."* (keep) | ACTIVE 1-3 — 0.5s: the next hit is returned |
+  | `shelter-seal` | Shelter Seal | **Shelter Writ** | *"Here, the writ of violence does not run."* (keep) | ACTIVE 1-3 — 2.5s: damage halved |
 
   Recommendation: keep three as-written (they landed in the register first try); the two "Writ" renames make Stride/Ward read as *paperwork filed against reality* — pure tribunal voice. Jake owns the final call; renames are display-field-only edits.
 - [x] Button registry landed (`docs/ui-axioms.md` §7d — exhaustive touch combat-button table, new-button-must-register law) + four-viewport sizing pass DONE WITH REAL SCREENSHOTS (390×844 / 844×390 / 820×1180 / 1440×900, playwright + touch emulation, buttons force-shown with real classes): all in-bounds, ready-state hierarchy reads, and the pass CAUGHT a real bug — a straight row of 4 slots overflowed narrow landscape; fixed with a 2×2 fold media query (≤900px landscape) before ship. Draft-overlay ACTIVE presentation: ability cards read through their existing card plates (name + "Active (…s cooldown)" description line); a bespoke ACTIVE badge is tune-pass polish, noted not blocking.
@@ -281,12 +281,12 @@ Forbidden "green but unplayable": Phase 4 is part of done. Unit green alone clos
 
 1. **Actives acquired anywhere but the draft.** No unlocks, no defaults, no "everyone starts with a dash-2".
 2. **A 5th slot, a slot-swap UI, or slot reordering.** Four, draft order, forever (until a playtest demands otherwise IN WRITING).
-3. **Resource costs on 1–4.** Cooldown only. The meter belongs to E.
+3. **Resource costs on 1–3.** Cooldown + class resource per classes-goal; the Emission charge meter belongs to E.
 4. **An axis feeding from two fields' identities** (e.g. homing marking both Sorcery and Technique). One field, one axis.
 5. **Damage-immunity stacking into a state.** Veil evades targeting, Ward reduces, Counter answers once — none grants invulnerability, and no pair may compose into effective invulnerability.
 6. **Zig learning about actives** before wasm world-step parity is a live goal again.
 7. **Shipping the working names** past the dev host without the copy sign-off.
-8. **Silent offer-gating bugs** — if ability offers stop appearing for any reason other than 4 slots held, that's a loud bug, not balance.
+8. **Silent offer-gating bugs** — if ability offers stop appearing for any reason other than 3 slots held (fills) or legitimate offer-pool empty, that's a loud bug, not balance.
 9. **New visual language** for slots/cooldowns (radial sweep + ready-flash or nothing).
 10. **Declaring done from unit tests only.**
 

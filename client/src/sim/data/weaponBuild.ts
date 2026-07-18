@@ -5,12 +5,36 @@
 
 import type {
   CardDefinition,
+  ClassId,
   ProjectileModifier,
   ResolvedWeaponBuild,
   WeaponBucket,
+  WeaponCardModifier,
   WeaponDefinition,
 } from "./cardTypes.js";
 import { MAX_ABILITY_SLOTS } from "./cardTypes.js";
+
+/**
+ * The class-expression hook (docs/classes-goal.md C3, card-pool-v2.md).
+ * Returns the modifier a card resolves to FOR THIS CLASS: the class's
+ * override when the card has authored one, else the class-blind base
+ * `modifier` — the fallback is total and silent-by-design, never a
+ * placeholder and never another class's reading (task requirement: a
+ * Ninja must never end up with a Wizard-flavored effect). Omitting
+ * `classId` entirely reproduces today's class-blind resolution exactly —
+ * every existing call site (Zig parity tests, bots, tutorial) that never
+ * passes a class continues to resolve `modifier` unchanged.
+ */
+export function effectiveCardModifier(
+  card: CardDefinition,
+  classId?: ClassId,
+): WeaponCardModifier | undefined {
+  if (classId) {
+    const override = card.classModifiers?.[classId];
+    if (override) return override;
+  }
+  return card.modifier;
+}
 
 /**
  * Compute the neutral time-to-kill (seconds) for a base weapon definition.
@@ -48,6 +72,10 @@ export function effectiveTTKBuild(build: ResolvedWeaponBuild): number {
 export function createWeaponBuild(
   baseWeapon: WeaponDefinition,
   cards: CardDefinition[],
+  /** Resolving player's class (docs/classes-goal.md dev-id vocabulary).
+   *  Omitted = class-blind resolution, byte-identical to pre-class-era
+   *  behavior (every card uses its base `modifier`). */
+  classId?: ClassId,
 ): ResolvedWeaponBuild {
   const build: ResolvedWeaponBuild = {
     id: baseWeapon.id,
@@ -82,6 +110,7 @@ export function createWeaponBuild(
     airJumps: 0,
     dashCharges: 0,
     dashCooldownMultiplier: 1,
+    leechFraction: 0,
     cards: [],
     occupiedBuckets: [],
     actives: [],
@@ -92,9 +121,10 @@ export function createWeaponBuild(
   const appliedCounts = new Map<string, number>();
 
   for (const card of cards) {
+    const modifier = effectiveCardModifier(card, classId);
     // A card must DO something to enter the hand: a gun modifier, an
     // active, or both (ability cards may carry either combination).
-    if (!card.modifier && !card.active) {
+    if (!modifier && !card.active) {
       continue;
     }
 
@@ -108,7 +138,7 @@ export function createWeaponBuild(
       bucketOwners.add(bucket);
     }
 
-    if (card.modifier) applyCard(build, card);
+    if (modifier) applyCard(build, card, classId);
     // Drafted actives fill slots in pick order (six-axes Layer 2). The
     // offer roll stops offering ability cards at MAX_ABILITY_SLOTS, so the
     // length guard here is belt-and-braces, never the enforcement site.
@@ -118,6 +148,7 @@ export function createWeaponBuild(
         kind: card.active.kind,
         cooldownMs: card.active.cooldownMs,
         durationMs: card.active.durationMs ?? 0,
+        role: card.role,
       });
     }
     build.cards.push(card);
@@ -193,8 +224,12 @@ export function findCardsById(
   });
 }
 
-export function applyCard(build: ResolvedWeaponBuild, card: CardDefinition) {
-  const modifier = card.modifier;
+export function applyCard(
+  build: ResolvedWeaponBuild,
+  card: CardDefinition,
+  classId?: ClassId,
+) {
+  const modifier = effectiveCardModifier(card, classId);
   if (!modifier) {
     return;
   }
@@ -259,6 +294,10 @@ export function applyCard(build: ResolvedWeaponBuild, card: CardDefinition) {
   );
   build.orbitingSatellites += modifier.orbitingSatellites ?? 0;
   build.mirrorShield ||= modifier.mirrorShield ?? false;
+  // Tithe: max, not additive — a second lifesteal source shouldn't let the
+  // fraction runaway past what any single card intends (same "cap, don't
+  // stack unboundedly" posture as maxHealthAdd's clamp below).
+  build.leechFraction = Math.max(build.leechFraction, modifier.leechFraction ?? 0);
 
   // Spread: never shrink a prior wide fan with a later absolute set.
   if (modifier.spreadRadians !== undefined) {
@@ -567,6 +606,10 @@ export function clampBuild(build: ResolvedWeaponBuild) {
   build.shieldChargeMultiplier = roundTo(Math.max(0.5, Math.min(3.0, build.shieldChargeMultiplier)), 2);
   build.shieldRechargeMultiplier = roundTo(Math.max(0.5, Math.min(3.0, build.shieldRechargeMultiplier)), 2);
   build.gravityMultiplier = roundTo(Math.max(0.45, Math.min(1.8, build.gravityMultiplier)), 2);
+  // Same ceiling the six-axes Crimson Tithe ability window already uses
+  // (ABILITY_TITHE_LEECH_FRACTION = 0.5, constants.ts) — a passive can never
+  // out-leech the timed ability's own cap.
+  build.leechFraction = roundTo(Math.max(0, Math.min(0.5, build.leechFraction)), 3);
 
   // Effective DPS with multi-pellet efficiency <1 (not all pellets hit).
   // Slight margin under the public floor so rounding cannot re-breach ~1.55s.

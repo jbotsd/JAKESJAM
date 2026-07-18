@@ -9,7 +9,7 @@
 import { BOT_ID_PREFIX } from "./botId.js";
 import { STEP_MS } from "./constants.js";
 import { crystalRoundsCards } from "./data/cards.js";
-import { MAX_ABILITY_SLOTS } from "./data/cardTypes.js";
+import { MAX_ABILITY_SLOTS, classIdForArchetype } from "./data/cardTypes.js";
 import { resolvePlayerBuild } from "./weapon.js";
 import {
   classifyDraftRole,
@@ -480,11 +480,20 @@ export function enterDrafting(
     // Copies held per card id — `player.cards` keeps one entry per stack.
     const copies = new Map<string, number>();
     for (const id of player.cards) copies.set(id, (copies.get(id) ?? 0) + 1);
-    // Ability-slot cap (six-axes-goal.md doctrine #6): four action-bar
+    // Ability-slot cap (six-axes-goal.md doctrine #6; slot count locked at
+    // three in docs/classes-goal.md "Rotation system"): three action-bar
     // slots, enforced HERE at the offer roll — a full hand simply stops
     // seeing ability offers, never fails a pick. Count actives the same
     // way the build resolves them (cards carrying an `active` spec).
     const heldActives = resolvePlayerBuild(player).actives.length;
+    // Catalog gate (docs/class-ability-catalogs-v1.md): a classId-gated
+    // card (the Geometrician catalog today) is only ever offered to a
+    // player of that class. Enforced HERE, at the single offer-roll gate
+    // point — same discipline as the MAX_ABILITY_SLOTS cap just below.
+    // Cards with no `classId` (every pre-catalog card, including the five
+    // universal six-axes ability cards) are unaffected — every existing
+    // test/behavior stays byte-identical.
+    const playerClassId = classIdForArchetype(player.characterId);
     const candidatePool = crystalRoundsCards.filter((c) => {
       // `unique: true` cards must not appear twice in a hand.
       if (c.unique && owned.has(c.id)) return false;
@@ -495,6 +504,7 @@ export function enterDrafting(
         return false;
       }
       if (c.active && heldActives >= MAX_ABILITY_SLOTS) return false;
+      if (c.classId !== undefined && c.classId !== playerClassId) return false;
       return true;
     });
     const offered: string[] = [];
