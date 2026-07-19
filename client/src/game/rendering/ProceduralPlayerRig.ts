@@ -6,6 +6,14 @@ import { type SpringState, springKick, springState, springTo } from "./spring";
 import { getSonicField } from "../systems/SonicField.js";
 import { drawPortraitBadge, shadeColor } from "../render/portraitBadge.js";
 import { headCrestGeometry, headHoodGeometry } from "./chassisSilhouette";
+import type { AbilityKind } from "../../sim/data/cardTypes.js";
+import { ABILITY_ANIMATIONS } from "../render/abilityAnimation.js";
+import {
+  meleeHandPose,
+  meleeKineticChain,
+  meleeOffhandPose,
+  meleeStage,
+} from "../render/meleeTiming.js";
 
 /** The minimal surface SimEventRouter drives on ANY on-screen combatant —
  *  hero, boss, or a non-humanoid thrall (see TutorialShardThrall.ts). Kept
@@ -19,6 +27,8 @@ export interface CombatRig {
   triggerHit(dirX: number, dirY: number): void;
   triggerParryFlash(): void;
   triggerKillPulse(): void;
+  triggerMeleeSwing?(style: "interstice" | "kindred", dir: number): void;
+  triggerAbility?(kind: AbilityKind): void;
   destroy(): void;
 }
 
@@ -42,7 +52,7 @@ export interface CombatRig {
  * Performance: ~0.3ms per character at 60fps. All procedural, no textures.
  */
 
-type ProceduralPlayerRigOptions = {
+export type ProceduralPlayerRigOptions = {
   color: number;
   name: string;
   scale?: number;
@@ -97,7 +107,7 @@ type ProceduralPlayerRigOptions = {
   detail?: "full" | "lite";
 };
 
-type ProceduralPlayerPose = {
+export type ProceduralPlayerPose = {
   position: Vec2;
   velocity: Vec2;
   aimTarget: Vec2;
@@ -380,6 +390,13 @@ export class ProceduralPlayerRig implements CombatRig {
   private leadThrow = 0;
   private backThrow = 0;
   private static readonly FIRE_RECOIL_MS = 200;
+  private meleePoseMs = 0;
+  private meleePoseDurationMs = 1;
+  private meleePoseStyle: "interstice" | "kindred" = "interstice";
+  private meleePoseDir = 1;
+  private abilityPoseMs = 0;
+  private abilityPoseDurationMs = 1;
+  private abilityPoseKind: AbilityKind = "sunlance";
   // Spin phase for the held/thrown shuriken shards (wall-clock, visual only).
   private shurikenSpin = 0;
   // Visual-only knockback. Set by triggerHit(); decays over HIT_DECAY_MS.
@@ -559,6 +576,8 @@ export class ProceduralPlayerRig implements CombatRig {
     this.killPulseMs = Math.max(0, this.killPulseMs - deltaMs);
     this.combatHoldMs = Math.max(0, this.combatHoldMs - deltaMs);
     this.victoryPoseMs = Math.max(0, this.victoryPoseMs - deltaMs);
+    this.meleePoseMs = Math.max(0, this.meleePoseMs - deltaMs);
+    this.abilityPoseMs = Math.max(0, this.abilityPoseMs - deltaMs);
 
     // Facing target with hysteresis, then smooth ease so IK bend doesn't pop.
     let facingTarget = this.facingSmooth >= 0 ? 1 : -1;
@@ -764,6 +783,27 @@ export class ProceduralPlayerRig implements CombatRig {
     this.throwHand = hand ?? (this.throwHand === 0 ? 1 : 0);
     if (this.throwHand === 0) this.leadThrow = 1;
     else this.backThrow = 1;
+  }
+
+  /** Render-only melee sentence: coil, cross-body cut, committed travel past
+   * contact, then recovery. Simulation hit timing and position never move. */
+  triggerMeleeSwing(style: "interstice" | "kindred", dir: number): void {
+    this.meleePoseStyle = style;
+    this.meleePoseDir = dir >= 0 ? 1 : -1;
+    this.meleePoseDurationMs = style === "interstice" ? 360 : 560;
+    this.meleePoseMs = this.meleePoseDurationMs;
+    this.combatHoldMs = Math.max(this.combatHoldMs, 900);
+  }
+
+  /** Render-only authored gesture for every drafted active. The exhaustive
+   * contract owns timing/physical verb per AbilityKind; sim effect timing and
+   * movement remain authoritative and untouched. */
+  triggerAbility(kind: AbilityKind): void {
+    const contract = ABILITY_ANIMATIONS[kind];
+    this.abilityPoseKind = kind;
+    this.abilityPoseDurationMs = contract.durationMs;
+    this.abilityPoseMs = contract.durationMs;
+    this.combatHoldMs = Math.max(this.combatHoldMs, contract.durationMs + 300);
   }
 
   /** Which hand is throwing right now (for the muzzle/spawn point). 0 = lead,
@@ -1057,6 +1097,23 @@ export class ProceduralPlayerRig implements CombatRig {
 
     const weightShift =
       Math.sin(this.idlePhase) * 2.2 * s * idleLife + grooveSway * 6.5 * s;
+    const meleeT = this.meleePoseMs > 0
+      ? 1 - this.meleePoseMs / this.meleePoseDurationMs
+      : 1;
+    const meleeAnticipationEnd = this.meleePoseStyle === "kindred" ? 0.38 : 0.32;
+    const meleeCutEnd = this.meleePoseStyle === "kindred" ? 0.61 : 0.52;
+    // Load from the floor: hips/chest/head sink together during anticipation,
+    // then rise sharply into the cut. Feet retain their authoritative contact.
+    const meleeGroundLoad = this.meleePoseMs <= 0
+      ? 0
+      : meleeT < meleeAnticipationEnd
+        ? Math.sin((meleeT / meleeAnticipationEnd) * Math.PI * 0.5) *
+          (this.meleePoseStyle === "kindred" ? 14 : 10) * s
+        : meleeT < meleeCutEnd
+          ? (1 - (meleeT - meleeAnticipationEnd) /
+            (meleeCutEnd - meleeAnticipationEnd)) *
+            (this.meleePoseStyle === "kindred" ? 14 : 10) * s
+          : 0;
     // Key positions — head/chest lag hip for floppy chain.
     // gather dips the whole chain, slightly harder toward the head — the
     // upper body rounds over the coil, not a rigid elevator drop. cushion
@@ -1074,11 +1131,11 @@ export class ProceduralPlayerRig implements CombatRig {
     // arms (pop-and-lock, below) are now the primary read; the body bounce
     // is a grounding undertone, not competing for attention.
     const pelvisY =
-      ground - Phaser.Math.Linear(52, 28, cr) * sy - bob + gather * s + cushion + breathe * 0.4 + throwDrop - groove * 1.6 * sy + beatHit * 1 * sy;
+      ground - Phaser.Math.Linear(52, 28, cr) * sy - bob + gather * s + cushion + breathe * 0.4 + throwDrop - groove * 1.6 * sy + beatHit * 1 * sy + meleeGroundLoad;
     const chestYTarget =
-      ground - Phaser.Math.Linear(78, 52, cr) * sy - bob + gather * 1.2 * s + cushion * 1.15 + breathe + throwDrop * 0.5 - groove * 1.2 * sy + beatHit * 3 * sy;
+      ground - Phaser.Math.Linear(78, 52, cr) * sy - bob + gather * 1.2 * s + cushion * 1.15 + breathe + throwDrop * 0.5 - groove * 1.2 * sy + beatHit * 3 * sy + meleeGroundLoad * 0.82;
     const headYTarget =
-      ground - Phaser.Math.Linear(100, 72, cr) * sy - bob + gather * 1.4 * s + cushion * 1.25 + breathe * 1.4 + throwDrop * 0.3 - groove * 1 * sy + beatHit * 5 * sy;
+      ground - Phaser.Math.Linear(100, 72, cr) * sy - bob + gather * 1.4 * s + cushion * 1.25 + breathe * 1.4 + throwDrop * 0.3 - groove * 1 * sy + beatHit * 5 * sy + meleeGroundLoad * 0.68;
     const cx = pose.position.x + this.hitOffsetX * hitEased + drunkSway * 0.35;
     // Forward CENTRE OF MASS: the whole body chain (pelvis up) rides ahead
     // of the feet while moving — the falling-forward posture that makes a
@@ -1092,7 +1149,24 @@ export class ProceduralPlayerRig implements CombatRig {
       (1.5 + sprint * 5.5) *
       (pose.grounded ? 1 : 0.55) *
       s;
-    const bodyCx = cx + comShift + weightShift;
+    const meleeChain = this.meleePoseMs > 0
+      ? meleeKineticChain(meleeT, this.meleePoseStyle)
+      : { pelvisDrive: 0, chestDrive: 0, headDrive: 0, shoulderTwist: 0, frontBrace: 0 };
+    const abilityContract = ABILITY_ANIMATIONS[this.abilityPoseKind];
+    const abilityT = this.abilityPoseMs > 0
+      ? 1 - this.abilityPoseMs / this.abilityPoseDurationMs
+      : 1;
+    const abilityCommit = this.abilityPoseMs <= 0 || this.meleePoseMs > 0
+      ? 0
+      : abilityT < abilityContract.anticipationEnd
+        ? -Math.sin((abilityT / abilityContract.anticipationEnd) * Math.PI) * abilityContract.bodyCommit * 0.28
+        : abilityT < abilityContract.actionEnd
+          ? Math.sin(((abilityT - abilityContract.anticipationEnd) /
+            (abilityContract.actionEnd - abilityContract.anticipationEnd)) * Math.PI * 0.5) * abilityContract.bodyCommit
+          : (1 - (abilityT - abilityContract.actionEnd) /
+            Math.max(0.01, 1 - abilityContract.actionEnd)) * abilityContract.bodyCommit;
+    const bodyCx = cx + comShift + weightShift +
+      this.facing * (meleeChain.pelvisDrive + abilityCommit) * s;
 
     this.chestLagX = springTo(
       this.chestLagX,
@@ -1126,13 +1200,23 @@ export class ProceduralPlayerRig implements CombatRig {
     );
 
     const pelvis = vec(bodyCx, pelvisY);
-    const chest = vec(bodyCx + this.chestLagX.value, this.chestLagY.value);
-    const head = vec(bodyCx + this.headLagX.value, this.headLagY.value);
+    const chest = vec(
+      bodyCx + this.chestLagX.value +
+        this.facing * (meleeChain.chestDrive - meleeChain.pelvisDrive) * s,
+      this.chestLagY.value,
+    );
+    const head = vec(
+      bodyCx + this.headLagX.value +
+        this.facing * (meleeChain.headDrive - meleeChain.pelvisDrive) * s,
+      this.headLagY.value,
+    );
 
     // Aim
     const aimAngle = Math.atan2(pose.aimTarget.y - chest.y, pose.aimTarget.x - chest.x);
     const aim = vec(Math.cos(aimAngle), Math.sin(aimAngle));
-    const perp = vec(-aim.y, aim.x);
+    const shoulderAxis = Math.atan2(aim.x, -aim.y) +
+      this.meleePoseDir * meleeChain.shoulderTwist;
+    const perp = vec(Math.cos(shoulderAxis), Math.sin(shoulderAxis));
 
     // Joints
     const hipL = vec(pelvis.x - 7 * s, pelvis.y);
@@ -1189,6 +1273,111 @@ export class ProceduralPlayerRig implements CombatRig {
       this.victoryPoseMs,
     );
 
+    if (this.meleePoseMs > 0) {
+      // Kindred always cuts with the sword hand; alternating the combo only
+      // reverses its travel. Interstice really alternates its two daggers.
+      // Treating Kindred's shield hand as a sword hand on every other swing
+      // detached the visible blade from the anatomy.
+      const activeLead = this.meleePoseStyle === "kindred" || this.meleePoseDir > 0;
+      const shoulder = activeLead ? shoulderLead : shoulderBack;
+      const guardShoulder = activeLead ? shoulderBack : shoulderLead;
+      const active = activeLead ? armTargets.lead : armTargets.back;
+      const guard = activeLead ? armTargets.back : armTargets.lead;
+      // Shoulder→hand and hand→blade are two linked arcs, not one rigid
+      // spoke. The elbow loads/bends first, the hand extends through contact,
+      // and the wrist/blade continues into the follow-through.
+      const handPose = meleeHandPose(
+        aimAngle,
+        this.meleePoseDir,
+        meleeT,
+        this.meleePoseStyle,
+      );
+      active.x = shoulder.x + Math.cos(handPose.angle) * handPose.reach * s;
+      active.y = shoulder.y + Math.sin(handPose.angle) * handPose.reach * s;
+      if (this.meleePoseStyle === "interstice") {
+        const offPose = meleeOffhandPose(aimAngle, this.meleePoseDir, meleeT);
+        guard.x = guardShoulder.x + Math.cos(offPose.angle) * offPose.reach * s;
+        guard.y = guardShoulder.y + Math.sin(offPose.angle) * offPose.reach * s;
+      } else {
+        const brace = meleeStage(meleeT, "kindred");
+        const braceOpen = brace.recovery;
+        const guardAngle = aimAngle - this.meleePoseDir * (0.55 - braceOpen * 0.22);
+        const guardReach = (25 + braceOpen * 4) * s;
+        guard.x = guardShoulder.x + Math.cos(guardAngle) * guardReach;
+        guard.y = guardShoulder.y + Math.sin(guardAngle) * guardReach;
+      }
+    } else if (this.abilityPoseMs > 0) {
+      const a = abilityContract;
+      const wind = Phaser.Math.Clamp(abilityT / a.anticipationEnd, 0, 1);
+      const act = Phaser.Math.Clamp(
+        (abilityT - a.anticipationEnd) / Math.max(0.01, a.actionEnd - a.anticipationEnd),
+        0,
+        1,
+      );
+      const recover = Phaser.Math.Clamp((abilityT - 0.86) / 0.14, 0, 1);
+      const reach = a.reach * s;
+      const side = a.handedness === 0 ? this.facing : a.handedness;
+      const lead = armTargets.lead;
+      const back = armTargets.back;
+      const setPolar = (hand: Vec2, shoulder: Vec2, angle: number, distance: number): void => {
+        hand.x = shoulder.x + Math.cos(angle) * distance;
+        hand.y = shoulder.y + Math.sin(angle) * distance;
+      };
+      const forward = aimAngle;
+      switch (a.gesture) {
+        case "thrust":
+          setPolar(lead, shoulderLead, forward + side * (0.65 * (1 - act)), reach * (0.55 + 0.45 * act - 0.22 * recover));
+          setPolar(back, shoulderBack, forward + Math.PI - side * 0.25, 16 * s);
+          break;
+        case "fan":
+          setPolar(lead, shoulderLead, forward - side * (1.05 - act * 1.55), reach);
+          setPolar(back, shoulderBack, forward + side * (1.05 - act * 1.55), reach);
+          break;
+        case "plant":
+          setPolar(lead, shoulderLead, forward + side * (0.55 + act * 0.8), reach * (0.68 + act * 0.22));
+          setPolar(back, shoulderBack, forward - side * (0.55 + act * 0.8), reach * (0.68 + act * 0.22));
+          lead.y += act * 15 * s;
+          back.y += act * 15 * s;
+          break;
+        case "guard":
+          setPolar(lead, shoulderLead, forward - side * (0.9 - act * 0.35), reach * 0.78);
+          setPolar(back, shoulderBack, forward + side * (0.9 - act * 0.35), reach * 0.78);
+          break;
+        case "gather": {
+          const r = reach * (0.9 - act * 0.42 + recover * 0.25);
+          setPolar(lead, shoulderLead, forward - side * (1.15 - wind * 0.45), r);
+          setPolar(back, shoulderBack, forward + side * (1.15 - wind * 0.45), r);
+          break;
+        }
+        case "mark":
+          setPolar(lead, shoulderLead, forward, reach * (0.62 + act * 0.38 - recover * 0.2));
+          setPolar(back, shoulderBack, forward + Math.PI * 0.72 * side, 17 * s);
+          break;
+        case "pulse": {
+          const spread = 0.38 + act * 1.0 - recover * 0.35;
+          setPolar(lead, shoulderLead, forward - side * spread, reach);
+          setPolar(back, shoulderBack, forward + side * spread, reach);
+          break;
+        }
+        case "step":
+          setPolar(lead, shoulderLead, forward - side * (0.8 - act * 0.55), reach);
+          setPolar(back, shoulderBack, forward + Math.PI - side * 0.35, 19 * s);
+          break;
+        case "weave": {
+          const orbit = (wind * 0.9 + act * 1.8) * side;
+          setPolar(lead, shoulderLead, forward - 0.75 + orbit, reach * 0.8);
+          setPolar(back, shoulderBack, forward + 0.75 - orbit, reach * 0.8);
+          break;
+        }
+        case "cut": {
+          const sweep = -1.0 + act * 2.1 - recover * 0.35;
+          setPolar(lead, shoulderLead, forward + side * sweep, reach);
+          setPolar(back, shoulderBack, forward - side * 0.8, 18 * s);
+          break;
+        }
+      }
+    }
+
     if (!this.leadHandSpringReady) {
       this.leadHandSpringX = springState(armTargets.lead.x);
       this.leadHandSpringY = springState(armTargets.lead.y);
@@ -1215,12 +1404,24 @@ export class ProceduralPlayerRig implements CombatRig {
     // it doesn't drift there. Slightly past combat's own snap at full
     // raise, since a punched-up fist should feel harder than a readied
     // weapon, not softer.
-    const armFreq = Phaser.Math.Linear(
+    const baseArmFreq = Phaser.Math.Linear(
       ProceduralPlayerRig.ARM_FREQUENCY_HZ,
       7.2,
       this.danceRaise,
     );
-    const armDamp = Phaser.Math.Linear(ProceduralPlayerRig.ARM_DAMPING, 0.68, this.danceRaise);
+    const baseArmDamp = Phaser.Math.Linear(ProceduralPlayerRig.ARM_DAMPING, 0.68, this.danceRaise);
+    // The generic hand spring is intentionally soft for locomotion/idle, but
+    // it erased a 70–130ms sword cut. During melee the arm follows the authored
+    // kinetic chain crisply; anticipation remains slower than the contact beat
+    // and Kindred remains weightier than Interstice.
+    const meleeCutActive = this.meleePoseMs > 0 &&
+      meleeT >= meleeAnticipationEnd && meleeT < meleeCutEnd;
+    const armFreq = this.meleePoseMs <= 0
+      ? baseArmFreq
+      : meleeCutActive
+        ? this.meleePoseStyle === "interstice" ? 18 : 12
+        : this.meleePoseStyle === "interstice" ? 10 : 7.5;
+    const armDamp = this.meleePoseMs <= 0 ? baseArmDamp : meleeCutActive ? 0.76 : 0.88;
     this.leadHandSpringX = springTo(this.leadHandSpringX, armTargets.lead.x, deltaMs, armFreq, armDamp);
     this.leadHandSpringY = springTo(this.leadHandSpringY, armTargets.lead.y, deltaMs, armFreq, armDamp);
     const handLead = vec(this.leadHandSpringX.value, this.leadHandSpringY.value);
@@ -1248,6 +1449,14 @@ export class ProceduralPlayerRig implements CombatRig {
       wallSliding && wallDir === 1
         ? this.wallPlantFoot(cx, wallDir, pelvis, s)
         : this.footPos(cx, 1, ground, walkAmount, sprint, pose.crouching, pose.grounded);
+    if (this.meleePoseMs > 0 && pose.grounded) {
+      // Plant a real base under the cut: rear foot receives the coil, front
+      // foot catches the body after contact. Feet do not skate with the torso.
+      footLTarget.x = cx - this.facing * (13 + meleeChain.frontBrace) * s;
+      footRTarget.x = cx + this.facing * (9 + meleeChain.frontBrace * 3) * s;
+      footLTarget.y = ground;
+      footRTarget.y = ground;
+    }
 
     if (!this.footSpringsReady) {
       this.footLSpringX = springState(footLTarget.x);
@@ -1272,12 +1481,15 @@ export class ProceduralPlayerRig implements CombatRig {
     const legR = solveTwoBone(hipR, footR, legLen1, legLen2, -this.facing);
     const armUpper = ProceduralPlayerRig.ARM_UPPER * s;
     const armLower = ProceduralPlayerRig.ARM_LOWER * s;
+    const meleeLeadBend = this.meleePoseMs > 0 && this.meleePoseStyle === "kindred"
+      ? -this.meleePoseDir * this.facing
+      : -this.facing * (1 + this.leadElbowWobble.value * 0.15);
     const armLead = solveTwoBone(
       shoulderLead,
       handLead,
       armUpper,
       armLower,
-      -this.facing * (1 + this.leadElbowWobble.value * 0.15),
+      meleeLeadBend,
     );
     const armBack = solveTwoBone(
       shoulderBack,

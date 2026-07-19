@@ -424,8 +424,8 @@ describe("Kindred catalog v1 — representative sim effects", () => {
       DT_MS,
     );
     state = res.state;
-    const WINDUP_TICKS = Math.ceil(200 / DT_MS) + 1;
-    for (let i = 0; i < WINDUP_TICKS; i++) {
+    const HIT_TICKS = Math.ceil(200 / DT_MS) + 1 + Math.ceil(100 / DT_MS);
+    for (let i = 0; i < HIT_TICKS; i++) {
       res = stepWithRuntime(state, runtime, inputsWith([attacker, victim, bystander], {}), DT_MS);
       state = res.state;
     }
@@ -443,7 +443,7 @@ describe("Kindred catalog v1 — representative sim effects", () => {
       DT_MS,
     );
     state2 = res2.state;
-    for (let i = 0; i < WINDUP_TICKS; i++) {
+    for (let i = 0; i < HIT_TICKS; i++) {
       res2 = stepWithRuntime(state2, runtime2, inputsWith([attacker2, victim2], {}), DT_MS);
       state2 = res2.state;
     }
@@ -469,8 +469,8 @@ describe("Kindred catalog v1 — representative sim effects", () => {
       inputsWith([attacker, victim], { [A as string]: frame(FIRE_BIT, 2, 900, 300) }), DT_MS,
     );
     state = res.state;
-    const WINDUP_TICKS = Math.ceil(200 / DT_MS) + 1;
-    for (let i = 0; i < WINDUP_TICKS; i++) {
+    const HIT_TICKS = Math.ceil(200 / DT_MS) + 1 + Math.ceil(100 / DT_MS);
+    for (let i = 0; i < HIT_TICKS; i++) {
       res = stepWithRuntime(state, runtime, inputsWith([attacker, victim], {}), DT_MS);
       state = res.state;
     }
@@ -643,8 +643,8 @@ describe("Kindred catalog v1 fast-follow — Retribution Edge", () => {
       inputsWith([attacker, victim], { [A as string]: frame(FIRE_BIT, 1, 900, 300) }), DT_MS,
     );
     state = res.state;
-    const WINDUP_TICKS = Math.ceil(200 / DT_MS) + 1;
-    for (let i = 0; i < WINDUP_TICKS; i++) {
+    const HIT_TICKS = Math.ceil(200 / DT_MS) + 1 + Math.ceil(100 / DT_MS);
+    for (let i = 0; i < HIT_TICKS; i++) {
       res = stepWithRuntime(state, runtime, inputsWith([attacker, victim], {}), DT_MS);
       state = res.state;
     }
@@ -903,8 +903,8 @@ describe("Kindred catalog v1 coverage-floor fast-follow — Kindled Resolve (buf
         inputsWith([attacker, victim], { [A as string]: frame(FIRE_BIT, 1, 900, 300) }), DT_MS,
       );
       state = res.state;
-      const WINDUP_TICKS = Math.ceil(200 / DT_MS) + 1;
-      for (let i = 0; i < WINDUP_TICKS; i++) {
+    const HIT_TICKS = Math.ceil(200 / DT_MS) + 1 + Math.ceil(100 / DT_MS);
+    for (let i = 0; i < HIT_TICKS; i++) {
         res = stepWithRuntime(state, runtime, inputsWith([attacker, victim], {}), DT_MS);
         state = res.state;
       }
@@ -1071,8 +1071,8 @@ describe("Kindred catalog v1 fast-follow — Retort (card-pool-v2.md #27, shield
       inputsWith([attacker, victim], { [A as string]: frame(FIRE_BIT, 1, 900, 300) }), DT_MS,
     );
     state = res.state;
-    const WINDUP_TICKS = Math.ceil(200 / DT_MS) + 1;
-    for (let i = 0; i < WINDUP_TICKS; i++) {
+    const HIT_TICKS = Math.ceil(200 / DT_MS) + 1 + Math.ceil(100 / DT_MS);
+    for (let i = 0; i < HIT_TICKS; i++) {
       res = stepWithRuntime(state, runtime, inputsWith([attacker, victim], {}), DT_MS);
       state = res.state;
     }
@@ -1097,8 +1097,8 @@ describe("Kindred catalog v1 fast-follow — Bastion (card-pool-v2.md #28, passi
         inputsWith([attacker, victim], { [A as string]: frame(FIRE_BIT, 1, 900, 300) }), DT_MS,
       );
       state = res.state;
-      const WINDUP_TICKS = Math.ceil(200 / DT_MS) + 1;
-      for (let i = 0; i < WINDUP_TICKS; i++) {
+    const HIT_TICKS = Math.ceil(200 / DT_MS) + 1 + Math.ceil(100 / DT_MS);
+    for (let i = 0; i < HIT_TICKS; i++) {
         res = stepWithRuntime(state, runtime, inputsWith([attacker, victim], {}), DT_MS);
         state = res.state;
       }
@@ -1126,8 +1126,8 @@ describe("Kindred catalog v1 fast-follow — Bastion (card-pool-v2.md #28, passi
         inputsWith([attacker, victim, bastionAlly], { [A as string]: frame(FIRE_BIT, 1, 900, 300) }), DT_MS,
       );
       state = res.state;
-      const WINDUP_TICKS = Math.ceil(200 / DT_MS) + 1;
-      for (let i = 0; i < WINDUP_TICKS; i++) {
+    const HIT_TICKS = Math.ceil(200 / DT_MS) + 1 + Math.ceil(100 / DT_MS);
+    for (let i = 0; i < HIT_TICKS; i++) {
         res = stepWithRuntime(state, runtime, inputsWith([attacker, victim, bastionAlly], {}), DT_MS);
         state = res.state;
       }

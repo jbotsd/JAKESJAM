@@ -121,7 +121,7 @@ function stepIdle(
 }
 
 // Commit-frame constants mirrored from World.ts (EDGE_WINDUP_MS=200,
-// EDGE_ACTIVE_MS=110, EDGE_RECOVERY_MS=340) — kept local so a change to the
+// EDGE_CONTACT_DELAY_MS=100, EDGE_ACTIVE_MS=110, EDGE_RECOVERY_MS=340) — kept local so a change to the
 // real constants fails this test loudly instead of silently drifting.
 // WINDUP_TICKS has a +1 the ninja file's equivalent constant doesn't need:
 // 200ms happens to sit almost exactly on a 12-tick boundary at 60Hz
@@ -131,6 +131,7 @@ function stepIdle(
 // tick to actually flip windup→active. Verified against the real FSM, not
 // hand-derived (this file's own harness, not a fudge factor).
 const WINDUP_TICKS = Math.ceil(200 / DT_MS) + 1;
+const CONTACT_TICKS = Math.ceil(100 / DT_MS);
 const ACTIVE_TICKS = Math.ceil(110 / DT_MS);
 const RECOVERY_TICKS = Math.ceil(340 / DT_MS);
 
@@ -142,7 +143,13 @@ describe("paladin melee — classId gating (zero behavior change for other chass
     const res = stepWithRuntime(
       state, runtime, pressInputs([attacker], A, 900, 300, 1), DT_MS,
     );
-    expect(res.events.some((e) => e.t === "shot-fired")).toBe(true);
+    const fired = res.events.find((e) => e.t === "shot-fired");
+    expect(fired).toBeDefined();
+    if (fired?.t === "shot-fired") {
+      expect(fired.projectileIds?.map(Number)).toEqual(
+        Object.keys(res.state.projectiles).map(Number),
+      );
+    }
     expect(res.events.some((e) => e.t === "slash-started")).toBe(false);
   });
 
@@ -160,7 +167,7 @@ describe("paladin melee — classId gating (zero behavior change for other chass
 });
 
 describe("paladin melee — arc hit detection (reuses P2's isBodyInMeleeArc primitive)", () => {
-  test("windup delays the hit: no damage on the press tick, arc lands once active", () => {
+  test("damage lands at the authored radial intercept, not during windup or early active", () => {
     const attacker = mkPlayer(A, 500, 300, { aimX: 900, aimY: 300 });
     const victim = mkPlayer(B, 560, 300); // ~60px ahead, within EDGE_RANGE 84
     const state = mkState([attacker, victim]);
@@ -170,8 +177,12 @@ describe("paladin melee — arc hit detection (reuses P2's isBodyInMeleeArc prim
     expect(s1.events.some((e) => e.t === "slash-started" && e.playerId === A)).toBe(true);
     expect(s1.state.players[B]!.health).toBe(100);
 
-    const afterWindup = stepIdle(s1.state, runtime, [attacker, victim], WINDUP_TICKS);
-    expect(afterWindup.players[B]!.health).toBeLessThan(100);
+    const beforeContact = stepIdle(
+      s1.state, runtime, [attacker, victim], WINDUP_TICKS + CONTACT_TICKS - 1,
+    );
+    expect(beforeContact.players[B]!.health).toBe(100);
+    const atContact = stepIdle(beforeContact, runtime, [attacker, victim], 1);
+    expect(atContact.players[B]!.health).toBeLessThan(100);
   });
 
   test("an enemy well off the swing axis, within range, is not hit — the tighter arc excludes it", () => {
@@ -231,7 +242,9 @@ describe("paladin melee — arc hit detection (reuses P2's isBodyInMeleeArc prim
     const s1 = stepWithRuntime(
       state, runtime, pressInputs([attacker, victimNear, victimAlsoNear], A, 900, 300, 1), DT_MS,
     );
-    const after = stepIdle(s1.state, runtime, [attacker, victimNear, victimAlsoNear], WINDUP_TICKS);
+    const after = stepIdle(
+      s1.state, runtime, [attacker, victimNear, victimAlsoNear], WINDUP_TICKS + CONTACT_TICKS,
+    );
     expect(after.players[B]!.health).toBeLessThan(100);
     expect(after.players[C]!.health).toBeLessThan(100);
   });
@@ -243,7 +256,7 @@ describe("paladin melee — arc hit detection (reuses P2's isBodyInMeleeArc prim
     const runtime = createRuntime(flatMap);
 
     const s1 = stepWithRuntime(state, runtime, pressInputs([attacker, victim], A, 900, 300, 1), DT_MS);
-    const after = stepIdle(s1.state, runtime, [attacker, victim], WINDUP_TICKS);
+    const after = stepIdle(s1.state, runtime, [attacker, victim], WINDUP_TICKS + CONTACT_TICKS);
     // EDGE_DAMAGE (32) > ninja's SLASH_DAMAGE (22) — "harder hit".
     expect(after.players[B]!.health).toBe(68);
   });
@@ -292,7 +305,7 @@ describe("paladin melee — Kindled Edge is NOT ninja's slash with new numbers",
     const runtime = createRuntime(flatMap);
 
     const s1 = stepWithRuntime(state, runtime, pressInputs([attacker, victim], A, 900, 300, 1), DT_MS);
-    const after = stepIdle(s1.state, runtime, [attacker, victim], WINDUP_TICKS);
+    const after = stepIdle(s1.state, runtime, [attacker, victim], WINDUP_TICKS + CONTACT_TICKS);
     expect(after.players[B]!.health).toBeLessThan(100); // sanity: the hit landed
     expect(after.players[A]!.kindling ?? 0).toBe(0);
     expect(after.players[A]!.energy ?? 0).toBe(0);

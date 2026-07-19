@@ -292,6 +292,7 @@ export class HudCompositor {
           name: pid === this.localPlayerId ? "You" : playerTag(pid),
           score,
           cardIds: player?.cards ?? [],
+          characterId: player?.characterId,
           isLocal: pid === this.localPlayerId,
         };
       },

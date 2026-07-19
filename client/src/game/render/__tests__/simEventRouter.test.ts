@@ -11,6 +11,7 @@ import type { SimEventRouterDeps } from "../SimEventRouter";
 import type { ProceduralPlayerRig } from "../../rendering/ProceduralPlayerRig";
 import type { ParticlePool } from "../../systems/ParticlePool";
 import { EntityId, PlayerId, type SimEvent } from "../../../sim/types";
+import type { AbilityKind } from "../../../sim/data/cardTypes.js";
 
 function makeDeps(): {
   deps: SimEventRouterDeps;
@@ -25,10 +26,12 @@ function makeDeps(): {
   drainActiveCalls: number;
   explosionBlasts: Array<{ x: number; y: number; r: number; d: number }>;
   wardAbsorbFlashes: Array<{ pid: string; isPeel: boolean }>;
+  syzygistWardFlashes: Array<{ pid: string; casterId: string; wardBroke: boolean }>;
   rigHits: Array<{ pid: string; dirX: number; dirY: number }>;
   rigFires: string[];
   rigParryFlashes: string[];
   rigKillPulses: string[];
+  rigAbilities: Array<{ pid: string; kind: string }>;
   killStreaks: Map<string, number>;
   prevAlive: Set<string>;
   tweens: { timeScale: number };
@@ -45,10 +48,16 @@ function makeDeps(): {
   let drainActiveCalls = 0;
   const explosionBlasts: Array<{ x: number; y: number; r: number; d: number }> = [];
   const wardAbsorbFlashes: Array<{ pid: string; isPeel: boolean }> = [];
+  const syzygistWardFlashes: Array<{
+    pid: string;
+    casterId: string;
+    wardBroke: boolean;
+  }> = [];
   const rigHits: Array<{ pid: string; dirX: number; dirY: number }> = [];
   const rigFires: string[] = [];
   const rigParryFlashes: string[] = [];
   const rigKillPulses: string[] = [];
+  const rigAbilities: Array<{ pid: string; kind: string }> = [];
   const killStreaks = new Map<string, number>();
   const prevAlive = new Set<string>();
   const tweens = { timeScale: 1 };
@@ -67,6 +76,9 @@ function makeDeps(): {
       },
       triggerKillPulse() {
         rigKillPulses.push(pid);
+      },
+      triggerAbility(kind: AbilityKind) {
+        rigAbilities.push({ pid, kind });
       },
     }) as unknown as ProceduralPlayerRig;
 
@@ -115,6 +127,13 @@ function makeDeps(): {
     spawnWardAbsorbFlash(pid, isPeel) {
       wardAbsorbFlashes.push({ pid: String(pid), isPeel });
     },
+    spawnSyzygistWardAbsorbFlash(pid, casterId, wardBroke) {
+      syzygistWardFlashes.push({
+        pid: String(pid),
+        casterId: String(casterId),
+        wardBroke,
+      });
+    },
     killCinematic(vid) {
       killCinematics.push(String(vid));
     },
@@ -151,10 +170,12 @@ function makeDeps(): {
     },
     explosionBlasts,
     wardAbsorbFlashes,
+    syzygistWardFlashes,
     rigHits,
     rigFires,
     rigParryFlashes,
     rigKillPulses,
+    rigAbilities,
     killStreaks,
     prevAlive,
     tweens,
@@ -426,7 +447,7 @@ describe("SimEventRouter — C2b contract", () => {
     expect(env.shakeCalls).toEqual([]);
   });
 
-  test("audio=null short-circuits dispatch (early return)", () => {
+  test("audio=null degrades only sound; visual reaction still dispatches", () => {
     env.deps.audio = null;
     const ev: SimEvent = {
       t: "hit-confirmed",
@@ -435,7 +456,9 @@ describe("SimEventRouter — C2b contract", () => {
       sourceProjectileId: null,
     };
     router.dispatch(ev);
-    expect(env.tweens.timeScale).toBe(1); // hit-stop didn't fire
+    expect(env.tweens.timeScale).toBe(0);
+    expect(env.damageNumbers).toEqual([["remote", 99]]);
+    expect(env.blasts).toEqual([["remote", 22, 99]]);
     expect(env.shakeCalls).toEqual([]);
   });
 
@@ -449,5 +472,47 @@ describe("SimEventRouter — C2b contract", () => {
     router.dispatch(ev);
     expect(env.audioCalls).toEqual([]);
     expect(env.shakeCalls).toEqual([]);
+  });
+
+  test("ability-activated drives the caster's authored render-only gesture", () => {
+    router.dispatch({
+      t: "ability-activated",
+      playerId: PlayerId("remote"),
+      slot: 1,
+      kind: "sunlance",
+      x: 10,
+      y: 20,
+    });
+    expect(env.rigAbilities).toEqual([{ pid: "remote", kind: "sunlance" }]);
+    expect(env.audioCalls).toEqual(["card"]);
+    expect(env.shakeCalls).toEqual([]);
+  });
+
+  test("unknown future ability kind does not invent a gesture", () => {
+    router.dispatch({
+      t: "ability-activated",
+      playerId: PlayerId("remote"),
+      slot: 1,
+      kind: "future-wire-kind",
+      x: 10,
+      y: 20,
+    });
+    expect(env.rigAbilities).toEqual([]);
+  });
+
+  test("syz-ward-absorbed: attributes ally ward and scales a local break", () => {
+    const ev: SimEvent = {
+      t: "syz-ward-absorbed",
+      playerId: PlayerId("remote"),
+      casterId: PlayerId("local"),
+      damageBlocked: 18,
+      wardBroke: true,
+    };
+    router.dispatch(ev);
+    expect(env.syzygistWardFlashes).toEqual([
+      { pid: "remote", casterId: "local", wardBroke: true },
+    ]);
+    expect(env.shakeCalls).toEqual([[70, 0.006]]);
+    expect(env.audioCalls).toEqual([]);
   });
 });

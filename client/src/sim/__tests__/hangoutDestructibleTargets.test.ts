@@ -122,11 +122,12 @@ function stepIdle(
 // Commit-frame constants mirrored from World.ts, same "kept local so a
 // change fails this test loudly" precedent as ninjaMelee.test.ts.
 const WINDUP_TICKS = Math.ceil(120 / DT_MS); // SLASH_WINDUP_MS (ninja)
+const CONTACT_TICKS = Math.ceil(44 / DT_MS); // SLASH_CONTACT_DELAY_MS (ninja)
 const ACTIVE_TICKS = Math.ceil(90 / DT_MS); // SLASH_ACTIVE_MS (ninja)
 // +1: paladinMelee.test.ts's own WINDUP_TICKS needs the same fudge factor
 // (its comment: "has a +1 the ninja file's equivalent constant doesn't need").
 const EDGE_WINDUP_TICKS = Math.ceil(200 / DT_MS) + 1; // EDGE_WINDUP_MS (paladin)
-const EDGE_ACTIVE_TICKS = Math.ceil(110 / DT_MS); // EDGE_ACTIVE_MS (paladin)
+const EDGE_CONTACT_TICKS = Math.ceil(100 / DT_MS); // EDGE_CONTACT_DELAY_MS (paladin)
 
 // GROUNDED, not airborne (measured: a player spawned at y=300 above this
 // floor settles at y=442 under gravity). Destructibles never fall — they
@@ -145,7 +146,7 @@ describe("ninja/paladin melee vs. destructibles in hangout mode", () => {
     const runtime = createRuntime(flatMap, "hangout");
 
     const s1 = stepWithRuntime(state, runtime, inputsWith([attacker], { [A as string]: frame(FIRE_BIT, 1, 900, GROUND_Y) }), DT_MS);
-    const after = stepIdle(s1.state, runtime, [attacker], WINDUP_TICKS + 1);
+    const after = stepIdle(s1.state, runtime, [attacker], WINDUP_TICKS + CONTACT_TICKS);
     const survivor = after.destructibles[EntityId(1)];
     // Either damaged (health dropped) or broken (removed) — both are a real hit.
     expect(survivor === undefined || survivor.health < 60).toBe(true);
@@ -169,7 +170,7 @@ describe("ninja/paladin melee vs. destructibles in hangout mode", () => {
     const runtime = createRuntime(flatMap, "hangout");
 
     const s1 = stepWithRuntime(state, runtime, inputsWith([attacker], { [A as string]: frame(FIRE_BIT, 1, 900, GROUND_Y) }), DT_MS);
-    const after = stepIdle(s1.state, runtime, [attacker], EDGE_WINDUP_TICKS + EDGE_ACTIVE_TICKS);
+    const after = stepIdle(s1.state, runtime, [attacker], EDGE_WINDUP_TICKS + EDGE_CONTACT_TICKS);
     const survivor = after.destructibles[EntityId(1)];
     expect(survivor === undefined || survivor.health < 60).toBe(true);
   });
@@ -218,7 +219,7 @@ describe("emission charge fills from hangout-mode destructible damage", () => {
     const runtime = createRuntime(flatMap, "hangout");
 
     const s1 = stepWithRuntime(state, runtime, inputsWith([attacker], { [A as string]: frame(FIRE_BIT, 1, 900, GROUND_Y) }), DT_MS);
-    const after = stepIdle(s1.state, runtime, [attacker], WINDUP_TICKS + 1);
+    const after = stepIdle(s1.state, runtime, [attacker], WINDUP_TICKS + CONTACT_TICKS);
     expect(after.players[A]!.abilityCharge).toBeGreaterThan(0);
   });
 
@@ -243,7 +244,7 @@ describe("emission charge fills from hangout-mode destructible damage", () => {
     const state = mkState([attacker, victim]);
     const runtime = createRuntime(flatMap, "combat");
     const s1 = stepWithRuntime(state, runtime, inputsWith([attacker, victim], { [A as string]: frame(FIRE_BIT, 1, 900, 300) }), DT_MS);
-    const after = stepIdle(s1.state, runtime, [attacker, victim], WINDUP_TICKS + 1);
+    const after = stepIdle(s1.state, runtime, [attacker, victim], WINDUP_TICKS + CONTACT_TICKS);
     expect(after.players[B]!.health).toBeLessThan(100); // real combat still works
   });
 });

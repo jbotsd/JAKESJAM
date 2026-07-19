@@ -128,9 +128,10 @@ function stepIdle(
 }
 
 // Commit-frame constants mirrored from World.ts (SLASH_WINDUP_MS=120,
-// SLASH_ACTIVE_MS=90, SLASH_RECOVERY_MS=220) — kept local so a change to
+// SLASH_CONTACT_DELAY_MS=44, SLASH_ACTIVE_MS=90, SLASH_RECOVERY_MS=220) — kept local so a change to
 // the real constants fails this test loudly instead of silently drifting.
 const WINDUP_TICKS = Math.ceil(120 / DT_MS);
+const CONTACT_TICKS = Math.ceil(44 / DT_MS);
 const ACTIVE_TICKS = Math.ceil(90 / DT_MS);
 const RECOVERY_TICKS = Math.ceil(220 / DT_MS);
 
@@ -166,7 +167,7 @@ describe("ninja melee — classId gating (zero behavior change for other chassis
 });
 
 describe("ninja melee — arc hit detection", () => {
-  test("windup delays the hit: no damage on the press tick, arc lands once active", () => {
+  test("damage lands at the authored radial intercept, not during windup or early active", () => {
     const attacker = mkPlayer(A, 500, 300, { aimX: 900, aimY: 300 });
     const victim = mkPlayer(B, 560, 300); // ~60px ahead, within SLASH_RANGE 78
     const state = mkState([attacker, victim]);
@@ -177,9 +178,12 @@ describe("ninja melee — arc hit detection", () => {
     // Still in windup — no hit yet.
     expect(s1.state.players[B]!.health).toBe(100);
 
-    // Advance through the rest of windup.
-    const afterWindup = stepIdle(s1.state, runtime, [attacker, victim], WINDUP_TICKS);
-    expect(afterWindup.players[B]!.health).toBeLessThan(100); // arc landed once active
+    const beforeContact = stepIdle(
+      s1.state, runtime, [attacker, victim], WINDUP_TICKS + CONTACT_TICKS - 1,
+    );
+    expect(beforeContact.players[B]!.health).toBe(100);
+    const atContact = stepIdle(beforeContact, runtime, [attacker, victim], 1);
+    expect(atContact.players[B]!.health).toBeLessThan(100);
   });
 
   test("an enemy outside the arc (behind the swing) is not hit", () => {
@@ -214,7 +218,9 @@ describe("ninja melee — arc hit detection", () => {
     const s1 = stepWithRuntime(
       state, runtime, pressInputs([attacker, victimNear, victimAlsoNear], A, 900, 300, 1), DT_MS,
     );
-    const after = stepIdle(s1.state, runtime, [attacker, victimNear, victimAlsoNear], WINDUP_TICKS);
+    const after = stepIdle(
+      s1.state, runtime, [attacker, victimNear, victimAlsoNear], WINDUP_TICKS + CONTACT_TICKS,
+    );
     expect(after.players[B]!.health).toBeLessThan(100);
     expect(after.players[C]!.health).toBeLessThan(100);
   });
@@ -284,7 +290,7 @@ describe("ninja melee — energy resource", () => {
     const state = mkState([attacker, victim]);
     const runtime = createRuntime(flatMap);
     const s1 = stepWithRuntime(state, runtime, pressInputs([attacker, victim], A, 900, 300, 1), DT_MS);
-    const after = stepIdle(s1.state, runtime, [attacker, victim], WINDUP_TICKS);
+    const after = stepIdle(s1.state, runtime, [attacker, victim], WINDUP_TICKS + CONTACT_TICKS);
     expect(after.players[B]!.health).toBeLessThan(100); // sanity: the hit landed
     expect(after.players[A]!.energy ?? 0).toBeGreaterThan(0);
   });

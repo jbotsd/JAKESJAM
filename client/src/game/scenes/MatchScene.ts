@@ -29,6 +29,7 @@ import { RenderLayer } from "../render/RenderLayer";
 import { ActionIntensity } from "../systems/ActionIntensity.js";
 import { CameraHype } from "../systems/CameraHype.js";
 import { SlowMotion } from "../systems/SlowMotion.js";
+import { RenderTimeArbiter } from "../render/RenderTimeArbiter.js";
 import { ActionCamera } from "../systems/ActionCamera.js";
 import { CameraJuice } from "../systems/CameraJuice.js";
 import { installHudCamera } from "../systems/HudCamera.js";
@@ -114,7 +115,8 @@ export class MatchScene extends Phaser.Scene {
   /** Render-only bullet-time dip (see SlowMotion.ts) — not wired to any
    *  trigger yet, just the per-frame input-cancel plumbing. Call
    *  .trigger(scale, maxHoldMs) from wherever a big moment should get it. */
-  private readonly slowMotion = new SlowMotion(this);
+  private readonly renderTime = new RenderTimeArbiter(this);
+  private readonly slowMotion = new SlowMotion(this, this.renderTime);
   private prevWallDir = 0;
   private prevDashing = false;
   /** Ambient haze ellipses (renderArena) + their resting alpha, retained so

@@ -79,8 +79,9 @@ const NINJA_ABILITY_IDS = [
 
 // Commit-frame constants mirrored from World.ts, same precedent as
 // ninjaMelee.test.ts's own local copies (SLASH_WINDUP_MS=120,
-// SLASH_ACTIVE_MS=90).
+// SLASH_CONTACT_DELAY_MS=44, SLASH_ACTIVE_MS=90).
 const WINDUP_TICKS = Math.ceil(120 / DT_MS);
+const CONTACT_TICKS = Math.ceil(44 / DT_MS);
 const ACTIVE_TICKS = Math.ceil(90 / DT_MS);
 
 const flatMap: MapDefinition = {
@@ -353,7 +354,7 @@ describe("Interstice catalog v1 — representative sim effects", () => {
       DT_MS,
     );
     expect(s1.state.players[A]!.undercutUntilTick).toBeDefined();
-    const after = stepIdle(s1.state, runtime, [attacker, lowHpVictim], WINDUP_TICKS + 1).state;
+    const after = stepIdle(s1.state, runtime, [attacker, lowHpVictim], WINDUP_TICKS + CONTACT_TICKS).state;
     expect(after.players[B]!.alive).toBe(false);
     expect(after.players[B]!.health).toBe(0);
   });
@@ -371,7 +372,7 @@ describe("Interstice catalog v1 — representative sim effects", () => {
       inputsWith([attacker, lowHpVictim], { [A as string]: frame(FIRE_BIT, 1, 900, 300) }),
       DT_MS,
     );
-    const after = stepIdle(s1.state, runtime, [attacker, lowHpVictim], WINDUP_TICKS + 1).state;
+    const after = stepIdle(s1.state, runtime, [attacker, lowHpVictim], WINDUP_TICKS + CONTACT_TICKS).state;
     // A normal SLASH_DAMAGE (22) hit against 15 health still kills here —
     // use a slightly higher starting health to actually distinguish
     // "execute" from "would have died anyway".
@@ -458,7 +459,7 @@ describe("Interstice catalog v1 — representative sim effects", () => {
       inputsWith([marked, victim], { [A as string]: frame(FIRE_BIT, 2, 900, 300) }),
       DT_MS,
     );
-    const after = stepIdle(s2.state, runtime, [marked, victim], WINDUP_TICKS + 1).state;
+    const after = stepIdle(s2.state, runtime, [marked, victim], WINDUP_TICKS + CONTACT_TICKS).state;
     const markedDealt = 100 - after.players[B]!.health;
 
     // Unmarked control: identical swing, no Read Mark cast.
@@ -472,7 +473,7 @@ describe("Interstice catalog v1 — representative sim effects", () => {
       inputsWith([attacker2, victim2], { [A as string]: frame(FIRE_BIT, 1, 900, 300) }),
       DT_MS,
     );
-    const after2 = stepIdle(c1.state, runtime2, [attacker2, victim2], WINDUP_TICKS + 1).state;
+    const after2 = stepIdle(c1.state, runtime2, [attacker2, victim2], WINDUP_TICKS + CONTACT_TICKS).state;
     const unmarkedDealt = 100 - after2.players[B]!.health;
 
     expect(markedDealt).toBeCloseTo(unmarkedDealt * NINJA_READ_MARK_AMP_MULTIPLIER, 0);
@@ -577,7 +578,7 @@ describe("Interstice catalog v1 — representative sim effects", () => {
       inputsWith([attacker, victim], { [A as string]: frame(FIRE_BIT, 2, 900, 300) }),
       DT_MS,
     );
-    const after = stepIdle(s2.state, runtime, [attacker, victim], WINDUP_TICKS + 1).state;
+    const after = stepIdle(s2.state, runtime, [attacker, victim], WINDUP_TICKS + CONTACT_TICKS).state;
     expect(after.players[A]!.health).toBe(60 + NINJA_SECOND_WIND_HEAL);
     // At LEAST the melee-hit grant plus Second Wind's bonus dump — passive
     // per-tick regen (NINJA_ENERGY_PASSIVE_REGEN_PER_SEC) also accrues

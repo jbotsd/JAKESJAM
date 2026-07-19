@@ -79,6 +79,7 @@ import {
   MatchResultsOverlay,
   type MatchResultsRow,
 } from "../ui/MatchResultsOverlay";
+import { BuildChangeToast } from "../ui/BuildChangeToast.js";
 import { HudSystem, type HudChip, type HudVitals, type HudRound, type NameplateStatusTick } from "../ui/HudSystem";
 import { ActionBarSystem, type ActionBarVitals } from "../ui/ActionBarSystem";
 import { RoundBanner } from "../ui/RoundBanner";
@@ -101,6 +102,7 @@ import { isTouchPrimary, isPortraitMobile } from "../input/mobile";
 import { ActionIntensity } from "../systems/ActionIntensity.js";
 import { CameraHype } from "../systems/CameraHype.js";
 import { SlowMotion } from "../systems/SlowMotion.js";
+import { RenderTimeArbiter } from "../render/RenderTimeArbiter.js";
 import { ActionCamera } from "../systems/ActionCamera.js";
 import { stickyEnvelopeSubjects } from "../systems/actionCameraMath.js";
 import { CameraJuice } from "../systems/CameraJuice.js";
@@ -408,6 +410,7 @@ export class OnlineMatchScene extends Phaser.Scene {
   /** Tracks the local player's shield state to drive shield-up / hum audio. */
   private prevLocalShield = false;
   private cardDraftOverlay?: CardDraftOverlay;
+  private buildChangeToast?: BuildChangeToast;
   private matchResultsOverlay?: MatchResultsOverlay;
   private matchHasEnded = false;
 
@@ -437,7 +440,8 @@ export class OnlineMatchScene extends Phaser.Scene {
    *  trigger yet, just the per-frame input-cancel plumbing (any meaningful
    *  key press ends it instantly). Call .trigger(scale, maxHoldMs) from
    *  wherever a big moment should get it. */
-  private readonly slowMotion = new SlowMotion(this);
+  private readonly renderTime = new RenderTimeArbiter(this);
+  private readonly slowMotion = new SlowMotion(this, this.renderTime);
   /** Local-player movement-juice edge detection (landing/wall-jump/dash). */
   private prevLocalGrounded = true;
   private prevLocalWallDir = 0;
@@ -606,6 +610,7 @@ export class OnlineMatchScene extends Phaser.Scene {
     this.cardDraftOverlay = new CardDraftOverlay({
       onPicked: (card) => this.playLocalCardPickFeel(card),
     });
+    this.buildChangeToast = new BuildChangeToast();
     this.matchResultsOverlay = new MatchResultsOverlay();
 
     // World-space entity render. C2a: was 5 separate fields +
@@ -1012,9 +1017,24 @@ export class OnlineMatchScene extends Phaser.Scene {
       // constructs); cleared once below after both consumers have run. The
       // hand resolver anchors a swung blade to the rig's live lead hand so the
       // slash reads as HELD, not a projectile sweeping around the feet.
-      const resolveHand = (id: PlayerId): { x: number; y: number } | undefined =>
-        this.playerRigs.get(id as string)?.getHandWorld(0) ?? undefined;
-      this.constructVfx.update(state, simEvents, deltaMs, resolvePos, classIdForArchetype, resolveHand);
+      const resolveHand = (id: PlayerId, hand: 0 | 1): { x: number; y: number } | undefined =>
+        this.playerRigs.get(id as string)?.getHandWorld(hand) ?? undefined;
+      const triggerMeleePose = (
+        id: PlayerId,
+        style: "interstice" | "kindred",
+        dir: number,
+      ): void => {
+        this.playerRigs.get(id as string)?.triggerMeleeSwing?.(style, dir);
+      };
+      this.constructVfx.update(
+        state,
+        simEvents,
+        deltaMs,
+        resolvePos,
+        classIdForArchetype,
+        resolveHand,
+        triggerMeleePose,
+      );
     }
     if (simEvents.length > 0) simEvents.length = 0;
 
@@ -1542,19 +1562,26 @@ export class OnlineMatchScene extends Phaser.Scene {
         this.clipRecorder.trigger();
       }
     }
-    if (!this.audio) return;
     // C2b: per-event dispatch lives in SimEventRouter. The 120-line
-    // switch was inline here. Lazy-init the router on first use so
-    // it picks up the now-ready audio + overlay refs.
+    // switch was inline here. Visual presentation and evidence must still
+    // dispatch when WebAudio is unavailable/autoplay-gated; the router's
+    // SILENT_AUDIO fallback degrades only the sound channel.
     if (!this.simEventRouter) {
       this.simEventRouter = new SimEventRouter({
         scene: this,
-        audio: this.audio,
+        audio: this.audio ?? null,
         localPlayerId: this.localPlayerId,
         safeShake: (durationMs, intensity) => this.safeShake(durationMs, intensity),
+        renderTime: this.renderTime,
         spawnDamageNumber: (vid, dmg, headshot) => this.spawnDamageNumber(vid, dmg, headshot),
         spawnBlastAtPlayer: (pid, r, d) => this.spawnBlastAtPlayer(pid, r, d),
         spawnWardAbsorbFlash: (pid, isPeel) => this.spawnWardAbsorbFlash(pid as string, isPeel),
+        spawnSyzygistWardAbsorbFlash: (pid, casterId, wardBroke) =>
+          this.spawnSyzygistWardAbsorbFlash(
+            pid as string,
+            casterId as string,
+            wardBroke,
+          ),
         killCinematic: (vid) => this.killCinematic(vid),
         emissionCastFeel: (pid, x, y, element) =>
           this.emissionCastFeel(pid as string, x, y, element),
@@ -1571,6 +1598,21 @@ export class OnlineMatchScene extends Phaser.Scene {
     }
     for (const event of events) {
       this.simEventRouter.dispatch(event);
+      if (event.t === "draft-resolved" && event.playerId === this.localPlayerId) {
+        const card = crystalRoundsCards.find((candidate) => candidate.id === event.cardId);
+        const player = this.lastStateForAssist?.players[this.localPlayerId];
+        if (card) {
+          const cardIds = player?.cards.includes(event.cardId)
+            ? player.cards
+            : [...(player?.cards ?? []), event.cardId];
+          this.buildChangeToast?.show({
+            card,
+            cardIds,
+            characterId: player?.characterId ?? "balanced",
+            autoPicked: event.autoPicked,
+          });
+        }
+      }
     }
     // Persistent player record (splash stats panel). After dispatch so the
     // router's killStreakCount already includes this event's kill.
@@ -1789,6 +1831,38 @@ export class OnlineMatchScene extends Phaser.Scene {
     const KINDRED_GOLD = 0xc9a84c;
     const radius = isPeel ? 46 : 34;
     this.renderLayer.spawnExplosionBlastBig({ x: player.x, y: player.y }, radius, KINDRED_GOLD);
+  }
+
+  /** Syzygist wards are cool-white and relational: the protected vessel gets
+   * the dominant barrier impact, while an ally caster gets a smaller source
+   * pulse. A break expands the impact so depletion reads without relying on
+   * colour or sound. */
+  private spawnSyzygistWardAbsorbFlash(
+    playerId: string,
+    casterId: string,
+    wardBroke: boolean,
+  ): void {
+    if (!this.renderLayer) return;
+    const state = this.loop?.getRenderState();
+    if (!state) return;
+    const protectedPlayer = state.players[PlayerId(playerId)];
+    if (!protectedPlayer) return;
+    const SYZYGIST_WHITE = 0xdbeafe;
+    this.renderLayer.spawnExplosionBlastBig(
+      { x: protectedPlayer.x, y: protectedPlayer.y },
+      wardBroke ? 48 : 30,
+      SYZYGIST_WHITE,
+    );
+    if (casterId !== playerId) {
+      const caster = state.players[PlayerId(casterId)];
+      if (caster) {
+        this.renderLayer.spawnExplosionBlastBig(
+          { x: caster.x, y: caster.y },
+          18,
+          SYZYGIST_WHITE,
+        );
+      }
+    }
   }
 
   /**
@@ -2877,6 +2951,7 @@ export class OnlineMatchScene extends Phaser.Scene {
           name: pid === this.localPlayerId ? "You" : this.displayName(pid),
           score,
           cardIds: player?.cards ?? [],
+          characterId: player?.characterId,
           isLocal: pid === this.localPlayerId,
         };
       });
@@ -3052,6 +3127,8 @@ export class OnlineMatchScene extends Phaser.Scene {
     this.audio = undefined;
     this.cardDraftOverlay?.destroy();
     this.cardDraftOverlay = undefined;
+    this.buildChangeToast?.destroy();
+    this.buildChangeToast = undefined;
     this.matchResultsOverlay?.destroy();
     this.matchResultsOverlay = undefined;
     for (const rig of this.playerRigs.values()) rig.destroy();
@@ -3113,7 +3190,29 @@ export function drawDestructible(
     3,
   );
   graphics.fillStyle(color, alpha);
-  if (obj.kind === "barrel") {
+  if (obj.kind === "trainingDummy") {
+    // Venue practice targets read as hostile mannequin figures, not pink
+    // shipping crates. The collision body remains the same authoritative
+    // 44px destructible; only its presentation extends into a vessel-like
+    // head/torso silhouette so it belongs at the loadout table.
+    const headY = obj.y - halfH - 5;
+    graphics.fillStyle(color, alpha);
+    graphics.fillCircle(obj.x, headY, 8);
+    graphics.fillRoundedRect(obj.x - 11, headY + 9, 22, 29, 4);
+    graphics.lineStyle(4, color, alpha);
+    graphics.lineBetween(obj.x - 9, headY + 17, obj.x - 17, obj.y + halfH - 2);
+    graphics.lineBetween(obj.x + 9, headY + 17, obj.x + 17, obj.y + halfH - 2);
+    graphics.lineStyle(2, 0xf7fbff, flashing ? 1 : 0.7);
+    graphics.strokeCircle(obj.x, headY, 8);
+    graphics.strokeRoundedRect(obj.x - 11, headY + 9, 22, 29, 4);
+    // Bullseye and plinth retain immediate "shoot this" readability.
+    graphics.strokeCircle(obj.x, headY + 22, 5);
+    graphics.fillStyle(0x07101c, 0.9);
+    graphics.fillRect(obj.x - halfW, obj.y + halfH - 5, obj.width, 7);
+    graphics.lineStyle(1.5, color, 0.9);
+    graphics.strokeRect(obj.x - halfW, obj.y + halfH - 5, obj.width, 7);
+    return;
+  } else if (obj.kind === "barrel") {
     graphics.fillRoundedRect(obj.x - halfW, obj.y - halfH, obj.width, obj.height, 7);
   } else if (obj.kind === "mine") {
     graphics.fillRoundedRect(obj.x - halfW, obj.y - halfH, obj.width, obj.height, 2);

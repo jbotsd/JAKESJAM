@@ -15,10 +15,12 @@ import type { PlayerId, SimEvent, Vec2, WorldState } from "../../sim";
 const BURN_SPARK_INTERVAL_MS = 80;
 const FREEZE_SHARD_INTERVAL_MS = 160;
 const WARD_RING_INTERVAL_MS = 130;
+const SLOW_RING_INTERVAL_MS = 220;
 
 // Ward shell sapphire — the shield/EMIT resource family (matches the
 // nameplate WARD chip in OnlineMatchScene's BUFF_DESCRIPTORS).
 const WARD_COLOR = 0x38bdf8;
+const SLOW_COLOR = 0x7dd3fc;
 // Drain thread crimson — vampire register, deliberately NOT an element color.
 const LEECH_COLOR = 0xdc2626;
 const LEECH_GLOW = 0x7f1d1d;
@@ -36,6 +38,7 @@ export class StatusVfxController {
   private readonly burnCadence: Map<string, number> = new Map();
   private readonly freezeCadence: Map<string, number> = new Map();
   private readonly wardCadence: Map<string, number> = new Map();
+  private readonly slowCadence: Map<string, number> = new Map();
 
   constructor(_scene: Phaser.Scene, pool: ParticlePool) {
     // Scene is no longer held — transientVfx owns scene routing now.
@@ -53,6 +56,7 @@ export class StatusVfxController {
     const seenBurn = new Set<string>();
     const seenFreeze = new Set<string>();
     const seenWard = new Set<string>();
+    const seenSlow = new Set<string>();
 
     for (const [pidStr, player] of Object.entries(state.players)) {
       if (!player.alive) continue;
@@ -100,6 +104,21 @@ export class StatusVfxController {
           this.wardCadence.set(pidStr, next);
         }
       }
+
+      // Slow is a movement-state change, so its world read hugs the feet.
+      // Paired contracting rings form a non-colour-only "drag wake"; the HUD
+      // chip and actual gait reduction supply the other feedback channels.
+      if (player.slowedUntilTick !== undefined && player.slowedUntilTick > state.tick) {
+        seenSlow.add(pidStr);
+        const next = (this.slowCadence.get(pidStr) ?? SLOW_RING_INTERVAL_MS) + deltaMs;
+        if (next >= SLOW_RING_INTERVAL_MS) {
+          this.slowCadence.set(pidStr, 0);
+          this.spawnSlowDragRing(pos, 0);
+          this.spawnSlowDragRing(pos, Math.PI);
+        } else {
+          this.slowCadence.set(pidStr, next);
+        }
+      }
     }
 
     // Drop cadence entries for players that no longer have an active status.
@@ -111,6 +130,9 @@ export class StatusVfxController {
     }
     for (const key of this.wardCadence.keys()) {
       if (!seenWard.has(key)) this.wardCadence.delete(key);
+    }
+    for (const key of this.slowCadence.keys()) {
+      if (!seenSlow.has(key)) this.slowCadence.delete(key);
     }
 
     for (const ev of events) {
@@ -133,6 +155,31 @@ export class StatusVfxController {
     this.burnCadence.clear();
     this.freezeCadence.clear();
     this.wardCadence.clear();
+    this.slowCadence.clear();
+  }
+
+  private spawnSlowDragRing(position: Vec2, phase: number): void {
+    const ring = this.pool.acquireRing();
+    if (!ring) return;
+    const startX = position.x + Math.cos(phase) * 9;
+    const startY = position.y + 13 + Math.sin(phase) * 3;
+    ring.setPosition(startX, startY);
+    ring.setFillStyle(SLOW_COLOR, 0);
+    ring.setStrokeStyle(2, SLOW_COLOR, 0.62);
+    ring.setScale(0.9, 0.34);
+    ring.setAlpha(1);
+    transientVfx.spawn({
+      factory: () => ring,
+      lifetimeMs: RING_DURATION_MS,
+      startAlpha: 1,
+      ease: "Sine.easeOut",
+      onTick: (obj, t) => {
+        const r = obj as Phaser.GameObjects.Arc;
+        r.x = startX - Math.cos(phase) * 12 * t;
+        r.setScale(0.9 + 0.45 * t, 0.34 + 0.08 * t);
+      },
+      release: () => this.pool.release(ring),
+    });
   }
 
   private spawnBurnSpark(position: Vec2): void {

@@ -495,8 +495,9 @@ const BASH_ATTACKER_STOP = 0.22; // attacker keeps this fraction of velocity on 
 // FSM per ninja player (host-only, WorldRuntime.melee — see
 // NinjaMeleeMemory below, same off-wire-truth/wire-mirror split as dash's
 // PlayerMovementMemory): idle(0) --Fire rising edge--> windup(1)
-// --SLASH_WINDUP_MS--> active(2) --SLASH_ACTIVE_MS, arc hit-checked every
-// tick--> recovery(3) [wave spawns on this transition] --SLASH_RECOVERY_MS
+// --SLASH_WINDUP_MS--> active(2) --radial contact gate, then arc hit-checked
+// every tick for the rest of SLASH_ACTIVE_MS--> recovery(3) [wave spawns on
+// this transition] --SLASH_RECOVERY_MS
 // --> idle(0). Re-trigger only accepted from idle — "gate re-swinging
 // during recovery" (task doctrine) is satisfied by construction (any Fire
 // press while phase != 0 is simply not read as a new swing).
@@ -533,8 +534,12 @@ const SLASH_KNOCK_UP = 60;
 // dash's own ~410ms burst+recovery rhythm (DASH_DURATION_MS 210 +
 // DASH_RECOVERY_MS 200) — the whole kit reads at one cadence.
 const SLASH_WINDUP_MS = 120; // the readable tell before the arc goes live
-const SLASH_ACTIVE_MS = 90; // hit-checked every tick while true
+const SLASH_ACTIVE_MS = 90; // contact-gated hit checks, then a late-entry tail
 const SLASH_RECOVERY_MS = 220; // endlag; whiffing costs
+/** Renderer contact is t=.456 of its 360ms sentence = 164ms. Relative to
+ * the 120ms authoritative windup, the blade crosses the aim radius 44ms
+ * into active. Do not damage during the overhead coil before this gate. */
+const SLASH_CONTACT_DELAY_MS = 44;
 
 // Wave-off-swing (spawned via the existing spawnProjectile machinery so
 // element/impact card modifiers compose onto it for free later — no
@@ -652,6 +657,10 @@ const EDGE_KNOCK_UP = 110;
 const EDGE_WINDUP_MS = 200;
 const EDGE_ACTIVE_MS = 110;
 const EDGE_RECOVERY_MS = 340;
+/** Renderer contact is t=.5364 of its 560ms sentence = 300ms. Relative to
+ * the 200ms authoritative windup, the heavy edge meets the aim radius 100ms
+ * into active, leaving a short late-contact tail before recovery. */
+const EDGE_CONTACT_DELAY_MS = 100;
 
 /**
  * Melee arc hit test — more rigorous than DASH BASH's plain centre-point
@@ -1995,6 +2004,7 @@ export function stepWithRuntime(
           x: nextEntity.x,
           y: nextEntity.y,
           hand: fireResult.throwHand,
+          projectileIds: fireResult.projectiles.map((projectile) => projectile.id),
         });
         for (const p of fireResult.projectiles) {
           projectilesCow.set(p.id, p);
@@ -3995,6 +4005,7 @@ export function stepWithRuntime(
 
       // ---- Swing FSM ----
       const wasActive = mem.phase === 2;
+      const activeElapsedBeforeStep = wasActive ? SLASH_ACTIVE_MS - mem.phaseMs : 0;
       let waveShouldSpawn = false;
       if (mem.phase === 0) {
         const edge = ninjaSlashEdges.get(aid);
@@ -4029,10 +4040,17 @@ export function stepWithRuntime(
         }
       }
       const isActiveNow = mem.phase === 2;
+      const activeElapsedAfterStep = isActiveNow
+        ? SLASH_ACTIVE_MS - mem.phaseMs
+        : wasActive
+          ? Math.min(SLASH_ACTIVE_MS, activeElapsedBeforeStep + effDtMs)
+          : 0;
+      const hasReachedSlashContact =
+        (wasActive || isActiveNow) && activeElapsedAfterStep >= SLASH_CONTACT_DELAY_MS;
 
-      // ---- Arc hit-check (every active tick, all victims in the cone —
-      //      not "first hit only" like bash) ----
-      if ((wasActive || isActiveNow) && !hangoutMode) {
+      // ---- Arc hit-check (from the radial intercept onward, all victims
+      //      in the cone — not "first hit only" like bash) ----
+      if (hasReachedSlashContact && !hangoutMode) {
         const aimAngle = Math.atan2(mem.aimY, mem.aimX);
         for (const vid of meleeIds) {
           if (vid === aid) continue;
@@ -4185,7 +4203,7 @@ export function stepWithRuntime(
       //      applied directly — see pendingHangoutDestructibleDamage's doc
       //      comment for why (stepDestructibles fully replaces the
       //      destructibles record later this tick regardless).
-      if ((wasActive || isActiveNow) && hangoutMode) {
+      if (hasReachedSlashContact && hangoutMode) {
         const aimAngle = Math.atan2(mem.aimY, mem.aimX);
         for (const [did, d] of Object.entries(state.destructibles)) {
           if (d.health <= 0 || mem.hitDestructiblesThisSwing.has(did)) continue;
@@ -4271,6 +4289,7 @@ export function stepWithRuntime(
 
       // ---- Swing FSM (same 4-phase shape as ninja's, own constants) ----
       const wasActive = mem.phase === 2;
+      const activeElapsedBeforeStep = wasActive ? EDGE_ACTIVE_MS - mem.phaseMs : 0;
       if (mem.phase === 0) {
         const edge = paladinEdgeEdges.get(aid);
         if (edge) {
@@ -4299,9 +4318,17 @@ export function stepWithRuntime(
         }
       }
       const isActiveNow = mem.phase === 2;
+      const activeElapsedAfterStep = isActiveNow
+        ? EDGE_ACTIVE_MS - mem.phaseMs
+        : wasActive
+          ? Math.min(EDGE_ACTIVE_MS, activeElapsedBeforeStep + effDtMs)
+          : 0;
+      const hasReachedEdgeContact =
+        (wasActive || isActiveNow) && activeElapsedAfterStep >= EDGE_CONTACT_DELAY_MS;
 
-      // ---- Arc hit-check (every active tick, all victims in the cone) ----
-      if ((wasActive || isActiveNow) && !hangoutMode) {
+      // ---- Arc hit-check (from the radial intercept onward, all victims
+      //      in the cone) ----
+      if (hasReachedEdgeContact && !hangoutMode) {
         const aimAngle = Math.atan2(mem.aimY, mem.aimX);
         for (const vid of edgeIds) {
           if (vid === aid) continue;
@@ -4493,7 +4520,7 @@ export function stepWithRuntime(
       //      block above exactly (same reasoning: Kindled Edge had no
       //      destructible-hit path at all, so Kindred's entire primary
       //      attack did nothing to the practice dummies). ----
-      if ((wasActive || isActiveNow) && hangoutMode) {
+      if (hasReachedEdgeContact && hangoutMode) {
         const aimAngle = Math.atan2(mem.aimY, mem.aimX);
         for (const [did, d] of Object.entries(state.destructibles)) {
           if (d.health <= 0 || mem.hitDestructiblesThisSwing.has(did)) continue;

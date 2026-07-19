@@ -15,13 +15,19 @@
 //      timer).
 // Both exits are a hard, instant snap to timeScale=1 — never an eased
 // ramp-back, matching the existing hit-stop's own instant-recovery shape.
+import { RenderTimeArbiter } from "../render/RenderTimeArbiter.js";
+
+const SLOW_MOTION_SOURCE = "slow-motion";
+
 export class SlowMotion {
   private readonly scene: Phaser.Scene;
   private active = false;
   private deadlineMs = 0;
+  private readonly renderTime: RenderTimeArbiter;
 
-  constructor(scene: Phaser.Scene) {
+  constructor(scene: Phaser.Scene, renderTime?: RenderTimeArbiter) {
     this.scene = scene;
+    this.renderTime = renderTime ?? new RenderTimeArbiter(scene);
   }
 
   /** Enter slow motion right now. `scale` is the render timeScale (e.g. 0.35
@@ -30,17 +36,20 @@ export class SlowMotion {
   trigger(scale: number, maxHoldMs: number): void {
     this.active = true;
     this.deadlineMs = this.scene.time.now + maxHoldMs;
-    this.scene.tweens.timeScale = scale;
+    this.renderTime.hold(SLOW_MOTION_SOURCE, scale, maxHoldMs);
   }
 
   /** Call once per frame with the current input bitfield (0 = nothing
    *  pressed). Ends the dip instantly on either exit condition. */
   update(currentKeys: number): void {
+    // Also expires hit-stop and any future render-time sources sharing this
+    // arbiter, even when slow motion itself is inactive.
+    this.renderTime.update();
     if (!this.active) return;
     const inputArrived = currentKeys !== 0;
     const timedOut = this.scene.time.now >= this.deadlineMs;
     if (inputArrived || timedOut) {
-      this.scene.tweens.timeScale = 1;
+      this.renderTime.release(SLOW_MOTION_SOURCE);
       this.active = false;
     }
   }
@@ -53,7 +62,7 @@ export class SlowMotion {
    *  shape as the input/timeout exits, not a fade. */
   cancel(): void {
     if (!this.active) return;
-    this.scene.tweens.timeScale = 1;
+    this.renderTime.release(SLOW_MOTION_SOURCE);
     this.active = false;
   }
 }

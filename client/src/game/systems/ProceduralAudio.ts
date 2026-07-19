@@ -143,6 +143,7 @@ function weaponPatch(el?: string): WeaponPatch {
 export class ProceduralAudio {
   private ctx?: AudioContext | OfflineAudioContext;
   private master?: GainNode;
+  private evidenceDestination?: MediaStreamAudioDestinationNode;
   /** OFFLINE RENDER MODE (clip-goal CL.B): constructed with an
    *  OfflineAudioContext, every cue schedules at `offlineAt` (set per sim
    *  tick by the replay renderer) instead of ctx.currentTime, realtime
@@ -212,6 +213,18 @@ export class ProceduralAudio {
     }
     this.unsubscribeSfxVolume?.();
     this.unsubscribeSfxVolume = undefined;
+    if (this.evidenceDestination) {
+      for (const track of this.evidenceDestination.stream.getTracks()) track.stop();
+      if (typeof window !== "undefined") {
+        const evidenceWindow = window as Window & {
+          __jakesjam_evidence_audio_stream__?: MediaStream;
+        };
+        if (evidenceWindow.__jakesjam_evidence_audio_stream__ === this.evidenceDestination.stream) {
+          delete evidenceWindow.__jakesjam_evidence_audio_stream__;
+        }
+      }
+      this.evidenceDestination = undefined;
+    }
     // Offline contexts are owned by the replay renderer (it still needs
     // startRendering after we're done) — only close a realtime context.
     if (this.ctx && !this.offline) void (this.ctx as AudioContext).close();
@@ -254,6 +267,22 @@ export class ProceduralAudio {
     limiter.attack.value = 0.002;
     limiter.release.value = 0.12;
     master.connect(limiter).connect(ctx.destination);
+    // Playwright's video recorder is intentionally video-only. Evidence runs
+    // therefore mirror the already-mixed master bus into a MediaStream so the
+    // audio-only review is a real artifact, not a filename pointing at silence.
+    // This branch is absent from normal play and never changes cue scheduling.
+    if (
+      !this.offline &&
+      typeof window !== "undefined" &&
+      new URLSearchParams(window.location.search).get("evidence") === "1"
+    ) {
+      const liveCtx = ctx as AudioContext;
+      const destination = liveCtx.createMediaStreamDestination();
+      limiter.connect(destination);
+      this.evidenceDestination = destination;
+      (window as Window & { __jakesjam_evidence_audio_stream__?: MediaStream })
+        .__jakesjam_evidence_audio_stream__ = destination.stream;
+    }
     this.master = master;
 
     // Light reverb send (generated impulse) for "space" on shields/impacts.
@@ -1067,4 +1096,3 @@ function SEMI(n: number): number {
 // while guaranteeing consecutive shots differ (the core anti-fatigue trick).
 // Ordered to avoid neighbouring repeats.
 const BODY_STEPS = [0, 3, -2, 2, -3, 1, 4, -1];
-

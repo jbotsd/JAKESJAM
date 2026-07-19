@@ -85,6 +85,23 @@ function localizeDescriptionForInput(description: string): string {
   return description.replace(/\(press C\)/g, "(DASH button)");
 }
 
+/** Catalog cards must scan in combat-planning order: identity → cadence →
+ * effect. The data's full sentence remains authoritative; this only lifts
+ * its leading `Active (...)` clause into a compact timing rail so the glyph
+ * and prose no longer fight for the same pixels. */
+function catalogDescriptionParts(description: string): { timing: string; effect: string } {
+  const localized = localizeDescriptionForInput(description);
+  const active = /^Active\s*\(([^)]+)\):\s*(.*)$/i.exec(localized);
+  if (!active) return { timing: "ACTIVE", effect: localized };
+  return {
+    timing: active[1]!
+      .replace(/\bcooldown\b/gi, "CD")
+      .replace(/,\s*/g, "  ·  ")
+      .toUpperCase(),
+    effect: active[2]!,
+  };
+}
+
 export class CardDraftOverlay {
   private root: HTMLDivElement;
   private cardsContainer: HTMLDivElement;
@@ -109,6 +126,8 @@ export class CardDraftOverlay {
    *  them — zero behavior change to the existing draft surfaces. */
   private catalogHeading: HTMLDivElement | null = null;
   private catalogGrid: HTMLDivElement | null = null;
+  private catalogSelectionPrimed = false;
+  private catalogSelectedIds = new Set<string>();
 
   constructor(juice: CardDraftJuice = {}, copy: CardDraftCopy = {}, classRow?: ClassRowConfig) {
     this.juice = juice;
@@ -232,7 +251,7 @@ export class CardDraftOverlay {
         // localStorage unavailable — skip the extra line rather than nag forever.
       }
       this.hintEl.textContent = firstDraftEver
-        ? "Pick one. It stacks with your weapon for the rest of the match. Auto-selects when the timer expires."
+        ? "Pick one. It rewrites your build next round; BUILD CHANGED will explain exactly what changed. It lasts for this match. The timer will choose if you do not."
         : "Pick one card. Auto-selects when the timer expires.";
     }
     this.cardsContainer.replaceChildren();
@@ -632,22 +651,36 @@ export class CardDraftOverlay {
     for (const card of cards) {
       const isSelected = selected.has(card.id);
       const disabled = !isSelected && activesHeld >= MAX_ABILITY_SLOTS;
-      const tile = this.makeCatalogTile(card, isSelected, disabled);
+      const slotIndex = isSelected ? selectedIds.indexOf(card.id) : -1;
+      const justEquipped =
+        this.catalogSelectionPrimed && isSelected && !this.catalogSelectedIds.has(card.id);
+      const tile = this.makeCatalogTile(card, isSelected, disabled, slotIndex, justEquipped);
       if (!disabled) {
         tile.addEventListener("click", () => onToggle(card));
       }
       this.catalogGrid.appendChild(tile);
     }
+    this.catalogSelectedIds = selected;
+    this.catalogSelectionPrimed = true;
   }
 
   /** One catalog grid tile — compact (unlike the big offer plates below;
    *  up to 10 need to fit at once), toggle-styled: gold/selected vs
    *  cyan/unselected register (visual-language-gnostic-vessel.md — stroke-
    *  based accents, no new imagery). */
-  private makeCatalogTile(card: CardDefinition, selected: boolean, disabled: boolean): HTMLDivElement {
-    const el = document.createElement("div");
+  private makeCatalogTile(
+    card: CardDefinition,
+    selected: boolean,
+    disabled: boolean,
+    slotIndex: number,
+    justEquipped: boolean,
+  ): HTMLButtonElement {
+    const el = document.createElement("button");
+    el.type = "button";
+    el.disabled = disabled;
     el.dataset.catalogTile = card.id;
     el.setAttribute("aria-pressed", selected ? "true" : "false");
+    el.setAttribute("aria-label", `${card.name}. ${selected ? `Equipped in slot ${slotIndex + 1}` : disabled ? "Rack full" : "Equip"}.`);
     Object.assign(el.style, CATALOG_TILE_STYLE);
 
     const accentHex = selected ? "#c9a84c" : "#5DCFD9";
@@ -678,6 +711,11 @@ export class CardDraftOverlay {
       flexShrink: "0",
       opacity: "0.95",
     } as Partial<CSSStyleDeclaration>);
+    const glyphSvg = glyph.querySelector<SVGElement>("svg");
+    if (glyphSvg) {
+      glyphSvg.style.width = "26px";
+      glyphSvg.style.height = "26px";
+    }
     const name = document.createElement("div");
     name.textContent = card.name;
     Object.assign(name.style, {
@@ -688,8 +726,17 @@ export class CardDraftOverlay {
     } as Partial<CSSStyleDeclaration>);
     top.append(glyph, name);
 
-    const roleTag = document.createElement("div");
-    roleTag.textContent = (card.role ?? "").toUpperCase();
+    const copy = catalogDescriptionParts(card.description);
+    const meta = document.createElement("div");
+    Object.assign(meta.style, {
+      display: "flex",
+      flexDirection: "column",
+      alignItems: "flex-start",
+      gap: "2px",
+      minHeight: "27px",
+    } as Partial<CSSStyleDeclaration>);
+    const roleTag = document.createElement("span");
+    roleTag.textContent = (card.role ?? "ACTIVE").toUpperCase();
     Object.assign(roleTag.style, {
       fontSize: "9px",
       fontWeight: "700",
@@ -697,17 +744,30 @@ export class CardDraftOverlay {
       color: withAlpha(accentHex, 0.85),
       fontFamily: "'Space Mono', 'Courier New', monospace",
     } as Partial<CSSStyleDeclaration>);
+    const timing = document.createElement("span");
+    timing.textContent = copy.timing;
+    Object.assign(timing.style, {
+      fontSize: "8px",
+      letterSpacing: "0.06em",
+      color: "#7f8da3",
+      fontFamily: "'Space Mono', 'Courier New', monospace",
+      whiteSpace: "normal",
+    } as Partial<CSSStyleDeclaration>);
+    meta.append(roleTag, timing);
 
     const desc = document.createElement("div");
-    desc.textContent = localizeDescriptionForInput(card.description);
+    desc.textContent = copy.effect;
     Object.assign(desc.style, {
       fontSize: "11px",
-      lineHeight: "1.4",
-      color: "#b7c4d6",
+      lineHeight: "1.42",
+      color: "#c2ccda",
+      flex: "1",
     } as Partial<CSSStyleDeclaration>);
 
     const badge = document.createElement("div");
-    badge.textContent = selected ? "EQUIPPED" : disabled ? "RACK FULL" : "TAP TO EQUIP";
+    badge.textContent = selected
+      ? `SLOT ${slotIndex + 1}  ·  EQUIPPED`
+      : disabled ? "RACK FULL  ·  REMOVE ONE TO SWAP" : "TAP TO EQUIP";
     Object.assign(badge.style, {
       fontSize: "9px",
       fontWeight: "700",
@@ -717,14 +777,31 @@ export class CardDraftOverlay {
       marginTop: "2px",
     } as Partial<CSSStyleDeclaration>);
 
-    el.append(top, roleTag, desc, badge);
+    el.append(top, meta, desc, badge);
+
+    if (justEquipped) {
+      el.animate(
+        [
+          { transform: "scale(0.94)", filter: "brightness(1.8)" },
+          { transform: "scale(1.035)", filter: "brightness(1.25)", offset: 0.58 },
+          { transform: "scale(1)", filter: "brightness(1)" },
+        ],
+        { duration: 360, easing: "cubic-bezier(0.16,1,0.3,1)" },
+      );
+    }
 
     if (!disabled) {
       el.addEventListener("mouseenter", () => {
-        if (!selected) el.style.borderColor = "rgba(93, 207, 217, 0.4)";
+        if (!selected) {
+          el.style.borderColor = "rgba(93, 207, 217, 0.5)";
+          el.style.transform = "translateY(-2px)";
+        }
       });
       el.addEventListener("mouseleave", () => {
-        if (!selected) el.style.borderColor = "rgba(93, 207, 217, 0.18)";
+        if (!selected) {
+          el.style.borderColor = "rgba(93, 207, 217, 0.18)";
+          el.style.transform = "translateY(0)";
+        }
       });
     }
 
@@ -989,7 +1066,7 @@ const STAGE_STYLE: Partial<CSSStyleDeclaration> = {
   ].join(", "),
   boxShadow:
     "0 32px 80px rgba(0,0,0,0.6), 0 0 1px rgba(143,248,255,0.3), inset 0 1px 0 rgba(143,248,255,0.07)",
-  maxWidth: "min(1100px, 95vw)",
+  maxWidth: "min(1260px, 96vw)",
   maxHeight: "92vh",
   overflowY: "auto",
 };
@@ -1222,19 +1299,24 @@ const CATALOG_HEADING_STYLE: Partial<CSSStyleDeclaration> = {
 
 const CATALOG_GRID_STYLE: Partial<CSSStyleDeclaration> = {
   display: "grid",
-  gridTemplateColumns: "repeat(auto-fill, minmax(160px, 1fr))",
-  gap: "8px",
+  gridTemplateColumns: "repeat(auto-fit, minmax(168px, 1fr))",
+  gap: "10px",
   width: "100%",
-  maxWidth: "820px",
+  maxWidth: "1120px",
 };
 
 const CATALOG_TILE_STYLE: Partial<CSSStyleDeclaration> = {
   display: "flex",
   flexDirection: "column",
-  gap: "4px",
-  padding: "10px 12px",
-  borderRadius: "8px",
-  transition: "border-color 140ms ease, opacity 140ms ease",
+  gap: "6px",
+  minHeight: "142px",
+  padding: "12px 13px 11px",
+  borderRadius: "10px",
+  appearance: "none",
+  textAlign: "left",
+  color: "inherit",
+  overflow: "hidden",
+  transition: "border-color 140ms ease, opacity 140ms ease, transform 160ms cubic-bezier(0.16,1,0.3,1)",
 };
 
 const CATALOG_EMPTY_STYLE: Partial<CSSStyleDeclaration> = {

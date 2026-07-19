@@ -25,6 +25,8 @@ import {
   SEAL_ACCENT_HEX,
 } from "./cardSeals.js";
 import { rarityColorCss } from "./rarityColors.js";
+import { describeBuild } from "./buildDescription.js";
+import type { CharacterArchetype } from "../../sim/types.js";
 
 export type MatchResultsRow = {
   playerId: string;
@@ -33,6 +35,8 @@ export type MatchResultsRow = {
   score: number;
   /** Drafted card ids for this player, in pick order. */
   cardIds: string[];
+  /** Chassis selects the class-aware reading of the same card stack. */
+  characterId?: CharacterArchetype;
   /** Whether this row represents the local player (gets a "(you)" tag). */
   isLocal?: boolean;
 };
@@ -260,6 +264,10 @@ export class MatchResultsOverlay {
     header.append(nameEl, scoreEl);
 
     const cards = findCardsById(crystalRoundsCards, row.cardIds);
+    const build = describeBuild(row.cardIds, row.characterId);
+    const buildEl = document.createElement("div");
+    Object.assign(buildEl.style, BUILD_SUMMARY_STYLE);
+    buildEl.textContent = `${cards.length > 0 ? "FINAL BUILD" : "STARTER BUILD"} · ${build.summary}`;
     const cardListEl = document.createElement("div");
     Object.assign(cardListEl.style, CARD_LIST_STYLE);
     if (cards.length === 0) {
@@ -271,7 +279,7 @@ export class MatchResultsOverlay {
       }
     }
 
-    el.append(header, cardListEl);
+    el.append(header, buildEl, cardListEl);
     return el;
   }
 
@@ -434,6 +442,13 @@ const CARD_LIST_STYLE: Partial<CSSStyleDeclaration> = {
   gap: "6px",
   fontSize: "11px",
   color: "#caffea",
+};
+
+const BUILD_SUMMARY_STYLE: Partial<CSSStyleDeclaration> = {
+  fontSize: "13px",
+  lineHeight: "1.4",
+  color: "#fff7d6",
+  letterSpacing: "0.01em",
 };
 
 const CARD_CHIP_STYLE: Partial<CSSStyleDeclaration> = {

@@ -19,6 +19,58 @@ import type { PlayerId, SimEvent } from "../../sim/types";
 import type { CombatRig } from "../rendering/ProceduralPlayerRig";
 import type { ParticlePool } from "../systems/ParticlePool";
 import type { RenderLayer } from "./RenderLayer";
+import { presentationBudget } from "./presentationBudgets.js";
+import { RenderTimeArbiter } from "./RenderTimeArbiter.js";
+import { isAbilityKind } from "./abilityAnimation.js";
+
+const SILENT_AUDIO: AudioPlayer = { play: () => undefined };
+function evidenceEventsEnabled(): boolean {
+  // Read at dispatch time. Dev HMR and in-place venue → arena handoffs can
+  // outlive the module evaluation that first constructed this router; a
+  // frozen top-level boolean made a valid ?evidence=1 session silently
+  // record nothing even while authoritative presentation events fired.
+  return typeof window !== "undefined" &&
+    new URLSearchParams(window.location.search).get("evidence") === "1";
+}
+
+function emitEvidenceEvent(event: SimEvent, localPlayerId: PlayerId): void {
+  if (!evidenceEventsEnabled()) return;
+  const record = event as unknown as Record<string, unknown>;
+  const actorId = record.attackerId ?? record.killerId ?? record.casterId ??
+    record.warderId ?? record.playerId;
+  const targetId = record.victimId ??
+    (event.t === "syz-ward-absorbed" ? event.playerId : undefined);
+  const identityValues = [
+    record.playerId,
+    record.attackerId,
+    record.killerId,
+    record.casterId,
+    record.warderId,
+    record.victimId,
+  ].filter((value): value is string => typeof value === "string");
+  const localActor = actorId === localPlayerId;
+  const localTarget = targetId === localPlayerId;
+  const metadata = event.t === "ability-activated"
+    ? { abilityKind: event.kind }
+    : event.t === "syz-ward-absorbed"
+      ? { wardBroke: event.wardBroke }
+      : event.t === "shot-fired"
+        ? { projectileIds: event.projectileIds }
+        : event.t === "hit-confirmed"
+          ? { sourceProjectileId: event.sourceProjectileId }
+          : {};
+  window.dispatchEvent(new CustomEvent("jakesjam:presentation-event", {
+    detail: {
+      kind: event.t,
+      atMs: performance.now(),
+      atTick: event.atTick,
+      localActor,
+      localTarget,
+      remoteOnly: identityValues.length > 0 && !localActor && !localTarget,
+      ...metadata,
+    },
+  }));
+}
 
 /**
  * Audio surface the router needs. Procedural synth: each cue takes optional
@@ -59,6 +111,8 @@ export type SimEventRouterDeps = {
 
   /** Camera-shake helper that already guards against stacking. */
   safeShake: (durationMs: number, intensity: number) => void;
+  /** Shared render-clock owner. When present, hit-stop composes with slow-mo. */
+  renderTime?: RenderTimeArbiter;
 
   /** Float a damage number above the victim's rig. */
   spawnDamageNumber: (victimId: PlayerId | string, damage: number, headshot?: boolean) => void;
@@ -107,6 +161,14 @@ export type SimEventRouterDeps = {
    *  precedent as `emissionCastFeel`. */
   spawnWardAbsorbFlash?: (playerId: PlayerId | string, isPeel: boolean) => void;
 
+  /** Cool-white Syzygist ward response. The source caster is passed separately
+   * so ally wards remain attributable; `wardBroke` selects the louder shatter. */
+  spawnSyzygistWardAbsorbFlash?: (
+    playerId: PlayerId | string,
+    casterId: PlayerId | string,
+    wardBroke: boolean,
+  ) => void;
+
   /** Show the local card-draft overlay with the given offered ids. */
   showCardDraft: (cardIds: string[]) => void;
 
@@ -140,8 +202,25 @@ export type SimEventRouterDeps = {
  */
 export class SimEventRouter {
   private readonly deps: SimEventRouterDeps;
+  private readonly renderTime: RenderTimeArbiter;
+  private ownsRenderTime: boolean;
+  private hitStopSequence = 0;
   constructor(deps: SimEventRouterDeps) {
     this.deps = deps;
+    this.renderTime = deps.renderTime ?? new RenderTimeArbiter(deps.scene);
+    this.ownsRenderTime = deps.renderTime === undefined;
+  }
+
+  private holdHitStop(durationMs: number): void {
+    if (!this.ownsRenderTime) {
+      this.renderTime.hold("hit-stop", 0, durationMs);
+      return;
+    }
+    // Standalone scenes without a frame-updated shared arbiter still get
+    // overlap-safe holds: each callback releases only its own request.
+    const source = `hit-stop:${this.hitStopSequence++}`;
+    this.renderTime.hold(source, 0, durationMs);
+    this.deps.scene.time.delayedCall(durationMs, () => this.renderTime.release(source));
   }
 
   /**
@@ -153,9 +232,11 @@ export class SimEventRouter {
    */
   dispatch(event: SimEvent): void {
     const d = this.deps;
-    const audio = d.audio;
-    if (!audio) return;
+    // Presentation must not disappear when WebAudio is unavailable or still
+    // autoplay-gated. Only the audio channel degrades; visual/UI reactions run.
+    const audio = d.audio ?? SILENT_AUDIO;
     const scene = d.scene;
+    emitEvidenceEvent(event, d.localPlayerId);
     switch (event.t) {
       case "shot-fired": {
         audio.play("shoot", d.shotAudioParams?.(event.playerId));
@@ -166,7 +247,8 @@ export class SimEventRouter {
         d.playerRigs.get(event.playerId)?.triggerFire(event.hand);
         if (event.playerId === d.localPlayerId) {
           // Tiny recoil shake on local-player fire — guard stacking.
-          d.safeShake(40, 0.0015);
+          const budget = presentationBudget("action");
+          d.safeShake(budget.shakeDurationMs * (2 / 3), budget.shakeIntensity * 0.375);
         }
         break;
       }
@@ -174,13 +256,11 @@ export class SimEventRouter {
         audio.play("hit", { intensity: Math.min(1, event.damage / 40) });
         // Hit-stop: freeze render tweens for 35–50ms on a heavy hit.
         // Per game-feel-juice/SKILL.md recipe 2 — render-only freeze, sim keeps ticking.
-        const stopMs = event.damage >= 30 ? 50 : 35;
-        scene.tweens.timeScale = 0;
-        scene.time.delayedCall(stopMs, () => {
-          scene.tweens.timeScale = 1;
-        });
+        const stopMs = presentationBudget(event.damage >= 30 ? "heavy" : "hit").hitStopMs;
+        this.holdHitStop(stopMs);
         if (event.victimId === d.localPlayerId) {
-          d.safeShake(80, 0.008);
+          const budget = presentationBudget("hit");
+          d.safeShake(budget.shakeDurationMs, budget.shakeIntensity);
         }
         d.spawnDamageNumber(event.victimId, event.damage, event.headshot);
         d.spawnBlastAtPlayer(event.victimId, 22, event.damage);
@@ -192,11 +272,10 @@ export class SimEventRouter {
         break;
       }
       case "player-killed": {
-        scene.tweens.timeScale = 0;
-        scene.time.delayedCall(80, () => {
-          scene.tweens.timeScale = 1;
-        });
-        d.safeShake(180, 0.012);
+        const killStopMs = presentationBudget("kill").hitStopMs;
+        this.holdHitStop(killStopMs);
+        const killBudget = presentationBudget("kill");
+        d.safeShake(killBudget.shakeDurationMs, killBudget.shakeIntensity);
         d.spawnBlastAtPlayer(event.victimId, 36, 50);
         d.killCinematic(event.victimId);
         audio.play("explosion");
@@ -231,10 +310,7 @@ export class SimEventRouter {
         d.playerRigs.get(event.playerId)?.triggerParryFlash();
         // Micro hit-stop (shorter than a damage hit) — the "turn" registers
         // without interrupting the slide's flow.
-        scene.tweens.timeScale = 0;
-        scene.time.delayedCall(30, () => {
-          scene.tweens.timeScale = 1;
-        });
+        this.holdHitStop(30);
         if (event.playerId === d.localPlayerId) {
           d.safeShake(50, 0.004);
         }
@@ -312,6 +388,12 @@ export class SimEventRouter {
         // audio moment; the action-bar slot flash + buff chips carry the
         // sustained read (legibility law: every press has an instant cue).
         audio.play("card", { heavy: false });
+        // Every catalog press moves the vessel through its authored physical
+        // verb (plant, weave, guard, thrust, etc.). The event is authoritative;
+        // the rig gesture is render-only and never delays the sim effect.
+        if (isAbilityKind(event.kind)) {
+          d.playerRigs.get(event.playerId)?.triggerAbility?.(event.kind);
+        }
         if (event.playerId === d.localPlayerId) {
           d.safeShake(60, 0.004);
         }
@@ -410,13 +492,17 @@ export class SimEventRouter {
         break;
       }
       case "syz-ward-absorbed": {
-        // Syzygist Ward absorb tell (2026-07-18, class-overhaul-workboard.md
-        // chunk 3.3 — sim correctness pass, minimal rendering per scope,
-        // identical precedent to ward-absorbed/team-peel-absorbed above).
-        // No bespoke cool-white barrier asset exists and the hard rule is
-        // never synthesize audio (rip only) — left silent. Fast-follow: a
-        // future Syzygist VFX pass (mirrors chunk 2.7's heaven-tank pass)
-        // gives this a readable cool-white absorb flash + SFX.
+        d.spawnSyzygistWardAbsorbFlash?.(
+          event.playerId,
+          event.casterId,
+          event.wardBroke,
+        );
+        if (
+          event.playerId === d.localPlayerId ||
+          event.casterId === d.localPlayerId
+        ) {
+          d.safeShake(event.wardBroke ? 70 : 40, event.wardBroke ? 0.006 : 0.003);
+        }
         break;
       }
       default: {

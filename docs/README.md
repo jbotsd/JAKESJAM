@@ -80,6 +80,12 @@ For agents working in this repo. See `.claude/skills/`:
 - [`themes.md`](themes.md) — palette + theme switching.
 - [`jakesjam-design-pillars.md`](jakesjam-design-pillars.md) —
   core gameplay pillars.
+- [`juice-axiom-orchestration.md`](juice-axiom-orchestration.md) —
+  bite-sized action/reaction work packages grounded in the juice skill,
+  design axioms, and local game-design book corpus.
+- [`melee-juice-pass.md`](melee-juice-pass.md) — staged timing, research,
+  implementation notes, and visual evidence criteria for rogue and paladin
+  melee attacks.
 - [`game-design-document-copy-paste.md`](game-design-document-copy-paste.md) —
   GDD in copy-paste-friendly form.
 
