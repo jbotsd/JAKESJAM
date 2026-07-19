@@ -483,6 +483,19 @@ export class ClientLoop {
     this.transport.send(encodeMessage({ t: "class-pick", characterId }));
   }
 
+  /**
+   * Venue lobby only: cycle the loadout station's rack to the next/previous
+   * group of ≤ MAX_ABILITY_SLOTS actives in the locked class's full catalog
+   * (Part B, 2026-07-19 — "exhaustively test all and every single ability"
+   * without hand-toggling every combination). Server owns the group index
+   * (`VenueHost`'s `LoadoutEntry.cycleIndex`) and re-pushes a fresh
+   * `venue-draft` with the new picks — no local optimistic update, same
+   * "authoritative push only" precedent as `sendClassPick`.
+   */
+  sendCatalogCycle(direction: "next" | "prev"): void {
+    this.transport.send(encodeMessage({ t: "catalog-cycle", direction }));
+  }
+
   /** Updated by the input capture layer every frame before the next tick. */
   setLocalInput(input: LocalInput): void {
     this.currentInput = input;

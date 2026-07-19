@@ -77,6 +77,15 @@ export type ClassRowConfig = {
   onSelect: (id: string) => void;
 };
 
+/**
+ * Loadout-station catalog CYCLE (Part B, 2026-07-19 — "exhaustively test
+ * all and every single ability" without hand-toggling every combination
+ * one at a time). Fired by the "‹ PREV SET" / "NEXT SET ›" buttons next to
+ * the catalog heading — station-only, same `classRow`-gated existence as
+ * the catalog grid itself (see `catalogHeading`/`catalogGrid`'s own doc).
+ */
+export type CatalogCycleHandler = (direction: "next" | "prev") => void;
+
 /** Card copy lives in sim data (cards.ts) and is written for desktop
  *  ("press C"). Rewrite input references at render time for touch players —
  *  the data file feeds the Zig codegen and must stay input-agnostic. */
@@ -128,10 +137,20 @@ export class CardDraftOverlay {
   private catalogGrid: HTMLDivElement | null = null;
   private catalogSelectionPrimed = false;
   private catalogSelectedIds = new Set<string>();
+  /** Part B cycle handler — see `CatalogCycleHandler`'s own doc. Null at
+   *  every non-station call site (round-draft/HUD), same "only exists when
+   *  classRow does" gate as the catalog grid itself. */
+  private readonly onCatalogCycle: CatalogCycleHandler | null;
 
-  constructor(juice: CardDraftJuice = {}, copy: CardDraftCopy = {}, classRow?: ClassRowConfig) {
+  constructor(
+    juice: CardDraftJuice = {},
+    copy: CardDraftCopy = {},
+    classRow?: ClassRowConfig,
+    onCatalogCycle?: CatalogCycleHandler,
+  ) {
     this.juice = juice;
     this.fixedHint = copy.hint ?? null;
+    this.onCatalogCycle = onCatalogCycle ?? null;
     this.root = document.createElement("div");
     this.root.dataset.cardDraft = "true";
     Object.assign(this.root.style, BASE_OVERLAY_STYLE);
@@ -589,8 +608,9 @@ export class CardDraftOverlay {
   }
 
   /** Builds the (initially empty) class ability catalog section — heading
-   *  + grid — populated later by `setCatalog` once server data arrives.
-   *  Station-only (see the `catalogHeading`/`catalogGrid` field docs). */
+   *  (+ Part B cycle buttons) + grid — populated later by `setCatalog` once
+   *  server data arrives. Station-only (see the `catalogHeading`/
+   *  `catalogGrid` field docs). */
   private buildCatalogSection(): HTMLDivElement {
     const wrap = document.createElement("div");
     wrap.dataset.catalogSection = "true";
@@ -602,6 +622,33 @@ export class CardDraftOverlay {
 
     this.catalogGrid = document.createElement("div");
     Object.assign(this.catalogGrid.style, CATALOG_GRID_STYLE);
+
+    if (this.onCatalogCycle) {
+      const headingRow = document.createElement("div");
+      Object.assign(headingRow.style, CATALOG_HEADING_ROW_STYLE);
+
+      // Part B — "exhaustively test all and every single ability" without
+      // hand-toggling every combination: one tap swaps the current rack
+      // for the next (or previous) ≤3-ability group of the FULL catalog,
+      // wrapping around. Server owns the group index; these just send
+      // direction and let the next `venue-draft` push reconcile the grid
+      // (same "authoritative push only" precedent as the class row).
+      const prevBtn = document.createElement("button");
+      prevBtn.type = "button";
+      prevBtn.textContent = "‹ PREV SET";
+      Object.assign(prevBtn.style, CATALOG_CYCLE_BUTTON_STYLE);
+      prevBtn.addEventListener("click", () => this.onCatalogCycle?.("prev"));
+
+      const nextBtn = document.createElement("button");
+      nextBtn.type = "button";
+      nextBtn.textContent = "NEXT SET ›";
+      Object.assign(nextBtn.style, CATALOG_CYCLE_BUTTON_STYLE);
+      nextBtn.addEventListener("click", () => this.onCatalogCycle?.("next"));
+
+      headingRow.append(this.catalogHeading, prevBtn, nextBtn);
+      wrap.append(headingRow, this.catalogGrid);
+      return wrap;
+    }
 
     wrap.append(this.catalogHeading, this.catalogGrid);
     return wrap;
@@ -1295,6 +1342,35 @@ const CATALOG_HEADING_STYLE: Partial<CSSStyleDeclaration> = {
   color: "#aa9e7f", // Instrument Ink — same register as the class-row title
   textTransform: "uppercase",
   fontFamily: "'Space Mono', 'Courier New', monospace",
+};
+
+/** Part B: heading text + the two cycle buttons share one row, heading
+ *  taking the remaining space so the buttons stay pinned to the right. */
+const CATALOG_HEADING_ROW_STYLE: Partial<CSSStyleDeclaration> = {
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "space-between",
+  gap: "10px",
+  width: "100%",
+  maxWidth: "1120px", // matches CATALOG_GRID_STYLE's own cap
+};
+
+/** Part B cycle buttons — same stroke-only instrument-panel register as the
+ *  catalog tiles (visual-language-gnostic-vessel.md — no new imagery). */
+const CATALOG_CYCLE_BUTTON_STYLE: Partial<CSSStyleDeclaration> = {
+  flexShrink: "0",
+  appearance: "none",
+  cursor: "pointer",
+  padding: "5px 10px",
+  borderRadius: "6px",
+  border: "1px solid rgba(201, 168, 76, 0.45)",
+  background: "rgba(201, 168, 76, 0.08)",
+  color: "#c9a84c",
+  fontSize: "10px",
+  fontWeight: "700",
+  letterSpacing: "0.14em",
+  fontFamily: "'Space Mono', 'Courier New', monospace",
+  textTransform: "uppercase",
 };
 
 const CATALOG_GRID_STYLE: Partial<CSSStyleDeclaration> = {

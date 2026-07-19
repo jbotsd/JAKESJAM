@@ -34,6 +34,7 @@ import { ActionCamera } from "../systems/ActionCamera.js";
 import { CameraHype } from "../systems/CameraHype.js";
 import { getMusicLevel } from "../systems/MusicAmplitude";
 import { SimEventRouter } from "../render/SimEventRouter";
+import { spawnFloatingDamageNumber } from "../render/damageNumber.js";
 import { TouchControls } from "../input/TouchControls";
 import { isTouchPrimary, isPortraitMobile } from "../input/mobile";
 import { getRenderScale, uiWidth } from "../render/renderResolution.js";
@@ -131,6 +132,12 @@ export class HangoutScene extends Phaser.Scene {
   // bookkeeping, not gameplay input.
   private lobbyTransport: WsTransport | null = null;
   private duoKey?: Phaser.Input.Keyboard.Key;
+  /** Part B (2026-07-19): a bound key alongside the "NEXT SET" DOM button
+   *  so cycling the catalog doesn't require reaching for the mouse while
+   *  standing at the dummies mid-test — same "walk-up affordance, not a
+   *  menu" precedent as `duoKey`. Only acts while `loadoutInZone` (station
+   *  proximity), same zone-gate the overlay itself uses. */
+  private catalogCycleKey?: Phaser.Input.Keyboard.Key;
   /** Optimistic local echo — the server is the actual source of truth
    *  (VenueHost's duoIntent Set), but there's no round-trip ack message
    *  for a toggle this cheap; a dropped packet would only desync the
@@ -256,6 +263,7 @@ export class HangoutScene extends Phaser.Scene {
         slot3: this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.THREE),
       };
       this.duoKey = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.T);
+      this.catalogCycleKey = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.N);
     }
 
     this.statusText = this.add
@@ -476,6 +484,13 @@ export class HangoutScene extends Phaser.Scene {
           hint: LOADOUT_HINT,
         },
         this.buildClassRowConfig(),
+        // Part B (2026-07-19): "PREV SET"/"NEXT SET" buttons next to the
+        // catalog heading — server owns the group index and re-pushes a
+        // fresh `venue-draft`, same authoritative-push-only precedent as
+        // class-pick/catalog-toggle; no local optimistic guess here since
+        // the exact next group depends on server-side state this client
+        // doesn't mirror.
+        (direction) => this.loop?.sendCatalogCycle(direction),
       );
     }
     if (!this.draftOverlay.isOpen()) this.draftOverlay.showStation();
@@ -522,12 +537,9 @@ export class HangoutScene extends Phaser.Scene {
   /** Class-select row config (classes-goal.md P1): the four chassis from
    *  characters.ts, selected = the persisted value the private-room "Class"
    *  dropdown also reads. Picking persists locally and announces via
-   *  `jakesjam:class-change` (LobbyController listens) — the pick rides the
-   *  NEXT arena admission through the world-join `character` param
-   *  (OnlineMatchScene → /ws/world → WorldHost.spawnFor). No live respawn
-   *  here: the lobby vessel keeps its connect-time chassis until the next
-   *  socket, which is fine — the station arms the future, the bell cashes
-   *  it in.
+   *  `jakesjam:class-change` (LobbyController listens) — the pick ALSO
+   *  rides the NEXT arena admission through the world-join `character`
+   *  param (OnlineMatchScene → /ws/world → WorldHost.spawnFor).
    *
    *  ALSO sends `class-pick` over the live lobby socket (Bug 1 fix, live
    *  playtest 2026-07-18): the localStorage write + DOM event above only
@@ -536,7 +548,16 @@ export class HangoutScene extends Phaser.Scene {
    *  therefore the ability catalog grid below) locked to whatever class
    *  was picked at first totem touch. `sendClassPick` re-derives it live;
    *  the server's reply (`venue-draft`) re-renders the catalog via
-   *  `onVenueDraft` → `syncCatalog()`, no totem re-entry required. */
+   *  `onVenueDraft` → `syncCatalog()`, no totem re-entry required.
+   *
+   *  SINCE the Part A follow-up (2026-07-19, "when you switch loudouts and
+   *  classes it SHOULD REALLY switch"): the SAME `class-pick` message ALSO
+   *  live-swaps the lobby vessel's actual standing chassis server-side
+   *  (`VenueHost`'s handler → `MatchHost.setPlayerCharacter`) — no longer
+   *  "arms the future for the next socket," the visitor's rig visibly
+   *  re-skins and their resources/cooldowns reset RIGHT NOW, standing at
+   *  the dummies. `renderWorld`'s rig-rebuild-on-chassis-change handles the
+   *  visual side; nothing here needs to change to get that for free. */
   private buildClassRowConfig(): ClassRowConfig {
     return {
       title: CLASS_ROW_TITLE,
@@ -642,7 +663,19 @@ export class HangoutScene extends Phaser.Scene {
         audio: this.audio ?? null,
         localPlayerId: this.localPlayerId,
         safeShake: () => {},
-        spawnDamageNumber: () => {},
+        // Practice-range damage numbers (2026-07-19, venue-lobby ability
+        // showcase — Jake: "we need an area with the right bots... to test
+        // this"): the whole point of the showcase room is SEEING that an
+        // ability worked. Was a literal no-op — every ability landed with
+        // zero visible confirmation of damage dealt. `spawnDamageNumber`
+        // covers player/ally-NPC victims (real PlayerIds, e.g.
+        // `lobbyAllyNpcId` — resolvable via `state.players` exactly like
+        // OnlineMatchScene's arena case); `spawnDamageNumberAt` covers
+        // destructible (dummy) hits via the new `destructible-hit` SimEvent,
+        // which carries the dummy's own x/y directly (no PlayerId to look
+        // up for a destructible).
+        spawnDamageNumber: (vid, dmg, headshot) => this.spawnDamageNumber(vid, dmg, headshot),
+        spawnDamageNumberAt: (x, y, dmg) => this.spawnDamageNumberAt(x, y, dmg),
         spawnBlastAtPlayer: () => {},
         killCinematic: () => {},
         spawnPlatformBlastTint: () => {},
@@ -661,6 +694,32 @@ export class HangoutScene extends Phaser.Scene {
       }
       this.simEventRouter.dispatch(event);
     }
+  }
+
+  /** Player/ally-NPC damage-number popup — mirrors OnlineMatchScene's own
+   *  `spawnDamageNumber` byte-for-byte (shared tween/tier logic lives in
+   *  `spawnFloatingDamageNumber`). Covers every REAL `PlayerId` victim in
+   *  the lobby: the local player and the loadout table's two stationary
+   *  ally NPCs (`lobbyAllyNpcId`) alike — both live in `state.players`
+   *  exactly like an arena player does. */
+  private spawnDamageNumber(victimId: string, damage: number, headshot = false): void {
+    const state = this.loop?.getRenderState();
+    if (!state) return;
+    const victim = state.players[PlayerId(victimId)];
+    if (!victim || damage < 1) return;
+    if (!victim.alive) return;
+    const isLocal = victimId === (this.localPlayerId as string);
+    spawnFloatingDamageNumber(this, victim.x, victim.y, damage, { headshot, isLocal });
+  }
+
+  /** Destructible (training dummy) damage-number popup — the `destructible-
+   *  hit` SimEvent carries the dummy's own `x`/`y` directly (a destructible
+   *  has no `PlayerId`/rig to resolve a position from). This is the half
+   *  that actually matters for the showcase room: every dummy hit now
+   *  floats a number, not just player/ally-NPC hits. */
+  private spawnDamageNumberAt(x: number, y: number, damage: number): void {
+    if (damage < 1) return;
+    spawnFloatingDamageNumber(this, x, y, damage, { headshot: false, isLocal: false });
   }
 
   // ---------------- Arena + totems ----------------
@@ -1055,6 +1114,21 @@ export class HangoutScene extends Phaser.Scene {
       this.lobbyTransport?.send(encodeMessage({ t: "duo-toggle" }));
     }
 
+    // Part B catalog cycle (2026-07-19): press [N] while standing at the
+    // loadout station to swap in the next ability group — the keyboard
+    // twin of the overlay's "NEXT SET" button, for testers who'd rather
+    // not leave the keyboard mid-test. Zone-gated (only while
+    // `loadoutInZone`) so N does nothing walking around the rest of the
+    // lobby.
+    if (
+      this.mode === "venue" &&
+      this.loadoutInZone &&
+      this.catalogCycleKey &&
+      Phaser.Input.Keyboard.JustDown(this.catalogCycleKey)
+    ) {
+      this.loop?.sendCatalogCycle("next");
+    }
+
     let keys = 0;
     if (this.keys?.a.isDown) keys |= InputBit.Left;
     if (this.keys?.d.isDown) keys |= InputBit.Right;
@@ -1183,6 +1257,28 @@ export class HangoutScene extends Phaser.Scene {
     for (const pid in state.players) {
       const player = state.players[PlayerId(pid)]!;
       seen.add(pid);
+      // Live chassis switch (Part A follow-up — loadout-station class-pick
+      // now mutates the live PlayerEntity.characterId, matchHost.ts's
+      // `setPlayerCharacter`): `rosterCharacterIds` was populated ONCE from
+      // ServerHello and, before this fix, never updated again — every rig
+      // read (`makePlayerRig`/`updatePlayerRig` below) prefers that STALE
+      // cache over the live `player.characterId`, and `ProceduralPlayerRig`
+      // bakes chassis silhouette/scale/classId in at construction, never on
+      // `.update()`. So a class switch would be fully correct in the sim
+      // (cooldowns/resources/health reset, weapon build recomputed) yet
+      // silently invisible on screen — exactly the "theater, not a real
+      // switch" complaint this whole fix line is about. Keep the roster
+      // cache live-synced here, and force a rig rebuild the moment a
+      // player's chassis actually changes underneath an existing rig.
+      if (this.rosterCharacterIds.get(pid) !== player.characterId) {
+        this.rosterCharacterIds.set(pid, player.characterId);
+        const stale = this.playerRigs.get(pid);
+        if (stale) {
+          stale.destroy();
+          this.playerRigs.delete(pid);
+          this.crouchHalfByPid.delete(pid);
+        }
+      }
       let rig = this.playerRigs.get(pid);
       if (!rig) {
         rig = this.makePlayerRig(player, pid === (this.localPlayerId as string));

@@ -18,6 +18,7 @@ function makeDeps(): {
   audioCalls: string[];
   shakeCalls: Array<[number, number]>;
   damageNumbers: Array<[string, number]>;
+  damageNumbersAt: Array<[number, number, number]>;
   blasts: Array<[string, number, number]>;
   killCinematics: string[];
   blastTints: Array<{ x: number; y: number }>;
@@ -40,6 +41,7 @@ function makeDeps(): {
   const audioCalls: string[] = [];
   const shakeCalls: Array<[number, number]> = [];
   const damageNumbers: Array<[string, number]> = [];
+  const damageNumbersAt: Array<[number, number, number]> = [];
   const blasts: Array<[string, number, number]> = [];
   const killCinematics: string[] = [];
   const blastTints: Array<{ x: number; y: number }> = [];
@@ -121,6 +123,9 @@ function makeDeps(): {
     spawnDamageNumber(victimId, damage) {
       damageNumbers.push([String(victimId), damage]);
     },
+    spawnDamageNumberAt(x, y, damage) {
+      damageNumbersAt.push([x, y, damage]);
+    },
     spawnBlastAtPlayer(pid, r, d) {
       blasts.push([String(pid), r, d]);
     },
@@ -158,6 +163,7 @@ function makeDeps(): {
     audioCalls,
     shakeCalls,
     damageNumbers,
+    damageNumbersAt,
     blasts,
     killCinematics,
     blastTints,
@@ -321,6 +327,23 @@ describe("SimEventRouter — C2b contract", () => {
     expect(env.shakeCalls).toEqual([[60, 0.0025]]);
     expect(env.blastTints).toEqual([{ x: 100, y: 200 }]);
     expect(env.explosionBlasts).toEqual([{ x: 100, y: 200, r: 48, d: 30 }]);
+  });
+
+  test("destructible-hit: hit SFX + damage number AT the entity's position, no shake/hit-stop", () => {
+    const ev: SimEvent = {
+      t: "destructible-hit",
+      entityId: EntityId(1),
+      damage: 20,
+      x: 300,
+      y: 150,
+    };
+    router.dispatch(ev);
+    expect(env.audioCalls).toEqual(["hit"]);
+    expect(env.damageNumbersAt).toEqual([[300, 150, 20]]);
+    // Deliberately no camera shake / hit-stop — a struck object shouldn't
+    // jolt the camera the way a player hit does (SimEventRouter.ts's own
+    // doc on the case).
+    expect(env.shakeCalls).toEqual([]);
   });
 
   test("ward-absorbed: gold flash at the BLOCKER, no audio (no ripped asset — hard rule), small local shake", () => {

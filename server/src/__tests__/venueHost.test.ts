@@ -109,12 +109,20 @@ describe("VenueHost lobby lifecycle (Pillar 1.2)", () => {
     venue.attachLobby(makeFakeWs("p_b", "BEA"));
     const lobby = venue.lobbyHostForTest() as unknown as LobbyInternals;
     const ids = Object.keys(lobby.state.players).sort();
-    // Plus the two permanent loadout-table ally NPCs (docs/venue-lobby-
-    // tableau-goal.md Part 2) — always present, bot_-prefixed, never real
-    // connections. `venue.summary().lobby.present` (below) is keyed off
-    // real WEBSOCKETS, not the sim roster, so it stays a true "2 humans"
-    // count regardless.
-    expect(ids).toEqual(["bot_practice_ally_1", "bot_practice_ally_2", "p_a", "p_b"]);
+    // Plus the FOUR permanent ally NPCs: the loadout table's original two
+    // (docs/venue-lobby-tableau-goal.md Part 2) PLUS the showcase
+    // gauntlet's own two (Part C, 2026-07-19) — always present, bot_-
+    // prefixed, never real connections. `venue.summary().lobby.present`
+    // (below) is keyed off real WEBSOCKETS, not the sim roster, so it
+    // stays a true "2 humans" count regardless.
+    expect(ids).toEqual([
+      "bot_practice_ally_1",
+      "bot_practice_ally_2",
+      "bot_practice_ally_3",
+      "bot_practice_ally_4",
+      "p_a",
+      "p_b",
+    ]);
     expect(venue.summary().lobby.present).toBe(2);
     venue.dispose();
   });
@@ -189,16 +197,19 @@ describe("VenueHost lobby lifecycle (Pillar 1.2)", () => {
       respawnDestructibles(): void;
     };
     const internals = lobby as unknown as DestructibleInternals;
-    expect(Object.keys(internals.state.destructibles).length).toBe(3);
+    // 3 tableau dummies (docs/venue-lobby-tableau-goal.md Part 3) + 5
+    // showcase-gauntlet dummies (Part C, 2026-07-19: 2 isolated + a
+    // 3-dummy cluster) = 8.
+    expect(Object.keys(internals.state.destructibles).length).toBe(8);
     // Break them all (the sim-level break path is covered by
     // hangoutMode.test.ts — here we pin the venue's respawn contract).
     internals.state = { ...internals.state, destructibles: {} };
     expect(Object.keys(internals.state.destructibles).length).toBe(0);
     internals.respawnDestructibles();
-    expect(Object.keys(internals.state.destructibles).length).toBe(3);
+    expect(Object.keys(internals.state.destructibles).length).toBe(8);
     // Fully-stocked lobby: respawn is a no-op, not a duplicate-spawner.
     internals.respawnDestructibles();
-    expect(Object.keys(internals.state.destructibles).length).toBe(3);
+    expect(Object.keys(internals.state.destructibles).length).toBe(8);
     venue.dispose();
   });
 
@@ -950,5 +961,413 @@ describe("VenueHost live loadout sync onto the lobby PlayerEntity (Fix 1)", () =
     host.setPlayerCards(PlayerId("p_combat1"), ["sunlance"]);
     expect(host.getStateSnapshot().players[PlayerId("p_combat1")]?.cards).toEqual([]);
     host.dispose();
+  });
+});
+
+// ── Live chassis switch (Part A follow-up, Jake: "when you switch loudouts
+//    and classes it SHOULD REALLY switch") — `class-pick` used to only
+//    change which catalog the station showed; the visitor's actual standing
+//    PlayerEntity kept whatever chassis they walked in with. These pin the
+//    NEW live-apply: `MatchHost.setPlayerCharacter` mutates the lobby
+//    player's real `characterId` + resets health/cooldowns/resource pools,
+//    called from VenueHost's `class-pick` handler right alongside the
+//    existing cards live-sync. ──────────────────────────────────────────
+
+describe("VenueHost live chassis switch onto the lobby PlayerEntity", () => {
+  type SimEventSink = { onSimEvent?: (e: { t: string; playerId: string }) => void };
+
+  test("class-pick live-swaps the lobby PlayerEntity.characterId immediately", () => {
+    const { venue } = makeVenue(0);
+    const ws = makeFakeWs("p_chas1", "CHAS1"); // default chassis → balanced (wizard)
+    venue.attachLobby(ws);
+    const pid = PlayerId("p_chas1");
+    expect(venue.lobbyHostForTest().getStateSnapshot().players[pid]?.characterId).toBe("balanced");
+    venue.routeLobby(ws, encodeMessage({ t: "class-pick", characterId: "sprinter" })); // → ninja
+    expect(venue.lobbyHostForTest().getStateSnapshot().players[pid]?.characterId).toBe("sprinter");
+    venue.dispose();
+  });
+
+  test("a chassis switch resets health, ability-slot cooldowns, and class resource pools to a fresh baseline", () => {
+    const { venue } = makeVenue(0);
+    const ws = makeFakeWs("p_chas2", "CHAS2");
+    venue.attachLobby(ws);
+    const pid = PlayerId("p_chas2");
+    const host = venue.lobbyHostForTest();
+    // Simulate combat wear-and-tear the old chassis picked up: damaged,
+    // cooldowns armed, a resource pool partially filled.
+    type Internals = { state: { players: Record<string, Record<string, unknown>> } };
+    const internals = host as unknown as Internals;
+    internals.state = {
+      ...internals.state,
+      players: {
+        ...internals.state.players,
+        [pid]: {
+          ...internals.state.players[pid],
+          health: 42,
+          slot1CooldownUntilTick: 999,
+          slot2CooldownUntilTick: 999,
+          energy: 80,
+        },
+      },
+    };
+    venue.routeLobby(ws, encodeMessage({ t: "class-pick", characterId: "heavy" })); // → paladin
+    const after = host.getStateSnapshot().players[pid]!;
+    expect(after.characterId).toBe("heavy");
+    expect(after.health).toBe(100);
+    expect(after.slot1CooldownUntilTick).toBeUndefined();
+    expect(after.slot2CooldownUntilTick).toBeUndefined();
+    expect(after.energy).toBeUndefined();
+    venue.dispose();
+  });
+
+  test("class-pick to the SAME class the lobby entity is already on is a no-op — no reset, no churn", () => {
+    const { venue } = makeVenue(0);
+    const ws = makeFakeWs("p_chas3", "CHAS3"); // default chassis → balanced (wizard)
+    venue.attachLobby(ws);
+    const pid = PlayerId("p_chas3");
+    const host = venue.lobbyHostForTest();
+    type Internals = { state: { players: Record<string, Record<string, unknown>> } };
+    const internals = host as unknown as Internals;
+    internals.state = {
+      ...internals.state,
+      players: {
+        ...internals.state.players,
+        [pid]: { ...internals.state.players[pid], health: 55 },
+      },
+    };
+    venue.routeLobby(ws, encodeMessage({ t: "class-pick", characterId: "balanced" })); // still wizard
+    const after = host.getStateSnapshot().players[pid]!;
+    expect(after.characterId).toBe("balanced");
+    expect(after.health).toBe(55); // untouched — nothing to reset on a same-class no-op
+    venue.dispose();
+  });
+
+  test("switching class twice ends up on the SECOND class, not stuck on the first", () => {
+    const { venue } = makeVenue(0);
+    const ws = makeFakeWs("p_chas4", "CHAS4");
+    venue.attachLobby(ws);
+    const pid = PlayerId("p_chas4");
+    venue.routeLobby(ws, encodeMessage({ t: "class-pick", characterId: "sprinter" })); // ninja
+    venue.routeLobby(ws, encodeMessage({ t: "class-pick", characterId: "shielded" })); // priest
+    expect(venue.lobbyHostForTest().getStateSnapshot().players[pid]?.characterId).toBe("shielded");
+    venue.dispose();
+  });
+
+  test("MatchHost.setPlayerCharacter is a no-op on an ordinary combat-mode host (arena matches never chassis-swap mid-run)", () => {
+    const spawn = {
+      playerId: PlayerId("p_combat2"),
+      characterId: "balanced" as const,
+      name: "COMBAT2",
+      color: "#ffffff",
+      weaponId: "starter-pistol",
+    };
+    const host = new MatchHost("combat-test-2", [spawn], [], "boxworks-mini");
+    const internals = host as unknown as { stop(): void };
+    internals.stop();
+    host.setPlayerCharacter(PlayerId("p_combat2"), "sprinter");
+    expect(host.getStateSnapshot().players[PlayerId("p_combat2")]?.characterId).toBe("balanced");
+    host.dispose();
+  });
+
+  test("setPlayerCharacter no-ops on an unknown playerId (no throw)", () => {
+    const { venue } = makeVenue(0);
+    const host = venue.lobbyHostForTest();
+    expect(() => host.setPlayerCharacter(PlayerId("p_ghost_chassis"), "sprinter")).not.toThrow();
+    venue.dispose();
+  });
+
+  test("a chassis switch mirrors into rosterInfo() too, not just the live PlayerEntity", () => {
+    const { venue } = makeVenue(0);
+    const ws = makeFakeWs("p_chas6", "CHAS6");
+    venue.attachLobby(ws);
+    const pid = PlayerId("p_chas6");
+    const host = venue.lobbyHostForTest();
+    expect(host.rosterInfo(pid)?.characterId).toBe("balanced");
+    venue.routeLobby(ws, encodeMessage({ t: "class-pick", characterId: "sprinter" })); // → ninja
+    expect(host.rosterInfo(pid)?.characterId).toBe("sprinter");
+    // Same-class no-op leaves it untouched too (nothing to mirror).
+    venue.routeLobby(ws, encodeMessage({ t: "class-pick", characterId: "sprinter" }));
+    expect(host.rosterInfo(pid)?.characterId).toBe("sprinter");
+    venue.dispose();
+  });
+
+  test("standing at the dummies mid-visit, a class switch is instant and visible — no totem re-touch required", () => {
+    // End-to-end shape of Jake's ask: touch the station, equip a catalog
+    // pick, then swap class WITHOUT leaving the totem zone — both the
+    // catalog rack AND the live chassis must reflect the new class in the
+    // same breath.
+    const { venue } = makeVenue(0);
+    const ws = makeFakeWs("p_chas5", "CHAS5");
+    venue.attachLobby(ws);
+    const pid = PlayerId("p_chas5");
+    const sink = venue.lobbyHostForTest() as unknown as SimEventSink;
+    sink.onSimEvent?.({ t: "ready-toggled", playerId: "p_chas5" });
+    venue.routeLobby(ws, encodeMessage({ t: "catalog-toggle", cardId: "sunlance" }));
+    venue.routeLobby(ws, encodeMessage({ t: "class-pick", characterId: "shielded" })); // → priest
+    const live = venue.lobbyHostForTest().getStateSnapshot().players[pid]!;
+    expect(live.characterId).toBe("shielded");
+    expect(live.cards).toEqual([]); // wizard-only pick dropped by the class switch
+    expect(venue.loadoutForTest(pid)!.classId).toBe("priest");
+    venue.dispose();
+  });
+});
+
+// ── Loadout station catalog CYCLE (Part B, 2026-07-19 — Jake: "an ability
+//    show case room where we can exhaustveily test all and every single
+//    ability"). `catalog-cycle` swaps the whole rack for the next/previous
+//    ≤3-ability group of the locked class's FULL catalog, wrapping around,
+//    live-applying exactly like `catalog-toggle` does. Wizard's catalog
+//    (10 actives, the fresh-visitor default class) groups as
+//    [3,3,3,1] — group0 sunlance/facet-break/prism-fan, group1 lattice/
+//    return-glass/hard-aperture, group2 overclock/measure/slip-node,
+//    group3 recoil-step (alone). ─────────────────────────────────────────
+
+describe("VenueHost loadout station: catalog cycle (Part B)", () => {
+  test("catalog-cycle before ever touching the station is a no-op (no loadout entry yet)", () => {
+    const { venue } = makeVenue(0);
+    const ws = makeFakeWs("p_cyc1", "CYC1");
+    venue.attachLobby(ws);
+    venue.routeLobby(ws, encodeMessage({ t: "catalog-cycle", direction: "next" }));
+    expect(venue.loadoutForTest(PlayerId("p_cyc1"))).toBeUndefined();
+    venue.dispose();
+  });
+
+  test("first 'next' cycle lands on group 0 of the locked class's catalog", () => {
+    const { venue } = makeVenue(0);
+    const ws = makeFakeWs("p_cyc2", "CYC2"); // default chassis → wizard
+    venue.attachLobby(ws);
+    const sink = venue.lobbyHostForTest() as unknown as { onSimEvent?: (e: { t: string; playerId: string }) => void };
+    sink.onSimEvent?.({ t: "ready-toggled", playerId: "p_cyc2" });
+    venue.routeLobby(ws, encodeMessage({ t: "catalog-cycle", direction: "next" }));
+    expect(venue.loadoutForTest(PlayerId("p_cyc2"))!.picks).toEqual([
+      "sunlance",
+      "facet-break",
+      "prism-fan",
+    ]);
+    venue.dispose();
+  });
+
+  test("repeated 'next' cycles step through every group, including the trailing partial group", () => {
+    const { venue } = makeVenue(0);
+    const ws = makeFakeWs("p_cyc3", "CYC3");
+    venue.attachLobby(ws);
+    const sink = venue.lobbyHostForTest() as unknown as { onSimEvent?: (e: { t: string; playerId: string }) => void };
+    sink.onSimEvent?.({ t: "ready-toggled", playerId: "p_cyc3" });
+    const groups: string[][] = [];
+    for (let i = 0; i < 4; i += 1) {
+      venue.routeLobby(ws, encodeMessage({ t: "catalog-cycle", direction: "next" }));
+      groups.push([...venue.loadoutForTest(PlayerId("p_cyc3"))!.picks]);
+    }
+    expect(groups).toEqual([
+      ["sunlance", "facet-break", "prism-fan"],
+      ["lattice", "return-glass", "hard-aperture"],
+      ["overclock", "measure", "slip-node"],
+      ["recoil-step"], // trailing partial group — 10 actives don't divide evenly by 3
+    ]);
+    venue.dispose();
+  });
+
+  test("cycling wraps back to group 0 after the last group", () => {
+    const { venue } = makeVenue(0);
+    const ws = makeFakeWs("p_cyc4", "CYC4");
+    venue.attachLobby(ws);
+    const sink = venue.lobbyHostForTest() as unknown as { onSimEvent?: (e: { t: string; playerId: string }) => void };
+    sink.onSimEvent?.({ t: "ready-toggled", playerId: "p_cyc4" });
+    for (let i = 0; i < 4; i += 1) {
+      venue.routeLobby(ws, encodeMessage({ t: "catalog-cycle", direction: "next" }));
+    }
+    // 5th "next" wraps past the trailing partial group back to group 0.
+    venue.routeLobby(ws, encodeMessage({ t: "catalog-cycle", direction: "next" }));
+    expect(venue.loadoutForTest(PlayerId("p_cyc4"))!.picks).toEqual([
+      "sunlance",
+      "facet-break",
+      "prism-fan",
+    ]);
+    venue.dispose();
+  });
+
+  test("first 'prev' cycle lands on the LAST group, not group 0", () => {
+    const { venue } = makeVenue(0);
+    const ws = makeFakeWs("p_cyc5", "CYC5");
+    venue.attachLobby(ws);
+    const sink = venue.lobbyHostForTest() as unknown as { onSimEvent?: (e: { t: string; playerId: string }) => void };
+    sink.onSimEvent?.({ t: "ready-toggled", playerId: "p_cyc5" });
+    venue.routeLobby(ws, encodeMessage({ t: "catalog-cycle", direction: "prev" }));
+    expect(venue.loadoutForTest(PlayerId("p_cyc5"))!.picks).toEqual(["recoil-step"]);
+    venue.dispose();
+  });
+
+  test("'next' then 'prev' returns to the group just cycled away from", () => {
+    const { venue } = makeVenue(0);
+    const ws = makeFakeWs("p_cyc6", "CYC6");
+    venue.attachLobby(ws);
+    const sink = venue.lobbyHostForTest() as unknown as { onSimEvent?: (e: { t: string; playerId: string }) => void };
+    sink.onSimEvent?.({ t: "ready-toggled", playerId: "p_cyc6" });
+    venue.routeLobby(ws, encodeMessage({ t: "catalog-cycle", direction: "next" })); // group 0
+    venue.routeLobby(ws, encodeMessage({ t: "catalog-cycle", direction: "next" })); // group 1
+    venue.routeLobby(ws, encodeMessage({ t: "catalog-cycle", direction: "prev" })); // back to group 0
+    expect(venue.loadoutForTest(PlayerId("p_cyc6"))!.picks).toEqual([
+      "sunlance",
+      "facet-break",
+      "prism-fan",
+    ]);
+    venue.dispose();
+  });
+
+  test("a cycle live-applies to the lobby PlayerEntity.cards immediately, same as catalog-toggle", () => {
+    const { venue } = makeVenue(0);
+    const ws = makeFakeWs("p_cyc7", "CYC7");
+    venue.attachLobby(ws);
+    const pid = PlayerId("p_cyc7");
+    const sink = venue.lobbyHostForTest() as unknown as { onSimEvent?: (e: { t: string; playerId: string }) => void };
+    sink.onSimEvent?.({ t: "ready-toggled", playerId: "p_cyc7" });
+    venue.routeLobby(ws, encodeMessage({ t: "catalog-cycle", direction: "next" }));
+    expect(venue.lobbyHostForTest().getStateSnapshot().players[pid]?.cards).toEqual([
+      "sunlance",
+      "facet-break",
+      "prism-fan",
+    ]);
+    venue.dispose();
+  });
+
+  test("cycling never includes a non-active catalog card (paladin's bastion/retort passives are skipped)", () => {
+    const { venue } = makeVenue(0);
+    const ws = makeFakeWs("p_cyc8", "CYC8");
+    venue.attachLobby(ws);
+    venue.routeLobby(ws, encodeMessage({ t: "class-pick", characterId: "heavy" })); // → paladin
+    for (let i = 0; i < 6; i += 1) {
+      venue.routeLobby(ws, encodeMessage({ t: "catalog-cycle", direction: "next" }));
+      const picks = venue.loadoutForTest(PlayerId("p_cyc8"))!.picks;
+      expect(picks.every((id) => id !== "retort" && id !== "bastion")).toBe(true);
+    }
+    venue.dispose();
+  });
+
+  test("a real class switch resets the cycle position — the next cycle for the NEW class starts at its own group 0", () => {
+    const { venue } = makeVenue(0);
+    const ws = makeFakeWs("p_cyc9", "CYC9");
+    venue.attachLobby(ws);
+    const sink = venue.lobbyHostForTest() as unknown as { onSimEvent?: (e: { t: string; playerId: string }) => void };
+    sink.onSimEvent?.({ t: "ready-toggled", playerId: "p_cyc9" });
+    venue.routeLobby(ws, encodeMessage({ t: "catalog-cycle", direction: "next" })); // wizard group 0
+    venue.routeLobby(ws, encodeMessage({ t: "catalog-cycle", direction: "next" })); // wizard group 1
+    venue.routeLobby(ws, encodeMessage({ t: "class-pick", characterId: "heavy" })); // → paladin, resets cycleIndex
+    venue.routeLobby(ws, encodeMessage({ t: "catalog-cycle", direction: "next" })); // paladin group 0, not group 2
+    const picks = venue.loadoutForTest(PlayerId("p_cyc9"))!.picks;
+    expect(picks).toEqual(["bastion-pulse", "sunspike", "judgment-line"]);
+    venue.dispose();
+  });
+});
+
+// ── Ability-showcase gauntlet geometry (Part C, 2026-07-19 — Jake: "an area
+//    with the right bots and freindlies to test this... an ability show
+//    case room where we can exhaustveily test all and every single
+//    ability"). Pins: entity COUNT, that the gauntlet lives strictly
+//    between the (untouched) tableau's right edge and the bell's own
+//    clearance zone, and that it doesn't collide with either. ───────────
+
+describe("VenueHost ability-showcase gauntlet (Part C)", () => {
+  const MAP_WIDTH = 3000; // vessel-nexus
+  const TABLEAU_RIGHT_EDGE_X = MAP_WIDTH * 0.35; // badOuterRight — the tableau's own locked right flank
+  // resolveVenueTotems' BELL_X=0.75, radius 80 (totem.ts) — the bell's own
+  // interaction/clearance zone this gauntlet must stay clear of.
+  const BELL_CLEARANCE_MIN_X = MAP_WIDTH * 0.75 - 80;
+  const BELL_CLEARANCE_MAX_X = MAP_WIDTH * 0.75 + 80;
+
+  type StateInternals = {
+    getStateSnapshot(): {
+      destructibles: Record<string, { x: number; y: number; health: number }>;
+      players: Record<string, { x: number; y: number; teamId?: string }>;
+    };
+  };
+
+  test("8 total destructibles: the original 3-figure tableau UNTOUCHED plus 5 new showcase dummies", () => {
+    const { venue } = makeVenue(0);
+    const snap = (venue.lobbyHostForTest() as unknown as StateInternals).getStateSnapshot();
+    const xs = Object.values(snap.destructibles)
+      .map((d) => d.x)
+      .sort((a, b) => a - b);
+    expect(xs.length).toBe(8);
+    // The original tableau's three dummies (0.19/0.31/0.35) are still
+    // present, byte-identical to Part 3's locked composition — this test
+    // fails loudly if a future edit ever touches them instead of only
+    // adding new ones elsewhere.
+    expect(xs.slice(0, 3)).toEqual(
+      [0.19, 0.31, 0.35].map((fx) => Math.round(MAP_WIDTH * fx)),
+    );
+    venue.dispose();
+  });
+
+  test("every showcase dummy sits strictly between the tableau's right edge and the bell's clearance zone", () => {
+    const { venue } = makeVenue(0);
+    const snap = (venue.lobbyHostForTest() as unknown as StateInternals).getStateSnapshot();
+    const showcaseXs = Object.values(snap.destructibles)
+      .map((d) => d.x)
+      .filter((x) => x > TABLEAU_RIGHT_EDGE_X + 1); // exclude the 3 tableau dummies themselves
+    expect(showcaseXs.length).toBe(5); // isolatedA/B + 3-dummy cluster
+    for (const x of showcaseXs) {
+      expect(x).toBeGreaterThan(TABLEAU_RIGHT_EDGE_X);
+      expect(x).toBeLessThan(BELL_CLEARANCE_MIN_X);
+    }
+    venue.dispose();
+  });
+
+  test("the showcase cluster is genuinely tight (multi-target AOE test) while the two isolated dummies are genuinely apart (single-target test)", () => {
+    const { venue } = makeVenue(0);
+    const snap = (venue.lobbyHostForTest() as unknown as StateInternals).getStateSnapshot();
+    const showcaseXs = Object.values(snap.destructibles)
+      .map((d) => d.x)
+      .filter((x) => x > TABLEAU_RIGHT_EDGE_X + 1)
+      .sort((a, b) => a - b);
+    const [isoA, isoB, clA, clB, clC] = showcaseXs;
+    // The two isolated dummies are far enough apart (and from the cluster)
+    // that a radius-scale AOE test can hit exactly one of them alone.
+    expect(isoB! - isoA!).toBeGreaterThan(150);
+    expect(clA! - isoB!).toBeGreaterThan(150);
+    // The cluster's own 3 members are close together — a single AOE/chain/
+    // bounce ability should be able to reach more than one of them.
+    expect(clC! - clA!).toBeLessThan(150);
+    venue.dispose();
+  });
+
+  test("4 permanent ally NPCs total: the tableau's original 2 plus the gauntlet's own 2, all sharing LOBBY_PRACTICE_TEAM_ID", () => {
+    const { venue } = makeVenue(0);
+    const snap = (venue.lobbyHostForTest() as unknown as StateInternals).getStateSnapshot();
+    const allies = Object.entries(snap.players).filter(([id]) => id.startsWith("bot_practice_ally_"));
+    expect(allies.length).toBe(4);
+    for (const [, p] of allies) expect(p.teamId).toBe("lobby-practice");
+    venue.dispose();
+  });
+
+  test("the gauntlet's near/far ally NPCs sit at meaningfully different distances (in-range vs out-of-range aura testing)", () => {
+    const { venue } = makeVenue(0);
+    const snap = (venue.lobbyHostForTest() as unknown as StateInternals).getStateSnapshot();
+    const near = snap.players["bot_practice_ally_3"];
+    const far = snap.players["bot_practice_ally_4"];
+    expect(near).toBeDefined();
+    expect(far).toBeDefined();
+    // Comfortably wider than any drafted aura radius in the catalog — a
+    // real "out of range" control target, not just a token gap.
+    expect(Math.abs(far!.x - near!.x)).toBeGreaterThan(400);
+    // Both live strictly inside the gauntlet's own band, same bounds as
+    // the dummies above.
+    for (const p of [near!, far!]) {
+      expect(p.x).toBeGreaterThan(TABLEAU_RIGHT_EDGE_X);
+      expect(p.x).toBeLessThan(BELL_CLEARANCE_MIN_X);
+    }
+    venue.dispose();
+  });
+
+  test("respawnDestructibles restores all 8 (tableau + gauntlet) after a full wipe — not scoped to only the original 3", () => {
+    const { venue } = makeVenue(0);
+    type DestructibleInternals = {
+      state: { destructibles: Record<string, unknown> };
+      respawnDestructibles(): void;
+    };
+    const internals = venue.lobbyHostForTest() as unknown as DestructibleInternals;
+    internals.state = { ...internals.state, destructibles: {} };
+    internals.respawnDestructibles();
+    expect(Object.keys(internals.state.destructibles).length).toBe(8);
+    venue.dispose();
   });
 });

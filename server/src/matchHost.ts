@@ -639,6 +639,82 @@ export class MatchHost {
   }
 
   /**
+   * Hangout-only: directly overwrite a live player's `characterId` (chassis),
+   * companion to `setPlayerCards` above — same additive/narrow/hangout-only
+   * discipline. Venue lobby loadout-station follow-up (docs/venue-lobby-
+   * tableau-goal.md's live-sync fix covered cards; Jake's next pass: "when
+   * you switch loudouts and classes it SHOULD REALLY switch"): a mid-visit
+   * class-row click used to only change which catalog the station showed —
+   * the visitor's actual standing PlayerEntity kept whatever chassis they
+   * walked in with, so ability-slot cooldowns/resource pools from the OLD
+   * class stayed live under the NEW one. This is the live-apply path.
+   *
+   * No-op if the chassis isn't actually changing (`class-pick` to the same
+   * class the entry is already locked to) — nothing to reset.
+   *
+   * What resets, and why: `health` (full) and the three ability-slot
+   * cooldowns + the three per-class resource pools (`energy`/`kindling`/
+   * `devotion` — ninja/paladin/priest respectively; a leftover pool from
+   * the old chassis has no meaning under the new one) all reset to a fresh-
+   * spawn baseline (mirrors `rosterOps.applyMidMatchJoin`'s own "fresh
+   * spawn" field set), so a class switch reads as a clean restart, not an
+   * inherited advantage/disadvantage carried over from the last pick.
+   *
+   * What's deliberately LEFT ALONE: position/velocity/aim (the visitor is
+   * still standing where they were, mid-visit — this isn't a respawn/
+   * teleport), `teamId`/`weaponId`/`cards` (owned by other call sites —
+   * `cards` specifically stays `setPlayerCards`'s job so the two stay
+   * independently testable), and the long tail of ability-specific timed
+   * buff/debuff fields (`hasteUntilTick`, `shieldCharge`, `sunlanceUntilTick`,
+   * etc., `client/src/sim/types.ts`) — each is either only ever read by its
+   * own class's own ability logic (inert once the chassis no longer has
+   * that ability equipped) or a short-lived timed buff that expires on its
+   * own within seconds; exhaustively zeroing every one of them is far more
+   * blast-radius than this lobby-testing convenience is worth, and none of
+   * them can produce a stuck/broken state (they're all `Until Tick`-gated,
+   * never permanent).
+   */
+  setPlayerCharacter(playerId: PlayerId, characterId: PlayerEntity["characterId"]): void {
+    if (this.mode !== "hangout") return;
+    const player = this.state.players[playerId];
+    if (!player) return;
+    if (player.characterId === characterId) return;
+    this.state = {
+      ...this.state,
+      players: {
+        ...this.state.players,
+        [playerId]: {
+          ...player,
+          characterId,
+          health: 100,
+          shieldActive: false,
+          abilityCharge: 0,
+          fireCooldownMs: 0,
+          energy: undefined,
+          kindling: undefined,
+          devotion: undefined,
+          slot1CooldownUntilTick: undefined,
+          slot2CooldownUntilTick: undefined,
+          slot3CooldownUntilTick: undefined,
+        },
+      },
+    };
+    // Mirror the roster bookkeeping too (addPlayer's own precedent) — the
+    // per-tick WorldState mutation above is the source of truth every
+    // renderer/consumer that reads live state already sees, but
+    // `playerInfo` feeds `ServerHello.allPlayers` for anyone who connects
+    // AFTER this switch, and `rosterInfo()`. Leaving it stale wouldn't be a
+    // functional bug today (HangoutScene's `renderWorld` self-heals its
+    // roster cache from the live per-tick `characterId` regardless of what
+    // `ServerHello` seeded it with — see that method's own doc), but a
+    // roster snapshot that disagrees with the live entity it describes is
+    // exactly the kind of drift this task is about closing, not leaving
+    // for the next person to rediscover.
+    const info = this.playerInfo.get(playerId);
+    if (info) this.playerInfo.set(playerId, { ...info, characterId });
+  }
+
+  /**
    * Hangout-only: directly pin a live player's position, independent of
    * the normal spawn-point-selection path (`rosterOps.applyMidMatchJoin`'s
    * farthest-from-occupants algorithm, which has no way to express "land
@@ -865,6 +941,13 @@ export class MatchHost {
         // Same interception discipline as duo-toggle/catalog-toggle above
         // — VenueHost's routeLobby handles the loadout station's class
         // switch (Bug fix, live playtest 2026-07-18) before it ever
+        // reaches here. Harmless no-op if it somehow arrives at an
+        // ordinary MatchHost.
+        break;
+      case "catalog-cycle":
+        // Same interception discipline as duo-toggle/catalog-toggle/
+        // class-pick above — VenueHost's routeLobby handles the loadout
+        // station's catalog cycle (Part B, 2026-07-19) before it ever
         // reaches here. Harmless no-op if it somehow arrives at an
         // ordinary MatchHost.
         break;

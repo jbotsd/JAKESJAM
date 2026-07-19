@@ -87,6 +87,16 @@ export const EVENT_PRESENTATION_REGISTRY = {
     lowTierCore: "Object removal and one break flash remain visible",
     state: "complete",
   },
+  "destructible-hit": {
+    action: "Damage lands on an arena object without destroying it",
+    stateChange: "A floating damage number confirms the hit at the object's position",
+    lead: "ui",
+    channels: ["ui", "audio"],
+    intensity: "hit",
+    lowTierCore: "The damage number remains visible",
+    state: "partial",
+    note: "Deliberately no hit-stop/camera-shake/world-vfx (a struck object shouldn't jolt the camera the way a player hit does) — 2-channel stack reads as \"partial\" against this registry's 3-channel completeness bar by construction, not because a planned channel is missing.",
+  },
   "pickup-taken": {
     action: "A player collects a pickup",
     stateChange: "The pickup vanishes and the acquired state is acknowledged",

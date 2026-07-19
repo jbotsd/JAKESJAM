@@ -76,7 +76,24 @@ function venueLobbyMap(): MapDefinition {
   });
   return {
     ...base,
-    destructibles: [dummy(0, LOBBY_TABLEAU_FRACTIONS.badOuterLeft), dummy(1, LOBBY_TABLEAU_FRACTIONS.badInnerRight), dummy(2, LOBBY_TABLEAU_FRACTIONS.badOuterRight)],
+    destructibles: [
+      dummy(0, LOBBY_TABLEAU_FRACTIONS.badOuterLeft),
+      dummy(1, LOBBY_TABLEAU_FRACTIONS.badInnerRight),
+      dummy(2, LOBBY_TABLEAU_FRACTIONS.badOuterRight),
+      // Ability-showcase gauntlet (Part C, 2026-07-19 — Jake: "an area with
+      // the right bots and freindlies to test this... an ability show case
+      // room where we can exhaustveily test all and every single ability").
+      // Same `dummy()` shape/kind/health as the tableau's three — purely
+      // MORE of them, spread across the open ground between the tableau
+      // (ends 0.35) and the bell's own clearance zone (0.75 ± totem radius
+      // 80px ⇒ keep clear of x-fraction ~0.723–0.777), see
+      // SHOWCASE_FRACTIONS' own doc for the exact placement math.
+      dummy(3, SHOWCASE_FRACTIONS.isolatedA),
+      dummy(4, SHOWCASE_FRACTIONS.isolatedB),
+      dummy(5, SHOWCASE_FRACTIONS.clusterA),
+      dummy(6, SHOWCASE_FRACTIONS.clusterB),
+      dummy(7, SHOWCASE_FRACTIONS.clusterC),
+    ],
   };
 }
 
@@ -96,6 +113,70 @@ const LOBBY_TABLEAU_FRACTIONS = {
   badOuterRight: 0.35,
 } as const;
 
+/**
+ * The ability-showcase gauntlet's own placements (Part C, 2026-07-19) — a
+ * SEPARATE row from the tableau above (never modifies it, per docs/venue-
+ * lobby-tableau-goal.md Part 1/3's lock on that composition), living in the
+ * open ground between the tableau's right edge (0.35 ⇒ x=1050 on
+ * vessel-nexus's 3000px width) and the bell totem's own clearance zone
+ * (resolveVenueTotems' BELL_X=0.75 ⇒ x=2250, radius 80 ⇒ keep clear of
+ * [2170, 2330]).
+ *
+ * Placement was checked against `vessel-nexus.ts`'s actual platform list,
+ * not guessed: `ledge()` platforms (the t1/t2/lip/chimney/nest/perch/float
+ * families) are thin floating shelves that never reach the ground, so they
+ * never obstruct a ground-level dummy/NPC regardless of x. Only the five
+ * `col()` "sightline cover" pylons touch the ground (their `baseY` is
+ * literally `GROUND`): cover-a(480)/b(960)/c(1500)/d(2040)/e(2520), each
+ * ~50–56px wide. In THIS x-range that's cover-c(1500) and cover-d(2040);
+ * the "lip" low barriers (also `ledge()`, so technically non-blocking, but
+ * close enough to the ground — GROUND-36 top — to visually clip a 44px
+ * dummy) at lip-b(1260, w90) and lip-c(1740, w90) are avoided too, for a
+ * clean unobstructed read on every dummy. Every fraction below keeps
+ * ≥50px clearance from the nearest one of these.
+ *
+ * Honest limit (documented per this task's own "stop and say so" contract
+ * rather than silently claiming a perfect result): vessel-nexus's cover
+ * pylons are spaced every ~420–540px BY DESIGN (the map's own top-of-file
+ * doc: "Sightline law: cover pylons break floor-band snipes (~≤480px
+ * open)") — that cadence is a base-map invariant, not something this
+ * gauntlet's placement can dissolve without editing core arena platform
+ * geometry (out of scope: this task adds destructibles/NPCs via
+ * `venueLobbyMap()`/`allyNpcSpawn()`, the same data-only surface the
+ * tableau itself used, never touches `vessel-nexus.ts`'s platform list).
+ * So: a movement ability's FULL travel distance (Paper Double's ~900px)
+ * cannot play out with zero interruption ANYWHERE on this map's ground
+ * floor, showcase gauntlet included — the honest win here is the *longest
+ * achievable* open run on this map (tableau edge 1050 → bell clearance
+ * edge 2170 ≈ 1120px total span, versus the old tableau-only band's 480px)
+ * with only the map's own pre-existing short pylons/lips interrupting it,
+ * not new clutter piled on top of them.
+ */
+const SHOWCASE_FRACTIONS = {
+  /** Isolated single-target dummy — clean melee-arc/single-shot reads,
+   *  nothing else in range to confuse an AOE-vs-single-target read. */
+  isolatedA: 1150 / 3000,
+  /** Second isolated single-target dummy, further along — a mid-gauntlet
+   *  "did my projectile actually travel/pierce/bounce this far" waypoint. */
+  isolatedB: 1385 / 3000,
+  /** The showcase's near ally NPC — closer to the tableau's own two, so
+   *  Rally Light/Haste Gift's aura radius has a "definitely in range" case
+   *  right next to a "definitely out of range" case (the far ally below). */
+  allyNear: 1600 / 3000,
+  /** A tight 3-dummy cluster (50px apart) — the one deliberately CROWDED
+   *  spot in the gauntlet, so AOE/pierce/bounce/split/chain-lightning
+   *  abilities have multiple real targets worth hitting at once (the
+   *  tableau's own 90px spacing was too tight to isolate this from single-
+   *  target testing; this cluster is purpose-built for it instead). */
+  clusterA: 1830 / 3000,
+  clusterB: 1880 / 3000,
+  clusterC: 1930 / 3000,
+  /** The showcase's far ally NPC — ~530px from `allyNear`, well outside
+   *  any drafted aura/buff radius in the catalog, so it's a clean "out of
+   *  range" control target. */
+  allyFar: 2130 / 3000,
+} as const;
+
 /** How often the lobby checks whether its dummies need respawning. */
 const DUMMY_RESPAWN_CHECK_MS = 8000;
 
@@ -108,7 +189,21 @@ const DUMMY_RESPAWN_CHECK_MS = 8000;
  *  MAX_ABILITY_SLOTS by `catalog-toggle`'s own gate rather than a hard
  *  length check here — the same "enforced at the point of adding, never by
  *  failing a pick" discipline round.ts's enterDrafting documents. */
-type LoadoutEntry = { picks: string[]; classId: ClassId };
+type LoadoutEntry = {
+  picks: string[];
+  classId: ClassId;
+  /**
+   * Catalog-cycle position (Part B, 2026-07-19) — which group of ≤
+   * MAX_ABILITY_SLOTS actives, in `catalogForClass(classId)` order, the
+   * `catalog-cycle` handler last swapped in. `undefined` until the first
+   * cycle (equivalent to "before group 0"). Reset to `undefined` whenever
+   * `classId` actually changes (`class-pick`'s own handler) — a group
+   * index only means anything relative to the class it was computed
+   * against; carrying it across a chassis switch would land on an
+   * unrelated group of the NEW class's catalog.
+   */
+  cycleIndex?: number;
+};
 
 const LOBBY_COLOR_PALETTE = [
   "#88ccff", "#ff88aa", "#ffd166", "#9bf6ff", "#a0e7a0",
@@ -130,7 +225,8 @@ function pickColor(playerId: string): string {
 const LOBBY_ALLY_ACCENT = "#c9a84c";
 
 /**
- * The loadout table's two flanking "good" (ally) NPCs — stationary
+ * The loadout table's two flanking "good" (ally) NPCs (index 1/2) PLUS the
+ * showcase gauntlet's own two (index 3/4, Part C 2026-07-19) — stationary
  * forever (nothing ever calls `applyInput` for their ids), carrying
  * LOBBY_PRACTICE_TEAM_ID so `isAlly()` reads true against any visitor
  * (who gets the same teamId in `spawnFor` below), giving Aegis Share/Rally
@@ -139,7 +235,7 @@ const LOBBY_ALLY_ACCENT = "#c9a84c";
  * `bot_`-prefixed id (`lobbyAllyNpcId`) so every existing "is this a real
  * human" check already excludes them for free — no new exclusion logic.
  */
-function allyNpcSpawn(index: 1 | 2): PlayerSpawnInfo {
+function allyNpcSpawn(index: 1 | 2 | 3 | 4): PlayerSpawnInfo {
   return {
     playerId: PlayerId(lobbyAllyNpcId(index)),
     characterId: "balanced",
@@ -322,7 +418,8 @@ export class VenueHost {
     });
     host.ensureTickLoop();
     // The loadout table's two "good" ally NPCs (docs/venue-lobby-tableau-
-    // goal.md Part 3) — added once, at construction, permanent for the
+    // goal.md Part 3) PLUS the showcase gauntlet's own two (index 3/4,
+    // Part C 2026-07-19) — added once, at construction, permanent for the
     // lobby's whole (never-recycling) life. Pinned to exact flanking
     // positions via setPlayerPosition since the normal spawn-point
     // algorithm (farthest-from-occupants) has no way to express "land
@@ -330,12 +427,16 @@ export class VenueHost {
     const map = resolveMap(LOBBY_MAP_ID);
     const groundY = map.size.y - 36; // vessel-nexus FLOOR_H → standing surface (matches venueLobbyMap's dummy math)
     const playerStandY = groundY - 28; // SIM_BODY_HALF_HEIGHT (HangoutScene.ts) — feet at the floor surface
-    for (const index of [1, 2] as const) {
+    const allyFractionByIndex = {
+      1: LOBBY_TABLEAU_FRACTIONS.goodInnerLeft,
+      2: LOBBY_TABLEAU_FRACTIONS.goodInnerRight,
+      3: SHOWCASE_FRACTIONS.allyNear,
+      4: SHOWCASE_FRACTIONS.allyFar,
+    } as const;
+    for (const index of [1, 2, 3, 4] as const) {
       const npcId = PlayerId(lobbyAllyNpcId(index));
       host.addPlayer(allyNpcSpawn(index));
-      const fx =
-        index === 1 ? LOBBY_TABLEAU_FRACTIONS.goodInnerLeft : LOBBY_TABLEAU_FRACTIONS.goodInnerRight;
-      host.setPlayerPosition(npcId, Math.round(map.size.x * fx), playerStandY);
+      host.setPlayerPosition(npcId, Math.round(map.size.x * allyFractionByIndex[index]), playerStandY);
     }
     return host;
   }
@@ -638,7 +739,20 @@ export class VenueHost {
         const validIds = new Set(catalogForClass(classId).map((c) => c.id));
         entry.classId = classId;
         entry.picks = entry.picks.filter((id) => validIds.has(id));
+        // A group index only means anything relative to the class it was
+        // computed against (Part B) — a real class switch starts the
+        // cycle fresh, same "no stale carry-over" call setPlayerCharacter
+        // makes for the live entity's resources/cooldowns.
+        entry.cycleIndex = undefined;
       }
+      // Live chassis switch (Part A follow-up, Jake: "when you switch
+      // loudouts and classes it SHOULD REALLY switch") — the lobby
+      // visitor's actual standing PlayerEntity swaps chassis immediately
+      // too, not just the catalog grid this handler already re-derives.
+      // No-op (own guard) if `characterId` isn't actually changing (e.g.
+      // the same-class no-op case just above). See
+      // `MatchHost.setPlayerCharacter`'s own doc for exactly what resets.
+      this.lobbyHost.setPlayerCharacter(playerId, characterId);
       this.pushLoadoutDraft(playerId, entry);
       return;
     }
@@ -673,6 +787,44 @@ export class VenueHost {
         if (activesHeld >= MAX_ABILITY_SLOTS) return;
         entry.picks.push(cardId);
       }
+      this.pushLoadoutDraft(playerId, entry);
+      return;
+    }
+    // Loadout-station catalog CYCLE (Part B, 2026-07-19 — Jake: "an ability
+    // show case room where we can exhaustveily test all and every single
+    // ability"). Replaces the ENTIRE rack (not just actives; a class's
+    // catalog is active-only besides a couple of paladin passives that
+    // don't occupy a slot anyway — see `activeIds` below) with the next
+    // (or previous) group of ≤ MAX_ABILITY_SLOTS actives from
+    // `catalogForClass(entry.classId)`, wrapping around, and live-applies
+    // it exactly like `catalog-toggle` does. No-op if the station hasn't
+    // been touched yet (no entry) or the class has zero active catalog
+    // cards (shouldn't happen for any of the 4 classes today, but a
+    // defensive no-op beats a divide-by-zero group count).
+    if (decoded?.message.t === "catalog-cycle") {
+      const playerId = PlayerId(ws.data.playerId);
+      const entry = this.loadouts.get(playerId);
+      if (!entry) return;
+      const activeIds = catalogForClass(entry.classId)
+        .filter((c) => c.active !== undefined)
+        .map((c) => c.id);
+      if (activeIds.length === 0) return;
+      const groupCount = Math.ceil(activeIds.length / MAX_ABILITY_SLOTS);
+      const direction = decoded.message.direction;
+      // First-ever cycle: "next" starts at the first group, "prev" starts
+      // at the last — both read as "the nearest group in that direction"
+      // rather than an arbitrary always-group-0 landing regardless of
+      // which button was pressed.
+      const nextIndex =
+        entry.cycleIndex === undefined
+          ? direction === "prev"
+            ? groupCount - 1
+            : 0
+          : (((entry.cycleIndex + (direction === "prev" ? -1 : 1)) % groupCount) + groupCount) %
+            groupCount;
+      entry.cycleIndex = nextIndex;
+      const start = nextIndex * MAX_ABILITY_SLOTS;
+      entry.picks = activeIds.slice(start, start + MAX_ABILITY_SLOTS);
       this.pushLoadoutDraft(playerId, entry);
       return;
     }

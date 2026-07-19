@@ -97,6 +97,7 @@ import { RenderLayer } from "../render/RenderLayer";
 import { transientVfx } from "../render/TransientVfx";
 import { EntityRenderCoordinator } from "../render/EntityRenderCoordinator";
 import { SimEventRouter } from "../render/SimEventRouter";
+import { spawnFloatingDamageNumber } from "../render/damageNumber.js";
 import { TouchControls } from "../input/TouchControls";
 import { isTouchPrimary, isPortraitMobile } from "../input/mobile";
 import { ActionIntensity } from "../systems/ActionIntensity.js";
@@ -1574,6 +1575,7 @@ export class OnlineMatchScene extends Phaser.Scene {
         safeShake: (durationMs, intensity) => this.safeShake(durationMs, intensity),
         renderTime: this.renderTime,
         spawnDamageNumber: (vid, dmg, headshot) => this.spawnDamageNumber(vid, dmg, headshot),
+        spawnDamageNumberAt: (x, y, dmg) => this.spawnDamageNumberAt(x, y, dmg),
         spawnBlastAtPlayer: (pid, r, d) => this.spawnBlastAtPlayer(pid, r, d),
         spawnWardAbsorbFlash: (pid, isPeel) => this.spawnWardAbsorbFlash(pid as string, isPeel),
         spawnSyzygistWardAbsorbFlash: (pid, casterId, wardBroke) =>
@@ -1693,55 +1695,16 @@ export class OnlineMatchScene extends Phaser.Scene {
     // FX owns the killing blow's read; numbers are for the living.
     if (!victim.alive) return;
     const isLocal = victimId === this.localPlayerId;
-    const spread = (Math.random() - 0.5) * 22;
+    spawnFloatingDamageNumber(this, victim.x, victim.y, damage, { headshot, isLocal });
+  }
 
-    // Damage tiers: light <15, medium 15–29, heavy 30+.
-    // Per game-feel-juice/SKILL.md: bigger impacts need bigger reactions.
-    const isHeavy = damage >= 30;
-    const isMedium = damage >= 15;
-    const fontSize = isHeavy ? "22px" : isMedium ? "17px" : "13px";
-    // Overshoot scale: punch in at 1.4× then settle to 1.0 (Nijman's "tweened spawning").
-    // Headshot reads a notch bigger than a same-tier body shot — the slight
-    // damage boon (player.ts's HEADSHOT_DAMAGE_MULTIPLIER) should also FEEL
-    // distinct, not just tally differently.
-    const spawnScale = (isHeavy ? 1.6 : isMedium ? 1.35 : 1.2) * (headshot ? 1.15 : 1);
-    // Headshot: Instrument Ink gold (PALETTE.hullGold) — the game's own
-    // established "something special" accent (kill-pulse, share-page
-    // highlights), not a new colour invented for this one case.
-    const color = headshot ? "#897f69" : isLocal ? "#fb7185" : isHeavy ? "#ffffff" : "#fff7d6";
-    const label = headshot ? `${Math.round(damage)} HEADSHOT` : Math.round(damage).toString();
-
-    const text = this.add
-      .text(victim.x + spread, victim.y - 36, label, {
-        color,
-        fontFamily: "'Space Grotesk', Inter, Arial, sans-serif",
-        fontSize,
-        fontStyle: "900",
-        stroke: "#05080f",
-        strokeThickness: isHeavy ? 4 : 3,
-      })
-      .setOrigin(0.5, 1)
-      .setDepth(800)
-      .setScale(spawnScale);
-
-    // Two-phase: overshoot pop (Back.easeOut) then float-up + fade.
-    this.tweens.add({
-      targets: text,
-      scaleX: 1,
-      scaleY: 1,
-      duration: 120,
-      ease: "Back.easeOut",
-      onComplete: () => {
-        this.tweens.add({
-          targets: text,
-          y: text.y - (isHeavy ? 44 : 28),
-          alpha: 0,
-          duration: isHeavy ? 700 : 560,
-          ease: "Sine.easeOut",
-          onComplete: () => text.destroy(),
-        });
-      },
-    });
+  /** The destructible counterpart to `spawnDamageNumber` above — no
+   *  `PlayerId`/rig to look up (a destructible has neither), so the
+   *  `destructible-hit` SimEvent carries its own `x`/`y` directly. Never a
+   *  headshot, never "local" (a destructible has no team-relative read). */
+  private spawnDamageNumberAt(x: number, y: number, damage: number) {
+    if (damage < 1) return;
+    spawnFloatingDamageNumber(this, x, y, damage, { headshot: false, isLocal: false });
   }
 
   /**

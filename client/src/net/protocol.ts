@@ -105,6 +105,29 @@ export type ClassPick = {
   characterId: string;
 };
 
+/**
+ * Loadout-station catalog CYCLE (Part B, 2026-07-19 — Jake: "we need...
+ * an ability show case room where we can exhaustveily test all and every
+ * single ability", and separately "all abilities must be available for
+ * use"). The rack is hard-capped at MAX_ABILITY_SLOTS (baked into fixed
+ * per-slot fields + a 3-key input layout — not just a UI limit, see
+ * `MatchHost`'s doc), so "all N active at once" isn't achievable or even
+ * the right shape for a class with 10+ abilities. This is the fast
+ * alternative: one tap swaps the current 3 active picks for the NEXT (or
+ * PREVIOUS) group of ≤3 actives in the player's locked class's FULL
+ * catalog, wrapping around — so exhaustively testing a class means
+ * standing at the dummies and repeatedly tapping "next set," not walking
+ * back to re-open menus and re-toggle by hand every time. Server-side
+ * state (`VenueHost`'s `LoadoutEntry.cycleIndex`) tracks which group is
+ * current per player; this message only carries the direction. Lobby-only,
+ * venue business — same interception discipline as `catalog-toggle`/
+ * `class-pick`.
+ */
+export type CatalogCycle = {
+  t: "catalog-cycle";
+  direction: "next" | "prev";
+};
+
 export type ClientMessage =
   | ClientHello
   | Input
@@ -113,7 +136,8 @@ export type ClientMessage =
   | CardPick
   | DuoToggle
   | CatalogToggle
-  | ClassPick;
+  | ClassPick
+  | CatalogCycle;
 
 // ---------------- Server → Client ----------------
 
@@ -354,6 +378,7 @@ const REQUIRED_FIELDS: Record<string, ReadonlyArray<readonly [string, "string" |
   "duo-toggle": [],
   "catalog-toggle": [["cardId", "string"]],
   "class-pick": [["characterId", "string"]],
+  "catalog-cycle": [["direction", "string"]],
   snap: [["tick", "number"]],
   bye: [["reason", "string"]],
   "venue-status": [["arenaPhase", "string"], ["nextBellMs", "number"]],

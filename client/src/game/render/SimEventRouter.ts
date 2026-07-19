@@ -117,6 +117,14 @@ export type SimEventRouterDeps = {
   /** Float a damage number above the victim's rig. */
   spawnDamageNumber: (victimId: PlayerId | string, damage: number, headshot?: boolean) => void;
 
+  /** Float a damage number at an explicit world position — the
+   *  destructible counterpart to `spawnDamageNumber` above (a destructible
+   *  has no `PlayerId`/rig to look up, only its own `x`/`y`, carried on the
+   *  `destructible-hit` event itself). Optional: scenes without the full
+   *  juice stack (Tutorial, Replay) simply omit it, same precedent as
+   *  `emissionCastFeel`. */
+  spawnDamageNumberAt?: (x: number, y: number, damage: number) => void;
+
   /** Render-time impact blast at the player's last-known position. */
   spawnBlastAtPlayer: (
     playerId: PlayerId | string,
@@ -298,6 +306,16 @@ export class SimEventRouter {
         const bPos = { x: event.x, y: event.y };
         d.spawnPlatformBlastTint(bPos);
         d.renderLayer?.spawnExplosionBlast(bPos, 48, 30);
+        break;
+      }
+      case "destructible-hit": {
+        // The destructible counterpart to `hit-confirmed`'s damage-number
+        // popup (2026-07-19, venue-lobby ability showcase) — same "hit"
+        // cue at the same intensity curve, no hit-stop/camera-shake (a
+        // dummy taking damage shouldn't jolt the camera the way a player
+        // hit does; the number popping is the read here).
+        audio.play("hit", { intensity: Math.min(1, event.damage / 40) });
+        d.spawnDamageNumberAt?.(event.x, event.y, event.damage);
         break;
       }
       case "pickup-taken":
