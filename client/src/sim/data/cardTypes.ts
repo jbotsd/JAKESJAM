@@ -212,7 +212,7 @@ export type AbilityKind =
   | "measure"
   | "slip-node"
   | "recoil-step"
-  // ── Kindred catalog v1 (docs/class-ability-catalogs-v1.md) ──────────────
+  // ── Kindled catalog v1 (docs/class-ability-catalogs-v1.md) ──────────────
   // classId-gated to paladin at the offer roll (round.ts enterDrafting) —
   // same discipline as the Geometrician ten above. All 10 of the doc's 10
   // (grew to 12 via the coverage-floor fast-follow further down this
@@ -237,11 +237,11 @@ export type AbilityKind =
   | "plant-charge"
   | "shock-ring"
   | "rally-light"
-  // Kindred coverage-floor + solo-viability fast-follow (docs/axiom-
-  // deviations-audit.md "Kindred (paladin) — two structural gaps",
+  // Kindled coverage-floor + solo-viability fast-follow (docs/axiom-
+  // deviations-audit.md "Kindled (paladin) — two structural gaps",
   // 2026-07-18): the catalog's 2nd buff and 2nd movement, closing the
   // ≥2-per-role floor every other catalog already met (docs/classes-
-  // goal.md's coverage lock). Grows Kindred to 12/12 (still inside the
+  // goal.md's coverage lock). Grows Kindled to 12/12 (still inside the
   // locked 8-12 catalog-size range) rather than replacing two of the
   // existing 10 — see constants.ts's KIN_KINDLED_RESOLVE_*/KIN_BULWARK_
   // STEP_* header comments for the full "why ADD, not replace" reasoning.
@@ -264,9 +264,9 @@ export type AbilityKind =
   // feature).
   // ── Syzygist catalog v1 (docs/class-ability-catalogs-v1.md) ─────────────
   // classId-gated to priest at the offer roll (round.ts enterDrafting) —
-  // same discipline as the Geometrician/Kindred blocks above. All 10 of the
+  // same discipline as the Geometrician/Kindled blocks above. All 10 of the
   // doc's 10 are wired this pass (class-overhaul-workboard.md chunk 3.4) —
-  // unlike Kindred's 7/10, every ability here reuses ONE of a small set of
+  // unlike Kindled's 7/10, every ability here reuses ONE of a small set of
   // shared low-aim auto-target helpers (World.ts's findNearestAlly/
   // findNearestEnemy, SYZ_ALLY_SEARCH_RANGE_PX/SYZ_ENEMY_SEARCH_RANGE_PX),
   // so there was no per-ability aim-cone tuning left to defer.
@@ -282,7 +282,7 @@ export type AbilityKind =
   | "drift-step"
   // ── Interstice catalog v1 (docs/class-ability-catalogs-v1.md) ───────────
   // classId-gated to ninja at the offer roll (round.ts enterDrafting) —
-  // same discipline as the Geometrician/Kindred/Syzygist blocks above. All
+  // same discipline as the Geometrician/Kindled/Syzygist blocks above. All
   // 10 of the doc's 10 are now wired (class-overhaul-workboard.md ninja-
   // catalog chunk shipped 9, "paper-double" (movement) followed as its own
   // fast-follow pass once its blocking dependency — a new decoy/summon

@@ -183,7 +183,7 @@ export const GEO_RECOIL_STEP_HOP_SPEED = 220;
 export const GEO_CHANNEL_RAMP_MS = 2000;
 export const GEO_CHANNEL_RAMP_FIRE_RATE_MULTIPLIER_MAX = 1.6;
 
-// Kindred catalog v1 (docs/class-ability-catalogs-v1.md — the paladin's
+// Kindled catalog v1 (docs/class-ability-catalogs-v1.md — the paladin's
 // 10-ability class catalog; class-overhaul-workboard.md chunk 2.6). Same
 // substrate-reuse discipline as the Geometrician block above: reuses
 // tryDeflectDamage/isBodyInMeleeArc-style scans, the existing slow debuff
@@ -256,7 +256,7 @@ export const KIN_SEAL_STAGGER_MULTIPLIER = 0.25;
  *  doc's rider onto the existing 2.4 peel mechanism rather than a second,
  *  parallel peel implementation. */
 export const KIN_AEGIS_SHARE_RADIUS_MULTIPLIER = 1.6;
-/** Aegis Share solo fallback (docs/axiom-deviations-audit.md "Kindred —
+/** Aegis Share solo fallback (docs/axiom-deviations-audit.md "Kindled —
  *  two structural gaps", 2026-07-18: "no allies → Aegis still feeds
  *  Kindling"). A cast that finds no ally inside the SAME widened radius
  *  this ability actually affects (WARD_PEEL_RADIUS_PX *
@@ -279,7 +279,7 @@ export const KIN_AEGIS_SHARE_SOLO_KINDLING_FEED = 12;
 export const KIN_PLANT_CHARGE_RANGE_PX = 190;
 export const KIN_PLANT_CHARGE_SHIELD_REFUND = 12;
 
-// Kindred catalog v1 — originally 3 previously-deferred entries (class-
+// Kindled catalog v1 — originally 3 previously-deferred entries (class-
 // overhaul-workboard.md chunk 2.6 fast-follow, 2026-07-18): Retribution
 // Edge, Shock Ring, Rally Light. Same substrate-reuse discipline as the 7
 // above; each comment documents the "thin layer over existing mechanism"
@@ -322,7 +322,7 @@ export const KIN_SHOCK_RING_RADIUS_PX = 170;
  *  axiom-deviations audit's AX.2 "Aegis Share + Rally Light are solo-dead"
  *  flag for this ability specifically): the aura ALWAYS covers its own
  *  caster (self counts as an eligible "ally" at distance 0, regardless of
- *  teamId), so a solo Kindred still gets a real button here, not just a
+ *  teamId), so a solo Kindled still gets a real button here, not just a
  *  team tool. Radius matches Bastion's card-pool-v2.md aura (220px, chosen
  *  for a consistent "heaven-tank aura" reading across the kit — Bastion
  *  itself was cut 2026-07-19, but the radius provenance stands). Multipliers are
@@ -334,8 +334,8 @@ export const KIN_RALLY_LIGHT_RADIUS_PX = 220;
 export const KIN_RALLY_LIGHT_DAMAGE_MULTIPLIER = 1.12;
 export const KIN_RALLY_LIGHT_MOVE_MULTIPLIER = 1.08;
 
-// ── Kindred catalog v1 — coverage-floor + solo-viability fast-follow
-// (docs/axiom-deviations-audit.md "Kindred (paladin) — two structural
+// ── Kindled catalog v1 — coverage-floor + solo-viability fast-follow
+// (docs/axiom-deviations-audit.md "Kindled (paladin) — two structural
 // gaps", 2026-07-18). Two NEW abilities close the ≥2-per-role floor
 // (buff×1/movement×1 → ×2 each, docs/classes-goal.md's coverage lock);
 // Aegis Share's own solo-fallback constant lives with its Aegis Share
@@ -344,7 +344,7 @@ export const KIN_RALLY_LIGHT_MOVE_MULTIPLIER = 1.08;
 // 10→12 (still inside the locked 8-12 range, docs/classes-goal.md
 // "Catalog is full day one") rather than replacing two existing entries —
 // the audit's own phrasing is "ADD a 2nd buff... ADD a 2nd movement", and
-// the D2 sweep found Kindred "orthogonally fine" already (unlike
+// the D2 sweep found Kindled "orthogonally fine" already (unlike
 // Geometrician's confirmed Measure/Recoil Step filler) — nothing in the
 // existing 10 is weak enough to warrant benching for a replacement.
 /** Kindled Resolve (buff, self-only): spends Kindling for a self stagger-
@@ -375,14 +375,14 @@ export const KIN_RALLY_LIGHT_MOVE_MULTIPLIER = 1.08;
  *  free press. Insufficient Kindling is a dead press (legibility law: a
  *  press that does nothing burns no cooldown, same precedent as Shadow
  *  Step's blocked-blink / Judgment Line's no-target case, both above).
- *  Cooldown (12s) sits above every other Kindred active's (max 9s, Shock
+ *  Cooldown (12s) sits above every other Kindled active's (max 9s, Shock
  *  Ring/Rally Light) — the resource gate alone isn't trusted as the only
  *  brake; a hard CD backstops it even if Kindling regenerates fast off a
  *  block-heavy fight. First-draft/playtest-pending, like every number this
  *  session. */
 // Window/cooldown (4s / 12s) live solely in cards.ts's `active` spec, same
 // "one source of truth, no constants.ts duplicate" convention every other
-// Kindred ability's window/cooldown already follows (KIN_SEAL_STAGGER_MS
+// Kindled ability's window/cooldown already follows (KIN_SEAL_STAGGER_MS
 // above is a DIFFERENT number — the stagger length applied to a VICTIM,
 // not the window/cooldown cards.ts already owns).
 export const KIN_KINDLED_RESOLVE_KINDLING_COST = 40;
@@ -419,7 +419,7 @@ export const KIN_KINDLED_RESOLVE_STAGGER_RESIST_FRACTION = 0.5;
  *  able to drop Ward by repositioning. Bulwark Step inherits that existing
  *  guarantee rather than building a new one. */
 // Cooldown (4s) lives solely in cards.ts's `active` spec, same convention
-// as every other Kindred ability (see the note above KIN_KINDLED_RESOLVE_
+// as every other Kindled ability (see the note above KIN_KINDLED_RESOLVE_
 // KINDLING_COST).
 export const KIN_BULWARK_STEP_RANGE_PX = 110;
 
@@ -669,12 +669,12 @@ export const SYZ_ENEMY_SEARCH_RANGE_PX = 420;
 
 // ── SYZYGIST CATALOG v1 (docs/class-ability-catalogs-v1.md — the priest's
 // 10-ability class catalog; class-overhaul-workboard.md chunk 3.4). Same
-// substrate-reuse discipline as the Geometrician/Kindred blocks above:
+// substrate-reuse discipline as the Geometrician/Kindled blocks above:
 // reuses spawnProjectile, the existing fire-element burn-on-hit path, the
 // existing leechFraction self-heal path, applyRegenToAlly/applyHasteToAlly/
 // applyWardToAlly, and the Facet-Break-style caster-side mark pattern —
 // rather than inventing new mechanics per button. All 10 are wired this
-// pass (unlike Kindred's 7/10) because the low-aim auto-target helpers
+// pass (unlike Kindled's 7/10) because the low-aim auto-target helpers
 // above let every ability reuse the SAME "nearest valid target" shape.
 // classId-gated to priest only (round.ts enterDrafting).
 /** Bleed Tithe (offense): instant fire-element shard, auto-targeted at the
@@ -946,7 +946,7 @@ export const SYZ_TENDRIL_AVOID_STRENGTH_PX = 160;
 // ── Interstice catalog v1 (docs/class-ability-catalogs-v1.md — the ninja's
 // 10-ability class catalog, 9 wired this pass; see cardTypes.ts's
 // AbilityKind header comment for why "paper-double" is out of this union
-// entirely). Same substrate-reuse discipline as the Geometrician/Kindred/
+// entirely). Same substrate-reuse discipline as the Geometrician/Kindled/
 // Syzygist blocks above: reuses findNearestEnemy (Syzygist's own low-aim
 // auto-target helper) + spawnProjectile for the offense/aoe entries, and
 // the self-only-mark-on-caster shape (judgmentTargetId/sealUntilTick/

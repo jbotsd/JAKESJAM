@@ -258,7 +258,7 @@ Current evidence:
   use deterministic loadout-station equip; the five class-blind actives are
   explicitly `forced-hook-required`. Autoplay records `ability:<kind>` beats,
   preventing one unrelated activation from satisfying every ability row.
-- Cinematic melee rebuild: Interstice and Kindred load from planted feet,
+- Cinematic melee rebuild: Interstice and Kindled load from planted feet,
   carry hips/torso/head through the attack, share one arm/blade angle function,
   and retain only the accelerated world-space blade-tip path. Full-fighter
   filmstrips replaced construct-only approval and caught both tether harness
@@ -295,7 +295,7 @@ Run one stream per class:
 
 - Geometrician;
 - Interstice;
-- Kindred;
+- Kindled;
 - Syzygist.
 
 Within a class, split only where packages do not share a controller hotspot:
@@ -330,7 +330,7 @@ Prefer composition of existing primitives over another effects language.
 Independently model and test:
 
 - Syzygist Bleed Tithe + Contagion + Flock Pulse brake;
-- Kindred Retribution Edge brake;
+- Kindled Retribution Edge brake;
 - Geometrician Return Glass brake;
 - first-blood feedback review;
 - rack non-domination tests;

@@ -1,4 +1,4 @@
-// Unveiling — Paladin/Kindred's ultimate (class-overhaul-workboard.md
+// Unveiling — Paladin/Kindled's ultimate (class-overhaul-workboard.md
 // chunk 2.5, docs/classes-goal.md "E-KEY RULING": "the ult IS the
 // Emission" — every class's ultimate is the Kindled kit transfigured
 // through the SAME emission composer, never a bespoke per-class ultimate

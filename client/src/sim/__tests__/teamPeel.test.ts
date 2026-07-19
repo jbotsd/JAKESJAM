@@ -1,4 +1,4 @@
-// TEAM PEEL — Paladin/Kindred's team peel (class-overhaul-workboard.md
+// TEAM PEEL — Paladin/Kindled's team peel (class-overhaul-workboard.md
 // chunk 2.4: "block for allies in ward shadow"). Depends on chunk 1.1
 // (team identity, team.ts's `isAlly`) and chunks 2.1-2.3 (Kindled Edge/
 // Ward/Kindling, already shipped this session).

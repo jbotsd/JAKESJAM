@@ -75,8 +75,8 @@ await page.waitForTimeout(90);
 await canvas.screenshot({ path: `${OUT}/geo-shards.png` });
 await page.waitForTimeout(240);
 
-// Kindred divine ward — switch demo, then the four reads + the Kindled Edge.
-await fire("kindred");
+// Kindled divine ward — switch demo, then the four reads + the Kindled Edge.
+await fire("kindled");
 await page.waitForTimeout(120);
 await fire("raise");
 await page.waitForTimeout(90);
@@ -98,7 +98,7 @@ for (let i = 0; i < 22; i++) {
     { kind: "paladin" as const, t: i / 21 },
   );
   await page.waitForTimeout(20);
-  await canvas.screenshot({ path: `${OUT}/kindred-edge-${String(i).padStart(2, "0")}.png` });
+  await canvas.screenshot({ path: `${OUT}/kindled-edge-${String(i).padStart(2, "0")}.png` });
 }
 await fire("drop");
 await page.waitForTimeout(110);

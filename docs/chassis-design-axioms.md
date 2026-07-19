@@ -230,7 +230,7 @@ grounded in what's actually shipped this session, not aspiration.
   chassis/art match of the four. The open-palm dual-cast pose is a strong
   future idle/ready-stance reference if one doesn't exist yet.
 
-### Kindred (Paladin) — `kindled-v2.jpg`
+### Kindled (Paladin) — `kindled-v2.jpg`
 
 - **Silhouette:** tallest, broadest, most vertical — a conical crown
   helmet unlike any other class's hood shape. Reads as "the biggest thing
@@ -243,7 +243,7 @@ grounded in what's actually shipped this session, not aspiration.
 - **Pose/verb:** grounded, weapon AND shield both raised, weight low — a
   READY stance, not an attack. Matches "the line holds where he stands"
   (Bastion's own card-pool-v2 concept line) exactly.
-- **Tether/echo:** none (CA5 doesn't apply here either) — Kindred's power
+- **Tether/echo:** none (CA5 doesn't apply here either) — Kindled's power
   is carried, not extended.
 - **Shipped:** 125hp, 0.88 move speed, 1.18 size — the art's "biggest/
   slowest" read landed correctly in the stats before this session even

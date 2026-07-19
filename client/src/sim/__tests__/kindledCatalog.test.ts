@@ -1,4 +1,4 @@
-// Kindred catalog v1 (docs/class-ability-catalogs-v1.md) — the paladin's
+// Kindled catalog v1 (docs/class-ability-catalogs-v1.md) — the paladin's
 // class ability catalog, plugged into the EXISTING six-axes rack/draft
 // substrate (docs/six-axes-goal.md) and the Geometrician catalog's own
 // activation-switch pattern (class-overhaul-workboard.md chunk 2.6). All 10
@@ -6,7 +6,7 @@
 // the original pass shipped 7; Retribution Edge, Shock Ring, and Rally
 // Light (below the original 7) are the fast-follow's own additions. Kindled
 // Resolve and Bulwark Step (further below) are a SECOND fast-follow
-// (docs/axiom-deviations-audit.md "Kindred — two structural gaps",
+// (docs/axiom-deviations-audit.md "Kindled — two structural gaps",
 // 2026-07-18), growing the catalog to 12/12 and closing the buff×1/
 // movement×1 coverage-floor miss the audit found.
 //
@@ -24,7 +24,7 @@
 // consequence of THIS cut, not a re-opened coverage gap; buff/movement
 // (Kindled Resolve/Bulwark Step, the abilities that closed that exact gap
 // above) are untouched. See docs/class-ability-catalogs-v1.md's own cut
-// note for the full reasoning. `KINDRED_ABILITY_IDS` below is back to 10
+// note for the full reasoning. `KINDLED_ABILITY_IDS` below is back to 10
 // entries — if you're reading this wondering why it used to have 12, this
 // is why.
 //
@@ -81,7 +81,7 @@ const FIRE_BIT = 1 << 6;
 const LEFT_BIT = 1 << 0;
 const RIGHT_BIT = 1 << 1;
 
-const KINDRED_ABILITY_IDS = [
+const KINDLED_ABILITY_IDS = [
   "bastion-pulse",
   "sunspike",
   "judgment-line",
@@ -172,15 +172,15 @@ function frame(keys: number, seq: number, aimX = 0, aimY = 0): InputFrame {
   return { seq: InputSeq(seq), tick: Tick(0), keys, aimX, aimY, dtMs: DT_MS };
 }
 
-function kinCard(id: (typeof KINDRED_ABILITY_IDS)[number]) {
+function kinCard(id: (typeof KINDLED_ABILITY_IDS)[number]) {
   const card = crystalRoundsCards.find((c) => c.id === id);
   if (!card) throw new Error(`missing catalog card: ${id}`);
   return card;
 }
 
-describe("Kindred catalog v1 — data authoring", () => {
+describe("Kindled catalog v1 — data authoring", () => {
   test("all 10 wired catalog abilities exist as classId:'paladin' ability cards", () => {
-    for (const id of KINDRED_ABILITY_IDS) {
+    for (const id of KINDLED_ABILITY_IDS) {
       const card = kinCard(id);
       expect(card.classId).toBe("paladin");
       expect(card.active).toBeDefined();
@@ -190,7 +190,7 @@ describe("Kindred catalog v1 — data authoring", () => {
   });
 
   test("role coverage across the 10 wired abilities: defense/single/offense/aoe/movement/buff all present", () => {
-    const roles = new Set(KINDRED_ABILITY_IDS.map((id) => kinCard(id).role));
+    const roles = new Set(KINDLED_ABILITY_IDS.map((id) => kinCard(id).role));
     expect(roles.has("defense")).toBe(true);
     expect(roles.has("single")).toBe(true);
     expect(roles.has("offense")).toBe(true);
@@ -212,7 +212,7 @@ describe("Kindred catalog v1 — data authoring", () => {
   // regression (or restoration) is caught either way.
   test("coverage FLOOR (docs/classes-goal.md '≥2 primary tags per role') holds for buff/movement — the roles the audit flagged and Kindled Resolve/Bulwark Step fixed; offense/aoe are intentionally 1-per-role after the 2026-07-19 cut", () => {
     const counts: Record<string, number> = {};
-    for (const id of KINDRED_ABILITY_IDS) {
+    for (const id of KINDLED_ABILITY_IDS) {
       const role = kinCard(id).role!;
       counts[role] = (counts[role] ?? 0) + 1;
     }
@@ -236,7 +236,7 @@ describe("Kindred catalog v1 — data authoring", () => {
   // Bastion's own fast-follow blocks) were removed too.)
 });
 
-describe("Kindred catalog v1 — offer-roll classId gating", () => {
+describe("Kindled catalog v1 — offer-roll classId gating", () => {
   test("a paladin (heavy) player is offered catalog abilities across seeds", () => {
     const paladin = mkPlayer(A, 400, 400, "heavy");
     const other = mkPlayer(B, 600, 400, "balanced");
@@ -251,14 +251,14 @@ describe("Kindred catalog v1 — offer-roll classId gating", () => {
     for (let seed = 1; seed <= 80; seed++) {
       const roll = enterDrafting(round, { [A]: paladin, [B]: other }, Tick(100), seed >>> 0);
       const offer = roll.state.draftingOffers?.[A] ?? [];
-      if (offer.some((id) => (KINDRED_ABILITY_IDS as readonly string[]).includes(id))) {
+      if (offer.some((id) => (KINDLED_ABILITY_IDS as readonly string[]).includes(id))) {
         sawCatalogOffer = true;
       }
     }
     expect(sawCatalogOffer).toBe(true);
   });
 
-  test("a Wizard (balanced) NEVER sees a Kindred catalog offer", () => {
+  test("a Wizard (balanced) NEVER sees a Kindled catalog offer", () => {
     const wizard = mkPlayer(A, 400, 400, "balanced");
     const other = mkPlayer(B, 600, 400, "heavy");
     const round = {
@@ -271,11 +271,11 @@ describe("Kindred catalog v1 — offer-roll classId gating", () => {
     for (let seed = 1; seed <= 80; seed++) {
       const roll = enterDrafting(round, { [A]: wizard, [B]: other }, Tick(100), seed >>> 0);
       const offer = roll.state.draftingOffers?.[A] ?? [];
-      expect(offer.some((id) => (KINDRED_ABILITY_IDS as readonly string[]).includes(id))).toBe(false);
+      expect(offer.some((id) => (KINDLED_ABILITY_IDS as readonly string[]).includes(id))).toBe(false);
     }
   });
 
-  test("the OTHER melee chassis (sprinter/Interstice) NEVER sees a Kindred catalog offer — the generic classId gate distinguishes two melee classes correctly", () => {
+  test("the OTHER melee chassis (sprinter/Interstice) NEVER sees a Kindled catalog offer — the generic classId gate distinguishes two melee classes correctly", () => {
     const ninja = mkPlayer(A, 400, 400, "sprinter");
     const other = mkPlayer(B, 600, 400, "heavy");
     const round = {
@@ -288,11 +288,11 @@ describe("Kindred catalog v1 — offer-roll classId gating", () => {
     for (let seed = 1; seed <= 80; seed++) {
       const roll = enterDrafting(round, { [A]: ninja, [B]: other }, Tick(100), seed >>> 0);
       const offer = roll.state.draftingOffers?.[A] ?? [];
-      expect(offer.some((id) => (KINDRED_ABILITY_IDS as readonly string[]).includes(id))).toBe(false);
+      expect(offer.some((id) => (KINDLED_ABILITY_IDS as readonly string[]).includes(id))).toBe(false);
     }
   });
 
-  test("shielded (Syzygist) never sees the Kindred catalog either", () => {
+  test("shielded (Syzygist) never sees the Kindled catalog either", () => {
     const priest = mkPlayer(A, 400, 400, "shielded");
     const other = mkPlayer(B, 600, 400, "heavy");
     const round = {
@@ -305,7 +305,7 @@ describe("Kindred catalog v1 — offer-roll classId gating", () => {
     for (let seed = 1; seed <= 30; seed++) {
       const roll = enterDrafting(round, { [A]: priest, [B]: other }, Tick(100), seed >>> 0);
       const offer = roll.state.draftingOffers?.[A] ?? [];
-      expect(offer.some((id) => (KINDRED_ABILITY_IDS as readonly string[]).includes(id))).toBe(false);
+      expect(offer.some((id) => (KINDLED_ABILITY_IDS as readonly string[]).includes(id))).toBe(false);
     }
   });
 
@@ -328,8 +328,8 @@ describe("Kindred catalog v1 — offer-roll classId gating", () => {
   });
 });
 
-describe("Kindred catalog v1 — rack fill (existing substrate, no new slot system)", () => {
-  test("a Kindred ability card resolves into build.actives exactly like a universal one", () => {
+describe("Kindled catalog v1 — rack fill (existing substrate, no new slot system)", () => {
+  test("a Kindled ability card resolves into build.actives exactly like a universal one", () => {
     const paladin = mkPlayer(A, 400, 400, "heavy");
     paladin.cards = ["bastion-pulse", "sunspike", "judgment-line"];
     const build = resolvePlayerBuild(paladin);
@@ -347,7 +347,7 @@ describe("Kindred catalog v1 — rack fill (existing substrate, no new slot syst
   });
 });
 
-describe("Kindred catalog v1 — representative sim effects", () => {
+describe("Kindled catalog v1 — representative sim effects", () => {
   test("Bastion Pulse: instant shield-charge tick, doubled while Ward is held", () => {
     const notHolding = mkPlayer(A, 400, 400, "heavy", { cards: ["bastion-pulse"], shieldCharge: 0, shieldActive: false });
     const s1 = stepWithRuntime(
@@ -572,7 +572,7 @@ describe("Kindred catalog v1 — representative sim effects", () => {
   });
 });
 
-// ── Kindred catalog v1 fast-follow (class-overhaul-workboard.md chunk 2.6,
+// ── Kindled catalog v1 fast-follow (class-overhaul-workboard.md chunk 2.6,
 // 2026-07-18) — originally Retribution Edge, Shock Ring, Rally Light: the 3
 // abilities the original pass deferred, now wired. Retribution Edge (and
 // its whole "cast opens armed window / self-block readies it / next Edge
@@ -580,7 +580,7 @@ describe("Kindred catalog v1 — representative sim effects", () => {
 // 2026-07-19 — see docs/class-ability-catalogs-v1.md's cut note — not
 // deferred, so there's no test to keep for it. ─────────────────────────────
 
-describe("Kindred catalog v1 fast-follow — Shock Ring (landing-detection hop-slam)", () => {
+describe("Kindled catalog v1 fast-follow — Shock Ring (landing-detection hop-slam)", () => {
   test("Shock Ring: cast hops upward and arms a window; landing triggers a damaging slam nova, then clears", () => {
     const caster = mkPlayer(A, 400, 400, "heavy", { cards: ["shock-ring"] });
     const victim = mkPlayer(B, 440, 400, "balanced");
@@ -615,7 +615,7 @@ describe("Kindred catalog v1 fast-follow — Shock Ring (landing-detection hop-s
   // the old crater/retort/bastion card definitions.)
 });
 
-describe("Kindred catalog v1 fast-follow — Rally Light (read-only continuous aura, no cross-player write)", () => {
+describe("Kindled catalog v1 fast-follow — Rally Light (read-only continuous aura, no cross-player write)", () => {
   test("cast opens the aura-source window", () => {
     const caster = mkPlayer(A, 400, 400, "heavy", { cards: ["rally-light"] });
     const state = mkState([caster]);
@@ -705,7 +705,7 @@ describe("Kindred catalog v1 fast-follow — Rally Light (read-only continuous a
   });
 });
 
-describe("Kindred catalog v1 coverage-floor fast-follow — Kindled Resolve (buff #2, self-only, spends Kindling; docs/axiom-deviations-audit.md, 2026-07-18)", () => {
+describe("Kindled catalog v1 coverage-floor fast-follow — Kindled Resolve (buff #2, self-only, spends Kindling; docs/axiom-deviations-audit.md, 2026-07-18)", () => {
   test("with enough Kindling, a cast spends the cost and opens the buff window", () => {
     const caster = mkPlayer(A, 400, 400, "heavy", {
       cards: ["kindled-resolve"],
@@ -816,7 +816,7 @@ describe("Kindred catalog v1 coverage-floor fast-follow — Kindled Resolve (buf
   });
 });
 
-describe("Kindred catalog v1 coverage-floor fast-follow — Bulwark Step (movement #2, input-facing shuffle, NOT aim-directed; docs/axiom-deviations-audit.md, 2026-07-18)", () => {
+describe("Kindled catalog v1 coverage-floor fast-follow — Bulwark Step (movement #2, input-facing shuffle, NOT aim-directed; docs/axiom-deviations-audit.md, 2026-07-18)", () => {
   test("holding RIGHT repositions rightward, within KIN_BULWARK_STEP_RANGE_PX, regardless of aim", () => {
     const caster = mkPlayer(A, 400, 400, "heavy", { cards: ["bulwark-step"], aimX: 0, aimY: 400 });
     const state = mkState([caster]);
@@ -953,7 +953,7 @@ describe("Second Wind — Paladin classModifiers expression (card-pool-v2.md 'st
   });
 });
 
-describe("Kindred catalog v1 — classId gating on sim effects (zero behavior change for other chassis)", () => {
+describe("Kindled catalog v1 — classId gating on sim effects (zero behavior change for other chassis)", () => {
   test("a non-paladin (wizard) never gets judgmentTargetId set, even holding the card id directly on their hand (shouldn't happen via draft, but the sim effect itself must still be classId-gated)", () => {
     // Kindled Edge itself is classId-gated (paladinMelee.test.ts already
     // covers this exhaustively) — Judgment Line's amp lives INSIDE that

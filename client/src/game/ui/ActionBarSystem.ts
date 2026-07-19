@@ -59,7 +59,7 @@ import type { ClassId } from "../types/game.js";
 // (classes-goal.md: wizard technical-awesome, ninja insidious-precise,
 // paladin epic-settled/self-lit-not-liturgical, priest unsettling-
 // benevolent) and checked against that class's own catalog vocabulary for
-// collisions (Geometrician/Interstice/Kindred/Syzygist catalogs,
+// collisions (Geometrician/Interstice/Kindled/Syzygist catalogs,
 // docs/class-ability-catalogs-v1.md).
 //
 // Known gap this naming surfaces rather than hides: wizard's held-Shield is

@@ -9,14 +9,14 @@ identity non-obsolescence), character sheets (feel contracts).
 
 | Lock | Value |
 |------|--------|
-| Display names | Geometrician · Interstice · Kindred · Syzygist |
+| Display names | Geometrician · Interstice · Kindled · Syzygist |
 | Syzygist color | cool-white |
 | Rack | **3** slots, keys 1–3 |
-| Catalog size | **10** per chassis at first pass (within 8–12); Kindred grew to **12** in its 2026-07-18 coverage-floor fast-follow, then was cut back to **10** on 2026-07-19 (Retribution Edge + Consecrated Field removed — see Kindred's own section below) |
+| Catalog size | **10** per chassis at first pass (within 8–12); Kindled grew to **12** in its 2026-07-18 coverage-floor fast-follow, then was cut back to **10** on 2026-07-19 (Retribution Edge + Consecrated Field removed — see Kindled's own section below) |
 | Catalog availability | **Full day one** at loadout |
 | Specialization | Loadout equip; recommend + pure freedom |
 | Roles (exactly six) | defense · offense · buff · aoe · single · movement |
-| Coverage | ≥2 primary tags per role per catalog (some multi-role) — **exception:** Kindred's offense/aoe dropped to 1 each in the 2026-07-19 cut, an accepted consequence of that specific cut, not a re-opened gap (see Kindred's section) |
+| Coverage | ≥2 primary tags per role per catalog (some multi-role) — **exception:** Kindled's offense/aoe dropped to 1 each in the 2026-07-19 cut, an accepted consequence of that specific cut, not a re-opened gap (see Kindled's section) |
 | Cards | Specs/emission on buttons — **not** a second ability bar |
 | Chassis sacred | Catalog never replaces Ward / slash+wave / parry+projectile / status verb |
 
@@ -76,13 +76,13 @@ Catalog may add movement tools; **slash remains the engine**.
 
 ---
 
-## Kindred (`paladin`) — 10
+## Kindled (`paladin`) — 10
 
 Always-on sacred: Kindled Ward (hold) + Kindled Edge weight. Heaven-tank
 feel. Catalog **extends** peel/field; never “skip the board.”
 
 **2026-07-18 coverage-floor fast-follow** (docs/axiom-deviations-audit.md
-"Kindred — two structural gaps"): the original 10 shipped buff×1 (Rally
+"Kindled — two structural gaps"): the original 10 shipped buff×1 (Rally
 Light) and movement×1 (Plant Charge), both below this file's own ≥2-per-
 role floor (the Locks table above), and Aegis Share/Rally Light were
 team-only with no solo fallback. Kindled Resolve/Bulwark Step closed the
@@ -187,5 +187,5 @@ optionally as draft **specs that empower** them — not duplicate bars.
 
 - Sim constants pass (damage, CD, resource) per class resource curves  
 - Resonance pair matrix (which 3-combos feel best)  
-- Bot loadout tables (solo Syzygist vs peel Kindred)  
+- Bot loadout tables (solo Syzygist vs peel Kindled)  
 - Wire loadout station UI to this list  

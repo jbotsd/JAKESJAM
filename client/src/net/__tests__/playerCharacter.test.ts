@@ -48,7 +48,7 @@ describe("characters.ts — class-era display layer over stable ids", () => {
     const byId = new Map(characters.map((c) => [c.id, c]));
     expect(byId.get("balanced")?.name).toBe("Geometrician");
     expect(byId.get("sprinter")?.name).toBe("Interstice");
-    expect(byId.get("heavy")?.name).toBe("Kindred");
+    expect(byId.get("heavy")?.name).toBe("Kindled");
     expect(byId.get("shielded")?.name).toBe("Syzygist");
     // classId dev-id layer (code/docs/sigil lookup) stays the English word.
     expect(byId.get("balanced")?.classId).toBe("wizard");
@@ -64,7 +64,7 @@ describe("characters.ts — class-era display layer over stable ids", () => {
   });
 
   test("kitComing tracks which classes have shipped their full kit (honesty rule, updated 2026-07-18)", () => {
-    // Wizard (P1), Kindred, and Syzygist have shipped 10/10 of their class
+    // Wizard (P1), Kindled, and Syzygist have shipped 10/10 of their class
     // catalog — kitComing removed. Interstice ships 9/10 (Paper Double is a
     // recorded deferral — see characters.ts's UPDATE comment and
     // cardTypes.ts's AbilityKind header) — kitComing stays true until it
@@ -82,7 +82,7 @@ describe("characters.ts — class-era display layer over stable ids", () => {
         /sword|slash|blade|heal|buff|curse|board|melee/,
       );
     }
-    // Kindred and Syzygist DID ship — their kitSummary is allowed (and
+    // Kindled and Syzygist DID ship — their kitSummary is allowed (and
     // expected) to name real, live abilities by name now.
     const byId = new Map(characters.map((c) => [c.id, c]));
     expect(byId.get("heavy")?.kitSummary).toContain("Kindled Edge");

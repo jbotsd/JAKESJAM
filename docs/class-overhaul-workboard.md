@@ -62,9 +62,9 @@ differently; nothing yet *enforces* it. **The per-class sweep is DONE — see th
 per-class table in `axiom-deviations-audit.md`.** Concrete results to act on:
 - **Geometrician:** re-job **Measure (#8)** (confirmed filler) and check **Recoil Step
   (#10)** vs Slip Node — give each an orthogonal reason or cut.
-- **Kindred [NEW]:** coverage-lock **miss** — only **buff ×1, movement ×1** (spec requires
+- **Kindled [NEW]:** coverage-lock **miss** — only **buff ×1, movement ×1** (spec requires
   ≥2 per role); and **Aegis Share (#8) + Rally Light (#9) are solo-dead** in FFA (team-only,
-  no solo fallback). Add second buff/movement + solo clauses, or declare Kindred team-leaning.
+  no solo fallback). Add second buff/movement + solo clauses, or declare Kindled team-leaning.
 - **Interstice:** clean — no filler. **Use it as the template.**
 - **Syzygist:** solo design is the model (every team tool has a fallback); shares the
   buff×1/movement×1 coverage gap.
@@ -85,7 +85,7 @@ rebalance. **The per-class sweep is DONE — priority order:**
   each self-fuel — they *amplify each other* (curse → Devotion+lifesteal → Contagion spreads
   → Flock scales with count → more Devotion). One shared stopping mechanism (diminishing
   Devotion / Flock scaling past N entangled) brakes all three at once — do this in 0.3 / 3.2.
-- **Kindred:** **Retribution Edge (#2)** block→amp+Kindling loop — brake in 2.3.
+- **Kindled:** **Retribution Edge (#2)** block→amp+Kindling loop — brake in 2.3.
 - **Geometrician:** **Return Glass (#5)** mild mana loop — low priority.
 - **Interstice:** Second Wind / Read Mark self-fuel but are **hit-gated = already braked** — no
   action; this is the pattern to copy (gate the payout on landing a hit).
@@ -189,7 +189,7 @@ with anything else on this board.
 
 ---
 
-## Tier 2 — Paladin / Kindred (P3), gated on P2 landing
+## Tier 2 — Paladin / Kindled (P3), gated on P2 landing
 
 Do not start until P2 (Ninja melee core) is confirmed shipped and
 verified — Paladin's melee explicitly reuses that primitive per canon
@@ -219,12 +219,12 @@ ward's frontal cone, extend mitigation to them. Solo-useless without 1.1;
 don't attempt without it.
 
 ### 2.5 — Ultimate: Unveiling
-Depends on 0.2 (E-key/Emission system) being complete — Kindred's
+Depends on 0.2 (E-key/Emission system) being complete — Kindled's
 ultimate is the Kindled kit transfigured through the emission composer,
 same mechanism every class uses.
 
 ### 2.6 — Wire Paladin's cards + catalog — DONE (2026-07-18 fast-follow)
-Kindred's 10-ability catalog is now complete: the original pass shipped 7
+Kindled's 10-ability catalog is now complete: the original pass shipped 7
 (Unbroken Seal, Sunspike, Judgment Line, Consecrated Field, Bastion Pulse,
 Aegis Share, Plant Charge); this fast-follow added the 3 it deferred
 (Retribution Edge, Shock Ring, Rally Light — see cardTypes.ts's AbilityKind
@@ -237,7 +237,7 @@ outside this chunk's assigned scope (Second Wind was the one specifically
 handed off) and stay open for a future pass. Rally Light needed no
 cross-player write in the end (read-only continuous aura — see
 constants.ts's KIN_RALLY_LIGHT_* comment); Retribution Edge/Shock Ring/
-Crater are self-only. Full test coverage in kindredCatalog.test.ts.
+Crater are self-only. Full test coverage in kindledCatalog.test.ts.
 
 ### 2.7 — Heaven-tank VFX pass — PARTIAL (2026-07-18 fast-follow)
 Gold-forward per the locked DI-Crusader-feel/Autogenes-source reframe.

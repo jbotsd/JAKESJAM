@@ -82,8 +82,8 @@ function quantiseMs(value: number): number {
  *   regenUntilTick (int, Syzygist substrate), hasteUntilTick (int, Syzygist
  *   substrate), devotion (int, priest class resource), wardAbsorbUntilTick
  *   (int, Syzygist Ward window), grounded (0/1), shockRingArmedUntilTick /
- *   rallyLightUntilTick (int, Kindred catalog v1 fast-follow),
- *   kindledResolveUntilTick (int, Kindred coverage-floor fast-follow).
+ *   rallyLightUntilTick (int, Kindled catalog v1 fast-follow),
+ *   kindledResolveUntilTick (int, Kindled coverage-floor fast-follow).
  *
  * Fields deliberately skipped: aimX/aimY (presentation only, changes every
  * frame without gameplay consequence), lastProcessedInputSeq (reconcile
@@ -143,7 +143,7 @@ export function hashPlayerEntity(p: PlayerEntity): number {
   h = mixU32(h, (p.sunlanceUntilTick ?? 0) | 0);
   h = mixU32(h, (p.facetMarkUntilTick ?? 0) | 0);
   h = mixU32(h, (p.overclockUntilTick ?? 0) | 0);
-  // Kindred catalog v1 (docs/class-ability-catalogs-v1.md, class-overhaul-
+  // Kindled catalog v1 (docs/class-ability-catalogs-v1.md, class-overhaul-
   // workboard.md chunk 2.6). Same absent-as-0 treatment as the Geometrician
   // fields above; judgmentTargetId (a PlayerId string) is deliberately NOT
   // mixed for the identical "covered by its numeric sibling" reasoning as
@@ -151,7 +151,7 @@ export function hashPlayerEntity(p: PlayerEntity): number {
   h = mixU32(h, (p.judgmentMarkUntilTick ?? 0) | 0);
   h = mixU32(h, (p.sealUntilTick ?? 0) | 0);
   h = mixU32(h, (p.aegisShareUntilTick ?? 0) | 0);
-  // Kindred catalog v1 fast-follow (class-overhaul-workboard.md chunk 2.6,
+  // Kindled catalog v1 fast-follow (class-overhaul-workboard.md chunk 2.6,
   // 2026-07-18: originally Retribution Edge, Shock Ring, Rally Light).
   // Retribution Edge and its retributionArmedUntilTick/
   // retributionReadyUntilTick fields were removed 2026-07-19, see
@@ -162,7 +162,7 @@ export function hashPlayerEntity(p: PlayerEntity): number {
   // window-buff field above.
   h = mixU32(h, (p.shockRingArmedUntilTick ?? 0) | 0);
   h = mixU32(h, (p.rallyLightUntilTick ?? 0) | 0);
-  // Kindled Resolve (Kindred catalog v1 coverage-floor fast-follow,
+  // Kindled Resolve (Kindled catalog v1 coverage-floor fast-follow,
   // docs/axiom-deviations-audit.md, 2026-07-18). Same absent-as-0
   // treatment as every other window-buff field above.
   h = mixU32(h, (p.kindledResolveUntilTick ?? 0) | 0);

@@ -292,7 +292,7 @@ describe("authored Wizard cards (docs/card-pool-v2.md universal specs/passives)"
   });
 });
 
-// ── Paladin / Kindred (class-overhaul-workboard.md chunk 2.6) — universal
+// ── Paladin / Kindled (class-overhaul-workboard.md chunk 2.6) — universal
 //    card "Paladin:" classModifiers expressions, authored against
 //    card-pool-v2.md's Paladin per-class lines on the SAME 6 cards Wizard's
 //    own 7-card pass already proved the mechanism on (double-jump is the
@@ -428,7 +428,7 @@ describe("Priest baseline: detuned starter bolt (docs/classes-goal.md 'modest pr
   });
 });
 
-// ── Paladin / Kindred baseline (class-overhaul-workboard.md chunk 2.5,
+// ── Paladin / Kindled baseline (class-overhaul-workboard.md chunk 2.5,
 //    docs/classes-goal.md "E-KEY RULING") — Kindled Edge replaces this
 //    weapon for Paladin's actual Fire input (World.ts), so its ONLY live
 //    consumer is the Unveiling ultimate's composed Emission

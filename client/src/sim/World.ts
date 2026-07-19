@@ -279,7 +279,7 @@ const AbilityBit = 1 << 7;
  *  stepPlayer via player.ts's own private `Bit.Jump`. */
 const JumpBit = 1 << 4;
 /** InputBit.Left/Right — read here only for Bulwark Step's facing-
- *  direction derivation (Kindred coverage-floor fast-follow, docs/axiom-
+ *  direction derivation (Kindled coverage-floor fast-follow, docs/axiom-
  *  deviations-audit.md, 2026-07-18); movement itself reads the same bits
  *  inside stepPlayer via player.ts's own private `Bit.Left`/`Bit.Right`,
  *  same "read here only for X" precedent as JumpBit above. */
@@ -435,7 +435,7 @@ export type PaladinEdgePhase = 0 | 1 | 2 | 3;
  * source of truth (class-overhaul-workboard.md chunk 2.1). Trimmed relative
  * to `NinjaMeleeMemory`: no `dashThroughTagged`/`wasDashing` (Paladin has no
  * dash-i-frame-evasion verb — that's ninja's defense identity, not
- * Kindred's; Kindred's defense verb is Kindled Ward, an entirely separate
+ * Kindled's; Kindled's defense verb is Kindled Ward, an entirely separate
  * held-input mechanic in combat.ts, not part of this FSM at all), and no
  * wave-spawn bookkeeping (Kindled Edge doesn't emit an aftermath projectile
  * — "tighter arc, harder hit" is the whole verb, no ranged rider).
@@ -596,7 +596,7 @@ const NINJA_ENERGY_ON_WALL_KICK = 12;
 //   - Ninja's slash spawns a WAVE projectile aftermath; Edge does not (no
 //     ranged rider — "tighter arc, harder hit" is the whole verb).
 //   - Ninja's slash grants ENERGY on a landed hit ("aggression feeds the
-//     rack"); Edge grants NOTHING on a landed hit — Kindred's resource
+//     rack"); Edge grants NOTHING on a landed hit — Kindled's resource
 //     (Kindling) comes exclusively from Ward absorbing damage, not from
 //     Edge dealing it ("Defense IS the engine", classes-goal.md). Landing
 //     a hit and blocking a hit are opposite resource triggers for these
@@ -755,7 +755,7 @@ function isAABBInMeleeArc(
  * guarantee every other multi-candidate scan in this file already uses
  * (facet-break's target search is the precedent).
  *
- * Aegis Share (Kindred catalog v1): a candidate warder with a live
+ * Aegis Share (Kindled catalog v1): a candidate warder with a live
  * `aegisShareUntilTick` window gets its peel radius widened by
  * `KIN_AEGIS_SHARE_RADIUS_MULTIPLIER` for this check only — the window
  * lives on the WARDER, not the victim, so it's read directly off the
@@ -882,8 +882,8 @@ function rallyLightDamageMultiplier(
   return hasRallyLightSource(attacker, players, tick) ? KIN_RALLY_LIGHT_DAMAGE_MULTIPLIER : 1;
 }
 
-// ── KINDLED RESOLVE (Kindred coverage-floor fast-follow, docs/axiom-
-// deviations-audit.md "Kindred (paladin) — two structural gaps",
+// ── KINDLED RESOLVE (Kindled coverage-floor fast-follow, docs/axiom-
+// deviations-audit.md "Kindled (paladin) — two structural gaps",
 // 2026-07-18) ────────────────────────────────────────────────────────────
 // Self-only buff — no aura/ally reach at all (constants.ts's KIN_KINDLED_
 // RESOLVE_* header comment has the full "why this differs from Rally
@@ -1704,7 +1704,7 @@ export function stepWithRuntime(
         entity.hasteUntilTick !== undefined &&
         entity.hasteUntilTick > state.tick;
       const hasteMul = hasteActive ? entity.hasteMultiplier ?? 1 : 1;
-      // Rally Light (Kindred catalog v1 fast-follow, class-overhaul-
+      // Rally Light (Kindled catalog v1 fast-follow, class-overhaul-
       // workboard.md chunk 2.6): "move tick" for anyone the aura currently
       // covers — READS `state.players` (the stable pre-tick snapshot every
       // other other-player scan this tick uses, e.g. Judgment Line's target
@@ -2106,7 +2106,7 @@ export function stepWithRuntime(
     // pendingSyzygistCasts, gated on `isAlly`, which is unconditionally
     // false in hangout (lobby `PlayerEntity`s never get a `teamId` —
     // venueHost.ts's `spawnFor` never sets one; only the arena's duo-bell
-    // admission does). See the ninja-catalog/Kindred/Syzygist safety audit
+    // admission does). See the ninja-catalog/Kindled/Syzygist safety audit
     // (chunk: hangout-ability-activation-fix) — no ability here mutates
     // another player's `health` directly.
     for (let slot = 0; slot < build.actives.length && slot < MAX_ABILITY_SLOTS; slot++) {
@@ -2431,7 +2431,7 @@ export function stepWithRuntime(
           activated = true;
           break;
         }
-        // ── Kindred catalog v1 (docs/class-ability-catalogs-v1.md) ─────────
+        // ── Kindled catalog v1 (docs/class-ability-catalogs-v1.md) ─────────
         // classId-gated to paladin at the offer roll (round.ts). Same
         // substrate-reuse discipline as the Geometrician block above — see
         // constants.ts's KIN_* header note for the per-ability reasoning.
@@ -2549,7 +2549,7 @@ export function stepWithRuntime(
           // range later during the window still gets peeled for, exactly
           // as before this fast-follow.
           //
-          // Solo fallback (docs/axiom-deviations-audit.md "Kindred — two
+          // Solo fallback (docs/axiom-deviations-audit.md "Kindled — two
           // structural gaps", 2026-07-18): unlike Haste Gift/Glass Ward
           // (Syzygist), this ability never targeted an ally at cast time to
           // begin with — it's a passive window a DIFFERENT player's later
@@ -2629,7 +2629,7 @@ export function stepWithRuntime(
           }
           break;
         }
-        // ── Kindred catalog v1 fast-follow (class-overhaul-workboard.md
+        // ── Kindled catalog v1 fast-follow (class-overhaul-workboard.md
         // chunk 2.6, 2026-07-18) — originally Retribution Edge, Shock Ring,
         // Rally Light: the 3 abilities the original pass deferred.
         // Retribution Edge was cut 2026-07-19 (see docs/class-ability-
@@ -2640,7 +2640,7 @@ export function stepWithRuntime(
         // hook that opened the second window are gone too. Shock Ring only
         // ever writes `nextEntity` (self) here — the same "never another
         // player's entity inside this per-player loop" discipline the
-        // Kindred block above documents. Rally Light writes `nextEntity`
+        // Kindled block above documents. Rally Light writes `nextEntity`
         // too (it just OPENS the aura-source window; every beneficiary
         // reads it later, never a write onto them — see
         // `hasRallyLightSource`'s own doc comment above `applyTeamPeel`).
@@ -2674,8 +2674,8 @@ export function stepWithRuntime(
           activated = true;
           break;
         }
-        // ── Kindred coverage-floor + solo-viability fast-follow (docs/
-        // axiom-deviations-audit.md "Kindred (paladin) — two structural
+        // ── Kindled coverage-floor + solo-viability fast-follow (docs/
+        // axiom-deviations-audit.md "Kindled (paladin) — two structural
         // gaps", 2026-07-18) — the catalog's 2nd buff and 2nd movement,
         // closing the ≥2-per-role floor. See constants.ts's KIN_KINDLED_
         // RESOLVE_*/KIN_BULWARK_STEP_* header comments for the full design.
@@ -2762,7 +2762,7 @@ export function stepWithRuntime(
         // substrate (spawnProjectile + fire-element burn, leechFraction,
         // applyRegenToAlly/applyHasteToAlly/applyWardToAlly, the Facet-
         // Break-style caster-side mark) — same discipline as the
-        // Geometrician/Kindred blocks above. Abilities that write onto an
+        // Geometrician/Kindled blocks above. Abilities that write onto an
         // ALLY's entity (Borrowed Time, Haste Gift, Glass Ward, Self-
         // Lattice) call the exported `applyXToAlly` helpers, which write
         // directly into `players[target.id]` — safe from the same cross-
@@ -4367,7 +4367,7 @@ export function stepWithRuntime(
           if (mit.evaded) {
             // no-op: victim phased through (e.g. a dashing ninja's i-frames).
           } else if (!blocked) {
-            // Kindred catalog v1 (class-overhaul-workboard.md chunk 2.6):
+            // Kindled catalog v1 (class-overhaul-workboard.md chunk 2.6):
             // Judgment Line's mark-amp and Unbroken Seal's window-amp both
             // apply to a landed Edge hit, ahead of team peel. Re-read the
             // attacker's LIVE state (not the outer-loop `attacker` const,
@@ -4487,7 +4487,7 @@ export function stepWithRuntime(
       // ---- Arc hit-check vs. destructibles (venue-lobby-tableau fast-
       //      follow, 2026-07-18) — hangout mode only, mirrors ninja's own
       //      block above exactly (same reasoning: Kindled Edge had no
-      //      destructible-hit path at all, so Kindred's entire primary
+      //      destructible-hit path at all, so Kindled's entire primary
       //      attack did nothing to the practice dummies). ----
       if (hasReachedEdgeContact && hangoutMode) {
         const aimAngle = Math.atan2(mem.aimY, mem.aimX);

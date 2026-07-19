@@ -9,7 +9,7 @@
 // characterId and asserts NOTHING paladin-shaped happens — that's the
 // classId-gating proof the task calls for. A second family of tests proves
 // Kindled Edge is NOT ninja's slash wearing new numbers: no wave spawns, no
-// energy is granted on a landed hit — Kindred's resource (Kindling) comes
+// energy is granted on a landed hit — Kindled's resource (Kindling) comes
 // exclusively from Ward absorbing damage (kindledWard.test.ts), never from
 // Edge dealing it.
 

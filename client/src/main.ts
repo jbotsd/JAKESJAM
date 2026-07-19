@@ -550,7 +550,7 @@ app.innerHTML = `
             <select data-player-character>
               <option value="balanced">Geometrician</option>
               <option value="sprinter">Interstice</option>
-              <option value="heavy">Kindred</option>
+              <option value="heavy">Kindled</option>
               <option value="shielded">Syzygist</option>
             </select>
           </label>

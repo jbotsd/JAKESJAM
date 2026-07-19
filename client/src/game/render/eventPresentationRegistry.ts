@@ -307,7 +307,7 @@ export const EVENT_PRESENTATION_REGISTRY = {
     note: "Audio exists, but the contact-site read is not explicit.",
   },
   "ward-absorbed": {
-    action: "Kindred catches damage on Kindled Ward",
+    action: "Kindled catches damage on Kindled Ward",
     stateChange: "The board absorbs force and visibly feeds Kindling",
     lead: "world-vfx",
     channels: ["world-vfx", "camera", "world-state"],
@@ -317,7 +317,7 @@ export const EVENT_PRESENTATION_REGISTRY = {
     note: "Absorb flash exists; raise/hold/drop animation and audible fingerprint remain open.",
   },
   "team-peel-absorbed": {
-    action: "Kindred's ward catches damage for an ally",
+    action: "Kindled's ward catches damage for an ally",
     stateChange: "The warder-to-victim save relationship is legible",
     lead: "world-vfx",
     channels: ["world-vfx", "camera", "world-state"],

@@ -88,10 +88,10 @@ own `LOADOUT_HINT` copy). Today, several of the 42 catalog abilities do
 | Gap | Root cause | Affected |
 |---|---|---|
 | Ninja M1 (melee arc) hits nothing | `stepDestructibles` (`destructible.ts:77-197`) is the ONLY code in the repo that touches `destructible.health`, and it's driven exclusively by `state.projectiles` (sole call site `World.ts:5321`) — the melee arc hit-check (`World.ts` ninja block) only ever iterates player ids | Interstice's entire primary attack |
-| Paladin M1 (Kindled Edge) hits nothing | Same root cause, same shape, separate block | Kindred's entire primary attack |
-| 7 instant-AOE catalog abilities do nothing | Prism Fan, Lattice, Consecrated Field, Shock Ring, Flock Pulse, Shard Ring, Wall Bloom all resolve through one `pendingInstantAoe` loop (`World.ts:3520-3568`) that only iterates players and is skipped entirely in hangout mode | Geometrician x2, Kindred x2, Syzygist x2, Interstice x1 |
+| Paladin M1 (Kindled Edge) hits nothing | Same root cause, same shape, separate block | Kindled's entire primary attack |
+| 7 instant-AOE catalog abilities do nothing | Prism Fan, Lattice, Consecrated Field, Shock Ring, Flock Pulse, Shard Ring, Wall Bloom all resolve through one `pendingInstantAoe` loop (`World.ts:3520-3568`) that only iterates players and is skipped entirely in hangout mode | Geometrician x2, Kindled x2, Syzygist x2, Interstice x1 |
 | Emission (E key) never fills | Deliberately gated (`World.ts:1991-1997`) — "hangout emits no combat events... keeps a future lobby damage source from quietly charging meters." This IS that future source, arriving now | Every class's Emission cast |
-| 5 ally-targeted abilities never see a real ally | No lobby player ever has a `teamId` (`World.ts:2098-2103`'s own comment); `isAlly()` (`team.ts:31-33`) requires two players sharing one | Kindred's Aegis Share/Rally Light, Syzygist's Borrowed Time/Glass Ward/Haste Gift |
+| 5 ally-targeted abilities never see a real ally | No lobby player ever has a `teamId` (`World.ts:2098-2103`'s own comment); `isAlly()` (`team.ts:31-33`) requires two players sharing one | Kindled's Aegis Share/Rally Light, Syzygist's Borrowed Time/Glass Ward/Haste Gift |
 
 The fix (implemented alongside this doc, see the sibling plan) closes all
 five gaps: destructible-hit resolution for melee arc and instant AOE,

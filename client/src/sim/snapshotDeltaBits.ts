@@ -85,7 +85,7 @@ export const P_HI = {
    *  activation, six-axes and Geometrician-catalog kinds alike. */
   resonanceUntilTick: 1 << 20,
   resonanceSourceKind: 1 << 21,
-  /** Kindred catalog v1 (docs/class-ability-catalogs-v1.md, paladin-only —
+  /** Kindled catalog v1 (docs/class-ability-catalogs-v1.md, paladin-only —
    *  class-overhaul-workboard.md chunk 2.6). Bits 22..25 — same "plain
    *  number, no protocol change" headroom as the Geometrician block above. */
   judgmentTargetId: 1 << 22,
@@ -96,7 +96,7 @@ export const P_HI = {
    *  chunk 3.1) — regen (heal-over-time) and haste (move/fire-rate) windows,
    *  the first BUFF fields a DIFFERENT player's cast can write onto this
    *  entity. Bits 26..29 — same "plain number, no protocol change" headroom
-   *  as the Geometrician/Kindred blocks above. */
+   *  as the Geometrician/Kindled blocks above. */
   regenUntilTick: 1 << 26,
   regenHps: 1 << 27,
   hasteUntilTick: 1 << 28,

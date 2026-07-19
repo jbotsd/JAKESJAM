@@ -1,7 +1,7 @@
 // classAccentColors tests — pure lookup table, no Phaser import, no DOM.
 // Verifies docs/chassis-design-axioms.md CA2's three registers: cyan is
 // SHARED between Geometrician/Interstice (differentiated by silhouette,
-// not color — CA3), gold is Kindred-only, and Syzygist gets its own
+// not color — CA3), gold is Kindled-only, and Syzygist gets its own
 // distinct "measured white" register (not a dim cyan, not violet).
 
 import { describe, expect, test } from "bun:test";
@@ -15,7 +15,7 @@ describe("classAccentPalette", () => {
     expect(wizard.accentColor).toBe(0x8ff8ff);
   });
 
-  test("Kindred (paladin) uses the Autogenes house gold — same hex as the Ward-absorb flash", () => {
+  test("Kindled (paladin) uses the Autogenes house gold — same hex as the Ward-absorb flash", () => {
     const paladin = classAccentPalette("paladin");
     expect(paladin.accentColor).toBe(0xc9a84c);
     expect(paladin.visorColor).toBe(0xc9a84c);

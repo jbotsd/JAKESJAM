@@ -67,7 +67,7 @@ print Kalyptos/Protophanes/Autogenes as class labels per
 |--------|---------|--------------|
 | **wizard** | **Geometrician** | Engineer of light — geometry, charge, angle; not elemental master |
 | **ninja** | **Interstice** | Already between places; Paper Double / Read; not stealth assassin |
-| **paladin** | **Kindred** | Self-light heaven tank; Kindling resource; not knight of a god |
+| **paladin** | **Kindled** | Self-light heaven tank; Kindling resource; not knight of a god |
 | **priest** | **Syzygist** | From *syzygy* — paired/bound; power via others carrying your effects; not cleric |
 
 **Syzygist visual:** **cool-white** base read (not violet, not Autogenes gold).
@@ -96,7 +96,7 @@ Catalog movement/defense **must not replace** the always-on chassis verb:
 
 | Chassis | Always-on that stays sacred | Catalog may **not** obsolete |
 |---------|----------------------------|------------------------------|
-| Kindred | Kindled Ward (directional hold) + Kindled Edge weight | “Just equip a better shield button and ignore ward” |
+| Kindled | Kindled Ward (directional hold) + Kindled Edge weight | “Just equip a better shield button and ignore ward” |
 | Interstice | Dual-blade slash + short wave (tactile) + baseline dash | “Ignore slash; only catalog dashes and gadgets” |
 | Geometrician | Projectile kit + parry | “Never shoot; only catalog gadgets” |
 | Syzygist | Status/entanglement verb + baseline projectile | “Never curse/bind; only pure heal buttons” |

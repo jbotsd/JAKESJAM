@@ -84,7 +84,7 @@ export const BUFF_DESCRIPTORS: BuffDescriptor[] = [
   // ready-ping already uses for "an ability just came back" — instead of
   // inventing a new hue for a class-agnostic mechanic.
   { key: "resonance", field: "resonanceUntilTick", label: "RES", color: PALETTE.sapphirePulse, nominalMs: 2000 },
-  // Kindred catalog v1 (docs/class-ability-catalogs-v1.md, paladin-only) —
+  // Kindled catalog v1 (docs/class-ability-catalogs-v1.md, paladin-only) —
   // added 2026-07-18, closing the SAME nameplate-legibility gap the
   // Geometrician catalog rows above already close for Wizard. Gold-forward
   // family (classes-goal.md: "Gold-forward combat kit unlocked" — the one
@@ -107,8 +107,8 @@ export const BUFF_DESCRIPTORS: BuffDescriptor[] = [
   // table exists to close, now doubly true since the AFFECTED player also
   // needs their own tell that someone else buffed them. Cool-white family
   // (docs/character-sheets-v1.md: Syzygist visual LOCKED "cool-white...
-  // not violet, not Kindred gold") — distinct from every other family on
-  // this table (crystal-cyan Geometrician, gold Kindred, element colors).
+  // not violet, not Kindled gold") — distinct from every other family on
+  // this table (crystal-cyan Geometrician, gold Kindled, element colors).
   // No real Priest ability wires these yet (chunk 3.4); the rows exist so
   // the nameplate/action-bar surfaces are ready the moment one does.
   { key: "regen", field: "regenUntilTick", label: "REGEN", color: 0xdff7ff, nominalMs: 4000 },
@@ -129,7 +129,7 @@ export const BUFF_DESCRIPTORS: BuffDescriptor[] = [
   { key: "focus-hex", field: "focusHexMarkUntilTick", label: "MARK", color: 0xa5f3fc, nominalMs: 4000 },
   // Interstice catalog v1 (docs/class-ability-catalogs-v1.md, ninja-only) —
   // added 2026-07-18, closing the SAME nameplate-legibility gap the
-  // Geometrician/Kindred/Syzygist rows above already close for their own
+  // Geometrician/Kindled/Syzygist rows above already close for their own
   // chassis. Sharper/higher-frequency crystal-cyan family
   // (character-sheets-v1.md: "energy-resource glow — sharper, higher-
   // frequency pulse than wizard cyan") — distinct hex values from the

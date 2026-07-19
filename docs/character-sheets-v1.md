@@ -8,7 +8,7 @@ separately in `docs/classes-goal.md` and `docs/card-pool-v2.md`. This doc is
 for FANTASY, VOICE, and VISUAL IDENTITY — the parts still open.
 
 **Display names LOCKED (`classes-goal.md` § Naming):**
-`wizard` → **Geometrician** · `ninja` → **Interstice** · `paladin` → **Kindred** ·
+`wizard` → **Geometrician** · `ninja` → **Interstice** · `paladin` → **Kindled** ·
 `priest` → **Syzygist** (cool-white). Dev IDs stay English archetype words.
 
 **House register (do not drift from this without a reason):** sci-fi
@@ -253,7 +253,7 @@ shadow tendrils, not a cast glyph.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-## PALADIN / Kindred — the one who woke up
+## PALADIN / Kindled — the one who woke up
 
 **One line:** Heaven-tank presence, self-sourced. A vessel that finished
 tempering until the light was *theirs* — mass, board, and edge running
@@ -344,13 +344,13 @@ ult; body does not sky-launch.
 
 **Alt (heaven-tank combat):** *"Stand with me. That's the whole shield."*
 
-**Display name LOCKED: Kindred** (Jake, 2026-07-17, final call over
-Heavy / Ward / the earlier "Kindled" draft — Kindred reads as belonging/
+**Display name LOCKED: Kindled** (Jake, 2026-07-17, final call over
+Heavy / Ward / the earlier "Kindled" draft — Kindled reads as belonging/
 relation rather than a past-tense verb, and pairs better with the peel/
 team-shield fantasy than a self-only word did). "Paladin" as UI label is
-less radioactive now that heaven-tank feel is intentional, but Kindred is
+less radioactive now that heaven-tank feel is intentional, but Kindled is
 the shipped display name. Ability names **Kindled Edge**, **Kindled
-Ward**, and the **Kindling** resource are unaffected — a Kindred wields
+Ward**, and the **Kindling** resource are unaffected — a Kindled wields
 Kindled tools and gathers Kindling; the family of words still hangs
 together. **Unveiling** stays the ultimate name. Primary B "Unbroken
 Seal" still optional (Seal is card-rarity vocab); alts Full Temper /
@@ -374,7 +374,7 @@ and the honest ones are the scariest — because they never pretend
 otherwise.
 
 **Display / visual LOCKED:** **Syzygist**, **cool-white** (not violet, not
-Kindred gold). Clinical gift / devotion filament.
+Kindled gold). Clinical gift / devotion filament.
 
 **Anti-moodboard (Diablo Immortal Monk):** DI never shipped a pure priest
 — Monk is the closest it has, and that absence is itself the useful data
@@ -424,7 +424,7 @@ power alone is intentional and tuned**. Catalog must support a singular
 3-slot spec (offense/single/defense paths), not only buff stacks.
 
 **Visual identity:** Radiant-ring sigil. **Cool-white** locked — clinical
-gift / devotion filament; not Kindred gold, not void violet. Contagion
+gift / devotion filament; not Kindled gold, not void violet. Contagion
 and Flock tells must be READABLE from outside — threat is otherwise
 invisible (no big blade, no big bolt).
 

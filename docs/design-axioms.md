@@ -225,7 +225,7 @@ load-bearing for *feel and balance now*, not just beauty *later*.
 single foreign note (Four Immersions). **JAKESJAM:** the card pool's "one card, four readings —
 a nova through a blade is a spin-slash, through a board a quake" is exactly this. The VFX/SFX
 must *show* the refraction: the same underlying mechanic must read as unmistakably Geometrician
-(crystal geometry), Interstice (blade + wave), Kindred (settled light + weight), Syzygist
+(crystal geometry), Interstice (blade + wave), Kindled (settled light + weight), Syzygist
 (cool-white entanglement) — coherent *within* each lens, never a fireball on the geometrician
 or a WoW-rogue flourish on the ninja. Discrete infinity applied to presentation: few effects,
 each refracted four ways.

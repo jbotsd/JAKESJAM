@@ -104,7 +104,7 @@ export const priestStarterWeapon: WeaponDefinition = {
 };
 
 /**
- * Paladin/Kindred baseline (class-overhaul-workboard.md chunk 2.5,
+ * Paladin/Kindled baseline (class-overhaul-workboard.md chunk 2.5,
  * docs/classes-goal.md "E-KEY RULING": the ultimate IS the composed
  * Emission through the resolved build). Kindled Edge REPLACES this weapon
  * entirely for Paladin's actual Fire input (World.ts: "Ninja/Paladin: Fire

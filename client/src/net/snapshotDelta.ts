@@ -38,7 +38,7 @@
  *  P_HI bits 20-21: Resonance (class-overhaul-workboard.md chunk 0.1,
  *  class-agnostic — six-axes and catalog kinds alike) — resonanceUntilTick,
  *  resonanceSourceKind.
- *  P_HI bits 22-25: Kindred catalog v1 (docs/class-ability-catalogs-v1.md,
+ *  P_HI bits 22-25: Kindled catalog v1 (docs/class-ability-catalogs-v1.md,
  *  paladin-only) — judgmentTargetId, judgmentMarkUntilTick, sealUntilTick,
  *  aegisShareUntilTick.
  *  P_HI bits 26-29: Syzygist status substrate extension (class-overhaul-

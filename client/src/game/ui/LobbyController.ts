@@ -892,7 +892,7 @@ function readError(error: unknown): string {
   return "Unexpected lobby error.";
 }
 
-/** Class-era display name (Geometrician/Interstice/Kindred/Syzygist — the
+/** Class-era display name (Geometrician/Interstice/Kindled/Syzygist — the
  *  locked persona names, docs/classes-goal.md § Naming) for a sim-stable
  *  archetype id — sourced from the one characters.ts truth, never a second
  *  hand-kept map (docs/classes-goal.md P1). */

@@ -117,7 +117,7 @@ describe("per-class silhouette differentiation (CA3 — readable in flat black a
     }
   });
 
-  test("Kindred (paladin) is the tallest crest — smallest (most negative) tip.y magnitude beats every other class", () => {
+  test("Kindled (paladin) is the tallest crest — smallest (most negative) tip.y magnitude beats every other class", () => {
     const heights = classes
       .map((c) => ({ c, crest: headCrestGeometry(c, HEAD, S, F) }))
       .filter((x): x is { c: ClassId; crest: NonNullable<ReturnType<typeof headCrestGeometry>> } => x.crest !== null)
@@ -130,7 +130,7 @@ describe("per-class silhouette differentiation (CA3 — readable in flat black a
     }
   });
 
-  test("Kindred's crest is CENTERED (no facing sweep) — tip.x stays at head.x regardless of facing, unlike wizard/ninja", () => {
+  test("Kindled's crest is CENTERED (no facing sweep) — tip.x stays at head.x regardless of facing, unlike wizard/ninja", () => {
     const paladinRight = headCrestGeometry("paladin", HEAD, S, 1)!;
     const paladinLeft = headCrestGeometry("paladin", HEAD, S, -1)!;
     expect(paladinRight.tipGlow.x).toBeCloseTo(HEAD.x, 5);

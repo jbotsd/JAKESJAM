@@ -11,7 +11,7 @@ import type { CharacterDefinition } from "../types/game";
 // Display names LOCKED 2026-07-17 (docs/classes-goal.md § Naming,
 // docs/character-sheets-v1.md): sci-fi gnostic persona names, not the
 // generic class words. `wizard`→Geometrician, `ninja`→Interstice,
-// `paladin`→Kindred, `priest`→Syzygist. `classId` stays the dev-id English
+// `paladin`→Kindled, `priest`→Syzygist. `classId` stays the dev-id English
 // word (code/docs/sigil lookup only, zero sim meaning) — only `name`
 // (the player-facing string) speaks the persona.
 //
@@ -19,10 +19,10 @@ import type { CharacterDefinition } from "../types/game";
 // `kitComing` marks a class whose kit hasn't shipped so selection surfaces
 // can note it without over-promising.
 //
-// UPDATE 2026-07-18 (class-overhaul-workboard.md chunks 2.6/3.4): Kindred
-// (10/10 Kindred catalog abilities wired, incl. the Retribution Edge/Shock
+// UPDATE 2026-07-18 (class-overhaul-workboard.md chunks 2.6/3.4): Kindled
+// (10/10 Kindled catalog abilities wired, incl. the Retribution Edge/Shock
 // Ring/Rally Light fast-follow — Retribution Edge itself was later cut
-// 2026-07-19, see docs/class-ability-catalogs-v1.md's cut note; Kindred is
+// 2026-07-19, see docs/class-ability-catalogs-v1.md's cut note; Kindled is
 // still 10/10, just a different 10) and Syzygist (10/10 Syzygist catalog
 // abilities wired) both ship real kits now — `kitComing` removed for both,
 // and their `kitSummary`s name real, live abilities. Interstice stays
@@ -43,7 +43,7 @@ export const characters: CharacterDefinition[] = [
     // Prism Wall / Vector Charge named 2026-07-18 (chassis-verb legibility
     // pass) — kitSummary discipline above still applies: only wizard has no
     // kitComing flag, so only wizard's ability verbs belong in this string
-    // today. Deliberately NOT extended to Kindred/Interstice/Syzygist below.
+    // today. Deliberately NOT extended to Kindled/Interstice/Syzygist below.
     kitSummary: "100hp · the full crystal arsenal — every weapon, the parry, Prism Wall, Vector Charge",
     maxHealth: 100,
     moveSpeedMultiplier: 1,
@@ -54,9 +54,9 @@ export const characters: CharacterDefinition[] = [
   },
   {
     id: "heavy",
-    name: "Kindred",
+    name: "Kindled",
     classId: "paladin",
-    // Kindred catalog v1 shipped 10/10 (class-overhaul-workboard.md chunk
+    // Kindled catalog v1 shipped 10/10 (class-overhaul-workboard.md chunk
     // 2.6 fast-follow, 2026-07-18) — Kindled Edge (melee), Kindled Ward
     // (shield), Kindled Charge (dash), team-peel, and the Unveiling
     // ultimate are all real; kitComing removed per the honesty rule above.

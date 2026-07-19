@@ -101,7 +101,7 @@ number moves, the reading it serves must survive the move.
 Wizard/Ninja/Priest). Paladin's own 3 exclusives — Crater (rare, ability),
 Retort (uncommon, spec), Bastion (uncommon, passive), formerly #26-28 —
 were built, then cut entirely 2026-07-19: they were classId:"paladin"-
-gated the same way as the real 10-ability Kindred rack catalog
+gated the same way as the real 10-ability Kindled rack catalog
 (docs/class-ability-catalogs-v1.md), so they leaked into the loadout
 station's own full-catalog query as 3 extra cards, showing 13 total
 instead of a true 10 (a live-playtest bug Jake caught, not a "bonus picks"
@@ -629,7 +629,7 @@ Paladin used to have 3 exclusives here — Crater [rare, ability], Retort
 self-lit" register as the rest of the kit (leap-slam verdict, block-to-
 counter answer, standing-law aura). All 3 were actually **built**
 (client/src/sim/data/cards.ts, classId:"paladin"-gated exactly like the
-real 10-ability Kindred rack catalog, docs/class-ability-catalogs-v1.md),
+real 10-ability Kindled rack catalog, docs/class-ability-catalogs-v1.md),
 which is exactly the bug: `catalogForClass("paladin")` — the loadout
 station's own full-catalog query — doesn't distinguish "rack ability" from
 "draft-pool exclusive," so it surfaced all 13 in one undifferentiated

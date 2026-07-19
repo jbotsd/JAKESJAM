@@ -5,7 +5,7 @@
 //
 // The wire/sim ids stay the ORIGINAL archetype ids ("balanced" etc.) even
 // though the player-facing layer now speaks the LOCKED persona names
-// (Geometrician/Interstice/Kindred/Syzygist — docs/classes-goal.md §
+// (Geometrician/Interstice/Kindled/Syzygist — docs/classes-goal.md §
 // Naming, 2026-07-17): characterId is sim-visible (PlayerEntity/
 // PlayerSpawnInfo, replays serialize it), so renaming ids would break wire
 // compat and recorded replays for a purely cosmetic win. Display names

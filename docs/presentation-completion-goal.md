@@ -33,7 +33,7 @@ found is fixed, repeat until a pass surfaces nothing.
 
 ### Layer 1 — Animation (the rig moves with intent)
 - **Dialed:** every action has **anticipation → action → follow-through**, and the per-class
-  weight contract holds — Kindred *commits* (plant/brace/slow-recover), Interstice *flicks*
+  weight contract holds — Kindled *commits* (plant/brace/slow-recover), Interstice *flicks*
   (snap, no drag), Geometrician *charges* (wind/release), Syzygist *weaves* (smooth/tethered).
   Hit-stop + follow on impactful beats. The rig poses *to* its construct (hold the board, throw
   the blade, pour the field) — authored together, never layered blind.
@@ -45,7 +45,7 @@ found is fixed, repeat until a pass surfaces nothing.
 - **Dialed:** every mechanic has its construct read *at its site* (A16); each class's construct
   language is unmistakable (A17); intensity tuned so **fighters + hitboxes stay the loudest read**
   and the backdrop recedes (A18 — fixes the backdrop-louder-than-fighters leak); all geometry is
-  IDENT-GRAMMAR-legal (no Eye/triangle-ring/hexagram) and Kindred carries **no** liturgical
+  IDENT-GRAMMAR-legal (no Eye/triangle-ring/hexagram) and Kindled carries **no** liturgical
   iconography.
 - **Locked:** intensities, colors, and lifetimes frozen; a **locked effect does not change
   without a written playtest reason** (same law as six-axes "shapes are the design; numbers move
@@ -79,10 +79,10 @@ found is fixed, repeat until a pass surfaces nothing.
 |-------|------------------|-------------|--------------|----------|------------|----------------------|
 | **Geometrician** | Crystal lance/prism | project | parry+refract | Slip Node/Recoil Step | composed cast | ☐ ×10 |
 | **Interstice** | Twin light-blades + wave | dual-blade slash | Ghost Guard evade | dash/Razor/Paper | composed cast | ☐ ×10 |
-| **Kindred** | Kindled Edge (dense) | overhead/edge | **Kindled Ward (the centerpiece — raise/hold/absorb/drop)** | Plant/Bulwark Step | composed cast | ☐ ×10 (**roster must be complete first — see prereq**) |
+| **Kindled** | Kindled Edge (dense) | overhead/edge | **Kindled Ward (the centerpiece — raise/hold/absorb/drop)** | Plant/Bulwark Step | composed cast | ☐ ×10 (**roster must be complete first — see prereq**) |
 | **Syzygist** | Cool-white thread/motes | status/entangle | Self-/Glass Ward | Drift Step | composed cast | ☐ ×10 |
 
-**Each cell = all three layers (anim/VFX/audio) at the *locked* bar.** The Kindred divine shield
+**Each cell = all three layers (anim/VFX/audio) at the *locked* bar.** The Kindled divine shield
 is the flagship (`presentation-overhaul-goal.md` § centerpiece) and its four reads
 (raise/hold/absorb/drop, with absorb *feeding* the paladin) are individually gated.
 
@@ -90,9 +90,9 @@ is the flagship (`presentation-overhaul-goal.md` § centerpiece) and its four re
 
 ## Prerequisites (completion cannot start on an incomplete class)
 
-- **Paladin roster parity.** Kindred is under-covered (buff ×1, movement ×1), has 2 solo-dead
+- **Paladin roster parity.** Kindled is under-covered (buff ×1, movement ×1), has 2 solo-dead
   abilities, and is ~60% the wizard's build depth. Close it (add Kindled Resolve + Bulwark Step,
-  solo-clause Aegis/Rally — `axiom-deviations-audit.md` § Kindred) and build to wizard-parity
+  solo-clause Aegis/Rally — `axiom-deviations-audit.md` § Kindled) and build to wizard-parity
   *before* its presentation is locked. You cannot lock the render of a class that isn't built.
 - **Event contract complete.** Every mechanic emits a named event (§5) so every read has a hook.
 - **The two observable leaks fixed** (footage review): backdrop-louder-than-fighters (A18),
@@ -173,7 +173,7 @@ scale: it puts the frame in front of the eye that judges, over and over, until n
 4. **Spectacle over legibility** — a locked effect that buries the fight (A18).
 5. **Unlocking without a playtest reason** — the matrix is frozen; changes are earned by play.
 6. **Synthesized SFX** (house hard rule — rip the real thing).
-7. **Any forbidden geometry or liturgical iconography** (IDENT-GRAMMAR / Kindred char-sheet).
+7. **Any forbidden geometry or liturgical iconography** (IDENT-GRAMMAR / Kindled char-sheet).
 
 ---
 

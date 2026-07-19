@@ -56,7 +56,7 @@ export type ClassOption = {
   /** Sim/wire-stable archetype id ("balanced"...) — what actually persists. */
   id: string;
   /** Class display name — the LOCKED persona ("Geometrician",
-   *  "Interstice", "Kindred", "Syzygist"; docs/classes-goal.md § Naming). */
+   *  "Interstice", "Kindled", "Syzygist"; docs/classes-goal.md § Naming). */
   name: string;
   /** Display class id — picks the drawn sigil. */
   classId: "wizard" | "ninja" | "paladin" | "priest";

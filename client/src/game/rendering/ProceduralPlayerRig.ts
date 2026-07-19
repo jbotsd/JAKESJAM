@@ -21,7 +21,7 @@ import {
   drawBladeSwing,
   drawKindledSwing,
   INTERSTICE_TINT,
-  KINDRED_TINT,
+  KINDLED_TINT,
 } from "../render/LightConstruct.js";
 
 /** The minimal surface SimEventRouter drives on ANY on-screen combatant —
@@ -36,7 +36,7 @@ export interface CombatRig {
   triggerHit(dirX: number, dirY: number): void;
   triggerParryFlash(): void;
   triggerKillPulse(): void;
-  triggerMeleeSwing?(style: "interstice" | "kindred", dir: number): void;
+  triggerMeleeSwing?(style: "interstice" | "kindled", dir: number): void;
   triggerAbility?(kind: AbilityKind): void;
   destroy(): void;
 }
@@ -401,7 +401,7 @@ export class ProceduralPlayerRig implements CombatRig {
   private static readonly FIRE_RECOIL_MS = 200;
   private meleePoseMs = 0;
   private meleePoseDurationMs = 1;
-  private meleePoseStyle: "interstice" | "kindred" = "interstice";
+  private meleePoseStyle: "interstice" | "kindled" = "interstice";
   private meleePoseDir = 1;
   // Live blade-tip trail for the Kindled Edge's swept-ribbon read
   // (drawKindledSwing's tipHistory param) — sampled once per frame while a
@@ -804,7 +804,7 @@ export class ProceduralPlayerRig implements CombatRig {
 
   /** Render-only melee sentence: coil, cross-body cut, committed travel past
    * contact, then recovery. Simulation hit timing and position never move. */
-  triggerMeleeSwing(style: "interstice" | "kindred", dir: number): void {
+  triggerMeleeSwing(style: "interstice" | "kindled", dir: number): void {
     this.meleePoseStyle = style;
     this.meleePoseDir = dir >= 0 ? 1 : -1;
     this.meleePoseDurationMs = style === "interstice" ? 360 : 560;
@@ -1118,19 +1118,19 @@ export class ProceduralPlayerRig implements CombatRig {
     const meleeT = this.meleePoseMs > 0
       ? 1 - this.meleePoseMs / this.meleePoseDurationMs
       : 1;
-    const meleeAnticipationEnd = this.meleePoseStyle === "kindred" ? 0.38 : 0.32;
-    const meleeCutEnd = this.meleePoseStyle === "kindred" ? 0.61 : 0.52;
+    const meleeAnticipationEnd = this.meleePoseStyle === "kindled" ? 0.38 : 0.32;
+    const meleeCutEnd = this.meleePoseStyle === "kindled" ? 0.61 : 0.52;
     // Load from the floor: hips/chest/head sink together during anticipation,
     // then rise sharply into the cut. Feet retain their authoritative contact.
     const meleeGroundLoad = this.meleePoseMs <= 0
       ? 0
       : meleeT < meleeAnticipationEnd
         ? Math.sin((meleeT / meleeAnticipationEnd) * Math.PI * 0.5) *
-          (this.meleePoseStyle === "kindred" ? 14 : 10) * s
+          (this.meleePoseStyle === "kindled" ? 14 : 10) * s
         : meleeT < meleeCutEnd
           ? (1 - (meleeT - meleeAnticipationEnd) /
             (meleeCutEnd - meleeAnticipationEnd)) *
-            (this.meleePoseStyle === "kindred" ? 14 : 10) * s
+            (this.meleePoseStyle === "kindled" ? 14 : 10) * s
           : 0;
     // Key positions — head/chest lag hip for floppy chain.
     // gather dips the whole chain, slightly harder toward the head — the
@@ -1292,11 +1292,11 @@ export class ProceduralPlayerRig implements CombatRig {
     );
 
     if (this.meleePoseMs > 0) {
-      // Kindred always cuts with the sword hand; alternating the combo only
+      // Kindled always cuts with the sword hand; alternating the combo only
       // reverses its travel. Interstice really alternates its two daggers.
-      // Treating Kindred's shield hand as a sword hand on every other swing
+      // Treating Kindled's shield hand as a sword hand on every other swing
       // detached the visible blade from the anatomy.
-      const activeLead = this.meleePoseStyle === "kindred" || this.meleePoseDir > 0;
+      const activeLead = this.meleePoseStyle === "kindled" || this.meleePoseDir > 0;
       const shoulder = activeLead ? shoulderLead : shoulderBack;
       const guardShoulder = activeLead ? shoulderBack : shoulderLead;
       const active = activeLead ? armTargets.lead : armTargets.back;
@@ -1317,7 +1317,7 @@ export class ProceduralPlayerRig implements CombatRig {
         guard.x = guardShoulder.x + Math.cos(offPose.angle) * offPose.reach * s;
         guard.y = guardShoulder.y + Math.sin(offPose.angle) * offPose.reach * s;
       } else {
-        const brace = meleeStage(meleeT, "kindred");
+        const brace = meleeStage(meleeT, "kindled");
         const braceOpen = brace.recovery;
         const guardAngle = aimAngle - this.meleePoseDir * (0.55 - braceOpen * 0.22);
         const guardReach = (25 + braceOpen * 4) * s;
@@ -1431,7 +1431,7 @@ export class ProceduralPlayerRig implements CombatRig {
     // The generic hand spring is intentionally soft for locomotion/idle, but
     // it erased a 70–130ms sword cut. During melee the arm follows the authored
     // kinetic chain crisply; anticipation remains slower than the contact beat
-    // and Kindred remains weightier than Interstice.
+    // and Kindled remains weightier than Interstice.
     const meleeCutActive = this.meleePoseMs > 0 &&
       meleeT >= meleeAnticipationEnd && meleeT < meleeCutEnd;
     const armFreq = this.meleePoseMs <= 0
@@ -1499,7 +1499,7 @@ export class ProceduralPlayerRig implements CombatRig {
     const legR = solveTwoBone(hipR, footR, legLen1, legLen2, -this.facing);
     const armUpper = ProceduralPlayerRig.ARM_UPPER * s;
     const armLower = ProceduralPlayerRig.ARM_LOWER * s;
-    const meleeLeadBend = this.meleePoseMs > 0 && this.meleePoseStyle === "kindred"
+    const meleeLeadBend = this.meleePoseMs > 0 && this.meleePoseStyle === "kindled"
       ? -this.meleePoseDir * this.facing
       : -this.facing * (1 + this.leadElbowWobble.value * 0.15);
     const armLead = solveTwoBone(
@@ -1637,14 +1637,14 @@ export class ProceduralPlayerRig implements CombatRig {
         tip,
         ProceduralPlayerRig.MELEE_TIP_HISTORY_MAX,
       );
-      if (bladeParams.style === "kindred") {
+      if (bladeParams.style === "kindled") {
         drawKindledSwing(
           g,
           bladeParams.leadPivot,
           bladeParams.backPivot,
           bladeParams.aimRad,
           bladeParams.reach,
-          KINDRED_TINT,
+          KINDLED_TINT,
           bladeParams.sweepRad,
           bladeParams.dir,
           bladeParams.t,

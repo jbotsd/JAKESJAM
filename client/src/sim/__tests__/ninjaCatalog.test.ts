@@ -1,6 +1,6 @@
 // Interstice catalog v1 (docs/class-ability-catalogs-v1.md) — the ninja's
 // class ability catalog, plugged into the EXISTING six-axes rack/draft
-// substrate (docs/six-axes-goal.md) and the Geometrician/Kindred/Syzygist
+// substrate (docs/six-axes-goal.md) and the Geometrician/Kindled/Syzygist
 // catalogs' own activation-switch pattern. All 10 of the doc's 10 abilities
 // are now wired — "paper-double" (movement, the decoy) shipped as its own
 // fast-follow pass once its blocking dependency (a new decoy/summon entity
@@ -325,7 +325,7 @@ describe("Interstice catalog v1 — offer-roll classId gating", () => {
     }
   });
 
-  test("a ninja NEVER sees a Kindred/Geometrician/Syzygist catalog offer — the gate is symmetric", () => {
+  test("a ninja NEVER sees a Kindled/Geometrician/Syzygist catalog offer — the gate is symmetric", () => {
     const ninja = mkPlayer(A, 400, 400, "sprinter");
     const other = mkPlayer(B, 600, 400, "balanced");
     const round = {

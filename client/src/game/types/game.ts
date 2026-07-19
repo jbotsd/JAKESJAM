@@ -68,7 +68,7 @@ export type PlayerState = {
  * the original archetype ids (wire/replay compat; see
  * net/playerCharacter.ts). `classId` is dev-id vocabulary (code/docs/sigil
  * lookup) — the LOCKED player-facing persona name (Geometrician/Interstice/
- * Kindred/Syzygist, docs/classes-goal.md § Naming) lives on
+ * Kindled/Syzygist, docs/classes-goal.md § Naming) lives on
  * `CharacterDefinition.name`, never here.
  *
  * UPDATE 2026-07-17 (class-expression infra): `ClassId` is no longer
@@ -83,7 +83,7 @@ export type PlayerState = {
 export type CharacterDefinition = {
   id: CharacterId;
   /** Player-facing display name — the LOCKED persona ("Geometrician",
-   *  "Interstice", "Kindred", "Syzygist"; docs/classes-goal.md § Naming,
+   *  "Interstice", "Kindled", "Syzygist"; docs/classes-goal.md § Naming,
    *  2026-07-17), never the old archetype word and never the bare dev-id
    *  class word (that's `classId` below). */
   name: string;

@@ -8,9 +8,9 @@
 //     CA2/CA3 are explicit that these two classes are differentiated by
 //     SILHOUETTE, not color; they intentionally read the same combat-cyan
 //     register.
-//   - Autogenes gold (grown/carried): Kindred's always-on vein-circuitry.
+//   - Autogenes gold (grown/carried): Kindled's always-on vein-circuitry.
 //     Same hex OnlineMatchScene.spawnWardAbsorbFlash already uses for
-//     Kindred's Ward-absorb flash — one gold, not two.
+//     Kindled's Ward-absorb flash — one gold, not two.
 //   - Measured white (observed/instrument): Syzygist's tick-marked ring +
 //     spine-conduit. This settles the previously-open "cool-white vs.
 //     reserved violet" question from earlier this session — white is the
@@ -37,7 +37,7 @@ export type ClassAccentPalette = {
  *  play-readability cyan, `#8ff8ff`). */
 const COMBAT_CYAN = 0x8ff8ff;
 /** House/self-generated register (Autogenes gold, `#c9a84c` — the same hex
- *  used across this codebase's render layer for Kindred/house VFX). */
+ *  used across this codebase's render layer for Kindled/house VFX). */
 const HOUSE_GOLD = 0xc9a84c;
 /** Measured/instrument register — cool white with a faint blue cast, NOT a
  *  dimmed cyan and NOT violet. Syzygist's own register, doing a job

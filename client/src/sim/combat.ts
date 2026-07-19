@@ -61,7 +61,7 @@ export const SHIELD_HIT_DRAIN_MULTIPLIER = 1.8;
  *  playtest-pending like every number this session. */
 export const NINJA_GHOST_GUARD_MOVE_SPEED_THRESHOLD = 60;
 
-// ── KINDLED WARD (2026-07-18, docs/classes-goal.md Paladin/Kindred verb —
+// ── KINDLED WARD (2026-07-18, docs/classes-goal.md Paladin/Kindled verb —
 // class-overhaul-workboard.md chunks 2.2/2.3) ───────────────────────────────
 // Paladin's frontal directional block. Reuses the EXISTING held-shield
 // plumbing every class already has (input bit, `tickShield`'s shieldActive/
@@ -220,7 +220,7 @@ function trySyzygistWard(
  * checks — callers (World.ts's `findTeamPeelWarder`) are responsible for
  * confirming the warder is actually holding Ward and is an ally of the
  * victim before treating this as "peel applies." `radiusPx` defaults to
- * `WARD_PEEL_RADIUS_PX`; Aegis Share (Kindred catalog v1) widens it for a
+ * `WARD_PEEL_RADIUS_PX`; Aegis Share (Kindled catalog v1) widens it for a
  * warder with that window live.
  */
 export function isAllyBodyInWardCone(

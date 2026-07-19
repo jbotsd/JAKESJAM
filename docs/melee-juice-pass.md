@@ -1,4 +1,4 @@
-# Melee Juice Pass — Interstice and Kindred
+# Melee Juice Pass — Interstice and Kindled
 
 ## Target
 
@@ -58,7 +58,7 @@ third-party mesh, animation, or audio is imported.
 - Full procedural body shifts back during load, forward during cut, stays
   committed through follow-through, then returns.
 
-### Kindred
+### Kindled
 
 - 430 ms render sentence: longer load and recovery than Interstice.
 - Shield hand remains braced across the body during sword commitment.
@@ -77,7 +77,7 @@ Findings and fixes:
 1. Previous wall-clock capture skipped most of each attack because screenshot
    latency exceeded the short cut window. Harness now sets exact normalized
    progress for every frame.
-2. Kindred board crowded the sword lane. Board moved to the off-line brace.
+2. Kindled board crowded the sword lane. Board moved to the off-line brace.
 3. Painters produced timed "impact" sparks even on whiffs. Removed; confirmed
    sim contact owns impact punctuation.
 4. Interstice follow-through is now visibly held across multiple samples,
@@ -85,13 +85,13 @@ Findings and fixes:
 
 ## Pass 3 — separation and honesty
 
-Re-captured 18 exact Interstice samples and 22 exact Kindred samples after the
+Re-captured 18 exact Interstice samples and 22 exact Kindled samples after the
 lane and contact fixes.
 
 - Interstice preserves a quiet six-sample coil, crosses the target during a
   short high-density trail burst, and holds the low finishing line before
   dissolving into recovery.
-- Kindred remains visibly slower: the sword begins behind the raised board,
+- Kindled remains visibly slower: the sword begins behind the raised board,
   crosses its face without being hidden by it, then finishes low while the
   shield continues to read as a defensive brace.
 - Neither whiff emits a contact spark. Trail communicates velocity; only a
@@ -106,7 +106,7 @@ a wider, more cinematic motion grounded in the path a held blade really takes.
   deliberately narrow 20% acceleration window. Its nominal sweep is 2.25
   radians; coil-to-overshoot blade travel is roughly 3.24 radians (186°), with an
   82 px blade reach. This remains screen-wide without becoming a full windmill.
-- Kindred is now a 560 ms sentence with a deeper 38% load, a 2.5-radian dense
+- Kindled is now a 560 ms sentence with a deeper 38% load, a 2.5-radian dense
   edge path, 88 px reach, and longer committed finish.
 - Feet remain planted at their authoritative render contacts while hips,
   chest, and head compress during the load and release into forward centre-of-
@@ -140,14 +140,14 @@ not a slash.
 - The off hand is a late counterguard, not a duplicate slash. It closes the
   exposed line after the dominant blade crosses while keeping a separate arm
   silhouette.
-- Kindred always cuts with the sword hand. Combo direction reverses the same
+- Kindled always cuts with the sword hand. Combo direction reverses the same
   sword's travel; it no longer animates the shield hand on alternating swings.
   The shield elbow stays bent and the board remains forward through contact.
 - Grounded attacks widen and plant the stance. Hips/chest carry forward while
   the feet remain behind, making force visibly originate below the shoulder.
 - Melee temporarily raises arm-solver frequency during the contact window so
   the generic soft locomotion spring cannot erase a 70–130 ms cut. Interstice
-  remains whippier than Kindred.
+  remains whippier than Kindled.
 - Decorative wrist-centred crescent bands were removed. The cinematic ribbon
   and blade ghosts are reconstructed from sampled world-space tip travel, so
   hand translation and torso drive visibly bend the arc.
@@ -161,13 +161,13 @@ world-space tip path. The captured aim line is the radial intercept through
 that path.
 
 - `meleeContactT()` places the intercept at the 68% velocity apex inside each
-  cut: about 164 ms after Interstice starts and 300 ms after Kindred starts.
+  cut: about 164 ms after Interstice starts and 300 ms after Kindled starts.
 - At that instant the blade is within 0.08 radians of the captured aim line and
   still has authored travel remaining on its far side. Contact is punctuation,
   not the ending pose.
 - The authoritative sim now withholds player and practice-dummy damage until
   those crossings: 44 ms into Interstice's active phase and 100 ms into
-  Kindred's. It continues checking through the remaining active tail, so a
+  Kindled's. It continues checking through the remaining active tail, so a
   body entering late can still be struck.
 - Tests prove no damage one tick before the intercept, damage at the intercept,
   peak angular speed at the crossing, and unchanged mark/execute/shield-rider
@@ -193,10 +193,10 @@ block.
   the blade visibly lags, catches, and becomes the fastest link at the radial
   intercept. A finite-difference contract proves distal blade angular speed is
   more than twice hand angular speed at that crossing.
-- Kindred retains the shield brace and one-handed sword anatomy. Interstice
+- Kindled retains the shield brace and one-handed sword anatomy. Interstice
   retains its off-hand counterguard. Only the force-transfer mechanism comes
   from the bat analogy.
-- Fresh deterministic full-body filmstrips at 18 Interstice and 22 Kindred
+- Fresh deterministic full-body filmstrips at 18 Interstice and 22 Kindled
   phases confirm rear-side coil, front-side brace, delayed shoulder release,
   and weapon-led follow-through without foot skating.
 
@@ -207,13 +207,13 @@ every shipped `AbilityKind`. `ability-activated` drives the caster rig through
 that render-only contract. Shared gesture families keep the vocabulary
 learnable, while duration, anticipation, reach, body commitment, handedness,
 and class cadence are authored per ability. An exhaustiveness test covers all
-active cards and checks the distinct Interstice/Geometrician/Kindred/Syzygist
+active cards and checks the distinct Interstice/Geometrician/Kindled/Syzygist
 weight bands.
 
 ## Current evidence and remaining review
 
 - Complete procedural-fighter filmstrips now cover 18 exact Interstice phases
-  and 22 exact Kindred phases, including the linked arm and planted feet.
+  and 22 exact Kindled phases, including the linked arm and planted feet.
 - Review at potato, phone, and standard tiers.
 - Review confirmed hit and deliberate whiff side by side.
 - Audio-only review remains open; no unrelated or synthetic sword cue may be

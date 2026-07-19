@@ -76,7 +76,7 @@ const CLASSES: ClassId[] = ["wizard", "ninja", "paladin", "priest"];
 const PERSONA: Record<ClassId, string> = {
   wizard: "Geometrician",
   ninja: "Interstice",
-  paladin: "Kindred",
+  paladin: "Kindled",
   priest: "Syzygist",
 };
 const CHASSIS: Record<ClassId, CharacterArchetype> = {
@@ -105,25 +105,25 @@ const LOADOUTS: Record<ClassId, string[]> = {
 // pre-cursed target from Bleed Tithe landing first; Contagion needs a
 // SECOND enemy to spread fire to) — deliberately not picked here.
 
-// ── Kindred ability leaderboard: exercise all 12 catalog abilities ──────
+// ── Kindled ability leaderboard: exercise all 12 catalog abilities ──────
 //
-// `LOADOUTS.paladin` above only tests 3/12 Kindred abilities. Jake wants to
-// use this harness's per-ability data to cut Kindred's catalog from 12 to
+// `LOADOUTS.paladin` above only tests 3/12 Kindled abilities. Jake wants to
+// use this harness's per-ability data to cut Kindled's catalog from 12 to
 // 10 (parity with the other 3 classes' 10-ability catalogs) — that needs
 // comparable usage/damage/kill/no-effect data for ALL 12
-// (client/src/sim/__tests__/kindredCatalog.test.ts's KINDRED_ABILITY_IDS
+// (client/src/sim/__tests__/kindledCatalog.test.ts's KINDLED_ABILITY_IDS
 // is the authoritative full list). Three more 3-ability variant loadouts
 // below cover the remaining 9; the grouping itself is arbitrary — a
 // vehicle to get every ability activated at a comparable rate, not a
 // design statement about which abilities belong together.
-const KINDRED_VARIANTS: { label: string; cards: string[] }[] = [
+const KINDLED_VARIANTS: { label: string; cards: string[] }[] = [
   { label: "baseline", cards: LOADOUTS.paladin }, // sunspike / judgment-line / bastion-pulse
   { label: "variant-b", cards: ["unbroken-seal", "consecrated-field", "aegis-share"] },
   { label: "variant-c", cards: ["plant-charge", "retribution-edge", "shock-ring"] },
   { label: "variant-d", cards: ["rally-light", "kindled-resolve", "bulwark-step"] },
 ];
 
-// ── mkPlayer / mkState (mirrors client/src/sim/__tests__/kindredCatalog.test.ts) ──
+// ── mkPlayer / mkState (mirrors client/src/sim/__tests__/kindledCatalog.test.ts) ──
 
 function mkPlayer(
   id: PlayerId,
@@ -202,7 +202,7 @@ function mkState(players: PlayerEntity[], rngSeed: number): WorldState {
 // ATTACK_RANGE tuned to sit INSIDE melee reach (World.ts's EDGE_RANGE=84
 // for paladin's Kindled Edge, SLASH_RANGE=78 for ninja's arc) — a first
 // pass at 220px left both melee classes' basic attack landing ~0 hits ever
-// (verified: 480/480 Kindred matches, 0 basic-fire hits), which produced a
+// (verified: 480/480 Kindled matches, 0 basic-fire hits), which produced a
 // nonsensical 0% mirror-match win rate. The hold band (ATTACK_RANGE-40 to
 // ATTACK_RANGE+20 = 60-120px) now straddles both melee ranges while still
 // comfortably inside FIRE_RANGE for the two ranged classes, so the SAME
@@ -420,12 +420,12 @@ function runTrial(
   rowAgg: ClassAggregate,
   colAgg: ClassAggregate,
   noEffect: Map<string, NoEffectObs>,
-  // Additive params for the Kindred ability-leaderboard extension below —
+  // Additive params for the Kindled ability-leaderboard extension below —
   // every existing call site omits these and gets EXACTLY the prior
   // behavior (LOADOUTS[rowClass]/LOADOUTS[colClass], both sides recorded).
   // rowCardsOverride/colCardsOverride let a caller swap in an arbitrary
   // loadout for a class's chassis without inventing a new ClassId (e.g.
-  // testing a Kindred ability-variant kit that isn't `LOADOUTS.paladin`);
+  // testing a Kindled ability-variant kit that isn't `LOADOUTS.paladin`);
   // noEffectSides restricts which side's ability-activated observations
   // get finalized into `noEffect`, so a fixed "reference opponent" run
   // repeatedly against several row-side variants doesn't have the
@@ -747,7 +747,7 @@ function advanceObservation(
   // effect distinct from a total no-op). Matched by ownerId (not just
   // kind+classId): a kind+classId-only match would cross-attribute in any
   // mirror matchup where both sides share BOTH class and ability kind
-  // (e.g. a Kindred-baseline-vs-Kindred-baseline trial, which the ability
+  // (e.g. a Kindled-baseline-vs-Kindled-baseline trial, which the ability
   // leaderboard's variant-1 run relies on) — obs.playerId's own projectile
   // is the only valid evidence for obs.playerId's own activation.
   for (const id in next.projectiles) {
@@ -847,7 +847,7 @@ async function main(): Promise<void> {
 
   const elapsedMs = performance.now() - startedAt;
 
-  // ── Kindred (Paladin) ability leaderboard ───────────────────────────────
+  // ── Kindled (Paladin) ability leaderboard ───────────────────────────────
   //
   // Additive phase, entirely separate from the main matrix above (which is
   // untouched — same seeds, same loop, same TRIALS_PER_PAIR). Runs the 3
@@ -856,10 +856,10 @@ async function main(): Promise<void> {
   // against a FIXED reference opponent so every one of the 12 abilities is
   // judged under identical conditions.
   //
-  // Opponent choice: the Kindred BASELINE loadout (sunspike/judgment-line/
+  // Opponent choice: the Kindled BASELINE loadout (sunspike/judgment-line/
   // bastion-pulse) for every variant, including the baseline variant
   // itself (a mirror). Rationale: the main matrix already characterizes
-  // Kindred against 4 very different external kits (wizard/ninja/paladin/
+  // Kindled against 4 very different external kits (wizard/ninja/paladin/
   // priest) — that's the wrong reference for "does THIS specific ability
   // pull weight", since a landslide loss/win there is dominated by the
   // OPPONENT class's kit, not the ability being tested. A fixed,
@@ -871,11 +871,11 @@ async function main(): Promise<void> {
   // activations are deliberately discarded every run so baseline abilities
   // don't end up with a 4x-larger sample than the other 9 just because
   // they're also cast by the reference opponent in variants b/c/d.
-  const kindredStartedAt = performance.now();
-  const kindredLeaderAgg = newClassAggregate();
-  const kindredDiscardAgg = newClassAggregate();
-  const kindredNoEffect = new Map<string, NoEffectObs>();
-  const kindredVariantOutcomes: {
+  const kindledStartedAt = performance.now();
+  const kindledLeaderAgg = newClassAggregate();
+  const kindledDiscardAgg = newClassAggregate();
+  const kindledNoEffect = new Map<string, NoEffectObs>();
+  const kindledVariantOutcomes: {
     label: string;
     cards: string[];
     wins: number;
@@ -883,11 +883,11 @@ async function main(): Promise<void> {
     timeouts: number;
     doubleKOs: number;
   }[] = [];
-  const kindredKindToVariant = new Map<string, string>();
+  const kindledKindToVariant = new Map<string, string>();
 
   let kSeed = 1_000_000; // separate seed space from the main matrix, purely tidy.
-  for (const variant of KINDRED_VARIANTS) {
-    for (const kind of variant.cards) kindredKindToVariant.set(kind, variant.label);
+  for (const variant of KINDLED_VARIANTS) {
+    for (const kind of variant.cards) kindledKindToVariant.set(kind, variant.label);
     let wins = 0;
     let decided = 0;
     let variantTimeouts = 0;
@@ -898,9 +898,9 @@ async function main(): Promise<void> {
         "paladin",
         "paladin",
         kSeed,
-        kindredLeaderAgg,
-        kindredDiscardAgg,
-        kindredNoEffect,
+        kindledLeaderAgg,
+        kindledDiscardAgg,
+        kindledNoEffect,
         variant.cards,
         LOADOUTS.paladin,
         "row",
@@ -914,7 +914,7 @@ async function main(): Promise<void> {
         if (outcome.winner === "row") wins += 1;
       }
     }
-    kindredVariantOutcomes.push({
+    kindledVariantOutcomes.push({
       label: variant.label,
       cards: variant.cards,
       wins,
@@ -923,8 +923,8 @@ async function main(): Promise<void> {
       doubleKOs: variantDoubleKOs,
     });
   }
-  const kindredElapsedMs = performance.now() - kindredStartedAt;
-  const kindredTrials = KINDRED_VARIANTS.length * TRIALS_PER_PAIR;
+  const kindledElapsedMs = performance.now() - kindledStartedAt;
+  const kindledTrials = KINDLED_VARIANTS.length * TRIALS_PER_PAIR;
 
   // Per-ability leaderboard row. "Impact score" = damage + kills×100 (a
   // kill is treated as worth one full health bar of damage, so a
@@ -950,13 +950,13 @@ async function main(): Promise<void> {
   // below (by activations===0, not hardcoded by name) so it can never be
   // silently read as "this is the ability to cut."
   const KILL_IMPACT_VALUE = 100;
-  const kindredLeaderboard = KINDRED_VARIANTS.flatMap((v) => v.cards).map((kind) => {
-    const stat = kindredLeaderAgg.abilities.get(kind) ?? { activations: 0, hits: 0, damage: 0, kills: 0 };
-    const noEff = kindredNoEffect.get(kind) ?? { activations: 0, withEffect: 0, allyStarved: false };
+  const kindledLeaderboard = KINDLED_VARIANTS.flatMap((v) => v.cards).map((kind) => {
+    const stat = kindledLeaderAgg.abilities.get(kind) ?? { activations: 0, hits: 0, damage: 0, kills: 0 };
+    const noEff = kindledNoEffect.get(kind) ?? { activations: 0, withEffect: 0, allyStarved: false };
     const noEffectRatePct = noEff.activations > 0 ? 100 * (1 - noEff.withEffect / noEff.activations) : null;
     return {
       kind,
-      variant: kindredKindToVariant.get(kind) ?? "?",
+      variant: kindledKindToVariant.get(kind) ?? "?",
       activations: stat.activations,
       activationsPerMatch: TRIALS_PER_PAIR > 0 ? stat.activations / TRIALS_PER_PAIR : 0,
       hits: stat.hits,
@@ -977,7 +977,7 @@ async function main(): Promise<void> {
   // in the weakest-by-impact ordering, and burying it among the other
   // genuinely-tested 0-damage entries would defeat the point of flagging
   // it at all.
-  kindredLeaderboard.sort((a, b) => {
+  kindledLeaderboard.sort((a, b) => {
     const aGap = a.dataGapWarning !== null;
     const bGap = b.dataGapWarning !== null;
     if (aGap !== bGap) return aGap ? -1 : 1;
@@ -1132,22 +1132,22 @@ async function main(): Promise<void> {
       ],
     },
     // ADDITIVE to abilityUsage/damageAttribution above, not a replacement —
-    // this is a Kindred(paladin)-only, catalog-cut-focused view covering
+    // this is a Kindled(paladin)-only, catalog-cut-focused view covering
     // all 12 abilities (abilityUsage.paladin above only covers the 3 in
     // LOADOUTS.paladin) under a controlled, identical-opponent condition.
-    kindredAbilityLeaderboard: {
-      opponent: "Kindred baseline loadout (sunspike / judgment-line / bastion-pulse), fixed for every variant including the baseline-vs-baseline mirror — isolates each variant's own abilities rather than being confounded by a rotating cast of very different external class kits.",
+    kindledAbilityLeaderboard: {
+      opponent: "Kindled baseline loadout (sunspike / judgment-line / bastion-pulse), fixed for every variant including the baseline-vs-baseline mirror — isolates each variant's own abilities rather than being confounded by a rotating cast of very different external class kits.",
       trialsPerVariant: TRIALS_PER_PAIR,
-      totalTrials: kindredTrials,
-      elapsedMs: kindredElapsedMs,
-      variants: KINDRED_VARIANTS.map((v) => ({
+      totalTrials: kindledTrials,
+      elapsedMs: kindledElapsedMs,
+      variants: KINDLED_VARIANTS.map((v) => ({
         label: v.label,
         cards: v.cards,
-        matchup: kindredVariantOutcomes.find((o) => o.label === v.label),
+        matchup: kindledVariantOutcomes.find((o) => o.label === v.label),
       })),
       killImpactValue: KILL_IMPACT_VALUE,
       note: "impactScore = damage + kills×100, sorted ascending (weakest-by-impact first). A 0-damage/0-kill entry is NOT necessarily a no-op — check its own noEffectRatePct: a buff/mark/defense ability can legitimately show real in-sim effect (a buff window opening, a mark landing) while crediting zero damage here, because its payoff shows up as amplified basic-fire damage this harness's projectile-tag heuristic can't trace back to it. Cross-reference both columns before recommending a cut.",
-      leaderboard: kindredLeaderboard,
+      leaderboard: kindledLeaderboard,
     },
   };
 
@@ -1228,26 +1228,26 @@ async function main(): Promise<void> {
     );
   }
 
-  console.log("\n── Kindred (Paladin) 12-ability leaderboard — catalog-cut data ──");
+  console.log("\n── Kindled (Paladin) 12-ability leaderboard — catalog-cut data ──");
   console.log(
-    `  ${r.kindredAbilityLeaderboard.totalTrials} trials (${r.kindredAbilityLeaderboard.variants.length} variants × ${r.kindredAbilityLeaderboard.trialsPerVariant}) in ${(r.kindredAbilityLeaderboard.elapsedMs / 1000).toFixed(2)}s`,
+    `  ${r.kindledAbilityLeaderboard.totalTrials} trials (${r.kindledAbilityLeaderboard.variants.length} variants × ${r.kindledAbilityLeaderboard.trialsPerVariant}) in ${(r.kindledAbilityLeaderboard.elapsedMs / 1000).toFixed(2)}s`,
   );
-  console.log(`  Opponent: ${r.kindredAbilityLeaderboard.opponent}`);
-  for (const v of r.kindredAbilityLeaderboard.variants) {
+  console.log(`  Opponent: ${r.kindledAbilityLeaderboard.opponent}`);
+  for (const v of r.kindledAbilityLeaderboard.variants) {
     const m = v.matchup;
     const rate = m && m.decided > 0 ? `${((100 * m.wins) / m.decided).toFixed(0)}% (${m.wins}/${m.decided})` : "n/a";
     console.log(
       `  ${v.label.padEnd(10)} [${v.cards.join(", ")}] — vs opponent: ${rate}, timeouts=${m?.timeouts ?? 0}, doubleKOs=${m?.doubleKOs ?? 0}`,
     );
   }
-  console.log(`  sorted weakest-by-impact first (impactScore = damage + kills×${r.kindredAbilityLeaderboard.killImpactValue})`);
+  console.log(`  sorted weakest-by-impact first (impactScore = damage + kills×${r.kindledAbilityLeaderboard.killImpactValue})`);
   console.log(
     "  " +
       ["kind", "variant", "acts/match", "hits", "damage", "avgDmg/act", "kills", "no-effect%", "impact"]
         .map((h, i) => h.padEnd([20, 11, 11, 6, 9, 11, 6, 11, 8][i]!))
         .join(""),
   );
-  for (const e of r.kindredAbilityLeaderboard.leaderboard) {
+  for (const e of r.kindledAbilityLeaderboard.leaderboard) {
     const marker = e.dataGapWarning !== null ? "  ⚠ DATA GAP — see below" : "";
     console.log(
       "  " +
@@ -1264,10 +1264,10 @@ async function main(): Promise<void> {
         ].join("") + marker,
     );
   }
-  for (const e of r.kindredAbilityLeaderboard.leaderboard) {
+  for (const e of r.kindledAbilityLeaderboard.leaderboard) {
     if (e.dataGapWarning !== null) console.log(`  ⚠ ${e.kind}: ${e.dataGapWarning}`);
   }
-  console.log(`  ${r.kindredAbilityLeaderboard.note}`);
+  console.log(`  ${r.kindledAbilityLeaderboard.note}`);
 
     console.log("\n── Scope limits (read before trusting these numbers) ──");
     for (const n of r.scope.notes) console.log(`  - ${n}`);

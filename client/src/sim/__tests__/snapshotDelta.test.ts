@@ -383,7 +383,7 @@ describe("snapshotDelta", () => {
       expect(same.players[p1]?.resonanceSourceKind).toBeUndefined();
     });
 
-    test("Kindred catalog v1 fields round-trip (class-overhaul-workboard.md chunk 2.6)", () => {
+    test("Kindled catalog v1 fields round-trip (class-overhaul-workboard.md chunk 2.6)", () => {
       // Same additive-contract proof as the resonance/six-axes tests above,
       // for the new judgmentTargetId/judgmentMarkUntilTick/sealUntilTick/
       // aegisShareUntilTick quartet (P_HI bits 22-25).

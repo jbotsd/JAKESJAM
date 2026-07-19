@@ -16,7 +16,7 @@ sheets-v1.md` (per-class feel + the *avoid* lists), `jakesjam-north-star-goal.md
 Every weapon, every shield, every cast in JAKESJAM is **self-light the character projects** —
 not geometry bolted to a hand, but a coherent particle construct the rig *generates* from its
 own body. A Geometrician conjures a crystal lance; an Interstice ninja projects twin blades of
-light; a Kindred paladin **raises a fortress-board of divine energy in front of themselves** and
+light; a Kindled paladin **raises a fortress-board of divine energy in front of themselves** and
 holds the line. One particle spine, refracted four ways (A17). The graphical pass is not paint
 on top of the game — it is the game becoming *legible and alive*: the read that closes every
 feedback loop (A16), rendered world-class.
@@ -35,7 +35,7 @@ event stream, touching no sim logic.
 |----------|-----|
 | Rigid weapon *models* attached to hand bones | Jake: "the character generated the particle effect." Constructs are projected self-light — fits crystal-tech, unifies weapon+shield+cast, animates procedurally |
 | A new gameplay system | Zero sim changes. This is the *presentation* of mechanics that already emit events (`ability-activated`, `ward-absorbed`, `shot-fired`, `emission-cast` — verified present). §5 independence |
-| Religious / templar iconography | `character-sheets-v1.md` bans it for Kindred (no "gothic plate," "blessed weapon lore," "smite-the-unclean," "church pavise heraldry"). "Divine" = **light density**, not liturgy |
+| Religious / templar iconography | `character-sheets-v1.md` bans it for Kindled (no "gothic plate," "blessed weapon lore," "smite-the-unclean," "church pavise heraldry"). "Divine" = **light density**, not liturgy |
 | Forbidden sacred geometry | `IDENT-GRAMMAR.md`: no Eye-of-Providence, no triangle-capping-ring, no hexagram/pentagram, no accidental composites. Divine reads as *faceted crystal light*, invented not borrowed |
 | Spectacle that buries the fight | A18 — the rig body and hitboxes stay the loudest read; constructs *frame* the body, never hide the enemy behind them |
 
@@ -64,7 +64,7 @@ One system generates all constructs; classes are presets over it (A17, discrete 
 
 ---
 
-## THE CENTERPIECE — the Kindred paladin's divine energy shield (Kindled Ward)
+## THE CENTERPIECE — the Kindled paladin's divine energy shield (Kindled Ward)
 
 The class's entire fantasy is *hold-the-board heaven-tank* (`character-sheets-v1.md`: "board as
 fortress + weapon," "self-light density," settled not sky-god). The ward is the deepest
@@ -90,14 +90,14 @@ construct in the game and the flagship of this pass.
 ### Feel contract (the *divine energy* read)
 - **Divine = density of light, not religious symbol.** The awe comes from *how much light,
   how coherent, how heavy* — a wall of woven radiance — never from a cross, halo, or scripture.
-- **Color:** the Kindred light register (kindled gold/white per `character-sheets-v1.md`; confirm
+- **Color:** the Kindled light register (kindled gold/white per `character-sheets-v1.md`; confirm
   against palette). Warm, dense, settled — distinct from the Emission's sapphire ward-shell
   (six-axes) and the Syzygist's cool-white. The player must tell paladin-ward from emission-ward
   at a glance.
 - **Weight in animation:** every ward beat carries anticipation + follow-through; the rig *commits*
   (plant, brace) — a paladin holding the board should look like they could stop a truck.
 
-### Depth hooks (each Kindred ability refracts the ward construct)
+### Depth hooks (each Kindled ability refracts the ward construct)
 - **Bastion Pulse** (#7): a bright inward self-absorb flare — the board pulled tight to the body.
 - **Aegis Share** (#8): the board's shadow extends a faint lattice toward allies (team read).
 - **Consecrated Field** (#5): the same light *poured to the floor* — a settled ground-plane of the
@@ -116,7 +116,7 @@ with); full = the polished per-class construct language.
 
 | Class | Weapon construct | Feel |
 |-------|------------------|------|
-| **Kindred** (paladin) | **Kindled Edge** — a dense, heavy light-blade/maul; same material as the ward | Settled weight, hard hits, commit frames |
+| **Kindled** (paladin) | **Kindled Edge** — a dense, heavy light-blade/maul; same material as the ward | Settled weight, hard hits, commit frames |
 | **Interstice** (ninja) | **Twin light-blades** — thin, fast, contact-close; wave arcs trail the slash | Flick, hit-stop, no follow-through drag |
 | **Geometrician** (wizard) | **Crystal lance / prism** projected along aim | Angular, charge-and-release, geometry-first |
 | **Syzygist** (priest) | Cool-white **thread/tether** + modest projectile motes | Entanglement, thin, unsettling-benevolent |
@@ -148,7 +148,7 @@ constructs — and the fighter stays loudest throughout (A18).
 ## Animation pass (on the procedural rig)
 
 - **Anticipation → action → follow-through** for every construct beat (raise, slash, cast, absorb).
-- **Weight per class:** Kindred *commits* (plant, brace, recover-slow); Interstice *flicks*
+- **Weight per class:** Kindled *commits* (plant, brace, recover-slow); Interstice *flicks*
   (snap, no drag); Geometrician *charges* (wind, release); Syzygist *weaves* (smooth, tethered).
 - **Hit-stop + follow** on impactful beats (already partially present — extend to constructs).
 - **Rig respects the construct:** the hands/body pose to *hold the board*, *throw the blade*,
@@ -163,10 +163,10 @@ constructs — and the fighter stays loudest throughout (A18).
   read-less. *Unblocks everything; smallest.*
 - **P1 — The divine shield (centerpiece).** Kindled Ward's four reads (raise/hold/absorb/drop) +
   feel contract, full polish. The flagship; proves the spine.
-  **PREREQUISITE:** the paladin roster must be complete first. Kindred today is under-covered
+  **PREREQUISITE:** the paladin roster must be complete first. Kindled today is under-covered
   (buff ×1, movement ×1 — below its own ≥2/role floor), has 2 solo-dead abilities, and is ~60%
   the wizard's *build* depth (Tier 2, gated). You cannot world-class-render an incomplete class.
-  Close the roster per `axiom-deviations-audit.md` § Kindred proposed fix (add "Kindled Resolve"
+  Close the roster per `axiom-deviations-audit.md` § Kindled proposed fix (add "Kindled Resolve"
   + "Bulwark Step", solo-clause Aegis/Rally) and build to wizard-parity *before* P1 polish lands.
 - **P2 — Weapons polish, all four lenses.** Per-class construct languages to world-class.
 - **P3 — Ability/card construct pass.** Every ability + card effect gets its construct read
@@ -206,7 +206,7 @@ constructs — and the fighter stays loudest throughout (A18).
    fiction).
 2. **A read deferred to "the VFX pass later"** — the read ships with the mechanic; only polish
    defers (A16).
-3. **Any forbidden geometry** (Eye/triangle-ring/hexagram) or **liturgical iconography** on Kindred.
+3. **Any forbidden geometry** (Eye/triangle-ring/hexagram) or **liturgical iconography** on Kindled.
 4. **Spectacle over legibility** — a construct you can't see the fight through (A18).
 5. **VFX reaching into sim** — coupling the pass to mechanics (breaks §5 independence).
 6. **Per-class one-offs with no shared spine** — four bespoke effect systems instead of one

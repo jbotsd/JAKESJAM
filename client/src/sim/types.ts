@@ -200,7 +200,7 @@ export type PlayerEntity = {
    */
   energy?: number;
   /**
-   * Paladin/Kindred class-resource pool (docs/classes-goal.md MANA section:
+   * Paladin/Kindled class-resource pool (docs/classes-goal.md MANA section:
    * "Resource: Kindling from blocked damage... Defense IS the engine",
    * class-overhaul-workboard.md chunk 2.3). 0..KINDLING_MAX
    * (combat.ts) — granted by `tryDeflectDamage`'s Kindled Ward branch,
@@ -407,7 +407,7 @@ export type PlayerEntity = {
    * already established) AND delta-bit-tracked (P_HI, snapshotDeltaBits.ts
    * — all three fields share ONE bit, `wardAbsorb`, a deliberate budget-
    * driven consolidation: P_HI had exactly one free bit left after the
-   * Kindred/Syzygist-3.1 additions; see that file's comment). The warded
+   * Kindled/Syzygist-3.1 additions; see that file's comment). The warded
    * ally needs to SEE their own absorb pool deplete in real time — same "an
    * ally needs to see a buff originating from ANOTHER player's cast"
    * requirement regen/haste's own doc comment gives. DOES cross into
@@ -636,7 +636,7 @@ export type PlayerEntity = {
   facetMarkUntilTick?: Tick;
   overclockUntilTick?: Tick;
   /**
-   * Kindred catalog v1 (docs/class-ability-catalogs-v1.md, paladin-only —
+   * Kindled catalog v1 (docs/class-ability-catalogs-v1.md, paladin-only —
    * classId-gated at the offer roll, class-overhaul-workboard.md chunk
    * 2.6). All additive/optional, all hash-mixed (except the id-typed
    * `judgmentTargetId`, same "covered by its numeric sibling" precedent as
@@ -663,7 +663,7 @@ export type PlayerEntity = {
   sealUntilTick?: Tick;
   aegisShareUntilTick?: Tick;
   /**
-   * Kindred catalog v1 fast-follow (class-overhaul-workboard.md chunk 2.6,
+   * Kindled catalog v1 fast-follow (class-overhaul-workboard.md chunk 2.6,
    * 2026-07-18) — originally 3 abilities the earlier pass deferred. All
    * additive/optional, TS-only ("the Zig line" — never cross the ABI, same
    * category as judgmentMarkUntilTick/sealUntilTick/aegisShareUntilTick
@@ -685,7 +685,7 @@ export type PlayerEntity = {
    */
   shockRingArmedUntilTick?: Tick;
   /**
-   * Rally Light (Kindred catalog v1 fast-follow) — this player is an aura
+   * Rally Light (Kindled catalog v1 fast-follow) — this player is an aura
    * SOURCE while live. Deliberately the ONLY field the ability needs: every
    * beneficiary (self or ally, World.ts's `hasRallyLightBoost`) reads this
    * field off a nearby player and multiplies its OWN speed/damage — nothing
@@ -701,7 +701,7 @@ export type PlayerEntity = {
   // cut note above the old crater/retort/bastion card definitions. Fields
   // removed, not left undefined-but-declared.)
   /**
-   * Kindled Resolve (Kindred catalog v1 coverage-floor fast-follow,
+   * Kindled Resolve (Kindled catalog v1 coverage-floor fast-follow,
    * docs/axiom-deviations-audit.md, 2026-07-18) — self-only buff window
    * opened by spending Kindling (constants.ts's KIN_KINDLED_RESOLVE_*
    * header comment has the full design). While live: this player's
@@ -1486,7 +1486,7 @@ export type SimEvent = (
    */
   | { t: 'dash-through'; attackerId: PlayerId; victimId: PlayerId }
   /**
-   * KINDLED WARD (2026-07-18, docs/classes-goal.md Paladin/Kindred verb —
+   * KINDLED WARD (2026-07-18, docs/classes-goal.md Paladin/Kindled verb —
    * "directional frontal hold... generates Kindling on absorb",
    * class-overhaul-workboard.md chunks 2.2/2.3). Emitted once per hit that
    * Ward partially mitigated (WARD_MITIGATION_FRACTION, combat.ts) — a

@@ -1763,7 +1763,7 @@ export const crystalRoundsCards: CardDefinition[] = [
     visual: visual("circle", "#fca5a5"),
     unique: true,
   },
-  // ── Kindred catalog v1 (docs/class-ability-catalogs-v1.md) ──────────────
+  // ── Kindled catalog v1 (docs/class-ability-catalogs-v1.md) ──────────────
   // classId: "paladin" — offer-roll gated (round.ts enterDrafting); every
   // other chassis sees zero of these. All 10 of the doc's 10 are wired as of
   // the class-overhaul-workboard.md chunk 2.6 fast-follow (2026-07-18) — the
@@ -1893,7 +1893,7 @@ export const crystalRoundsCards: CardDefinition[] = [
     visual: visual("square", "#facc15"),
     unique: true,
   },
-  // ── Kindred catalog v1 fast-follow (class-overhaul-workboard.md chunk
+  // ── Kindled catalog v1 fast-follow (class-overhaul-workboard.md chunk
   // 2.6, 2026-07-18) — originally 3 abilities the earlier pass deferred,
   // now wired; Retribution Edge (offense) was one of the 3 but was cut
   // 2026-07-19 (see docs/class-ability-catalogs-v1.md's 12→10 cut note)
@@ -1940,14 +1940,14 @@ export const crystalRoundsCards: CardDefinition[] = [
     visual: visual("circle", "#fdba74"),
     unique: true,
   },
-  // ── Kindred coverage-floor + solo-viability fast-follow (docs/axiom-
-  // deviations-audit.md "Kindred (paladin) — two structural gaps",
+  // ── Kindled coverage-floor + solo-viability fast-follow (docs/axiom-
+  // deviations-audit.md "Kindled (paladin) — two structural gaps",
   // 2026-07-18). The catalog's 2nd buff and 2nd movement — closes the
-  // ≥2-per-role floor (docs/classes-goal.md), grows Kindred to 12/12
+  // ≥2-per-role floor (docs/classes-goal.md), grows Kindled to 12/12
   // (still inside the locked 8-12 catalog-size range) rather than
   // replacing two of the existing 10. See constants.ts's KIN_KINDLED_
   // RESOLVE_*/KIN_BULWARK_STEP_* header comments for the full design.
-  // NOTE 2026-07-19: Kindred was cut back to 10/10 the same week by
+  // NOTE 2026-07-19: Kindled was cut back to 10/10 the same week by
   // removing Retribution Edge (offense) and Consecrated Field (aoe) —
   // see docs/class-ability-catalogs-v1.md's cut note. Kindled Resolve and
   // Bulwark Step stay; buff/movement are untouched by that cut.
@@ -2007,11 +2007,11 @@ export const crystalRoundsCards: CardDefinition[] = [
   // ── Syzygist catalog v1 (docs/class-ability-catalogs-v1.md) — the
   //    priest's 10-ability class catalog (class-overhaul-workboard.md
   //    chunk 3.4). Same substrate-reuse discipline as the Geometrician/
-  //    Kindred blocks above; every low-aim auto-target ability reuses
+  //    Kindled blocks above; every low-aim auto-target ability reuses
   //    World.ts's findNearestAlly/findNearestEnemy (see constants.ts's
   //    SYZ_ALLY_SEARCH_RANGE_PX/SYZ_ENEMY_SEARCH_RANGE_PX header note).
   //    Cool-white visual family throughout (docs/character-sheets-v1.md:
-  //    Syzygist LOCKED "cool-white... not violet, not Kindred gold") —
+  //    Syzygist LOCKED "cool-white... not violet, not Kindled gold") —
   //    distinct from every other class's color family on this pool.
   {
     id: "bleed-tithe",
@@ -2209,7 +2209,7 @@ export const crystalRoundsCards: CardDefinition[] = [
   //    ninja's 10-ability class catalog, 9 wired this pass (see
   //    cardTypes.ts's AbilityKind header comment for why "Paper Double" is
   //    not in this pool at all). Same substrate-reuse discipline as the
-  //    Geometrician/Kindred/Syzygist blocks above. Crystal-cyan-adjacent
+  //    Geometrician/Kindled/Syzygist blocks above. Crystal-cyan-adjacent
   //    but distinctly sharper/higher-frequency than the Geometrician family
   //    (character-sheets-v1.md: "energy-resource glow — sharper, higher-
   //    frequency pulse than wizard cyan") — insidious-precise tone (C4):

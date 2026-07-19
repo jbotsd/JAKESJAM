@@ -453,7 +453,7 @@ describe("VenueHost lobby lifecycle (Pillar 1.2)", () => {
 
 // ── Class ability catalog (docs/classes-goal.md "Loadout station owns the
 //    3 slots" — live playtest finding 2026-07-18: Jake pulled up the
-//    loadout station with Kindred/paladin selected, saw a 3-card random
+//    loadout station with Kindled/paladin selected, saw a 3-card random
 //    offer mixing a universal weapon card with a class catalog card, and
 //    said "this should show all cards for that class when its selected
 //    not just three and this should have the concept of selecting them").

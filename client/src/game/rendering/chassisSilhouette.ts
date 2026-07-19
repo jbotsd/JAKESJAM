@@ -65,7 +65,7 @@ export function headCrestGeometry(
   const rootY = head.y - 8 * s;
 
   if (classId === "paladin") {
-    // Kindred: a TALL, THIN blade-spike — centered (no facing sweep,
+    // Kindled: a TALL, THIN blade-spike — centered (no facing sweep,
     // unlike every other class's crest), the tallest/most-vertical
     // silhouette of the four (kindled-v2.jpg's tall pointed crown), echoing
     // the sword this class actually wields rather than reading as a
@@ -168,7 +168,7 @@ export function headCrestGeometry(
 export function headHoodGeometry(classId: ClassId, head: Point, s: number, f: number): HeadHoodGeometry {
   switch (classId) {
     case "paladin":
-      // Kindred: tall, CENTERED (no facing skew), narrow-tapered — the
+      // Kindled: tall, CENTERED (no facing skew), narrow-tapered — the
       // crown base beneath the crest spike above. Reads as "the biggest
       // thing in the room" even in flat black (chassis-design-axioms CA3).
       return {

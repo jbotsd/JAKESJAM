@@ -1,10 +1,10 @@
 // Syzygist catalog v1 (docs/class-ability-catalogs-v1.md) — the priest's
 // class ability catalog, plugged into the EXISTING six-axes rack/draft
-// substrate (docs/six-axes-goal.md) and the Geometrician/Kindred catalogs'
+// substrate (docs/six-axes-goal.md) and the Geometrician/Kindled catalogs'
 // own activation-switch pattern (class-overhaul-workboard.md chunk 3.4).
 // All 10 of the doc's 10 abilities are wired this pass.
 //
-// Coverage, mirroring kindredCatalog.test.ts's own shape:
+// Coverage, mirroring kindledCatalog.test.ts's own shape:
 //   (1) data authoring — the 10 cards exist as classId:"priest" ability
 //       cards wired to their AbilityKind.
 //   (2) offer-roll classId gating — only a priest (shielded) ever sees
@@ -68,7 +68,7 @@ const SYZYGIST_ABILITY_IDS = [
 
 // Platform `position` is CENTER-origin — a 1280-wide floor centered at
 // x=640 spans [0, 1280], covering every test position in this file
-// (kindredCatalog.test.ts's own fixture only needed [0,600], hence its
+// (kindledCatalog.test.ts's own fixture only needed [0,600], hence its
 // x=0 center; this file's wider spread needs the recentered version).
 const flatMap: MapDefinition = {
   id: "test",
@@ -155,7 +155,7 @@ function syzCard(id: (typeof SYZYGIST_ABILITY_IDS)[number]) {
 }
 
 /** Step until a predicate holds or the budget runs out — the standard
- *  "let a fast shard travel and land" idiom kindredCatalog.test.ts's own
+ *  "let a fast shard travel and land" idiom kindledCatalog.test.ts's own
  *  Sunspike test uses (Consecrated Field's test used it too until that
  *  ability was cut 2026-07-19, see docs/class-ability-catalogs-v1.md). */
 function stepUntil(
@@ -253,7 +253,7 @@ describe("Syzygist catalog v1 — offer-roll classId gating", () => {
     }
   });
 
-  test("a priest NEVER sees a Kindred (paladin-only) or Geometrician (wizard-only) catalog offer — the gate is symmetric", () => {
+  test("a priest NEVER sees a Kindled (paladin-only) or Geometrician (wizard-only) catalog offer — the gate is symmetric", () => {
     const priest = mkPlayer(A, 400, 400, "shielded");
     const other = mkPlayer(B, 600, 400, "balanced");
     const round = {

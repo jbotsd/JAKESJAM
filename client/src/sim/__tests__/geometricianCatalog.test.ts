@@ -206,7 +206,7 @@ describe("Geometrician catalog v1 — offer-roll classId gating", () => {
     }
   });
 
-  test("heavy (Kindred) and shielded (Syzygist) also never see the Geometrician catalog", () => {
+  test("heavy (Kindled) and shielded (Syzygist) also never see the Geometrician catalog", () => {
     const other = mkPlayer(B, 600, 400);
     const round = {
       phase: "round-over" as const,

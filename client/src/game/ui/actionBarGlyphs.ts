@@ -234,7 +234,7 @@ export function drawActiveGlyph(
     // ── Interstice catalog v1 (docs/class-ability-catalogs-v1.md) ───────
     // Sharp/angular/precise strokes — insidious-precise tone (classes-
     // goal.md C4), distinct from the Geometrician block's crystal-facet
-    // language and Kindred's board/shield language: every glyph here is a
+    // language and Kindled's board/shield language: every glyph here is a
     // cut, a mark, or a single decisive line, never a rounded/ornate shape.
     case "undercut":
       // One clean horizontal cut, low — the execute line under a body.
