@@ -80,11 +80,12 @@ describe("Priest tendrils: shape of the volley (unit-level, no world state neede
       expect(proj.element).toBe("fire");
       expect(proj.enemyOnly).toBe(true);
     }
-    // Total damage if every tendril connects matches the OLD single-shot
-    // detune total (9) — parity, not a buff. constants.ts's own
+    // Total damage if every tendril connects is DELIBERATELY below the old
+    // single-shot detune total (9) — REVISED 2026-07-19 (Jake: "long range
+    // but weak on attack powerful on effects"). constants.ts's own
     // SYZ_TENDRIL_* bookkeeping comment.
     const totalIfAllConnect = result.projectiles.reduce((sum, p) => sum + p.damage, 0);
-    expect(totalIfAllConnect).toBe(9);
+    expect(totalIfAllConnect).toBe(SYZ_TENDRIL_COUNT * SYZ_TENDRIL_DAMAGE);
   });
 });
 

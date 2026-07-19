@@ -814,34 +814,46 @@ export const SYZ_DRIFT_STEP_RANGE_PX = 210;
 // constant is needed or added, since the fraction isn't ability-specific,
 // it's the sim's one shared burn formula).
 //
-// Total-damage bookkeeping: `SYZ_TENDRIL_COUNT × SYZ_TENDRIL_DAMAGE === 9`
-// — the SAME total priestStarterWeapon.damage was before this change
-// (single-shot 9, itself already a 25% detune off starterWeapon's 12). A
-// volley that connects with EVERY tendril deals the same total the old
-// single detuned bolt did (parity, not a buff); a volley that only lands
-// SOME tendrils (the realistic outcome against a target that isn't already
-// dead-center, homing curve notwithstanding) deals less. That's the class's
-// whole bargain made literal in the basic gun: aim-free consistency traded
-// against burst, instead of a flat top-line buff for going low-aim.
+// Total-damage bookkeeping (REVISED 2026-07-19, Jake live playtest: "the
+// priest should be long range but weak on attack powerful on effects" —
+// the original landing intentionally matched the old single-shot's total
+// damage; that's now wrong on purpose). `SYZ_TENDRIL_COUNT × SYZ_TENDRIL_
+// DAMAGE === 6`, a genuine ~33% cut below the prior 9-damage parity
+// target (itself already a 25% detune off starterWeapon's 12) — basic
+// fire is deliberately the WEAK part of this class's kit now, not a
+// parity-preserved reskin of it. The class's actual power sits in its
+// ability kit (Bleed Tithe/Focus Hex/Contagion's marks-and-DoT stack,
+// Flock Pulse/Borrowed Time's ally-woven payoffs) — "powerful on
+// effects," per Jake's own framing, not on the gun.
 //
 // Speed ("oozing" is a SPEED/character read before anything else — a fast,
 // crisp shard reads as a bolt; a slow one reads as something reaching out):
 // `SYZ_TENDRIL_SPEED` sits well below starterWeapon's 650 (Wizard's crisp,
-// bolt-like feel) — well under half. `SYZ_TENDRIL_LIFETIME_SECONDS` is
-// bumped up from starterWeapon's 1.2s specifically to compensate: at the
-// slower speed, 1.2s of flight only covers ~380px, a noticeably shorter
-// practical range than every other class's basic gun; the lifetime bump
-// restores a comparable effective range without touching speed (which
-// would undo the "oozing" read) or homing turn rate. The extra hang time
-// also gives the per-tick homing more real distance to actually curve —
-// a shot that arrives before it can turn wouldn't read as self-guiding at
-// all.
+// bolt-like feel) — well under half. `SYZ_TENDRIL_LIFETIME_SECONDS` was
+// originally tuned to only *restore* rough range parity with the other
+// classes' basic guns (780px); Jake's follow-up call is that Priest should
+// be the LONGEST-range basic gun in the game, not merely parity — bumped
+// further so effective range (speed × lifetime = 320 × 2.6 = 832px) clears
+// starterWeapon's 780px outright. The extra hang time also gives the
+// per-tick homing more real distance to actually curve — a shot that
+// arrives before it can turn wouldn't read as self-guiding at all, and a
+// longer flight window makes that curve-in read more deliberate at range,
+// which is the whole "measured pace" identity this class is going for.
 export const SYZ_TENDRIL_COUNT = 3;
-/** 3 × 3 = 9 — see the block comment above: total volley damage if every
- *  tendril connects is unchanged from the old single-shot detune. */
-export const SYZ_TENDRIL_DAMAGE = 3;
+/** 3 × 2.5 = 7.5 — deliberately BELOW the old single-shot's 9 (see the
+ *  block comment above): Priest's basic fire is the weak, long-range,
+ *  low-aim half of the kit on purpose; the ability rack is where the
+ *  damage lives. Held at 2.5 rather than pushed lower still: at fireRate 4
+ *  and count 3, `classExpression.test.ts`'s own combat-balance-ttk band
+ *  (weaponBuild.ts's TTK_FLOOR_S/TTK_CEILING_S — "a real, functional gun,
+ *  not gimped into unplayability") caps how far this can drop before the
+ *  basic gun stops being a credible threat at all; 2.5 is the weakest value
+ *  that still clears that floor. */
+export const SYZ_TENDRIL_DAMAGE = 2.5;
 export const SYZ_TENDRIL_SPEED = 320;
-export const SYZ_TENDRIL_LIFETIME_SECONDS = 1.6;
+/** speed × lifetime = 832px — intentionally the longest basic-gun range of
+ *  any class (starterWeapon's own 650×1.2 = 780px is the next-longest). */
+export const SYZ_TENDRIL_LIFETIME_SECONDS = 2.6;
 /** Widens the 3-tendril fan from starterWeapon's near-zero 0.03 rad spread
  *  so the tendrils visibly reach out in slightly different directions
  *  before homing curls them back onto one target — selling "several

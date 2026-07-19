@@ -1,15 +1,29 @@
-// The cut itself stays fast; these wider sentences buy a ground-loaded read
-// before it and a cinematic finishing silhouette after it.
-export const BLADE_SWING_MS = 360;
+// Interstice is the "flick, no drag" chassis (chassis-design-axioms CA — the
+// ninja weight contract): research on fast/player-controlled melee (Owlboy's
+// Nemo has near-zero anticipation; Hollow Knight decouples visual swing from
+// input-lock) says anticipation should read as almost-already-cut, not a
+// telegraphed wind-up. Kindred is the deliberate opposite — a heavier,
+// ground-loaded commit — and keeps its wider sentence.
+export const BLADE_SWING_MS = 240;
 export const EDGE_SWING_MS = 560;
+
+/** Blade-construct geometry (reach/sweep) for the LIVE swing render — same
+ * literals the offline construct-harness review uses for `drawBladeSwing`/
+ * `drawKindledSwing` (client/src/constructHarness.ts), kept as one named
+ * source here so the live rig and the harness read the same "how big is
+ * this blade" contract instead of two independently-tuned magic numbers. */
+export const INTERSTICE_BLADE_REACH_PX = 82;
+export const INTERSTICE_BLADE_SWEEP_RAD = 2.25;
+export const KINDRED_BLADE_REACH_PX = 88;
+export const KINDRED_BLADE_SWEEP_RAD = 2.5;
 /** Point inside the authored cut where the blade crosses the captured aim
  * radius at peak tip speed. This is deliberately not the end of the move:
  * contact needs visible follow-through on the far side of the target. */
 export const MELEE_CONTACT_CUT_FRACTION = 0.68;
 
 export function meleeContactT(style: "interstice" | "kindred"): number {
-  const cutStart = style === "interstice" ? 0.32 : 0.38;
-  const cutEnd = style === "interstice" ? 0.52 : 0.61;
+  const cutStart = style === "interstice" ? 0.15 : 0.38;
+  const cutEnd = style === "interstice" ? 0.42 : 0.61;
   return cutStart + (cutEnd - cutStart) * MELEE_CONTACT_CUT_FRACTION;
 }
 
@@ -19,9 +33,9 @@ export function meleeStage(t: number, style: "interstice" | "kindred"): {
   followThrough: number;
   recovery: number;
 } {
-  const aEnd = style === "interstice" ? 0.32 : 0.38;
-  const cutEnd = style === "interstice" ? 0.52 : 0.61;
-  const followEnd = style === "interstice" ? 0.84 : 0.88;
+  const aEnd = style === "interstice" ? 0.15 : 0.38;
+  const cutEnd = style === "interstice" ? 0.42 : 0.61;
+  const followEnd = style === "interstice" ? 0.80 : 0.88;
   const clamp = (v: number) => Math.max(0, Math.min(1, v));
   return {
     anticipation: clamp(t / aEnd),
@@ -41,9 +55,9 @@ export function meleeSweepFraction(t: number, style: "interstice" | "kindred"): 
     // ready → deep coil → contact extension → blade-led overshoot → guard.
     // The cut uses an acceleration-to-contact curve rather than generic
     // smoothstep: sparse frames before contact, then visible braking after.
-    if (t < 0.32) return lerp(0.24, -0.22, smooth(s.anticipation));
-    if (t < 0.52) return lerp(-0.22, 0.88, cutWhip(s.cut));
-    if (t < 0.84) return lerp(0.88, 1.22, easeOutCubic(s.followThrough));
+    if (t < 0.15) return lerp(0.24, -0.22, smooth(s.anticipation));
+    if (t < 0.42) return lerp(-0.22, 0.88, cutWhip(s.cut));
+    if (t < 0.80) return lerp(0.88, 1.22, easeOutCubic(s.followThrough));
     return lerp(1.22, 0.92, smooth(s.recovery));
   }
   if (t < 0.38) return lerp(0.28, -0.12, smooth(s.anticipation));
@@ -81,18 +95,23 @@ export function meleeKineticChain(
   frontBrace: number;
 } {
   const stage = meleeStage(t, style);
-  const aEnd = style === "interstice" ? 0.32 : 0.38;
-  const cutEnd = style === "interstice" ? 0.52 : 0.61;
-  const followEnd = style === "interstice" ? 0.84 : 0.88;
+  const aEnd = style === "interstice" ? 0.15 : 0.38;
+  const cutEnd = style === "interstice" ? 0.42 : 0.61;
+  const followEnd = style === "interstice" ? 0.80 : 0.88;
   const heavy = style === "kindred";
   const loadPelvis = heavy ? -5.5 : -4.5;
   const loadChest = heavy ? -8 : -6.5;
-  const pelvisThrough = heavy ? 9.5 : 8;
-  const chestThrough = heavy ? 14 : 12;
+  // Interstice carries farther forward than Kindred despite being the
+  // lighter chassis: a fast cut that is nearly pure wrist/arm rotation around
+  // a barely-translating pivot reads as a fan opening in place, not a step
+  // into a cut. Real arc-length travel on the tip (not just angle) is what
+  // separates a slash from a pinwheel.
+  const pelvisThrough = heavy ? 9.5 : 15;
+  const chestThrough = heavy ? 14 : 21;
   // Keep the eyes/head comparatively quiet over the braced front side while
   // the torso turns underneath. Driving the head farther than the chest made
   // the release read as a shoulder-first lunge, not a grounded kinetic chain.
-  const headThrough = heavy ? 10 : 9;
+  const headThrough = heavy ? 10 : 15;
 
   if (t < aEnd) {
     const e = smooth(stage.anticipation);
@@ -162,14 +181,14 @@ export function meleeHandPose(
         readyAngle: -0.1, coilAngle: -0.5, contactAngle: 0.08, followAngle: 0.66, guardAngle: 0.26,
         readyReach: 30, coilReach: 22, contactReach: 41, followReach: 34, guardReach: 30,
       };
-  if (t < (style === "interstice" ? 0.32 : 0.38)) {
+  if (t < (style === "interstice" ? 0.15 : 0.38)) {
     const e = smooth(s.anticipation);
     return {
       angle: aimRad + d * lerp(keys.readyAngle, keys.coilAngle, e),
       reach: lerp(keys.readyReach, keys.coilReach, e),
     };
   }
-  if (t < (style === "interstice" ? 0.52 : 0.61)) {
+  if (t < (style === "interstice" ? 0.42 : 0.61)) {
     // The hands begin their trip with the torso, then yield some speed into
     // the blade at the intercept. The blade continues to use cutWhip(), so it
     // visibly lags early and becomes the fastest/distal link at contact.
@@ -179,7 +198,7 @@ export function meleeHandPose(
       reach: lerp(keys.coilReach, keys.contactReach, e),
     };
   }
-  if (t < (style === "interstice" ? 0.84 : 0.88)) {
+  if (t < (style === "interstice" ? 0.80 : 0.88)) {
     const e = easeOutCubic(s.followThrough);
     return {
       angle: aimRad + d * lerp(keys.contactAngle, keys.followAngle, e),
@@ -193,9 +212,13 @@ export function meleeHandPose(
   };
 }
 
-/** Off-hand blade keeps a compact guard/counterbalance path. It is late by
- * design: the dominant cut owns the silhouette, while the second dagger
- * closes the exposed line instead of drawing a duplicate windmill. */
+/** Off-hand blade keeps a TIGHT guard/counterbalance path close to the body.
+ * The previous version swept nearly as wide as the dominant blade (0.3 to
+ * -0.4 rad, almost 1.2 rad of independent travel) and read as two blades
+ * scissoring open rather than one cut with a counterbalance. It now stays in
+ * a compact ~0.4 rad arc on the same side as ready, so it never independently
+ * competes with the dominant blade's silhouette — it can brush past it once,
+ * briefly, at the real cut, and nowhere else. */
 export function meleeOffhandBladeAngle(
   aimRad: number,
   dir: number,
@@ -203,12 +226,15 @@ export function meleeOffhandBladeAngle(
 ): number {
   const s = meleeStage(t, "interstice");
   const d = dir >= 0 ? 1 : -1;
-  if (t < 0.32) return aimRad + d * lerp(0.3, 0.78, smooth(s.anticipation));
-  if (t < 0.52) return aimRad + d * lerp(0.78, -0.4, cutWhip(Math.max(0, s.cut - 0.18) / 0.82));
-  if (t < 0.84) return aimRad + d * lerp(-0.4, -0.22, easeOutCubic(s.followThrough));
-  return aimRad + d * lerp(-0.22, 0.18, smooth(s.recovery));
+  if (t < 0.15) return aimRad + d * lerp(0.18, 0.4, smooth(s.anticipation));
+  if (t < 0.42) return aimRad + d * lerp(0.4, 0.08, cutWhip(s.cut));
+  if (t < 0.80) return aimRad + d * lerp(0.08, -0.02, easeOutCubic(s.followThrough));
+  return aimRad + d * lerp(-0.02, 0.18, smooth(s.recovery));
 }
 
+/** Same tight-guard choreography for the full rig's off-hand IK target —
+ * reach stays close to the body throughout instead of extending out to
+ * nearly the dominant blade's own reach. */
 export function meleeOffhandPose(
   aimRad: number,
   dir: number,
@@ -216,20 +242,111 @@ export function meleeOffhandPose(
 ): { angle: number; reach: number } {
   const s = meleeStage(t, "interstice");
   const d = dir >= 0 ? 1 : -1;
-  if (t < 0.32) {
+  if (t < 0.15) {
     const e = smooth(s.anticipation);
-    return { angle: aimRad + d * lerp(0.18, 0.48, e), reach: lerp(25, 21, e) };
+    return { angle: aimRad + d * lerp(0.18, 0.36, e), reach: lerp(24, 20, e) };
   }
-  if (t < 0.52) {
-    const e = cutWhip(Math.max(0, s.cut - 0.18) / 0.82);
-    return { angle: aimRad + d * lerp(0.48, -0.5, e), reach: lerp(21, 29, e) };
+  if (t < 0.42) {
+    const e = cutWhip(s.cut);
+    return { angle: aimRad + d * lerp(0.36, 0.06, e), reach: lerp(20, 23, e) };
   }
-  if (t < 0.84) {
+  if (t < 0.80) {
     const e = easeOutCubic(s.followThrough);
-    return { angle: aimRad + d * lerp(-0.5, -0.72, e), reach: lerp(29, 23, e) };
+    return { angle: aimRad + d * lerp(0.06, -0.04, e), reach: lerp(23, 21, e) };
   }
   const e = smooth(s.recovery);
-  return { angle: aimRad + d * lerp(-0.72, 0.2, e), reach: lerp(23, 25, e) };
+  return { angle: aimRad + d * lerp(-0.04, 0.18, e), reach: lerp(21, 24, e) };
+}
+
+type Vec2Like = { x: number; y: number };
+
+/** Which hand is actually swinging the blade this frame. Mirrors the
+ * anatomy decision ProceduralPlayerRig's own arm IK already makes (Kindred
+ * always cuts with the sword/lead hand; Interstice alternates by combo
+ * `dir`) — kept here as one pure, testable rule so the render-time blade
+ * pivot can never drift from the arm pose it's drawn on top of. */
+export function meleeActiveHand(
+  style: "interstice" | "kindred",
+  dir: number,
+): "lead" | "back" {
+  const activeLead = style === "kindred" || dir > 0;
+  return activeLead ? "lead" : "back";
+}
+
+/** Pure "what should this frame's blade construct look like" computation —
+ * factored out of ProceduralPlayerRig.draw() so it's testable without a
+ * live Phaser Graphics context (this codebase's established pattern, see
+ * chassisSilhouette.ts + its test header comment: `import Phaser from
+ * "phaser"` throws under `bun test`, so anything that decides WHAT to draw
+ * belongs in a Phaser-free module; only the actual `g.lineStyle()`/
+ * `g.strokePath()` calls need the real engine). Returns null when there is
+ * no active swing (meleePoseMs <= 0) — the caller should draw nothing. */
+export function meleeBladeDrawParams(
+  style: "interstice" | "kindred",
+  meleePoseMs: number,
+  meleePoseDurationMs: number,
+  dir: number,
+  aimRad: number,
+  leadHand: Vec2Like,
+  backHand: Vec2Like,
+): {
+  style: "interstice" | "kindred";
+  leadPivot: Vec2Like;
+  backPivot: Vec2Like;
+  activePivot: Vec2Like;
+  aimRad: number;
+  reach: number;
+  sweepRad: number;
+  dir: number;
+  t: number;
+} | null {
+  if (meleePoseMs <= 0 || meleePoseDurationMs <= 0) return null;
+  const t = clamp01(1 - meleePoseMs / meleePoseDurationMs);
+  const active = meleeActiveHand(style, dir);
+  return {
+    style,
+    leadPivot: leadHand,
+    backPivot: backHand,
+    activePivot: active === "lead" ? leadHand : backHand,
+    aimRad,
+    reach: style === "kindred" ? KINDRED_BLADE_REACH_PX : INTERSTICE_BLADE_REACH_PX,
+    sweepRad: style === "kindred" ? KINDRED_BLADE_SWEEP_RAD : INTERSTICE_BLADE_SWEEP_RAD,
+    dir,
+    t,
+  };
+}
+
+/** World-space position of the blade's tip this frame — the same formula
+ * the construct-harness review samples (constructHarness.ts's
+ * harnessRigFrame), reused so a LIVE per-frame accumulator and the
+ * harness's analytic precompute agree on what a "tip" even is. */
+export function meleeBladeTip(
+  pivot: Vec2Like,
+  aimRad: number,
+  sweepRad: number,
+  dir: number,
+  t: number,
+  style: "interstice" | "kindred",
+  reach: number,
+): Vec2Like {
+  const a = meleeBladeAngle(aimRad, sweepRad, dir, t, style);
+  return { x: pivot.x + Math.cos(a) * reach, y: pivot.y + Math.sin(a) * reach };
+}
+
+/** Append one live-sampled tip position to the trail, capped to `maxLen` —
+ * the LIVE per-frame shape (append + cap), deliberately NOT the harness's
+ * offline-review shape (precompute the whole timeline analytically from a
+ * scrubbed `t`, which only works because that path is scrubbing a fixed
+ * duration up front, not accumulating real per-frame state). Pure/immutable
+ * so it's trivially testable; the caller owns clearing it on swing start. */
+export function appendBladeTip(
+  history: readonly Vec2Like[],
+  tip: Vec2Like,
+  maxLen: number,
+): Vec2Like[] {
+  const next = history.length >= maxLen ? history.slice(history.length - maxLen + 1) : history.slice();
+  next.push(tip);
+  return next;
 }
 
 function cutWhip(v: number): number {

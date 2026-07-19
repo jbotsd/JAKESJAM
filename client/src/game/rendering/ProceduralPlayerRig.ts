@@ -9,11 +9,20 @@ import { headCrestGeometry, headHoodGeometry } from "./chassisSilhouette";
 import type { AbilityKind } from "../../sim/data/cardTypes.js";
 import { ABILITY_ANIMATIONS } from "../render/abilityAnimation.js";
 import {
+  appendBladeTip,
+  meleeBladeDrawParams,
+  meleeBladeTip,
   meleeHandPose,
   meleeKineticChain,
   meleeOffhandPose,
   meleeStage,
 } from "../render/meleeTiming.js";
+import {
+  drawBladeSwing,
+  drawKindledSwing,
+  INTERSTICE_TINT,
+  KINDRED_TINT,
+} from "../render/LightConstruct.js";
 
 /** The minimal surface SimEventRouter drives on ANY on-screen combatant —
  *  hero, boss, or a non-humanoid thrall (see TutorialShardThrall.ts). Kept
@@ -394,6 +403,14 @@ export class ProceduralPlayerRig implements CombatRig {
   private meleePoseDurationMs = 1;
   private meleePoseStyle: "interstice" | "kindred" = "interstice";
   private meleePoseDir = 1;
+  // Live blade-tip trail for the Kindled Edge's swept-ribbon read
+  // (drawKindledSwing's tipHistory param) — sampled once per frame while a
+  // swing is active, cleared on the next triggerMeleeSwing(). Deliberately a
+  // per-frame accumulator, not the offline construct-harness's analytic
+  // whole-timeline precompute (that only works because the harness is
+  // scrubbing a fixed, already-known duration; live play only knows "now").
+  private meleeTipHistory: { x: number; y: number }[] = [];
+  private static readonly MELEE_TIP_HISTORY_MAX = 24;
   private abilityPoseMs = 0;
   private abilityPoseDurationMs = 1;
   private abilityPoseKind: AbilityKind = "sunlance";
@@ -793,6 +810,7 @@ export class ProceduralPlayerRig implements CombatRig {
     this.meleePoseDurationMs = style === "interstice" ? 360 : 560;
     this.meleePoseMs = this.meleePoseDurationMs;
     this.combatHoldMs = Math.max(this.combatHoldMs, 900);
+    this.meleeTipHistory = [];
   }
 
   /** Render-only authored gesture for every drafted active. The exhaustive
@@ -1583,6 +1601,69 @@ export class ProceduralPlayerRig implements CombatRig {
 
     // 10. Head + hood + visor
     this.drawHead(g, head, s, healthRatio);
+
+    // 9b. Melee blade swing — the live weapon: renders only while an active
+    // swing is running (meleePoseMs > 0). Reuses LightConstruct's
+    // drawBladeSwing/drawKindledSwing — built for the offline construct
+    // harness (constructHarness.ts) but never wired into the real rig, which
+    // is why every melee swing in a live match has swung a fully invisible
+    // weapon (Jake, playtest: "i am insterstice here cant see the blades").
+    // Pivots off THIS frame's real spring-settled hand positions (handLead/
+    // handBack — the same values getHandWorld() exposes), not a re-derived
+    // pose, so the blade can never visually detach from the arm swinging it.
+    // Drawn after the head so the swing silhouette is never occluded by the
+    // body it's swinging past.
+    const bladeParams = meleeBladeDrawParams(
+      this.meleePoseStyle,
+      this.meleePoseMs,
+      this.meleePoseDurationMs,
+      this.meleePoseDir,
+      aimAngle,
+      handLead,
+      handBack,
+    );
+    if (bladeParams) {
+      const tip = meleeBladeTip(
+        bladeParams.activePivot,
+        bladeParams.aimRad,
+        bladeParams.sweepRad,
+        bladeParams.dir,
+        bladeParams.t,
+        bladeParams.style,
+        bladeParams.reach,
+      );
+      this.meleeTipHistory = appendBladeTip(
+        this.meleeTipHistory,
+        tip,
+        ProceduralPlayerRig.MELEE_TIP_HISTORY_MAX,
+      );
+      if (bladeParams.style === "kindred") {
+        drawKindledSwing(
+          g,
+          bladeParams.leadPivot,
+          bladeParams.backPivot,
+          bladeParams.aimRad,
+          bladeParams.reach,
+          KINDRED_TINT,
+          bladeParams.sweepRad,
+          bladeParams.dir,
+          bladeParams.t,
+          this.meleeTipHistory,
+        );
+      } else {
+        drawBladeSwing(
+          g,
+          bladeParams.leadPivot,
+          bladeParams.backPivot,
+          bladeParams.aimRad,
+          bladeParams.reach,
+          INTERSTICE_TINT,
+          bladeParams.sweepRad,
+          bladeParams.dir,
+          bladeParams.t,
+        );
+      }
+    }
 
     // 11. Dash-bash shield — deployed only while dashing: a bright energy arc in
     // the lunge direction, the directional block made visible (matches the
