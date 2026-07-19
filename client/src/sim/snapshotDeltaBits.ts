@@ -155,3 +155,23 @@ export const SAT = {
   fireCooldownMs: 1 << 1,
   lifetimeMs: 1 << 2,
 } as const;
+
+/**
+ * Paper Double (Interstice catalog v1 — types.ts's `PaperDoubleEntity`).
+ * Unlike its self-only ability-window PlayerEntity siblings, a decoy is a
+ * cross-visible world entity an enemy needs to SEE to shoot — same category
+ * as FireEntity/SatelliteEntity above, so it gets its own dedicated
+ * collection-delta bitmask rather than riding PlayerEntity's own P_HI
+ * (which had no free bits left anyway — see that mask's own "LAST free bit"
+ * comment). `id`/`ownerId` are static after creation (sent once, in
+ * `added`, never in `updated` — same convention every other entity type's
+ * immutable fields already follow); `x`/`y`/`health`/`remainingMs` change
+ * every tick the decoy is alive. `vx`/`vy` are fixed for the decoy's whole
+ * life (set once at cast) — also static, not tracked here.
+ */
+export const PAPER_DOUBLE = {
+  x: 1 << 0,
+  y: 1 << 1,
+  health: 1 << 2,
+  remainingMs: 1 << 3,
+} as const;

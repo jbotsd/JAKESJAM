@@ -274,17 +274,35 @@ export type AbilityKind =
   | "drift-step"
   // ── Interstice catalog v1 (docs/class-ability-catalogs-v1.md) ───────────
   // classId-gated to ninja at the offer roll (round.ts enterDrafting) —
-  // same discipline as the Geometrician/Kindred/Syzygist blocks above. 9 of
-  // the doc's 10 are wired this pass (class-overhaul-workboard.md ninja-
-  // catalog chunk) — "paper-double" (movement) is NOT in this union: it
-  // needs a new decoy/summon ENTITY type in WorldState (own hitbox/health/
-  // input-echo AI + a resonance-gated swap), a genuinely new ABI-crossing
-  // entity concept none of the other 36 catalog abilities shipped this
-  // session needed — every one of them reuses a self-window-buff / mark /
-  // projectile-spawn shape an existing verb already proves out. Recorded
-  // deferral, not a silent stub — same discipline as Kindred's own 7/10
-  // (Retribution Edge/Shock Ring/Rally Light left out of this union
-  // entirely rather than stubbed to a no-op case).
+  // same discipline as the Geometrician/Kindred/Syzygist blocks above. All
+  // 10 of the doc's 10 are now wired (class-overhaul-workboard.md ninja-
+  // catalog chunk shipped 9, "paper-double" (movement) followed as its own
+  // fast-follow pass once its blocking dependency — a new decoy/summon
+  // ENTITY type in WorldState — was actually built).
+  //
+  // Former deferral note (preserved, not deleted — the discipline this
+  // codebase already applies to every "why was this deferred" paragraph):
+  // "paper-double... needs a new decoy/summon ENTITY type in WorldState
+  // (own hitbox/health/input-echo AI + a resonance-gated swap), a
+  // genuinely new ABI-crossing entity concept none of the other 36 catalog
+  // abilities shipped this session needed — every one of them reuses a
+  // self-window-buff / mark / projectile-spawn shape an existing verb
+  // already proves out." That entity type now exists —
+  // `PaperDoubleEntity`/`state.paperDoubles` (types.ts) + `paperDouble.ts`'s
+  // spawn/step/collision logic, wired into World.ts's activation switch and
+  // both classes' melee arc-hit-check sections. The "resonance-gated swap"
+  // half of the original deferral is STILL a v1 gap — see this ability's
+  // own case comment in World.ts (`"paper-double"`) and cardTypes.ts's
+  // sibling doc trail below: v1 always spawns fresh, never swaps positions
+  // with a live decoy. The `Fooled` status debuff from the card's
+  // "Resonance:" line is ALSO deferred — it's a victim-side amp any
+  // attacker's ability can exploit ("abilities cast into Fooled gain
+  // +25%"), which would need threading into every ability damage site in
+  // this file (melee arc hits ×2, the pendingInstantAoe resolution pass,
+  // the generic projectile hit-confirm pass) rather than one caster-side
+  // check like Facet Break's own `facetTargetId`/`facetMarkUntilTick`
+  // precedent — a genuinely bigger surface than the core decoy loop this
+  // pass shipped, so it's recorded here rather than guessed at silently.
   | "undercut"
   | "edge-storm"
   | "needle"
@@ -293,7 +311,8 @@ export type AbilityKind =
   | "wall-bloom"
   | "ghost-guard"
   | "second-wind"
-  | "razor-route";
+  | "razor-route"
+  | "paper-double";
 
 /** Catalog role tag (docs/classes-goal.md "Ability role range" — exactly
  *  six locked roles, no seventh "utility" catch-all). Only meaningful on

@@ -16,9 +16,14 @@ floor (0.3), bot loadout awareness (0.4), team identity in the sim (1.1),
 the loadout station's live catalog-browse UI (1.3), and all of Priest's
 kit (3.1-3.4: Devotion, Ward, full 10-ability catalog) shipped and are
 live. Tier 2 (Paladin) is fully done including the 2.6/2.7 fast-follow
-notes below. Ninja/Interstice also has a full 9-of-10 catalog (Paper
-Double deferred — needs a new decoy entity type) even though it was never
-its own workboard tier. The AOE role tag across all 4 classes was
+notes below. Ninja/Interstice now has the full 10-of-10 catalog — Paper
+Double (the decoy) shipped as its own fast-follow once its blocking
+dependency (a new decoy entity type, `PaperDoubleEntity`/`state.
+paperDoubles`) was actually built; the core ability (spawn/move/
+damageable/expire/burst) is live, the Resonance-tier "Fooled" debuff and
+the window-gated position-swap variant are both recorded v1 deferrals (see
+cardTypes.ts's own updated header comment) — even though this catalog was
+never its own workboard tier. The AOE role tag across all 4 classes was
 reworked into real area effects (was projectile-burst spam). 1.2 (unified
 resource pass) was deliberately NOT done — Kindling/Devotion/energy stay
 separate `PlayerEntity` fields; see combat.ts/constants.ts doc comments

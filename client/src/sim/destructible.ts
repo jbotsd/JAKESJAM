@@ -115,6 +115,17 @@ export function stepDestructibles(
       d.health = Math.max(0, d.health - proj.damage);
       removedProjectileIds.add(pid);
 
+      // Per-hit damage-number signal (2026-07-19, venue-lobby ability
+      // showcase) — fires on EVERY hit, fatal or not, alongside (not
+      // instead of) `destructible-broken` below on a killing blow.
+      events.push({
+        t: "destructible-hit",
+        entityId: d.id,
+        damage: proj.damage,
+        x: d.x,
+        y: d.y,
+      });
+
       if (d.health <= 0) {
         events.push({
           t: "destructible-broken",

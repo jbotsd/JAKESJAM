@@ -95,12 +95,22 @@
  *   0  angle
  *   1  fireCooldownMs
  *   2  lifetimeMs
+ *
+ * PaperDoubleEntity (Interstice catalog v1 — Paper Double, the ninja's
+ * decoy; see snapshotDeltaBits.ts's own PAPER_DOUBLE comment for why this
+ * gets its own bitmask rather than riding PlayerEntity's full P_HI):
+ *   0  x
+ *   1  y
+ *   2  health
+ *   3  remainingMs
+ *   (id, ownerId, vx, vy are static after creation — sent once in `added`)
  */
 
 import type {
   DestructibleEntity,
   EntityId,
   FireEntity,
+  PaperDoubleEntity,
   PickupEntity,
   PlayerEntity,
   PlayerId,
@@ -120,6 +130,7 @@ import {
   FIRE,
   PICKUP,
   SAT,
+  PAPER_DOUBLE,
 } from "../sim/snapshotDeltaBits.js";
 
 // ─── Public types ─────────────────────────────────────────────────────────────
@@ -146,6 +157,8 @@ export type EntityUpdate<V> =
     ? { bits: number } & Partial<PickupEntity>
     : V extends SatelliteEntity
     ? { bits: number } & Partial<SatelliteEntity>
+    : V extends PaperDoubleEntity
+    ? { bits: number } & Partial<PaperDoubleEntity>
     : never;
 
 export type DeltaPayload = {
@@ -161,6 +174,9 @@ export type DeltaPayload = {
   firePatches: CollectionDelta<EntityId, FireEntity>;
   pickups: CollectionDelta<EntityId, PickupEntity>;
   satellites: CollectionDelta<EntityId, SatelliteEntity>;
+  /** Optional/additive — matches WorldState.paperDoubles's own optional
+   *  contract (older peers/snapshots simply omit it, read as "no decoys"). */
+  paperDoubles?: CollectionDelta<EntityId, PaperDoubleEntity>;
 };
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -372,6 +388,22 @@ function diffSatellite(
   return { bits, patch };
 }
 
+// ─── Paper Double diff ────────────────────────────────────────────────────────
+
+function diffPaperDouble(
+  prev: PaperDoubleEntity,
+  next: PaperDoubleEntity,
+): { bits: number; patch: Partial<PaperDoubleEntity> } | null {
+  let bits = 0;
+  const patch: Partial<PaperDoubleEntity> = {};
+  if (prev.x !== next.x) { bits |= PAPER_DOUBLE.x; patch.x = next.x; }
+  if (prev.y !== next.y) { bits |= PAPER_DOUBLE.y; patch.y = next.y; }
+  if (prev.health !== next.health) { bits |= PAPER_DOUBLE.health; patch.health = next.health; }
+  if (prev.remainingMs !== next.remainingMs) { bits |= PAPER_DOUBLE.remainingMs; patch.remainingMs = next.remainingMs; }
+  if (bits === 0) return null;
+  return { bits, patch };
+}
+
 // ─── Generic collection diffing ───────────────────────────────────────────────
 
 function diffCollection<K extends string | number, V>(
@@ -451,6 +483,11 @@ export function encodeDelta(prev: WorldState, next: WorldState): DeltaPayload {
       if (!result) return null;
       return { bits: result.bits, ...result.patch };
     }) as CollectionDelta<EntityId, SatelliteEntity>,
+    paperDoubles: diffCollection(prev.paperDoubles ?? {}, next.paperDoubles ?? {}, (p, n) => {
+      const result = diffPaperDouble(p, n);
+      if (!result) return null;
+      return { bits: result.bits, ...result.patch };
+    }) as CollectionDelta<EntityId, PaperDoubleEntity>,
   };
 }
 
@@ -490,6 +527,15 @@ export function applyDelta(baseline: WorldState, delta: DeltaPayload): WorldStat
       baseline.satellites,
       delta.satellites,
       (base, upd) => ({ ...base, ...(upd as Partial<SatelliteEntity>) }),
+    ),
+    // Optional/additive on both sides — an older sender that never encoded
+    // `paperDoubles` (or a baseline that predates it) falls back to an
+    // empty delta / empty record, same "older snapshots read as absent"
+    // contract every other optional WorldState field already uses.
+    paperDoubles: applyCollectionDelta(
+      baseline.paperDoubles ?? {},
+      delta.paperDoubles ?? emptyDelta<EntityId, PaperDoubleEntity>(),
+      (base, upd) => ({ ...base, ...(upd as Partial<PaperDoubleEntity>) }),
     ),
   };
 }

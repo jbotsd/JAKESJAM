@@ -39,7 +39,8 @@
     "presentation:evidence": "bun scripts/audit-presentation-evidence.ts",
     "presentation:extract-frames": "bun scripts/extractPresentationFrames.ts",
     "presentation:rig-evidence": "bun scripts/rigHarnessShots.ts",
-    "presentation:loadout-evidence": "bun scripts/loadoutHarnessShots.ts"
+    "presentation:loadout-evidence": "bun scripts/loadoutHarnessShots.ts",
+    "balance-sim": "bun scripts/balance-sim.ts"
   },
   "devDependencies": {
     "@playwright/test": "^1.59.1",

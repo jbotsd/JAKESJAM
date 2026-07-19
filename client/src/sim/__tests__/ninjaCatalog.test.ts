@@ -1,23 +1,31 @@
 // Interstice catalog v1 (docs/class-ability-catalogs-v1.md) — the ninja's
 // class ability catalog, plugged into the EXISTING six-axes rack/draft
 // substrate (docs/six-axes-goal.md) and the Geometrician/Kindred/Syzygist
-// catalogs' own activation-switch pattern. 9 of the doc's 10 abilities are
-// wired this pass ("paper-double" is out of the AbilityKind union entirely —
-// see cardTypes.ts's own header comment for why).
+// catalogs' own activation-switch pattern. All 10 of the doc's 10 abilities
+// are now wired — "paper-double" (movement, the decoy) shipped as its own
+// fast-follow pass once its blocking dependency (a new decoy/summon entity
+// type in WorldState) was actually built; see cardTypes.ts's own updated
+// header comment and types.ts's `PaperDoubleEntity` for the full shape, and
+// this file's own "Paper Double" describe block below (separate from the
+// other 9's shared describe block since it drives a different substrate —
+// `state.paperDoubles`, not a caster-side window/mark field).
 //
 // Coverage, mirroring syzygistCatalog.test.ts's own shape:
-//   (1) data authoring — the 9 cards exist as classId:"ninja" ability cards
-//       wired to their AbilityKind, with role coverage across all six roles.
+//   (1) data authoring — all 10 cards exist as classId:"ninja" ability
+//       cards wired to their AbilityKind, with role coverage across all six
+//       roles.
 //   (2) offer-roll classId gating — only a ninja (sprinter) ever sees these;
 //       every other chassis never does, and a ninja never sees a foreign
 //       catalog offer either.
 //   (3) rack fill via the existing resolvePlayerBuild mechanism.
-//   (4) representative v1 sim-effect tests for each of the 9 abilities —
-//       these drive the REAL NINJA MELEE FSM (windup/active/recovery),
-//       mirroring ninjaMelee.test.ts's own fixture conventions, since
-//       Undercut/Edge Storm/Read Mark/Second Wind/Razor Route are all
+//   (4) representative v1 sim-effect tests for each of the 9 window/mark
+//       abilities — these drive the REAL NINJA MELEE FSM (windup/active/
+//       recovery), mirroring ninjaMelee.test.ts's own fixture conventions,
+//       since Undercut/Edge Storm/Read Mark/Second Wind/Razor Route are all
 //       consumed at that FSM's own hit/wave/dash-through sites, not by the
-//       generic activation switch alone.
+//       generic activation switch alone. Paper Double's own sim-effect
+//       tests live in the dedicated describe block below (spawn/move/
+//       damageable/expire/burst — a decoy entity, not a window/mark).
 //   (5) classId gating on sim effects (a wizard casting a ninja card off-
 //       class never reaches the ninja-only consumption sites).
 //
@@ -41,14 +49,19 @@ import {
   NINJA_SECOND_WIND_HEAL,
   NINJA_SECOND_WIND_ENERGY,
   NINJA_RAZOR_ROUTE_BOOST_SPEED,
+  NINJA_PAPER_DOUBLE_SPEED,
+  NINJA_PAPER_DOUBLE_MAX_HEALTH,
+  NINJA_PAPER_DOUBLE_LIFETIME_MS,
 } from "../constants.js";
 import {
+  EntityId,
   InputSeq,
   PlayerId,
   Tick,
   type InputBitfield,
   type InputFrame,
   type MapDefinition,
+  type PaperDoubleEntity,
   type PlayerEntity,
   type WorldState,
 } from "../types.js";
@@ -75,6 +88,7 @@ const NINJA_ABILITY_IDS = [
   "ghost-guard",
   "second-wind",
   "razor-route",
+  "paper-double",
 ] as const;
 
 // Commit-frame constants mirrored from World.ts, same precedent as
@@ -213,7 +227,7 @@ function ninjaCard(id: (typeof NINJA_ABILITY_IDS)[number]) {
 }
 
 describe("Interstice catalog v1 — data authoring", () => {
-  test("all 9 wired catalog abilities exist as classId:'ninja' ability cards", () => {
+  test("all 10 wired catalog abilities exist as classId:'ninja' ability cards", () => {
     for (const id of NINJA_ABILITY_IDS) {
       const card = ninjaCard(id);
       expect(card.classId).toBe("ninja");
@@ -223,11 +237,26 @@ describe("Interstice catalog v1 — data authoring", () => {
     }
   });
 
-  test("paper-double does NOT exist as a card — recorded deferral, not a silent stub", () => {
-    expect(crystalRoundsCards.find((c) => c.id === "paper-double")).toBeUndefined();
+  // Formerly "paper-double does NOT exist as a card — recorded deferral,
+  // not a silent stub" (asserted `crystalRoundsCards.find(... "paper-
+  // double") toBeUndefined()`). Flipped now that it's shipped — the
+  // deferral itself is still on record (cardTypes.ts's own updated header
+  // comment preserves the original paragraph rather than deleting it), this
+  // test just needs to assert the opposite fact now that the card is real.
+  test("paper-double exists as a card and is correctly shaped (rare, exclusive-ninja, movement, no energy-cost field — matches every other catalog ability's 'nothing SPENDS energy yet' contract)", () => {
+    const card = ninjaCard("paper-double");
+    expect(card.classId).toBe("ninja");
+    expect(card.rarity).toBe("rare");
+    expect(card.category).toBe("ability");
+    expect(card.role).toBe("movement");
+    expect(card.active?.kind).toBe("paper-double");
+    expect(card.active?.cooldownMs).toBe(9000);
+    // No durationMs — unlike the window/mark abilities, Paper Double's
+    // "window" IS the spawned decoy's own lifetime, not a caster-side timer.
+    expect(card.active?.durationMs).toBeUndefined();
   });
 
-  test("role coverage across the 9 abilities: all six locked roles present", () => {
+  test("role coverage across all 10 abilities: all six locked roles present", () => {
     const roles = new Set(NINJA_ABILITY_IDS.map((id) => ninjaCard(id).role));
     expect(roles.has("defense")).toBe(true);
     expect(roles.has("offense")).toBe(true);
@@ -628,6 +657,246 @@ describe("Interstice catalog v1 — representative sim effects", () => {
     expect(res.state.players[A]!.vx).toBe(300); // unboosted
     expect(res.state.players[A]!.readTargetId).toBeUndefined();
     expect(res.events.some((e) => e.t === "dash-through")).toBe(true); // the chassis verb still fires
+  });
+});
+
+// Paper Double drives a different substrate than the 9 tests above (a
+// spawned `state.paperDoubles` entity, not a caster-side window/mark field
+// on PlayerEntity) — its own describe block, own fixture shapes.
+describe("Interstice catalog v1 — Paper Double (decoy entity)", () => {
+  test("casting spawns a decoy entity owned by the caster, at the caster's position, at full health", () => {
+    const caster = mkPlayer(A, 400, 400, "sprinter", {
+      cards: ["paper-double"],
+      vx: 0,
+      vy: 0,
+      aimX: 500,
+      aimY: 400,
+    });
+    const state = mkState([caster]);
+    const runtime = createRuntime(flatMap);
+    const res = stepWithRuntime(
+      state,
+      runtime,
+      inputsWith([caster], { [A as string]: frame(SLOT1_BIT, 1, 500, 400) }),
+      DT_MS,
+    );
+    const doubles = Object.values(res.state.paperDoubles ?? {});
+    expect(doubles.length).toBe(1);
+    expect(doubles[0]!.ownerId).toBe(A);
+    expect(doubles[0]!.health).toBe(NINJA_PAPER_DOUBLE_MAX_HEALTH);
+    // ability-activated fires generically for every case (World.ts's
+    // post-switch resonance block) — same event every other catalog
+    // ability gets, kind-tagged "paper-double".
+    expect(res.events.some((e) => e.t === "ability-activated" && (e as { kind: string }).kind === "paper-double")).toBe(true);
+  });
+
+  test("a stationary caster's decoy runs along the FALLBACK aim direction (v1's documented 'no real movement input' case)", () => {
+    // vx/vy both 0 — below NINJA_PAPER_DOUBLE_STATIONARY_SPEED_PX — so the
+    // heading falls back to aim direction (World.ts's own case comment).
+    const caster = mkPlayer(A, 400, 400, "sprinter", {
+      cards: ["paper-double"],
+      vx: 0,
+      vy: 0,
+      aimX: 400, // pointing straight "up" (aim is a world point above the caster)
+      aimY: 100,
+    });
+    const state = mkState([caster]);
+    const runtime = createRuntime(flatMap);
+    const res = stepWithRuntime(
+      state,
+      runtime,
+      inputsWith([caster], { [A as string]: frame(SLOT1_BIT, 1, 400, 100) }),
+      DT_MS,
+    );
+    const pd = Object.values(res.state.paperDoubles ?? {})[0]!;
+    expect(pd.vx).toBeCloseTo(0, 1);
+    expect(pd.vy).toBeCloseTo(-NINJA_PAPER_DOUBLE_SPEED, 1); // world -y is "up"
+  });
+
+  test("the decoy sprints in a straight line at NINJA_PAPER_DOUBLE_SPEED — it keeps moving even after the caster's own velocity changes", () => {
+    const caster = mkPlayer(A, 400, 400, "sprinter", {
+      cards: ["paper-double"],
+      vx: 300,
+      vy: 0,
+    });
+    const state = mkState([caster]);
+    const runtime = createRuntime(flatMap);
+    const s1 = stepWithRuntime(
+      state,
+      runtime,
+      inputsWith([caster], { [A as string]: frame(SLOT1_BIT, 1) }),
+      DT_MS,
+    );
+    const pd0 = Object.values(s1.state.paperDoubles ?? {})[0]!;
+    expect(pd0.vx).toBeCloseTo(NINJA_PAPER_DOUBLE_SPEED, 1);
+    expect(pd0.vy).toBeCloseTo(0, 1);
+
+    const ticks = 20;
+    const stepped = stepIdle(s1.state, runtime, [caster], ticks).state;
+    const pd1 = Object.values(stepped.paperDoubles ?? {})[0]!;
+    const expectedDx = NINJA_PAPER_DOUBLE_SPEED * ((ticks * DT_MS) / 1000);
+    expect(pd1.x - pd0.x).toBeCloseTo(expectedDx, 0);
+    expect(pd1.y).toBeCloseTo(pd0.y, 1); // pure +x heading, no drift
+  });
+
+  test("a projectile hit damages the decoy without killing it (sub-lethal enemy weapon fire)", () => {
+    // Caster's decoy heads +x (toward the shooter) via the aim fallback;
+    // the shooter sits close enough, aiming back -x, that starter-pistol's
+    // (12 dmg, < NINJA_PAPER_DOUBLE_MAX_HEALTH's 20) shot reaches it well
+    // before the decoy could run far.
+    const caster = mkPlayer(A, 400, 400, "sprinter", {
+      cards: ["paper-double"],
+      vx: 0,
+      vy: 0,
+      aimX: 500,
+      aimY: 400,
+    });
+    const shooter = mkPlayer(B, 460, 400, "balanced", { aimX: 400, aimY: 400 });
+    const state = mkState([caster, shooter]);
+    const runtime = createRuntime(flatMap);
+    const s1 = stepWithRuntime(
+      state,
+      runtime,
+      inputsWith([caster, shooter], {
+        [A as string]: frame(SLOT1_BIT, 1, 500, 400),
+        [B as string]: frame(FIRE_BIT, 1, 400, 400),
+      }),
+      DT_MS,
+    );
+    const stepped = stepUntil(
+      s1.state,
+      runtime,
+      [caster, shooter],
+      30,
+      (s) => Object.values(s.paperDoubles ?? {}).some((pd) => pd.health < NINJA_PAPER_DOUBLE_MAX_HEALTH),
+    );
+    const doubles = Object.values(stepped.paperDoubles ?? {});
+    expect(doubles.length).toBe(1); // damaged, not killed
+    expect(doubles[0]!.health).toBe(NINJA_PAPER_DOUBLE_MAX_HEALTH - 12);
+  });
+
+  test("melee lands on and can kill a decoy in one hit (>= 20 damage)", () => {
+    // A casts, decoy runs +x toward B. B (also ninja — this arc-hit-check
+    // has no classId gate, but a swing needs the ninja melee FSM to reach
+    // it at all) is positioned so the decoy enters B's slash arc well
+    // within the active window (see this test file's own header-comment
+    // math for the geometry).
+    const caster = mkPlayer(A, 400, 400, "sprinter", {
+      cards: ["paper-double"],
+      vx: 0,
+      vy: 0,
+      aimX: 500,
+      aimY: 400,
+    });
+    const attacker = mkPlayer(B, 500, 400, "sprinter", { aimX: 400, aimY: 400 });
+    const state = mkState([caster, attacker]);
+    const runtime = createRuntime(flatMap);
+    const s1 = stepWithRuntime(
+      state,
+      runtime,
+      inputsWith([caster, attacker], {
+        [A as string]: frame(SLOT1_BIT, 1, 500, 400),
+        [B as string]: frame(FIRE_BIT, 1, 400, 400),
+      }),
+      DT_MS,
+    );
+    const after = stepIdle(s1.state, runtime, [caster, attacker], WINDUP_TICKS + ACTIVE_TICKS + 2).state;
+    expect(Object.keys(after.paperDoubles ?? {}).length).toBe(0); // popped — SLASH_DAMAGE (22) >= 20
+  });
+
+  test("a decoy's death (lethal projectile fire) bursts AOE damage on a nearby bystander, without hitting whoever's far off the shot's own path", () => {
+    // Hand-authors `state.paperDoubles` directly (bypassing the cast flow —
+    // already proven separately above) so the decoy's position is fully
+    // controlled and independent of caster/attacker placement. Low starting
+    // health (5) so ONE starter-pistol shot (12 dmg) overkills it cleanly.
+    // The bystander sits 80px BELOW the decoy — inside
+    // NINJA_PAPER_DOUBLE_BURST_RADIUS_PX (90) of the decoy — but the
+    // shooter's own shot travels along a straight horizontal line toward
+    // the decoy and never comes near the bystander's position, so any
+    // damage the bystander takes can only be the decoy's own burst.
+    // The decoy's owner (A) must still exist as a live player —
+    // `resolveInstantAoeCasts` looks the caster up by id (`players[cast.
+    // casterId]`) before resolving the burst, same "caster must still be
+    // present" contract every other pendingInstantAoe consumer already has
+    // — so A is included here too, far off in a corner, taking no actions.
+    const caster = mkPlayer(A, 50, 50, "sprinter");
+    const shooter = mkPlayer(B, 660, 400, "balanced", { aimX: 600, aimY: 400 });
+    const C = PlayerId("c");
+    const bystander = mkPlayer(C, 600, 480, "balanced");
+    const pdId = EntityId(1);
+    const handAuthoredDouble: PaperDoubleEntity = {
+      id: pdId,
+      ownerId: A,
+      x: 600,
+      y: 400,
+      vx: 0,
+      vy: 0,
+      health: 5,
+      remainingMs: NINJA_PAPER_DOUBLE_LIFETIME_MS,
+    };
+    const state: WorldState = {
+      ...mkState([caster, shooter, bystander]),
+      paperDoubles: { [pdId]: handAuthoredDouble },
+    };
+    const runtime = createRuntime(flatMap);
+    const s1 = stepWithRuntime(
+      state,
+      runtime,
+      inputsWith([caster, shooter, bystander], { [B as string]: frame(FIRE_BIT, 1, 600, 400) }),
+      DT_MS,
+    );
+    const after = stepUntil(
+      s1.state,
+      runtime,
+      [caster, shooter, bystander],
+      20,
+      (s) => Object.keys(s.paperDoubles ?? {}).length === 0,
+    );
+    expect(Object.keys(after.paperDoubles ?? {}).length).toBe(0); // popped
+    // Caught the burst — exactly NINJA_PAPER_DOUBLE_BURST_DAMAGE (10), not
+    // some multiple and not zero (the shot itself never reached C).
+    expect(100 - after.players[C]!.health).toBeCloseTo(10, 1);
+  });
+
+  test("expires after ~2.5s if never damaged (no burst-radius bystander needed to prove the timer itself)", () => {
+    const caster = mkPlayer(A, 400, 400, "sprinter", {
+      cards: ["paper-double"],
+      vx: 0,
+      vy: 0,
+      aimX: 500,
+      aimY: 400,
+    });
+    const state = mkState([caster]);
+    const runtime = createRuntime(flatMap);
+    const s1 = stepWithRuntime(
+      state,
+      runtime,
+      inputsWith([caster], { [A as string]: frame(SLOT1_BIT, 1, 500, 400) }),
+      DT_MS,
+    );
+    expect(Object.keys(s1.state.paperDoubles ?? {}).length).toBe(1);
+    // ~1.67s in — well short of the 2.5s lifetime, still alive.
+    const midway = stepIdle(s1.state, runtime, [caster], 100).state;
+    expect(Object.keys(midway.paperDoubles ?? {}).length).toBe(1);
+    // Well past 2.5s total (180 ticks * 16.667ms ≈ 3.0s).
+    const afterExpiry = stepIdle(midway, runtime, [caster], 80).state;
+    expect(Object.keys(afterExpiry.paperDoubles ?? {}).length).toBe(0);
+  });
+
+  test("cooldown gates re-casting — CD (9s) exceeds max decoy lifetime (2.5s), so a caster can never have two overlapping decoys in practice", () => {
+    const caster = mkPlayer(A, 400, 400, "sprinter", { cards: ["paper-double"] });
+    const state = mkState([caster]);
+    const runtime = createRuntime(flatMap);
+    const s1 = stepWithRuntime(state, runtime, inputsWith([caster], { [A as string]: frame(SLOT1_BIT, 1) }), DT_MS);
+    expect(s1.state.players[A]!.slot1CooldownUntilTick).toBeDefined();
+    // A second press one tick later (still on cooldown) spawns nothing new.
+    const s2 = stepWithRuntime(
+      s1.state,
+      runtime,
+      inputsWith([caster], { [A as string]: frame(SLOT1_BIT, 2) }),
+      DT_MS,
+    );
+    expect(Object.keys(s2.state.paperDoubles ?? {}).length).toBe(1); // still just the one
   });
 });
 

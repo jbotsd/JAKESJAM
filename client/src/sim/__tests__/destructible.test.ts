@@ -98,18 +98,32 @@ describe("stepDestructibles", () => {
     const result = stepDestructibles(dests, projs, players, 16.667, Tick(1));
     expect(result.destructibles[EntityId(1)]?.health).toBe(30);
     expect(result.projectiles[EntityId(10)]).toBeUndefined();
-    expect(result.events).toEqual([]);
+    // A non-fatal hit still emits `destructible-hit` (2026-07-19, venue-
+    // lobby ability showcase) — the damage-number signal that used to be
+    // entirely absent for a surviving destructible.
+    expect(result.events).toEqual([
+      { t: "destructible-hit", entityId: EntityId(1), damage: 20, x: 100, y: 100 },
+    ]);
     expect(result.spawnedFire).toEqual([]);
   });
 
-  test("projectile that breaks a non-explosive box emits destructible-broken only", () => {
+  test("projectile that breaks a non-explosive box emits destructible-hit THEN destructible-broken", () => {
     const dests = { [EntityId(1)]: mkDestructible(EntityId(1), { health: 10 }) };
     const projs = { [EntityId(10)]: mkProj(EntityId(10), PlayerId("a"), 100, 100, { damage: 20 }) };
     const players = { [PlayerId("a")]: mkPlayer(PlayerId("a"), 0, 0), [PlayerId("b")]: mkPlayer(PlayerId("b"), 110, 110) };
     const result = stepDestructibles(dests, projs, players, 16.667, Tick(1));
     expect(result.destructibles[EntityId(1)]).toBeUndefined();
-    expect(result.events.length).toBe(1);
+    // The killing blow still deals damage worth a number — destructible-hit
+    // fires ALONGSIDE destructible-broken, not instead of it (2026-07-19).
+    expect(result.events.length).toBe(2);
     expect(result.events[0]).toMatchObject({
+      t: "destructible-hit",
+      entityId: EntityId(1),
+      damage: 20,
+      x: 100,
+      y: 100,
+    });
+    expect(result.events[1]).toMatchObject({
       t: "destructible-broken",
       entityId: EntityId(1),
       x: 100,

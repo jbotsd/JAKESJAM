@@ -463,6 +463,18 @@ export type PlayerEntity = {
    * the WASM ABI (six-axes-goal.md "Zig line" — ability/window state, never
    * computed by `step_world`).
    *
+   * The catalog's TENTH ability, Paper Double, is shipped too (previously
+   * deferred — see the old paragraph this replaced, preserved in git
+   * history, and cardTypes.ts's own updated deferral-turned-shipped note)
+   * but deliberately has NO caster-side field here: unlike these nine, its
+   * whole effect lives on a brand-new WorldState entity collection
+   * (`PaperDoubleEntity` / `state.paperDoubles`, below) rather than a
+   * window-buff/mark on the caster's own PlayerEntity — unavoidable, since
+   * the decoy needs its own position/health/lifetime independent of the
+   * caster who's still standing elsewhere. See `paperDouble.ts`'s header
+   * for the full v1 shape (straight-line runner, no platform collision)
+   * and World.ts's `"paper-double"` case for the cast-time spawn.
+   *
    * Wire-visibility call: P_HI (snapshotDeltaBits.ts) had exactly ZERO free
    * bits left after Syzygist's `wardAbsorb` consumed the last one (bit 30 —
    * see that file's own "LAST free bit" comment) — so, matching
@@ -817,6 +829,29 @@ export type PlayerEntity = {
    */
   throwHandParity?: number;
   /**
+   * Priest-only basic-fire ramping channel (weapon.ts stepWeaponNative,
+   * constants.ts's SYZ_CHANNEL_RAMP_MS doc comment has the full design
+   * rationale). Milliseconds Fire has been CONTINUOUSLY held by a priest
+   * player — ticks up every tick `fireRequested` is true and the player is
+   * alive, reset to `undefined` the instant `fireRequested` goes false (or
+   * the player dies), so a release always drops the ramp back to baseline
+   * immediately, matching the "punishes flicking between targets" design
+   * intent. Only ever written for `classIdForArchetype(characterId) ===
+   * "priest"` — every other class never touches this field, so it always
+   * reads `undefined` for them (purely additive, zero behavior change).
+   *
+   * Runtime-only, same category as `throwHandParity` immediately above:
+   * not wire-encoded and not mixed into `hash.ts`'s reconcile hash. The
+   * ramp's actual EFFECT (faster shot cadence) is already fully visible to
+   * remote clients through the wire-synced `fireCooldownMs` field and the
+   * spawned projectiles themselves, so a remote observer never needs this
+   * raw hold-duration counter to render correctly; and like
+   * `throwHandParity`, it's deterministically derived from
+   * `fireRequested`'s own input-bit history + dt, so predicted-local state
+   * self-corrects without a wire channel.
+   */
+  channelHoldMs?: number;
+  /**
    * Duos-queue team assignment (docs/classes-goal.md "Venue integration",
    * class-overhaul-workboard.md chunk 1.1 — "Team identity threading into
    * the sim"). Populated ONCE at entity construction from
@@ -983,6 +1018,81 @@ export type SatelliteEntity = {
   lifetimeMs: number;
 };
 
+/**
+ * Paper Double's decoy runner (Interstice catalog v1, docs/card-pool-v2.md
+ * "Paper Double" — the ninja's tenth ability, previously deferred because it
+ * "needs a new decoy/summon ENTITY type in WorldState... a genuinely new
+ * ABI-crossing entity concept none of the other 36 catalog abilities shipped
+ * this session needed" — cardTypes.ts's own former deferral note, now
+ * updated). Own hitbox (`paperDouble.ts`'s `paperDoubleAABB`, the same
+ * PLAYER_BODY_WIDTH/HEIGHT box a real player uses — "same mass silhouette"
+ * per the card's visual-read text), own health pool, own lifetime — a real
+ * damageable body, not a caster-side buff window like every other Interstice
+ * catalog field on PlayerEntity above.
+ *
+ * v1 simplifications (documented, not silent — same "honest partial over
+ * padded" discipline this session's other v1 calls already use):
+ *   - "sprinting your last input vector" is read as a STRAIGHT LINE at a
+ *     fixed heading captured once at cast time (`vx`/`vy`, constant for the
+ *     decoy's whole life) — not a full replay buffer of the caster's actual
+ *     historical inputs. See World.ts's `"paper-double"` case for exactly
+ *     how that heading is derived (current HORIZONTAL velocity only —
+ *     gravity's vertical fall component doesn't count as "input", it would
+ *     otherwise spawn a decoy diving into the floor mid-air — falling back
+ *     to the full 2D aim direction if horizontally stationary).
+ *   - No platform collision, no gravity: the decoy is a pure kinematic
+ *     mover (position += velocity × dt every tick, unconditionally) for its
+ *     whole 2.5s max life, not a full physics body. A decoy cast toward a
+ *     wall/ledge visually "sprints" through it rather than colliding —
+ *     acceptable for a body that's alive at most 2.5s and never fights back;
+ *     a grounded/collidable mover is a fast-follow, not a blocker for the
+ *     core damageable/lifetime/burst loop this ships.
+ *   - Damage sources: enemy weapon fire (`paperDouble.ts`'s own projectile-
+ *     collision loop, mirroring `destructible.ts`'s exactly) and melee (the
+ *     ninja slash arc + paladin edge arc, mirroring their existing "arc
+ *     hit-check vs. destructibles" blocks in World.ts) both apply. The
+ *     owner's own projectiles/melee never damage their own decoy (mirrors
+ *     `FireEntity`'s owner-exclusion in `fire.ts`).
+ *
+ * Wire-visibility call (deliberate, NOT matching the self-only ability-
+ * window fields above): unlike `undercutUntilTick`/`readMarkUntilTick`/etc,
+ * an enemy genuinely needs to SEE this entity to shoot it — it's a
+ * cross-visible world entity, same category as `FireEntity`/
+ * `SatelliteEntity`, not ability/window state. `state.paperDoubles` crosses
+ * the network snapshot-delta wire (net/snapshotDelta.ts, net/
+ * snapshotDeltaBits.ts's `PAPER_DOUBLE` bits) exactly like those two
+ * collections do. It does NOT cross the WASM ABI (six-axes-goal.md "Zig
+ * line" still applies — this is TS-only combat/ability state, not identity/
+ * roster/resource state; the opt-in wasm physics dev step spreads
+ * `...state` through untouched, matching every other collection it doesn't
+ * know about).
+ */
+export type PaperDoubleEntity = {
+  id: EntityId;
+  /** The caster who cast Paper Double — never null, unlike FireEntity's
+   *  world-owned option (a decoy always has a living owner; killing the
+   *  owner doesn't currently despawn their decoy early — it just runs out
+   *  its own clock, a deliberate small v1 simplification, not a hazard:
+   *  the decoy can't be re-cast while alive anyway, CD (9s) exceeds max
+   *  lifetime (2.5s) in every build). */
+  ownerId: PlayerId;
+  x: number;
+  y: number;
+  /** Fixed heading × NINJA_PAPER_DOUBLE_SPEED, captured once at cast —
+   *  see this type's own header comment. Never changes over the decoy's
+   *  life (no steering, no homing, no acceleration). */
+  vx: number;
+  vy: number;
+  /** Remaining health; starts at NINJA_PAPER_DOUBLE_MAX_HEALTH (20, per the
+   *  card's "Lives... 20 damage"), depletes on a landed hit, despawns
+   *  (bursts) at 0 — same "damageable hull" contract as DestructibleEntity's
+   *  own `health` field, not FireEntity's timer-only shape. */
+  health: number;
+  /** Lifetime countdown (ms); despawns (bursts) at 0 even if never
+   *  damaged — same field/semantics as FireEntity's `remainingMs`. */
+  remainingMs: number;
+};
+
 export type RoundState = {
   phase: RoundPhase;
   countdownRemainingMs: number;
@@ -1048,6 +1158,19 @@ export type WorldState = {
   firePatches: Record<EntityId, FireEntity>;
   pickups: Record<EntityId, PickupEntity>;
   satellites: Record<EntityId, SatelliteEntity>;
+  /**
+   * Paper Double decoys (see `PaperDoubleEntity`'s own header comment for
+   * the full design/simplification rationale). Optional/additive — unlike
+   * `projectiles`/`destructibles`/`firePatches`/`pickups`/`satellites`
+   * above (all required fields from Day 1), this was added long after
+   * dozens of hand-built `WorldState` test literals already existed across
+   * the repo; making it required would have forced editing every one of
+   * them for a single new (usually-empty) collection. Matches this file's
+   * own established "additive/optional, older snapshots read as absent"
+   * contract (`chaosModifierIds`/`fireHazardTimerMs` immediately below use
+   * the same pattern) — every read site defaults via `?? {}`.
+   */
+  paperDoubles?: Record<EntityId, PaperDoubleEntity>;
   round: RoundState;
   /**
    * Active chaos modifier ids for this match. Resolved per-tick via
@@ -1094,6 +1217,31 @@ export type SimEvent = (
       headshot?: boolean;
     }
   | { t: 'destructible-broken'; entityId: EntityId; x: number; y: number }
+  | {
+      /**
+       * A destructible (training dummy / barrel / box) took damage that
+       * DIDN'T break it — the destructible counterpart to `hit-confirmed`.
+       * Added 2026-07-19 for the venue-lobby ability showcase (Jake: "we
+       * need an area with the right bots... to test this"): before this,
+       * a destructible taking non-lethal damage emitted NOTHING (only a
+       * kill emitted `destructible-broken`), so a dummy being whittled
+       * down had zero per-hit signal to key a damage-number popup off —
+       * confirmed by grep, `destructible.health` mutation sites
+       * (`destructible.ts`'s `stepDestructibles`, `World.ts`'s hangout
+       * melee/instant-AOE block) previously pushed no event on a
+       * non-fatal hit at all. `victimId` is deliberately absent (unlike
+       * `hit-confirmed`) — a destructible has no `PlayerId`, so `x`/`y`
+       * (the destructible's own position) is the only way a renderer can
+       * place a floating number for it. Fires ALONGSIDE
+       * `destructible-broken` on a killing blow too (not instead of) —
+       * the death still deals damage worth reading a number for.
+       */
+      t: 'destructible-hit';
+      entityId: EntityId;
+      damage: number;
+      x: number;
+      y: number;
+    }
   | { t: 'pickup-taken'; entityId: EntityId; playerId: PlayerId }
   | { t: 'round-end'; winnerId: PlayerId | null }
   | {

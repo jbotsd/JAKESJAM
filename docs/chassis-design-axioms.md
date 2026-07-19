@@ -133,17 +133,24 @@ IN the held object — no tether, no echo.
 
 **Mechanism:** this isn't decoration, it's the concept art already having
 solved two mechanics the sim built independently and later: Interstice's
-ghost-double IS Paper Double (the "input-echo lie" decoy, still deferred in
-code — the art shipped before the mechanic did) and Syzygist's
-finger-threads-to-fragments ARE the "self-guiding tendril, auto-target the
-correct destination" design Jake asked for this session, independently
+ghost-double IS Paper Double (the "input-echo lie" decoy — the art shipped
+before the mechanic did; the sim mechanic itself shipped 2026-07-19,
+`PaperDoubleEntity`/`state.paperDoubles`, still with only a placeholder
+render, see the "Opens" note below) and Syzygist's finger-threads-to-
+fragments ARE the "self-guiding tendril, auto-target the correct
+destination" design Jake asked for this session, independently
 re-arrived-at from the mechanics side. The art and the late-session
 mechanics-design converged on the same idea without either referencing the
 other — that's a strong signal it's the right read for both classes.
 
-**Opens:** when Paper Double finally gets built (needs the new decoy-entity
-type, tracked separately), its VFX has a head start — a translucent
-afterimage, not a smoke-puff/vanish. When Syzygist's ally-targeted
+**Opens:** now that Paper Double's SIM is built (spawn/move/damageable/
+expire/burst — the decoy-entity type this section originally flagged as
+the blocker), its VFX still has a head start waiting to be spent: a
+translucent afterimage, not a smoke-puff/vanish. The shipped v1 render is
+a minimal placeholder only (sim-correctness pass, not a tactile VFX pass —
+see `paperDouble.ts`'s header / types.ts's `PaperDoubleEntity` comment) —
+the ghost-double-afterimage treatment this section describes is still a
+genuinely open follow-up, not done. When Syzygist's ally-targeted
 abilities get their VFX pass, the thread-to-target visual is already
 canon, not a fresh design problem — draw the tendril literally, finger to
 target, the way the concept art already does. Geometrician and Kindled
@@ -188,8 +195,9 @@ concept art doesn't violate its own doctrine.
 
 **These axioms are extracted from art that's already locked-in, not
 proposed from scratch.** Where a current mechanic doesn't yet match what
-the art already implies (Paper Double, Syzygist VFX), that's a tracked gap
-to close toward the art — not a reason to redesign the art.
+the art already implies (Paper Double's VFX — the SIM shipped 2026-07-19,
+the tactile ghost-double render didn't yet; Syzygist VFX), that's a
+tracked gap to close toward the art — not a reason to redesign the art.
 
 ---
 
@@ -266,23 +274,28 @@ grounded in what's actually shipped this session, not aspiration.
 - **Tether/echo (CA5 — this class's signature use of it):** a translucent
   ghost-double trails the leap, mid-motion, same pose one beat behind.
   This is the concept-art-native visual for Paper Double, arrived at
-  independently of the sim mechanic and still waiting for it — see gap
-  below.
+  independently of the sim mechanic — the sim mechanic shipped 2026-07-19
+  (spawn/move/damageable/expire/burst), the tactile afterimage render
+  still hasn't — see gap below.
 - **Shipped:** 85hp, fastest, smallest — matches CA3's silhouette read.
-  9 of 10 catalog abilities (Undercut, Edge Storm, Needle, Read Mark,
-  Shard Ring, Wall Bloom, Ghost Guard, Second Wind, Razor Route), full
-  melee/dash/energy chassis, Shield fixed this session to genuinely
-  never-block (per character-sheets-v1.md's own "Dash i-frames only" line
-  — Kindled Ward's structural sibling-branch, but the ninja branch's
-  entire content IS "does nothing," matching CA4: the class's defense verb
-  IS the dash, nothing else should visually or mechanically compete with
-  that read). `kitComing` correctly still `true`.
-- **Gap toward the art:** Paper Double (the tenth ability) is the ONE
-  piece of this chassis the concept art already fully previsualized and
-  the sim hasn't built — needs a new decoy/summon entity type. When it
-  ships, CA5 says: translucent afterimage repeating the caster's last few
-  inputs, not a smoke-puff/teleport-vanish (a WoW Rogue vanish read, which
-  the class's own DI-anti-moodboard table already rejects).
+  Full 10-of-10 catalog abilities (Undercut, Edge Storm, Needle, Read Mark,
+  Shard Ring, Wall Bloom, Ghost Guard, Second Wind, Razor Route, Paper
+  Double), full melee/dash/energy chassis, Shield fixed this session to
+  genuinely never-block (per character-sheets-v1.md's own "Dash i-frames
+  only" line — Kindled Ward's structural sibling-branch, but the ninja
+  branch's entire content IS "does nothing," matching CA4: the class's
+  defense verb IS the dash, nothing else should visually or mechanically
+  compete with that read). `kitComing` correctly still `true`.
+- **Gap toward the art:** Paper Double's SIM is built now (own entity type,
+  `PaperDoubleEntity`/`state.paperDoubles`, resolved the blocker this
+  section originally named) but its RENDER is still just a minimal
+  placeholder (sim-correctness pass only — see `paperDouble.ts`'s header
+  comment). CA5's own visual is the ONE piece of this chassis the concept
+  art already fully previsualized and the render still hasn't caught up
+  to: translucent afterimage repeating the caster's last few inputs, not a
+  smoke-puff/teleport-vanish (a WoW Rogue vanish read, which the class's
+  own DI-anti-moodboard table already rejects). A real fast-follow now
+  that nothing sim-side blocks it.
 
 ### Syzygist (Priest) — `syzygist-v2.jpg`
 

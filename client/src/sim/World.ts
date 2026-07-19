@@ -42,6 +42,7 @@ import {
 } from "./player.js";
 import { buildFireEntity, destructibleAABB, stepDestructibles } from "./destructible.js";
 import { stepFirePatches } from "./fire.js";
+import { buildPaperDoubleEntity, paperDoubleAABB, stepPaperDoubles } from "./paperDouble.js";
 import { stepSuddenDeathStorm } from "./suddenDeath.js";
 import { clearExpiredBuffs, stepPickups } from "./pickup.js";
 import { stepLaunchPads } from "./launchPad.js";
@@ -168,6 +169,11 @@ import {
   NINJA_SECOND_WIND_HEAL,
   NINJA_SECOND_WIND_ENERGY,
   NINJA_RAZOR_ROUTE_BOOST_SPEED,
+  NINJA_PAPER_DOUBLE_MAX_HEALTH,
+  NINJA_PAPER_DOUBLE_LIFETIME_MS,
+  NINJA_PAPER_DOUBLE_BURST_RADIUS_PX,
+  NINJA_PAPER_DOUBLE_BURST_DAMAGE,
+  NINJA_PAPER_DOUBLE_STATIONARY_SPEED_PX,
 } from "./constants.js";
 import { stepProjectile, spawnProjectile, makeHitSweepScratch, fillHitSweepScratch, SLOW_FIELD_DURATION_MS, type HitSweepScratch } from "./projectile.js";
 import {
@@ -225,6 +231,7 @@ import type {
   InputBitfield,
   InputFrame,
   MapDefinition,
+  PaperDoubleEntity,
   PlayerEntity,
   PlayerSpawnInfo,
   ProjectileEntity,
@@ -391,6 +398,15 @@ export type NinjaMeleeMemory = {
    *  there). Same "once per swing" contract as `hitThisSwing`, separate
    *  Set because destructible ids and PlayerIds aren't the same brand. */
   hitDestructiblesThisSwing: Set<string>;
+  /** Paper Double ids already hit by the CURRENT swing — same "once per
+   *  swing" contract as hitThisSwing/hitDestructiblesThisSwing, separate Set
+   *  for the same reason (a decoy's EntityId shares its number-space with
+   *  destructibles/projectiles/etc but the Sets themselves stay
+   *  semantically distinct rather than piggybacking on
+   *  hitDestructiblesThisSwing's name). Live in both hangout AND real
+   *  fights — unlike hitDestructiblesThisSwing, which is a hangout-only
+   *  practice-dummy concern, a decoy is a real combat entity. */
+  hitPaperDoublesThisSwing: Set<string>;
   /** Victim ids already dash-through-tagged during the CURRENT dash burst
    *  — cleared on the burst's rising edge so a body-cross fires once per
    *  dash per victim, not once per tick of overlap. */
@@ -418,6 +434,7 @@ export function freshNinjaMeleeMemory(): NinjaMeleeMemory {
     aimY: 0,
     hitThisSwing: new Set(),
     hitDestructiblesThisSwing: new Set(),
+    hitPaperDoublesThisSwing: new Set(),
     dashThroughTagged: new Set(),
     wasDashing: false,
     razorRouteActiveDash: false,
@@ -455,6 +472,12 @@ export type PaladinMeleeMemory = {
   /** Destructible ids already hit by the CURRENT swing — same hangout-
    *  mode-only contract as NinjaMeleeMemory.hitDestructiblesThisSwing. */
   hitDestructiblesThisSwing: Set<string>;
+  /** Paper Double ids already hit by the CURRENT swing — same contract as
+   *  NinjaMeleeMemory.hitPaperDoublesThisSwing (live in both hangout and
+   *  real fights, unlike hitDestructiblesThisSwing). Paladin melee can pop
+   *  a NINJA's decoy just as readily as the ninja's own blade can — no
+   *  classId gate, matching how any class's projectiles already can. */
+  hitPaperDoublesThisSwing: Set<string>;
 };
 
 export function freshPaladinMeleeMemory(): PaladinMeleeMemory {
@@ -465,6 +488,7 @@ export function freshPaladinMeleeMemory(): PaladinMeleeMemory {
     aimY: 0,
     hitThisSwing: new Set(),
     hitDestructiblesThisSwing: new Set(),
+    hitPaperDoublesThisSwing: new Set(),
   };
 }
 
@@ -1429,6 +1453,7 @@ export class World {
       firePatches: {},
       pickups,
       satellites: {},
+      paperDoubles: {},
       round: {
         // Hangout mode starts already `"fighting"` — the round machine
         // never steps in this mode (stepWithRuntime's hangoutMode branch),
@@ -1476,6 +1501,7 @@ export function nextEntityIdSeed(state: WorldState): number {
   for (const id of Object.keys(state.pickups)) max = Math.max(max, Number(id));
   for (const id of Object.keys(state.satellites ?? {})) max = Math.max(max, Number(id));
   for (const id of Object.keys(state.firePatches ?? {})) max = Math.max(max, Number(id));
+  for (const id of Object.keys(state.paperDoubles ?? {})) max = Math.max(max, Number(id));
   return max + 1;
 }
 
@@ -1668,6 +1694,32 @@ export function stepWithRuntime(
    * Empty (and free) outside hangout mode — nothing pushes into it.
    */
   const pendingHangoutDestructibleDamage: Array<{ destructibleId: string; attackerId: PlayerId; damage: number }> = [];
+
+  /**
+   * Paper Double (Interstice catalog v1, movement role) melee damage —
+   * mirrors `pendingHangoutDestructibleDamage` immediately above exactly
+   * (same "accumulate during the main loop, apply once right before the
+   * dedicated step function runs" reasoning — `stepPaperDoubles` always
+   * returns a fresh replacement record, same as `stepDestructibles`), but
+   * is NOT hangout-only: a decoy is a real combat entity, so both the
+   * ninja slash arc AND the paladin edge arc push into this in EVERY
+   * fight, not just the practice-dummy lobby. Applied in section "3c2.
+   * Paper Doubles" below, right before `stepPaperDoubles` runs.
+   */
+  const pendingPaperDoubleDamage: Array<{ paperDoubleId: string; attackerId: PlayerId; damage: number }> = [];
+
+  /**
+   * Newly-cast Paper Double decoys (populated by the `"paper-double"`
+   * ability-switch case below) — a plain array, same "collected here,
+   * merged once at the single site that already owns the collection's
+   * construction" shape as `pendingZoneSpawns` above, NOT a `CowRecord`:
+   * `stepPaperDoubles` reassigns `state.paperDoubles` wholesale every tick
+   * it runs (movement/lifetime always advance), the exact "record is
+   * reassigned wholesale every tick" case `cowRecord.ts`'s own header
+   * comment documents CoW would waste an allocation on (its own
+   * `state.satellites` example, same reasoning here).
+   */
+  const pendingPaperDoubleSpawns: PaperDoubleEntity[] = [];
 
   for (const [pid_, entity] of Object.entries(state.players)) {
     const pid = pid_ as PlayerId;
@@ -3405,6 +3457,87 @@ export function stepWithRuntime(
           activated = true;
           break;
         }
+        case "paper-double": {
+          // Paper Double (movement, the catalog's 10th ability — previously
+          // deferred, see cardTypes.ts's own updated deferral note and
+          // types.ts's PaperDoubleEntity header for the full shape). Unlike
+          // every case above, this spawns a brand-new WorldState entity
+          // instead of writing a window/mark onto `nextEntity` — collected
+          // into `pendingPaperDoubleSpawns` (merged into `state.paperDoubles`
+          // in section "3c2. Paper Doubles" below), never written directly,
+          // matching `pendingZoneSpawns`' own "spawn is safe mid-loop,
+          // merging happens once at the single site that owns the
+          // collection" reasoning.
+          //
+          // "Sprinting your last input vector" (v1 reading, PaperDoubleEntity's
+          // own header comment): the caster's CURRENT HORIZONTAL velocity
+          // direction if they're actually running (|vx| above
+          // NINJA_PAPER_DOUBLE_STATIONARY_SPEED_PX), falling back to aim
+          // direction for a horizontally-stationary caster. Deliberately
+          // HORIZONTAL-ONLY, not the full (vx, vy) vector: `vy` is gravity-
+          // driven for most of a player's airtime, not player INPUT — an
+          // in-air (even standing-still-on-the-spot) cast would otherwise
+          // pick up tens of px/s of pure-gravity fall velocity within a
+          // SINGLE tick (well past the stationary threshold) and spawn a
+          // decoy diving straight into the floor, nothing like "sprinting".
+          // "Input vector" in this 2D platformer is fundamentally
+          // horizontal (Left/Right); jump is a discrete action, not a held
+          // aim-like direction — a decoy "sprints" along the ground plane,
+          // it doesn't dive. A stationary caster falls back to the FULL 2D
+          // aim vector instead (any direction, including vertical) — "sprints
+          // the way you're looking" is a fine stand-in for "last input" when
+          // there IS no horizontal movement input to echo. `aimX`/`aimY`
+          // here are the per-player loop's own locals (`input?.aimX ??
+          // entity.aimX`, computed once above) — an ABSOLUTE world-space
+          // cursor point, NOT a direction vector (same "aimX/aimY on the
+          // input are an absolute cursor point, not a unit vector" contract
+          // every other aim-consuming case in this switch already follows —
+          // Sunlance/Facet Break/Needle/etc all compute `aimX - nextEntity.x`,
+          // never read `.aimX` as a direction on its own).
+          let dirX: number;
+          let dirY: number;
+          if (Math.abs(nextEntity.vx) > NINJA_PAPER_DOUBLE_STATIONARY_SPEED_PX) {
+            dirX = Math.sign(nextEntity.vx);
+            dirY = 0;
+          } else {
+            const aimDx = aimX - nextEntity.x;
+            const aimDy = aimY - nextEntity.y;
+            const aimLen = Math.hypot(aimDx, aimDy);
+            if (aimLen > 1e-3) {
+              dirX = aimDx / aimLen;
+              dirY = aimDy / aimLen;
+            } else {
+              dirX = 1;
+              dirY = 0;
+            }
+          }
+          // v1 always SPAWNS, even when a resonance window is live — the
+          // doc's "cast INTO a live window: you and the double swap
+          // positions instead" variant is a recorded fast-follow deferral
+          // (same "ship the core, document the nuance" discipline Undercut's
+          // wave-exclusion / Read Mark's dash-through-tag / Borrowed Time's
+          // aggression-gate already use above). Not implemented here because
+          // it's a genuinely different effect SHAPE (a cross-entity position
+          // swap gated on "does a live decoy from THIS caster still exist"),
+          // not a numeric tuning nuance — see this ability's own card
+          // description for the honest "always spawns" v1 contract.
+          const pd = buildPaperDoubleEntity(
+            allocId(),
+            pid,
+            nextEntity.x,
+            nextEntity.y,
+            dirX,
+            dirY,
+            NINJA_PAPER_DOUBLE_MAX_HEALTH,
+            NINJA_PAPER_DOUBLE_LIFETIME_MS,
+          );
+          pendingPaperDoubleSpawns.push(pd);
+          // No manual "ability-activated" push here — the generic post-
+          // switch block right below (keyed off `active.kind`) already
+          // emits it for every case, this one included.
+          activated = true;
+          break;
+        }
       }
       if (!activated) continue;
 
@@ -3577,9 +3710,19 @@ export function stepWithRuntime(
   //     always takes the hit — there is no projectile path to dodge around,
   //     which IS the fix (a real area check, not projectile-vs-player
   //     collision).
-  if (fightingPhase && !hangoutMode) {
-    const aoeTick = Tick(state.tick + 1);
-    for (const cast of pendingInstantAoe) {
+  // Extracted so a SECOND, later-in-the-tick batch (Paper Double's decoy
+  // bursts — section "3c2" below) can resolve through the identical
+  // mitigation chain without duplicating it. Paper Double bursts are
+  // discovered too late in tick order (after projectile/lifetime
+  // resolution, section 3b/3c) to land in the FIRST call below — this
+  // block already ran and drained `pendingInstantAoe` by then, so pushing
+  // into that same array from later code would silently lose the entry.
+  // Same closure-captured locals every call site already relies on
+  // (players/events/sortedPlayerIdsForTick/effDtMs) — a nested function,
+  // not a module-level export, since none of this is meaningful outside
+  // one tick's `stepWithRuntime` call.
+  function resolveInstantAoeCasts(casts: PendingInstantAoe[], aoeTick: Tick): void {
+    for (const cast of casts) {
       const caster = players[cast.casterId];
       if (!caster) continue;
       for (const vid of sortedPlayerIdsForTick) {
@@ -3706,6 +3849,14 @@ export function stepWithRuntime(
         players[vid] = post;
       }
     }
+  }
+
+  // First batch: every ability that queues into `pendingInstantAoe` during
+  // the main per-player loop above (Prism Fan/Lattice/Shock Ring/Crater/
+  // Flock Pulse/Shard Ring/Wall Bloom) — all fully known by this point in
+  // the tick.
+  if (fightingPhase && !hangoutMode) {
+    resolveInstantAoeCasts(pendingInstantAoe, Tick(state.tick + 1));
   }
 
   // 1y2. INSTANT AOE vs. DESTRUCTIBLES (venue-lobby-tableau fast-follow,
@@ -4021,6 +4172,7 @@ export function stepWithRuntime(
           mem.aimY = len > 1e-3 ? (edge.aimY - attacker.y) / len : 0;
           mem.hitThisSwing.clear();
           mem.hitDestructiblesThisSwing.clear();
+          mem.hitPaperDoublesThisSwing.clear();
           events.push({ t: "slash-started", playerId: aid, x: attacker.x, y: attacker.y });
         }
       } else {
@@ -4215,6 +4367,30 @@ export function stepWithRuntime(
         }
       }
 
+      // ---- Arc hit-check vs. Paper Doubles (docs/card-pool-v2.md "Paper
+      //      Double") — live in BOTH hangout and real fights (unlike the
+      //      destructibles block just above): a decoy is a real combat
+      //      entity, not a practice-dummy-only concern. Same 5-point
+      //      arc-sample geometry against paperDoubleAABB(pd) instead of a
+      //      player hitbox; damage is accumulated into
+      //      pendingPaperDoubleDamage (NOT applied directly — see that
+      //      array's own doc comment for why, same "the step function
+      //      always returns a fresh record" reasoning
+      //      pendingHangoutDestructibleDamage gives). The caster's own
+      //      decoy is excluded — "can't hurt your own tools" (fire.ts's
+      //      owner-exclusion precedent).
+      if (hasReachedSlashContact) {
+        const aimAngle = Math.atan2(mem.aimY, mem.aimX);
+        for (const [pdIdStr, pd] of Object.entries(state.paperDoubles ?? {})) {
+          if (pd.ownerId === aid || mem.hitPaperDoublesThisSwing.has(pdIdStr)) continue;
+          if (!isAABBInMeleeArc(attacker.x, attacker.y, aimAngle, SLASH_ARC_RADIANS / 2, SLASH_RANGE, pd.x, pd.y, paperDoubleAABB(pd))) {
+            continue;
+          }
+          mem.hitPaperDoublesThisSwing.add(pdIdStr);
+          pendingPaperDoubleDamage.push({ paperDoubleId: pdIdStr, attackerId: aid, damage: SLASH_DAMAGE });
+        }
+      }
+
       // ---- Wave-off-swing ----
       // "Wave is aftermath of contact, not a free cast: spawns from a swing
       // that had commit." Fires at the active→recovery transition
@@ -4300,6 +4476,7 @@ export function stepWithRuntime(
           mem.aimY = len > 1e-3 ? (edge.aimY - attacker.y) / len : 0;
           mem.hitThisSwing.clear();
           mem.hitDestructiblesThisSwing.clear();
+          mem.hitPaperDoublesThisSwing.clear();
           events.push({ t: "slash-started", playerId: aid, x: attacker.x, y: attacker.y });
         }
       } else {
@@ -4529,6 +4706,23 @@ export function stepWithRuntime(
           }
           mem.hitDestructiblesThisSwing.add(did);
           pendingHangoutDestructibleDamage.push({ destructibleId: did, attackerId: aid, damage: EDGE_DAMAGE });
+        }
+      }
+
+      // ---- Arc hit-check vs. Paper Doubles — live in both hangout and real
+      //      fights, mirrors the ninja block above exactly (see that block's
+      //      own doc comment). Any class's melee can pop a ninja's decoy —
+      //      no classId gate, matching how any class's projectiles already
+      //      can via stepPaperDoubles' projectile loop.
+      if (hasReachedEdgeContact) {
+        const aimAngle = Math.atan2(mem.aimY, mem.aimX);
+        for (const [pdIdStr, pd] of Object.entries(state.paperDoubles ?? {})) {
+          if (pd.ownerId === aid || mem.hitPaperDoublesThisSwing.has(pdIdStr)) continue;
+          if (!isAABBInMeleeArc(attacker.x, attacker.y, aimAngle, EDGE_ARC_RADIANS / 2, EDGE_RANGE, pd.x, pd.y, paperDoubleAABB(pd))) {
+            continue;
+          }
+          mem.hitPaperDoublesThisSwing.add(pdIdStr);
+          pendingPaperDoubleDamage.push({ paperDoubleId: pdIdStr, attackerId: aid, damage: EDGE_DAMAGE });
         }
       }
     }
@@ -5476,6 +5670,12 @@ export function stepWithRuntime(
       const d = destructiblesForStep[EntityId(Number(did))];
       if (!d) continue;
       const newHealth = Math.max(0, d.health - dmg);
+      // Per-hit damage-number signal (2026-07-19, venue-lobby ability
+      // showcase) — same "fires alongside destructible-broken on a kill,
+      // not instead of" contract as stepDestructibles' own projectile-hit
+      // emission (destructible.ts), so melee-arc/instant-AOE dummy hits
+      // get a floating number exactly like projectile hits do.
+      events.push({ t: "destructible-hit", entityId: d.id, damage: dmg, x: d.x, y: d.y });
       if (newHealth <= 0) {
         delete destructiblesForStep[EntityId(Number(did))];
         events.push({ t: "destructible-broken", entityId: d.id, x: d.x, y: d.y });
@@ -5588,6 +5788,83 @@ export function stepWithRuntime(
         }
       }
       events.push(ev);
+    }
+  }
+
+  // 3c2. Paper Doubles (Interstice catalog v1, movement role — docs/card-
+  //      pool-v2.md "Paper Double") — same overall shape as destructibles/
+  //      fire patches immediately above. Melee damage accumulated during
+  //      the main per-player loop (pendingPaperDoubleDamage) is pre-applied
+  //      here first (deleting any decoy it kills, same "the step function
+  //      always returns a fresh record" reasoning the destructiblesForStep
+  //      block above already establishes) — a melee kill's burst is
+  //      collected directly here rather than via `stepPaperDoubles`, since
+  //      the decoy never reaches that function at all once melee has
+  //      already zeroed its health. Newly-cast decoys
+  //      (pendingPaperDoubleSpawns, from the "paper-double" ability-switch
+  //      case) are merged in next. `stepPaperDoubles` then advances every
+  //      survivor (straight-line movement, lifetime countdown, projectile
+  //      collision — mirrors stepDestructibles' own projectile loop)
+  //      returning its own burst list (projectile-killed + expired decoys).
+  //      Every burst this section discovers — melee, projectile, or expiry
+  //      — resolves through `resolveInstantAoeCasts` a SECOND time (see
+  //      that function's own header comment for why this can't just push
+  //      into the original `pendingInstantAoe` array: section 1y already
+  //      drained it earlier this tick). Gated `fightingPhase` only (not
+  //      `!hangoutMode` — hangout pins fightingPhase true per WorldMode's
+  //      own doc comment, so decoys still move/expire/can-be-meleed there);
+  //      the burst RESOLUTION itself is additionally gated `!hangoutMode`,
+  //      same "player damage is suppressed in hangout" invariant every
+  //      other pendingInstantAoe consumer already respects.
+  let nextPaperDoubles: WorldState["paperDoubles"] = state.paperDoubles ?? {};
+  if (fightingPhase) {
+    let paperDoublesForStep: Record<EntityId, PaperDoubleEntity> = state.paperDoubles ?? {};
+    const paperDoubleBursts: PendingInstantAoe[] = [];
+    if (pendingPaperDoubleDamage.length > 0) {
+      const totalDamageById = new Map<string, number>();
+      for (const hit of pendingPaperDoubleDamage) {
+        totalDamageById.set(hit.paperDoubleId, (totalDamageById.get(hit.paperDoubleId) ?? 0) + hit.damage);
+      }
+      paperDoublesForStep = { ...paperDoublesForStep };
+      for (const [pdIdStr, dmg] of totalDamageById) {
+        const pdId = EntityId(Number(pdIdStr));
+        const pd = paperDoublesForStep[pdId];
+        if (!pd) continue;
+        const newHealth = Math.max(0, pd.health - dmg);
+        if (newHealth <= 0) {
+          delete paperDoublesForStep[pdId];
+          paperDoubleBursts.push({
+            kind: "paper-double-burst",
+            casterId: pd.ownerId,
+            x: pd.x,
+            y: pd.y,
+            radius: NINJA_PAPER_DOUBLE_BURST_RADIUS_PX,
+            damage: NINJA_PAPER_DOUBLE_BURST_DAMAGE,
+          });
+        } else {
+          paperDoublesForStep[pdId] = { ...pd, health: newHealth };
+        }
+      }
+    }
+    if (pendingPaperDoubleSpawns.length > 0) {
+      paperDoublesForStep = { ...paperDoublesForStep };
+      for (const pd of pendingPaperDoubleSpawns) paperDoublesForStep[pd.id] = pd;
+    }
+    const pdStep = stepPaperDoubles(paperDoublesForStep, projectilesAfterDestructibles, effDtMs);
+    nextPaperDoubles = pdStep.paperDoubles;
+    projectilesAfterDestructibles = pdStep.projectiles;
+    for (const b of pdStep.bursts) {
+      paperDoubleBursts.push({
+        kind: "paper-double-burst",
+        casterId: b.casterId,
+        x: b.x,
+        y: b.y,
+        radius: NINJA_PAPER_DOUBLE_BURST_RADIUS_PX,
+        damage: NINJA_PAPER_DOUBLE_BURST_DAMAGE,
+      });
+    }
+    if (paperDoubleBursts.length > 0 && !hangoutMode) {
+      resolveInstantAoeCasts(paperDoubleBursts, nextTick);
     }
   }
 
@@ -5957,6 +6234,7 @@ export function stepWithRuntime(
       firePatches: nextFirePatches,
       pickups: nextPickups,
       satellites: finalSatellites,
+      paperDoubles: nextPaperDoubles,
       round: roundResult.state,
       // chaosModifierIds are immutable across the match; pass through.
       chaosModifierIds: state.chaosModifierIds,

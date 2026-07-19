@@ -25,8 +25,13 @@ const LOBBY_ALLY_NPC_ID_PREFIX = `${BOT_ID_PREFIX}practice_ally_`;
 
 /** Two ally NPCs flank the loadout table (inner-left/inner-right — the
  *  compositional symmetry docs/venue-lobby-tableau-goal.md Part 3 calls
- *  for), so this is an id-builder, not one fixed id. */
-export function lobbyAllyNpcId(index: 1 | 2): string {
+ *  for), so this is an id-builder, not one fixed id. Widened to 1..4
+ *  (2026-07-19, ability-showcase gauntlet, docs/venue-lobby-tableau-
+ *  goal.md's sibling showcase-room work): indices 3/4 are the showcase
+ *  gauntlet's own two ally NPCs, placed at varied distances from each
+ *  other in the open ground between the tableau and the bell — same
+ *  stationary-fixture contract as 1/2, just further from the table. */
+export function lobbyAllyNpcId(index: 1 | 2 | 3 | 4): string {
   return `${LOBBY_ALLY_NPC_ID_PREFIX}${index}`;
 }
 

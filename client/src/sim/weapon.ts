@@ -25,6 +25,8 @@ import {
   GEO_SUNLANCE_DAMAGE_MULTIPLIER,
   GEO_OVERCLOCK_FIRE_RATE_MULTIPLIER,
   GEO_OVERCLOCK_SPREAD_MULTIPLIER,
+  SYZ_CHANNEL_RAMP_MS,
+  SYZ_CHANNEL_RAMP_FIRE_RATE_MULTIPLIER_MAX,
 } from "./constants.js";
 import { nextInt } from "./rng.js";
 import { lutAtan2, lutCos, lutSin } from "./trig.js";
@@ -235,6 +237,21 @@ function stepWeaponNative(
     fireCooldownMs: Math.max(0, player.fireCooldownMs - dtMs),
   };
 
+  // Priest basic-fire ramping channel (constants.ts's SYZ_CHANNEL_RAMP_MS
+  // doc comment has the full design rationale). Tracked BEFORE the early
+  // return below so continuing to hold Fire through a normal cooldown gap
+  // (the common case — most ticks land mid-cooldown, not on a fire tick)
+  // still accumulates hold duration; a release (or death) drops it back to
+  // baseline instantly. Gated on classId so every other archetype's
+  // `channelHoldMs` stays permanently `undefined` — zero behavior change
+  // for them.
+  const isPriestChannel = classIdForArchetype(next.characterId) === "priest";
+  if (isPriestChannel && fireRequested && next.alive) {
+    next.channelHoldMs = (next.channelHoldMs ?? 0) + dtMs;
+  } else if (next.channelHoldMs !== undefined) {
+    next.channelHoldMs = undefined;
+  }
+
   if (!fireRequested || !next.alive || next.fireCooldownMs > 0) {
     const idleBuild = resolvePlayerBuild(next);
     return {
@@ -287,6 +304,18 @@ function stepWeaponNative(
     next.hasteUntilTick !== undefined &&
     next.hasteUntilTick > options.currentTick;
   const hasteFireRateMul = hasteActive ? next.hasteMultiplier ?? 1 : 1;
+  // Priest basic-fire ramping channel (constants.ts's SYZ_CHANNEL_RAMP_MS
+  // doc comment). Same "fixed ceiling, driven by a live duration" compose
+  // pattern as hasteFireRateMul/overclockActive immediately above, except
+  // the "duration" is continuous-hold time (channelHoldMs, ticked above)
+  // rather than a fixed timed window. `isPriestChannel` keeps this at
+  // exactly 1 for every other class regardless of channelHoldMs (which is
+  // always undefined for them anyway).
+  const channelRampFrac = isPriestChannel
+    ? Math.min(1, (next.channelHoldMs ?? 0) / SYZ_CHANNEL_RAMP_MS)
+    : 0;
+  const channelFireRateMul =
+    1 + (SYZ_CHANNEL_RAMP_FIRE_RATE_MULTIPLIER_MAX - 1) * channelRampFrac;
   // Damage is left at the build value here; the chaos damageMultiplier is
   // applied post-hit in World.stepWithRuntime so satellites and any other
   // projectile sources get the same scaling without each spawn site reading
@@ -395,13 +424,25 @@ function stepWeaponNative(
 
   // Cooldown derived from build.fireRate (shots per second), scaled by the
   // chaos fire-rate multiplier (golden-gun slows it, future buffs raise it),
-  // Overclock's window (Geometrician catalog v1), and Syzygist haste
-  // (class-overhaul-workboard.md chunk 3.1) when live.
+  // Overclock's window (Geometrician catalog v1), Syzygist haste
+  // (class-overhaul-workboard.md chunk 3.1), and — priest only — the basic-
+  // fire ramping channel (constants.ts's SYZ_CHANNEL_RAMP_MS) when live.
   const fireRate = Math.max(
     MIN_FIRE_RATE,
-    build.fireRate * chaos.fireRateMultiplier * (overclockActive ? GEO_OVERCLOCK_FIRE_RATE_MULTIPLIER : 1) * hasteFireRateMul,
+    build.fireRate *
+      chaos.fireRateMultiplier *
+      (overclockActive ? GEO_OVERCLOCK_FIRE_RATE_MULTIPLIER : 1) *
+      hasteFireRateMul *
+      channelFireRateMul,
   );
   next.fireCooldownMs = 1000 / fireRate;
+  // `ammo` decrements once per fire event exactly as before the channel
+  // ramp — checked before landing this change: `ammo` gates nothing in
+  // this codebase (no read anywhere checks it against 0 to block firing;
+  // ammoRegenPerSecond is 0, so it already only ever drains, never
+  // refills, for every class) and isn't HUD-rendered. A priest streaming
+  // faster at full ramp drains it faster, same as any other class's high-
+  // fire-rate build already would — not a new mechanic, not a regression.
   next.ammo = Math.max(0, next.ammo - 1);
 
   return {

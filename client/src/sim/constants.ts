@@ -813,6 +813,43 @@ export const SYZ_HASTE_GIFT_SELF_MULTIPLIER = 1 + (SYZ_HASTE_MULTIPLIER_DEFAULT 
  *  same shape as Recoil Step's own recorded gap). */
 export const SYZ_DRIFT_STEP_RANGE_PX = 210;
 
+/** Basic-fire ramping channel (weapon.ts stepWeaponNative, priest-only —
+ *  Jake's ask: "rework the basic priest spell to be more channely... take
+ *  effects from cards but its like geometrician rn except with a better
+ *  deck"). Design direction (locked, Jake's own framing after a follow-up
+ *  question): a RAMPING STREAM, not a flat hold-to-stream and not a
+ *  charge-then-release — holding Fire continuously fires (no discrete
+ *  per-press gate change needed; stepWeapon already re-fires on cooldown
+ *  expiry while held), and the longer Fire has been held on ONE continuous
+ *  press, the faster the stream ticks. Releasing Fire resets instantly —
+ *  "rewards sustained commitment to one target, punishes flicking between
+ *  targets."
+ *
+ *  FIRE-RATE ramp only, no damage ramp. Reasoning: a damage ramp reads as
+ *  "charging a shot," which is the WIZARD's locked identity (character-
+ *  sheets-v1.md Wizard: "charge-and-release channeling... Sunlance/
+ *  Overchannel already do this shape") — Priest must stay clear of that
+ *  lane per its own doctrine ("positioned and calm — power through
+ *  entanglement, not through closing distance," character-sheets-v1.md
+ *  Priest). A pure rate ramp reads as "spinning up a stream" instead,
+ *  which is a mechanically AND thematically distinct basic-fire identity
+ *  from Wizard's discrete pull-trigger shot while still spawning the same
+ *  ProjectileEntity via the same spawnProjectile path — every card
+ *  modifier (element/split/pierce/homing/etc.) keeps applying unmodified
+ *  to each ramped shot.
+ *
+ *  SYZ_CHANNEL_RAMP_MS: time (holding Fire, ms) to reach max ramp — v1
+ *  numeric guess (same "no need to agonize, balance-sim/playtest refines
+ *  later" doctrine as every other SYZ_/GEO_/KIN_ constant), landed inside
+ *  the "roughly 1.5-2.5s" range considered.
+ *  SYZ_CHANNEL_RAMP_FIRE_RATE_MULTIPLIER_MAX: fire-rate multiplier at max
+ *  ramp — composes into weapon.ts's fireRate calc exactly like
+ *  GEO_OVERCLOCK_FIRE_RATE_MULTIPLIER/hasteFireRateMul (a multiplicative
+ *  factor on top of build.fireRate), just driven by continuous-hold
+ *  duration (ramping 1.0x → this ceiling) instead of a fixed timed window. */
+export const SYZ_CHANNEL_RAMP_MS = 2000;
+export const SYZ_CHANNEL_RAMP_FIRE_RATE_MULTIPLIER_MAX = 1.6;
+
 // ── Interstice catalog v1 (docs/class-ability-catalogs-v1.md — the ninja's
 // 10-ability class catalog, 9 wired this pass; see cardTypes.ts's
 // AbilityKind header comment for why "paper-double" is out of this union
@@ -909,6 +946,35 @@ export const NINJA_SECOND_WIND_ENERGY = 30;
  *  a recorded v1 deferral (a collision-layer change on the always-on dash,
  *  out of scope here). */
 export const NINJA_RAZOR_ROUTE_BOOST_SPEED = 260;
+/** Paper Double (movement, the catalog's 10th ability — docs/card-pool-
+ *  v2.md "Paper Double", previously deferred pending a new decoy entity
+ *  type; see types.ts's `PaperDoubleEntity` header for the full shape).
+ *  CD matches the doc's "Energy 40, CD 9s" — the Energy half is N/A in v1
+ *  for the SAME reason every other catalog ability's energy cost is N/A
+ *  (this file's NINJA_ENERGY header note: "nothing SPENDS energy yet"),
+ *  only the cooldown gate is implemented. Speed/lifetime/burst numbers are
+ *  the doc's own literal values ("exactly run speed 362", "Lives 2.5s or
+ *  20 damage", "bursts: 10 damage, 90px") — no first-draft guessing needed
+ *  here, unlike most other catalog numbers this session. */
+export const NINJA_PAPER_DOUBLE_CD_MS = 9000;
+export const NINJA_PAPER_DOUBLE_SPEED = 362;
+export const NINJA_PAPER_DOUBLE_MAX_HEALTH = 20;
+export const NINJA_PAPER_DOUBLE_LIFETIME_MS = 2500;
+export const NINJA_PAPER_DOUBLE_BURST_RADIUS_PX = 90;
+export const NINJA_PAPER_DOUBLE_BURST_DAMAGE = 10;
+/** Below this current HORIZONTAL velocity magnitude (|vx|, px/s), the
+ *  caster is read as "not actually running" at cast time — the decoy's
+ *  heading falls back to the full 2D aim direction instead (see World.ts's
+ *  `"paper-double"` case). Deliberately checked against HORIZONTAL speed
+ *  only, never the full (vx, vy) vector: `vy` is gravity-driven for most of
+ *  a player's airtime (even a single tick of freefall from a dead stop
+ *  picks up tens of px/s downward), so a full-vector check would read
+ *  almost every airborne cast as "moving" in whatever direction gravity
+ *  happened to be pulling that tick — nothing like "sprinting". A tiny
+ *  threshold, not zero: a barely-drifting idle player (friction decay,
+ *  sub-pixel jitter) should still read as "stationary", not lock onto a
+ *  near-random near-zero horizontal velocity sign. */
+export const NINJA_PAPER_DOUBLE_STATIONARY_SPEED_PX = 5;
 
 // Mid-round respawn (Jake ruled "A", 2026-07-17, reverting the venue-era
 // bench-until-bell): death costs a short fixed delay, then you're back at

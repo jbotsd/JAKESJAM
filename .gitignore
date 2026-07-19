@@ -65,3 +65,7 @@ stream-kit/obs/*.bak-*
 # on demand, never hand-edited, so it's a build artifact like dist/.
 dist-portal/
 jakesjam-portal-build.zip
+
+# scripts/balance-sim.ts JSON report — regenerated on every run, not
+# authored data.
+scripts/.balance-sim-report.json

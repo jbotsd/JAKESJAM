@@ -2465,6 +2465,28 @@ export const crystalRoundsCards: CardDefinition[] = [
     visual: visual("bar", "#22d3ee"),
     unique: true,
   },
+  {
+    id: "paper-double",
+    name: "Paper Double",
+    category: "ability",
+    rarity: "rare",
+    buckets: ["ability"],
+    essenceCost: 5,
+    classId: "ninja",
+    role: "movement",
+    description:
+      "Active (9s cooldown): spawn a decoy sprinting your current heading — damageable, dies at 20 damage or 2.5s, bursts for 10 damage in a 90px radius.",
+    flavorText: "Same feet, same weight, same lie.",
+    active: {
+      kind: "paper-double",
+      cooldownMs: 9000,
+    },
+    // Pale grey/white, not the class's usual combat-cyan — matches the
+    // card's own "Visual read" text ("paper-white body pop" on burst); the
+    // decoy itself is meant to read as an honest tell, not a spell effect.
+    visual: visual("hexagon", "#e2e8f0"),
+    unique: true,
+  },
 ];
 
 export const prototypeCards = crystalRoundsCards;
