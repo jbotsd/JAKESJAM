@@ -59,11 +59,15 @@ await fire("unmark");
 await page.waitForTimeout(400); // let the snap fire + the thread clear
 // Interstice blade — burst-capture the animated SWEEP (whips through the arc).
 // Fire, let the scene's next update consume the command + spawn, THEN sample.
-await fire("blade");
-await page.waitForTimeout(12);
-for (let i = 0; i < 9; i++) {
+for (let i = 0; i < 18; i++) {
+  await page.evaluate(
+    ({ kind, t }) => (window as unknown as {
+      harnessMeleeFrame: (k: "ninja" | "paladin", p: number) => void;
+    }).harnessMeleeFrame(kind, t),
+    { kind: "ninja" as const, t: i / 17 },
+  );
+  await page.waitForTimeout(20);
   await canvas.screenshot({ path: `${OUT}/blade-sweep-${String(i).padStart(2, "0")}.png` });
-  await page.waitForTimeout(16);
 }
 await page.waitForTimeout(200);
 await fire("shards");
@@ -86,10 +90,16 @@ await fire("absorb");
 await page.waitForTimeout(90);
 await canvas.screenshot({ path: `${OUT}/ward-absorb.png` });
 await page.waitForTimeout(280);
-await fire("edge");
-await page.waitForTimeout(80);
-await canvas.screenshot({ path: `${OUT}/kindred-edge.png` });
-await page.waitForTimeout(240);
+for (let i = 0; i < 22; i++) {
+  await page.evaluate(
+    ({ kind, t }) => (window as unknown as {
+      harnessMeleeFrame: (k: "ninja" | "paladin", p: number) => void;
+    }).harnessMeleeFrame(kind, t),
+    { kind: "paladin" as const, t: i / 21 },
+  );
+  await page.waitForTimeout(20);
+  await canvas.screenshot({ path: `${OUT}/kindred-edge-${String(i).padStart(2, "0")}.png` });
+}
 await fire("drop");
 await page.waitForTimeout(110);
 await canvas.screenshot({ path: `${OUT}/ward-drop.png` });

@@ -27,13 +27,25 @@ import {
   spawnWardDrop,
   GEOMETRICIAN_TINT,
   KINDRED_TINT,
+  INTERSTICE_TINT,
+  drawBladeSwing,
+  drawKindledSwing,
 } from "./game/render/LightConstruct";
+import { meleeBladeAngle } from "./game/render/meleeTiming.js";
 import type { CharacterArchetype, PlayerId, Vec2, WorldState } from "./sim";
+import {
+  ProceduralPlayerRig,
+  type ProceduralPlayerPose,
+} from "./game/rendering/ProceduralPlayerRig.js";
+import type { AbilityKind, ClassId } from "./sim/data/cardTypes.js";
+import { ABILITY_ANIMATIONS, isAbilityKind } from "./game/render/abilityAnimation.js";
 
 type HarnessWindow = Window & {
   __harnessReady?: boolean;
   __cmd?: string | null;
   harnessFire?: (name: string) => void;
+  harnessMeleeFrame?: (kind: "ninja" | "paladin", t: number) => void;
+  harnessRigFrame?: (classId: ClassId, action: AbilityKind | "melee", t: number) => void;
 };
 
 const resolveClassId = (cid: CharacterArchetype): string => (cid === "shielded" ? "priest" : "wizard");
@@ -45,6 +57,7 @@ class HarnessScene extends Phaser.Scene {
   private pool!: ParticlePool;
   private controller!: ConstructVfxController;
   private wardLayer!: Phaser.GameObjects.Graphics;
+  private meleeReviewLayer!: Phaser.GameObjects.Graphics;
   private priest!: Phaser.GameObjects.Arc;
   private priestHalo!: Phaser.GameObjects.Arc;
   private victim!: Phaser.GameObjects.Arc;
@@ -58,6 +71,16 @@ class HarnessScene extends Phaser.Scene {
   private wardActive = false;
   private wardIntensity = 0; // eases toward wardActive so raise/drop ramp smoothly
   private victimPos: Vec2 = { x: 520, y: 170 };
+  private meleeReview: { kind: "ninja" | "paladin"; t: number } | null = null;
+  private reviewRig: ProceduralPlayerRig | null = null;
+  private rigReview: {
+    classId: ClassId;
+    action: AbilityKind | "melee";
+    t: number;
+    lead: Vec2;
+    back: Vec2;
+    tipHistory: Vec2[];
+  } | null = null;
 
   constructor() {
     super("harness");
@@ -73,6 +96,8 @@ class HarnessScene extends Phaser.Scene {
     this.wardLayer = this.add.graphics();
     this.wardLayer.setBlendMode(Phaser.BlendModes.ADD);
     this.wardLayer.setDepth(6);
+    this.meleeReviewLayer = this.add.graphics().setDepth(30);
+    this.meleeReviewLayer.setBlendMode(Phaser.BlendModes.ADD);
 
     this.priestHalo = this.add
       .circle(200, 220, 30, 0xffcc88, 0.18)
@@ -94,6 +119,87 @@ class HarnessScene extends Phaser.Scene {
     w.__cmd = null;
     w.harnessFire = (name: string) => {
       w.__cmd = name;
+    };
+    w.harnessMeleeFrame = (kind, t) => {
+      this.meleeReview = { kind, t: Math.max(0, Math.min(0.999, t)) };
+      this.rigReview = null;
+    };
+    w.harnessRigFrame = (classId, action, rawT) => {
+      const t = Math.max(0, Math.min(0.999, rawT));
+      if (action !== "melee" && !isAbilityKind(action)) return;
+      this.meleeReview = null;
+      // Isolate the fighter review: hidden entanglement-demo actors must not
+      // keep a live mark/tether behind the pose and contaminate silhouettes.
+      this.markActive = false;
+      this.reviewRig?.destroy();
+      const colors: Record<ClassId, { body: number; accent: number; name: string }> = {
+        wizard: { body: 0x8fcfff, accent: 0x67e8f9, name: "GEOMETRICIAN" },
+        ninja: { body: 0x69e6ff, accent: 0x22d3ee, name: "INTERSTICE" },
+        paladin: { body: 0xffd98a, accent: 0xfbbf24, name: "KINDRED" },
+        priest: { body: 0xe7edf7, accent: 0xcbd5e1, name: "SYZYGIST" },
+      };
+      const skin = colors[classId];
+      this.reviewRig = new ProceduralPlayerRig(this, {
+        color: skin.body,
+        accentColor: skin.accent,
+        classId,
+        name: skin.name,
+        identitySeed: `harness-${classId}`,
+        detail: "full",
+        scale: 1.15,
+      });
+      const pose: ProceduralPlayerPose = {
+        position: { x: 330, y: 350 },
+        velocity: { x: 0, y: 0 },
+        aimTarget: { x: 560, y: 285 },
+        grounded: true,
+        crouching: false,
+        health: 100,
+        maxHealth: 100,
+      };
+      // Establish stable springs before the authored event, then advance in
+      // fixed 120 Hz increments. Rebuilding per requested frame makes captures
+      // independent of browser/screenshot latency.
+      for (let i = 0; i < 16; i++) this.reviewRig.update(1000 / 120, pose);
+      const style = classId === "paladin" ? "kindred" : "interstice";
+      const duration = action === "melee"
+        ? style === "kindred" ? 560 : 360
+        : ABILITY_ANIMATIONS[action].durationMs;
+      if (action === "melee") this.reviewRig.triggerMeleeSwing(style, 1);
+      else this.reviewRig.triggerAbility(action);
+      const tipHistory: Vec2[] = [];
+      const totalMs = duration * t;
+      const steps = Math.max(1, Math.ceil(totalMs / (1000 / 120)));
+      for (let i = 0; i < steps; i++) {
+        const elapsed = Math.min(totalMs, (i + 1) * (1000 / 120));
+        const dt = i === steps - 1 ? Math.max(0, totalMs - i * (1000 / 120)) : 1000 / 120;
+        this.reviewRig.update(dt, pose);
+        if (action === "melee") {
+          const q = elapsed / duration;
+          const trailStart = style === "kindred" ? 0.38 : 0.32;
+          const trailEnd = style === "kindred" ? 0.88 : 0.84;
+          if (q >= trailStart && q <= trailEnd) {
+            const hand = this.reviewRig.getHandWorld(0);
+            if (hand) {
+              const reach = style === "kindred" ? 88 : 82;
+              const sweep = style === "kindred" ? 2.5 : 2.25;
+              const a = meleeBladeAngle(-0.276, sweep, 1, q, style);
+              tipHistory.push({ x: hand.x + Math.cos(a) * reach, y: hand.y + Math.sin(a) * reach });
+            }
+          }
+        }
+      }
+      this.rigReview = {
+        classId,
+        action,
+        t,
+        lead: this.reviewRig.getHandWorld(0) ?? { x: 360, y: 300 },
+        back: this.reviewRig.getHandWorld(1) ?? { x: 340, y: 310 },
+        tipHistory: tipHistory.slice(-18),
+      };
+      for (const obj of [this.priest, this.priestHalo, this.victim, this.victimHalo, this.kindred, this.kindredHalo]) {
+        obj.setVisible(false);
+      }
     };
     w.__harnessReady = true;
   }
@@ -137,7 +243,12 @@ class HarnessScene extends Phaser.Scene {
         case "blade":
           // Interstice twin-dagger slash — driven through the controller's
           // persistent swing layer (advanced each frame in controller.update).
-          this.controller.triggerSwing("ninja", { x: 360, y: 330 }, -0.35);
+          this.controller.triggerSwing(
+            "ninja",
+            { x: 360, y: 330 },
+            { x: 344, y: 338 },
+            -0.35,
+          );
           break;
         case "shards":
           // Geometrician conjures a volley of cyan crystal shards from the palm.
@@ -157,7 +268,12 @@ class HarnessScene extends Phaser.Scene {
         case "edge":
           // Kindred crystal-edge swing to the LEFT, clear of the shield held on
           // the right — driven through the controller's persistent swing layer.
-          this.controller.triggerSwing("paladin", KINDRED_POS, 2.3);
+          this.controller.triggerSwing(
+            "paladin",
+            KINDRED_POS,
+            { x: KINDRED_POS.x - 16, y: KINDRED_POS.y + 4 },
+            2.3,
+          );
           break;
       }
     }
@@ -170,6 +286,70 @@ class HarnessScene extends Phaser.Scene {
     this.wardLayer.clear();
     if (this.wardIntensity > 0.02) {
       drawWardSlab(this.wardLayer, KINDRED_SLAB, KINDRED_TINT, this.wardPhase, this.wardIntensity);
+    }
+
+    this.meleeReviewLayer.clear();
+    if (this.rigReview?.action === "melee") {
+      const r = this.rigReview;
+      if (r.classId === "paladin") {
+        drawKindledSwing(this.meleeReviewLayer, r.lead, r.back, -0.276, 88, KINDRED_TINT, 2.5, 1, r.t, r.tipHistory);
+      } else {
+        drawBladeSwing(this.meleeReviewLayer, r.lead, r.back, -0.276, 82, INTERSTICE_TINT, 2.25, 1, r.t, r.tipHistory);
+      }
+    } else if (this.meleeReview?.kind === "ninja") {
+      const t = this.meleeReview.t;
+      const pivotAt = (q: number): Vec2 => {
+        const x = q < 0.32 ? -5 * (q / 0.32) : q < 0.84 ? -5 + 17 * ((q - 0.32) / 0.52) : 12 * (1 - (q - 0.84) / 0.16);
+        const y = q < 0.32 ? 10 * Math.sin((q / 0.32) * Math.PI * 0.5) : q < 0.52 ? 10 * (1 - (q - 0.32) / 0.2) : 0;
+        return { x: 360 + x, y: 230 + y };
+      };
+      const trailStart = 0.32;
+      const trailEnd = Math.min(t, 0.84);
+      const tipHistory = t < trailStart ? [] : Array.from({ length: 18 }, (_, i) => trailStart + (trailEnd - trailStart) * (i / 17))
+        .map((q) => {
+          const p = pivotAt(q);
+          const a = meleeBladeAngle(-0.2, 2.25, 1, q, "interstice");
+          return { x: p.x + Math.cos(a) * 82, y: p.y + Math.sin(a) * 82 };
+        });
+      drawBladeSwing(
+        this.meleeReviewLayer,
+        pivotAt(t),
+        { x: 340, y: 244 },
+        -0.2,
+        82,
+        INTERSTICE_TINT,
+        2.25,
+        1,
+        t,
+        tipHistory,
+      );
+    } else if (this.meleeReview?.kind === "paladin") {
+      const t = this.meleeReview.t;
+      const pivotAt = (q: number): Vec2 => {
+        const x = q < 0.38 ? -6 * (q / 0.38) : q < 0.88 ? -6 + 20 * ((q - 0.38) / 0.5) : 14 * (1 - (q - 0.88) / 0.12);
+        const y = q < 0.38 ? 14 * Math.sin((q / 0.38) * Math.PI * 0.5) : q < 0.61 ? 14 * (1 - (q - 0.38) / 0.23) : 0;
+        return { x: 360 + x, y: 230 + y };
+      };
+      const trailStart = 0.38;
+      const trailEnd = Math.min(t, 0.88);
+      const tipHistory = t < trailStart ? [] : Array.from({ length: 22 }, (_, i) => trailStart + (trailEnd - trailStart) * (i / 21))
+        .map((q) => {
+          const p = pivotAt(q);
+          const a = meleeBladeAngle(-0.2, 2.5, 1, q, "kindred");
+          return { x: p.x + Math.cos(a) * 88, y: p.y + Math.sin(a) * 88 };
+        });
+      drawKindledSwing(
+        this.meleeReviewLayer,
+        pivotAt(t),
+        { x: 340, y: 244 },
+        -0.2,
+        88,
+        KINDRED_TINT,
+        2.5,
+        1,
+        t,
+        tipHistory,
+      );
     }
 
     // The REAL entanglement pipeline (does nothing in kindred mode: markActive off).

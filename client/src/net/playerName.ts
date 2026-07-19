@@ -79,3 +79,17 @@ export function sanitizePlayerName(raw: string): string | undefined {
 
   return collapsed;
 }
+
+/**
+ * Deterministic guest callsign for zero-friction shared-link entry. The
+ * authored callsign prompt remains the normal front-door experience; this is
+ * only the safe fallback when an invite needs to enter play immediately.
+ */
+export function fallbackPlayerName(playerId: string): string {
+  let hash = 2166136261;
+  for (let i = 0; i < playerId.length; i += 1) {
+    hash ^= playerId.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  return `Vessel-${(hash >>> 0).toString(36).toUpperCase().padStart(6, "0").slice(-6)}`;
+}

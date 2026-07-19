@@ -25,7 +25,7 @@ import { resolveMap } from "../../sim/data/maps.js";
 import { resolveHangoutTotems, resolveVenueTotems, type TotemDefinition } from "../../sim/totem.js";
 import { PrivateRoomClient } from "../net/PrivateRoomClient";
 import { fetchVenueLobbyAssignment } from "../../net/worldClient";
-import { sanitizePlayerName } from "../../net/playerName";
+import { fallbackPlayerName, sanitizePlayerName } from "../../net/playerName";
 import { ProceduralPlayerRig } from "../rendering/ProceduralPlayerRig";
 import { colorToNumber } from "../render/colorToNumber.js";
 import { ProceduralAudio } from "../systems/ProceduralAudio";
@@ -60,6 +60,7 @@ import {
   drawPickup,
 } from "./OnlineMatchScene.js";
 import type { CharacterDefinition, CharacterId } from "../types/game";
+import { setActiveLocalPlayerIdGetter, setActiveStateGetter } from "../../debug/wasmStateProbe.js";
 
 export type HangoutSceneInit = {
   /**
@@ -338,8 +339,13 @@ export class HangoutScene extends Phaser.Scene {
         // refuses nameless queue entry regardless.
         let name = sanitizePlayerName(localStorage.getItem("jakesjam.playerName") ?? "");
         if (!name) {
-          this.setStatus("");
-          name = await this.promptForCallsign();
+          if (isSharedWorldInvite()) {
+            name = fallbackPlayerName(this.localPlayerId as string);
+            localStorage.setItem("jakesjam.playerName", name);
+          } else {
+            this.setStatus("");
+            name = await this.promptForCallsign();
+          }
         }
         this.setStatus("Entering the lobby...");
         const assignment = await fetchVenueLobbyAssignment(
@@ -422,6 +428,11 @@ export class HangoutScene extends Phaser.Scene {
           window.dispatchEvent(new CustomEvent("jakesjam:venue-admitted"));
         },
       });
+      // The shared-link golden-path probe needs the same honest sim view as
+      // arena combat: it can prove state is live and a locally-owned shot
+      // exists, instead of treating canvas visibility as "playable".
+      setActiveStateGetter(() => this.loop?.getRenderState() ?? null);
+      setActiveLocalPlayerIdGetter(() => this.localPlayerId as string);
       transport.onClose((reason) => {
         this.setStatus(`Disconnected: ${reason}`);
       });
@@ -618,7 +629,6 @@ export class HangoutScene extends Phaser.Scene {
   // ---------------- Sim event -> audio ----------------
 
   private handleSimEvents(events: SimEvent[]): void {
-    if (!this.audio) return;
     if (!this.simEventRouter) {
       // Only ready-toggled/launch-requested (and the always-inert combat
       // cases) can ever fire in a hangout match — the deps below are still
@@ -627,7 +637,9 @@ export class HangoutScene extends Phaser.Scene {
       // unreachable here.
       this.simEventRouter = new SimEventRouter({
         scene: this,
-        audio: this.audio,
+        // Lobby flashes/evidence are visual contracts, not conditional on
+        // the browser granting a WebAudio context.
+        audio: this.audio ?? null,
         localPlayerId: this.localPlayerId,
         safeShake: () => {},
         spawnDamageNumber: () => {},
@@ -722,18 +734,79 @@ export class HangoutScene extends Phaser.Scene {
     //      compositional AND lighting anchor. A few shafts, not a wash. ----
     const loadoutTotem = this.totems.find((t) => t.id === "totem-loadout");
     if (loadoutTotem) {
-      const shaftHalfW = 90;
+      const cx = loadoutTotem.x;
+      const shaftHalfW = 150;
       g.fillGradientStyle(
-        PALETTE.lightBeamCyan,
-        PALETTE.lightBeamCyan,
+        PALETTE.lightBeamWarm,
+        PALETTE.lightBeamWarm,
         theme.bg,
         theme.bg,
-        0.16,
-        0.16,
+        0.13,
+        0.13,
         0,
         0,
       );
-      g.fillRect(loadoutTotem.x - shaftHalfW, hallTop, shaftHalfW * 2, floorY - hallTop);
+      g.fillRect(cx - shaftHalfW, hallTop, shaftHalfW * 2, floorY - hallTop);
+
+      // A broad, low wall composition gives the station a readable stage
+      // even when the camera follows a player from one side. Three bays and
+      // a continuous cornice borrow the strong horizontal perspective of a
+      // banquet room without importing church shapes or sacred props.
+      const stageHalfW = 460;
+      const stageTop = floorY - 410;
+      const stageBottom = floorY - 82;
+      g.fillStyle(PALETTE.voidCharcoal, 0.72);
+      g.fillRect(cx - stageHalfW, stageTop, stageHalfW * 2, stageBottom - stageTop);
+      g.lineStyle(3, PALETTE.inkDim, 0.66);
+      g.lineBetween(cx - stageHalfW, stageTop, cx + stageHalfW, stageTop);
+      g.lineBetween(cx - stageHalfW, stageBottom, cx + stageHalfW, stageBottom);
+      g.lineStyle(1.5, PALETTE.inkMid, 0.45);
+      for (const bayX of [cx - 300, cx, cx + 300]) {
+        const bayHalfW = bayX === cx ? 125 : 118;
+        g.strokeRect(bayX - bayHalfW, stageTop + 28, bayHalfW * 2, stageBottom - stageTop - 56);
+      }
+      // The central place is deliberately brighter and empty: when the
+      // visitor walks to the loadout trigger, their live rig completes the
+      // composition instead of competing with a decorative "hero" statue.
+      g.fillStyle(PALETTE.lightBeamWarm, 0.035);
+      g.fillRect(cx - 122, stageTop + 30, 244, stageBottom - stageTop - 60);
+      g.lineStyle(2, PALETTE.inkBright, 0.58);
+      g.lineBetween(cx, stageTop + 22, cx, stageBottom - 12);
+
+      const tableY = loadoutTotem.y + 8;
+
+      // Twelve quiet house delegates, blocked as four groups of three with
+      // an open central place. This is the Last-Supper read: count, rhythm,
+      // grouped gesture and a shared eyeline — rendered as manufactured
+      // vessel silhouettes, never robes/halos or held ritual objects.
+      const delegateOffsets = [
+        -370, -324, -280,
+        -205, -159, -115,
+        115, 159, 205,
+        280, 324, 370,
+      ];
+      for (let i = 0; i < delegateOffsets.length; i += 1) {
+        const x = cx + delegateOffsets[i]!;
+        const towardCenter = x < cx ? 1 : -1;
+        const headY = tableY - 78 - (i % 3 === 1 ? 5 : 0);
+        const bodyColor = i % 3 === 1 ? PALETTE.hullSlateHi : PALETTE.hullSlate;
+        // Seat back / chassis spine.
+        g.fillStyle(PALETTE.voidEdge, 0.92);
+        g.fillRoundedRect(x - 15, headY + 8, 30, 70, 6);
+        // Faceted head and shoulder block.
+        g.fillStyle(bodyColor, 0.98);
+        g.fillCircle(x, headY, 9);
+        g.fillRoundedRect(x - 14, headY + 11, 28, 42, 5);
+        g.lineStyle(1.5, PALETTE.inkMid, 0.6);
+        g.strokeCircle(x, headY, 9);
+        g.lineBetween(x - 12, headY + 24, x + 12, headY + 24);
+        // Alternating conversational gestures point inward and create the
+        // grouped triangular rhythms missing from the previous straight row.
+        const gestureLift = (i % 3 - 1) * 8;
+        g.lineStyle(3, i % 3 === 1 ? PALETTE.inkBright : PALETTE.inkDim, 0.76);
+        g.lineBetween(x + towardCenter * 8, headY + 25, x + towardCenter * 24, headY + 35 + gestureLift);
+        g.lineBetween(x - towardCenter * 8, headY + 27, x - towardCenter * 18, headY + 43 - gestureLift * 0.4);
+      }
 
       // ---- The table itself: a literal long, low, crystal-plated surface
       //      (docs/venue-lobby-tableau-goal.md Part 3) — replaces the
@@ -741,19 +814,31 @@ export class HangoutScene extends Phaser.Scene {
       //      instrument seam along the top edge (ShellFrame's own "sealed
       //      hull, thin filament seam" language), never a held ritual
       //      object or cloth. ----
-      const tableHalfW = 130;
-      const tableH = 22;
-      const tableY = loadoutTotem.y + 4; // sits just below the totem ring's center, reads as "on the floor"
+      const tableHalfW = 425;
+      const tableH = 48;
       g.fillStyle(PALETTE.voidCharcoal, 0.9);
-      g.fillRoundedRect(loadoutTotem.x - tableHalfW - 2, tableY - tableH / 2 - 2, tableHalfW * 2 + 4, tableH + 4, 4);
+      g.fillRoundedRect(cx - tableHalfW - 3, tableY - tableH / 2 - 3, tableHalfW * 2 + 6, tableH + 6, 5);
       g.fillStyle(PALETTE.hullSlate, 1);
-      g.fillRoundedRect(loadoutTotem.x - tableHalfW, tableY - tableH / 2, tableHalfW * 2, tableH, 3);
-      g.lineStyle(2, PALETTE.sapphireSteady, 0.75);
-      g.lineBetween(loadoutTotem.x - tableHalfW + 6, tableY - tableH / 2 + 2, loadoutTotem.x + tableHalfW - 6, tableY - tableH / 2 + 2);
-      // Table legs — short verticals to the floor, same dark hull material.
+      g.fillRoundedRect(cx - tableHalfW, tableY - tableH / 2, tableHalfW * 2, tableH, 3);
+      g.lineStyle(3, PALETTE.inkBright, 0.82);
+      g.lineBetween(cx - tableHalfW + 8, tableY - tableH / 2 + 3, cx + tableHalfW - 8, tableY - tableH / 2 + 3);
+      // Front fascia panels turn a flat bar into a substantial shared table.
+      g.lineStyle(1.5, PALETTE.sapphireDim, 0.62);
+      for (let panel = -3; panel <= 3; panel += 1) {
+        const panelX = cx + panel * 104;
+        g.strokeRect(panelX - 44, tableY - 9, 88, 22);
+      }
+      // Thirteen instrument nodes: one per place, clearly tech controls
+      // rather than food or ceremonial objects.
+      g.fillStyle(PALETTE.sapphirePulse, 0.72);
+      for (let node = -6; node <= 6; node += 1) {
+        g.fillRect(cx + node * 61 - 3, tableY - tableH / 2 + 8, 6, 2);
+      }
+      // Table legs — spaced structural supports, same dark hull material.
       g.fillStyle(PALETTE.hullSlate, 0.85);
-      g.fillRect(loadoutTotem.x - tableHalfW + 10, tableY + tableH / 2, 8, floorY - (tableY + tableH / 2));
-      g.fillRect(loadoutTotem.x + tableHalfW - 18, tableY + tableH / 2, 8, floorY - (tableY + tableH / 2));
+      for (const legX of [cx - 330, cx - 110, cx + 110, cx + 330]) {
+        g.fillRect(legX - 7, tableY + tableH / 2, 14, floorY - (tableY + tableH / 2));
+      }
     }
   }
 
@@ -776,25 +861,20 @@ export class HangoutScene extends Phaser.Scene {
     const g = this.add.graphics().setDepth(2);
     this.totemGraphics = g;
     for (const totem of this.totems) {
-      const ring = totem.kind === "ready" ? PALETTE.inkBright : PALETTE.sapphireSteady;
-      g.lineStyle(4, ring, 0.85);
-      g.strokeCircle(totem.x, totem.y, totem.radius);
-      g.lineStyle(2, ring, 0.4);
-      g.strokeCircle(totem.x, totem.y, totem.radius * 0.6);
-      g.fillStyle(ring, 0.06);
-      g.fillCircle(totem.x, totem.y, totem.radius);
+      this.drawTotemGlyph(g, totem, 1, false, 0.85);
 
       const isBell = totem.id === "totem-bell";
       const text =
         this.mode === "venue"
           ? isBell
             ? "THE BELL"
-            : LOADOUT_KICKER
+            : "LOADOUT TABLE"
           : totem.kind === "ready"
             ? "READY"
             : "LAUNCH";
+      const isLoadoutTable = this.mode === "venue" && totem.id === "totem-loadout";
       const label = this.add
-        .text(totem.x, totem.y - totem.radius - 26, text, {
+        .text(totem.x, totem.y - (isLoadoutTable ? 148 : totem.radius + 26), text, {
           color: totem.kind === "ready" ? "#aa9e7f" : "#6b98f4",
           fontFamily: "'Space Grotesk', Inter, Arial, sans-serif",
           fontSize: "16px",
@@ -805,6 +885,38 @@ export class HangoutScene extends Phaser.Scene {
       this.totemLabels.push(label);
       if (this.mode === "venue" && isBell) this.bellLabel = label;
     }
+  }
+
+  /** The bell remains a portal-ring. The loadout trigger becomes a quiet
+   * floor pool beneath the table, so interaction state stays legible without
+   * drawing a giant target over the scene's central composition. */
+  private drawTotemGlyph(
+    graphics: Phaser.GameObjects.Graphics,
+    totem: TotemDefinition,
+    scale: number,
+    active: boolean,
+    alpha: number,
+  ): void {
+    const ring = totem.kind === "ready" ? PALETTE.inkBright : PALETTE.sapphireSteady;
+    if (this.mode === "venue" && totem.id === "totem-loadout") {
+      const width = totem.radius * 3.1 * scale;
+      const height = totem.radius * 0.52 * scale;
+      const y = totem.y + totem.radius * 0.72;
+      graphics.fillStyle(ring, active ? 0.12 : 0.035);
+      graphics.fillEllipse(totem.x, y, width, height);
+      graphics.lineStyle(active ? 3 : 2, ring, active ? 0.95 : alpha * 0.48);
+      graphics.strokeEllipse(totem.x, y, width, height);
+      graphics.lineStyle(1.5, ring, active ? 0.75 : 0.34);
+      graphics.lineBetween(totem.x - width * 0.32, y, totem.x + width * 0.32, y);
+      return;
+    }
+    const r = totem.radius * scale;
+    graphics.lineStyle(4, ring, active ? 1 : alpha);
+    graphics.strokeCircle(totem.x, totem.y, r);
+    graphics.lineStyle(2, ring, 0.4);
+    graphics.strokeCircle(totem.x, totem.y, r * 0.6);
+    graphics.fillStyle(ring, active ? 0.14 : 0.06 * alpha * 2);
+    graphics.fillCircle(totem.x, totem.y, r);
   }
 
   /** Ready totem flash feedback — walking-into-it feel while no combat
@@ -834,15 +946,14 @@ export class HangoutScene extends Phaser.Scene {
         // ability holds the station ring bright — state, not a flash
         // (axiom H2), mirroring the bell's queued glow.
         (this.loadoutPicks.length > 0 && totem.id === "totem-loadout");
-      const ring = totem.kind === "ready" ? PALETTE.inkBright : PALETTE.sapphireSteady;
-      const r = isFlashingRing ? totem.radius * scale : totem.radius;
       const alpha = 0.55 + 0.3 * pulse;
-      this.totemGraphics.lineStyle(4, ring, isFlashingRing ? 1 : 0.85);
-      this.totemGraphics.strokeCircle(totem.x, totem.y, r);
-      this.totemGraphics.lineStyle(2, ring, 0.4);
-      this.totemGraphics.strokeCircle(totem.x, totem.y, r * 0.6);
-      this.totemGraphics.fillStyle(ring, isFlashingRing ? 0.14 : 0.06 * alpha * 2);
-      this.totemGraphics.fillCircle(totem.x, totem.y, r);
+      this.drawTotemGlyph(
+        this.totemGraphics,
+        totem,
+        isFlashingRing ? scale : 1,
+        isFlashingRing,
+        alpha,
+      );
     }
   }
 
@@ -1269,6 +1380,8 @@ export class HangoutScene extends Phaser.Scene {
     // as OnlineMatchScene teardown, venue-goal Pillar 0.6).
     this.loop?.disconnect("client-leave");
     this.loop = null;
+    setActiveStateGetter(null);
+    setActiveLocalPlayerIdGetter(null);
     this.audio?.destroy();
     this.audio = undefined;
     for (const rig of this.playerRigs.values()) rig.destroy();
@@ -1288,4 +1401,12 @@ export class HangoutScene extends Phaser.Scene {
     // PlatformLayer self-destroys on the scene's own SHUTDOWN event.
     this.platformLayer = null;
   }
+}
+
+/** Shared links promise immediate live play; the normal Lobby button still
+ * owns the authored callsign prompt. Email and intro are shell-level surfaces
+ * and remain untouched. */
+function isSharedWorldInvite(): boolean {
+  const params = new URLSearchParams(window.location.search);
+  return params.get("world") === "1" || window.location.pathname === "/world";
 }

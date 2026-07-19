@@ -3,7 +3,7 @@
 // ws-upgrade check call — see net/playerName.ts.
 
 import { describe, expect, test } from "bun:test";
-import { sanitizePlayerName, stripDisallowedChars } from "../playerName.js";
+import { fallbackPlayerName, sanitizePlayerName, stripDisallowedChars } from "../playerName.js";
 
 describe("sanitizePlayerName — legitimate names pass through", () => {
   test("plain alnum", () => {
@@ -101,5 +101,19 @@ describe("stripDisallowedChars — live-typing filter never over-rejects", () =>
   });
   test("still strips disallowed characters live", () => {
     expect(stripDisallowedChars("<b>hi</b>")).toBe("bhib");
+  });
+});
+
+describe("fallbackPlayerName — shared-link guest identity", () => {
+  test("is deterministic, safe, and within the callsign limit", () => {
+    const name = fallbackPlayerName("guest-7c86dbb4-98ce-4f55-80c1-4868e7ee77fc");
+    expect(fallbackPlayerName("guest-7c86dbb4-98ce-4f55-80c1-4868e7ee77fc")).toBe(name);
+    expect(name.startsWith("Vessel-")).toBe(true);
+    expect(name.length).toBeLessThanOrEqual(14);
+    expect(sanitizePlayerName(name)).toBe(name);
+  });
+
+  test("different player ids produce different callsigns", () => {
+    expect(fallbackPlayerName("guest-one")).not.toBe(fallbackPlayerName("guest-two"));
   });
 });
