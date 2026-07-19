@@ -46,6 +46,27 @@ export type ProjectileRenderModel = {
   impactRadiusPx: number;
   /** 1 normally; sticky projectiles pulse as their fuse runs down. */
   bodyAlpha: number;
+  /**
+   * True for Priest/Syzygist's "oozing tendril" basic-fire shots
+   * specifically — `proj.tendril === true`. `tendril` (types.ts,
+   * `ProjectileEntity`) is a dedicated, purely-identity flag stamped ONLY
+   * on a Priest tendril (weapon.ts's `isPriestTendril` spawn site), so this
+   * is a collision-free signal: a naive `element === "fire"` check would
+   * also catch any class stacking a fire-element card (Molten Core), and
+   * `element === "fire" && pathing === "homing"` would ALSO catch any class
+   * stacking a fire card with a homing card (Seeker Facets /
+   * Homing-Cluster) — both real, reachable combos. REVISED 2026-07-19: this
+   * used to derive from `element === "fire" && enemyOnly === true`, but the
+   * Priest tendril dual-purpose rework (docs/classes-goal.md "ally=heal,
+   * enemy=curse") repurposes `enemyOnly`-style targeting so tendrils no
+   * longer set it — `tendril` is the SAME identity signal, now carried on
+   * its own dedicated field instead of piggybacking on a targeting flag, so
+   * this render-layer check keeps working regardless of how targeting
+   * evolves. Painters use this to opt a Priest tendril into a bespoke
+   * travel-phase body (see ProjectileVfx.ts) without touching any other
+   * class's shot.
+   */
+  tendril: boolean;
 };
 
 function blankProjectile(): ProjectileRenderModel {
@@ -65,6 +86,7 @@ function blankProjectile(): ProjectileRenderModel {
     impact: "none",
     impactRadiusPx: 0,
     bodyAlpha: 1,
+    tendril: false,
   };
 }
 
@@ -103,6 +125,7 @@ export function produceProjectiles(
     } else {
       m.bodyAlpha = 1;
     }
+    m.tendril = proj.tendril === true;
   }
   return n;
 }

@@ -21,8 +21,14 @@ import {
   platformToAABB,
   sweepAABB,
   aabbOverlap,
+  queryGrid,
+  type AABB,
   type StaticCollisionCache,
 } from "./collision.js";
+import {
+  SYZ_TENDRIL_AVOID_LOOKAHEAD_PX,
+  SYZ_TENDRIL_AVOID_STRENGTH_PX,
+} from "./constants.js";
 import { playerHitboxAABB, isHeadshot, HEADSHOT_DAMAGE_MULTIPLIER } from "./player.js";
 import { nextFloat } from "./rng.js";
 import { isAlly } from "./team.js";
@@ -304,13 +310,46 @@ function stepProjectileNative(
         ctx.tick,
         proj.enemyOnly,
       );
+      let tx: number | undefined;
+      let ty: number | undefined;
       if (target) {
-        const tx = proj.pathing === "anti-homing"
+        tx = proj.pathing === "anti-homing"
           ? proj.x * 2 - target.x
           : target.x;
-        const ty = proj.pathing === "anti-homing"
+        ty = proj.pathing === "anti-homing"
           ? proj.y * 2 - target.y
           : target.y;
+      }
+      // Priest tendril obstacle avoidance (constants.ts's SYZ_TENDRIL_
+      // AVOID_* doc comment has the full design + v1 simplification note)
+      // — blend a repulsion away from the nearest sensed platform surface
+      // into the desired-heading point BEFORE the turn-rate-limited rotate
+      // below. Gated on `proj.tendril` (the identity flag, deliberately
+      // decoupled from `enemyOnly`/targeting — types.ts's doc comment) so
+      // every other class's homing shot (Stolen Fangs proc, Bleed Tithe)
+      // never touches this code path at all — zero behavior change for
+      // them regardless of map geometry. `ctx.collisionCache` is always
+      // populated in production (World.ts's createRuntime); only absent in
+      // legacy/uncached test harnesses, which simply skip avoidance.
+      if (proj.tendril === true && ctx.collisionCache) {
+        // No player target in range? Steer using the tendril's own current
+        // heading, projected a short distance forward, as the avoidance
+        // base point — lets a target-less tendril still dodge nearby
+        // terrain instead of flying dead straight into it. Purely additive:
+        // `steerAwayFromNearestPlatform` only changes (tx, ty) when a
+        // platform is actually within the lookahead radius, so a tendril in
+        // open space with no target is completely unaffected either way.
+        const baseTx = tx ?? proj.x + vx * 0.25;
+        const baseTy = ty ?? proj.y + vy * 0.25;
+        const steered = steerAwayFromNearestPlatform(
+          proj.x, proj.y, baseTx, baseTy, ctx.collisionCache,
+        );
+        if (steered.adjusted || target) {
+          tx = steered.x;
+          ty = steered.y;
+        }
+      }
+      if (tx !== undefined && ty !== undefined) {
         const turnRate = proj.homingStrength && proj.homingStrength > 0
           ? proj.homingStrength
           : HOMING_TURN_RATE_DEFAULT;
@@ -928,6 +967,80 @@ function rotateVelocityToward(
   return { vx: lutCos(next) * speed, vy: lutSin(next) * speed };
 }
 
+/**
+ * Priest tendril obstacle-avoidance steering (constants.ts's SYZ_TENDRIL_
+ * AVOID_* doc comment has the full design rationale + documented v1
+ * simplification). Classic seek+avoid blend: finds the SINGLE nearest
+ * platform surface within `SYZ_TENDRIL_AVOID_LOOKAHEAD_PX` of `(px, py)`
+ * (reusing the same `StaticCollisionCache`/`queryGrid` spatial-grid query
+ * World.ts's own player-movement collision resolution already relies on —
+ * collision.ts) and, if one exists, pushes the returned aim point away from
+ * that surface, blended by proximity (closer = stronger push, linear
+ * falloff to 0 at the lookahead boundary). Returns `(targetX, targetY)`
+ * UNCHANGED with `adjusted: false` when nothing is within range — a
+ * tendril in open space is byte-identical to calling this function at all.
+ *
+ * Pure function, no RNG/wall-clock/Phaser — directly unit-testable against
+ * a `buildStaticCache` fixture without spinning up a full tick.
+ */
+function steerAwayFromNearestPlatform(
+  px: number,
+  py: number,
+  targetX: number,
+  targetY: number,
+  cache: StaticCollisionCache,
+): { x: number; y: number; adjusted: boolean } {
+  const region: AABB = {
+    x: px - SYZ_TENDRIL_AVOID_LOOKAHEAD_PX,
+    y: py - SYZ_TENDRIL_AVOID_LOOKAHEAD_PX,
+    w: SYZ_TENDRIL_AVOID_LOOKAHEAD_PX * 2,
+    h: SYZ_TENDRIL_AVOID_LOOKAHEAD_PX * 2,
+  };
+  const candidates = queryGrid(cache.grid, region, cache._seen);
+  const lookaheadSq = SYZ_TENDRIL_AVOID_LOOKAHEAD_PX * SYZ_TENDRIL_AVOID_LOOKAHEAD_PX;
+  let bestDistSq = lookaheadSq;
+  let bestCx = 0;
+  let bestCy = 0;
+  let found = false;
+  for (let i = 0; i < candidates.length; i += 1) {
+    const aabb = cache.aabbs[candidates[i]!]!;
+    // Closest point on the AABB to (px, py) — same clamp-to-box formula
+    // circleOverlapsAABB (collision.ts) uses internally.
+    const closestX = Math.max(aabb.x, Math.min(px, aabb.x + aabb.w));
+    const closestY = Math.max(aabb.y, Math.min(py, aabb.y + aabb.h));
+    const dx = px - closestX;
+    const dy = py - closestY;
+    const d2 = dx * dx + dy * dy;
+    if (d2 < bestDistSq) {
+      bestDistSq = d2;
+      bestCx = closestX;
+      bestCy = closestY;
+      found = true;
+    }
+  }
+  if (!found) {
+    return { x: targetX, y: targetY, adjusted: false };
+  }
+  const dist = Math.sqrt(bestDistSq);
+  let awayX = px - bestCx;
+  let awayY = py - bestCy;
+  const awayLen = Math.sqrt(awayX * awayX + awayY * awayY);
+  if (awayLen < 0.01) {
+    // Degenerate: the shard is already overlapping the surface (dist≈0),
+    // so the closest-point vector is ~zero-length and would produce a NaN
+    // direction. Fall back to straight up — pushes the shard off the
+    // terrain rather than leaving it with no avoidance heading at all.
+    awayX = 0;
+    awayY = -1;
+  } else {
+    awayX /= awayLen;
+    awayY /= awayLen;
+  }
+  const weight = 1 - dist / SYZ_TENDRIL_AVOID_LOOKAHEAD_PX; // 0..1, closer = stronger
+  const push = weight * SYZ_TENDRIL_AVOID_STRENGTH_PX;
+  return { x: targetX + awayX * push, y: targetY + awayY * push, adjusted: true };
+}
+
 function rotateAngleToward(current: number, target: number, maxStep: number): number {
   const difference = wrapAngle(target - current);
   if (Math.abs(difference) <= maxStep) return target;
@@ -950,11 +1063,14 @@ function closestNonOwnerPlayer(
   players: Record<PlayerId, PlayerEntity>,
   sortedIds?: readonly PlayerId[],
   tick?: number,
-  /** Priest tendril flag (ProjectileEntity.enemyOnly, types.ts) — when true,
-   *  also skips the owner's ALLIES (`isAlly`, team.ts), not just the owner.
-   *  Absent/false = original behavior (every homing shot before this flag
-   *  existed): closest non-owner player, ally or not. See constants.ts's
-   *  SYZ_TENDRIL_* comment for why this is opt-in rather than sim-wide. */
+  /** Generic targeting-exclusion filter (ProjectileEntity.enemyOnly,
+   *  types.ts) — when true, also skips the owner's ALLIES (`isAlly`,
+   *  team.ts), not just the owner. Absent/false = original behavior (every
+   *  homing shot in the sim today, INCLUDING Priest's own tendrils as of
+   *  the 2026-07-19 dual-target rework — see constants.ts's SYZ_TENDRIL_*
+   *  comment): closest non-owner player, ally or not. Currently dormant —
+   *  no live call site sets this `true` — kept as opt-in infrastructure for
+   *  a future genuinely enemy-only homing source rather than removed. */
   enemyOnly?: boolean,
 ): { x: number; y: number } | null {
   // Iterate in id-sorted order for deterministic tiebreaks.

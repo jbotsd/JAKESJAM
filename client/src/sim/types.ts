@@ -926,16 +926,48 @@ export type ProjectileEntity = {
   leechFraction?: number;
   executeBelowFrac?: number;
   wrapShots?: boolean;
-  /** Priest's "oozing tendrils" basic fire (weapon.ts stepWeaponNative,
-   *  constants.ts's SYZ_TENDRIL_* doc comment) — gates the per-tick
-   *  `pathing: "homing"` re-target (projectile.ts's `closestNonOwnerPlayer`)
-   *  to skip the owner's ALLIES, not just the owner. Absent/false = the
-   *  homing re-target machinery's original behavior (closest non-owner
-   *  PLAYER, ally or not) — matches every other homing shot in the sim
-   *  today (Bleed Tithe, Stolen Fangs), neither of which sets this. Additive
-   *  optional contract like every extra above: only ever `true` for a
-   *  Priest tendril, so this is zero behavior change for anything else. */
+  /** Generic per-tick `pathing: "homing"` re-target filter (projectile.ts's
+   *  `closestNonOwnerPlayer`) — when true, also skips the owner's ALLIES,
+   *  not just the owner. Absent/false = the homing re-target machinery's
+   *  original behavior (closest non-owner PLAYER, ally or not) — every
+   *  homing shot in the sim today (Bleed Tithe, Stolen Fangs, and — as of
+   *  the Priest tendril dual-purpose rework below — Priest's own tendrils)
+   *  leaves this unset, so this flag is currently dormant infrastructure,
+   *  kept for a future "true enemy-seeking-only" homing source rather than
+   *  removed outright. REVISED 2026-07-19: this field used to be stamped
+   *  `true` on every Priest tendril (see git history) — Jake's redirect
+   *  ("shooting projectiles... auto-home to the right target... ally=heal,
+   *  enemy=curse") replaced that enemy-only restriction with dual-target
+   *  homing (closest non-owner player of EITHER team), so tendrils no
+   *  longer set this at all. See `tendril` below for the identity flag
+   *  that replaced it at every gate site this field used to serve. */
   enemyOnly?: boolean;
+  /** Priest/Syzygist's "oozing tendrils" basic fire — a pure IDENTITY flag
+   *  (weapon.ts's `isPriestTendril` spawn site is the one place this is
+   *  ever stamped `true`), deliberately decoupled from any TARGETING or
+   *  BEHAVIOR flag so downstream consumers never break when this class's
+   *  targeting/steering rules change independently (`enemyOnly` used to
+   *  conflate identity with behavior — this field is the fix). Three
+   *  consumers, all additive/optional-contract, all gated on this ONE
+   *  field:
+   *   - `client/src/game/render/renderContract.ts`'s `produceProjectiles`
+   *     — opts the shot into the bespoke "oozing tendril" travel-phase
+   *     trail (ProjectileVfx.ts) instead of a generic shape-based dot.
+   *   - `World.ts`'s projectile hit-confirm site — a tendril that reaches
+   *     an ALLY (`team.ts`'s `isAlly`) pulses a HEAL instead of damage +
+   *     fire-burn (docs/classes-goal.md "priest = low-aim... ally=heal,
+   *     enemy=curse"); every other class's fire-element hits on an ally
+   *     (e.g. a duo Wizard's Molten Core) are completely unaffected since
+   *     they never set this flag.
+   *   - `projectile.ts`'s homing pathing step — blends a repulsion force
+   *     away from the nearest platform surface into the per-tick homing
+   *     turn (`steerAwayFromNearestPlatform`), so a tendril organically
+   *     curves around terrain instead of dying on contact with it. Every
+   *     other class's homing shot never calls this code path.
+   *  Additive optional contract like every extra above: only ever `true`
+   *  for a Priest tendril, so this is zero behavior change for anything
+   *  else regardless of what `enemyOnly` above is ever set to. */
+  tendril?: boolean;
   /** Tracking state set/maintained by the projectile stepper. */
   ageMs?: number;
   traveledPx?: number;

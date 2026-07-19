@@ -20,6 +20,13 @@ import type { ElementType, PlayerId, ProjectileShape, WorldState } from "../../s
 import type { ParticlePool } from "../systems/ParticlePool";
 import { produceProjectiles, type ProjectileRenderModel } from "./renderContract";
 import { GLOW_TEXTURE_SIZE } from "./glowTexture";
+import {
+  makeTendrilChain,
+  stepTendrilChain,
+  tendrilSegmentAlpha,
+  tendrilSegmentWidthScale,
+  type TendrilSegment,
+} from "./tendrilTrail";
 
 const TRAIL_SAMPLES = 6;
 const BODY_DEPTH = 6;
@@ -79,6 +86,10 @@ export class ProjectileVfx {
   private readonly bodyGfx: Phaser.GameObjects.Graphics;
   private readonly trailGfx: Phaser.GameObjects.Graphics;
   private readonly trails = new Map<number, Trail>();
+  /** Priest-tendril-only chase-chain state (tendrilTrail.ts), keyed by
+   *  projectile id — a completely separate representation from `trails`'
+   *  ring buffer so every other class's shots are byte-for-byte unaffected. */
+  private readonly tendrilChains = new Map<number, TendrilSegment[]>();
   private readonly halos = new Map<number, Phaser.GameObjects.Image>();
   private readonly lastPos = new Map<
     number,
@@ -121,11 +132,12 @@ export class ProjectileVfx {
    * sim entities — the same models any other painter (baked tier, headless
    * replay renderer) will consume.
    */
-  render(state: WorldState, resolveColor: ColorResolver): void {
+  render(state: WorldState, resolveColor: ColorResolver, deltaMs: number = 1000 / 60): void {
     const body = this.bodyGfx;
     const trail = this.trailGfx;
     body.clear();
     trail.clear();
+    const deltaSeconds = Math.max(0, deltaMs) / 1000;
 
     const count = produceProjectiles(state, this.modelPool);
     const seen = this.seenScratch;
@@ -138,44 +150,66 @@ export class ProjectileVfx {
       const lang = elementVfx(proj.element);
       const radius = proj.radius;
       const angle = proj.angle;
+      // Priest/Syzygist's "oozing tendril" basic fire (renderContract.ts's
+      // `tendril` flag: element === "fire" && enemyOnly === true — the one
+      // collision-free "this is specifically a Priest tendril" signal, not
+      // just any fire-element or fire+homing shot). Gets a bespoke
+      // writhing-ribbon body instead of the shape-based renderer below;
+      // every other class/shape/element is completely untouched.
+      const isTendril = proj.tendril;
 
-      // Trail — record position, draw newest→oldest as fading additive segs.
       // First sight of an id = the shot's muzzle frame: the spawn point IS
       // the muzzle and we have element/velocity/damage right here, so fire
-      // the muzzle flash without any separate event plumbing.
-      let t = this.trails.get(id);
-      if (!t) {
-        t = new Trail();
-        this.trails.set(id, t);
+      // the muzzle flash without any separate event plumbing. Shared by
+      // both trail representations (tendril chain vs. ring-buffer trail).
+      const firstSight = !this.trails.has(id) && !this.tendrilChains.has(id);
+      if (firstSight) {
         this.muzzle(proj.x, proj.y, angle, proj.element, proj.damage);
       }
-      t.push(proj.x, proj.y);
-      let px = proj.x;
-      let py = proj.y;
-      t.forEach((x, y, i, total) => {
-        if (i === 0) {
+
+      let tendrilChain: TendrilSegment[] | null = null;
+      if (isTendril) {
+        // Chase-chain trail — see tendrilTrail.ts. A completely separate
+        // representation from the ring-buffer `Trail` below; this branch
+        // never touches `this.trails`.
+        const existing = this.tendrilChains.get(id) ?? makeTendrilChain(proj.x, proj.y);
+        tendrilChain = stepTendrilChain(existing, proj.x, proj.y, deltaSeconds);
+        this.tendrilChains.set(id, tendrilChain);
+      } else {
+        // Trail — record position, draw newest→oldest as fading additive segs.
+        let t = this.trails.get(id);
+        if (!t) {
+          t = new Trail();
+          this.trails.set(id, t);
+        }
+        t.push(proj.x, proj.y);
+        let px = proj.x;
+        let py = proj.y;
+        t.forEach((x, y, i, total) => {
+          if (i === 0) {
+            px = x;
+            py = y;
+            return;
+          }
+          // Discontinuity guard: a wrap-flagged shard (six-axes Mystery)
+          // teleports across the map rect between frames — connecting those
+          // samples would smear a screen-wide streak that reads as a hitscan
+          // laser. Any segment far longer than one frame of flight is a
+          // teleport, not motion: break the trail there.
+          const segX = x - px;
+          const segY = y - py;
+          if (segX * segX + segY * segY > 200 * 200) {
+            px = x;
+            py = y;
+            return;
+          }
+          const a = (1 - i / total) * 0.5;
+          trail.lineStyle(Math.max(1, radius * lang.trailWidth * (1 - i / total)), color, a);
+          trail.lineBetween(px, py, x, y);
           px = x;
           py = y;
-          return;
-        }
-        // Discontinuity guard: a wrap-flagged shard (six-axes Mystery)
-        // teleports across the map rect between frames — connecting those
-        // samples would smear a screen-wide streak that reads as a hitscan
-        // laser. Any segment far longer than one frame of flight is a
-        // teleport, not motion: break the trail there.
-        const segX = x - px;
-        const segY = y - py;
-        if (segX * segX + segY * segY > 200 * 200) {
-          px = x;
-          py = y;
-          return;
-        }
-        const a = (1 - i / total) * 0.5;
-        trail.lineStyle(Math.max(1, radius * lang.trailWidth * (1 - i / total)), color, a);
-        trail.lineBetween(px, py, x, y);
-        px = x;
-        py = y;
-      });
+        });
+      }
 
       // P2 — bounce tell: a 'bounce'-pathing shard reflecting off a wall
       // flips a velocity axis sharply between frames. Spark-tick at the
@@ -195,8 +229,15 @@ export class ProjectileVfx {
       // Sticky fuse blink comes precomputed from the contract model.
       const bodyAlpha = proj.bodyAlpha;
 
-      // Body — element core over a resolved-color shell, shape-correct.
-      this.drawBody(body, proj.shape, proj.x, proj.y, radius, angle, color, lang.core, bodyAlpha);
+      if (tendrilChain) {
+        // Oozing-tendril body: segmented curling ribbon (warm shell) with a
+        // bright ember head — replaces the shape-based body/trail entirely
+        // for this shot only.
+        this.drawTendrilBody(body, trail, tendrilChain, color, lang.core, radius, bodyAlpha);
+      } else {
+        // Body — element core over a resolved-color shell, shape-correct.
+        this.drawBody(body, proj.shape, proj.x, proj.y, radius, angle, color, lang.core, bodyAlpha);
+      }
 
       // Mutate the existing record — a fresh object per projectile per
       // frame was one of the render loop's biggest allocation sources.
@@ -219,10 +260,13 @@ export class ProjectileVfx {
       last.pathing = proj.pathing;
     }
 
-    // Despawn diff → element impact/fizzle, release halo + trail.
+    // Despawn diff → element impact/fizzle, release halo + trail state.
+    // `lastPos` is written for every live projectile above (tendril or not),
+    // so it's the single source of truth for "ids we're tracking" — a
+    // tendril's state otherwise lives only in `tendrilChains`, never `trails`.
     const stale = this.staleScratch;
     stale.length = 0;
-    for (const id of this.trails.keys()) {
+    for (const id of this.lastPos.keys()) {
       if (!seen.has(id)) stale.push(id);
     }
     for (const id of stale) {
@@ -232,8 +276,42 @@ export class ProjectileVfx {
       }
       this.releaseHalo(id);
       this.trails.delete(id);
+      this.tendrilChains.delete(id);
       this.lastPos.delete(id);
     }
+  }
+
+  /**
+   * Oozing-tendril travel-phase body: a segmented, tapering curl (the
+   * chase-chain from tendrilTrail.ts) drawn as fading/thinning additive
+   * line segments on the trail graphics, with a bright hot-ember head drawn
+   * on the body graphics — same "hot core over resolved-color shell"
+   * grammar `drawBody` uses for every other shape, just traced along a
+   * writhing path instead of stamped at one point.
+   */
+  private drawTendrilBody(
+    bodyGfx: Phaser.GameObjects.Graphics,
+    trailGfx: Phaser.GameObjects.Graphics,
+    chain: readonly TendrilSegment[],
+    color: number,
+    core: number,
+    radius: number,
+    bodyAlpha: number,
+  ): void {
+    const count = chain.length;
+    for (let i = 0; i < count - 1; i += 1) {
+      const a = chain[i]!;
+      const b = chain[i + 1]!;
+      const segAlpha = tendrilSegmentAlpha(i, count) * bodyAlpha;
+      const segWidth = Math.max(1, radius * 1.8 * tendrilSegmentWidthScale(i, count));
+      trailGfx.lineStyle(segWidth, color, segAlpha * 0.85);
+      trailGfx.lineBetween(a.x, a.y, b.x, b.y);
+    }
+    const head = chain[0]!;
+    bodyGfx.fillStyle(color, 0.95 * bodyAlpha);
+    bodyGfx.fillCircle(head.x, head.y, radius * 1.05);
+    bodyGfx.fillStyle(core, bodyAlpha);
+    bodyGfx.fillCircle(head.x, head.y, Math.max(1, radius * 0.55));
   }
 
   /** P2 — small ricochet spark + glow tick at a wall bounce. */
@@ -635,6 +713,7 @@ export class ProjectileVfx {
     this.trailGfx.destroy();
     for (const id of [...this.halos.keys()]) this.releaseHalo(id);
     this.trails.clear();
+    this.tendrilChains.clear();
     this.lastPos.clear();
   }
 }

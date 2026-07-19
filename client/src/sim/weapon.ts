@@ -356,14 +356,21 @@ function stepWeaponNative(
   // comment — the class-blind projectile shape/count/speed/homing identity
   // itself lives entirely in priestStarterWeapon's WeaponDefinition,
   // weapons.ts, resolved through `build` like any other class's basic gun;
-  // this flag is the one piece that can't live there). Stamps `enemyOnly`
-  // on every tendril this class fires so the per-tick homing re-target
-  // (projectile.ts's closestNonOwnerPlayer) skips the caster's ALLIES too,
-  // not just the caster — see the constants.ts comment for why this can't
-  // be a cast-time findNearestEnemy call the way Bleed Tithe's ability
-  // version is (stepWeaponNative has no `state.players`). Every other
-  // class's projectiles are left completely untouched (`enemyOnly` stays
-  // unset), so this is zero behavior change for them.
+  // this flag is the one piece that can't live there). REVISED 2026-07-19
+  // (Jake: "shooting projectiles not object avoiding tendrils that pulse
+  // attack or healing effects depending" — ally=heal, enemy=curse, dual-
+  // target rather than enemy-only): stamps `tendril` (types.ts, a pure
+  // identity flag — NOT a targeting/behavior flag, deliberately decoupled
+  // so render/heal/avoidance consumers never break independently of each
+  // other) on every tendril this class fires. Targeting itself is now the
+  // per-tick homing re-target's DEFAULT behavior — `enemyOnly` is
+  // deliberately left unset, so `closestNonOwnerPlayer` (projectile.ts)
+  // homes on the closest non-owner player of EITHER team, exactly like
+  // every other homing shot in the sim (Bleed Tithe, Stolen Fangs) already
+  // does; no cast-time findNearestEnemy call is needed here (stepWeapon-
+  // Native has no `state.players` to make one with). Every other class's
+  // projectiles are left completely untouched (`tendril` stays unset), so
+  // this is zero behavior change for them.
   const isPriestTendril = classIdForArchetype(next.characterId) === "priest";
   // Per-shot offset: spread the count evenly across [-totalSpread/2, +totalSpread/2].
   // Single-shot shots ignore spread entirely (consistent with the offline path).
@@ -412,7 +419,7 @@ function stepWeaponNative(
       projectile.gravityScale = build.projectile.gravityScale;
       projectile.rangePx = build.projectile.rangePx;
       if (isPriestTendril) {
-        projectile.enemyOnly = true;
+        projectile.tendril = true;
       }
       // Tithe (docs/card-pool-v2.md "Tithe", card-pool-v2.md "Priest" solo
       // floor): an always-on passive leech from build.leechFraction, layered

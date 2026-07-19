@@ -4950,6 +4950,61 @@ export function stepWithRuntime(
         // future projectile source that bypasses the hit sweep must not
         // quietly reopen player damage in the lobby.
         if (victim.alive && !hangoutMode) {
+          // Priest tendril dual-purpose hit (Jake's redirect, 2026-07-19:
+          // "pulse attack or healing effects depending" — ally=heal,
+          // enemy=curse, the same low-aim auto-target doctrine this class's
+          // dedicated abilities already use, applied to basic fire).
+          // `proj.tendril` (types.ts) is a pure IDENTITY flag stamped ONLY
+          // on a Priest tendril (weapon.ts's isPriestTendril spawn site) —
+          // scoping this branch to it, rather than to every generic
+          // `element === "fire"` hit below, keeps every other class's
+          // fire-element friendly fire (e.g. a duo Wizard stacking Molten
+          // Core) completely unaffected, matching this session's
+          // "byte-identical for every other class" regression bar. Checked
+          // BEFORE parry/counter/shield mitigation — a heal isn't an
+          // attack, so it shouldn't be blockable/deflectable the way a hit
+          // is, and "no ally present" needs no extra handling: the shard
+          // can only ever land on an ENEMY in that case (the dual-target
+          // homing rework's own fallback — see constants.ts's SYZ_TENDRIL_*
+          // comment), so this check simply falls through to the ordinary
+          // damage path below for them.
+          const tendrilOwner =
+            proj.tendril === true && proj.ownerId !== null
+              ? players[proj.ownerId]
+              : undefined;
+          if (tendrilOwner && isAlly(tendrilOwner, victim)) {
+            // Heal amount: reuse the tendril's OWN resolved hit magnitude
+            // (`ev.damage` — already chaos-scaled, and headshot-boosted if
+            // the swept hit happened to land in the head zone) rather than
+            // inventing a second hardcoded number. "Same tendril, same
+            // magnitude, opposite polarity" is the most defensible v1 read
+            // of "pulse a healing effect" — a Priest stacking +damage cards
+            // heals allies harder too, which matches intuition rather than
+            // fighting it. Clamp mirrors Borrowed Time's own heal clamp
+            // exactly (World.ts's "borrowed-time" case, pendingSyzygistCasts
+            // loop below: `Math.min(100, target.health + cast.heal)`) — same
+            // flat 100 ceiling, no new MAX_HEALTH machinery invented here.
+            const healed = Math.min(100, victim.health + ev.damage);
+            if (healed > victim.health) {
+              players[ev.victimId] = { ...victim, health: healed };
+            }
+            // No SimEvent pushed for the heal itself: Borrowed Time and
+            // health-shard pickups both reach the client purely through the
+            // `health` field already present in the snapshot, with no
+            // dedicated wire event required for correctness. `hit-confirmed`
+            // specifically assumes harm — SimEventRouter.ts unconditionally
+            // plays a hit sound, hit-stop freeze, screen shake, damage
+            // number, and hit-react animation off it — so routing a heal
+            // through that pipeline would misrender as "you got hit for
+            // -2.5". A dedicated heal-pulse VFX event is a reasonable future
+            // addition but is render-layer work, out of this change's
+            // sim-mechanics-only scope; `continue` below also means the
+            // original (harmful) `hit-confirmed` for this event is never
+            // pushed to `events` at all (see the unconditional
+            // `events.push(ev)` at the end of this loop body, which this
+            // skips).
+            continue;
+          }
           // Ward shell (six-axes-goal.md Layer 1): a post-cast shell halves
           // incoming damage BEFORE the shield absorbs it. Order is
           // parry > shell > shield — parry zeroes regardless, so applying

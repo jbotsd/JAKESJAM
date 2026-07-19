@@ -871,27 +871,77 @@ export const SYZ_TENDRIL_SPREAD_RADIANS = 0.45;
  *  dedicated ability shard would read as unavoidable; playtest-pending like
  *  every number on this file. */
 export const SYZ_TENDRIL_HOMING_STRENGTH = 5.0;
-// Enemy-only targeting: weapon.ts's stepWeaponNative is a pure function of
-// the firing player alone (no `state.players`), so — unlike World.ts's
-// ability-cast sites (Bleed Tithe/Severance's own `findNearestEnemy` calls)
-// — it structurally cannot pick a target at spawn time. Tendrils lean on
-// the SAME generic per-tick re-target machinery every other homing WEAPON
-// shot in the sim already uses (Stolen Fangs' proc, at this exact
-// stepWeaponNative call site) rather than inventing new targeting — but
-// that generic machinery (`closestNonOwnerPlayer`) doesn't discriminate
-// teammates from enemies by itself, matching this file's own former
-// Consecrated Field note (cut 2026-07-19, but the underlying observation
-// still holds: "no ability or weapon in the sim excludes allies... today").
-// Priest is documented as a duos-bound chassis
-// (never ships into pure FFA — docs/classes-goal.md), so a basic gun that
-// could curve onto your own ally the moment duos ships would be a real, live
-// bug, not a hypothetical one — worth the small, additive
-// `ProjectileEntity.enemyOnly` flag (types.ts) that gates ONLY this shot's
-// homing loop with `isAlly` (team.ts), rather than punting on it or
-// generalizing friendly-fire exclusion sim-wide (out of scope — team.ts's
-// own header comment: "No friendly-fire rules... those are later chunks").
+// Dual-target homing (REVISED 2026-07-19, Jake's redirect: "shooting
+// projectiles not object avoiding tendrils that pulse attack or healing
+// effects depending" — read together with this class's long-standing
+// low-aim doctrine, "tendrils that ooze out and auto-home to the right
+// target... ally=heal, enemy=curse"). Tendrils used to stamp
+// `ProjectileEntity.enemyOnly` (types.ts) so the per-tick re-target
+// (`closestNonOwnerPlayer`, projectile.ts) would skip the caster's own
+// allies — correct for a PURELY offensive shot, but wrong once the same
+// shot is meant to be dual-purpose. That stamp is gone: tendrils now rely
+// on `closestNonOwnerPlayer`'s own DEFAULT behavior (no `enemyOnly` filter
+// at all) — closest non-owner player, ally or enemy alike — the exact same
+// generic re-target machinery every other homing WEAPON shot in the sim
+// already uses (Stolen Fangs' proc, at this exact stepWeaponNative call
+// site), so no new targeting code was needed, only the removal of the
+// exclusion. World.ts's hit-confirm site is what actually decides heal-vs-
+// damage from there (`ProjectileEntity.tendril` gates that branch — see
+// types.ts's doc comment on that field for the full three-consumer list).
+// Zero-allies-in-range fallback needs no special-casing: with no ally
+// present, the closest non-owner player is necessarily an enemy (or nobody,
+// in solo testing), so the tendril transparently behaves exactly like the
+// old enemy-only version — "graceful fallback" falls out of the targeting
+// pool being empty, not a branch that has to detect and handle it.
 // Every other homing shot in the sim (Bleed Tithe, Stolen Fangs) is left
-// completely untouched by this — the flag defaults false/absent for them.
+// completely untouched by this — none of them ever set `enemyOnly` or
+// `tendril`, so this is zero behavior change for them either way.
+
+/**
+ * Priest tendril obstacle-avoidance steering ("object avoiding tendrils",
+ * Jake's same redirect above) — Part 2 of the dual-purpose tendril rework.
+ * Investigation finding: projectiles in this sim DO collide with platform
+ * geometry (projectile.ts's stepProjectile, section "4. Platform
+ * collision") and a non-bounce shard (tendrils use `pathing: "homing"`, not
+ * `"bounce"`) EXPIRES outright on contact — so before this change, a
+ * tendril flying anywhere near a wall/ledge on its way to a homing target
+ * would simply die on the terrain instead of reaching it. "Object avoiding"
+ * therefore means: steer the tendril's per-tick homing turn away from
+ * nearby platform edges BEFORE it gets close enough to clip them, so it
+ * organically curves around terrain it's "supposed to dodge" rather than
+ * dying to it. `projectile.ts`'s `steerAwayFromNearestPlatform` is a
+ * classic seek+avoid steering blend (Reynolds-style: a repulsion vector
+ * blended into the desired-heading point, not a modified collision rule) —
+ * reuses the SAME `StaticCollisionCache`/`queryGrid` spatial-grid query
+ * World.ts's own player-movement collision resolution already relies on
+ * (collision.ts), rather than a bespoke query.
+ *
+ * v1 SIMPLIFICATION (documented, not silent — this session's "honest
+ * partial over padded" discipline): steers away from the SINGLE nearest
+ * platform surface within the lookahead radius, not full multi-obstacle
+ * avoidance or pathfinding. A tendril squeezed between two close obstacles
+ * on both sides can still clip one of them — a real, accepted gap; full
+ * multi-obstacle blending (summing every nearby surface's repulsion) is a
+ * reasonable fast-follow if this reads as a problem in practice, not a
+ * blocker for landing a genuine, working avoidance behavior now.
+ */
+/** How far ahead (px) the tendril "senses" platform geometry each tick.
+ *  Platforms in this map set run ~100-300px wide (collision.ts's own
+ *  SPATIAL_CELL_SIZE doc comment) — 80px gives the steering enough room to
+ *  react before the shard is close enough to actually clip a typical edge
+ *  (at SYZ_TENDRIL_SPEED × dtSec ≈ 5.3px/tick, that's ~15 ticks/0.25s of
+ *  reaction window), without sensing distant, irrelevant geometry. */
+export const SYZ_TENDRIL_AVOID_LOOKAHEAD_PX = 80;
+/** How far (px) the steering target point gets pushed away from a sensed
+ *  platform surface, at full strength (i.e. when the tendril is already at
+ *  the lookahead boundary — see `steerAwayFromNearestPlatform`'s linear
+ *  falloff, stronger the closer the shard gets). Deliberately larger than
+ *  the lookahead radius itself: a push comparable to or smaller than the
+ *  sensing radius reads as a barely-perceptible wobble once blended against
+ *  a real homing target that may be hundreds of px away; 160 reliably bends
+ *  the desired heading by a visually legible amount without so thoroughly
+ *  dominating a close real target that the tendril appears to ignore it. */
+export const SYZ_TENDRIL_AVOID_STRENGTH_PX = 160;
 
 // ── Interstice catalog v1 (docs/class-ability-catalogs-v1.md — the ninja's
 // 10-ability class catalog, 9 wired this pass; see cardTypes.ts's

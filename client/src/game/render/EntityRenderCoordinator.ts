@@ -113,8 +113,8 @@ export class EntityRenderCoordinator {
    * subsystems (projectiles / satellites / destructibles / fire /
    * pickups) in a single call.
    */
-  update(state: WorldState, _deltaMs: number, nowMs: number): void {
-    this.renderProjectiles(state);
+  update(state: WorldState, deltaMs: number, nowMs: number): void {
+    this.renderProjectiles(state, deltaMs);
     this.renderDestructibles(state, nowMs);
     this.renderFirePatches(state, nowMs);
     this.renderPickups(state, nowMs);
@@ -133,11 +133,14 @@ export class EntityRenderCoordinator {
     this.flashState.flashUntilMs.clear();
   }
 
-  private renderProjectiles(state: WorldState): void {
+  private renderProjectiles(state: WorldState, deltaMs: number): void {
     // Delegated to ProjectileVfx: shaped/glowing/trailed bodies + muzzle
     // flash on spawn + element impact/fizzle on despawn. Reads the same
-    // element colour resolver the flat-circle path used.
-    this.projectileVfx.render(state, this.cfg.projectileColor);
+    // element colour resolver the flat-circle path used. `deltaMs` feeds
+    // the Priest-tendril chase-chain (tendrilTrail.ts) — every other
+    // projectile visual is frame-order-driven only and ignores it, same
+    // as before this plumbing existed.
+    this.projectileVfx.render(state, this.cfg.projectileColor, deltaMs);
   }
 
   private renderDestructibles(state: WorldState, nowMs: number): void {
