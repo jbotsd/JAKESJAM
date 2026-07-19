@@ -122,6 +122,9 @@ const registry = new MatchRegistry();
 // rather than as a module-level singleton so tests can spin up a fresh
 // instance without crossing module-load state.
 const worldHost = new WorldHost({
+  // The shared-link journey must contain at least five completed rounds so
+  // the drafted stack has enough time to become a build a player can name.
+  modeModifierIds: ["target-score-5"],
   // WORLD_MAP pins the world to one map (curated id or "gen:<seed>") —
   // useful for playtesting a specific arena. Default: Vessel Nexus mega
   // (always-floor + cover) with rotation across Hot Lobby maps when unset.
@@ -135,6 +138,10 @@ const worldHost = new WorldHost({
   // floor 4 = "a full room's worth of combatants"; WORLD_BOT_FLOOR=0
   // restores the fixed WORLD_BOTS behavior.
   botFloor: Number(process.env.WORLD_BOT_FLOOR ?? 4),
+  // Forced package evidence only. Production launch scripts never set this;
+  // isolated autoplay servers use it to skip bell cadence while retaining
+  // the real WorldHost/MatchHost/sim/network path.
+  forceImmediateJoin: process.env.PRESENTATION_EVIDENCE_FORCE_JOIN === "1",
 });
 // The Venue (venue-goal.md Pillar 1): composes the always-on walkable
 // lobby (antechamber) with the arena above. The arena's own lifecycle —

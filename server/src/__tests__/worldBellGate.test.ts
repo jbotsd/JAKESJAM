@@ -154,18 +154,39 @@ describe("world bell gate (S2.D)", () => {
     expect(wi.pendingEntrants.has("p_seed")).toBe(false); // never gated
   });
 
-  test("structural: every addPlayer call in worldHost.ts lives on the bell edge (S2.D.4)", async () => {
+  test("explicit evidence host inserts immediately while production default remains gated", () => {
+    const wh = new WorldHost({
+      mapId: "boxworks-mini",
+      resultsHoldMs: 60_000,
+      forceImmediateJoin: true,
+    });
+    const seed = fakeWs("p_seed", "SEED");
+    wh.attach(seed);
+    const wi = wh as unknown as WorldInternals;
+    const hi = wi.host as unknown as HostInternals;
+    hi.stop();
+    setPhase(hi, { phase: "fighting", countdownRemainingMs: 60_000 });
+
+    wh.attach(fakeWs("p_evidence", "EVIDENCE"));
+    expect(wi.host!.hasPlayer("p_evidence" as never)).toBe(true);
+    expect(wi.pendingEntrants.has("p_evidence")).toBe(false);
+  });
+
+  test("structural: attach cannot call addPlayer outside the explicit insertion seam", async () => {
     const src = await Bun.file(new URL("../worldHost.ts", import.meta.url).pathname).text();
     const calls = src.match(/\.addPlayer\(/g) ?? [];
-    // Exactly two insertion sites: human entrants (drainPendingEntrants)
-    // and elastic bots (adjustElasticBots) — both run ONLY from the
-    // countdown-entry edge. attach() must never insert directly.
+    // Exactly two insertion sites: shared human insertion and elastic bots.
+    // Production reaches the former from the countdown drain; the only other
+    // caller is the constructor-gated evidence branch.
     expect(calls.length).toBe(2);
     const bellEdgeStart = src.indexOf("private drainPendingEntrants");
     const bellEdgeEnd = src.indexOf("private scheduleRecycle");
     expect(bellEdgeStart).toBeGreaterThan(-1);
     const bellEdgeRegion = src.slice(bellEdgeStart, bellEdgeEnd);
     expect((bellEdgeRegion.match(/\.addPlayer\(/g) ?? []).length).toBe(2);
+    const attachRegion = src.slice(src.indexOf("attach(ws:"), bellEdgeStart);
+    expect((attachRegion.match(/\.addPlayer\(/g) ?? []).length).toBe(0);
+    expect(attachRegion).toContain("this.forceImmediateJoin");
   });
 });
 

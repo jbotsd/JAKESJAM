@@ -1065,8 +1065,18 @@ export type WorldState = {
   fireHazardTimerMs?: number;
 };
 
-export type SimEvent =
-  | { t: 'shot-fired'; playerId: PlayerId; x: number; y: number; hand?: 0 | 1 }
+export type SimEvent = (
+  | {
+      t: 'shot-fired';
+      playerId: PlayerId;
+      x: number;
+      y: number;
+      hand?: 0 | 1;
+      /** Projectiles born from this trigger pull. Additive because legacy and
+       * WASM event sources may not know their entity ids. Presentation
+       * evidence uses it to pair the exact anticipation with its impact. */
+      projectileIds?: EntityId[];
+    }
   | {
       t: 'hit-confirmed';
       victimId: PlayerId;
@@ -1358,7 +1368,14 @@ export type SimEvent =
       casterId: PlayerId;
       damageBlocked: number;
       wardBroke: boolean;
-    };
+    }
+) & {
+  /** Authoritative simulation tick on which this event occurred. The server
+   * adds it before snapshot-window batching; standalone/predicted sim callers
+   * may omit it. Presentation evidence uses this to retain action rhythm when
+   * several ticks arrive in one network message. */
+  atTick?: Tick;
+};
 
 export type StepResult = {
   state: WorldState;

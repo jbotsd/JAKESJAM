@@ -1256,6 +1256,7 @@ export class MatchHost {
       });
       if (totemResult.events.length > 0) events.push(...totemResult.events);
     }
+    stampSimEventTicks(events, this.state.tick);
     if (this.onSimEvent) {
       for (const e of events) this.onSimEvent(e);
     }
@@ -1815,6 +1816,16 @@ export class MatchHost {
 
   private now(): number {
     return Date.now() - this.startedAt;
+  }
+}
+
+/** Preserve the tick of occurrence before several event-bearing sim steps are
+ * coalesced into one snapshot. Mutates freshly-created per-step events so all
+ * downstream consumers (hooks, replay, director, wire payload) share one
+ * canonical instance; never overwrites an already-stamped event. */
+export function stampSimEventTicks(events: SimEvent[], tick: Tick): void {
+  for (const event of events) {
+    if (event.atTick === undefined) event.atTick = tick;
   }
 }
 

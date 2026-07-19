@@ -40,4 +40,10 @@ describe("WorldHost construction", () => {
     expect(summary!.humans).toBe(0);
     expect(wh.size()).toBe(1);
   });
+
+  test("threads public mode rules into the live host", () => {
+    const wh = new WorldHost({ bots: 1, modeModifierIds: ["target-score-5"] });
+    expect(wh.summary()?.targetScore).toBe(5);
+    expect(wh.summary()?.chaosModifierIds).toContain("target-score-5");
+  });
 });

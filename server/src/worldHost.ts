@@ -109,6 +109,10 @@ export class WorldHost {
   /** Server-side AI duelists that keep the world alive. Count via the
    *  WORLD_BOTS env (host-public.sh default 2 — enough motion, not a gang). */
   private readonly botCount: number;
+  /** Explicit package-evidence seam. Never enabled by product hosting: an
+   * isolated evidence server may insert a browser into the authoritative
+   * arena immediately instead of waiting for the public bell cadence. */
+  private readonly forceImmediateJoin: boolean;
   private readonly bots = new WorldBots();
   private botTimer: ReturnType<typeof setInterval> | null = null;
   /** Index into ROTATION_MAPS used by `nextMapId`. Reset alongside host
@@ -138,6 +142,8 @@ export class WorldHost {
    *  `max(0, botFloor - humansFighting)` at bell edges ONLY, capped at 6.
    *  0 (default) disables elasticity — the legacy fixed `bots` count rules. */
   private readonly botFloor: number;
+  /** Public-world mode rules, carried through every host recycle. */
+  private readonly modeModifierIds: string[];
   /** Uniqueness counter for bot-only duo teamIds minted by
    *  `planBotTeams` — see its doc for the pairing rule. */
   private botTeamCounter = 0;
@@ -154,8 +160,11 @@ export class WorldHost {
       resultsHoldMs?: number;
       bots?: number;
       botFloor?: number;
+      forceImmediateJoin?: boolean;
+      modeModifierIds?: readonly string[];
     } = {},
   ) {
+    this.modeModifierIds = [...(opts.modeModifierIds ?? [])];
     this.botFloor = Math.max(0, Math.min(6, opts.botFloor ?? 0));
     // Was a flat 6000ms with no readiness gate — the "goes too fast into
     // the next game" complaint (Jake, 2026-07-13). Raised to 12000ms as the
@@ -165,6 +174,7 @@ export class WorldHost {
     this.resultsHoldMs = opts.resultsHoldMs ?? 12000;
     // Cap 6 — 4+ on mega docks felt like a firing squad for solo humans.
     this.botCount = Math.max(0, Math.min(6, opts.bots ?? 0));
+    this.forceImmediateJoin = opts.forceImmediateJoin === true;
     if (this.botCount > 0 || this.botFloor > 0) {
       // Bot brains tick at sim rate; think() no-ops while the host loop
       // is stopped (empty world), so idle cost is a timer wakeup.
@@ -229,13 +239,16 @@ export class WorldHost {
       // endpoint that exposes a default/modifiable chaos set for the always-on world.
       this.host = this.buildHost([spawn]);
     } else if (!this.host.hasPlayer(playerId)) {
-      // The ONLY insertion path for a new world player is the pending
-      // drain — attach never calls addPlayer directly (S2.D.4). During
-      // countdown the drain runs immediately; any other phase waits for
-      // the next countdown edge.
-      this.pendingEntrants.set(playerId, chosenName);
-      if (this.host.summary().phase === "countdown") {
-        this.drainPendingEntrants();
+      if (this.forceImmediateJoin) {
+        // Forced package harness only. This still creates a normal player in
+        // the normal MatchHost; it bypasses admission cadence, not authority.
+        this.insertEntrant(playerId, chosenName, ws);
+      } else {
+        // Production: countdown is the only insertion edge (S2.D.4).
+        this.pendingEntrants.set(playerId, chosenName);
+        if (this.host.summary().phase === "countdown") {
+          this.drainPendingEntrants();
+        }
       }
     }
     this.host.attachClient(ws);
@@ -254,26 +267,27 @@ export class WorldHost {
     for (const [playerId, chosenName] of this.pendingEntrants) {
       const ws = this.sockets.get(playerId);
       if (!ws || ws.readyState !== 1) continue;
-      if (!this.host.hasPlayer(playerId)) {
-        // Starter cards ride the spawn (S2.E): the venue's provider hands
-        // back the lobby draft pick (or its leftmost auto-pick); no
-        // provider / no entry = plain spawn.
-        const cards = this.getEntrantCards?.(playerId);
-        // Duos-queue team assignment (classes-goal.md "Venue integration")
-        // rides the same admission moment, same optional-provider shape.
-        const teamId = this.getEntrantTeamId?.(playerId);
-        this.host.addPlayer({
-          // Chassis rides SocketData like the name (classes-goal.md P1) —
-          // read from the live socket, not the pending map, so a reconnect
-          // between queue and drain still carries the latest pick.
-          ...this.spawnFor(playerId, chosenName, characterOf(ws)),
-          ...(cards && cards.length > 0 ? { cards } : {}),
-          ...(teamId ? { teamId } : {}),
-        });
-      }
+      this.insertEntrant(playerId, chosenName, ws);
     }
     this.pendingEntrants.clear();
     this.adjustElasticBots();
+  }
+
+  /** One authoritative human insertion implementation shared by the public
+   * countdown edge and the opt-in isolated evidence seam. */
+  private insertEntrant(
+    playerId: PlayerId,
+    chosenName: string | undefined,
+    ws: ServerWebSocket<MatchSocketData>,
+  ): void {
+    if (!this.host || this.host.hasPlayer(playerId)) return;
+    const cards = this.getEntrantCards?.(playerId);
+    const teamId = this.getEntrantTeamId?.(playerId);
+    this.host.addPlayer({
+      ...this.spawnFor(playerId, chosenName, characterOf(ws)),
+      ...(cards && cards.length > 0 ? { cards } : {}),
+      ...(teamId ? { teamId } : {}),
+    });
   }
 
   /**
@@ -452,7 +466,7 @@ export class WorldHost {
       .map((b) => this.botSpawn(b.playerId, b.name));
     // Map-aware brains: cover / hop / LOS for the arena they're actually on.
     this.bots.bindMap(map);
-    return new MatchHost(WORLD_MATCH_ID, [...spawns, ...botSpawns], [], mapId, {
+    return new MatchHost(WORLD_MATCH_ID, [...spawns, ...botSpawns], this.modeModifierIds, mapId, {
       onMatchComplete: () => this.scheduleRecycle(),
       // Threaded through EVERY host build (recycles included) so venue
       // status frames / the bell drain never silently detach after a
