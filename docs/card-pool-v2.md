@@ -93,15 +93,20 @@ number moves, the reading it serves must survive the move.
 | 23 | Paper Double | rare | ability | exclusive: Ninja |
 | 24 | Undercut | rare | spec | exclusive: Ninja |
 | 25 | Slipstream | uncommon | passive | exclusive: Ninja |
-| 26 | Crater | rare | ability | exclusive: Paladin |
-| 27 | Retort | uncommon | spec | exclusive: Paladin |
-| 28 | Bastion | uncommon | passive | exclusive: Paladin |
-| 29 | Borrowed Time | rare | ability | exclusive: Priest |
-| 30 | Contagion | rare | spec | exclusive: Priest |
-| 31 | Flock | uncommon | passive | exclusive: Priest |
+| 26 | Borrowed Time | rare | ability | exclusive: Priest |
+| 27 | Contagion | rare | spec | exclusive: Priest |
+| 28 | Flock | uncommon | passive | exclusive: Priest |
 
-**Composition:** 31 cards — 19 universal / 12 exclusive (3 per class);
-10 ability / 11 spec / 10 passive; 8 common / 13 uncommon / 10 rare.
+**Composition:** 28 cards — 19 universal / 9 exclusive (3 per class:
+Wizard/Ninja/Priest). Paladin's own 3 exclusives — Crater (rare, ability),
+Retort (uncommon, spec), Bastion (uncommon, passive), formerly #26-28 —
+were built, then cut entirely 2026-07-19: they were classId:"paladin"-
+gated the same way as the real 10-ability Kindred rack catalog
+(docs/class-ability-catalogs-v1.md), so they leaked into the loadout
+station's own full-catalog query as 3 extra cards, showing 13 total
+instead of a true 10 (a live-playtest bug Jake caught, not a "bonus picks"
+feature — no other class gets one). See the cut Paladin section below.
+8 common / 11 uncommon / 9 rare; 9 ability / 10 spec / 9 passive.
 
 ---
 
@@ -255,8 +260,9 @@ angle.
 - Wizard: classic ricochet shots — corridor ownership.
 - Ninja: the slash wave rebounds off its first wall, coming back through
   the doorway they thought was safe.
-- Paladin: slam/shock effects skip once off walls (Crater's ring folds
-  back into the room).
+- Paladin: slam/shock effects skip once off walls (Shock Ring's slam
+  folds back into the room — the example used to be Crater's ring until
+  that card was cut 2026-07-19).
 - Priest: bolts bounce; a bounced bolt crossing an ally transfers a
   4-point heal in passing.
 **Resonance:** None — a geometry card, deliberately clean of the clock
@@ -616,54 +622,30 @@ wind ribbon as the class brand; trail is thin crystal grit, not storm.
 
 ---
 
-## Paladin exclusives — epic-settled / self-lit
+## Paladin exclusives — CUT 2026-07-19
 
-### Crater  [rare]  [exclusive: Paladin]
-**Concept:** The verdict arrives from above.
-**Effect:** Leap (190px rise — deliberately above the 134px jump apex; an
-ability-gated route breaker), 25% air steer, then slam: 24 damage in
-130px + 0.4s stagger at the epicenter; a shock ring travels the floor
-240px at 480px/s for 10 damage. The ring climbs 2:1 slopes and dies at
-45° faces (first-draft rule: 1:1 reads as a wall). Resolve 40, CD 9s.
-**Resonance:** Leaves *Shaken* (2.5s) on everyone struck. Cast into a
-live window: slam radius +40% and the ring travels both directions.
-**Slot type:** ability.
-**Insidious↔epic reading:** The pool's most epic-liturgical moment — a
-gavel with a flight path.
-**Visual read:** A rising gold arc with the board raised; impact draws a
-radial stone seam plus one traveling floor ripple. Readable across the
-whole arena — that's the point.
-
-### Retort  [uncommon]  [exclusive: Paladin]
-**Concept:** The answer — blocked damage becomes the next swing.
-**Effect:** Spec on the shield-board: banks 50% of blocked damage (cap
-30). Your next melee swing within 3s spends the bank as bonus damage AND
-equal bonus knockback.
-**Resonance:** Filling the bank to cap opens a resonance window on the
-paladin (self-window, 2.0s) — blocking well IS casting.
-**Slot type:** spec.
-**Insidious↔epic reading:** Epic-liturgical call-and-response: "you said
-enough."
-**Visual read:** The board rim brightens in proportion to the bank; the
-spending swing trails the stored light out through the arc. Enemies can
-READ the loaded swing and respect it — that fear is the card.
-
-### Bastion  [uncommon]  [exclusive: Paladin]
-**Concept:** The line holds where he stands — teams-native pride with a
-solo floor.
-**Effect:** Aura, 220px: allies inside take −10% damage; the paladin
-himself takes −5%. Damage allies absorb inside the aura feeds his
-resolve at 20% rate (their endurance funds his engine). Solo: the −5%
-self-reduction stands alone.
-**Resonance:** None — a standing law, not a cast. (Justified: the
-paladin's rotation already has two self-window sources; a third would
-crowd the clock.)
-**Slot type:** passive.
-**Insidious↔epic reading:** Pure epic — geometry as protection. The most
-teams-shaped card in the pool.
-**Visual read:** A faint floor circle drawn at the RIM only (no dome
-clutter); protected allies carry a hairline gold underline. Positioning
-becomes visible doctrine.
+Paladin used to have 3 exclusives here — Crater [rare, ability], Retort
+[uncommon, spec], Bastion [uncommon, passive] — same "epic-settled /
+self-lit" register as the rest of the kit (leap-slam verdict, block-to-
+counter answer, standing-law aura). All 3 were actually **built**
+(client/src/sim/data/cards.ts, classId:"paladin"-gated exactly like the
+real 10-ability Kindred rack catalog, docs/class-ability-catalogs-v1.md),
+which is exactly the bug: `catalogForClass("paladin")` — the loadout
+station's own full-catalog query — doesn't distinguish "rack ability" from
+"draft-pool exclusive," so it surfaced all 13 in one undifferentiated
+grid instead of the true 10 every other class shows. Jake, live playtest:
+cut all 3 rather than build the missing distinction — no class gets a
+"bonus picks" mechanic the others don't have. Genuine removal, not a
+deferral: the card definitions, their AbilityKind/type-union entries, all
+sim effects (World.ts's applyBastionAura/crater case/crater landing hook,
+combat.ts's Retort bank), constants.ts's KIN_CRATER_*/KIN_RETORT_*/
+KIN_BASTION_* (aura) group, and every test referencing them are gone, not
+commented out. Wizard/Ninja/Priest's own exclusives below are unaffected
+— they were never wired as a second parallel system the way Paladin's
+were (most, like Overchannel/Refraction/Slipstream/Flock, were never
+built at all; the ones that were — Sunlance, Paper Double, Undercut,
+Borrowed Time, Contagion — were folded directly into their class's
+10-ability catalog rather than added on top of it).
 
 ---
 

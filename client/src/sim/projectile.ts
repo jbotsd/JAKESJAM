@@ -25,6 +25,7 @@ import {
 } from "./collision.js";
 import { playerHitboxAABB, isHeadshot, HEADSHOT_DAMAGE_MULTIPLIER } from "./player.js";
 import { nextFloat } from "./rng.js";
+import { isAlly } from "./team.js";
 import { lutAtan2, lutCos, lutSin } from "./trig.js";
 import { PlayerId } from "./types.js";
 import type {
@@ -50,11 +51,10 @@ const BOOMERANG_RANGE_FRACTION = 0.55;
 const BOOMERANG_RETURN_RADIUS = 16; // ~ proj.radius + 8 in offline
 const STICKY_FUSE_MS = 720;
 // Exported (2026-07-18, aoe role rework): World.ts's new instant radius-
-// check AoE resolution (Consecrated Field/Crater's stagger) reuses this
-// SAME duration for its own directly-applied slow, rather than inventing a
-// second "how long does a stagger last" number — the shared formula
-// constants.ts's own KIN_CONSECRATED_FIELD_DAMAGE/KIN_CRATER_SLAM_STAGGER_
-// MULTIPLIER comments already point to.
+// check AoE resolution (Flock Pulse's stagger — Crater's epicenter and
+// Consecrated Field's instant slow both used this too, until they were cut
+// 2026-07-19) reuses this SAME duration for its own directly-applied slow,
+// rather than inventing a second "how long does a stagger last" number.
 export const SLOW_FIELD_DURATION_MS = 1500;
 const FLOAT_OSC_LATERAL = 22;
 const FLOAT_OSC_FORWARD = 11;
@@ -295,7 +295,15 @@ function stepProjectileNative(
     }
     case "homing":
     case "anti-homing": {
-      const target = closestNonOwnerPlayer(proj.x, proj.y, proj.ownerId, players, ctx.sortedPlayerIds, ctx.tick);
+      const target = closestNonOwnerPlayer(
+        proj.x,
+        proj.y,
+        proj.ownerId,
+        players,
+        ctx.sortedPlayerIds,
+        ctx.tick,
+        proj.enemyOnly,
+      );
       if (target) {
         const tx = proj.pathing === "anti-homing"
           ? proj.x * 2 - target.x
@@ -942,9 +950,16 @@ function closestNonOwnerPlayer(
   players: Record<PlayerId, PlayerEntity>,
   sortedIds?: readonly PlayerId[],
   tick?: number,
+  /** Priest tendril flag (ProjectileEntity.enemyOnly, types.ts) — when true,
+   *  also skips the owner's ALLIES (`isAlly`, team.ts), not just the owner.
+   *  Absent/false = original behavior (every homing shot before this flag
+   *  existed): closest non-owner player, ally or not. See constants.ts's
+   *  SYZ_TENDRIL_* comment for why this is opt-in rather than sim-wide. */
+  enemyOnly?: boolean,
 ): { x: number; y: number } | null {
   // Iterate in id-sorted order for deterministic tiebreaks.
   const ids = sortedIds ?? Object.keys(players).sort();
+  const ownerPlayer = enemyOnly && ownerId !== null ? players[ownerId] : undefined;
   let best: PlayerEntity | null = null;
   let bestSq = Number.POSITIVE_INFINITY;
   for (const id_ of ids) {
@@ -960,6 +975,7 @@ function closestNonOwnerPlayer(
     ) {
       continue;
     }
+    if (ownerPlayer !== undefined && isAlly(ownerPlayer, p)) continue;
     const dx = p.x - fromX;
     const dy = p.y - fromY;
     const d2 = dx * dx + dy * dy;

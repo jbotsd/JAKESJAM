@@ -26,13 +26,6 @@ import type {
   ProjectileEntity,
 } from "./types.js";
 import { classIdForArchetype } from "./data/cardTypes.js";
-import {
-  STEP_MS,
-  KIN_RETRIBUTION_EDGE_READY_WINDOW_MS,
-  KIN_RETORT_BANK_FRACTION,
-  KIN_RETORT_BANK_CAP,
-  KIN_RETORT_WINDOW_MS,
-} from "./constants.js";
 
 // ----- Constants -------------------------------------------------------------
 
@@ -739,41 +732,14 @@ export function tryDeflectDamage(
         (player.kindling ?? 0) + kindlingGranted,
       );
       let wardedPlayer: PlayerEntity = { ...player, kindling };
-      // Retribution Edge (class-overhaul-workboard.md chunk 2.6 fast-
-      // follow): a self-block landing while `retributionArmedUntilTick` is
-      // live (World.ts's "retribution-edge" cast case opens it) readies the
-      // player's NEXT Kindled Edge hit — consumed at that hit's resolution
-      // site (World.ts's "PALADIN MELEE" section), not here. This is a
-      // SELF-only write (the block-taker IS the ability owner — no cross-
-      // player hazard, same "the victim of this call is the one being
-      // mutated" shape every other branch of this function already uses).
-      if (
-        wardedPlayer.retributionArmedUntilTick !== undefined &&
-        wardedPlayer.retributionArmedUntilTick > tick
-      ) {
-        const readyDurTicks = Math.ceil(KIN_RETRIBUTION_EDGE_READY_WINDOW_MS / STEP_MS);
-        wardedPlayer = {
-          ...wardedPlayer,
-          retributionArmedUntilTick: undefined,
-          retributionReadyUntilTick: (tick + 1 + readyDurTicks) as Tick,
-        };
-      }
-      // Retort (docs/card-pool-v2.md #27, exclusive: Paladin) — a shield-
-      // board SPEC, always on once equipped (no cast, no cooldown; read
-      // directly off the card id). Banks a FRACTION of blocked damage,
-      // capped, refreshing a "spend within N seconds" window on every bank
-      // tick — spent by the next landed Kindled Edge hit (same resolution
-      // site as Retribution Edge above).
-      if (wardedPlayer.cards.includes("retort")) {
-        const bankAdd = blocked * KIN_RETORT_BANK_FRACTION;
-        const bank = Math.min(KIN_RETORT_BANK_CAP, (wardedPlayer.retortBank ?? 0) + bankAdd);
-        const windowDurTicks = Math.ceil(KIN_RETORT_WINDOW_MS / STEP_MS);
-        wardedPlayer = {
-          ...wardedPlayer,
-          retortBank: bank,
-          retortBankUntilTick: (tick + 1 + windowDurTicks) as Tick,
-        };
-      }
+      // (Retribution Edge's self-block → "ready" window used to be applied
+      // here — class-overhaul-workboard.md chunk 2.6 fast-follow. Removed
+      // 2026-07-19 along with the ability itself; see docs/class-ability-
+      // catalogs-v1.md's cut note. Retort — docs/card-pool-v2.md #27, a
+      // shield-board spec that used to bank a fraction of `blocked` right
+      // here — was cut the same day alongside its sibling exclusives
+      // Crater/Bastion; see cards.ts's cut note above their old
+      // definitions.)
       // No extra shieldCharge drain beyond tickShield's own passive per-
       // second cost of holding Ward — the partial damage getting through IS
       // the per-hit cost (unlike the generic shield's 100%-block-but-

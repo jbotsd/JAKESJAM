@@ -25,8 +25,8 @@ import {
   GEO_SUNLANCE_DAMAGE_MULTIPLIER,
   GEO_OVERCLOCK_FIRE_RATE_MULTIPLIER,
   GEO_OVERCLOCK_SPREAD_MULTIPLIER,
-  SYZ_CHANNEL_RAMP_MS,
-  SYZ_CHANNEL_RAMP_FIRE_RATE_MULTIPLIER_MAX,
+  GEO_CHANNEL_RAMP_MS,
+  GEO_CHANNEL_RAMP_FIRE_RATE_MULTIPLIER_MAX,
 } from "./constants.js";
 import { nextInt } from "./rng.js";
 import { lutAtan2, lutCos, lutSin } from "./trig.js";
@@ -237,16 +237,17 @@ function stepWeaponNative(
     fireCooldownMs: Math.max(0, player.fireCooldownMs - dtMs),
   };
 
-  // Priest basic-fire ramping channel (constants.ts's SYZ_CHANNEL_RAMP_MS
-  // doc comment has the full design rationale). Tracked BEFORE the early
-  // return below so continuing to hold Fire through a normal cooldown gap
-  // (the common case — most ticks land mid-cooldown, not on a fire tick)
-  // still accumulates hold duration; a release (or death) drops it back to
-  // baseline instantly. Gated on classId so every other archetype's
-  // `channelHoldMs` stays permanently `undefined` — zero behavior change
-  // for them.
-  const isPriestChannel = classIdForArchetype(next.characterId) === "priest";
-  if (isPriestChannel && fireRequested && next.alive) {
+  // Wizard basic-fire ramping channel (constants.ts's GEO_CHANNEL_RAMP_MS
+  // doc comment has the full design rationale — RELOCATED from Priest
+  // 2026-07-19, Jake: "the wizards hould have ramping fire rate to feel
+  // more glass canony"). Tracked BEFORE the early return below so
+  // continuing to hold Fire through a normal cooldown gap (the common case
+  // — most ticks land mid-cooldown, not on a fire tick) still accumulates
+  // hold duration; a release (or death) drops it back to baseline
+  // instantly. Gated on classId so every other archetype's `channelHoldMs`
+  // stays permanently `undefined` — zero behavior change for them.
+  const isWizardChannel = classIdForArchetype(next.characterId) === "wizard";
+  if (isWizardChannel && fireRequested && next.alive) {
     next.channelHoldMs = (next.channelHoldMs ?? 0) + dtMs;
   } else if (next.channelHoldMs !== undefined) {
     next.channelHoldMs = undefined;
@@ -304,18 +305,18 @@ function stepWeaponNative(
     next.hasteUntilTick !== undefined &&
     next.hasteUntilTick > options.currentTick;
   const hasteFireRateMul = hasteActive ? next.hasteMultiplier ?? 1 : 1;
-  // Priest basic-fire ramping channel (constants.ts's SYZ_CHANNEL_RAMP_MS
+  // Wizard basic-fire ramping channel (constants.ts's GEO_CHANNEL_RAMP_MS
   // doc comment). Same "fixed ceiling, driven by a live duration" compose
   // pattern as hasteFireRateMul/overclockActive immediately above, except
   // the "duration" is continuous-hold time (channelHoldMs, ticked above)
-  // rather than a fixed timed window. `isPriestChannel` keeps this at
+  // rather than a fixed timed window. `isWizardChannel` keeps this at
   // exactly 1 for every other class regardless of channelHoldMs (which is
   // always undefined for them anyway).
-  const channelRampFrac = isPriestChannel
-    ? Math.min(1, (next.channelHoldMs ?? 0) / SYZ_CHANNEL_RAMP_MS)
+  const channelRampFrac = isWizardChannel
+    ? Math.min(1, (next.channelHoldMs ?? 0) / GEO_CHANNEL_RAMP_MS)
     : 0;
   const channelFireRateMul =
-    1 + (SYZ_CHANNEL_RAMP_FIRE_RATE_MULTIPLIER_MAX - 1) * channelRampFrac;
+    1 + (GEO_CHANNEL_RAMP_FIRE_RATE_MULTIPLIER_MAX - 1) * channelRampFrac;
   // Damage is left at the build value here; the chaos damageMultiplier is
   // applied post-hit in World.stepWithRuntime so satellites and any other
   // projectile sources get the same scaling without each spawn site reading
@@ -351,6 +352,19 @@ function stepWeaponNative(
     : sunlanceActive
       ? build.damage * GEO_SUNLANCE_DAMAGE_MULTIPLIER
       : build.damage;
+  // Priest "oozing tendrils" basic fire (constants.ts's SYZ_TENDRIL_* doc
+  // comment — the class-blind projectile shape/count/speed/homing identity
+  // itself lives entirely in priestStarterWeapon's WeaponDefinition,
+  // weapons.ts, resolved through `build` like any other class's basic gun;
+  // this flag is the one piece that can't live there). Stamps `enemyOnly`
+  // on every tendril this class fires so the per-tick homing re-target
+  // (projectile.ts's closestNonOwnerPlayer) skips the caster's ALLIES too,
+  // not just the caster — see the constants.ts comment for why this can't
+  // be a cast-time findNearestEnemy call the way Bleed Tithe's ability
+  // version is (stepWeaponNative has no `state.players`). Every other
+  // class's projectiles are left completely untouched (`enemyOnly` stays
+  // unset), so this is zero behavior change for them.
+  const isPriestTendril = classIdForArchetype(next.characterId) === "priest";
   // Per-shot offset: spread the count evenly across [-totalSpread/2, +totalSpread/2].
   // Single-shot shots ignore spread entirely (consistent with the offline path).
   const projectiles: ProjectileEntity[] = [];
@@ -397,6 +411,9 @@ function stepWeaponNative(
       projectile.accelerationMultiplier = build.projectile.accelerationMultiplier;
       projectile.gravityScale = build.projectile.gravityScale;
       projectile.rangePx = build.projectile.rangePx;
+      if (isPriestTendril) {
+        projectile.enemyOnly = true;
+      }
       // Tithe (docs/card-pool-v2.md "Tithe", card-pool-v2.md "Priest" solo
       // floor): an always-on passive leech from build.leechFraction, layered
       // under the six-axes Crimson Tithe ABILITY window (titheActive) rather
@@ -425,8 +442,8 @@ function stepWeaponNative(
   // Cooldown derived from build.fireRate (shots per second), scaled by the
   // chaos fire-rate multiplier (golden-gun slows it, future buffs raise it),
   // Overclock's window (Geometrician catalog v1), Syzygist haste
-  // (class-overhaul-workboard.md chunk 3.1), and — priest only — the basic-
-  // fire ramping channel (constants.ts's SYZ_CHANNEL_RAMP_MS) when live.
+  // (class-overhaul-workboard.md chunk 3.1), and — wizard only — the basic-
+  // fire ramping channel (constants.ts's GEO_CHANNEL_RAMP_MS) when live.
   const fireRate = Math.max(
     MIN_FIRE_RATE,
     build.fireRate *
@@ -440,7 +457,7 @@ function stepWeaponNative(
   // ramp — checked before landing this change: `ammo` gates nothing in
   // this codebase (no read anywhere checks it against 0 to block firing;
   // ammoRegenPerSecond is 0, so it already only ever drains, never
-  // refills, for every class) and isn't HUD-rendered. A priest streaming
+  // refills, for every class) and isn't HUD-rendered. A wizard streaming
   // faster at full ramp drains it faster, same as any other class's high-
   // fire-rate build already would — not a new mechanic, not a regression.
   next.ammo = Math.max(0, next.ammo - 1);

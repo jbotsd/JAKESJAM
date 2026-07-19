@@ -1,19 +1,25 @@
-// Priest basic-fire ramping channel (weapon.ts stepWeaponNative,
-// constants.ts's SYZ_CHANNEL_RAMP_MS doc comment has the full design
-// rationale). Jake's ask: "rework the basic priest spell to be more
-// channely... take effects from cards but its like geometrician rn except
-// with a better deck." Locked direction: holding Fire continuously fires
-// (unchanged — stepWeapon already re-fires on cooldown expiry while held),
-// and PRIEST'S fire-rate ramps 1.0x -> SYZ_CHANNEL_RAMP_FIRE_RATE_MULTIPLIER_MAX
-// the longer Fire has been held on one continuous press, resetting the
-// instant Fire releases. Every other class must be completely unaffected —
-// the single most important regression this suite proves.
+// Wizard basic-fire ramping channel (weapon.ts stepWeaponNative,
+// constants.ts's GEO_CHANNEL_RAMP_MS doc comment has the full design
+// rationale). RELOCATED from Priest to Wizard 2026-07-19 — Jake's redirect:
+// "the wizards hould have ramping fire rate to feel more glass canony."
+// (File renamed from priestChannelWeapon.test.ts; the mechanic itself is
+// otherwise a pure class-relabel — same shape, same numbers, only the
+// gating class and the constant names moved. Priest's basic fire is now
+// the unrelated "oozing tendrils" mechanic — see priestTendrilWeapon.test.ts
+// for its own coverage, INCLUDING the reverse-direction regression proof
+// that Priest/Ninja/Paladin stay byte-identical to the wizard-only ramp.)
+// Locked direction: holding Fire continuously fires (unchanged — stepWeapon
+// already re-fires on cooldown expiry while held), and WIZARD'S fire-rate
+// ramps 1.0x -> GEO_CHANNEL_RAMP_FIRE_RATE_MULTIPLIER_MAX the longer Fire
+// has been held on one continuous press, resetting the instant Fire
+// releases. Every other class must be completely unaffected — the single
+// most important regression this suite proves.
 
 import { describe, test, expect } from "bun:test";
 import { stepWeapon, resolvePlayerBuild } from "../weapon.js";
 import {
-  SYZ_CHANNEL_RAMP_MS,
-  SYZ_CHANNEL_RAMP_FIRE_RATE_MULTIPLIER_MAX,
+  GEO_CHANNEL_RAMP_MS,
+  GEO_CHANNEL_RAMP_FIRE_RATE_MULTIPLIER_MAX,
 } from "../constants.js";
 import { EntityId, InputSeq, type PlayerEntity, type PlayerId } from "../types.js";
 
@@ -74,10 +80,12 @@ function holdFire(
   return { player, firedAtMs, damages, elements };
 }
 
-describe("Priest channel ramp: class gating (the critical regression)", () => {
-  const NON_PRIEST_CLASSES: PlayerEntity["characterId"][] = ["balanced", "sprinter", "heavy"];
+describe("Wizard channel ramp: class gating (the critical regression)", () => {
+  // shielded=priest, sprinter=ninja, heavy=paladin (cardTypes.ts
+  // ARCHETYPE_CLASS_ID) — every archetype EXCEPT wizard's own "balanced".
+  const NON_WIZARD_CLASSES: PlayerEntity["characterId"][] = ["shielded", "sprinter", "heavy"];
 
-  for (const characterId of NON_PRIEST_CLASSES) {
+  for (const characterId of NON_WIZARD_CLASSES) {
     test(`${characterId}: a single fire tick is byte-identical to the pre-channel formula`, () => {
       const player = mkPlayer({ characterId });
       const build = resolvePlayerBuild(player);
@@ -88,7 +96,7 @@ describe("Priest channel ramp: class gating (the critical regression)", () => {
       // (chaos/overclock/haste are all neutral/absent here too).
       expect(result.player.fireCooldownMs).toBeCloseTo(1000 / build.fireRate, 10);
       expect(result.projectiles[0]!.damage).toBe(build.damage);
-      // The new field must never be written for a non-priest class.
+      // The new field must never be written for a non-wizard class.
       expect(result.player.channelHoldMs).toBeUndefined();
     });
 
@@ -103,33 +111,33 @@ describe("Priest channel ramp: class gating (the critical regression)", () => {
       const first = intervals[0]!;
       const last = intervals[intervals.length - 1]!;
       // Flat cadence: last interval must be the same as the first (within
-      // one tick's quantisation), never shrinking the way priest's does.
+      // one tick's quantisation), never shrinking the way wizard's does.
       expect(Math.abs(last - first)).toBeLessThanOrEqual(DT_MS + 0.01);
       expect(finalPlayer.channelHoldMs).toBeUndefined();
     });
   }
 });
 
-describe("Priest channel ramp: the ramp itself", () => {
-  function priestPlayer(over: Partial<PlayerEntity> = {}): PlayerEntity {
-    return mkPlayer({ characterId: "shielded", ...over });
+describe("Wizard channel ramp: the ramp itself", () => {
+  function wizardPlayer(over: Partial<PlayerEntity> = {}): PlayerEntity {
+    return mkPlayer({ characterId: "balanced", ...over });
   }
 
   test("holding Fire continuously fires repeatedly with no discrete per-press gate", () => {
-    const player = priestPlayer();
+    const player = wizardPlayer();
     const { firedAtMs } = holdFire(player, 2500);
-    // priestStarterWeapon fireRate = 4/s baseline -> at LEAST ~10 shots in
-    // 2.5s even before any ramp kicks in; the ramp only ever speeds this up.
+    // starterWeapon fireRate = 4/s baseline -> at LEAST ~10 shots in 2.5s
+    // even before any ramp kicks in; the ramp only ever speeds this up.
     expect(firedAtMs.length).toBeGreaterThanOrEqual(9);
   });
 
   test("shot cadence measurably speeds up the longer Fire is held, and the ramp is bounded by the documented ceiling", () => {
-    const player = priestPlayer();
+    const player = wizardPlayer();
     const build = resolvePlayerBuild(player);
     const baselineIntervalMs = 1000 / build.fireRate;
-    const rampedIntervalMs = baselineIntervalMs / SYZ_CHANNEL_RAMP_FIRE_RATE_MULTIPLIER_MAX;
+    const rampedIntervalMs = baselineIntervalMs / GEO_CHANNEL_RAMP_FIRE_RATE_MULTIPLIER_MAX;
 
-    const { firedAtMs } = holdFire(player, SYZ_CHANNEL_RAMP_MS + 1500);
+    const { firedAtMs } = holdFire(player, GEO_CHANNEL_RAMP_MS + 1500);
     const intervals: number[] = [];
     for (let i = 1; i < firedAtMs.length; i += 1) {
       intervals.push(firedAtMs[i]! - firedAtMs[i - 1]!);
@@ -157,7 +165,7 @@ describe("Priest channel ramp: the ramp itself", () => {
         EntityId(nextId++),
       );
 
-    let player = priestPlayer();
+    let player = wizardPlayer();
     const build = resolvePlayerBuild(player);
     const baselineIntervalMs = 1000 / build.fireRate;
 
@@ -165,7 +173,7 @@ describe("Priest channel ramp: the ramp itself", () => {
     let elapsed = 0;
     let lastFireGapMs = 0;
     let sinceLastFire = 0;
-    while (elapsed < SYZ_CHANNEL_RAMP_MS + 600) {
+    while (elapsed < GEO_CHANNEL_RAMP_MS + 600) {
       const result = fire(player, true);
       player = result.player;
       elapsed += DT_MS;
@@ -202,14 +210,14 @@ describe("Priest channel ramp: the ramp itself", () => {
   });
 });
 
-describe("Priest channel ramp: card modifiers still fully apply to ramped shots", () => {
+describe("Wizard channel ramp: card modifiers still fully apply to ramped shots", () => {
   test("Molten Core's element/impact-radius modifier survives on shots fired deep into the ramp", () => {
-    const player = mkPlayer({ characterId: "shielded", cards: ["molten-core"] });
+    const player = mkPlayer({ characterId: "balanced", cards: ["molten-core"] });
     const build = resolvePlayerBuild(player);
     expect(build.projectile.element).toBe("fire");
     expect(build.projectile.impactRadiusPx).toBe(42);
 
-    const { firedAtMs, elements, damages } = holdFire(player, SYZ_CHANNEL_RAMP_MS + 800);
+    const { firedAtMs, elements, damages } = holdFire(player, GEO_CHANNEL_RAMP_MS + 800);
     expect(firedAtMs.length).toBeGreaterThan(3);
     // Every single shot across the whole hold — including the fully-ramped
     // tail — still carries the card's element. The ramp is a fire-rate
@@ -224,8 +232,12 @@ describe("Priest channel ramp: card modifiers still fully apply to ramped shots"
     }
   });
 
-  test("a non-priest class holding the same card is unaffected by the channel machinery (control)", () => {
-    const player = mkPlayer({ characterId: "balanced", cards: ["molten-core"] });
+  test("a non-wizard class holding the same card is unaffected by the channel machinery (control)", () => {
+    // "heavy" (paladin) rather than "shielded" (priest) — priest's OWN
+    // basic fire is separately reworked to a fire-element weapon this same
+    // session (priestTendrilWeapon.test.ts), so paladin is the cleaner,
+    // fully-untouched-by-either-change control here.
+    const player = mkPlayer({ characterId: "heavy", cards: ["molten-core"] });
     const { elements } = holdFire(player, 1500);
     expect(elements.length).toBeGreaterThan(0);
     for (const element of elements) {

@@ -792,9 +792,11 @@ export class VenueHost {
     }
     // Loadout-station catalog CYCLE (Part B, 2026-07-19 — Jake: "an ability
     // show case room where we can exhaustveily test all and every single
-    // ability"). Replaces the ENTIRE rack (not just actives; a class's
-    // catalog is active-only besides a couple of paladin passives that
-    // don't occupy a slot anyway — see `activeIds` below) with the next
+    // ability"). Replaces the ENTIRE rack (not just actives — the
+    // `c.active !== undefined` filter below is a generic defensive check,
+    // not built for any specific class; every classId-gated catalog card
+    // in the game is active-only as of the same-day Crater/Retort/Bastion
+    // cut, docs/card-pool-v2.md #26-28) with the next
     // (or previous) group of ≤ MAX_ABILITY_SLOTS actives from
     // `catalogForClass(entry.classId)`, wrapping around, and live-applies
     // it exactly like `catalog-toggle` does. No-op if the station hasn't

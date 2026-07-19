@@ -12,11 +12,11 @@ identity non-obsolescence), character sheets (feel contracts).
 | Display names | Geometrician · Interstice · Kindred · Syzygist |
 | Syzygist color | cool-white |
 | Rack | **3** slots, keys 1–3 |
-| Catalog size | **10** per chassis at first pass (within 8–12); Kindred grew to **12** in its 2026-07-18 coverage-floor fast-follow, still within range |
+| Catalog size | **10** per chassis at first pass (within 8–12); Kindred grew to **12** in its 2026-07-18 coverage-floor fast-follow, then was cut back to **10** on 2026-07-19 (Retribution Edge + Consecrated Field removed — see Kindred's own section below) |
 | Catalog availability | **Full day one** at loadout |
 | Specialization | Loadout equip; recommend + pure freedom |
 | Roles (exactly six) | defense · offense · buff · aoe · single · movement |
-| Coverage | ≥2 primary tags per role per catalog (some multi-role) |
+| Coverage | ≥2 primary tags per role per catalog (some multi-role) — **exception:** Kindred's offense/aoe dropped to 1 each in the 2026-07-19 cut, an accepted consequence of that specific cut, not a re-opened gap (see Kindred's section) |
 | Cards | Specs/emission on buttons — **not** a second ability bar |
 | Chassis sacred | Catalog never replaces Ward / slash+wave / parry+projectile / status verb |
 
@@ -76,7 +76,7 @@ Catalog may add movement tools; **slash remains the engine**.
 
 ---
 
-## Kindred (`paladin`) — 12
+## Kindred (`paladin`) — 10
 
 Always-on sacred: Kindled Ward (hold) + Kindled Edge weight. Heaven-tank
 feel. Catalog **extends** peel/field; never “skip the board.”
@@ -85,31 +85,53 @@ feel. Catalog **extends** peel/field; never “skip the board.”
 "Kindred — two structural gaps"): the original 10 shipped buff×1 (Rally
 Light) and movement×1 (Plant Charge), both below this file's own ≥2-per-
 role floor (the Locks table above), and Aegis Share/Rally Light were
-team-only with no solo fallback. #11-12 close the coverage gap; Aegis
-Share/Rally Light both now carry a solo clause too (see their rows below
-and constants.ts's KIN_AEGIS_SHARE_SOLO_KINDLING_FEED /
-KIN_KINDLED_RESOLVE_*/KIN_BULWARK_STEP_* header comments for the full
-numbers). 12 is still inside the locked 8-12 catalog-size range.
+team-only with no solo fallback. Kindled Resolve/Bulwark Step closed the
+coverage gap (growing the catalog to 12); Aegis Share/Rally Light both now
+carry a solo clause too (see their rows below and constants.ts's
+KIN_AEGIS_SHARE_SOLO_KINDLING_FEED / KIN_KINDLED_RESOLVE_*/KIN_BULWARK_
+STEP_* header comments for the full numbers). 12 was still inside the
+locked 8-12 catalog-size range.
+
+**2026-07-19 cut — back down to 10:** Retribution Edge (offense) and
+Consecrated Field (aoe) were removed entirely (not deferred — a genuine
+permanent cut). Retribution Edge carried an unaddressed self-fueling-loop
+brake: docs/axiom-deviations-audit.md flagged it (D3/AX.3, "block → amp +
+Kindling refund → more") as needing a brake, the same category of issue
+the Syzygist class had this session (Flock Pulse's snowball, fixed with a
+kill-lead-fed brake) — Retribution Edge's equivalent brake was never
+built, and removal sidesteps that open design debt rather than requiring a
+fix first. Consecrated Field was cut for role redundancy against Shock
+Ring: both were "AOE damage zone near yourself," and Shock Ring reads as
+more central to the class's heaven-tank weight identity (the "Space claim;
+heaven-tank weight" feel note below is Shock Ring's own). This drops
+offense and aoe from 2-per-role to 1-per-role each (Unbroken Seal and
+Shock Ring are now the sole survivors of those roles) — an intentional,
+accepted consequence of THIS cut, not a re-opened coverage gap needing
+another fast-follow. Kindled Resolve/Bulwark Step (buff/movement, the roles
+the 2026-07-18 fast-follow actually fixed) are untouched and stay at ≥2.
 
 | # | Name | Role | Effect (sketch) | Feel / notes |
 |---|------|------|-----------------|--------------|
 | 1 | **Unbroken Seal** | offense | Committed overhead; big hit-stop + stagger | Primary B feel; punish window |
-| 2 | **Retribution Edge** | offense | After a blocked hit, next edge swing amp + Kindling refund tick | Block-punish loop |
-| 3 | **Sunspike** | single | Aimed thrust; high single, short windup | Focus the one who ignored the line |
-| 4 | **Judgment Line** | single | Mark one enemy; they take extra from your ward bashes / edge for 3s | Duel tank |
-| 5 | **Consecrated Field** | aoe | Settled self-light field at feet (moves slowly or sticks); damages / slows lightly | Consecration *feel*, self-sourced |
-| 6 | **Shock Ring** | aoe | Slam shock on ground after short hop (keep hop modest — not sky-god) | Space claim; heaven-tank weight |
-| 7 | **Bastion Pulse** | defense | Instant small self-absorb; stronger if Ward is held | Ward synergy, not a second shield identity |
-| 8 | **Aegis Share** | defense | Brief: projectiles that would hit allies in ward shadow also feed your Kindling. **Solo fallback:** no ally in range → feeds the caster a reduced Kindling tick instead | Peel readable; no dead solo press |
-| 9 | **Rally Light** | buff | Allies in aura (including yourself, solo-safe): small damage amp + move tick (Conjuration *feel* lite) | Team peak; already self-covers solo |
-| 10 | **Plant Charge** | movement | Short directional charge (board-first, aim-directed); ends in ward-ready stance, tips shield charge up | Plant-to-plant, not freeflow ninja; the committed reposition |
-| 11 | **Kindled Resolve** | buff | Spend Kindling for a self stagger-resist + small self-damage-amp window | Solo, resource-gated stance — cash in the block-meter |
-| 12 | **Bulwark Step** | movement | Short lateral shuffle in whatever direction you're currently walking (input-facing, NOT aim-directed); Ward never drops | Cheap, reflexive reposition — the low-commitment counterpart to Plant Charge |
+| 2 | **Sunspike** | single | Aimed thrust; high single, short windup | Focus the one who ignored the line |
+| 3 | **Judgment Line** | single | Mark one enemy; they take extra from your ward bashes / edge for 3s | Duel tank |
+| 4 | **Shock Ring** | aoe | Slam shock on ground after short hop (keep hop modest — not sky-god) | Space claim; heaven-tank weight |
+| 5 | **Bastion Pulse** | defense | Instant small self-absorb; stronger if Ward is held | Ward synergy, not a second shield identity |
+| 6 | **Aegis Share** | defense | Brief: projectiles that would hit allies in ward shadow also feed your Kindling. **Solo fallback:** no ally in range → feeds the caster a reduced Kindling tick instead | Peel readable; no dead solo press |
+| 7 | **Rally Light** | buff | Allies in aura (including yourself, solo-safe): small damage amp + move tick (Conjuration *feel* lite) | Team peak; already self-covers solo |
+| 8 | **Plant Charge** | movement | Short directional charge (board-first, aim-directed); ends in ward-ready stance, tips shield charge up | Plant-to-plant, not freeflow ninja; the committed reposition |
+| 9 | **Kindled Resolve** | buff | Spend Kindling for a self stagger-resist + small self-damage-amp window | Solo, resource-gated stance — cash in the block-meter |
+| 10 | **Bulwark Step** | movement | Short lateral shuffle in whatever direction you're currently walking (input-facing, NOT aim-directed); Ward never drops | Cheap, reflexive reposition — the low-commitment counterpart to Plant Charge |
+
+*(Cut 2026-07-19 — no longer in the catalog: Retribution Edge (was #2,
+offense, "after a blocked hit, next edge swing amp + Kindling refund
+tick") and Consecrated Field (was #5, aoe, "settled self-light field at
+feet; damages / slows lightly"). See the cut note above.)*
 
 **Example racks:**  
-- Peel: Aegis Share + Rally Light + Retribution Edge  
-- Punish: Unbroken Seal + Bastion Pulse + Sunspike  
-- Field: Consecrated Field + Shock Ring + Plant Charge  
+- Peel: Aegis Share + Rally Light + Bastion Pulse  
+- Punish: Unbroken Seal + Sunspike + Judgment Line  
+- Space claim: Shock Ring + Plant Charge + Bastion Pulse  
 - Solo heaven-tank: Kindled Resolve + Bulwark Step + Bastion Pulse — every pick has a real, non-team-gated payoff  
 
 ---

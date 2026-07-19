@@ -156,7 +156,8 @@ function syzCard(id: (typeof SYZYGIST_ABILITY_IDS)[number]) {
 
 /** Step until a predicate holds or the budget runs out — the standard
  *  "let a fast shard travel and land" idiom kindredCatalog.test.ts's own
- *  Sunspike/Consecrated Field tests use. */
+ *  Sunspike test uses (Consecrated Field's test used it too until that
+ *  ability was cut 2026-07-19, see docs/class-ability-catalogs-v1.md). */
 function stepUntil(
   state: WorldState,
   runtime: ReturnType<typeof createRuntime>,

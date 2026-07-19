@@ -1230,18 +1230,17 @@ describe("VenueHost loadout station: catalog cycle (Part B)", () => {
     venue.dispose();
   });
 
-  test("cycling never includes a non-active catalog card (paladin's bastion/retort passives are skipped)", () => {
-    const { venue } = makeVenue(0);
-    const ws = makeFakeWs("p_cyc8", "CYC8");
-    venue.attachLobby(ws);
-    venue.routeLobby(ws, encodeMessage({ t: "class-pick", characterId: "heavy" })); // → paladin
-    for (let i = 0; i < 6; i += 1) {
-      venue.routeLobby(ws, encodeMessage({ t: "catalog-cycle", direction: "next" }));
-      const picks = venue.loadoutForTest(PlayerId("p_cyc8"))!.picks;
-      expect(picks.every((id) => id !== "retort" && id !== "bastion")).toBe(true);
-    }
-    venue.dispose();
-  });
+  // (A "cycling never includes a non-active catalog card (paladin's
+  // bastion/retort passives are skipped)" test used to live here. Retort
+  // and Bastion — docs/card-pool-v2.md #27-28 — were cut entirely
+  // 2026-07-19 (they were leaking into the loadout station as 13 cards
+  // instead of a true 10; see client/src/sim/data/cards.ts's cut note
+  // above the old crater/retort/bastion card definitions), so paladin's
+  // catalog no longer has any non-active card to skip — the test's own
+  // premise is gone, not just its example. `catalog-cycle`'s
+  // `c.active !== undefined` filter (just above) stays: it's a generic
+  // defensive check, not bastion/retort-specific, and every OTHER class's
+  // catalog is still covered by it.)
 
   test("a real class switch resets the cycle position — the next cycle for the NEW class starts at its own group 0", () => {
     const { venue } = makeVenue(0);

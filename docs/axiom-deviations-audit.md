@@ -84,7 +84,10 @@ difference-fed brake or it becomes a downward spiral for everyone else.
   entangled count) and **Contagion** (#5, spreads on death) — a positive-*constructive*
   engine. No stated brake.
 - **Kindred Retribution Edge** (#2): blocked hit → next edge amps + Kindling refund → more
-  blocks/edges → more Kindling. A block-punish loop; brake unclear.
+  blocks/edges → more Kindling. A block-punish loop; brake unclear. **CLOSED 2026-07-19 by
+  removal, not by a fix** — the ability was cut from the catalog entirely (docs/class-
+  ability-catalogs-v1.md's cut note; Kindred back to 10/10) rather than given the brake this
+  section calls for. The brake was never built.
 **Mechanism at stake:** the **draft's** catch-up weights are the macro brake (A3 applied
 correctly at the roster level — and it's the model to copy). But an *ability* economy that
 self-fuels *within a round* has no roster-level brake reaching it fast enough; in FFA a
@@ -209,6 +212,13 @@ pass — flagged **[NEW]**.
   See `docs/class-ability-catalogs-v1.md`'s Kindred table (now 12 rows) and constants.ts's
   KIN_KINDLED_RESOLVE_*/KIN_BULWARK_STEP_*/KIN_AEGIS_SHARE_SOLO_KINDLING_FEED header comments for
   the full numbers/reasoning.
+- **CLOSED (2026-07-19, by removal, not by a fix):** Retribution Edge's D3 brake was never
+  built — instead, Jake directed the ability cut from the catalog entirely, alongside
+  Consecrated Field (cut for role redundancy against Shock Ring, an unrelated D2-adjacent
+  reason — see `docs/class-ability-catalogs-v1.md`'s cut note). Kindred is back to 10/10
+  (offense and aoe now 1-per-role each, an accepted consequence of this specific cut — buff
+  and movement, the roles the 2026-07-18 fast-follow actually fixed, are untouched and stay
+  at ≥2). This line item is closed; there is no more open D3 debt for Kindred.
 
 ### Syzygist (priest) — the D3 hotspot
 - **D3 (compounding engine):** **Bleed Tithe (#1) + Contagion (#5) + Flock Pulse (#6)** don't
@@ -229,7 +239,7 @@ pass — flagged **[NEW]**.
 |-------|-----------|-----------------|-----------------|
 | Geometrician | Measure (confirmed), Recoil Step (suspect) | Return Glass (mild) | OK |
 | Interstice | — (clean) | hit-gated = self-braked | OK |
-| Kindred | Aegis/Rally solo-dead — **RESOLVED 2026-07-18** | Retribution Edge (still open) | **RESOLVED 2026-07-18: buff/movement now ×2 (12/12); Aegis Share has a solo Kindling fallback; Rally Light was already solo-safe** |
+| Kindred | Aegis/Rally solo-dead — **RESOLVED 2026-07-18** | Retribution Edge — **CLOSED 2026-07-19 by removal (cut from catalog, not braked)** | **RESOLVED 2026-07-18: buff/movement now ×2; Aegis Share has a solo Kindling fallback; Rally Light was already solo-safe. Catalog is 10/10 as of the 2026-07-19 cut (offense/aoe now ×1 each, intentional)** |
 | Syzygist | — | **Bleed+Contagion+Flock (compounding — priority)** | solo done right; buff×1, movement×1 |
 
 **So: yes, now all four are combed** — and the sweep earned two findings the example-pass

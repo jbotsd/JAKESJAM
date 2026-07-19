@@ -1850,25 +1850,10 @@ export const crystalRoundsCards: CardDefinition[] = [
     visual: visual("square", "#eab308"),
     unique: true,
   },
-  {
-    id: "consecrated-field",
-    name: "Consecrated Field",
-    category: "ability",
-    rarity: "uncommon",
-    buckets: ["ability"],
-    essenceCost: 5,
-    classId: "paladin",
-    role: "aoe",
-    description:
-      "Active (9s cooldown): self-light settles at your feet, slowing everyone it catches and lingering to damage anyone who stays in it.",
-    flavorText: "Settled self-light, self-sourced.",
-    active: {
-      kind: "consecrated-field",
-      cooldownMs: 9000,
-    },
-    visual: visual("hexagon", "#fde68a"),
-    unique: true,
-  },
+  // Consecrated Field (aoe, self-light zone) was cut 2026-07-19 — see
+  // docs/class-ability-catalogs-v1.md's 12→10 cut note: redundant with
+  // Shock Ring below (both are "AOE damage zone near yourself"), and
+  // Shock Ring reads as more central to the class's heaven-tank identity.
   {
     id: "aegis-share",
     name: "Aegis Share",
@@ -1909,29 +1894,12 @@ export const crystalRoundsCards: CardDefinition[] = [
     unique: true,
   },
   // ── Kindred catalog v1 fast-follow (class-overhaul-workboard.md chunk
-  // 2.6, 2026-07-18) — the 3 abilities the original pass deferred, now
-  // wired. Same classId gate, same gold-forward visual family as the 7
-  // above.
-  {
-    id: "retribution-edge",
-    name: "Retribution Edge",
-    category: "ability",
-    rarity: "rare",
-    buckets: ["ability"],
-    essenceCost: 6,
-    classId: "paladin",
-    role: "offense",
-    description:
-      "Active (3s arm window, 8s cooldown): the next Ward block you land while armed readies your next Kindled Edge hit for bonus damage and a Kindling refund.",
-    flavorText: "You said enough. Now you pay for it.",
-    active: {
-      kind: "retribution-edge",
-      cooldownMs: 8000,
-      durationMs: 3000,
-    },
-    visual: visual("hexagon", "#f97316"),
-    unique: true,
-  },
+  // 2.6, 2026-07-18) — originally 3 abilities the earlier pass deferred,
+  // now wired; Retribution Edge (offense) was one of the 3 but was cut
+  // 2026-07-19 (see docs/class-ability-catalogs-v1.md's 12→10 cut note)
+  // rather than fixed — it carried an unaddressed self-fueling-loop brake
+  // gap flagged in docs/axiom-deviations-audit.md that removal sidesteps.
+  // Same classId gate, same gold-forward visual family as the 7 above.
   {
     id: "shock-ring",
     name: "Shock Ring",
@@ -1979,6 +1947,10 @@ export const crystalRoundsCards: CardDefinition[] = [
   // (still inside the locked 8-12 catalog-size range) rather than
   // replacing two of the existing 10. See constants.ts's KIN_KINDLED_
   // RESOLVE_*/KIN_BULWARK_STEP_* header comments for the full design.
+  // NOTE 2026-07-19: Kindred was cut back to 10/10 the same week by
+  // removing Retribution Edge (offense) and Consecrated Field (aoe) —
+  // see docs/class-ability-catalogs-v1.md's cut note. Kindled Resolve and
+  // Bulwark Step stay; buff/movement are untouched by that cut.
   {
     id: "kindled-resolve",
     name: "Kindled Resolve",
@@ -2018,65 +1990,20 @@ export const crystalRoundsCards: CardDefinition[] = [
     visual: visual("square", "#fde68a"),
     unique: true,
   },
-  // ── Paladin exclusives (docs/card-pool-v2.md #26-28) — the draft-pool
-  // cards, a SEPARATE system from the Kindred catalog above: picked from
-  // the universal/class-exclusive pool at round end, not the loadout-
-  // station catalog. classId-gated the same way. Crater is a rack ability
-  // (has `active`); Retort is a shield-board spec (always-on once equipped,
-  // no cast — reads `entity.cards.includes("retort")` directly in
-  // combat.ts/World.ts, no `modifier` needed); Bastion is a passive aura
-  // (always-on, same "no modifier needed, read the card id directly" shape
-  // — World.ts's `applyBastionAura`).
-  {
-    id: "crater",
-    name: "Crater",
-    category: "ability",
-    rarity: "rare",
-    buckets: ["ability"],
-    essenceCost: 7,
-    classId: "paladin",
-    role: "aoe",
-    description:
-      "Active (9s cooldown): leap above your normal jump, then slam — a heavy epicenter burst plus a wider shock ring. The verdict arrives from above.",
-    flavorText: "A gavel with a flight path.",
-    active: {
-      kind: "crater",
-      cooldownMs: 9000,
-      durationMs: 1800,
-    },
-    visual: visual("hexagon", "#f59e0b"),
-    unique: true,
-  },
-  {
-    id: "retort",
-    name: "Retort",
-    category: "defense",
-    rarity: "uncommon",
-    buckets: ["utility"],
-    essenceCost: 4,
-    classId: "paladin",
-    role: "defense",
-    description:
-      "Spec on the shield-board: banks half of blocked damage (capped). Your next Kindled Edge swing within 3s spends the bank as bonus damage and knockback.",
-    flavorText: "You said enough.",
-    visual: visual("square", "#fbbf24"),
-    unique: true,
-  },
-  {
-    id: "bastion",
-    name: "Bastion",
-    category: "defense",
-    rarity: "uncommon",
-    buckets: ["utility"],
-    essenceCost: 4,
-    classId: "paladin",
-    role: "defense",
-    description:
-      "Passive aura (220px): allies inside take less damage, you take a little less too. Damage allies absorb in your light feeds your Kindling.",
-    flavorText: "The line holds where he stands.",
-    visual: visual("circle", "#d97706"),
-    unique: true,
-  },
+  // Crater/Retort/Bastion (docs/card-pool-v2.md #26-28, "the 3 Paladin
+  // exclusives") were cut entirely 2026-07-19 — a genuine removal, not a
+  // deferral, same discipline as Retribution Edge/Consecrated Field above.
+  // They were meant to be a SEPARATE draft-pool system (picked at round
+  // end, not the loadout station), but were actually classId:"paladin"-
+  // gated like every rack ability, so `catalogForClass("paladin")` — the
+  // loadout station's own full-catalog query — surfaced all 3 alongside
+  // the real 10-ability rack, showing 13 cards in one undifferentiated
+  // grid (Jake, live playtest: the station should show a true 10, matching
+  // Wizard/Ninja/Priest, not a class-specific "bonus picks" mechanic).
+  // Removed here plus their AbilityKind union entry (cardTypes.ts), sim
+  // effects (World.ts's applyBastionAura/crater case/crater landing hook,
+  // combat.ts's Retort bank), constants.ts's KIN_CRATER_*/KIN_RETORT_*/
+  // KIN_BASTION_* (aura) group, and every test referencing them.
   // ── Syzygist catalog v1 (docs/class-ability-catalogs-v1.md) — the
   //    priest's 10-ability class catalog (class-overhaul-workboard.md
   //    chunk 3.4). Same substrate-reuse discipline as the Geometrician/

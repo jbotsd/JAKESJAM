@@ -64,16 +64,17 @@ export const ABILITY_ANIMATIONS = {
   "unbroken-seal": c("paladin", "thrust", 620, .37, .70, 32, 6, 1),
   sunspike: c("paladin", "thrust", 570, .34, .67, 34, 6, 1),
   "judgment-line": c("paladin", "cut", 650, .38, .71, 33, 7, 1),
-  "consecrated-field": c("paladin", "plant", 720, .41, .73, 27, 3),
   "bastion-pulse": c("paladin", "pulse", 620, .36, .68, 27, 2),
   "aegis-share": c("paladin", "guard", 580, .34, .67, 25, 2, -1),
   "plant-charge": c("paladin", "step", 500, .31, .66, 31, 8, 1),
-  "retribution-edge": c("paladin", "cut", 610, .35, .69, 33, 6, -1),
   "shock-ring": c("paladin", "pulse", 660, .39, .71, 29, 3),
   "rally-light": c("paladin", "gather", 680, .40, .72, 27, 1),
   "kindled-resolve": c("paladin", "gather", 640, .37, .70, 24, 2),
   "bulwark-step": c("paladin", "step", 520, .32, .67, 29, 7, 1),
-  crater: c("paladin", "plant", 760, .43, .74, 31, 8),
+  // (crater's entry — a "plant" gesture — lived here; cut 2026-07-19
+  // alongside its sibling exclusives retort/bastion, see cards.ts's cut
+  // note. "crater" is no longer an AbilityKind, so this map has no key for
+  // it at all now.)
 
   "bleed-tithe": c("priest", "weave", 560, .31, .68, 29, 2, -1),
   severance: c("priest", "cut", 500, .29, .65, 31, 3, 1),
@@ -95,6 +96,12 @@ export const ABILITY_ANIMATIONS = {
   "ghost-guard": c("ninja", "guard", 320, .18, .58, 25, -2),
   "second-wind": c("ninja", "gather", 360, .20, .61, 24, 1),
   "razor-route": c("ninja", "step", 300, .17, .56, 31, 7, 1),
+  // Paper Double: a low-commit plant-and-release (the caster stays put —
+  // the decoy is what runs), not a "step" gesture like Razor Route's own
+  // dash-empowering cast. Minimal placeholder timing/reach, matching this
+  // ability's own scope (sim correctness, not a full tactile VFX pass —
+  // see paperDouble.ts's header / types.ts's PaperDoubleEntity comment).
+  "paper-double": c("ninja", "plant", 340, .20, .58, 22, 2),
 } as const satisfies Record<AbilityKind, AbilityAnimationContract>;
 
 export type AbilityAnimationPhase = "anticipation" | "action" | "follow-through" | "recovery";

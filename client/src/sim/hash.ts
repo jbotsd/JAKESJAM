@@ -81,10 +81,8 @@ function quantiseMs(value: number): number {
  *   overclockUntilTick (int), resonanceUntilTick (int),
  *   regenUntilTick (int, Syzygist substrate), hasteUntilTick (int, Syzygist
  *   substrate), devotion (int, priest class resource), wardAbsorbUntilTick
- *   (int, Syzygist Ward window), grounded (0/1), retributionArmedUntilTick /
- *   retributionReadyUntilTick / shockRingArmedUntilTick / rallyLightUntilTick
- *   / craterArmedUntilTick (int, Kindred catalog v1 fast-follow +
- *   card-pool-v2.md exclusives), retortBank (int), retortBankUntilTick (int),
+ *   (int, Syzygist Ward window), grounded (0/1), shockRingArmedUntilTick /
+ *   rallyLightUntilTick (int, Kindred catalog v1 fast-follow),
  *   kindledResolveUntilTick (int, Kindred coverage-floor fast-follow).
  *
  * Fields deliberately skipped: aimX/aimY (presentation only, changes every
@@ -154,21 +152,16 @@ export function hashPlayerEntity(p: PlayerEntity): number {
   h = mixU32(h, (p.sealUntilTick ?? 0) | 0);
   h = mixU32(h, (p.aegisShareUntilTick ?? 0) | 0);
   // Kindred catalog v1 fast-follow (class-overhaul-workboard.md chunk 2.6,
-  // 2026-07-18: Retribution Edge, Shock Ring, Rally Light, plus Crater/
-  // Retort from the separate card-pool-v2.md exclusives). Same absent-as-0
-  // treatment as every other window-buff field above. `retortBank` is a
-  // depletable numeric pool, not a boolean/tick — mixed like `kindling`
-  // above (rounded, not quantised) rather than skipped like `shieldCharge`,
-  // because unlike shieldCharge it changes only on discrete block/swing
-  // events (not "nearly every combat tick"), so it doesn't defeat the
-  // reconcile-skip heuristic the way a continuously-draining pool would.
-  h = mixU32(h, (p.retributionArmedUntilTick ?? 0) | 0);
-  h = mixU32(h, (p.retributionReadyUntilTick ?? 0) | 0);
+  // 2026-07-18: originally Retribution Edge, Shock Ring, Rally Light).
+  // Retribution Edge and its retributionArmedUntilTick/
+  // retributionReadyUntilTick fields were removed 2026-07-19, see
+  // docs/class-ability-catalogs-v1.md's cut note; craterArmedUntilTick/
+  // retortBank/retortBankUntilTick (the separate card-pool-v2.md
+  // exclusives Crater/Retort) were removed the same day alongside Bastion
+  // — see cards.ts's cut note. Same absent-as-0 treatment as every other
+  // window-buff field above.
   h = mixU32(h, (p.shockRingArmedUntilTick ?? 0) | 0);
   h = mixU32(h, (p.rallyLightUntilTick ?? 0) | 0);
-  h = mixU32(h, (p.craterArmedUntilTick ?? 0) | 0);
-  h = mixU32(h, Math.round(p.retortBank ?? 0) | 0);
-  h = mixU32(h, (p.retortBankUntilTick ?? 0) | 0);
   // Kindled Resolve (Kindred catalog v1 coverage-floor fast-follow,
   // docs/axiom-deviations-audit.md, 2026-07-18). Same absent-as-0
   // treatment as every other window-buff field above.

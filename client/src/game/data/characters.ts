@@ -21,7 +21,9 @@ import type { CharacterDefinition } from "../types/game";
 //
 // UPDATE 2026-07-18 (class-overhaul-workboard.md chunks 2.6/3.4): Kindred
 // (10/10 Kindred catalog abilities wired, incl. the Retribution Edge/Shock
-// Ring/Rally Light fast-follow) and Syzygist (10/10 Syzygist catalog
+// Ring/Rally Light fast-follow — Retribution Edge itself was later cut
+// 2026-07-19, see docs/class-ability-catalogs-v1.md's cut note; Kindred is
+// still 10/10, just a different 10) and Syzygist (10/10 Syzygist catalog
 // abilities wired) both ship real kits now — `kitComing` removed for both,
 // and their `kitSummary`s name real, live abilities. Interstice stays
 // `kitComing: true`: 9/10 Interstice catalog abilities are wired (full

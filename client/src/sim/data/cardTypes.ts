@@ -215,7 +215,8 @@ export type AbilityKind =
   // ── Kindred catalog v1 (docs/class-ability-catalogs-v1.md) ──────────────
   // classId-gated to paladin at the offer roll (round.ts enterDrafting) —
   // same discipline as the Geometrician ten above. All 10 of the doc's 10
-  // (now 12 — see the coverage-floor fast-follow further down this union)
+  // (grew to 12 via the coverage-floor fast-follow further down this
+  // union, then cut back to 10 on 2026-07-19 — see that note below)
   // are wired as of the class-overhaul-workboard.md chunk 2.6 fast-follow
   // (2026-07-18) — the original pass shipped 7; Retribution Edge, Shock
   // Ring, and Rally Light (deferred that pass for "timing/hop-slam
@@ -231,11 +232,9 @@ export type AbilityKind =
   | "unbroken-seal"
   | "sunspike"
   | "judgment-line"
-  | "consecrated-field"
   | "bastion-pulse"
   | "aegis-share"
   | "plant-charge"
-  | "retribution-edge"
   | "shock-ring"
   | "rally-light"
   // Kindred coverage-floor + solo-viability fast-follow (docs/axiom-
@@ -248,12 +247,21 @@ export type AbilityKind =
   // STEP_* header comments for the full "why ADD, not replace" reasoning.
   | "kindled-resolve"
   | "bulwark-step"
-  // Crater (docs/card-pool-v2.md #26, exclusive: Paladin) — a draft-pool
-  // "ability" card, a SEPARATE system from the Kindred catalog above (same
-  // pool this Sunlance/Borrowed Time entries elsewhere in this union
-  // belong to), but its sim effect still rides an `active.kind` switch case
-  // like every other ability card, so it joins this union too.
-  | "crater"
+  // NOTE 2026-07-19: back down to 10/10. Retribution Edge (offense) and
+  // Consecrated Field (aoe) were cut, not deferred — a genuine permanent
+  // removal, unlike the "recorded deferral" pattern elsewhere in this
+  // union. Retribution Edge carried an unaddressed self-fueling-loop
+  // brake gap (docs/axiom-deviations-audit.md); Consecrated Field was
+  // role-redundant with Shock Ring (both "AOE zone near yourself"). See
+  // docs/class-ability-catalogs-v1.md's cut note. offense/aoe are now
+  // 1-per-role by design, not a re-opened coverage gap.
+  // Crater (docs/card-pool-v2.md #26, exclusive: Paladin) was also removed
+  // 2026-07-19, alongside its sibling exclusives Retort/Bastion (never
+  // AbilityKind entries — Retort/Bastion had no `active`, so no cast
+  // switch case) — see cards.ts's cut note just above the old crater/
+  // retort/bastion card definitions for the full reasoning (they leaked
+  // into the loadout station's 10-card catalog as 13, a bug, not a
+  // feature).
   // ── Syzygist catalog v1 (docs/class-ability-catalogs-v1.md) ─────────────
   // classId-gated to priest at the offer roll (round.ts enterDrafting) —
   // same discipline as the Geometrician/Kindred blocks above. All 10 of the

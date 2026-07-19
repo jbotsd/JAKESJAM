@@ -80,16 +80,10 @@ import {
   KIN_SEAL_DAMAGE_MULTIPLIER,
   KIN_SEAL_STAGGER_MS,
   KIN_SEAL_STAGGER_MULTIPLIER,
-  KIN_CONSECRATED_FIELD_DAMAGE,
-  KIN_CONSECRATED_FIELD_RADIUS_PX,
-  KIN_CONSECRATED_FIELD_SLOW_MULTIPLIER,
-  KIN_CONSECRATED_FIELD_ZONE_DURATION_MS,
   KIN_AEGIS_SHARE_RADIUS_MULTIPLIER,
   KIN_AEGIS_SHARE_SOLO_KINDLING_FEED,
   KIN_PLANT_CHARGE_RANGE_PX,
   KIN_PLANT_CHARGE_SHIELD_REFUND,
-  KIN_RETRIBUTION_EDGE_AMP_MULTIPLIER,
-  KIN_RETRIBUTION_EDGE_KINDLING_REFUND,
   KIN_SHOCK_RING_HOP_VY,
   KIN_SHOCK_RING_ARM_WINDOW_MS,
   KIN_SHOCK_RING_DAMAGE,
@@ -101,17 +95,6 @@ import {
   KIN_KINDLED_RESOLVE_DAMAGE_MULTIPLIER,
   KIN_KINDLED_RESOLVE_STAGGER_RESIST_FRACTION,
   KIN_BULWARK_STEP_RANGE_PX,
-  KIN_CRATER_LEAP_VY,
-  KIN_CRATER_SLAM_DAMAGE,
-  KIN_CRATER_SLAM_RADIUS_PX,
-  KIN_CRATER_SLAM_STAGGER_MULTIPLIER,
-  KIN_CRATER_RING_DAMAGE,
-  KIN_CRATER_RING_RADIUS_PX,
-  KIN_CRATER_ARM_WINDOW_MS,
-  KIN_BASTION_RADIUS_PX,
-  KIN_BASTION_ALLY_DAMAGE_REDUCTION,
-  KIN_BASTION_SELF_DAMAGE_REDUCTION,
-  KIN_BASTION_KINDLING_FEED_RATE,
   KIN_STOMP_JUMP_DAMAGE,
   KIN_STOMP_JUMP_RADIUS_PX,
   SYZ_REGEN_HPS_DEFAULT,
@@ -175,7 +158,7 @@ import {
   NINJA_PAPER_DOUBLE_BURST_DAMAGE,
   NINJA_PAPER_DOUBLE_STATIONARY_SPEED_PX,
 } from "./constants.js";
-import { stepProjectile, spawnProjectile, makeHitSweepScratch, fillHitSweepScratch, SLOW_FIELD_DURATION_MS, type HitSweepScratch } from "./projectile.js";
+import { stepProjectile, spawnProjectile, makeHitSweepScratch, fillHitSweepScratch, type HitSweepScratch } from "./projectile.js";
 import {
   resolveEmission,
   EMISSION_BURN_CAP_MS,
@@ -933,63 +916,12 @@ function applyKindledResolveStaggerResist(
   return multiplier + (1 - multiplier) * KIN_KINDLED_RESOLVE_STAGGER_RESIST_FRACTION;
 }
 
-// ── BASTION (docs/card-pool-v2.md #28, exclusive: Paladin — a passive
-// aura, always on once equipped, resolved at the SAME post-loop hit-
-// resolution sites `applyTeamPeel` already runs at) ─────────────────────
-// Two effects, both keyed off `entity.cards.includes("bastion")` directly
-// (no WeaponBuild plumbing — same "read the card id, don't thread a new
-// modifier field" economy Retort uses in combat.ts):
-//   - Self: a victim WEARING Bastion themselves takes
-//     KIN_BASTION_SELF_DAMAGE_REDUCTION less — works solo, no teamId/isAlly
-//     needed (the doc's own "solo: the −5% self-reduction stands alone").
-//   - Ally: the NEAREST ally (`isAlly`) wearing Bastion within
-//     KIN_BASTION_RADIUS_PX of the victim reduces the victim's damage by
-//     KIN_BASTION_ALLY_DAMAGE_REDUCTION AND is granted Kindling equal to
-//     KIN_BASTION_KINDLING_FEED_RATE of the (already-mitigated) damage —
-//     "their endurance funds his engine". Self takes priority over ally
-//     (a Bastion-wearing victim mitigates their own hit directly; it does
-//     not ALSO search for a separate ally source on the same hit).
-// Deliberately does not emit a SimEvent — no VFX/audio consumes this yet
-// (class-overhaul-workboard.md chunk 2.7 is scoped to the ALREADY-wired
-// ward-absorbed/team-peel-absorbed events this session; a dedicated
-// "bastion-mitigated" event is a clean fast-follow, not built here to keep
-// this chunk's new-event-type surface area lean).
-function applyBastionAura(
-  victim: PlayerEntity,
-  rawDamage: number,
-  players: Record<PlayerId, PlayerEntity>,
-  sortedIds: readonly PlayerId[],
-  // Unused — kept for call-site symmetry with `applyTeamPeel`/
-  // `rallyLightDamageMultiplier` (every hit-resolution site already threads
-  // a `tick` through; Bastion's own aura check needs no tick-gated window).
-  _tick: Tick,
-): number {
-  if (rawDamage <= 0) return rawDamage;
-  if (victim.cards.includes("bastion")) {
-    return rawDamage * (1 - KIN_BASTION_SELF_DAMAGE_REDUCTION);
-  }
-  let best: PlayerEntity | null = null;
-  let bestDist = Infinity;
-  for (const cid of sortedIds) {
-    if (cid === victim.id) continue;
-    const candidate = players[cid];
-    if (!candidate || !candidate.alive) continue;
-    if (!candidate.cards.includes("bastion")) continue;
-    if (!isAlly(candidate, victim)) continue;
-    const dist = Math.hypot(candidate.x - victim.x, candidate.y - victim.y);
-    if (dist > KIN_BASTION_RADIUS_PX) continue;
-    if (dist < bestDist) {
-      bestDist = dist;
-      best = candidate;
-    }
-  }
-  if (!best) return rawDamage;
-  const mitigated = rawDamage * (1 - KIN_BASTION_ALLY_DAMAGE_REDUCTION);
-  const feed = mitigated * KIN_BASTION_KINDLING_FEED_RATE;
-  const kindling = Math.min(KINDLING_MAX, (best.kindling ?? 0) + feed);
-  players[best.id] = { ...best, kindling };
-  return mitigated;
-}
+// (BASTION — docs/card-pool-v2.md #28, exclusive: Paladin — used to live
+// here as `applyBastionAura`, a passive-aura victim-side mitigation +
+// Kindling-feed check called from every hit-resolution site below. Cut
+// entirely 2026-07-19 alongside its sibling exclusives Crater/Retort — see
+// cards.ts's cut note above the old crater/retort/bastion card
+// definitions. Every call site below was removed too, not stubbed.)
 
 // ── SYZYGIST STATUS SUBSTRATE (2026-07-18, class-overhaul-workboard.md
 // chunk 3.1: "Status substrate extension (buffs, not just debuffs)") ──────
@@ -1623,21 +1555,20 @@ export function stepWithRuntime(
    * instead of spawning entities. A dedicated pass right after the main
    * loop closes (same "every player has committed their own turn" timing
    * pendingSyzygistCasts's own doc comment above establishes, and the SAME
-   * post-loop site applyTeamPeel/applyBastionAura already resolve hits at)
+   * post-loop site applyTeamPeel already resolves hits at)
    * resolves every entry: a plain center-to-center distance check (no
    * raycast/LOS — the same simplification findNearestEnemy/hasRallyLight
-   * Source/applyBastionAura already use for every other ability range in
-   * this file) against every OTHER player, routed through the exact same
-   * tryDeflectDamage + rallyLightDamageMultiplier + applyBastionAura +
-   * applyTeamPeel mitigation chain DASH BASH/NINJA MELEE/PALADIN MELEE use,
-   * so shield/parry counterplay and every existing damage-amp/mitigation
-   * aura still applies to these hits exactly as it did when they were
-   * projectiles. Casting inside THIS loop (queuing here, not writing
-   * `players[otherId]` directly) avoids the cross-player-write-mid-loop
-   * hazard Facet Break's own comment documents; the entries themselves
-   * carry no player-entity references, just plain data, so queuing is safe
-   * even for the LANDING-gated casts (Shock Ring/Crater) that resolve many
-   * ticks after the original press.
+   * Source already uses for every other ability range in this file) against
+   * every OTHER player, routed through the exact same tryDeflectDamage +
+   * rallyLightDamageMultiplier + applyTeamPeel mitigation chain DASH
+   * BASH/NINJA MELEE/PALADIN MELEE use, so shield/parry counterplay and
+   * every existing damage-amp/mitigation aura still applies to these hits
+   * exactly as it did when they were projectiles. Casting inside THIS loop
+   * (queuing here, not writing `players[otherId]` directly) avoids the
+   * cross-player-write-mid-loop hazard Facet Break's own comment
+   * documents; the entries themselves carry no player-entity references,
+   * just plain data, so queuing is safe even for the LANDING-gated casts
+   * (Shock Ring) that resolve many ticks after the original press.
    */
   type PendingInstantAoe = {
     /** Ability kind — carried through only for future debugging/telemetry,
@@ -1794,7 +1725,7 @@ export function stepWithRuntime(
       // stepPlayer dispatches to the TS-native path or the wasm physics
       // backend (which defaults on for live matches) — a callback hook
       // into stepPlayerNative would silently never fire under wasm.
-      // Shock Ring/Crater's landing detection and the Second Wind Paladin
+      // Shock Ring's landing detection and the Second Wind Paladin
       // stomp-jump (below) reuse this EXACT before/after idiom for
       // groundedLastFrame/airJumpsUsed — same "read INPUT and OUTPUT only"
       // backend-agnostic reasoning.
@@ -1881,7 +1812,7 @@ export function stepWithRuntime(
       }
 
       // Paladin landing/air-jump hooks (class-overhaul-workboard.md chunk
-      // 2.6 fast-follow): Shock Ring/Crater resolve on landing, Second
+      // 2.6 fast-follow): Shock Ring resolves on landing, Second
       // Wind's Paladin expression resolves on the AIR JUMP itself. Same
       // before/after `stepPlayer` idiom the ninja wall-kick grant above
       // uses — backend-agnostic (works under both the TS-native and wasm
@@ -1909,55 +1840,18 @@ export function stepWithRuntime(
             });
             nextEntity = { ...nextEntity, shockRingArmedUntilTick: undefined };
           }
-          // Crater (card-pool-v2.md #26): the leap's arm window is still
-          // live → epicenter burst (small radius, high damage, stagger) +
-          // a traveling ring (larger radius, lower damage). Aoe role rework
-          // (2026-07-18): both novas were rings of discrete shard
-          // projectiles (the epicenter burst even SPLIT KIN_CRATER_SLAM_
-          // DAMAGE across all 8 shards, so a target had to eat nearly every
-          // shard to see the doc's full 24 — a real damage bug this fix
-          // also corrects) — now two instant radius checks, queued for the
-          // post-loop resolution pass, each dealing its FULL doc damage to
-          // everyone in range in one tick. The ring's own doc text
-          // ("travels the floor... at 480px/s") describes a gradually-
-          // expanding wavefront this pass does NOT build (a bigger lift
-          // than Tier A's budget for an ability that wasn't one of the two
-          // flagged Tier-B zones — see constants.ts's KIN_CRATER_RING_*
-          // comment) — v1 collapses it to an instant check at its full
-          // 240px reach, still a real radius check, just not a traveling
-          // one. Epicenter carries the stagger (a strong, short slow);
-          // the ring carries none — matches the doc's "epicenter vs
-          // traveling ring" damage/control split.
-          if (
-            nextEntity.craterArmedUntilTick !== undefined &&
-            nextEntity.craterArmedUntilTick > state.tick
-          ) {
-            pendingInstantAoe.push({
-              kind: "crater-epicenter",
-              casterId: pid,
-              x: nextEntity.x,
-              y: nextEntity.y,
-              radius: KIN_CRATER_SLAM_RADIUS_PX,
-              damage: KIN_CRATER_SLAM_DAMAGE,
-              slowMultiplier: KIN_CRATER_SLAM_STAGGER_MULTIPLIER,
-              slowDurationMs: SLOW_FIELD_DURATION_MS,
-            });
-            pendingInstantAoe.push({
-              kind: "crater-ring",
-              casterId: pid,
-              x: nextEntity.x,
-              y: nextEntity.y,
-              radius: KIN_CRATER_RING_RADIUS_PX,
-              damage: KIN_CRATER_RING_DAMAGE,
-            });
-            nextEntity = { ...nextEntity, craterArmedUntilTick: undefined };
-          }
+          // (Crater's epicenter-burst + traveling-ring landing resolution —
+          // docs/card-pool-v2.md #26 — used to live here, gated on
+          // craterArmedUntilTick. Cut entirely 2026-07-19 alongside its
+          // sibling exclusives Retort/Bastion; see cards.ts's cut note
+          // above the old crater/retort/bastion card definitions.)
         }
         // Second Wind — Paladin expression (docs/card-pool-v2.md "the
         // stomp-jump"): fires on the AIR JUMP itself (the departure), not
         // on landing — "his air jump deals 6 damage in a 70px ring beneath
         // him". Gated on the card actually being equipped, same "read the
-        // card id directly" economy Retort/Bastion use.
+        // card id directly" economy Bastion Pulse's self-only shield ticks
+        // use.
         if (
           moveResult.memory.airJumpsUsed > airJumpsUsedBeforeStep &&
           nextEntity.cards.includes("double-jump")
@@ -2414,7 +2308,8 @@ export function stepWithRuntime(
           // remainingMs, ticked every tick by `stepFirePatches` against
           // anyone overlapping) — no new entity kind, no new Zig ABI
           // surface. Pure damage, no status (space denial via damage alone
-          // — Consecrated Field below is the damage+slow sibling).
+          // — Consecrated Field was the damage+slow sibling until it was
+          // cut 2026-07-19, see docs/class-ability-catalogs-v1.md).
           pendingZoneSpawns.push({
             id: allocId(),
             ownerId: pid,
@@ -2545,8 +2440,8 @@ export function stepWithRuntime(
         // for the SAME reason Facet Break's own comment gives above: a
         // cross-player write inside this per-player loop would be lost the
         // moment that OTHER player's own turn runs later this tick.
-        // Sunspike and Consecrated Field's actual damage therefore rides
-        // the existing projectile-hit-resolution pass (which runs AFTER
+        // Sunspike's actual damage therefore rides the existing
+        // projectile-hit-resolution pass (which runs AFTER
         // every player's turn this tick, and is already team-peel-aware —
         // chunk 2.4) rather than hand-rolling a second damage path; Kindled
         // Edge-side consumption for Judgment Line / Unbroken Seal happens
@@ -2646,48 +2541,6 @@ export function stepWithRuntime(
           activated = true;
           break;
         }
-        case "consecrated-field": {
-          // Aoe role rework (2026-07-18): this ability's OWN v1 comment
-          // already flagged the gap — "an instant self-centered nova, not
-          // the doc's persisting field". Tier B fix, same primitive Lattice
-          // now uses: a genuine lingering `firePatches`/`FireEntity` zone
-          // for the damage-over-time half ("damages... lightly" per the
-          // doc) — KIN_CONSECRATED_FIELD_DAMAGE keeps its old meaning
-          // (total damage over a FULL dwell, same number the old one-shot
-          // burst dealt). The slow half ("...and slows lightly") is applied
-          // ONCE, instantly, to whoever's already standing in the radius at
-          // cast time (the SAME pendingInstantAoe pass Shock Ring/Crater's
-          // stagger use, damage:0 so it doesn't double up with the zone) —
-          // re-checking every tick the zone lingers would need a second,
-          // bespoke per-tick scan on top of `stepFirePatches`' own damage
-          // tick; a documented v1 simplification, not a silent gap. This
-          // damage+slow combination is the differentiation from Lattice's
-          // pure-damage zone: Consecrated Field also tags whoever's caught
-          // at the moment it goes off, costing them an escape option
-          // Lattice doesn't take.
-          pendingZoneSpawns.push({
-            id: allocId(),
-            ownerId: pid,
-            x: nextEntity.x,
-            y: nextEntity.y,
-            radius: KIN_CONSECRATED_FIELD_RADIUS_PX,
-            remainingMs: KIN_CONSECRATED_FIELD_ZONE_DURATION_MS,
-            damagePerSecond:
-              KIN_CONSECRATED_FIELD_DAMAGE / (KIN_CONSECRATED_FIELD_ZONE_DURATION_MS / 1000),
-          });
-          pendingInstantAoe.push({
-            kind: "consecrated-field",
-            casterId: pid,
-            x: nextEntity.x,
-            y: nextEntity.y,
-            radius: KIN_CONSECRATED_FIELD_RADIUS_PX,
-            damage: 0,
-            slowMultiplier: KIN_CONSECRATED_FIELD_SLOW_MULTIPLIER,
-            slowDurationMs: SLOW_FIELD_DURATION_MS,
-          });
-          activated = true;
-          break;
-        }
         case "aegis-share": {
           // Window widening THIS player's team-peel radius for allies
           // (World.ts's findTeamPeelWarder reads aegisShareUntilTick
@@ -2777,28 +2630,20 @@ export function stepWithRuntime(
           break;
         }
         // ── Kindred catalog v1 fast-follow (class-overhaul-workboard.md
-        // chunk 2.6, 2026-07-18) — Retribution Edge, Shock Ring, Rally
-        // Light: the 3 abilities the original pass deferred. Retribution
-        // Edge/Shock Ring only ever write `nextEntity` (self) here — the
-        // same "never another player's entity inside this per-player loop"
-        // discipline the Kindred block above documents. Rally Light writes
-        // `nextEntity` too (it just OPENS the aura-source window; every
-        // beneficiary reads it later, never a write onto them — see
+        // chunk 2.6, 2026-07-18) — originally Retribution Edge, Shock Ring,
+        // Rally Light: the 3 abilities the original pass deferred.
+        // Retribution Edge was cut 2026-07-19 (see docs/class-ability-
+        // catalogs-v1.md's 12→10 cut note) — it carried an unaddressed
+        // self-fueling-loop brake gap (docs/axiom-deviations-audit.md) and
+        // was removed rather than fixed; its retributionArmedUntilTick/
+        // retributionReadyUntilTick fields and the combat.ts Ward-block
+        // hook that opened the second window are gone too. Shock Ring only
+        // ever writes `nextEntity` (self) here — the same "never another
+        // player's entity inside this per-player loop" discipline the
+        // Kindred block above documents. Rally Light writes `nextEntity`
+        // too (it just OPENS the aura-source window; every beneficiary
+        // reads it later, never a write onto them — see
         // `hasRallyLightSource`'s own doc comment above `applyTeamPeel`).
-        case "retribution-edge": {
-          // Opens the "armed" window. The SECOND window (`retributionReady
-          // UntilTick`) is opened by a landed self-Ward-block while this one
-          // is live (combat.ts's tryDeflectDamage, paladin Ward branch) —
-          // consumed by the next landed Kindled Edge hit ("PALADIN MELEE"
-          // section below, alongside Judgment/Seal consumption).
-          const durTicks = Math.ceil(active.durationMs / Math.max(1, dtMs));
-          nextEntity = {
-            ...nextEntity,
-            retributionArmedUntilTick: (state.tick + 1 + durTicks) as Tick,
-          };
-          activated = true;
-          break;
-        }
         case "shock-ring": {
           // A modest upward hop (KIN_SHOCK_RING_HOP_VY, well under a full
           // jump — "keep hop modest, not sky-god") plus an arm window
@@ -2904,25 +2749,12 @@ export function stepWithRuntime(
           }
           break;
         }
-        // ── Crater (docs/card-pool-v2.md #26, exclusive: Paladin — a
-        // draft-pool ability card, not a Kindred catalog entry, but same
-        // "arm on cast, resolve on landing" shape as Shock Ring above). ────
-        case "crater": {
-          // Leap above the measured 134px jump apex (constants.ts's
-          // KIN_CRATER_LEAP_VY header comment has the height math) plus an
-          // arm window covering the leap's airtime. The doc's "25% air
-          // steer" nuance is a recorded v1 deferral (no new air-control
-          // field this pass). Landing resolution (epicenter burst + the
-          // traveling ring) happens in the per-player MOVEMENT section
-          // above, same landing-detection hook Shock Ring uses.
-          nextEntity = {
-            ...nextEntity,
-            vy: -KIN_CRATER_LEAP_VY,
-            craterArmedUntilTick: (state.tick + 1 + Math.ceil(KIN_CRATER_ARM_WINDOW_MS / Math.max(1, dtMs))) as Tick,
-          };
-          activated = true;
-          break;
-        }
+        // (Crater's "cast" case — docs/card-pool-v2.md #26, exclusive:
+        // Paladin — used to live here: leap + arm window, same shape as
+        // Shock Ring above. Cut entirely 2026-07-19 alongside its sibling
+        // exclusives Retort/Bastion; see cards.ts's cut note above the old
+        // crater/retort/bastion card definitions. "crater" is no longer an
+        // AbilityKind, so this switch has no case for it at all now.)
         // ── Syzygist catalog v1 (docs/class-ability-catalogs-v1.md) ────────
         // classId-gated to priest at the offer roll (round.ts). Every case
         // reuses the low-aim auto-target helpers (findNearestAlly/
@@ -3701,10 +3533,11 @@ export function stepWithRuntime(
 
   // 1y. INSTANT AOE RESOLUTION (aoe role rework, 2026-07-18) — resolves
   //     `pendingInstantAoe`, queued above by Prism Fan/Lattice's instant
-  //     slow/Consecrated Field's instant slow/Shock Ring/Crater/Flock
-  //     Pulse/Shard Ring/Wall Bloom. Same post-loop timing and mitigation
+  //     slow/Shock Ring/Flock Pulse/Shard Ring/Wall Bloom (Consecrated
+  //     Field's instant slow and Crater's epicenter+ring were also in this
+  //     list until they were cut, 2026-07-19). Same post-loop timing and mitigation
   //     chain as DASH BASH/NINJA MELEE/PALADIN MELEE below (tryDeflectDamage
-  //     → rallyLightDamageMultiplier → applyBastionAura → applyTeamPeel),
+  //     → rallyLightDamageMultiplier → applyTeamPeel),
   //     just a plain center-to-center radius (+ optional cone) check instead
   //     of a frontal-arc/dash-collision shape. A target standing in range
   //     always takes the hit — there is no projectile path to dodge around,
@@ -3740,14 +3573,17 @@ export function stepWithRuntime(
         }
 
         const victimBuild = resolvePlayerBuild(victim);
-        // A status-only entry (cast.damage === 0, Consecrated Field's
-        // instant slow) still needs the REAL mitigation chain evaluated —
-        // tryDeflectDamage short-circuits into a no-op passthrough for
-        // damage<=0 (skipping shield/parry/ninja-evasion entirely), which
-        // would let the slow ignore a raised shield or a dashing ninja's
-        // i-frames. Feed it a nominal 1 damage purely so shielded/deflected/
-        // evaded resolve correctly, then discard that nominal amount below
-        // — only cast.damage (the REAL damage) ever reaches health.
+        // A status-only entry (cast.damage === 0 — Consecrated Field's
+        // instant slow was the one live example of this until it was cut
+        // 2026-07-19; the defensive handling stays in case a future
+        // ability needs it) still needs the REAL mitigation chain
+        // evaluated — tryDeflectDamage short-circuits into a no-op
+        // passthrough for damage<=0 (skipping shield/parry/ninja-evasion
+        // entirely), which would let the slow ignore a raised shield or a
+        // dashing ninja's i-frames. Feed it a nominal 1 damage purely so
+        // shielded/deflected/evaded resolve correctly, then discard that
+        // nominal amount below — only cast.damage (the REAL damage) ever
+        // reaches health.
         const nominalDamage = cast.damage > 0 ? cast.damage : 1;
         const mit = tryDeflectDamage(victim, null, nominalDamage, aoeTick, {
           mirrorShield: victimBuild.mirrorShield,
@@ -3777,7 +3613,6 @@ export function stepWithRuntime(
           let finalDamage = mit.damage;
           finalDamage *= rallyLightDamageMultiplier(liveCaster, players, aoeTick);
           finalDamage *= kindledResolveDamageMultiplier(liveCaster, aoeTick);
-          finalDamage = applyBastionAura(victim, finalDamage, players, sortedPlayerIdsForTick, aoeTick);
           if (!mit.warded) {
             const peel = applyTeamPeel(victim, finalDamage, players, sortedPlayerIdsForTick, aoeTick);
             if (peel) {
@@ -3819,8 +3654,9 @@ export function stepWithRuntime(
 
         // Status (slow/stagger) — applied whenever the hit wasn't evaded or
         // blocked above, regardless of whether real damage also landed
-        // (Consecrated Field/Crater carry both; Flock Pulse too). Same
-        // "keep whichever ends later, take the lower (more punishing)
+        // (Flock Pulse carries both; Crater used to as well, until it was
+        // cut 2026-07-19 — same for Consecrated Field, cut the same week).
+        // Same "keep whichever ends later, take the lower (more punishing)
         // multiplier" stacking policy the projectile-sourced player-slowed
         // consumer already uses (below, section 3a).
         if (cast.slowMultiplier !== undefined && cast.slowDurationMs !== undefined) {
@@ -3852,7 +3688,7 @@ export function stepWithRuntime(
   }
 
   // First batch: every ability that queues into `pendingInstantAoe` during
-  // the main per-player loop above (Prism Fan/Lattice/Shock Ring/Crater/
+  // the main per-player loop above (Prism Fan/Lattice/Shock Ring/
   // Flock Pulse/Shard Ring/Wall Bloom) — all fully known by this point in
   // the tick.
   if (fightingPhase && !hangoutMode) {
@@ -3868,9 +3704,10 @@ export function stepWithRuntime(
   //      Flock Pulse, Shard Ring, Wall Bloom) did nothing when tried on
   //      them. Same center-distance (+ optional cone) geometry as the
   //      player check above, reused directly rather than duplicated —
-  //      status-only casts (cast.damage === 0, e.g. Consecrated Field's
-  //      instant slow) are skipped here: a destructible doesn't move, so a
-  //      slow has no destructible-facing meaning.
+  //      status-only casts (cast.damage === 0 — Consecrated Field's instant
+  //      slow was the example until it was cut 2026-07-19) are skipped
+  //      here: a destructible doesn't move, so a slow has no destructible-
+  //      facing meaning.
   if (fightingPhase && hangoutMode) {
     for (const cast of pendingInstantAoe) {
       if (cast.damage <= 0) continue;
@@ -3975,9 +3812,6 @@ export function stepWithRuntime(
           // read-only aura check at every hit-resolution site.
           bashFinalDamage *= rallyLightDamageMultiplier(players[aid]!, players, bashTick);
           bashFinalDamage *= kindledResolveDamageMultiplier(players[aid]!, bashTick);
-          // Bastion (card-pool-v2.md #28) — victim-side mitigation +
-          // Kindling feed, same post-loop `players` mutation shape peel uses.
-          bashFinalDamage = applyBastionAura(victim, bashFinalDamage, players, bashIds, bashTick);
           if (!mit.warded) {
             const peel = applyTeamPeel(victim, bashFinalDamage, players, bashIds, bashTick);
             if (peel) {
@@ -4260,11 +4094,10 @@ export function stepWithRuntime(
             ) {
               slashFinalDamage = Math.max(slashFinalDamage, victim.health);
             }
-            // Rally Light / Bastion (chunk 2.6 fast-follow) — same
-            // attacker-amp / victim-mitigate shape as DASH BASH above.
+            // Rally Light (chunk 2.6 fast-follow) — attacker-amp shape as
+            // DASH BASH above.
             slashFinalDamage *= rallyLightDamageMultiplier(liveAttackerForMark, players, meleeTick);
             slashFinalDamage *= kindledResolveDamageMultiplier(liveAttackerForMark, meleeTick);
-            slashFinalDamage = applyBastionAura(victim, slashFinalDamage, players, meleeIds, meleeTick);
             // Team peel (class-overhaul-workboard.md chunk 2.4) — same gate
             // as DASH BASH's own peel check above: only when the victim's
             // OWN Ward didn't already cover this hit.
@@ -4560,60 +4393,19 @@ export function stepWithRuntime(
               // NEXT Kindled Edge hit" (class-ability-catalogs-v1.md).
               players[aid] = { ...liveAttacker, sealUntilTick: undefined };
             }
-            // Retribution Edge (chunk 2.6 fast-follow): a landed Edge hit
-            // while the block-armed "ready" window lives (combat.ts's
-            // tryDeflectDamage, paladin Ward branch, opens this) is amped
-            // and refunds Kindling — consumed on the hit, same "not just on
-            // timeout" shape as Seal above. Re-reads `players[aid]` fresh
-            // (Seal's own write just above may have already touched it).
-            const liveAttackerForRetribution = players[aid]!;
-            if (
-              liveAttackerForRetribution.retributionReadyUntilTick !== undefined &&
-              liveAttackerForRetribution.retributionReadyUntilTick > edgeTick
-            ) {
-              edgeDamage *= KIN_RETRIBUTION_EDGE_AMP_MULTIPLIER;
-              const kindling = Math.min(
-                KINDLING_MAX,
-                (liveAttackerForRetribution.kindling ?? 0) + KIN_RETRIBUTION_EDGE_KINDLING_REFUND,
-              );
-              players[aid] = {
-                ...liveAttackerForRetribution,
-                kindling,
-                retributionReadyUntilTick: undefined,
-              };
-            }
-            // Retort (card-pool-v2.md #27): a shield-board SPEC, always on
-            // once equipped (no cast, no cooldown — read directly off the
-            // card id, same "no new WeaponBuild plumbing" economy as
-            // GEO_RECOIL_STEP's own deferred-nuance precedent). Spends the
-            // WHOLE bank as bonus damage AND, per the doc's own "equal
-            // bonus knockback" wording, the SAME number added as extra
-            // knockback velocity along the swing direction.
-            const liveAttackerForRetort = players[aid]!;
-            if (
-              liveAttackerForRetort.cards.includes("retort") &&
-              liveAttackerForRetort.retortBankUntilTick !== undefined &&
-              liveAttackerForRetort.retortBankUntilTick > edgeTick &&
-              (liveAttackerForRetort.retortBank ?? 0) > 0
-            ) {
-              const bank = liveAttackerForRetort.retortBank ?? 0;
-              edgeDamage += bank;
-              post = {
-                ...post,
-                vx: post.vx + mem.aimX * bank,
-                vy: post.vy + mem.aimY * bank,
-              };
-              players[aid] = {
-                ...liveAttackerForRetort,
-                retortBank: 0,
-                retortBankUntilTick: undefined,
-              };
-            }
-            // Rally Light / Bastion (chunk 2.6 fast-follow) — same
-            // attacker-amp / victim-mitigate shape as DASH BASH/slash above.
+            // (Retribution Edge's block-armed "ready" window amp + Kindling
+            // refund used to be consumed here — chunk 2.6 fast-follow.
+            // Removed 2026-07-19 along with the ability itself; see
+            // docs/class-ability-catalogs-v1.md's cut note. Retort's own
+            // bank-spend — docs/card-pool-v2.md #27, "the WHOLE bank as
+            // bonus damage AND equal bonus knockback" — used to be
+            // consumed right here too; cut the same day alongside its
+            // sibling exclusives Crater/Bastion, see cards.ts's cut note
+            // above the old crater/retort/bastion card definitions.)
+            // Rally Light (chunk 2.6 fast-follow) — attacker-amp shape as
+            // DASH BASH/slash above.
             edgeDamage *= rallyLightDamageMultiplier(players[aid]!, players, edgeTick);
             edgeDamage *= kindledResolveDamageMultiplier(players[aid]!, edgeTick);
-            edgeDamage = applyBastionAura(victim, edgeDamage, players, edgeIds, edgeTick);
             // Team peel (chunk 2.4) — same gate as bash/slash above: only
             // when the victim's OWN Ward didn't already cover this hit.
             if (!mit.warded) {
@@ -5370,14 +5162,13 @@ export function stepWithRuntime(
           ) {
             finalDamage = Math.max(finalDamage, postPlayer.health);
           }
-          // Rally Light / Bastion (chunk 2.6 fast-follow) — same attacker-
-          // amp / victim-mitigate shape every other hit-resolution site in
-          // this file uses (bash/slash/edge above).
+          // Rally Light (chunk 2.6 fast-follow) — same attacker-amp shape
+          // every other hit-resolution site in this file uses (bash/slash/
+          // edge above).
           if (attackerEntity) {
             finalDamage *= rallyLightDamageMultiplier(attackerEntity, players, nextTick);
             finalDamage *= kindledResolveDamageMultiplier(attackerEntity, nextTick);
           }
-          finalDamage = applyBastionAura(victim, finalDamage, players, sortedPlayerIdsForTick, nextTick);
           // Team peel (class-overhaul-workboard.md chunk 2.4) — same gate as
           // every other damage-resolution site in this file: only when the
           // victim's OWN Ward didn't already cover this hit (`mitigation.
@@ -5692,9 +5483,10 @@ export function stepWithRuntime(
   // stepDestructibles never runs.
   let nextDestructibles: WorldState["destructibles"] = destructiblesForStep;
   let nextFirePatches: WorldState["firePatches"] = state.firePatches;
-  // Aoe role rework (2026-07-18): Lattice/Consecrated Field's lingering
-  // zones, queued into `pendingZoneSpawns` during the main per-player loop
-  // above — merged in here, same site + same "included THIS tick, before
+  // Aoe role rework (2026-07-18): Lattice's lingering zone (Consecrated
+  // Field's zone did the same thing until it was cut 2026-07-19), queued
+  // into `pendingZoneSpawns` during the main per-player loop above —
+  // merged in here, same site + same "included THIS tick, before
   // `stepFirePatches` runs below" timing `destResult.spawnedFire` (flammable
   // destructibles breaking) already uses.
   if (pendingZoneSpawns.length > 0) {

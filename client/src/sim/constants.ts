@@ -111,13 +111,14 @@ export const GEO_PRISM_FAN_RANGE_PX = 260;
 // overlapping, excluding the owner) — no new entity kind, no new Zig ABI
 // surface (FireEntity's shape is untouched; this just spawns more instances
 // of it). Pure damage, no status — "space denial, angle-first" reads as
-// raw area-denial, not a debuff; that's Consecrated Field's job (below),
-// the differentiation axis between the two self-centered wizard/paladin
-// zones. Total damage over a FULL dwell (radius × duration × dps) is a
-// flat, build-independent number — matches how every other zone in this
-// file (fire hazard, Consecrated Field) is tuned, a deliberate departure
-// from the OLD per-shard build.damage-scaled shape now that the hit is
-// guaranteed rather than a probabilistic shard graze.
+// raw area-denial, not a debuff; that was Consecrated Field's job (a
+// damage+slow zone, cut 2026-07-19 — see docs/class-ability-catalogs-v1.md's
+// cut note), the differentiation axis between the two self-centered
+// wizard/paladin zones while it existed. Total damage over a FULL dwell
+// (radius × duration × dps) is a flat, build-independent number — matches
+// how every other zone in this file (fire hazard) is tuned, a deliberate
+// departure from the OLD per-shard build.damage-scaled shape now that the
+// hit is guaranteed rather than a probabilistic shard graze.
 export const GEO_LATTICE_ZONE_RADIUS_PX = 150;
 export const GEO_LATTICE_ZONE_DURATION_MS = 2200;
 export const GEO_LATTICE_ZONE_DPS = 11;
@@ -126,6 +127,61 @@ export const GEO_OVERCLOCK_FIRE_RATE_MULTIPLIER = 1.35;
 export const GEO_OVERCLOCK_SPREAD_MULTIPLIER = 0.7;
 export const GEO_SLIP_NODE_RANGE_PX = 280;
 export const GEO_RECOIL_STEP_HOP_SPEED = 220;
+
+/** Basic-fire ramping channel (weapon.ts stepWeaponNative, wizard-only —
+ *  RELOCATED from Priest 2026-07-19. Original ask (still the mechanic's own
+ *  origin story): "rework the basic priest spell to be more channely...
+ *  take effects from cards but its like geometrician rn except with a
+ *  better deck." Jake's follow-up redirect moved it: "the wizards hould
+ *  have ramping fire rate to feel more glass canony" — Priest's basic fire
+ *  is now the unrelated "oozing tendrils" mechanic (SYZ_TENDRIL_* below),
+ *  built from the SAME low-aim/self-guiding throughline as Bleed Tithe
+ *  instead. Mechanically this block is a pure class-relabel — every number
+ *  and every line of behavior is unchanged from the original Priest
+ *  version, only `classIdForArchetype(...) === "wizard"` (weapon.ts) and
+ *  these two constant names moved.
+ *
+ *  Design direction (locked): a RAMPING STREAM, not a flat hold-to-stream
+ *  and not a charge-then-release — holding Fire continuously fires (no
+ *  discrete per-press gate change needed; stepWeapon already re-fires on
+ *  cooldown expiry while held), and the longer Fire has been held on ONE
+ *  continuous press, the faster the stream ticks. Releasing Fire resets
+ *  instantly — "rewards sustained commitment to one target, punishes
+ *  flicking between targets."
+ *
+ *  FIRE-RATE ramp only, no damage ramp — unchanged reasoning from the
+ *  original Priest version, now read the other way round: a damage ramp
+ *  reads as "charging a shot," which is Sunlance/Overchannel's OWN
+ *  charge-and-release identity (docs/card-pool-v2.md's Wizard exclusives —
+ *  hold-to-charge, release-for-burst); the BASIC gun ramping fire RATE
+ *  instead of damage keeps it a mechanically distinct feel from those two
+ *  ability cards even though it now lives on the same chassis, and reads as
+ *  "spinning up a stream" rather than duplicating "charging a shot."
+ *
+ *  Glass-cannon framing (Jake's own words: "feel more glass canony," landed
+ *  here 2026-07-19): the mechanic doesn't need an INVENTED drawback like
+ *  extra damage taken while channeling — the existing tradeoff already
+ *  reads as glass cannon on this chassis. A wizard who commits to holding
+ *  Fire on one target is standing still relative to that decision, visibly
+ *  telegraphing where the next shot is going, and forfeiting the
+ *  flicking-between-targets flexibility every other basic-fire class keeps
+ *  — rising output in exchange for growing predictability/exposure IS the
+ *  glass-cannon read, made literal in the same input the player already
+ *  holds. No separate damage-taken multiplier or defense penalty is added;
+ *  that would be a second, redundant drawback bolted onto a mechanic whose
+ *  drawback already exists by construction.
+ *
+ *  GEO_CHANNEL_RAMP_MS: time (holding Fire, ms) to reach max ramp — v1
+ *  numeric guess (same "no need to agonize, balance-sim/playtest refines
+ *  later" doctrine as every other GEO_/SYZ_/KIN_ constant), landed inside
+ *  the "roughly 1.5-2.5s" range considered when this was still Priest's.
+ *  GEO_CHANNEL_RAMP_FIRE_RATE_MULTIPLIER_MAX: fire-rate multiplier at max
+ *  ramp — composes into weapon.ts's fireRate calc exactly like
+ *  GEO_OVERCLOCK_FIRE_RATE_MULTIPLIER/hasteFireRateMul (a multiplicative
+ *  factor on top of build.fireRate), just driven by continuous-hold
+ *  duration (ramping 1.0x → this ceiling) instead of a fixed timed window. */
+export const GEO_CHANNEL_RAMP_MS = 2000;
+export const GEO_CHANNEL_RAMP_FIRE_RATE_MULTIPLIER_MAX = 1.6;
 
 // Kindred catalog v1 (docs/class-ability-catalogs-v1.md — the paladin's
 // 10-ability class catalog; class-overhaul-workboard.md chunk 2.6). Same
@@ -186,36 +242,12 @@ export const KIN_SEAL_STAGGER_MS = 900;
  *  (cards.ts) — a committed overhead's stagger should read as a real
  *  punish window, close to (not equal to) a full lock. */
 export const KIN_SEAL_STAGGER_MULTIPLIER = 0.25;
-/** Consecrated Field (aoe role rework, 2026-07-18): the case comment this
- *  ability shipped with already flagged the gap in its own words — "v1 = an
- *  instant self-centered nova... not the doc's persisting field". Tier B
- *  fix: a genuine lingering zone built on the SAME `firePatches`/
- *  `FireEntity` primitive Lattice's own zone (constants.ts, above) now
- *  uses — no new entity kind, no new Zig ABI surface. KIN_CONSECRATED_
- *  FIELD_DAMAGE keeps its old meaning (total damage a target takes
- *  standing in the field for its FULL duration, same number as the old
- *  one-shot burst — a guaranteed-hit zone at the same total damage the old
- *  probabilistic shard-ring dealt at best is parity, not a buff); DPS is
- *  derived from that total ÷ KIN_CONSECRATED_FIELD_ZONE_DURATION_MS in
- *  World.ts. Slow is APPLIED ONCE, at cast instant, to whoever's already
- *  standing in the radius (World.ts's instant-AoE resolution, the same
- *  pass Shock Ring/Crater's stagger use) — re-checking every tick while the
- *  zone lingers would need a second, bespoke per-tick radius scan on top of
- *  `stepFirePatches`' own damage tick; a documented v1 simplification, not
- *  a silent gap. This IS the differentiation from Lattice: Lattice is pure
- *  space-denial damage (walk away or burn); Consecrated Field also tags you
- *  slowed the instant it goes off, so lingering in it (or being caught at
- *  the moment of cast) costs you an escape option Lattice doesn't take.
- *  Deliberately does NOT exclude allies (isAlly, team.ts) — no ability or
- *  weapon in the sim excludes allies from AoE/projectile damage today
- *  (friendly-fire prevention doesn't exist as generic machinery yet);
- *  building a bespoke exclusion for only this one ability would be new,
- *  unrequested friendly-fire-RULE machinery — Consecrated Field simply
- *  inherits the sim's existing (pre-2.4, unrelated) behavior. */
-export const KIN_CONSECRATED_FIELD_DAMAGE = 18;
-export const KIN_CONSECRATED_FIELD_RADIUS_PX = 150;
-export const KIN_CONSECRATED_FIELD_SLOW_MULTIPLIER = 0.5;
-export const KIN_CONSECRATED_FIELD_ZONE_DURATION_MS = 2200;
+// Consecrated Field (aoe role rework, 2026-07-18) used to be documented
+// here — a genuine lingering damage+slow zone built on the same
+// `firePatches`/`FireEntity` primitive Lattice's own zone uses. The ability
+// was cut 2026-07-19 (role-redundant with Shock Ring — both "AOE damage
+// zone near yourself"; see docs/class-ability-catalogs-v1.md's cut note),
+// so its KIN_CONSECRATED_FIELD_* constants are gone too.
 /** Aegis Share: brief window widening THIS player's team-peel eligibility
  *  radius (combat.ts's WARD_PEEL_RADIUS_PX) for allies checking whether
  *  this Ward-holder's shadow covers them — "projectiles that would hit
@@ -247,31 +279,24 @@ export const KIN_AEGIS_SHARE_SOLO_KINDLING_FEED = 12;
 export const KIN_PLANT_CHARGE_RANGE_PX = 190;
 export const KIN_PLANT_CHARGE_SHIELD_REFUND = 12;
 
-// Kindred catalog v1 — the 3 previously-deferred entries (class-overhaul-
-// workboard.md chunk 2.6 fast-follow, 2026-07-18): Retribution Edge, Shock
-// Ring, Rally Light. Same substrate-reuse discipline as the 7 above; each
-// comment documents the "thin layer over existing mechanism" it rides.
-/** Retribution Edge: a cast opens a short "armed" window
- *  (KIN_RETRIBUTION_EDGE_READY_WINDOW_MS below is the SECOND window, opened
- *  by the block itself — see World.ts/combat.ts's retributionArmedUntilTick
- *  / retributionReadyUntilTick doc comments for the two-window shape). The
- *  self-fueling loop the axiom-deviations audit flags (AX.3: "block →
- *  amp+Kindling → more") is braked by gating the whole chain behind a
- *  CAST that consumes a cooldown — unlike a passive that triggers on every
- *  block for free, a player must spend the ability's own CD to re-arm, so
- *  the loop's throughput is capped by KIN_RETRIBUTION_EDGE_COOLDOWN_MS, not
- *  by how many hits land on the Ward. Amp sits below Unbroken Seal's 1.45
- *  (a punish window earned by press-timing a whole overhead beats one earned
- *  by simply holding Ward); Kindling refund is a partial "tick", well under
- *  a full Bastion Pulse (22), matching the doc's own "refund tick" wording
- *  (not "refund the block"). */
-export const KIN_RETRIBUTION_EDGE_READY_WINDOW_MS = 3000;
-export const KIN_RETRIBUTION_EDGE_AMP_MULTIPLIER = 1.35;
-export const KIN_RETRIBUTION_EDGE_KINDLING_REFUND = 15;
+// Kindred catalog v1 — originally 3 previously-deferred entries (class-
+// overhaul-workboard.md chunk 2.6 fast-follow, 2026-07-18): Retribution
+// Edge, Shock Ring, Rally Light. Same substrate-reuse discipline as the 7
+// above; each comment documents the "thin layer over existing mechanism"
+// it rides.
+//
+// Retribution Edge (block → amp+Kindling refund → more) was cut 2026-07-19
+// rather than fixed — it carried the self-fueling-loop brake the axiom-
+// deviations audit flagged (AX.3/D3) and never got the fix built, unlike
+// the Syzygist class's equivalent gap this same session (which WAS fixed
+// with a difference-fed brake). Removing it sidesteps the open design debt
+// instead of building the brake first. Its KIN_RETRIBUTION_EDGE_* constants
+// are gone too — see docs/class-ability-catalogs-v1.md's cut note.
 /** Shock Ring: "keep hop modest — not sky-god" — the hop's upward velocity
  *  sits well under player.ts's own M.jumpVelocity (635 magnitude, ~134px
  *  apex): a shallower hop that still reads as a real leave-the-ground beat.
- *  Damage/radius sit at Consecrated Field's tier (18dmg/150px) — a second
+ *  Damage/radius sit at the same tier Consecrated Field used to occupy
+ *  (18dmg/150px, before that ability was cut 2026-07-19) — a second
  *  self-centered nova would strictly dominate the first if it hit harder for
  *  free, so Shock Ring trades a LANDING-gated cast (must wait out the hop)
  *  for a slightly larger radius, not more damage. Arm window is generous
@@ -280,8 +305,9 @@ export const KIN_RETRIBUTION_EDGE_KINDLING_REFUND = 15;
  *  rework (2026-07-18): landing now resolves as a single instant radius
  *  check (World.ts's instant-AoE pass) instead of a ring of GEO_LATTICE_
  *  COUNT discrete shards — same damage/radius, no status effect (a plain
- *  "space claim" thump, the differentiation from Consecrated Field's
- *  damage+slow and Crater's damage+stagger). */
+ *  "space claim" thump, deliberately no stagger — Crater's damage+stagger
+ *  and Consecrated Field's damage+slow were the points of comparison until
+ *  both were cut, 2026-07-19). */
 export const KIN_SHOCK_RING_HOP_VY = 420;
 export const KIN_SHOCK_RING_ARM_WINDOW_MS = 1500;
 export const KIN_SHOCK_RING_DAMAGE = 18;
@@ -297,8 +323,9 @@ export const KIN_SHOCK_RING_RADIUS_PX = 170;
  *  flag for this ability specifically): the aura ALWAYS covers its own
  *  caster (self counts as an eligible "ally" at distance 0, regardless of
  *  teamId), so a solo Kindred still gets a real button here, not just a
- *  team tool. Radius matches Bastion's card-pool-v2.md aura (220px) for a
- *  consistent "heaven-tank aura" reading across the kit. Multipliers are
+ *  team tool. Radius matches Bastion's card-pool-v2.md aura (220px, chosen
+ *  for a consistent "heaven-tank aura" reading across the kit — Bastion
+ *  itself was cut 2026-07-19, but the radius provenance stands). Multipliers are
  *  deliberately mild ("small damage amp + move tick" per the doc) — well
  *  under Haste Gift's 1.25x move multiplier and Judgment Line's 1.3x damage
  *  amp, because Rally Light is passive-while-cast (no target, no aim, no
@@ -323,8 +350,9 @@ export const KIN_RALLY_LIGHT_MOVE_MULTIPLIER = 1.08;
 /** Kindled Resolve (buff, self-only): spends Kindling for a self stagger-
  *  resist + small self-damage-amp window — "heaven-tank cashes in his
  *  block-meter for a stance." The first ability in the sim to actually
- *  SPEND Kindling rather than only ever grant it (Retribution Edge/Bastion
- *  Pulse/team-peel are all pure sources; `grep kindling client/src/sim/
+ *  SPEND Kindling rather than only ever grant it (Bastion Pulse/team-peel
+ *  are pure sources — Retribution Edge was too, until it was cut
+ *  2026-07-19; `grep kindling client/src/sim/
  *  World.ts` before this pass turns up zero subtraction sites) — the
  *  resource-sink the axiom-deviations audit's own fix direction calls for.
  *  Orthogonal to Rally Light (buff #1): Rally Light is a FREE, continuous,
@@ -338,9 +366,9 @@ export const KIN_RALLY_LIGHT_MOVE_MULTIPLIER = 1.08;
  *  cost is this ability's real payoff, not the multiplier. Stagger-resist
  *  blends the incoming stagger multiplier toward 1 (halves its severity)
  *  rather than granting full immunity — "resist", not "CC-immune", per the
- *  doc's own wording (a fully immune Paladin would trivialize Crater/
- *  Unbroken Seal/Flock Pulse's own stagger payoff for every other class
- *  that lands one on them). Kindling cost (40) is a meaningful fraction of
+ *  doc's own wording (a fully immune Paladin would trivialize Unbroken
+ *  Seal/Flock Pulse's own stagger payoff for every other class that lands
+ *  one on them). Kindling cost (40) is a meaningful fraction of
  *  KINDLING_MAX (100) — roughly 3 solid Ward blocks' worth
  *  (KINDLING_PER_DAMAGE_BLOCKED's own ~13.2-per-block reference,
  *  combat.ts) — so this reads as "you played defense, now cash in," not a
@@ -360,9 +388,10 @@ export const KIN_RALLY_LIGHT_MOVE_MULTIPLIER = 1.08;
 export const KIN_KINDLED_RESOLVE_KINDLING_COST = 40;
 export const KIN_KINDLED_RESOLVE_DAMAGE_MULTIPLIER = 1.1;
 /** Fraction of an incoming stagger's SEVERITY removed while Kindled
- *  Resolve is live: `resisted = mul + (1 - mul) * this`. At 0.5, a Crater
- *  epicenter's 0.3 stagger multiplier (70% slow) softens to 0.65 (35%
- *  slow) — halved, not negated. */
+ *  Resolve is live: `resisted = mul + (1 - mul) * this`. At 0.5, Unbroken
+ *  Seal's own 0.25 stagger multiplier (75% slow, KIN_SEAL_STAGGER_
+ *  MULTIPLIER above) softens to 0.625 (37.5% slow) — halved, not
+ *  negated. */
 export const KIN_KINDLED_RESOLVE_STAGGER_RESIST_FRACTION = 0.5;
 /** Bulwark Step (movement, self-only): a short reposition along the
  *  player's currently-HELD movement input (player.ts's own private
@@ -394,77 +423,15 @@ export const KIN_KINDLED_RESOLVE_STAGGER_RESIST_FRACTION = 0.5;
 // KINDLING_COST).
 export const KIN_BULWARK_STEP_RANGE_PX = 110;
 
-// Paladin exclusives (docs/card-pool-v2.md #26-28) — draft-pool cards,
-// classId:"paladin"-gated, a SEPARATE system from the Kindred catalog above
-// (these are picked from the universal/class-exclusive draft pool at round
-// end, not the 10-ability loadout-station catalog). Crater is a rack
-// "ability" (has `active.kind`, joins AbilityKind); Retort is a "spec" on
-// the shield-board itself (always-on once equipped, no cast, no cooldown —
-// reads `entity.cards.includes("retort")` directly in combat.ts, same
-// "no new WeaponBuild plumbing needed" economy GEO_RECOIL_STEP's own
-// deferred-nuance comment argues for); Bastion is a "passive" aura (always
-// on, no cast) resolved at the same post-loop hit-resolution sites
-// `applyTeamPeel` already runs at (bash/slash/edge/projectile) — see
-// World.ts's `applyBastionAura` doc comment for why that's safe (same
-// "post-loop, direct `players[]` mutation" shape `applyTeamPeel` proves).
-/** Crater: leap height sits ABOVE the measured 134px jump apex ("an
- *  ability-gated route breaker" per the doc) — LEAP_VY is tuned so the
- *  self-only vertical impulse clears roughly 190px before gravity brings it
- *  back down (v^2 = 2*g*h; reuses the same jump-height math player.ts's own
- *  M.jumpVelocity/M.gravity pair implies). The doc's "25% air steer" nuance
- *  is a recorded v1 deferral (no new air-control field this pass — same
- *  "keep the new-field count lean" discipline GEO_RECOIL_STEP's comment
- *  documents); landing still triggers the full two-part slam. Epicenter
- *  burst damage/radius and the traveling ring's damage/reach are the doc's
- *  own numbers verbatim.
- *
- *  Aoe role rework (2026-07-18): both the epicenter burst AND the ring now
- *  resolve as instant radius checks (World.ts's instant-AoE pass) instead
- *  of two rings of discrete projectile shards. The epicenter check is a
- *  faithful real-area-check fix (24 dmg / 130px, everyone inside takes it
- *  in one tick). The ring's own doc text — "a shock ring TRAVELS the floor
- *  240px at 480px/s" — describes a gradually-expanding wavefront; this pass
- *  does NOT build that (would need a new per-tick expanding-radius tracker,
- *  a bigger lift than this pass's Tier A budget covers for an ability that
- *  wasn't one of the two flagged Tier-B mandatory zones — see Lattice/
- *  Consecrated Field above). v1 collapses the ring to an INSTANT check at
- *  its full 240px reach — still a real radius check (no projectile
- *  collision), just not a traveling one. A documented deferral, same shape
- *  as the pre-existing slope-grip note below, not a silent gap.
- *  KIN_CRATER_RING_SPEED is retired (nothing to animate a travel rate for
- *  once the ring is instant). The doc's slope-grip nuance (ring "climbs
- *  2:1 slopes, dies at 45°") also needs ground-normal detection this pass
- *  doesn't build — an existing, still-recorded deferral. */
-export const KIN_CRATER_LEAP_VY = 745;
-export const KIN_CRATER_SLAM_DAMAGE = 24;
-export const KIN_CRATER_SLAM_RADIUS_PX = 130;
-// Stagger duration is NOT an independent lever — same "not independently
-// tunable without touching the shared formula" scope boundary Consecrated
-// Field's own comment documents: the epicenter burst reuses projectile.ts's
-// exported SLOW_FIELD_DURATION_MS (~1500ms), not a per-card duration field.
-// Only the STRENGTH of the stagger (how heavily slowed) is Crater's own
-// number.
-export const KIN_CRATER_SLAM_STAGGER_MULTIPLIER = 0.3;
-export const KIN_CRATER_RING_DAMAGE = 10;
-export const KIN_CRATER_RING_RADIUS_PX = 240;
-export const KIN_CRATER_ARM_WINDOW_MS = 1800;
-/** Retort: banks HALF of blocked damage (WARD_MITIGATION_FRACTION's own
- *  60%-blocked amount, combat.ts), capped — "the answer" should feel earned
- *  over a couple of real blocks, not maxed on the first big hit. Window is
- *  3s per the doc ("your next melee swing within 3s"). */
-export const KIN_RETORT_BANK_FRACTION = 0.5;
-export const KIN_RETORT_BANK_CAP = 30;
-export const KIN_RETORT_WINDOW_MS = 3000;
-/** Bastion: aura radius/mitigation numbers are the doc's own (220px,
- *  -10%/-5%, 20% of absorbed ally damage feeds Kindling). "Damage allies
- *  absorb inside the aura feeds his resolve" reads as damage the ally
- *  actually TOOK (post-mitigation, the amount that left their health pool)
- *  — not damage the Bastion aura itself blocked (the -10% aura discount is
- *  a separate, smaller effect from Ward's own block economy). */
-export const KIN_BASTION_RADIUS_PX = 220;
-export const KIN_BASTION_ALLY_DAMAGE_REDUCTION = 0.1;
-export const KIN_BASTION_SELF_DAMAGE_REDUCTION = 0.05;
-export const KIN_BASTION_KINDLING_FEED_RATE = 0.2;
+// Paladin exclusives (docs/card-pool-v2.md #26-28: Crater/Retort/Bastion)
+// were cut entirely 2026-07-19 — they leaked into the loadout station's
+// catalog as 3 extra cards beyond the real 10-ability rack (13 shown
+// instead of 10, a bug Jake caught live), so the whole KIN_CRATER_*/
+// KIN_RETORT_*/KIN_BASTION_* (aura) constant group was removed along with
+// the cards, cardTypes.ts's AbilityKind entry, World.ts's applyBastionAura/
+// crater case/landing hook, and combat.ts's Retort bank. KIN_BASTION_
+// PULSE_* just above is unrelated — that's Bastion Pulse, a real
+// still-live rack ability, not this cut Bastion.
 
 // Second Wind (universal card "double-jump") — Paladin classModifiers
 // expression (docs/card-pool-v2.md: "the stomp-jump — his air jump deals 6
@@ -743,8 +710,9 @@ export const SYZ_SEVERANCE_DAMAGE = 34;
 export const SYZ_SEVERANCE_SPEED = 1300;
 /** Borrowed Time (single, catalog AND Priest exclusive draft card —
  *  card-pool-v2.md #29, same shared `active.kind` shape Sunlance/Paper
- *  Double/Crater already prove for the other three classes' "main pride"
- *  ability cards): instant heal to the nearest INJURED ally within
+ *  Double already prove for the other three classes' "main pride"
+ *  ability cards — Crater used to be the fourth example until it was cut
+ *  2026-07-19): instant heal to the nearest INJURED ally within
  *  SYZ_ALLY_SEARCH_RANGE_PX (auto-target — low-aim direction), self if
  *  none found. v1 drain-back is UNCONDITIONAL (no aggression-gate — see
  *  types.ts's debtUntilTick doc comment for why), so every number pair
@@ -787,9 +755,10 @@ export const SYZ_CONTAGION_JUMP_RADIUS_PX = 220;
  *  usually only caught one shard's worth); now an instant radius check —
  *  the full (BASE + sourceCount×PER_SOURCE) total lands on every enemy in
  *  radius directly, no split, no travel. Carries the OLD slow-field tag
- *  (0.8 multiplier, "weak" — the mildest slow of the four control-bearing
- *  aoe abilities: Flock Pulse < Consecrated Field's 0.5 < Crater's 0.3
- *  stagger), applied for SYZ_FLOCK_PULSE_SLOW_DURATION_MS. */
+ *  (0.8 multiplier, "weak" — the mildest slow among the control-bearing aoe
+ *  abilities this pass shipped; Crater's 0.3 stagger and Consecrated
+ *  Field's 0.5 both used to sit below it until both were cut,
+ *  2026-07-19), applied for SYZ_FLOCK_PULSE_SLOW_DURATION_MS. */
 export const SYZ_FLOCK_PULSE_BASE_DAMAGE = 8;
 export const SYZ_FLOCK_PULSE_PER_SOURCE_DAMAGE = 6;
 export const SYZ_FLOCK_PULSE_RADIUS_PX = 170;
@@ -813,42 +782,104 @@ export const SYZ_HASTE_GIFT_SELF_MULTIPLIER = 1 + (SYZ_HASTE_MULTIPLIER_DEFAULT 
  *  same shape as Recoil Step's own recorded gap). */
 export const SYZ_DRIFT_STEP_RANGE_PX = 210;
 
-/** Basic-fire ramping channel (weapon.ts stepWeaponNative, priest-only —
- *  Jake's ask: "rework the basic priest spell to be more channely... take
- *  effects from cards but its like geometrician rn except with a better
- *  deck"). Design direction (locked, Jake's own framing after a follow-up
- *  question): a RAMPING STREAM, not a flat hold-to-stream and not a
- *  charge-then-release — holding Fire continuously fires (no discrete
- *  per-press gate change needed; stepWeapon already re-fires on cooldown
- *  expiry while held), and the longer Fire has been held on ONE continuous
- *  press, the faster the stream ticks. Releasing Fire resets instantly —
- *  "rewards sustained commitment to one target, punishes flicking between
- *  targets."
- *
- *  FIRE-RATE ramp only, no damage ramp. Reasoning: a damage ramp reads as
- *  "charging a shot," which is the WIZARD's locked identity (character-
- *  sheets-v1.md Wizard: "charge-and-release channeling... Sunlance/
- *  Overchannel already do this shape") — Priest must stay clear of that
- *  lane per its own doctrine ("positioned and calm — power through
- *  entanglement, not through closing distance," character-sheets-v1.md
- *  Priest). A pure rate ramp reads as "spinning up a stream" instead,
- *  which is a mechanically AND thematically distinct basic-fire identity
- *  from Wizard's discrete pull-trigger shot while still spawning the same
- *  ProjectileEntity via the same spawnProjectile path — every card
- *  modifier (element/split/pierce/homing/etc.) keeps applying unmodified
- *  to each ramped shot.
- *
- *  SYZ_CHANNEL_RAMP_MS: time (holding Fire, ms) to reach max ramp — v1
- *  numeric guess (same "no need to agonize, balance-sim/playtest refines
- *  later" doctrine as every other SYZ_/GEO_/KIN_ constant), landed inside
- *  the "roughly 1.5-2.5s" range considered.
- *  SYZ_CHANNEL_RAMP_FIRE_RATE_MULTIPLIER_MAX: fire-rate multiplier at max
- *  ramp — composes into weapon.ts's fireRate calc exactly like
- *  GEO_OVERCLOCK_FIRE_RATE_MULTIPLIER/hasteFireRateMul (a multiplicative
- *  factor on top of build.fireRate), just driven by continuous-hold
- *  duration (ramping 1.0x → this ceiling) instead of a fixed timed window. */
-export const SYZ_CHANNEL_RAMP_MS = 2000;
-export const SYZ_CHANNEL_RAMP_FIRE_RATE_MULTIPLIER_MAX = 1.6;
+// ── SYZYGIST BASIC FIRE: OOZING TENDRILS OF FIRE (2026-07-19, priest-only —
+// priestStarterWeapon, weapons.ts). Priest's basic-fire ramping channel
+// (the block this replaces) got reassigned to Wizard mid-session (Jake:
+// "the wizards hould have ramping fire rate to feel more glass canony" —
+// see GEO_CHANNEL_RAMP_MS above); Priest needed "something completely
+// different... oozing tendrils of fire." Built from the SAME
+// low-aim/self-guiding throughline the SYZYGIST LOW-AIM AUTO-TARGET section
+// above already established for Priest's ABILITIES (Bleed Tithe: "a homing
+// shard that finds its own target rather than requiring precise aim"),
+// extended here to Priest's BASIC weapon fire — every property below is
+// baked directly into `priestStarterWeapon`'s `WeaponDefinition` (weapons.ts)
+// so it flows through the EXACT same resolvePlayerBuild → stepWeaponNative
+// → spawnProjectile path every other class's basic fire already uses; every
+// card modifier (element override, +damage, +count, pierce, etc.) still
+// composes on top unmodified, same "no bypass of the resolved build"
+// guarantee the wizard ramp block above documents for itself.
+//
+// Design decision (locked): MULTI-tendril, not a single shard. "Tendrils"
+// is plural — several small threads reaching out at once reads truer to the
+// name than one bolt with a homing tag on it. `SYZ_TENDRIL_COUNT` tendrils
+// spawn per shot (priestStarterWeapon.projectile.count), each one
+// INDEPENDENTLY homing (`pathing: "homing"`; projectile.ts's
+// `closestNonOwnerPlayer` re-targets every tendril every tick — the SAME
+// per-tick re-target machinery Bleed Tithe/Stolen Fangs already use, no new
+// targeting code) and independently fire-elemented (`element: "fire"`
+// triggers World.ts's existing, fully generic element==="fire" burn-on-hit
+// branch per hit — burnDps is already `finalDamage * 0.4` off whatever
+// damage THAT hit actually lands, so a smaller per-tendril hit just
+// produces a smaller burn tick; no separate SYZ_TENDRIL_BURN_DPS_FRACTION
+// constant is needed or added, since the fraction isn't ability-specific,
+// it's the sim's one shared burn formula).
+//
+// Total-damage bookkeeping: `SYZ_TENDRIL_COUNT × SYZ_TENDRIL_DAMAGE === 9`
+// — the SAME total priestStarterWeapon.damage was before this change
+// (single-shot 9, itself already a 25% detune off starterWeapon's 12). A
+// volley that connects with EVERY tendril deals the same total the old
+// single detuned bolt did (parity, not a buff); a volley that only lands
+// SOME tendrils (the realistic outcome against a target that isn't already
+// dead-center, homing curve notwithstanding) deals less. That's the class's
+// whole bargain made literal in the basic gun: aim-free consistency traded
+// against burst, instead of a flat top-line buff for going low-aim.
+//
+// Speed ("oozing" is a SPEED/character read before anything else — a fast,
+// crisp shard reads as a bolt; a slow one reads as something reaching out):
+// `SYZ_TENDRIL_SPEED` sits well below starterWeapon's 650 (Wizard's crisp,
+// bolt-like feel) — well under half. `SYZ_TENDRIL_LIFETIME_SECONDS` is
+// bumped up from starterWeapon's 1.2s specifically to compensate: at the
+// slower speed, 1.2s of flight only covers ~380px, a noticeably shorter
+// practical range than every other class's basic gun; the lifetime bump
+// restores a comparable effective range without touching speed (which
+// would undo the "oozing" read) or homing turn rate. The extra hang time
+// also gives the per-tick homing more real distance to actually curve —
+// a shot that arrives before it can turn wouldn't read as self-guiding at
+// all.
+export const SYZ_TENDRIL_COUNT = 3;
+/** 3 × 3 = 9 — see the block comment above: total volley damage if every
+ *  tendril connects is unchanged from the old single-shot detune. */
+export const SYZ_TENDRIL_DAMAGE = 3;
+export const SYZ_TENDRIL_SPEED = 320;
+export const SYZ_TENDRIL_LIFETIME_SECONDS = 1.6;
+/** Widens the 3-tendril fan from starterWeapon's near-zero 0.03 rad spread
+ *  so the tendrils visibly reach out in slightly different directions
+ *  before homing curls them back onto one target — selling "several
+ *  threads," not "one shot that happens to have count:3." Modest (~26°
+ *  total, not a shotgun spray) since the homing turn is what's actually
+ *  responsible for landing the hit; the spread is a presentation choice, not
+ *  the accuracy mechanism. */
+export const SYZ_TENDRIL_SPREAD_RADIANS = 0.45;
+/** Turn-rate ceiling for the per-tick homing re-target (projectile.ts's
+ *  `rotateVelocityToward`, the same knob `SYZ_BLEED_TITHE_HOMING_STRENGTH`
+ *  tunes for the ability version). Sits close to that ability's 5.5 — both
+ *  are the same "single precision shard" turn feel, not
+ *  `HOMING_TURN_RATE_DEFAULT`'s wide-net swarm rate — tuned a hair gentler
+ *  since three concurrent homing tendrils turning as sharply as one
+ *  dedicated ability shard would read as unavoidable; playtest-pending like
+ *  every number on this file. */
+export const SYZ_TENDRIL_HOMING_STRENGTH = 5.0;
+// Enemy-only targeting: weapon.ts's stepWeaponNative is a pure function of
+// the firing player alone (no `state.players`), so — unlike World.ts's
+// ability-cast sites (Bleed Tithe/Severance's own `findNearestEnemy` calls)
+// — it structurally cannot pick a target at spawn time. Tendrils lean on
+// the SAME generic per-tick re-target machinery every other homing WEAPON
+// shot in the sim already uses (Stolen Fangs' proc, at this exact
+// stepWeaponNative call site) rather than inventing new targeting — but
+// that generic machinery (`closestNonOwnerPlayer`) doesn't discriminate
+// teammates from enemies by itself, matching this file's own former
+// Consecrated Field note (cut 2026-07-19, but the underlying observation
+// still holds: "no ability or weapon in the sim excludes allies... today").
+// Priest is documented as a duos-bound chassis
+// (never ships into pure FFA — docs/classes-goal.md), so a basic gun that
+// could curve onto your own ally the moment duos ships would be a real, live
+// bug, not a hypothetical one — worth the small, additive
+// `ProjectileEntity.enemyOnly` flag (types.ts) that gates ONLY this shot's
+// homing loop with `isAlly` (team.ts), rather than punting on it or
+// generalizing friendly-fire exclusion sim-wide (out of scope — team.ts's
+// own header comment: "No friendly-fire rules... those are later chunks").
+// Every other homing shot in the sim (Bleed Tithe, Stolen Fangs) is left
+// completely untouched by this — the flag defaults false/absent for them.
 
 // ── Interstice catalog v1 (docs/class-ability-catalogs-v1.md — the ninja's
 // 10-ability class catalog, 9 wired this pass; see cardTypes.ts's

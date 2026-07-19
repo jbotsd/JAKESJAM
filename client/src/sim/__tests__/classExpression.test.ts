@@ -408,7 +408,14 @@ describe("Priest baseline: detuned starter bolt (docs/classes-goal.md 'modest pr
     expect(priestBuild.damage).toBeLessThan(wizardBuild.damage);
     // Still a real, functional gun — inside the combat-balance-ttk band, not
     // gimped into unplayability (weaponBuild.ts TTK_FLOOR_S/TTK_CEILING_S).
-    const ttk = 100 / (priestBuild.damage * priestBuild.fireRate);
+    // Priest's basic fire is now SYZ_TENDRIL_COUNT small homing shards per
+    // shot rather than one bolt (constants.ts's SYZ_TENDRIL_* doc comment —
+    // "oozing tendrils of fire", 2026-07-19) — `damage` is the PER-TENDRIL
+    // figure, so the TTK-band check needs `× count` (the same "if every
+    // tendril connects" total-damage accounting weaponBuild.ts's
+    // effectiveTTKBuild uses) to compare like with like against a
+    // single-shot weapon's plain damage×fireRate.
+    const ttk = 100 / (priestBuild.damage * priestBuild.fireRate * priestBuild.projectile.count);
     expect(ttk).toBeGreaterThan(1.8);
     expect(ttk).toBeLessThan(3.5);
   });

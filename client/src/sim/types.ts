@@ -664,31 +664,25 @@ export type PlayerEntity = {
   aegisShareUntilTick?: Tick;
   /**
    * Kindred catalog v1 fast-follow (class-overhaul-workboard.md chunk 2.6,
-   * 2026-07-18) — the 3 abilities the original pass deferred. All additive/
-   * optional, TS-only ("the Zig line" — never cross the ABI, same category
-   * as judgmentMarkUntilTick/sealUntilTick/aegisShareUntilTick above), self-
-   * only fields (never written by another player's cast — Rally Light and
-   * Shock Ring need no NEW fields beyond what's already here or on other
-   * catalog entries).
+   * 2026-07-18) — originally 3 abilities the earlier pass deferred. All
+   * additive/optional, TS-only ("the Zig line" — never cross the ABI, same
+   * category as judgmentMarkUntilTick/sealUntilTick/aegisShareUntilTick
+   * above), self-only fields (never written by another player's cast —
+   * Rally Light and Shock Ring need no NEW fields beyond what's already
+   * here or on other catalog entries).
    *
-   * - retributionArmedUntilTick: Retribution Edge's cast-opened window — a
-   *   self-Ward-block landing while this is live arms
-   *   `retributionReadyUntilTick` (combat.ts's `tryDeflectDamage`, the
-   *   paladin Ward branch — see its own inline comment). Two windows, not
-   *   one: "cast to arm, block to ready, swing to consume" (constants.ts's
-   *   KIN_RETRIBUTION_EDGE_* header comment has the full brake reasoning).
-   * - retributionReadyUntilTick: opened by the block described above. While
-   *   live, this player's NEXT landed Kindled Edge hit is amplified and
-   *   refunds Kindling, then the window is consumed early (same "consumed
-   *   on the hit, not just on timeout" shape as `sealUntilTick`).
    * - shockRingArmedUntilTick: Shock Ring's cast-opened window, covering the
    *   hop's airtime. World.ts's per-player movement step detects "just
    *   landed" the same way it already detects "just wall-kicked" (grounded-
    *   before/after comparison around `stepPlayer`) and, while this window is
    *   live, fires the slam nova then clears the flag.
+   *
+   * (Retribution Edge's retributionArmedUntilTick/retributionReadyUntilTick
+   * two-window pair — "cast to arm, block to ready, swing to consume" —
+   * was removed 2026-07-19 along with the ability itself; see docs/class-
+   * ability-catalogs-v1.md's cut note. It was cut for an unaddressed self-
+   * fueling-loop brake gap, not fixed, so the fields aren't coming back.)
    */
-  retributionArmedUntilTick?: Tick;
-  retributionReadyUntilTick?: Tick;
   shockRingArmedUntilTick?: Tick;
   /**
    * Rally Light (Kindred catalog v1 fast-follow) — this player is an aura
@@ -701,27 +695,11 @@ export type PlayerEntity = {
    * cross-player). See constants.ts's KIN_RALLY_LIGHT_* header comment.
    */
   rallyLightUntilTick?: Tick;
-  /**
-   * Crater (docs/card-pool-v2.md #26, exclusive: Paladin — a draft-pool
-   * ability card, not a Kindred catalog entry, but its sim effect is the
-   * SAME "arm on cast, resolve on landing" shape as Shock Ring immediately
-   * above, so it reuses the pattern rather than inventing a second one).
-   */
-  craterArmedUntilTick?: Tick;
-  /**
-   * Retort (docs/card-pool-v2.md #27, exclusive: Paladin — a "spec" on the
-   * shield-board itself, always active once equipped, no cast/cooldown;
-   * read via `entity.cards.includes("retort")` directly at the point Ward
-   * absorbs a hit, same "no new WeaponBuild plumbing" economy Recoil Step's
-   * own deferred-nuance precedent argues for). `retortBank` is the banked
-   * bonus-damage pool (capped, constants.ts's KIN_RETORT_BANK_CAP);
-   * `retortBankUntilTick` is the "spend within 3s" window — the NEXT landed
-   * Kindled Edge hit while it's live spends the whole bank as bonus damage
-   * AND equal bonus knockback, then both fields reset (World.ts's "PALADIN
-   * MELEE" section, alongside Judgment/Seal/Retribution Edge consumption).
-   */
-  retortBank?: number;
-  retortBankUntilTick?: Tick;
+  // (Crater/Retort — docs/card-pool-v2.md #26-27, exclusive: Paladin — used
+  // craterArmedUntilTick/retortBank/retortBankUntilTick here. Cut entirely
+  // 2026-07-19 alongside Bastion, their sibling exclusive; see cards.ts's
+  // cut note above the old crater/retort/bastion card definitions. Fields
+  // removed, not left undefined-but-declared.)
   /**
    * Kindled Resolve (Kindred catalog v1 coverage-floor fast-follow,
    * docs/axiom-deviations-audit.md, 2026-07-18) — self-only buff window
@@ -732,8 +710,8 @@ export type PlayerEntity = {
    * is) and incoming stagger/slow multipliers aimed at them are softened
    * toward 1 (`applyKindledResolveStaggerResist`, checked at every site
    * that WRITES a stagger onto a victim). Same TS-only, hash-mixed-not-
-   * delta-synced contract as retributionArmedUntilTick/shockRingArmed
-   * UntilTick/rallyLightUntilTick above (never crosses the Zig ABI).
+   * delta-synced contract as shockRingArmedUntilTick/rallyLightUntilTick
+   * above (never crosses the Zig ABI).
    */
   kindledResolveUntilTick?: Tick;
   /**
@@ -829,16 +807,24 @@ export type PlayerEntity = {
    */
   throwHandParity?: number;
   /**
-   * Priest-only basic-fire ramping channel (weapon.ts stepWeaponNative,
-   * constants.ts's SYZ_CHANNEL_RAMP_MS doc comment has the full design
-   * rationale). Milliseconds Fire has been CONTINUOUSLY held by a priest
-   * player — ticks up every tick `fireRequested` is true and the player is
-   * alive, reset to `undefined` the instant `fireRequested` goes false (or
-   * the player dies), so a release always drops the ramp back to baseline
-   * immediately, matching the "punishes flicking between targets" design
-   * intent. Only ever written for `classIdForArchetype(characterId) ===
-   * "priest"` — every other class never touches this field, so it always
-   * reads `undefined` for them (purely additive, zero behavior change).
+   * Wizard-only basic-fire ramping channel (weapon.ts stepWeaponNative,
+   * constants.ts's GEO_CHANNEL_RAMP_MS doc comment has the full design
+   * rationale). RELOCATED from Priest to Wizard 2026-07-19 (Jake's redirect:
+   * "the wizards hould have ramping fire rate to feel more glass canony" —
+   * see GEO_CHANNEL_RAMP_MS's own comment for the full glass-cannon framing;
+   * Priest's basic fire is now the unrelated "oozing tendrils" mechanic,
+   * SYZ_TENDRIL_* in constants.ts). Milliseconds Fire has been CONTINUOUSLY
+   * held by a wizard player — ticks up every tick `fireRequested` is true
+   * and the player is alive, reset to `undefined` the instant
+   * `fireRequested` goes false (or the player dies), so a release always
+   * drops the ramp back to baseline immediately, matching the "punishes
+   * flicking between targets" design intent. Only ever written for
+   * `classIdForArchetype(characterId) === "wizard"` — every other class
+   * never touches this field, so it always reads `undefined` for them
+   * (purely additive, zero behavior change). Field NAME kept class-generic
+   * (not renamed to e.g. `wizardChannelHoldMs`) — it was already
+   * class-neutral before the relocation and renaming it would only churn
+   * every read/write site for no behavioral gain.
    *
    * Runtime-only, same category as `throwHandParity` immediately above:
    * not wire-encoded and not mixed into `hash.ts`'s reconcile hash. The
@@ -940,6 +926,16 @@ export type ProjectileEntity = {
   leechFraction?: number;
   executeBelowFrac?: number;
   wrapShots?: boolean;
+  /** Priest's "oozing tendrils" basic fire (weapon.ts stepWeaponNative,
+   *  constants.ts's SYZ_TENDRIL_* doc comment) — gates the per-tick
+   *  `pathing: "homing"` re-target (projectile.ts's `closestNonOwnerPlayer`)
+   *  to skip the owner's ALLIES, not just the owner. Absent/false = the
+   *  homing re-target machinery's original behavior (closest non-owner
+   *  PLAYER, ally or not) — matches every other homing shot in the sim
+   *  today (Bleed Tithe, Stolen Fangs), neither of which sets this. Additive
+   *  optional contract like every extra above: only ever `true` for a
+   *  Priest tendril, so this is zero behavior change for anything else. */
+  enemyOnly?: boolean;
   /** Tracking state set/maintained by the projectile stepper. */
   ageMs?: number;
   traveledPx?: number;

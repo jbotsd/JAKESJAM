@@ -2,6 +2,14 @@
 // share one source of truth for base weapon stats.
 
 import type { ClassId, WeaponDefinition } from "./cardTypes.js";
+import {
+  SYZ_TENDRIL_COUNT,
+  SYZ_TENDRIL_DAMAGE,
+  SYZ_TENDRIL_SPEED,
+  SYZ_TENDRIL_LIFETIME_SECONDS,
+  SYZ_TENDRIL_SPREAD_RADIANS,
+  SYZ_TENDRIL_HOMING_STRENGTH,
+} from "../constants.js";
 
 export const starterWeapon: WeaponDefinition = {
   id: "starter-pistol",
@@ -47,24 +55,52 @@ export const starterWeapon: WeaponDefinition = {
 /**
  * Priest / Syzygist baseline (docs/classes-goal.md "Priest / Syzygist":
  * "Baseline attack: modest projectile (wizard's starter, detuned)"; docs/
- * class-overhaul-workboard.md chunk 0.3). A copy of `starterWeapon` — same
- * hexagon shape, same fire rate, same everything else — with damage cut
- * from 12 to 9 (25% detune). Neutral TTK moves from ~2.08s to ~2.78s, still
- * comfortably inside the 1.8-3.5s combat-balance-ttk band (weaponBuild.ts
- * TTK_FLOOR_S/TTK_CEILING_S), so it reads as a genuinely weaker gun rather
- * than a broken one — the honest cost of a kit whose real power lives in
- * curses + lifesteal, not the bolt. Keeps the SAME wire id ("starter-pistol")
- * — this is a base-STAT reskin selected by class, not a second weapon slot —
- * so it never appears in the `weapons` export below (weaponDataParity.test.ts
- * asserts `weapon_count() === 1`; that Zig-side count is unaffected, since
- * Zig only ever sees the packed, already-class-resolved fire config —
- * see sim/src/world.zig's "parity with the TS orchestrator's
- * resolvePlayerBuild" comment).
+ * class-overhaul-workboard.md chunk 0.3). Started as a copy of
+ * `starterWeapon` with damage cut from 12 to 9 (25% detune) — REWORKED
+ * 2026-07-19 into "oozing tendrils of fire" (constants.ts's SYZ_TENDRIL_*
+ * doc comment has the full design rationale) after the original basic-fire
+ * ramping-channel mechanic got reassigned to Wizard mid-session. Same
+ * hexagon shape, same fire rate as `starterWeapon` — the identity now lives
+ * in the projectile config: SYZ_TENDRIL_COUNT small homing, fire-element
+ * shards per shot instead of one straight crystal bolt, each individually
+ * weaker (SYZ_TENDRIL_DAMAGE × SYZ_TENDRIL_COUNT === the old single-shot 9,
+ * so a volley that lands every tendril is total-damage parity, not a buff —
+ * see the constants.ts comment for the full bookkeeping), slower
+ * (SYZ_TENDRIL_SPEED, well under starterWeapon's 650) with a longer fuse
+ * (SYZ_TENDRIL_LIFETIME_SECONDS) to keep effective range comparable despite
+ * the lower speed. Neutral TTK if every tendril of every volley connects is
+ * unchanged from the pre-rework figure (~2.78s, same 9-damage/4rps math),
+ * still comfortably inside the 1.8-3.5s combat-balance-ttk band
+ * (weaponBuild.ts TTK_FLOOR_S/TTK_CEILING_S) — this weapon is intentionally
+ * excluded from that band's own iterated test (weaponBuild.test.ts only
+ * walks the class-blind `weapons` export below, never this one, same as
+ * before the rework) since a per-tendril hit-or-miss weapon doesn't reduce
+ * to one clean number the way a single-shot gun does; classExpression.test.ts
+ * still asserts it's a real, lower-damage, same-shape gun. The honest cost
+ * of a kit whose real power lives in curses + lifesteal, not the bolt.
+ * Keeps the SAME wire id ("starter-pistol") — this is a base-STAT reskin
+ * selected by class, not a second weapon slot — so it never appears in the
+ * `weapons` export below (weaponDataParity.test.ts asserts
+ * `weapon_count() === 1`; that Zig-side count is unaffected, since Zig only
+ * ever sees the packed, already-class-resolved fire config — see
+ * sim/src/world.zig's "parity with the TS orchestrator's resolvePlayerBuild"
+ * comment — and never mirrored the channel ramp OR the tendril rework:
+ * both are TS-only combat/projectile state, confirmed by grepping the Zig
+ * sim source for either mechanic before this rework).
  */
 export const priestStarterWeapon: WeaponDefinition = {
   ...starterWeapon,
-  damage: 9,
-  projectile: { ...starterWeapon.projectile },
+  damage: SYZ_TENDRIL_DAMAGE,
+  projectileSpeed: SYZ_TENDRIL_SPEED,
+  projectileLifetimeSeconds: SYZ_TENDRIL_LIFETIME_SECONDS,
+  spreadRadians: SYZ_TENDRIL_SPREAD_RADIANS,
+  projectile: {
+    ...starterWeapon.projectile,
+    count: SYZ_TENDRIL_COUNT,
+    pathing: "homing",
+    element: "fire",
+    homingStrength: SYZ_TENDRIL_HOMING_STRENGTH,
+  },
 };
 
 /**

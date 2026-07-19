@@ -10,8 +10,26 @@
 // 2026-07-18), growing the catalog to 12/12 and closing the buff×1/
 // movement×1 coverage-floor miss the audit found.
 //
+// CUT NOTE (2026-07-19): the catalog was brought back down to 10/10 —
+// Retribution Edge (offense) and Consecrated Field (aoe) were removed
+// entirely, not deferred. Retribution Edge carried an unaddressed self-
+// fueling-loop brake gap (docs/axiom-deviations-audit.md's D3/AX.3 flag —
+// same category of issue the Syzygist class had this session, which WAS
+// fixed with a difference-fed brake; Retribution Edge's equivalent was
+// never built) — removing it sidesteps that open design debt rather than
+// building the fix. Consecrated Field was cut for role redundancy against
+// Shock Ring (both "AOE damage zone near yourself"; Shock Ring reads as
+// more central to the class's heaven-tank identity). This drops offense
+// and aoe from 2-per-role to 1-per-role each — an accepted, intentional
+// consequence of THIS cut, not a re-opened coverage gap; buff/movement
+// (Kindled Resolve/Bulwark Step, the abilities that closed that exact gap
+// above) are untouched. See docs/class-ability-catalogs-v1.md's own cut
+// note for the full reasoning. `KINDRED_ABILITY_IDS` below is back to 10
+// entries — if you're reading this wondering why it used to have 12, this
+// is why.
+//
 // Coverage, mirroring geometricianCatalog.test.ts's own shape:
-//   (1) data authoring — all 12 cards exist as classId:"paladin" ability
+//   (1) data authoring — all 10 cards exist as classId:"paladin" ability
 //       cards wired to their AbilityKind.
 //   (2) offer-roll classId gating — only a paladin (heavy) ever sees these;
 //       every other chassis (including the OTHER melee class, ninja) never
@@ -19,7 +37,7 @@
 //       already extends correctly to a SECOND classId with no code change.
 //   (3) rack fill via the existing resolvePlayerBuild/createWeaponBuild
 //       mechanism — no new slot system.
-//   (4) representative v1 sim-effect tests for each of the 12 abilities.
+//   (4) representative v1 sim-effect tests for each of the 10 abilities.
 
 import { describe, expect, test } from "bun:test";
 import { createRuntime, stepWithRuntime } from "../World.js";
@@ -34,20 +52,8 @@ import {
   KIN_JUDGMENT_AMP_MULTIPLIER,
   KIN_SEAL_DAMAGE_MULTIPLIER,
   KIN_SEAL_STAGGER_MULTIPLIER,
-  KIN_CONSECRATED_FIELD_RADIUS_PX,
-  KIN_CONSECRATED_FIELD_SLOW_MULTIPLIER,
   KIN_PLANT_CHARGE_RANGE_PX,
-  KIN_RETRIBUTION_EDGE_AMP_MULTIPLIER,
-  KIN_RETRIBUTION_EDGE_KINDLING_REFUND,
   KIN_RALLY_LIGHT_DAMAGE_MULTIPLIER,
-  KIN_RETORT_BANK_FRACTION,
-  KIN_RETORT_BANK_CAP,
-  KIN_BASTION_ALLY_DAMAGE_REDUCTION,
-  KIN_BASTION_SELF_DAMAGE_REDUCTION,
-  KIN_BASTION_KINDLING_FEED_RATE,
-  KIN_CRATER_SLAM_RADIUS_PX,
-  KIN_CRATER_RING_RADIUS_PX,
-  KIN_CRATER_SLAM_STAGGER_MULTIPLIER,
   KIN_KINDLED_RESOLVE_KINDLING_COST,
   KIN_KINDLED_RESOLVE_DAMAGE_MULTIPLIER,
   KIN_KINDLED_RESOLVE_STAGGER_RESIST_FRACTION,
@@ -55,7 +61,7 @@ import {
   KIN_AEGIS_SHARE_SOLO_KINDLING_FEED,
   SHIELD_MAX_CHARGE_DEFAULT,
 } from "../constants.js";
-import { tryDeflectDamage, KINDLING_MAX } from "../combat.js";
+import { KINDLING_MAX } from "../combat.js";
 import {
   InputSeq,
   PlayerId,
@@ -80,10 +86,8 @@ const KINDRED_ABILITY_IDS = [
   "sunspike",
   "judgment-line",
   "unbroken-seal",
-  "consecrated-field",
   "aegis-share",
   "plant-charge",
-  "retribution-edge",
   "shock-ring",
   "rally-light",
   "kindled-resolve",
@@ -175,7 +179,7 @@ function kinCard(id: (typeof KINDRED_ABILITY_IDS)[number]) {
 }
 
 describe("Kindred catalog v1 — data authoring", () => {
-  test("all 12 wired catalog abilities exist as classId:'paladin' ability cards", () => {
+  test("all 10 wired catalog abilities exist as classId:'paladin' ability cards", () => {
     for (const id of KINDRED_ABILITY_IDS) {
       const card = kinCard(id);
       expect(card.classId).toBe("paladin");
@@ -185,7 +189,7 @@ describe("Kindred catalog v1 — data authoring", () => {
     }
   });
 
-  test("role coverage across the 12 wired abilities: defense/single/offense/aoe/movement/buff all present", () => {
+  test("role coverage across the 10 wired abilities: defense/single/offense/aoe/movement/buff all present", () => {
     const roles = new Set(KINDRED_ABILITY_IDS.map((id) => kinCard(id).role));
     expect(roles.has("defense")).toBe(true);
     expect(roles.has("single")).toBe(true);
@@ -195,34 +199,41 @@ describe("Kindred catalog v1 — data authoring", () => {
     expect(roles.has("buff")).toBe(true);
   });
 
-  test("coverage FLOOR (docs/classes-goal.md '≥2 primary tags per role'): every one of the six roles has at least 2 abilities tagged, not just 1 — the axiom-deviations-audit.md gap this fast-follow closes (buff×1/movement×1 before Kindled Resolve/Bulwark Step)", () => {
+  // CUT NOTE (2026-07-19): this used to assert a ≥2-per-role floor across
+  // ALL six roles (docs/classes-goal.md), closed by the coverage-floor
+  // fast-follow below (Kindled Resolve/Bulwark Step). The 12→10 cut
+  // (Retribution Edge/offense, Consecrated Field/aoe — see docs/class-
+  // ability-catalogs-v1.md's cut note) deliberately drops offense and aoe
+  // to 1-per-role; that's an accepted consequence of THIS cut, not a
+  // re-opened gap needing another fast-follow. buff/movement — the roles
+  // the original audit actually flagged, and the ones Kindled Resolve/
+  // Bulwark Step exist to fix — stay at the ≥2 floor and are asserted
+  // below; offense/aoe are asserted at exactly 1 so a future accidental
+  // regression (or restoration) is caught either way.
+  test("coverage FLOOR (docs/classes-goal.md '≥2 primary tags per role') holds for buff/movement — the roles the audit flagged and Kindled Resolve/Bulwark Step fixed; offense/aoe are intentionally 1-per-role after the 2026-07-19 cut", () => {
     const counts: Record<string, number> = {};
     for (const id of KINDRED_ABILITY_IDS) {
       const role = kinCard(id).role!;
       counts[role] = (counts[role] ?? 0) + 1;
     }
-    for (const role of ["defense", "offense", "buff", "aoe", "single", "movement"]) {
-      expect(counts[role] ?? 0).toBeGreaterThanOrEqual(2);
-    }
-    // Specifically the two roles the audit flagged as below the floor.
     expect(counts["buff"]).toBeGreaterThanOrEqual(2);
     expect(counts["movement"]).toBeGreaterThanOrEqual(2);
+    expect(counts["defense"]).toBeGreaterThanOrEqual(2);
+    expect(counts["single"]).toBeGreaterThanOrEqual(2);
+    // Intentional 1-per-role after the cut (Unbroken Seal/Shock Ring are
+    // the sole survivors) — not a floor violation.
+    expect(counts["offense"]).toBe(1);
+    expect(counts["aoe"]).toBe(1);
   });
 
-  test("the 3 Paladin exclusives (Crater/Retort/Bastion, card-pool-v2.md #26-28) are authored, classId-gated", () => {
-    for (const id of ["crater", "retort", "bastion"]) {
-      const card = crystalRoundsCards.find((c) => c.id === id);
-      expect(card).toBeDefined();
-      expect(card!.classId).toBe("paladin");
-    }
-    // Crater is a rack ability; Retort/Bastion are always-on (no `active`).
-    const crater = crystalRoundsCards.find((c) => c.id === "crater")!;
-    expect(crater.active?.kind).toBe("crater");
-    const retort = crystalRoundsCards.find((c) => c.id === "retort")!;
-    const bastion = crystalRoundsCards.find((c) => c.id === "bastion")!;
-    expect(retort.active).toBeUndefined();
-    expect(bastion.active).toBeUndefined();
-  });
+  // (The 3 Paladin exclusives — Crater/Retort/Bastion, card-pool-v2.md
+  // #26-28 — used to be authored-and-classId-gated here too. Cut entirely
+  // 2026-07-19: they were leaking into the loadout station's 10-card
+  // catalog as 13 total, a live-playtest bug Jake caught, not a feature —
+  // see cards.ts's cut note above the old crater/retort/bastion card
+  // definitions. Their dedicated describe blocks further down this file
+  // (Shock Ring/Crater's landing-detection pair, plus Retort's and
+  // Bastion's own fast-follow blocks) were removed too.)
 });
 
 describe("Kindred catalog v1 — offer-roll classId gating", () => {
@@ -486,36 +497,6 @@ describe("Kindred catalog v1 — representative sim effects", () => {
     expect(state.players[A]!.sealUntilTick === undefined || state.players[A]!.sealUntilTick! <= state.tick).toBe(true);
   });
 
-  test("Consecrated Field: a genuine lingering self-light zone (no projectiles) damages+slows a nearby player, leaves a distant one untouched", () => {
-    const caster = mkPlayer(A, 400, 400, "heavy", { cards: ["consecrated-field"] });
-    const victim = mkPlayer(B, 440, 400, "balanced");
-    const farAway = mkPlayer(PlayerId("c"), 400 + KIN_CONSECRATED_FIELD_RADIUS_PX + 200, 400, "balanced");
-    let state = mkState([caster, victim, farAway]);
-    const runtime = createRuntime(flatMap);
-    let res = stepWithRuntime(
-      state, runtime,
-      inputsWith([caster, victim, farAway], { [A as string]: frame(SLOT1_BIT, 1) }), DT_MS,
-    );
-    state = res.state;
-    // No shard-ring projectiles — the zone is a firePatches entity; the
-    // slow is applied directly (instant-AoE pass), also no projectile.
-    expect(Object.keys(state.projectiles).length).toBe(0);
-    expect(Object.keys(state.firePatches).length).toBe(1);
-    // Slow lands the SAME tick the field goes off (instant, not zone-tick).
-    expect(state.players[B]!.slowedUntilTick).toBeDefined();
-    expect(state.players[B]!.slowMultiplier).toBeCloseTo(KIN_CONSECRATED_FIELD_SLOW_MULTIPLIER);
-    expect(state.players[PlayerId("c")]!.slowedUntilTick).toBeUndefined();
-    // Step forward WITHOUT re-pressing — the zone keeps re-applying damage.
-    let victimHealth = state.players[B]!.health;
-    for (let i = 0; i < 60 && victimHealth === 100; i++) {
-      res = stepWithRuntime(state, runtime, inputsWith([caster, victim, farAway], {}), DT_MS);
-      state = res.state;
-      victimHealth = state.players[B]!.health;
-    }
-    expect(victimHealth).toBeLessThan(100);
-    expect(state.players[PlayerId("c")]!.health).toBe(100);
-  });
-
   test("Aegis Share: opens a window that widens this player's team-peel radius", () => {
     const caster = mkPlayer(A, 400, 400, "heavy", { cards: ["aegis-share"] });
     const state = mkState([caster]);
@@ -592,74 +573,14 @@ describe("Kindred catalog v1 — representative sim effects", () => {
 });
 
 // ── Kindred catalog v1 fast-follow (class-overhaul-workboard.md chunk 2.6,
-// 2026-07-18) — Retribution Edge, Shock Ring, Rally Light: the 3 abilities
-// the original pass deferred, now wired. ──────────────────────────────────
-describe("Kindred catalog v1 fast-follow — Retribution Edge", () => {
-  test("cast opens an armed window", () => {
-    const caster = mkPlayer(A, 400, 400, "heavy", { cards: ["retribution-edge"] });
-    const state = mkState([caster]);
-    const runtime = createRuntime(flatMap);
-    const res = stepWithRuntime(
-      state, runtime,
-      inputsWith([caster], { [A as string]: frame(SLOT1_BIT, 1) }), DT_MS,
-    );
-    expect(res.state.players[A]!.retributionArmedUntilTick).toBeDefined();
-    expect((res.state.players[A]!.retributionArmedUntilTick as number) > res.state.tick).toBe(true);
-  });
+// 2026-07-18) — originally Retribution Edge, Shock Ring, Rally Light: the 3
+// abilities the original pass deferred, now wired. Retribution Edge (and
+// its whole "cast opens armed window / self-block readies it / next Edge
+// hit consumes it" describe block that used to live here) was cut
+// 2026-07-19 — see docs/class-ability-catalogs-v1.md's cut note — not
+// deferred, so there's no test to keep for it. ─────────────────────────────
 
-  test("a self-Ward block while armed opens the ready window (pure tryDeflectDamage)", () => {
-    const attackerPos = { x: 460, y: 400 };
-    const blocker = mkPlayer(A, 400, 400, "heavy", {
-      aimX: 460, aimY: 400,
-      shieldActive: true,
-      retributionArmedUntilTick: Tick(100),
-    });
-    const result = tryDeflectDamage(blocker, null, 20, Tick(0), { attackerPos });
-    expect(result.warded).toBe(true);
-    expect(result.player.retributionArmedUntilTick).toBeUndefined();
-    expect(result.player.retributionReadyUntilTick).toBeDefined();
-    expect((result.player.retributionReadyUntilTick as number) > 0).toBe(true);
-  });
-
-  test("without a live armed window, a Ward block does NOT open the ready window", () => {
-    const attackerPos = { x: 460, y: 400 };
-    const blocker = mkPlayer(A, 400, 400, "heavy", { aimX: 460, aimY: 400, shieldActive: true });
-    const result = tryDeflectDamage(blocker, null, 20, Tick(0), { attackerPos });
-    expect(result.warded).toBe(true);
-    expect(result.player.retributionReadyUntilTick).toBeUndefined();
-  });
-
-  test("a ready Kindled Edge hit is amplified and refunds Kindling, then the window clears", () => {
-    const attacker = mkPlayer(A, 500, 300, "heavy", {
-      aimX: 900, aimY: 300,
-      retributionReadyUntilTick: Tick(600),
-      kindling: 0,
-    });
-    const victim = mkPlayer(B, 560, 300, "balanced");
-    let state = mkState([attacker, victim]);
-    const runtime = createRuntime(flatMap);
-    let res = stepWithRuntime(
-      state, runtime,
-      inputsWith([attacker, victim], { [A as string]: frame(FIRE_BIT, 1, 900, 300) }), DT_MS,
-    );
-    state = res.state;
-    const HIT_TICKS = Math.ceil(200 / DT_MS) + 1 + Math.ceil(100 / DT_MS);
-    for (let i = 0; i < HIT_TICKS; i++) {
-      res = stepWithRuntime(state, runtime, inputsWith([attacker, victim], {}), DT_MS);
-      state = res.state;
-    }
-    const dealt = 100 - state.players[B]!.health;
-    expect(dealt).toBeGreaterThan(0);
-    expect(dealt).toBeCloseTo(32 * KIN_RETRIBUTION_EDGE_AMP_MULTIPLIER, 0);
-    expect(state.players[A]!.kindling).toBeCloseTo(KIN_RETRIBUTION_EDGE_KINDLING_REFUND, 0);
-    expect(
-      state.players[A]!.retributionReadyUntilTick === undefined ||
-        state.players[A]!.retributionReadyUntilTick! <= state.tick,
-    ).toBe(true);
-  });
-});
-
-describe("Kindred catalog v1 fast-follow — Shock Ring / Crater (landing-detection hop-slam)", () => {
+describe("Kindred catalog v1 fast-follow — Shock Ring (landing-detection hop-slam)", () => {
   test("Shock Ring: cast hops upward and arms a window; landing triggers a damaging slam nova, then clears", () => {
     const caster = mkPlayer(A, 400, 400, "heavy", { cards: ["shock-ring"] });
     const victim = mkPlayer(B, 440, 400, "balanced");
@@ -688,47 +609,10 @@ describe("Kindred catalog v1 fast-follow — Shock Ring / Crater (landing-detect
     expect(Object.keys(state.projectiles).length).toBe(0);
   });
 
-  test("Crater (card-pool-v2.md #26): leaps, arms a window; landing triggers an instant epicenter burst (damage+stagger) AND an instant ring check, no projectiles, then clears the window", () => {
-    const caster = mkPlayer(A, 400, 400, "heavy", { cards: ["crater"] });
-    // Inside the epicenter radius (130px) — should take the epicenter's
-    // damage AND its stagger (slow).
-    const closeVictim = mkPlayer(B, 430, 400, "balanced");
-    // Between the epicenter and ring radii (130-240px) — should take ONLY
-    // the ring's (smaller) damage, no stagger — proves this is a real
-    // radius check with two distinct bands, not a single blanket hit.
-    const midVictim = mkPlayer(PlayerId("mid"), 400 + KIN_CRATER_SLAM_RADIUS_PX + 40, 400, "balanced");
-    // Beyond the ring's own radius entirely — untouched.
-    const farVictim = mkPlayer(PlayerId("far"), 400 + KIN_CRATER_RING_RADIUS_PX + 100, 400, "balanced");
-    let state = mkState([caster, closeVictim, midVictim, farVictim]);
-    const runtime = createRuntime(flatMap);
-    let res = stepWithRuntime(
-      state, runtime,
-      inputsWith([caster, closeVictim, midVictim, farVictim], { [A as string]: frame(SLOT1_BIT, 1) }), DT_MS,
-    );
-    state = res.state;
-    expect(state.players[A]!.vy).toBeLessThan(0);
-    expect(state.players[A]!.craterArmedUntilTick).toBeDefined();
-    let landed = false;
-    for (let i = 0; i < 150 && !landed; i++) {
-      const before = state.players[A]!.craterArmedUntilTick;
-      res = stepWithRuntime(state, runtime, inputsWith([caster, closeVictim, midVictim, farVictim], {}), DT_MS);
-      state = res.state;
-      if (before !== undefined && state.players[A]!.craterArmedUntilTick === undefined) {
-        landed = true;
-      }
-    }
-    expect(landed).toBe(true);
-    // No projectile-fan spawned at any point — a real radius check.
-    expect(Object.keys(state.projectiles).length).toBe(0);
-    expect(state.players[B]!.health).toBeLessThan(100);
-    expect(state.players[B]!.slowedUntilTick).toBeDefined();
-    expect(state.players[B]!.slowMultiplier).toBeCloseTo(KIN_CRATER_SLAM_STAGGER_MULTIPLIER);
-    expect(state.players[PlayerId("mid")]!.health).toBeLessThan(100);
-    // The ring alone (no epicenter stagger) reached mid — a REAL distinct
-    // band from the epicenter's damage+stagger above.
-    expect(state.players[PlayerId("mid")]!.slowedUntilTick).toBeUndefined();
-    expect(state.players[PlayerId("far")]!.health).toBe(100);
-  });
+  // (Crater's own landing-detection test — leap, arm a window, land into an
+  // epicenter burst + traveling ring — used to live here. Cut entirely
+  // 2026-07-19 alongside the card itself; see cards.ts's cut note above
+  // the old crater/retort/bastion card definitions.)
 });
 
 describe("Kindred catalog v1 fast-follow — Rally Light (read-only continuous aura, no cross-player write)", () => {
@@ -1029,122 +913,11 @@ describe("Kindred catalog v1 coverage-floor fast-follow — Bulwark Step (moveme
   });
 });
 
-describe("Kindred catalog v1 fast-follow — Retort (card-pool-v2.md #27, shield-board spec)", () => {
-  test("a self-Ward block banks a fraction of the blocked damage, capped (pure tryDeflectDamage)", () => {
-    const attackerPos = { x: 460, y: 400 };
-    const blocker = mkPlayer(A, 400, 400, "heavy", {
-      aimX: 460, aimY: 400,
-      shieldActive: true,
-      cards: ["retort"],
-    });
-    const result = tryDeflectDamage(blocker, null, 20, Tick(0), { attackerPos });
-    expect(result.warded).toBe(true);
-    const expectedBank = result.wardDamageBlocked * KIN_RETORT_BANK_FRACTION;
-    expect(result.player.retortBank).toBeCloseTo(expectedBank, 5);
-    expect(result.player.retortBankUntilTick).toBeDefined();
-
-    // A second, much larger block caps the bank.
-    const secondResult = tryDeflectDamage(result.player, null, 500, Tick(1), { attackerPos });
-    expect(secondResult.player.retortBank).toBeLessThanOrEqual(KIN_RETORT_BANK_CAP);
-    expect(secondResult.player.retortBank).toBeCloseTo(KIN_RETORT_BANK_CAP, 5);
-  });
-
-  test("without the card, a Ward block never banks anything", () => {
-    const attackerPos = { x: 460, y: 400 };
-    const blocker = mkPlayer(A, 400, 400, "heavy", { aimX: 460, aimY: 400, shieldActive: true });
-    const result = tryDeflectDamage(blocker, null, 20, Tick(0), { attackerPos });
-    expect(result.player.retortBank).toBeUndefined();
-  });
-
-  test("a landed Kindled Edge hit within the window spends the whole bank as bonus damage, then clears it", () => {
-    const attacker = mkPlayer(A, 500, 300, "heavy", {
-      aimX: 900, aimY: 300,
-      cards: ["retort"],
-      retortBank: 20,
-      retortBankUntilTick: Tick(600),
-    });
-    const victim = mkPlayer(B, 560, 300, "balanced");
-    let state = mkState([attacker, victim]);
-    const runtime = createRuntime(flatMap);
-    let res = stepWithRuntime(
-      state, runtime,
-      inputsWith([attacker, victim], { [A as string]: frame(FIRE_BIT, 1, 900, 300) }), DT_MS,
-    );
-    state = res.state;
-    const HIT_TICKS = Math.ceil(200 / DT_MS) + 1 + Math.ceil(100 / DT_MS);
-    for (let i = 0; i < HIT_TICKS; i++) {
-      res = stepWithRuntime(state, runtime, inputsWith([attacker, victim], {}), DT_MS);
-      state = res.state;
-    }
-    const dealt = 100 - state.players[B]!.health;
-    // EDGE_DAMAGE (32, World.ts's own private constant — same literal-reuse
-    // precedent Unbroken Seal's own test above uses) + the spent bank (20).
-    expect(dealt).toBeCloseTo(32 + 20, 0);
-    expect(state.players[A]!.retortBank).toBe(0);
-    expect(state.players[A]!.retortBankUntilTick).toBeUndefined();
-  });
-});
-
-describe("Kindred catalog v1 fast-follow — Bastion (card-pool-v2.md #28, passive aura)", () => {
-  test("a self-equipped Bastion mitigates the wearer's own incoming damage (solo-safe, no teamId needed)", () => {
-    const dealtDamage = (wearing: boolean): number => {
-      const attacker = mkPlayer(A, 500, 300, "heavy", { aimX: 900, aimY: 300 });
-      const victim = mkPlayer(B, 560, 300, "balanced", { cards: wearing ? ["bastion"] : [] });
-      let state = mkState([attacker, victim]);
-      const runtime = createRuntime(flatMap);
-      let res = stepWithRuntime(
-        state, runtime,
-        inputsWith([attacker, victim], { [A as string]: frame(FIRE_BIT, 1, 900, 300) }), DT_MS,
-      );
-      state = res.state;
-    const HIT_TICKS = Math.ceil(200 / DT_MS) + 1 + Math.ceil(100 / DT_MS);
-    for (let i = 0; i < HIT_TICKS; i++) {
-        res = stepWithRuntime(state, runtime, inputsWith([attacker, victim], {}), DT_MS);
-        state = res.state;
-      }
-      return 100 - state.players[B]!.health;
-    };
-    const withBastion = dealtDamage(true);
-    const without = dealtDamage(false);
-    expect(withBastion).toBeLessThan(without);
-    expect(withBastion).toBeCloseTo(without * (1 - KIN_BASTION_SELF_DAMAGE_REDUCTION), 0);
-  });
-
-  test("an ALLY wearing Bastion within radius mitigates the victim's damage AND is fed Kindling — a non-ally at the same distance gets neither (cross-player Kindling grant is the post-loop `players[]` write, same shape applyTeamPeel already proves safe)", () => {
-    const run = (allySameTeam: boolean) => {
-      const attacker = mkPlayer(A, 500, 300, "heavy", { aimX: 900, aimY: 300, teamId: "blue" });
-      const victim = mkPlayer(B, 560, 300, "balanced", { teamId: "red" });
-      const bastionAlly = mkPlayer(C, 580, 300, "heavy", {
-        teamId: allySameTeam ? "red" : "blue",
-        cards: ["bastion"],
-        kindling: 0,
-      });
-      let state = mkState([attacker, victim, bastionAlly]);
-      const runtime = createRuntime(flatMap);
-      let res = stepWithRuntime(
-        state, runtime,
-        inputsWith([attacker, victim, bastionAlly], { [A as string]: frame(FIRE_BIT, 1, 900, 300) }), DT_MS,
-      );
-      state = res.state;
-    const HIT_TICKS = Math.ceil(200 / DT_MS) + 1 + Math.ceil(100 / DT_MS);
-    for (let i = 0; i < HIT_TICKS; i++) {
-        res = stepWithRuntime(state, runtime, inputsWith([attacker, victim, bastionAlly], {}), DT_MS);
-        state = res.state;
-      }
-      return {
-        damage: 100 - state.players[B]!.health,
-        allyKindling: state.players[C]!.kindling ?? 0,
-      };
-    };
-    const allied = run(true);
-    const enemy = run(false);
-    expect(allied.damage).toBeLessThan(enemy.damage);
-    expect(allied.damage).toBeCloseTo(enemy.damage * (1 - KIN_BASTION_ALLY_DAMAGE_REDUCTION), 0);
-    expect(allied.allyKindling).toBeGreaterThan(0);
-    expect(allied.allyKindling).toBeCloseTo(allied.damage * KIN_BASTION_KINDLING_FEED_RATE, 0);
-    expect(enemy.allyKindling).toBe(0);
-  });
-});
+// (Retort's own describe block — bank-on-block, spend-on-landed-edge —
+// and Bastion's own describe block — self/ally aura mitigation + Kindling
+// feed — used to live here. Cut entirely 2026-07-19 alongside the cards
+// themselves (card-pool-v2.md #27-28); see cards.ts's cut note above the
+// old crater/retort/bastion card definitions.)
 
 describe("Second Wind — Paladin classModifiers expression (card-pool-v2.md 'stomp-jump')", () => {
   test("a paladin's air jump (with the card equipped) deals ring damage to a nearby victim", () => {
