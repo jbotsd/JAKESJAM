@@ -94,11 +94,12 @@ const NINJA_ABILITY_IDS = [
 ] as const;
 
 // Commit-frame constants mirrored from World.ts, same precedent as
-// ninjaMelee.test.ts's own local copies (SLASH_WINDUP_MS=120,
-// SLASH_CONTACT_DELAY_MS=44, SLASH_ACTIVE_MS=90).
-const WINDUP_TICKS = Math.ceil(120 / DT_MS);
-const CONTACT_TICKS = Math.ceil(44 / DT_MS);
-const ACTIVE_TICKS = Math.ceil(90 / DT_MS);
+// ninjaMelee.test.ts's own local copies (SLASH_WINDUP_MS=60,
+// SLASH_CONTACT_DELAY_MS=22, SLASH_ACTIVE_MS=45 — halved 2026-07-20
+// alongside SLASH_DAMAGE, same DPS, twice the cadence).
+const WINDUP_TICKS = Math.ceil(60 / DT_MS);
+const CONTACT_TICKS = Math.ceil(22 / DT_MS);
+const ACTIVE_TICKS = Math.ceil(45 / DT_MS);
 
 const flatMap: MapDefinition = {
   id: "test",
@@ -404,10 +405,16 @@ describe("Interstice catalog v1 — representative sim effects", () => {
       DT_MS,
     );
     const after = stepIdle(s1.state, runtime, [attacker, lowHpVictim], WINDUP_TICKS + CONTACT_TICKS).state;
-    // A normal SLASH_DAMAGE (22) hit against 15 health still kills here —
-    // use a slightly higher starting health to actually distinguish
-    // "execute" from "would have died anyway".
-    expect(after.players[B]!.health).toBeLessThanOrEqual(0 + 1e-6);
+    // 2026-07-20: SLASH_DAMAGE dropped 22 -> 11 (balance pass — same DPS,
+    // twice the cadence). This test's title always claimed "survives," but
+    // the old 22 damage actually overkilled the 15-health threshold victim
+    // anyway (a known, previously-flagged imprecision — the old comment
+    // here said "use a slightly higher starting health to actually
+    // distinguish 'execute' from 'would have died anyway'"). 11 < 15 makes
+    // the title true for the first time: a normal hit genuinely doesn't
+    // execute-kill a threshold-health target absent the Undercut card.
+    expect(after.players[B]!.alive).toBe(true);
+    expect(after.players[B]!.health).toBe(NINJA_UNDERCUT_HEALTH_THRESHOLD - 11);
   });
 
   test("Edge Storm: the next wave-off-swing deals amplified damage", () => {
@@ -785,7 +792,7 @@ describe("Interstice catalog v1 — Paper Double (decoy entity)", () => {
     expect(doubles[0]!.health).toBe(NINJA_PAPER_DOUBLE_MAX_HEALTH - 12);
   });
 
-  test("melee lands on and can kill a decoy in one hit (>= 20 damage)", () => {
+  test("melee lands on and damages a decoy, but no longer one-shots it (2026-07-20: SLASH_DAMAGE 11 < 20)", () => {
     // A casts, decoy runs +x toward B. B (also ninja — this arc-hit-check
     // has no classId gate, but a swing needs the ninja melee FSM to reach
     // it at all) is positioned so the decoy enters B's slash arc well
@@ -811,7 +818,14 @@ describe("Interstice catalog v1 — Paper Double (decoy entity)", () => {
       DT_MS,
     );
     const after = stepIdle(s1.state, runtime, [caster, attacker], WINDUP_TICKS + ACTIVE_TICKS + 2).state;
-    expect(Object.keys(after.paperDoubles ?? {}).length).toBe(0); // popped — SLASH_DAMAGE (22) >= 20
+    // Pre-2026-07-20 this popped in one hit (SLASH_DAMAGE was 22 >= the
+    // decoy's doc-specified 20 max health, constants.ts's own "Lives 2.5s
+    // or 20 damage" — an independently-tuned number, not intentionally
+    // paired with ninja's own slash damage, so it wasn't touched by the
+    // balance pass). Now SLASH_DAMAGE is 11 < 20 — damaged, not killed.
+    const doubles = Object.values(after.paperDoubles ?? {});
+    expect(doubles.length).toBe(1);
+    expect(doubles[0]!.health).toBe(NINJA_PAPER_DOUBLE_MAX_HEALTH - 11);
   });
 
   test("a decoy's death (lethal projectile fire) bursts AOE damage on a nearby bystander, without hitting whoever's far off the shot's own path", () => {

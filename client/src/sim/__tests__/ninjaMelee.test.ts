@@ -127,13 +127,15 @@ function stepIdle(
   return s;
 }
 
-// Commit-frame constants mirrored from World.ts (SLASH_WINDUP_MS=120,
-// SLASH_CONTACT_DELAY_MS=44, SLASH_ACTIVE_MS=90, SLASH_RECOVERY_MS=220) — kept local so a change to
-// the real constants fails this test loudly instead of silently drifting.
-const WINDUP_TICKS = Math.ceil(120 / DT_MS);
-const CONTACT_TICKS = Math.ceil(44 / DT_MS);
-const ACTIVE_TICKS = Math.ceil(90 / DT_MS);
-const RECOVERY_TICKS = Math.ceil(220 / DT_MS);
+// Commit-frame constants mirrored from World.ts (SLASH_WINDUP_MS=60,
+// SLASH_CONTACT_DELAY_MS=22, SLASH_ACTIVE_MS=45, SLASH_RECOVERY_MS=110 — halved
+// 2026-07-20 alongside SLASH_DAMAGE, same DPS, twice the cadence) — kept
+// local so a change to the real constants fails this test loudly instead
+// of silently drifting.
+const WINDUP_TICKS = Math.ceil(60 / DT_MS);
+const CONTACT_TICKS = Math.ceil(22 / DT_MS);
+const ACTIVE_TICKS = Math.ceil(45 / DT_MS);
+const RECOVERY_TICKS = Math.ceil(110 / DT_MS);
 
 describe("ninja melee — classId gating (zero behavior change for other chassis)", () => {
   test("a non-ninja (balanced) pressing Fire still fires stepWeapon, not a slash", () => {

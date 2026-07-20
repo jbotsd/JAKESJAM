@@ -4,7 +4,14 @@
 // input-lock) says anticipation should read as almost-already-cut, not a
 // telegraphed wind-up. Kindled is the deliberate opposite — a heavier,
 // ground-loaded commit — and keeps its wider sentence.
-export const BLADE_SWING_MS = 240;
+// BLADE_SWING_MS halved 2026-07-20 (was 240) alongside the sim's own
+// SLASH_WINDUP_MS/SLASH_ACTIVE_MS/SLASH_RECOVERY_MS halving (World.ts) —
+// same DPS, twice the swing cadence. Without this, the visual swing pose
+// would still play at the old (now stale) duration while the sim already
+// allows the next swing input twice as soon, reading as desynced/laggy.
+// EDGE_SWING_MS (Kindled) is untouched — that chassis's own timing wasn't
+// part of this balance pass.
+export const BLADE_SWING_MS = 120;
 export const EDGE_SWING_MS = 560;
 
 /** Blade-construct geometry (reach/sweep) for the LIVE swing render — same

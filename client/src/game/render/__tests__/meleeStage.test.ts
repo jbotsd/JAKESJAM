@@ -76,7 +76,10 @@ describe("melee attack rhythm", () => {
       expect(speedAt(contact)).toBeGreaterThan(speedAt(contact - 0.06));
       expect(speedAt(contact)).toBeGreaterThan(speedAt(contact + 0.06));
 
-      const expectedMs = style === "interstice" ? 80 : 300;
+      // interstice: 80 -> 40 (2026-07-20, BLADE_SWING_MS halved 240->120
+      // alongside the sim's SLASH_* commit-frame halving — same contact
+      // fraction, half the absolute ms since the whole swing is shorter).
+      const expectedMs = style === "interstice" ? 40 : 300;
       expect(contact * duration).toBeCloseTo(expectedMs, 0);
     }
   });

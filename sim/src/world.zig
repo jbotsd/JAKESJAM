@@ -570,13 +570,16 @@ pub fn resolveInstantAoeCasts(
 // mid-loop, inline" pattern today, safely.
 const SLASH_RANGE: f64 = 78.0;
 const SLASH_ARC_RADIANS: f64 = (5.0 * std.math.pi) / 9.0;
-const SLASH_DAMAGE: f64 = 22.0;
+// 2026-07-20 balance pass ("hits faster, same DPS"): damage + the three
+// commit-frame timings below scaled by a uniform 0.5x together (22->11,
+// 430ms->215ms cycle) — bit-exact mirror of World.ts's own comment/math.
+const SLASH_DAMAGE: f64 = 11.0;
 const SLASH_KNOCKBACK: f64 = 260.0;
 const SLASH_KNOCK_UP: f64 = 60.0;
-const SLASH_WINDUP_MS: f64 = 120.0;
-const SLASH_ACTIVE_MS: f64 = 90.0;
-const SLASH_RECOVERY_MS: f64 = 220.0;
-const SLASH_CONTACT_DELAY_MS: f64 = 44.0;
+const SLASH_WINDUP_MS: f64 = 60.0;
+const SLASH_ACTIVE_MS: f64 = 45.0;
+const SLASH_RECOVERY_MS: f64 = 110.0;
+const SLASH_CONTACT_DELAY_MS: f64 = 22.0;
 
 const EDGE_RANGE: f64 = 84.0;
 const EDGE_ARC_RADIANS: f64 = (7.0 * std.math.pi) / 18.0;

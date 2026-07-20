@@ -533,11 +533,21 @@ const SLASH_RANGE = 78;
  *  guard. 100° = (5π)/9. */
 const SLASH_ARC_RADIANS = (5 * Math.PI) / 9;
 /** A landed arc hit. Lower than BASH_DAMAGE (34) because the swing cadence
- *  (~2.3/s, see the commit-frame constants below) is far higher than a
+ *  (~4.65/s, see the commit-frame constants below) is far higher than a
  *  dash-bash's (~0.33/s, gated by DASH_COOLDOWN_MS=3000) — per-hit damage is
  *  tuned down so sustained arc DPS (~51) lands in the same neighbourhood as
- *  bash's burst, not multiplies it. */
-const SLASH_DAMAGE = 22;
+ *  bash's burst, not multiplies it.
+ *  2026-07-20 balance pass ("hits faster, same DPS, make it elegant"): the
+ *  whole commit-frame trio below was scaled by a uniform 0.5x alongside
+ *  this damage halving (22->11) — same DPS (~51, unchanged, that's the
+ *  point), same internal windup:active:recovery shape, just delivered in
+ *  half-sized, twice-as-frequent hits. One scale factor, applied to every
+ *  timing AND damage number together, so DPS-neutrality falls out of the
+ *  arithmetic instead of needing a separate re-tune-and-check pass. The
+ *  render-side BLADE_SWING_MS (meleeTiming.ts) and NINJA_PAPER_DOUBLE_MAX_HEALTH
+ *  (constants.ts, "pops in exactly one slash") were scaled the same way to
+ *  keep the visual and the paper-double invariant in lockstep. */
+const SLASH_DAMAGE = 11;
 /** Gentle shove + pop on a landed arc hit — "hit-stop + scrape... victim
  *  micro-knock" (character-sheets-v1.md), NOT a heavy bash-style launch. */
 const SLASH_KNOCKBACK = 260;
@@ -546,16 +556,18 @@ const SLASH_KNOCK_UP = 60;
 // Commit-frame structure (ms). "Commit frames you can feel" / "no free
 // cast" — recovery IS the re-swing gate; there is no additional ability-
 // style cooldown layered on top (this is the always-on chassis verb, not a
-// card-gated active). Total cycle 430ms (~2.3 swings/sec cap) sits close to
-// dash's own ~410ms burst+recovery rhythm (DASH_DURATION_MS 210 +
-// DASH_RECOVERY_MS 200) — the whole kit reads at one cadence.
-const SLASH_WINDUP_MS = 120; // the readable tell before the arc goes live
-const SLASH_ACTIVE_MS = 90; // contact-gated hit checks, then a late-entry tail
-const SLASH_RECOVERY_MS = 220; // endlag; whiffing costs
-/** Renderer contact is t=.456 of its 360ms sentence = 164ms. Relative to
- * the 120ms authoritative windup, the blade crosses the aim radius 44ms
- * into active. Do not damage during the overhead coil before this gate. */
-const SLASH_CONTACT_DELAY_MS = 44;
+// card-gated active). Total cycle 215ms (~4.65 swings/sec cap) — halved
+// 2026-07-20 (was 430ms/~2.3/s) alongside SLASH_DAMAGE so DPS holds exactly
+// (11 / 0.215s == 22 / 0.430s); no longer tracks dash's ~410ms rhythm,
+// that coincidence wasn't load-bearing.
+const SLASH_WINDUP_MS = 60; // the readable tell before the arc goes live
+const SLASH_ACTIVE_MS = 45; // contact-gated hit checks, then a late-entry tail
+const SLASH_RECOVERY_MS = 110; // endlag; whiffing costs
+/** Same fraction of SLASH_ACTIVE_MS as before the 2026-07-20 halving
+ * (44/90 ~= 22/45) — the blade still crosses the aim radius at the same
+ * relative point in the swing, just sooner in absolute ms. Do not damage
+ * during the overhead coil before this gate. */
+const SLASH_CONTACT_DELAY_MS = 22;
 
 // Wave-off-swing (spawned via the existing spawnProjectile machinery so
 // element/impact card modifiers compose onto it for free later — no
