@@ -568,28 +568,36 @@ pub fn resolveInstantAoeCasts(
 // write. Section 4's own projectile-vs-player loop is the closest existing
 // precedent: it already does exactly this "read attacker, write victim,
 // mid-loop, inline" pattern today, safely.
-const SLASH_RANGE: f64 = 78.0;
-const SLASH_ARC_RADIANS: f64 = (5.0 * std.math.pi) / 9.0;
+// pub (2026-07-20, Phase 5 test-fragility fix): these were plain `const`
+// (module-private) until smoke.zig's melee tests broke against this exact
+// file's own same-day balance pass (damage+timing halved together) —
+// the tests hardcoded literal expected values (`78.0` meaning `100 -
+// SLASH_DAMAGE`'s OLD 22) instead of referencing the constant, so a
+// legitimate tuning change silently desynced them. Exported so
+// smoke.zig can assert against `root.world.SLASH_DAMAGE` etc. directly —
+// robust to future tuning by construction, not by manual test upkeep.
+pub const SLASH_RANGE: f64 = 78.0;
+pub const SLASH_ARC_RADIANS: f64 = (5.0 * std.math.pi) / 9.0;
 // 2026-07-20 balance pass ("hits faster, same DPS"): damage + the three
 // commit-frame timings below scaled by a uniform 0.5x together (22->11,
 // 430ms->215ms cycle) — bit-exact mirror of World.ts's own comment/math.
-const SLASH_DAMAGE: f64 = 11.0;
-const SLASH_KNOCKBACK: f64 = 260.0;
-const SLASH_KNOCK_UP: f64 = 60.0;
-const SLASH_WINDUP_MS: f64 = 60.0;
-const SLASH_ACTIVE_MS: f64 = 45.0;
-const SLASH_RECOVERY_MS: f64 = 110.0;
-const SLASH_CONTACT_DELAY_MS: f64 = 22.0;
+pub const SLASH_DAMAGE: f64 = 11.0;
+pub const SLASH_KNOCKBACK: f64 = 260.0;
+pub const SLASH_KNOCK_UP: f64 = 60.0;
+pub const SLASH_WINDUP_MS: f64 = 60.0;
+pub const SLASH_ACTIVE_MS: f64 = 45.0;
+pub const SLASH_RECOVERY_MS: f64 = 110.0;
+pub const SLASH_CONTACT_DELAY_MS: f64 = 22.0;
 
-const EDGE_RANGE: f64 = 84.0;
-const EDGE_ARC_RADIANS: f64 = (7.0 * std.math.pi) / 18.0;
-const EDGE_DAMAGE: f64 = 32.0;
-const EDGE_KNOCKBACK: f64 = 420.0;
-const EDGE_KNOCK_UP: f64 = 110.0;
-const EDGE_WINDUP_MS: f64 = 200.0;
-const EDGE_ACTIVE_MS: f64 = 110.0;
-const EDGE_RECOVERY_MS: f64 = 340.0;
-const EDGE_CONTACT_DELAY_MS: f64 = 100.0;
+pub const EDGE_RANGE: f64 = 84.0;
+pub const EDGE_ARC_RADIANS: f64 = (7.0 * std.math.pi) / 18.0;
+pub const EDGE_DAMAGE: f64 = 32.0;
+pub const EDGE_KNOCKBACK: f64 = 420.0;
+pub const EDGE_KNOCK_UP: f64 = 110.0;
+pub const EDGE_WINDUP_MS: f64 = 200.0;
+pub const EDGE_ACTIVE_MS: f64 = 110.0;
+pub const EDGE_RECOVERY_MS: f64 = 340.0;
+pub const EDGE_CONTACT_DELAY_MS: f64 = 100.0;
 
 // ── Ability-cast dispatch (Phase 1, docs/zig-step-world-parity-goal.md
 //    "the next unblock") — constants for the 6 melee-hook abilities wired
@@ -600,7 +608,7 @@ const EDGE_CONTACT_DELAY_MS: f64 = 100.0;
 const NINJA_UNDERCUT_HEALTH_THRESHOLD: f64 = 15.0;
 // Ninja — Read Mark (constants.ts:1058-1059).
 const NINJA_READ_MARK_RANGE_PX: f64 = 340.0;
-const NINJA_READ_MARK_AMP_MULTIPLIER: f64 = 1.28;
+pub const NINJA_READ_MARK_AMP_MULTIPLIER: f64 = 1.28;
 // Ninja — Second Wind (constants.ts:1091-1092) + the baseline per-hit
 // energy grant it tops up (World.ts:576/582 NINJA_ENERGY_MAX/
 // NINJA_ENERGY_ON_MELEE_HIT — see this pass's own report for why the

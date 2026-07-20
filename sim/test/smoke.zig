@@ -749,33 +749,33 @@ test "melee: ninja slash hits an in-arc in-range victim for SLASH_DAMAGE with kn
     state.players[1].x = 50; // within SLASH_RANGE (78), dead ahead (angle 0)
     state.players[1].y = 0;
 
-    // Tick 1: Fire rising edge -> windup starts (phaseMs = 120).
+    // Tick 1: Fire rising edge -> windup starts (phaseMs = SLASH_WINDUP_MS).
     _ = root.world.stepWorld(&state, 1.0);
     try std.testing.expectEqual(@as(f64, 100.0), state.players[1].health);
 
-    // Tick 2: dt = 120 exactly closes windup -> active starts this same
-    // tick (phaseMs = 90, elapsed = 0) — too early for contact.
-    _ = root.world.stepWorld(&state, 120.0);
+    // Tick 2: dt = SLASH_WINDUP_MS exactly closes windup -> active starts
+    // this same tick (phaseMs = SLASH_ACTIVE_MS, elapsed = 0) — too early
+    // for contact.
+    _ = root.world.stepWorld(&state, root.world.SLASH_WINDUP_MS);
     try std.testing.expectEqual(@as(f64, 100.0), state.players[1].health);
 
-    // Tick 3: dt = 44 (== SLASH_CONTACT_DELAY_MS) — elapsed hits exactly
-    // 44, the contact gate opens, arc hit-check resolves this tick.
-    _ = root.world.stepWorld(&state, 44.0);
-    try std.testing.expectEqual(@as(f64, 78.0), state.players[1].health); // 100 - 22
+    // Tick 3: dt = SLASH_CONTACT_DELAY_MS — elapsed hits exactly that, the
+    // contact gate opens, arc hit-check resolves this tick.
+    _ = root.world.stepWorld(&state, root.world.SLASH_CONTACT_DELAY_MS);
+    try std.testing.expectEqual(@as(f64, 100.0 - root.world.SLASH_DAMAGE), state.players[1].health);
     // Tolerance is looser than the other float checks in this file: the
     // swing direction is captured from `attacker.aimX - attacker.x` at the
     // START of windup (tick 1), AFTER that same tick's physics pass has
     // already nudged the attacker's y down a hair under gravity — a real,
     // tiny, expected deviation from a perfect (1, 0) unit vector, not a
     // bug in the melee code itself.
-    try std.testing.expect(@abs(state.players[1].vx - 260.0) < 0.01); // aimX(~1) * SLASH_KNOCKBACK
-    try std.testing.expect(@abs(state.players[1].vy - (-60.0)) < 0.01); // aimY(~0)*KB - SLASH_KNOCK_UP
+    try std.testing.expect(@abs(state.players[1].vx - root.world.SLASH_KNOCKBACK) < 0.01); // aimX(~1) * SLASH_KNOCKBACK
+    try std.testing.expect(@abs(state.players[1].vy - (-root.world.SLASH_KNOCK_UP)) < 0.01); // aimY(~0)*KB - SLASH_KNOCK_UP
 
-    // Tick 4: still inside the active window (46ms of phaseMs left) and
-    // still contact-gated — but the victim is already in hitThisSwing, so
-    // no second hit lands.
+    // Tick 4: still inside the active window and still contact-gated — but
+    // the victim is already in hitThisSwing, so no second hit lands.
     _ = root.world.stepWorld(&state, 1.0);
-    try std.testing.expectEqual(@as(f64, 78.0), state.players[1].health);
+    try std.testing.expectEqual(@as(f64, 100.0 - root.world.SLASH_DAMAGE), state.players[1].health);
 }
 
 test "melee: arc gate — a victim outside the cone at the same range is missed; range gate — a victim dead-ahead but beyond SLASH_RANGE is missed" {
@@ -822,16 +822,16 @@ test "melee: contact-delay gate — no damage while active but before SLASH_CONT
     state.players[1].y = 0;
 
     _ = root.world.stepWorld(&state, 1.0); // windup starts
-    _ = root.world.stepWorld(&state, 120.0); // active starts, elapsed = 0
+    _ = root.world.stepWorld(&state, root.world.SLASH_WINDUP_MS); // active starts, elapsed = 0
 
-    // dt = 43 (one short of SLASH_CONTACT_DELAY_MS = 44) — active, in the
-    // cone, but still pre-contact: must not damage.
-    _ = root.world.stepWorld(&state, 43.0);
+    // dt = one short of SLASH_CONTACT_DELAY_MS — active, in the cone, but
+    // still pre-contact: must not damage.
+    _ = root.world.stepWorld(&state, root.world.SLASH_CONTACT_DELAY_MS - 1.0);
     try std.testing.expectEqual(@as(f64, 100.0), state.players[1].health);
 
-    // One more ms crosses the 44ms gate exactly — now it connects.
+    // One more ms crosses the gate exactly — now it connects.
     _ = root.world.stepWorld(&state, 1.0);
-    try std.testing.expectEqual(@as(f64, 78.0), state.players[1].health);
+    try std.testing.expectEqual(@as(f64, 100.0 - root.world.SLASH_DAMAGE), state.players[1].health);
 }
 
 test "melee: re-trigger is only accepted from idle — releasing and re-pressing Fire mid-windup does not restart the swing timer" {
@@ -855,18 +855,19 @@ test "melee: re-trigger is only accepted from idle — releasing and re-pressing
     state.players[0].current_keys = FIRE_BIT; // tick 1: rising edge
     _ = root.world.stepWorld(&state, 1.0);
     try std.testing.expectEqual(root.world_state.MeleeSwingPhase.windup, state.melee_swing[0].phase);
-    try std.testing.expectEqual(@as(f64, 120.0), state.melee_swing[0].phase_ms);
+    try std.testing.expectEqual(root.world.SLASH_WINDUP_MS, state.melee_swing[0].phase_ms);
 
     state.players[0].current_keys = 0; // release
     _ = root.world.stepWorld(&state, 1.0);
-    try std.testing.expectEqual(@as(f64, 119.0), state.melee_swing[0].phase_ms);
+    try std.testing.expectEqual(root.world.SLASH_WINDUP_MS - 1.0, state.melee_swing[0].phase_ms);
 
-    // Rising edge again, mid-windup: must NOT reset phase_ms back to 120 —
-    // only an idle-phase rising edge starts a fresh swing.
+    // Rising edge again, mid-windup: must NOT reset phase_ms back to the
+    // full windup value — only an idle-phase rising edge starts a fresh
+    // swing.
     state.players[0].current_keys = FIRE_BIT;
     _ = root.world.stepWorld(&state, 1.0);
     try std.testing.expectEqual(root.world_state.MeleeSwingPhase.windup, state.melee_swing[0].phase);
-    try std.testing.expectEqual(@as(f64, 118.0), state.melee_swing[0].phase_ms);
+    try std.testing.expectEqual(root.world.SLASH_WINDUP_MS - 2.0, state.melee_swing[0].phase_ms);
 }
 
 test "melee: shield fully blocks a landed hit — zero damage, charge drains by this tick's hold-drain plus the hit drain, knockback still applies" {
@@ -889,10 +890,10 @@ test "melee: shield fully blocks a landed hit — zero damage, charge drains by 
     state.players[1].current_keys = SHIELD_BIT; // held every tick, or tickShield drops shield_active
 
     _ = root.world.stepWorld(&state, 1.0); // windup starts
-    _ = root.world.stepWorld(&state, 120.0); // active starts
+    _ = root.world.stepWorld(&state, root.world.SLASH_WINDUP_MS); // active starts
 
-    // Contact tick: dt = 44.
-    _ = root.world.stepWorld(&state, 44.0);
+    // Contact tick.
+    _ = root.world.stepWorld(&state, root.world.SLASH_CONTACT_DELAY_MS);
 
     // Fully blocked: zero damage, still alive.
     try std.testing.expectEqual(@as(f64, 100.0), state.players[1].health);
@@ -900,17 +901,19 @@ test "melee: shield fully blocks a landed hit — zero damage, charge drains by 
     // `post` gets the knockback velocity unconditionally unless evaded).
     // Tolerance loosened same as the hit test above — the captured swing
     // direction picks up a hair of gravity drift from windup's own tick.
-    try std.testing.expect(@abs(state.players[1].vx - 260.0) < 0.01);
-    try std.testing.expect(@abs(state.players[1].vy - (-60.0)) < 0.01);
+    try std.testing.expect(@abs(state.players[1].vx - root.world.SLASH_KNOCKBACK) < 0.01);
+    try std.testing.expect(@abs(state.players[1].vy - (-root.world.SLASH_KNOCK_UP)) < 0.01);
 
     // Charge drained by tickShield's OWN hold-drain across all 3 ticks this
-    // test held Shield (dt = 1 + 120 + 44 = 165ms total — section 6 runs
-    // every tick regardless of swing phase) plus the melee hit's own
-    // SHIELD_HIT_DRAIN_MULTIPLIER-scaled drain on the contact tick — same
-    // accounting shape as the instant-AOE shield test above, just summed
-    // over more ticks since this test's swing takes 3 to reach contact.
-    const tick_shield_drain = root.combat.shieldDrain(root.combat.SHIELD_DRAIN_PER_SECOND, 1.0 + 120.0 + 44.0);
-    const hit_drain = 22.0 * root.combat.SHIELD_HIT_DRAIN_MULTIPLIER;
+    // test held Shield (dt = 1 + SLASH_WINDUP_MS + SLASH_CONTACT_DELAY_MS
+    // total — section 6 runs every tick regardless of swing phase) plus
+    // the melee hit's own SHIELD_HIT_DRAIN_MULTIPLIER-scaled drain on the
+    // contact tick — same accounting shape as the instant-AOE shield test
+    // above, just summed over more ticks since this test's swing takes 3
+    // to reach contact.
+    const total_dt = 1.0 + root.world.SLASH_WINDUP_MS + root.world.SLASH_CONTACT_DELAY_MS;
+    const tick_shield_drain = root.combat.shieldDrain(root.combat.SHIELD_DRAIN_PER_SECOND, total_dt);
+    const hit_drain = root.world.SLASH_DAMAGE * root.combat.SHIELD_HIT_DRAIN_MULTIPLIER;
     const expected = 50.0 - tick_shield_drain - hit_drain;
     try std.testing.expect(@abs(state.players[1].shield_charge - expected) < 1e-6);
     try std.testing.expect(state.players[1].flags.shield_active); // charge survives, not popped
@@ -938,11 +941,11 @@ test "melee: an active timed parry does NOT block a melee hit — exact TS parit
     state.players[1].parry_facing = std.math.pi; // facing -X, toward the attacker at x=0
 
     _ = root.world.stepWorld(&state, 1.0); // windup
-    _ = root.world.stepWorld(&state, 120.0); // active starts
-    _ = root.world.stepWorld(&state, 44.0); // contact tick
+    _ = root.world.stepWorld(&state, root.world.SLASH_WINDUP_MS); // active starts
+    _ = root.world.stepWorld(&state, root.world.SLASH_CONTACT_DELAY_MS); // contact tick
 
     // Full, unmitigated damage — the parry never even gets checked.
-    try std.testing.expectEqual(@as(f64, 78.0), state.players[1].health);
+    try std.testing.expectEqual(@as(f64, 100.0 - root.world.SLASH_DAMAGE), state.players[1].health);
 }
 
 test "melee: paladin kindled edge lands its own EDGE_DAMAGE/EDGE_RANGE/EDGE_* timing — distinct numbers from ninja slash, not a copy-paste reuse" {
@@ -1226,6 +1229,20 @@ test "ability dispatch: Read Mark (Ninja) — marks the NEAREST enemy within ran
     state.players[0].aim_y = 0;
     setPlayerId(&state.players[0], "attacker");
     equipSlot(&state, 0, 0, .read_mark); // range 340px, no cone
+    // Suppress the base starter-pistol auto-fire (weapon.zig's
+    // weaponTickFire: fires on ANY tick FIRE_BIT is held once cooldown
+    // hits 0, independent of class/melee — every player falls back to it
+    // when player_fire_config[i].valid is unset, which it is here). The
+    // sibling "melee: ninja slash hits" test never notices this because it
+    // never calls setPlayerId — both players default to empty id_bytes, so
+    // the pistol shard's owner-skip check (id_len==0 == id_len==0, vacuous
+    // std.mem.eql on two empty slices) silently treats the victim as the
+    // shooter and skips it. This test DOES set real ids (needed for the
+    // mark-matching check below), which un-hides that same pistol shot —
+    // it lands its own 12.0 dmg mid-test, well before the amp assertion.
+    // Pinning the cooldown keeps this test isolated to melee, same as the
+    // sibling test achieves by accident.
+    state.players[0].fire_cooldown_ms = 999.0;
 
     // Nearest — inside Read Mark's range AND inside the slash arc/range
     // (this is the one that actually gets hit).
@@ -1252,12 +1269,13 @@ test "ability dispatch: Read Mark (Ninja) — marks the NEAREST enemy within ran
     // Now swing at "nearest" — the amp should land on it.
     state.players[0].current_keys = FIRE_BIT;
     _ = root.world.stepWorld(&state, 1.0); // windup starts
-    _ = root.world.stepWorld(&state, 120.0); // active starts
-    _ = root.world.stepWorld(&state, 44.0); // contact tick
+    _ = root.world.stepWorld(&state, root.world.SLASH_WINDUP_MS); // active starts
+    _ = root.world.stepWorld(&state, root.world.SLASH_CONTACT_DELAY_MS); // contact tick
 
-    // 100 - (22 * 1.28) == 71.84 — proves the amp actually applied (a plain
-    // unamplified hit would leave 78.0, the base melee test's own number).
-    try std.testing.expect(@abs(state.players[1].health - 71.84) < 1e-9);
+    // Proves the amp actually applied (a plain unamplified hit would leave
+    // 100 - SLASH_DAMAGE, the base melee test's own number).
+    const expected_amped = 100.0 - (root.world.SLASH_DAMAGE * root.world.NINJA_READ_MARK_AMP_MULTIPLIER);
+    try std.testing.expect(@abs(state.players[1].health - expected_amped) < 1e-9);
     try std.testing.expectEqual(@as(f64, 100.0), state.players[2].health); // never in slash range
 }
 
