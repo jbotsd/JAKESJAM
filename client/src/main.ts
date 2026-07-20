@@ -1255,10 +1255,17 @@ const menuMusic = new Audio(getAudioUrl("jakes-jam-theme.mp3"));
 menuMusic.loop = true;
 menuMusic.preload = "auto";
 
-// In-world / match soundtrack — the three "bassradian" epic loops, cycled for
-// variety (advance on `ended`, wrap around) so a long session doesn't hear the
-// same 2 minutes on repeat.
-const WORLD_MUSIC_TRACKS = ["epic-loop-1.mp3", "epic-loop-2.mp3", "epic-loop-3.mp3"] as const;
+// In-world / match soundtrack — cycled for variety (advance on `ended`, wrap
+// around) so a long session doesn't hear the same 2 minutes on repeat.
+// epic-loop-3 retired 2026-07-20; all three "Juh-Roh" (Suno, bassradian)
+// takes follow it, in download order, with the "jazzy" take last.
+const WORLD_MUSIC_TRACKS = [
+  "epic-loop-1.mp3",
+  "epic-loop-2.mp3",
+  "juh-roh-1.mp3",
+  "juh-roh-2.mp3",
+  "juh-roh-jazzy.mp3",
+] as const;
 let worldTrackIdx = 0;
 const worldMusic = new Audio(getAudioUrl(WORLD_MUSIC_TRACKS[0]));
 // Venue lobby music — "A Table Set" (Jake, 2026-07-16; venue-sprint2-goal
@@ -1938,9 +1945,10 @@ window.addEventListener(ShellEvents.CLIP_UPLOADED, () => {
 // No-op if already playing or muted.
 function armSoundtrackOnFirstGesture(): void {
   const start = () => {
-    // The email gate is skipped entirely for ?world=1 (see emailGate.ts
-    // shouldSkip), so this only ever holds back the primary menu path —
-    // clicking/typing in the email form must not start the soundtrack.
+    // ?world=1 no longer skips the email gate (2026-07-20, emailGate.ts
+    // shouldSkip) — this live re-check now correctly holds back the
+    // soundtrack for a ?world=1 visitor too, same as the primary menu
+    // path: clicking/typing in the email form must not start the song.
     if (isEmailGateOpen()) return;
     // Play whichever track the current context wants — a bare `?world=1`
     // auto-join has already flipped the context to "world" by now.
