@@ -744,6 +744,22 @@ pub const PlayerEntity = extern struct {
     /// `stepMeleeSwing`, section 4's projectile-hit loop, and
     /// `resolveInstantAoeCasts` — see each site's own doc comment.
     ghost_guard_charge_until_tick: u32 = 0,
+
+    /// Razor Route (Ninja, this pass — docs/zig-step-world-parity-goal.md,
+    /// deferred in Phase 4c, corrected finding this pass: the earlier
+    /// deferral's "needs the dash-through body-cross substrate... that's
+    /// real, separate, melee-hook-shaped work" reasoning held at the time,
+    /// but the substrate itself turns out cheap once actually
+    /// investigated — see world.zig section 8's own dash-through detection
+    /// block for the full citation). Cast opens this window; consumed by
+    /// the NEXT dash's rising edge (`state.player_movement[i].
+    /// dash_active_ms > 0.0`, which IS the derived Zig equivalent of TS's
+    /// `attacker.dashing === true` — player.zig's own dash-timer memory
+    /// already tracks exactly this, just not as a wire-visible
+    /// PlayerEntity boolean). Mirrors TS `PlayerEntity.razorRouteUntilTick`
+    /// (types.ts:585). Plain `u32` tick, 0 = inactive, same convention as
+    /// every sibling window field on this struct.
+    razor_route_until_tick: u32 = 0,
 };
 
 /// Mirrors `ProjectileEntity`.
@@ -1079,6 +1095,39 @@ pub const MeleeSwingMemory = extern struct {
     hit_this_swing_mask: u16 = 0,
     phase: MeleeSwingPhase = .idle,
     _pad: u8 = 0,
+
+    /// Razor Route substrate (this pass, docs/zig-step-world-parity-
+    /// goal.md) — dash-through body-cross detection, the Zig mirror of
+    /// NinjaMeleeMemory's own `dashThroughTagged`/`wasDashing`/
+    /// `razorRouteActiveDash` fields (World.ts:403-419), which this
+    /// struct's own header comment previously said were deliberately NOT
+    /// carried (true when this comment was written — Zig had no melee
+    /// mechanic to hang dash-through off yet; ninja melee/dash-through are
+    /// independent verbs sharing this per-player memory slot only because
+    /// a player is exactly one chassis at a time, same reasoning the
+    /// header comment already gives for the swing-FSM fields above).
+    /// Consumed/written in world.zig section 8's own dash-through
+    /// detection block (right after Wall Bloom/Shock Ring's landing
+    /// hooks), not `stepMeleeSwing` — a DIFFERENT per-tick pass than the
+    /// swing-FSM fields above, despite sharing this struct.
+    /// Victim bitmask already dash-through-tagged during the CURRENT dash
+    /// burst — mirrors `hit_this_swing_mask`'s own "one bit per player
+    /// index" shape, cleared on the burst's rising edge so a body-cross
+    /// fires once per dash per victim, not once per tick of overlap.
+    dash_through_tagged_mask: u16 = 0,
+    /// Last tick's `dash_active_ms > 0.0`, to detect the dash burst's
+    /// rising edge (for clearing `dash_through_tagged_mask`) without
+    /// re-deriving ms-precision timer state. Mirrors NinjaMeleeMemory.
+    /// wasDashing.
+    was_dashing: bool = false,
+    /// True for the duration of the CURRENT dash burst if
+    /// `razor_route_until_tick` was live the moment this burst started —
+    /// the velocity boost + "marks Read on cross" both key off this, not
+    /// off `razor_route_until_tick` itself (cleared at burst-start).
+    /// Reset false the moment the burst ends OR the first victim is
+    /// Read-tagged ("one body, one lie"). Mirrors NinjaMeleeMemory.
+    /// razorRouteActiveDash.
+    razor_route_active_dash: bool = false,
 };
 
 /// Resolved per-player fire config — what `step_world` reads
@@ -1350,6 +1399,15 @@ pub const SimEventKind = enum(u32) {
     /// Mirrors TS's `draft-resolved` event (`{playerId, cardId,
     /// autoPicked}`).
     draft_resolved = 14,
+    /// Ninja dash burst body-crossed another player (world.zig section 8's
+    /// dash-through detection block, this pass — docs/zig-step-world-
+    /// parity-goal.md, Razor Route substrate). player_idx_a = the dashing
+    /// player, player_idx_b = the crossed victim. Mirrors TS's
+    /// "dash-through" event ({attackerId, victimId}). Not yet bridged to a
+    /// TS-side decoder (this session's scope is sim/ only, client/ is
+    /// owned by a concurrent session) — same KNOWN GAP shape as every
+    /// PLAYER_ENTITY_SIZE staleness note in this file.
+    dash_through = 15,
 };
 
 pub const SimEvent = extern struct {
@@ -1732,7 +1790,22 @@ comptime {
     // note above already follows. No wasm-bridge follow-up needed for this
     // field specifically (struct size is unchanged), unlike every KNOWN
     // GAP noted above.
-    std.debug.assert(@sizeOf(PlayerEntity) == 616);
+    // 616 → 624 (this pass, Razor Route): +4 content bytes for
+    // `razor_route_until_tick` (u32), landing at [616, 620) (616 is already
+    // 4-byte-aligned — no leading gap needed), plus 4 bytes of implicit
+    // tail padding to reach 624 (78×8) — this field pair has no sibling pad
+    // left to reclaim this time (Ghost Guard's own cut immediately above
+    // already consumed the last one). Verified via a temporary
+    // `@compileLog(@sizeOf(PlayerEntity))` before locking this assert
+    // (confirmed 624), same "don't trust hand math alone" discipline every
+    // growth-history note above already follows. KNOWN GAP, same shape as
+    // every note above: worldStateBridge.ts's PLAYER_ENTITY_SIZE is
+    // untouched by this Zig-only pass (this session's scope is sim/ only,
+    // client/ is owned by a concurrent session) — Zig-internal tests read
+    // @sizeOf(PlayerEntity) directly and are unaffected; a future pass with
+    // client/ in scope needs to bump PLAYER_ENTITY_SIZE 616 → 624 and
+    // worldStateLayout.test.ts's matching literal.
+    std.debug.assert(@sizeOf(PlayerEntity) == 624);
     // EquippedActives (Phase 1): [3]u8 = 3 bytes, no padding (u8 array
     // needs no alignment beyond 1). Doesn't cross the wasm ABI today (see
     // its own doc comment) — pure internal regression-catching, same role
@@ -1781,6 +1854,15 @@ comptime {
     // padding). Doesn't cross the wasm ABI (host-only, see its own doc
     // comment) so this assert is pure internal regression-catching, same
     // role PlayerMovementMemory's assert plays.
+    // 32 → 32 (this pass, Razor Route substrate): +2 content bytes for
+    // dash_through_tagged_mask (u16, lands right after the existing _pad
+    // at offset 28, no leading gap needed) + 1 (was_dashing bool) + 1
+    // (razor_route_active_dash bool) = 4 bytes total, landing EXACTLY in
+    // the 4 bytes of implicit tail padding the struct already had — net
+    // growth is ZERO, same "reclaim the old pad" shape PlayerEntity's own
+    // Ghost Guard cut used moments ago. Verified via a temporary
+    // `@compileLog(@sizeOf(MeleeSwingMemory))` before locking this assert
+    // (confirmed still 32).
     std.debug.assert(@sizeOf(MeleeSwingMemory) == 32);
     std.debug.assert(@sizeOf(SimEvent) == 40);
     std.debug.assert(@sizeOf(ResolvedFireConfig) == 240);

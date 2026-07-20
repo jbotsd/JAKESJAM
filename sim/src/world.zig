@@ -594,8 +594,13 @@ pub fn resolveInstantAoeCasts(
 //     comment in world_state.zig is updated alongside this cut to reflect
 //     that step_world now mutates it at this ONE site, same "name the
 //     ownership boundary that changed" discipline this whole goal doc asks
-//     for; every OTHER energy grant (dash-through, wall-kick) stays
-//     TS-owned/un-ported.
+//     for. Dash-through's OWN energy grant is ALSO now ported (a later
+//     pass, docs/zig-step-world-parity-goal.md's Razor Route substrate) —
+//     but at section 8's dash-through detection block, not here; this
+//     function's own melee-contact grant stays a structurally separate
+//     site, matching TS's own two-separate-code-paths shape. Wall-kick's
+//     energy grant (Wall Bloom's own hook, section 8, unrelated to this
+//     paragraph) stays TS-owned/un-ported.
 //   - Destructible arc hits — World.ts's own comment marks this path
 //     hangout-mode-only (Zig models real matches, not the venue-lobby
 //     hangout mode — no Zig analog exists to hang this off of).
@@ -722,6 +727,12 @@ pub const NINJA_READ_MARK_AMP_MULTIPLIER: f64 = 1.28;
 // baseline grant is now in scope alongside Second Wind).
 const NINJA_ENERGY_MAX: f64 = 100.0;
 const NINJA_ENERGY_ON_MELEE_HIT: f64 = 10.0;
+// Dash-through body-cross's own baseline energy grant (World.ts:602
+// NINJA_ENERGY_ON_DASH_THROUGH), same "top-up an existing resource" shape
+// as NINJA_ENERGY_ON_MELEE_HIT immediately above — this pass (docs/zig-
+// step-world-parity-goal.md, Razor Route substrate), consumed in world.zig
+// section 8's own dash-through detection block, not stepMeleeSwing.
+const NINJA_ENERGY_ON_DASH_THROUGH: f64 = 15.0;
 const NINJA_SECOND_WIND_HEAL: f64 = 12.0;
 const NINJA_SECOND_WIND_ENERGY: f64 = 30.0;
 // Ninja — Edge Storm (constants.ts:1039-1040) + the wave-off-swing
@@ -918,16 +929,23 @@ const KIN_BASTION_PULSE_WARD_HELD_MULTIPLIER: f64 = 2.0;
 // ── Phase 4c: movement (docs/zig-step-world-parity-goal.md "4c. Movement")
 // — constants.ts's own range exports for the 4 abilities that share
 // findCollisionFreeLanding below (Slip Node/Plant Charge/Bulwark Step/
-// Drift Step). Razor Route is DELIBERATELY absent from this group — verified
+// Drift Step). Razor Route was DELIBERATELY absent from this group — verified
 // directly against World.ts's "razor-route" case, it is not a
 // landing-search blink at all (a TS-side additive velocity impulse on the
-// existing always-on dash, plus a Read-mark byproduct write), see its own
-// switch-arm comment below for the real reason it's still a no-op.
+// existing always-on dash, plus a Read-mark byproduct write); it's SHIPPED
+// now (this pass) via its own dash-through substrate, see world.zig section
+// 8's own dash-through detection block and this file's `.razor_route`
+// dispatch arm.
 const GEO_SLIP_NODE_RANGE_PX: f64 = 280.0;
 const KIN_PLANT_CHARGE_RANGE_PX: f64 = 190.0;
 const KIN_PLANT_CHARGE_SHIELD_REFUND: f64 = 12.0;
 const KIN_BULWARK_STEP_RANGE_PX: f64 = 110.0;
 const SYZ_DRIFT_STEP_RANGE_PX: f64 = 210.0;
+// Ninja — Razor Route (constants.ts:1071/1114). SHIPPED this pass (docs/
+// zig-step-world-parity-goal.md) — see the comment block immediately above
+// for why it doesn't belong in the findCollisionFreeLanding group.
+const NINJA_RAZOR_ROUTE_READ_MARK_MS: f64 = 3000.0;
+const NINJA_RAZOR_ROUTE_BOOST_SPEED: f64 = 260.0;
 
 // ── Phase 4a follow-up (this pass, docs/zig-step-world-parity-goal.md —
 //    closing Hard Aperture's original deferral): Self-Lattice (Priest).
@@ -2308,39 +2326,31 @@ fn stepAbilityDispatch(
                 attacker.ghost_guard_charge_until_tick = state.header.tick + dur_ticks;
                 activated = true;
             },
-            // Razor Route (Ninja): the goal doc's own Phase 4c hypothesis
-            // ("port whatever farthest/nearest collision-free-point search
-            // TS's World.ts uses for these") does NOT hold for this one —
-            // verified directly against World.ts's "razor-route" case, not
-            // assumed. It is NOT a landing-search blink at all: cast just
-            // opens a window (`razorRouteUntilTick`), and TS's own case
-            // comment is explicit that the REAL effect — "a TS-side
-            // additive velocity impulse along the dash direction... plus a
-            // Read mark on the first body crossed" — is "consumed by the
-            // NEXT dash-trigger inside the NINJA MELEE section's own
-            // dash-through detection". That consumption site has NO Zig
-            // mirror at all: grepped directly, `stepMeleeSwing`'s own
-            // "Deliberately NOT ported" list already names this exact gap
-            // ("Dash-through body-cross / ninja evasion i-frames / Ghost
-            // Guard — all key off a `dashing` boolean that has NO Zig
-            // PlayerEntity mirror at all") — the identical substrate gap
-            // Ghost Guard above is deferred on. The cast half (opening
-            // `razorRouteUntilTick`) would be trivial — Zig's
-            // PlayerEntity already mirrors `readTargetId`/
-            // `readMarkUntilTick` for the mark byproduct (Phase 4b) — but
-            // shipping only the window-open with no dash-through detector
-            // to ever consume it would write a field with a provably zero
-            // reader anywhere in step_world, exactly the "half-ported,
-            // silently wrong" shape this goal doc's doctrine #4 exists to
-            // avoid. Deferred whole; needs the dash-through body-cross
-            // substrate (host-only per-player memory: a `dashThroughTagged`
-            // per-burst debounce set + a `wasDashing` edge, mirroring
-            // NinjaMeleeMemory in World.ts) ported first — that is real,
-            // separate, melee-hook-shaped work, not a movement-search
-            // problem, so it does NOT belong in this sub-group even though
-            // the goal doc originally filed Razor Route under "4c.
-            // Movement".
-            .razor_route => {}, // Phase 4c — deferred, see comment above
+            // Razor Route (Ninja): SHIPPED this pass (docs/zig-step-world-
+            // parity-goal.md) — corrected finding: the original deferral's
+            // premise ("needs the dash-through body-cross substrate... a
+            // `dashing` boolean that has NO Zig PlayerEntity mirror at
+            // all") is technically true (no wire-visible PlayerEntity
+            // field) but doesn't survive investigation of what's ACTUALLY
+            // needed — `state.player_movement[i].dash_active_ms > 0.0` IS
+            // the derived Zig equivalent of TS's `attacker.dashing ===
+            // true` (player.zig's own dash-timer memory already tracks
+            // exactly this internally), and `MeleeSwingMemory` already had
+            // a per-player host-only slot to carry the extra
+            // dashThroughTagged/wasDashing/razorRouteActiveDash bookkeeping
+            // (grown this pass — see that struct's own doc comment). This
+            // arm only opens the window (`razor_route_until_tick`) — the
+            // REAL effect (the velocity boost + "marks Read on the first
+            // body crossed") is consumed by the NEXT dash's rising edge,
+            // in world.zig section 8's own dash-through detection block
+            // (right after Wall Bloom/Shock Ring's landing hooks), not
+            // here. Same "plain u32 tick" shape as every sibling
+            // window-open ability.
+            .razor_route => {
+                const dur_ticks: u32 = @intFromFloat(@ceil((active_spec.duration_ms orelse 0) / @max(1.0, eff_dt)));
+                attacker.razor_route_until_tick = state.header.tick + dur_ticks;
+                activated = true;
+            },
         }
 
         if (!activated) continue; // a press that does nothing burns no cooldown
@@ -4120,6 +4130,91 @@ pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
                     }
                 }
             }
+        }
+
+        // Razor Route (Ninja, this pass) — dash-through body-cross
+        // detection. Mirrors World.ts's "1z2. NINJA MELEE" dash-through
+        // section (World.ts:5131-5200) — rising-edge burst detection,
+        // per-burst tag debounce, the baseline energy grant, and Razor
+        // Route's own velocity boost + "marks Read on cross" byproduct.
+        // Deliberately positioned here (post-stepPlayer, same per-player
+        // physics loop as Wall Bloom/Shock Ring's own hooks immediately
+        // above) rather than inside `stepMeleeSwing`: TS runs this as its
+        // OWN pass over the ninja roster, independent of (and running
+        // AFTER, in TS's own tick order) the swing FSM, keyed off
+        // `dashing`/movement state, not the melee arc — same "read
+        // stepPlayer's OUTPUT, not its internals" shape this loop's other
+        // two hooks already use. `dashing_now` is the derived Zig
+        // equivalent of TS's `attacker.dashing === true`:
+        // `player_movement[pmi].dash_active_ms > 0.0` is exactly what
+        // `dash_active`/`was_dash_active` already track internally in
+        // player.zig, just not as a wire-visible PlayerEntity boolean —
+        // the ACTUAL gap the original Razor Route/Ghost Guard deferrals
+        // cited never needed a new field, only reading what already
+        // exists. `melee_swing[pmi]`'s new dash_through_tagged_mask/
+        // was_dashing/razor_route_active_dash fields are the Zig mirror of
+        // NinjaMeleeMemory's own fields of the same name/shape.
+        if (state.players[pmi].character_id == .sprinter) {
+            const dmem = &state.melee_swing[pmi];
+            const dashing_now = state.player_movement[pmi].dash_active_ms > 0.0;
+            if (dashing_now and !dmem.was_dashing) {
+                dmem.dash_through_tagged_mask = 0; // new dash burst — fresh tags
+                const razor_route_live = state.players[pmi].razor_route_until_tick > state.header.tick;
+                dmem.razor_route_active_dash = razor_route_live;
+                if (razor_route_live) {
+                    state.players[pmi].razor_route_until_tick = 0;
+                    const dash_speed = @sqrt(
+                        state.players[pmi].vx * state.players[pmi].vx +
+                            state.players[pmi].vy * state.players[pmi].vy,
+                    );
+                    if (dash_speed > 1e-3) {
+                        state.players[pmi].vx += (state.players[pmi].vx / dash_speed) * NINJA_RAZOR_ROUTE_BOOST_SPEED;
+                        state.players[pmi].vy += (state.players[pmi].vy / dash_speed) * NINJA_RAZOR_ROUTE_BOOST_SPEED;
+                    }
+                }
+            }
+            if (dashing_now) {
+                const attacker_box = combat.playerHitboxAabb(
+                    state.players[pmi].x,
+                    state.players[pmi].y,
+                    state.players[pmi].flags.crouching,
+                );
+                var dvi: u32 = 0;
+                while (dvi < state.player_count) : (dvi += 1) {
+                    if (dvi == pmi) continue;
+                    const dbit: u16 = @as(u16, 1) << @as(u4, @intCast(dvi));
+                    if ((dmem.dash_through_tagged_mask & dbit) != 0) continue;
+                    if (!state.players[dvi].flags.alive) continue;
+                    const victim_box = combat.playerHitboxAabb(
+                        state.players[dvi].x,
+                        state.players[dvi].y,
+                        state.players[dvi].flags.crouching,
+                    );
+                    // AABB overlap — same inline check `stepMeleeSwing`'s
+                    // arc-hit-check delegates to `combat.isBodyInMeleeArc`
+                    // for, but this is a plain body-cross (no range/arc
+                    // gate), matching TS's own `aabbOverlap(attackerAABB,
+                    // playerHitboxAABB(victim))`.
+                    if (!(attacker_box.x < victim_box.x + victim_box.w and
+                        attacker_box.x + attacker_box.w > victim_box.x and
+                        attacker_box.y < victim_box.y + victim_box.h and
+                        attacker_box.y + attacker_box.h > victim_box.y)) continue;
+                    dmem.dash_through_tagged_mask |= dbit;
+                    state.players[pmi].energy = @min(
+                        NINJA_ENERGY_MAX,
+                        state.players[pmi].energy + NINJA_ENERGY_ON_DASH_THROUGH,
+                    );
+                    emitEvent(state, .dash_through, @intCast(pmi), @intCast(dvi), 0, 0, state.players[pmi].x, state.players[pmi].y);
+                    if (dmem.razor_route_active_dash) {
+                        const mark_ticks: u32 = @intFromFloat(@ceil(NINJA_RAZOR_ROUTE_READ_MARK_MS / @max(1.0, eff_dt)));
+                        state.players[pmi].read_target_id_len = state.players[dvi].id_len;
+                        state.players[pmi].read_target_id_bytes = state.players[dvi].id_bytes;
+                        state.players[pmi].read_mark_until_tick = state.header.tick + mark_ticks;
+                        dmem.razor_route_active_dash = false;
+                    }
+                }
+            }
+            dmem.was_dashing = dashing_now;
         }
 
         // Ceiling clamp (parity with World.ts computeCeilingClampY): head pushed

@@ -3249,6 +3249,91 @@ test "ability dispatch: Bleed Tithe (Priest/Syzygist) — no enemy within range:
     try std.testing.expectEqual(@as(u32, 0), state.players[0].slot_cooldown_until_tick[0]);
 }
 
+test "ability dispatch: Razor Route (Ninja) — cast opens a window; the NEXT dash's body-cross applies the velocity boost AND marks Read on the crossed victim once (per-burst debounce — a second overlapping tick in the SAME burst grants no additional energy)" {
+    var state = freshFightingState();
+    state.player_count = 2;
+    state.players[0].flags.alive = true;
+    state.players[0].character_id = .sprinter; // ninja
+    state.players[0].health = 100;
+    state.players[0].x = 0;
+    state.players[0].y = 0;
+    setPlayerId(&state.players[0], "caster");
+    equipSlot(&state, 0, 0, .razor_route);
+
+    state.players[1].flags.alive = true;
+    state.players[1].health = 100;
+    state.players[1].x = 5; // overlapping player0's melee hitbox (MELEE_BODY_WIDTH 26) at close range
+    state.players[1].y = 0;
+    setPlayerId(&state.players[1], "victim");
+
+    // Tick 1: cast — opens the window.
+    state.players[0].current_keys = SLOT1_BIT;
+    _ = root.world.stepWorld(&state, 1.0);
+    try std.testing.expect(state.players[0].razor_route_until_tick > state.header.tick);
+
+    // Tick 2: simulate the NEXT dash's rising edge directly — dash_active_ms
+    // set on `player_movement` bypasses the real dash-trigger input
+    // pipeline (a full input-driven dash needs a resolved fire config with
+    // dash_charges > 0, which this test doesn't set up), same "prove the
+    // READ site" shape Kindled Resolve's own tests already establish for
+    // an unreachable-today cast path. 0 the tick before (freshFightingState
+    // zero-inits player_movement), so `was_dashing` reads false this tick
+    // — the burst's rising edge.
+    state.players[0].current_keys = 0;
+    state.players[0].vx = 300.0;
+    state.players[0].vy = 0.0;
+    state.player_movement[0].dash_active_ms = 100.0;
+    _ = root.world.stepWorld(&state, 1.0);
+
+    // Window consumed at burst-start, regardless of whether a body was
+    // crossed yet.
+    try std.testing.expectEqual(@as(u32, 0), state.players[0].razor_route_until_tick);
+    // Velocity boost: vx grew by NINJA_RAZOR_ROUTE_BOOST_SPEED (260) along
+    // the dash direction — 300 + 260 == 560 (player.zig's own mid-dash
+    // steering is inert here: no aim target set, so aim_len is ~0 and the
+    // steering branch's own `aim_len > 1e-3` guard skips it, leaving vx a
+    // pure magnitude sum).
+    try std.testing.expectApproxEqAbs(@as(f64, 560.0), state.players[0].vx, 1.0);
+    // Read mark landed on the crossed victim.
+    try std.testing.expectEqualSlices(u8, "victim", state.players[0].read_target_id_bytes[0..state.players[0].read_target_id_len]);
+    try std.testing.expect(state.players[0].read_mark_until_tick > state.header.tick);
+    // Baseline dash-through energy granted once.
+    try std.testing.expectApproxEqAbs(@as(f64, 15.0), state.players[0].energy, 1e-9); // NINJA_ENERGY_ON_DASH_THROUGH
+
+    // Tick 3: still mid-burst (dash_active_ms > 0, no rising edge this
+    // time), victim still overlapping — per-burst debounce means NO second
+    // energy grant, proving `dash_through_tagged_mask` actually gates
+    // re-tagging rather than "grants energy every tick of overlap".
+    state.player_movement[0].dash_active_ms = 50.0;
+    _ = root.world.stepWorld(&state, 1.0);
+    try std.testing.expectApproxEqAbs(@as(f64, 15.0), state.players[0].energy, 1e-9); // unchanged
+}
+
+test "ability dispatch: Razor Route (Ninja) — dash-through's baseline energy grant + Read mark are DISTINCT: no live razor_route_until_tick window still grants dash-through energy (the generic mechanic) but writes NO Read mark (the empowered byproduct stays correctly gated)" {
+    var state = freshFightingState();
+    state.player_count = 2;
+    state.players[0].flags.alive = true;
+    state.players[0].character_id = .sprinter; // ninja, no Razor Route cast this time
+    state.players[0].health = 100;
+    state.players[0].x = 0;
+    state.players[0].y = 0;
+
+    state.players[1].flags.alive = true;
+    state.players[1].health = 100;
+    state.players[1].x = 5; // overlapping
+    state.players[1].y = 0;
+
+    state.players[0].vx = 300.0;
+    state.player_movement[0].dash_active_ms = 100.0;
+    _ = root.world.stepWorld(&state, 1.0); // rising edge, body-cross this same tick
+
+    try std.testing.expectApproxEqAbs(@as(f64, 15.0), state.players[0].energy, 1e-9); // baseline grant still fires
+    try std.testing.expectEqual(@as(u8, 0), state.players[0].read_target_id_len); // no mark written
+    try std.testing.expectEqual(@as(u32, 0), state.players[0].read_mark_until_tick);
+    // No empowered boost either — plain dash speed, no +260 addition.
+    try std.testing.expectApproxEqAbs(@as(f64, 300.0), state.players[0].vx, 1.0);
+}
+
 // ── Draft/offer-roll system (Phase 2, docs/zig-step-world-parity-goal.md) ─
 // Ports client/src/sim/round.ts's enterDrafting + draftWeights.ts. Testing
 // strategy per the phase's own brief: the DETERMINISTIC parts (candidate-
