@@ -3184,6 +3184,71 @@ test "ability dispatch: Ghost Guard (Ninja) — ranged: an active charge on a mo
     try std.testing.expectEqual(@as(u32, 0), state.projectile_count); // consumed + compacted same tick
 }
 
+test "ability dispatch: Bleed Tithe (Priest/Syzygist) — auto-targeted homing fire shard: a landed hit writes the SAME burn-DoT fields section 8b's tick already reads (new `.fire` on-hit arm), AND heals the caster leech_fraction of the damage that landed (new leech-heal consumption site)" {
+    var state = freshFightingState();
+    state.player_count = 2;
+    state.players[0].flags.alive = true;
+    state.players[0].character_id = .shielded; // priest/syzygist caster
+    state.players[0].health = 50; // below 100 so the leech heal is directly observable, well under the max(100, health) cap
+    state.players[0].x = 0;
+    state.players[0].y = 0;
+    setPlayerId(&state.players[0], "caster");
+    equipSlot(&state, 0, 0, .bleed_tithe); // SYZ_ENEMY_SEARCH_RANGE_PX (420) auto-target
+
+    state.players[1].flags.alive = true;
+    state.players[1].health = 100;
+    state.players[1].x = 15;
+    state.players[1].y = 0;
+    setPlayerId(&state.players[1], "victim");
+
+    state.players[0].current_keys = SLOT1_BIT;
+    _ = root.world.stepWorld(&state, 1.0); // cast: shard spawns
+
+    try std.testing.expectEqual(@as(u32, 1), state.projectile_count);
+    try std.testing.expectApproxEqAbs(@as(f64, 26.0), state.projectiles[0].damage, 1e-9); // SYZ_BLEED_TITHE_DAMAGE
+    try std.testing.expectEqual(root.world_state.ElementType.fire, state.projectiles[0].element);
+    try std.testing.expectApproxEqAbs(@as(f64, 0.35), state.projectiles[0].leech_fraction, 1e-6); // SYZ_BLEED_TITHE_LEECH_FRACTION
+    try std.testing.expect(state.projectiles[0].flags.has_homing);
+    try std.testing.expect(state.players[0].slot_cooldown_until_tick[0] > state.header.tick);
+
+    state.players[0].current_keys = 0;
+    _ = root.world.stepWorld(&state, 1.0); // shard overlaps the close-range victim's AABB, hit resolves
+
+    // 100 - 26 == 74.
+    try std.testing.expectApproxEqAbs(@as(f64, 74.0), state.players[1].health, 1e-9);
+    // Fire on-hit: burn DoT written (this pass's new `.fire` arm).
+    try std.testing.expect(state.players[1].flags.has_burn);
+    try std.testing.expect(state.players[1].burn_until_tick > state.header.tick);
+    try std.testing.expectApproxEqAbs(@as(f64, 10.4), state.players[1].burn_dps, 1e-9); // 26 * 0.4
+    // Leech: caster healed 26 * 0.35 == 9.1, well under the max(100, 50)==100
+    // cap. Wider tolerance than this file's usual 1e-9: leech_fraction is
+    // stored as f32 (ProjectileEntity's own precision tradeoff — see that
+    // field's doc comment in world_state.zig), so 0.35 round-trips with
+    // ~1e-7 relative error, not bit-exact against an f64 literal.
+    try std.testing.expectApproxEqAbs(@as(f64, 59.1), state.players[0].health, 1e-4);
+}
+
+test "ability dispatch: Bleed Tithe (Priest/Syzygist) — no enemy within range: a dead press, no shard, no cooldown burn" {
+    var state = freshFightingState();
+    state.player_count = 2;
+    state.players[0].flags.alive = true;
+    state.players[0].character_id = .shielded;
+    state.players[0].health = 100;
+    state.players[0].x = 0;
+    state.players[0].y = 0;
+    equipSlot(&state, 0, 0, .bleed_tithe);
+
+    state.players[1].flags.alive = true;
+    state.players[1].health = 100;
+    state.players[1].x = 5000; // far outside SYZ_ENEMY_SEARCH_RANGE_PX (420)
+
+    state.players[0].current_keys = SLOT1_BIT;
+    _ = root.world.stepWorld(&state, 1.0);
+
+    try std.testing.expectEqual(@as(u32, 0), state.projectile_count);
+    try std.testing.expectEqual(@as(u32, 0), state.players[0].slot_cooldown_until_tick[0]);
+}
+
 // ── Draft/offer-roll system (Phase 2, docs/zig-step-world-parity-goal.md) ─
 // Ports client/src/sim/round.ts's enterDrafting + draftWeights.ts. Testing
 // strategy per the phase's own brief: the DETERMINISTIC parts (candidate-

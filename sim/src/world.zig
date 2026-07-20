@@ -79,6 +79,14 @@ const EMISSION_FILL_PER_DAMAGE_TAKEN: f64 = 0.2;
 /// ProjectileEntity instances and DO route through `resolveRangedHit` like
 /// any other shot — the flavor text doesn't claim otherwise).
 const EMISSION_WARD_DAMAGE_MULT: f64 = 0.5;
+/// Burn duration cap (data/emission.ts's EMISSION_BURN_CAP_MS) — TS composes
+/// burn duration as `min(3000 * statusScale, EMISSION_BURN_CAP_MS)`; every
+/// shard actually spawned in step_world today leaves `statusScale` at TS's
+/// own default (1), so `3000 * 1 == EMISSION_BURN_CAP_MS` exactly and the
+/// min() is a no-op — this port skips carrying a separate statusScale term
+/// (ProjectileEntity.status_scale exists but has zero consumption sites
+/// anywhere in this file yet) and just uses the cap value directly.
+const EMISSION_BURN_CAP_MS: f64 = 3000.0;
 
 /// Half the player body height (parity with World.ts PLAYER_HALF_HEIGHT).
 const PLAYER_HALF_HEIGHT: f64 = 28;
@@ -940,11 +948,20 @@ const SYZ_SELF_LATTICE_ABSORB: f64 = 20.0;
 // ── Phase 4e: structurally distinct abilities (docs/zig-step-world-parity-
 //    goal.md "4e. Structurally distinct, port individually") — Sunspike/
 //    Needle/Severance/Contagion/Lattice, each with its own real mechanic,
-//    no shared substrate built first (Bleed Tithe stays a no-op — see its
-//    own comment at the switch arm for why). Bit-exact port of the
-//    matching World.ts/constants.ts values (re-verified live — doctrine
-//    #1/#6), same "duplicated as a local constant, not exported"
-//    convention every earlier sub-group's own block already establishes.
+//    no shared substrate built first. Bit-exact port of the matching
+//    World.ts/constants.ts values (re-verified live — doctrine #1/#6), same
+//    "duplicated as a local constant, not exported" convention every
+//    earlier sub-group's own block already establishes.
+// Priest/Syzygist — Bleed Tithe (constants.ts:746-758). SHIPPED in a
+// later pass than the rest of this group (this pass, docs/zig-step-world-
+// parity-goal.md) — originally deferred here because Zig's element on-hit
+// switch had no `.fire` arm and `leech_fraction` had zero readers; both
+// gaps are closed now (see the element switch in section 4 and its
+// sibling leech-heal block right after it).
+const SYZ_BLEED_TITHE_DAMAGE: f64 = 26.0;
+const SYZ_BLEED_TITHE_LEECH_FRACTION: f64 = 0.35;
+const SYZ_BLEED_TITHE_SPEED: f64 = 1100.0;
+const SYZ_BLEED_TITHE_HOMING_STRENGTH: f64 = 5.5;
 // Paladin/Kindled — Sunspike (constants.ts:249-251).
 const KIN_SUNSPIKE_DAMAGE: f64 = 40.0;
 const KIN_SUNSPIKE_RANGE_PX: f64 = 150.0;
@@ -1903,34 +1920,56 @@ fn stepAbilityDispatch(
                     activated = true;
                 }
             },
-            // Bleed Tithe (Priest): the goal doc's own hedge flagged this
-            // as "partially substrate-covered already... verify what's
-            // real vs. assumed" — investigated directly, not trusted.
-            // World.ts's own case comment claims this "reuses World.ts's
-            // OWN existing element==='fire' burn-on-hit branch... and
-            // ProjectileEntity.leechFraction's existing self-heal-on-hit
-            // path... for zero new hit-resolution code." Neither claim
-            // holds in Zig, verified by grep: the element on-hit switch in
-            // section 4 below has NO `.fire` arm (only `.ice`/`.lightning`/
-            // `.electric`, `else => {}` silently swallows fire), and
-            // `leech_fraction` has zero reads anywhere in this file — both
-            // consumption sites are TS-only. The homing shard itself
-            // (genuine per-tick re-target, 2026-07-18 Jake: "genu[in]e
-            // homing") would spawn fine via `spawnAbilityShard` above, but
-            // this ability's WHOLE documented identity is the curse+
-            // lifesteal (its own name), not a generic homing pellet with a
-            // one-time flat hit — same "the real payoff has no
-            // consumption site, shipping only the trivial half would
-            // misrepresent the ability entirely" shape as Recoil Step/
-            // Ghost Guard/Kindled Resolve/Hard Aperture/Self-Lattice above,
-            // not Flock Pulse's already-shipped "ships base, defers a
-            // secondary scaling term" partial. Deferred whole per
-            // doctrine #4; needs a real fire-burn-on-hit consumption site
-            // (section 4's element switch) AND a real leech_fraction
-            // consumption site built first — shared substrate work
-            // affecting every fire-element shot in the sim, not a per-
-            // ability cast, out of this pass's scope.
-            .bleed_tithe => {}, // Phase 4e — deferred, see comment above
+            // Bleed Tithe (Priest): SHIPPED this pass (docs/zig-step-world-
+            // parity-goal.md) — the deferral's premise ("needs a real
+            // fire-burn-on-hit consumption site AND a real leech_fraction
+            // consumption site built first") is now closed: section 4's
+            // element switch has a real `.fire` arm and a leech-heal block
+            // right after it (see both for the consumption half). Cast
+            // side: auto-targeted at the nearest enemy in range (dead
+            // press, no cooldown burn, if none found — matches World.ts's
+            // "severance" precedent immediately below). Genuine per-tick
+            // homing (`pathing: .homing`, `has_homing` set by
+            // `spawnAbilityShard` from the pathing arg) plus
+            // `leech_fraction`/`homing_strength` patched onto the returned
+            // pointer afterward — exactly the shape `spawnAbilityShard`'s
+            // own doc comment already anticipated this call site needing.
+            // `has_leech_fraction` also set explicitly so the field crosses
+            // the wasm ABI correctly if this shard is ever inspected
+            // cross-boundary (matches the "BRIDGED" contract
+            // ProjectileFlags's own doc comment documents for this bit),
+            // even though the Zig-internal read site below doesn't gate on
+            // it (mirrors TS's plain `leechFraction ?? 0` — no separate
+            // boolean check there either).
+            .bleed_tithe => {
+                const target_idx = findNearestEnemyInRange(state, player_idx, SYZ_ENEMY_SEARCH_RANGE_PX);
+                if (target_idx >= 0) {
+                    const target = &state.players[@as(usize, @intCast(target_idx))];
+                    const dx0 = target.x - attacker.x;
+                    const dy0 = target.y - attacker.y;
+                    const aim_angle = trig.lutAtan2(dy0, dx0);
+                    const fcfg = &state.player_fire_config[player_idx];
+                    const shape = if (fcfg.valid != 0) fcfg.shape else weapons_data.weaponBaseById(.starter_pistol).projectile_shape;
+                    if (spawnAbilityShard(
+                        state,
+                        attacker,
+                        aim_angle,
+                        SYZ_BLEED_TITHE_SPEED,
+                        SYZ_BLEED_TITHE_DAMAGE,
+                        1200.0,
+                        8.0,
+                        shape,
+                        .fire,
+                        .homing,
+                        null,
+                    )) |shard| {
+                        shard.leech_fraction = @floatCast(SYZ_BLEED_TITHE_LEECH_FRACTION);
+                        shard.flags.has_leech_fraction = true;
+                        shard.homing_strength = SYZ_BLEED_TITHE_HOMING_STRENGTH;
+                    }
+                    activated = true;
+                }
+            },
             // Severance (Priest): burst curse-detonate on the nearest
             // ALREADY-cursed enemy — "execute-adjacent; take polarity"
             // (verified against World.ts's "severance" case). "Cursed" =
@@ -3518,6 +3557,29 @@ pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
                 }
                 // Element on-hit effects (parity with World.ts phase 6d).
                 switch (proj_ptr.element) {
+                    .fire => {
+                        // Bleed Tithe (Priest, this pass) — TS's own
+                        // `element === "fire"` burn-on-hit branch
+                        // (World.ts:1882-1892): `burnDps = finalDamage *
+                        // 0.4`, duration capped at EMISSION_BURN_CAP_MS
+                        // (see that constant's own doc comment for why the
+                        // `statusScale` term is skipped, not just
+                        // forgotten). Writes the SAME `has_burn`/
+                        // `burn_until_tick`/`burn_dps`/
+                        // `burn_tick_last_applied` fields section 8b's
+                        // burn-DoT tick already reads every tick, and
+                        // Contagion's own already-shipped burn-COPY (a
+                        // separate `.contagion` ability-dispatch arm,
+                        // Phase 4e) already proved those 4 fields are real
+                        // Zig-side readers, just never written from a
+                        // fresh ON-HIT source before this pass — this is
+                        // that missing WRITE side.
+                        const burn_ticks: u32 = @intFromFloat(@ceil(EMISSION_BURN_CAP_MS / @max(1.0, eff_dt)));
+                        state.players[ph2].flags.has_burn = true;
+                        state.players[ph2].burn_until_tick = state.header.tick + burn_ticks;
+                        state.players[ph2].burn_dps = final_dmg * 0.4;
+                        state.players[ph2].burn_tick_last_applied = state.header.tick;
+                    },
                     .ice => {
                         // 1-second freeze at 0.5x movement (tick-quantized).
                         const freeze_ticks: u32 = @intFromFloat(@ceil(1000.0 / @max(1.0, eff_dt)));
@@ -3560,6 +3622,32 @@ pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
                         }
                     },
                     else => {},
+                }
+                // Drain axis (Bleed Tithe, this pass — six-axes-goal.md
+                // Layer 1): a leech-flagged shard heals its owner a
+                // fraction of the post-mitigation damage that just landed.
+                // Independent of element (TS's own `leechFrac = proj.
+                // leechFraction ?? 0` check has no element gate either —
+                // it happens to only ever be nonzero on the fire-element
+                // Bleed Tithe shard today, but the mechanic itself is
+                // general), so this lives OUTSIDE the switch above rather
+                // than inside the `.fire` arm — matches World.ts's own
+                // relative ordering (leech runs right after the
+                // burn/freeze write, independent of which one fired).
+                // Self-damage never leeches (owner-index guard, mirrors
+                // TS's `proj.ownerId !== ev.victimId`) — `shooter_idx` is
+                // already resolved above (the owner lookup that also feeds
+                // damage_amp/overcharge/boss-mode). Cap mirrors World.ts's
+                // `Math.min(Math.max(100, health), health + finalDamage *
+                // leechFrac)` — never reduces (a boss-mode body above 100
+                // stays safe) and never overheals a normal-health caster
+                // past 100.
+                if (proj_ptr.leech_fraction > 0 and shooter_idx >= 0 and @as(u32, @intCast(shooter_idx)) != ph2) {
+                    const healer = &state.players[@as(usize, @intCast(shooter_idx))];
+                    if (healer.flags.alive) {
+                        const cap = @max(100.0, healer.health);
+                        healer.health = @min(cap, healer.health + final_dmg * proj_ptr.leech_fraction);
+                    }
                 }
                 // Pierce-chain: decrement and survive; otherwise
                 // sticky → linger then detonate, others → expire.
