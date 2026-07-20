@@ -2298,6 +2298,194 @@ test "ability dispatch: Focus Hex (Priest) — no enemy within range: a dead pre
     try std.testing.expectEqual(@as(u32, 0), state.players[0].slot_cooldown_until_tick[0]);
 }
 
+// ── Phase 4a follow-up (this pass, docs/zig-step-world-parity-goal.md —
+//    closing Hard Aperture/Self-Lattice's original deferrals): both cast
+//    a ward-shaped defense window on the CASTER; both are proven here by
+//    showing a landed hit against the warded player deals LESS damage than
+//    an identical unwarded hit would, not just that the cast writes a
+//    field (the exact bar the parent task set).
+test "ability dispatch: Hard Aperture (Wizard) — cast opens ward_shell_until_tick; the NEXT landed ranged hit against the warded player is halved by EMISSION_WARD_DAMAGE_MULT" {
+    var state = freshFightingState();
+    state.player_count = 2;
+    // Player 0 = the warded Wizard (victim). Player 1 = the shooter.
+    state.players[0].flags.alive = true;
+    state.players[0].character_id = .balanced; // wizard
+    state.players[0].health = 100;
+    state.players[0].x = 15;
+    state.players[0].y = 0;
+    setPlayerId(&state.players[0], "victim");
+    equipSlot(&state, 0, 0, .hard_aperture); // duration 600ms, cooldown 9000ms
+
+    state.players[1].flags.alive = true;
+    state.players[1].health = 100;
+    state.players[1].x = 0;
+    state.players[1].y = 0;
+    state.players[1].aim_x = 100;
+    state.players[1].aim_y = 0;
+    setPlayerId(&state.players[1], "shooter"); // distinct non-empty ids — an empty-vs-empty id
+    // match would wrongly skip the victim as "the projectile's own owner"
+    // in section 4's owner-skip check (the same hazard Facet Break/Read
+    // Mark's own test comments already document).
+
+    // Tick 1: cast only — no fire this tick.
+    state.players[0].current_keys = SLOT1_BIT;
+    _ = root.world.stepWorld(&state, 1.0);
+    try std.testing.expect(state.players[0].ward_shell_until_tick > state.header.tick);
+    try std.testing.expect(state.players[0].slot_cooldown_until_tick[0] > state.header.tick);
+
+    // Tick 2: release the ability press, shooter fires a plain starter
+    // pistol shot (damage 12.0, weapons.zig STARTER_PISTOL) — spawns
+    // un-amplified (the ward multiplier is a HIT-SITE mitigation, not baked
+    // into the projectile's own damage field, same shape Facet Break/Focus
+    // Hex's own tests already establish for their amp multipliers).
+    state.players[0].current_keys = 0;
+    state.players[1].current_keys = FIRE_BIT;
+    _ = root.world.stepWorld(&state, 1.0);
+    try std.testing.expectEqual(@as(u32, 1), state.projectile_count);
+    try std.testing.expectApproxEqAbs(@as(f64, 12.0), state.projectiles[0].damage, 1e-9);
+
+    // Tick 3: release Fire, let the shard travel into the warded victim's
+    // AABB (same close-range geometry Facet Break/Focus Hex's own tests
+    // use). 100 - (12.0 * 0.5) == 94.0 — a plain unwarded pistol hit would
+    // leave 88.0, proving the ward halved this landed hit.
+    state.players[1].current_keys = 0;
+    _ = root.world.stepWorld(&state, 1.0);
+    try std.testing.expectApproxEqAbs(@as(f64, 94.0), state.players[0].health, 1e-9);
+}
+
+test "ability dispatch: Self-Lattice (Priest) — cast opens a flat absorb pool; a landed Ninja Slash against the warded Priest is FULLY absorbed (11 < pool 20), leaving the pool partially drained and still live" {
+    var state = freshFightingState();
+    state.player_count = 2;
+    // Player 0 = the Ninja attacker (melee). Player 1 = the warded Priest.
+    state.players[0].flags.alive = true;
+    state.players[0].character_id = .sprinter; // ninja
+    state.players[0].health = 100;
+    state.players[0].aim_x = 100;
+    state.players[0].aim_y = 0;
+
+    state.players[1].flags.alive = true;
+    state.players[1].character_id = .shielded; // priest
+    state.players[1].health = 100;
+    state.players[1].x = 40; // inside SLASH_RANGE (78px)
+    state.players[1].y = 0;
+    equipSlot(&state, 1, 0, .self_lattice); // SYZ_SELF_LATTICE_ABSORB = 20, no duration field (fixed 360-tick window)
+
+    // Tick 1: Priest casts Self-Lattice AND the Ninja's Fire rising edge
+    // starts the slash windup, same tick (independent players, no
+    // interaction hazard — mirrors the Undercut test's own "cast + windup
+    // start on the same tick" pattern).
+    state.players[1].current_keys = SLOT1_BIT;
+    state.players[0].current_keys = FIRE_BIT;
+    _ = root.world.stepWorld(&state, 1.0);
+    try std.testing.expect(state.players[1].syz_ward_absorb_until_tick > state.header.tick);
+    try std.testing.expectApproxEqAbs(@as(f64, 20.0), state.players[1].syz_ward_absorb_remaining, 1e-9);
+
+    // Ticks 2-3: drive the swing FSM through windup -> active -> contact,
+    // bit-exact tick sizes copied from the Undercut test above (120ms then
+    // 44ms — windup(60) overflows into a fresh active(45) with 0ms elapsed,
+    // then 44ms into active clears the 22ms contact-delay gate).
+    state.players[1].current_keys = 0;
+    _ = root.world.stepWorld(&state, 120.0); // windup -> active (0ms elapsed)
+    _ = root.world.stepWorld(&state, 44.0); // contact tick — arc hit resolves
+
+    // SLASH_DAMAGE (11.0) is fully covered by the 20.0 pool: victim takes
+    // ZERO damage (unlike the generic shield step, which would have
+    // suppressed the whole hit-confirmed event too — Syzygist Ward still
+    // lands a real, just-zeroed, hit).
+    try std.testing.expectApproxEqAbs(@as(f64, 100.0), state.players[1].health, 1e-9);
+    // Pool genuinely drained by the absorbed amount (11), not just a
+    // boolean flag — proves the depletion math, not merely "blocked".
+    try std.testing.expectApproxEqAbs(@as(f64, 9.0), state.players[1].syz_ward_absorb_remaining, 1e-9);
+    // Still live (9 > 0) — the window was NOT cleared by a partial absorb.
+    try std.testing.expect(state.players[1].syz_ward_absorb_until_tick > state.header.tick);
+}
+
+test "ability dispatch: Self-Lattice (Priest) — a ranged hit that fully drains the pool takes only the OVERFLOW as real damage, and clears the window (not just a partial drain)" {
+    var state = freshFightingState();
+    state.player_count = 2;
+    state.players[0].flags.alive = true;
+    state.players[0].health = 100;
+    state.players[0].x = 0;
+    state.players[0].y = 0;
+    state.players[0].aim_x = 100;
+    state.players[0].aim_y = 0;
+    setPlayerId(&state.players[0], "shooter");
+
+    state.players[1].flags.alive = true;
+    state.players[1].character_id = .shielded; // priest
+    state.players[1].health = 100;
+    state.players[1].x = 15;
+    state.players[1].y = 0;
+    setPlayerId(&state.players[1], "victim"); // distinct ids — see Hard
+    // Aperture's own test comment for why (owner-skip hazard).
+    // Bypass the cast (already proven above) to focus purely on the
+    // depletion-to-zero READ-site behavior: a small remaining pool (5),
+    // smaller than the incoming pistol shot (12.0).
+    state.players[1].syz_ward_absorb_until_tick = 100_000;
+    state.players[1].syz_ward_absorb_remaining = 5.0;
+
+    state.players[0].current_keys = FIRE_BIT;
+    _ = root.world.stepWorld(&state, 1.0);
+    try std.testing.expectEqual(@as(u32, 1), state.projectile_count);
+    state.players[0].current_keys = 0;
+    _ = root.world.stepWorld(&state, 1.0);
+
+    // 100 - (12.0 - 5.0) == 93.0 — only the 7.0 overflow past the drained
+    // pool lands as real damage.
+    try std.testing.expectApproxEqAbs(@as(f64, 93.0), state.players[1].health, 1e-9);
+    // Pool fully drained and the window cleared (matches trySyzygistWard's
+    // own `broke` branch, which unsets all three fields).
+    try std.testing.expectApproxEqAbs(@as(f64, 0.0), state.players[1].syz_ward_absorb_remaining, 1e-9);
+    try std.testing.expectEqual(@as(u32, 0), state.players[1].syz_ward_absorb_until_tick);
+}
+
+test "ability dispatch: Self-Lattice (Priest) — mutually exclusive with the generic shield: a live absorb pool consumes the hit even while shieldActive+charge are ALSO true, and the shield charge is left completely untouched" {
+    var state = freshFightingState();
+    state.player_count = 2;
+    state.players[0].flags.alive = true;
+    state.players[0].health = 100;
+    state.players[0].x = 0;
+    state.players[0].y = 0;
+    state.players[0].aim_x = 100;
+    state.players[0].aim_y = 0;
+    setPlayerId(&state.players[0], "shooter");
+
+    state.players[1].flags.alive = true;
+    state.players[1].character_id = .shielded;
+    state.players[1].health = 100;
+    state.players[1].x = 15;
+    state.players[1].y = 0;
+    setPlayerId(&state.players[1], "victim");
+    state.players[1].syz_ward_absorb_until_tick = 100_000;
+    state.players[1].syz_ward_absorb_remaining = 20.0;
+    state.players[1].flags.shield_active = true;
+    state.players[1].flags.has_shield_charge = true;
+    state.players[1].shield_charge = 50.0;
+    // Hold Shield the whole time so section 6's tickShield (which runs
+    // every tick regardless of this test's own hit-resolution assertions)
+    // keeps `shield_active` genuinely live rather than tickShield itself
+    // flipping it off for lack of held input — the scenario under test is
+    // "both mitigations are ACTUALLY live at hit-resolution time", not
+    // just "both fields happened to be true before tick 1".
+    state.players[1].current_keys = SHIELD_BIT;
+
+    state.players[0].current_keys = FIRE_BIT;
+    _ = root.world.stepWorld(&state, 1.0);
+    state.players[0].current_keys = 0;
+    _ = root.world.stepWorld(&state, 1.0);
+
+    // Syzygist Ward alone consumed the hit (100 - (12 - 20 clamped to 0) ==
+    // 100, fully absorbed) — the generic shield branch never ran. Its
+    // charge only moved by the ORDINARY held-shield drain tickShield
+    // applies every tick regardless (SHIELD_DRAIN_PER_SECOND=35.0 × 2ms
+    // held == 0.07), never the much larger hit-absorb drain
+    // (SHIELD_HIT_DRAIN_MULTIPLIER × final_dmg) the generic shield step
+    // would have applied had it run.
+    try std.testing.expectApproxEqAbs(@as(f64, 100.0), state.players[1].health, 1e-9);
+    try std.testing.expectApproxEqAbs(@as(f64, 49.93), state.players[1].shield_charge, 1e-9);
+    try std.testing.expectApproxEqAbs(@as(f64, 8.0), state.players[1].syz_ward_absorb_remaining, 1e-9);
+}
+
 // ── Phase 4c: movement (docs/zig-step-world-parity-goal.md "4c. Movement")
 // — the shared findCollisionFreeLanding substrate (world.zig) backing Slip
 // Node/Plant Charge/Drift Step, plus Bulwark Step's own held-input variant.

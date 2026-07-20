@@ -60,6 +60,25 @@ const NO_HUMAN_SURVIVOR_END_MS: f64 = 6000;
 const EMISSION_CHARGE_MAX: f64 = 100;
 const EMISSION_FILL_PER_DAMAGE_DEALT: f64 = 0.5;
 const EMISSION_FILL_PER_DAMAGE_TAKEN: f64 = 0.2;
+/// Ward shell mitigation (six-axes-goal.md Layer 1, data/emission.ts's
+/// EMISSION_WARD_DAMAGE_MULT) — halves incoming RANGED damage while
+/// `ward_shell_until_tick > tick` is live on the victim. Consumed at
+/// section 4's projectile-vs-player hit resolution ONLY: verified directly
+/// against World.ts, not assumed — the multiplier is computed inside
+/// `resolveRangedHit` (World.ts:1671-1673), which is called ONLY from the
+/// hitscan-hit and real-projectile-hit sites (World.ts:4514/6037), NEVER
+/// from the melee (Ninja Slash/Kindled Edge, World.ts's "1z2"/"1z3"
+/// sections) or instant-AOE (`resolveInstantAoeCasts`) resolution paths —
+/// both of those call `tryDeflectDamage` directly, bypassing
+/// `resolveRangedHit`'s wrapper entirely, so ward-shell structurally cannot
+/// apply there in TS either. Hard Aperture's own card flavor text ("melee,
+/// ability blasts, and burn ticks pass through untouched") is consistent
+/// with this: "ability blasts" reads as the AOE-radius abilities (Wall
+/// Bloom/Shock Ring/etc, which use the AOE path), not the shard-projectile
+/// abilities (Sunspike/Severance/Needle/etc, which travel as real
+/// ProjectileEntity instances and DO route through `resolveRangedHit` like
+/// any other shot — the flavor text doesn't claim otherwise).
+const EMISSION_WARD_DAMAGE_MULT: f64 = 0.5;
 
 /// Half the player body height (parity with World.ts PLAYER_HALF_HEIGHT).
 const PLAYER_HALF_HEIGHT: f64 = 28;
@@ -564,12 +583,18 @@ pub fn resolveInstantAoeCasts(
 // `projectile !== null` guard), so an equipped directional shield fully
 // blocks a melee hit from ANY angle, not just the front — exactly the same
 // port resolveInstantAoeCasts already made for AOE casts. Paladin's
-// Kindled Ward (a PARTIAL mitigation, not the generic 100% block) and
-// Syzygist Ward are both real TS mitigation branches for a null-projectile
-// hit but have NO Zig implementation anywhere yet (not in section 4's
-// projectile path, not in resolveInstantAoeCasts) — this port stays
-// consistent with that pre-existing gap rather than becoming the first
-// path to invent paladin/priest-aware mitigation math.
+// Kindled Ward (a PARTIAL mitigation, not the generic 100% block) still has
+// NO Zig implementation anywhere (not in section 4's projectile path, not
+// in resolveInstantAoeCasts, not here) — this port stays consistent with
+// that pre-existing gap rather than becoming the first path to invent
+// paladin-aware mitigation math. Syzygist Ward (Self-Lattice, this pass)
+// is DIFFERENT from Kindled Ward in exactly this respect: verified
+// directly against combat.ts, `trySyzygistWard`'s branch inside
+// `tryDeflectDamage` (1.7) has NO `projectile !== null` guard — unlike
+// parry/directional-shield above, it applies uniformly to melee AND ranged
+// hits alike, so a melee consumption site is not "inventing" anything, it's
+// closing a real gap the parry/directional-shield precedent above does NOT
+// extend to. See this function's own arc-hit loop for the consumption.
 //
 // PLACEMENT / WRITE STRATEGY: runs as its own section "6a", positioned
 // AFTER section 6's per-player shield/parry/weapon-fire loop finishes for
@@ -836,6 +861,22 @@ const KIN_PLANT_CHARGE_RANGE_PX: f64 = 190.0;
 const KIN_PLANT_CHARGE_SHIELD_REFUND: f64 = 12.0;
 const KIN_BULWARK_STEP_RANGE_PX: f64 = 110.0;
 const SYZ_DRIFT_STEP_RANGE_PX: f64 = 210.0;
+
+// ── Phase 4a follow-up (this pass, docs/zig-step-world-parity-goal.md —
+//    closing Hard Aperture's original deferral): Self-Lattice (Priest).
+//    Writes the same `wardAbsorbUntilTick`/`wardAbsorbRemaining` pair
+//    Glass Ward/Aegis Share (still-deferred siblings) would also write —
+//    self-cast only, bypassing the isAlly team gate entirely (World.ts's
+//    "self-lattice" case writes `nextEntity`'s own fields directly, never
+//    routes through `applyWardToAlly`). SYZ_WARD_DURATION_TICKS_DEFAULT is
+//    a RAW TICK COUNT in TS (constants.ts:678 — `Math.round(6000 /
+//    STEP_MS)`, STEP_MS = 1000/60), not a `durationMs` on the card's own
+//    `active` spec (cards.ts's "self-lattice" entry has no `durationMs` at
+//    all) — mirrored here as a literal tick count for the same reason,
+//    NOT re-derived via `eff_dt` the way every `active_spec.duration_ms`-
+//    driven window above is (this one has no ms source to divide).
+const SYZ_WARD_DURATION_TICKS_DEFAULT: u32 = 360;
+const SYZ_SELF_LATTICE_ABSORB: f64 = 20.0;
 
 // ── Phase 4e: structurally distinct abilities (docs/zig-step-world-parity-
 //    goal.md "4e. Structurally distinct, port individually") — Sunspike/
@@ -1505,23 +1546,29 @@ fn stepAbilityDispatch(
                 attacker.shield_charge = @min(max_charge, attacker.shield_charge + GEO_RETURN_GLASS_SHIELD_REFUND);
                 activated = true;
             },
-            // Hard Aperture (Wizard): v1 reuses TS's exact ward-shell
-            // mechanic (Shelter Seal's own field, `wardShellUntilTick`) —
-            // that field DOES already have a Zig PlayerEntity mirror
-            // (`ward_shell_until_tick`, Phase 5), so the CAST half of this
-            // ability would be trivial (identical shape to hard-aperture's
-            // TS case). Genuinely deferred anyway: `ward_shell_until_tick`
-            // is documented (see its own doc comment, world_state.zig) as
-            // "carry-through only" — step_world does not itself apply
-            // EMISSION_WARD_DAMAGE_MULT/the ×0.5 incoming-damage mitigation
-            // ANYWHERE in its own melee/projectile/AOE damage math today.
-            // Wiring Hard Aperture's cast without a real Zig consumption
-            // site would ship a field write nothing ever reads — exactly
-            // the "half-ported, silently wrong" shape this goal doc's own
-            // doctrine #4 asks to avoid. Needs a real damage-mitigation
-            // consumption site added first (out of THIS sub-group's scope —
-            // that's shared substrate work, not a per-ability cast).
-            .hard_aperture => {}, // Phase 4a — deferred, see comment above
+            // Hard Aperture (Wizard, shipped this pass — docs/zig-step-
+            // world-parity-goal.md's own Phase 4a deferral for this ability
+            // is now closed). v1 reuses TS's exact ward-shell mechanic
+            // (`wardShellUntilTick`, mirrored as `ward_shell_until_tick`
+            // since Phase 5) — same shape as `.overclock`/`.measure` above.
+            // The consumption half (this file's PREVIOUS blocker: nothing
+            // read the field) now lives at section 4's projectile-vs-player
+            // hit resolution — see `EMISSION_WARD_DAMAGE_MULT`'s own doc
+            // comment above for exactly which paths do and don't apply it
+            // (ranged only, verified against TS; melee/AOE structurally
+            // can't per TS itself).
+            .hard_aperture => {
+                // TS's own "hard-aperture" case uses `state.tick + 1 +
+                // durTicks` (World.ts:3204, the SAME "+1" shape Self-Lattice
+                // below and ward_shell_until_tick's own TS cast sites use) —
+                // verified directly rather than copied from the sibling
+                // `.overclock`/`.measure` arms above, which are missing the
+                // +1 (a pre-existing discrepancy in already-shipped code,
+                // out of THIS pass's scope to touch).
+                const dur_ticks: u32 = @intFromFloat(@ceil((active_spec.duration_ms orelse 0) / @max(1.0, eff_dt)));
+                attacker.ward_shell_until_tick = state.header.tick + 1 + dur_ticks;
+                activated = true;
+            },
             .overclock => {
                 const dur_ticks: u32 = @intFromFloat(@ceil((active_spec.duration_ms orelse 0) / @max(1.0, eff_dt)));
                 attacker.overclock_until_tick = state.header.tick + dur_ticks;
@@ -1979,23 +2026,28 @@ fn stepAbilityDispatch(
                 }
                 activated = jumped;
             },
-            // Self-Lattice (Priest): writes the SAME
-            // wardAbsorbUntilTick/wardAbsorbRemaining pair Syzygist Ward
-            // uses (self-only, bypassing the isAlly team gate — see
-            // World.ts's "self-lattice" case). Those two fields already
-            // have a Zig PlayerEntity mirror
-            // (`syz_ward_absorb_until_tick`/`syz_ward_absorb_remaining`),
-            // so — same shape as Hard Aperture above — the CAST half would
-            // be trivial. Genuinely deferred anyway: that field pair is
-            // documented (its own doc comment, world_state.zig) as
-            // "TS-owned/TS-applied... step_world does not compute or
-            // consume this; combat.ts's trySyzygistWard does" — grepped
-            // directly, confirmed zero reads of either field anywhere in
-            // world.zig. Same "don't write a field nothing reads" reasoning
-            // as Hard Aperture; needs the Syzygist-Ward damage-mitigation
-            // consumption site built first (shared substrate work, out of
-            // this sub-group's scope).
-            .self_lattice => {}, // Phase 4a — deferred, see comment above
+            // Self-Lattice (Priest, shipped this pass — closes the Phase 4a
+            // deferral). Writes the SAME wardAbsorbUntilTick/
+            // wardAbsorbRemaining pair Glass Ward/Aegis Share (still
+            // deferred) would also write, self-only, bypassing the isAlly
+            // team gate — matches World.ts's "self-lattice" case exactly,
+            // including its lack of a `wardAbsorbSourceId` gameplay
+            // consumer in Zig (that field only ever feeds a
+            // `syz-ward-absorbed` event's `casterId` cosmetic attribution
+            // in TS — no Zig PlayerEntity mirror exists for it, and
+            // step_world has no such event type; self-cast makes the
+            // source trivially "self" anyway, so nothing is lost). The
+            // consumption half now lives at BOTH `stepMeleeSwing` and
+            // section 4's projectile-vs-player hit resolution — see
+            // `SYZ_SELF_LATTICE_ABSORB`'s own doc comment above for the
+            // exact absorb-pool mechanic (flat pool, not a %, mutually
+            // exclusive with the generic shield step, matching
+            // combat.ts's `trySyzygistWard` early-return ordering).
+            .self_lattice => {
+                attacker.syz_ward_absorb_until_tick = state.header.tick + 1 + SYZ_WARD_DURATION_TICKS_DEFAULT;
+                attacker.syz_ward_absorb_remaining = SYZ_SELF_LATTICE_ABSORB;
+                activated = true;
+            },
             .glass_ward => {}, // Phase 4 — not yet ported
             .haste_gift => {}, // Phase 4 — not yet ported
             .drift_step => {
@@ -2275,11 +2327,32 @@ fn stepMeleeSwing(
         victim.vx = mem.aim_x * knockback;
         victim.vy = mem.aim_y * knockback - knock_up;
 
-        // Generic shield mitigation only — see this section's own doc
-        // comment for why parry/directional-facing/Kindled-Ward/Syzygist-
-        // Ward are all correctly absent here.
-        if (victim.flags.shield_active and victim.flags.has_shield_charge and victim.shield_charge > 0) {
-            victim.shield_charge -= damage * combat.SHIELD_HIT_DRAIN_MULTIPLIER;
+        // Self-Lattice (Priest) — Syzygist Ward's flat absorb pool, checked
+        // BEFORE the generic shield step and mutually exclusive with it
+        // (same ordering/reasoning as section 4's own consumption site —
+        // see that site's own doc comment for the full citation). Melee is
+        // a genuine consumer here (this function's own doc comment above
+        // now explains why), unlike parry/directional-shield which stay
+        // correctly absent.
+        var damage_after_ward = damage;
+        var syz_ward_consumed = false;
+        if (victim.syz_ward_absorb_until_tick > state.header.tick and victim.syz_ward_absorb_remaining > 0) {
+            syz_ward_consumed = true;
+            const blocked = @min(damage_after_ward, victim.syz_ward_absorb_remaining);
+            victim.syz_ward_absorb_remaining -= blocked;
+            damage_after_ward -= blocked;
+            if (victim.syz_ward_absorb_remaining <= 0) {
+                victim.syz_ward_absorb_remaining = 0;
+                victim.syz_ward_absorb_until_tick = 0;
+            }
+        }
+
+        // Generic shield mitigation — see this section's own doc comment
+        // for why parry/directional-facing/Kindled-Ward are all correctly
+        // absent here. Skipped entirely when Syzygist Ward already
+        // consumed this hit above (mutual exclusivity, matches TS).
+        if (!syz_ward_consumed and victim.flags.shield_active and victim.flags.has_shield_charge and victim.shield_charge > 0) {
+            victim.shield_charge -= damage_after_ward * combat.SHIELD_HIT_DRAIN_MULTIPLIER;
             if (victim.shield_charge <= 0) {
                 victim.shield_charge = 0;
                 victim.flags.shield_active = false;
@@ -2310,7 +2383,7 @@ fn stepMeleeSwing(
         //    either way), and team peel (Phase 3 ally substrate). Every one
         //    of these is a TRUE no-op today given nothing upstream can
         //    populate the state they'd read, not a silent shortcut.
-        var final_damage = damage;
+        var final_damage = damage_after_ward;
         if (is_ninja) {
             if (attacker.read_mark_until_tick > state.header.tick and
                 attacker.read_target_id_len == victim.id_len and
@@ -3077,6 +3150,16 @@ pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
                 {
                     final_dmg *= 1.5;
                 }
+                // Hard Aperture (Wizard) — ward shell: halves incoming
+                // damage BEFORE parry/shield mitigation, matching
+                // World.ts's `resolveRangedHit` positioning (computed into
+                // `intoMitigation` ahead of its own `tryDeflectDamage`
+                // call). See `EMISSION_WARD_DAMAGE_MULT`'s own doc comment
+                // above for why this site (ranged only) is correct and
+                // melee/AOE correctly do NOT get an equivalent term.
+                if (state.players[ph2].ward_shell_until_tick > state.header.tick) {
+                    final_dmg *= EMISSION_WARD_DAMAGE_MULT;
+                }
                 // Victim's resolved card build (parry cover, directional +
                 // mirror shield) — parity with TS tryDeflectDamage.
                 const vcfg = &state.player_fire_config[ph2];
@@ -3125,6 +3208,32 @@ pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
                     );
                     break;
                 }
+                // Self-Lattice (Priest) — Syzygist Ward's flat absorb pool.
+                // Checked BEFORE the generic shield step and MUTUALLY
+                // EXCLUSIVE with it — matches combat.ts's `trySyzygistWard`,
+                // which returns from `tryDeflectDamage` immediately when a
+                // live pool exists (even a fully-drained-to-zero-remaining
+                // partial block), never falling through to the generic
+                // shield/Kindled-Ward branch that same call would otherwise
+                // reach. No facing/aim check (cast-and-forget, unlike
+                // parry/directional shield above). Reduces `final_dmg`
+                // rather than fully suppressing the hit — a partial absorb
+                // still lands as a (smaller) real hit, matching TS's
+                // `damage: damage - blocked` (never a hard 0-or-nothing
+                // block the way the generic shield step is).
+                var syz_ward_consumed = false;
+                if (state.players[ph2].syz_ward_absorb_until_tick > state.header.tick and
+                    state.players[ph2].syz_ward_absorb_remaining > 0)
+                {
+                    syz_ward_consumed = true;
+                    const blocked = @min(final_dmg, state.players[ph2].syz_ward_absorb_remaining);
+                    state.players[ph2].syz_ward_absorb_remaining -= blocked;
+                    final_dmg -= blocked;
+                    if (state.players[ph2].syz_ward_absorb_remaining <= 0) {
+                        state.players[ph2].syz_ward_absorb_remaining = 0;
+                        state.players[ph2].syz_ward_absorb_until_tick = 0;
+                    }
+                }
                 // Shield pop: if the player's shield is active
                 // and absorbs the hit, drop a shield_popped
                 // event (and tap the shield charge — full
@@ -3132,6 +3241,7 @@ pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
                 // shield-vs-direct-damage is wired into the
                 // model).
                 shield_block: {
+                    if (syz_ward_consumed) break :shield_block;
                     if (!(state.players[ph2].flags.shield_active and
                         state.players[ph2].flags.has_shield_charge and
                         state.players[ph2].shield_charge > 0)) break :shield_block;
