@@ -9,20 +9,11 @@ import { headCrestGeometry, headHoodGeometry } from "./chassisSilhouette";
 import type { AbilityKind } from "../../sim/data/cardTypes.js";
 import { ABILITY_ANIMATIONS } from "../render/abilityAnimation.js";
 import {
-  appendBladeTip,
-  meleeBladeDrawParams,
-  meleeBladeTip,
   meleeHandPose,
   meleeKineticChain,
   meleeOffhandPose,
   meleeStage,
 } from "../render/meleeTiming.js";
-import {
-  drawBladeSwing,
-  drawKindledSwing,
-  INTERSTICE_TINT,
-  KINDLED_TINT,
-} from "../render/LightConstruct.js";
 
 /** The minimal surface SimEventRouter drives on ANY on-screen combatant —
  *  hero, boss, or a non-humanoid thrall (see TutorialShardThrall.ts). Kept
@@ -403,14 +394,6 @@ export class ProceduralPlayerRig implements CombatRig {
   private meleePoseDurationMs = 1;
   private meleePoseStyle: "interstice" | "kindled" = "interstice";
   private meleePoseDir = 1;
-  // Live blade-tip trail for the Kindled Edge's swept-ribbon read
-  // (drawKindledSwing's tipHistory param) — sampled once per frame while a
-  // swing is active, cleared on the next triggerMeleeSwing(). Deliberately a
-  // per-frame accumulator, not the offline construct-harness's analytic
-  // whole-timeline precompute (that only works because the harness is
-  // scrubbing a fixed, already-known duration; live play only knows "now").
-  private meleeTipHistory: { x: number; y: number }[] = [];
-  private static readonly MELEE_TIP_HISTORY_MAX = 24;
   private abilityPoseMs = 0;
   private abilityPoseDurationMs = 1;
   private abilityPoseKind: AbilityKind = "sunlance";
@@ -810,7 +793,6 @@ export class ProceduralPlayerRig implements CombatRig {
     this.meleePoseDurationMs = style === "interstice" ? 360 : 560;
     this.meleePoseMs = this.meleePoseDurationMs;
     this.combatHoldMs = Math.max(this.combatHoldMs, 900);
-    this.meleeTipHistory = [];
   }
 
   /** Render-only authored gesture for every drafted active. The exhaustive
@@ -1602,68 +1584,20 @@ export class ProceduralPlayerRig implements CombatRig {
     // 10. Head + hood + visor
     this.drawHead(g, head, s, healthRatio);
 
-    // 9b. Melee blade swing — the live weapon: renders only while an active
-    // swing is running (meleePoseMs > 0). Reuses LightConstruct's
-    // drawBladeSwing/drawKindledSwing — built for the offline construct
-    // harness (constructHarness.ts) but never wired into the real rig, which
-    // is why every melee swing in a live match has swung a fully invisible
-    // weapon (Jake, playtest: "i am insterstice here cant see the blades").
-    // Pivots off THIS frame's real spring-settled hand positions (handLead/
-    // handBack — the same values getHandWorld() exposes), not a re-derived
-    // pose, so the blade can never visually detach from the arm swinging it.
-    // Drawn after the head so the swing silhouette is never occluded by the
-    // body it's swinging past.
-    const bladeParams = meleeBladeDrawParams(
-      this.meleePoseStyle,
-      this.meleePoseMs,
-      this.meleePoseDurationMs,
-      this.meleePoseDir,
-      aimAngle,
-      handLead,
-      handBack,
-    );
-    if (bladeParams) {
-      const tip = meleeBladeTip(
-        bladeParams.activePivot,
-        bladeParams.aimRad,
-        bladeParams.sweepRad,
-        bladeParams.dir,
-        bladeParams.t,
-        bladeParams.style,
-        bladeParams.reach,
-      );
-      this.meleeTipHistory = appendBladeTip(
-        this.meleeTipHistory,
-        tip,
-        ProceduralPlayerRig.MELEE_TIP_HISTORY_MAX,
-      );
-      if (bladeParams.style === "kindled") {
-        drawKindledSwing(
-          g,
-          bladeParams.leadPivot,
-          bladeParams.backPivot,
-          bladeParams.aimRad,
-          bladeParams.reach,
-          KINDLED_TINT,
-          bladeParams.sweepRad,
-          bladeParams.dir,
-          bladeParams.t,
-          this.meleeTipHistory,
-        );
-      } else {
-        drawBladeSwing(
-          g,
-          bladeParams.leadPivot,
-          bladeParams.backPivot,
-          bladeParams.aimRad,
-          bladeParams.reach,
-          INTERSTICE_TINT,
-          bladeParams.sweepRad,
-          bladeParams.dir,
-          bladeParams.t,
-        );
-      }
-    }
+    // 9b. Melee blade swing — RENDERED BY ConstructVfxController, not here.
+    // 2026-07-20: this used to ALSO draw the active swing directly onto
+    // this.graphics (drawBladeSwing/drawKindledSwing, unfiltered, live aim)
+    // in addition to ConstructVfxController's own swingLayerPaladin/
+    // swingLayerNinja (glow-filtered, aim frozen at swing-start) — two
+    // independent, uncoordinated draws of the same swing, which is exactly
+    // the "double sword" ghosting a real match clip caught on Kindled (the
+    // long EDGE_SWING_MS=560 gave the frozen-vs-live aim divergence time to
+    // become visible; Interstice had the identical bug but BLADE_SWING_MS=120
+    // made it much harder to see). ConstructVfxController's path already
+    // owns the crossfade against the resting held-weapon layer
+    // (swingSuppression) — this rig only drives the BODY pose (arm bend,
+    // weight shift, kinetic chain, all still driven by meleePoseMs/Style/Dir
+    // above) and no longer duplicates the blade itself.
 
     // 11. Dash-bash shield — deployed only while dashing: a bright energy arc in
     // the lunge direction, the directional block made visible (matches the

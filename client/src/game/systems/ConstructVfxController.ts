@@ -31,7 +31,7 @@ import {
   drawBladeSwing,
   drawKindledSwing,
   drawHeldDaggers,
-  drawHeldEdge,
+  drawHeldEdges,
   drawWardSlab,
   spawnWardRaise,
   spawnWardAbsorb,
@@ -602,11 +602,11 @@ export class ConstructVfxController {
         if (cls !== "ninja" && cls !== "paladin") continue;
         const aim = Math.atan2(p.aimY - p.y, p.aimX - p.x);
         const lead = resolveHand(pidKey as PlayerId, 0);
+        const back = resolveHand(pidKey as PlayerId, 1);
         if (cls === "ninja") {
-          const back = resolveHand(pidKey as PlayerId, 1);
           if (lead && back) drawHeldDaggers(this.heldLayerNinja, lead, back, aim, INTERSTICE_TINT, heldAlpha);
-        } else if (lead) {
-          drawHeldEdge(this.heldLayerPaladin, lead, aim, KINDLED_TINT, heldAlpha);
+        } else if (lead && back) {
+          drawHeldEdges(this.heldLayerPaladin, lead, back, aim, KINDLED_TINT, heldAlpha);
         }
       }
     }
