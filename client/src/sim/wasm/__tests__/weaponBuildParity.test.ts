@@ -22,7 +22,17 @@ const ex = sim.exports as unknown as {
   resolve_build_card_count: () => number;
 };
 
-const cards = crystalRoundsCards.filter((c) => c.modifier);
+// gen_card_data.ts emits a CardEntry for EVERY card now (not just the ones
+// with a `modifier` — see that file's "Every card gets an entry now" note,
+// landed in 110f825), so `resolve_build_test`/`resolve_build_card_count`
+// index into cards_gen.zig's FULL, unfiltered `cards` array — this list must
+// stay in the exact same (unfiltered) declaration order to keep `cards[i]`
+// pointing at the same card as Zig's `gen.cards[i]`. Cards without a
+// `modifier` still round-trip correctly here: `createWeaponBuild`'s
+// `applyCard` early-returns on a missing modifier (weaponBuild.ts) exactly
+// like Zig's `cardModLiteral` short-circuits to the all-defaults `.{}`
+// literal, so both sides resolve to the untouched base build for them.
+const cards = crystalRoundsCards;
 const SCRATCH = sim.statePtr + WORLD_STATE_TOTAL_SIZE + 4096;
 
 function zig(i: number): DataView {
