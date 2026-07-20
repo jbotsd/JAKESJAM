@@ -22,28 +22,38 @@ number. If you want daily instead, there's 7 ready to go out same-day.
 
 ---
 
-## Post 0 (NEW lead, supersedes Post 1 below) — fresh kill-reel
+## Post 0 (NEW lead, supersedes Post 1 below) — fresh kill-reel (v3)
 
-File: `~/Downloads/jakesjam-fresh-kill-reel.mp4` (45.3s, 1920x1080, real gameplay from a live
+File: `~/Downloads/jakesjam-kill-reel-v3.mp4` (17.8s, 1920x1080, real gameplay from a live
 session on `play.elyad.io` today, 2026-07-20 — genuinely new, not the Jul 6 batch below).
 
-Four real players' auto-rendered broadcast-grade killcams (`docs/clip-goal.md` pipeline),
-concatenated in escalating order, ORIGINAL captured game audio kept (not stripped/replaced —
-it's real, already good, no reason to cover it): BINGUS double kill → GWAD double kill →
-GWAD triple kill → SHADY_BASS_MAN triple kill → branded end card. Each clip already carries
-its own baked-in player-name + kill-count lower third from the game's own render, so no extra
-per-clip captioning was needed — just a 1.8s hook-text intro on the open.
+**Revision note:** the first cut of this (v1, since deleted) concatenated 4 full raw clips
+picked by their "TRIPLE/DOUBLE KILL" end-label text alone, without checking what the middle
+of each clip actually showed — result was 10+ straight seconds of a character just walking
+alone with no visible action. Correctly called out as bad. v3 fixes this properly: every
+source clip in the ~45-clip batch from tonight was scored by actual scene-change/motion
+density (ffmpeg `select='gt(scene,0.08)'`, normalized per second), and only the verified
+highest-motion ~4s windows from 4 different clips were used — hard-trimmed, not full clips.
+Also discovered along the way: this batch of clips has NO audio track (server-side headless
+replay renders, unlike the earlier "TRIPLE KILL"-labeled batch which does have live-captured
+audio) — scored with `epic-loop-3` instead (top pick per `docs/MUSIC-MANIFEST.md` for hype
+shorts).
 
-Source clip IDs (server/.clips/, real 2026-07-20 gameplay, for provenance):
-`1a6934d6-57d6-432f-bade-699b2208c14f`, `6a0c3025-f390-4636-840f-bee555115722`,
-`885b9c81-a3ef-4592-9806-5583b7e76ec6`, `386163c4-8091-4bb8-b037-36197a534e48`.
+Cut order: beam-combat exchange → escalating laser-pattern volley → dense multi-beam cluster
+→ a clip with an actual **"DOUBLE KILL" popup visible mid-action** (not just an end-card
+label) as the payoff → branded end card. 1.6s hook-text intro on the open.
+
+Source clip IDs (server/.clips/, real 2026-07-20 gameplay, action windows trimmed, for
+provenance): `984a9818-44f1-4673-9530-978d4392ab4d` (0.3-4.5s), `b7fee481-2fe7-40e4-aea8-8f22f7ab589d`
+(2.3-6.5s), `39fe3899-e845-4ba4-aabe-1af5126815f1` (4.0-8.0s), `d35505f3-16d6-482d-b057-a1161b95ad96`
+(0.0-3.5s).
 
 ### TikTok
-> random people found my game today and this happened 🕹️ link in bio
+> real players. tonight. on the live server. 🕹️ link in bio
 #indiegame #gamedev #browsergame #multiplayer
 
 ### YouTube (native 16:9, works as a regular upload or Short)
-**Title:** Random players found my game today and it went off
+**Title:** Real players found my game tonight and this happened
 **Description:**
 > Real players, real matches, tonight, on the live build: https://play.elyad.io
 > Fight Night every Friday.
