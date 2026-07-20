@@ -17,7 +17,7 @@ import { join } from "node:path";
 import { healthy } from "./probeKit.mjs";
 
 const BASE = process.env.PROBE_BASE ?? "http://localhost:8088";
-const OUT_DIR = "/tmp/claude-1000/-home-jimothy/230c0343-c50b-4b15-bcce-8a7728a73e8b/scratchpad/promo-session";
+const OUT_DIR = process.env.PROMO_OUT_DIR ?? join(process.cwd(), "tools", ".promo-session-out");
 mkdirSync(OUT_DIR, { recursive: true });
 
 if (!(await healthy(BASE))) {

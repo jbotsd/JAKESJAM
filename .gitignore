@@ -69,3 +69,6 @@ jakesjam-portal-build.zip
 # scripts/balance-sim.ts JSON report — regenerated on every run, not
 # authored data.
 scripts/.balance-sim-report.json
+
+# tools/promo-clip-session.mjs raw capture output — regenerated per run.
+tools/.promo-session-out/
