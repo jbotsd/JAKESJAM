@@ -618,6 +618,29 @@ pub const PlayerEntity = extern struct {
     /// `shockRingArmedUntilTick`). Cleared on consumption, not just on
     /// timeout.
     shock_ring_armed_until_tick: u32 = 0,
+
+    /// Ward shell (Phase 5, docs/zig-step-world-parity-goal.md wire-contract
+    /// cleanup — one of the 2 "accidental field gaps" the original audit
+    /// flagged). Mirrors TS `PlayerEntity.wardShellUntilTick` (types.ts,
+    /// six-axes-goal.md Layer 1: set at Emission cast when the hand's Ward
+    /// axis is charged). Unlike `regenTickLastApplied` — this pass's other
+    /// flagged item, RE-VERIFIED and found to be a false positive: it's
+    /// pure TS-internal rate-limit bookkeeping for World.ts's own regen
+    /// tick, absent from both hash.ts and snapshotDeltaBits.ts, never wire-
+    /// visible — this field IS genuinely wire-relevant: hash-mixed
+    /// (hash.ts:127) and delta-bit-tracked (snapshotDeltaBits.ts:64), and
+    /// it gates a real mitigation-order step ("parry > shell > shield",
+    /// World.ts:1672) another player needs to see. Same carry-through-only
+    /// contract as `regen_until_tick`/`haste_until_tick` above (`step_world`
+    /// does not itself apply EMISSION_WARD_DAMAGE_MULT anywhere in its own
+    /// melee/projectile damage math today — this field crosses the ABI
+    /// structurally so a value written by the live TS-authoritative path
+    /// round-trips correctly; wiring step_world's OWN damage resolution to
+    /// read it is a separate, not-yet-scoped follow-up, not silently
+    /// assumed done by this field's mere presence). No `has_*` flag needed
+    /// — 0 unambiguously reads "no shell" against a monotonic tick, same
+    /// convention as every window field on this struct.
+    ward_shell_until_tick: u32 = 0,
 };
 
 /// Mirrors `ProjectileEntity`.
@@ -1512,7 +1535,16 @@ comptime {
     // notes directly above: worldStateBridge.ts's PLAYER_ENTITY_SIZE is
     // untouched by this Zig-only pass — Zig-internal tests read
     // @sizeOf(PlayerEntity) directly and are unaffected.
-    std.debug.assert(@sizeOf(PlayerEntity) == 512);
+    // 512 → 520 (Phase 5, docs/zig-step-world-parity-goal.md wire-contract
+    // cleanup): +4 content bytes for ward_shell_until_tick (u32) — 512 is
+    // already 8-byte-aligned so the field itself needs no leading pad, but
+    // being a single trailing u32 leaves the struct at 516, not a multiple
+    // of 8, so Zig inserts 4 bytes of implicit tail padding (516 → 520).
+    // See ward_shell_until_tick's own doc comment for what it carries and
+    // why its sibling `regenTickLastApplied` (the original audit's OTHER
+    // flagged gap) is deliberately NOT added — verified as TS-internal-only,
+    // never wire-visible, not a real gap.
+    std.debug.assert(@sizeOf(PlayerEntity) == 520);
     // EquippedActives (Phase 1): [3]u8 = 3 bytes, no padding (u8 array
     // needs no alignment beyond 1). Doesn't cross the wasm ABI today (see
     // its own doc comment) — pure internal regression-catching, same role

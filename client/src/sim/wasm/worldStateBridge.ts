@@ -103,7 +103,17 @@ export const HEADER_SIZE = 56;
 // 384 — host-only state for now), but PLAYER_ENTITY_SIZE MUST reflect the
 // true Zig stride or every downstream array (projectiles, satellites, ...)
 // mis-aligns.
-export const PLAYER_ENTITY_SIZE = 512;
+// 512 → 520 (Phase 5, docs/zig-step-world-parity-goal.md wire-contract
+// cleanup): +4 content bytes for ward_shell_until_tick (u32) + 4 bytes of
+// implicit tail padding (516 isn't 8-aligned) — see world_state.zig's
+// PlayerEntity comptime assert. UNLIKE the 384→512 tail above (genuinely
+// TS-only ability/window state, per six-axes-goal.md's "Zig line"),
+// wardShellUntilTick IS wire-relevant on the TS side today (hash-mixed,
+// hash.ts:127; delta-bit-tracked, snapshotDeltaBits.ts:64) — packPlayer/
+// unpackPlayer crossing it is a real, scoped follow-up (not done by this
+// cut), same "size correct now, field-level pack/unpack later" split every
+// prior growth in this history used.
+export const PLAYER_ENTITY_SIZE = 520;
 const PROJECTILE_ENTITY_SIZE = 216;
 const SATELLITE_ENTITY_SIZE = 96;
 const DESTRUCTIBLE_ENTITY_SIZE = 64;
