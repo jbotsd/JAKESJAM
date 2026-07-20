@@ -34,6 +34,10 @@ import { ActionCamera } from "../systems/ActionCamera.js";
 import { CameraHype } from "../systems/CameraHype.js";
 import { getMusicLevel } from "../systems/MusicAmplitude";
 import { SimEventRouter } from "../render/SimEventRouter";
+import { ParticlePool } from "../systems/ParticlePool";
+import { StatusVfxController } from "../systems/StatusVfxController";
+import { ConstructVfxController } from "../systems/ConstructVfxController";
+import { classIdForArchetype } from "../../sim/data/cardTypes";
 import { spawnFloatingDamageNumber } from "../render/damageNumber.js";
 import { TouchControls } from "../input/TouchControls";
 import { isTouchPrimary, isPortraitMobile } from "../input/mobile";
@@ -121,7 +125,7 @@ export class HangoutScene extends Phaser.Scene {
   private audio?: ProceduralAudio;
   private touchControls: TouchControls | null = null;
   private keys!: Record<
-    "a" | "d" | "w" | "space" | "slot1" | "slot2" | "slot3",
+    "a" | "d" | "w" | "space" | "shift" | "slot1" | "slot2" | "slot3",
     Phaser.Input.Keyboard.Key
   >;
   // Duos queue (classes-goal.md "Venue integration" — venue-only, a lighter
@@ -147,6 +151,20 @@ export class HangoutScene extends Phaser.Scene {
   private statusText: Phaser.GameObjects.Text | null = null;
   private actionCamera!: ActionCamera;
   private simEventRouter: SimEventRouter | null = null;
+  /** Lobby VFX parity (docs/lobby-vfx-parity-goal.md): venue-mode only —
+   *  same trio OnlineMatchScene drives for every held weapon, melee swing,
+   *  Ward slab, tether, lance flourish, and ability cast-tell. Private
+   *  hangouts carry no combat, so these stay null there (same gate as
+   *  `entityRender`/`actionBar` below) and every consumer null-guards. */
+  private particlePool: ParticlePool | null = null;
+  private statusVfx: StatusVfxController | null = null;
+  private constructVfx: ConstructVfxController | null = null;
+  /** Buffered once per frame, drained after both VFX consumers run —
+   *  mirrors OnlineMatchScene's `pendingSimEvents` byte-for-byte (this
+   *  scene's own `handleSimEvents` used to dispatch straight to
+   *  `simEventRouter` with no buffering, because nothing downstream ever
+   *  needed the whole-frame batch before). */
+  private pendingSimEvents: SimEvent[] = [];
   /** Loadout station live-fire (Fix 1, live playtest 2026-07-18 — Jake:
    *  "the abilities and load out should be active in this world"): the
    *  same bottom-center hotkey bar OnlineMatchScene renders, venue-mode
@@ -256,6 +274,12 @@ export class HangoutScene extends Phaser.Scene {
         d: this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.D),
         w: this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.W),
         space: this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.SPACE),
+        // Shield (docs/lobby-vfx-parity-goal.md Pillar 3): hold-to-shield,
+        // same key OnlineMatchScene binds (`OnlineMatchScene.ts:594`) — the
+        // lobby had Fire + drafted-active keys but no way to ever raise
+        // Kindled's Ward at all, so "try it on the dummies" couldn't cover
+        // the class's own centerpiece defense. Venue-only, same gate as Fire.
+        shift: this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.SHIFT),
         // Drafted actives (loadout station catalog abilities) — same three
         // keys/bits OnlineMatchScene binds (see update()'s input assembly).
         slot1: this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.ONE),
@@ -284,6 +308,11 @@ export class HangoutScene extends Phaser.Scene {
     this.scale.on("resize", this.applyCameraZoom, this);
 
     if (this.mode === "venue") {
+      // Lobby VFX parity (docs/lobby-vfx-parity-goal.md Pillar 1): pool
+      // BEFORE the entity coordinator, same order OnlineMatchScene.create()
+      // uses, so anything that wants to draw from it during setup can.
+      this.particlePool = new ParticlePool(this);
+
       // S2.C: the venue lobby is a live-fire room — projectiles and the
       // practice dummies are ordinary snapshot state, so the arena's own
       // painters render them (TutorialScene's cross-scene import precedent).
@@ -295,13 +324,25 @@ export class HangoutScene extends Phaser.Scene {
           drawFirePatch: (g, fire, nowMs) => drawFirePatch(g, fire, nowMs),
           drawPickup: (g, pickup, nowMs) => drawPickup(g, pickup, nowMs),
         },
-        null,
+        this.particlePool,
       );
       // Loadout station live-fire (Fix 1): the same hotkey bar the arena
       // renders, so cooldowns/glyphs for whatever's equipped are visible
       // while standing at a dummy — venue-only, mirroring entityRender's
       // gate immediately above (private hangouts have no loadout station).
       this.actionBar = new ActionBarSystem(this);
+
+      // Lobby VFX parity (docs/lobby-vfx-parity-goal.md Pillar 1): the exact
+      // trio OnlineMatchScene constructs (`OnlineMatchScene.ts:673,676`) —
+      // every held weapon, melee swing, Ward slab, tether, lance flourish,
+      // and ability cast-tell renders through these two controllers and
+      // NOWHERE else in the client. Without them a class standing at the
+      // loadout table has empty hands, and attacking a practice dummy swings
+      // nothing visible — confirmed root cause of the reported "swords don't
+      // show on Kindled/Interstice" gap, which turned out to affect every
+      // class's construct, not just those two.
+      this.statusVfx = new StatusVfxController(this, this.particlePool);
+      this.constructVfx = new ConstructVfxController(this, this.particlePool);
     }
 
     this.lastFrameMs = performance.now();
@@ -651,11 +692,13 @@ export class HangoutScene extends Phaser.Scene {
 
   private handleSimEvents(events: SimEvent[]): void {
     if (!this.simEventRouter) {
-      // Only ready-toggled/launch-requested (and the always-inert combat
-      // cases) can ever fire in a hangout match — the deps below are still
-      // fully wired (not stubbed) so the router's exhaustive switch stays
-      // byte-identical to OnlineMatchScene's, even though most branches are
-      // unreachable here.
+      // Combat IS reachable here (venue-lobby practice dummies + showcase
+      // gauntlet, docs/venue-lobby-tableau-goal.md) — the deps below are
+      // fully wired, not stubbed, so the router's exhaustive switch stays
+      // byte-identical to OnlineMatchScene's AND every branch it dispatches
+      // actually fires for real in venue mode. (Corrected 2026-07-20,
+      // docs/lobby-vfx-parity-goal.md — the previous "always-inert combat
+      // cases" comment here predated the practice dummies and was stale.)
       this.simEventRouter = new SimEventRouter({
         scene: this,
         // Lobby flashes/evidence are visual contracts, not conditional on
@@ -682,7 +725,7 @@ export class HangoutScene extends Phaser.Scene {
         showCardDraft: () => {},
         hideCardDraft: () => {},
         playerRigs: this.playerRigs,
-        particlePool: null,
+        particlePool: this.particlePool,
         renderLayer: null,
         killStreakCount: new Map(),
         prevAlive: new Set(),
@@ -694,6 +737,11 @@ export class HangoutScene extends Phaser.Scene {
       }
       this.simEventRouter.dispatch(event);
     }
+    // Lobby VFX parity (docs/lobby-vfx-parity-goal.md Pillar 1): buffered
+    // for statusVfx/constructVfx, which read the whole frame's batch once
+    // per `update()` tick (not per-event) — same buffer-then-drain shape as
+    // OnlineMatchScene's `pendingSimEvents` (`OnlineMatchScene.ts:1542-1545`).
+    for (const event of events) this.pendingSimEvents.push(event);
   }
 
   /** Player/ally-NPC damage-number popup — mirrors OnlineMatchScene's own
@@ -1139,6 +1187,11 @@ export class HangoutScene extends Phaser.Scene {
     if (this.mode === "venue" && this.input.activePointer.leftButtonDown()) {
       keys |= InputBit.Fire;
     }
+    // Shield (docs/lobby-vfx-parity-goal.md Pillar 3) — venue-only, same
+    // gate as Fire above; see the key binding's own doc comment in create().
+    if (this.mode === "venue" && this.keys?.shift.isDown) {
+      keys |= InputBit.Shield;
+    }
     // Drafted actives (loadout station catalog abilities, Fix 1 live
     // playtest 2026-07-18 — Jake: "the abilities and load out should be
     // active in this world"): keys 1-3 press bar slots in pick order —
@@ -1195,10 +1248,54 @@ export class HangoutScene extends Phaser.Scene {
     // frame's hype; matching upstream's exact order rather than
     // "fixing" a one-frame lag that isn't this port's job to change).
     this.updateCameraHype(deltaMs);
+    this.updateConstructVfx(state, deltaMs);
     this.updateLoadoutZone(state);
     this.updateTotemPulse(now);
     this.updateVenueFeed(now);
     this.updateActionBar(state);
+  }
+
+  /** Lobby VFX parity (docs/lobby-vfx-parity-goal.md Pillar 1) — drives the
+   *  exact two controllers OnlineMatchScene drives every frame
+   *  (`OnlineMatchScene.ts:1016-1042`), unconditionally (never gated behind
+   *  "were there events this frame"): `ConstructVfxController.update()`'s
+   *  resting-weapon draw runs every call regardless of `events`, which is
+   *  what makes a class's IDLE held weapon visible while just standing at
+   *  the loadout table, not only mid-swing. `null` on both controllers in
+   *  private-hangout mode (never constructed there) makes this a no-op —
+   *  same guard shape OnlineMatchScene itself uses defensively. */
+  private updateConstructVfx(state: WorldState, deltaMs: number): void {
+    const simEvents = this.pendingSimEvents;
+    const resolvePos = (id: PlayerId): { x: number; y: number } | undefined => {
+      const p = state.players[id];
+      return p ? { x: p.x, y: p.y } : undefined;
+    };
+    if (this.statusVfx) {
+      this.statusVfx.update(state, simEvents, deltaMs, resolvePos);
+    }
+    if (this.constructVfx) {
+      // Same hand-anchoring rationale as OnlineMatchScene's own comment
+      // here: the blade pivots at the rig's live hand, not the feet.
+      const resolveHand = (id: PlayerId, hand: 0 | 1): { x: number; y: number } | undefined =>
+        this.playerRigs.get(id as string)?.getHandWorld(hand) ?? undefined;
+      const triggerMeleePose = (
+        id: PlayerId,
+        style: "interstice" | "kindled",
+        dir: number,
+      ): void => {
+        this.playerRigs.get(id as string)?.triggerMeleeSwing?.(style, dir);
+      };
+      this.constructVfx.update(
+        state,
+        simEvents,
+        deltaMs,
+        resolvePos,
+        classIdForArchetype,
+        resolveHand,
+        triggerMeleePose,
+      );
+    }
+    if (simEvents.length > 0) simEvents.length = 0;
   }
 
   /** Dance camera (Fix 2, live playtest 2026-07-18 — Jake: "as well as the
@@ -1457,6 +1554,14 @@ export class HangoutScene extends Phaser.Scene {
     this.entityRender = null;
     this.actionBar?.destroy();
     this.actionBar = null;
+    // Lobby VFX parity (docs/lobby-vfx-parity-goal.md) — same teardown order
+    // as OnlineMatchScene (`OnlineMatchScene.ts:3114-3115`): controllers
+    // hold no disposable resources of their own, the pool does.
+    this.statusVfx = null;
+    this.constructVfx = null;
+    this.particlePool?.destroy();
+    this.particlePool = null;
+    this.pendingSimEvents.length = 0;
     this.cameraHype.reset();
     this.cameraHypePeakPrev = false;
     this.callsignOverlay?.remove();
