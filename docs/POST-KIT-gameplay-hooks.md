@@ -22,7 +22,42 @@ number. If you want daily instead, there's 7 ready to go out same-day.
 
 ---
 
-## Post 1 (lead) — parry-multikill
+## Post 0 (NEW lead, supersedes Post 1 below) — fresh kill-reel
+
+File: `~/Downloads/jakesjam-fresh-kill-reel.mp4` (45.3s, 1920x1080, real gameplay from a live
+session on `play.elyad.io` today, 2026-07-20 — genuinely new, not the Jul 6 batch below).
+
+Four real players' auto-rendered broadcast-grade killcams (`docs/clip-goal.md` pipeline),
+concatenated in escalating order, ORIGINAL captured game audio kept (not stripped/replaced —
+it's real, already good, no reason to cover it): BINGUS double kill → GWAD double kill →
+GWAD triple kill → SHADY_BASS_MAN triple kill → branded end card. Each clip already carries
+its own baked-in player-name + kill-count lower third from the game's own render, so no extra
+per-clip captioning was needed — just a 1.8s hook-text intro on the open.
+
+Source clip IDs (server/.clips/, real 2026-07-20 gameplay, for provenance):
+`1a6934d6-57d6-432f-bade-699b2208c14f`, `6a0c3025-f390-4636-840f-bee555115722`,
+`885b9c81-a3ef-4592-9806-5583b7e76ec6`, `386163c4-8091-4bb8-b037-36197a534e48`.
+
+### TikTok
+> random people found my game today and this happened 🕹️ link in bio
+#indiegame #gamedev #browsergame #multiplayer
+
+### YouTube (native 16:9, works as a regular upload or Short)
+**Title:** Random players found my game today and it went off
+**Description:**
+> Real players, real matches, tonight, on the live build: https://play.elyad.io
+> Fight Night every Friday.
+
+### Instagram Reels
+Same caption as TikTok. Bio link → play.elyad.io.
+
+Native 1920x1080 (landscape) — kept as the auto-render pipeline output it, since re-cropping
+to vertical risks cutting off side-screen action; landscape uploads natively on all three
+platforms today.
+
+---
+
+## Post 1 — parry-multikill (Jul 6 batch, now second in the queue)
 
 File: `~/Downloads/jakesjam-parry-multikill.mp4` (12.0s, 1080x1920)
 
