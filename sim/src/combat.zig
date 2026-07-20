@@ -9,6 +9,7 @@
 const std = @import("std");
 const trig = @import("trig.zig");
 const world_state = @import("world_state.zig");
+const collision = @import("collision.zig");
 
 const PI: f64 = 3.141592653589793;
 const TWO_PI: f64 = 6.283185307179586;
@@ -294,4 +295,75 @@ pub export fn combat_shield_drain_per_second() f64 {
 
 pub export fn combat_shield_recharge_per_second() f64 {
     return SHIELD_RECHARGE_PER_SECOND;
+}
+
+// =================================================================
+// Melee arc-containment primitive (2026-07-20, base-melee-mechanic
+// gap-closure pass — Ninja Slash + Paladin Kindled Edge). Bit-exact port
+// of `isAABBInMeleeArc`/`playerHitboxAABB` in client/src/sim/World.ts:
+// 686-734 and client/src/sim/player.ts:105-113. Lives in combat.zig (not
+// world.zig) because it's a pure geometry primitive in the same family as
+// `isHitInArc` immediately above — the melee FSM orchestration itself
+// (swing phase/timing/hit application) lives in world.zig's new melee
+// step section, mirroring the existing split between this file (math
+// primitives) and world.zig (per-tick orchestration).
+
+/// Real player body box — bodyWidth × crouch-aware bodyHeight, centred on
+/// (x, y). Mirrors `player.ts`'s `M.bodyWidth`/`M.bodyHeight`/
+/// `M.crouchHeight` constants exactly (26 × 56, 38 crouched). NOT the same
+/// as world.zig section 4's projectile-hit box (a fixed 30×56
+/// approximation, non-crouch-aware) — that's a pre-existing simplification
+/// in the projectile path, left untouched by this melee-only port. Melee's
+/// own arc-check uses the REAL hitbox because World.ts's own
+/// `isBodyInMeleeArc` doc comment calls this out explicitly ("sample the
+/// victim's real crouch-aware hitbox").
+pub const MELEE_BODY_WIDTH: f64 = 26.0;
+pub const MELEE_BODY_HEIGHT: f64 = 56.0;
+pub const MELEE_BODY_CROUCH_HEIGHT: f64 = 38.0;
+
+pub fn playerHitboxAabb(x: f64, y: f64, crouching: bool) collision.AABB {
+    const h: f64 = if (crouching) MELEE_BODY_CROUCH_HEIGHT else MELEE_BODY_HEIGHT;
+    return .{
+        .x = x - MELEE_BODY_WIDTH / 2.0,
+        .y = y - h / 2.0,
+        .w = MELEE_BODY_WIDTH,
+        .h = h,
+    };
+}
+
+/// Melee arc hit test — bit-exact port of World.ts's `isAABBInMeleeArc`
+/// (World.ts:707-734): sample the victim's AABB at its centre + 4 corners,
+/// hit if ANY sampled point is within `range` of `(origin_x, origin_y)` AND
+/// within `half_arc` of `aim_angle`. `half_arc` is HALF the full cone width
+/// — callers pass e.g. `SLASH_ARC_RADIANS / 2`, matching the TS source's
+/// own `halfArc` parameter naming exactly. This is a DIFFERENT convention
+/// from `isHitInArc` above (whose `arc_radians` param IS the full width) —
+/// deliberately kept as a literal, checkable port of the TS source rather
+/// than harmonized with this file's own parry-arc convention.
+pub fn isBodyInMeleeArc(
+    origin_x: f64,
+    origin_y: f64,
+    aim_angle: f64,
+    half_arc: f64,
+    range: f64,
+    center_x: f64,
+    center_y: f64,
+    box: collision.AABB,
+) bool {
+    const points = [5][2]f64{
+        .{ center_x, center_y },
+        .{ box.x, box.y },
+        .{ box.x + box.w, box.y },
+        .{ box.x, box.y + box.h },
+        .{ box.x + box.w, box.y + box.h },
+    };
+    for (points) |p| {
+        const dx = p[0] - origin_x;
+        const dy = p[1] - origin_y;
+        const dist = @sqrt(dx * dx + dy * dy);
+        if (dist > range or dist < 1e-3) continue;
+        const da = wrapAngle(trig.lutAtan2(dy, dx) - aim_angle);
+        if (@abs(da) <= half_arc) return true;
+    }
+    return false;
 }

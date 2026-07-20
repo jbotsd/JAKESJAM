@@ -718,3 +718,260 @@ test "instant AOE: resolved strictly AFTER section 6 — a shield activated THIS
     // pre-tick snapshot — full block, zero damage.
     try std.testing.expectEqual(@as(f64, 100.0), state.players[1].health);
 }
+
+// ── MELEE — Ninja Slash + Paladin Kindled Edge (2026-07-20 base-melee-
+//    mechanic gap-closure pass, parity port of World.ts's "1z2. NINJA
+//    MELEE"/"1z3. PALADIN MELEE" sections) ─────────────────────────────────
+//
+// Tick-math note: every test below drives dt in exact-boundary steps so
+// the swing phase machine lands EXACTLY on a phase transition or the
+// contact-delay gate on a known tick, rather than approximating with many
+// small dt steps. Attacker and victim both start at vy=0 with no
+// horizontal input, so gravity (identical dt/grav_mul for every player,
+// IEEE754-deterministic) moves them down in perfect lockstep tick over
+// tick — their RELATIVE position (all the arc/range check reads) never
+// drifts, so no static floor is needed to hold them in place.
+
+test "melee: ninja slash hits an in-arc in-range victim for SLASH_DAMAGE with knockback, and does not double-hit the same victim later in the same active window" {
+    var state = freshFightingState();
+    state.player_count = 2;
+    state.players[0].flags.alive = true;
+    state.players[0].character_id = .sprinter; // ninja
+    state.players[0].health = 100;
+    state.players[0].x = 0;
+    state.players[0].y = 0;
+    state.players[0].aim_x = 100; // aims straight along +X
+    state.players[0].aim_y = 0;
+    state.players[0].current_keys = FIRE_BIT;
+
+    state.players[1].flags.alive = true;
+    state.players[1].health = 100;
+    state.players[1].x = 50; // within SLASH_RANGE (78), dead ahead (angle 0)
+    state.players[1].y = 0;
+
+    // Tick 1: Fire rising edge -> windup starts (phaseMs = 120).
+    _ = root.world.stepWorld(&state, 1.0);
+    try std.testing.expectEqual(@as(f64, 100.0), state.players[1].health);
+
+    // Tick 2: dt = 120 exactly closes windup -> active starts this same
+    // tick (phaseMs = 90, elapsed = 0) — too early for contact.
+    _ = root.world.stepWorld(&state, 120.0);
+    try std.testing.expectEqual(@as(f64, 100.0), state.players[1].health);
+
+    // Tick 3: dt = 44 (== SLASH_CONTACT_DELAY_MS) — elapsed hits exactly
+    // 44, the contact gate opens, arc hit-check resolves this tick.
+    _ = root.world.stepWorld(&state, 44.0);
+    try std.testing.expectEqual(@as(f64, 78.0), state.players[1].health); // 100 - 22
+    // Tolerance is looser than the other float checks in this file: the
+    // swing direction is captured from `attacker.aimX - attacker.x` at the
+    // START of windup (tick 1), AFTER that same tick's physics pass has
+    // already nudged the attacker's y down a hair under gravity — a real,
+    // tiny, expected deviation from a perfect (1, 0) unit vector, not a
+    // bug in the melee code itself.
+    try std.testing.expect(@abs(state.players[1].vx - 260.0) < 0.01); // aimX(~1) * SLASH_KNOCKBACK
+    try std.testing.expect(@abs(state.players[1].vy - (-60.0)) < 0.01); // aimY(~0)*KB - SLASH_KNOCK_UP
+
+    // Tick 4: still inside the active window (46ms of phaseMs left) and
+    // still contact-gated — but the victim is already in hitThisSwing, so
+    // no second hit lands.
+    _ = root.world.stepWorld(&state, 1.0);
+    try std.testing.expectEqual(@as(f64, 78.0), state.players[1].health);
+}
+
+test "melee: arc gate — a victim outside the cone at the same range is missed; range gate — a victim dead-ahead but beyond SLASH_RANGE is missed" {
+    var state = freshFightingState();
+    state.player_count = 3; // 0 = attacker, 1 = miss (off-axis), 2 = miss (too far)
+    state.players[0].flags.alive = true;
+    state.players[0].character_id = .sprinter;
+    state.players[0].health = 100;
+    state.players[0].aim_x = 100;
+    state.players[0].aim_y = 0;
+    state.players[0].current_keys = FIRE_BIT;
+
+    state.players[1].flags.alive = true;
+    state.players[1].health = 100;
+    state.players[1].x = 0; // 90 degrees off-axis, well outside the +-50 deg cone
+    state.players[1].y = 50; // same 50px distance as the in-arc victim in the hit test
+
+    state.players[2].flags.alive = true;
+    state.players[2].health = 100;
+    state.players[2].x = 90; // dead ahead but beyond SLASH_RANGE (78)
+    state.players[2].y = 0;
+
+    _ = root.world.stepWorld(&state, 1.0); // windup starts
+    _ = root.world.stepWorld(&state, 120.0); // active starts
+    _ = root.world.stepWorld(&state, 44.0); // contact gate opens, hit-check runs
+
+    try std.testing.expectEqual(@as(f64, 100.0), state.players[1].health); // off-axis miss
+    try std.testing.expectEqual(@as(f64, 100.0), state.players[2].health); // out-of-range miss
+}
+
+test "melee: contact-delay gate — no damage while active but before SLASH_CONTACT_DELAY_MS has elapsed, even though the arc geometry already overlaps" {
+    var state = freshFightingState();
+    state.player_count = 2;
+    state.players[0].flags.alive = true;
+    state.players[0].character_id = .sprinter;
+    state.players[0].health = 100;
+    state.players[0].aim_x = 100;
+    state.players[0].aim_y = 0;
+    state.players[0].current_keys = FIRE_BIT;
+
+    state.players[1].flags.alive = true;
+    state.players[1].health = 100;
+    state.players[1].x = 50;
+    state.players[1].y = 0;
+
+    _ = root.world.stepWorld(&state, 1.0); // windup starts
+    _ = root.world.stepWorld(&state, 120.0); // active starts, elapsed = 0
+
+    // dt = 43 (one short of SLASH_CONTACT_DELAY_MS = 44) — active, in the
+    // cone, but still pre-contact: must not damage.
+    _ = root.world.stepWorld(&state, 43.0);
+    try std.testing.expectEqual(@as(f64, 100.0), state.players[1].health);
+
+    // One more ms crosses the 44ms gate exactly — now it connects.
+    _ = root.world.stepWorld(&state, 1.0);
+    try std.testing.expectEqual(@as(f64, 78.0), state.players[1].health);
+}
+
+test "melee: re-trigger is only accepted from idle — releasing and re-pressing Fire mid-windup does not restart the swing timer" {
+    var state = freshFightingState();
+    // 2 players, not 1: round.detectRoundWinner declares an instant KO win
+    // (alive_count == 1) and flips round_phase off .fighting, which would
+    // gate off section 6a entirely before this test gets to observe the
+    // FSM at all — an artifact of the round-end rule, not the swing FSM
+    // under test, so a harmless bystander keeps the round alive throughout.
+    state.player_count = 2;
+    state.players[0].flags.alive = true;
+    state.players[0].character_id = .sprinter;
+    state.players[0].health = 100;
+    state.players[0].aim_x = 100;
+    state.players[0].aim_y = 0;
+
+    state.players[1].flags.alive = true;
+    state.players[1].health = 100;
+    state.players[1].x = 1000; // far away — never enters the swing's arc/range
+
+    state.players[0].current_keys = FIRE_BIT; // tick 1: rising edge
+    _ = root.world.stepWorld(&state, 1.0);
+    try std.testing.expectEqual(root.world_state.MeleeSwingPhase.windup, state.melee_swing[0].phase);
+    try std.testing.expectEqual(@as(f64, 120.0), state.melee_swing[0].phase_ms);
+
+    state.players[0].current_keys = 0; // release
+    _ = root.world.stepWorld(&state, 1.0);
+    try std.testing.expectEqual(@as(f64, 119.0), state.melee_swing[0].phase_ms);
+
+    // Rising edge again, mid-windup: must NOT reset phase_ms back to 120 —
+    // only an idle-phase rising edge starts a fresh swing.
+    state.players[0].current_keys = FIRE_BIT;
+    _ = root.world.stepWorld(&state, 1.0);
+    try std.testing.expectEqual(root.world_state.MeleeSwingPhase.windup, state.melee_swing[0].phase);
+    try std.testing.expectEqual(@as(f64, 118.0), state.melee_swing[0].phase_ms);
+}
+
+test "melee: shield fully blocks a landed hit — zero damage, charge drains by this tick's hold-drain plus the hit drain, knockback still applies" {
+    var state = freshFightingState();
+    state.player_count = 2;
+    state.players[0].flags.alive = true;
+    state.players[0].character_id = .sprinter;
+    state.players[0].health = 100;
+    state.players[0].aim_x = 100;
+    state.players[0].aim_y = 0;
+    state.players[0].current_keys = FIRE_BIT;
+
+    state.players[1].flags.alive = true;
+    state.players[1].health = 100;
+    state.players[1].x = 50;
+    state.players[1].y = 0;
+    state.players[1].flags.shield_active = true;
+    state.players[1].flags.has_shield_charge = true;
+    state.players[1].shield_charge = 50;
+    state.players[1].current_keys = SHIELD_BIT; // held every tick, or tickShield drops shield_active
+
+    _ = root.world.stepWorld(&state, 1.0); // windup starts
+    _ = root.world.stepWorld(&state, 120.0); // active starts
+
+    // Contact tick: dt = 44.
+    _ = root.world.stepWorld(&state, 44.0);
+
+    // Fully blocked: zero damage, still alive.
+    try std.testing.expectEqual(@as(f64, 100.0), state.players[1].health);
+    // Knockback still lands even though the hit was shield-blocked (TS:
+    // `post` gets the knockback velocity unconditionally unless evaded).
+    // Tolerance loosened same as the hit test above — the captured swing
+    // direction picks up a hair of gravity drift from windup's own tick.
+    try std.testing.expect(@abs(state.players[1].vx - 260.0) < 0.01);
+    try std.testing.expect(@abs(state.players[1].vy - (-60.0)) < 0.01);
+
+    // Charge drained by tickShield's OWN hold-drain across all 3 ticks this
+    // test held Shield (dt = 1 + 120 + 44 = 165ms total — section 6 runs
+    // every tick regardless of swing phase) plus the melee hit's own
+    // SHIELD_HIT_DRAIN_MULTIPLIER-scaled drain on the contact tick — same
+    // accounting shape as the instant-AOE shield test above, just summed
+    // over more ticks since this test's swing takes 3 to reach contact.
+    const tick_shield_drain = root.combat.shieldDrain(root.combat.SHIELD_DRAIN_PER_SECOND, 1.0 + 120.0 + 44.0);
+    const hit_drain = 22.0 * root.combat.SHIELD_HIT_DRAIN_MULTIPLIER;
+    const expected = 50.0 - tick_shield_drain - hit_drain;
+    try std.testing.expect(@abs(state.players[1].shield_charge - expected) < 1e-6);
+    try std.testing.expect(state.players[1].flags.shield_active); // charge survives, not popped
+}
+
+test "melee: an active timed parry does NOT block a melee hit — exact TS parity (tryDeflectDamage's parry branches require projectile !== null; both melee call sites pass null)" {
+    var state = freshFightingState();
+    state.player_count = 2;
+    state.players[0].flags.alive = true;
+    state.players[0].character_id = .sprinter;
+    state.players[0].health = 100;
+    state.players[0].aim_x = 100;
+    state.players[0].aim_y = 0;
+    state.players[0].current_keys = FIRE_BIT;
+
+    state.players[1].flags.alive = true;
+    state.players[1].health = 100;
+    state.players[1].x = 50;
+    state.players[1].y = 0;
+    // An active parry, facing directly toward the attacker — geometrically
+    // this WOULD cover the incoming hit if parry applied to melee at all.
+    state.players[1].flags.has_parry_active = true;
+    state.players[1].parry_active_until_tick = 100_000;
+    state.players[1].flags.has_parry_facing = true;
+    state.players[1].parry_facing = std.math.pi; // facing -X, toward the attacker at x=0
+
+    _ = root.world.stepWorld(&state, 1.0); // windup
+    _ = root.world.stepWorld(&state, 120.0); // active starts
+    _ = root.world.stepWorld(&state, 44.0); // contact tick
+
+    // Full, unmitigated damage — the parry never even gets checked.
+    try std.testing.expectEqual(@as(f64, 78.0), state.players[1].health);
+}
+
+test "melee: paladin kindled edge lands its own EDGE_DAMAGE/EDGE_RANGE/EDGE_* timing — distinct numbers from ninja slash, not a copy-paste reuse" {
+    var state = freshFightingState();
+    state.player_count = 2;
+    state.players[0].flags.alive = true;
+    state.players[0].character_id = .heavy; // paladin
+    state.players[0].health = 100;
+    state.players[0].aim_x = 100;
+    state.players[0].aim_y = 0;
+    state.players[0].current_keys = FIRE_BIT;
+
+    state.players[1].flags.alive = true;
+    state.players[1].health = 100;
+    state.players[1].x = 80; // within EDGE_RANGE (84) but OUTSIDE SLASH_RANGE (78)
+    state.players[1].y = 0;
+
+    _ = root.world.stepWorld(&state, 1.0); // windup starts (EDGE_WINDUP_MS = 200)
+    _ = root.world.stepWorld(&state, 200.0); // active starts (EDGE_ACTIVE_MS = 110), elapsed = 0
+
+    // dt = 99 (one short of EDGE_CONTACT_DELAY_MS = 100) — no hit yet.
+    _ = root.world.stepWorld(&state, 99.0);
+    try std.testing.expectEqual(@as(f64, 100.0), state.players[1].health);
+
+    // dt = 1 crosses the 100ms gate exactly.
+    _ = root.world.stepWorld(&state, 1.0);
+    try std.testing.expectEqual(@as(f64, 68.0), state.players[1].health); // 100 - EDGE_DAMAGE(32)
+    // Tolerance loosened same as the ninja hit test above (gravity-drift
+    // artifact on the captured swing direction, not a bug).
+    try std.testing.expect(@abs(state.players[1].vx - 420.0) < 0.01); // EDGE_KNOCKBACK
+    try std.testing.expect(@abs(state.players[1].vy - (-110.0)) < 0.01); // -EDGE_KNOCK_UP
+}

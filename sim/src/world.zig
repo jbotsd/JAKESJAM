@@ -474,6 +474,249 @@ pub fn resolveInstantAoeCasts(
     }
 }
 
+// ── MELEE (2026-07-20, base-melee-mechanic gap-closure pass) — Ninja Slash
+// + Paladin Kindled Edge swing FSM + arc hit-check. Bit-exact port of the
+// TIMING/RANGE/ARC/DAMAGE numbers from World.ts's "1z2. NINJA MELEE"
+// (World.ts:4029-4409, SLASH_* constants at 523-553) and "1z3. PALADIN
+// MELEE" (World.ts:4412+, EDGE_* constants at 624-674) sections. Scope is
+// the BASE melee mechanic only — can a Ninja/Paladin swing and land a hit
+// for the right damage, at the right range/arc/timing, with shield
+// mitigation applying — not the ability-card hooks that ride on top of it.
+//
+// Deliberately NOT ported here (see this pass's own report for the full
+// accounting):
+//   - Wave-off-swing projectile (World.ts's WAVE_* constants) — gated on
+//     Edge Storm, a card ability; no Zig ability-cast system exists yet,
+//     same "additive growth cut needed first" contract as every other
+//     stubbed ability hook below.
+//   - Energy grant on a landed hit / dash-through / wall-kick grants —
+//     PlayerEntity.energy is a TS-owned resource `step_world` never
+//     computes, only carries through (see its own doc comment in
+//     world_state.zig) — same contract weapon fire already respects for
+//     `ability_charge`.
+//   - The ability-card hooks that modify a melee hit (Undercut's execute,
+//     Read Mark's amp, Second Wind's heal+energy, Judgment Line, Unbroken
+//     Seal, Edge Storm's wave) — every one reads a TS-only `*UntilTick`
+//     field with no Zig PlayerEntity mirror.
+//   - Destructible / Paper Double arc hits — World.ts's own comment marks
+//     the destructible path hangout-mode-only (Zig models real matches,
+//     not the venue-lobby hangout mode — no Zig analog exists to hang this
+//     off of); Paper Double hits are a real-match feature but
+//     PaperDoubleEntity has no spawn path in Zig yet either (see its own
+//     doc comment) — nothing to hit in practice, deferred alongside the
+//     ability-cast system rather than wired against dead weight.
+//   - Dash-through body-cross / ninja evasion i-frames / Ghost Guard — all
+//     key off a `dashing` boolean that has NO Zig PlayerEntity mirror at
+//     all (`PlayerMovementMemory` tracks dash TIMERS, not a wire-visible
+//     dashing flag) — same "stubbed, no field to hang it on" contract
+//     `resolveInstantAoeCasts`'s own MITIGATION comment documents above.
+//
+// MITIGATION — re-derived independently here and confirmed byte-for-byte
+// against combat.ts, landing on the SAME finding resolveInstantAoeCasts's
+// own doc comment already documents for null-projectile hits:
+// `tryDeflectDamage`'s parry branches (combat.ts:592,625) AND the
+// directional-shield facing check (combat.ts:790) are ALL gated
+// `projectile !== null`. BOTH World.ts melee call sites pass
+// `tryDeflectDamage(victim, null, ...)` — so **parry never applies to a
+// melee hit in TS**, despite this task's own brief assuming the opposite
+// ("confirm parry ... DOES apply here since melee ... passes a real attack
+// context that can be parried"); the actual source contradicts that
+// assumption, and TS parity wins — no parry check exists anywhere below.
+// Directional shield's facing gate is likewise skipped for melee (same
+// `projectile !== null` guard), so an equipped directional shield fully
+// blocks a melee hit from ANY angle, not just the front — exactly the same
+// port resolveInstantAoeCasts already made for AOE casts. Paladin's
+// Kindled Ward (a PARTIAL mitigation, not the generic 100% block) and
+// Syzygist Ward are both real TS mitigation branches for a null-projectile
+// hit but have NO Zig implementation anywhere yet (not in section 4's
+// projectile path, not in resolveInstantAoeCasts) — this port stays
+// consistent with that pre-existing gap rather than becoming the first
+// path to invent paladin/priest-aware mitigation math.
+//
+// PLACEMENT / WRITE STRATEGY: runs as its own section "6a", positioned
+// AFTER section 6's per-player shield/parry/weapon-fire loop finishes for
+// EVERY player (so a shield raised THIS tick already blocks, same
+// ordering guarantee section 6b's AOE resolver relies on) and BEFORE
+// section 6b. Resolved INLINE (direct `state.players[victim_idx]` field
+// writes during the attacker's own loop iteration), NOT deferred through a
+// pending-write queue like section 6b's AOE primitive: that queue exists
+// because TS's OWN per-player loop uses an immutable
+// snapshot-then-commit-at-end-of-turn pattern (`players[pid] = nextEntity`
+// from a frozen `entity` read at the top of the SAME player's turn), where
+// a cross-player write landing mid-loop gets silently overwritten the
+// moment the victim's own turn later commits ITS stale snapshot. Zig has
+// no such hazard: every mutation in this file (section 4's projectile-vs-
+// player resolution, section 8b's burn DoT, and section 6a below) is a
+// direct in-place field mutation (`victim.health -= dmg`) on the single
+// shared `state.players` array — nothing anywhere in stepWorld ever
+// replaces another player's WHOLE struct wholesale, so there is no stale
+// snapshot for a later iteration to commit over a melee hit's damage
+// write. Section 4's own projectile-vs-player loop is the closest existing
+// precedent: it already does exactly this "read attacker, write victim,
+// mid-loop, inline" pattern today, safely.
+const SLASH_RANGE: f64 = 78.0;
+const SLASH_ARC_RADIANS: f64 = (5.0 * std.math.pi) / 9.0;
+const SLASH_DAMAGE: f64 = 22.0;
+const SLASH_KNOCKBACK: f64 = 260.0;
+const SLASH_KNOCK_UP: f64 = 60.0;
+const SLASH_WINDUP_MS: f64 = 120.0;
+const SLASH_ACTIVE_MS: f64 = 90.0;
+const SLASH_RECOVERY_MS: f64 = 220.0;
+const SLASH_CONTACT_DELAY_MS: f64 = 44.0;
+
+const EDGE_RANGE: f64 = 84.0;
+const EDGE_ARC_RADIANS: f64 = (7.0 * std.math.pi) / 18.0;
+const EDGE_DAMAGE: f64 = 32.0;
+const EDGE_KNOCKBACK: f64 = 420.0;
+const EDGE_KNOCK_UP: f64 = 110.0;
+const EDGE_WINDUP_MS: f64 = 200.0;
+const EDGE_ACTIVE_MS: f64 = 110.0;
+const EDGE_RECOVERY_MS: f64 = 340.0;
+const EDGE_CONTACT_DELAY_MS: f64 = 100.0;
+
+/// Advance one attacker's melee swing FSM one tick + resolve the arc
+/// hit-check when contact-delay-gated active. `fire_rising_edge` MUST be
+/// captured before section 6 (below, in stepWorld) rolls
+/// `prev_keys = current_keys` for every player — see stepWorld's own
+/// "melee rising-edge capture" comment for why a pre-captured bool is
+/// threaded in rather than re-deriving the edge from
+/// `attacker.current_keys`/`attacker.prev_keys` here.
+fn stepMeleeSwing(
+    state: *world_state.WorldState,
+    attacker_idx: u32,
+    eff_dt: f64,
+    fire_rising_edge: bool,
+) void {
+    const attacker = &state.players[attacker_idx];
+    if (!attacker.flags.alive) return;
+    // classIdForArchetype(...) === "ninja" / "paladin" (cardTypes.ts's
+    // ARCHETYPE_CLASS_ID: sprinter->ninja, heavy->paladin) — same inline-
+    // comparison convention section 6 already uses for `is_wizard_channel`
+    // (`character_id == .balanced`) rather than a named helper function.
+    const is_ninja = attacker.character_id == .sprinter;
+    const is_paladin = attacker.character_id == .heavy;
+    if (!is_ninja and !is_paladin) return;
+
+    const range: f64 = if (is_ninja) SLASH_RANGE else EDGE_RANGE;
+    const arc: f64 = if (is_ninja) SLASH_ARC_RADIANS else EDGE_ARC_RADIANS;
+    const damage: f64 = if (is_ninja) SLASH_DAMAGE else EDGE_DAMAGE;
+    const knockback: f64 = if (is_ninja) SLASH_KNOCKBACK else EDGE_KNOCKBACK;
+    const knock_up: f64 = if (is_ninja) SLASH_KNOCK_UP else EDGE_KNOCK_UP;
+    const windup_ms: f64 = if (is_ninja) SLASH_WINDUP_MS else EDGE_WINDUP_MS;
+    const active_ms: f64 = if (is_ninja) SLASH_ACTIVE_MS else EDGE_ACTIVE_MS;
+    const recovery_ms: f64 = if (is_ninja) SLASH_RECOVERY_MS else EDGE_RECOVERY_MS;
+    const contact_delay_ms: f64 = if (is_ninja) SLASH_CONTACT_DELAY_MS else EDGE_CONTACT_DELAY_MS;
+
+    const mem = &state.melee_swing[attacker_idx];
+
+    // ---- Swing FSM (idle -> windup -> active -> recovery -> idle) ----
+    const was_active = mem.phase == .active;
+    const active_elapsed_before: f64 = if (was_active) active_ms - mem.phase_ms else 0;
+
+    if (mem.phase == .idle) {
+        // Re-trigger only accepted from idle — a Fire press while
+        // mem.phase != .idle is simply never read as a new swing (this
+        // branch isn't reached), satisfying "gate re-swinging during
+        // windup/active/recovery" by construction, same as TS's own FSM.
+        if (fire_rising_edge) {
+            const dx = attacker.aim_x - attacker.x;
+            const dy = attacker.aim_y - attacker.y;
+            const len = @sqrt(dx * dx + dy * dy);
+            mem.phase = .windup;
+            mem.phase_ms = windup_ms;
+            mem.aim_x = if (len > 1e-3) dx / len else 1.0;
+            mem.aim_y = if (len > 1e-3) dy / len else 0.0;
+            mem.hit_this_swing_mask = 0;
+        }
+    } else {
+        mem.phase_ms -= eff_dt;
+        if (mem.phase_ms <= 0) {
+            switch (mem.phase) {
+                .windup => {
+                    mem.phase = .active;
+                    mem.phase_ms = active_ms;
+                },
+                .active => {
+                    mem.phase = .recovery;
+                    mem.phase_ms = recovery_ms;
+                },
+                .recovery => {
+                    mem.phase = .idle;
+                    mem.phase_ms = 0;
+                },
+                .idle => unreachable,
+            }
+        }
+    }
+
+    // ---- Contact-delay gate: the arc goes live at the start of `active`,
+    //      but only DAMAGES from `contact_delay_ms` into that window
+    //      onward (the blade visually crosses the aim radius partway
+    //      through the swing, not on the very first active tick). Mirrors
+    //      World.ts's `hasReachedSlashContact`/equivalent Edge check
+    //      exactly, including the "elapsed" accounting across the tick
+    //      that just transitioned OUT of active (`wasActive`). ----
+    const is_active_now = mem.phase == .active;
+    const active_elapsed_after: f64 = if (is_active_now)
+        active_ms - mem.phase_ms
+    else if (was_active)
+        @min(active_ms, active_elapsed_before + eff_dt)
+    else
+        0;
+    const reached_contact = (was_active or is_active_now) and active_elapsed_after >= contact_delay_ms;
+    if (!reached_contact) return;
+
+    // ---- Arc hit-check (from the contact-delay tick onward, every
+    //      victim in the cone — not "first hit only") ----
+    const aim_angle = trig.lutAtan2(mem.aim_y, mem.aim_x);
+    const half_arc = arc / 2.0;
+
+    var vi: u32 = 0;
+    while (vi < state.player_count) : (vi += 1) {
+        if (vi == attacker_idx) continue;
+        const bit: u16 = @as(u16, 1) << @as(u4, @intCast(vi));
+        if ((mem.hit_this_swing_mask & bit) != 0) continue;
+        const victim = &state.players[vi];
+        if (!victim.flags.alive) continue;
+        const box = combat.playerHitboxAabb(victim.x, victim.y, victim.flags.crouching);
+        if (!combat.isBodyInMeleeArc(attacker.x, attacker.y, aim_angle, half_arc, range, victim.x, victim.y, box)) {
+            continue;
+        }
+        mem.hit_this_swing_mask |= bit;
+
+        // Knockback lands on every arc hit regardless of the mitigation
+        // below (TS: `post` always gets the knockback velocity unless
+        // `mit.evaded` — dash-i-frame evasion has no Zig analog here, see
+        // this section's own doc comment, so knockback unconditionally
+        // applies once a swing connects).
+        victim.vx = mem.aim_x * knockback;
+        victim.vy = mem.aim_y * knockback - knock_up;
+
+        // Generic shield mitigation only — see this section's own doc
+        // comment for why parry/directional-facing/Kindled-Ward/Syzygist-
+        // Ward are all correctly absent here.
+        if (victim.flags.shield_active and victim.flags.has_shield_charge and victim.shield_charge > 0) {
+            victim.shield_charge -= damage * combat.SHIELD_HIT_DRAIN_MULTIPLIER;
+            if (victim.shield_charge <= 0) {
+                victim.shield_charge = 0;
+                victim.flags.shield_active = false;
+                emitEvent(state, .shield_popped, @intCast(vi), -1, 0, 0, victim.x, victim.y);
+            }
+            continue;
+        }
+
+        const new_health = @max(0.0, victim.health - damage);
+        const was_alive = victim.flags.alive;
+        victim.health = new_health;
+        victim.flags.alive = new_health > 0;
+        emitEvent(state, .hit_confirmed, @intCast(vi), @intCast(attacker_idx), 0, damage, victim.x, victim.y);
+        if (was_alive and new_health <= 0) {
+            creditKill(state, @intCast(attacker_idx), @intCast(vi));
+            emitEvent(state, .player_killed, @intCast(vi), @intCast(attacker_idx), 0, 0, victim.x, victim.y);
+        }
+    }
+}
+
 pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
     state.event_count = 0;
     state.header.tick += 1;
@@ -1674,6 +1917,28 @@ pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
         }
     }
 
+    // Melee rising-edge capture (2026-07-20 base-melee-mechanic gap-closure
+    // pass) — host-only stack scratch, mirrors World.ts's own
+    // `ninjaSlashEdges`/`paladinEdgeEdges` maps and the EXACT reason they
+    // exist (World.ts:1518-1530): section 6 immediately below rolls
+    // `prev_keys = current_keys` at the end of EVERY player's own
+    // iteration, so by the time section 6a's melee loop runs AFTER section
+    // 6 has finished, `prev_keys` no longer holds the pre-tick value for
+    // ANYONE — a same-tick Fire press would look like it was already held
+    // last tick too, and a swing could never start. Captured here, before
+    // section 6 touches prev_keys.
+    var melee_fire_rising_edge: [world_state.MAX_PLAYERS]bool = @splat(false);
+    {
+        const MELEE_FIRE_BIT: u32 = 1 << 6;
+        var mfi: u32 = 0;
+        while (mfi < state.player_count) : (mfi += 1) {
+            const mp = &state.players[mfi];
+            melee_fire_rising_edge[mfi] =
+                (mp.current_keys & MELEE_FIRE_BIT) != 0 and
+                (mp.prev_keys & MELEE_FIRE_BIT) == 0;
+        }
+    }
+
     // 6. Combat — per-player shield drain + parry start (I4 +
     //    I4b). Defaults match `combat_*` exports.
     var pi3: u32 = 0;
@@ -1982,6 +2247,21 @@ pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
 
         // Roll current → prev for the next tick's edge detection.
         player_ptr.prev_keys = player_ptr.current_keys;
+    }
+
+    // 6a. Melee — Ninja Slash + Paladin Kindled Edge (2026-07-20 base-
+    //     melee-mechanic gap-closure pass; see stepMeleeSwing's own doc
+    //     comment above for the full scope/mitigation/placement reasoning).
+    //     Runs after section 6's per-player loop has finished for EVERY
+    //     player (so shield state is already this-tick-final, same
+    //     ordering guarantee section 6b relies on) and before section 6b.
+    //     Fighting-phase only — Zig has no hangout-mode analog to carve out
+    //     the way World.ts does (see stepMeleeSwing's doc comment).
+    if (state.header.round_phase == @intFromEnum(round.RoundPhase.fighting)) {
+        var mai: u32 = 0;
+        while (mai < state.player_count) : (mai += 1) {
+            stepMeleeSwing(state, mai, eff_dt, melee_fire_rising_edge[mai]);
+        }
     }
 
     // 6b. Instant AOE resolution (2026-07-20 gap-closure pass — deferred-

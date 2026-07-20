@@ -740,6 +740,57 @@ pub const PlayerMovementMemory = extern struct {
     _pad: [1]u8 = .{0},
 };
 
+/// Swing phase tag for `MeleeSwingMemory.phase` — mirrors the shape of TS's
+/// `NinjaSlashPhase`/`PaladinEdgePhase` (both `0 | 1 | 2 | 3` unions,
+/// World.ts:357-360/431-435): idle(0, ready) -> windup(1, readable tell)
+/// -> active(2, contact-delay-gated hit-check window) -> recovery(3,
+/// endlag, no re-swing) -> idle(0).
+pub const MeleeSwingPhase = enum(u8) {
+    idle = 0,
+    windup = 1,
+    active = 2,
+    recovery = 3,
+};
+
+/// Per-player melee swing FSM memory (2026-07-20, base-melee-mechanic
+/// gap-closure pass) — Ninja Slash + Paladin Kindled Edge share ONE slot
+/// per player (unlike TS's two separate `melee`/`paladinMelee` Maps,
+/// World.ts:343-354): a given player is exactly one chassis at a time
+/// (`character_id` is singular), so a combined struct is sufficient and
+/// simpler than mirroring TS's two-Map split, which exists there mainly
+/// because Ninja's memory carries extra dash-through/wave bookkeeping this
+/// port deliberately does NOT carry (see world.zig's melee step section
+/// doc comment for the full "what's not ported" list) — with those fields
+/// gone, nothing left to distinguish the two shapes.
+///
+/// Host-only, off-wire — same split as `PlayerMovementMemory` immediately
+/// below: swing timing never touches WorldState's wire-visible fields
+/// directly, only its CONSEQUENCES (health/velocity/events) do, and
+/// player.zig's own dash-timer memory is this file's existing precedent
+/// for "per-player scratch that's a deterministic function of replayed
+/// inputs, so it never needs to cross the wasm ABI to stay in sync between
+/// prediction and authority." Indexed parallel to `WorldState.players`,
+/// same convention as `player_movement`.
+pub const MeleeSwingMemory = extern struct {
+    /// ms remaining in the current phase; 0/irrelevant when phase == .idle.
+    phase_ms: f64 = 0,
+    /// Swing direction captured at windup start (unit vector, attacker's
+    /// position toward their aim cursor at that instant) — reused by the
+    /// arc hit-check for the WHOLE swing so a target drifting mid-swing
+    /// doesn't "steer" the blade. Mirrors NinjaMeleeMemory.aimX/aimY /
+    /// PaladinMeleeMemory.aimX/aimY (World.ts:373-377/451-454).
+    aim_x: f64 = 1,
+    aim_y: f64 = 0,
+    /// Victim bitmask already hit by the CURRENT swing's active window —
+    /// one bit per player index (MAX_PLAYERS=16 fits a u16 exactly).
+    /// Mirrors NinjaMeleeMemory.hitThisSwing / PaladinMeleeMemory.
+    /// hitThisSwing (`Set<PlayerId>` in TS) — a bitmask is the natural
+    /// extern-struct-safe equivalent for a fixed MAX_PLAYERS roster.
+    hit_this_swing_mask: u16 = 0,
+    phase: MeleeSwingPhase = .idle,
+    _pad: u8 = 0,
+};
+
 /// Resolved per-player fire config — what `step_world` reads
 /// when spawning projectiles instead of the global weapon_base.
 /// Host-side TS computes this from `createWeaponBuild` (cards
@@ -936,6 +987,12 @@ pub const WorldState = extern struct {
     /// players[N]. Used by player.stepPlayer (Phase I14+).
     player_movement: [MAX_PLAYERS]PlayerMovementMemory,
 
+    /// Parallel to `players[]` — index N is melee swing FSM memory for
+    /// players[N] (2026-07-20 base-melee-mechanic gap-closure pass). Used
+    /// by world.zig's melee step section; see `MeleeSwingMemory`'s own doc
+    /// comment for the host-only/off-wire contract.
+    melee_swing: [MAX_PLAYERS]MeleeSwingMemory,
+
     /// Parallel to `players[]` — resolved fire config from
     /// applied cards. Host writes this each tick from
     /// `createWeaponBuild`. Without `valid=1`, step_world
@@ -1047,6 +1104,14 @@ comptime {
     // regression-catching, same role PlayerMovementMemory's assert plays.
     std.debug.assert(@sizeOf(PendingInstantAoe) == 80);
     std.debug.assert(@sizeOf(PlayerMovementMemory) == 48);
+    // MeleeSwingMemory (2026-07-20 base-melee-mechanic gap-closure pass):
+    // 3×f64 (24) + hit_this_swing_mask u16 (2) + phase u8 (1) + _pad u8 (1)
+    // = 28 content bytes; extern struct alignment is 8 (from the f64
+    // fields), so the total rounds up to 32 (4 bytes implicit tail
+    // padding). Doesn't cross the wasm ABI (host-only, see its own doc
+    // comment) so this assert is pure internal regression-catching, same
+    // role PlayerMovementMemory's assert plays.
+    std.debug.assert(@sizeOf(MeleeSwingMemory) == 32);
     std.debug.assert(@sizeOf(SimEvent) == 40);
     std.debug.assert(@sizeOf(ResolvedFireConfig) == 240);
 }
