@@ -2486,6 +2486,134 @@ test "ability dispatch: Self-Lattice (Priest) — mutually exclusive with the ge
     try std.testing.expectApproxEqAbs(@as(f64, 8.0), state.players[1].syz_ward_absorb_remaining, 1e-9);
 }
 
+// ── Kindled Resolve (Paladin, Phase 4a follow-up, docs/zig-step-world-
+//    parity-goal.md) — consumption side only (the cast stays a genuine
+//    no-op today, see the `.kindled_resolve` switch arm's own comment for
+//    why: it's gated on a `kindling` resource step_world never accrues).
+//    Every test below sets `kindled_resolve_until_tick` directly rather
+//    than going through a cast — bypassing an unreachable-today dispatch
+//    path to focus purely on proving the READ sites, matching the same
+//    "bypass the cast, focus on the read site" precedent the Self-Lattice
+//    depletion test above already established.
+test "Kindled Resolve: melee damage amp is CLASS-BLIND — a Ninja Slash from an attacker holding the window is amplified too, matching World.ts's own class-blind composition site" {
+    var state = freshFightingState();
+    state.player_count = 2;
+    state.players[0].flags.alive = true;
+    state.players[0].character_id = .sprinter; // ninja
+    state.players[0].health = 100;
+    state.players[0].aim_x = 100;
+    state.players[0].aim_y = 0;
+    state.players[0].kindled_resolve_until_tick = 100_000;
+
+    state.players[1].flags.alive = true;
+    state.players[1].health = 100;
+    state.players[1].x = 40;
+    state.players[1].y = 0;
+
+    state.players[0].current_keys = FIRE_BIT;
+    _ = root.world.stepWorld(&state, 1.0); // windup start
+    _ = root.world.stepWorld(&state, 120.0); // active starts
+    _ = root.world.stepWorld(&state, 44.0); // contact tick — hit resolves
+
+    // SLASH_DAMAGE (11.0) * KIN_KINDLED_RESOLVE_DAMAGE_MULTIPLIER (1.1) ==
+    // 12.1 — a plain unbuffed slash would leave 89.0.
+    try std.testing.expectApproxEqAbs(@as(f64, 87.9), state.players[1].health, 1e-9);
+}
+
+test "Kindled Resolve: melee stagger-resist softens an Unbroken-Seal-triggered stagger toward 1 when the VICTIM (not the attacker) holds the window, without changing the landed damage" {
+    var state = freshFightingState();
+    state.player_count = 2;
+    state.players[0].flags.alive = true;
+    state.players[0].character_id = .heavy; // paladin
+    state.players[0].health = 100;
+    state.players[0].aim_x = 100;
+    state.players[0].aim_y = 0;
+    equipSlot(&state, 0, 0, .unbroken_seal);
+
+    state.players[1].flags.alive = true;
+    state.players[1].health = 100;
+    state.players[1].x = 40;
+    state.players[1].y = 0;
+    state.players[1].kindled_resolve_until_tick = 100_000;
+
+    state.players[0].current_keys = SLOT1_BIT | FIRE_BIT;
+    _ = root.world.stepWorld(&state, 1.0); // cast Seal + windup start
+    try std.testing.expect(state.players[0].seal_until_tick > state.header.tick);
+
+    state.players[0].current_keys = FIRE_BIT;
+    _ = root.world.stepWorld(&state, 200.0); // active starts
+    _ = root.world.stepWorld(&state, 100.0); // contact tick — hit resolves
+
+    // Damage UNCHANGED from the plain Unbroken Seal test above (32 * 1.45
+    // == 46.4, attacker has no Kindled Resolve of their own here) — proves
+    // stagger-resist doesn't leak into the damage multiplier.
+    try std.testing.expect(@abs(state.players[1].health - 53.6) < 1e-9);
+    try std.testing.expect(state.players[1].flags.has_slow);
+    // Resisted: 0.25 + (1 - 0.25) * 0.5 == 0.625 — a plain unresisted Seal
+    // stagger would leave 0.25 (the Unbroken Seal test above proves that
+    // baseline).
+    try std.testing.expect(@abs(state.players[1].slow_multiplier - 0.625) < 1e-9);
+}
+
+test "Kindled Resolve: ranged (projectile) damage amp — a plain starter-pistol shot from a shooter holding the window lands amplified" {
+    var state = freshFightingState();
+    state.player_count = 2;
+    state.players[0].flags.alive = true;
+    state.players[0].health = 100;
+    state.players[0].x = 0;
+    state.players[0].y = 0;
+    state.players[0].aim_x = 100;
+    state.players[0].aim_y = 0;
+    state.players[0].kindled_resolve_until_tick = 100_000;
+    setPlayerId(&state.players[0], "shooter");
+
+    state.players[1].flags.alive = true;
+    state.players[1].health = 100;
+    state.players[1].x = 15;
+    state.players[1].y = 0;
+    setPlayerId(&state.players[1], "victim");
+
+    state.players[0].current_keys = FIRE_BIT;
+    _ = root.world.stepWorld(&state, 1.0);
+    try std.testing.expectEqual(@as(u32, 1), state.projectile_count);
+    state.players[0].current_keys = 0;
+    _ = root.world.stepWorld(&state, 1.0);
+
+    // 100 - (12.0 * 1.1) == 86.8 — a plain unbuffed pistol hit would leave
+    // 88.0.
+    try std.testing.expectApproxEqAbs(@as(f64, 86.8), state.players[1].health, 1e-9);
+}
+
+test "Kindled Resolve: instant-AOE (Flock Pulse) — caster-side damage amp AND victim-side stagger-resist both apply in the SAME cast, proving both resolveInstantAoeCasts consumption sites independently" {
+    var state = freshFightingState();
+    state.player_count = 2; // 0 = priest caster, 1 = victim in radius
+    state.players[0].flags.alive = true;
+    state.players[0].character_id = .shielded; // priest
+    state.players[0].health = 100;
+    state.players[0].x = 0;
+    state.players[0].y = 0;
+    state.players[0].kindled_resolve_until_tick = 100_000; // caster's OWN window
+    equipSlot(&state, 0, 0, .flock_pulse);
+
+    state.players[1].flags.alive = true;
+    state.players[1].health = 100;
+    state.players[1].x = 50; // within SYZ_FLOCK_PULSE_RADIUS_PX (170)
+    state.players[1].y = 0;
+    state.players[1].kindled_resolve_until_tick = 100_000; // victim's OWN window
+
+    state.players[0].current_keys = SLOT1_BIT;
+    _ = root.world.stepWorld(&state, 16.0);
+
+    // Damage: SYZ_FLOCK_PULSE_BASE_DAMAGE (8) * 1.1 == 8.8 — the plain
+    // Flock Pulse test above proves the unbuffed baseline (8.0/92.0).
+    try std.testing.expectApproxEqAbs(@as(f64, 91.2), state.players[1].health, 1e-9);
+    try std.testing.expect(state.players[1].flags.has_slow);
+    // Stagger-resist: SYZ_FLOCK_PULSE_SLOW_MULTIPLIER (0.8) resisted
+    // toward 1 by 0.5 == 0.8 + (1 - 0.8) * 0.5 == 0.9 — softer (less
+    // slowing) than the plain 0.8 baseline.
+    try std.testing.expect(@abs(state.players[1].slow_multiplier - 0.9) < 1e-9);
+}
+
 // ── Phase 4c: movement (docs/zig-step-world-parity-goal.md "4c. Movement")
 // — the shared findCollisionFreeLanding substrate (world.zig) backing Slip
 // Node/Plant Charge/Drift Step, plus Bulwark Step's own held-input variant.

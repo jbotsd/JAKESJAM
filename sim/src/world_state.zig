@@ -707,6 +707,25 @@ pub const PlayerEntity = extern struct {
     focus_hex_target_id_len: u8 = 0,
     _pad_focus_hex: [3]u8 = .{ 0, 0, 0 },
     focus_hex_target_id_bytes: [PLAYER_ID_BYTES]u8 = @splat(0),
+
+    /// Kindled Resolve (Paladin, docs/zig-step-world-parity-goal.md Phase
+    /// 4a follow-up — genuinely absent before this cut, unlike Hard
+    /// Aperture/Self-Lattice's sibling fields, which already existed).
+    /// Self-only window: while `kindled_resolve_until_tick > tick`, this
+    /// player's OUTGOING damage is amplified
+    /// (KIN_KINDLED_RESOLVE_DAMAGE_MULTIPLIER) and incoming stagger/slow
+    /// multipliers aimed AT them are softened toward 1
+    /// (KIN_KINDLED_RESOLVE_STAGGER_RESIST_FRACTION) — mirrors TS
+    /// `PlayerEntity.kindledResolveUntilTick` (types.ts:803), whose own doc
+    /// comment says it "never crosses the Zig ABI" — that refers to the
+    /// OLD movement-only wasm bridge (worldStateBridge.ts), not this
+    /// struct: `step_world` needs its own copy to run the ability itself,
+    /// same precedent `sunlance_until_tick`/`overclock_until_tick`/
+    /// `measure_until_tick` above already set for other TS-ABI-invisible
+    /// window fields. Plain `u32` tick, no `has_*` flag, same "0
+    /// unambiguously reads inactive" convention as every sibling window
+    /// field on this struct.
+    kindled_resolve_until_tick: u32 = 0,
 };
 
 /// Mirrors `ProjectileEntity`.
@@ -1662,7 +1681,28 @@ comptime {
     // worldStateBridge.ts's PLAYER_ENTITY_SIZE is untouched by this
     // Zig-only pass — Zig-internal tests read @sizeOf(PlayerEntity)
     // directly and are unaffected.
-    std.debug.assert(@sizeOf(PlayerEntity) == 608);
+    // 608 → 616 (Phase 4a follow-up, this pass — Kindled Resolve):
+    // +4 content bytes for `kindled_resolve_until_tick` (u32), landing at
+    // [608, 612) (608 is already 4-byte-aligned), plus 4 bytes of implicit
+    // tail padding to reach 616 (77×8) — this field pair has no sibling to
+    // reclaim old padding from this time, unlike several growth steps
+    // above. Verified via a temporary `@compileLog(@sizeOf(PlayerEntity))`
+    // before locking this assert (confirmed 616), same "don't trust hand
+    // math alone" discipline every growth-history note above already
+    // follows. This is a REAL, NEW field gap (not a duplicate under a
+    // different name — grepped `kindled_resolve` across sim/src/ before
+    // adding it, confirmed zero prior existence), unlike Hard
+    // Aperture/Self-Lattice's sibling abilities in this same follow-up
+    // pass, whose fields already existed from earlier phases. KNOWN GAP,
+    // same shape as every note above: worldStateBridge.ts's
+    // PLAYER_ENTITY_SIZE is untouched by this Zig-only pass (this session's
+    // scope is sim/ only, client/ is owned by a concurrent session) —
+    // Zig-internal tests read @sizeOf(PlayerEntity) directly and are
+    // unaffected; a future pass with client/ in scope needs to bump
+    // PLAYER_ENTITY_SIZE 608 → 616 and worldStateLayout.test.ts's matching
+    // literal, same close-out shape commit e669173 already used once for
+    // an identical sim-only-scoping gap.
+    std.debug.assert(@sizeOf(PlayerEntity) == 616);
     // EquippedActives (Phase 1): [3]u8 = 3 bytes, no padding (u8 array
     // needs no alignment beyond 1). Doesn't cross the wasm ABI today (see
     // its own doc comment) — pure internal regression-catching, same role

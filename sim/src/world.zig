@@ -399,12 +399,14 @@ fn emitEvent(
 ///   - Paladin Kindled Ward's partial-mitigation branch (combat.ts's
 ///     `classIdForArchetype(...) === "paladin"` shield branch)
 ///   - Team-peel (World.ts's `applyTeamPeel`/`findTeamPeelWarder`)
-///   - rallyLightDamageMultiplier / kindledResolveDamageMultiplier /
-///     fooledDamageMultiplier (all read TS-only *UntilTick fields with no
-///     Zig mirror: kindledResolveUntilTick, fooledUntilTick, and a
+///   - rallyLightDamageMultiplier / fooledDamageMultiplier (both read
+///     TS-only *UntilTick fields with no Zig mirror: fooledUntilTick and a
 ///     team-based "rally light source" lookup)
-///   - applyKindledResolveStaggerResist on the slow-multiplier stacking
-///     below (same TS-only field as its sibling above)
+/// kindledResolveDamageMultiplier / applyKindledResolveStaggerResist are NO
+/// LONGER stubbed here (Phase 4a follow-up, this pass) — `kindled_resolve_
+/// until_tick` is now a real PlayerEntity field (world_state.zig), wired at
+/// both consumption sites below, matching TS's own :4662/:4719 call sites
+/// exactly.
 /// Victim `has_vulnerability` is ALSO correctly absent here — checked
 /// directly against TS: `resolveInstantAoeCasts` never reads
 /// vulnerabilityUntilTick at all (unlike the projectile-hit path in
@@ -464,7 +466,15 @@ pub fn resolveInstantAoeCasts(
             }
 
             if (cast.damage > 0) {
-                const final_dmg = cast.damage;
+                var final_dmg = cast.damage;
+                // Kindled Resolve (Paladin, Phase 4a follow-up) —
+                // caster-side amp, matches World.ts:4662's
+                // `finalDamage *= kindledResolveDamageMultiplier(liveCaster, aoeTick)`
+                // exactly (the caster is already known in-bounds from this
+                // loop's own top-of-function guard above).
+                if (state.players[cast.caster_idx].kindled_resolve_until_tick > tick) {
+                    final_dmg *= KIN_KINDLED_RESOLVE_DAMAGE_MULTIPLIER;
+                }
                 const new_health = @max(0.0, victim.health - final_dmg);
                 const was_alive = victim.flags.alive;
                 victim.health = new_health;
@@ -497,18 +507,27 @@ pub fn resolveInstantAoeCasts(
             // Slow status — applied whenever the hit wasn't blocked above,
             // independent of whether real damage also landed (Flock
             // Pulse carries both). Same "keep whichever ends later, take
-            // the lower (more punishing) multiplier" stacking policy as
-            // TS (Kindled Resolve's stagger-RESIST step ahead of this
-            // comparison is the one stubbed piece — see doc comment
-            // above).
+            // the lower (more punishing) multiplier" stacking policy as TS.
             if (cast.has_slow != 0) {
                 const dt: f64 = if (eff_dt > 0) eff_dt else 1.0;
                 const ticks_duration: u32 = @intFromFloat(@ceil(cast.slow_duration_ms / dt));
                 const new_until = tick + ticks_duration;
                 const prev_until: u32 = if (victim.flags.has_slow) victim.slowed_until_tick else 0;
                 const prev_mul: f64 = if (victim.flags.has_slow) victim.slow_multiplier else 1.0;
+                // Kindled Resolve (Phase 4a follow-up): resist BEFORE the
+                // stacking comparison, so a resisted stagger competes
+                // fairly against any pre-existing slow using its
+                // actually-applied strength — matches World.ts:4715-4719
+                // exactly (`applyKindledResolveStaggerResist(post,
+                // cast.slowMultiplier, aoeTick)` runs before the `Math.min`
+                // stacking pick). No-op (mul unchanged) for every victim
+                // without a live window.
+                const resisted_mul: f64 = if (victim.kindled_resolve_until_tick > tick)
+                    cast.slow_multiplier + (1.0 - cast.slow_multiplier) * KIN_KINDLED_RESOLVE_STAGGER_RESIST_FRACTION
+                else
+                    cast.slow_multiplier;
                 victim.slowed_until_tick = @max(prev_until, new_until);
-                victim.slow_multiplier = @min(prev_mul, cast.slow_multiplier);
+                victim.slow_multiplier = @min(prev_mul, resisted_mul);
                 victim.flags.has_slow = true;
             }
 
@@ -687,6 +706,15 @@ const KIN_JUDGMENT_CONE_RADIANS: f64 = (60.0 * std.math.pi) / 180.0;
 const KIN_SEAL_DAMAGE_MULTIPLIER: f64 = 1.45;
 const KIN_SEAL_STAGGER_MS: f64 = 900.0;
 const KIN_SEAL_STAGGER_MULTIPLIER: f64 = 0.25;
+// Paladin — Kindled Resolve (constants.ts:417/423, Phase 4a follow-up —
+// consumption sites shipped this pass, see `.kindled_resolve`'s own switch
+// arm comment below for why the CAST itself stays deferred). Self-only
+// outgoing-damage amp + incoming-stagger-resist window.
+const KIN_KINDLED_RESOLVE_DAMAGE_MULTIPLIER: f64 = 1.1;
+/// Fraction of an incoming stagger's SEVERITY removed while Kindled Resolve
+/// is live on the VICTIM: `resisted = mul + (1 - mul) * this` — mirrors
+/// TS's `applyKindledResolveStaggerResist` exactly (World.ts:941-950).
+const KIN_KINDLED_RESOLVE_STAGGER_RESIST_FRACTION: f64 = 0.5;
 
 // ── Phase 4b targeting/marking constants (docs/zig-step-world-parity-goal.md
 //    "4b. Targeting/marking") — Facet Break/Focus Hex. Unlike the melee-hook
@@ -1614,21 +1642,45 @@ fn stepAbilityDispatch(
                 // own comment already records for a real lingering marker
                 // entity, not a Zig-specific gap.
             },
-            // Recoil Step (Wizard): the hop-impulse half of this ability is
-            // trivial (same shape as Shadow Step's own aim-opposite hop),
-            // but the ability's WHOLE documented payoff is the rider window
-            // — "shots fired in the next 1.2s barely push you around"
-            // (cards.ts) — and that payoff has NO consumption site to hang
-            // off: grepped directly, `recoilImpulse`/`RecoilImpulse`
-            // (weapon.zig) is never called anywhere in world.zig's own
-            // fire section — step_world does not apply ANY self-knockback-
-            // from-firing today (TS's weapon.ts:542-551 `next.vx -=
-            // lutCos(baseAngle) * recoil` has no Zig mirror at all). Shipping
-            // only the hop and silently dropping the rider would misrepresent
-            // the ability entirely (its OWN card description is about the
-            // rider, not the hop) — deferred whole, not half-shipped, per
-            // this goal doc's own doctrine #4. Needs self-recoil ported to
-            // step_world's fire section first (out of this sub-group's scope).
+            // Recoil Step (Wizard): re-investigated this pass (docs/
+            // zig-step-world-parity-goal.md's Phase 4a follow-up) — the
+            // original deferral reason ("recoilImpulse is never called
+            // from world.zig") is STILL true, but the fix is a bigger lift
+            // than that framing suggested, verified directly rather than
+            // assumed:
+            //   - `weapon.zig`'s `recoilImpulse(base_angle, recoil_strength)`
+            //     is a pure function of a caller-supplied STRENGTH — it does
+            //     NOT know the resolved weapon build. TS's own call site
+            //     (weapon.ts:545-549) composes that strength from FOUR
+            //     multiplicative terms: `build.recoilImpulse` (base weapon
+            //     recoil × every equipped card's `modifier.recoilMultiplier`,
+            //     folded in at weaponBuild.ts:278/619) ×
+            //     `build.projectile.recoilMultiplier` (a SECOND,
+            //     independent per-projectile multiplier, cardTypes.ts:433)
+            //     × `chaos.recoilMultiplier`.
+            //   - Real cards DO modify this (grepped cards.ts directly, not
+            //     assumed): 4 separate `recoilMultiplier` entries (0.8,
+            //     1.24, 1.12, 0.9) — so a base×chaos-only port would
+            //     SILENTLY DIVERGE from TS for any player holding one of
+            //     those cards, not just be an incomplete-but-honest partial.
+            //   - Zig's OWN `ResolvedFireConfig`/`player_fire_config`
+            //     (world_state.zig, the struct every other build-resolved
+            //     stat this file reads — damage/fire_rate/spread/etc. all
+            //     live here) carries NO recoil field at all today (grepped
+            //     directly: zero `recoil` fields anywhere on that struct) —
+            //     so even the "just the base weapon constant" shortcut has
+            //     nothing correct to multiply against for a carded player.
+            // Wiring only base-weapon × chaos would ship a plausible-looking
+            // but wrong number for exactly the players who drafted a
+            // recoil-changing card — worse than the current true no-op,
+            // which at least doesn't lie. Needs `ResolvedFireConfig` grown
+            // with a resolved recoil field (card-modifier-codegen-adjacent
+            // substrate work, NOT a per-ability consumption-site read) before
+            // even the BASE mechanic can be ported correctly, let alone
+            // Recoil Step's own GEO_RECOIL_STEP_RECOIL_MULTIPLIER rider on
+            // top of it. Deferred whole, per this goal doc's own explicit
+            // permission to defer again with a sharper reason once the real
+            // shape of the gap is understood.
             .recoil_step => {}, // Phase 4a — deferred, see comment above
             // Sunspike (Paladin/Kindled): v1 = a single fast, narrow,
             // short-range shot — PLAYER-AIMED (the caster's own cursor),
@@ -1722,31 +1774,51 @@ fn stepAbilityDispatch(
                 }
             },
             .rally_light => {}, // Phase 4 — not yet ported
-            // Kindled Resolve (Paladin): unlike its 9 Phase-4a siblings,
-            // TS's own `kindledResolveDamageMultiplier`/
-            // `applyKindledResolveStaggerResist` (World.ts:918-949) are NOT
-            // read at one composition site — verified directly against
-            // World.ts, not assumed: the damage multiplier is composed at
-            // SIX separate call sites (projectile hit :1815, instant-AOE
-            // damage :4662, instant-AOE stagger-resist :4719, dash-bash
-            // :4876, ninja-slash... no, Kindled/paladin melee :5163/:5478,
-            // plus the stagger-resist term again at :5500) spanning melee,
-            // projectiles, AND instant-AOE — not the single "one more term
-            // at an existing composition call site" shape every other
-            // ability in this sub-group has (world.zig's own melee
-            // hit-resolution comment, right where Judgment/Seal/Undercut/
-            // Read Mark already compose `final_damage`, explicitly flags
-            // this exact gap: "rallyLight/kindledResolve damage multipliers
-            // ... are Phase 4 abilities, unreachable"). Wiring only the
-            // melee site (the one place this dispatch loop can reach
-            // cheaply) would silently under-deliver the ability everywhere
-            // else a Paladin actually deals damage (Sunspike's projectile,
-            // any instant-AOE Kindled ever gets) — a real, out-of-scope
-            // multi-site fan-out, not this sub-group's "cheapest remaining
-            // tier" shape. Deferred whole per doctrine #4, needs its own
-            // pass touching the melee/projectile/AOE resolution sites
-            // together (Phase 4e-adjacent scope, not 4a).
-            .kindled_resolve => {}, // Phase 4a — deferred, see comment above
+            // Kindled Resolve (Paladin) — CONSUMPTION side shipped this
+            // pass (Phase 4a follow-up): re-verified the original "SIX call
+            // sites" citation directly against live World.ts rather than
+            // trusting the old line numbers (doctrine #6, the file moves).
+            // Found 7 raw call sites, one genuine class-blind pair
+            // (:5163 Ninja Slash + :5478 Kindled Edge both call the SAME
+            // helper, so "melee damage" is one consumption SHAPE, not two):
+            // projectile hit (:1815) — wired, section 4 above, alongside
+            // Facet Break/Focus Hex.
+            // melee damage, both classes (:5163/:5478) — wired,
+            // `stepMeleeSwing` above, generic (not Paladin-gated), matching
+            // TS's own class-blind helper call.
+            // melee stagger-resist (:5500, Kindled Edge's Unbroken-Seal-
+            // triggered stagger only — Ninja Slash has no stagger write to
+            // resist against in either codebase) — wired, same site.
+            // instant-AOE damage (:4662) — wired, `resolveInstantAoeCasts`
+            // above.
+            // instant-AOE stagger-resist (:4719) — wired, same function.
+            // dash-bash (:4876) — genuinely NO Zig equivalent: grepped
+            // directly, `step_world` has no dash-bash power-slide mechanic
+            // at all (no "dashing" state, no bash damage constant, nothing
+            // — confirmed absent, not just unwired) — this is the one real,
+            // verified gap among the 7, deferred alone rather than blocking
+            // the other 6 on it, per doctrine #4's "partial-but-correct
+            // beats all-or-nothing."
+            // CAST side deliberately STILL a no-op, for a DIFFERENT reason
+            // than before: TS's own "kindled-resolve" case (World.ts:3543-
+            // 3563) gates the cast on `nextEntity.kindling >=
+            // KIN_KINDLED_RESOLVE_KINDLING_COST` (40) — a real spendable
+            // resource, `kindling` (PlayerEntity.kindling, world_state.zig)
+            // already exists as a Zig field, but is documented (its own doc
+            // comment) as "TS-owned... mutated ONLY by TS combat.ts's
+            // Kindled Ward branch of tryDeflectDamage" — grepped directly,
+            // ZERO writes to `.kindling` exist anywhere in sim/src/, so it
+            // is permanently 0 in step_world today (Kindled Ward's own
+            // block-grant accrual isn't ported). Wiring the cast now would
+            // gate on a resource that can never be nonzero — a dead press
+            // forever, not a real ability — the exact "write a check
+            // nothing can ever satisfy" inversion of doctrine #4's usual
+            // "write a field nothing reads" hazard. `kindled_resolve_
+            // until_tick` (the new field this pass added) is proven correct
+            // by tests that set it directly, same as a future pass wiring
+            // Kindled Ward's kindling accrual would need anyway — that pass
+            // lights up the cast for free once it lands.
+            .kindled_resolve => {}, // consumption shipped, cast genuinely blocked — see comment above
             .bulwark_step => {
                 // Phase 4c — same search SHAPE as Plant Charge above, but
                 // the direction comes from currently-HELD movement input
@@ -2376,11 +2448,15 @@ fn stepMeleeSwing(
         //    DELIBERATELY NOT applied here (same "correctness over
         //    completeness" scope as the rest of this pass — see the
         //    report): fooledDamageMultiplier (Paper Double burst — no
-        //    fooled_until_tick field on PlayerEntity yet), rallyLight/
-        //    kindledResolve damage multipliers (Rally Light/Kindled
-        //    Resolve are both Phase 4 abilities, unreachable — nothing can
-        //    equip them today, so their multiplier is unconditionally 1
-        //    either way), and team peel (Phase 3 ally substrate). Every one
+        //    fooled_until_tick field on PlayerEntity yet), rallyLight
+        //    damage multiplier (Rally Light is still a Phase 4 ability,
+        //    unreachable — nothing can equip it today, so its multiplier
+        //    is unconditionally 1 either way), and team peel (Phase 3 ally
+        //    substrate). kindledResolveDamageMultiplier/
+        //    applyKindledResolveStaggerResist are NO LONGER in this
+        //    "unreachable" list (Phase 4a follow-up, this pass) — see the
+        //    generic post-class-switch block below, right after this
+        //    if/else. Every one
         //    of these is a TRUE no-op today given nothing upstream can
         //    populate the state they'd read, not a silent shortcut.
         var final_damage = damage_after_ward;
@@ -2418,6 +2494,21 @@ fn stepMeleeSwing(
                 attacker.seal_until_tick = 0;
             }
         }
+        // Kindled Resolve (Paladin, Phase 4a follow-up — shipped this
+        // pass). Attacker-side damage amp, applied GENERICALLY regardless
+        // of class: verified directly against World.ts, `slashFinalDamage
+        // *= kindledResolveDamageMultiplier(...)` (Ninja Slash, :5163) AND
+        // `edgeDamage *= kindledResolveDamageMultiplier(...)` (Kindled
+        // Edge, :5478) both call the SAME class-blind helper — a Ninja who
+        // somehow held a live Kindled Resolve window would be amplified
+        // too (today that can never happen: the card is Paladin-exclusive
+        // and the cast itself stays a no-op, see `.kindled_resolve`'s own
+        // switch-arm comment below — but the READ site itself must not
+        // silently assume Paladin-only, matching what TS's own composition
+        // site actually does).
+        if (attacker.kindled_resolve_until_tick > state.header.tick) {
+            final_damage *= KIN_KINDLED_RESOLVE_DAMAGE_MULTIPLIER;
+        }
 
         const new_health = @max(0.0, victim.health - final_damage);
         const was_alive = victim.flags.alive;
@@ -2426,7 +2517,19 @@ fn stepMeleeSwing(
         if (stagger_victim) {
             const stagger_ticks: u32 = @intFromFloat(@ceil(KIN_SEAL_STAGGER_MS / @max(1.0, eff_dt)));
             victim.slowed_until_tick = state.header.tick + stagger_ticks;
-            victim.slow_multiplier = KIN_SEAL_STAGGER_MULTIPLIER;
+            // Kindled Resolve (Phase 4a follow-up): softens the stagger's
+            // SEVERITY toward 1 if the VICTIM (not the attacker) currently
+            // holds a live window — "resist", not immune. Mirrors TS's
+            // `applyKindledResolveStaggerResist` exactly (World.ts:5493-
+            // 5505's "edge-hit" call site — this Zig function's melee arc
+            // covers both Slash and Edge, but only Unbroken Seal ever sets
+            // `stagger_victim` true, matching TS's own "only Kindled Edge's
+            // Seal branch writes a stagger" shape; Ninja Slash has no
+            // stagger-write site to resist against in either codebase).
+            victim.slow_multiplier = if (victim.kindled_resolve_until_tick > state.header.tick)
+                KIN_SEAL_STAGGER_MULTIPLIER + (1.0 - KIN_SEAL_STAGGER_MULTIPLIER) * KIN_KINDLED_RESOLVE_STAGGER_RESIST_FRACTION
+            else
+                KIN_SEAL_STAGGER_MULTIPLIER;
             victim.flags.has_slow = true;
         }
         emitEvent(state, .hit_confirmed, @intCast(vi), @intCast(attacker_idx), 0, final_damage, victim.x, victim.y);
@@ -3140,6 +3243,20 @@ pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
                             std.mem.eql(u8, sp.focus_hex_target_id_bytes[0..sp.focus_hex_target_id_len], state.players[ph2].id_bytes[0..state.players[ph2].id_len]))
                         {
                             final_dmg *= SYZ_FOCUS_HEX_AMP_MULTIPLIER;
+                        }
+                        // Kindled Resolve (Paladin, Phase 4a follow-up) —
+                        // attacker-side amp, same shooter-buff composition
+                        // shape as damage_amp/overcharge/boss_mode above.
+                        // TS's own site (World.ts:1815,
+                        // `finalDamage *= kindledResolveDamageMultiplier(...)`)
+                        // is post-mitigation, not pre- like this block —
+                        // this port stays consistent with the PRE-EXISTING
+                        // Zig composition order Facet Break/Focus Hex
+                        // already established at this exact site (pre-
+                        // mitigation), not a new divergence this pass
+                        // introduces.
+                        if (sp.kindled_resolve_until_tick > state.header.tick) {
+                            final_dmg *= KIN_KINDLED_RESOLVE_DAMAGE_MULTIPLIER;
                         }
                     }
                 }
