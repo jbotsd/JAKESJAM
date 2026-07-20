@@ -113,7 +113,18 @@ export const HEADER_SIZE = 56;
 // unpackPlayer crossing it is a real, scoped follow-up (not done by this
 // cut), same "size correct now, field-level pack/unpack later" split every
 // prior growth in this history used.
-export const PLAYER_ENTITY_SIZE = 520;
+// 520 → 608 (Phase 4b+4c, docs/zig-step-world-parity-goal.md): +80 for
+// Facet Break/Focus Hex's mark-tick + target-id fields (Phase 4b, see
+// world_state.zig's own 528→608 comptime-assert accounting for the exact
+// byte layout); Phase 4c (Slip Node/Plant Charge/Bulwark Step/Drift Step)
+// added NO new PlayerEntity fields (instant resolves writing only
+// pre-existing x/y/shield_charge), so no further growth from that pass.
+// Both Phase 4 sub-agents were correctly scoped to sim/ only and flagged
+// this exact staleness as a KNOWN GAP in their own commit messages — this
+// closes it. Same "TS bridge doesn't pack/unpack these tail fields yet,
+// but the SIZE must reflect the true Zig stride or every downstream array
+// mis-aligns" contract as every prior growth in this history.
+export const PLAYER_ENTITY_SIZE = 608;
 const PROJECTILE_ENTITY_SIZE = 216;
 const SATELLITE_ENTITY_SIZE = 96;
 const DESTRUCTIBLE_ENTITY_SIZE = 64;

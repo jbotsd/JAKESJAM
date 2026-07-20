@@ -80,7 +80,10 @@ describe("WorldState extern struct layout (Phase G1c)", () => {
     // PLAYER_ENTITY_SIZE for the full accounting.
     // 512 → 520 (Phase 5, docs/zig-step-world-parity-goal.md wire-contract
     // cleanup): +ward_shell_until_tick (u32) + 4 bytes implicit tail pad.
-    expect(ex.sizeof_player_entity()).toBe(520);
+    // 520 → 608 (Phase 4b, docs/zig-step-world-parity-goal.md): Facet Break/
+    // Focus Hex mark-tick + target-id fields. See worldStateBridge.ts's
+    // PLAYER_ENTITY_SIZE for the full accounting.
+    expect(ex.sizeof_player_entity()).toBe(608);
     expect(ex.sizeof_projectile_entity()).toBe(216);
     expect(ex.sizeof_satellite_entity()).toBe(96);
     expect(ex.sizeof_destructible_entity()).toBe(64);
