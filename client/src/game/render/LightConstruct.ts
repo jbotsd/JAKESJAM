@@ -1262,6 +1262,33 @@ function strokeClosed(g: Phaser.GameObjects.Graphics, verts: Phaser.Math.Vector2
   g.strokePath();
 }
 
+/** Kindled's carried shield — the SAME faceted circuit-board silhouette as
+ *  the active Ward slab (drawWardSlab/slabVerts), at a small resting scale
+ *  and without the animated rune-screen detail (kept cheap: this redraws
+ *  every frame, held or braced through a swing, not cast once). One sword +
+ *  one shield (Jake, 2026-07-20: "we should really not have two weapons on
+ *  kindled... we need one sword on shield" — corrected the earlier
+ *  double-blade read). Same self-light material as the sword and the full
+ *  Ward, so "fights and defends with the same divine light" still holds. */
+function drawHeldShield(
+  g: Phaser.GameObjects.Graphics,
+  center: Vec2,
+  tint: ConstructTint,
+  alpha = 1,
+  scale = 0.5,
+): void {
+  if (alpha <= 0.01) return;
+  const verts = slabVerts(center, scale);
+  g.fillStyle(tint.glow, 0.16 * alpha);
+  g.fillPoints(verts, true);
+  g.lineStyle(5, tint.glow, 0.35 * alpha);
+  strokeClosed(g, verts);
+  g.lineStyle(2, tint.core, 0.9 * alpha);
+  strokeClosed(g, verts);
+  g.fillStyle(tint.core, 0.85 * alpha);
+  g.fillCircle(center.x, center.y, 2.4 * scale + 1);
+}
+
 /** hold — the held circuit-board slab, its rune-screen alive. Draw INTO a
  *  caller-owned off-pool Graphics each frame (like drawTether). ADD-blend, so
  *  the "black face" is the dark bg showing through the gold light elements.
@@ -1468,23 +1495,20 @@ export function spawnWardDrop(pool: ParticlePool, center: Vec2, tint: ConstructT
   });
 }
 
-/** Kindled weapon — DOUBLE Kindled Edges: two HELD faceted gold crystal
- *  greatswords that swing THROUGH the arc together, pivoting from each hand.
- *  Heavier and slower than the Interstice twin-flick (the paladin commits):
- *  thicker bodies, longer follow, a heavy bright edge + a gold swoosh trail.
- *  2026-07-20: was one sword + an off-hand shield board; the board is now a
- *  second blade (same "one committed action" brace timing the board already
- *  had — a real gameplay clip caught the OLD off-hand shield read as
- *  visually confusing when a second, unrelated ghost-blade bug (since fixed,
- *  see ProceduralPlayerRig.ts's removed duplicate draw path) was overlapping
- *  it; "it should be double swords" made both problems moot at once). The
- *  off blade shares the SAME angle as the lead blade — both hands committing
- *  to one identical cut, not an independently-animated second weapon (that's
- *  Interstice's "flick" register, not Kindled's) — so the two can never
- *  visually diverge or scissor; only their fixed pivot offset (already-tuned
- *  brace positioning, unchanged) tells them apart. PURE per-frame paint at
- *  progress `t` into the caller's persistent layer (same reliable path as
- *  the tether). */
+/** Kindled weapon — the Kindled Edge: a HELD faceted gold crystal greatsword
+ *  in the lead hand, one carried shield braced in the off hand through the
+ *  swing. Heavier and slower than the Interstice twin-flick (the paladin
+ *  commits): thicker body, longer follow, a heavy bright edge + a gold
+ *  swoosh trail. 2026-07-20: briefly became a second blade instead of the
+ *  shield (fixing an unrelated ghost-blade duplicate-render bug at the same
+ *  time — see ProceduralPlayerRig.ts's removed duplicate draw path, still
+ *  fixed) — reverted; "we should really not have two weapons on kindled...
+ *  we need one sword on shield" (Jake). The shield's own draw
+ *  (drawHeldShield) reuses the SAME brace-through-the-hit/open-on-recovery
+ *  position math the second blade briefly used, just braced in place rather
+ *  than swinging — the sword does the cutting, the shield holds. PURE
+ *  per-frame paint at progress `t` into the caller's persistent layer (same
+ *  reliable path as the tether). */
 export function drawKindledSwing(
   g: Phaser.GameObjects.Graphics,
   pivot: Vec2,
@@ -1514,46 +1538,18 @@ export function drawKindledSwing(
   drawWorldTipTrail(g, tipHistory, tint, env, 28);
   drawTipBladeGhosts(g, tipHistory, reach, dir, tint, env, 9);
 
-  // Off blade — same brace-through-the-hit / open-on-recovery positioning
-  // the shield board used (unchanged math), same angle as the lead blade
-  // (locked parallel, never independently animated), scaled down ~80% so
-  // the two read as a matched pair rather than one blade duplicated.
+  // Off hand — the SAME carried shield the resting pose holds (drawHeldEdges
+  // → drawHeldShield), braced through the swing rather than a second blade
+  // (Jake, 2026-07-20: "we should really not have two weapons on kindled...
+  // we need one sword on shield" — this used to mirror the lead blade
+  // one-for-one; the brace-through-the-hit/open-on-recovery position math
+  // is unchanged, only what's DRAWN there changed). The shield stays put
+  // (braced) while the sword does the swinging.
   const brace = 1 - smoothstep(stage.recovery);
   const offX = offPivot.x - px * dir * 9 + Math.cos(aimRad) * 3 * brace;
   const offY = offPivot.y - py * dir * 9 + Math.sin(aimRad) * 3 * brace;
-  const offReach = reach * 0.8;
-  const offMidR = offReach * 0.5;
-  const offHw = hw * 0.8;
-  const offHiltR = hiltR * 0.8;
-  const OP = (r: number, w: number): Phaser.Math.Vector2 =>
-    new Phaser.Math.Vector2(offX + dx * r + px * w, offY + dy * r + py * w);
   const offEnv = env * (0.55 + 0.45 * brace);
-  const offBlade = [
-    OP(offHiltR, 3),
-    OP(offMidR, offHw),
-    OP(offReach, 0),
-    OP(offMidR, -offHw),
-    OP(offHiltR, -3),
-  ];
-  g.fillStyle(tint.glow, 0.5 * offEnv);
-  g.fillPoints(offBlade, true);
-  g.fillStyle(tint.core, 0.28 * offEnv);
-  g.fillPoints(
-    [OP(offHiltR, 1.3), OP(offMidR, offHw * 0.5), OP(offReach, 0), OP(offMidR, -offHw * 0.5), OP(offHiltR, -1.3)],
-    true,
-  );
-  g.lineStyle(5, tint.glow, 0.3 * offEnv);
-  strokeClosed(g, offBlade);
-  g.lineStyle(2.5, tint.core, 0.85 * offEnv);
-  strokeClosed(g, offBlade);
-  g.fillStyle(tint.glow, 0.42 * offEnv);
-  g.fillCircle(offX + dx * offHiltR, offY + dy * offHiltR, 4);
-  const offTipX = offX + dx * offReach;
-  const offTipY = offY + dy * offReach;
-  g.fillStyle(tint.glow, 0.45 * offEnv);
-  g.fillCircle(offTipX, offTipY, 7);
-  g.fillStyle(tint.core, 0.85 * offEnv);
-  g.fillCircle(offTipX, offTipY, 3.2);
+  drawHeldShield(g, { x: offX, y: offY }, tint, offEnv, 0.5);
 
   // Lead blade — the faceted crystal blade at the leading angle.
   const blade = [P(hiltR, 3.5), P(midR, hw), P(reach, 0), P(midR, -hw), P(hiltR, -3.5)];
@@ -1695,12 +1691,13 @@ export function drawHeldDaggers(
   g.fillCircle(back.x, back.y, 2.6);
 }
 
-/** HELD Kindled Edges — the Kindled paladin's TWO RESTING crystal swords, one
- *  per hand (heavier + longer than Interstice's daggers; the Ward slab is a
- *  separate ability, not drawn here). Same self-light material as the ward +
- *  the swing (goal: "fight and defend with the same divine light"). Mirrors
- *  drawHeldDaggers's two-blade pattern exactly (2026-07-20 — Kindled's
- *  identity is double swords, matching the swing's own two-blade read). */
+/** HELD Kindled sword + shield — the paladin's RESTING crystal longsword in
+ *  the lead hand, one carried shield in the off hand (Jake, 2026-07-20: "we
+ *  should really not have two weapons on kindled... we need one sword on
+ *  shield" — corrected the earlier double-blade read, which mirrored
+ *  drawHeldDaggers's two-blade pattern one-for-one). Same self-light
+ *  material as the ward + the swing (goal: "fight and defend with the same
+ *  divine light" still holds — it's one sword now, not two). */
 export function drawHeldEdges(
   g: Phaser.GameObjects.Graphics,
   lead: Vec2,
@@ -1710,14 +1707,14 @@ export function drawHeldEdges(
   alpha = 1,
 ): void {
   if (alpha <= 0.01) return;
-  // Held ready toward aim, splayed a touch so the two read as separate
-  // blades — same spirit as drawHeldDaggers, narrower angle since Kindled
-  // reads as square/disciplined rather than Interstice's loose agility.
-  drawDagger(g, lead, aimRad - 0.08, 40, 5.6, tint, 0.95 * alpha);
-  drawDagger(g, back, aimRad + 0.10, 34, 4.8, tint, 0.8 * alpha);
+  // ONE longsword in the lead (weapon) hand — heavier/longer than
+  // Interstice's dagger pair, Kindled reads as square/disciplined, not
+  // agile — held ready toward aim, same as before.
+  drawDagger(g, lead, aimRad, 42, 5.8, tint, 0.95 * alpha);
   g.fillStyle(tint.glow, 0.42 * alpha);
   g.fillCircle(lead.x, lead.y, 3.6);
-  g.fillCircle(back.x, back.y, 3.0);
+  // ONE carried shield in the off hand — see drawHeldShield's own doc comment.
+  drawHeldShield(g, back, tint, alpha, 0.5);
 }
 
 /** Geometrician — a volley of faceted cyan crystal shards conjured from an open
