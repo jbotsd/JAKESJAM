@@ -33,6 +33,15 @@ pub const MAX_SATELLITES: usize = 32;
 pub const MAX_DESTRUCTIBLES: usize = 64;
 pub const MAX_FIRE: usize = 32;
 pub const MAX_PICKUPS: usize = 32;
+/// Paper Double decoys (2026-07-20 gap-closure pass item 3 — Interstice/
+/// ninja catalog v1, docs/card-pool-v2.md "Paper Double"; PaperDoubleEntity
+/// at client/src/sim/types.ts). Sized the same as MAX_PLAYERS: the card's
+/// own cooldown (9s, NINJA_PAPER_DOUBLE_CD_MS) exceeds its max lifetime
+/// (2.5s, NINJA_PAPER_DOUBLE_LIFETIME_MS) by a wide margin, so no single
+/// player can ever have more than one live decoy — one slot per player is
+/// already generous headroom, matching MAX_SATELLITES/MAX_FIRE's own
+/// "generous, not exact" sizing convention in this file.
+pub const MAX_PAPER_DOUBLES: usize = MAX_PLAYERS;
 
 pub const PLAYER_ID_BYTES: usize = 32;
 pub const WEAPON_ID_BYTES: usize = 24;
@@ -192,7 +201,26 @@ pub const ProjectileFlags = packed struct(u32) {
     returning: bool,
     has_sticky_fuse: bool,
     has_impact_radius: bool,
-    _reserved: u18 = 0,
+    /// 2026-07-20 gap-closure pass (client/src/sim/types.ts:1004/1013/1014) —
+    /// gate bits for the 3 new optional numeric fields below, same
+    /// "unset vs 0" ambiguity every other `has_*` bit on this struct
+    /// resolves. Given default values (`= false`) so the two existing
+    /// ProjectileEntity struct-literal sites in world.zig (weapon-fire spawn
+    /// + emission-cast spawn), which explicitly enumerate every flag field,
+    /// keep compiling unchanged — neither spawn site produces these extras
+    /// yet (that's a separate, later fire-path port).
+    has_status_scale: bool = false,
+    has_leech_fraction: bool = false,
+    has_execute_below_frac: bool = false,
+    /// Pure identity/behavior flags (types.ts:1015/1031/1057/1069) — each
+    /// IS its own value, no separate has_* gate, same shape as `returning`
+    /// above. Defaulted `= false` for the same "existing spawn sites don't
+    /// need editing" reason as the has_* trio above.
+    wrap_shots: bool = false,
+    enemy_only: bool = false,
+    tendril: bool = false,
+    ninja_wave: bool = false,
+    _reserved: u11 = 0,
 };
 
 // -----------------------------------------------------------------
@@ -396,6 +424,29 @@ pub const PlayerEntity = extern struct {
     /// `combat.ts`'s `trySyzygistWard`, mirrored here as a byte-layout
     /// carry-through only.
     syz_ward_absorb_remaining: f64 = 0,
+
+    /// Wizard basic-fire ramping channel (2026-07-20 gap-closure pass,
+    /// constants.ts's GEO_CHANNEL_RAMP_MS doc comment, weapon.ts:243-257).
+    /// UNLIKE energy/kindling/devotion above (TS-owned, step_world never
+    /// touches), this field IS computed by step_world once this cut lands —
+    /// accrues by eff_dt every tick the Fire input bit is held AND
+    /// `character_id == .balanced` (== `classIdForArchetype(...) ===
+    /// "wizard"`, cardTypes.ts's ARCHETYPE_CLASS_ID map) AND the player is
+    /// alive, resets to 0 otherwise (see world.zig's per-player combat
+    /// loop). No flag needed — same "always-valid resource, no unset
+    /// ambiguity" contract as energy/kindling (0 IS the correct rest
+    /// state, not a sentinel), not the `has_*`/`*_until_tick` window-field
+    /// contract. Non-wizard players simply never move this field off 0.
+    ///
+    /// Layout: `syz_ward_absorb_remaining`'s f64 ends at offset 384,
+    /// already 8-byte-aligned, so this f64 needs no padding — struct
+    /// grows 384 → 392. See the comptime assert below and
+    /// worldStateBridge.ts's PLAYER_ENTITY_SIZE (NOTE: that TS constant is
+    /// NOT updated by this pass — see this field's own callers in world.zig
+    /// and the task-level report for why crossing the wasm ABI for this
+    /// field is deliberately deferred; it is read/written by step_world
+    /// only, never packed/unpacked by worldStateBridge.ts today).
+    channel_hold_ms: f64 = 0,
 };
 
 /// Mirrors `ProjectileEntity`.
@@ -435,7 +486,45 @@ pub const ProjectileEntity = extern struct {
 
     owner_id_bytes: [PLAYER_ID_BYTES]u8 = @splat(0),
 
-    _reserved: [12]u8 = @splat(0),
+    /// 2026-07-20 gap-closure pass — the 3 remaining ProjectileEntity fields
+    /// from client/src/sim/types.ts (statusScale:1004, leechFraction:1013,
+    /// executeBelowFrac:1014), gated by has_status_scale/has_leech_fraction/
+    /// has_execute_below_frac above (types.ts's wrapShots/enemyOnly/tendril/
+    /// ninjaWave are plain booleans, already fully represented by
+    /// ProjectileFlags's own new bits — no numeric storage needed for
+    /// those 4). owner_id_bytes ends at offset 204 (172 + 32), a multiple
+    /// of 4, so three f32 fields (4-byte aligned, no f64 alignment demand)
+    /// slot in with zero padding: 204 → 216 exactly — the struct's
+    /// documented 216-byte size is UNCHANGED. f32 (not f64) is the only
+    /// choice that fits: the tail this replaces was `_reserved: [12]u8`
+    /// (12 bytes) and 3×f64 needs 24; 3×f32 needs exactly 12. This is also
+    /// not merely a size-saving preference — worldStateBridge.ts's
+    /// `PROJECTILE_ENTITY_SIZE = 216` constant (client/src/sim/wasm/
+    /// worldStateBridge.ts) is a TS file outside this pass's touch scope,
+    /// so growing this struct at all was not an available option here
+    /// without also editing that file. Precision tradeoff: these three
+    /// TS `number` fields (status multipliers / health fractions, never
+    /// raw pixel/velocity magnitudes) round-trip through f32 with ~7
+    /// significant decimal digits — ample for values like "×2 status
+    /// duration" or "0.15 leech fraction" or "0.2 execute threshold".
+    /// _reserved is now fully consumed — any FUTURE ProjectileEntity
+    /// addition needs its own struct-growth cut (see PlayerEntity's own
+    /// growth-history comments below the comptime asserts for the pattern
+    /// this file already follows for that).
+    ///
+    /// NOT YET BRIDGED: packProjectile/unpackProjectile in
+    /// worldStateBridge.ts still only walk the pre-existing 18 f64 + 14
+    /// flag fields (that file is off-limits to this Zig-only pass per the
+    /// task's hard safety rules) — these 7 new fields exist and are usable
+    /// by step_world's own internal logic but do not yet cross the TS<->
+    /// wasm boundary. A follow-up TS-side cut must extend both codec
+    /// functions (mirroring exactly how homingStrength/accelerationMultiplier
+    /// are packed/unpacked today) before any TS-authored spawn (e.g. a
+    /// future Priest tendril or Crimson Tithe cast routed through step_world)
+    /// can actually populate them.
+    status_scale: f32 = 0,
+    leech_fraction: f32 = 0,
+    execute_below_frac: f32 = 0,
 };
 
 /// Mirrors `SatelliteEntity`.
@@ -485,6 +574,42 @@ pub const FireEntity = extern struct {
     owner_id_len: u8,
     _pad0: [7]u8 = .{ 0, 0, 0, 0, 0, 0, 0 },
     owner_id_bytes: [PLAYER_ID_BYTES]u8 = @splat(0),
+};
+
+/// Mirrors `PaperDoubleEntity` (2026-07-20 gap-closure pass item 3 —
+/// client/src/sim/types.ts:1197-1221, client/src/sim/paperDouble.ts). A
+/// straight-line kinematic mover (no platform collision/gravity, per
+/// types.ts's own header comment) that both self-expires on a clock AND
+/// collides with projectiles — same overall shape as `DestructibleEntity`
+/// above, cloned field-for-field with that struct's layout discipline
+/// (f64s first, id, then a length-prefixed owner id buffer padded to an
+/// 8-byte boundary, `_reserved` tail for future growth room). Unlike
+/// `FireEntity`'s `has_owner` (world-owned fire patches exist), a decoy
+/// ALWAYS has a living owner (types.ts: "never null") — no has_owner flag
+/// needed.
+///
+/// Deliberately has NO wasm-ABI crossing today: types.ts's own header
+/// comment is explicit that `PaperDoubleEntity` does NOT cross the WASM
+/// ABI (six-axes-goal.md "Zig line" — TS-only combat/ability state, not
+/// identity/roster/resource state). This mirror exists purely for
+/// step_world's OWN internal use (movement/expiry/collision/compaction),
+/// ready for a later phase's ability-cast system to spawn into — see this
+/// pass's own report for what's deliberately NOT wired yet (spawn-on-cast).
+pub const PaperDoubleEntity = extern struct {
+    x: f64,
+    y: f64,
+    vx: f64,
+    vy: f64,
+    health: f64,
+    remaining_ms: f64,
+
+    id: u32,
+    owner_id_len: u8,
+    _pad0: [3]u8 = .{ 0, 0, 0 },
+
+    owner_id_bytes: [PLAYER_ID_BYTES]u8 = @splat(0),
+
+    _reserved: [8]u8 = @splat(0),
 };
 
 /// Per-player movement memory — the host-only fields that the
@@ -632,6 +757,7 @@ pub const SATELLITE_ENTITY_BYTES: usize = @sizeOf(SatelliteEntity);
 pub const DESTRUCTIBLE_ENTITY_BYTES: usize = @sizeOf(DestructibleEntity);
 pub const FIRE_ENTITY_BYTES: usize = @sizeOf(FireEntity);
 pub const PICKUP_ENTITY_BYTES: usize = @sizeOf(PickupEntity);
+pub const PAPER_DOUBLE_ENTITY_BYTES: usize = @sizeOf(PaperDoubleEntity);
 
 /// Header — packed up front so the host can cheaply read tick /
 /// rng_state without dereferencing a full WorldState.
@@ -689,6 +815,15 @@ pub const WorldState = extern struct {
     pickup_count: u32,
     _pad_after_pickup_count: [4]u8 = .{ 0, 0, 0, 0 },
     pickups: [MAX_PICKUPS]PickupEntity,
+
+    /// Paper Double decoys (2026-07-20 gap-closure pass item 3). Not yet
+    /// spawned by anything (no Zig ability-cast system exists — see
+    /// PaperDoubleEntity's own doc comment) but fully stepped/collided/
+    /// compacted by stepWorld every tick, ready for a later phase's
+    /// spawn-on-cast hook.
+    paper_double_count: u32,
+    _pad_after_paper_double_count: [4]u8 = .{ 0, 0, 0, 0 },
+    paper_doubles: [MAX_PAPER_DOUBLES]PaperDoubleEntity,
 
     /// Parallel to `players[]` — index N is movement memory for
     /// players[N]. Used by player.stepPlayer (Phase I14+).
@@ -754,12 +889,39 @@ comptime {
     // syz_ward_absorb_remaining (f64) — 4 bytes of implicit alignment
     // padding between the two (372 → 376) since a lone u32 precedes an f64.
     // See PlayerEntity.syz_ward_absorb_until_tick's doc comment.
-    std.debug.assert(@sizeOf(PlayerEntity) == 384);
+    // 384 → 392 (2026-07-20, gap-closure pass item 2, weapon.ts:243-257 /
+    // constants.ts GEO_CHANNEL_RAMP_MS): +8 bytes for
+    // PlayerEntity.channel_hold_ms (f64) — 384 already 8-byte-aligned, no
+    // padding. See PlayerEntity.channel_hold_ms's doc comment. KNOWN GAP:
+    // worldStateBridge.ts's PLAYER_ENTITY_SIZE constant is still 384 as of
+    // this cut (TS files are out of scope for this Zig-only pass) — a
+    // follow-up TS cut MUST bump it to 392 and extend pack/unpackPlayer
+    // before step_world's wasm export path can be exercised through that
+    // bridge with this field populated. Zig-internal tests (this file's
+    // comptime assert + world.zig's own native calls) are unaffected since
+    // they read @sizeOf(PlayerEntity) directly, never the stale TS literal.
+    std.debug.assert(@sizeOf(PlayerEntity) == 392);
+    // ProjectileEntity: SIZE UNCHANGED at 216 despite 3 new numeric fields
+    // (2026-07-20 gap-closure pass item 1) — status_scale/leech_fraction/
+    // execute_below_frac (f32 ×3 = 12 bytes) exactly fill what used to be
+    // `_reserved: [12]u8`. See ProjectileEntity.status_scale's doc comment
+    // for the full byte-math + the f32-vs-f64 tradeoff. worldStateBridge.ts's
+    // PROJECTILE_ENTITY_SIZE (216) stays correct as-is; only its
+    // packProjectile/unpackProjectile codec bodies are stale (don't yet
+    // read/write these 3 fields or the 7 new ProjectileFlags bits) — same
+    // "TS follow-up needed, out of scope here" note as PlayerEntity above.
     std.debug.assert(@sizeOf(ProjectileEntity) == 216);
     std.debug.assert(@sizeOf(SatelliteEntity) == 96);
     std.debug.assert(@sizeOf(DestructibleEntity) == 64);
     std.debug.assert(@sizeOf(FireEntity) == 88);
     std.debug.assert(@sizeOf(PickupEntity) == 64);
+    // PaperDoubleEntity (2026-07-20 gap-closure pass item 3): 6×f64 (48) +
+    // id u32 (4) + owner_id_len u8 (1) + 3 bytes pad to the next 8-byte
+    // boundary (56) + owner_id_bytes[32] (88) + _reserved[8] (96) — 96 is
+    // already 8-byte-aligned, no further tail padding. See
+    // PaperDoubleEntity's own doc comment for the DestructibleEntity-
+    // pattern rationale.
+    std.debug.assert(@sizeOf(PaperDoubleEntity) == 96);
     std.debug.assert(@sizeOf(PlayerMovementMemory) == 48);
     std.debug.assert(@sizeOf(SimEvent) == 40);
     std.debug.assert(@sizeOf(ResolvedFireConfig) == 240);

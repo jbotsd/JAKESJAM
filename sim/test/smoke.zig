@@ -259,3 +259,276 @@ test "slopes: one-way — a jump from below never grounds through the surface" {
     // Jump apex (~134px) genuinely crossed the overhead surface band (480).
     try std.testing.expect(min_foot < 480.0 - 8.0);
 }
+
+// ── Wizard basic-fire ramping channel (2026-07-20 gap-closure pass item 2,
+//    parity port of weapon.ts:243-257/330-334, constants.ts's
+//    GEO_CHANNEL_RAMP_MS/GEO_CHANNEL_RAMP_FIRE_RATE_MULTIPLIER_MAX) ────────
+
+fn freshFightingState() root.world_state.WorldState {
+    var state: root.world_state.WorldState = std.mem.zeroes(root.world_state.WorldState);
+    state.header.round_phase = @intFromEnum(root.round.RoundPhase.fighting);
+    // Large window so the round-phase machine never transitions mid-test —
+    // isolates the assertions below from round.zig's own timing.
+    state.header.countdown_remaining_ms = 90_000.0;
+    return state;
+}
+
+const FIRE_BIT: u32 = 1 << 6;
+
+test "channel ramp: wizard accrues channel_hold_ms while holding Fire, and it composes into the fire-rate cooldown on the same tick a shot fires" {
+    var state = freshFightingState();
+    state.player_count = 1;
+    state.players[0].flags.alive = true;
+    state.players[0].character_id = .balanced; // balanced -> "wizard" (cardTypes.ts ARCHETYPE_CLASS_ID)
+    state.players[0].current_keys = FIRE_BIT;
+    state.players[0].health = 100;
+
+    // dt == GEO_CHANNEL_RAMP_MS so channel_hold_ms hits the ramp ceiling
+    // in a single tick. fire_cooldown_ms starts at 0 (zeroed state), so
+    // this SAME tick's weapon_tick_fire_with_keys call fires immediately
+    // — reading this tick's just-accrued hold duration, matching
+    // weapon.ts's "tracked before the early return" ordering note.
+    _ = root.world.stepWorld(&state, 2000.0);
+
+    try std.testing.expectEqual(@as(f64, 2000.0), state.players[0].channel_hold_ms);
+
+    // starter pistol fire_rate (4.0/s) × ramp ceiling (1.6x) = 6.4/s ->
+    // cooldown = 1000/6.4 = 156.25ms. (weapon.cooldownFromFireRate's floor
+    // arg is 1.0 at this call site, not MIN_FIRE_RATE — pre-existing,
+    // unrelated to this pass, not asserted here.)
+    const starter_fire_rate = root.weapons.weaponBaseById(.starter_pistol).fire_rate;
+    const expected_cd = 1000.0 / (starter_fire_rate * 1.6);
+    try std.testing.expect(@abs(state.players[0].fire_cooldown_ms - expected_cd) < 1e-9);
+
+    // Release Fire: channel_hold_ms drops back to 0 on the very next tick.
+    state.players[0].current_keys = 0;
+    _ = root.world.stepWorld(&state, 16.0);
+    try std.testing.expectEqual(@as(f64, 0.0), state.players[0].channel_hold_ms);
+}
+
+test "channel ramp: non-wizard chassis never accrues channel_hold_ms even while holding Fire" {
+    var state = freshFightingState();
+    state.player_count = 1;
+    state.players[0].flags.alive = true;
+    state.players[0].character_id = .heavy; // "paladin", not wizard
+    state.players[0].current_keys = FIRE_BIT;
+    state.players[0].health = 100;
+
+    var t: u32 = 0;
+    while (t < 10) : (t += 1) {
+        _ = root.world.stepWorld(&state, 200.0);
+    }
+    try std.testing.expectEqual(@as(f64, 0.0), state.players[0].channel_hold_ms);
+}
+
+test "haste_multiplier composes into the fire-rate cooldown (2026-07-20 fix — was already on PlayerEntity but unread at this call site)" {
+    var state = freshFightingState();
+    state.player_count = 1;
+    state.players[0].flags.alive = true;
+    state.players[0].character_id = .shielded; // "priest" — not wizard, isolates haste from channel ramp
+    state.players[0].current_keys = FIRE_BIT;
+    state.players[0].health = 100;
+    state.players[0].flags.has_haste = true;
+    state.players[0].haste_until_tick = 1000; // far beyond this test's single tick
+    state.players[0].haste_multiplier = 2.0;
+
+    _ = root.world.stepWorld(&state, 16.0); // tick becomes 1, well under haste_until_tick
+
+    const starter_fire_rate = root.weapons.weaponBaseById(.starter_pistol).fire_rate;
+    const expected_cd = 1000.0 / (starter_fire_rate * 2.0);
+    try std.testing.expect(@abs(state.players[0].fire_cooldown_ms - expected_cd) < 1e-9);
+}
+
+// ── Paper Double (2026-07-20 gap-closure pass item 3, parity port of
+//    client/src/sim/paperDouble.ts) ─────────────────────────────────────
+
+test "paper double: straight-line movement + lifetime countdown, compacted once remaining_ms expires" {
+    var state = freshFightingState();
+    state.paper_double_count = 1;
+    state.paper_doubles[0] = .{
+        .x = 0,
+        .y = 0,
+        .vx = 100, // px/s
+        .vy = 0,
+        .health = 20,
+        .remaining_ms = 250,
+        .id = 1,
+        .owner_id_len = 0,
+    };
+
+    _ = root.world.stepWorld(&state, 100.0);
+    try std.testing.expectEqual(@as(u32, 1), state.paper_double_count);
+    try std.testing.expect(@abs(state.paper_doubles[0].x - 10.0) < 1e-9);
+    try std.testing.expect(@abs(state.paper_doubles[0].remaining_ms - 150.0) < 1e-9);
+
+    _ = root.world.stepWorld(&state, 100.0);
+    try std.testing.expectEqual(@as(u32, 1), state.paper_double_count);
+    try std.testing.expect(@abs(state.paper_doubles[0].x - 20.0) < 1e-9);
+    try std.testing.expect(@abs(state.paper_doubles[0].remaining_ms - 50.0) < 1e-9);
+
+    // This tick's tick-down takes remaining_ms to -50 (50 - 100); the
+    // end-of-tick compaction pass removes it (remaining_ms > 0 fails).
+    _ = root.world.stepWorld(&state, 100.0);
+    try std.testing.expectEqual(@as(u32, 0), state.paper_double_count);
+}
+
+test "paper double: SWEPT collision catches a fast projectile that tunnels past in one tick (2026-07-20 regression guard — point-in-time missed this exact shape)" {
+    var state = freshFightingState();
+    state.paper_double_count = 1;
+    state.paper_doubles[0] = .{
+        .x = 500,
+        .y = 300,
+        .vx = 0,
+        .vy = 0,
+        .health = 20,
+        .remaining_ms = 2500,
+        .id = 1,
+        .owner_id_len = 0,
+    };
+    // Decoy body AABB (PAPER_DOUBLE_BODY_HALF_W=13, _HALF_H=28): x in
+    // [487, 513], y in [272, 328].
+    const target_aabb: root.collision.AABB = .{ .x = 487, .y = 272, .w = 26, .h = 56 };
+
+    state.projectile_count = 1;
+    // Section 3 (projectile pre-step/motion) runs BEFORE section 4's
+    // collision loop and already advances .straight pathing by vx*dt_sec
+    // — so the position that section 4 actually sees is this tick's END
+    // position, not the value written here. Start at 472 (clear of the
+    // decoy's left edge-radius at 483) so that after section 3 moves it
+    // by 3000px/s * 0.016s = 48px it lands at 520 (clear of the right
+    // edge+radius at 517) — a single-tick pass straight through the box
+    // with NEITHER the start nor the end position inside it. Section 4's
+    // decoy loop reconstructs the pre-motion position as
+    // `current_x - vx*dt_sec` = 520 - 48 = 472, matching this start value
+    // exactly (single straight-line integration, no terrain deflection).
+    state.projectiles[0] = .{
+        .x = 472,
+        .y = 300,
+        .vx = 3000, // px/s
+        .vy = 0,
+        .radius = 4,
+        .damage = 15,
+        .lifetime_ms = 1000,
+        .age_ms = 0,
+        .traveled_px = 0,
+        .origin_x = 472,
+        .origin_y = 300,
+        .homing_strength = 0,
+        .acceleration_multiplier = 0,
+        .gravity_scale = 0,
+        .range_px = 0,
+        .slow_multiplier = 1.0,
+        .sticky_fuse_ms = 0,
+        .impact_radius_px = 0,
+        .id = 9,
+        .bounces_remaining = 0,
+        .pierce_remaining = 0,
+        .split_count = 0,
+        .flags = .{
+            .has_owner = false,
+            .has_impact = false,
+            .has_split = false,
+            .has_slow = false,
+            .has_homing = false,
+            .has_acceleration = false,
+            .has_gravity_scale = false,
+            .has_range = false,
+            .has_age = false,
+            .has_traveled = false,
+            .has_origin = false,
+            .returning = false,
+            .has_sticky_fuse = false,
+            .has_impact_radius = false,
+        },
+        .pathing = .straight,
+        .element = .neutral,
+        .impact = .none,
+        .shape = .circle,
+        .owner_id_len = 0,
+    };
+
+    // Concretely prove a point-in-time check at EITHER endpoint alone
+    // would have missed this hit (the exact tunneling shape paperDouble.ts
+    // was fixed for on 2026-07-20) — the regression this test guards.
+    try std.testing.expect(!root.collision.circleOverlapsAABB(520, 300, 4, target_aabb));
+    try std.testing.expect(!root.collision.circleOverlapsAABB(472, 300, 4, target_aabb));
+
+    _ = root.world.stepWorld(&state, 16.0);
+
+    // The swept check in section 4's decoy sub-loop caught it anyway.
+    try std.testing.expect(@abs(state.paper_doubles[0].health - 5.0) < 1e-9); // 20 - 15
+    try std.testing.expectEqual(@as(u32, 0), state.projectile_count); // consumed + compacted
+}
+
+test "paper double: owner-exclusion — a caster's own projectile never damages their own decoy" {
+    var state = freshFightingState();
+    var owner_bytes: [root.world_state.PLAYER_ID_BYTES]u8 = @splat(0);
+    owner_bytes[0] = 'p';
+    owner_bytes[1] = '1';
+
+    state.paper_double_count = 1;
+    state.paper_doubles[0] = .{
+        .x = 500,
+        .y = 300,
+        .vx = 0,
+        .vy = 0,
+        .health = 20,
+        .remaining_ms = 2500,
+        .id = 1,
+        .owner_id_len = 2,
+        .owner_id_bytes = owner_bytes,
+    };
+
+    state.projectile_count = 1;
+    state.projectiles[0] = .{
+        .x = 500, // dead center overlap — would hit if not for owner exclusion
+        .y = 300,
+        .vx = 0,
+        .vy = 0,
+        .radius = 4,
+        .damage = 15,
+        .lifetime_ms = 1000,
+        .age_ms = 0,
+        .traveled_px = 0,
+        .origin_x = 500,
+        .origin_y = 300,
+        .homing_strength = 0,
+        .acceleration_multiplier = 0,
+        .gravity_scale = 0,
+        .range_px = 0,
+        .slow_multiplier = 1.0,
+        .sticky_fuse_ms = 0,
+        .impact_radius_px = 0,
+        .id = 9,
+        .bounces_remaining = 0,
+        .pierce_remaining = 0,
+        .split_count = 0,
+        .flags = .{
+            .has_owner = true,
+            .has_impact = false,
+            .has_split = false,
+            .has_slow = false,
+            .has_homing = false,
+            .has_acceleration = false,
+            .has_gravity_scale = false,
+            .has_range = false,
+            .has_age = false,
+            .has_traveled = false,
+            .has_origin = false,
+            .returning = false,
+            .has_sticky_fuse = false,
+            .has_impact_radius = false,
+        },
+        .pathing = .straight,
+        .element = .neutral,
+        .impact = .none,
+        .shape = .circle,
+        .owner_id_len = 2,
+        .owner_id_bytes = owner_bytes,
+    };
+
+    _ = root.world.stepWorld(&state, 16.0);
+
+    try std.testing.expectEqual(@as(f64, 20.0), state.paper_doubles[0].health);
+    try std.testing.expectEqual(@as(u32, 1), state.projectile_count);
+}

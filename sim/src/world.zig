@@ -62,6 +62,23 @@ const EMISSION_FILL_PER_DAMAGE_TAKEN: f64 = 0.2;
 /// Half the player body height (parity with World.ts PLAYER_HALF_HEIGHT).
 const PLAYER_HALF_HEIGHT: f64 = 28;
 
+/// Wizard basic-fire ramping channel (2026-07-20 gap-closure pass — parity
+/// with constants.ts's GEO_CHANNEL_RAMP_MS / GEO_CHANNEL_RAMP_FIRE_RATE_
+/// MULTIPLIER_MAX). Time holding Fire (ms) to reach max ramp, and the fire-
+/// rate multiplier at max ramp — composed into the fire-rate calc below
+/// exactly like TS's channelFireRateMul.
+const GEO_CHANNEL_RAMP_MS: f64 = 2000;
+const GEO_CHANNEL_RAMP_FIRE_RATE_MULTIPLIER_MAX: f64 = 1.6;
+
+/// Paper Double decoy body (2026-07-20 gap-closure pass item 3 — parity
+/// with client/src/sim/player.ts's PLAYER_BODY_WIDTH/PLAYER_BODY_HEIGHT,
+/// used by paperDouble.ts's `paperDoubleAABB` — the SAME box a real player
+/// uses, per that function's own doc comment, NOT the looser
+/// PLAYER_HALF_W=15/PLAYER_HALF_H=28 approximation this file's section 4
+/// player-hit loop uses elsewhere). Centered on (x, y).
+const PAPER_DOUBLE_BODY_HALF_W: f64 = 13.0;
+const PAPER_DOUBLE_BODY_HALF_H: f64 = 28.0;
+
 // Arena bounds for the ceiling clamp + void-plane kill (parity with World.ts).
 // Module-level (not packed in WorldState) — one sim instance, same lifetime as
 // the statics cache; set by the host on match start.
@@ -520,6 +537,29 @@ pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
         _ = fire.fireEntityTick(patch_ptr, eff_dt);
     }
 
+    // 2b. Paper Doubles (2026-07-20 gap-closure pass item 3 — parity port
+    //     of paperDouble.ts's `stepPaperDoubles`): straight-line kinematic
+    //     advance (no platform collision/gravity, per PaperDoubleEntity's
+    //     own doc comment) + lifetime countdown. Modeled on section 2's
+    //     fire-patch lifetime tick immediately above — ticks remaining_ms
+    //     down in place but does NOT remove expired entries here (same
+    //     "tick now, compact once at end of tick" split fire patches and
+    //     projectiles already use); section 9 below does the actual
+    //     removal via the same `remaining_ms > 0` filter. Runs BEFORE
+    //     section 4's projectile-resolution loop so a decoy can be hit the
+    //     same tick it's still alive (health <= 0 or remaining_ms <= 0
+    //     both fall out of the section-9 compaction filter identically —
+    //     no separate health check needed here since the collision loop in
+    //     section 4 is what drives health down, not this section).
+    var pdi: u32 = 0;
+    while (pdi < state.paper_double_count) : (pdi += 1) {
+        const pd_ptr = &state.paper_doubles[pdi];
+        if (pd_ptr.remaining_ms <= 0) continue;
+        pd_ptr.x += pd_ptr.vx * (eff_dt / 1000.0);
+        pd_ptr.y += pd_ptr.vy * (eff_dt / 1000.0);
+        pd_ptr.remaining_ms -= eff_dt;
+    }
+
     // 3. Projectile pre-step lifecycle + motion (I7). Sticky /
     //    lifetime decisions first; for `advance` results the
     //    motion kernel runs via step_projectile_v2 with the REAL
@@ -677,6 +717,68 @@ pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
                     }
                 }
             }
+            break;
+        }
+        if (proj_ptr.lifetime_ms <= 0) continue;
+        // Paper Double overlap (2026-07-20 gap-closure pass item 3 —
+        // parity port of paperDouble.ts's `stepPaperDoubles` projectile
+        // loop, ported from its CURRENT swept form — paperDouble.ts:
+        // 119-166, fixed 2026-07-20 for a tunneling bug where a fast
+        // (700+ px/s) shard could pass through a decoy at an unlucky
+        // position with zero damage on a discrete point-in-time check.
+        // `prevX/prevY` aren't stored on ProjectileEntity, so (matching
+        // the TS fix exactly) they're reconstructed from the projectile's
+        // OWN velocity — exact for straight pathing, a close approximation
+        // for curved. Same "one projectile, one impact" shape as the
+        // destructible loop above: the first LIVE decoy (array order) a
+        // projectile overlaps consumes it and the projectile stops
+        // checking further decoys. Owner-exclusion mirrors fire.ts's own
+        // precedent — a caster's own shot never pops their own decoy.
+        var pdi2: u32 = 0;
+        while (pdi2 < state.paper_double_count) : (pdi2 += 1) {
+            const pd_ptr = &state.paper_doubles[pdi2];
+            if (pd_ptr.health <= 0 or pd_ptr.remaining_ms <= 0) continue;
+            if (proj_ptr.flags.has_owner and
+                pd_ptr.owner_id_len == proj_ptr.owner_id_len and
+                std.mem.eql(u8, pd_ptr.owner_id_bytes[0..proj_ptr.owner_id_len], proj_ptr.owner_id_bytes[0..proj_ptr.owner_id_len]))
+            {
+                continue;
+            }
+            const target_aabb: collision_types.AABB = .{
+                .x = pd_ptr.x - PAPER_DOUBLE_BODY_HALF_W,
+                .y = pd_ptr.y - PAPER_DOUBLE_BODY_HALF_H,
+                .w = PAPER_DOUBLE_BODY_HALF_W * 2.0,
+                .h = PAPER_DOUBLE_BODY_HALF_H * 2.0,
+            };
+            var hit = collision_types.circleOverlapsAABB(
+                proj_ptr.x,
+                proj_ptr.y,
+                proj_ptr.radius,
+                target_aabb,
+            );
+            if (!hit) {
+                const dt_sec = eff_dt / 1000.0;
+                const prev_x = proj_ptr.x - proj_ptr.vx * dt_sec;
+                const prev_y = proj_ptr.y - proj_ptr.vy * dt_sec;
+                const mover_prev: collision_types.AABB = .{
+                    .x = prev_x - proj_ptr.radius,
+                    .y = prev_y - proj_ptr.radius,
+                    .w = proj_ptr.radius * 2.0,
+                    .h = proj_ptr.radius * 2.0,
+                };
+                var sweep_hit: collision_types.SweepHit = undefined;
+                hit = collision_types.sweepAABB(
+                    mover_prev,
+                    proj_ptr.vx,
+                    proj_ptr.vy,
+                    dt_sec,
+                    &.{target_aabb},
+                    &sweep_hit,
+                );
+            }
+            if (!hit) continue;
+            pd_ptr.health = @max(0.0, pd_ptr.health - proj_ptr.damage);
+            proj_ptr.lifetime_ms = 0;
             break;
         }
         if (proj_ptr.lifetime_ms <= 0) continue;
@@ -1410,6 +1512,26 @@ pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
     var pi3: u32 = 0;
     while (pi3 < state.player_count) : (pi3 += 1) {
         const player_ptr = &state.players[pi3];
+        // Wizard basic-fire ramping channel (2026-07-20 gap-closure pass —
+        // parity port of weapon.ts:243-257 / constants.ts's
+        // GEO_CHANNEL_RAMP_MS doc comment). Ticked BEFORE the fire-rate
+        // composition below (and before any early-return-shaped gate,
+        // matching TS's own "track hold duration even mid-cooldown" note)
+        // so holding Fire through a normal cooldown gap still accumulates.
+        // `character_id == .balanced` is this codebase's Zig-side mirror of
+        // `classIdForArchetype(...) === "wizard"` (cardTypes.ts's
+        // ARCHETYPE_CLASS_ID: balanced→wizard).
+        // FIRE_BIT mirrors weapon.zig's own (non-pub) `InputBitFire = 1 << 6`
+        // — duplicated as a local constant rather than exported, matching
+        // this same loop's existing ABILITY_BIT precedent below.
+        const FIRE_BIT: u32 = 1 << 6;
+        const is_wizard_channel = player_ptr.character_id == .balanced;
+        const fire_requested = (player_ptr.current_keys & FIRE_BIT) != 0;
+        if (is_wizard_channel and fire_requested and player_ptr.flags.alive) {
+            player_ptr.channel_hold_ms += eff_dt;
+        } else {
+            player_ptr.channel_hold_ms = 0;
+        }
         // Card shield/parry augments from the host-resolved build. Match the TS
         // orchestrator: maxCharge = SHIELD_MAX_CHARGE_DEFAULT × chargeMul (NOT
         // the stored max), recharge × rechargeMul, parry cooldown × cooldownMul.
@@ -1556,8 +1678,41 @@ pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
         const proj_element = if (fcfg.valid != 0) fcfg.element else weapons_data.weaponBaseById(.starter_pistol).projectile_element;
         const proj_pathing = if (fcfg.valid != 0) fcfg.pathing else weapons_data.weaponBaseById(.starter_pistol).projectile_pathing;
         const proj_impact_kind = if (fcfg.valid != 0) fcfg.impact else .none;
+        // Syzygist haste (2026-07-20 gap-closure pass — parity with
+        // weapon.ts:318-322): fire-rate multiplier while the window is
+        // live, reading the per-entity haste_multiplier set by TS's
+        // applyHasteToAlly (Zig never computes it, only carries it
+        // through — same contract as PlayerEntity.haste_multiplier's own
+        // doc comment). This field already existed on PlayerEntity
+        // (world_state.zig) but was unread at this site before this pass.
+        const haste_active = player_ptr.flags.has_haste and
+            player_ptr.haste_until_tick > state.header.tick;
+        const haste_fire_rate_mul: f64 = if (haste_active) player_ptr.haste_multiplier else 1.0;
+        // Wizard basic-fire ramping channel (2026-07-20 gap-closure pass —
+        // parity with weapon.ts:330-334): ramps 1.0x → the ceiling over
+        // GEO_CHANNEL_RAMP_MS of continuous hold (channel_hold_ms, ticked
+        // at the top of this loop). `is_wizard_channel` keeps this at
+        // exactly 1 for every other class (channel_hold_ms is always 0
+        // for them anyway).
+        const channel_ramp_frac: f64 = if (is_wizard_channel)
+            @min(1.0, player_ptr.channel_hold_ms / GEO_CHANNEL_RAMP_MS)
+        else
+            0.0;
+        const channel_fire_rate_mul: f64 = 1.0 +
+            (GEO_CHANNEL_RAMP_FIRE_RATE_MULTIPLIER_MAX - 1.0) * channel_ramp_frac;
+        // Overclock (constants.ts's GEO_OVERCLOCK_FIRE_RATE_MULTIPLIER,
+        // weapon.ts:290-296) is a DEFERRED gap, not a trivial add like
+        // haste above: unlike haste_multiplier, `overclockUntilTick` (TS
+        // types.ts:722) has NO Zig PlayerEntity mirror at all today — wiring
+        // it here would mean growing PlayerEntity by another u32+flag bit,
+        // which is exactly the "large port" the task scoping this pass
+        // asked NOT to scope-creep into. Left unread here; a future cut
+        // should add overclock_until_tick + PlayerFlags.has_overclock
+        // following the same growth-history-comment pattern as
+        // channel_hold_ms above, then read it here.
         const cd_after = weapon.cooldownFromFireRate(
-            fire_rate_v * chaos_profile.fire_rate_multiplier,
+            fire_rate_v * chaos_profile.fire_rate_multiplier *
+                haste_fire_rate_mul * channel_fire_rate_mul,
             1.0,
         );
         var fire_decision: weapon.FireDecision = undefined;
@@ -1716,6 +1871,27 @@ pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
         }
     }
     state.fire_count = fwrite;
+
+    // Paper Double compaction (2026-07-20 gap-closure pass item 3) — same
+    // "tick now, compact once at end of tick" split as fires/projectiles
+    // above. A decoy is dead once EITHER its health (section 4's collision
+    // loop) or its remaining_ms (section 2b's lifetime tick) hits 0 — a
+    // decoy that's already dead going into this tick (health <= 0 from a
+    // prior tick, defensively) is also swept up, matching section 2b/4's
+    // own `health <= 0 or remaining_ms <= 0` skip-guards.
+    var pdwrite: u32 = 0;
+    var pdread: u32 = 0;
+    while (pdread < state.paper_double_count) : (pdread += 1) {
+        const alive_pd = state.paper_doubles[pdread].health > 0 and
+            state.paper_doubles[pdread].remaining_ms > 0;
+        if (alive_pd) {
+            if (pdwrite != pdread) {
+                state.paper_doubles[pdwrite] = state.paper_doubles[pdread];
+            }
+            pdwrite += 1;
+        }
+    }
+    state.paper_double_count = pdwrite;
 
     // 10. Emission charge fill (P0 — docs/emission-engine-goal.md; mirror of
     //     World.ts's post-pass over this tick's hit-confirmed events).
