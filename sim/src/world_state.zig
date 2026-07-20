@@ -683,16 +683,25 @@ pub const ProjectileEntity = extern struct {
     /// growth-history comments below the comptime asserts for the pattern
     /// this file already follows for that).
     ///
-    /// NOT YET BRIDGED: packProjectile/unpackProjectile in
-    /// worldStateBridge.ts still only walk the pre-existing 18 f64 + 14
-    /// flag fields (that file is off-limits to this Zig-only pass per the
-    /// task's hard safety rules) — these 7 new fields exist and are usable
-    /// by step_world's own internal logic but do not yet cross the TS<->
-    /// wasm boundary. A follow-up TS-side cut must extend both codec
-    /// functions (mirroring exactly how homingStrength/accelerationMultiplier
-    /// are packed/unpacked today) before any TS-authored spawn (e.g. a
-    /// future Priest tendril or Crimson Tithe cast routed through step_world)
-    /// can actually populate them.
+    /// BRIDGED (2026-07-20, docs/zig-step-world-parity-goal.md Phase 5,
+    /// wire-contract-cleanup stage): packProjectile/unpackProjectile in
+    /// worldStateBridge.ts now read/write these 7 fields (PROJ_FLAG_BITS
+    /// bits 14-20 gate/carry them), same treatment homingStrength/
+    /// accelerationMultiplier already had. One name drift found while
+    /// bridging: TS's `ninjaWave` (referenced in this file's own comment
+    /// above) was itself renamed to `ninjaBladeShard` in types.ts on this
+    /// same date, before ever crossing to Zig — `ninja_wave` here is still
+    /// the pre-rename name; same bit, same semantics, TS's bridge maps
+    /// `ninjaBladeShard` onto this field. Also found in the process: TS's
+    /// ProjectileEntity has grown an 8th optional field since this struct
+    /// was last touched, `kindledThrust` (Sunspike's identity flag,
+    /// types.ts:1084, a pure boolean like `tendril`/`wrap_shots` above) —
+    /// no Zig-side field or flag bit exists for it yet. Out of scope for
+    /// this bridging-only pass (it wasn't one of the 7 fields already
+    /// present on the Zig side); ProjectileFlags's own `_reserved: u11`
+    /// tail still has room for a bit if a future pass wants to add it,
+    /// this struct's byte layout does not need to grow. Flagged here for
+    /// whoever does the next ProjectileEntity growth cut.
     status_scale: f32 = 0,
     leech_fraction: f32 = 0,
     execute_below_frac: f32 = 0,

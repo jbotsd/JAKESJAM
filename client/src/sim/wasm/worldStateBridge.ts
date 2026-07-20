@@ -911,6 +911,22 @@ const PROJ_FLAG_BITS = {
   returning: 11,
   hasStickyFuse: 12,
   hasImpactRadius: 13,
+  // 2026-07-20 gap-closure pass — bits 14-20 mirror world_state.zig's
+  // ProjectileFlags packed struct exactly (declaration order = bit order,
+  // LSB first): has_status_scale/has_leech_fraction/has_execute_below_frac
+  // gate the 3 new f32 fields below; wrap_shots/enemy_only/tendril/
+  // ninja_wave are pure-identity value flags (no separate has_* gate,
+  // same shape as `returning` above). Zig's `ninja_wave` bit is the
+  // pre-rename name for what TS now calls `ninjaBladeShard` (types.ts,
+  // 2026-07-20 rename once a second ability needed the identical
+  // treatment) — same bit, same semantics, name drift is cosmetic.
+  hasStatusScale: 14,
+  hasLeechFraction: 15,
+  hasExecuteBelowFrac: 16,
+  wrapShots: 17,
+  enemyOnly: 18,
+  tendril: 19,
+  ninjaBladeShard: 20,
 } as const;
 
 function packProjectile(
@@ -978,6 +994,25 @@ function packProjectile(
     PROJ_FLAG_BITS.hasImpactRadius,
     p.impactRadiusPx != null,
   );
+  flags = set(flags, PROJ_FLAG_BITS.hasStatusScale, p.statusScale != null);
+  flags = set(
+    flags,
+    PROJ_FLAG_BITS.hasLeechFraction,
+    p.leechFraction != null,
+  );
+  flags = set(
+    flags,
+    PROJ_FLAG_BITS.hasExecuteBelowFrac,
+    p.executeBelowFrac != null,
+  );
+  flags = set(flags, PROJ_FLAG_BITS.wrapShots, p.wrapShots ?? false);
+  flags = set(flags, PROJ_FLAG_BITS.enemyOnly, p.enemyOnly ?? false);
+  flags = set(flags, PROJ_FLAG_BITS.tendril, p.tendril ?? false);
+  flags = set(
+    flags,
+    PROJ_FLAG_BITS.ninjaBladeShard,
+    p.ninjaBladeShard ?? false,
+  );
   view.setUint32(off, flags >>> 0, true);
   off += 4;
 
@@ -999,7 +1034,16 @@ function packProjectile(
   off += 3;
   writeString(view, off, PLAYER_ID_BYTES, p.ownerId ?? "");
   off += PLAYER_ID_BYTES;
-  // _reserved 12 bytes — leave zero.
+
+  // 2026-07-20 gap-closure pass — the 3 f32 tail fields world_state.zig
+  // added in the same offset-204→216 span (Phase 0's `_reserved: [12]u8`
+  // consumed exactly here; see ProjectileEntity's Zig-side comment).
+  view.setFloat32(off, p.statusScale ?? 0, true);
+  off += 4;
+  view.setFloat32(off, p.leechFraction ?? 0, true);
+  off += 4;
+  view.setFloat32(off, p.executeBelowFrac ?? 0, true);
+  off += 4;
 }
 
 function unpackProjectile(
@@ -1069,6 +1113,14 @@ function unpackProjectile(
     : null;
   off += PLAYER_ID_BYTES;
 
+  // 2026-07-20 gap-closure pass — mirrors packProjectile's tail write above.
+  const statusScaleRaw = view.getFloat32(off, true);
+  off += 4;
+  const leechFractionRaw = view.getFloat32(off, true);
+  off += 4;
+  const executeBelowFracRaw = view.getFloat32(off, true);
+  off += 4;
+
   const out: ProjectileEntity = {
     id: EntityId(id),
     ownerId,
@@ -1108,6 +1160,16 @@ function unpackProjectile(
   if (bit(flags, PROJ_FLAG_BITS.returning)) out.returning = true;
   if (bit(flags, PROJ_FLAG_BITS.hasStickyFuse))
     out.stickyFuseMs = stickyFuseMsRaw;
+  if (bit(flags, PROJ_FLAG_BITS.hasStatusScale))
+    out.statusScale = statusScaleRaw;
+  if (bit(flags, PROJ_FLAG_BITS.hasLeechFraction))
+    out.leechFraction = leechFractionRaw;
+  if (bit(flags, PROJ_FLAG_BITS.hasExecuteBelowFrac))
+    out.executeBelowFrac = executeBelowFracRaw;
+  if (bit(flags, PROJ_FLAG_BITS.wrapShots)) out.wrapShots = true;
+  if (bit(flags, PROJ_FLAG_BITS.enemyOnly)) out.enemyOnly = true;
+  if (bit(flags, PROJ_FLAG_BITS.tendril)) out.tendril = true;
+  if (bit(flags, PROJ_FLAG_BITS.ninjaBladeShard)) out.ninjaBladeShard = true;
   return out;
 }
 

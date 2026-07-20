@@ -149,6 +149,15 @@ function makeFixtureState(): WorldState {
     homingStrength: 4.5,
     returning: true,
     stickyFuseMs: 250,
+    // 2026-07-20 gap-closure pass — the 7 fields bridged in this stage
+    // (docs/zig-step-world-parity-goal.md Phase 5, wire-contract cleanup).
+    statusScale: 2,
+    leechFraction: 0.15,
+    executeBelowFrac: 0.2,
+    wrapShots: true,
+    enemyOnly: true,
+    tendril: true,
+    ninjaBladeShard: true,
   };
 
   const sat1: SatelliteEntity = {
@@ -315,6 +324,14 @@ describe("worldStateBridge — pack/unpack round-trip (Phase G2)", () => {
     expect(pr2.homingStrength).toBe(4.5);
     expect(pr2.returning).toBe(true);
     expect(pr2.stickyFuseMs).toBe(250);
+    // 2026-07-20 gap-closure pass — the 7 newly-bridged fields.
+    expect(pr2.statusScale).toBe(2);
+    expect(pr2.leechFraction).toBeCloseTo(0.15, 5);
+    expect(pr2.executeBelowFrac).toBeCloseTo(0.2, 5);
+    expect(pr2.wrapShots).toBe(true);
+    expect(pr2.enemyOnly).toBe(true);
+    expect(pr2.tendril).toBe(true);
+    expect(pr2.ninjaBladeShard).toBe(true);
 
     const s1 = back.satellites[EntityId(2001)]!;
     expect(s1.ownerId).toBe(PlayerId("p_alpha"));
