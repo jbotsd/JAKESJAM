@@ -131,7 +131,12 @@ export const HEADER_SIZE = 56;
 // multiple of 8). Sub-agent scoped to sim/ only, per the now-established
 // pattern — this closes the resulting TS-side staleness immediately rather
 // than letting it sit as a known gap again.
-export const PLAYER_ENTITY_SIZE = 616;
+// 616 → 624 (Phase 4 new-substrate pass, docs/zig-step-world-parity-goal.md
+// — Ghost Guard/Bleed Tithe/Razor Route): ghost_guard_charge_until_tick
+// reclaimed existing padding (net zero); razor_route_until_tick added +8
+// real growth. Sub-agent scoped to sim/ only, per the now-established
+// pattern — closing the resulting TS-side staleness immediately again.
+export const PLAYER_ENTITY_SIZE = 624;
 const PROJECTILE_ENTITY_SIZE = 216;
 const SATELLITE_ENTITY_SIZE = 96;
 const DESTRUCTIBLE_ENTITY_SIZE = 64;

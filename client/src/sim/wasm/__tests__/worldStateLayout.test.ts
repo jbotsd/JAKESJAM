@@ -85,7 +85,10 @@ describe("WorldState extern struct layout (Phase G1c)", () => {
     // PLAYER_ENTITY_SIZE for the full accounting.
     // 608 → 616 (Phase 4a follow-up, docs/zig-step-world-parity-goal.md):
     // +kindled_resolve_until_tick (u32), no padding either side.
-    expect(ex.sizeof_player_entity()).toBe(616);
+    // 616 → 624 (Phase 4 new-substrate pass, docs/zig-step-world-parity-goal.md):
+    // ghost_guard_charge_until_tick (padding reclaim, net zero) +
+    // razor_route_until_tick (+8 real growth).
+    expect(ex.sizeof_player_entity()).toBe(624);
     expect(ex.sizeof_projectile_entity()).toBe(216);
     expect(ex.sizeof_satellite_entity()).toBe(96);
     expect(ex.sizeof_destructible_entity()).toBe(64);
