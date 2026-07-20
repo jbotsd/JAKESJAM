@@ -641,6 +641,39 @@ pub const PlayerEntity = extern struct {
     /// — 0 unambiguously reads "no shell" against a monotonic tick, same
     /// convention as every window field on this struct.
     ward_shell_until_tick: u32 = 0,
+
+    /// Phase 4a self-only window buffs (docs/zig-step-world-parity-goal.md
+    /// "4a. Self-only window buffs" — Sunlance/Overclock/Measure,
+    /// Geometrician catalog v1). Mirror TS `PlayerEntity.sunlanceUntilTick`/
+    /// `overclockUntilTick`/`measureUntilTick` (types.ts:719/722/723)
+    /// exactly — plain `u32` ticks, no `has_*` flag, same "0 unambiguously
+    /// reads inactive against a monotonic tick" convention every other
+    /// window field on this struct already uses. Consumed at world.zig's
+    /// weapon-fire section (the damage/spread/fire-rate composition chain
+    /// mirroring weapon.ts:336-423/558-565) — NOT self-write-only like the
+    /// melee-hook windows above; these are read by a DIFFERENT section
+    /// (section 6) than the one that opens them (section 6z), so a cast
+    /// this tick affects the FOLLOWING tick's fire, matching the real
+    /// section-6-before-section-6z tick order (see `stepAbilityDispatch`'s
+    /// own ordering doc comment) — TS has the identical one-tick lag
+    /// (World.ts's ability-cast switch also runs after that tick's
+    /// `stepWeapon` call in its own per-player loop).
+    sunlance_until_tick: u32 = 0,
+    overclock_until_tick: u32 = 0,
+    /// Measure (reworked 2026-07-19 — see types.ts's own field comment for
+    /// the "not the original +1-ammo v1" history). Composes with Sunlance
+    /// (above) at the SAME damage-priority chain (Sunlance wins if both are
+    /// somehow live) and with Overclock (above) at the spread chain (Measure
+    /// forces 0, beating Overclock's partial tightening) — see world.zig's
+    /// GEO_MEASURE_*/GEO_OVERCLOCK_*/GEO_SUNLANCE_* constants for the exact
+    /// priority order, bit-matched against weapon.ts.
+    measure_until_tick: u32 = 0,
+    // Return Glass / Bastion Pulse (Phase 4a) deliberately have NO field
+    // here — both are INSTANT self-shield-charge ticks applied directly to
+    // the existing `shield_charge` field at cast time (world.zig's
+    // `stepAbilityDispatch`), not timed windows. See
+    // GEO_RETURN_GLASS_SHIELD_REFUND/KIN_BASTION_PULSE_SHIELD_REFUND's own
+    // doc comments in world.zig.
 };
 
 /// Mirrors `ProjectileEntity`.
@@ -1544,7 +1577,26 @@ comptime {
     // why its sibling `regenTickLastApplied` (the original audit's OTHER
     // flagged gap) is deliberately NOT added — verified as TS-internal-only,
     // never wire-visible, not a real gap.
-    std.debug.assert(@sizeOf(PlayerEntity) == 520);
+    // 520 → 528 (Phase 4a, docs/zig-step-world-parity-goal.md "self-only
+    // window buffs" — Sunlance/Overclock/Measure): +12 content bytes for
+    // sunlance_until_tick/overclock_until_tick/measure_until_tick (u32 ×3),
+    // landing at [516, 528) — 516 is already 4-byte-aligned (no leading
+    // gap) and 528 is already an 8-byte multiple (66×8), so this addition
+    // actually RECLAIMS the 4 bytes of implicit tail padding
+    // ward_shell_until_tick's own cut left behind (516 → 520) as real
+    // content space instead of adding a fresh pad on top — net growth is
+    // +8, not +12, same "reclaim the old pad" shape
+    // `team_id_bytes` → `kindling`'s growth-history note already
+    // established. Verified via a temporary `@compileLog(@sizeOf(
+    // PlayerEntity))` before locking this assert (confirmed 528), same
+    // "don't trust hand math alone" discipline every growth-history note
+    // above this one already follows. Return Glass / Bastion Pulse (this
+    // same phase) need NO field — see their own doc comment right above
+    // this struct's closing brace. KNOWN GAP, same shape as every note
+    // above: worldStateBridge.ts's PLAYER_ENTITY_SIZE is untouched by this
+    // Zig-only pass — Zig-internal tests read @sizeOf(PlayerEntity)
+    // directly and are unaffected.
+    std.debug.assert(@sizeOf(PlayerEntity) == 528);
     // EquippedActives (Phase 1): [3]u8 = 3 bytes, no padding (u8 array
     // needs no alignment beyond 1). Doesn't cross the wasm ABI today (see
     // its own doc comment) — pure internal regression-catching, same role
