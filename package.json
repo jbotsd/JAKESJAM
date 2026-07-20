@@ -40,6 +40,7 @@
     "presentation:extract-frames": "bun scripts/extractPresentationFrames.ts",
     "presentation:rig-evidence": "bun scripts/rigHarnessShots.ts",
     "presentation:loadout-evidence": "bun scripts/loadoutHarnessShots.ts",
+    "presentation:lobby-vfx-parity": "bun scripts/lobbyVfxParityShots.ts",
     "balance-sim": "bun scripts/balance-sim.ts"
   },
   "devDependencies": {
