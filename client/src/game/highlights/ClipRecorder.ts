@@ -281,7 +281,7 @@ export class ClipRecorder {
       if (this.workerUploadOnFile) {
         const blob = new Blob([msg.buffer], { type: "video/mp4" });
         if (blob.size >= MIN_UPLOAD_BYTES) {
-          void this.upload(blob);
+          void this.upload(blob, msg.width, msg.height);
         } else {
           console.log(`[clips] dropped dud worker segment (${blob.size} bytes — tab hidden?)`);
         }
@@ -470,7 +470,7 @@ export class ClipRecorder {
       // emits a header-only blob. Uploading those littered server/.clips
       // with 10-15 byte junk files. Drop anything implausibly small.
       if (blob.size >= MIN_UPLOAD_BYTES) {
-        void this.upload(blob);
+        void this.upload(blob, p.canvas.width, p.canvas.height);
       } else {
         console.log(`[clips] dropped dud ${p.kind} segment (${blob.size} bytes — tab hidden?)`);
       }
@@ -480,11 +480,21 @@ export class ClipRecorder {
     if (this.pendingStops <= 0 && !this.stopped) this.beginSegment();
   }
 
-  private async upload(blob: Blob): Promise<void> {
+  private async upload(blob: Blob, width?: number, height?: number): Promise<void> {
     try {
       const form = new FormData();
       const ext = blob.type.includes("webm") ? "webm" : "mp4";
       form.append("file", blob, `clip-original.${ext}`);
+      // Aspect-ratio fix (2026-07-20): the browser already knows exactly
+      // what it captured — the share page used to just assume every clip
+      // was 1920x1080 (wrong whenever the game canvas wasn't a 16:9 window,
+      // e.g. a narrower/taller browser size), causing giant unnecessary
+      // letterbox bars. Send the real encoded size so the server can render
+      // the page's box at the actual aspect ratio instead of guessing.
+      if (width && height) {
+        form.append("width", String(width));
+        form.append("height", String(height));
+      }
       const res = await fetch(this.deps.uploadPath ?? "/clips/upload", {
         method: "POST",
         body: form,

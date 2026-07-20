@@ -178,6 +178,13 @@ async function enforceQuota(incomingBytes: number): Promise<void> {
     } catch {
       // Already gone — fine.
     }
+    // Best-effort sidecar cleanup (see handleClipUpload's dims.json) — an
+    // orphaned one just means a future re-upload of the same id (never
+    // happens, ids are random) would see stale dims; harmless either way.
+    const dot = f.name.lastIndexOf(".");
+    if (dot > 0) {
+      unlink(resolve(CLIPS_DIR, `${f.name.slice(0, dot)}.dims.json`)).catch(() => {});
+    }
   }
 }
 
@@ -269,6 +276,27 @@ export async function handleClipUpload(
   const filename = `${id}.${ext}`;
   const full = resolve(CLIPS_DIR, filename);
   await Bun.write(full, file);
+
+  // Aspect-ratio fix (2026-07-20): the share page used to always assume
+  // 1920x1080 (clipSharePage.ts), regardless of what shape the browser
+  // actually captured — wrong whenever the game canvas wasn't 16:9 at
+  // record time, producing giant unnecessary letterbox bars. The browser
+  // already knows its exact encoded size; persist it as a tiny sidecar so
+  // the share page can size its box correctly without any server-side
+  // video probing (no new ffmpeg/ffprobe dependency). Best-effort — a
+  // missing/invalid sidecar just falls back to the old 16:9 default.
+  const width = Number(form.get("width"));
+  const height = Number(form.get("height"));
+  if (Number.isFinite(width) && Number.isFinite(height) && width >= 2 && height >= 2) {
+    try {
+      await Bun.write(
+        resolve(CLIPS_DIR, `${id}.dims.json`),
+        JSON.stringify({ width: Math.round(width), height: Math.round(height) }),
+      );
+    } catch {
+      /* best effort — the share page falls back to a default aspect ratio */
+    }
+  }
 
   // Native resolution only — Jake, 2026-07-15: the 720x1280 vertical crop
   // (formerly produced here via NVENC, clipTranscode.ts) was cutting real

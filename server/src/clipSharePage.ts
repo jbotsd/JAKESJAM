@@ -69,6 +69,31 @@ export async function clipByteSize(filename: string): Promise<number | null> {
   return null;
 }
 
+/** Real captured dimensions (aspect-ratio fix, 2026-07-20) — sidecar written
+ *  by clipStore.ts's handleClipUpload from what the browser actually
+ *  encoded. Null for clips uploaded before this fix, or if the sidecar is
+ *  missing/corrupt — callers fall back to a default aspect ratio. */
+export async function clipDimensions(
+  filename: string,
+): Promise<{ width: number; height: number } | null> {
+  const dot = filename.lastIndexOf(".");
+  if (dot < 0) return null;
+  const sidecar = `${filename.slice(0, dot)}.dims.json`;
+  for (const full of [resolve(CLIPS_DIR, sidecar), resolve(KEPT_DIR, sidecar)]) {
+    try {
+      const raw = JSON.parse(await Bun.file(full).text()) as { width?: unknown; height?: unknown };
+      const width = Number(raw.width);
+      const height = Number(raw.height);
+      if (Number.isFinite(width) && Number.isFinite(height) && width >= 2 && height >= 2) {
+        return { width: Math.round(width), height: Math.round(height) };
+      }
+    } catch {
+      /* next */
+    }
+  }
+  return null;
+}
+
 export type ClipShareOpts = {
   filename: string;
   origin: string;
@@ -76,6 +101,10 @@ export type ClipShareOpts = {
   note?: string | null;
   exists: boolean;
   sizeBytes?: number | null;
+  /** Real encoded dimensions (see clipDimensions) — null/absent falls back
+   *  to a 1920x1080 (16:9) assumption, same as before this field existed. */
+  videoWidth?: number | null;
+  videoHeight?: number | null;
 };
 
 function esc(s: string): string {
@@ -110,12 +139,15 @@ export function renderClipSharePage(opts: ClipShareOpts): string {
   const ogImage = `${origin}/og-image.png`;
   const favicon = `${origin}/favicon.png`;
   const mime = filename.toLowerCase().endsWith(".mp4") ? "video/mp4" : "video/webm";
+  // Real captured dimensions when known (aspect-ratio fix, 2026-07-20) —
+  // drives BOTH the og:video:width/height hint for FB/X's player chrome AND
+  // .theater's own box shape below (inline style). Falls back to the old
+  // 1920x1080 (16:9) assumption for clips uploaded before this fix, or if
+  // the sidecar is missing — same behavior as before this field existed.
   // Landscape native capture — no vertical crop anymore (2026-07-15: the
-  // 9:16 crop was cutting real action out of frame). Only used as the
-  // og:video:width/height hint for FB/X's player chrome; the actual <video>
-  // element sizes itself to whatever the file really is (see .theater CSS).
-  const vidW = 1920;
-  const vidH = 1080;
+  // 9:16 crop was cutting real action out of frame).
+  const vidW = opts.videoWidth ?? 1920;
+  const vidH = opts.videoHeight ?? 1080;
   const titleBase = note?.trim()
     ? `${note.trim().slice(0, 80)} · JAKESJAM highlight`
     : "JAKESJAM highlight — crystal arena clip";
@@ -300,7 +332,7 @@ export function renderClipSharePage(opts: ClipShareOpts): string {
   <main class="wrap">
     <section class="hero">
       <div class="stage-col">
-        <div class="theater" id="player">
+        <div class="theater" id="player" style="aspect-ratio: ${vidW} / ${vidH};">
           ${
             exists
               ? `<video
@@ -419,6 +451,23 @@ export function renderClipSharePage(opts: ClipShareOpts): string {
     var PAGE = '${escJs(pageUrl)}';
     var TITLE = '${escJs(title)}';
     var TEXT = 'Watch this JAKESJAM highlight — free browser arena. Predict · parry · draft.';
+
+    // Aspect-ratio fix, defensive fallback (2026-07-20): the server sets
+    // #player's aspect-ratio from the clip's real dimensions when a dims
+    // sidecar exists (clipStore.ts), but clips uploaded before that fix
+    // have none and fall back to a guessed 16:9 here. Once the actual
+    // video loads, correct the box to its true shape — a crawler never
+    // runs this (no JS), but a real human watching a legacy clip gets the
+    // right box instead of stuck-forever letterbox bars.
+    var reel = document.querySelector('.reel');
+    var theater = document.getElementById('player');
+    if (reel && theater) {
+      reel.addEventListener('loadedmetadata', function () {
+        if (reel.videoWidth > 0 && reel.videoHeight > 0) {
+          theater.style.aspectRatio = reel.videoWidth + ' / ' + reel.videoHeight;
+        }
+      });
+    }
 
     function toast(msg) {
       var el = document.getElementById('share-toast');
@@ -642,11 +691,13 @@ a:hover { color: var(--text-hi); }
 .stage-col { width: 100%; display: flex; flex-direction: column; align-items: center; }
 .theater {
   /* Landscape native capture (2026-07-15: dropped the 9:16 crop — it was
-     cutting real action out of frame in a fast multi-player arena). Sized
-     to a 16:9 default so the box roughly matches the reel without needing
-     to probe each file's exact dimensions; .reel below uses object-fit:
-     contain (not cover) so an exact mismatch letterboxes instead of ever
-     cropping content — a thin bar beats losing the action a second time.
+     cutting real action out of frame in a fast multi-player arena).
+     aspect-ratio is set INLINE per-page (see the id="player" element below)
+     from the clip's own real captured dimensions (aspect-ratio fix,
+     2026-07-20) — this 16/9 is only the fallback for clips uploaded before
+     that fix. .reel below still uses object-fit: contain (not cover) so
+     even a wrong/unknown aspect ratio letterboxes instead of ever cropping
+     content — a thin bar beats losing the action a second time.
      A hollow chamfered frame (void interior, thin cyan seam) per axiom
      G2/G3 — no filled gradient card, no elevation drop-shadow. */
   position: relative;

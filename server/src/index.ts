@@ -51,6 +51,7 @@ import {
 } from "./clipStore.ts";
 import {
   clipByteSize,
+  clipDimensions,
   clipExistsOnDisk,
   isClipFilename,
   renderClipSharePage,
@@ -451,6 +452,7 @@ function serveOnPort(port: number) {
         const filename = resolved ?? (isClipFilename(slug) ? slug : `${slug}.mp4`);
         const exists = resolved !== null;
         const sizeBytes = exists ? await clipByteSize(filename) : null;
+        const dims = exists ? await clipDimensions(filename) : null;
         // Canonical: /c/<uuid> without extension — 301 legacy .mp4 share URLs.
         if (exists && isClipFilename(slug)) {
           const idOnly = slug.replace(/\.(webm|mp4)$/i, "");
@@ -478,6 +480,8 @@ function serveOnPort(port: number) {
           origin,
           exists,
           sizeBytes,
+          videoWidth: dims?.width,
+          videoHeight: dims?.height,
         });
         return new Response(html, {
           status: exists ? 200 : 404,
@@ -599,6 +603,15 @@ video{width:100%;height:100%;object-fit:contain;display:block}</style>
       const pageUrl = `${origin}/c/${idOnly}`;
       const mediaUrl = `${origin}/v/${resolved}`;
       const thumb = `${origin}/og-image.png`;
+      // Aspect-ratio fix (2026-07-20): this 360x640 was a leftover from the
+      // 9:16 vertical-crop era, dropped 2026-07-15 (clipStore.ts) — every
+      // clip has been landscape since, so a portrait hint here was stale
+      // for months. Use the clip's real dimensions when known (same
+      // sidecar the share page reads), else a landscape default instead of
+      // a portrait one.
+      const oembedDims = await clipDimensions(resolved);
+      const oembedW = oembedDims?.width ?? 1920;
+      const oembedH = oembedDims?.height ?? 1080;
       return new Response(
         JSON.stringify({
           version: "1.0",
@@ -606,9 +619,9 @@ video{width:100%;height:100%;object-fit:contain;display:block}</style>
           provider_name: "JAKESJAM",
           provider_url: origin,
           title: "JAKESJAM highlight — crystal arena clip",
-          html: `<video src="${mediaUrl}" controls playsinline style="max-width:100%;height:auto" width="360" height="640"></video>`,
-          width: 360,
-          height: 640,
+          html: `<video src="${mediaUrl}" controls playsinline style="max-width:100%;height:auto" width="${oembedW}" height="${oembedH}"></video>`,
+          width: oembedW,
+          height: oembedH,
           thumbnail_url: thumb,
           thumbnail_width: 1200,
           thumbnail_height: 630,
