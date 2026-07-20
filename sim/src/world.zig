@@ -837,6 +837,34 @@ const KIN_PLANT_CHARGE_SHIELD_REFUND: f64 = 12.0;
 const KIN_BULWARK_STEP_RANGE_PX: f64 = 110.0;
 const SYZ_DRIFT_STEP_RANGE_PX: f64 = 210.0;
 
+// ── Phase 4e: structurally distinct abilities (docs/zig-step-world-parity-
+//    goal.md "4e. Structurally distinct, port individually") — Sunspike/
+//    Needle/Severance/Contagion/Lattice, each with its own real mechanic,
+//    no shared substrate built first (Bleed Tithe stays a no-op — see its
+//    own comment at the switch arm for why). Bit-exact port of the
+//    matching World.ts/constants.ts values (re-verified live — doctrine
+//    #1/#6), same "duplicated as a local constant, not exported"
+//    convention every earlier sub-group's own block already establishes.
+// Paladin/Kindled — Sunspike (constants.ts:249-251).
+const KIN_SUNSPIKE_DAMAGE: f64 = 40.0;
+const KIN_SUNSPIKE_RANGE_PX: f64 = 150.0;
+const KIN_SUNSPIKE_SPEED: f64 = 1500.0;
+// Ninja — Needle (constants.ts:1055-1058).
+const NINJA_NEEDLE_RANGE_PX: f64 = 300.0;
+const NINJA_NEEDLE_LUNGE_PX: f64 = 130.0;
+const NINJA_NEEDLE_DAMAGE: f64 = 36.0;
+const NINJA_NEEDLE_SPEED: f64 = 1400.0;
+// Priest/Syzygist — Severance (constants.ts:767-768).
+const SYZ_SEVERANCE_DAMAGE: f64 = 34.0;
+const SYZ_SEVERANCE_SPEED: f64 = 1300.0;
+// Priest/Syzygist — Contagion (constants.ts:808-809).
+const SYZ_CONTAGION_RADIUS_PX: f64 = 260.0;
+const SYZ_CONTAGION_JUMP_RADIUS_PX: f64 = 220.0;
+// Wizard/Geometrician — Lattice (constants.ts:122-124).
+const GEO_LATTICE_ZONE_RADIUS_PX: f64 = 150.0;
+const GEO_LATTICE_ZONE_DURATION_MS: f64 = 2200.0;
+const GEO_LATTICE_ZONE_DPS: f64 = 11.0;
+
 /// Half-extent of the REAL player body box (PLAYER_BODY_WIDTH=26 /
 /// PLAYER_BODY_HEIGHT=56 in player.ts) — the box World.ts's own
 /// `centerToAABB(cx, cy, PLAYER_BODY_WIDTH, PLAYER_BODY_HEIGHT)` uses inside
@@ -1001,6 +1029,98 @@ fn findNearestEnemyInCone(
         }
     }
     return best_idx;
+}
+
+/// Shared shape for the single-shard ability-cast projectile spawns Phase
+/// 4e's Sunspike/Needle/Severance all use (docs/zig-step-world-parity-goal.md
+/// — verified live against World.ts's own `spawnProjectile` call at each of
+/// those 3 case sites: same param shape every time — owner/origin/aimAngle/
+/// speed/damage/lifetimeMs/radius/shape/element/pathing — differing only in
+/// the values). Origin is always `(attacker.x, attacker.y - 20)`, matching
+/// every existing ability-shard spawn site in this file (Edge Storm's wave
+/// above is the closest precedent — same origin offset, same "no shot_fired
+/// event" choice, since World.ts itself never emits one for these either,
+/// just a plain `projectilesCow.set`). Deliberately NOT reused by section
+/// 6's basic-weapon-fire spawn (multi-shot/spread/bounce/pierce/impact-kind
+/// is a materially different contract — forcing one shared helper there
+/// would obscure both, the same "don't force a shape TS itself doesn't
+/// share" discipline this whole file already follows). `range_px == null`
+/// mirrors a TS case that never sets `shard.rangePx` at all (Bleed Tithe/
+/// Severance leave it unset); `homing_strength`/`leech_fraction` are
+/// intentionally NOT parameters — callers that need them (Bleed Tithe) set
+/// them on the returned pointer afterward, exactly like World.ts's own
+/// post-spawn `shard.leechFraction = ...` field patches.
+fn spawnAbilityShard(
+    state: *world_state.WorldState,
+    attacker: *const world_state.PlayerEntity,
+    aim_angle: f64,
+    speed: f64,
+    damage: f64,
+    lifetime_ms: f64,
+    radius: f64,
+    shape: world_state.ProjectileShape,
+    element: world_state.ElementType,
+    pathing: world_state.ProjectilePathing,
+    range_px: ?f64,
+) ?*world_state.ProjectileEntity {
+    // Zig-only defensive cap (MAX_PROJECTILES) has no TS equivalent (TS's
+    // Record is unbounded) — callers do NOT gate `activated` on a null
+    // return, same "a dropped spawn there is a silent bug, not a
+    // legitimate no-op" reasoning Paper Double's own comment documents.
+    if (state.projectile_count >= world_state.MAX_PROJECTILES) return null;
+    const slot: u32 = state.projectile_count;
+    state.projectile_count += 1;
+    const new_id: u32 = state.header.next_entity_id;
+    state.header.next_entity_id += 1;
+    const origin_x = attacker.x;
+    const origin_y = attacker.y - 20.0;
+    state.projectiles[slot] = .{
+        .x = origin_x,
+        .y = origin_y,
+        .vx = trig.lutCos(aim_angle) * speed,
+        .vy = trig.lutSin(aim_angle) * speed,
+        .radius = radius,
+        .damage = damage,
+        .lifetime_ms = lifetime_ms,
+        .age_ms = 0,
+        .traveled_px = 0,
+        .origin_x = origin_x,
+        .origin_y = origin_y,
+        .homing_strength = 0,
+        .acceleration_multiplier = 0,
+        .gravity_scale = 0,
+        .range_px = range_px orelse 0,
+        .slow_multiplier = 1,
+        .sticky_fuse_ms = 0,
+        .impact_radius_px = 0,
+        .id = new_id,
+        .bounces_remaining = 0,
+        .pierce_remaining = 0,
+        .split_count = 0,
+        .flags = .{
+            .has_owner = true,
+            .has_impact = false,
+            .has_split = false,
+            .has_slow = false,
+            .has_homing = pathing == .homing,
+            .has_acceleration = false,
+            .has_gravity_scale = false,
+            .has_range = range_px != null,
+            .has_age = true,
+            .has_traveled = true,
+            .has_origin = true,
+            .returning = false,
+            .has_sticky_fuse = false,
+            .has_impact_radius = false,
+        },
+        .pathing = pathing,
+        .element = element,
+        .impact = .none,
+        .shape = shape,
+        .owner_id_len = attacker.id_len,
+        .owner_id_bytes = attacker.id_bytes,
+    };
+    return &state.projectiles[slot];
 }
 
 /// Ability-cast dispatch — one player, one tick: for each of the 3 rack
@@ -1339,7 +1459,46 @@ fn stepAbilityDispatch(
                     activated = true;
                 }
             },
-            .lattice => {}, // Phase 4 — not yet ported
+            // Lattice (Geometrician): genuine lingering damage zone (aoe
+            // role rework, 2026-07-18) — World.ts's own case comment says
+            // it reuses the SAME `firePatches`/`FireEntity` primitive fire
+            // hazards already use ("no new entity kind, no new Zig ABI
+            // surface"). Verified directly, not assumed per this goal
+            // doc's own "may warrant its own small primitive" hedge for
+            // this ability: Zig ALREADY has that exact primitive as a
+            // first-class step_world entity array (`state.fires`/
+            // `FireEntity`, spawned by the chaos fire-hazard modifier and
+            // ticked/compacted every tick by section 2/section 9 above) —
+            // so this needs NO new deferred-write primitive at all, the
+            // hedge doesn't hold once you check what TS itself reuses.
+            // Pure damage, no status, self-centered, owner-immune
+            // (has_owner=1 — "patches never damage their owner", same
+            // contract every other fire-patch spawn in this file has).
+            .lattice => {
+                if (state.fire_count < world_state.MAX_FIRE) {
+                    const fire_slot = state.fire_count;
+                    state.fire_count += 1;
+                    const new_id: u32 = state.header.next_entity_id;
+                    state.header.next_entity_id += 1;
+                    state.fires[fire_slot] = .{
+                        .x = attacker.x,
+                        .y = attacker.y,
+                        .radius = GEO_LATTICE_ZONE_RADIUS_PX,
+                        .remaining_ms = GEO_LATTICE_ZONE_DURATION_MS,
+                        .damage_per_second = GEO_LATTICE_ZONE_DPS,
+                        .id = new_id,
+                        .has_owner = 1,
+                        .owner_id_len = attacker.id_len,
+                        .owner_id_bytes = attacker.id_bytes,
+                    };
+                }
+                // Zig-only defensive cap (MAX_FIRE) has no TS equivalent
+                // (TS's Record is unbounded) — same "doesn't gate
+                // activated" reasoning Paper Double's own comment
+                // documents above; a dropped spawn there would be a
+                // silent bug, not a legitimate no-op.
+                activated = true;
+            },
             .return_glass => {
                 const fcfg = &state.player_fire_config[player_idx];
                 const max_charge = combat.SHIELD_MAX_CHARGE_DEFAULT * (if (fcfg.valid != 0) fcfg.shield_charge_mul else 1.0);
@@ -1424,7 +1583,54 @@ fn stepAbilityDispatch(
             // this goal doc's own doctrine #4. Needs self-recoil ported to
             // step_world's fire section first (out of this sub-group's scope).
             .recoil_step => {}, // Phase 4a — deferred, see comment above
-            .sunspike => {}, // Phase 4 — not yet ported
+            // Sunspike (Paladin/Kindled): v1 = a single fast, narrow,
+            // short-range shot — PLAYER-AIMED (the caster's own cursor),
+            // NOT auto-targeted, verified directly against World.ts's
+            // "sunspike" case (`aimX - nextEntity.x`, unlike its 3 auto-
+            // targeted siblings in this sub-group). Inherits the resolved
+            // build's own element/shape identity (constants.ts KIN_
+            // SUNSPIKE_* header note: "so a fire-handed paladin's Sunspike
+            // burns too") — same fallback-to-starter-pistol shape section
+            // 6's weapon-fire site already uses for an unresolved fire
+            // config. A build resolving to a fire element still won't
+            // burn on hit here: that's a PRE-EXISTING gap shared by EVERY
+            // build-resolved-element shot in step_world today (verified —
+            // the element on-hit switch in section 4 below has no `.fire`
+            // arm at all yet, only `.ice`/`.lightning`/`.electric`), not a
+            // new gap this ability introduces. Unconditional activation —
+            // no target-existence gate, matches World.ts exactly.
+            .sunspike => {
+                const fcfg = &state.player_fire_config[player_idx];
+                const shape = if (fcfg.valid != 0) fcfg.shape else weapons_data.weaponBaseById(.starter_pistol).projectile_shape;
+                const element = if (fcfg.valid != 0) fcfg.element else weapons_data.weaponBaseById(.starter_pistol).projectile_element;
+                const size_mul: f64 = if (fcfg.valid != 0) fcfg.size_multiplier else 1.0;
+                const dx0 = attacker.aim_x - attacker.x;
+                const dy0 = attacker.aim_y - attacker.y;
+                const aim_angle: f64 = if (dx0 == 0 and dy0 == 0) 0 else trig.lutAtan2(dy0, dx0);
+                const lifetime_ms = @max(50.0, (KIN_SUNSPIKE_RANGE_PX / KIN_SUNSPIKE_SPEED) * 1000.0);
+                _ = spawnAbilityShard(
+                    state,
+                    attacker,
+                    aim_angle,
+                    KIN_SUNSPIKE_SPEED,
+                    KIN_SUNSPIKE_DAMAGE,
+                    lifetime_ms,
+                    @max(2.0, 9.0 * size_mul),
+                    shape,
+                    element,
+                    .straight,
+                    KIN_SUNSPIKE_RANGE_PX,
+                );
+                // Bespoke render identity (`kindledThrust`, types.ts) is
+                // client-render-only — a solid symmetric gold spike
+                // instead of the build-resolved shape, damage/impact
+                // unaffected. No Zig field exists or is needed for it:
+                // unlike Hard Aperture/Self-Lattice above (which defer
+                // because a REAL gameplay reader is genuinely missing),
+                // this one has no gameplay reader by design — TS's own
+                // field comment confirms it's presentation-only.
+                activated = true;
+            },
             .bastion_pulse => {
                 const fcfg = &state.player_fire_config[player_idx];
                 const max_charge = combat.SHIELD_MAX_CHARGE_DEFAULT * (if (fcfg.valid != 0) fcfg.shield_charge_mul else 1.0);
@@ -1547,8 +1753,100 @@ fn stepAbilityDispatch(
                     activated = true;
                 }
             },
-            .bleed_tithe => {}, // Phase 4 — not yet ported
-            .severance => {}, // Phase 4 — not yet ported
+            // Bleed Tithe (Priest): the goal doc's own hedge flagged this
+            // as "partially substrate-covered already... verify what's
+            // real vs. assumed" — investigated directly, not trusted.
+            // World.ts's own case comment claims this "reuses World.ts's
+            // OWN existing element==='fire' burn-on-hit branch... and
+            // ProjectileEntity.leechFraction's existing self-heal-on-hit
+            // path... for zero new hit-resolution code." Neither claim
+            // holds in Zig, verified by grep: the element on-hit switch in
+            // section 4 below has NO `.fire` arm (only `.ice`/`.lightning`/
+            // `.electric`, `else => {}` silently swallows fire), and
+            // `leech_fraction` has zero reads anywhere in this file — both
+            // consumption sites are TS-only. The homing shard itself
+            // (genuine per-tick re-target, 2026-07-18 Jake: "genu[in]e
+            // homing") would spawn fine via `spawnAbilityShard` above, but
+            // this ability's WHOLE documented identity is the curse+
+            // lifesteal (its own name), not a generic homing pellet with a
+            // one-time flat hit — same "the real payoff has no
+            // consumption site, shipping only the trivial half would
+            // misrepresent the ability entirely" shape as Recoil Step/
+            // Ghost Guard/Kindled Resolve/Hard Aperture/Self-Lattice above,
+            // not Flock Pulse's already-shipped "ships base, defers a
+            // secondary scaling term" partial. Deferred whole per
+            // doctrine #4; needs a real fire-burn-on-hit consumption site
+            // (section 4's element switch) AND a real leech_fraction
+            // consumption site built first — shared substrate work
+            // affecting every fire-element shot in the sim, not a per-
+            // ability cast, out of this pass's scope.
+            .bleed_tithe => {}, // Phase 4e — deferred, see comment above
+            // Severance (Priest): burst curse-detonate on the nearest
+            // ALREADY-cursed enemy — "execute-adjacent; take polarity"
+            // (verified against World.ts's "severance" case). "Cursed" =
+            // an active burn/freeze/slow window, the SAME 3-field OR
+            // World.ts's own `requireCursed` option checks — unlike Bleed
+            // Tithe above, all three already have real Zig PlayerEntity
+            // mirrors AND real Zig consumption elsewhere (burn DoT tick
+            // section 8b, freeze/slow movement multipliers section 7) —
+            // this ability only READS an existing status, it doesn't need
+            // a new one applied ON HIT. The shard itself is a plain
+            // straight shot, build-resolved element/shape (same fallback-
+            // to-starter-pistol shape every other fcfg-gated read uses),
+            // flat SYZ_SEVERANCE_DAMAGE via the SAME generic hit-
+            // resolution path every other shard already uses — no bespoke
+            // consumption site needed, fully portable. No cursed target in
+            // range = a dead press (legibility law, matches World.ts) — no
+            // cooldown burn. Bespoke inline scan (not a shared helper):
+            // the cursed-predicate is unique to this one ability, same
+            // "don't force a shared shape only one consumer needs"
+            // discipline Contagion's own scan below and Judgment Line's
+            // cone scan already established.
+            .severance => {
+                var best_idx: i32 = -1;
+                var best_dist_sq: f64 = std.math.inf(f64);
+                var ei: u32 = 0;
+                while (ei < state.player_count) : (ei += 1) {
+                    if (ei == player_idx) continue;
+                    const other = &state.players[ei];
+                    if (!other.flags.alive) continue;
+                    const cursed = (other.flags.has_burn and other.burn_until_tick > state.header.tick) or
+                        (other.flags.has_freeze and other.freeze_until_tick > state.header.tick) or
+                        (other.flags.has_slow and other.slowed_until_tick > state.header.tick);
+                    if (!cursed) continue;
+                    const dx = other.x - attacker.x;
+                    const dy = other.y - attacker.y;
+                    const d2 = dx * dx + dy * dy;
+                    if (d2 > SYZ_ENEMY_SEARCH_RANGE_PX * SYZ_ENEMY_SEARCH_RANGE_PX) continue;
+                    if (d2 < best_dist_sq) {
+                        best_dist_sq = d2;
+                        best_idx = @intCast(ei);
+                    }
+                }
+                if (best_idx >= 0) {
+                    const target = &state.players[@as(usize, @intCast(best_idx))];
+                    const dx0 = target.x - attacker.x;
+                    const dy0 = target.y - attacker.y;
+                    const aim_angle = trig.lutAtan2(dy0, dx0);
+                    const fcfg = &state.player_fire_config[player_idx];
+                    const shape = if (fcfg.valid != 0) fcfg.shape else weapons_data.weaponBaseById(.starter_pistol).projectile_shape;
+                    const element = if (fcfg.valid != 0) fcfg.element else weapons_data.weaponBaseById(.starter_pistol).projectile_element;
+                    _ = spawnAbilityShard(
+                        state,
+                        attacker,
+                        aim_angle,
+                        SYZ_SEVERANCE_SPEED,
+                        SYZ_SEVERANCE_DAMAGE,
+                        1000.0,
+                        8.0,
+                        shape,
+                        element,
+                        .straight,
+                        null,
+                    );
+                    activated = true;
+                }
+            },
             .borrowed_time => {}, // Phase 4 — not yet ported
             .focus_hex => {
                 // Omnidirectional auto-target mark on the CASTER — same
@@ -1565,7 +1863,122 @@ fn stepAbilityDispatch(
                     activated = true;
                 }
             },
-            .contagion => {}, // Phase 4 — not yet ported
+            // Contagion (Priest): instant pulse — every OTHER alive player
+            // within SYZ_CONTAGION_RADIUS_PX of the caster who is ALREADY
+            // burning has that burn "jump" onto the nearest non-burning
+            // OTHER player within SYZ_CONTAGION_JUMP_RADIUS_PX of THAT
+            // SOURCE — verified directly against World.ts's "contagion"
+            // case, not the goal doc's own "jump-targeting" gloss alone.
+            //
+            // Team-awareness: TS's own isAlly gate (excluding the caster's
+            // allies from being a source OR a jump target) has no Zig
+            // mirror yet (Phase 3 ally-targeting substrate, out of this
+            // pass's scope) — every OTHER alive player is currently a
+            // valid source/target, the SAME simplification
+            // findNearestEnemyInRange/InCone (and everything built on
+            // them: Facet Break/Judgment Line/Read Mark/Focus Hex/Flock
+            // Pulse's shipped base-damage-only cut) already ships with.
+            // This is NOT the ally-targeting substrate Phase 3 blocks —
+            // Contagion never needs to find an ALLY, only enemies, so it
+            // stays on this file's existing, already-accepted deferral.
+            //
+            // Deferred-write shape: TS pushes this onto `pendingSyzygistCasts`
+            // — a queue resolved in its own dedicated pass after the per-
+            // player loop closes — because TS's per-player loop commits via
+            // an immutable snapshot-then-whole-record-replace
+            // (`players[pid] = nextEntity`), where a cross-player write
+            // landing mid-loop is silently lost the moment the target's own
+            // turn later commits ITS stale snapshot over it (see this
+            // file's section-6a "PLACEMENT / WRITE STRATEGY" comment,
+            // already investigated and confirmed a non-issue for Zig).
+            // Zig mutates `state.players` directly in place — no snapshot,
+            // nothing to lose — so a cross-player write here is exactly as
+            // safe as section 6a's melee-hit damage writes or section 4's
+            // projectile-hit writes already are: this ships INLINE, no
+            // queue that survives past this tick.
+            //
+            // What Zig DOES still need, that TS's two-phase queue gets for
+            // free, is a two-pass split WITHIN this single cast: TS's scan
+            // phase finds every qualifying source+jump-target pair against
+            // a value that is stable BEFORE any of THIS cast's own writes
+            // land, so an early jump inside this same press can never (a)
+            // make a LATER source's own target search see an
+            // already-mutated victim, or (b) turn a freshly-ignited jump
+            // target into a chained SOURCE within the same press.
+            // Collecting pairs first and writing second (a small
+            // MAX_PLAYERS-sized local scratch array, not a persistent
+            // WorldState field — nothing here needs to survive past this
+            // switch arm) reproduces that ordering guarantee without a
+            // cross-tick queue.
+            //
+            // burnSourceId is deliberately NOT carried onto the jump target
+            // (unlike World.ts's own "carries the ORIGINAL curse's
+            // attribution forward" comment) — Zig's PlayerEntity has no
+            // burn-source-id field at all (Flock Pulse's own shipped port
+            // above already established this: its ally/enemy source-count
+            // scaling term, the ONE consumer of burnSourceId in Zig's
+            // future, is itself deferred to Phase 3). Copying a field that
+            // doesn't exist and has no reader would be exactly the
+            // "half-ported, silently wrong" shape doctrine #4 exists to
+            // avoid — burn_until_tick/burn_dps/burn_tick_last_applied/
+            // has_burn are the only fields that have a real Zig reader
+            // (section 8b's burn DoT tick), so those are the only ones
+            // this copies.
+            .contagion => {
+                var jump_src: [world_state.MAX_PLAYERS]u32 = undefined;
+                var jump_tgt: [world_state.MAX_PLAYERS]u32 = undefined;
+                var jump_count: u32 = 0;
+                var src_i: u32 = 0;
+                while (src_i < state.player_count) : (src_i += 1) {
+                    if (src_i == player_idx) continue;
+                    const source = &state.players[src_i];
+                    if (!source.flags.alive) continue;
+                    if (!source.flags.has_burn or source.burn_until_tick <= state.header.tick) continue;
+                    const dsx = source.x - attacker.x;
+                    const dsy = source.y - attacker.y;
+                    if (dsx * dsx + dsy * dsy > SYZ_CONTAGION_RADIUS_PX * SYZ_CONTAGION_RADIUS_PX) continue;
+                    var best_idx: i32 = -1;
+                    var best_dist_sq: f64 = std.math.inf(f64);
+                    var tgt_i: u32 = 0;
+                    while (tgt_i < state.player_count) : (tgt_i += 1) {
+                        if (tgt_i == src_i or tgt_i == player_idx) continue;
+                        const other = &state.players[tgt_i];
+                        if (!other.flags.alive) continue;
+                        if (other.flags.has_burn and other.burn_until_tick > state.header.tick) continue;
+                        const dx = other.x - source.x;
+                        const dy = other.y - source.y;
+                        const d2 = dx * dx + dy * dy;
+                        if (d2 > SYZ_CONTAGION_JUMP_RADIUS_PX * SYZ_CONTAGION_JUMP_RADIUS_PX) continue;
+                        if (d2 < best_dist_sq) {
+                            best_dist_sq = d2;
+                            best_idx = @intCast(tgt_i);
+                        }
+                    }
+                    if (best_idx >= 0 and jump_count < world_state.MAX_PLAYERS) {
+                        jump_src[jump_count] = src_i;
+                        jump_tgt[jump_count] = @intCast(best_idx);
+                        jump_count += 1;
+                    }
+                }
+                var jumped = false;
+                var k: u32 = 0;
+                while (k < jump_count) : (k += 1) {
+                    const s = &state.players[jump_src[k]];
+                    const t = &state.players[jump_tgt[k]];
+                    // Defensive re-check (matches World.ts's own
+                    // resolution-time re-check comment) — nothing else
+                    // this cast clears burn between scan and here, but
+                    // guard anyway rather than trust a stale read.
+                    if (s.flags.has_burn and s.burn_until_tick > state.header.tick) {
+                        t.burn_until_tick = s.burn_until_tick;
+                        t.burn_dps = s.burn_dps;
+                        t.burn_tick_last_applied = state.header.tick;
+                        t.flags.has_burn = true;
+                        jumped = true;
+                    }
+                }
+                activated = jumped;
+            },
             // Self-Lattice (Priest): writes the SAME
             // wardAbsorbUntilTick/wardAbsorbRemaining pair Syzygist Ward
             // uses (self-only, bypassing the isAlly team gate — see
@@ -1621,7 +2034,59 @@ fn stepAbilityDispatch(
                     activated = true;
                 }
             },
-            .needle => {}, // Phase 4 — not yet ported
+            // Needle (Ninja): auto-targeted gap-finish — a short self-lunge
+            // toward the nearest enemy in range (clamped short of contact,
+            // flavor "already closed the distance") plus a fast, short-
+            // range, high-damage shard. Element FIXED at "crystal" (NOT
+            // build-resolved, unlike Sunspike/Severance above — verified
+            // directly against World.ts's "needle" case), shape stays
+            // build-resolved. "Crystal" has no on-hit special-case in
+            // either TS or Zig (it's the sim-wide default/neutral element)
+            // — no gap, this ability's shard needs nothing section 4's
+            // element switch doesn't already cover today. The self-lunge
+            // only ever writes `attacker.x`/`attacker.y` (the CASTER's own
+            // position) — no cross-player write, no deferred-queue
+            // question at all, same shape World.ts's own case comment
+            // makes explicit ("rather than a hand-rolled direct-damage
+            // write that would need a cross-player deferred-write queue
+            // this chassis's kit otherwise never needs"). No enemy in
+            // range = a dead press, no lunge, no cooldown burn.
+            .needle => {
+                const target_idx = findNearestEnemyInRange(state, player_idx, NINJA_NEEDLE_RANGE_PX);
+                if (target_idx >= 0) {
+                    const target = &state.players[@as(usize, @intCast(target_idx))];
+                    const dx0 = target.x - attacker.x;
+                    const dy0 = target.y - attacker.y;
+                    const dist = @sqrt(dx0 * dx0 + dy0 * dy0);
+                    const dir_x: f64 = if (dist > 0.001) dx0 / dist else 1.0;
+                    const dir_y: f64 = if (dist > 0.001) dy0 / dist else 0.0;
+                    const lunge = @min(NINJA_NEEDLE_LUNGE_PX, @max(0.0, dist - 20.0));
+                    attacker.x += dir_x * lunge;
+                    attacker.y += dir_y * lunge;
+                    const aim_angle = trig.lutAtan2(dy0, dx0);
+                    const fcfg = &state.player_fire_config[player_idx];
+                    const shape = if (fcfg.valid != 0) fcfg.shape else weapons_data.weaponBaseById(.starter_pistol).projectile_shape;
+                    const lifetime_ms = @max(50.0, (NINJA_NEEDLE_RANGE_PX / NINJA_NEEDLE_SPEED) * 1000.0);
+                    _ = spawnAbilityShard(
+                        state,
+                        attacker,
+                        aim_angle,
+                        NINJA_NEEDLE_SPEED,
+                        NINJA_NEEDLE_DAMAGE,
+                        lifetime_ms,
+                        7.0,
+                        shape,
+                        .crystal,
+                        .straight,
+                        NINJA_NEEDLE_RANGE_PX,
+                    );
+                    // `ninjaBladeShard` (types.ts) is client-render-only,
+                    // same "no gameplay reader by design" reasoning
+                    // Sunspike's `kindledThrust` comment above already
+                    // covers — no Zig field needed.
+                    activated = true;
+                }
+            },
             // Ghost Guard (Ninja): consumed by combat.ts's
             // `tryDeflectDamage` — "a new branch right after the always-on
             // dash-i-frame check" (types.ts's own field comment). Neither

@@ -2519,6 +2519,264 @@ test "ability dispatch: Bulwark Step (Paladin) — no movement key held: falls b
     try std.testing.expect(state.players[0].slot_cooldown_until_tick[0] > state.header.tick);
 }
 
+// ── Phase 4e: structurally distinct abilities (docs/zig-step-world-parity-
+//    goal.md "4e. Structurally distinct, port individually") — Sunspike/
+//    Needle/Severance/Contagion/Lattice. Bleed Tithe has no test here: it
+//    stays an explicit no-op (see its own comment at the switch arm) —
+//    same "no test for a deferred no-op" convention every earlier
+//    sub-group's own deferrals (Hard Aperture/Recoil Step/Kindled
+//    Resolve/Ghost Guard/Self-Lattice/Razor Route) already established.
+
+test "ability dispatch: Sunspike (Paladin/Kindled) — player-AIMED shard (the caster's own cursor, NOT auto-targeted), full damage/speed, no target-existence gate" {
+    var state = freshFightingState();
+    // 2 = a bystander keeps round_phase == fighting past tick 1 — a
+    // single-alive-player match KOs immediately (see the Slip Node test's
+    // own comment for this exact precedent), which would otherwise mask
+    // the dispatch switch never running at all.
+    state.player_count = 2;
+    state.players[0].flags.alive = true;
+    state.players[0].character_id = .heavy; // paladin/kindled
+    state.players[0].health = 100;
+    state.players[0].aim_x = 100;
+    state.players[0].aim_y = 0;
+    equipSlot(&state, 0, 0, .sunspike);
+
+    state.players[1].flags.alive = true;
+    state.players[1].health = 100;
+    state.players[1].x = 5000;
+
+    state.players[0].current_keys = SLOT1_BIT;
+    _ = root.world.stepWorld(&state, 1.0);
+
+    try std.testing.expectEqual(@as(u32, 1), state.projectile_count);
+    try std.testing.expectApproxEqAbs(@as(f64, 40.0), state.projectiles[0].damage, 1e-9); // KIN_SUNSPIKE_DAMAGE
+    const speed = @sqrt(state.projectiles[0].vx * state.projectiles[0].vx +
+        state.projectiles[0].vy * state.projectiles[0].vy);
+    // Epsilon loosened past the LUT-trig quantization floor (lutCos/lutSin
+    // are separate lookup tables — cos^2+sin^2 isn't guaranteed exactly 1
+    // the way real trig would be, same tiny-magnitude-drift class every
+    // other LUT-derived assertion in this file already tolerates).
+    try std.testing.expectApproxEqAbs(@as(f64, 1500.0), speed, 1e-3); // KIN_SUNSPIKE_SPEED
+    try std.testing.expect(state.projectiles[0].vx > 0); // aimed at (100,0): straight +x
+    try std.testing.expect(state.players[0].slot_cooldown_until_tick[0] > state.header.tick);
+}
+
+test "ability dispatch: Needle (Ninja) — auto-targeted self-lunge toward the nearest enemy (clamped short of contact) plus a fixed-'crystal'-element shard aimed the SAME direction" {
+    var state = freshFightingState();
+    state.player_count = 2;
+    state.players[0].flags.alive = true;
+    state.players[0].character_id = .sprinter; // ninja
+    state.players[0].health = 100;
+    state.players[0].x = 0;
+    state.players[0].y = 0;
+    equipSlot(&state, 0, 0, .needle); // range 300px, lunge 130px, damage 36, speed 1400
+
+    state.players[1].flags.alive = true;
+    state.players[1].health = 100;
+    state.players[1].x = 100; // dist 100 -> lunge = min(130, 100-20) = 80
+    state.players[1].y = 0;
+
+    state.players[0].current_keys = SLOT1_BIT;
+    _ = root.world.stepWorld(&state, 1.0);
+
+    // Epsilon (not exact equality) on both axes: section 8's physics pass
+    // runs BEFORE this dispatch switch every tick and applies a tiny
+    // one-tick gravity nudge to y regardless of grounded state (no floor
+    // static in this test), which in turn perturbs the lunge direction by
+    // a proportionally tiny amount — same "epsilon for one-tick drift"
+    // reasoning the Bulwark Step tests above already use, just from
+    // gravity instead of ground friction.
+    try std.testing.expectApproxEqAbs(@as(f64, 80.0), state.players[0].x, 1e-2);
+    try std.testing.expectApproxEqAbs(@as(f64, 0.0), state.players[0].y, 1e-2);
+    try std.testing.expectEqual(@as(u32, 1), state.projectile_count);
+    try std.testing.expectApproxEqAbs(@as(f64, 36.0), state.projectiles[0].damage, 1e-9); // NINJA_NEEDLE_DAMAGE
+    try std.testing.expectEqual(root.world_state.ElementType.crystal, state.projectiles[0].element);
+    const speed = @sqrt(state.projectiles[0].vx * state.projectiles[0].vx +
+        state.projectiles[0].vy * state.projectiles[0].vy);
+    try std.testing.expectApproxEqAbs(@as(f64, 1400.0), speed, 1e-6); // NINJA_NEEDLE_SPEED
+    try std.testing.expect(state.players[0].slot_cooldown_until_tick[0] > state.header.tick);
+}
+
+test "ability dispatch: Needle (Ninja) — no enemy within range: a dead press, no lunge, no shard, no cooldown burn" {
+    var state = freshFightingState();
+    state.player_count = 2;
+    state.players[0].flags.alive = true;
+    state.players[0].character_id = .sprinter;
+    state.players[0].health = 100;
+    state.players[0].x = 0;
+    state.players[0].y = 0;
+    equipSlot(&state, 0, 0, .needle);
+
+    state.players[1].flags.alive = true;
+    state.players[1].health = 100;
+    state.players[1].x = 5000; // far outside NINJA_NEEDLE_RANGE_PX (300)
+
+    state.players[0].current_keys = SLOT1_BIT;
+    _ = root.world.stepWorld(&state, 1.0);
+
+    try std.testing.expectEqual(@as(f64, 0.0), state.players[0].x);
+    try std.testing.expectEqual(@as(u32, 0), state.projectile_count);
+    try std.testing.expectEqual(@as(u32, 0), state.players[0].slot_cooldown_until_tick[0]);
+}
+
+test "ability dispatch: Severance (Priest/Syzygist) — targets the nearest ALREADY-cursed enemy, skipping a CLOSER non-cursed candidate entirely (curse gate, not distance alone)" {
+    var state = freshFightingState();
+    state.player_count = 3;
+    state.players[0].flags.alive = true;
+    state.players[0].character_id = .shielded; // priest/syzygist
+    state.players[0].health = 100;
+    state.players[0].x = 0;
+    state.players[0].y = 0;
+    equipSlot(&state, 0, 0, .severance); // range 420px (SYZ_ENEMY_SEARCH_RANGE_PX)
+
+    // Closer, but NOT cursed — must be ignored entirely (proves the curse
+    // gate wins over raw distance).
+    state.players[1].flags.alive = true;
+    state.players[1].health = 100;
+    state.players[1].x = 30;
+    state.players[1].y = 0;
+
+    // Farther, but frozen (one of the 3 OR'd curse fields) — off-axis (+y,
+    // not +x) so the shard's own velocity direction proves WHICH target
+    // got picked.
+    state.players[2].flags.alive = true;
+    state.players[2].health = 100;
+    state.players[2].x = 0;
+    state.players[2].y = 200;
+    state.players[2].flags.has_freeze = true;
+    state.players[2].freeze_until_tick = 999_999;
+
+    state.players[0].current_keys = SLOT1_BIT;
+    _ = root.world.stepWorld(&state, 1.0);
+
+    try std.testing.expectEqual(@as(u32, 1), state.projectile_count);
+    try std.testing.expectApproxEqAbs(@as(f64, 34.0), state.projectiles[0].damage, 1e-9); // SYZ_SEVERANCE_DAMAGE
+    // Aimed at (0,200), NOT (30,0): vx ~ 0, vy > 0.
+    try std.testing.expectApproxEqAbs(@as(f64, 0.0), state.projectiles[0].vx, 1e-6);
+    try std.testing.expect(state.projectiles[0].vy > 0);
+    try std.testing.expect(state.players[0].slot_cooldown_until_tick[0] > state.header.tick);
+}
+
+test "ability dispatch: Severance (Priest/Syzygist) — no cursed enemy in range: a dead press, no shard, no cooldown burn" {
+    var state = freshFightingState();
+    state.player_count = 2;
+    state.players[0].flags.alive = true;
+    state.players[0].character_id = .shielded;
+    state.players[0].health = 100;
+    state.players[1].flags.alive = true;
+    state.players[1].health = 100;
+    state.players[1].x = 50; // in range, but not cursed at all
+    equipSlot(&state, 0, 0, .severance);
+
+    state.players[0].current_keys = SLOT1_BIT;
+    _ = root.world.stepWorld(&state, 1.0);
+
+    try std.testing.expectEqual(@as(u32, 0), state.projectile_count);
+    try std.testing.expectEqual(@as(u32, 0), state.players[0].slot_cooldown_until_tick[0]);
+}
+
+test "ability dispatch: Contagion (Priest/Syzygist) — an already-burning OTHER player within radius has their burn copied onto the nearest NON-burning OTHER player near them (cross-player write, resolved inline, no deferred queue)" {
+    var state = freshFightingState();
+    state.player_count = 3;
+    state.players[0].flags.alive = true; // caster
+    state.players[0].character_id = .shielded;
+    state.players[0].health = 100;
+    state.players[0].x = 0;
+    state.players[0].y = 0;
+    equipSlot(&state, 0, 0, .contagion); // radius 260 / jump radius 220
+
+    state.players[1].flags.alive = true; // source: already burning, in radius of caster
+    state.players[1].health = 100;
+    state.players[1].x = 100;
+    state.players[1].y = 0;
+    state.players[1].flags.has_burn = true;
+    state.players[1].burn_until_tick = 999_999;
+    state.players[1].burn_dps = 7.0;
+
+    state.players[2].flags.alive = true; // jump target: NOT burning, in jump-radius of SOURCE
+    state.players[2].health = 100;
+    state.players[2].x = 100;
+    state.players[2].y = 50; // dist to source (100,0) = 50, well inside 220
+
+    state.players[0].current_keys = SLOT1_BIT;
+    _ = root.world.stepWorld(&state, 1.0);
+
+    try std.testing.expect(state.players[2].flags.has_burn);
+    try std.testing.expectEqual(@as(u32, 999_999), state.players[2].burn_until_tick);
+    try std.testing.expectApproxEqAbs(@as(f64, 7.0), state.players[2].burn_dps, 1e-9);
+    try std.testing.expectEqual(state.header.tick, state.players[2].burn_tick_last_applied);
+    try std.testing.expect(state.players[0].slot_cooldown_until_tick[0] > state.header.tick);
+}
+
+test "ability dispatch: Contagion (Priest/Syzygist) — no burning enemy in radius: a dead press, no write, no cooldown burn" {
+    var state = freshFightingState();
+    state.player_count = 2;
+    state.players[0].flags.alive = true;
+    state.players[0].character_id = .shielded;
+    state.players[0].health = 100;
+    state.players[1].flags.alive = true;
+    state.players[1].health = 100;
+    state.players[1].x = 100; // in radius, but not burning
+    equipSlot(&state, 0, 0, .contagion);
+
+    state.players[0].current_keys = SLOT1_BIT;
+    _ = root.world.stepWorld(&state, 1.0);
+
+    try std.testing.expect(!state.players[1].flags.has_burn);
+    try std.testing.expectEqual(@as(u32, 0), state.players[0].slot_cooldown_until_tick[0]);
+}
+
+test "ability dispatch: Lattice (Geometrician) — cast spawns a real, self-owned, owner-immune lingering damage zone (state.fires) which then damages a non-owner victim standing in it on a LATER tick via the EXISTING fire-patch tick — not a new primitive" {
+    var state = freshFightingState();
+    state.player_count = 2;
+    state.players[0].flags.alive = true;
+    state.players[0].character_id = .balanced; // wizard/geometrician
+    state.players[0].health = 100;
+    state.players[0].x = 100;
+    state.players[0].y = 100;
+    setPlayerId(&state.players[0], "caster");
+    equipSlot(&state, 0, 0, .lattice); // radius 150, duration 2200ms, 11 dps
+
+    state.players[1].flags.alive = true;
+    state.players[1].health = 100;
+    state.players[1].x = 110;
+    state.players[1].y = 100;
+    setPlayerId(&state.players[1], "victim");
+
+    state.players[0].current_keys = SLOT1_BIT;
+    _ = root.world.stepWorld(&state, 1.0); // tick 1: cast — zone spawns AFTER this tick's own fire-patch-tick pass already ran, so no damage lands yet.
+
+    try std.testing.expectEqual(@as(u32, 1), state.fire_count);
+    try std.testing.expectEqual(@as(f64, 100.0), state.fires[0].x);
+    // Epsilon: section 8's physics pass applies a tiny one-tick gravity
+    // nudge to y before this dispatch switch runs (no floor static in
+    // this test) — same "epsilon for one-tick drift" reasoning the Needle
+    // test above uses.
+    try std.testing.expectApproxEqAbs(@as(f64, 100.0), state.fires[0].y, 1e-2);
+    try std.testing.expectApproxEqAbs(@as(f64, 150.0), state.fires[0].radius, 1e-9);
+    try std.testing.expectApproxEqAbs(@as(f64, 2200.0), state.fires[0].remaining_ms, 1e-9);
+    try std.testing.expectApproxEqAbs(@as(f64, 11.0), state.fires[0].damage_per_second, 1e-9);
+    try std.testing.expectEqual(@as(u32, 1), state.fires[0].has_owner);
+    try std.testing.expectEqualSlices(u8, "caster", state.fires[0].owner_id_bytes[0..state.fires[0].owner_id_len]);
+    try std.testing.expect(state.players[0].slot_cooldown_until_tick[0] > state.header.tick);
+
+    // Tick 2 (one 16ms frame — small on purpose: no floor static in this
+    // test, so a large dt would free-fall the players a huge distance
+    // under unconstrained gravity before the fire-patch tick even runs
+    // this same tick): the EXISTING fire-patch tick (section 2, runs
+    // every tick regardless of this ability) applies real, proportional
+    // DPS (`damage_per_second * (dt/1000)`, no 1s-cadence gate unlike burn
+    // DoT) to the non-owner victim standing in the zone. The owner, ALSO
+    // standing inside their own zone's radius, stays untouched — the
+    // load-bearing property this test proves: this is a real, already-
+    // simulated entity (owner-immune, DPS-ticking, lifetime-draining),
+    // not an inert marker.
+    state.players[0].current_keys = 0;
+    _ = root.world.stepWorld(&state, 16.0);
+    try std.testing.expectApproxEqAbs(@as(f64, 99.824), state.players[1].health, 1e-6); // 100 - 11.0*0.016s
+    try std.testing.expectEqual(@as(f64, 100.0), state.players[0].health);
+}
+
 // ── Draft/offer-roll system (Phase 2, docs/zig-step-world-parity-goal.md) ─
 // Ports client/src/sim/round.ts's enterDrafting + draftWeights.ts. Testing
 // strategy per the phase's own brief: the DETERMINISTIC parts (candidate-
