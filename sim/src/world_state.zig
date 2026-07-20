@@ -57,6 +57,21 @@ pub const MAX_PAPER_DOUBLES: usize = MAX_PLAYERS;
 /// out at 2 × MAX_PLAYERS = 32. See `PendingInstantAoe`'s own doc comment
 /// for why the type lives here but the QUEUE STORAGE (this bound sizes)
 /// lives on `WorldState` rather than as function-local scratch.
+///
+/// UPDATED (AOE-queue ability wiring pass): all 5 sites above are now
+/// real push sites (world.zig sections 6z/8), plus a 6th SOURCE sharing
+/// this same queue — Paper Double's death/expiry burst (section 6y) —
+/// that wasn't part of the original 5-trigger sizing math above. Still
+/// safely covered: a burst is gated on "this specific decoy died this
+/// tick," and `MAX_PAPER_DOUBLES == MAX_PLAYERS` (at most one live decoy
+/// per player, per that constant's own doc comment) bounds it to well
+/// under the 32-slot headroom even stacked on top of the original 5
+/// triggers' own worst case — not re-derived to an exact new bound, same
+/// "generous, not exact" convention this whole file already uses; every
+/// real push site additionally bounds-checks against this constant before
+/// writing (silently drops on overflow, extremely unlikely to ever
+/// trigger in real play) rather than assuming the math above holds
+/// forever.
 pub const MAX_PENDING_INSTANT_AOE: usize = 32;
 
 pub const PLAYER_ID_BYTES: usize = 32;
@@ -581,6 +596,28 @@ pub const PlayerEntity = extern struct {
     read_target_id_len: u8 = 0,
     _pad_read: [3]u8 = .{ 0, 0, 0 },
     read_target_id_bytes: [PLAYER_ID_BYTES]u8 = @splat(0),
+
+    // ── AOE-queue ability windows (this pass, docs/zig-step-world-parity-
+    //    goal.md Phase 1's second unblock — Wall Bloom/Shock Ring, the two
+    //    hook-gated abilities in the "Wall Bloom, Shock Ring, Prism Fan,
+    //    Flock Pulse, Shard Ring, Paper Double's burst" AOE-queue group).
+    //    Both are single-use windows consumed at a MOVEMENT hook (section
+    //    8's per-player physics loop in world.zig — wall-kick edge for Wall
+    //    Bloom, landing edge for Shock Ring), not at a melee-hit site like
+    //    the 6 Phase 1 abilities above — same "0 unambiguously reads as
+    //    inactive against a monotonic tick counter" convention, no `has_*`
+    //    flag needed.
+    /// Wall Bloom (Ninja) — window opened by the cast; consumed on THIS
+    /// player's next wall-kick (world.zig section 8, mirrors World.ts's
+    /// `wallBloomUntilTick`, types.ts). Cleared on consumption, not just on
+    /// timeout.
+    wall_bloom_until_tick: u32 = 0,
+    /// Shock Ring (Paladin) — window opened by the cast (alongside a hop
+    /// impulse written directly to `vy` at the cast site); consumed on
+    /// THIS player's next landing (world.zig section 8, mirrors World.ts's
+    /// `shockRingArmedUntilTick`). Cleared on consumption, not just on
+    /// timeout.
+    shock_ring_armed_until_tick: u32 = 0,
 };
 
 /// Mirrors `ProjectileEntity`.
@@ -1316,7 +1353,16 @@ comptime {
     // Zig-only pass (already stale at 384 before this cut; still out of
     // scope here) — Zig-internal tests read @sizeOf(PlayerEntity) directly
     // and are unaffected.
-    std.debug.assert(@sizeOf(PlayerEntity) == 504);
+    // 504 → 512 (this pass, AOE-queue ability wiring — Wall Bloom/Shock
+    // Ring's own windows, the 2 hook-gated abilities in that group): +8
+    // bytes for wall_bloom_until_tick (u32) + shock_ring_armed_until_tick
+    // (u32) — 504 already 8-byte-aligned, no padding, 512 stays an 8-byte
+    // multiple. Same "plain u32 tick, 0 = inactive, no has_* flag" shape
+    // as every sibling window field above. KNOWN GAP, same shape as the
+    // notes directly above: worldStateBridge.ts's PLAYER_ENTITY_SIZE is
+    // untouched by this Zig-only pass — Zig-internal tests read
+    // @sizeOf(PlayerEntity) directly and are unaffected.
+    std.debug.assert(@sizeOf(PlayerEntity) == 512);
     // EquippedActives (Phase 1): [3]u8 = 3 bytes, no padding (u8 array
     // needs no alignment beyond 1). Doesn't cross the wasm ABI today (see
     // its own doc comment) — pure internal regression-catching, same role

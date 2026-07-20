@@ -500,13 +500,24 @@ pub fn resolveInstantAoeCasts(
 //     ownership boundary that changed" discipline this whole goal doc asks
 //     for; every OTHER energy grant (dash-through, wall-kick) stays
 //     TS-owned/un-ported.
-//   - Destructible / Paper Double arc hits — World.ts's own comment marks
-//     the destructible path hangout-mode-only (Zig models real matches,
-//     not the venue-lobby hangout mode — no Zig analog exists to hang this
-//     off of); Paper Double hits are a real-match feature but
-//     PaperDoubleEntity has no spawn path in Zig yet either (see its own
-//     doc comment) — nothing to hit in practice, deferred alongside the
-//     ability-cast system rather than wired against dead weight.
+//   - Destructible arc hits — World.ts's own comment marks this path
+//     hangout-mode-only (Zig models real matches, not the venue-lobby
+//     hangout mode — no Zig analog exists to hang this off of).
+//   - Paper Double arc hits — STILL not ported (UPDATED, this pass: no
+//     longer "nothing to hit in practice" — Paper Double now HAS a
+//     spawn-on-cast path, world.zig section 6z's `.paper_double` arm, so
+//     this is now a real, more-visible gap, not dead weight deferred
+//     alongside a nonexistent cast site). A decoy can currently only die
+//     by projectile hit or lifetime expiry (both already wired, see
+//     section 6y's burst-detection comment below) — a Ninja Slash/Kindled
+//     Edge landing on a live decoy does zero damage today. Genuinely
+//     deferred, not silently dropped: melee's own arc-hit loop would need
+//     a THIRD target category (destructible/paper-double/player) plus a
+//     `hitPaperDoublesThisSwing`-equivalent per-swing dedupe set (mirrors
+//     `mem.hitPaperDoublesThisSwing`, World.ts:5029-5051) — a real touch
+//     surface on already-shipped baseline melee code this pass's own
+//     scope (Paper Double's cast + burst, not new melee mechanics) does
+//     not cover.
 //   - Dash-through body-cross / ninja evasion i-frames / Ghost Guard — all
 //     key off a `dashing` boolean that has NO Zig PlayerEntity mirror at
 //     all (`PlayerMovementMemory` tracks dash TIMERS, not a wire-visible
@@ -616,6 +627,94 @@ const KIN_SEAL_DAMAGE_MULTIPLIER: f64 = 1.45;
 const KIN_SEAL_STAGGER_MS: f64 = 900.0;
 const KIN_SEAL_STAGGER_MULTIPLIER: f64 = 0.25;
 
+// ── AOE-queue ability constants (this pass — the 2nd half of Phase 1's own
+//    "first real abilities" list: Wall Bloom, Shock Ring, Prism Fan, Flock
+//    Pulse, Shard Ring push onto the `PendingInstantAoe` queue from commit
+//    4340859; Paper Double's cast spawns a `PaperDoubleEntity` and its
+//    death/expiry burst ALSO pushes onto that same queue). Bit-exact port
+//    of the matching World.ts/constants.ts values (re-verified live —
+//    doctrine #1/#6), same "duplicated as a local constant, not exported"
+//    convention the Phase 1 block above already establishes.
+// Wizard — Prism Fan (constants.ts:100-102). Damage is BUILD-SCALED
+// (`build.damage * GEO_PRISM_FAN_DAMAGE_MULTIPLIER`), unlike every other
+// AOE ability in this block — verified directly against World.ts's
+// "prism-fan" case, not assumed; `state.player_fire_config[idx].damage`
+// is step_world's own mirror of `build.damage` (same value weapon fire
+// already reads at this same struct field).
+const GEO_PRISM_FAN_CONE_RADIANS: f64 = (50.0 * std.math.pi) / 180.0;
+const GEO_PRISM_FAN_DAMAGE_MULTIPLIER: f64 = 0.5;
+const GEO_PRISM_FAN_RANGE_PX: f64 = 260.0;
+// Ninja — Shard Ring (constants.ts:1076-1077). Flat constant damage, NOT
+// build-scaled — verified directly against World.ts's "shard-ring" case
+// (`damage: NINJA_SHARD_RING_DAMAGE`, no `build.damage` factor anywhere
+// in that case).
+const NINJA_SHARD_RING_RADIUS_PX: f64 = 150.0;
+const NINJA_SHARD_RING_DAMAGE: f64 = 14.0;
+// Ninja — Wall Bloom (constants.ts:1085-1086). Flat constant damage, same
+// "not build-scaled" verification as Shard Ring above. Wall-contact-point
+// offset mirrors World.ts's own `PLAYER_BODY_WIDTH / 2 + 6` (player.ts:
+// bodyWidth 26, half 13) — a local constant rather than importing
+// PLAYER_BODY_WIDTH, matching PAPER_DOUBLE_BODY_HALF_W's own "duplicated,
+// not imported" precedent right above this function's start.
+const NINJA_WALL_BLOOM_RADIUS_PX: f64 = 110.0;
+const NINJA_WALL_BLOOM_DAMAGE: f64 = 10.0;
+const NINJA_WALL_BLOOM_WALL_OFFSET_PX: f64 = 13.0 + 6.0;
+// Paladin — Shock Ring (constants.ts:339-342). Flat constant damage, same
+// "not build-scaled" verification. The hop's arm-window duration is read
+// from the card's own `active.durationMs` (1500, cards.ts) at the cast
+// site below, matching the Undercut/Second Wind/etc. precedent of reading
+// `active_spec.duration_ms` rather than duplicating the window length as
+// a second constant — KIN_SHOCK_RING_ARM_WINDOW_MS is named here purely
+// for doc-comment cross-reference, never read directly.
+const KIN_SHOCK_RING_HOP_VY: f64 = 420.0;
+const KIN_SHOCK_RING_ARM_WINDOW_MS: f64 = 1500.0; // == the "shock-ring" card's active.durationMs
+const KIN_SHOCK_RING_DAMAGE: f64 = 18.0;
+const KIN_SHOCK_RING_RADIUS_PX: f64 = 170.0;
+// Priest — Flock Pulse (constants.ts:824-828). BASE damage only — the
+// ally/enemy "source count" scaling term (SYZ_FLOCK_PULSE_PER_SOURCE_DAMAGE
+// × sourceCount × syzygistLeadBrakeMultiplier) reads TS-only ally-buff-
+// carrier tracking (regenSourceId/hasteSourceId/wardAbsorbSourceId/
+// burnSourceId — none exist on Zig's PlayerEntity, all Phase 3 ally-
+// targeting-substrate-adjacent) — verified directly against World.ts's
+// "flock-pulse" case, not guessed. DEFERRED, not silently dropped: this
+// port always resolves sourceCount as 0 (the correct, honest solo-case
+// value — a Zig Syzygist genuinely carries no ally/enemy buff sources
+// today, since nothing upstream populates those source-id fields), so
+// every Zig Flock Pulse cast does exactly SYZ_FLOCK_PULSE_BASE_DAMAGE —
+// bit-exact parity with what TS itself would compute for a solo caster
+// with zero live buffs, never an invented substitute shape.
+const SYZ_FLOCK_PULSE_BASE_DAMAGE: f64 = 8.0;
+const SYZ_FLOCK_PULSE_RADIUS_PX: f64 = 170.0;
+const SYZ_FLOCK_PULSE_SLOW_MULTIPLIER: f64 = 0.8;
+const SYZ_FLOCK_PULSE_SLOW_DURATION_MS: f64 = 1200.0;
+// Ninja — Paper Double (constants.ts:1114-1132). Cast spawns a
+// PaperDoubleEntity (mechanics already ported, commit 6aa0dc9 — this pass
+// wires the SPAWN only); its death/expiry burst is a SECOND, later push
+// onto the same `PendingInstantAoe` queue (see the burst-detection block
+// in stepWorld's section "6b" below for the tick-order trace). The
+// resonance-gated SWAP branch (World.ts:4174-4221, "cast into a live
+// window: swap places with the decoy instead") is DELIBERATELY NOT
+// ported — grepped directly: no `resonance` field/concept exists
+// anywhere in sim/src/ today (Zig has no resonance system at all yet),
+// so the swap branch's eligibility condition can never be true here —
+// this port always takes TS's OWN "v1 always SPAWNS when the swap isn't
+// eligible" fallback path, which is exactly what a resonance-less caster
+// gets in TS too, not an invented shortcut.
+const NINJA_PAPER_DOUBLE_SPEED: f64 = 362.0;
+const NINJA_PAPER_DOUBLE_MAX_HEALTH: f64 = 20.0;
+const NINJA_PAPER_DOUBLE_LIFETIME_MS: f64 = 2500.0;
+const NINJA_PAPER_DOUBLE_BURST_RADIUS_PX: f64 = 90.0;
+const NINJA_PAPER_DOUBLE_BURST_DAMAGE: f64 = 10.0;
+const NINJA_PAPER_DOUBLE_STATIONARY_SPEED_PX: f64 = 5.0;
+// Paper Double's burst carries a fooled-debuff duration into the
+// PendingInstantAoe entry (has_fooled/fooled_duration_ms — forward-compat
+// fields the primitive already reserves, see PendingInstantAoe.has_fooled's
+// own doc comment in world_state.zig) even though `resolveInstantAoeCasts`
+// does not apply it yet (no `fooled_until_tick` field on PlayerEntity) —
+// same "carry the value now, the field-growth pass only touches the
+// resolver later" reasoning that doc comment already documents.
+const NINJA_FOOLED_DURATION_MS: f64 = 2000.0;
+
 /// Nearest ALIVE other player within `range_px`, ignoring the caster —
 /// Read Mark's own targeting shape (World.ts's `findNearestEnemy` call at
 /// its cast site: omnidirectional, no cone). Team-awareness (`isAlly`) is
@@ -720,10 +819,17 @@ fn findNearestEnemyInCone(
 /// docs/zig-step-world-parity-goal.md's Phase 1 section calls for: add a
 /// 46th `AbilityKind` later and forget an arm here, `zig build` itself
 /// fails at compile time, not a silent runtime gap. No `else`/`_`
-/// catch-all exists anywhere in this switch. 6 arms carry a real
-/// cast-time effect (this phase's own "first real abilities" list, the
-/// CAST half — see `stepMeleeSwing` for the CONSUMPTION half of all 6);
-/// the other 39 are explicit, individually-commented no-ops.
+/// catch-all exists anywhere in this switch. 12 arms carry a real
+/// cast-time effect: the original 6 melee-hook abilities (this phase's own
+/// "first real abilities" list — see `stepMeleeSwing` for their
+/// CONSUMPTION half) plus 6 more from the AOE-queue group (Prism Fan/
+/// Shard Ring/Flock Pulse push straight onto `PendingInstantAoe` from
+/// this switch; Wall Bloom/Shock Ring only OPEN a window here, consumed
+/// at a movement hook in section 8 below — see `stepWorld`'s own section-8
+/// comment; Paper Double spawns a `PaperDoubleEntity` directly, whose
+/// death/expiry burst is pushed separately, see section 6b's burst-
+/// detection block); the other 33 are explicit, individually-commented
+/// no-ops.
 fn stepAbilityDispatch(
     state: *world_state.WorldState,
     player_idx: u32,
@@ -819,6 +925,164 @@ fn stepAbilityDispatch(
                     activated = true;
                 }
             },
+            .prism_fan => {
+                // Instant cone AOE straight from the cast — no window/hook
+                // indirection, the simplest of the 5 AOE-queue abilities
+                // (docs/zig-step-world-parity-goal.md's own "do this one
+                // FIRST" note). Unconditional activation, matching
+                // World.ts's "prism-fan" case (no target-existence check
+                // at cast time — everyone in the cone at cast time is
+                // resolved later, by section 6b below).
+                const dx0 = attacker.aim_x - attacker.x;
+                const dy0 = attacker.aim_y - attacker.y;
+                const base_angle = trig.lutAtan2(dy0, dx0);
+                // Same fallback-to-starter-pistol shape the weapon-fire site
+                // (section 6 below) already establishes for every other
+                // `fcfg.valid`-gated read — `build.damage` in TS always
+                // resolves to AT LEAST the starter weapon's base damage
+                // (never undefined), so an unresolved fire config here must
+                // fall back the same way, not silently read a zeroed field.
+                const fcfg = &state.player_fire_config[player_idx];
+                const base_damage: f64 = if (fcfg.valid != 0) fcfg.damage else weapons_data.weaponBaseById(.starter_pistol).damage;
+                if (state.pending_instant_aoe_count < world_state.MAX_PENDING_INSTANT_AOE) {
+                    state.pending_instant_aoe[state.pending_instant_aoe_count] = .{
+                        .x = attacker.x,
+                        .y = attacker.y,
+                        .radius = GEO_PRISM_FAN_RANGE_PX,
+                        .damage = base_damage * GEO_PRISM_FAN_DAMAGE_MULTIPLIER,
+                        .aim_angle = base_angle,
+                        .cone_radians = GEO_PRISM_FAN_CONE_RADIANS,
+                        .caster_idx = player_idx,
+                        .has_cone = 1,
+                    };
+                    state.pending_instant_aoe_count += 1;
+                }
+                activated = true;
+            },
+            .shard_ring => {
+                // Instant self-centered radius AOE, cast-time push, flat
+                // NINJA_SHARD_RING_DAMAGE (verified NOT build-scaled — see
+                // this constant's own doc comment above). Unconditional
+                // activation, same shape as Prism Fan above.
+                if (state.pending_instant_aoe_count < world_state.MAX_PENDING_INSTANT_AOE) {
+                    state.pending_instant_aoe[state.pending_instant_aoe_count] = .{
+                        .x = attacker.x,
+                        .y = attacker.y,
+                        .radius = NINJA_SHARD_RING_RADIUS_PX,
+                        .damage = NINJA_SHARD_RING_DAMAGE,
+                        .caster_idx = player_idx,
+                    };
+                    state.pending_instant_aoe_count += 1;
+                }
+                activated = true;
+            },
+            .flock_pulse => {
+                // Instant self-centered radius AOE + slow, cast-time push.
+                // BASE damage only (SYZ_FLOCK_PULSE_BASE_DAMAGE) — the
+                // ally/enemy source-count scaling term is DEFERRED (Phase 3
+                // ally-targeting substrate; see this constant's own doc
+                // comment above for the full "verified against World.ts,
+                // not guessed" accounting). Unconditional activation, same
+                // shape as Prism Fan/Shard Ring above.
+                if (state.pending_instant_aoe_count < world_state.MAX_PENDING_INSTANT_AOE) {
+                    state.pending_instant_aoe[state.pending_instant_aoe_count] = .{
+                        .x = attacker.x,
+                        .y = attacker.y,
+                        .radius = SYZ_FLOCK_PULSE_RADIUS_PX,
+                        .damage = SYZ_FLOCK_PULSE_BASE_DAMAGE,
+                        .slow_multiplier = SYZ_FLOCK_PULSE_SLOW_MULTIPLIER,
+                        .slow_duration_ms = SYZ_FLOCK_PULSE_SLOW_DURATION_MS,
+                        .caster_idx = player_idx,
+                        .has_slow = 1,
+                    };
+                    state.pending_instant_aoe_count += 1;
+                }
+                activated = true;
+            },
+            .wall_bloom => {
+                // Window — consumed at the wall-kick hook (world.zig
+                // section 8's per-player physics loop below), single-use
+                // (cleared on that wall-kick, not just on timeout). Mirrors
+                // World.ts's "wall-bloom" case exactly: opens the window
+                // only, no AOE queued from THIS switch arm.
+                const dur_ticks: u32 = @intFromFloat(@ceil((active_spec.duration_ms orelse 0) / @max(1.0, eff_dt)));
+                attacker.wall_bloom_until_tick = state.header.tick + dur_ticks;
+                activated = true;
+            },
+            .shock_ring => {
+                // A modest upward hop (KIN_SHOCK_RING_HOP_VY) plus an arm
+                // window covering the hop's airtime — landing detection +
+                // the actual slam AOE happen in the MOVEMENT section
+                // (world.zig section 8 below), since dispatch (this
+                // function, section 6z) runs AFTER section 8 has already
+                // moved every player this tick — "just landed" for THIS
+                // press can only be detected on a LATER tick, same "window
+                // persists across ticks until consumed" shape Wall Bloom
+                // above uses. Mirrors World.ts's "shock-ring" case exactly.
+                attacker.vy = -KIN_SHOCK_RING_HOP_VY;
+                const dur_ticks: u32 = @intFromFloat(@ceil((active_spec.duration_ms orelse 0) / @max(1.0, eff_dt)));
+                attacker.shock_ring_armed_until_tick = state.header.tick + dur_ticks;
+                activated = true;
+            },
+            .paper_double => {
+                // Spawns a PaperDoubleEntity via the caster's CURRENT
+                // horizontal velocity direction if actually running
+                // (|vx| > NINJA_PAPER_DOUBLE_STATIONARY_SPEED_PX), falling
+                // back to the aim direction for a horizontally-stationary
+                // caster — ported verbatim from World.ts's "paper-double"
+                // case / paperDouble.ts's own header comment (deliberately
+                // horizontal-only, not the full vx/vy vector: vy is
+                // gravity-driven, not player input). `attacker.vx` here is
+                // ALREADY this tick's post-movement velocity (section 8
+                // runs before section 6z, same ordering World.ts's single
+                // per-player loop gets for free). The resonance-gated SWAP
+                // branch is DELIBERATELY NOT ported — see
+                // NINJA_PAPER_DOUBLE_SPEED's own doc comment above for why
+                // (no resonance substrate exists in Zig at all, so this
+                // port always takes TS's own "v1 always spawns" fallback,
+                // never an invented shortcut).
+                var dir_x: f64 = 1;
+                var dir_y: f64 = 0;
+                if (@abs(attacker.vx) > NINJA_PAPER_DOUBLE_STATIONARY_SPEED_PX) {
+                    dir_x = if (attacker.vx > 0) 1.0 else -1.0;
+                    dir_y = 0;
+                } else {
+                    const aim_dx = attacker.aim_x - attacker.x;
+                    const aim_dy = attacker.aim_y - attacker.y;
+                    const aim_len = @sqrt(aim_dx * aim_dx + aim_dy * aim_dy);
+                    if (aim_len > 1e-3) {
+                        dir_x = aim_dx / aim_len;
+                        dir_y = aim_dy / aim_len;
+                    }
+                }
+                if (state.paper_double_count < world_state.MAX_PAPER_DOUBLES) {
+                    const pd_slot: u32 = state.paper_double_count;
+                    state.paper_double_count += 1;
+                    const new_id: u32 = state.header.next_entity_id;
+                    state.header.next_entity_id += 1;
+                    state.paper_doubles[pd_slot] = .{
+                        .x = attacker.x,
+                        .y = attacker.y,
+                        .vx = dir_x * NINJA_PAPER_DOUBLE_SPEED,
+                        .vy = dir_y * NINJA_PAPER_DOUBLE_SPEED,
+                        .health = NINJA_PAPER_DOUBLE_MAX_HEALTH,
+                        .remaining_ms = NINJA_PAPER_DOUBLE_LIFETIME_MS,
+                        .id = new_id,
+                        .owner_id_len = attacker.id_len,
+                        .owner_id_bytes = attacker.id_bytes,
+                    };
+                }
+                // Matches World.ts: the cast ALWAYS activates (a decoy
+                // always spawns when the swap isn't eligible, and the swap
+                // never is here) — the MAX_PAPER_DOUBLES bound is a
+                // Zig-only defensive cap with no TS equivalent (TS's
+                // Record is unbounded), sized so it can never actually
+                // trigger under normal single-decoy-per-player play (see
+                // MAX_PAPER_DOUBLES's own doc comment) — a dropped spawn
+                // there would be a silent bug, not a legitimate no-op, so
+                // this does NOT gate `activated` on it.
+                activated = true;
+            },
             // ── Not yet ported (Phase 4 — docs/zig-step-world-parity-goal.md) ──
             .crimson_tithe => {}, // Phase 4 — not yet ported
             .shelter_seal => {}, // Phase 4 — not yet ported
@@ -827,7 +1091,6 @@ fn stepAbilityDispatch(
             .severing_answer => {}, // Phase 4 — not yet ported
             .sunlance => {}, // Phase 4 — not yet ported
             .facet_break => {}, // Phase 4 — not yet ported
-            .prism_fan => {}, // Phase 4 — not yet ported
             .lattice => {}, // Phase 4 — not yet ported
             .return_glass => {}, // Phase 4 — not yet ported
             .hard_aperture => {}, // Phase 4 — not yet ported
@@ -839,7 +1102,6 @@ fn stepAbilityDispatch(
             .bastion_pulse => {}, // Phase 4 — not yet ported
             .aegis_share => {}, // Phase 4 — not yet ported
             .plant_charge => {}, // Phase 4 — not yet ported
-            .shock_ring => {}, // Phase 4 — not yet ported
             .rally_light => {}, // Phase 4 — not yet ported
             .kindled_resolve => {}, // Phase 4 — not yet ported
             .bulwark_step => {}, // Phase 4 — not yet ported
@@ -848,17 +1110,13 @@ fn stepAbilityDispatch(
             .borrowed_time => {}, // Phase 4 — not yet ported
             .focus_hex => {}, // Phase 4 — not yet ported
             .contagion => {}, // Phase 4 — not yet ported
-            .flock_pulse => {}, // Phase 4 — not yet ported
             .self_lattice => {}, // Phase 4 — not yet ported
             .glass_ward => {}, // Phase 4 — not yet ported
             .haste_gift => {}, // Phase 4 — not yet ported
             .drift_step => {}, // Phase 4 — not yet ported
             .needle => {}, // Phase 4 — not yet ported
-            .shard_ring => {}, // Phase 4 — not yet ported
-            .wall_bloom => {}, // Phase 4 — not yet ported
             .ghost_guard => {}, // Phase 4 — not yet ported
             .razor_route => {}, // Phase 4 — not yet ported
-            .paper_double => {}, // Phase 4 — not yet ported
         }
 
         if (!activated) continue; // a press that does nothing burns no cooldown
@@ -2257,6 +2515,17 @@ pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
         if (has_cfg) speed_mul *= fcfg.move_speed_mul;
         const grav_mul = chaos_profile.gravity_multiplier *
             (if (has_cfg) fcfg.gravity_mul else 1.0);
+        // Wall Bloom / Shock Ring hook capture (this pass, AOE-queue
+        // ability wiring) — captured BEFORE stepPlayer mutates movement
+        // memory, same "read stepPlayer's INPUT and OUTPUT only, never its
+        // internals" backend-agnostic idiom World.ts's own
+        // wallDirBeforeStep/groundedBeforeStep locals use (World.ts:2377-
+        // 2392) and for the identical reason: Wall Bloom's wall-kick
+        // detection and Shock Ring's landing detection both need the
+        // PRE-step values to compare against this same call's OUTPUT
+        // below.
+        const wall_dir_before_step = state.player_movement[pmi].touching_wall_dir;
+        const grounded_before_step = state.player_movement[pmi].grounded_last_frame;
         // NB: stepPlayer RETURNS jumped-this-frame, not grounded. The grounded
         // state lives in ps.grounded_last_frame (mutated in place). The world
         // orchestrator emits no jump event, so the return is discarded.
@@ -2292,6 +2561,73 @@ pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
         state.player_movement[pmi].dash_recovery_ms = ps.dash_recovery_ms;
         state.player_movement[pmi].air_jumps_used = @intCast(ps.air_jumps_used);
         state.player_movement[pmi].dash_used_in_air = @intCast(ps.dash_used_in_air);
+
+        // Wall Bloom (Ninja) — wall-kick hook (this pass, AOE-queue
+        // ability wiring; window OPENED by the "wall-bloom" cast in
+        // section 6z below). Mirrors World.ts's own heuristic exactly
+        // (World.ts:2422-2456): a Jump-bit rising edge while airborne and
+        // touching a wall LAST tick (not this tick's post-step state —
+        // same "before" values World.ts's wallDirBeforeStep/
+        // groundedBeforeStep read). Single-use: cleared on THIS wall-kick
+        // regardless of whether the window was even live (matches TS's
+        // unconditional `wallBloomUntilTick: wallBloomLive ? undefined :
+        // nextEntity.wallBloomUntilTick` — a no-op clear when already 0).
+        if (state.players[pmi].character_id == .sprinter) {
+            const jump_bit: u32 = 1 << 4;
+            const jump_edge = (state.players[pmi].current_keys & jump_bit) != 0 and
+                (state.players[pmi].prev_keys & jump_bit) == 0;
+            if (jump_edge and wall_dir_before_step != 0 and grounded_before_step == 0) {
+                const wall_bloom_live = state.players[pmi].wall_bloom_until_tick > state.header.tick;
+                if (wall_bloom_live) {
+                    state.players[pmi].wall_bloom_until_tick = 0;
+                    if (state.pending_instant_aoe_count < world_state.MAX_PENDING_INSTANT_AOE) {
+                        const wall_x = state.players[pmi].x +
+                            @as(f64, @floatFromInt(wall_dir_before_step)) * NINJA_WALL_BLOOM_WALL_OFFSET_PX;
+                        state.pending_instant_aoe[state.pending_instant_aoe_count] = .{
+                            .x = wall_x,
+                            .y = state.players[pmi].y,
+                            .radius = NINJA_WALL_BLOOM_RADIUS_PX,
+                            .damage = NINJA_WALL_BLOOM_DAMAGE,
+                            .caster_idx = pmi,
+                        };
+                        state.pending_instant_aoe_count += 1;
+                    }
+                }
+            }
+        }
+
+        // Shock Ring (Paladin) — landing hook (this pass, AOE-queue
+        // ability wiring; hop + window OPENED by the "shock-ring" cast in
+        // section 6z below). Mirrors World.ts's own landing check exactly
+        // (World.ts:2465-2493): airborne last tick, grounded now.
+        // Single-use: cleared on THIS landing regardless of whether the
+        // window was even live (same unconditional-clear shape as Wall
+        // Bloom above — matches TS's `nextEntity = { ...,
+        // shockRingArmedUntilTick: undefined }` sitting INSIDE the
+        // `if (...armedUntilTick... > state.tick)` branch, so it only
+        // actually fires when live; harmless either way since 0 already
+        // reads as "not armed").
+        if (state.players[pmi].character_id == .heavy) {
+            const grounded_after_step = ps.grounded_last_frame != 0;
+            const just_landed = grounded_before_step == 0 and grounded_after_step;
+            if (just_landed) {
+                const shock_ring_live = state.players[pmi].shock_ring_armed_until_tick > state.header.tick;
+                if (shock_ring_live) {
+                    state.players[pmi].shock_ring_armed_until_tick = 0;
+                    if (state.pending_instant_aoe_count < world_state.MAX_PENDING_INSTANT_AOE) {
+                        state.pending_instant_aoe[state.pending_instant_aoe_count] = .{
+                            .x = state.players[pmi].x,
+                            .y = state.players[pmi].y,
+                            .radius = KIN_SHOCK_RING_RADIUS_PX,
+                            .damage = KIN_SHOCK_RING_DAMAGE,
+                            .caster_idx = pmi,
+                        };
+                        state.pending_instant_aoe_count += 1;
+                    }
+                }
+            }
+        }
+
         // Ceiling clamp (parity with World.ts computeCeilingClampY): head pushed
         // above the ceiling → shove back under + kill upward velocity.
         if (g_has_ceiling) {
@@ -2767,6 +3103,54 @@ pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
         }
     }
 
+    // 6y. Paper Double death/expiry burst detection (this pass — parity
+    //     port of paperDouble.ts's own `bursts` list feeding World.ts's
+    //     SECOND, LATER `resolveInstantAoeCasts` call, World.ts:6113-6115,
+    //     "discovered too late in tick order to land in the SAME
+    //     pendingInstantAoe batch"). Zig's tick order is the MIRROR IMAGE
+    //     of TS's here, not the same shape: paper-double stepping
+    //     (lifetime countdown in section "2b", projectile-collision health
+    //     zeroing in section 4) runs EARLY in stepWorld — well BEFORE this
+    //     point — while the AOE resolver (section 6b, directly below) runs
+    //     LATE. So every this-tick paper-double death has ALREADY happened
+    //     by the time this scan runs, and pushing here lands in the SAME
+    //     single 6b resolve pass below — traced and confirmed Zig needs NO
+    //     second resolver call, unlike TS (see this pass's own report for
+    //     the full ordering trace).
+    //
+    //     A paper double found here with `health <= 0 or remaining_ms <=
+    //     0` is GUARANTEED to have died THIS tick, never a stale prior-tick
+    //     entry: section 9's end-of-tick compaction (below) removes every
+    //     dead entry before the NEXT tick's section 2b could ever observe
+    //     it again — so this single scan can neither double-count a death
+    //     nor miss one. Melee-killed decoys are NOT covered here (melee-
+    //     vs-Paper-Double damage remains unwired — a real, now more
+    //     visible gap now that decoys can exist at all post this pass; see
+    //     stepMeleeSwing's own "deliberately NOT ported" list above) — the
+    //     two death paths this DOES cover (projectile kill, lifetime
+    //     expiry) are exactly the two `stepPaperDoubles`-equivalent paths
+    //     already built in commit 6aa0dc9.
+    {
+        var pdb: u32 = 0;
+        while (pdb < state.paper_double_count) : (pdb += 1) {
+            const pd = &state.paper_doubles[pdb];
+            if (pd.health > 0 and pd.remaining_ms > 0) continue; // still alive
+            const owner_idx = playerIdxById(state, pd.owner_id_bytes[0..pd.owner_id_len]);
+            if (owner_idx < 0) continue; // owner no longer in the roster — matches resolveInstantAoeCasts's own `if (!caster) continue`
+            if (state.pending_instant_aoe_count >= world_state.MAX_PENDING_INSTANT_AOE) continue;
+            state.pending_instant_aoe[state.pending_instant_aoe_count] = .{
+                .x = pd.x,
+                .y = pd.y,
+                .radius = NINJA_PAPER_DOUBLE_BURST_RADIUS_PX,
+                .damage = NINJA_PAPER_DOUBLE_BURST_DAMAGE,
+                .caster_idx = @intCast(owner_idx),
+                .has_fooled = 1,
+                .fooled_duration_ms = NINJA_FOOLED_DURATION_MS,
+            };
+            state.pending_instant_aoe_count += 1;
+        }
+    }
+
     // 6b. Instant AOE resolution (2026-07-20 gap-closure pass — deferred-
     //     write primitive port of World.ts's `pendingInstantAoe`/
     //     `resolveInstantAoeCasts`; see resolveInstantAoeCasts's own doc
@@ -2774,11 +3158,14 @@ pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
     //     section 6's per-player loop directly above (every player's own
     //     per-tick state — shield/parry/fire — is only final once that
     //     loop has finished for EVERY player) and before section 9's
-    //     end-of-tick compaction below. No push site exists yet (no Zig
-    //     ability-cast system triggers wall-bloom/shock-ring/prism-fan/
-    //     flock-pulse/shard-ring) — `pending_instant_aoe_count` is 0 on
-    //     every real tick today; this block only fires for hand-seeded
-    //     test states until a later phase wires the 5 push sites.
+    //     end-of-tick compaction below. UPDATED (this pass): all 5 cast-
+    //     time/hook push sites (wall-bloom, shock-ring, prism-fan,
+    //     flock-pulse, shard-ring — section 6z below, plus the wall-kick/
+    //     landing hooks in section 8 above) and Paper Double's death/
+    //     expiry burst (section 6y directly above) are now real. This one
+    //     call drains ALL of them together every tick — see section 6y's
+    //     own doc comment for why Paper Double's burst doesn't need (and
+    //     doesn't get) a second resolver call the way TS's does.
     if (state.pending_instant_aoe_count > 0) {
         resolveInstantAoeCasts(
             state,

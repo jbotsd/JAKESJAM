@@ -1514,3 +1514,418 @@ test "ability dispatch: Edge Storm NOT cast — a slash swing's active->recovery
     // gap, legitimately fires too while Fire is held).
     try std.testing.expectEqual(@as(u32, 0), countWaveProjectiles(&state));
 }
+
+// ── AOE-queue abilities (this pass, docs/zig-step-world-parity-goal.md
+//    Phase 1's 2nd unblock) — Wall Bloom, Shock Ring, Prism Fan, Flock
+//    Pulse, Shard Ring push onto the `PendingInstantAoe` queue from commit
+//    4340859; Paper Double's cast spawns a `PaperDoubleEntity` and its
+//    death/expiry burst pushes onto that same queue via section 6y's new
+//    detection pass. ──────────────────────────────────────────────────────
+
+test "ability dispatch: Prism Fan (Wizard) — instant cone AOE straight from the cast, build-scaled damage (not a flat constant), hits inside the cone and misses outside it at the same range" {
+    var state = freshFightingState();
+    state.player_count = 3; // 0 = wizard caster, 1 = in the cone, 2 = same range but outside it
+    state.players[0].flags.alive = true;
+    state.players[0].character_id = .balanced; // wizard
+    state.players[0].health = 100;
+    state.players[0].x = 0;
+    state.players[0].y = 0;
+    state.players[0].aim_x = 100; // aim straight along +x
+    state.players[0].aim_y = 0;
+    state.player_fire_config[0] = .{ .damage = 20, .fire_rate = 4, .projectile_speed = 1, .projectile_lifetime_seconds = 1, .spread_radians = 0, .range_px = 1, .homing_strength = 0, .acceleration_multiplier = 0, .gravity_scale = 0, .slow_multiplier = 1, .impact_radius_px = 0, .size_multiplier = 1, .speed_multiplier = 1, .lifetime_multiplier = 1, .projectile_count = 1, .bounces = 0, .pierce_count = 0, .split_count = 0, .shape = .circle, .element = .neutral, .pathing = .straight, .impact = .none, .valid = 1 };
+    equipSlot(&state, 0, 0, .prism_fan);
+
+    state.players[1].flags.alive = true;
+    state.players[1].health = 100;
+    state.players[1].x = 100; // dead ahead, well inside GEO_PRISM_FAN_CONE_RADIANS
+    state.players[1].y = 0;
+
+    state.players[2].flags.alive = true;
+    state.players[2].health = 100;
+    state.players[2].x = 0; // same 100px range, 90 degrees off-axis: outside the cone
+    state.players[2].y = 100;
+
+    state.players[0].current_keys = SLOT1_BIT;
+    _ = root.world.stepWorld(&state, 16.0);
+
+    // build.damage (20) * GEO_PRISM_FAN_DAMAGE_MULTIPLIER (0.5) = 10.
+    try std.testing.expectEqual(@as(f64, 90.0), state.players[1].health); // in the cone
+    try std.testing.expectEqual(@as(f64, 100.0), state.players[2].health); // in radius, outside the cone
+    try std.testing.expect(state.players[0].slot_cooldown_until_tick[0] > state.header.tick);
+    try std.testing.expectEqual(@as(u32, 0), state.pending_instant_aoe_count); // drained
+}
+
+test "ability dispatch: Shard Ring (Ninja) — instant self-centered radius AOE, flat NINJA_SHARD_RING_DAMAGE (not build-scaled), hits inside the radius and misses outside it" {
+    var state = freshFightingState();
+    state.player_count = 3; // 0 = ninja caster, 1 = in radius, 2 = out of radius
+    state.players[0].flags.alive = true;
+    state.players[0].character_id = .sprinter;
+    state.players[0].health = 100;
+    state.players[0].x = 0;
+    state.players[0].y = 0;
+    // Deliberately no player_fire_config seeded (stays zeroed/invalid) —
+    // proves this ability's damage is NOT read from build.damage at all.
+    equipSlot(&state, 0, 0, .shard_ring);
+
+    state.players[1].flags.alive = true;
+    state.players[1].health = 100;
+    state.players[1].x = 100; // within NINJA_SHARD_RING_RADIUS_PX (150)
+    state.players[1].y = 0;
+
+    state.players[2].flags.alive = true;
+    state.players[2].health = 100;
+    state.players[2].x = 400; // well outside
+    state.players[2].y = 0;
+
+    state.players[0].current_keys = SLOT1_BIT;
+    _ = root.world.stepWorld(&state, 16.0);
+
+    try std.testing.expectEqual(@as(f64, 86.0), state.players[1].health); // 100 - 14
+    try std.testing.expectEqual(@as(f64, 100.0), state.players[2].health);
+}
+
+test "ability dispatch: Flock Pulse (Priest) — instant self-centered radius AOE + slow, resolves to SYZ_FLOCK_PULSE_BASE_DAMAGE only (ally/enemy source-count scaling correctly deferred, Phase 3 substrate), never build-scaled" {
+    var state = freshFightingState();
+    state.player_count = 2; // 0 = priest caster, 1 = victim in radius
+    state.players[0].flags.alive = true;
+    state.players[0].character_id = .shielded; // priest
+    state.players[0].health = 100;
+    state.players[0].x = 0;
+    state.players[0].y = 0;
+    equipSlot(&state, 0, 0, .flock_pulse);
+
+    state.players[1].flags.alive = true;
+    state.players[1].health = 100;
+    state.players[1].x = 50; // within SYZ_FLOCK_PULSE_RADIUS_PX (170)
+    state.players[1].y = 0;
+
+    state.players[0].current_keys = SLOT1_BIT;
+    _ = root.world.stepWorld(&state, 16.0);
+
+    // SYZ_FLOCK_PULSE_BASE_DAMAGE (8) only — no ally/enemy source ever
+    // populated on Zig's PlayerEntity today, so sourceCount is honestly 0,
+    // matching what TS itself would compute for a solo caster with zero
+    // live buffs (not an invented substitute).
+    try std.testing.expectEqual(@as(f64, 92.0), state.players[1].health); // 100 - 8
+    try std.testing.expect(state.players[1].flags.has_slow);
+    try std.testing.expect(@abs(state.players[1].slow_multiplier - 0.8) < 1e-9);
+    try std.testing.expect(state.players[1].slowed_until_tick > state.header.tick);
+}
+
+test "ability dispatch: Wall Bloom (Ninja) — cast opens the window and sets cooldown" {
+    var state = freshFightingState();
+    state.player_count = 2;
+    state.players[0].flags.alive = true;
+    state.players[0].character_id = .sprinter;
+    state.players[0].health = 100;
+    state.players[1].flags.alive = true;
+    state.players[1].health = 100;
+    state.players[1].x = 5000;
+    equipSlot(&state, 0, 0, .wall_bloom); // duration 9000ms, cooldown 7000ms
+
+    state.players[0].current_keys = SLOT1_BIT;
+    _ = root.world.stepWorld(&state, 1000.0); // tick=1
+    try std.testing.expectEqual(@as(u32, 10), state.players[0].wall_bloom_until_tick); // 1+9
+    try std.testing.expectEqual(@as(u32, 8), state.players[0].slot_cooldown_until_tick[0]); // 1+7
+}
+
+test "ability dispatch: Wall Bloom (Ninja) — a wall-kick (Jump rising edge while airborne + touching a wall LAST tick) while the window is LIVE consumes it and pushes a wall-contact AOE burst; window is cleared" {
+    var state = freshFightingState();
+    state.player_count = 2; // 0 = ninja, 1 = victim near the wall-contact point
+    state.players[0].flags.alive = true;
+    state.players[0].character_id = .sprinter;
+    state.players[0].health = 100;
+    state.players[0].x = 300;
+    state.players[0].y = 300;
+    state.players[0].wall_bloom_until_tick = 100; // live, far beyond this test's tick=1
+    state.player_movement[0].touching_wall_dir = 1; // touching a wall to the right, LAST tick
+    state.player_movement[0].grounded_last_frame = 0; // airborne LAST tick
+
+    state.players[1].flags.alive = true;
+    state.players[1].health = 100;
+    // Wall-contact point ~= caster.x + 19 (PLAYER_BODY_WIDTH/2 + 6); a
+    // generous placement well within NINJA_WALL_BLOOM_RADIUS_PX (110) of
+    // wherever the caster's own tiny single-tick physics drift lands.
+    state.players[1].x = 320;
+    state.players[1].y = 300;
+
+    const jump_bit: u32 = 1 << 4;
+    state.players[0].current_keys = jump_bit; // rising edge (prev_keys starts 0)
+    _ = root.world.stepWorld(&state, 16.0);
+
+    try std.testing.expectEqual(@as(f64, 90.0), state.players[1].health); // 100 - NINJA_WALL_BLOOM_DAMAGE(10)
+    try std.testing.expectEqual(@as(u32, 0), state.players[0].wall_bloom_until_tick); // cleared, single-use
+    try std.testing.expectEqual(@as(u32, 0), state.pending_instant_aoe_count); // drained
+}
+
+test "ability dispatch: Wall Bloom (Ninja) — a wall-kick with an EXPIRED window pushes NO AOE and does not touch the (already-lapsed) window value — negative case, both cast AND trigger are required" {
+    var state = freshFightingState();
+    state.player_count = 2;
+    state.players[0].flags.alive = true;
+    state.players[0].character_id = .sprinter;
+    state.players[0].health = 100;
+    state.players[0].x = 300;
+    state.players[0].y = 300;
+    state.players[0].wall_bloom_until_tick = 1; // expires exactly AT tick 1 (gate is `> tick`, 1 > 1 is false)
+    state.player_movement[0].touching_wall_dir = 1;
+    state.player_movement[0].grounded_last_frame = 0;
+
+    state.players[1].flags.alive = true;
+    state.players[1].health = 100;
+    state.players[1].x = 320;
+    state.players[1].y = 300;
+
+    const jump_bit: u32 = 1 << 4;
+    state.players[0].current_keys = jump_bit;
+    _ = root.world.stepWorld(&state, 16.0); // tick becomes 1
+
+    try std.testing.expectEqual(@as(f64, 100.0), state.players[1].health); // untouched — no burst
+    try std.testing.expectEqual(@as(u32, 1), state.players[0].wall_bloom_until_tick); // unchanged — never live, never consumed
+    try std.testing.expectEqual(@as(u32, 0), state.pending_instant_aoe_count);
+}
+
+test "ability dispatch: Shock Ring (Paladin) — cast opens the window, hops (vy = -KIN_SHOCK_RING_HOP_VY), and sets cooldown" {
+    var state = freshFightingState();
+    state.player_count = 2;
+    state.players[0].flags.alive = true;
+    state.players[0].character_id = .heavy;
+    state.players[0].health = 100;
+    state.players[1].flags.alive = true;
+    state.players[1].health = 100;
+    state.players[1].x = 5000;
+    equipSlot(&state, 0, 0, .shock_ring); // duration 1500ms, cooldown 9000ms
+
+    state.players[0].current_keys = SLOT1_BIT;
+    _ = root.world.stepWorld(&state, 1000.0); // tick=1
+    try std.testing.expectEqual(@as(u32, 3), state.players[0].shock_ring_armed_until_tick); // 1+ceil(1500/1000)
+    try std.testing.expectEqual(@as(u32, 10), state.players[0].slot_cooldown_until_tick[0]); // 1+9
+    try std.testing.expect(@abs(state.players[0].vy - (-420.0)) < 1e-9);
+}
+
+test "ability dispatch: Shock Ring (Paladin) — landing (airborne LAST tick, grounded THIS tick, real floor collision) while the window is LIVE consumes it and pushes a slam AOE at the landing spot; window is cleared" {
+    var state = freshFightingState();
+    state.player_count = 2; // 0 = paladin falling onto a floor, 1 = victim near the landing spot
+    state.static_count = 1;
+    state.statics[0] = .{ .x = 0, .y = 600, .w = 1280, .h = 40 }; // floor surface at y=600
+    state.one_way[0] = 0;
+
+    state.players[0].flags.alive = true;
+    state.players[0].character_id = .heavy;
+    state.players[0].health = 100;
+    state.players[0].x = 300;
+    state.players[0].y = 600 - 28 - 40; // 40px above standing height
+    state.players[0].vy = 600; // falling fast enough to cross the gap in one tick
+    state.player_movement[0].grounded_last_frame = 0; // airborne LAST tick
+    state.players[0].shock_ring_armed_until_tick = 100; // live, far beyond this test's tick=1
+
+    state.players[1].flags.alive = true;
+    state.players[1].health = 100;
+    state.players[1].x = 320; // within KIN_SHOCK_RING_RADIUS_PX (170) of the landing spot
+    state.players[1].y = 572;
+
+    _ = root.world.stepWorld(&state, 100.0); // tick=1: falls, lands, slams
+
+    try std.testing.expect(state.players[0].flags.grounded); // really landed (physics-driven, not asserted)
+    try std.testing.expectEqual(@as(f64, 82.0), state.players[1].health); // 100 - KIN_SHOCK_RING_DAMAGE(18)
+    try std.testing.expectEqual(@as(u32, 0), state.players[0].shock_ring_armed_until_tick); // cleared, single-use
+    try std.testing.expectEqual(@as(u32, 0), state.pending_instant_aoe_count);
+}
+
+test "ability dispatch: Shock Ring (Paladin) — a real landing with an EXPIRED window pushes NO AOE and does not touch the (already-lapsed) window value — negative case, both cast AND trigger are required" {
+    var state = freshFightingState();
+    state.player_count = 2;
+    state.static_count = 1;
+    state.statics[0] = .{ .x = 0, .y = 600, .w = 1280, .h = 40 };
+    state.one_way[0] = 0;
+
+    state.players[0].flags.alive = true;
+    state.players[0].character_id = .heavy;
+    state.players[0].health = 100;
+    state.players[0].x = 300;
+    state.players[0].y = 600 - 28 - 40;
+    state.players[0].vy = 600;
+    state.player_movement[0].grounded_last_frame = 0;
+    state.players[0].shock_ring_armed_until_tick = 1; // expires exactly AT tick 1
+
+    state.players[1].flags.alive = true;
+    state.players[1].health = 100;
+    state.players[1].x = 320;
+    state.players[1].y = 572;
+
+    _ = root.world.stepWorld(&state, 100.0); // tick=1: falls, lands — but window is not live
+
+    try std.testing.expect(state.players[0].flags.grounded); // landing itself still genuinely happens
+    try std.testing.expectEqual(@as(f64, 100.0), state.players[1].health); // untouched — no burst
+    try std.testing.expectEqual(@as(u32, 1), state.players[0].shock_ring_armed_until_tick); // unchanged
+    try std.testing.expectEqual(@as(u32, 0), state.pending_instant_aoe_count);
+}
+
+test "ability dispatch: Paper Double (Ninja) cast — a running caster spawns a decoy sprinting the CURRENT horizontal-velocity direction (not the aim direction)" {
+    var state = freshFightingState();
+    // 2 players, not 1: with only 1 the round ends in a KO on tick 1
+    // (round.detectRoundWinner's alive_count==1 branch), flipping
+    // round_phase off .fighting and making stepAbilityDispatch's own
+    // phase gate a no-op — same bystander precedent the cooldown-gating
+    // test above uses.
+    state.player_count = 2;
+    state.players[0].flags.alive = true;
+    state.players[0].character_id = .sprinter;
+    state.players[0].health = 100;
+    state.players[0].x = 111;
+    state.players[0].y = 222;
+    state.players[0].vx = -400; // running left, well above the stationary threshold (5px/s)
+    state.players[0].aim_x = 500; // aim points RIGHT — must NOT be used while running
+    state.players[0].aim_y = 222;
+    setPlayerId(&state.players[0], "caster-1");
+    equipSlot(&state, 0, 0, .paper_double);
+    state.players[1].flags.alive = true;
+    state.players[1].health = 100;
+    state.players[1].x = 5000;
+
+    state.players[0].current_keys = SLOT1_BIT;
+    _ = root.world.stepWorld(&state, 16.0);
+
+    try std.testing.expectEqual(@as(u32, 1), state.paper_double_count);
+    const pd = state.paper_doubles[0];
+    try std.testing.expect(@abs(pd.vx - (-362.0)) < 1e-6);
+    try std.testing.expectEqual(@as(f64, 0.0), pd.vy); // horizontal-only direction
+    try std.testing.expectEqual(@as(f64, 20.0), pd.health); // NINJA_PAPER_DOUBLE_MAX_HEALTH
+    try std.testing.expectEqual(@as(f64, 2500.0), pd.remaining_ms); // NINJA_PAPER_DOUBLE_LIFETIME_MS
+    try std.testing.expectEqual(@as(u8, 8), pd.owner_id_len);
+    try std.testing.expectEqualSlices(u8, "caster-1", pd.owner_id_bytes[0..8]);
+}
+
+test "ability dispatch: Paper Double (Ninja) cast — a horizontally-stationary caster falls back to the aim direction" {
+    var state = freshFightingState();
+    // Same "2 players, not 1" bystander reasoning as the test above.
+    state.player_count = 2;
+    state.players[0].flags.alive = true;
+    state.players[0].character_id = .sprinter;
+    state.players[0].health = 100;
+    state.players[0].x = 0;
+    state.players[0].y = 0;
+    state.players[0].vx = 0; // below the stationary threshold
+    state.players[0].aim_x = 0;
+    state.players[0].aim_y = -100; // aiming straight up
+    setPlayerId(&state.players[0], "caster-2");
+    equipSlot(&state, 0, 0, .paper_double);
+    state.players[1].flags.alive = true;
+    state.players[1].health = 100;
+    state.players[1].x = 5000;
+
+    state.players[0].current_keys = SLOT1_BIT;
+    _ = root.world.stepWorld(&state, 16.0);
+
+    try std.testing.expectEqual(@as(u32, 1), state.paper_double_count);
+    const pd = state.paper_doubles[0];
+    try std.testing.expect(@abs(pd.vx - 0.0) < 1e-6); // dirX = 0 (aim is pure vertical)
+    try std.testing.expect(@abs(pd.vy - (-362.0)) < 1e-6); // dirY = -1 (aim up)
+}
+
+test "ability dispatch: Paper Double burst — a decoy that dies (health <= 0) THIS tick pushes a PendingInstantAoe entry that genuinely reaches the SAME tick's AOE resolver, strictly AFTER section 6 (a shield raised THIS tick still blocks it) — the ordering property, same rigor as commit 4340859's own 'resolved strictly AFTER' test" {
+    var state = freshFightingState();
+    state.player_count = 2; // 0 = decoy's owner, 1 = victim who raises shield THIS tick
+    state.players[0].flags.alive = true;
+    state.players[0].health = 100;
+    setPlayerId(&state.players[0], "owner-1");
+
+    state.players[1].flags.alive = true;
+    state.players[1].health = 100;
+    state.players[1].x = 20; // within NINJA_PAPER_DOUBLE_BURST_RADIUS_PX (90) of the decoy
+    state.players[1].y = 0;
+    state.players[1].flags.shield_active = false; // NOT active before this tick
+    state.players[1].flags.has_shield_charge = true;
+    state.players[1].shield_charge = 80;
+    state.players[1].current_keys = SHIELD_BIT; // victim raises it THIS same tick
+
+    state.paper_double_count = 1;
+    state.paper_doubles[0] = .{
+        .x = 0,
+        .y = 0,
+        .vx = 0,
+        .vy = 0,
+        .health = 0, // already dead entering this tick's section "2b"/4
+        .remaining_ms = 2500,
+        .id = 1,
+        .owner_id_len = 7,
+        .owner_id_bytes = blk: {
+            var b: [root.world_state.PLAYER_ID_BYTES]u8 = @splat(0);
+            @memcpy(b[0..7], "owner-1");
+            break :blk b;
+        },
+    };
+
+    _ = root.world.stepWorld(&state, 16.0);
+
+    try std.testing.expectEqual(@as(u32, 0), state.paper_double_count); // compacted away this same tick
+    try std.testing.expect(state.players[1].flags.shield_active); // proof #1: shield really did activate THIS tick
+    try std.testing.expectEqual(@as(f64, 100.0), state.players[1].health); // proof #2: burst saw the up-to-date shield, fully blocked
+    try std.testing.expectEqual(@as(u32, 0), state.pending_instant_aoe_count);
+}
+
+test "ability dispatch: Paper Double burst — a decoy that EXPIRES (remaining_ms <= 0) THIS tick also bursts, landing NINJA_PAPER_DOUBLE_BURST_DAMAGE on an unshielded victim in range" {
+    var state = freshFightingState();
+    state.player_count = 2;
+    state.players[0].flags.alive = true;
+    state.players[0].health = 100;
+    setPlayerId(&state.players[0], "owner-2");
+
+    state.players[1].flags.alive = true;
+    state.players[1].health = 100;
+    state.players[1].x = 30; // within NINJA_PAPER_DOUBLE_BURST_RADIUS_PX (90)
+    state.players[1].y = 0;
+
+    state.paper_double_count = 1;
+    state.paper_doubles[0] = .{
+        .x = 0,
+        .y = 0,
+        .vx = 0,
+        .vy = 0,
+        .health = 20,
+        .remaining_ms = 10, // expires this tick (dt=16ms > 10ms remaining)
+        .id = 1,
+        .owner_id_len = 7,
+        .owner_id_bytes = blk: {
+            var b: [root.world_state.PLAYER_ID_BYTES]u8 = @splat(0);
+            @memcpy(b[0..7], "owner-2");
+            break :blk b;
+        },
+    };
+
+    _ = root.world.stepWorld(&state, 16.0);
+
+    try std.testing.expectEqual(@as(u32, 0), state.paper_double_count);
+    try std.testing.expectEqual(@as(f64, 90.0), state.players[1].health); // 100 - NINJA_PAPER_DOUBLE_BURST_DAMAGE(10)
+}
+
+test "ability dispatch: Paper Double burst — a decoy whose owner no longer exists in the roster bursts into NOTHING (matches resolveInstantAoeCasts's own `if (!caster) continue`), no crash" {
+    var state = freshFightingState();
+    state.player_count = 1; // no player has id "ghost-owner"
+    state.players[0].flags.alive = true;
+    state.players[0].health = 100;
+    state.players[0].x = 10;
+    state.players[0].y = 0;
+
+    state.paper_double_count = 1;
+    state.paper_doubles[0] = .{
+        .x = 0,
+        .y = 0,
+        .vx = 0,
+        .vy = 0,
+        .health = 0,
+        .remaining_ms = 2500,
+        .id = 1,
+        .owner_id_len = 11,
+        .owner_id_bytes = blk: {
+            var b: [root.world_state.PLAYER_ID_BYTES]u8 = @splat(0);
+            @memcpy(b[0..11], "ghost-owner");
+            break :blk b;
+        },
+    };
+
+    _ = root.world.stepWorld(&state, 16.0); // must not crash
+
+    try std.testing.expectEqual(@as(u32, 0), state.paper_double_count); // still compacted away
+    try std.testing.expectEqual(@as(f64, 100.0), state.players[0].health); // no burst — no valid caster
+    try std.testing.expectEqual(@as(u32, 0), state.pending_instant_aoe_count);
+}
