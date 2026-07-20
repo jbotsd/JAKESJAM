@@ -295,9 +295,15 @@ describe("createWeaponBuild", () => {
       const base = createWeaponBuild(starterWeapon, []);
       const withCard = createWeaponBuild(starterWeapon, [find("crystal-volley")]);
       expect(withCard.damage).toBeGreaterThan(base.damage);
-      expect(withCard.projectile.speedMultiplier).toBeGreaterThan(
-        base.projectile.speedMultiplier,
-      );
+      // `base` here resolves through starterWeapon's own "raycast" delivery
+      // (true hitscan, 2026-07-20) — applyDeliveryFeel's hyper-speed bump
+      // (speedMultiplier >= 3.2) makes it a poor comparison baseline for
+      // crystal-volley's real 1.06x (the card explicitly pulls delivery
+      // back to "projectile" for its own "honest gunplay" identity, see the
+      // card's own doc comment). Compare against the neutral 1x instead —
+      // what actually proves the card grants a real speed bump over its own
+      // plain-projectile self.
+      expect(withCard.projectile.speedMultiplier).toBeGreaterThan(1);
     });
   });
 

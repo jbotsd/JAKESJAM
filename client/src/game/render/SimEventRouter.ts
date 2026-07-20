@@ -323,20 +323,31 @@ export class SimEventRouter {
         break;
       case "parry-deflected": {
         // The signature dash-bash moment (slide-parry reflect, timed parry, or a
-        // bash clash). Was audio-only — the flash/ring/hit-stop make it READ.
+        // bash clash). Registered as "heavy" tier — was shipping a hand-typed
+        // hit-stop/shake noticeably below that budget ("way not enough juice
+        // and impact," Jake, 2026-07-19). A clean parry is a genuine skill
+        // moment; it should hit at least as hard as a landed attack, not softer.
         audio.play("parry");
         d.playerRigs.get(event.playerId)?.triggerParryFlash();
-        // Micro hit-stop (shorter than a damage hit) — the "turn" registers
-        // without interrupting the slide's flow.
-        this.holdHitStop(30);
+        const budget = presentationBudget("heavy");
+        this.holdHitStop(budget.hitStopMs);
         if (event.playerId === d.localPlayerId) {
-          d.safeShake(50, 0.004);
+          d.safeShake(budget.shakeDurationMs, budget.shakeIntensity);
         }
         break;
       }
       case "shield-popped": {
+        // Registered as "heavy" — was shipping ZERO camera/timing channels
+        // despite the registry declaring them (audio + a blast only). A
+        // shield fully breaking is a real defensive-state loss; it needs to
+        // land, not just make a sound.
         audio.play("shield-break", { intensity: 0.7 });
         d.spawnBlastAtPlayer(event.playerId, 36, 26);
+        const budget = presentationBudget("heavy");
+        this.holdHitStop(budget.hitStopMs);
+        if (event.playerId === d.localPlayerId) {
+          d.safeShake(budget.shakeDurationMs, budget.shakeIntensity);
+        }
         break;
       }
       case "round-end":
@@ -361,12 +372,17 @@ export class SimEventRouter {
         audio.play("card");
         break;
       case "chain-hit": {
+        // Registered as "hit" tier — was shipping shake below that budget and
+        // no hit-stop at all, even though a lightning chain landing is a real
+        // damage event just like hit-confirmed.
         audio.play("hit");
+        const budget = presentationBudget("hit");
+        this.holdHitStop(budget.hitStopMs);
         if (
           event.victimId === d.localPlayerId ||
           event.chainTargetId === d.localPlayerId
         ) {
-          d.safeShake(50, 0.004);
+          d.safeShake(budget.shakeDurationMs, budget.shakeIntensity);
         }
         break;
       }
@@ -405,25 +421,46 @@ export class SimEventRouter {
         // A drafted active fired (six-axes Layer 2). The router owns the
         // audio moment; the action-bar slot flash + buff chips carry the
         // sustained read (legibility law: every press has an instant cue).
-        audio.play("card", { heavy: false });
+        //
+        // Every AbilityKind shared the SAME modest audio/shake here
+        // regardless of what actually happens — a personal fire-rate buff
+        // (Overclock) and a guaranteed-AOE detonation (Shard Ring, Flock
+        // Pulse) both got the identical soft "card" cue + 60ms/0.004 shake
+        // (Jake, 2026-07-20: "every single factor where game feel matters"
+        // — this was the gap the Phase 3 construct-VFX pass didn't touch,
+        // since it only ever added the world-vfx channel, never re-weighted
+        // audio/camera). Shard Ring and Flock Pulse are cast-synchronized
+        // detonations (World.ts pushes their pendingInstantAoe in the SAME
+        // switch-case iteration as this event) — they get the "heavy" tier,
+        // same budget a landed hit/parry/shield-break already uses.
+        const isBigNova = event.kind === "shard-ring" || event.kind === "flock-pulse";
+        const budget = presentationBudget(isBigNova ? "heavy" : "action");
+        audio.play("card", { heavy: isBigNova });
         // Every catalog press moves the vessel through its authored physical
         // verb (plant, weave, guard, thrust, etc.). The event is authoritative;
         // the rig gesture is render-only and never delays the sim effect.
         if (isAbilityKind(event.kind)) {
           d.playerRigs.get(event.playerId)?.triggerAbility?.(event.kind);
         }
+        if (isBigNova) this.holdHitStop(budget.hitStopMs);
         if (event.playerId === d.localPlayerId) {
-          d.safeShake(60, 0.004);
+          d.safeShake(budget.shakeDurationMs, budget.shakeIntensity);
         }
         break;
       }
       case "resonance-triggered": {
         // Chain-unlike-abilities bonus fired (class-overhaul-workboard.md
-        // chunk 0.1). Minimal audio accent on top of ability-activated's
-        // own cue so a chain is at least AUDIBLE today — a bespoke world-
-        // space read (nameplate chip / VFX) is Tier 4 polish
-        // (class-overhaul-workboard.md 4.2), deliberately not built here.
+        // chunk 0.1). Registered as "cast" tier but was shipping audio only —
+        // a successful resonance chain is a rewarded skill moment (A14 reward
+        // steer) and should feel like one. A bespoke world-space read
+        // (nameplate chip / VFX) is still Tier 4 polish, deliberately not
+        // built here — this is just bringing the existing channels up to the
+        // budget the registry already declares.
         audio.play("card", { heavy: true });
+        if (event.playerId === d.localPlayerId) {
+          const budget = presentationBudget("cast");
+          d.safeShake(budget.shakeDurationMs, budget.shakeIntensity);
+        }
         break;
       }
       case "emission-leech": {
@@ -485,41 +522,58 @@ export class SimEventRouter {
         break;
       }
       case "ward-absorbed": {
-        // Kindled Ward absorb tell (2026-07-18, class-overhaul-workboard.md
-        // chunk 2.2/2.3, VFX landed in chunk 2.7's heaven-tank pass). No
-        // bespoke "shield-board catches a hit" audio asset exists and the
-        // hard rule is never synthesize audio (rip only) — left silent;
-        // the gold flash + a small local shake carry the read instead.
+        // Kindled Ward absorb tell. Registered as "heavy" tier in
+        // eventPresentationRegistry.ts, but was shipping raw hand-typed
+        // numbers well BELOW that tier and zero hit-stop — "way not enough
+        // juice and impact" (Jake, 2026-07-19). Now pulls the real "heavy"
+        // budget (matches hit-confirmed/player-killed's own pattern) plus a
+        // genuine freeze-frame so a real block registers as a real event, not
+        // a flicker. No bespoke audio asset exists and the hard rule is never
+        // synthesize audio (rip only) — left silent; camera + hit-stop + the
+        // real slab-absorb construct (ConstructVfxController) carry the read.
         d.spawnWardAbsorbFlash?.(event.playerId, false);
+        this.holdHitStop(presentationBudget("heavy").hitStopMs);
         if (event.playerId === d.localPlayerId) {
-          d.safeShake(40, 0.003);
+          const budget = presentationBudget("heavy");
+          d.safeShake(budget.shakeDurationMs, budget.shakeIntensity);
         }
         break;
       }
       case "team-peel-absorbed": {
-        // Team peel tell (2026-07-18, class-overhaul-workboard.md chunk
-        // 2.4, VFX landed in chunk 2.7's heaven-tank pass) — same "no
-        // bespoke audio asset, never synthesize" silence as ward-absorbed
-        // above. Flash lands at the WARDER (not the victim) so a clip
-        // reads "that Paladin just saved their teammate" — see
+        // Team peel tell — same under-tiered gap as ward-absorbed, same fix.
+        // Flash + shake land at the WARDER (not the victim) so a clip reads
+        // "that Paladin just saved their teammate" — see
         // `spawnWardAbsorbFlash`'s own doc comment.
         d.spawnWardAbsorbFlash?.(event.warderId, true);
+        this.holdHitStop(presentationBudget("heavy").hitStopMs);
         if (event.warderId === d.localPlayerId || event.victimId === d.localPlayerId) {
-          d.safeShake(50, 0.004);
+          const budget = presentationBudget("heavy");
+          d.safeShake(budget.shakeDurationMs, budget.shakeIntensity);
         }
         break;
       }
       case "syz-ward-absorbed": {
+        // Same under-tiered gap as the Kindled ward cases above — "heavy" per
+        // the registry, was shipping well below it with no hit-stop. A broken
+        // ward (the pool fully depleted) reads as the bigger of the two beats
+        // (extra hit-stop, harder shake), same escalation shape the old
+        // numbers already implied (70/0.006 vs 40/0.003) — now off the real
+        // budget instead of hand-typed guesses.
         d.spawnSyzygistWardAbsorbFlash?.(
           event.playerId,
           event.casterId,
           event.wardBroke,
         );
+        const budget = presentationBudget("heavy");
+        this.holdHitStop(event.wardBroke ? budget.hitStopMs * 1.4 : budget.hitStopMs);
         if (
           event.playerId === d.localPlayerId ||
           event.casterId === d.localPlayerId
         ) {
-          d.safeShake(event.wardBroke ? 70 : 40, event.wardBroke ? 0.006 : 0.003);
+          d.safeShake(
+            event.wardBroke ? budget.shakeDurationMs * 1.3 : budget.shakeDurationMs,
+            event.wardBroke ? budget.shakeIntensity * 1.3 : budget.shakeIntensity,
+          );
         }
         break;
       }

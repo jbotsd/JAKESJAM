@@ -40,9 +40,19 @@ never “stop shooting.”
 | 5 | **Return Glass** | defense | Brief window: successful parry also refunds a small mana tick + tiny self-shield | Extends parry, does not replace it |
 | 6 | **Hard Aperture** | defense | 0.6s damage gate while aiming (move slow); breaks if you fire | Planted defense; geometrician “hold the proof” |
 | 7 | **Overclock** | buff | 3s: fire rate up, spread tighter; ends early if you stop shooting | Cast-weave fuel |
-| 8 | **Measure** | buff | Self: next fully charged shot refunds mana and shows a brief aim-assist “true line” VFX (cosmetic-heavy, small mechanical help) | Information + confidence |
+| 8 | **Measure** | buff | Self: short window (0.7s) — shots fired go dead-center (spread zeroed) with a damage amp | The "true line," made mechanically real (reworked 2026-07-19 — see cut/rework note below) |
 | 9 | **Slip Node** | movement | Short blink along aim (cap ~280px); leaves a fading node that enemies can read | Reposition, not Interstice freeflow |
-| 10 | **Recoil Step** | movement | On cast, hop opposite to aim (small); next shot gets knock-self reduction | Micro-kiting tool |
+| 10 | **Recoil Step** | movement | On cast, hop opposite to aim (small); shots fired in the next 1.2s get a strong knock-self reduction | Micro-kiting tool — the reduction is the ability's real reason to exist over Slip Node (reworked 2026-07-19, see below) |
+
+**2026-07-19 rework (docs/axiom-deviations-audit.md D2):** Measure and Recoil Step were both
+confirmed/suspected filler — Measure was a flat +1-ammo grant ("cosmetic-heavy, small
+mechanical help" in its own v1 doc text, dominated by Overclock as a buff pick); Recoil Step
+was an unadorned hop, "likely dominated by Slip Node" with no independent payoff. Both now
+ship the mechanic their ORIGINAL doc text already named but deferred: Measure's "true line"
+aim-assist is a real spread-zero + damage amp, not a VFX note; Recoil Step's "next shot gets
+knock-self reduction" is a real rider window. See `docs/axiom-deviations-audit.md`'s
+Geometrician section for the full before/after and `constants.ts`'s `GEO_MEASURE_*`/
+`GEO_RECOIL_STEP_*` header comments for the numbers.
 
 **Example racks (recommend, not force):**  
 - Duel: Facet Break + Sunlance + Recoil Step  

@@ -48,7 +48,12 @@ import {
 // -----------------------------------------------------------------
 // Layout constants — must match sim/src/world_state.zig.
 
-const HEADER_SIZE = 48;
+// 48 → 56 (2026-07-20, Phase 2, docs/zig-step-world-parity-goal.md —
+// draft/offer-roll system): +4 content bytes for
+// WorldStateHeader.round_winner_idx (i32), rounded up to 56 by the
+// trailing f64 (countdown_remaining_ms)'s own 8-byte alignment need — see
+// world_state.zig's WorldStateHeader comptime assert.
+export const HEADER_SIZE = 56;
 // 288 → 296 (2026-07-18): +8 bytes for PlayerEntity.energy (ninja class
 // resource) plus the 4-byte alignment pad Zig inserts before an f64 that
 // follows a run of u32 tail fields. See world_state.zig's comptime assert
@@ -87,22 +92,53 @@ const HEADER_SIZE = 48;
 // alignment padding between the two (372 → 376). See world_state.zig's
 // comptime assert and packPlayer/unpackPlayer's trailing Ward read/write
 // below.
-export const PLAYER_ENTITY_SIZE = 384;
+// 384 → 392 → 504 → 512 (2026-07-20, gap-closure + Phase 1 ability-cast
+// dispatch + AOE-queue window passes, docs/zig-step-world-parity-goal.md):
+// +8 for channel_hold_ms, +112 for the ability-slot cooldown/status window
+// fields (slot_cooldown_until_tick[3], undercut/edge-storm/seal/second-wind/
+// judgment/read-mark windows + judgment/read target ids), +8 for the
+// AOE-queue window fields — see world_state.zig's PlayerEntity comptime
+// assert for the full byte-by-byte accounting. The TS bridge doesn't pack/
+// unpack these tail fields yet (packPlayer/unpackPlayer still stop at byte
+// 384 — host-only state for now), but PLAYER_ENTITY_SIZE MUST reflect the
+// true Zig stride or every downstream array (projectiles, satellites, ...)
+// mis-aligns.
+export const PLAYER_ENTITY_SIZE = 512;
 const PROJECTILE_ENTITY_SIZE = 216;
 const SATELLITE_ENTITY_SIZE = 96;
 const DESTRUCTIBLE_ENTITY_SIZE = 64;
 const FIRE_ENTITY_SIZE = 88;
 const PICKUP_ENTITY_SIZE = 64;
+// Paper Double decoys (2026-07-20 gap-closure pass item 3) — parallel to
+// world_state.zig's PaperDoubleEntity/MAX_PAPER_DOUBLES. Not yet
+// spawned/packed by the TS bridge; sized so downstream arrays stay aligned.
+const PAPER_DOUBLE_ENTITY_SIZE = 96;
+const MAX_PAPER_DOUBLES = 16;
 // Must match sim/src/world_state.zig PlayerMovementMemory @sizeOf. Grew 24→40
 // with the deep-movement augment memory (dash timers + counters), then 40→48
 // with dash_recovery_ms (slide endlag); the TS bridge skips the array's
 // contents but MUST advance by the correct stride or every field after it
 // mis-aligns.
 const PLAYER_MOVEMENT_MEMORY_SIZE = 48;
+// Melee swing FSM memory (2026-07-20 base-melee-mechanic gap-closure pass)
+// — parallel to players[], host-only/off-wire like PlayerMovementMemory.
+// Must match world_state.zig's MeleeSwingMemory @sizeOf.
+const MELEE_SWING_MEMORY_SIZE = 32;
 // I-final — ResolvedFireConfig parallel array (per-player fire
 // build resolved by the host from createWeaponBuild). 14 × f64 +
 // 4 × u32 + 4 × u8(enum) + 1 × u8(valid) + 3 × u8(pad) = 136.
 export const RESOLVED_FIRE_CONFIG_SIZE = 240; // +14 augment fields (movement/shield/parry) +dash_cooldown_mul
+// Ability-slot equipment / card hand / per-round draft bookkeeping (Phase 2,
+// docs/zig-step-world-parity-goal.md — draft/offer-roll system). Parallel to
+// players[], host-only/off-wire like the rows above. Must match
+// world_state.zig's EquippedActives/PlayerCardIds/PlayerDraftState @sizeOf.
+const EQUIPPED_ACTIVES_SIZE = 3; // MAX_ABILITY_SLOTS
+const PLAYER_CARD_IDS_SIZE = 8; // MAX_PLAYER_CARDS
+const PLAYER_DRAFT_STATE_SIZE = 4; // DRAFT_OFFER_COUNT + 1
+// Deferred-write instant-AOE cast queue (2026-07-20 gap-closure pass) — must
+// match world_state.zig's PendingInstantAoe/MAX_PENDING_INSTANT_AOE.
+const PENDING_INSTANT_AOE_SIZE = 80;
+const MAX_PENDING_INSTANT_AOE = 32;
 
 export const MAX_PLAYERS = 16;
 const MAX_STATICS = 256;
@@ -137,21 +173,46 @@ export const WORLD_STATE_TOTAL_SIZE =
   MAX_FIRE * FIRE_ENTITY_SIZE +
   ARRAY_PREAMBLE +
   MAX_PICKUPS * PICKUP_ENTITY_SIZE +
+  // Paper Double decoys (2026-07-20 gap-closure pass item 3): 4 count + 4
+  // pad + N×PaperDoubleEntity.
+  ARRAY_PREAMBLE +
+  MAX_PAPER_DOUBLES * PAPER_DOUBLE_ENTITY_SIZE +
   // I14 — PlayerMovementMemory parallel array (no preamble; sized
   // by MAX_PLAYERS, indexed parallel to the players array).
   MAX_PLAYERS * PLAYER_MOVEMENT_MEMORY_SIZE +
+  // Melee swing FSM memory (2026-07-20 base-melee-mechanic gap-closure
+  // pass) — no preamble, parallel to players[].
+  MAX_PLAYERS * MELEE_SWING_MEMORY_SIZE +
   // I-final — player_fire_config parallel array (no preamble;
   // host writes per tick from createWeaponBuild).
   MAX_PLAYERS * RESOLVED_FIRE_CONFIG_SIZE +
+  // Phase 2 (docs/zig-step-world-parity-goal.md — draft/offer-roll system)
+  // — equipped actives / card hand / per-round draft state, all parallel
+  // to players[], no preambles.
+  MAX_PLAYERS * EQUIPPED_ACTIVES_SIZE +
+  MAX_PLAYERS * PLAYER_CARD_IDS_SIZE +
+  MAX_PLAYERS * PLAYER_DRAFT_STATE_SIZE +
   // I15 — static AABB cache: 4 count + 4 pad + N×AABB +
   // N×u8 one_way + 4 tail pad.
   ARRAY_PREAMBLE +
   MAX_STATICS * AABB_SIZE +
   MAX_STATICS +
   4 +
-  // I18 — events buffer: 4 count + 4 pad + 4 alignment pad
-  // (SimEvent has f64 → 8-byte aligned) + N×SimEvent.
+  // Deferred-write instant-AOE cast queue (2026-07-20 gap-closure pass):
+  // 4 count + 4 explicit pad + 4 IMPLICIT Zig alignment pad (statics
+  // section above leaves this field at a non-8-aligned offset, and
+  // PendingInstantAoe has f64 fields → needs 8-byte alignment for its
+  // array) + N×PendingInstantAoe. This is the SAME "extra 4 bytes" the
+  // events buffer below used to need before this section existed between
+  // statics and events — the alignment requirement moved, the byte
+  // didn't disappear. Verified empirically against the live wasm
+  // sizeof_world_state() + a raw-memory event_count probe (2026-07-20).
   12 +
+  MAX_PENDING_INSTANT_AOE * PENDING_INSTANT_AOE_SIZE +
+  // I18 — events buffer: 4 count + 4 pad. No further implicit alignment
+  // pad needed here anymore — the pending-AOE section above now absorbs
+  // it, and this field's offset comes out 8-aligned on its own. + N×SimEvent.
+  ARRAY_PREAMBLE +
   64 * 40;
 
 // -----------------------------------------------------------------
@@ -1337,6 +1398,14 @@ export function packWorldState(state: WorldState): Uint8Array {
   // back. Encode -1 as 0xFFFFFFFF.
   view.setInt32(off, -1, true);
   off += 4;
+  // round_winner_idx (2026-07-20, Phase 2, docs/zig-step-world-parity-
+  // goal.md) — orchestrator writes this back at the fighting → round_over
+  // transition; -1 = no winner yet this round. See world_state.zig's
+  // WorldStateHeader.round_winner_idx doc comment.
+  view.setInt32(off, -1, true);
+  off += 4;
+  view.setUint32(off, 0, true); // alignment pad before countdown_remaining_ms
+  off += 4;
   view.setFloat64(off, state.round.countdownRemainingMs, true);
   off += 8;
 
@@ -1497,6 +1566,10 @@ export function unpackWorldState(buf: Uint8Array): UnpackedWorldState {
   off += 4;
   const matchWinnerIdx = view.getInt32(off, true);
   off += 4;
+  // round_winner_idx (2026-07-20, Phase 2) + its 4-byte alignment pad —
+  // not yet surfaced on UnpackedWorldState; skipped like next_entity_id/
+  // map_id above. See world_state.zig's WorldStateHeader doc comment.
+  off += 4 + 4;
   const countdownRemainingMs = view.getFloat64(off, true);
   off += 8;
 
@@ -1590,22 +1663,50 @@ export function unpackWorldState(buf: Uint8Array): UnpackedWorldState {
   }
   off = pickupStart + MAX_PICKUPS * PICKUP_ENTITY_SIZE;
 
+  // Paper Double decoys (2026-07-20 gap-closure pass item 3) — 4 count + 4
+  // pad + N×PaperDoubleEntity. Skipped (host doesn't consume yet; nothing
+  // spawns these).
+  off += 8 + MAX_PAPER_DOUBLES * PAPER_DOUBLE_ENTITY_SIZE;
+
   // I14 player_movement parallel array — 16 × 48 bytes. Skipped
   // for now (host doesn't consume; lives in wasm linear memory).
   off += MAX_PLAYERS * PLAYER_MOVEMENT_MEMORY_SIZE;
 
-  // I-final player_fire_config parallel array — 16 × 136 bytes.
+  // Melee swing FSM memory (2026-07-20 base-melee-mechanic gap-closure
+  // pass) — 16 × 32 bytes. Skipped, same "host doesn't consume" treatment
+  // as player_movement.
+  off += MAX_PLAYERS * MELEE_SWING_MEMORY_SIZE;
+
+  // I-final player_fire_config parallel array — 16 × 240 bytes.
   // Host-writable; no read-back needed (sim writes nothing here).
   off += MAX_PLAYERS * RESOLVED_FIRE_CONFIG_SIZE;
+
+  // Phase 2 (docs/zig-step-world-parity-goal.md) — equipped actives / card
+  // hand / per-round draft state parallel arrays. Skipped for now (no TS
+  // consumer reads these back through this bridge yet).
+  off += MAX_PLAYERS * EQUIPPED_ACTIVES_SIZE;
+  off += MAX_PLAYERS * PLAYER_CARD_IDS_SIZE;
+  off += MAX_PLAYERS * PLAYER_DRAFT_STATE_SIZE;
 
   // I15 static cache: 4 count + 4 pad + N×AABB + N×u8 + 4 tail.
   off += 8 + MAX_STATICS * AABB_SIZE + MAX_STATICS + 4;
 
-  // I18 events buffer: 4 count + 4 pad + 4 alignment pad +
-  // N×SimEvent (40B each, 8-aligned). Zig inserts the extra 4
-  // bytes because SimEvent's f64 fields need 8-byte alignment.
+  // Deferred-write instant-AOE cast queue (2026-07-20 gap-closure pass) —
+  // 4 count + 4 explicit pad + 4 implicit Zig alignment pad (see
+  // WORLD_STATE_TOTAL_SIZE's comment on this section for the full
+  // accounting) + N×PendingInstantAoe. Skipped (nothing pushes into it
+  // yet — see world_state.zig's PendingInstantAoe doc comment).
+  off += 12 + MAX_PENDING_INSTANT_AOE * PENDING_INSTANT_AOE_SIZE;
+
+  // I18 events buffer: 4 count + 4 pad + N×SimEvent (40B each,
+  // 8-aligned). 2026-07-20: the extra implicit alignment pad this
+  // section used to need moved to the new pending-instant-AOE section
+  // immediately above (that field's own offset is what's non-8-aligned
+  // now) — event_count's offset comes out 8-aligned on its own since
+  // the gap-closure pass's additions. See WORLD_STATE_TOTAL_SIZE's
+  // comment on the pending-AOE section for the full accounting.
   const eventCount = view.getUint32(off, true);
-  off += 12;
+  off += 8;
   const events: WasmSimEvent[] = [];
   for (let i = 0; i < eventCount; i++) {
     const e: WasmSimEvent = {

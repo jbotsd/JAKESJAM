@@ -379,10 +379,23 @@ describe("Priest baseline: detuned starter bolt (docs/classes-goal.md 'modest pr
 
   test("priestStarterWeapon is a same-shape, lower-damage copy of starterWeapon", () => {
     expect(priestStarterWeapon.damage).toBeLessThan(starterWeapon.damage);
-    expect(priestStarterWeapon.delivery).toBe(starterWeapon.delivery);
+    // Deliberate divergence (2026-07-20, true hitscan), not inherited default
+    // — the tendril needs real travel time to home, so weapons.ts explicitly
+    // overrides delivery back to "projectile" rather than silently
+    // inheriting starterWeapon's now-"raycast" value. Asserting the two
+    // stay EQUAL would be testing the wrong invariant post-hitscan.
+    expect(priestStarterWeapon.delivery).toBe("projectile");
     expect(priestStarterWeapon.projectile.shape).toBe(starterWeapon.projectile.shape);
     expect(priestStarterWeapon.fireRate).toBe(starterWeapon.fireRate);
     expect(priestStarterWeapon.id).toBe(starterWeapon.id);
+    // Lock down that the override actually WORKS: without it, resolving
+    // through createWeaponBuild would silently pick up applyDeliveryFeel's
+    // raycast bump (speedMultiplier >= 3.2, lifetimeMultiplier <= 0.35,
+    // rangePx >= 880) and invert the tendril's own "slower but homing,
+    // longer fuse" balance (constants.ts's SYZ_TENDRIL_* doc comment).
+    const build = createWeaponBuild(priestStarterWeapon, []);
+    expect(build.projectile.speedMultiplier).toBe(1);
+    expect(build.projectile.lifetimeMultiplier).toBe(1);
   });
 
   test("createWeaponBuild(baseWeaponForClass(classId), ...) with no cards: only Wizard/Ninja stay at the flat-pool baseline", () => {
@@ -442,8 +455,19 @@ describe("Paladin baseline: heavier starter bolt feeding the Unveiling ultimate 
     expect(paladinStarterWeapon.projectile.sizeMultiplier).toBeGreaterThan(
       starterWeapon.projectile.sizeMultiplier,
     );
-    expect(paladinStarterWeapon.delivery).toBe(starterWeapon.delivery);
+    // Deliberate divergence (2026-07-20, true hitscan), not inherited default
+    // — weapons.ts explicitly overrides delivery back to "projectile" so
+    // this weapon stays a real, functional gun (resolveEmission still
+    // resolves it even though Paladin never fires it conventionally)
+    // regardless of what the shared base weapon's delivery drifts to.
+    expect(paladinStarterWeapon.delivery).toBe("projectile");
     expect(paladinStarterWeapon.id).toBe(starterWeapon.id);
+    // Lock down that the override actually works: without it, resolving
+    // through createWeaponBuild would silently pick up applyDeliveryFeel's
+    // raycast bump instead of staying a plain heavier/slower/bigger bolt.
+    const build = createWeaponBuild(paladinStarterWeapon, []);
+    expect(build.projectile.speedMultiplier).toBe(1);
+    expect(build.projectile.lifetimeMultiplier).toBe(1);
   });
 
   test("still inside the combat-balance-ttk band even though Paladin never actually fires it conventionally", () => {
@@ -561,6 +585,9 @@ describe("Priest lifesteal: Stolen Fangs re-read as always-on drain (docs/card-p
     let nextId = 1;
     const result = stepWeapon(player, true, { x: 500, y: 0 }, 16, () => EntityId(nextId++));
     expect(result.fired).toBe(true);
-    expect(result.projectiles[0]!.leechFraction ?? 0).toBe(0);
+    // Wizard's basic shot fires via `hitscanPellets`, not `projectiles`
+    // (true hitscan, 2026-07-20) — `result.projectiles` is empty here.
+    expect(result.projectiles.length).toBe(0);
+    expect(result.hitscanPellets[0]!.leechFraction ?? 0).toBe(0);
   });
 });

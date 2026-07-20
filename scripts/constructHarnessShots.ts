@@ -104,6 +104,41 @@ await fire("drop");
 await page.waitForTimeout(110);
 await canvas.screenshot({ path: `${OUT}/ward-drop.png` });
 
+// Phase 3 primitives (2026-07-20) — nova/blink/dodge are one-shot bursts
+// (capture mid-flight, not just the end frame); aura/field are continuous
+// toggles (capture a held frame once settled).
+for (const kind of ["nova-slash", "nova-ooze", "nova-shatter", "nova-seal"]) {
+  await fire(kind);
+  await page.waitForTimeout(90);
+  await canvas.screenshot({ path: `${OUT}/${kind}.png` });
+  await page.waitForTimeout(240);
+}
+
+for (const kind of ["blink-trail", "blink-commit"]) {
+  await fire(kind);
+  await page.waitForTimeout(90);
+  await canvas.screenshot({ path: `${OUT}/${kind}.png` });
+  await page.waitForTimeout(220);
+}
+
+await fire("dodge");
+await page.waitForTimeout(70);
+await canvas.screenshot({ path: `${OUT}/dodge.png` });
+await page.waitForTimeout(160);
+
+for (const kind of ["aura-slash", "aura-ooze", "aura-shatter", "aura-seal"]) {
+  await fire(kind); // toggle ON
+  await page.waitForTimeout(180); // let it settle into its orbit/pulse
+  await canvas.screenshot({ path: `${OUT}/${kind}.png` });
+  await fire(kind); // toggle OFF before the next one so they don't stack
+  await page.waitForTimeout(60);
+}
+
+await fire("field"); // toggle ON
+await page.waitForTimeout(120);
+await canvas.screenshot({ path: `${OUT}/field.png` });
+await fire("field"); // toggle OFF
+
 await browser.close();
 if (errors.length) {
   console.log("PAGE ERRORS (port bug!):\n" + errors.slice(0, 20).join("\n"));

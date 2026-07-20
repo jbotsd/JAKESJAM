@@ -298,19 +298,24 @@ export type AbilityKind =
   // already proves out." That entity type now exists —
   // `PaperDoubleEntity`/`state.paperDoubles` (types.ts) + `paperDouble.ts`'s
   // spawn/step/collision logic, wired into World.ts's activation switch and
-  // both classes' melee arc-hit-check sections. The "resonance-gated swap"
-  // half of the original deferral is STILL a v1 gap — see this ability's
-  // own case comment in World.ts (`"paper-double"`) and cardTypes.ts's
-  // sibling doc trail below: v1 always spawns fresh, never swaps positions
-  // with a live decoy. The `Fooled` status debuff from the card's
-  // "Resonance:" line is ALSO deferred — it's a victim-side amp any
-  // attacker's ability can exploit ("abilities cast into Fooled gain
-  // +25%"), which would need threading into every ability damage site in
-  // this file (melee arc hits ×2, the pendingInstantAoe resolution pass,
-  // the generic projectile hit-confirm pass) rather than one caster-side
-  // check like Facet Break's own `facetTargetId`/`facetMarkUntilTick`
-  // precedent — a genuinely bigger surface than the core decoy loop this
-  // pass shipped, so it's recorded here rather than guessed at silently.
+  // both classes' melee arc-hit-check sections. BOTH remaining gaps CLOSED
+  // 2026-07-19 (D2 fast-follow): the "resonance-gated swap" — cast into a
+  // live resonance window with a live own-decoy and the caster/decoy trade
+  // positions instead of a fresh spawn, bounded at
+  // NINJA_PAPER_DOUBLE_SWAP_MAX_DISPLACEMENT_PX (constants.ts) — and the
+  // `Fooled` victim-side debuff ("abilities cast into Fooled gain +25%"),
+  // threaded into all three ability-damage sites this comment used to flag
+  // as too broad a surface for the core-decoy pass (melee arc hits ×2, the
+  // `resolveInstantAoeCasts` pass, the generic projectile hit-confirm pass)
+  // via one shared `fooledDamageMultiplier` helper (World.ts). Recorded v1
+  // simplification kept from the original scoping: Fooled amps ANY damage
+  // landing on the victim, not literally "abilities" only — the codebase
+  // has no existing way to distinguish an ability-sourced projectile from a
+  // basic weapon shot at the shared hit-confirm site (Facet Break's own
+  // caster-side mark amp has the identical scope already). See types.ts's
+  // `fooledUntilTick` field comment and `ninjaCatalog.test.ts`'s two new
+  // describe blocks ("Paper Double resonance swap" / "Paper Double Fooled
+  // debuff") for the full reasoning and coverage.
   | "undercut"
   | "edge-storm"
   | "needle"

@@ -9,7 +9,7 @@ import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 
 import { loadSimFromBytes } from "../loader";
-import { packWorldState, PLAYER_ENTITY_SIZE, MAX_PLAYERS } from "../worldStateBridge";
+import { packWorldState, PLAYER_ENTITY_SIZE, MAX_PLAYERS, HEADER_SIZE } from "../worldStateBridge";
 import { installLutTables } from "../../trig";
 import {
   EntityId,
@@ -59,9 +59,10 @@ installLutTables(
 );
 
 // Player-block size derived from the live constant (2026-07-18) — see
-// projectileLifecycleParity.test.ts's PROJECTILES_OFFSET comment.
+// projectileLifecycleParity.test.ts's PROJECTILES_OFFSET comment. Same for
+// HEADER_SIZE (2026-07-20: 48 → 56).
 const SAT_OFFSET =
-  48 + 8 + MAX_PLAYERS * PLAYER_ENTITY_SIZE + 8 + 256 * 216 + 8;
+  HEADER_SIZE + 8 + MAX_PLAYERS * PLAYER_ENTITY_SIZE + 8 + 256 * 216 + 8;
 const ANGLE_OFFSET = 0;
 const COOLDOWN_OFFSET = 2 * 8;
 const LIFETIME_OFFSET = 3 * 8;

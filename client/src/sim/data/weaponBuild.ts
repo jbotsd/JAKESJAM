@@ -11,6 +11,7 @@ import type {
   WeaponBucket,
   WeaponCardModifier,
   WeaponDefinition,
+  WeaponDelivery,
 } from "./cardTypes.js";
 import { MAX_ABILITY_SLOTS } from "./cardTypes.js";
 
@@ -138,7 +139,7 @@ export function createWeaponBuild(
       bucketOwners.add(bucket);
     }
 
-    if (modifier) applyCard(build, card, classId);
+    if (modifier) applyCard(build, card, classId, baseWeapon.delivery);
     // Drafted actives fill slots in pick order (six-axes Layer 2). The
     // offer roll stops offering ability cards at MAX_ABILITY_SLOTS, so the
     // length guard here is belt-and-braces, never the enforcement site.
@@ -228,6 +229,12 @@ export function applyCard(
   build: ResolvedWeaponBuild,
   card: CardDefinition,
   classId?: ClassId,
+  /** The base weapon's OWN delivery, before any card touched it this
+   *  resolution (`createWeaponBuild` passes `baseWeapon.delivery`; direct
+   *  callers that omit it get the pre-hitscan default, `"projectile"`,
+   *  unchanged). Needed to tell "still the untouched base default" apart
+   *  from "an earlier card already upgraded this" — see the guard below. */
+  baseDelivery: WeaponDelivery = "projectile",
 ) {
   const modifier = effectiveCardModifier(card, classId);
   if (!modifier) {
@@ -235,9 +242,18 @@ export function applyCard(
   }
 
   if (modifier.delivery) {
-    // Delivery is a rare identity — only upgrade from baseline projectile.
-    // Never stomp raycast/beam with a later "projectile" card.
-    if (build.delivery === "projectile" || modifier.delivery !== "projectile") {
+    // Delivery is a rare identity — only upgrade away from the BASE
+    // weapon's own delivery. Never stomp an earlier CARD's raycast/beam
+    // pick with a later "projectile" card. Wizard's own base weapon is
+    // itself "raycast" now (true hitscan, 2026-07-20) — cards whose whole
+    // mechanic needs real travel time (Crystal Volley's "honest gunplay",
+    // Seeker Facets' homing curve, Shard Bloom's split) explicitly carry
+    // `delivery: "projectile"` to pull back to a traveling shot, and that
+    // must win against the untouched base default, exactly like any other
+    // delivery upgrade would. `build.delivery === baseDelivery` means no
+    // card has touched it yet this resolution, so this card's choice is
+    // free to apply regardless of direction.
+    if (build.delivery === baseDelivery || modifier.delivery !== "projectile") {
       build.delivery = modifier.delivery;
     }
   }

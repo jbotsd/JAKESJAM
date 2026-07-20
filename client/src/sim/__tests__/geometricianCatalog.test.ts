@@ -13,7 +13,7 @@
 import { describe, expect, test } from "bun:test";
 import { createRuntime, stepWithRuntime } from "../World.js";
 import { enterDrafting } from "../round.js";
-import { resolvePlayerBuild } from "../weapon.js";
+import { resolvePlayerBuild, stepWeapon } from "../weapon.js";
 import { crystalRoundsCards } from "../data/cards.js";
 import {
   MAX_ABILITY_SLOTS,
@@ -26,8 +26,11 @@ import {
   GEO_LATTICE_ZONE_RADIUS_PX,
   GEO_RETURN_GLASS_SHIELD_REFUND,
   GEO_SLIP_NODE_RANGE_PX,
+  GEO_MEASURE_DAMAGE_MULTIPLIER,
+  GEO_RECOIL_STEP_RECOIL_MULTIPLIER,
 } from "../constants.js";
 import {
+  EntityId,
   InputSeq,
   PlayerId,
   Tick,
@@ -264,25 +267,36 @@ describe("Geometrician catalog v1 — representative sim effects", () => {
     state = res.state;
     expect(state.players[A]!.sunlanceUntilTick).toBeDefined();
 
-    res = stepWithRuntime(
-      state,
-      runtime,
-      inputsWith([caster], { [A as string]: frame(FIRE_BIT, 2, 500, 400) }),
+    // The starter pistol is true hitscan (2026-07-20) — a fired shot never
+    // creates a `ProjectileEntity`, so read the damage straight off the
+    // resolved `hitscanPellets` via a direct `stepWeapon` call (the SAME
+    // function `stepWithRuntime` calls internally per-player) instead of
+    // `state.projectiles`, which stays empty for this weapon.
+    let nextId = 1;
+    const fireResult = stepWeapon(
+      state.players[A]!,
+      true,
+      { x: 500, y: 400 },
       DT_MS,
+      () => EntityId(nextId++),
+      { currentTick: state.tick },
     );
-    const shard = Object.values(res.state.projectiles)[0];
+    expect(fireResult.fired).toBe(true);
+    const shard = fireResult.hitscanPellets[0];
     expect(shard).toBeDefined();
     // Starter pistol base damage is a positive constant; the sunlance shot
     // must exceed a bare unmultiplied shot fired from an identical rig.
     const plainCaster = mkPlayer(B, 400, 400);
     plainCaster.ammo = 5;
-    const plainRes = stepWithRuntime(
-      mkState([plainCaster]),
-      createRuntime(flatMap),
-      inputsWith([plainCaster], { [B as string]: frame(FIRE_BIT, 1, 500, 400) }),
+    const plainResult = stepWeapon(
+      plainCaster,
+      true,
+      { x: 500, y: 400 },
       DT_MS,
+      () => EntityId(nextId++),
+      { currentTick: Tick(0) },
     );
-    const plainShard = Object.values(plainRes.state.projectiles)[0]!;
+    const plainShard = plainResult.hitscanPellets[0]!;
     expect(shard!.damage).toBeCloseTo(plainShard.damage * GEO_SUNLANCE_DAMAGE_MULTIPLIER, 5);
   });
 
@@ -471,19 +485,60 @@ describe("Geometrician catalog v1 — representative sim effects", () => {
     expect((res.state.players[A]!.wardShellUntilTick as number) > res.state.tick).toBe(true);
   });
 
-  test("Measure: banks one free shot (ammo+1, capped at magazine size)", () => {
+  // Reworked 2026-07-19 (docs/axiom-deviations-audit.md D2 — the original
+  // +1-ammo v1 was a confirmed dominated filler pick). Mirrors Sunlance's
+  // own "cast, then fire, compare against a plain shot" test shape. The
+  // starter pistol fires a single projectile — weapon.ts's own comment
+  // notes single-shot fire "ignores spread entirely" (only multi-projectile
+  // fans use totalSpread to fan out), so the window's spread-zeroing isn't
+  // independently observable via fired angle on this weapon; the damage
+  // amp is the mechanically-provable half this test asserts.
+  test("Measure: shots fired during the window deal the boosted multiplier", () => {
     const caster = mkPlayer(A, 400, 400);
     caster.cards = ["measure"];
-    caster.ammo = 0;
-    const state = mkState([caster]);
+    caster.ammo = 5;
+    let state = mkState([caster]);
     const runtime = createRuntime(flatMap);
-    const res = stepWithRuntime(
+
+    let res = stepWithRuntime(
       state,
       runtime,
       inputsWith([caster], { [A as string]: frame(SLOT1_BIT, 1) }),
       DT_MS,
     );
-    expect(res.state.players[A]!.ammo).toBe(1);
+    state = res.state;
+    expect(state.players[A]!.measureUntilTick).toBeDefined();
+
+    // The starter pistol is true hitscan (2026-07-20) — a fired shot never
+    // creates a `ProjectileEntity`, so read the damage straight off the
+    // resolved `hitscanPellets` via a direct `stepWeapon` call (the SAME
+    // function `stepWithRuntime` calls internally per-player) instead of
+    // `state.projectiles`, which stays empty for this weapon.
+    let nextId = 1;
+    const fireResult = stepWeapon(
+      state.players[A]!,
+      true,
+      { x: 500, y: 400 },
+      DT_MS,
+      () => EntityId(nextId++),
+      { currentTick: state.tick },
+    );
+    expect(fireResult.fired).toBe(true);
+    const shard = fireResult.hitscanPellets[0];
+    expect(shard).toBeDefined();
+
+    const plainCaster = mkPlayer(B, 400, 400);
+    plainCaster.ammo = 5;
+    const plainResult = stepWeapon(
+      plainCaster,
+      true,
+      { x: 500, y: 400 },
+      DT_MS,
+      () => EntityId(nextId++),
+      { currentTick: Tick(0) },
+    );
+    const plainShard = plainResult.hitscanPellets[0]!;
+    expect(shard!.damage).toBeCloseTo(plainShard.damage * GEO_MEASURE_DAMAGE_MULTIPLIER, 5);
   });
 
   test("Slip Node: blinks toward aim, landing within GEO_SLIP_NODE_RANGE_PX", () => {
@@ -519,5 +574,73 @@ describe("Geometrician catalog v1 — representative sim effects", () => {
       DT_MS,
     );
     expect(res.state.players[A]!.vx).toBeLessThan(0);
+  });
+
+  // Reworked 2026-07-19 (docs/axiom-deviations-audit.md D2 — "likely
+  // dominated by Slip Node... needs a kite-specific payoff or it's a second
+  // filler"). The hop itself is unchanged; this proves the NEW rider — the
+  // doc's own long-deferred "next shot gets knock-self reduction."
+  test("Recoil Step: shots fired during the rider window get reduced self-knockback", () => {
+    const caster = mkPlayer(A, 400, 400);
+    caster.cards = ["recoil-step"];
+    caster.ammo = 5;
+    let state = mkState([caster]);
+    const runtime = createRuntime(flatMap);
+
+    let res = stepWithRuntime(
+      state,
+      runtime,
+      inputsWith([caster], { [A as string]: frame(SLOT1_BIT, 1, 900, 400) }),
+      DT_MS,
+    );
+    state = res.state;
+    expect(state.players[A]!.recoilStepUntilTick).toBeDefined();
+    const vxAfterHop = state.players[A]!.vx;
+
+    res = stepWithRuntime(
+      state,
+      runtime,
+      inputsWith([caster], { [A as string]: frame(FIRE_BIT, 2, 900, 400) }),
+      DT_MS,
+    );
+    const riderRecoilDelta = res.state.players[A]!.vx - vxAfterHop;
+
+    // Same setup, but with the rider window already expired (skip past it) —
+    // this is today's OLD, unreduced recoil for the identical shot.
+    const plainCaster = mkPlayer(B, 400, 400);
+    plainCaster.cards = ["recoil-step"];
+    plainCaster.ammo = 5;
+    let plainState = mkState([plainCaster]);
+    const plainRuntime = createRuntime(flatMap);
+    let plainRes = stepWithRuntime(
+      plainState,
+      plainRuntime,
+      inputsWith([plainCaster], { [B as string]: frame(SLOT1_BIT, 1, 900, 400) }),
+      DT_MS,
+    );
+    plainState = plainRes.state;
+    // Let the rider window lapse before firing.
+    for (let i = 0; i < 90; i++) {
+      plainRes = stepWithRuntime(plainState, plainRuntime, inputsWith([plainCaster], {}), DT_MS);
+      plainState = plainRes.state;
+    }
+    const vxBeforePlainFire = plainState.players[B]!.vx;
+    plainRes = stepWithRuntime(
+      plainState,
+      plainRuntime,
+      inputsWith([plainCaster], { [B as string]: frame(FIRE_BIT, 2, 900, 400) }),
+      DT_MS,
+    );
+    const unbrakedRecoilDelta = plainRes.state.players[B]!.vx - vxBeforePlainFire;
+
+    // Both pushes are in the same direction (recoil, not the earlier hop) —
+    // the braked one must be a real, meaningfully smaller push. Relative
+    // tolerance (not toBeCloseTo's absolute-decimal-places check, too tight
+    // for physics-integrated velocities): minor per-tick integration noise
+    // between the two scenarios (different tick counts before firing) is
+    // expected; the RATIO is what this proves.
+    expect(Math.sign(riderRecoilDelta)).toBe(Math.sign(unbrakedRecoilDelta));
+    const expectedBraked = Math.abs(unbrakedRecoilDelta) * GEO_RECOIL_STEP_RECOIL_MULTIPLIER;
+    expect(Math.abs(Math.abs(riderRecoilDelta) - expectedBraked)).toBeLessThan(expectedBraked * 0.05);
   });
 });

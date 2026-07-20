@@ -25,12 +25,15 @@ import {
   GEO_SUNLANCE_DAMAGE_MULTIPLIER,
   GEO_OVERCLOCK_FIRE_RATE_MULTIPLIER,
   GEO_OVERCLOCK_SPREAD_MULTIPLIER,
+  GEO_MEASURE_SPREAD_MULTIPLIER,
+  GEO_MEASURE_DAMAGE_MULTIPLIER,
+  GEO_RECOIL_STEP_RECOIL_MULTIPLIER,
   GEO_CHANNEL_RAMP_MS,
   GEO_CHANNEL_RAMP_FIRE_RATE_MULTIPLIER_MAX,
 } from "./constants.js";
 import { nextInt } from "./rng.js";
 import { lutAtan2, lutCos, lutSin } from "./trig.js";
-import type { EntityId, PlayerEntity, ProjectileEntity, Vec2 } from "./types.js";
+import type { EntityId, PlayerEntity, PlayerId, ProjectileEntity, Vec2 } from "./types.js";
 
 /** Default fire cadence floor when fireRate is zero or missing. */
 const MIN_FIRE_RATE = 0.35;
@@ -138,9 +141,54 @@ export function resolvePlayerBuild(player: PlayerEntity): ResolvedWeaponBuild {
   return build;
 }
 
+/**
+ * A single hitscan pellet's fire-time trace request — everything
+ * `resolveHitscanShot` + `resolveRangedHit` (World.ts) need to resolve a
+ * same-tick, no-`ProjectileEntity` hit. Emitted instead of a real
+ * `ProjectileEntity` when the resolved build's `delivery === "raycast"`
+ * (2026-07-20 — see `docs/`-adjacent weapons.ts's own delivery doc comment).
+ * `stepWeaponNative` has no visibility into other players or the collision
+ * cache (by design — see this file's own header, "depends only on the
+ * player snapshot, the input bit, the aim, and dt"), so it can't resolve the
+ * trace itself; World.ts (which already owns every other synchronous hit
+ * resolution — melee, dash-bash, the projectile drain) does the actual
+ * ray-trace + mitigation right where it already calls `stepWeapon`.
+ */
+export type HitscanPelletSpec = {
+  ownerId: PlayerId;
+  originX: number;
+  originY: number;
+  aimAngle: number;
+  rangePx: number;
+  damage: number;
+  element: ProjectileEntity["element"];
+  tendril?: boolean;
+  leechFraction?: number;
+  /**
+   * Same `radius` a traveling projectile from this build would carry
+   * (`Math.max(2, 7 * build.projectile.sizeMultiplier)`, computed once below
+   * and shared with the projectile branch) — NOT a fast-projectile trick,
+   * just the bullet's real caliber. A literal zero-width ray is stricter
+   * than a traveling projectile's swept circle (`projectile.ts` inflates its
+   * AABB by `proj.radius` on every axis), so without this a shot that
+   * would've grazed a target's edge as a projectile silently whiffs as a
+   * hitscan trace instead — confirmed via a 2px near-miss on a real
+   * regression (`abilitySlots.test.ts`'s Crimson Tithe leech case). Giving
+   * the ray the same thickness the build's own sizeMultiplier already
+   * implies keeps size-modifier cards (circle-rounds etc.) meaningful for
+   * the hitscan weapon too, instead of silently doing nothing.
+   */
+  radius: number;
+};
+
 export type FireResult = {
   player: PlayerEntity;
   projectiles: ProjectileEntity[];
+  /** Raycast-delivery pellets this shot fired — see `HitscanPelletSpec`'s own
+   *  doc comment. Empty for every non-raycast build (the overwhelming
+   *  majority today), so existing callers that never read this field see no
+   *  behavior change. */
+  hitscanPellets: HitscanPelletSpec[];
   fired: boolean;
   /**
    * Number of orbiting satellites this player's resolved build expects.
@@ -258,6 +306,7 @@ function stepWeaponNative(
     return {
       player: next,
       projectiles: [],
+      hitscanPellets: [],
       fired: false,
       desiredSatelliteCount: Math.max(0, idleBuild.orbitingSatellites | 0),
       rngState,
@@ -291,7 +340,19 @@ function stepWeaponNative(
     options.currentTick !== undefined &&
     next.overclockUntilTick !== undefined &&
     next.overclockUntilTick > options.currentTick;
-  const totalSpread = build.spreadRadians * (overclockActive ? GEO_OVERCLOCK_SPREAD_MULTIPLIER : 1);
+  // Measure (Geometrician catalog v1, buff role, reworked 2026-07-19 —
+  // constants.ts's GEO_MEASURE_* doc comment): forces spread to 0 while the
+  // window is live — takes priority over Overclock's own spread-tightening
+  // if somehow both are live (0 already beats any partial multiplier, so
+  // this is just "apply the stronger of the two effects", not a real
+  // conflict to resolve).
+  const measureActive =
+    options.currentTick !== undefined &&
+    next.measureUntilTick !== undefined &&
+    next.measureUntilTick > options.currentTick;
+  const totalSpread = measureActive
+    ? build.spreadRadians * GEO_MEASURE_SPREAD_MULTIPLIER
+    : build.spreadRadians * (overclockActive ? GEO_OVERCLOCK_SPREAD_MULTIPLIER : 1);
   // Syzygist haste (class-overhaul-workboard.md chunk 3.1, buff role): fire
   // rate up while the window is live — same currentTick-gated pattern as
   // Overclock immediately above, but reads the per-entity `hasteMultiplier`
@@ -347,11 +408,19 @@ function stepWeaponNative(
     options.currentTick !== undefined &&
     next.sunlanceUntilTick !== undefined &&
     next.sunlanceUntilTick > options.currentTick;
+  // Measure's damage amp sits BELOW Sunlance's in this priority chain (never
+  // stacks with it) — same "pick the strongest applicable multiplier, don't
+  // compound them" convention Stolen Fangs > Sunlance already established.
+  // Measure is a buff-role support press (a smaller, secondary amp);
+  // Sunlance is a dedicated offense-role button and wins if both are
+  // somehow live at once.
   const damage = spendStolenFangsCharge
     ? build.damage * STOLEN_FANGS_DAMAGE_MULTIPLIER
     : sunlanceActive
       ? build.damage * GEO_SUNLANCE_DAMAGE_MULTIPLIER
-      : build.damage;
+      : measureActive
+        ? build.damage * GEO_MEASURE_DAMAGE_MULTIPLIER
+        : build.damage;
   // Priest "oozing tendrils" basic fire (constants.ts's SYZ_TENDRIL_* doc
   // comment — the class-blind projectile shape/count/speed/homing identity
   // itself lives entirely in priestStarterWeapon's WeaponDefinition,
@@ -375,6 +444,11 @@ function stepWeaponNative(
   // Per-shot offset: spread the count evenly across [-totalSpread/2, +totalSpread/2].
   // Single-shot shots ignore spread entirely (consistent with the offline path).
   const projectiles: ProjectileEntity[] = [];
+  // Raycast-delivery pellets (2026-07-20, true hitscan) — see
+  // `HitscanPelletSpec`'s own doc comment for why the trace itself resolves
+  // in World.ts, not here.
+  const hitscanPellets: HitscanPelletSpec[] = [];
+  const isHitscan = build.delivery === "raycast";
   // `slappers-only` skips projectile spawn entirely; cooldown/recoil still
   // apply so the shooter feels the kick (matches the chaos modifier intent).
   if (!chaos.disableProjectiles) {
@@ -384,6 +458,34 @@ function stepWeaponNative(
           ? 0
           : -totalSpread / 2 + (totalSpread * i) / (projectileCount - 1);
       const angle = baseAngle + offset;
+      // Tithe (docs/card-pool-v2.md "Tithe", card-pool-v2.md "Priest" solo
+      // floor): an always-on passive leech from build.leechFraction, layered
+      // under the six-axes Crimson Tithe ABILITY window (titheActive) rather
+      // than replaced by it — whichever is stronger this shot wins, so a
+      // player holding both never sees the passive silently disappear while
+      // the timed window is live. Computed once, shared by both the
+      // projectile and hitscan branches below.
+      const passiveLeechFraction = build.leechFraction ?? 0;
+      const leechFraction = titheActive
+        ? Math.max(passiveLeechFraction, ABILITY_TITHE_LEECH_FRACTION)
+        : passiveLeechFraction > 0
+          ? passiveLeechFraction
+          : undefined;
+      if (isHitscan) {
+        hitscanPellets.push({
+          ownerId: next.id,
+          originX: muzzle.x,
+          originY: muzzle.y,
+          aimAngle: angle,
+          rangePx: build.projectile.rangePx,
+          damage,
+          element: build.projectile.element,
+          tendril: isPriestTendril || undefined,
+          leechFraction,
+          radius,
+        });
+        continue;
+      }
       let shape: ProjectileEntity["shape"] = simShape(build.projectile.shape);
       if (chaos.randomShapes) {
         const [nextRng, idx] = nextInt(rngState, 0, projectileShapes.length);
@@ -421,28 +523,30 @@ function stepWeaponNative(
       if (isPriestTendril) {
         projectile.tendril = true;
       }
-      // Tithe (docs/card-pool-v2.md "Tithe", card-pool-v2.md "Priest" solo
-      // floor): an always-on passive leech from build.leechFraction, layered
-      // under the six-axes Crimson Tithe ABILITY window (titheActive) rather
-      // than replaced by it — whichever is stronger this shot wins, so a
-      // player holding both never sees the passive silently disappear while
-      // the timed window is live.
-      const passiveLeechFraction = build.leechFraction ?? 0;
-      if (titheActive) {
-        projectile.leechFraction = Math.max(passiveLeechFraction, ABILITY_TITHE_LEECH_FRACTION);
-      } else if (passiveLeechFraction > 0) {
-        projectile.leechFraction = passiveLeechFraction;
+      if (leechFraction !== undefined) {
+        projectile.leechFraction = leechFraction;
       }
       projectiles.push(projectile);
     }
   }
 
+  // Recoil Step's rider window (Geometrician catalog v1, movement role,
+  // reworked 2026-07-19 — constants.ts's GEO_RECOIL_STEP_RECOIL_MULTIPLIER
+  // doc comment): a strong reduction on THIS PLAYER'S OWN self-knockback
+  // from firing while live — the kite-specific payoff that makes the
+  // ability orthogonal to Slip Node's raw gap-cross.
+  const recoilStepActive =
+    options.currentTick !== undefined &&
+    next.recoilStepUntilTick !== undefined &&
+    next.recoilStepUntilTick > options.currentTick;
   // Apply recoil — push the player opposite to the aim direction, scaled by
-  // the build's recoil, the projectile recoil multiplier, and chaos recoil.
+  // the build's recoil, the projectile recoil multiplier, chaos recoil, and
+  // Recoil Step's own self-knockback reduction.
   const recoil =
     build.recoilImpulse *
     build.projectile.recoilMultiplier *
-    chaos.recoilMultiplier;
+    chaos.recoilMultiplier *
+    (recoilStepActive ? GEO_RECOIL_STEP_RECOIL_MULTIPLIER : 1);
   next.vx -= lutCos(baseAngle) * recoil;
   next.vy -= lutSin(baseAngle) * recoil * 0.45;
 
@@ -472,6 +576,7 @@ function stepWeaponNative(
   return {
     player: next,
     projectiles,
+    hitscanPellets,
     fired: true,
     desiredSatelliteCount: Math.max(0, build.orbitingSatellites | 0),
     rngState,

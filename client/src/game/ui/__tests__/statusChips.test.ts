@@ -66,6 +66,11 @@ describe("statusChips descriptor coverage", () => {
     expect(fields).toContain("razorRouteUntilTick");
   });
 
+  test("covers Paper Double's Fooled debuff (2026-07-20 nameplate fast-follow)", () => {
+    const fields = DEBUFF_DESCRIPTORS.map((d) => d.field);
+    expect(fields).toContain("fooledUntilTick");
+  });
+
   test("no descriptor targets a cooldown field (action bar's job, not the nameplate's)", () => {
     const allFields = [...BUFF_DESCRIPTORS, ...DEBUFF_DESCRIPTORS].map((d) => d.field);
     for (const f of allFields) {
@@ -111,6 +116,17 @@ describe("deriveNameplateTicks", () => {
     const ticks = deriveNameplateTicks(p, TICK);
     expect(ticks.length).toBe(1);
     expect(ticks[0]!.isDebuff).toBe(false);
+  });
+
+  test("an active fooledUntilTick debuff produces exactly one debuff tick, distinct color from vuln", () => {
+    const p = mkPlayer({ fooledUntilTick: (TICK + 120) as ReturnType<typeof Tick> });
+    const ticks = deriveNameplateTicks(p, TICK);
+    expect(ticks.length).toBe(1);
+    expect(ticks[0]!.isDebuff).toBe(true);
+    const fooled = DEBUFF_DESCRIPTORS.find((d) => d.key === "fooled")!;
+    const vuln = DEBUFF_DESCRIPTORS.find((d) => d.key === "vuln")!;
+    expect(ticks[0]!.color).toBe(fooled.color);
+    expect(fooled.color).not.toBe(vuln.color);
   });
 
   test("a tick at or before the current tick is expired — no tick shown", () => {

@@ -37,10 +37,12 @@ import {
   PARRY_COOLDOWN_MS_DEFAULT,
 } from "./combat.js";
 import { buildStaticCache, type StaticCollisionCache } from "./collision.js";
+import { resolveHitscanShot } from "./World.js";
 import { EntityId, PlayerId, Tick, InputSeq } from "./types.js";
 import type {
   InputBitfield,
   MapDefinition,
+  PlayerEntity,
   PlayerSpawnInfo,
   ProjectileEntity,
   SimEvent,
@@ -206,6 +208,22 @@ export function stepTutorialDuel(
 
   const players: WorldState["players"] = {};
   const nextProjectiles: WorldState["projectiles"] = { ...state.projectiles };
+  // Hitscan hits awaiting mitigation + damage application (2026-07-20, true
+  // hitscan) — the ray-trace runs immediately below (safe, read-only), but
+  // resolving the actual hit is deferred to right after the per-player loop
+  // closes: `players` only gets this player's own committed entry at the END
+  // of their own loop iteration, so hitting (and writing to) a victim whose
+  // OWN turn hasn't run yet would be silently overwritten the moment their
+  // turn later commits a `nextEntity` built from the frozen pre-tick
+  // `state.players[victimId]`, unaware of the damage.
+  const pendingHitscanHits: Array<{
+    victimId: PlayerId;
+    ownerId: PlayerId;
+    originX: number;
+    originY: number;
+    aimAngle: number;
+    damage: number;
+  }> = [];
 
   // 1. Movement + fire + parry/shield, mirroring World.ts's per-player pass.
   for (const [pid_, entity] of Object.entries(state.players)) {
@@ -273,6 +291,37 @@ export function stepTutorialDuel(
       if (fireResult.fired) {
         events.push({ t: "shot-fired", playerId: pid, x: nextEntity.x, y: nextEntity.y, hand: fireResult.throwHand });
         for (const p of fireResult.projectiles) nextProjectiles[p.id] = p;
+        // Hitscan pellets (2026-07-20, true hitscan) — the RAY-TRACE resolves
+        // right here (read-only, safe at any point in the tick); the actual
+        // mitigation + damage is deferred to `pendingHitscanHits` (see that
+        // array's own doc comment for why). `resolveHitscanShot` itself is
+        // shared with World.ts (pure geometry, no World-specific state).
+        for (const pellet of fireResult.hitscanPellets) {
+          const hitscanSortedIds = (Object.keys(state.players) as PlayerId[]).sort();
+          const playersForTrace: Record<PlayerId, PlayerEntity> = { ...state.players, ...players };
+          const trace = resolveHitscanShot(
+            pellet.originX,
+            pellet.originY,
+            pellet.aimAngle,
+            pellet.rangePx,
+            pellet.ownerId,
+            playersForTrace,
+            hitscanSortedIds,
+            runtime.collisionCache,
+            undefined,
+            undefined,
+            pellet.radius,
+          );
+          if (trace.hitPlayerId === null) continue;
+          pendingHitscanHits.push({
+            victimId: trace.hitPlayerId,
+            ownerId: pellet.ownerId,
+            originX: pellet.originX,
+            originY: pellet.originY,
+            aimAngle: pellet.aimAngle,
+            damage: pellet.damage,
+          });
+        }
       }
     }
 
@@ -294,6 +343,92 @@ export function stepTutorialDuel(
   }
 
   const sortedPlayerIds = (Object.keys(players) as PlayerId[]).sort();
+
+  // 1a. Hitscan hit resolution (2026-07-20, true hitscan) — deferred from the
+  //     per-player loop above; `players` is now fully committed so reading/
+  //     writing ANY victim is safe. Mirrors this file's OWN simpler
+  //     mitigation subset (no elements/leech/chain/ward-shell/team-peel —
+  //     "no cards exist here", same scope the projectile-drain pass below
+  //     already limits itself to).
+  for (const pending of pendingHitscanHits) {
+    const victim = players[pending.victimId];
+    if (!victim || !victim.alive) continue;
+    const victimBuild = resolvePlayerBuild(victim);
+    const sourceProj: Pick<ProjectileEntity, "id" | "x" | "y" | "vx" | "vy" | "damage"> = {
+      id: allocId(),
+      x: pending.originX,
+      y: pending.originY,
+      vx: Math.cos(pending.aimAngle),
+      vy: Math.sin(pending.aimAngle),
+      damage: pending.damage,
+    };
+    const mitigation = tryDeflectDamage(victim, sourceProj, pending.damage, Tick(state.tick + 1), {
+      mirrorShield: victimBuild.mirrorShield,
+      directionalShield: victimBuild.directionalShield,
+      parryCoverMultiplier: victimBuild.parryCoverMultiplier,
+    });
+    const postPlayer = mitigation.player;
+    if (mitigation.evaded) {
+      players[pending.victimId] = postPlayer;
+      continue;
+    }
+    if (mitigation.deflected) {
+      events.push({ t: "parry-deflected", playerId: pending.victimId, projectileId: null });
+      players[pending.victimId] = postPlayer;
+      continue;
+    }
+    if (mitigation.shielded) {
+      if (mitigation.shieldPopped) {
+        events.push({
+          t: "shield-popped",
+          playerId: pending.victimId,
+          remainingCharge: postPlayer.shieldCharge ?? 0,
+        });
+      }
+      players[pending.victimId] = postPlayer;
+      continue;
+    }
+    // Directional shield ("warder" tier) — same frontal-arc check as the
+    // projectile-drain pass below.
+    const shield = runtime.shields.get(pending.victimId);
+    if (shield && shield.crackedMs <= 0) {
+      const aimDx = postPlayer.aimX - postPlayer.x;
+      const aimDy = postPlayer.aimY - postPlayer.y;
+      const aimLen = Math.sqrt(aimDx * aimDx + aimDy * aimDy) || 1;
+      const inLen = Math.sqrt(sourceProj.vx * sourceProj.vx + sourceProj.vy * sourceProj.vy) || 1;
+      const frontality =
+        -((sourceProj.vx / inLen) * (aimDx / aimLen) + (sourceProj.vy / inLen) * (aimDy / aimLen));
+      if (frontality > Math.cos(SHIELD_FRONTAL_ARC_RAD / 2)) {
+        shield.hitStacks += 1;
+        if (shield.hitStacks >= SHIELD_CRACK_THRESHOLD) {
+          shield.hitStacks = 0;
+          shield.crackedMs = SHIELD_CRACK_WINDOW_MS;
+          events.push({ t: "shield-popped", playerId: pending.victimId, remainingCharge: 0 });
+        }
+        players[pending.victimId] = postPlayer;
+        continue;
+      }
+    }
+    const newHealth = Math.max(0, postPlayer.health - mitigation.damage);
+    const wasAlive = postPlayer.alive;
+    const nextVictim = { ...postPlayer, health: newHealth, alive: newHealth > 0 };
+    events.push({
+      t: "hit-confirmed",
+      victimId: pending.victimId,
+      damage: mitigation.damage,
+      sourceProjectileId: null,
+      attackerId: pending.ownerId,
+    });
+    if (wasAlive && newHealth === 0) {
+      events.push({
+        t: "player-killed",
+        victimId: pending.victimId,
+        killerId: pending.ownerId,
+        cause: "projectile",
+      });
+    }
+    players[pending.victimId] = nextVictim;
+  }
 
   // 2. Ceiling clamp.
   if (runtime.ceilingClampY !== null) {

@@ -20,6 +20,7 @@ import {
   WORLD_STATE_TOTAL_SIZE,
   PLAYER_ENTITY_SIZE,
   MAX_PLAYERS,
+  HEADER_SIZE,
 } from "../worldStateBridge";
 import { installLutTables, lutAtan2, lutCos, lutSin } from "../../trig";
 import { nextU32 } from "../../rng";
@@ -80,14 +81,15 @@ const SPLIT_SPEED_MIN = 180;
 const SPLIT_SPEED_SCALE = 0.82;
 const SIZEOF_SPLIT_VEL = ex.sizeof_split_velocity();
 
-// Layout in the WorldState packed buffer: header (48) + player
+// Layout in the WorldState packed buffer: header (HEADER_SIZE) + player
 // preamble (8) + MAX_PLAYERS*PLAYER_ENTITY_SIZE player bytes +
 // projectile preamble (8) + projectile array start. Derived from the
 // live constants (2026-07-18) — this used to hardcode `16 * 288`, which
 // silently desynced the moment PLAYER_ENTITY_SIZE grew (288 → 296 for
 // the ninja energy field) and every read here started landing 128 bytes
-// before the real projectile data.
-const PROJECTILES_OFFSET = 48 + 8 + MAX_PLAYERS * PLAYER_ENTITY_SIZE + 8;
+// before the real projectile data. Same treatment for HEADER_SIZE
+// (2026-07-20: 48 → 56 for WorldStateHeader.round_winner_idx).
+const PROJECTILES_OFFSET = HEADER_SIZE + 8 + MAX_PLAYERS * PLAYER_ENTITY_SIZE + 8;
 
 function makeBaseProjectile(): ProjectileEntity {
   return {

@@ -48,7 +48,10 @@ pub const WeaponBase = extern struct {
 
 const STARTER_PISTOL = WeaponBase{
     // Mirrors client/src/sim/data/weapons.ts: bumped 10->12 (balance audit,
-    // snappier round-1 pre-card TTK).
+    // snappier round-1 pre-card TTK). projectile_speed speed-bump attempt
+    // REVERTED (2026-07-20) — see weapons.ts's own doc comment: every value
+    // tried above 650 broke a real collision test identically, not a
+    // gradual risk. Left at the known-good 650 pending a real investigation.
     .damage = 12.0,
     .fire_rate = 4.0,
     .projectile_speed = 650.0,

@@ -601,10 +601,11 @@ describe("Priest tendrils: CRITICAL regression — every other class's projectil
 });
 
 describe("Priest tendrils: class gating, reverse direction — Wizard/Ninja/Paladin unaffected by this change", () => {
-  // sprinter (ninja) and heavy (paladin) never touch either the wizard-ramp
-  // OR the priest-tendril code paths at all — a plain byte-identical
-  // formula check is the right bar for them.
-  const FULLY_UNRELATED_CLASSES: PlayerEntity["characterId"][] = ["sprinter", "heavy"];
+  // heavy (paladin) never touches either the wizard-ramp OR the
+  // priest-tendril code paths at all, AND keeps its explicit
+  // `delivery: "projectile"` override (weapons.ts) — a plain byte-identical
+  // formula check is the right bar for it.
+  const FULLY_UNRELATED_CLASSES: PlayerEntity["characterId"][] = ["heavy"];
   for (const characterId of FULLY_UNRELATED_CLASSES) {
     test(`${characterId}: a single fire tick is byte-identical to the pre-tendril formula`, () => {
       const player = mkPlayer({ characterId });
@@ -626,6 +627,26 @@ describe("Priest tendrils: class gating, reverse direction — Wizard/Ninja/Pala
     });
   }
 
+  // sprinter (ninja) has NO entry of its own in weapons.ts's
+  // `CLASS_BASE_WEAPON` (classExpression.test.ts asserts this by object
+  // identity: ninja and wizard deliberately share the exact same base gun)
+  // — so true hitscan (2026-07-20) reaches ninja's basic gun right along
+  // with wizard's, same as "balanced" below. Fires via `hitscanPellets`, not
+  // `projectiles`, but pathing/element/tendril are still untouched by any
+  // priest-only SYZ_TENDRIL_* constant.
+  test("sprinter (ninja): shares Wizard's true-hitscan basic gun (same base-weapon object) — pathing/element/tendril unaffected by the priest-tendril rework", () => {
+    const player = mkPlayer({ characterId: "sprinter" });
+    const build = resolvePlayerBuild(player);
+    expect(build.delivery).toBe("raycast");
+    let nextId = 1;
+    const result = stepWeapon(player, true, { x: 500, y: 0 }, DT_MS, () => EntityId(nextId++));
+    expect(result.fired).toBe(true);
+    expect(result.projectiles).toHaveLength(0);
+    expect(result.hitscanPellets).toHaveLength(build.projectile.count);
+    expect(result.hitscanPellets[0]!.element).toBe(build.projectile.element);
+    expect(result.hitscanPellets[0]!.tendril).toBeUndefined();
+  });
+
   // "balanced" (wizard) legitimately carries its OWN separate,
   // already-tested (wizardChannelWeapon.test.ts) ramp-driven cooldown
   // deviation from the flat pre-ramp formula — that's Part 1 of this same
@@ -634,18 +655,20 @@ describe("Priest tendrils: class gating, reverse direction — Wizard/Ninja/Pala
   // wrong thing. What THIS priest-only change must not do is add anything
   // ON TOP of that: wizard's pathing/element/tendril must stay exactly
   // what starterWeapon always resolved to, completely untouched by any
-  // SYZ_TENDRIL_* constant.
-  test("balanced (wizard): the priest tendril rework adds nothing beyond the wizard's own already-tested ramp — pathing/element/tendril unaffected", () => {
+  // SYZ_TENDRIL_* constant. True hitscan (2026-07-20) moved wizard's shot
+  // from `projectiles` to `hitscanPellets` — `pathing` isn't a field on a
+  // hitscan pellet at all (there's no travel path to have one), so that
+  // specific assertion is dropped; element/tendril still apply.
+  test("balanced (wizard): the priest tendril rework adds nothing beyond the wizard's own already-tested ramp — element/tendril unaffected", () => {
     const player = mkPlayer({ characterId: "balanced" });
     const build = resolvePlayerBuild(player);
-    expect(build.projectile.pathing).toBe("straight");
+    expect(build.delivery).toBe("raycast");
     expect(build.projectile.element).toBe("crystal");
     let nextId = 1;
     const result = stepWeapon(player, true, { x: 500, y: 0 }, DT_MS, () => EntityId(nextId++));
     expect(result.fired).toBe(true);
-    expect(result.projectiles[0]!.pathing).toBe("straight");
-    expect(result.projectiles[0]!.element).toBe("crystal");
-    expect(result.projectiles[0]!.enemyOnly).toBeUndefined();
-    expect(result.projectiles[0]!.tendril).toBeUndefined();
+    expect(result.projectiles).toHaveLength(0);
+    expect(result.hitscanPellets[0]!.element).toBe("crystal");
+    expect(result.hitscanPellets[0]!.tendril).toBeUndefined();
   });
 });

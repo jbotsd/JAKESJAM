@@ -493,6 +493,28 @@ describe("Syzygist catalog v1 — representative sim effects (low-aim auto-targe
     expect(res.state.players[A]!.slot1CooldownUntilTick).toBeUndefined();
   });
 
+  test("Contagion: the jump preserves the ORIGINAL curse's attribution, not the Contagion caster's", () => {
+    // A different Syzygist (D) originally cursed `burning` — A merely
+    // spreads it via Contagion. The jumped burn on `clean` must still
+    // credit D's Devotion/Flock income, not A's (2026-07-19 D3 fast-follow
+    // — a Contagion chain extends an EXISTING caster's income, it doesn't
+    // invent a second, independently-attributed one).
+    const originalCurser = PlayerId("d");
+    const caster = mkPlayer(A, 400, 400, "shielded", { cards: ["contagion"] });
+    const burning = mkPlayer(B, 460, 400, "balanced", {
+      burnUntilTick: Tick(600), burnDps: 7, burnTickLastApplied: Tick(0), burnSourceId: originalCurser,
+    });
+    const clean = mkPlayer(PlayerId("c"), 500, 400, "balanced");
+    let state = mkState([caster, burning, clean]);
+    const runtime = createRuntime(flatMap);
+    const res = stepWithRuntime(
+      state, runtime,
+      inputsWith([caster, burning, clean], { [A as string]: frame(SLOT1_BIT, 1) }), DT_MS,
+    );
+    expect(res.state.players[PlayerId("c")]!.burnSourceId).toBe(originalCurser);
+    expect(res.state.players[PlayerId("c")]!.burnSourceId).not.toBe(A);
+  });
+
   test("Flock Pulse: an instant nova that damages nearby enemies, scaling with entangled-ally count", () => {
     const soloCaster = mkPlayer(A, 400, 400, "shielded", { cards: ["flock-pulse"] });
     const soloVictim = mkPlayer(B, 440, 400, "balanced");
@@ -524,6 +546,43 @@ describe("Syzygist catalog v1 — representative sim effects (low-aim auto-targe
     buffedState = buffedStepped.state;
     const buffedDealt = 100 - buffedState.players[B]!.health;
     expect(buffedDealt).toBeGreaterThan(soloDealt);
+  });
+
+  test("Flock Pulse: a SOLO caster's nova also scales with cursed-enemy count — 'Solo: cursed count' per the doc", () => {
+    // Same solo baseline as the test above (no ally, no curse) vs a solo
+    // caster with a DIFFERENT enemy currently burning from their own hit —
+    // 2026-07-19 D3 fast-follow closed the "Solo: cursed count; team:
+    // allies+cursed" half of the catalog doc's own Flock Pulse row, which
+    // previously left every solo cast doing only SYZ_FLOCK_PULSE_BASE_DAMAGE
+    // regardless of how many enemies the caster had cursed.
+    const bareCaster = mkPlayer(A, 400, 400, "shielded", { cards: ["flock-pulse"] });
+    const bareVictim = mkPlayer(B, 440, 400, "balanced");
+    let bareState = mkState([bareCaster, bareVictim]);
+    const bareRuntime = createRuntime(flatMap);
+    let bareRes = stepWithRuntime(
+      bareState, bareRuntime,
+      inputsWith([bareCaster, bareVictim], { [A as string]: frame(SLOT1_BIT, 1) }), DT_MS,
+    );
+    bareState = bareRes.state;
+    const bareStepped = stepUntil(bareState, bareRuntime, [bareCaster, bareVictim], 15, (s) => s.players[B]!.health < 100);
+    const bareDealt = 100 - bareStepped.state.players[B]!.health;
+
+    const cursedCaster = mkPlayer(A, 400, 400, "shielded", { cards: ["flock-pulse"] });
+    const cursedEnemy = mkPlayer(PlayerId("cursed"), 460, 400, "balanced", {
+      burnUntilTick: Tick(600), burnDps: 7, burnTickLastApplied: Tick(0), burnSourceId: A,
+    });
+    const cursedVictim = mkPlayer(B, 440, 400, "balanced");
+    let cursedState = mkState([cursedCaster, cursedEnemy, cursedVictim]);
+    const cursedRuntime = createRuntime(flatMap);
+    let cursedRes = stepWithRuntime(
+      cursedState, cursedRuntime,
+      inputsWith([cursedCaster, cursedEnemy, cursedVictim], { [A as string]: frame(SLOT1_BIT, 1) }), DT_MS,
+    );
+    cursedState = cursedRes.state;
+    const cursedStepped = stepUntil(cursedState, cursedRuntime, [cursedCaster, cursedEnemy, cursedVictim], 15, (s) => s.players[B]!.health < 100);
+    const cursedDealt = 100 - cursedStepped.state.players[B]!.health;
+
+    expect(cursedDealt).toBeGreaterThan(bareDealt);
   });
 
   // D3 brake (docs/axiom-deviations-audit.md's Syzygist entry — see

@@ -15,7 +15,7 @@ import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 
 import { loadSimFromBytes } from "../loader";
-import { packWorldState } from "../worldStateBridge";
+import { packWorldState, HEADER_SIZE } from "../worldStateBridge";
 import { installLutTables } from "../../trig";
 import {
   EntityId,
@@ -50,7 +50,9 @@ installLutTables(
   new Float64Array(ex.memory.buffer, ex.lut_atan_table_ptr(), ex.lut_table_size()),
 );
 
-const PLAYERS_OFFSET = 48 + 8;
+// HEADER_SIZE (2026-07-20: 48 → 56 for WorldStateHeader.round_winner_idx) —
+// derived from the live constant, not re-hardcoded.
+const PLAYERS_OFFSET = HEADER_SIZE + 8;
 const SHIELD_CHARGE_OFFSET = 11 * 8;
 const FLAGS_OFFSET = 17 * 8 + 15 * 4;
 const PARRY_ACTIVE_TICK_OFFSET = 17 * 8 + 4 * 4;

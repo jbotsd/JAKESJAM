@@ -67,6 +67,19 @@ export type ProjectileRenderModel = {
    * class's shot.
    */
   tendril: boolean;
+  /** True for Interstice's small precision shots — Edge Storm's wave-off-
+   * swing AND Needle's shard — `proj.ninjaBladeShard === true` (types.ts,
+   * `ProjectileEntity`), the same dedicated-identity-flag shape as
+   * `tendril` immediately above. Opts a shot into a bespoke, smaller
+   * blade-sliver body + the Interstice cyan tint (ProjectileVfx.ts)
+   * instead of the Geometrician's own crystal-dart shape either used to
+   * inherit purely from riding `element === "crystal"`. */
+  ninjaBladeShard: boolean;
+  /** True for Kindled's Sunspike specifically — `proj.kindledThrust ===
+   * true` (types.ts). Opts into a solid, symmetric gold spike body
+   * (ProjectileVfx.ts's `drawSpikeBody`) instead of inheriting whatever
+   * shape/element the caster's own card build resolves to. */
+  kindledThrust: boolean;
 };
 
 function blankProjectile(): ProjectileRenderModel {
@@ -87,6 +100,8 @@ function blankProjectile(): ProjectileRenderModel {
     impactRadiusPx: 0,
     bodyAlpha: 1,
     tendril: false,
+    ninjaBladeShard: false,
+    kindledThrust: false,
   };
 }
 
@@ -126,6 +141,8 @@ export function produceProjectiles(
       m.bodyAlpha = 1;
     }
     m.tendril = proj.tendril === true;
+    m.ninjaBladeShard = proj.ninjaBladeShard === true;
+    m.kindledThrust = proj.kindledThrust === true;
   }
   return n;
 }

@@ -25,6 +25,7 @@ describe("setStepWeaponBackend", () => {
       return {
         player: {} as never,
         projectiles: [],
+        hitscanPellets: [],
         fired: false,
         desiredSatelliteCount: 0,
         rngState: 0,

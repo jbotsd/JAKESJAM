@@ -8,7 +8,7 @@
 //  - "entangle" (default): drives the REAL ConstructVfxController with a
 //    synthetic WorldState — state -> planEntanglement -> controller -> off-pool
 //    tether + pooled bursts/motes; mark/unmark fire bind/snap via real state.
-//  - "kindred": the paladin divine ward — a persistent faceted dome drawn into a
+//  - "kindled": the paladin divine ward — a persistent faceted dome drawn into a
 //    dedicated off-pool layer (never the shared pool), plus raise/absorb/drop
 //    one-shots and the Kindled Edge weapon.
 //
@@ -26,10 +26,16 @@ import {
   spawnWardAbsorb,
   spawnWardDrop,
   GEOMETRICIAN_TINT,
-  KINDRED_TINT,
+  KINDLED_TINT,
   INTERSTICE_TINT,
+  SYZYGIST_TINT,
   drawBladeSwing,
   drawKindledSwing,
+  spawnNovaBurst,
+  drawBuffAura,
+  spawnBlinkStreak,
+  drawGroundField,
+  spawnGhostGuardDodge,
 } from "./game/render/LightConstruct";
 import { meleeBladeAngle } from "./game/render/meleeTiming.js";
 import type { CharacterArchetype, PlayerId, Vec2, WorldState } from "./sim";
@@ -50,8 +56,8 @@ type HarnessWindow = Window & {
 
 const resolveClassId = (cid: CharacterArchetype): string => (cid === "shielded" ? "priest" : "wizard");
 
-const KINDRED_POS: Vec2 = { x: 340, y: 200 }; // paladin body
-const KINDRED_SLAB: Vec2 = { x: 402, y: 208 }; // the shield HELD to the front
+const KINDLED_POS: Vec2 = { x: 340, y: 200 }; // paladin body
+const KINDLED_SLAB: Vec2 = { x: 402, y: 208 }; // the shield HELD to the front
 
 class HarnessScene extends Phaser.Scene {
   private pool!: ParticlePool;
@@ -62,12 +68,12 @@ class HarnessScene extends Phaser.Scene {
   private priestHalo!: Phaser.GameObjects.Arc;
   private victim!: Phaser.GameObjects.Arc;
   private victimHalo!: Phaser.GameObjects.Arc;
-  private kindred!: Phaser.GameObjects.Arc;
-  private kindredHalo!: Phaser.GameObjects.Arc;
+  private kindled!: Phaser.GameObjects.Arc;
+  private kindledHalo!: Phaser.GameObjects.Arc;
   private t = 0;
   private wardPhase = 0;
   private markActive = true;
-  private mode: "entangle" | "kindred" = "entangle";
+  private mode: "entangle" | "kindled" = "entangle";
   private wardActive = false;
   private wardIntensity = 0; // eases toward wardActive so raise/drop ramp smoothly
   private victimPos: Vec2 = { x: 520, y: 170 };
@@ -81,6 +87,13 @@ class HarnessScene extends Phaser.Scene {
     back: Vec2;
     tipHistory: Vec2[];
   } | null = null;
+  // Phase 3 primitive demo state — continuous-redraw layers (aura/field) plus
+  // toggle booleans; nova/blink/dodge are one-shot pooled transients fired
+  // straight from the switch below, same as "shards".
+  private auraDemoLayer!: Phaser.GameObjects.Graphics;
+  private fieldDemoLayer!: Phaser.GameObjects.Graphics;
+  private auraDemoStyle: "slash" | "ooze" | "shatter" | "seal" | null = null;
+  private fieldDemoActive = false;
 
   constructor() {
     super("harness");
@@ -98,6 +111,10 @@ class HarnessScene extends Phaser.Scene {
     this.wardLayer.setDepth(6);
     this.meleeReviewLayer = this.add.graphics().setDepth(30);
     this.meleeReviewLayer.setBlendMode(Phaser.BlendModes.ADD);
+    this.auraDemoLayer = this.add.graphics().setDepth(9);
+    this.auraDemoLayer.setBlendMode(Phaser.BlendModes.ADD);
+    this.fieldDemoLayer = this.add.graphics().setDepth(3);
+    this.fieldDemoLayer.setBlendMode(Phaser.BlendModes.ADD);
 
     this.priestHalo = this.add
       .circle(200, 220, 30, 0xffcc88, 0.18)
@@ -107,13 +124,13 @@ class HarnessScene extends Phaser.Scene {
     this.victimHalo = this.add.circle(520, 170, 30, 0xffcc88, 0.28).setBlendMode(Phaser.BlendModes.ADD).setDepth(20);
     this.victim = this.add.circle(520, 170, 13, 0xf0c48a, 1).setDepth(20);
 
-    // Kindred paladin — hidden until switched to.
-    this.kindredHalo = this.add
-      .circle(KINDRED_POS.x, KINDRED_POS.y, 26, 0xffd9a0, 0.22)
+    // Kindled paladin — hidden until switched to.
+    this.kindledHalo = this.add
+      .circle(KINDLED_POS.x, KINDLED_POS.y, 26, 0xffd9a0, 0.22)
       .setBlendMode(Phaser.BlendModes.ADD)
       .setDepth(20)
       .setVisible(false);
-    this.kindred = this.add.circle(KINDRED_POS.x, KINDRED_POS.y, 13, 0xffe6b0, 1).setDepth(20).setVisible(false);
+    this.kindled = this.add.circle(KINDLED_POS.x, KINDLED_POS.y, 13, 0xffe6b0, 1).setDepth(20).setVisible(false);
 
     const w = window as HarnessWindow;
     w.__cmd = null;
@@ -135,7 +152,7 @@ class HarnessScene extends Phaser.Scene {
       const colors: Record<ClassId, { body: number; accent: number; name: string }> = {
         wizard: { body: 0x8fcfff, accent: 0x67e8f9, name: "GEOMETRICIAN" },
         ninja: { body: 0x69e6ff, accent: 0x22d3ee, name: "INTERSTICE" },
-        paladin: { body: 0xffd98a, accent: 0xfbbf24, name: "KINDRED" },
+        paladin: { body: 0xffd98a, accent: 0xfbbf24, name: "KINDLED" },
         priest: { body: 0xe7edf7, accent: 0xcbd5e1, name: "SYZYGIST" },
       };
       const skin = colors[classId];
@@ -161,9 +178,9 @@ class HarnessScene extends Phaser.Scene {
       // fixed 120 Hz increments. Rebuilding per requested frame makes captures
       // independent of browser/screenshot latency.
       for (let i = 0; i < 16; i++) this.reviewRig.update(1000 / 120, pose);
-      const style = classId === "paladin" ? "kindred" : "interstice";
+      const style = classId === "paladin" ? "kindled" : "interstice";
       const duration = action === "melee"
-        ? style === "kindred" ? 560 : 360
+        ? style === "kindled" ? 560 : 360
         : ABILITY_ANIMATIONS[action].durationMs;
       if (action === "melee") this.reviewRig.triggerMeleeSwing(style, 1);
       else this.reviewRig.triggerAbility(action);
@@ -176,13 +193,13 @@ class HarnessScene extends Phaser.Scene {
         this.reviewRig.update(dt, pose);
         if (action === "melee") {
           const q = elapsed / duration;
-          const trailStart = style === "kindred" ? 0.38 : 0.32;
-          const trailEnd = style === "kindred" ? 0.88 : 0.84;
+          const trailStart = style === "kindled" ? 0.38 : 0.32;
+          const trailEnd = style === "kindled" ? 0.88 : 0.84;
           if (q >= trailStart && q <= trailEnd) {
             const hand = this.reviewRig.getHandWorld(0);
             if (hand) {
-              const reach = style === "kindred" ? 88 : 82;
-              const sweep = style === "kindred" ? 2.5 : 2.25;
+              const reach = style === "kindled" ? 88 : 82;
+              const sweep = style === "kindled" ? 2.5 : 2.25;
               const a = meleeBladeAngle(-0.276, sweep, 1, q, style);
               tipHistory.push({ x: hand.x + Math.cos(a) * reach, y: hand.y + Math.sin(a) * reach });
             }
@@ -197,7 +214,7 @@ class HarnessScene extends Phaser.Scene {
         back: this.reviewRig.getHandWorld(1) ?? { x: 340, y: 310 },
         tipHistory: tipHistory.slice(-18),
       };
-      for (const obj of [this.priest, this.priestHalo, this.victim, this.victimHalo, this.kindred, this.kindredHalo]) {
+      for (const obj of [this.priest, this.priestHalo, this.victim, this.victimHalo, this.kindled, this.kindledHalo]) {
         obj.setVisible(false);
       }
     };
@@ -206,7 +223,7 @@ class HarnessScene extends Phaser.Scene {
 
   private hitOnSlab(): Vec2 {
     // A hit landing on the shield's outward (left) face.
-    return { x: KINDRED_SLAB.x - 30, y: KINDRED_SLAB.y - 8 };
+    return { x: KINDLED_SLAB.x - 30, y: KINDLED_SLAB.y - 8 };
   }
 
   update(_time: number, delta: number): void {
@@ -223,16 +240,16 @@ class HarnessScene extends Phaser.Scene {
     if (cmd) {
       w.__cmd = null;
       switch (cmd) {
-        case "kindred":
-          this.mode = "kindred";
+        case "kindled":
+          this.mode = "kindled";
           this.markActive = false;
           this.wardActive = false;
           this.priest.setVisible(false);
           this.priestHalo.setVisible(false);
           this.victim.setVisible(false);
           this.victimHalo.setVisible(false);
-          this.kindred.setVisible(true);
-          this.kindredHalo.setVisible(true);
+          this.kindled.setVisible(true);
+          this.kindledHalo.setVisible(true);
           break;
         case "mark":
           this.markActive = true;
@@ -256,24 +273,65 @@ class HarnessScene extends Phaser.Scene {
           break;
         case "raise":
           this.wardActive = true;
-          spawnWardRaise(this.pool, KINDRED_SLAB, KINDRED_TINT);
+          spawnWardRaise(this.pool, KINDLED_SLAB, KINDLED_TINT);
           break;
         case "absorb":
-          spawnWardAbsorb(this.pool, KINDRED_POS, this.hitOnSlab(), KINDRED_TINT);
+          spawnWardAbsorb(this.pool, KINDLED_POS, this.hitOnSlab(), KINDLED_TINT);
           break;
         case "drop":
           this.wardActive = false;
-          spawnWardDrop(this.pool, KINDRED_SLAB, KINDRED_TINT);
+          spawnWardDrop(this.pool, KINDLED_SLAB, KINDLED_TINT);
           break;
         case "edge":
-          // Kindred crystal-edge swing to the LEFT, clear of the shield held on
+          // Kindled crystal-edge swing to the LEFT, clear of the shield held on
           // the right — driven through the controller's persistent swing layer.
           this.controller.triggerSwing(
             "paladin",
-            KINDRED_POS,
-            { x: KINDRED_POS.x - 16, y: KINDRED_POS.y + 4 },
+            KINDLED_POS,
+            { x: KINDLED_POS.x - 16, y: KINDLED_POS.y + 4 },
             2.3,
           );
+          break;
+        // ── Phase 3 primitive demos (2026-07-20) ──────────────────────────
+        case "nova-slash":
+          spawnNovaBurst(this.pool, { x: 300, y: 250 }, 90, INTERSTICE_TINT, "slash");
+          break;
+        case "nova-ooze":
+          spawnNovaBurst(this.pool, { x: 300, y: 250 }, 90, SYZYGIST_TINT, "ooze");
+          break;
+        case "nova-shatter":
+          spawnNovaBurst(this.pool, { x: 300, y: 250 }, 90, GEOMETRICIAN_TINT, "shatter");
+          break;
+        case "nova-seal":
+          spawnNovaBurst(this.pool, { x: 300, y: 250 }, 90, KINDLED_TINT, "seal");
+          break;
+        case "aura-slash":
+          this.auraDemoStyle = this.auraDemoStyle === "slash" ? null : "slash";
+          break;
+        case "aura-ooze":
+          this.auraDemoStyle = this.auraDemoStyle === "ooze" ? null : "ooze";
+          break;
+        case "aura-shatter":
+          this.auraDemoStyle = this.auraDemoStyle === "shatter" ? null : "shatter";
+          break;
+        case "aura-seal":
+          this.auraDemoStyle = this.auraDemoStyle === "seal" ? null : "seal";
+          break;
+        case "field":
+          this.fieldDemoActive = !this.fieldDemoActive;
+          break;
+        case "blink-trail":
+          // Drift Step (priest) — the one blink ability in scope that gets
+          // the connecting afterimage trail (CA5's tether-rights gating).
+          spawnBlinkStreak(this.pool, { x: 200, y: 300 }, { x: 460, y: 220 }, SYZYGIST_TINT, "ooze");
+          break;
+        case "blink-commit":
+          // Slip Node/Plant Charge/Bulwark Step — no trail, departure +
+          // arrival burst only (CA5 bans the echo register for these classes).
+          spawnBlinkStreak(this.pool, { x: 200, y: 300 }, { x: 460, y: 220 }, KINDLED_TINT, "seal");
+          break;
+        case "dodge":
+          spawnGhostGuardDodge(this.pool, { x: 380, y: 260 }, INTERSTICE_TINT);
           break;
       }
     }
@@ -281,20 +339,36 @@ class HarnessScene extends Phaser.Scene {
     // hold — the paladin's held slab shield, drawn every frame into the off-pool
     // layer (rune-screen alive via wardPhase). Its intensity eases toward the
     // ward state, so raise fades it IN and drop fades it OUT (no instant pop).
-    const wardTarget = this.mode === "kindred" && this.wardActive ? 1 : 0;
+    const wardTarget = this.mode === "kindled" && this.wardActive ? 1 : 0;
     this.wardIntensity += (wardTarget - this.wardIntensity) * Math.min(1, delta / 160);
     this.wardLayer.clear();
     if (this.wardIntensity > 0.02) {
-      drawWardSlab(this.wardLayer, KINDRED_SLAB, KINDRED_TINT, this.wardPhase, this.wardIntensity);
+      drawWardSlab(this.wardLayer, KINDLED_SLAB, KINDLED_TINT, this.wardPhase, this.wardIntensity);
+    }
+
+    // Phase 3 continuous-redraw demos — aura pulse + ground field, driven by
+    // the SAME wardPhase clock (reuse, not a new counter).
+    this.auraDemoLayer.clear();
+    if (this.auraDemoStyle) {
+      const tint =
+        this.auraDemoStyle === "slash" ? INTERSTICE_TINT
+        : this.auraDemoStyle === "ooze" ? SYZYGIST_TINT
+        : this.auraDemoStyle === "shatter" ? GEOMETRICIAN_TINT
+        : KINDLED_TINT;
+      drawBuffAura(this.auraDemoLayer, { x: 550, y: 320 }, tint, this.auraDemoStyle, this.wardPhase, 24, 1);
+    }
+    this.fieldDemoLayer.clear();
+    if (this.fieldDemoActive) {
+      drawGroundField(this.fieldDemoLayer, { x: 420, y: 340 }, 90, GEOMETRICIAN_TINT, "shatter", 1, this.wardPhase);
     }
 
     this.meleeReviewLayer.clear();
     if (this.rigReview?.action === "melee") {
       const r = this.rigReview;
       if (r.classId === "paladin") {
-        drawKindledSwing(this.meleeReviewLayer, r.lead, r.back, -0.276, 88, KINDRED_TINT, 2.5, 1, r.t, r.tipHistory);
+        drawKindledSwing(this.meleeReviewLayer, r.lead, r.back, -0.276, 88, KINDLED_TINT, 2.5, 1, r.t, r.tipHistory);
       } else {
-        drawBladeSwing(this.meleeReviewLayer, r.lead, r.back, -0.276, 82, INTERSTICE_TINT, 2.25, 1, r.t, r.tipHistory);
+        drawBladeSwing(this.meleeReviewLayer, r.lead, r.back, -0.276, 82, INTERSTICE_TINT, 2.25, 1, r.t);
       }
     } else if (this.meleeReview?.kind === "ninja") {
       const t = this.meleeReview.t;
@@ -321,8 +395,8 @@ class HarnessScene extends Phaser.Scene {
         2.25,
         1,
         t,
-        tipHistory,
       );
+      void tipHistory;
     } else if (this.meleeReview?.kind === "paladin") {
       const t = this.meleeReview.t;
       const pivotAt = (q: number): Vec2 => {
@@ -335,7 +409,7 @@ class HarnessScene extends Phaser.Scene {
       const tipHistory = t < trailStart ? [] : Array.from({ length: 22 }, (_, i) => trailStart + (trailEnd - trailStart) * (i / 21))
         .map((q) => {
           const p = pivotAt(q);
-          const a = meleeBladeAngle(-0.2, 2.5, 1, q, "kindred");
+          const a = meleeBladeAngle(-0.2, 2.5, 1, q, "kindled");
           return { x: p.x + Math.cos(a) * 88, y: p.y + Math.sin(a) * 88 };
         });
       drawKindledSwing(
@@ -344,7 +418,7 @@ class HarnessScene extends Phaser.Scene {
         { x: 340, y: 244 },
         -0.2,
         88,
-        KINDRED_TINT,
+        KINDLED_TINT,
         2.5,
         1,
         t,
@@ -352,7 +426,7 @@ class HarnessScene extends Phaser.Scene {
       );
     }
 
-    // The REAL entanglement pipeline (does nothing in kindred mode: markActive off).
+    // The REAL entanglement pipeline (does nothing in kindled mode: markActive off).
     const tick = Math.floor(this.t / 16);
     const state = {
       tick,

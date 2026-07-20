@@ -20,11 +20,12 @@ notes below. Ninja/Interstice now has the full 10-of-10 catalog — Paper
 Double (the decoy) shipped as its own fast-follow once its blocking
 dependency (a new decoy entity type, `PaperDoubleEntity`/`state.
 paperDoubles`) was actually built; the core ability (spawn/move/
-damageable/expire/burst) is live, the Resonance-tier "Fooled" debuff and
-the window-gated position-swap variant are both recorded v1 deferrals (see
-cardTypes.ts's own updated header comment) — even though this catalog was
-never its own workboard tier. The AOE role tag across all 4 classes was
-reworked into real area effects (was projectile-burst spam). 1.2 (unified
+damageable/expire/burst) is live, and its two Resonance-tier sub-features —
+the "Fooled" debuff and the window-gated position-swap variant, both
+recorded v1 deferrals — closed the same day (2026-07-19, see cardTypes.ts's
+own updated header comment) — even though this catalog was never its own
+workboard tier. The AOE role tag across all 4 classes was reworked into
+real area effects (was projectile-burst spam). 1.2 (unified
 resource pass) was deliberately NOT done — Kindling/Devotion/energy stay
 separate `PlayerEntity` fields; see combat.ts/constants.ts doc comments
 for why generalizing now was judged premature. **Remaining real work is
@@ -61,7 +62,9 @@ when:** a first-time player in round 1 is asked to actively track ≤4 things.
 differently; nothing yet *enforces* it. **The per-class sweep is DONE — see the
 per-class table in `axiom-deviations-audit.md`.** Concrete results to act on:
 - **Geometrician:** re-job **Measure (#8)** (confirmed filler) and check **Recoil Step
-  (#10)** vs Slip Node — give each an orthogonal reason or cut.
+  (#10)** vs Slip Node — give each an orthogonal reason or cut. **RESOLVED 2026-07-19** —
+  see `axiom-deviations-audit.md`'s Geometrician section for the rework (Measure = precision
+  spread-zero/damage window; Recoil Step = kite self-knockback-reduction rider).
 - **Kindled [NEW]:** coverage-lock **miss** — only **buff ×1, movement ×1** (spec requires
   ≥2 per role); and **Aegis Share (#8) + Rally Light (#9) are solo-dead** in FFA (team-only,
   no solo fallback). Add second buff/movement + solo clauses, or declare Kindled team-leaning.
@@ -102,19 +105,28 @@ unboundedly within a single round.
 These don't wait on P2, duos, or anything else in flight. Best chunks to
 hand off immediately.
 
-### 0.1 — Resonance system (class-agnostic, high value)
-**Confirmed fully unbuilt** (`grep -rn "resonance" client/src server/src`
-returns nothing but an unrelated audio comment). This is the "chain
-unlike abilities for a bonus" system from `docs/classes-goal.md`'s
-Rotation section — testable RIGHT NOW against Wizard's existing 15
-abilities (5 six-axes + 10 Geometrician catalog), no other class needed.
-Scope: per-ability "resonance window" state (~2s) on cast, a DIFFERENT
-ability cast inside the window consumes it for a bonus (empowered effect
-/ partial CD refund / emission-flavored rider — pick one v1 shape and
-document it), sim-authoritative (predicted, wire-visible), TS+Zig parity
-if it crosses the ABI (check whether ability state already crosses it via
-the six-axes work — likely yes). This is the single best isolated chunk
-in the whole board.
+### 0.1 — Resonance system (class-agnostic, high value) — DONE
+**Shipped and tested** (`client/src/sim/__tests__/resonance.test.ts`,
+6 tests). The "chain unlike abilities for a bonus" system from
+`docs/classes-goal.md`'s Rotation section is live: `resonanceUntilTick`/
+`resonanceSourceKind` on `PlayerEntity` (types.ts), opened/refreshed on
+every successful ability activation (six-axes Layer 2 kinds and every
+catalog kind alike — reads `active.kind` generically, never branches on
+classId). A DIFFERENT kind cast inside the ~2s window
+(`RESONANCE_WINDOW_MS`) consumes it for the v1 bonus: a fractional
+cooldown refund (`RESONANCE_CD_REFUND_FRACTION`) on the CONSUMING
+ability's own freshly-computed cooldown, plus a `resonance-triggered`
+event for render/audio to hook. Same kind cast twice never resonates
+(chains unlike abilities only, per spec). TS-only — resonance state never
+crosses the Zig ABI, same precedent as `sealUntilTick`/
+`aegisShareUntilTick` (player-movement physics is the only Zig surface).
+This paragraph originally said "confirmed fully unbuilt"; that was stale
+against this doc's own 2026-07-18 header update declaring 0.1 done — left
+uncorrected until now. Paper Double's window-gated position-swap variant
+(cardTypes.ts's AbilityKind header comment) — a bespoke per-ability
+consumption on top of this generic mechanism, not a gap in the mechanism
+itself — was the one still-open resonance-specific gap; it closed
+2026-07-19 alongside Paper Double's Fooled debuff.
 
 ### 0.2 — E-key ultimate = Emission, verify/complete
 The locked ruling: charged ultimate IS the composed Emission through the

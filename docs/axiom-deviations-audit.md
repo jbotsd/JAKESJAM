@@ -161,6 +161,22 @@ pass — flagged **[NEW]**.
 - **A14 watch:** **Hard Aperture (#6)** — a strong not-fighting hold in an aggression-first
   game (already on the watch list).
 - **Verdict:** mostly orthogonal; one confirmed filler, one suspect, one mild loop.
+- **RESOLVED (2026-07-19, D2 fast-follow):** both reworked in KIND, not magnitude — the fix
+  direction this section itself asked for ("re-job the filler... a different KIND of job, not
+  a bigger number"). **Measure**: was a flat +1-ammo grant; now a short (0.7s) window where
+  fired shots go dead-center (spread forced to 0) with a 1.3x damage amp — a discrete,
+  single-precise-shot tool, mechanically distinct from Overclock's sustained multi-second
+  spray window (which REWARDS continued firing; Measure's short window doesn't). **Recoil
+  Step**: kept its hop unchanged, gained the doc's own long-deferred "next shot gets knock-
+  self reduction" as a real rider window (70% self-knockback reduction on fire) — the
+  orthogonal, kite-specific payoff this section called for: Slip Node is a raw gap-crosser,
+  Recoil Step is now a defensive tool for firing aggressively while retreating without being
+  thrown off your own line. Both land on the SAME window-buff shape Overclock/Sunlance
+  already established (a `*UntilTick` field read at weapon.ts's fire-composition site), no
+  new mechanism invented. See `client/src/sim/types.ts`'s `measureUntilTick`/
+  `recoilStepUntilTick` field comment and `constants.ts`'s `GEO_MEASURE_*`/
+  `GEO_RECOIL_STEP_*` header comments for the full numbers/reasoning, and
+  `geometricianCatalog.test.ts` for the new coverage.
 
 ### Interstice (ninja) — the cleanest catalog
 - **D2:** no obvious filler — all ten differ in kind (two offense = execute vs sustain, two
@@ -233,14 +249,33 @@ pass — flagged **[NEW]**.
 - **[shares Kindled's] Coverage:** buff ×1 (Haste Gift), movement ×1 (Drift Step) — same
   ≥2-per-role gap.
 - **Verdict:** solo design is exemplary; the triple-loop engine is the priority brake.
+- **RESOLVED (2026-07-19, D3 fast-follow):** the shared brake (`syzygistLeadBrakeMultiplier`,
+  World.ts — difference-fed on in-round kill lead, floors at `SYZ_SNOWBALL_BRAKE_FLOOR`)
+  shipped 2026-07-18 for the two-ability engine that actually existed at the time (Devotion
+  accrual + Flock Pulse's per-source damage, both counting live ally-buff carriers). This
+  fast-follow closed the literal gap the sub-bullet names — "Devotion from enemy DoTs/curses"
+  was, until now, an unimplemented half of the design (see constants.ts's SYZYGIST DEVOTION
+  RESOURCE header note) — by stamping `burnSourceId` (types.ts) at the fire-hit site and
+  wiring cursed-enemy counts into BOTH Devotion accrual and Flock Pulse's scaling, alongside
+  the existing ally-buff counts (independently capped, both braked). Bleed Tithe's lifesteal
+  stays a separate, additional, unbraked solo income path — deliberately: it is the class's
+  "solo still has a real floor" mechanism (docs/classes-goal.md chunk 0.3), and the audit's
+  own fix direction never asked for THAT specific number to be braked, only the *compounding*
+  Devotion/Flock engine. Contagion still only copies an existing burn (no new Devotion write
+  of its own) but now correctly carries `burnSourceId` through the jump unchanged, so a
+  spread curse keeps crediting whichever Syzygist originally cast it — closing the last gap
+  the original "the audit's literal 4-ability closed loop does not exist in the shipped code"
+  scope note (constants.ts, SYZYGIST SNOWBALL BRAKE header) flagged as still-aspirational.
+  See `client/src/sim/__tests__/syzygistDevotion.test.ts`'s "enemy curses (solo/FFA floor)"
+  block and `syzygistCatalog.test.ts`'s Flock Pulse / Contagion attribution tests.
 
 ### Cross-class summary
 | Class | D2 filler | D3 brake needed | Coverage / solo |
 |-------|-----------|-----------------|-----------------|
-| Geometrician | Measure (confirmed), Recoil Step (suspect) | Return Glass (mild) | OK |
+| Geometrician | Measure, Recoil Step — **RESOLVED 2026-07-19: both reworked in kind (Measure = precision spread/damage window, Recoil Step = kite self-knockback rider)** | Return Glass (mild) | OK |
 | Interstice | — (clean) | hit-gated = self-braked | OK |
 | Kindled | Aegis/Rally solo-dead — **RESOLVED 2026-07-18** | Retribution Edge — **CLOSED 2026-07-19 by removal (cut from catalog, not braked)** | **RESOLVED 2026-07-18: buff/movement now ×2; Aegis Share has a solo Kindling fallback; Rally Light was already solo-safe. Catalog is 10/10 as of the 2026-07-19 cut (offense/aoe now ×1 each, intentional)** |
-| Syzygist | — | **Bleed+Contagion+Flock (compounding — priority)** | solo done right; buff×1, movement×1 |
+| Syzygist | — | **Bleed+Contagion+Flock (compounding) — RESOLVED 2026-07-19: shared kill-lead brake now covers Devotion accrual + Flock Pulse scaling from BOTH ally-buff and enemy-curse sources; Bleed Tithe's lifesteal stays a deliberately unbraked separate solo floor** | solo done right; buff×1, movement×1 |
 
 **So: yes, now all four are combed** — and the sweep earned two findings the example-pass
 missed (Kindled's coverage-floor miss and its solo-dead abilities), plus located the priority

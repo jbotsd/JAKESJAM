@@ -127,6 +127,34 @@ export const GEO_OVERCLOCK_FIRE_RATE_MULTIPLIER = 1.35;
 export const GEO_OVERCLOCK_SPREAD_MULTIPLIER = 0.7;
 export const GEO_SLIP_NODE_RANGE_PX = 280;
 export const GEO_RECOIL_STEP_HOP_SPEED = 220;
+// Measure/Recoil Step rework (2026-07-19, docs/axiom-deviations-audit.md D2
+// — "re-job Measure (confirmed filler) and check Recoil Step vs Slip Node —
+// give each an orthogonal reason or cut"). Both were originally shipped as
+// this file's leanest possible v1 (a flat +1 ammo grant; an unadorned hop) —
+// see types.ts's measureUntilTick/recoilStepUntilTick field comment for the
+// full "why these specific mechanics" reasoning. Window LENGTH for both
+// lives in cards.ts's `active.durationMs` (this file's own established
+// convention — Overclock's 3000ms is a bare literal there too, never a
+// constants.ts export); only the per-tick multipliers live here, matching
+// GEO_OVERCLOCK_FIRE_RATE_MULTIPLIER/GEO_OVERCLOCK_SPREAD_MULTIPLIER's own
+// precedent. First-draft/playtest-pending like every other number in this
+// file.
+/** Measure: shots fired during the window go dead-center — the doc's own
+ *  "true line" aim-assist flavor, made a real mechanical effect instead of
+ *  a cosmetic VFX note. */
+export const GEO_MEASURE_SPREAD_MULTIPLIER = 0;
+/** Measure: damage amp on the (guaranteed-accurate) shot — modest, sits
+ *  below Sunlance's dedicated-offense-role 1.6x
+ *  (GEO_SUNLANCE_DAMAGE_MULTIPLIER): Measure is a buff-role support press,
+ *  not a second burst-damage button. */
+export const GEO_MEASURE_DAMAGE_MULTIPLIER = 1.3;
+/** Recoil Step: self-knockback multiplier while the rider window is live —
+ *  a strong (70%) reduction: this is the ability's entire reason to exist
+ *  over Slip Node once the hop itself is equal-or-smaller in raw distance,
+ *  so it needs to read as a real, noticeable difference in how much a
+ *  kiting Geometrician gets thrown around by their own shots, not a
+ *  marginal tweak. */
+export const GEO_RECOIL_STEP_RECOIL_MULTIPLIER = 0.3;
 
 /** Basic-fire ramping channel (weapon.ts stepWeaponNative, wizard-only —
  *  RELOCATED from Priest 2026-07-19. Original ask (still the mechanic's own
@@ -521,19 +549,37 @@ export const SYZ_HASTE_DURATION_TICKS_DEFAULT = Math.round(5000 / STEP_MS);
 //     their own income for free by never letting a single-buff window
 //     lapse, which isn't a real choice — it's just remembering to double-
 //     tap the same ally.
-//   - Scope (deliberate v1 cut, matching this session's every other
-//     "recorded deferral"): counts ALLY buff uptime only (regen/haste/
-//     Ward — the substrate chunks 3.1/3.3 actually build). classes-goal.md
-//     also promises "Devotion from enemy DoTs/curses at a real rate" for
-//     the solo-viability floor — that half is NOT implemented here: it
-//     would require every debuff application site (burn/freeze/slow, a
-//     substrate SHARED by every class's fire/ice cards, not Priest-
-//     specific) to carry caster attribution, a broader blast-radius change
-//     than this chunk's "add a Priest-only counting pass" scope allows.
-//     Bleed Tithe/Severance (chunk 3.4) grant lifesteal DIRECTLY instead of
-//     routing solo income through Devotion, so solo Syzygist still has a
-//     real curse+lifesteal floor (chunk 0.3's original scope) without
-//     solo Devotion income — flagged here, not silently dropped.
+//   - Scope, UPDATED 2026-07-19 (D3 fast-follow — "Devotion from enemy
+//     curses" was a recorded v1 deferral; see the struck-through reasoning
+//     below, kept for history): counts BOTH ally buff uptime (regen/haste/
+//     Ward, chunks 3.1/3.3) AND enemy burn uptime sourced from this caster
+//     (`burnSourceId`, types.ts) — closing classes-goal.md's "Devotion from
+//     enemy DoTs/curses at a real rate" solo-viability promise. The original
+//     blast-radius worry below didn't materialize: burn was the ONE debuff
+//     that needed attribution (freeze/slow have no Priest ability routed
+//     through them), and `burnSourceId` is stamped once, universally, at
+//     the single existing fire-hit site (World.ts) — it does not touch
+//     freeze/slow at all. A caster with NO teamId (solo/FFA) can now still
+//     accrue Devotion via cursed enemies even though `isAlly` can never
+//     satisfy for them (team.ts) — the accrual pass no longer skips solo
+//     casters outright; see World.ts's Devotion-accrual pass for the two
+//     source counts (ally + enemy) it now sums, both still capped by
+//     SYZ_DEVOTION_MAX_COUNTED_SOURCES and both still run through
+//     `syzygistLeadBrakeMultiplier` — the D3 brake covers this new source
+//     by construction, same as the comment above it always intended.
+//     Original (2026-07-18) reasoning, preserved: "counts ALLY buff uptime
+//     only... classes-goal.md also promises 'Devotion from enemy DoTs/
+//     curses at a real rate' for the solo-viability floor — that half is
+//     NOT implemented here: it would require every debuff application site
+//     (burn/freeze/slow, a substrate SHARED by every class's fire/ice
+//     cards, not Priest-specific) to carry caster attribution, a broader
+//     blast-radius change than this chunk's 'add a Priest-only counting
+//     pass' scope allows. Bleed Tithe/Severance (chunk 3.4) grant lifesteal
+//     DIRECTLY instead of routing solo income through Devotion, so solo
+//     Syzygist still has a real curse+lifesteal floor (chunk 0.3's original
+//     scope) without solo Devotion income — flagged here, not silently
+//     dropped." Lifesteal stays a SEPARATE, additional solo income path —
+//     this pass adds Devotion on top of it, doesn't replace it.
 /** Devotion pool ceiling — same 0..100 scale convention as
  *  NINJA_ENERGY_MAX/KINDLING_MAX (every class resource on this additive-
  *  field substrate; class-overhaul-workboard.md chunk 1.2's generalization
@@ -552,6 +598,18 @@ export const SYZ_DEVOTION_MAX = 100;
  *  class's whole rotation-feel target (classes-goal.md). First-draft,
  *  playtest-pending like every number this session. */
 export const SYZ_DEVOTION_PER_BUFFED_ALLY_PER_SEC = 2.0;
+/** Devotion earned per second, PER distinct enemy currently burning from
+ *  THIS caster's own fire-element hit (`burnSourceId`, types.ts) — the D3
+ *  fast-follow (2026-07-19) closing "Devotion from enemy DoTs/curses" for
+ *  solo/FFA, where `isAlly` can never satisfy so the buffed-ally rate above
+ *  alone leaves a solo Syzygist's Devotion pool permanently at zero. Same
+ *  numeric value as the ally rate, deliberately: this is a v1 choice to
+ *  avoid tuning a second untested number when the existing snowball brake
+ *  (`SYZ_SNOWBALL_BRAKE_PER_KILL_LEAD`/`_FLOOR`) already governs how far
+ *  either source can run away with a round — first-draft, playtest-pending
+ *  like every number in this file. Named separately (not a re-export of the
+ *  ally constant) so the two can diverge later without an unrelated rename. */
+export const SYZ_DEVOTION_PER_CURSED_ENEMY_PER_SEC = 2.0;
 /** Cap on how many distinct buffed allies count toward accrual per tick —
  *  ties directly to docs/card-pool-v2.md's Flock passive ("cap 4 sources"),
  *  authored as the SAME cap here rather than inventing a different number,
@@ -565,27 +623,27 @@ export const SYZ_DEVOTION_MAX_COUNTED_SOURCES = 4;
 // audit.md's Syzygist entry: "Bleed Tithe + Contagion + Flock Pulse... the
 // single worst A3 hotspot in the game", fix direction "prefer difference-fed
 // brakes: tie the friction to how far AHEAD the loop's owner is"). Scope
-// note, read before touching either consumer below: as SHIPPED, only
-// Devotion accrual and Flock Pulse's per-source damage actually share a
-// mechanism — both dedupe-count the SAME "distinct other player currently
-// carrying this caster's live regen/haste/Ward window" set (World.ts's
-// Devotion-accrual pass and the flock-pulse case block). Bleed Tithe grants
-// lifesteal DIRECTLY (SYZ_BLEED_TITHE_LEECH_FRACTION, on-hit, not routed
-// through Devotion) and Contagion only copies an EXISTING burn onto a fresh
-// target (no Devotion write, no Flock-Pulse-count interaction) — the
-// "Devotion from enemy DoTs/curses" half of classes-goal.md's design that
-// would have wired curses into this same engine is an explicit, already-
-// recorded v1 deferral (see this file's SYZYGIST DEVOTION RESOURCE header
-// note above, "that half is NOT implemented here"). So the audit's literal
-// 4-ability closed loop does not exist in the shipped code today; what DOES
-// exist is a real but already-partially-capped 2-ability loop (Devotion +
-// Flock Pulse), and this brake targets exactly that shared mechanism — the
-// same "one shared stopping mechanism... brakes [the connected ones] at
-// once" fix direction the audit names, applied to what's actually wired
-// rather than what the design doc still aspires to. Written so that IF a
-// future chunk does wire curse-carriers into the same sourceCount (closing
-// the doc's deferred half), the brake below already covers it too — it
-// lives in the shared multiplier, not in either ability's own math.
+// note, UPDATED 2026-07-19 (D3 fast-follow — "Devotion from enemy curses"
+// shipped, see SYZYGIST DEVOTION RESOURCE header above and `burnSourceId`,
+// types.ts): Devotion accrual and Flock Pulse's per-source damage now BOTH
+// dedupe-count TWO sets — "distinct other ally currently carrying this
+// caster's live regen/haste/Ward window" AND "distinct enemy currently
+// burning from this caster's own hit" (World.ts's Devotion-accrual pass and
+// the flock-pulse case block, both summing the two independently-capped
+// counts). Bleed Tithe still grants lifesteal DIRECTLY
+// (SYZ_BLEED_TITHE_LEECH_FRACTION, on-hit, not routed through Devotion —
+// deliberately left as a separate, additional solo income path, not
+// replaced) and Contagion still only copies an EXISTING burn onto a fresh
+// target — but now carries `burnSourceId` forward UNCHANGED with it (the
+// "contagion" pendingSyzygistCasts consumer, World.ts), preserving the
+// ORIGINAL curse's attribution rather than crediting Contagion's own
+// caster. A jumped curse still counts toward whichever Syzygist actually
+// cursed the chain's first target — correct even in a multi-Syzygist match
+// where the spreader and the original curser differ — so Contagion extends
+// an existing caster's Devotion/Flock income without inventing a second,
+// independently-attributed loop. This brake now covers the enemy-source
+// count by construction, exactly as originally written to anticipate — no
+// change needed here, only in the two counting sites.
 /** Multiplier lost per whole kill of IN-ROUND lead over the field average
  *  (`state.round.roundKills`, already computed by World.ts every tick,
  *  reset every round — no new state). Difference-fed per A3's stated
@@ -744,12 +802,16 @@ export const SYZ_FOCUS_HEX_AMP_MULTIPLIER = 1.28;
 export const SYZ_CONTAGION_RADIUS_PX = 260;
 export const SYZ_CONTAGION_JUMP_RADIUS_PX = 220;
 /** Flock Pulse (aoe): instant nova scaled by the caster's OWN currently-
- *  entangled-ally count (the same dedup-by-target-id count Devotion's own
- *  accrual pass computes) — "scaling with # of entities currently entangled
- *  with you" per the doc. Base damage alone is deliberately weak ("weak
- *  cool-white damage" per the doc); the per-source bonus is what makes a
- *  teams-committed Syzygist's nova hit harder than a solo one's, without
- *  solo being damage-zero. Aoe role rework (2026-07-18): was a
+ *  entangled count — allies carrying a live buff PLUS enemies burning from
+ *  this caster's own hit (the same two dedup-by-target-id counts Devotion's
+ *  own accrual pass computes, summed; 2026-07-19 D3 fast-follow added the
+ *  enemy half) — "scaling with # of entities currently entangled with you"
+ *  per the doc's own "Solo: cursed count; team: allies+cursed" line. Base
+ *  damage alone is deliberately weak ("weak cool-white damage" per the
+ *  doc); the per-source bonus is what makes an entangled Syzygist's nova
+ *  hit harder than an idle one's, without solo being damage-zero — true
+ *  now for solo curse-stacking, not just team buff-stacking. Aoe role
+ *  rework (2026-07-18): was a
  *  GEO_LATTICE-style ring of SYZ_FLOCK_PULSE_COUNT discrete shards (BASE +
  *  sourceCount×PER_SOURCE split evenly across them, so any one target
  *  usually only caught one shard's worth); now an instant radius check —
@@ -1068,6 +1130,24 @@ export const NINJA_PAPER_DOUBLE_BURST_DAMAGE = 10;
  *  sub-pixel jitter) should still read as "stationary", not lock onto a
  *  near-random near-zero horizontal velocity sign. */
 export const NINJA_PAPER_DOUBLE_STATIONARY_SPEED_PX = 5;
+// Paper Double's two Resonance-tier gaps (2026-07-19 fast-follow —
+// docs/card-pool-v2.md's "Resonance:" line, cardTypes.ts's own long-standing
+// "STILL a v1 gap" note). Both numbers below are the doc's own literal
+// values, same "no first-draft guessing needed" note as the block above.
+/** "Cast Paper Double INTO a live [resonance] window: you and the double
+ *  swap positions at cast instead" — World.ts's "paper-double" case checks
+ *  for a live resonance window (opened by a DIFFERENT prior ability, same
+ *  "chains unlike abilities" rule every resonance consumer follows) AND a
+ *  still-live decoy owned by this caster; if both hold, the caster and
+ *  their decoy trade positions instead of a fresh decoy spawning. */
+export const NINJA_PAPER_DOUBLE_SWAP_MAX_DISPLACEMENT_PX = 900;
+/** "The burst leaves Fooled (2.0s) on those it catches; abilities cast into
+ *  Fooled gain +25%" — see types.ts's `fooledUntilTick` field comment for
+ *  the full amp-scope reasoning (any damage, not literally ability-only —
+ *  a recorded v1 simplification, matching Facet Break's own identical-scope
+ *  precedent). */
+export const NINJA_FOOLED_DURATION_MS = 2000;
+export const NINJA_FOOLED_DAMAGE_MULTIPLIER = 1.25;
 
 // Mid-round respawn (Jake ruled "A", 2026-07-17, reverting the venue-era
 // bench-until-bell): death costs a short fixed delay, then you're back at

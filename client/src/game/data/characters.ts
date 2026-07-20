@@ -25,16 +25,15 @@ import type { CharacterDefinition } from "../types/game";
 // 2026-07-19, see docs/class-ability-catalogs-v1.md's cut note; Kindled is
 // still 10/10, just a different 10) and Syzygist (10/10 Syzygist catalog
 // abilities wired) both ship real kits now — `kitComing` removed for both,
-// and their `kitSummary`s name real, live abilities. Interstice stays
-// `kitComing: true`: 9/10 Interstice catalog abilities are wired (full
-// melee/dash/energy chassis included), but the tenth — Paper Double — is
-// deliberately deferred (needs a new decoy/summon entity type in
-// WorldState, not just a case in the ability switch; see cardTypes.ts's
-// AbilityKind header comment) and docs/character-sheets-v1.md calls Paper
-// Double "basically their whole personality as a mechanic" — the class's
-// identity-defining piece, not filler. Claiming "full kit" for Interstice
-// while that's still missing would violate A2 (ship the missing feature,
-// never claim the finished one), so the flag stays until it lands.
+// and their `kitSummary`s name real, live abilities. Interstice is now
+// 10/10 too — Paper Double, docs/character-sheets-v1.md's "basically their
+// whole personality as a mechanic" piece, landed 2026-07-19 once its
+// blocking dependency (a decoy/summon entity type in WorldState) was built;
+// kitComing removed below per the same honesty rule. Paper Double's own two
+// sub-features (the resonance-gated position-swap variant, the "Fooled"
+// victim debuff) — recorded deferrals when the core ability first shipped —
+// were CLOSED the same day (D2 fast-follow); see cardTypes.ts's AbilityKind
+// header comment for the full history.
 export const characters: CharacterDefinition[] = [
   {
     id: "balanced",
@@ -73,14 +72,14 @@ export const characters: CharacterDefinition[] = [
     id: "sprinter",
     name: "Interstice",
     classId: "ninja",
-    // Interstice catalog v1 shipped 9/10 (class-overhaul-workboard.md ninja-
-    // catalog chunk, 2026-07-18) — the melee/dash/energy chassis and 9
-    // catalog abilities are real, but Paper Double (the class's namesake
-    // decoy mechanic) is a recorded deferral, not a silent stub — see
-    // cardTypes.ts's AbilityKind header comment. kitComing stays true until
-    // it lands: don't claim "full kit" while the signature piece is absent.
-    kitSummary: "85hp · fastest, smallest silhouette",
-    kitComing: true,
+    // Interstice catalog v1 shipped 10/10 (class-overhaul-workboard.md
+    // ninja-catalog fast-follow, 2026-07-19) — Paper Double, the class's
+    // namesake decoy mechanic, is real; kitComing removed per the honesty
+    // rule above. Its resonance-swap and Fooled-debuff sub-features
+    // (recorded deferrals when Paper Double first shipped) closed the same
+    // day — see cardTypes.ts's AbilityKind header comment for the history.
+    kitSummary:
+      "85hp · fastest, smallest silhouette — melee daggers, Paper Double decoy",
     maxHealth: 85,
     moveSpeedMultiplier: 1.14,
     sizeScale: 0.92,

@@ -171,6 +171,15 @@ export const DEBUFF_DESCRIPTORS: BuffDescriptor[] = [
   { key: "slow", field: "slowDebuffUntilTick", label: "SLOW", color: 0xbfdbfe, nominalMs: 5500 },
   { key: "vuln", field: "vulnerabilityUntilTick", label: "VULN", color: 0xfca5a5, nominalMs: 5500 },
   { key: "no-block", field: "blockJammerUntilTick", label: "JAM", color: 0xc084fc, nominalMs: 6500 },
+  // Paper Double's Fooled debuff (2026-07-19 mechanic, 2026-07-20 nameplate
+  // fast-follow — class-overhaul-workboard.md chunk 4.2's "nameplate status
+  // legibility" gap named this pattern generically; Fooled was a real,
+  // shipped-since-yesterday example of it with zero tell). +25% damage
+  // taken while live (World.ts's fooledDamageMultiplier) — a hot magenta
+  // distinct from every other row here (closest neighbor "vuln" is a
+  // different mechanic entirely; sharing its color would misread as the
+  // same status). nominalMs matches NINJA_FOOLED_DURATION_MS (2000).
+  { key: "fooled", field: "fooledUntilTick", label: "FOOL", color: 0xff6ec7, nominalMs: 2000 },
 ];
 
 /** Local-only detailed chip strip (HudSystem's text chips + ActionBarSystem's

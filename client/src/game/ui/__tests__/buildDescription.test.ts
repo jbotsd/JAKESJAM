@@ -14,6 +14,10 @@ describe("describeBuild", () => {
     const result = describeBuild([]);
     expect(result.title).toBe("Starter build");
     expect(result.cardCount).toBe(0);
-    expect(result.summary).toContain("single projectile");
+    // The starter weapon is true hitscan (2026-07-20) — `describeShot`'s
+    // pre-existing "raycast" branch (originally dormant, written for
+    // Raycast Prism) now correctly describes it as an instant beam rather
+    // than a traveling projectile.
+    expect(result.summary).toContain("single instant beam");
   });
 });

@@ -4,7 +4,6 @@ import { PreloadScene } from "./scenes/PreloadScene";
 import { MainMenuScene } from "./scenes/MainMenuScene";
 import { MatchScene } from "./scenes/MatchScene";
 import { OnlineMatchScene } from "./scenes/OnlineMatchScene";
-import { DraftScene } from "./scenes/DraftScene";
 import { ReplayScene } from "./scenes/ReplayScene";
 import { TutorialScene } from "./scenes/TutorialScene";
 import { ArenaForgeScene } from "./scenes/ArenaForgeScene";
@@ -62,7 +61,7 @@ export function buildGameConfig(): Phaser.Types.Core.GameConfig {
     width,
     height,
     backgroundColor: "#05080f",
-    scene: [BootScene, PreloadScene, MainMenuScene, MatchScene, OnlineMatchScene, DraftScene, ReplayScene, TutorialScene, ArenaForgeScene, HangoutScene],
+    scene: [BootScene, PreloadScene, MainMenuScene, MatchScene, OnlineMatchScene, ReplayScene, TutorialScene, ArenaForgeScene, HangoutScene],
     scale: {
       mode: Phaser.Scale.NONE,
       autoCenter: Phaser.Scale.NO_CENTER,

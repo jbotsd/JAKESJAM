@@ -33,6 +33,22 @@ const BODY_DEPTH = 6;
 const TRAIL_DEPTH = 5;
 const HALO_DEPTH = 4;
 
+/** Interstice cyan / Kindled gold registers — literal copies of
+ *  `LightConstruct.ts`'s own `INTERSTICE_TINT`/`KINDLED_TINT`
+ *  `.glow`/`.core`, NOT an import: `LightConstruct.ts` does a real
+ *  (non-type-only) `import Phaser from "phaser"`, which throws under
+ *  `bun test`'s no-DOM environment (this codebase's established rule —
+ *  see chassisSilhouette.ts's own header comment) the moment anything
+ *  transitively pulls it in, and `projectileVfx.test.ts`/
+ *  `entityRenderCoordinator.test.ts` both import this module directly.
+ *  Keep these hex values in sync with `LightConstruct.ts`'s own tint
+ *  constants by hand if those ever change — a real cross-module import
+ *  isn't safe here regardless of which direction it goes. */
+const NINJA_BLADE_SHARD_GLOW = 0x35d6ff;
+const NINJA_BLADE_SHARD_CORE = 0xf2fbff;
+const KINDLED_THRUST_GLOW = 0xffc24d;
+const KINDLED_THRUST_CORE = 0xfff3d0;
+
 /**
  * Per-element visual character. `glowScale` multiplies the body radius for
  * the halo; `trailWidth` scales the streak; `hot` is the bright core tint
@@ -49,7 +65,13 @@ const ELEMENT_VFX: Record<ElementType, ElementVfx> = {
   radiant: { glowScale: 3.8, trailWidth: 1.4, core: 0xffffff },
   sticky: { glowScale: 2.4, trailWidth: 1.5, core: 0xffd9a8 },
   explosive: { glowScale: 3.2, trailWidth: 1.4, core: 0xffd0d6 },
-  crystal: { glowScale: 2.8, trailWidth: 1.0, core: 0xffe0ff },
+  // Was the weakest glow/trail in this whole table (2.8/1.0) despite crystal
+  // being the wizard's SIGNATURE element — a genuine "fluffy, not tactile"
+  // contributor (Jake, 2026-07-20). Bumped to lead the table, not trail it:
+  // glass-cannon reads as bright and sharp, never soft. Core brightened
+  // toward near-white-cyan so the hot spine on the new "shard" shape
+  // actually pops against the cyan body.
+  crystal: { glowScale: 3.7, trailWidth: 1.5, core: 0xeafcff },
   neutral: { glowScale: 2.6, trailWidth: 1.0, core: 0xffffff },
 };
 
@@ -146,9 +168,27 @@ export class ProjectileVfx {
       const proj = this.modelPool[mi]!;
       const id = proj.id;
       seen.add(id);
-      const color = resolveColor(proj.element as ElementType, proj.ownerId);
+      // Interstice's blade-shards (Edge Storm's wave, Needle) and Kindled's
+      // Sunspike thrust (renderContract.ts's `ninjaBladeShard`/
+      // `kindledThrust` flags): override the resolved element color with
+      // each class's own register everywhere `color` is used below (trail,
+      // halo, body) — element itself is left untouched (damage/impact
+      // unaffected), but the shot no longer reads as "borrowed wizard
+      // stuff" or "a generic copy of your basic shot."
+      const isNinjaBladeShard = proj.ninjaBladeShard === true;
+      const isKindledThrust = proj.kindledThrust === true;
+      const color = isNinjaBladeShard
+        ? NINJA_BLADE_SHARD_GLOW
+        : isKindledThrust
+          ? KINDLED_THRUST_GLOW
+          : resolveColor(proj.element as ElementType, proj.ownerId);
       const lang = elementVfx(proj.element);
-      const radius = proj.radius;
+      // Visual-only shrink (never touches proj.radius, the real hit
+      // detection) — "smaller" per each ability's own read: a wave/needle
+      // is the AFTERMATH/tip of a strike, not a second full-size shot.
+      // Sunspike keeps its own build-resolved size — a solid thrust reads
+      // right at full size, unlike the ninja's small precision shards.
+      const radius = isNinjaBladeShard ? proj.radius * 0.72 : proj.radius;
       const angle = proj.angle;
       // Priest/Syzygist's "oozing tendril" basic fire (renderContract.ts's
       // `tendril` flag: element === "fire" && enemyOnly === true — the one
@@ -234,6 +274,24 @@ export class ProjectileVfx {
         // bright ember head — replaces the shape-based body/trail entirely
         // for this shot only.
         this.drawTendrilBody(body, trail, tendrilChain, color, lang.core, radius, bodyAlpha);
+      } else if (isNinjaBladeShard) {
+        // Edge Storm's wave-off-swing / Needle — a small blade-sliver, not
+        // the Geometrician's crystal dart. Checked BEFORE the `element ===
+        // "crystal"` branch below since both shots still carry that
+        // element (damage/impact untouched); only the identity flag routes
+        // it here. `NINJA_BLADE_SHARD_CORE` overrides `lang.core` too, so
+        // the hot center reads cyan-white, not crystal's own core tint.
+        this.drawBladeSliverBody(body, proj.x, proj.y, radius, angle, color, NINJA_BLADE_SHARD_CORE, bodyAlpha);
+      } else if (isKindledThrust) {
+        // Kindled's Sunspike — a solid, symmetric gold spike, not "a
+        // faster copy of your basic shot." Checked before the generic
+        // element/shape dispatch below for the same reason as the ninja
+        // branch above.
+        this.drawSpikeBody(body, proj.x, proj.y, radius, angle, color, KINDLED_THRUST_CORE, bodyAlpha);
+      } else if (proj.element === "crystal") {
+        // The wizard's elongated dart — an element override, not a `shape`
+        // value (see drawShardBody's own doc comment for why).
+        this.drawShardBody(body, proj.x, proj.y, radius, angle, color, lang.core, bodyAlpha);
       } else {
         // Body — element core over a resolved-color shell, shape-correct.
         this.drawBody(body, proj.shape, proj.x, proj.y, radius, angle, color, lang.core, bodyAlpha);
@@ -690,6 +748,133 @@ export class ProjectileVfx {
         break;
     }
     // Hot core — a small bright dot reads as energy regardless of shape.
+    g.fillStyle(core, bodyAlpha);
+    g.fillCircle(x, y, Math.max(1, r * 0.45));
+  }
+
+  /** Elongated faceted crystal dart — an ELEMENT-driven override (checked at
+   *  the call site, `element === "crystal"`), not a `ProjectileShape` value:
+   *  `shape` is packed byte-for-byte into the shared Zig/TS WASM ABI
+   *  (weaponBuildParity.test.ts), so adding a shape variant there breaks
+   *  parity without a matching Zig-side change. This stays purely a client
+   *  render override — same nominal shape ("hexagon"), different silhouette
+   *  for this one element. The wizard's "wiz-like bullet" (Jake, 2026-07-20:
+   *  "not tactile enough... not enough wiz like bullets" — a symmetric
+   *  rotating hexagon didn't cut through the air the way a directional
+   *  dart does). Tip forward, sharp asymmetric wedge belly, a brighter core
+   *  facet down the spine so it reads as CUTTING through the air. */
+  private drawShardBody(
+    g: Phaser.GameObjects.Graphics,
+    x: number,
+    y: number,
+    r: number,
+    angle: number,
+    color: number,
+    core: number,
+    bodyAlpha: number,
+  ): void {
+    const cos = Math.cos(angle);
+    const sin = Math.sin(angle);
+    const rot = (dx: number, dy: number): [number, number] => [x + dx * cos - dy * sin, y + dx * sin + dy * cos];
+    const nose = rot(r * 2.4, 0);
+    const tail = rot(-r * 1.4, 0);
+    const wingF = rot(r * 0.3, r * 1.1);
+    const wingB = rot(r * 0.3, -r * 1.1);
+    g.fillStyle(color, 0.95 * bodyAlpha);
+    g.fillTriangle(nose[0], nose[1], wingF[0], wingF[1], wingB[0], wingB[1]);
+    g.fillTriangle(wingF[0], wingF[1], tail[0], tail[1], wingB[0], wingB[1]);
+    // Bright spine facet — the "cutting edge" catching the light.
+    g.lineStyle(Math.max(1, r * 0.35), core, bodyAlpha);
+    g.lineBetween(tail[0], tail[1], nose[0], nose[1]);
+    // Hot core — matches drawBody's own convention regardless of shape.
+    g.fillStyle(core, bodyAlpha);
+    g.fillCircle(x, y, Math.max(1, r * 0.45));
+  }
+
+  /** Interstice's small precision shots — Edge Storm's wave-off-swing AND
+   *  Needle's shard (2026-07-20, `ninjaBladeShard` identity flag — see
+   *  types.ts's field comment; Needle joined a day after the wave got this
+   *  treatment, same bug, same fix). Was riding `drawShardBody` purely via
+   *  `element === "crystal"`, which read as "the wizard's stuff" borrowed
+   *  wholesale on a class whose whole identity is dual-blade insidious-
+   *  precise. A distinct silhouette, not just a recolor: a SINGLE-edged
+   *  blade fragment (asymmetric shoulder — wide on one side, narrow on the
+   *  other, like a snapped-off kunai sliver), shorter and slimmer than the
+   *  dart's own symmetric double-wing wedge (tip 1.8r vs 2.4r, tail -0.9r
+   *  vs -1.4r, one shoulder 0.42r vs both wings 1.1r) — reads as "small and
+   *  precise" rather than "a second full-size shot." One shared shape for
+   *  both abilities is deliberate — see `ninjaBladeShard`'s own field
+   *  comment for why. */
+  private drawBladeSliverBody(
+    g: Phaser.GameObjects.Graphics,
+    x: number,
+    y: number,
+    r: number,
+    angle: number,
+    color: number,
+    core: number,
+    bodyAlpha: number,
+  ): void {
+    const cos = Math.cos(angle);
+    const sin = Math.sin(angle);
+    const rot = (dx: number, dy: number): [number, number] => [x + dx * cos - dy * sin, y + dx * sin + dy * cos];
+    const tip = rot(r * 1.8, 0);
+    const tail = rot(-r * 0.9, -r * 0.08);
+    // Asymmetric shoulder — the single cutting edge — sits closer to the
+    // tail than the tip, echoing a real blade's belly, and is deliberately
+    // NOT mirrored (shoulderNear ≠ -shoulderFar) so it reads as one edge,
+    // not a symmetric leaf.
+    const shoulderNear = rot(r * 0.35, r * 0.42);
+    const shoulderFar = rot(r * 0.5, -r * 0.2);
+    g.fillStyle(color, 0.95 * bodyAlpha);
+    g.fillTriangle(tip[0], tip[1], shoulderNear[0], shoulderNear[1], shoulderFar[0], shoulderFar[1]);
+    g.fillTriangle(shoulderNear[0], shoulderNear[1], tail[0], tail[1], shoulderFar[0], shoulderFar[1]);
+    // Bright spine — the cutting edge catching the light, same convention
+    // as drawShardBody's own spine but thinner (this is a sliver, not a
+    // full dart).
+    g.lineStyle(Math.max(1, r * 0.28), core, bodyAlpha);
+    g.lineBetween(tail[0], tail[1], tip[0], tip[1]);
+    // Hot core — smaller than drawShardBody's, matching the overall
+    // "smaller" silhouette.
+    g.fillStyle(core, bodyAlpha);
+    g.fillCircle(x, y, Math.max(1, r * 0.35));
+  }
+
+  /** Kindled's Sunspike (2026-07-20, `kindledThrust` identity flag — see
+   *  types.ts's field comment). Deliberately NOT a recolor of
+   *  `drawBladeSliverBody`: where the ninja's shard is a small, ASYMMETRIC
+   *  single-edge fragment (insidious, precise), Sunspike is a solid,
+   *  SYMMETRIC spike — the "committed, not flicked" heaven-tank weight
+   *  (chassis-design-axioms.md) made literal in the silhouette itself, not
+   *  just the color. Full-size (no shrink, unlike the ninja shards) — this
+   *  is "aimed thrust; high single damage," not an aftermath. */
+  private drawSpikeBody(
+    g: Phaser.GameObjects.Graphics,
+    x: number,
+    y: number,
+    r: number,
+    angle: number,
+    color: number,
+    core: number,
+    bodyAlpha: number,
+  ): void {
+    const cos = Math.cos(angle);
+    const sin = Math.sin(angle);
+    const rot = (dx: number, dy: number): [number, number] => [x + dx * cos - dy * sin, y + dx * sin + dy * cos];
+    const tip = rot(r * 2.0, 0);
+    const tail = rot(-r * 1.2, 0);
+    // Symmetric wings — same offset mirrored, unlike the ninja sliver's
+    // deliberately mismatched shoulders. A single honest line, not an edge.
+    const wingF = rot(r * 0.1, r * 0.55);
+    const wingB = rot(r * 0.1, -r * 0.55);
+    g.fillStyle(color, 0.95 * bodyAlpha);
+    g.fillTriangle(tip[0], tip[1], wingF[0], wingF[1], wingB[0], wingB[1]);
+    g.fillTriangle(wingF[0], wingF[1], tail[0], tail[1], wingB[0], wingB[1]);
+    // Bright spine — a solid gold core line, thicker than the ninja
+    // sliver's to read as heavier/more committed.
+    g.lineStyle(Math.max(1, r * 0.4), core, bodyAlpha);
+    g.lineBetween(tail[0], tail[1], tip[0], tip[1]);
+    // Hot core — matches drawShardBody's own convention.
     g.fillStyle(core, bodyAlpha);
     g.fillCircle(x, y, Math.max(1, r * 0.45));
   }

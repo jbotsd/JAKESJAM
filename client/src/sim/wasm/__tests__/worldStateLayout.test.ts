@@ -44,7 +44,12 @@ const ex = sim.exports as unknown as SizeofExports;
 
 describe("WorldState extern struct layout (Phase G1c)", () => {
   test("entity sizes match the wire contract", () => {
-    expect(ex.sizeof_world_state_header()).toBe(48);
+    // 48 → 56 (2026-07-20, Phase 2, docs/zig-step-world-parity-goal.md —
+    // draft/offer-roll system): +4 content bytes for
+    // WorldStateHeader.round_winner_idx (i32), rounded to 56 by the
+    // trailing f64's own 8-byte alignment need. See world_state.zig's
+    // WorldStateHeader comptime assert.
+    expect(ex.sizeof_world_state_header()).toBe(56);
     // 288 → 296 (2026-07-18, deliberate bump): +8 bytes for
     // PlayerEntity.energy (ninja class resource) — see world_state.zig's
     // comptime assert and worldStateBridge.ts's PLAYER_ENTITY_SIZE.
@@ -68,7 +73,12 @@ describe("WorldState extern struct layout (Phase G1c)", () => {
     // syz_ward_absorb_remaining (f64) — 4 bytes of implicit alignment pad
     // between the two. See world_state.zig's comptime assert and
     // worldStateBridge.ts's PLAYER_ENTITY_SIZE.
-    expect(ex.sizeof_player_entity()).toBe(384);
+    // 384 → 392 → 504 → 512 (2026-07-20, gap-closure + Phase 1 ability-cast
+    // dispatch + AOE-queue window passes): channel_hold_ms, the ability-
+    // slot cooldown/status window fields, and the AOE-queue window fields.
+    // See world_state.zig's comptime assert and worldStateBridge.ts's
+    // PLAYER_ENTITY_SIZE for the full accounting.
+    expect(ex.sizeof_player_entity()).toBe(512);
     expect(ex.sizeof_projectile_entity()).toBe(216);
     expect(ex.sizeof_satellite_entity()).toBe(96);
     expect(ex.sizeof_destructible_entity()).toBe(64);
@@ -104,6 +114,20 @@ describe("WorldState extern struct layout (Phase G1c)", () => {
     const sizeofEvent = (
       ex as unknown as { sizeof_sim_event: () => number }
     ).sizeof_sim_event();
+    // No wasm sizeof_* exports exist for these (2026-07-20 additions) —
+    // literal byte counts pinned from world_state.zig's own comptime
+    // asserts/doc comments (PaperDoubleEntity=96×MAX_PAPER_DOUBLES(16),
+    // MeleeSwingMemory=32, EquippedActives=3 (MAX_ABILITY_SLOTS),
+    // PlayerCardIds=8 (MAX_PLAYER_CARDS), PlayerDraftState=4
+    // (DRAFT_OFFER_COUNT+1), PendingInstantAoe=80×MAX_PENDING_INSTANT_AOE(32)).
+    const PAPER_DOUBLE_SIZE = 96;
+    const MAX_PAPER_DOUBLES = 16;
+    const MELEE_SWING_MEMORY_SIZE = 32;
+    const EQUIPPED_ACTIVES_SIZE = 3;
+    const PLAYER_CARD_IDS_SIZE = 8;
+    const PLAYER_DRAFT_STATE_SIZE = 4;
+    const PENDING_INSTANT_AOE_SIZE = 80;
+    const MAX_PENDING_INSTANT_AOE = 32;
     const expected =
       ex.sizeof_world_state_header() +
       (ex.world_state_max_players() * ex.sizeof_player_entity() + 8) +
@@ -112,17 +136,36 @@ describe("WorldState extern struct layout (Phase G1c)", () => {
       (ex.world_state_max_destructibles() * ex.sizeof_destructible_entity() + 8) +
       (ex.world_state_max_fire() * ex.sizeof_fire_entity() + 8) +
       (ex.world_state_max_pickups() * ex.sizeof_pickup_entity() + 8) +
+      // Paper Double decoys: 8 preamble + N×96.
+      (8 + MAX_PAPER_DOUBLES * PAPER_DOUBLE_SIZE) +
       ex.world_state_max_players() * sizeofMovement +
+      // Melee swing FSM memory (no preamble).
+      ex.world_state_max_players() * MELEE_SWING_MEMORY_SIZE +
       // I-final player_fire_config parallel array (no preamble).
       ex.world_state_max_players() * sizeofFireConfig +
+      // Phase 2 — equipped actives / card hand / draft state (no preambles).
+      ex.world_state_max_players() * EQUIPPED_ACTIVES_SIZE +
+      ex.world_state_max_players() * PLAYER_CARD_IDS_SIZE +
+      ex.world_state_max_players() * PLAYER_DRAFT_STATE_SIZE +
       // I15 static cache: 8 preamble + N×32 AABB + N×1 one_way + 4 tail.
       8 +
       maxStatics * 32 +
       maxStatics +
       4 +
-      // I18 events buffer: 4 count + 4 pad + 4 alignment pad +
-      // M×SimEvent (40B, 8-aligned).
+      // Pending instant-AOE cast queue: 4 count + 4 explicit pad + 4
+      // IMPLICIT Zig alignment pad (this field's own offset lands
+      // non-8-aligned after the statics section, and PendingInstantAoe
+      // has f64 fields → needs 8-byte alignment) + N×80. Verified
+      // empirically against the live wasm sizeof_world_state() + a raw
+      // memory event_count probe (2026-07-20) — this is the same "extra
+      // 4 bytes" the events buffer below used to need before this
+      // section existed between statics and events.
       12 +
+      MAX_PENDING_INSTANT_AOE * PENDING_INSTANT_AOE_SIZE +
+      // I18 events buffer: 4 count + 4 pad + M×SimEvent (40B, 8-aligned).
+      // No further implicit alignment pad needed here anymore — the
+      // pending-AOE section above now absorbs it.
+      8 +
       maxEvents * sizeofEvent;
     expect(ex.sizeof_world_state()).toBe(expected);
   });

@@ -63,29 +63,20 @@ describe("characters.ts — class-era display layer over stable ids", () => {
     }
   });
 
-  test("kitComing tracks which classes have shipped their full kit (honesty rule, updated 2026-07-18)", () => {
-    // Wizard (P1), Kindled, and Syzygist have shipped 10/10 of their class
-    // catalog — kitComing removed. Interstice ships 9/10 (Paper Double is a
-    // recorded deferral — see characters.ts's UPDATE comment and
-    // cardTypes.ts's AbilityKind header) — kitComing stays true until it
-    // lands.
-    const shipped = new Set(["wizard", "paladin", "priest"]);
+  test("kitComing tracks which classes have shipped their full kit (honesty rule, updated 2026-07-19)", () => {
+    // All four classes now ship 10/10 of their class catalog — Interstice's
+    // Paper Double (the last holdout) landed 2026-07-19 — kitComing removed
+    // for all of them. See characters.ts's UPDATE comment and cardTypes.ts's
+    // AbilityKind header for each class's remaining sub-feature gaps, which
+    // are recorded deferrals, not silent stubs, and don't reinstate the flag.
     for (const c of characters) {
-      if (shipped.has(c.classId)) expect(c.kitComing).toBeUndefined();
-      else expect(c.kitComing).toBe(true);
+      expect(c.kitComing).toBeUndefined();
     }
-    // Interstice (the one remaining kitComing:true class) must not claim
-    // future verbs in its summary — it hasn't shipped its full kit yet.
-    for (const c of characters) {
-      if (c.kitComing !== true) continue;
-      expect(c.kitSummary.toLowerCase()).not.toMatch(
-        /sword|slash|blade|heal|buff|curse|board|melee/,
-      );
-    }
-    // Kindled and Syzygist DID ship — their kitSummary is allowed (and
-    // expected) to name real, live abilities by name now.
+    // Every class DID ship — kitSummary is allowed (and expected) to name
+    // real, live abilities by name now.
     const byId = new Map(characters.map((c) => [c.id, c]));
     expect(byId.get("heavy")?.kitSummary).toContain("Kindled Edge");
     expect(byId.get("shielded")?.kitSummary).toContain("Bleed Tithe");
+    expect(byId.get("sprinter")?.kitSummary).toContain("Paper Double");
   });
 });

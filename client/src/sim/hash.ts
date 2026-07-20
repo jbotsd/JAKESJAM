@@ -78,7 +78,8 @@ function quantiseMs(value: number): number {
  *   wardShellUntilTick (int), slot1..4CooldownUntilTick (int),
  *   titheUntilTick (int), veilUntilTick (int), counterUntilTick (int),
  *   respawnAtTick (int), sunlanceUntilTick (int), facetMarkUntilTick (int),
- *   overclockUntilTick (int), resonanceUntilTick (int),
+ *   overclockUntilTick (int), measureUntilTick (int), recoilStepUntilTick
+ *   (int), resonanceUntilTick (int),
  *   regenUntilTick (int, Syzygist substrate), hasteUntilTick (int, Syzygist
  *   substrate), devotion (int, priest class resource), wardAbsorbUntilTick
  *   (int, Syzygist Ward window), grounded (0/1), shockRingArmedUntilTick /
@@ -143,6 +144,10 @@ export function hashPlayerEntity(p: PlayerEntity): number {
   h = mixU32(h, (p.sunlanceUntilTick ?? 0) | 0);
   h = mixU32(h, (p.facetMarkUntilTick ?? 0) | 0);
   h = mixU32(h, (p.overclockUntilTick ?? 0) | 0);
+  // Measure/Recoil Step rework (2026-07-19, docs/axiom-deviations-audit.md
+  // D2). Same absent-as-0 window-buff treatment as sunlance/overclock above.
+  h = mixU32(h, (p.measureUntilTick ?? 0) | 0);
+  h = mixU32(h, (p.recoilStepUntilTick ?? 0) | 0);
   // Kindled catalog v1 (docs/class-ability-catalogs-v1.md, class-overhaul-
   // workboard.md chunk 2.6). Same absent-as-0 treatment as the Geometrician
   // fields above; judgmentTargetId (a PlayerId string) is deliberately NOT

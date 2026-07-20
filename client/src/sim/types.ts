@@ -71,6 +71,13 @@ export type InputFrame = {
 
 export type CharacterArchetype = 'balanced' | 'heavy' | 'sprinter' | 'shielded';
 
+// NOTE: `shape` is packed into the shared Zig/TS WASM ABI as a byte index
+// (weaponBuildParity.test.ts asserts it byte-for-byte) — it is NOT purely a
+// render hint despite the historical "pure data, no Phaser refs" framing.
+// Adding a new variant here requires updating the Zig-side shape table too,
+// or parity breaks. The wizard's "shard" bullet silhouette (2026-07-20) is
+// instead an ELEMENT-driven render override in ProjectileVfx.drawBody — see
+// its own doc comment — leaving this union and the ABI untouched.
 export type ProjectileShape =
   | 'circle'
   | 'triangle'
@@ -249,12 +256,26 @@ export type PlayerEntity = {
    *   Burn applies `burnDps` damage every 1 second (in sim ticks) until
    *   `burnUntilTick`. `burnTickLastApplied` is the last tick the DoT was
    *   credited on so the per-tick pass can rate-limit to once per second.
+   * - `burnSourceId`: which caster's projectile ignited the CURRENTLY LIVE
+   *   burn (class-overhaul-workboard.md's D3 Syzygist-brake fast-follow,
+   *   2026-07-19 — "Devotion from enemy curses" was a recorded v1 deferral
+   *   until this pass wired it). Stamped universally at the fire-hit site
+   *   (World.ts) regardless of caster class — any fire-element source counts,
+   *   not just Syzygist's Bleed Tithe — so a Syzygist's own devotion-accrual
+   *   pass can answer "is this enemy currently burning from MY shot," the
+   *   same shape `regenSourceId`/`hasteSourceId` already give the ALLY side
+   *   of that same pass. Same contract as those two: TS-only, does NOT cross
+   *   the WASM ABI, not hash-mixed, not delta-bit-tracked (covered by its
+   *   numeric sibling `burnUntilTick` for both purposes — every full-
+   *   prediction client replays the identical deterministic hit that set
+   *   it).
    * - `freezeUntilTick` / `freezeMultiplier`: ice-element movement freeze.
    *   Composes alongside `slowMultiplier` at the movement site.
    */
   burnUntilTick?: Tick;
   burnDps?: number;
   burnTickLastApplied?: Tick;
+  burnSourceId?: PlayerId;
   freezeUntilTick?: Tick;
   freezeMultiplier?: number;
   /**
@@ -523,6 +544,35 @@ export type PlayerEntity = {
    *   velocity boost (`NINJA_RAZOR_ROUTE_BOOST_SPEED`) along the dash
    *   direction, plus a Read mark (above) on the first body crossed during
    *   that dash; single-use, cleared the moment the empowered dash starts.
+   * - `fooledUntilTick`: Paper Double's burst debuff (2026-07-19 fast-follow
+   *   — docs/card-pool-v2.md's own "Resonance:" line, a recorded v1 gap
+   *   until now: "The burst leaves Fooled (2.0s) on those it catches;
+   *   abilities cast into Fooled gain +25%"). Lives on the VICTIM (unlike
+   *   every mark field above, which lives on the attacker/caster) — the
+   *   opposite shape from `readTargetId`/`focusHexTargetId`/etc, since this
+   *   is a status ANY attacker's ability can exploit, not a bond between one
+   *   specific attacker and target. Checked by `fooledDamageMultiplier`
+   *   (World.ts) at every ability-damage site (melee arc hits,
+   *   `resolveInstantAoeCasts`) AND the generic projectile hit-confirm pass
+   *   — the doc's "abilities" scoping is a v1 simplification: the codebase
+   *   has no existing way to distinguish an ability-sourced projectile from
+   *   a basic weapon shot at that shared hit-confirm site (Facet Break's own
+   *   caster-side mark amp, right beside this check, has the identical
+   *   scope already — it doesn't discriminate either), so Fooled amps ANY
+   *   damage landing on the victim rather than "abilities" specifically.
+   *   Recorded here, not silently narrowed or silently widened.
+   *
+   *   Wire-visibility call: NEITHER hash-mixed nor delta-bit-tracked —
+   *   matches every sibling Interstice window field immediately above
+   *   (`undercutUntilTick` through `razorRouteUntilTick`, none of which are
+   *   in hash.ts or snapshotDeltaBits.ts either, unlike the Geometrician/
+   *   Kindled/Syzygist window fields elsewhere in this file), not a new gap
+   *   introduced here. Correctness doesn't depend on it regardless — the
+   *   amp check reads the victim's own full-prediction state, already
+   *   deterministic from synced burst-cast inputs on every client. Also
+   *   moot on the wire-budget front: both P_LO and P_HI
+   *   (snapshotDeltaBits.ts) are completely full (31/31 bits each), so
+   *   adding tracking here would need a wire-protocol change regardless.
    */
   undercutUntilTick?: Tick;
   edgeStormUntilTick?: Tick;
@@ -533,6 +583,7 @@ export type PlayerEntity = {
   ghostGuardChargeUntilTick?: Tick;
   secondWindUntilTick?: Tick;
   razorRouteUntilTick?: Tick;
+  fooledUntilTick?: Tick;
   /**
    * Jetpack fuel reservoir. Range [0, JETPACK_MAX_FUEL]; defaults to MAX
    * when absent (older snapshots) and is reset to MAX on respawn. Drains
@@ -630,11 +681,47 @@ export type PlayerEntity = {
    * - overclockUntilTick: Overclock window — fire rate up / spread tighter
    *   while live (weapon.ts), ends naturally at the tick rather than early
    *   on a stop-shooting read (doc's "ends early" nuance is a deferred v2).
+   * - measureUntilTick: Measure window (reworked 2026-07-19, docs/axiom-
+   *   deviations-audit.md D2 — the ORIGINAL v1 was a flat +1 ammo grant,
+   *   "cosmetic-heavy, small mechanical help" in the catalog doc's own
+   *   words, a confirmed dominated filler pick). Same window-buff shape as
+   *   overclockUntilTick/sunlanceUntilTick, but a genuinely different KIND
+   *   of buff, not just a smaller one: while live, shots fired go dead-
+   *   center (spread forced to 0, weapon.ts) with a modest damage amp — a
+   *   short, deliberate "one precise shot" tool, not Overclock's sustained
+   *   spray-faster window (the doc's own "true line" / "information and
+   *   confidence" flavor, made mechanically real instead of cosmetic).
+   * - recoilStepUntilTick: Recoil Step's rider window (reworked 2026-07-19,
+   *   same D2 sweep — Recoil Step's own catalog doc text already named this
+   *   exact effect, "next shot gets knock-self reduction," but v1 shipped
+   *   only the hop and explicitly deferred it: "would need its own
+   *   weapon.ts window field"). While live, this player's own recoil
+   *   impulse from firing (weapon.ts) is reduced — the orthogonal reason
+   *   Recoil Step needed against Slip Node (docs/axiom-deviations-audit.md
+   *   D2: "likely dominated by Slip Node... needs a kite-specific payoff or
+   *   it's a second filler"): Slip Node is a raw gap-crosser, Recoil Step is
+   *   now a defensive KITE tool — hop away, then fire aggressively backward
+   *   without being thrown further off your intended retreat line.
+   *
+   * Wire-visibility call for BOTH (deliberate, matching `devotion`'s own
+   * precedent, NOT sunlanceUntilTick/overclockUntilTick's): hash-mixed
+   * (hash.ts, so a divergence still fails safe) but NOT delta-bit-tracked
+   * (snapshotDeltaBits.ts) — bitsHi is completely full (bits 0-30 all
+   * spoken for; Ward's own fields already consolidated onto "the LAST free
+   * bit" per that file's header note) and adding a 32nd/33rd tracked field
+   * would need a wire-protocol change, well outside a filler-ability
+   * rework's scope. Correctness doesn't need it: like `devotion`, this is a
+   * SELF-view window (a Geometrician watches their own precision/kite tell,
+   * there is no "an ally needs to see this" requirement Ward-style buffs
+   * have), and the owning client's own full-prediction replay of its own
+   * cast input already keeps it accurate without a dedicated wire channel.
    */
   sunlanceUntilTick?: Tick;
   facetTargetId?: PlayerId;
   facetMarkUntilTick?: Tick;
   overclockUntilTick?: Tick;
+  measureUntilTick?: Tick;
+  recoilStepUntilTick?: Tick;
   /**
    * Kindled catalog v1 (docs/class-ability-catalogs-v1.md, paladin-only —
    * classId-gated at the offer roll, class-overhaul-workboard.md chunk
@@ -968,6 +1055,33 @@ export type ProjectileEntity = {
    *  for a Priest tendril, so this is zero behavior change for anything
    *  else regardless of what `enemyOnly` above is ever set to. */
   tendril?: boolean;
+  /** Interstice's small precision shots (2026-07-20, RENAMED from the
+   *  narrower `ninjaWave` once a second ability needed the identical
+   *  treatment — same pure-IDENTITY-flag shape as `tendril` above). Stamped
+   *  `true` at TWO sites: the wave-off-swing (Edge Storm, "NINJA MELEE"
+   *  section) and Needle's shard (both used to ride `element === "crystal"`
+   *  alone for their render dispatch, reusing the Geometrician's own
+   *  crystal-dart shape — "wizard's stuff" on a class whose whole identity
+   *  is dual-blade insidious-precise, not crystal munitions). Opts a shot
+   *  into a bespoke, smaller blade-sliver render (ProjectileVfx.ts's
+   *  `drawBladeSliverBody`) and the Interstice cyan tint instead of the
+   *  resolved element color — render-only, `element` itself is unchanged
+   *  on both (damage/impact behavior untouched). One shared shape across
+   *  both abilities is deliberate: a consistent "this is Interstice's
+   *  blade-shard" signature reads better than two near-identical bespoke
+   *  shapes with no real visual reason to differ. */
+  ninjaBladeShard?: boolean;
+  /** Kindled's Sunspike (2026-07-20) — same pure-IDENTITY-flag shape as
+   *  `ninjaBladeShard` above, but deliberately a DIFFERENT silhouette, not
+   *  a recolor of it: Sunspike was riding `element: build.projectile.element`
+   *  (whatever the caster's own card loadout resolves to), so it read as
+   *  "a faster, narrower copy of your basic shot" with no Kindled identity
+   *  at all. Opts into a solid, SYMMETRIC gold spike (ProjectileVfx.ts's
+   *  `drawSpikeBody`) — the class's "committed, not flicked" heaven-tank
+   *  weight (chassis-design-axioms.md), as distinct from Interstice's
+   *  asymmetric "insidious" blade-sliver as the two chassis are from each
+   *  other. Render-only; `element` stays whatever the build resolves to. */
+  kindledThrust?: boolean;
   /** Tracking state set/maintained by the projectile stepper. */
   ageMs?: number;
   traveledPx?: number;
@@ -1227,6 +1341,13 @@ export type SimEvent = (
        * WASM event sources may not know their entity ids. Presentation
        * evidence uses it to pair the exact anticipation with its impact. */
       projectileIds?: EntityId[];
+      /** Real-time hit endpoints for any raycast-delivery pellets this shot
+       * fired (2026-07-20, true hitscan — World.ts's `resolveHitscanShot`).
+       * One entry per pellet, parallel to `projectileIds`'s shape but for a
+       * delivery that never creates a `ProjectileEntity` at all — the render
+       * layer draws an instant tracer to each point instead of animating a
+       * traveling body. Additive; absent for every non-raycast weapon. */
+      hitscanHits?: { x: number; y: number; hitPlayerId: PlayerId | null }[];
     }
   | {
       t: 'hit-confirmed';

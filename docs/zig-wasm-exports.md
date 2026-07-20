@@ -255,6 +255,7 @@ once the card data tables ship.
 | `round_countdown_ms() → f64` | 3000 | `roundPhaseParity.test.ts` |
 | `round_time_limit_ms() → f64` | 90_000 | `roundPhaseParity.test.ts` |
 | `round_over_hold_ms() → f64` | 2500 | `roundPhaseParity.test.ts` |
+| `round_draft_window_ms() → f64` | 8000 | `roundPhaseParity.test.ts` |
 | `sizeof_round_phase_step_result` | 16 | `roundPhaseParity.test.ts` |
 
 ## Sizeof helpers

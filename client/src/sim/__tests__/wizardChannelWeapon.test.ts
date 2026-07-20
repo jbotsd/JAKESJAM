@@ -95,7 +95,15 @@ describe("Wizard channel ramp: class gating (the critical regression)", () => {
       // Cooldown formula is EXACTLY build.fireRate — no channel multiplier
       // (chaos/overclock/haste are all neutral/absent here too).
       expect(result.player.fireCooldownMs).toBeCloseTo(1000 / build.fireRate, 10);
-      expect(result.projectiles[0]!.damage).toBe(build.damage);
+      // sprinter (ninja) shares Wizard's exact base-weapon object
+      // (weapons.ts's `CLASS_BASE_WEAPON` deliberately has no ninja entry —
+      // classExpression.test.ts asserts this by identity), so true hitscan
+      // (2026-07-20) reaches it too: it fires via `hitscanPellets`, not
+      // `projectiles`. shielded (priest) and heavy (paladin) both keep an
+      // explicit `delivery: "projectile"` override, so they're unaffected.
+      const dealtDamage =
+        characterId === "sprinter" ? result.hitscanPellets[0]!.damage : result.projectiles[0]!.damage;
+      expect(dealtDamage).toBe(build.damage);
       // The new field must never be written for a non-wizard class.
       expect(result.player.channelHoldMs).toBeUndefined();
     });

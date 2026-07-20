@@ -38,6 +38,8 @@ import {
   PLAYER_BODY_WIDTH,
   PLAYER_BODY_HEIGHT,
   playerHitboxAABB,
+  isHeadshot,
+  HEADSHOT_DAMAGE_MULTIPLIER,
   type PlayerMovementMemory,
 } from "./player.js";
 import { buildFireEntity, destructibleAABB, stepDestructibles } from "./destructible.js";
@@ -104,6 +106,7 @@ import {
   SYZ_HASTE_DURATION_TICKS_DEFAULT,
   SYZ_DEVOTION_MAX,
   SYZ_DEVOTION_PER_BUFFED_ALLY_PER_SEC,
+  SYZ_DEVOTION_PER_CURSED_ENEMY_PER_SEC,
   SYZ_DEVOTION_MAX_COUNTED_SOURCES,
   SYZ_SNOWBALL_BRAKE_PER_KILL_LEAD,
   SYZ_SNOWBALL_BRAKE_FLOOR,
@@ -157,6 +160,9 @@ import {
   NINJA_PAPER_DOUBLE_BURST_RADIUS_PX,
   NINJA_PAPER_DOUBLE_BURST_DAMAGE,
   NINJA_PAPER_DOUBLE_STATIONARY_SPEED_PX,
+  NINJA_PAPER_DOUBLE_SWAP_MAX_DISPLACEMENT_PX,
+  NINJA_FOOLED_DURATION_MS,
+  NINJA_FOOLED_DAMAGE_MULTIPLIER,
 } from "./constants.js";
 import { stepProjectile, spawnProjectile, makeHitSweepScratch, fillHitSweepScratch, type HitSweepScratch } from "./projectile.js";
 import {
@@ -196,6 +202,9 @@ import {
   platformToAABB,
   centerToAABB,
   aabbOverlap,
+  sweepAABB,
+  sweepAABBCached,
+  type AABB,
   type StaticCollisionCache,
 } from "./collision.js";
 import {
@@ -900,6 +909,18 @@ function kindledResolveDamageMultiplier(attacker: PlayerEntity, tick: Tick): num
     : 1;
 }
 
+/** Damage multiplier for a hit landing ON `victim` — 1 (no-op) unless a live
+ *  Fooled window (Paper Double's burst debuff, types.ts's `fooledUntilTick`
+ *  field comment) currently covers them. Victim-side, unlike every other
+ *  small multiplier helper in this file (which read the ATTACKER's own
+ *  window) — Fooled is a status any attacker's hit can exploit, not a bond
+ *  tied to one specific attacker. */
+function fooledDamageMultiplier(victim: PlayerEntity, tick: Tick): number {
+  return victim.fooledUntilTick !== undefined && victim.fooledUntilTick > tick
+    ? NINJA_FOOLED_DAMAGE_MULTIPLIER
+    : 1;
+}
+
 /** Softens an incoming stagger/slow `multiplier` toward 1 (less severe)
  *  when `victim` currently holds a live Kindled Resolve window — "resist",
  *  not immune (constants.ts's KIN_KINDLED_RESOLVE_STAGGER_RESIST_FRACTION
@@ -1438,6 +1459,670 @@ export function nextEntityIdSeed(state: WorldState): number {
 }
 
 /**
+ * The minimal projectile-shaped data a ranged hit needs to carry through
+ * `resolveRangedHit`'s mitigation chain. A real `ProjectileEntity` (the
+ * per-tick projectile-stepping pass) satisfies this directly; a hitscan shot
+ * (2026-07-20) constructs an equivalent throwaway object that's never
+ * inserted into `state.projectiles` — `x/y/vx/vy` carry the shot's real
+ * origin/aim-direction so `tryDeflectDamage`'s parry-arc check still gets
+ * real direction info (NOT degraded the way an actual `sourceProjectileId:
+ * null` hit like the counter-stance reflect below already is).
+ */
+type RangedHitSource = Pick<
+  ProjectileEntity,
+  "id" | "ownerId" | "element" | "x" | "y" | "vx" | "vy" | "damage" | "radius"
+> &
+  Partial<Pick<ProjectileEntity, "tendril" | "executeBelowFrac" | "statusScale" | "leechFraction">>;
+
+/** Tick-scoped, read-mostly context `resolveRangedHit` needs — everything
+ *  the original inline block read from `stepWithRuntime`'s closure, now
+ *  threaded explicitly so a hitscan shot (resolved earlier in the SAME tick,
+ *  inside the per-player loop, not the later projectile-drain pass) can
+ *  supply an equivalent context without depending on that pass's own local
+ *  state existing yet. */
+type RangedHitContext = {
+  chaosProfile: ChaosProfile;
+  hangoutMode: boolean;
+  fightingPhase: boolean;
+  firstBloodAlreadyClaimedThisRound: boolean;
+  nextTick: Tick;
+  effDtMs: number;
+  sortedPlayerIds: readonly PlayerId[];
+  firstBloodAwardThisTick: PlayerId | null;
+  /** Real projectile ids resolved so far this tick — used only to look up a
+   *  fresher copy of the source projectile for the counter-stance/lightning
+   *  chain's OWN follow-up hit-confirmed re-entry (see the `sourceProj`
+   *  lookup below). A hitscan-only caller can safely pass `{}` — the lookup
+   *  misses and falls back to `proj` itself, which already carries the
+   *  correct direction info (see `RangedHitSource`'s own doc comment). */
+  remainingProjectiles: Readonly<Record<EntityId, ProjectileEntity>>;
+  deflectedProjectileIds: Map<EntityId, PlayerId>;
+};
+
+type RangedHitResult = {
+  /** True if the hit was fully negated (evaded/parried/shielded) — the
+   *  caller must NOT push `ev` onto the tick's event list (mirrors the
+   *  original inline block's `continue`, which skipped the loop's
+   *  unconditional trailing `events.push(ev)`). */
+  suppressed: boolean;
+  firstBloodAwardThisTick: PlayerId | null;
+  /** Set when a mirror shield reflected this hit. The real projectile-array
+   *  caller already handles the bounce itself (reverse velocity + reassign
+   *  owner at the projectile-drop site — untouched by this extraction); a
+   *  hitscan caller has no real entity to reverse, so it reads this back and
+   *  immediately resolves ONE more trace from the victim toward the original
+   *  attacker instead (see `resolveHitscanShot`'s call site). */
+  reflectedVictimId?: PlayerId;
+};
+
+/**
+ * The full ranged-hit mitigation + damage-application chain: chaos scaling,
+ * priest-tendril ally-heal, Ward shell, Severing Answer, `tryDeflectDamage`
+ * (dash i-frames / parry / mirror shield), Stolen Fangs, Radiant/Facet
+ * Break/Focus Hex amps, Paper Double's Fooled debuff, execute threshold,
+ * Rally Light/Kindled Resolve amps, team peel, ward-absorbed events,
+ * first-blood wager, HP subtraction + kill detection, fire/ice status,
+ * leech, lightning chain.
+ *
+ * Extracted 2026-07-20 (hitscan) from `stepWithRuntime`'s per-tick
+ * projectile-drain loop — a PURE move, zero logic changes (verified via the
+ * full test suite pre/post) — so both the projectile-array pass below AND a
+ * same-tick hitscan shot resolve through the identical, single copy of this
+ * chain rather than risking two implementations drifting apart.
+ *
+ * Mutates `ev.damage` in place as the chain recomputes it (the caller's
+ * already-pushed-or-about-to-push event object is the SAME reference) and
+ * mutates `players` directly (assignment by key), exactly as the original
+ * inline block did.
+ */
+function resolveRangedHit(
+  ev: Extract<SimEvent, { t: "hit-confirmed" }>,
+  proj: RangedHitSource,
+  players: Record<PlayerId, PlayerEntity>,
+  events: SimEvent[],
+  ctx: RangedHitContext,
+): RangedHitResult {
+  let firstBlood = ctx.firstBloodAwardThisTick;
+  const victim = players[ev.victimId]!;
+  // Apply chaos damage multiplier here so every projectile source (player
+  // weapons, satellites, future hazards) is scaled uniformly. We mutate the
+  // event's `damage` so SFX / network consumers see the post-chaos number
+  // too.
+  const scaledDamage = ev.damage * ctx.chaosProfile.damageMultiplier;
+  ev.damage = scaledDamage;
+  // Belt-and-braces for the hangout player-immunity carve-out: the empty
+  // candidate list upstream already makes this unreachable, but a future
+  // ranged source that bypasses the hit sweep must not quietly reopen player
+  // damage in the lobby.
+  if (!victim.alive || ctx.hangoutMode) {
+    return { suppressed: false, firstBloodAwardThisTick: firstBlood };
+  }
+  // Priest tendril dual-purpose hit (Jake's redirect, 2026-07-19: "pulse
+  // attack or healing effects depending" — ally=heal, enemy=curse, the same
+  // low-aim auto-target doctrine this class's dedicated abilities already
+  // use, applied to basic fire). `proj.tendril` (types.ts) is a pure
+  // IDENTITY flag stamped ONLY on a Priest tendril (weapon.ts's
+  // isPriestTendril spawn site) — scoping this branch to it, rather than to
+  // every generic `element === "fire"` hit below, keeps every other class's
+  // fire-element friendly fire (e.g. a duo Wizard stacking Molten Core)
+  // completely unaffected, matching this session's "byte-identical for
+  // every other class" regression bar. Checked BEFORE parry/counter/shield
+  // mitigation — a heal isn't an attack, so it shouldn't be
+  // blockable/deflectable the way a hit is, and "no ally present" needs no
+  // extra handling: the shard can only ever land on an ENEMY in that case
+  // (the dual-target homing rework's own fallback — see constants.ts's
+  // SYZ_TENDRIL_* comment), so this check simply falls through to the
+  // ordinary damage path below for them.
+  const tendrilOwner =
+    proj.tendril === true && proj.ownerId !== null ? players[proj.ownerId] : undefined;
+  if (tendrilOwner && isAlly(tendrilOwner, victim)) {
+    // Heal amount: reuse the tendril's OWN resolved hit magnitude (`ev.damage`
+    // — already chaos-scaled, and headshot-boosted if the swept hit happened
+    // to land in the head zone) rather than inventing a second hardcoded
+    // number. "Same tendril, same magnitude, opposite polarity" is the most
+    // defensible v1 read of "pulse a healing effect" — a Priest stacking
+    // +damage cards heals allies harder too, which matches intuition rather
+    // than fighting it. Clamp mirrors Borrowed Time's own heal clamp exactly
+    // (World.ts's "borrowed-time" case, pendingSyzygistCasts loop: `Math.min(100,
+    // target.health + cast.heal)`) — same flat 100 ceiling, no new
+    // MAX_HEALTH machinery invented here.
+    const healed = Math.min(100, victim.health + ev.damage);
+    if (healed > victim.health) {
+      players[ev.victimId] = { ...victim, health: healed };
+    }
+    // No SimEvent pushed for the heal itself: Borrowed Time and health-shard
+    // pickups both reach the client purely through the `health` field
+    // already present in the snapshot, with no dedicated wire event
+    // required for correctness. `hit-confirmed` specifically assumes harm —
+    // SimEventRouter.ts unconditionally plays a hit sound, hit-stop freeze,
+    // screen shake, damage number, and hit-react animation off it — so
+    // routing a heal through that pipeline would misrender as "you got hit
+    // for -2.5". A dedicated heal-pulse VFX event is a reasonable future
+    // addition but is render-layer work, out of this change's
+    // sim-mechanics-only scope; suppressing here also means the original
+    // (harmful) `hit-confirmed` for this event is never pushed at all.
+    return { suppressed: true, firstBloodAwardThisTick: firstBlood };
+  }
+  // Ward shell (six-axes-goal.md Layer 1): a post-cast shell halves incoming
+  // damage BEFORE the shield absorbs it. Order is parry > shell > shield —
+  // parry zeroes regardless, so applying the shell to the pre-mitigation
+  // number here is order-exact.
+  // Scope: the projectile path (direct + AOE) — bash/DoT keep their own
+  // sites untouched in Layer 1.
+  // Severing Answer (six-axes Layer 2): counter-stance consumes the hit —
+  // negated, and the raw (post-chaos, pre-shell) damage is returned to the
+  // attacker, capped. Order: parry > counter > shell > shield — a live parry
+  // wins the frame, so the stance only answers when no parry is up.
+  const parryLive =
+    victim.parryActiveUntilTick !== undefined && victim.parryActiveUntilTick > ctx.nextTick;
+  const counterLive =
+    victim.counterUntilTick !== undefined && victim.counterUntilTick > ctx.nextTick;
+  if (counterLive && !parryLive) {
+    players[ev.victimId] = { ...victim, counterUntilTick: undefined };
+    const counterTarget =
+      proj.ownerId !== null && proj.ownerId !== ev.victimId ? players[proj.ownerId] : undefined;
+    if (counterTarget && counterTarget.alive) {
+      const returned = Math.min(ABILITY_COUNTER_RETURN_CAP, scaledDamage);
+      const tHealth = Math.max(0, counterTarget.health - returned);
+      players[proj.ownerId!] = {
+        ...counterTarget,
+        health: tHealth,
+        alive: tHealth > 0,
+      };
+      if (tHealth === 0) {
+        events.push({
+          t: "player-killed",
+          victimId: proj.ownerId!,
+          killerId: ev.victimId,
+          cause: "projectile",
+        });
+      }
+      // The returned damage is a real hit: it flows through hit-confirmed so
+      // charge fill / kill feed / audio all read it with zero bespoke
+      // plumbing.
+      events.push({
+        t: "hit-confirmed",
+        victimId: proj.ownerId!,
+        damage: returned,
+        sourceProjectileId: null,
+        attackerId: ev.victimId,
+      });
+    }
+    // The answered read: the parry-deflect flash at the stancer.
+    events.push({
+      t: "parry-deflected",
+      playerId: ev.victimId,
+      projectileId: ev.sourceProjectileId,
+    });
+    return { suppressed: true, firstBloodAwardThisTick: firstBlood }; // original hit suppressed entirely
+  }
+  const wardActive =
+    victim.wardShellUntilTick !== undefined && victim.wardShellUntilTick > ctx.nextTick;
+  const intoMitigation = wardActive ? scaledDamage * EMISSION_WARD_DAMAGE_MULT : scaledDamage;
+  ev.damage = intoMitigation;
+  // Run parry/shield mitigation BEFORE applying damage. Pass the live source
+  // (direct reference for a hitscan shot; a fresher copy from
+  // `remainingProjectiles` when a real, still-live projectile exists this
+  // tick) so the parry arc check has direction info.
+  const sourceProj: RangedHitSource | null =
+    ev.sourceProjectileId !== null ? ctx.remainingProjectiles[ev.sourceProjectileId] ?? proj : null;
+  const victimBuild = resolvePlayerBuild(victim);
+  const mitigation = tryDeflectDamage(victim, sourceProj, intoMitigation, ctx.nextTick, {
+    mirrorShield: victimBuild.mirrorShield,
+    directionalShield: victimBuild.directionalShield,
+    parryCoverMultiplier: victimBuild.parryCoverMultiplier,
+    voidPiercing: proj.element === "void",
+  });
+  let postPlayer = mitigation.player;
+  if (mitigation.evaded) {
+    // Ninja dash i-frames: "wasn't there" — zero damage, no event, no
+    // reflect (evasion is not a counter). The projectile is still consumed
+    // by this hit resolution (v1 simplification — it doesn't visually pass
+    // through the dodging body).
+    players[ev.victimId] = postPlayer;
+    return { suppressed: true, firstBloodAwardThisTick: firstBlood };
+  }
+  if (mitigation.deflected) {
+    // Parry: zero damage; tell the caller (and downstream listeners) by
+    // emitting a parry-deflected event. Damage event is suppressed.
+    events.push({
+      t: "parry-deflected",
+      playerId: ev.victimId,
+      projectileId: ev.sourceProjectileId,
+    });
+    if (ev.sourceProjectileId !== null) {
+      ctx.deflectedProjectileIds.set(ev.sourceProjectileId, ev.victimId);
+    }
+    players[ev.victimId] = postPlayer;
+    return { suppressed: true, firstBloodAwardThisTick: firstBlood };
+  }
+  if (mitigation.shielded) {
+    // Mirror shield: bounce the blocked shard back at the attacker, reusing
+    // the parry-reflect path (reverse velocity + reassign owner at the
+    // projectile-drop site) and the same deflect event/VFX. A hitscan
+    // caller has no real projectile to drop/reverse — see `resolveHitscanShot`'s
+    // own doc comment for how a hitscan reflection is handled instead (a
+    // single immediate re-trace back at the attacker).
+    if (mitigation.shieldReflected && ev.sourceProjectileId !== null) {
+      ctx.deflectedProjectileIds.set(ev.sourceProjectileId, ev.victimId);
+      events.push({
+        t: "parry-deflected",
+        playerId: ev.victimId,
+        projectileId: ev.sourceProjectileId,
+      });
+    }
+    // Shield popped or absorbed — emit shield-popped only when the charge
+    // fully drained; partial absorbs stay silent for the protocol audience
+    // (clients can derive "shield hit" from charge delta in the snapshot if
+    // they want a sound cue).
+    if (mitigation.shieldPopped) {
+      events.push({
+        t: "shield-popped",
+        playerId: ev.victimId,
+        remainingCharge: postPlayer.shieldCharge ?? 0,
+      });
+    }
+    // Stolen Fangs: any absorbed hit banks a lock charge (cap 2), refreshing
+    // the expiry window. weapon.ts spends charges on the player's next fired
+    // shot(s), turning them homing.
+    if (victimBuild.stolenFangs) {
+      const expiryTicks = Math.ceil(STOLEN_FANGS_CHARGE_EXPIRY_MS / ctx.effDtMs);
+      const bankedCharges = Math.min(
+        STOLEN_FANGS_MAX_CHARGES,
+        (postPlayer.pendingLockCharges ?? 0) + 1,
+      );
+      postPlayer = {
+        ...postPlayer,
+        pendingLockCharges: bankedCharges,
+        pendingLockExpiresAtTick: (ctx.nextTick + expiryTicks) as Tick,
+      };
+    }
+    players[ev.victimId] = postPlayer;
+    // Shielded → final damage is 0; don't push the original hit-confirmed
+    // (it's already in the caller's own event list; suppress here).
+    return {
+      suppressed: true,
+      firstBloodAwardThisTick: firstBlood,
+      reflectedVictimId: mitigation.shieldReflected ? ev.victimId : undefined,
+    };
+  }
+  let finalDamage = mitigation.damage;
+  const element = proj.element;
+  // Radiant: 1.4x to a target already affected by any status effect.
+  if (element === "radiant") {
+    const hasStatus =
+      (postPlayer.burnUntilTick !== undefined && postPlayer.burnUntilTick > ctx.nextTick) ||
+      (postPlayer.freezeUntilTick !== undefined && postPlayer.freezeUntilTick > ctx.nextTick) ||
+      (postPlayer.slowedUntilTick !== undefined && postPlayer.slowedUntilTick > ctx.nextTick) ||
+      (postPlayer.vulnerabilityUntilTick !== undefined &&
+        postPlayer.vulnerabilityUntilTick > ctx.nextTick);
+    if (hasStatus) finalDamage *= 1.4;
+  }
+  // Facet Break (Geometrician catalog v1, single role): a hit from the
+  // marking player on their still-marked target is amplified.
+  // Additive/composable, same post-mitigation site as the Radiant status-amp
+  // just above — default-inert (facetTargetId is undefined on every hand
+  // that never drafted the card, so this is a true no-op for every existing
+  // test/build).
+  const attackerEntity = proj.ownerId !== null ? players[proj.ownerId] : undefined;
+  if (
+    attackerEntity?.facetTargetId === ev.victimId &&
+    attackerEntity.facetMarkUntilTick !== undefined &&
+    attackerEntity.facetMarkUntilTick > ctx.nextTick
+  ) {
+    finalDamage *= GEO_FACET_BREAK_AMP_MULTIPLIER;
+  }
+  // Focus Hex (Syzygist catalog v1, single role, class-overhaul-workboard.md
+  // chunk 3.4): the EXACT same amp shape as Facet Break immediately above,
+  // just a different mark field pair and multiplier — mark lives on the
+  // CASTER (focusHexTargetId), not the victim, same reasoning.
+  if (
+    attackerEntity?.focusHexTargetId === ev.victimId &&
+    attackerEntity.focusHexMarkUntilTick !== undefined &&
+    attackerEntity.focusHexMarkUntilTick > ctx.nextTick
+  ) {
+    finalDamage *= SYZ_FOCUS_HEX_AMP_MULTIPLIER;
+  }
+  // Paper Double's Fooled debuff (2026-07-19 fast-follow) — VICTIM-side,
+  // unlike Facet Break/Focus Hex immediately above (which read the
+  // ATTACKER's own mark); any attacker's shot benefits, not just the
+  // Syzygist/Geometrician who caught this player with the burst.
+  finalDamage *= fooledDamageMultiplier(postPlayer, ctx.nextTick);
+  // Technique axis (six-axes-goal.md Layer 1): an execute-flagged shard
+  // finishes a player already below the threshold fraction of spawn health
+  // (100, rosterOps.ts) — never from above it, so the no-100-0 law holds by
+  // construction.
+  const executeFrac = proj.executeBelowFrac ?? 0;
+  if (executeFrac > 0 && postPlayer.health > 0 && postPlayer.health < executeFrac * 100) {
+    finalDamage = Math.max(finalDamage, postPlayer.health);
+  }
+  // Rally Light (chunk 2.6 fast-follow) — same attacker-amp shape every
+  // other hit-resolution site in this file uses (bash/slash/edge).
+  if (attackerEntity) {
+    finalDamage *= rallyLightDamageMultiplier(attackerEntity, players, ctx.nextTick);
+    finalDamage *= kindledResolveDamageMultiplier(attackerEntity, ctx.nextTick);
+  }
+  // Team peel (class-overhaul-workboard.md chunk 2.4) — same gate as every
+  // other damage-resolution site in this file: only when the victim's OWN
+  // Ward didn't already cover this hit (`mitigation.warded` false). `victim`
+  // (captured pre-mitigation, above) still carries the id/teamId/position
+  // the check needs.
+  if (!mitigation.warded) {
+    const peel = applyTeamPeel(victim, finalDamage, players, ctx.sortedPlayerIds, ctx.nextTick);
+    if (peel) {
+      finalDamage = peel.damage;
+      events.push(peel.event);
+    }
+  }
+  ev.damage = finalDamage;
+  if (mitigation.warded) {
+    events.push({
+      t: "ward-absorbed",
+      playerId: ev.victimId,
+      damageBlocked: mitigation.wardDamageBlocked,
+      kindlingGranted: mitigation.wardKindlingGranted,
+    });
+  }
+  if (mitigation.syzWarded) {
+    events.push({
+      t: "syz-ward-absorbed",
+      playerId: ev.victimId,
+      casterId: victim.wardAbsorbSourceId ?? ev.victimId,
+      damageBlocked: mitigation.syzWardDamageBlocked ?? 0,
+      wardBroke: mitigation.syzWardBroke ?? false,
+    });
+  }
+  // First-blood wager: this is a real, non-self, attacker-attributed hit
+  // landing during the fighting phase — claim it if nobody has this round
+  // yet. `firstBlood` also guards against a second projectile awarding it
+  // again later in this same tick.
+  if (
+    ctx.fightingPhase &&
+    !ctx.firstBloodAlreadyClaimedThisRound &&
+    firstBlood === null &&
+    proj.ownerId !== null &&
+    proj.ownerId !== ev.victimId
+  ) {
+    firstBlood = proj.ownerId;
+  }
+  const newHealth = Math.max(0, postPlayer.health - finalDamage);
+  const wasAlive_main = postPlayer.alive;
+  let nextVictim = {
+    ...postPlayer,
+    health: newHealth,
+    alive: newHealth > 0,
+  };
+  if (wasAlive_main && newHealth === 0) {
+    events.push({
+      t: "player-killed",
+      victimId: ev.victimId,
+      killerId: proj.ownerId,
+      cause: "projectile",
+    });
+  }
+  // Fire: 3-second burn DoT at damage * 0.4 per second. Tick-quantized.
+  // Emission cast shards carry statusScale ×2, hard-capped per status
+  // (docs/emission-engine-goal.md) — burn's cap equals its base 3s, so the
+  // cast's fire identity reads through impact size + coverage rather than a
+  // longer burn; freeze genuinely doubles (≤2s).
+  const statusScale = proj.statusScale ?? 1;
+  if (element === "fire") {
+    const burnMs = Math.min(3 * 1000 * statusScale, EMISSION_BURN_CAP_MS);
+    const burnTicks = Math.ceil(burnMs / Math.max(1, ctx.effDtMs));
+    nextVictim = {
+      ...nextVictim,
+      burnUntilTick: (ctx.nextTick + burnTicks) as Tick,
+      burnDps: finalDamage * 0.4,
+      burnTickLastApplied: ctx.nextTick,
+      burnSourceId: proj.ownerId ?? undefined,
+    };
+  }
+  // Ice: 1-second freeze at 0.5x movement (Emission-scaled, capped).
+  if (element === "ice") {
+    const freezeMs = Math.min(1 * 1000 * statusScale, EMISSION_FREEZE_CAP_MS);
+    const freezeTicks = Math.ceil(freezeMs / Math.max(1, ctx.effDtMs));
+    nextVictim = {
+      ...nextVictim,
+      freezeUntilTick: (ctx.nextTick + freezeTicks) as Tick,
+      freezeMultiplier: 0.5,
+    };
+  }
+  players[ev.victimId] = nextVictim;
+
+  // Drain axis (six-axes-goal.md Layer 1): a leech-flagged shard heals its
+  // caster a fraction of the post-mitigation damage that actually landed —
+  // the SAME number the charge fill reads (one damage model). Self-damage
+  // never leeches; the heal is monotone and capped at spawn health (never
+  // reduces, so a boss-mode body above 100 is safe). Chain-lightning
+  // secondaries deliberately excluded — the chain is a derived hit, not the
+  // shard.
+  const leechFrac = proj.leechFraction ?? 0;
+  if (leechFrac > 0 && proj.ownerId !== null && proj.ownerId !== ev.victimId) {
+    const leechCaster = players[proj.ownerId];
+    if (leechCaster && leechCaster.alive) {
+      const healed = Math.min(
+        Math.max(100, leechCaster.health),
+        leechCaster.health + finalDamage * leechFrac,
+      );
+      if (healed > leechCaster.health) {
+        events.push({
+          t: "emission-leech",
+          casterId: proj.ownerId,
+          victimId: ev.victimId,
+          amount: healed - leechCaster.health,
+          fromX: nextVictim.x,
+          fromY: nextVictim.y,
+          toX: leechCaster.x,
+          toY: leechCaster.y,
+        });
+        players[proj.ownerId] = { ...leechCaster, health: healed };
+      }
+    }
+  }
+
+  // Lightning: chain half damage to the nearest OTHER alive player within
+  // radius. Depth 1 only (no recursion). Bypasses parry/shield for
+  // simplicity — the chain is a derived secondary hit.
+  if (element === "lightning") {
+    const CHAIN_RADIUS = 220;
+    const chainDmg = finalDamage * 0.5;
+    let bestId: PlayerId | null = null;
+    let bestD2 = CHAIN_RADIUS * CHAIN_RADIUS;
+    // Iterate sorted ids for determinism.
+    for (const oid of ctx.sortedPlayerIds) {
+      if (oid === ev.victimId) continue;
+      if (proj.ownerId !== null && oid === proj.ownerId) continue;
+      const other = players[oid]!;
+      if (!other.alive) continue;
+      const dx = other.x - nextVictim.x;
+      const dy = other.y - nextVictim.y;
+      const d2 = dx * dx + dy * dy;
+      if (d2 <= bestD2) {
+        bestD2 = d2;
+        bestId = oid;
+      }
+    }
+    if (bestId !== null) {
+      const target = players[bestId]!;
+      const tHealth = Math.max(0, target.health - chainDmg);
+      const wasAlive_chain = target.alive;
+      players[bestId] = {
+        ...target,
+        health: tHealth,
+        alive: tHealth > 0,
+      };
+      if (wasAlive_chain && tHealth === 0) {
+        events.push({
+          t: "player-killed",
+          victimId: bestId,
+          killerId: proj.ownerId,
+          cause: "chain-lightning",
+        });
+      }
+      events.push({
+        t: "hit-confirmed",
+        victimId: bestId,
+        damage: chainDmg,
+        sourceProjectileId: ev.sourceProjectileId,
+        attackerId: proj.ownerId,
+      });
+      // Emit chain-hit so clients can render the lightning bolt arc.
+      // Positions come from player entities at hit-time — deterministic.
+      events.push({
+        t: "chain-hit",
+        victimId: ev.victimId,
+        chainTargetId: bestId,
+        fromX: nextVictim.x,
+        fromY: nextVictim.y,
+        toX: target.x,
+        toY: target.y,
+        damage: chainDmg,
+      });
+    }
+  }
+  return { suppressed: false, firstBloodAwardThisTick: firstBlood };
+}
+
+export type HitscanTraceResult = {
+  hitPlayerId: PlayerId | null;
+  hitDecoyId: EntityId | null;
+  hitDestructibleId: EntityId | null;
+  hitX: number;
+  hitY: number;
+  /** True when the trace was stopped by terrain before reaching anything
+   *  else — every `hit*Id` field is null in that case. */
+  blockedByWall: boolean;
+};
+
+/**
+ * Same-tick, no-`ProjectileEntity` ray-trace (2026-07-20, true hitscan) —
+ * sweeps `sweepAABB` against alive non-owner player AABBs, Paper Double
+ * decoys, and destructibles, plus `sweepAABBCached` against the map's static
+ * collision cache (one-way platforms respected), over the FULL `rangePx` in
+ * one shot (both sweep helpers just multiply velocity by a scalar `dt` — no
+ * tick-boundedness — so encoding the whole range as a single displacement is
+ * exact, not an approximation). Mirrors the same three collision-consumer
+ * groups the real traveling-projectile pipeline checks (player-hit inside
+ * `stepProjectileNative`, decoy-hit in `paperDouble.ts`, destructible-hit in
+ * `destructible.ts`) — a hitscan shot never creates a `ProjectileEntity`, so
+ * without this it could never hit a decoy or destructible at all. Whichever
+ * candidate is nearest wins; a clean miss returns the max-range endpoint
+ * with every `hit*Id` null so the tracer visual always has a real point to
+ * draw to. Hangout mode's player-immunity carve-out is the CALLER's
+ * responsibility (pass an empty `sortedPlayerIds` — same convention
+ * `projectilePlayerIds` already uses for the real projectile pass).
+ */
+export function resolveHitscanShot(
+  originX: number,
+  originY: number,
+  aimAngle: number,
+  rangePx: number,
+  ownerId: PlayerId | null,
+  players: Record<PlayerId, PlayerEntity>,
+  sortedPlayerIds: readonly PlayerId[],
+  collisionCache: StaticCollisionCache,
+  decoys: WorldState["paperDoubles"] = undefined,
+  destructibles: WorldState["destructibles"] = {},
+  // Same bullet thickness a traveling projectile from this build would
+  // carry (`build.projectile radius`, default 0 for a mathematically true
+  // ray). NOT a fast-projectile trick — a literal zero-width ray is
+  // actually STRICTER than a traveling projectile's swept circle
+  // (`projectile.ts` inflates its own AABB by `proj.radius` on every axis
+  // before sweeping), so a shot that would've grazed a target's edge as a
+  // projectile silently whiffs as a hitscan trace without this — confirmed
+  // via a real 2px near-miss regression (abilitySlots.test.ts's Crimson
+  // Tithe leech case). Passing the build's own radius keeps size-modifier
+  // cards (circle-rounds etc.) meaningful for a hitscan weapon too.
+  radius: number = 0,
+): HitscanTraceResult {
+  const dx = Math.cos(aimAngle);
+  const dy = Math.sin(aimAngle);
+  const vx = dx * rangePx;
+  const vy = dy * rangePx;
+  const mover: AABB = { x: originX - radius, y: originY - radius, w: radius * 2, h: radius * 2 };
+
+  const candidatePids: PlayerId[] = [];
+  const candidateAABBs: AABB[] = [];
+  for (const pid of sortedPlayerIds) {
+    if (ownerId !== null && pid === ownerId) continue;
+    const player = players[pid];
+    if (!player || !player.alive) continue;
+    candidatePids.push(pid);
+    candidateAABBs.push(playerHitboxAABB(player));
+  }
+  const playerHit = candidateAABBs.length > 0 ? sweepAABB(mover, vx, vy, 1, candidateAABBs) : null;
+
+  const decoyIds: EntityId[] = [];
+  const decoyAABBs: AABB[] = [];
+  if (decoys) {
+    for (const idStr of Object.keys(decoys).sort()) {
+      const id = EntityId(Number(idStr));
+      const pd = decoys[id]!;
+      if (ownerId !== null && pd.ownerId === ownerId) continue;
+      decoyIds.push(id);
+      decoyAABBs.push(paperDoubleAABB(pd));
+    }
+  }
+  const decoyHit = decoyAABBs.length > 0 ? sweepAABB(mover, vx, vy, 1, decoyAABBs) : null;
+
+  const destructibleIds: EntityId[] = [];
+  const destructibleAABBs: AABB[] = [];
+  for (const idStr of Object.keys(destructibles).sort()) {
+    const id = EntityId(Number(idStr));
+    const d = destructibles[id]!;
+    if (d.health <= 0) continue;
+    destructibleIds.push(id);
+    destructibleAABBs.push(destructibleAABB(d));
+  }
+  const destructibleHit =
+    destructibleAABBs.length > 0 ? sweepAABB(mover, vx, vy, 1, destructibleAABBs) : null;
+
+  const wallHit = sweepAABBCached(mover, vx, vy, 1, collisionCache, true);
+
+  let bestT = 1; // 1 = full range, no hit at all
+  let hitPlayerId: PlayerId | null = null;
+  let hitDecoyId: EntityId | null = null;
+  let hitDestructibleId: EntityId | null = null;
+  let blockedByWall = false;
+  if (playerHit && playerHit.t < bestT) {
+    bestT = playerHit.t;
+    hitPlayerId = candidatePids[playerHit.index]!;
+    hitDecoyId = null;
+    hitDestructibleId = null;
+    blockedByWall = false;
+  }
+  if (decoyHit && decoyHit.t < bestT) {
+    bestT = decoyHit.t;
+    hitPlayerId = null;
+    hitDecoyId = decoyIds[decoyHit.index]!;
+    hitDestructibleId = null;
+    blockedByWall = false;
+  }
+  if (destructibleHit && destructibleHit.t < bestT) {
+    bestT = destructibleHit.t;
+    hitPlayerId = null;
+    hitDecoyId = null;
+    hitDestructibleId = destructibleIds[destructibleHit.index]!;
+    blockedByWall = false;
+  }
+  if (wallHit && wallHit.t < bestT) {
+    bestT = wallHit.t;
+    hitPlayerId = null;
+    hitDecoyId = null;
+    hitDestructibleId = null;
+    blockedByWall = true;
+  }
+  return {
+    hitPlayerId,
+    hitDecoyId,
+    hitDestructibleId,
+    hitX: originX + vx * bestT,
+    hitY: originY + vy * bestT,
+    blockedByWall,
+  };
+}
+
+/**
  * Authoritative tick. Processes inputs, advances all entities, runs collisions,
  * advances round state. Returns the next world state and any discrete events.
  */
@@ -1478,6 +2163,28 @@ export function stepWithRuntime(
   // timer all use the same scaled dt so the whole match observably runs at
   // half tempo. Effective dt is what we feed downstream.
   const effDtMs = dtMs * chaosProfile.timeScale;
+
+  // First-blood wager: the first ranged hit this tick with a resolvable,
+  // non-self attacker claims it, but only if nobody has claimed it yet this
+  // round. Hoisted here (2026-07-20, hitscan) — was previously declared right
+  // before the projectile-drain pass (now, further down), but a hitscan shot
+  // resolves synchronously inside the EARLIER per-player loop and needs to
+  // compete for the same claim; a plain `let` hoist changes nothing about
+  // WHEN it's read/written, only makes it available earlier too.
+  let firstBloodAwardThisTick: PlayerId | null = null;
+
+  // Hitscan hits awaiting mitigation + damage application (2026-07-20) — the
+  // ray-trace itself runs immediately in the per-player loop below (safe,
+  // read-only), but resolving the actual hit is deferred here, to right
+  // after that loop closes, for the SAME reason `PendingSyzygistCast` (below)
+  // defers its own cross-player writes — see the per-player loop's own
+  // comment at its hitscan-pellet site for the full hazard explanation.
+  const pendingHitscanHits: Array<{
+    victimId: PlayerId;
+    hitY: number;
+    source: RangedHitSource;
+    rangePx: number;
+  }> = [];
 
   // Single rng cursor threaded through all sim stages this tick. We seed it
   // from the world state so determinism is preserved across replays.
@@ -1585,6 +2292,10 @@ export function stepWithRuntime(
     coneRadians?: number;
     slowMultiplier?: number;
     slowDurationMs?: number;
+    /** Paper Double's burst debuff (2026-07-19 fast-follow) — set ONLY on
+     *  `paper-double-burst` casts. See types.ts's `fooledUntilTick` field
+     *  comment for the full mechanic. */
+    fooledDurationMs?: number;
   };
   const pendingInstantAoe: PendingInstantAoe[] = [];
 
@@ -1651,6 +2362,23 @@ export function stepWithRuntime(
    * `state.satellites` example, same reasoning here).
    */
   const pendingPaperDoubleSpawns: PaperDoubleEntity[] = [];
+
+  /**
+   * Resonance-gated position swaps (2026-07-19 fast-follow — docs/card-
+   * pool-v2.md's "Cast Paper Double INTO a live window: you and the double
+   * swap positions at cast instead"). Populated by the `"paper-double"`
+   * ability-switch case when it finds BOTH a live resonance window AND a
+   * still-live decoy of its own — same deferred-collection shape as
+   * `pendingPaperDoubleSpawns` immediately above (a cross-entity write to a
+   * `PaperDoubleEntity`, which this per-player loop never otherwise
+   * touches, so it can't safely mutate `state.paperDoubles` directly
+   * mid-loop). Applied in section "3c2. Paper Doubles" below, BEFORE
+   * `stepPaperDoubles` runs, so the decoy's own straight-line movement this
+   * tick continues from its NEW (post-swap) position, not its old one. The
+   * caster's OWN side of the swap is a self-write (`nextEntity.x/y`) —
+   * applied directly in the switch case, no queue needed for that half.
+   */
+  const pendingPaperDoubleSwaps: Array<{ decoyId: EntityId; x: number; y: number }> = [];
 
   for (const [pid_, entity] of Object.entries(state.players)) {
     const pid = pid_ as PlayerId;
@@ -1944,6 +2672,112 @@ export function stepWithRuntime(
         ) {
           nextEntity = { ...nextEntity, veilUntilTick: undefined };
         }
+        // Hitscan pellets (2026-07-20, true hitscan) — the RAY-TRACE resolves
+        // right here (read-only geometry, safe at any point in the tick), but
+        // the actual mitigation + damage application (`resolveRangedHit`) is
+        // DEFERRED to `pendingHitscanHits`, resolved in one batch right after
+        // the main per-player loop closes below. Reason: this loop commits
+        // each player's own `nextEntity` into `players` only at the END of
+        // THEIR OWN iteration — a player later in iteration order (not yet
+        // processed) has no live entry in `players` yet, and if their turn
+        // hasn't run, hitting them NOW and writing `players[victimId] = ...`
+        // would be silently overwritten the moment their own turn eventually
+        // runs and commits a `nextEntity` built from the frozen pre-tick
+        // `state.players[victimId]` (unaware of the damage). This is the
+        // EXACT hazard `PendingSyzygistCast` (above) already documents and
+        // works around for cross-player writes — same fix, same reason.
+        // `hitscanHits` (an additive field on the SAME shot-fired event
+        // below) still carries each pellet's real endpoint for the tracer
+        // visual, since the TRACE itself doesn't need deferring — only the
+        // damage write does. The trace's own player candidates are read from
+        // `state.players` merged under `players` (`??`) so a not-yet-
+        // processed victim is still found (using their pre-tick position —
+        // negligible for one tick of movement).
+        const hitscanHits: { x: number; y: number; hitPlayerId: PlayerId | null }[] = [];
+        if (fireResult.hitscanPellets.length > 0) {
+          const hitscanSortedIds = (Object.keys(state.players) as PlayerId[]).sort();
+          // Hangout mode: players take ZERO ranged damage there (same carve-
+          // out `projectilePlayerIds = hangoutMode ? [] : sortedPlayerIdsForTick`
+          // already applies below for real projectiles) — an empty candidate
+          // list means `resolveHitscanShot` can never resolve a player hit,
+          // while decoys/destructibles (passed unconditionally just below)
+          // still can, matching the practice-dummy venue's actual ruleset.
+          const hitscanPlayerCandidateIds = hangoutMode ? [] : hitscanSortedIds;
+          const playersForTrace: Record<PlayerId, PlayerEntity> = { ...state.players, ...players };
+          // Same reasoning as `playersForTrace` above, applied to decoys: a
+          // decoy cast THIS SAME TICK by an earlier-processed player lives
+          // only in `pendingPaperDoubleSpawns` until `stepPaperDoubles` runs
+          // after the whole per-player loop closes — `state.paperDoubles`
+          // alone is the stale pre-tick snapshot and would miss it entirely,
+          // the one gap a traveling projectile never had (it would simply
+          // arrive on some LATER tick, by which point the spawn had already
+          // landed in `state.paperDoubles`). A same-tick hitscan trace has no
+          // such luxury, so it reads whatever's been committed so far this
+          // tick, exactly like the players merge just above.
+          const decoysForTrace: WorldState["paperDoubles"] =
+            pendingPaperDoubleSpawns.length > 0
+              ? {
+                  ...(state.paperDoubles ?? {}),
+                  ...Object.fromEntries(pendingPaperDoubleSpawns.map((pd) => [pd.id, pd])),
+                }
+              : state.paperDoubles;
+          for (const pellet of fireResult.hitscanPellets) {
+            const trace = resolveHitscanShot(
+              pellet.originX,
+              pellet.originY,
+              pellet.aimAngle,
+              pellet.rangePx,
+              pellet.ownerId,
+              playersForTrace,
+              hitscanPlayerCandidateIds,
+              runtime.collisionCache,
+              decoysForTrace,
+              state.destructibles,
+              pellet.radius,
+            );
+            hitscanHits.push({ x: trace.hitX, y: trace.hitY, hitPlayerId: trace.hitPlayerId });
+            // Decoy/destructible hits reuse the SAME pending-array mechanisms
+            // melee/edge attacks already push into (see their own doc
+            // comments a few hundred lines below) — damage application,
+            // break/burst events, and (for decoys) the AOE burst + Fooled
+            // debuff via `resolveInstantAoeCasts` all come for free.
+            if (trace.hitDecoyId !== null) {
+              pendingPaperDoubleDamage.push({
+                paperDoubleId: String(trace.hitDecoyId),
+                attackerId: pellet.ownerId,
+                damage: pellet.damage,
+              });
+              continue;
+            }
+            if (trace.hitDestructibleId !== null) {
+              pendingHangoutDestructibleDamage.push({
+                destructibleId: String(trace.hitDestructibleId),
+                attackerId: pellet.ownerId,
+                damage: pellet.damage,
+              });
+              continue;
+            }
+            if (trace.hitPlayerId === null) continue;
+            pendingHitscanHits.push({
+              victimId: trace.hitPlayerId,
+              hitY: trace.hitY,
+              source: {
+                id: allocId(),
+                ownerId: pellet.ownerId,
+                element: pellet.element,
+                x: pellet.originX,
+                y: pellet.originY,
+                vx: Math.cos(pellet.aimAngle),
+                vy: Math.sin(pellet.aimAngle),
+                damage: pellet.damage,
+                tendril: pellet.tendril,
+                leechFraction: pellet.leechFraction,
+                radius: pellet.radius,
+              },
+              rangePx: pellet.rangePx,
+            });
+          }
+        }
         events.push({
           t: "shot-fired",
           playerId: pid,
@@ -1951,6 +2785,7 @@ export function stepWithRuntime(
           y: nextEntity.y,
           hand: fireResult.throwHand,
           projectileIds: fireResult.projectiles.map((projectile) => projectile.id),
+          hitscanHits: hitscanHits.length > 0 ? hitscanHits : undefined,
         });
         for (const p of fireResult.projectiles) {
           projectilesCow.set(p.id, p);
@@ -2364,14 +3199,15 @@ export function stepWithRuntime(
           break;
         }
         case "measure": {
-          // v1 = banks one guaranteed free shot (ammo+1, capped at magazine
-          // size) — the closest existing analog to "refunds mana" (no mana
-          // resource exists yet, classes-goal.md future work). The doc's
-          // aim-assist "true line" VFX is a render-only follow-up; the
-          // generic ability-activated event already gives spectators a read.
+          // Reworked 2026-07-19 (docs/axiom-deviations-audit.md D2 — the
+          // original +1-ammo v1 was a confirmed dominated filler). Opens a
+          // short window (types.ts's measureUntilTick doc comment has the
+          // full reasoning); weapon.ts reads it to zero spread + amp damage
+          // on shots fired while live.
+          const durTicks = Math.ceil(active.durationMs / Math.max(1, dtMs));
           nextEntity = {
             ...nextEntity,
-            ammo: Math.min(build.magazineSize, nextEntity.ammo + 1),
+            measureUntilTick: (state.tick + 1 + durTicks) as Tick,
           };
           activated = true;
           break;
@@ -2416,17 +3252,22 @@ export function stepWithRuntime(
           break;
         }
         case "recoil-step": {
-          // Instant hop opposite the aim direction. The doc's "next shot
-          // gets knock-self reduction" nuance is a deferred v2 (would need
-          // its own weapon.ts window field — left out to keep this pass's
-          // new-field count lean).
+          // Instant hop opposite the aim direction, plus a rider window
+          // (reworked 2026-07-19, docs/axiom-deviations-audit.md D2 — the
+          // doc's own "next shot gets knock-self reduction" nuance, deferred
+          // in v1, now shipped): weapon.ts reads recoilStepUntilTick to
+          // reduce self-knockback on shots fired while live. See types.ts's
+          // field comment for the full "why this makes Recoil Step
+          // orthogonal to Slip Node" reasoning.
           const dx0 = aimX - nextEntity.x;
           const dy0 = aimY - nextEntity.y;
           const hopAngle = lutAtan2(dy0, dx0) + Math.PI;
+          const durTicks = Math.ceil(active.durationMs / Math.max(1, dtMs));
           nextEntity = {
             ...nextEntity,
             vx: nextEntity.vx + lutCos(hopAngle) * GEO_RECOIL_STEP_HOP_SPEED,
             vy: nextEntity.vy + lutSin(hopAngle) * GEO_RECOIL_STEP_HOP_SPEED * 0.6,
+            recoilStepUntilTick: (state.tick + 1 + durTicks) as Tick,
           };
           activated = true;
           break;
@@ -2485,6 +3326,12 @@ export function stepWithRuntime(
             element: build.projectile.element,
           });
           shard.rangePx = KIN_SUNSPIKE_RANGE_PX;
+          // Bespoke render identity (2026-07-20) — see types.ts's
+          // `kindledThrust` field comment: a solid, symmetric gold spike
+          // instead of "whatever your card build's shot looks like."
+          // Render-only; `element`/`shape` above stay build-resolved so a
+          // fire-handed paladin's Sunspike still burns, unchanged.
+          shard.kindledThrust = true;
           projectilesCow.set(shard.id, shard);
           activated = true;
           break;
@@ -2936,10 +3783,15 @@ export function stepWithRuntime(
         }
         case "flock-pulse": {
           // Instant nova (Lattice-style ring), damage scaled by how many
-          // OTHER players currently carry this caster's live buffs — the
-          // same dedup-by-target-id count Devotion's own accrual pass
-          // computes (constants.ts's SYZ_FLOCK_PULSE_* header note).
-          let sourceCount = 0;
+          // OTHER players currently entangle with this caster — the same
+          // dedup-by-target-id count Devotion's own accrual pass computes
+          // (constants.ts's SYZ_FLOCK_PULSE_* header note). Two independent
+          // counts, matching the catalog doc's "Solo: cursed count; team:
+          // allies+cursed" (2026-07-19 D3 fast-follow — buffed-ally count
+          // alone left this ability doing only its flat base damage for any
+          // Syzygist with no ally, i.e. every solo FFA cast).
+          let allySourceCount = 0;
+          let enemySourceCount = 0;
           for (const [otherId, other] of Object.entries(state.players)) {
             if ((otherId as PlayerId) === pid || !other.alive) continue;
             const carriesRegen =
@@ -2954,9 +3806,16 @@ export function stepWithRuntime(
               other.wardAbsorbSourceId === pid &&
               other.wardAbsorbUntilTick !== undefined &&
               other.wardAbsorbUntilTick > state.tick;
-            if (carriesRegen || carriesHaste || carriesWard) sourceCount++;
+            if (carriesRegen || carriesHaste || carriesWard) allySourceCount++;
+            const carriesBurn =
+              other.burnSourceId === pid &&
+              other.burnUntilTick !== undefined &&
+              other.burnUntilTick > state.tick;
+            if (carriesBurn) enemySourceCount++;
           }
-          sourceCount = Math.min(sourceCount, SYZ_DEVOTION_MAX_COUNTED_SOURCES);
+          const sourceCount =
+            Math.min(allySourceCount, SYZ_DEVOTION_MAX_COUNTED_SOURCES) +
+            Math.min(enemySourceCount, SYZ_DEVOTION_MAX_COUNTED_SOURCES);
           // Aoe role rework (2026-07-18): was a ring of SYZ_FLOCK_PULSE_
           // COUNT discrete shards, the scaled total split evenly across
           // them (so any one target usually only caught one shard's
@@ -3178,6 +4037,13 @@ export function stepWithRuntime(
               element: "crystal",
             });
             shard.rangePx = NINJA_NEEDLE_RANGE_PX;
+            // Bespoke render identity (2026-07-20) — same fix as Edge
+            // Storm's wave, see types.ts's `ninjaBladeShard` field comment:
+            // was riding `element: "crystal"` alone and reading as the
+            // Geometrician's own crystal-dart shape. Render-only;
+            // `element` above stays "crystal" so damage/impact behavior
+            // is unchanged.
+            shard.ninjaBladeShard = true;
             projectilesCow.set(shard.id, shard);
             activated = true;
           }
@@ -3343,16 +4209,70 @@ export function stepWithRuntime(
               dirY = 0;
             }
           }
-          // v1 always SPAWNS, even when a resonance window is live — the
-          // doc's "cast INTO a live window: you and the double swap
-          // positions instead" variant is a recorded fast-follow deferral
-          // (same "ship the core, document the nuance" discipline Undercut's
-          // wave-exclusion / Read Mark's dash-through-tag / Borrowed Time's
-          // aggression-gate already use above). Not implemented here because
-          // it's a genuinely different effect SHAPE (a cross-entity position
-          // swap gated on "does a live decoy from THIS caster still exist"),
-          // not a numeric tuning nuance — see this ability's own card
-          // description for the honest "always spawns" v1 contract.
+          // Resonance-gated swap (2026-07-19 fast-follow — docs/card-pool-
+          // v2.md: "Cast Paper Double INTO a live window: you and the
+          // double swap positions at cast instead"). Checked here, BEFORE
+          // the shared post-switch resonance block below (which computes
+          // its own `resonated` from these SAME fields and still applies —
+          // the swap replaces the SPAWN, not the generic CD-refund bonus).
+          // Same "chains unlike abilities" eligibility every resonance
+          // consumer follows: a live window opened by a DIFFERENT kind.
+          // Mirrors a live decoy owned by THIS caster — the earliest by
+          // EntityId (determinism; in practice at most one can exist, since
+          // NINJA_PAPER_DOUBLE_CD_MS (9s) outlasts NINJA_PAPER_DOUBLE_
+          // LIFETIME_MS (2.5s), so a second cast's own decoy can't overlap
+          // an still-live prior one under normal cooldown play).
+          const resonanceLiveForSwap =
+            nextEntity.resonanceUntilTick !== undefined &&
+            nextEntity.resonanceUntilTick > state.tick &&
+            nextEntity.resonanceSourceKind !== undefined &&
+            nextEntity.resonanceSourceKind !== "paper-double";
+          let ownDecoyId: EntityId | undefined;
+          const existingPaperDoubles = state.paperDoubles ?? {};
+          if (resonanceLiveForSwap) {
+            const decoyIds = Object.keys(existingPaperDoubles)
+              .map((idStr) => EntityId(Number(idStr)))
+              .sort((a, b) => a - b);
+            for (const decoyId of decoyIds) {
+              if (existingPaperDoubles[decoyId]!.ownerId === pid) {
+                ownDecoyId = decoyId;
+                break;
+              }
+            }
+          }
+          if (ownDecoyId !== undefined) {
+            const decoy = existingPaperDoubles[ownDecoyId]!;
+            const dxSwap = decoy.x - nextEntity.x;
+            const dySwap = decoy.y - nextEntity.y;
+            const swapDist = Math.hypot(dxSwap, dySwap);
+            // Bounded exchange, not always a full teleport-to-exact-position
+            // — "max displacement ≈ 900px... never a free cross-map blink"
+            // (the doc's own appendix explicitly rejected an unbounded
+            // universal Blink card; this is the survivor). Within the cap,
+            // the swap is exact; beyond it, both sides move only the capped
+            // distance along the same line — a partial exchange rather than
+            // a full one, never exceeding the documented bound.
+            const scale = swapDist > NINJA_PAPER_DOUBLE_SWAP_MAX_DISPLACEMENT_PX && swapDist > 0
+              ? NINJA_PAPER_DOUBLE_SWAP_MAX_DISPLACEMENT_PX / swapDist
+              : 1;
+            const casterOldX = nextEntity.x;
+            const casterOldY = nextEntity.y;
+            nextEntity = {
+              ...nextEntity,
+              x: casterOldX + dxSwap * scale,
+              y: casterOldY + dySwap * scale,
+            };
+            pendingPaperDoubleSwaps.push({
+              decoyId: ownDecoyId,
+              x: decoy.x - dxSwap * scale,
+              y: decoy.y - dySwap * scale,
+            });
+            activated = true;
+            break;
+          }
+          // v1 always SPAWNS when the swap isn't eligible (no live
+          // resonance window, or no live decoy of this caster's own to
+          // swap with) — the ordinary "sprint a fresh decoy" cast.
           const pd = buildPaperDoubleEntity(
             allocId(),
             pid,
@@ -3517,6 +4437,15 @@ export function stepWithRuntime(
             burnUntilTick: source.burnUntilTick,
             burnDps: source.burnDps,
             burnTickLastApplied: state.tick,
+            // Carries the ORIGINAL curse's attribution forward, not
+            // Contagion's own caster — this is a spread of an existing
+            // curse (with its existing properties), not a new one authored
+            // by whoever cast Contagion. Keeps Devotion/Flock Pulse credit
+            // (World.ts's accrual pass, burnSourceId) with whichever
+            // Syzygist actually cursed the chain's first target, correct
+            // even in a multi-Syzygist match where the spreader and the
+            // original curser are different players.
+            burnSourceId: source.burnSourceId,
           };
         }
         break;
@@ -3530,6 +4459,107 @@ export function stepWithRuntime(
   // stable for the rest of the tick — passes mutate player VALUES, never
   // add/remove ids — so this is byte-identical to each pass re-sorting.
   const sortedPlayerIdsForTick = (Object.keys(players) as PlayerId[]).sort();
+
+  // 1x. HITSCAN HIT RESOLUTION (2026-07-20, true hitscan) — resolves
+  //     `pendingHitscanHits`, queued during the per-player loop above by any
+  //     raycast-delivery pellet's ray-trace. Deferred to here (same
+  //     post-loop timing as DASH BASH/NINJA MELEE/PALADIN MELEE/instant AOE
+  //     below) because `players` is now FULLY committed — every player's own
+  //     turn has already run, so reading/writing ANY victim (including one
+  //     that fires AFTER its own turn in iteration order) is safe. See the
+  //     per-player loop's own comment at the hitscan-pellet site for the
+  //     full hazard this avoids.
+  const hitscanTick = Tick(state.tick + 1);
+  for (const pending of pendingHitscanHits) {
+    const victim = players[pending.victimId];
+    if (!victim || !victim.alive) continue;
+    const headshot = isHeadshot(pending.hitY, victim);
+    const hitEv: Extract<SimEvent, { t: "hit-confirmed" }> = {
+      t: "hit-confirmed",
+      victimId: pending.victimId,
+      damage: headshot ? pending.source.damage * HEADSHOT_DAMAGE_MULTIPLIER : pending.source.damage,
+      sourceProjectileId: pending.source.id,
+      attackerId: pending.source.ownerId,
+      headshot,
+    };
+    const rangedCtx: RangedHitContext = {
+      chaosProfile,
+      hangoutMode,
+      fightingPhase,
+      firstBloodAlreadyClaimedThisRound: state.round.firstBloodPlayerId !== undefined,
+      nextTick: hitscanTick,
+      effDtMs,
+      sortedPlayerIds: sortedPlayerIdsForTick,
+      firstBloodAwardThisTick,
+      remainingProjectiles: {},
+      deflectedProjectileIds: runtime.scratchDeflectedProjectiles,
+    };
+    const rangedResult = resolveRangedHit(hitEv, pending.source, players, events, rangedCtx);
+    firstBloodAwardThisTick = rangedResult.firstBloodAwardThisTick;
+    if (!rangedResult.suppressed) events.push(hitEv);
+    // Mirror shield: a real projectile physically reverses and reassigns
+    // owner (untouched elsewhere in this file); a hitscan shot has no entity
+    // to reverse, so re-resolve ONE more trace from the victim back along
+    // the same line toward where it came from — single bounce only, no
+    // further reflection. Safe to do inline here (unlike the per-player
+    // loop) since every player is already fully committed by this point.
+    if (rangedResult.reflectedVictimId !== undefined) {
+      const bouncer = players[rangedResult.reflectedVictimId];
+      if (bouncer) {
+        const backAngle = Math.atan2(pending.source.vy, pending.source.vx) + Math.PI;
+        const bounceTrace = resolveHitscanShot(
+          bouncer.x,
+          bouncer.y,
+          backAngle,
+          pending.rangePx,
+          rangedResult.reflectedVictimId,
+          players,
+          sortedPlayerIdsForTick,
+          runtime.collisionCache,
+          undefined,
+          undefined,
+          pending.source.radius,
+        );
+        if (bounceTrace.hitPlayerId !== null) {
+          const bounceVictim = players[bounceTrace.hitPlayerId];
+          if (bounceVictim && bounceVictim.alive) {
+            const bounceHeadshot = isHeadshot(bounceTrace.hitY, bounceVictim);
+            const bounceEv: Extract<SimEvent, { t: "hit-confirmed" }> = {
+              t: "hit-confirmed",
+              victimId: bounceTrace.hitPlayerId,
+              damage: bounceHeadshot
+                ? pending.source.damage * HEADSHOT_DAMAGE_MULTIPLIER
+                : pending.source.damage,
+              sourceProjectileId: allocId(),
+              attackerId: rangedResult.reflectedVictimId,
+              headshot: bounceHeadshot,
+            };
+            const bounceResult = resolveRangedHit(
+              bounceEv,
+              {
+                id: bounceEv.sourceProjectileId!,
+                ownerId: rangedResult.reflectedVictimId,
+                element: pending.source.element,
+                x: bouncer.x,
+                y: bouncer.y,
+                vx: Math.cos(backAngle),
+                vy: Math.sin(backAngle),
+                damage: pending.source.damage,
+                tendril: pending.source.tendril,
+                leechFraction: pending.source.leechFraction,
+                radius: pending.source.radius,
+              },
+              players,
+              events,
+              { ...rangedCtx, firstBloodAwardThisTick },
+            );
+            firstBloodAwardThisTick = bounceResult.firstBloodAwardThisTick;
+            if (!bounceResult.suppressed) events.push(bounceEv);
+          }
+        }
+      }
+    }
+  }
 
   // 1y. INSTANT AOE RESOLUTION (aoe role rework, 2026-07-18) — resolves
   //     `pendingInstantAoe`, queued above by Prism Fan/Lattice's instant
@@ -3613,6 +4643,7 @@ export function stepWithRuntime(
           let finalDamage = mit.damage;
           finalDamage *= rallyLightDamageMultiplier(liveCaster, players, aoeTick);
           finalDamage *= kindledResolveDamageMultiplier(liveCaster, aoeTick);
+          finalDamage *= fooledDamageMultiplier(victim, aoeTick);
           if (!mit.warded) {
             const peel = applyTeamPeel(victim, finalDamage, players, sortedPlayerIdsForTick, aoeTick);
             if (peel) {
@@ -3680,6 +4711,20 @@ export function stepWithRuntime(
             multiplier: resistedMul,
             durationMs: cast.slowDurationMs,
           });
+        }
+
+        // Fooled (Paper Double's burst debuff, 2026-07-19 fast-follow) —
+        // same "applied whenever the hit wasn't evaded/blocked, whether or
+        // not real damage also landed" gate as slow/stagger just above (a
+        // status-only burst — cast.damage === 0 for paper-double-burst,
+        // NINJA_PAPER_DOUBLE_BURST_DAMAGE is actually > 0 today, but this
+        // stays gate-correct either way) — same "keep whichever ends later"
+        // stacking policy, extend-not-refresh.
+        if (cast.fooledDurationMs !== undefined) {
+          const ticksDuration = Math.ceil(cast.fooledDurationMs / effDtMs);
+          const until = Tick(aoeTick + ticksDuration);
+          const prevUntil = post.fooledUntilTick ?? Tick(0);
+          post = { ...post, fooledUntilTick: Tick(Math.max(prevUntil, until)) };
         }
 
         players[vid] = post;
@@ -4076,6 +5121,7 @@ export function stepWithRuntime(
             // must not double-consume a single-charge window on the first).
             const liveAttackerForMark = players[aid]!;
             let slashFinalDamage = mit.damage;
+            slashFinalDamage *= fooledDamageMultiplier(victim, meleeTick);
             if (
               liveAttackerForMark.readTargetId === vid &&
               liveAttackerForMark.readMarkUntilTick !== undefined &&
@@ -4256,6 +5302,12 @@ export function stepWithRuntime(
             element: "crystal",
           });
           wave.rangePx = WAVE_RANGE;
+          // Bespoke render identity (2026-07-20) — see types.ts's
+          // `ninjaBladeShard` field comment: opts this shot into a smaller,
+          // ninja-themed blade-sliver render instead of the Geometrician's
+          // reused crystal-dart shape. Render-only; `element` above stays
+          // "crystal" so damage/impact behavior is unchanged.
+          wave.ninjaBladeShard = true;
           projectilesCow.set(wave.id, wave);
           events.push({ t: "wave-spawned", playerId: aid, projectileId: wave.id, x: wave.x, y: wave.y });
           const remaining = (liveAttacker.edgeStormChargesRemaining ?? 0) - 1;
@@ -4375,6 +5427,7 @@ export function stepWithRuntime(
             // victims in the same tick only consumes Seal on the first.
             const liveAttacker = players[aid]!;
             let edgeDamage = mit.damage;
+            edgeDamage *= fooledDamageMultiplier(victim, edgeTick);
             if (
               liveAttacker.judgmentTargetId === vid &&
               liveAttacker.judgmentMarkUntilTick !== undefined &&
@@ -4765,36 +5818,47 @@ export function stepWithRuntime(
     if (next !== p) players[pid] = next;
   }
 
-  // 1c. Syzygist Devotion accrual (class-overhaul-workboard.md chunk 3.2):
-  //     continuous per-tick income, +SYZ_DEVOTION_PER_BUFFED_ALLY_PER_SEC
-  //     per DISTINCT other ally currently carrying THIS player's live
-  //     regen/haste/Ward window (deduped by target id — an ally holding
-  //     two of this caster's buffs at once still counts once), capped at
-  //     SYZ_DEVOTION_MAX_COUNTED_SOURCES sources and SYZ_DEVOTION_MAX
-  //     total. Runs AFTER the expiry block above so a window that just
-  //     lapsed this tick no longer counts (byte-consistent with "does not
-  //     generate when no one carries it"). A player with NO teamId (solo/
-  //     FFA) can never satisfy `isAlly` for anyone (team.ts), so this loop
-  //     is a true no-op for every non-team match — same "unaffected by
-  //     construction" guarantee every other 1.1-consuming chunk gives.
-  //     Two-phase (count-then-write) so no caster's own devotion write can
-  //     affect another caster's count computed from the SAME pre-write
-  //     `players` snapshot this tick.
+  // 1c. Syzygist Devotion accrual (class-overhaul-workboard.md chunk 3.2,
+  //     extended 2026-07-19 D3 fast-follow to close "Devotion from enemy
+  //     curses"): continuous per-tick income from TWO independent source
+  //     counts —
+  //       - ally sources: +SYZ_DEVOTION_PER_BUFFED_ALLY_PER_SEC per DISTINCT
+  //         other ally currently carrying THIS player's live regen/haste/
+  //         Ward window (deduped by target id — an ally holding two of this
+  //         caster's buffs at once still counts once). A player with NO
+  //         teamId (solo/FFA) can never satisfy `isAlly` for anyone
+  //         (team.ts), so this count is always 0 for them — unaffected by
+  //         construction, same as before this fast-follow.
+  //       - enemy sources: +SYZ_DEVOTION_PER_CURSED_ENEMY_PER_SEC per
+  //         DISTINCT enemy currently burning from THIS player's own fire
+  //         hit (`burnSourceId`, types.ts) — works identically whether or
+  //         not the caster has a teamId, which is what actually closes the
+  //         solo floor (a solo Syzygist previously earned literally zero
+  //         Devotion; every ability with a Devotion cost was unusable solo).
+  //     Both counts are capped independently at SYZ_DEVOTION_MAX_COUNTED_
+  //     SOURCES (a duo Syzygist who ALSO curses enemies earns from both at
+  //     once — "teams still peak higher" per classes-goal.md, intentional).
+  //     Runs AFTER the expiry block above so a window/burn that just lapsed
+  //     this tick no longer counts. Two-phase (count-then-write) so no
+  //     caster's own devotion write can affect another caster's count
+  //     computed from the SAME pre-write `players` snapshot this tick.
   //
   //     D3 brake (2026-07-18, docs/axiom-deviations-audit.md — see
   //     `syzygistLeadBrakeMultiplier`'s own doc comment above for the full
-  //     rationale): the counted source total is scaled by this caster's
-  //     in-round kill-lead brake BEFORE the per-second rate is applied, so
-  //     a Syzygist already pulling ahead this round earns Devotion slower
-  //     from the exact same buff uptime a leaderless/behind Syzygist earns
-  //     at full rate.
+  //     rationale): EACH source count is scaled by this caster's in-round
+  //     kill-lead brake BEFORE its own per-second rate is applied, so a
+  //     Syzygist already pulling ahead this round earns Devotion slower
+  //     from the exact same uptime (ally OR enemy) a leaderless/behind
+  //     Syzygist earns at full rate — the brake covers the new enemy source
+  //     by construction, exactly as this comment always intended.
   {
     const devotionGain = new Map<PlayerId, number>();
     for (const casterIdStr of Object.keys(players)) {
       const casterId = casterIdStr as PlayerId;
       const caster = players[casterId]!;
-      if (!caster.alive || caster.teamId === undefined) continue;
-      let sourceCount = 0;
+      if (!caster.alive) continue;
+      let allySourceCount = 0;
+      let enemySourceCount = 0;
       for (const otherIdStr of Object.keys(players)) {
         const otherId = otherIdStr as PlayerId;
         if (otherId === casterId) continue;
@@ -4812,18 +5876,28 @@ export function stepWithRuntime(
           other.wardAbsorbSourceId === casterId &&
           other.wardAbsorbUntilTick !== undefined &&
           other.wardAbsorbUntilTick > state.tick;
-        if (carriesRegen || carriesHaste || carriesWard) sourceCount++;
+        if (carriesRegen || carriesHaste || carriesWard) allySourceCount++;
+        const carriesBurn =
+          other.burnSourceId === casterId &&
+          other.burnUntilTick !== undefined &&
+          other.burnUntilTick > state.tick;
+        if (carriesBurn) enemySourceCount++;
       }
-      if (sourceCount > 0) {
+      if (allySourceCount > 0 || enemySourceCount > 0) {
         const brake = syzygistLeadBrakeMultiplier(casterId, players, state.round.roundKills);
-        devotionGain.set(casterId, Math.min(sourceCount, SYZ_DEVOTION_MAX_COUNTED_SOURCES) * brake);
+        const rate =
+          Math.min(allySourceCount, SYZ_DEVOTION_MAX_COUNTED_SOURCES) *
+            SYZ_DEVOTION_PER_BUFFED_ALLY_PER_SEC +
+          Math.min(enemySourceCount, SYZ_DEVOTION_MAX_COUNTED_SOURCES) *
+            SYZ_DEVOTION_PER_CURSED_ENEMY_PER_SEC;
+        devotionGain.set(casterId, rate * brake);
       }
     }
     if (devotionGain.size > 0) {
       const dtSec = effDtMs / 1000;
-      for (const [casterId, sources] of devotionGain) {
+      for (const [casterId, ratePerSec] of devotionGain) {
         const caster = players[casterId]!;
-        const gained = sources * SYZ_DEVOTION_PER_BUFFED_ALLY_PER_SEC * dtSec;
+        const gained = ratePerSec * dtSec;
         players[casterId] = {
           ...caster,
           devotion: Math.min(SYZ_DEVOTION_MAX, (caster.devotion ?? 0) + gained),
@@ -4872,11 +5946,10 @@ export function stepWithRuntime(
 
   const nextTick = Tick(state.tick + 1);
   let rngState = state.rngState;
-  // First-blood wager: the first projectile hit this tick with a resolvable,
-  // non-self attacker claims it, but only if nobody has claimed it yet this
-  // round. Threaded into the stepRound() call below so RoundState picks it
-  // up starting next tick (see round.ts's `next` scaffold).
-  let firstBloodAwardThisTick: PlayerId | null = null;
+  // First-blood wager state: `firstBloodAwardThisTick` is now declared near
+  // the top of this function (2026-07-20, hitscan) — see that declaration's
+  // own comment. Threaded into the stepRound() call below so RoundState
+  // picks it up starting next tick (see round.ts's `next` scaffold).
   // Projectile ids that were parry-deflected this tick — they get dropped
   // from `remainingProjectiles` even if their hit-resolution path would have
   // kept them alive (e.g. pierce-chain). Reuses runtime scratch.
@@ -4938,481 +6011,26 @@ export function stepWithRuntime(
     // Drain events: damage on hit-confirmed, slow on player-slowed.
     for (const ev of result.events) {
       if (ev.t === "hit-confirmed" && players[ev.victimId]) {
-        const victim = players[ev.victimId]!;
-        // Apply chaos damage multiplier here so every projectile source
-        // (player weapons, satellites, future hazards) is scaled uniformly.
-        // We mutate the event's `damage` so SFX / network consumers see the
-        // post-chaos number too.
-        const scaledDamage = ev.damage * chaosProfile.damageMultiplier;
-        ev.damage = scaledDamage;
-        // Belt-and-braces for the hangout player-immunity carve-out: the
-        // empty candidate list above already makes this unreachable, but a
-        // future projectile source that bypasses the hit sweep must not
-        // quietly reopen player damage in the lobby.
-        if (victim.alive && !hangoutMode) {
-          // Priest tendril dual-purpose hit (Jake's redirect, 2026-07-19:
-          // "pulse attack or healing effects depending" — ally=heal,
-          // enemy=curse, the same low-aim auto-target doctrine this class's
-          // dedicated abilities already use, applied to basic fire).
-          // `proj.tendril` (types.ts) is a pure IDENTITY flag stamped ONLY
-          // on a Priest tendril (weapon.ts's isPriestTendril spawn site) —
-          // scoping this branch to it, rather than to every generic
-          // `element === "fire"` hit below, keeps every other class's
-          // fire-element friendly fire (e.g. a duo Wizard stacking Molten
-          // Core) completely unaffected, matching this session's
-          // "byte-identical for every other class" regression bar. Checked
-          // BEFORE parry/counter/shield mitigation — a heal isn't an
-          // attack, so it shouldn't be blockable/deflectable the way a hit
-          // is, and "no ally present" needs no extra handling: the shard
-          // can only ever land on an ENEMY in that case (the dual-target
-          // homing rework's own fallback — see constants.ts's SYZ_TENDRIL_*
-          // comment), so this check simply falls through to the ordinary
-          // damage path below for them.
-          const tendrilOwner =
-            proj.tendril === true && proj.ownerId !== null
-              ? players[proj.ownerId]
-              : undefined;
-          if (tendrilOwner && isAlly(tendrilOwner, victim)) {
-            // Heal amount: reuse the tendril's OWN resolved hit magnitude
-            // (`ev.damage` — already chaos-scaled, and headshot-boosted if
-            // the swept hit happened to land in the head zone) rather than
-            // inventing a second hardcoded number. "Same tendril, same
-            // magnitude, opposite polarity" is the most defensible v1 read
-            // of "pulse a healing effect" — a Priest stacking +damage cards
-            // heals allies harder too, which matches intuition rather than
-            // fighting it. Clamp mirrors Borrowed Time's own heal clamp
-            // exactly (World.ts's "borrowed-time" case, pendingSyzygistCasts
-            // loop below: `Math.min(100, target.health + cast.heal)`) — same
-            // flat 100 ceiling, no new MAX_HEALTH machinery invented here.
-            const healed = Math.min(100, victim.health + ev.damage);
-            if (healed > victim.health) {
-              players[ev.victimId] = { ...victim, health: healed };
-            }
-            // No SimEvent pushed for the heal itself: Borrowed Time and
-            // health-shard pickups both reach the client purely through the
-            // `health` field already present in the snapshot, with no
-            // dedicated wire event required for correctness. `hit-confirmed`
-            // specifically assumes harm — SimEventRouter.ts unconditionally
-            // plays a hit sound, hit-stop freeze, screen shake, damage
-            // number, and hit-react animation off it — so routing a heal
-            // through that pipeline would misrender as "you got hit for
-            // -2.5". A dedicated heal-pulse VFX event is a reasonable future
-            // addition but is render-layer work, out of this change's
-            // sim-mechanics-only scope; `continue` below also means the
-            // original (harmful) `hit-confirmed` for this event is never
-            // pushed to `events` at all (see the unconditional
-            // `events.push(ev)` at the end of this loop body, which this
-            // skips).
-            continue;
-          }
-          // Ward shell (six-axes-goal.md Layer 1): a post-cast shell halves
-          // incoming damage BEFORE the shield absorbs it. Order is
-          // parry > shell > shield — parry zeroes regardless, so applying
-          // the shell to the pre-mitigation number here is order-exact.
-          // Scope: the projectile path (direct + AOE) — bash/DoT keep their
-          // own sites untouched in Layer 1.
-          // Severing Answer (six-axes Layer 2): counter-stance consumes the
-          // hit — negated, and the raw (post-chaos, pre-shell) damage is
-          // returned to the attacker, capped. Order: parry > counter >
-          // shell > shield — a live parry wins the frame, so the stance
-          // only answers when no parry is up.
-          const parryLive =
-            victim.parryActiveUntilTick !== undefined &&
-            victim.parryActiveUntilTick > nextTick;
-          const counterLive =
-            victim.counterUntilTick !== undefined &&
-            victim.counterUntilTick > nextTick;
-          if (counterLive && !parryLive) {
-            players[ev.victimId] = { ...victim, counterUntilTick: undefined };
-            const counterTarget =
-              proj.ownerId !== null && proj.ownerId !== ev.victimId
-                ? players[proj.ownerId]
-                : undefined;
-            if (counterTarget && counterTarget.alive) {
-              const returned = Math.min(ABILITY_COUNTER_RETURN_CAP, scaledDamage);
-              const tHealth = Math.max(0, counterTarget.health - returned);
-              players[proj.ownerId!] = {
-                ...counterTarget,
-                health: tHealth,
-                alive: tHealth > 0,
-              };
-              if (tHealth === 0) {
-                events.push({
-                  t: "player-killed",
-                  victimId: proj.ownerId!,
-                  killerId: ev.victimId,
-                  cause: "projectile",
-                });
-              }
-              // The returned damage is a real hit: it flows through
-              // hit-confirmed so charge fill / kill feed / audio all read
-              // it with zero bespoke plumbing.
-              events.push({
-                t: "hit-confirmed",
-                victimId: proj.ownerId!,
-                damage: returned,
-                sourceProjectileId: null,
-                attackerId: ev.victimId,
-              });
-            }
-            // The answered read: the parry-deflect flash at the stancer.
-            events.push({
-              t: "parry-deflected",
-              playerId: ev.victimId,
-              projectileId: ev.sourceProjectileId,
-            });
-            continue; // original hit suppressed entirely
-          }
-          const wardActive =
-            victim.wardShellUntilTick !== undefined &&
-            victim.wardShellUntilTick > nextTick;
-          const intoMitigation = wardActive
-            ? scaledDamage * EMISSION_WARD_DAMAGE_MULT
-            : scaledDamage;
-          ev.damage = intoMitigation;
-          // Run parry/shield mitigation BEFORE applying damage. Pass the live
-          // projectile so the parry arc check has direction info; falls back to
-          // null when the source projectile already despawned this tick.
-          const sourceProj = ev.sourceProjectileId !== null
-            ? remainingProjectiles[ev.sourceProjectileId] ?? proj
-            : null;
-          const victimBuild = resolvePlayerBuild(victim);
-          const mitigation = tryDeflectDamage(
-            victim,
-            sourceProj,
-            intoMitigation,
-            nextTick,
-            {
-              mirrorShield: victimBuild.mirrorShield,
-              directionalShield: victimBuild.directionalShield,
-              parryCoverMultiplier: victimBuild.parryCoverMultiplier,
-              voidPiercing: proj.element === "void",
-            },
-          );
-          let postPlayer = mitigation.player;
-          if (mitigation.evaded) {
-            // Ninja dash i-frames: "wasn't there" — zero damage, no event,
-            // no reflect (evasion is not a counter). The projectile is
-            // still consumed by this hit resolution (v1 simplification —
-            // it doesn't visually pass through the dodging body).
-            players[ev.victimId] = postPlayer;
-            continue;
-          }
-          if (mitigation.deflected) {
-            // Parry: zero damage; tell the caller (and downstream listeners)
-            // by emitting a parry-deflected event. Damage event is suppressed.
-            events.push({
-              t: "parry-deflected",
-              playerId: ev.victimId,
-              projectileId: ev.sourceProjectileId,
-            });
-            if (ev.sourceProjectileId !== null) {
-              deflectedProjectileIds.set(ev.sourceProjectileId, ev.victimId);
-            }
-            players[ev.victimId] = postPlayer;
-            continue;
-          }
-          if (mitigation.shielded) {
-            // Mirror shield: bounce the blocked shard back at the attacker,
-            // reusing the parry-reflect path (reverse velocity + reassign owner
-            // at the projectile-drop site) and the same deflect event/VFX.
-            if (mitigation.shieldReflected && ev.sourceProjectileId !== null) {
-              deflectedProjectileIds.set(ev.sourceProjectileId, ev.victimId);
-              events.push({
-                t: "parry-deflected",
-                playerId: ev.victimId,
-                projectileId: ev.sourceProjectileId,
-              });
-            }
-            // Shield popped or absorbed — emit shield-popped only when the
-            // charge fully drained; partial absorbs stay silent for the
-            // protocol audience (clients can derive "shield hit" from charge
-            // delta in the snapshot if they want a sound cue).
-            if (mitigation.shieldPopped) {
-              events.push({
-                t: "shield-popped",
-                playerId: ev.victimId,
-                remainingCharge: postPlayer.shieldCharge ?? 0,
-              });
-            }
-            // Stolen Fangs: any absorbed hit banks a lock charge (cap 2),
-            // refreshing the expiry window. weapon.ts spends charges on the
-            // player's next fired shot(s), turning them homing.
-            if (victimBuild.stolenFangs) {
-              const expiryTicks = Math.ceil(STOLEN_FANGS_CHARGE_EXPIRY_MS / effDtMs);
-              const bankedCharges = Math.min(
-                STOLEN_FANGS_MAX_CHARGES,
-                (postPlayer.pendingLockCharges ?? 0) + 1,
-              );
-              postPlayer = {
-                ...postPlayer,
-                pendingLockCharges: bankedCharges,
-                pendingLockExpiresAtTick: (nextTick + expiryTicks) as Tick,
-              };
-            }
-            players[ev.victimId] = postPlayer;
-            // Shielded → final damage is 0; don't push the original
-            // hit-confirmed (it's already in result.events; suppress here).
-            continue;
-          }
-          let finalDamage = mitigation.damage;
-          const element = proj.element;
-          // Radiant: 1.4x to a target already affected by any status effect.
-          if (element === "radiant") {
-            const hasStatus =
-              (postPlayer.burnUntilTick !== undefined &&
-                postPlayer.burnUntilTick > nextTick) ||
-              (postPlayer.freezeUntilTick !== undefined &&
-                postPlayer.freezeUntilTick > nextTick) ||
-              (postPlayer.slowedUntilTick !== undefined &&
-                postPlayer.slowedUntilTick > nextTick) ||
-              (postPlayer.vulnerabilityUntilTick !== undefined &&
-                postPlayer.vulnerabilityUntilTick > nextTick);
-            if (hasStatus) finalDamage *= 1.4;
-          }
-          // Facet Break (Geometrician catalog v1, single role): a hit from
-          // the marking player on their still-marked target is amplified.
-          // Additive/composable, same post-mitigation site as the Radiant
-          // status-amp just above — default-inert (facetTargetId is
-          // undefined on every hand that never drafted the card, so this is
-          // a true no-op for every existing test/build).
-          const attackerEntity = proj.ownerId !== null ? players[proj.ownerId] : undefined;
-          if (
-            attackerEntity?.facetTargetId === ev.victimId &&
-            attackerEntity.facetMarkUntilTick !== undefined &&
-            attackerEntity.facetMarkUntilTick > nextTick
-          ) {
-            finalDamage *= GEO_FACET_BREAK_AMP_MULTIPLIER;
-          }
-          // Focus Hex (Syzygist catalog v1, single role, class-overhaul-
-          // workboard.md chunk 3.4): the EXACT same amp shape as Facet
-          // Break immediately above, just a different mark field pair and
-          // multiplier — mark lives on the CASTER (focusHexTargetId), not
-          // the victim, same reasoning.
-          if (
-            attackerEntity?.focusHexTargetId === ev.victimId &&
-            attackerEntity.focusHexMarkUntilTick !== undefined &&
-            attackerEntity.focusHexMarkUntilTick > nextTick
-          ) {
-            finalDamage *= SYZ_FOCUS_HEX_AMP_MULTIPLIER;
-          }
-          // Void's HELD-SHIELD pierce already happened above (voidPiercing
-          // short-circuits tryDeflectDamage's shield step entirely — a void
-          // hit that reaches here either had no shield in the way or already
-          // passed through one untouched). This is a SEPARATE, still-open
-          // hook: 50% armor pierce. No armor stat exists yet.
-          if (element === "void") {
-            // TODO: when `armor` is added to PlayerEntity, multiply
-            // finalDamage by 1 / (1 - 0.5 * armor). For now: no-op.
-          }
-          // Technique axis (six-axes-goal.md Layer 1): an execute-flagged
-          // shard finishes a player already below the threshold fraction of
-          // spawn health (100, rosterOps.ts) — never from above it, so the
-          // no-100-0 law holds by construction.
-          const executeFrac = proj.executeBelowFrac ?? 0;
-          if (
-            executeFrac > 0 &&
-            postPlayer.health > 0 &&
-            postPlayer.health < executeFrac * 100
-          ) {
-            finalDamage = Math.max(finalDamage, postPlayer.health);
-          }
-          // Rally Light (chunk 2.6 fast-follow) — same attacker-amp shape
-          // every other hit-resolution site in this file uses (bash/slash/
-          // edge above).
-          if (attackerEntity) {
-            finalDamage *= rallyLightDamageMultiplier(attackerEntity, players, nextTick);
-            finalDamage *= kindledResolveDamageMultiplier(attackerEntity, nextTick);
-          }
-          // Team peel (class-overhaul-workboard.md chunk 2.4) — same gate as
-          // every other damage-resolution site in this file: only when the
-          // victim's OWN Ward didn't already cover this hit (`mitigation.
-          // warded` false). `victim` (captured pre-mitigation, above) still
-          // carries the id/teamId/position the check needs.
-          if (!mitigation.warded) {
-            const peel = applyTeamPeel(
-              victim,
-              finalDamage,
-              players,
-              sortedPlayerIdsForTick,
-              nextTick,
-            );
-            if (peel) {
-              finalDamage = peel.damage;
-              events.push(peel.event);
-            }
-          }
-          ev.damage = finalDamage;
-          if (mitigation.warded) {
-            events.push({
-              t: "ward-absorbed",
-              playerId: ev.victimId,
-              damageBlocked: mitigation.wardDamageBlocked,
-              kindlingGranted: mitigation.wardKindlingGranted,
-            });
-          }
-          if (mitigation.syzWarded) {
-            events.push({
-              t: "syz-ward-absorbed",
-              playerId: ev.victimId,
-              casterId: victim.wardAbsorbSourceId ?? ev.victimId,
-              damageBlocked: mitigation.syzWardDamageBlocked ?? 0,
-              wardBroke: mitigation.syzWardBroke ?? false,
-            });
-          }
-          // First-blood wager: this is a real, non-self, attacker-attributed
-          // hit landing during the fighting phase — claim it if nobody has
-          // this round yet. `firstBloodAwardThisTick` also guards against a
-          // second projectile awarding it again later in this same tick.
-          if (
-            fightingPhase &&
-            state.round.firstBloodPlayerId === undefined &&
-            firstBloodAwardThisTick === null &&
-            proj.ownerId !== null &&
-            proj.ownerId !== ev.victimId
-          ) {
-            firstBloodAwardThisTick = proj.ownerId;
-          }
-          const newHealth = Math.max(0, postPlayer.health - finalDamage);
-          const wasAlive_main = postPlayer.alive;
-          let nextVictim = {
-            ...postPlayer,
-            health: newHealth,
-            alive: newHealth > 0,
-          };
-          if (wasAlive_main && newHealth === 0) {
-            events.push({
-              t: "player-killed",
-              victimId: ev.victimId,
-              killerId: proj.ownerId,
-              cause: "projectile",
-            });
-          }
-          // Fire: 3-second burn DoT at damage * 0.4 per second. Tick-quantized.
-          // Emission cast shards carry statusScale ×2, hard-capped per status
-          // (docs/emission-engine-goal.md) — burn's cap equals its base 3s,
-          // so the cast's fire identity reads through impact size + coverage
-          // rather than a longer burn; freeze genuinely doubles (≤2s).
-          const statusScale = proj.statusScale ?? 1;
-          if (element === "fire") {
-            const burnMs = Math.min(3 * 1000 * statusScale, EMISSION_BURN_CAP_MS);
-            const burnTicks = Math.ceil(burnMs / Math.max(1, effDtMs));
-            nextVictim = {
-              ...nextVictim,
-              burnUntilTick: (nextTick + burnTicks) as Tick,
-              burnDps: finalDamage * 0.4,
-              burnTickLastApplied: nextTick,
-            };
-          }
-          // Ice: 1-second freeze at 0.5x movement (Emission-scaled, capped).
-          if (element === "ice") {
-            const freezeMs = Math.min(1 * 1000 * statusScale, EMISSION_FREEZE_CAP_MS);
-            const freezeTicks = Math.ceil(freezeMs / Math.max(1, effDtMs));
-            nextVictim = {
-              ...nextVictim,
-              freezeUntilTick: (nextTick + freezeTicks) as Tick,
-              freezeMultiplier: 0.5,
-            };
-          }
-          players[ev.victimId] = nextVictim;
-
-          // Drain axis (six-axes-goal.md Layer 1): a leech-flagged shard
-          // heals its caster a fraction of the post-mitigation damage that
-          // actually landed — the SAME number the charge fill reads (one
-          // damage model). Self-damage never leeches; the heal is monotone
-          // and capped at spawn health (never reduces, so a boss-mode body
-          // above 100 is safe). Chain-lightning secondaries deliberately
-          // excluded — the chain is a derived hit, not the shard.
-          const leechFrac = proj.leechFraction ?? 0;
-          if (
-            leechFrac > 0 &&
-            proj.ownerId !== null &&
-            proj.ownerId !== ev.victimId
-          ) {
-            const leechCaster = players[proj.ownerId];
-            if (leechCaster && leechCaster.alive) {
-              const healed = Math.min(
-                Math.max(100, leechCaster.health),
-                leechCaster.health + finalDamage * leechFrac,
-              );
-              if (healed > leechCaster.health) {
-                events.push({
-                  t: "emission-leech",
-                  casterId: proj.ownerId,
-                  victimId: ev.victimId,
-                  amount: healed - leechCaster.health,
-                  fromX: nextVictim.x,
-                  fromY: nextVictim.y,
-                  toX: leechCaster.x,
-                  toY: leechCaster.y,
-                });
-                players[proj.ownerId] = { ...leechCaster, health: healed };
-              }
-            }
-          }
-
-          // Lightning: chain half damage to the nearest OTHER alive player
-          // within radius. Depth 1 only (no recursion). Bypasses parry/shield
-          // for simplicity — the chain is a derived secondary hit.
-          if (element === "lightning") {
-            const CHAIN_RADIUS = 220;
-            const chainDmg = finalDamage * 0.5;
-            let bestId: PlayerId | null = null;
-            let bestD2 = CHAIN_RADIUS * CHAIN_RADIUS;
-            // Iterate sorted ids for determinism.
-            const ids = sortedPlayerIdsForTick;
-            for (const oid of ids) {
-              if (oid === ev.victimId) continue;
-              if (proj.ownerId !== null && oid === proj.ownerId) continue;
-              const other = players[oid]!;
-              if (!other.alive) continue;
-              const dx = other.x - nextVictim.x;
-              const dy = other.y - nextVictim.y;
-              const d2 = dx * dx + dy * dy;
-              if (d2 <= bestD2) {
-                bestD2 = d2;
-                bestId = oid;
-              }
-            }
-            if (bestId !== null) {
-              const target = players[bestId]!;
-              const tHealth = Math.max(0, target.health - chainDmg);
-              const wasAlive_chain = target.alive;
-              players[bestId] = {
-                ...target,
-                health: tHealth,
-                alive: tHealth > 0,
-              };
-              if (wasAlive_chain && tHealth === 0) {
-                events.push({
-                  t: "player-killed",
-                  victimId: bestId,
-                  killerId: proj.ownerId,
-                  cause: "chain-lightning",
-                });
-              }
-              events.push({
-                t: "hit-confirmed",
-                victimId: bestId,
-                damage: chainDmg,
-                sourceProjectileId: ev.sourceProjectileId,
-                attackerId: proj.ownerId,
-              });
-              // Emit chain-hit so clients can render the lightning bolt arc.
-              // Positions come from player entities at hit-time — deterministic.
-              events.push({
-                t: "chain-hit",
-                victimId: ev.victimId,
-                chainTargetId: bestId,
-                fromX: nextVictim.x,
-                fromY: nextVictim.y,
-                toX: target.x,
-                toY: target.y,
-                damage: chainDmg,
-              });
-            }
-          }
-        }
+        // Full mitigation + damage-application chain now lives in
+        // `resolveRangedHit` (2026-07-20, hitscan extraction — see that
+        // function's own doc comment for the complete list of what it does).
+        // `suppressed` mirrors this loop's own former `continue` semantics:
+        // skip the trailing `events.push(ev)` below for evaded/parried/
+        // shielded hits, exactly as the inline version did.
+        const rangedResult = resolveRangedHit(ev, proj, players, events, {
+          chaosProfile,
+          hangoutMode,
+          fightingPhase,
+          firstBloodAlreadyClaimedThisRound: state.round.firstBloodPlayerId !== undefined,
+          nextTick,
+          effDtMs,
+          sortedPlayerIds: sortedPlayerIdsForTick,
+          firstBloodAwardThisTick,
+          remainingProjectiles,
+          deflectedProjectileIds,
+        });
+        firstBloodAwardThisTick = rangedResult.firstBloodAwardThisTick;
+        if (rangedResult.suppressed) continue;
       } else if (ev.t === "player-slowed" && players[ev.victimId]) {
         const victim = players[ev.victimId]!;
         const ticksDuration = Math.ceil(ev.durationMs / effDtMs);
@@ -5687,6 +6305,7 @@ export function stepWithRuntime(
             y: pd.y,
             radius: NINJA_PAPER_DOUBLE_BURST_RADIUS_PX,
             damage: NINJA_PAPER_DOUBLE_BURST_DAMAGE,
+            fooledDurationMs: NINJA_FOOLED_DURATION_MS,
           });
         } else {
           paperDoublesForStep[pdId] = { ...pd, health: newHealth };
@@ -5696,6 +6315,19 @@ export function stepWithRuntime(
     if (pendingPaperDoubleSpawns.length > 0) {
       paperDoublesForStep = { ...paperDoublesForStep };
       for (const pd of pendingPaperDoubleSpawns) paperDoublesForStep[pd.id] = pd;
+    }
+    // Resonance-gated position swaps (2026-07-19 fast-follow) — applied
+    // BEFORE stepPaperDoubles so the decoy's straight-line movement this
+    // tick continues from its new (post-swap) position, not its old one.
+    // The caster's own half of the swap already happened as a self-write
+    // in the "paper-double" ability-switch case.
+    if (pendingPaperDoubleSwaps.length > 0) {
+      paperDoublesForStep = { ...paperDoublesForStep };
+      for (const swap of pendingPaperDoubleSwaps) {
+        const decoy = paperDoublesForStep[swap.decoyId];
+        if (!decoy) continue; // despawned by melee damage earlier this same tick
+        paperDoublesForStep[swap.decoyId] = { ...decoy, x: swap.x, y: swap.y };
+      }
     }
     const pdStep = stepPaperDoubles(paperDoublesForStep, projectilesAfterDestructibles, effDtMs);
     nextPaperDoubles = pdStep.paperDoubles;
@@ -5708,6 +6340,7 @@ export function stepWithRuntime(
         y: b.y,
         radius: NINJA_PAPER_DOUBLE_BURST_RADIUS_PX,
         damage: NINJA_PAPER_DOUBLE_BURST_DAMAGE,
+        fooledDurationMs: NINJA_FOOLED_DURATION_MS,
       });
     }
     if (paperDoubleBursts.length > 0 && !hangoutMode) {

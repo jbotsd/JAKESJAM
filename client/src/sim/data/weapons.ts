@@ -15,7 +15,17 @@ export const starterWeapon: WeaponDefinition = {
   id: "starter-pistol",
   name: "Crystal Blaster / Scrap Rifle",
   weaponClass: "baseline",
-  delivery: "projectile",
+  // TRUE hitscan (2026-07-20, Jake: "no real hhiscan please" — real, not the
+  // fast-projectile shortcut). Resolved same-tick, no ProjectileEntity, via
+  // World.ts's `resolveHitscanShot` + `resolveRangedHit` — see weapon.ts's
+  // `HitscanPelletSpec` doc comment for the full call chain. Every other
+  // consumer of "raycast" delivery (weaponBuild.ts's `applyDeliveryFeel`,
+  // e.g. the "Raycast Prism" card) already re-tunes speed/lifetime/range for
+  // this value; those numbers are now simply UNUSED by the wizard's own hit
+  // resolution (it never reads speed/lifetime), but `rangePx`'s floor bump
+  // (880, from that same function) still applies and IS read — it's the
+  // hitscan's actual max trace distance.
+  delivery: "raycast",
   // Bumped 10->12 (balance audit): round-1, pre-card duels sat at a
   // 10-shot/2.25s sustained TTK — spongy next to the genre (Duck
   // Game/Towerfall are one-hit; Stick Fight is 3-5 hits). 12 dmg = 8
@@ -25,12 +35,31 @@ export const starterWeapon: WeaponDefinition = {
   fireRate: 4,
   magazineSize: 8,
   reloadSeconds: 1.1,
+  // REVERTED speed bump attempt (2026-07-20). Jake asked "is it faster and
+  // more shot like" — tried 950, then 800, then even a modest 700 (~8% over
+  // baseline): ALL THREE broke ninjaCatalog.test.ts's decoy sub-lethal-hit
+  // case IDENTICALLY (the decoy takes zero damage across a 30-tick budget,
+  // not partial/rare — a clean binary threshold, not a gradual tunneling
+  // risk that scales with speed). Only the exact original 650 passes. That
+  // rules out my first hypothesis (simple per-tick tunneling margin) — this
+  // looks like a real, pre-existing fragility in how projectile-vs-entity
+  // overlap resolves against a fast-closing target within the fixed-tick
+  // pipeline (ordering/staleness of positions, not raw distance), not
+  // something a "safer" speed number sidesteps. Left at 650 (known-good)
+  // rather than shipping an unverified value; the collision path itself
+  // needs a real investigation (or a proper swept/continuous check) before
+  // this speed can safely move, which is a bigger change than this pass.
   projectileSpeed: 650,
   projectileLifetimeSeconds: 1.2,
   spreadRadians: 0.03,
   recoilImpulse: 95,
   knockbackImpulse: 120,
   projectile: {
+    // Reverted "shard" attempt (2026-07-20) — `shape` is Zig/TS ABI-packed
+    // (weaponBuildParity.test.ts), not a pure render hint. The wizard's
+    // elongated-dart bullet is instead an ELEMENT-driven override in
+    // ProjectileVfx.drawBody (element === "crystal"), so this stays
+    // "hexagon" and the ABI is untouched.
     shape: "hexagon",
     count: 1,
     rangePx: 720,
@@ -90,6 +119,15 @@ export const starterWeapon: WeaponDefinition = {
  */
 export const priestStarterWeapon: WeaponDefinition = {
   ...starterWeapon,
+  // Explicit override, NOT inherited (2026-07-20) — `starterWeapon.delivery`
+  // is now `"raycast"` for the wizard's true-hitscan basic attack, but this
+  // weapon's whole identity is homing tendrils, which need real travel time
+  // to curve in. Without this override, the `...starterWeapon` spread would
+  // silently inherit raycast delivery too, and weaponBuild.ts's own
+  // `applyDeliveryFeel` would force this tendril's speed 320→1024px/s
+  // (3.2x) and lifetime 2.6s→0.91s (0.35x) — inverting the entire "slower
+  // because it's homing, longer fuse to compensate" balance below.
+  delivery: "projectile",
   damage: SYZ_TENDRIL_DAMAGE,
   projectileSpeed: SYZ_TENDRIL_SPEED,
   projectileLifetimeSeconds: SYZ_TENDRIL_LIFETIME_SECONDS,
@@ -128,6 +166,14 @@ export const priestStarterWeapon: WeaponDefinition = {
  */
 export const paladinStarterWeapon: WeaponDefinition = {
   ...starterWeapon,
+  // Explicit override, NOT inherited (2026-07-20) — same reasoning as
+  // priestStarterWeapon's own override above. Paladin never actually fires
+  // this weapon conventionally (Kindled Edge replaces Fire's chassis verb),
+  // but `resolveEmission` still resolves it as a real build, and the "still
+  // a real, functional gun" discipline this weapon's own doc comment already
+  // holds it to means its delivery shouldn't silently drift just because the
+  // shared base weapon's did.
+  delivery: "projectile",
   damage: 15,
   fireRate: 3,
   projectileSpeed: 520,
@@ -142,6 +188,14 @@ export const paladinStarterWeapon: WeaponDefinition = {
  * hang a `classModifiers` entry off. Omitted/unknown class or any class
  * with no authored entry here falls back to `starterWeapon`, byte-identical
  * to every existing call site that resolves a class-blind build today.
+ * Ninja deliberately has NO entry here (classExpression.test.ts's own
+ * "baseWeaponForClass falls back to starterWeapon for Wizard/Ninja" asserts
+ * object-identity equality, not just same stats) — Ninja and Wizard have
+ * always intentionally shared the exact same base gun, only Priest/Paladin
+ * get their own baseline. True hitscan (2026-07-20) doesn't change that
+ * coupling, it just makes it observable for the first time: Ninja's basic
+ * gun becomes genuinely instant right along with Wizard's, by the same
+ * "shares the object" design this file already had.
  */
 const CLASS_BASE_WEAPON: Partial<Record<ClassId, WeaponDefinition>> = {
   priest: priestStarterWeapon,

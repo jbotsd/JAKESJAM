@@ -5,8 +5,8 @@ import {
   EDGE_SWING_MS,
   INTERSTICE_BLADE_REACH_PX,
   INTERSTICE_BLADE_SWEEP_RAD,
-  KINDRED_BLADE_REACH_PX,
-  KINDRED_BLADE_SWEEP_RAD,
+  KINDLED_BLADE_REACH_PX,
+  KINDLED_BLADE_SWEEP_RAD,
   meleeActiveHand,
   meleeBladeAngle,
   meleeBladeDrawParams,
@@ -26,11 +26,11 @@ describe("melee attack rhythm", () => {
     expect(meleeStage(0.7, "interstice").recovery).toBe(0);
   });
 
-  test("Kindred commits longer than Interstice", () => {
+  test("Kindled commits longer than Interstice", () => {
     expect(EDGE_SWING_MS).toBeGreaterThan(BLADE_SWING_MS);
-    expect(meleeStage(0.25, "kindred").cut).toBe(0);
-    expect(meleeStage(0.86, "kindred").followThrough).toBeGreaterThan(0.8);
-    expect(meleeStage(0.86, "kindred").recovery).toBe(0);
+    expect(meleeStage(0.25, "kindled").cut).toBe(0);
+    expect(meleeStage(0.86, "kindled").followThrough).toBeGreaterThan(0.8);
+    expect(meleeStage(0.86, "kindled").recovery).toBe(0);
   });
 
   test("Interstice is a broad cut rather than a full windmill", () => {
@@ -51,14 +51,19 @@ describe("melee attack rhythm", () => {
   test("the sword hand folds in during coil then extends beyond contact", () => {
     const coil = meleeHandPose(0, 1, 0.15, "interstice");
     const extension = meleeHandPose(0, 1, 0.42, "interstice");
-    expect(extension.reach - coil.reach).toBeGreaterThan(20);
+    // Extension is deliberately capped well under ProceduralPlayerRig's
+    // ARM_REACH (40) so the two-bone solve keeps a visible elbow bend at
+    // contact instead of pinning straight (see meleeHandPose's comment) —
+    // this still asserts real growth, just not enough to weld the arm.
+    expect(extension.reach - coil.reach).toBeGreaterThan(10);
+    expect(extension.reach).toBeLessThan(36);
     expect(extension.angle).toBeGreaterThan(coil.angle);
   });
 
   test("the authored radial intercept crosses aim near peak tip speed", () => {
     for (const [style, duration] of [
       ["interstice", BLADE_SWING_MS],
-      ["kindred", EDGE_SWING_MS],
+      ["kindled", EDGE_SWING_MS],
     ] as const) {
       const contact = meleeContactT(style);
       const angle = meleeBladeAngle(0, 2.25, 1, contact, style);
@@ -77,7 +82,7 @@ describe("melee attack rhythm", () => {
   });
 
   test("the cut releases hips, chest, then shoulders instead of one rigid block", () => {
-    for (const style of ["interstice", "kindred"] as const) {
+    for (const style of ["interstice", "kindled"] as const) {
       const cutStart = style === "interstice" ? 0.15 : 0.38;
       const cutEnd = style === "interstice" ? 0.42 : 0.61;
       const earlyCut = cutStart + (cutEnd - cutStart) * 0.24;
@@ -97,7 +102,7 @@ describe("melee attack rhythm", () => {
   });
 
   test("the distal blade overtakes the hands at the radial intercept", () => {
-    for (const style of ["interstice", "kindred"] as const) {
+    for (const style of ["interstice", "kindled"] as const) {
       const contact = meleeContactT(style);
       const delta = 0.002;
       const bladeSpeed = Math.abs(
@@ -134,7 +139,7 @@ describe("live melee blade wiring — ProceduralPlayerRig.draw()'s per-frame par
   const LEAD_HAND = { x: 120, y: 80 };
   const BACK_HAND = { x: 96, y: 88 };
 
-  function simulateSwing(style: "interstice" | "kindred", dir: number) {
+  function simulateSwing(style: "interstice" | "kindled", dir: number) {
     const durationMs = style === "interstice" ? BLADE_SWING_MS : EDGE_SWING_MS;
     let meleePoseMs = durationMs;
     const frames: ReturnType<typeof meleeBladeDrawParams>[] = [];
@@ -171,15 +176,15 @@ describe("live melee blade wiring — ProceduralPlayerRig.draw()'s per-frame par
     expect(active[active.length - 1]!.t).toBeGreaterThan(0.85);
   });
 
-  test("Kindred: same sanity, with the heavier chassis's own reach/sweep/duration", () => {
-    const frames = simulateSwing("kindred", 1);
+  test("Kindled: same sanity, with the heavier chassis's own reach/sweep/duration", () => {
+    const frames = simulateSwing("kindled", 1);
     expect(frames.length).toBeGreaterThan(3);
     const active = frames.slice(0, -1);
     for (const p of active) {
       expect(p).not.toBeNull();
       expect(Number.isNaN(p!.t)).toBe(false);
-      expect(p!.reach).toBe(KINDRED_BLADE_REACH_PX);
-      expect(p!.sweepRad).toBe(KINDRED_BLADE_SWEEP_RAD);
+      expect(p!.reach).toBe(KINDLED_BLADE_REACH_PX);
+      expect(p!.sweepRad).toBe(KINDLED_BLADE_SWEEP_RAD);
     }
     expect(active[active.length - 1]!.t).toBeGreaterThan(0.85);
   });
@@ -190,12 +195,12 @@ describe("live melee blade wiring — ProceduralPlayerRig.draw()'s per-frame par
     // Explicitly: a frame called with meleePoseMs<=0 outside any swing loop
     // also yields null, matching draw()'s `if (bladeParams) { ... }` guard.
     expect(meleeBladeDrawParams("interstice", 0, BLADE_SWING_MS, 1, 0, LEAD_HAND, BACK_HAND)).toBeNull();
-    expect(meleeBladeDrawParams("kindred", -5, EDGE_SWING_MS, 1, 0, LEAD_HAND, BACK_HAND)).toBeNull();
+    expect(meleeBladeDrawParams("kindled", -5, EDGE_SWING_MS, 1, 0, LEAD_HAND, BACK_HAND)).toBeNull();
   });
 
-  test("Kindred always swings from the lead/sword hand; Interstice alternates by combo dir", () => {
-    expect(meleeActiveHand("kindred", 1)).toBe("lead");
-    expect(meleeActiveHand("kindred", -1)).toBe("lead"); // shield hand never swings
+  test("Kindled always swings from the lead/sword hand; Interstice alternates by combo dir", () => {
+    expect(meleeActiveHand("kindled", 1)).toBe("lead");
+    expect(meleeActiveHand("kindled", -1)).toBe("lead"); // shield hand never swings
     expect(meleeActiveHand("interstice", 1)).toBe("lead");
     expect(meleeActiveHand("interstice", -1)).toBe("back");
 
@@ -203,14 +208,14 @@ describe("live melee blade wiring — ProceduralPlayerRig.draw()'s per-frame par
     expect(leadSwing!.activePivot).toEqual(LEAD_HAND);
     const backSwing = meleeBladeDrawParams("interstice", 100, BLADE_SWING_MS, -1, 0, LEAD_HAND, BACK_HAND);
     expect(backSwing!.activePivot).toEqual(BACK_HAND);
-    const kindredSwing = meleeBladeDrawParams("kindred", 100, EDGE_SWING_MS, -1, 0, LEAD_HAND, BACK_HAND);
-    expect(kindredSwing!.activePivot).toEqual(LEAD_HAND);
+    const kindledSwing = meleeBladeDrawParams("kindled", 100, EDGE_SWING_MS, -1, 0, LEAD_HAND, BACK_HAND);
+    expect(kindledSwing!.activePivot).toEqual(LEAD_HAND);
   });
 
   test("meleeBladeTip lands roughly `reach` px from the pivot, never NaN/degenerate", () => {
-    for (const style of ["interstice", "kindred"] as const) {
-      const reach = style === "interstice" ? INTERSTICE_BLADE_REACH_PX : KINDRED_BLADE_REACH_PX;
-      const sweep = style === "interstice" ? INTERSTICE_BLADE_SWEEP_RAD : KINDRED_BLADE_SWEEP_RAD;
+    for (const style of ["interstice", "kindled"] as const) {
+      const reach = style === "interstice" ? INTERSTICE_BLADE_REACH_PX : KINDLED_BLADE_REACH_PX;
+      const sweep = style === "interstice" ? INTERSTICE_BLADE_SWEEP_RAD : KINDLED_BLADE_SWEEP_RAD;
       for (const t of [0, 0.15, 0.5, 0.85, 0.999]) {
         const tip = meleeBladeTip(LEAD_HAND, 0, sweep, 1, t, style, reach);
         expect(Number.isFinite(tip.x)).toBe(true);

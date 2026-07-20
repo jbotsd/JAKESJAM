@@ -9,7 +9,7 @@
 // decoys + projectiles in EntityId order for cross-runtime determinism —
 // same discipline destructible.ts/fire.ts/satellite.ts already establish.
 
-import { circleOverlapsAABB, centerToAABB, type AABB } from "./collision.js";
+import { circleOverlapsAABB, centerToAABB, sweepAABB, type AABB } from "./collision.js";
 import { PLAYER_BODY_WIDTH, PLAYER_BODY_HEIGHT } from "./player.js";
 import { NINJA_PAPER_DOUBLE_SPEED } from "./constants.js";
 import { EntityId, PlayerId } from "./types.js";
@@ -120,6 +120,23 @@ export function stepPaperDoubles(
     // destructible.ts: the first decoy a given projectile overlaps (in
     // EntityId order) consumes it, then that projectile stops checking
     // further decoys.
+    //
+    // SWEPT (2026-07-20, Jake: "redesign the way it travels to feel more
+    // shot like... SO its TIGHT and registers ALWAYS"). The real
+    // player-hit path (projectile.ts's stepProjectileNative) already sweeps
+    // prev->now against player AABBs specifically to prevent a fast
+    // projectile tunneling through a body in one tick — decoys never got
+    // that upgrade and used a single end-of-tick point check, which is
+    // exactly what a faster wizard bolt exposed (confirmed via direct
+    // trace: a decoy at an identical position took the hit at 650px/s and
+    // took zero damage at 700+, a discrete-sampling miss, not a gradual
+    // risk). `prevX/prevY` aren't stored on ProjectileEntity, so they're
+    // reconstructed from the projectile's OWN velocity (exact for the
+    // "straight" pathing every basic shot uses; a very close approximation
+    // for curved pathings, still far better than no sweep at all) rather
+    // than threading a new persisted field through stepProjectileNative's
+    // many branch/return sites — the same call-site-local technique, just
+    // applied here instead of there.
     for (const projId of projectileIds) {
       if (removedProjectileIds.has(projId)) continue;
       const proj = projectiles[projId]!;
@@ -127,7 +144,21 @@ export function stepPaperDoubles(
       // (fire.ts's owner-exclusion precedent, applied here for the same
       // "can't hurt your own tools" reason).
       if (proj.ownerId !== null && proj.ownerId === pd.ownerId) continue;
-      if (!circleOverlapsAABB(proj.x, proj.y, proj.radius, paperDoubleAABB(pd))) continue;
+      const targetAABB = paperDoubleAABB(pd);
+      const overlapsNow = circleOverlapsAABB(proj.x, proj.y, proj.radius, targetAABB);
+      let hit = overlapsNow;
+      if (!hit) {
+        const prevX = proj.x - proj.vx * dtSec;
+        const prevY = proj.y - proj.vy * dtSec;
+        const moverPrev: AABB = {
+          x: prevX - proj.radius,
+          y: prevY - proj.radius,
+          w: proj.radius * 2,
+          h: proj.radius * 2,
+        };
+        hit = sweepAABB(moverPrev, proj.vx, proj.vy, dtSec, [targetAABB]) !== null;
+      }
+      if (!hit) continue;
 
       pd = { ...pd, health: Math.max(0, pd.health - proj.damage) };
       removedProjectileIds.add(projId);

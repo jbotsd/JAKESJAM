@@ -104,6 +104,7 @@ import { ActionIntensity } from "../systems/ActionIntensity.js";
 import { CameraHype } from "../systems/CameraHype.js";
 import { SlowMotion } from "../systems/SlowMotion.js";
 import { RenderTimeArbiter } from "../render/RenderTimeArbiter.js";
+import { presentationBudget } from "../render/presentationBudgets.js";
 import { ActionCamera } from "../systems/ActionCamera.js";
 import { stickyEnvelopeSubjects } from "../systems/actionCameraMath.js";
 import { CameraJuice } from "../systems/CameraJuice.js";
@@ -269,7 +270,14 @@ export function projectileColorByElement(element: string, ownerId: string | null
     case "explosive":
       return 0xfb7185;
     case "crystal":
-      return 0xf0abfc;
+      // Was 0xf0abfc — a pale lavender-pink that matched NOTHING else the
+      // class does (GEOMETRICIAN_TINT.glow is a saturated cyan everywhere
+      // else: the lance, the shard-fan, the shatter flourish). The wizard's
+      // most-seen thing (the basic bullet, fired constantly) reading as a
+      // completely different color family was a real "fluffy, not wiz-like"
+      // contributor (Jake, 2026-07-20). Matches the class's own construct
+      // language now.
+      return 0x35d6ff;
     default:
       // Neutral / unknown: deterministic owner color so shots from the same
       // player still read as "theirs".
@@ -1022,10 +1030,26 @@ export class OnlineMatchScene extends Phaser.Scene {
         this.playerRigs.get(id as string)?.getHandWorld(hand) ?? undefined;
       const triggerMeleePose = (
         id: PlayerId,
-        style: "interstice" | "kindred",
+        style: "interstice" | "kindled",
         dir: number,
       ): void => {
         this.playerRigs.get(id as string)?.triggerMeleeSwing?.(style, dir);
+      };
+      // Shock Ring's landing slam and Wall Bloom's wall-kick burst fire with
+      // NO SimEvent (combat.ts/World.ts's own silent-payoff comments), so
+      // SimEventRouter never sees them — they were landing with a visual
+      // construct but zero camera shake/hit-stop (Jake, 2026-07-20: "every
+      // single factor where game feel matters"). ConstructVfxController
+      // already detects the exact tick each one fires (its own
+      // consumedThisFrame check for the deferred AOE construct); this
+      // callback is just the scene supplying the camera-side half, the same
+      // dependency-injection split SimEventRouter's own `safeShake` uses.
+      const onDeferredNovaImpact = (playerId: PlayerId, _kind: "shock-ring" | "wall-bloom"): void => {
+        const budget = presentationBudget("heavy");
+        this.renderTime.hold("hit-stop", 0, budget.hitStopMs);
+        if (playerId === this.localPlayerId) {
+          this.safeShake(budget.shakeDurationMs, budget.shakeIntensity);
+        }
       };
       this.constructVfx.update(
         state,
@@ -1035,6 +1059,7 @@ export class OnlineMatchScene extends Phaser.Scene {
         classIdForArchetype,
         resolveHand,
         triggerMeleePose,
+        onDeferredNovaImpact,
       );
     }
     if (simEvents.length > 0) simEvents.length = 0;
@@ -1769,31 +1794,19 @@ export class OnlineMatchScene extends Phaser.Scene {
   }
 
   /**
-   * Gold-forward absorb flash — the heaven-tank VFX pass (class-overhaul-
-   * workboard.md chunk 2.7). Reuses `RenderLayer.spawnExplosionBlastBig`'s
-   * existing `baseColor` param (the SAME big-blast/spike-overlay primitive
-   * kill/player-killed already use) with the house gold
-   * (`0xc9a84c` — matches `emissionCastFeel`'s Coptic seal color and
-   * `PlatformPainter`'s vessel-seal gold, the established hex across this
-   * codebase's render layer) instead of the default reddish blast color —
-   * no new asset, no new render primitive, just a different color/read at
-   * an existing call shape. `isPeel` only changes the radius (a peel flash
-   * reads slightly larger — "the light that covered someone else") since
-   * `spawnWardAbsorbFlash`'s CALLER already picks a different target
-   * (blocker vs warder) for the two cases, which alone makes them visually
-   * distinct in a clip. Per this session's hard rule (never synthesize
-   * audio), no SFX is attached — no ripped "shield-board catches a hit"
-   * asset exists in this project's audio directories; ship the visual only.
+   * The real Kindled Ward absorb read (drawWardSlab's construct language) now
+   * lives in `ConstructVfxController` — it scans the same `ward-absorbed` /
+   * `team-peel-absorbed` events directly (its own established pattern, same
+   * as slash-hit) and paints the impact bloom + shock ripple ON the actual
+   * held slab, not a generic explosion decal. This method is kept as a no-op
+   * visual passthrough because `SimEventRouter`'s dispatch still calls it
+   * alongside its own (unrelated, still-live) local camera-shake — only the
+   * old placeholder blast (`renderLayer.spawnExplosionBlastBig`, gold-tinted)
+   * is removed; firing both here and in ConstructVfxController would double
+   * up two different visual languages on the same hit.
    */
-  private spawnWardAbsorbFlash(playerId: string, isPeel: boolean): void {
-    if (!this.renderLayer) return;
-    const state = this.loop?.getRenderState();
-    if (!state) return;
-    const player = state.players[PlayerId(playerId)];
-    if (!player) return;
-    const KINDRED_GOLD = 0xc9a84c;
-    const radius = isPeel ? 46 : 34;
-    this.renderLayer.spawnExplosionBlastBig({ x: player.x, y: player.y }, radius, KINDRED_GOLD);
+  private spawnWardAbsorbFlash(_playerId: string, _isPeel: boolean): void {
+    // Intentionally empty — see doc comment above.
   }
 
   /** Syzygist wards are cool-white and relational: the protected vessel gets
@@ -2396,7 +2409,7 @@ export class OnlineMatchScene extends Phaser.Scene {
     //   1. The player's OWN Vessel Creator cosmetic pick (cosmetics?.xColor)
     //      — a paid/chosen personalization always wins.
     //   2. The class-derived default (classAccentColors.ts) — cyan for
-    //      Geometrician/Interstice, gold for Kindred, cool-white for
+    //      Geometrician/Interstice, gold for Kindled, cool-white for
     //      Syzygist. This REPLACES the old "local player defaults to gold
     //      (0xffd166), remote/bot defaults to the rig's built-in cyan"
     //      convention: that rule predates the class system and was a

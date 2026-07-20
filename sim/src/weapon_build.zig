@@ -62,11 +62,16 @@ fn resolveMods(mods: []const gen.CardMod) world_state.ResolvedFireConfig {
     var dash_cooldown_mul: f64 = 1;
     var mirror = false;
     var directional = false;
-    // Delivery identity (0=projectile/default, 1=raycast, 2=continuous-beam,
-    // 3=area-pulse) — mirrors weaponBuild.ts's applyCard delivery merge:
-    // only upgrades from the default; a later "projectile" card never stomps
-    // an already-set raycast/beam/pulse identity.
-    var delivery: u8 = 0;
+    // Delivery identity (0=projectile, 1=raycast, 2=continuous-beam,
+    // 3=area-pulse) — seeded from the BASE weapon's own delivery (true
+    // hitscan, 2026-07-20: StarterBase.delivery is 1/raycast, not the old
+    // hardcoded-0 default), mirrors weaponBuild.ts's applyCard delivery
+    // merge exactly: a card's delivery only overrides while the CURRENT
+    // value still equals the untouched base default — once a card has
+    // upgraded it away, a later "projectile" (0) card never stomps that
+    // upgrade. See weaponBuild.ts's `applyCard`'s own `baseDelivery` param
+    // doc comment for the full reasoning.
+    var delivery: u8 = B.delivery;
 
     var p_shape: u8 = B.p_shape;
     var p_element: u8 = B.p_element;
@@ -88,7 +93,7 @@ fn resolveMods(mods: []const gen.CardMod) world_state.ResolvedFireConfig {
 
     for (mods) |m| {
         if (m.delivery) |d| {
-            if (delivery == 0 or d != 0) delivery = d;
+            if (delivery == B.delivery or d != 0) delivery = d;
         }
         damage *= m.damage_mul;
         fire_rate *= m.fire_rate_mul;

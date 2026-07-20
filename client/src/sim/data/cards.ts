@@ -90,6 +90,13 @@ export const crystalRoundsCards: CardDefinition[] = [
     description: "Short-fused rounds — much less range, but they're already there. Win it up close before it becomes a poke war.",
     flavorText: "Close is a choice.",
     modifier: {
+      // Explicit (2026-07-20, true hitscan) — this card's whole identity is
+      // a real distance CUT on a traveling shot; Wizard's own base weapon
+      // is "raycast" now, whose applyDeliveryFeel floor (rangePx >= 880)
+      // would otherwise silently OVERSHOOT this card's own 480px cut into a
+      // longer range than the base weapon ever had. Pull delivery back to
+      // a plain traveling shot so the cut actually lands.
+      delivery: "projectile",
       projectileSpeedMultiplier: 1.1,
       projectile: { shape: "circle", rangePx: 480, sizeMultiplier: 0.92 },
     },
@@ -114,6 +121,14 @@ export const crystalRoundsCards: CardDefinition[] = [
     description: "Long-hafted shards built to cross the whole map. Slower off the hand, but distance is the whole point.",
     flavorText: "Patience, sharpened.",
     modifier: {
+      // Explicit (2026-07-20, true hitscan) — same reasoning as
+      // circle-rounds above, mirrored: this card's own lifetimeMultiplier
+      // (1.4, "persists longer") would otherwise be silently CAPPED DOWN to
+      // 0.35 by Wizard's raycast base's applyDeliveryFeel bump, inverting
+      // "reaches farther and persists longer" into the opposite. This card
+      // is explicitly the still-travels, still-dodgeable poke — never
+      // hitscan (see the doc comment above).
+      delivery: "projectile",
       projectileSpeedMultiplier: 0.95,
       projectile: { shape: "triangle", rangePx: 1080, lifetimeMultiplier: 1.4 },
     },
@@ -330,6 +345,12 @@ export const crystalRoundsCards: CardDefinition[] = [
     description: "Main shot homes toward the nearest foe with a capped turn rate. Still aim — it assists, not auto-wins.",
     flavorText: "It remembers the slight.",
     modifier: {
+      // Explicit (2026-07-20, true hitscan) — homing needs real travel time
+      // to curve; Wizard's own base weapon is "raycast" now, so without
+      // this the card would silently do nothing (weaponBuild.ts's
+      // applyCard guard lets a card's "projectile" win over the untouched
+      // base default, same as Crystal Volley/Shard Bloom already rely on).
+      delivery: "projectile",
       projectileSpeedMultiplier: 0.82,
       projectile: { pathing: "homing", homingStrength: 4.4 },
       projectileHomingStrengthAdd: 1.2,
@@ -378,6 +399,14 @@ export const crystalRoundsCards: CardDefinition[] = [
     // way instead of needing careful tracking to justify the tax.
     classModifiers: {
       wizard: {
+        // Explicit (2026-07-20, true hitscan) — classModifiers REPLACES the
+        // top-level `modifier` wholesale (this file's own documented
+        // convention), so the top-level modifier's own `delivery:
+        // "projectile"` (added for the class-blind/Ninja reading) does NOT
+        // carry over here; homing needs real travel time to curve, and
+        // Wizard's own base weapon is "raycast" now, so this needs its own
+        // override or the card silently does nothing for Wizard.
+        delivery: "projectile",
         projectileSpeedMultiplier: 0.82,
         damageMultiplier: 0.9,
         projectile: { pathing: "homing", homingStrength: 4.4 },
@@ -1678,7 +1707,7 @@ export const crystalRoundsCards: CardDefinition[] = [
     classId: "wizard",
     role: "defense",
     description:
-      "Active (0.6s window, 9s cooldown): a damage gate — incoming hits are halved while it holds.",
+      "Active (0.6s window, 9s cooldown): a damage gate — halves incoming gunfire while it holds. Melee, ability blasts, and burn ticks pass through untouched.",
     flavorText: "Hold the proof.",
     active: {
       kind: "hard-aperture",
@@ -1717,11 +1746,12 @@ export const crystalRoundsCards: CardDefinition[] = [
     classId: "wizard",
     role: "buff",
     description:
-      "Active (9s cooldown): banks one free shot — your next shot costs no ammo.",
-    flavorText: "Information and confidence.",
+      "Active (0.7s window, 9s cooldown): shots fired go dead-center with a damage amp.",
+    flavorText: "The true line, drawn once.",
     active: {
       kind: "measure",
       cooldownMs: 9000,
+      durationMs: 700,
     },
     visual: visual("orb", "#e2e8f0"),
     unique: true,
@@ -1754,11 +1784,12 @@ export const crystalRoundsCards: CardDefinition[] = [
     classId: "wizard",
     role: "movement",
     description:
-      "Active (6s cooldown): hop opposite your aim on cast.",
+      "Active (6s cooldown): hop opposite your aim; shots fired in the next 1.2s barely push you around.",
     flavorText: "Micro-kiting, the geometrician's way.",
     active: {
       kind: "recoil-step",
       cooldownMs: 6000,
+      durationMs: 1200,
     },
     visual: visual("circle", "#fca5a5"),
     unique: true,
@@ -1864,7 +1895,7 @@ export const crystalRoundsCards: CardDefinition[] = [
     classId: "paladin",
     role: "defense",
     description:
-      "Active (3s window, 8s cooldown): your team-peel shadow (Kindled Ward's reach for allies) widens.",
+      "Active (3s window, 8s cooldown): your team-peel shadow (Kindled Ward's reach for allies) widens — no ally nearby, gain Kindling instead.",
     flavorText: "Peel readable, peel real.",
     active: {
       kind: "aegis-share",
@@ -1884,7 +1915,7 @@ export const crystalRoundsCards: CardDefinition[] = [
     classId: "paladin",
     role: "movement",
     description:
-      "Active (6s cooldown): a short board-first charge that ends in a ready stance, tipping your shield charge up.",
+      "Active (6s cooldown): a short charge that ends in a Ward-ready stance, tipping your shield charge up.",
     flavorText: "Plant to plant, not freeflow.",
     active: {
       kind: "plant-charge",
@@ -1981,7 +2012,7 @@ export const crystalRoundsCards: CardDefinition[] = [
     classId: "paladin",
     role: "movement",
     description:
-      "Active (4s cooldown): a quick lateral shuffle in whatever direction you're already walking — the board never drops.",
+      "Active (4s cooldown): a quick lateral shuffle in whatever direction you're already walking — your Ward never drops.",
     flavorText: "Feet move. The wall doesn't.",
     active: {
       kind: "bulwark-step",
@@ -2061,7 +2092,7 @@ export const crystalRoundsCards: CardDefinition[] = [
     classId: "priest",
     role: "single",
     description:
-      "Active (8s cooldown): heals the nearest hurt ally on its own — some of it drains back a few seconds later, whether or not they earned it. Self-cast if you're alone, weaker both ways.",
+      "Active (8s cooldown): heals the nearest hurt ally on its own — some of it drains back a few seconds later, whether or not they earned it. Self-cast if no ally nearby needs it, weaker both ways.",
     flavorText: "I already gave you more than you'll pay back.",
     active: {
       kind: "borrowed-time",
@@ -2119,7 +2150,7 @@ export const crystalRoundsCards: CardDefinition[] = [
     classId: "priest",
     role: "aoe",
     description:
-      "Active (7s cooldown): a weak cool-white nova around you — grows with every ally or bond currently carrying your effects.",
+      "Active (7s cooldown): a weak cool-white nova around you that also slows — grows with every ally you're buffing and every enemy you have burning.",
     flavorText: "The congregation, counted.",
     active: {
       kind: "flock-pulse",
@@ -2244,7 +2275,7 @@ export const crystalRoundsCards: CardDefinition[] = [
     classId: "ninja",
     role: "offense",
     description:
-      "Active (8s cooldown, 6s window): your next three wave-off-swings hit hard — still has to land the swing first.",
+      "Active (8s cooldown, 6s window): your next three swings emit a hard-hitting wave when they finish — a whiff still fires it, an interrupted swing doesn't.",
     flavorText: "Every cut, a little heavier than the last.",
     active: {
       kind: "edge-storm",
@@ -2283,7 +2314,7 @@ export const crystalRoundsCards: CardDefinition[] = [
     classId: "ninja",
     role: "single",
     description:
-      "Active (6s cooldown, 5s window): mark the nearest enemy without needing to aim at them — your next arc hits on them cut harder.",
+      "Active (6s cooldown, 5s window): mark the nearest enemy without needing to aim at them — while marked, every arc hit you land on them cuts harder.",
     flavorText: "I already modeled you. This is just showing my work.",
     active: {
       kind: "read-mark",
@@ -2342,7 +2373,7 @@ export const crystalRoundsCards: CardDefinition[] = [
     classId: "ninja",
     role: "defense",
     description:
-      "Active (9s cooldown, 6s window): banks one near-miss — the next hit that lands while you're moving simply doesn't.",
+      "Active (9s cooldown, 6s window): banks one near-miss — the next ordinary hit that lands while you're moving simply doesn't. Burn, void, and chain damage still get through.",
     flavorText: "You hit where I was.",
     active: {
       kind: "ghost-guard",
@@ -2362,7 +2393,7 @@ export const crystalRoundsCards: CardDefinition[] = [
     classId: "ninja",
     role: "buff",
     description:
-      "Active (8s cooldown, 1.5s window): land a hit in the next 1.5s and take some of it back — health and energy both.",
+      "Active (8s cooldown, 1.5s window): land a hit in the next 1.5s for a flat burst of health and energy — not a cut of the damage dealt.",
     flavorText: "Aggression, paid forward.",
     active: {
       kind: "second-wind",
@@ -2402,7 +2433,7 @@ export const crystalRoundsCards: CardDefinition[] = [
     classId: "ninja",
     role: "movement",
     description:
-      "Active (9s cooldown): spawn a decoy sprinting your current heading — damageable, dies at 20 damage or 2.5s, bursts for 10 damage in a 90px radius.",
+      "Active (9s cooldown): spawn a decoy sprinting your heading — dies at 20 damage or 2.5s, and its burst hits for 10 in a 90px radius and fools victims into taking +25% damage for 2s. Cast during a resonance window and you swap places with a live decoy instead.",
     flavorText: "Same feet, same weight, same lie.",
     active: {
       kind: "paper-double",

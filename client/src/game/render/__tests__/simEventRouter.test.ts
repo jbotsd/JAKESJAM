@@ -12,6 +12,7 @@ import type { ProceduralPlayerRig } from "../../rendering/ProceduralPlayerRig";
 import type { ParticlePool } from "../../systems/ParticlePool";
 import { EntityId, PlayerId, type SimEvent } from "../../../sim/types";
 import type { AbilityKind } from "../../../sim/data/cardTypes.js";
+import { presentationBudget } from "../presentationBudgets.js";
 
 function makeDeps(): {
   deps: SimEventRouterDeps;
@@ -227,7 +228,11 @@ describe("SimEventRouter — C2b contract", () => {
     expect(env.tweens.timeScale).toBe(0); // hit-stop engaged...
     env.delayedCalls.forEach((fn) => fn());
     expect(env.tweens.timeScale).toBe(1); // ...and released
-    expect(env.shakeCalls).toEqual([[50, 0.004]]);
+    // Registered as "heavy" tier (eventPresentationRegistry.ts) — a clean
+    // parry is a real skill moment, should hit at least as hard as a landed
+    // attack (2026-07-19 juice pass: was shipping below its own tier).
+    const heavy = presentationBudget("heavy");
+    expect(env.shakeCalls).toEqual([[heavy.shakeDurationMs, heavy.shakeIntensity]]);
   });
 
   test("parry-deflected (remote) → flash + SFX but NO local shake", () => {
@@ -346,7 +351,7 @@ describe("SimEventRouter — C2b contract", () => {
     expect(env.shakeCalls).toEqual([]);
   });
 
-  test("ward-absorbed: gold flash at the BLOCKER, no audio (no ripped asset — hard rule), small local shake", () => {
+  test("ward-absorbed: gold flash at the BLOCKER, no audio (no ripped asset — hard rule), heavy-tier shake + hit-stop", () => {
     const ev: SimEvent = {
       t: "ward-absorbed",
       playerId: PlayerId("local"),
@@ -356,7 +361,13 @@ describe("SimEventRouter — C2b contract", () => {
     router.dispatch(ev);
     expect(env.audioCalls).toEqual([]);
     expect(env.wardAbsorbFlashes).toEqual([{ pid: "local", isPeel: false }]);
-    expect(env.shakeCalls).toEqual([[40, 0.003]]);
+    // Registered as "heavy" tier — was shipping well below it with zero
+    // hit-stop (2026-07-19 juice pass: "way not enough juice and impact").
+    expect(env.tweens.timeScale).toBe(0);
+    env.delayedCalls.forEach((fn) => fn());
+    expect(env.tweens.timeScale).toBe(1);
+    const heavy = presentationBudget("heavy");
+    expect(env.shakeCalls).toEqual([[heavy.shakeDurationMs, heavy.shakeIntensity]]);
   });
 
   test("ward-absorbed on a REMOTE player: flash still fires (world-space read), but no LOCAL shake", () => {
@@ -382,8 +393,14 @@ describe("SimEventRouter — C2b contract", () => {
     router.dispatch(ev);
     expect(env.audioCalls).toEqual([]);
     expect(env.wardAbsorbFlashes).toEqual([{ pid: "remote", isPeel: true }]);
-    // Victim is local even though the warder isn't — shake still fires.
-    expect(env.shakeCalls).toEqual([[50, 0.004]]);
+    // Registered as "heavy" tier, same 2026-07-19 juice-pass fix as
+    // ward-absorbed above. Victim is local even though the warder isn't —
+    // shake still fires.
+    expect(env.tweens.timeScale).toBe(0);
+    env.delayedCalls.forEach((fn) => fn());
+    expect(env.tweens.timeScale).toBe(1);
+    const heavy = presentationBudget("heavy");
+    expect(env.shakeCalls).toEqual([[heavy.shakeDurationMs, heavy.shakeIntensity]]);
   });
 
   test("pickup-taken: just pickup SFX", () => {
@@ -452,7 +469,14 @@ describe("SimEventRouter — C2b contract", () => {
     };
     router.dispatch(ev);
     expect(env.audioCalls).toEqual(["hit"]);
-    expect(env.shakeCalls).toEqual([[50, 0.004]]);
+    // Registered as "hit" tier — was shipping below it with zero hit-stop
+    // even though a lightning chain landing is a real damage event just like
+    // hit-confirmed (2026-07-19 juice pass).
+    expect(env.tweens.timeScale).toBe(0);
+    env.delayedCalls.forEach((fn) => fn());
+    expect(env.tweens.timeScale).toBe(1);
+    const hit = presentationBudget("hit");
+    expect(env.shakeCalls).toEqual([[hit.shakeDurationMs, hit.shakeIntensity]]);
   });
 
   test("chain-hit between two non-local players: NO shake", () => {
@@ -535,7 +559,15 @@ describe("SimEventRouter — C2b contract", () => {
     expect(env.syzygistWardFlashes).toEqual([
       { pid: "remote", casterId: "local", wardBroke: true },
     ]);
-    expect(env.shakeCalls).toEqual([[70, 0.006]]);
-    expect(env.audioCalls).toEqual([]);
+    // Registered as "heavy" tier, same 2026-07-19 juice-pass fix as the
+    // Kindled ward cases — a BROKEN ward (pool fully depleted) escalates
+    // further still (×1.3 shake, ×1.4 hit-stop over the plain-absorb case).
+    expect(env.tweens.timeScale).toBe(0);
+    env.delayedCalls.forEach((fn) => fn());
+    expect(env.tweens.timeScale).toBe(1);
+    const heavy = presentationBudget("heavy");
+    expect(env.shakeCalls).toEqual([
+      [heavy.shakeDurationMs * 1.3, heavy.shakeIntensity * 1.3],
+    ]);
   });
 });

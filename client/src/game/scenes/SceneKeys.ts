@@ -8,7 +8,6 @@ export const SceneKeys = {
   MainMenu: "MainMenuScene",
   Match: "MatchScene",
   OnlineMatch: "OnlineMatchScene",
-  Draft: "DraftScene",
   Replay: "ReplayScene",
   HUD: "HUDScene",
   Tutorial: "TutorialScene",

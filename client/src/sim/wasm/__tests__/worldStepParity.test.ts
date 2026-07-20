@@ -10,7 +10,7 @@ import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 
 import { loadSimFromBytes } from "../loader";
-import { packWorldState, PLAYER_ENTITY_SIZE, MAX_PLAYERS } from "../worldStateBridge";
+import { packWorldState, PLAYER_ENTITY_SIZE, MAX_PLAYERS, HEADER_SIZE } from "../worldStateBridge";
 import {
   EntityId,
   PlayerId,
@@ -41,9 +41,9 @@ const ex = sim.exports as unknown as WorldExports;
 // Player-block size derived from the live constant (2026-07-18) — see
 // projectileLifecycleParity.test.ts's PROJECTILES_OFFSET comment.
 const FIRES_OFFSET =
-  48 + 8 + MAX_PLAYERS * PLAYER_ENTITY_SIZE + 8 + 256 * 216 + 8 + 32 * 96 + 8 + 64 * 64 + 8;
+  HEADER_SIZE + 8 + MAX_PLAYERS * PLAYER_ENTITY_SIZE + 8 + 256 * 216 + 8 + 32 * 96 + 8 + 64 * 64 + 8;
 const DESTRUCTIBLES_OFFSET =
-  48 + 8 + MAX_PLAYERS * PLAYER_ENTITY_SIZE + 8 + 256 * 216 + 8 + 32 * 96 + 8;
+  HEADER_SIZE + 8 + MAX_PLAYERS * PLAYER_ENTITY_SIZE + 8 + 256 * 216 + 8 + 32 * 96 + 8;
 const TICK_OFFSET = 0;
 const FIRE_REMAINING_OFFSET = 3 * 8;
 const DEST_HEALTH_OFFSET = 4 * 8;
@@ -210,7 +210,7 @@ describe("step_world orchestrator parity (Phase I1)", () => {
     // + 1 (card_count) + 2 (pad) + 8 (id_len + weapon_id_len + 6
     // pad) + 32 (id_bytes) + 24 (weapon_id_bytes) = 268.
     // current_keys is at +268.
-    const PLAYERS_OFFSET = 48 + 8;
+    const PLAYERS_OFFSET = HEADER_SIZE + 8;
     const view = new DataView(ex.memory.buffer);
     view.setUint32(ptr + PLAYERS_OFFSET + 268, 1 << 8, true);
     ex.step_world(ptr, 1000); // 1 sec tick

@@ -209,7 +209,7 @@ pub const CardEntry = struct { id: []const u8, mod: CardMod, meta: CardMeta };
 
 /// Starter-pistol base (the only weapon) — mirrors weapons.ts.
 pub const StarterBase = struct {
-    pub const delivery: u8 = 0;
+    pub const delivery: u8 = 1;
     pub const damage: f64 = 12.0;
     pub const fire_rate: f64 = 4.0;
     pub const projectile_speed: f64 = 650.0;
@@ -237,8 +237,8 @@ pub const StarterBase = struct {
 pub const cards = [_]CardEntry{
     .{ .id = "raycast-prism", .mod = .{ .damage_mul = 0.9, .delivery = 1, .proj_range_px_set = 880.0, .proj_impact_radius_set = 12.0 }, .meta = .{ .unique = true, .rarity = .rare, .buckets = .{ .delivery = true } } },
     .{ .id = "crystal-volley", .mod = .{ .damage_mul = 1.06, .delivery = 0, .proj_speed_mul = 1.06, .proj_shape = 3, .proj_count_set = 1.0 }, .meta = .{ .unique = true, .rarity = .common, .buckets = .{ .delivery = true } } },
-    .{ .id = "circle-rounds", .mod = .{ .projectile_speed_mul = 1.1, .proj_size_mul = 0.92, .proj_shape = 0, .proj_range_px_set = 480.0 }, .meta = .{ .unique = true, .rarity = .common, .buckets = .{ .shape = true } } },
-    .{ .id = "triangle-rounds", .mod = .{ .projectile_speed_mul = 0.95, .proj_lifetime_mul = 1.4, .proj_shape = 1, .proj_range_px_set = 1080.0 }, .meta = .{ .unique = true, .rarity = .common, .buckets = .{ .shape = true } } },
+    .{ .id = "circle-rounds", .mod = .{ .projectile_speed_mul = 1.1, .delivery = 0, .proj_size_mul = 0.92, .proj_shape = 0, .proj_range_px_set = 480.0 }, .meta = .{ .unique = true, .rarity = .common, .buckets = .{ .shape = true } } },
+    .{ .id = "triangle-rounds", .mod = .{ .projectile_speed_mul = 0.95, .delivery = 0, .proj_lifetime_mul = 1.4, .proj_shape = 1, .proj_range_px_set = 1080.0 }, .meta = .{ .unique = true, .rarity = .common, .buckets = .{ .shape = true } } },
     .{ .id = "square-rounds", .mod = .{ .projectile_speed_mul = 0.8, .proj_size_mul = 1.3, .proj_shape = 2 }, .meta = .{ .unique = true, .rarity = .uncommon, .buckets = .{ .shape = true } } },
     .{ .id = "x-rounds", .mod = .{ .fire_rate_mul = 0.92, .projectile_speed_mul = 0.9, .proj_size_mul = 1.55, .proj_shape = 5 }, .meta = .{ .unique = true, .rarity = .uncommon, .buckets = .{ .shape = true } } },
     .{ .id = "i-rounds", .mod = .{ .projectile_speed_mul = 0.78, .proj_lifetime_mul = 1.15, .proj_shape = 6, .proj_pathing = 7, .proj_acceleration_mul_set = 1.4 }, .meta = .{ .unique = true, .rarity = .uncommon, .buckets = .{ .shape = true, .trajectory = true } } },
@@ -247,7 +247,7 @@ pub const cards = [_]CardEntry{
     .{ .id = "shard-bloom", .mod = .{ .damage_mul = 0.62, .fire_rate_mul = 0.82, .spread_radians_add = 0.6632251157578452, .delivery = 0, .proj_count_add = 5.0, .proj_size_mul = 0.78, .proj_range_px_set = 390.0 }, .meta = .{ .max_stacks = 2, .rarity = .rare, .buckets = .{ .quantity = true } } },
     .{ .id = "arc-shards", .mod = .{ .projectile_speed_mul = 0.86, .proj_pathing = 1, .proj_gravity_scale_set = 560.0 }, .meta = .{ .rarity = .common, .buckets = .{ .trajectory = true } } },
     .{ .id = "deadfall-mortar", .mod = .{ .fire_rate_mul = 0.8, .projectile_speed_mul = 0.6, .proj_size_mul = 1.15, .proj_pathing = 1, .proj_impact = 1, .proj_gravity_scale_set = 2100.0, .proj_impact_radius_set = 82.0 }, .meta = .{ .unique = true, .rarity = .rare, .buckets = .{ .trajectory = true, .impact = true } } },
-    .{ .id = "seeker-facets", .mod = .{ .projectile_speed_mul = 0.82, .proj_homing_add = 1.2, .proj_pathing = 4, .proj_homing_strength_set = 4.4 }, .meta = .{ .max_stacks = 4, .rarity = .rare, .buckets = .{ .trajectory = true } } },
+    .{ .id = "seeker-facets", .mod = .{ .projectile_speed_mul = 0.82, .delivery = 0, .proj_homing_add = 1.2, .proj_pathing = 4, .proj_homing_strength_set = 4.4 }, .meta = .{ .max_stacks = 4, .rarity = .rare, .buckets = .{ .trajectory = true } } },
     .{ .id = "micro-seekers", .mod = .{ .damage_mul = 0.78, .projectile_speed_mul = 0.9, .spread_radians_add = 0.2792526803190927, .proj_count_add = 2.0, .proj_homing_add = 0.9, .proj_size_mul = 0.74, .proj_pathing = 4, .proj_homing_strength_set = 3.2 }, .meta = .{ .max_stacks = 5, .rarity = .uncommon, .buckets = .{ .trajectory = true, .quantity = true } } },
     .{ .id = "bouncy-prism", .mod = .{ .proj_bounce_add = 4.0, .proj_pathing = 2 }, .meta = .{ .max_stacks = 4, .rarity = .uncommon, .buckets = .{ .trajectory = true } } },
     .{ .id = "extra-bounce", .mod = .{ .proj_bounce_add = 1.0, .proj_pathing = 2 }, .meta = .{ .max_stacks = 8, .rarity = .common, .buckets = .{ .trajectory = true } } },
@@ -306,9 +306,9 @@ pub const cards = [_]CardEntry{
     .{ .id = "return-glass", .mod = .{}, .meta = .{ .class_id = .wizard, .unique = true, .rarity = .uncommon, .buckets = .{ .ability = true }, .active = .{ .kind = .return_glass, .cooldown_ms = 10000.0 } } },
     .{ .id = "hard-aperture", .mod = .{}, .meta = .{ .class_id = .wizard, .unique = true, .rarity = .rare, .buckets = .{ .ability = true }, .active = .{ .kind = .hard_aperture, .cooldown_ms = 9000.0, .duration_ms = 600.0 } } },
     .{ .id = "overclock", .mod = .{}, .meta = .{ .class_id = .wizard, .unique = true, .rarity = .rare, .buckets = .{ .ability = true }, .active = .{ .kind = .overclock, .cooldown_ms = 10000.0, .duration_ms = 3000.0 } } },
-    .{ .id = "measure", .mod = .{}, .meta = .{ .class_id = .wizard, .unique = true, .rarity = .uncommon, .buckets = .{ .ability = true }, .active = .{ .kind = .measure, .cooldown_ms = 9000.0 } } },
+    .{ .id = "measure", .mod = .{}, .meta = .{ .class_id = .wizard, .unique = true, .rarity = .uncommon, .buckets = .{ .ability = true }, .active = .{ .kind = .measure, .cooldown_ms = 9000.0, .duration_ms = 700.0 } } },
     .{ .id = "slip-node", .mod = .{}, .meta = .{ .class_id = .wizard, .unique = true, .rarity = .rare, .buckets = .{ .ability = true }, .active = .{ .kind = .slip_node, .cooldown_ms = 6000.0 } } },
-    .{ .id = "recoil-step", .mod = .{}, .meta = .{ .class_id = .wizard, .unique = true, .rarity = .uncommon, .buckets = .{ .ability = true }, .active = .{ .kind = .recoil_step, .cooldown_ms = 6000.0 } } },
+    .{ .id = "recoil-step", .mod = .{}, .meta = .{ .class_id = .wizard, .unique = true, .rarity = .uncommon, .buckets = .{ .ability = true }, .active = .{ .kind = .recoil_step, .cooldown_ms = 6000.0, .duration_ms = 1200.0 } } },
     .{ .id = "bastion-pulse", .mod = .{}, .meta = .{ .class_id = .paladin, .unique = true, .rarity = .uncommon, .buckets = .{ .ability = true }, .active = .{ .kind = .bastion_pulse, .cooldown_ms = 8000.0 } } },
     .{ .id = "sunspike", .mod = .{}, .meta = .{ .class_id = .paladin, .unique = true, .rarity = .rare, .buckets = .{ .ability = true }, .active = .{ .kind = .sunspike, .cooldown_ms = 7000.0 } } },
     .{ .id = "judgment-line", .mod = .{}, .meta = .{ .class_id = .paladin, .unique = true, .rarity = .rare, .buckets = .{ .ability = true }, .active = .{ .kind = .judgment_line, .cooldown_ms = 8000.0, .duration_ms = 3000.0 } } },

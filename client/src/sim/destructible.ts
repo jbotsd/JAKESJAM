@@ -8,7 +8,7 @@
 // Hard rules: no Phaser, no DOM, no wall-clock reads, no Math.random. Iterate
 // destructibles + projectiles in EntityId order for cross-runtime determinism.
 
-import { circleOverlapsAABB, centerToAABB, type AABB } from "./collision.js";
+import { circleOverlapsAABB, centerToAABB, sweepAABB, type AABB } from "./collision.js";
 import { EntityId, PlayerId } from "./types.js";
 import type {
   DestructibleEntity,
@@ -100,6 +100,7 @@ export function stepDestructibles(
     .map((id) => EntityId(Number(id)))
     .sort((a, b) => a - b);
 
+  const dtSec = dtMs / 1000;
   for (const pid of projectileIds) {
     const proj = projectiles[pid]!;
     // Sticky / lingering projectiles don't damage destructibles again — the
@@ -109,7 +110,24 @@ export function stepDestructibles(
       const d = liveDestructibles[did];
       if (!d || d.health <= 0) continue;
       const aabb = destructibleAABB(d);
-      if (!circleOverlapsAABB(proj.x, proj.y, proj.radius, aabb)) continue;
+      // SWEPT (2026-07-20) — same fix + rationale as paperDouble.ts's
+      // decoy check: a fast projectile's end-of-tick point can skip clean
+      // over a stationary target between samples. prevX/prevY reconstructed
+      // from the projectile's own velocity (exact for straight pathing).
+      const overlapsNow = circleOverlapsAABB(proj.x, proj.y, proj.radius, aabb);
+      let hit = overlapsNow;
+      if (!hit) {
+        const prevX = proj.x - proj.vx * dtSec;
+        const prevY = proj.y - proj.vy * dtSec;
+        const moverPrev: AABB = {
+          x: prevX - proj.radius,
+          y: prevY - proj.radius,
+          w: proj.radius * 2,
+          h: proj.radius * 2,
+        };
+        hit = sweepAABB(moverPrev, proj.vx, proj.vy, dtSec, [aabb]) !== null;
+      }
+      if (!hit) continue;
 
       // Apply damage + despawn the projectile.
       d.health = Math.max(0, d.health - proj.damage);
@@ -196,7 +214,6 @@ export function stepDestructibles(
     survivingDestructibles[EntityId(Number(id))] = d;
   }
 
-  void dtMs;
   void tick;
 
   return {

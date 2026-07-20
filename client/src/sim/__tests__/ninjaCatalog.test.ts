@@ -52,6 +52,8 @@ import {
   NINJA_PAPER_DOUBLE_SPEED,
   NINJA_PAPER_DOUBLE_MAX_HEALTH,
   NINJA_PAPER_DOUBLE_LIFETIME_MS,
+  NINJA_PAPER_DOUBLE_SWAP_MAX_DISPLACEMENT_PX,
+  NINJA_FOOLED_DAMAGE_MULTIPLIER,
 } from "../constants.js";
 import {
   EntityId,
@@ -740,37 +742,45 @@ describe("Interstice catalog v1 — Paper Double (decoy entity)", () => {
   });
 
   test("a projectile hit damages the decoy without killing it (sub-lethal enemy weapon fire)", () => {
-    // Caster's decoy heads +x (toward the shooter) via the aim fallback;
-    // the shooter sits close enough, aiming back -x, that starter-pistol's
-    // (12 dmg, < NINJA_PAPER_DOUBLE_MAX_HEALTH's 20) shot reaches it well
-    // before the decoy could run far.
-    const caster = mkPlayer(A, 400, 400, "sprinter", {
-      cards: ["paper-double"],
-      vx: 0,
-      vy: 0,
-      aimX: 500,
-      aimY: 400,
-    });
+    // Hand-authors `state.paperDoubles` directly (same pattern the AOE-
+    // burst test below uses), rather than casting it live in the SAME tick
+    // as the shot (2026-07-20, true-hitscan rework) — a genuinely instant
+    // hitscan trace resolves before a same-tick-cast decoy has had ANY time
+    // to separate from its own caster's exact spawn point (they're
+    // perfectly co-located at the instant of cast), so a live same-tick
+    // cast+shot can no longer reliably tell "hit the decoy" apart from "hit
+    // the caster standing in the exact same spot" the way the old
+    // multi-tick traveling projectile could (the decoy used to physically
+    // outrun its caster during the shot's travel time — a dynamic that
+    // simply doesn't exist for a zero-travel-time shot). Hand-authoring
+    // keeps this test about "does a sub-lethal hitscan hit correctly damage
+    // without killing the decoy", not about spawn-race timing.
+    const caster = mkPlayer(A, 50, 50, "sprinter");
     const shooter = mkPlayer(B, 460, 400, "balanced", { aimX: 400, aimY: 400 });
-    const state = mkState([caster, shooter]);
+    const pdId = EntityId(1);
+    const state: WorldState = {
+      ...mkState([caster, shooter]),
+      paperDoubles: {
+        [pdId]: {
+          id: pdId,
+          ownerId: A,
+          x: 400,
+          y: 400,
+          vx: 0,
+          vy: 0,
+          health: NINJA_PAPER_DOUBLE_MAX_HEALTH,
+          remainingMs: NINJA_PAPER_DOUBLE_LIFETIME_MS,
+        },
+      },
+    };
     const runtime = createRuntime(flatMap);
     const s1 = stepWithRuntime(
       state,
       runtime,
-      inputsWith([caster, shooter], {
-        [A as string]: frame(SLOT1_BIT, 1, 500, 400),
-        [B as string]: frame(FIRE_BIT, 1, 400, 400),
-      }),
+      inputsWith([caster, shooter], { [B as string]: frame(FIRE_BIT, 1, 400, 400) }),
       DT_MS,
     );
-    const stepped = stepUntil(
-      s1.state,
-      runtime,
-      [caster, shooter],
-      30,
-      (s) => Object.values(s.paperDoubles ?? {}).some((pd) => pd.health < NINJA_PAPER_DOUBLE_MAX_HEALTH),
-    );
-    const doubles = Object.values(stepped.paperDoubles ?? {});
+    const doubles = Object.values(s1.state.paperDoubles ?? {});
     expect(doubles.length).toBe(1); // damaged, not killed
     expect(doubles[0]!.health).toBe(NINJA_PAPER_DOUBLE_MAX_HEALTH - 12);
   });
@@ -897,6 +907,275 @@ describe("Interstice catalog v1 — Paper Double (decoy entity)", () => {
       DT_MS,
     );
     expect(Object.keys(s2.state.paperDoubles ?? {}).length).toBe(1); // still just the one
+  });
+});
+
+// Two 2026-07-19 fast-follow gaps closed (docs/card-pool-v2.md's
+// "Resonance:" line, cardTypes.ts's own long-standing "STILL a v1 gap"
+// note): the window-gated position swap, and the Fooled victim debuff.
+describe("Interstice catalog v1 — Paper Double resonance swap", () => {
+  test("casting into a live resonance window (opened by a DIFFERENT ability) with a live own-decoy swaps positions instead of spawning a new decoy", () => {
+    const decoyId = EntityId(1);
+    const decoy: PaperDoubleEntity = {
+      id: decoyId,
+      ownerId: A,
+      x: 700,
+      y: 400,
+      vx: 50,
+      vy: 0,
+      health: NINJA_PAPER_DOUBLE_MAX_HEALTH,
+      remainingMs: NINJA_PAPER_DOUBLE_LIFETIME_MS,
+    };
+    const caster = mkPlayer(A, 400, 400, "sprinter", {
+      cards: ["paper-double", "recoil-step"],
+      // Simulates a PRIOR different-ability cast having just opened the
+      // resonance window (resonance.test.ts's own "same ability twice does
+      // NOT resonate" test uses this identical direct-authoring technique).
+      resonanceUntilTick: Tick(1000),
+      resonanceSourceKind: "recoil-step",
+    });
+    const state: WorldState = {
+      ...mkState([caster]),
+      tick: Tick(500),
+      paperDoubles: { [decoyId]: decoy },
+    };
+    const runtime = createRuntime(flatMap);
+    const res = stepWithRuntime(
+      state,
+      runtime,
+      inputsWith([caster], { [A as string]: frame(SLOT1_BIT, 1) }),
+      DT_MS,
+    );
+
+    // No SECOND decoy spawned — still exactly the one.
+    expect(Object.keys(res.state.paperDoubles ?? {}).length).toBe(1);
+    // Caster teleported to the decoy's OLD position.
+    expect(res.state.players[A]!.x).toBeCloseTo(700, 0);
+    expect(res.state.players[A]!.y).toBeCloseTo(400, 0);
+    // Decoy now sits at the caster's OLD position (this tick's movement
+    // hasn't been applied to it yet at the moment of the swap itself, but
+    // stepPaperDoubles runs immediately after within the same tick, so
+    // allow for one tick's worth of its own vx=50 drift).
+    const movedDecoy = Object.values(res.state.paperDoubles ?? {})[0]!;
+    expect(movedDecoy.x).toBeCloseTo(400 + 50 * (DT_MS / 1000), 0);
+    expect(movedDecoy.y).toBeCloseTo(400, 0);
+    // Resonance's own generic bonus still applies on top (a CD refund +
+    // resonance-triggered event) — the swap replaces the SPAWN, not the
+    // resonance consumption itself.
+    expect(res.events.some((e) => e.t === "resonance-triggered")).toBe(true);
+  });
+
+  test("casting into a live resonance window with NO live own-decoy falls back to an ordinary spawn", () => {
+    const caster = mkPlayer(A, 400, 400, "sprinter", {
+      cards: ["paper-double", "recoil-step"],
+      resonanceUntilTick: Tick(1000),
+      resonanceSourceKind: "recoil-step",
+      vx: 0,
+      vy: 0,
+      aimX: 500,
+      aimY: 400,
+    });
+    const state: WorldState = { ...mkState([caster]), tick: Tick(500) };
+    const runtime = createRuntime(flatMap);
+    const res = stepWithRuntime(
+      state,
+      runtime,
+      inputsWith([caster], { [A as string]: frame(SLOT1_BIT, 1, 500, 400) }),
+      DT_MS,
+    );
+    const doubles = Object.values(res.state.paperDoubles ?? {});
+    expect(doubles.length).toBe(1);
+    expect(doubles[0]!.ownerId).toBe(A);
+    // The caster did NOT teleport — an ordinary spawn-in-place cast.
+    expect(res.state.players[A]!.x).toBeCloseTo(400, 0);
+  });
+
+  test("casting the SAME kind twice in a row never resonates — never swaps (chains unlike abilities only)", () => {
+    // A distinct, out-of-range id — this test's own cast allocates a FRESH
+    // decoy id via allocId() (starting at 1 on a brand-new runtime), which
+    // would otherwise collide with a hand-authored EntityId(1) and silently
+    // overwrite it at the same paperDoubles key.
+    const decoyId = EntityId(9001);
+    const decoy: PaperDoubleEntity = {
+      id: decoyId,
+      ownerId: A,
+      x: 700,
+      y: 400,
+      vx: 0,
+      vy: 0,
+      health: NINJA_PAPER_DOUBLE_MAX_HEALTH,
+      remainingMs: NINJA_PAPER_DOUBLE_LIFETIME_MS,
+    };
+    const caster = mkPlayer(A, 400, 400, "sprinter", {
+      cards: ["paper-double"],
+      resonanceUntilTick: Tick(1000),
+      resonanceSourceKind: "paper-double", // the SAME kind opened the window
+      vx: 0,
+      vy: 0,
+      aimX: 500,
+      aimY: 400,
+    });
+    const state: WorldState = {
+      ...mkState([caster]),
+      tick: Tick(500),
+      paperDoubles: { [decoyId]: decoy },
+    };
+    const runtime = createRuntime(flatMap);
+    const res = stepWithRuntime(
+      state,
+      runtime,
+      inputsWith([caster], { [A as string]: frame(SLOT1_BIT, 1, 500, 400) }),
+      DT_MS,
+    );
+    // A second, fresh decoy spawned — the swap never triggered.
+    expect(Object.keys(res.state.paperDoubles ?? {}).length).toBe(2);
+    expect(res.state.players[A]!.x).toBeCloseTo(400, 0); // no teleport
+  });
+
+  test("the swap distance is capped at NINJA_PAPER_DOUBLE_SWAP_MAX_DISPLACEMENT_PX — never a free cross-map blink", () => {
+    const decoyId = EntityId(1);
+    const farX = 400 + NINJA_PAPER_DOUBLE_SWAP_MAX_DISPLACEMENT_PX * 3; // well past the cap
+    const decoy: PaperDoubleEntity = {
+      id: decoyId,
+      ownerId: A,
+      x: farX,
+      y: 400,
+      vx: 0,
+      vy: 0,
+      health: NINJA_PAPER_DOUBLE_MAX_HEALTH,
+      remainingMs: NINJA_PAPER_DOUBLE_LIFETIME_MS,
+    };
+    const caster = mkPlayer(A, 400, 400, "sprinter", {
+      cards: ["paper-double", "recoil-step"],
+      resonanceUntilTick: Tick(1000),
+      resonanceSourceKind: "recoil-step",
+    });
+    const state: WorldState = {
+      ...mkState([caster]),
+      tick: Tick(500),
+      paperDoubles: { [decoyId]: decoy },
+    };
+    const runtime = createRuntime(flatMap);
+    const res = stepWithRuntime(
+      state,
+      runtime,
+      inputsWith([caster], { [A as string]: frame(SLOT1_BIT, 1) }),
+      DT_MS,
+    );
+    const traveled = res.state.players[A]!.x - 400;
+    expect(traveled).toBeCloseTo(NINJA_PAPER_DOUBLE_SWAP_MAX_DISPLACEMENT_PX, 0);
+    expect(traveled).toBeLessThan(farX - 400);
+  });
+});
+
+describe("Interstice catalog v1 — Paper Double Fooled debuff", () => {
+  test("the burst leaves Fooled on caught victims, amplifying the NEXT ability hit against them", () => {
+    // Low-health hand-authored decoy (bypassing the cast flow, same
+    // technique the existing burst test above uses) so one shot pops it
+    // and its burst catches a nearby victim.
+    const decoyId = EntityId(1);
+    const decoy: PaperDoubleEntity = {
+      id: decoyId,
+      ownerId: A,
+      x: 600,
+      y: 400,
+      vx: 0,
+      vy: 0,
+      health: 5,
+      remainingMs: NINJA_PAPER_DOUBLE_LIFETIME_MS,
+    };
+    const owner = mkPlayer(A, 50, 50, "sprinter"); // far off, inert
+    const shooter = mkPlayer(B, 660, 400, "balanced", { aimX: 600, aimY: 400 });
+    const C = PlayerId("c");
+    const victim = mkPlayer(C, 600, 480, "balanced"); // inside the burst radius
+    const state: WorldState = {
+      ...mkState([owner, shooter, victim]),
+      paperDoubles: { [decoyId]: decoy },
+    };
+    const runtime = createRuntime(flatMap);
+    const s1 = stepWithRuntime(
+      state,
+      runtime,
+      inputsWith([owner, shooter, victim], { [B as string]: frame(FIRE_BIT, 1, 600, 400) }),
+      DT_MS,
+    );
+    const afterBurst = stepUntil(
+      s1.state,
+      runtime,
+      [owner, shooter, victim],
+      20,
+      (s) => Object.keys(s.paperDoubles ?? {}).length === 0,
+    );
+    expect(afterBurst.players[C]!.fooledUntilTick).toBeDefined();
+    expect((afterBurst.players[C]!.fooledUntilTick as number) > afterBurst.tick).toBe(true);
+
+    // A SECOND, otherwise-identical shot from B against the now-Fooled C
+    // must deal MORE damage than the SAME shot fired from the SAME evolved
+    // state (identical rngState/round/chaos context — the only thing that
+    // differs between the two branches below is C's own fooledUntilTick)
+    // against an otherwise-identical, un-fooled control. Branching from one
+    // shared post-burst state (rather than a wholly separate fresh
+    // scenario) rules out chaos-modifier/rngState drift as a confound.
+    const healthBeforeSecondShot = afterBurst.players[C]!.health;
+    const shooterState2 = { ...afterBurst.players[B]!, fireCooldownMs: 0, ammo: 5 };
+
+    const fireSecondShotAt = (victimAfterBurst: PlayerEntity) => {
+      const stateForSecondShot: WorldState = {
+        ...afterBurst,
+        players: { ...afterBurst.players, [B]: shooterState2, [C]: victimAfterBurst },
+      };
+      const s2 = stepWithRuntime(
+        stateForSecondShot,
+        runtime,
+        inputsWith([owner, shooterState2, victimAfterBurst], { [B as string]: frame(FIRE_BIT, 2, 600, 480) }),
+        DT_MS,
+      );
+      const afterSecondShot = stepUntil(
+        s2.state,
+        runtime,
+        [owner, shooterState2, victimAfterBurst],
+        20,
+        (s) => s.players[C]!.health < healthBeforeSecondShot,
+      );
+      return healthBeforeSecondShot - afterSecondShot.players[C]!.health;
+    };
+
+    const fooledDamage = fireSecondShotAt(afterBurst.players[C]!);
+    const unfooledDamage = fireSecondShotAt({ ...afterBurst.players[C]!, fooledUntilTick: undefined });
+
+    expect(fooledDamage).toBeCloseTo(unfooledDamage * NINJA_FOOLED_DAMAGE_MULTIPLIER, 0);
+  });
+
+  test("Fooled expires after its duration — no amp on a hit landing after the window closes", () => {
+    // Hand-authors fooledUntilTick directly (bypassing the burst — already
+    // proven separately above) at a tick that has already passed by the
+    // time the shot resolves.
+    const shooter = mkPlayer(B, 460, 400, "balanced", { aimX: 400, aimY: 400 });
+    const victim = mkPlayer(A, 400, 400, "balanced", { fooledUntilTick: Tick(1) });
+    const state: WorldState = { ...mkState([shooter, victim]), tick: Tick(500) };
+    const runtime = createRuntime(flatMap);
+    const res = stepWithRuntime(
+      state,
+      runtime,
+      inputsWith([shooter, victim], { [B as string]: frame(FIRE_BIT, 1, 400, 400) }),
+      DT_MS,
+    );
+    const afterShot = stepUntil(res.state, runtime, [shooter, victim], 20, (s) => s.players[A]!.health < 100);
+    const expiredDamage = 100 - afterShot.players[A]!.health;
+
+    const controlShooter = mkPlayer(B, 460, 400, "balanced", { aimX: 400, aimY: 400 });
+    const controlVictim = mkPlayer(A, 400, 400, "balanced"); // never fooled
+    const controlRuntime = createRuntime(flatMap);
+    const controlRes = stepWithRuntime(
+      mkState([controlShooter, controlVictim]),
+      controlRuntime,
+      inputsWith([controlShooter, controlVictim], { [B as string]: frame(FIRE_BIT, 1, 400, 400) }),
+      DT_MS,
+    );
+    const controlAfter = stepUntil(controlRes.state, controlRuntime, [controlShooter, controlVictim], 20, (s) => s.players[A]!.health < 100);
+    const controlDamage = 100 - controlAfter.players[A]!.health;
+
+    expect(expiredDamage).toBeCloseTo(controlDamage, 5); // no amp — window already closed
   });
 });
 
