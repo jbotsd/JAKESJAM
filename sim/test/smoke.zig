@@ -1064,3 +1064,453 @@ test "cards_gen: cardMeta/cardMod return null for an unknown card id" {
     try std.testing.expectEqual(@as(?root.cards_gen.CardMeta, null), root.cards_gen.cardMeta("not-a-real-card"));
     try std.testing.expectEqual(@as(?root.cards_gen.CardMod, null), root.cards_gen.cardMod("not-a-real-card"));
 }
+
+// ── Ability-cast dispatch (Phase 1, docs/zig-step-world-parity-goal.md) ──
+// Cooldown gating + empty-slot-inert are the two named load-bearing
+// properties; the 6 wired abilities (Undercut/Read Mark/Second Wind/Edge
+// Storm — Ninja; Judgment Line/Unbroken Seal — Paladin) each get their own
+// cast-time + consumption-time proof, mirroring the rigor of the base
+// melee tests above (arc/range gates, timing gates, single-use windows).
+
+const SLOT1_BIT: u32 = 1 << 10;
+const SLOT2_BIT: u32 = 1 << 11;
+
+fn setPlayerId(p: *root.world_state.PlayerEntity, id: []const u8) void {
+    p.id_len = @intCast(id.len);
+    @memcpy(p.id_bytes[0..id.len], id);
+}
+
+/// Stores `kind` into `slot` for `player_idx` — see
+/// `world_state.EquippedActives.slot_kind`'s own doc comment for why the
+/// raw storage is `AbilityKind + 1`, not the bare enum value.
+fn equipSlot(state: *root.world_state.WorldState, player_idx: usize, slot: usize, kind: root.cards_gen.AbilityKind) void {
+    state.player_equipped_actives[player_idx].slot_kind[slot] = @intFromEnum(kind) + 1;
+}
+
+test "ability dispatch: cooldown gating — a re-press mid-cooldown is a no-op (no re-cast, no cooldown reset), and a press after the cooldown expires DOES re-cast" {
+    var state = freshFightingState();
+    // 2 players, not 1: with only 1 the round ends in a KO on tick 1
+    // (round.detectRoundWinner's alive_count==1 branch), flipping
+    // round_phase off .fighting and making stepAbilityDispatch's own
+    // phase gate a no-op for the rest of the test — same bystander
+    // precedent the pre-existing "melee: re-trigger" test above uses.
+    state.player_count = 2;
+    state.players[0].flags.alive = true;
+    state.players[0].character_id = .sprinter; // ninja
+    state.players[0].health = 100;
+    state.players[1].flags.alive = true;
+    state.players[1].health = 100;
+    state.players[1].x = 5000; // far away, never interacts
+    equipSlot(&state, 0, 0, .undercut); // duration 4000ms, cooldown 8000ms
+
+    // Tick 1 (dt=1000ms -> 1 tick = 1000ms, so duration/cooldown resolve to
+    // small tick counts: duration 4000ms/1000 = 4 ticks, cooldown 8000ms/1000
+    // = 8 ticks — deliberately coarse dt so the whole cooldown window fits
+    // in a handful of stepWorld calls instead of thousands).
+    state.players[0].current_keys = SLOT1_BIT;
+    _ = root.world.stepWorld(&state, 1000.0); // tick=1: rising edge, casts
+    try std.testing.expectEqual(@as(u32, 5), state.players[0].undercut_until_tick); // 1+4
+    try std.testing.expectEqual(@as(u32, 9), state.players[0].slot_cooldown_until_tick[0]); // 1+8
+
+    // Tick 2: release.
+    state.players[0].current_keys = 0;
+    _ = root.world.stepWorld(&state, 1000.0); // tick=2
+
+    // Tick 3: re-press — genuine rising edge, but slot_cooldown_until_tick
+    // (9) > tick (3), so this MUST be a no-op: no re-cast, no reset.
+    state.players[0].current_keys = SLOT1_BIT;
+    _ = root.world.stepWorld(&state, 1000.0); // tick=3
+    try std.testing.expectEqual(@as(u32, 5), state.players[0].undercut_until_tick); // unchanged
+    try std.testing.expectEqual(@as(u32, 9), state.players[0].slot_cooldown_until_tick[0]); // unchanged
+
+    // Ticks 4-8: release and hold released until the cooldown (tick 9) has
+    // fully elapsed (gate is `cd_until > tick`, so tick 9 itself is no
+    // longer gated: 9 > 9 is false).
+    state.players[0].current_keys = 0;
+    var t: u32 = 0;
+    while (t < 5) : (t += 1) {
+        _ = root.world.stepWorld(&state, 1000.0); // ticks 4..8
+    }
+    try std.testing.expectEqual(@as(u32, 8), state.header.tick);
+
+    // Tick 9: re-press — cooldown has fully elapsed, this MUST re-cast.
+    state.players[0].current_keys = SLOT1_BIT;
+    _ = root.world.stepWorld(&state, 1000.0); // tick=9
+    try std.testing.expectEqual(@as(u32, 9), state.header.tick);
+    try std.testing.expectEqual(@as(u32, 13), state.players[0].undercut_until_tick); // 9+4
+    try std.testing.expectEqual(@as(u32, 17), state.players[0].slot_cooldown_until_tick[0]); // 9+8
+}
+
+test "ability dispatch: an empty slot (ABILITY_KIND_NONE, the zero-init default) is provably inert under repeated rising-edge presses on all 3 slots — no crash, no cooldown-set, no window-set" {
+    var state = freshFightingState();
+    // 2 players — same "avoid an instant KO ending the round" reasoning as
+    // the cooldown-gating test above.
+    state.player_count = 2;
+    state.players[0].flags.alive = true;
+    state.players[0].character_id = .sprinter;
+    state.players[0].health = 100;
+    state.players[1].flags.alive = true;
+    state.players[1].health = 100;
+    state.players[1].x = 5000;
+    // Deliberately NOT calling equipSlot — every slot stays at the
+    // zero-init default (ABILITY_KIND_NONE == 0), the exact state
+    // `reset()`/every test's `freshFightingState()` produces for every
+    // real player until something explicitly equips a card. This is the
+    // load-bearing case: ABILITY_KIND_NONE was picked specifically so THIS
+    // is the natural rest state, not an edge case a caller has to
+    // remember to set up (see ABILITY_KIND_NONE's own doc comment).
+
+    const ALL_SLOTS_BIT = SLOT1_BIT | SLOT2_BIT | (1 << 12);
+    var i: u32 = 0;
+    while (i < 6) : (i += 1) {
+        // Alternate press/release every tick so every press is a genuine
+        // rising edge, not a held key.
+        state.players[0].current_keys = if (i % 2 == 0) ALL_SLOTS_BIT else 0;
+        _ = root.world.stepWorld(&state, 1000.0);
+    }
+
+    // No crash getting here is itself part of the proof. Assert zero
+    // state change on every field an active dispatch could have touched.
+    try std.testing.expectEqual([3]u32{ 0, 0, 0 }, state.players[0].slot_cooldown_until_tick);
+    try std.testing.expectEqual(@as(u32, 0), state.players[0].undercut_until_tick);
+    try std.testing.expectEqual(@as(u32, 0), state.players[0].edge_storm_until_tick);
+    try std.testing.expectEqual(@as(u32, 0), state.players[0].edge_storm_charges_remaining);
+    try std.testing.expectEqual(@as(u32, 0), state.players[0].seal_until_tick);
+    try std.testing.expectEqual(@as(u32, 0), state.players[0].second_wind_until_tick);
+    try std.testing.expectEqual(@as(u32, 0), state.players[0].judgment_mark_until_tick);
+    try std.testing.expectEqual(@as(u32, 0), state.players[0].read_mark_until_tick);
+    try std.testing.expectEqual(@as(f64, 100.0), state.players[0].health);
+}
+
+test "ability dispatch: Undercut (Ninja) — cast opens the window and sets cooldown; a landed slash against a victim at/under the execute threshold still lands the ordinary lethal hit (the execute clamp is exercised, not skipped, even though it's numerically redundant against the base 22 slash vs. threshold 15 — see this pass's own report)" {
+    var state = freshFightingState();
+    state.player_count = 2;
+    state.players[0].flags.alive = true;
+    state.players[0].character_id = .sprinter;
+    state.players[0].health = 100;
+    state.players[0].aim_x = 100;
+    state.players[0].aim_y = 0;
+    equipSlot(&state, 0, 0, .undercut);
+
+    state.players[1].flags.alive = true;
+    state.players[1].health = 15; // at the execute threshold exactly
+    state.players[1].x = 50;
+    state.players[1].y = 0;
+
+    // Cast Undercut (slot bit) and start the slash swing (Fire bit) on the
+    // SAME tick — dispatch (section 6z) runs before melee (section 6a), so
+    // the window is already live by the time this tick's swing FSM starts.
+    state.players[0].current_keys = SLOT1_BIT | FIRE_BIT;
+    _ = root.world.stepWorld(&state, 1.0); // tick 1: cast + windup starts
+    try std.testing.expect(state.players[0].undercut_until_tick > state.header.tick);
+    try std.testing.expect(state.players[0].slot_cooldown_until_tick[0] > state.header.tick);
+
+    state.players[0].current_keys = FIRE_BIT; // hold fire, ability bit released (no re-cast attempted)
+    _ = root.world.stepWorld(&state, 120.0); // active starts
+    _ = root.world.stepWorld(&state, 44.0); // contact tick — hit resolves
+
+    // Execute clamp: max(SLASH_DAMAGE(22), victim.health(15)) == 22 — the
+    // formula is bit-exact with World.ts's own `Math.max`, and produces a
+    // guaranteed kill either way at this threshold (0 health, not alive).
+    try std.testing.expectEqual(@as(f64, 0.0), state.players[1].health);
+    try std.testing.expectEqual(false, state.players[1].flags.alive);
+}
+
+test "ability dispatch: Read Mark (Ninja) — marks the NEAREST enemy within range (ignoring one out of range), and amplifies only a landed slash against that exact target" {
+    var state = freshFightingState();
+    state.player_count = 3;
+    state.players[0].flags.alive = true;
+    state.players[0].character_id = .sprinter;
+    state.players[0].health = 100;
+    state.players[0].aim_x = 100;
+    state.players[0].aim_y = 0;
+    setPlayerId(&state.players[0], "attacker");
+    equipSlot(&state, 0, 0, .read_mark); // range 340px, no cone
+
+    // Nearest — inside Read Mark's range AND inside the slash arc/range
+    // (this is the one that actually gets hit).
+    state.players[1].flags.alive = true;
+    state.players[1].health = 100;
+    state.players[1].x = 50;
+    state.players[1].y = 0;
+    setPlayerId(&state.players[1], "nearest");
+
+    // Farther, but still inside Read Mark's 340px range, and OUTSIDE
+    // SLASH_RANGE (78) so it can never be hit by the swing itself — purely
+    // a distractor to prove "nearest," not "first," is selected.
+    state.players[2].flags.alive = true;
+    state.players[2].health = 100;
+    state.players[2].x = 300;
+    state.players[2].y = 0;
+    setPlayerId(&state.players[2], "farther-in-range");
+
+    state.players[0].current_keys = SLOT1_BIT;
+    _ = root.world.stepWorld(&state, 1.0); // tick 1: cast — should mark "nearest"
+    try std.testing.expect(state.players[0].read_mark_until_tick > state.header.tick);
+    try std.testing.expectEqualSlices(u8, "nearest", state.players[0].read_target_id_bytes[0..state.players[0].read_target_id_len]);
+
+    // Now swing at "nearest" — the amp should land on it.
+    state.players[0].current_keys = FIRE_BIT;
+    _ = root.world.stepWorld(&state, 1.0); // windup starts
+    _ = root.world.stepWorld(&state, 120.0); // active starts
+    _ = root.world.stepWorld(&state, 44.0); // contact tick
+
+    // 100 - (22 * 1.28) == 71.84 — proves the amp actually applied (a plain
+    // unamplified hit would leave 78.0, the base melee test's own number).
+    try std.testing.expect(@abs(state.players[1].health - 71.84) < 1e-9);
+    try std.testing.expectEqual(@as(f64, 100.0), state.players[2].health); // never in slash range
+}
+
+test "ability dispatch: Read Mark (Ninja) — no enemy within range: a dead press, no mark, no cooldown burn" {
+    var state = freshFightingState();
+    state.player_count = 2;
+    state.players[0].flags.alive = true;
+    state.players[0].character_id = .sprinter;
+    state.players[0].health = 100;
+    equipSlot(&state, 0, 0, .read_mark);
+
+    state.players[1].flags.alive = true;
+    state.players[1].health = 100;
+    state.players[1].x = 1000; // well outside NINJA_READ_MARK_RANGE_PX (340)
+
+    state.players[0].current_keys = SLOT1_BIT;
+    _ = root.world.stepWorld(&state, 1.0);
+    try std.testing.expectEqual(@as(u32, 0), state.players[0].read_mark_until_tick);
+    try std.testing.expectEqual(@as(u32, 0), state.players[0].slot_cooldown_until_tick[0]);
+}
+
+test "ability dispatch: Second Wind (Ninja) — window heals + grants bonus energy on the NEXT landed slash hit only; a second victim hit in the SAME swing gets the ordinary (un-bonused) energy grant, proving single-use consumption" {
+    var state = freshFightingState();
+    state.player_count = 3; // 0 = attacker, 1 & 2 = both in-arc victims
+    state.players[0].flags.alive = true;
+    state.players[0].character_id = .sprinter;
+    state.players[0].health = 50; // below 100 so the heal is visible
+    state.players[0].aim_x = 100;
+    state.players[0].aim_y = 0;
+    equipSlot(&state, 0, 0, .second_wind);
+
+    // Both victims dead ahead, within SLASH_RANGE/arc, at slightly
+    // different distances so array-index order (1 then 2) matches the
+    // arc-scan's own natural iteration order.
+    state.players[1].flags.alive = true;
+    state.players[1].health = 100;
+    state.players[1].x = 40;
+    state.players[1].y = 0;
+    state.players[2].flags.alive = true;
+    state.players[2].health = 100;
+    state.players[2].x = 70;
+    state.players[2].y = 0;
+
+    state.players[0].current_keys = SLOT1_BIT | FIRE_BIT;
+    _ = root.world.stepWorld(&state, 1.0); // cast + windup start
+    try std.testing.expect(state.players[0].second_wind_until_tick > state.header.tick);
+
+    state.players[0].current_keys = FIRE_BIT;
+    _ = root.world.stepWorld(&state, 120.0); // active starts
+    _ = root.world.stepWorld(&state, 44.0); // contact tick — both victims hit this same tick
+
+    // Heal applied exactly once (12), not twice.
+    try std.testing.expectEqual(@as(f64, 62.0), state.players[0].health);
+    // Energy: baseline 10 on EVERY landed hit + Second Wind's 30 bonus on
+    // ONLY the first-processed hit = 10 + 30 + 10 = 50.
+    try std.testing.expectEqual(@as(f64, 50.0), state.players[0].energy);
+    // Window consumed after the first qualifying hit.
+    try std.testing.expectEqual(@as(u32, 0), state.players[0].second_wind_until_tick);
+}
+
+test "ability dispatch: Judgment Line (Paladin) — marks the nearest foe in the aim cone and amplifies the NEXT landed Kindled Edge hit against it; a candidate outside the cone is ignored and burns no cooldown" {
+    var state = freshFightingState();
+    state.player_count = 2;
+    state.players[0].flags.alive = true;
+    state.players[0].character_id = .heavy; // paladin
+    state.players[0].health = 100;
+    state.players[0].aim_x = 100;
+    state.players[0].aim_y = 0;
+
+    // Off-axis (90 degrees), well outside KIN_JUDGMENT_CONE_RADIANS (60 deg
+    // total, 30 deg half-width) — must NOT be marked.
+    state.players[1].flags.alive = true;
+    state.players[1].health = 100;
+    state.players[1].x = 0;
+    state.players[1].y = 50;
+
+    equipSlot(&state, 0, 0, .judgment_line);
+    state.players[0].current_keys = SLOT1_BIT;
+    _ = root.world.stepWorld(&state, 1.0);
+    try std.testing.expectEqual(@as(u32, 0), state.players[0].judgment_mark_until_tick); // no target: dead press
+    try std.testing.expectEqual(@as(u32, 0), state.players[0].slot_cooldown_until_tick[0]); // no cooldown burn
+
+    // Move the victim dead ahead, in range and in cone, and re-press —
+    // this time it should mark.
+    state.players[1].x = 80; // within EDGE_RANGE (84) and KIN_JUDGMENT_RANGE_PX (420)
+    state.players[1].y = 0;
+    state.players[0].current_keys = 0;
+    _ = root.world.stepWorld(&state, 1.0); // release (so the next press is a rising edge)
+    state.players[0].current_keys = SLOT1_BIT | FIRE_BIT;
+    _ = root.world.stepWorld(&state, 1.0); // cast (marks) + windup start, same tick
+    try std.testing.expect(state.players[0].judgment_mark_until_tick > state.header.tick);
+    try std.testing.expect(state.players[0].slot_cooldown_until_tick[0] > state.header.tick);
+
+    state.players[0].current_keys = FIRE_BIT;
+    _ = root.world.stepWorld(&state, 200.0); // active starts (EDGE_WINDUP_MS)
+    _ = root.world.stepWorld(&state, 100.0); // contact tick (EDGE_CONTACT_DELAY_MS)
+
+    // 100 - (32 * 1.3) == 58.4 — a plain unamplified Edge hit would leave
+    // 68.0 (the base melee test's own number), proving the amp landed.
+    try std.testing.expect(@abs(state.players[1].health - 58.4) < 1e-9);
+}
+
+test "ability dispatch: Unbroken Seal (Paladin) — single-use window amplifies + staggers the FIRST landed Kindled Edge hit only; a second victim in the same swing takes ordinary damage with no stagger" {
+    var state = freshFightingState();
+    state.player_count = 3;
+    state.players[0].flags.alive = true;
+    state.players[0].character_id = .heavy;
+    state.players[0].health = 100;
+    state.players[0].aim_x = 100;
+    state.players[0].aim_y = 0;
+    equipSlot(&state, 0, 0, .unbroken_seal);
+
+    state.players[1].flags.alive = true;
+    state.players[1].health = 100;
+    state.players[1].x = 40;
+    state.players[1].y = 0;
+    state.players[2].flags.alive = true;
+    state.players[2].health = 100;
+    state.players[2].x = 75;
+    state.players[2].y = 0;
+
+    state.players[0].current_keys = SLOT1_BIT | FIRE_BIT;
+    _ = root.world.stepWorld(&state, 1.0); // cast + windup start
+    try std.testing.expect(state.players[0].seal_until_tick > state.header.tick);
+
+    state.players[0].current_keys = FIRE_BIT;
+    _ = root.world.stepWorld(&state, 200.0); // active starts
+    _ = root.world.stepWorld(&state, 100.0); // contact tick — both victims hit
+
+    // First victim (index 1, scanned first): amplified 32 * 1.45 = 46.4,
+    // plus the stagger status.
+    try std.testing.expect(@abs(state.players[1].health - 53.6) < 1e-9);
+    try std.testing.expect(state.players[1].flags.has_slow);
+    try std.testing.expect(state.players[1].slowed_until_tick > state.header.tick);
+    try std.testing.expect(@abs(state.players[1].slow_multiplier - 0.25) < 1e-9);
+
+    // Second victim: seal already consumed — ordinary damage, no stagger.
+    try std.testing.expectEqual(@as(f64, 68.0), state.players[2].health);
+    try std.testing.expectEqual(false, state.players[2].flags.has_slow);
+
+    // Window cleared.
+    try std.testing.expectEqual(@as(u32, 0), state.players[0].seal_until_tick);
+}
+
+/// Counts projectiles matching the wave's own distinguishing stats
+/// (radius 10, damage ~22 — see WAVE_RADIUS/WAVE_DAMAGE*multiplier in
+/// world.zig). Needed because holding the Fire input bit (this test's own
+/// swing driver) ALSO satisfies a real, PRE-EXISTING, unrelated gap this
+/// pass found but does not fix (out of scope — see the task's own "don't
+/// touch anything outside sim/'s ability-dispatch surface" boundary):
+/// `weapon.weaponTickFire`/section 6's basic weapon-fire path has no
+/// classId branch suppressing the ordinary starter-pistol shot for a
+/// ninja the way World.ts's own fire block does ("the ninja melee slash
+/// does NOT get a new input bit — it reuses Fire... World.ts branches on
+/// classId at the stepWeapon call site: ninja chassis route the Fire
+/// rising-edge into the slash FSM INSTEAD OF stepWeapon" — protocol.ts's
+/// own comment). Zig has no such branch yet, so holding Fire as a ninja
+/// spawns an ordinary pistol shot (damage 12, radius ~7) ALONGSIDE the
+/// slash — a real gap, flagged here rather than silently worked around,
+/// but genuinely out of THIS phase's scope (Phase 1 is ability-cast
+/// dispatch, not a weapon-fire/melee-input-routing fix).
+fn countWaveProjectiles(state: *const root.world_state.WorldState) u32 {
+    var n: u32 = 0;
+    for (state.projectiles[0..state.projectile_count]) |p| {
+        if (@abs(p.radius - 10.0) < 1e-9) n += 1;
+    }
+    return n;
+}
+
+test "ability dispatch: Edge Storm (Ninja) — window banks 3 charges; each full slash swing while the window is live spawns one amplified wave projectile and spends one charge; the window closes early once charges hit 0, and a 4th swing spawns no further wave" {
+    var state = freshFightingState();
+    // 2 players — bystander avoids an instant KO ending the round (same
+    // reasoning as the cooldown-gating test above); no victim interaction
+    // needed, only the wave-spawn mechanic is under test.
+    state.player_count = 2;
+    state.players[0].flags.alive = true;
+    state.players[0].character_id = .sprinter;
+    state.players[0].health = 100;
+    state.players[0].aim_x = 100;
+    state.players[0].aim_y = 0;
+    state.players[1].flags.alive = true;
+    state.players[1].health = 100;
+    state.players[1].x = 5000;
+    equipSlot(&state, 0, 0, .edge_storm); // duration 6000ms, 3 charges
+
+    state.players[0].current_keys = SLOT1_BIT;
+    _ = root.world.stepWorld(&state, 1.0); // tick 1: cast
+    try std.testing.expectEqual(@as(u32, 3), state.players[0].edge_storm_charges_remaining);
+    try std.testing.expect(state.players[0].edge_storm_until_tick > state.header.tick);
+
+    var cycle: u32 = 0;
+    while (cycle < 3) : (cycle += 1) {
+        state.players[0].current_keys = 0;
+        _ = root.world.stepWorld(&state, 1.0); // let the ability-slot release register
+        state.players[0].current_keys = FIRE_BIT;
+        _ = root.world.stepWorld(&state, 1.0); // windup starts (rising edge)
+        _ = root.world.stepWorld(&state, 120.0); // active starts
+        _ = root.world.stepWorld(&state, 90.0); // active -> recovery: wave spawns HERE
+        try std.testing.expectEqual(cycle + 1, countWaveProjectiles(&state));
+        try std.testing.expectEqual(@as(u32, 2 - cycle), state.players[0].edge_storm_charges_remaining);
+        state.players[0].current_keys = 0;
+        _ = root.world.stepWorld(&state, 220.0); // recovery -> idle
+    }
+    // Window closed early once charges hit 0 (not left to time out).
+    try std.testing.expectEqual(@as(u32, 0), state.players[0].edge_storm_until_tick);
+
+    // Sanity-check the FIRST wave's stats (bit-exact, not just "a
+    // projectile exists"): damage = WAVE_DAMAGE(10) * multiplier(2.2) =
+    // 22; radius 10; straight/crystal, no homing/gravity/bounce/pierce.
+    var found_wave: ?root.world_state.ProjectileEntity = null;
+    for (state.projectiles[0..state.projectile_count]) |p| {
+        if (@abs(p.radius - 10.0) < 1e-9) {
+            found_wave = p;
+            break;
+        }
+    }
+    const wave = found_wave.?;
+    try std.testing.expect(@abs(wave.damage - 22.0) < 1e-9);
+    try std.testing.expectEqual(@as(f64, 10.0), wave.radius);
+    try std.testing.expectEqual(root.world_state.ProjectilePathing.straight, wave.pathing);
+    try std.testing.expectEqual(root.world_state.ElementType.crystal, wave.element);
+
+    // 4th swing: window already closed (edge_storm_until_tick == 0), no
+    // charges — must NOT spawn a 4th wave.
+    state.players[0].current_keys = FIRE_BIT;
+    _ = root.world.stepWorld(&state, 1.0); // windup starts
+    _ = root.world.stepWorld(&state, 120.0); // active starts
+    _ = root.world.stepWorld(&state, 90.0); // active -> recovery, no wave this time
+    try std.testing.expectEqual(@as(u32, 3), countWaveProjectiles(&state)); // unchanged from the 3 real waves
+}
+
+test "ability dispatch: Edge Storm NOT cast — a slash swing's active->recovery transition spawns NO wave at all (base melee stays melee-only, matching World.ts's own 'without Edge Storm live, the swing is melee-only')" {
+    var state = freshFightingState();
+    // 2 players — same bystander reasoning as the tests above.
+    state.player_count = 2;
+    state.players[0].flags.alive = true;
+    state.players[0].character_id = .sprinter;
+    state.players[0].health = 100;
+    state.players[0].aim_x = 100;
+    state.players[0].aim_y = 0;
+    state.players[1].flags.alive = true;
+    state.players[1].health = 100;
+    state.players[1].x = 5000;
+    // No equipSlot call at all — nothing equipped, Edge Storm never cast.
+
+    state.players[0].current_keys = FIRE_BIT;
+    _ = root.world.stepWorld(&state, 1.0); // windup starts
+    _ = root.world.stepWorld(&state, 120.0); // active starts
+    _ = root.world.stepWorld(&state, 90.0); // active -> recovery transition
+
+    // Zero WAVE projectiles specifically — see countWaveProjectiles' own
+    // doc comment for why raw `state.projectile_count` isn't the right
+    // assertion here (an ordinary pistol shot, a pre-existing unrelated
+    // gap, legitimately fires too while Fire is held).
+    try std.testing.expectEqual(@as(u32, 0), countWaveProjectiles(&state));
+}

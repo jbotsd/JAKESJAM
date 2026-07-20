@@ -37,6 +37,7 @@ const weapon = @import("weapon.zig");
 const weapon_build = @import("weapon_build.zig");
 const weapons_data = @import("data/weapons.zig");
 const trig = @import("trig.zig");
+const gen = @import("data/cards_gen.zig");
 
 /// Per-tick step. Mutates `state` in place. Returns 0 on success;
 /// reserved non-zero values for future error reporting.
@@ -479,25 +480,26 @@ pub fn resolveInstantAoeCasts(
 // TIMING/RANGE/ARC/DAMAGE numbers from World.ts's "1z2. NINJA MELEE"
 // (World.ts:4029-4409, SLASH_* constants at 523-553) and "1z3. PALADIN
 // MELEE" (World.ts:4412+, EDGE_* constants at 624-674) sections. Scope is
-// the BASE melee mechanic only — can a Ninja/Paladin swing and land a hit
-// for the right damage, at the right range/arc/timing, with shield
-// mitigation applying — not the ability-card hooks that ride on top of it.
+// the BASE melee mechanic — can a Ninja/Paladin swing and land a hit for
+// the right damage, at the right range/arc/timing, with shield mitigation
+// applying — PLUS (2026-07-20, Phase 1 ability-cast dispatch pass) the 6
+// melee-hook ability-card consumption sites Phase 0's own deferral list
+// named: Undercut's execute, Read Mark's amp, Second Wind's heal+energy
+// (Ninja); Judgment Line's amp, Unbroken Seal's amp+stagger (Paladin); and
+// Edge Storm's wave-off-swing. See `stepAbilityDispatch` (below this
+// function) for the CAST half of all 6 — this function only holds the
+// CONSUMPTION half, at the arc-hit-resolution / active-to-recovery-
+// transition sites, matching exactly where World.ts consumes each one.
 //
 // Deliberately NOT ported here (see this pass's own report for the full
 // accounting):
-//   - Wave-off-swing projectile (World.ts's WAVE_* constants) — gated on
-//     Edge Storm, a card ability; no Zig ability-cast system exists yet,
-//     same "additive growth cut needed first" contract as every other
-//     stubbed ability hook below.
-//   - Energy grant on a landed hit / dash-through / wall-kick grants —
-//     PlayerEntity.energy is a TS-owned resource `step_world` never
-//     computes, only carries through (see its own doc comment in
-//     world_state.zig) — same contract weapon fire already respects for
-//     `ability_charge`.
-//   - The ability-card hooks that modify a melee hit (Undercut's execute,
-//     Read Mark's amp, Second Wind's heal+energy, Judgment Line, Unbroken
-//     Seal, Edge Storm's wave) — every one reads a TS-only `*UntilTick`
-//     field with no Zig PlayerEntity mirror.
+//   - The baseline "energy from contact" grant now DOES run here (Second
+//     Wind needs it to add on top of) — PlayerEntity.energy's own doc
+//     comment in world_state.zig is updated alongside this cut to reflect
+//     that step_world now mutates it at this ONE site, same "name the
+//     ownership boundary that changed" discipline this whole goal doc asks
+//     for; every OTHER energy grant (dash-through, wall-kick) stays
+//     TS-owned/un-ported.
 //   - Destructible / Paper Double arc hits — World.ts's own comment marks
 //     the destructible path hangout-mode-only (Zig models real matches,
 //     not the venue-lobby hangout mode — no Zig analog exists to hang this
@@ -574,6 +576,298 @@ const EDGE_ACTIVE_MS: f64 = 110.0;
 const EDGE_RECOVERY_MS: f64 = 340.0;
 const EDGE_CONTACT_DELAY_MS: f64 = 100.0;
 
+// ── Ability-cast dispatch (Phase 1, docs/zig-step-world-parity-goal.md
+//    "the next unblock") — constants for the 6 melee-hook abilities wired
+//    this pass. Bit-exact port of the matching World.ts/constants.ts
+//    values (re-verified live, not from the goal doc's own citations —
+//    doctrine #1/#6).
+// Ninja — Undercut (constants.ts:1031).
+const NINJA_UNDERCUT_HEALTH_THRESHOLD: f64 = 15.0;
+// Ninja — Read Mark (constants.ts:1058-1059).
+const NINJA_READ_MARK_RANGE_PX: f64 = 340.0;
+const NINJA_READ_MARK_AMP_MULTIPLIER: f64 = 1.28;
+// Ninja — Second Wind (constants.ts:1091-1092) + the baseline per-hit
+// energy grant it tops up (World.ts:576/582 NINJA_ENERGY_MAX/
+// NINJA_ENERGY_ON_MELEE_HIT — see this pass's own report for why the
+// baseline grant is now in scope alongside Second Wind).
+const NINJA_ENERGY_MAX: f64 = 100.0;
+const NINJA_ENERGY_ON_MELEE_HIT: f64 = 10.0;
+const NINJA_SECOND_WIND_HEAL: f64 = 12.0;
+const NINJA_SECOND_WIND_ENERGY: f64 = 30.0;
+// Ninja — Edge Storm (constants.ts:1039-1040) + the wave-off-swing
+// projectile it gates (World.ts:566-570 WAVE_*). The wave ONLY ever
+// spawns while Edge Storm is live and has charges — TS's own comment at
+// the spawn site is explicit ("without Edge Storm live, the swing is
+// melee-only"), so there is no separate "always-on wave" mechanic to port
+// underneath this — Edge Storm's window IS the wave's entire gate.
+const NINJA_EDGE_STORM_CHARGES: u32 = 3;
+const NINJA_EDGE_STORM_WAVE_DAMAGE_MULTIPLIER: f64 = 2.2;
+const WAVE_RANGE: f64 = 260.0;
+const WAVE_SPEED: f64 = 780.0;
+const WAVE_LIFETIME_MS: f64 = 333.0; // Math.round((260/780)*1000), World.ts:568
+const WAVE_DAMAGE: f64 = 10.0;
+const WAVE_RADIUS: f64 = 10.0;
+// Paladin — Judgment Line (constants.ts:257-259).
+const KIN_JUDGMENT_AMP_MULTIPLIER: f64 = 1.3;
+const KIN_JUDGMENT_RANGE_PX: f64 = 420.0;
+const KIN_JUDGMENT_CONE_RADIANS: f64 = (60.0 * std.math.pi) / 180.0;
+// Paladin — Unbroken Seal (constants.ts:267-268/272).
+const KIN_SEAL_DAMAGE_MULTIPLIER: f64 = 1.45;
+const KIN_SEAL_STAGGER_MS: f64 = 900.0;
+const KIN_SEAL_STAGGER_MULTIPLIER: f64 = 0.25;
+
+/// Nearest ALIVE other player within `range_px`, ignoring the caster —
+/// Read Mark's own targeting shape (World.ts's `findNearestEnemy` call at
+/// its cast site: omnidirectional, no cone). Team-awareness (`isAlly`) is
+/// DELIBERATELY not checked: Phase 3 (ally-targeting substrate) doesn't
+/// exist in Zig yet — docs/zig-step-world-parity-goal.md's own Phase 1
+/// section names the missing `isAlly`/`findNearestAlly` substrate as a
+/// Phase 3 dependency for ALLY-targeted abilities, and the same missing
+/// piece means an ENEMY-search can't exclude teammates either today. A
+/// real, named, deferred gap (a duo match could see this mark a
+/// teammate), not a silent one — step_world has no team-aware match mode
+/// exercised anywhere in this test suite yet (Phase 0/1 coverage is all
+/// FFA), so this is "correctness over completeness" per this goal doc's
+/// own doctrine, not a guess.
+fn findNearestEnemyInRange(
+    state: *const world_state.WorldState,
+    caster_idx: u32,
+    range_px: f64,
+) i32 {
+    const caster = &state.players[caster_idx];
+    var best_idx: i32 = -1;
+    var best_dist_sq: f64 = std.math.inf(f64);
+    var i: u32 = 0;
+    while (i < state.player_count) : (i += 1) {
+        if (i == caster_idx) continue;
+        const other = &state.players[i];
+        if (!other.flags.alive) continue;
+        const dx = other.x - caster.x;
+        const dy = other.y - caster.y;
+        const d2 = dx * dx + dy * dy;
+        if (d2 > range_px * range_px) continue;
+        if (d2 < best_dist_sq) {
+            best_dist_sq = d2;
+            best_idx = @intCast(i);
+        }
+    }
+    return best_idx;
+}
+
+/// Nearest ALIVE other player within `range_px` AND inside a cone of
+/// half-width `cone_radians / 2` centered on the caster's aim direction —
+/// Judgment Line's own targeting shape, ported verbatim from its inline
+/// scan in World.ts (that ability does NOT call the shared
+/// `findNearestEnemy` helper — there is no cone-aware variant of it in
+/// TS either, each cone-gated ability inlines its own scan). `aim_x`/
+/// `aim_y` on `PlayerEntity` are an ABSOLUTE cursor point (same
+/// convention `stepMeleeSwing`'s own aim capture and every TS
+/// ability-cast case already use), not a direction vector — the caster's
+/// facing direction is `aim - position`, computed here the same way
+/// `stepMeleeSwing` computes its own swing direction. Same team-awareness
+/// deferral as `findNearestEnemyInRange` above.
+fn findNearestEnemyInCone(
+    state: *const world_state.WorldState,
+    caster_idx: u32,
+    range_px: f64,
+    cone_radians: f64,
+) i32 {
+    const caster = &state.players[caster_idx];
+    const dx0 = caster.aim_x - caster.x;
+    const dy0 = caster.aim_y - caster.y;
+    const aim_angle = trig.lutAtan2(dy0, dx0);
+    var best_idx: i32 = -1;
+    var best_dist_sq: f64 = std.math.inf(f64);
+    var i: u32 = 0;
+    while (i < state.player_count) : (i += 1) {
+        if (i == caster_idx) continue;
+        const other = &state.players[i];
+        if (!other.flags.alive) continue;
+        const dx = other.x - caster.x;
+        const dy = other.y - caster.y;
+        const d2 = dx * dx + dy * dy;
+        if (d2 > range_px * range_px or d2 < 1e-6) continue;
+        const target_angle = trig.lutAtan2(dy, dx);
+        const da = combat.wrapAngle(target_angle - aim_angle);
+        if (@abs(da) > cone_radians / 2.0) continue;
+        if (d2 < best_dist_sq) {
+            best_dist_sq = d2;
+            best_idx = @intCast(i);
+        }
+    }
+    return best_idx;
+}
+
+/// Ability-cast dispatch — one player, one tick: for each of the 3 rack
+/// slots (`world_state.MAX_ABILITY_SLOTS`), on a rising edge of that
+/// slot's input bit, look up the equipped `AbilityKind`
+/// (`state.player_equipped_actives[player_idx]` — host-resolved, see
+/// `EquippedActives`'s own doc comment), gate on cooldown, and dispatch.
+/// `slot_rising_edge` MUST be pre-captured before section 6 (in
+/// `stepWorld`) rolls `prev_keys = current_keys` for every player — same
+/// "captured before prev_keys rolls" contract `melee_fire_rising_edge`
+/// already establishes for the melee FSM, and for the identical reason
+/// (section 6's own per-player loop body is what does the rolling).
+///
+/// An empty slot (`ABILITY_KIND_NONE`) is a no-op by construction — the
+/// `continue` right after the sentinel check means nothing downstream
+/// (cooldown read/write, the switch, an event) ever runs for it, so it is
+/// provably inert under repeated presses: no crash, no state change, no
+/// false cooldown-set (see this phase's own dedicated test).
+///
+/// EVERY one of the 45 `AbilityKind` arms below is explicit — Zig's
+/// switch-exhaustiveness check on an enum IS the safety net
+/// docs/zig-step-world-parity-goal.md's Phase 1 section calls for: add a
+/// 46th `AbilityKind` later and forget an arm here, `zig build` itself
+/// fails at compile time, not a silent runtime gap. No `else`/`_`
+/// catch-all exists anywhere in this switch. 6 arms carry a real
+/// cast-time effect (this phase's own "first real abilities" list, the
+/// CAST half — see `stepMeleeSwing` for the CONSUMPTION half of all 6);
+/// the other 39 are explicit, individually-commented no-ops.
+fn stepAbilityDispatch(
+    state: *world_state.WorldState,
+    player_idx: u32,
+    eff_dt: f64,
+    slot_rising_edge: [world_state.MAX_ABILITY_SLOTS]bool,
+) void {
+    const attacker = &state.players[player_idx];
+    if (!attacker.flags.alive) return;
+    if (state.header.round_phase != @intFromEnum(round.RoundPhase.fighting)) return;
+
+    const equipped = &state.player_equipped_actives[player_idx];
+
+    var slot: usize = 0;
+    while (slot < world_state.MAX_ABILITY_SLOTS) : (slot += 1) {
+        if (!slot_rising_edge[slot]) continue;
+
+        const raw_kind = equipped.slot_kind[slot];
+        if (raw_kind == world_state.ABILITY_KIND_NONE) continue; // empty slot: inert
+
+        // Storage is AbilityKind + 1 (see EquippedActives.slot_kind's own
+        // doc comment for why 0 is reserved as the zero-init-safe "empty"
+        // sentinel rather than a top-of-range value).
+        const kind: gen.AbilityKind = @enumFromInt(raw_kind - 1);
+        const cd_until = attacker.slot_cooldown_until_tick[slot];
+        if (cd_until > state.header.tick) continue; // still on cooldown: no-op, no reset
+
+        const active_spec = weapon_build.cardActiveForKind(kind) orelse continue;
+
+        var activated = false;
+        switch (kind) {
+            .undercut => {
+                // Window — consumed by the NINJA MELEE arc-hit-resolution
+                // section (stepMeleeSwing below). Unconditional activation
+                // (no target check at cast time — matches World.ts).
+                const dur_ticks: u32 = @intFromFloat(@ceil((active_spec.duration_ms orelse 0) / @max(1.0, eff_dt)));
+                attacker.undercut_until_tick = state.header.tick + dur_ticks;
+                activated = true;
+            },
+            .edge_storm => {
+                // Charge bank — consumed at the wave-spawn site
+                // (stepMeleeSwing below) for up to NINJA_EDGE_STORM_CHARGES
+                // swings.
+                const dur_ticks: u32 = @intFromFloat(@ceil((active_spec.duration_ms orelse 0) / @max(1.0, eff_dt)));
+                attacker.edge_storm_until_tick = state.header.tick + dur_ticks;
+                attacker.edge_storm_charges_remaining = NINJA_EDGE_STORM_CHARGES;
+                activated = true;
+            },
+            .unbroken_seal => {
+                // Window consumed by the NEXT landed Kindled Edge hit
+                // (amp + stagger), at the PALADIN MELEE section below —
+                // single-use, cleared on that hit, not just on timeout.
+                const dur_ticks: u32 = @intFromFloat(@ceil((active_spec.duration_ms orelse 0) / @max(1.0, eff_dt)));
+                attacker.seal_until_tick = state.header.tick + dur_ticks;
+                activated = true;
+            },
+            .second_wind => {
+                // Window — consumed by the NEXT landed Ninja Slash hit
+                // (self-heal + bonus energy, NINJA MELEE section below).
+                const dur_ticks: u32 = @intFromFloat(@ceil((active_spec.duration_ms orelse 0) / @max(1.0, eff_dt)));
+                attacker.second_wind_until_tick = state.header.tick + dur_ticks;
+                activated = true;
+            },
+            .judgment_line => {
+                // Mark lives on the CASTER (judgment_target_id_*/
+                // judgment_mark_until_tick), never the victim — same
+                // cross-player-write-hazard-avoidance shape every other
+                // self-write in this dispatch loop already follows.
+                // No target in the cone: a press that does nothing is a
+                // dead press (legibility law, matches World.ts) — no
+                // cooldown burn (activated stays false).
+                const target_idx = findNearestEnemyInCone(state, player_idx, KIN_JUDGMENT_RANGE_PX, KIN_JUDGMENT_CONE_RADIANS);
+                if (target_idx >= 0) {
+                    const target = &state.players[@as(usize, @intCast(target_idx))];
+                    const dur_ticks: u32 = @intFromFloat(@ceil((active_spec.duration_ms orelse 0) / @max(1.0, eff_dt)));
+                    attacker.judgment_target_id_len = target.id_len;
+                    attacker.judgment_target_id_bytes = target.id_bytes;
+                    attacker.judgment_mark_until_tick = state.header.tick + dur_ticks;
+                    activated = true;
+                }
+            },
+            .read_mark => {
+                // Omnidirectional auto-target mark on the CASTER — same
+                // shape as Judgment Line above but for Ninja Slash hits,
+                // consumed at the NINJA MELEE section below. Non-consuming
+                // window (a per-target amp while live), unlike Seal.
+                const target_idx = findNearestEnemyInRange(state, player_idx, NINJA_READ_MARK_RANGE_PX);
+                if (target_idx >= 0) {
+                    const target = &state.players[@as(usize, @intCast(target_idx))];
+                    const dur_ticks: u32 = @intFromFloat(@ceil((active_spec.duration_ms orelse 0) / @max(1.0, eff_dt)));
+                    attacker.read_target_id_len = target.id_len;
+                    attacker.read_target_id_bytes = target.id_bytes;
+                    attacker.read_mark_until_tick = state.header.tick + dur_ticks;
+                    activated = true;
+                }
+            },
+            // ── Not yet ported (Phase 4 — docs/zig-step-world-parity-goal.md) ──
+            .crimson_tithe => {}, // Phase 4 — not yet ported
+            .shelter_seal => {}, // Phase 4 — not yet ported
+            .shadow_step => {}, // Phase 4 — not yet ported
+            .veil_of_nought => {}, // Phase 4 — not yet ported
+            .severing_answer => {}, // Phase 4 — not yet ported
+            .sunlance => {}, // Phase 4 — not yet ported
+            .facet_break => {}, // Phase 4 — not yet ported
+            .prism_fan => {}, // Phase 4 — not yet ported
+            .lattice => {}, // Phase 4 — not yet ported
+            .return_glass => {}, // Phase 4 — not yet ported
+            .hard_aperture => {}, // Phase 4 — not yet ported
+            .overclock => {}, // Phase 4 — not yet ported
+            .measure => {}, // Phase 4 — not yet ported
+            .slip_node => {}, // Phase 4 — not yet ported
+            .recoil_step => {}, // Phase 4 — not yet ported
+            .sunspike => {}, // Phase 4 — not yet ported
+            .bastion_pulse => {}, // Phase 4 — not yet ported
+            .aegis_share => {}, // Phase 4 — not yet ported
+            .plant_charge => {}, // Phase 4 — not yet ported
+            .shock_ring => {}, // Phase 4 — not yet ported
+            .rally_light => {}, // Phase 4 — not yet ported
+            .kindled_resolve => {}, // Phase 4 — not yet ported
+            .bulwark_step => {}, // Phase 4 — not yet ported
+            .bleed_tithe => {}, // Phase 4 — not yet ported
+            .severance => {}, // Phase 4 — not yet ported
+            .borrowed_time => {}, // Phase 4 — not yet ported
+            .focus_hex => {}, // Phase 4 — not yet ported
+            .contagion => {}, // Phase 4 — not yet ported
+            .flock_pulse => {}, // Phase 4 — not yet ported
+            .self_lattice => {}, // Phase 4 — not yet ported
+            .glass_ward => {}, // Phase 4 — not yet ported
+            .haste_gift => {}, // Phase 4 — not yet ported
+            .drift_step => {}, // Phase 4 — not yet ported
+            .needle => {}, // Phase 4 — not yet ported
+            .shard_ring => {}, // Phase 4 — not yet ported
+            .wall_bloom => {}, // Phase 4 — not yet ported
+            .ghost_guard => {}, // Phase 4 — not yet ported
+            .razor_route => {}, // Phase 4 — not yet ported
+            .paper_double => {}, // Phase 4 — not yet ported
+        }
+
+        if (!activated) continue; // a press that does nothing burns no cooldown
+
+        const cd_ticks: u32 = @intFromFloat(@ceil(active_spec.cooldown_ms / @max(1.0, eff_dt)));
+        attacker.slot_cooldown_until_tick[slot] = state.header.tick + cd_ticks;
+    }
+}
+
 /// Advance one attacker's melee swing FSM one tick + resolve the arc
 /// hit-check when contact-delay-gated active. `fire_rising_edge` MUST be
 /// captured before section 6 (below, in stepWorld) rolls
@@ -612,6 +906,16 @@ fn stepMeleeSwing(
     // ---- Swing FSM (idle -> windup -> active -> recovery -> idle) ----
     const was_active = mem.phase == .active;
     const active_elapsed_before: f64 = if (was_active) active_ms - mem.phase_ms else 0;
+    // Edge Storm (Ninja) — wave-off-swing gate (2026-07-20, Phase 1 ability-
+    // cast dispatch pass). Set true on the EXACT tick the swing transitions
+    // active -> recovery, mirroring World.ts's own `waveShouldSpawn` local
+    // (World.ts:4737/4764 — "aftermath of contact, not a free cast: fires
+    // regardless of whether the arc landed a hit"). Computed for BOTH
+    // classes (this FSM is shared) but only ever ACTED on below when
+    // `is_ninja` — Paladin has no wave in TS, matching this gate with a
+    // dead-but-harmless `true` for a paladin swing is simpler than forking
+    // the shared FSM update just to skip setting one bool.
+    var wave_should_spawn = false;
 
     if (mem.phase == .idle) {
         // Re-trigger only accepted from idle — a Fire press while
@@ -639,6 +943,7 @@ fn stepMeleeSwing(
                 .active => {
                     mem.phase = .recovery;
                     mem.phase_ms = recovery_ms;
+                    wave_should_spawn = true;
                 },
                 .recovery => {
                     mem.phase = .idle;
@@ -705,14 +1010,166 @@ fn stepMeleeSwing(
             continue;
         }
 
-        const new_health = @max(0.0, victim.health - damage);
+        // ── Ability-card hooks (Phase 1, docs/zig-step-world-parity-goal.md)
+        //    — Read Mark's amp, Undercut's execute (Ninja); Judgment Line's
+        //    amp, Unbroken Seal's amp+stagger (Paladin). Reads `attacker.*`
+        //    directly (not a re-fetched "live attacker" the way World.ts
+        //    needs to, per that file's own comment at this exact site) —
+        //    Zig mutates `state.players` in place, so `attacker` is ALREADY
+        //    the live record; no TS-style frozen-snapshot hazard exists
+        //    here (this function's own doc comment above establishes that
+        //    for the whole section). `victim.health` is read BEFORE this
+        //    hit's damage is applied, matching TS's own execute-threshold
+        //    check ("a target already at or below the threshold").
+        //
+        //    DELIBERATELY NOT applied here (same "correctness over
+        //    completeness" scope as the rest of this pass — see the
+        //    report): fooledDamageMultiplier (Paper Double burst — no
+        //    fooled_until_tick field on PlayerEntity yet), rallyLight/
+        //    kindledResolve damage multipliers (Rally Light/Kindled
+        //    Resolve are both Phase 4 abilities, unreachable — nothing can
+        //    equip them today, so their multiplier is unconditionally 1
+        //    either way), and team peel (Phase 3 ally substrate). Every one
+        //    of these is a TRUE no-op today given nothing upstream can
+        //    populate the state they'd read, not a silent shortcut.
+        var final_damage = damage;
+        if (is_ninja) {
+            if (attacker.read_mark_until_tick > state.header.tick and
+                attacker.read_target_id_len == victim.id_len and
+                std.mem.eql(u8, attacker.read_target_id_bytes[0..attacker.read_target_id_len], victim.id_bytes[0..victim.id_len]))
+            {
+                final_damage *= NINJA_READ_MARK_AMP_MULTIPLIER;
+            }
+            // Undercut: a landed arc hit against a target already at or
+            // below the execute threshold becomes a guaranteed kill while
+            // the window lives — non-consuming (no clearing here, matches
+            // World.ts).
+            if (attacker.undercut_until_tick > state.header.tick and
+                victim.health <= NINJA_UNDERCUT_HEALTH_THRESHOLD)
+            {
+                final_damage = @max(final_damage, victim.health);
+            }
+        }
+        var stagger_victim = false;
+        if (is_paladin) {
+            if (attacker.judgment_mark_until_tick > state.header.tick and
+                attacker.judgment_target_id_len == victim.id_len and
+                std.mem.eql(u8, attacker.judgment_target_id_bytes[0..attacker.judgment_target_id_len], victim.id_bytes[0..victim.id_len]))
+            {
+                final_damage *= KIN_JUDGMENT_AMP_MULTIPLIER;
+            }
+            if (attacker.seal_until_tick > state.header.tick) {
+                final_damage *= KIN_SEAL_DAMAGE_MULTIPLIER;
+                stagger_victim = true;
+                // Consumed on this landed hit, not just on timeout — "the
+                // NEXT Kindled Edge hit" (matches World.ts). Cleared via
+                // `attacker` directly (the live record), not a re-fetch.
+                attacker.seal_until_tick = 0;
+            }
+        }
+
+        const new_health = @max(0.0, victim.health - final_damage);
         const was_alive = victim.flags.alive;
         victim.health = new_health;
         victim.flags.alive = new_health > 0;
-        emitEvent(state, .hit_confirmed, @intCast(vi), @intCast(attacker_idx), 0, damage, victim.x, victim.y);
+        if (stagger_victim) {
+            const stagger_ticks: u32 = @intFromFloat(@ceil(KIN_SEAL_STAGGER_MS / @max(1.0, eff_dt)));
+            victim.slowed_until_tick = state.header.tick + stagger_ticks;
+            victim.slow_multiplier = KIN_SEAL_STAGGER_MULTIPLIER;
+            victim.flags.has_slow = true;
+        }
+        emitEvent(state, .hit_confirmed, @intCast(vi), @intCast(attacker_idx), 0, final_damage, victim.x, victim.y);
         if (was_alive and new_health <= 0) {
             creditKill(state, @intCast(attacker_idx), @intCast(vi));
             emitEvent(state, .player_killed, @intCast(vi), @intCast(attacker_idx), 0, 0, victim.x, victim.y);
+        }
+
+        // Energy from contact (Ninja only) — the attacker's own landed hit
+        // restores the rack ("aggression feeds the rack", World.ts:4829-
+        // 4831). Second Wind (this phase's own 6th ability) piggybacks on
+        // this SAME self-write: a landed hit while its window lives also
+        // heals + dumps bonus energy, single-use (window cleared on the
+        // qualifying hit, not just on timeout) — matches World.ts exactly,
+        // including the flat `100` heal cap (NOT build-max-health-aware;
+        // a TS quirk this port mirrors as-is, not fixes, per this goal
+        // doc's "port AS-IS" doctrine). See this pass's own report for why
+        // the baseline (unconditional) energy grant is now in scope here
+        // too — Second Wind's top-up needs a baseline to top up.
+        if (is_ninja) {
+            const second_wind_live = attacker.second_wind_until_tick > state.header.tick;
+            attacker.energy = @min(
+                NINJA_ENERGY_MAX,
+                attacker.energy + NINJA_ENERGY_ON_MELEE_HIT + (if (second_wind_live) NINJA_SECOND_WIND_ENERGY else 0),
+            );
+            if (second_wind_live) {
+                attacker.health = @min(100.0, attacker.health + NINJA_SECOND_WIND_HEAL);
+                attacker.second_wind_until_tick = 0;
+            }
+        }
+    }
+
+    // ---- Wave-off-swing (Ninja, Edge Storm-gated only — see
+    //      `wave_should_spawn`'s own doc comment above) ----
+    if (wave_should_spawn and is_ninja) {
+        const edge_storm_live = attacker.edge_storm_until_tick > state.header.tick and
+            attacker.edge_storm_charges_remaining > 0;
+        if (edge_storm_live and state.projectile_count < world_state.MAX_PROJECTILES) {
+            const wave_damage = WAVE_DAMAGE * NINJA_EDGE_STORM_WAVE_DAMAGE_MULTIPLIER;
+            const wave_aim_angle = trig.lutAtan2(mem.aim_y, mem.aim_x);
+            const slot: u32 = state.projectile_count;
+            state.projectile_count += 1;
+            const new_id: u32 = state.header.next_entity_id;
+            state.header.next_entity_id += 1;
+            state.projectiles[slot] = .{
+                .x = attacker.x,
+                .y = attacker.y - 20,
+                .vx = trig.lutCos(wave_aim_angle) * WAVE_SPEED,
+                .vy = trig.lutSin(wave_aim_angle) * WAVE_SPEED,
+                .radius = WAVE_RADIUS,
+                .damage = wave_damage,
+                .lifetime_ms = WAVE_LIFETIME_MS,
+                .age_ms = 0,
+                .traveled_px = 0,
+                .origin_x = attacker.x,
+                .origin_y = attacker.y - 20,
+                .homing_strength = 0,
+                .acceleration_multiplier = 0,
+                .gravity_scale = 0,
+                .range_px = WAVE_RANGE,
+                .slow_multiplier = 1,
+                .sticky_fuse_ms = 0,
+                .impact_radius_px = 0,
+                .id = new_id,
+                .bounces_remaining = 0,
+                .pierce_remaining = 0,
+                .split_count = 0,
+                .flags = .{
+                    .has_owner = true,
+                    .has_impact = false,
+                    .has_split = false,
+                    .has_slow = false,
+                    .has_homing = false,
+                    .has_acceleration = false,
+                    .has_gravity_scale = false,
+                    .has_range = true,
+                    .has_age = true,
+                    .has_traveled = true,
+                    .has_origin = true,
+                    .returning = false,
+                    .has_sticky_fuse = false,
+                    .has_impact_radius = false,
+                },
+                .pathing = .straight,
+                .element = .crystal,
+                .impact = .none,
+                .shape = .circle,
+                .owner_id_len = attacker.id_len,
+                .owner_id_bytes = attacker.id_bytes,
+            };
+            attacker.edge_storm_charges_remaining -= 1;
+            if (attacker.edge_storm_charges_remaining == 0) {
+                attacker.edge_storm_until_tick = 0;
+            }
         }
     }
 }
@@ -1939,6 +2396,33 @@ pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
         }
     }
 
+    // Ability-slot rising-edge capture (2026-07-20, Phase 1 ability-cast
+    // dispatch pass) — same "captured before section 6 rolls prev_keys"
+    // contract as `melee_fire_rising_edge` immediately above, and for the
+    // identical reason. Slot bits did NOT exist anywhere in Zig's input
+    // handling before this pass (verified by grepping every existing
+    // `1 << N` input-bit constant in this file / combat.zig / player.zig —
+    // 0..9 were all spoken for, nothing read 10/11/12) — mirrors TS's own
+    // `slotBit = 1 << (10 + slot)` (World.ts:2150) exactly, the SAME
+    // "duplicated as a local constant rather than exported" convention
+    // `ABILITY_BIT`/`FIRE_BIT`/`MELEE_FIRE_BIT` above already use.
+    var ability_slot_rising_edge: [world_state.MAX_PLAYERS][world_state.MAX_ABILITY_SLOTS]bool =
+        @splat(@splat(false));
+    {
+        const SLOT_BIT_BASE: u5 = 10;
+        var asi: u32 = 0;
+        while (asi < state.player_count) : (asi += 1) {
+            const ap = &state.players[asi];
+            var slot: usize = 0;
+            while (slot < world_state.MAX_ABILITY_SLOTS) : (slot += 1) {
+                const slot_bit: u32 = @as(u32, 1) << @as(u5, @intCast(SLOT_BIT_BASE + slot));
+                ability_slot_rising_edge[asi][slot] =
+                    (ap.current_keys & slot_bit) != 0 and
+                    (ap.prev_keys & slot_bit) == 0;
+            }
+        }
+    }
+
     // 6. Combat — per-player shield drain + parry start (I4 +
     //    I4b). Defaults match `combat_*` exports.
     var pi3: u32 = 0;
@@ -2247,6 +2731,25 @@ pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
 
         // Roll current → prev for the next tick's edge detection.
         player_ptr.prev_keys = player_ptr.current_keys;
+    }
+
+    // 6z. Ability-cast dispatch (Phase 1, docs/zig-step-world-parity-goal.md
+    //     "the next unblock") — runs after section 6's per-player loop has
+    //     finished for EVERY player (shield/emission already this-tick-
+    //     final) and BEFORE section 6a's melee loop, so a window opened
+    //     here (Judgment Line's mark, Unbroken Seal, Undercut, Read Mark,
+    //     Second Wind, Edge Storm) is already visible to THIS SAME tick's
+    //     melee consumption — matching World.ts's own per-player-loop
+    //     ordering, where the ability-slot loop (World.ts:2149) runs well
+    //     before the NINJA/PALADIN MELEE sections (World.ts:4029+/4412+).
+    //     `stepAbilityDispatch` itself gates on fighting-phase + alive, so
+    //     no outer phase guard is needed here (matches how section 6b's
+    //     AOE resolver and stepMeleeSwing structure their own guards).
+    {
+        var adi: u32 = 0;
+        while (adi < state.player_count) : (adi += 1) {
+            stepAbilityDispatch(state, adi, eff_dt, ability_slot_rising_edge[adi]);
+        }
     }
 
     // 6a. Melee — Ninja Slash + Paladin Kindled Edge (2026-07-20 base-

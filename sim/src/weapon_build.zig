@@ -354,3 +354,32 @@ pub export fn resolve_player_fire_config(
     const n = @min(count, @as(u32, world_state.MAX_PLAYER_CARDS));
     state_ptr.player_fire_config[player_index] = resolveByIndices(indices_ptr[0..n]);
 }
+
+// ── Ability-cast dispatch support (Phase 1, docs/zig-step-world-parity-
+//    goal.md) ─────────────────────────────────────────────────────────
+
+/// Reverse lookup: `AbilityKind` → its owning card's `CardActive`
+/// (cooldown_ms + optional duration_ms). Ability-cast dispatch (world.zig)
+/// knows WHICH kind is equipped in a slot (via
+/// `world_state.EquippedActives`, a raw `u8` cast back to `AbilityKind` at
+/// the one call site that needs it) but needs the cooldown to gate
+/// re-presses — this is the "go from AbilityKind back to the owning card's
+/// CardMeta" helper the goal doc's own Phase 1 section flags as possibly
+/// needed. Every one of the 45 `AbilityKind` values corresponds to exactly
+/// one card with `meta.active.kind == kind` (cards_gen.zig's 45 ability
+/// cards are 1:1 with the enum — see cards_gen's own "AbilityKind has
+/// exactly 45 members" test) so a linear scan over `gen.cards` (104
+/// entries) always finds a match for a real value; `null` only for a
+/// (theoretically unreachable, given the enum is exhaustively generated
+/// from the same 45 cards) value with no owning card. Lives here, not in
+/// cards_gen.zig, because that file is GENERATED (its own header: "DO NOT
+/// EDIT") — this is genuinely hand-written logic over the generated data,
+/// same relationship `resolveMods` already has to `gen.cards`.
+pub fn cardActiveForKind(kind: gen.AbilityKind) ?gen.CardActive {
+    for (gen.cards) |c| {
+        if (c.meta.active) |a| {
+            if (a.kind == kind) return a;
+        }
+    }
+    return null;
+}

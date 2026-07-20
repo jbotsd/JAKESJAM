@@ -63,6 +63,15 @@ pub const PLAYER_ID_BYTES: usize = 32;
 pub const WEAPON_ID_BYTES: usize = 24;
 pub const CARD_ID_BYTES: usize = 24;
 pub const MAX_PLAYER_CARDS: usize = 8;
+/// Ability-cast dispatch (Phase 1, docs/zig-step-world-parity-goal.md) — the
+/// rack is hard-capped at exactly 3 slots, mirroring cardTypes.ts's own
+/// `MAX_ABILITY_SLOTS` (client/src/sim/data/cardTypes.ts:191) and
+/// PlayerEntity.slot1/2/3CooldownUntilTick's own 3-slot shape (types.ts:649-
+/// 651; the TS-only 4th "slot4CooldownUntilTick" field is dead — no input
+/// bit or offer-roll path ever populates a 4th slot, per round.ts's own
+/// `heldActives >= MAX_ABILITY_SLOTS` gate — so this Zig port mirrors the
+/// LIVE 3-slot contract, not the vestigial 4th field).
+pub const MAX_ABILITY_SLOTS: usize = 3;
 /// Duos-queue team id (class-overhaul-workboard.md chunk 1.1). Generated
 /// ids look like `duo-3` / `bot-duo-7` (server/src/venueHost.ts,
 /// worldHost.ts) — well under 24 bytes; sized the same as WEAPON_ID_BYTES,
@@ -319,13 +328,22 @@ pub const PlayerEntity = extern struct {
     round_kills: u32 = 0,
 
     /// Ninja class-resource pool (2026-07-18, docs/classes-goal.md MANA
-    /// section: "ninja = energy, fast regen, melee hits restore"). Mutated
-    /// ONLY by TS World.ts combat code (melee-hit / dash-through / wall-kick
-    /// grants + passive regen) — mirrors how `ability_charge` is a TS-owned
-    /// resource that the physics step never touches, just carries through.
-    /// f64 after a run of u32 tail fields forces 4 bytes of alignment
-    /// padding before it (284 → 288) — struct grows 288 → 296. Non-ninja
-    /// players simply never move this field off 0.
+    /// section: "ninja = energy, fast regen, melee hits restore").
+    /// UPDATED 2026-07-20 (Phase 1 ability-cast dispatch pass): no longer
+    /// "TS-owned only" — `step_world`'s own Ninja Slash hit-resolution
+    /// (world.zig's melee section) now mutates this directly, the same
+    /// "landed hit restores the rack" grant TS's World.ts always applied
+    /// (NINJA_ENERGY_ON_MELEE_HIT per landed hit, plus Second Wind's bonus
+    /// top-up while that window is live) — Phase 0's base melee port had
+    /// deliberately deferred this exact grant pending an ability-cast
+    /// system to hang Second Wind off of; this is that system. Dash-
+    /// through and wall-kick energy grants remain TS-owned/un-ported (no
+    /// Zig dash-through detection exists yet — see stepMeleeSwing's own
+    /// "deliberately NOT ported" list) — only the melee-hit grant crossed
+    /// the ownership boundary, not every energy source. f64 after a run of
+    /// u32 tail fields forces 4 bytes of alignment padding before it
+    /// (284 → 288) — struct grows 288 → 296. Non-ninja players simply
+    /// never move this field off 0.
     energy: f64 = 0,
 
     /// Duos-queue team identity (2026-07-18, class-overhaul-workboard.md
@@ -463,6 +481,106 @@ pub const PlayerEntity = extern struct {
     /// field is deliberately deferred; it is read/written by step_world
     /// only, never packed/unpacked by worldStateBridge.ts today).
     channel_hold_ms: f64 = 0,
+
+    // ── Ability-cast dispatch (Phase 1, docs/zig-step-world-parity-goal.md
+    //    "the next unblock") ──────────────────────────────────────────────
+    // Per-slot cooldown gate — mirrors TS `slot1/2/3CooldownUntilTick`
+    // (types.ts:649-651) exactly, just collapsed into one fixed array
+    // instead of 3 discrete optional fields (TS's own fields are already a
+    // MAX_ABILITY_SLOTS=3 rack, see MAX_ABILITY_SLOTS's own doc comment
+    // above) — same "fixed array over discrete numbered fields" shape this
+    // file already uses for `slowed_until_tick`-style single window fields
+    // vs. this NEW multi-slot case; a `[3]u32` is simpler than 3 separate
+    // named fields here because world.zig's dispatch loop is itself
+    // generic over `slot` (0..MAX_ABILITY_SLOTS), and indexing a named
+    // field per slot would force a switch/ternary at every call site TS
+    // itself is forced into (World.ts:2158-2163's own
+    // `slot === 0 ? ... : slot === 1 ? ...` chain) — the array sidesteps
+    // that entirely. No `has_*` gate needed: 0 is a valid "never on
+    // cooldown" rest state, same "always-valid, no unset ambiguity"
+    // contract as `channel_hold_ms` above, not the `*_until_tick` window
+    // convention (which needs a flag because 0 there could mean either
+    // "tick 0" or "unset" — a slot cooldown is always compared with a
+    // strict `> tick` gate against a monotonically increasing tick, so 0
+    // unambiguously reads as "not on cooldown" from tick 1 onward, and
+    // tick 0 itself has no cooldown to gate against).
+    slot_cooldown_until_tick: [MAX_ABILITY_SLOTS]u32 = @splat(0),
+
+    // Self-only ability windows for the 6 melee-hook abilities this phase
+    // wires end to end (docs/zig-step-world-parity-goal.md Phase 1's own
+    // "first real abilities" list). Every field below mirrors an
+    // identically-named TS `PlayerEntity` field 1:1 (types.ts:748-757) —
+    // plain `u32` ticks, no `has_*` flag, same "0 unambiguously reads as
+    // inactive against a monotonic tick counter" reasoning as
+    // `slot_cooldown_until_tick` above (every consumption site below gates
+    // on `> tick`, and no real match tick is ever 0 by the time an ability
+    // could have been cast).
+    /// Undercut (Ninja) — non-consuming window; while live, a landed Ninja
+    /// Slash arc hit against a victim at/under
+    /// `NINJA_UNDERCUT_HEALTH_THRESHOLD` becomes a guaranteed kill.
+    undercut_until_tick: u32 = 0,
+    /// Edge Storm (Ninja) — charge-bank window; while live AND
+    /// `edge_storm_charges_remaining > 0`, the wave-off-swing (world.zig's
+    /// melee section) spawns an amplified wave and decrements the charge.
+    edge_storm_until_tick: u32 = 0,
+    /// Charges remaining in the current Edge Storm window (starts at
+    /// `NINJA_EDGE_STORM_CHARGES` on cast, decrements per wave spawned,
+    /// window closes early once it hits 0 — mirrors World.ts's
+    /// `edgeStormChargesRemaining` exactly). `u32` (not `u8`) purely to
+    /// stay consistent with every other small counter on this struct
+    /// (`round_kills`, `card_count` is the one `u8` exception and that's
+    /// because it long predates this cut) — no alignment cost either way
+    /// since it sits in a run of other u32 fields.
+    edge_storm_charges_remaining: u32 = 0,
+    /// Unbroken Seal (Paladin) — single-use window (not a duration tick
+    /// the way the others are "while live, repeatedly"): the NEXT landed
+    /// Kindled Edge hit is amplified + staggers the victim, then the
+    /// window is explicitly cleared at the consumption site (world.zig's
+    /// PALADIN MELEE section), not just left to time out.
+    seal_until_tick: u32 = 0,
+    /// Second Wind (Ninja) — window; the NEXT landed Ninja Slash hit heals
+    /// + grants bonus energy on top of the ordinary per-hit energy grant,
+    /// then the window is cleared (single-use, same shape as Seal above).
+    second_wind_until_tick: u32 = 0,
+    /// Judgment Line (Paladin) — mark window; while live AND
+    /// `judgment_target_id_*` matches the victim, a landed Kindled Edge
+    /// hit against THAT SPECIFIC victim is amplified (non-consuming — the
+    /// mark stays live for every qualifying hit until it times out, unlike
+    /// Seal). Paired with `judgment_target_id_len`/`judgment_target_id_bytes`
+    /// below.
+    judgment_mark_until_tick: u32 = 0,
+    /// Read Mark (Ninja) — parallel shape to Judgment Line above, but for
+    /// Ninja Slash hits instead of Kindled Edge. Paired with
+    /// `read_target_id_len`/`read_target_id_bytes` below.
+    read_mark_until_tick: u32 = 0,
+
+    /// Judgment Line's marked victim, stored as a byte-stable id (NOT a
+    /// `WorldState.players` array index): unlike `PendingInstantAoe.
+    /// caster_idx` (safe as a raw index ONLY because it's pushed and
+    /// resolved within the SAME `stepWorld` call, per that field's own doc
+    /// comment), a mark must survive MANY ticks — the exact same
+    /// multi-tick-lifetime hazard `ProjectileEntity.owner_id_bytes` exists
+    /// to avoid ("a projectile can outlive many ticks and the roster is
+    /// only guaranteed stable within one"). Mirrors TS `judgmentTargetId`
+    /// (a `PlayerId` string, types.ts:748) via the same length-prefixed
+    /// fixed buffer convention `id_bytes`/`owner_id_bytes` already use
+    /// throughout this file. Zero-length (`judgment_target_id_len == 0`)
+    /// reads as "no mark" — every real player id is non-empty, so this is
+    /// an unambiguous sentinel, no separate flag needed (same reasoning
+    /// `team_id_len == 0` already relies on for `has_team_id`... except
+    /// THAT field still carries an explicit flag bit because a team id and
+    /// "no cooldown" share the same struct-wide flags convention; here
+    /// there is no spare PlayerFlags bit being spent either way, and the
+    /// mark is ALWAYS gated by its own `_until_tick > tick` check first, so
+    /// the length byte alone is sufficient).
+    judgment_target_id_len: u8 = 0,
+    _pad_judgment: [3]u8 = .{ 0, 0, 0 },
+    judgment_target_id_bytes: [PLAYER_ID_BYTES]u8 = @splat(0),
+    /// Read Mark's marked victim — same byte-stable-id shape as
+    /// `judgment_target_id_bytes` above, same sentinel convention.
+    read_target_id_len: u8 = 0,
+    _pad_read: [3]u8 = .{ 0, 0, 0 },
+    read_target_id_bytes: [PLAYER_ID_BYTES]u8 = @splat(0),
 };
 
 /// Mirrors `ProjectileEntity`.
@@ -850,6 +968,91 @@ pub const ResolvedFireConfig = extern struct {
     dash_cooldown_mul: f64 = 1,
 };
 
+/// Sentinel for `EquippedActives.slot_kind[N]` meaning "slot N is empty" —
+/// out of range for every real `data/cards_gen.zig` `AbilityKind` value
+/// (0..44, 45 members total, see that enum's own doc comment), so it can
+/// never collide with a real ability. A plain-`u8` sentinel, not a
+/// `?AbilityKind` array: Zig gives no defined `extern struct` layout for
+/// `Optional` of a non-pointer type (unlike `?*T`, which reuses the null
+/// pointer as its own sentinel) — the exact reason every OTHER optional
+/// value on an extern struct in this file uses a `has_*` flag or an
+/// explicit sentinel instead (see `CardMeta.class_id`'s own doc comment in
+/// cards_gen.zig for the contrasting case where `?T` IS fine, because that
+/// struct is plain, not `extern`, and never crosses an ABI boundary).
+///
+/// VALUE IS `0`, NOT the more obvious "past the end" `255` — investigated
+/// and deliberately picked after finding a real hazard with `255`: this
+/// codebase's own `reset()` export (`root.zig`) and every test's fresh-
+/// state helper build a `WorldState` via a raw `@memset(..., 0)` /
+/// `std.mem.zeroes` zero-fill, NOT via this struct's `.{}` literal syntax
+/// — so a Zig field default like `= @splat(255)` NEVER actually applies at
+/// runtime; the byte pattern is just zero either way. Picking `255` as the
+/// sentinel would have made every zero-initialized `WorldState` (i.e.
+/// EVERY real one — production included) silently read as "every player
+/// has AbilityKind value `0` (crimson-tithe) equipped in every slot,"
+/// exactly the opposite of "empty," and directly contradicting this
+/// phase's own required load-bearing property ("an empty/unequipped slot
+/// is provably inert"). `0` sidesteps this entirely: raw storage in
+/// `EquippedActives.slot_kind` is `AbilityKind`'s enum value **+ 1**
+/// (never the raw `@intFromEnum` value directly) so `0` unambiguously
+/// means "empty" under BOTH zero-fill AND explicit initialization, and a
+/// real kind (enum values 0..44) is recovered via `raw - 1` at the one
+/// call site that reads it (world.zig's dispatch loop).
+pub const ABILITY_KIND_NONE: u8 = 0;
+
+/// Per-player resolved ability-slot equipment (Phase 1, docs/zig-step-
+/// world-parity-goal.md) — parallel to `players[]`, same architectural
+/// role `ResolvedFireConfig`/`player_fire_config` immediately above
+/// already establish: "host resolves [X] from cards, patches it into wasm
+/// memory each tick; step_world only READS it." `equipped_actives` is that
+/// same shape for "which ability is drafted into which of the 3 rack
+/// slots" — the fact Phase 1 needed to close per its own report (Phase 0's
+/// card-data-model pass explicitly noted "the actual card-id contents
+/// never mirror into any Zig struct").
+///
+/// DELIBERATELY NOT added as fields directly on `PlayerEntity` (the goal
+/// doc's own literal suggested shape) — investigated first: TS's
+/// `resolvePlayerBuild(player)` re-derives `build.actives` from
+/// `player.cards` EVERY tick (World.ts's per-player loop calls it fresh,
+/// same as `createWeaponBuild` re-deriving `ResolvedFireConfig` every
+/// tick) rather than storing a pre-resolved actives list as persistent
+/// roster state — so "which ability is in slot N" is BUILD-RESOLVED,
+/// re-computed data, not identity data like `character_id`/`weapon_id`.
+/// That's exactly `ResolvedFireConfig`'s own category, not
+/// `team_id`/`kindling`'s (persistent identity/resource fields that
+/// belong ON `PlayerEntity`). Using a parallel array also sidesteps the
+/// `?AbilityKind`-in-`extern-struct` ABI problem entirely (see
+/// `ABILITY_KIND_NONE`'s own doc comment) without inventing a new sentinel
+/// convention specifically for `PlayerEntity`.
+///
+/// POPULATION: Phase 2 (the draft/offer-roll system) doesn't exist in Zig
+/// yet, so nothing resolves this from real card picks today — same "no
+/// live push site yet" state `PendingInstantAoe` shipped in before any
+/// ability actually queued into it (Phase 0). Tests hand-seed this array
+/// directly, exactly like Phase 0's Paper Double tests hand-seeded
+/// `state.paper_doubles[0]` before any spawn-on-cast path existed (see
+/// this phase's own test file). A future Phase 2 cut would populate it the
+/// same way `weapon_build.resolve_player_fire_config` already resolves
+/// `ResolvedFireConfig` from card indices — a small additive export, not a
+/// reason to revisit this shape.
+pub const EquippedActives = extern struct {
+    /// `AbilityKind` (data/cards_gen.zig) as a raw `u8` **+ 1**, or
+    /// `ABILITY_KIND_NONE` (`0`) for an empty slot — see
+    /// `ABILITY_KIND_NONE`'s own doc comment for why the encoding is
+    /// shifted by one instead of using a top-of-range sentinel. Not typed
+    /// as `AbilityKind` itself (an enum) to keep this file free of a
+    /// `data/cards_gen.zig` import — `world_state.zig` is the byte-layout
+    /// foundation every other `sim/src/` module (including
+    /// `data/cards_gen.zig` indirectly, via `weapon_build.zig`) already
+    /// depends ON; a reverse dependency back onto a `data/` module would
+    /// be the first of its kind in this file and buys nothing a raw `u8` +
+    /// a documented sentinel/offset doesn't already give `world.zig`'s
+    /// dispatch loop (which already imports `data/cards_gen.zig` directly
+    /// and does the `@enumFromInt(raw - 1)` conversion at the one call
+    /// site that needs it).
+    slot_kind: [MAX_ABILITY_SLOTS]u8 = @splat(ABILITY_KIND_NONE),
+};
+
 /// SimEvent kind tag (Phase I18). Mirrors the discriminated
 /// `SimEvent` union in client/src/sim/types.ts but flat: each
 /// event carries an i32 tag + 4 generic numeric payload slots
@@ -999,6 +1202,13 @@ pub const WorldState = extern struct {
     /// falls back to the starter pistol base.
     player_fire_config: [MAX_PLAYERS]ResolvedFireConfig,
 
+    /// Parallel to `players[]` — resolved ability-slot equipment (Phase 1,
+    /// docs/zig-step-world-parity-goal.md). See `EquippedActives`'s own
+    /// doc comment for the full "why a parallel array, not PlayerEntity
+    /// fields" reasoning and the "nothing populates this from real drafts
+    /// yet" caveat.
+    player_equipped_actives: [MAX_PLAYERS]EquippedActives,
+
     /// Static-AABB cache (I15). Caller bakes the map's platforms
     /// into this array before the first step_world call; static
     /// across the match. Used by player.stepPlayer +
@@ -1075,7 +1285,43 @@ comptime {
     // bridge with this field populated. Zig-internal tests (this file's
     // comptime assert + world.zig's own native calls) are unaffected since
     // they read @sizeOf(PlayerEntity) directly, never the stale TS literal.
-    std.debug.assert(@sizeOf(PlayerEntity) == 392);
+    // 392 → 504 (2026-07-20, Phase 1 ability-cast dispatch pass): +112
+    // bytes, zero implicit padding anywhere in the addition (verified via
+    // a temporary `@compileLog(@sizeOf(PlayerEntity))` before locking this
+    // assert, same "don't trust hand math alone" discipline the growth-
+    // history notes below already ask for). Layout, in declaration order:
+    //   slot_cooldown_until_tick [3]u32   392 → 404  (12, no gap: 392 8-aligned)
+    //   undercut_until_tick       u32     404 → 408  (4)
+    //   edge_storm_until_tick     u32     408 → 412  (4)
+    //   edge_storm_charges_remaining u32  412 → 416  (4)
+    //   seal_until_tick           u32     416 → 420  (4)
+    //   second_wind_until_tick    u32     420 → 424  (4)
+    //   judgment_mark_until_tick  u32     424 → 428  (4)
+    //   read_mark_until_tick      u32     428 → 432  (4)
+    //   judgment_target_id_len    u8      432 → 433  (1)
+    //   _pad_judgment             [3]u8   433 → 436  (3, explicit — same
+    //                                       "len byte + explicit pad to the
+    //                                       next 4-byte boundary" shape
+    //                                       owner_id_len/_pad0 already use
+    //                                       on ProjectileEntity/PaperDoubleEntity)
+    //   judgment_target_id_bytes  [32]u8  436 → 468  (32)
+    //   read_target_id_len        u8      468 → 469  (1)
+    //   _pad_read                 [3]u8   469 → 472  (3)
+    //   read_target_id_bytes      [32]u8  472 → 504  (32)
+    // 504 is already an 8-byte multiple (63×8), so no further implicit
+    // tail padding — struct grows 392 → 504 exactly. See
+    // slot_cooldown_until_tick's own doc comment for the field-shape
+    // reasoning. KNOWN GAP, same shape as the 384→392 note directly above:
+    // worldStateBridge.ts's PLAYER_ENTITY_SIZE is untouched by this
+    // Zig-only pass (already stale at 384 before this cut; still out of
+    // scope here) — Zig-internal tests read @sizeOf(PlayerEntity) directly
+    // and are unaffected.
+    std.debug.assert(@sizeOf(PlayerEntity) == 504);
+    // EquippedActives (Phase 1): [3]u8 = 3 bytes, no padding (u8 array
+    // needs no alignment beyond 1). Doesn't cross the wasm ABI today (see
+    // its own doc comment) — pure internal regression-catching, same role
+    // PendingInstantAoe's assert plays.
+    std.debug.assert(@sizeOf(EquippedActives) == 3);
     // ProjectileEntity: SIZE UNCHANGED at 216 despite 3 new numeric fields
     // (2026-07-20 gap-closure pass item 1) — status_scale/leech_fraction/
     // execute_below_frac (f32 ×3 = 12 bytes) exactly fill what used to be
