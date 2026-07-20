@@ -2,9 +2,20 @@
 // you're playing the prototype in your browser about eight seconds from
 // now." Full-screen overlay above the splash on first visit.
 //
-// SKIPPED for: the stream kiosk (?kiosk=1), friend/world invite links
-// (?world=1 — Fight Night joins must be frictionless), ?gate=off (dev),
-// and anyone with an email already on file.
+// SKIPPED for: the stream kiosk (?kiosk=1), ?gate=off (dev), and anyone
+// with an email already on file.
+//
+// `?world=1` deliberately does NOT skip this (2026-07-20 fix): that param
+// is ALSO the game's one public share URL — printed as the literal
+// hosting "Share" link (docs/hosting-elyad-io.md), the kiosk launch
+// command, and every dev/test instruction in the repo. Letting it skip the
+// gate meant the entire email-capture funnel — "the list is the asset"
+// (docs/devlog-000-script.md) — was optional for anyone who'd ever seen
+// that URL anywhere (stream overlay, doc, chat), forever, with no
+// per-recipient scoping or expiry. `docs/venue-goal.md` Pillar 6 already
+// planned the real fix (a distinct, signed `?fight` invite token for
+// genuine Fight Night repeat traffic) but never shipped it — until that
+// lands, `?world=1` gets the same gate as every other first visit.
 //
 // Submit is OPTIMISTIC: we store the email and drop the gate immediately,
 // then fire the POST in the background — a slow network must never break
@@ -19,7 +30,6 @@ function shouldSkip(): boolean {
   try {
     const params = new URLSearchParams(window.location.search);
     if (params.get("kiosk") === "1") return true;
-    if (params.get("world") === "1") return true;
     if (params.get("gate") === "off") return true;
     if (localStorage.getItem(STORAGE_KEY)) return true;
     if (sessionStorage.getItem(SESSION_SKIP_KEY)) return true;
