@@ -490,7 +490,7 @@ app.innerHTML = `
            art-directed shell. Hidden until Leave is clicked; axiom B4 keeps
            the destructive confirm spatially separated on its own row. -->
       <div class="shell-pause-leave-confirm" data-pause-leave-confirm hidden>
-        <p class="shell-hint">Leave the arena? It keeps running without you.</p>
+        <p class="shell-hint">Leave? It keeps running without you.</p>
         <div class="shell-pause-row">
           <button data-pause-leave-confirm-yes type="button" class="btn-danger">Leave</button>
           <button data-pause-leave-confirm-no type="button" class="shell-btn-secondary">Stay</button>
@@ -1862,7 +1862,17 @@ function openMatchMenu(): void {
   // Hangout (private-room pre-stage): Menu/Esc toggles the PRIVATE ROOM
   // panel as an overlay — join no longer leaves it stuck open
   // (Jake 2026-07-17). Real fights still open the pause menu.
-  if (game.scene.isActive(SceneKeys.Hangout)) {
+  //
+  // matchMode !== "lobby" (2026-07-20 fix): this used to catch ANY active
+  // Hangout scene, including the public venue lobby (mode: "venue" /
+  // matchMode "lobby", joinWorld()) — silently routing Menu/Esc to the
+  // PRIVATE room panel there too, which has no room code / nothing to show.
+  // Venue visitors could never reach the real pause menu, so Settings and
+  // Leave were both unreachable from the lobby (reported bug). "lobby" is
+  // exclusively the public venue (private hangouts always use "private" —
+  // see emitMatchStarted("private") below and at room-joined), so this
+  // condition now only fires for the actual private-room pre-stage case.
+  if (game.scene.isActive(SceneKeys.Hangout) && shell.getState().matchMode !== "lobby") {
     const st = shell.getState();
     // Stuck open: exclusive room still up, matchMode never flipped (or
     // race). Enter private match-mode → exclusive chrome hides. One
@@ -2192,6 +2202,15 @@ function leaveMatchToHome(): void {
   }
   if (game.scene.isActive(SceneKeys.OnlineMatch)) {
     game.scene.stop(SceneKeys.OnlineMatch);
+  }
+  // 2026-07-20 fix: this never checked for Hangout, so "Leave" from the
+  // pause menu while in the venue lobby (now reachable — see
+  // openMatchMenu's matchMode !== "lobby" fix) would start MainMenu ON TOP
+  // of a still-running HangoutScene instead of stopping it — same "two
+  // live WS connections" hazard the room-joined/match-started handlers
+  // already guard against elsewhere in this file.
+  if (game.scene.isActive(SceneKeys.Hangout)) {
+    game.scene.stop(SceneKeys.Hangout);
   }
   if (!game.scene.isActive(SceneKeys.MainMenu)) {
     game.scene.start(SceneKeys.MainMenu);
