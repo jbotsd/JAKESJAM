@@ -1929,3 +1929,237 @@ test "ability dispatch: Paper Double burst — a decoy whose owner no longer exi
     try std.testing.expectEqual(@as(f64, 100.0), state.players[0].health); // no burst — no valid caster
     try std.testing.expectEqual(@as(u32, 0), state.pending_instant_aoe_count);
 }
+
+// ── Draft/offer-roll system (Phase 2, docs/zig-step-world-parity-goal.md) ─
+// Ports client/src/sim/round.ts's enterDrafting + draftWeights.ts. Testing
+// strategy per the phase's own brief: the DETERMINISTIC parts (candidate-
+// pool filtering, pity floor's forced-guarantee) get direct assertions
+// against exact composition; the RANDOM part gets a determinism proof
+// (same seed → bit-identical offers), not a distribution check; the full
+// phase transition gets an end-to-end hand-fed-picks proof that a pick
+// genuinely changes what Phase 1's ability dispatch loop sees equipped.
+
+fn cardIndexById(id: []const u8) u8 {
+    for (root.cards_gen.cards, 0..) |c, i| {
+        if (std.mem.eql(u8, c.id, id)) return @intCast(i);
+    }
+    unreachable; // every id used below is a real, live cards.ts id
+}
+
+fn containsIndex(pool: []const u8, idx: u8) bool {
+    for (pool) |c| {
+        if (c == idx) return true;
+    }
+    return false;
+}
+
+test "draft: candidate pool — a unique card already owned is never offered; the same card is offered when not yet owned" {
+    var state: root.world_state.WorldState = std.mem.zeroes(root.world_state.WorldState);
+    state.player_count = 1;
+    state.players[0].character_id = .balanced; // wizard
+    const raycast_idx = cardIndexById("raycast-prism"); // unique, no classId, no active
+
+    var pool: [root.cards_gen.cards.len]u8 = undefined;
+    var n = root.draft.buildCandidatePool(&state, 0, &pool);
+    try std.testing.expect(containsIndex(pool[0..n], raycast_idx));
+
+    state.players[0].card_count = 1;
+    state.player_card_ids[0].indices[0] = raycast_idx;
+    n = root.draft.buildCandidatePool(&state, 0, &pool);
+    try std.testing.expect(!containsIndex(pool[0..n], raycast_idx));
+}
+
+test "draft: candidate pool — a maxStacks card at its cap is never offered; below the cap it still is" {
+    var state: root.world_state.WorldState = std.mem.zeroes(root.world_state.WorldState);
+    state.player_count = 1;
+    state.players[0].character_id = .balanced;
+    const shard_bloom_idx = cardIndexById("shard-bloom"); // maxStacks = 2, not unique
+
+    var pool: [root.cards_gen.cards.len]u8 = undefined;
+    state.players[0].card_count = 1;
+    state.player_card_ids[0].indices[0] = shard_bloom_idx;
+    var n = root.draft.buildCandidatePool(&state, 0, &pool);
+    try std.testing.expect(containsIndex(pool[0..n], shard_bloom_idx)); // 1 of 2: still offerable
+
+    state.players[0].card_count = 2;
+    state.player_card_ids[0].indices[1] = shard_bloom_idx;
+    n = root.draft.buildCandidatePool(&state, 0, &pool);
+    try std.testing.expect(!containsIndex(pool[0..n], shard_bloom_idx)); // 2 of 2: at cap, excluded
+}
+
+test "draft: candidate pool — ability offers stop once all 3 rack slots are full; passives are unaffected by the cap" {
+    var state: root.world_state.WorldState = std.mem.zeroes(root.world_state.WorldState);
+    state.player_count = 1;
+    state.players[0].character_id = .balanced;
+    const crimson_idx = cardIndexById("crimson-tithe"); // class-blind ability, unique, unowned
+    const raycast_idx = cardIndexById("raycast-prism"); // passive, unrelated to the rack
+
+    var pool: [root.cards_gen.cards.len]u8 = undefined;
+    // 2 of 3 slots filled: ability cards still offered.
+    state.player_equipped_actives[0].slot_kind[0] = @intFromEnum(root.cards_gen.AbilityKind.shadow_step) + 1;
+    state.player_equipped_actives[0].slot_kind[1] = @intFromEnum(root.cards_gen.AbilityKind.veil_of_nought) + 1;
+    var n = root.draft.buildCandidatePool(&state, 0, &pool);
+    try std.testing.expect(containsIndex(pool[0..n], crimson_idx));
+
+    // 3rd slot filled: ability cards no longer offered.
+    state.player_equipped_actives[0].slot_kind[2] = @intFromEnum(root.cards_gen.AbilityKind.severing_answer) + 1;
+    n = root.draft.buildCandidatePool(&state, 0, &pool);
+    try std.testing.expect(!containsIndex(pool[0..n], crimson_idx));
+    try std.testing.expect(containsIndex(pool[0..n], raycast_idx)); // passive: untouched by the rack cap
+}
+
+test "draft: candidate pool — an off-class ability card is never offered; the matching class sees it" {
+    var state: root.world_state.WorldState = std.mem.zeroes(root.world_state.WorldState);
+    state.player_count = 1;
+    const sunlance_idx = cardIndexById("sunlance"); // classId = wizard
+
+    var pool: [root.cards_gen.cards.len]u8 = undefined;
+    state.players[0].character_id = .sprinter; // -> ninja, off-class
+    var n = root.draft.buildCandidatePool(&state, 0, &pool);
+    try std.testing.expect(!containsIndex(pool[0..n], sunlance_idx));
+
+    state.players[0].character_id = .balanced; // -> wizard, matching class
+    n = root.draft.buildCandidatePool(&state, 0, &pool);
+    try std.testing.expect(containsIndex(pool[0..n], sunlance_idx));
+}
+
+test "draft: ability pity-floor — a hand holding zero actives is guaranteed at least one ability offer, across several seeds" {
+    const seeds = [_]u32{ 1, 42, 999_983, 0xDEADBEEF, 7 };
+    for (seeds) |seed| {
+        var state: root.world_state.WorldState = std.mem.zeroes(root.world_state.WorldState);
+        state.player_count = 1;
+        state.players[0].character_id = .balanced;
+        state.header.rng_state = seed;
+        state.header.round_winner_idx = -1;
+
+        root.draft.rollOffersForRound(&state);
+
+        const ds = state.player_draft_state[0];
+        var offers_ability = false;
+        for (ds.offers) |raw| {
+            if (raw == root.world_state.DRAFT_SLOT_NONE) continue;
+            const idx = raw - 1;
+            if (root.cards_gen.cards[idx].meta.active != null) offers_ability = true;
+        }
+        try std.testing.expect(offers_ability);
+    }
+}
+
+test "draft: offer roll is deterministic — same seed + same input state produces bit-identical offers across two separate calls" {
+    var state_a: root.world_state.WorldState = std.mem.zeroes(root.world_state.WorldState);
+    state_a.player_count = 3;
+    state_a.players[0].character_id = .balanced;
+    state_a.players[1].character_id = .heavy;
+    state_a.players[2].character_id = .sprinter;
+    state_a.header.rng_state = 999_999;
+    state_a.header.round_winner_idx = 1; // player 1 = winner; 0 and 2 draft as catch_up
+
+    var state_b = state_a; // WorldState is pure value data (no pointers) — a real deep copy.
+
+    root.draft.rollOffersForRound(&state_a);
+    root.draft.rollOffersForRound(&state_b);
+
+    try std.testing.expectEqual(state_a.header.rng_state, state_b.header.rng_state);
+    for (0..3) |i| {
+        try std.testing.expectEqual(
+            state_a.player_draft_state[i].offers,
+            state_b.player_draft_state[i].offers,
+        );
+    }
+}
+
+test "draft: full round-over -> drafting -> countdown transition — hand-fed picks genuinely change EquippedActives and the card hand, and all-picked resolves the window EARLY (not just on expiry)" {
+    var state = freshFightingState();
+    state.player_count = 2;
+    state.players[0].character_id = .balanced; // wizard, 0 held actives -> pity floor guarantees an ability at offers[2]
+    state.players[1].character_id = .heavy;
+    for (0..2) |i| {
+        state.players[i].flags.alive = true;
+        state.players[i].health = 100;
+    }
+    state.players[1].health = 40; // player 0 wins the time-out (most health alive)
+    state.header.rng_state = 2026;
+    state.header.countdown_remaining_ms = 0.0; // already expired — detectRoundWinner reads THIS pre-tick value, not the post-decrement one, so it must already be <=0 for a winner to resolve on the very next stepWorld call
+
+    // Tick 1: fighting -> round_over (time-out win for player 0).
+    _ = root.world.stepWorld(&state, 16.0);
+    try std.testing.expectEqual(@intFromEnum(root.round.RoundPhase.round_over), state.header.round_phase);
+    try std.testing.expectEqual(@as(i32, 0), state.header.round_winner_idx);
+
+    // Advance the round-over hold to 0 in one tick: round_over -> drafting,
+    // offers rolled for both players.
+    _ = root.world.stepWorld(&state, root.round.ROUND_OVER_HOLD_MS);
+    try std.testing.expectEqual(@intFromEnum(root.round.RoundPhase.drafting), state.header.round_phase);
+
+    // Pity floor guarantee (re-proven here through the REAL end-to-end
+    // path, not just the isolated unit test above): player 0 holds zero
+    // actives, so offers[2] (the last rolled slot) must be an ability card.
+    const p0_offers = state.player_draft_state[0].offers;
+    const p0_last_idx = p0_offers[2] - 1;
+    try std.testing.expect(root.cards_gen.cards[p0_last_idx].meta.active != null);
+    const picked_kind = root.cards_gen.cards[p0_last_idx].meta.active.?.kind;
+
+    // Hand-fed picks: player 0 takes the guaranteed ability (slot 2),
+    // player 1 takes whatever landed in slot 0.
+    try std.testing.expect(root.draft.applyCardPick(&state, 0, 2, false));
+    try std.testing.expect(root.draft.applyCardPick(&state, 1, 0, false));
+
+    // Both drafters have now picked — the very NEXT tick (16ms, nowhere
+    // near the 8000ms window) must resolve immediately, not wait for
+    // expiry. This is the property distinct from auto-pick-on-expiry.
+    _ = root.world.stepWorld(&state, 16.0);
+    try std.testing.expectEqual(@intFromEnum(root.round.RoundPhase.countdown), state.header.round_phase);
+
+    // The pick genuinely changed what Phase 1's dispatch loop sees
+    // equipped: player 0's ability landed in a real EquippedActives slot.
+    const expected_raw: u8 = @intFromEnum(picked_kind) + 1;
+    var found_in_rack = false;
+    for (state.player_equipped_actives[0].slot_kind) |s| {
+        if (s == expected_raw) found_in_rack = true;
+    }
+    try std.testing.expect(found_in_rack);
+
+    // The card hand itself changed too (both the ability pick and the
+    // passive pick landed in PlayerCardIds / card_count).
+    try std.testing.expectEqual(@as(u8, 1), state.players[0].card_count);
+    try std.testing.expectEqual(p0_last_idx, state.player_card_ids[0].indices[0]);
+    try std.testing.expectEqual(@as(u8, 1), state.players[1].card_count);
+
+    // Drafting bookkeeping was wiped for the next round.
+    try std.testing.expectEqual(root.world_state.DRAFT_SLOT_NONE, state.player_draft_state[0].picked_slot);
+}
+
+test "draft: auto-pick-on-expiry — an unpicked drafter's FIRST offer is granted once the draft window expires, and the round still resolves" {
+    var state = freshFightingState();
+    state.player_count = 1;
+    state.players[0].character_id = .balanced;
+    state.players[0].flags.alive = true;
+    state.players[0].health = 100;
+    state.header.rng_state = 777;
+    state.header.countdown_remaining_ms = 0.0;
+
+    _ = root.world.stepWorld(&state, 16.0); // -> round_over
+    _ = root.world.stepWorld(&state, root.round.ROUND_OVER_HOLD_MS); // -> drafting, offers rolled
+
+    try std.testing.expectEqual(@intFromEnum(root.round.RoundPhase.drafting), state.header.round_phase);
+    const offered_idx = state.player_draft_state[0].offers[0] - 1;
+    try std.testing.expectEqual(@as(u8, 0), state.players[0].card_count); // nothing picked yet
+
+    // Let the full window run out without ever calling applyCardPick.
+    _ = root.world.stepWorld(&state, root.round.DRAFT_WINDOW_MS);
+
+    try std.testing.expectEqual(@intFromEnum(root.round.RoundPhase.countdown), state.header.round_phase);
+    try std.testing.expectEqual(@as(u8, 1), state.players[0].card_count); // auto-picked
+    try std.testing.expectEqual(offered_idx, state.player_card_ids[0].indices[0]);
+
+    var saw_auto_pick = false;
+    var ei: u32 = 0;
+    while (ei < state.event_count) : (ei += 1) {
+        if (state.events[ei].kind == @intFromEnum(root.world_state.SimEventKind.draft_resolved) and
+            state.events[ei].player_idx_a == 0 and state.events[ei].player_idx_b == 1)
+        {
+            saw_auto_pick = true;
+        }
+    }
+    try std.testing.expect(saw_auto_pick);
+}

@@ -28,6 +28,27 @@ pub const NextIntResult = struct {
     value: i32,
 };
 
+pub const NextFloatResult = struct {
+    state: u32,
+    value: f64,
+};
+
+/// Returns the new state + a value in [0, 1). Bit-exact port of TS's
+/// `nextFloat` (rng.ts): `nextU32(state)` then `n / 0x100000000` — divide
+/// by 2^32, NOT 0xFFFFFFFF (2^32-1); the off-by-one matters for parity, see
+/// `nextIntFromState`'s own `4294967296.0` constant, which this reuses.
+/// Was previously inlined at each call site (e.g. projectile.zig's split
+/// jitter) rather than a shared helper; added here as the canonical form
+/// once a second call site (the draft/offer-roll's weighted sampling,
+/// docs/zig-step-world-parity-goal.md Phase 2) needed the exact same
+/// computation — purely additive, existing inlined call sites are
+/// untouched.
+pub fn nextFloat(state: u32) NextFloatResult {
+    const new_state = nextU32(state);
+    const value: f64 = @as(f64, @floatFromInt(new_state)) / 4294967296.0;
+    return .{ .state = new_state, .value = value };
+}
+
 /// Returns the integer in [min, max_exclusive). Matches TS:
 ///   min + Math.floor(f * (max_exclusive - min))
 /// where f = new_state / 0x100000000.

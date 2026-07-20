@@ -23,13 +23,24 @@ const ELEMENT = ["crystal", "neutral", "fire", "ice", "lightning", "void", "radi
 const PATHING = ["straight", "gravity", "bounce", "boomerang", "homing", "anti-homing", "float", "accelerate"];
 const IMPACT = ["none", "explosive", "sticky", "pierce-chain", "slow-field"];
 // Mirrors cardTypes.ts's WeaponDelivery union — index 0 ("projectile") is
-// the default/no-op delivery, matching weapons.ts's starterWeapon.delivery.
+// the neutral no-op value a card's OWN `delivery` field defaults to when
+// unset (CardMod.delivery stays `null` for every card that doesn't touch
+// it). NOT necessarily starterWeapon.delivery itself any more — true
+// hitscan (2026-07-20) moved that to "raycast" (index 1); StarterBase.delivery
+// below carries the actual base weapon value independently.
 const DELIVERY = ["projectile", "raycast", "continuous-beam", "area-pulse"];
 // Mirrors cardTypes.ts's ClassId union exactly (dev-id vocabulary, never the
 // display persona name).
 const CLASS_ID = ["wizard", "ninja", "paladin", "priest"];
 // Mirrors cardTypes.ts's CardDefinition.rarity union exactly.
 const RARITY = ["common", "uncommon", "rare", "legendary", "cursed"];
+// Mirrors cardTypes.ts's WeaponBucket union exactly — one bool per bucket,
+// packed into CardMeta.buckets (draftWeights.ts's weightForCard reads
+// buckets to decide the catch-up impact/utility/element/ability boost; the
+// draft/offer-roll port (docs/zig-step-world-parity-goal.md Phase 2) is the
+// first Zig consumer, hence added here rather than earlier — no prior Zig
+// pass needed bucket membership).
+const BUCKET = ["delivery", "shape", "trajectory", "quantity", "impact", "element", "utility", "ability"];
 // Mirrors cardTypes.ts's AbilityKind union EXACTLY, in declaration order —
 // re-derive this list from the live file on every future edit to that union
 // (it has changed several times this session already); a card whose
@@ -222,6 +233,15 @@ function cardMetaLiteral(card: (typeof crystalRoundsCards)[number]): string {
   }
   assertKnown(RARITY, card.rarity, "rarity", card.id);
   parts.push(`.rarity = .${zigIdent(card.rarity)}`);
+  const buckets = card.buckets ?? [];
+  const bucketParts: string[] = [];
+  for (const b of buckets) {
+    assertKnown(BUCKET, b, "bucket", card.id);
+    bucketParts.push(`.${zigIdent(b)} = true`);
+  }
+  if (bucketParts.length > 0) {
+    parts.push(`.buckets = .{ ${bucketParts.join(", ")} }`);
+  }
   if (card.active) {
     assertKnown(ABILITY_KIND, card.active.kind, "active.kind", card.id);
     const durationPart =
@@ -331,6 +351,27 @@ pub const CardActive = struct {
     duration_ms: ?f64 = null,
 };
 
+/// Mirrors cardTypes.ts's WeaponBucket union — one bool per bucket, a
+/// card may belong to several (e.g. \`["shape", "trajectory"]\`). Only
+/// consumer today (Phase 2, docs/zig-step-world-parity-goal.md): the
+/// draft/offer-roll's catch-up weighting (draftWeights.ts's
+/// \`weightForCard\`) boosts impact/utility/element/ability-bucket cards
+/// for non-winner seats. A packed bool struct, not a \`[]const WeaponBucket\`
+/// slice, because CardMeta (unlike ProjectileEntity et al.) is a plain
+/// (non-\`extern\`) struct living entirely Zig-side (see CardMeta's own doc
+/// comment) — a fixed 1-byte bitset is simpler than a slice here and needs
+/// no backing array.
+pub const CardBuckets = packed struct(u8) {
+    delivery: bool = false,
+    shape: bool = false,
+    trajectory: bool = false,
+    quantity: bool = false,
+    impact: bool = false,
+    element: bool = false,
+    utility: bool = false,
+    ability: bool = false,
+};
+
 /// A card's own identity/metadata — classId/unique/maxStacks/rarity/active.
 /// Deliberately a SIBLING struct to CardMod, not an extension of it: CardMod
 /// is "the resolved WEAPON stat effect" (damage/speed/spread/... multipliers
@@ -373,6 +414,11 @@ pub const CardMeta = struct {
     /// rarity); the default below is never relied upon, only present so
     /// CardMeta stays a valid zero-initializable struct like CardMod.
     rarity: Rarity = .common,
+    /// Weapon-bucket membership (cardTypes.ts's CardDefinition.buckets ??
+    /// []) — every real card in cards.ts sets at least one bucket, but the
+    /// default here is the honest empty-set, same "never relied upon"
+    /// caveat as \`rarity\`'s default above.
+    buckets: CardBuckets = .{},
     /// The ability this card grants, if any (cardTypes.ts's
     /// CardDefinition.active). null = this card has no active — either a
     /// pure weapon-stat card, or (today) not yet authored. Resolution of
@@ -385,6 +431,7 @@ pub const CardEntry = struct { id: []const u8, mod: CardMod, meta: CardMeta };
 
 /// Starter-pistol base (the only weapon) — mirrors weapons.ts.
 pub const StarterBase = struct {
+    pub const delivery: u8 = ${idx(DELIVERY, sw.delivery)};
     pub const damage: f64 = ${f(sw.damage, 0)};
     pub const fire_rate: f64 = ${f(sw.fireRate, 0)};
     pub const projectile_speed: f64 = ${f(sw.projectileSpeed, 0)};

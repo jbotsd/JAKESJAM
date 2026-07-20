@@ -1090,6 +1090,89 @@ pub const EquippedActives = extern struct {
     slot_kind: [MAX_ABILITY_SLOTS]u8 = @splat(ABILITY_KIND_NONE),
 };
 
+/// Per-player ordered card hand (Phase 2, docs/zig-step-world-parity-
+/// goal.md — draft/offer-roll system). Parallel to `players[]`, same
+/// architectural role as `EquippedActives` immediately above: host-only
+/// (doesn't cross the wasm ABI today — see that struct's own doc comment
+/// for the full "why a parallel array" reasoning, which applies here
+/// identically), populated by `draft.zig`'s pick-application path, not by
+/// anything in this file.
+///
+/// WHY THIS EXISTS, not just `EquippedActives` alone: `EquippedActives`
+/// only carries WHICH ability occupies which of the 3 rack slots — it
+/// can't answer "does this player already own card X" (uniqueness/
+/// maxStacks gating at the offer roll) or re-derive `ResolvedFireConfig`
+/// (`weapon_build.resolveMods`'s card-order-SENSITIVE accumulation: the
+/// `proj_*_set`/`delivery` fields are last-card-wins overwrites, not a
+/// commutative fold — see `resolveMods`'s own loop). TS's `player.cards`
+/// already carries both concerns off one ordered array; this is that
+/// array's Zig-side counterpart. `EquippedActives` stays a SEPARATE
+/// direct-write array rather than being re-derived from this one every
+/// tick (Phase 1's own established shape — see its "POPULATION" doc
+/// comment) because nothing here ever reorders or removes: `indices` only
+/// ever grows by append, in pick order, so writing a newly-picked ability
+/// straight into the next open `EquippedActives` slot at pick time
+/// produces the exact same final assignment a from-scratch re-derivation
+/// over `indices` would (see `draft.zig`'s `applyCardPick` doc comment).
+///
+/// Index type: `u8` into `data/cards_gen.zig`'s `cards` table (0..103),
+/// the SAME index space `weapon_build.resolveByIndices` already consumes
+/// — not a card-id string, for the same "no strings in extern structs,
+/// no dynamic allocation" reasons every other Zig-side card reference in
+/// this codebase already follows.
+pub const PlayerCardIds = extern struct {
+    /// Slots `[0..count)` (see `PlayerEntity.card_count`, the existing
+    /// authoritative count field this array pairs with — investigated
+    /// before adding a redundant second counter here: `card_count` was
+    /// already present, already written by the wasm bridge's pack side
+    /// (`p.cards.length`), and simply never had a backing array to pair
+    /// with until this cut) are valid, in pick order. Slots at/past
+    /// `card_count` are stale/unused — never read past it.
+    indices: [MAX_PLAYER_CARDS]u8 = @splat(0),
+};
+
+/// Offers-per-player DRAFT_OFFER_COUNT — mirrors round.ts's
+/// `DRAFT_OFFER_COUNT` exactly (cards offered per player per drafting
+/// entry). A distinct constant from `MAX_ABILITY_SLOTS` even though both
+/// happen to be 3 today — semantically unrelated (one caps the ability
+/// rack, the other caps one offer roll), same "don't collapse two
+/// same-valued TS constants into one Zig constant" discipline the rest of
+/// this file already follows (e.g. `WEAPON_ID_BYTES`/`TEAM_ID_BYTES` both
+/// being 24 but staying separate names).
+pub const DRAFT_OFFER_COUNT: usize = 3;
+
+/// Sentinel for `PlayerDraftState.offers[N]`/`picked_slot` meaning "empty"/
+/// "not yet picked" — same "+1 encoding, 0 = zero-init-safe empty" shape
+/// `ABILITY_KIND_NONE` already established, for the identical reason: a
+/// real card-table index (0..103) can legitimately BE 0 (card index 0 is
+/// "raycast-prism", a real card), so 0 can't double as "no offer here"
+/// without the shift — and every `WorldState` this codebase creates is
+/// zero-initialized (`std.mem.zeroes`/`reset()`'s `@memset(..., 0)`, never
+/// this struct's own `.{}` literal), so the sentinel must read correctly
+/// under a raw zero-fill, not just under explicit initialization.
+pub const DRAFT_SLOT_NONE: u8 = 0;
+
+/// Per-player drafting bookkeeping (Phase 2, docs/zig-step-world-parity-
+/// goal.md) — parallel to `players[]`, rolled once per round by
+/// `draft.zig`'s offer-roll and consumed by `draft.zig`'s pick-application
+/// + `allDraftersResolved`. Mirrors TS `RoundState.draftingOffers[pid]` /
+/// `draftingPicked[pid]`, collapsed from TS's per-round `Record<PlayerId,
+/// ...>` maps into a fixed parallel array (this codebase's universal
+/// "fixed max + count/index, never a dynamic map" shape).
+pub const PlayerDraftState = extern struct {
+    /// Offered card-table indices this round, `+1`-encoded (see
+    /// `DRAFT_SLOT_NONE`'s own doc comment) — `DRAFT_SLOT_NONE` (`0`) means
+    /// "no offer in this slot" (either not yet rolled this round, or the
+    /// candidate pool was smaller than `DRAFT_OFFER_COUNT` when rolled).
+    offers: [DRAFT_OFFER_COUNT]u8 = @splat(DRAFT_SLOT_NONE),
+    /// Which offer slot was picked, `+1`-encoded: `DRAFT_SLOT_NONE` (`0`)
+    /// = not picked yet; `1..DRAFT_OFFER_COUNT` = `offers[picked_slot - 1]`
+    /// was picked (real or auto-picked-on-expiry — see the `draft_resolved`
+    /// event's `player_idx_b` for the auto-picked flag, `PlayerDraftState`
+    /// itself doesn't distinguish the two once landed).
+    picked_slot: u8 = DRAFT_SLOT_NONE,
+};
+
 /// SimEvent kind tag (Phase I18). Mirrors the discriminated
 /// `SimEvent` union in client/src/sim/types.ts but flat: each
 /// event carries an i32 tag + 4 generic numeric payload slots
@@ -1116,6 +1199,22 @@ pub const SimEventKind = enum(u32) {
     /// volley count, x/y = cast origin. Element is NOT carried — the TS
     /// event converter resolves it from the caster's build.
     emission_cast = 12,
+    /// Draft offers rolled for one player (Phase 2, docs/zig-step-world-
+    /// parity-goal.md — draft/offer-roll system). player_idx_a = the
+    /// player, scalar = how many offers were rolled (0..DRAFT_OFFER_COUNT
+    /// — 0 when the candidate pool was empty). Mirrors TS's `card-offered`
+    /// event, thinned the same way `emission_cast` already is: the full
+    /// offer CONTENTS are readable directly from
+    /// `WorldState.player_draft_state[player_idx_a].offers`, not
+    /// duplicated into the event payload (there's no room for 3 card
+    /// indices in this flat 4-slot-payload shape anyway).
+    card_offered = 13,
+    /// One player's draft pick resolved (Phase 2). player_idx_a = the
+    /// player, player_idx_b = 1 if auto-picked-on-expiry else 0, scalar =
+    /// the picked card's table index (`data/cards_gen.zig`'s `cards[N]`).
+    /// Mirrors TS's `draft-resolved` event (`{playerId, cardId,
+    /// autoPicked}`).
+    draft_resolved = 14,
 };
 
 pub const SimEvent = extern struct {
@@ -1184,6 +1283,26 @@ pub const WorldStateHeader = extern struct {
     /// Match winner index (Phase I9). -1 = no match winner yet,
     /// ≥ 0 = player array index that hit target_score.
     match_winner_idx: i32,
+    /// THIS ROUND's winner index (Phase 2, docs/zig-step-world-parity-
+    /// goal.md — draft/offer-roll system). Written exactly once per round,
+    /// at the fighting → round_over transition, from the same `winner_idx`
+    /// value `stepWorld` already computed for score-crediting that tick
+    /// (world.zig section 1) — captures BOTH a real winner (≥0) and a draw
+    /// (-1; either a mutual-KO or a zero-kill time-out with nobody alive,
+    /// see `timeoutWinnerIdx`'s own doc comment) exactly as
+    /// `detectRoundWinner` resolved it, so it's still readable
+    /// `ROUND_OVER_HOLD_MS` later when drafting rolls offers — mirrors TS
+    /// `RoundState.winnerPlayerId` (`PlayerId | null`), which `enterDrafting`
+    /// reads via `next.winnerPlayerId ?? null` for `classifyDraftRole`.
+    /// Distinct from `match_winner_idx` above: that one is set once for the
+    /// whole MATCH and stays -1 for every round before the decider; this
+    /// one is set every round and is genuinely ambiguous between "no
+    /// winner yet this tick" and "round resolved as a draw" at the value
+    /// level — same collapse `detectRoundWinner`'s own return already
+    /// makes, disambiguated only by WHEN it's read (never read except
+    /// during round_over/drafting, i.e. only after a real resolution has
+    /// happened).
+    round_winner_idx: i32 = -1,
     countdown_remaining_ms: f64,
 };
 
@@ -1242,9 +1361,23 @@ pub const WorldState = extern struct {
     /// Parallel to `players[]` — resolved ability-slot equipment (Phase 1,
     /// docs/zig-step-world-parity-goal.md). See `EquippedActives`'s own
     /// doc comment for the full "why a parallel array, not PlayerEntity
-    /// fields" reasoning and the "nothing populates this from real drafts
-    /// yet" caveat.
+    /// fields" reasoning. POPULATED as of Phase 2 (`draft.zig`'s
+    /// `applyCardPick`) — the "nothing populates this from real drafts
+    /// yet" caveat from Phase 1 no longer applies.
     player_equipped_actives: [MAX_PLAYERS]EquippedActives,
+
+    /// Parallel to `players[]` — the player's full ordered card hand
+    /// (Phase 2). See `PlayerCardIds`'s own doc comment.
+    player_card_ids: [MAX_PLAYERS]PlayerCardIds,
+
+    /// Parallel to `players[]` — per-round drafting bookkeeping (Phase 2).
+    /// See `PlayerDraftState`'s own doc comment. Rolled fresh by
+    /// `draft.zig`'s `rollOffersForRound` at every round_over → drafting
+    /// transition; cleared back to `.{}` at every drafting → countdown
+    /// transition (`stepWorld`'s own countdown-arrival reset block) so a
+    /// round's stale offers/picks never leak into the next round's
+    /// `allDraftersResolved` check.
+    player_draft_state: [MAX_PLAYERS]PlayerDraftState,
 
     /// Static-AABB cache (I15). Caller bakes the map's platforms
     /// into this array before the first step_world call; static
@@ -1284,7 +1417,15 @@ pub const WorldState = extern struct {
 // goes through a deliberate cut so callers stay in sync.
 
 comptime {
-    std.debug.assert(@sizeOf(WorldStateHeader) == 48);
+    // 48 → 56 (Phase 2, docs/zig-step-world-parity-goal.md, draft/offer-roll
+    // system): +4 content bytes for `round_winner_idx` (i32) — 40 was
+    // already 4-byte-aligned (no gap before it), but the trailing f64
+    // (`countdown_remaining_ms`) needs 8-byte alignment and 44 isn't a
+    // multiple of 8, so Zig inserts 4 bytes of implicit padding before it
+    // (44 → 48), same "one leftover i32 forces a padding gap" shape
+    // `PlayerEntity.syz_ward_absorb_until_tick`'s own doc comment already
+    // hit. See `round_winner_idx`'s own doc comment for what it carries.
+    std.debug.assert(@sizeOf(WorldStateHeader) == 56);
 
     // Each entity is 8-byte-aligned and tail-packed with explicit
     // _reserved bytes. These numbers are the wire contract — change
@@ -1368,6 +1509,14 @@ comptime {
     // its own doc comment) — pure internal regression-catching, same role
     // PendingInstantAoe's assert plays.
     std.debug.assert(@sizeOf(EquippedActives) == 3);
+    // PlayerCardIds (Phase 2): [8]u8 = 8 bytes, no padding. Same
+    // "internal regression-catching, doesn't cross the wasm ABI today"
+    // role as EquippedActives's assert immediately above.
+    std.debug.assert(@sizeOf(PlayerCardIds) == MAX_PLAYER_CARDS);
+    // PlayerDraftState (Phase 2): [3]u8 (offers) + 1 u8 (picked_slot) = 4
+    // bytes, no padding (all u8 fields). Same role as the two asserts
+    // immediately above.
+    std.debug.assert(@sizeOf(PlayerDraftState) == DRAFT_OFFER_COUNT + 1);
     // ProjectileEntity: SIZE UNCHANGED at 216 despite 3 new numeric fields
     // (2026-07-20 gap-closure pass item 1) — status_scale/leech_fraction/
     // execute_below_frac (f32 ×3 = 12 bytes) exactly fill what used to be

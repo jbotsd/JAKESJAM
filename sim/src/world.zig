@@ -38,6 +38,7 @@ const weapon_build = @import("weapon_build.zig");
 const weapons_data = @import("data/weapons.zig");
 const trig = @import("trig.zig");
 const gen = @import("data/cards_gen.zig");
+const draft = @import("draft.zig");
 
 /// Per-tick step. Mutates `state` in place. Returns 0 on success;
 /// reserved non-zero values for future error reporting.
@@ -1472,15 +1473,53 @@ pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
             state.header.match_winner_idx = winner_idx;
         }
     }
+    // Prev-phase snapshot (Phase 2, docs/zig-step-world-parity-goal.md):
+    // captured BEFORE `roundStepPhase` overwrites `state.header.round_phase`
+    // below — needed to tell "arrived at countdown FROM drafting" apart
+    // from any other arrival, and to gate `allDraftersResolved` (only
+    // meaningful while CURRENTLY in drafting).
+    const prev_phase = state.header.round_phase;
+    const drafting_all_resolved =
+        prev_phase == @intFromEnum(round.RoundPhase.drafting) and
+        draft.allDraftersResolved(state);
     const phase_result = round.roundStepPhase(
         state.header.round_phase,
         state.header.countdown_remaining_ms,
         eff_dt,
         winner_idx >= 0,
+        drafting_all_resolved,
     );
+    // Auto-pick stragglers BEFORE committing the new phase below: this
+    // runs `draft.applyCardPick` (via `autoPickStragglers`), which itself
+    // gates on `state.header.round_phase == drafting` — it must still see
+    // the OLD (drafting) phase here, not the new (countdown) one the very
+    // next line is about to write. Same reasoning as capturing `prev_phase`
+    // above: side effects that need to observe "we were just in drafting"
+    // must run before the phase write, not after.
+    if (phase_result.transitioned == 1 and
+        phase_result.new_phase == @intFromEnum(round.RoundPhase.countdown) and
+        prev_phase == @intFromEnum(round.RoundPhase.drafting) and
+        !drafting_all_resolved)
+    {
+        // Window expired with picks outstanding: auto-pick the FIRST
+        // offer for every unpicked drafter (round.ts's own expiry branch).
+        draft.autoPickStragglers(state);
+    }
+
     state.header.round_phase = phase_result.new_phase;
     state.header.countdown_remaining_ms =
         phase_result.new_countdown_remaining_ms;
+    if (phase_result.transitioned == 1 and
+        phase_result.new_phase == @intFromEnum(round.RoundPhase.round_over))
+    {
+        // Persist THIS round's winner (real index or -1 = draw) so it's
+        // still readable `ROUND_OVER_HOLD_MS` later when drafting rolls
+        // offers and needs it for catch-up role classification — see
+        // `WorldStateHeader.round_winner_idx`'s own doc comment for why a
+        // fresh local `winner_idx` isn't enough (this tick's value would
+        // otherwise be lost by the time drafting starts).
+        state.header.round_winner_idx = winner_idx;
+    }
     if (phase_result.transitioned == 1 and
         phase_result.new_phase == @intFromEnum(round.RoundPhase.fighting))
     {
@@ -1493,8 +1532,24 @@ pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
         }
     }
     if (phase_result.transitioned == 1 and
+        phase_result.new_phase == @intFromEnum(round.RoundPhase.drafting))
+    {
+        // round_over → drafting (Phase 2): roll DRAFT_OFFER_COUNT offers
+        // per roster player. See `draft.zig`'s `rollOffersForRound` for
+        // the full candidate-pool-filter + weighted-sample + pity-floor
+        // port of `enterDrafting`.
+        draft.rollOffersForRound(state);
+    }
+    if (phase_result.transitioned == 1 and
         phase_result.new_phase == @intFromEnum(round.RoundPhase.countdown))
     {
+        // Wipe drafting bookkeeping so the next round starts clean (no-op
+        // the very first time countdown is ever reached, before any round
+        // has run — player_draft_state is already zero-valued then). Runs
+        // AFTER the auto-pick block above (which needed the pre-clear
+        // offers/picked_slot state to still be readable).
+        draft.clearDraftState(state);
+
         state.header.round_index += 1;
         // Reset transient entities for the new round (I28).
         // Players keep their score + buff durations; everything

@@ -30,6 +30,7 @@ type RoundExports = {
   round_countdown_ms: () => number;
   round_time_limit_ms: () => number;
   round_over_hold_ms: () => number;
+  round_draft_window_ms: () => number;
   sizeof_round_phase_step_result: () => number;
   memory: WebAssembly.Memory;
 };
@@ -41,6 +42,21 @@ const OUT_PTR = sim.statePtr; // borrow the static buffer
 const PHASE_COUNTDOWN = 0;
 const PHASE_FIGHTING = 1;
 const PHASE_ROUND_OVER = 2;
+// Added Phase 2 (docs/zig-step-world-parity-goal.md, 2026-07-20): round-over
+// now always routes through drafting before countdown — the dead
+// RoundPhase.drafting branch this file's own header comment used to note
+// as "never entered" is wired for real now (sim/src/draft.zig). The
+// exported round_step_phase's own arity stayed fixed (still takes
+// winner_decided, not a 6th drafting_all_resolved arg) specifically so
+// this file's existing calls keep working unchanged — see draft.zig's own
+// doc comment for why. That means this wasm export always resolves
+// drafting_all_resolved=false internally; the real gating on "did every
+// player finish picking" only exists in world.zig's native orchestrator,
+// not reachable from this parity harness — round_over→drafting is provable
+// here, drafting→countdown on early-all-picked is not (drafting→countdown
+// on WINDOW EXPIRY still is, since that path doesn't depend on the missing
+// arg — see the new test below).
+const PHASE_DRAFTING = 3;
 
 function call(
   phase: number,
@@ -99,10 +115,24 @@ describe("round phase machine parity (Phase H7)", () => {
     expect(r.remaining).toBe(2500);
   });
 
-  test("round_over→countdown when hold finishes", () => {
+  test("round_over→drafting when hold finishes (was round_over→countdown before Phase 2)", () => {
     const r = call(PHASE_ROUND_OVER, 10, 16.667, 0);
+    expect(r.phase).toBe(PHASE_DRAFTING);
+    expect(r.transitioned).toBe(1);
+    expect(r.remaining).toBe(ex.round_draft_window_ms());
+  });
+
+  test("drafting→countdown when the offer window itself expires (all-picked early-resolve isn't reachable through this fixed-arity export — see header comment)", () => {
+    const r = call(PHASE_DRAFTING, 10, 16.667, 0);
     expect(r.phase).toBe(PHASE_COUNTDOWN);
     expect(r.transitioned).toBe(1);
     expect(r.remaining).toBe(3000);
+  });
+
+  test("drafting ticks down without transition before the window expires", () => {
+    const r = call(PHASE_DRAFTING, 5000, 16.667, 0);
+    expect(r.phase).toBe(PHASE_DRAFTING);
+    expect(r.transitioned).toBe(0);
+    expect(r.remaining).toBeCloseTo(5000 - 16.667, 6);
   });
 });
