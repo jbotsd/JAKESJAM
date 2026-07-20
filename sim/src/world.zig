@@ -639,6 +639,30 @@ const KIN_SEAL_DAMAGE_MULTIPLIER: f64 = 1.45;
 const KIN_SEAL_STAGGER_MS: f64 = 900.0;
 const KIN_SEAL_STAGGER_MULTIPLIER: f64 = 0.25;
 
+// ── Phase 4b targeting/marking constants (docs/zig-step-world-parity-goal.md
+//    "4b. Targeting/marking") — Facet Break/Focus Hex. Unlike the melee-hook
+//    marks above (Judgment Line/Read Mark, consumed by `stepMeleeSwing`),
+//    both of these are consumed at the generic ranged-hit-resolution site
+//    in section 4 below (mirrors World.ts's `resolveRangedHit`, which
+//    amplifies ANY ranged hit — basic weapon fire included, not just
+//    ability projectiles — landing on the marked victim).
+// Wizard — Facet Break (constants.ts:83-87). Cone-gated, same targeting
+// shape as Judgment Line above (verified directly against World.ts's
+// "facet-break" case — its own inline scan has no team/ally check either,
+// same "team-awareness deferral" `findNearestEnemyInCone` already documents).
+const GEO_FACET_BREAK_AMP_MULTIPLIER: f64 = 1.25;
+const GEO_FACET_BREAK_RANGE_PX: f64 = 900.0;
+const GEO_FACET_BREAK_CONE_RADIANS: f64 = (60.0 * std.math.pi) / 180.0;
+// Priest — Focus Hex (constants.ts:800). Omnidirectional, no cone — same
+// targeting shape as Read Mark above (verified directly against World.ts's
+// "focus-hex" case: `findNearestEnemy(nextEntity, state.players,
+// SYZ_ENEMY_SEARCH_RANGE_PX)`, no cone argument). SYZ_ENEMY_SEARCH_RANGE_PX
+// (constants.ts:726) is a range TS reuses across several Syzygist
+// abilities — Focus Hex is the only one that reads it in Zig today, the
+// others sharing it are still unported (Phase 4d/4e).
+const SYZ_FOCUS_HEX_AMP_MULTIPLIER: f64 = 1.28;
+const SYZ_ENEMY_SEARCH_RANGE_PX: f64 = 420.0;
+
 // ── AOE-queue ability constants (this pass — the 2nd half of Phase 1's own
 //    "first real abilities" list: Wall Bloom, Shock Ring, Prism Fan, Flock
 //    Pulse, Shard Ring push onto the `PendingInstantAoe` queue from commit
@@ -1166,7 +1190,26 @@ fn stepAbilityDispatch(
                 attacker.sunlance_until_tick = state.header.tick + dur_ticks;
                 activated = true;
             },
-            .facet_break => {}, // Phase 4 — not yet ported
+            .facet_break => {
+                // Mark lives on the CASTER (facet_target_id_*/
+                // facet_mark_until_tick), never the victim — same
+                // cross-player-write-hazard-avoidance shape Judgment Line
+                // above already establishes. Consumed at the GENERIC
+                // ranged-hit-resolution site in section 4 below (not
+                // stepMeleeSwing) — World.ts's own "facet-break" amp lives
+                // in resolveRangedHit, which runs for every ranged hit
+                // (basic weapon fire included), not just ability
+                // projectiles.
+                const target_idx = findNearestEnemyInCone(state, player_idx, GEO_FACET_BREAK_RANGE_PX, GEO_FACET_BREAK_CONE_RADIANS);
+                if (target_idx >= 0) {
+                    const target = &state.players[@as(usize, @intCast(target_idx))];
+                    const dur_ticks: u32 = @intFromFloat(@ceil((active_spec.duration_ms orelse 0) / @max(1.0, eff_dt)));
+                    attacker.facet_target_id_len = target.id_len;
+                    attacker.facet_target_id_bytes = target.id_bytes;
+                    attacker.facet_mark_until_tick = state.header.tick + dur_ticks;
+                    activated = true;
+                }
+            },
             .lattice => {}, // Phase 4 — not yet ported
             .return_glass => {
                 const fcfg = &state.player_fire_config[player_idx];
@@ -1261,7 +1304,21 @@ fn stepAbilityDispatch(
             .bleed_tithe => {}, // Phase 4 — not yet ported
             .severance => {}, // Phase 4 — not yet ported
             .borrowed_time => {}, // Phase 4 — not yet ported
-            .focus_hex => {}, // Phase 4 — not yet ported
+            .focus_hex => {
+                // Omnidirectional auto-target mark on the CASTER — same
+                // shape as Read Mark above but consumed at the generic
+                // ranged-hit-resolution site (section 4 below), matching
+                // Facet Break's own consumption site, not stepMeleeSwing.
+                const target_idx = findNearestEnemyInRange(state, player_idx, SYZ_ENEMY_SEARCH_RANGE_PX);
+                if (target_idx >= 0) {
+                    const target = &state.players[@as(usize, @intCast(target_idx))];
+                    const dur_ticks: u32 = @intFromFloat(@ceil((active_spec.duration_ms orelse 0) / @max(1.0, eff_dt)));
+                    attacker.focus_hex_target_id_len = target.id_len;
+                    attacker.focus_hex_target_id_bytes = target.id_bytes;
+                    attacker.focus_hex_mark_until_tick = state.header.tick + dur_ticks;
+                    activated = true;
+                }
+            },
             .contagion => {}, // Phase 4 — not yet ported
             // Self-Lattice (Priest): writes the SAME
             // wardAbsorbUntilTick/wardAbsorbRemaining pair Syzygist Ward
@@ -2201,6 +2258,37 @@ pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
                             sp.boss_mode_until_tick > state.header.tick)
                         {
                             final_dmg *= 2.0;
+                        }
+                        // Facet Break (Wizard) / Focus Hex (Priest) — Phase
+                        // 4b, docs/zig-step-world-parity-goal.md. Mark
+                        // lives on the SHOOTER (`sp`, not the victim); a
+                        // landed ranged hit against the exact marked
+                        // victim is amplified. Same "until_tick check
+                        // first" short-circuit shape `stepMeleeSwing`'s own
+                        // Judgment Line/Read Mark checks already use — at
+                        // tick 0 (mark never cast) `until_tick(0) >
+                        // tick(0)` is false, so this never vacuously
+                        // matches two players who both still have
+                        // zero-length ids (the exact hazard Read Mark's
+                        // own smoke-test comment documents for the
+                        // owner-skip check above). Mirrors World.ts's
+                        // `resolveRangedHit` (facetTargetId/
+                        // focusHexTargetId checks, right after the Radiant
+                        // status-amp) — this is the generic ranged-hit
+                        // site, so (matching TS) the amp applies to ANY
+                        // ranged hit from the marking player, not just an
+                        // ability projectile.
+                        if (sp.facet_mark_until_tick > state.header.tick and
+                            sp.facet_target_id_len == state.players[ph2].id_len and
+                            std.mem.eql(u8, sp.facet_target_id_bytes[0..sp.facet_target_id_len], state.players[ph2].id_bytes[0..state.players[ph2].id_len]))
+                        {
+                            final_dmg *= GEO_FACET_BREAK_AMP_MULTIPLIER;
+                        }
+                        if (sp.focus_hex_mark_until_tick > state.header.tick and
+                            sp.focus_hex_target_id_len == state.players[ph2].id_len and
+                            std.mem.eql(u8, sp.focus_hex_target_id_bytes[0..sp.focus_hex_target_id_len], state.players[ph2].id_bytes[0..state.players[ph2].id_len]))
+                        {
+                            final_dmg *= SYZ_FOCUS_HEX_AMP_MULTIPLIER;
                         }
                     }
                 }

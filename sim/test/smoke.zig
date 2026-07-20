@@ -2145,6 +2145,159 @@ test "ability dispatch: Bastion Pulse (Paladin) — instant self shield-charge t
     try std.testing.expect(state.players[0].flags.shield_active); // Ward was genuinely held+charged
 }
 
+test "ability dispatch: Facet Break (Wizard) — marks the nearest foe in the aim cone; a candidate outside the cone is ignored and burns no cooldown; the NEXT landed RANGED hit (a plain starter-pistol shot, not an ability projectile) against the marked victim is amplified" {
+    var state = freshFightingState();
+    state.player_count = 2;
+    state.players[0].flags.alive = true;
+    state.players[0].character_id = .balanced; // wizard
+    state.players[0].health = 100;
+    state.players[0].aim_x = 100;
+    state.players[0].aim_y = 0;
+    setPlayerId(&state.players[0], "attacker");
+    equipSlot(&state, 0, 0, .facet_break); // range 900px, cone 60deg, duration 4000ms
+
+    // Off-axis (90 degrees), well outside GEO_FACET_BREAK_CONE_RADIANS (60
+    // deg total, 30 deg half-width) — must NOT be marked.
+    state.players[1].flags.alive = true;
+    state.players[1].health = 100;
+    state.players[1].x = 0;
+    state.players[1].y = 50;
+    setPlayerId(&state.players[1], "victim");
+
+    state.players[0].current_keys = SLOT1_BIT;
+    _ = root.world.stepWorld(&state, 1.0); // tick 1: dead press, off-cone
+    try std.testing.expectEqual(@as(u32, 0), state.players[0].facet_mark_until_tick);
+    try std.testing.expectEqual(@as(u32, 0), state.players[0].slot_cooldown_until_tick[0]);
+
+    // Move the victim dead ahead (close range — this test drives a REAL
+    // pistol shot across REAL travel ticks, unlike the melee-hook ability
+    // tests, so keeping the distance small avoids needing a long, fragile
+    // travel loop) and re-press.
+    state.players[1].x = 15;
+    state.players[1].y = 0;
+    state.players[0].current_keys = 0;
+    _ = root.world.stepWorld(&state, 1.0); // release (so the next press is a rising edge)
+    state.players[0].current_keys = SLOT1_BIT;
+    _ = root.world.stepWorld(&state, 1.0); // tick 3: cast — marks "victim"
+    try std.testing.expect(state.players[0].facet_mark_until_tick > state.header.tick);
+    try std.testing.expect(state.players[0].slot_cooldown_until_tick[0] > state.header.tick);
+    try std.testing.expectEqualSlices(u8, "victim", state.players[0].facet_target_id_bytes[0..state.players[0].facet_target_id_len]);
+
+    // Tick 4: fire ONE shot (mark opened tick 3, read tick 4 — the
+    // established one-tick lag every window-buff composition site in this
+    // file already has, same as Sunlance's own test). fire_cooldown_ms
+    // starts 0 (zeroed state), so this fires immediately, spawning at
+    // (0,0) with velocity straight down the aim line (100,0) — the mark's
+    // amp is NOT baked into the projectile's own damage field (unlike
+    // Sunlance/Measure): it's applied at the HIT-CONFIRM site, keyed to
+    // the victim's id, so the spawned shot's damage is still the plain
+    // base 12.0 here.
+    state.players[0].current_keys = FIRE_BIT;
+    _ = root.world.stepWorld(&state, 1.0);
+    try std.testing.expectEqual(@as(u32, 1), state.projectile_count);
+    try std.testing.expectApproxEqAbs(@as(f64, 12.0), state.projectiles[0].damage, 1e-9);
+
+    // Tick 5: release Fire (so cooldown ticking down doesn't spawn a
+    // SECOND shot this same call — a fresh spawn wouldn't have traveled
+    // yet, contaminating the single-shot damage assertion below) and let
+    // the already-live shard's own per-tick integration (unconditional,
+    // not gated on held input) carry it into the victim's AABB — spawn
+    // x=0, victim x=15 (AABB half-width 15, so [0,30] overlaps at x=0
+    // already; STARTER_PISTOL speed 650px/s moves it well past 0 in 1ms).
+    state.players[0].current_keys = 0;
+    _ = root.world.stepWorld(&state, 1.0);
+    // 100 - (12.0 * 1.25) == 85.0 — a plain unamplified pistol hit would
+    // leave 88.0, proving the mark's amp landed on the marked victim.
+    try std.testing.expectApproxEqAbs(@as(f64, 85.0), state.players[1].health, 1e-9);
+}
+
+test "ability dispatch: Facet Break (Wizard) — no enemy in the aim cone: a dead press, no mark, no cooldown burn" {
+    var state = freshFightingState();
+    state.player_count = 2;
+    state.players[0].flags.alive = true;
+    state.players[0].character_id = .balanced;
+    state.players[0].health = 100;
+    state.players[0].aim_x = 100;
+    state.players[0].aim_y = 0;
+    state.players[1].flags.alive = true;
+    state.players[1].health = 100;
+    state.players[1].x = 5000; // far outside GEO_FACET_BREAK_RANGE_PX (900)
+    equipSlot(&state, 0, 0, .facet_break);
+
+    state.players[0].current_keys = SLOT1_BIT;
+    _ = root.world.stepWorld(&state, 1.0);
+    try std.testing.expectEqual(@as(u32, 0), state.players[0].facet_mark_until_tick);
+    try std.testing.expectEqual(@as(u32, 0), state.players[0].slot_cooldown_until_tick[0]);
+}
+
+test "ability dispatch: Focus Hex (Priest) — marks the NEAREST enemy within range (ignoring one out of range, omnidirectional — no cone), and the NEXT landed RANGED hit against that exact target is amplified" {
+    var state = freshFightingState();
+    state.player_count = 3;
+    state.players[0].flags.alive = true;
+    state.players[0].character_id = .shielded; // priest
+    state.players[0].health = 100;
+    state.players[0].aim_x = 100;
+    state.players[0].aim_y = 0;
+    setPlayerId(&state.players[0], "attacker");
+    equipSlot(&state, 0, 0, .focus_hex); // range 420px (SYZ_ENEMY_SEARCH_RANGE_PX), duration 4000ms
+
+    // Nearest — close range, dead ahead, inside SYZ_ENEMY_SEARCH_RANGE_PX.
+    state.players[1].flags.alive = true;
+    state.players[1].health = 100;
+    state.players[1].x = 15;
+    state.players[1].y = 0;
+    setPlayerId(&state.players[1], "nearest");
+
+    // Farther, OUTSIDE SYZ_ENEMY_SEARCH_RANGE_PX (420) — a distractor to
+    // prove "nearest in range," not "first," is selected, and that an
+    // out-of-range candidate is correctly excluded (omnidirectional: this
+    // one sits directly BEHIND the caster, angle irrelevant since Focus
+    // Hex has no cone, only range).
+    state.players[2].flags.alive = true;
+    state.players[2].health = 100;
+    state.players[2].x = -500;
+    state.players[2].y = 0;
+    setPlayerId(&state.players[2], "too-far");
+
+    state.players[0].current_keys = SLOT1_BIT;
+    _ = root.world.stepWorld(&state, 1.0); // tick 1: cast — marks "nearest"
+    try std.testing.expect(state.players[0].focus_hex_mark_until_tick > state.header.tick);
+    try std.testing.expect(state.players[0].slot_cooldown_until_tick[0] > state.header.tick);
+    try std.testing.expectEqualSlices(u8, "nearest", state.players[0].focus_hex_target_id_bytes[0..state.players[0].focus_hex_target_id_len]);
+
+    // Tick 2: fire — one-tick lag (mark opened tick 1, read tick 2).
+    state.players[0].current_keys = FIRE_BIT;
+    _ = root.world.stepWorld(&state, 1.0);
+    try std.testing.expectEqual(@as(u32, 1), state.projectile_count);
+    try std.testing.expectApproxEqAbs(@as(f64, 12.0), state.projectiles[0].damage, 1e-9); // unamplified at spawn — amp is hit-site-only
+
+    // Tick 3: release Fire, let the shard travel into "nearest"'s AABB.
+    state.players[0].current_keys = 0;
+    _ = root.world.stepWorld(&state, 1.0);
+    // 100 - (12.0 * 1.28) == 84.64 — a plain unamplified pistol hit would
+    // leave 88.0, proving the mark's amp landed on the marked victim only
+    // ("too-far" never entered the shard's path at all).
+    try std.testing.expectApproxEqAbs(@as(f64, 84.64), state.players[1].health, 1e-9);
+    try std.testing.expectEqual(@as(f64, 100.0), state.players[2].health);
+}
+
+test "ability dispatch: Focus Hex (Priest) — no enemy within range: a dead press, no mark, no cooldown burn" {
+    var state = freshFightingState();
+    state.player_count = 2;
+    state.players[0].flags.alive = true;
+    state.players[0].character_id = .shielded; // priest
+    state.players[0].health = 100;
+    state.players[1].flags.alive = true;
+    state.players[1].health = 100;
+    state.players[1].x = 5000; // far outside SYZ_ENEMY_SEARCH_RANGE_PX (420)
+    equipSlot(&state, 0, 0, .focus_hex);
+
+    state.players[0].current_keys = SLOT1_BIT;
+    _ = root.world.stepWorld(&state, 1.0);
+    try std.testing.expectEqual(@as(u32, 0), state.players[0].focus_hex_mark_until_tick);
+    try std.testing.expectEqual(@as(u32, 0), state.players[0].slot_cooldown_until_tick[0]);
+}
+
 // ── Draft/offer-roll system (Phase 2, docs/zig-step-world-parity-goal.md) ─
 // Ports client/src/sim/round.ts's enterDrafting + draftWeights.ts. Testing
 // strategy per the phase's own brief: the DETERMINISTIC parts (candidate-

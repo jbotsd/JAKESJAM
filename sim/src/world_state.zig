@@ -674,6 +674,39 @@ pub const PlayerEntity = extern struct {
     // `stepAbilityDispatch`), not timed windows. See
     // GEO_RETURN_GLASS_SHIELD_REFUND/KIN_BASTION_PULSE_SHIELD_REFUND's own
     // doc comments in world.zig.
+
+    /// Phase 4b (docs/zig-step-world-parity-goal.md "4b. Targeting/
+    /// marking") — Facet Break (Wizard) mark window; while live AND
+    /// `facet_target_id_*` matches the victim, a landed RANGED hit (any
+    /// weapon-fire shot, not a melee hook) against THAT SPECIFIC victim is
+    /// amplified — non-consuming, same "stays live for every qualifying
+    /// hit until it times out" shape as `judgment_mark_until_tick`, just
+    /// consumed at the generic ranged-hit-resolution site (world.zig
+    /// section 4's per-projectile-vs-player loop) instead of
+    /// `stepMeleeSwing`, mirroring World.ts `resolveRangedHit`'s own
+    /// post-mitigation amp chain (facetTargetId/facetMarkUntilTick,
+    /// types.ts:720-721). Paired with `facet_target_id_len`/
+    /// `facet_target_id_bytes` below.
+    facet_mark_until_tick: u32 = 0,
+    /// Focus Hex (Priest) — parallel shape to Facet Break immediately
+    /// above (mirrors World.ts `focusHexTargetId`/`focusHexMarkUntilTick`,
+    /// types.ts:457-458), same consumption site, different mark pair and
+    /// multiplier (`SYZ_FOCUS_HEX_AMP_MULTIPLIER`, world.zig).
+    focus_hex_mark_until_tick: u32 = 0,
+
+    /// Facet Break's marked victim, same byte-stable-id shape as
+    /// `judgment_target_id_bytes`/`read_target_id_bytes` above (a mark
+    /// must survive many ticks, so a raw `WorldState.players` index is
+    /// unsafe — see `judgment_target_id_len`'s own doc comment for the
+    /// full reasoning), same zero-length "no mark" sentinel convention.
+    facet_target_id_len: u8 = 0,
+    _pad_facet: [3]u8 = .{ 0, 0, 0 },
+    facet_target_id_bytes: [PLAYER_ID_BYTES]u8 = @splat(0),
+    /// Focus Hex's marked victim — same byte-stable-id shape as
+    /// `facet_target_id_bytes` immediately above.
+    focus_hex_target_id_len: u8 = 0,
+    _pad_focus_hex: [3]u8 = .{ 0, 0, 0 },
+    focus_hex_target_id_bytes: [PLAYER_ID_BYTES]u8 = @splat(0),
 };
 
 /// Mirrors `ProjectileEntity`.
@@ -1596,7 +1629,40 @@ comptime {
     // above: worldStateBridge.ts's PLAYER_ENTITY_SIZE is untouched by this
     // Zig-only pass — Zig-internal tests read @sizeOf(PlayerEntity)
     // directly and are unaffected.
-    std.debug.assert(@sizeOf(PlayerEntity) == 528);
+    // 528 → 608 (Phase 4b, docs/zig-step-world-parity-goal.md "4b.
+    // Targeting/marking" — Facet Break/Focus Hex): +80 content bytes, zero
+    // implicit padding anywhere in the addition (verified via a temporary
+    // `@compileLog(@sizeOf(PlayerEntity))` before locking this assert,
+    // same "don't trust hand math alone" discipline every growth-history
+    // note above this one already follows — confirmed 608). Layout, in
+    // declaration order:
+    //   facet_mark_until_tick      u32     528 → 532  (4, no gap: 528 is
+    //                                       already 8-aligned from the
+    //                                       Phase 4a cut directly above)
+    //   focus_hex_mark_until_tick  u32     532 → 536  (4)
+    //   facet_target_id_len        u8      536 → 537  (1)
+    //   _pad_facet                 [3]u8   537 → 540  (3, explicit — same
+    //                                       "len byte + explicit pad to the
+    //                                       next 4-byte boundary" shape
+    //                                       judgment_target_id_len/
+    //                                       _pad_judgment already use)
+    //   facet_target_id_bytes      [32]u8  540 → 572  (32)
+    //   focus_hex_target_id_len    u8      572 → 573  (1)
+    //   _pad_focus_hex             [3]u8   573 → 576  (3)
+    //   focus_hex_target_id_bytes  [32]u8  576 → 608  (32)
+    // 608 is already an 8-byte multiple (76×8), so no further implicit
+    // tail padding — struct grows 528 → 608 exactly, same "read Judgment
+    // Line/Read Mark's own pair shape and repeat it twice" reasoning
+    // Facet Break/Focus Hex's own doc comments give (right above this
+    // struct's closing brace). Read Mark itself needs NO new field here —
+    // its marking half already landed in Phase 1 (judgment/read pairs
+    // above), only its melee-consumption half was outstanding, and that
+    // was ALSO already wired (world.zig's `.read_mark` dispatch arm
+    // predates this cut). KNOWN GAP, same shape as every note above:
+    // worldStateBridge.ts's PLAYER_ENTITY_SIZE is untouched by this
+    // Zig-only pass — Zig-internal tests read @sizeOf(PlayerEntity)
+    // directly and are unaffected.
+    std.debug.assert(@sizeOf(PlayerEntity) == 608);
     // EquippedActives (Phase 1): [3]u8 = 3 bytes, no padding (u8 array
     // needs no alignment beyond 1). Doesn't cross the wasm ABI today (see
     // its own doc comment) — pure internal regression-catching, same role
