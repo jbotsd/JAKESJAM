@@ -101,6 +101,30 @@ pub export fn world_state_set_arena_bounds(
     g_kill_plane_y = kill_plane_y;
 }
 
+// Arena X/Y extent (map.size.x/map.size.y in TS) — a SEPARATE global pair
+// from the ceiling/kill-plane bounds above because it serves a different
+// consumer: Phase 4c's movement-ability collision-free-landing search
+// (findCollisionFreeLanding below — Slip Node/Plant Charge/Bulwark Step/
+// Drift Step all clamp candidate landing points against `runtime.map.size`
+// in World.ts, and unlike the kill-plane's derived margin math, this needs
+// the RAW width/height, not a pre-offset threshold). 0 = not yet set by the
+// host (the search's bound check in that axis is skipped, same "0 =
+// disabled" convention `g_kill_plane_y` already uses) — wiring the host call
+// (server/serverWasmHost.ts, alongside its existing setArenaBounds call) is
+// OUT OF SCOPE here: this pass's whole write-scope is sim/, and every real
+// map's boundary geometry is already enclosed in solid statics wall
+// platforms, so an unset bound here degrades to "rely on the statics
+// overlap check alone" rather than a silent correctness gap.
+var g_arena_size_x: f64 = 0;
+var g_arena_size_y: f64 = 0;
+
+/// Host sets the arena's raw width/height on match start (same cadence as
+/// world_state_set_arena_bounds/world_state_set_statics above).
+pub export fn world_state_set_arena_size(width: f64, height: f64) void {
+    g_arena_size_x = width;
+    g_arena_size_y = height;
+}
+
 // ── Launch pads (§8c — parity with client/src/sim/launchPad.ts) ─────────────
 // STATIC map geometry, module-level like the arena bounds above: pads carry
 // ZERO WorldState bytes (the retrigger condition is stateless — see the TS
@@ -799,6 +823,104 @@ const GEO_RETURN_GLASS_SHIELD_REFUND: f64 = 22.0;
 const KIN_BASTION_PULSE_SHIELD_REFUND: f64 = 22.0;
 const KIN_BASTION_PULSE_WARD_HELD_MULTIPLIER: f64 = 2.0;
 
+// ── Phase 4c: movement (docs/zig-step-world-parity-goal.md "4c. Movement")
+// — constants.ts's own range exports for the 4 abilities that share
+// findCollisionFreeLanding below (Slip Node/Plant Charge/Bulwark Step/
+// Drift Step). Razor Route is DELIBERATELY absent from this group — verified
+// directly against World.ts's "razor-route" case, it is not a
+// landing-search blink at all (a TS-side additive velocity impulse on the
+// existing always-on dash, plus a Read-mark byproduct write), see its own
+// switch-arm comment below for the real reason it's still a no-op.
+const GEO_SLIP_NODE_RANGE_PX: f64 = 280.0;
+const KIN_PLANT_CHARGE_RANGE_PX: f64 = 190.0;
+const KIN_PLANT_CHARGE_SHIELD_REFUND: f64 = 12.0;
+const KIN_BULWARK_STEP_RANGE_PX: f64 = 110.0;
+const SYZ_DRIFT_STEP_RANGE_PX: f64 = 210.0;
+
+/// Half-extent of the REAL player body box (PLAYER_BODY_WIDTH=26 /
+/// PLAYER_BODY_HEIGHT=56 in player.ts) — the box World.ts's own
+/// `centerToAABB(cx, cy, PLAYER_BODY_WIDTH, PLAYER_BODY_HEIGHT)` uses inside
+/// EVERY landing-search loop (slip-node/plant-charge/bulwark-step/
+/// drift-step cases), NOT this file's looser PLAYER_HALF_W=15/
+/// PLAYER_HALF_H=28 approximation used elsewhere (section 4's player-hit
+/// loop, launch pads) — same real-body precedent Paper Double's own
+/// PAPER_DOUBLE_BODY_HALF_W/H already established. PLAYER_HALF_HEIGHT
+/// (defined above, =28) already matches PLAYER_BODY_HEIGHT/2 exactly, so
+/// only the half-width needs its own name here.
+const MOVE_SEARCH_HALF_W: f64 = 13.0;
+
+/// The "farthest-collision-free-landing search" substrate Slip Node/Plant
+/// Charge/Bulwark Step/Drift Step all share — verified independently
+/// against each ability's own World.ts case (not assumed from the goal
+/// doc's "there's likely one shared shape here too" hedge): all 4 run the
+/// EXACT same loop shape (step inward from `max_range` to 24px in 12px
+/// decrements, reject any candidate that fails the arena-bounds check or
+/// overlaps a static's AABB, take the first — i.e. FARTHEST — clear point),
+/// differing only in their direction vector, range, and what they do with
+/// the landing point once found (Bulwark Step also skips vertical bound
+/// checking since it's horizontal-only, but running the same y-check on a
+/// dir_y=0 candidate is a harmless no-op: cy stays `origin_y`, already
+/// valid). World.ts itself keeps these as 4 separate inline loops rather
+/// than a shared TS helper ("kept as its own small loop rather than a
+/// shared helper, so tuning one never silently retunes the other" — the
+/// slip-node case's own comment) — that reasoning is about NOT
+/// cross-wiring each ability's TUNING (range/direction), which this Zig
+/// port still keeps fully separate (each call site passes its own
+/// range/direction); only the pure search MECHANICS (arithmetic with zero
+/// per-ability tuning inside the loop body) are shared, so one Zig helper
+/// serving 4 callers carries none of the "silent retune" risk TS's own
+/// comment is guarding against — this is exactly the "build the substrate
+/// once" shape Phase 3's ally-targeting helpers already set precedent for.
+///
+/// Returns true and writes `*out_x`/`*out_y` on the first (farthest) clear
+/// candidate; returns false (out params untouched) if the WHOLE range is
+/// blocked — callers must leave `activated` false in that case (a press
+/// that finds no landing spot is a dead press: no cooldown burn, no state
+/// change — the same legibility-law precedent Shadow Step's blocked-blink/
+/// Judgment Line's no-target case already establish elsewhere in this
+/// switch).
+fn findCollisionFreeLanding(
+    origin_x: f64,
+    origin_y: f64,
+    dir_x: f64,
+    dir_y: f64,
+    max_range: f64,
+    statics: []const collision_types.AABB,
+    out_x: *f64,
+    out_y: *f64,
+) bool {
+    var d: f64 = max_range;
+    while (d >= 24.0) : (d -= 12.0) {
+        const cx = origin_x + dir_x * d;
+        const cy = origin_y + dir_y * d;
+        if (cx < MOVE_SEARCH_HALF_W) continue;
+        if (g_arena_size_x > 0 and cx > g_arena_size_x - MOVE_SEARCH_HALF_W) continue;
+        if (cy < PLAYER_HALF_HEIGHT) continue;
+        if (g_arena_size_y > 0 and cy > g_arena_size_y - PLAYER_HALF_HEIGHT) continue;
+        const box = collision_types.AABB{
+            .x = cx - MOVE_SEARCH_HALF_W,
+            .y = cy - PLAYER_HALF_HEIGHT,
+            .w = MOVE_SEARCH_HALF_W * 2.0,
+            .h = PLAYER_HALF_HEIGHT * 2.0,
+        };
+        var blocked = false;
+        for (statics) |s| {
+            // Strict-inequality overlap test — mirrors World.ts's
+            // `aabbOverlap` exactly (edge-touching = no overlap).
+            if (box.x < s.x + s.w and box.x + box.w > s.x and box.y < s.y + s.h and box.y + box.h > s.y) {
+                blocked = true;
+                break;
+            }
+        }
+        if (!blocked) {
+            out_x.* = cx;
+            out_y.* = cy;
+            return true;
+        }
+    }
+    return false;
+}
+
 /// Nearest ALIVE other player within `range_px`, ignoring the caster —
 /// Read Mark's own targeting shape (World.ts's `findNearestEnemy` call at
 /// its cast site: omnidirectional, no cone). Team-awareness (`isAlly`) is
@@ -903,16 +1025,23 @@ fn findNearestEnemyInCone(
 /// docs/zig-step-world-parity-goal.md's Phase 1 section calls for: add a
 /// 46th `AbilityKind` later and forget an arm here, `zig build` itself
 /// fails at compile time, not a silent runtime gap. No `else`/`_`
-/// catch-all exists anywhere in this switch. 12 arms carry a real
-/// cast-time effect: the original 6 melee-hook abilities (this phase's own
-/// "first real abilities" list — see `stepMeleeSwing` for their
-/// CONSUMPTION half) plus 6 more from the AOE-queue group (Prism Fan/
-/// Shard Ring/Flock Pulse push straight onto `PendingInstantAoe` from
-/// this switch; Wall Bloom/Shock Ring only OPEN a window here, consumed
-/// at a movement hook in section 8 below — see `stepWorld`'s own section-8
-/// comment; Paper Double spawns a `PaperDoubleEntity` directly, whose
-/// death/expiry burst is pushed separately, see section 6b's burst-
-/// detection block); the other 33 are explicit, individually-commented
+/// catch-all exists anywhere in this switch. As of Phase 4c, 23 arms carry
+/// a real cast-time effect (updated from Phase 1's original 12 — each
+/// later sub-group's own commit grew this count; re-verify with a grep
+/// count, not this number, before trusting it further into the future):
+/// the original 6 melee-hook abilities (Phase 1's own "first real
+/// abilities" list — see `stepMeleeSwing` for their CONSUMPTION half) plus
+/// 6 more from the AOE-queue group (Prism Fan/Shard Ring/Flock Pulse push
+/// straight onto `PendingInstantAoe` from this switch; Wall Bloom/Shock
+/// Ring only OPEN a window here, consumed at a movement hook in section 8
+/// below — see `stepWorld`'s own section-8 comment; Paper Double spawns a
+/// `PaperDoubleEntity` directly, whose death/expiry burst is pushed
+/// separately, see section 6b's burst-detection block); 5 Phase 4a
+/// self-only window buffs (Sunlance/Overclock/Measure/Return Glass/Bastion
+/// Pulse); 2 Phase 4b caster-side marks (Facet Break/Focus Hex); and 4
+/// Phase 4c movement blinks (Slip Node/Plant Charge/Bulwark Step/Drift
+/// Step, all sharing `findCollisionFreeLanding` above). The other 22 are
+/// explicit, individually-commented
 /// no-ops.
 fn stepAbilityDispatch(
     state: *world_state.WorldState,
@@ -1244,7 +1373,41 @@ fn stepAbilityDispatch(
                 attacker.measure_until_tick = state.header.tick + dur_ticks;
                 activated = true;
             },
-            .slip_node => {}, // Phase 4 — not yet ported
+            .slip_node => {
+                // Phase 4c (docs/zig-step-world-parity-goal.md "4c.
+                // Movement") — aim-directed blink using the shared
+                // findCollisionFreeLanding search above. Falls back to +X
+                // when aim is exactly on the caster (dLen ~0), matching
+                // World.ts's own `dLen > 0.001 ? ... : 1` fallback.
+                const dx0 = attacker.aim_x - attacker.x;
+                const dy0 = attacker.aim_y - attacker.y;
+                const d_len = @sqrt(dx0 * dx0 + dy0 * dy0);
+                const dir_x: f64 = if (d_len > 0.001) dx0 / d_len else 1.0;
+                const dir_y: f64 = if (d_len > 0.001) dy0 / d_len else 0.0;
+                var cx: f64 = undefined;
+                var cy: f64 = undefined;
+                if (findCollisionFreeLanding(
+                    attacker.x,
+                    attacker.y,
+                    dir_x,
+                    dir_y,
+                    GEO_SLIP_NODE_RANGE_PX,
+                    state.statics[0..state.static_count],
+                    &cx,
+                    &cy,
+                )) {
+                    attacker.x = cx;
+                    attacker.y = cy;
+                    activated = true;
+                }
+                // TS's "leaves a fading node enemies can read" flavor is a
+                // render-layer VFX note satisfied there by a generic
+                // client-side ability-activated event — step_world has no
+                // such event type and doesn't need one for this goal (pure
+                // presentation, not sim state); same v2-deferral World.ts's
+                // own comment already records for a real lingering marker
+                // entity, not a Zig-specific gap.
+            },
             // Recoil Step (Wizard): the hop-impulse half of this ability is
             // trivial (same shape as Shadow Step's own aim-opposite hop),
             // but the ability's WHOLE documented payoff is the rider window
@@ -1273,7 +1436,38 @@ fn stepAbilityDispatch(
                 activated = true;
             },
             .aegis_share => {}, // Phase 4 — not yet ported
-            .plant_charge => {}, // Phase 4 — not yet ported
+            .plant_charge => {
+                // Phase 4c — same shared search as Slip Node above (shorter
+                // range: "plant-to-plant, not freeflow ninja"), plus a
+                // small shield-charge tick for "ends in ward-ready stance"
+                // on a successful blink only (World.ts writes the refund
+                // inside the same `if (!blocked)` branch as the position
+                // write, not unconditionally).
+                const dx0 = attacker.aim_x - attacker.x;
+                const dy0 = attacker.aim_y - attacker.y;
+                const d_len = @sqrt(dx0 * dx0 + dy0 * dy0);
+                const dir_x: f64 = if (d_len > 0.001) dx0 / d_len else 1.0;
+                const dir_y: f64 = if (d_len > 0.001) dy0 / d_len else 0.0;
+                var cx: f64 = undefined;
+                var cy: f64 = undefined;
+                if (findCollisionFreeLanding(
+                    attacker.x,
+                    attacker.y,
+                    dir_x,
+                    dir_y,
+                    KIN_PLANT_CHARGE_RANGE_PX,
+                    state.statics[0..state.static_count],
+                    &cx,
+                    &cy,
+                )) {
+                    const fcfg = &state.player_fire_config[player_idx];
+                    const max_charge = combat.SHIELD_MAX_CHARGE_DEFAULT * (if (fcfg.valid != 0) fcfg.shield_charge_mul else 1.0);
+                    attacker.x = cx;
+                    attacker.y = cy;
+                    attacker.shield_charge = @min(max_charge, attacker.shield_charge + KIN_PLANT_CHARGE_SHIELD_REFUND);
+                    activated = true;
+                }
+            },
             .rally_light => {}, // Phase 4 — not yet ported
             // Kindled Resolve (Paladin): unlike its 9 Phase-4a siblings,
             // TS's own `kindledResolveDamageMultiplier`/
@@ -1300,7 +1494,59 @@ fn stepAbilityDispatch(
             // pass touching the melee/projectile/AOE resolution sites
             // together (Phase 4e-adjacent scope, not 4a).
             .kindled_resolve => {}, // Phase 4a — deferred, see comment above
-            .bulwark_step => {}, // Phase 4 — not yet ported
+            .bulwark_step => {
+                // Phase 4c — same search SHAPE as Plant Charge above, but
+                // the direction comes from currently-HELD movement input
+                // (LeftBit/RightBit — player.zig's own private `Bit.left`/
+                // `Bit.right` values, mirrored locally here exactly like
+                // this switch's own FIRE_BIT/ABILITY_BIT precedent
+                // elsewhere in this file), never aim — "board-facing
+                // shuffle-reposition" per constants.ts's KIN_BULWARK_STEP_*
+                // header comment. Falls back to the caster's current
+                // horizontal velocity sign, then +X, when neither left nor
+                // right is held — same "always resolves a direction, never
+                // a dead press for lack of aim" contract Plant Charge's own
+                // dx0/dy0 fallback uses. Horizontal-only: dir_y stays 0, so
+                // findCollisionFreeLanding's y-bound check degrades to a
+                // no-op against the caster's own already-valid y (TS's own
+                // case skips that check entirely for the same reason — see
+                // findCollisionFreeLanding's own doc comment).
+                const LEFT_BIT: u32 = 1 << 0;
+                const RIGHT_BIT: u32 = 1 << 1;
+                const left_held = (attacker.current_keys & LEFT_BIT) != 0;
+                const right_held = (attacker.current_keys & RIGHT_BIT) != 0;
+                var dir_x: f64 = undefined;
+                if (right_held and !left_held) {
+                    dir_x = 1.0;
+                } else if (left_held and !right_held) {
+                    dir_x = -1.0;
+                } else if (@abs(attacker.vx) > 0.01) {
+                    dir_x = if (attacker.vx > 0) 1.0 else -1.0;
+                } else {
+                    dir_x = 1.0;
+                }
+                var cx: f64 = undefined;
+                var cy: f64 = undefined;
+                if (findCollisionFreeLanding(
+                    attacker.x,
+                    attacker.y,
+                    dir_x,
+                    0.0,
+                    KIN_BULWARK_STEP_RANGE_PX,
+                    state.statics[0..state.static_count],
+                    &cx,
+                    &cy,
+                )) {
+                    // x only — deliberately does NOT touch `shieldActive`;
+                    // section 6's tickShield runs AFTER this whole switch
+                    // and recomputes it fresh from held input every tick
+                    // regardless, so Ward already survives this reposition
+                    // (constants.ts's KIN_BULWARK_STEP_RANGE_PX doc comment
+                    // has the full "keeps Ward up" verification).
+                    attacker.x = cx;
+                    activated = true;
+                }
+            },
             .bleed_tithe => {}, // Phase 4 — not yet ported
             .severance => {}, // Phase 4 — not yet ported
             .borrowed_time => {}, // Phase 4 — not yet ported
@@ -1339,7 +1585,42 @@ fn stepAbilityDispatch(
             .self_lattice => {}, // Phase 4a — deferred, see comment above
             .glass_ward => {}, // Phase 4 — not yet ported
             .haste_gift => {}, // Phase 4 — not yet ported
-            .drift_step => {}, // Phase 4 — not yet ported
+            .drift_step => {
+                // Phase 4c — same shared search as Slip Node/Plant Charge
+                // above. The ONE catalog ability the doc tags "(player
+                // aim)" — deliberately aim-directed like Slip Node/Plant
+                // Charge rather than the Syzygist low-aim auto-target
+                // helpers this class's OTHER abilities use (Haste Gift/
+                // Flock Pulse etc.) — verified directly against the
+                // constants.ts SYZ_DRIFT_STEP_RANGE_PX header note, not
+                // assumed. The doc's "snap slightly toward/away an
+                // entangled entity" nuance is a recorded v1 deferral in TS
+                // itself (World.ts's own comment: "would need a second,
+                // target-aware branch on top of the shared blink-search
+                // loop") — Zig mirrors that same v1 scope, not a Zig-only
+                // gap.
+                const dx0 = attacker.aim_x - attacker.x;
+                const dy0 = attacker.aim_y - attacker.y;
+                const d_len = @sqrt(dx0 * dx0 + dy0 * dy0);
+                const dir_x: f64 = if (d_len > 0.001) dx0 / d_len else 1.0;
+                const dir_y: f64 = if (d_len > 0.001) dy0 / d_len else 0.0;
+                var cx: f64 = undefined;
+                var cy: f64 = undefined;
+                if (findCollisionFreeLanding(
+                    attacker.x,
+                    attacker.y,
+                    dir_x,
+                    dir_y,
+                    SYZ_DRIFT_STEP_RANGE_PX,
+                    state.statics[0..state.static_count],
+                    &cx,
+                    &cy,
+                )) {
+                    attacker.x = cx;
+                    attacker.y = cy;
+                    activated = true;
+                }
+            },
             .needle => {}, // Phase 4 — not yet ported
             // Ghost Guard (Ninja): consumed by combat.ts's
             // `tryDeflectDamage` — "a new branch right after the always-on
@@ -1358,7 +1639,39 @@ fn stepAbilityDispatch(
             // itself is ported (out of this sub-group's scope; that's
             // shared defense-mitigation work, not a per-ability cast).
             .ghost_guard => {}, // Phase 4a — deferred, see comment above
-            .razor_route => {}, // Phase 4 — not yet ported
+            // Razor Route (Ninja): the goal doc's own Phase 4c hypothesis
+            // ("port whatever farthest/nearest collision-free-point search
+            // TS's World.ts uses for these") does NOT hold for this one —
+            // verified directly against World.ts's "razor-route" case, not
+            // assumed. It is NOT a landing-search blink at all: cast just
+            // opens a window (`razorRouteUntilTick`), and TS's own case
+            // comment is explicit that the REAL effect — "a TS-side
+            // additive velocity impulse along the dash direction... plus a
+            // Read mark on the first body crossed" — is "consumed by the
+            // NEXT dash-trigger inside the NINJA MELEE section's own
+            // dash-through detection". That consumption site has NO Zig
+            // mirror at all: grepped directly, `stepMeleeSwing`'s own
+            // "Deliberately NOT ported" list already names this exact gap
+            // ("Dash-through body-cross / ninja evasion i-frames / Ghost
+            // Guard — all key off a `dashing` boolean that has NO Zig
+            // PlayerEntity mirror at all") — the identical substrate gap
+            // Ghost Guard above is deferred on. The cast half (opening
+            // `razorRouteUntilTick`) would be trivial — Zig's
+            // PlayerEntity already mirrors `readTargetId`/
+            // `readMarkUntilTick` for the mark byproduct (Phase 4b) — but
+            // shipping only the window-open with no dash-through detector
+            // to ever consume it would write a field with a provably zero
+            // reader anywhere in step_world, exactly the "half-ported,
+            // silently wrong" shape this goal doc's doctrine #4 exists to
+            // avoid. Deferred whole; needs the dash-through body-cross
+            // substrate (host-only per-player memory: a `dashThroughTagged`
+            // per-burst debounce set + a `wasDashing` edge, mirroring
+            // NinjaMeleeMemory in World.ts) ported first — that is real,
+            // separate, melee-hook-shaped work, not a movement-search
+            // problem, so it does NOT belong in this sub-group even though
+            // the goal doc originally filed Razor Route under "4c.
+            // Movement".
+            .razor_route => {}, // Phase 4c — deferred, see comment above
         }
 
         if (!activated) continue; // a press that does nothing burns no cooldown

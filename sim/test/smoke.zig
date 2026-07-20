@@ -2298,6 +2298,227 @@ test "ability dispatch: Focus Hex (Priest) — no enemy within range: a dead pre
     try std.testing.expectEqual(@as(u32, 0), state.players[0].slot_cooldown_until_tick[0]);
 }
 
+// ── Phase 4c: movement (docs/zig-step-world-parity-goal.md "4c. Movement")
+// — the shared findCollisionFreeLanding substrate (world.zig) backing Slip
+// Node/Plant Charge/Drift Step, plus Bulwark Step's own held-input variant.
+// Every test below stands the caster on a floor static (grounded, vy=0, no
+// horizontal input beyond the ability slot bit) so section 8's physics
+// pass — which always runs BEFORE this dispatch switch each tick — leaves
+// x/y untouched going into the cast: with no L/R held and vx starting at
+// 0, `approach(0, 0, GROUND_FRICTION * dt)` is a no-op, so the position
+// this switch reads is bit-exact, and every landing-point assertion below
+// can be exact equality rather than an epsilon. Bulwark Step's own tests
+// are the one exception (see their own comments for why).
+const RIGHT_BIT: u32 = 1 << 1;
+
+fn standOnFloor(state: *root.world_state.WorldState, player_idx: usize, x: f64) void {
+    state.static_count = 1;
+    state.statics[0] = .{ .x = 0, .y = 600, .w = 1280, .h = 40 }; // floor surface at y=600
+    state.one_way[0] = 0;
+    state.players[player_idx].x = x;
+    state.players[player_idx].y = 572; // 600 - PLAYER_BODY_HEIGHT/2 (28) — standing height
+    state.players[player_idx].vy = 0;
+    state.player_movement[player_idx].grounded_last_frame = 1;
+}
+
+test "ability dispatch: Slip Node (Geometrician) — open path: blinks the caster the FULL GEO_SLIP_NODE_RANGE_PX (280) along aim direction, sets cooldown" {
+    var state = freshFightingState();
+    state.player_count = 2; // 1 = bystander, keeps round_phase == fighting past tick 1
+    state.players[0].flags.alive = true;
+    state.players[0].character_id = .balanced;
+    state.players[0].health = 100;
+    standOnFloor(&state, 0, 300);
+    state.players[0].aim_x = 300 + 280; // straight +x, exactly the full range
+    state.players[0].aim_y = 572;
+    equipSlot(&state, 0, 0, .slip_node);
+
+    state.players[1].flags.alive = true;
+    state.players[1].health = 100;
+    state.players[1].x = 5000;
+    state.players[1].y = 572;
+
+    state.players[0].current_keys = SLOT1_BIT;
+    _ = root.world.stepWorld(&state, 16.0);
+
+    try std.testing.expectEqual(@as(f64, 580.0), state.players[0].x); // 300 + 280
+    try std.testing.expectEqual(@as(f64, 572.0), state.players[0].y); // unchanged (horizontal aim)
+    try std.testing.expect(state.players[0].slot_cooldown_until_tick[0] > state.header.tick);
+}
+
+test "ability dispatch: Slip Node (Geometrician) — a wall blocks the FAR half of the range: lands at the farthest point still clear of it (148px), not the max range and not the near fallback" {
+    var state = freshFightingState();
+    state.player_count = 2;
+    state.players[0].flags.alive = true;
+    state.players[0].character_id = .balanced;
+    state.players[0].health = 100;
+    standOnFloor(&state, 0, 300);
+    // Wall covers x[470,700] — overlaps every candidate box with cx > 457
+    // (box half-width 13), i.e. every d >= 160 in the search's 12px-step
+    // ladder (280,268,...,172,160 all blocked; 148 is the first clear).
+    // Starts well clear of the caster's own resting box (x[287,313]) so
+    // the pre-cast standing position is never itself inside solid geometry.
+    state.static_count = 2;
+    state.statics[1] = .{ .x = 470, .y = 500, .w = 230, .h = 150 };
+    state.one_way[1] = 0;
+    state.players[0].aim_x = 300 + 280;
+    state.players[0].aim_y = 572;
+    equipSlot(&state, 0, 0, .slip_node);
+
+    state.players[1].flags.alive = true;
+    state.players[1].health = 100;
+    state.players[1].x = 5000;
+    state.players[1].y = 572;
+
+    state.players[0].current_keys = SLOT1_BIT;
+    _ = root.world.stepWorld(&state, 16.0);
+
+    try std.testing.expectEqual(@as(f64, 448.0), state.players[0].x); // 300 + 148
+    try std.testing.expectEqual(@as(f64, 572.0), state.players[0].y);
+    try std.testing.expect(state.players[0].slot_cooldown_until_tick[0] > state.header.tick);
+}
+
+test "ability dispatch: Slip Node (Geometrician) — a wall blocks the ENTIRE range: dead press, caster doesn't move, no cooldown burn" {
+    var state = freshFightingState();
+    state.player_count = 2;
+    state.players[0].flags.alive = true;
+    state.players[0].character_id = .balanced;
+    state.players[0].health = 100;
+    standOnFloor(&state, 0, 300);
+    // Wall covers x[314,714] — clear of the caster's own resting box
+    // (x[287,313]) but overlaps every candidate from d=24 (cx=324) through
+    // d=280 (cx=580), so the WHOLE search range is blocked.
+    state.static_count = 2;
+    state.statics[1] = .{ .x = 314, .y = 500, .w = 400, .h = 150 };
+    state.one_way[1] = 0;
+    state.players[0].aim_x = 300 + 280;
+    state.players[0].aim_y = 572;
+    equipSlot(&state, 0, 0, .slip_node);
+
+    state.players[1].flags.alive = true;
+    state.players[1].health = 100;
+    state.players[1].x = 5000;
+    state.players[1].y = 572;
+
+    state.players[0].current_keys = SLOT1_BIT;
+    _ = root.world.stepWorld(&state, 16.0);
+
+    try std.testing.expectEqual(@as(f64, 300.0), state.players[0].x); // unmoved
+    try std.testing.expectEqual(@as(f64, 572.0), state.players[0].y);
+    try std.testing.expectEqual(@as(u32, 0), state.players[0].slot_cooldown_until_tick[0]); // dead press, no burn
+}
+
+test "ability dispatch: Plant Charge (Paladin) — open path: blinks KIN_PLANT_CHARGE_RANGE_PX (190) along aim and refunds shield charge, capped at the resolved max (100)" {
+    var state = freshFightingState();
+    state.player_count = 2;
+    state.players[0].flags.alive = true;
+    state.players[0].character_id = .heavy;
+    state.players[0].health = 100;
+    state.players[0].shield_charge = 95; // + refund (12) would overshoot 100 uncapped
+    standOnFloor(&state, 0, 300);
+    state.players[0].aim_x = 300 + 190;
+    state.players[0].aim_y = 572;
+    equipSlot(&state, 0, 0, .plant_charge);
+
+    state.players[1].flags.alive = true;
+    state.players[1].health = 100;
+    state.players[1].x = 5000;
+    state.players[1].y = 572;
+
+    state.players[0].current_keys = SLOT1_BIT;
+    _ = root.world.stepWorld(&state, 16.0);
+
+    try std.testing.expectEqual(@as(f64, 490.0), state.players[0].x); // 300 + 190
+    try std.testing.expectEqual(@as(f64, 572.0), state.players[0].y);
+    try std.testing.expectEqual(@as(f64, 100.0), state.players[0].shield_charge); // 95 + 12, capped
+    try std.testing.expect(state.players[0].slot_cooldown_until_tick[0] > state.header.tick);
+}
+
+test "ability dispatch: Drift Step (Syzygist) — open path: blinks SYZ_DRIFT_STEP_RANGE_PX (210) along aim — the ONE catalog movement ability that's player-aimed rather than low-aim auto-target" {
+    var state = freshFightingState();
+    state.player_count = 2;
+    state.players[0].flags.alive = true;
+    state.players[0].character_id = .shielded; // priest
+    state.players[0].health = 100;
+    standOnFloor(&state, 0, 300);
+    state.players[0].aim_x = 300 + 210;
+    state.players[0].aim_y = 572;
+    equipSlot(&state, 0, 0, .drift_step);
+
+    state.players[1].flags.alive = true;
+    state.players[1].health = 100;
+    state.players[1].x = 5000;
+    state.players[1].y = 572;
+
+    state.players[0].current_keys = SLOT1_BIT;
+    _ = root.world.stepWorld(&state, 16.0);
+
+    try std.testing.expectEqual(@as(f64, 510.0), state.players[0].x); // 300 + 210
+    try std.testing.expectEqual(@as(f64, 572.0), state.players[0].y);
+    try std.testing.expect(state.players[0].slot_cooldown_until_tick[0] > state.header.tick);
+}
+
+test "ability dispatch: Bulwark Step (Paladin) — held Right input drives the reposition, NOT aim (aim points hard -x, caster still moves +x)" {
+    var state = freshFightingState();
+    state.player_count = 2;
+    state.players[0].flags.alive = true;
+    state.players[0].character_id = .heavy;
+    state.players[0].health = 100;
+    standOnFloor(&state, 0, 300);
+    state.players[0].aim_x = 300 - 500; // hard -x — must be ignored
+    state.players[0].aim_y = 572;
+    equipSlot(&state, 0, 0, .bulwark_step);
+
+    state.players[1].flags.alive = true;
+    state.players[1].health = 100;
+    state.players[1].x = 5000;
+    state.players[1].y = 572;
+
+    // Right held alongside the ability slot bit — same tick, same input
+    // read this switch's own case reads (`attacker.current_keys`).
+    state.players[0].current_keys = SLOT1_BIT | RIGHT_BIT;
+    _ = root.world.stepWorld(&state, 16.0);
+
+    // Epsilon (not exact) unlike the aim-directed abilities above: holding
+    // Right also feeds section 8's own ground-acceleration branch THIS
+    // SAME tick, before dispatch reads back attacker.x as its blink
+    // origin — a few sub-pixel px of physics-driven drift on top of the
+    // exact +110 search delta is expected and harmless (this test's own
+    // load-bearing property is direction-source + magnitude, not
+    // sub-pixel physics purity, which the aim-directed tests above already
+    // cover with exact assertions in a zero-input-drift setup).
+    try std.testing.expect(@abs(state.players[0].x - 410.0) < 5.0); // ~300 + 110
+    try std.testing.expectEqual(@as(f64, 572.0), state.players[0].y); // horizontal-only, never touched
+    try std.testing.expect(state.players[0].slot_cooldown_until_tick[0] > state.header.tick);
+}
+
+test "ability dispatch: Bulwark Step (Paladin) — no movement key held: falls back to the caster's current horizontal velocity SIGN (moving left -> steps further left)" {
+    var state = freshFightingState();
+    state.player_count = 2;
+    state.players[0].flags.alive = true;
+    state.players[0].character_id = .heavy;
+    state.players[0].health = 100;
+    standOnFloor(&state, 0, 300);
+    state.players[0].vx = -200; // already moving left; no L/R held this tick
+    state.players[0].aim_x = 300 + 500; // aim points +x — must ALSO be ignored (never aim-directed)
+    state.players[0].aim_y = 572;
+    equipSlot(&state, 0, 0, .bulwark_step);
+
+    state.players[1].flags.alive = true;
+    state.players[1].health = 100;
+    state.players[1].x = 5000;
+    state.players[1].y = 572;
+
+    state.players[0].current_keys = SLOT1_BIT; // neither LEFT_BIT nor RIGHT_BIT held
+    _ = root.world.stepWorld(&state, 16.0);
+
+    // Epsilon for the same ground-friction-drift reason as the held-input
+    // test above (vx=-200 is deliberately large so friction can't flip its
+    // sign in one tick — see world.zig's own bulwark_step case comment).
+    try std.testing.expect(@abs(state.players[0].x - 190.0) < 5.0); // ~300 - 110
+    try std.testing.expectEqual(@as(f64, 572.0), state.players[0].y);
+    try std.testing.expect(state.players[0].slot_cooldown_until_tick[0] > state.header.tick);
+}
+
 // ── Draft/offer-roll system (Phase 2, docs/zig-step-world-parity-goal.md) ─
 // Ports client/src/sim/round.ts's enterDrafting + draftWeights.ts. Testing
 // strategy per the phase's own brief: the DETERMINISTIC parts (candidate-
