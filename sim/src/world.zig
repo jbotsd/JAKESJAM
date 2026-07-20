@@ -307,6 +307,173 @@ fn emitEvent(
     state.event_count += 1;
 }
 
+/// Resolve every queued instant-AOE cast against the player roster — the
+/// deferred-write PRIMITIVE itself (2026-07-20 gap-closure pass), ported
+/// from World.ts's `resolveInstantAoeCasts` (World.ts:3675-3821). Takes an
+/// explicit `casts` slice (not always `state.pending_instant_aoe[0..
+/// state.pending_instant_aoe_count]`) so a future phase can call this a
+/// SECOND time against a distinct batch — exactly how TS itself calls it
+/// twice: once for the main per-player-loop queue (World.ts:3828), once
+/// more for Paper Double's decoy bursts, discovered too late in tick order
+/// to land in the first batch (World.ts:5903, its own comment explains
+/// why a second call is needed rather than reusing the first array).
+///
+/// Caller contract: call this strictly AFTER every player's per-tick turn
+/// has already run (world.zig section "6b", after section 6's per-player
+/// loop) and strictly BEFORE section 9's end-of-tick compaction — same
+/// timing TS's own call site comment documents. This is what makes the
+/// primitive safe: `resolveInstantAoeCasts` is the ONLY place in a tick
+/// that writes cast damage into another player's entity, and by the time
+/// it runs every player's own per-tick state (fire, shield, parry, etc.)
+/// is already final for this tick.
+///
+/// MITIGATION — what's real vs. stubbed (see the task-level report for the
+/// full accounting): implements the geometry gate (radius + optional cone)
+/// and the ONE piece of the TS mitigation chain that both (a) Zig already
+/// has the primitives for (shield charge state, `combat.SHIELD_HIT_DRAIN_
+/// MULTIPLIER`) and (b) TS's own `tryDeflectDamage` actually applies to a
+/// null-projectile hit: the generic shield block. Parry and the dash-bash
+/// power-slide deliberately do NOT apply here — this is not a gap, it's
+/// EXACT TS parity: both of tryDeflectDamage's parry branches (combat.ts:
+/// 592, 622) are gated `projectile !== null`, and `resolveInstantAoeCasts`
+/// always calls `tryDeflectDamage(victim, null, ...)`. Directional shield's
+/// facing check is likewise gated `options.directionalShield && projectile
+/// !== null` (combat.ts:783) — false for every AOE cast — so an equipped
+/// directional shield still fully blocks an AOE regardless of facing,
+/// which is what this port does too (no facing check at all before the
+/// block below).
+///
+/// STUBBED (ability-state fields with no Zig PlayerEntity mirror yet, same
+/// "additive growth cut needed first" contract as PlayerEntity.
+/// channel_hold_ms's own doc comment — none of these are silently dropped,
+/// they're just not portable without growing PlayerEntity, which is
+/// exactly the "large port" this pass's scoping asked NOT to take on):
+///   - Ninja dash-evasion / Ghost Guard i-frames (combat.ts steps 0.5/0.6)
+///   - Syzygist Ward (already flagged TS-owned/TS-applied on its own field
+///     comment, world_state.zig's syz_ward_absorb_until_tick)
+///   - Paladin Kindled Ward's partial-mitigation branch (combat.ts's
+///     `classIdForArchetype(...) === "paladin"` shield branch)
+///   - Team-peel (World.ts's `applyTeamPeel`/`findTeamPeelWarder`)
+///   - rallyLightDamageMultiplier / kindledResolveDamageMultiplier /
+///     fooledDamageMultiplier (all read TS-only *UntilTick fields with no
+///     Zig mirror: kindledResolveUntilTick, fooledUntilTick, and a
+///     team-based "rally light source" lookup)
+///   - applyKindledResolveStaggerResist on the slow-multiplier stacking
+///     below (same TS-only field as its sibling above)
+/// Victim `has_vulnerability` is ALSO correctly absent here — checked
+/// directly against TS: `resolveInstantAoeCasts` never reads
+/// vulnerabilityUntilTick at all (unlike the projectile-hit path in
+/// section 4 above, which does) — porting it here would be inventing
+/// behavior TS itself doesn't have for this code path.
+pub fn resolveInstantAoeCasts(
+    state: *world_state.WorldState,
+    casts: []const world_state.PendingInstantAoe,
+    tick: u32,
+    eff_dt: f64,
+) void {
+    for (casts) |cast| {
+        if (cast.caster_idx >= state.player_count) continue;
+        var vi: u32 = 0;
+        while (vi < state.player_count) : (vi += 1) {
+            if (vi == cast.caster_idx) continue;
+            const victim = &state.players[vi];
+            if (!victim.flags.alive) continue;
+
+            const dx = victim.x - cast.x;
+            const dy = victim.y - cast.y;
+            const dist2 = dx * dx + dy * dy;
+            if (dist2 > cast.radius * cast.radius) continue;
+
+            if (cast.has_cone != 0) {
+                const target_angle = trig.lutAtan2(dy, dx);
+                const da = combat.wrapAngle(target_angle - cast.aim_angle);
+                if (@abs(da) > cast.cone_radians / 2.0) continue;
+            }
+
+            // Status-only entries (cast.damage <= 0 — none of the 5 live
+            // push sites emit one today, but TS keeps the branch, so this
+            // does too) still need the real shield check evaluated with a
+            // nominal 1 damage, exactly like TS's own `nominalDamage`
+            // trick — only `cast.damage` (the real amount) ever reaches
+            // health below.
+            const nominal: f64 = if (cast.damage > 0) cast.damage else 1.0;
+
+            // Generic shield block (see the doc comment above for exactly
+            // which mitigation steps this does and doesn't cover). Full
+            // block, no overflow carry — matches combat.ts's shield branch
+            // exactly (always `damage: 0` on block, never a partial-charge
+            // remainder).
+            if (victim.flags.shield_active and
+                victim.flags.has_shield_charge and
+                victim.shield_charge > 0)
+            {
+                victim.shield_charge -= nominal * combat.SHIELD_HIT_DRAIN_MULTIPLIER;
+                if (victim.shield_charge <= 0) {
+                    victim.shield_charge = 0;
+                    victim.flags.shield_active = false;
+                    emitEvent(state, .shield_popped, @intCast(vi), -1, 0, 0, victim.x, victim.y);
+                }
+                // Blocked: matches TS's `if (mit.evaded || blocked) { ...;
+                // continue; }` — no damage, no slow/fooled status either.
+                continue;
+            }
+
+            if (cast.damage > 0) {
+                const final_dmg = cast.damage;
+                const new_health = @max(0.0, victim.health - final_dmg);
+                const was_alive = victim.flags.alive;
+                victim.health = new_health;
+                victim.flags.alive = new_health > 0;
+                emitEvent(
+                    state,
+                    .hit_confirmed,
+                    @intCast(vi),
+                    @intCast(cast.caster_idx),
+                    0,
+                    final_dmg,
+                    victim.x,
+                    victim.y,
+                );
+                if (was_alive and new_health <= 0) {
+                    creditKill(state, @intCast(cast.caster_idx), @intCast(vi));
+                    emitEvent(
+                        state,
+                        .player_killed,
+                        @intCast(vi),
+                        @intCast(cast.caster_idx),
+                        0,
+                        0,
+                        victim.x,
+                        victim.y,
+                    );
+                }
+            }
+
+            // Slow status — applied whenever the hit wasn't blocked above,
+            // independent of whether real damage also landed (Flock
+            // Pulse carries both). Same "keep whichever ends later, take
+            // the lower (more punishing) multiplier" stacking policy as
+            // TS (Kindled Resolve's stagger-RESIST step ahead of this
+            // comparison is the one stubbed piece — see doc comment
+            // above).
+            if (cast.has_slow != 0) {
+                const dt: f64 = if (eff_dt > 0) eff_dt else 1.0;
+                const ticks_duration: u32 = @intFromFloat(@ceil(cast.slow_duration_ms / dt));
+                const new_until = tick + ticks_duration;
+                const prev_until: u32 = if (victim.flags.has_slow) victim.slowed_until_tick else 0;
+                const prev_mul: f64 = if (victim.flags.has_slow) victim.slow_multiplier else 1.0;
+                victim.slowed_until_tick = @max(prev_until, new_until);
+                victim.slow_multiplier = @min(prev_mul, cast.slow_multiplier);
+                victim.flags.has_slow = true;
+            }
+
+            // cast.has_fooled: deliberately NOT applied — see
+            // PendingInstantAoe.has_fooled's own doc comment (no
+            // fooled_until_tick field exists on PlayerEntity yet).
+        }
+    }
+}
+
 pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
     state.event_count = 0;
     state.header.tick += 1;
@@ -1815,6 +1982,28 @@ pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
 
         // Roll current → prev for the next tick's edge detection.
         player_ptr.prev_keys = player_ptr.current_keys;
+    }
+
+    // 6b. Instant AOE resolution (2026-07-20 gap-closure pass — deferred-
+    //     write primitive port of World.ts's `pendingInstantAoe`/
+    //     `resolveInstantAoeCasts`; see resolveInstantAoeCasts's own doc
+    //     comment for the full mitigation accounting). MUST run after
+    //     section 6's per-player loop directly above (every player's own
+    //     per-tick state — shield/parry/fire — is only final once that
+    //     loop has finished for EVERY player) and before section 9's
+    //     end-of-tick compaction below. No push site exists yet (no Zig
+    //     ability-cast system triggers wall-bloom/shock-ring/prism-fan/
+    //     flock-pulse/shard-ring) — `pending_instant_aoe_count` is 0 on
+    //     every real tick today; this block only fires for hand-seeded
+    //     test states until a later phase wires the 5 push sites.
+    if (state.pending_instant_aoe_count > 0) {
+        resolveInstantAoeCasts(
+            state,
+            state.pending_instant_aoe[0..state.pending_instant_aoe_count],
+            state.header.tick,
+            eff_dt,
+        );
+        state.pending_instant_aoe_count = 0;
     }
 
     // 8b. Burn DoT (I32). Players with has_burn + burn_until_tick

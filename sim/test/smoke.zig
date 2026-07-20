@@ -532,3 +532,189 @@ test "paper double: owner-exclusion — a caster's own projectile never damages 
     try std.testing.expectEqual(@as(f64, 20.0), state.paper_doubles[0].health);
     try std.testing.expectEqual(@as(u32, 1), state.projectile_count);
 }
+
+// ── Deferred-write instant-AOE primitive (2026-07-20 gap-closure pass,
+//    port of the PATTERN behind World.ts's pendingInstantAoe queue /
+//    resolveInstantAoeCasts — see world_state.zig's PendingInstantAoe doc
+//    comment and world.zig's resolveInstantAoeCasts doc comment for the
+//    full design rationale). No ability-cast system exists to push into
+//    this queue yet, so every test here hand-seeds
+//    `state.pending_instant_aoe`/`pending_instant_aoe_count` directly
+//    before calling `stepWorld`, the same way the Paper Double tests
+//    above hand-seed `state.paper_doubles`/`paper_double_count`. ─────────
+
+const SHIELD_BIT: u32 = 1 << 8; // mirrors combat.zig's private InputBit.shield
+
+test "instant AOE: radius gate — hits a victim inside the radius, ignores one outside it, never touches the caster" {
+    var state = freshFightingState();
+    state.player_count = 3; // 0 = caster, 1 = in range, 2 = out of range
+    for (0..3) |i| {
+        state.players[i].flags.alive = true;
+        state.players[i].health = 100;
+    }
+    state.players[0].x = 0;
+    state.players[0].y = 0;
+    state.players[1].x = 40; // within radius 50
+    state.players[1].y = 0;
+    state.players[2].x = 200; // well outside radius 50
+    state.players[2].y = 0;
+
+    state.pending_instant_aoe_count = 1;
+    state.pending_instant_aoe[0] = .{
+        .caster_idx = 0,
+        .x = 0,
+        .y = 0,
+        .radius = 50,
+        .damage = 15,
+    };
+
+    _ = root.world.stepWorld(&state, 16.0);
+
+    try std.testing.expectEqual(@as(f64, 100.0), state.players[0].health); // caster untouched
+    try std.testing.expectEqual(@as(f64, 85.0), state.players[1].health); // 100 - 15
+    try std.testing.expectEqual(@as(f64, 100.0), state.players[2].health); // out of radius
+    try std.testing.expectEqual(@as(u32, 0), state.pending_instant_aoe_count); // drained
+}
+
+test "instant AOE: cone gate — a Prism-Fan-style cone hits a victim inside the arc and ignores one outside it at the same range" {
+    var state = freshFightingState();
+    state.player_count = 3; // 0 = caster, 1 = inside the cone, 2 = same distance but outside it
+    for (0..3) |i| {
+        state.players[i].flags.alive = true;
+        state.players[i].health = 100;
+    }
+    state.players[0].x = 0;
+    state.players[0].y = 0;
+    state.players[1].x = 100; // straight along aim_angle = 0
+    state.players[1].y = 0;
+    state.players[2].x = 0; // 90 degrees off-axis, same 100px range
+    state.players[2].y = 100;
+
+    state.pending_instant_aoe_count = 1;
+    state.pending_instant_aoe[0] = .{
+        .caster_idx = 0,
+        .x = 0,
+        .y = 0,
+        .radius = 150,
+        .damage = 20,
+        .aim_angle = 0,
+        .cone_radians = std.math.pi / 3.0, // +-30 degrees full width
+        .has_cone = 1,
+    };
+
+    _ = root.world.stepWorld(&state, 16.0);
+
+    try std.testing.expectEqual(@as(f64, 80.0), state.players[1].health); // in the cone
+    try std.testing.expectEqual(@as(f64, 100.0), state.players[2].health); // in radius, outside the cone
+}
+
+test "instant AOE: shield fully blocks the hit — drains by damage times SHIELD_HIT_DRAIN_MULTIPLIER on top of this tick's own tickShield drain, pops only when emptied, no status applied either way" {
+    var state = freshFightingState();
+    state.player_count = 3; // 0 = caster, 1 = ample charge, 2 = nearly-empty charge
+    for (0..3) |i| {
+        state.players[i].flags.alive = true;
+        state.players[i].health = 100;
+    }
+    state.players[1].x = 10;
+    state.players[1].y = 0;
+    state.players[1].flags.shield_active = true;
+    state.players[1].flags.has_shield_charge = true;
+    state.players[1].shield_charge = 50;
+    state.players[1].current_keys = SHIELD_BIT; // held THIS tick, or tickShield forces shield_active false
+
+    state.players[2].x = -10;
+    state.players[2].y = 0;
+    state.players[2].flags.shield_active = true;
+    state.players[2].flags.has_shield_charge = true;
+    state.players[2].shield_charge = 1;
+    state.players[2].current_keys = SHIELD_BIT;
+
+    // radius=15 (not 50) is deliberate: it keeps each cast's blast from
+    // ALSO reaching the OTHER victim 20px away — each cast must hit only
+    // its own intended target, or the second cast processed would find
+    // the first victim's shield already popped by the first cast's own
+    // blast and the test would stop isolating one drain path from the
+    // other.
+    state.pending_instant_aoe_count = 2;
+    state.pending_instant_aoe[0] = .{ .caster_idx = 0, .x = 10, .y = 0, .radius = 15, .damage = 10 };
+    state.pending_instant_aoe[1] = .{ .caster_idx = 0, .x = -10, .y = 0, .radius = 15, .damage = 10 };
+
+    _ = root.world.stepWorld(&state, 16.0);
+
+    // Both victims took zero damage from the cast — full block either way.
+    try std.testing.expectEqual(@as(f64, 100.0), state.players[1].health);
+    try std.testing.expectEqual(@as(f64, 100.0), state.players[2].health);
+
+    const tick_shield_drain = root.combat.shieldDrain(root.combat.SHIELD_DRAIN_PER_SECOND, 16.0);
+    const hit_drain = 10.0 * root.combat.SHIELD_HIT_DRAIN_MULTIPLIER;
+
+    // Ample charge survives BOTH drains (this tick's own tickShield hold-
+    // drain, then the AOE's on-hit drain) and stays active.
+    const expected1 = 50.0 - tick_shield_drain - hit_drain;
+    try std.testing.expect(@abs(state.players[1].shield_charge - expected1) < 1e-9);
+    try std.testing.expect(state.players[1].flags.shield_active);
+
+    // Near-empty charge is emptied by the combined drain, pops, and the
+    // popped bar carries no overflow into health (full block regardless).
+    try std.testing.expectEqual(@as(f64, 0.0), state.players[2].shield_charge);
+    try std.testing.expect(!state.players[2].flags.shield_active);
+
+    var saw_pop_for_2 = false;
+    var ei: u32 = 0;
+    while (ei < state.event_count) : (ei += 1) {
+        if (state.events[ei].kind == @intFromEnum(root.world_state.SimEventKind.shield_popped) and
+            state.events[ei].player_idx_a == 2)
+        {
+            saw_pop_for_2 = true;
+        }
+    }
+    try std.testing.expect(saw_pop_for_2);
+}
+
+test "instant AOE: resolved strictly AFTER section 6 — a shield activated THIS tick by holding the Shield input still blocks a cast queued for the same tick" {
+    // This is the single most important property of the whole primitive:
+    // World.ts's own header comment on PendingInstantAoe names the exact
+    // hazard the queue+post-loop-resolve pattern exists to avoid — a
+    // cross-player write landing before the target's own per-tick state
+    // (here: this-tick shield activation via combat.tickShield, which
+    // only runs inside section 6) is final. Player B never had an active
+    // shield BEFORE this tick (shield_active starts false below) — it
+    // only becomes active THIS tick because B holds the Shield input and
+    // has charge, which section 6's tickShield resolves. If
+    // resolveInstantAoeCasts ran anywhere before section 6 (or wasn't
+    // sequenced after it), it would see B's STALE pre-tick shield_active
+    // = false and the cast would land as full unmitigated damage. Placed
+    // correctly (world.zig section "6b", strictly after section 6), B's
+    // shield is already active by the time the cast resolves, so it
+    // blocks — this test fails loudly if that ordering ever regresses.
+    var state = freshFightingState();
+    state.player_count = 2; // 0 = caster A, 1 = victim B
+    state.players[0].flags.alive = true;
+    state.players[0].health = 100;
+    state.players[0].x = 0;
+    state.players[0].y = 0;
+
+    state.players[1].flags.alive = true;
+    state.players[1].health = 100;
+    state.players[1].x = 20;
+    state.players[1].y = 0;
+    state.players[1].flags.shield_active = false; // NOT active before this tick
+    state.players[1].flags.has_shield_charge = true;
+    state.players[1].shield_charge = 80; // ample charge, just not raised yet
+    state.players[1].current_keys = SHIELD_BIT; // B raises it THIS tick
+
+    // Cast "queued during A's own section-6 turn" (stand-in for the real
+    // push site a later phase adds) — targets B, who in real per-player-
+    // loop order may have already had ITS OWN turn run earlier in the
+    // very same tick section 6 iterates.
+    state.pending_instant_aoe_count = 1;
+    state.pending_instant_aoe[0] = .{ .caster_idx = 0, .x = 20, .y = 0, .radius = 50, .damage = 25 };
+
+    _ = root.world.stepWorld(&state, 16.0);
+
+    // Proof #1: B's shield really did activate THIS tick (section 6 ran).
+    try std.testing.expect(state.players[1].flags.shield_active);
+    // Proof #2: the AOE saw that up-to-date shield state, not a stale
+    // pre-tick snapshot — full block, zero damage.
+    try std.testing.expectEqual(@as(f64, 100.0), state.players[1].health);
+}

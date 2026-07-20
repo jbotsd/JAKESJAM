@@ -43,6 +43,22 @@ pub const MAX_PICKUPS: usize = 32;
 /// "generous, not exact" sizing convention in this file.
 pub const MAX_PAPER_DOUBLES: usize = MAX_PLAYERS;
 
+/// Deferred-write instant-AOE cast queue bound (2026-07-20 gap-closure
+/// pass — port of the PATTERN behind World.ts's `pendingInstantAoe`
+/// array, World.ts:1609). Sized generously rather than exactly, matching
+/// this file's own MAX_SATELLITES/MAX_FIRE convention: the 5 real push
+/// sites this queue exists for (wall-bloom, shock-ring, prism-fan,
+/// flock-pulse, shard-ring) are each gated on a DISTINCT per-player
+/// trigger (a wall-kick edge, a landing edge, an ability-cast edge) that
+/// can fire at most once per player per tick per trigger, and
+/// MAX_PLAYERS=16 bounds the roster — so even the pathological case of
+/// every player queuing from two independent triggers in the same tick
+/// (e.g. a wall-kick AND an ability cast landing on the same tick) tops
+/// out at 2 × MAX_PLAYERS = 32. See `PendingInstantAoe`'s own doc comment
+/// for why the type lives here but the QUEUE STORAGE (this bound sizes)
+/// lives on `WorldState` rather than as function-local scratch.
+pub const MAX_PENDING_INSTANT_AOE: usize = 32;
+
 pub const PLAYER_ID_BYTES: usize = 32;
 pub const WEAPON_ID_BYTES: usize = 24;
 pub const CARD_ID_BYTES: usize = 24;
@@ -612,6 +628,96 @@ pub const PaperDoubleEntity = extern struct {
     _reserved: [8]u8 = @splat(0),
 };
 
+/// Deferred-write instant-AOE cast (2026-07-20 gap-closure pass) — port of
+/// the PATTERN (not yet any of the abilities) behind World.ts's
+/// `PendingInstantAoe` type (World.ts:1589-1608) + `pendingInstantAoe`
+/// queue (World.ts:1609) + `resolveInstantAoeCasts` (World.ts:3675-3821).
+/// TS's own header comment on this type (World.ts:1580-1588) names the
+/// exact hazard it exists to avoid: writing damage into ANOTHER player's
+/// entity while still mid-way through the per-player loop risks that
+/// write being silently clobbered once that OTHER player's own turn runs
+/// later in the same tick. Queuing here and resolving in one dedicated
+/// pass strictly AFTER every player's per-tick turn has finished (world.zig
+/// section "6b", after section 6's per-player loop, before section 9's
+/// end-of-tick compaction) is the fix — same category as the swing-phase/
+/// melee-memory structs already in this file (PlayerMovementMemory below):
+/// a non-wire-contract, host-only intermediate type that never crosses the
+/// wasm ABI (no push-site/ability-cast system exists in Zig yet — see this
+/// pass's own report for what's deliberately NOT wired).
+///
+/// Field set mirrors TS's `PendingInstantAoe` exactly (verified against
+/// the type + all 5 real `pendingInstantAoe.push(...)` call sites —
+/// wall-bloom, shock-ring, prism-fan, flock-pulse, shard-ring — grepped
+/// directly, not guessed): `kind` (TS: string, "carried through only for
+/// future debugging/telemetry, never branched on in the resolution pass"
+/// per its own doc comment) is DELIBERATELY omitted here — a purely
+/// cosmetic field with zero behavioral effect in TS, and no Zig-side
+/// debugging harness consumes it yet. `element` is ALSO absent — checked
+/// directly: none of the 5 push sites set one, and the TS type has no such
+/// field at all, so a Zig element field would be inventing surface TS
+/// doesn't have.
+///
+/// `caster_idx` is a plain array INDEX into `WorldState.players`, not a
+/// copy of `PLAYER_ID_BYTES` (contrast `ProjectileEntity.owner_id_bytes`,
+/// which DOES need a byte-stable id because a projectile can outlive many
+/// ticks and the roster is only guaranteed stable within one). A pending
+/// cast is pushed and resolved within the SAME `stepWorld` call, and
+/// `WorldState.player_count`/index assignment never changes mid-tick
+/// (joins/leaves are host-side, applied between ticks) — so the index is
+/// always valid at resolve time, and skips a 32-byte copy × 32 queue slots
+/// for no benefit.
+///
+/// Cone fields (`aim_angle`/`cone_radians`) mirror TS's optional
+/// `aimAngle?`/`coneRadians?` pair (Prism Fan only, "both present or both
+/// absent" per TS's own comment) via `has_cone` — same "unset vs 0"
+/// explicit-flag convention `PlayerFlags` uses throughout this file, since
+/// 0 is a valid cone angle. Same shape for `slow_multiplier`/
+/// `slow_duration_ms` (`has_slow`; Flock Pulse) and `fooled_duration_ms`
+/// (`has_fooled`; Paper Double's burst, TS: `fooledDurationMs?`).
+///
+/// STORAGE NOTE: unlike `PlayerMovementMemory`/`ResolvedFireConfig` (both
+/// WorldState fields precisely because they must SURVIVE across ticks —
+/// movement memory carries coyote-time state tick-to-tick, fire config is
+/// host-patched once and read many times), this queue's CONTENTS are
+/// meaningless before this tick's section 6 runs and drained back to empty
+/// by the end of this same tick's section 6b. Even so, the array is still a
+/// `WorldState` field (not stepWorld-local stack scratch): `world.zig`'s
+/// tests construct a `WorldState` directly and hand-push entries onto it
+/// BEFORE calling `stepWorld` (the exact `state.paper_doubles[0] = .{...}`
+/// precedent test/smoke.zig already uses for Paper Double) — a
+/// function-local array has no seam a test running through the real
+/// `stepWorld` entry point could reach. `resolveInstantAoeCasts` resets
+/// `pending_instant_aoe_count` to 0 once it has drained the queue every
+/// tick, so stale entries never survive past the tick that queued them.
+pub const PendingInstantAoe = extern struct {
+    x: f64,
+    y: f64,
+    radius: f64,
+    damage: f64,
+    aim_angle: f64 = 0,
+    cone_radians: f64 = 0,
+    slow_multiplier: f64 = 0,
+    slow_duration_ms: f64 = 0,
+    fooled_duration_ms: f64 = 0,
+
+    /// Index into `WorldState.players` at push time (see doc comment
+    /// above for why an index, not an id-byte copy, is safe here).
+    caster_idx: u32,
+    has_cone: u8 = 0,
+    has_slow: u8 = 0,
+    /// Stored for forward-compat (Paper Double's burst — a SECOND, later
+    /// batch through this same resolver, per this pass's own report) but
+    /// NOT applied by `resolveInstantAoeCasts` yet: it would write to a
+    /// `fooled_until_tick` field that does not exist on `PlayerEntity`
+    /// today (Paper Double's burst debuff is TS-only ability state, same
+    /// "additive growth cut needed first" contract as `channel_hold_ms`'s
+    /// own doc comment above). A future PlayerEntity growth pass adds the
+    /// field + flag; this queue entry already carries the value so that
+    /// pass only has to touch the resolver, not every push site again.
+    has_fooled: u8 = 0,
+    _pad: u8 = 0,
+};
+
 /// Per-player movement memory — the host-only fields that the
 /// player.zig stepPlayer kernel needs to thread across ticks
 /// (coyote time, jump buffer, jump-cut flag, grounded-last-frame,
@@ -758,6 +864,7 @@ pub const DESTRUCTIBLE_ENTITY_BYTES: usize = @sizeOf(DestructibleEntity);
 pub const FIRE_ENTITY_BYTES: usize = @sizeOf(FireEntity);
 pub const PICKUP_ENTITY_BYTES: usize = @sizeOf(PickupEntity);
 pub const PAPER_DOUBLE_ENTITY_BYTES: usize = @sizeOf(PaperDoubleEntity);
+pub const PENDING_INSTANT_AOE_BYTES: usize = @sizeOf(PendingInstantAoe);
 
 /// Header — packed up front so the host can cheaply read tick /
 /// rng_state without dereferencing a full WorldState.
@@ -848,6 +955,17 @@ pub const WorldState = extern struct {
     one_way: [MAX_STATICS]u8,
     _pad_after_one_way: [4]u8 = .{ 0, 0, 0, 0 },
 
+    /// Deferred-write instant-AOE cast queue (2026-07-20 gap-closure pass —
+    /// see `PendingInstantAoe`'s own doc comment for the full "why a
+    /// WorldState field, not stepWorld-local scratch" reasoning). Per-tick
+    /// like `events` immediately below — world.zig's new "6b" section
+    /// resolves whatever is queued here (nothing, today — no ability-cast
+    /// system pushes into it yet) and resets the count back to 0 before
+    /// section 9's end-of-tick compaction runs, every tick.
+    pending_instant_aoe_count: u32,
+    _pad_after_pending_instant_aoe_count: [4]u8 = .{ 0, 0, 0, 0 },
+    pending_instant_aoe: [MAX_PENDING_INSTANT_AOE]PendingInstantAoe,
+
     /// Per-tick events buffer (I18). step_world resets event_count
     /// to 0 at the start of every tick and pushes events as it
     /// runs. The host drains this by reading
@@ -922,6 +1040,12 @@ comptime {
     // PaperDoubleEntity's own doc comment for the DestructibleEntity-
     // pattern rationale.
     std.debug.assert(@sizeOf(PaperDoubleEntity) == 96);
+    // PendingInstantAoe (2026-07-20 gap-closure pass — deferred-write AOE
+    // primitive): 9×f64 (72) + caster_idx u32 (4) + 3×u8 flags + 1×u8 pad
+    // (4) = 80, already 8-byte-aligned, no tail padding. Doesn't cross the
+    // wasm ABI (see its own doc comment) so this assert is pure internal
+    // regression-catching, same role PlayerMovementMemory's assert plays.
+    std.debug.assert(@sizeOf(PendingInstantAoe) == 80);
     std.debug.assert(@sizeOf(PlayerMovementMemory) == 48);
     std.debug.assert(@sizeOf(SimEvent) == 40);
     std.debug.assert(@sizeOf(ResolvedFireConfig) == 240);
