@@ -726,6 +726,24 @@ pub const PlayerEntity = extern struct {
     /// unambiguously reads inactive" convention as every sibling window
     /// field on this struct.
     kindled_resolve_until_tick: u32 = 0,
+
+    /// Ghost Guard (Ninja, this pass — docs/zig-step-world-parity-goal.md,
+    /// deferred in Phase 4a, corrected finding this pass: the earlier
+    /// deferral's "no Zig `dashing` substrate at all" reasoning does NOT
+    /// actually gate this ability — verified directly against combat.ts's
+    /// `tryDeflectDamage`, Ghost Guard's own branch (step 0.6) has no
+    /// `player.dashing` check at all, only a class check + this window +
+    /// the victim's OWN current velocity magnitude (see
+    /// `combat.NINJA_GHOST_GUARD_MOVE_SPEED_THRESHOLD`). Banked evasion
+    /// charge: while `ghost_guard_charge_until_tick > tick` AND the
+    /// (ninja) victim is moving fast enough, the NEXT incoming hit
+    /// (melee, ranged, or instant-AOE) is fully evaded and the charge is
+    /// consumed — mirrors TS `PlayerEntity.ghostGuardChargeUntilTick`
+    /// (types.ts:583). Plain `u32` tick, 0 = inactive, same convention as
+    /// every sibling window field on this struct. Consumed at 3 sites:
+    /// `stepMeleeSwing`, section 4's projectile-hit loop, and
+    /// `resolveInstantAoeCasts` — see each site's own doc comment.
+    ghost_guard_charge_until_tick: u32 = 0,
 };
 
 /// Mirrors `ProjectileEntity`.
@@ -1702,6 +1720,18 @@ comptime {
     // PLAYER_ENTITY_SIZE 608 → 616 and worldStateLayout.test.ts's matching
     // literal, same close-out shape commit e669173 already used once for
     // an identical sim-only-scoping gap.
+    // 616 → 616 (this pass, Ghost Guard): +4 content bytes for
+    // `ghost_guard_charge_until_tick` (u32), landing exactly in the 4 bytes
+    // of implicit tail padding `kindled_resolve_until_tick`'s own cut left
+    // behind ([612, 616) — see that field's growth-history note two steps
+    // above) — net growth is ZERO, same "reclaim the old pad" shape
+    // `sunlance_until_tick`'s own growth-history note already established
+    // once before. Verified via a temporary `@compileLog(@sizeOf(
+    // PlayerEntity))` before locking this assert (confirmed still 616),
+    // same "don't trust hand math alone" discipline every growth-history
+    // note above already follows. No wasm-bridge follow-up needed for this
+    // field specifically (struct size is unchanged), unlike every KNOWN
+    // GAP noted above.
     std.debug.assert(@sizeOf(PlayerEntity) == 616);
     // EquippedActives (Phase 1): [3]u8 = 3 bytes, no padding (u8 array
     // needs no alignment beyond 1). Doesn't cross the wasm ABI today (see

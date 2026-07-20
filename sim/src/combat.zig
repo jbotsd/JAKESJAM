@@ -24,6 +24,13 @@ pub const SHIELD_DRAIN_PER_SECOND: f64 = 35.0;
 pub const SHIELD_RECHARGE_PER_SECOND: f64 = 14.0;
 pub const SHIELD_HIT_DRAIN_MULTIPLIER: f64 = 1.8;
 
+/// Ghost Guard (Ninja, Phase 4a follow-up, docs/zig-step-world-parity-
+/// goal.md) — "if moving" gate on the banked evasion charge: the VICTIM's
+/// own current velocity magnitude at hit time (not cast time) must clear
+/// this threshold. Mirrors `combat.ts`'s `NINJA_GHOST_GUARD_MOVE_SPEED_
+/// THRESHOLD = 60` exactly.
+pub const NINJA_GHOST_GUARD_MOVE_SPEED_THRESHOLD: f64 = 60.0;
+
 // Input bit layout — mirrors client/src/net/protocol.ts InputBit.
 const InputBit = struct {
     pub const ability: u32 = 1 << 7;

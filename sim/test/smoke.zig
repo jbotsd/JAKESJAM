@@ -3093,6 +3093,97 @@ test "ability dispatch: Lattice (Geometrician) — cast spawns a real, self-owne
     try std.testing.expectEqual(@as(f64, 100.0), state.players[0].health);
 }
 
+// ── Ghost Guard (Ninja) — previously deferred abilities, real substrate
+//    found on re-investigation (docs/zig-step-world-parity-goal.md) ────────
+
+test "ability dispatch: Ghost Guard (Ninja) — melee: an active charge on a MOVING victim evades a landed Ninja Slash entirely (zero damage, no knockback, charge consumed); a SECOND victim in the same arc with a live charge but NOT moving fast enough takes the full hit and keeps its charge (the 'if moving' gate is real, not a blanket skip)" {
+    var state = freshFightingState();
+    state.player_count = 3;
+    // All 3 grounded on the SAME floor (standOnFloor) rather than airborne —
+    // deliberately: an airborne "stationary" victim isn't actually
+    // velocity-zero in this sim (unconstrained gravity accrues real vy
+    // every tick it's falling, which this ability's own hypot(vx,vy) check
+    // correctly picks up, same as TS would), so an airborne victim 2 would
+    // falsely cross NINJA_GHOST_GUARD_MOVE_SPEED_THRESHOLD from gravity
+    // alone by the contact tick and break the very contrast this test
+    // exists to prove. Grounding removes that confound.
+    state.players[0].flags.alive = true;
+    state.players[0].character_id = .sprinter; // ninja attacker
+    state.players[0].health = 100;
+    standOnFloor(&state, 0, 100);
+    state.players[0].aim_x = 300; // +x, well past both victims
+    state.players[0].aim_y = 572;
+
+    // Victim 1: ninja, charge live, moving fast — evades.
+    state.players[1].flags.alive = true;
+    state.players[1].character_id = .sprinter;
+    state.players[1].health = 100;
+    standOnFloor(&state, 1, 120); // dx 20 from attacker
+
+    // Victim 2: ninja, charge ALSO live, but stationary — must take the
+    // full unmitigated hit (the gate never triggers for it).
+    state.players[2].flags.alive = true;
+    state.players[2].character_id = .sprinter;
+    state.players[2].health = 100;
+    standOnFloor(&state, 2, 115); // dx 15 from attacker
+
+    state.players[1].ghost_guard_charge_until_tick = 100_000;
+    state.players[2].ghost_guard_charge_until_tick = 100_000;
+
+    state.players[0].current_keys = FIRE_BIT;
+    _ = root.world.stepWorld(&state, 1.0); // windup start
+    _ = root.world.stepWorld(&state, 120.0); // active starts
+    // Set victim 1's velocity right before the contact tick only — grounded
+    // friction (GROUND_FRICTION=3600px/s^2) would otherwise fully zero out
+    // anything set earlier across the 121ms of windup/active above; a
+    // large value here comfortably survives ONE 44ms tick of friction decay
+    // (3600 * 0.044 = 158.4) and still clears the 60px/s threshold.
+    state.players[1].vx = 800.0;
+    _ = root.world.stepWorld(&state, 44.0); // contact tick — arc hit resolves against both victims
+
+    // Victim 1: evaded — untouched, charge consumed.
+    try std.testing.expectApproxEqAbs(@as(f64, 100.0), state.players[1].health, 1e-9);
+    try std.testing.expectEqual(@as(u32, 0), state.players[1].ghost_guard_charge_until_tick);
+
+    // Victim 2: NOT moving fast enough — full SLASH_DAMAGE (11.0) lands,
+    // charge stays live (the gate never triggered for it).
+    try std.testing.expectApproxEqAbs(@as(f64, 89.0), state.players[2].health, 1e-9);
+    try std.testing.expectEqual(@as(u32, 100_000), state.players[2].ghost_guard_charge_until_tick);
+}
+
+test "ability dispatch: Ghost Guard (Ninja) — ranged: an active charge on a moving ninja victim evades a landed shot entirely (zero damage, projectile consumed same tick), independent of parry/shield state" {
+    var state = freshFightingState();
+    state.player_count = 2;
+    state.players[0].flags.alive = true;
+    state.players[0].character_id = .sprinter; // ninja victim
+    state.players[0].health = 100;
+    state.players[0].x = 15;
+    state.players[0].y = 0;
+    setPlayerId(&state.players[0], "victim");
+    state.players[0].ghost_guard_charge_until_tick = 100_000;
+    state.players[0].vx = 200.0; // > NINJA_GHOST_GUARD_MOVE_SPEED_THRESHOLD (60)
+
+    state.players[1].flags.alive = true;
+    state.players[1].health = 100;
+    state.players[1].x = 0;
+    state.players[1].y = 0;
+    state.players[1].aim_x = 100;
+    state.players[1].aim_y = 0;
+    setPlayerId(&state.players[1], "shooter");
+
+    state.players[1].current_keys = FIRE_BIT;
+    _ = root.world.stepWorld(&state, 1.0); // shot spawns
+    try std.testing.expectEqual(@as(u32, 1), state.projectile_count);
+
+    state.players[1].current_keys = 0;
+    state.players[0].vx = 200.0; // re-assert so the gate reads "moving" at hit-resolution time
+    _ = root.world.stepWorld(&state, 1.0); // shard overlaps the close-range victim AABB, hit resolves
+
+    try std.testing.expectApproxEqAbs(@as(f64, 100.0), state.players[0].health, 1e-9); // undamaged — evaded
+    try std.testing.expectEqual(@as(u32, 0), state.players[0].ghost_guard_charge_until_tick); // charge consumed
+    try std.testing.expectEqual(@as(u32, 0), state.projectile_count); // consumed + compacted same tick
+}
+
 // ── Draft/offer-roll system (Phase 2, docs/zig-step-world-parity-goal.md) ─
 // Ports client/src/sim/round.ts's enterDrafting + draftWeights.ts. Testing
 // strategy per the phase's own brief: the DETERMINISTIC parts (candidate-
