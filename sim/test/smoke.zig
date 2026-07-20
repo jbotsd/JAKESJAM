@@ -1948,6 +1948,203 @@ test "ability dispatch: Paper Double burst — a decoy whose owner no longer exi
     try std.testing.expectEqual(@as(u32, 0), state.pending_instant_aoe_count);
 }
 
+// ── Phase 4a: self-only window buffs (docs/zig-step-world-parity-goal.md
+//    "4a. Self-only window buffs") — Sunlance/Overclock/Measure (window
+//    fields, consumed at world.zig's weapon-fire composition chain) and
+//    Return Glass/Bastion Pulse (instant shield-charge ticks, no window
+//    field at all). Same "cast, assert field set, then step through to the
+//    consumption site and assert the OUTCOME differs" rigor as the Phase 1
+//    tests above. All 5 use a 1.0ms tick (Undercut's own precedent) so
+//    duration/cooldown resolve to generous tick counts.
+//
+// Ordering note load-bearing to every window test below: section 6 (shield/
+// parry/weapon-fire, world.zig) runs BEFORE section 6z (ability dispatch)
+// every tick — see sunlance_until_tick's own doc comment (world_state.zig)
+// — so a cast on tick N cannot buff a shot fired on that SAME tick N; the
+// buff is only observable starting tick N+1. Every test below casts on one
+// tick (Fire NOT held) then fires on the NEXT tick, matching that real
+// ordering rather than fighting it.
+
+test "ability dispatch: Sunlance (Wizard) — window amplifies the fired shot's damage by GEO_SUNLANCE_DAMAGE_MULTIPLIER (1.6x) starting the tick AFTER cast" {
+    var state = freshFightingState();
+    state.player_count = 2;
+    state.players[0].flags.alive = true;
+    state.players[0].character_id = .balanced; // wizard
+    state.players[0].health = 100;
+    state.players[0].aim_x = 100;
+    state.players[0].aim_y = 0;
+    state.players[1].flags.alive = true;
+    state.players[1].health = 100;
+    state.players[1].x = 5000; // far away, never interacts
+    equipSlot(&state, 0, 0, .sunlance); // duration 700ms, cooldown 7000ms
+
+    // Tick 1: cast only (Fire NOT held) — no fire this tick to contaminate
+    // the "buffed vs base" comparison.
+    state.players[0].current_keys = SLOT1_BIT;
+    _ = root.world.stepWorld(&state, 1.0);
+    try std.testing.expect(state.players[0].sunlance_until_tick > state.header.tick);
+    try std.testing.expectEqual(@as(u32, 0), state.projectile_count);
+
+    // Tick 2: hold Fire only — window is live, base starter pistol
+    // (damage 12.0, weapons.zig STARTER_PISTOL) fires buffed.
+    state.players[0].current_keys = FIRE_BIT;
+    _ = root.world.stepWorld(&state, 1.0);
+    try std.testing.expectEqual(@as(u32, 1), state.projectile_count);
+    try std.testing.expectApproxEqAbs(@as(f64, 12.0 * 1.6), state.projectiles[0].damage, 1e-9);
+}
+
+test "ability dispatch: Overclock (Wizard) — window raises the fired shot's effective fire rate by GEO_OVERCLOCK_FIRE_RATE_MULTIPLIER (1.35x), observed via the post-fire cooldown" {
+    var state = freshFightingState();
+    state.player_count = 2;
+    state.players[0].flags.alive = true;
+    // Deliberately NOT .balanced (wizard): character_id == .balanced also
+    // gates the Geometrician basic-fire ramping channel
+    // (`is_wizard_channel`, world.zig's weapon-fire section), which would
+    // accrue `channel_hold_ms` the instant Fire is held on tick 2 below and
+    // silently contaminate the precise cooldown assertion with a SECOND
+    // fire-rate multiplier this test isn't trying to isolate — same
+    // "pin what's not being tested" discipline as the Read Mark test's own
+    // fire_cooldown_ms pin. The ability-cast dispatch switch itself doesn't
+    // gate on classId (only the draft/offer roll does, TS-side), so the
+    // choice of character here has zero effect on Overclock's own mechanic.
+    state.players[0].character_id = .sprinter;
+    state.players[0].health = 100;
+    state.players[0].aim_x = 100;
+    state.players[0].aim_y = 0;
+    state.players[1].flags.alive = true;
+    state.players[1].health = 100;
+    state.players[1].x = 5000;
+    equipSlot(&state, 0, 0, .overclock); // duration 3000ms, cooldown 10000ms
+
+    state.players[0].current_keys = SLOT1_BIT;
+    _ = root.world.stepWorld(&state, 1.0); // tick 1: cast only
+    try std.testing.expect(state.players[0].overclock_until_tick > state.header.tick);
+
+    state.players[0].current_keys = FIRE_BIT;
+    _ = root.world.stepWorld(&state, 1.0); // tick 2: buffed fire
+    // Starter pistol fire_rate = 4.0 shots/sec -> base cooldown 250ms;
+    // Overclock raises the effective rate to 4.0*1.35 -> cooldown
+    // 1000/(4*1.35) ≈ 185.185ms (weapon.zig's cooldownFromFireRate).
+    try std.testing.expectApproxEqAbs(@as(f64, 1000.0 / (4.0 * 1.35)), state.players[0].fire_cooldown_ms, 1e-6);
+}
+
+test "ability dispatch: Measure (Wizard) — window forces fired-shot spread to exactly 0 AND amplifies damage by GEO_MEASURE_DAMAGE_MULTIPLIER (1.3x); ranked BELOW Sunlance in the damage-priority chain when both are somehow live" {
+    var state = freshFightingState();
+    state.player_count = 2;
+    state.players[0].flags.alive = true;
+    state.players[0].character_id = .balanced;
+    state.players[0].health = 100;
+    state.players[0].aim_x = 100;
+    state.players[0].aim_y = 0;
+    state.players[1].flags.alive = true;
+    state.players[1].health = 100;
+    state.players[1].x = 5000;
+    // Force a resolved 2-shot spread build — a 1-shot build's offset is
+    // always 0 regardless of spread (proj_count <= 1 branch), so the
+    // spread-zero effect needs a real multi-shot fan to be observable at
+    // all, same "can't tell the difference" caveat weapon.ts's own
+    // multi-shot fan comment notes.
+    state.player_fire_config[0] = .{ .damage = 10, .fire_rate = 4, .projectile_speed = 1, .projectile_lifetime_seconds = 1, .spread_radians = 0.5, .range_px = 1, .homing_strength = 0, .acceleration_multiplier = 0, .gravity_scale = 0, .slow_multiplier = 1, .impact_radius_px = 0, .size_multiplier = 1, .speed_multiplier = 1, .lifetime_multiplier = 1, .projectile_count = 2, .bounces = 0, .pierce_count = 0, .split_count = 0, .shape = .circle, .element = .neutral, .pathing = .straight, .impact = .none, .valid = 1 };
+    equipSlot(&state, 0, 0, .measure); // duration 700ms, cooldown 9000ms
+
+    state.players[0].current_keys = SLOT1_BIT;
+    _ = root.world.stepWorld(&state, 1.0); // tick 1: cast only
+    try std.testing.expect(state.players[0].measure_until_tick > state.header.tick);
+
+    state.players[0].current_keys = FIRE_BIT;
+    _ = root.world.stepWorld(&state, 1.0); // tick 2: buffed fire
+    try std.testing.expectEqual(@as(u32, 2), state.projectile_count);
+    // Damage amp: 10.0 * GEO_MEASURE_DAMAGE_MULTIPLIER (1.3), not Sunlance's
+    // 1.6 (not equipped here, so no priority conflict to resolve).
+    try std.testing.expectApproxEqAbs(@as(f64, 10.0 * 1.3), state.projectiles[0].damage, 1e-9);
+    try std.testing.expectApproxEqAbs(@as(f64, 10.0 * 1.3), state.projectiles[1].damage, 1e-9);
+    // Spread-zero: both shots of the 2-shot fan land at THE SAME angle
+    // (offset 0 either side) instead of the build's real 0.5rad spread —
+    // proven via identical velocity vectors, not just "didn't crash".
+    try std.testing.expectApproxEqAbs(state.projectiles[0].vx, state.projectiles[1].vx, 1e-9);
+    try std.testing.expectApproxEqAbs(state.projectiles[0].vy, state.projectiles[1].vy, 1e-9);
+}
+
+test "ability dispatch: Return Glass (Wizard) — instant self shield-charge tick (+GEO_RETURN_GLASS_SHIELD_REFUND, 22.0), capped at the resolved max charge" {
+    var state = freshFightingState();
+    state.player_count = 2;
+    state.players[0].flags.alive = true;
+    state.players[0].character_id = .balanced;
+    state.players[0].health = 100;
+    state.players[0].flags.has_shield_charge = true;
+    state.players[0].shield_charge = 0;
+    state.players[1].flags.alive = true;
+    state.players[1].health = 100;
+    state.players[1].x = 5000;
+    equipSlot(&state, 0, 0, .return_glass); // cooldown 10000ms, no duration
+
+    // Tick 1: cast. tickShield (section 6) recharges the tracked 0 charge
+    // by a small amount BEFORE dispatch (section 6z) adds the refund —
+    // computed via the same combat.shieldDrain helper world.zig itself
+    // calls, not a hardcoded magic number, so this stays robust to a
+    // future SHIELD_RECHARGE_PER_SECOND tuning change.
+    state.players[0].current_keys = SLOT1_BIT;
+    _ = root.world.stepWorld(&state, 1.0);
+    const recharge_tick1 = root.combat.shieldDrain(root.combat.SHIELD_RECHARGE_PER_SECOND, 1.0);
+    try std.testing.expectApproxEqAbs(recharge_tick1 + 22.0, state.players[0].shield_charge, 1e-9);
+    try std.testing.expect(state.players[0].slot_cooldown_until_tick[0] > state.header.tick);
+
+    // Second cast near max charge proves the CAP, not just the add — bypass
+    // the real cooldown (directly clear it) to isolate the cap behavior,
+    // same "directly clear cooldown to isolate one property" convention
+    // Wall Bloom/Shock Ring's own negative-case tests already use.
+    state.players[0].shield_charge = 90.0;
+    state.players[0].slot_cooldown_until_tick[0] = 0;
+    state.players[0].current_keys = 0;
+    _ = root.world.stepWorld(&state, 1.0); // release — new rising edge available
+    state.players[0].current_keys = SLOT1_BIT;
+    _ = root.world.stepWorld(&state, 1.0); // recast — 90 + recharge*2 + 22 well over 100
+    try std.testing.expectEqual(@as(f64, 100.0), state.players[0].shield_charge);
+}
+
+test "ability dispatch: Bastion Pulse (Paladin) — instant self shield-charge tick (+KIN_BASTION_PULSE_SHIELD_REFUND, 22.0), doubled when Ward (Shield input) is actively held at cast time" {
+    var state = freshFightingState();
+    state.player_count = 2;
+    state.players[0].flags.alive = true;
+    state.players[0].character_id = .heavy; // paladin
+    state.players[0].health = 100;
+    state.players[0].flags.has_shield_charge = true;
+    state.players[0].shield_charge = 0;
+    state.players[1].flags.alive = true;
+    state.players[1].health = 100;
+    state.players[1].x = 5000;
+    equipSlot(&state, 0, 0, .bastion_pulse); // cooldown 8000ms, no duration
+
+    // Tick 1: cast WITHOUT Ward held — single refund.
+    state.players[0].current_keys = SLOT1_BIT;
+    _ = root.world.stepWorld(&state, 1.0);
+    const recharge_tick1 = root.combat.shieldDrain(root.combat.SHIELD_RECHARGE_PER_SECOND, 1.0);
+    try std.testing.expectApproxEqAbs(recharge_tick1 + 22.0, state.players[0].shield_charge, 1e-9);
+
+    // Reset for a second cast, bypassing the real cooldown (same isolation
+    // convention as Return Glass's own cap test above). Charge is left at
+    // 10.0 (not 0) so THIS tick's shield-drain (Ward held, real drain
+    // applies) can't zero it back out before shield_active gets checked.
+    state.players[0].shield_charge = 10.0;
+    state.players[0].slot_cooldown_until_tick[0] = 0;
+    state.players[0].current_keys = 0;
+    _ = root.world.stepWorld(&state, 1.0); // release — new rising edge available; also recharges
+    const recharge_release_tick = root.combat.shieldDrain(root.combat.SHIELD_RECHARGE_PER_SECOND, 1.0);
+
+    // Tick 3: hold Ward (Shield input) + the ability slot on the SAME
+    // tick — tickShield (section 6) runs before dispatch (section 6z)
+    // every tick, so shield_active already reflects THIS tick's held
+    // input by the time Bastion Pulse reads it (mirrors World.ts's
+    // identical same-tick ordering, `nextEntity.shieldActive`).
+    state.players[0].current_keys = SLOT1_BIT | SHIELD_BIT;
+    _ = root.world.stepWorld(&state, 1.0);
+    const drained_tick3 = root.combat.shieldDrain(root.combat.SHIELD_DRAIN_PER_SECOND, 1.0);
+    const charge_before_tick3 = 10.0 + recharge_release_tick;
+    const expected = @min(100.0, (charge_before_tick3 - drained_tick3) + 22.0 * 2.0);
+    try std.testing.expectApproxEqAbs(expected, state.players[0].shield_charge, 1e-9);
+    try std.testing.expect(state.players[0].flags.shield_active); // Ward was genuinely held+charged
+}
+
 // ── Draft/offer-roll system (Phase 2, docs/zig-step-world-parity-goal.md) ─
 // Ports client/src/sim/round.ts's enterDrafting + draftWeights.ts. Testing
 // strategy per the phase's own brief: the DETERMINISTIC parts (candidate-

@@ -727,6 +727,54 @@ const NINJA_PAPER_DOUBLE_STATIONARY_SPEED_PX: f64 = 5.0;
 // resolver later" reasoning that doc comment already documents.
 const NINJA_FOOLED_DURATION_MS: f64 = 2000.0;
 
+// ── Phase 4a self-only window-buff constants (docs/zig-step-world-parity-
+//    goal.md "4a. Self-only window buffs" — Sunlance/Overclock/Measure
+//    (Geometrician catalog v1) + Return Glass/Bastion Pulse's instant
+//    shield-charge ticks). Bit-exact port of the matching
+//    World.ts/weapon.ts/constants.ts values (re-verified live —
+//    doctrine #1/#6), same "duplicated as a local constant, not exported"
+//    convention every other block in this file already establishes.
+// Wizard — Sunlance (constants.ts:82, weapon.ts:401-423). Composes with
+// Measure below via the SAME priority chain weapon.ts uses (Sunlance wins
+// if both windows are somehow live) — Stolen Fangs, which TS ranks ABOVE
+// Sunlance in that same chain, has no Zig mirror anywhere
+// (pendingLockCharges — unrelated to this pass), so this port's chain
+// correctly starts at Sunlance, exactly what a Stolen-Fangs-less TS caster
+// would compute anyway.
+const GEO_SUNLANCE_DAMAGE_MULTIPLIER: f64 = 1.6;
+// Wizard — Overclock (constants.ts:126-127, weapon.ts:339-342/558-565).
+// Fire rate up AND spread tighter while live — UNLESS Measure is also
+// live, which forces spread all the way to 0 and wins that one sub-term
+// (weapon.ts:353-355's own "measureActive ? ... : overclockActive ? ...
+// : 1" chain).
+const GEO_OVERCLOCK_FIRE_RATE_MULTIPLIER: f64 = 1.35;
+const GEO_OVERCLOCK_SPREAD_MULTIPLIER: f64 = 0.7;
+// Wizard — Measure (constants.ts:145/150, weapon.ts:343-355/411-423,
+// reworked 2026-07-19 per that field's own types.ts doc comment — v1's
+// original +1-ammo effect is gone, this is the CURRENT mechanic). Spread
+// forced to exactly 0 (dead-center shots) plus a smaller damage amp than
+// Sunlance's, ranked BELOW it in the damage-priority chain (never stacks).
+const GEO_MEASURE_SPREAD_MULTIPLIER: f64 = 0;
+const GEO_MEASURE_DAMAGE_MULTIPLIER: f64 = 1.3;
+// Wizard — Return Glass (constants.ts:125, World.ts's "return-glass" case).
+// Instant self-shield-charge tick, capped at the resolved build's own max
+// charge — no window field needed at all (unlike every sibling in this
+// block), consumed immediately at cast time against the SAME shield_charge/
+// shield_charge_mul substrate section 6's tickShield already reads/writes
+// every tick (combat.zig's tickShield, world.zig's cfg3/has3 pattern).
+const GEO_RETURN_GLASS_SHIELD_REFUND: f64 = 22.0;
+// Paladin — Bastion Pulse (constants.ts:234-235, World.ts's "bastion-pulse"
+// case). Same instant shield-charge-tick shape as Return Glass immediately
+// above, doubled if `shield_active` is already true AT CAST TIME — reads
+// `attacker.flags.shield_active` directly, which section 6's tickShield
+// (this SAME tick, always running before section 6z's dispatch — see
+// `stepAbilityDispatch`'s own file-level ordering doc comment) has already
+// refreshed from this tick's held Shield input, matching World.ts's own
+// `nextEntity.shieldActive` read (tickShield/its TS equivalent similarly
+// runs before the ability-cast switch in World.ts's per-player loop).
+const KIN_BASTION_PULSE_SHIELD_REFUND: f64 = 22.0;
+const KIN_BASTION_PULSE_WARD_HELD_MULTIPLIER: f64 = 2.0;
+
 /// Nearest ALIVE other player within `range_px`, ignoring the caster —
 /// Read Mark's own targeting shape (World.ts's `findNearestEnemy` call at
 /// its cast site: omnidirectional, no cone). Team-awareness (`isAlly`) is
@@ -1101,33 +1149,158 @@ fn stepAbilityDispatch(
             .shadow_step => {}, // Phase 4 — not yet ported
             .veil_of_nought => {}, // Phase 4 — not yet ported
             .severing_answer => {}, // Phase 4 — not yet ported
-            .sunlance => {}, // Phase 4 — not yet ported
+            // ── Phase 4a: self-only window buffs (docs/zig-step-world-
+            //    parity-goal.md "4a. Self-only window buffs") — Sunlance/
+            //    Overclock/Measure open a window here, consumed at
+            //    world.zig's weapon-fire composition chain (section 6,
+            //    mirrors weapon.ts:336-423/558-565 bit-exact — see
+            //    GEO_SUNLANCE_DAMAGE_MULTIPLIER's own doc comment for the
+            //    full priority-chain reasoning). Return Glass/Bastion Pulse
+            //    are INSTANT self-shield-charge ticks against the existing
+            //    shield_charge/shield_charge_mul substrate section 6's
+            //    tickShield already reads/writes every tick — no window
+            //    field at all, same shape TS itself uses (no
+            //    `*UntilTick` field for either in types.ts).
+            .sunlance => {
+                const dur_ticks: u32 = @intFromFloat(@ceil((active_spec.duration_ms orelse 0) / @max(1.0, eff_dt)));
+                attacker.sunlance_until_tick = state.header.tick + dur_ticks;
+                activated = true;
+            },
             .facet_break => {}, // Phase 4 — not yet ported
             .lattice => {}, // Phase 4 — not yet ported
-            .return_glass => {}, // Phase 4 — not yet ported
-            .hard_aperture => {}, // Phase 4 — not yet ported
-            .overclock => {}, // Phase 4 — not yet ported
-            .measure => {}, // Phase 4 — not yet ported
+            .return_glass => {
+                const fcfg = &state.player_fire_config[player_idx];
+                const max_charge = combat.SHIELD_MAX_CHARGE_DEFAULT * (if (fcfg.valid != 0) fcfg.shield_charge_mul else 1.0);
+                attacker.shield_charge = @min(max_charge, attacker.shield_charge + GEO_RETURN_GLASS_SHIELD_REFUND);
+                activated = true;
+            },
+            // Hard Aperture (Wizard): v1 reuses TS's exact ward-shell
+            // mechanic (Shelter Seal's own field, `wardShellUntilTick`) —
+            // that field DOES already have a Zig PlayerEntity mirror
+            // (`ward_shell_until_tick`, Phase 5), so the CAST half of this
+            // ability would be trivial (identical shape to hard-aperture's
+            // TS case). Genuinely deferred anyway: `ward_shell_until_tick`
+            // is documented (see its own doc comment, world_state.zig) as
+            // "carry-through only" — step_world does not itself apply
+            // EMISSION_WARD_DAMAGE_MULT/the ×0.5 incoming-damage mitigation
+            // ANYWHERE in its own melee/projectile/AOE damage math today.
+            // Wiring Hard Aperture's cast without a real Zig consumption
+            // site would ship a field write nothing ever reads — exactly
+            // the "half-ported, silently wrong" shape this goal doc's own
+            // doctrine #4 asks to avoid. Needs a real damage-mitigation
+            // consumption site added first (out of THIS sub-group's scope —
+            // that's shared substrate work, not a per-ability cast).
+            .hard_aperture => {}, // Phase 4a — deferred, see comment above
+            .overclock => {
+                const dur_ticks: u32 = @intFromFloat(@ceil((active_spec.duration_ms orelse 0) / @max(1.0, eff_dt)));
+                attacker.overclock_until_tick = state.header.tick + dur_ticks;
+                activated = true;
+            },
+            .measure => {
+                const dur_ticks: u32 = @intFromFloat(@ceil((active_spec.duration_ms orelse 0) / @max(1.0, eff_dt)));
+                attacker.measure_until_tick = state.header.tick + dur_ticks;
+                activated = true;
+            },
             .slip_node => {}, // Phase 4 — not yet ported
-            .recoil_step => {}, // Phase 4 — not yet ported
+            // Recoil Step (Wizard): the hop-impulse half of this ability is
+            // trivial (same shape as Shadow Step's own aim-opposite hop),
+            // but the ability's WHOLE documented payoff is the rider window
+            // — "shots fired in the next 1.2s barely push you around"
+            // (cards.ts) — and that payoff has NO consumption site to hang
+            // off: grepped directly, `recoilImpulse`/`RecoilImpulse`
+            // (weapon.zig) is never called anywhere in world.zig's own
+            // fire section — step_world does not apply ANY self-knockback-
+            // from-firing today (TS's weapon.ts:542-551 `next.vx -=
+            // lutCos(baseAngle) * recoil` has no Zig mirror at all). Shipping
+            // only the hop and silently dropping the rider would misrepresent
+            // the ability entirely (its OWN card description is about the
+            // rider, not the hop) — deferred whole, not half-shipped, per
+            // this goal doc's own doctrine #4. Needs self-recoil ported to
+            // step_world's fire section first (out of this sub-group's scope).
+            .recoil_step => {}, // Phase 4a — deferred, see comment above
             .sunspike => {}, // Phase 4 — not yet ported
-            .bastion_pulse => {}, // Phase 4 — not yet ported
+            .bastion_pulse => {
+                const fcfg = &state.player_fire_config[player_idx];
+                const max_charge = combat.SHIELD_MAX_CHARGE_DEFAULT * (if (fcfg.valid != 0) fcfg.shield_charge_mul else 1.0);
+                const refund: f64 = if (attacker.flags.shield_active)
+                    KIN_BASTION_PULSE_SHIELD_REFUND * KIN_BASTION_PULSE_WARD_HELD_MULTIPLIER
+                else
+                    KIN_BASTION_PULSE_SHIELD_REFUND;
+                attacker.shield_charge = @min(max_charge, attacker.shield_charge + refund);
+                activated = true;
+            },
             .aegis_share => {}, // Phase 4 — not yet ported
             .plant_charge => {}, // Phase 4 — not yet ported
             .rally_light => {}, // Phase 4 — not yet ported
-            .kindled_resolve => {}, // Phase 4 — not yet ported
+            // Kindled Resolve (Paladin): unlike its 9 Phase-4a siblings,
+            // TS's own `kindledResolveDamageMultiplier`/
+            // `applyKindledResolveStaggerResist` (World.ts:918-949) are NOT
+            // read at one composition site — verified directly against
+            // World.ts, not assumed: the damage multiplier is composed at
+            // SIX separate call sites (projectile hit :1815, instant-AOE
+            // damage :4662, instant-AOE stagger-resist :4719, dash-bash
+            // :4876, ninja-slash... no, Kindled/paladin melee :5163/:5478,
+            // plus the stagger-resist term again at :5500) spanning melee,
+            // projectiles, AND instant-AOE — not the single "one more term
+            // at an existing composition call site" shape every other
+            // ability in this sub-group has (world.zig's own melee
+            // hit-resolution comment, right where Judgment/Seal/Undercut/
+            // Read Mark already compose `final_damage`, explicitly flags
+            // this exact gap: "rallyLight/kindledResolve damage multipliers
+            // ... are Phase 4 abilities, unreachable"). Wiring only the
+            // melee site (the one place this dispatch loop can reach
+            // cheaply) would silently under-deliver the ability everywhere
+            // else a Paladin actually deals damage (Sunspike's projectile,
+            // any instant-AOE Kindled ever gets) — a real, out-of-scope
+            // multi-site fan-out, not this sub-group's "cheapest remaining
+            // tier" shape. Deferred whole per doctrine #4, needs its own
+            // pass touching the melee/projectile/AOE resolution sites
+            // together (Phase 4e-adjacent scope, not 4a).
+            .kindled_resolve => {}, // Phase 4a — deferred, see comment above
             .bulwark_step => {}, // Phase 4 — not yet ported
             .bleed_tithe => {}, // Phase 4 — not yet ported
             .severance => {}, // Phase 4 — not yet ported
             .borrowed_time => {}, // Phase 4 — not yet ported
             .focus_hex => {}, // Phase 4 — not yet ported
             .contagion => {}, // Phase 4 — not yet ported
-            .self_lattice => {}, // Phase 4 — not yet ported
+            // Self-Lattice (Priest): writes the SAME
+            // wardAbsorbUntilTick/wardAbsorbRemaining pair Syzygist Ward
+            // uses (self-only, bypassing the isAlly team gate — see
+            // World.ts's "self-lattice" case). Those two fields already
+            // have a Zig PlayerEntity mirror
+            // (`syz_ward_absorb_until_tick`/`syz_ward_absorb_remaining`),
+            // so — same shape as Hard Aperture above — the CAST half would
+            // be trivial. Genuinely deferred anyway: that field pair is
+            // documented (its own doc comment, world_state.zig) as
+            // "TS-owned/TS-applied... step_world does not compute or
+            // consume this; combat.ts's trySyzygistWard does" — grepped
+            // directly, confirmed zero reads of either field anywhere in
+            // world.zig. Same "don't write a field nothing reads" reasoning
+            // as Hard Aperture; needs the Syzygist-Ward damage-mitigation
+            // consumption site built first (shared substrate work, out of
+            // this sub-group's scope).
+            .self_lattice => {}, // Phase 4a — deferred, see comment above
             .glass_ward => {}, // Phase 4 — not yet ported
             .haste_gift => {}, // Phase 4 — not yet ported
             .drift_step => {}, // Phase 4 — not yet ported
             .needle => {}, // Phase 4 — not yet ported
-            .ghost_guard => {}, // Phase 4 — not yet ported
+            // Ghost Guard (Ninja): consumed by combat.ts's
+            // `tryDeflectDamage` — "a new branch right after the always-on
+            // dash-i-frame check" (types.ts's own field comment). Neither
+            // half of that consumption site exists in Zig: this exact gap
+            // is already flagged, twice, by pre-existing doc comments in
+            // this file — `resolveInstantAoeCasts`'s own MITIGATION comment
+            // ("Ninja dash-evasion / Ghost Guard i-frames ... STUBBED ...
+            // no Zig PlayerEntity mirror") and `stepMeleeSwing`'s own
+            // "Deliberately NOT ported" list ("Dash-through body-cross /
+            // ninja evasion i-frames / Ghost Guard — all key off a
+            // `dashing` boolean that has NO Zig PlayerEntity mirror at
+            // all"). Cast-time window-open would be trivial but would write
+            // a field with provably zero readers anywhere in step_world —
+            // deferred until the dash-i-frame/tryDeflectDamage substrate
+            // itself is ported (out of this sub-group's scope; that's
+            // shared defense-mitigation work, not a per-ability cast).
+            .ghost_guard => {}, // Phase 4a — deferred, see comment above
             .razor_route => {}, // Phase 4 — not yet ported
         }
 
@@ -2981,6 +3154,35 @@ pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
         const proj_lifetime_sec: f64 = if (fcfg.valid != 0) fcfg.projectile_lifetime_seconds else weapons_data.weaponBaseById(.starter_pistol).projectile_lifetime_seconds;
         const proj_lifetime_mul: f64 = if (fcfg.valid != 0) fcfg.lifetime_multiplier else 1.0;
         const spread_total: f64 = if (fcfg.valid != 0) fcfg.spread_radians else weapons_data.weaponBaseById(.starter_pistol).spread_radians;
+        // Sunlance / Measure / Overclock (Phase 4a, docs/zig-step-world-
+        // parity-goal.md — bit-exact port of weapon.ts:336-423's own
+        // priority chains). `overclock_active` is read here (ahead of its
+        // sibling composition at the cd_after call below) purely because
+        // spread's own priority chain needs it in the SAME expression as
+        // measure_active — see GEO_MEASURE_SPREAD_MULTIPLIER's own doc
+        // comment (world.zig, Phase 4a constants block) for why Measure
+        // beats Overclock here specifically.
+        const sunlance_active = player_ptr.sunlance_until_tick > state.header.tick;
+        const measure_active = player_ptr.measure_until_tick > state.header.tick;
+        const overclock_active = player_ptr.overclock_until_tick > state.header.tick;
+        // Damage priority: Sunlance > Measure > base — TS also ranks
+        // Stolen Fangs above Sunlance here, but Stolen Fangs has no Zig
+        // mirror anywhere (pendingLockCharges — unrelated to this pass), so
+        // this chain correctly starts at Sunlance (see
+        // GEO_SUNLANCE_DAMAGE_MULTIPLIER's own doc comment).
+        const damage_amp_v: f64 = if (sunlance_active)
+            damage_v * GEO_SUNLANCE_DAMAGE_MULTIPLIER
+        else if (measure_active)
+            damage_v * GEO_MEASURE_DAMAGE_MULTIPLIER
+        else
+            damage_v;
+        // Spread priority: Measure (forces 0) > Overclock (tightens) > base.
+        const spread_amp_total: f64 = if (measure_active)
+            spread_total * GEO_MEASURE_SPREAD_MULTIPLIER
+        else if (overclock_active)
+            spread_total * GEO_OVERCLOCK_SPREAD_MULTIPLIER
+        else
+            spread_total;
         const proj_count: u32 = if (fcfg.valid != 0) @max(@as(u32, 1), fcfg.projectile_count) else 1;
         const proj_size_mul: f64 = if (fcfg.valid != 0) fcfg.size_multiplier else 1.0;
         const proj_range: f64 = if (fcfg.valid != 0) fcfg.range_px else weapons_data.weaponBaseById(.starter_pistol).projectile_range_px;
@@ -3018,19 +3220,25 @@ pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
             0.0;
         const channel_fire_rate_mul: f64 = 1.0 +
             (GEO_CHANNEL_RAMP_FIRE_RATE_MULTIPLIER_MAX - 1.0) * channel_ramp_frac;
-        // Overclock (constants.ts's GEO_OVERCLOCK_FIRE_RATE_MULTIPLIER,
-        // weapon.ts:290-296) is a DEFERRED gap, not a trivial add like
-        // haste above: unlike haste_multiplier, `overclockUntilTick` (TS
-        // types.ts:722) has NO Zig PlayerEntity mirror at all today — wiring
-        // it here would mean growing PlayerEntity by another u32+flag bit,
-        // which is exactly the "large port" the task scoping this pass
-        // asked NOT to scope-creep into. Left unread here; a future cut
-        // should add overclock_until_tick + PlayerFlags.has_overclock
-        // following the same growth-history-comment pattern as
-        // channel_hold_ms above, then read it here.
+        // Overclock (Phase 4a, docs/zig-step-world-parity-goal.md —
+        // constants.ts's GEO_OVERCLOCK_FIRE_RATE_MULTIPLIER,
+        // weapon.ts:339-342/558-565): fire-rate multiplier while the
+        // window is live, composing alongside haste/channel-ramp above at
+        // the SAME cd_after call below — matches weapon.ts's own
+        // multiplicative chain exactly (`hasteFireRateMul`/
+        // `channelFireRateMul`/`overclockActive ? GEO_OVERCLOCK_FIRE_RATE_
+        // MULTIPLIER : 1` are all peers in ONE `Math.max(MIN_FIRE_RATE, ...)`
+        // product). A cast THIS tick cannot buff a shot fired THIS SAME
+        // tick — section 6 (this loop) runs before section 6z (ability
+        // dispatch, where the window is opened) every tick, see
+        // `sunlance_until_tick`'s own doc comment (world_state.zig) for the
+        // full one-tick-lag reasoning, matching TS's identical ordering.
+        // `overclock_active` itself is computed above, alongside
+        // sunlance_active/measure_active, for the spread-priority chain.
+        const overclock_fire_rate_mul: f64 = if (overclock_active) GEO_OVERCLOCK_FIRE_RATE_MULTIPLIER else 1.0;
         const cd_after = weapon.cooldownFromFireRate(
             fire_rate_v * chaos_profile.fire_rate_multiplier *
-                haste_fire_rate_mul * channel_fire_rate_mul,
+                haste_fire_rate_mul * channel_fire_rate_mul * overclock_fire_rate_mul,
             1.0,
         );
         var fire_decision: weapon.FireDecision = undefined;
@@ -3055,8 +3263,11 @@ pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
             const radius_v: f64 = @max(2.0, 7.0 * proj_size_mul);
 
             // Multi-shot spread fan: distribute proj_count
-            // projectiles evenly across spread_total radians centred
-            // on aim_angle. Single-shot (count == 1) fires straight.
+            // projectiles evenly across spread_amp_total radians (Measure/
+            // Overclock's own priority chain applied — see their doc
+            // comment above) centred on aim_angle. Single-shot (count == 1)
+            // fires straight regardless (offset always 0), same "can't
+            // observe spread with one shot" shape weapon.ts itself has.
             var shot_i: u32 = 0;
             while (shot_i < proj_count) : (shot_i += 1) {
                 if (state.projectile_count >= world_state.MAX_PROJECTILES) break;
@@ -3065,7 +3276,7 @@ pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
                 else blk: {
                     const t: f64 = @as(f64, @floatFromInt(shot_i)) /
                         @as(f64, @floatFromInt(proj_count - 1));
-                    break :blk -spread_total * 0.5 + t * spread_total;
+                    break :blk -spread_amp_total * 0.5 + t * spread_amp_total;
                 };
                 const ang = aim_angle + offset;
                 const slot: u32 = state.projectile_count;
@@ -3078,7 +3289,7 @@ pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
                     .vx = trig.lutCos(ang) * speed,
                     .vy = trig.lutSin(ang) * speed,
                     .radius = radius_v,
-                    .damage = damage_v,
+                    .damage = damage_amp_v,
                     .lifetime_ms = lifetime_ms,
                     .age_ms = 0,
                     .traveled_px = 0,
