@@ -975,3 +975,92 @@ test "melee: paladin kindled edge lands its own EDGE_DAMAGE/EDGE_RANGE/EDGE_* ti
     try std.testing.expect(@abs(state.players[1].vx - 420.0) < 0.01); // EDGE_KNOCKBACK
     try std.testing.expect(@abs(state.players[1].vy - (-110.0)) < 0.01); // -EDGE_KNOCK_UP
 }
+
+// ── cards_gen CardMeta plumbing (foundational data-model pass) ───────────
+// Spot-checks that gen_card_data.ts's codegen genuinely carries classId/
+// unique/maxStacks/rarity/active through from cards.ts into Zig-readable
+// CardMeta — the structural blocker the draft/offer-roll and ability-cast
+// resolution phases (both explicitly OUT of scope here) need to exist
+// before either can move forward. These assert against the exact live
+// cards.ts values (see the task's own investigation), not placeholders —
+// re-check against cards.ts if any of these specific cards' data changes.
+
+test "cards_gen: total card count is 104 — every card gets an entry now, not just ones with a modifier" {
+    try std.testing.expectEqual(@as(usize, 104), root.cards_gen.cards.len);
+}
+
+test "cards_gen: universal weapon-stat card (raycast-prism) has no class gate and no active" {
+    const meta = root.cards_gen.cardMeta("raycast-prism").?;
+    try std.testing.expectEqual(@as(?root.cards_gen.ClassId, null), meta.class_id);
+    try std.testing.expectEqual(true, meta.unique);
+    try std.testing.expectEqual(@as(u8, 0), meta.max_stacks); // no explicit cap
+    try std.testing.expectEqual(root.cards_gen.Rarity.rare, meta.rarity);
+    try std.testing.expectEqual(@as(?root.cards_gen.CardActive, null), meta.active);
+    // A pure weapon-stat card still resolves a real (non-default) CardMod.
+    const mod = root.cards_gen.cardMod("raycast-prism").?;
+    try std.testing.expect(mod.damage_mul != 1.0);
+}
+
+test "cards_gen: maxStacks card (shard-bloom) carries its real cap and is NOT flagged unique" {
+    const meta = root.cards_gen.cardMeta("shard-bloom").?;
+    try std.testing.expectEqual(false, meta.unique);
+    try std.testing.expectEqual(@as(u8, 2), meta.max_stacks);
+    try std.testing.expectEqual(root.cards_gen.Rarity.rare, meta.rarity);
+}
+
+test "cards_gen: class-blind ability card (crimson-tithe) has active but no class gate, and its CardMod is the all-defaults no-op" {
+    const meta = root.cards_gen.cardMeta("crimson-tithe").?;
+    try std.testing.expectEqual(@as(?root.cards_gen.ClassId, null), meta.class_id);
+    try std.testing.expectEqual(true, meta.unique);
+    try std.testing.expectEqual(root.cards_gen.Rarity.rare, meta.rarity);
+    const active = meta.active.?;
+    try std.testing.expectEqual(root.cards_gen.AbilityKind.crimson_tithe, active.kind);
+    try std.testing.expectEqual(@as(f64, 14000.0), active.cooldown_ms);
+    try std.testing.expectEqual(@as(?f64, 3000.0), active.duration_ms);
+
+    // Pure-ability cards carry no modifier in cards.ts — applyCard's own
+    // `if (!modifier) return;` early return means this must resolve to
+    // CardMod's zero-value default, matching that no-op exactly (mirrors
+    // weaponBuild.ts's applyCard, not a fabricated Zig-side rule).
+    const mod = root.cards_gen.cardMod("crimson-tithe").?;
+    try std.testing.expectEqual(root.cards_gen.CardMod{}, mod);
+}
+
+test "cards_gen: one classId-gated ability card per class resolves the correct class_id/active identity" {
+    const Case = struct {
+        id: []const u8,
+        class_id: root.cards_gen.ClassId,
+        rarity: root.cards_gen.Rarity,
+        kind: root.cards_gen.AbilityKind,
+        cooldown_ms: f64,
+        duration_ms: ?f64,
+    };
+    const cases = [_]Case{
+        .{ .id = "sunlance", .class_id = .wizard, .rarity = .rare, .kind = .sunlance, .cooldown_ms = 7000.0, .duration_ms = 700.0 },
+        .{ .id = "bastion-pulse", .class_id = .paladin, .rarity = .uncommon, .kind = .bastion_pulse, .cooldown_ms = 8000.0, .duration_ms = null },
+        .{ .id = "bleed-tithe", .class_id = .priest, .rarity = .uncommon, .kind = .bleed_tithe, .cooldown_ms = 6000.0, .duration_ms = null },
+        .{ .id = "undercut", .class_id = .ninja, .rarity = .rare, .kind = .undercut, .cooldown_ms = 8000.0, .duration_ms = 4000.0 },
+    };
+    for (cases) |c| {
+        const meta = root.cards_gen.cardMeta(c.id).?;
+        try std.testing.expectEqual(@as(?root.cards_gen.ClassId, c.class_id), meta.class_id);
+        try std.testing.expectEqual(true, meta.unique);
+        try std.testing.expectEqual(c.rarity, meta.rarity);
+        const active = meta.active.?;
+        try std.testing.expectEqual(c.kind, active.kind);
+        try std.testing.expectEqual(c.cooldown_ms, active.cooldown_ms);
+        try std.testing.expectEqual(c.duration_ms, active.duration_ms);
+        // Every classId-gated catalog ability card carries no modifier either.
+        try std.testing.expectEqual(root.cards_gen.CardMod{}, root.cards_gen.cardMod(c.id).?);
+    }
+}
+
+test "cards_gen: AbilityKind has exactly 45 members (5 class-blind six-axes + 10 per each of 4 catalogs)" {
+    const info = @typeInfo(root.cards_gen.AbilityKind);
+    try std.testing.expectEqual(@as(usize, 45), info.@"enum".fields.len);
+}
+
+test "cards_gen: cardMeta/cardMod return null for an unknown card id" {
+    try std.testing.expectEqual(@as(?root.cards_gen.CardMeta, null), root.cards_gen.cardMeta("not-a-real-card"));
+    try std.testing.expectEqual(@as(?root.cards_gen.CardMod, null), root.cards_gen.cardMod("not-a-real-card"));
+}

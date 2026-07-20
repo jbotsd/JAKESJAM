@@ -47,7 +47,139 @@ pub const CardMod = struct {
     proj_slow_mul_set: ?f64 = null,
 };
 
-pub const CardEntry = struct { id: []const u8, mod: CardMod };
+/// Class-exclusive gate (cardTypes.ts's ClassId — dev-id vocabulary, never
+/// the display persona name: wizard/ninja/paladin/priest).
+pub const ClassId = enum(u8) {
+    wizard = 0,
+    ninja = 1,
+    paladin = 2,
+    priest = 3,
+};
+
+/// Draft-weighting tier (cardTypes.ts's CardDefinition.rarity union).
+pub const Rarity = enum(u8) {
+    common = 0,
+    uncommon = 1,
+    rare = 2,
+    legendary = 3,
+    cursed = 4,
+};
+
+/// Drafted-active identity tag (cardTypes.ts's AbilityKind union) — a plain
+/// identity enum, NOT a struct: it tells a future resolver WHICH ability a
+/// card grants, carrying no behavior of its own. Re-derive this list from
+/// the live cardTypes.ts union on every future edit (gen_card_data.ts's
+/// ABILITY_KIND array is the single source for member order/count).
+pub const AbilityKind = enum(u8) {
+    crimson_tithe = 0,
+    shelter_seal = 1,
+    shadow_step = 2,
+    veil_of_nought = 3,
+    severing_answer = 4,
+    sunlance = 5,
+    facet_break = 6,
+    prism_fan = 7,
+    lattice = 8,
+    return_glass = 9,
+    hard_aperture = 10,
+    overclock = 11,
+    measure = 12,
+    slip_node = 13,
+    recoil_step = 14,
+    unbroken_seal = 15,
+    sunspike = 16,
+    judgment_line = 17,
+    bastion_pulse = 18,
+    aegis_share = 19,
+    plant_charge = 20,
+    shock_ring = 21,
+    rally_light = 22,
+    kindled_resolve = 23,
+    bulwark_step = 24,
+    bleed_tithe = 25,
+    severance = 26,
+    borrowed_time = 27,
+    focus_hex = 28,
+    contagion = 29,
+    flock_pulse = 30,
+    self_lattice = 31,
+    glass_ward = 32,
+    haste_gift = 33,
+    drift_step = 34,
+    undercut = 35,
+    edge_storm = 36,
+    needle = 37,
+    read_mark = 38,
+    shard_ring = 39,
+    wall_bloom = 40,
+    ghost_guard = 41,
+    second_wind = 42,
+    razor_route = 43,
+    paper_double = 44,
+};
+
+/// One drafted active's timing (cardTypes.ts's AbilityActiveSpec). Paired
+/// onto a CardMeta only when the card actually has `active` — see
+/// CardMeta.active below.
+pub const CardActive = struct {
+    kind: AbilityKind,
+    cooldown_ms: f64,
+    /// Effect window; null = instant (mirrors AbilityActiveSpec.durationMs
+    /// being omitted — "omitted = instant" per its own TS doc comment).
+    duration_ms: ?f64 = null,
+};
+
+/// A card's own identity/metadata — classId/unique/maxStacks/rarity/active.
+/// Deliberately a SIBLING struct to CardMod, not an extension of it: CardMod
+/// is "the resolved WEAPON stat effect" (damage/speed/spread/... multipliers
+/// that fold additively/multiplicatively across a whole hand via
+/// weapon_build.zig's resolveMods loop); CardMeta is per-card identity that
+/// never folds — it's read once per card, not accumulated across a hand.
+/// Cramming classId/active into CardMod would force every hand-resolution
+/// call site to start ignoring fields that make no sense to accumulate,
+/// which is exactly the kind of accidental-coupling CardMod's own doc
+/// comment ("the resolved weapon stat effect") warns against.
+pub const CardMeta = struct {
+    /// Class-EXCLUSIVE gate (cardTypes.ts's CardDefinition.classId) — null
+    /// means universal (every six-axes class-blind card, and every
+    /// universal weapon-stat card). Mirrors CardMod's own `?u8`-family
+    /// "genuinely absent" convention (this file's established idiom for
+    /// optional TS fields), rather than world_state.zig's has_-bool-gate
+    /// pattern — that pattern exists because world_state.zig's structs are
+    /// `extern` (crossing the wasm ABI boundary), where Zig's tagged
+    /// optionals aren't layout-stable. CardMeta/CardEntry never cross that
+    /// boundary (weapon_build.zig consumes them Zig-side only), so a plain
+    /// `?ClassId` is both idiomatic and consistent with CardMod's own
+    /// sibling fields in this exact file.
+    class_id: ?ClassId = null,
+    /// Can only ever be held once (cardTypes.ts's CardDefinition.unique) —
+    /// enforced at the offer-roll and apply-time gates (round.ts / weaponBuild.ts),
+    /// not here; this struct only carries the fact.
+    unique: bool = false,
+    /// Explicit stacking cap (cardTypes.ts's CardDefinition.maxStacks).
+    /// 0 = no explicit cap (the TS field is simply absent — stacking is
+    /// then gated ONLY by `unique`, or fully unlimited if unique is also
+    /// false). Every real maxStacks value in cards.ts is >=1 (see
+    /// gen_card_data.ts's assertKnown-adjacent guard), so 0 is an
+    /// unambiguous "unset" sentinel — chosen over `?u8` to keep this one
+    /// field a plain int (every OTHER CardMeta field already needed either
+    /// a bool or an optional-of-a-non-trivial-type; this is the one place a
+    /// sentinel reads clearer than an extra optional wrapper).
+    max_stacks: u8 = 0,
+    /// Draft-weighting tier (cardTypes.ts's CardDefinition.rarity) — always
+    /// explicitly set by the generator (every CardDefinition has a required
+    /// rarity); the default below is never relied upon, only present so
+    /// CardMeta stays a valid zero-initializable struct like CardMod.
+    rarity: Rarity = .common,
+    /// The ability this card grants, if any (cardTypes.ts's
+    /// CardDefinition.active). null = this card has no active — either a
+    /// pure weapon-stat card, or (today) not yet authored. Resolution of
+    /// WHAT an active does is explicitly out of scope here; this only
+    /// carries kind + cooldown/duration identity.
+    active: ?CardActive = null,
+};
+
+pub const CardEntry = struct { id: []const u8, mod: CardMod, meta: CardMeta };
 
 /// Starter-pistol base (the only weapon) — mirrors weapons.ts.
 pub const StarterBase = struct {
@@ -76,70 +208,122 @@ pub const StarterBase = struct {
 };
 
 pub const cards = [_]CardEntry{
-    .{ .id = "raycast-prism", .mod = .{ .damage_mul = 0.9, .delivery = 1, .proj_range_px_set = 880.0, .proj_impact_radius_set = 12.0 } },
-    .{ .id = "crystal-volley", .mod = .{ .damage_mul = 1.06, .delivery = 0, .proj_speed_mul = 1.06, .proj_shape = 3, .proj_count_set = 1.0 } },
-    .{ .id = "circle-rounds", .mod = .{ .projectile_speed_mul = 1.1, .proj_size_mul = 0.92, .proj_shape = 0, .proj_range_px_set = 480.0 } },
-    .{ .id = "triangle-rounds", .mod = .{ .projectile_speed_mul = 0.95, .proj_lifetime_mul = 1.4, .proj_shape = 1, .proj_range_px_set = 1080.0 } },
-    .{ .id = "square-rounds", .mod = .{ .projectile_speed_mul = 0.8, .proj_size_mul = 1.3, .proj_shape = 2 } },
-    .{ .id = "x-rounds", .mod = .{ .fire_rate_mul = 0.92, .projectile_speed_mul = 0.9, .proj_size_mul = 1.55, .proj_shape = 5 } },
-    .{ .id = "i-rounds", .mod = .{ .projectile_speed_mul = 0.78, .proj_lifetime_mul = 1.15, .proj_shape = 6, .proj_pathing = 7, .proj_acceleration_mul_set = 1.4 } },
-    .{ .id = "orby-blap-blap", .mod = .{ .damage_mul = 0.78, .projectile_speed_mul = 0.72, .spread_radians_set = 0.3141592653589793, .proj_size_mul = 1.38, .proj_shape = 4, .proj_count_set = 2.0, .proj_impact_radius_set = 36.0 } },
-    .{ .id = "continuous-refractor", .mod = .{ .damage_mul = 0.42, .fire_rate_mul = 2.4, .delivery = 2, .proj_impact = 4, .proj_range_px_set = 760.0, .proj_slow_mul_set = 0.72 } },
-    .{ .id = "shard-bloom", .mod = .{ .damage_mul = 0.62, .fire_rate_mul = 0.82, .spread_radians_add = 0.6632251157578452, .delivery = 0, .proj_count_add = 5.0, .proj_size_mul = 0.78, .proj_range_px_set = 390.0 } },
-    .{ .id = "arc-shards", .mod = .{ .projectile_speed_mul = 0.86, .proj_pathing = 1, .proj_gravity_scale_set = 560.0 } },
-    .{ .id = "deadfall-mortar", .mod = .{ .fire_rate_mul = 0.8, .projectile_speed_mul = 0.6, .proj_size_mul = 1.15, .proj_pathing = 1, .proj_impact = 1, .proj_gravity_scale_set = 2100.0, .proj_impact_radius_set = 82.0 } },
-    .{ .id = "seeker-facets", .mod = .{ .projectile_speed_mul = 0.82, .proj_homing_add = 1.2, .proj_pathing = 4, .proj_homing_strength_set = 4.4 } },
-    .{ .id = "micro-seekers", .mod = .{ .damage_mul = 0.78, .projectile_speed_mul = 0.9, .spread_radians_add = 0.2792526803190927, .proj_count_add = 2.0, .proj_homing_add = 0.9, .proj_size_mul = 0.74, .proj_pathing = 4, .proj_homing_strength_set = 3.2 } },
-    .{ .id = "bouncy-prism", .mod = .{ .proj_bounce_add = 4.0, .proj_pathing = 2 } },
-    .{ .id = "extra-bounce", .mod = .{ .proj_bounce_add = 1.0, .proj_pathing = 2 } },
-    .{ .id = "boomerang-return", .mod = .{ .projectile_speed_mul = 0.92, .proj_lifetime_mul = 1.18, .proj_pathing = 3 } },
-    .{ .id = "x-velocity", .mod = .{ .projectile_speed_mul = 1.18, .proj_lifetime_mul = 0.96 } },
-    .{ .id = "falling-star", .mod = .{ .projectile_speed_mul = 1.5, .proj_lifetime_mul = 1.1, .proj_pathing = 7, .proj_acceleration_mul_set = -1.8 } },
-    .{ .id = "zero-g-floaters", .mod = .{ .projectile_speed_mul = 0.58, .proj_size_mul = 1.18, .proj_lifetime_mul = 1.5, .proj_pathing = 6 } },
-    .{ .id = "triple-fan", .mod = .{ .damage_mul = 0.74, .spread_radians_add = 0.2792526803190927, .proj_count_add = 2.0, .proj_bounce_add = 2.0, .proj_pathing = 2 } },
-    .{ .id = "five-shard-spray", .mod = .{ .damage_mul = 0.6, .fire_rate_mul = 0.9, .projectile_speed_mul = 1.22, .spread_radians_add = 0.3490658503988659, .proj_count_add = 4.0, .proj_size_mul = 0.6 } },
-    .{ .id = "one-more-shard", .mod = .{ .damage_mul = 0.94, .spread_radians_add = 0.12217304763960307, .proj_count_add = 1.0 } },
-    .{ .id = "wide-barrage", .mod = .{ .damage_mul = 0.7, .fire_rate_mul = 0.94, .spread_radians_add = 0.767944870877505, .proj_count_add = 3.0, .proj_size_mul = 0.82 } },
-    .{ .id = "orbiting-satellites", .mod = .{ .fire_rate_mul = 1.12 } },
-    .{ .id = "cluster-bomb", .mod = .{ .fire_rate_mul = 0.72, .proj_split_add = 6.0, .proj_size_mul = 1.12 } },
-    .{ .id = "explosive-facet", .mod = .{ .damage_mul = 0.92, .proj_impact = 1, .proj_impact_radius_set = 64.0 } },
-    .{ .id = "sticky-shards", .mod = .{ .projectile_speed_mul = 0.8, .proj_impact = 2, .proj_impact_radius_set = 48.0 } },
-    .{ .id = "pierce-chain", .mod = .{ .proj_impact = 3, .proj_pierce_count_set = 3.0, .proj_split_count_set = 2.0 } },
-    .{ .id = "slow-field", .mod = .{ .damage_mul = 0.86, .proj_impact = 4, .proj_impact_radius_set = 70.0, .proj_slow_mul_set = 0.58 } },
-    .{ .id = "molten-core", .mod = .{ .proj_element = 2, .proj_impact_radius_set = 42.0 } },
-    .{ .id = "frost-prism", .mod = .{ .proj_element = 3, .proj_impact = 4, .proj_slow_mul_set = 0.68 } },
-    .{ .id = "voltaic-spark", .mod = .{ .projectile_speed_mul = 1.08, .proj_element = 4, .proj_impact = 3, .proj_pierce_count_set = 1.0 } },
-    .{ .id = "void-fracture", .mod = .{ .damage_mul = 1.08, .proj_element = 5, .proj_pierce_count_set = 2.0 } },
-    .{ .id = "radiant-overload", .mod = .{ .damage_mul = 1.14, .fire_rate_mul = 0.82, .proj_size_mul = 1.14, .proj_element = 6, .proj_impact_radius_set = 58.0 } },
-    .{ .id = "rapid-refraction", .mod = .{ .fire_rate_mul = 1.22, .projectile_speed_mul = 1.06, .proj_size_mul = 0.88 } },
-    .{ .id = "needle-compressor", .mod = .{ .fire_rate_mul = 1.14, .proj_size_mul = 0.86 } },
-    .{ .id = "heavy-coolant", .mod = .{ .fire_rate_mul = 0.88, .proj_size_mul = 1.22 } },
-    .{ .id = "essence-battery", .mod = .{ .proj_size_mul = 1.1, .proj_element = 0 } },
-    .{ .id = "crystal-plating", .mod = .{ .max_health_add = 20.0, .move_speed_mul = 0.98, .proj_size_mul = 1.14, .proj_shape = 3, .proj_element = 0 } },
-    .{ .id = "wide-parry", .mod = .{ .parry_cover_mul = 1.28, .proj_size_mul = 1.04, .proj_element = 0 } },
-    .{ .id = "quick-parry", .mod = .{ .dash_cooldown_mul = 0.86, .proj_speed_mul = 1.06, .proj_size_mul = 0.94, .proj_shape = 2 } },
-    .{ .id = "overcharge", .mod = .{ .fire_rate_mul = 0.72, .proj_size_mul = 1.42, .proj_impact_radius_set = 76.0 } },
-    .{ .id = "mirror-shield", .mod = .{ .mirror_shield = true, .proj_element = 0 } },
-    .{ .id = "cataclysmic-prism", .mod = .{ .damage_mul = 1.18, .fire_rate_mul = 0.72, .proj_size_mul = 1.22, .proj_element = 6, .proj_impact = 1, .proj_impact_radius_set = 118.0 } },
-    .{ .id = "homing-cluster", .mod = .{ .damage_mul = 0.78, .projectile_speed_mul = 0.82, .spread_radians_set = 0.4886921905584123, .proj_pathing = 4, .proj_count_set = 3.0, .proj_homing_strength_set = 5.2 } },
-    .{ .id = "sticky-ray", .mod = .{ .fire_rate_mul = 0.78, .delivery = 1, .proj_element = 0, .proj_impact = 2, .proj_impact_radius_set = 74.0 } },
-    .{ .id = "sprint-coils", .mod = .{ .move_speed_mul = 1.18 } },
-    .{ .id = "glide-membrane", .mod = .{ .gravity_mul = 0.74 } },
-    .{ .id = "lead-boots", .mod = .{ .move_speed_mul = 1.06, .gravity_mul = 1.35 } },
-    .{ .id = "spring-heel", .mod = .{ .jump_mul = 1.18, .wall_jump_mul = 1.16 } },
-    .{ .id = "gecko-grip", .mod = .{ .wall_slide_mul = 0.45 } },
-    .{ .id = "double-jump", .mod = .{ .air_jumps_add = 1.0 } },
-    .{ .id = "blink-dash", .mod = .{ .dash_charges_add = 1.0 } },
-    .{ .id = "bulwark-core", .mod = .{ .shield_charge_mul = 1.6, .proj_size_mul = 1.08, .proj_shape = 3 } },
-    .{ .id = "rapid-capacitor", .mod = .{ .shield_recharge_mul = 1.8, .proj_size_mul = 1.08, .proj_shape = 0 } },
-    .{ .id = "aim-barrier", .mod = .{ .shield_charge_mul = 2.2, .directional_shield = true } },
-    .{ .id = "riot-mirror", .mod = .{ .shield_charge_mul = 1.7, .mirror_shield = true, .directional_shield = true, .proj_element = 0 } },
-    .{ .id = "stolen-fangs", .mod = .{ .proj_element = 0 } },
+    .{ .id = "raycast-prism", .mod = .{ .damage_mul = 0.9, .delivery = 1, .proj_range_px_set = 880.0, .proj_impact_radius_set = 12.0 }, .meta = .{ .unique = true, .rarity = .rare } },
+    .{ .id = "crystal-volley", .mod = .{ .damage_mul = 1.06, .delivery = 0, .proj_speed_mul = 1.06, .proj_shape = 3, .proj_count_set = 1.0 }, .meta = .{ .unique = true, .rarity = .common } },
+    .{ .id = "circle-rounds", .mod = .{ .projectile_speed_mul = 1.1, .proj_size_mul = 0.92, .proj_shape = 0, .proj_range_px_set = 480.0 }, .meta = .{ .unique = true, .rarity = .common } },
+    .{ .id = "triangle-rounds", .mod = .{ .projectile_speed_mul = 0.95, .proj_lifetime_mul = 1.4, .proj_shape = 1, .proj_range_px_set = 1080.0 }, .meta = .{ .unique = true, .rarity = .common } },
+    .{ .id = "square-rounds", .mod = .{ .projectile_speed_mul = 0.8, .proj_size_mul = 1.3, .proj_shape = 2 }, .meta = .{ .unique = true, .rarity = .uncommon } },
+    .{ .id = "x-rounds", .mod = .{ .fire_rate_mul = 0.92, .projectile_speed_mul = 0.9, .proj_size_mul = 1.55, .proj_shape = 5 }, .meta = .{ .unique = true, .rarity = .uncommon } },
+    .{ .id = "i-rounds", .mod = .{ .projectile_speed_mul = 0.78, .proj_lifetime_mul = 1.15, .proj_shape = 6, .proj_pathing = 7, .proj_acceleration_mul_set = 1.4 }, .meta = .{ .unique = true, .rarity = .uncommon } },
+    .{ .id = "orby-blap-blap", .mod = .{ .damage_mul = 0.78, .projectile_speed_mul = 0.72, .spread_radians_set = 0.3141592653589793, .proj_size_mul = 1.38, .proj_shape = 4, .proj_count_set = 2.0, .proj_impact_radius_set = 36.0 }, .meta = .{ .unique = true, .rarity = .rare } },
+    .{ .id = "continuous-refractor", .mod = .{ .damage_mul = 0.42, .fire_rate_mul = 2.4, .delivery = 2, .proj_impact = 4, .proj_range_px_set = 760.0, .proj_slow_mul_set = 0.72 }, .meta = .{ .unique = true, .rarity = .rare } },
+    .{ .id = "shard-bloom", .mod = .{ .damage_mul = 0.62, .fire_rate_mul = 0.82, .spread_radians_add = 0.6632251157578452, .delivery = 0, .proj_count_add = 5.0, .proj_size_mul = 0.78, .proj_range_px_set = 390.0 }, .meta = .{ .max_stacks = 2, .rarity = .rare } },
+    .{ .id = "arc-shards", .mod = .{ .projectile_speed_mul = 0.86, .proj_pathing = 1, .proj_gravity_scale_set = 560.0 }, .meta = .{ .rarity = .common } },
+    .{ .id = "deadfall-mortar", .mod = .{ .fire_rate_mul = 0.8, .projectile_speed_mul = 0.6, .proj_size_mul = 1.15, .proj_pathing = 1, .proj_impact = 1, .proj_gravity_scale_set = 2100.0, .proj_impact_radius_set = 82.0 }, .meta = .{ .unique = true, .rarity = .rare } },
+    .{ .id = "seeker-facets", .mod = .{ .projectile_speed_mul = 0.82, .proj_homing_add = 1.2, .proj_pathing = 4, .proj_homing_strength_set = 4.4 }, .meta = .{ .max_stacks = 4, .rarity = .rare } },
+    .{ .id = "micro-seekers", .mod = .{ .damage_mul = 0.78, .projectile_speed_mul = 0.9, .spread_radians_add = 0.2792526803190927, .proj_count_add = 2.0, .proj_homing_add = 0.9, .proj_size_mul = 0.74, .proj_pathing = 4, .proj_homing_strength_set = 3.2 }, .meta = .{ .max_stacks = 5, .rarity = .uncommon } },
+    .{ .id = "bouncy-prism", .mod = .{ .proj_bounce_add = 4.0, .proj_pathing = 2 }, .meta = .{ .max_stacks = 4, .rarity = .uncommon } },
+    .{ .id = "extra-bounce", .mod = .{ .proj_bounce_add = 1.0, .proj_pathing = 2 }, .meta = .{ .max_stacks = 8, .rarity = .common } },
+    .{ .id = "boomerang-return", .mod = .{ .projectile_speed_mul = 0.92, .proj_lifetime_mul = 1.18, .proj_pathing = 3 }, .meta = .{ .unique = true, .rarity = .uncommon } },
+    .{ .id = "x-velocity", .mod = .{ .projectile_speed_mul = 1.18, .proj_lifetime_mul = 0.96 }, .meta = .{ .max_stacks = 7, .rarity = .common } },
+    .{ .id = "falling-star", .mod = .{ .projectile_speed_mul = 1.5, .proj_lifetime_mul = 1.1, .proj_pathing = 7, .proj_acceleration_mul_set = -1.8 }, .meta = .{ .unique = true, .rarity = .rare } },
+    .{ .id = "zero-g-floaters", .mod = .{ .projectile_speed_mul = 0.58, .proj_size_mul = 1.18, .proj_lifetime_mul = 1.5, .proj_pathing = 6 }, .meta = .{ .unique = true, .rarity = .uncommon } },
+    .{ .id = "triple-fan", .mod = .{ .damage_mul = 0.74, .spread_radians_add = 0.2792526803190927, .proj_count_add = 2.0, .proj_bounce_add = 2.0, .proj_pathing = 2 }, .meta = .{ .max_stacks = 4, .rarity = .uncommon } },
+    .{ .id = "five-shard-spray", .mod = .{ .damage_mul = 0.6, .fire_rate_mul = 0.9, .projectile_speed_mul = 1.22, .spread_radians_add = 0.3490658503988659, .proj_count_add = 4.0, .proj_size_mul = 0.6 }, .meta = .{ .max_stacks = 2, .rarity = .rare } },
+    .{ .id = "one-more-shard", .mod = .{ .damage_mul = 0.94, .spread_radians_add = 0.12217304763960307, .proj_count_add = 1.0 }, .meta = .{ .max_stacks = 8, .rarity = .common } },
+    .{ .id = "wide-barrage", .mod = .{ .damage_mul = 0.7, .fire_rate_mul = 0.94, .spread_radians_add = 0.767944870877505, .proj_count_add = 3.0, .proj_size_mul = 0.82 }, .meta = .{ .max_stacks = 5, .rarity = .uncommon } },
+    .{ .id = "orbiting-satellites", .mod = .{ .fire_rate_mul = 1.12 }, .meta = .{ .unique = true, .rarity = .rare } },
+    .{ .id = "cluster-bomb", .mod = .{ .fire_rate_mul = 0.72, .proj_split_add = 6.0, .proj_size_mul = 1.12 }, .meta = .{ .max_stacks = 3, .rarity = .rare } },
+    .{ .id = "explosive-facet", .mod = .{ .damage_mul = 0.92, .proj_impact = 1, .proj_impact_radius_set = 64.0 }, .meta = .{ .unique = true, .rarity = .uncommon } },
+    .{ .id = "sticky-shards", .mod = .{ .projectile_speed_mul = 0.8, .proj_impact = 2, .proj_impact_radius_set = 48.0 }, .meta = .{ .unique = true, .rarity = .uncommon } },
+    .{ .id = "pierce-chain", .mod = .{ .proj_impact = 3, .proj_pierce_count_set = 3.0, .proj_split_count_set = 2.0 }, .meta = .{ .unique = true, .rarity = .rare } },
+    .{ .id = "slow-field", .mod = .{ .damage_mul = 0.86, .proj_impact = 4, .proj_impact_radius_set = 70.0, .proj_slow_mul_set = 0.58 }, .meta = .{ .unique = true, .rarity = .uncommon } },
+    .{ .id = "molten-core", .mod = .{ .proj_element = 2, .proj_impact_radius_set = 42.0 }, .meta = .{ .unique = true, .rarity = .uncommon } },
+    .{ .id = "frost-prism", .mod = .{ .proj_element = 3, .proj_impact = 4, .proj_slow_mul_set = 0.68 }, .meta = .{ .unique = true, .rarity = .uncommon } },
+    .{ .id = "voltaic-spark", .mod = .{ .projectile_speed_mul = 1.08, .proj_element = 4, .proj_impact = 3, .proj_pierce_count_set = 1.0 }, .meta = .{ .unique = true, .rarity = .rare } },
+    .{ .id = "void-fracture", .mod = .{ .damage_mul = 1.08, .proj_element = 5, .proj_pierce_count_set = 2.0 }, .meta = .{ .unique = true, .rarity = .rare } },
+    .{ .id = "radiant-overload", .mod = .{ .damage_mul = 1.14, .fire_rate_mul = 0.82, .proj_size_mul = 1.14, .proj_element = 6, .proj_impact_radius_set = 58.0 }, .meta = .{ .unique = true, .rarity = .rare } },
+    .{ .id = "rapid-refraction", .mod = .{ .fire_rate_mul = 1.22, .projectile_speed_mul = 1.06, .proj_size_mul = 0.88 }, .meta = .{ .max_stacks = 5, .rarity = .common } },
+    .{ .id = "needle-compressor", .mod = .{ .fire_rate_mul = 1.14, .proj_size_mul = 0.86 }, .meta = .{ .max_stacks = 5, .rarity = .common } },
+    .{ .id = "heavy-coolant", .mod = .{ .fire_rate_mul = 0.88, .proj_size_mul = 1.22 }, .meta = .{ .max_stacks = 6, .rarity = .common } },
+    .{ .id = "essence-battery", .mod = .{ .proj_size_mul = 1.1, .proj_element = 0 }, .meta = .{ .max_stacks = 4, .rarity = .common } },
+    .{ .id = "crystal-plating", .mod = .{ .max_health_add = 20.0, .move_speed_mul = 0.98, .proj_size_mul = 1.14, .proj_shape = 3, .proj_element = 0 }, .meta = .{ .max_stacks = 5, .rarity = .common } },
+    .{ .id = "wide-parry", .mod = .{ .parry_cover_mul = 1.28, .proj_size_mul = 1.04, .proj_element = 0 }, .meta = .{ .max_stacks = 2, .rarity = .uncommon } },
+    .{ .id = "quick-parry", .mod = .{ .dash_cooldown_mul = 0.86, .proj_speed_mul = 1.06, .proj_size_mul = 0.94, .proj_shape = 2 }, .meta = .{ .max_stacks = 2, .rarity = .uncommon } },
+    .{ .id = "overcharge", .mod = .{ .fire_rate_mul = 0.72, .proj_size_mul = 1.42, .proj_impact_radius_set = 76.0 }, .meta = .{ .unique = true, .rarity = .rare } },
+    .{ .id = "mirror-shield", .mod = .{ .mirror_shield = true, .proj_element = 0 }, .meta = .{ .unique = true, .rarity = .rare } },
+    .{ .id = "cataclysmic-prism", .mod = .{ .damage_mul = 1.18, .fire_rate_mul = 0.72, .proj_size_mul = 1.22, .proj_element = 6, .proj_impact = 1, .proj_impact_radius_set = 118.0 }, .meta = .{ .unique = true, .rarity = .legendary } },
+    .{ .id = "homing-cluster", .mod = .{ .damage_mul = 0.78, .projectile_speed_mul = 0.82, .spread_radians_set = 0.4886921905584123, .proj_pathing = 4, .proj_count_set = 3.0, .proj_homing_strength_set = 5.2 }, .meta = .{ .unique = true, .rarity = .legendary } },
+    .{ .id = "sticky-ray", .mod = .{ .fire_rate_mul = 0.78, .delivery = 1, .proj_element = 0, .proj_impact = 2, .proj_impact_radius_set = 74.0 }, .meta = .{ .unique = true, .rarity = .legendary } },
+    .{ .id = "sprint-coils", .mod = .{ .move_speed_mul = 1.18 }, .meta = .{ .max_stacks = 3, .rarity = .uncommon } },
+    .{ .id = "glide-membrane", .mod = .{ .gravity_mul = 0.74 }, .meta = .{ .max_stacks = 2, .rarity = .uncommon } },
+    .{ .id = "lead-boots", .mod = .{ .move_speed_mul = 1.06, .gravity_mul = 1.35 }, .meta = .{ .max_stacks = 2, .rarity = .uncommon } },
+    .{ .id = "spring-heel", .mod = .{ .jump_mul = 1.18, .wall_jump_mul = 1.16 }, .meta = .{ .max_stacks = 2, .rarity = .uncommon } },
+    .{ .id = "gecko-grip", .mod = .{ .wall_slide_mul = 0.45 }, .meta = .{ .max_stacks = 2, .rarity = .uncommon } },
+    .{ .id = "double-jump", .mod = .{ .air_jumps_add = 1.0 }, .meta = .{ .max_stacks = 3, .rarity = .rare } },
+    .{ .id = "blink-dash", .mod = .{ .dash_charges_add = 1.0 }, .meta = .{ .max_stacks = 2, .rarity = .rare } },
+    .{ .id = "bulwark-core", .mod = .{ .shield_charge_mul = 1.6, .proj_size_mul = 1.08, .proj_shape = 3 }, .meta = .{ .max_stacks = 3, .rarity = .uncommon } },
+    .{ .id = "rapid-capacitor", .mod = .{ .shield_recharge_mul = 1.8, .proj_size_mul = 1.08, .proj_shape = 0 }, .meta = .{ .max_stacks = 3, .rarity = .uncommon } },
+    .{ .id = "aim-barrier", .mod = .{ .shield_charge_mul = 2.2, .directional_shield = true }, .meta = .{ .unique = true, .rarity = .rare } },
+    .{ .id = "riot-mirror", .mod = .{ .shield_charge_mul = 1.7, .mirror_shield = true, .directional_shield = true, .proj_element = 0 }, .meta = .{ .unique = true, .rarity = .legendary } },
+    .{ .id = "stolen-fangs", .mod = .{ .proj_element = 0 }, .meta = .{ .unique = true, .rarity = .legendary } },
+    .{ .id = "crimson-tithe", .mod = .{}, .meta = .{ .unique = true, .rarity = .rare, .active = .{ .kind = .crimson_tithe, .cooldown_ms = 14000.0, .duration_ms = 3000.0 } } },
+    .{ .id = "shadow-step", .mod = .{}, .meta = .{ .unique = true, .rarity = .rare, .active = .{ .kind = .shadow_step, .cooldown_ms = 9000.0 } } },
+    .{ .id = "veil-of-nought", .mod = .{}, .meta = .{ .unique = true, .rarity = .legendary, .active = .{ .kind = .veil_of_nought, .cooldown_ms = 16000.0, .duration_ms = 1500.0 } } },
+    .{ .id = "severing-answer", .mod = .{}, .meta = .{ .unique = true, .rarity = .legendary, .active = .{ .kind = .severing_answer, .cooldown_ms = 12000.0, .duration_ms = 500.0 } } },
+    .{ .id = "shelter-seal", .mod = .{}, .meta = .{ .unique = true, .rarity = .legendary, .active = .{ .kind = .shelter_seal, .cooldown_ms = 12000.0, .duration_ms = 2500.0 } } },
+    .{ .id = "sunlance", .mod = .{}, .meta = .{ .class_id = .wizard, .unique = true, .rarity = .rare, .active = .{ .kind = .sunlance, .cooldown_ms = 7000.0, .duration_ms = 700.0 } } },
+    .{ .id = "facet-break", .mod = .{}, .meta = .{ .class_id = .wizard, .unique = true, .rarity = .rare, .active = .{ .kind = .facet_break, .cooldown_ms = 8000.0, .duration_ms = 4000.0 } } },
+    .{ .id = "prism-fan", .mod = .{}, .meta = .{ .class_id = .wizard, .unique = true, .rarity = .uncommon, .active = .{ .kind = .prism_fan, .cooldown_ms = 9000.0 } } },
+    .{ .id = "lattice", .mod = .{}, .meta = .{ .class_id = .wizard, .unique = true, .rarity = .uncommon, .active = .{ .kind = .lattice, .cooldown_ms = 9000.0 } } },
+    .{ .id = "return-glass", .mod = .{}, .meta = .{ .class_id = .wizard, .unique = true, .rarity = .uncommon, .active = .{ .kind = .return_glass, .cooldown_ms = 10000.0 } } },
+    .{ .id = "hard-aperture", .mod = .{}, .meta = .{ .class_id = .wizard, .unique = true, .rarity = .rare, .active = .{ .kind = .hard_aperture, .cooldown_ms = 9000.0, .duration_ms = 600.0 } } },
+    .{ .id = "overclock", .mod = .{}, .meta = .{ .class_id = .wizard, .unique = true, .rarity = .rare, .active = .{ .kind = .overclock, .cooldown_ms = 10000.0, .duration_ms = 3000.0 } } },
+    .{ .id = "measure", .mod = .{}, .meta = .{ .class_id = .wizard, .unique = true, .rarity = .uncommon, .active = .{ .kind = .measure, .cooldown_ms = 9000.0, .duration_ms = 700.0 } } },
+    .{ .id = "slip-node", .mod = .{}, .meta = .{ .class_id = .wizard, .unique = true, .rarity = .rare, .active = .{ .kind = .slip_node, .cooldown_ms = 6000.0 } } },
+    .{ .id = "recoil-step", .mod = .{}, .meta = .{ .class_id = .wizard, .unique = true, .rarity = .uncommon, .active = .{ .kind = .recoil_step, .cooldown_ms = 6000.0, .duration_ms = 1200.0 } } },
+    .{ .id = "bastion-pulse", .mod = .{}, .meta = .{ .class_id = .paladin, .unique = true, .rarity = .uncommon, .active = .{ .kind = .bastion_pulse, .cooldown_ms = 8000.0 } } },
+    .{ .id = "sunspike", .mod = .{}, .meta = .{ .class_id = .paladin, .unique = true, .rarity = .rare, .active = .{ .kind = .sunspike, .cooldown_ms = 7000.0 } } },
+    .{ .id = "judgment-line", .mod = .{}, .meta = .{ .class_id = .paladin, .unique = true, .rarity = .rare, .active = .{ .kind = .judgment_line, .cooldown_ms = 8000.0, .duration_ms = 3000.0 } } },
+    .{ .id = "unbroken-seal", .mod = .{}, .meta = .{ .class_id = .paladin, .unique = true, .rarity = .rare, .active = .{ .kind = .unbroken_seal, .cooldown_ms = 7000.0, .duration_ms = 5000.0 } } },
+    .{ .id = "aegis-share", .mod = .{}, .meta = .{ .class_id = .paladin, .unique = true, .rarity = .uncommon, .active = .{ .kind = .aegis_share, .cooldown_ms = 8000.0, .duration_ms = 3000.0 } } },
+    .{ .id = "plant-charge", .mod = .{}, .meta = .{ .class_id = .paladin, .unique = true, .rarity = .uncommon, .active = .{ .kind = .plant_charge, .cooldown_ms = 6000.0 } } },
+    .{ .id = "shock-ring", .mod = .{}, .meta = .{ .class_id = .paladin, .unique = true, .rarity = .uncommon, .active = .{ .kind = .shock_ring, .cooldown_ms = 9000.0, .duration_ms = 1500.0 } } },
+    .{ .id = "rally-light", .mod = .{}, .meta = .{ .class_id = .paladin, .unique = true, .rarity = .uncommon, .active = .{ .kind = .rally_light, .cooldown_ms = 9000.0, .duration_ms = 5000.0 } } },
+    .{ .id = "kindled-resolve", .mod = .{}, .meta = .{ .class_id = .paladin, .unique = true, .rarity = .rare, .active = .{ .kind = .kindled_resolve, .cooldown_ms = 12000.0, .duration_ms = 4000.0 } } },
+    .{ .id = "bulwark-step", .mod = .{}, .meta = .{ .class_id = .paladin, .unique = true, .rarity = .uncommon, .active = .{ .kind = .bulwark_step, .cooldown_ms = 4000.0 } } },
+    .{ .id = "bleed-tithe", .mod = .{}, .meta = .{ .class_id = .priest, .unique = true, .rarity = .uncommon, .active = .{ .kind = .bleed_tithe, .cooldown_ms = 6000.0 } } },
+    .{ .id = "severance", .mod = .{}, .meta = .{ .class_id = .priest, .unique = true, .rarity = .uncommon, .active = .{ .kind = .severance, .cooldown_ms = 7000.0 } } },
+    .{ .id = "borrowed-time", .mod = .{}, .meta = .{ .class_id = .priest, .unique = true, .rarity = .rare, .active = .{ .kind = .borrowed_time, .cooldown_ms = 8000.0 } } },
+    .{ .id = "focus-hex", .mod = .{}, .meta = .{ .class_id = .priest, .unique = true, .rarity = .uncommon, .active = .{ .kind = .focus_hex, .cooldown_ms = 6000.0, .duration_ms = 4000.0 } } },
+    .{ .id = "contagion", .mod = .{}, .meta = .{ .class_id = .priest, .unique = true, .rarity = .rare, .active = .{ .kind = .contagion, .cooldown_ms = 9000.0 } } },
+    .{ .id = "flock-pulse", .mod = .{}, .meta = .{ .class_id = .priest, .unique = true, .rarity = .uncommon, .active = .{ .kind = .flock_pulse, .cooldown_ms = 7000.0 } } },
+    .{ .id = "self-lattice", .mod = .{}, .meta = .{ .class_id = .priest, .unique = true, .rarity = .common, .active = .{ .kind = .self_lattice, .cooldown_ms = 6000.0 } } },
+    .{ .id = "glass-ward", .mod = .{}, .meta = .{ .class_id = .priest, .unique = true, .rarity = .uncommon, .active = .{ .kind = .glass_ward, .cooldown_ms = 7000.0 } } },
+    .{ .id = "haste-gift", .mod = .{}, .meta = .{ .class_id = .priest, .unique = true, .rarity = .uncommon, .active = .{ .kind = .haste_gift, .cooldown_ms = 7000.0, .duration_ms = 5000.0 } } },
+    .{ .id = "drift-step", .mod = .{}, .meta = .{ .class_id = .priest, .unique = true, .rarity = .uncommon, .active = .{ .kind = .drift_step, .cooldown_ms = 6000.0 } } },
+    .{ .id = "undercut", .mod = .{}, .meta = .{ .class_id = .ninja, .unique = true, .rarity = .rare, .active = .{ .kind = .undercut, .cooldown_ms = 8000.0, .duration_ms = 4000.0 } } },
+    .{ .id = "edge-storm", .mod = .{}, .meta = .{ .class_id = .ninja, .unique = true, .rarity = .uncommon, .active = .{ .kind = .edge_storm, .cooldown_ms = 8000.0, .duration_ms = 6000.0 } } },
+    .{ .id = "needle", .mod = .{}, .meta = .{ .class_id = .ninja, .unique = true, .rarity = .uncommon, .active = .{ .kind = .needle, .cooldown_ms = 6000.0 } } },
+    .{ .id = "read-mark", .mod = .{}, .meta = .{ .class_id = .ninja, .unique = true, .rarity = .uncommon, .active = .{ .kind = .read_mark, .cooldown_ms = 6000.0, .duration_ms = 5000.0 } } },
+    .{ .id = "shard-ring", .mod = .{}, .meta = .{ .class_id = .ninja, .unique = true, .rarity = .uncommon, .active = .{ .kind = .shard_ring, .cooldown_ms = 7000.0 } } },
+    .{ .id = "wall-bloom", .mod = .{}, .meta = .{ .class_id = .ninja, .unique = true, .rarity = .common, .active = .{ .kind = .wall_bloom, .cooldown_ms = 7000.0, .duration_ms = 9000.0 } } },
+    .{ .id = "ghost-guard", .mod = .{}, .meta = .{ .class_id = .ninja, .unique = true, .rarity = .rare, .active = .{ .kind = .ghost_guard, .cooldown_ms = 9000.0, .duration_ms = 6000.0 } } },
+    .{ .id = "second-wind", .mod = .{}, .meta = .{ .class_id = .ninja, .unique = true, .rarity = .common, .active = .{ .kind = .second_wind, .cooldown_ms = 8000.0, .duration_ms = 1500.0 } } },
+    .{ .id = "razor-route", .mod = .{}, .meta = .{ .class_id = .ninja, .unique = true, .rarity = .uncommon, .active = .{ .kind = .razor_route, .cooldown_ms = 7000.0, .duration_ms = 3000.0 } } },
+    .{ .id = "paper-double", .mod = .{}, .meta = .{ .class_id = .ninja, .unique = true, .rarity = .rare, .active = .{ .kind = .paper_double, .cooldown_ms = 9000.0 } } },
 };
 
 pub fn cardMod(id: []const u8) ?CardMod {
     for (cards) |c| {
         if (std.mem.eql(u8, c.id, id)) return c.mod;
+    }
+    return null;
+}
+
+pub fn cardMeta(id: []const u8) ?CardMeta {
+    for (cards) |c| {
+        if (std.mem.eql(u8, c.id, id)) return c.meta;
     }
     return null;
 }
