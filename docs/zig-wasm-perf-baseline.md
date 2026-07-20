@@ -1,5 +1,22 @@
 # Zig→WASM perf baseline
 
+> **STALE — the 2026-05-05 numbers below pre-date the export-surface
+> roughly doubling (144 wasm exports as of the pre-Phase-0
+> `zig-wasm-exports.md` audit, growing further through
+> `docs/zig-step-world-parity-goal.md` Phases 0-4, active as of
+> 2026-07-20) and pre-date `step_world` itself gaining substantial new
+> logic (melee, AOE-queue abilities, Paper Double, ability-cast
+> dispatch, draft/offer-roll). This doc's own "Architectural takeaways"
+> conclusion (no perf concerns, wasm boundary tax is negligible) is NOT
+> being reversed here — nothing in this staleness note claims the
+> conclusion is wrong, only that the specific ns/op numbers below are
+> old and the wasm binary they were measured against was much smaller.
+> A fresh spot-check run on 2026-07-20 (below, same dev machine, NOT a
+> full re-benchmark of the newly-added `step_world` surface) is
+> included as a bonus data point, not a replacement baseline — if you
+> need current numbers for a real decision, re-run
+> `bun run tools/wasm-bench.ts` yourself first.
+
 Generated 2026-05-05 from `tools/wasm-bench.ts` on the dev machine
 (Bun 1.3.10, Linux x86_64). Numbers are illustrative — re-run on
 the deploy hardware (Vercel + Fly) for production decisions.
@@ -86,3 +103,36 @@ bun run tools/wasm-bench.ts
 
 Run on the actual deploy hardware to validate numbers; dev-machine
 numbers are 2-3× faster than typical Fly Performance VMs.
+
+## 2026-07-20 spot-check (bonus, not a re-baseline)
+
+Same dev machine, same `tools/wasm-bench.ts`, run as a cheap staleness
+check while adding this banner — not a rigorous re-benchmark of
+everything `step_world` has grown since May (that would need its own
+pass, ideally with new kernels for the abilities/melee/draft logic this
+doc never covered). Numbers moved enough that they're worth recording
+plainly rather than silently leaving the reader with only the old ones:
+
+| Op | Backend | 2026-05-05 | 2026-07-20 |
+|---|---|---|---|
+| `sin(x)` | TS-LUT | 10.9 ns | 15.3 ns |
+| `sin(x)` | wasm-LUT | 17.7 ns | 22.7 ns |
+| `atan2(y, x)` | TS-LUT | 23.9 ns | 26.5 ns |
+| `atan2(y, x)` | wasm-LUT | 17.7 ns | 19.7 ns |
+| `nextU32` | TS | 13.0 ns | 13.1 ns |
+| `nextU32` | wasm | 44.2 ns | 46.2 ns |
+| `resolveMoveCached` | TS-native | 191 ns | 197.7 ns |
+| `stepPlayer` | TS-native | 347 ns | 1284.4 ns |
+| `stepPlayer` | wasm-swap | 369 ns | 661.7 ns |
+
+Most kernels are flat-to-slightly-slower, consistent with normal
+machine noise/thermal variance and this repo's own general growth. The
+one number that moved a lot is `stepPlayer` TS-native (347 ns → 1284
+ns) — wasm-swap is now the FASTER path on this run (661.7 ns), the
+opposite of the original "wasm 6% slower" takeaway above. This was a
+single spot-check run, not averaged across multiple runs or isolated
+from background load on this (actively-used) dev machine, so treat the
+reversal as "worth re-checking properly," not as a settled new
+conclusion — the honest move here is to record what was actually
+measured, not to quietly discard an inconvenient number or promote it
+to a confident claim either way.

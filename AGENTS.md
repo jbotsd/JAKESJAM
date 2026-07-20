@@ -58,6 +58,11 @@ When implementation changes design behaviour, update the relevant doc.
 > consequence: player-movement changes need a `player.ts` ↔ `player.zig`
 > mirror + `cd sim && zig build`; weapon/combat/round/draft changes are
 > TS-only and need NO Zig mirror. See `CLAUDE.md` for the verified state.
+> 2026-07-20 addendum, conclusion unchanged: `step_world` itself (the
+> opt-in orchestrator) has grown well past the physics/collision skeleton
+> described above — 144+ wasm exports and active work
+> (`docs/zig-step-world-parity-goal.md`) porting melee, ability casts, and
+> the draft system into it. Still opt-in only, still not live by default.
 
 The deterministic sim core's hot paths have been ported from TypeScript
 to **Zig compiled to WebAssembly** to satisfy ADR-0001's "byte-identical

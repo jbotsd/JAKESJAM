@@ -5,6 +5,13 @@ docs describe plans that were later reverted or superseded — when a doc
 contradicts this file, trust this file, then verify against the running
 code. Last verified: 2026-07-08.
 
+*(2026-07-20 addendum, conclusion below unchanged: `step_world`/`sim/src/world.zig`*
+*has grown substantially since the 2026-07-08 verification — 144+ wasm*
+*exports and active multi-phase development (`docs/zig-step-world-parity-goal.md`)*
+*porting melee, ability casts, and the draft system into it. It is still*
+*NOT the production default; `USE_WASM_STEP_WORLD` stays unset live. This*
+*note only updates "how much exists," not the verified authority model above.)*
+
 ## What actually runs in production (verified, not aspirational)
 
 - **Sim authority is TypeScript.** `client/src/sim/World.ts`'s
