@@ -124,7 +124,14 @@ export const HEADER_SIZE = 56;
 // closes it. Same "TS bridge doesn't pack/unpack these tail fields yet,
 // but the SIZE must reflect the true Zig stride or every downstream array
 // mis-aligns" contract as every prior growth in this history.
-export const PLAYER_ENTITY_SIZE = 608;
+// 608 → 616 (Phase 4a follow-up, docs/zig-step-world-parity-goal.md — Kindled
+// Resolve consumption pass): +4 content bytes for kindled_resolve_until_tick
+// (u32); 608 was already 8-aligned so no leading pad, and being the sole
+// trailing field leaves no further implicit pad needed at 616 either (a
+// multiple of 8). Sub-agent scoped to sim/ only, per the now-established
+// pattern — this closes the resulting TS-side staleness immediately rather
+// than letting it sit as a known gap again.
+export const PLAYER_ENTITY_SIZE = 616;
 const PROJECTILE_ENTITY_SIZE = 216;
 const SATELLITE_ENTITY_SIZE = 96;
 const DESTRUCTIBLE_ENTITY_SIZE = 64;
