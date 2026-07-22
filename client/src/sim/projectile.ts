@@ -4,7 +4,10 @@
 //   pathings: straight, gravity, float, accelerate, boomerang, homing,
 //             anti-homing, bounce
 //   impacts:  none, explosive (AOE), sticky (linger + delayed burst),
-//             pierce-chain (decrement pierce, keep going), slow-field
+//             pierce-chain, slow-field
+//   pierce: decrement `pierceRemaining` and keep going on any hit — impact-
+//           independent (2026-07-20; "pierce-chain" is just the impact type
+//           that traditionally ALSO carries pierceCount, not the trigger)
 //   on-expire: spawn `splitCount` child shards in a fan
 //
 // Authority lives wherever this runs. On the Bun server the sim is the source
@@ -480,9 +483,16 @@ function stepProjectileNative(
     // Apply primary hit damage + side effects (explosive AOE, slow).
     events.push(...applyHitOn(proj, hitPid, x, y, players, tick, ctx.sortedPlayerIds));
 
-    // Pierce-chain: decrement and survive (don't expire). All other impacts
-    // expire on the first hit (with optional split spawn).
-    if (impact === "pierce-chain" && proj.pierceRemaining > 0) {
+    // Pierce: decrement and survive (don't expire) whenever any pierce
+    // budget remains — decoupled from `impact` (2026-07-20, card-pool
+    // raycast pass): this was previously gated on `impact === "pierce-chain"`
+    // specifically, which silently made `pierceCount` dead code on any card
+    // that sets it without ALSO setting that exact impact string (Void
+    // Fracture sets `pierceCount: 2` with `impact` left at the default
+    // `"none"` — it pierced nothing, ever, before this fix). Every other
+    // impact type still expires on the first hit below (with optional split
+    // spawn) exactly as before.
+    if (proj.pierceRemaining > 0) {
       const next: ProjectileEntity = {
         ...proj,
         x,
@@ -883,7 +893,7 @@ function detonateAt(
  * stay in lockstep when seeds match. Returns a new rng cursor and the list of
  * specs (ids assigned by caller).
  */
-function spawnSplit(
+export function spawnSplit(
   parent: ProjectileEntity,
   rngState: number,
 ): { spawned: SpawnedChild[]; rngState: number } {

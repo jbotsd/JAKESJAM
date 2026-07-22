@@ -33,7 +33,7 @@ import {
 } from "./constants.js";
 import { nextInt } from "./rng.js";
 import { lutAtan2, lutCos, lutSin } from "./trig.js";
-import type { EntityId, PlayerEntity, PlayerId, ProjectileEntity, Vec2 } from "./types.js";
+import type { EntityId, PlayerEntity, PlayerId, ProjectileEntity, ProjectileImpact, Vec2 } from "./types.js";
 
 /** Default fire cadence floor when fireRate is zero or missing. */
 const MIN_FIRE_RATE = 0.35;
@@ -179,6 +179,24 @@ export type HitscanPelletSpec = {
    * the hitscan weapon too, instead of silently doing nothing.
    */
   radius: number;
+  /**
+   * Card-pool raycast-compatibility pass (2026-07-20). Mirrors
+   * `ResolvedWeaponBuild.projectile`'s own `impact`/`impactRadiusPx`/
+   * `slowMultiplier`/`pierceCount`/`splitCount` fields — carried through so
+   * World.ts's hitscan resolution can natively support explosive/slow-field
+   * impact (routed through the existing `PendingInstantAoe` queue), pierce
+   * (`resolveHitscanShot` gathers multiple ordered hits along the same ray
+   * instead of stopping at the first), and split (spawns real child
+   * `ProjectileEntity`s at the ray's terminal point via the existing
+   * `spawnSplit`). Optional/defaulted exactly like the real-projectile
+   * branch below treats them — a card that never touches these fields costs
+   * nothing extra.
+   */
+  impact?: ProjectileImpact;
+  impactRadiusPx?: number;
+  slowMultiplier?: number;
+  pierceCount?: number;
+  splitCount?: number;
 };
 
 export type FireResult = {
@@ -483,6 +501,11 @@ function stepWeaponNative(
           tendril: isPriestTendril || undefined,
           leechFraction,
           radius,
+          impact: build.projectile.impact,
+          impactRadiusPx: build.projectile.impactRadiusPx,
+          slowMultiplier: build.projectile.slowMultiplier,
+          pierceCount: build.projectile.pierceCount,
+          splitCount: build.projectile.splitCount,
         });
         continue;
       }

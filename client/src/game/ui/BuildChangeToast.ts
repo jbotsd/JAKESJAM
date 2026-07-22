@@ -21,13 +21,17 @@ export class BuildChangeToast {
       position: "fixed",
       zIndex: "9050",
       left: "50%",
-      bottom: "clamp(92px, 15vh, 150px)",
-      width: "min(560px, calc(100vw - 32px))",
+      // Pulled down to hug the action-bar HUD band (was clamp(92,15vh,150))
+      // so this reads as part of the UI chrome cluster instead of a block
+      // floating mid-screen over open play space (2026-07-20, playtest
+      // feedback: "these info things always cover meaningful screen space").
+      bottom: "clamp(64px, 10vh, 104px)",
+      width: "min(440px, calc(100vw - 32px))",
       transform: "translate(-50%, 14px)",
       opacity: "0",
       pointerEvents: "none",
       boxSizing: "border-box",
-      padding: "14px 18px",
+      padding: "8px 12px",
       border: "1px solid rgba(80,227,194,0.72)",
       borderRadius: "8px",
       background: "rgba(7, 12, 18, 0.94)",
@@ -43,13 +47,15 @@ export class BuildChangeToast {
     if (this.hideTimer) clearTimeout(this.hideTimer);
     const build = describeBuild(view.cardIds, view.characterId);
     this.root.replaceChildren(
-      line(`BUILD CHANGED · ${view.autoPicked ? "TIMER CHOSE" : "YOU PICKED"} ${view.card.name.toUpperCase()}`, "#50e3c2", "10px", "0.16em"),
-      line(view.card.description, "#d9e7ee", "13px", "0.01em"),
-      line(`NOW · ${build.summary}`, "#fff7d6", "14px", "0.01em"),
+      line(`BUILD CHANGED · ${view.autoPicked ? "TIMER CHOSE" : "YOU PICKED"} ${view.card.name.toUpperCase()}`, "#50e3c2", "9px", "0.14em"),
+      line(view.card.description, "#d9e7ee", "12px", "0.01em"),
+      line(`NOW · ${build.summary}`, "#fff7d6", "12px", "0.01em"),
     );
     this.root.style.opacity = "1";
     this.root.style.transform = "translate(-50%, 0)";
-    this.hideTimer = setTimeout(() => this.hide(), 6500);
+    // Shorter dwell (was 6500ms) — less time spent covering the play area
+    // for a non-modal confirmation nobody needs to read for 6+ seconds.
+    this.hideTimer = setTimeout(() => this.hide(), 4500);
   }
 
   hide(): void {
@@ -66,6 +72,6 @@ export class BuildChangeToast {
 function line(text: string, color: string, fontSize: string, letterSpacing: string): HTMLDivElement {
   const el = document.createElement("div");
   el.textContent = text;
-  Object.assign(el.style, { color, fontSize, letterSpacing, lineHeight: "1.35", margin: "2px 0" } as Partial<CSSStyleDeclaration>);
+  Object.assign(el.style, { color, fontSize, letterSpacing, lineHeight: "1.2", margin: "1px 0" } as Partial<CSSStyleDeclaration>);
   return el;
 }

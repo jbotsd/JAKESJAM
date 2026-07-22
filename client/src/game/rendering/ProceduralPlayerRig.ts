@@ -2066,22 +2066,21 @@ export class ProceduralPlayerRig implements CombatRig {
 
     // Hood shadow (larger dark shape behind head) — narrower than the old
     // helmet build, reads as a sealed vessel-hull rather than a hard helmet.
+    // Polygon length varies by class (e.g. Kindled's 5-point shield vs the
+    // other classes' quads), so this walks the whole array rather than
+    // indexing fixed slots.
     g.fillStyle(DARK, 1);
     g.beginPath();
-    g.moveTo(hood.shadow[0].x, hood.shadow[0].y);
-    g.lineTo(hood.shadow[1].x, hood.shadow[1].y);
-    g.lineTo(hood.shadow[2].x, hood.shadow[2].y);
-    g.lineTo(hood.shadow[3].x, hood.shadow[3].y);
+    g.moveTo(hood.shadow[0]!.x, hood.shadow[0]!.y);
+    for (let i = 1; i < hood.shadow.length; i++) g.lineTo(hood.shadow[i]!.x, hood.shadow[i]!.y);
     g.closePath();
     g.fillPath();
 
     // Hood main (player colored)
     g.fillStyle(this.colorDark, 1);
     g.beginPath();
-    g.moveTo(hood.main[0].x, hood.main[0].y);
-    g.lineTo(hood.main[1].x, hood.main[1].y);
-    g.lineTo(hood.main[2].x, hood.main[2].y);
-    g.lineTo(hood.main[3].x, hood.main[3].y);
+    g.moveTo(hood.main[0]!.x, hood.main[0]!.y);
+    for (let i = 1; i < hood.main.length; i++) g.lineTo(hood.main[i]!.x, hood.main[i]!.y);
     g.closePath();
     g.fillPath();
 

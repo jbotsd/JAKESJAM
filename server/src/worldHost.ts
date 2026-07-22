@@ -346,7 +346,7 @@ export class WorldHost {
         // existing brains keep their identity, new ones register on demand.
         for (const b of this.bots.spawnInfosFor(target)) {
           if (!this.host.hasPlayer(b.playerId)) {
-            this.addBot(b.playerId, b.name);
+            this.addBot(b.playerId, b.name, b.characterId);
           }
         }
       } else if (liveBots.length > target) {
@@ -375,14 +375,19 @@ export class WorldHost {
     if (idsMatch && teamsMatch) return; // already correct — no churn
 
     for (const id of liveBots) this.host.removeRosterPlayer(PlayerId(id));
-    desc.forEach((b, index) => this.addBot(b.playerId, b.name, teamPlan[index]));
+    desc.forEach((b, index) => this.addBot(b.playerId, b.name, b.characterId, teamPlan[index]));
   }
 
   /** The one bot-insertion call site (structural test S2.D.4 counts every
    *  roster-insertion call in this file) — both branches of
    *  `adjustElasticBots` funnel through here. */
-  private addBot(playerId: PlayerId, name: string, teamId?: string): void {
-    this.host!.addPlayer(this.botSpawn(playerId, name, teamId));
+  private addBot(
+    playerId: PlayerId,
+    name: string,
+    characterId: PlayerSpawnInfo["characterId"],
+    teamId?: string,
+  ): void {
+    this.host!.addPlayer(this.botSpawn(playerId, name, characterId, teamId));
   }
 
   /** Team composition of currently-known humans, keyed by teamId — feeds
@@ -463,7 +468,7 @@ export class WorldHost {
     const botSpawns = this.bots
       .spawnInfosFor(botTarget)
       .filter((b) => !spawns.some((sp) => sp.playerId === b.playerId))
-      .map((b) => this.botSpawn(b.playerId, b.name));
+      .map((b) => this.botSpawn(b.playerId, b.name, b.characterId));
     // Map-aware brains: cover / hop / LOS for the arena they're actually on.
     this.bots.bindMap(map);
     return new MatchHost(WORLD_MATCH_ID, [...spawns, ...botSpawns], this.modeModifierIds, mapId, {
@@ -480,10 +485,15 @@ export class WorldHost {
     });
   }
 
-  private botSpawn(playerId: PlayerId, name: string, teamId?: string): PlayerSpawnInfo {
+  private botSpawn(
+    playerId: PlayerId,
+    name: string,
+    characterId: PlayerSpawnInfo["characterId"],
+    teamId?: string,
+  ): PlayerSpawnInfo {
     return {
       playerId,
-      characterId: "balanced",
+      characterId,
       name: `BOT · ${name}`,
       // Amber — the client also colors bot rigs by the bot_ id prefix, but
       // the roster color keeps room-mode consistent too.

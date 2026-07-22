@@ -7,12 +7,13 @@
 // Layout (Crystal Cyan palette, anchored to viewport via setScrollFactor(0)):
 //
 //   ┌─ top-left (fused nameplate column) ───────────────────────────────────────┐
-//   │  (◕)══ ▸ YOU        2   84/100    ← badge + health/shield ring, one row   │
-//   │  (◕)══   R3F9       1              per player in the match (Jake,        │
-//   │  (◕)══   BOT · SPARK 0             2026-07-14: "give everyone the match  │
+//   │  (◕)══ ▸ GEO YOU    2   84/100    ← badge + health/shield ring, one row   │
+//   │  (◕)══   KIN R3F9   1              per player in the match (Jake,        │
+//   │  (◕)══   SYZ BOT · SPARK 0         2026-07-14: "give everyone the match  │
 //   │  [buff strip - outline chips per active buff/debuff]  a nameplate" —     │
-//   │                                     health+shield+name+score fused      │
-//   │                                     into one object, not a separate bar) │
+//   │                                     health+shield+name+score+class      │
+//   │                     fused into one object, not a separate bar — class   │
+//   │                     tag added 2026-07-20, "including self")             │
 //   └──────────────────────────────────────────────────────────────────────────┘
 //
 //   ┌─ top-right ───────────────────────────────────────────────────────────────┐
@@ -39,6 +40,8 @@ import { crystalRoundsCards } from "../../sim/data/cards.js";
 import type { PlayerId } from "../../sim/types.js";
 import { drawPortraitBadge, drawNameplateRing, nameplateOuterRadius } from "../render/portraitBadge.js";
 import { RARITY_COLORS } from "./rarityColors.js";
+import { classShortLabel } from "./classAccentColors.js";
+import type { ClassId } from "../../sim/data/cardTypes.js";
 
 export type HudVitals = {
   health: number;
@@ -82,6 +85,14 @@ export type HudRound = {
    * one badge-height tall).
    */
   statusByPlayer?: Record<string, NameplateStatusTick[]>;
+  /**
+   * playerId → class (2026-07-20, "put what class everyone is... including
+   * self" — the fused nameplate above already carries name/health/status
+   * for everyone; class was the one identity fact missing from it, for
+   * every player INCLUDING the local "YOU" row). Missing entries just skip
+   * the tag rather than showing a placeholder.
+   */
+  classByPlayer?: Record<string, ClassId>;
   winnerLabel?: string;
 };
 
@@ -509,6 +520,8 @@ export class HudSystem {
       let tag = isLocal ? "YOU" : (round.names?.[pid] ?? playerTag(pid));
       if (this.compact) tag = tag.replace("BOT · ", "");
       tag = tag.slice(0, 14);
+      const classId = round.classByPlayer?.[pid];
+      if (classId) tag = `${classShortLabel(classId)} ${tag}`;
 
       const cy = startY + i * rowH;
       const color = round.colors?.[pid] ?? PALETTE.textDim;

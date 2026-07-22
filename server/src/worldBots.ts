@@ -17,7 +17,13 @@ import { BOT_ID_PREFIX } from "@sim/botId.ts";
 import { EMISSION_CHARGE_MAX } from "@sim/constants.ts";
 import { resolvePlayerBuild } from "@sim/weapon.ts";
 import { MAX_ABILITY_SLOTS } from "@sim/data/cardTypes.ts";
-import { PlayerId, type MapDefinition, type PlayerEntity, type WorldState } from "@sim/types.ts";
+import {
+  PlayerId,
+  type CharacterArchetype,
+  type MapDefinition,
+  type PlayerEntity,
+  type WorldState,
+} from "@sim/types.ts";
 import {
   buildArenaNav,
   dirTowardX,
@@ -35,6 +41,23 @@ const ROSTER = [
   "COG", "FLUX", "BOLT", "GEAR",
 ] as const;
 
+// Class variety (2026-07-20, "make it feel like real players" — a lobby of
+// bots that are all secretly Geometrician reads as one reskinned dummy, not
+// four different opponents). Cycled by creation order, same fixed-rotation
+// shape as `slideTier` below, so any bell with 4+ bots shows every class
+// rather than leaving it to chance. classes-goal.md confirms all four ship
+// into FFA/solo at this point ("FFA/solo always admit" — Priest is tuned to
+// be solo-viable, not duos-gated), so nothing here is held back.
+const CLASS_ROTATION: readonly CharacterArchetype[] = ["balanced", "heavy", "sprinter", "shielded"];
+/** Paladin/Ninja chassis verb is a melee arc (World.ts's Fire-is-the-same-
+ *  button-different-FSM branch), not stepWeapon's ranged shot — the generic
+ *  brain below must close to blade range before it means anything to press
+ *  Fire, instead of holding the ranged-tuned `engageRange` and swinging air
+ *  from 380px out. */
+function isMeleeClass(characterId: CharacterArchetype): boolean {
+  return characterId === "heavy" || characterId === "sprinter";
+}
+
 /** Deterministic-ish per-bot RNG (mulberry32). */
 function rng(seed: number): () => number {
   let t = seed >>> 0;
@@ -51,6 +74,9 @@ type BotMode = "chase" | "hold" | "cover" | "commit" | "retreat";
 type BotState = {
   id: PlayerId;
   name: string;
+  /** Assigned once at creation (CLASS_ROTATION), stable for the bot's
+   *  lifetime — this bot IS "a Kindled", not a random reskin every recycle. */
+  characterId: CharacterArchetype;
   seq: number;
   rand: () => number;
   strafeUntil: number;
@@ -83,6 +109,14 @@ const BOT_TUNING = {
   /** Preferred dueling range at 1280-wide cells (scaled by megaScale).
    *  Wider = hang back more, less face-tank pressure. */
   engageRange: 380,
+  /** Paladin/Ninja's own engage+fire range (replaces the two above for a
+   *  melee bot) — blade reach is ~82-88px (ConstructVfxController.ts's
+   *  BLADE_REACH/EDGE_REACH), so holding the ranged `engageRange` (380)
+   *  would have a melee bot happily swinging at air from four screen-
+   *  widths out. A small buffer over the real reach absorbs a tick or two
+   *  of closing-speed/aim jitter without missing every swing. */
+  meleeEngageRange: 95,
+  meleeFireRange: 110,
   retreatHp: 40,
   /** Base aim wobble — deliberately sloppy so humans can out-aim them. */
   aimErrorPx: 78,
@@ -137,20 +171,56 @@ export class WorldBots {
   }
 
   /** Bot spawn descriptors for host construction / recycle. */
-  spawnInfosFor(count: number): { playerId: PlayerId; name: string }[] {
-    const out: { playerId: PlayerId; name: string }[] = [];
+  spawnInfosFor(count: number): { playerId: PlayerId; name: string; characterId: CharacterArchetype }[] {
+    const out: { playerId: PlayerId; name: string; characterId: CharacterArchetype }[] = [];
     const existing = [...this.bots.values()];
+    // Class tally for whichever existing bots are about to be reused below —
+    // seeds the scarcest-class picker so a NEW bot fills the gap in the
+    // LIVE roster, not the next slot in an ever-advancing global sequence.
+    // A raw `nameCursor`-driven rotation (the first cut of this feature)
+    // only guarantees variety across every bot ever created — individual
+    // bots recycle independently (elastic bot floor tracks human count), so
+    // the CURRENTLY LIVE set can drift to 1-2 classes for a long stretch
+    // after uneven churn even though the abstract sequence is correct
+    // (observed live 2026-07-20: 4 live bots read GEO/GEO/GEO/KIN, zero
+    // Syzygist — "i havent seen a syzergist yet"). This keeps each bot's
+    // OWN class stable for its lifetime (still assigned once, at creation)
+    // while making the live set self-balancing regardless of history.
+    const classTally = new Map<CharacterArchetype, number>(CLASS_ROTATION.map((c) => [c, 0]));
+    for (let j = 0; j < Math.min(count, existing.length); j++) {
+      const c = existing[j]!.characterId;
+      classTally.set(c, (classTally.get(c) ?? 0) + 1);
+    }
+    const pickScarcestClass = (): CharacterArchetype => {
+      let best = CLASS_ROTATION[0]!;
+      let bestCount = Infinity;
+      for (const c of CLASS_ROTATION) {
+        const n = classTally.get(c) ?? 0;
+        if (n < bestCount) {
+          bestCount = n;
+          best = c;
+        }
+      }
+      classTally.set(best, bestCount + 1);
+      return best;
+    };
     for (let i = 0; i < count; i++) {
       if (existing[i]) {
-        out.push({ playerId: existing[i]!.id, name: existing[i]!.name });
+        out.push({
+          playerId: existing[i]!.id,
+          name: existing[i]!.name,
+          characterId: existing[i]!.characterId,
+        });
         continue;
       }
       const name = ROSTER[this.nameCursor % ROSTER.length]!;
+      const characterId = pickScarcestClass();
       this.nameCursor += 1;
       const id = PlayerId(`${BOT_ID_PREFIX}${name.toLowerCase()}`);
       this.bots.set(id, {
         id,
         name,
+        characterId,
         seq: 0,
         rand: rng(0xb07 + i * 7919),
         strafeUntil: 0,
@@ -172,7 +242,7 @@ export class WorldBots {
         coverUntil: 0,
         mode: "chase",
       });
-      out.push({ playerId: id, name });
+      out.push({ playerId: id, name, characterId });
     }
     for (const id of [...this.bots.keys()]) {
       if (!out.some((o) => o.playerId === id)) this.bots.delete(id);
@@ -221,8 +291,15 @@ export class WorldBots {
     let keys = 0;
     const scale = megaScale(this.nav);
     const farRange = BOT_TUNING.farRange * scale;
-    const engageRange = BOT_TUNING.engageRange * Math.min(1.35, scale);
-    const fireRange = BOT_TUNING.fireRange * scale;
+    // Melee (Paladin/Ninja): hold at blade range, not the ranged-tuned
+    // standoff distance — everything downstream (mode selection, chase-
+    // vs-hold, the Fire gate) already reads off these two locals, so
+    // swapping them here is the whole fix (see isMeleeClass's own comment).
+    const melee = isMeleeClass(bot.characterId);
+    const engageRange = melee
+      ? BOT_TUNING.meleeEngageRange * scale
+      : BOT_TUNING.engageRange * Math.min(1.35, scale);
+    const fireRange = melee ? BOT_TUNING.meleeFireRange * scale : BOT_TUNING.fireRange * scale;
 
     if (!foe) {
       if (nowMs > bot.strafeUntil) {

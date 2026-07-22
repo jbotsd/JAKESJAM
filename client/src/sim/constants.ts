@@ -784,6 +784,12 @@ export const SYZ_BORROWED_TIME_DRAIN_SELF = 8;
 /** Delay before the drain lands — matches the doc's "over the next 6s"
  *  figure exactly. */
 export const SYZ_BORROWED_TIME_DEBT_DELAY_TICKS = Math.round(6000 / STEP_MS);
+/** Debt-resolution burst (VFX-only, render-side): a small, ominous pop on
+ *  whoever the drain actually lands on (self OR the healed ally — the
+ *  render-side deferred-payoff scan is per-player, not caster-only). Sized
+ *  down from Second Wind's own payoff burst — this reads as a bill coming
+ *  due, not a weapon hit. */
+export const SYZ_BORROWED_TIME_DEBT_BURST_RADIUS_PX = 70;
 /** Focus Hex (single): marks the nearest enemy within
  *  SYZ_ENEMY_SEARCH_RANGE_PX (no cone — omnidirectional auto-target,
  *  low-aim direction; unlike Facet Break/Judgment Line's aim-cone marks,
@@ -1043,11 +1049,22 @@ export const NINJA_EDGE_STORM_WAVE_DAMAGE_MULTIPLIER = 2.2;
  *  applies for free via the existing hit-resolution pass, the SAME shape
  *  Sunspike/Bleed Tithe/Severance already use. Range shorter than
  *  SYZ_ENEMY_SEARCH_RANGE_PX (420) — "gap-finish, tactile" reads as
- *  melee-adjacent, not a snipe. Damage sits between SLASH_DAMAGE (22) and
+ *  melee-adjacent, not a snipe. Damage sits between SLASH_DAMAGE (11) and
  *  KIN_SUNSPIKE_DAMAGE (40) — "high single damage" for a catalog button,
- *  but not above a dedicated melee-tank thrust. */
+ *  but not above a dedicated melee-tank thrust.
+ *  2026-07-20 gap-closer pass (Jake: "rogue is balanced too weak" — melee
+ *  chassis vs. Wizard's 880px true-hitscan and Priest's homing tendrils is
+ *  a structural range mismatch; ninja also carries the lowest HP of the
+ *  four classes with no Paladin-style mitigation to compensate for closing
+ *  that gap). Lunge distance raised from 130 so a cast from near max RANGE
+ *  actually lands the ninja inside/adjacent to SLASH_RANGE — before this,
+ *  "the gap was never really there" (the card's own flavor text) wasn't
+ *  literally true: a max-range cast still left ~170px uncrossed. Cooldown
+ *  (cards.ts) cut 6000ms -> 5000ms so the tool is available more often
+ *  during an approach — kept above Bulwark Step's 4000ms floor so it isn't
+ *  the single most spammable reposition tool in the game. */
 export const NINJA_NEEDLE_RANGE_PX = 300;
-export const NINJA_NEEDLE_LUNGE_PX = 130;
+export const NINJA_NEEDLE_LUNGE_PX = 230;
 export const NINJA_NEEDLE_DAMAGE = 36;
 export const NINJA_NEEDLE_SPEED = 1400;
 /** Read Mark (single): omnidirectional auto-target, mark lives on the
@@ -1090,6 +1107,11 @@ export const NINJA_WALL_BLOOM_DAMAGE = 10;
  *  HIT grant. */
 export const NINJA_SECOND_WIND_HEAL = 12;
 export const NINJA_SECOND_WIND_ENERGY = 30;
+/** Second Wind's payoff burst (VFX-only, render-side): self-directed, so it
+ *  rides the same spawnNovaBurst() shape as Shard Ring/Wall Bloom above but
+ *  sized down — this is a personal sustain proc, not an area weapon, so it
+ *  shouldn't visually compete with the abilities that actually hit people. */
+export const NINJA_SECOND_WIND_BURST_RADIUS_PX = 90;
 /** Razor Route (movement): a TS-side additive velocity impulse along the
  *  dash direction, layered on top of whatever the movement backend (TS or
  *  wasm) already computed for THIS tick — the same "post-hoc velocity

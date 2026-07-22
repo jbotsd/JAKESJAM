@@ -39,10 +39,10 @@ export type HeadCrestGeometry = {
 };
 
 export type HeadHoodGeometry = {
-  /** Dark hood shadow quad (drawn first, larger). */
-  shadow: [Point, Point, Point, Point];
-  /** Player-colored hood main quad, inset from shadow. */
-  main: [Point, Point, Point, Point];
+  /** Dark hood shadow polygon (drawn first, larger). At least 3 points. */
+  shadow: Point[];
+  /** Player-colored hood main polygon, inset from shadow. At least 3 points. */
+  main: Point[];
 };
 
 /**
@@ -168,21 +168,33 @@ export function headCrestGeometry(
 export function headHoodGeometry(classId: ClassId, head: Point, s: number, f: number): HeadHoodGeometry {
   switch (classId) {
     case "paladin":
-      // Kindled: tall, CENTERED (no facing skew), narrow-tapered — the
-      // crown base beneath the crest spike above. Reads as "the biggest
-      // thing in the room" even in flat black (chassis-design-axioms CA3).
+      // Kindled: a flat-topped, flared-shoulder SHIELD — tapering to a
+      // single point at the chin — CENTERED (no facing skew), sat beneath
+      // the crest spike above. REVISED 2026-07-22 (Jake, live feedback: "the
+      // head cone ... looks like kkk"): the previous shape was a narrow-top/
+      // wide-base cone that, combined with the centered blade crest above
+      // it, read as a pointed hood — see feedback_no_illuminati_symbolism
+      // memory for this project's hard line against accidental hate-symbol
+      // silhouettes. A shield tapers the OPPOSITE way (wide at the top,
+      // point at the bottom) so it can't be mistaken for a hood, while still
+      // reading as "the biggest thing in the room" (chassis-design-axioms
+      // CA3) via the flared shoulders. Verified side-by-side against the old
+      // geometry as a rendered PNG before committing (this rig can't be
+      // constructed under `bun test`, see file header).
       return {
         shadow: [
-          { x: head.x - 8.5 * s, y: head.y + 6 * s },
-          { x: head.x - 3.5 * s, y: head.y - 20 * s },
-          { x: head.x + 3.5 * s, y: head.y - 20 * s },
-          { x: head.x + 8.5 * s, y: head.y + 6 * s },
+          { x: head.x - 7 * s, y: head.y - 20 * s },
+          { x: head.x + 7 * s, y: head.y - 20 * s },
+          { x: head.x + 8.5 * s, y: head.y - 10 * s },
+          { x: head.x, y: head.y + 6 * s },
+          { x: head.x - 8.5 * s, y: head.y - 10 * s },
         ],
         main: [
-          { x: head.x - 6.5 * s, y: head.y + 4 * s },
-          { x: head.x - 2.5 * s, y: head.y - 18 * s },
-          { x: head.x + 2.5 * s, y: head.y - 18 * s },
-          { x: head.x + 6.5 * s, y: head.y + 4 * s },
+          { x: head.x - 5.3 * s, y: head.y - 18 * s },
+          { x: head.x + 5.3 * s, y: head.y - 18 * s },
+          { x: head.x + 6.5 * s, y: head.y - 9 * s },
+          { x: head.x, y: head.y + 4 * s },
+          { x: head.x - 6.5 * s, y: head.y - 9 * s },
         ],
       };
 

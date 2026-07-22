@@ -1347,7 +1347,17 @@ export type SimEvent = (
        * delivery that never creates a `ProjectileEntity` at all — the render
        * layer draws an instant tracer to each point instead of animating a
        * traveling body. Additive; absent for every non-raycast weapon. */
-      hitscanHits?: { x: number; y: number; hitPlayerId: PlayerId | null }[];
+      hitscanHits?: {
+        x: number;
+        y: number;
+        hitPlayerId: PlayerId | null;
+        /** True when the ray was stopped by terrain rather than a player,
+         *  decoy, destructible, or reaching clean max range (2026-07-20,
+         *  bullet-feel juice pass) — lets the render layer draw a wall-impact
+         *  spark at `x`/`y` instead of a spark hanging in empty air on a
+         *  clean miss. Additive; older events treat it as falsy/absent. */
+        blockedByWall?: boolean;
+      }[];
     }
   | {
       t: 'hit-confirmed';

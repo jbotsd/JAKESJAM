@@ -70,7 +70,9 @@ import {
   GEO_LATTICE_ZONE_DURATION_MS,
   NINJA_SHARD_RING_RADIUS_PX,
   NINJA_WALL_BLOOM_RADIUS_PX,
+  NINJA_SECOND_WIND_BURST_RADIUS_PX,
   SYZ_FLOCK_PULSE_RADIUS_PX,
+  SYZ_BORROWED_TIME_DEBT_BURST_RADIUS_PX,
   KIN_SHOCK_RING_RADIUS_PX,
   STEP_MS,
 } from "../../sim/constants.js";
@@ -227,6 +229,24 @@ export class ConstructVfxController {
   private readonly ghostGuardWasArmed: Map<string, boolean> = new Map();
   private readonly shockRingWasArmed: Map<string, boolean> = new Map();
   private readonly wallBloomWasArmed: Map<string, boolean> = new Map();
+  // Second Wind (2026-07-20 fast-follow) — joins the three above for the
+  // IDENTICAL reason: its payoff (heal + energy on a landed hit within the
+  // window) is consumed in the SAME tick as the `slash-hit` event that
+  // would otherwise drive the empowered-hit flourish below, so a live
+  // `secondWindUntilTick > tick` check always reads false by the time this
+  // controller sees it — World.ts:5209 clears the field to `undefined` in
+  // that exact write. This was a silent no-op flourish, not a missing
+  // design; the fix is the same frame-diff technique, not a new mechanism.
+  private readonly secondWindWasArmed: Map<string, boolean> = new Map();
+  // Borrowed Time's debt (2026-07-20 fast-follow) — a DIFFERENT flavor of
+  // the same gap: this one isn't racing a same-tick SimEvent, there simply
+  // IS no SimEvent for the drain landing (World.ts's debt-resolution block
+  // is a bare per-tick expiry check, not an emitted event) — frame-diff is
+  // the only tell that exists, not a race to win. Fires on WHOEVER the
+  // drain actually lands on (self-cast or the healed ally, per-player scan
+  // below), matching debtUntilTick's own "never cleared by anything but
+  // resolution" invariant `consumedThisFrame` requires.
+  private readonly debtWasArmed: Map<string, boolean> = new Map();
   // Continuous buff-aura pulse — Overclock (wizard), Rally Light/Aegis
   // Share/Kindled Resolve (paladin), Haste Gift/Self-Lattice (priest). Split
   // per class for the same Filters-Glow-is-one-tint-per-layer reason the
@@ -506,9 +526,14 @@ export class ConstructVfxController {
       const tick = state.tick;
       let empowered = false;
       if (cls === "ninja") {
+        // Second Wind is deliberately NOT checked here — its window clears
+        // in the SAME tick it's consumed (a same-tick-clear race this
+        // victim-directed live-check can never win), unlike Undercut/Read
+        // Mark's non-consuming windows below. Its own payoff is handled
+        // separately, self-directed, via the deferred-payoff frame-diff
+        // loop (`secondWindWasArmed`, below) — see that block's comment.
         empowered =
           (attacker.undercutUntilTick !== undefined && attacker.undercutUntilTick > tick) ||
-          (attacker.secondWindUntilTick !== undefined && attacker.secondWindUntilTick > tick) ||
           (attacker.readTargetId === ev.victimId &&
             attacker.readMarkUntilTick !== undefined &&
             attacker.readMarkUntilTick > tick);
@@ -708,6 +733,16 @@ export class ConstructVfxController {
         ? Math.hypot(hitPoint.x - origin.x, hitPoint.y - origin.y)
         : base * (1 + channelFrac * 0.35);
       spawnLance(this.pool, origin, aim, reach, GEOMETRICIAN_TINT);
+      // Wall impact — a real bullet hitting terrain leaves a mark, not
+      // silence (2026-07-20, bullet-feel juice pass). Reuses the SAME
+      // crystal-shatter shape Prism Fan's cast-tell already established
+      // (spawnCrystalShards is a generic burst-from-point primitive, not
+      // Prism-Fan-exclusive) — the wizard's own crystal bolt breaking apart
+      // against a wall, oriented along the shot's own travel direction so
+      // the shards scatter forward past the impact point.
+      if (hitPoint?.blockedByWall) {
+        spawnCrystalShards(this.pool, { x: hitPoint.x, y: hitPoint.y }, aim, GEOMETRICIAN_TINT);
+      }
     }
 
     // Geometrician wind-up glow — the ramping channel itself, drawn
@@ -819,12 +854,13 @@ export class ConstructVfxController {
     }
 
     // Deferred-payoff detection — Ghost Guard's dodge (ninja), Shock Ring's
-    // landing slam (paladin), Wall Bloom's wall-kick burst (ninja). None of
-    // these have a dedicated SimEvent (all three fire silently in
-    // combat.ts/World.ts); "the *UntilTick field was defined last frame and
-    // is undefined now" is the only tell, and is unambiguous because none of
-    // the three fields are ever reset by natural timeout (see
-    // `consumedThisFrame`'s doc comment).
+    // landing slam (paladin), Wall Bloom's wall-kick burst (ninja), Second
+    // Wind's heal/energy payoff (ninja), Borrowed Time's debt landing
+    // (priest). None of these have a dedicated SimEvent (all five fire
+    // silently in combat.ts/World.ts); "the *UntilTick field was defined
+    // last frame and is undefined now" is the only tell, and is
+    // unambiguous because none of the five fields are ever reset by
+    // natural timeout (see `consumedThisFrame`'s doc comment).
     this.auraPhaseSec += deltaMs / 1000; // (also drives the buff-aura scan below)
     for (const pidKey of Object.keys(state.players)) {
       const p = state.players[pidKey as PlayerId];
@@ -833,6 +869,13 @@ export class ConstructVfxController {
       if (this.consumedThisFrame(this.ghostGuardWasArmed, pidKey, p.ghostGuardChargeUntilTick)) {
         if (pos) spawnGhostGuardDodge(this.pool, pos, INTERSTICE_TINT);
       }
+      // Second Wind — self-directed (the caster heals/energizes themself,
+      // there's no victim to flourish), so this rides the SAME deferred-
+      // payoff shape as Ghost Guard immediately above rather than the
+      // victim-positioned empowered-hit flourish Undercut/Read Mark use.
+      if (this.consumedThisFrame(this.secondWindWasArmed, pidKey, p.secondWindUntilTick)) {
+        if (pos) spawnNovaBurst(this.pool, pos, NINJA_SECOND_WIND_BURST_RADIUS_PX, INTERSTICE_TINT, "slash");
+      }
       if (this.consumedThisFrame(this.shockRingWasArmed, pidKey, p.shockRingArmedUntilTick)) {
         if (pos) spawnNovaBurst(this.pool, pos, KIN_SHOCK_RING_RADIUS_PX, KINDLED_TINT, "seal");
         onDeferredNovaImpact?.(pidKey as PlayerId, "shock-ring");
@@ -840,6 +883,15 @@ export class ConstructVfxController {
       if (this.consumedThisFrame(this.wallBloomWasArmed, pidKey, p.wallBloomUntilTick)) {
         if (pos) spawnNovaBurst(this.pool, pos, NINJA_WALL_BLOOM_RADIUS_PX, INTERSTICE_TINT, "slash");
         onDeferredNovaImpact?.(pidKey as PlayerId, "wall-bloom");
+      }
+      // Borrowed Time — self-directed on WHOEVER the drain actually lands
+      // on (the caster on a self-cast, or the healed ally on the ally
+      // branch — this per-player scan covers both with no extra plumbing,
+      // same "an ally needs their own tell" shape the buff-aura block
+      // below already relies on for Haste Gift). Priest cool-white/"ooze"
+      // style, not Interstice's — this is a Syzygist mechanic.
+      if (this.consumedThisFrame(this.debtWasArmed, pidKey, p.debtUntilTick)) {
+        if (pos) spawnNovaBurst(this.pool, pos, SYZ_BORROWED_TIME_DEBT_BURST_RADIUS_PX, SYZYGIST_TINT, "ooze");
       }
     }
 

@@ -39,6 +39,7 @@ server/.tiktok/
 server/.entitlements/
 server/.signups/
 server/.clips-quarantine/
+server/.clips-highlights/
 server/.telemetry/
 # Data warehouse — rebuilt locally from the sources above + fresh research
 # agent runs (bun data-warehouse/ingest.ts), never hand-edited, so it's a

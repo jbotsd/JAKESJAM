@@ -1164,6 +1164,27 @@ export function spawnLance(
   g.fillStyle(tint.core, 0.95);
   g.fillCircle(tip.x, tip.y, 3);
 
+  // Muzzle flash — a distinct bright pop AT THE ORIGIN, not just the tapered
+  // beam's own wide base. Nijman's "Art of Screenshake" checklist treats
+  // muzzle flashes as their own beat, separate from the tracer/impact (a gun
+  // that only shows its bolt in flight but never visibly discharges reads as
+  // weightless). A short radial burst, bigger than the tip's own circles
+  // since this is the "recoil" end, not the "arrival" end.
+  g.fillStyle(tint.glow, 0.55);
+  g.fillCircle(origin.x, origin.y, 11);
+  g.fillStyle(tint.core, 1);
+  g.fillCircle(origin.x, origin.y, 5);
+  // Cross-flare spikes off the muzzle burst (perpendicular to the beam),
+  // reading as light escaping around the shot rather than a flat dot.
+  g.lineStyle(2, tint.core, 0.8);
+  const flareLen = 10;
+  g.beginPath();
+  g.moveTo(origin.x + px * flareLen, origin.y + py * flareLen);
+  g.lineTo(origin.x - px * flareLen, origin.y - py * flareLen);
+  g.moveTo(origin.x - dx * flareLen * 0.6, origin.y - dy * flareLen * 0.6);
+  g.lineTo(origin.x + dx * flareLen * 0.3, origin.y + dy * flareLen * 0.3);
+  g.strokePath();
+
   transientVfx.spawn({
     factory: () => g,
     lifetimeMs: 240,

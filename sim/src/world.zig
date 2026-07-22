@@ -986,7 +986,7 @@ const KIN_SUNSPIKE_RANGE_PX: f64 = 150.0;
 const KIN_SUNSPIKE_SPEED: f64 = 1500.0;
 // Ninja — Needle (constants.ts:1055-1058).
 const NINJA_NEEDLE_RANGE_PX: f64 = 300.0;
-const NINJA_NEEDLE_LUNGE_PX: f64 = 130.0;
+const NINJA_NEEDLE_LUNGE_PX: f64 = 230.0; // 2026-07-20 gap-closer pass, see constants.ts
 const NINJA_NEEDLE_DAMAGE: f64 = 36.0;
 const NINJA_NEEDLE_SPEED: f64 = 1400.0;
 // Priest/Syzygist — Severance (constants.ts:767-768).

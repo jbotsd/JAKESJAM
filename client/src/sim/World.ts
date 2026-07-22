@@ -164,7 +164,8 @@ import {
   NINJA_FOOLED_DURATION_MS,
   NINJA_FOOLED_DAMAGE_MULTIPLIER,
 } from "./constants.js";
-import { stepProjectile, spawnProjectile, makeHitSweepScratch, fillHitSweepScratch, type HitSweepScratch } from "./projectile.js";
+import { stepProjectile, spawnProjectile, spawnSplit, makeHitSweepScratch, fillHitSweepScratch, type HitSweepScratch } from "./projectile.js";
+import { SLOW_FIELD_DURATION_MS } from "./projectile.js";
 import {
   resolveEmission,
   EMISSION_BURN_CAP_MS,
@@ -2017,12 +2018,26 @@ export type HitscanTraceResult = {
  * groups the real traveling-projectile pipeline checks (player-hit inside
  * `stepProjectileNative`, decoy-hit in `paperDouble.ts`, destructible-hit in
  * `destructible.ts`) — a hitscan shot never creates a `ProjectileEntity`, so
- * without this it could never hit a decoy or destructible at all. Whichever
- * candidate is nearest wins; a clean miss returns the max-range endpoint
- * with every `hit*Id` null so the tracer visual always has a real point to
- * draw to. Hangout mode's player-immunity carve-out is the CALLER's
- * responsibility (pass an empty `sortedPlayerIds` — same convention
- * `projectilePlayerIds` already uses for the real projectile pass).
+ * without this it could never hit a decoy or destructible at all. Hangout
+ * mode's player-immunity carve-out is the CALLER's responsibility (pass an
+ * empty `sortedPlayerIds` — same convention `projectilePlayerIds` already
+ * uses for the real projectile pass).
+ *
+ * Returns an ORDERED ARRAY of hits (2026-07-20, card-pool raycast pass —
+ * pierce support): the ray keeps gathering the next-nearest
+ * player/decoy/destructible hit, in distance order, up to `pierceCount + 1`
+ * total, same as a real piercing projectile keeps traveling and can strike
+ * additional targets on later ticks (`projectile.ts`'s
+ * `pierceRemaining`-continue branch) — except a same-tick ray resolves every
+ * pierced hit in one pass instead of needing multiple ticks. A wall always
+ * hard-stops the ray (piercing never grants wall-penetration, matching the
+ * real-projectile precedent: bounce/pierce never lets a shot pass through
+ * terrain either) and is always the LAST element when reached. The array is
+ * never empty: index 0 is always present (a clean miss returns a
+ * single-element array with every `hit*Id` null at the max-range endpoint,
+ * exactly like the pre-pierce single-result shape did) — every existing
+ * caller that only cares about the first hit can keep reading `[0]`
+ * unchanged.
  */
 export function resolveHitscanShot(
   originX: number,
@@ -2046,13 +2061,18 @@ export function resolveHitscanShot(
   // Tithe leech case). Passing the build's own radius keeps size-modifier
   // cards (circle-rounds etc.) meaningful for a hitscan weapon too.
   radius: number = 0,
-): HitscanTraceResult {
+  // Pierce budget (2026-07-20) — 0 (default) reproduces the original
+  // single-hit behavior exactly (a length-1 result array).
+  pierceCount: number = 0,
+): HitscanTraceResult[] {
   const dx = Math.cos(aimAngle);
   const dy = Math.sin(aimAngle);
   const vx = dx * rangePx;
   const vy = dy * rangePx;
   const mover: AABB = { x: originX - radius, y: originY - radius, w: radius * 2, h: radius * 2 };
 
+  // Mutable candidate pools — a pierced hit is spliced out of its own pool
+  // so the next sweep pass finds the NEXT-nearest one behind it.
   const candidatePids: PlayerId[] = [];
   const candidateAABBs: AABB[] = [];
   for (const pid of sortedPlayerIds) {
@@ -2062,7 +2082,6 @@ export function resolveHitscanShot(
     candidatePids.push(pid);
     candidateAABBs.push(playerHitboxAABB(player));
   }
-  const playerHit = candidateAABBs.length > 0 ? sweepAABB(mover, vx, vy, 1, candidateAABBs) : null;
 
   const decoyIds: EntityId[] = [];
   const decoyAABBs: AABB[] = [];
@@ -2075,7 +2094,6 @@ export function resolveHitscanShot(
       decoyAABBs.push(paperDoubleAABB(pd));
     }
   }
-  const decoyHit = decoyAABBs.length > 0 ? sweepAABB(mover, vx, vy, 1, decoyAABBs) : null;
 
   const destructibleIds: EntityId[] = [];
   const destructibleAABBs: AABB[] = [];
@@ -2086,52 +2104,83 @@ export function resolveHitscanShot(
     destructibleIds.push(id);
     destructibleAABBs.push(destructibleAABB(d));
   }
-  const destructibleHit =
-    destructibleAABBs.length > 0 ? sweepAABB(mover, vx, vy, 1, destructibleAABBs) : null;
 
+  // Wall position is fixed for the whole ray — piercing never moves it.
   const wallHit = sweepAABBCached(mover, vx, vy, 1, collisionCache, true);
+  const wallT = wallHit ? wallHit.t : 1;
 
-  let bestT = 1; // 1 = full range, no hit at all
-  let hitPlayerId: PlayerId | null = null;
-  let hitDecoyId: EntityId | null = null;
-  let hitDestructibleId: EntityId | null = null;
-  let blockedByWall = false;
-  if (playerHit && playerHit.t < bestT) {
-    bestT = playerHit.t;
-    hitPlayerId = candidatePids[playerHit.index]!;
-    hitDecoyId = null;
-    hitDestructibleId = null;
-    blockedByWall = false;
+  const results: HitscanTraceResult[] = [];
+  const maxHits = pierceCount + 1;
+  while (results.length < maxHits) {
+    const playerHit = candidateAABBs.length > 0 ? sweepAABB(mover, vx, vy, 1, candidateAABBs) : null;
+    const decoyHit = decoyAABBs.length > 0 ? sweepAABB(mover, vx, vy, 1, decoyAABBs) : null;
+    const destructibleHit =
+      destructibleAABBs.length > 0 ? sweepAABB(mover, vx, vy, 1, destructibleAABBs) : null;
+
+    let bestT = wallT; // the wall is the floor every candidate must beat
+    let hitPlayerId: PlayerId | null = null;
+    let hitDecoyId: EntityId | null = null;
+    let hitDestructibleId: EntityId | null = null;
+    let playerHitIdx = -1;
+    let decoyHitIdx = -1;
+    let destructibleHitIdx = -1;
+    if (playerHit && playerHit.t < bestT) {
+      bestT = playerHit.t;
+      hitPlayerId = candidatePids[playerHit.index]!;
+      hitDecoyId = null;
+      hitDestructibleId = null;
+      playerHitIdx = playerHit.index;
+      decoyHitIdx = -1;
+      destructibleHitIdx = -1;
+    }
+    if (decoyHit && decoyHit.t < bestT) {
+      bestT = decoyHit.t;
+      hitPlayerId = null;
+      hitDecoyId = decoyIds[decoyHit.index]!;
+      hitDestructibleId = null;
+      playerHitIdx = -1;
+      decoyHitIdx = decoyHit.index;
+      destructibleHitIdx = -1;
+    }
+    if (destructibleHit && destructibleHit.t < bestT) {
+      bestT = destructibleHit.t;
+      hitPlayerId = null;
+      hitDecoyId = null;
+      hitDestructibleId = destructibleIds[destructibleHit.index]!;
+      playerHitIdx = -1;
+      decoyHitIdx = -1;
+      destructibleHitIdx = destructibleHit.index;
+    }
+
+    const blockedByWall = hitPlayerId === null && hitDecoyId === null && hitDestructibleId === null && bestT === wallT && wallHit !== null;
+    results.push({
+      hitPlayerId,
+      hitDecoyId,
+      hitDestructibleId,
+      hitX: originX + vx * bestT,
+      hitY: originY + vy * bestT,
+      blockedByWall,
+    });
+
+    // A wall (or a clean miss at max range) always ends the ray — nothing
+    // left to pierce through.
+    if (hitPlayerId === null && hitDecoyId === null && hitDestructibleId === null) break;
+
+    // Splice the pierced candidate out of its own pool (and the parallel id
+    // array, so indices stay aligned) so the next loop pass's sweep finds
+    // whatever's next behind it.
+    if (playerHitIdx >= 0) {
+      candidatePids.splice(playerHitIdx, 1);
+      candidateAABBs.splice(playerHitIdx, 1);
+    } else if (decoyHitIdx >= 0) {
+      decoyIds.splice(decoyHitIdx, 1);
+      decoyAABBs.splice(decoyHitIdx, 1);
+    } else if (destructibleHitIdx >= 0) {
+      destructibleIds.splice(destructibleHitIdx, 1);
+      destructibleAABBs.splice(destructibleHitIdx, 1);
+    }
   }
-  if (decoyHit && decoyHit.t < bestT) {
-    bestT = decoyHit.t;
-    hitPlayerId = null;
-    hitDecoyId = decoyIds[decoyHit.index]!;
-    hitDestructibleId = null;
-    blockedByWall = false;
-  }
-  if (destructibleHit && destructibleHit.t < bestT) {
-    bestT = destructibleHit.t;
-    hitPlayerId = null;
-    hitDecoyId = null;
-    hitDestructibleId = destructibleIds[destructibleHit.index]!;
-    blockedByWall = false;
-  }
-  if (wallHit && wallHit.t < bestT) {
-    bestT = wallHit.t;
-    hitPlayerId = null;
-    hitDecoyId = null;
-    hitDestructibleId = null;
-    blockedByWall = true;
-  }
-  return {
-    hitPlayerId,
-    hitDecoyId,
-    hitDestructibleId,
-    hitX: originX + vx * bestT,
-    hitY: originY + vy * bestT,
-    blockedByWall,
-  };
+  return results;
 }
 
 /**
@@ -2374,6 +2423,20 @@ export function stepWithRuntime(
    * `state.satellites` example, same reasoning here).
    */
   const pendingPaperDoubleSpawns: PaperDoubleEntity[] = [];
+
+  /**
+   * Hitscan split children (2026-07-20, card-pool raycast pass — Pierce
+   * Chain/Cluster Bomb) — same "collected here, merged once" shape as
+   * `pendingPaperDoubleSpawns` immediately above, for the same reason:
+   * `remainingProjectiles` (the projectile output cow-map) isn't declared
+   * until well after the per-player loop closes, so a hitscan pellet
+   * resolved DURING that loop can't insert a real child `ProjectileEntity`
+   * into it directly. Missing only `id` (assigned at the merge site, right
+   * after `remainingProjectiles` is declared, using the same
+   * `runtime.nextEntityId` allocator the existing on-death split insertion
+   * already uses).
+   */
+  const pendingHitscanSplitSpawns: Omit<ProjectileEntity, "id">[] = [];
 
   /**
    * Resonance-gated position swaps (2026-07-19 fast-follow — docs/card-
@@ -2705,7 +2768,7 @@ export function stepWithRuntime(
         // `state.players` merged under `players` (`??`) so a not-yet-
         // processed victim is still found (using their pre-tick position —
         // negligible for one tick of movement).
-        const hitscanHits: { x: number; y: number; hitPlayerId: PlayerId | null }[] = [];
+        const hitscanHits: { x: number; y: number; hitPlayerId: PlayerId | null; blockedByWall?: boolean }[] = [];
         if (fireResult.hitscanPellets.length > 0) {
           const hitscanSortedIds = (Object.keys(state.players) as PlayerId[]).sort();
           // Hangout mode: players take ZERO ranged damage there (same carve-
@@ -2734,7 +2797,15 @@ export function stepWithRuntime(
                 }
               : state.paperDoubles;
           for (const pellet of fireResult.hitscanPellets) {
-            const trace = resolveHitscanShot(
+            // Pierce (2026-07-20, card-pool raycast pass): `resolveHitscanShot`
+            // now returns an ORDERED ARRAY of hits along the ray — length 1
+            // for the overwhelming majority of pellets (pierceCount 0, the
+            // default), longer only for Pierce Chain/Voltaic Spark/Void
+            // Fracture. The tracer visual uses the LAST entry (the ray's
+            // true final resting point, whatever pierced through to get
+            // there) so a piercing shot's beam visibly reaches past the
+            // first body instead of stopping there.
+            const traces = resolveHitscanShot(
               pellet.originX,
               pellet.originY,
               pellet.aimAngle,
@@ -2746,48 +2817,129 @@ export function stepWithRuntime(
               decoysForTrace,
               state.destructibles,
               pellet.radius,
+              pellet.pierceCount ?? 0,
             );
-            hitscanHits.push({ x: trace.hitX, y: trace.hitY, hitPlayerId: trace.hitPlayerId });
-            // Decoy/destructible hits reuse the SAME pending-array mechanisms
-            // melee/edge attacks already push into (see their own doc
-            // comments a few hundred lines below) — damage application,
-            // break/burst events, and (for decoys) the AOE burst + Fooled
-            // debuff via `resolveInstantAoeCasts` all come for free.
-            if (trace.hitDecoyId !== null) {
-              pendingPaperDoubleDamage.push({
-                paperDoubleId: String(trace.hitDecoyId),
-                attackerId: pellet.ownerId,
-                damage: pellet.damage,
+            const finalTrace = traces[traces.length - 1]!;
+            hitscanHits.push({
+              x: finalTrace.hitX,
+              y: finalTrace.hitY,
+              hitPlayerId: finalTrace.hitPlayerId,
+              blockedByWall: finalTrace.blockedByWall,
+            });
+            // Explosive/slow-field (2026-07-20) REPLACES the normal per-hit
+            // damage entirely with a radius cast at the ray's terminal point
+            // — see the `pendingInstantAoe` push below, mirroring
+            // `projectile.ts`'s own real-projectile precedent
+            // (`applyHitOn`'s explosive branch routes into `detonateAt`
+            // instead of a direct single-target hit). Neither impact type
+            // combines with pierceCount in the actual card pool today
+            // (Explosive Facet/Cataclysmic Prism/Slow Field/Frost Prism all
+            // leave pierceCount at 0), so reading only the final trace here
+            // is exactly equivalent to reading the only trace.
+            if (pellet.impact === "explosive" || pellet.impact === "slow-field") {
+              // A direct hit on a decoy/destructible still takes its own
+              // normal damage (an explosive shot must still be able to pop
+              // a dummy/decoy directly) — the AOE happens ADDITIONALLY at
+              // that same point so nearby real players still catch the
+              // splash. A direct PLAYER hit has no separate push at all:
+              // the AOE below already covers them (they're at distance ~0
+              // from their own hit point).
+              if (finalTrace.hitDecoyId !== null) {
+                pendingPaperDoubleDamage.push({
+                  paperDoubleId: String(finalTrace.hitDecoyId),
+                  attackerId: pellet.ownerId,
+                  damage: pellet.damage,
+                });
+              } else if (finalTrace.hitDestructibleId !== null) {
+                pendingHangoutDestructibleDamage.push({
+                  destructibleId: String(finalTrace.hitDestructibleId),
+                  attackerId: pellet.ownerId,
+                  damage: pellet.damage,
+                });
+              }
+              pendingInstantAoe.push({
+                kind: "hitscan-impact",
+                casterId: pellet.ownerId,
+                x: finalTrace.hitX,
+                y: finalTrace.hitY,
+                radius: pellet.impactRadiusPx ?? 0,
+                damage: pellet.impact === "explosive" ? pellet.damage : 0,
+                slowMultiplier: pellet.impact === "slow-field" ? pellet.slowMultiplier : undefined,
+                slowDurationMs: pellet.impact === "slow-field" ? SLOW_FIELD_DURATION_MS : undefined,
               });
               continue;
             }
-            if (trace.hitDestructibleId !== null) {
-              pendingHangoutDestructibleDamage.push({
-                destructibleId: String(trace.hitDestructibleId),
-                attackerId: pellet.ownerId,
-                damage: pellet.damage,
+            for (const trace of traces) {
+              // Decoy/destructible hits reuse the SAME pending-array
+              // mechanisms melee/edge attacks already push into (see their
+              // own doc comments a few hundred lines below) — damage
+              // application, break/burst events, and (for decoys) the AOE
+              // burst + Fooled debuff via `resolveInstantAoeCasts` all come
+              // for free.
+              if (trace.hitDecoyId !== null) {
+                pendingPaperDoubleDamage.push({
+                  paperDoubleId: String(trace.hitDecoyId),
+                  attackerId: pellet.ownerId,
+                  damage: pellet.damage,
+                });
+                continue;
+              }
+              if (trace.hitDestructibleId !== null) {
+                pendingHangoutDestructibleDamage.push({
+                  destructibleId: String(trace.hitDestructibleId),
+                  attackerId: pellet.ownerId,
+                  damage: pellet.damage,
+                });
+                continue;
+              }
+              if (trace.hitPlayerId === null) continue;
+              pendingHitscanHits.push({
+                victimId: trace.hitPlayerId,
+                hitY: trace.hitY,
+                source: {
+                  id: allocId(),
+                  ownerId: pellet.ownerId,
+                  element: pellet.element,
+                  x: pellet.originX,
+                  y: pellet.originY,
+                  vx: Math.cos(pellet.aimAngle),
+                  vy: Math.sin(pellet.aimAngle),
+                  damage: pellet.damage,
+                  tendril: pellet.tendril,
+                  leechFraction: pellet.leechFraction,
+                  radius: pellet.radius,
+                },
+                rangePx: pellet.rangePx,
               });
-              continue;
             }
-            if (trace.hitPlayerId === null) continue;
-            pendingHitscanHits.push({
-              victimId: trace.hitPlayerId,
-              hitY: trace.hitY,
-              source: {
+            // Split (2026-07-20) — spawns real child ProjectileEntitys at
+            // the ray's terminal point (last pierced hit, wall, or clean-miss
+            // endpoint), reusing the exact same spawnSplit fan a real
+            // projectile's own on-death split uses. See
+            // `pendingHitscanSplitSpawns`'s own declaration for why this
+            // can't insert directly into `remainingProjectiles` from here.
+            if ((pellet.splitCount ?? 0) > 0) {
+              const splitParent: ProjectileEntity = {
                 id: allocId(),
                 ownerId: pellet.ownerId,
-                element: pellet.element,
-                x: pellet.originX,
-                y: pellet.originY,
+                x: finalTrace.hitX,
+                y: finalTrace.hitY,
                 vx: Math.cos(pellet.aimAngle),
                 vy: Math.sin(pellet.aimAngle),
-                damage: pellet.damage,
-                tendril: pellet.tendril,
-                leechFraction: pellet.leechFraction,
+                shape: "hexagon",
                 radius: pellet.radius,
-              },
-              rangePx: pellet.rangePx,
-            });
+                damage: pellet.damage,
+                lifetimeMs: 1000,
+                pathing: "straight",
+                element: pellet.element,
+                bouncesRemaining: 0,
+                pierceRemaining: 0,
+                splitCount: pellet.splitCount,
+              };
+              const splitResult = spawnSplit(splitParent, runtimeRngState);
+              runtimeRngState = splitResult.rngState;
+              pendingHitscanSplitSpawns.push(...splitResult.spawned.map((c) => c.spec));
+            }
           }
         }
         events.push({
@@ -4519,6 +4671,8 @@ export function stepWithRuntime(
       const bouncer = players[rangedResult.reflectedVictimId];
       if (bouncer) {
         const backAngle = Math.atan2(pending.source.vy, pending.source.vx) + Math.PI;
+        // A single reflected bounce never pierces — [0] is always the only
+        // (and final) trace here.
         const bounceTrace = resolveHitscanShot(
           bouncer.x,
           bouncer.y,
@@ -4531,7 +4685,7 @@ export function stepWithRuntime(
           undefined,
           undefined,
           pending.source.radius,
-        );
+        )[0]!;
         if (bounceTrace.hitPlayerId !== null) {
           const bounceVictim = players[bounceTrace.hitPlayerId];
           if (bounceVictim && bounceVictim.alive) {
@@ -5946,6 +6100,16 @@ export function stepWithRuntime(
   const remainingProjectiles: WorldState["projectiles"] = draftingPhase
     ? { ...projectilesView }
     : {};
+  // Insert hitscan split children (2026-07-20, card-pool raycast pass) —
+  // collected during the per-player loop into `pendingHitscanSplitSpawns`
+  // (see that array's own declaration for why), merged in here using the
+  // same `runtime.nextEntityId` allocator the existing on-death split
+  // insertion uses a few hundred lines below.
+  for (const spec of pendingHitscanSplitSpawns) {
+    const childId = EntityId(runtime.nextEntityId);
+    runtime.nextEntityId += 1;
+    remainingProjectiles[childId] = { ...spec, id: childId };
+  }
   // Reuse per-runtime scratch buffer — see WorldRuntime.scratchSortedProjectileIds.
   const sortedProjectileIds = runtime.scratchSortedProjectileIds;
   sortedProjectileIds.length = 0;

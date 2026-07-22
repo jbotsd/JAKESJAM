@@ -355,6 +355,45 @@ describe("createWeaponBuild", () => {
     });
   });
 
+  // Card-pool raycast-compatibility pass (2026-07-20, Jake: "a lot of things
+  // break raycast on wizard, deeply iterate current system to work raycast
+  // too"). Every card whose identity depends on multi-tick travel physics
+  // (homing curve, bouncing off a wall, ballistic gravity arc, an
+  // accelerating/decelerating speed profile, floating drift) needs an
+  // explicit `delivery: "projectile"` override — Wizard/Ninja's own base
+  // weapon is "raycast" now (true hitscan), and a same-tick ray has no time
+  // axis for any of this physics to happen across. Same pattern already
+  // proven for Seeker Facets/Crystal Volley/Circle Rounds/Triangle Rounds;
+  // this locks down the rest of the pool found in the follow-up audit.
+  describe("travel-time-only cards fall back to delivery: projectile", () => {
+    const find = (id: string): CardDefinition => {
+      const c = crystalRoundsCards.find((c) => c.id === id);
+      if (!c) throw new Error(`missing card: ${id}`);
+      return c;
+    };
+    const fallsBackToProjectile = (id: string): void => {
+      const b = createWeaponBuild(starterWeapon, [find(id)]);
+      expect(b.delivery).toBe("projectile");
+    };
+
+    test("arc-shards (gravity arc)", () => fallsBackToProjectile("arc-shards"));
+    test("deadfall-mortar (gravity arc + explosive)", () => fallsBackToProjectile("deadfall-mortar"));
+    test("micro-seekers (homing)", () => fallsBackToProjectile("micro-seekers"));
+    test("homing-cluster (homing)", () => fallsBackToProjectile("homing-cluster"));
+    test("bouncy-prism (bounce)", () => fallsBackToProjectile("bouncy-prism"));
+    test("extra-bounce (bounce)", () => fallsBackToProjectile("extra-bounce"));
+    test("triple-fan (bounce)", () => fallsBackToProjectile("triple-fan"));
+    test("boomerang-return (boomerang)", () => fallsBackToProjectile("boomerang-return"));
+    test("i-rounds (accelerate)", () => fallsBackToProjectile("i-rounds"));
+    test("falling-star (accelerate)", () => fallsBackToProjectile("falling-star"));
+    test("zero-g-floaters (float)", () => fallsBackToProjectile("zero-g-floaters"));
+
+    test("seeker-facets priest classModifiers variant ALSO falls back (defensive — classModifiers replaces the top-level modifier wholesale)", () => {
+      const b = createWeaponBuild(starterWeapon, [find("seeker-facets")], "priest");
+      expect(b.delivery).toBe("projectile");
+    });
+  });
+
   describe("split-cluster audit: cut cards are gone, kept cards own distinct axes", () => {
     test("dual-splitter, needle-hose, magnet-spray are cut — redundant with a surviving sibling", () => {
       expect(crystalRoundsCards.find((c) => c.id === "dual-splitter")).toBeUndefined();

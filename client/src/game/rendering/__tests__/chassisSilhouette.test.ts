@@ -150,8 +150,8 @@ describe("per-class silhouette differentiation (CA3 — readable in flat black a
   test("Interstice (ninja) hood is lower-profile (flatter) than Geometrician's (wizard) — smaller peak height", () => {
     const wizard = headHoodGeometry("wizard", HEAD, S, F);
     const ninja = headHoodGeometry("ninja", HEAD, S, F);
-    const wizardPeakHeight = HEAD.y - wizard.main[1].y;
-    const ninjaPeakHeight = HEAD.y - ninja.main[1].y;
+    const wizardPeakHeight = HEAD.y - wizard.main[1]!.y;
+    const ninjaPeakHeight = HEAD.y - ninja.main[1]!.y;
     expect(ninjaPeakHeight).toBeLessThan(wizardPeakHeight);
   });
 });

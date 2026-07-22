@@ -80,3 +80,21 @@ const CLASS_ACCENT_PALETTES: Record<ClassId, ClassAccentPalette> = {
 export function classAccentPalette(classId: ClassId): ClassAccentPalette {
   return CLASS_ACCENT_PALETTES[classId];
 }
+
+// Compact class tag for nameplate rows (2026-07-20, "put what class
+// everyone is... including self" — the roster column's every-player
+// nameplate, HudSystem.updateScoreRows, had no class signal at all; the
+// accent colors above can't carry it alone since wizard/ninja intentionally
+// SHARE combat-cyan — classes-goal.md's naming doc bans the dev-id words
+// (wizard/ninja/paladin/priest) from any player-facing surface, so these
+// are drawn from the persona names (characters.ts), not the dev ids.
+const CLASS_SHORT_LABEL: Record<ClassId, string> = {
+  wizard: "GEO", // Geometrician
+  ninja: "INT", // Interstice
+  paladin: "KIN", // Kindled
+  priest: "SYZ", // Syzygist
+};
+
+export function classShortLabel(classId: ClassId): string {
+  return CLASS_SHORT_LABEL[classId];
+}

@@ -180,6 +180,16 @@ export const DEBUFF_DESCRIPTORS: BuffDescriptor[] = [
   // different mechanic entirely; sharing its color would misread as the
   // same status). nominalMs matches NINJA_FOOLED_DURATION_MS (2000).
   { key: "fooled", field: "fooledUntilTick", label: "FOOL", color: 0xff6ec7, nominalMs: 2000 },
+  // Borrowed Time's debt (2026-07-20 fast-follow): the flat, delayed drain
+  // every Borrowed Time cast banks (SYZ_BORROWED_TIME_DEBT_DELAY_TICKS
+  // later, World.ts's debt-resolution block) had ZERO tell before this —
+  // the drained player (caster on self-cast, or the healed ally on the
+  // ally branch) had no idea it was coming until their health silently
+  // dropped. nominalMs matches the delay (6000ms, constants.ts). Dusky
+  // maroon — same Drain-register family "tithe" above claims, but a
+  // visibly distinct shade (this is a delayed bill, not an active leech),
+  // so the two never read as the same status.
+  { key: "debt", field: "debtUntilTick", label: "DEBT", color: 0x991b1b, nominalMs: 6000 },
 ];
 
 /** Local-only detailed chip strip (HudSystem's text chips + ActionBarSystem's

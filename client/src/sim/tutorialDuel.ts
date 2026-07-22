@@ -299,6 +299,9 @@ export function stepTutorialDuel(
         for (const pellet of fireResult.hitscanPellets) {
           const hitscanSortedIds = (Object.keys(state.players) as PlayerId[]).sort();
           const playersForTrace: Record<PlayerId, PlayerEntity> = { ...state.players, ...players };
+          // No cards exist in this scene (this file's own header comment),
+          // so pierceCount is always 0/undefined here — [0] is always the
+          // only (and final) trace.
           const trace = resolveHitscanShot(
             pellet.originX,
             pellet.originY,
@@ -311,7 +314,8 @@ export function stepTutorialDuel(
             undefined,
             undefined,
             pellet.radius,
-          );
+            pellet.pierceCount ?? 0,
+          )[0]!;
           if (trace.hitPlayerId === null) continue;
           pendingHitscanHits.push({
             victimId: trace.hitPlayerId,

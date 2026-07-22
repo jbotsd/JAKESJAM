@@ -212,6 +212,13 @@ export const crystalRoundsCards: CardDefinition[] = [
     description: "Slow off the hand, then it isn't — bar-crystals that build speed the longer they fly. Lean into long sightlines; lead less at range, more up close.",
     flavorText: "A straight answer, delayed on purpose.",
     modifier: {
+      // Explicit (2026-07-20, true hitscan) — "accelerate" pathing needs
+      // real travel time to ramp up; Wizard/Ninja's own base weapon is
+      // "raycast" now, and a same-tick shot has no distance to accelerate
+      // across. This card's whole identity (launches slow, builds speed) is
+      // meaningless without a real flight, so pull delivery back to a
+      // traveling shot.
+      delivery: "projectile",
       projectileSpeedMultiplier: 0.78,
       projectile: { shape: "bar", pathing: "accelerate", accelerationMultiplier: 1.4, lifetimeMultiplier: 1.15 },
     },
@@ -294,6 +301,11 @@ export const crystalRoundsCards: CardDefinition[] = [
     description: "Lobbing diamonds arc over cover. Drop fire onto ledges and platforms.",
     flavorText: "Gravity works for you.",
     modifier: {
+      // Explicit (2026-07-20, true hitscan) — "gravity" pathing arcs over
+      // multiple ticks; a same-tick hitscan ray is always a straight line
+      // with zero flight time, so there's no arc to lob over cover with.
+      // Pull delivery back to a traveling shot so the lob actually happens.
+      delivery: "projectile",
       projectileSpeedMultiplier: 0.86,
       projectile: { pathing: "gravity", gravityScale: 560 },
     },
@@ -322,6 +334,13 @@ export const crystalRoundsCards: CardDefinition[] = [
     description: "A true lob: steep drop, big boom. Arc it over cover and walls — the impact does the rest.",
     flavorText: "What goes up, negotiates.",
     modifier: {
+      // Explicit (2026-07-20, true hitscan) — same reasoning as arc-shards:
+      // "gravity" pathing needs real flight time to drop, which a same-tick
+      // hitscan ray never has. Falls back to a traveling shot; its
+      // explosive impact then rides along for free via the existing
+      // real-projectile impact path (no separate hitscan-explosive work
+      // needed for this specific card).
+      delivery: "projectile",
       projectileSpeedMultiplier: 0.6,
       fireRateMultiplier: 0.8,
       projectile: {
@@ -417,6 +436,14 @@ export const crystalRoundsCards: CardDefinition[] = [
         projectileHomingStrengthAdd: 0,
       },
       priest: {
+        // Explicit (2026-07-20, true hitscan) — defensive, same reasoning
+        // as the wizard variant above: classModifiers REPLACES the
+        // top-level modifier wholesale, so this variant needs its own
+        // delivery override too. Harmless today (Priest's own base weapon
+        // is already "projectile", never raycast), but cheap and correct to
+        // close now rather than leave a latent gap for whenever that
+        // changes.
+        delivery: "projectile",
         projectileSpeedMultiplier: 0.9,
         projectile: { pathing: "homing", homingStrength: 4.4 },
         projectileHomingStrengthAdd: 1.2,
@@ -443,6 +470,11 @@ export const crystalRoundsCards: CardDefinition[] = [
     description: "Extra tiny homers peel into the fight. Chaos fuel for multi-target messes.",
     flavorText: "Small. Personal. Persistent.",
     modifier: {
+      // Explicit (2026-07-20, true hitscan) — homing needs real travel time
+      // to curve toward a target; Wizard/Ninja's own base weapon is
+      // "raycast" now, so without this the card silently does nothing (same
+      // gap Seeker Facets had before its own fix).
+      delivery: "projectile",
       damageMultiplier: 0.78,
       projectileSpeedMultiplier: 0.9,
       spreadRadiansAdd: degrees(16),
@@ -472,6 +504,12 @@ export const crystalRoundsCards: CardDefinition[] = [
     description: "Ricochets up to four times — brighter after each bounce. Own the corridors.",
     flavorText: "Walls are just more aim.",
     modifier: {
+      // Explicit (2026-07-20, true hitscan) — bouncing off a wall and
+      // continuing needs a real multi-tick flight (reflect, keep traveling,
+      // re-check contact); a same-tick hitscan ray has no second tick to
+      // bounce into. Nothing salvageable at the bounce point itself for a
+      // hitscan reading, so this pulls delivery back to a traveling shot.
+      delivery: "projectile",
       projectile: { pathing: "bounce" },
       projectileBounceAdd: 4,
     },
@@ -488,6 +526,10 @@ export const crystalRoundsCards: CardDefinition[] = [
     description: "+1 ricochet on everything you fire. Stacks the geometry game.",
     flavorText: "One more vote for the wall.",
     modifier: {
+      // Explicit (2026-07-20, true hitscan) — same reasoning as Bouncy
+      // Prism: bounce needs real multi-tick flight, which a same-tick
+      // hitscan ray never has.
+      delivery: "projectile",
       projectile: { pathing: "bounce" },
       projectileBounceAdd: 1,
     },
@@ -504,6 +546,10 @@ export const crystalRoundsCards: CardDefinition[] = [
     description: "After half range, shots curl home. Catch retreats and punish chase-you play.",
     flavorText: "Regret, sharpened.",
     modifier: {
+      // Explicit (2026-07-20, true hitscan) — curling home after half range
+      // needs the shot to actually travel there first; a same-tick hitscan
+      // ray never has a "half range" moment to curl at.
+      delivery: "projectile",
       projectileSpeedMultiplier: 0.92,
       projectile: { pathing: "boomerang", lifetimeMultiplier: 1.18 },
     },
@@ -548,6 +594,11 @@ export const crystalRoundsCards: CardDefinition[] = [
     description: "Blistering point-blank speed that burns off fast. Everything up close, nothing at range.",
     flavorText: "All at once, then nothing.",
     modifier: {
+      // Explicit (2026-07-20, true hitscan) — same reasoning as I Rounds:
+      // "accelerate" pathing (even the negative/burn-off variant here) needs
+      // real travel time to change speed across, which a same-tick hitscan
+      // ray never has.
+      delivery: "projectile",
       projectileSpeedMultiplier: 1.5,
       projectile: { pathing: "accelerate", accelerationMultiplier: -1.8, lifetimeMultiplier: 1.1 },
     },
@@ -564,6 +615,10 @@ export const crystalRoundsCards: CardDefinition[] = [
     description: "Slow floaters with longer life and a bit more size. Own airspace and chokepoints.",
     flavorText: "Hang time is a weapon.",
     modifier: {
+      // Explicit (2026-07-20, true hitscan) — "float" pathing (a lingering,
+      // slow-drifting hang-time read) needs the shot to actually be in the
+      // air for a while; a same-tick hitscan ray never has any airtime.
+      delivery: "projectile",
       projectileSpeedMultiplier: 0.58,
       projectile: { pathing: "float", lifetimeMultiplier: 1.5, sizeMultiplier: 1.18 },
     },
@@ -600,6 +655,10 @@ export const crystalRoundsCards: CardDefinition[] = [
     description: "Three-way fan that also ricochets twice. Bank shots around corners — own the room, not just the lane.",
     flavorText: "The core spreads its hands. The walls don't stop it.",
     modifier: {
+      // Explicit (2026-07-20, true hitscan) — same reasoning as Bouncy
+      // Prism/+1 Bounce: bank shots off a wall need real multi-tick flight,
+      // which a same-tick hitscan ray never has.
+      delivery: "projectile",
       damageMultiplier: 0.74,
       spreadRadiansAdd: degrees(16),
       projectileCountAdd: 2,
@@ -1222,6 +1281,9 @@ export const crystalRoundsCards: CardDefinition[] = [
     description: "Homing + triple fan: three seekers curve into the kill. Beautiful and unfair.",
     flavorText: "Three bad ideas with a destination.",
     modifier: {
+      // Explicit (2026-07-20, true hitscan) — homing needs real travel time
+      // to curve toward a target, same gap Seeker Facets/Micro Seekers had.
+      delivery: "projectile",
       damageMultiplier: 0.78,
       projectileSpeedMultiplier: 0.82,
       spreadRadians: degrees(28),
@@ -2295,11 +2357,13 @@ export const crystalRoundsCards: CardDefinition[] = [
     classId: "ninja",
     role: "single",
     description:
-      "Active (6s cooldown): close the last few feet on the nearest enemy and put a fast, hard shard through them — no target, no cast.",
+      "Active (5s cooldown): close the last few feet on the nearest enemy and put a fast, hard shard through them — no target, no cast.",
     flavorText: "The gap was never really there.",
     active: {
       kind: "needle",
-      cooldownMs: 6000,
+      // 2026-07-20 gap-closer pass: 6000 -> 5000ms (see NINJA_NEEDLE_LUNGE_PX's
+      // constants.ts comment for the full rationale).
+      cooldownMs: 5000,
     },
     visual: visual("x", "#5ac8fa"),
     unique: true,

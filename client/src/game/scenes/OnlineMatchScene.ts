@@ -1172,6 +1172,16 @@ export class OnlineMatchScene extends Phaser.Scene {
       if (ticks.length > 0) statusByPlayer[pid] = ticks;
     }
 
+    // Per-row class tag (2026-07-20, "put what class everyone is...
+    // including self" — the local "YOU" row above reads this same map, no
+    // special-case needed since it's keyed by pid like every other field
+    // here).
+    const classByPlayer: Record<string, ReturnType<typeof classIdForArchetype>> = {};
+    for (const pid of Object.keys(scores)) {
+      const p = state.players[pid as PlayerId];
+      if (p) classByPlayer[pid] = classIdForArchetype(p.characterId);
+    }
+
     const round: HudRound = {
       phase: state.round.phase,
       countdownRemainingMs: state.round.countdownRemainingMs,
@@ -1181,6 +1191,7 @@ export class OnlineMatchScene extends Phaser.Scene {
       colors,
       healthByPlayer,
       statusByPlayer,
+      classByPlayer,
       winnerLabel,
     };
 
