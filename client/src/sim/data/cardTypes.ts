@@ -53,6 +53,32 @@ export function classIdForArchetype(characterId: CharacterArchetype): ClassId {
   return ARCHETYPE_CLASS_ID[characterId] ?? "wizard";
 }
 
+/** archetype → BASE max health (before any `maxHealthAdd` card bonus).
+ *  Mirrors the authoritative display table in
+ *  client/src/game/data/characters.ts (balanced/Geometrician 100,
+ *  heavy/Kindled 125, sprinter/Interstice 85, shielded/Syzygist 100) — same
+ *  "sim must not depend on game/" reasoning as ARCHETYPE_CLASS_ID above.
+ *  BUG FIX (2026-07-22, Jake, live playtest: "meant to start with 125
+ *  health as a paladin but i start with 100/125"): every spawn/respawn/
+ *  heal-clamp site in World.ts used to hardcode a flat `100`, so this table
+ *  had NEVER actually been read by the sim before — Kindled's 125 and
+ *  Interstice's 85 were purely a HUD denominator (characters.ts) layered
+ *  over a sim that could never put a player above (or, for Interstice,
+ *  meaningfully below) 100 real HP. Keep both tables in sync if a class's
+ *  base HP is ever retuned. */
+const ARCHETYPE_BASE_MAX_HEALTH: Record<CharacterArchetype, number> = {
+  balanced: 100,
+  heavy: 125,
+  sprinter: 85,
+  shielded: 100,
+};
+
+/** Total, pure lookup — unknown archetypes fall back to 100 (wizard's base,
+ *  same fallback precedent as classIdForArchetype above). */
+export function baseMaxHealthForArchetype(characterId: CharacterArchetype): number {
+  return ARCHETYPE_BASE_MAX_HEALTH[characterId] ?? 100;
+}
+
 export type WeaponDelivery = "projectile" | "raycast" | "continuous-beam" | "area-pulse";
 
 export type ImpactBehavior =

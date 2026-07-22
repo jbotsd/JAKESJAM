@@ -82,6 +82,25 @@ export const starterWeapon: WeaponDefinition = {
 };
 
 /**
+ * Wizard / Geometrician baseline (2026-07-22, Jake, live playtest: wants the
+ * hitscan basic attack changed back to a projectile). `starterWeapon` above
+ * is still shared by Ninja (`baseWeaponForClass` has no ninja entry —
+ * classExpression.test.ts's own object-identity assertion), so flipping
+ * `starterWeapon.delivery` itself would silently revert Ninja's gun too.
+ * Same override pattern as `priestStarterWeapon`/`paladinStarterWeapon`
+ * below: same wire id, same stats, ONLY `delivery` diverges — Wizard fires a
+ * real `ProjectileEntity` again (travel time, dodgeable) instead of an
+ * instant same-tick raycast. `applyDeliveryFeel`'s raycast branch no longer
+ * applies, so the base 650/1.2s/720px numbers (already balance-tested pre-
+ * hitscan, see the speed-bump-revert comment above) govern the shot as-is —
+ * no retuning needed.
+ */
+export const wizardStarterWeapon: WeaponDefinition = {
+  ...starterWeapon,
+  delivery: "projectile",
+};
+
+/**
  * Priest / Syzygist baseline (docs/classes-goal.md "Priest / Syzygist":
  * "Baseline attack: modest projectile (wizard's starter, detuned)"; docs/
  * class-overhaul-workboard.md chunk 0.3). Started as a copy of
@@ -189,15 +208,15 @@ export const paladinStarterWeapon: WeaponDefinition = {
  * with no authored entry here falls back to `starterWeapon`, byte-identical
  * to every existing call site that resolves a class-blind build today.
  * Ninja deliberately has NO entry here (classExpression.test.ts's own
- * "baseWeaponForClass falls back to starterWeapon for Wizard/Ninja" asserts
- * object-identity equality, not just same stats) — Ninja and Wizard have
- * always intentionally shared the exact same base gun, only Priest/Paladin
- * get their own baseline. True hitscan (2026-07-20) doesn't change that
- * coupling, it just makes it observable for the first time: Ninja's basic
- * gun becomes genuinely instant right along with Wizard's, by the same
- * "shares the object" design this file already had.
+ * "baseWeaponForClass falls back to starterWeapon for Ninja" asserts
+ * object-identity equality, not just same stats) — Ninja still shares
+ * `starterWeapon`'s raycast/hitscan basic gun untouched. Wizard split off
+ * into its own `wizardStarterWeapon` entry 2026-07-22 (see that weapon's own
+ * doc comment) specifically so Geometrician's basic attack could revert to
+ * a real projectile without dragging Ninja's back with it.
  */
 const CLASS_BASE_WEAPON: Partial<Record<ClassId, WeaponDefinition>> = {
+  wizard: wizardStarterWeapon,
   priest: priestStarterWeapon,
   paladin: paladinStarterWeapon,
 };

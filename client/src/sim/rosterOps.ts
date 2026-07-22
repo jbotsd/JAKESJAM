@@ -12,8 +12,9 @@
 // (2026-07-10); behavior-identical, only the host bookkeeping (playerInfo,
 // input queues, baseline rings) stays in matchHost.
 
-import type { MapDefinition, PlayerId, PlayerSpawnInfo, WorldState } from "./types";
+import { InputSeq, type MapDefinition, type PlayerId, type PlayerSpawnInfo, type PlayerEntity, type WorldState } from "./types";
 import { transferAuthority } from "./authority";
+import { maxHealthForPlayer } from "./weapon";
 
 /**
  * Insert a mid-match joiner into the world. Spawn point = the map spawn
@@ -44,38 +45,46 @@ export function applyMidMatchJoin(
       spawnPoint = c;
     }
   }
+  // Built as a local first (rather than health-first-then-patched-inline)
+  // so maxHealthForPlayer can read the entity's own characterId + starter
+  // cards for its maxHealthAdd bonus (2026-07-22 bug fix — this used to
+  // hardcode a flat 100, so a mid-match Kindled joiner, the live path
+  // play.elyad.io's persistent world actually uses, never got their real
+  // 125).
+  const entity: PlayerEntity = {
+    id: spawn.playerId,
+    characterId: spawn.characterId,
+    x: spawnPoint.x,
+    y: spawnPoint.y,
+    vx: 0,
+    vy: 0,
+    aimX: spawnPoint.x + 160,
+    aimY: spawnPoint.y,
+    health: 0, // placeholder — set for real below, once cards[] is in place
+    shieldActive: false,
+    crouching: false,
+    alive: true,
+    weaponId: spawn.weaponId,
+    // Starter cards ride the spawn (S2.E) — the lobby draft pick lands
+    // here, on the shared live/replay code path.
+    cards: spawn.cards ? [...spawn.cards] : [],
+    fireCooldownMs: 0,
+    ammo: 0,
+    abilityCharge: 0,
+    lastProcessedInputSeq: InputSeq(0),
+    // Duos-queue team identity (class-overhaul-workboard.md chunk 1.1) —
+    // mirrors World.create's treatment so a mid-match joiner (e.g. a
+    // duo partner reconnecting) gets the same teamId their spawn info
+    // carries. Omitted key when absent, same optional-spread convention
+    // used throughout PlayerEntity.
+    ...(spawn.teamId ? { teamId: spawn.teamId } : {}),
+  };
+  entity.health = maxHealthForPlayer(entity);
   return {
     ...state,
     players: {
       ...state.players,
-      [spawn.playerId]: {
-        id: spawn.playerId,
-        characterId: spawn.characterId,
-        x: spawnPoint.x,
-        y: spawnPoint.y,
-        vx: 0,
-        vy: 0,
-        aimX: spawnPoint.x + 160,
-        aimY: spawnPoint.y,
-        health: 100,
-        shieldActive: false,
-        crouching: false,
-        alive: true,
-        weaponId: spawn.weaponId,
-        // Starter cards ride the spawn (S2.E) — the lobby draft pick lands
-        // here, on the shared live/replay code path.
-        cards: spawn.cards ? [...spawn.cards] : [],
-        fireCooldownMs: 0,
-        ammo: 0,
-        abilityCharge: 0,
-        lastProcessedInputSeq: 0,
-        // Duos-queue team identity (class-overhaul-workboard.md chunk 1.1) —
-        // mirrors World.create's treatment so a mid-match joiner (e.g. a
-        // duo partner reconnecting) gets the same teamId their spawn info
-        // carries. Omitted key when absent, same optional-spread convention
-        // used throughout PlayerEntity.
-        ...(spawn.teamId ? { teamId: spawn.teamId } : {}),
-      },
+      [spawn.playerId]: entity,
     },
     round: {
       ...state.round,

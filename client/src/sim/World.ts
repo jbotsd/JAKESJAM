@@ -101,7 +101,6 @@ import {
   KIN_STOMP_JUMP_RADIUS_PX,
   SYZ_REGEN_HPS_DEFAULT,
   SYZ_REGEN_DURATION_TICKS_DEFAULT,
-  SYZ_REGEN_HEALTH_CAP,
   SYZ_HASTE_MULTIPLIER_DEFAULT,
   SYZ_HASTE_DURATION_TICKS_DEFAULT,
   SYZ_DEVOTION_MAX,
@@ -181,7 +180,7 @@ import {
   spawnMissingSatellites,
   stepSatellites,
 } from "./satellite.js";
-import { stepWeapon, resolvePlayerBuild } from "./weapon.js";
+import { stepWeapon, resolvePlayerBuild, maxHealthForPlayer } from "./weapon.js";
 import { stepRound, FIRST_BLOOD_SPEED_MULTIPLIER } from "./round.js";
 import { resolveModeConfig } from "./data/modeConfig.js";
 import {
@@ -214,7 +213,7 @@ import {
   Tick,
   InputSeq,
 } from "./types.js";
-import { MAX_ABILITY_SLOTS, classIdForArchetype } from "./data/cardTypes.js";
+import { MAX_ABILITY_SLOTS, classIdForArchetype, baseMaxHealthForArchetype } from "./data/cardTypes.js";
 import { RoundOrchestrator } from "./RoundOrchestrator.js";
 import { wasmHost } from "./wasm/wasmHost.js";
 import { writeFireConfigsForState } from "./wasm/writeFireConfigs.js";
@@ -1010,8 +1009,8 @@ function applyKindledResolveStaggerResist(
  * same "last cast wins" convention as every other window-buff field on
  * PlayerEntity). The actual per-tick healing happens in `stepWithRuntime`'s
  * element-status-effects pass (mirrors the burn DoT tick exactly, opposite
- * sign, capped at `SYZ_REGEN_HEALTH_CAP`) — this function only opens the
- * window.
+ * sign, capped at the target's real max health — `maxHealthForPlayer`) —
+ * this function only opens the window.
  */
 export function applyRegenToAlly(
   caster: PlayerEntity,
@@ -1172,7 +1171,10 @@ function findNearestAlly(
     if (options.excludeSelf !== false && (otherId as PlayerId) === caster.id) continue;
     if (!other.alive) continue;
     if (!isAlly(caster, other)) continue;
-    if (options.requireInjured && other.health >= 100) continue;
+    // 2026-07-22 bug fix: was a flat `>= 100`, so a Kindled ally sitting at
+    // e.g. 110/125 (genuinely injured, real room to heal) got wrongly
+    // treated as full-health and skipped as a heal target.
+    if (options.requireInjured && other.health >= maxHealthForPlayer(other)) continue;
     const dx = other.x - caster.x;
     const dy = other.y - caster.y;
     const dist = Math.hypot(dx, dy);
@@ -1349,7 +1351,11 @@ export class World {
         vy: 0,
         aimX: spawnPoint.x + 160,
         aimY: spawnPoint.y,
-        health: 100,
+        // Class base max health (2026-07-22 bug fix, see
+        // baseMaxHealthForArchetype's doc comment) — cards are always empty
+        // at this exact construction point (`cards: []` below), so there's
+        // no maxHealthAdd bonus to fold in yet.
+        health: baseMaxHealthForArchetype(spawn.characterId),
         shieldActive: false,
         crouching: false,
         alive: true,
@@ -1596,10 +1602,10 @@ function resolveRangedHit(
     // defensible v1 read of "pulse a healing effect" — a Priest stacking
     // +damage cards heals allies harder too, which matches intuition rather
     // than fighting it. Clamp mirrors Borrowed Time's own heal clamp exactly
-    // (World.ts's "borrowed-time" case, pendingSyzygistCasts loop: `Math.min(100,
-    // target.health + cast.heal)`) — same flat 100 ceiling, no new
-    // MAX_HEALTH machinery invented here.
-    const healed = Math.min(100, victim.health + ev.damage);
+    // (World.ts's "borrowed-time" case, pendingSyzygistCasts loop) — both
+    // now cap at the VICTIM's real max health (maxHealthForPlayer,
+    // 2026-07-22 bug fix), not a flat 100.
+    const healed = Math.min(maxHealthForPlayer(victim), victim.health + ev.damage);
     if (healed > victim.health) {
       players[ev.victimId] = { ...victim, health: healed };
     }
@@ -1802,11 +1808,13 @@ function resolveRangedHit(
   // Syzygist/Geometrician who caught this player with the burst.
   finalDamage *= fooledDamageMultiplier(postPlayer, ctx.nextTick);
   // Technique axis (six-axes-goal.md Layer 1): an execute-flagged shard
-  // finishes a player already below the threshold fraction of spawn health
-  // (100, rosterOps.ts) — never from above it, so the no-100-0 law holds by
-  // construction.
+  // finishes a player already below the threshold fraction of their REAL
+  // max health (maxHealthForPlayer, 2026-07-22 bug fix — was a flat 100,
+  // which let a Kindled at 100/125 falsely read as "below 35%" the moment
+  // they dropped under 35, rather than under 35% of 125) — never from
+  // above it, so the no-100-0 law holds by construction.
   const executeFrac = proj.executeBelowFrac ?? 0;
-  if (executeFrac > 0 && postPlayer.health > 0 && postPlayer.health < executeFrac * 100) {
+  if (executeFrac > 0 && postPlayer.health > 0 && postPlayer.health < executeFrac * maxHealthForPlayer(postPlayer)) {
     finalDamage = Math.max(finalDamage, postPlayer.health);
   }
   // Rally Light (chunk 2.6 fast-follow) — same attacker-amp shape every
@@ -1905,16 +1913,20 @@ function resolveRangedHit(
   // Drain axis (six-axes-goal.md Layer 1): a leech-flagged shard heals its
   // caster a fraction of the post-mitigation damage that actually landed —
   // the SAME number the charge fill reads (one damage model). Self-damage
-  // never leeches; the heal is monotone and capped at spawn health (never
-  // reduces, so a boss-mode body above 100 is safe). Chain-lightning
-  // secondaries deliberately excluded — the chain is a derived hit, not the
-  // shard.
+  // never leeches; the heal is monotone and capped at the caster's REAL max
+  // health (maxHealthForPlayer, 2026-07-22 bug fix — was a flat 100, which
+  // silently capped Kindled leech well under their real 125) but never
+  // REDUCES a body already above that (bossModeUntilTick's "more health"
+  // buff isn't tracked by maxHealthForPlayer, so `Math.max` against current
+  // health keeps the original "a boss-mode body above its max is safe"
+  // guarantee). Chain-lightning secondaries deliberately excluded — the
+  // chain is a derived hit, not the shard.
   const leechFrac = proj.leechFraction ?? 0;
   if (leechFrac > 0 && proj.ownerId !== null && proj.ownerId !== ev.victimId) {
     const leechCaster = players[proj.ownerId];
     if (leechCaster && leechCaster.alive) {
       const healed = Math.min(
-        Math.max(100, leechCaster.health),
+        Math.max(maxHealthForPlayer(leechCaster), leechCaster.health),
         leechCaster.health + finalDamage * leechFrac,
       );
       if (healed > leechCaster.health) {
@@ -3876,7 +3888,8 @@ export function stepWithRuntime(
           } else {
             nextEntity = {
               ...nextEntity,
-              health: Math.min(100, nextEntity.health + SYZ_BORROWED_TIME_HEAL_SELF),
+              // 2026-07-22 bug fix: was a flat 100, capped Kindled well under 125.
+              health: Math.min(maxHealthForPlayer(nextEntity), nextEntity.health + SYZ_BORROWED_TIME_HEAL_SELF),
               debtUntilTick: debtDelayTick,
               debtAmount: SYZ_BORROWED_TIME_DRAIN_SELF,
             };
@@ -4576,7 +4589,8 @@ export function stepWithRuntime(
         if (target && target.alive) {
           players[cast.targetId] = {
             ...target,
-            health: Math.min(100, target.health + cast.heal),
+            // 2026-07-22 bug fix: was a flat 100, capped Kindled well under 125.
+            health: Math.min(maxHealthForPlayer(target), target.health + cast.heal),
             debtUntilTick: cast.debtDelayTick,
             debtAmount: cast.drain,
           };
@@ -5369,8 +5383,11 @@ export function stepWithRuntime(
                   NINJA_ENERGY_ON_MELEE_HIT +
                   (secondWindLive ? NINJA_SECOND_WIND_ENERGY : 0),
               ),
+              // 2026-07-22 bug fix: was a flat 100 — for Interstice (real
+              // base 85) this let Second Wind over-heal past their true max;
+              // for Kindled it capped well under 125. Same formula fixes both.
               health: secondWindLive
-                ? Math.min(100, liveAttackerPostHit.health + NINJA_SECOND_WIND_HEAL)
+                ? Math.min(maxHealthForPlayer(liveAttackerPostHit), liveAttackerPostHit.health + NINJA_SECOND_WIND_HEAL)
                 : liveAttackerPostHit.health,
               secondWindUntilTick: secondWindLive ? undefined : liveAttackerPostHit.secondWindUntilTick,
             };
@@ -5874,8 +5891,11 @@ export function stepWithRuntime(
     // Regen HoT (class-overhaul-workboard.md chunk 3.1) — the exact mirror
     // of the Burn DoT block above, opposite sign: once per second of sim
     // time (same ONE_SECOND_TICKS rate-limit, via `regenTickLastApplied`),
-    // heals `regenHps`, capped at SYZ_REGEN_HEALTH_CAP rather than floored
-    // at 0. Regen never revives a dead player: the `!p.alive` guard at the
+    // heals `regenHps`, capped at the TARGET's real max health
+    // (maxHealthForPlayer, 2026-07-22 bug fix — this regen can land on any
+    // class as a Syzygist ally buff, so a flat SYZ_REGEN_HEALTH_CAP=100
+    // silently under-capped a Kindled ally) rather than floored at 0. Regen
+    // never revives a dead player: the `!p.alive` guard at the
     // top of this loop skips players who were ALREADY dead entering this
     // tick, and the explicit `next.alive` check here additionally covers
     // the same-tick case where the Burn DoT block immediately above just
@@ -5891,7 +5911,7 @@ export function stepWithRuntime(
       const last = next.regenTickLastApplied ?? -ONE_SECOND_TICKS;
       if (state.tick - last >= ONE_SECOND_TICKS) {
         const heal = next.regenHps;
-        const newHealth = Math.min(SYZ_REGEN_HEALTH_CAP, next.health + heal);
+        const newHealth = Math.min(maxHealthForPlayer(next), next.health + heal);
         next = {
           ...next,
           health: newHealth,
@@ -7089,7 +7109,10 @@ function respawnPlayerAt(
     y: spawn.y,
     vx: 0,
     vy: 0,
-    health: 100,
+    // Class base + this player's current maxHealthAdd cards (2026-07-22 bug
+    // fix — respawn used to hardcode a flat 100 for everyone, so Kindled
+    // never actually came back at their real 125).
+    health: maxHealthForPlayer(player),
     alive: true,
     crouching: false,
     shieldActive: false,

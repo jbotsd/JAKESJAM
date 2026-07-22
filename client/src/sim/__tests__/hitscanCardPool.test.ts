@@ -121,7 +121,12 @@ function frame(keys: number, seq: number, aimX = 0, aimY = 0): InputFrame {
 
 describe("Hitscan pierce (Void Fracture / Voltaic Spark / Pierce Chain)", () => {
   test("a single shot damages TWO lined-up victims in the same tick, no ProjectileEntity ever created", () => {
-    const shooter = mkPlayer(A, 400, 400, { cards: ["void-fracture"] });
+    // "balanced" (wizard) no longer defaults to raycast delivery (2026-07-22:
+    // Geometrician's hitscan reverted back to a projectile — weapons.ts's
+    // `wizardStarterWeapon`), so this suite forces it explicitly via Raycast
+    // Prism (still a real, pickable delivery-changing card) to keep testing
+    // the hitscan pierce/explosive/slow-field code paths this file targets.
+    const shooter = mkPlayer(A, 400, 400, { cards: ["void-fracture", "raycast-prism"] });
     // Both victims sit on the muzzle's own aim line (same y as the aim
     // target) so one ray sweeps through both in order. Far enough out that
     // the muzzle-height-vs-aim-line offset (the ray starts a bit above the
@@ -148,7 +153,10 @@ describe("Hitscan pierce (Void Fracture / Voltaic Spark / Pierce Chain)", () => 
 
 describe("Hitscan explosive impact (Explosive Facet)", () => {
   test("a shot that hits a wall still splashes a bystander standing near the impact point", () => {
-    const shooter = mkPlayer(A, 400, 400, { cards: ["explosive-facet"] });
+    // Forces raycast delivery via Raycast Prism — see the pierce describe
+    // block above for why this is now explicit rather than inherited from
+    // "balanced" (wizard)'s base weapon.
+    const shooter = mkPlayer(A, 400, 400, { cards: ["explosive-facet", "raycast-prism"] });
     // Bystander offset PERPENDICULAR to the ray (below it), within
     // impactRadiusPx of the wall-impact point but never directly hit by the
     // ray itself — proves the AOE, not a direct hit.
@@ -169,7 +177,10 @@ describe("Hitscan explosive impact (Explosive Facet)", () => {
 
 describe("Hitscan slow-field impact (Slow Field)", () => {
   test("a shot that hits a wall still slows a bystander standing near the impact point", () => {
-    const shooter = mkPlayer(A, 400, 400, { cards: ["slow-field"] });
+    // Forces raycast delivery via Raycast Prism — see the pierce describe
+    // block above for why this is now explicit rather than inherited from
+    // "balanced" (wizard)'s base weapon.
+    const shooter = mkPlayer(A, 400, 400, { cards: ["slow-field", "raycast-prism"] });
     const bystander = mkPlayer(B, 585, 420);
     const state = mkState([shooter, bystander]);
     const runtime = createRuntime(wallMap);
@@ -206,9 +217,9 @@ describe("Hitscan split (Pierce Chain / Cluster Bomb)", () => {
 describe("void-fracture pierce also works for a REAL traveling projectile (not just hitscan)", () => {
   test("regression: projectile.ts's pierce-continue branch used to require impact === 'pierce-chain' specifically, silently making Void Fracture's pierceCount dead code for EVERY delivery — a plain traveling projectile with pierceRemaining set (impact left at the default 'none', matching Void Fracture) survives its first hit and goes on to also hit a second victim", () => {
     // Bypasses class/Fire-input routing entirely (no character in this sim
-    // has a plain straight-shot base weapon to drive this through: Wizard/
-    // Ninja share the raycast starterWeapon, Priest's base weapon bakes in
-    // homing tendrils, Paladin's Fire never calls stepWeapon at all — see
+    // has a plain straight-shot base weapon to drive this through: Ninja's
+    // base weapon is the raycast starterWeapon, Priest's base weapon bakes
+    // in homing tendrils, Paladin's Fire never calls stepWeapon at all — see
     // this session's notes). Instead this drives projectile.ts's own
     // stepProjectile directly, exactly like projectileHitbox.test.ts does,
     // isolating the exact branch the fix touched.

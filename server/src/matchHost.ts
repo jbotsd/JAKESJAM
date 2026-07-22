@@ -53,6 +53,7 @@ import { InterestGrid, CELL_SIZE_PX, OBSERVE_RADIUS_CELLS } from "./InterestGrid
 import { encodeDelta } from "@net/snapshotDelta.ts";
 import { makeHitSweepScratch } from "@sim/projectile.ts";
 import { transferAuthority } from "@sim/authority.ts";
+import { baseMaxHealthForArchetype } from "@sim/data/cardTypes.ts";
 import { applyMidMatchJoin, applyRosterLeave } from "@sim/rosterOps.ts";
 import { maybeSignalHostClip } from "./hostReplayBuffer.ts";
 import { persistReplay } from "./replayStore.ts";
@@ -686,7 +687,11 @@ export class MatchHost {
         [playerId]: {
           ...player,
           characterId,
-          health: 100,
+          // Class base for the NEW character being previewed (2026-07-22 bug
+          // fix — was a flat 100, so switching to Kindled in hangout still
+          // showed 100/125 instead of the real 125). Cards don't carry a
+          // maxHealthAdd bonus worth resolving for a hangout preview swap.
+          health: baseMaxHealthForArchetype(characterId),
           shieldActive: false,
           abilityCharge: 0,
           fireCooldownMs: 0,

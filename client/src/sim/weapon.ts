@@ -14,7 +14,7 @@ import type {
   CardDefinition,
   ResolvedWeaponBuild,
 } from "./data/cardTypes.js";
-import { classIdForArchetype } from "./data/cardTypes.js";
+import { baseMaxHealthForArchetype, classIdForArchetype } from "./data/cardTypes.js";
 import { baseWeaponForClass } from "./data/weapons.js";
 import { createWeaponBuild, findCardsById } from "./data/weaponBuild.js";
 import { spawnProjectile, type ProjectileSpawnParams } from "./projectile.js";
@@ -139,6 +139,18 @@ export function resolvePlayerBuild(player: PlayerEntity): ResolvedWeaponBuild {
   buildCache.set(key, build);
   identityCacheSet(player, build);
   return build;
+}
+
+/**
+ * A player's REAL max health right now: class base (Kindled 125, Interstice
+ * 85, Geometrician/Syzygist 100 — `baseMaxHealthForArchetype`) plus any
+ * `maxHealthAdd` their current card hand resolves to. This is the single
+ * source of truth every spawn/respawn site and every heal-clamp in World.ts
+ * reads (2026-07-22 bug fix — see `baseMaxHealthForArchetype`'s own doc
+ * comment for why a flat, class-blind 100 doesn't belong anywhere anymore).
+ */
+export function maxHealthForPlayer(player: PlayerEntity): number {
+  return baseMaxHealthForArchetype(player.characterId) + resolvePlayerBuild(player).maxHealthAdd;
 }
 
 /**

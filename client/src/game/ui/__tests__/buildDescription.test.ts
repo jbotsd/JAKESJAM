@@ -14,10 +14,11 @@ describe("describeBuild", () => {
     const result = describeBuild([]);
     expect(result.title).toBe("Starter build");
     expect(result.cardCount).toBe(0);
-    // The starter weapon is true hitscan (2026-07-20) — `describeShot`'s
-    // pre-existing "raycast" branch (originally dormant, written for
-    // Raycast Prism) now correctly describes it as an instant beam rather
-    // than a traveling projectile.
-    expect(result.summary).toContain("single instant beam");
+    // Wizard's basic shot is a real projectile again (2026-07-22:
+    // Geometrician's hitscan reverted back to a projectile — weapons.ts's
+    // `wizardStarterWeapon`), so `describeShot` falls through to its
+    // ordinary projectile phrasing rather than the "raycast" instant-beam
+    // branch (still reachable via delivery-changing cards like Raycast Prism).
+    expect(result.summary).toContain("single projectile");
   });
 });

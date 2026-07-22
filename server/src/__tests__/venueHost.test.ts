@@ -1013,7 +1013,10 @@ describe("VenueHost live chassis switch onto the lobby PlayerEntity", () => {
     venue.routeLobby(ws, encodeMessage({ t: "class-pick", characterId: "heavy" })); // → paladin
     const after = host.getStateSnapshot().players[pid]!;
     expect(after.characterId).toBe("heavy");
-    expect(after.health).toBe(100);
+    // Kindled's real base is 125, not a flat 100 (2026-07-22 bug fix — a
+    // chassis switch used to reset health to the same hardcoded 100 for
+    // every class; see matchHost.ts's setPlayerCharacter).
+    expect(after.health).toBe(125);
     expect(after.slot1CooldownUntilTick).toBeUndefined();
     expect(after.slot2CooldownUntilTick).toBeUndefined();
     expect(after.energy).toBeUndefined();

@@ -750,18 +750,14 @@ describe("Interstice catalog v1 — Paper Double (decoy entity)", () => {
 
   test("a projectile hit damages the decoy without killing it (sub-lethal enemy weapon fire)", () => {
     // Hand-authors `state.paperDoubles` directly (same pattern the AOE-
-    // burst test below uses), rather than casting it live in the SAME tick
-    // as the shot (2026-07-20, true-hitscan rework) — a genuinely instant
-    // hitscan trace resolves before a same-tick-cast decoy has had ANY time
-    // to separate from its own caster's exact spawn point (they're
-    // perfectly co-located at the instant of cast), so a live same-tick
-    // cast+shot can no longer reliably tell "hit the decoy" apart from "hit
-    // the caster standing in the exact same spot" the way the old
-    // multi-tick traveling projectile could (the decoy used to physically
-    // outrun its caster during the shot's travel time — a dynamic that
-    // simply doesn't exist for a zero-travel-time shot). Hand-authoring
-    // keeps this test about "does a sub-lethal hitscan hit correctly damage
-    // without killing the decoy", not about spawn-race timing.
+    // burst test below uses) rather than casting it live in the same tick
+    // as the shot — keeps this test about "does a sub-lethal projectile hit
+    // correctly damage without killing the decoy", not about cast/spawn-race
+    // timing. Wizard's basic shot is a real traveling ProjectileEntity again
+    // (2026-07-22: Geometrician's hitscan reverted back to a projectile —
+    // weapons.ts's `wizardStarterWeapon`), so — same as the pre-hitscan
+    // version of this test — stepUntil gives the 650px/s bolt time to cross
+    // the 60px gap instead of asserting on the single fire-tick.
     const caster = mkPlayer(A, 50, 50, "sprinter");
     const shooter = mkPlayer(B, 460, 400, "balanced", { aimX: 400, aimY: 400 });
     const pdId = EntityId(1);
@@ -787,7 +783,14 @@ describe("Interstice catalog v1 — Paper Double (decoy entity)", () => {
       inputsWith([caster, shooter], { [B as string]: frame(FIRE_BIT, 1, 400, 400) }),
       DT_MS,
     );
-    const doubles = Object.values(s1.state.paperDoubles ?? {});
+    const stepped = stepUntil(
+      s1.state,
+      runtime,
+      [caster, shooter],
+      30,
+      (s) => Object.values(s.paperDoubles ?? {}).some((pd) => pd.health < NINJA_PAPER_DOUBLE_MAX_HEALTH),
+    );
+    const doubles = Object.values(stepped.paperDoubles ?? {});
     expect(doubles.length).toBe(1); // damaged, not killed
     expect(doubles[0]!.health).toBe(NINJA_PAPER_DOUBLE_MAX_HEALTH - 12);
   });
