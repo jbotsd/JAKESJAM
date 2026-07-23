@@ -202,6 +202,16 @@ human gate — the last open acceptance row in six-axes-goal.md — closes.
    round-robin of bare-class bots (all 6 pairings + mirrors) and the win
    rates land in a declared band (default 35–65% per pairing) — the report
    is committed as the tuning evidence, re-runnable in one command.
+   *(FINDING 2026-07-23, recorded during execution: the current harness
+   CANNOT measure this. Its one shared heuristic bot policy resolves every
+   cross-class cell to a hard 0%/100% — verified identical at the pre-P1
+   commit (07ee723, isolated worktree run) and post-P1, so the determinism
+   is a policy artifact, not a balance signal; only the mirror cells carry
+   variance. Tuning class stats to move this needle would be tuning to a
+   broken instrument. PREREQ added: the harness needs a per-class-capable
+   policy — at minimum, range-keeping for Kindled melee and
+   evasion-vs-homing for the Syzygist tendril matchups — before the band
+   is meaningful. TTK guardrails (row 1) remain valid and pass.)*
 3. **Bot parity:** worldBots' melee-aware ranges still hold for the
    re-tuned classes (existing bot tests pass; a soak on :8088 shows all
    four bot classes scoring within a declared spread).
@@ -248,6 +258,8 @@ misled about what the game is or what remains.
   P1.7 feel-check AWAITING JAKE on :8088
 - P2 one voice: **NOT STARTED** (register decided 2026-07-23)
 - P3 legibility: **NOT STARTED**
-- P4 fight loops: **UNBLOCKED** (P1 merged) — balance matrix not run yet;
+- P4 fight loops: **UNBLOCKED** (P1 merged) — matrix run 2026-07-23:
+  harness found incapable of cross-class measurement (see P4.2's FINDING;
+  per-class bot policy is the new prereq); TTK guardrails pass;
   Syzygist color + Phase 4 rows AWAITING JAKE
 - P5 repo truth: **DONE** 2026-07-23 — archive/ + banners + STATE-OF-PLAY.md
