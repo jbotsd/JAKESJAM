@@ -37,10 +37,14 @@ cleanup, not a separate chore. Last touched: 2026-07-23.*
 
 ## The active goal docs (in priority order)
 
-1. **cohesion-goal.md** — the current focus; its Status block at the
-   bottom is the live work tracker.
-2. **six-axes-goal.md** — complete except Phase 4 (Jake's live playtest).
-3. **venue-goal.md** — shipped through its pillars; reference for venue
+1. **convergence-goal.md** — the one-big-/goal orchestration contract
+   (2026-07-23): Zig-first suite + cohesion P2/P3/P4 as parallel tracks,
+   built for ultracode workflow fan-out. Its Status block is the tracker
+   for those tracks.
+2. **cohesion-goal.md** — P1/P5 DONE; P2/P3/P4 execution now orchestrated
+   under convergence-goal.md (acceptance criteria still live here).
+3. **six-axes-goal.md** — complete except Phase 4 (Jake's live playtest).
+4. **venue-goal.md** — shipped through its pillars; reference for venue
    behavior.
 
 ## What needs finishing (live pointer)
