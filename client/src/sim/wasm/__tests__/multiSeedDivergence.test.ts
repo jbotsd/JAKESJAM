@@ -9,33 +9,49 @@
 // ticks of movement + combat interacting the way a real match actually does.
 //
 // This test is Track Z's convergence METER, not a proven-green gate. Z0b
-// (2026-07-23) ported the three biggest known gaps — fast-respawn round
-// semantics (Item A), muzzle geometry (Item B), the shrink-zone storm
-// (Item C) — and recorded the meter before/after:
+// (2026-07-23) ported fast-respawn round semantics + muzzle geometry +
+// the shrink-zone storm and got finals down to 329/185/445/278/361px
+// (from 1067/217/867/1043/376 at the Z0a baseline), leaving two evidenced
+// hypotheses: the missing fire-recoil substrate and the un-ported
+// tick-order reorder. Z0c (2026-07-23) built BOTH and the meter got
+// WORSE — recorded honestly, with the per-item split:
 //
-//   Z0b BEFORE (Z0a baseline, this harness):        AFTER (A+B+C):
-//   seed=1     : final 1067px, spikes→1494px, aliveΔ≤3 | final 329px, spikes→1480px (transient), aliveΔ≤1
-//   seed=42    : final  217px, spikes→1073px, aliveΔ≤2 | final 185px, spikes→1075px (transient), aliveΔ≤1
-//   seed=1337  : final  867px, spikes→1488px, aliveΔ≤3 | final 445px, spikes→1416px (transient), aliveΔ≤1
-//   seed=90210 : final 1043px, spikes→1468px, aliveΔ≤2 | final 278px, spikes→1466px (transient), aliveΔ≤1
-//   seed=271828: final  376px, spikes→1277px, aliveΔ≤3 | final 361px, spikes→1275px (transient), aliveΔ≤3
+//   Z0c BEFORE (Z0b's after):   AFTER Item A (recoil):  AFTER A+B (reorder):
+//   seed=1     : final  329px | final 1696px           | final 1696px
+//   seed=42    : final  185px | final 1562px           | final 1562px
+//   seed=1337  : final  445px | final 1246px           | final 1246px
+//   seed=90210 : final  278px | final 1661px           | final 1661px
+//   seed=271828: final  361px | final  898px           | final 1147px
 //
-// What changed and what didn't, honestly: Item A killed the dominant
-// signature — the sustained alive-flag/100-health oscillation (Zig ended
-// every round on last-alive KO and cycled respawn-all+score while TS kept
-// fighting); mismatches are now short transients around individual
-// death-timing disagreements and finals dropped 2-3x on 3/5 seeds. Item B
-// zeroed the early-match health deltas (hits land identically until
-// positions drift) but did NOT tighten the position numbers — evidenced
-// hypothesis, verified in-code: (1) Zig applies NO fire recoil while TS
-// kicks the shooter every shot (CardMod/ResolvedFireConfig carry no recoil
-// fields — the documented Recoil Step deferral; sweep players fire ~40% of
-// ticks, so TS shooters walk a different path from tick ~1), and (2) the
-// orphan branch's tick-order reorder is un-ported (a Zig shot gets its
-// first motion step one tick late → one-tick hit-timing skew) — see
-// tickOrderParity.test.ts. Item C (storm) can't move this sweep at all:
-// the 20s run never reaches a zone window (endgame = last 15s of a 90s
-// round). Recoil substrate + tick-order are the Z0c targets.
+// What the numbers do NOT mean: the ports themselves are wrong. Both are
+// proven at the micro level — the recoil kick is bit-identical per shot
+// (throwaway TS-vs-Zig probe during Z0c: shooter vx/vy equal to 1e-9),
+// and a shot fired at tick T now travels the IDENTICAL distance on both
+// sides at T (tickOrderParity.test.ts asserts full position+age equality,
+// 47.3221px both sides — its old "Zig integrates one tick late" carve-out
+// is deleted). Pre-death samples confirm it: t=60 deltas are equal or
+// slightly better than Z0b's on every seed. Item B on top of Item A
+// changed almost nothing in this sweep (one sample on one seed) — the
+// one-tick flight skew was never this harness's dominant term.
+//
+// Why the finals exploded anyway — the NEXT evidenced hypothesis, both
+// halves verified in-code during Z0c: the blowup starts at the FIRST
+// death-timing disagreement on every seed and never re-converges, because
+// (1) TS grants the round's first-blood killer a PERSISTENT 1.15x
+// move-speed multiplier (World.ts:2532 `firstBloodMul`, round.ts:37
+// FIRST_BLOOD_SPEED_MULTIPLIER) with NO Zig mirror at all (grepped: the
+// only `first_blood` in sim/src is a comment) — after the first kill the
+// TS-side killer walks 15% faster than its Zig twin for the REST of the
+// round, a sustained divergence engine that recoil's velocity coupling
+// now compounds on every shot (before Z0c the un-kicked Zig shooter's
+// friction-anchored drift plateaued near 161-330px; kicks at
+// slightly-different muzzle angles turn that plateau into growth); and
+// (2) respawn seat choice is position-dependent (assignedSpawnPoint's
+// greedy farthest-from-roster placement, mirroring TS assignSpawnPoints)
+// — once death ticks diverge, the two sims re-seat the same player at
+// DIFFERENT spawn seals, which is exactly the 1400-1700px step-plateaus
+// in the samples. First-blood is the next port target; it is small,
+// self-contained state (round.firstBloodPlayerId + one speed_mul term).
 //
 // If the sweep exceeds its bound, the per-seed record above is the
 // deliverable the next track consumes.

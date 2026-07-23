@@ -192,28 +192,21 @@ describe("tick-order + muzzle-geometry parity — TS vs Zig same-tick fired shot
     //   - after the reorder, before the muzzle port: 10.8394px vs TS's
     //     47.3221px, velocity vectors mismatched;
     //   - after the muzzle port: exact match.
-    //
-    // WHAT THIS PORT COVERS (Z0b Item B) vs. what it deliberately does
-    // NOT: the muzzle GEOMETRY is asserted exact below — identical spawn
-    // origin (the offset alternating-hand muzzle point) and identical
-    // velocity vector (muzzle-derived angle × speed), to 1e-9. The orphan
-    // branch's separate TICK-ORDER reorder (player physics + weapon fire
-    // moved BEFORE projectile motion/impact, its 3f16fe3-era fix) is NOT
-    // on main and NOT part of the 888345c muzzle spec — so on main a
-    // Zig-fired shot still gets its first motion step one step_world call
-    // later (ageMs=0 here vs TS's dt; ~10.8px of first-tick travel lag).
-    // Asserted explicitly below as the CURRENT state rather than papered
-    // over with a loose bound — when a future track ports the reorder,
-    // flip these two assertions to equality and this comment to history.
+    //   - main got the muzzle port first (Z0b Item B) and the tick-order
+    //     reorder second (Z0c Item B, adapted port of 3d465f3) — the
+    //     "flip these to equality" note the Z0b cut left behind is now
+    //     cashed in below: a projectile fired at tick T has integrated
+    //     the SAME distance on both sides at T (full position + age
+    //     equality, not just origin/velocity).
     expect(zigProj.originX).toBeCloseTo(tsProj.originX!, 9);
     expect(zigProj.originY).toBeCloseTo(tsProj.originY!, 9);
-    expect(zigProj.x).toBeCloseTo(tsProj.originX!, 9); // un-integrated: still at the muzzle
-    expect(zigProj.y).toBeCloseTo(tsProj.originY!, 9);
+    expect(zigProj.x).toBeCloseTo(tsProj.x, 9); // same-tick motion step applied on BOTH sides
+    expect(zigProj.y).toBeCloseTo(tsProj.y, 9);
     expect(zigProj.vx).toBeCloseTo(tsProj.vx, 9);
     expect(zigProj.vy).toBeCloseTo(tsProj.vy, 9);
-    // Known un-ported tick-order gap (see the block comment above).
-    expect(zigProj.ageMs).toBe(0);
+    expect(zigProj.ageMs).toBeCloseTo(tsProj.ageMs!, 6);
     expect(tsProj.ageMs).toBeCloseTo(DT_MS, 6);
+    expect(zigTraveled).toBeCloseTo(tsTraveled, 9);
 
     // And the muzzle geometry is REALLY in play (not both sides
     // regressing to center-spawn together): the spawn origin must sit off

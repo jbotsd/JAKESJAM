@@ -3040,176 +3040,919 @@ pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
     // 0b. PRE-step round snapshot for the shrink-zone storm (Track Z0b
     //     Item C): TS's storm block reads `state.round` as it stood at
     //     tick ENTRY (World.ts §3d's own "one-tick lag is imperceptible"
-    //     comment — `roundStateForStep` isn't computed yet there). Section
-    //     1 below overwrites phase/countdown before section 2z runs, so
-    //     capture the same-entry values here — this is what makes the
-    //     boundary tick exact: at countdown 0 entering the tick, TS still
-    //     applies a full-scale storm tick WHILE transitioning the round;
-    //     post-step reads would see `round_over` and skip it.
+    //     comment — `roundStateForStep` isn't computed yet there). Since
+    //     the Z0c Item B reorder the round machine runs LAST, so section
+    //     2z would read the entry values off the header anyway — the
+    //     snapshot is kept for the explicitness (2z's contract is "tick-
+    //     entry round state", and this spells it) rather than necessity;
+    //     the boundary-tick behavior it documents is unchanged: at
+    //     countdown 0 entering the tick, a full-scale storm tick still
+    //     applies WHILE this same tick's (now-later) machine transitions
+    //     the round.
     const storm_prestep_phase = state.header.round_phase;
     const storm_prestep_countdown = state.header.countdown_remaining_ms;
     const storm_prestep_sudden = state.header.sudden_death_active;
 
-    // 1. Round phase machine + winner detection (I6). When the round
-    //    resolves with a real winner (sudden-death last-alive or
-    //    force-resolve — see detectRoundWinner), increment that player's
-    //    score and signal the phase machine so it transitions
-    //    fighting → round_over; a draw (`ended` with winner -1) still
-    //    transitions but credits nobody.
-    const resolution = detectRoundWinner(state, eff_dt);
-    const winner_idx = resolution.winner_idx;
-    if (winner_idx >= 0 and
-        state.header.round_phase == @intFromEnum(round.RoundPhase.fighting))
+    // Round phase as of tick ENTRY (Track Z0c Item B — port of orphaned-
+    // branch commit 3d465f3's tick-order fix, adapted to main's grown
+    // step): parity with World.ts's `fightingPhase` const, read once at
+    // the top before its own round machine runs at the END of the tick.
+    // Player movement + weapon fire gate on this; the round machine itself
+    // now runs LAST (just before end-of-tick compaction) instead of first
+    // — see its own relocated comment below for the full reasoning.
+    const is_fighting = state.header.round_phase ==
+        @intFromEnum(round.RoundPhase.fighting);
+
+    // 8. Player physics (I16). Bridge PlayerEntity +
+    //    PlayerMovementMemory → PlayerStep, run stepPlayer with
+    //    the statics + one_way cache, write motion + memory back.
+    const statics_slice = state.statics[0..state.static_count];
+    const one_way_slice = state.one_way[0..state.static_count];
+    var pmi: u32 = 0;
+    while (pmi < state.player_count) : (pmi += 1) {
+        if (!state.players[pmi].flags.alive) continue;
+        // Host-resolved card build for this player (movement/shield/parry
+        // augments) — parity with the TS orchestrator's resolvePlayerBuild.
+        const fcfg = &state.player_fire_config[pmi];
+        const has_cfg = fcfg.valid != 0;
+        var ps = player_mod.PlayerStep{
+            .x = state.players[pmi].x,
+            .y = state.players[pmi].y,
+            .vx = state.players[pmi].vx,
+            .vy = state.players[pmi].vy,
+            .aim_x = state.players[pmi].aim_x,
+            .aim_y = state.players[pmi].aim_y,
+            .jetpack_fuel = if (state.players[pmi].flags.has_jetpack_fuel)
+                state.players[pmi].jetpack_fuel
+            else
+                100.0,
+            .crouching = if (state.players[pmi].flags.crouching) 1 else 0,
+            .coyote_ms = state.player_movement[pmi].coyote_ms,
+            .jump_buffer_ms = state.player_movement[pmi].jump_buffer_ms,
+            .jump_cut_applied = @intCast(state.player_movement[pmi].jump_cut_applied),
+            .jump_released_since_jump = @intCast(state.player_movement[pmi].jump_released_since_jump),
+            .grounded_last_frame = @intCast(state.player_movement[pmi].grounded_last_frame),
+            .jetpack_active = @intCast(state.player_movement[pmi].jetpack_active),
+            .touching_wall_dir = @intCast(state.player_movement[pmi].touching_wall_dir),
+            // Augment INPUTS from the host-resolved card build.
+            .jump_mul = if (has_cfg) fcfg.jump_mul else 1.0,
+            .wall_jump_mul = if (has_cfg) fcfg.wall_jump_mul else 1.0,
+            .wall_slide_mul = if (has_cfg) fcfg.wall_slide_mul else 1.0,
+            .air_jumps = if (has_cfg) @intCast(fcfg.air_jumps) else 0,
+            .dash_charges = if (has_cfg) @intCast(fcfg.dash_charges) else 0,
+            .dash_cooldown_mul = if (has_cfg) fcfg.dash_cooldown_mul else 1.0,
+            // Augment MEMORY carried from world state.
+            .dash_cooldown_ms = state.player_movement[pmi].dash_cooldown_ms,
+            .dash_active_ms = state.player_movement[pmi].dash_active_ms,
+            .dash_recovery_ms = state.player_movement[pmi].dash_recovery_ms,
+            .air_jumps_used = @intCast(state.player_movement[pmi].air_jumps_used),
+            .dash_used_in_air = @intCast(state.player_movement[pmi].dash_used_in_air),
+        };
+        // Compose per-player movement speed (I37). Defaults 1.0;
+        // speed_boost buff multiplies, slow_debuff / freeze /
+        // slow_field debuffs multiply (≤1).
+        var speed_mul: f64 = 1.0;
+        const ple = &state.players[pmi];
+        if (ple.flags.has_speed_boost and ple.speed_boost_until_tick > state.header.tick) {
+            speed_mul *= 1.4;
+        }
+        if (ple.flags.has_slow_debuff and ple.slow_debuff_until_tick > state.header.tick) {
+            speed_mul *= 0.5;
+        }
+        if (ple.flags.has_slow and ple.slowed_until_tick > state.header.tick) {
+            speed_mul *= ple.slow_multiplier;
+        }
+        if (ple.flags.has_freeze and ple.freeze_until_tick > state.header.tick) {
+            speed_mul *= ple.freeze_multiplier;
+        }
+        // Card move-speed + gravity augments ride the existing step multipliers.
+        if (has_cfg) speed_mul *= fcfg.move_speed_mul;
+        const grav_mul = chaos_profile.gravity_multiplier *
+            (if (has_cfg) fcfg.gravity_mul else 1.0);
+        // Wall Bloom / Shock Ring hook capture (this pass, AOE-queue
+        // ability wiring) — captured BEFORE stepPlayer mutates movement
+        // memory, same "read stepPlayer's INPUT and OUTPUT only, never its
+        // internals" backend-agnostic idiom World.ts's own
+        // wallDirBeforeStep/groundedBeforeStep locals use (World.ts:2377-
+        // 2392) and for the identical reason: Wall Bloom's wall-kick
+        // detection and Shock Ring's landing detection both need the
+        // PRE-step values to compare against this same call's OUTPUT
+        // below.
+        const wall_dir_before_step = state.player_movement[pmi].touching_wall_dir;
+        const grounded_before_step = state.player_movement[pmi].grounded_last_frame;
+        // Gated on is_fighting (Track Z0c Item B — port of orphaned-
+        // branch commit 3d465f3's own gate): parity with World.ts:2515's
+        // `if (entity.alive && fightingPhase)` — players freeze during
+        // countdown/round-over/drafting. The ceiling clamp + void-plane
+        // kill below stay OUTSIDE the gate, same shape as the orphan's
+        // cut (a body shoved past the bounds still resolves whatever the
+        // phase).
+        if (is_fighting) {
+            // NB: stepPlayer RETURNS jumped-this-frame, not grounded. The grounded
+            // state lives in ps.grounded_last_frame (mutated in place). The world
+            // orchestrator emits no jump event, so the return is discarded.
+            _ = player_mod.stepPlayer(
+                &ps,
+                state.players[pmi].prev_keys,
+                state.players[pmi].current_keys,
+                state.players[pmi].aim_x,
+                state.players[pmi].aim_y,
+                speed_mul,
+                grav_mul,
+                eff_dt,
+                statics_slice,
+                one_way_slice,
+            );
+            state.players[pmi].x = ps.x;
+            state.players[pmi].y = ps.y;
+            state.players[pmi].vx = ps.vx;
+            state.players[pmi].vy = ps.vy;
+            state.players[pmi].jetpack_fuel = ps.jetpack_fuel;
+            state.players[pmi].flags.has_jetpack_fuel = true;
+            state.players[pmi].flags.crouching = ps.crouching != 0;
+            state.players[pmi].flags.grounded = ps.grounded_last_frame != 0;
+            state.player_movement[pmi].coyote_ms = ps.coyote_ms;
+            state.player_movement[pmi].jump_buffer_ms = ps.jump_buffer_ms;
+            state.player_movement[pmi].jump_cut_applied = @intCast(ps.jump_cut_applied);
+            state.player_movement[pmi].jump_released_since_jump = @intCast(ps.jump_released_since_jump);
+            state.player_movement[pmi].grounded_last_frame = @intCast(ps.grounded_last_frame);
+            state.player_movement[pmi].jetpack_active = @intCast(ps.jetpack_active);
+            state.player_movement[pmi].touching_wall_dir = @intCast(ps.touching_wall_dir);
+            state.player_movement[pmi].dash_cooldown_ms = ps.dash_cooldown_ms;
+            state.player_movement[pmi].dash_active_ms = ps.dash_active_ms;
+            state.player_movement[pmi].dash_recovery_ms = ps.dash_recovery_ms;
+            state.player_movement[pmi].air_jumps_used = @intCast(ps.air_jumps_used);
+            state.player_movement[pmi].dash_used_in_air = @intCast(ps.dash_used_in_air);
+
+            // Wall Bloom (Ninja) — wall-kick hook (this pass, AOE-queue
+            // ability wiring; window OPENED by the "wall-bloom" cast in
+            // section 6z below). Mirrors World.ts's own heuristic exactly
+            // (World.ts:2422-2456): a Jump-bit rising edge while airborne and
+            // touching a wall LAST tick (not this tick's post-step state —
+            // same "before" values World.ts's wallDirBeforeStep/
+            // groundedBeforeStep read). Single-use: cleared on THIS wall-kick
+            // regardless of whether the window was even live (matches TS's
+            // unconditional `wallBloomUntilTick: wallBloomLive ? undefined :
+            // nextEntity.wallBloomUntilTick` — a no-op clear when already 0).
+            if (state.players[pmi].character_id == .sprinter) {
+                const jump_bit: u32 = 1 << 4;
+                const jump_edge = (state.players[pmi].current_keys & jump_bit) != 0 and
+                    (state.players[pmi].prev_keys & jump_bit) == 0;
+                if (jump_edge and wall_dir_before_step != 0 and grounded_before_step == 0) {
+                    const wall_bloom_live = state.players[pmi].wall_bloom_until_tick > state.header.tick;
+                    if (wall_bloom_live) {
+                        state.players[pmi].wall_bloom_until_tick = 0;
+                        if (state.pending_instant_aoe_count < world_state.MAX_PENDING_INSTANT_AOE) {
+                            const wall_x = state.players[pmi].x +
+                                @as(f64, @floatFromInt(wall_dir_before_step)) * NINJA_WALL_BLOOM_WALL_OFFSET_PX;
+                            state.pending_instant_aoe[state.pending_instant_aoe_count] = .{
+                                .x = wall_x,
+                                .y = state.players[pmi].y,
+                                .radius = NINJA_WALL_BLOOM_RADIUS_PX,
+                                .damage = NINJA_WALL_BLOOM_DAMAGE,
+                                .caster_idx = pmi,
+                            };
+                            state.pending_instant_aoe_count += 1;
+                        }
+                    }
+                }
+            }
+
+            // Shock Ring (Paladin) — landing hook (this pass, AOE-queue
+            // ability wiring; hop + window OPENED by the "shock-ring" cast in
+            // section 6z below). Mirrors World.ts's own landing check exactly
+            // (World.ts:2465-2493): airborne last tick, grounded now.
+            // Single-use: cleared on THIS landing regardless of whether the
+            // window was even live (same unconditional-clear shape as Wall
+            // Bloom above — matches TS's `nextEntity = { ...,
+            // shockRingArmedUntilTick: undefined }` sitting INSIDE the
+            // `if (...armedUntilTick... > state.tick)` branch, so it only
+            // actually fires when live; harmless either way since 0 already
+            // reads as "not armed").
+            if (state.players[pmi].character_id == .heavy) {
+                const grounded_after_step = ps.grounded_last_frame != 0;
+                const just_landed = grounded_before_step == 0 and grounded_after_step;
+                if (just_landed) {
+                    const shock_ring_live = state.players[pmi].shock_ring_armed_until_tick > state.header.tick;
+                    if (shock_ring_live) {
+                        state.players[pmi].shock_ring_armed_until_tick = 0;
+                        if (state.pending_instant_aoe_count < world_state.MAX_PENDING_INSTANT_AOE) {
+                            state.pending_instant_aoe[state.pending_instant_aoe_count] = .{
+                                .x = state.players[pmi].x,
+                                .y = state.players[pmi].y,
+                                .radius = KIN_SHOCK_RING_RADIUS_PX,
+                                .damage = KIN_SHOCK_RING_DAMAGE,
+                                .caster_idx = pmi,
+                            };
+                            state.pending_instant_aoe_count += 1;
+                        }
+                    }
+                }
+            }
+
+            // Razor Route (Ninja, this pass) — dash-through body-cross
+            // detection. Mirrors World.ts's "1z2. NINJA MELEE" dash-through
+            // section (World.ts:5131-5200) — rising-edge burst detection,
+            // per-burst tag debounce, the baseline energy grant, and Razor
+            // Route's own velocity boost + "marks Read on cross" byproduct.
+            // Deliberately positioned here (post-stepPlayer, same per-player
+            // physics loop as Wall Bloom/Shock Ring's own hooks immediately
+            // above) rather than inside `stepMeleeSwing`: TS runs this as its
+            // OWN pass over the ninja roster, independent of (and running
+            // AFTER, in TS's own tick order) the swing FSM, keyed off
+            // `dashing`/movement state, not the melee arc — same "read
+            // stepPlayer's OUTPUT, not its internals" shape this loop's other
+            // two hooks already use. `dashing_now` is the derived Zig
+            // equivalent of TS's `attacker.dashing === true`:
+            // `player_movement[pmi].dash_active_ms > 0.0` is exactly what
+            // `dash_active`/`was_dash_active` already track internally in
+            // player.zig, just not as a wire-visible PlayerEntity boolean —
+            // the ACTUAL gap the original Razor Route/Ghost Guard deferrals
+            // cited never needed a new field, only reading what already
+            // exists. `melee_swing[pmi]`'s new dash_through_tagged_mask/
+            // was_dashing/razor_route_active_dash fields are the Zig mirror of
+            // NinjaMeleeMemory's own fields of the same name/shape.
+            if (state.players[pmi].character_id == .sprinter) {
+                const dmem = &state.melee_swing[pmi];
+                const dashing_now = state.player_movement[pmi].dash_active_ms > 0.0;
+                if (dashing_now and !dmem.was_dashing) {
+                    dmem.dash_through_tagged_mask = 0; // new dash burst — fresh tags
+                    const razor_route_live = state.players[pmi].razor_route_until_tick > state.header.tick;
+                    dmem.razor_route_active_dash = razor_route_live;
+                    if (razor_route_live) {
+                        state.players[pmi].razor_route_until_tick = 0;
+                        const dash_speed = @sqrt(
+                            state.players[pmi].vx * state.players[pmi].vx +
+                                state.players[pmi].vy * state.players[pmi].vy,
+                        );
+                        if (dash_speed > 1e-3) {
+                            state.players[pmi].vx += (state.players[pmi].vx / dash_speed) * NINJA_RAZOR_ROUTE_BOOST_SPEED;
+                            state.players[pmi].vy += (state.players[pmi].vy / dash_speed) * NINJA_RAZOR_ROUTE_BOOST_SPEED;
+                        }
+                    }
+                }
+                if (dashing_now) {
+                    const attacker_box = combat.playerHitboxAabb(
+                        state.players[pmi].x,
+                        state.players[pmi].y,
+                        state.players[pmi].flags.crouching,
+                    );
+                    var dvi: u32 = 0;
+                    while (dvi < state.player_count) : (dvi += 1) {
+                        if (dvi == pmi) continue;
+                        const dbit: u16 = @as(u16, 1) << @as(u4, @intCast(dvi));
+                        if ((dmem.dash_through_tagged_mask & dbit) != 0) continue;
+                        if (!state.players[dvi].flags.alive) continue;
+                        const victim_box = combat.playerHitboxAabb(
+                            state.players[dvi].x,
+                            state.players[dvi].y,
+                            state.players[dvi].flags.crouching,
+                        );
+                        // AABB overlap — same inline check `stepMeleeSwing`'s
+                        // arc-hit-check delegates to `combat.isBodyInMeleeArc`
+                        // for, but this is a plain body-cross (no range/arc
+                        // gate), matching TS's own `aabbOverlap(attackerAABB,
+                        // playerHitboxAABB(victim))`.
+                        if (!(attacker_box.x < victim_box.x + victim_box.w and
+                            attacker_box.x + attacker_box.w > victim_box.x and
+                            attacker_box.y < victim_box.y + victim_box.h and
+                            attacker_box.y + attacker_box.h > victim_box.y)) continue;
+                        dmem.dash_through_tagged_mask |= dbit;
+                        state.players[pmi].energy = @min(
+                            NINJA_ENERGY_MAX,
+                            state.players[pmi].energy + NINJA_ENERGY_ON_DASH_THROUGH,
+                        );
+                        emitEvent(state, .dash_through, @intCast(pmi), @intCast(dvi), 0, 0, state.players[pmi].x, state.players[pmi].y);
+                        if (dmem.razor_route_active_dash) {
+                            const mark_ticks: u32 = @intFromFloat(@ceil(NINJA_RAZOR_ROUTE_READ_MARK_MS / @max(1.0, eff_dt)));
+                            state.players[pmi].read_target_id_len = state.players[dvi].id_len;
+                            state.players[pmi].read_target_id_bytes = state.players[dvi].id_bytes;
+                            state.players[pmi].read_mark_until_tick = state.header.tick + mark_ticks;
+                            dmem.razor_route_active_dash = false;
+                        }
+                    }
+                }
+                dmem.was_dashing = dashing_now;
+            }
+        }
+
+        // Ceiling clamp (parity with World.ts computeCeilingClampY): head pushed
+        // above the ceiling → shove back under + kill upward velocity.
+        if (g_has_ceiling) {
+            const min_center_y = g_ceiling_clamp_y + PLAYER_HALF_HEIGHT;
+            if (state.players[pmi].y < min_center_y) {
+                state.players[pmi].y = min_center_y;
+                if (state.players[pmi].vy < 0) state.players[pmi].vy = 0;
+            }
+        }
+        // Void-plane kill (parity with World.ts): fell past the map bottom +
+        // KILL_PLANE_MARGIN → force-kill so the death→respawn flow runs. Player
+        // is alive here (checked at loop top). Emit hit_confirmed (damage =
+        // remaining health) + player_killed like any other death.
+        if (g_kill_plane_y > 0 and state.players[pmi].y > g_kill_plane_y) {
+            const rem = state.players[pmi].health;
+            state.players[pmi].health = 0;
+            state.players[pmi].flags.alive = false;
+            emitEvent(state, .hit_confirmed, @intCast(pmi), -1, 0, rem, state.players[pmi].x, state.players[pmi].y);
+            emitEvent(state, .player_killed, @intCast(pmi), -1, 0, 0, state.players[pmi].x, state.players[pmi].y);
+        }
+    }
+
+    // 8c. Launch pads — mirror of World.ts §4a / client/src/sim/launchPad.ts.
+    //     TICK-ORDER POSITION: directly AFTER the player-physics pass, so
+    //     the impulse modifies the player's post-movement velocity and
+    //     integrates on the NEXT tick's stepPlayer — the exact invariant the
+    //     TS orchestrator establishes by running its pad pass after movement
+    //     (TS anchors it to the pickup section §4a; Zig's own pickup pass §7
+    //     runs pre-movement, a pre-existing quarantined divergence, so the
+    //     shared anchor is "post-movement", not "post-pickups").
+    //     Formula + stateless retrigger gate: see launchPad.ts's header.
+    //     Pads iterate in host array order (== map.launchPads order ==
+    //     event entity_id); players in packed order (packed from sorted ids
+    //     by worldStateBridge — same order TS iterates).
+    if (state.header.round_phase == @intFromEnum(round.RoundPhase.fighting)) {
+        var lpi: u32 = 0;
+        while (lpi < g_launch_pad_count) : (lpi += 1) {
+            const pad = &g_launch_pads[lpi];
+            const magnitude = @sqrt(pad.impulse_x * pad.impulse_x +
+                pad.impulse_y * pad.impulse_y);
+            if (magnitude <= 0) continue; // degenerate authoring — inert pad
+            const ux = pad.impulse_x / magnitude;
+            const uy = pad.impulse_y / magnitude;
+            const retrigger_gate = LAUNCH_RETRIGGER_FRACTION * magnitude;
+            const along_cap = LAUNCH_ALONG_CAP_FACTOR * magnitude;
+            var lpp: u32 = 0;
+            while (lpp < state.player_count) : (lpp += 1) {
+                const lp = &state.players[lpp];
+                if (!lp.flags.alive) continue;
+                // AABB overlap, strict inequalities (TS aabbOverlap parity).
+                if (!(lp.x - LAUNCH_PLAYER_HALF_W < pad.x + pad.w / 2 and
+                    lp.x + LAUNCH_PLAYER_HALF_W > pad.x - pad.w / 2 and
+                    lp.y - LAUNCH_PLAYER_HALF_H < pad.y + pad.h / 2 and
+                    lp.y + LAUNCH_PLAYER_HALF_H > pad.y - pad.h / 2)) continue;
+                const v_along = lp.vx * ux + lp.vy * uy;
+                if (v_along >= retrigger_gate) continue; // launched / moving away
+                // ADD with floor + cap; perpendicular velocity preserved.
+                const v_perp_x = lp.vx - v_along * ux;
+                const v_perp_y = lp.vy - v_along * uy;
+                const boosted = @min(v_along + magnitude, along_cap);
+                const new_along = @max(magnitude, boosted);
+                lp.vx = v_perp_x + new_along * ux;
+                lp.vy = v_perp_y + new_along * uy;
+                // A pad launch is NOT a jump — consume the variable-jump-
+                // height cut so next tick's stepPlayer doesn't halve the
+                // rising velocity (parity with World.ts §4a's memory poke;
+                // same trick the dash lunge uses in player.ts/player.zig).
+                state.player_movement[lpp].jump_cut_applied = 1;
+                emitEvent(
+                    state,
+                    .launch_pad_fired,
+                    @intCast(lpp),
+                    -1,
+                    lpi,
+                    magnitude,
+                    pad.x,
+                    pad.y,
+                );
+            }
+        }
+    }
+
+    // Melee rising-edge capture (2026-07-20 base-melee-mechanic gap-closure
+    // pass) — host-only stack scratch, mirrors World.ts's own
+    // `ninjaSlashEdges`/`paladinEdgeEdges` maps and the EXACT reason they
+    // exist (World.ts:1518-1530): section 6 immediately below rolls
+    // `prev_keys = current_keys` at the end of EVERY player's own
+    // iteration, so by the time section 6a's melee loop runs AFTER section
+    // 6 has finished, `prev_keys` no longer holds the pre-tick value for
+    // ANYONE — a same-tick Fire press would look like it was already held
+    // last tick too, and a swing could never start. Captured here, before
+    // section 6 touches prev_keys.
+    var melee_fire_rising_edge: [world_state.MAX_PLAYERS]bool = @splat(false);
     {
-        const idx: u32 = @intCast(winner_idx);
-        state.players[idx].score += 1;
-        emitEvent(
-            state,
-            .round_end,
-            winner_idx,
-            -1,
-            0,
-            @floatFromInt(state.players[idx].score),
-            0,
-            0,
+        const MELEE_FIRE_BIT: u32 = 1 << 6;
+        var mfi: u32 = 0;
+        while (mfi < state.player_count) : (mfi += 1) {
+            const mp = &state.players[mfi];
+            melee_fire_rising_edge[mfi] =
+                (mp.current_keys & MELEE_FIRE_BIT) != 0 and
+                (mp.prev_keys & MELEE_FIRE_BIT) == 0;
+        }
+    }
+
+    // Ability-slot rising-edge capture (2026-07-20, Phase 1 ability-cast
+    // dispatch pass) — same "captured before section 6 rolls prev_keys"
+    // contract as `melee_fire_rising_edge` immediately above, and for the
+    // identical reason. Slot bits did NOT exist anywhere in Zig's input
+    // handling before this pass (verified by grepping every existing
+    // `1 << N` input-bit constant in this file / combat.zig / player.zig —
+    // 0..9 were all spoken for, nothing read 10/11/12) — mirrors TS's own
+    // `slotBit = 1 << (10 + slot)` (World.ts:2150) exactly, the SAME
+    // "duplicated as a local constant rather than exported" convention
+    // `ABILITY_BIT`/`FIRE_BIT`/`MELEE_FIRE_BIT` above already use.
+    var ability_slot_rising_edge: [world_state.MAX_PLAYERS][world_state.MAX_ABILITY_SLOTS]bool =
+        @splat(@splat(false));
+    {
+        const SLOT_BIT_BASE: u5 = 10;
+        var asi: u32 = 0;
+        while (asi < state.player_count) : (asi += 1) {
+            const ap = &state.players[asi];
+            var slot: usize = 0;
+            while (slot < world_state.MAX_ABILITY_SLOTS) : (slot += 1) {
+                const slot_bit: u32 = @as(u32, 1) << @as(u5, @intCast(SLOT_BIT_BASE + slot));
+                ability_slot_rising_edge[asi][slot] =
+                    (ap.current_keys & slot_bit) != 0 and
+                    (ap.prev_keys & slot_bit) == 0;
+            }
+        }
+    }
+
+    // 6. Combat — per-player shield drain + parry start (I4 +
+    //    I4b). Defaults match `combat_*` exports.
+    var pi3: u32 = 0;
+    while (pi3 < state.player_count) : (pi3 += 1) {
+        const player_ptr = &state.players[pi3];
+        // Wizard basic-fire ramping channel (2026-07-20 gap-closure pass —
+        // parity port of weapon.ts:243-257 / constants.ts's
+        // GEO_CHANNEL_RAMP_MS doc comment). Ticked BEFORE the fire-rate
+        // composition below (and before any early-return-shaped gate,
+        // matching TS's own "track hold duration even mid-cooldown" note)
+        // so holding Fire through a normal cooldown gap still accumulates.
+        // `character_id == .balanced` is this codebase's Zig-side mirror of
+        // `classIdForArchetype(...) === "wizard"` (cardTypes.ts's
+        // ARCHETYPE_CLASS_ID: balanced→wizard).
+        // FIRE_BIT mirrors weapon.zig's own (non-pub) `InputBitFire = 1 << 6`
+        // — duplicated as a local constant rather than exported, matching
+        // this same loop's existing ABILITY_BIT precedent below.
+        const FIRE_BIT: u32 = 1 << 6;
+        const is_wizard_channel = player_ptr.character_id == .balanced;
+        const fire_requested = (player_ptr.current_keys & FIRE_BIT) != 0;
+        // Phase-gated (Track Z0c Item B): TS only ever ticks the channel
+        // inside stepWeapon, which isn't called outside the fighting
+        // phase — a held Fire during countdown must not pre-ramp the
+        // wizard's fire rate (hold value freezes, not resets, matching
+        // stepWeapon simply not running).
+        if (is_fighting) {
+            if (is_wizard_channel and fire_requested and player_ptr.flags.alive) {
+                player_ptr.channel_hold_ms += eff_dt;
+            } else {
+                player_ptr.channel_hold_ms = 0;
+            }
+        }
+        // Card shield/parry augments from the host-resolved build. Match the TS
+        // orchestrator: maxCharge = SHIELD_MAX_CHARGE_DEFAULT × chargeMul (NOT
+        // the stored max), recharge × rechargeMul, parry cooldown × cooldownMul.
+        const cfg3 = &state.player_fire_config[pi3];
+        const has3 = cfg3.valid != 0;
+        combat.tickShield(
+            player_ptr,
+            player_ptr.current_keys,
+            eff_dt,
+            combat.SHIELD_MAX_CHARGE_DEFAULT * (if (has3) cfg3.shield_charge_mul else 1.0),
+            combat.SHIELD_DRAIN_PER_SECOND,
+            combat.SHIELD_RECHARGE_PER_SECOND * (if (has3) cfg3.shield_recharge_mul else 1.0),
         );
-        // Match-end check (I9): if this player hit target_score,
-        // mark match winner. orchestrator stops advancing past
-        // round_over once match_winner_idx is set.
-        if (state.header.target_score > 0 and
-            state.players[idx].score >= state.header.target_score)
+        // Emission cast (docs/emission-engine-goal.md — mirror of the TS
+        // cast branch in World.stepWithRuntime): the Ability rising edge
+        // at full charge fires a radial volley derived from the fire
+        // config (weapon_build.emissionFromConfig — parameters already
+        // crossed the boundary, no second config), zeroes the charge, and
+        // CONSUMES the edge (no parry this press). Below full charge the
+        // edge falls through to tryStartParry — bot defensive behavior.
+        // Known v1 parity gap vs TS: cast shards don't carry statusScale
+        // (freeze ×2) — the projectile ABI has no such field yet; the
+        // opt-in wasm world accepts base-duration statuses until a later
+        // ABI cut (documented in emission.ts too).
+        const ABILITY_BIT: u32 = 1 << 7;
+        const ability_edge = (player_ptr.current_keys & ABILITY_BIT) != 0 and
+            (player_ptr.prev_keys & ABILITY_BIT) == 0;
+        var cast_consumed_edge = false;
+        if (ability_edge and
+            player_ptr.flags.alive and
+            state.header.round_phase == @intFromEnum(round.RoundPhase.fighting) and
+            player_ptr.ability_charge >= EMISSION_CHARGE_MAX)
         {
-            state.header.match_winner_idx = winner_idx;
-        }
-    }
-    // Prev-phase snapshot (Phase 2, docs/zig-step-world-parity-goal.md):
-    // captured BEFORE `roundStepPhase` overwrites `state.header.round_phase`
-    // below — needed to tell "arrived at countdown FROM drafting" apart
-    // from any other arrival, and to gate `allDraftersResolved` (only
-    // meaningful while CURRENTLY in drafting).
-    const prev_phase = state.header.round_phase;
-    const drafting_all_resolved =
-        prev_phase == @intFromEnum(round.RoundPhase.drafting) and
-        draft.allDraftersResolved(state);
-    const phase_result = round.roundStepPhase(
-        state.header.round_phase,
-        state.header.countdown_remaining_ms,
-        eff_dt,
-        // `ended` (not `winner_idx >= 0`): a sudden-death mutual KO ends
-        // the round as a DRAW — the phase must still leave `fighting`
-        // even though nobody is credited (round.ts scores only when
-        // `winner !== null` but transitions on any non-undefined verdict).
-        resolution.ended,
-        drafting_all_resolved,
-    );
-    // Auto-pick stragglers BEFORE committing the new phase below: this
-    // runs `draft.applyCardPick` (via `autoPickStragglers`), which itself
-    // gates on `state.header.round_phase == drafting` — it must still see
-    // the OLD (drafting) phase here, not the new (countdown) one the very
-    // next line is about to write. Same reasoning as capturing `prev_phase`
-    // above: side effects that need to observe "we were just in drafting"
-    // must run before the phase write, not after.
-    if (phase_result.transitioned == 1 and
-        phase_result.new_phase == @intFromEnum(round.RoundPhase.countdown) and
-        prev_phase == @intFromEnum(round.RoundPhase.drafting) and
-        !drafting_all_resolved)
-    {
-        // Window expired with picks outstanding: auto-pick the FIRST
-        // offer for every unpicked drafter (round.ts's own expiry branch).
-        draft.autoPickStragglers(state);
-    }
-
-    state.header.round_phase = phase_result.new_phase;
-    state.header.countdown_remaining_ms =
-        phase_result.new_countdown_remaining_ms;
-    if (phase_result.transitioned == 1 and
-        phase_result.new_phase == @intFromEnum(round.RoundPhase.round_over))
-    {
-        // Persist THIS round's winner (real index or -1 = draw) so it's
-        // still readable `ROUND_OVER_HOLD_MS` later when drafting rolls
-        // offers and needs it for catch-up role classification — see
-        // `WorldStateHeader.round_winner_idx`'s own doc comment for why a
-        // fresh local `winner_idx` isn't enough (this tick's value would
-        // otherwise be lost by the time drafting starts).
-        state.header.round_winner_idx = winner_idx;
-    }
-    if (phase_result.transitioned == 1 and
-        phase_result.new_phase == @intFromEnum(round.RoundPhase.fighting))
-    {
-        // New round's fighting phase begins: kill tally starts empty
-        // (parity with round.ts's countdown → fighting reset — same
-        // lifecycle as firstBloodPlayerId on the TS side).
-        var ki: u32 = 0;
-        while (ki < state.player_count) : (ki += 1) {
-            state.players[ki].round_kills = 0;
-        }
-        // Sudden-death trigger (Track Z0a port of orphaned-branch commit
-        // 02b74f5 — parity with round.ts): re-evaluated exactly on the
-        // countdown → fighting transition, using the scores as they stand
-        // heading into the new round. This is the first time step_world
-        // DECIDES the trigger independently (previously the flag was
-        // TS-set-only, and the pack path wiped it every tick anyway —
-        // see writeScoresIntoMemory's bug history).
-        state.header.sudden_death_active =
-            if (isSuddenDeathRound(state)) 1 else 0;
-    }
-    if (phase_result.transitioned == 1 and
-        phase_result.new_phase == @intFromEnum(round.RoundPhase.drafting))
-    {
-        // round_over → drafting (Phase 2): roll DRAFT_OFFER_COUNT offers
-        // per roster player. See `draft.zig`'s `rollOffersForRound` for
-        // the full candidate-pool-filter + weighted-sample + pity-floor
-        // port of `enterDrafting`.
-        draft.rollOffersForRound(state);
-    }
-    if (phase_result.transitioned == 1 and
-        phase_result.new_phase == @intFromEnum(round.RoundPhase.countdown))
-    {
-        // Wipe drafting bookkeeping so the next round starts clean (no-op
-        // the very first time countdown is ever reached, before any round
-        // has run — player_draft_state is already zero-valued then). Runs
-        // AFTER the auto-pick block above (which needed the pre-clear
-        // offers/picked_slot state to still be readable).
-        draft.clearDraftState(state);
-
-        // Sudden death clears on countdown entry (round.ts sets
-        // `next.suddenDeathActive = undefined` at BOTH →countdown
-        // transitions — round-over→countdown and drafting→countdown; the
-        // countdown→fighting transition above re-decides it fresh). Not in
-        // the 02b74f5 branch spec, which only wrote the flag at the
-        // fighting transition — but without this, a stale `true` survives
-        // the countdown phase where TS reads cleared, a needless
-        // divergence window.
-        state.header.sudden_death_active = 0;
-
-        state.header.round_index += 1;
-        // Reset transient entities for the new round (I28).
-        // Players keep their score + buff durations; everything
-        // else clears so the next round starts clean.
-        state.projectile_count = 0;
-        state.fire_count = 0;
-        state.satellite_count = 0;
-        // Respawn ALL players for the new round (Track Z0b Item A —
-        // upgraded from the old heal-in-place approximation to the full
-        // World.ts `respawnAll` port: every player runs the SAME
-        // respawnPlayerAt reset as the mid-round fast respawn, at their
-        // assignSpawnPoints seat — max health honors class chassis +
-        // maxHealthAdd cards instead of the old flat 100, positions move
-        // to the spawn seals instead of staying wherever the bell rang,
-        // and any pending mid-round respawn stamp is consumed. NOTE:
-        // slow deliberately survives now (TS's respawnPlayerAt clears
-        // burn/freeze/parry but NOT slowedUntilTick — the old Zig clear
-        // here was a divergence, not a feature).
-        var ri: u32 = 0;
-        while (ri < state.player_count) : (ri += 1) {
-            const seat = assignedSpawnPoint(state, ri);
-            respawnPlayerAt(
-                &state.players[ri],
-                &state.player_fire_config[ri],
-                seat.x,
-                seat.y,
+            const em = weapon_build.emissionFromConfig(&state.player_fire_config[pi3]);
+            const ecfg = &state.player_fire_config[pi3];
+            const e_valid = ecfg.valid != 0;
+            var ei2: u32 = 0;
+            while (ei2 < em.volley_count) : (ei2 += 1) {
+                if (state.projectile_count >= world_state.MAX_PROJECTILES) break;
+                const ang = (@as(f64, @floatFromInt(ei2)) /
+                    @as(f64, @floatFromInt(em.volley_count))) * 2.0 * std.math.pi;
+                const slot: u32 = state.projectile_count;
+                state.projectile_count += 1;
+                const new_id: u32 = state.header.next_entity_id;
+                state.header.next_entity_id += 1;
+                state.projectiles[slot] = .{
+                    .x = player_ptr.x,
+                    .y = player_ptr.y - 30,
+                    .vx = trig.lutCos(ang) * em.speed,
+                    .vy = trig.lutSin(ang) * em.speed,
+                    .radius = em.radius_px,
+                    .damage = em.damage_per_shard,
+                    .lifetime_ms = weapon_build.EMISSION_LIFETIME_MS,
+                    .age_ms = 0,
+                    .traveled_px = 0,
+                    .origin_x = player_ptr.x,
+                    .origin_y = player_ptr.y - 30,
+                    .homing_strength = if (e_valid) ecfg.homing_strength else 0,
+                    .acceleration_multiplier = 0,
+                    .gravity_scale = 0,
+                    .range_px = weapon_build.EMISSION_RANGE_PX,
+                    .slow_multiplier = if (e_valid) ecfg.slow_multiplier else 1.0,
+                    .sticky_fuse_ms = 0,
+                    .impact_radius_px = em.impact_radius_px,
+                    .id = new_id,
+                    .bounces_remaining = if (e_valid) ecfg.bounces else 0,
+                    .pierce_remaining = 0,
+                    .split_count = 0,
+                    .flags = .{
+                        .has_owner = true,
+                        .has_impact = true,
+                        .has_split = false,
+                        .has_slow = e_valid and ecfg.slow_multiplier != 1.0,
+                        .has_homing = e_valid and ecfg.homing_strength != 0,
+                        .has_acceleration = false,
+                        .has_gravity_scale = false,
+                        .has_range = true,
+                        .has_age = true,
+                        .has_traveled = true,
+                        .has_origin = true,
+                        .returning = false,
+                        .has_sticky_fuse = false,
+                        .has_impact_radius = true,
+                    },
+                    .pathing = if (e_valid) ecfg.pathing else .straight,
+                    .element = if (e_valid) ecfg.element else .crystal,
+                    .impact = if (e_valid) ecfg.impact else .none,
+                    .shape = if (e_valid) ecfg.shape else .circle,
+                    .owner_id_len = player_ptr.id_len,
+                    .owner_id_bytes = player_ptr.id_bytes,
+                };
+            }
+            player_ptr.ability_charge = 0;
+            cast_consumed_edge = true;
+            emitEvent(
+                state,
+                .emission_cast,
+                @intCast(pi3),
+                -1,
+                0,
+                @floatFromInt(em.volley_count),
+                player_ptr.x,
+                player_ptr.y,
             );
         }
+
+        if (!cast_consumed_edge) {
+            _ = combat.tryStartParry(
+                player_ptr,
+                player_ptr.current_keys,
+                player_ptr.prev_keys,
+                state.header.tick,
+                eff_dt,
+                combat.PARRY_ACTIVE_MS,
+                combat.PARRY_COOLDOWN_MS_DEFAULT * (if (has3) cfg3.parry_cooldown_mul else 1.0),
+            );
+        }
+        // Gated on is_fighting (Track Z0c Item B — port of 3d465f3's
+        // missing gate): parity with World.ts:2766's `else if
+        // (nextEntity.alive && fightingPhase)` around stepWeapon —
+        // no firing (and no cooldown tick) during countdown/round-over/
+        // drafting. Shield/parry above deliberately stay UNGATED (TS's
+        // own comment: "Both run regardless of round phase so the
+        // shield can recharge between rounds").
+        if (is_fighting) {
+            // Weapon fire decision + projectile spawn (I21 + I45).
+            // Use the host-resolved fire config when valid, else fall
+            // back to the starter-pistol base from data/weapons.zig.
+            // The host (J0 shim) patches state.player_fire_config[i]
+            // each tick from createWeaponBuild(player.cards) so card
+            // mutations (multi-shot, damage scale, etc) take effect.
+            const fcfg = &state.player_fire_config[pi3];
+            const damage_v: f64 = if (fcfg.valid != 0) fcfg.damage else weapons_data.weaponBaseById(.starter_pistol).damage;
+            const fire_rate_v: f64 = if (fcfg.valid != 0) fcfg.fire_rate else weapons_data.weaponBaseById(.starter_pistol).fire_rate;
+            const proj_speed_base: f64 = if (fcfg.valid != 0) fcfg.projectile_speed else weapons_data.weaponBaseById(.starter_pistol).projectile_speed;
+            const proj_speed_mul: f64 = if (fcfg.valid != 0) fcfg.speed_multiplier else 1.0;
+            const proj_lifetime_sec: f64 = if (fcfg.valid != 0) fcfg.projectile_lifetime_seconds else weapons_data.weaponBaseById(.starter_pistol).projectile_lifetime_seconds;
+            const proj_lifetime_mul: f64 = if (fcfg.valid != 0) fcfg.lifetime_multiplier else 1.0;
+            const spread_total: f64 = if (fcfg.valid != 0) fcfg.spread_radians else weapons_data.weaponBaseById(.starter_pistol).spread_radians;
+            // Sunlance / Measure / Overclock (Phase 4a, docs/zig-step-world-
+            // parity-goal.md — bit-exact port of weapon.ts:336-423's own
+            // priority chains). `overclock_active` is read here (ahead of its
+            // sibling composition at the cd_after call below) purely because
+            // spread's own priority chain needs it in the SAME expression as
+            // measure_active — see GEO_MEASURE_SPREAD_MULTIPLIER's own doc
+            // comment (world.zig, Phase 4a constants block) for why Measure
+            // beats Overclock here specifically.
+            const sunlance_active = player_ptr.sunlance_until_tick > state.header.tick;
+            const measure_active = player_ptr.measure_until_tick > state.header.tick;
+            const overclock_active = player_ptr.overclock_until_tick > state.header.tick;
+            // Damage priority: Sunlance > Measure > base — TS also ranks
+            // Stolen Fangs above Sunlance here, but Stolen Fangs has no Zig
+            // mirror anywhere (pendingLockCharges — unrelated to this pass), so
+            // this chain correctly starts at Sunlance (see
+            // GEO_SUNLANCE_DAMAGE_MULTIPLIER's own doc comment).
+            const damage_amp_v: f64 = if (sunlance_active)
+                damage_v * GEO_SUNLANCE_DAMAGE_MULTIPLIER
+            else if (measure_active)
+                damage_v * GEO_MEASURE_DAMAGE_MULTIPLIER
+            else
+                damage_v;
+            // Spread priority: Measure (forces 0) > Overclock (tightens) > base.
+            const spread_amp_total: f64 = if (measure_active)
+                spread_total * GEO_MEASURE_SPREAD_MULTIPLIER
+            else if (overclock_active)
+                spread_total * GEO_OVERCLOCK_SPREAD_MULTIPLIER
+            else
+                spread_total;
+            const proj_count: u32 = if (fcfg.valid != 0) @max(@as(u32, 1), fcfg.projectile_count) else 1;
+            const proj_size_mul: f64 = if (fcfg.valid != 0) fcfg.size_multiplier else 1.0;
+            const proj_range: f64 = if (fcfg.valid != 0) fcfg.range_px else weapons_data.weaponBaseById(.starter_pistol).projectile_range_px;
+            const proj_bounces: u32 = if (fcfg.valid != 0) fcfg.bounces else 0;
+            const proj_pierce: u32 = if (fcfg.valid != 0) fcfg.pierce_count else 0;
+            const proj_splits: u32 = if (fcfg.valid != 0) fcfg.split_count else 0;
+            const proj_homing: f64 = if (fcfg.valid != 0) fcfg.homing_strength else 0;
+            const proj_accel: f64 = if (fcfg.valid != 0) fcfg.acceleration_multiplier else 0;
+            const proj_gravity: f64 = if (fcfg.valid != 0) fcfg.gravity_scale else 0;
+            const proj_slow: f64 = if (fcfg.valid != 0) fcfg.slow_multiplier else 1.0;
+            const proj_impact_radius: f64 = if (fcfg.valid != 0) fcfg.impact_radius_px else 0;
+            const proj_shape = if (fcfg.valid != 0) fcfg.shape else weapons_data.weaponBaseById(.starter_pistol).projectile_shape;
+            const proj_element = if (fcfg.valid != 0) fcfg.element else weapons_data.weaponBaseById(.starter_pistol).projectile_element;
+            const proj_pathing = if (fcfg.valid != 0) fcfg.pathing else weapons_data.weaponBaseById(.starter_pistol).projectile_pathing;
+            const proj_impact_kind = if (fcfg.valid != 0) fcfg.impact else .none;
+            // Syzygist haste (2026-07-20 gap-closure pass — parity with
+            // weapon.ts:318-322): fire-rate multiplier while the window is
+            // live, reading the per-entity haste_multiplier set by TS's
+            // applyHasteToAlly (Zig never computes it, only carries it
+            // through — same contract as PlayerEntity.haste_multiplier's own
+            // doc comment). This field already existed on PlayerEntity
+            // (world_state.zig) but was unread at this site before this pass.
+            const haste_active = player_ptr.flags.has_haste and
+                player_ptr.haste_until_tick > state.header.tick;
+            const haste_fire_rate_mul: f64 = if (haste_active) player_ptr.haste_multiplier else 1.0;
+            // Wizard basic-fire ramping channel (2026-07-20 gap-closure pass —
+            // parity with weapon.ts:330-334): ramps 1.0x → the ceiling over
+            // GEO_CHANNEL_RAMP_MS of continuous hold (channel_hold_ms, ticked
+            // at the top of this loop). `is_wizard_channel` keeps this at
+            // exactly 1 for every other class (channel_hold_ms is always 0
+            // for them anyway).
+            const channel_ramp_frac: f64 = if (is_wizard_channel)
+                @min(1.0, player_ptr.channel_hold_ms / GEO_CHANNEL_RAMP_MS)
+            else
+                0.0;
+            const channel_fire_rate_mul: f64 = 1.0 +
+                (GEO_CHANNEL_RAMP_FIRE_RATE_MULTIPLIER_MAX - 1.0) * channel_ramp_frac;
+            // Overclock (Phase 4a, docs/zig-step-world-parity-goal.md —
+            // constants.ts's GEO_OVERCLOCK_FIRE_RATE_MULTIPLIER,
+            // weapon.ts:339-342/558-565): fire-rate multiplier while the
+            // window is live, composing alongside haste/channel-ramp above at
+            // the SAME cd_after call below — matches weapon.ts's own
+            // multiplicative chain exactly (`hasteFireRateMul`/
+            // `channelFireRateMul`/`overclockActive ? GEO_OVERCLOCK_FIRE_RATE_
+            // MULTIPLIER : 1` are all peers in ONE `Math.max(MIN_FIRE_RATE, ...)`
+            // product). A cast THIS tick cannot buff a shot fired THIS SAME
+            // tick — section 6 (this loop) runs before section 6z (ability
+            // dispatch, where the window is opened) every tick, see
+            // `sunlance_until_tick`'s own doc comment (world_state.zig) for the
+            // full one-tick-lag reasoning, matching TS's identical ordering.
+            // `overclock_active` itself is computed above, alongside
+            // sunlance_active/measure_active, for the spread-priority chain.
+            const overclock_fire_rate_mul: f64 = if (overclock_active) GEO_OVERCLOCK_FIRE_RATE_MULTIPLIER else 1.0;
+            const cd_after = weapon.cooldownFromFireRate(
+                fire_rate_v * chaos_profile.fire_rate_multiplier *
+                    haste_fire_rate_mul * channel_fire_rate_mul * overclock_fire_rate_mul,
+                1.0,
+            );
+            var fire_decision: weapon.FireDecision = undefined;
+            weapon.weapon_tick_fire_with_keys(
+                player_ptr,
+                player_ptr.current_keys,
+                eff_dt,
+                cd_after,
+                &fire_decision,
+            );
+            if (fire_decision.fired == 1) {
+                // Muzzle offset + alternating-hand throws (Track Z0b Item B —
+                // port of orphaned-branch commit 888345c; previously spawned
+                // dead-center on the player with a center-derived angle, the
+                // audit's 10.84px-vs-47.32px per-shot divergence). Parity with
+                // weapon.ts:368-376: hand toggles ONCE per fire event, not per
+                // pellet — a multi-shot spread's pellets all share one muzzle
+                // origin — and it toggles OUTSIDE the disableProjectiles gate
+                // (TS toggles before its own `if (!chaos.disableProjectiles)`
+                // spawn loop, so slappers-only rounds keep the parity bit
+                // moving in lock-step too).
+                const throw_hand: u8 = (player_ptr.throw_hand_parity ^ 1) & 1;
+                player_ptr.throw_hand_parity = throw_hand;
+                const muzzle = weapon.playerMuzzlePosition(
+                    player_ptr.x,
+                    player_ptr.y,
+                    player_ptr.aim_x,
+                    player_ptr.aim_y,
+                    throw_hand,
+                );
+                // Fire angle derives from the OFFSET muzzle point toward aim
+                // (weapon.ts:376's `lutAtan2(aim.y - muzzle.y, aim.x -
+                // muzzle.x)`) — NOT from the player center; the angular gap
+                // between the two is exactly what compounded over travel
+                // distance in the audit.
+                const adx = player_ptr.aim_x - muzzle.x;
+                const ady = player_ptr.aim_y - muzzle.y;
+                const aim_angle: f64 = if (adx == 0 and ady == 0) 0 else trig.lutAtan2(ady, adx);
+                const speed = proj_speed_base * proj_speed_mul;
+                const lifetime_ms = @max(
+                    50.0,
+                    proj_lifetime_sec * 1000.0 * proj_lifetime_mul,
+                );
+                const radius_v: f64 = @max(2.0, 7.0 * proj_size_mul);
+                const spawn_projectiles = chaos_profile.disable_projectiles == 0;
+
+                // Multi-shot spread fan: distribute proj_count
+                // projectiles evenly across spread_amp_total radians (Measure/
+                // Overclock's own priority chain applied — see their doc
+                // comment above) centred on the MUZZLE-derived aim_angle.
+                // Single-shot (count == 1) fires straight regardless (offset
+                // always 0), same "can't observe spread with one shot" shape
+                // weapon.ts itself has. `spawn_projectiles` gates ONLY the
+                // spawns (slappers-only chaos) — the hand toggle above already
+                // ran, matching TS's ordering.
+                var shot_i: u32 = 0;
+                while (spawn_projectiles and shot_i < proj_count) : (shot_i += 1) {
+                    if (state.projectile_count >= world_state.MAX_PROJECTILES) break;
+                    const offset: f64 = if (proj_count <= 1)
+                        0
+                    else blk: {
+                        const t: f64 = @as(f64, @floatFromInt(shot_i)) /
+                            @as(f64, @floatFromInt(proj_count - 1));
+                        break :blk -spread_amp_total * 0.5 + t * spread_amp_total;
+                    };
+                    const ang = aim_angle + offset;
+                    const slot: u32 = state.projectile_count;
+                    state.projectile_count += 1;
+                    const new_id: u32 = state.header.next_entity_id;
+                    state.header.next_entity_id += 1;
+                    state.projectiles[slot] = .{
+                        .x = muzzle.x,
+                        .y = muzzle.y,
+                        .vx = trig.lutCos(ang) * speed,
+                        .vy = trig.lutSin(ang) * speed,
+                        .radius = radius_v,
+                        .damage = damage_amp_v,
+                        .lifetime_ms = lifetime_ms,
+                        .age_ms = 0,
+                        .traveled_px = 0,
+                        .origin_x = muzzle.x,
+                        .origin_y = muzzle.y,
+                        .homing_strength = proj_homing,
+                        .acceleration_multiplier = proj_accel,
+                        .gravity_scale = proj_gravity,
+                        .range_px = proj_range,
+                        .slow_multiplier = proj_slow,
+                        .sticky_fuse_ms = 0,
+                        .impact_radius_px = proj_impact_radius,
+                        .id = new_id,
+                        .bounces_remaining = proj_bounces,
+                        .pierce_remaining = proj_pierce,
+                        .split_count = proj_splits,
+                        .flags = .{
+                            .has_owner = true,
+                            .has_impact = true,
+                            .has_split = proj_splits > 0,
+                            .has_slow = proj_slow != 1.0,
+                            .has_homing = proj_homing != 0,
+                            .has_acceleration = proj_accel != 0,
+                            .has_gravity_scale = proj_gravity != 0,
+                            .has_range = true,
+                            .has_age = true,
+                            .has_traveled = true,
+                            .has_origin = true,
+                            .returning = false,
+                            .has_sticky_fuse = false,
+                            .has_impact_radius = proj_impact_radius > 0,
+                        },
+                        .pathing = proj_pathing,
+                        .element = proj_element,
+                        .impact = proj_impact_kind,
+                        .shape = proj_shape,
+                        .owner_id_len = player_ptr.id_len,
+                        .owner_id_bytes = player_ptr.id_bytes,
+                    };
+                    emitEvent(
+                        state,
+                        .shot_fired,
+                        @intCast(pi3),
+                        -1,
+                        new_id,
+                        ang,
+                        player_ptr.x,
+                        player_ptr.y,
+                    );
+                }
+
+                // Fire recoil — kick the shooter opposite the MUZZLE-derived
+                // aim angle (Track Z0c Item A; parity with weapon.ts:589-607).
+                // Runs OUTSIDE the spawn loop and outside `spawn_projectiles`
+                // (slappers-only rounds still kick, matching TS's "cooldown/
+                // recoil still apply" comment) and after the spawns (order is
+                // observationally irrelevant — spawns read position, recoil
+                // writes velocity — but kept TS-shaped). Composition mirrors
+                // weapon.ts:600-605 term for term: the baked build product
+                // (fcfg.recoil_impulse — see its own world_state.zig doc
+                // comment for what's inside) × chaos × Recoil Step's rider
+                // window, ÷ the class chassis recoil control. Fallback for
+                // valid==0 is the bare starter-pistol base (projectile recoil
+                // multiplier 1), same shape as every sibling fallback above.
+                //
+                // MELEE-CLASS GATE (found via the paladin melee smoke tests,
+                // not assumed): TS routes ninja/paladin AROUND stepWeapon
+                // entirely (World.ts:2744's class branch — Fire drives the
+                // melee FSM, never the ranged shot), so those classes NEVER
+                // take fire recoil in TS. Zig's own fire section still ranged-
+                // fires for them (a PRE-EXISTING divergence this pass neither
+                // introduced nor widens — narrowing it means porting the whole
+                // class branch, separate work); the kick at least must match
+                // TS exactly, so it applies only to the classes that reach
+                // stepWeapon there (wizard/balanced, priest/shielded).
+                const is_melee_class = player_ptr.character_id == .sprinter or
+                    player_ptr.character_id == .heavy;
+                if (!is_melee_class) {
+                    const recoil_resolved: f64 = if (fcfg.valid != 0)
+                        fcfg.recoil_impulse
+                    else
+                        weapons_data.weaponBaseById(.starter_pistol).recoil_impulse;
+                    const recoil_step_active =
+                        player_ptr.recoil_step_until_tick > state.header.tick;
+                    const recoil_strength = (recoil_resolved *
+                        chaos_profile.recoil_multiplier *
+                        (if (recoil_step_active) GEO_RECOIL_STEP_RECOIL_MULTIPLIER else 1.0)) /
+                        recoilControlForArchetype(player_ptr.character_id);
+                    player_ptr.vx -= trig.lutCos(aim_angle) * recoil_strength;
+                    player_ptr.vy -= trig.lutSin(aim_angle) * recoil_strength * 0.45;
+                }
+            }
+        }
+
+        // Roll current → prev for the next tick's edge detection.
+        player_ptr.prev_keys = player_ptr.current_keys;
+    }
+
+    // 6z. Ability-cast dispatch (Phase 1, docs/zig-step-world-parity-goal.md
+    //     "the next unblock") — runs after section 6's per-player loop has
+    //     finished for EVERY player (shield/emission already this-tick-
+    //     final) and BEFORE section 6a's melee loop, so a window opened
+    //     here (Judgment Line's mark, Unbroken Seal, Undercut, Read Mark,
+    //     Second Wind, Edge Storm) is already visible to THIS SAME tick's
+    //     melee consumption — matching World.ts's own per-player-loop
+    //     ordering, where the ability-slot loop (World.ts:2149) runs well
+    //     before the NINJA/PALADIN MELEE sections (World.ts:4029+/4412+).
+    //     `stepAbilityDispatch` itself gates on fighting-phase + alive, so
+    //     no outer phase guard is needed here (matches how section 6b's
+    //     AOE resolver and stepMeleeSwing structure their own guards).
+    {
+        var adi: u32 = 0;
+        while (adi < state.player_count) : (adi += 1) {
+            stepAbilityDispatch(state, adi, eff_dt, ability_slot_rising_edge[adi]);
+        }
+    }
+
+    // 6a. Melee — Ninja Slash + Paladin Kindled Edge (2026-07-20 base-
+    //     melee-mechanic gap-closure pass; see stepMeleeSwing's own doc
+    //     comment above for the full scope/mitigation/placement reasoning).
+    //     Runs after section 6's per-player loop has finished for EVERY
+    //     player (so shield state is already this-tick-final, same
+    //     ordering guarantee section 6b relies on) and before section 6b.
+    //     Fighting-phase only — Zig has no hangout-mode analog to carve out
+    //     the way World.ts does (see stepMeleeSwing's doc comment).
+    if (state.header.round_phase == @intFromEnum(round.RoundPhase.fighting)) {
+        var mai: u32 = 0;
+        while (mai < state.player_count) : (mai += 1) {
+            stepMeleeSwing(state, mai, eff_dt, melee_fire_rising_edge[mai]);
+        }
+    }
+
+    // 6b. Instant AOE resolution (2026-07-20 gap-closure pass — deferred-
+    //     write primitive port of World.ts's `pendingInstantAoe`/
+    //     `resolveInstantAoeCasts`; see resolveInstantAoeCasts's own doc
+    //     comment for the full mitigation accounting). MUST run after
+    //     section 6's per-player loop directly above (every player's own
+    //     per-tick state — shield/parry/fire — is only final once that
+    //     loop has finished for EVERY player). This drain now mirrors
+    //     World.ts's FIRST `resolveInstantAoeCasts` call (World.ts:4957,
+    //     right after the per-player + melee passes) — the Z0c Item B
+    //     reorder moved the whole combat block ahead of projectile motion,
+    //     so Paper Double's death/expiry burst is no longer discoverable
+    //     here; it gets the SAME second, later drain TS has (see section
+    //     6y + its 6y-drain, after section 4 below).
+    if (state.pending_instant_aoe_count > 0) {
+        resolveInstantAoeCasts(
+            state,
+            state.pending_instant_aoe[0..state.pending_instant_aoe_count],
+            state.header.tick,
+            eff_dt,
+        );
+        state.pending_instant_aoe_count = 0;
     }
 
     // 2a. Fire-hazard chaos modifier (I33): spawn fire patches at
@@ -4142,6 +4885,71 @@ pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
         }
     }
 
+    // 6y. Paper Double death/expiry burst detection (parity port of
+    //     paperDouble.ts's own `bursts` list feeding World.ts's SECOND,
+    //     LATER `resolveInstantAoeCasts` call, World.ts:6113-6115,
+    //     "discovered too late in tick order to land in the SAME
+    //     pendingInstantAoe batch"). The Z0c Item B reorder made Zig's
+    //     shape here IDENTICAL to TS's (the pre-reorder "mirror image /
+    //     single drain suffices" note is history): the combat block + the
+    //     6b drain now run BEFORE paper-double stepping (2b) and the
+    //     projectile-hit pass (4), so a death discovered by this scan
+    //     lands in its OWN second drain directly below (the 6y-drain),
+    //     exactly like TS — it cannot wait for next tick's 6b, because
+    //     section 9's compaction removes the dead double at the end of
+    //     THIS tick.
+    //
+    //     A paper double found here with `health <= 0 or remaining_ms <=
+    //     0` is GUARANTEED to have died THIS tick, never a stale prior-tick
+    //     entry: section 9's end-of-tick compaction (below) removes every
+    //     dead entry before the NEXT tick's section 2b could ever observe
+    //     it again — so this single scan can neither double-count a death
+    //     nor miss one. Melee-killed decoys are NOT covered here (melee-
+    //     vs-Paper-Double damage remains unwired — a real, now more
+    //     visible gap now that decoys can exist at all post this pass; see
+    //     stepMeleeSwing's own "deliberately NOT ported" list above) — the
+    //     two death paths this DOES cover (projectile kill, lifetime
+    //     expiry) are exactly the two `stepPaperDoubles`-equivalent paths
+    //     already built in commit 6aa0dc9.
+    {
+        var pdb: u32 = 0;
+        while (pdb < state.paper_double_count) : (pdb += 1) {
+            const pd = &state.paper_doubles[pdb];
+            if (pd.health > 0 and pd.remaining_ms > 0) continue; // still alive
+            const owner_idx = playerIdxById(state, pd.owner_id_bytes[0..pd.owner_id_len]);
+            if (owner_idx < 0) continue; // owner no longer in the roster — matches resolveInstantAoeCasts's own `if (!caster) continue`
+            if (state.pending_instant_aoe_count >= world_state.MAX_PENDING_INSTANT_AOE) continue;
+            state.pending_instant_aoe[state.pending_instant_aoe_count] = .{
+                .x = pd.x,
+                .y = pd.y,
+                .radius = NINJA_PAPER_DOUBLE_BURST_RADIUS_PX,
+                .damage = NINJA_PAPER_DOUBLE_BURST_DAMAGE,
+                .caster_idx = @intCast(owner_idx),
+                .has_fooled = 1,
+                .fooled_duration_ms = NINJA_FOOLED_DURATION_MS,
+            };
+            state.pending_instant_aoe_count += 1;
+        }
+    }
+
+    // 6y-drain. SECOND instant-AOE resolve (Track Z0c Item B) — mirrors
+    // World.ts's own second `resolveInstantAoeCasts` call (World.ts:6580),
+    // which exists there for exactly the reason it now exists here: Paper
+    // Double bursts are discovered AFTER the main drain already ran (the
+    // reorder moved section 6b's drain up with the combat block, so 6y's
+    // pushes would otherwise sit un-resolved until next tick's drain —
+    // and section 9's compaction would have removed the dead doubles by
+    // then). Same call shape as 6b's drain above.
+    if (state.pending_instant_aoe_count > 0) {
+        resolveInstantAoeCasts(
+            state,
+            state.pending_instant_aoe[0..state.pending_instant_aoe_count],
+            state.header.tick,
+            eff_dt,
+        );
+        state.pending_instant_aoe_count = 0;
+    }
+
     // 5. Satellites — orbit advance + fire decision (I8). Owner
     //    lookup walks the players array matching owner_id_bytes;
     //    target lookup picks the closest non-owner alive player.
@@ -4388,923 +5196,6 @@ pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
         }
     }
 
-    // 8. Player physics (I16). Bridge PlayerEntity +
-    //    PlayerMovementMemory → PlayerStep, run stepPlayer with
-    //    the statics + one_way cache, write motion + memory back.
-    const statics_slice = state.statics[0..state.static_count];
-    const one_way_slice = state.one_way[0..state.static_count];
-    var pmi: u32 = 0;
-    while (pmi < state.player_count) : (pmi += 1) {
-        if (!state.players[pmi].flags.alive) continue;
-        // Host-resolved card build for this player (movement/shield/parry
-        // augments) — parity with the TS orchestrator's resolvePlayerBuild.
-        const fcfg = &state.player_fire_config[pmi];
-        const has_cfg = fcfg.valid != 0;
-        var ps = player_mod.PlayerStep{
-            .x = state.players[pmi].x,
-            .y = state.players[pmi].y,
-            .vx = state.players[pmi].vx,
-            .vy = state.players[pmi].vy,
-            .aim_x = state.players[pmi].aim_x,
-            .aim_y = state.players[pmi].aim_y,
-            .jetpack_fuel = if (state.players[pmi].flags.has_jetpack_fuel)
-                state.players[pmi].jetpack_fuel
-            else
-                100.0,
-            .crouching = if (state.players[pmi].flags.crouching) 1 else 0,
-            .coyote_ms = state.player_movement[pmi].coyote_ms,
-            .jump_buffer_ms = state.player_movement[pmi].jump_buffer_ms,
-            .jump_cut_applied = @intCast(state.player_movement[pmi].jump_cut_applied),
-            .jump_released_since_jump = @intCast(state.player_movement[pmi].jump_released_since_jump),
-            .grounded_last_frame = @intCast(state.player_movement[pmi].grounded_last_frame),
-            .jetpack_active = @intCast(state.player_movement[pmi].jetpack_active),
-            .touching_wall_dir = @intCast(state.player_movement[pmi].touching_wall_dir),
-            // Augment INPUTS from the host-resolved card build.
-            .jump_mul = if (has_cfg) fcfg.jump_mul else 1.0,
-            .wall_jump_mul = if (has_cfg) fcfg.wall_jump_mul else 1.0,
-            .wall_slide_mul = if (has_cfg) fcfg.wall_slide_mul else 1.0,
-            .air_jumps = if (has_cfg) @intCast(fcfg.air_jumps) else 0,
-            .dash_charges = if (has_cfg) @intCast(fcfg.dash_charges) else 0,
-            .dash_cooldown_mul = if (has_cfg) fcfg.dash_cooldown_mul else 1.0,
-            // Augment MEMORY carried from world state.
-            .dash_cooldown_ms = state.player_movement[pmi].dash_cooldown_ms,
-            .dash_active_ms = state.player_movement[pmi].dash_active_ms,
-            .dash_recovery_ms = state.player_movement[pmi].dash_recovery_ms,
-            .air_jumps_used = @intCast(state.player_movement[pmi].air_jumps_used),
-            .dash_used_in_air = @intCast(state.player_movement[pmi].dash_used_in_air),
-        };
-        // Compose per-player movement speed (I37). Defaults 1.0;
-        // speed_boost buff multiplies, slow_debuff / freeze /
-        // slow_field debuffs multiply (≤1).
-        var speed_mul: f64 = 1.0;
-        const ple = &state.players[pmi];
-        if (ple.flags.has_speed_boost and ple.speed_boost_until_tick > state.header.tick) {
-            speed_mul *= 1.4;
-        }
-        if (ple.flags.has_slow_debuff and ple.slow_debuff_until_tick > state.header.tick) {
-            speed_mul *= 0.5;
-        }
-        if (ple.flags.has_slow and ple.slowed_until_tick > state.header.tick) {
-            speed_mul *= ple.slow_multiplier;
-        }
-        if (ple.flags.has_freeze and ple.freeze_until_tick > state.header.tick) {
-            speed_mul *= ple.freeze_multiplier;
-        }
-        // Card move-speed + gravity augments ride the existing step multipliers.
-        if (has_cfg) speed_mul *= fcfg.move_speed_mul;
-        const grav_mul = chaos_profile.gravity_multiplier *
-            (if (has_cfg) fcfg.gravity_mul else 1.0);
-        // Wall Bloom / Shock Ring hook capture (this pass, AOE-queue
-        // ability wiring) — captured BEFORE stepPlayer mutates movement
-        // memory, same "read stepPlayer's INPUT and OUTPUT only, never its
-        // internals" backend-agnostic idiom World.ts's own
-        // wallDirBeforeStep/groundedBeforeStep locals use (World.ts:2377-
-        // 2392) and for the identical reason: Wall Bloom's wall-kick
-        // detection and Shock Ring's landing detection both need the
-        // PRE-step values to compare against this same call's OUTPUT
-        // below.
-        const wall_dir_before_step = state.player_movement[pmi].touching_wall_dir;
-        const grounded_before_step = state.player_movement[pmi].grounded_last_frame;
-        // NB: stepPlayer RETURNS jumped-this-frame, not grounded. The grounded
-        // state lives in ps.grounded_last_frame (mutated in place). The world
-        // orchestrator emits no jump event, so the return is discarded.
-        _ = player_mod.stepPlayer(
-            &ps,
-            state.players[pmi].prev_keys,
-            state.players[pmi].current_keys,
-            state.players[pmi].aim_x,
-            state.players[pmi].aim_y,
-            speed_mul,
-            grav_mul,
-            eff_dt,
-            statics_slice,
-            one_way_slice,
-        );
-        state.players[pmi].x = ps.x;
-        state.players[pmi].y = ps.y;
-        state.players[pmi].vx = ps.vx;
-        state.players[pmi].vy = ps.vy;
-        state.players[pmi].jetpack_fuel = ps.jetpack_fuel;
-        state.players[pmi].flags.has_jetpack_fuel = true;
-        state.players[pmi].flags.crouching = ps.crouching != 0;
-        state.players[pmi].flags.grounded = ps.grounded_last_frame != 0;
-        state.player_movement[pmi].coyote_ms = ps.coyote_ms;
-        state.player_movement[pmi].jump_buffer_ms = ps.jump_buffer_ms;
-        state.player_movement[pmi].jump_cut_applied = @intCast(ps.jump_cut_applied);
-        state.player_movement[pmi].jump_released_since_jump = @intCast(ps.jump_released_since_jump);
-        state.player_movement[pmi].grounded_last_frame = @intCast(ps.grounded_last_frame);
-        state.player_movement[pmi].jetpack_active = @intCast(ps.jetpack_active);
-        state.player_movement[pmi].touching_wall_dir = @intCast(ps.touching_wall_dir);
-        state.player_movement[pmi].dash_cooldown_ms = ps.dash_cooldown_ms;
-        state.player_movement[pmi].dash_active_ms = ps.dash_active_ms;
-        state.player_movement[pmi].dash_recovery_ms = ps.dash_recovery_ms;
-        state.player_movement[pmi].air_jumps_used = @intCast(ps.air_jumps_used);
-        state.player_movement[pmi].dash_used_in_air = @intCast(ps.dash_used_in_air);
-
-        // Wall Bloom (Ninja) — wall-kick hook (this pass, AOE-queue
-        // ability wiring; window OPENED by the "wall-bloom" cast in
-        // section 6z below). Mirrors World.ts's own heuristic exactly
-        // (World.ts:2422-2456): a Jump-bit rising edge while airborne and
-        // touching a wall LAST tick (not this tick's post-step state —
-        // same "before" values World.ts's wallDirBeforeStep/
-        // groundedBeforeStep read). Single-use: cleared on THIS wall-kick
-        // regardless of whether the window was even live (matches TS's
-        // unconditional `wallBloomUntilTick: wallBloomLive ? undefined :
-        // nextEntity.wallBloomUntilTick` — a no-op clear when already 0).
-        if (state.players[pmi].character_id == .sprinter) {
-            const jump_bit: u32 = 1 << 4;
-            const jump_edge = (state.players[pmi].current_keys & jump_bit) != 0 and
-                (state.players[pmi].prev_keys & jump_bit) == 0;
-            if (jump_edge and wall_dir_before_step != 0 and grounded_before_step == 0) {
-                const wall_bloom_live = state.players[pmi].wall_bloom_until_tick > state.header.tick;
-                if (wall_bloom_live) {
-                    state.players[pmi].wall_bloom_until_tick = 0;
-                    if (state.pending_instant_aoe_count < world_state.MAX_PENDING_INSTANT_AOE) {
-                        const wall_x = state.players[pmi].x +
-                            @as(f64, @floatFromInt(wall_dir_before_step)) * NINJA_WALL_BLOOM_WALL_OFFSET_PX;
-                        state.pending_instant_aoe[state.pending_instant_aoe_count] = .{
-                            .x = wall_x,
-                            .y = state.players[pmi].y,
-                            .radius = NINJA_WALL_BLOOM_RADIUS_PX,
-                            .damage = NINJA_WALL_BLOOM_DAMAGE,
-                            .caster_idx = pmi,
-                        };
-                        state.pending_instant_aoe_count += 1;
-                    }
-                }
-            }
-        }
-
-        // Shock Ring (Paladin) — landing hook (this pass, AOE-queue
-        // ability wiring; hop + window OPENED by the "shock-ring" cast in
-        // section 6z below). Mirrors World.ts's own landing check exactly
-        // (World.ts:2465-2493): airborne last tick, grounded now.
-        // Single-use: cleared on THIS landing regardless of whether the
-        // window was even live (same unconditional-clear shape as Wall
-        // Bloom above — matches TS's `nextEntity = { ...,
-        // shockRingArmedUntilTick: undefined }` sitting INSIDE the
-        // `if (...armedUntilTick... > state.tick)` branch, so it only
-        // actually fires when live; harmless either way since 0 already
-        // reads as "not armed").
-        if (state.players[pmi].character_id == .heavy) {
-            const grounded_after_step = ps.grounded_last_frame != 0;
-            const just_landed = grounded_before_step == 0 and grounded_after_step;
-            if (just_landed) {
-                const shock_ring_live = state.players[pmi].shock_ring_armed_until_tick > state.header.tick;
-                if (shock_ring_live) {
-                    state.players[pmi].shock_ring_armed_until_tick = 0;
-                    if (state.pending_instant_aoe_count < world_state.MAX_PENDING_INSTANT_AOE) {
-                        state.pending_instant_aoe[state.pending_instant_aoe_count] = .{
-                            .x = state.players[pmi].x,
-                            .y = state.players[pmi].y,
-                            .radius = KIN_SHOCK_RING_RADIUS_PX,
-                            .damage = KIN_SHOCK_RING_DAMAGE,
-                            .caster_idx = pmi,
-                        };
-                        state.pending_instant_aoe_count += 1;
-                    }
-                }
-            }
-        }
-
-        // Razor Route (Ninja, this pass) — dash-through body-cross
-        // detection. Mirrors World.ts's "1z2. NINJA MELEE" dash-through
-        // section (World.ts:5131-5200) — rising-edge burst detection,
-        // per-burst tag debounce, the baseline energy grant, and Razor
-        // Route's own velocity boost + "marks Read on cross" byproduct.
-        // Deliberately positioned here (post-stepPlayer, same per-player
-        // physics loop as Wall Bloom/Shock Ring's own hooks immediately
-        // above) rather than inside `stepMeleeSwing`: TS runs this as its
-        // OWN pass over the ninja roster, independent of (and running
-        // AFTER, in TS's own tick order) the swing FSM, keyed off
-        // `dashing`/movement state, not the melee arc — same "read
-        // stepPlayer's OUTPUT, not its internals" shape this loop's other
-        // two hooks already use. `dashing_now` is the derived Zig
-        // equivalent of TS's `attacker.dashing === true`:
-        // `player_movement[pmi].dash_active_ms > 0.0` is exactly what
-        // `dash_active`/`was_dash_active` already track internally in
-        // player.zig, just not as a wire-visible PlayerEntity boolean —
-        // the ACTUAL gap the original Razor Route/Ghost Guard deferrals
-        // cited never needed a new field, only reading what already
-        // exists. `melee_swing[pmi]`'s new dash_through_tagged_mask/
-        // was_dashing/razor_route_active_dash fields are the Zig mirror of
-        // NinjaMeleeMemory's own fields of the same name/shape.
-        if (state.players[pmi].character_id == .sprinter) {
-            const dmem = &state.melee_swing[pmi];
-            const dashing_now = state.player_movement[pmi].dash_active_ms > 0.0;
-            if (dashing_now and !dmem.was_dashing) {
-                dmem.dash_through_tagged_mask = 0; // new dash burst — fresh tags
-                const razor_route_live = state.players[pmi].razor_route_until_tick > state.header.tick;
-                dmem.razor_route_active_dash = razor_route_live;
-                if (razor_route_live) {
-                    state.players[pmi].razor_route_until_tick = 0;
-                    const dash_speed = @sqrt(
-                        state.players[pmi].vx * state.players[pmi].vx +
-                            state.players[pmi].vy * state.players[pmi].vy,
-                    );
-                    if (dash_speed > 1e-3) {
-                        state.players[pmi].vx += (state.players[pmi].vx / dash_speed) * NINJA_RAZOR_ROUTE_BOOST_SPEED;
-                        state.players[pmi].vy += (state.players[pmi].vy / dash_speed) * NINJA_RAZOR_ROUTE_BOOST_SPEED;
-                    }
-                }
-            }
-            if (dashing_now) {
-                const attacker_box = combat.playerHitboxAabb(
-                    state.players[pmi].x,
-                    state.players[pmi].y,
-                    state.players[pmi].flags.crouching,
-                );
-                var dvi: u32 = 0;
-                while (dvi < state.player_count) : (dvi += 1) {
-                    if (dvi == pmi) continue;
-                    const dbit: u16 = @as(u16, 1) << @as(u4, @intCast(dvi));
-                    if ((dmem.dash_through_tagged_mask & dbit) != 0) continue;
-                    if (!state.players[dvi].flags.alive) continue;
-                    const victim_box = combat.playerHitboxAabb(
-                        state.players[dvi].x,
-                        state.players[dvi].y,
-                        state.players[dvi].flags.crouching,
-                    );
-                    // AABB overlap — same inline check `stepMeleeSwing`'s
-                    // arc-hit-check delegates to `combat.isBodyInMeleeArc`
-                    // for, but this is a plain body-cross (no range/arc
-                    // gate), matching TS's own `aabbOverlap(attackerAABB,
-                    // playerHitboxAABB(victim))`.
-                    if (!(attacker_box.x < victim_box.x + victim_box.w and
-                        attacker_box.x + attacker_box.w > victim_box.x and
-                        attacker_box.y < victim_box.y + victim_box.h and
-                        attacker_box.y + attacker_box.h > victim_box.y)) continue;
-                    dmem.dash_through_tagged_mask |= dbit;
-                    state.players[pmi].energy = @min(
-                        NINJA_ENERGY_MAX,
-                        state.players[pmi].energy + NINJA_ENERGY_ON_DASH_THROUGH,
-                    );
-                    emitEvent(state, .dash_through, @intCast(pmi), @intCast(dvi), 0, 0, state.players[pmi].x, state.players[pmi].y);
-                    if (dmem.razor_route_active_dash) {
-                        const mark_ticks: u32 = @intFromFloat(@ceil(NINJA_RAZOR_ROUTE_READ_MARK_MS / @max(1.0, eff_dt)));
-                        state.players[pmi].read_target_id_len = state.players[dvi].id_len;
-                        state.players[pmi].read_target_id_bytes = state.players[dvi].id_bytes;
-                        state.players[pmi].read_mark_until_tick = state.header.tick + mark_ticks;
-                        dmem.razor_route_active_dash = false;
-                    }
-                }
-            }
-            dmem.was_dashing = dashing_now;
-        }
-
-        // Ceiling clamp (parity with World.ts computeCeilingClampY): head pushed
-        // above the ceiling → shove back under + kill upward velocity.
-        if (g_has_ceiling) {
-            const min_center_y = g_ceiling_clamp_y + PLAYER_HALF_HEIGHT;
-            if (state.players[pmi].y < min_center_y) {
-                state.players[pmi].y = min_center_y;
-                if (state.players[pmi].vy < 0) state.players[pmi].vy = 0;
-            }
-        }
-        // Void-plane kill (parity with World.ts): fell past the map bottom +
-        // KILL_PLANE_MARGIN → force-kill so the death→respawn flow runs. Player
-        // is alive here (checked at loop top). Emit hit_confirmed (damage =
-        // remaining health) + player_killed like any other death.
-        if (g_kill_plane_y > 0 and state.players[pmi].y > g_kill_plane_y) {
-            const rem = state.players[pmi].health;
-            state.players[pmi].health = 0;
-            state.players[pmi].flags.alive = false;
-            emitEvent(state, .hit_confirmed, @intCast(pmi), -1, 0, rem, state.players[pmi].x, state.players[pmi].y);
-            emitEvent(state, .player_killed, @intCast(pmi), -1, 0, 0, state.players[pmi].x, state.players[pmi].y);
-        }
-    }
-
-    // 8c. Launch pads — mirror of World.ts §4a / client/src/sim/launchPad.ts.
-    //     TICK-ORDER POSITION: directly AFTER the player-physics pass, so
-    //     the impulse modifies the player's post-movement velocity and
-    //     integrates on the NEXT tick's stepPlayer — the exact invariant the
-    //     TS orchestrator establishes by running its pad pass after movement
-    //     (TS anchors it to the pickup section §4a; Zig's own pickup pass §7
-    //     runs pre-movement, a pre-existing quarantined divergence, so the
-    //     shared anchor is "post-movement", not "post-pickups").
-    //     Formula + stateless retrigger gate: see launchPad.ts's header.
-    //     Pads iterate in host array order (== map.launchPads order ==
-    //     event entity_id); players in packed order (packed from sorted ids
-    //     by worldStateBridge — same order TS iterates).
-    if (state.header.round_phase == @intFromEnum(round.RoundPhase.fighting)) {
-        var lpi: u32 = 0;
-        while (lpi < g_launch_pad_count) : (lpi += 1) {
-            const pad = &g_launch_pads[lpi];
-            const magnitude = @sqrt(pad.impulse_x * pad.impulse_x +
-                pad.impulse_y * pad.impulse_y);
-            if (magnitude <= 0) continue; // degenerate authoring — inert pad
-            const ux = pad.impulse_x / magnitude;
-            const uy = pad.impulse_y / magnitude;
-            const retrigger_gate = LAUNCH_RETRIGGER_FRACTION * magnitude;
-            const along_cap = LAUNCH_ALONG_CAP_FACTOR * magnitude;
-            var lpp: u32 = 0;
-            while (lpp < state.player_count) : (lpp += 1) {
-                const lp = &state.players[lpp];
-                if (!lp.flags.alive) continue;
-                // AABB overlap, strict inequalities (TS aabbOverlap parity).
-                if (!(lp.x - LAUNCH_PLAYER_HALF_W < pad.x + pad.w / 2 and
-                    lp.x + LAUNCH_PLAYER_HALF_W > pad.x - pad.w / 2 and
-                    lp.y - LAUNCH_PLAYER_HALF_H < pad.y + pad.h / 2 and
-                    lp.y + LAUNCH_PLAYER_HALF_H > pad.y - pad.h / 2)) continue;
-                const v_along = lp.vx * ux + lp.vy * uy;
-                if (v_along >= retrigger_gate) continue; // launched / moving away
-                // ADD with floor + cap; perpendicular velocity preserved.
-                const v_perp_x = lp.vx - v_along * ux;
-                const v_perp_y = lp.vy - v_along * uy;
-                const boosted = @min(v_along + magnitude, along_cap);
-                const new_along = @max(magnitude, boosted);
-                lp.vx = v_perp_x + new_along * ux;
-                lp.vy = v_perp_y + new_along * uy;
-                // A pad launch is NOT a jump — consume the variable-jump-
-                // height cut so next tick's stepPlayer doesn't halve the
-                // rising velocity (parity with World.ts §4a's memory poke;
-                // same trick the dash lunge uses in player.ts/player.zig).
-                state.player_movement[lpp].jump_cut_applied = 1;
-                emitEvent(
-                    state,
-                    .launch_pad_fired,
-                    @intCast(lpp),
-                    -1,
-                    lpi,
-                    magnitude,
-                    pad.x,
-                    pad.y,
-                );
-            }
-        }
-    }
-
-    // Melee rising-edge capture (2026-07-20 base-melee-mechanic gap-closure
-    // pass) — host-only stack scratch, mirrors World.ts's own
-    // `ninjaSlashEdges`/`paladinEdgeEdges` maps and the EXACT reason they
-    // exist (World.ts:1518-1530): section 6 immediately below rolls
-    // `prev_keys = current_keys` at the end of EVERY player's own
-    // iteration, so by the time section 6a's melee loop runs AFTER section
-    // 6 has finished, `prev_keys` no longer holds the pre-tick value for
-    // ANYONE — a same-tick Fire press would look like it was already held
-    // last tick too, and a swing could never start. Captured here, before
-    // section 6 touches prev_keys.
-    var melee_fire_rising_edge: [world_state.MAX_PLAYERS]bool = @splat(false);
-    {
-        const MELEE_FIRE_BIT: u32 = 1 << 6;
-        var mfi: u32 = 0;
-        while (mfi < state.player_count) : (mfi += 1) {
-            const mp = &state.players[mfi];
-            melee_fire_rising_edge[mfi] =
-                (mp.current_keys & MELEE_FIRE_BIT) != 0 and
-                (mp.prev_keys & MELEE_FIRE_BIT) == 0;
-        }
-    }
-
-    // Ability-slot rising-edge capture (2026-07-20, Phase 1 ability-cast
-    // dispatch pass) — same "captured before section 6 rolls prev_keys"
-    // contract as `melee_fire_rising_edge` immediately above, and for the
-    // identical reason. Slot bits did NOT exist anywhere in Zig's input
-    // handling before this pass (verified by grepping every existing
-    // `1 << N` input-bit constant in this file / combat.zig / player.zig —
-    // 0..9 were all spoken for, nothing read 10/11/12) — mirrors TS's own
-    // `slotBit = 1 << (10 + slot)` (World.ts:2150) exactly, the SAME
-    // "duplicated as a local constant rather than exported" convention
-    // `ABILITY_BIT`/`FIRE_BIT`/`MELEE_FIRE_BIT` above already use.
-    var ability_slot_rising_edge: [world_state.MAX_PLAYERS][world_state.MAX_ABILITY_SLOTS]bool =
-        @splat(@splat(false));
-    {
-        const SLOT_BIT_BASE: u5 = 10;
-        var asi: u32 = 0;
-        while (asi < state.player_count) : (asi += 1) {
-            const ap = &state.players[asi];
-            var slot: usize = 0;
-            while (slot < world_state.MAX_ABILITY_SLOTS) : (slot += 1) {
-                const slot_bit: u32 = @as(u32, 1) << @as(u5, @intCast(SLOT_BIT_BASE + slot));
-                ability_slot_rising_edge[asi][slot] =
-                    (ap.current_keys & slot_bit) != 0 and
-                    (ap.prev_keys & slot_bit) == 0;
-            }
-        }
-    }
-
-    // 6. Combat — per-player shield drain + parry start (I4 +
-    //    I4b). Defaults match `combat_*` exports.
-    var pi3: u32 = 0;
-    while (pi3 < state.player_count) : (pi3 += 1) {
-        const player_ptr = &state.players[pi3];
-        // Wizard basic-fire ramping channel (2026-07-20 gap-closure pass —
-        // parity port of weapon.ts:243-257 / constants.ts's
-        // GEO_CHANNEL_RAMP_MS doc comment). Ticked BEFORE the fire-rate
-        // composition below (and before any early-return-shaped gate,
-        // matching TS's own "track hold duration even mid-cooldown" note)
-        // so holding Fire through a normal cooldown gap still accumulates.
-        // `character_id == .balanced` is this codebase's Zig-side mirror of
-        // `classIdForArchetype(...) === "wizard"` (cardTypes.ts's
-        // ARCHETYPE_CLASS_ID: balanced→wizard).
-        // FIRE_BIT mirrors weapon.zig's own (non-pub) `InputBitFire = 1 << 6`
-        // — duplicated as a local constant rather than exported, matching
-        // this same loop's existing ABILITY_BIT precedent below.
-        const FIRE_BIT: u32 = 1 << 6;
-        const is_wizard_channel = player_ptr.character_id == .balanced;
-        const fire_requested = (player_ptr.current_keys & FIRE_BIT) != 0;
-        if (is_wizard_channel and fire_requested and player_ptr.flags.alive) {
-            player_ptr.channel_hold_ms += eff_dt;
-        } else {
-            player_ptr.channel_hold_ms = 0;
-        }
-        // Card shield/parry augments from the host-resolved build. Match the TS
-        // orchestrator: maxCharge = SHIELD_MAX_CHARGE_DEFAULT × chargeMul (NOT
-        // the stored max), recharge × rechargeMul, parry cooldown × cooldownMul.
-        const cfg3 = &state.player_fire_config[pi3];
-        const has3 = cfg3.valid != 0;
-        combat.tickShield(
-            player_ptr,
-            player_ptr.current_keys,
-            eff_dt,
-            combat.SHIELD_MAX_CHARGE_DEFAULT * (if (has3) cfg3.shield_charge_mul else 1.0),
-            combat.SHIELD_DRAIN_PER_SECOND,
-            combat.SHIELD_RECHARGE_PER_SECOND * (if (has3) cfg3.shield_recharge_mul else 1.0),
-        );
-        // Emission cast (docs/emission-engine-goal.md — mirror of the TS
-        // cast branch in World.stepWithRuntime): the Ability rising edge
-        // at full charge fires a radial volley derived from the fire
-        // config (weapon_build.emissionFromConfig — parameters already
-        // crossed the boundary, no second config), zeroes the charge, and
-        // CONSUMES the edge (no parry this press). Below full charge the
-        // edge falls through to tryStartParry — bot defensive behavior.
-        // Known v1 parity gap vs TS: cast shards don't carry statusScale
-        // (freeze ×2) — the projectile ABI has no such field yet; the
-        // opt-in wasm world accepts base-duration statuses until a later
-        // ABI cut (documented in emission.ts too).
-        const ABILITY_BIT: u32 = 1 << 7;
-        const ability_edge = (player_ptr.current_keys & ABILITY_BIT) != 0 and
-            (player_ptr.prev_keys & ABILITY_BIT) == 0;
-        var cast_consumed_edge = false;
-        if (ability_edge and
-            player_ptr.flags.alive and
-            state.header.round_phase == @intFromEnum(round.RoundPhase.fighting) and
-            player_ptr.ability_charge >= EMISSION_CHARGE_MAX)
-        {
-            const em = weapon_build.emissionFromConfig(&state.player_fire_config[pi3]);
-            const ecfg = &state.player_fire_config[pi3];
-            const e_valid = ecfg.valid != 0;
-            var ei2: u32 = 0;
-            while (ei2 < em.volley_count) : (ei2 += 1) {
-                if (state.projectile_count >= world_state.MAX_PROJECTILES) break;
-                const ang = (@as(f64, @floatFromInt(ei2)) /
-                    @as(f64, @floatFromInt(em.volley_count))) * 2.0 * std.math.pi;
-                const slot: u32 = state.projectile_count;
-                state.projectile_count += 1;
-                const new_id: u32 = state.header.next_entity_id;
-                state.header.next_entity_id += 1;
-                state.projectiles[slot] = .{
-                    .x = player_ptr.x,
-                    .y = player_ptr.y - 30,
-                    .vx = trig.lutCos(ang) * em.speed,
-                    .vy = trig.lutSin(ang) * em.speed,
-                    .radius = em.radius_px,
-                    .damage = em.damage_per_shard,
-                    .lifetime_ms = weapon_build.EMISSION_LIFETIME_MS,
-                    .age_ms = 0,
-                    .traveled_px = 0,
-                    .origin_x = player_ptr.x,
-                    .origin_y = player_ptr.y - 30,
-                    .homing_strength = if (e_valid) ecfg.homing_strength else 0,
-                    .acceleration_multiplier = 0,
-                    .gravity_scale = 0,
-                    .range_px = weapon_build.EMISSION_RANGE_PX,
-                    .slow_multiplier = if (e_valid) ecfg.slow_multiplier else 1.0,
-                    .sticky_fuse_ms = 0,
-                    .impact_radius_px = em.impact_radius_px,
-                    .id = new_id,
-                    .bounces_remaining = if (e_valid) ecfg.bounces else 0,
-                    .pierce_remaining = 0,
-                    .split_count = 0,
-                    .flags = .{
-                        .has_owner = true,
-                        .has_impact = true,
-                        .has_split = false,
-                        .has_slow = e_valid and ecfg.slow_multiplier != 1.0,
-                        .has_homing = e_valid and ecfg.homing_strength != 0,
-                        .has_acceleration = false,
-                        .has_gravity_scale = false,
-                        .has_range = true,
-                        .has_age = true,
-                        .has_traveled = true,
-                        .has_origin = true,
-                        .returning = false,
-                        .has_sticky_fuse = false,
-                        .has_impact_radius = true,
-                    },
-                    .pathing = if (e_valid) ecfg.pathing else .straight,
-                    .element = if (e_valid) ecfg.element else .crystal,
-                    .impact = if (e_valid) ecfg.impact else .none,
-                    .shape = if (e_valid) ecfg.shape else .circle,
-                    .owner_id_len = player_ptr.id_len,
-                    .owner_id_bytes = player_ptr.id_bytes,
-                };
-            }
-            player_ptr.ability_charge = 0;
-            cast_consumed_edge = true;
-            emitEvent(
-                state,
-                .emission_cast,
-                @intCast(pi3),
-                -1,
-                0,
-                @floatFromInt(em.volley_count),
-                player_ptr.x,
-                player_ptr.y,
-            );
-        }
-
-        if (!cast_consumed_edge) {
-            _ = combat.tryStartParry(
-                player_ptr,
-                player_ptr.current_keys,
-                player_ptr.prev_keys,
-                state.header.tick,
-                eff_dt,
-                combat.PARRY_ACTIVE_MS,
-                combat.PARRY_COOLDOWN_MS_DEFAULT * (if (has3) cfg3.parry_cooldown_mul else 1.0),
-            );
-        }
-        // Weapon fire decision + projectile spawn (I21 + I45).
-        // Use the host-resolved fire config when valid, else fall
-        // back to the starter-pistol base from data/weapons.zig.
-        // The host (J0 shim) patches state.player_fire_config[i]
-        // each tick from createWeaponBuild(player.cards) so card
-        // mutations (multi-shot, damage scale, etc) take effect.
-        const fcfg = &state.player_fire_config[pi3];
-        const damage_v: f64 = if (fcfg.valid != 0) fcfg.damage else weapons_data.weaponBaseById(.starter_pistol).damage;
-        const fire_rate_v: f64 = if (fcfg.valid != 0) fcfg.fire_rate else weapons_data.weaponBaseById(.starter_pistol).fire_rate;
-        const proj_speed_base: f64 = if (fcfg.valid != 0) fcfg.projectile_speed else weapons_data.weaponBaseById(.starter_pistol).projectile_speed;
-        const proj_speed_mul: f64 = if (fcfg.valid != 0) fcfg.speed_multiplier else 1.0;
-        const proj_lifetime_sec: f64 = if (fcfg.valid != 0) fcfg.projectile_lifetime_seconds else weapons_data.weaponBaseById(.starter_pistol).projectile_lifetime_seconds;
-        const proj_lifetime_mul: f64 = if (fcfg.valid != 0) fcfg.lifetime_multiplier else 1.0;
-        const spread_total: f64 = if (fcfg.valid != 0) fcfg.spread_radians else weapons_data.weaponBaseById(.starter_pistol).spread_radians;
-        // Sunlance / Measure / Overclock (Phase 4a, docs/zig-step-world-
-        // parity-goal.md — bit-exact port of weapon.ts:336-423's own
-        // priority chains). `overclock_active` is read here (ahead of its
-        // sibling composition at the cd_after call below) purely because
-        // spread's own priority chain needs it in the SAME expression as
-        // measure_active — see GEO_MEASURE_SPREAD_MULTIPLIER's own doc
-        // comment (world.zig, Phase 4a constants block) for why Measure
-        // beats Overclock here specifically.
-        const sunlance_active = player_ptr.sunlance_until_tick > state.header.tick;
-        const measure_active = player_ptr.measure_until_tick > state.header.tick;
-        const overclock_active = player_ptr.overclock_until_tick > state.header.tick;
-        // Damage priority: Sunlance > Measure > base — TS also ranks
-        // Stolen Fangs above Sunlance here, but Stolen Fangs has no Zig
-        // mirror anywhere (pendingLockCharges — unrelated to this pass), so
-        // this chain correctly starts at Sunlance (see
-        // GEO_SUNLANCE_DAMAGE_MULTIPLIER's own doc comment).
-        const damage_amp_v: f64 = if (sunlance_active)
-            damage_v * GEO_SUNLANCE_DAMAGE_MULTIPLIER
-        else if (measure_active)
-            damage_v * GEO_MEASURE_DAMAGE_MULTIPLIER
-        else
-            damage_v;
-        // Spread priority: Measure (forces 0) > Overclock (tightens) > base.
-        const spread_amp_total: f64 = if (measure_active)
-            spread_total * GEO_MEASURE_SPREAD_MULTIPLIER
-        else if (overclock_active)
-            spread_total * GEO_OVERCLOCK_SPREAD_MULTIPLIER
-        else
-            spread_total;
-        const proj_count: u32 = if (fcfg.valid != 0) @max(@as(u32, 1), fcfg.projectile_count) else 1;
-        const proj_size_mul: f64 = if (fcfg.valid != 0) fcfg.size_multiplier else 1.0;
-        const proj_range: f64 = if (fcfg.valid != 0) fcfg.range_px else weapons_data.weaponBaseById(.starter_pistol).projectile_range_px;
-        const proj_bounces: u32 = if (fcfg.valid != 0) fcfg.bounces else 0;
-        const proj_pierce: u32 = if (fcfg.valid != 0) fcfg.pierce_count else 0;
-        const proj_splits: u32 = if (fcfg.valid != 0) fcfg.split_count else 0;
-        const proj_homing: f64 = if (fcfg.valid != 0) fcfg.homing_strength else 0;
-        const proj_accel: f64 = if (fcfg.valid != 0) fcfg.acceleration_multiplier else 0;
-        const proj_gravity: f64 = if (fcfg.valid != 0) fcfg.gravity_scale else 0;
-        const proj_slow: f64 = if (fcfg.valid != 0) fcfg.slow_multiplier else 1.0;
-        const proj_impact_radius: f64 = if (fcfg.valid != 0) fcfg.impact_radius_px else 0;
-        const proj_shape = if (fcfg.valid != 0) fcfg.shape else weapons_data.weaponBaseById(.starter_pistol).projectile_shape;
-        const proj_element = if (fcfg.valid != 0) fcfg.element else weapons_data.weaponBaseById(.starter_pistol).projectile_element;
-        const proj_pathing = if (fcfg.valid != 0) fcfg.pathing else weapons_data.weaponBaseById(.starter_pistol).projectile_pathing;
-        const proj_impact_kind = if (fcfg.valid != 0) fcfg.impact else .none;
-        // Syzygist haste (2026-07-20 gap-closure pass — parity with
-        // weapon.ts:318-322): fire-rate multiplier while the window is
-        // live, reading the per-entity haste_multiplier set by TS's
-        // applyHasteToAlly (Zig never computes it, only carries it
-        // through — same contract as PlayerEntity.haste_multiplier's own
-        // doc comment). This field already existed on PlayerEntity
-        // (world_state.zig) but was unread at this site before this pass.
-        const haste_active = player_ptr.flags.has_haste and
-            player_ptr.haste_until_tick > state.header.tick;
-        const haste_fire_rate_mul: f64 = if (haste_active) player_ptr.haste_multiplier else 1.0;
-        // Wizard basic-fire ramping channel (2026-07-20 gap-closure pass —
-        // parity with weapon.ts:330-334): ramps 1.0x → the ceiling over
-        // GEO_CHANNEL_RAMP_MS of continuous hold (channel_hold_ms, ticked
-        // at the top of this loop). `is_wizard_channel` keeps this at
-        // exactly 1 for every other class (channel_hold_ms is always 0
-        // for them anyway).
-        const channel_ramp_frac: f64 = if (is_wizard_channel)
-            @min(1.0, player_ptr.channel_hold_ms / GEO_CHANNEL_RAMP_MS)
-        else
-            0.0;
-        const channel_fire_rate_mul: f64 = 1.0 +
-            (GEO_CHANNEL_RAMP_FIRE_RATE_MULTIPLIER_MAX - 1.0) * channel_ramp_frac;
-        // Overclock (Phase 4a, docs/zig-step-world-parity-goal.md —
-        // constants.ts's GEO_OVERCLOCK_FIRE_RATE_MULTIPLIER,
-        // weapon.ts:339-342/558-565): fire-rate multiplier while the
-        // window is live, composing alongside haste/channel-ramp above at
-        // the SAME cd_after call below — matches weapon.ts's own
-        // multiplicative chain exactly (`hasteFireRateMul`/
-        // `channelFireRateMul`/`overclockActive ? GEO_OVERCLOCK_FIRE_RATE_
-        // MULTIPLIER : 1` are all peers in ONE `Math.max(MIN_FIRE_RATE, ...)`
-        // product). A cast THIS tick cannot buff a shot fired THIS SAME
-        // tick — section 6 (this loop) runs before section 6z (ability
-        // dispatch, where the window is opened) every tick, see
-        // `sunlance_until_tick`'s own doc comment (world_state.zig) for the
-        // full one-tick-lag reasoning, matching TS's identical ordering.
-        // `overclock_active` itself is computed above, alongside
-        // sunlance_active/measure_active, for the spread-priority chain.
-        const overclock_fire_rate_mul: f64 = if (overclock_active) GEO_OVERCLOCK_FIRE_RATE_MULTIPLIER else 1.0;
-        const cd_after = weapon.cooldownFromFireRate(
-            fire_rate_v * chaos_profile.fire_rate_multiplier *
-                haste_fire_rate_mul * channel_fire_rate_mul * overclock_fire_rate_mul,
-            1.0,
-        );
-        var fire_decision: weapon.FireDecision = undefined;
-        weapon.weapon_tick_fire_with_keys(
-            player_ptr,
-            player_ptr.current_keys,
-            eff_dt,
-            cd_after,
-            &fire_decision,
-        );
-        if (fire_decision.fired == 1) {
-            // Muzzle offset + alternating-hand throws (Track Z0b Item B —
-            // port of orphaned-branch commit 888345c; previously spawned
-            // dead-center on the player with a center-derived angle, the
-            // audit's 10.84px-vs-47.32px per-shot divergence). Parity with
-            // weapon.ts:368-376: hand toggles ONCE per fire event, not per
-            // pellet — a multi-shot spread's pellets all share one muzzle
-            // origin — and it toggles OUTSIDE the disableProjectiles gate
-            // (TS toggles before its own `if (!chaos.disableProjectiles)`
-            // spawn loop, so slappers-only rounds keep the parity bit
-            // moving in lock-step too).
-            const throw_hand: u8 = (player_ptr.throw_hand_parity ^ 1) & 1;
-            player_ptr.throw_hand_parity = throw_hand;
-            const muzzle = weapon.playerMuzzlePosition(
-                player_ptr.x,
-                player_ptr.y,
-                player_ptr.aim_x,
-                player_ptr.aim_y,
-                throw_hand,
-            );
-            // Fire angle derives from the OFFSET muzzle point toward aim
-            // (weapon.ts:376's `lutAtan2(aim.y - muzzle.y, aim.x -
-            // muzzle.x)`) — NOT from the player center; the angular gap
-            // between the two is exactly what compounded over travel
-            // distance in the audit.
-            const adx = player_ptr.aim_x - muzzle.x;
-            const ady = player_ptr.aim_y - muzzle.y;
-            const aim_angle: f64 = if (adx == 0 and ady == 0) 0 else trig.lutAtan2(ady, adx);
-            const speed = proj_speed_base * proj_speed_mul;
-            const lifetime_ms = @max(
-                50.0,
-                proj_lifetime_sec * 1000.0 * proj_lifetime_mul,
-            );
-            const radius_v: f64 = @max(2.0, 7.0 * proj_size_mul);
-            const spawn_projectiles = chaos_profile.disable_projectiles == 0;
-
-            // Multi-shot spread fan: distribute proj_count
-            // projectiles evenly across spread_amp_total radians (Measure/
-            // Overclock's own priority chain applied — see their doc
-            // comment above) centred on the MUZZLE-derived aim_angle.
-            // Single-shot (count == 1) fires straight regardless (offset
-            // always 0), same "can't observe spread with one shot" shape
-            // weapon.ts itself has. `spawn_projectiles` gates ONLY the
-            // spawns (slappers-only chaos) — the hand toggle above already
-            // ran, matching TS's ordering.
-            var shot_i: u32 = 0;
-            while (spawn_projectiles and shot_i < proj_count) : (shot_i += 1) {
-                if (state.projectile_count >= world_state.MAX_PROJECTILES) break;
-                const offset: f64 = if (proj_count <= 1)
-                    0
-                else blk: {
-                    const t: f64 = @as(f64, @floatFromInt(shot_i)) /
-                        @as(f64, @floatFromInt(proj_count - 1));
-                    break :blk -spread_amp_total * 0.5 + t * spread_amp_total;
-                };
-                const ang = aim_angle + offset;
-                const slot: u32 = state.projectile_count;
-                state.projectile_count += 1;
-                const new_id: u32 = state.header.next_entity_id;
-                state.header.next_entity_id += 1;
-                state.projectiles[slot] = .{
-                    .x = muzzle.x,
-                    .y = muzzle.y,
-                    .vx = trig.lutCos(ang) * speed,
-                    .vy = trig.lutSin(ang) * speed,
-                    .radius = radius_v,
-                    .damage = damage_amp_v,
-                    .lifetime_ms = lifetime_ms,
-                    .age_ms = 0,
-                    .traveled_px = 0,
-                    .origin_x = muzzle.x,
-                    .origin_y = muzzle.y,
-                    .homing_strength = proj_homing,
-                    .acceleration_multiplier = proj_accel,
-                    .gravity_scale = proj_gravity,
-                    .range_px = proj_range,
-                    .slow_multiplier = proj_slow,
-                    .sticky_fuse_ms = 0,
-                    .impact_radius_px = proj_impact_radius,
-                    .id = new_id,
-                    .bounces_remaining = proj_bounces,
-                    .pierce_remaining = proj_pierce,
-                    .split_count = proj_splits,
-                    .flags = .{
-                        .has_owner = true,
-                        .has_impact = true,
-                        .has_split = proj_splits > 0,
-                        .has_slow = proj_slow != 1.0,
-                        .has_homing = proj_homing != 0,
-                        .has_acceleration = proj_accel != 0,
-                        .has_gravity_scale = proj_gravity != 0,
-                        .has_range = true,
-                        .has_age = true,
-                        .has_traveled = true,
-                        .has_origin = true,
-                        .returning = false,
-                        .has_sticky_fuse = false,
-                        .has_impact_radius = proj_impact_radius > 0,
-                    },
-                    .pathing = proj_pathing,
-                    .element = proj_element,
-                    .impact = proj_impact_kind,
-                    .shape = proj_shape,
-                    .owner_id_len = player_ptr.id_len,
-                    .owner_id_bytes = player_ptr.id_bytes,
-                };
-                emitEvent(
-                    state,
-                    .shot_fired,
-                    @intCast(pi3),
-                    -1,
-                    new_id,
-                    ang,
-                    player_ptr.x,
-                    player_ptr.y,
-                );
-            }
-
-            // Fire recoil — kick the shooter opposite the MUZZLE-derived
-            // aim angle (Track Z0c Item A; parity with weapon.ts:589-607).
-            // Runs OUTSIDE the spawn loop and outside `spawn_projectiles`
-            // (slappers-only rounds still kick, matching TS's "cooldown/
-            // recoil still apply" comment) and after the spawns (order is
-            // observationally irrelevant — spawns read position, recoil
-            // writes velocity — but kept TS-shaped). Composition mirrors
-            // weapon.ts:600-605 term for term: the baked build product
-            // (fcfg.recoil_impulse — see its own world_state.zig doc
-            // comment for what's inside) × chaos × Recoil Step's rider
-            // window, ÷ the class chassis recoil control. Fallback for
-            // valid==0 is the bare starter-pistol base (projectile recoil
-            // multiplier 1), same shape as every sibling fallback above.
-            //
-            // MELEE-CLASS GATE (found via the paladin melee smoke tests,
-            // not assumed): TS routes ninja/paladin AROUND stepWeapon
-            // entirely (World.ts:2744's class branch — Fire drives the
-            // melee FSM, never the ranged shot), so those classes NEVER
-            // take fire recoil in TS. Zig's own fire section still ranged-
-            // fires for them (a PRE-EXISTING divergence this pass neither
-            // introduced nor widens — narrowing it means porting the whole
-            // class branch, separate work); the kick at least must match
-            // TS exactly, so it applies only to the classes that reach
-            // stepWeapon there (wizard/balanced, priest/shielded).
-            const is_melee_class = player_ptr.character_id == .sprinter or
-                player_ptr.character_id == .heavy;
-            if (!is_melee_class) {
-                const recoil_resolved: f64 = if (fcfg.valid != 0)
-                    fcfg.recoil_impulse
-                else
-                    weapons_data.weaponBaseById(.starter_pistol).recoil_impulse;
-                const recoil_step_active =
-                    player_ptr.recoil_step_until_tick > state.header.tick;
-                const recoil_strength = (recoil_resolved *
-                    chaos_profile.recoil_multiplier *
-                    (if (recoil_step_active) GEO_RECOIL_STEP_RECOIL_MULTIPLIER else 1.0)) /
-                    recoilControlForArchetype(player_ptr.character_id);
-                player_ptr.vx -= trig.lutCos(aim_angle) * recoil_strength;
-                player_ptr.vy -= trig.lutSin(aim_angle) * recoil_strength * 0.45;
-            }
-        }
-
-        // Roll current → prev for the next tick's edge detection.
-        player_ptr.prev_keys = player_ptr.current_keys;
-    }
-
-    // 6z. Ability-cast dispatch (Phase 1, docs/zig-step-world-parity-goal.md
-    //     "the next unblock") — runs after section 6's per-player loop has
-    //     finished for EVERY player (shield/emission already this-tick-
-    //     final) and BEFORE section 6a's melee loop, so a window opened
-    //     here (Judgment Line's mark, Unbroken Seal, Undercut, Read Mark,
-    //     Second Wind, Edge Storm) is already visible to THIS SAME tick's
-    //     melee consumption — matching World.ts's own per-player-loop
-    //     ordering, where the ability-slot loop (World.ts:2149) runs well
-    //     before the NINJA/PALADIN MELEE sections (World.ts:4029+/4412+).
-    //     `stepAbilityDispatch` itself gates on fighting-phase + alive, so
-    //     no outer phase guard is needed here (matches how section 6b's
-    //     AOE resolver and stepMeleeSwing structure their own guards).
-    {
-        var adi: u32 = 0;
-        while (adi < state.player_count) : (adi += 1) {
-            stepAbilityDispatch(state, adi, eff_dt, ability_slot_rising_edge[adi]);
-        }
-    }
-
-    // 6a. Melee — Ninja Slash + Paladin Kindled Edge (2026-07-20 base-
-    //     melee-mechanic gap-closure pass; see stepMeleeSwing's own doc
-    //     comment above for the full scope/mitigation/placement reasoning).
-    //     Runs after section 6's per-player loop has finished for EVERY
-    //     player (so shield state is already this-tick-final, same
-    //     ordering guarantee section 6b relies on) and before section 6b.
-    //     Fighting-phase only — Zig has no hangout-mode analog to carve out
-    //     the way World.ts does (see stepMeleeSwing's doc comment).
-    if (state.header.round_phase == @intFromEnum(round.RoundPhase.fighting)) {
-        var mai: u32 = 0;
-        while (mai < state.player_count) : (mai += 1) {
-            stepMeleeSwing(state, mai, eff_dt, melee_fire_rising_edge[mai]);
-        }
-    }
-
-    // 6y. Paper Double death/expiry burst detection (this pass — parity
-    //     port of paperDouble.ts's own `bursts` list feeding World.ts's
-    //     SECOND, LATER `resolveInstantAoeCasts` call, World.ts:6113-6115,
-    //     "discovered too late in tick order to land in the SAME
-    //     pendingInstantAoe batch"). Zig's tick order is the MIRROR IMAGE
-    //     of TS's here, not the same shape: paper-double stepping
-    //     (lifetime countdown in section "2b", projectile-collision health
-    //     zeroing in section 4) runs EARLY in stepWorld — well BEFORE this
-    //     point — while the AOE resolver (section 6b, directly below) runs
-    //     LATE. So every this-tick paper-double death has ALREADY happened
-    //     by the time this scan runs, and pushing here lands in the SAME
-    //     single 6b resolve pass below — traced and confirmed Zig needs NO
-    //     second resolver call, unlike TS (see this pass's own report for
-    //     the full ordering trace).
-    //
-    //     A paper double found here with `health <= 0 or remaining_ms <=
-    //     0` is GUARANTEED to have died THIS tick, never a stale prior-tick
-    //     entry: section 9's end-of-tick compaction (below) removes every
-    //     dead entry before the NEXT tick's section 2b could ever observe
-    //     it again — so this single scan can neither double-count a death
-    //     nor miss one. Melee-killed decoys are NOT covered here (melee-
-    //     vs-Paper-Double damage remains unwired — a real, now more
-    //     visible gap now that decoys can exist at all post this pass; see
-    //     stepMeleeSwing's own "deliberately NOT ported" list above) — the
-    //     two death paths this DOES cover (projectile kill, lifetime
-    //     expiry) are exactly the two `stepPaperDoubles`-equivalent paths
-    //     already built in commit 6aa0dc9.
-    {
-        var pdb: u32 = 0;
-        while (pdb < state.paper_double_count) : (pdb += 1) {
-            const pd = &state.paper_doubles[pdb];
-            if (pd.health > 0 and pd.remaining_ms > 0) continue; // still alive
-            const owner_idx = playerIdxById(state, pd.owner_id_bytes[0..pd.owner_id_len]);
-            if (owner_idx < 0) continue; // owner no longer in the roster — matches resolveInstantAoeCasts's own `if (!caster) continue`
-            if (state.pending_instant_aoe_count >= world_state.MAX_PENDING_INSTANT_AOE) continue;
-            state.pending_instant_aoe[state.pending_instant_aoe_count] = .{
-                .x = pd.x,
-                .y = pd.y,
-                .radius = NINJA_PAPER_DOUBLE_BURST_RADIUS_PX,
-                .damage = NINJA_PAPER_DOUBLE_BURST_DAMAGE,
-                .caster_idx = @intCast(owner_idx),
-                .has_fooled = 1,
-                .fooled_duration_ms = NINJA_FOOLED_DURATION_MS,
-            };
-            state.pending_instant_aoe_count += 1;
-        }
-    }
-
-    // 6b. Instant AOE resolution (2026-07-20 gap-closure pass — deferred-
-    //     write primitive port of World.ts's `pendingInstantAoe`/
-    //     `resolveInstantAoeCasts`; see resolveInstantAoeCasts's own doc
-    //     comment for the full mitigation accounting). MUST run after
-    //     section 6's per-player loop directly above (every player's own
-    //     per-tick state — shield/parry/fire — is only final once that
-    //     loop has finished for EVERY player) and before section 9's
-    //     end-of-tick compaction below. UPDATED (this pass): all 5 cast-
-    //     time/hook push sites (wall-bloom, shock-ring, prism-fan,
-    //     flock-pulse, shard-ring — section 6z below, plus the wall-kick/
-    //     landing hooks in section 8 above) and Paper Double's death/
-    //     expiry burst (section 6y directly above) are now real. This one
-    //     call drains ALL of them together every tick — see section 6y's
-    //     own doc comment for why Paper Double's burst doesn't need (and
-    //     doesn't get) a second resolver call the way TS's does.
-    if (state.pending_instant_aoe_count > 0) {
-        resolveInstantAoeCasts(
-            state,
-            state.pending_instant_aoe[0..state.pending_instant_aoe_count],
-            state.header.tick,
-            eff_dt,
-        );
-        state.pending_instant_aoe_count = 0;
-    }
-
     // 8b. Burn DoT (I32). Players with has_burn + burn_until_tick
     //     > tick take burn_dps every ~1 second (timed via
     //     burn_tick_last_applied).
@@ -5329,6 +5220,175 @@ pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
                 pp.flags.alive = false;
                 emitEvent(state, .player_killed, @intCast(bi), -1, 0, 0, pp.x, pp.y);
             }
+        }
+    }
+
+    // 1. Round phase machine + winner detection (I6). RELOCATED to run
+    //    LAST (Track Z0c Item B — port of 3d465f3's structural fix #1):
+    //    TS's stepRound is the final sim step of its tick, so winner
+    //    detection there sees THIS tick's combat; Zig used to run this
+    //    FIRST, making every round/match-end decision lag one tick behind
+    //    the deaths that caused it. Everything upstream of here reads the
+    //    tick-ENTRY phase (the `is_fighting` const at the top), exactly
+    //    like TS's own `fightingPhase` const.
+    //    When the round resolves with a real winner (sudden-death
+    //    last-alive or force-resolve — see detectRoundWinner), increment
+    //    that player's score and signal the phase machine so it
+    //    transitions fighting → round_over; a draw (`ended` with winner
+    //    -1) still transitions but credits nobody.
+    const resolution = detectRoundWinner(state, eff_dt);
+    const winner_idx = resolution.winner_idx;
+    if (winner_idx >= 0 and
+        state.header.round_phase == @intFromEnum(round.RoundPhase.fighting))
+    {
+        const idx: u32 = @intCast(winner_idx);
+        state.players[idx].score += 1;
+        emitEvent(
+            state,
+            .round_end,
+            winner_idx,
+            -1,
+            0,
+            @floatFromInt(state.players[idx].score),
+            0,
+            0,
+        );
+        // Match-end check (I9): if this player hit target_score,
+        // mark match winner. orchestrator stops advancing past
+        // round_over once match_winner_idx is set.
+        if (state.header.target_score > 0 and
+            state.players[idx].score >= state.header.target_score)
+        {
+            state.header.match_winner_idx = winner_idx;
+        }
+    }
+    // Prev-phase snapshot (Phase 2, docs/zig-step-world-parity-goal.md):
+    // captured BEFORE `roundStepPhase` overwrites `state.header.round_phase`
+    // below — needed to tell "arrived at countdown FROM drafting" apart
+    // from any other arrival, and to gate `allDraftersResolved` (only
+    // meaningful while CURRENTLY in drafting).
+    const prev_phase = state.header.round_phase;
+    const drafting_all_resolved =
+        prev_phase == @intFromEnum(round.RoundPhase.drafting) and
+        draft.allDraftersResolved(state);
+    const phase_result = round.roundStepPhase(
+        state.header.round_phase,
+        state.header.countdown_remaining_ms,
+        eff_dt,
+        // `ended` (not `winner_idx >= 0`): a sudden-death mutual KO ends
+        // the round as a DRAW — the phase must still leave `fighting`
+        // even though nobody is credited (round.ts scores only when
+        // `winner !== null` but transitions on any non-undefined verdict).
+        resolution.ended,
+        drafting_all_resolved,
+    );
+    // Auto-pick stragglers BEFORE committing the new phase below: this
+    // runs `draft.applyCardPick` (via `autoPickStragglers`), which itself
+    // gates on `state.header.round_phase == drafting` — it must still see
+    // the OLD (drafting) phase here, not the new (countdown) one the very
+    // next line is about to write. Same reasoning as capturing `prev_phase`
+    // above: side effects that need to observe "we were just in drafting"
+    // must run before the phase write, not after.
+    if (phase_result.transitioned == 1 and
+        phase_result.new_phase == @intFromEnum(round.RoundPhase.countdown) and
+        prev_phase == @intFromEnum(round.RoundPhase.drafting) and
+        !drafting_all_resolved)
+    {
+        // Window expired with picks outstanding: auto-pick the FIRST
+        // offer for every unpicked drafter (round.ts's own expiry branch).
+        draft.autoPickStragglers(state);
+    }
+
+    state.header.round_phase = phase_result.new_phase;
+    state.header.countdown_remaining_ms =
+        phase_result.new_countdown_remaining_ms;
+    if (phase_result.transitioned == 1 and
+        phase_result.new_phase == @intFromEnum(round.RoundPhase.round_over))
+    {
+        // Persist THIS round's winner (real index or -1 = draw) so it's
+        // still readable `ROUND_OVER_HOLD_MS` later when drafting rolls
+        // offers and needs it for catch-up role classification — see
+        // `WorldStateHeader.round_winner_idx`'s own doc comment for why a
+        // fresh local `winner_idx` isn't enough (this tick's value would
+        // otherwise be lost by the time drafting starts).
+        state.header.round_winner_idx = winner_idx;
+    }
+    if (phase_result.transitioned == 1 and
+        phase_result.new_phase == @intFromEnum(round.RoundPhase.fighting))
+    {
+        // New round's fighting phase begins: kill tally starts empty
+        // (parity with round.ts's countdown → fighting reset — same
+        // lifecycle as firstBloodPlayerId on the TS side).
+        var ki: u32 = 0;
+        while (ki < state.player_count) : (ki += 1) {
+            state.players[ki].round_kills = 0;
+        }
+        // Sudden-death trigger (Track Z0a port of orphaned-branch commit
+        // 02b74f5 — parity with round.ts): re-evaluated exactly on the
+        // countdown → fighting transition, using the scores as they stand
+        // heading into the new round. This is the first time step_world
+        // DECIDES the trigger independently (previously the flag was
+        // TS-set-only, and the pack path wiped it every tick anyway —
+        // see writeScoresIntoMemory's bug history).
+        state.header.sudden_death_active =
+            if (isSuddenDeathRound(state)) 1 else 0;
+    }
+    if (phase_result.transitioned == 1 and
+        phase_result.new_phase == @intFromEnum(round.RoundPhase.drafting))
+    {
+        // round_over → drafting (Phase 2): roll DRAFT_OFFER_COUNT offers
+        // per roster player. See `draft.zig`'s `rollOffersForRound` for
+        // the full candidate-pool-filter + weighted-sample + pity-floor
+        // port of `enterDrafting`.
+        draft.rollOffersForRound(state);
+    }
+    if (phase_result.transitioned == 1 and
+        phase_result.new_phase == @intFromEnum(round.RoundPhase.countdown))
+    {
+        // Wipe drafting bookkeeping so the next round starts clean (no-op
+        // the very first time countdown is ever reached, before any round
+        // has run — player_draft_state is already zero-valued then). Runs
+        // AFTER the auto-pick block above (which needed the pre-clear
+        // offers/picked_slot state to still be readable).
+        draft.clearDraftState(state);
+
+        // Sudden death clears on countdown entry (round.ts sets
+        // `next.suddenDeathActive = undefined` at BOTH →countdown
+        // transitions — round-over→countdown and drafting→countdown; the
+        // countdown→fighting transition above re-decides it fresh). Not in
+        // the 02b74f5 branch spec, which only wrote the flag at the
+        // fighting transition — but without this, a stale `true` survives
+        // the countdown phase where TS reads cleared, a needless
+        // divergence window.
+        state.header.sudden_death_active = 0;
+
+        state.header.round_index += 1;
+        // Reset transient entities for the new round (I28).
+        // Players keep their score + buff durations; everything
+        // else clears so the next round starts clean.
+        state.projectile_count = 0;
+        state.fire_count = 0;
+        state.satellite_count = 0;
+        // Respawn ALL players for the new round (Track Z0b Item A —
+        // upgraded from the old heal-in-place approximation to the full
+        // World.ts `respawnAll` port: every player runs the SAME
+        // respawnPlayerAt reset as the mid-round fast respawn, at their
+        // assignSpawnPoints seat — max health honors class chassis +
+        // maxHealthAdd cards instead of the old flat 100, positions move
+        // to the spawn seals instead of staying wherever the bell rang,
+        // and any pending mid-round respawn stamp is consumed. NOTE:
+        // slow deliberately survives now (TS's respawnPlayerAt clears
+        // burn/freeze/parry but NOT slowedUntilTick — the old Zig clear
+        // here was a divergence, not a feature).
+        var ri: u32 = 0;
+        while (ri < state.player_count) : (ri += 1) {
+            const seat = assignedSpawnPoint(state, ri);
+            respawnPlayerAt(
+                &state.players[ri],
+                &state.player_fire_config[ri],
+                seat.x,
+                seat.y,
+            );
         }
     }
 
@@ -5424,9 +5484,11 @@ pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
     //     section), diffing against the section-0a alive snapshot — one
     //     stamp site catches every death cause, same as TS. TS runs its
     //     copy after its round machine and reads the JUST-stepped phase;
-    //     here the round machine ran at the top of this same tick, so the
-    //     phase read below is the same value TS's `roundNow.phase` holds
-    //     for this tick's decision.
+    //     since the Z0c Item B reorder the round machine runs late here
+    //     too (just before compaction, still ahead of this block), so the
+    //     phase read below is the same JUST-stepped value TS's
+    //     `roundNow.phase` holds for this tick's decision — the reorder
+    //     made this note's old "machine ran at the top" caveat moot.
     {
         const in_fighting =
             state.header.round_phase == @intFromEnum(round.RoundPhase.fighting);

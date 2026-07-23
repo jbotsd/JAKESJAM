@@ -1808,7 +1808,12 @@ test "ability dispatch: Paper Double (Ninja) cast — a running caster spawns a 
     try std.testing.expect(@abs(pd.vx - (-362.0)) < 1e-6);
     try std.testing.expectEqual(@as(f64, 0.0), pd.vy); // horizontal-only direction
     try std.testing.expectEqual(@as(f64, 20.0), pd.health); // NINJA_PAPER_DOUBLE_MAX_HEALTH
-    try std.testing.expectEqual(@as(f64, 2500.0), pd.remaining_ms); // NINJA_PAPER_DOUBLE_LIFETIME_MS
+    // NINJA_PAPER_DOUBLE_LIFETIME_MS (2500) minus this SAME tick's 16ms
+    // lifetime drain: since the Z0c Item B reorder, section 2b's decoy
+    // step runs AFTER the 6z cast within one tick — the exact cadence TS
+    // has (pendingPaperDoubleSpawns merges into paperDoublesForStep
+    // BEFORE stepPaperDoubles runs, World.ts:6547-6551).
+    try std.testing.expectEqual(@as(f64, 2484.0), pd.remaining_ms);
     try std.testing.expectEqual(@as(u8, 8), pd.owner_id_len);
     try std.testing.expectEqualSlices(u8, "caster-1", pd.owner_id_bytes[0..8]);
 }
@@ -2183,25 +2188,18 @@ test "ability dispatch: Facet Break (Wizard) — marks the nearest foe in the ai
     try std.testing.expect(state.players[0].slot_cooldown_until_tick[0] > state.header.tick);
     try std.testing.expectEqualSlices(u8, "victim", state.players[0].facet_target_id_bytes[0..state.players[0].facet_target_id_len]);
 
-    // Track Z0b Item B: shots now spawn at the offset alternating-hand
-    // MUZZLE (weapon.zig playerMuzzlePosition ≈ (29.7, -49.2) for this
-    // shooter/aim geometry — anchor 60 up, 31 reach toward aim, back-hand
-    // -6 perp on a fresh zig-only state), not the player center. Park the
-    // already-marked victim ON the muzzle point so the hit keeps resolving
-    // on the same one-tick cadence this test always used (the mark is
-    // id-keyed — moving the victim after the cast changes nothing else).
-    state.players[1].x = 30;
-    state.players[1].y = -49;
-
     // Tick 4: fire ONE shot (mark opened tick 3, read tick 4 — the
     // established one-tick lag every window-buff composition site in this
     // file already has, same as Sunlance's own test). fire_cooldown_ms
-    // starts 0 (zeroed state), so this fires immediately, spawning at
-    // (0,0) with velocity straight down the aim line (100,0) — the mark's
-    // amp is NOT baked into the projectile's own damage field (unlike
-    // Sunlance/Measure): it's applied at the HIT-CONFIRM site, keyed to
-    // the victim's id, so the spawned shot's damage is still the plain
-    // base 12.0 here.
+    // starts 0 (zeroed state), so this fires immediately, spawning at the
+    // offset alternating-hand MUZZLE (Track Z0b Item B, ≈ (29.7, -49.2)
+    // for this geometry) — the victim at (15,0) sits clear of that spawn
+    // point AND of its first tick of travel (Z0c Item B: a fired shard
+    // now integrates + hit-checks on its SPAWN tick, TS's own cadence),
+    // so the shot is still live and mid-flight here. The mark's amp is
+    // NOT baked into the projectile's own damage field (unlike Sunlance/
+    // Measure): it's applied at the HIT-CONFIRM site, keyed to the
+    // victim's id, so the spawned shot's damage is the plain base 12.0.
     state.players[0].current_keys = FIRE_BIT;
     _ = root.world.stepWorld(&state, 1.0);
     try std.testing.expectEqual(@as(u32, 1), state.projectile_count);
@@ -2209,11 +2207,12 @@ test "ability dispatch: Facet Break (Wizard) — marks the nearest foe in the ai
 
     // Tick 5: release Fire (so cooldown ticking down doesn't spawn a
     // SECOND shot this same call — a fresh spawn wouldn't have traveled
-    // yet, contaminating the single-shot damage assertion below) and let
-    // the already-live shard's own per-tick integration (unconditional,
-    // not gated on held input) carry it into the victim's AABB — spawn
-    // x=0, victim x=15 (AABB half-width 15, so [0,30] overlaps at x=0
-    // already; STARTER_PISTOL speed 650px/s moves it well past 0 in 1ms).
+    // yet, contaminating the single-shot damage assertion below) and park
+    // the marked victim directly ON the live shard so this tick's hit
+    // pass resolves it (the mark is id-keyed — moving the victim changes
+    // nothing else; geometry-proof against future muzzle tweaks).
+    state.players[1].x = state.projectiles[0].x;
+    state.players[1].y = state.projectiles[0].y;
     state.players[0].current_keys = 0;
     _ = root.world.stepWorld(&state, 1.0);
     // 100 - (12.0 * 1.25) == 85.0 — a plain unamplified pistol hit would
@@ -2275,19 +2274,21 @@ test "ability dispatch: Focus Hex (Priest) — marks the NEAREST enemy within ra
     try std.testing.expect(state.players[0].slot_cooldown_until_tick[0] > state.header.tick);
     try std.testing.expectEqualSlices(u8, "nearest", state.players[0].focus_hex_target_id_bytes[0..state.players[0].focus_hex_target_id_len]);
 
-    // Track Z0b Item B: park the marked victim on the offset-muzzle spawn
-    // point (≈ (29.7, -49.2) for this shooter/aim geometry) — see the
-    // Facet Break test's matching comment for the full reasoning.
-    state.players[1].x = 30;
-    state.players[1].y = -49;
-
-    // Tick 2: fire — one-tick lag (mark opened tick 1, read tick 2).
+    // Tick 2: fire — one-tick lag (mark opened tick 1, read tick 2). The
+    // "nearest" victim at (15,0) sits clear of the offset-muzzle spawn
+    // point and its first tick of travel (Z0c Item B: fired shards now
+    // integrate + hit-check on their spawn tick, TS's cadence), so the
+    // shot is still live and mid-flight at the asserts below.
     state.players[0].current_keys = FIRE_BIT;
     _ = root.world.stepWorld(&state, 1.0);
     try std.testing.expectEqual(@as(u32, 1), state.projectile_count);
     try std.testing.expectApproxEqAbs(@as(f64, 12.0), state.projectiles[0].damage, 1e-9); // unamplified at spawn — amp is hit-site-only
 
-    // Tick 3: release Fire, let the shard travel into "nearest"'s AABB.
+    // Tick 3: release Fire and park the marked victim directly ON the
+    // live shard so this tick's hit pass resolves it (see the Facet Break
+    // test's matching comment).
+    state.players[1].x = state.projectiles[0].x;
+    state.players[1].y = state.projectiles[0].y;
     state.players[0].current_keys = 0;
     _ = root.world.stepWorld(&state, 1.0);
     // 100 - (12.0 * 1.28) == 84.64 — a plain unamplified pistol hit would
@@ -2327,12 +2328,13 @@ test "ability dispatch: Hard Aperture (Wizard) — cast opens ward_shell_until_t
     state.players[0].flags.alive = true;
     state.players[0].character_id = .balanced; // wizard
     state.players[0].health = 100;
-    // Track Z0b Item B: parked on the shooter's offset-muzzle spawn point
-    // (≈ (29.7, -49.2) for this aim geometry) — see the Facet Break test's
-    // matching comment. Hard Aperture's cast is self-targeted, so the
-    // warded victim's position is free.
-    state.players[0].x = 30;
-    state.players[0].y = -49;
+    // Away from the shooter's muzzle + first-tick shard path (Z0c Item B:
+    // fired shards now integrate + hit-check on their spawn tick, TS's
+    // cadence) — the victim snaps onto the live shard just before the hit
+    // tick below. Hard Aperture's cast is self-targeted, so the warded
+    // victim's position is free.
+    state.players[0].x = 300;
+    state.players[0].y = 0;
     setPlayerId(&state.players[0], "victim");
     equipSlot(&state, 0, 0, .hard_aperture); // duration 600ms, cooldown 9000ms
 
@@ -2364,10 +2366,13 @@ test "ability dispatch: Hard Aperture (Wizard) — cast opens ward_shell_until_t
     try std.testing.expectEqual(@as(u32, 1), state.projectile_count);
     try std.testing.expectApproxEqAbs(@as(f64, 12.0), state.projectiles[0].damage, 1e-9);
 
-    // Tick 3: release Fire, let the shard travel into the warded victim's
-    // AABB (same close-range geometry Facet Break/Focus Hex's own tests
-    // use). 100 - (12.0 * 0.5) == 94.0 — a plain unwarded pistol hit would
-    // leave 88.0, proving the ward halved this landed hit.
+    // Tick 3: release Fire and park the warded victim directly ON the
+    // live shard so this tick's hit pass resolves it (same snap-onto-the-
+    // shard shape Facet Break/Focus Hex's own tests use). 100 - (12.0 *
+    // 0.5) == 94.0 — a plain unwarded pistol hit would leave 88.0,
+    // proving the ward halved this landed hit.
+    state.players[0].x = state.projectiles[0].x;
+    state.players[0].y = state.projectiles[0].y;
     state.players[1].current_keys = 0;
     _ = root.world.stepWorld(&state, 1.0);
     try std.testing.expectApproxEqAbs(@as(f64, 94.0), state.players[0].health, 1e-9);
@@ -2434,10 +2439,11 @@ test "ability dispatch: Self-Lattice (Priest) — a ranged hit that fully drains
     state.players[1].flags.alive = true;
     state.players[1].character_id = .shielded; // priest
     state.players[1].health = 100;
-    // Track Z0b Item B: parked on the shooter's offset-muzzle spawn point
-    // — see the Facet Break test's matching comment.
-    state.players[1].x = 30;
-    state.players[1].y = -49;
+    // Away from the shooter's muzzle + first-tick shard path (Z0c Item B:
+    // fired shards now integrate + hit-check on their spawn tick) — the
+    // victim snaps onto the live shard just before the hit tick below.
+    state.players[1].x = 300;
+    state.players[1].y = 0;
     setPlayerId(&state.players[1], "victim"); // distinct ids — see Hard
     // Aperture's own test comment for why (owner-skip hazard).
     // Bypass the cast (already proven above) to focus purely on the
@@ -2449,6 +2455,8 @@ test "ability dispatch: Self-Lattice (Priest) — a ranged hit that fully drains
     state.players[0].current_keys = FIRE_BIT;
     _ = root.world.stepWorld(&state, 1.0);
     try std.testing.expectEqual(@as(u32, 1), state.projectile_count);
+    state.players[1].x = state.projectiles[0].x;
+    state.players[1].y = state.projectiles[0].y;
     state.players[0].current_keys = 0;
     _ = root.world.stepWorld(&state, 1.0);
 
@@ -2593,15 +2601,18 @@ test "Kindled Resolve: ranged (projectile) damage amp — a plain starter-pistol
 
     state.players[1].flags.alive = true;
     state.players[1].health = 100;
-    // Track Z0b Item B: parked on the shooter's offset-muzzle spawn point
-    // — see the Facet Break test's matching comment.
-    state.players[1].x = 30;
-    state.players[1].y = -49;
+    // Away from the shooter's muzzle + first-tick shard path (Z0c Item B:
+    // fired shards now integrate + hit-check on their spawn tick) — the
+    // victim snaps onto the live shard just before the hit tick below.
+    state.players[1].x = 300;
+    state.players[1].y = 0;
     setPlayerId(&state.players[1], "victim");
 
     state.players[0].current_keys = FIRE_BIT;
     _ = root.world.stepWorld(&state, 1.0);
     try std.testing.expectEqual(@as(u32, 1), state.projectile_count);
+    state.players[1].x = state.projectiles[0].x;
+    state.players[1].y = state.projectiles[0].y;
     state.players[0].current_keys = 0;
     _ = root.world.stepWorld(&state, 1.0);
 
@@ -3086,7 +3097,7 @@ test "ability dispatch: Lattice (Geometrician) — cast spawns a real, self-owne
     setPlayerId(&state.players[1], "victim");
 
     state.players[0].current_keys = SLOT1_BIT;
-    _ = root.world.stepWorld(&state, 1.0); // tick 1: cast — zone spawns AFTER this tick's own fire-patch-tick pass already ran, so no damage lands yet.
+    _ = root.world.stepWorld(&state, 1.0); // tick 1: cast — since the Z0c Item B reorder the fire-patch tick runs AFTER the 6z cast within this same tick (TS's own cadence: pendingZoneSpawns merges into nextFirePatches before stepFirePatches, World.ts:6398/6457), so the fresh zone drains 1ms and deals its first 0.011 damage immediately.
 
     try std.testing.expectEqual(@as(u32, 1), state.fire_count);
     try std.testing.expectEqual(@as(f64, 100.0), state.fires[0].x);
@@ -3096,7 +3107,9 @@ test "ability dispatch: Lattice (Geometrician) — cast spawns a real, self-owne
     // test above uses.
     try std.testing.expectApproxEqAbs(@as(f64, 100.0), state.fires[0].y, 1e-2);
     try std.testing.expectApproxEqAbs(@as(f64, 150.0), state.fires[0].radius, 1e-9);
-    try std.testing.expectApproxEqAbs(@as(f64, 2200.0), state.fires[0].remaining_ms, 1e-9);
+    // GEO_LATTICE_ZONE_DURATION_MS (2200) minus this same tick's 1ms drain
+    // (see the cast comment above).
+    try std.testing.expectApproxEqAbs(@as(f64, 2199.0), state.fires[0].remaining_ms, 1e-9);
     try std.testing.expectApproxEqAbs(@as(f64, 11.0), state.fires[0].damage_per_second, 1e-9);
     try std.testing.expectEqual(@as(u32, 1), state.fires[0].has_owner);
     try std.testing.expectEqualSlices(u8, "caster", state.fires[0].owner_id_bytes[0..state.fires[0].owner_id_len]);
@@ -3115,7 +3128,7 @@ test "ability dispatch: Lattice (Geometrician) — cast spawns a real, self-owne
     // not an inert marker.
     state.players[0].current_keys = 0;
     _ = root.world.stepWorld(&state, 16.0);
-    try std.testing.expectApproxEqAbs(@as(f64, 99.824), state.players[1].health, 1e-6); // 100 - 11.0*0.016s
+    try std.testing.expectApproxEqAbs(@as(f64, 99.813), state.players[1].health, 1e-6); // 100 - 11.0*(0.001+0.016)s — cast tick's 1ms + this tick's 16ms
     try std.testing.expectEqual(@as(f64, 100.0), state.players[0].health);
 }
 
@@ -3183,11 +3196,13 @@ test "ability dispatch: Ghost Guard (Ninja) — ranged: an active charge on a mo
     state.players[0].flags.alive = true;
     state.players[0].character_id = .sprinter; // ninja victim
     state.players[0].health = 100;
-    // Track Z0b Item B: parked on the shooter's offset-muzzle spawn point
-    // — see the Facet Break test's matching comment. Still "moving" via
-    // vx below; 1ms ticks drift it a negligible 0.2px before the hit.
-    state.players[0].x = 30;
-    state.players[0].y = -49;
+    // Away from the shooter's muzzle + first-tick shard path (Z0c Item B:
+    // fired shards now integrate + hit-check on their spawn tick) — the
+    // victim snaps onto the live shard just before the hit tick below.
+    // Still "moving" via vx below; 1ms ticks drift it a negligible 0.2px
+    // before the hit.
+    state.players[0].x = 300;
+    state.players[0].y = 0;
     setPlayerId(&state.players[0], "victim");
     state.players[0].ghost_guard_charge_until_tick = 100_000;
     state.players[0].vx = 200.0; // > NINJA_GHOST_GUARD_MOVE_SPEED_THRESHOLD (60)
@@ -3204,9 +3219,11 @@ test "ability dispatch: Ghost Guard (Ninja) — ranged: an active charge on a mo
     _ = root.world.stepWorld(&state, 1.0); // shot spawns
     try std.testing.expectEqual(@as(u32, 1), state.projectile_count);
 
+    state.players[0].x = state.projectiles[0].x;
+    state.players[0].y = state.projectiles[0].y;
     state.players[1].current_keys = 0;
     state.players[0].vx = 200.0; // re-assert so the gate reads "moving" at hit-resolution time
-    _ = root.world.stepWorld(&state, 1.0); // shard overlaps the close-range victim AABB, hit resolves
+    _ = root.world.stepWorld(&state, 1.0); // victim parked on the shard, hit resolves
 
     try std.testing.expectApproxEqAbs(@as(f64, 100.0), state.players[0].health, 1e-9); // undamaged — evaded
     try std.testing.expectEqual(@as(u32, 0), state.players[0].ghost_guard_charge_until_tick); // charge consumed
@@ -3226,7 +3243,12 @@ test "ability dispatch: Bleed Tithe (Priest/Syzygist) — auto-targeted homing f
 
     state.players[1].flags.alive = true;
     state.players[1].health = 100;
-    state.players[1].x = 15;
+    // In auto-target range (420) but clear of the caster-adjacent shard
+    // spawn point and its first tick of travel (Z0c Item B: an ability
+    // shard cast in section 6z now integrates + hit-checks the SAME tick,
+    // TS's own cadence) — the victim snaps onto the live shard just
+    // before the hit tick below.
+    state.players[1].x = 200;
     state.players[1].y = 0;
     setPlayerId(&state.players[1], "victim");
 
@@ -3240,8 +3262,10 @@ test "ability dispatch: Bleed Tithe (Priest/Syzygist) — auto-targeted homing f
     try std.testing.expect(state.projectiles[0].flags.has_homing);
     try std.testing.expect(state.players[0].slot_cooldown_until_tick[0] > state.header.tick);
 
+    state.players[1].x = state.projectiles[0].x;
+    state.players[1].y = state.projectiles[0].y;
     state.players[0].current_keys = 0;
-    _ = root.world.stepWorld(&state, 1.0); // shard overlaps the close-range victim's AABB, hit resolves
+    _ = root.world.stepWorld(&state, 1.0); // victim parked on the shard, hit resolves
 
     // 100 - 26 == 74.
     try std.testing.expectApproxEqAbs(@as(f64, 74.0), state.players[1].health, 1e-9);
