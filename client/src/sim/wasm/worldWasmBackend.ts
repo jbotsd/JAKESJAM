@@ -350,7 +350,7 @@ export function writeScoresIntoMemory(state: WorldState): void {
   const ex = cachedEx;
   const view = new DataView(ex.memory.buffer);
   const playersStart = sim.statePtr + HEADER_SIZE + 8;
-  // PlayerEntity.score offset within the 624-byte entity — the same
+  // PlayerEntity.score offset within the 632-byte entity — the same
   // constant unpackWorldState's score-extraction loop reads (worldState-
   // Bridge.ts: "PlayerEntity score is at offset 276"), directly after
   // current_keys/prev_keys at +268/+272 (see writePlayerInputsIntoMemory).

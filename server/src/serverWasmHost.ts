@@ -367,7 +367,7 @@ class ServerWasmHost {
     if (!this.ex || this.statePtr === null) return;
     const view = new DataView(this.ex.memory.buffer);
     const playersStart = this.statePtr + HEADER_SIZE + 8;
-    // PlayerEntity.score offset within the 624-byte entity — same constant
+    // PlayerEntity.score offset within the 632-byte entity — same constant
     // unpackWorldState's score-extraction loop reads (offset 276, directly
     // after current_keys/prev_keys at +268/+272).
     const SCORE_OFF = 276;

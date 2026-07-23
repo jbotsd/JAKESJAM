@@ -136,7 +136,19 @@ export const HEADER_SIZE = 56;
 // reclaimed existing padding (net zero); razor_route_until_tick added +8
 // real growth. Sub-agent scoped to sim/ only, per the now-established
 // pattern — closing the resulting TS-side staleness immediately again.
-export const PLAYER_ENTITY_SIZE = 624;
+// 624 → 624 (Track Z0b Item A, fast-respawn): respawn_at_tick (u32)
+// reclaimed the razor-route cut's tail padding at offset 620 — net zero.
+// UNLIKE the Zig-only tail fields above, this one IS packed/unpacked
+// (packPlayer/unpackPlayer's skip-236-then-u32 tail — the full-sync path
+// repacks every tick, so an unbridged respawn stamp would be wiped).
+// 624 → 632 (Track Z0b Item B, muzzle-geometry port of 888345c):
+// throw_hand_parity (u8) at offset 624 + 7 bytes explicit tail pad — the
+// orphan branch's cut stole a then-free _reserved byte (size unchanged
+// there), but that landing zone was consumed long ago (round_kills), so
+// this port grows the struct instead. Packed/unpacked like
+// respawn_at_tick (TS's weapon.ts toggles the SAME field on the
+// TS-authoritative path — both sides must share one parity bit).
+export const PLAYER_ENTITY_SIZE = 632;
 const PROJECTILE_ENTITY_SIZE = 216;
 const SATELLITE_ENTITY_SIZE = 96;
 const DESTRUCTIBLE_ENTITY_SIZE = 64;
@@ -731,13 +743,24 @@ function packPlayer(
   // respawn_at_tick (Track Z0b Item A, fast-respawn ruling 2026-07-17) —
   // the mid-round respawn stamp, parity with world_state.zig's
   // PlayerEntity.respawn_at_tick (which consumed the struct's former tail
-  // pad: PLAYER_ENTITY_SIZE stays 624). 0 = no scheduled respawn (a real
-  // stamp is always ≥ 1), mirroring TS `undefined` — same sentinel
-  // convention as PickupEntity.respawnAtTick. MUST round-trip: the
-  // full-sync path repacks every tick, so an unbridged stamp would be
-  // wiped before it ever came due.
+  // pad). 0 = no scheduled respawn (a real stamp is always ≥ 1), mirroring
+  // TS `undefined` — same sentinel convention as PickupEntity.respawnAtTick.
+  // MUST round-trip: the full-sync path repacks every tick, so an
+  // unbridged stamp would be wiped before it ever came due.
   view.setUint32(off, p.respawnAtTick ?? 0, true);
   off += 4;
+
+  // throw_hand_parity (Track Z0b Item B, port of 888345c) — alternating-
+  // hand shuriken throws, parity with weapon.ts's throwHandParity
+  // (toggled once per FIRE EVENT; the muzzle position + fired angle
+  // derive from it on both sides). `?? 1` mirrors TS's own unset
+  // convention (`(throwHandParity ?? 1) ^ 1` — the first-ever shot
+  // toggles to hand 0). 7 explicit tail-pad bytes mirror world_state.zig's
+  // `_pad_throw_hand` exactly (625 → 632).
+  view.setUint8(off, (p.throwHandParity ?? 1) & 1);
+  off += 1;
+  for (let i = 0; i < 7; i++) view.setUint8(off + i, 0);
+  off += 7;
 }
 
 function unpackPlayer(view: DataView, offset: number): PlayerEntity {
@@ -873,11 +896,14 @@ function unpackPlayer(view: DataView, offset: number): PlayerEntity {
   const syzWardRemainingRaw = view.getFloat64(off, true);
   off += 8;
 
-  // Zig-only tail span + respawn_at_tick — see packPlayer's matching
-  // comments (Track Z0b Item A).
+  // Zig-only tail span + respawn_at_tick + throw_hand_parity — see
+  // packPlayer's matching comments (Track Z0b Items A + B).
   off += 236;
   const respawnAtTickRaw = view.getUint32(off, true);
   off += 4;
+  const throwHandParityRaw = view.getUint8(off) & 1;
+  off += 1;
+  off += 7; // _pad_throw_hand
 
   const out: PlayerEntity = {
     id: PlayerId(id),
@@ -959,6 +985,10 @@ function unpackPlayer(view: DataView, offset: number): PlayerEntity {
   // 0 = no scheduled respawn (see packPlayer's respawn_at_tick comment) —
   // decoded back to `undefined`, TS's own rest state for the field.
   if (respawnAtTickRaw > 0) out.respawnAtTick = Tick(respawnAtTickRaw);
+  // Always-carried (unlike the sentinel above): 0 and 1 are both real
+  // hands, and TS's `?? 1` unset convention was already normalized at
+  // pack time — see packPlayer's throw_hand_parity comment.
+  out.throwHandParity = throwHandParityRaw;
   return out;
 }
 

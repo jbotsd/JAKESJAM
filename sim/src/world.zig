@@ -4921,27 +4921,53 @@ pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
             cd_after,
             &fire_decision,
         );
-        if (fire_decision.fired == 1 and
-            chaos_profile.disable_projectiles == 0)
-        {
-            const dx = player_ptr.aim_x - player_ptr.x;
-            const dy = player_ptr.aim_y - player_ptr.y;
-            const aim_angle: f64 = if (dx == 0 and dy == 0) 0 else trig.lutAtan2(dy, dx);
+        if (fire_decision.fired == 1) {
+            // Muzzle offset + alternating-hand throws (Track Z0b Item B —
+            // port of orphaned-branch commit 888345c; previously spawned
+            // dead-center on the player with a center-derived angle, the
+            // audit's 10.84px-vs-47.32px per-shot divergence). Parity with
+            // weapon.ts:368-376: hand toggles ONCE per fire event, not per
+            // pellet — a multi-shot spread's pellets all share one muzzle
+            // origin — and it toggles OUTSIDE the disableProjectiles gate
+            // (TS toggles before its own `if (!chaos.disableProjectiles)`
+            // spawn loop, so slappers-only rounds keep the parity bit
+            // moving in lock-step too).
+            const throw_hand: u8 = (player_ptr.throw_hand_parity ^ 1) & 1;
+            player_ptr.throw_hand_parity = throw_hand;
+            const muzzle = weapon.playerMuzzlePosition(
+                player_ptr.x,
+                player_ptr.y,
+                player_ptr.aim_x,
+                player_ptr.aim_y,
+                throw_hand,
+            );
+            // Fire angle derives from the OFFSET muzzle point toward aim
+            // (weapon.ts:376's `lutAtan2(aim.y - muzzle.y, aim.x -
+            // muzzle.x)`) — NOT from the player center; the angular gap
+            // between the two is exactly what compounded over travel
+            // distance in the audit.
+            const adx = player_ptr.aim_x - muzzle.x;
+            const ady = player_ptr.aim_y - muzzle.y;
+            const aim_angle: f64 = if (adx == 0 and ady == 0) 0 else trig.lutAtan2(ady, adx);
             const speed = proj_speed_base * proj_speed_mul;
             const lifetime_ms = @max(
                 50.0,
                 proj_lifetime_sec * 1000.0 * proj_lifetime_mul,
             );
             const radius_v: f64 = @max(2.0, 7.0 * proj_size_mul);
+            const spawn_projectiles = chaos_profile.disable_projectiles == 0;
 
             // Multi-shot spread fan: distribute proj_count
             // projectiles evenly across spread_amp_total radians (Measure/
             // Overclock's own priority chain applied — see their doc
-            // comment above) centred on aim_angle. Single-shot (count == 1)
-            // fires straight regardless (offset always 0), same "can't
-            // observe spread with one shot" shape weapon.ts itself has.
+            // comment above) centred on the MUZZLE-derived aim_angle.
+            // Single-shot (count == 1) fires straight regardless (offset
+            // always 0), same "can't observe spread with one shot" shape
+            // weapon.ts itself has. `spawn_projectiles` gates ONLY the
+            // spawns (slappers-only chaos) — the hand toggle above already
+            // ran, matching TS's ordering.
             var shot_i: u32 = 0;
-            while (shot_i < proj_count) : (shot_i += 1) {
+            while (spawn_projectiles and shot_i < proj_count) : (shot_i += 1) {
                 if (state.projectile_count >= world_state.MAX_PROJECTILES) break;
                 const offset: f64 = if (proj_count <= 1)
                     0
@@ -4956,8 +4982,8 @@ pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
                 const new_id: u32 = state.header.next_entity_id;
                 state.header.next_entity_id += 1;
                 state.projectiles[slot] = .{
-                    .x = player_ptr.x,
-                    .y = player_ptr.y,
+                    .x = muzzle.x,
+                    .y = muzzle.y,
                     .vx = trig.lutCos(ang) * speed,
                     .vy = trig.lutSin(ang) * speed,
                     .radius = radius_v,
@@ -4965,8 +4991,8 @@ pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
                     .lifetime_ms = lifetime_ms,
                     .age_ms = 0,
                     .traveled_px = 0,
-                    .origin_x = player_ptr.x,
-                    .origin_y = player_ptr.y,
+                    .origin_x = muzzle.x,
+                    .origin_y = muzzle.y,
                     .homing_strength = proj_homing,
                     .acceleration_multiplier = proj_accel,
                     .gravity_scale = proj_gravity,

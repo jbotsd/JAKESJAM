@@ -88,7 +88,14 @@ describe("WorldState extern struct layout (Phase G1c)", () => {
     // 616 → 624 (Phase 4 new-substrate pass, docs/zig-step-world-parity-goal.md):
     // ghost_guard_charge_until_tick (padding reclaim, net zero) +
     // razor_route_until_tick (+8 real growth).
-    expect(ex.sizeof_player_entity()).toBe(624);
+    // 624 → 624 (Track Z0b Item A): respawn_at_tick (u32) — padding
+    // reclaim, net zero, but wire-BRIDGED unlike the tail fields above.
+    // 624 → 632 (Track Z0b Item B, muzzle-geometry port of 888345c):
+    // throw_hand_parity (u8) + 7 explicit tail-pad bytes, also bridged.
+    // See world_state.zig's comptime asserts (incl. the two bridged-field
+    // offset locks at 620/624) and worldStateBridge.ts's
+    // PLAYER_ENTITY_SIZE for the full accounting.
+    expect(ex.sizeof_player_entity()).toBe(632);
     expect(ex.sizeof_projectile_entity()).toBe(216);
     expect(ex.sizeof_satellite_entity()).toBe(96);
     expect(ex.sizeof_destructible_entity()).toBe(64);
