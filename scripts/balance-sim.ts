@@ -2,7 +2,7 @@
 //
 // Drives `stepWithRuntime` (client/src/sim/World.ts) directly — the exact
 // pure-sim function every `.test.ts` file under client/src/sim/__tests__
-// already calls — with a single shared cheap heuristic bot policy on BOTH
+// already calls — with a cheap PER-CLASS-AWARE heuristic bot policy on BOTH
 // sides. No MatchHost, no server, no networking, no draft/round FSM. This
 // is a deliberately scoped FIRST PASS (see the "Scope limits" section of
 // the printed report / JSON) — a coarse balance signal, not gospel.
@@ -42,6 +42,7 @@ import {
 const LEFT_BIT = 1 << 0;
 const RIGHT_BIT = 1 << 1;
 const FIRE_BIT = 1 << 6;
+const DASH_BIT = 1 << 9;
 const SLOT_BIT = [1 << 10, 1 << 11, 1 << 12] as const;
 
 const DT_MS = 1000 / 60;
@@ -55,9 +56,14 @@ const EFFECT_WINDOW_TICKS = 30;
 // Same-tick position/velocity jump thresholds used to detect a movement
 // ability's signature displacement. Chosen well above ordinary per-tick
 // ground movement (maxGroundSpeed 362px/s * DT_MS/1000 ≈ 6px/tick) and
-// above the boosted per-tick delta a held Dash could produce (~15.7px/tick)
-// — but the bot policy in this harness never presses Dash or Jump, so any
-// jump this large on the activation tick is attributable to the ability.
+// above the boosted per-tick delta a held Dash could produce (~15.7px/tick).
+// The policy never presses Jump. It DOES now press Dash (per-class evasion/
+// gap-close, 2026-07-23) — attribution is preserved by a hard mutual-
+// exclusion guard: no slot bit is ever pressed on a dash tick, and slot
+// presses stay suppressed for SLOT_QUIET_AFTER_DASH_TICKS after every dash
+// (covers the dash's 210ms active burst + 200ms recovery decel, both of
+// which can exceed VELOCITY_JUMP_PXPS within one tick), so a large jump on
+// an activation tick is still attributable to the ability alone.
 const MOVEMENT_JUMP_PX = 20;
 const VELOCITY_JUMP_PXPS = 260;
 
@@ -176,44 +182,191 @@ function mkState(players: PlayerEntity[], rngSeed: number): WorldState {
   };
 }
 
-// ── Bot policy: ONE shared cheap heuristic, both sides ──────────────────
+// ── Bot policy: PER-CLASS-AWARE heuristic, both sides ───────────────────
 //
-// - Moves toward the enemy when far, backs off when too close, holds in a
-//   preferred attack band.
-// - Aims straight at the enemy's current position (no lead, no error — this
-//   is a balance-signal bot, not a player-facing one).
-// - Pulses Fire (press-one-tick, release-one-tick) whenever in range. A
-//   pulse (not a hold) is required because World.ts routes Fire through a
-//   RISING-EDGE melee FSM for ninja/paladin (their "Fire" is a melee arc,
-//   not stepWeapon's ranged shot) — holding it down only triggers once.
-//   Wizard/priest's stepWeapon reads Fire as a level trigger, so pulsing
-//   just fires slightly bursty instead of laser-holding; harmless.
+// 2026-07-23 (convergence-goal.md Track B): the previous ONE-shared-policy
+// design — every class holding the same 60-120px band — made the matrix a
+// POLICY artifact, not a balance signal: Syzygist's homing tendrils can't
+// miss a target that never dodges (~100% vs everyone), and Kindled — whose
+// entire kit is the Kindled Edge melee arc, it never fires the gun — lost
+// every cross-class cell 100% because the shared band only sometimes
+// straddled its 84px reach and nothing ever protected its slow approach.
+// Verified identical pre-/post-chassis-stats, so it was the policy.
+//
+// The policy is still deliberately cheap (a balance-signal bot, not a
+// player-facing one), but now reads a per-class parameter row
+// (CLASS_POLICY, prior art: server/src/worldBots.ts's isMeleeClass +
+// meleeEngageRange/meleeFireRange split):
+// - Class-aware engagement band: Geometrician keeps gun range, Syzygist
+//   holds mid (tendrils have a 2.6s fuse), Kindled CLOSES to inside
+//   EDGE_RANGE=84 and never backs off, Interstice alternates a mid-range
+//   hold with periodic melee commit windows (seeded phase offset).
+// - Class-aware Fire gate: melee classes only pulse Fire inside their own
+//   blade reach (EDGE_RANGE=84 / SLASH_RANGE=78) instead of swinging air
+//   from gun range; ranged classes keep FIRE_RANGE.
+// - Homing evasion (the intended tendril counter): any inbound enemy
+//   projectile slower than RUN_DODGE_MAX_PROJ_SPEED (tendrils fly
+//   SYZ_TENDRIL_SPEED=320 < every chassis run speed except heavy's 318.6)
+//   triggers a run-away dodge; Interstice spends its dash on evasion
+//   (i-frames), Kindled spends its dash CLOSING (a dash is also a moving
+//   shield + dash-bash, so the lunge is both its gap-closer and its
+//   projectile answer).
+// - Pulses Fire (press-one-tick, release-one-tick) when in range. A pulse
+//   (not a hold) is required because World.ts routes Fire through a
+//   RISING-EDGE melee FSM for ninja/paladin — holding it down only
+//   triggers once. Wizard/priest's stepWeapon reads Fire as a level
+//   trigger, so pulsing just fires slightly bursty; harmless.
 // - Pulses each drafted ability slot (1/2/3) whenever it's off cooldown,
 //   same press/release shape — World.ts's slot-activation loop is ALSO
-//   strictly rising-edge (`(currKeys&bit)!==0 && (prevKeys&bit)===0`), so
-//   holding a slot bit down fires it once and then never again. A "single"
-//   role ability (needs a live nearby target — mirrors server/src/
-//   worldBots.ts's own role-aware target gate) is only pressed once the
-//   enemy is within SINGLE_ROLE_RANGE; every other role fires on cooldown
-//   alone.
-// - Never presses Jump/Dash/Shield/Crouch — deliberately, so any sudden
-//   position/velocity jump observed on an ability-activation tick can only
-//   be attributed to that ability (see MOVEMENT_JUMP_PX above).
-// ATTACK_RANGE tuned to sit INSIDE melee reach (World.ts's EDGE_RANGE=84
-// for paladin's Kindled Edge, SLASH_RANGE=78 for ninja's arc) — a first
-// pass at 220px left both melee classes' basic attack landing ~0 hits ever
-// (verified: 480/480 Kindled matches, 0 basic-fire hits), which produced a
-// nonsensical 0% mirror-match win rate. The hold band (ATTACK_RANGE-40 to
-// ATTACK_RANGE+20 = 60-120px) now straddles both melee ranges while still
-// comfortably inside FIRE_RANGE for the two ranged classes, so the SAME
-// shared policy connects for all four kits.
-const ATTACK_RANGE = 100;
+//   strictly rising-edge. A "single" role ability (needs a live nearby
+//   target — mirrors worldBots.ts's role-aware target gate) is only
+//   pressed once the enemy is within SINGLE_ROLE_RANGE; every other role
+//   fires on cooldown alone.
+// - Never presses Jump/Shield/Crouch. Dash IS pressed now, but never on a
+//   slot-press tick and with a quiet window after (see MOVEMENT_JUMP_PX's
+//   comment) so the no-op detector's movement-jump attribution survives.
 const FIRE_RANGE = 560;
 const SINGLE_ROLE_RANGE = 620;
+
+type ClassPolicy = {
+  /** Preferred hold distance (px). */
+  engage: number;
+  /** Approach when dist > engage + outerSlack. */
+  outerSlack: number;
+  /** Back off when dist < engage - innerSlack (engage <= innerSlack ⇒ never
+   *  backs off — Kindled's whole kit is at arm's length). */
+  innerSlack: number;
+  /** Pulse Fire only inside this (melee classes: just under blade reach). */
+  fireWithin: number;
+  /** Spend dash lunging AT the enemy (gap-close + moving-shield + bash). */
+  dashToClose: boolean;
+  /** Spend dash dodging inbound projectiles (dash i-frames). */
+  dashToEvade: boolean;
+  /** Interstice's hold↔melee-commit alternation (ticks); null = static band. */
+  commit: { holdTicks: number; commitTicks: number; commitEngage: number } | null;
+};
+
+const CLASS_POLICY: Record<ClassId, ClassPolicy> = {
+  // Geometrician: keep gun range (worldBots engageRange=380 prior art).
+  wizard: { engage: 380, outerSlack: 20, innerSlack: 60, fireWithin: FIRE_RANGE, dashToClose: false, dashToEvade: false, commit: null },
+  // Syzygist: mid-range — tendrils home with a long fuse, no need to crowd.
+  priest: { engage: 300, outerSlack: 20, innerSlack: 60, fireWithin: FIRE_RANGE, dashToClose: false, dashToEvade: false, commit: null },
+  // Kindled: close to inside EDGE_RANGE=84 and stay there; swing only in
+  // reach (fireWithin 80 leaves a whisker of margin for aim jitter).
+  paladin: { engage: 56, outerSlack: 14, innerSlack: 56, fireWithin: 80, dashToClose: true, dashToEvade: false, commit: null },
+  // Interstice: mid-range hold with dash evasion, melee (SLASH_RANGE=78)
+  // during periodic commit windows. commitTicks must be long enough to
+  // actually CLOSE on a kiting target: sprinter 413px/s vs balanced 362
+  // px/s only gains ~51px/s, so covering a ~150px band gap takes ~3s —
+  // a 90-tick (1.5s) first draft never reached melee and lost 100% to
+  // both ranged classes (verified run 1).
+  ninja: { engage: 190, outerSlack: 30, innerSlack: 50, fireWithin: 72, dashToClose: false, dashToEvade: true, commit: { holdTicks: 110, commitTicks: 200, commitEngage: 52 } },
+};
+
+/** Per-tick chance to freeze movement keys for one tick (a micro-stutter).
+ *  This is the harness's main TRAJECTORY de-correlator: aim jitter alone
+ *  proved too weak up close (run 1: melee + priest MIRROR cells collapsed
+ *  back to hard 0%/100% spawn-side artifacts — at 60px the scaled aim
+ *  jitter stays inside both melee arcs, so two symmetric closers replay
+ *  the same first-swing trade every trial). One hesitation roll per tick
+ *  per side, drawn unconditionally so stream shapes stay uniform. */
+const HESITATE_CHANCE = 0.08;
+
+/** Uniform random delay (0..N-1 ticks, seeded per side) before the FIRST
+ *  Fire press each time a side enters its own fire range. Range is mutual
+ *  — in a mirror both sides cross the gate on the SAME tick, press Fire
+ *  the same tick, and land contact the same tick, and stepWithRuntime
+ *  resolves players in sorted-id order ("col" < "row"), so the col side
+ *  won every simultaneous melee trade: run 2 still had INT/KIN mirror
+ *  cells at a hard 0% for row (movement hesitation can't desync a SHARED
+ *  distance). A per-side uniform entry delay makes first-contact order a
+ *  seeded coin flip (same-tick residual ≈ 1/N); the ~tick-scale delay is
+ *  negligible for ranged cadence. */
+const FIRE_ENTRY_JITTER_TICKS = 9;
+
+// Local dash bookkeeping (the sim's own cooldown lives in runtime-internal
+// movement memory this harness can't read): DASH_COOLDOWN_MS 3000 + active
+// 210 + recovery 200 ≈ 3410ms ≈ 205 ticks — slightly conservative is fine,
+// a bot that dashes a beat late loses nothing measurable.
+const DASH_LOCAL_COOLDOWN_TICKS = 205;
+/** No slot presses for this long after a dash — see MOVEMENT_JUMP_PX. */
+const SLOT_QUIET_AFTER_DASH_TICKS = 30;
+/** Scan radius / alignment gate for inbound-projectile threat detection
+ *  (same alignment-dot shape as worldBots.inboundThreat, wider radius —
+ *  tendrils are slow, dodging early is the point). */
+const THREAT_RADIUS_PX = 340;
+const THREAT_ALIGN_MIN = 0.5;
+/** Only run-dodge projectiles slow enough to plausibly outrun (tendrils
+ *  320px/s; wizard bolts at 650 are not dodgeable on foot — don't turn
+ *  ranged duels into permanent flight). */
+const RUN_DODGE_MAX_PROJ_SPEED = 480;
+/** Kindled lunge window: close enough to connect the follow-up melee,
+ *  far enough that the ~197px dash travel isn't wasted overshoot. */
+const DASH_CLOSE_MIN_PX = 150;
+const DASH_CLOSE_MAX_PX = 460;
 
 type PulseState = { fire: boolean; slot: [boolean, boolean, boolean] };
 function freshPulse(): PulseState {
   return { fire: false, slot: [false, false, false] };
+}
+
+/** Per-side policy state for one trial (pulse edges + dash timers + the
+ *  seeded commit-cycle phase). Drawing the phase offset from the side's own
+ *  jitter stream keeps the harness fully seed-deterministic AND desyncs the
+ *  two sides' commit windows in a ninja mirror (same reasoning as the
+ *  independent jitter streams — see AIM_JITTER_PX's comment). The one
+ *  rand() draw happens for every class (cycle=1 ⇒ offset 0) so all four
+ *  classes consume identical stream shapes. */
+type SideState = {
+  classId: ClassId;
+  pulse: PulseState;
+  dashReadyAtTick: number;
+  slotQuietUntilTick: number;
+  commitPhase: number;
+  /** Fire-range entry latch + first-press delay — see FIRE_ENTRY_JITTER_TICKS. */
+  wasInFireRange: boolean;
+  fireDelayUntilTick: number;
+};
+function mkSideState(classId: ClassId, rand: () => number): SideState {
+  const pol = CLASS_POLICY[classId];
+  const cycle = pol.commit ? pol.commit.holdTicks + pol.commit.commitTicks : 1;
+  return {
+    classId,
+    pulse: freshPulse(),
+    dashReadyAtTick: 0,
+    slotQuietUntilTick: 0,
+    commitPhase: Math.floor(rand() * cycle),
+    wasInFireRange: false,
+    fireDelayUntilTick: 0,
+  };
+}
+
+/** Nearest inbound enemy-owned projectile (heading at us, within scan
+ *  radius) — the evasion trigger. Deterministic: Record iteration order is
+ *  insertion order, which is itself deterministic per seed. */
+function inboundThreat(
+  state: WorldState,
+  self: PlayerEntity,
+  enemyId: PlayerId,
+): { x: number; y: number; vx: number; vy: number } | null {
+  let best: { x: number; y: number; vx: number; vy: number } | null = null;
+  let bestD = Infinity;
+  for (const id in state.projectiles) {
+    const pr = state.projectiles[id as unknown as EntityId]!;
+    if (pr.ownerId !== enemyId) continue;
+    const dx = self.x - pr.x;
+    const dy = self.y - pr.y;
+    const d = Math.hypot(dx, dy);
+    if (d > THREAT_RADIUS_PX || d < 1e-3) continue;
+    const speed = Math.hypot(pr.vx, pr.vy) || 1;
+    const align = (pr.vx * dx + pr.vy * dy) / (speed * d);
+    if (align < THREAT_ALIGN_MIN) continue;
+    if (d < bestD) {
+      bestD = d;
+      best = pr;
+    }
+  }
+  return best;
 }
 
 // Deterministic mulberry32 PRNG — same tiny generator shape as
@@ -248,12 +401,15 @@ function decideInput(
   selfId: PlayerId,
   enemyId: PlayerId,
   actives: { kind: string; role?: string }[],
-  pulse: PulseState,
+  side: SideState,
   seq: number,
   rand: () => number,
 ): InputFrame {
   const self = state.players[selfId]!;
   const enemy = state.players[enemyId]!;
+  const pol = CLASS_POLICY[side.classId];
+  const pulse = side.pulse;
+  const tick = state.tick as number;
   let keys = 0;
   let aimX = self.aimX;
   let aimY = self.aimY;
@@ -262,26 +418,116 @@ function decideInput(
     const dx = enemy.x - self.x;
     const dy = enemy.y - self.y;
     const dist = Math.hypot(dx, dy);
-    aimX = enemy.x + (rand() - 0.5) * AIM_JITTER_PX;
-    aimY = enemy.y + (rand() - 0.5) * AIM_JITTER_PX;
+    // Aim jitter scaled down at close range: a flat ±30px at a 60px melee
+    // distance is up to ~27° of arc-aim error — enough to swing the Edge's
+    // 70° cone off a body the policy deliberately walked into. Same TWO
+    // rand() draws per tick for every class at every range, so stream
+    // shapes stay identical (see AIM_JITTER_PX's determinism comment).
+    const jitter = AIM_JITTER_PX * Math.min(1, dist / 300);
+    aimX = enemy.x + (rand() - 0.5) * jitter;
+    aimY = enemy.y + (rand() - 0.5) * jitter;
+    // Trajectory de-correlator — see HESITATE_CHANCE. Drawn every tick
+    // regardless of outcome so both sides' streams stay shape-identical.
+    const hesitate = rand() < HESITATE_CHANCE;
 
-    if (dist > ATTACK_RANGE + 20) {
+    // Engagement target — Interstice alternates hold ↔ melee commit.
+    let engage = pol.engage;
+    let inCommit = false;
+    if (pol.commit) {
+      const cycle = pol.commit.holdTicks + pol.commit.commitTicks;
+      const phase = (tick + side.commitPhase) % cycle;
+      if (phase >= pol.commit.holdTicks) {
+        engage = pol.commit.commitEngage;
+        inCommit = true;
+      }
+    }
+
+    if (dist > engage + pol.outerSlack) {
       keys |= dx < 0 ? LEFT_BIT : RIGHT_BIT;
-    } else if (dist < ATTACK_RANGE - 40) {
+    } else if (dist < engage - pol.innerSlack) {
       keys |= dx < 0 ? RIGHT_BIT : LEFT_BIT;
     }
 
-    if (dist < FIRE_RANGE) {
-      if (!pulse.fire) {
-        keys |= FIRE_BIT;
-        pulse.fire = true;
+    // ── Evasion / dash layer ──────────────────────────────────────────
+    const threat = inboundThreat(state, self, enemyId);
+    const dashReady = tick >= side.dashReadyAtTick;
+    let dashed = false;
+    if (threat) {
+      const projSpeed = Math.hypot(threat.vx, threat.vy);
+      if (pol.dashToEvade && dashReady) {
+        // Dash through/away from the projectile (dash direction = aim
+        // vector, player.ts's DASH BASH block; kept flat — no air-dash
+        // bookkeeping to reason about). Mid-commit the dash goes TOWARD
+        // the enemy — i-frames through the tendril AND ~197px of gap
+        // closed (dash-through is the ninja's own energy verb); on hold
+        // it goes defensively away. One aimed-off tick costs one fire
+        // opportunity; the i-frames are worth far more.
+        const dir = inCommit
+          ? ((Math.sign(dx) || 1) as -1 | 1)
+          : Math.sign(self.x - threat.x) || (dx < 0 ? 1 : -1);
+        aimX = self.x + dir * 100;
+        aimY = self.y;
+        keys = (keys & ~(LEFT_BIT | RIGHT_BIT)) | DASH_BIT | (dir < 0 ? LEFT_BIT : RIGHT_BIT);
+        side.dashReadyAtTick = tick + DASH_LOCAL_COOLDOWN_TICKS;
+        side.slotQuietUntilTick = tick + SLOT_QUIET_AFTER_DASH_TICKS;
+        dashed = true;
+      } else if (
+        projSpeed < RUN_DODGE_MAX_PROJ_SPEED &&
+        !inCommit &&
+        (!pol.dashToClose || dist > 260)
+      ) {
+        // Outrun the slow homer. Two exceptions keep the closers honest:
+        // Kindled inside 260px keeps pressing in — abandoning a nearly-
+        // closed gap to jog from a tendril it can't outrun anyway (318.6
+        // vs 320 px/s) re-creates the guaranteed-loss artifact this
+        // rewrite exists to fix — and Interstice mid-commit stays
+        // committed (run 1 showed dodge-running during commits cancels
+        // its ~51px/s closing edge, so it never reached melee at all).
+        const dir = Math.sign(self.x - threat.x) || (dx < 0 ? 1 : -1);
+        keys = (keys & ~(LEFT_BIT | RIGHT_BIT)) | (dir < 0 ? LEFT_BIT : RIGHT_BIT);
+      }
+    }
+    if (!dashed && pol.dashToClose && dashReady && dist > DASH_CLOSE_MIN_PX && dist < DASH_CLOSE_MAX_PX) {
+      // Kindled lunge: aim dead at the enemy so the dash tracks the gap —
+      // ~197px of travel, a moving shield the whole way, dash-bash on
+      // body contact, and it exits inside Edge range.
+      aimX = enemy.x;
+      aimY = enemy.y;
+      keys |= DASH_BIT | (dx < 0 ? LEFT_BIT : RIGHT_BIT);
+      side.dashReadyAtTick = tick + DASH_LOCAL_COOLDOWN_TICKS;
+      side.slotQuietUntilTick = tick + SLOT_QUIET_AFTER_DASH_TICKS;
+      dashed = true;
+    }
+
+    // Micro-stutter (movement keys only — never eats a dash tick).
+    if (hesitate && !dashed) {
+      keys &= ~(LEFT_BIT | RIGHT_BIT);
+    }
+
+    // ── Fire pulse — class-aware range gate + entry-desync delay ──────
+    if (dist < pol.fireWithin) {
+      if (!side.wasInFireRange) {
+        side.wasInFireRange = true;
+        side.fireDelayUntilTick = tick + Math.floor(rand() * FIRE_ENTRY_JITTER_TICKS);
+      }
+      if (!dashed && tick >= side.fireDelayUntilTick) {
+        if (!pulse.fire) {
+          keys |= FIRE_BIT;
+          pulse.fire = true;
+        } else {
+          pulse.fire = false;
+        }
       } else {
         pulse.fire = false;
       }
     } else {
+      side.wasInFireRange = false;
       pulse.fire = false;
     }
 
+    // ── Drafted ability slots (suppressed around dashes — see
+    //    MOVEMENT_JUMP_PX's attribution comment) ────────────────────────
+    const slotsQuiet = dashed || tick < side.slotQuietUntilTick;
     for (let slot = 0; slot < actives.length && slot < 3; slot++) {
       const active = actives[slot]!;
       const cdUntil =
@@ -292,7 +538,7 @@ function decideInput(
             : self.slot3CooldownUntilTick;
       const ready = cdUntil === undefined || cdUntil <= state.tick;
       const needsTarget = active.role === "single";
-      const want = ready && (!needsTarget || dist < SINGLE_ROLE_RANGE);
+      const want = !slotsQuiet && ready && (!needsTarget || dist < SINGLE_ROLE_RANGE);
       if (want) {
         if (!pulse.slot[slot]) {
           keys |= SLOT_BIT[slot]!;
@@ -455,12 +701,12 @@ function runTrial(
   const rowActives = rowBuild.actives.map((a) => ({ kind: a.kind, role: a.role }));
   const colActives = colBuild.actives.map((a) => ({ kind: a.kind, role: a.role }));
 
-  const rowPulse = freshPulse();
-  const colPulse = freshPulse();
   // Independent jitter streams per side (distinct seed offsets) so ROW and
   // COL don't draw identical jitter sequences even in a mirror matchup.
   const rowRand = mulberry32(seed * 2 + 1);
   const colRand = mulberry32(seed * 2 + 2);
+  const rowSide = mkSideState(rowClass, rowRand);
+  const colSide = mkSideState(colClass, colRand);
 
   // Projectile/firePatch id → ability kind tagging (per-player). Built by
   // diffing state.projectiles/state.firePatches for newly-appeared entries
@@ -493,8 +739,8 @@ function runTrial(
   for (let tick = 0; tick < MAX_TICKS; tick++) {
     let rowDied = false;
     let colDied = false;
-    const rowFrame = decideInput(state, ROW, COL, rowActives, rowPulse, seq, rowRand);
-    const colFrame = decideInput(state, COL, ROW, colActives, colPulse, seq, colRand);
+    const rowFrame = decideInput(state, ROW, COL, rowActives, rowSide, seq, rowRand);
+    const colFrame = decideInput(state, COL, ROW, colActives, colSide, seq, colRand);
     seq += 1;
 
     const prevProjectiles = state.projectiles;
@@ -943,7 +1189,7 @@ async function main(): Promise<void> {
   // window, no spend, no cooldown burn, no ability-activated event" design
   // — see e.g. kindled-resolve's KIN_KINDLED_RESOLVE_KINDLING_COST gate,
   // which only accrues Kindling via combat.ts's tryDeflectDamage Ward-block
-  // branch — this harness's shared bot policy never presses Shield, by
+  // branch — this harness's bot policy never presses Shield, by
   // design, so ANY Kindling-gated ability is structurally unreachable
   // here). That's a HARNESS BLIND SPOT specific to that one ability's
   // precondition, not evidence the ability itself is weak — auto-flagged
@@ -1070,7 +1316,7 @@ async function main(): Promise<void> {
       map: boxworksMini.id,
       notes: [
         "Single first-to-die 1v1 duel per trial — no round/draft/target-score FSM (round.ts/enterDrafting) wired up.",
-        "ONE shared cheap heuristic bot policy on both sides — not per-class tuned AI.",
+        "Cheap per-class-aware heuristic bot policy on both sides (CLASS_POLICY: class engagement bands, melee-gated Fire, homing-projectile evasion, class dash use) — still not player-grade AI.",
         "Fixed representative 3-ability loadouts per class (see LOADOUTS in this script), not the live draft/offer-roll system.",
         "TTK measured tick-0 (fight start) to the single kill each trial produces (see 'Match loop' scope note).",
       ],
@@ -1127,7 +1373,7 @@ async function main(): Promise<void> {
       candidates: noOpFlags,
       method: [
         "For every ability-activated event, open an observation window (same tick + next ~500ms/30 ticks).",
-        "Effect = ANY of: (1) a self PlayerEntity field changed outside a routine-bookkeeping ignore-list (buff/mark/resource/window fields), (2) a curated set of enemy debuff fields changed (slow/burn/freeze), (3) a same-tick position/velocity jump beyond ordinary walk speed (movement-ability signature; bot never presses Jump/Dash so this is unambiguous), (4) a new projectile or fire-patch entity appeared, owned by the caster, tagged to this activation, (5) [weak/supplementary] a hit-confirmed or player-killed event attributable to the caster within the window.",
+        "Effect = ANY of: (1) a self PlayerEntity field changed outside a routine-bookkeeping ignore-list (buff/mark/resource/window fields), (2) a curated set of enemy debuff fields changed (slow/burn/freeze), (3) a same-tick position/velocity jump beyond ordinary walk speed (movement-ability signature; bot never presses Jump, and slot presses are hard-suppressed on/around dash ticks, so this stays attributable), (4) a new projectile or fire-patch entity appeared, owned by the caster, tagged to this activation, (5) [weak/supplementary] a hit-confirmed or player-killed event attributable to the caster within the window.",
         "Signal (5) is generous/noisy (bots fire near-continuously) and is only load-bearing for the handful of no-projectile melee/AoE abilities signals 1-4 can't otherwise see — treat any candidate whose flag rests mainly on signal 5 with extra skepticism.",
       ],
     },
