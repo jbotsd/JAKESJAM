@@ -1,21 +1,30 @@
 // Sim-authoritative status VFX driver. Reads burnUntilTick / freezeUntilTick
-// / wardShellUntilTick from each player in the snapshot WorldState and spawns
-// fire sparks / freeze shards / frost rings / ward rings via a shared
-// ParticlePool. Lightning chain arcs come from `chain-hit` SimEvents; crimson
-// leech threads from `emission-leech` (six-axes Drain — same arc language,
-// re-tinted). Wall-clock cadence is per-player so tab focus changes don't all
-// spawn together. Legibility law (six-axes-goal.md): every axis effect gets a
-// world-space read at its site.
+// / wardShellUntilTick / veilUntilTick from each player in the snapshot
+// WorldState and spawns fire sparks / freeze shards / frost rings / ward
+// rings / veil shrouds via a shared ParticlePool. Lightning chain arcs come
+// from `chain-hit` SimEvents; crimson leech threads from `emission-leech`
+// (six-axes Drain — same arc language, re-tinted); the stride-refund feet
+// sweep from `stride-refunded`. Wall-clock cadence is per-player so tab
+// focus changes don't all spawn together. Legibility law (six-axes-goal.md):
+// every axis effect gets a world-space read at its site.
 
 import Phaser from "phaser";
 import { ParticlePool, STATUS_VFX } from "./ParticlePool";
 import { transientVfx } from "../render/TransientVfx";
+import {
+  makeVeilReadMemo,
+  planVeilRead,
+} from "../render/veilReadPlan";
 import type { PlayerId, SimEvent, Vec2, WorldState } from "../../sim";
 
 const BURN_SPARK_INTERVAL_MS = 80;
 const FREEZE_SHARD_INTERVAL_MS = 160;
 const WARD_RING_INTERVAL_MS = 130;
 const SLOW_RING_INTERVAL_MS = 220;
+// Veil is stealth: the slowest cadence of the family — legible to a watching
+// enemy without spotlighting the position beyond what fairness demands
+// (six-axes doctrine #10; the audit's explicit design intent).
+const VEIL_SHROUD_INTERVAL_MS = 300;
 
 // Ward shell sapphire — the shield/EMIT resource family (matches the
 // nameplate WARD chip in OnlineMatchScene's BUFF_DESCRIPTORS).
@@ -25,6 +34,11 @@ const SLOW_COLOR = 0x7dd3fc;
 // conjured combat), deliberately hotter than slow's pale drag-wake blue so
 // the two feet-level reads never blur.
 const STRIDE_COLOR = 0x67e8f9;
+// Veil of Nought — white/negative-space register (the vessel "unmade", not a
+// glow): a desaturated near-white outline, NOT any element or class tint.
+const VEIL_COLOR = 0xe2e8f0;
+const VEIL_SEAM_COLOR = 0xf8fafc;
+const VEIL_SEAM_DURATION_MS = 170;
 // Drain thread crimson — vampire register, deliberately NOT an element color.
 const LEECH_COLOR = 0xdc2626;
 const LEECH_GLOW = 0x7f1d1d;
@@ -43,6 +57,10 @@ export class StatusVfxController {
   private readonly freezeCadence: Map<string, number> = new Map();
   private readonly wardCadence: Map<string, number> = new Map();
   private readonly slowCadence: Map<string, number> = new Map();
+  private readonly veilCadence: Map<string, number> = new Map();
+  // Frame-diff memory for the veil break (planner-owned semantics —
+  // render/veilReadPlan.ts documents why the definedness edge is sound).
+  private readonly veilMemo = makeVeilReadMemo();
 
   constructor(_scene: Phaser.Scene, pool: ParticlePool) {
     // Scene is no longer held — transientVfx owns scene routing now.
@@ -125,6 +143,30 @@ export class StatusVfxController {
       }
     }
 
+    // Veil of Nought — the 1.5s unmade window and its break-on-firing
+    // (Track L: was nameplate-only). While veiled: a quiet desaturated
+    // outline-shroud at the body (white/negative-space register — the
+    // vessel is unmade, so its EDGE goes ghostly; deliberately not a glow
+    // and quieter than the ward rings, Veil is stealth). On break (the
+    // sim clears veilUntilTick when the veiled player fires — no SimEvent
+    // exists, so the pure planner frame-diffs the definedness edge): a
+    // brief seam-snap dissolve as the vessel re-makes itself.
+    const veilPlan = planVeilRead(state, getPosition, this.veilMemo);
+    const seenVeil = new Set<string>();
+    for (const shroud of veilPlan.shrouds) {
+      seenVeil.add(shroud.id);
+      const next = (this.veilCadence.get(shroud.id) ?? VEIL_SHROUD_INTERVAL_MS) + deltaMs;
+      if (next >= VEIL_SHROUD_INTERVAL_MS) {
+        this.veilCadence.set(shroud.id, 0);
+        this.spawnVeilShroud(shroud.pos, shroud.intensity);
+      } else {
+        this.veilCadence.set(shroud.id, next);
+      }
+    }
+    for (const brk of veilPlan.breaks) {
+      this.spawnVeilBreakSeam(brk.pos);
+    }
+
     // Drop cadence entries for players that no longer have an active status.
     for (const key of this.burnCadence.keys()) {
       if (!seenBurn.has(key)) this.burnCadence.delete(key);
@@ -137,6 +179,9 @@ export class StatusVfxController {
     }
     for (const key of this.slowCadence.keys()) {
       if (!seenSlow.has(key)) this.slowCadence.delete(key);
+    }
+    for (const key of this.veilCadence.keys()) {
+      if (!seenVeil.has(key)) this.veilCadence.delete(key);
     }
 
     for (const ev of events) {
@@ -163,6 +208,79 @@ export class StatusVfxController {
     this.freezeCadence.clear();
     this.wardCadence.clear();
     this.slowCadence.clear();
+    this.veilCadence.clear();
+    this.veilMemo.wasLive.clear();
+  }
+
+  /** Veil-of-Nought presence read: a thin desaturated near-white outline
+   *  ellipse hugging the body's silhouette, easing slightly INWARD as it
+   *  dissolves — the vessel's edge going ghostly, not an aura leaving it.
+   *  Quieter than every other family member by construction: thinnest
+   *  stroke, lowest alpha, slowest cadence (Veil is stealth; doctrine #10
+   *  only demands an observer CAN tell, not a spotlight). `intensity`
+   *  fades over the window's final 300ms so expiry reads too. */
+  private spawnVeilShroud(position: Vec2, intensity: number): void {
+    const ring = this.pool.acquireRing();
+    if (!ring) return;
+    ring.setPosition(position.x, position.y - 6);
+    ring.setFillStyle(VEIL_COLOR, 0);
+    ring.setStrokeStyle(1.4, VEIL_COLOR, 0.3 * intensity);
+    // Body-hugging ellipse (vs the ward's larger circle): 18px pool ring
+    // scaled to the vessel's rough silhouette.
+    ring.setScale(0.95, 1.18);
+    ring.setAlpha(1);
+    transientVfx.spawn({
+      factory: () => ring,
+      lifetimeMs: RING_DURATION_MS + 120,
+      startAlpha: 1,
+      ease: "Sine.easeOut",
+      onTick: (obj, t) => {
+        const r = obj as Phaser.GameObjects.Arc;
+        const s = 1 - 0.08 * t; // dissolve inward — unmade, not radiating
+        r.setScale(0.95 * s, 1.18 * s);
+      },
+      release: () => this.pool.release(ring),
+    });
+  }
+
+  /** Veil break (fired while unmade): a seam-snap dissolve — a crisp
+   *  horizontal seam flashes across the body and parts by a couple px as
+   *  the veil tears. One-shot pooled bolt (same one-shot budget as the
+   *  leech thread / chain arc); brief and white, no glow bloom. */
+  private spawnVeilBreakSeam(position: Vec2): void {
+    const graphics = this.pool.acquireBolt();
+    if (!graphics) return;
+    graphics.setPosition(0, 0);
+    graphics.setAlpha(1);
+    graphics.setScale(1);
+    graphics.setRotation(0);
+    graphics.setBlendMode(Phaser.BlendModes.ADD);
+    const cx = position.x;
+    const cy = position.y - 6;
+    const draw = (t: number): void => {
+      graphics.clear();
+      const fade = 1 - t;
+      const reach = 8 + 16 * t; // snap outward from the center
+      const part = 1.5 + 2.5 * t; // the two halves parting
+      graphics.lineStyle(1.4, VEIL_SEAM_COLOR, 0.85 * fade);
+      graphics.beginPath();
+      graphics.moveTo(cx - reach, cy);
+      graphics.lineTo(cx + reach, cy);
+      graphics.strokePath();
+      graphics.lineStyle(1, VEIL_COLOR, 0.4 * fade);
+      graphics.beginPath();
+      graphics.moveTo(cx - reach * 0.7, cy + part);
+      graphics.lineTo(cx + reach * 0.7, cy + part);
+      graphics.strokePath();
+    };
+    draw(0);
+    transientVfx.spawn({
+      factory: () => graphics,
+      lifetimeMs: VEIL_SEAM_DURATION_MS,
+      ease: "Sine.easeOut",
+      onTick: (_obj, t) => draw(t),
+      release: () => this.pool.release(graphics),
+    });
   }
 
   /** Stride-refund site read (six-axes Layer 1, `stride-refunded`): spent
