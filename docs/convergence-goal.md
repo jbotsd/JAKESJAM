@@ -152,20 +152,28 @@ already pass.
 
 ## Status
 
-- Z0 harvest: **IN PROGRESS** 2026-07-23 — scout verified all four orphans
-  absent from main; the score bug is CONFIRMED live on the wasm path
-  (packPlayer hardcodes score 0, no patcher exists, `world_state_set_target_score`
-  has zero call sites → wasm matches can never end). Z0a (score fix + sweep
-  meter) executing on `track-z/z0-harvest`; Z0b (muzzle geometry M, storm M)
-  queued behind the meter.
+- Z0 harvest: **Z0a DONE + MERGED** 2026-07-23 (bebc4cd score/target_score
+  patchers + sudden-death trigger, e73c3d5 multi-seed divergence sweep —
+  the meter runs GREEN, bounded on all 5 seeds). The meter's first
+  finding, now the top Z0b/Z1 item: Zig's `detectRoundWinner` still ends
+  rounds on last-alive KO while TS fast-respawns mid-round (2026-07-17
+  semantics) — the dominant remaining divergence source (oscillating
+  ~1000-1500px spikes with alive-flag mismatches, re-converging each
+  round cycle). Z0b = muzzle geometry (M) + storm (M) + fast-respawn
+  round-semantics port. NOTE for operators: sim.wasm is a gitignored
+  build artifact — after pulling Zig changes, `zig build` before running
+  wasm suites or they fail on the stale binary.
 - Z1 deferrals: **NOT STARTED**
 - Z2 server honesty: **NOT STARTED**
 - Z3 sweep + bench: **NOT STARTED**
 - Z4 flip: **AWAITING JAKE** (after Z0–Z3)
-- V voice: **IN PROGRESS** 2026-07-23 — 104 proposals generated + judge-passed
-  by the fan-out workflow; single-writer assembler applying to cards.ts on
-  `track-v/voice-pass` (inventory doc + voice-lint test included); sign-off
-  AWAITING JAKE after merge.
+- V voice: **APPLIED + MERGED + LIVE** 2026-07-23 (1536849) — 88/104 card
+  rewrites applied (16 already in-register), codegen zero-diff, results
+  overlay speaks the record register, voiceRegister.test.ts lint added.
+  docs/voice-pass-inventory.md is the sign-off artifact — AWAITING JAKE:
+  overall copy sign-off, 9 flagged rename candidates, 5 proposed result
+  epigraphs, the paper-double 160-char trim, and the deferred DeathOverlay
+  in-play line.
 - L legibility: **AUDIT DONE** 2026-07-23 — docs/legibility-audit.md: 79
   effects, 2 MISSING (Stride refund — the only Layer-1 axis with NO read;
   Technique execute — kills indistinguishable from ordinary), 34 PARTIAL
