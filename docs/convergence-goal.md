@@ -169,8 +169,17 @@ already pass.
   compensating errors exposed the true gap — per-shot samples are
   equal-or-better; the blowup starts at the first death-timing
   disagreement, driven by TS's first-blood 1.15× speed boost having no
-  Zig mirror (World.ts:2532 vs a lone comment). Z0d (first-blood port)
-  IN PROGRESS on `track-z/z0d`. NOTE for operators: sim.wasm is a
+  Zig mirror (World.ts:2532 vs a lone comment). Z0d MERGED (8336c53):
+  first-blood fully mirrored + wire event, parity proven at micro level
+  (claim tick, claimant, boosted step exactly equal) — HONEST MISS at
+  the meter (sweep unchanged); its probe produced the next hypothesis,
+  now Z0e IN PROGRESS: the full-sync pack path zeroes Zig's
+  player_movement memory (grounded_last_frame stuck false → air-accel
+  on the ground, no friction, no ground jumps — idle vx holds at -92.9
+  Zig-side vs TS's 60/tick decay). If the LIVE serverWasmHost path
+  full-syncs mid-match, this was a real wasm-mode bug and may explain
+  part of the 2026-07-06 "Zig version is garbage" feel verdict.
+  NOTE for operators: sim.wasm is a
   gitignored build artifact — after pulling Zig changes, `zig build`
   before running wasm suites or they fail on the stale binary.
 - Z1 deferrals: **NOT STARTED**
