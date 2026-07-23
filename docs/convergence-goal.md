@@ -161,14 +161,18 @@ already pass.
   Zig on evidence the wasm path previously SKIPPED it (f2129de). Sweep
   before→after: worst seed 1067px/≤3 alive-mismatches → 329px/≤1; the
   round-cycling oscillation is gone; table lives atop
-  multiSeedDivergence.test.ts. The orphan branch's value is fully
-  extracted — it can be deleted. NEXT (Z0c, evidence in the meter
-  header): (1) Zig applies no fire recoil (no recoil fields in
-  CardMod/ResolvedFireConfig — the Recoil Step deferral's root), (2) the
-  orphan tick-order reorder is un-ported (Zig shots integrate one tick
-  late). NOTE for operators: sim.wasm is a gitignored build artifact —
-  after pulling Zig changes, `zig build` before running wasm suites or
-  they fail on the stale binary.
+  multiSeedDivergence.test.ts. The orphan branch is deleted — fully
+  extracted. Z0c MERGED (dcae7f0 recoil substrate — bit-identical kick,
+  closed the recoil_step Phase 4a deferral; b86a217 tick-order reorder —
+  tick-T integration now equal both sides). Meter lesson recorded: the
+  sweep's end-to-end numbers WORSENED (329→1696 worst) because removing
+  compensating errors exposed the true gap — per-shot samples are
+  equal-or-better; the blowup starts at the first death-timing
+  disagreement, driven by TS's first-blood 1.15× speed boost having no
+  Zig mirror (World.ts:2532 vs a lone comment). Z0d (first-blood port)
+  IN PROGRESS on `track-z/z0d`. NOTE for operators: sim.wasm is a
+  gitignored build artifact — after pulling Zig changes, `zig build`
+  before running wasm suites or they fail on the stale binary.
 - Z1 deferrals: **NOT STARTED**
 - Z2 server honesty: **NOT STARTED**
 - Z3 sweep + bench: **NOT STARTED**
