@@ -136,6 +136,11 @@ export function convertWasmEventsToTs(
           });
         }
         break;
+      case 16: // first_blood (Track Z0d) — player_idx_a = the claimant.
+        // Feeds the same announcer/spectator hooks the TS orchestrator's
+        // own end-of-tick emission (World.ts:6807) reaches.
+        if (victim) out.push({ t: "first-blood", playerId: victim });
+        break;
     }
   }
   return out;

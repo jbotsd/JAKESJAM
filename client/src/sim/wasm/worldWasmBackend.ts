@@ -213,6 +213,11 @@ function mergeUnpacked(
       // the explicit-undefined clear (matches round.ts's optional-field
       // convention).
       suddenDeathActive: unpacked.round.suddenDeathActive,
+      // First-blood wager (Track Z0d): Zig owns the claim on this path
+      // (section-4 ranged-hit award sites + its round machine's clears) —
+      // mirror the verdict out, including the explicit-undefined clear
+      // (round.ts optional-field convention, same as suddenDeathActive).
+      firstBloodPlayerId: unpacked.round.firstBloodPlayerId,
       scores: { ...state.round.scores, ...unpacked.scores },
       // Kill tally REPLACES rather than spread-merges (unlike scores,
       // which are match-monotonic): the tally resets every round, so

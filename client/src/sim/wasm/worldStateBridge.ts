@@ -1599,7 +1599,22 @@ export function packWorldState(state: WorldState): Uint8Array {
   // WorldStateHeader.round_winner_idx doc comment.
   view.setInt32(off, -1, true);
   off += 4;
-  view.setUint32(off, 0, true); // alignment pad before countdown_remaining_ms
+  // first_blood_idx_plus1 (Track Z0d) — reclaims what used to be the
+  // alignment pad before countdown_remaining_ms (HEADER_SIZE unchanged).
+  // 0 = unclaimed, N = sorted-player-index N-1 holds first blood (see
+  // world_state.zig's plus-one-encoding doc comment). MUST round-trip the
+  // real value: pack runs every tick, so a hardcoded 0 here would wipe
+  // Zig's award one tick after it happens — the exact bug class
+  // writeScoresIntoMemory's history documents (scores/target_score).
+  // Sorted-keys order matches unpackWorldState/convertWasmEventsToTs's
+  // own `Object.keys(players).sort()` convention.
+  const firstBloodIdx =
+    state.round.firstBloodPlayerId !== undefined
+      ? Object.keys(state.players)
+          .sort()
+          .indexOf(state.round.firstBloodPlayerId)
+      : -1;
+  view.setUint32(off, firstBloodIdx >= 0 ? firstBloodIdx + 1 : 0, true);
   off += 4;
   view.setFloat64(off, state.round.countdownRemainingMs, true);
   off += 8;
@@ -1715,6 +1730,10 @@ export const SIM_EVENT_KIND = {
   shieldPopped: 8,
   explosion: 9,
   fireHit: 10,
+  // 11-15 (launch_pad_fired … dash_through) exist Zig-side but are decoded
+  // by convertWasmEvents' numeric cases directly; add here as tests need
+  // them (this const is test-facing, not a decode table).
+  firstBlood: 16,
 } as const;
 
 export type UnpackedWorldState = {
@@ -1722,7 +1741,11 @@ export type UnpackedWorldState = {
   rngState: number;
   round: Pick<
     RoundState,
-    "phase" | "countdownRemainingMs" | "roundIndex" | "suddenDeathActive"
+    | "phase"
+    | "countdownRemainingMs"
+    | "roundIndex"
+    | "suddenDeathActive"
+    | "firstBloodPlayerId"
   >;
   scores: Record<string, number>;
   /** Per-round kill tally (PlayerEntity.round_kills), keyed by player id.
@@ -1769,10 +1792,15 @@ export function unpackWorldState(buf: Uint8Array): UnpackedWorldState {
   off += 4;
   const matchWinnerIdx = view.getInt32(off, true);
   off += 4;
-  // round_winner_idx (2026-07-20, Phase 2) + its 4-byte alignment pad —
-  // not yet surfaced on UnpackedWorldState; skipped like next_entity_id/
-  // map_id above. See world_state.zig's WorldStateHeader doc comment.
-  off += 4 + 4;
+  // round_winner_idx (2026-07-20, Phase 2) — not yet surfaced on
+  // UnpackedWorldState; skipped like next_entity_id/map_id above. See
+  // world_state.zig's WorldStateHeader doc comment.
+  off += 4;
+  // first_blood_idx_plus1 (Track Z0d) — raw index held here; resolved to
+  // a PlayerId after the players section below is unpacked (sorted-keys
+  // order, same convention as the score-extraction loop at the bottom).
+  const firstBloodIdxPlus1 = view.getUint32(off, true);
+  off += 4;
   const countdownRemainingMs = view.getFloat64(off, true);
   off += 8;
 
@@ -1943,10 +1971,26 @@ export function unpackWorldState(buf: Uint8Array): UnpackedWorldState {
     pi++;
   }
 
+  // first_blood_idx_plus1 → PlayerId (Track Z0d): resolved against the
+  // SAME sorted-keys order the pack side used to encode it (and the score
+  // loop above reads). `undefined` (not null) when unclaimed — mirrors
+  // round.ts's optional-field convention, same as suddenDeathActive.
+  const sortedIds = Object.keys(players).sort();
+  const firstBloodPlayerId =
+    firstBloodIdxPlus1 > 0 && firstBloodIdxPlus1 <= sortedIds.length
+      ? PlayerId(sortedIds[firstBloodIdxPlus1 - 1]!)
+      : undefined;
+
   const out: UnpackedWorldState = {
     tick,
     rngState,
-    round: { phase, countdownRemainingMs, roundIndex, suddenDeathActive },
+    round: {
+      phase,
+      countdownRemainingMs,
+      roundIndex,
+      suddenDeathActive,
+      firstBloodPlayerId,
+    },
     scores,
     roundKills,
     targetScore,

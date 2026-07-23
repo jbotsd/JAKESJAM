@@ -523,6 +523,9 @@ function mergeUnpacked(
       // transition (Track Z0a / 02b74f5) — mirror its verdict out, incl.
       // the explicit-undefined clear (round.ts optional-field convention).
       suddenDeathActive: unpacked.round.suddenDeathActive,
+      // First-blood wager (Track Z0d): Zig owns the claim on this path —
+      // same mirror-out + explicit-undefined clear as suddenDeathActive.
+      firstBloodPlayerId: unpacked.round.firstBloodPlayerId,
       scores: { ...state.round.scores, ...unpacked.scores },
     },
     players: stableMergeRecord(state.players, unpacked.players),
