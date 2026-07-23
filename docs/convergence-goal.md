@@ -152,17 +152,23 @@ already pass.
 
 ## Status
 
-- Z0 harvest: **Z0a DONE + MERGED** 2026-07-23 (bebc4cd score/target_score
-  patchers + sudden-death trigger, e73c3d5 multi-seed divergence sweep —
-  the meter runs GREEN, bounded on all 5 seeds). The meter's first
-  finding, now the top Z0b/Z1 item: Zig's `detectRoundWinner` still ends
-  rounds on last-alive KO while TS fast-respawns mid-round (2026-07-17
-  semantics) — the dominant remaining divergence source (oscillating
-  ~1000-1500px spikes with alive-flag mismatches, re-converging each
-  round cycle). Z0b = muzzle geometry (M) + storm (M) + fast-respawn
-  round-semantics port. NOTE for operators: sim.wasm is a gitignored
-  build artifact — after pulling Zig changes, `zig build` before running
-  wasm suites or they fail on the stale binary.
+- Z0 harvest: **COMPLETE** 2026-07-23 — all four orphans + the meter's
+  findings landed and merged. Z0a: score/target_score patchers +
+  sudden-death trigger + multi-seed divergence sweep (bebc4cd, e73c3d5).
+  Z0b: fast-respawn round semantics (f0ba9a8 — incl. a timeout-path bug
+  fix and chassis-aware respawn health), byte-identical muzzle geometry
+  (7a9abe0, entity 624→632), shrink-zone storm with damage moved into
+  Zig on evidence the wasm path previously SKIPPED it (f2129de). Sweep
+  before→after: worst seed 1067px/≤3 alive-mismatches → 329px/≤1; the
+  round-cycling oscillation is gone; table lives atop
+  multiSeedDivergence.test.ts. The orphan branch's value is fully
+  extracted — it can be deleted. NEXT (Z0c, evidence in the meter
+  header): (1) Zig applies no fire recoil (no recoil fields in
+  CardMod/ResolvedFireConfig — the Recoil Step deferral's root), (2) the
+  orphan tick-order reorder is un-ported (Zig shots integrate one tick
+  late). NOTE for operators: sim.wasm is a gitignored build artifact —
+  after pulling Zig changes, `zig build` before running wasm suites or
+  they fail on the stale binary.
 - Z1 deferrals: **NOT STARTED**
 - Z2 server honesty: **NOT STARTED**
 - Z3 sweep + bench: **NOT STARTED**
