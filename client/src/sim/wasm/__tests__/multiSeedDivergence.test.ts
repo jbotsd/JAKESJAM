@@ -53,6 +53,52 @@
 // in the samples. First-blood is the next port target; it is small,
 // self-contained state (round.firstBloodPlayerId + one speed_mul term).
 //
+// Z0d (2026-07-23) built exactly that port — first-blood is now fully
+// mirrored (WorldStateHeader.first_blood_idx_plus1 + the section-4/chain
+// award sites + both round-machine clears + the speed_mul term + bridge
+// round-trip and the first_blood wasm event; firstBloodParity.test.ts
+// proves claim tick, claimant, clearing semantics, AND an exactly-equal
+// boosted steady-state step across the boundary) — and the meter did not
+// move:
+//
+//   Z0d BEFORE (Z0c's after):    AFTER first-blood mirror:
+//   seed=1     : final 1696px  | final 1696.0px
+//   seed=42    : final 1562px  | final 1561.8px
+//   seed=1337  : final 1246px  | final 1246.4px
+//   seed=90210 : final 1661px  | final 1667.5px
+//   seed=271828: final 1147px  | final 1147.1px
+//
+// VERDICT: hypothesis MISS at the meter level. The mechanism was real and
+// is proven ported at the micro level, but it never got the chance to be
+// this harness's dominant term: every seed crosses 200px of divergence
+// within 98-171 ticks (1.6-2.9s) while health/alive mismatches are still
+// ZERO — movement alone forks the sims long before the first death, so a
+// per-round post-kill 15% walk-speed edge is noise here.
+//
+// Why movement forks — the NEXT evidenced hypothesis, all three legs
+// verified in-code during Z0d: the full-sync path ZEROES Zig's movement
+// MEMORY every tick. packWorldState never writes the player_movement
+// parallel array (worldStateBridge.ts leaves that region zero-filled in
+// the packed buffer; unpack just skips it), and runWasmStepSync /
+// serverWasmHost overwrite the ENTIRE WorldState buffer with that packed
+// image before every step_world call — so Zig's stepPlayer runs every
+// tick with grounded_last_frame=false and blank coyote/jump-buffer/
+// air-jump/dash memory, while TS's runtime.movement Map persists the real
+// memory across ticks. Concretely (probed while building
+// firstBloodParity.test.ts): (1) grounded players accelerate with
+// AIR_ACCELERATION instead of GROUND_ACCELERATION (player.zig:312) —
+// measured ramp 0.65 vs 0.86 px/tick^2, a bounded ~23px offset per
+// movement burst; (2) ground friction never applies (player.zig:314) — an
+// idle post-recoil shooter keeps vx=-92.9 on the Zig side while TS decays
+// it 60/tick; (3) ground jumps are IMPOSSIBLE Zig-side (every jump branch
+// gates on grounded/coyote/air-jump memory) while this sweep's scripted
+// bots press Jump on ~10% of ticks — each press forks the two sims'
+// y-trajectories outright. The fix is small and mechanical — persist the
+// movement-memory region across packs (copy it back from the prior
+// wasm-side state after heap.set, or pack/unpack it like any other
+// array) — but it touches BOTH hosts' pack cadence, a substrate change
+// that is its own track item, not part of Z0d's one-item scope.
+//
 // If the sweep exceeds its bound, the per-seed record above is the
 // deliverable the next track consumes.
 //

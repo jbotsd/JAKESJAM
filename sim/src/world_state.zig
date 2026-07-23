@@ -1472,6 +1472,12 @@ pub const SimEventKind = enum(u32) {
     /// owned by a concurrent session) — same KNOWN GAP shape as every
     /// PLAYER_ENTITY_SIZE staleness note in this file.
     dash_through = 15,
+    /// First-blood wager claimed (Track Z0d — mirrors TS's
+    /// `{ t: "first-blood", playerId }`, emitted by World.ts:6807 at its
+    /// end-of-tick commit; here it fires at the claiming hit itself since
+    /// the header IS the round state — no deferred commit step exists).
+    /// player_idx_a = the claiming player, x/y = their position at claim.
+    first_blood = 16,
 };
 
 pub const SimEvent = extern struct {
@@ -1570,6 +1576,23 @@ pub const WorldStateHeader = extern struct {
     /// during round_over/drafting, i.e. only after a real resolution has
     /// happened).
     round_winner_idx: i32 = -1,
+    /// First-blood wager claim (Track Z0d — mirrors TS
+    /// `RoundState.firstBloodPlayerId`, round.ts/types.ts): 0 = unclaimed
+    /// this round, N = sorted-player-index N-1 holds first blood and gets
+    /// `round.FIRST_BLOOD_SPEED_MULTIPLIER` on movement for the rest of the
+    /// round (world.zig section 8's speed product reads it; the section-4
+    /// ranged-hit sites write it; the round machine clears it at
+    /// countdown→fighting and →countdown, round.ts's own lifecycle).
+    /// PLUS-ONE encoding, deliberately diverging from `round_winner_idx`'s
+    /// -1 sentinel immediately above: `std.mem.zeroes(WorldState)`-built
+    /// states (every Zig unit test, plus the module's fresh state buffer)
+    /// must read as UNCLAIMED — an i32 whose zero value means "player 0
+    /// holds it" would silently hand player 0 a 1.15x move boost in every
+    /// zeroed harness, a far sharper hazard than round_winner_idx's
+    /// mislabeled draft role. Occupies the 4-byte implicit alignment pad
+    /// the trailing f64 forced after round_winner_idx (44→48), so
+    /// HEADER size stays 56 — no wire growth.
+    first_blood_idx_plus1: u32 = 0,
     countdown_remaining_ms: f64,
 };
 
@@ -1692,7 +1715,13 @@ comptime {
     // (44 → 48), same "one leftover i32 forces a padding gap" shape
     // `PlayerEntity.syz_ward_absorb_until_tick`'s own doc comment already
     // hit. See `round_winner_idx`'s own doc comment for what it carries.
+    // 56 → 56 (Track Z0d, first-blood wager): `first_blood_idx_plus1`
+    // (u32) RECLAIMS that 44→48 implicit padding gap as real content — the
+    // header size and every downstream offset are unchanged, so this is
+    // not a wire bump. See its own doc comment for the plus-one encoding.
     std.debug.assert(@sizeOf(WorldStateHeader) == 56);
+    std.debug.assert(@offsetOf(WorldStateHeader, "first_blood_idx_plus1") == 44);
+    std.debug.assert(@offsetOf(WorldStateHeader, "countdown_remaining_ms") == 48);
 
     // Each entity is 8-byte-aligned and tail-packed with explicit
     // _reserved bytes. These numbers are the wire contract — change

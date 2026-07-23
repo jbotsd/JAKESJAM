@@ -3620,3 +3620,137 @@ test "draft: auto-pick-on-expiry — an unpicked drafter's FIRST offer is grante
     }
     try std.testing.expect(saw_auto_pick);
 }
+
+// ---------------------------------------------------------------------------
+// First-blood wager (Track Z0d — port of World.ts's resolveRangedHit claim +
+// round.ts FIRST_BLOOD_SPEED_MULTIPLIER). TS-side integration coverage lives
+// in client/src/sim/__tests__/firstBloodSuddenDeath.test.ts; cross-boundary
+// agreement in client/src/sim/wasm/__tests__/firstBloodParity.test.ts.
+
+test "first blood: the round's first attacker-attributed projectile hit claims it, emits the event, and a later hit cannot steal it" {
+    var state = freshFightingState();
+    state.player_count = 2;
+    state.players[0].flags.alive = true;
+    state.players[0].character_id = .balanced;
+    state.players[0].health = 100;
+    state.players[0].aim_x = 100;
+    state.players[0].aim_y = 0;
+    setPlayerId(&state.players[0], "attacker");
+    state.players[1].flags.alive = true;
+    state.players[1].health = 100;
+    state.players[1].x = 400; // clear of the muzzle + first travel tick
+    state.players[1].y = 0;
+    setPlayerId(&state.players[1], "victim");
+
+    // Fire ONE real pistol shot (fire_cooldown_ms starts 0 in a zeroed
+    // state, so the press fires immediately).
+    state.players[0].current_keys = FIRE_BIT;
+    _ = root.world.stepWorld(&state, 1.0);
+    try std.testing.expectEqual(@as(u32, 1), state.projectile_count);
+    // Unclaimed while the shot is mid-flight.
+    try std.testing.expectEqual(@as(u32, 0), state.header.first_blood_idx_plus1);
+
+    // Park the victim ON the live shard so this tick's hit pass resolves it
+    // (same geometry-proof idiom as the Facet Break test above).
+    state.players[1].x = state.projectiles[0].x;
+    state.players[1].y = state.projectiles[0].y;
+    state.players[0].current_keys = 0;
+    _ = root.world.stepWorld(&state, 1.0);
+
+    // Claimed by player 0 (plus-one encoding), with the event emitted at
+    // the claiming hit.
+    try std.testing.expectEqual(@as(u32, 1), state.header.first_blood_idx_plus1);
+    var saw_event = false;
+    var ei: u32 = 0;
+    while (ei < state.event_count) : (ei += 1) {
+        if (state.events[ei].kind == @intFromEnum(root.world_state.SimEventKind.first_blood) and
+            state.events[ei].player_idx_a == 0)
+        {
+            saw_event = true;
+        }
+    }
+    try std.testing.expect(saw_event);
+
+    // A later hit by the OTHER player cannot steal the claim, and the
+    // event does not re-fire (mirrors TS's "second hit in a later round
+    // doesn't re-award" + the already-claimed guard).
+    state.players[1].health = 100;
+    state.players[1].aim_x = state.players[1].x - 100; // aim back at player 0
+    state.players[1].aim_y = 0;
+    state.players[1].current_keys = FIRE_BIT;
+    _ = root.world.stepWorld(&state, 1.0);
+    try std.testing.expect(state.projectile_count >= 1);
+    // Park player 0 on player 1's fresh shard (the newest projectile).
+    const newest = state.projectile_count - 1;
+    state.players[0].x = state.projectiles[newest].x;
+    state.players[0].y = state.projectiles[newest].y;
+    state.players[1].current_keys = 0;
+    const events_before = blk: {
+        var n: u32 = 0;
+        var ej: u32 = 0;
+        while (ej < state.event_count) : (ej += 1) {
+            if (state.events[ej].kind == @intFromEnum(root.world_state.SimEventKind.first_blood)) n += 1;
+        }
+        break :blk n;
+    };
+    _ = events_before; // events reset per tick; the guard below re-scans fresh
+    _ = root.world.stepWorld(&state, 1.0);
+    try std.testing.expectEqual(@as(u32, 1), state.header.first_blood_idx_plus1); // still player 0
+    var ei2: u32 = 0;
+    while (ei2 < state.event_count) : (ei2 += 1) {
+        try std.testing.expect(state.events[ei2].kind != @intFromEnum(root.world_state.SimEventKind.first_blood));
+    }
+}
+
+test "first blood: the claimant covers ~FIRST_BLOOD_SPEED_MULTIPLIER x the distance of an unboosted twin under identical held-Right input" {
+    // Two independent single-player worlds with identical zeroed movement
+    // state; world B's sole player holds first blood. One tick of held
+    // Right from rest — the same one-tick displacement-ratio assertion
+    // TS's firstBloodSuddenDeath.test.ts makes (boostedDx >
+    // baselineDx * MULTIPLIER - epsilon).
+    var base = freshFightingState();
+    base.player_count = 1;
+    base.players[0].flags.alive = true;
+    base.players[0].health = 100;
+    base.players[0].current_keys = RIGHT_BIT;
+    setPlayerId(&base.players[0], "p0");
+
+    var boosted = base; // value copy — WorldState is pointer-free
+    boosted.header.first_blood_idx_plus1 = 1; // player 0 holds it
+
+    _ = root.world.stepWorld(&base, 16.0);
+    _ = root.world.stepWorld(&boosted, 16.0);
+
+    const base_dx = base.players[0].x;
+    const boosted_dx = boosted.players[0].x;
+    try std.testing.expect(base_dx > 0);
+    try std.testing.expect(boosted_dx > base_dx * root.round.FIRST_BLOOD_SPEED_MULTIPLIER - 0.01);
+}
+
+test "first blood: clears on the countdown -> fighting transition and at countdown entry (round.ts's exact lifecycle)" {
+    // countdown -> fighting: the fresh round starts unclaimed.
+    var state: root.world_state.WorldState = std.mem.zeroes(root.world_state.WorldState);
+    state.player_count = 1;
+    state.players[0].flags.alive = true;
+    state.players[0].health = 100;
+    state.header.round_phase = @intFromEnum(root.round.RoundPhase.countdown);
+    state.header.countdown_remaining_ms = 1.0; // transitions THIS tick
+    state.header.first_blood_idx_plus1 = 1; // stale claim from the old round
+    _ = root.world.stepWorld(&state, 16.0);
+    try std.testing.expectEqual(@intFromEnum(root.round.RoundPhase.fighting), state.header.round_phase);
+    try std.testing.expectEqual(@as(u32, 0), state.header.first_blood_idx_plus1);
+
+    // drafting -> countdown (window expiry): the claim must not survive
+    // into the next round's countdown either (TS clears at BOTH ->countdown
+    // transitions; same belt-and-braces as sudden_death_active).
+    var state2: root.world_state.WorldState = std.mem.zeroes(root.world_state.WorldState);
+    state2.player_count = 1;
+    state2.players[0].flags.alive = true;
+    state2.players[0].health = 100;
+    state2.header.round_phase = @intFromEnum(root.round.RoundPhase.drafting);
+    state2.header.countdown_remaining_ms = 1.0; // window expires THIS tick
+    state2.header.first_blood_idx_plus1 = 1;
+    _ = root.world.stepWorld(&state2, 16.0);
+    try std.testing.expectEqual(@intFromEnum(root.round.RoundPhase.countdown), state2.header.round_phase);
+    try std.testing.expectEqual(@as(u32, 0), state2.header.first_blood_idx_plus1);
+}

@@ -460,6 +460,50 @@ fn creditKill(
     state.players[@intCast(attacker_idx)].round_kills += 1;
 }
 
+/// First-blood wager claim (Track Z0d — port of World.ts's resolveRangedHit
+/// check, :1882-1889, plus its :6805 end-of-tick commit collapsed into one
+/// write): the round's FIRST non-self, attacker-attributed RANGED hit that
+/// survives mitigation claims a persistent FIRST_BLOOD_SPEED_MULTIPLIER
+/// move boost for its owner. Call sites mirror TS's resolveRangedHit
+/// coverage exactly — section 4's projectile damage site + the lightning
+/// chain's secondary hit; NOT melee (TS's melee damage block never touches
+/// firstBloodAwardThisTick), NOT fire/storm/void/explosion (attacker-less
+/// or non-ranged in TS too).
+///
+/// Direct header write is TS-equivalent, not a shortcut: TS defers the
+/// commit to end-of-tick only so its per-player MOVEMENT loop (which runs
+/// before the projectile drain and reads `state.round.firstBloodPlayerId`,
+/// the PRE-tick value — World.ts:2529's "boost takes effect starting next
+/// tick" comment) can't see a same-tick award. In this orchestrator's
+/// tick order movement (section 8) runs before every award site too, so
+/// the claimant's boost still starts NEXT tick, and the round machine that
+/// clears the field runs LAST — after every award site — exactly like TS's
+/// stepRound. The `== 0` guard collapses TS's
+/// `firstBloodAlreadyClaimedThisRound` + tick-local `firstBlood` pair
+/// (header state and tick state are the same cell here).
+fn maybeAwardFirstBlood(
+    state: *world_state.WorldState,
+    attacker_idx: i32,
+    victim_idx: i32,
+    is_fighting: bool,
+) void {
+    if (!is_fighting) return;
+    if (state.header.first_blood_idx_plus1 != 0) return;
+    if (attacker_idx < 0 or attacker_idx == victim_idx) return;
+    const ai: u32 = @intCast(attacker_idx);
+    state.header.first_blood_idx_plus1 = ai + 1;
+    emitEvent(
+        state,
+        .first_blood,
+        attacker_idx,
+        -1,
+        0,
+        0,
+        state.players[ai].x,
+        state.players[ai].y,
+    );
+}
+
 /// Time-out / force-resolve winner (parity with round.ts
 /// decideRoundWinner's forceResolve branch — kill-tally rule 2026-07-17):
 ///   1. most `round_kills` wins, dead or alive (landing kills is the
@@ -3125,6 +3169,18 @@ pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
         if (ple.flags.has_freeze and ple.freeze_until_tick > state.header.tick) {
             speed_mul *= ple.freeze_multiplier;
         }
+        // First-blood wager (Track Z0d — port of World.ts:2532's
+        // firstBloodMul): whoever claimed it this round moves faster for
+        // the rest of it. Reads the header as it stands at THIS point of
+        // the tick — the award sites all run later (sections 4/6, after
+        // movement), so a fresh claim boosts starting next tick, exactly
+        // TS's "reads the PRE-tick round state" cadence. Positioned
+        // between freeze and the card move-speed augment to mirror TS's
+        // own composition order (slow × freeze × firstBlood × … ×
+        // moveSpeedMultiplier).
+        if (state.header.first_blood_idx_plus1 == pmi + 1) {
+            speed_mul *= round.FIRST_BLOOD_SPEED_MULTIPLIER;
+        }
         // Card move-speed + gravity augments ride the existing step multipliers.
         if (has_cfg) speed_mul *= fcfg.move_speed_mul;
         const grav_mul = chaos_profile.gravity_multiplier *
@@ -4713,6 +4769,13 @@ pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
                     }
                     break;
                 }
+                // First-blood wager (Track Z0d): claimed by the round's
+                // first attacker-attributed hit that reaches the damage
+                // site — the parry/shield/i-frame branches above all
+                // `break`/`continue` before here, mirroring TS's
+                // "suppressed hits never reach the check" shape
+                // (resolveRangedHit's own early returns).
+                maybeAwardFirstBlood(state, shooter_idx, @intCast(ph2), is_fighting);
                 state.players[ph2].health -= final_dmg;
                 emitEvent(
                     state,
@@ -4796,6 +4859,13 @@ pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
                         }
                         if (best >= 0) {
                             const cb: u32 = @intCast(best);
+                            // First-blood (Track Z0d): the chain's
+                            // secondary hit runs the same claim TS's
+                            // resolveRangedHit re-entry does. In practice
+                            // the triggering hit above already claimed it
+                            // this tick (same owner) — kept for exact
+                            // TS structural parity, not reachability.
+                            maybeAwardFirstBlood(state, shooter_idx, best, is_fighting);
                             state.players[cb].health -= chain_dmg;
                             emitEvent(state, .hit_confirmed, best, shooter_idx, proj_ptr.id, chain_dmg, state.players[cb].x, state.players[cb].y);
                             if (state.players[cb].health <= 0) {
@@ -5332,6 +5402,10 @@ pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
         // see writeScoresIntoMemory's bug history).
         state.header.sudden_death_active =
             if (isSuddenDeathRound(state)) 1 else 0;
+        // First-blood wager resets with the kill tally (Track Z0d —
+        // round.ts's countdown → fighting branch clears BOTH
+        // `firstBloodPlayerId` and `roundKills` in the same block).
+        state.header.first_blood_idx_plus1 = 0;
     }
     if (phase_result.transitioned == 1 and
         phase_result.new_phase == @intFromEnum(round.RoundPhase.drafting))
@@ -5361,6 +5435,14 @@ pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
         // the countdown phase where TS reads cleared, a needless
         // divergence window.
         state.header.sudden_death_active = 0;
+
+        // First-blood clears at BOTH →countdown transitions too (round.ts
+        // sets `next.firstBloodPlayerId = undefined` in the round-over→
+        // countdown legacy fallback AND the drafting→countdown branch;
+        // the boost must never leak across rounds). Same belt-and-braces
+        // shape as the sudden-death clear immediately above — the
+        // countdown→fighting block re-clears it anyway.
+        state.header.first_blood_idx_plus1 = 0;
 
         state.header.round_index += 1;
         // Reset transient entities for the new round (I28).

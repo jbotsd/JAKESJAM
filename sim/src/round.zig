@@ -54,6 +54,14 @@ pub const SUDDEN_DEATH_STORM_DPS: f64 = 8.0;
 pub const ENDGAME_ZONE_TRIGGER_MS: f64 = 15_000.0;
 pub const ENDGAME_ZONE_SCALE_END: f64 = 0.75;
 
+/// First-blood wager move boost (Track Z0d — mirrors round.ts:37's
+/// FIRST_BLOOD_SPEED_MULTIPLIER exactly): whoever claims the round's first
+/// attacker-attributed ranged hit moves this much faster for the REST of
+/// the round. The claim state itself lives in
+/// `WorldStateHeader.first_blood_idx_plus1`; world.zig's section-8 speed
+/// product is the only consumer of this constant.
+pub const FIRST_BLOOD_SPEED_MULTIPLIER: f64 = 1.15;
+
 pub const RoundPhase = world_state.RoundPhase;
 
 /// Per-tick result of `roundStepPhase`. Tells the orchestrator
