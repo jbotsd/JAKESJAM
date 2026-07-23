@@ -118,17 +118,17 @@ export class MatchResultsOverlay {
       this.titleEl.textContent = winnerRow.name.toUpperCase();
       this.titleEl.style.color = winnerRow.color ?? "#fff7d6";
       this.titleEl.style.textShadow = `0 0 28px ${withAlpha(winnerRow.color ?? "#fff7d6", 0.45)}`;
-      this.subtitleEl.textContent = "MATCH WINNER";
+      this.subtitleEl.textContent = "THE RECORD NAMES ITS VICTOR";
     } else {
       this.titleEl.textContent = "DRAW";
       this.titleEl.style.color = "#f7fbff";
       this.titleEl.style.textShadow = "0 0 18px rgba(247,251,255,0.3)";
-      this.subtitleEl.textContent = `First to ${view.targetScore}`;
+      this.subtitleEl.textContent = `First to ${view.targetScore} — the record closes level`;
     }
 
     // Secondary subtitle line — persistent element, toggled per show.
     if (winnerRow) {
-      this.secondaryEl.textContent = `First to ${view.targetScore} · match over`;
+      this.secondaryEl.textContent = `First to ${view.targetScore} · the record is closed`;
       this.secondaryEl.style.display = "";
     } else {
       this.secondaryEl.style.display = "none";
@@ -267,11 +267,11 @@ export class MatchResultsOverlay {
     const build = describeBuild(row.cardIds, row.characterId);
     const buildEl = document.createElement("div");
     Object.assign(buildEl.style, BUILD_SUMMARY_STYLE);
-    buildEl.textContent = `${cards.length > 0 ? "FINAL BUILD" : "STARTER BUILD"} · ${build.summary}`;
+    buildEl.textContent = `${cards.length > 0 ? "BUILD AS IT STOOD" : "BUILD AS FORGED"} · ${build.summary}`;
     const cardListEl = document.createElement("div");
     Object.assign(cardListEl.style, CARD_LIST_STYLE);
     if (cards.length === 0) {
-      cardListEl.textContent = "No cards drafted";
+      cardListEl.textContent = "No cards drafted — stood as forged";
       cardListEl.style.opacity = "0.6";
     } else {
       for (const card of cards) {

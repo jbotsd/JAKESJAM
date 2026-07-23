@@ -25,7 +25,8 @@ export const crystalRoundsCards: CardDefinition[] = [
     rarity: "rare",
     buckets: ["delivery"],
     essenceCost: 4,
-    description: "Hitscan beam: no travel time. Slightly less damage, softer kick — pure aim reward.",
+    description:
+      "Hitscan beam: no travel time. Slightly less damage, softer kick — your aim is the only variable.",
     flavorText: "Light does not wait for permission.",
     modifier: {
       delivery: "raycast",
@@ -46,7 +47,7 @@ export const crystalRoundsCards: CardDefinition[] = [
     rarity: "common",
     buckets: ["delivery"],
     essenceCost: 1,
-    description: "Tighter, faster baseline shot. The clean default when you want honest gunplay.",
+    description: "Tighter, faster baseline shot — the clean default that asks only for your aim.",
     flavorText: "One shard. No excuses.",
     modifier: {
       delivery: "projectile",
@@ -87,7 +88,8 @@ export const crystalRoundsCards: CardDefinition[] = [
     rarity: "common",
     buckets: ["shape"],
     essenceCost: 1,
-    description: "Short-fused rounds — much less range, but they're already there. Win it up close before it becomes a poke war.",
+    description:
+      "Short-fused rounds — much less range, but they're already there. Step in and end it before range matters.",
     flavorText: "Close is a choice.",
     modifier: {
       // Explicit (2026-07-20, true hitscan) — this card's whole identity is
@@ -118,7 +120,8 @@ export const crystalRoundsCards: CardDefinition[] = [
     rarity: "common",
     buckets: ["shape"],
     essenceCost: 1,
-    description: "Long-hafted shards built to cross the whole map. Slower off the hand, but distance is the whole point.",
+    description:
+      "Long-hafted shards that cross the whole map. Slower off the hand — the far fight belongs to you.",
     flavorText: "Patience, sharpened.",
     modifier: {
       // Explicit (2026-07-20, true hitscan) — same reasoning as
@@ -149,8 +152,9 @@ export const crystalRoundsCards: CardDefinition[] = [
     rarity: "uncommon",
     buckets: ["shape"],
     essenceCost: 2,
-    description: "Heavy slabs built to shove. Massive knockback punts enemies off platforms and out of position — slow to arrive.",
-    flavorText: "Mass over manners.",
+    description:
+      "Heavy slabs, slow to arrive — massive knockback drives enemies off platforms and out of position.",
+    flavorText: "Ground is taken, not given.",
     modifier: {
       projectileSpeedMultiplier: 0.8,
       knockbackMultiplier: 1.45,
@@ -178,8 +182,9 @@ export const crystalRoundsCards: CardDefinition[] = [
     rarity: "uncommon",
     buckets: ["shape"],
     essenceCost: 2,
-    description: "The biggest standard round in the pool — a wide X-cut slab that's hard to miss and hard to dodge. Slower to throw, impossible to ignore.",
-    flavorText: "Big enough to matter.",
+    description:
+      "The biggest standard round in the pool: a wide X-cut slab, hard to miss, hard to dodge — slower to throw.",
+    flavorText: "Presence is a weapon.",
     modifier: {
       fireRateMultiplier: 0.92,
       projectileSpeedMultiplier: 0.9,
@@ -209,8 +214,9 @@ export const crystalRoundsCards: CardDefinition[] = [
     rarity: "uncommon",
     buckets: ["shape", "trajectory"],
     essenceCost: 2,
-    description: "Slow off the hand, then it isn't — bar-crystals that build speed the longer they fly. Lean into long sightlines; lead less at range, more up close.",
-    flavorText: "A straight answer, delayed on purpose.",
+    description:
+      "Slow off the hand, these bar-crystals build speed the longer they fly. Lead less at range, more up close.",
+    flavorText: "Momentum is earned in flight.",
     modifier: {
       // Explicit (2026-07-20, true hitscan) — "accelerate" pathing needs
       // real travel time to ramp up; Wizard/Ninja's own base weapon is
@@ -232,8 +238,9 @@ export const crystalRoundsCards: CardDefinition[] = [
     rarity: "rare",
     buckets: ["shape", "quantity"],
     essenceCost: 4,
-    description: "Fat orbs fire in a two-shot blap. Slower flight, huge presence, close-range bully.",
-    flavorText: "Blap once. Blap again.",
+    description:
+      "Heavy orbs loosed in a two-shot burst. Slower flight, huge presence — built to rule the close fight.",
+    flavorText: "Once to open. Once to end.",
     modifier: {
       damageMultiplier: 0.78,
       projectileSpeedMultiplier: 0.72,
@@ -250,8 +257,9 @@ export const crystalRoundsCards: CardDefinition[] = [
     rarity: "rare",
     buckets: ["delivery"],
     essenceCost: 5,
-    description: "Hold to pour a continuous beam. Lower per-tick damage, relentless pressure and glow.",
-    flavorText: "A wall made of now.",
+    description:
+      "Hold to pour an unending beam. Lower per-tick damage — ceaseless pressure, ceaseless light.",
+    flavorText: "Your will, unbroken.",
     modifier: {
       delivery: "continuous-beam",
       damageMultiplier: 0.42,
@@ -277,8 +285,9 @@ export const crystalRoundsCards: CardDefinition[] = [
     rarity: "rare",
     buckets: ["quantity"],
     essenceCost: 5,
-    description: "Close-range shard burst instead of a pulse wave. Severe range cut — devastating in faces, useless at distance.",
-    flavorText: "The core empties its pockets.",
+    description:
+      "Your pulse wave becomes a close shard burst. Severe range cut — devastating up close, nothing at range.",
+    flavorText: "Step in. Give everything.",
     modifier: {
       delivery: "projectile",
       damageMultiplier: 0.62,
@@ -331,8 +340,9 @@ export const crystalRoundsCards: CardDefinition[] = [
     rarity: "rare",
     buckets: ["trajectory", "impact"],
     essenceCost: 4,
-    description: "A true lob: steep drop, big boom. Arc it over cover and walls — the impact does the rest.",
-    flavorText: "What goes up, negotiates.",
+    description:
+      "A true lob: steep drop, heavy blast. Arc it over cover and walls — the landing does the rest.",
+    flavorText: "Send it high. Trust the fall.",
     modifier: {
       // Explicit (2026-07-20, true hitscan) — same reasoning as arc-shards:
       // "gravity" pathing needs real flight time to drop, which a same-tick
@@ -361,8 +371,9 @@ export const crystalRoundsCards: CardDefinition[] = [
     rarity: "rare",
     buckets: ["trajectory"],
     essenceCost: 4,
-    description: "Main shot homes toward the nearest foe with a capped turn rate. Still aim — it assists, not auto-wins.",
-    flavorText: "It remembers the slight.",
+    description:
+      "Your main shot homes toward the nearest foe, turn rate capped. Aim still rules — it assists, not replaces.",
+    flavorText: "It seeks what you intend.",
     modifier: {
       // Explicit (2026-07-20, true hitscan) — homing needs real travel time
       // to curve; Wizard's own base weapon is "raycast" now, so without
@@ -467,8 +478,8 @@ export const crystalRoundsCards: CardDefinition[] = [
     rarity: "uncommon",
     buckets: ["trajectory", "quantity"],
     essenceCost: 3,
-    description: "Extra tiny homers peel into the fight. Chaos fuel for multi-target messes.",
-    flavorText: "Small. Personal. Persistent.",
+    description: "Extra tiny homing shards peel into the fight. Strongest against many foes.",
+    flavorText: "Small. Tireless. Yours.",
     modifier: {
       // Explicit (2026-07-20, true hitscan) — homing needs real travel time
       // to curve toward a target; Wizard/Ninja's own base weapon is
@@ -523,8 +534,9 @@ export const crystalRoundsCards: CardDefinition[] = [
     rarity: "common",
     buckets: ["trajectory"],
     essenceCost: 1,
-    description: "+1 ricochet on everything you fire. Stacks the geometry game.",
-    flavorText: "One more vote for the wall.",
+    description:
+      "+1 ricochet on everything you fire. Stacks — every surface becomes another angle.",
+    flavorText: "Another angle earned.",
     modifier: {
       // Explicit (2026-07-20, true hitscan) — same reasoning as Bouncy
       // Prism: bounce needs real multi-tick flight, which a same-tick
@@ -543,8 +555,9 @@ export const crystalRoundsCards: CardDefinition[] = [
     rarity: "uncommon",
     buckets: ["trajectory"],
     essenceCost: 3,
-    description: "After half range, shots curl home. Catch retreats and punish chase-you play.",
-    flavorText: "Regret, sharpened.",
+    description:
+      "Past half range, your shots turn and come home. Catch retreats; punish anyone who hunts your heels.",
+    flavorText: "What leaves your hand comes home keener.",
     modifier: {
       // Explicit (2026-07-20, true hitscan) — curling home after half range
       // needs the shot to actually travel there first; a same-tick hitscan
@@ -591,8 +604,9 @@ export const crystalRoundsCards: CardDefinition[] = [
     rarity: "rare",
     buckets: ["trajectory"],
     essenceCost: 4,
-    description: "Blistering point-blank speed that burns off fast. Everything up close, nothing at range.",
-    flavorText: "All at once, then nothing.",
+    description:
+      "Blistering point-blank speed that burns off fast. Everything up close, nothing at range — close in.",
+    flavorText: "Spend it all where it counts.",
     modifier: {
       // Explicit (2026-07-20, true hitscan) — same reasoning as I Rounds:
       // "accelerate" pathing (even the negative/burn-off variant here) needs
@@ -652,8 +666,9 @@ export const crystalRoundsCards: CardDefinition[] = [
     rarity: "uncommon",
     buckets: ["quantity", "trajectory"],
     essenceCost: 3,
-    description: "Three-way fan that also ricochets twice. Bank shots around corners — own the room, not just the lane.",
-    flavorText: "The core spreads its hands. The walls don't stop it.",
+    description:
+      "Three-way fan that also ricochets twice. Bank shots around corners — own the room, not just the lane.",
+    flavorText: "The walls fight beside you.",
     modifier: {
       // Explicit (2026-07-20, true hitscan) — same reasoning as Bouncy
       // Prism/+1 Bounce: bank shots off a wall need real multi-tick flight,
@@ -683,8 +698,9 @@ export const crystalRoundsCards: CardDefinition[] = [
     rarity: "rare",
     buckets: ["quantity"],
     essenceCost: 5,
-    description: "Five tiny, fast fragments — hard to see, harder to dodge. Pressure at range, not just up close.",
-    flavorText: "Accuracy left. Velocity stayed.",
+    description:
+      "Five tiny, fast fragments — hard to see, harder to dodge. Pressure at range, not just up close.",
+    flavorText: "Five shards, one will.",
     modifier: {
       damageMultiplier: 0.6,
       fireRateMultiplier: 0.9,
@@ -711,7 +727,7 @@ export const crystalRoundsCards: CardDefinition[] = [
     buckets: ["quantity"],
     essenceCost: 1,
     description: "+1 projectile to your pattern. Stacks with fans and splitters for denser fire.",
-    flavorText: "Just one more. Famous last words.",
+    flavorText: "You are more than you were.",
     modifier: {
       damageMultiplier: 0.94,
       spreadRadiansAdd: degrees(7),
@@ -759,8 +775,9 @@ export const crystalRoundsCards: CardDefinition[] = [
     rarity: "rare",
     buckets: ["quantity"],
     essenceCost: 5,
-    description: "Two orbiting crystals auto-harass nearby foes. Passive your hands for the big shot.",
-    flavorText: "The little ones are listening.",
+    description:
+      "Two crystals orbit you, harrying any foe that strays close. Your hands stay free for the big shot.",
+    flavorText: "What orbits you, fights for you.",
     modifier: {
       orbitingSatellites: 2,
       fireRateMultiplier: 1.12,
@@ -782,8 +799,9 @@ export const crystalRoundsCards: CardDefinition[] = [
     rarity: "rare",
     buckets: ["quantity"],
     essenceCost: 5,
-    description: "On first hit, the shot splits into six child shards. Openers become area denial.",
-    flavorText: "Impact has children. They bite.",
+    description:
+      "On first hit, your shot splits into six child shards. One opening blow claims the ground around it.",
+    flavorText: "Struck true, one becomes many.",
     modifier: {
       fireRateMultiplier: 0.72,
       projectileSplitAdd: 6,
@@ -831,8 +849,9 @@ export const crystalRoundsCards: CardDefinition[] = [
     rarity: "uncommon",
     buckets: ["impact"],
     essenceCost: 3,
-    description: "Hits detonate a prism burst. Splash for groups and soft cover peels.",
-    flavorText: "Impact, then argument.",
+    description:
+      "Every hit detonates in a prism burst. Splash scours packs and peels foes from soft cover.",
+    flavorText: "Pressure in, radiance out.",
     modifier: {
       damageMultiplier: 0.92,
       projectile: { impact: "explosive", impactRadiusPx: 64 },
@@ -847,8 +866,9 @@ export const crystalRoundsCards: CardDefinition[] = [
     rarity: "uncommon",
     buckets: ["impact"],
     essenceCost: 3,
-    description: "Shards stick, glow, then burst. Plant threats on bodies and walls.",
-    flavorText: "This is home now.",
+    description:
+      "Shards stick to bodies and walls, glow, then burst. Plant your threat where the fight is going.",
+    flavorText: "Your will waits where you left it.",
     modifier: {
       projectileSpeedMultiplier: 0.8,
       projectile: { impact: "sticky", impactRadiusPx: 48 },
@@ -863,8 +883,9 @@ export const crystalRoundsCards: CardDefinition[] = [
     rarity: "rare",
     buckets: ["impact"],
     essenceCost: 4,
-    description: "Pierce three targets and shed copies. Line up multi-kills through clumped packs.",
-    flavorText: "One shot, several endings.",
+    description:
+      "Your shot drives through three foes, shedding copies as it goes. Line up the pack; take them as one.",
+    flavorText: "Draw one line through many.",
     modifier: {
       projectile: { impact: "pierce-chain", pierceCount: 3, splitCount: 2 },
     },
@@ -915,7 +936,7 @@ export const crystalRoundsCards: CardDefinition[] = [
     buckets: ["element"],
     essenceCost: 3,
     description: "Fire: molten trails and burn-ready hits. Zone control with heat.",
-    flavorText: "Refraction comes out angry.",
+    flavorText: "You were tempered hotter than this.",
     modifier: {
       projectile: { element: "fire", impactRadiusPx: 42 },
     },
@@ -1005,7 +1026,8 @@ export const crystalRoundsCards: CardDefinition[] = [
     rarity: "rare",
     buckets: ["element"],
     essenceCost: 4,
-    description: "Lightning: pierces and arcs to a nearby target. Multi-mark punishment.",
+    description:
+      "Lightning: pierces and arcs to a nearby target. The more they gather, the more you reach.",
     flavorText: "The crystal kept the storm.",
     modifier: {
       projectileSpeedMultiplier: 1.08,
@@ -1025,7 +1047,8 @@ export const crystalRoundsCards: CardDefinition[] = [
     rarity: "rare",
     buckets: ["element"],
     essenceCost: 4,
-    description: "Void: ignores held shields and pierces two. Punish turtles and stacks.",
+    description:
+      "Void: ignores held shields and pierces two. Their cover and their numbers both give way.",
     flavorText: "Through absence, into them.",
     modifier: {
       damageMultiplier: 1.08,
@@ -1041,8 +1064,8 @@ export const crystalRoundsCards: CardDefinition[] = [
     rarity: "rare",
     buckets: ["element"],
     essenceCost: 5,
-    description: "Radiant: high damage, blinding white hit flash. The honest power pick.",
-    flavorText: "A small sun. Bad manners.",
+    description: "Radiant: high damage, blinding white hit flash. Strength that hides nothing.",
+    flavorText: "A small sun, and it is yours.",
     modifier: {
       damageMultiplier: 1.14,
       fireRateMultiplier: 0.82,
@@ -1058,8 +1081,9 @@ export const crystalRoundsCards: CardDefinition[] = [
     rarity: "common",
     buckets: ["utility"],
     essenceCost: 2,
-    description: "Faster fire, softer recoil, thinner faster needles. Win trades with tempo you can SEE.",
-    flavorText: "Blink — already rude twice.",
+    description:
+      "Faster fire, softer recoil, thinner faster needles. Tempo you can see; trades you can win.",
+    flavorText: "The bent path arrives first.",
     modifier: {
       // Reduced from 1.32 → 1.22 to prevent 1.5s TTK breach when stacked
       // with needle-compressor + damage shape cards. Per combat-balance-ttk/SKILL.md.
@@ -1079,8 +1103,8 @@ export const crystalRoundsCards: CardDefinition[] = [
     rarity: "common",
     buckets: ["utility"],
     essenceCost: 2,
-    description: "Higher rate of fire, smaller shots. Hose them down; aim still matters.",
-    flavorText: "Tiny shots. Horrible tempo.",
+    description: "Higher rate of fire, smaller shots. Sustain the pressure — aim still matters.",
+    flavorText: "A hundred needles, one will.",
     modifier: {
       // Reduced from 1.22 → 1.14 to prevent 1.5s TTK breach when stacked
       // with rapid-refraction + damage shape cards. Per combat-balance-ttk/SKILL.md.
@@ -1098,7 +1122,7 @@ export const crystalRoundsCards: CardDefinition[] = [
     buckets: ["utility"],
     essenceCost: 2,
     description: "Bigger projectiles, slower fire. Each shot is a statement.",
-    flavorText: "Big crystal. Slow manners.",
+    flavorText: "Patience, given mass.",
     modifier: {
       fireRateMultiplier: 0.88,
       projectile: { sizeMultiplier: 1.22 },
@@ -1113,8 +1137,9 @@ export const crystalRoundsCards: CardDefinition[] = [
     rarity: "common",
     buckets: ["utility"],
     essenceCost: 2,
-    description: "Bigger mag, faster reload, fatter crystal cores. Stay in the fight — shots look charged.",
-    flavorText: "Reload before regret.",
+    description:
+      "Bigger mag, faster reload, fatter crystal cores. Stay in the fight — shots look charged.",
+    flavorText: "The well is deep. Draw again.",
     modifier: {
       magazineSizeAdd: 2,
       // Visible: charged cores — slightly larger crystal-tinted rounds.
@@ -1133,7 +1158,7 @@ export const crystalRoundsCards: CardDefinition[] = [
     buckets: ["utility"],
     essenceCost: 2,
     description: "More max health + thicker hex crystal shots. You look armored; you are armored.",
-    flavorText: "More of you to fight for.",
+    flavorText: "You are more than you were.",
     modifier: {
       maxHealthAdd: 20,
       moveSpeedMultiplier: 0.98,
@@ -1184,7 +1209,8 @@ export const crystalRoundsCards: CardDefinition[] = [
     rarity: "uncommon",
     buckets: ["utility"],
     essenceCost: 3,
-    description: "Wider dash-bash arc you can SEE on the shield shell. Catch more angles when you slide-block.",
+    description:
+      "Your dash-bash arc widens — and shows on the shield shell. Slide-block and catch more angles.",
     flavorText: "Your no covers more sky.",
     modifier: {
       parryCoverMultiplier: 1.28,
@@ -1202,8 +1228,9 @@ export const crystalRoundsCards: CardDefinition[] = [
     rarity: "uncommon",
     buckets: ["utility"],
     essenceCost: 3,
-    description: "Shorter dash-bash cooldown — slide-guard more often. Snappier square cores mark the tempo.",
-    flavorText: "Still rude. Sooner.",
+    description:
+      "Shorter dash-bash cooldown — slide-guard more often. Snappier square cores mark your tempo.",
+    flavorText: "Your no arrives sooner.",
     modifier: {
       dashCooldownMultiplier: 0.86,
       // Visible: square cores + slight speed so "quick" reads on the gun too.
@@ -1219,8 +1246,9 @@ export const crystalRoundsCards: CardDefinition[] = [
     rarity: "rare",
     buckets: ["utility"],
     essenceCost: 4,
-    description: "Slower fire, huge shots, wider impact. Patient, brutal, platform-popping.",
-    flavorText: "Wait. Then nonsense.",
+    description:
+      "You fire slower; each shot lands huge with wider impact — enough to pop platforms.",
+    flavorText: "Patience, then thunder.",
     modifier: {
       fireRateMultiplier: 0.72,
       overchargeMultiplier: 3,
@@ -1237,7 +1265,7 @@ export const crystalRoundsCards: CardDefinition[] = [
     buckets: ["utility"],
     essenceCost: 4,
     description: "Blocked shots reflect straight back at the shooter. Their aim becomes yours.",
-    flavorText: "No — you.",
+    flavorText: "The whetstone answers.",
     modifier: {
       mirrorShield: true,
       projectile: { element: "crystal" },
@@ -1252,8 +1280,8 @@ export const crystalRoundsCards: CardDefinition[] = [
     rarity: "legendary",
     buckets: ["impact", "element"],
     essenceCost: 7,
-    description: "Explosive + Radiant: massive nova and pure white flash. Round-ender energy.",
-    flavorText: "Look directly at the math.",
+    description: "Explosive meets Radiant: a massive nova and a pure white flash. Rounds end here.",
+    flavorText: "Every facet fires at once.",
     modifier: {
       damageMultiplier: 1.18,
       fireRateMultiplier: 0.72,
@@ -1278,8 +1306,9 @@ export const crystalRoundsCards: CardDefinition[] = [
     rarity: "legendary",
     buckets: ["trajectory", "quantity"],
     essenceCost: 7,
-    description: "Homing + triple fan: three seekers curve into the kill. Beautiful and unfair.",
-    flavorText: "Three bad ideas with a destination.",
+    description:
+      "Homing meets triple fan: three seekers curve onto the target. Loose them and move.",
+    flavorText: "Three arcs. One answer.",
     modifier: {
       // Explicit (2026-07-20, true hitscan) — homing needs real travel time
       // to curve toward a target, same gap Seeker Facets/Micro Seekers had.
@@ -1299,8 +1328,9 @@ export const crystalRoundsCards: CardDefinition[] = [
     rarity: "legendary",
     buckets: ["delivery", "impact"],
     essenceCost: 7,
-    description: "Hitscan ray that paints sticky crystal bursts. Beam leaves delayed pain.",
-    flavorText: "The beam leaves receipts.",
+    description:
+      "A hitscan ray that paints sticky crystal where it lands; each burst arrives a beat late.",
+    flavorText: "The crystal keeps your word.",
     modifier: {
       delivery: "raycast",
       fireRateMultiplier: 0.78,
@@ -1318,8 +1348,9 @@ export const crystalRoundsCards: CardDefinition[] = [
     rarity: "uncommon",
     buckets: ["utility"],
     essenceCost: 3,
-    description: "Much faster ground and air move. Outrun peeks, claim high ground first.",
-    flavorText: "The floor is a suggestion.",
+    description:
+      "Move much faster on ground and in air. Outrun their peeks; claim the high ground first.",
+    flavorText: "Speed chooses the ground.",
     modifier: { moveSpeedMultiplier: 1.18 },
     visual: visual("circle", "#67e8f9"),
     maxStacks: 3,
@@ -1331,7 +1362,8 @@ export const crystalRoundsCards: CardDefinition[] = [
     rarity: "uncommon",
     buckets: ["utility"],
     essenceCost: 3,
-    description: "Lower gravity: floatier jumps, longer hang for wall routes and aim windows.",
+    description:
+      "Gravity loosens its hold on you: floatier jumps, longer hang for wall routes and aim windows.",
     flavorText: "Falling as a choice.",
     modifier: { gravityMultiplier: 0.74 },
     visual: visual("orb", "#a5f3fc"),
@@ -1391,8 +1423,8 @@ export const crystalRoundsCards: CardDefinition[] = [
     rarity: "uncommon",
     buckets: ["utility"],
     essenceCost: 3,
-    description: "Sticky wall-slide — cling and reset. Vertical maps become your house.",
-    flavorText: "Down is optional.",
+    description: "Sticky wall-slide — cling and reset. The vertical belongs to you.",
+    flavorText: "Where they fall, you hold.",
     modifier: { wallSlideMultiplier: 0.45 },
     visual: visual("hexagon", "#4ade80"),
     maxStacks: 2,
@@ -1405,7 +1437,7 @@ export const crystalRoundsCards: CardDefinition[] = [
     buckets: ["utility"],
     essenceCost: 4,
     description: "Mid-air jump. Stacks for triple+ jumps. Recover from bad falls and fake commits.",
-    flavorText: "Who said one?",
+    flavorText: "Rise, and rise again.",
     modifier: { airJumpsAdd: 1 },
     // Wizard expression = docs/card-pool-v2.md "Second Wind" (universal
     // passive — same name AND same +1 air jump this card already ships;
@@ -1465,8 +1497,9 @@ export const crystalRoundsCards: CardDefinition[] = [
     rarity: "uncommon",
     buckets: ["utility"],
     essenceCost: 3,
-    description: "Much larger shield reserve. Hold block through longer volleys before it pops.",
-    flavorText: "A bigger no.",
+    description:
+      "Much larger shield reserve. Hold your block through longer volleys before it breaks.",
+    flavorText: "Their storm breaks on you.",
     modifier: { shieldChargeMultiplier: 1.6 },
     visual: visual("hexagon", "#86efac"),
     maxStacks: 3,
@@ -1478,8 +1511,9 @@ export const crystalRoundsCards: CardDefinition[] = [
     rarity: "uncommon",
     buckets: ["utility"],
     essenceCost: 3,
-    description: "Shield recharges much faster between blocks. Spam safe peeks and re-engage.",
-    flavorText: "Back up before they do.",
+    description:
+      "Shield recharges much faster between blocks. Peek safely and re-engage, again and again.",
+    flavorText: "Ready again before they are.",
     modifier: { shieldRechargeMultiplier: 1.8 },
     visual: visual("circle", "#bae6fd"),
     maxStacks: 3,
@@ -1493,7 +1527,8 @@ export const crystalRoundsCards: CardDefinition[] = [
     rarity: "rare",
     buckets: ["utility"],
     essenceCost: 4,
-    description: "Shield only covers where you aim — but that frontal wall is huge. Point the no.",
+    description:
+      "Your shield holds only where you aim — but that frontal wall is vast. Face what you would stop.",
     flavorText: "Mean the angle.",
     modifier: { directionalShield: true, shieldChargeMultiplier: 2.2 },
     visual: visual("square", "#7ec8e3"),
@@ -1506,8 +1541,9 @@ export const crystalRoundsCards: CardDefinition[] = [
     rarity: "legendary",
     buckets: ["utility"],
     essenceCost: 6,
-    description: "Aimed reflect wall with big charge: face threats and bounce their shots home.",
-    flavorText: "Return to sender. Fast.",
+    description:
+      "Aimed reflect wall with a heavy charge: face what fires and its shots fly back to their source.",
+    flavorText: "Meet it. Turn it. Return it.",
     modifier: {
       directionalShield: true,
       mirrorShield: true,
@@ -1524,8 +1560,9 @@ export const crystalRoundsCards: CardDefinition[] = [
     rarity: "legendary",
     buckets: ["utility"],
     essenceCost: 7,
-    description: "Blocked hits bank locks (max 2). Next shot burns a lock into a weaker homing bolt.",
-    flavorText: "It bit. Now it owes you.",
+    description:
+      "Each blocked hit stores a lock (max 2). Your next shot spends one to loose a weaker homing bolt.",
+    flavorText: "What bit you now hunts for you.",
     modifier: {
       stolenFangs: true,
       projectile: { element: "crystal" },
@@ -1576,8 +1613,9 @@ export const crystalRoundsCards: CardDefinition[] = [
     rarity: "rare",
     buckets: ["ability"],
     essenceCost: 6,
-    description: "Active (3s, 14s cooldown): your shots tithe half the damage they deal back to you as health.",
-    flavorText: "The congregation pays in what it bleeds.",
+    description:
+      "Active (3s, 14s cooldown): your shots tithe half the damage they deal back to you as health.",
+    flavorText: "Strike, and be restored.",
     active: {
       kind: "crimson-tithe",
       cooldownMs: 14000,
@@ -1593,8 +1631,9 @@ export const crystalRoundsCards: CardDefinition[] = [
     rarity: "rare",
     buckets: ["ability"],
     essenceCost: 6,
-    description: "Active (9s cooldown): blink toward your aim. Walls are a suggestion; landing inside one is not.",
-    flavorText: "Filed in the space between spaces. Approved before it was asked.",
+    description:
+      "Active (9s cooldown): blink toward your aim — pass through walls, but you cannot land inside one.",
+    flavorText: "The space between spaces opens for you.",
     active: {
       kind: "shadow-step",
       cooldownMs: 9000,
@@ -1609,8 +1648,9 @@ export const crystalRoundsCards: CardDefinition[] = [
     rarity: "legendary",
     buckets: ["ability"],
     essenceCost: 7,
-    description: "Active (1.5s, 16s cooldown): unmade — homing and satellites lose you; firing ends it early.",
-    flavorText: "The archons cannot audit what is not.",
+    description:
+      "Active (1.5s, 16s cooldown): become untraceable — homing and satellites lose you; firing ends it early.",
+    flavorText: "The archons cannot strike what is not.",
     active: {
       kind: "veil-of-nought",
       cooldownMs: 16000,
@@ -1673,8 +1713,8 @@ export const crystalRoundsCards: CardDefinition[] = [
     classId: "wizard",
     role: "offense",
     description:
-      "Active (0.7s window, 7s cooldown): shots deal 1.6x damage while it holds.",
-    flavorText: "I finished a sentence the crystal started.",
+      "Active (0.7s window, 7s cooldown): your shots strike at 1.6x damage while it holds.",
+    flavorText: "A moment of sun, honed to a point.",
     active: {
       kind: "sunlance",
       cooldownMs: 7000,
@@ -1712,8 +1752,9 @@ export const crystalRoundsCards: CardDefinition[] = [
     essenceCost: 5,
     classId: "wizard",
     role: "aoe",
-    description: "Active (9s cooldown): a cone of crystal force erupts from your aim, striking everyone caught in it at once.",
-    flavorText: "Still crystal munitions — just more of the angle.",
+    description:
+      "Active (9s cooldown): a cone of crystal force erupts from your aim, striking everyone caught in it at once.",
+    flavorText: "Split the light; every ray still cuts.",
     active: {
       kind: "prism-fan",
       cooldownMs: 9000,
@@ -1731,8 +1772,8 @@ export const crystalRoundsCards: CardDefinition[] = [
     classId: "wizard",
     role: "aoe",
     description:
-      "Active (9s cooldown): a crystal lattice plane settles around you, damaging anyone standing in it for a few seconds.",
-    flavorText: "Space denial, angle-first.",
+      "Active (9s cooldown): a crystal lattice plane settles around you, damaging all standing in it for a few seconds.",
+    flavorText: "Where you stand, structure follows.",
     active: {
       kind: "lattice",
       cooldownMs: 9000,
@@ -1769,7 +1810,7 @@ export const crystalRoundsCards: CardDefinition[] = [
     classId: "wizard",
     role: "defense",
     description:
-      "Active (0.6s window, 9s cooldown): a damage gate — halves incoming gunfire while it holds. Melee, ability blasts, and burn ticks pass through untouched.",
+      "Active (0.6s window, 9s cooldown): halves incoming gunfire. Melee, ability blasts, and burn ticks pass through.",
     flavorText: "Hold the proof.",
     active: {
       kind: "hard-aperture",
@@ -1789,7 +1830,7 @@ export const crystalRoundsCards: CardDefinition[] = [
     classId: "wizard",
     role: "buff",
     description: "Active (3s window, 10s cooldown): fire rate up, spread tighter while it holds.",
-    flavorText: "Cast-weave fuel.",
+    flavorText: "Three seconds of more than you were.",
     active: {
       kind: "overclock",
       cooldownMs: 10000,
@@ -1828,7 +1869,7 @@ export const crystalRoundsCards: CardDefinition[] = [
     classId: "wizard",
     role: "movement",
     description: "Active (6s cooldown): a short blink along your aim.",
-    flavorText: "Reposition, not freeflow.",
+    flavorText: "Space bends for the one who studied it.",
     active: {
       kind: "slip-node",
       cooldownMs: 6000,
@@ -1846,8 +1887,8 @@ export const crystalRoundsCards: CardDefinition[] = [
     classId: "wizard",
     role: "movement",
     description:
-      "Active (6s cooldown): hop opposite your aim; shots fired in the next 1.2s barely push you around.",
-    flavorText: "Micro-kiting, the geometrician's way.",
+      "Active (6s cooldown): hop opposite your aim; shots you fire in the next 1.2s barely push you around.",
+    flavorText: "Every step back is drawn, not driven.",
     active: {
       kind: "recoil-step",
       cooldownMs: 6000,
@@ -1875,8 +1916,8 @@ export const crystalRoundsCards: CardDefinition[] = [
     classId: "paladin",
     role: "defense",
     description:
-      "Active (8s cooldown): instant shield-charge tick, doubled if Ward is actively held.",
-    flavorText: "Ward synergy, not a second shield identity.",
+      "Active (8s cooldown): an instant shield-charge tick — doubled if Ward is actively held.",
+    flavorText: "Hold the line, and the line holds you.",
     active: {
       kind: "bastion-pulse",
       cooldownMs: 8000,
@@ -1894,8 +1935,8 @@ export const crystalRoundsCards: CardDefinition[] = [
     classId: "paladin",
     role: "single",
     description:
-      "Active (7s cooldown): an aimed thrust — a single fast, narrow, short-range hit. High single-target damage.",
-    flavorText: "Focus the one who ignored the line.",
+      "Active (7s cooldown): a fast aimed thrust — one narrow, short-range hit. High single-target damage.",
+    flavorText: "All of dawn, driven through one point.",
     active: {
       kind: "sunspike",
       cooldownMs: 7000,
@@ -1913,8 +1954,8 @@ export const crystalRoundsCards: CardDefinition[] = [
     classId: "paladin",
     role: "single",
     description:
-      "Active (3s mark, 8s cooldown): marks the nearest foe in your aim cone — your Kindled Edge hits on them are amplified.",
-    flavorText: "Duel the tank.",
+      "Active (3s mark, 8s cooldown): mark the nearest foe in your aim cone; Kindled Edge hits on them are amplified.",
+    flavorText: "Choose your whetstone, and meet it.",
     active: {
       kind: "judgment-line",
       cooldownMs: 8000,
@@ -1933,8 +1974,8 @@ export const crystalRoundsCards: CardDefinition[] = [
     classId: "paladin",
     role: "offense",
     description:
-      "Active (5s window, 7s cooldown): your next landed Kindled Edge hit is amplified and staggers the victim.",
-    flavorText: "One committed overhead that lands.",
+      "Active (5s window, 7s cooldown): your next landed Kindled Edge hit is amplified and staggers the foe.",
+    flavorText: "Everything you are, behind one blow.",
     active: {
       kind: "unbroken-seal",
       cooldownMs: 7000,
@@ -1957,8 +1998,8 @@ export const crystalRoundsCards: CardDefinition[] = [
     classId: "paladin",
     role: "defense",
     description:
-      "Active (3s window, 8s cooldown): your team-peel shadow (Kindled Ward's reach for allies) widens — no ally nearby, gain Kindling instead.",
-    flavorText: "Peel readable, peel real.",
+      "Active (3s window, 8s cooldown): Kindled Ward reaches further for allies; no ally near, gain Kindling instead.",
+    flavorText: "Your shield was always wide enough for two.",
     active: {
       kind: "aegis-share",
       cooldownMs: 8000,
@@ -1977,8 +2018,8 @@ export const crystalRoundsCards: CardDefinition[] = [
     classId: "paladin",
     role: "movement",
     description:
-      "Active (6s cooldown): a short charge that ends in a Ward-ready stance, tipping your shield charge up.",
-    flavorText: "Plant to plant, not freeflow.",
+      "Active (6s cooldown): a short charge that ends in a Ward-ready stance and tips your shield charge up.",
+    flavorText: "Charge, plant, become the wall.",
     active: {
       kind: "plant-charge",
       cooldownMs: 6000,
@@ -2003,7 +2044,7 @@ export const crystalRoundsCards: CardDefinition[] = [
     classId: "paladin",
     role: "aoe",
     description:
-      "Active (9s cooldown): a modest hop, then a slam shock on landing. Space claim, not sky-god.",
+      "Active (9s cooldown): a modest hop, then a slam shock on landing. Claim the ground you take.",
     flavorText: "Ground that answers when you arrive.",
     active: {
       kind: "shock-ring",
@@ -2023,7 +2064,7 @@ export const crystalRoundsCards: CardDefinition[] = [
     classId: "paladin",
     role: "buff",
     description:
-      "Active (5s window, 9s cooldown): allies near you (including you, solo-safe) fight harder and move quicker.",
+      "Active (5s window, 9s cooldown): allies near you — yourself included, even alone — fight harder, move quicker.",
     flavorText: "Stand with me. That's the whole shield.",
     active: {
       kind: "rally-light",
@@ -2054,7 +2095,7 @@ export const crystalRoundsCards: CardDefinition[] = [
     classId: "paladin",
     role: "buff",
     description:
-      "Active (4s window, 12s cooldown, spends 40 Kindling): harden your resolve — resist stagger, hit a little harder. No Kindling banked, no effect.",
+      "Active (4s window, 12s cooldown): spend 40 Kindling — resist stagger, hit a little harder. None banked, no effect.",
     flavorText: "Spend the block. Keep the line.",
     active: {
       kind: "kindled-resolve",
@@ -2116,8 +2157,8 @@ export const crystalRoundsCards: CardDefinition[] = [
     classId: "priest",
     role: "offense",
     description:
-      "Active (6s cooldown): a self-guiding fire-tendril finds the nearest enemy on its own — burns them and tithes a fraction of the damage back to you.",
-    flavorText: "It finds them. You don't have to.",
+      "Active (6s cooldown): a fire-tendril seeks the nearest enemy on its own — burns them, tithes part of the damage to you.",
+    flavorText: "What it burns, it brings home.",
     active: {
       kind: "bleed-tithe",
       cooldownMs: 6000,
@@ -2136,7 +2177,7 @@ export const crystalRoundsCards: CardDefinition[] = [
     role: "offense",
     description:
       "Active (7s cooldown): detonates the nearest already-cursed enemy — no cursed target, no cast, no cooldown burned.",
-    flavorText: "The debt comes due on its own schedule.",
+    flavorText: "You name the hour the debt falls due.",
     active: {
       kind: "severance",
       cooldownMs: 7000,
@@ -2154,8 +2195,8 @@ export const crystalRoundsCards: CardDefinition[] = [
     classId: "priest",
     role: "single",
     description:
-      "Active (8s cooldown): heals the nearest hurt ally on its own — some of it drains back a few seconds later, whether or not they earned it. Self-cast if no ally nearby needs it, weaker both ways.",
-    flavorText: "I already gave you more than you'll pay back.",
+      "Active (8s cooldown): heals the nearest hurt ally on its own; part drains back a few seconds later. No ally nearby in need: self-cast, weaker both ways.",
+    flavorText: "Take the loan. Win before it's due.",
     active: {
       kind: "borrowed-time",
       cooldownMs: 8000,
@@ -2173,8 +2214,8 @@ export const crystalRoundsCards: CardDefinition[] = [
     classId: "priest",
     role: "single",
     description:
-      "Active (6s cooldown): marks the nearest enemy without needing to aim at them — your hits on the marked target amplify while it lasts.",
-    flavorText: "You were already the closest thing to me.",
+      "Active (6s cooldown): marks the nearest enemy — no aim needed. Your hits on the mark amplify while it lasts.",
+    flavorText: "Undivided attention is a weapon.",
     active: {
       kind: "focus-hex",
       cooldownMs: 6000,
@@ -2193,8 +2234,8 @@ export const crystalRoundsCards: CardDefinition[] = [
     classId: "priest",
     role: "aoe",
     description:
-      "Active (9s cooldown): every burning enemy nearby passes their fire on to the nearest un-burned enemy — the word spreads on its own.",
-    flavorText: "It only ever touches what was already lawfully applied.",
+      "Active (9s cooldown): every burning enemy nearby spreads their fire to the nearest un-burned enemy.",
+    flavorText: "Kindle one. Ignite them all.",
     active: {
       kind: "contagion",
       cooldownMs: 9000,
@@ -2212,8 +2253,8 @@ export const crystalRoundsCards: CardDefinition[] = [
     classId: "priest",
     role: "aoe",
     description:
-      "Active (7s cooldown): a weak cool-white nova around you that also slows — grows with every ally you're buffing and every enemy you have burning.",
-    flavorText: "The congregation, counted.",
+      "Active (7s cooldown): a weak cool-white slowing nova around you — grows with every ally you're buffing and every enemy you have burning.",
+    flavorText: "Everyone you lift lifts you.",
     active: {
       kind: "flock-pulse",
       cooldownMs: 7000,
@@ -2231,8 +2272,8 @@ export const crystalRoundsCards: CardDefinition[] = [
     classId: "priest",
     role: "defense",
     description:
-      "Active (6s cooldown): a small absorb barrier on yourself — deliberately weaker than what you'd cast on an ally. Solo still has a button.",
-    flavorText: "Invest outward. This is what's left for you.",
+      "Active (6s cooldown): a small absorb barrier on yourself — weaker, by design, than what you'd grant an ally.",
+    flavorText: "Give everything. Keep enough.",
     active: {
       kind: "self-lattice",
       cooldownMs: 6000,
@@ -2250,8 +2291,8 @@ export const crystalRoundsCards: CardDefinition[] = [
     classId: "priest",
     role: "defense",
     description:
-      "Active (7s cooldown): a stronger absorb barrier finds the nearest ally on its own — falls back to a weaker self-cast if nobody's close enough.",
-    flavorText: "Teams peak here. Solo still has a floor.",
+      "Active (7s cooldown): a stronger absorb barrier seeks your nearest ally — weaker self-cast if none is near.",
+    flavorText: "Armor the arm that fights beside you.",
     active: {
       kind: "glass-ward",
       cooldownMs: 7000,
@@ -2269,8 +2310,8 @@ export const crystalRoundsCards: CardDefinition[] = [
     classId: "priest",
     role: "buff",
     description:
-      "Active (7s cooldown): a haste tendril finds the nearest ally on its own — self-cast at half strength if you're alone.",
-    flavorText: "Keep pace with what I gave you.",
+      "Active (7s cooldown): a haste tendril seeks your nearest ally on its own — self-cast at half strength if alone.",
+    flavorText: "Swiftness shared is swiftness doubled.",
     active: {
       kind: "haste-gift",
       cooldownMs: 7000,
@@ -2289,8 +2330,8 @@ export const crystalRoundsCards: CardDefinition[] = [
     classId: "priest",
     role: "movement",
     description:
-      "Active (6s cooldown): a short reposition toward your aim — keep curse/gift uptime alive without leaving the fight.",
-    flavorText: "Not Interstice speed. Just enough.",
+      "Active (6s cooldown): a short step toward your aim — hold curse and gift uptime without leaving the fight.",
+    flavorText: "A step toward, never away.",
     active: {
       kind: "drift-step",
       cooldownMs: 6000,
@@ -2317,8 +2358,8 @@ export const crystalRoundsCards: CardDefinition[] = [
     classId: "ninja",
     role: "offense",
     description:
-      "Active (8s cooldown, 4s window): a landed arc hit against anyone already below 15% health finishes them outright.",
-    flavorText: "You were already gone. This just made it official.",
+      "Active (8s cooldown, 4s window): a landed arc hit on anyone below 15% health finishes them outright.",
+    flavorText: "You made the opening. Take it.",
     active: {
       kind: "undercut",
       cooldownMs: 8000,
@@ -2337,7 +2378,7 @@ export const crystalRoundsCards: CardDefinition[] = [
     classId: "ninja",
     role: "offense",
     description:
-      "Active (8s cooldown, 6s window): your next three swings emit a hard-hitting wave when they finish — a whiff still fires it, an interrupted swing doesn't.",
+      "Active (8s cooldown, 6s window): next 3 swings each finish with a heavy wave — whiffs fire it, interrupts don't.",
     flavorText: "Every cut, a little heavier than the last.",
     active: {
       kind: "edge-storm",
@@ -2357,7 +2398,7 @@ export const crystalRoundsCards: CardDefinition[] = [
     classId: "ninja",
     role: "single",
     description:
-      "Active (5s cooldown): close the last few feet on the nearest enemy and put a fast, hard shard through them — no target, no cast.",
+      "Active (5s cooldown): close the last few feet and put a fast, hard shard through the nearest enemy — no aim, no cast.",
     flavorText: "The gap was never really there.",
     active: {
       kind: "needle",
@@ -2378,8 +2419,8 @@ export const crystalRoundsCards: CardDefinition[] = [
     classId: "ninja",
     role: "single",
     description:
-      "Active (6s cooldown, 5s window): mark the nearest enemy without needing to aim at them — while marked, every arc hit you land on them cuts harder.",
-    flavorText: "I already modeled you. This is just showing my work.",
+      "Active (6s cooldown, 5s window): mark the nearest enemy — no aim. While marked, your arc hits on them cut harder.",
+    flavorText: "The blade finishes what knowing began.",
     active: {
       kind: "read-mark",
       cooldownMs: 6000,
@@ -2399,7 +2440,7 @@ export const crystalRoundsCards: CardDefinition[] = [
     role: "aoe",
     description:
       "Active (7s cooldown): a full-circle wave ring off a still blade — short radius, everyone close pays for it.",
-    flavorText: "The air kept cutting after I stopped moving.",
+    flavorText: "Stillness is not surrender.",
     active: {
       kind: "shard-ring",
       cooldownMs: 7000,
@@ -2418,7 +2459,7 @@ export const crystalRoundsCards: CardDefinition[] = [
     role: "aoe",
     description:
       "Active (7s cooldown, 9s window): your next wall-kick blooms a shard burst off the wall you left.",
-    flavorText: "The wall remembers the kick longer than you do.",
+    flavorText: "Even your leaving cuts.",
     active: {
       kind: "wall-bloom",
       cooldownMs: 7000,
@@ -2437,8 +2478,8 @@ export const crystalRoundsCards: CardDefinition[] = [
     classId: "ninja",
     role: "defense",
     description:
-      "Active (9s cooldown, 6s window): banks one near-miss — the next ordinary hit that lands while you're moving simply doesn't. Burn, void, and chain damage still get through.",
-    flavorText: "You hit where I was.",
+      "Active (9s cooldown, 6s window): while you move, the next ordinary hit doesn't land. Burn, void, chain still do.",
+    flavorText: "Motion is its own armor.",
     active: {
       kind: "ghost-guard",
       cooldownMs: 9000,
@@ -2457,7 +2498,7 @@ export const crystalRoundsCards: CardDefinition[] = [
     classId: "ninja",
     role: "buff",
     description:
-      "Active (8s cooldown, 1.5s window): land a hit in the next 1.5s for a flat burst of health and energy — not a cut of the damage dealt.",
+      "Active (8s cooldown, 1.5s window): land one hit for a flat burst of health and energy — not scaled to damage dealt.",
     flavorText: "Aggression, paid forward.",
     active: {
       kind: "second-wind",
@@ -2478,7 +2519,7 @@ export const crystalRoundsCards: CardDefinition[] = [
     role: "movement",
     description:
       "Active (7s cooldown, 3s window): your next dash carries further and marks the first body it crosses.",
-    flavorText: "Faster than the read that was supposed to catch me.",
+    flavorText: "Make the road a razor.",
     active: {
       kind: "razor-route",
       cooldownMs: 7000,
@@ -2497,8 +2538,8 @@ export const crystalRoundsCards: CardDefinition[] = [
     classId: "ninja",
     role: "movement",
     description:
-      "Active (9s cooldown): spawn a decoy sprinting your heading — dies at 20 damage or 2.5s, and its burst hits for 10 in a 90px radius and fools victims into taking +25% damage for 2s. Cast during a resonance window and you swap places with a live decoy instead.",
-    flavorText: "Same feet, same weight, same lie.",
+      "Active (9s cooldown): decoy sprints your heading, dies at 20 damage or 2.5s, bursts 10 in 90px; struck: +25% damage, 2s. Resonance cast: swap with a live decoy.",
+    flavorText: "Let them fight the echo. Arrive as the answer.",
     active: {
       kind: "paper-double",
       cooldownMs: 9000,
