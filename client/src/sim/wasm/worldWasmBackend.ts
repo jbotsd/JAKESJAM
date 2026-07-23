@@ -61,6 +61,9 @@ type WorldExports = {
    *  7 per slope (deriveSlopeStatics bits):
    *  [span_min_x, span_max_x, base_x, base_y, dy_dx, tx, ty]. */
   world_state_set_slopes?: (slopes_ptr: number, count: number) => number;
+  /** Optional — older sim.wasm builds predate spawn points (Track Z0b
+   *  Item A). Flat f64 array, 2 per point: [x, y], map.spawns order. */
+  world_state_set_spawn_points?: (points_ptr: number, count: number) => number;
   memory: WebAssembly.Memory;
 };
 
@@ -552,6 +555,25 @@ export function setWorldSlopes(slopes: ReadonlyArray<SlopeStatic>): void {
   cachedSlopes = slopes.slice();
 }
 
+/**
+ * Cache the map's spawn points (Track Z0b Item A — the Zig mirror of
+ * World.ts assignSpawnPoints needs the same point list to seat mid-round
+ * fast respawns + round-boundary respawns identically). Same cadence as
+ * setWorldStatics (World.ts syncWorldStaticsToWasm); written into the wasm
+ * module's module-level spawn array (world.zig) alongside the statics each
+ * step. Point order MUST be `map.spawns` order — the assignment's
+ * strict-`>` best-score tiebreak makes order load-bearing. Callers are
+ * responsible for TS's own no-spawns fallback (`spawns.length > 0 ?
+ * spawns : [map center]`) — world.zig has no map size to derive it.
+ */
+let cachedSpawnPoints: { x: number; y: number }[] | null = null;
+
+export function setWorldSpawnPoints(
+  points: ReadonlyArray<{ x: number; y: number }>,
+): void {
+  cachedSpawnPoints = points.map((p) => ({ x: p.x, y: p.y }));
+}
+
 const AABB_SIZE_BYTES = 32;
 
 function writeStaticsIntoMemory(): void {
@@ -625,6 +647,26 @@ function writeStaticsIntoMemory(): void {
       slopeView.setFloat64(i * 56 + 48, s.ty, true);
     }
     ex.world_state_set_slopes(slopeScratchPtr, slopeCount);
+  }
+  // Spawn points (world.zig, Track Z0b Item A). Scratch sits past the max
+  // slope region (32×56 = 1792 bytes) so statics/pads/slopes/spawns never
+  // trample each other. 2 f64 per point, order = map.spawns order. Always
+  // written when the cache is set — count 0 clears (Zig then falls back to
+  // respawn-in-place; see world.zig's assignedSpawnPoint fail-safe note).
+  if (
+    cachedSpawnPoints &&
+    typeof ex.world_state_set_spawn_points === "function"
+  ) {
+    const spawnScratchPtr =
+      scratchPtr + 256 * AABB_SIZE_BYTES + 256 + 16 * 48 + MAX_SLOPES * 56;
+    const spawnView = new DataView(ex.memory.buffer, spawnScratchPtr);
+    const spawnCount = Math.min(cachedSpawnPoints.length, 16);
+    for (let i = 0; i < spawnCount; i++) {
+      const p = cachedSpawnPoints[i]!;
+      spawnView.setFloat64(i * 16 + 0, p.x, true);
+      spawnView.setFloat64(i * 16 + 8, p.y, true);
+    }
+    ex.world_state_set_spawn_points(spawnScratchPtr, spawnCount);
   }
 }
 

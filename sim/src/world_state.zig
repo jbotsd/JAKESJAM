@@ -760,6 +760,23 @@ pub const PlayerEntity = extern struct {
     /// (types.ts:585). Plain `u32` tick, 0 = inactive, same convention as
     /// every sibling window field on this struct.
     razor_route_until_tick: u32 = 0,
+
+    /// Mid-round fast-respawn stamp (Track Z0b Item A — parity with TS
+    /// `PlayerEntity.respawnAtTick`, Jake's fast-respawn ruling
+    /// 2026-07-17): the tick this dead player re-forms at a spawn seal.
+    /// Stamped by `stepWorld`'s end-of-tick death diff (was-alive →
+    /// not-alive this tick, no stamp yet) at `tick + ceil(RESPAWN_DELAY_MS
+    /// / eff_dt)`; consumed by the same block once due, IF the round phase
+    /// is `fighting` and sudden death is NOT active (sudden death keeps
+    /// last-one-standing — no re-forming). `0` = no scheduled respawn
+    /// (unambiguous: a real stamp is always `tick + delay >= 1`), mirroring
+    /// TS's `undefined` — same sentinel convention as
+    /// `PickupEntity.respawn_at_tick`. UNLIKE the Zig-only window fields
+    /// above, this field IS bridged (worldStateBridge.ts pack/unpackPlayer
+    /// read/write offset 620): the full-sync path repacks the whole struct
+    /// every tick, so an unbridged stamp would be wiped before it ever came
+    /// due.
+    respawn_at_tick: u32 = 0,
 };
 
 /// Mirrors `ProjectileEntity`.
@@ -1815,7 +1832,21 @@ comptime {
     // @sizeOf(PlayerEntity) directly and are unaffected; a future pass with
     // client/ in scope needs to bump PLAYER_ENTITY_SIZE 616 → 624 and
     // worldStateLayout.test.ts's matching literal.
+    // 624 → 624 (Track Z0b Item A, fast-respawn round semantics): +4
+    // content bytes for `respawn_at_tick` (u32), landing exactly in the 4
+    // bytes of implicit tail padding Razor Route's own cut left behind
+    // ([620, 624) — see the 616 → 624 note immediately above) — net
+    // growth ZERO, same "reclaim the old pad" shape Ghost Guard's note
+    // above already used. worldStateBridge.ts's PLAYER_ENTITY_SIZE stays
+    // 624; its pack/unpackPlayer codecs DID grow a skip-then-read tail
+    // for the u32 at offset 620 (this field is wire-bridged, unlike the
+    // Zig-only window fields — see respawn_at_tick's own doc comment).
     std.debug.assert(@sizeOf(PlayerEntity) == 624);
+    // Bridged-field offset lock for the codec note above: packPlayer/
+    // unpackPlayer hardcode a skip from the end of the syz-ward pair
+    // (relative offset 384) to reach this field at 620 — if a future
+    // growth cut moves it, this trips before the bridge silently drifts.
+    std.debug.assert(@offsetOf(PlayerEntity, "respawn_at_tick") == 620);
     // EquippedActives (Phase 1): [3]u8 = 3 bytes, no padding (u8 array
     // needs no alignment beyond 1). Doesn't cross the wasm ABI today (see
     // its own doc comment) — pure internal regression-catching, same role

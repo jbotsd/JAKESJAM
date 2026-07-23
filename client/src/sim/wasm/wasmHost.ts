@@ -276,6 +276,19 @@ export class WasmHost {
     );
   }
 
+  /** Mirror the map's spawn points to the world backend (Track Z0b Item A
+   *  — world.zig's assignSpawnPoints port seats mid-round fast respawns
+   *  and round-boundary respawns from the same list TS reads). Module-
+   *  level in world.zig like the launch pads; zero WorldState bytes.
+   *  Callers pass TS's own no-spawns fallback (map center) — see
+   *  World.ts syncWorldStaticsToWasm. */
+  setSpawnPoints(points: ReadonlyArray<{ x: number; y: number }>): void {
+    const sliced = points.map((p) => ({ x: p.x, y: p.y }));
+    void import("./worldWasmBackend.js").then((m) =>
+      m.setWorldSpawnPoints(sliced),
+    );
+  }
+
   /**
    * Cache per-player input for the next `step()`. Replaces the
    * `globalThis.__jakesjam_wasm_inputs__` stash. The wasm step

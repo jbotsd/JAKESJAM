@@ -718,6 +718,26 @@ function packPlayer(
   off += 4;
   view.setFloat64(off, p.wardAbsorbRemaining ?? 0, true);
   off += 8;
+
+  // Zig-only tail span (world_state.zig channel_hold_ms →
+  // razor_route_until_tick, relative offsets [384, 620)) — 236 bytes this
+  // codec deliberately does NOT carry (step_world-internal ability windows;
+  // the fresh pack buffer leaves them zero). Skipped, not written, so the
+  // ONE bridged field beyond them lands at its true Zig offset. Guarded on
+  // the Zig side by a comptime `@offsetOf(PlayerEntity, "respawn_at_tick")
+  // == 620` assert next to the PLAYER_ENTITY_SIZE assert.
+  off += 236;
+
+  // respawn_at_tick (Track Z0b Item A, fast-respawn ruling 2026-07-17) —
+  // the mid-round respawn stamp, parity with world_state.zig's
+  // PlayerEntity.respawn_at_tick (which consumed the struct's former tail
+  // pad: PLAYER_ENTITY_SIZE stays 624). 0 = no scheduled respawn (a real
+  // stamp is always ≥ 1), mirroring TS `undefined` — same sentinel
+  // convention as PickupEntity.respawnAtTick. MUST round-trip: the
+  // full-sync path repacks every tick, so an unbridged stamp would be
+  // wiped before it ever came due.
+  view.setUint32(off, p.respawnAtTick ?? 0, true);
+  off += 4;
 }
 
 function unpackPlayer(view: DataView, offset: number): PlayerEntity {
@@ -853,6 +873,12 @@ function unpackPlayer(view: DataView, offset: number): PlayerEntity {
   const syzWardRemainingRaw = view.getFloat64(off, true);
   off += 8;
 
+  // Zig-only tail span + respawn_at_tick — see packPlayer's matching
+  // comments (Track Z0b Item A).
+  off += 236;
+  const respawnAtTickRaw = view.getUint32(off, true);
+  off += 4;
+
   const out: PlayerEntity = {
     id: PlayerId(id),
     characterId,
@@ -930,6 +956,9 @@ function unpackPlayer(view: DataView, offset: number): PlayerEntity {
     out.wardAbsorbUntilTick = Tick(syzWardUntilRaw);
     out.wardAbsorbRemaining = syzWardRemainingRaw;
   }
+  // 0 = no scheduled respawn (see packPlayer's respawn_at_tick comment) —
+  // decoded back to `undefined`, TS's own rest state for the field.
+  if (respawnAtTickRaw > 0) out.respawnAtTick = Tick(respawnAtTickRaw);
   return out;
 }
 

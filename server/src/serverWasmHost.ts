@@ -78,6 +78,9 @@ type WorldExports = {
    *  7 per slope (deriveSlopeStatics bits):
    *  [span_min_x, span_max_x, base_x, base_y, dy_dx, tx, ty]. */
   world_state_set_slopes?: (slopes_ptr: number, count: number) => number;
+  /** Optional — older sim.wasm builds predate spawn points (Track Z0b
+   *  Item A). Flat f64 array, 2 per point: [x, y], map.spawns order. */
+  world_state_set_spawn_points?: (points_ptr: number, count: number) => number;
   resolve_player_fire_config?: (
     state_ptr: number,
     player_index: number,
@@ -100,6 +103,7 @@ class ServerWasmHost {
   } | null = null;
   private cachedLaunchPads: LaunchPadDefinition[] | null = null;
   private cachedSlopes: SlopeStatic[] | null = null;
+  private cachedSpawnPoints: { x: number; y: number }[] | null = null;
   private cachedTargetScore: number | null = null;
   private preloadPromise: Promise<void> | null = null;
   private resolvedReady = false;
@@ -198,6 +202,15 @@ class ServerWasmHost {
     this.cachedSlopes = deriveSlopeStatics(slopes);
   }
 
+  /** Spawn points (map.spawns, world.zig module-level — Track Z0b Item A:
+   *  the Zig assignSpawnPoints port seats mid-round fast respawns +
+   *  round-boundary respawns from the same list the TS respawn path
+   *  reads). Point ORDER is load-bearing (strict-`>` tiebreak). Callers
+   *  pass TS's own no-spawns fallback (map center) — see matchHost. */
+  setSpawnPoints(points: ReadonlyArray<{ x: number; y: number }>): void {
+    this.cachedSpawnPoints = points.map((p) => ({ x: p.x, y: p.y }));
+  }
+
   /** Match win-target. Track Z0a port of orphaned-branch commit 02b74f5 —
    *  see the matching client-side setWorldTargetScore comment:
    *  world_state_set_target_score existed as an export but nothing ever
@@ -256,6 +269,7 @@ class ServerWasmHost {
     this.writeArenaBoundsIntoMemory();
     this.writeLaunchPadsIntoMemory();
     this.writeSlopesIntoMemory();
+    this.writeSpawnPointsIntoMemory();
     this.writeInputsIntoMemory();
     const rc = ex.step_world(statePtr, dtMs);
     if (rc !== 0) {
@@ -282,6 +296,7 @@ class ServerWasmHost {
     this.cachedInputs = null;
     this.cachedLaunchPads = null;
     this.cachedSlopes = null;
+    this.cachedSpawnPoints = null;
     this.cachedTargetScore = null;
     this.preloadPromise = null;
     this.resolvedReady = false;
@@ -414,6 +429,26 @@ class ServerWasmHost {
       view.setFloat64(i * 56 + 48, s.ty, true);
     }
     this.ex.world_state_set_slopes(slopeScratchPtr, count);
+  }
+
+  /** Spawn points (world.zig module-level, Track Z0b Item A). Scratch sits
+   *  past the max slope region (32×56 = 1792 bytes past the slope scratch)
+   *  — statics, pads, slopes and spawns never trample each other. 2 f64
+   *  per point, map.spawns order (mirrors the client backend's write).
+   *  Count 0 clears (Zig then falls back to respawn-in-place). */
+  private writeSpawnPointsIntoMemory(): void {
+    if (!this.cachedSpawnPoints || !this.ex || this.statePtr === null) return;
+    if (typeof this.ex.world_state_set_spawn_points !== "function") return;
+    const scratchPtr = this.statePtr + WORLD_STATE_TOTAL_SIZE + 64;
+    const spawnScratchPtr = scratchPtr + 256 * 32 + 256 + 16 * 48 + MAX_SLOPES * 56;
+    const view = new DataView(this.ex.memory.buffer, spawnScratchPtr);
+    const count = Math.min(this.cachedSpawnPoints.length, 16);
+    for (let i = 0; i < count; i++) {
+      const p = this.cachedSpawnPoints[i]!;
+      view.setFloat64(i * 16 + 0, p.x, true);
+      view.setFloat64(i * 16 + 8, p.y, true);
+    }
+    this.ex.world_state_set_spawn_points(spawnScratchPtr, count);
   }
 
   private writeInputsIntoMemory(): void {

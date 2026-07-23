@@ -65,6 +65,7 @@ import {
   setWorldArenaBounds,
   setWorldLaunchPads,
   setWorldSlopes,
+  setWorldSpawnPoints,
   setWorldTargetScore,
 } from "../worldWasmBackend";
 import { wasmHost } from "../wasmHost";
@@ -239,6 +240,11 @@ async function runOneSeed(seed: number): Promise<{
   );
   setWorldLaunchPads([]);
   setWorldSlopes([]);
+  // Spawn points (Track Z0b Item A) — mirrors syncWorldStaticsToWasm's new
+  // production wiring so Zig's mid-round fast respawn seats players at the
+  // SAME assignSpawnPoints seals TS uses (and pins the module cache per
+  // seed run, same discipline as the other setters above).
+  setWorldSpawnPoints(MAP.spawns);
   // Match win-target — mirrors matchHost's Z0a wiring (and pins the module
   // cache: suddenDeathTriggerParity.test.ts sets 3 in this same process).
   // TS's stepWithRuntime reads the identical resolveModeConfig value.

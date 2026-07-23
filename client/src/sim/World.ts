@@ -1298,6 +1298,17 @@ export function syncWorldStaticsToWasm(map: MapDefinition): void {
   // step_world path; the step_player backend re-writes slopes per call
   // from the collision cache regardless.
   wasmHost.setSlopes(map.slopes ?? []);
+  // Spawn points (Track Z0b Item A) — same host-set pattern; the Zig
+  // assignSpawnPoints port seats respawns from the same list this file's
+  // own assignSpawnPoints reads. The no-spawns fallback is applied HERE
+  // (TS's `map.spawns.length > 0 ? map.spawns : [center]`, from
+  // assignSpawnPoints itself) because world.zig has no map size to derive
+  // the center from.
+  wasmHost.setSpawnPoints(
+    map.spawns.length > 0
+      ? map.spawns
+      : [{ x: map.size.x / 2, y: map.size.y / 2 }],
+  );
 }
 
 /**
