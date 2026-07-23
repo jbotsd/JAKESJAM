@@ -2064,6 +2064,18 @@ pub export fn offset_player_fire_config() u32 {
     return @intCast(@offsetOf(WorldState, "player_fire_config"));
 }
 
+/// Byte offset of `player_movement[0]` from the start of `WorldState`
+/// (Track Z0e). The TS bridge packs/unpacks this parallel array every
+/// full-sync tick — coyote/jump-buffer/grounded/dash memory must SURVIVE
+/// the repack or stepPlayer runs permanently amnesiac (air-acceleration
+/// on the ground, no ground friction, ground jumps impossible). The
+/// bridge computes its own offset from the layout constants; this export
+/// exists so a layout test can assert the two derivations agree before
+/// any behavioral test has the chance to fail confusingly.
+pub export fn offset_player_movement() u32 {
+    return @intCast(@offsetOf(WorldState, "player_movement"));
+}
+
 pub export fn world_state_max_players() u32 {
     return @intCast(MAX_PLAYERS);
 }

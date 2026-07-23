@@ -39,6 +39,7 @@ import {
   type ProjectileImpact,
   type ProjectilePathing,
   type ProjectileShape,
+  type PlayerMovementMemory,
   type RoundPhase,
   type RoundState,
   type SatelliteEntity,
@@ -167,10 +168,11 @@ const PAPER_DOUBLE_ENTITY_SIZE = 96;
 const MAX_PAPER_DOUBLES = 16;
 // Must match sim/src/world_state.zig PlayerMovementMemory @sizeOf. Grew 24→40
 // with the deep-movement augment memory (dash timers + counters), then 40→48
-// with dash_recovery_ms (slide endlag); the TS bridge skips the array's
-// contents but MUST advance by the correct stride or every field after it
-// mis-aligns.
-const PLAYER_MOVEMENT_MEMORY_SIZE = 48;
+// with dash_recovery_ms (slide endlag). BRIDGED as of Track Z0e — the
+// pack/unpack pair below reads and writes the array's contents (see
+// packMovementMemory/unpackMovementMemory for the field offsets), so this
+// stride is now both the skip distance AND the per-slot layout size.
+export const PLAYER_MOVEMENT_MEMORY_SIZE = 48;
 // Melee swing FSM memory (2026-07-20 base-melee-mechanic gap-closure pass)
 // — parallel to players[], host-only/off-wire like PlayerMovementMemory.
 // Must match world_state.zig's MeleeSwingMemory @sizeOf.
@@ -265,6 +267,98 @@ export const WORLD_STATE_TOTAL_SIZE =
   // it, and this field's offset comes out 8-aligned on its own. + N×SimEvent.
   ARRAY_PREAMBLE +
   64 * 40;
+
+// Byte offset of `player_movement[0]` within the packed WorldState
+// (Track Z0e). Bridged (packed AND unpacked) since Z0e: the full-sync
+// hosts overwrite the whole wasm-side WorldState buffer with
+// packWorldState's output every tick, and before this array was bridged
+// that pack left it ZERO-FILLED — Zig's stepPlayer ran every tick with
+// grounded_last_frame=false and blank coyote/jump-buffer/air-jump/dash
+// memory (air-acceleration on the ground, no ground friction, ground
+// jumps impossible). Must equal wasm's `offset_player_movement()` export
+// — movementMemoryBridge.test.ts asserts the two derivations agree.
+export const PLAYER_MOVEMENT_OFFSET =
+  HEADER_SIZE +
+  ARRAY_PREAMBLE +
+  MAX_PLAYERS * PLAYER_ENTITY_SIZE +
+  ARRAY_PREAMBLE +
+  MAX_PROJECTILES * PROJECTILE_ENTITY_SIZE +
+  ARRAY_PREAMBLE +
+  MAX_SATELLITES * SATELLITE_ENTITY_SIZE +
+  ARRAY_PREAMBLE +
+  MAX_DESTRUCTIBLES * DESTRUCTIBLE_ENTITY_SIZE +
+  ARRAY_PREAMBLE +
+  MAX_FIRE * FIRE_ENTITY_SIZE +
+  ARRAY_PREAMBLE +
+  MAX_PICKUPS * PICKUP_ENTITY_SIZE +
+  ARRAY_PREAMBLE +
+  MAX_PAPER_DOUBLES * PAPER_DOUBLE_ENTITY_SIZE;
+
+/** Pack one PlayerMovementMemory into its 48-byte slot. Field offsets
+ *  follow world_state.zig's PlayerMovementMemory extern struct exactly:
+ *  five f64s (coyote, buffer, dash cooldown/active/recovery), then four
+ *  u8 flags, then three i8 counters, then one pad byte. */
+function packMovementMemory(
+  view: DataView,
+  offset: number,
+  m: PlayerMovementMemory,
+): void {
+  view.setFloat64(offset + 0, m.coyoteMs, true);
+  view.setFloat64(offset + 8, m.jumpBufferMs, true);
+  view.setFloat64(offset + 16, m.dashCooldownMs, true);
+  view.setFloat64(offset + 24, m.dashActiveMs, true);
+  view.setFloat64(offset + 32, m.dashRecoveryMs, true);
+  view.setUint8(offset + 40, m.jumpCutApplied ? 1 : 0);
+  view.setUint8(offset + 41, m.jumpReleasedSinceJump ? 1 : 0);
+  view.setUint8(offset + 42, m.groundedLastFrame ? 1 : 0);
+  view.setUint8(offset + 43, m.jetpackActive ? 1 : 0);
+  view.setInt8(offset + 44, m.touchingWallDir);
+  view.setInt8(offset + 45, m.airJumpsUsed);
+  view.setInt8(offset + 46, m.dashUsedInAir);
+  // offset + 47: _pad — left zero (buf starts zero-filled).
+}
+
+function unpackMovementMemory(
+  view: DataView,
+  offset: number,
+): PlayerMovementMemory {
+  return {
+    coyoteMs: view.getFloat64(offset + 0, true),
+    jumpBufferMs: view.getFloat64(offset + 8, true),
+    dashCooldownMs: view.getFloat64(offset + 16, true),
+    dashActiveMs: view.getFloat64(offset + 24, true),
+    dashRecoveryMs: view.getFloat64(offset + 32, true),
+    jumpCutApplied: view.getUint8(offset + 40) !== 0,
+    jumpReleasedSinceJump: view.getUint8(offset + 41) !== 0,
+    groundedLastFrame: view.getUint8(offset + 42) !== 0,
+    jetpackActive: view.getUint8(offset + 43) !== 0,
+    touchingWallDir: view.getInt8(offset + 44),
+    airJumpsUsed: view.getInt8(offset + 45),
+    dashUsedInAir: view.getInt8(offset + 46),
+  };
+}
+
+/** The bytes a NEW player's slot gets when `state.movementMemory` has no
+ *  entry for them — the exact mirror of player.ts's
+ *  `freshPlayerMovementMemory()` (which the TS runtime lazily seeds for
+ *  an unseen player): all zeros EXCEPT jumpReleasedSinceJump=true. A
+ *  zero-filled slot (the pre-Z0e status quo) differs in that one byte —
+ *  fresh-TS applies the jump-cut to an already-rising player, zeroed
+ *  does not — so the fresh default is written explicitly. */
+const FRESH_MOVEMENT_MEMORY: PlayerMovementMemory = {
+  coyoteMs: 0,
+  jumpBufferMs: 0,
+  jumpCutApplied: false,
+  jumpReleasedSinceJump: true,
+  groundedLastFrame: false,
+  jetpackActive: false,
+  touchingWallDir: 0,
+  airJumpsUsed: 0,
+  dashCooldownMs: 0,
+  dashUsedInAir: 0,
+  dashActiveMs: 0,
+  dashRecoveryMs: 0,
+};
 
 // -----------------------------------------------------------------
 // Enum tables. Order MUST match the enum(u8) declarations in
@@ -1705,6 +1799,28 @@ export function packWorldState(state: WorldState): Uint8Array {
     packPickup(view, pickupStart + i * PICKUP_ENTITY_SIZE, pickups[i]!);
   }
 
+  // player_movement parallel array (Track Z0e) — packed by SORTED player
+  // order (the same `players` array the entity loop above wrote, so slot
+  // N's movement memory always sits under players[N] even when the
+  // roster changed since last tick). Before Z0e this region was left
+  // zero-filled and the full-sync hosts' every-tick repack therefore
+  // WIPED Zig's movement memory every single tick — the dominant
+  // movement-fork term in the multiSeedDivergence sweep and a real
+  // live-mode bug for both wasm hosts (see WorldState.movementMemory's
+  // doc comment in types.ts). Missing entries (fresh match, new joiner,
+  // TS-authored states that never ran through unpack) get the
+  // freshPlayerMovementMemory() equivalent — the same default the TS
+  // runtime lazily seeds for an unseen player.
+  for (let i = 0; i < players.length; i++) {
+    const mem =
+      state.movementMemory?.[players[i]!.id] ?? FRESH_MOVEMENT_MEMORY;
+    packMovementMemory(
+      view,
+      PLAYER_MOVEMENT_OFFSET + i * PLAYER_MOVEMENT_MEMORY_SIZE,
+      mem,
+    );
+  }
+
   return buf;
 }
 
@@ -1762,6 +1878,12 @@ export type UnpackedWorldState = {
   destructibles: Record<EntityId, DestructibleEntity>;
   firePatches: Record<EntityId, FireEntity>;
   pickups: Record<EntityId, PickupEntity>;
+  /** Zig's post-step `player_movement` parallel array, re-keyed by player
+   *  id (Track Z0e). The hosts' mergeUnpacked carries this onto the
+   *  returned WorldState so the NEXT tick's packWorldState can write it
+   *  back — the round-trip that lets movement memory survive the
+   *  every-tick full-sync repack. */
+  movementMemory: Record<PlayerId, PlayerMovementMemory>;
 };
 
 export function unpackWorldState(buf: Uint8Array): UnpackedWorldState {
@@ -1812,9 +1934,17 @@ export function unpackWorldState(buf: Uint8Array): UnpackedWorldState {
   off += 4;
   off += 4;
   const playersStart = off;
+  // Slot-order id list (Track Z0e): index N here is the id packPlayer
+  // wrote into entity slot N — the movement-memory section below re-keys
+  // the `player_movement` parallel array by these EXACT slot ids rather
+  // than re-deriving a sort (pack uses localeCompare, the score loop
+  // uses default sort; reading the slots directly can't drift from
+  // either).
+  const playerIdBySlot: PlayerId[] = [];
   for (let i = 0; i < playerCount; i++) {
     const e = unpackPlayer(view, playersStart + i * PLAYER_ENTITY_SIZE);
     players[e.id] = e;
+    playerIdBySlot.push(e.id);
   }
   off = playersStart + MAX_PLAYERS * PLAYER_ENTITY_SIZE;
 
@@ -1899,8 +2029,20 @@ export function unpackWorldState(buf: Uint8Array): UnpackedWorldState {
   // spawns these).
   off += 8 + MAX_PAPER_DOUBLES * PAPER_DOUBLE_ENTITY_SIZE;
 
-  // I14 player_movement parallel array — 16 × 48 bytes. Skipped
-  // for now (host doesn't consume; lives in wasm linear memory).
+  // I14 player_movement parallel array — 16 × 48 bytes. BRIDGED as of
+  // Track Z0e (was skipped, which combined with the hosts' every-tick
+  // full-buffer repack to zero Zig's movement memory every tick): read
+  // back per live slot, keyed by that slot's player id, so
+  // packWorldState can re-seat it under the same player next tick even
+  // if the roster (and thus sorted slot order) changed in between.
+  const movementMemory: Record<PlayerId, PlayerMovementMemory> =
+    {} as Record<PlayerId, PlayerMovementMemory>;
+  for (let i = 0; i < playerIdBySlot.length; i++) {
+    movementMemory[playerIdBySlot[i]!] = unpackMovementMemory(
+      view,
+      off + i * PLAYER_MOVEMENT_MEMORY_SIZE,
+    );
+  }
   off += MAX_PLAYERS * PLAYER_MOVEMENT_MEMORY_SIZE;
 
   // Melee swing FSM memory (2026-07-20 base-melee-mechanic gap-closure
@@ -2002,6 +2144,7 @@ export function unpackWorldState(buf: Uint8Array): UnpackedWorldState {
     firePatches,
     pickups,
     events,
+    movementMemory,
   };
   if (chaosModifierIds.length > 0) out.chaosModifierIds = chaosModifierIds;
   if (fireHazardTimerMs !== 0) out.fireHazardTimerMs = fireHazardTimerMs;

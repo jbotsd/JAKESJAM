@@ -1291,6 +1291,50 @@ export type RoundState = {
   suddenDeathActive?: boolean;
 };
 
+/**
+ * Per-player movement memory the entity itself doesn't carry — coyote
+ * time, jump buffer, jump-cut flag, grounded-last-frame, wall contact,
+ * dash timers/counters. CANONICAL definition (moved here from player.ts
+ * in Track Z0e so `WorldState.movementMemory` below can reference it
+ * without a types.ts → player.ts import cycle; player.ts re-exports it,
+ * so every existing `import { type PlayerMovementMemory } from
+ * "./player.js"` site still compiles unchanged).
+ *
+ * Two carriers exist, one per orchestrator:
+ *  - TS path: `WorldRuntime.movement` (World.ts) — a host-side Map keyed
+ *    by PlayerId, persists across state-object replacement for the whole
+ *    match. Never stored on WorldState on this path.
+ *  - Zig full-sync path: `WorldState.movementMemory` (below) — the
+ *    bridge round-trips Zig's `player_movement` parallel array through
+ *    the TS state object so it survives the every-tick repack.
+ */
+export type PlayerMovementMemory = {
+  coyoteMs: number;
+  jumpBufferMs: number;
+  jumpCutApplied: boolean;
+  jumpReleasedSinceJump: boolean;
+  groundedLastFrame: boolean;
+  /** Legacy field (jetpack removed). Kept for wasm struct ABI stability;
+   *  always false now. */
+  jetpackActive: boolean;
+  /** Wall the player was in contact with LAST tick: -1 wall on the left,
+   *  +1 wall on the right, 0 none. Read this tick to decide wall-jump / slide;
+   *  recomputed from the collision resolve at the end of the tick. */
+  touchingWallDir: number;
+  /** Mid-air jumps consumed since last grounded (double-jump card). */
+  airJumpsUsed: number;
+  /** Remaining dash cooldown (ms). */
+  dashCooldownMs: number;
+  /** Air dashes consumed since last grounded. */
+  dashUsedInAir: number;
+  /** Remaining dash burst window (ms) — while >0 the max-speed clamp is raised
+   *  to DASH_SPEED and friction is suspended so the burst carries. */
+  dashActiveMs: number;
+  /** Remaining recovery endlag (ms) after a burst ends — steering accel is
+   *  reduced (DASH_RECOVERY_ACCEL_MULT) so a whiffed slide can be punished. */
+  dashRecoveryMs: number;
+};
+
 export type WorldState = {
   tick: Tick;
   rngState: number;
@@ -1328,6 +1372,35 @@ export type WorldState = {
    * so each round starts clean. Absent when no fire hazard is active.
    */
   fireHazardTimerMs?: number;
+  /**
+   * Zig full-sync path ONLY (Track Z0e): per-player movement memory
+   * bridged across the every-tick WorldState repack. The wasm hosts
+   * (client `runWasmStepSync`, server `serverWasmHost.step`) overwrite
+   * the ENTIRE wasm-side WorldState buffer with `packWorldState(state)`
+   * before every `step_world` call — before this field existed, that
+   * pack left the `player_movement` parallel array zero-filled, so Zig's
+   * stepPlayer ran every tick with `grounded_last_frame=false` and blank
+   * coyote/jump-buffer/air-jump/dash memory: air-acceleration on the
+   * ground, no ground friction ever, ground jumps IMPOSSIBLE (every jump
+   * branch gates on grounded/coyote memory). Now `unpackWorldState`
+   * reads the array back after each step and `packWorldState` re-packs
+   * it, so the memory travels WITH the state object — the exact
+   * "unbridged Zig-owned state gets wiped by the next tick's pack" bug
+   * class PlayerEntity.respawn_at_tick's bridge comment documents.
+   *
+   * Keyed by PlayerId (the pack re-seats slots by sorted-id order every
+   * tick, so roster changes can't misalign the parallel array). Missing
+   * entries pack as `freshPlayerMovementMemory()` equivalents — the same
+   * default the TS runtime lazily seeds for an unseen player.
+   *
+   * Optional/additive per this file's established contract
+   * (`paperDoubles`/`chaosModifierIds` above). OFF-WIRE: snapshotDelta's
+   * `encodeDelta` whitelists fields explicitly and does not include this
+   * one — same host-only/off-wire truth contract as the TS path's
+   * `WorldRuntime.movement` Map. The TS orchestrator never reads or
+   * writes it.
+   */
+  movementMemory?: Record<PlayerId, PlayerMovementMemory>;
 };
 
 export type SimEvent = (

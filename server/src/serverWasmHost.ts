@@ -534,6 +534,10 @@ function mergeUnpacked(
     projectiles: stableMergeRecord(state.projectiles, unpacked.projectiles),
     satellites: stableMergeRecord(state.satellites, unpacked.satellites),
     pickups: stableMergeRecord(state.pickups, unpacked.pickups),
+    // Zig's movement memory rides the state object between packs (Track
+    // Z0e) — REPLACED wholesale each tick (Zig's own post-step truth,
+    // keyed by id). Mirrors the client backend's mergeUnpacked exactly.
+    movementMemory: unpacked.movementMemory,
   };
 }
 

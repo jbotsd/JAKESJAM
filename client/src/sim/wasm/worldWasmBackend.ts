@@ -233,6 +233,12 @@ function mergeUnpacked(
     projectiles: stableMergeRecord(state.projectiles, unpacked.projectiles),
     satellites: stableMergeRecord(state.satellites, unpacked.satellites),
     pickups: stableMergeRecord(state.pickups, unpacked.pickups),
+    // Zig's movement memory rides the state object between packs (Track
+    // Z0e) — REPLACED wholesale each tick (it's Zig's own post-step
+    // truth, keyed by id; a spread-merge would resurrect departed
+    // players' slots). No stableMergeRecord: nothing renders from it, so
+    // referential churn costs nothing.
+    movementMemory: unpacked.movementMemory,
   };
 }
 

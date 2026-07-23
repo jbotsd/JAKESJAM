@@ -238,31 +238,23 @@ describe("serverWasmHost — B3 contract", () => {
     // the wasm player pass grounds/projects on them, and across N ticks
     // the positions are EXACTLY the TS stepPlayer trajectory.
     //
-    // The TS mirror replicates the full-cycle wasm quirk that the packed
-    // player_movement region is re-zeroed by every pack (movement memory
-    // lives in wasm linear memory; packWorldState allocates a fresh
-    // zeroed buffer) — so the reference steps with ZEROED memory per
-    // tick, exactly what step_world sees. NOTE: zeroed ≠
-    // freshPlayerMovementMemory() — fresh sets jumpReleasedSinceJump=true
-    // which jump-cuts any rising velocity every tick; the packed region
-    // is all-zero (false).
-    const { stepPlayer, setStepPlayerBackend } = await import("@sim/player.ts");
+    // The TS mirror carries movement memory across ticks, exactly like
+    // the wasm full-sync cycle does since Track Z0e: the bridge now
+    // packs/unpacks the player_movement parallel array and
+    // serverWasmHost's mergeUnpacked rides it on the state object, so
+    // step_world sees PERSISTENT memory (starting from the
+    // freshPlayerMovementMemory() defaults an absent
+    // `state.movementMemory` packs). This comment used to document the
+    // OPPOSITE — "the reference steps with ZEROED memory per tick,
+    // exactly what step_world sees" — which was a faithful mirror of a
+    // real bug (the pack re-zeroed Zig's movement memory every tick:
+    // air-acceleration on the ground, no ground friction, ground jumps
+    // impossible). Z0e fixed the bug; the reference follows the live
+    // semantics.
+    const { stepPlayer, setStepPlayerBackend, freshPlayerMovementMemory } =
+      await import("@sim/player.ts");
     const { buildStaticCache } = await import("@sim/collision.ts");
     setStepPlayerBackend(null);
-    const zeroedMemory = () => ({
-      coyoteMs: 0,
-      jumpBufferMs: 0,
-      jumpCutApplied: false,
-      jumpReleasedSinceJump: false,
-      groundedLastFrame: false,
-      jetpackActive: false,
-      touchingWallDir: 0,
-      airJumpsUsed: 0,
-      dashCooldownMs: 0,
-      dashUsedInAir: 0,
-      dashActiveMs: 0,
-      dashRecoveryMs: 0,
-    });
 
     const mkPlayer = (id: string, x: number): PlayerEntity => ({
       id: PlayerId(id),
@@ -318,23 +310,26 @@ describe("serverWasmHost — B3 contract", () => {
           ]),
         );
 
-        // TS reference — same statics, same slope, fresh memory per tick.
+        // TS reference — same statics, same slope, memory THREADED across
+        // ticks (Track Z0e: the wasm cycle persists it now too).
         const cache = buildStaticCache(
           [{ id: "floor", kind: "floor", position: { x: 640, y: 620 }, size: { x: 1280, y: 40 } }],
           1280, 720,
           [sc.slope],
         );
         let ref: PlayerEntity = mover;
+        let refMem = freshPlayerMovementMemory();
         let groundedProjectionTicks = 0;
         for (let t = 0; t < 60; t++) {
           const result = serverWasmHost.step(state, DT);
           state = result.state;
           const r = stepPlayer(
             ref, sc.keys, sc.keys, ref.aimX, ref.aimY,
-            zeroedMemory(), [], DT,
+            refMem, [], DT,
             { collisionCache: cache },
           );
           ref = r.player;
+          refMem = r.memory;
           const w = state.players[PlayerId("a")]!;
           expect(w.x, `${sc.name} t=${t} x`).toBe(ref.x);
           expect(w.y, `${sc.name} t=${t} y`).toBe(ref.y);
