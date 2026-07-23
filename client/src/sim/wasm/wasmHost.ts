@@ -103,6 +103,10 @@ export type ResolvedFireConfigBytes = {
   dashCooldownMultiplier: number;
   mirrorShield: number; // 0/1
   directionalShield: number; // 0/1
+  /** Fully-resolved fire recoil (Track Z0c Item A) — recoilImpulse ×
+   *  projectile.recoilMultiplier, mirroring world_state.zig's appended
+   *  `recoil_impulse` (offset 240). */
+  recoilImpulse: number;
 };
 
 /**

@@ -148,6 +148,12 @@ export const HEADER_SIZE = 56;
 // this port grows the struct instead. Packed/unpacked like
 // respawn_at_tick (TS's weapon.ts toggles the SAME field on the
 // TS-authoritative path — both sides must share one parity bit).
+// 632 → 632 (Track Z0c Item A, Recoil Step deferral close-out):
+// recoil_step_until_tick (u32) reclaimed the last 4 bytes of the muzzle
+// port's explicit tail pad ([628, 632); _pad_throw_hand [7]u8 → [3]u8) —
+// net zero. Packed/unpacked like respawn_at_tick (the window must survive
+// the full-sync repack, and TS's ability cast opens the same window on the
+// TS-authoritative path).
 export const PLAYER_ENTITY_SIZE = 632;
 const PROJECTILE_ENTITY_SIZE = 216;
 const SATELLITE_ENTITY_SIZE = 96;
@@ -172,7 +178,7 @@ const MELEE_SWING_MEMORY_SIZE = 32;
 // I-final — ResolvedFireConfig parallel array (per-player fire
 // build resolved by the host from createWeaponBuild). 14 × f64 +
 // 4 × u32 + 4 × u8(enum) + 1 × u8(valid) + 3 × u8(pad) = 136.
-export const RESOLVED_FIRE_CONFIG_SIZE = 240; // +14 augment fields (movement/shield/parry) +dash_cooldown_mul
+export const RESOLVED_FIRE_CONFIG_SIZE = 248; // +14 augment fields (movement/shield/parry) +dash_cooldown_mul +recoil_impulse (Z0c Item A)
 // Ability-slot equipment / card hand / per-round draft bookkeeping (Phase 2,
 // docs/zig-step-world-parity-goal.md — draft/offer-roll system). Parallel to
 // players[], host-only/off-wire like the rows above. Must match
@@ -755,12 +761,21 @@ function packPlayer(
   // (toggled once per FIRE EVENT; the muzzle position + fired angle
   // derive from it on both sides). `?? 1` mirrors TS's own unset
   // convention (`(throwHandParity ?? 1) ^ 1` — the first-ever shot
-  // toggles to hand 0). 7 explicit tail-pad bytes mirror world_state.zig's
-  // `_pad_throw_hand` exactly (625 → 632).
+  // toggles to hand 0). 3 explicit pad bytes mirror world_state.zig's
+  // `_pad_throw_hand` (625 → 628; shrunk from 7 when Z0c Item A reclaimed
+  // the tail for recoil_step_until_tick below).
   view.setUint8(off, (p.throwHandParity ?? 1) & 1);
   off += 1;
-  for (let i = 0; i < 7; i++) view.setUint8(off + i, 0);
-  off += 7;
+  for (let i = 0; i < 3; i++) view.setUint8(off + i, 0);
+  off += 3;
+
+  // recoil_step_until_tick (Track Z0c Item A — Recoil Step's rider
+  // window, the closed Phase 4a deferral). Bridged for the same reason as
+  // respawn_at_tick: the full-sync path repacks every tick, so an
+  // unbridged window would be wiped mid-flight. 0 = inactive, mirroring
+  // TS `undefined`.
+  view.setUint32(off, p.recoilStepUntilTick ?? 0, true);
+  off += 4;
 }
 
 function unpackPlayer(view: DataView, offset: number): PlayerEntity {
@@ -896,14 +911,17 @@ function unpackPlayer(view: DataView, offset: number): PlayerEntity {
   const syzWardRemainingRaw = view.getFloat64(off, true);
   off += 8;
 
-  // Zig-only tail span + respawn_at_tick + throw_hand_parity — see
-  // packPlayer's matching comments (Track Z0b Items A + B).
+  // Zig-only tail span + respawn_at_tick + throw_hand_parity +
+  // recoil_step_until_tick — see packPlayer's matching comments (Track
+  // Z0b Items A + B, Z0c Item A).
   off += 236;
   const respawnAtTickRaw = view.getUint32(off, true);
   off += 4;
   const throwHandParityRaw = view.getUint8(off) & 1;
   off += 1;
-  off += 7; // _pad_throw_hand
+  off += 3; // _pad_throw_hand
+  const recoilStepUntilTickRaw = view.getUint32(off, true);
+  off += 4;
 
   const out: PlayerEntity = {
     id: PlayerId(id),
@@ -985,6 +1003,10 @@ function unpackPlayer(view: DataView, offset: number): PlayerEntity {
   // 0 = no scheduled respawn (see packPlayer's respawn_at_tick comment) —
   // decoded back to `undefined`, TS's own rest state for the field.
   if (respawnAtTickRaw > 0) out.respawnAtTick = Tick(respawnAtTickRaw);
+  // 0 = no live Recoil Step window (Z0c Item A), same sentinel → undefined
+  // decode as respawnAtTick above.
+  if (recoilStepUntilTickRaw > 0)
+    out.recoilStepUntilTick = Tick(recoilStepUntilTickRaw);
   // Always-carried (unlike the sentinel above): 0 and 1 are both real
   // hands, and TS's `?? 1` unset convention was already normalized at
   // pack time — see packPlayer's throw_hand_parity comment.

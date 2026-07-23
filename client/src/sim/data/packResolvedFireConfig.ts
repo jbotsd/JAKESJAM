@@ -104,5 +104,11 @@ export function packResolvedFireConfig(
     dashCooldownMultiplier: build.dashCooldownMultiplier,
     mirrorShield: build.mirrorShield ? 1 : 0,
     directionalShield: build.directionalShield ? 1 : 0,
+    // Fully-resolved fire recoil (Track Z0c Item A) — the exact product
+    // weapon.ts:600-604 computes from the build at fire time: clamped
+    // build.recoilImpulse × the per-projectile recoilMultiplier channel.
+    // Chaos / Recoil Step / chassis recoil-control stay fire-time terms on
+    // both sides (see ResolvedFireConfig.recoil_impulse's Zig doc comment).
+    recoilImpulse: build.recoilImpulse * (p.recoilMultiplier ?? 1),
   };
 }

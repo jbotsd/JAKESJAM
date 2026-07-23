@@ -5,6 +5,7 @@
 pub const CardMod = struct {
     damage_mul: f64 = 1,
     fire_rate_mul: f64 = 1,
+    recoil_mul: f64 = 1,
     projectile_speed_mul: f64 = 1,
     spread_radians_add: f64 = 0,
     spread_radians_set: ?f64 = null,
@@ -30,6 +31,7 @@ pub const CardMod = struct {
     proj_homing_add: f64 = 0,
     proj_speed_mul: f64 = 1,
     proj_size_mul: f64 = 1,
+    proj_recoil_mul: f64 = 1,
     proj_lifetime_mul: f64 = 1,
     proj_shape: ?u8 = null,
     proj_element: ?u8 = null,
@@ -215,11 +217,13 @@ pub const StarterBase = struct {
     pub const projectile_speed: f64 = 650.0;
     pub const projectile_lifetime_seconds: f64 = 1.2;
     pub const spread_radians: f64 = 0.03;
+    pub const recoil_impulse: f64 = 95.0;
     pub const p_shape: u8 = 3;
     pub const p_count: f64 = 1.0;
     pub const p_range_px: f64 = 720.0;
     pub const p_speed_mul: f64 = 1.0;
     pub const p_size_mul: f64 = 1.0;
+    pub const p_recoil_mul: f64 = 1.0;
     pub const p_pathing: u8 = 0;
     pub const p_element: u8 = 0;
     pub const p_impact: u8 = 0;
@@ -235,7 +239,7 @@ pub const StarterBase = struct {
 };
 
 pub const cards = [_]CardEntry{
-    .{ .id = "raycast-prism", .mod = .{ .damage_mul = 0.9, .delivery = 1, .proj_range_px_set = 880.0, .proj_impact_radius_set = 12.0 }, .meta = .{ .unique = true, .rarity = .rare, .buckets = .{ .delivery = true } } },
+    .{ .id = "raycast-prism", .mod = .{ .damage_mul = 0.9, .recoil_mul = 0.8, .delivery = 1, .proj_range_px_set = 880.0, .proj_impact_radius_set = 12.0 }, .meta = .{ .unique = true, .rarity = .rare, .buckets = .{ .delivery = true } } },
     .{ .id = "crystal-volley", .mod = .{ .damage_mul = 1.06, .delivery = 0, .proj_speed_mul = 1.06, .proj_shape = 3, .proj_count_set = 1.0 }, .meta = .{ .unique = true, .rarity = .common, .buckets = .{ .delivery = true } } },
     .{ .id = "circle-rounds", .mod = .{ .projectile_speed_mul = 1.1, .delivery = 0, .proj_size_mul = 0.92, .proj_shape = 0, .proj_range_px_set = 480.0 }, .meta = .{ .unique = true, .rarity = .common, .buckets = .{ .shape = true } } },
     .{ .id = "triangle-rounds", .mod = .{ .projectile_speed_mul = 0.95, .delivery = 0, .proj_lifetime_mul = 1.4, .proj_shape = 1, .proj_range_px_set = 1080.0 }, .meta = .{ .unique = true, .rarity = .common, .buckets = .{ .shape = true } } },
@@ -244,7 +248,7 @@ pub const cards = [_]CardEntry{
     .{ .id = "i-rounds", .mod = .{ .projectile_speed_mul = 0.78, .delivery = 0, .proj_lifetime_mul = 1.15, .proj_shape = 6, .proj_pathing = 7, .proj_acceleration_mul_set = 1.4 }, .meta = .{ .unique = true, .rarity = .uncommon, .buckets = .{ .shape = true, .trajectory = true } } },
     .{ .id = "orby-blap-blap", .mod = .{ .damage_mul = 0.78, .projectile_speed_mul = 0.72, .spread_radians_set = 0.3141592653589793, .proj_size_mul = 1.38, .proj_shape = 4, .proj_count_set = 2.0, .proj_impact_radius_set = 36.0 }, .meta = .{ .unique = true, .rarity = .rare, .buckets = .{ .shape = true, .quantity = true } } },
     .{ .id = "continuous-refractor", .mod = .{ .damage_mul = 0.42, .fire_rate_mul = 2.4, .delivery = 2, .proj_impact = 4, .proj_range_px_set = 760.0, .proj_slow_mul_set = 0.72 }, .meta = .{ .unique = true, .rarity = .rare, .buckets = .{ .delivery = true } } },
-    .{ .id = "shard-bloom", .mod = .{ .damage_mul = 0.62, .fire_rate_mul = 0.82, .spread_radians_add = 0.6632251157578452, .delivery = 0, .proj_count_add = 5.0, .proj_size_mul = 0.78, .proj_range_px_set = 390.0 }, .meta = .{ .max_stacks = 2, .rarity = .rare, .buckets = .{ .quantity = true } } },
+    .{ .id = "shard-bloom", .mod = .{ .damage_mul = 0.62, .fire_rate_mul = 0.82, .recoil_mul = 1.24, .spread_radians_add = 0.6632251157578452, .delivery = 0, .proj_count_add = 5.0, .proj_size_mul = 0.78, .proj_range_px_set = 390.0 }, .meta = .{ .max_stacks = 2, .rarity = .rare, .buckets = .{ .quantity = true } } },
     .{ .id = "arc-shards", .mod = .{ .projectile_speed_mul = 0.86, .delivery = 0, .proj_pathing = 1, .proj_gravity_scale_set = 560.0 }, .meta = .{ .rarity = .common, .buckets = .{ .trajectory = true } } },
     .{ .id = "deadfall-mortar", .mod = .{ .fire_rate_mul = 0.8, .projectile_speed_mul = 0.6, .delivery = 0, .proj_size_mul = 1.15, .proj_pathing = 1, .proj_impact = 1, .proj_gravity_scale_set = 2100.0, .proj_impact_radius_set = 82.0 }, .meta = .{ .unique = true, .rarity = .rare, .buckets = .{ .trajectory = true, .impact = true } } },
     .{ .id = "seeker-facets", .mod = .{ .projectile_speed_mul = 0.82, .delivery = 0, .proj_homing_add = 1.2, .proj_pathing = 4, .proj_homing_strength_set = 4.4 }, .meta = .{ .max_stacks = 4, .rarity = .rare, .buckets = .{ .trajectory = true } } },
@@ -258,7 +262,7 @@ pub const cards = [_]CardEntry{
     .{ .id = "triple-fan", .mod = .{ .damage_mul = 0.74, .spread_radians_add = 0.2792526803190927, .delivery = 0, .proj_count_add = 2.0, .proj_bounce_add = 2.0, .proj_pathing = 2 }, .meta = .{ .max_stacks = 4, .rarity = .uncommon, .buckets = .{ .quantity = true, .trajectory = true } } },
     .{ .id = "five-shard-spray", .mod = .{ .damage_mul = 0.6, .fire_rate_mul = 0.9, .projectile_speed_mul = 1.22, .spread_radians_add = 0.3490658503988659, .proj_count_add = 4.0, .proj_size_mul = 0.6 }, .meta = .{ .max_stacks = 2, .rarity = .rare, .buckets = .{ .quantity = true } } },
     .{ .id = "one-more-shard", .mod = .{ .damage_mul = 0.94, .spread_radians_add = 0.12217304763960307, .proj_count_add = 1.0 }, .meta = .{ .max_stacks = 8, .rarity = .common, .buckets = .{ .quantity = true } } },
-    .{ .id = "wide-barrage", .mod = .{ .damage_mul = 0.7, .fire_rate_mul = 0.94, .spread_radians_add = 0.767944870877505, .proj_count_add = 3.0, .proj_size_mul = 0.82 }, .meta = .{ .max_stacks = 5, .rarity = .uncommon, .buckets = .{ .quantity = true } } },
+    .{ .id = "wide-barrage", .mod = .{ .damage_mul = 0.7, .fire_rate_mul = 0.94, .recoil_mul = 1.12, .spread_radians_add = 0.767944870877505, .proj_count_add = 3.0, .proj_size_mul = 0.82 }, .meta = .{ .max_stacks = 5, .rarity = .uncommon, .buckets = .{ .quantity = true } } },
     .{ .id = "orbiting-satellites", .mod = .{ .fire_rate_mul = 1.12 }, .meta = .{ .unique = true, .rarity = .rare, .buckets = .{ .quantity = true } } },
     .{ .id = "cluster-bomb", .mod = .{ .fire_rate_mul = 0.72, .proj_split_add = 6.0, .proj_size_mul = 1.12 }, .meta = .{ .max_stacks = 3, .rarity = .rare, .buckets = .{ .quantity = true } } },
     .{ .id = "explosive-facet", .mod = .{ .damage_mul = 0.92, .proj_impact = 1, .proj_impact_radius_set = 64.0 }, .meta = .{ .unique = true, .rarity = .uncommon, .buckets = .{ .impact = true } } },
@@ -270,7 +274,7 @@ pub const cards = [_]CardEntry{
     .{ .id = "voltaic-spark", .mod = .{ .projectile_speed_mul = 1.08, .proj_element = 4, .proj_impact = 3, .proj_pierce_count_set = 1.0 }, .meta = .{ .unique = true, .rarity = .rare, .buckets = .{ .element = true } } },
     .{ .id = "void-fracture", .mod = .{ .damage_mul = 1.08, .proj_element = 5, .proj_pierce_count_set = 2.0 }, .meta = .{ .unique = true, .rarity = .rare, .buckets = .{ .element = true } } },
     .{ .id = "radiant-overload", .mod = .{ .damage_mul = 1.14, .fire_rate_mul = 0.82, .proj_size_mul = 1.14, .proj_element = 6, .proj_impact_radius_set = 58.0 }, .meta = .{ .unique = true, .rarity = .rare, .buckets = .{ .element = true } } },
-    .{ .id = "rapid-refraction", .mod = .{ .fire_rate_mul = 1.22, .projectile_speed_mul = 1.06, .proj_size_mul = 0.88 }, .meta = .{ .max_stacks = 5, .rarity = .common, .buckets = .{ .utility = true } } },
+    .{ .id = "rapid-refraction", .mod = .{ .fire_rate_mul = 1.22, .recoil_mul = 0.9, .projectile_speed_mul = 1.06, .proj_size_mul = 0.88 }, .meta = .{ .max_stacks = 5, .rarity = .common, .buckets = .{ .utility = true } } },
     .{ .id = "needle-compressor", .mod = .{ .fire_rate_mul = 1.14, .proj_size_mul = 0.86 }, .meta = .{ .max_stacks = 5, .rarity = .common, .buckets = .{ .utility = true } } },
     .{ .id = "heavy-coolant", .mod = .{ .fire_rate_mul = 0.88, .proj_size_mul = 1.22 }, .meta = .{ .max_stacks = 6, .rarity = .common, .buckets = .{ .utility = true } } },
     .{ .id = "essence-battery", .mod = .{ .proj_size_mul = 1.1, .proj_element = 0 }, .meta = .{ .max_stacks = 4, .rarity = .common, .buckets = .{ .utility = true } } },

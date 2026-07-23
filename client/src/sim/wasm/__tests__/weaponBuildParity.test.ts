@@ -37,7 +37,7 @@ const SCRATCH = sim.statePtr + WORLD_STATE_TOTAL_SIZE + 4096;
 
 function zig(i: number): DataView {
   ex.resolve_build_test(i, SCRATCH);
-  return new DataView(ex.memory.buffer, SCRATCH, 232);
+  return new DataView(ex.memory.buffer, SCRATCH, 248);
 }
 function ts(i: number) {
   return packResolvedFireConfig(
@@ -90,6 +90,10 @@ function compare(i: number, label: string) {
   expect(U32(220), "dashCharges" + ctx).toBe(t.dashCharges);
   expect(U8(224), "mirror" + ctx).toBe(t.mirrorShield ? 1 : 0);
   expect(U8(225), "directional" + ctx).toBe(t.directionalShield ? 1 : 0);
+  expect(F(232), "dashCooldownMul" + ctx).toBeCloseTo(t.dashCooldownMultiplier, 6);
+  // Z0c Item A — the fire-recoil substrate: base 95 × card recoil_mul
+  // (clamped) × projectile recoil channel, baked to one f64.
+  expect(F(240), "recoilImpulse" + ctx).toBeCloseTo(t.recoilImpulse, 6);
 }
 
 describe("Zig build resolver ≡ TS createWeaponBuild → ResolvedFireConfig", () => {

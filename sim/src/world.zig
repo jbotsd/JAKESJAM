@@ -346,6 +346,19 @@ fn baseMaxHealthForArchetype(archetype: world_state.CharacterArchetype) f64 {
     };
 }
 
+/// Class-chassis recoil steadiness (parity with cardTypes.ts CHASSIS_STATS
+/// recoilControlMultiplier — enforced TS-side 2026-07-23, cohesion-goal.md
+/// P1.3): the fire self-knockback DIVIDES by this (>1 = steadier, <1 =
+/// kickier). Kindled/heavy 1.25, Interstice/sprinter 0.9, everyone else 1
+/// — same mirror shape as baseMaxHealthForArchetype directly above.
+fn recoilControlForArchetype(archetype: world_state.CharacterArchetype) f64 {
+    return switch (archetype) {
+        .heavy => 1.25,
+        .sprinter => 0.9,
+        else => 1.0,
+    };
+}
+
 /// A player's REAL max health right now (parity with weapon.ts
 /// maxHealthForPlayer): class base + the resolved build's maxHealthAdd —
 /// read from the host-patched per-player fire config, the same
@@ -1179,6 +1192,14 @@ const GEO_OVERCLOCK_SPREAD_MULTIPLIER: f64 = 0.7;
 // Sunlance's, ranked BELOW it in the damage-priority chain (never stacks).
 const GEO_MEASURE_SPREAD_MULTIPLIER: f64 = 0;
 const GEO_MEASURE_DAMAGE_MULTIPLIER: f64 = 1.3;
+// Wizard — Recoil Step (constants.ts:129/157, World.ts's "recoil-step"
+// case + weapon.ts:589-604's rider read — Track Z0c Item A closes the
+// Phase 4a deferral now that ResolvedFireConfig carries the resolved
+// recoil the rider scales). Instant hop opposite the aim direction (0.6
+// vertical factor at cast) + the rider window: fire self-knockback × 0.3
+// while live, consumed at section 6's fire site below.
+const GEO_RECOIL_STEP_HOP_SPEED: f64 = 220.0;
+const GEO_RECOIL_STEP_RECOIL_MULTIPLIER: f64 = 0.3;
 // Wizard — Return Glass (constants.ts:125, World.ts's "return-glass" case).
 // Instant self-shield-charge tick, capped at the resolved build's own max
 // charge — no window field needed at all (unlike every sibling in this
@@ -1980,46 +2001,31 @@ fn stepAbilityDispatch(
                 // own comment already records for a real lingering marker
                 // entity, not a Zig-specific gap.
             },
-            // Recoil Step (Wizard): re-investigated this pass (docs/
-            // zig-step-world-parity-goal.md's Phase 4a follow-up) — the
-            // original deferral reason ("recoilImpulse is never called
-            // from world.zig") is STILL true, but the fix is a bigger lift
-            // than that framing suggested, verified directly rather than
-            // assumed:
-            //   - `weapon.zig`'s `recoilImpulse(base_angle, recoil_strength)`
-            //     is a pure function of a caller-supplied STRENGTH — it does
-            //     NOT know the resolved weapon build. TS's own call site
-            //     (weapon.ts:545-549) composes that strength from FOUR
-            //     multiplicative terms: `build.recoilImpulse` (base weapon
-            //     recoil × every equipped card's `modifier.recoilMultiplier`,
-            //     folded in at weaponBuild.ts:278/619) ×
-            //     `build.projectile.recoilMultiplier` (a SECOND,
-            //     independent per-projectile multiplier, cardTypes.ts:433)
-            //     × `chaos.recoilMultiplier`.
-            //   - Real cards DO modify this (grepped cards.ts directly, not
-            //     assumed): 4 separate `recoilMultiplier` entries (0.8,
-            //     1.24, 1.12, 0.9) — so a base×chaos-only port would
-            //     SILENTLY DIVERGE from TS for any player holding one of
-            //     those cards, not just be an incomplete-but-honest partial.
-            //   - Zig's OWN `ResolvedFireConfig`/`player_fire_config`
-            //     (world_state.zig, the struct every other build-resolved
-            //     stat this file reads — damage/fire_rate/spread/etc. all
-            //     live here) carries NO recoil field at all today (grepped
-            //     directly: zero `recoil` fields anywhere on that struct) —
-            //     so even the "just the base weapon constant" shortcut has
-            //     nothing correct to multiply against for a carded player.
-            // Wiring only base-weapon × chaos would ship a plausible-looking
-            // but wrong number for exactly the players who drafted a
-            // recoil-changing card — worse than the current true no-op,
-            // which at least doesn't lie. Needs `ResolvedFireConfig` grown
-            // with a resolved recoil field (card-modifier-codegen-adjacent
-            // substrate work, NOT a per-ability consumption-site read) before
-            // even the BASE mechanic can be ported correctly, let alone
-            // Recoil Step's own GEO_RECOIL_STEP_RECOIL_MULTIPLIER rider on
-            // top of it. Deferred whole, per this goal doc's own explicit
-            // permission to defer again with a sharper reason once the real
-            // shape of the gap is understood.
-            .recoil_step => {}, // Phase 4a — deferred, see comment above
+            // Recoil Step (Wizard) — SHIPPED (Track Z0c Item A; formerly
+            // the Phase 4a "needs ResolvedFireConfig grown with a resolved
+            // recoil field" deferral, which is exactly the substrate this
+            // pass built — see `ResolvedFireConfig.recoil_impulse`'s own
+            // doc comment for the full resolution chain). Parity with
+            // World.ts's "recoil-step" case (World.ts:3467-3487): instant
+            // hop OPPOSITE the aim direction (hop angle = atan2 toward aim
+            // + π, 0.6 vertical factor) plus the rider window weapon.ts's
+            // fire site reads to scale self-knockback — here consumed at
+            // section 6's fire-recoil block (GEO_RECOIL_STEP_RECOIL_
+            // MULTIPLIER). Same `state.header.tick + dur_ticks` window
+            // arithmetic as every sibling arm in this switch (sunlance et
+            // al.), NOT TS's `tick + 1 + durTicks` — the two agree because
+            // Zig's header.tick was already incremented at the top of this
+            // step while TS's `state.tick` still holds the pre-step value.
+            .recoil_step => {
+                const dxr = attacker.aim_x - attacker.x;
+                const dyr = attacker.aim_y - attacker.y;
+                const hop_angle = trig.lutAtan2(dyr, dxr) + std.math.pi;
+                attacker.vx += trig.lutCos(hop_angle) * GEO_RECOIL_STEP_HOP_SPEED;
+                attacker.vy += trig.lutSin(hop_angle) * GEO_RECOIL_STEP_HOP_SPEED * 0.6;
+                const dur_ticks: u32 = @intFromFloat(@ceil((active_spec.duration_ms orelse 0) / @max(1.0, eff_dt)));
+                attacker.recoil_step_until_tick = state.header.tick + dur_ticks;
+                activated = true;
+            },
             // Sunspike (Paladin/Kindled): v1 = a single fast, narrow,
             // short-range shot — PLAYER-AIMED (the caster's own cursor),
             // NOT auto-targeted, verified directly against World.ts's
@@ -5144,6 +5150,47 @@ pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
                     player_ptr.x,
                     player_ptr.y,
                 );
+            }
+
+            // Fire recoil — kick the shooter opposite the MUZZLE-derived
+            // aim angle (Track Z0c Item A; parity with weapon.ts:589-607).
+            // Runs OUTSIDE the spawn loop and outside `spawn_projectiles`
+            // (slappers-only rounds still kick, matching TS's "cooldown/
+            // recoil still apply" comment) and after the spawns (order is
+            // observationally irrelevant — spawns read position, recoil
+            // writes velocity — but kept TS-shaped). Composition mirrors
+            // weapon.ts:600-605 term for term: the baked build product
+            // (fcfg.recoil_impulse — see its own world_state.zig doc
+            // comment for what's inside) × chaos × Recoil Step's rider
+            // window, ÷ the class chassis recoil control. Fallback for
+            // valid==0 is the bare starter-pistol base (projectile recoil
+            // multiplier 1), same shape as every sibling fallback above.
+            //
+            // MELEE-CLASS GATE (found via the paladin melee smoke tests,
+            // not assumed): TS routes ninja/paladin AROUND stepWeapon
+            // entirely (World.ts:2744's class branch — Fire drives the
+            // melee FSM, never the ranged shot), so those classes NEVER
+            // take fire recoil in TS. Zig's own fire section still ranged-
+            // fires for them (a PRE-EXISTING divergence this pass neither
+            // introduced nor widens — narrowing it means porting the whole
+            // class branch, separate work); the kick at least must match
+            // TS exactly, so it applies only to the classes that reach
+            // stepWeapon there (wizard/balanced, priest/shielded).
+            const is_melee_class = player_ptr.character_id == .sprinter or
+                player_ptr.character_id == .heavy;
+            if (!is_melee_class) {
+                const recoil_resolved: f64 = if (fcfg.valid != 0)
+                    fcfg.recoil_impulse
+                else
+                    weapons_data.weaponBaseById(.starter_pistol).recoil_impulse;
+                const recoil_step_active =
+                    player_ptr.recoil_step_until_tick > state.header.tick;
+                const recoil_strength = (recoil_resolved *
+                    chaos_profile.recoil_multiplier *
+                    (if (recoil_step_active) GEO_RECOIL_STEP_RECOIL_MULTIPLIER else 1.0)) /
+                    recoilControlForArchetype(player_ptr.character_id);
+                player_ptr.vx -= trig.lutCos(aim_angle) * recoil_strength;
+                player_ptr.vy -= trig.lutSin(aim_angle) * recoil_strength * 0.45;
             }
         }
 

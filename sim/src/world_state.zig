@@ -793,10 +793,22 @@ pub const PlayerEntity = extern struct {
     /// TS packs `(throwHandParity ?? 1) & 1` — undefined reads as 1, so
     /// the first-ever shot toggles to hand 0 on both sides.
     throw_hand_parity: u8 = 0,
-    /// Explicit tail pad to the struct's 8-byte alignment boundary (625 →
-    /// 632) — kept explicit (not implicit) so the growth-history notes and
-    /// the wire codec's byte accounting stay literal.
-    _pad_throw_hand: [7]u8 = .{ 0, 0, 0, 0, 0, 0, 0 },
+    /// Explicit pad to the next 4-byte boundary (625 → 628) — was the [7]u8
+    /// full tail pad until Track Z0c Item A reclaimed its last 4 bytes for
+    /// `recoil_step_until_tick` below.
+    _pad_throw_hand: [3]u8 = .{ 0, 0, 0 },
+    /// Recoil Step's rider window (Track Z0c Item A — closes the
+    /// `.recoil_step` Phase 4a deferral now that the recoil substrate
+    /// exists): while `recoil_step_until_tick > tick`, this player's OWN
+    /// fire self-knockback is scaled by GEO_RECOIL_STEP_RECOIL_MULTIPLIER
+    /// at world.zig's fire site. Mirrors TS `PlayerEntity.
+    /// recoilStepUntilTick` (types.ts:724). Plain `u32` tick, 0 =
+    /// inactive, same convention as every sibling window field — but
+    /// UNLIKE those Zig-only windows, this one IS bridged (offset 628,
+    /// same reasoning as `respawn_at_tick`: the full-sync path repacks
+    /// every tick, and TS's own ability cast opens the SAME window on the
+    /// TS-authoritative path — both sides must share one clock).
+    recoil_step_until_tick: u32 = 0,
 };
 
 /// Mirrors `ProjectileEntity`.
@@ -1224,6 +1236,21 @@ pub const ResolvedFireConfig = extern struct {
     // Appended — keeps every offset above stable (I25: repurposed Quick Parry
     // from the dead timed-parry cooldown onto the dash-bash slide's cooldown).
     dash_cooldown_mul: f64 = 1,
+    /// Fire self-knockback, FULLY card-resolved (Track Z0c Item A — the
+    /// recoil substrate the old `.recoil_step` deferral note demanded):
+    /// clamped `build.recoilImpulse` (base weapon recoil × every card's
+    /// top-level `modifier.recoilMultiplier`, weaponBuild.ts:278/619) ×
+    /// `build.projectile.recoilMultiplier` (the second, per-projectile
+    /// channel, weaponBuild.ts:428) — ONE baked f64, exactly the product
+    /// TS's stepWeapon computes from the build at fire time (weapon.ts:600-
+    /// 604). The remaining TS terms are tick-state, NOT build-state, and
+    /// deliberately do NOT bake in here: chaos `recoilMultiplier` already
+    /// crosses (data/chaos.zig ChaosProfile), Recoil Step's window is a
+    /// PlayerEntity tick field, and the chassis `recoilControlMultiplier`
+    /// divisor keys off `character_id` (already on PlayerEntity) — all
+    /// three compose at world.zig's fire site, mirroring weapon.ts's own
+    /// fire-time composition. Appended, keeping every offset above stable.
+    recoil_impulse: f64 = 0,
 };
 
 /// Sentinel for `EquippedActives.slot_kind[N]` meaning "slot N is empty" —
@@ -1871,13 +1898,23 @@ comptime {
     // 624 → 632 in the same cut (pack/unpackPlayer write/read the byte at
     // offset 624 — wire-bridged like respawn_at_tick, see both fields' own
     // doc comments), plus worldStateLayout.test.ts's matching literal.
+    // 632 → 632 (Track Z0c Item A, recoil_step deferral close-out): +4
+    // content bytes for `recoil_step_until_tick` (u32), landing exactly in
+    // the last 4 bytes of the muzzle port's explicit `_pad_throw_hand`
+    // ([628, 632) — the [7]u8 shrank to [3]u8) — net growth ZERO, same
+    // "reclaim the old pad" shape respawn_at_tick's note above used.
+    // Wire-bridged like respawn_at_tick/throw_hand_parity (see its own
+    // doc comment); worldStateBridge.ts's codec tail reads/writes the u32
+    // at offset 628 in the same cut.
     std.debug.assert(@sizeOf(PlayerEntity) == 632);
     // Bridged-field offset locks for the codec notes above: packPlayer/
     // unpackPlayer hardcode a skip from the end of the syz-ward pair
-    // (relative offset 384) to reach these fields at 620/624 — if a future
-    // growth cut moves them, this trips before the bridge silently drifts.
+    // (relative offset 384) to reach these fields at 620/624/628 — if a
+    // future growth cut moves them, this trips before the bridge silently
+    // drifts.
     std.debug.assert(@offsetOf(PlayerEntity, "respawn_at_tick") == 620);
     std.debug.assert(@offsetOf(PlayerEntity, "throw_hand_parity") == 624);
+    std.debug.assert(@offsetOf(PlayerEntity, "recoil_step_until_tick") == 628);
     // EquippedActives (Phase 1): [3]u8 = 3 bytes, no padding (u8 array
     // needs no alignment beyond 1). Doesn't cross the wasm ABI today (see
     // its own doc comment) — pure internal regression-catching, same role
@@ -1937,7 +1974,11 @@ comptime {
     // (confirmed still 32).
     std.debug.assert(@sizeOf(MeleeSwingMemory) == 32);
     std.debug.assert(@sizeOf(SimEvent) == 40);
-    std.debug.assert(@sizeOf(ResolvedFireConfig) == 240);
+    // 240 → 248 (Track Z0c Item A, fire-recoil substrate): +8 for the
+    // appended `recoil_impulse` f64 at [240, 248) — 240 is 8-aligned, no
+    // padding anywhere. worldStateBridge.ts's RESOLVED_FIRE_CONFIG_SIZE
+    // bumped 240 → 248 in the same cut.
+    std.debug.assert(@sizeOf(ResolvedFireConfig) == 248);
 }
 
 // -----------------------------------------------------------------

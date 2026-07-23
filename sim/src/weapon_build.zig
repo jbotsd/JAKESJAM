@@ -47,6 +47,11 @@ fn resolveMods(mods: []const gen.CardMod) world_state.ResolvedFireConfig {
     var fire_rate = B.fire_rate;
     var projectile_speed = B.projectile_speed;
     var spread = B.spread_radians;
+    // Recoil (Track Z0c Item A): two independent channels, exactly like
+    // weaponBuild.ts — the build-level impulse (base × top-level card
+    // recoilMultiplier, :278) and the per-projectile multiplier (:428).
+    var recoil_impulse = B.recoil_impulse;
+    var p_recoil_mul = B.p_recoil_mul;
     var max_health_add: f64 = 0;
     var move_speed_mul: f64 = 1;
     var parry_cover_mul: f64 = 1;
@@ -97,6 +102,7 @@ fn resolveMods(mods: []const gen.CardMod) world_state.ResolvedFireConfig {
         }
         damage *= m.damage_mul;
         fire_rate *= m.fire_rate_mul;
+        recoil_impulse *= m.recoil_mul;
         projectile_speed *= m.projectile_speed_mul;
         max_health_add += m.max_health_add;
         move_speed_mul *= m.move_speed_mul;
@@ -132,6 +138,7 @@ fn resolveMods(mods: []const gen.CardMod) world_state.ResolvedFireConfig {
         if (m.proj_slow_mul_set) |v| p_slow = v;
         p_speed_mul *= m.proj_speed_mul;
         p_size_mul *= m.proj_size_mul;
+        p_recoil_mul *= m.proj_recoil_mul;
         p_lifetime_mul *= m.proj_lifetime_mul;
         p_count += m.proj_count_add;
         p_bounces += m.proj_bounce_add;
@@ -174,6 +181,12 @@ fn resolveMods(mods: []const gen.CardMod) world_state.ResolvedFireConfig {
     // clampBuild (weaponBuild.ts). Positive values → @round matches Math.round.
     damage = round2(damage);
     fire_rate = round2(@max(0.35, @min(12.0, fire_rate)));
+    // clampBuild:619 rounds ONLY the build-level impulse; the projectile
+    // channel stays raw and multiplies in afterward, matching weapon.ts's
+    // fire-time `build.recoilImpulse * build.projectile.recoilMultiplier`
+    // bit-for-bit (both terms are per-build constants, so baking the
+    // product here is exact — same values, same one multiplication).
+    recoil_impulse = round2(@max(0.0, recoil_impulse));
     projectile_speed = round2(@max(80.0, projectile_speed));
     const pls = round2(@max(0.1, B.projectile_lifetime_seconds));
     spread = @max(0.0, spread);
@@ -266,6 +279,7 @@ fn resolveMods(mods: []const gen.CardMod) world_state.ResolvedFireConfig {
         .dash_cooldown_mul = dash_cooldown_mul,
         .mirror_shield = if (mirror) 1 else 0,
         .directional_shield = if (directional) 1 else 0,
+        .recoil_impulse = recoil_impulse * p_recoil_mul,
     };
 }
 
