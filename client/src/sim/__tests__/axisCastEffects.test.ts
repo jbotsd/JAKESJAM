@@ -404,9 +404,33 @@ describe("Technique axis — execute below the threshold, never above it", () =>
   };
 
   test("a 14%-health victim is finished by a shard that deals less", () => {
-    const { state } = castAtVictim(14);
+    const { state, events } = castAtVictim(14);
     expect(state.players[B]!.alive).toBe(false);
     expect(state.players[B]!.health).toBe(0);
+    // The kill event carries the additive execute flag (Track L legibility)
+    // so the death-FX can draw the severance mark.
+    const kill = events.find((e) => e.t === "player-killed");
+    expect(kill).toBeDefined();
+    if (kill?.t === "player-killed") {
+      expect(kill.victimId).toBe(B);
+      expect(kill.executed).toBe(true);
+    }
+  });
+
+  test("an ordinary lethal shard kills WITHOUT the execute flag", () => {
+    // Plain hand (no Technique axis): a 5-health victim dies to raw damage
+    // — the kill event must not wear the severance mark.
+    const caster = mkPlayer(A, 400, 400);
+    caster.abilityCharge = EMISSION_CHARGE_MAX;
+    const victim = mkPlayer(B, 480, 370);
+    victim.health = 5;
+    const { state, events } = castAndRun([caster, victim], 60);
+    expect(state.players[B]!.alive).toBe(false);
+    const kill = events.find((e) => e.t === "player-killed");
+    expect(kill).toBeDefined();
+    if (kill?.t === "player-killed") {
+      expect(kill.executed).toBeUndefined();
+    }
   });
 
   test("a 16%-health victim survives the same shard (no execute above threshold)", () => {

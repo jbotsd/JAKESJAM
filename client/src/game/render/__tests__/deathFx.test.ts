@@ -202,6 +202,55 @@ describe("ascension denial (emission-engine-goal P2)", () => {
   });
 });
 
+describe("technique execute severance (six-axes Layer 1, Track L)", () => {
+  test("an executed kill threads the flag from event to soul to model", () => {
+    const st = makeDeathFxState();
+    setDeathFxTarget(st, 1000, 500);
+    const state = fakeState(10, { v: { x: 200, y: 800 } });
+    noteDeathEvents(
+      state,
+      [{ t: "player-killed", victimId: "v", killerId: "k", executed: true }],
+      st,
+    );
+    expect(st.souls.find((s) => s.active)!.executed).toBe(true);
+
+    const out: SoulRenderModel[] = [];
+    // The flag rides the model for the painter's shear window and beyond
+    // (the painter itself gates on dissolveT < 0.35).
+    expect(produceDeathFx(state, 100, st, out)).toBe(1);
+    expect(out[0]!.executed).toBe(true);
+    produceDeathFx(state, 400, st, out);
+    expect(out[0]!.executed).toBe(true);
+  });
+
+  test("an ordinary kill leaves the model unmarked (flag absent → false)", () => {
+    const st = makeDeathFxState();
+    setDeathFxTarget(st, 1000, 500);
+    const state = fakeState(10, { v: { x: 200, y: 800 } });
+    noteDeathEvents(state, [{ t: "player-killed", victimId: "v", killerId: "k" }], st);
+    expect(st.souls.find((s) => s.active)!.executed).toBe(false);
+    const out: SoulRenderModel[] = [];
+    produceDeathFx(state, 100, st, out);
+    expect(out[0]!.executed).toBe(false);
+  });
+
+  test("a recycled soul never inherits a previous execute mark", () => {
+    const st = makeDeathFxState();
+    setDeathFxTarget(st, 1000, 500);
+    const state = fakeState(10, { v: { x: 200, y: 800 }, w: { x: 300, y: 700 } });
+    noteDeathEvents(
+      state,
+      [{ t: "player-killed", victimId: "v", killerId: "k", executed: true }],
+      st,
+    );
+    // Let the executed soul finish, then kill an ordinary victim.
+    const out: SoulRenderModel[] = [];
+    produceDeathFx(state, 4000, st, out);
+    noteDeathEvents(state, [{ t: "player-killed", victimId: "w", killerId: "k" }], st);
+    expect(st.souls.find((s) => s.active)!.executed).toBe(false);
+  });
+});
+
 describe("produceSpawnFx", () => {
   test("alive transition and new player both trigger the upload; dead does not", () => {
     const st = makeDeathFxState();

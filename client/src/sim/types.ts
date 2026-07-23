@@ -1432,6 +1432,18 @@ export type SimEvent = (
       victimId: PlayerId;
       killerId: PlayerId | null;
       /**
+       * True when the killing hit was a Technique-axis execute (six-axes
+       * Layer 1, World.ts's `executeBelowFrac` raise): the victim was
+       * already below the threshold fraction of their real max health and
+       * the shard's damage was raised to lethal. Rides the existing kill
+       * path so the death-FX can add the severance mark without any
+       * snapshot derivation (the raise is transient — unlike ascension-
+       * denial it CANNOT be re-derived from the killer's build at event
+       * time, since it also depends on the victim's pre-hit health).
+       * Additive wire field — old clients ignore it.
+       */
+      executed?: true;
+      /**
        * 'aoe' (2026-07-18, aoe role rework): the 9 "aoe"-tagged class
        * abilities' new instant radius-check resolution (World.ts's
        * pendingInstantAoe pass) — a null-projectile hit, same shape as

@@ -153,6 +153,7 @@ export const EVENT_PRESENTATION_REGISTRY = {
     intensity: "kill",
     lowTierCore: "Death state, soul mote, and killer/victim distinction remain readable",
     state: "complete",
+    note: "Carries additive `executed: true` for Technique-axis execute kills — deathFxPainter adds a single horizontal severance shear at the unmake moment (all fx tiers; subtler than ascension-denial's inverted grammar).",
   },
   "first-blood": {
     action: "The first credited hit of a round lands",

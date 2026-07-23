@@ -1814,8 +1814,13 @@ function resolveRangedHit(
   // they dropped under 35, rather than under 35% of 125) — never from
   // above it, so the no-100-0 law holds by construction.
   const executeFrac = proj.executeBelowFrac ?? 0;
+  let executedThisHit = false;
   if (executeFrac > 0 && postPlayer.health > 0 && postPlayer.health < executeFrac * maxHealthForPlayer(postPlayer)) {
     finalDamage = Math.max(finalDamage, postPlayer.health);
+    // Mark for the kill event below (Track L legibility): the flag only
+    // survives onto `player-killed` if the hit really killed — a later
+    // team-peel reduction that saves the victim never emits it.
+    executedThisHit = true;
   }
   // Rally Light (chunk 2.6 fast-follow) — same attacker-amp shape every
   // other hit-resolution site in this file uses (bash/slash/edge).
@@ -1879,6 +1884,9 @@ function resolveRangedHit(
       victimId: ev.victimId,
       killerId: proj.ownerId,
       cause: "projectile",
+      // Technique execute (six-axes Layer 1): additive flag so the death
+      // presents its severance mark — "the answer was already written".
+      ...(executedThisHit ? { executed: true as const } : {}),
     });
   }
   // Fire: 3-second burn DoT at damage * 0.4 per second. Tick-quantized.

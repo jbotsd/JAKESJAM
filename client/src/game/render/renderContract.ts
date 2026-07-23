@@ -413,6 +413,12 @@ export type SoulRenderModel = {
   trailY: number[];
   trailHead: number;
   trailLen: number;
+  /** TECHNIQUE EXECUTE (six-axes Layer 1): the killing hit carried the
+   *  execute raise (`player-killed.executed`) — the painter adds a single
+   *  clean severance shear at the unmake moment. Unlike `denied` this is
+   *  event-threaded, not snapshot-derived: the raise depends on the
+   *  victim's transient pre-hit health, which no snapshot retains. */
+  executed: boolean;
 };
 
 type Soul = {
@@ -434,6 +440,9 @@ type Soul = {
    *  tinted collapse, no journey, no motif absorption. The gnostic war
    *  crime made legible in one frame of grammar the game already taught. */
   denied: boolean;
+  /** Technique execute — threaded from `player-killed.executed` (see
+   *  SoulRenderModel.executed). */
+  executed: boolean;
 };
 
 type Shard = {
@@ -489,6 +498,7 @@ export function makeDeathFxState(): DeathFxState {
       trailLen: 0,
       sampleAccum: 0,
       denied: false,
+      executed: false,
     });
   }
   const shards: Shard[] = [];
@@ -549,6 +559,7 @@ export function noteDeathEvents(
     killerId?: string | null;
     attackerId?: string | null;
     damage?: number;
+    executed?: boolean;
   }>,
   st: DeathFxState,
 ): void {
@@ -585,6 +596,10 @@ export function noteDeathEvents(
     soul.trailLen = 0;
     soul.trailHead = 0;
     soul.sampleAccum = 0;
+    // TECHNIQUE EXECUTE: sim-authoritative flag on the kill event itself
+    // (single-derivation doctrine's event-side sibling — the sim already
+    // decided the raise fired; the renderer only repeats the verdict).
+    soul.executed = e.executed === true;
     // ASCENSION DENIAL: a killer whose hand charges the Mystery axis
     // UNMAKES the victim's soul (emission-engine-goal P2). Derived through
     // resolveEmission's mystery section so the renderer and the sim share
@@ -680,6 +695,7 @@ function blankSoul(): SoulRenderModel {
     trailY: new Array(TRAIL_N).fill(0),
     trailHead: 0,
     trailLen: 0,
+    executed: false,
   };
 }
 
@@ -800,6 +816,7 @@ export function produceDeathFx(
     m.absorbT = absorbT;
     m.motifX = st.motifX;
     m.motifY = st.motifY;
+    m.executed = soul.executed;
     for (let i = 0; i < TRAIL_N; i++) {
       m.trailX[i] = soul.trailX[i]!;
       m.trailY[i] = soul.trailY[i]!;

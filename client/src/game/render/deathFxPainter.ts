@@ -127,6 +127,31 @@ export function drawDeathFx(
       g.fillEllipse(m.originX, m.originY - 6 * t, 20 * fade, 40 * fade);
     }
 
+    // ── TECHNIQUE EXECUTE (six-axes Layer 1): a single clean horizontal
+    // shear through the soul at the unmake moment — the answer was already
+    // written. One crisp instrument-stroke travelling outward, plus a
+    // hairline echo parting a few px beneath it (the severance, kept
+    // surgical). Deliberately NOT gore and NOT a bigger explosion, and
+    // subtler than ascension-denial's full inverted grammar. Drawn at all
+    // fx tiers — it IS the execute read (drawn outside the fx1+ dissolve
+    // block above so potato tier keeps it). ──
+    if (m.executed && m.dissolveT < 0.35) {
+      const cutT = m.dissolveT / 0.35; // 0..1 over the first ~315ms
+      const cutFade = 1 - cutT;
+      const reach = 26 + 40 * cutT;
+      const yCut = m.originY - 12; // through the body, not the feet
+      g.lineStyle(1.6, coreC, 0.92 * cutFade);
+      g.beginPath();
+      g.moveTo(m.originX - reach, yCut);
+      g.lineTo(m.originX + reach, yCut);
+      g.strokePath();
+      g.lineStyle(1, innerC, 0.5 * cutFade);
+      g.beginPath();
+      g.moveTo(m.originX - reach * 0.7, yCut + 2 + 3 * cutT);
+      g.lineTo(m.originX + reach * 0.7, yCut + 2 + 3 * cutT);
+      g.strokePath();
+    }
+
     // ── Trail: glowing dots + a connected RIBBON (fx1+) ──
     const trailPts = fxLevel === 0 ? Math.min(5, m.trailLen) : m.trailLen;
     let prevX = m.x;
