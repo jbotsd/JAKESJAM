@@ -15,8 +15,9 @@ import {
   type SlopeStatic,
   type StaticCollisionCache,
 } from "./collision.js";
-import type { PlayerEntity, PlatformDefinition, InputBitfield } from "./types.js";
+import type { CharacterArchetype, PlayerEntity, PlatformDefinition, InputBitfield } from "./types.js";
 import { MIN_PLATFORM_H_PX } from "./constants.js";
+import { chassisStatsForArchetype } from "./data/cardTypes.js";
 
 const M = {
   // 330 → 362 (2026-07-12): a ~10% global bump so full stride reads as a
@@ -90,9 +91,29 @@ export const HEADSHOT_ZONE_FRAC = 0.32;
 export const HEADSHOT_DAMAGE_MULTIPLIER = 1.2;
 
 /**
- * The player's REAL combat hitbox — same box movement collision already
- * uses (bodyWidth × crouch-aware bodyHeight, centred on player.x/y), not a
- * hand-rolled approximation. Jake, 2026-07-15: projectile.ts/fire.ts/
+ * Class hitbox scaling (docs/cohesion-goal.md P1.4, contested call #1 —
+ * flip to `false` to revert the whole gameplay change with one line): when
+ * on, the COMBAT hitbox scales by the chassis sizeScale (Kindled 1.18 = a
+ * genuinely bigger target, Interstice 0.92 = genuinely smaller), matching
+ * the silhouette the rig already renders at that same scale (one sizeScale
+ * source: chassisStatsForArchetype). Deliberately scoped to combat only —
+ * the MOVEMENT collision box (walls/platforms, mirrored in player.zig's own
+ * constants) stays uniform across classes, so platforming parity with the
+ * Zig step is untouched and traversal stays class-fair (the genre norm).
+ */
+export const CLASS_HITBOX_SCALE_ENABLED = true;
+
+function combatHitboxScale(characterId: CharacterArchetype | undefined): number {
+  if (!CLASS_HITBOX_SCALE_ENABLED || characterId === undefined) return 1;
+  return chassisStatsForArchetype(characterId).sizeScale;
+}
+
+/**
+ * The player's REAL combat hitbox — the movement collision box (bodyWidth ×
+ * crouch-aware bodyHeight, centred on player.x/y) scaled by the chassis
+ * sizeScale (see CLASS_HITBOX_SCALE_ENABLED above; scale 1 for
+ * Geometrician, so the home-base chassis is byte-identical to the
+ * pre-scaling box). Jake, 2026-07-15: projectile.ts/fire.ts/
  * destructible.ts each independently hard-coded their own `PLAYER_RADIUS =
  * 18` square hitbox (36×36) — this is exactly the "hand-duplicating these
  * numbers as magic constants" anti-pattern the export above already exists
@@ -101,29 +122,38 @@ export const HEADSHOT_DAMAGE_MULTIPLIER = 1.2;
  * than the standing body, meaning shots that visually land on the head or
  * feet — the outer ~36% of the character's real vertical profile — missed
  * outright. That's the "we miss often when we should" bug.
+ *
+ * `characterId` is optional so synthetic bodies (harness probes, partial
+ * mocks) keep the unscaled home-base box without every caller changing —
+ * real PlayerEntity call sites all carry it and scale automatically.
  */
-export function playerHitboxAABB(player: Pick<PlayerEntity, "x" | "y" | "crouching">): AABB {
-  const h = player.crouching ? M.crouchHeight : M.bodyHeight;
+export function playerHitboxAABB(
+  player: Pick<PlayerEntity, "x" | "y" | "crouching"> & { characterId?: CharacterArchetype },
+): AABB {
+  const s = combatHitboxScale(player.characterId);
+  const h = (player.crouching ? M.crouchHeight : M.bodyHeight) * s;
+  const w = M.bodyWidth * s;
   return {
-    x: player.x - M.bodyWidth / 2,
+    x: player.x - w / 2,
     y: player.y - h / 2,
-    w: M.bodyWidth,
+    w,
     h,
   };
 }
 
 /**
  * True when a hit at world-space `hitY` landed in the victim's head zone
- * (top HEADSHOT_ZONE_FRAC of their real, crouch-aware hitbox — see
- * playerHitboxAABB). Pure Y-band check: a projectile that's already
- * confirmed to hit the body only needs the vertical placement to qualify,
- * not a second full AABB test.
+ * (top HEADSHOT_ZONE_FRAC of their real, crouch-aware, class-scaled hitbox
+ * — see playerHitboxAABB; the height here MUST use the same scale or the
+ * head band would detach from the box it's a fraction of). Pure Y-band
+ * check: a projectile that's already confirmed to hit the body only needs
+ * the vertical placement to qualify, not a second full AABB test.
  */
 export function isHeadshot(
   hitY: number,
-  victim: Pick<PlayerEntity, "y" | "crouching">,
+  victim: Pick<PlayerEntity, "y" | "crouching"> & { characterId?: CharacterArchetype },
 ): boolean {
-  const h = victim.crouching ? M.crouchHeight : M.bodyHeight;
+  const h = (victim.crouching ? M.crouchHeight : M.bodyHeight) * combatHitboxScale(victim.characterId);
   const top = victim.y - h / 2;
   return hitY <= top + h * HEADSHOT_ZONE_FRAC;
 }
