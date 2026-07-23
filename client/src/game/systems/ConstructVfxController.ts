@@ -821,19 +821,23 @@ export class ConstructVfxController {
       );
     }
 
-    // Blink/teleport streak — Slip Node (wizard), Drift Step (priest), Plant
-    // Charge + Bulwark Step (paladin). All four are instant position snaps
-    // (World.ts hard-sets x/y — no velocity dash), so the event's x/y is the
-    // DESTINATION; the origin comes from last frame's cached position
-    // (`lastPos`, updated at the very end of this method). Only Drift Step
-    // (priest) draws a connecting trail body — chassis-design-axioms.md CA5
-    // reserves the tether/echo afterimage register for Interstice + Syzygist
-    // alone, and none of these four abilities happen to be a ninja one, so
+    // Blink/teleport streak — Shadow Step (ninja), Slip Node (wizard), Drift
+    // Step (priest), Plant Charge + Bulwark Step (paladin). All five are
+    // instant position snaps (World.ts hard-sets x/y — no velocity dash), so
+    // the event's x/y is the DESTINATION; the origin comes from last frame's
+    // cached position (`lastPos`, updated at the very end of this method).
+    // Only Shadow Step (ninja, "slash") and Drift Step (priest, "ooze") draw
+    // a connecting trail body — chassis-design-axioms.md CA5 reserves the
+    // tether/echo afterimage register for Interstice + Syzygist alone, and
     // `spawnBlinkStreak`'s own style-gating (slash/ooze only) already
     // resolves this correctly with no per-ability special-casing needed.
+    // Shadow Step was the register's OWNER yet the one blink excluded here
+    // (docs/legibility-audit.md, Track L) — its blink popped position with
+    // no origin→destination causality beyond the destination cast tell.
     for (const ev of events) {
       if (ev.t !== "ability-activated") continue;
       if (
+        ev.kind !== "shadow-step" &&
         ev.kind !== "slip-node" &&
         ev.kind !== "drift-step" &&
         ev.kind !== "plant-charge" &&
