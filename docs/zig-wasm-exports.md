@@ -304,6 +304,7 @@ wire contract — bumping any number is a protocol-version change.
 | `offset_player_movement` | byte offset | `movementMemoryBridge.test.ts` (Track Z0e — bridged movement memory) |
 | `offset_melee_swing` | byte offset | `meleeSwingMemoryBridge.test.ts` (Track Z1a — bridged melee swing FSM memory) |
 | `sizeof_melee_swing_memory` | 32 | `meleeSwingMemoryBridge.test.ts` (Track Z1a) |
+| `combat_hitbox_scale` | per-archetype sizeScale | `combatHitboxScaleParity.test.ts` (Track Z1a item 2 — class-scaled combat hitboxes) |
 | `world_state_max_statics` | 256 | `worldStateLayout.test.ts` (I15) |
 | `world_state_max_events_per_tick` | 64 | `worldStateLayout.test.ts` (I18) |
 | `sizeof_sim_event` | 40 | `worldStateLayout.test.ts` (I18) |

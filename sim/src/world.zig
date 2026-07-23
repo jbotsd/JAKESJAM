@@ -2797,7 +2797,7 @@ fn stepMeleeSwing(
         if ((mem.hit_this_swing_mask & bit) != 0) continue;
         const victim = &state.players[vi];
         if (!victim.flags.alive) continue;
-        const box = combat.playerHitboxAabb(victim.x, victim.y, victim.flags.crouching);
+        const box = combat.playerHitboxAabb(victim.x, victim.y, victim.flags.crouching, victim.character_id);
         if (!combat.isBodyInMeleeArc(attacker.x, attacker.y, aim_angle, half_arc, range, victim.x, victim.y, box)) {
             continue;
         }
@@ -3352,6 +3352,7 @@ pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
                         state.players[pmi].x,
                         state.players[pmi].y,
                         state.players[pmi].flags.crouching,
+                        state.players[pmi].character_id,
                     );
                     var dvi: u32 = 0;
                     while (dvi < state.player_count) : (dvi += 1) {
@@ -3363,6 +3364,7 @@ pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
                             state.players[dvi].x,
                             state.players[dvi].y,
                             state.players[dvi].flags.crouching,
+                            state.players[dvi].character_id,
                         );
                         // AABB overlap — same inline check `stepMeleeSwing`'s
                         // arc-hit-check delegates to `combat.isBodyInMeleeArc`
@@ -4053,7 +4055,11 @@ pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
 
     // 2. Fire patches (I10): tick lifetime in place + apply DPS
     //    damage to overlapping non-owner alive players.
-    //    Player AABB is approximated as 30×56 centered on (x,y).
+    //    Player AABB is approximated as 30×56 centered on (x,y), scaled
+    //    per class since Track Z1a item 2 (parity with fire.ts:77, which
+    //    reads the class-scaled playerHitboxAABB since cohesion P1.4 —
+    //    same "scale the existing approximation, don't silently swap the
+    //    base box" call as section 4's projectile check).
     const PLAYER_HALF_W: f64 = 15.0;
     const PLAYER_HALF_H: f64 = 28.0;
     var fi: u32 = 0;
@@ -4071,12 +4077,13 @@ pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
             {
                 continue;
             }
+            const fire_hit_scale = combat.combatHitboxScale(state.players[ph].character_id);
             if (fire.fireEntityHitsPlayerAABB(
                 patch_ptr,
-                state.players[ph].x - PLAYER_HALF_W,
-                state.players[ph].y - PLAYER_HALF_H,
-                PLAYER_HALF_W * 2.0,
-                PLAYER_HALF_H * 2.0,
+                state.players[ph].x - PLAYER_HALF_W * fire_hit_scale,
+                state.players[ph].y - PLAYER_HALF_H * fire_hit_scale,
+                PLAYER_HALF_W * 2.0 * fire_hit_scale,
+                PLAYER_HALF_H * 2.0 * fire_hit_scale,
             )) {
                 // Shield-first absorption (I38) — fire DPS drains
                 // shield before health if shield active + has charge.
@@ -4509,8 +4516,15 @@ pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
             }
             const px = state.players[ph2].x;
             const py = state.players[ph2].y;
-            const half_w: f64 = 15.0;
-            const half_h: f64 = 28.0;
+            // Class-scaled combat box (Track Z1a item 2 — parity with TS,
+            // whose projectile path reads the class-scaled playerHitboxAABB
+            // since cohesion P1.4). The 30×56 BASE box is a pre-existing
+            // approximation of TS's real 26×56 (see combat.zig's
+            // MELEE_BODY_* doc comment) — deliberately untouched here; this
+            // mirrors the SCALING only, the same multiplier TS applies.
+            const hit_scale = combat.combatHitboxScale(state.players[ph2].character_id);
+            const half_w: f64 = 15.0 * hit_scale;
+            const half_h: f64 = 28.0 * hit_scale;
             const closest_x = @max(px - half_w, @min(proj_ptr.x, px + half_w));
             const closest_y = @max(py - half_h, @min(proj_ptr.y, py + half_h));
             const dx = proj_ptr.x - closest_x;

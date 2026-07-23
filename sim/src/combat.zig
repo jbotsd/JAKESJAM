@@ -328,12 +328,65 @@ pub const MELEE_BODY_WIDTH: f64 = 26.0;
 pub const MELEE_BODY_HEIGHT: f64 = 56.0;
 pub const MELEE_BODY_CROUCH_HEIGHT: f64 = 38.0;
 
-pub fn playerHitboxAabb(x: f64, y: f64, crouching: bool) collision.AABB {
-    const h: f64 = if (crouching) MELEE_BODY_CROUCH_HEIGHT else MELEE_BODY_HEIGHT;
+/// Class hitbox scaling (Track Z1a item 2 — mirror of cohesion-goal.md
+/// P1.4, player.ts's CLASS_HITBOX_SCALE_ENABLED, flipped on 2026-07-23):
+/// COMBAT hitboxes scale by the chassis sizeScale so Kindled is a
+/// genuinely bigger target and Interstice genuinely smaller, matching the
+/// rendered silhouette. Mirror of player.ts's flag — the TS side
+/// documents "flip to `false` to revert the whole gameplay change with
+/// one line"; if that ever happens, THIS line is the Zig half of the
+/// revert (combatHitboxScaleParity.test.ts pins the two behaviors to
+/// each other).
+///
+/// Deliberately scoped to COMBAT only, exactly like TS: the MOVEMENT
+/// collision box (player.zig's own body constants, walls/platforms)
+/// stays uniform across classes so traversal stays class-fair and
+/// platforming parity is untouched — do NOT thread this scale into
+/// player.zig.
+pub const CLASS_HITBOX_SCALE_ENABLED: bool = true;
+
+/// Per-chassis combat hitbox scale — the sizeScale column of
+/// cardTypes.ts's CHASSIS_STATS, keyed by archetype exactly like
+/// world.zig's baseMaxHealthForArchetype / recoilControlForArchetype
+/// mirrors of the same table (the established "tiny switch on
+/// character_id" pattern for chassis stats).
+pub fn combatHitboxScale(archetype: world_state.CharacterArchetype) f64 {
+    if (!CLASS_HITBOX_SCALE_ENABLED) return 1.0;
+    return switch (archetype) {
+        .heavy => 1.18, // Kindled (paladin)
+        .sprinter => 0.92, // Interstice (ninja)
+        .shielded => 1.05, // Syzygist (priest)
+        .balanced => 1.0, // Geometrician (wizard) — home base, byte-identical
+    };
+}
+
+/// Wasm pin for the scale table (Track Z1a item 2) —
+/// combatHitboxScaleParity.test.ts asserts this against cardTypes.ts's
+/// CHASSIS_STATS sizeScale for all four archetypes, same "constants match
+/// TS pinned values" contract as the combat_parry_*/combat_shield_*
+/// exports above. `archetype` is the CharacterArchetype enum(u8) ordinal
+/// (balanced 0, heavy 1, sprinter 2, shielded 3 — the bridge's
+/// CHARACTER_ARCHETYPES order); callers must pass a valid ordinal.
+pub export fn combat_hitbox_scale(archetype: u8) f64 {
+    return combatHitboxScale(@enumFromInt(archetype));
+}
+
+/// Combat body box, class-scaled (Track Z1a item 2 — parity with
+/// player.ts's playerHitboxAABB, which scales width AND height by the
+/// chassis sizeScale, centred on the same (x, y)).
+pub fn playerHitboxAabb(
+    x: f64,
+    y: f64,
+    crouching: bool,
+    archetype: world_state.CharacterArchetype,
+) collision.AABB {
+    const s = combatHitboxScale(archetype);
+    const h: f64 = (if (crouching) MELEE_BODY_CROUCH_HEIGHT else MELEE_BODY_HEIGHT) * s;
+    const w: f64 = MELEE_BODY_WIDTH * s;
     return .{
-        .x = x - MELEE_BODY_WIDTH / 2.0,
+        .x = x - w / 2.0,
         .y = y - h / 2.0,
-        .w = MELEE_BODY_WIDTH,
+        .w = w,
         .h = h,
     };
 }
