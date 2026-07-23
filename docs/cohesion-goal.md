@@ -222,8 +222,15 @@ misled about what the game is or what remains.
 1. **Stale docs archived:** `release-readiness-checklist.md`,
    `milestone-roadmap.md`, `NEXT_ACTIONS.md` move to `docs/archive/` with a
    one-line banner each ("superseded by cohesion-goal.md, kept for
-   history"). Grep: no live (non-archive) doc references npm, Convex-as-
-   backend, or the retired gsr host-replay workflow.
+   history"). *(Acceptance made precise 2026-07-23 during execution: a
+   blanket "no live doc mentions npm/Convex" grep is unachievable and
+   wrong — ~20 docs mention them as history (changelog, GDD) or as the
+   still-present optional `convexClient`. The enforced claim is:) * the
+   three docs above — the ones presenting npm/Convex/gsr as CURRENT
+   practice — are in `docs/archive/` with banners (grep: each banner
+   present), and `STATE-OF-PLAY.md` states the current stack explicitly
+   ("No npm. No Convex backend") so the first doc a reader meets corrects
+   the record.
 2. **One current-truth doc:** `docs/STATE-OF-PLAY.md` (one screen, honest):
    what's live on play.elyad.io, what the active goal docs are (this one,
    venue-goal, six-axes), what's deferred with links. The "what needs
@@ -236,8 +243,11 @@ misled about what the game is or what remains.
 
 ## Status
 
-- P1 chassis truth: **NOT STARTED**
+- P1 chassis truth: **DONE (code)** 2026-07-23 — commits 52890d8 (table +
+  speed + recoil + display reads sim) and 8c868bd (flagged hitbox scaling);
+  P1.7 feel-check AWAITING JAKE on :8088
 - P2 one voice: **NOT STARTED** (register decided 2026-07-23)
 - P3 legibility: **NOT STARTED**
-- P4 fight loops: **BLOCKED ON P1** (Syzygist color + Phase 4 rows AWAITING JAKE)
-- P5 repo truth: **NOT STARTED**
+- P4 fight loops: **UNBLOCKED** (P1 merged) — balance matrix not run yet;
+  Syzygist color + Phase 4 rows AWAITING JAKE
+- P5 repo truth: **DONE** 2026-07-23 — archive/ + banners + STATE-OF-PLAY.md

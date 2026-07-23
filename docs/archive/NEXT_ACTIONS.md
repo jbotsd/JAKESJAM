@@ -1,3 +1,5 @@
+> **ARCHIVED 2026-07-23** — superseded by `docs/cohesion-goal.md` + `docs/STATE-OF-PLAY.md`; kept for history. Contents predate the Bun/venue/class era (npm/Convex-as-backend and the retired gsr host-replay workflow are NOT current practice).
+
 # Five physical acts — the entire remaining distance to the goal
 
 Everything code-shaped shipped 2026-07-10 (50 commits, evidence in

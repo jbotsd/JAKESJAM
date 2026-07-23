@@ -1,3 +1,5 @@
+> **ARCHIVED 2026-07-23** — superseded by `docs/cohesion-goal.md` + `docs/STATE-OF-PLAY.md`; kept for history. Contents predate the Bun/venue/class era (npm/Convex-as-backend and the retired gsr host-replay workflow are NOT current practice).
+
 # JAKESJAM Release Readiness Checklist
 
 Milestone 9 is the "can we hand this build to someone else without babysitting it?" pass.

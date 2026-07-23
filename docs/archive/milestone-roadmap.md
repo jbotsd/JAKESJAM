@@ -1,3 +1,5 @@
+> **ARCHIVED 2026-07-23** — superseded by `docs/cohesion-goal.md` + `docs/STATE-OF-PLAY.md`; kept for history. Contents predate the Bun/venue/class era (npm/Convex-as-backend and the retired gsr host-replay workflow are NOT current practice).
+
 # JAKESJAM — Milestone Roadmap
 
 This roadmap turns the GDD and backlog into a practical build order. The project should prove feel first, then combat, then multiplayer, then orthogonal upgrade depth.
