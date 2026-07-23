@@ -3031,6 +3031,19 @@ pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
         }
     }
 
+    // 0b. PRE-step round snapshot for the shrink-zone storm (Track Z0b
+    //     Item C): TS's storm block reads `state.round` as it stood at
+    //     tick ENTRY (World.ts §3d's own "one-tick lag is imperceptible"
+    //     comment — `roundStateForStep` isn't computed yet there). Section
+    //     1 below overwrites phase/countdown before section 2z runs, so
+    //     capture the same-entry values here — this is what makes the
+    //     boundary tick exact: at countdown 0 entering the tick, TS still
+    //     applies a full-scale storm tick WHILE transitioning the round;
+    //     post-step reads would see `round_over` and skip it.
+    const storm_prestep_phase = state.header.round_phase;
+    const storm_prestep_countdown = state.header.countdown_remaining_ms;
+    const storm_prestep_sudden = state.header.sudden_death_active;
+
     // 1. Round phase machine + winner detection (I6). When the round
     //    resolves with a real winner (sudden-death last-alive or
     //    force-resolve — see detectRoundWinner), increment that player's
@@ -3337,6 +3350,100 @@ pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
             }
         }
         _ = fire.fireEntityTick(patch_ptr, eff_dt);
+    }
+
+    // 2z. Shrink-zone storm (Track Z0b Item C — port of orphaned-branch
+    //     commit 9aeabaa; parity with client/src/sim/suddenDeath.ts's
+    //     computeStormZone + stepSuddenDeathStorm, the ONE sim concern
+    //     that had zero Zig code at all). Two mutually-exclusive zones,
+    //     sudden death wins ties:
+    //       - True sudden death (header.sudden_death_active — a game-point
+    //         tie, Z0a's trigger): shrinks the WHOLE round,
+    //         SCALE_START(1.0) → SCALE_END(0.6) as the clock runs.
+    //       - Soft endgame zone (every round, unconditionally): only
+    //         active in the final ENDGAME_ZONE_TRIGGER_MS(15s), eases from
+    //         full coverage to ENDGAME_ZONE_SCALE_END(0.75) —
+    //         anti-timeout-camping pressure without the hard punish.
+    //     Both damage every alive player outside a circle centered on the
+    //     map (half-diagonal base radius, so scale=1.0 covers every corner
+    //     — nobody takes damage the instant a zone activates). Gated the
+    //     same way fire-hazard is: fighting phase + REAL map size
+    //     (fail-closed if the host never called world_state_set_arena_size
+    //     — a Zig-only test that never wired the arena gets an inert
+    //     storm, not a wrong one).
+    //
+    //     DAMAGE OWNERSHIP (the Z0a deferral, decided WITH evidence this
+    //     cut): storm damage now lives HERE on the wasm path. Checked
+    //     directly — on the full step_world path (client
+    //     applyWasmWorldStepFullSync / server serverWasmHost.step), TS's
+    //     stepWithRuntime never runs, so World.ts's own storm block
+    //     (World.ts §3d) never executes there and serverWasmHost's
+    //     mergeUnpacked only passes `suddenDeathActive` through — the
+    //     wasm-mode path SKIPPED storm damage entirely (not
+    //     double-applied). Moving the application here closes that hole
+    //     with no double-hit anywhere: pure-TS path → TS applies, wasm
+    //     path → this section applies.
+    //
+    //     Parity notes vs TS, both deliberate:
+    //       - chaos damage_multiplier applies (World.ts:6578 scales storm
+    //         damage by chaosProfile.damageMultiplier — the branch spec
+    //         predated that and skipped it);
+    //       - reads the section-0b PRE-step round snapshot, exactly as TS
+    //         reads `state.round` at tick entry — section 1 has already
+    //         overwritten the header by the time this section runs.
+    if (storm_prestep_phase == @intFromEnum(round.RoundPhase.fighting) and
+        g_arena_size_x > 0 and g_arena_size_y > 0)
+    {
+        var zone_scale: f64 = 0;
+        var zone_active = false;
+        if (storm_prestep_sudden != 0) {
+            const elapsed_ms = round.ROUND_TIME_LIMIT_MS - storm_prestep_countdown;
+            const frac = @max(0.0, @min(1.0, elapsed_ms / round.ROUND_TIME_LIMIT_MS));
+            zone_scale = round.SUDDEN_DEATH_SCALE_START +
+                (round.SUDDEN_DEATH_SCALE_END - round.SUDDEN_DEATH_SCALE_START) * frac;
+            zone_active = true;
+        } else if (storm_prestep_countdown <= round.ENDGAME_ZONE_TRIGGER_MS) {
+            // countdown_remaining_ms IS the remaining round time during
+            // `fighting` (suddenDeath.ts's own comment).
+            const local_elapsed_ms = round.ENDGAME_ZONE_TRIGGER_MS - storm_prestep_countdown;
+            const frac = @max(0.0, @min(1.0, local_elapsed_ms / round.ENDGAME_ZONE_TRIGGER_MS));
+            zone_scale = 1.0 + (round.ENDGAME_ZONE_SCALE_END - 1.0) * frac;
+            zone_active = true;
+        }
+        if (zone_active) {
+            // Half-diagonal so scale=1.0 comfortably covers every corner —
+            // nobody takes storm damage the instant sudden death triggers.
+            const base_radius = @sqrt(g_arena_size_x * g_arena_size_x +
+                g_arena_size_y * g_arena_size_y) / 2.0;
+            const zone_radius = base_radius * zone_scale;
+            const zone_cx = g_arena_size_x / 2.0;
+            const zone_cy = g_arena_size_y / 2.0;
+            const safe_radius_sq = zone_radius * zone_radius;
+            // Environmental DoT — no parry/shield mitigation, no owner
+            // (same direct-damage drain shape as the fire patches above;
+            // World.ts applies the identical chain at its §3d).
+            const storm_damage = round.SUDDEN_DEATH_STORM_DPS * (eff_dt / 1000.0) *
+                chaos_profile.damage_multiplier;
+            var sdi: u32 = 0;
+            while (sdi < state.player_count) : (sdi += 1) {
+                const sp = &state.players[sdi];
+                if (!sp.flags.alive) continue;
+                const sdx = sp.x - zone_cx;
+                const sdy = sp.y - zone_cy;
+                if (sdx * sdx + sdy * sdy <= safe_radius_sq) continue;
+                sp.health -= storm_damage;
+                emitEvent(state, .hit_confirmed, @intCast(sdi), -1, 0, storm_damage, sp.x, sp.y);
+                if (sp.health <= 0) {
+                    sp.health = 0;
+                    sp.flags.alive = false;
+                    // Attacker-less death (cause "storm") — credits nobody
+                    // (creditKill no-ops on attacker -1), and the
+                    // section-11 fast-respawn stamp catches it like every
+                    // other death cause.
+                    emitEvent(state, .player_killed, @intCast(sdi), -1, 0, 0, sp.x, sp.y);
+                }
+            }
+        }
     }
 
     // 2b. Paper Doubles (2026-07-20 gap-closure pass item 3 — parity port

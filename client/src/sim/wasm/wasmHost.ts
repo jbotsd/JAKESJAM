@@ -276,6 +276,16 @@ export class WasmHost {
     );
   }
 
+  /** Mirror the arena's raw width/height to the world backend (Track Z0b
+   *  Item C — the shrink-zone storm's center/half-diagonal math; the Zig
+   *  export existed unwired since Phase 4c). Fail-closed: never calling
+   *  this leaves the Zig storm inert. */
+  setArenaSize(width: number, height: number): void {
+    void import("./worldWasmBackend.js").then((m) =>
+      m.setWorldArenaSize(width, height),
+    );
+  }
+
   /** Mirror the map's spawn points to the world backend (Track Z0b Item A
    *  — world.zig's assignSpawnPoints port seats mid-round fast respawns
    *  and round-boundary respawns from the same list TS reads). Module-

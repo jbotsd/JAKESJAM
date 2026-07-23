@@ -432,6 +432,10 @@ export class MatchHost {
         this.runtime.ceilingClampY,
         this.map.size.y > 0 ? this.map.size.y + KILL_PLANE_MARGIN_PX : 0,
       );
+      // Raw arena size (Track Z0b Item C) — feeds the Zig shrink-zone
+      // storm's center/half-diagonal math (same map.size the TS storm
+      // reads). Fail-closed Zig-side if never set.
+      serverWasmHost.setArenaSize(this.map.size.x, this.map.size.y);
       // Launch pads — static map geometry (world.zig §8c), same host-set
       // cadence as the statics/bounds. Empty array clears stale pads.
       serverWasmHost.setLaunchPads(this.map.launchPads ?? []);

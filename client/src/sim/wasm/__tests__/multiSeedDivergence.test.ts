@@ -8,12 +8,37 @@
 // fire-hazard spawn). Nothing else here exercises hundreds of consecutive
 // ticks of movement + combat interacting the way a real match actually does.
 //
-// This test is Track Z's convergence METER, not a proven-green gate: main has
-// known un-ported divergences (muzzle geometry, storm damage, player respawn
-// lives TS-side only — Zig's detectRoundWinner still ends rounds on
-// last-alive KO while TS's fast-respawn ruling 2026-07-17 reserves that for
-// sudden death). If the sweep exceeds its bound, the per-seed record below is
-// the deliverable Z0b consumes.
+// This test is Track Z's convergence METER, not a proven-green gate. Z0b
+// (2026-07-23) ported the three biggest known gaps — fast-respawn round
+// semantics (Item A), muzzle geometry (Item B), the shrink-zone storm
+// (Item C) — and recorded the meter before/after:
+//
+//   Z0b BEFORE (Z0a baseline, this harness):        AFTER (A+B+C):
+//   seed=1     : final 1067px, spikes→1494px, aliveΔ≤3 | final 329px, spikes→1480px (transient), aliveΔ≤1
+//   seed=42    : final  217px, spikes→1073px, aliveΔ≤2 | final 185px, spikes→1075px (transient), aliveΔ≤1
+//   seed=1337  : final  867px, spikes→1488px, aliveΔ≤3 | final 445px, spikes→1416px (transient), aliveΔ≤1
+//   seed=90210 : final 1043px, spikes→1468px, aliveΔ≤2 | final 278px, spikes→1466px (transient), aliveΔ≤1
+//   seed=271828: final  376px, spikes→1277px, aliveΔ≤3 | final 361px, spikes→1275px (transient), aliveΔ≤3
+//
+// What changed and what didn't, honestly: Item A killed the dominant
+// signature — the sustained alive-flag/100-health oscillation (Zig ended
+// every round on last-alive KO and cycled respawn-all+score while TS kept
+// fighting); mismatches are now short transients around individual
+// death-timing disagreements and finals dropped 2-3x on 3/5 seeds. Item B
+// zeroed the early-match health deltas (hits land identically until
+// positions drift) but did NOT tighten the position numbers — evidenced
+// hypothesis, verified in-code: (1) Zig applies NO fire recoil while TS
+// kicks the shooter every shot (CardMod/ResolvedFireConfig carry no recoil
+// fields — the documented Recoil Step deferral; sweep players fire ~40% of
+// ticks, so TS shooters walk a different path from tick ~1), and (2) the
+// orphan branch's tick-order reorder is un-ported (a Zig shot gets its
+// first motion step one tick late → one-tick hit-timing skew) — see
+// tickOrderParity.test.ts. Item C (storm) can't move this sweep at all:
+// the 20s run never reaches a zone window (endgame = last 15s of a 90s
+// round). Recoil substrate + tick-order are the Z0c targets.
+//
+// If the sweep exceeds its bound, the per-seed record above is the
+// deliverable the next track consumes.
 //
 // Harness-fidelity lessons KEPT from the branch (5e1676a + 3f16fe3):
 //   - setWorldArenaBounds is called (5e1676a's root-cause fix: without it,

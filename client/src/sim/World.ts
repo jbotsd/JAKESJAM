@@ -1289,6 +1289,11 @@ export function syncWorldStaticsToWasm(map: MapDefinition): void {
     computeCeilingClampY(map),
     map.size.y > 0 ? map.size.y + KILL_PLANE_MARGIN_PX : 0,
   );
+  // Raw arena size (Track Z0b Item C) — the Zig shrink-zone storm's
+  // center/half-diagonal math reads the same map.size this file's own
+  // stepSuddenDeathStorm call passes. Fail-closed on the Zig side if
+  // never set.
+  wasmHost.setArenaSize(map.size.x, map.size.y);
   // Launch pads — static map geometry, same host-set pattern as the arena
   // bounds (module-level in world.zig, zero WorldState bytes). Always
   // called (empty array clears the previous match's pads).

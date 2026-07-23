@@ -65,6 +65,7 @@ type WorldExports = {
   ) => number;
   offset_player_fire_config?: () => number;
   sizeof_resolved_fire_config?: () => number;
+  world_state_set_arena_size?: (width: number, height: number) => void;
   world_state_set_arena_bounds?: (
     ceiling_y: number,
     has_ceiling: number,
@@ -104,6 +105,7 @@ class ServerWasmHost {
   private cachedLaunchPads: LaunchPadDefinition[] | null = null;
   private cachedSlopes: SlopeStatic[] | null = null;
   private cachedSpawnPoints: { x: number; y: number }[] | null = null;
+  private cachedArenaSize: { x: number; y: number } | null = null;
   private cachedTargetScore: number | null = null;
   private preloadPromise: Promise<void> | null = null;
   private resolvedReady = false;
@@ -184,6 +186,14 @@ class ServerWasmHost {
       hasCeiling: ceilingY === null ? 0 : 1,
       killPlaneY,
     };
+  }
+
+  /** Raw arena width/height (map.size — world.zig module-level, Track Z0b
+   *  Item C): consumed by the shrink-zone storm's center/half-diagonal
+   *  math (and pre-existing consumer findCollisionFreeLanding's bounds
+   *  check). Fail-closed — an unset size leaves the storm inert. */
+  setArenaSize(width: number, height: number): void {
+    this.cachedArenaSize = { x: width, y: height };
   }
 
   /** Static launch pads (map.launchPads, world.zig §8c — module-level like
@@ -267,6 +277,7 @@ class ServerWasmHost {
     // (no card augments) while the client predicts WITH them → desync.
     this.writeFireConfigsIntoMemory(state);
     this.writeArenaBoundsIntoMemory();
+    this.writeArenaSizeIntoMemory();
     this.writeLaunchPadsIntoMemory();
     this.writeSlopesIntoMemory();
     this.writeSpawnPointsIntoMemory();
@@ -297,6 +308,7 @@ class ServerWasmHost {
     this.cachedLaunchPads = null;
     this.cachedSlopes = null;
     this.cachedSpawnPoints = null;
+    this.cachedArenaSize = null;
     this.cachedTargetScore = null;
     this.preloadPromise = null;
     this.resolvedReady = false;
@@ -354,6 +366,14 @@ class ServerWasmHost {
     if (this.cachedTargetScore === null || !this.ex || this.statePtr === null)
       return;
     this.ex.world_state_set_target_score?.(this.statePtr, this.cachedTargetScore);
+  }
+
+  private writeArenaSizeIntoMemory(): void {
+    if (!this.cachedArenaSize || !this.ex) return;
+    this.ex.world_state_set_arena_size?.(
+      this.cachedArenaSize.x,
+      this.cachedArenaSize.y,
+    );
   }
 
   /** Patch each player's score into linear memory. Track Z0a port of

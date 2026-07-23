@@ -54,6 +54,9 @@ type WorldExports = {
     has_ceiling: number,
     kill_plane_y: number,
   ) => void;
+  /** Optional — raw arena width/height (Track Z0b Item C wires it from the
+   *  hosts; consumed by the shrink-zone storm + findCollisionFreeLanding). */
+  world_state_set_arena_size?: (width: number, height: number) => void;
   /** Optional — older sim.wasm builds predate launch pads. Flat f64
    *  array, 6 per pad: [x, y, w, h, impulse_x, impulse_y]. */
   world_state_set_launch_pads?: (pads_ptr: number, count: number) => number;
@@ -487,6 +490,18 @@ export function setWorldArenaBounds(
   };
 }
 
+/**
+ * Cache the arena's raw width/height (map.size — Track Z0b Item C). The
+ * Zig export existed unwired since Phase 4c; the shrink-zone storm's
+ * center/half-diagonal math now consumes it (fail-closed: unset size =
+ * inert storm). Applied each step alongside the arena bounds.
+ */
+let cachedArenaSize: { x: number; y: number } | null = null;
+
+export function setWorldArenaSize(width: number, height: number): void {
+  cachedArenaSize = { x: width, y: height };
+}
+
 let cachedTargetScore: number | null = null;
 
 /**
@@ -609,6 +624,9 @@ function writeStaticsIntoMemory(): void {
       cachedArenaBounds.hasCeiling,
       cachedArenaBounds.killPlaneY,
     );
+  }
+  if (cachedArenaSize && typeof ex.world_state_set_arena_size === "function") {
+    ex.world_state_set_arena_size(cachedArenaSize.x, cachedArenaSize.y);
   }
   // Launch pads (world.zig §8c). Scratch sits past the max statics region
   // (256×32 AABB + 256 one_way = 8448 bytes, 8-aligned) so the two writes
