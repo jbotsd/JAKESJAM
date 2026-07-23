@@ -538,6 +538,11 @@ function mergeUnpacked(
     // Z0e) — REPLACED wholesale each tick (Zig's own post-step truth,
     // keyed by id). Mirrors the client backend's mergeUnpacked exactly.
     movementMemory: unpacked.movementMemory,
+    // Same contract for the melee swing FSM (Track Z1a — Z0e's sibling):
+    // without this, the next pack resets every swing to idle and melee
+    // can never mature past windup on the wasm path. Mirrors the client
+    // backend's mergeUnpacked exactly.
+    meleeSwingMemory: unpacked.meleeSwingMemory,
   };
 }
 

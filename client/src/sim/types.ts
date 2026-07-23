@@ -1335,6 +1335,49 @@ export type PlayerMovementMemory = {
   dashRecoveryMs: number;
 };
 
+/**
+ * Zig full-sync path ONLY (Track Z1a) — the bridged image of ONE slot of
+ * wasm's `melee_swing` parallel array (world_state.zig MeleeSwingMemory):
+ * the combined Ninja Slash / Kindled Edge swing FSM plus the dash-through
+ * per-burst debounce. This is Zig's OWN memory riding the TS state object
+ * between packs, exactly like `PlayerMovementMemory` above — it is NOT a
+ * mirror of the TS orchestrator's `WorldRuntime.melee`/`paladinMelee`
+ * Maps (those stay host-side Maps, never stored on WorldState; the TS
+ * orchestrator never reads or writes this type).
+ *
+ * Field shape follows the Zig extern struct, not the TS Maps: Zig keys
+ * victims by roster SLOT INDEX bitmask (u16, one bit per player slot in
+ * sorted-id order) where TS uses `Set<PlayerId>` — the masks are only
+ * meaningful to the wasm side that wrote them, and only within the same
+ * pack's slot ordering (the bridge re-seats slots by sorted id every
+ * tick; see `meleeSwingMemory`'s doc comment on WorldState for why that
+ * is sound here).
+ */
+export type MeleeSwingMemory = {
+  /** ms remaining in the current phase; 0/irrelevant when phase === 0. */
+  phaseMs: number;
+  /** Swing direction captured at windup start (unit vector) — fresh
+   *  default is aimX=1/aimY=0, NOT zeros (a zero vector would break the
+   *  arc hit-check's atan2). */
+  aimX: number;
+  aimY: number;
+  /** Victim bitmask already hit by the CURRENT swing's active window —
+   *  one bit per player slot index (MAX_PLAYERS=16 fits a u16). */
+  hitThisSwingMask: number;
+  /** 0 idle | 1 windup | 2 active | 3 recovery — world_state.zig's
+   *  MeleeSwingPhase enum(u8), same shape as TS's NinjaSlashPhase /
+   *  PaladinEdgePhase unions. */
+  phase: 0 | 1 | 2 | 3;
+  /** Victim bitmask already dash-through-tagged during the CURRENT dash
+   *  burst (Razor Route substrate) — same slot-index shape as
+   *  hitThisSwingMask. */
+  dashThroughTaggedMask: number;
+  /** Last tick's dash_active_ms > 0 (dash rising-edge detection). */
+  wasDashing: boolean;
+  /** Razor Route empowerment latched at the current burst's start. */
+  razorRouteActiveDash: boolean;
+};
+
 export type WorldState = {
   tick: Tick;
   rngState: number;
@@ -1401,6 +1444,33 @@ export type WorldState = {
    * writes it.
    */
   movementMemory?: Record<PlayerId, PlayerMovementMemory>;
+  /**
+   * Zig full-sync path ONLY (Track Z1a): per-player melee swing FSM
+   * memory bridged across the every-tick WorldState repack — the exact
+   * sibling of `movementMemory` above, closing the finding Z0e recorded
+   * (multiSeedDivergence.test.ts header): packWorldState left the
+   * `melee_swing` parallel array zero-filled, and since both full-sync
+   * hosts overwrite the whole wasm-side buffer every tick, Zig's swing
+   * FSM was reset to idle EVERY pack — a windup could never mature into
+   * an active window, so ninja/paladin melee could never land a hit under
+   * live wasm authority (same bug class as Z0e's movement amnesia, felt
+   * as "melee does nothing" instead of "movement feels wrong").
+   *
+   * Keyed by PlayerId (the pack re-seats slots by sorted-id order every
+   * tick). The victim bitmasks inside are slot-index-based and only
+   * self-consistent when the roster is stable within a swing (~215ms) —
+   * a mid-swing roster change can shift slot order, which at worst
+   * re-arms one already-hit victim for one swing; the same pack-order
+   * caveat applies to the parallel array itself and predates this
+   * bridge. Missing entries pack as the fresh idle FSM (aimX=1, not raw
+   * zeros).
+   *
+   * Optional/additive + OFF-WIRE per the `movementMemory` contract above
+   * (snapshotDelta's `encodeDelta` whitelist does not include it). The
+   * TS orchestrator never reads or writes it — its own swing FSMs live
+   * in `WorldRuntime.melee`/`paladinMelee`.
+   */
+  meleeSwingMemory?: Record<PlayerId, MeleeSwingMemory>;
 };
 
 export type SimEvent = (

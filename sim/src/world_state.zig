@@ -2076,6 +2076,24 @@ pub export fn offset_player_movement() u32 {
     return @intCast(@offsetOf(WorldState, "player_movement"));
 }
 
+/// Byte offset of `melee_swing[0]` from the start of `WorldState` (Track
+/// Z1a — Z0e's sibling). The TS bridge packs/unpacks this parallel array
+/// every full-sync tick — the swing FSM must SURVIVE the repack or melee
+/// resets to idle before every step (a windup can never mature into an
+/// active window; ninja/paladin melee never lands under live wasm
+/// authority). Same layout-pinning contract as offset_player_movement
+/// above — meleeSwingMemoryBridge.test.ts asserts the two derivations
+/// agree.
+pub export fn offset_melee_swing() u32 {
+    return @intCast(@offsetOf(WorldState, "melee_swing"));
+}
+
+/// @sizeOf pin for the bridge's MELEE_SWING_MEMORY_SIZE stride (Track
+/// Z1a) — same contract as sizeof_player_movement_memory above.
+pub export fn sizeof_melee_swing_memory() u32 {
+    return @intCast(@sizeOf(MeleeSwingMemory));
+}
+
 pub export fn world_state_max_players() u32 {
     return @intCast(MAX_PLAYERS);
 }

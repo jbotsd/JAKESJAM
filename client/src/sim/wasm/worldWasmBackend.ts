@@ -239,6 +239,10 @@ function mergeUnpacked(
     // players' slots). No stableMergeRecord: nothing renders from it, so
     // referential churn costs nothing.
     movementMemory: unpacked.movementMemory,
+    // Same contract for the melee swing FSM (Track Z1a — Z0e's sibling):
+    // without this, the next pack resets every swing to idle and melee
+    // can never mature past windup on the wasm path.
+    meleeSwingMemory: unpacked.meleeSwingMemory,
   };
 }
 

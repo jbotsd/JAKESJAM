@@ -39,6 +39,7 @@ import {
   type ProjectileImpact,
   type ProjectilePathing,
   type ProjectileShape,
+  type MeleeSwingMemory,
   type PlayerMovementMemory,
   type RoundPhase,
   type RoundState,
@@ -175,8 +176,11 @@ const MAX_PAPER_DOUBLES = 16;
 export const PLAYER_MOVEMENT_MEMORY_SIZE = 48;
 // Melee swing FSM memory (2026-07-20 base-melee-mechanic gap-closure pass)
 // — parallel to players[], host-only/off-wire like PlayerMovementMemory.
-// Must match world_state.zig's MeleeSwingMemory @sizeOf.
-const MELEE_SWING_MEMORY_SIZE = 32;
+// Must match world_state.zig's MeleeSwingMemory @sizeOf. BRIDGED as of
+// Track Z1a (Z0e's sibling fix — see packMeleeSwingMemory below): the
+// pack/unpack pair reads and writes the slots, so this stride is both the
+// skip distance AND the per-slot layout size.
+export const MELEE_SWING_MEMORY_SIZE = 32;
 // I-final — ResolvedFireConfig parallel array (per-player fire
 // build resolved by the host from createWeaponBuild). 14 × f64 +
 // 4 × u32 + 4 × u8(enum) + 1 × u8(valid) + 3 × u8(pad) = 136.
@@ -337,6 +341,70 @@ function unpackMovementMemory(
     dashUsedInAir: view.getInt8(offset + 46),
   };
 }
+
+// Byte offset of `melee_swing[0]` within the packed WorldState (Track
+// Z1a). Bridged for the same reason player_movement was in Z0e: the
+// full-sync hosts repack the whole buffer every tick, and an unbridged
+// slot means Zig's swing FSM resets to idle before every step — a windup
+// can never mature, so ninja/paladin melee can never land under live
+// wasm authority. Must equal wasm's `offset_melee_swing()` export —
+// meleeSwingMemoryBridge.test.ts asserts the two derivations agree.
+export const MELEE_SWING_OFFSET =
+  PLAYER_MOVEMENT_OFFSET + MAX_PLAYERS * PLAYER_MOVEMENT_MEMORY_SIZE;
+
+/** Pack one MeleeSwingMemory into its 32-byte slot. Field offsets follow
+ *  world_state.zig's MeleeSwingMemory extern struct exactly: three f64s
+ *  (phase_ms, aim_x, aim_y), u16 hit mask, u8 phase enum, one pad byte,
+ *  u16 dash-through mask, two bool bytes. */
+function packMeleeSwingMemory(
+  view: DataView,
+  offset: number,
+  m: MeleeSwingMemory,
+): void {
+  view.setFloat64(offset + 0, m.phaseMs, true);
+  view.setFloat64(offset + 8, m.aimX, true);
+  view.setFloat64(offset + 16, m.aimY, true);
+  view.setUint16(offset + 24, m.hitThisSwingMask, true);
+  view.setUint8(offset + 26, m.phase);
+  // offset + 27: _pad — left zero (buf starts zero-filled).
+  view.setUint16(offset + 28, m.dashThroughTaggedMask, true);
+  view.setUint8(offset + 30, m.wasDashing ? 1 : 0);
+  view.setUint8(offset + 31, m.razorRouteActiveDash ? 1 : 0);
+}
+
+function unpackMeleeSwingMemory(
+  view: DataView,
+  offset: number,
+): MeleeSwingMemory {
+  return {
+    phaseMs: view.getFloat64(offset + 0, true),
+    aimX: view.getFloat64(offset + 8, true),
+    aimY: view.getFloat64(offset + 16, true),
+    hitThisSwingMask: view.getUint16(offset + 24, true),
+    phase: (view.getUint8(offset + 26) & 3) as MeleeSwingMemory["phase"],
+    dashThroughTaggedMask: view.getUint16(offset + 28, true),
+    wasDashing: view.getUint8(offset + 30) !== 0,
+    razorRouteActiveDash: view.getUint8(offset + 31) !== 0,
+  };
+}
+
+/** The bytes a NEW player's slot gets when `state.meleeSwingMemory` has
+ *  no entry for them — the exact mirror of world_state.zig's
+ *  MeleeSwingMemory field defaults (`.{}`): idle FSM with aim_x=1. A
+ *  zero-filled slot (the pre-Z1a status quo) differs in aim_x — a zero
+ *  aim vector would feed atan2(0,0) into the first swing's arc check if
+ *  any stale active window survived — so the default is written
+ *  explicitly, same discipline as FRESH_MOVEMENT_MEMORY below. */
+const FRESH_MELEE_SWING_MEMORY: MeleeSwingMemory = {
+  phaseMs: 0,
+  aimX: 1,
+  aimY: 0,
+  hitThisSwingMask: 0,
+  phase: 0,
+  dashThroughTaggedMask: 0,
+  wasDashing: false,
+  razorRouteActiveDash: false,
+};
 
 /** The bytes a NEW player's slot gets when `state.movementMemory` has no
  *  entry for them — the exact mirror of player.ts's
@@ -1821,6 +1889,23 @@ export function packWorldState(state: WorldState): Uint8Array {
     );
   }
 
+  // melee_swing parallel array (Track Z1a) — same sorted-slot contract as
+  // the player_movement loop directly above. Before Z1a this region was
+  // left zero-filled, so the hosts' every-tick repack reset every swing
+  // FSM to idle before every step — melee windup could never mature into
+  // an active window on the wasm path (see WorldState.meleeSwingMemory's
+  // doc comment in types.ts). Missing entries get the fresh idle FSM
+  // (aim_x=1 — world_state.zig's own field defaults, not raw zeros).
+  for (let i = 0; i < players.length; i++) {
+    const mem =
+      state.meleeSwingMemory?.[players[i]!.id] ?? FRESH_MELEE_SWING_MEMORY;
+    packMeleeSwingMemory(
+      view,
+      MELEE_SWING_OFFSET + i * MELEE_SWING_MEMORY_SIZE,
+      mem,
+    );
+  }
+
   return buf;
 }
 
@@ -1884,6 +1969,10 @@ export type UnpackedWorldState = {
    *  back — the round-trip that lets movement memory survive the
    *  every-tick full-sync repack. */
   movementMemory: Record<PlayerId, PlayerMovementMemory>;
+  /** Zig's post-step `melee_swing` parallel array, re-keyed by player id
+   *  (Track Z1a) — same round-trip contract as movementMemory, so the
+   *  swing FSM survives the every-tick full-sync repack. */
+  meleeSwingMemory: Record<PlayerId, MeleeSwingMemory>;
 };
 
 export function unpackWorldState(buf: Uint8Array): UnpackedWorldState {
@@ -2045,9 +2134,19 @@ export function unpackWorldState(buf: Uint8Array): UnpackedWorldState {
   }
   off += MAX_PLAYERS * PLAYER_MOVEMENT_MEMORY_SIZE;
 
-  // Melee swing FSM memory (2026-07-20 base-melee-mechanic gap-closure
-  // pass) — 16 × 32 bytes. Skipped, same "host doesn't consume" treatment
-  // as player_movement.
+  // Melee swing FSM memory — 16 × 32 bytes. BRIDGED as of Track Z1a
+  // (was skipped, which combined with the hosts' every-tick full-buffer
+  // repack to reset every swing FSM to idle every tick — Z0e's sibling
+  // bug): read back per live slot, keyed by that slot's player id, same
+  // contract as the player_movement section directly above.
+  const meleeSwingMemory: Record<PlayerId, MeleeSwingMemory> =
+    {} as Record<PlayerId, MeleeSwingMemory>;
+  for (let i = 0; i < playerIdBySlot.length; i++) {
+    meleeSwingMemory[playerIdBySlot[i]!] = unpackMeleeSwingMemory(
+      view,
+      off + i * MELEE_SWING_MEMORY_SIZE,
+    );
+  }
   off += MAX_PLAYERS * MELEE_SWING_MEMORY_SIZE;
 
   // I-final player_fire_config parallel array — 16 × 240 bytes.
@@ -2145,6 +2244,7 @@ export function unpackWorldState(buf: Uint8Array): UnpackedWorldState {
     pickups,
     events,
     movementMemory,
+    meleeSwingMemory,
   };
   if (chaosModifierIds.length > 0) out.chaosModifierIds = chaosModifierIds;
   if (fireHazardTimerMs !== 0) out.fireHazardTimerMs = fireHazardTimerMs;
