@@ -174,12 +174,15 @@ already pass.
   overall copy sign-off, 9 flagged rename candidates, 5 proposed result
   epigraphs, the paper-double 160-char trim, and the deferred DeathOverlay
   in-play line.
-- L legibility: **AUDIT DONE** 2026-07-23 — docs/legibility-audit.md: 79
-  effects, 2 MISSING (Stride refund — the only Layer-1 axis with NO read;
-  Technique execute — kills indistinguishable from ordinary), 34 PARTIAL
-  (notably shadow-step excluded from the built blink-streak primitive;
-  veil window invisible on the body), 43 SHIPPED. The MISSING/PARTIAL rows
-  are the build list; launch-cue rip still open.
+- L legibility: **AUDIT DONE + TOP FIXES MERGED/LIVE** 2026-07-23 —
+  docs/legibility-audit.md now 0 MISSING / 32 PARTIAL / 47 SHIPPED.
+  Shipped: stride-refunded site event + feet sweep, execute severance
+  shear on death-FX, shadow-step blink streak, veil body shroud +
+  break-snap (pure planner, 6 headless tests). AWAITING JAKE live-eyes:
+  stride ring readability at speed, veil quietness-vs-fairness, shear
+  timing vs the kill pop (harness could only verify the streak path).
+  Still open: launch-cue rip (canonical recording — taste call), the 32
+  PARTIAL rows as a future polish lane.
 - B instrument: **DONE (PASS)** 2026-07-23 — commit 30ed713: per-class
   policy (Kindled closes, seeded first-swing delay fixes the mutual-range
   mirror collapse). Matrix now varies in all 4 mirrors and 6/12 cross
