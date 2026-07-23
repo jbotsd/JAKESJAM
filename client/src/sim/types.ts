@@ -1463,6 +1463,21 @@ export type SimEvent = (
       volleyCount: number;
     }
   /**
+   * Emitted when a Stride-charged Emission cast actually refunds spent air
+   * movement (six-axes-goal.md Layer 1: `stride.dashReset` zeroes the host
+   * movement memory's airJumpsUsed/dashUsedInAir — the exact reset landing
+   * performs). Only fires when something was really spent (a grounded /
+   * fresh-countered cast refunds nothing and stays silent, doctrine #3), so
+   * the read is honest: this marks the moment air movement CAME BACK, not
+   * the axis merely existing. The refund itself lives in host-side movement
+   * memory (never in the snapshot), so without this event no renderer can
+   * see it — it was the only Layer-1 axis with no site read
+   * (docs/legibility-audit.md). x/y = the caster at cast time; the site
+   * read goes at the FEET (movement register). Additive wire type — old
+   * clients ignore unknown event tags.
+   */
+  | { t: 'stride-refunded'; playerId: PlayerId; x: number; y: number }
+  /**
    * Emitted when a drafted active fires (six-axes Layer 2: input bits
    * 10..13, validated against the slot's cooldown). Drives the router's
    * activation cue + the scene's slot flash; the effect itself is ordinary

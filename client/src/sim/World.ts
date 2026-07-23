@@ -3062,12 +3062,25 @@ export function stepWithRuntime(
       // Stride axis: the cast refunds spent air movement — the exact reset
       // landing performs (player.ts), written into the same host-side
       // memory the next player step reads. No new ABI: the wasm player
-      // step already receives these counters every tick.
+      // step already receives these counters every tick. The refund lives
+      // ONLY in this host memory (no snapshot field), so the event below is
+      // the sole way a renderer can see it — emitted only when something
+      // was actually spent, so the site read marks a real restoration
+      // rather than the axis idling (docs/legibility-audit.md, Track L).
       if (emission.stride.dashReset) {
         const mem = runtime.movement.get(pid);
         if (mem) {
+          const refunded = mem.airJumpsUsed > 0 || mem.dashUsedInAir > 0;
           mem.airJumpsUsed = 0;
           mem.dashUsedInAir = 0;
+          if (refunded) {
+            events.push({
+              t: "stride-refunded",
+              playerId: pid,
+              x: nextEntity.x,
+              y: nextEntity.y,
+            });
+          }
         }
       }
       // E-coupling cast effects (doctrine #7): Shadow Step held → the cast

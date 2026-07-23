@@ -406,6 +406,15 @@ export class SimEventRouter {
         // Hangout mode only — no router-level feedback; the scene
         // transition itself (real match handoff) is the feedback.
         break;
+      case "stride-refunded":
+        // Stride axis refund (six-axes Layer 1). The world-space read — an
+        // upward-sweeping ring burst at the caster's FEET (movement
+        // register) — lives in StatusVfxController beside its status-read
+        // siblings. Deliberately silent here: no canonical "movement
+        // restored" recording exists and we never synthesize audio (hard
+        // rule); the paired emission-cast event this same tick already
+        // carries the cast's audio weight.
+        break;
       case "emission-cast":
         // The seal presses (Emission Engine P1/P2). Weight without a new
         // vocabulary — the heavy card cue CARRIES THE HAND'S ELEMENT (a

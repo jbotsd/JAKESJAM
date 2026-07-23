@@ -278,6 +278,39 @@ describe("Stride axis — the cast refunds spent air movement", () => {
     expect(res.events.some((e) => e.t === "emission-cast")).toBe(true);
     expect(runtime.movement.get(A)!.airJumpsUsed).toBe(0);
     expect(runtime.movement.get(A)!.dashUsedInAir).toBe(0);
+    // The refund surfaces as its own SimEvent at the caster's site — the
+    // counters live in host movement memory (never the snapshot), so this
+    // event is the ONLY way a renderer can present the moment.
+    const refund = res.events.find((e) => e.t === "stride-refunded");
+    expect(refund).toBeDefined();
+    if (refund?.t === "stride-refunded") {
+      expect(refund.playerId).toBe(A);
+      expect(typeof refund.x).toBe("number");
+      expect(typeof refund.y).toBe("number");
+    }
+  });
+
+  test("a stride-charged cast with nothing spent stays silent (honest read)", () => {
+    const caster = mkPlayer(A, 400, 300);
+    caster.cards = ["double-jump", "blink-dash"];
+    caster.abilityCharge = EMISSION_CHARGE_MAX;
+    let state = mkState([caster]);
+    const runtime = createRuntime(flatMap);
+
+    // Prime movement memory but spend NOTHING — the reset is a no-op, so
+    // no refund event may fire (a false "movement restored" read is noise).
+    let res = stepWithRuntime(state, runtime, inputsWith([caster], {}), DT_MS);
+    state = res.state;
+    expect(runtime.movement.get(A)!.airJumpsUsed).toBe(0);
+
+    res = stepWithRuntime(
+      state,
+      runtime,
+      inputsWith([caster], { [A as string]: abilityPress() }),
+      DT_MS,
+    );
+    expect(res.events.some((e) => e.t === "emission-cast")).toBe(true);
+    expect(res.events.some((e) => e.t === "stride-refunded")).toBe(false);
   });
 
   test("a no-Stride hand's cast leaves the counters spent", () => {
@@ -301,6 +334,7 @@ describe("Stride axis — the cast refunds spent air movement", () => {
     expect(res.events.some((e) => e.t === "emission-cast")).toBe(true);
     expect(runtime.movement.get(A)!.airJumpsUsed).toBe(1);
     expect(runtime.movement.get(A)!.dashUsedInAir).toBe(1);
+    expect(res.events.some((e) => e.t === "stride-refunded")).toBe(false);
   });
 });
 

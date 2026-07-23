@@ -21,6 +21,10 @@ const SLOW_RING_INTERVAL_MS = 220;
 // nameplate WARD chip in OnlineMatchScene's BUFF_DESCRIPTORS).
 const WARD_COLOR = 0x38bdf8;
 const SLOW_COLOR = 0x7dd3fc;
+// Stride refund cyan — conjured-movement register (chassis color law: cyan =
+// conjured combat), deliberately hotter than slow's pale drag-wake blue so
+// the two feet-level reads never blur.
+const STRIDE_COLOR = 0x67e8f9;
 // Drain thread crimson — vampire register, deliberately NOT an element color.
 const LEECH_COLOR = 0xdc2626;
 const LEECH_GLOW = 0x7f1d1d;
@@ -148,6 +152,9 @@ export class StatusVfxController {
           { x: ev.toX, y: ev.toY },
         );
       }
+      if (ev.t === "stride-refunded") {
+        this.spawnStrideRefundSweep({ x: ev.x, y: ev.y });
+      }
     }
   }
 
@@ -156,6 +163,65 @@ export class StatusVfxController {
     this.freezeCadence.clear();
     this.wardCadence.clear();
     this.slowCadence.clear();
+  }
+
+  /** Stride-refund site read (six-axes Layer 1, `stride-refunded`): spent
+   *  air movement just came back, so the read is MOVEMENT-registered — an
+   *  upward-sweeping pair of flattened rings rising from the feet up the
+   *  body (the exact inversion of slow's inward-dragging foot wake), plus
+   *  two rising tick sparks. One-shot pooled transients; deliberately not
+   *  the generic emission-cast seal flash, which is axis-blind. */
+  private spawnStrideRefundSweep(position: Vec2): void {
+    const feetY = position.y + 13;
+    for (let i = 0; i < 2; i++) {
+      const ring = this.pool.acquireRing();
+      if (!ring) break;
+      // Second ring starts tighter and rises further — a double-beat sweep.
+      const startScale = i === 0 ? 0.95 : 0.7;
+      const riseTo = i === 0 ? 30 : 44;
+      ring.setPosition(position.x, feetY);
+      ring.setFillStyle(STRIDE_COLOR, 0);
+      ring.setStrokeStyle(2, STRIDE_COLOR, 0.7);
+      ring.setScale(startScale, 0.34);
+      ring.setAlpha(1);
+      transientVfx.spawn({
+        factory: () => ring,
+        lifetimeMs: RING_DURATION_MS + i * 70,
+        startAlpha: 1,
+        ease: "Sine.easeOut",
+        onTick: (obj, t) => {
+          const r = obj as Phaser.GameObjects.Arc;
+          r.y = feetY - riseTo * t;
+          // Hug the body as it rises — a sweep along the vessel, not a blast.
+          r.setScale(startScale * (1 - 0.35 * t), 0.34 * (1 - 0.3 * t));
+        },
+        release: () => this.pool.release(ring),
+      });
+    }
+    for (let i = 0; i < 2; i++) {
+      const spark = this.pool.acquireSpark();
+      if (!spark) break;
+      const side = i === 0 ? -1 : 1;
+      const startX = position.x + side * 10;
+      spark.setPosition(startX, feetY);
+      spark.setFillStyle(STRIDE_COLOR, 0.85);
+      spark.setRotation(0); // upright tick — a rising line, not debris
+      spark.setScale(1);
+      spark.setAlpha(0.85);
+      transientVfx.spawn({
+        factory: () => spark,
+        lifetimeMs: RING_DURATION_MS,
+        startAlpha: 0.85,
+        ease: "Sine.easeOut",
+        onTick: (obj, t) => {
+          const s = obj as Phaser.GameObjects.Rectangle;
+          s.y = feetY - 36 * t;
+          s.x = startX + side * 3 * t;
+          s.setScale(1 - 0.4 * t, 1 + 0.5 * t);
+        },
+        release: () => this.pool.release(spark),
+      });
+    }
   }
 
   private spawnSlowDragRing(position: Vec2, phase: number): void {

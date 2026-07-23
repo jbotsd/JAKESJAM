@@ -173,6 +173,16 @@ export const EVENT_PRESENTATION_REGISTRY = {
     lowTierCore: "Seal flash, volley origin, and charge consumption remain readable",
     state: "complete",
   },
+  "stride-refunded": {
+    action: "A Stride-charged Emission cast refunds spent air movement",
+    stateChange: "The caster's air jump/dash visibly come back at the body",
+    lead: "world-vfx",
+    channels: ["world-vfx", "particles", "world-state"],
+    intensity: "action",
+    lowTierCore: "One upward-sweeping ring at the feet remains visible",
+    state: "complete",
+    note: "StatusVfxController renders an upward-sweeping feet-level ring burst plus rising tick sparks (movement register — rises where slow's drag wake sinks); the refunded jump/dash being usable again is the world-state confirmation. Deliberately silent (no canonical cue recorded; the same-tick emission-cast carries the audio).",
+  },
   "ability-activated": {
     action: "A player activates a drafted ability",
     stateChange: "The press, ability identity, and cooldown start register",
