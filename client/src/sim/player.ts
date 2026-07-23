@@ -15,7 +15,7 @@ import {
   type SlopeStatic,
   type StaticCollisionCache,
 } from "./collision.js";
-import type { CharacterArchetype, PlayerEntity, PlatformDefinition, InputBitfield } from "./types.js";
+import type { CharacterArchetype, PlayerEntity, PlayerMovementMemory, PlatformDefinition, InputBitfield } from "./types.js";
 import { MIN_PLATFORM_H_PX } from "./constants.js";
 import { chassisStatsForArchetype } from "./data/cardTypes.js";
 
@@ -226,33 +226,13 @@ const DASH_MIN_CYCLE_MS = DASH_DURATION_MS + DASH_RECOVERY_MS;
  *  without ever reading as teleport-turning. MIRRORED in player.zig. */
 const DASH_STEER_LERP_PER_SEC = 9;
 
-/** Per-player movement memory the entity itself doesn't carry. */
-export type PlayerMovementMemory = {
-  coyoteMs: number;
-  jumpBufferMs: number;
-  jumpCutApplied: boolean;
-  jumpReleasedSinceJump: boolean;
-  groundedLastFrame: boolean;
-  /** Legacy field (jetpack removed). Kept for wasm struct ABI stability;
-   *  always false now. */
-  jetpackActive: boolean;
-  /** Wall the player was in contact with LAST tick: -1 wall on the left,
-   *  +1 wall on the right, 0 none. Read this tick to decide wall-jump / slide;
-   *  recomputed from the collision resolve at the end of the tick. */
-  touchingWallDir: number;
-  /** Mid-air jumps consumed since last grounded (double-jump card). */
-  airJumpsUsed: number;
-  /** Remaining dash cooldown (ms). */
-  dashCooldownMs: number;
-  /** Air dashes consumed since last grounded. */
-  dashUsedInAir: number;
-  /** Remaining dash burst window (ms) — while >0 the max-speed clamp is raised
-   *  to DASH_SPEED and friction is suspended so the burst carries. */
-  dashActiveMs: number;
-  /** Remaining recovery endlag (ms) after a burst ends — steering accel is
-   *  reduced (DASH_RECOVERY_ACCEL_MULT) so a whiffed slide can be punished. */
-  dashRecoveryMs: number;
-};
+/** Per-player movement memory the entity itself doesn't carry.
+ *
+ *  Canonical definition moved to types.ts in Track Z0e (so
+ *  `WorldState.movementMemory` — the Zig full-sync path's bridge carrier
+ *  — can reference it without a types.ts → player.ts import cycle).
+ *  Re-exported here so every existing importer compiles unchanged. */
+export type { PlayerMovementMemory } from "./types.js";
 
 export function freshPlayerMovementMemory(): PlayerMovementMemory {
   return {

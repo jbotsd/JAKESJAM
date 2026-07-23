@@ -99,6 +99,49 @@
 // array) — but it touches BOTH hosts' pack cadence, a substrate change
 // that is its own track item, not part of Z0d's one-item scope.
 //
+// Z0e (2026-07-23) built exactly that — the bridge now packs AND unpacks
+// the player_movement parallel array (worldStateBridge.ts, keyed by
+// player id via the new `WorldState.movementMemory` carrier; both hosts'
+// mergeUnpacked ride it between packs; movementMemoryBridge.test.ts
+// proves layout vs wasm's @offsetOf, codec round-trip, and the Z0d probe
+// shape as a lockstep gate: idle vx decays to exactly 0 both sides,
+// ground jumps fire again) — and the meter moved MORE than any port so
+// far, the largest tightening of the whole harvest:
+//
+//   Z0e BEFORE (Z0d's after):    AFTER movement-memory bridge:
+//   seed=1     : final 1696.0px | final  376.5px
+//   seed=42    : final 1561.8px | final  196.2px
+//   seed=1337  : final 1246.4px | final  449.6px
+//   seed=90210 : final 1667.5px | final  280.4px
+//   seed=271828: final 1147.1px | final  378.0px
+//
+// VERDICT: hypothesis CONFIRMED. Onset of >200px divergence moved from
+// 98-171 ticks (1.6-2.9s, pre-death, movement-only) out to 181-309 ticks
+// (3.0-5.2s), and the t=60 samples now read 0.0-23.5px (previously
+// 60-160px+): movement alone no longer forks the sims. Finals now sit
+// BELOW the orphan branch's own observed steady state (595-1,084px on
+// its 2026-07-14 codebase). LIVE-MODE IMPLICATION, confirmed in-code:
+// this was never harness-only — matchHost's USE_WASM_STEP_WORLD path
+// and the client's ?wasm-world=2 path both repack every tick, so live
+// Zig authority ran with no ground friction, ground-jumps impossible,
+// and air-acceleration on the ground — a direct mechanical explanation
+// for part of the 2026-07-06 "wrong-feeling movement / Zig version is
+// garbage" verdict that reverted the Zig default.
+//
+// NEXT evidenced hypothesis (Z0e observations): the remaining pattern is
+// step-plateaus (recurring ~160-164px and larger) whose onsets coincide
+// with health/alive-mismatch windows — death-TICK disagreements (small
+// residual combat deltas: seed=1337 already shows healthΔ=14.4 at t=60
+// while positions still track within 8px, i.e. borderline hit-resolution
+// flips) amplified by position-dependent respawn seating (Z0c finding
+// (2): once death ticks diverge, assignedSpawnPoint's farthest-from-
+// roster greedy re-seats the same player at DIFFERENT seals). The dead-
+// player frozen-position gap + seat gap dominate every sample >150px.
+// Also known and deliberately NOT fixed here (same bug class, separate
+// item): the melee_swing parallel array is still zeroed by every pack —
+// irrelevant to this sweep (scripted bots never melee) but the swing FSM
+// can never leave windup on the live wasm path.
+//
 // If the sweep exceeds its bound, the per-seed record above is the
 // deliverable the next track consumes.
 //
