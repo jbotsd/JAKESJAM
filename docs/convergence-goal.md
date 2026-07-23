@@ -171,15 +171,21 @@ already pass.
   disagreement, driven by TS's first-blood 1.15× speed boost having no
   Zig mirror (World.ts:2532 vs a lone comment). Z0d MERGED (8336c53):
   first-blood fully mirrored + wire event, parity proven at micro level
-  (claim tick, claimant, boosted step exactly equal) — HONEST MISS at
-  the meter (sweep unchanged); its probe produced the next hypothesis,
-  now Z0e IN PROGRESS: the full-sync pack path zeroes Zig's
-  player_movement memory (grounded_last_frame stuck false → air-accel
-  on the ground, no friction, no ground jumps — idle vx holds at -92.9
-  Zig-side vs TS's 60/tick decay). If the LIVE serverWasmHost path
-  full-syncs mid-match, this was a real wasm-mode bug and may explain
-  part of the 2026-07-06 "Zig version is garbage" feel verdict.
-  NOTE for operators: sim.wasm is a
+  — honest miss at the meter, but its probe produced Z0e. **Z0e MERGED
+  (576a82d) — hypothesis CONFIRMED, the harvest's biggest win:**
+  packWorldState never wrote the player_movement parallel array and
+  BOTH full-sync hosts repack every tick, so live Zig authority always
+  ran movement-amnesiac — air-accel on the ground, no ground friction,
+  no ground jumps. **This was a real live wasm-mode bug, a direct
+  mechanical explanation for part of the 2026-07-06 "Zig movement feels
+  wrong" revert.** Fix: movement memory bridged through the state
+  (off-wire), proven by a mid-flight re-pack lockstep test. Sweep
+  finals: 1696/1562/1246/1667/1147 → 376/196/450/280/378 px — now
+  beating the orphan branch's own steady state; t=60 deltas 0-23px.
+  Recorded next: (a) death-tick disagreements × greedy respawn-seat
+  choice (header hypothesis), (b) melee_swing memory still zeroed per
+  pack (sibling finding — melee FSM can't leave windup on the wasm
+  path; a Z1 item). NOTE for operators: sim.wasm is a
   gitignored build artifact — after pulling Zig changes, `zig build`
   before running wasm suites or they fail on the stale binary.
 - Z1 deferrals: **NOT STARTED**
