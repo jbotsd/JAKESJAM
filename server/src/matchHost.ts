@@ -438,6 +438,13 @@ export class MatchHost {
       // True slopes — same host-set cadence (player.zig module-level,
       // stepped inside the wasm player pass). Empty array clears.
       serverWasmHost.setSlopes(this.map.slopes ?? []);
+      // Match win-target — without this, step_world's match-end detection
+      // and sudden-death trigger are permanently inert (Track Z0a /
+      // 02b74f5 fix). Same resolveModeConfig source the TS round machine
+      // reads every tick.
+      serverWasmHost.setTargetScore(
+        resolveModeConfig(this.state.chaosModifierIds).targetScore,
+      );
     }
     this.grid = new InterestGrid(this.map.size.x, this.map.size.y, CELL_SIZE_PX);
     // Perf audit N2 (2026-07-18): on a map small enough that the observe

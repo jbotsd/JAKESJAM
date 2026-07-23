@@ -625,7 +625,14 @@ function packPlayer(
   off += 4;
 
   // score (Phase I5) — encoded from state.round.scores[p.id].
-  view.setUint32(off, 0, true); // populated by patcher per pack-callsite
+  // Written as 0 here and populated by a patcher per pack-callsite:
+  // writeScoresIntoMemory in worldWasmBackend.ts (client) and
+  // serverWasmHost.ts (server). Track Z0a NOTE: that patcher did NOT
+  // exist until the 02b74f5 port — every pack silently wiped every
+  // player's score each tick, permanently breaking match-end detection
+  // and the sudden-death trigger on the wasm path. If you add a new
+  // pack→step_world call site, it MUST call the patcher too.
+  view.setUint32(off, 0, true);
   off += 4;
 
   // round_kills — per-round kill tally, mirrored from
@@ -1471,7 +1478,15 @@ export function packWorldState(state: WorldState): Uint8Array {
   off += 4;
   view.setUint8(off, encEnum(ROUND_PHASES, state.round.phase));
   off += 1;
-  off += 3;
+  // sudden_death_active (Track Z0a port of orphaned-branch commit 02b74f5)
+  // — steals one of the 3 header pad bytes rather than growing
+  // WORLD_STATE_TOTAL_SIZE. Parity with World.ts's round.suddenDeathActive
+  // (true sudden death: a game-point tie shrinks the WHOLE round). Packed
+  // from TS state so the Zig orchestrator sees the current flag; world.zig
+  // re-decides it at the countdown → fighting transition.
+  view.setUint8(off, state.round.suddenDeathActive ? 1 : 0);
+  off += 1;
+  off += 2;
   // next_entity_id + map_id stay placeholders until the
   // data-table-driven orchestrator owns them.
   view.setUint32(off, 0, true);
@@ -1486,7 +1501,11 @@ export function packWorldState(state: WorldState): Uint8Array {
   off += 4;
   view.setUint32(off, state.round.roundIndex >>> 0, true);
   off += 4;
-  // target_score (I9). Default 0 = no match-end detection.
+  // target_score (I9). Default 0 = no match-end detection. Re-applied
+  // after every pack by writeTargetScoreIntoMemory (client
+  // worldWasmBackend.ts / server serverWasmHost.ts) — a one-off
+  // world_state_set_target_score call would be wiped by the very next
+  // pack (same bug class as player scores above; Track Z0a / 02b74f5).
   view.setUint32(off, 0, true);
   off += 4;
   // match_winner_idx (I9). -1 = no winner; orchestrator writes
@@ -1620,7 +1639,10 @@ export const SIM_EVENT_KIND = {
 export type UnpackedWorldState = {
   tick: Tick;
   rngState: number;
-  round: Pick<RoundState, "phase" | "countdownRemainingMs" | "roundIndex">;
+  round: Pick<
+    RoundState,
+    "phase" | "countdownRemainingMs" | "roundIndex" | "suddenDeathActive"
+  >;
   scores: Record<string, number>;
   /** Per-round kill tally (PlayerEntity.round_kills), keyed by player id.
    *  Only players with a non-zero tally get an entry — mirrors `scores`. */
@@ -1647,7 +1669,12 @@ export function unpackWorldState(buf: Uint8Array): UnpackedWorldState {
   off += 4;
   const phase = decEnum(ROUND_PHASES, view.getUint8(off)) as RoundPhase;
   off += 1;
-  off += 3;
+  // sudden_death_active — see packWorldState's matching write. `undefined`
+  // (not `false`) when unset, mirroring TS round.ts's optional-field
+  // convention (`next.suddenDeathActive = undefined` on countdown entry).
+  const suddenDeathActive = view.getUint8(off) !== 0 ? true : undefined;
+  off += 1;
+  off += 2;
   off += 4 + 4; // next_entity_id, map_id (placeholders)
   const chaosMask = view.getUint32(off, true);
   off += 4;
@@ -1838,7 +1865,7 @@ export function unpackWorldState(buf: Uint8Array): UnpackedWorldState {
   const out: UnpackedWorldState = {
     tick,
     rngState,
-    round: { phase, countdownRemainingMs, roundIndex },
+    round: { phase, countdownRemainingMs, roundIndex, suddenDeathActive },
     scores,
     roundKills,
     targetScore,

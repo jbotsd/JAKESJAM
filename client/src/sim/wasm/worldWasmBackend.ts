@@ -27,7 +27,7 @@
 // shim grows; eventually World.step becomes a thin wrapper
 // around `applyWasmWorldStep` (Phase J1).
 
-import type { LaunchPadDefinition, WorldState } from "../types.js";
+import type { LaunchPadDefinition, PlayerId, WorldState } from "../types.js";
 import { MAX_SLOPES, type SlopeStatic } from "../collision.js";
 import { loadSim, type Sim } from "./loader.js";
 import {
@@ -112,12 +112,22 @@ export async function applyWasmWorldStep(
  *   2. Validate state buffer size matches packed bytes.
  *   3. pack(state) → wasm linear memory at sim.statePtr.
  *   4. writeStaticsIntoMemory() — terrain AABBs into state.statics[].
- *   5. writePlayerInputsFromGlobal() — current_keys / prev_keys / aim
+ *   5. writeTargetScoreIntoMemory() — match win-target, patched after
+ *      pack because packWorldState always writes 0 for target_score
+ *      (Track Z0a / 02b74f5 fix — the export existed but was never
+ *      called anywhere, so match-end detection and the sudden-death
+ *      trigger were both permanently inert).
+ *   6. writeScoresIntoMemory(state) — per-player score, patched after
+ *      pack because packPlayer always writes 0 (Track Z0a / 02b74f5
+ *      fix — this call was missing entirely before, silently resetting
+ *      every player's score to 0 every tick and permanently breaking
+ *      match-end detection + the sudden-death trigger).
+ *   7. writePlayerInputsFromGlobal() — current_keys / prev_keys / aim
  *      patched after pack. Without this, prediction runs on stale
  *      keys → "stuttery laggy" symptom (commit 4a73635).
- *   6. ex.step_world(statePtr, dt_ms).
- *   7. unpack(state) → fresh TS WorldState bytes.
- *   8. mergeUnpacked → identity-stable merge with prior `state`.
+ *   8. ex.step_world(statePtr, dt_ms).
+ *   9. unpack(state) → fresh TS WorldState bytes.
+ *  10. mergeUnpacked → identity-stable merge with prior `state`.
  *
  * Returns `{ state, events, matchComplete }` always; callers that
  * don't need events drop them. Throws on any wasm-side error.
@@ -151,6 +161,8 @@ function runWasmStepSync(
   const heap = new Uint8Array(ex.memory.buffer);
   heap.set(buf, sim.statePtr);
   writeStaticsIntoMemory();
+  writeTargetScoreIntoMemory();
+  writeScoresIntoMemory(state);
   writePlayerInputsFromGlobal();
   const rc = ex.step_world(sim.statePtr, dt_ms);
   if (rc !== 0) {
@@ -190,6 +202,11 @@ function mergeUnpacked(
       phase: unpacked.round.phase,
       countdownRemainingMs: unpacked.round.countdownRemainingMs,
       roundIndex: unpacked.round.roundIndex,
+      // Zig decides the sudden-death trigger at the countdown → fighting
+      // transition (Track Z0a / 02b74f5) — mirror its verdict out, including
+      // the explicit-undefined clear (matches round.ts's optional-field
+      // convention).
+      suddenDeathActive: unpacked.round.suddenDeathActive,
       scores: { ...state.round.scores, ...unpacked.scores },
       // Kill tally REPLACES rather than spread-merges (unlike scores,
       // which are match-monotonic): the tally resets every round, so
@@ -311,6 +328,43 @@ function writePlayerInputsFromGlobal(): void {
  * walking, no jumping, no firing. Aim updates also need this
  * path so the muzzle position matches what the player sees.
  */
+/**
+ * Patch each player's score (state.round.scores[p.id] ?? 0) into the
+ * packed WorldState in linear memory. Track Z0a port of orphaned-branch
+ * commit 02b74f5 — genuinely missing before this: packPlayer's own comment
+ * said score is "populated by patcher per pack-callsite," but no such
+ * patcher existed anywhere on main. Every call to packWorldState hardcodes
+ * score to 0, so without this, step_world's own score-incrementing logic
+ * (state.players[i].score += 1 on a round win) got silently WIPED by the
+ * very next tick's pack — permanently breaking match-end detection
+ * (target_score comparisons never trigger) and the sudden-death trigger
+ * (reads player scores) for the entire lifetime of a match. Must be called
+ * AFTER the base pack (heap.set(buf, statePtr)) and BEFORE step_world.
+ */
+export function writeScoresIntoMemory(state: WorldState): void {
+  if (!cachedSim || !cachedEx) return;
+  const sim = cachedSim;
+  const ex = cachedEx;
+  const view = new DataView(ex.memory.buffer);
+  const playersStart = sim.statePtr + HEADER_SIZE + 8;
+  // PlayerEntity.score offset within the 624-byte entity — the same
+  // constant unpackWorldState's score-extraction loop reads (worldState-
+  // Bridge.ts: "PlayerEntity score is at offset 276"), directly after
+  // current_keys/prev_keys at +268/+272 (see writePlayerInputsIntoMemory).
+  const SCORE_OFF = 276;
+  // Sort MUST match packWorldState's player ordering (localeCompare) so
+  // index i here lands on the same entity slot packPlayer wrote.
+  const sortedIds = Object.keys(state.players).sort((a, b) =>
+    a.localeCompare(b),
+  );
+  for (let i = 0; i < sortedIds.length; i++) {
+    const pid = sortedIds[i]! as PlayerId;
+    const score = state.round.scores?.[pid] ?? 0;
+    const playerOff = playersStart + i * PLAYER_ENTITY_SIZE;
+    view.setUint32(playerOff + SCORE_OFF, score >>> 0, true);
+  }
+}
+
 export function writePlayerInputsIntoMemory(
   inputs: ReadonlyMap<
     string,
@@ -428,6 +482,30 @@ export function setWorldArenaBounds(
     hasCeiling: ceilingY === null ? 0 : 1,
     killPlaneY,
   };
+}
+
+let cachedTargetScore: number | null = null;
+
+/**
+ * Cache the match's target_score. Track Z0a port of orphaned-branch commit
+ * 02b74f5 — genuinely missing before this: world_state_set_target_score
+ * existed as an export but nothing ever called it, AND even a one-off call
+ * gets silently wiped by the very next tick's pack (packWorldState
+ * hardcodes target_score to 0, same bug class as scores — see
+ * writeScoresIntoMemory). Without this, both match-end detection and the
+ * sudden-death trigger (which reads target_score) are permanently inert in
+ * the full step_world path. Cached-and-reapplied-every-tick, the same
+ * pattern as setWorldArenaBounds. NOTE: not yet wired from the client's
+ * production ?wasm-world=2 path (the branch never wired it either — server
+ * matchHost is the authority that sets it); tests call it directly.
+ */
+export function setWorldTargetScore(target: number): void {
+  cachedTargetScore = target;
+}
+
+function writeTargetScoreIntoMemory(): void {
+  if (cachedTargetScore === null || !cachedSim || !cachedEx) return;
+  cachedEx.world_state_set_target_score(cachedSim.statePtr, cachedTargetScore);
 }
 
 /**

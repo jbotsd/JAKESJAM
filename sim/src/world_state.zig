@@ -1459,7 +1459,17 @@ pub const WorldStateHeader = extern struct {
     tick: u32,
     rng_state: u32,
     round_phase: u8,
-    _pad0: [3]u8 = .{ 0, 0, 0 },
+    /// True sudden death (Track Z0a port of orphaned-branch commit 02b74f5,
+    /// 2026-07-14): a game-point tie shrinks the WHOLE round. Steals one of
+    /// the 3 header pad bytes rather than growing the struct — parity with
+    /// World.ts's `round.suddenDeathActive`. `stepWorld` DECIDES the trigger
+    /// at the countdown → fighting transition (see `isSuddenDeathRound` in
+    /// world.zig) and clears it on countdown entry (round.ts clears at both
+    /// →countdown transitions). The storm-DAMAGE consumer is NOT ported yet —
+    /// TS's World.ts still applies shrink-zone damage on the wasm path — so
+    /// today this flag only round-trips out to `round.suddenDeathActive`.
+    sudden_death_active: u8 = 0,
+    _pad0: [2]u8 = .{ 0, 0 },
     next_entity_id: u32,
     map_id: u32,
     /// Bitmask of active chaos modifier ids (Phase I3). Bit N
