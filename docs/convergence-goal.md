@@ -152,11 +152,31 @@ already pass.
 
 ## Status
 
-- Z0 harvest: **NOT STARTED**
+- Z0 harvest: **IN PROGRESS** 2026-07-23 — scout verified all four orphans
+  absent from main; the score bug is CONFIRMED live on the wasm path
+  (packPlayer hardcodes score 0, no patcher exists, `world_state_set_target_score`
+  has zero call sites → wasm matches can never end). Z0a (score fix + sweep
+  meter) executing on `track-z/z0-harvest`; Z0b (muzzle geometry M, storm M)
+  queued behind the meter.
 - Z1 deferrals: **NOT STARTED**
 - Z2 server honesty: **NOT STARTED**
 - Z3 sweep + bench: **NOT STARTED**
 - Z4 flip: **AWAITING JAKE** (after Z0–Z3)
-- V voice: **NOT STARTED**
-- L legibility: **NOT STARTED**
-- B instrument: **NOT STARTED**
+- V voice: **IN PROGRESS** 2026-07-23 — 104 proposals generated + judge-passed
+  by the fan-out workflow; single-writer assembler applying to cards.ts on
+  `track-v/voice-pass` (inventory doc + voice-lint test included); sign-off
+  AWAITING JAKE after merge.
+- L legibility: **AUDIT DONE** 2026-07-23 — docs/legibility-audit.md: 79
+  effects, 2 MISSING (Stride refund — the only Layer-1 axis with NO read;
+  Technique execute — kills indistinguishable from ordinary), 34 PARTIAL
+  (notably shadow-step excluded from the built blink-streak primitive;
+  veil window invisible on the body), 43 SHIPPED. The MISSING/PARTIAL rows
+  are the build list; launch-cue rip still open.
+- B instrument: **DONE (PASS)** 2026-07-23 — commit 30ed713: per-class
+  policy (Kindled closes, seeded first-swing delay fixes the mutual-range
+  mirror collapse). Matrix now varies in all 4 mirrors and 6/12 cross
+  cells. TWO STAT-HONEST FINDINGS for the P4 tuning pass: (1) point-blank
+  pistol sustained DPS (~92) beats both melee arcs (~50) — a perfectly
+  executed melee close still loses the endgame trade; (2) Kindled at
+  318.6px/s cannot outrun 320px/s Syzygist tendrils — the intended evasion
+  counter is unavailable to the heavy chassis specifically.
