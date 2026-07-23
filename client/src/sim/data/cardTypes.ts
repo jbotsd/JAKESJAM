@@ -53,30 +53,59 @@ export function classIdForArchetype(characterId: CharacterArchetype): ClassId {
   return ARCHETYPE_CLASS_ID[characterId] ?? "wizard";
 }
 
-/** archetype → BASE max health (before any `maxHealthAdd` card bonus).
- *  Mirrors the authoritative display table in
- *  client/src/game/data/characters.ts (balanced/Geometrician 100,
- *  heavy/Kindled 125, sprinter/Interstice 85, shielded/Syzygist 100) — same
- *  "sim must not depend on game/" reasoning as ARCHETYPE_CLASS_ID above.
- *  BUG FIX (2026-07-22, Jake, live playtest: "meant to start with 125
- *  health as a paladin but i start with 100/125"): every spawn/respawn/
- *  heal-clamp site in World.ts used to hardcode a flat `100`, so this table
- *  had NEVER actually been read by the sim before — Kindled's 125 and
- *  Interstice's 85 were purely a HUD denominator (characters.ts) layered
- *  over a sim that could never put a player above (or, for Interstice,
- *  meaningfully below) 100 real HP. Keep both tables in sync if a class's
- *  base HP is ever retuned. */
-const ARCHETYPE_BASE_MAX_HEALTH: Record<CharacterArchetype, number> = {
-  balanced: 100,
-  heavy: 125,
-  sprinter: 85,
-  shielded: 100,
+/** The full per-chassis physical stat sheet the SIM enforces. */
+export type ChassisStats = {
+  /** Base max health, before any `maxHealthAdd` card bonus. */
+  maxHealth: number;
+  /** Class movement-speed factor, folded into the resolved build's
+   *  `moveSpeedMultiplier` (resolvePlayerBuild) so it multiplies with card
+   *  effects and reaches the same `World.ts` speed product / Zig `speed_mul`
+   *  path cards already use. */
+  moveSpeedMultiplier: number;
+  /** Silhouette scale. Render-side today; reaches the combat hitbox behind
+   *  `CLASS_HITBOX_SCALE_ENABLED` (cohesion-goal.md P1.4, own commit). */
+  sizeScale: number;
+  /** Recoil steadiness — the fire self-knockback in `stepWeapon` DIVIDES by
+   *  this ( >1 = steadier, <1 = kickier). */
+  recoilControlMultiplier: number;
 };
 
-/** Total, pure lookup — unknown archetypes fall back to 100 (wizard's base,
- *  same fallback precedent as classIdForArchetype above). */
+/** archetype → the chassis stat sheet — THE single source of truth
+ *  (cohesion-goal.md Pillar 1). The display table in
+ *  client/src/game/data/characters.ts READS this (it must never re-declare
+ *  these numbers); the "sim must not depend on game/" rule is why the table
+ *  lives here, same reasoning as ARCHETYPE_CLASS_ID above.
+ *
+ *  HISTORY (why this table exists): 2026-07-22, Jake, live playtest —
+ *  "meant to start with 125 health as a paladin but i start with 100/125".
+ *  Every spawn/respawn/heal-clamp site in World.ts hardcoded a flat 100,
+ *  and speed/size/recoil never left the display layer AT ALL
+ *  (resolvePlayerBuild started every class at moveSpeedMultiplier 1,
+ *  cards-only) — the four chassis were the same body wearing four
+ *  costumes. maxHealth was enforced 2026-07-22; speed + recoil 2026-07-23
+ *  (this table); sizeScale→hitbox is the flagged P1.4 follow-up. */
+const CHASSIS_STATS: Record<CharacterArchetype, ChassisStats> = {
+  // Geometrician — the home-base chassis every other class is measured
+  // against: all-1 by definition.
+  balanced: { maxHealth: 100, moveSpeedMultiplier: 1, sizeScale: 1, recoilControlMultiplier: 1 },
+  // Kindled — slower, larger, steadier.
+  heavy: { maxHealth: 125, moveSpeedMultiplier: 0.88, sizeScale: 1.18, recoilControlMultiplier: 1.25 },
+  // Interstice — fastest, smallest, kickiest gun.
+  sprinter: { maxHealth: 85, moveSpeedMultiplier: 1.14, sizeScale: 0.92, recoilControlMultiplier: 0.9 },
+  // Syzygist — measured pace, broad frame.
+  shielded: { maxHealth: 100, moveSpeedMultiplier: 0.96, sizeScale: 1.05, recoilControlMultiplier: 1 },
+};
+
+/** Total, pure lookup — unknown archetypes fall back to the Geometrician
+ *  home-base sheet (same fallback precedent as classIdForArchetype). */
+export function chassisStatsForArchetype(characterId: CharacterArchetype): ChassisStats {
+  return CHASSIS_STATS[characterId] ?? CHASSIS_STATS.balanced;
+}
+
+/** Convenience view over `chassisStatsForArchetype` kept for its existing
+ *  World.ts/rosterOps/matchHost call sites (2026-07-22 max-health fix). */
 export function baseMaxHealthForArchetype(characterId: CharacterArchetype): number {
-  return ARCHETYPE_BASE_MAX_HEALTH[characterId] ?? 100;
+  return chassisStatsForArchetype(characterId).maxHealth;
 }
 
 export type WeaponDelivery = "projectile" | "raycast" | "continuous-beam" | "area-pulse";

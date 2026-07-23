@@ -1,4 +1,17 @@
 import type { CharacterDefinition } from "../types/game";
+import { chassisStatsForArchetype } from "../../sim/data/cardTypes";
+
+// Numeric chassis stats are READ from the sim's own table
+// (chassisStatsForArchetype — cohesion-goal.md P1.5) rather than
+// re-declared here. Two hand-synced copies of these numbers is exactly how
+// the 100/125 max-health bug happened (2026-07-22): this file said 125, the
+// sim said 100, and nobody noticed for weeks. The sim table is the single
+// source of truth; this file only adds the display-layer identity (names,
+// kit summaries, weaknesses) on top.
+const balancedStats = chassisStatsForArchetype("balanced");
+const heavyStats = chassisStatsForArchetype("heavy");
+const sprinterStats = chassisStatsForArchetype("sprinter");
+const shieldedStats = chassisStatsForArchetype("shielded");
 
 // Class era, P1 (docs/classes-goal.md): the four archetypes evolve into the
 // class chassis — Balanced→WIZARD, Heavy→PALADIN, Sprinter→NINJA,
@@ -44,10 +57,10 @@ export const characters: CharacterDefinition[] = [
     // kitComing flag, so only wizard's ability verbs belong in this string
     // today. Deliberately NOT extended to Kindled/Interstice/Syzygist below.
     kitSummary: "100hp · the full crystal arsenal — every weapon, the parry, Prism Wall, Vector Charge",
-    maxHealth: 100,
-    moveSpeedMultiplier: 1,
-    sizeScale: 1,
-    recoilControlMultiplier: 1,
+    maxHealth: balancedStats.maxHealth,
+    moveSpeedMultiplier: balancedStats.moveSpeedMultiplier,
+    sizeScale: balancedStats.sizeScale,
+    recoilControlMultiplier: balancedStats.recoilControlMultiplier,
     abilityType: "shield",
     weakness: "No extreme stat advantage.",
   },
@@ -61,10 +74,10 @@ export const characters: CharacterDefinition[] = [
     // ultimate are all real; kitComing removed per the honesty rule above.
     kitSummary:
       "125hp · slower, larger, steadier recoil — Kindled Edge melee, Kindled Ward, Kindled Charge, the Unveiling ultimate",
-    maxHealth: 125,
-    moveSpeedMultiplier: 0.88,
-    sizeScale: 1.18,
-    recoilControlMultiplier: 1.25,
+    maxHealth: heavyStats.maxHealth,
+    moveSpeedMultiplier: heavyStats.moveSpeedMultiplier,
+    sizeScale: heavyStats.sizeScale,
+    recoilControlMultiplier: heavyStats.recoilControlMultiplier,
     abilityType: "brace",
     weakness: "Larger and slower.",
   },
@@ -80,10 +93,10 @@ export const characters: CharacterDefinition[] = [
     // day — see cardTypes.ts's AbilityKind header comment for the history.
     kitSummary:
       "85hp · fastest, smallest silhouette — melee daggers, Paper Double decoy",
-    maxHealth: 85,
-    moveSpeedMultiplier: 1.14,
-    sizeScale: 0.92,
-    recoilControlMultiplier: 0.9,
+    maxHealth: sprinterStats.maxHealth,
+    moveSpeedMultiplier: sprinterStats.moveSpeedMultiplier,
+    sizeScale: sprinterStats.sizeScale,
+    recoilControlMultiplier: sprinterStats.recoilControlMultiplier,
     abilityType: "blink",
     weakness: "Lower health.",
   },
@@ -97,10 +110,10 @@ export const characters: CharacterDefinition[] = [
     // removed per the honesty rule above.
     kitSummary:
       "100hp · measured pace, broad frame — Bleed Tithe, Borrowed Time, Open Hand, Tethered Charge",
-    maxHealth: 100,
-    moveSpeedMultiplier: 0.96,
-    sizeScale: 1.05,
-    recoilControlMultiplier: 1,
+    maxHealth: shieldedStats.maxHealth,
+    moveSpeedMultiplier: shieldedStats.moveSpeedMultiplier,
+    sizeScale: shieldedStats.sizeScale,
+    recoilControlMultiplier: shieldedStats.recoilControlMultiplier,
     abilityType: "shield",
     weakness: "Weaker pressure before cards.",
   },

@@ -14,7 +14,7 @@ import type {
   CardDefinition,
   ResolvedWeaponBuild,
 } from "./data/cardTypes.js";
-import { baseMaxHealthForArchetype, classIdForArchetype } from "./data/cardTypes.js";
+import { baseMaxHealthForArchetype, chassisStatsForArchetype, classIdForArchetype } from "./data/cardTypes.js";
 import { baseWeaponForClass } from "./data/weapons.js";
 import { createWeaponBuild, findCardsById } from "./data/weaponBuild.js";
 import { spawnProjectile, type ProjectileSpawnParams } from "./projectile.js";
@@ -132,9 +132,25 @@ export function resolvePlayerBuild(player: PlayerEntity): ResolvedWeaponBuild {
   // every character can slide/parry/bash from match start. Cards + the
   // Shielded innate stack MORE on top (extra air-dashes). Applied here, after
   // createWeaponBuild, so it never touches the Zig createWeaponBuild parity.
+  //
+  // CHASSIS SPEED (cohesion-goal.md P1.2, 2026-07-23): the class
+  // moveSpeedMultiplier (Kindled 0.88 / Interstice 1.14 / Syzygist 0.96)
+  // multiplies onto the card-resolved value here — same after-createWeaponBuild
+  // slot as the dashCharges floor, for the same reason (Zig createWeaponBuild
+  // parity untouched; the folded value flows through the existing World.ts
+  // speed product into Zig's `speed_mul` param, no ABI change). Re-clamped to
+  // clampBuild's own [0.45, 1.55] band so a class factor times a speed-card
+  // stack can never exceed what cards alone could already reach. Before this
+  // fold the class speeds were display-only fiction — see
+  // chassisStatsForArchetype's own doc comment for the history.
+  const chassis = chassisStatsForArchetype(player.characterId);
   const build: ResolvedWeaponBuild = {
     ...withInnate,
     dashCharges: Math.max(withInnate.dashCharges, 1),
+    moveSpeedMultiplier: Math.max(
+      0.45,
+      Math.min(1.55, withInnate.moveSpeedMultiplier * chassis.moveSpeedMultiplier),
+    ),
   };
   buildCache.set(key, build);
   identityCacheSet(player, build);
@@ -576,12 +592,17 @@ function stepWeaponNative(
     next.recoilStepUntilTick > options.currentTick;
   // Apply recoil — push the player opposite to the aim direction, scaled by
   // the build's recoil, the projectile recoil multiplier, chaos recoil, and
-  // Recoil Step's own self-knockback reduction.
+  // Recoil Step's own self-knockback reduction — then DIVIDED by the class
+  // recoilControlMultiplier (cohesion-goal.md P1.3, 2026-07-23: Kindled's
+  // 1.25 "steadier recoil" and Interstice's 0.9 kickier gun were display-
+  // only fiction before this line — chassisStatsForArchetype's doc comment
+  // has the history).
   const recoil =
-    build.recoilImpulse *
-    build.projectile.recoilMultiplier *
-    chaos.recoilMultiplier *
-    (recoilStepActive ? GEO_RECOIL_STEP_RECOIL_MULTIPLIER : 1);
+    (build.recoilImpulse *
+      build.projectile.recoilMultiplier *
+      chaos.recoilMultiplier *
+      (recoilStepActive ? GEO_RECOIL_STEP_RECOIL_MULTIPLIER : 1)) /
+    chassisStatsForArchetype(next.characterId).recoilControlMultiplier;
   next.vx -= lutCos(baseAngle) * recoil;
   next.vy -= lutSin(baseAngle) * recoil * 0.45;
 
