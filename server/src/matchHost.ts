@@ -432,12 +432,25 @@ export class MatchHost {
         this.runtime.ceilingClampY,
         this.map.size.y > 0 ? this.map.size.y + KILL_PLANE_MARGIN_PX : 0,
       );
+      // Raw arena size (Track Z0b Item C) — feeds the Zig shrink-zone
+      // storm's center/half-diagonal math (same map.size the TS storm
+      // reads). Fail-closed Zig-side if never set.
+      serverWasmHost.setArenaSize(this.map.size.x, this.map.size.y);
       // Launch pads — static map geometry (world.zig §8c), same host-set
       // cadence as the statics/bounds. Empty array clears stale pads.
       serverWasmHost.setLaunchPads(this.map.launchPads ?? []);
       // True slopes — same host-set cadence (player.zig module-level,
       // stepped inside the wasm player pass). Empty array clears.
       serverWasmHost.setSlopes(this.map.slopes ?? []);
+      // Spawn points (Track Z0b Item A) — the Zig assignSpawnPoints port
+      // seats mid-round fast respawns from the same list the TS respawn
+      // path reads. TS's no-spawns fallback (map center) is applied HERE:
+      // world.zig has no map size to derive it.
+      serverWasmHost.setSpawnPoints(
+        this.map.spawns.length > 0
+          ? this.map.spawns
+          : [{ x: this.map.size.x / 2, y: this.map.size.y / 2 }],
+      );
       // Match win-target — without this, step_world's match-end detection
       // and sudden-death trigger are permanently inert (Track Z0a /
       // 02b74f5 fix). Same resolveModeConfig source the TS round machine

@@ -2183,6 +2183,16 @@ test "ability dispatch: Facet Break (Wizard) — marks the nearest foe in the ai
     try std.testing.expect(state.players[0].slot_cooldown_until_tick[0] > state.header.tick);
     try std.testing.expectEqualSlices(u8, "victim", state.players[0].facet_target_id_bytes[0..state.players[0].facet_target_id_len]);
 
+    // Track Z0b Item B: shots now spawn at the offset alternating-hand
+    // MUZZLE (weapon.zig playerMuzzlePosition ≈ (29.7, -49.2) for this
+    // shooter/aim geometry — anchor 60 up, 31 reach toward aim, back-hand
+    // -6 perp on a fresh zig-only state), not the player center. Park the
+    // already-marked victim ON the muzzle point so the hit keeps resolving
+    // on the same one-tick cadence this test always used (the mark is
+    // id-keyed — moving the victim after the cast changes nothing else).
+    state.players[1].x = 30;
+    state.players[1].y = -49;
+
     // Tick 4: fire ONE shot (mark opened tick 3, read tick 4 — the
     // established one-tick lag every window-buff composition site in this
     // file already has, same as Sunlance's own test). fire_cooldown_ms
@@ -2265,6 +2275,12 @@ test "ability dispatch: Focus Hex (Priest) — marks the NEAREST enemy within ra
     try std.testing.expect(state.players[0].slot_cooldown_until_tick[0] > state.header.tick);
     try std.testing.expectEqualSlices(u8, "nearest", state.players[0].focus_hex_target_id_bytes[0..state.players[0].focus_hex_target_id_len]);
 
+    // Track Z0b Item B: park the marked victim on the offset-muzzle spawn
+    // point (≈ (29.7, -49.2) for this shooter/aim geometry) — see the
+    // Facet Break test's matching comment for the full reasoning.
+    state.players[1].x = 30;
+    state.players[1].y = -49;
+
     // Tick 2: fire — one-tick lag (mark opened tick 1, read tick 2).
     state.players[0].current_keys = FIRE_BIT;
     _ = root.world.stepWorld(&state, 1.0);
@@ -2311,8 +2327,12 @@ test "ability dispatch: Hard Aperture (Wizard) — cast opens ward_shell_until_t
     state.players[0].flags.alive = true;
     state.players[0].character_id = .balanced; // wizard
     state.players[0].health = 100;
-    state.players[0].x = 15;
-    state.players[0].y = 0;
+    // Track Z0b Item B: parked on the shooter's offset-muzzle spawn point
+    // (≈ (29.7, -49.2) for this aim geometry) — see the Facet Break test's
+    // matching comment. Hard Aperture's cast is self-targeted, so the
+    // warded victim's position is free.
+    state.players[0].x = 30;
+    state.players[0].y = -49;
     setPlayerId(&state.players[0], "victim");
     equipSlot(&state, 0, 0, .hard_aperture); // duration 600ms, cooldown 9000ms
 
@@ -2414,8 +2434,10 @@ test "ability dispatch: Self-Lattice (Priest) — a ranged hit that fully drains
     state.players[1].flags.alive = true;
     state.players[1].character_id = .shielded; // priest
     state.players[1].health = 100;
-    state.players[1].x = 15;
-    state.players[1].y = 0;
+    // Track Z0b Item B: parked on the shooter's offset-muzzle spawn point
+    // — see the Facet Break test's matching comment.
+    state.players[1].x = 30;
+    state.players[1].y = -49;
     setPlayerId(&state.players[1], "victim"); // distinct ids — see Hard
     // Aperture's own test comment for why (owner-skip hazard).
     // Bypass the cast (already proven above) to focus purely on the
@@ -2453,8 +2475,10 @@ test "ability dispatch: Self-Lattice (Priest) — mutually exclusive with the ge
     state.players[1].flags.alive = true;
     state.players[1].character_id = .shielded;
     state.players[1].health = 100;
-    state.players[1].x = 15;
-    state.players[1].y = 0;
+    // Track Z0b Item B: parked on the shooter's offset-muzzle spawn point
+    // — see the Facet Break test's matching comment.
+    state.players[1].x = 30;
+    state.players[1].y = -49;
     setPlayerId(&state.players[1], "victim");
     state.players[1].syz_ward_absorb_until_tick = 100_000;
     state.players[1].syz_ward_absorb_remaining = 20.0;
@@ -2569,8 +2593,10 @@ test "Kindled Resolve: ranged (projectile) damage amp — a plain starter-pistol
 
     state.players[1].flags.alive = true;
     state.players[1].health = 100;
-    state.players[1].x = 15;
-    state.players[1].y = 0;
+    // Track Z0b Item B: parked on the shooter's offset-muzzle spawn point
+    // — see the Facet Break test's matching comment.
+    state.players[1].x = 30;
+    state.players[1].y = -49;
     setPlayerId(&state.players[1], "victim");
 
     state.players[0].current_keys = FIRE_BIT;
@@ -3157,8 +3183,11 @@ test "ability dispatch: Ghost Guard (Ninja) — ranged: an active charge on a mo
     state.players[0].flags.alive = true;
     state.players[0].character_id = .sprinter; // ninja victim
     state.players[0].health = 100;
-    state.players[0].x = 15;
-    state.players[0].y = 0;
+    // Track Z0b Item B: parked on the shooter's offset-muzzle spawn point
+    // — see the Facet Break test's matching comment. Still "moving" via
+    // vx below; 1ms ticks drift it a negligible 0.2px before the hit.
+    state.players[0].x = 30;
+    state.players[0].y = -49;
     setPlayerId(&state.players[0], "victim");
     state.players[0].ghost_guard_charge_until_tick = 100_000;
     state.players[0].vx = 200.0; // > NINJA_GHOST_GUARD_MOVE_SPEED_THRESHOLD (60)

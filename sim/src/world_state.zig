@@ -760,6 +760,43 @@ pub const PlayerEntity = extern struct {
     /// (types.ts:585). Plain `u32` tick, 0 = inactive, same convention as
     /// every sibling window field on this struct.
     razor_route_until_tick: u32 = 0,
+
+    /// Mid-round fast-respawn stamp (Track Z0b Item A — parity with TS
+    /// `PlayerEntity.respawnAtTick`, Jake's fast-respawn ruling
+    /// 2026-07-17): the tick this dead player re-forms at a spawn seal.
+    /// Stamped by `stepWorld`'s end-of-tick death diff (was-alive →
+    /// not-alive this tick, no stamp yet) at `tick + ceil(RESPAWN_DELAY_MS
+    /// / eff_dt)`; consumed by the same block once due, IF the round phase
+    /// is `fighting` and sudden death is NOT active (sudden death keeps
+    /// last-one-standing — no re-forming). `0` = no scheduled respawn
+    /// (unambiguous: a real stamp is always `tick + delay >= 1`), mirroring
+    /// TS's `undefined` — same sentinel convention as
+    /// `PickupEntity.respawn_at_tick`. UNLIKE the Zig-only window fields
+    /// above, this field IS bridged (worldStateBridge.ts pack/unpackPlayer
+    /// read/write offset 620): the full-sync path repacks the whole struct
+    /// every tick, so an unbridged stamp would be wiped before it ever came
+    /// due.
+    respawn_at_tick: u32 = 0,
+
+    /// Alternating-hand shuriken throws (Track Z0b Item B — port of
+    /// orphaned-branch commit 888345c; parity with weapon.ts's
+    /// `throwHandParity`, types.ts:895): toggled 0/1 on every FIRE EVENT
+    /// (once per trigger pull, NOT per pellet — a multi-shot spread's
+    /// pellets all share one muzzle origin) so the muzzle position
+    /// alternates lead/back hand. Without this, world.zig's fire-spawn
+    /// section couldn't know which hand fired last and every shot's spawn
+    /// position AND fired angle diverged from TS (the audit measured
+    /// 10.84px vs 47.32px same-tick travel). Bridged like
+    /// `respawn_at_tick` above (offset 624): the full-sync path repacks
+    /// every tick, and TS's own weapon.ts toggles the SAME field on the
+    /// TS-authoritative path — both sides must see one shared parity bit.
+    /// TS packs `(throwHandParity ?? 1) & 1` — undefined reads as 1, so
+    /// the first-ever shot toggles to hand 0 on both sides.
+    throw_hand_parity: u8 = 0,
+    /// Explicit tail pad to the struct's 8-byte alignment boundary (625 →
+    /// 632) — kept explicit (not implicit) so the growth-history notes and
+    /// the wire codec's byte accounting stay literal.
+    _pad_throw_hand: [7]u8 = .{ 0, 0, 0, 0, 0, 0, 0 },
 };
 
 /// Mirrors `ProjectileEntity`.
@@ -1815,7 +1852,32 @@ comptime {
     // @sizeOf(PlayerEntity) directly and are unaffected; a future pass with
     // client/ in scope needs to bump PLAYER_ENTITY_SIZE 616 → 624 and
     // worldStateLayout.test.ts's matching literal.
-    std.debug.assert(@sizeOf(PlayerEntity) == 624);
+    // 624 → 624 (Track Z0b Item A, fast-respawn round semantics): +4
+    // content bytes for `respawn_at_tick` (u32), landing exactly in the 4
+    // bytes of implicit tail padding Razor Route's own cut left behind
+    // ([620, 624) — see the 616 → 624 note immediately above) — net
+    // growth ZERO, same "reclaim the old pad" shape Ghost Guard's note
+    // above already used. worldStateBridge.ts's PLAYER_ENTITY_SIZE stays
+    // 624; its pack/unpackPlayer codecs DID grow a skip-then-read tail
+    // for the u32 at offset 620 (this field is wire-bridged, unlike the
+    // Zig-only window fields — see respawn_at_tick's own doc comment).
+    // 624 → 632 (Track Z0b Item B, muzzle-geometry port of 888345c): +1
+    // content byte for `throw_hand_parity` (u8) at [624, 625) + 7 bytes of
+    // EXPLICIT tail padding (`_pad_throw_hand`, [625, 632)) — the orphan
+    // branch's own cut stole a then-existing `_reserved` byte next to
+    // `score` (struct size unchanged there), but that landing zone was
+    // consumed long ago (round_kills), so THIS port grows the struct
+    // instead: 632 = 79×8. worldStateBridge.ts's PLAYER_ENTITY_SIZE bumped
+    // 624 → 632 in the same cut (pack/unpackPlayer write/read the byte at
+    // offset 624 — wire-bridged like respawn_at_tick, see both fields' own
+    // doc comments), plus worldStateLayout.test.ts's matching literal.
+    std.debug.assert(@sizeOf(PlayerEntity) == 632);
+    // Bridged-field offset locks for the codec notes above: packPlayer/
+    // unpackPlayer hardcode a skip from the end of the syz-ward pair
+    // (relative offset 384) to reach these fields at 620/624 — if a future
+    // growth cut moves them, this trips before the bridge silently drifts.
+    std.debug.assert(@offsetOf(PlayerEntity, "respawn_at_tick") == 620);
+    std.debug.assert(@offsetOf(PlayerEntity, "throw_hand_parity") == 624);
     // EquippedActives (Phase 1): [3]u8 = 3 bytes, no padding (u8 array
     // needs no alignment beyond 1). Doesn't cross the wasm ABI today (see
     // its own doc comment) — pure internal regression-catching, same role

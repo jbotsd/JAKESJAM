@@ -40,16 +40,10 @@ const trig = @import("trig.zig");
 const gen = @import("data/cards_gen.zig");
 const draft = @import("draft.zig");
 
-/// Per-tick step. Mutates `state` in place. Returns 0 on success;
-/// reserved non-zero values for future error reporting.
-/// Decide a round winner during fighting phase. Returns:
-///   * winner index ≥ 0 if exactly one player alive (KO)
-///   * winner index ≥ 0 if time-out / bot-shootout force-resolve —
-///     most round_kills wins, then alive-health tiebreaks (see
-///     timeoutWinnerIdx; kill-tally rule 2026-07-17)
-///   * -1 if no winner yet (or a time-out draw: zero kills + nobody alive)
 /// Grace after ALL humans die before the bot-shootout guard ends the round
-/// (parity with round.ts NO_HUMAN_SURVIVOR_END_MS).
+/// (parity with round.ts NO_HUMAN_SURVIVOR_END_MS). Round resolution
+/// itself lives in `detectRoundWinner` below — see its doc comment for the
+/// fast-respawn (2026-07-17) semantics.
 const NO_HUMAN_SURVIVOR_END_MS: f64 = 6000;
 
 /// Emission Engine charge economy (parity with constants.ts —
@@ -208,6 +202,214 @@ pub export fn world_state_set_launch_pads(
     return clamped;
 }
 
+// ── Spawn points (Track Z0b Item A — parity with World.ts assignSpawnPoints)
+// STATIC map geometry, module-level like the launch pads above: the spawn
+// list carries zero WorldState bytes. Host sets them on match start next to
+// the statics/pads/slopes calls. The TS-side wrapper (worldWasmBackend's
+// setWorldSpawnPoints) is responsible for passing TS's own no-spawns
+// fallback (`map.spawns.length > 0 ? map.spawns : [center]`) so this module
+// never needs the map size; an EMPTY list here degrades to (0, 0) — the
+// same `?? { x: 0, y: 0 }` fallback World.ts's respawn call site uses for a
+// missing assignment.
+
+pub const MAX_SPAWN_POINTS: usize = 16;
+
+var g_spawn_points_x: [MAX_SPAWN_POINTS]f64 = undefined;
+var g_spawn_points_y: [MAX_SPAWN_POINTS]f64 = undefined;
+var g_spawn_point_count: u32 = 0;
+
+/// Host sets the map's spawn points on match start. `points_ptr` is a flat
+/// f64 array of 2 values per point: [x, y] — point order MUST be the map's
+/// `spawns` array order (assignSpawnPoints iterates candidates in that
+/// order, and its strict-`>` best-score comparison makes order load-bearing
+/// for ties). Returns the count actually written (clamped).
+pub export fn world_state_set_spawn_points(
+    points_ptr: [*]const f64,
+    count: u32,
+) u32 {
+    const clamped: u32 = @min(count, @as(u32, @intCast(MAX_SPAWN_POINTS)));
+    var i: u32 = 0;
+    while (i < clamped) : (i += 1) {
+        g_spawn_points_x[i] = points_ptr[i * 2 + 0];
+        g_spawn_points_y[i] = points_ptr[i * 2 + 1];
+    }
+    g_spawn_point_count = clamped;
+    return clamped;
+}
+
+/// Mid-round fast-respawn delay (parity with constants.ts RESPAWN_DELAY_MS
+/// — Jake's fast-respawn ruling 2026-07-17): ordinary-round deaths re-form
+/// this many ms after the death tick; SUDDEN DEATH keeps last-one-standing.
+const RESPAWN_DELAY_MS: f64 = 3000.0;
+
+/// Compare two players by id bytes (lexicographic) — the Zig mirror of
+/// TS's `[...ids].sort()` (ASCII ids: UTF-16 code-unit order == byte
+/// order). Used to walk the roster in sorted-id order for spawn
+/// assignment. NOTE: pack order (worldStateBridge sorts by localeCompare)
+/// is NOT trusted here — localeCompare is locale-sensitive and TS's own
+/// respawn path re-sorts with plain `.sort()` anyway, so this derives the
+/// order it needs from the bytes it can see.
+fn playerIdLessThan(a: *const world_state.PlayerEntity, b: *const world_state.PlayerEntity) bool {
+    return std.mem.order(u8, a.id_bytes[0..a.id_len], b.id_bytes[0..b.id_len]) == .lt;
+}
+
+/// Port of World.ts `assignSpawnPoints` for ONE target player: players are
+/// placed one at a time in stable id-sorted order, each at the spawn point
+/// that is farthest from everyone already placed, preferring unused points
+/// (`score = (used ? 0 : 1e7) + (minD == ∞ ? 2e7 : minD)`, strict `>` —
+/// first-listed point wins exact ties, matching TS). The full placement is
+/// recomputed per call, exactly like TS's respawn site calls
+/// `assignSpawnPoints(map, idsNow)` fresh per respawning player — the
+/// assignment depends only on the sorted roster + point list, not on who
+/// is alive, so both sides agree. Returns the target's assigned point;
+/// (0, 0) when no spawn points were ever registered (see the module note
+/// above — the TS wrapper's center fallback makes this unreachable in
+/// production).
+const SpawnSeat = struct { x: f64, y: f64 };
+
+fn assignedSpawnPoint(
+    state: *const world_state.WorldState,
+    target_idx: u32,
+) SpawnSeat {
+    // Fail-safe, NOT the TS fallback: with no registered spawn points the
+    // respawn keeps the player where they stand (TS would use the map
+    // center — but this module has no map size, and a Zig-only test that
+    // never wired spawn points should not teleport its roster to a made-up
+    // origin). The TS wrapper always registers at least one point, so
+    // production/parity paths never take this branch.
+    if (g_spawn_point_count == 0)
+        return .{ .x = state.players[target_idx].x, .y = state.players[target_idx].y };
+    // Sorted-id order over the roster (selection sort into an index list —
+    // MAX_PLAYERS is small and this runs only on respawn ticks).
+    var order: [world_state.MAX_PLAYERS]u32 = undefined;
+    var n: u32 = 0;
+    while (n < state.player_count) : (n += 1) order[n] = n;
+    var si: u32 = 0;
+    while (si + 1 < state.player_count) : (si += 1) {
+        var best = si;
+        var sj: u32 = si + 1;
+        while (sj < state.player_count) : (sj += 1) {
+            if (playerIdLessThan(&state.players[order[sj]], &state.players[order[best]]))
+                best = sj;
+        }
+        if (best != si) {
+            const tmp = order[si];
+            order[si] = order[best];
+            order[best] = tmp;
+        }
+    }
+    var placed_x: [world_state.MAX_PLAYERS]f64 = undefined;
+    var placed_y: [world_state.MAX_PLAYERS]f64 = undefined;
+    var placed_count: u32 = 0;
+    var oi: u32 = 0;
+    while (oi < state.player_count) : (oi += 1) {
+        var best_x = g_spawn_points_x[0];
+        var best_y = g_spawn_points_y[0];
+        var best_score = -std.math.inf(f64);
+        var pt: u32 = 0;
+        while (pt < g_spawn_point_count) : (pt += 1) {
+            const px = g_spawn_points_x[pt];
+            const py = g_spawn_points_y[pt];
+            var min_d = std.math.inf(f64);
+            var used = false;
+            var pl: u32 = 0;
+            while (pl < placed_count) : (pl += 1) {
+                const d = std.math.hypot(px - placed_x[pl], py - placed_y[pl]);
+                if (d < min_d) min_d = d;
+                if (placed_x[pl] == px and placed_y[pl] == py) used = true;
+            }
+            const used_bonus: f64 = if (used) 0 else 1e7;
+            const dist_term: f64 = if (min_d == std.math.inf(f64)) 2e7 else min_d;
+            const score = used_bonus + dist_term;
+            if (score > best_score) {
+                best_score = score;
+                best_x = px;
+                best_y = py;
+            }
+        }
+        if (order[oi] == target_idx) return .{ .x = best_x, .y = best_y };
+        placed_x[placed_count] = best_x;
+        placed_y[placed_count] = best_y;
+        placed_count += 1;
+    }
+    return .{ .x = 0, .y = 0 }; // unreachable for a valid target_idx
+}
+
+/// Class-chassis base max health (parity with cardTypes.ts CHASSIS_STATS
+/// maxHealth — enforced TS-side 2026-07-22): Geometrician/balanced 100,
+/// Kindled/heavy 125, Interstice/sprinter 85, Syzygist/shielded 100.
+fn baseMaxHealthForArchetype(archetype: world_state.CharacterArchetype) f64 {
+    return switch (archetype) {
+        .heavy => 125.0,
+        .sprinter => 85.0,
+        else => 100.0,
+    };
+}
+
+/// A player's REAL max health right now (parity with weapon.ts
+/// maxHealthForPlayer): class base + the resolved build's maxHealthAdd —
+/// read from the host-patched per-player fire config, the same
+/// createWeaponBuild resolution TS's own maxHealthForPlayer reads.
+fn maxHealthForPlayer(
+    p: *const world_state.PlayerEntity,
+    fcfg: *const world_state.ResolvedFireConfig,
+) f64 {
+    const add: f64 = if (fcfg.valid != 0) fcfg.max_health_add else 0;
+    return baseMaxHealthForArchetype(p.character_id) + add;
+}
+
+/// The one respawn reset (port of World.ts `respawnPlayerAt` — shared by
+/// the round-boundary reset and the mid-round fast respawn so the two
+/// paths can never drift). Slot cooldowns and ability_charge deliberately
+/// persist (same law as TS's round carry-over); slow deliberately
+/// persists too (TS's respawnPlayerAt clears burn/freeze/parry but NOT
+/// slowedUntilTick — mirrored bit-for-bit, not "improved").
+fn respawnPlayerAt(
+    p: *world_state.PlayerEntity,
+    fcfg: *const world_state.ResolvedFireConfig,
+    spawn_x: f64,
+    spawn_y: f64,
+) void {
+    p.x = spawn_x;
+    p.y = spawn_y;
+    p.vx = 0;
+    p.vy = 0;
+    p.health = maxHealthForPlayer(p, fcfg);
+    p.flags.alive = true;
+    p.flags.crouching = false;
+    p.flags.shield_active = false;
+    p.fire_cooldown_ms = 0;
+    // jetpackFuel: JETPACK_MAX_FUEL (player.zig's constant, 125 — TS
+    // constants.ts JETPACK_MAX_FUEL). Defined-after-respawn in TS, so the
+    // has-flag turns on here too.
+    p.jetpack_fuel = 125.0;
+    p.flags.has_jetpack_fuel = true;
+    // Parry timers clear (mirrors clearTemporaryCombatEffects).
+    p.parry_active_until_tick = 0;
+    p.parry_cooldown_until_tick = 0;
+    p.parry_facing = 0;
+    p.flags.has_parry_active = false;
+    p.flags.has_parry_cooldown = false;
+    p.flags.has_parry_facing = false;
+    // Shield charge resets to full: TS `player.shieldMaxCharge ?? 100` —
+    // after a bridge round-trip shieldMaxCharge is defined iff
+    // hasShieldCharge, so gate on the flag, then set it (shieldCharge is a
+    // plain number after this in TS).
+    p.shield_charge = if (p.flags.has_shield_charge) p.shield_max_charge else 100.0;
+    p.flags.has_shield_charge = true;
+    // Element status effects clear on respawn (burn + freeze; NOT slow —
+    // see this fn's doc comment).
+    p.burn_until_tick = 0;
+    p.burn_dps = 0;
+    p.burn_tick_last_applied = 0;
+    p.flags.has_burn = false;
+    p.freeze_until_tick = 0;
+    p.freeze_multiplier = 0;
+    p.flags.has_freeze = false;
+    // The pending mid-round respawn is consumed by re-forming.
+    p.respawn_at_tick = 0;
+}
+
 /// A player whose id begins with "bot_" is AI (parity with round.ts BOT_ID_PREFIX).
 fn isBotPlayer(p: *const world_state.PlayerEntity) bool {
     if (p.id_len < 4) return false;
@@ -319,9 +521,49 @@ fn isSuddenDeathRound(state: *const world_state.WorldState) bool {
     return all_at_threshold;
 }
 
-fn detectRoundWinner(state: *const world_state.WorldState) i32 {
+/// Round-resolution verdict for one tick — the Zig mirror of TS
+/// `decideRoundWinner`'s THREE-way return (`PlayerId | null | undefined`):
+/// `ended=false` ⇔ TS `undefined` (round continues, `winner_idx` is -1);
+/// `ended=true, winner_idx=-1` ⇔ TS `null` (round ends as a DRAW —
+/// sudden-death mutual KO, or a force-resolve with nobody creditable);
+/// `ended=true, winner_idx>=0` ⇔ a real winner. The old i32-only shape
+/// couldn't represent "ends as a draw" distinctly from "keeps going",
+/// which is exactly the case a sudden-death mutual KO needs.
+const RoundResolution = struct { ended: bool, winner_idx: i32 };
+
+/// Decide whether the fighting round resolves this tick (Track Z0b Item A
+/// — full port of round.ts's fighting-phase resolution, fast-respawn
+/// ruling 2026-07-17):
+///   * LAST-ALIVE rules apply ONLY in sudden death (`suddenDeathActive` ⇔
+///     `header.sudden_death_active`): 0 alive → mutual-KO draw; exactly 1
+///     alive (roster > 1) → that player wins. In ORDINARY rounds a wiped
+///     field is a moment, not an ending — the fallen re-form after
+///     RESPAWN_DELAY_MS and the clock decides.
+///   * Force-resolve (time-out, or the bot-shootout guard: humans present
+///     but ALL dead for ≥ NO_HUMAN_SURVIVOR_END_MS) → most `round_kills`
+///     wins with alive-health tiebreaks (timeoutWinnerIdx; -1 = draw).
+/// `eff_dt` is taken so the countdown used here is the POST-decrement
+/// value (`next.countdownRemainingMs` in round.ts) — the pre-decrement
+/// header value made both the time-out and the bot-shootout guard read
+/// one tick behind the phase machine (the phase machine transitions on
+/// the post-decrement value, so the old code's time-out branch was
+/// unreachable: the phase left `fighting` before the header ever read 0).
+fn detectRoundWinner(
+    state: *const world_state.WorldState,
+    eff_dt: f64,
+) RoundResolution {
     if (state.header.round_phase != @intFromEnum(round.RoundPhase.fighting))
-        return -1;
+        return .{ .ended = false, .winner_idx = -1 };
+    const next_remaining = @max(0.0, state.header.countdown_remaining_ms - eff_dt);
+    // Empty roster: keep the round in-progress on a normal tick, but on a
+    // forced resolve let it end as a draw so the phase can't hang forever
+    // (round.ts's `playerIds.length === 0` branch — no bot-shootout term
+    // here because `humanIds.length > 0` is false with zero players).
+    if (state.player_count == 0) {
+        if (next_remaining <= 0)
+            return .{ .ended = true, .winner_idx = -1 };
+        return .{ .ended = false, .winner_idx = -1 };
+    }
     var alive_count: u32 = 0;
     var alive_idx: i32 = -1;
     var i: u32 = 0;
@@ -331,12 +573,19 @@ fn detectRoundWinner(state: *const world_state.WorldState) i32 {
             alive_idx = @intCast(i);
         }
     }
-    if (alive_count == 1) return alive_idx; // KO
-    // Bot-shootout guard (parity with round.ts): humans present but ALL dead,
-    // and the round has run ≥ NO_HUMAN_SURVIVOR_END_MS → force-resolve so the
-    // lobby isn't stuck watching bots duel. Computed fresh each tick, so a live
-    // human (alive_humans>0) cancels it.
-    if (state.player_count > 0) {
+    // Last-alive resolution belongs to SUDDEN DEATH only (fast-respawn
+    // ruling 2026-07-17 — round.ts's `lastAliveResolves`).
+    if (state.header.sudden_death_active != 0) {
+        if (alive_count == 0) return .{ .ended = true, .winner_idx = -1 }; // mutual KO
+        if (alive_count == 1 and state.player_count > 1)
+            return .{ .ended = true, .winner_idx = alive_idx };
+    }
+    // Bot-shootout guard (parity with round.ts): humans present but ALL
+    // dead, and the round has run ≥ NO_HUMAN_SURVIVOR_END_MS →
+    // force-resolve so the lobby isn't stuck watching bots duel. Computed
+    // fresh each tick, so a live human cancels it.
+    var force_resolve = next_remaining <= 0;
+    if (!force_resolve) {
         var humans: u32 = 0;
         var alive_humans: u32 = 0;
         var h: u32 = 0;
@@ -346,17 +595,16 @@ fn detectRoundWinner(state: *const world_state.WorldState) i32 {
                 if (state.players[h].flags.alive) alive_humans += 1;
             }
         }
-        const elapsed = round.ROUND_TIME_LIMIT_MS - state.header.countdown_remaining_ms;
-        if (humans > 0 and alive_humans == 0 and elapsed >= NO_HUMAN_SURVIVOR_END_MS) {
-            return timeoutWinnerIdx(state);
-        }
+        const elapsed = round.ROUND_TIME_LIMIT_MS - next_remaining;
+        force_resolve = humans > 0 and alive_humans == 0 and
+            elapsed >= NO_HUMAN_SURVIVOR_END_MS;
     }
-    // Time-out path (kill-tally rule 2026-07-17): most round_kills wins,
-    // then alive-health tiebreaks — see timeoutWinnerIdx. -1 = draw.
-    if (state.header.countdown_remaining_ms <= 0 and state.player_count > 0) {
-        return timeoutWinnerIdx(state);
+    if (force_resolve) {
+        // Kill-tally rule 2026-07-17: most round_kills wins, then
+        // alive-health tiebreaks — see timeoutWinnerIdx. -1 = draw.
+        return .{ .ended = true, .winner_idx = timeoutWinnerIdx(state) };
     }
-    return -1;
+    return .{ .ended = false, .winner_idx = -1 };
 }
 
 /// Push an event into state.events[event_count++]. Drops silently
@@ -2768,11 +3016,42 @@ pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
     const chaos_profile = chaos.chaosProfileFromMask(state.header.chaos_mask);
     const eff_dt = dt_ms * chaos_profile.time_scale;
 
-    // 1. Round phase machine + winner detection (I6). When a
-    //    winner emerges (KO or time-out), increment that player's
+    // 0a. Alive-flag snapshot for the mid-round fast-respawn stamp (Track
+    //     Z0b Item A — the Zig mirror of World.ts's `wasAlive =
+    //     state.players[pid]?.alive` diff): captured before ANY damage
+    //     section runs so the end-of-tick block below can stamp
+    //     `respawn_at_tick` for exactly the players who died THIS tick,
+    //     whatever the cause (projectile, chain, burn, storm, bash,
+    //     kill-plane) — one stamp site, same as TS.
+    var was_alive: [world_state.MAX_PLAYERS]bool = undefined;
+    {
+        var wai: u32 = 0;
+        while (wai < state.player_count) : (wai += 1) {
+            was_alive[wai] = state.players[wai].flags.alive;
+        }
+    }
+
+    // 0b. PRE-step round snapshot for the shrink-zone storm (Track Z0b
+    //     Item C): TS's storm block reads `state.round` as it stood at
+    //     tick ENTRY (World.ts §3d's own "one-tick lag is imperceptible"
+    //     comment — `roundStateForStep` isn't computed yet there). Section
+    //     1 below overwrites phase/countdown before section 2z runs, so
+    //     capture the same-entry values here — this is what makes the
+    //     boundary tick exact: at countdown 0 entering the tick, TS still
+    //     applies a full-scale storm tick WHILE transitioning the round;
+    //     post-step reads would see `round_over` and skip it.
+    const storm_prestep_phase = state.header.round_phase;
+    const storm_prestep_countdown = state.header.countdown_remaining_ms;
+    const storm_prestep_sudden = state.header.sudden_death_active;
+
+    // 1. Round phase machine + winner detection (I6). When the round
+    //    resolves with a real winner (sudden-death last-alive or
+    //    force-resolve — see detectRoundWinner), increment that player's
     //    score and signal the phase machine so it transitions
-    //    fighting → round_over even before the time-out.
-    const winner_idx = detectRoundWinner(state);
+    //    fighting → round_over; a draw (`ended` with winner -1) still
+    //    transitions but credits nobody.
+    const resolution = detectRoundWinner(state, eff_dt);
+    const winner_idx = resolution.winner_idx;
     if (winner_idx >= 0 and
         state.header.round_phase == @intFromEnum(round.RoundPhase.fighting))
     {
@@ -2810,7 +3089,11 @@ pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
         state.header.round_phase,
         state.header.countdown_remaining_ms,
         eff_dt,
-        winner_idx >= 0,
+        // `ended` (not `winner_idx >= 0`): a sudden-death mutual KO ends
+        // the round as a DRAW — the phase must still leave `fighting`
+        // even though nobody is credited (round.ts scores only when
+        // `winner !== null` but transitions on any non-undefined verdict).
+        resolution.ended,
         drafting_all_resolved,
     );
     // Auto-pick stragglers BEFORE committing the new phase below: this
@@ -2900,17 +3183,26 @@ pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
         state.projectile_count = 0;
         state.fire_count = 0;
         state.satellite_count = 0;
-        // Heal alive players to full + clear timed buffs that
-        // shouldn't carry across rounds (slow, burn, freeze).
-        // Buff pickups (overcharge, damage_amp etc) DO carry per
-        // the offline TS behavior.
+        // Respawn ALL players for the new round (Track Z0b Item A —
+        // upgraded from the old heal-in-place approximation to the full
+        // World.ts `respawnAll` port: every player runs the SAME
+        // respawnPlayerAt reset as the mid-round fast respawn, at their
+        // assignSpawnPoints seat — max health honors class chassis +
+        // maxHealthAdd cards instead of the old flat 100, positions move
+        // to the spawn seals instead of staying wherever the bell rang,
+        // and any pending mid-round respawn stamp is consumed. NOTE:
+        // slow deliberately survives now (TS's respawnPlayerAt clears
+        // burn/freeze/parry but NOT slowedUntilTick — the old Zig clear
+        // here was a divergence, not a feature).
         var ri: u32 = 0;
         while (ri < state.player_count) : (ri += 1) {
-            state.players[ri].health = 100.0;
-            state.players[ri].flags.alive = true;
-            state.players[ri].flags.has_slow = false;
-            state.players[ri].flags.has_burn = false;
-            state.players[ri].flags.has_freeze = false;
+            const seat = assignedSpawnPoint(state, ri);
+            respawnPlayerAt(
+                &state.players[ri],
+                &state.player_fire_config[ri],
+                seat.x,
+                seat.y,
+            );
         }
     }
 
@@ -3058,6 +3350,100 @@ pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
             }
         }
         _ = fire.fireEntityTick(patch_ptr, eff_dt);
+    }
+
+    // 2z. Shrink-zone storm (Track Z0b Item C — port of orphaned-branch
+    //     commit 9aeabaa; parity with client/src/sim/suddenDeath.ts's
+    //     computeStormZone + stepSuddenDeathStorm, the ONE sim concern
+    //     that had zero Zig code at all). Two mutually-exclusive zones,
+    //     sudden death wins ties:
+    //       - True sudden death (header.sudden_death_active — a game-point
+    //         tie, Z0a's trigger): shrinks the WHOLE round,
+    //         SCALE_START(1.0) → SCALE_END(0.6) as the clock runs.
+    //       - Soft endgame zone (every round, unconditionally): only
+    //         active in the final ENDGAME_ZONE_TRIGGER_MS(15s), eases from
+    //         full coverage to ENDGAME_ZONE_SCALE_END(0.75) —
+    //         anti-timeout-camping pressure without the hard punish.
+    //     Both damage every alive player outside a circle centered on the
+    //     map (half-diagonal base radius, so scale=1.0 covers every corner
+    //     — nobody takes damage the instant a zone activates). Gated the
+    //     same way fire-hazard is: fighting phase + REAL map size
+    //     (fail-closed if the host never called world_state_set_arena_size
+    //     — a Zig-only test that never wired the arena gets an inert
+    //     storm, not a wrong one).
+    //
+    //     DAMAGE OWNERSHIP (the Z0a deferral, decided WITH evidence this
+    //     cut): storm damage now lives HERE on the wasm path. Checked
+    //     directly — on the full step_world path (client
+    //     applyWasmWorldStepFullSync / server serverWasmHost.step), TS's
+    //     stepWithRuntime never runs, so World.ts's own storm block
+    //     (World.ts §3d) never executes there and serverWasmHost's
+    //     mergeUnpacked only passes `suddenDeathActive` through — the
+    //     wasm-mode path SKIPPED storm damage entirely (not
+    //     double-applied). Moving the application here closes that hole
+    //     with no double-hit anywhere: pure-TS path → TS applies, wasm
+    //     path → this section applies.
+    //
+    //     Parity notes vs TS, both deliberate:
+    //       - chaos damage_multiplier applies (World.ts:6578 scales storm
+    //         damage by chaosProfile.damageMultiplier — the branch spec
+    //         predated that and skipped it);
+    //       - reads the section-0b PRE-step round snapshot, exactly as TS
+    //         reads `state.round` at tick entry — section 1 has already
+    //         overwritten the header by the time this section runs.
+    if (storm_prestep_phase == @intFromEnum(round.RoundPhase.fighting) and
+        g_arena_size_x > 0 and g_arena_size_y > 0)
+    {
+        var zone_scale: f64 = 0;
+        var zone_active = false;
+        if (storm_prestep_sudden != 0) {
+            const elapsed_ms = round.ROUND_TIME_LIMIT_MS - storm_prestep_countdown;
+            const frac = @max(0.0, @min(1.0, elapsed_ms / round.ROUND_TIME_LIMIT_MS));
+            zone_scale = round.SUDDEN_DEATH_SCALE_START +
+                (round.SUDDEN_DEATH_SCALE_END - round.SUDDEN_DEATH_SCALE_START) * frac;
+            zone_active = true;
+        } else if (storm_prestep_countdown <= round.ENDGAME_ZONE_TRIGGER_MS) {
+            // countdown_remaining_ms IS the remaining round time during
+            // `fighting` (suddenDeath.ts's own comment).
+            const local_elapsed_ms = round.ENDGAME_ZONE_TRIGGER_MS - storm_prestep_countdown;
+            const frac = @max(0.0, @min(1.0, local_elapsed_ms / round.ENDGAME_ZONE_TRIGGER_MS));
+            zone_scale = 1.0 + (round.ENDGAME_ZONE_SCALE_END - 1.0) * frac;
+            zone_active = true;
+        }
+        if (zone_active) {
+            // Half-diagonal so scale=1.0 comfortably covers every corner —
+            // nobody takes storm damage the instant sudden death triggers.
+            const base_radius = @sqrt(g_arena_size_x * g_arena_size_x +
+                g_arena_size_y * g_arena_size_y) / 2.0;
+            const zone_radius = base_radius * zone_scale;
+            const zone_cx = g_arena_size_x / 2.0;
+            const zone_cy = g_arena_size_y / 2.0;
+            const safe_radius_sq = zone_radius * zone_radius;
+            // Environmental DoT — no parry/shield mitigation, no owner
+            // (same direct-damage drain shape as the fire patches above;
+            // World.ts applies the identical chain at its §3d).
+            const storm_damage = round.SUDDEN_DEATH_STORM_DPS * (eff_dt / 1000.0) *
+                chaos_profile.damage_multiplier;
+            var sdi: u32 = 0;
+            while (sdi < state.player_count) : (sdi += 1) {
+                const sp = &state.players[sdi];
+                if (!sp.flags.alive) continue;
+                const sdx = sp.x - zone_cx;
+                const sdy = sp.y - zone_cy;
+                if (sdx * sdx + sdy * sdy <= safe_radius_sq) continue;
+                sp.health -= storm_damage;
+                emitEvent(state, .hit_confirmed, @intCast(sdi), -1, 0, storm_damage, sp.x, sp.y);
+                if (sp.health <= 0) {
+                    sp.health = 0;
+                    sp.flags.alive = false;
+                    // Attacker-less death (cause "storm") — credits nobody
+                    // (creditKill no-ops on attacker -1), and the
+                    // section-11 fast-respawn stamp catches it like every
+                    // other death cause.
+                    emitEvent(state, .player_killed, @intCast(sdi), -1, 0, 0, sp.x, sp.y);
+                }
+            }
+        }
     }
 
     // 2b. Paper Doubles (2026-07-20 gap-closure pass item 3 — parity port
@@ -4642,27 +5028,53 @@ pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
             cd_after,
             &fire_decision,
         );
-        if (fire_decision.fired == 1 and
-            chaos_profile.disable_projectiles == 0)
-        {
-            const dx = player_ptr.aim_x - player_ptr.x;
-            const dy = player_ptr.aim_y - player_ptr.y;
-            const aim_angle: f64 = if (dx == 0 and dy == 0) 0 else trig.lutAtan2(dy, dx);
+        if (fire_decision.fired == 1) {
+            // Muzzle offset + alternating-hand throws (Track Z0b Item B —
+            // port of orphaned-branch commit 888345c; previously spawned
+            // dead-center on the player with a center-derived angle, the
+            // audit's 10.84px-vs-47.32px per-shot divergence). Parity with
+            // weapon.ts:368-376: hand toggles ONCE per fire event, not per
+            // pellet — a multi-shot spread's pellets all share one muzzle
+            // origin — and it toggles OUTSIDE the disableProjectiles gate
+            // (TS toggles before its own `if (!chaos.disableProjectiles)`
+            // spawn loop, so slappers-only rounds keep the parity bit
+            // moving in lock-step too).
+            const throw_hand: u8 = (player_ptr.throw_hand_parity ^ 1) & 1;
+            player_ptr.throw_hand_parity = throw_hand;
+            const muzzle = weapon.playerMuzzlePosition(
+                player_ptr.x,
+                player_ptr.y,
+                player_ptr.aim_x,
+                player_ptr.aim_y,
+                throw_hand,
+            );
+            // Fire angle derives from the OFFSET muzzle point toward aim
+            // (weapon.ts:376's `lutAtan2(aim.y - muzzle.y, aim.x -
+            // muzzle.x)`) — NOT from the player center; the angular gap
+            // between the two is exactly what compounded over travel
+            // distance in the audit.
+            const adx = player_ptr.aim_x - muzzle.x;
+            const ady = player_ptr.aim_y - muzzle.y;
+            const aim_angle: f64 = if (adx == 0 and ady == 0) 0 else trig.lutAtan2(ady, adx);
             const speed = proj_speed_base * proj_speed_mul;
             const lifetime_ms = @max(
                 50.0,
                 proj_lifetime_sec * 1000.0 * proj_lifetime_mul,
             );
             const radius_v: f64 = @max(2.0, 7.0 * proj_size_mul);
+            const spawn_projectiles = chaos_profile.disable_projectiles == 0;
 
             // Multi-shot spread fan: distribute proj_count
             // projectiles evenly across spread_amp_total radians (Measure/
             // Overclock's own priority chain applied — see their doc
-            // comment above) centred on aim_angle. Single-shot (count == 1)
-            // fires straight regardless (offset always 0), same "can't
-            // observe spread with one shot" shape weapon.ts itself has.
+            // comment above) centred on the MUZZLE-derived aim_angle.
+            // Single-shot (count == 1) fires straight regardless (offset
+            // always 0), same "can't observe spread with one shot" shape
+            // weapon.ts itself has. `spawn_projectiles` gates ONLY the
+            // spawns (slappers-only chaos) — the hand toggle above already
+            // ran, matching TS's ordering.
             var shot_i: u32 = 0;
-            while (shot_i < proj_count) : (shot_i += 1) {
+            while (spawn_projectiles and shot_i < proj_count) : (shot_i += 1) {
                 if (state.projectile_count >= world_state.MAX_PROJECTILES) break;
                 const offset: f64 = if (proj_count <= 1)
                     0
@@ -4677,8 +5089,8 @@ pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
                 const new_id: u32 = state.header.next_entity_id;
                 state.header.next_entity_id += 1;
                 state.projectiles[slot] = .{
-                    .x = player_ptr.x,
-                    .y = player_ptr.y,
+                    .x = muzzle.x,
+                    .y = muzzle.y,
                     .vx = trig.lutCos(ang) * speed,
                     .vy = trig.lutSin(ang) * speed,
                     .radius = radius_v,
@@ -4686,8 +5098,8 @@ pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
                     .lifetime_ms = lifetime_ms,
                     .age_ms = 0,
                     .traveled_px = 0,
-                    .origin_x = player_ptr.x,
-                    .origin_y = player_ptr.y,
+                    .origin_x = muzzle.x,
+                    .origin_y = muzzle.y,
                     .homing_strength = proj_homing,
                     .acceleration_multiplier = proj_accel,
                     .gravity_scale = proj_gravity,
@@ -4952,6 +5364,49 @@ pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
                 EMISSION_CHARGE_MAX,
                 ap.ability_charge + ev.scalar * EMISSION_FILL_PER_DAMAGE_DEALT,
             );
+        }
+    }
+
+    // 11. Mid-round fast respawn (Track Z0b Item A — port of World.ts's
+    //     block of the same name; Jake ruled "A" 2026-07-17, reverting the
+    //     venue-era bench-until-bell): a death stamps `respawn_at_tick`
+    //     (RESPAWN_DELAY_MS out, in ticks); when it comes due during the
+    //     FIGHTING phase the player re-forms at their assignSpawnPoints
+    //     seat. Never in sudden death — last one standing is the money
+    //     moment. Runs at the very end of the tick (after every damage
+    //     section), diffing against the section-0a alive snapshot — one
+    //     stamp site catches every death cause, same as TS. TS runs its
+    //     copy after its round machine and reads the JUST-stepped phase;
+    //     here the round machine ran at the top of this same tick, so the
+    //     phase read below is the same value TS's `roundNow.phase` holds
+    //     for this tick's decision.
+    {
+        const in_fighting =
+            state.header.round_phase == @intFromEnum(round.RoundPhase.fighting);
+        // TS: Math.ceil(RESPAWN_DELAY_MS / Math.max(1, effDtMs)).
+        const delay_ticks: u32 =
+            @intFromFloat(@ceil(RESPAWN_DELAY_MS / @max(1.0, eff_dt)));
+        var rsi: u32 = 0;
+        while (rsi < state.player_count) : (rsi += 1) {
+            const p = &state.players[rsi];
+            if (was_alive[rsi] and !p.flags.alive and p.respawn_at_tick == 0) {
+                p.respawn_at_tick = state.header.tick + delay_ticks;
+                continue;
+            }
+            if (!p.flags.alive and
+                p.respawn_at_tick != 0 and
+                state.header.tick >= p.respawn_at_tick and
+                in_fighting and
+                state.header.sudden_death_active == 0)
+            {
+                const seat = assignedSpawnPoint(state, rsi);
+                respawnPlayerAt(
+                    &state.players[rsi],
+                    &state.player_fire_config[rsi],
+                    seat.x,
+                    seat.y,
+                );
+            }
         }
     }
 

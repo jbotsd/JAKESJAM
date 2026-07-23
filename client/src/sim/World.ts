@@ -1289,6 +1289,11 @@ export function syncWorldStaticsToWasm(map: MapDefinition): void {
     computeCeilingClampY(map),
     map.size.y > 0 ? map.size.y + KILL_PLANE_MARGIN_PX : 0,
   );
+  // Raw arena size (Track Z0b Item C) — the Zig shrink-zone storm's
+  // center/half-diagonal math reads the same map.size this file's own
+  // stepSuddenDeathStorm call passes. Fail-closed on the Zig side if
+  // never set.
+  wasmHost.setArenaSize(map.size.x, map.size.y);
   // Launch pads — static map geometry, same host-set pattern as the arena
   // bounds (module-level in world.zig, zero WorldState bytes). Always
   // called (empty array clears the previous match's pads).
@@ -1298,6 +1303,17 @@ export function syncWorldStaticsToWasm(map: MapDefinition): void {
   // step_world path; the step_player backend re-writes slopes per call
   // from the collision cache regardless.
   wasmHost.setSlopes(map.slopes ?? []);
+  // Spawn points (Track Z0b Item A) — same host-set pattern; the Zig
+  // assignSpawnPoints port seats respawns from the same list this file's
+  // own assignSpawnPoints reads. The no-spawns fallback is applied HERE
+  // (TS's `map.spawns.length > 0 ? map.spawns : [center]`, from
+  // assignSpawnPoints itself) because world.zig has no map size to derive
+  // the center from.
+  wasmHost.setSpawnPoints(
+    map.spawns.length > 0
+      ? map.spawns
+      : [{ x: map.size.x / 2, y: map.size.y / 2 }],
+  );
 }
 
 /**

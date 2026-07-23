@@ -54,6 +54,9 @@ type WorldExports = {
     has_ceiling: number,
     kill_plane_y: number,
   ) => void;
+  /** Optional — raw arena width/height (Track Z0b Item C wires it from the
+   *  hosts; consumed by the shrink-zone storm + findCollisionFreeLanding). */
+  world_state_set_arena_size?: (width: number, height: number) => void;
   /** Optional — older sim.wasm builds predate launch pads. Flat f64
    *  array, 6 per pad: [x, y, w, h, impulse_x, impulse_y]. */
   world_state_set_launch_pads?: (pads_ptr: number, count: number) => number;
@@ -61,6 +64,9 @@ type WorldExports = {
    *  7 per slope (deriveSlopeStatics bits):
    *  [span_min_x, span_max_x, base_x, base_y, dy_dx, tx, ty]. */
   world_state_set_slopes?: (slopes_ptr: number, count: number) => number;
+  /** Optional — older sim.wasm builds predate spawn points (Track Z0b
+   *  Item A). Flat f64 array, 2 per point: [x, y], map.spawns order. */
+  world_state_set_spawn_points?: (points_ptr: number, count: number) => number;
   memory: WebAssembly.Memory;
 };
 
@@ -347,7 +353,7 @@ export function writeScoresIntoMemory(state: WorldState): void {
   const ex = cachedEx;
   const view = new DataView(ex.memory.buffer);
   const playersStart = sim.statePtr + HEADER_SIZE + 8;
-  // PlayerEntity.score offset within the 624-byte entity — the same
+  // PlayerEntity.score offset within the 632-byte entity — the same
   // constant unpackWorldState's score-extraction loop reads (worldState-
   // Bridge.ts: "PlayerEntity score is at offset 276"), directly after
   // current_keys/prev_keys at +268/+272 (see writePlayerInputsIntoMemory).
@@ -484,6 +490,18 @@ export function setWorldArenaBounds(
   };
 }
 
+/**
+ * Cache the arena's raw width/height (map.size — Track Z0b Item C). The
+ * Zig export existed unwired since Phase 4c; the shrink-zone storm's
+ * center/half-diagonal math now consumes it (fail-closed: unset size =
+ * inert storm). Applied each step alongside the arena bounds.
+ */
+let cachedArenaSize: { x: number; y: number } | null = null;
+
+export function setWorldArenaSize(width: number, height: number): void {
+  cachedArenaSize = { x: width, y: height };
+}
+
 let cachedTargetScore: number | null = null;
 
 /**
@@ -552,6 +570,25 @@ export function setWorldSlopes(slopes: ReadonlyArray<SlopeStatic>): void {
   cachedSlopes = slopes.slice();
 }
 
+/**
+ * Cache the map's spawn points (Track Z0b Item A — the Zig mirror of
+ * World.ts assignSpawnPoints needs the same point list to seat mid-round
+ * fast respawns + round-boundary respawns identically). Same cadence as
+ * setWorldStatics (World.ts syncWorldStaticsToWasm); written into the wasm
+ * module's module-level spawn array (world.zig) alongside the statics each
+ * step. Point order MUST be `map.spawns` order — the assignment's
+ * strict-`>` best-score tiebreak makes order load-bearing. Callers are
+ * responsible for TS's own no-spawns fallback (`spawns.length > 0 ?
+ * spawns : [map center]`) — world.zig has no map size to derive it.
+ */
+let cachedSpawnPoints: { x: number; y: number }[] | null = null;
+
+export function setWorldSpawnPoints(
+  points: ReadonlyArray<{ x: number; y: number }>,
+): void {
+  cachedSpawnPoints = points.map((p) => ({ x: p.x, y: p.y }));
+}
+
 const AABB_SIZE_BYTES = 32;
 
 function writeStaticsIntoMemory(): void {
@@ -587,6 +624,9 @@ function writeStaticsIntoMemory(): void {
       cachedArenaBounds.hasCeiling,
       cachedArenaBounds.killPlaneY,
     );
+  }
+  if (cachedArenaSize && typeof ex.world_state_set_arena_size === "function") {
+    ex.world_state_set_arena_size(cachedArenaSize.x, cachedArenaSize.y);
   }
   // Launch pads (world.zig §8c). Scratch sits past the max statics region
   // (256×32 AABB + 256 one_way = 8448 bytes, 8-aligned) so the two writes
@@ -625,6 +665,26 @@ function writeStaticsIntoMemory(): void {
       slopeView.setFloat64(i * 56 + 48, s.ty, true);
     }
     ex.world_state_set_slopes(slopeScratchPtr, slopeCount);
+  }
+  // Spawn points (world.zig, Track Z0b Item A). Scratch sits past the max
+  // slope region (32×56 = 1792 bytes) so statics/pads/slopes/spawns never
+  // trample each other. 2 f64 per point, order = map.spawns order. Always
+  // written when the cache is set — count 0 clears (Zig then falls back to
+  // respawn-in-place; see world.zig's assignedSpawnPoint fail-safe note).
+  if (
+    cachedSpawnPoints &&
+    typeof ex.world_state_set_spawn_points === "function"
+  ) {
+    const spawnScratchPtr =
+      scratchPtr + 256 * AABB_SIZE_BYTES + 256 + 16 * 48 + MAX_SLOPES * 56;
+    const spawnView = new DataView(ex.memory.buffer, spawnScratchPtr);
+    const spawnCount = Math.min(cachedSpawnPoints.length, 16);
+    for (let i = 0; i < spawnCount; i++) {
+      const p = cachedSpawnPoints[i]!;
+      spawnView.setFloat64(i * 16 + 0, p.x, true);
+      spawnView.setFloat64(i * 16 + 8, p.y, true);
+    }
+    ex.world_state_set_spawn_points(spawnScratchPtr, spawnCount);
   }
 }
 

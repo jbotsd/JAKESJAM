@@ -26,8 +26,10 @@ pub const RecoilImpulse = extern struct {
 };
 
 /// Compute where a projectile spawns relative to the player rig.
-/// Aim direction × reach px from the player center. Matches
-/// `playerMuzzlePosition` in weapon.ts byte-for-byte.
+/// Aim direction × reach px from the player center. LEGACY center+reach
+/// primitive — predates the alternating-hand rig; `playerMuzzlePosition`
+/// below is the full port of weapon.ts's CURRENT muzzle geometry and is
+/// what world.zig's fire-spawn section wires in (Track Z0b Item B).
 pub fn muzzlePosition(
     player_x: f64,
     player_y: f64,
@@ -44,6 +46,51 @@ pub fn muzzlePosition(
     return .{
         .x = player_x + (dx / len) * reach,
         .y = player_y + (dy / len) * reach,
+    };
+}
+
+/// Muzzle offset constants (Track Z0b Item B port of orphaned-branch
+/// commit 888345c — parity with weapon.ts's MUZZLE_ANCHOR_UP /
+/// MUZZLE_REACH / MUZZLE_HAND_SPREAD, weapon.ts:665-667; that file's own
+/// doc comment has the rig-geometry derivation: hands at shoulder height
+/// ≈60px above player.y at the standard visual scale, ~31px release
+/// reach, ±6px perpendicular hand split).
+pub const MUZZLE_ANCHOR_UP: f64 = 60;
+pub const MUZZLE_REACH: f64 = 31;
+pub const MUZZLE_HAND_SPREAD: f64 = 6;
+
+/// Full port of weapon.ts `playerMuzzlePosition` (weapon.ts:668-684) —
+/// byte-for-byte: anchor the throw at shoulder height (player center −
+/// MUZZLE_ANCHOR_UP), unit-normalize aim FROM THAT ANCHOR (`Math.sqrt`,
+/// `|| 1` zero-guard), extend MUZZLE_REACH toward aim, then offset
+/// MUZZLE_HAND_SPREAD along the perpendicular toward the throwing hand
+/// (`hand` 0 = lead = +perp side, 1 = back = −perp — TS's
+/// `hand === 0 ? 1 : -1`). The FIRE ANGLE must then be re-derived from
+/// this muzzle point toward aim (NOT from the player center) — the
+/// angular difference between the two is exactly the divergence the
+/// original audit measured (10.84px vs 47.32px same-tick travel).
+pub fn playerMuzzlePosition(
+    player_x: f64,
+    player_y: f64,
+    aim_x: f64,
+    aim_y: f64,
+    hand: u8,
+) MuzzlePosition {
+    const cx = player_x;
+    const cy = player_y - MUZZLE_ANCHOR_UP;
+    const dx = aim_x - cx;
+    const dy = aim_y - cy;
+    const len_raw = @sqrt(dx * dx + dy * dy);
+    const len = if (len_raw == 0.0) 1.0 else len_raw;
+    const ux = dx / len;
+    const uy = dy / len;
+    // Perpendicular to aim, toward the throwing hand (lead = +perp side).
+    const side: f64 = if (hand == 0) 1.0 else -1.0;
+    const px = -uy;
+    const py = ux;
+    return .{
+        .x = cx + ux * MUZZLE_REACH + px * side * MUZZLE_HAND_SPREAD,
+        .y = cy + uy * MUZZLE_REACH + py * side * MUZZLE_HAND_SPREAD,
     };
 }
 
