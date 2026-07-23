@@ -295,6 +295,30 @@ fn timeoutWinnerIdx(state: *const world_state.WorldState) i32 {
     return best_idx;
 }
 
+/// True sudden-death trigger (Track Z0a port of orphaned-branch commit
+/// 02b74f5 — parity with client/src/sim/round.ts's isSuddenDeathRound).
+/// Every player who has EVER scored (score > 0 — TS's sparse `scores` map
+/// only has entries for players who've won at least one round, so a player
+/// still at 0 is excluded, not counted as "tied at 0") is exactly one round
+/// away from winning. Needs at least 2 scored players — a single scorer
+/// can't have a decider round with themselves.
+fn isSuddenDeathRound(state: *const world_state.WorldState) bool {
+    if (state.header.target_score == 0) return false;
+    const threshold = state.header.target_score - 1;
+    var scored_count: u32 = 0;
+    var all_at_threshold = true;
+    var i: u32 = 0;
+    while (i < state.player_count) : (i += 1) {
+        const s = state.players[i].score;
+        if (s > 0) {
+            scored_count += 1;
+            if (s != threshold) all_at_threshold = false;
+        }
+    }
+    if (scored_count < 2) return false;
+    return all_at_threshold;
+}
+
 fn detectRoundWinner(state: *const world_state.WorldState) i32 {
     if (state.header.round_phase != @intFromEnum(round.RoundPhase.fighting))
         return -1;
@@ -2830,6 +2854,15 @@ pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
         while (ki < state.player_count) : (ki += 1) {
             state.players[ki].round_kills = 0;
         }
+        // Sudden-death trigger (Track Z0a port of orphaned-branch commit
+        // 02b74f5 — parity with round.ts): re-evaluated exactly on the
+        // countdown → fighting transition, using the scores as they stand
+        // heading into the new round. This is the first time step_world
+        // DECIDES the trigger independently (previously the flag was
+        // TS-set-only, and the pack path wiped it every tick anyway —
+        // see writeScoresIntoMemory's bug history).
+        state.header.sudden_death_active =
+            if (isSuddenDeathRound(state)) 1 else 0;
     }
     if (phase_result.transitioned == 1 and
         phase_result.new_phase == @intFromEnum(round.RoundPhase.drafting))
@@ -2849,6 +2882,16 @@ pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
         // AFTER the auto-pick block above (which needed the pre-clear
         // offers/picked_slot state to still be readable).
         draft.clearDraftState(state);
+
+        // Sudden death clears on countdown entry (round.ts sets
+        // `next.suddenDeathActive = undefined` at BOTH →countdown
+        // transitions — round-over→countdown and drafting→countdown; the
+        // countdown→fighting transition above re-decides it fresh). Not in
+        // the 02b74f5 branch spec, which only wrote the flag at the
+        // fighting transition — but without this, a stale `true` survives
+        // the countdown phase where TS reads cleared, a needless
+        // divergence window.
+        state.header.sudden_death_active = 0;
 
         state.header.round_index += 1;
         // Reset transient entities for the new round (I28).

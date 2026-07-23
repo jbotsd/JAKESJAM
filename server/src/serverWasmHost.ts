@@ -14,7 +14,12 @@
 // Reuses the already-shipped `loadServerSim` loader from
 // `wasmRuntime.ts` (which installs the trig LUT for parity).
 
-import type { LaunchPadDefinition, SlopeDefinition, WorldState } from "@sim/types.ts";
+import type {
+  LaunchPadDefinition,
+  PlayerId,
+  SlopeDefinition,
+  WorldState,
+} from "@sim/types.ts";
 import { deriveSlopeStatics, MAX_SLOPES, type SlopeStatic } from "@sim/collision.ts";
 import {
   packWorldState,
@@ -65,6 +70,7 @@ type WorldExports = {
     has_ceiling: number,
     kill_plane_y: number,
   ) => void;
+  world_state_set_target_score?: (state_ptr: number, target: number) => void;
   /** Optional — older sim.wasm builds predate launch pads. Flat f64
    *  array, 6 per pad: [x, y, w, h, impulse_x, impulse_y]. */
   world_state_set_launch_pads?: (pads_ptr: number, count: number) => number;
@@ -94,6 +100,7 @@ class ServerWasmHost {
   } | null = null;
   private cachedLaunchPads: LaunchPadDefinition[] | null = null;
   private cachedSlopes: SlopeStatic[] | null = null;
+  private cachedTargetScore: number | null = null;
   private preloadPromise: Promise<void> | null = null;
   private resolvedReady = false;
   private readyResolvers: Array<() => void> = [];
@@ -191,6 +198,16 @@ class ServerWasmHost {
     this.cachedSlopes = deriveSlopeStatics(slopes);
   }
 
+  /** Match win-target. Track Z0a port of orphaned-branch commit 02b74f5 —
+   *  see the matching client-side setWorldTargetScore comment:
+   *  world_state_set_target_score existed as an export but nothing ever
+   *  called it, and packWorldState hardcodes target_score to 0 every pack
+   *  anyway, so a one-off call would get wiped by the next tick. Cached and
+   *  reapplied every tick like arena bounds / launch pads / slopes. */
+  setTargetScore(target: number): void {
+    this.cachedTargetScore = target;
+  }
+
   getStaticsSnapshot(): { aabbs: ReadonlyArray<StaticAABB>; oneWay: ReadonlyArray<number> } | null {
     return this.cachedStatics
       ? { aabbs: this.cachedStatics.aabbs, oneWay: this.cachedStatics.oneWay }
@@ -225,6 +242,13 @@ class ServerWasmHost {
     const heap = new Uint8Array(ex.memory.buffer);
     heap.set(buf, statePtr);
     this.writeStaticsIntoMemory();
+    // Target score + per-player scores — patched after EVERY pack because
+    // packWorldState/packPlayer hardcode both to 0 (Track Z0a / 02b74f5:
+    // without these two calls, step_world's own score increments got wiped
+    // by the next tick's pack and match-end detection + the sudden-death
+    // trigger were permanently inert on the wasm path).
+    this.writeTargetScoreIntoMemory();
+    this.writeScoresIntoMemory(state);
     // Card builds + arena bounds — MUST match the client (writeFireConfigsForState
     // + setArenaBounds). Without these the server runs every player's build inert
     // (no card augments) while the client predicts WITH them → desync.
@@ -258,6 +282,7 @@ class ServerWasmHost {
     this.cachedInputs = null;
     this.cachedLaunchPads = null;
     this.cachedSlopes = null;
+    this.cachedTargetScore = null;
     this.preloadPromise = null;
     this.resolvedReady = false;
     this.readyResolvers.length = 0;
@@ -308,6 +333,40 @@ class ServerWasmHost {
       this.cachedArenaBounds.hasCeiling,
       this.cachedArenaBounds.killPlaneY,
     );
+  }
+
+  private writeTargetScoreIntoMemory(): void {
+    if (this.cachedTargetScore === null || !this.ex || this.statePtr === null)
+      return;
+    this.ex.world_state_set_target_score?.(this.statePtr, this.cachedTargetScore);
+  }
+
+  /** Patch each player's score into linear memory. Track Z0a port of
+   *  orphaned-branch commit 02b74f5 — see the matching client-side
+   *  writeScoresIntoMemory comment: packPlayer always writes 0, so without
+   *  this call every player's score silently resets to 0 every tick,
+   *  permanently breaking match-end detection and the sudden-death trigger
+   *  for the whole match. Must match the client's equivalent call exactly
+   *  (same pack-order sort) or predict/reconcile desyncs on score. */
+  private writeScoresIntoMemory(state: WorldState): void {
+    if (!this.ex || this.statePtr === null) return;
+    const view = new DataView(this.ex.memory.buffer);
+    const playersStart = this.statePtr + HEADER_SIZE + 8;
+    // PlayerEntity.score offset within the 624-byte entity — same constant
+    // unpackWorldState's score-extraction loop reads (offset 276, directly
+    // after current_keys/prev_keys at +268/+272).
+    const SCORE_OFF = 276;
+    // Sort MUST match packWorldState's player ordering (localeCompare) so
+    // index i lands on the same entity slot packPlayer wrote.
+    const sortedIds = Object.keys(state.players).sort((a, b) =>
+      a.localeCompare(b),
+    );
+    for (let i = 0; i < sortedIds.length; i++) {
+      const pid = sortedIds[i]! as PlayerId;
+      const score = state.round.scores?.[pid] ?? 0;
+      const playerOff = playersStart + i * PLAYER_ENTITY_SIZE;
+      view.setUint32(playerOff + SCORE_OFF, score >>> 0, true);
+    }
   }
 
   /** Launch pads (world.zig §8c). Scratch sits past the max statics region
@@ -405,6 +464,10 @@ function mergeUnpacked(
       phase: unpacked.round.phase,
       countdownRemainingMs: unpacked.round.countdownRemainingMs,
       roundIndex: unpacked.round.roundIndex,
+      // Zig decides the sudden-death trigger at the countdown → fighting
+      // transition (Track Z0a / 02b74f5) — mirror its verdict out, incl.
+      // the explicit-undefined clear (round.ts optional-field convention).
+      suddenDeathActive: unpacked.round.suddenDeathActive,
       scores: { ...state.round.scores, ...unpacked.scores },
     },
     players: stableMergeRecord(state.players, unpacked.players),
