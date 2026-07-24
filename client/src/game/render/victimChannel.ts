@@ -59,7 +59,14 @@ export function impactChannelParams(chassis: MeleeChassis): ImpactChannelParams 
       pairStopKillMs: 150,
       victimKillHoldMul: 1.5,
       holdCapMs: 250,
-      vibrationPx: 2.5,
+      // 2.5 → 3.5 (K5 live-tape retune, 2026-07-24): at real game scale
+      // (~0.9 world→screen at arena zoom, 25fps tape) the pair hold read
+      // as a STATIC freeze — the ±2.5px buzz was sub-legible while flash/
+      // squash/flinch all read at spec. One more pixel puts the shiver
+      // above the perception floor without breaking the hold's stillness.
+      // Kindled-only: Interstice keeps the research number until its own
+      // wave live-tapes it (channel stays parameterized, never forked).
+      vibrationPx: 3.5,
       flashInMs: 50,
       flashOutMs: 50,
       killFlashInMs: 67,

@@ -863,7 +863,33 @@ export class ProceduralPlayerRig implements CombatRig {
     danceEnergy: number;
     idleDanceMs: number;
     danceRaise: number;
+    /** Victim-channel live state (R1 rows 3-8) — null when no impact chord
+     *  is speaking on this rig. Pure read of the same clocks update()/draw()
+     *  consume, so a Playwright rAF sampler sees exactly what rendered
+     *  (capture discipline: __debugState over pixels for ADD-blend). */
+    impact: {
+      role: "attacker" | "victim";
+      chassis: "interstice" | "kindled";
+      kill: boolean;
+      holdMs: number;
+      holdTotalMs: number;
+      elapsedMs: number | null;
+      flashK: number;
+      squashX: number;
+      squashY: number;
+      /** Directional flinch as applied this frame (offset * decay^2, px). */
+      flinchX: number;
+      flinchY: number;
+    } | null;
   } {
+    const ip = this.impactParams;
+    const speaking =
+      ip !== null && (this.impactHoldMs > 0 || this.impactElapsedMs !== Infinity);
+    const hitEased = this.hitDecay * this.hitDecay;
+    const squash =
+      speaking && ip && this.impactElapsedMs !== Infinity
+        ? squashScale(this.impactElapsedMs, ip)
+        : { x: 1, y: 1 };
     return {
       visible: this.graphics.visible,
       x: this.lastDrawX,
@@ -871,6 +897,24 @@ export class ProceduralPlayerRig implements CombatRig {
       danceEnergy: this.danceEnergy,
       idleDanceMs: this.idleDanceMs,
       danceRaise: this.danceRaise,
+      impact: speaking && ip
+        ? {
+            role: this.impactHoldRole,
+            chassis: ip.chassis,
+            kill: this.impactKill,
+            holdMs: this.impactHoldMs,
+            holdTotalMs: this.impactHoldTotalMs,
+            elapsedMs: this.impactElapsedMs === Infinity ? null : this.impactElapsedMs,
+            flashK:
+              this.impactElapsedMs !== Infinity
+                ? flashMix(this.impactElapsedMs, ip, this.impactKill)
+                : 0,
+            squashX: squash.x,
+            squashY: squash.y,
+            flinchX: this.hitOffsetX * hitEased,
+            flinchY: this.hitOffsetY * hitEased,
+          }
+        : null,
     };
   }
 

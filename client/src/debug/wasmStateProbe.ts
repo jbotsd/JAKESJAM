@@ -44,6 +44,22 @@ export type RigDebugRow = {
   danceEnergy: number;
   idleDanceMs: number;
   danceRaise: number;
+  /** Victim-channel live state (slash-feel-ledger R1 rows 3-8) — null when
+   *  no melee impact chord is speaking on this rig. Additive/optional so
+   *  older probe consumers keep reading rows unchanged. */
+  impact?: {
+    role: "attacker" | "victim";
+    chassis: "interstice" | "kindled";
+    kill: boolean;
+    holdMs: number;
+    holdTotalMs: number;
+    elapsedMs: number | null;
+    flashK: number;
+    squashX: number;
+    squashY: number;
+    flinchX: number;
+    flinchY: number;
+  } | null;
 };
 
 const FNV1A_PRIME_32 = 0x01000193;
