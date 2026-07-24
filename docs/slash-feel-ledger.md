@@ -79,12 +79,36 @@ with weight (anticipation + crunch), Interstice actives with snap (smear +
 whip) — per the research verb-transfer matrix. A vanilla mouse-click cast
 feel is the failure state.
 
-## Research tuning table
+## Research tuning table (R1, verbatim from the report)
 
-*(Inserted when the Slash_Feel_Research_20260724 report lands — per-channel
-targets: windup/active/recovery/cancel ms+ticks, hit-stop hit/kill, shake
-px·ms·direction, knockback, flash frames, smear counts, sound offsets —
-columns: current / Interstice target / Kindled target / sources.)*
+*Source: `~/Documents/Slash_Feel_Research_20260724/research_report_20260724_slash_feel.md`
+(10,927 words, 92 sources; [N] = that report's bibliography). The report's
+R3 sequencing is BINDING: step 1 = melee input buffer, step 2 = Interstice
+contact-frame alignment — BOTH before any hit-stop retune, because every
+channel keys off the contact tick. R4 there defines the tape-verifiable
+measurement contract the iteration critiques use. 1t = 16.67ms @60Hz.
+"(est.)" rows are the report's marked estimates, not sourced numbers.*
+
+| # | Channel | Current (repo) | Interstice target | Kindled target | Sources |
+|---|---------|----------------|-------------------|----------------|---------|
+| 1 | Melee input buffer | none found (slash edge consumed only in idle phase of swing FSM) | 100ms (6t) edge buffer: press during active/recovery queues, fires at phase 0 | same 100ms (6t) | SF6 4-8f [18]; Smash Ult 9f [11]; For Honor universal 100ms [52]; survey buffering norms [2] |
+| 2 | Contact-frame alignment (render vs sim vs audio) | K aligned (300ms = 300ms); I misaligned: render contact ~40ms vs sim gate 82ms after edge (verify on tape) | render contact tick = sim contact tick ±1t; contact SFX ≤2t early, never >2t late; re-derive render sentence: 0.334 x sentence = 82ms → sentence ≈ 245ms, or re-author contact fraction to 0.68 of a 120ms sentence's cut | keep aligned (300ms/18t); same audio window | ITU 45ms lead/125ms lag [84]; contact-frame placement [80]; 1-2f early for perception [79]; sound coherence as top-3 feature [3] |
+| 3 | Hit-stop on hit (render-only, pair-scoped) | 35ms (2.1t) both, world-scope tween hold | 50ms (3t) attacker+victim | 100ms (6t) attacker+victim | GGXrd 7f/10f [3]; Final Fight 6f [58]; GGST 11-15f [16]; norm 3-12f [71]; Sakurai damage scaling [4]; MH weight identity [50][51] |
+| 4 | Hit-stop on kill | 80ms (4.8t) | 117ms (7t), victim rig holds 1.5x (175ms/10.5t) | 150ms (9t), victim holds 1.5x (225ms/13.5t); global cap 250ms (15t) | Smash cap 30f [8]; Melee electric victim-only 1.5x [8]; GGST CH 31f+35f slowdown [16]; Sakurai cap doctrine [4] |
+| 5 | Hit-stop behavior during hold | static hold (tweens.timeScale) | victim vibrates ±1.5px horizontal (grounded) / vertical (air), decaying; attacker keeps ~10% drift; hitbox/hurtbox never move; 4t blend into damage pose | same, vibration ±2.5px | Sakurai 8 techniques [5]; Famitsu column [4]; Smash vibration [57] |
+| 6 | Victim white-flash | none on player rigs (thrall 110ms; parry 240ms) | 33ms (2t) full white + 33ms (2t) decay, per hit | 50ms (3t) + 50ms (3t) decay; kill: 67ms (4t) then dissolve | Nijman 1-2f [2]; SNK 1f [67]; SFA3 1f [74]; most-pervasive highlight [3]; Feel defaults [65][66] |
+| 7 | Victim reaction pose | none (knockback velocity only) | same-frame directional flinch, zero cross-fade, 4px offset along hit vector, ease-out 100-150ms | same, 7px offset, ease-out 150-200ms | Massoud zero-crossfade/directional [73]; OFDP instant switch [3]; Sakurai 4f damage-pose blend [4] |
+| 8 | Victim squash (est.) | none | scale (1.25, 0.8) for 50ms (3t), spring back 100ms (6t) | scale (1.35, 0.7) for 67ms (4t), spring back 133ms (8t) | 12 principles squash-on-impact [68]; tutorial recipe 1.3/0.7 50ms [69]; volume preservation [68] |
+| 9 | Screenshake (est. px; directional-first) | random-only Phaser shake: hit 80ms @0.008 (~10px), heavy 120ms @0.01, kill 180ms @0.012 | hit: 4px kick along hit vector + 2px noise, 80ms (5t), trauma-squared decay | hit: 8px kick + 4px noise, 120ms (7t); kill (both): 12px kick + 6px noise + ±1.5 deg roll, 180ms (11t) | directional > random [2][41][71][72]; trauma^2 + Perlin [62][63]; 2D translation+rotation [62]; GGXrd axis matching [3] |
+| 10 | Attacker recoil/translation | kinetic chain forward drive (I 15px, K 9.5px chest-through) — keep | keep; add 2px camera-opposite kick on whiff (est.) | keep; ground-contact dust when arc ends low | GoW forward translation tenet [43]; HK strike recoil [30]; Vlambeer recoil [59][60] |
+| 11 | Knockback (sim; balance-owned) | I 260px/s + 60 up; K 420px/s + 110 up | keep; visual decay must read as impulse-then-decay, control visibly returning | keep | Smash 0.03 launch / 0.051 per-frame decay [9]; hitstun 0.4x [10] |
+| 12 | Smear / afterimage (est. counts) | I: instant-arc + streak cones, no tip ghosts; K: 9 tip ghosts | 4-6 tip ghosts, blade stretches ~1.3x along velocity in cut window; trail persists 150% of active window (~68ms) | keep 9-10 ghosts; trail persists 200% of active (~220ms); thicker core, mesh-deform read | Xrd every-frame keys + deform + scale smears [55]; smear frames [56]; trail outlives attack [72]; persistence readability [2] |
+| 13 | Sound layer stack | canonical single cues (whoosh + contact exist; layering not verified in repo) | whoosh @cut start; contact layer (high-mid crack) @contact tick; whiff = whoosh only; 3rd-combo-hit adds sweetener | whoosh (lower pitch, longer) @cut start; contact = crack + low-mid thud + sub tail; kill layer @contact+0-50ms (both classes) | Song 3-component stack [72]; For Honor attacker/victim split [76]; MK1 category mixing [78]; 2-4 layers by frequency band [79]; low freq = weight [83]; Melee 2f precision [81] |
+| 14 | Sound timing tolerance | unmeasured | fire on contact tick; ≤2t (33ms) early; >2t late = defect; never >6t | same | ITU 45/125ms asymmetry [84]; EBU +40/-60 [84]; 1-2f early guidance [79][80] |
+| 15 | Combo window & climax | render 60t (1000ms), alternating dir, 3rd = both blades | keep 1000ms; 3rd hit: +1t hit-stop (67ms), flash tier up, sweetener layer | keep; K has no 3rd-climax — its every hit is the climax | Dead Cells 3rd-hit crit [22]; DC combo-continuation [24][25] |
+| 16 | Cancel windows | none: recovery is a straitjacket | dash/roll may cancel recovery from 50% in (55ms/3.3t after active ends); attack may NOT cancel attack | dash/ward may cancel final 40% of recovery (from 204ms/12t in) | DC roll-doesn't-reset-combo [24][25]; Bayonetta dodge offset [48]; Motion Twin forgiveness thesis [26]; hitstop-as-cancel-window [57][18] |
+| 17 | Kill-only channels | killFeel exists (flash + zoom-punch + bloom) | zoom stays kill/execute-exclusive; 1.03-1.06x punch (est.); debris persists (permanence) | same; K kill adds ground shock ring | zoom-as-kill-tell [3][66]; permanence [59][2]; kill-tier budgets (repo) |
+| 18 | Debris directionality | hit VFX at site; no directional policy verified | tight directional spray continuing cut line (sharp-weapon read) | wider directional wedge + ground response | strike-vector debris [71]; BlazBlue sharp-vs-blunt patterns [3] |
 
 ## Iteration log
 
