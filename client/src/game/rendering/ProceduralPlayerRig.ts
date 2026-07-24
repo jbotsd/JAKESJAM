@@ -939,12 +939,25 @@ export class ProceduralPlayerRig implements CombatRig {
     /** Live melee sentence clock (I4, R1 row 2 epoch→frame alignment
      *  tooling): elapsedMs into the render sentence this frame — an rAF
      *  sampler can pin "where was the render clock when the sim's
-     *  slash-hit arrived" without frame-counting video. Null at rest. */
+     *  slash-hit arrived" without frame-counting video. Null at rest.
+     *  `stage`/hand positions added I11 (wave 3, pose-continuity gap —
+     *  slash-feel-ledger's "expose the rig's live hand-target positions on
+     *  __rigDebug()" ask): `stage` names which of meleeStage's four windows
+     *  owns the frame (matches meleeTiming.ts's own anticipation/cut/
+     *  followThrough/recovery names) so a live/harness sampler can bucket
+     *  samples by phase without re-deriving the style-specific boundary
+     *  constants; `handLead`/`handBack` are the SAME world-space points
+     *  getHandWorld() returns (the actual sprung/rendered position, not the
+     *  authored target) — a rAF trace over these across a real swing-start
+     *  or retrig is what proves (or disproves) a visible pose-snap. */
     melee: {
       style: "interstice" | "kindled";
       verb: "blade" | "bash";
       elapsedMs: number;
       durationMs: number;
+      stage: "anticipation" | "cut" | "followThrough" | "recovery";
+      handLead: { x: number; y: number } | null;
+      handBack: { x: number; y: number } | null;
     } | null;
   } {
     const ip = this.impactParams;
@@ -986,6 +999,13 @@ export class ProceduralPlayerRig implements CombatRig {
             verb: this.meleePoseVerb,
             elapsedMs: this.meleePoseDurationMs - this.meleePoseMs,
             durationMs: this.meleePoseDurationMs,
+            stage: meleeStageName(
+              Phaser.Math.Clamp(1 - this.meleePoseMs / this.meleePoseDurationMs, 0, 1),
+              this.meleePoseStyle,
+              this.meleePoseStyle === "kindled" && this.meleePoseVerb === "bash",
+            ),
+            handLead: this.lastLeadHandWorld,
+            handBack: this.lastBackHandWorld,
           }
         : null,
     };
@@ -3220,6 +3240,25 @@ function solveTwoBone(
 
 function vec(x: number, y: number): Vec2 {
   return { x, y };
+}
+
+/** Which of meleeStage's four windows owns this frame (debugInfo()'s
+ *  __rigDebug melee.stage, I11/wave 3) — the same style/verb-conditioned
+ *  boundary constants draw() itself uses (~lines 1399-1400), duplicated
+ *  here rather than threaded through as parameters since this is a debug-
+ *  only classification read, never consumed by the draw path. */
+function meleeStageName(
+  t: number,
+  style: "interstice" | "kindled",
+  isBash: boolean,
+): "anticipation" | "cut" | "followThrough" | "recovery" {
+  const aEnd = isBash ? 0.36 : style === "kindled" ? 0.38 : 0.15;
+  const cutEnd = isBash ? 0.56 : style === "kindled" ? 0.61 : 0.42;
+  const followEnd = isBash ? 0.74 : style === "kindled" ? 0.88 : 0.80;
+  if (t < aEnd) return "anticipation";
+  if (t < cutEnd) return "cut";
+  if (t < followEnd) return "followThrough";
+  return "recovery";
 }
 
 /** Mix a 0xRRGGBB color toward pure white by k (0..1) — the victim

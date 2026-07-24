@@ -5,6 +5,7 @@
 
 import { describe, expect, test } from "bun:test";
 import { RenderLayer } from "../RenderLayer";
+import { ParticlePool } from "../../systems/ParticlePool";
 
 type Stub = {
   rotation: number;
@@ -133,5 +134,84 @@ describe("RenderLayer", () => {
     expect(scene.__tweens.length).toBe(1);
     expect(scene.__tweens[0].config.radius).toBe(64);
     expect(scene.__tweens[0].config.duration).toBe(260);
+  });
+
+  // Interstice wave 3 (pool-stress item): spawnExplosionBlast's pooled path
+  // (blastCircle + spark) is the universal "someone died here" read every
+  // kill in the game depends on. This proves the "kill" tier ACTUALLY
+  // reaches ParticlePool.acquireBlastCircle/acquireSpark through RenderLayer
+  // (spawnExplosionBlast -> spawnExplosionBlastBig -> spawnBloomLayers/
+  // spawnBlastSparks), closing the one hop ParticlePool.test.ts (pool-level)
+  // and simEventRouter.test.ts (dispatch-level) don't individually cover.
+  describe("spawnExplosionBlast — pooled path threads the kill-tier reserve (Interstice wave 3)", () => {
+    function makeParticlePoolScene() {
+      const stub = () => ({
+        setVisible: () => stub(),
+        setAlpha: () => stub(),
+        setScale: () => stub(),
+        setRotation: () => stub(),
+        setPosition: () => stub(),
+        setBlendMode: () => stub(),
+        setTint: () => stub(),
+        setFillStyle: () => stub(),
+        setRadius: () => stub(),
+        setStrokeStyle: () => stub(),
+        clear: () => stub(),
+        destroy: () => undefined,
+      });
+      return {
+        add: {
+          rectangle: () => stub(),
+          circle: () => stub(),
+          graphics: () => stub(),
+        },
+        textures: { exists: () => false, createCanvas: () => ({ context: {}, refresh: () => undefined }) },
+        // Deliberately does NOT invoke onComplete — acquired pool objects
+        // must stay "active" (not auto-released) so this test can observe
+        // free-list draining under acquisition, not the release cycle.
+        tweens: { add: () => undefined },
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      } as any;
+    }
+
+    test("ambient blast (hit-confirmed) cannot dip into the reserve; kill-tier blast can", () => {
+      // Deliberately does NOT hardcode the exact reserve size (it's an
+      // internal, independently-tunable constant — see ParticlePool's own
+      // blastCircleKillReserve docblock) — this drains ambient acquires
+      // until they stop succeeding, THEN proves the invariant that
+      // actually matters: a kill-tier blast still gets through, and it
+      // measurably dips below whatever floor ambient hit.
+      const scene = makeParticlePoolScene();
+      const pool = new ParticlePool(scene);
+      const layer = new RenderLayer(scene, pool);
+      const original = console.warn;
+      console.warn = () => {};
+      try {
+        // Drain ambient hit-confirmed-style blasts (damage <= 25, so
+        // isBig=false -> ONE spawnBloomLayers call = 5 blastCircle each)
+        // until the reserve floor stops any further ambient acquisition.
+        const freeCount = () => (pool as unknown as { blastCircleFree: unknown[] }).blastCircleFree.length;
+        let before = freeCount();
+        for (let i = 0; i < 20; i++) {
+          layer.spawnExplosionBlast({ x: 0, y: 0 }, 22, 20); // ambient, wants 5
+          const now = freeCount();
+          if (now === before) break; // no progress -> ambient hit the reserve floor
+          before = now;
+        }
+        const reserveFloor = freeCount();
+        expect(reserveFloor).toBeGreaterThan(0); // the reserve itself is intact, untouched by ambient
+        // One more ambient attempt makes zero further progress — proves
+        // the floor holds, not just "got lucky on the last iteration".
+        layer.spawnExplosionBlast({ x: 0, y: 0 }, 22, 20);
+        expect(freeCount()).toBe(reserveFloor);
+        // Now the REAL player-killed blast (tier="kill") must still be
+        // able to dip into that exact protected floor even though ambient
+        // could not touch it.
+        layer.spawnExplosionBlast({ x: 0, y: 0 }, 36, 50, "kill");
+        expect(freeCount()).toBeLessThan(reserveFloor);
+      } finally {
+        console.warn = original;
+      }
+    });
   });
 });

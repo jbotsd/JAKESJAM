@@ -167,6 +167,84 @@ describe("ParticlePool", () => {
     }
   });
 
+  test("an ambient exhaustion warning never silences a later kill-tier exhaustion warning (Interstice wave 3)", () => {
+    // Before this fix, `warned: Set<PoolName>` fired once EVER per pool
+    // name — since ambient demand always exhausts a pool first (it's the
+    // vastly more common acquire path), the one warning that actually
+    // matters (kill-tier hitting a truly empty reserve) would be
+    // permanently suppressed by the routine ambient one that came first.
+    const pool = new ParticlePool(makeScene());
+    const warnCalls: string[] = [];
+    const original = console.warn;
+    console.warn = mock((msg: string) => { warnCalls.push(msg); });
+    try {
+      // Drain to the ambient floor (22 = 24 total - 2 reserve) -> one
+      // ambient warning fires.
+      for (let i = 0; i < 22; i++) pool.acquireBolt();
+      pool.acquireBolt(); // ambient: warns once
+      expect(warnCalls.length).toBe(1);
+      expect(warnCalls[0]).toContain("bolt pool exhausted; skipping spawn");
+      // Drain the reserve itself with kill-tier acquires, then push past
+      // empty — this MUST produce its own, separate, more alarming warning.
+      pool.acquireBolt("kill");
+      pool.acquireBolt("kill");
+      pool.acquireBolt("kill"); // truly empty now — kill-tier warns
+      expect(warnCalls.length).toBe(2);
+      expect(warnCalls[1]).toContain("KILL-TIER");
+      // Both are now suppressed on repeat (each key warns once).
+      pool.acquireBolt();
+      pool.acquireBolt("kill");
+      expect(warnCalls.length).toBe(2);
+    } finally {
+      console.warn = original;
+    }
+  });
+
+  // These two deliberately don't hardcode the exact reserve size (an
+  // independently-tunable constant — see ParticlePool's own
+  // blastCircleKillReserve/sparkKillReserve docblock) — they drain ambient
+  // acquires until the reserve floor stops them, THEN prove the invariant
+  // that actually matters: kill-tier can still dip into that exact floor.
+  test("kill-tier spark acquire may drain the reserve ambient spawns cannot touch (Interstice wave 3 — universal player-killed blast)", () => {
+    const pool = new ParticlePool(makeScene());
+    const original = console.warn;
+    console.warn = mock(() => {});
+    try {
+      let n = 0;
+      while (pool.acquireSpark() !== null) n++;
+      expect(n).toBeGreaterThan(0); // ambient legitimately acquired some
+      expect(pool.acquireSpark()).toBeNull(); // floor holds on repeat
+      // The universal kill blast (spawnBlastAtPlayer(..., "kill") ->
+      // RenderLayer.spawnExplosionBlast -> spawnBlastSparks) still gets the
+      // reserved tail — every kill in the game (both classes) depends on
+      // this read; ambient status-VFX churn must never starve it.
+      let killN = 0;
+      while (pool.acquireSpark("kill") !== null) killN++;
+      expect(killN).toBeGreaterThan(0); // the reserve had real capacity for kills
+      expect(pool.acquireSpark("kill")).toBeNull(); // a truly empty pool is empty for everyone
+    } finally {
+      console.warn = original;
+    }
+  });
+
+  test("kill-tier blastCircle acquire may drain the reserve ambient spawns cannot touch (Interstice wave 3 — universal player-killed blast)", () => {
+    const pool = new ParticlePool(makeScene());
+    const original = console.warn;
+    console.warn = mock(() => {});
+    try {
+      let n = 0;
+      while (pool.acquireBlastCircle() !== null) n++;
+      expect(n).toBeGreaterThan(0);
+      expect(pool.acquireBlastCircle()).toBeNull();
+      let killN = 0;
+      while (pool.acquireBlastCircle("kill") !== null) killN++;
+      expect(killN).toBeGreaterThan(0);
+      expect(pool.acquireBlastCircle("kill")).toBeNull();
+    } finally {
+      console.warn = original;
+    }
+  });
+
   test("acquireBlastCircle returns distinct instances and release returns to free list", () => {
     const pool = new ParticlePool(makeScene());
     const a = pool.acquireBlastCircle();

@@ -20,7 +20,7 @@ function makeDeps(): {
   shakeCalls: Array<[number, number]>;
   damageNumbers: Array<[string, number]>;
   damageNumbersAt: Array<[number, number, number]>;
-  blasts: Array<[string, number, number]>;
+  blasts: Array<[string, number, number, string | undefined]>;
   killCinematics: string[];
   blastTints: Array<{ x: number; y: number }>;
   shownCardOffers: string[][];
@@ -52,7 +52,7 @@ function makeDeps(): {
   const shakeCalls: Array<[number, number]> = [];
   const damageNumbers: Array<[string, number]> = [];
   const damageNumbersAt: Array<[number, number, number]> = [];
-  const blasts: Array<[string, number, number]> = [];
+  const blasts: Array<[string, number, number, string | undefined]> = [];
   const killCinematics: string[] = [];
   const blastTints: Array<{ x: number; y: number }> = [];
   const shownCardOffers: string[][] = [];
@@ -154,8 +154,8 @@ function makeDeps(): {
     spawnDamageNumberAt(x, y, damage) {
       damageNumbersAt.push([x, y, damage]);
     },
-    spawnBlastAtPlayer(pid, r, d) {
-      blasts.push([String(pid), r, d]);
+    spawnBlastAtPlayer(pid, r, d, tier) {
+      blasts.push([String(pid), r, d, tier]);
     },
     spawnWardAbsorbFlash(pid, isPeel) {
       wardAbsorbFlashes.push({ pid: String(pid), isPeel });
@@ -289,7 +289,7 @@ describe("SimEventRouter — C2b contract", () => {
     expect(env.tweens.timeScale).toBe(1);
     expect(env.audioCalls).toEqual(["hit"]);
     expect(env.damageNumbers).toEqual([["remote", 35]]);
-    expect(env.blasts).toEqual([["remote", 22, 35]]);
+    expect(env.blasts).toEqual([["remote", 22, 35, undefined]]);
     expect(env.rigHits.length).toBe(1);
     expect(env.rigHits[0]!.pid).toBe("remote");
   });
@@ -327,7 +327,11 @@ describe("SimEventRouter — C2b contract", () => {
     router.dispatch(ev);
     expect(env.tweens.timeScale).toBe(0);
     expect(env.audioCalls).toEqual(["explosion", "hit"]);
-    expect(env.blasts).toEqual([["remote", 36, 50]]);
+    // "kill" tier (Interstice wave 3, pool-stress fix) — this is the
+    // universal player-killed blast every kill in the game depends on; it
+    // must be able to dip into the blastCircle/spark reserve so ambient
+    // status-VFX/hit churn can never starve it.
+    expect(env.blasts).toEqual([["remote", 36, 50, "kill"]]);
     expect(env.killCinematics).toEqual(["remote"]); // P3 kill moment fired
     // Big shake (180/0.012) + killer kick (120/0.006) since LOCAL got the kill.
     expect(env.shakeCalls).toEqual([
@@ -534,7 +538,7 @@ describe("SimEventRouter — C2b contract", () => {
     router.dispatch(ev);
     expect(env.tweens.timeScale).toBe(0);
     expect(env.damageNumbers).toEqual([["remote", 99]]);
-    expect(env.blasts).toEqual([["remote", 22, 99]]);
+    expect(env.blasts).toEqual([["remote", 22, 99, undefined]]);
     expect(env.shakeCalls).toEqual([]);
   });
 
@@ -667,7 +671,7 @@ describe("SimEventRouter — melee pair-scoped contact chord (R1 rows 3-5, 2026-
       attackerId: PlayerId("remote"),
     } as SimEvent);
     expect(h.tweens.timeScale).toBe(0); // ranged hit: world stop as before
-    expect(h.blasts).toEqual([["local", 22, 11]]); // ranged keeps the orb
+    expect(h.blasts).toEqual([["local", 22, 11, undefined]]); // ranged keeps the orb
   });
 
   test("bash-landed: heavy hit cue + pair impacts, world clock untouched; paired confirm ALSO skips the generic cue (no phasing)", () => {

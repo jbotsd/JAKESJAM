@@ -139,11 +139,15 @@ export type SimEventRouterDeps = {
    *  `emissionCastFeel`. */
   spawnDamageNumberAt?: (x: number, y: number, damage: number) => void;
 
-  /** Render-time impact blast at the player's last-known position. */
+  /** Render-time impact blast at the player's last-known position.
+   *  `tier: "kill"` (Interstice wave 3, pool-stress fix) may dip into the
+   *  blastCircle/spark kill reserve — pass it ONLY for a real player-killed
+   *  blast, never for ambient hit-confirmed/shield-pop/launch-pad kicks. */
   spawnBlastAtPlayer: (
     playerId: PlayerId | string,
     radius: number,
     damage: number,
+    tier?: "ambient" | "kill",
   ) => void;
 
   /** P3 cinematic kill moment (flash + zoom-punch + bloom). No-op when
@@ -387,7 +391,7 @@ export class SimEventRouter {
         }
         const killBudget = presentationBudget("kill");
         d.safeShake(killBudget.shakeDurationMs, killBudget.shakeIntensity);
-        d.spawnBlastAtPlayer(event.victimId, 36, 50);
+        d.spawnBlastAtPlayer(event.victimId, 36, 50, "kill");
         d.killCinematic(event.victimId);
         audio.play("explosion");
         audio.play("hit");

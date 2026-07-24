@@ -1627,7 +1627,7 @@ export class OnlineMatchScene extends Phaser.Scene {
         renderTime: this.renderTime,
         spawnDamageNumber: (vid, dmg, headshot) => this.spawnDamageNumber(vid, dmg, headshot),
         spawnDamageNumberAt: (x, y, dmg) => this.spawnDamageNumberAt(x, y, dmg),
-        spawnBlastAtPlayer: (pid, r, d) => this.spawnBlastAtPlayer(pid, r, d),
+        spawnBlastAtPlayer: (pid, r, d, tier) => this.spawnBlastAtPlayer(pid, r, d, tier),
         spawnWardAbsorbFlash: (pid, isPeel) => this.spawnWardAbsorbFlash(pid as string, isPeel),
         spawnSyzygistWardAbsorbFlash: (pid, casterId, wardBroke) =>
           this.spawnSyzygistWardAbsorbFlash(
@@ -1810,13 +1810,13 @@ export class OnlineMatchScene extends Phaser.Scene {
   }
 
   /** Spawn a visual blast at the current world position of a player entity. */
-  private spawnBlastAtPlayer(playerId: string, radius: number, damage: number): void {
+  private spawnBlastAtPlayer(playerId: string, radius: number, damage: number, tier: "ambient" | "kill" = "ambient"): void {
     if (!this.renderLayer) return;
     const state = this.loop?.getRenderState();
     if (!state) return;
     const player = state.players[PlayerId(playerId)];
     if (!player) return;
-    this.renderLayer.spawnExplosionBlast({ x: player.x, y: player.y }, radius, damage);
+    this.renderLayer.spawnExplosionBlast({ x: player.x, y: player.y }, radius, damage, tier);
   }
 
   /**

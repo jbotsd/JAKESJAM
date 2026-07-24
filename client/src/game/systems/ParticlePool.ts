@@ -52,6 +52,19 @@ function scaled(base: number): number {
   return Math.max(2, Math.ceil(base * getQualityProfile().particleScale));
 }
 
+/** A kill-tier reserve as a PROPORTION of an already-scaled pool size (see
+ *  blastCircleKillReserve/sparkKillReserve's docblock) — floored at 1 so
+ *  even the smallest pool holds something back for kills. `fraction`
+ *  differs per pool: blastCircle's ONLY ambient consumer is the
+ *  low-frequency explosion blast itself (hit-confirmed/shield-pop/launch
+ *  kicks), so it can afford to give kills the majority share (0.5); spark
+ *  is ALSO the high-frequency ambient status-VFX pool (StatusVfxController's
+ *  fire/ice/lightning DoT ticks fire constantly), so a smaller share (0.3)
+ *  avoids meaningfully degrading that much busier ambient path. */
+function reserveFraction(scaledPoolSize: number, fraction: number): number {
+  return Math.max(1, Math.round(scaledPoolSize * fraction));
+}
+
 const SPARK_W = 3;
 const SPARK_H = 7;
 const SHARD_W = 4;
@@ -67,6 +80,66 @@ export class ParticlePool {
    *  and stays below every particleScale's floor (scaled() min is 2 —
    *  a potato profile simply reserves its whole bolt pool for kills). */
   private static readonly BOLT_KILL_RESERVE = 2;
+  /** blastCircle/spark reserves (Interstice wave 3, 2026-07-24 — extended-
+   *  session pool-stress item): `spawnExplosionBlast`'s "big" path (every
+   *  player-killed event, BOTH classes, via RenderLayer.spawnBloomLayers +
+   *  spawnBlastSparks called TWICE — once directly, once again inside
+   *  spawnExplosionBlastBig) is the ONE universal "a player died here" read
+   *  every kill in the game depends on, and until this fix it drew from
+   *  these two pools with ZERO reserve — the exact "ambient starves a
+   *  kill-tier read" failure class K10 already fixed for bolt.
+   *
+   *  UNLIKE bolt's small fixed "2", these can't be flat unscaled constants:
+   *  a single kill's worst case draws 10 blastCircle (5 layers × 2 calls)
+   *  and up to 28 spark (10-14 × 2 calls) — spawn COUNTS are fixed
+   *  regardless of quality tier, but pool SIZES shrink with particleScale
+   *  (potato = 0.25×), and blastCircle's base 32 scales to just 8 at
+   *  potato. A flat reserve of 10 would exceed the ENTIRE potato pool,
+   *  permanently starving ambient blasts on weak hardware instead of only
+   *  under real pressure (caught on this wave's own extended-session
+   *  tape: headless Playwright's SwiftShader renderer auto-detects as
+   *  "potato" per qualityProfile.ts's detectTier(), so the tape WAS
+   *  exercising this floor). A flat SMALL reserve (tried: 4/12) fixed
+   *  that but under-covers a genuinely busy always-on world: the SAME
+   *  tape (long-lived :8090 server, several consecutive sessions of
+   *  bot-vs-bot combat already in flight) showed the tiny reserve itself
+   *  getting exhausted by back-to-back REAL kills competing for it — a
+   *  narrower, different failure than ambient starvation (multiple
+   *  legitimate kill-tier reads sharing one small reserve), but still
+   *  worth reducing.
+   *
+   *  FIX: reserve a PROPORTION of the scaled pool (computed once in the
+   *  constructor via `reserveFraction()`, mirroring how `scaled()` itself
+   *  already scales pool SIZE), not a flat count — this keeps the reserve
+   *  safely under the pool at every tier by construction while giving
+   *  MORE absolute headroom for concurrent kills on the higher tiers
+   *  where busier matches are visually plausible anyway. The two pools
+   *  get DIFFERENT fractions (see reserveFraction's own docblock):
+   *  blastCircle's only ambient consumer is the low-frequency explosion
+   *  blast itself, so it reserves the MAJORITY (50%: standard/ultra 16,
+   *  potato 4); spark is also StatusVfxController's high-frequency
+   *  ambient DoT-tick pool, so it reserves less (30%: standard/ultra 38,
+   *  potato 10) to avoid meaningfully degrading that much busier ambient
+   *  path. Small absolute potato numbers are the same "a potato profile
+   *  mostly reserves itself for kills" tradeoff BOLT_KILL_RESERVE's own
+   *  docblock already accepts — a dimmer kill flash on weak hardware is
+   *  the accepted quality-dial cost; a TOTALLY invisible one is not.
+   *  RESIDUAL (found via this wave's own live tape, even after this fix):
+   *  multiple REAL kills landing close together (a busy small arena, or
+   *  simultaneous AOE deaths) can still exceed even this reserve — this
+   *  is fundamentally a "how many kills can overlap within one blast's
+   *  ~300ms tween lifetime" capacity question, not something an ever-
+   *  larger reserve solves without hollowing out the ambient budget; it's
+   *  the same bounded, accepted class of limitation as BOLT_KILL_RESERVE's
+   *  own "a future kill-debris upgrade has headroom" caveat, not chased
+   *  further here (I5's own precedent: past a certain point, sizing is
+   *  the quality dial, not a bug to keep re-tuning). The load-bearing,
+   *  now-PERMANENT guarantee this fix delivers is structural, not
+   *  statistical: an AMBIENT spawn can never be the one that starves a
+   *  kill (unit-proven in ParticlePool.test.ts), regardless of how the
+   *  numbers get tuned. */
+  private readonly blastCircleKillReserve: number;
+  private readonly sparkKillReserve: number;
   private readonly sparkFree: Phaser.GameObjects.Rectangle[] = [];
   private readonly sparkActive: Set<Phaser.GameObjects.Rectangle> = new Set();
 
@@ -87,7 +160,9 @@ export class ParticlePool {
   private readonly glowFree: Phaser.GameObjects.Image[] = [];
   private readonly glowActive: Set<Phaser.GameObjects.Image> = new Set();
 
-  private readonly warned: Set<PoolName> = new Set();
+  /** Keyed `${name}:${tier}` (see warnExhausted's docblock) so an ambient
+   *  exhaustion warning can never suppress a later kill-tier one. */
+  private readonly warned: Set<string> = new Set();
   // Tracks which pool each acquired object belongs to so `release` can return
   // it correctly without relying on Phaser-class `instanceof` (which fails in
   // headless bun:test environments).
@@ -128,6 +203,11 @@ export class ParticlePool {
       this.origin.set(a, "blastCircle");
       this.blastCircleFree.push(a);
     }
+    // 30% of the SCALED pool (see the reserve fields' own docblock) —
+    // computed here, once, against the actual constructed size, not the
+    // unscaled POOL_SIZES base.
+    this.blastCircleKillReserve = reserveFraction(this.blastCircleFree.length, 0.5);
+    this.sparkKillReserve = reserveFraction(this.sparkFree.length, 0.3);
 
     // Glow pool — additive radial Images. Skipped silently if the texture
     // can't be created (headless tests with no canvas) or if `scene.add.image`
@@ -144,11 +224,17 @@ export class ParticlePool {
     }
   }
 
-  acquireSpark(): Phaser.GameObjects.Rectangle | null {
+  /** `tier: "kill"` may dip into the reserve (see sparkKillReserve's
+   *  docblock); ordinary/ambient spawns leave it untouched. */
+  acquireSpark(tier: "ambient" | "kill" = "ambient"): Phaser.GameObjects.Rectangle | null {
     if (this.destroyed) return null;
+    if (tier !== "kill" && this.sparkFree.length <= this.sparkKillReserve) {
+      this.warnExhausted("spark", tier);
+      return null;
+    }
     const obj = this.sparkFree.pop();
     if (!obj) {
-      this.warnExhausted("spark");
+      this.warnExhausted("spark", tier);
       return null;
     }
     obj.setVisible(true);
@@ -193,12 +279,12 @@ export class ParticlePool {
   acquireBolt(tier: "ambient" | "kill" = "ambient"): Phaser.GameObjects.Graphics | null {
     if (this.destroyed) return null;
     if (tier !== "kill" && this.boltFree.length <= ParticlePool.BOLT_KILL_RESERVE) {
-      this.warnExhausted("bolt");
+      this.warnExhausted("bolt", tier);
       return null;
     }
     const obj = this.boltFree.pop();
     if (!obj) {
-      this.warnExhausted("bolt");
+      this.warnExhausted("bolt", tier);
       return null;
     }
     // Unreal-style: pool owns the clean state, not the call site. If a
@@ -236,11 +322,17 @@ export class ParticlePool {
     return obj;
   }
 
-  acquireBlastCircle(): Phaser.GameObjects.Arc | null {
+  /** `tier: "kill"` may dip into the reserve (see blastCircleKillReserve's
+   *  docblock); ordinary/ambient spawns leave it untouched. */
+  acquireBlastCircle(tier: "ambient" | "kill" = "ambient"): Phaser.GameObjects.Arc | null {
     if (this.destroyed) return null;
+    if (tier !== "kill" && this.blastCircleFree.length <= this.blastCircleKillReserve) {
+      this.warnExhausted("blastCircle", tier);
+      return null;
+    }
     const obj = this.blastCircleFree.pop();
     if (!obj) {
-      this.warnExhausted("blastCircle");
+      this.warnExhausted("blastCircle", tier);
       return null;
     }
     obj.setVisible(true);
@@ -395,10 +487,25 @@ export class ParticlePool {
     gfx.setPosition(0, 0);
   }
 
-  private warnExhausted(name: PoolName): void {
-    if (this.warned.has(name)) return;
-    this.warned.add(name);
+  /** `tier` (Interstice wave 3, pool-stress item) is logged and keyed
+   *  SEPARATELY from the ambient warning — an ambient exhaustion is the
+   *  accepted quality dial (I5's own conclusion: "a smaller pool IS the
+   *  particle-count dial") and fires constantly under sustained multi-
+   *  class combat, but it must never SILENCE the one warning that actually
+   *  matters: a "kill" tier acquire failing means the reserve itself is
+   *  empty — a real starved kill-tier read, not routine ambient pressure.
+   *  Before this, one `Set<PoolName>` warned-once-ever meant the (near-
+   *  certain, and near-immediate) ambient warning always fired FIRST and
+   *  permanently suppressed any later kill-tier alarm for that pool. */
+  private warnExhausted(name: PoolName, tier: "ambient" | "kill" = "ambient"): void {
+    const key = `${name}:${tier}`;
+    if (this.warned.has(key)) return;
+    this.warned.add(key);
     // eslint-disable-next-line no-console
-    console.warn(`[ParticlePool] ${name} pool exhausted; skipping spawn`);
+    console.warn(
+      tier === "kill"
+        ? `[ParticlePool] ${name} pool exhausted on a KILL-TIER acquire — the reserve itself is empty, a real read was starved`
+        : `[ParticlePool] ${name} pool exhausted; skipping spawn`,
+    );
   }
 }

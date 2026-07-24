@@ -262,8 +262,13 @@ export class RenderLayer {
    *  Falls back to a simple single circle when the pool is unavailable (e.g. tests).
    *
    *  @param damage  Optional hit damage. When > 25, automatically also fires the
-   *                 big spike-overlay variant and uses heavier camera shake. */
-  spawnExplosionBlast(position: Vec2, radius: number, damage?: number): void {
+   *                 big spike-overlay variant and uses heavier camera shake.
+   *  @param tier    "kill" (Interstice wave 3, pool-stress item) may dip into
+   *                 the blastCircle/spark kill reserve — pass this for the
+   *                 universal `player-killed` blast (SimEventRouter), the
+   *                 ONE VFX every kill in the game depends on for "someone
+   *                 died here." Ambient hit-confirmed blasts stay default. */
+  spawnExplosionBlast(position: Vec2, radius: number, damage?: number, tier: "ambient" | "kill" = "ambient"): void {
     const isBig = damage !== undefined && damage > 25;
 
     if (!this.pool) {
@@ -281,10 +286,10 @@ export class RenderLayer {
       this.applyBlastShake(isBig);
       return;
     }
-    this.spawnBloomLayers(position, radius, this.pool);
-    this.spawnBlastSparks(position, this.pool);
+    this.spawnBloomLayers(position, radius, this.pool, tier);
+    this.spawnBlastSparks(position, this.pool, tier);
     if (isBig) {
-      this.spawnExplosionBlastBig(position, radius);
+      this.spawnExplosionBlastBig(position, radius, undefined, tier);
     }
     this.applyBlastShake(isBig);
   }
@@ -304,15 +309,20 @@ export class RenderLayer {
   }
 
   /** Big explosion blast — same bloom + a 16-spike radial star overlay.
-   *  Use for boss kills, ults, or killing blows. */
+   *  Use for boss kills, ults, or killing blows.
+   *  @param tier "kill" may dip into the blastCircle/spark kill reserve —
+   *              see spawnExplosionBlast's docblock. Direct callers outside
+   *              a real player-killed event (e.g. ward-absorb flashes) stay
+   *              default "ambient". */
   spawnExplosionBlastBig(
     position: Vec2,
     radius: number,
     baseColor: number = PALETTE.blastMid,
+    tier: "ambient" | "kill" = "ambient",
   ): void {
     if (this.pool) {
-      this.spawnBloomLayers(position, radius, this.pool);
-      this.spawnBlastSparks(position, this.pool);
+      this.spawnBloomLayers(position, radius, this.pool, tier);
+      this.spawnBlastSparks(position, this.pool, tier);
     } else {
       const blast = this.scene.add.circle(position.x, position.y, 6, baseColor, 0.5);
       this.scene.tweens.add({
@@ -351,7 +361,7 @@ export class RenderLayer {
 
   // ── Private helpers ──────────────────────────────────────────────────────────
 
-  private spawnBloomLayers(position: Vec2, radius: number, pool: ParticlePool): void {
+  private spawnBloomLayers(position: Vec2, radius: number, pool: ParticlePool, tier: "ambient" | "kill" = "ambient"): void {
     const scales = [0.4, 0.7, 1.0, 1.2, 1.5] as const;
     const colors = [
       PALETTE.blastCore,
@@ -364,7 +374,7 @@ export class RenderLayer {
     const durations = [180, 200, 240, 280, 320] as const;
 
     for (let i = 0; i < scales.length; i++) {
-      const arc = pool.acquireBlastCircle();
+      const arc = pool.acquireBlastCircle(tier);
       if (!arc) continue; // pool exhausted — silent skip
 
       const scale = scales[i]!;
@@ -392,10 +402,10 @@ export class RenderLayer {
     }
   }
 
-  private spawnBlastSparks(position: Vec2, pool: ParticlePool): void {
+  private spawnBlastSparks(position: Vec2, pool: ParticlePool, tier: "ambient" | "kill" = "ambient"): void {
     const count = 10 + Math.floor(Math.random() * 5); // 10–14
     for (let i = 0; i < count; i++) {
-      const spark = pool.acquireSpark();
+      const spark = pool.acquireSpark(tier);
       if (!spark) break; // pool exhausted — silent skip
 
       const angle = Math.random() * Math.PI * 2;
