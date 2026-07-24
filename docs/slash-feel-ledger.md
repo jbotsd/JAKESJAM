@@ -73,6 +73,39 @@ the melee GRAMMAR from gameplay first, then make it feel right.)
   small-amplitude shake, sparks not chunks, kill-confirm still lands a
   real punctuation mark.
 
+### FULL ANIMATION GAMUT (Jake, 2026-07-24: "not just the slash but the
+### full suite and gammut of the antimation too")
+
+The loops grade the WHOLE BODY, not blade VFX layered over a neutral rig.
+Every iteration's critique walks the full animation suite per class
+against the class fantasy (ProceduralPlayerRig is the instrument — its
+spring chains, drunken-master lag, headbang machinery are the house
+style; chassis-design-axioms.md is canon):
+
+- **Idle / held:** weapons AT REST in the hands (held layer exists);
+  Kindled = the grounded BRACED stance from kindled-v2.jpg (sword + slab
+  held ready, weight planted — the long-gated braced-idle pose ships in
+  this loop); Interstice = coiled, forward, blades low — "already moving".
+- **Locomotion with weapons:** run/sprint carries the loadout — Kindled's
+  mass reads in the gait (the 0.88 speed is real now, the body should
+  own it); Interstice darts.
+- **Swing = BODY-DRIVEN (the gated rig-anchored work ships in these
+  loops):** arm winds up, torso coils, blade follows the HAND through the
+  arc, chest/pelvis drive through contact, follow-through in the spine —
+  never a crescent floating over a neutral body. Kindled: shoulder-and-
+  hip heave. Interstice: wrist-led whip.
+- **Bash:** a body CHECK — slab shoulder-leads, weight transfers through
+  the front foot, recoil through the frame on contact.
+- **Ward raise/hold:** braced set, knees bent, slab planted — an
+  instrument being USED, not an icon displayed.
+- **Dash/blink/ability casts:** class-charactered gestures (weight vs
+  snap) per the verb-transfer matrix below.
+- **Hurt/flinch/death:** the victim channel rows (R1 6-8) land ON the rig
+  — directional flinch through the spring chain, squash in the body, not
+  a sprite tint.
+
+A perfect blade over a dead body is a FAILED iteration.
+
 ### Ability transfer (both classes)
 Class abilities inherit their class's slash grammar — Kindled actives cast
 with weight (anticipation + crunch), Interstice actives with snap (smear +
