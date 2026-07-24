@@ -50,6 +50,19 @@ const ctx = await browser.newContext({
   recordVideo: { dir: OUT, size: { width: 1280, height: 720 } },
 });
 const page = await ctx.newPage();
+// Wall-clock anchor for the video timeline: recording starts at page
+// creation, raw events carry `epoch` (Date.now() at batch arrival), so
+// video_time_s ≈ (epoch - videoT0)/1000 — good to ~±100ms, enough to
+// land frame extraction inside a kill chord (K10 on-camera-kill tape).
+const videoT0 = Date.now();
+// Pool-exhaustion sentinel (K10): ParticlePool.warnExhausted console.warns
+// once per starved pool — a kill-tier spawn silently skipped is EXACTLY the
+// failure mode that made rows 17/18 invisible live while harness strips
+// (isolated, empty pool) showed them.
+page.on("console", (msg) => {
+  const text = msg.text();
+  if (text.includes("ParticlePool")) console.log(`[page-console] ${text}`);
+});
 const errors: string[] = [];
 page.on("pageerror", (e) => errors.push(`${e.name}: ${e.message}`));
 
@@ -61,6 +74,11 @@ const allRaw: unknown[] = [];
 await page.addInitScript(() => {
   localStorage.setItem("jakesjam.playerId", "player_feelK_live");
   localStorage.setItem("jakesjam.playerCharacter", "heavy"); // Kindled chassis
+  // Pin the STANDARD quality tier: headless Chromium probes as SwiftShader
+  // → potato → particleScale 0.25 quarters every pool (K10 finding), which
+  // makes the tape's VFX density lie about Jake's desktop. The tape must
+  // grade the presentation the real machine renders.
+  localStorage.setItem("jj_quality_tier", "standard");
   const w = window as unknown as { __feelEvents: unknown[] };
   w.__feelEvents = [];
   window.addEventListener("jakesjam:presentation-event", (e) => {
@@ -167,8 +185,9 @@ async function joinArena(p: Page): Promise<void> {
       const orig = loop.onEvents?.bind(loop);
       loop.onEvents = (evs: unknown[]) => {
         const t = performance.now();
+        const epoch = Date.now();
         for (const e of evs) {
-          w.__rawEvents.push({ t, me: scene?.localPlayerId, ...(e as object) });
+          w.__rawEvents.push({ t, epoch, me: scene?.localPlayerId, ...(e as object) });
           if (w.__rawEvents.length > 8000) w.__rawEvents.shift();
         }
         orig?.(evs);
@@ -235,6 +254,11 @@ type Probe = {
   slashHit: number;
   bashLanded: number;
   killed: number;
+  /** Melee-CHAIN kills by ME (the shock-ring gate condition: player-killed
+   *  killerId===me with a same-batch slash-hit/bash-landed attackerId===me).
+   *  THE wave-3 target — every one of these is on-camera by construction
+   *  (the camera follows the local player). */
+  myMeleeKills: number;
   trace: number;
   phase: string | null;
   meAlive: boolean | null;
@@ -261,6 +285,20 @@ const probe = (): Promise<Probe> =>
     };
     const ev = w.__feelEvents ?? [];
     const by = (k: string) => ev.filter((e) => e.kind === k).length;
+    // NOTE the raw-hook wrapper spreads the event LAST, so the sim event's
+    // own `t` (its TYPE tag, e.g. "player-killed") overwrites the wrapper's
+    // perf stamp — `epoch` + `me` survive. Batch = same-epoch rows.
+    let myMeleeKills = 0;
+    const rows = ((window as unknown as { __rawEvents?: Record<string, unknown>[] }).__rawEvents ??
+      []) as ({ t?: string; epoch?: number; me?: string } & Record<string, unknown>)[];
+    for (const r of rows) {
+      if (r.t !== "player-killed" || !r.me || r.killerId !== r.me) continue;
+      const batch = rows.filter((o) => o.epoch === r.epoch);
+      const meleeContact = batch.some(
+        (o) => (o.t === "slash-hit" || o.t === "bash-landed") && o.attackerId === r.me,
+      );
+      if (meleeContact) myMeleeKills += 1;
+    }
     const scene = w.__jakesjam_game__?.scene.getScene("OnlineMatchScene");
     const state = scene?.loop?.getRenderState?.() ?? null;
     const me = scene?.localPlayerId ? state?.players[scene.localPlayerId] : undefined;
@@ -277,6 +315,7 @@ const probe = (): Promise<Probe> =>
       slashHit: by("slash-hit"),
       bashLanded: by("bash-landed"),
       killed: by("player-killed"),
+      myMeleeKills,
       trace: (w.__feelTrace ?? []).length,
       phase: state?.round.phase ?? null,
       meAlive: me?.alive ?? null,
@@ -309,6 +348,17 @@ async function harvest(): Promise<void> {
   allEvents.push(...dump.events);
   allTrace.push(...dump.trace);
   allRaw.push(...dump.raw);
+  // Roll the page-side melee-kill count into the cross-reload accumulator
+  // (the page buffer is cleared by this drain; probe() restarts at 0).
+  const rows = dump.raw as ({ t?: string; epoch?: number; me?: string } & Record<string, unknown>)[];
+  for (const r of rows) {
+    if (r.t !== "player-killed" || !r.me || r.killerId !== r.me) continue;
+    const batch = rows.filter((o) => o.epoch === r.epoch);
+    if (batch.some((o) => (o.t === "slash-hit" || o.t === "bash-landed") && o.attackerId === r.me)) {
+      harvestedMyMeleeKills += 1;
+    }
+  }
+  lastMyMeleeKills = 0;
 }
 
 await joinArena(page);
@@ -321,6 +371,8 @@ let lastLogAt = 0;
 let totalSlashHit = 0;
 let totalBash = 0;
 let totalKills = 0;
+let lastMyMeleeKills = 0;
+let harvestedMyMeleeKills = 0;
 while (Date.now() - started < CAP_MS) {
   await page.waitForTimeout(400);
   await autoPick();
@@ -356,8 +408,16 @@ while (Date.now() - started < CAP_MS) {
     lastLogAt = Date.now();
     console.log(
       `[probe] phase=${c.phase} alive=${c.meAlive} hp=${c.meHp} foeDist=${c.foeDist} ` +
-        `swings=${c.slashStarted} hits=${c.slashHit} bash=${c.bashLanded} kills=${c.killed} trace=${c.trace}`,
+        `swings=${c.slashStarted} hits=${c.slashHit} bash=${c.bashLanded} kills=${c.killed} ` +
+        `MYMELEEKILLS=${c.myMeleeKills} trace=${c.trace}`,
     );
+  }
+  if (c.myMeleeKills > lastMyMeleeKills) {
+    lastMyMeleeKills = c.myMeleeKills;
+    console.log(`[tape] *** MELEE-CHAIN KILL BY ME #${c.myMeleeKills} — on camera ***`);
+    await page.screenshot({
+      path: `${OUT}/${TAG}-mykill-${String(c.myMeleeKills).padStart(2, "0")}.png`,
+    }).catch(() => {});
   }
   if (
     prev &&
@@ -376,7 +436,16 @@ while (Date.now() - started < CAP_MS) {
   totalSlashHit = allEventsCount("slash-hit") + c.slashHit;
   totalBash = allEventsCount("bash-landed") + c.bashLanded;
   totalKills = allEventsCount("player-killed") + c.killed;
-  if (totalBash >= 3 && totalSlashHit >= 6 && totalKills >= 1 && Date.now() - started > 60_000) {
+  // Wave-3 exit: at least ONE on-camera melee-chain kill by me (rows 17/18
+  // verdict needs it) + the wave-2 contact floor. Linger 2s past the last
+  // kill so the full 225ms corpse chord + ring/debris tail are on tape.
+  if (
+    harvestedMyMeleeKills + c.myMeleeKills >= 1 &&
+    totalBash >= 3 &&
+    totalSlashHit >= 6 &&
+    Date.now() - started > 60_000
+  ) {
+    await page.waitForTimeout(2000);
     break;
   }
 }
@@ -388,6 +457,10 @@ await harvest();
 writeFileSync(`${OUT}/${TAG}-events.json`, JSON.stringify(allEvents, null, 1));
 writeFileSync(`${OUT}/${TAG}-trace.json`, JSON.stringify(allTrace));
 writeFileSync(`${OUT}/${TAG}-raw.json`, JSON.stringify(allRaw, null, 1));
+writeFileSync(
+  `${OUT}/${TAG}-meta.json`,
+  JSON.stringify({ videoT0, myMeleeKills: harvestedMyMeleeKills }, null, 1),
+);
 console.log(
   `[tape] events=${allEvents.length} traceSamples=${allTrace.length} → ${OUT}/${TAG}-{events,trace}.json`,
 );

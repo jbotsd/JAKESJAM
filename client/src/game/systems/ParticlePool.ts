@@ -22,11 +22,28 @@ export const STATUS_VFX = {
 // design (acquireX returns null, effect skipped), so a smaller pool IS the
 // particle-count dial: weak devices simply skip the overflow effects.
 const POOL_SIZES = {
-  spark: 64,
+  // spark 64→96, ring 16→24, blastCircle 16→24 (K10): the same live-tape
+  // console sentinel that exposed the bolt starvation below also caught
+  // these three exhausted mid-brawl — melee-era effect density (contact
+  // chords + debris + kill bursts stacking) outgrew the pre-melee
+  // budgets. +50%, not a blank check: exhaustion stays the legitimate
+  // quality dial via particleScale on weaker profiles.
+  spark: 96,
   shard: 32,
-  ring: 16,
-  bolt: 4,
-  blastCircle: 16,
+  ring: 24,
+  // 4 → 16 (K10, 2026-07-24): sized when lightning arcs were the only
+  // Graphics consumer, but the melee overhaul made bolts the workhorse —
+  // 15 spawn sites now share this pool (slash marks, ground dust, melee
+  // debris, kill shock ring, ward raise/absorb/drop, nova bursts, cast
+  // tells, lances, blink streaks...) at 300-500ms lifetimes each. In a
+  // live melee brawl 4 was permanently exhausted, so later spawns were
+  // silently skipped — the K10 live tape's console sentinel caught
+  // "[ParticlePool] bolt pool exhausted" mid-brawl, and the R1 row-17
+  // kill shock ring had never once rendered in a real match while
+  // isolated harness strips (empty pool) showed it fine. Idle pooled
+  // Graphics cost nothing to hold; render cost accrues only when spawned.
+  bolt: 16,
+  blastCircle: 24,
   glow: 64,
 } as const;
 
@@ -43,6 +60,12 @@ const RING_RADIUS = 18;
 type PoolName = "spark" | "shard" | "ring" | "bolt" | "blastCircle" | "glow";
 
 export class ParticlePool {
+  /** Bolts an ambient acquire may never touch — held for kill-tier spawns
+   *  (see acquireBolt's docblock). 2 covers the kill moment's own bolt
+   *  needs (shock ring now; a future kill-debris upgrade has headroom)
+   *  and stays below every particleScale's floor (scaled() min is 2 —
+   *  a potato profile simply reserves its whole bolt pool for kills). */
+  private static readonly BOLT_KILL_RESERVE = 2;
   private readonly sparkFree: Phaser.GameObjects.Rectangle[] = [];
   private readonly sparkActive: Set<Phaser.GameObjects.Rectangle> = new Set();
 
@@ -156,8 +179,22 @@ export class ParticlePool {
     return obj;
   }
 
-  acquireBolt(): Phaser.GameObjects.Graphics | null {
+  /**
+   * `tier: "kill"` may drain the pool to empty; ordinary spawns leave the
+   * last BOLT_KILL_RESERVE bolts untouched. Kill-tier presentation is a
+   * permanence commitment (R1 row 17 "debris persists") — the one moment
+   * that must never lose the pool lottery to ambient dust/ward chatter.
+   * Found on the K10 live tape: at a real melee kill the pool is at peak
+   * pressure (swing trail + dust + debris + burst all in flight), so the
+   * shock ring — spawned LAST in the event pass — was the spawn that
+   * silently starved, every single time.
+   */
+  acquireBolt(tier: "ambient" | "kill" = "ambient"): Phaser.GameObjects.Graphics | null {
     if (this.destroyed) return null;
+    if (tier !== "kill" && this.boltFree.length <= ParticlePool.BOLT_KILL_RESERVE) {
+      this.warnExhausted("bolt");
+      return null;
+    }
     const obj = this.boltFree.pop();
     if (!obj) {
       this.warnExhausted("bolt");

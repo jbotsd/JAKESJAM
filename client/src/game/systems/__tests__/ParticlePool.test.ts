@@ -84,15 +84,44 @@ describe("ParticlePool", () => {
     const original = console.warn;
     console.warn = warn;
     try {
-      // Drain the bolt pool (size 4 — smallest, easiest to exhaust).
-      for (let i = 0; i < 4; i++) {
+      // Ambient acquires may drain the bolt pool only down to the kill
+      // reserve (16 total − 2 reserved = 14 ambient).
+      for (let i = 0; i < 14; i++) {
         const b = pool.acquireBolt();
         expect(b).not.toBeNull();
       }
-      // Next two attempts should each return null. Only one warn fires.
+      // Next two ambient attempts should each return null. One warn fires.
       expect(pool.acquireBolt()).toBeNull();
       expect(pool.acquireBolt()).toBeNull();
       expect(warn).toHaveBeenCalledTimes(1);
+    } finally {
+      console.warn = original;
+    }
+  });
+
+  test("kill-tier bolt acquire may drain the reserve ambient spawns cannot touch (K10)", () => {
+    const pool = new ParticlePool(makeScene());
+    const original = console.warn;
+    console.warn = mock(() => {});
+    try {
+      // Exhaust the ambient allowance.
+      for (let i = 0; i < 14; i++) expect(pool.acquireBolt()).not.toBeNull();
+      expect(pool.acquireBolt()).toBeNull();
+      // Kill-tier spawns (the R1 row-17 shock ring) still get the reserved
+      // tail — the kill moment must never lose the pool lottery to ambient
+      // dust/ward chatter (proven starved on the K10 live tape).
+      const k1 = pool.acquireBolt("kill");
+      const k2 = pool.acquireBolt("kill");
+      expect(k1).not.toBeNull();
+      expect(k2).not.toBeNull();
+      // A truly empty pool is empty for everyone.
+      expect(pool.acquireBolt("kill")).toBeNull();
+      // Releasing an ambient bolt refills the free list ABOVE the reserve
+      // line only after the reserve itself is repaid: with 1 free, ambient
+      // still starves while kill-tier succeeds.
+      pool.release(k1!);
+      expect(pool.acquireBolt()).toBeNull();
+      expect(pool.acquireBolt("kill")).toBe(k1);
     } finally {
       console.warn = original;
     }
