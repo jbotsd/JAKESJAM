@@ -78,7 +78,16 @@ await applyWasmPlayerFlag(); // TS movement runs the SAME wasm stepPlayer Zig us
 
 const DT_MS = 1000 / 60;
 const A = "p0"; // attacker → first-blood claimant
-const B = "p1"; // victim (12hp — one starter-pistol hit kills)
+// Victim HP: one shard from A's gun kills. A is "balanced" (wizard) and
+// wizard is ALWAYS raycast now (THE GEOMETRICIAN RULING, 2026-07-24) — a
+// bare wizard resolves same-tick hitscan on the TS side and spawns no
+// ProjectileEntity, so this file's park-the-victim-on-the-live-shard idiom
+// would have nothing to park on. A carries Continuous Refractor instead
+// (the ruling's pinned beam carve-out — wizard's one legal projectile-
+// spawning delivery, walked byte-identically in weaponBuildParity.test.ts),
+// whose resolved damage is 12 × 0.42 = 5.04 — so the victim spawns at 5hp
+// instead of the old starter-pistol 12.
+const B = "p1"; // victim (5hp — one beam shard kills)
 
 const MAP: MapDefinition = {
   id: "first-blood-parity-arena",
@@ -111,7 +120,10 @@ function makePlayer(id: string, x: number, health: number): PlayerEntity {
     crouching: false,
     alive: true,
     weaponId: "starter-pistol",
-    cards: [],
+    // Beam carve-out rig — see the victim-HP comment above `const B`.
+    // Both players carry it (only A ever fires; identical hands keep the
+    // two seats symmetric).
+    cards: ["continuous-refractor"],
     fireCooldownMs: 0,
     ammo: 12,
     abilityCharge: 0,
@@ -134,7 +146,7 @@ describe("first-blood wager TS-vs-Zig parity (Track Z0d)", () => {
       rngState: 7,
       players: {
         [PlayerId(A)]: makePlayer(A, 300, 100),
-        [PlayerId(B)]: makePlayer(B, 550, 12),
+        [PlayerId(B)]: makePlayer(B, 550, 5),
       } as Record<PlayerId, PlayerEntity>,
       projectiles: {},
       destructibles: {},
@@ -212,7 +224,7 @@ describe("first-blood wager TS-vs-Zig parity (Track Z0d)", () => {
     expect(zigState.round.firstBloodPlayerId).toBeUndefined();
 
     // --- (a) CLAIM. One-tick Fire press from A aimed at B, then park the
-    // 12hp victim ON the live shard on BOTH sides (same geometry-proof
+    // 5hp victim ON the live shard on BOTH sides (same geometry-proof
     // idiom as sim/test/smoke.zig's Facet Break + first-blood tests —
     // identical mutation of both states, so it is not a divergence
     // source). The hit both damages AND kills: first blood claims on the

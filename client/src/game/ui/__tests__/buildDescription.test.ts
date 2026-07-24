@@ -14,11 +14,11 @@ describe("describeBuild", () => {
     const result = describeBuild([]);
     expect(result.title).toBe("Starter build");
     expect(result.cardCount).toBe(0);
-    // Wizard's basic shot is a real projectile again (2026-07-22:
-    // Geometrician's hitscan reverted back to a projectile — weapons.ts's
-    // `wizardStarterWeapon`), so `describeShot` falls through to its
-    // ordinary projectile phrasing rather than the "raycast" instant-beam
-    // branch (still reachable via delivery-changing cards like Raycast Prism).
-    expect(result.summary).toContain("single projectile");
+    // describeBuild defaults to "balanced" (wizard), and Wizard's basic
+    // shot is true hitscan again (THE GEOMETRICIAN RULING, 2026-07-24,
+    // weapons.ts — the 2026-07-22 "single projectile" era was a misread of
+    // Jake's intent), so `describeShot` takes the "raycast" instant-beam
+    // branch.
+    expect(result.summary).toContain("single instant beam");
   });
 });

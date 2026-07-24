@@ -121,11 +121,13 @@ function frame(keys: number, seq: number, aimX = 0, aimY = 0): InputFrame {
 
 describe("Hitscan pierce (Void Fracture / Voltaic Spark / Pierce Chain)", () => {
   test("a single shot damages TWO lined-up victims in the same tick, no ProjectileEntity ever created", () => {
-    // "balanced" (wizard) no longer defaults to raycast delivery (2026-07-22:
-    // Geometrician's hitscan reverted back to a projectile — weapons.ts's
-    // `wizardStarterWeapon`), so this suite forces it explicitly via Raycast
-    // Prism (still a real, pickable delivery-changing card) to keep testing
-    // the hitscan pierce/explosive/slow-field code paths this file targets.
+    // "balanced" (wizard) defaults to raycast delivery again (THE
+    // GEOMETRICIAN RULING, 2026-07-24, weapons.ts — the 2026-07-22
+    // `wizardStarterWeapon` projectile era was a misread of Jake's intent).
+    // The explicit Raycast Prism pick (added while that misread was live)
+    // stays: it's still a real, pickable delivery-changing card, and on an
+    // already-raycast wizard it's simply a no-op — the pick keeps this
+    // suite's hitscan coverage independent of any class's base delivery.
     const shooter = mkPlayer(A, 400, 400, { cards: ["void-fracture", "raycast-prism"] });
     // Both victims sit on the muzzle's own aim line (same y as the aim
     // target) so one ray sweeps through both in order. Far enough out that
@@ -153,9 +155,8 @@ describe("Hitscan pierce (Void Fracture / Voltaic Spark / Pierce Chain)", () => 
 
 describe("Hitscan explosive impact (Explosive Facet)", () => {
   test("a shot that hits a wall still splashes a bystander standing near the impact point", () => {
-    // Forces raycast delivery via Raycast Prism — see the pierce describe
-    // block above for why this is now explicit rather than inherited from
-    // "balanced" (wizard)'s base weapon.
+    // Raycast Prism pick — a no-op on today's raycast-by-ruling wizard;
+    // see the pierce describe block above.
     const shooter = mkPlayer(A, 400, 400, { cards: ["explosive-facet", "raycast-prism"] });
     // Bystander offset PERPENDICULAR to the ray (below it), within
     // impactRadiusPx of the wall-impact point but never directly hit by the
@@ -177,9 +178,8 @@ describe("Hitscan explosive impact (Explosive Facet)", () => {
 
 describe("Hitscan slow-field impact (Slow Field)", () => {
   test("a shot that hits a wall still slows a bystander standing near the impact point", () => {
-    // Forces raycast delivery via Raycast Prism — see the pierce describe
-    // block above for why this is now explicit rather than inherited from
-    // "balanced" (wizard)'s base weapon.
+    // Raycast Prism pick — a no-op on today's raycast-by-ruling wizard;
+    // see the pierce describe block above.
     const shooter = mkPlayer(A, 400, 400, { cards: ["slow-field", "raycast-prism"] });
     const bystander = mkPlayer(B, 585, 420);
     const state = mkState([shooter, bystander]);

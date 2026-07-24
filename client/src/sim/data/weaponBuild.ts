@@ -156,6 +156,44 @@ export function createWeaponBuild(
   }
 
   build.occupiedBuckets = [...bucketOwners];
+  // ── THE GEOMETRICIAN RULING (Jake, 2026-07-24 — supersedes 2026-07-22) ──
+  // Geometrician (classId "wizard") is ALWAYS raycast/hitscan delivery.
+  // Never projectile. Nothing may flip it — no card, no fallback.
+  //
+  // History (see weapons.ts's ruling comment for the base-weapon half):
+  // Jake's 2026-07-22 live-playtest message ("ton of abilities change the
+  // hitscan to a projectile — change that") meant the Category-A travel-time
+  // fallback — cards whose `delivery: "projectile"` modifier flipped his
+  // hitscan into a traveling shot (weaponBuild.test.ts's "travel-time-only
+  // cards fall back to delivery: projectile" suite named the pattern) — was
+  // the bug. It was misread as "make the base gun a projectile" and
+  // weapons.ts grew a `wizardStarterWeapon` with delivery "projectile"
+  // (commit dbec211's weapons half). On 2026-07-24 he clarified; the misread
+  // is reverted and this line kills the flip mechanism itself, centrally,
+  // for every card path at once (top-level modifiers AND classModifiers —
+  // seeker-facets' wizard variant carries its own delivery flip, so a
+  // per-card fix would always be one authored card away from regressing).
+  //
+  // JUDGMENT CALL (pinned in geometricianAlwaysRaycast.test.ts):
+  // continuous-beam stays legal for wizard — a beam is instant-feel
+  // pressure, not a dodgeable traveling projectile; only the travel-time
+  // paths die. Everything else ("projectile", and "area-pulse" — a slow
+  // traveling pulse, unreachable from the current pool but travel-time by
+  // construction — see applyDeliveryFeel) is forced back to "raycast".
+  //
+  // Placement matters: BEFORE applyDeliveryFeel/clampBuild, so the raycast
+  // feel floors (speedMultiplier >= 3.2, rangePx >= 880, thin-beam size
+  // floor) apply to the final delivery. Travel-time card MODIFIERS stay
+  // applied — the card loop above already folded homing/bounce/gravity/
+  // accelerate fields into the build, and they ride it for every consumer
+  // that spawns REAL projectiles regardless of the basic gun's delivery:
+  // split children at the ray terminal (World.ts's hitscan split), orbiting
+  // satellites, and the Emission volley (resolveEmission carries pathing/
+  // bounces/homingStrength straight from build.projectile) — so travel-time
+  // cards are not dead picks for wizard.
+  if (classId === "wizard" && build.delivery !== "continuous-beam") {
+    build.delivery = "raycast";
+  }
   // Delivery cards reshape projectile identity so rare delivery picks FEEL
   // different even though the sim still spawns projectiles (hitscan math is
   // approximated by hyper-speed / beam-tick rates — see weapon.ts).
@@ -244,15 +282,22 @@ export function applyCard(
   if (modifier.delivery) {
     // Delivery is a rare identity — only upgrade away from the BASE
     // weapon's own delivery. Never stomp an earlier CARD's raycast/beam
-    // pick with a later "projectile" card. Wizard's own base weapon is
-    // itself "raycast" now (true hitscan, 2026-07-20) — cards whose whole
-    // mechanic needs real travel time (Crystal Volley's "honest gunplay",
-    // Seeker Facets' homing curve, Shard Bloom's split) explicitly carry
-    // `delivery: "projectile"` to pull back to a traveling shot, and that
-    // must win against the untouched base default, exactly like any other
-    // delivery upgrade would. `build.delivery === baseDelivery` means no
-    // card has touched it yet this resolution, so this card's choice is
-    // free to apply regardless of direction.
+    // pick with a later "projectile" card. Cards whose whole mechanic needs
+    // real travel time (Crystal Volley's "honest gunplay", Seeker Facets'
+    // homing curve, Shard Bloom's split) explicitly carry `delivery:
+    // "projectile"` to pull back to a traveling shot, and that must win
+    // against the untouched base default, exactly like any other delivery
+    // upgrade would. `build.delivery === baseDelivery` means no card has
+    // touched it yet this resolution, so this card's choice is free to
+    // apply regardless of direction.
+    //
+    // NOTE — this merge is class-blind by design and STILL flips a raycast
+    // base to "projectile" for Ninja (who shares starterWeapon's hitscan).
+    // For Geometrician the flip is dead: createWeaponBuild forces a wizard
+    // build's final delivery back to "raycast" after the card loop — see
+    // THE GEOMETRICIAN RULING comment there (2026-07-24). Neutralizing it
+    // here per-card would miss classModifiers-authored flips; the central
+    // post-loop enforcement can't.
     if (build.delivery === baseDelivery || modifier.delivery !== "projectile") {
       build.delivery = modifier.delivery;
     }

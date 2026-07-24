@@ -81,24 +81,26 @@ export const starterWeapon: WeaponDefinition = {
   },
 };
 
-/**
- * Wizard / Geometrician baseline (2026-07-22, Jake, live playtest: wants the
- * hitscan basic attack changed back to a projectile). `starterWeapon` above
- * is still shared by Ninja (`baseWeaponForClass` has no ninja entry —
- * classExpression.test.ts's own object-identity assertion), so flipping
- * `starterWeapon.delivery` itself would silently revert Ninja's gun too.
- * Same override pattern as `priestStarterWeapon`/`paladinStarterWeapon`
- * below: same wire id, same stats, ONLY `delivery` diverges — Wizard fires a
- * real `ProjectileEntity` again (travel time, dodgeable) instead of an
- * instant same-tick raycast. `applyDeliveryFeel`'s raycast branch no longer
- * applies, so the base 650/1.2s/720px numbers (already balance-tested pre-
- * hitscan, see the speed-bump-revert comment above) govern the shot as-is —
- * no retuning needed.
+/*
+ * THE GEOMETRICIAN RULING (Jake, 2026-07-24 — supersedes 2026-07-22):
+ * Geometrician (classId "wizard") is ALWAYS raycast/hitscan delivery.
+ * Never projectile. Nothing may flip it — no card, no fallback.
+ *
+ * History, so the next reader doesn't re-invert this: a `wizardStarterWeapon`
+ * (same stats, `delivery: "projectile"`) used to live right here, added by
+ * commit dbec211's weapons half. That was a MISREAD of Jake's 2026-07-22
+ * live-playtest message ("ton of abilities change the hitscan to a
+ * projectile — change that"): he was complaining that abilities/cards kept
+ * FLIPPING his hitscan into projectiles, and the message got read backwards
+ * as "make the base gun a projectile". On 2026-07-24 he clarified the true
+ * intent, so the split-off weapon is deleted — Wizard falls back to
+ * `starterWeapon` (raycast, the same shared object Ninja uses) — and the
+ * flip mechanism itself is dead: `createWeaponBuild` (weaponBuild.ts) now
+ * forces a wizard build's final delivery back to "raycast" no matter what
+ * any card's `delivery: "projectile"` fallback tried to do (see the ruling
+ * comment there for the continuous-beam carve-out and why travel-time card
+ * modifiers still apply).
  */
-export const wizardStarterWeapon: WeaponDefinition = {
-  ...starterWeapon,
-  delivery: "projectile",
-};
 
 /**
  * Priest / Syzygist baseline (docs/classes-goal.md "Priest / Syzygist":
@@ -207,16 +209,15 @@ export const paladinStarterWeapon: WeaponDefinition = {
  * hang a `classModifiers` entry off. Omitted/unknown class or any class
  * with no authored entry here falls back to `starterWeapon`, byte-identical
  * to every existing call site that resolves a class-blind build today.
- * Ninja deliberately has NO entry here (classExpression.test.ts's own
- * "baseWeaponForClass falls back to starterWeapon for Ninja" asserts
- * object-identity equality, not just same stats) — Ninja still shares
- * `starterWeapon`'s raycast/hitscan basic gun untouched. Wizard split off
- * into its own `wizardStarterWeapon` entry 2026-07-22 (see that weapon's own
- * doc comment) specifically so Geometrician's basic attack could revert to
- * a real projectile without dragging Ninja's back with it.
+ * Wizard and Ninja deliberately have NO entry here (classExpression.test.ts
+ * asserts object-identity equality with `starterWeapon`, not just same
+ * stats) — both share `starterWeapon`'s raycast/hitscan basic gun, the same
+ * "shares the object" design this file had before 2026-07-22. A `wizard:
+ * wizardStarterWeapon` entry (delivery "projectile") lived here between
+ * 2026-07-22 and 2026-07-24; it was a misread of Jake's intent and is gone
+ * — see THE GEOMETRICIAN RULING comment above `priestStarterWeapon`.
  */
 const CLASS_BASE_WEAPON: Partial<Record<ClassId, WeaponDefinition>> = {
-  wizard: wizardStarterWeapon,
   priest: priestStarterWeapon,
   paladin: paladinStarterWeapon,
 };

@@ -753,11 +753,13 @@ describe("Interstice catalog v1 — Paper Double (decoy entity)", () => {
     // burst test below uses) rather than casting it live in the same tick
     // as the shot — keeps this test about "does a sub-lethal projectile hit
     // correctly damage without killing the decoy", not about cast/spawn-race
-    // timing. Wizard's basic shot is a real traveling ProjectileEntity again
-    // (2026-07-22: Geometrician's hitscan reverted back to a projectile —
-    // weapons.ts's `wizardStarterWeapon`), so — same as the pre-hitscan
-    // version of this test — stepUntil gives the 650px/s bolt time to cross
-    // the 60px gap instead of asserting on the single fire-tick.
+    // timing. Wizard's basic shot is true hitscan again (THE GEOMETRICIAN
+    // RULING, 2026-07-24, weapons.ts — the 2026-07-22 projectile revert was
+    // a misread of Jake's intent), so the hit lands on the very first fire
+    // tick and stepUntil's predicate is satisfied immediately; the
+    // stepUntil FORM is deliberately kept (delivery-agnostic — it would
+    // still pass for any traveling shot within the 30-tick budget) rather
+    // than re-pinning the test to same-tick resolution.
     const caster = mkPlayer(A, 50, 50, "sprinter");
     const shooter = mkPlayer(B, 460, 400, "balanced", { aimX: 400, aimY: 400 });
     const pdId = EntityId(1);

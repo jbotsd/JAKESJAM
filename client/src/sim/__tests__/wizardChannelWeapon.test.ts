@@ -71,9 +71,18 @@ function holdFire(
     elapsed += DT_MS;
     if (result.fired) {
       firedAtMs.push(elapsed);
+      // Wizard's basic shot is true hitscan again (THE GEOMETRICIAN RULING,
+      // 2026-07-24, weapons.ts), so collect from BOTH branches — pellets for
+      // the raycast wizard, projectiles for the non-wizard control classes —
+      // keeping the card-modifier assertions below real (never vacuously
+      // green over an empty array) regardless of delivery.
       for (const proj of result.projectiles) {
         damages.push(proj.damage);
         elements.push(proj.element as string);
+      }
+      for (const pellet of result.hitscanPellets) {
+        damages.push(pellet.damage);
+        elements.push(pellet.element as string);
       }
     }
   }
@@ -227,6 +236,9 @@ describe("Wizard channel ramp: card modifiers still fully apply to ramped shots"
 
     const { firedAtMs, elements, damages } = holdFire(player, GEO_CHANNEL_RAMP_MS + 800);
     expect(firedAtMs.length).toBeGreaterThan(3);
+    // Guard against vacuous green: the raycast wizard emits hitscan pellets,
+    // and holdFire collects those too — this must never be an empty walk.
+    expect(elements.length).toBeGreaterThan(3);
     // Every single shot across the whole hold — including the fully-ramped
     // tail — still carries the card's element. The ramp is a fire-rate
     // multiplier layered on top of the resolved build, never a bypass of

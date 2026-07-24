@@ -267,11 +267,12 @@ describe("Geometrician catalog v1 — representative sim effects", () => {
     state = res.state;
     expect(state.players[A]!.sunlanceUntilTick).toBeDefined();
 
-    // Wizard's basic shot is a real `ProjectileEntity` again (2026-07-22:
-    // Geometrician's hitscan reverted back to a projectile — weapons.ts's
-    // `wizardStarterWeapon`), so read the damage off `fireResult.projectiles`
-    // via a direct `stepWeapon` call (the SAME function `stepWithRuntime`
-    // calls internally per-player) rather than `state.projectiles`.
+    // Wizard's basic shot is true hitscan again (THE GEOMETRICIAN RULING,
+    // 2026-07-24, weapons.ts — the 2026-07-22 projectile revert was a
+    // misread of Jake's intent), so read the damage off
+    // `fireResult.hitscanPellets` via a direct `stepWeapon` call (the SAME
+    // function `stepWithRuntime` calls internally per-player) rather than
+    // `state.projectiles`.
     let nextId = 1;
     const fireResult = stepWeapon(
       state.players[A]!,
@@ -282,7 +283,7 @@ describe("Geometrician catalog v1 — representative sim effects", () => {
       { currentTick: state.tick },
     );
     expect(fireResult.fired).toBe(true);
-    const shard = fireResult.projectiles[0];
+    const shard = fireResult.hitscanPellets[0];
     expect(shard).toBeDefined();
     // Starter pistol base damage is a positive constant; the sunlance shot
     // must exceed a bare unmultiplied shot fired from an identical rig.
@@ -296,7 +297,7 @@ describe("Geometrician catalog v1 — representative sim effects", () => {
       () => EntityId(nextId++),
       { currentTick: Tick(0) },
     );
-    const plainShard = plainResult.projectiles[0]!;
+    const plainShard = plainResult.hitscanPellets[0]!;
     expect(shard!.damage).toBeCloseTo(plainShard.damage * GEO_SUNLANCE_DAMAGE_MULTIPLIER, 5);
   });
 
@@ -509,11 +510,12 @@ describe("Geometrician catalog v1 — representative sim effects", () => {
     state = res.state;
     expect(state.players[A]!.measureUntilTick).toBeDefined();
 
-    // Wizard's basic shot is a real `ProjectileEntity` again (2026-07-22:
-    // Geometrician's hitscan reverted back to a projectile — weapons.ts's
-    // `wizardStarterWeapon`), so read the damage off `fireResult.projectiles`
-    // via a direct `stepWeapon` call (the SAME function `stepWithRuntime`
-    // calls internally per-player) rather than `state.projectiles`.
+    // Wizard's basic shot is true hitscan again (THE GEOMETRICIAN RULING,
+    // 2026-07-24, weapons.ts — the 2026-07-22 projectile revert was a
+    // misread of Jake's intent), so read the damage off
+    // `fireResult.hitscanPellets` via a direct `stepWeapon` call (the SAME
+    // function `stepWithRuntime` calls internally per-player) rather than
+    // `state.projectiles`.
     let nextId = 1;
     const fireResult = stepWeapon(
       state.players[A]!,
@@ -524,7 +526,7 @@ describe("Geometrician catalog v1 — representative sim effects", () => {
       { currentTick: state.tick },
     );
     expect(fireResult.fired).toBe(true);
-    const shard = fireResult.projectiles[0];
+    const shard = fireResult.hitscanPellets[0];
     expect(shard).toBeDefined();
 
     const plainCaster = mkPlayer(B, 400, 400);
@@ -537,7 +539,7 @@ describe("Geometrician catalog v1 — representative sim effects", () => {
       () => EntityId(nextId++),
       { currentTick: Tick(0) },
     );
-    const plainShard = plainResult.projectiles[0]!;
+    const plainShard = plainResult.hitscanPellets[0]!;
     expect(shard!.damage).toBeCloseTo(plainShard.damage * GEO_MEASURE_DAMAGE_MULTIPLIER, 5);
   });
 
