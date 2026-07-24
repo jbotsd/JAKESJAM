@@ -17,6 +17,8 @@ import {
   type ImpactChannelParams,
 } from "../render/victimChannel.js";
 import {
+  BLADE_SWING_MS,
+  EDGE_SWING_MS,
   bashHandPose,
   bashKineticChain,
   bashSwordHandPose,
@@ -1018,7 +1020,12 @@ export class ProceduralPlayerRig implements CombatRig {
     this.meleePoseStyle = style;
     this.meleePoseDir = dir >= 0 ? 1 : -1;
     this.meleePoseVerb = style === "kindled" ? verb : "blade";
-    this.meleePoseDurationMs = style === "interstice" ? 360 : 560;
+    // ONE clock per chassis, shared with ConstructVfxController's swing
+    // layer (I1, R1 row 2): body sentence and blade construct consume the
+    // same constant so hand and blade agree on every phase boundary — the
+    // old literal 360 here (sized for the pre-2026-07-20 sim cycle) had
+    // the arm still coiling while the 120ms blade had already cut.
+    this.meleePoseDurationMs = style === "interstice" ? BLADE_SWING_MS : EDGE_SWING_MS;
     this.meleePoseMs = this.meleePoseDurationMs;
     this.combatHoldMs = Math.max(this.combatHoldMs, 900);
   }
@@ -1366,8 +1373,13 @@ export class ProceduralPlayerRig implements CombatRig {
       ? 1 - this.meleePoseMs / this.meleePoseDurationMs
       : 1;
     const meleeIsBash = this.meleePoseStyle === "kindled" && this.meleePoseVerb === "bash";
-    const meleeAnticipationEnd = meleeIsBash ? 0.36 : this.meleePoseStyle === "kindled" ? 0.38 : 0.32;
-    const meleeCutEnd = meleeIsBash ? 0.56 : this.meleePoseStyle === "kindled" ? 0.61 : 0.52;
+    // Ground-load phase boundaries MATCH meleeTiming's own stage boundaries
+    // per style (I2, 2026-07-24): interstice ran a stale 0.32/0.52 here —
+    // the body was still SINKING at t=0.32 while the blade's cut (0.15-0.42)
+    // was already past contact (0.334). Coil loads BY cut start, releases
+    // THROUGH the cut — the crouch is the spring, the cut is the release.
+    const meleeAnticipationEnd = meleeIsBash ? 0.36 : this.meleePoseStyle === "kindled" ? 0.38 : 0.15;
+    const meleeCutEnd = meleeIsBash ? 0.56 : this.meleePoseStyle === "kindled" ? 0.61 : 0.42;
     // Load from the floor: hips/chest/head sink together during anticipation,
     // then rise sharply into the cut. Feet retain their authoritative contact.
     const meleeGroundLoad = this.meleePoseMs <= 0
@@ -1411,12 +1423,33 @@ export class ProceduralPlayerRig implements CombatRig {
     const wardDrop = this.wardBraceK > 0.01
       ? wardBracePose(this.wardBraceK, 0, 1).kneeDropPx * s
       : 0;
+    // INTERSTICE COILED IDLE (I2, slash-feel-ledger gamut "Idle/held":
+    // "coiled, forward, blades low — 'already moving'"). The ninja's rest
+    // pose is a sprinter's set position, not a stand: knees loaded, chest
+    // and head rounding FORWARD over the front foot (drop grows UP the
+    // chain — the inverse of ward/melee ground-load falloff, because this
+    // is a hunch-over-the-blades coil, not a squat-under-a-shield), mass
+    // pressed toward aim. Deliberately only PART-faded by locomotion
+    // (0.35 vs kindled's 0.55) — the dart keeps the crouch; the 1.14
+    // speed should look spent by a body already leaning into it.
+    const ninjaCoilMix =
+      this.classId === "ninja" &&
+      this.meleePoseMs <= 0 &&
+      this.abilityPoseMs <= 0 &&
+      !dashing &&
+      wallDir === 0 &&
+      this.victoryPoseMs <= 0 &&
+      pose.grounded
+        ? (1 - Math.min(1, walkAmount) * 0.35) *
+          (1 - Math.min(1, Math.max(this.leadThrow, this.backThrow)))
+        : 0;
+    const coilDrop = 5.5 * ninjaCoilMix * s;
     const pelvisY =
-      ground - Phaser.Math.Linear(52, 28, cr) * sy * impactSquash.y - bob + gather * s + cushion + breathe * 0.4 + throwDrop - groove * 1.6 * sy + beatHit * 1 * sy + meleeGroundLoad + wardDrop;
+      ground - Phaser.Math.Linear(52, 28, cr) * sy * impactSquash.y - bob + gather * s + cushion + breathe * 0.4 + throwDrop - groove * 1.6 * sy + beatHit * 1 * sy + meleeGroundLoad + wardDrop + coilDrop;
     const chestYTarget =
-      ground - Phaser.Math.Linear(78, 52, cr) * sy * impactSquash.y - bob + gather * 1.2 * s + cushion * 1.15 + breathe + throwDrop * 0.5 - groove * 1.2 * sy + beatHit * 3 * sy + meleeGroundLoad * 0.82 + wardDrop * 0.82;
+      ground - Phaser.Math.Linear(78, 52, cr) * sy * impactSquash.y - bob + gather * 1.2 * s + cushion * 1.15 + breathe + throwDrop * 0.5 - groove * 1.2 * sy + beatHit * 3 * sy + meleeGroundLoad * 0.82 + wardDrop * 0.82 + coilDrop * 1.18;
     const headYTarget =
-      ground - Phaser.Math.Linear(100, 72, cr) * sy * impactSquash.y - bob + gather * 1.4 * s + cushion * 1.25 + breathe * 1.4 + throwDrop * 0.3 - groove * 1 * sy + beatHit * 5 * sy + meleeGroundLoad * 0.68 + wardDrop * 0.68;
+      ground - Phaser.Math.Linear(100, 72, cr) * sy * impactSquash.y - bob + gather * 1.4 * s + cushion * 1.25 + breathe * 1.4 + throwDrop * 0.3 - groove * 1 * sy + beatHit * 5 * sy + meleeGroundLoad * 0.68 + wardDrop * 0.68 + coilDrop * 1.35;
     const cx = pose.position.x + this.hitOffsetX * hitEased + drunkSway * 0.35;
     // Forward CENTRE OF MASS: the whole body chain (pelvis up) rides ahead
     // of the feet while moving — the falling-forward posture that makes a
@@ -1453,7 +1486,10 @@ export class ProceduralPlayerRig implements CombatRig {
     const wardLean = this.wardBraceK > 0.01
       ? this.facingSmooth * wardBracePose(this.wardBraceK, 0, 1).leanPx * s
       : 0;
-    const bodyCx = cx + comShift + weightShift + wardLean +
+    // Interstice coil: mass presses toward the threat even at rest — the
+    // "already moving" half of the gamut row (ward lean's sibling).
+    const coilLean = this.facingSmooth * 3.5 * ninjaCoilMix * s;
+    const bodyCx = cx + comShift + weightShift + wardLean + coilLean +
       this.facing * (meleeChain.pelvisDrive + abilityCommit) * s;
 
     this.chestLagX = springTo(
@@ -1721,6 +1757,35 @@ export class ProceduralPlayerRig implements CombatRig {
       armTargets.lead.y = Phaser.Math.Linear(armTargets.lead.y, swordY, kindledBraceMix);
       armTargets.back.x = Phaser.Math.Linear(armTargets.back.x, slabX, kindledBraceMix);
       armTargets.back.y = Phaser.Math.Linear(armTargets.back.y, slabY, kindledBraceMix);
+    }
+
+    // INTERSTICE COILED IDLE arms (I2, gamut "blades low"): both daggers
+    // drop to hip/thigh height — the default combat stance folded the
+    // hands HIGH at the chest, which read as a boxer's guard with the
+    // blades hidden against the torso (i1-idle tape). Staggered low
+    // carry: lead blade low-forward of the thigh (the dart's first cut
+    // starts from here), back blade trailing at the hip — asymmetric on
+    // purpose, a body mid-stride, not a mirrored mannequin. Both hands
+    // hard-clamped below the shoulder line so no spring overshoot can
+    // ride a blade back up over the silhouette.
+    if (ninjaCoilMix > 0.01) {
+      const downBias = Math.cos(aimAngle) >= 0 ? 1 : -1;
+      const leadAngle = aimAngle + downBias * 1.0;
+      const leadX = shoulderLead.x + Math.cos(leadAngle) * 27 * s;
+      const leadY = Math.max(
+        shoulderLead.y + Math.sin(leadAngle) * 27 * s,
+        shoulderLead.y + 14 * s,
+      );
+      const backAngle = aimAngle + downBias * 1.45;
+      const backX = shoulderBack.x + Math.cos(backAngle) * 23 * s;
+      const backY = Math.max(
+        shoulderBack.y + Math.sin(backAngle) * 23 * s,
+        shoulderBack.y + 12 * s,
+      );
+      armTargets.lead.x = Phaser.Math.Linear(armTargets.lead.x, leadX, ninjaCoilMix);
+      armTargets.lead.y = Phaser.Math.Linear(armTargets.lead.y, leadY, ninjaCoilMix);
+      armTargets.back.x = Phaser.Math.Linear(armTargets.back.x, backX, ninjaCoilMix);
+      armTargets.back.y = Phaser.Math.Linear(armTargets.back.y, backY, ninjaCoilMix);
     }
 
     // KINDLED WARD BRACE arms (K11, gamut "Ward raise/hold") — layered

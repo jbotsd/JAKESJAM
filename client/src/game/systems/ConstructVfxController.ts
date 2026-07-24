@@ -29,6 +29,7 @@ import {
   spawnBindBurst,
   spawnSlashMark,
   drawBladeSwing,
+  drawBladeTrailOnly,
   drawKindledSwing,
   drawKindledBash,
   drawKindledTrailOnly,
@@ -457,24 +458,35 @@ export class ConstructVfxController {
       const s = this.swings[i]!;
       s.elapsedMs += deltaMs;
       const t = s.elapsedMs / s.durMs;
-      // Kindled trail afterglow (R1 row 12 — "trail persists 200% of the
-      // active window"): the blade sentence ends at t=1 but the swept
-      // ribbon outlives it, fading out over the next 0.2 sentences
-      // (~112ms). Bash (blunt — no ribbon) and ninja keep the t>=1 cut.
-      const tailEnd = s.kind === "paladin" && !s.bash ? 1.2 : 1;
+      // Trail afterglow (R1 row 12): the blade sentence ends at t=1 but the
+      // swept ribbon outlives it. Kindled: 200% of active (~112ms past the
+      // sentence). Interstice (I2): 150% of active ≈ 68ms → 68/245 ≈ 0.28
+      // sentences — the air-cut path lingers even on a whiff. Bash (blunt —
+      // no ribbon) keeps the t>=1 cut.
+      const tailFrac = s.kind === "paladin" ? 0.2 : 0.28;
+      const tailEnd = s.bash ? 1 : 1 + tailFrac;
       if (t >= tailEnd) {
         this.swings.splice(i, 1);
         continue;
       }
       if (t >= 1) {
         // Afterglow only: no blade, no held-weapon suppression (the held
-        // sword is already back in hand while the streak dissolves).
-        drawKindledTrailOnly(
-          this.swingLayerPaladin,
-          s.tipHistory,
-          KINDLED_TINT,
-          (tailEnd - t) / 0.2,
-        );
+        // weapon is already back in hand while the streak dissolves).
+        if (s.kind === "paladin") {
+          drawKindledTrailOnly(
+            this.swingLayerPaladin,
+            s.tipHistory,
+            KINDLED_TINT,
+            (tailEnd - t) / tailFrac,
+          );
+        } else {
+          drawBladeTrailOnly(
+            this.swingLayerNinja,
+            s.tipHistory,
+            INTERSTICE_TINT,
+            (tailEnd - t) / tailFrac,
+          );
+        }
         continue;
       }
       if (s.pid) swingSuppression.set(s.pid, Math.max(swingSuppression.get(s.pid) ?? 0, swingEnv(t)));
@@ -486,7 +498,9 @@ export class ConstructVfxController {
       const activePivot = s.kind === "ninja" && s.dir < 0 ? s.backPivot : s.pivot;
       const bladeAngle = s.bash ? s.aim : meleeBladeAngle(s.aim, s.sweep, s.dir, t, style);
       if (s.pid) attackerBladeAngle.set(s.pid, bladeAngle);
-      const trailStarts = style === "interstice" ? 0.32 : 0.38;
+      // Interstice samples from CUT START (0.15) so the row-12 tip ghosts
+      // exist through the whole 66ms cut window, not just its back half.
+      const trailStarts = style === "interstice" ? 0.15 : 0.38;
       const trailEnds = style === "interstice" ? 0.84 : 0.88;
       if (t < trailStarts) {
         s.tipHistory.length = 0;
@@ -535,6 +549,7 @@ export class ConstructVfxController {
           s.dir,
           t,
           s.comboCount,
+          s.tipHistory,
         );
       } else if (s.bash) {
         // SHIELD BASH — slab leads (backPivot = the rig's shield hand),

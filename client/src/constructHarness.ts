@@ -43,7 +43,7 @@ import {
   spawnMeleeDebris,
   spawnKillShockRing,
 } from "./game/render/LightConstruct";
-import { meleeBladeAngle } from "./game/render/meleeTiming.js";
+import { BLADE_SWING_MS, EDGE_SWING_MS, meleeBladeAngle } from "./game/render/meleeTiming.js";
 import type { CharacterArchetype, PlayerId, SimEvent, Vec2, WorldState } from "./sim";
 import {
   ProceduralPlayerRig,
@@ -265,7 +265,7 @@ class HarnessScene extends Phaser.Scene {
       }
       const style = classId === "paladin" ? "kindled" : "interstice";
       const duration = action === "melee" || action === "bash"
-        ? style === "kindled" ? 560 : 360
+        ? style === "kindled" ? EDGE_SWING_MS : BLADE_SWING_MS
         : ABILITY_ANIMATIONS[action].durationMs;
       if (action === "melee") this.reviewRig.triggerMeleeSwing(style, 1);
       else if (action === "bash") this.reviewRig.triggerMeleeSwing("kindled", 1, "bash");
@@ -279,7 +279,7 @@ class HarnessScene extends Phaser.Scene {
         this.reviewRig.update(dt, pose);
         if (action === "melee") {
           const q = elapsed / duration;
-          const trailStart = style === "kindled" ? 0.38 : 0.32;
+          const trailStart = style === "kindled" ? 0.38 : 0.15;
           const trailEnd = style === "kindled" ? 0.88 : 0.84;
           if (q >= trailStart && q <= trailEnd) {
             const hand = this.reviewRig.getHandWorld(0);
@@ -599,7 +599,7 @@ class HarnessScene extends Phaser.Scene {
       if (r.classId === "paladin") {
         drawKindledSwing(this.meleeReviewLayer, r.lead, r.back, -0.276, 88, KINDLED_TINT, 2.5, 1, r.t, r.tipHistory);
       } else {
-        drawBladeSwing(this.meleeReviewLayer, r.lead, r.back, -0.276, 82, INTERSTICE_TINT, 2.25, 1, r.t);
+        drawBladeSwing(this.meleeReviewLayer, r.lead, r.back, -0.276, 82, INTERSTICE_TINT, 2.25, 1, r.t, 1, r.tipHistory);
       }
     } else if (this.rigReview?.action === "bash") {
       // SHIELD BASH review — slab leads at the shield hand, sword chambers.

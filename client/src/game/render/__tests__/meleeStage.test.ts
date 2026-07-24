@@ -76,11 +76,15 @@ describe("melee attack rhythm", () => {
       expect(speedAt(contact)).toBeGreaterThan(speedAt(contact - 0.06));
       expect(speedAt(contact)).toBeGreaterThan(speedAt(contact + 0.06));
 
-      // interstice: 80 -> 40 (2026-07-20, BLADE_SWING_MS halved 240->120
-      // alongside the sim's SLASH_* commit-frame halving — same contact
-      // fraction, half the absolute ms since the whole swing is shorter).
-      const expectedMs = style === "interstice" ? 40 : 300;
-      expect(contact * duration).toBeCloseTo(expectedMs, 0);
+      // R1 ROW 2 CONTACT-FRAME ALIGNMENT (I1, 2026-07-24 — the R3-binding
+      // step): the visual cut must cross the target on the SIM's own
+      // damage-gate tick ±1t (16.7ms @60Hz). Sim gates (World.ts/world.zig):
+      // Interstice SLASH_WINDUP_MS + SLASH_CONTACT_DELAY_MS = 60 + 22 = 82ms;
+      // Kindled EDGE 200 + 100 = 300ms. 245 × 0.3336 = 81.8ms; 560 × 0.5364
+      // = 300.4ms. The old interstice 120ms sentence landed ~40ms — the
+      // blade finished cutting before damage could even gate on.
+      const simGateMs = style === "interstice" ? 82 : 300;
+      expect(Math.abs(contact * duration - simGateMs)).toBeLessThan(1000 / 60);
     }
   });
 
@@ -160,7 +164,7 @@ describe("live melee blade wiring — ProceduralPlayerRig.draw()'s per-frame par
 
   test("Interstice: every frame of an active swing produces sane, non-NaN draw params", () => {
     const frames = simulateSwing("interstice", 1);
-    expect(frames.length).toBeGreaterThan(3); // 360ms @60fps ≈ 21 frames
+    expect(frames.length).toBeGreaterThan(3); // 245ms @60fps ≈ 14 frames
     const active = frames.slice(0, -1); // last frame is the swing's own end (meleePoseMs hits 0)
     expect(active.length).toBeGreaterThan(0);
     for (const p of active) {

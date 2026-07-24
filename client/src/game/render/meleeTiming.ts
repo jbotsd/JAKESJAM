@@ -4,14 +4,28 @@
 // input-lock) says anticipation should read as almost-already-cut, not a
 // telegraphed wind-up. Kindled is the deliberate opposite — a heavier,
 // ground-loaded commit — and keeps its wider sentence.
-// BLADE_SWING_MS halved 2026-07-20 (was 240) alongside the sim's own
-// SLASH_WINDUP_MS/SLASH_ACTIVE_MS/SLASH_RECOVERY_MS halving (World.ts) —
-// same DPS, twice the swing cadence. Without this, the visual swing pose
-// would still play at the old (now stale) duration while the sim already
-// allows the next swing input twice as soon, reading as desynced/laggy.
-// EDGE_SWING_MS (Kindled) is untouched — that chassis's own timing wasn't
-// part of this balance pass.
-export const BLADE_SWING_MS = 120;
+// BLADE_SWING_MS re-derived 2026-07-24 (Interstice I1 — R1 row 2, the
+// R3-BINDING contact-frame alignment): the sim's damage gate for the ninja
+// slash sits at SLASH_WINDUP_MS + SLASH_CONTACT_DELAY_MS = 60 + 22 = 82ms
+// after the input edge (World.ts / world.zig), and the authored contact
+// fraction (meleeContactT below) is 0.3336 — so the ONE sentence duration
+// that makes the visual cut cross the target ON the sim's contact tick is
+// 82 / 0.3336 ≈ 245ms (245 × 0.3336 = 81.8ms — inside the ±1t contract).
+// The previous 120ms (halved 2026-07-20 alongside the sim commit-frame
+// halving) put visual contact at ~40ms: the blade had visibly finished
+// cutting 40ms before damage could even gate on — the exact "boundary
+// between missing and hitting is indistinct" failure the research names.
+// 245 ALSO maps the whole sentence onto the sim FSM nearly phase-for-phase:
+// cut window 37-103ms vs sim active 60-105ms, sentence end 245ms vs sim
+// cycle end 215ms (the last 30ms is guard-settle a max-cadence retrig
+// legitimately interrupts at t≈0.88, deep in recovery — no dead frames).
+// AND it collapses a three-clock split: ProceduralPlayerRig's body sentence
+// ran a stale 360ms (sized for the pre-halving 430ms sim cycle) while the
+// blade construct ran 120ms off this constant — hand and blade could never
+// agree on where "contact" was. Both now consume THIS constant.
+// EDGE_SWING_MS (Kindled) is untouched — 0.5364 × 560 = 300.4ms against
+// its 300ms sim gate, already aligned.
+export const BLADE_SWING_MS = 245;
 export const EDGE_SWING_MS = 560;
 
 /** Blade-construct geometry (reach/sweep) for the LIVE swing render — same

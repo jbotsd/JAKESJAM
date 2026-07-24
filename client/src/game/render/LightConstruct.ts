@@ -1017,6 +1017,10 @@ export function drawBladeSwing(
   // undersells it (Jake, 2026-07-19: "first slash should look one way,
   // second another direction, then both together on the third").
   comboCount = 1,
+  // R1 row 12 (I2): live-sampled world tips from the controller's swing
+  // record — feeds the hard-edged tip GHOSTS below. Optional so the pure
+  // param-shape stays callable without a trail (whiff-review stills).
+  tipHistory: readonly Vec2[] = [],
 ): void {
   const pivot = dir > 0 ? leadPivot : backPivot;
   const offPivot = dir > 0 ? backPivot : leadPivot;
@@ -1025,7 +1029,9 @@ export function drawBladeSwing(
   const stage = meleeStage(t, "interstice");
   const speedN = t >= 0.15 && t <= 0.48 ? Math.sin(stage.cut * Math.PI) : 0;
   const lead = meleeBladeAngle(aimRad, sweepRad, dir, t, "interstice");
-  const rO = reach * (1 + 0.14 * speedN); // slight smear-elongation at peak speed
+  // R1 row 12 (I2): blade stretches ~1.3x along its velocity through the
+  // cut window (was 1.14 — under the row's smear-deform floor).
+  const rO = reach * (1 + 0.3 * speedN);
   // The cone is ANCHORED at the cut's start angle and grows to the CURRENT
   // live angle — not a fixed-width window sliding along. A trailing window
   // relocates between samples; an anchored, growing wedge shows MORE of the
@@ -1045,8 +1051,16 @@ export function drawBladeSwing(
   // the payoff instead (Jake, 2026-07-19: "mid way the slash the second the
   // button is down").
   const INSTANT_FLOOR = sweepRad * 0.3;
-  const grown = Math.min(sweepRad * 0.95, INSTANT_FLOOR + naturalGrown);
-  drawSweepCone(g, pivot, lead, dir, rO, tint, env, grown);
+  // Pre-cut gating (I2, i1 tape): at the aligned 245ms sentence the full
+  // instant-floor cone hung frozen over the head for the whole 37ms
+  // anticipation — a fan parked on the nameplate before anything moved.
+  // The floor now grows IN across the anticipation (still fully open by
+  // cut start, still visibly underway on the first rendered frame — the
+  // Owlboy compress-the-lag principle keeps its teeth), so the pre-cut
+  // read is a sharpening tell, not a parked disc.
+  const preCut = t < 0.15 ? 0.35 + 0.65 * smoothstep(stage.anticipation) : 1;
+  const grown = Math.min(sweepRad * 0.95, INSTANT_FLOOR * preCut + naturalGrown);
+  drawSweepCone(g, pivot, lead, dir, rO, tint, env * preCut, grown);
   // The combo's 3rd hit combines BOTH directions — the mirrored cone from
   // the opposite hand, at reduced opacity so the CURRENT swing still leads,
   // reading as "both blades converging" rather than a plain repeat of hits
@@ -1078,6 +1092,32 @@ export function drawBladeSwing(
     : t < 0.80 ? 0.08
     : 0.08 + (0.55 - 0.08) * smoothstep(stage.recovery);
   drawDagger(g, offPivot, offAngle, reach * 0.6, 3.6, tint, offFade * env);
+  // TIP GHOSTS (R1 row 12, I2): 4-6 hard-edged after-images of the blade
+  // at its own sampled past tip positions — solid mini-daggers fading by
+  // age, NOT another soft wash. This is the Xrd smear discipline: discrete
+  // keyed after-images with real edges, so a 643ms-cadence flurry reads as
+  // countable cuts instead of fog. Ghost angle re-derived pivot→tip each
+  // frame, so ghosts stay welded to the arc even while the hand travels.
+  if (tipHistory.length >= 2 && t >= 0.15) {
+    const GHOSTS = Math.min(5, tipHistory.length - 1);
+    for (let i = 0; i < GHOSTS; i++) {
+      // Newest samples first (brightest); skip the current tip itself.
+      const idx = tipHistory.length - 2 - Math.floor((i / GHOSTS) * (tipHistory.length - 2));
+      const tip = tipHistory[Math.max(0, idx)]!;
+      const ga = Math.atan2(tip.y - pivot.y, tip.x - pivot.x);
+      const age = i / GHOSTS; // 0 = freshest ghost
+      const gl = Math.hypot(tip.x - pivot.x, tip.y - pivot.y);
+      // TIP-anchored: the ghost is the OUTER 55% of the pivot→tip line,
+      // ending exactly at the sampled tip. Full-length ghosts (i2 tape)
+      // read as spokes of a wheel — longer than the live blade itself —
+      // instead of receding cut smears at the arc's rim.
+      const ghostPivot = {
+        x: pivot.x + Math.cos(ga) * gl * 0.45,
+        y: pivot.y + Math.sin(ga) * gl * 0.45,
+      };
+      drawDagger(g, ghostPivot, ga, gl * 0.55, 2.8, tint, env * 0.38 * (1 - age * 0.75));
+    }
+  }
   // Small and agile, on purpose — the cone above is the primary "this swung
   // through the air" read now; the blade itself is a small accent at the
   // leading edge, not a competing full-opacity shape (Jake, 2026-07-19: "we
@@ -1705,6 +1745,21 @@ export function drawKindledBash(
   drawDagger(g, swordPivot, aimRad + Math.PI * 0.82, 34, 5, tint, 0.5 * env);
   // Confirmed bash-landed owns contact punctuation; a whiffed bash still
   // shows plate travel + smear, never a fake impact.
+}
+
+/** Trail afterglow for a finished INTERSTICE swing — R1 row 12's Interstice
+ *  column: "trail persists 150% of the active window (~68ms)". Lighter and
+ *  narrower than the Kindled ribbon (a razor line cooling, not a molten
+ *  sweep) — the cut's path outlives the blade so a whiffed arc still
+ *  leaves its air-cut signature on screen. `fade` 1→0. */
+export function drawBladeTrailOnly(
+  g: Phaser.GameObjects.Graphics,
+  tipHistory: readonly Vec2[],
+  tint: ConstructTint,
+  fade: number,
+): void {
+  if (fade <= 0.02) return;
+  drawWorldTipTrail(g, tipHistory, tint, fade * 0.5, 10);
 }
 
 /** Trail afterglow for a finished Kindled swing — R1 row 12's "trail
