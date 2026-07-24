@@ -48,6 +48,11 @@ const NINJA_BLADE_SHARD_GLOW = 0x35d6ff;
 const NINJA_BLADE_SHARD_CORE = 0xf2fbff;
 const KINDLED_THRUST_GLOW = 0xffc24d;
 const KINDLED_THRUST_CORE = 0xfff3d0;
+/** Drain/tithe crimson — StatusVfxController's LEECH_COLOR, hand-copied for
+ *  the same no-cross-import reason as the tint literals above. In-flight
+ *  accent for leech-stamped shots (Track L: a tithe volley must read as
+ *  vampiric BEFORE it lands; the leech thread stays the payoff read). */
+const LEECH_ACCENT_COLOR = 0xdc2626;
 
 /**
  * Per-element visual character. `glowScale` multiplies the body radius for
@@ -130,6 +135,9 @@ export class ProjectileVfx {
   /** Per-frame scratch — the render loop must not allocate (the old
    *  `new Set()` + `Object.entries()` + spread trio churned every frame). */
   private readonly seenScratch = new Set<number>();
+  /** Accumulated wall-clock — drives the homing seeker reticle's slow
+   *  rotation (Track L; drawn into the per-frame body gfx, zero pool churn). */
+  private clockMs = 0;
   /** Contract model pool — grows once to peak projectile count. */
   private readonly modelPool: ProjectileRenderModel[] = [];
   private readonly staleScratch: number[] = [];
@@ -160,6 +168,7 @@ export class ProjectileVfx {
     body.clear();
     trail.clear();
     const deltaSeconds = Math.max(0, deltaMs) / 1000;
+    this.clockMs += Math.max(0, deltaMs);
 
     const count = produceProjectiles(state, this.modelPool);
     const seen = this.seenScratch;
@@ -239,6 +248,17 @@ export class ProjectileVfx {
           const segX = x - px;
           const segY = y - py;
           if (segX * segX + segY * segY > 200 * 200) {
+            // Positive seam read (Track L, six-axes Mystery): for a
+            // wrap-FLAGGED shard, the newest segment (i === 1 — current
+            // sample back to the pre-wrap sample) IS the teleport moment,
+            // exactly once per wrap (next frame the jump sits deeper in
+            // the ring buffer). Exit flash where the shard left the map
+            // edge (x/y = pre-wrap sample), entry flash where it re-made
+            // (px/py = current). Unflagged shards keep the silent break —
+            // the guard alone stays the safety net for any other teleport.
+            if (proj.wrapShots && i === 1) {
+              this.wrapSeamFlash(x, y, px, py, angle, color);
+            }
             px = x;
             py = y;
             return;
@@ -265,6 +285,32 @@ export class ProjectileVfx {
 
       // Halo — one pooled additive glow following the body.
       this.updateHalo(id, proj.x, proj.y, radius * lang.glowScale, color);
+
+      // Seeker read (Track L): a homing-pathing shot wears a thin rotating
+      // lock-reticle — two opposed partial arcs precessing around the body
+      // — so a Stolen-Fangs spend (or any homing card) is visibly SEEKING
+      // in flight instead of rendering identically to a straight shot.
+      // Immediate-mode into the per-frame body gfx: zero pool churn.
+      if (proj.pathing === "homing") {
+        const phase = this.clockMs * 0.008;
+        const rr = radius + 5;
+        body.lineStyle(1, color, 0.55 * proj.bodyAlpha);
+        body.beginPath();
+        body.arc(proj.x, proj.y, rr, phase, phase + Math.PI * 0.6);
+        body.strokePath();
+        body.beginPath();
+        body.arc(proj.x, proj.y, rr, phase + Math.PI, phase + Math.PI * 1.6);
+        body.strokePath();
+      }
+
+      // Drain read (Track L): leech-stamped shots (Crimson Tithe's window
+      // stamp, Bleed Tithe's homing curse) carry a thin crimson accent
+      // ring in flight — the vampire register, worn BEFORE the hit so the
+      // victim can read what is coming (the leech thread is the payoff).
+      if (proj.leech) {
+        body.lineStyle(1.2, LEECH_ACCENT_COLOR, 0.6 * proj.bodyAlpha);
+        body.strokeCircle(proj.x, proj.y, radius + 2.5);
+      }
 
       // Sticky fuse blink comes precomputed from the contract model.
       const bodyAlpha = proj.bodyAlpha;
@@ -370,6 +416,51 @@ export class ProjectileVfx {
     bodyGfx.fillCircle(head.x, head.y, radius * 1.05);
     bodyGfx.fillStyle(core, bodyAlpha);
     bodyGfx.fillCircle(head.x, head.y, Math.max(1, radius * 0.55));
+  }
+
+  /** Track L (six-axes Mystery wrap): positive exit/entry seam read for a
+   *  map-rect teleport. Exit = two ticks collapsing into the departure
+   *  point (the shard un-making at the edge); entry = a glow pop + two
+   *  ticks fanning FORWARD along the travel direction (re-made, still
+   *  flying). Same pooled-transient budget class as bounceTick. */
+  private wrapSeamFlash(
+    exitX: number,
+    exitY: number,
+    entryX: number,
+    entryY: number,
+    angle: number,
+    color: number,
+  ): void {
+    const pool = this.pool;
+    if (!pool) return;
+    for (let i = 0; i < 2; i += 1) {
+      const s = pool.acquireSpark();
+      if (!s) break;
+      const a = angle + Math.PI / 2 + (i === 0 ? 0 : Math.PI); // perpendicular pair
+      const dist = 9;
+      s.setPosition(exitX + Math.cos(a) * dist, exitY + Math.sin(a) * dist)
+        .setFillStyle(color, 0.9)
+        .setDepth(HALO_DEPTH)
+        .setRotation(a);
+      // Collapse INTO the exit point — leaving, not exploding.
+      this.tweenRelease(s, { x: exitX, y: exitY, alpha: 0 }, 140);
+    }
+    const glow = pool.acquireGlow();
+    if (glow) {
+      const scale = (9 / GLOW_TEXTURE_SIZE) * 2;
+      glow.setPosition(entryX, entryY).setTint(color).setAlpha(0.8).setScale(scale).setDepth(HALO_DEPTH);
+      this.tweenRelease(glow, { alpha: 0, scaleX: scale * 1.7, scaleY: scale * 1.7 }, 150);
+    }
+    for (let i = 0; i < 2; i += 1) {
+      const s = pool.acquireSpark();
+      if (!s) break;
+      const spread = i === 0 ? -0.35 : 0.35;
+      const a = angle + spread;
+      const dist = 12;
+      s.setPosition(entryX, entryY).setFillStyle(color, 0.9).setDepth(HALO_DEPTH).setRotation(a);
+      // Fan FORWARD — re-made and still traveling.
+      this.tweenRelease(s, { x: entryX + Math.cos(a) * dist, y: entryY + Math.sin(a) * dist, alpha: 0 }, 150);
+    }
   }
 
   /** P2 — small ricochet spark + glow tick at a wall bounce. */

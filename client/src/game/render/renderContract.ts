@@ -80,6 +80,18 @@ export type ProjectileRenderModel = {
    * (ProjectileVfx.ts's `drawSpikeBody`) instead of inheriting whatever
    * shape/element the caster's own card build resolves to. */
   kindledThrust: boolean;
+  /** True when the shard wraps the map rect (six-axes Mystery —
+   * `proj.wrapShots === true`). Track L: the wasm bridge round-trips this
+   * flag but NO renderer consumed it — the trail teleport-discontinuity
+   * break was a pure distance heuristic. Painters now use it to fire the
+   * positive exit/entry seam flash at the wrap moment (ProjectileVfx.ts),
+   * turning the negative-space trail break into a readable teleport. */
+  wrapShots: boolean;
+  /** True when the shot leeches on hit (`proj.leechFraction > 0` —
+   * weapon.ts Drain-axis / Crimson Tithe stamp). Drives the in-flight
+   * crimson accent ring (ProjectileVfx.ts) so a tithe-window volley reads
+   * as vampiric BEFORE it lands — the leech thread stays the payoff read. */
+  leech: boolean;
 };
 
 function blankProjectile(): ProjectileRenderModel {
@@ -102,6 +114,8 @@ function blankProjectile(): ProjectileRenderModel {
     tendril: false,
     ninjaBladeShard: false,
     kindledThrust: false,
+    wrapShots: false,
+    leech: false,
   };
 }
 
@@ -143,6 +157,8 @@ export function produceProjectiles(
     m.tendril = proj.tendril === true;
     m.ninjaBladeShard = proj.ninjaBladeShard === true;
     m.kindledThrust = proj.kindledThrust === true;
+    m.wrapShots = proj.wrapShots === true;
+    m.leech = (proj.leechFraction ?? 0) > 0;
   }
   return n;
 }

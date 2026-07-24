@@ -78,6 +78,46 @@ describe("ParticlePool", () => {
     expect(b).toBe(a);
   });
 
+  test("released spark/shard/ring are HIDDEN (no styled junk pile at the origin)", () => {
+    // Track L 2026-07-24 regression: resetCommon used to setVisible(true)
+    // on release, parking every freed spark/shard/ring VISIBLE at (0,0)
+    // with its last style (blastCircle/glow re-hid explicitly and were
+    // immune). A recording scene catches the visible-state transitions.
+    type Recorded = Stub & { visible?: boolean };
+    const record = (s: Stub): Recorded => {
+      const r = s as Recorded;
+      const orig = r.setVisible;
+      r.setVisible = (v: boolean) => {
+        r.visible = v;
+        return orig(v);
+      };
+      return r;
+    };
+    const scene = {
+      add: {
+        rectangle: () => record(makeStub()),
+        circle: () => record(makeStub()),
+        graphics: () => record(makeStub()),
+        image: () => record(makeStub()),
+      },
+      textures: { exists: () => false, createCanvas: () => null },
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    } as any;
+    const pool = new ParticlePool(scene);
+    const spark = pool.acquireSpark() as unknown as Recorded;
+    const shard = pool.acquireShard() as unknown as Recorded;
+    const ring = pool.acquireRing() as unknown as Recorded;
+    expect(spark.visible).toBe(true);
+    expect(shard.visible).toBe(true);
+    expect(ring.visible).toBe(true);
+    pool.release(spark as never);
+    pool.release(shard as never);
+    pool.release(ring as never);
+    expect(spark.visible).toBe(false);
+    expect(shard.visible).toBe(false);
+    expect(ring.visible).toBe(false);
+  });
+
   test("exhaustion returns null and warns once", () => {
     const pool = new ParticlePool(makeScene());
     const warn = mock(() => {});

@@ -19,6 +19,7 @@ import Phaser from "phaser";
 import { ParticlePool } from "./game/systems/ParticlePool";
 import { transientVfx } from "./game/render/TransientVfx";
 import { ConstructVfxController } from "./game/systems/ConstructVfxController";
+import { StatusVfxController } from "./game/systems/StatusVfxController";
 import {
   spawnCrystalShards,
   drawWardSlab,
@@ -43,7 +44,7 @@ import {
   spawnKillShockRing,
 } from "./game/render/LightConstruct";
 import { meleeBladeAngle } from "./game/render/meleeTiming.js";
-import type { CharacterArchetype, PlayerId, Vec2, WorldState } from "./sim";
+import type { CharacterArchetype, PlayerId, SimEvent, Vec2, WorldState } from "./sim";
 import {
   ProceduralPlayerRig,
   type ProceduralPlayerPose,
@@ -108,6 +109,14 @@ class HarnessScene extends Phaser.Scene {
   private fieldDemoLayer!: Phaser.GameObjects.Graphics;
   private auraDemoStyle: "slash" | "ooze" | "shatter" | "seal" | null = null;
   private fieldDemoActive = false;
+  // Track L status-read driver (StatusVfxController): synthetic fields
+  // merged into the demo fighters each frame + a one-frame event queue.
+  // "st-*" harnessFire commands set these; the ORBITING victim doubles as
+  // the read's body so tracking is visible in the filmstrip.
+  private statusCtl!: StatusVfxController;
+  private bodyFields: Record<string, unknown> = {};
+  private hunterFields: Record<string, unknown> = {};
+  private statusEvents: SimEvent[] = [];
 
   constructor() {
     super("harness");
@@ -118,6 +127,7 @@ class HarnessScene extends Phaser.Scene {
     this.pool = new ParticlePool(this);
     transientVfx.attach(this);
     this.controller = new ConstructVfxController(this, this.pool);
+    this.statusCtl = new StatusVfxController(this, this.pool);
 
     // Off-pool ward layer (mirrors the controller's off-pool tether layer).
     this.wardLayer = this.add.graphics();
@@ -443,6 +453,112 @@ class HarnessScene extends Phaser.Scene {
         case "dodge":
           spawnGhostGuardDodge(this.pool, { x: 380, y: 260 }, INTERSTICE_TINT);
           break;
+        // ── Track L status reads (StatusVfxController) ──────────────────
+        // Marks live on the HUNTER (the priest dummy), windows on the BODY
+        // (the orbiting victim dummy). "st-clear" wipes everything.
+        default: {
+          if (!cmd.startsWith("st-")) break;
+          const tickNow = Math.floor(this.t / 16);
+          const until = tickNow + 150; // ~2.5s window
+          const short = tickNow + 40; // counter-length window
+          switch (cmd) {
+            case "st-clear":
+              this.bodyFields = {};
+              this.hunterFields = {};
+              break;
+            case "st-facet":
+              this.hunterFields = { facetTargetId: "victim", facetMarkUntilTick: until };
+              break;
+            case "st-judgment":
+              this.hunterFields = { judgmentTargetId: "victim", judgmentMarkUntilTick: until };
+              break;
+            case "st-read":
+              this.hunterFields = { readTargetId: "victim", readMarkUntilTick: until };
+              break;
+            case "st-counter":
+              this.bodyFields = { counterUntilTick: short };
+              break;
+            case "st-seal":
+              this.bodyFields = { sealUntilTick: until };
+              break;
+            case "st-tithe":
+              this.bodyFields = { titheUntilTick: until };
+              break;
+            case "st-measure":
+              this.bodyFields = { measureUntilTick: until };
+              break;
+            case "st-surge":
+              this.bodyFields = { speedBoostUntilTick: until };
+              break;
+            case "st-vuln":
+              this.bodyFields = { vulnerabilityUntilTick: until };
+              break;
+            case "st-jam":
+              this.bodyFields = { blockJammerUntilTick: until };
+              break;
+            case "st-fooled":
+              this.bodyFields = { fooledUntilTick: until };
+              break;
+            case "st-aegis":
+              this.bodyFields = { aegisShareUntilTick: until };
+              break;
+            case "st-fangs":
+              this.bodyFields = { pendingLockCharges: 2, pendingLockExpiresAtTick: until };
+              break;
+            case "st-resonance":
+              this.bodyFields = { resonanceUntilTick: until };
+              break;
+            case "st-refund":
+              this.statusEvents.push({
+                t: "shield-refunded",
+                playerId: "victim" as PlayerId,
+                amount: 20,
+                x: this.victimPos.x,
+                y: this.victimPos.y,
+              });
+              break;
+            case "st-amped":
+              this.statusEvents.push({
+                t: "hit-confirmed",
+                victimId: "victim" as PlayerId,
+                damage: 28,
+                sourceProjectileId: null,
+                amped: true,
+              });
+              break;
+            case "st-pierced":
+              this.statusEvents.push({
+                t: "hit-confirmed",
+                victimId: "victim" as PlayerId,
+                damage: 20,
+                sourceProjectileId: null,
+                pierced: true,
+              });
+              break;
+            case "st-contagion":
+              this.statusEvents.push({
+                t: "contagion-jump",
+                sourceId: "priest" as PlayerId,
+                targetId: "victim" as PlayerId,
+                fromX: this.priest.x,
+                fromY: this.priest.y,
+                toX: this.victimPos.x,
+                toY: this.victimPos.y,
+              });
+              break;
+            case "st-resglyph":
+              this.statusEvents.push({
+                t: "resonance-triggered",
+                playerId: "victim" as PlayerId,
+                sourceKind: "shelter-seal",
+                kind: "crimson-tithe",
+                x: this.victimPos.x,
+                y: this.victimPos.y,
+              });
+              break;
+          }
+          break;
+        }
       }
     }
 
@@ -570,6 +686,20 @@ class HarnessScene extends Phaser.Scene {
           ? this.victimPos
           : undefined;
     this.controller.update(state, [], delta, getPos, resolveClassId);
+
+    // Track L status reads — a second synthetic state carrying the
+    // "st-*"-commanded fields (hunter = priest dummy, body = orbiting
+    // victim dummy) so StatusVfxController's planners/painters run the
+    // REAL pipeline headlessly.
+    const statusState = {
+      tick,
+      players: {
+        priest: { alive: true, vx: 0, ...this.hunterFields },
+        victim: { alive: true, vx: 160, ...this.bodyFields },
+      },
+    } as unknown as WorldState;
+    this.statusCtl.update(statusState, this.statusEvents, delta, getPos);
+    this.statusEvents.length = 0;
   }
 }
 
