@@ -580,6 +580,12 @@ fn applyHitscanHitOnPlayer(
     _ = hit_x; // kept for signature symmetry with the caller's hit point; only hit_y feeds the headshot band (a pure Y-band check, matching TS's isHeadshot).
     if (!state.players[victim_idx].flags.alive) return; // belt-and-braces — the caller only ever builds candidates from alive players.
 
+    // Ninja dash i-frames (Track Z1c "ninja dash i-frames" item) — ahead of
+    // everything else (headshot/vulnerability/ward/parry/shield/peel), same
+    // "wasn't there" pre-emption as the real-projectile site below. No
+    // event, no damage — the shot is simply consumed by returning here.
+    if (isNinjaEvading(state, victim_idx)) return;
+
     // Headshot (mirrors projectile.ts's applyHitOn — the multiplier applies
     // to the RAW base damage BEFORE chaos scaling, same ordering as the
     // real-projectile site's own headshot port above).
@@ -1151,9 +1157,6 @@ fn emitEvent(
 /// channel_hold_ms's own doc comment — none of these are silently dropped,
 /// they're just not portable without growing PlayerEntity, which is
 /// exactly the "large port" this pass's scoping asked NOT to take on):
-///   - Ninja dash-evasion i-frames (combat.ts step 0.5 — a DIFFERENT,
-///     bigger "invuln while dashing" feature, still genuinely unported;
-///     see stepMeleeSwing's own "Deliberately NOT ported" list)
 ///   - Syzygist Ward (already flagged TS-owned/TS-applied on its own field
 ///     comment, world_state.zig's syz_ward_absorb_until_tick)
 ///   - Paladin Kindled Ward's partial-mitigation branch (combat.ts's
@@ -1182,7 +1185,11 @@ fn emitEvent(
 /// World.ts's `applyTeamPeel`/`findTeamPeelWarder` using the Track Z1a
 /// ally substrate, wired at this function's own damage block (matching
 /// World.ts:5064's call site), the real-projectile hit site (section 4),
-/// the hitscan hit site (Track Z1c item 1), and `stepMeleeSwing`.
+/// the hitscan hit site (Track Z1c item 1), and `stepMeleeSwing`. Ninja
+/// dash i-frames (Track Z1c "ninja dash i-frames" item) are NO LONGER
+/// stubbed either — `isNinjaEvading` (near `isAlly`) is checked ahead of
+/// Ghost Guard in this function's own damage block, the real-projectile
+/// site, the hitscan site, and `stepMeleeSwing`.
 pub fn resolveInstantAoeCasts(
     state: *world_state.WorldState,
     casts: []const world_state.PendingInstantAoe,
@@ -1208,6 +1215,14 @@ pub fn resolveInstantAoeCasts(
                 if (@abs(da) > cast.cone_radians / 2.0) continue;
             }
 
+            // Ninja dash i-frames (Track Z1c "ninja dash i-frames" item) —
+            // checked AHEAD of Ghost Guard, matching combat.ts's step 0.5
+            // (ahead of step 0.6). TS's `tryDeflectDamage` has no
+            // `projectile !== null` gate on this step either, so it applies
+            // to a null-projectile AOE hit same as melee/ranged. Same "no
+            // damage, no slow/fooled status either" shape Ghost Guard's own
+            // `continue` immediately below already documents.
+            if (isNinjaEvading(state, vi)) continue;
             // Ghost Guard (Ninja, this pass) — banked evasion charge. TS's
             // `tryDeflectDamage` step 0.6 has no `projectile !== null` gate
             // (unlike parry/directional-shield), so it DOES apply to a
@@ -1392,17 +1407,21 @@ pub fn resolveInstantAoeCasts(
 //     surface on already-shipped baseline melee code this pass's own
 //     scope (Paper Double's cast + burst, not new melee mechanics) does
 //     not cover.
-//   - Dash-through body-cross / ninja evasion i-frames — key off a
-//     `dashing` boolean with no Zig PlayerEntity mirror (`PlayerMovementMemory`
-//     tracks dash TIMERS, not a wire-visible dashing flag); dash-through
-//     body-cross itself is now ported separately (section 8's own
+//   - Dash-through body-cross — key off a `dashing` boolean with no Zig
+//     PlayerEntity mirror (`PlayerMovementMemory` tracks dash TIMERS, not a
+//     wire-visible dashing flag); ported separately (section 8's own
 //     dash-through detection block, right after Wall Bloom/Shock Ring's
-//     landing hooks — see that block's own doc comment), but ninja
-//     evasion i-frames (combat.ts step 0.5, a full "untouchable while
-//     dashing" mitigation) is a different, still-unported feature. Ghost
-//     Guard is NO LONGER in this list (this pass) — corrected finding: it
-//     never actually keyed off `dashing` at all, see its own consumption
-//     block below.
+//     landing hooks — see that block's own doc comment). Ghost Guard is
+//     NO LONGER in this list (a prior pass) — corrected finding: it never
+//     actually keyed off `dashing` at all, see its own consumption block
+//     below. Ninja evasion i-frames (combat.ts step 0.5, a full
+//     "untouchable while dashing" mitigation) is ALSO no longer in this
+//     list (Track Z1c "ninja dash i-frames" item) — `isNinjaEvading`
+//     (near `isAlly`) reads `state.player_movement[idx].dash_active_ms >
+//     0.0` directly, the SAME derived-from-timer approach `razor_route_
+//     until_tick`'s own doc comment already used for a different
+//     consumer — no new PlayerMovementMemory field was needed after all,
+//     just a damage-resolution-site reader.
 //
 // MITIGATION — re-derived independently here and confirmed byte-for-byte
 // against combat.ts, landing on the SAME finding resolveInstantAoeCasts's
@@ -2036,6 +2055,35 @@ fn isAlly(a: *const world_state.PlayerEntity, b: *const world_state.PlayerEntity
     if (!a.flags.has_team_id or !b.flags.has_team_id) return false;
     if (a.team_id_len != b.team_id_len) return false;
     return std.mem.eql(u8, a.team_id_bytes[0..a.team_id_len], b.team_id_bytes[0..b.team_id_len]);
+}
+
+/// Ninja dash i-frames (Track Z1c "ninja dash i-frames" item — port of
+/// combat.ts's `tryDeflectDamage` step 0.5: "ninja = evasion — dash
+/// i-frames — never blocks, only isn't there"). True while `victim_idx` is
+/// a Ninja (sprinter chassis) currently mid-dash. Omnidirectional (unlike
+/// parry/dash-bash's frontal arc) and checked AHEAD of every other
+/// mitigation (parry/shield/Self-Lattice/Ghost Guard/team peel/etc) at
+/// every call site below — a dodge means the hit never reaches the body,
+/// pre-empting the whole chain rather than adding to it, exactly matching
+/// TS's step ordering (0.5, ahead of 0.6's Ghost Guard).
+///
+/// `state.player_movement[victim_idx].dash_active_ms > 0.0` IS the derived
+/// Zig equivalent of TS's `player.dashing === true` (player.ts:288 —
+/// `dashing: memory.dashActiveMs > 0`) — `razor_route_until_tick`'s own
+/// doc comment (world_state.zig) already established this precedent for a
+/// DIFFERENT consumer (Razor Route's cast-then-next-dash window); this is
+/// the first DAMAGE-resolution site to read it. No new PlayerMovementMemory
+/// field needed — player.zig's dash-timer memory already tracked this for
+/// movement purposes.
+///
+/// KNOWN GAP, same as TS's own (combat.ts's step 0.5 doc comment): burn
+/// DoT / chain-lightning / shrink-zone storm damage apply directly without
+/// going through a `tryDeflectDamage`-equivalent gate in EITHER codebase,
+/// so i-frames don't cover those on either side — not a Zig-specific
+/// shortfall.
+fn isNinjaEvading(state: *const world_state.WorldState, victim_idx: u32) bool {
+    return state.players[victim_idx].character_id == .sprinter and
+        state.player_movement[victim_idx].dash_active_ms > 0.0;
 }
 
 /// Nearest ALIVE ally within `range_px`, excluding the caster — port of
@@ -3716,16 +3764,20 @@ fn stepMeleeSwing(
         }
         mem.hit_this_swing_mask |= bit;
 
+        // Ninja dash i-frames (Track Z1c "ninja dash i-frames" item) —
+        // checked BEFORE Ghost Guard (TS step 0.5, ahead of step 0.6) and
+        // BEFORE knockback, same "no damage, no knockback, no event" shape
+        // Ghost Guard's own `continue` immediately below already
+        // establishes (TS's `post = mit.evaded ? mit.player : {...
+        // knockback}` means an evaded hit gets no knockback either).
+        if (isNinjaEvading(state, vi)) continue;
         // Ghost Guard (Ninja, this pass) — banked evasion charge, checked
         // BEFORE knockback: TS's own `post = mit.evaded ? mit.player :
         // {...knockback}` (World.ts:5271-5277) means an evaded hit gets NO
         // knockback either, not just no damage. Same tryDeflectDamage step
         // 0.6 ordering as every other site — ahead of Self-Lattice/shield,
-        // both of which stay correctly reachable below (dash-i-frame evasion
-        // above Ghost Guard in TS, step 0.5, is a DIFFERENT still-unported
-        // feature — see this ability's own dispatch-arm comment for why
-        // Ghost Guard itself doesn't need that substrate). "If moving":
-        // the VICTIM's own current velocity at hit time (not cast time).
+        // both of which stay correctly reachable below. "If moving": the
+        // VICTIM's own current velocity at hit time (not cast time).
         if (victim.character_id == .sprinter and
             victim.ghost_guard_charge_until_tick > state.header.tick and
             @sqrt(victim.vx * victim.vx + victim.vy * victim.vy) > combat.NINJA_GHOST_GUARD_MOVE_SPEED_THRESHOLD)
@@ -5689,6 +5741,15 @@ pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
                 // melee/AOE correctly do NOT get an equivalent term.
                 if (state.players[ph2].ward_shell_until_tick > state.header.tick) {
                     final_dmg *= EMISSION_WARD_DAMAGE_MULT;
+                }
+                // Ninja dash i-frames (Track Z1c "ninja dash i-frames" item)
+                // — checked AHEAD of Ghost Guard, matching combat.ts's
+                // tryDeflectDamage step 0.5 (ahead of step 0.6). Same
+                // "consumed, zero damage, no event" shape Ghost Guard's own
+                // evasion immediately below already establishes.
+                if (isNinjaEvading(state, ph2)) {
+                    proj_ptr.lifetime_ms = 0;
+                    break;
                 }
                 // Ghost Guard (Ninja, this pass) — banked evasion charge,
                 // checked ahead of parry/Self-Lattice/shield below, matching

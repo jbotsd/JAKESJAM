@@ -326,6 +326,28 @@
 // granted — and a control case with the Warder facing away shows zero
 // peel on both engines too).
 //
+// Z1c "ninja dash i-frames" (2026-07-24): world.zig's new `isNinjaEvading`
+// (`state.player_movement[idx].dash_active_ms > 0.0` + sprinter class),
+// wired ahead of Ghost Guard at all four hit sites (real-projectile,
+// hitscan, resolveInstantAoeCasts, stepMeleeSwing):
+//
+//   BEFORE (team peel's after, unchanged): AFTER (ninja dash i-frames):
+//   seed=1     : final  376.5px (230) | final  376.5px (onset 230)
+//   seed=42    : final  247.5px (175) | final  247.5px (onset 175)
+//   seed=1337  : final  230.0px (249) | final  230.0px (onset 249)
+//   seed=90210 : final  274.2px (160) | final  274.2px (onset 160)
+//   seed=271828: final  437.9px (229) | final  437.9px (onset 229)
+//
+// VERDICT: byte-identical, EXPECTED — this harness's bots are all
+// "balanced" (wizard) per the header's own repeated note, never Ninja
+// (sprinter), so `isNinjaEvading`'s class gate fails closed for every bot
+// here regardless of dash state — structurally invisible, same shape as
+// every class-gated entry in this ledger. The real proof is at its own
+// gate: ninjaDashIframesParity.test.ts (a dashing Ninja evades a hitscan
+// hit AND a real injected ProjectileEntity hit identically on both
+// engines; three control cases — non-dashing Ninja, dashing non-Ninja —
+// prove the gate isn't an always-evade bug).
+//
 // If the sweep exceeds its bound, the per-seed record above is the
 // deliverable the next track consumes.
 //
