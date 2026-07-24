@@ -127,5 +127,13 @@ export function packResolvedFireConfig(
     // `StarterBase.delivery` fallback (raycast) for a build whose
     // `.delivery` somehow isn't one of the four known strings.
     delivery: DELIVERY_INDEX[build.delivery] ?? 1,
+    // Passive Tithe leech (Track Z1c "six-axes axis payloads") — Stolen
+    // Fangs' class-gated Priest reading, card-pool-v2.md "Tithe". Pure
+    // pass-through of the already-resolved build field, same shape as
+    // every other augment above. See world_state.zig's ResolvedFireConfig.
+    // leech_fraction doc comment for the classModifiers-gap stopgap this
+    // field depends on (fireConfigShared.ts patches it in separately since
+    // Zig's own card codegen can't derive a classModifiers override).
+    leechFraction: build.leechFraction,
   };
 }

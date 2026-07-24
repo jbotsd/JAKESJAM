@@ -276,6 +276,107 @@
 // untouched this pass): six-axes axis payloads, team peel, ninja dash
 // i-frames, Kindled Ward partial mitigation, contagion self-jump guard.
 //
+// Z1c "six-axes axis payloads" — leech (2026-07-24): appended
+// `ResolvedFireConfig.leech_fraction`, consumed at both the real-projectile
+// spawn/hit site and the hitscan resolve site, plus the chassis-aware
+// max-health cap fix (was a flat 100 — see world.zig's leech-application
+// comment). Contagion's self-jump guard (item 6) was already closed the
+// same pass as item 1 (see the ledger row above); this is the actual
+// six-axes-payloads item named in the "still open" note directly above:
+//
+//   BEFORE (item 1's after, unchanged): AFTER (leech + cap fix):
+//   seed=1     : final  376.5px (230) | final  376.5px (onset 230)
+//   seed=42    : final  247.5px (175) | final  247.5px (onset 175)
+//   seed=1337  : final  230.0px (249) | final  230.0px (onset 249)
+//   seed=90210 : final  274.2px (160) | final  274.2px (onset 160)
+//   seed=271828: final  437.9px (229) | final  437.9px (onset 229)
+//
+// VERDICT: byte-identical, EXPECTED — this harness's bots are cardless
+// (same header note as Z1a/Z1b above), and the only card that carries a
+// nonzero `leechFraction` today (Stolen Fangs, `classModifiers.priest`) is
+// both class-gated AND behind a documented, separate classModifiers-codegen
+// gap (see world_state.zig's `leech_fraction` field doc comment and
+// `fireConfigShared.ts`'s `patchLeechFraction` stopgap) — structurally
+// invisible to a cardless sweep, same shape as every prior "flat, expected"
+// entry in this ledger. The real proof is at its own gate:
+// leechFractionParity.test.ts (a Priest build with Stolen Fangs + a
+// max-health card leeches identically on both engines, capped at the real
+// 120 max health, not the old flat 100).
+//
+// Z1c "team peel" (2026-07-24): world.zig's new `findTeamPeelWarderIdx`/
+// `applyTeamPeel` (combat.zig's `isAllyBodyInWardCone`/
+// `computeTeamPeelMitigation`), wired into all four hit sites (real-
+// projectile, hitscan, resolveInstantAoeCasts, stepMeleeSwing):
+//
+//   BEFORE (leech's after, unchanged): AFTER (team peel):
+//   seed=1     : final  376.5px (230) | final  376.5px (onset 230)
+//   seed=42    : final  247.5px (175) | final  247.5px (onset 175)
+//   seed=1337  : final  230.0px (249) | final  230.0px (onset 249)
+//   seed=90210 : final  274.2px (160) | final  274.2px (onset 160)
+//   seed=271828: final  437.9px (229) | final  437.9px (onset 229)
+//
+// VERDICT: byte-identical, EXPECTED — this harness's bots are FFA (no
+// `teamId` set anywhere in its roster construction), and `isAlly`/
+// `findTeamPeelWarderIdx` both fail closed for any player without a team
+// id (same "true no-op outside team modes" contract TS's own
+// `findTeamPeelWarder` doc comment states) — structurally invisible here,
+// same shape as Z1a's ally-substrate entry above. The real proof is at its
+// own gate: teamPeelParity.test.ts (an eligible Warder mitigates a
+// teammate's hit identically on both engines — 60% blocked, Kindling
+// granted — and a control case with the Warder facing away shows zero
+// peel on both engines too).
+//
+// Z1c "ninja dash i-frames" (2026-07-24): world.zig's new `isNinjaEvading`
+// (`state.player_movement[idx].dash_active_ms > 0.0` + sprinter class),
+// wired ahead of Ghost Guard at all four hit sites (real-projectile,
+// hitscan, resolveInstantAoeCasts, stepMeleeSwing):
+//
+//   BEFORE (team peel's after, unchanged): AFTER (ninja dash i-frames):
+//   seed=1     : final  376.5px (230) | final  376.5px (onset 230)
+//   seed=42    : final  247.5px (175) | final  247.5px (onset 175)
+//   seed=1337  : final  230.0px (249) | final  230.0px (onset 249)
+//   seed=90210 : final  274.2px (160) | final  274.2px (onset 160)
+//   seed=271828: final  437.9px (229) | final  437.9px (onset 229)
+//
+// VERDICT: byte-identical, EXPECTED — this harness's bots are all
+// "balanced" (wizard) per the header's own repeated note, never Ninja
+// (sprinter), so `isNinjaEvading`'s class gate fails closed for every bot
+// here regardless of dash state — structurally invisible, same shape as
+// every class-gated entry in this ledger. The real proof is at its own
+// gate: ninjaDashIframesParity.test.ts (a dashing Ninja evades a hitscan
+// hit AND a real injected ProjectileEntity hit identically on both
+// engines; three control cases — non-dashing Ninja, dashing non-Ninja —
+// prove the gate isn't an always-evade bug).
+//
+// Z1c "Kindled Ward partial mitigation" (2026-07-24), the FOURTH and final
+// item on the Z1 list: world.zig's new Paladin-specific branch inside
+// every "shield_active" check (`combat.isSourceInWardCone`/
+// `combat.computeKindledWardMitigation`), replacing the generic 100%-block
+// for Paladin (partial + Kindling, cone-gated) and excluding Ninja
+// entirely (shield never mitigates, dash i-frames only) at all four hit
+// sites:
+//
+//   BEFORE (ninja i-frames' after, unchanged): AFTER (Kindled Ward):
+//   seed=1     : final  376.5px (230) | final  376.5px (onset 230)
+//   seed=42    : final  247.5px (175) | final  247.5px (onset 175)
+//   seed=1337  : final  230.0px (249) | final  230.0px (onset 249)
+//   seed=90210 : final  274.2px (160) | final  274.2px (onset 160)
+//   seed=271828: final  437.9px (229) | final  437.9px (onset 229)
+//
+// VERDICT: byte-identical, EXPECTED — this harness's bots are all
+// "balanced" (wizard), never Paladin (heavy) or Ninja (sprinter), and the
+// PRE-EXISTING generic 100%-block path (Wizard/Priest) is explicitly
+// UNCHANGED by this item (proven by kindledWardMitigationParity.test.ts's
+// own regression case) — structurally invisible here. The real proof is
+// at its own gate: kindledWardMitigationParity.test.ts (a Paladin facing
+// the threat takes the mitigated 40% + banks Kindling identically on both
+// engines; three control cases — Paladin facing away, Ninja's shield,
+// Wizard's unaffected generic block — prove every gate, not a uniform
+// nerf/buff). This closes the Z1 list Z1c opened with six items (six-axes
+// axis payloads, team peel, ninja dash i-frames, Kindled Ward partial
+// mitigation, plus item 1's hitscan resolution + headshot band and the
+// contagion self-jump guard, both merged earlier) — zero remaining.
+//
 // If the sweep exceeds its bound, the per-seed record above is the
 // deliverable the next track consumes.
 //

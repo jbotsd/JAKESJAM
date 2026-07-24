@@ -81,6 +81,7 @@ function compare(i: number, label: string, classId?: ClassId) {
   const F = (off: number) => z.getFloat64(off, true);
   const U32 = (off: number) => z.getUint32(off, true);
   const U8 = (off: number) => z.getUint8(off);
+  const F32 = (off: number) => z.getFloat32(off, true);
   const ctx = ` [${label}]`;
   expect(F(0), "damage" + ctx).toBeCloseTo(t.damage, 6);
   expect(F(8), "fireRate" + ctx).toBeCloseTo(t.fireRate, 6);
@@ -128,6 +129,17 @@ function compare(i: number, label: string, classId?: ClassId) {
   // card upgrades + wizard-forces-raycast enforcement), now actually
   // returned from `resolveMods` instead of being silently dropped.
   expect(U8(248), "delivery" + ctx).toBe(t.delivery);
+  // Track Z1c "six-axes axis payloads" — passive Tithe leech. Safe to
+  // assert here for EVERY card/class this file walks (class-blind + wizard
+  // only): the one card with a nonzero `leechFraction` (Stolen Fangs) only
+  // sets it via `classModifiers.priest`, and no `compare()` call in this
+  // file resolves as priest (see the two narrow priest-only tests below,
+  // which assert the delivery byte only) — so both sides are 0≡0 for every
+  // card table walk here. `resolveByIndices` has no classModifiers data
+  // (documented gap, see world_state.zig's leech_fraction doc comment), so
+  // this assertion would need loosening the day a priest-class walk is
+  // added here.
+  expect(F32(252), "leechFraction" + ctx).toBeCloseTo(t.leechFraction, 5);
 }
 
 describe("Zig build resolver ≡ TS createWeaponBuild → ResolvedFireConfig", () => {

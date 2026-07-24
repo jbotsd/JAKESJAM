@@ -425,6 +425,158 @@ pub fn isHeadshotAtHalfHeight(hit_y: f64, victim_y: f64, half_h: f64) bool {
     return hit_y <= top + (half_h * 2.0) * HEADSHOT_ZONE_FRAC;
 }
 
+// =================================================================
+// Team peel (Track Z1c "team peel" item) — bit-exact port of combat.ts's
+// TEAM PEEL section (WARD_PEEL_RADIUS_PX lives on the world.zig side
+// already, mirrored there since Aegis Share (Track Z1a) needed it before
+// this port existed — see that file's own doc comment on the constant).
+//
+// `isAllyBodyInWardCone` answers "is a nearby ALLY's BODY within the
+// ward-holder's frontal cone" — a DIFFERENT geometric question from
+// `isHitInArc` above (which tests whether an incoming hit's SOURCE lies
+// within the defender's own cone). Pure two-body geometry, no team/Ward-
+// active checks — world.zig's `findTeamPeelWarderIdx` is the one place
+// that combines it with `isAlly` to pick an eligible warding ally, exactly
+// mirroring TS's own split (`isAllyBodyInWardCone`/`computeTeamPeelMitigation`
+// here in combat.ts; `findTeamPeelWarder`/`applyTeamPeel` in World.ts).
+
+/// Ward's frontal cone width — matches `SHIELD_AIM_ARC_RADIANS` exactly
+/// (combat.ts: "a shield-board is a wall" reasoning carries over unchanged
+/// from Priest's innate directional shield"). Named separately (not a bare
+/// reuse at call sites) so a future balance pass can retune Ward without
+/// touching the aim-shield's own cone, matching combat.ts's own naming.
+pub const WARD_ARC_RADIANS: f64 = SHIELD_AIM_ARC_RADIANS;
+/// Fraction of incoming damage Ward (and team peel, which extends Ward's
+/// reach) absorbs on a covered hit. Mirrors combat.ts's
+/// WARD_MITIGATION_FRACTION exactly.
+pub const WARD_MITIGATION_FRACTION: f64 = 0.6;
+/// Kindling granted per point of damage Ward/peel actually blocks. Mirrors
+/// combat.ts's KINDLING_PER_DAMAGE_BLOCKED exactly (1:1 — a peeled hit's
+/// `kindlingGranted` therefore always equals its `damageBlocked`).
+pub const KINDLING_PER_DAMAGE_BLOCKED: f64 = 1.0;
+
+/// True iff `(victim_x, victim_y)` sits within a warder's frontal Ward cone
+/// (anchored on the warder's own aim, `(warder_aim_x, warder_aim_y)` minus
+/// `(warder_x, warder_y)`) AND within `radius_px` of the warder. Pure
+/// two-body geometry, no team/Ward-active checks — bit-exact port of
+/// combat.ts's `isAllyBodyInWardCone`. `radius_px` is caller-supplied (not
+/// defaulted here, unlike TS's optional param) since world.zig's own
+/// WARD_PEEL_RADIUS_PX/KIN_AEGIS_SHARE_RADIUS_MULTIPLIER constants already
+/// live there (Aegis Share, Track Z1a, predates this port) — no duplicate
+/// copy needed on this side.
+pub fn isAllyBodyInWardCone(
+    warder_x: f64,
+    warder_y: f64,
+    warder_aim_x: f64,
+    warder_aim_y: f64,
+    victim_x: f64,
+    victim_y: f64,
+    radius_px: f64,
+) bool {
+    const dx_aim = warder_aim_x - warder_x;
+    const dy_aim = warder_aim_y - warder_y;
+    const facing = if (dx_aim == 0.0 and dy_aim == 0.0) 0.0 else trig.lutAtan2(dy_aim, dx_aim);
+    const dx = victim_x - warder_x;
+    const dy = victim_y - warder_y;
+    const dist = @sqrt(dx * dx + dy * dy);
+    if (dist > radius_px or dist < 1e-3) return false;
+    const angle_to_victim = trig.lutAtan2(dy, dx);
+    const delta = wrapAngle(angle_to_victim - facing);
+    return @abs(delta) <= WARD_ARC_RADIANS / 2.0;
+}
+
+/// Mitigation math for a peeled hit — the SAME fraction/rate as self-Ward
+/// (WARD_MITIGATION_FRACTION, KINDLING_PER_DAMAGE_BLOCKED): peel is Ward
+/// extended to cover a second body, not a separate weaker mechanic. Bit-
+/// exact port of combat.ts's `computeTeamPeelMitigation`. Kindling from a
+/// peeled hit is granted to the WARDER (their block, their resource) —
+/// world.zig's `applyTeamPeel` is where that write actually happens.
+pub const TeamPeelMitigation = struct {
+    mitigated_damage: f64,
+    damage_blocked: f64,
+    kindling_granted: f64,
+};
+
+pub fn computeTeamPeelMitigation(damage: f64) TeamPeelMitigation {
+    const blocked = damage * WARD_MITIGATION_FRACTION;
+    return .{
+        .mitigated_damage = damage - blocked,
+        .damage_blocked = blocked,
+        .kindling_granted = blocked * KINDLING_PER_DAMAGE_BLOCKED,
+    };
+}
+
+// =================================================================
+// Kindled Ward SELF-mitigation (Track Z1c "Kindled Ward partial
+// mitigation" item) — bit-exact port of combat.ts's `tryDeflectDamage`
+// step 2 paladin branch (docs/classes-goal.md: "Defense IS the engine"
+// for Kindled/Ward). DIFFERENT from team peel above: this is the
+// PALADIN'S OWN held-Shield mitigation on a hit landing on THEMSELVES,
+// not extending their block to a nearby ally. Before this item, every
+// world.zig damage site applied the GENERIC 100%-block-and-drain-charge
+// shield behavior uniformly regardless of class — a real, live gameplay
+// divergence: a Zig paladin took ZERO damage from any hit their generic
+// shield covered (omnidirectional, no cone check) instead of the intended
+// 60%-mitigated/Kindling-economy trade gated on facing the threat, AND a
+// Zig ninja's held shield incorrectly "blocked" too (TS: "Shield is
+// chassis-null for this class... must never mitigate a single point of
+// damage" — dash i-frames are Ninja's ONLY defense verb).
+
+/// True iff the damage SOURCE (an incoming projectile's position, or a
+/// caller-supplied attacker/muzzle position for a null-projectile melee/
+/// AOE hit) lies within `facing`'s WARD_ARC_RADIANS cone, anchored on the
+/// PLAYER'S OWN aim (NOT `isAllyBodyInWardCone`'s "ally's body in MY
+/// cone" question — this is "is the THREAT in front of me"). Bit-exact
+/// port of combat.ts's `isSourceInWardCone`: degenerate (source exactly
+/// at the player's position) fails closed — DELIBERATELY UNLIKE
+/// `isHitInArc`'s velocity fallback above; TS's own comment is explicit
+/// ("no direction info, no block" — a different geometric question from
+/// the parry/aim-shield arc checks that DO fall back to velocity).
+pub fn isSourceInWardCone(
+    player_x: f64,
+    player_y: f64,
+    facing: f64,
+    source_x: f64,
+    source_y: f64,
+) bool {
+    const dx = source_x - player_x;
+    const dy = source_y - player_y;
+    if (dx == 0.0 and dy == 0.0) return false;
+    const source_angle = trig.lutAtan2(dy, dx);
+    const delta = wrapAngle(source_angle - facing);
+    return @abs(delta) <= WARD_ARC_RADIANS / 2.0;
+}
+
+pub const KindledWardMitigation = struct {
+    /// True iff the hit was actually in-cone and mitigated (60% blocked,
+    /// Kindling granted). False means "out of cone: full damage, no
+    /// Kindling, shield/charge left completely untouched" (combat.ts's own
+    /// "an unwarded hit costs nothing to the bar either way") — `damage`
+    /// is still populated (unchanged) in that case so callers can use it
+    /// unconditionally.
+    applies: bool,
+    damage: f64,
+    kindling_granted: f64,
+};
+
+/// Kindled Ward's self-mitigation math — bit-exact port of combat.ts's
+/// paladin branch: 60% mitigated (WARD_MITIGATION_FRACTION), 1:1 Kindling
+/// (KINDLING_PER_DAMAGE_BLOCKED), NO extra shield-charge drain beyond
+/// `tickShield`'s own passive per-second cost of holding Ward (unlike the
+/// generic shield's 100%-block-but-charge-drains-per-hit economy — the
+/// partial damage getting through IS the per-hit cost). Caller has ALREADY
+/// confirmed `shield_active` + paladin class and resolved the cone check
+/// (`isSourceInWardCone`) — this is pure math on the two outcomes.
+pub fn computeKindledWardMitigation(damage: f64, in_cone: bool) KindledWardMitigation {
+    if (!in_cone) return .{ .applies = false, .damage = damage, .kindling_granted = 0 };
+    const blocked = damage * WARD_MITIGATION_FRACTION;
+    return .{
+        .applies = true,
+        .damage = damage - blocked,
+        .kindling_granted = blocked * KINDLING_PER_DAMAGE_BLOCKED,
+    };
+}
+
 /// Melee arc hit test — bit-exact port of World.ts's `isAABBInMeleeArc`
 /// (World.ts:707-734): sample the victim's AABB at its centre + 4 corners,
 /// hit if ANY sampled point is within `range` of `(origin_x, origin_y)` AND

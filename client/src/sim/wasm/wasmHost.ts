@@ -114,6 +114,14 @@ export type ResolvedFireConfigBytes = {
    *  unless a card upgraded to continuous-beam) exactly like
    *  `weapon_build.zig`'s `resolveMods`. */
   delivery: number;
+  /** Passive Tithe leech (Track Z1c "six-axes axis payloads") — mirrors
+   *  world_state.zig's appended `leech_fraction` f32 (offset 252, reusing
+   *  `delivery`'s own trailing pad — struct size unchanged at 256). See
+   *  that field's doc comment for the classModifiers-gap stopgap this
+   *  depends on (packResolvedFireConfig is a TS-side mirror used only by
+   *  parity tests; the REAL runtime patch lives in fireConfigShared.ts's
+   *  `resolveFireConfigsViaZig`). */
+  leechFraction: number;
 };
 
 /**
