@@ -64,21 +64,39 @@ page.on("console", (msg) => {
   if (text.includes("ParticlePool")) console.log(`[page-console] ${text}`);
 });
 const errors: string[] = [];
-page.on("pageerror", (e) => errors.push(`${e.name}: ${e.message}`));
+page.on("pageerror", (e) => {
+  errors.push(`${e.name}: ${e.message}`);
+  // Print immediately — a join-phase throw used to abort the script before
+  // the end-of-run error dump, leaving handoff failures unexplained.
+  console.log(`[pageerror] ${e.name}: ${e.message.slice(0, 300)}`);
+});
 
 // Persist collected evidence/trace ACROSS reloads on the Node side.
 const allEvents: unknown[] = [];
 const allTrace: unknown[] = [];
 const allRaw: unknown[] = [];
 
-await page.addInitScript(() => {
-  localStorage.setItem("jakesjam.playerId", "player_feelK_live");
+// Unique per-run id (K10d fix): a reused id inside the server's reconnect
+// grace makes the client AUTO-enter the arena (venue-admitted frame on
+// reconnect), and joinArena's forced venue-admitted dispatch then RESTARTS
+// the already-live arena scene — which wedges it (isActive stays false
+// through every retry). Three consecutive "arena handoff never happened"
+// failures reproduced only when a run started <25s after the previous
+// run's player died out of the world.
+const RUN_ID = Math.random().toString(36).slice(2, 8);
+// QUALITY_TIER pin is OPT-IN ONLY (K10d finding): a recordVideo context
+// runs SwiftShader + per-frame ReadPixels screencast, and pinning
+// "standard" there makes the page CRAWL (26 probe cycles in 300s — the
+// sim loop starves, swings stall, the tape is fiction). Unpinned, the
+// auto-probe lands potato in this context, which is the CONSERVATIVE
+// read: quartered pools + 0.75 renderScale under-read what Jake's
+// desktop renders, so anything that reads on a potato tape reads live.
+const TIER = process.env.QUALITY_TIER ?? "";
+await page.addInitScript(({ runId, tier }) => {
+  localStorage.setItem("jakesjam.playerId", `player_feelK_${runId}`);
   localStorage.setItem("jakesjam.playerCharacter", "heavy"); // Kindled chassis
-  // Pin the STANDARD quality tier: headless Chromium probes as SwiftShader
-  // → potato → particleScale 0.25 quarters every pool (K10 finding), which
-  // makes the tape's VFX density lie about Jake's desktop. The tape must
-  // grade the presentation the real machine renders.
-  localStorage.setItem("jj_quality_tier", "standard");
+  if (tier) localStorage.setItem("jj_quality_tier", tier);
+  else localStorage.removeItem("jj_quality_tier");
   const w = window as unknown as { __feelEvents: unknown[] };
   w.__feelEvents = [];
   window.addEventListener("jakesjam:presentation-event", (e) => {
@@ -93,24 +111,37 @@ await page.addInitScript(() => {
       if (w.__feelEvents.length > 4000) w.__feelEvents.shift();
     }
   });
-});
+}, { runId: RUN_ID, tier: TIER });
 
 /** Full join flow: venue lobby → venue-admitted seam → arena scene →
  *  bell admission (no mid-fight spawns). Then installs the rAF trace
  *  collector + the pursuit driver. */
 async function joinArena(p: Page): Promise<void> {
   await p.goto(`${BASE}/?world=1&evidence=1&gate=off`, { waitUntil: "load" });
+  // Wait for EITHER scene: a fresh join lands in the venue lobby, but a
+  // reconnect inside the server's grace window auto-enters the arena
+  // (venue-admitted frame) — dispatching our own venue-admitted on top of
+  // a LIVE arena scene restarts it into a wedge (the K10d failure).
   await p.waitForFunction(
-    () =>
-      (window as unknown as { __jakesjam_game__?: { scene: { isActive(k: string): boolean } } })
-        .__jakesjam_game__?.scene.isActive("HangoutScene") ?? false,
+    () => {
+      const g = (window as unknown as { __jakesjam_game__?: { scene: { isActive(k: string): boolean } } })
+        .__jakesjam_game__;
+      return (g?.scene.isActive("HangoutScene") || g?.scene.isActive("OnlineMatchScene")) ?? false;
+    },
     undefined,
     { timeout: 30_000 },
   );
   await p.waitForTimeout(1500);
   // Dispatch-and-retry: the hangout scene must be listening before the
   // admitted event lands; a single early dispatch can vanish into nothing.
+  // Skipped entirely when the arena is already live (see above).
   for (let attempt = 0; attempt < 6; attempt++) {
+    const alreadyInArena = await p.evaluate(
+      () =>
+        (window as unknown as { __jakesjam_game__?: { scene: { isActive(k: string): boolean } } })
+          .__jakesjam_game__?.scene.isActive("OnlineMatchScene") ?? false,
+    );
+    if (alreadyInArena) break;
     await p.evaluate(() => window.dispatchEvent(new CustomEvent("jakesjam:venue-admitted")));
     const arrived = await p
       .waitForFunction(

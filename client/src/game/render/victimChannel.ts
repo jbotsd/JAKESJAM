@@ -193,3 +193,18 @@ export function cameraKickParams(
     ? { kickPx: 8, noisePx: 4, durMs: 120 }
     : { kickPx: 4, noisePx: 2, durMs: 80 };
 }
+
+/** WHIFF camera kick (K12, R1 row 10): a swing that hits nothing still
+ *  moved a lot of mass — the camera takes a small kick OPPOSITE the swing
+ *  direction (the body's momentum yanks the frame with it; a kick INTO
+ *  the swing would read as contact, exactly the lie a whiff must not
+ *  tell). Deliberately far under the row-9 hit kick and with ZERO noise:
+ *  a whiff is weight, not violence. Kindled's is bigger/slower than
+ *  Interstice's (mass identity), same ordering as every other channel. */
+export function whiffKickParams(
+  chassis: MeleeChassis,
+): { kickPx: number; noisePx: number; durMs: number } {
+  return chassis === "kindled"
+    ? { kickPx: 3, noisePx: 0, durMs: 100 }
+    : { kickPx: 2, noisePx: 0, durMs: 70 };
+}
