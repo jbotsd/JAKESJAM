@@ -197,9 +197,11 @@ describe("melee-swing-memory bridge (Track Z1a)", () => {
       bufferedAimY: -140.5,
       hitThisSwingMask: 0b1010,
       phase: 2,
+      chainIndex: 2,
       dashThroughTaggedMask: 0b0100,
       wasDashing: true,
       razorRouteActiveDash: true,
+      chainGapMs: 123.75,
     };
     state.meleeSwingMemory = { [NINJA]: midSwing };
     const unpacked = unpackWorldState(packWorldState(state));
@@ -216,9 +218,11 @@ describe("melee-swing-memory bridge (Track Z1a)", () => {
       bufferedAimY: 0,
       hitThisSwingMask: 0,
       phase: 0,
+      chainIndex: 0,
       dashThroughTaggedMask: 0,
       wasDashing: false,
       razorRouteActiveDash: false,
+      chainGapMs: 0,
     });
   });
 
@@ -360,5 +364,145 @@ describe("melee-swing-memory bridge (Track Z1a)", () => {
     expect(finalMem).toBeDefined();
     expect(finalMem!.phase).toBe(0);
     expect(finalMem!.aimX).toBeGreaterThan(0.99);
+  });
+
+  test("D. bash-chain parity — Kindled's swing·swing·BASH cadence resolves lockstep on both sides", () => {
+    // SHIELD BASH (2026-07-24, slash-feel-ledger design-decision block):
+    // every third Edge swing is the slab bash — low damage (14), biggest
+    // knockback, brief stagger — with chain state in the bridged
+    // MeleeSwingMemory (chain_index/chain_gap_ms). This gate proves the
+    // TS orchestrator and the every-tick-repacked Zig world agree on the
+    // WHOLE cadence: per-tick damage sequences must be identical, and the
+    // damage pattern itself must read 32·32·14 repeating.
+    //
+    // Harness note: the victim is PINNED back to its spot (and healed to
+    // full) after every step — applied identically to both states — so
+    // the game's biggest knockback can't carry it out of arc range and
+    // decouple the two runs from the cadence being proven.
+    const PAL = PlayerId("p0");
+    const TARGET = PlayerId("v2");
+    const TARGET_X = 460;
+    const TARGET_Y = 672; // grounded standing height on the 700-top floor
+    const playerIds = [String(PAL), String(TARGET)];
+
+    const mkBashState = (): WorldState => ({
+      tick: Tick(0),
+      rngState: 1,
+      players: {
+        [PAL]: makePlayer("p0", NINJA_X, "heavy"),
+        [TARGET]: makePlayer("v2", TARGET_X, "balanced"),
+      } as Record<PlayerId, PlayerEntity>,
+      projectiles: {},
+      destructibles: {},
+      firePatches: {},
+      pickups: {},
+      satellites: {},
+      round: {
+        phase: "fighting",
+        countdownRemainingMs: 90_000,
+        scores: {},
+        roundIndex: 1,
+        winnerPlayerId: null,
+      },
+    });
+
+    const runtime = createRuntime(MAP);
+    let tsState = mkBashState();
+
+    setWorldStatics(
+      MAP.platforms.map(platformToAABB),
+      MAP.platforms.map((p) => (p.kind === "platform" ? 1 : 0)),
+    );
+    setWorldArenaBounds(
+      runtime.ceilingClampY,
+      MAP.size.y > 0 ? MAP.size.y + KILL_PLANE_MARGIN_PX : 0,
+    );
+    setWorldLaunchPads([]);
+    setWorldSlopes([]);
+    setWorldSpawnPoints(MAP.spawns);
+    setWorldTargetScore(resolveModeConfig(undefined).targetScore);
+    let zigState: WorldState = mkBashState();
+
+    // Mash script: settle 0..59, then a Fire press every 8 ticks — each
+    // press either lands in the 100ms buffer window or re-triggers from a
+    // sub-350ms idle gap, so the chain never cools mid-run.
+    const palKeysForTick = (t: number): number =>
+      t >= 60 && (t - 60) % 8 === 0 ? FireBit : 0;
+
+    const prevKeys: Record<string, number> = {};
+    for (const id of playerIds) prevKeys[id] = 0;
+
+    const pinVictim = (state: WorldState): WorldState => ({
+      ...state,
+      players: {
+        ...state.players,
+        [TARGET]: {
+          ...state.players[TARGET]!,
+          x: TARGET_X,
+          y: TARGET_Y,
+          vx: 0,
+          vy: 0,
+          health: 100,
+          alive: true,
+        },
+      },
+    });
+
+    const tsDamages: number[] = [];
+    const zigDamages: number[] = [];
+    for (let t = 0; t < 420; t++) {
+      const tsInputs: Record<PlayerId, InputFrame | null> = {};
+      for (const id of playerIds) {
+        tsInputs[PlayerId(id)] = {
+          seq: InputSeq(t + 1),
+          tick: Tick(t + 1),
+          keys: id === String(PAL) ? palKeysForTick(t) : 0,
+          aimX: AIM_X,
+          aimY: AIM_Y,
+          dtMs: DT_MS,
+        };
+      }
+      tsState = stepWithRuntime(tsState, runtime, tsInputs, DT_MS).state;
+
+      (globalThis as {
+        __jakesjam_wasm_inputs__?: ReadonlyMap<
+          string,
+          { keys: number; prevKeys: number; aimX: number; aimY: number }
+        >;
+      }).__jakesjam_wasm_inputs__ = new Map(
+        playerIds.map((id) => {
+          const keys = id === String(PAL) ? palKeysForTick(t) : 0;
+          return [id, { keys, prevKeys: prevKeys[id]!, aimX: AIM_X, aimY: AIM_Y }];
+        }),
+      );
+      __clearFireConfigCacheForTests();
+      writeFireConfigsForState(zigState);
+      zigState = applyWasmWorldStepFullSync(zigState, DT_MS).state;
+      for (const id of playerIds)
+        prevKeys[id] = id === String(PAL) ? palKeysForTick(t) : 0;
+
+      tsDamages.push(100 - tsState.players[TARGET]!.health);
+      zigDamages.push(100 - zigState.players[TARGET]!.health);
+
+      tsState = pinVictim(tsState);
+      zigState = pinVictim(zigState);
+    }
+
+    // Lockstep: the two orchestrators agree on WHICH tick every hit
+    // lands and HOW HARD, across the whole mash.
+    expect(zigDamages).toEqual(tsDamages);
+
+    // The cadence itself: blades hit for 32, the chain's every third
+    // swing bashes for 14 — at least two full cycles landed in-run.
+    const landed = tsDamages.filter((d) => d > 0);
+    expect(landed.length).toBeGreaterThanOrEqual(6);
+    expect(landed.slice(0, 6)).toEqual([32, 32, 14, 32, 32, 14]);
+
+    // And the bridged chain state agrees with the TS orchestrator's own
+    // off-wire memory at the end of the run.
+    const tsChain = runtime.paladinMelee.get(PAL)!;
+    const zigMem = zigState.meleeSwingMemory?.[PAL];
+    expect(zigMem).toBeDefined();
+    expect(zigMem!.chainIndex).toBe(tsChain.chainIndex);
   });
 });

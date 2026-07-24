@@ -515,6 +515,28 @@ export class SimEventRouter {
         // hit-confirmed's generic shape.
         break;
       }
+      case "bash-landed": {
+        // KINDLED SHIELD BASH connected (2026-07-24, slash-feel-ledger
+        // design-decision block) — the chain's blunt punctuation. Damage
+        // number/generic feedback ride the paired hit-confirmed (same
+        // tick, same contract as slash-hit above); THIS case owns the
+        // bash-specific register: the bass THUD (procedural "hit" cue in
+        // its heavy voicing — deepest melee contact in the game) and a
+        // heavy-tier hold so the check reads as a body CHECK, not a tap.
+        // The full contact chord (slab smear, ground dust, pair-scoped
+        // stop, victim launch read) is the Kindled feel-loop's iteration
+        // surface — see the ledger's Iteration log.
+        audio.play("hit", { heavy: true, intensity: 1 });
+        this.holdHitStop(presentationBudget("heavy").hitStopMs);
+        if (
+          event.victimId === d.localPlayerId ||
+          event.attackerId === d.localPlayerId
+        ) {
+          const budget = presentationBudget("heavy");
+          d.safeShake(budget.shakeDurationMs, budget.shakeIntensity);
+        }
+        break;
+      }
       case "wave-spawned": {
         // "The wave rides existing projectile tech" (classes-goal.md) —
         // reuse the ordinary shoot cue at reduced intensity rather than a

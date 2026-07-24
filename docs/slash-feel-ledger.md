@@ -112,6 +112,46 @@ with weight (anticipation + crunch), Interstice actives with snap (smear +
 whip) — per the research verb-transfer matrix. A vanilla mouse-click cast
 feel is the failure state.
 
+## Shield-bash design decision (wave 1, 2026-07-24)
+
+**DECIDED: candidate (a) — fixed cadence. Swing · swing · BASH, the chain's
+blunt finisher.** Reasoning, gameplay-first per Jake's override:
+
+- **Payoff is CONTROL, not DPS** (the banked balance hook): perfectly-played
+  melee loses the point-blank DPS trade, so the third beat trades damage for
+  the biggest knockback in the game + a brief stagger — the bash buys SPACE
+  and breaks return fire without touching the damage table (bash damage 14,
+  well under half an Edge hit's 32).
+- **Why not contextual (b):** melee is already point-blank — a range gate
+  inside melee range is illegible, and an auto-triggering bash removes
+  authorship. A fixed chain position is plannable (hold the bash for the
+  ledge; back off to reset the chain) and countable by the defender (the
+  third beat is the shove — Ward/parry it), which makes it real grammar,
+  not cosmetics.
+- **Why not economy-coupled (c):** Kindling comes exclusively from Ward
+  absorbing damage ("Defense IS the engine", classes-goal.md). A bash that
+  FEEDS Kindling breaks that exclusivity; one that SPENDS it makes the
+  shield verb unavailable exactly when a fresh melee engage needs it. The
+  two economies stay uncoupled.
+- **Chain rules (sim, TS + Zig mirrored):** chain position advances per
+  STARTED swing (whiffs count — the cadence is rhythm, not hit-confirm);
+  resets after 350ms of idle gap following recovery (aligned with the
+  render combo window's 1000ms start-to-start against the 650ms cycle) and
+  on death, so a cold engage always opens with blades and the bash is
+  earned by sustained commitment. Buffered retrigs (R1 row 1) keep the
+  chain alive by construction.
+- **Bash numbers:** damage 14; knockback 760 px/s + 260 up (> dash-bash's
+  660/240 — the game's biggest); shortest reach (62px vs Edge's 84) with a
+  wider 100° slab arc (blunt, not edged); slab leads — contact gate 60ms
+  into active vs Edge's 100ms; victim stagger 300ms at 0.55 speed
+  (reusing slowedUntilTick — no new status system; Unbroken Seal's
+  stronger 900ms/0.25 stagger takes precedence when both would apply, and
+  Kindled Resolve's stagger resist softens either).
+- **Events:** `slash-started` carries `verb: "bash"` on the third swing so
+  the render leads with the slab from windup; a landed bash emits
+  `bash-landed` (distinct from `slash-hit`) so the contact chord gets its
+  own bass-THUD register.
+
 ## Research tuning table (R1, verbatim from the report)
 
 *Source: `~/Documents/Slash_Feel_Research_20260724/research_report_20260724_slash_feel.md`

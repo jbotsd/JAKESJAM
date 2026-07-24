@@ -138,12 +138,12 @@ describe("WorldState extern struct layout (Phase G1c)", () => {
     // No wasm sizeof_* exports exist for these (2026-07-20 additions) —
     // literal byte counts pinned from world_state.zig's own comptime
     // asserts/doc comments (PaperDoubleEntity=96×MAX_PAPER_DOUBLES(16),
-    // MeleeSwingMemory=56 (2026-07-24 input-buffer growth), EquippedActives=3 (MAX_ABILITY_SLOTS),
+    // MeleeSwingMemory=64 (2026-07-24 input-buffer + bash-chain growth), EquippedActives=3 (MAX_ABILITY_SLOTS),
     // PlayerCardIds=8 (MAX_PLAYER_CARDS), PlayerDraftState=4
     // (DRAFT_OFFER_COUNT+1), PendingInstantAoe=80×MAX_PENDING_INSTANT_AOE(32)).
     const PAPER_DOUBLE_SIZE = 96;
     const MAX_PAPER_DOUBLES = 16;
-    const MELEE_SWING_MEMORY_SIZE = 56;
+    const MELEE_SWING_MEMORY_SIZE = 64;
     const EQUIPPED_ACTIVES_SIZE = 3;
     const PLAYER_CARD_IDS_SIZE = 8;
     const PLAYER_DRAFT_STATE_SIZE = 4;

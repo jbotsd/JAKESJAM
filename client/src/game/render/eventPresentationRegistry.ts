@@ -298,6 +298,16 @@ export const EVENT_PRESENTATION_REGISTRY = {
     state: "partial",
     note: "Generic hit-confirmed handles damage; blade-specific scrape/read is absent.",
   },
+  "bash-landed": {
+    action: "Kindled's chain finisher — the shield BASH — checks a victim",
+    stateChange: "Victim is launched (biggest knockback in the game) and briefly staggered",
+    lead: "world-vfx",
+    channels: ["world-vfx", "audio", "camera", "animation", "world-state"],
+    intensity: "heavy",
+    lowTierCore: "Slab impact and the victim's launch remain visible",
+    state: "partial",
+    note: "Sim (low damage, max knockback, stagger) + bass-voiced hit cue + heavy hold live; slab-led contact chord, gold circuit smear, ground dust, and the pair-scoped stop are the Kindled feel-loop's iterations (slash-feel-ledger).",
+  },
   "wave-spawned": {
     action: "A committed slash releases its aftermath wave",
     stateChange: "The blade action visibly produces a traveling wave",

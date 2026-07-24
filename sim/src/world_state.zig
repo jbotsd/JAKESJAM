@@ -1189,7 +1189,14 @@ pub const MeleeSwingMemory = extern struct {
     /// extern-struct-safe equivalent for a fixed MAX_PLAYERS roster.
     hit_this_swing_mask: u16 = 0,
     phase: MeleeSwingPhase = .idle,
-    _pad: u8 = 0,
+    /// SHIELD BASH chain position (2026-07-24, slash-feel-ledger design-
+    /// decision block; Kindled-only, always 0 for ninja): 0/1 = blade
+    /// swings, 2 = the current/next swing is the BASH. Advances per
+    /// STARTED swing at recovery→idle; resets after KIN_BASH_CHAIN_GAP_MS
+    /// of idle (chain_gap_ms below) or on death. Reclaims the old _pad
+    /// byte — no size change from this field. Mirrors
+    /// PaladinMeleeMemory.chainIndex.
+    chain_index: u8 = 0,
 
     /// Razor Route substrate (this pass, docs/zig-step-world-parity-
     /// goal.md) — dash-through body-cross detection, the Zig mirror of
@@ -1223,6 +1230,11 @@ pub const MeleeSwingMemory = extern struct {
     /// Read-tagged ("one body, one lie"). Mirrors NinjaMeleeMemory.
     /// razorRouteActiveDash.
     razor_route_active_dash: bool = false,
+    /// ms spent idle since the last swing's recovery ended — the bash
+    /// chain's reset clock (Kindled-only; see chain_index above). Only
+    /// meaningful while phase == .idle. Mirrors
+    /// PaladinMeleeMemory.chainGapMs.
+    chain_gap_ms: f64 = 0,
 };
 
 /// Resolved per-player fire config — what `step_world` reads
@@ -2064,11 +2076,13 @@ comptime {
     // 1): +3 f64s (buffered_ms / buffered_aim_x / buffered_aim_y) inserted
     // after aim_y, so every f64 stays 8-aligned and the trailing
     // mask/phase/dash block shifts from offset 24 to offset 48 intact.
-    // 6×f64 (48) + u16 (2) + u8 (1) + _pad u8 (1) + u16 (2) + 2×bool (2)
-    // = 56, already 8-aligned — no tail padding. worldStateBridge.ts's
-    // MELEE_SWING_MEMORY_SIZE bumped 32 → 56 in the same cut
-    // (meleeSwingMemoryBridge.test.ts gate A pins the two together).
-    std.debug.assert(@sizeOf(MeleeSwingMemory) == 56);
+    // 56 → 64 (2026-07-24, shield-bash chain — ledger design-decision
+    // block): chain_index u8 reclaims the old _pad byte at offset 51 (no
+    // growth), chain_gap_ms f64 appends at offset 56 (+8). 7×f64 (56) +
+    // u16 + u8 + u8 + u16 + 2×bool (8) = 64, 8-aligned, no tail padding.
+    // worldStateBridge.ts's MELEE_SWING_MEMORY_SIZE bumped in the same
+    // cuts (meleeSwingMemoryBridge.test.ts gate A pins the two together).
+    std.debug.assert(@sizeOf(MeleeSwingMemory) == 64);
     std.debug.assert(@sizeOf(SimEvent) == 40);
     // 240 → 248 (Track Z0c Item A, fire-recoil substrate): +8 for the
     // appended `recoil_impulse` f64 at [240, 248) — 240 is 8-aligned, no

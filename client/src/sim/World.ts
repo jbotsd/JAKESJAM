@@ -494,6 +494,16 @@ export type PaladinMeleeMemory = {
   /** Same contract as NinjaMeleeMemory.bufferedAimX/bufferedAimY. */
   bufferedAimX: number;
   bufferedAimY: number;
+  /** SHIELD BASH chain position (2026-07-24, ledger design-decision
+   *  block): 0/1 = blade swings, 2 = the NEXT swing is the BASH. Advances
+   *  per STARTED swing (whiffs count — cadence is rhythm, not
+   *  hit-confirm) at the recovery→idle transition; resets to 0 after
+   *  KIN_BASH_CHAIN_GAP_MS of idle or on death. Kindled-only — ninja's
+   *  memory has no chain. */
+  chainIndex: number;
+  /** ms spent idle since the last swing's recovery ended — the chain-
+   *  reset clock. Only meaningful while phase === 0. */
+  chainGapMs: number;
 };
 
 export function freshPaladinMeleeMemory(): PaladinMeleeMemory {
@@ -508,6 +518,8 @@ export function freshPaladinMeleeMemory(): PaladinMeleeMemory {
     bufferedMs: 0,
     bufferedAimX: 0,
     bufferedAimY: 0,
+    chainIndex: 0,
+    chainGapMs: 0,
   };
 }
 
@@ -724,6 +736,37 @@ const EDGE_RECOVERY_MS = 340;
  * the 200ms authoritative windup, the heavy edge meets the aim radius 100ms
  * into active, leaving a short late-contact tail before recovery. */
 const EDGE_CONTACT_DELAY_MS = 100;
+
+// ── KINDLED SHIELD BASH (2026-07-24, slash-feel-ledger "THE SHIELD IS IN
+// THE CHAIN" + the design-decision block) — every THIRD Edge swing is a
+// shield BASH: the chain's blunt punctuation. Fixed cadence
+// (swing·swing·BASH) won over contextual/economy-coupled candidates —
+// plannable for the attacker, countable for the defender, and it keeps
+// Kindling's "Defense IS the engine" economy uncoupled. Payoff is CONTROL,
+// not DPS (the banked balance finding: perfectly-played melee loses the
+// point-blank DPS trade): damage stays under half an Edge hit, the
+// knockback is the biggest in the game, and the victim eats a brief
+// stagger that breaks return fire. Same FSM phase timings as Edge
+// (windup/active/recovery unchanged — the chain keeps one rhythm), but
+// the slab LEADS: earlier contact gate, shorter reach, wider blunt arc.
+const SHIELD_BASH_RANGE = 62; // px — shortest melee reach in the game (slab, not blade)
+const SHIELD_BASH_ARC_RADIANS = (5 * Math.PI) / 9; // 100° — a wide blunt wall vs Edge's 70° blade
+const SHIELD_BASH_DAMAGE = 14; // ≤ half an Edge hit (32) — control verb, not a DPS verb
+const SHIELD_BASH_KNOCKBACK = 760; // px/s — biggest in the game, > dash-bash's 660
+const SHIELD_BASH_KNOCK_UP = 260; // > dash-bash's 240 pop — launched, not slid
+const SHIELD_BASH_CONTACT_DELAY_MS = 60; // slab leads — earlier than Edge's 100ms gate
+/** Brief victim stagger on a landed bash — reuses the slowedUntilTick /
+ *  slowMultiplier machinery (Unbroken Seal's own stagger substrate), NOT a
+ *  new status system. Seal's stronger 900ms/0.25 stagger takes precedence
+ *  when both would apply to one hit. */
+const SHIELD_BASH_STAGGER_MS = 300;
+const SHIELD_BASH_STAGGER_MULTIPLIER = 0.55;
+/** Idle gap (ms, after recovery ends) beyond which the bash chain resets
+ *  to position 0 — a cold engage always opens with blades; the bash is
+ *  earned by sustained commitment. 350ms ≈ the render combo window's
+ *  1000ms start-to-start minus the 650ms swing cycle, so the sim chain
+ *  and the render's combo read agree on what "still chaining" means. */
+const KIN_BASH_CHAIN_GAP_MS = 350;
 
 /**
  * Melee arc hit test — more rigorous than DASH BASH's plain centre-point
@@ -5620,7 +5663,18 @@ export function stepWithRuntime(
     for (const aid of edgeIds) {
       const attacker = players[aid]!;
       if (classIdForArchetype(attacker.characterId) !== "paladin") continue;
-      if (!attacker.alive) continue;
+      if (!attacker.alive) {
+        // Death resets the bash chain (ledger design-decision block) — a
+        // respawn always re-opens with blades. The FSM itself is left
+        // alone (it's already the "advance so a swing doesn't get stuck"
+        // contract's concern, and a dead paladin's phase can't matter).
+        const deadMem = runtime.paladinMelee.get(aid);
+        if (deadMem) {
+          deadMem.chainIndex = 0;
+          deadMem.chainGapMs = 0;
+        }
+        continue;
+      }
 
       let mem = runtime.paladinMelee.get(aid);
       if (!mem) {
@@ -5629,12 +5683,20 @@ export function stepWithRuntime(
       }
 
       // ---- Swing FSM (same 4-phase shape as ninja's, own constants;
-      //      same R1-row-1 input buffer, 2026-07-24) ----
+      //      same R1-row-1 input buffer, 2026-07-24; PLUS the shield-bash
+      //      chain — swing·swing·BASH, ledger design-decision block) ----
       const wasActive = mem.phase === 2;
       const activeElapsedBeforeStep = wasActive ? EDGE_ACTIVE_MS - mem.phaseMs : 0;
       const edge = paladinEdgeEdges.get(aid);
       // Age-before-capture — same ordering contract as ninja's block above.
       if (mem.bufferedMs > 0) mem.bufferedMs = Math.max(0, mem.bufferedMs - effDtMs);
+      // Chain-reset clock: idle time accrues; past the gap the chain cools
+      // back to blades. Runs BEFORE any swing start this tick, so a press
+      // after a long gap opens at chain position 0.
+      if (mem.phase === 0) {
+        mem.chainGapMs += effDtMs;
+        if (mem.chainGapMs > KIN_BASH_CHAIN_GAP_MS) mem.chainIndex = 0;
+      }
       const startSwing = (aimPointX: number, aimPointY: number): void => {
         const len = Math.hypot(aimPointX - attacker.x, aimPointY - attacker.y);
         mem.phase = 1;
@@ -5645,7 +5707,13 @@ export function stepWithRuntime(
         mem.hitDestructiblesThisSwing.clear();
         mem.hitPaperDoublesThisSwing.clear();
         mem.bufferedMs = 0;
-        events.push({ t: "slash-started", playerId: aid, x: attacker.x, y: attacker.y });
+        // Chain position 2 = the BASH — the verb rides slash-started so
+        // the render leads with the slab from the first windup frame.
+        if (mem.chainIndex === 2) {
+          events.push({ t: "slash-started", playerId: aid, x: attacker.x, y: attacker.y, verb: "bash" });
+        } else {
+          events.push({ t: "slash-started", playerId: aid, x: attacker.x, y: attacker.y });
+        }
       };
       if (mem.phase === 0) {
         if (edge) {
@@ -5671,11 +5739,26 @@ export function stepWithRuntime(
           } else if (mem.phase === 3) {
             mem.phase = 0;
             mem.phaseMs = 0;
+            // Chain advances per STARTED swing (whiffs count — cadence is
+            // rhythm, not hit-confirm), stamped at the swing's end so the
+            // position is stable for the whole swing above.
+            mem.chainIndex = (mem.chainIndex + 1) % 3;
+            mem.chainGapMs = 0;
             // Fires at phase 0, zero dead frames — "smooth on retrig".
+            // A buffered retrig starts the NEXT chain position this same
+            // tick, so swing·swing·BASH flows without a reset window.
             if (mem.bufferedMs > 0) startSwing(mem.bufferedAimX, mem.bufferedAimY);
           }
         }
       }
+      // Which verb is the CURRENT swing? Stable for the swing's whole
+      // lifetime: chainIndex only advances at recovery→idle, and the
+      // hit-check gate below can never be reached on that transition tick.
+      const swingIsBash = mem.chainIndex === 2;
+      const swingRange = swingIsBash ? SHIELD_BASH_RANGE : EDGE_RANGE;
+      const swingArc = swingIsBash ? SHIELD_BASH_ARC_RADIANS : EDGE_ARC_RADIANS;
+      const swingDamage = swingIsBash ? SHIELD_BASH_DAMAGE : EDGE_DAMAGE;
+      const swingContactDelay = swingIsBash ? SHIELD_BASH_CONTACT_DELAY_MS : EDGE_CONTACT_DELAY_MS;
       const isActiveNow = mem.phase === 2;
       const activeElapsedAfterStep = isActiveNow
         ? EDGE_ACTIVE_MS - mem.phaseMs
@@ -5683,7 +5766,7 @@ export function stepWithRuntime(
           ? Math.min(EDGE_ACTIVE_MS, activeElapsedBeforeStep + effDtMs)
           : 0;
       const hasReachedEdgeContact =
-        (wasActive || isActiveNow) && activeElapsedAfterStep >= EDGE_CONTACT_DELAY_MS;
+        (wasActive || isActiveNow) && activeElapsedAfterStep >= swingContactDelay;
 
       // ---- Arc hit-check (from the radial intercept onward, all victims
       //      in the cone) ----
@@ -5693,13 +5776,13 @@ export function stepWithRuntime(
           if (vid === aid) continue;
           const victim = players[vid]!;
           if (!victim.alive || mem.hitThisSwing.has(vid)) continue;
-          if (!isBodyInMeleeArc(attacker.x, attacker.y, aimAngle, EDGE_ARC_RADIANS / 2, EDGE_RANGE, victim)) {
+          if (!isBodyInMeleeArc(attacker.x, attacker.y, aimAngle, swingArc / 2, swingRange, victim)) {
             continue;
           }
           mem.hitThisSwing.add(vid);
 
           const victimBuild = resolvePlayerBuild(victim);
-          const mit = tryDeflectDamage(victim, null, EDGE_DAMAGE, edgeTick, {
+          const mit = tryDeflectDamage(victim, null, swingDamage, edgeTick, {
             mirrorShield: victimBuild.mirrorShield,
             directionalShield: victimBuild.directionalShield,
             parryCoverMultiplier: victimBuild.parryCoverMultiplier,
@@ -5709,8 +5792,12 @@ export function stepWithRuntime(
             ? mit.player
             : {
                 ...mit.player,
-                vx: mem.aimX * EDGE_KNOCKBACK,
-                vy: mem.aimY * EDGE_KNOCKBACK - EDGE_KNOCK_UP,
+                // Bash knockback is the game's biggest (control, not DPS —
+                // ledger design-decision block); blade keeps Edge's shove.
+                vx: mem.aimX * (swingIsBash ? SHIELD_BASH_KNOCKBACK : EDGE_KNOCKBACK),
+                vy:
+                  mem.aimY * (swingIsBash ? SHIELD_BASH_KNOCKBACK : EDGE_KNOCKBACK) -
+                  (swingIsBash ? SHIELD_BASH_KNOCK_UP : EDGE_KNOCK_UP),
               };
           const blocked = mit.shielded || mit.deflected;
           if (mit.evaded) {
@@ -5768,8 +5855,17 @@ export function stepWithRuntime(
             const newHealth = Math.max(0, post.health - edgeDamage);
             const wasAlive = post.alive;
             post = { ...post, health: newHealth, alive: newHealth > 0 };
-            if (staggerVictim) {
-              const staggerTicks = Math.ceil(KIN_SEAL_STAGGER_MS / Math.max(1, effDtMs));
+            if (staggerVictim || swingIsBash) {
+              // Two stagger sources share the slowedUntilTick machinery
+              // (no new status system — ledger design-decision block):
+              // Unbroken Seal's 900ms/0.25 and the bash's brief 300ms/
+              // 0.55. Seal's stronger one takes precedence when both
+              // apply to a single hit.
+              const staggerMs = staggerVictim ? KIN_SEAL_STAGGER_MS : SHIELD_BASH_STAGGER_MS;
+              const staggerMul = staggerVictim
+                ? KIN_SEAL_STAGGER_MULTIPLIER
+                : SHIELD_BASH_STAGGER_MULTIPLIER;
+              const staggerTicks = Math.ceil(staggerMs / Math.max(1, effDtMs));
               // Kindled Resolve (coverage-floor fast-follow): softens the
               // stagger's SEVERITY toward 1 if the victim currently holds
               // the buff — "resist", not immune (a no-op multiplier change
@@ -5779,16 +5875,23 @@ export function stepWithRuntime(
                 slowedUntilTick: (edgeTick + staggerTicks) as Tick,
                 slowMultiplier: applyKindledResolveStaggerResist(
                   post,
-                  KIN_SEAL_STAGGER_MULTIPLIER,
+                  staggerMul,
                   edgeTick,
                 ),
               };
             }
             // Reuses "slash-hit"/"slash-started" (not bespoke "edge-hit"
-            // events) — spectator/renderer treatment is identical (a landed
-            // melee arc hit), and the hard-reject naming table only
-            // constrains DISPLAY-facing text, not this internal wire tag.
-            events.push({ t: "slash-hit", attackerId: aid, victimId: vid, damage: edgeDamage });
+            // events) for BLADE swings — spectator/renderer treatment is
+            // identical (a landed melee arc hit), and the hard-reject
+            // naming table only constrains DISPLAY-facing text, not this
+            // internal wire tag. The BASH is deliberately the opposite
+            // call: a distinct "bash-landed" so the blunt slab gets its
+            // own contact register (bass THUD vs the blade's shear).
+            if (swingIsBash) {
+              events.push({ t: "bash-landed", attackerId: aid, victimId: vid, damage: edgeDamage });
+            } else {
+              events.push({ t: "slash-hit", attackerId: aid, victimId: vid, damage: edgeDamage });
+            }
             events.push({
               t: "hit-confirmed",
               victimId: vid,
@@ -5843,11 +5946,11 @@ export function stepWithRuntime(
         const aimAngle = Math.atan2(mem.aimY, mem.aimX);
         for (const [did, d] of Object.entries(state.destructibles)) {
           if (d.health <= 0 || mem.hitDestructiblesThisSwing.has(did)) continue;
-          if (!isAABBInMeleeArc(attacker.x, attacker.y, aimAngle, EDGE_ARC_RADIANS / 2, EDGE_RANGE, d.x, d.y, destructibleAABB(d))) {
+          if (!isAABBInMeleeArc(attacker.x, attacker.y, aimAngle, swingArc / 2, swingRange, d.x, d.y, destructibleAABB(d))) {
             continue;
           }
           mem.hitDestructiblesThisSwing.add(did);
-          pendingHangoutDestructibleDamage.push({ destructibleId: did, attackerId: aid, damage: EDGE_DAMAGE });
+          pendingHangoutDestructibleDamage.push({ destructibleId: did, attackerId: aid, damage: swingDamage });
         }
       }
 
@@ -5860,11 +5963,11 @@ export function stepWithRuntime(
         const aimAngle = Math.atan2(mem.aimY, mem.aimX);
         for (const [pdIdStr, pd] of Object.entries(state.paperDoubles ?? {})) {
           if (pd.ownerId === aid || mem.hitPaperDoublesThisSwing.has(pdIdStr)) continue;
-          if (!isAABBInMeleeArc(attacker.x, attacker.y, aimAngle, EDGE_ARC_RADIANS / 2, EDGE_RANGE, pd.x, pd.y, paperDoubleAABB(pd))) {
+          if (!isAABBInMeleeArc(attacker.x, attacker.y, aimAngle, swingArc / 2, swingRange, pd.x, pd.y, paperDoubleAABB(pd))) {
             continue;
           }
           mem.hitPaperDoublesThisSwing.add(pdIdStr);
-          pendingPaperDoubleDamage.push({ paperDoubleId: pdIdStr, attackerId: aid, damage: EDGE_DAMAGE });
+          pendingPaperDoubleDamage.push({ paperDoubleId: pdIdStr, attackerId: aid, damage: swingDamage });
         }
       }
     }
