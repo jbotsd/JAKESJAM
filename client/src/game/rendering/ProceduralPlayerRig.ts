@@ -9,6 +9,9 @@ import { headCrestGeometry, headHoodGeometry } from "./chassisSilhouette";
 import type { AbilityKind } from "../../sim/data/cardTypes.js";
 import { ABILITY_ANIMATIONS } from "../render/abilityAnimation.js";
 import {
+  bashHandPose,
+  bashKineticChain,
+  bashSwordHandPose,
   meleeHandPose,
   meleeKineticChain,
   meleeOffhandPose,
@@ -394,6 +397,11 @@ export class ProceduralPlayerRig implements CombatRig {
   private meleePoseDurationMs = 1;
   private meleePoseStyle: "interstice" | "kindled" = "interstice";
   private meleePoseDir = 1;
+  /** SHIELD BASH (slash-feel-ledger design-decision block): "bash" swaps
+   *  the Kindled melee sentence from the sword arc to the slab-led body
+   *  CHECK — shield hand punches along aim, sword chambers back, and the
+   *  kinetic chain surges through the front foot (bashKineticChain). */
+  private meleePoseVerb: "blade" | "bash" = "blade";
   private abilityPoseMs = 0;
   private abilityPoseDurationMs = 1;
   private abilityPoseKind: AbilityKind = "sunlance";
@@ -786,10 +794,17 @@ export class ProceduralPlayerRig implements CombatRig {
   }
 
   /** Render-only melee sentence: coil, cross-body cut, committed travel past
-   * contact, then recovery. Simulation hit timing and position never move. */
-  triggerMeleeSwing(style: "interstice" | "kindled", dir: number): void {
+   * contact, then recovery. Simulation hit timing and position never move.
+   * `verb` "bash" (Kindled only) plays the slab-led body check instead of
+   * the sword arc — the chain's third beat (slash-feel-ledger). */
+  triggerMeleeSwing(
+    style: "interstice" | "kindled",
+    dir: number,
+    verb: "blade" | "bash" = "blade",
+  ): void {
     this.meleePoseStyle = style;
     this.meleePoseDir = dir >= 0 ? 1 : -1;
+    this.meleePoseVerb = style === "kindled" ? verb : "blade";
     this.meleePoseDurationMs = style === "interstice" ? 360 : 560;
     this.meleePoseMs = this.meleePoseDurationMs;
     this.combatHoldMs = Math.max(this.combatHoldMs, 900);
@@ -1100,19 +1115,20 @@ export class ProceduralPlayerRig implements CombatRig {
     const meleeT = this.meleePoseMs > 0
       ? 1 - this.meleePoseMs / this.meleePoseDurationMs
       : 1;
-    const meleeAnticipationEnd = this.meleePoseStyle === "kindled" ? 0.38 : 0.32;
-    const meleeCutEnd = this.meleePoseStyle === "kindled" ? 0.61 : 0.52;
+    const meleeIsBash = this.meleePoseStyle === "kindled" && this.meleePoseVerb === "bash";
+    const meleeAnticipationEnd = meleeIsBash ? 0.36 : this.meleePoseStyle === "kindled" ? 0.38 : 0.32;
+    const meleeCutEnd = meleeIsBash ? 0.56 : this.meleePoseStyle === "kindled" ? 0.61 : 0.52;
     // Load from the floor: hips/chest/head sink together during anticipation,
     // then rise sharply into the cut. Feet retain their authoritative contact.
     const meleeGroundLoad = this.meleePoseMs <= 0
       ? 0
       : meleeT < meleeAnticipationEnd
         ? Math.sin((meleeT / meleeAnticipationEnd) * Math.PI * 0.5) *
-          (this.meleePoseStyle === "kindled" ? 14 : 10) * s
+          (meleeIsBash ? 19 : this.meleePoseStyle === "kindled" ? 17 : 10) * s
         : meleeT < meleeCutEnd
           ? (1 - (meleeT - meleeAnticipationEnd) /
             (meleeCutEnd - meleeAnticipationEnd)) *
-            (this.meleePoseStyle === "kindled" ? 14 : 10) * s
+            (meleeIsBash ? 19 : this.meleePoseStyle === "kindled" ? 17 : 10) * s
           : 0;
     // Key positions — head/chest lag hip for floppy chain.
     // gather dips the whole chain, slightly harder toward the head — the
@@ -1150,7 +1166,9 @@ export class ProceduralPlayerRig implements CombatRig {
       (pose.grounded ? 1 : 0.55) *
       s;
     const meleeChain = this.meleePoseMs > 0
-      ? meleeKineticChain(meleeT, this.meleePoseStyle)
+      ? meleeIsBash
+        ? bashKineticChain(meleeT)
+        : meleeKineticChain(meleeT, this.meleePoseStyle)
       : { pelvisDrive: 0, chestDrive: 0, headDrive: 0, shoulderTwist: 0, frontBrace: 0 };
     const abilityContract = ABILITY_ANIMATIONS[this.abilityPoseKind];
     const abilityT = this.abilityPoseMs > 0
@@ -1273,7 +1291,18 @@ export class ProceduralPlayerRig implements CombatRig {
       this.victoryPoseMs,
     );
 
-    if (this.meleePoseMs > 0) {
+    if (this.meleePoseMs > 0 && meleeIsBash) {
+      // SHIELD BASH — a body CHECK, not a cut: the SLAB (off hand) leads,
+      // chambering then punching straight along aim while the sword hand
+      // chambers back-low and visibly yields the beat. Weight transfers
+      // through the front foot via bashKineticChain above.
+      const slab = bashHandPose(aimAngle, meleeT);
+      armTargets.back.x = shoulderBack.x + Math.cos(slab.angle) * slab.reach * s;
+      armTargets.back.y = shoulderBack.y + Math.sin(slab.angle) * slab.reach * s;
+      const sword = bashSwordHandPose(aimAngle, this.meleePoseDir, meleeT);
+      armTargets.lead.x = shoulderLead.x + Math.cos(sword.angle) * sword.reach * s;
+      armTargets.lead.y = shoulderLead.y + Math.sin(sword.angle) * sword.reach * s;
+    } else if (this.meleePoseMs > 0) {
       // Kindled always cuts with the sword hand; alternating the combo only
       // reverses its travel. Interstice really alternates its two daggers.
       // Treating Kindled's shield hand as a sword hand on every other swing
@@ -1301,10 +1330,19 @@ export class ProceduralPlayerRig implements CombatRig {
       } else {
         const brace = meleeStage(meleeT, "kindled");
         const braceOpen = brace.recovery;
-        const guardAngle = aimAngle - this.meleePoseDir * (0.55 - braceOpen * 0.22);
-        const guardReach = (25 + braceOpen * 4) * s;
+        // Brace LOW and forward — the slab guards the body line during the
+        // swing. The old 0.55-rad off-aim angle let the shield ride up over
+        // the face whenever aim tilted upward (2026-07-24 tape, frames
+        // t=0.34-0.61: a floating rectangle covering the head/nameplate);
+        // the shallower angle + hard below-shoulder clamp keeps the board
+        // an instrument on the arm, never an icon over the silhouette.
+        const guardAngle = aimAngle - this.meleePoseDir * (0.38 - braceOpen * 0.16);
+        const guardReach = (24 + braceOpen * 4) * s;
         guard.x = guardShoulder.x + Math.cos(guardAngle) * guardReach;
-        guard.y = guardShoulder.y + Math.sin(guardAngle) * guardReach;
+        guard.y = Math.max(
+          guardShoulder.y + Math.sin(guardAngle) * guardReach,
+          guardShoulder.y + 6 * s,
+        );
       }
     } else if (this.abilityPoseMs > 0) {
       const a = abilityContract;
@@ -1376,6 +1414,43 @@ export class ProceduralPlayerRig implements CombatRig {
           break;
         }
       }
+    }
+
+    // KINDLED BRACED IDLE (2026-07-24, slash-feel-ledger "FULL ANIMATION
+    // GAMUT" — kindled-v2.jpg's grounded stance): when no combat sentence
+    // owns the arms, the paladin's rest pose is SET, not slack — sword
+    // held low-ready in the lead hand, slab braced forward of the chest.
+    // Blended down (never off) while moving so locomotion still carries
+    // the loadout, and suppressed while dashing/wall-planting/venue
+    // gestures own the arms. Weapons themselves are drawn by
+    // ConstructVfxController's held layer at these same hands.
+    const kindledBraceMix =
+      this.classId === "paladin" &&
+      this.meleePoseMs <= 0 &&
+      this.abilityPoseMs <= 0 &&
+      !dashing &&
+      wallDir === 0 &&
+      this.victoryPoseMs <= 0 &&
+      pose.grounded
+        ? (1 - Math.min(1, walkAmount) * 0.55) *
+          (1 - Math.min(1, Math.max(this.leadThrow, this.backThrow)))
+        : 0;
+    if (kindledBraceMix > 0.01) {
+      // "Down-forward" relative to wherever the aim points, on either side.
+      const downBias = Math.cos(aimAngle) >= 0 ? 1 : -1;
+      const swordAngle = aimAngle + downBias * 0.85;
+      const swordX = shoulderLead.x + Math.cos(swordAngle) * 27 * s;
+      const swordY = shoulderLead.y + Math.sin(swordAngle) * 27 * s;
+      const slabAngle = aimAngle + downBias * 0.16;
+      const slabX = shoulderBack.x + Math.cos(slabAngle) * 21 * s;
+      const slabY = Math.max(
+        shoulderBack.y + Math.sin(slabAngle) * 21 * s,
+        shoulderBack.y + 5 * s,
+      );
+      armTargets.lead.x = Phaser.Math.Linear(armTargets.lead.x, swordX, kindledBraceMix);
+      armTargets.lead.y = Phaser.Math.Linear(armTargets.lead.y, swordY, kindledBraceMix);
+      armTargets.back.x = Phaser.Math.Linear(armTargets.back.x, slabX, kindledBraceMix);
+      armTargets.back.y = Phaser.Math.Linear(armTargets.back.y, slabY, kindledBraceMix);
     }
 
     if (!this.leadHandSpringReady) {
@@ -1456,6 +1531,11 @@ export class ProceduralPlayerRig implements CombatRig {
       footRTarget.x = cx + this.facing * (9 + meleeChain.frontBrace * 3) * s;
       footLTarget.y = ground;
       footRTarget.y = ground;
+    } else if (kindledBraceMix > 0.6 && walkAmount < 0.15) {
+      // Braced idle plants a slightly wider base — weight visibly SET
+      // (kindled-v2's grounded stance), not a narrow neutral hover.
+      footLTarget.x -= 3.5 * s * kindledBraceMix;
+      footRTarget.x += 3.5 * s * kindledBraceMix;
     }
 
     if (!this.footSpringsReady) {

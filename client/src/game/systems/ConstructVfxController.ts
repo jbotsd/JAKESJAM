@@ -30,6 +30,9 @@ import {
   spawnSlashMark,
   drawBladeSwing,
   drawKindledSwing,
+  drawKindledBash,
+  drawKindledTrailOnly,
+  spawnGroundDust,
   drawHeldDaggers,
   drawHeldEdges,
   drawWardSlab,
@@ -138,6 +141,13 @@ type Swing = {
    *  together on the third"). Cycles 1→2→3, then wraps back to 1 rather than
    *  climbing forever, so every third hit is the climax read. */
   comboCount: number;
+  /** SHIELD BASH (slash-feel-ledger design-decision block): true = this
+   *  paladin swing renders the slab-led body check (drawKindledBash), not
+   *  the sword arc. Driven by slash-started's `verb` field. */
+  bash: boolean;
+  /** Ground-response one-shot latch (R1 row 10): the dust wedge fires
+   *  once per swing, never per frame. */
+  dustFired: boolean;
 };
 
 /** Live world position of a fighter's hand (from the rig), 0 = lead, 1 = back. */
@@ -314,6 +324,7 @@ export class ConstructVfxController {
     dir = 1,
     pid?: string,
     comboCount = 1,
+    bash = false,
   ): void {
     this.swings.push({
       kind,
@@ -328,6 +339,8 @@ export class ConstructVfxController {
       tipHistory: [],
       pid,
       comboCount,
+      bash: kind === "paladin" && bash,
+      dustFired: false,
     });
   }
 
@@ -346,6 +359,7 @@ export class ConstructVfxController {
       id: PlayerId,
       style: "interstice" | "kindled",
       dir: number,
+      verb?: "blade" | "bash",
     ) => void,
     // Shock Ring's landing slam and Wall Bloom's wall-kick burst fire
     // SILENTLY (no SimEvent — see combat.ts/World.ts's own "nothing to
@@ -405,8 +419,18 @@ export class ConstructVfxController {
       const dir = inCombo ? -prev.dir : 1;
       const comboCount = inCombo ? (prev.count % 3) + 1 : 1;
       this.slashCombo.set(key, { tick: state.tick, dir, count: comboCount });
-      triggerMeleePose?.(ev.playerId, cls === "ninja" ? "interstice" : "kindled", dir);
-      this.triggerSwing(cls, pivot, backPivot, aim, dir, key, comboCount);
+      // SHIELD BASH: the sim marks the chain's third swing on the event
+      // itself (World.ts 1z3) — the render leads with the slab from the
+      // first windup frame, both on the rig (body CHECK pose) and in the
+      // construct (drawKindledBash), never guessing from its own counter.
+      const isBash = cls === "paladin" && ev.verb === "bash";
+      triggerMeleePose?.(
+        ev.playerId,
+        cls === "ninja" ? "interstice" : "kindled",
+        dir,
+        isBash ? "bash" : "blade",
+      );
+      this.triggerSwing(cls, pivot, backPivot, aim, dir, key, comboCount, isBash);
     }
 
     // Advance + repaint all live swings into the one persistent layer. Each
@@ -431,8 +455,24 @@ export class ConstructVfxController {
       const s = this.swings[i]!;
       s.elapsedMs += deltaMs;
       const t = s.elapsedMs / s.durMs;
-      if (t >= 1) {
+      // Kindled trail afterglow (R1 row 12 — "trail persists 200% of the
+      // active window"): the blade sentence ends at t=1 but the swept
+      // ribbon outlives it, fading out over the next 0.2 sentences
+      // (~112ms). Bash (blunt — no ribbon) and ninja keep the t>=1 cut.
+      const tailEnd = s.kind === "paladin" && !s.bash ? 1.2 : 1;
+      if (t >= tailEnd) {
         this.swings.splice(i, 1);
+        continue;
+      }
+      if (t >= 1) {
+        // Afterglow only: no blade, no held-weapon suppression (the held
+        // sword is already back in hand while the streak dissolves).
+        drawKindledTrailOnly(
+          this.swingLayerPaladin,
+          s.tipHistory,
+          KINDLED_TINT,
+          (tailEnd - t) / 0.2,
+        );
         continue;
       }
       if (s.pid) swingSuppression.set(s.pid, Math.max(swingSuppression.get(s.pid) ?? 0, swingEnv(t)));
@@ -442,19 +482,44 @@ export class ConstructVfxController {
       }
       const style = s.kind === "ninja" ? "interstice" : "kindled";
       const activePivot = s.kind === "ninja" && s.dir < 0 ? s.backPivot : s.pivot;
-      const bladeAngle = meleeBladeAngle(s.aim, s.sweep, s.dir, t, style);
+      const bladeAngle = s.bash ? s.aim : meleeBladeAngle(s.aim, s.sweep, s.dir, t, style);
       if (s.pid) attackerBladeAngle.set(s.pid, bladeAngle);
       const trailStarts = style === "interstice" ? 0.32 : 0.38;
       const trailEnds = style === "interstice" ? 0.84 : 0.88;
       if (t < trailStarts) {
         s.tipHistory.length = 0;
-      } else if (t <= trailEnds) {
+      } else if (t <= trailEnds && !s.bash) {
         s.tipHistory.push({
           x: activePivot.x + Math.cos(bladeAngle) * s.reach,
           y: activePivot.y + Math.sin(bladeAngle) * s.reach,
         });
       }
       if (s.tipHistory.length > 14) s.tipHistory.shift();
+      // Ground response (R1 row 10, Kindled): ONE dust wedge per swing —
+      // the blade kicks it where the arc exits low; the bash stomps it
+      // under the check as the weight lands through the front foot.
+      if (s.kind === "paladin" && !s.dustFired) {
+        if (!s.bash && t >= 0.61) {
+          s.dustFired = true;
+          const tip = s.tipHistory[s.tipHistory.length - 1];
+          if (tip && Math.sin(bladeAngle) > 0.3) {
+            spawnGroundDust(
+              this.pool,
+              { x: tip.x, y: Math.max(tip.y, s.pivot.y + 46) },
+              bladeAngle,
+              KINDLED_TINT,
+            );
+          }
+        } else if (s.bash && t >= 0.5) {
+          s.dustFired = true;
+          spawnGroundDust(
+            this.pool,
+            { x: s.backPivot.x + Math.cos(s.aim) * 14, y: s.backPivot.y + 42 },
+            s.aim,
+            KINDLED_TINT,
+          );
+        }
+      }
       const tint = s.kind === "ninja" ? INTERSTICE_TINT : KINDLED_TINT;
       if (s.kind === "ninja") {
         drawBladeSwing(
@@ -469,6 +534,11 @@ export class ConstructVfxController {
           t,
           s.comboCount,
         );
+      } else if (s.bash) {
+        // SHIELD BASH — slab leads (backPivot = the rig's shield hand),
+        // sword chambers at the lead hand. Blunt grammar: plate + drag
+        // smear, no crescent, no tip ribbon.
+        drawKindledBash(this.swingLayerPaladin, s.backPivot, s.pivot, s.aim, tint, t);
       } else {
         drawKindledSwing(
           this.swingLayerPaladin,
@@ -511,6 +581,22 @@ export class ConstructVfxController {
       spawnSlashMark(this.pool, victimPos, angle, INTERSTICE_TINT, variant);
     }
 
+    // Bash contact read — the check LANDS: a compact seal-burst at the
+    // victim + dust kicked at their feet (blunt register: bloom + ground
+    // response, deliberately NOT the ninja's sharp slash-mark). One-shot
+    // per bash-landed event, straight into the pool.
+    for (const ev of events) {
+      if (ev.t !== "bash-landed") continue;
+      const victimPos = getPosition(ev.victimId);
+      if (!victimPos) continue;
+      const attackerPos = getPosition(ev.attackerId);
+      const dirRad = attackerPos
+        ? Math.atan2(victimPos.y - attackerPos.y, victimPos.x - attackerPos.x)
+        : 0;
+      spawnNovaBurst(this.pool, victimPos, 46, KINDLED_TINT, "seal");
+      spawnGroundDust(this.pool, { x: victimPos.x, y: victimPos.y + 26 }, dirRad, KINDLED_TINT);
+    }
+
     // Empowered-hit flourish — "the next hit should look like a spell took
     // place" (Jake, 2026-07-19): every window/mark ability whose actual
     // payoff lands on a LATER hit, not at cast time. Checked directly off the
@@ -519,7 +605,7 @@ export class ConstructVfxController {
     // ninja-only slash-mark above); ranged/status payoffs ride hit-confirmed
     // below. Layered ON TOP of the existing hit read, never replacing it.
     for (const ev of events) {
-      if (ev.t !== "slash-hit") continue;
+      if (ev.t !== "slash-hit" && ev.t !== "bash-landed") continue;
       const attacker = state.players[ev.attackerId];
       if (!attacker) continue;
       const cls = resolveClassId(attacker.characterId);
