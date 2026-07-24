@@ -77,6 +77,7 @@ export const EVENT_PRESENTATION_REGISTRY = {
     intensity: "hit",
     lowTierCore: "Victim reaction and impact confirmation remain visible",
     state: "complete",
+    note: "Additive flags get distinct confirm layers on top of the generic stack (Track L): `amped` (radiant punish vs a statused target / Fooled consumption) → StatusVfxController's rose crack-burst at the victim; `pierced` (void through a held shield) → pass-through streaks + a falling shield tick, so the counter-pick reads instead of looking like a bug. `headshot` keeps its own distinct cue (earlier pass).",
   },
   "destructible-broken": {
     action: "Damage destroys an arena object",
@@ -183,6 +184,16 @@ export const EVENT_PRESENTATION_REGISTRY = {
     lowTierCore: "One upward-sweeping ring at the feet remains visible",
     state: "complete",
     note: "StatusVfxController renders an upward-sweeping feet-level ring burst plus rising tick sparks (movement register — rises where slow's drag wake sinks); the refunded jump/dash being usable again is the world-state confirmation. Deliberately silent (no canonical cue recorded; the same-tick emission-cast carries the audio).",
+  },
+  "shield-refunded": {
+    action: "An ability instantly restores shield charge (Return Glass / Bastion Pulse / Plant Charge's landing tick)",
+    stateChange: "The charge visibly returns to the vessel whose bar it refills",
+    lead: "world-vfx",
+    channels: ["world-vfx", "particles", "ui", "world-state"],
+    intensity: "action",
+    lowTierCore: "One inward sapphire snap-ring at the body remains visible",
+    state: "complete",
+    note: "StatusVfxController renders a fast inward snap-ring + rising charge tick in the shield bar's sapphire at the event site (Track L — these refunds previously moved ONLY the HUD bar). Sim emits only when charge actually rose (full-bar casts stay silent, honest-read doctrine). Deliberately silent audio (never-synthesize rule; the same-press 'card' cue carries it); Bastion Pulse's ward-held doubling reads through the sim `amount` (one ring either way — a bigger refill is still one refill beat).",
   },
   "ability-activated": {
     action: "A player activates a drafted ability",

@@ -1859,6 +1859,20 @@ function resolveRangedHit(
       reflectedVictimId: mitigation.shieldReflected ? ev.victimId : undefined,
     };
   }
+  // Void Fracture pass-through (Track L legibility): we only reach this
+  // point with a HELD shield when combat.ts's voidPiercing branch let the
+  // shard straight through (every other held-shield path either returned
+  // `shielded` above or was caught by Syzygist Ward / Kindled Ward inside
+  // the mitigation). Stamp the event so the renderer can show the shield
+  // FAILING rather than silently coexisting with full damage.
+  if (
+    victim.shieldActive &&
+    proj.element === "void" &&
+    !mitigation.warded &&
+    !mitigation.syzWarded
+  ) {
+    ev.pierced = true;
+  }
   let finalDamage = mitigation.damage;
   const element = proj.element;
   // Radiant: 1.4x to a target already affected by any status effect.
@@ -1869,7 +1883,12 @@ function resolveRangedHit(
       (postPlayer.slowedUntilTick !== undefined && postPlayer.slowedUntilTick > ctx.nextTick) ||
       (postPlayer.vulnerabilityUntilTick !== undefined &&
         postPlayer.vulnerabilityUntilTick > ctx.nextTick);
-    if (hasStatus) finalDamage *= 1.4;
+    if (hasStatus) {
+      finalDamage *= 1.4;
+      // Track L legibility: the punish-the-statused moment is a real
+      // mechanic beat — mark the event so it can read at the victim.
+      ev.amped = true;
+    }
   }
   // Facet Break (Geometrician catalog v1, single role): a hit from the
   // marking player on their still-marked target is amplified.
@@ -1900,7 +1919,13 @@ function resolveRangedHit(
   // unlike Facet Break/Focus Hex immediately above (which read the
   // ATTACKER's own mark); any attacker's shot benefits, not just the
   // Syzygist/Geometrician who caught this player with the burst.
-  finalDamage *= fooledDamageMultiplier(postPlayer, ctx.nextTick);
+  const fooledMult = fooledDamageMultiplier(postPlayer, ctx.nextTick);
+  if (fooledMult > 1) {
+    // Track L legibility: victim-state amp, same read as the radiant
+    // punish above — the consumption moment must be distinguishable.
+    ev.amped = true;
+  }
+  finalDamage *= fooledMult;
   // Technique axis (six-axes-goal.md Layer 1): an execute-flagged shard
   // finishes a player already below the threshold fraction of their REAL
   // max health (maxHealthForPlayer, 2026-07-22 bug fix — was a flat 100,
@@ -3455,13 +3480,21 @@ export function stepWithRuntime(
           // constants.ts GEO_* header). Capped at the build's own max charge
           // so this never exceeds what a full shield bar would hold.
           const maxCharge = SHIELD_MAX_CHARGE_DEFAULT * build.shieldChargeMultiplier;
-          nextEntity = {
-            ...nextEntity,
-            shieldCharge: Math.min(
-              maxCharge,
-              (nextEntity.shieldCharge ?? 0) + GEO_RETURN_GLASS_SHIELD_REFUND,
-            ),
-          };
+          const chargeBefore = nextEntity.shieldCharge ?? 0;
+          const chargeAfter = Math.min(maxCharge, chargeBefore + GEO_RETURN_GLASS_SHIELD_REFUND);
+          nextEntity = { ...nextEntity, shieldCharge: chargeAfter };
+          // Track L legibility: the refund gets a site read at the vessel —
+          // only when charge actually came back (a full-bar cast stays
+          // silent, honest-read doctrine, same contract as stride-refunded).
+          if (chargeAfter > chargeBefore) {
+            events.push({
+              t: "shield-refunded",
+              playerId: pid,
+              amount: chargeAfter - chargeBefore,
+              x: nextEntity.x,
+              y: nextEntity.y,
+            });
+          }
           activated = true;
           break;
         }
@@ -3587,10 +3620,21 @@ export function stepWithRuntime(
           const refund = nextEntity.shieldActive
             ? KIN_BASTION_PULSE_SHIELD_REFUND * KIN_BASTION_PULSE_WARD_HELD_MULTIPLIER
             : KIN_BASTION_PULSE_SHIELD_REFUND;
-          nextEntity = {
-            ...nextEntity,
-            shieldCharge: Math.min(maxCharge, (nextEntity.shieldCharge ?? 0) + refund),
-          };
+          const chargeBefore = nextEntity.shieldCharge ?? 0;
+          const chargeAfter = Math.min(maxCharge, chargeBefore + refund);
+          nextEntity = { ...nextEntity, shieldCharge: chargeAfter };
+          // Track L legibility: same shield-refunded site read as Return
+          // Glass (only when charge actually rose); the ward-held doubling
+          // reads through `amount`.
+          if (chargeAfter > chargeBefore) {
+            events.push({
+              t: "shield-refunded",
+              playerId: pid,
+              amount: chargeAfter - chargeBefore,
+              x: nextEntity.x,
+              y: nextEntity.y,
+            });
+          }
           activated = true;
           break;
         }
@@ -3752,15 +3796,24 @@ export function stepWithRuntime(
             }
             if (!blocked) {
               const maxCharge = SHIELD_MAX_CHARGE_DEFAULT * build.shieldChargeMultiplier;
-              nextEntity = {
-                ...nextEntity,
-                x: cx,
-                y: cy,
-                shieldCharge: Math.min(
-                  maxCharge,
-                  (nextEntity.shieldCharge ?? 0) + KIN_PLANT_CHARGE_SHIELD_REFUND,
-                ),
-              };
+              const chargeBefore = nextEntity.shieldCharge ?? 0;
+              const chargeAfter = Math.min(
+                maxCharge,
+                chargeBefore + KIN_PLANT_CHARGE_SHIELD_REFUND,
+              );
+              nextEntity = { ...nextEntity, x: cx, y: cy, shieldCharge: chargeAfter };
+              // Track L legibility: the landing's ward-ready tick reads at
+              // the LANDING point (was a recorded gap on the plant-charge
+              // audit row); silent when the bar was already full.
+              if (chargeAfter > chargeBefore) {
+                events.push({
+                  t: "shield-refunded",
+                  playerId: pid,
+                  amount: chargeAfter - chargeBefore,
+                  x: cx,
+                  y: cy,
+                });
+              }
               activated = true;
               break;
             }

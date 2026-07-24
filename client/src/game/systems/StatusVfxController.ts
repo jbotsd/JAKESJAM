@@ -73,6 +73,9 @@ const MARK_ORBIT_RAD_PER_MS = 0.0012;
 // family (the chip becomes the supplement to the SAME hue in-world),
 // class glows for class windows, the movement cyan for surge, drain
 // crimson for tithe/fangs.
+/** Void pierce streaks — ProjectileVfx's void core (pale violet), so the
+ *  pass-through wears the element that did it. */
+const PIERCE_COLOR = 0xd9c8ff;
 const WINDOW_COUNTER_COLOR = 0xf59e0b; // amber — the armed answer
 const WINDOW_SEAL_COLOR = 0xeab308; // gold — Kindled seal charge
 const WINDOW_MEASURE_COLOR = 0x35d6ff; // GEO cyan — calibration
@@ -305,6 +308,16 @@ export class StatusVfxController {
       }
       if (ev.t === "stride-refunded") {
         this.spawnStrideRefundSweep({ x: ev.x, y: ev.y });
+      }
+      if (ev.t === "shield-refunded") {
+        this.spawnShieldRefundSnap({ x: ev.x, y: ev.y });
+      }
+      if (ev.t === "hit-confirmed" && (ev.amped === true || ev.pierced === true)) {
+        const pos = getPosition(ev.victimId);
+        if (pos) {
+          if (ev.amped === true) this.spawnAmpPunishBurst(pos);
+          if (ev.pierced === true) this.spawnPierceSeam(pos);
+        }
       }
     }
   }
@@ -618,6 +631,138 @@ export class StatusVfxController {
         r.setScale(s, s);
       },
       release: () => this.pool.release(ring),
+    });
+  }
+
+  /** Shield charge instantly restored (`shield-refunded` — Return Glass /
+   *  Bastion Pulse / Plant Charge's landing tick): a fast sapphire ring
+   *  SNAPPING onto the body plus one rising charge tick. Same hue as the
+   *  ward-shell family (it refills the same sapphire bar) but read-distinct
+   *  by tempo — a single quick snap-in vs the shell's slow steady pulse. */
+  private spawnShieldRefundSnap(position: Vec2): void {
+    const ring = this.pool.acquireRing();
+    if (ring) {
+      ring.setPosition(position.x, position.y - 6);
+      ring.setFillStyle(WARD_COLOR, 0);
+      ring.setStrokeStyle(2.4, WARD_COLOR, 0.8);
+      ring.setScale(1.7);
+      ring.setAlpha(1);
+      transientVfx.spawn({
+        factory: () => ring,
+        lifetimeMs: 200, // the snap — much faster than the shell pulse
+        startAlpha: 1,
+        ease: "Sine.easeOut",
+        onTick: (obj, t) => {
+          const r = obj as Phaser.GameObjects.Arc;
+          const s = 1.7 - 0.75 * t;
+          r.setScale(s, s);
+        },
+        release: () => this.pool.release(ring),
+      });
+    }
+    const spark = this.pool.acquireSpark();
+    if (!spark) return;
+    const startY = position.y + 4;
+    spark.setPosition(position.x, startY);
+    spark.setFillStyle(WARD_COLOR, 0.85);
+    spark.setRotation(0); // upright — charge climbing back into the bar
+    spark.setScale(0.7, 1.2);
+    spark.setAlpha(0.85);
+    transientVfx.spawn({
+      factory: () => spark,
+      lifetimeMs: 260,
+      startAlpha: 0.85,
+      ease: "Sine.easeOut",
+      onTick: (obj, t) => {
+        const s = obj as Phaser.GameObjects.Rectangle;
+        s.y = startY - 26 * t;
+        s.setScale(0.7, 1.2 + 0.5 * t);
+      },
+      release: () => this.pool.release(spark),
+    });
+  }
+
+  /** Victim-state amp consumed (`hit-confirmed` with `amped` — radiant
+   *  punish vs a statused target, or the Fooled debuff): a rose crack-burst
+   *  at the victim, four radial ticks splitting outward from the body —
+   *  the cracked guard (vuln/fooled family hue) being exploited. Rides on
+   *  top of the generic hit presentation, which stays the lead. */
+  private spawnAmpPunishBurst(position: Vec2): void {
+    const cy = position.y - 6;
+    for (let i = 0; i < 4; i++) {
+      const spark = this.pool.acquireSpark();
+      if (!spark) break;
+      const angle = Math.PI / 4 + (i * Math.PI) / 2; // X arms, not a cross
+      const r0 = 8;
+      spark.setPosition(position.x + Math.cos(angle) * r0, cy + Math.sin(angle) * r0);
+      spark.setFillStyle(WINDOW_VULN_COLOR, 0.8);
+      spark.setRotation(angle - Math.PI / 2); // long axis radial — a split
+      spark.setScale(0.6, 1.2);
+      spark.setAlpha(0.8);
+      transientVfx.spawn({
+        factory: () => spark,
+        lifetimeMs: 220,
+        startAlpha: 0.8,
+        ease: "Sine.easeOut",
+        onTick: (obj, t) => {
+          const s = obj as Phaser.GameObjects.Rectangle;
+          const r = r0 + 14 * t;
+          s.x = position.x + Math.cos(angle) * r;
+          s.y = cy + Math.sin(angle) * r;
+          s.setScale(0.6, 1.2 + 0.5 * t);
+        },
+        release: () => this.pool.release(spark),
+      });
+    }
+  }
+
+  /** Void pierce (`hit-confirmed` with `pierced` — the shard went straight
+   *  THROUGH a held shield): pale-violet pass-through streaks crossing the
+   *  body plus one sapphire tick dropping away — the shield visibly
+   *  failing, so the counter-pick moment reads for both players instead of
+   *  looking like a bug. */
+  private spawnPierceSeam(position: Vec2): void {
+    const cy = position.y - 6;
+    for (let i = 0; i < 2; i++) {
+      const spark = this.pool.acquireSpark();
+      if (!spark) break;
+      const startX = position.x - 16 + i * 6;
+      const sy = cy + (i === 0 ? -3 : 3);
+      spark.setPosition(startX, sy);
+      spark.setFillStyle(PIERCE_COLOR, 0.85);
+      spark.setRotation(Math.PI / 2); // horizontal — travel through the body
+      spark.setScale(0.5, 1.6);
+      spark.setAlpha(0.85);
+      transientVfx.spawn({
+        factory: () => spark,
+        lifetimeMs: 180,
+        startAlpha: 0.85,
+        ease: "Sine.easeOut",
+        onTick: (obj, t) => {
+          const s = obj as Phaser.GameObjects.Rectangle;
+          s.x = startX + 32 * t; // in one side, out the other
+        },
+        release: () => this.pool.release(spark),
+      });
+    }
+    const tick = this.pool.acquireSpark();
+    if (!tick) return;
+    tick.setPosition(position.x + 6, cy);
+    tick.setFillStyle(WARD_COLOR, 0.7);
+    tick.setRotation(0.4);
+    tick.setScale(0.6, 1.0);
+    tick.setAlpha(0.7);
+    transientVfx.spawn({
+      factory: () => tick,
+      lifetimeMs: 240,
+      startAlpha: 0.7,
+      ease: "Sine.easeIn",
+      onTick: (obj, t) => {
+        const s = obj as Phaser.GameObjects.Rectangle;
+        s.y = cy + 18 * t; // the guard falling away
+        s.setRotation(0.4 + 0.8 * t);
+      },
+      release: () => this.pool.release(tick),
     });
   }
 

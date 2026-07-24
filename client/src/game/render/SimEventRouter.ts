@@ -723,6 +723,14 @@ export class SimEventRouter {
         }
         break;
       }
+      case "shield-refunded": {
+        // Deliberately no router-side reaction (Track L): the world-space
+        // read is StatusVfxController's sapphire snap-ring + rising charge
+        // tick at the event site, and the HUD bar movement is the ui
+        // channel. Silent by design — never-synthesize rule; the same-press
+        // ability 'card' cue already carries the audio beat.
+        break;
+      }
       default: {
         // Exhaustiveness check.
         const _exhaustive: never = event;

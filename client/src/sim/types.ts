@@ -1531,6 +1531,22 @@ export type SimEvent = (
        *  slight boon baked in; this is purely for the renderer's distinct
        *  headshot VFX/audio cue. Additive wire field — old clients ignore it. */
       headshot?: boolean;
+      /** True when the damage was amplified by the VICTIM's own state —
+       *  the radiant 1.4x punish vs an already-statused target, or the
+       *  Fooled debuff's multiplier (Track L legibility: both amps used to
+       *  fold silently into `damage`, leaving the punish-the-statused
+       *  moment illegible in principle — no renderer could distinguish an
+       *  amped radiant hit). Attacker-side mark amps (Facet Break / Focus
+       *  Hex / Judgment) deliberately DON'T set this — they already own a
+       *  dedicated empowered-hit flourish. Additive wire field. */
+      amped?: true;
+      /** True when a void shard passed straight through the victim's HELD
+       *  shield (combat.ts's voidPiercing pass-through — the counter-pick
+       *  to the turtle meta). Without this flag the shield visibly stays
+       *  up while full damage lands, which reads as a bug to both players
+       *  (Track L legibility, docs/legibility-audit.md "emission void
+       *  fork"). Additive wire field. */
+      pierced?: true;
     }
   | { t: 'destructible-broken'; entityId: EntityId; x: number; y: number }
   | {
@@ -1646,6 +1662,19 @@ export type SimEvent = (
    * clients ignore unknown event tags.
    */
   | { t: 'stride-refunded'; playerId: PlayerId; x: number; y: number }
+  /**
+   * Emitted when an ability instantly restores shield charge (Track L
+   * legibility, docs/legibility-audit.md: Return Glass and Bastion Pulse
+   * had ZERO dedicated read anywhere — shield charge only moved on the
+   * HUD bar — and Plant Charge's landing refund tick was a recorded gap).
+   * Only fires when the refund actually RAISED the charge (a cast at full
+   * charge stays silent — honest-read doctrine, same contract as
+   * stride-refunded). `amount` is the real post-cap delta. x/y = the
+   * caster's body at cast time (the site read goes at the vessel: the
+   * charge visibly returns to the fighter whose bar it refills).
+   * Additive wire type — old clients ignore unknown event tags.
+   */
+  | { t: 'shield-refunded'; playerId: PlayerId; amount: number; x: number; y: number }
   /**
    * Emitted when a drafted active fires (six-axes Layer 2: input bits
    * 10..13, validated against the slot's cooldown). Drives the router's
