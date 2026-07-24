@@ -341,7 +341,16 @@ export class ParticlePool {
       | Phaser.GameObjects.Graphics
       | Phaser.GameObjects.Image,
   ): void {
-    gfx.setVisible(true);
+    // HIDE on release (Track L 2026-07-24 bug fix; was setVisible(true)):
+    // a freed object is parked at the world origin with alpha 1 and its
+    // last fill/stroke style, so leaving it visible painted the free
+    // list as a styled junk pile at (0,0) whenever the camera showed the
+    // map corner (caught by scripts/statusReadShots.ts, whose harness
+    // camera always frames the origin). blastCircle/glow always re-hid
+    // explicitly after this call, masking the bug for those two pools;
+    // spark/shard/ring relied on resetCommon alone. Every acquire* sets
+    // visible(true), so hiding here is strictly correct for all five.
+    gfx.setVisible(false);
     gfx.setAlpha(1);
     gfx.setScale(1);
     gfx.setRotation(0);

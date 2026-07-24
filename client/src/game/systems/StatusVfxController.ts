@@ -499,14 +499,14 @@ export class StatusVfxController {
       const side = i === 0 ? -1 : 1;
       const startX = position.x + side * 15;
       spark.setPosition(startX, cy);
-      spark.setFillStyle(WINDOW_COUNTER_COLOR, 0.75 * intensity);
+      spark.setFillStyle(WINDOW_COUNTER_COLOR, 0.85 * intensity);
       spark.setRotation(side * 0.6); // angled arms of the pincer
-      spark.setScale(0.7, 1.3);
-      spark.setAlpha(0.75 * intensity);
+      spark.setScale(0.8, 1.5);
+      spark.setAlpha(0.85 * intensity);
       transientVfx.spawn({
         factory: () => spark,
         lifetimeMs: 160,
-        startAlpha: 0.75 * intensity,
+        startAlpha: 0.85 * intensity,
         ease: "Sine.easeOut",
         onTick: (obj, t) => {
           const s = obj as Phaser.GameObjects.Rectangle;
@@ -531,16 +531,16 @@ export class StatusVfxController {
       const sx = position.x + Math.cos(angle) * r;
       const sy = cy + Math.sin(angle) * r;
       spark.setPosition(sx, sy);
-      spark.setFillStyle(WINDOW_SEAL_COLOR, 0.5 * intensity);
+      spark.setFillStyle(WINDOW_SEAL_COLOR, 0.65 * intensity);
       // Lie along the diamond's edges, not point at the body — an outline,
       // not rays.
       spark.setRotation(angle + Math.PI / 4);
-      spark.setScale(0.6, 1.2);
-      spark.setAlpha(0.5 * intensity);
+      spark.setScale(0.7, 1.35);
+      spark.setAlpha(0.65 * intensity);
       transientVfx.spawn({
         factory: () => spark,
         lifetimeMs: RING_DURATION_MS,
-        startAlpha: 0.5 * intensity,
+        startAlpha: 0.65 * intensity,
         ease: "Sine.easeOut",
         onTick: (obj, t) => {
           const s = obj as Phaser.GameObjects.Rectangle;
@@ -597,14 +597,14 @@ export class StatusVfxController {
       const side = i === 0 ? -1 : 1;
       const startX = position.x + side * 17;
       spark.setPosition(startX, cy);
-      spark.setFillStyle(WINDOW_MEASURE_COLOR, 0.55 * intensity);
+      spark.setFillStyle(WINDOW_MEASURE_COLOR, 0.68 * intensity);
       spark.setRotation(Math.PI / 2); // long axis horizontal — a sight line
-      spark.setScale(0.5, 1.1);
-      spark.setAlpha(0.55 * intensity);
+      spark.setScale(0.6, 1.3);
+      spark.setAlpha(0.68 * intensity);
       transientVfx.spawn({
         factory: () => spark,
         lifetimeMs: RING_DURATION_MS,
-        startAlpha: 0.55 * intensity,
+        startAlpha: 0.68 * intensity,
         ease: "Sine.easeOut",
         onTick: (obj, t) => {
           const s = obj as Phaser.GameObjects.Rectangle;
@@ -734,8 +734,13 @@ export class StatusVfxController {
     ring.setPosition(position.x, position.y - 6);
     ring.setFillStyle(WINDOW_AEGIS_COLOR, 0);
     ring.setStrokeStyle(1.2, WINDOW_AEGIS_COLOR, 0.16 * intensity);
-    const scale = AEGIS_TRUE_RADIUS_PX / 18; // pool ring base radius is 18px
-    ring.setScale(scale * 0.985);
+    // Re-radius the pooled ring rather than scaling it 14x — a scaled Arc
+    // scales its stroke and segment geometry too (verified chunky on the
+    // harness tape); setRadius regenerates smooth geometry at true size.
+    // Restored to the shared pool's 18px on release, same contract as the
+    // judgment arc's angle restore.
+    ring.setRadius(AEGIS_TRUE_RADIUS_PX);
+    ring.setScale(0.985);
     ring.setAlpha(1);
     transientVfx.spawn({
       factory: () => ring,
@@ -744,10 +749,13 @@ export class StatusVfxController {
       ease: "Sine.easeOut",
       onTick: (obj, t) => {
         const r = obj as Phaser.GameObjects.Arc;
-        const s = scale * (0.985 + 0.03 * t); // a breath at true radius
+        const s = 0.985 + 0.03 * t; // a breath at true radius
         r.setScale(s, s);
       },
-      release: () => this.pool.release(ring),
+      release: () => {
+        ring.setRadius(18);
+        this.pool.release(ring);
+      },
     });
   }
 
@@ -812,21 +820,21 @@ export class StatusVfxController {
       const angle = Math.PI / 4 + (i * Math.PI) / 2; // X arms, not a cross
       const r0 = 8;
       spark.setPosition(position.x + Math.cos(angle) * r0, cy + Math.sin(angle) * r0);
-      spark.setFillStyle(WINDOW_VULN_COLOR, 0.8);
+      spark.setFillStyle(WINDOW_VULN_COLOR, 0.95);
       spark.setRotation(angle - Math.PI / 2); // long axis radial — a split
-      spark.setScale(0.6, 1.2);
-      spark.setAlpha(0.8);
+      spark.setScale(0.7, 1.5);
+      spark.setAlpha(0.95);
       transientVfx.spawn({
         factory: () => spark,
         lifetimeMs: 220,
-        startAlpha: 0.8,
+        startAlpha: 0.95,
         ease: "Sine.easeOut",
         onTick: (obj, t) => {
           const s = obj as Phaser.GameObjects.Rectangle;
-          const r = r0 + 14 * t;
+          const r = r0 + 18 * t;
           s.x = position.x + Math.cos(angle) * r;
           s.y = cy + Math.sin(angle) * r;
-          s.setScale(0.6, 1.2 + 0.5 * t);
+          s.setScale(0.7, 1.5 + 0.5 * t);
         },
         release: () => this.pool.release(spark),
       });
@@ -846,14 +854,14 @@ export class StatusVfxController {
       const startX = position.x - 16 + i * 6;
       const sy = cy + (i === 0 ? -3 : 3);
       spark.setPosition(startX, sy);
-      spark.setFillStyle(PIERCE_COLOR, 0.85);
+      spark.setFillStyle(PIERCE_COLOR, 0.95);
       spark.setRotation(Math.PI / 2); // horizontal — travel through the body
-      spark.setScale(0.5, 1.6);
-      spark.setAlpha(0.85);
+      spark.setScale(0.6, 1.8);
+      spark.setAlpha(0.95);
       transientVfx.spawn({
         factory: () => spark,
         lifetimeMs: 180,
-        startAlpha: 0.85,
+        startAlpha: 0.95,
         ease: "Sine.easeOut",
         onTick: (obj, t) => {
           const s = obj as Phaser.GameObjects.Rectangle;
@@ -945,16 +953,16 @@ export class StatusVfxController {
       const sx = position.x + Math.cos(angle) * MARK_ORBIT_RADIUS_PX;
       const sy = cy + Math.sin(angle) * MARK_ORBIT_RADIUS_PX;
       spark.setPosition(sx, sy);
-      spark.setFillStyle(MARK_FACET_COLOR, 0.55 * intensity);
+      spark.setFillStyle(MARK_FACET_COLOR, 0.7 * intensity);
       // Long axis tangent to the orbit — a chord lying flat on the facet,
       // not a ray shooting off it (instrument, not blast).
       spark.setRotation(angle);
-      spark.setScale(0.7, 1.5);
-      spark.setAlpha(0.55 * intensity);
+      spark.setScale(0.8, 1.7);
+      spark.setAlpha(0.7 * intensity);
       transientVfx.spawn({
         factory: () => spark,
         lifetimeMs: RING_DURATION_MS,
-        startAlpha: 0.55 * intensity,
+        startAlpha: 0.7 * intensity,
         ease: "Sine.easeOut",
         onTick: (obj, t) => {
           const s = obj as Phaser.GameObjects.Rectangle;
@@ -1015,14 +1023,14 @@ export class StatusVfxController {
       const sx = position.x + Math.cos(angle) * (MARK_ORBIT_RADIUS_PX - 1);
       const sy = cy + Math.sin(angle) * (MARK_ORBIT_RADIUS_PX - 1);
       spark.setPosition(sx, sy);
-      spark.setFillStyle(MARK_READ_COLOR, 0.6 * intensity);
+      spark.setFillStyle(MARK_READ_COLOR, 0.72 * intensity);
       spark.setRotation(-Math.PI / 4); // the slash angle, always
-      spark.setScale(0.6, 1.3);
-      spark.setAlpha(0.6 * intensity);
+      spark.setScale(0.7, 1.5);
+      spark.setAlpha(0.72 * intensity);
       transientVfx.spawn({
         factory: () => spark,
         lifetimeMs: RING_DURATION_MS,
-        startAlpha: 0.6 * intensity,
+        startAlpha: 0.72 * intensity,
         ease: "Sine.easeOut",
         onTick: (obj, t) => {
           const s = obj as Phaser.GameObjects.Rectangle;
