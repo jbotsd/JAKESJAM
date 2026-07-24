@@ -39,6 +39,8 @@ import {
   spawnBlinkStreak,
   drawGroundField,
   spawnGhostGuardDodge,
+  spawnMeleeDebris,
+  spawnKillShockRing,
 } from "./game/render/LightConstruct";
 import { meleeBladeAngle } from "./game/render/meleeTiming.js";
 import type { CharacterArchetype, PlayerId, Vec2, WorldState } from "./sim";
@@ -386,6 +388,19 @@ class HarnessScene extends Phaser.Scene {
             1,
             true,
           );
+          break;
+        // ── R1 rows 17/18 (K9, 2026-07-24) — melee contact debris + the
+        //    Kindled melee-kill ground shock ring ──────────────────────────
+        case "debris-edge":
+          // Edge contact: tight spray CONTINUING the cut line (left-to-right
+          // hit, slight downward bite — matches the hurt review's vector).
+          spawnMeleeDebris(this.pool, { x: 430, y: 300 }, 0.15, KINDLED_TINT, "edge");
+          break;
+        case "debris-bash":
+          spawnMeleeDebris(this.pool, { x: 430, y: 300 }, 0.15, KINDLED_TINT, "bash");
+          break;
+        case "kill-ring":
+          spawnKillShockRing(this.pool, { x: 430, y: 356 }, KINDLED_TINT);
           break;
         // ── Phase 3 primitive demos (2026-07-20) ──────────────────────────
         case "nova-slash":

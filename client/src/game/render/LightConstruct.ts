@@ -1795,22 +1795,27 @@ export function spawnMeleeDebris(
   const isEdge = register === "edge";
   const N = isEdge ? 7 : 9;
   const spread = isEdge ? 0.5 : 1.35; // full wedge angle (rad)
-  const travel = isEdge ? 78 : 52; // max chunk travel (px) over the life
-  const chip = isEdge ? 2.6 : 3.8; // base chip half-size (px)
+  const travel = isEdge ? 92 : 58; // max chunk travel (px) over the life
+  const chip = isEdge ? 3.2 : 4.6; // base chip half-size (px)
   const droop = isEdge ? 14 : 30; // gravity droop at end-of-life (px)
   const draw = (t: number): void => {
     g.clear();
-    const fade = (1 - t) * (1 - t);
+    // K9 harness-strip retune: the original (1-t)^2 fade killed the chips
+    // by half-life — the DIRECTIONAL read (the whole point of row 18) died
+    // before the chips finished traveling. Linear fade lets the spray
+    // speak for its full flight; only the streak keeps the sharper decay.
+    const fade = 1 - t;
     // Edge only: a fast-fading streak THROUGH the contact point along the
     // cut line — the "the cut continued" read the radial orb never had.
     if (isEdge) {
+      const streakFade = fade * fade;
       const sl = 26 * (1 - t * 0.5);
-      g.lineStyle(3, tint.glow, 0.5 * fade);
+      g.lineStyle(3, tint.glow, 0.6 * streakFade);
       g.beginPath();
       g.moveTo(at.x - Math.cos(dirRad) * sl * 0.35, at.y - Math.sin(dirRad) * sl * 0.35);
       g.lineTo(at.x + Math.cos(dirRad) * sl, at.y + Math.sin(dirRad) * sl);
       g.strokePath();
-      g.lineStyle(1.4, tint.core, 0.85 * fade);
+      g.lineStyle(1.6, tint.core, 0.95 * streakFade);
       g.beginPath();
       g.moveTo(at.x, at.y);
       g.lineTo(at.x + Math.cos(dirRad) * sl * 0.8, at.y + Math.sin(dirRad) * sl * 0.8);
@@ -1836,9 +1841,9 @@ export function spawnMeleeDebris(
         new Phaser.Math.Vector2(cx - dx, cy - dy),
         new Phaser.Math.Vector2(cx - px, cy - py),
       ];
-      g.fillStyle(tint.glow, 0.55 * fade);
+      g.fillStyle(tint.glow, 0.75 * fade);
       g.fillPoints(pts, true);
-      g.lineStyle(1, tint.core, 0.9 * fade);
+      g.lineStyle(1.2, tint.core, fade);
       strokeClosed(g, pts);
     }
   };
@@ -1897,22 +1902,28 @@ export function spawnKillShockRing(
   };
   const draw = (t: number): void => {
     g.clear();
-    const fade = (1 - t) * (1 - t);
-    const r = 12 + t * 58;
+    // K9 harness-strip retune: (1-t)^2 fade + hairline strokes died before
+    // the expansion spoke — a kill-tier ground shock has to SLAM while it
+    // travels. Linear fade, wider strokes, and a white-hot front for the
+    // first ~40% of the life.
+    const fade = 1 - t;
+    const hot = Math.max(0, 1 - t / 0.4); // white-hot front, gone by t=0.4
+    const r = 14 + t * 74;
     // Leading edge: bright core over a wider glow — the shock front.
-    drawBrokenEllipse(r, 5, tint.glow, 0.5 * fade);
-    drawBrokenEllipse(r, 2, tint.core, 0.95 * fade);
+    drawBrokenEllipse(r, 9, tint.glow, 0.65 * fade);
+    drawBrokenEllipse(r, 3, tint.core, fade);
+    if (hot > 0) drawBrokenEllipse(r, 1.6, 0xffffff, hot);
     // Trailing ring: the wave already passed here.
-    drawBrokenEllipse(r * 0.62, 2.5, tint.glow, 0.3 * fade);
+    drawBrokenEllipse(r * 0.62, 3, tint.glow, 0.42 * fade);
     // Ground chips kicked up just behind the front (discrete ticks, world
     // response — not a glow decoration).
     for (let i = 0; i < 6; i++) {
       const a = (i / 6) * Math.PI * 2 + 0.8;
       const bx = feet.x + Math.cos(a) * r * 0.82;
       const by = feet.y + Math.sin(a) * r * 0.82 * SQUASH;
-      const h = 4 + ((i * 3) % 4) - t * 3;
+      const h = 5 + ((i * 3) % 4) - t * 3;
       if (h <= 0) continue;
-      g.lineStyle(1.5, tint.core, 0.6 * fade);
+      g.lineStyle(2, tint.core, 0.8 * fade);
       g.beginPath();
       g.moveTo(bx, by);
       g.lineTo(bx, by - h);
