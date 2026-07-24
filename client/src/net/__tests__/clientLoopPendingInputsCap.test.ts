@@ -80,13 +80,13 @@ describe("ClientLoop.pendingInputs hard cap (perf audit M1)", () => {
     loop.stop();
   });
 
-  test("WEDGE RESYNC (2026-07-24): a snapshot that acks NOTHING against a saturated queue drops the queue and rebases prediction onto the authoritative tick", () => {
+  test("WEDGE RESYNC (2026-07-24): a snapshot that acks NOTHING against a deep queue drops the queue and rebases prediction onto the authoritative tick", () => {
     // The permanent form of the showcase "player stationary >1s" bug: once
     // the server starts window-dropping this client's inputs, acks freeze,
-    // the queue pins at the cap, and every reconcile replays all 240
-    // unacked inputs on top of the authoritative state — predicted tick =
-    // authTick + 240 forever, no matter what the slew hints do (taped live
-    // in the K6 kindled run: offset flat at 236-239 ticks for 3+ minutes).
+    // the queue grows, and every reconcile replays the whole queue on top
+    // of the authoritative state — predicted tick = authTick + depth, a
+    // SELF-AMPLIFYING ~2x-real-time ratchet (taped live in the K6/K7
+    // kindled runs; K6: offset flat at 236-239 ticks for 3+ minutes).
     const loop = new ClientLoop({
       transport: makeTransport(),
       matchId: "world",
@@ -96,11 +96,12 @@ describe("ClientLoop.pendingInputs hard cap (perf audit M1)", () => {
     internals.predictedState = World.create(arena, [], 1);
     internals.runtime = createRuntime(arena);
 
-    // Saturate: 300 local steps, zero acks → queue pinned at the cap.
-    for (let i = 0; i < 300; i += 1) internals.stepOnce();
-    expect(internals.pendingInputs.length).toBe(240);
+    // Exceed the resync depth (60 = 1s of unacked inputs): 90 local
+    // steps, zero acks.
+    for (let i = 0; i < 90; i += 1) internals.stepOnce();
+    expect(internals.pendingInputs.length).toBe(90);
     const predictedAhead = internals.predictedState!.tick as unknown as number;
-    expect(predictedAhead).toBe(300);
+    expect(predictedAhead).toBe(90);
 
     // Authoritative snapshot from a server that processed NONE of it.
     const authState = World.create(arena, [], 1);
