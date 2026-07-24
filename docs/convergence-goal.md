@@ -215,7 +215,40 @@ already pass.
   Kindled Ward partial mitigation, hitscan resolution (+ headshot band),
   six-axes axis payloads; Aegis Share's team-peel READER lands with the
   team-peel item (window is bridged and cast-live already).
-- Z2 server honesty: **NOT STARTED**
+- Z1b: **DONE** 2026-07-24 — the whole remaining wipe-on-repack substrate,
+  three commits: (a) the [384,620) ability-window tail bridged
+  field-level (28 comptime offset asserts; abilityWindowBridge.test.ts —
+  mid-fight windows survive explicit re-pack + 80 stepped repacks in TS
+  lockstep, verified-failing 2/2 on the old skip); (b)+(c) the loadout
+  delivery pipeline in ONE commit (one mechanism): new
+  resolve_player_loadout export re-establishes fire config + hand +
+  EquippedActives after EVERY pack (before: no ability castable at all
+  under wasm), client fire-config write moved INSIDE runWasmStepSync
+  post-pack (server always had it right), plus two ride-along finds —
+  CARD_INDEX filtered ability cards out of the hand Zig saw (indices
+  coincided for modifier cards by luck), and both hosts' mergeUnpacked
+  DESTROYED the real card ids every step (count-only placeholders);
+  loadoutBridge.test.ts proves valid=1 + card damage at step time and a
+  sunlance cast landing after 20 repacks in TS lockstep (failing 3/3 on
+  the old path). Meter: essentially flat as expected (header verdict —
+  the sweep's cardless bots can't see any of it except the wizard
+  channel ramp + class-aware config, which nudged 4 seeds <75px mixed).
+- Z2 server honesty: **DONE** 2026-07-24 — (1) drafting overlay RETIRED:
+  draft.zig owns offers/picks/auto-pick under full-sync via the
+  draftMemory carrier + bridged round_winner_idx (was hardcoded -1 every
+  pack — every hosted draft rolled all-standard weights) +
+  world_apply_card_pick pick queue; matchHost keeps only presentation +
+  hand mirroring (foldZigDraft); draftOfferParity.test.ts: same-seed
+  offers BYTE-IDENTICAL, identical rng cursor, tick-identical draft
+  window, 4/4 expiry auto-picks. (2) event drop branch GONE: full
+  convertWasmEventsToTs stream forwarded (+ kind 13/14 draft decode);
+  matchHostWasmEvents.test.ts proves shot-fired surfaces with no TS
+  fallback. (3) hangout pin KEPT + re-recorded with dated evidence: it's
+  a correctness pin (TS hangoutMode = PvP immunity at the damage
+  resolver, round machine never steps, projectiles/hitscan ghost —
+  none mirrored in Zig; lift condition = a step_world hangout flag).
+  Full server suite green under USE_WASM_STEP_WORLD=1 (317 pass, venue +
+  private-room coverage included).
 - Z3 sweep + bench: **NOT STARTED**
 - Z4 flip: **AWAITING JAKE** (after Z0–Z3)
 - V voice: **APPLIED + MERGED + LIVE** 2026-07-23 (1536849) — 88/104 card
