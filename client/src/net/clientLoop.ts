@@ -1023,6 +1023,26 @@ export class ClientLoop {
       this.pendingInputs.shift();
     }
 
+    // WEDGE RESYNC (2026-07-24, slash-feel wave 2b K6 live tape — the
+    // permanent form of the showcase "player stationary >1s" bug): a
+    // client whose inputs left the server's accept window gets NO acks —
+    // the queue saturates at PENDING_INPUTS_MAX_DEPTH and from then on
+    // EVERY reconcile replays the full queue on top of the authoritative
+    // state, re-deriving predictedState.tick = authTick + DEPTH (~4s
+    // ahead at 240) on every snapshot. K5's recovery slew can never win
+    // that fight: it drains the accumulator ~60ms/s while the replay
+    // re-pins the offset wholesale 20x/s (taped live: offset flat at
+    // 236-239 ticks for 3+ minutes, exactly the queue cap). A queue still
+    // saturated AFTER the ack-drop above means the server processed NONE
+    // of it — that timeline is fiction. Drop it and let this snapshot's
+    // reconcile rebase prediction directly onto the authoritative state:
+    // inputs stamp in-window again next step, acks resume, and the normal
+    // slew trims the lead. One visible rubber-band beats a permanently
+    // wedged player.
+    if (this.pendingInputs.length >= PENDING_INPUTS_MAX_DEPTH) {
+      this.pendingInputs.length = 0;
+    }
+
     // Capture the position the renderer was showing for the local player
     // BEFORE we rewind (α-blended + offset — same formula as getRenderState).
     const prevLocal = this.predictedState?.players[this.playerId];
