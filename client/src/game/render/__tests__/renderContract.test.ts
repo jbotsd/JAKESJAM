@@ -43,6 +43,22 @@ describe("produceProjectiles (render contract)", () => {
     expect(pool.length).toBe(2); // pool did not grow on the second frame
   });
 
+  test("maps wrapShots + leech identity flags (Track L) with clean defaults", () => {
+    const s = stateWithProjectiles({
+      1: { wrapShots: true, leechFraction: 0.4 },
+      2: {},
+      3: { leechFraction: 0 },
+    });
+    const pool: ProjectileRenderModel[] = [];
+    produceProjectiles(s, pool);
+    const byId = new Map(pool.map((m) => [m.id, m]));
+    expect(byId.get(1)!.wrapShots).toBe(true);
+    expect(byId.get(1)!.leech).toBe(true);
+    expect(byId.get(2)!.wrapShots).toBe(false);
+    expect(byId.get(2)!.leech).toBe(false);
+    expect(byId.get(3)!.leech).toBe(false); // a zero stamp is not a leech
+  });
+
   test("defaults impact fields when absent", () => {
     const s = stateWithProjectiles({ 1: {} });
     const pool: ProjectileRenderModel[] = [];
