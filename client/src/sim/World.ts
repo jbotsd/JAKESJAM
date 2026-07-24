@@ -407,6 +407,21 @@ export type NinjaMeleeMemory = {
    *  (for clearing dashThroughTagged) without reading movement memory's
    *  ms-precision timer directly. */
   wasDashing: boolean;
+  /** Melee input buffer (slash-feel-ledger R1 row 1, 2026-07-24): ms
+   *  remaining in the buffered-press window. A Fire press while the FSM is
+   *  mid-swing (windup/active/recovery) is QUEUED here for MELEE_BUFFER_MS
+   *  instead of being eaten, and fires at phase 0 — the same tick recovery
+   *  expires, so mashing never loses a swing and a queued re-swing has no
+   *  dead tick ("smooth on retrig", Jake's hard constraint). 0 = nothing
+   *  queued. Latest press wins (a second press mid-swing re-arms the
+   *  window and overwrites the stored aim). */
+  bufferedMs: number;
+  /** Cursor point (absolute, same shape as the input edge's aimX/aimY)
+   *  captured at the buffered press tick — the queued swing fires toward
+   *  where the player AIMED WHEN THEY PRESSED, resolved against the
+   *  attacker's position at fire time. */
+  bufferedAimX: number;
+  bufferedAimY: number;
   /** Razor Route (Interstice catalog v1, movement role): true for the
    *  duration of the CURRENT dash burst if `razorRouteUntilTick` was live
    *  the moment this burst started (the velocity boost + "marks Read on
@@ -430,6 +445,9 @@ export function freshNinjaMeleeMemory(): NinjaMeleeMemory {
     dashThroughTagged: new Set(),
     wasDashing: false,
     razorRouteActiveDash: false,
+    bufferedMs: 0,
+    bufferedAimX: 0,
+    bufferedAimY: 0,
   };
 }
 
@@ -470,6 +488,12 @@ export type PaladinMeleeMemory = {
    *  a NINJA's decoy just as readily as the ninja's own blade can — no
    *  classId gate, matching how any class's projectiles already can. */
   hitPaperDoublesThisSwing: Set<string>;
+  /** Melee input buffer — same contract as NinjaMeleeMemory.bufferedMs
+   *  (R1 row 1 is BOTH classes, one 100ms window). */
+  bufferedMs: number;
+  /** Same contract as NinjaMeleeMemory.bufferedAimX/bufferedAimY. */
+  bufferedAimX: number;
+  bufferedAimY: number;
 };
 
 export function freshPaladinMeleeMemory(): PaladinMeleeMemory {
@@ -481,6 +505,9 @@ export function freshPaladinMeleeMemory(): PaladinMeleeMemory {
     hitThisSwing: new Set(),
     hitDestructiblesThisSwing: new Set(),
     hitPaperDoublesThisSwing: new Set(),
+    bufferedMs: 0,
+    bufferedAimX: 0,
+    bufferedAimY: 0,
   };
 }
 
@@ -563,6 +590,14 @@ const SLASH_KNOCK_UP = 60;
 const SLASH_WINDUP_MS = 60; // the readable tell before the arc goes live
 const SLASH_ACTIVE_MS = 45; // contact-gated hit checks, then a late-entry tail
 const SLASH_RECOVERY_MS = 110; // endlag; whiffing costs
+
+/** Melee input buffer window (ms), BOTH classes — slash-feel-ledger R1 row
+ *  1 (SF6 4-8f / Smash Ult 9f / For Honor's universal 100ms). A Fire press
+ *  during windup/active/recovery queues in NinjaMeleeMemory.bufferedMs /
+ *  PaladinMeleeMemory.bufferedMs and fires at phase 0 instead of being
+ *  eaten. 100ms = 6 ticks @60Hz. Mirrored in sim/src/world.zig
+ *  (MELEE_BUFFER_MS) — sim behavior, both sides must agree. */
+const MELEE_BUFFER_MS = 100;
 /** Same fraction of SLASH_ACTIVE_MS as before the 2026-07-20 halving
  * (44/90 ~= 22/45) — the blade still crosses the aim radius at the same
  * relative point in the swing, just sooner in absolute ms. Do not damage
@@ -5250,28 +5285,49 @@ export function stepWithRuntime(
       }
       mem.wasDashing = dashingNow;
 
-      // ---- Swing FSM ----
+      // ---- Swing FSM (with the R1-row-1 input buffer, 2026-07-24) ----
       const wasActive = mem.phase === 2;
       const activeElapsedBeforeStep = wasActive ? SLASH_ACTIVE_MS - mem.phaseMs : 0;
       let waveShouldSpawn = false;
+      const edge = ninjaSlashEdges.get(aid);
+      // Age the buffered press BEFORE this tick's capture, so a press
+      // stored this very tick keeps its full window and only starts aging
+      // next tick. Uses effDtMs (chaos-scaled) like every other FSM timer.
+      if (mem.bufferedMs > 0) mem.bufferedMs = Math.max(0, mem.bufferedMs - effDtMs);
+      const startSwing = (aimPointX: number, aimPointY: number): void => {
+        const len = Math.hypot(aimPointX - attacker.x, aimPointY - attacker.y);
+        mem.phase = 1;
+        mem.phaseMs = SLASH_WINDUP_MS;
+        // aimX/aimY are an absolute cursor point, not a unit vector —
+        // capture the normalized swing DIRECTION from attacker toward that
+        // point (falls back to facing +X if the cursor is exactly on the
+        // player, e.g. a controller with no stick push).
+        mem.aimX = len > 1e-3 ? (aimPointX - attacker.x) / len : 1;
+        mem.aimY = len > 1e-3 ? (aimPointY - attacker.y) / len : 0;
+        mem.hitThisSwing.clear();
+        mem.hitDestructiblesThisSwing.clear();
+        mem.hitPaperDoublesThisSwing.clear();
+        mem.bufferedMs = 0; // one press, one swing — never double-fires
+        events.push({ t: "slash-started", playerId: aid, x: attacker.x, y: attacker.y });
+      };
       if (mem.phase === 0) {
-        const edge = ninjaSlashEdges.get(aid);
         if (edge) {
-          const len = Math.hypot(edge.aimX - attacker.x, edge.aimY - attacker.y);
-          mem.phase = 1;
-          mem.phaseMs = SLASH_WINDUP_MS;
-          // aimX/aimY on the input are an absolute cursor point, not a unit
-          // vector — capture the normalized swing DIRECTION from attacker
-          // toward that point (falls back to facing +X if the cursor is
-          // exactly on the player, e.g. a controller with no stick push).
-          mem.aimX = len > 1e-3 ? (edge.aimX - attacker.x) / len : 1;
-          mem.aimY = len > 1e-3 ? (edge.aimY - attacker.y) / len : 0;
-          mem.hitThisSwing.clear();
-          mem.hitDestructiblesThisSwing.clear();
-          mem.hitPaperDoublesThisSwing.clear();
-          events.push({ t: "slash-started", playerId: aid, x: attacker.x, y: attacker.y });
+          startSwing(edge.aimX, edge.aimY);
+        } else if (mem.bufferedMs > 0) {
+          // Defensive: the buffer normally consumes on the recovery→idle
+          // transition tick below; this only fires if the FSM somehow sat
+          // idle with a live buffer (e.g. memory carried across a phase
+          // where the melee step didn't run).
+          startSwing(mem.bufferedAimX, mem.bufferedAimY);
         }
       } else {
+        if (edge) {
+          // Press mid-swing: QUEUE it (latest press wins) instead of
+          // eating it — the R1 row 1 buffer.
+          mem.bufferedMs = MELEE_BUFFER_MS;
+          mem.bufferedAimX = edge.aimX;
+          mem.bufferedAimY = edge.aimY;
+        }
         mem.phaseMs -= effDtMs;
         if (mem.phaseMs <= 0) {
           if (mem.phase === 1) {
@@ -5284,6 +5340,10 @@ export function stepWithRuntime(
           } else if (mem.phase === 3) {
             mem.phase = 0;
             mem.phaseMs = 0;
+            // Buffered press fires AT phase 0 — the same tick recovery
+            // expires, so a queued re-swing has zero dead frames between
+            // endlag and the next windup ("smooth on retrig").
+            if (mem.bufferedMs > 0) startSwing(mem.bufferedAimX, mem.bufferedAimY);
           }
         }
       }
@@ -5568,23 +5628,38 @@ export function stepWithRuntime(
         runtime.paladinMelee.set(aid, mem);
       }
 
-      // ---- Swing FSM (same 4-phase shape as ninja's, own constants) ----
+      // ---- Swing FSM (same 4-phase shape as ninja's, own constants;
+      //      same R1-row-1 input buffer, 2026-07-24) ----
       const wasActive = mem.phase === 2;
       const activeElapsedBeforeStep = wasActive ? EDGE_ACTIVE_MS - mem.phaseMs : 0;
+      const edge = paladinEdgeEdges.get(aid);
+      // Age-before-capture — same ordering contract as ninja's block above.
+      if (mem.bufferedMs > 0) mem.bufferedMs = Math.max(0, mem.bufferedMs - effDtMs);
+      const startSwing = (aimPointX: number, aimPointY: number): void => {
+        const len = Math.hypot(aimPointX - attacker.x, aimPointY - attacker.y);
+        mem.phase = 1;
+        mem.phaseMs = EDGE_WINDUP_MS;
+        mem.aimX = len > 1e-3 ? (aimPointX - attacker.x) / len : 1;
+        mem.aimY = len > 1e-3 ? (aimPointY - attacker.y) / len : 0;
+        mem.hitThisSwing.clear();
+        mem.hitDestructiblesThisSwing.clear();
+        mem.hitPaperDoublesThisSwing.clear();
+        mem.bufferedMs = 0;
+        events.push({ t: "slash-started", playerId: aid, x: attacker.x, y: attacker.y });
+      };
       if (mem.phase === 0) {
-        const edge = paladinEdgeEdges.get(aid);
         if (edge) {
-          const len = Math.hypot(edge.aimX - attacker.x, edge.aimY - attacker.y);
-          mem.phase = 1;
-          mem.phaseMs = EDGE_WINDUP_MS;
-          mem.aimX = len > 1e-3 ? (edge.aimX - attacker.x) / len : 1;
-          mem.aimY = len > 1e-3 ? (edge.aimY - attacker.y) / len : 0;
-          mem.hitThisSwing.clear();
-          mem.hitDestructiblesThisSwing.clear();
-          mem.hitPaperDoublesThisSwing.clear();
-          events.push({ t: "slash-started", playerId: aid, x: attacker.x, y: attacker.y });
+          startSwing(edge.aimX, edge.aimY);
+        } else if (mem.bufferedMs > 0) {
+          // Defensive idle-consume — see ninja's identical branch comment.
+          startSwing(mem.bufferedAimX, mem.bufferedAimY);
         }
       } else {
+        if (edge) {
+          mem.bufferedMs = MELEE_BUFFER_MS;
+          mem.bufferedAimX = edge.aimX;
+          mem.bufferedAimY = edge.aimY;
+        }
         mem.phaseMs -= effDtMs;
         if (mem.phaseMs <= 0) {
           if (mem.phase === 1) {
@@ -5596,6 +5671,8 @@ export function stepWithRuntime(
           } else if (mem.phase === 3) {
             mem.phase = 0;
             mem.phaseMs = 0;
+            // Fires at phase 0, zero dead frames — "smooth on retrig".
+            if (mem.bufferedMs > 0) startSwing(mem.bufferedAimX, mem.bufferedAimY);
           }
         }
       }

@@ -186,7 +186,10 @@ export const PLAYER_MOVEMENT_MEMORY_SIZE = 48;
 // Track Z1a (Z0e's sibling fix — see packMeleeSwingMemory below): the
 // pack/unpack pair reads and writes the slots, so this stride is both the
 // skip distance AND the per-slot layout size.
-export const MELEE_SWING_MEMORY_SIZE = 32;
+// 32 → 56 (2026-07-24, melee input buffer — slash-feel-ledger R1 row 1):
+// +3 f64s (buffered_ms/buffered_aim_x/buffered_aim_y) inserted after
+// aim_y; the mask/phase/dash tail shifts from offset 24 to 48 intact.
+export const MELEE_SWING_MEMORY_SIZE = 56;
 // I-final — ResolvedFireConfig parallel array (per-player fire
 // build resolved by the host from createWeaponBuild). 14 × f64 +
 // 4 × u32 + 4 × u8(enum) + 1 × u8(valid) + 3 × u8(pad) = 136.
@@ -358,10 +361,11 @@ function unpackMovementMemory(
 export const MELEE_SWING_OFFSET =
   PLAYER_MOVEMENT_OFFSET + MAX_PLAYERS * PLAYER_MOVEMENT_MEMORY_SIZE;
 
-/** Pack one MeleeSwingMemory into its 32-byte slot. Field offsets follow
- *  world_state.zig's MeleeSwingMemory extern struct exactly: three f64s
- *  (phase_ms, aim_x, aim_y), u16 hit mask, u8 phase enum, one pad byte,
- *  u16 dash-through mask, two bool bytes. */
+/** Pack one MeleeSwingMemory into its 56-byte slot. Field offsets follow
+ *  world_state.zig's MeleeSwingMemory extern struct exactly: six f64s
+ *  (phase_ms, aim_x, aim_y, buffered_ms, buffered_aim_x, buffered_aim_y),
+ *  u16 hit mask, u8 phase enum, one pad byte, u16 dash-through mask, two
+ *  bool bytes. */
 function packMeleeSwingMemory(
   view: DataView,
   offset: number,
@@ -370,12 +374,15 @@ function packMeleeSwingMemory(
   view.setFloat64(offset + 0, m.phaseMs, true);
   view.setFloat64(offset + 8, m.aimX, true);
   view.setFloat64(offset + 16, m.aimY, true);
-  view.setUint16(offset + 24, m.hitThisSwingMask, true);
-  view.setUint8(offset + 26, m.phase);
-  // offset + 27: _pad — left zero (buf starts zero-filled).
-  view.setUint16(offset + 28, m.dashThroughTaggedMask, true);
-  view.setUint8(offset + 30, m.wasDashing ? 1 : 0);
-  view.setUint8(offset + 31, m.razorRouteActiveDash ? 1 : 0);
+  view.setFloat64(offset + 24, m.bufferedMs, true);
+  view.setFloat64(offset + 32, m.bufferedAimX, true);
+  view.setFloat64(offset + 40, m.bufferedAimY, true);
+  view.setUint16(offset + 48, m.hitThisSwingMask, true);
+  view.setUint8(offset + 50, m.phase);
+  // offset + 51: _pad — left zero (buf starts zero-filled).
+  view.setUint16(offset + 52, m.dashThroughTaggedMask, true);
+  view.setUint8(offset + 54, m.wasDashing ? 1 : 0);
+  view.setUint8(offset + 55, m.razorRouteActiveDash ? 1 : 0);
 }
 
 function unpackMeleeSwingMemory(
@@ -386,11 +393,14 @@ function unpackMeleeSwingMemory(
     phaseMs: view.getFloat64(offset + 0, true),
     aimX: view.getFloat64(offset + 8, true),
     aimY: view.getFloat64(offset + 16, true),
-    hitThisSwingMask: view.getUint16(offset + 24, true),
-    phase: (view.getUint8(offset + 26) & 3) as MeleeSwingMemory["phase"],
-    dashThroughTaggedMask: view.getUint16(offset + 28, true),
-    wasDashing: view.getUint8(offset + 30) !== 0,
-    razorRouteActiveDash: view.getUint8(offset + 31) !== 0,
+    bufferedMs: view.getFloat64(offset + 24, true),
+    bufferedAimX: view.getFloat64(offset + 32, true),
+    bufferedAimY: view.getFloat64(offset + 40, true),
+    hitThisSwingMask: view.getUint16(offset + 48, true),
+    phase: (view.getUint8(offset + 50) & 3) as MeleeSwingMemory["phase"],
+    dashThroughTaggedMask: view.getUint16(offset + 52, true),
+    wasDashing: view.getUint8(offset + 54) !== 0,
+    razorRouteActiveDash: view.getUint8(offset + 55) !== 0,
   };
 }
 
@@ -405,6 +415,9 @@ const FRESH_MELEE_SWING_MEMORY: MeleeSwingMemory = {
   phaseMs: 0,
   aimX: 1,
   aimY: 0,
+  bufferedMs: 0,
+  bufferedAimX: 0,
+  bufferedAimY: 0,
   hitThisSwingMask: 0,
   phase: 0,
   dashThroughTaggedMask: 0,

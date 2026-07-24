@@ -227,7 +227,7 @@ describe("ninja melee — arc hit detection", () => {
     expect(after.players[C]!.health).toBeLessThan(100);
   });
 
-  test("re-swinging is blocked during recovery, then allowed once recovery ends", () => {
+  test("re-swinging is blocked during recovery; a mid-recovery press QUEUES and fires at recovery end", () => {
     const attacker = mkPlayer(A, 500, 300, { aimX: 900, aimY: 300 });
     const state = mkState([attacker]);
     const runtime = createRuntime(flatMap);
@@ -237,18 +237,27 @@ describe("ninja melee — arc hit detection", () => {
     let s = stepIdle(s1.state, runtime, [attacker], WINDUP_TICKS + ACTIVE_TICKS);
     // Release (a REAL keys:0 frame — see releaseInputs's doc comment on
     // why `noInputs` can't be used here) then re-press Fire mid-recovery —
-    // must NOT start a new swing ("gate re-swinging during recovery" /
+    // must NOT start a new swing NOW ("gate re-swinging during recovery" /
     // "no free cast").
     let res = stepWithRuntime(s, runtime, releaseInputs([attacker], A, 900, 300, 50), DT_MS);
     res = stepWithRuntime(res.state, runtime, pressInputs([attacker], A, 900, 300, 99), DT_MS); // re-press
     expect(res.events.some((e) => e.t === "slash-started")).toBe(false);
 
-    // Walk through the rest of recovery — a couple of ticks were already
-    // spent above (release + the blocked re-press), so pad RECOVERY_TICKS
-    // by a small buffer rather than hand-tracking the exact remainder.
-    // Release, then re-press — a fresh swing IS allowed once the FSM
-    // returns to idle.
-    s = stepIdle(res.state, runtime, [attacker], RECOVERY_TICKS + 2);
+    // ...but the press is no longer EATEN (2026-07-24, melee input buffer
+    // — slash-feel-ledger R1 row 1, meleeInputBuffer.test.ts): it QUEUES
+    // for MELEE_BUFFER_MS and fires at phase 0, the exact tick recovery
+    // expires. Walk the remaining recovery and catch exactly one queued
+    // swing start.
+    let queuedFired = 0;
+    for (let i = 0; i < RECOVERY_TICKS + 2; i++) {
+      res = stepWithRuntime(res.state, runtime, releaseInputs([attacker], A, 900, 300, 100 + i), DT_MS);
+      queuedFired += res.events.filter((e) => e.t === "slash-started").length;
+    }
+    expect(queuedFired).toBe(1);
+
+    // Let the queued swing complete, then a fresh press from idle starts
+    // a swing immediately — the idle re-trigger path is unchanged.
+    s = stepIdle(res.state, runtime, [attacker], WINDUP_TICKS + ACTIVE_TICKS + RECOVERY_TICKS + 2);
     res = stepWithRuntime(s, runtime, releaseInputs([attacker], A, 900, 300, 150), DT_MS);
     res = stepWithRuntime(res.state, runtime, pressInputs([attacker], A, 900, 300, 200), DT_MS); // re-press
     expect(res.events.some((e) => e.t === "slash-started" && e.playerId === A)).toBe(true);

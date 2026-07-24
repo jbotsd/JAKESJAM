@@ -1361,6 +1361,14 @@ export type MeleeSwingMemory = {
    *  arc hit-check's atan2). */
   aimX: number;
   aimY: number;
+  /** Melee input buffer (slash-feel-ledger R1 row 1, 2026-07-24): ms
+   *  remaining in the buffered-press window; 0 = nothing queued. */
+  bufferedMs: number;
+  /** Cursor point (absolute aim coords, NOT a unit vector) captured at
+   *  the buffered press tick — the queued swing's aim, resolved against
+   *  the attacker's position at fire time. */
+  bufferedAimX: number;
+  bufferedAimY: number;
   /** Victim bitmask already hit by the CURRENT swing's active window —
    *  one bit per player slot index (MAX_PLAYERS=16 fits a u16). */
   hitThisSwingMask: number;

@@ -1050,6 +1050,12 @@ pub const EDGE_ACTIVE_MS: f64 = 110.0;
 pub const EDGE_RECOVERY_MS: f64 = 340.0;
 pub const EDGE_CONTACT_DELAY_MS: f64 = 100.0;
 
+/// Melee input buffer window (ms), BOTH classes — slash-feel-ledger R1
+/// row 1 (2026-07-24). Bit-exact mirror of World.ts's MELEE_BUFFER_MS;
+/// consumed in stepMeleeSwing's FSM (queue on a mid-swing press, fire at
+/// phase 0 on the recovery→idle transition tick).
+pub const MELEE_BUFFER_MS: f64 = 100.0;
+
 // ── Ability-cast dispatch (Phase 1, docs/zig-step-world-parity-goal.md
 //    "the next unblock") — constants for the 6 melee-hook abilities wired
 //    this pass. Bit-exact port of the matching World.ts/constants.ts
@@ -2934,6 +2940,31 @@ fn stepAbilityDispatch(
     }
 }
 
+/// Start a melee swing toward an absolute aim POINT (cursor coords) —
+/// shared by the idle fresh-press path and the R1-row-1 buffered-press
+/// consume paths (2026-07-24). Bit-exact mirror of World.ts's
+/// `startSwing` closures (ninja + paladin blocks): direction normalizes
+/// from the attacker's position AT FIRE TIME toward the point (+X
+/// fallback when the cursor sits on the body), the per-swing victim mask
+/// clears, and the buffer zeroes so one press can never double-fire.
+fn startMeleeSwingFromAim(
+    mem: *world_state.MeleeSwingMemory,
+    attacker: *const world_state.PlayerEntity,
+    aim_point_x: f64,
+    aim_point_y: f64,
+    windup_ms: f64,
+) void {
+    const dx = aim_point_x - attacker.x;
+    const dy = aim_point_y - attacker.y;
+    const len = @sqrt(dx * dx + dy * dy);
+    mem.phase = .windup;
+    mem.phase_ms = windup_ms;
+    mem.aim_x = if (len > 1e-3) dx / len else 1.0;
+    mem.aim_y = if (len > 1e-3) dy / len else 0.0;
+    mem.hit_this_swing_mask = 0;
+    mem.buffered_ms = 0;
+}
+
 /// Advance one attacker's melee swing FSM one tick + resolve the arc
 /// hit-check when contact-delay-gated active. `fire_rising_edge` MUST be
 /// captured before section 6 (below, in stepWorld) rolls
@@ -2983,22 +3014,30 @@ fn stepMeleeSwing(
     // the shared FSM update just to skip setting one bool.
     var wave_should_spawn = false;
 
+    // Age the buffered press BEFORE this tick's capture (a press stored
+    // this very tick keeps its full window, starts aging next tick) —
+    // exact ordering mirror of World.ts's own buffer block (2026-07-24,
+    // slash-feel-ledger R1 row 1).
+    if (mem.buffered_ms > 0) mem.buffered_ms = @max(0.0, mem.buffered_ms - eff_dt);
+
     if (mem.phase == .idle) {
-        // Re-trigger only accepted from idle — a Fire press while
-        // mem.phase != .idle is simply never read as a new swing (this
-        // branch isn't reached), satisfying "gate re-swinging during
-        // windup/active/recovery" by construction, same as TS's own FSM.
+        // A fresh press from idle starts a swing immediately; otherwise a
+        // still-live buffered press (queued mid-swing, consumed on the
+        // recovery→idle transition below — this branch is the defensive
+        // idle-consume mirror of TS's) fires now.
         if (fire_rising_edge) {
-            const dx = attacker.aim_x - attacker.x;
-            const dy = attacker.aim_y - attacker.y;
-            const len = @sqrt(dx * dx + dy * dy);
-            mem.phase = .windup;
-            mem.phase_ms = windup_ms;
-            mem.aim_x = if (len > 1e-3) dx / len else 1.0;
-            mem.aim_y = if (len > 1e-3) dy / len else 0.0;
-            mem.hit_this_swing_mask = 0;
+            startMeleeSwingFromAim(mem, attacker, attacker.aim_x, attacker.aim_y, windup_ms);
+        } else if (mem.buffered_ms > 0) {
+            startMeleeSwingFromAim(mem, attacker, mem.buffered_aim_x, mem.buffered_aim_y, windup_ms);
         }
     } else {
+        // Press mid-swing: QUEUE it (latest press wins, cursor point
+        // captured at press time) instead of eating it — R1 row 1.
+        if (fire_rising_edge) {
+            mem.buffered_ms = MELEE_BUFFER_MS;
+            mem.buffered_aim_x = attacker.aim_x;
+            mem.buffered_aim_y = attacker.aim_y;
+        }
         mem.phase_ms -= eff_dt;
         if (mem.phase_ms <= 0) {
             switch (mem.phase) {
@@ -3014,6 +3053,12 @@ fn stepMeleeSwing(
                 .recovery => {
                     mem.phase = .idle;
                     mem.phase_ms = 0;
+                    // Buffered press fires AT phase 0 — the same tick
+                    // recovery expires, zero dead frames ("smooth on
+                    // retrig"), matching World.ts exactly.
+                    if (mem.buffered_ms > 0) {
+                        startMeleeSwingFromAim(mem, attacker, mem.buffered_aim_x, mem.buffered_aim_y, windup_ms);
+                    }
                 },
                 .idle => unreachable,
             }

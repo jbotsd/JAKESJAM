@@ -1170,6 +1170,18 @@ pub const MeleeSwingMemory = extern struct {
     /// PaladinMeleeMemory.aimX/aimY (World.ts:373-377/451-454).
     aim_x: f64 = 1,
     aim_y: f64 = 0,
+    /// Melee input buffer (slash-feel-ledger R1 row 1, 2026-07-24): ms
+    /// remaining in the buffered-press window; 0 = nothing queued. A Fire
+    /// press while mid-swing queues here for MELEE_BUFFER_MS (world.zig)
+    /// and fires at phase 0 — the same tick recovery expires. Mirrors
+    /// NinjaMeleeMemory.bufferedMs / PaladinMeleeMemory.bufferedMs.
+    buffered_ms: f64 = 0,
+    /// Cursor point (absolute aim coords, NOT a unit vector) captured at
+    /// the buffered press tick — the queued swing fires toward where the
+    /// player aimed WHEN THEY PRESSED, resolved against the attacker's
+    /// position at fire time. Mirrors bufferedAimX/bufferedAimY.
+    buffered_aim_x: f64 = 0,
+    buffered_aim_y: f64 = 0,
     /// Victim bitmask already hit by the CURRENT swing's active window —
     /// one bit per player index (MAX_PLAYERS=16 fits a u16 exactly).
     /// Mirrors NinjaMeleeMemory.hitThisSwing / PaladinMeleeMemory.
@@ -2047,10 +2059,16 @@ comptime {
     // (razor_route_active_dash bool) = 4 bytes total, landing EXACTLY in
     // the 4 bytes of implicit tail padding the struct already had — net
     // growth is ZERO, same "reclaim the old pad" shape PlayerEntity's own
-    // Ghost Guard cut used moments ago. Verified via a temporary
-    // `@compileLog(@sizeOf(MeleeSwingMemory))` before locking this assert
-    // (confirmed still 32).
-    std.debug.assert(@sizeOf(MeleeSwingMemory) == 32);
+    // Ghost Guard cut used moments ago.
+    // 32 → 56 (2026-07-24, melee input buffer — slash-feel-ledger R1 row
+    // 1): +3 f64s (buffered_ms / buffered_aim_x / buffered_aim_y) inserted
+    // after aim_y, so every f64 stays 8-aligned and the trailing
+    // mask/phase/dash block shifts from offset 24 to offset 48 intact.
+    // 6×f64 (48) + u16 (2) + u8 (1) + _pad u8 (1) + u16 (2) + 2×bool (2)
+    // = 56, already 8-aligned — no tail padding. worldStateBridge.ts's
+    // MELEE_SWING_MEMORY_SIZE bumped 32 → 56 in the same cut
+    // (meleeSwingMemoryBridge.test.ts gate A pins the two together).
+    std.debug.assert(@sizeOf(MeleeSwingMemory) == 56);
     std.debug.assert(@sizeOf(SimEvent) == 40);
     // 240 → 248 (Track Z0c Item A, fire-recoil substrate): +8 for the
     // appended `recoil_impulse` f64 at [240, 248) — 240 is 8-aligned, no
