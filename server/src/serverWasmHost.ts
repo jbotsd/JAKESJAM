@@ -528,7 +528,10 @@ function mergeUnpacked(
       firstBloodPlayerId: unpacked.round.firstBloodPlayerId,
       scores: { ...state.round.scores, ...unpacked.scores },
     },
-    players: stableMergeRecord(state.players, unpacked.players),
+    players: stableMergeRecord(
+      state.players,
+      preservePlayerCards(state.players, unpacked.players),
+    ),
     firePatches: stableMergeRecord(state.firePatches, unpacked.firePatches),
     destructibles: stableMergeRecord(state.destructibles, unpacked.destructibles),
     projectiles: stableMergeRecord(state.projectiles, unpacked.projectiles),
@@ -544,6 +547,28 @@ function mergeUnpacked(
     // backend's mergeUnpacked exactly.
     meleeSwingMemory: unpacked.meleeSwingMemory,
   };
+}
+
+/**
+ * Re-seat the HOST's own card ids onto each unpacked player (Track Z1b).
+ * The pack encodes `cards` count-only, so unpackPlayer returns placeholder
+ * empty strings — before this helper the merge replaced every stepped
+ * player's hand with those placeholders, destroying the real card ids one
+ * tick after any wasm step (next tick's `resolveFireConfigsViaZig` saw an
+ * empty hand: bare pistol, no actives, broken draft gates). Mirrors the
+ * client backend's helper exactly.
+ */
+function preservePlayerCards(
+  prev: WorldState["players"],
+  next: WorldState["players"],
+): WorldState["players"] {
+  const out = {} as WorldState["players"];
+  for (const k in next) {
+    const pid = k as keyof WorldState["players"];
+    const prior = prev[pid];
+    out[pid] = prior ? { ...next[pid]!, cards: prior.cards } : next[pid]!;
+  }
+  return out;
 }
 
 function stableMergeRecord<K extends string | number, V>(

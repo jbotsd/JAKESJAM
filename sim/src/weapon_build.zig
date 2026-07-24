@@ -443,6 +443,66 @@ pub export fn resolve_player_fire_config(
     state_ptr.player_fire_config[player_index] = resolveByIndices(indices_ptr[0..n], cls);
 }
 
+/// Host entry (Track Z1b — finding (b) of multiSeedDivergence's Z1a
+/// header): superset of `resolve_player_fire_config` that re-establishes
+/// the player's WHOLE build-resolved loadout from one ordered-hand
+/// delivery — fire config, `player_card_ids`, `card_count`, AND the
+/// `EquippedActives` rack. The full-sync hosts repack the entire
+/// WorldState buffer every tick, zero-filling all three parallel arrays;
+/// before this export the rack was therefore stripped EVERY tick, so no
+/// ability was castable at all on the live wasm path (`stepAbilityDispatch`
+/// read `ABILITY_KIND_NONE` in every slot), and `draft.zig`'s
+/// uniqueness/maxStacks/rack-cap gates read a zeroed hand.
+///
+/// All of this is BUILD-RESOLVED data (ResolvedFireConfig's own category
+/// per `EquippedActives`'s doc comment — "host resolves [X] from cards,
+/// patches it into wasm memory each tick; step_world only READS it"), so
+/// the fix is host re-delivery after every pack, NOT a pack/unpack
+/// carrier: TS's own orchestrator re-derives `build.actives` from
+/// `player.cards` every tick the same way (`resolvePlayerBuild`).
+///
+/// Rack derivation walks the ordered hand front to back, filling slots
+/// with each ability card's kind, capped at MAX_ABILITY_SLOTS — the
+/// from-scratch equivalent of `draft.applyCardPick`'s write-into-first-
+/// empty-slot (equivalent because nothing ever removes or reorders a
+/// card; see that function's own equivalence proof), and the mirror of
+/// TS `createWeaponBuild`'s `build.actives.push(...)` walk.
+pub export fn resolve_player_loadout(
+    state_ptr: *world_state.WorldState,
+    player_index: u32,
+    indices_ptr: [*]const u8,
+    count: u32,
+) void {
+    if (player_index >= world_state.MAX_PLAYERS) return;
+    const n = @min(count, @as(u32, world_state.MAX_PLAYER_CARDS));
+
+    const hand = &state_ptr.player_card_ids[player_index];
+    hand.* = .{};
+    var i: u32 = 0;
+    while (i < n) : (i += 1) hand.indices[i] = indices_ptr[i];
+    // Keep the Zig-side hand self-consistent: card_count arrives packed as
+    // `cards.length`, but if the host's index mapping dropped an unknown
+    // id, an unshrunk count would make draft.zig's ownsCard/copiesOfCard
+    // read stale zero slots as "owns card 0".
+    state_ptr.players[player_index].card_count = @intCast(n);
+
+    const equipped = &state_ptr.player_equipped_actives[player_index];
+    equipped.* = .{};
+    var filled: usize = 0;
+    i = 0;
+    while (i < n and filled < world_state.MAX_ABILITY_SLOTS) : (i += 1) {
+        const idx = hand.indices[i];
+        if (idx >= gen.cards.len) continue;
+        if (gen.cards[idx].meta.active) |active| {
+            equipped.slot_kind[filled] = @intFromEnum(active.kind) + 1;
+            filled += 1;
+        }
+    }
+
+    const cls = classForArchetype(state_ptr.players[player_index].character_id);
+    state_ptr.player_fire_config[player_index] = resolveByIndices(indices_ptr[0..n], cls);
+}
+
 // ── Ability-cast dispatch support (Phase 1, docs/zig-step-world-parity-
 //    goal.md) ─────────────────────────────────────────────────────────
 

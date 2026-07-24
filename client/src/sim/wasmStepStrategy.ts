@@ -24,7 +24,6 @@ import type { WorldRuntime } from "./World.js";
 import { convertWasmEventsToTs } from "./World.js";
 import { wasmHost, type PlayerInputBits } from "./wasm/wasmHost.js";
 import type { StepStrategy } from "./stepStrategy.js";
-import { writeFireConfigsForState } from "./wasm/writeFireConfigs.js";
 
 export class WasmStepStrategy implements StepStrategy {
   step(
@@ -55,10 +54,11 @@ export class WasmStepStrategy implements StepStrategy {
     }
     wasmHost.writeInputs(inputsMap);
 
-    // Phase 97: resolve + write per-player fire configs so cards
-    // finally apply in the wasm sim. The helper holds the
-    // per-player cache (re-resolved only when cards change).
-    writeFireConfigsForState(state);
+    // Loadout delivery (fire configs + card hand + equipped actives)
+    // happens INSIDE the step now, AFTER the pack (Track Z1b finding
+    // (c)): the old pre-step `writeFireConfigsForState(state)` call here
+    // wrote configs the step's own pack immediately zero-filled, so
+    // step_world never saw them — starter pistol regardless of cards.
 
     const result = wasmHost.step(state, dtMs);
 
