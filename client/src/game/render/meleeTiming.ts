@@ -281,6 +281,146 @@ export function meleeOffhandPose(
   return { angle: aimRad + d * lerp(1.02, 1.05, e), reach: lerp(20, 22, e) };
 }
 
+// ── KINDLED SHIELD BASH (2026-07-24, slash-feel-ledger design-decision
+// block) — the render half of the chain's third beat. The bash is a body
+// CHECK, not a cut: the SLAB leads (shield hand chambers then punches
+// straight along aim), the sword holds back low, and the whole frame
+// drives through the front foot. Pure/Phaser-free like everything else in
+// this module so it stays bun-testable.
+
+/** Where inside the 560ms render sentence the slab meets the target —
+ *  matches the SIM's contact gate exactly: windup 200ms + 60ms into
+ *  active = 260ms → 260/560 ≈ 0.464. The render leads the sim by ≤1t at
+ *  60Hz when the sentence starts on the slash-started tick. */
+export const KINDLED_BASH_CONTACT_T = 0.46;
+
+/** Bash stage clocks: chamber (mass gathers into the rear hip) → thrust
+ *  (slab punches) → hold (the check lands and STAYS for a beat — blunt
+ *  weapons don't follow through, they stop ON the target) → recovery. */
+export function bashStage(t: number): {
+  chamber: number;
+  thrust: number;
+  hold: number;
+  recovery: number;
+} {
+  const clamp = (v: number) => Math.max(0, Math.min(1, v));
+  return {
+    chamber: clamp(t / 0.36),
+    thrust: clamp((t - 0.36) / (0.56 - 0.36)),
+    hold: clamp((t - 0.56) / (0.74 - 0.56)),
+    recovery: clamp((t - 0.74) / (1 - 0.74)),
+  };
+}
+
+/** Shield-hand pose through the bash — reach contracts into the chamber,
+ *  then extends HARD through contact and holds. Angle stays near the aim
+ *  axis the whole time (a straight-line check, not an arc). */
+export function bashHandPose(
+  aimRad: number,
+  t: number,
+): { angle: number; reach: number } {
+  const s = bashStage(t);
+  if (t < 0.36) {
+    const e = smooth(s.chamber);
+    return { angle: aimRad + 0.18 * e, reach: lerp(24, 13, e) };
+  }
+  if (t < 0.56) {
+    // A check EXPLODES out of the chamber and decelerates INTO the stop —
+    // ease-out, not ease-in: the input already happened (Owlboy/HK
+    // compress-the-lag principle), and a blunt weapon reads by how hard it
+    // STOPS, so the plate must already be near full extension when the
+    // sim's contact gate fires at KINDLED_BASH_CONTACT_T.
+    const e = 1 - (1 - s.thrust) * (1 - s.thrust);
+    return { angle: aimRad + lerp(0.18, -0.04, e), reach: lerp(13, 44, e) };
+  }
+  if (t < 0.74) {
+    const e = smooth(s.hold);
+    return { angle: aimRad - 0.04, reach: lerp(44, 40, e) };
+  }
+  const e = smooth(s.recovery);
+  return { angle: aimRad + lerp(-0.04, 0.1, e), reach: lerp(40, 24, e) };
+}
+
+/** Sword-hand pose through the bash — chambered back and LOW the whole
+ *  time (the blade visibly yields the beat to the slab; it never crosses
+ *  the slab's lane). */
+export function bashSwordHandPose(
+  aimRad: number,
+  dir: number,
+  t: number,
+): { angle: number; reach: number } {
+  const d = dir >= 0 ? 1 : -1;
+  const s = bashStage(t);
+  const back = aimRad + d * 2.35; // behind-and-below the body line
+  if (t < 0.36) {
+    const e = smooth(s.chamber);
+    return { angle: back, reach: lerp(24, 29, e) };
+  }
+  if (t < 0.74) {
+    // Counter-tension: the sword pulls slightly harder back as the slab
+    // extends — the frame stays loaded, not flailing.
+    return { angle: back + d * 0.1, reach: 30 };
+  }
+  const e = smooth(s.recovery);
+  return { angle: back + d * lerp(0.1, 0, e), reach: lerp(30, 26, e) };
+}
+
+/** Bash body sentence — a shoulder-led CHECK: deeper rear-side load than
+ *  the sword swing, then pelvis→chest→shoulder surge along aim with the
+ *  weight visibly through the front foot (frontBrace pins 1 through the
+ *  thrust+hold), and a recoil settle. Same return shape as
+ *  meleeKineticChain so the rig consumes either interchangeably. */
+export function bashKineticChain(t: number): {
+  pelvisDrive: number;
+  chestDrive: number;
+  headDrive: number;
+  shoulderTwist: number;
+  frontBrace: number;
+} {
+  const s = bashStage(t);
+  if (t < 0.36) {
+    const e = smooth(s.chamber);
+    return {
+      pelvisDrive: lerp(0, -7, e),
+      chestDrive: lerp(0, -10, e),
+      headDrive: lerp(0, -11, e),
+      shoulderTwist: lerp(0, -0.3, e),
+      frontBrace: smooth(clamp01((s.chamber - 0.5) / 0.5)),
+    };
+  }
+  if (t < 0.56) {
+    const pelvis = easeOutCubic(clamp01(s.thrust / 0.55));
+    const chest = smooth(clamp01((s.thrust - 0.1) / 0.75));
+    return {
+      pelvisDrive: lerp(-7, 15, pelvis),
+      chestDrive: lerp(-10, 22, chest),
+      headDrive: lerp(-11, 16, chest),
+      shoulderTwist: lerp(-0.3, 0.12, smooth(s.thrust)),
+      frontBrace: 1,
+    };
+  }
+  if (t < 0.74) {
+    // The check LANDS and the frame stays committed — a slight recoil
+    // shiver through the chest reads impact back up the arm.
+    const e = smooth(s.hold);
+    return {
+      pelvisDrive: 15,
+      chestDrive: lerp(22, 19, e),
+      headDrive: lerp(16, 14, e),
+      shoulderTwist: 0.12,
+      frontBrace: 1,
+    };
+  }
+  const r = smooth(s.recovery);
+  return {
+    pelvisDrive: lerp(15, 0, r),
+    chestDrive: lerp(19, 0, r),
+    headDrive: lerp(14, 0, r),
+    shoulderTwist: lerp(0.12, 0, r),
+    frontBrace: 1 - r,
+  };
+}
+
 type Vec2Like = { x: number; y: number };
 
 /** Which hand is actually swinging the blade this frame. Mirrors the

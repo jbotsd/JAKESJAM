@@ -1170,6 +1170,18 @@ pub const MeleeSwingMemory = extern struct {
     /// PaladinMeleeMemory.aimX/aimY (World.ts:373-377/451-454).
     aim_x: f64 = 1,
     aim_y: f64 = 0,
+    /// Melee input buffer (slash-feel-ledger R1 row 1, 2026-07-24): ms
+    /// remaining in the buffered-press window; 0 = nothing queued. A Fire
+    /// press while mid-swing queues here for MELEE_BUFFER_MS (world.zig)
+    /// and fires at phase 0 — the same tick recovery expires. Mirrors
+    /// NinjaMeleeMemory.bufferedMs / PaladinMeleeMemory.bufferedMs.
+    buffered_ms: f64 = 0,
+    /// Cursor point (absolute aim coords, NOT a unit vector) captured at
+    /// the buffered press tick — the queued swing fires toward where the
+    /// player aimed WHEN THEY PRESSED, resolved against the attacker's
+    /// position at fire time. Mirrors bufferedAimX/bufferedAimY.
+    buffered_aim_x: f64 = 0,
+    buffered_aim_y: f64 = 0,
     /// Victim bitmask already hit by the CURRENT swing's active window —
     /// one bit per player index (MAX_PLAYERS=16 fits a u16 exactly).
     /// Mirrors NinjaMeleeMemory.hitThisSwing / PaladinMeleeMemory.
@@ -1177,7 +1189,14 @@ pub const MeleeSwingMemory = extern struct {
     /// extern-struct-safe equivalent for a fixed MAX_PLAYERS roster.
     hit_this_swing_mask: u16 = 0,
     phase: MeleeSwingPhase = .idle,
-    _pad: u8 = 0,
+    /// SHIELD BASH chain position (2026-07-24, slash-feel-ledger design-
+    /// decision block; Kindled-only, always 0 for ninja): 0/1 = blade
+    /// swings, 2 = the current/next swing is the BASH. Advances per
+    /// STARTED swing at recovery→idle; resets after KIN_BASH_CHAIN_GAP_MS
+    /// of idle (chain_gap_ms below) or on death. Reclaims the old _pad
+    /// byte — no size change from this field. Mirrors
+    /// PaladinMeleeMemory.chainIndex.
+    chain_index: u8 = 0,
 
     /// Razor Route substrate (this pass, docs/zig-step-world-parity-
     /// goal.md) — dash-through body-cross detection, the Zig mirror of
@@ -1211,6 +1230,11 @@ pub const MeleeSwingMemory = extern struct {
     /// Read-tagged ("one body, one lie"). Mirrors NinjaMeleeMemory.
     /// razorRouteActiveDash.
     razor_route_active_dash: bool = false,
+    /// ms spent idle since the last swing's recovery ended — the bash
+    /// chain's reset clock (Kindled-only; see chain_index above). Only
+    /// meaningful while phase == .idle. Mirrors
+    /// PaladinMeleeMemory.chainGapMs.
+    chain_gap_ms: f64 = 0,
 };
 
 /// Resolved per-player fire config — what `step_world` reads
@@ -2047,10 +2071,18 @@ comptime {
     // (razor_route_active_dash bool) = 4 bytes total, landing EXACTLY in
     // the 4 bytes of implicit tail padding the struct already had — net
     // growth is ZERO, same "reclaim the old pad" shape PlayerEntity's own
-    // Ghost Guard cut used moments ago. Verified via a temporary
-    // `@compileLog(@sizeOf(MeleeSwingMemory))` before locking this assert
-    // (confirmed still 32).
-    std.debug.assert(@sizeOf(MeleeSwingMemory) == 32);
+    // Ghost Guard cut used moments ago.
+    // 32 → 56 (2026-07-24, melee input buffer — slash-feel-ledger R1 row
+    // 1): +3 f64s (buffered_ms / buffered_aim_x / buffered_aim_y) inserted
+    // after aim_y, so every f64 stays 8-aligned and the trailing
+    // mask/phase/dash block shifts from offset 24 to offset 48 intact.
+    // 56 → 64 (2026-07-24, shield-bash chain — ledger design-decision
+    // block): chain_index u8 reclaims the old _pad byte at offset 51 (no
+    // growth), chain_gap_ms f64 appends at offset 56 (+8). 7×f64 (56) +
+    // u16 + u8 + u8 + u16 + 2×bool (8) = 64, 8-aligned, no tail padding.
+    // worldStateBridge.ts's MELEE_SWING_MEMORY_SIZE bumped in the same
+    // cuts (meleeSwingMemoryBridge.test.ts gate A pins the two together).
+    std.debug.assert(@sizeOf(MeleeSwingMemory) == 64);
     std.debug.assert(@sizeOf(SimEvent) == 40);
     // 240 → 248 (Track Z0c Item A, fire-recoil substrate): +8 for the
     // appended `recoil_impulse` f64 at [240, 248) — 240 is 8-aligned, no

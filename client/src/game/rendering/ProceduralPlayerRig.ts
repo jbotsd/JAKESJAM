@@ -9,6 +9,17 @@ import { headCrestGeometry, headHoodGeometry } from "./chassisSilhouette";
 import type { AbilityKind } from "../../sim/data/cardTypes.js";
 import { ABILITY_ANIMATIONS } from "../render/abilityAnimation.js";
 import {
+  flashMix,
+  impactChannelParams,
+  pairHoldMs,
+  squashScale,
+  vibrationOffset,
+  type ImpactChannelParams,
+} from "../render/victimChannel.js";
+import {
+  bashHandPose,
+  bashKineticChain,
+  bashSwordHandPose,
   meleeHandPose,
   meleeKineticChain,
   meleeOffhandPose,
@@ -24,11 +35,25 @@ import {
 export interface CombatRig {
   setVisible(visible: boolean): void;
   triggerFire(hand?: 0 | 1): void;
-  triggerHit(dirX: number, dirY: number): void;
+  triggerHit(dirX: number, dirY: number, magPx?: number, durMs?: number): void;
   triggerParryFlash(): void;
   triggerKillPulse(): void;
-  triggerMeleeSwing?(style: "interstice" | "kindled", dir: number): void;
+  triggerMeleeSwing?(style: "interstice" | "kindled", dir: number, verb?: "blade" | "bash"): void;
   triggerAbility?(kind: AbilityKind): void;
+  /** Chassis silhouette id, when the rig knows it — lets SimEventRouter
+   *  pick the attacker-chassis victim-channel params (R1 rows 3-8). */
+  getClassId?(): string;
+  /** Pair-scoped melee impact (victimChannel.ts, R1 rows 3-8): freeze
+   *  this rig (attacker keeps ~10% drift; victim vibrates + flashes +
+   *  flinches + squashes). NEVER stacks — re-triggers restart at
+   *  max(remaining, fresh). */
+  applyPairImpact?(
+    role: "attacker" | "victim",
+    dirX: number,
+    dirY: number,
+    chassis: "interstice" | "kindled",
+    kill?: boolean,
+  ): void;
   destroy(): void;
 }
 
@@ -144,9 +169,16 @@ const ACCENT = 0x3c79f0;
 export class ProceduralPlayerRig implements CombatRig {
   private readonly graphics: Phaser.GameObjects.Graphics;
   private readonly nameText: Phaser.GameObjects.Text;
-  protected readonly color: number;
-  protected readonly colorDark: number;
-  protected readonly accentColor: number;
+  // Mutable since the victim-channel white-flash (2026-07-24): every draw
+  // helper reads these, so mixing them toward white for 2-3 frames flashes
+  // the WHOLE body without touching each call site. The originals live in
+  // baseColor/baseColorDark/baseAccentColor and are restored every frame.
+  protected color: number;
+  protected colorDark: number;
+  protected accentColor: number;
+  private baseColor = 0xffffff;
+  private baseColorDark = 0xffffff;
+  private baseAccentColor = 0xffffff;
   /** Vessel Creator channels — see ProceduralPlayerRigOptions' docblock. */
   protected readonly visorColor: number;
   protected readonly palmColor: number;
@@ -394,6 +426,11 @@ export class ProceduralPlayerRig implements CombatRig {
   private meleePoseDurationMs = 1;
   private meleePoseStyle: "interstice" | "kindled" = "interstice";
   private meleePoseDir = 1;
+  /** SHIELD BASH (slash-feel-ledger design-decision block): "bash" swaps
+   *  the Kindled melee sentence from the sword arc to the slab-led body
+   *  CHECK — shield hand punches along aim, sword chambers back, and the
+   *  kinetic chain surges through the front foot (bashKineticChain). */
+  private meleePoseVerb: "blade" | "bash" = "blade";
   private abilityPoseMs = 0;
   private abilityPoseDurationMs = 1;
   private abilityPoseKind: AbilityKind = "sunlance";
@@ -404,7 +441,21 @@ export class ProceduralPlayerRig implements CombatRig {
   private hitOffsetX = 0;
   private hitOffsetY = 0;
   private hitDecay = 0;
+  private hitDurMs = 90;
   private static readonly HIT_DECAY_MS = 90;
+  // ── Victim-channel state (victimChannel.ts, R1 rows 3-8) ──
+  /** Pair-scoped hold remaining (ms); 0 = free. */
+  private impactHoldMs = 0;
+  private impactHoldTotalMs = 0;
+  private impactHoldRole: "attacker" | "victim" = "victim";
+  private impactFrozenX = 0;
+  private impactFrozenY = 0;
+  private impactFrozenValid = false;
+  /** ms since the last VICTIM impact — drives flash/squash. Infinity when
+   *  no impact is live. */
+  private impactElapsedMs = Infinity;
+  private impactParams: ImpactChannelParams | null = null;
+  private impactKill = false;
   private readonly trailPositions: { x: number; y: number; t: number }[] = [];
   private lastTrailSampleMs = 0;
   // Parry flash — the dash-bash guard just turned an attack (slide-parry reflect,
@@ -525,6 +576,9 @@ export class ProceduralPlayerRig implements CombatRig {
     this.color = options.color;
     this.colorDark = shadeColor(options.color, -0.4);
     this.accentColor = options.accentColor ?? ACCENT;
+    this.baseColor = this.color;
+    this.baseColorDark = this.colorDark;
+    this.baseAccentColor = this.accentColor;
     this.visorColor = options.visorColor ?? this.accentColor;
     this.palmColor = options.palmColor ?? this.accentColor;
     this.jointColor = options.jointColor ?? this.accentColor;
@@ -543,6 +597,62 @@ export class ProceduralPlayerRig implements CombatRig {
     this.lastDrawX = pose.position.x;
     this.lastDrawY = pose.position.y;
     if (!this.graphics.visible) return;
+
+    // ── Pair-scoped hit-stop (victimChannel.ts rows 3-5) ── while held,
+    // this rig's internal clocks freeze (attacker keeps ~10% drift) and
+    // the body holds its captured position — the victim vibrating through
+    // the hold. The white-flash/squash clocks run on REAL time (canon:
+    // the flash and squash happen DURING hit-stop, not after it). The
+    // world tween clock is never touched here — rigs only.
+    const realDeltaMs = deltaMs;
+    if (this.impactElapsedMs !== Infinity) {
+      this.impactElapsedMs += realDeltaMs;
+      const ip = this.impactParams;
+      if (
+        ip &&
+        this.impactElapsedMs >
+          Math.max(ip.killFlashInMs + ip.flashOutMs, ip.squashHoldMs + ip.squashSpringMs) + 400
+      ) {
+        this.impactElapsedMs = Infinity; // chord fully spoken — go quiet
+      }
+    }
+    if (this.impactHoldMs > 0) {
+      if (!this.impactFrozenValid) {
+        this.impactFrozenX = pose.position.x;
+        this.impactFrozenY = pose.position.y;
+        this.impactFrozenValid = true;
+      }
+      this.impactHoldMs = Math.max(0, this.impactHoldMs - realDeltaMs);
+      const drift = this.impactHoldRole === "attacker" ? 0.1 : 0;
+      const holdElapsed = this.impactHoldTotalMs - this.impactHoldMs;
+      let vibX = 0;
+      let vibY = 0;
+      if (this.impactHoldRole === "victim" && this.impactParams) {
+        const v = vibrationOffset(holdElapsed, this.impactHoldTotalMs, this.impactParams.vibrationPx);
+        if (pose.grounded) vibX = v;
+        else vibY = v;
+      }
+      pose = {
+        ...pose,
+        position: {
+          x: this.impactFrozenX + (pose.position.x - this.impactFrozenX) * drift + vibX,
+          y: this.impactFrozenY + (pose.position.y - this.impactFrozenY) * drift + vibY,
+        },
+        velocity: { x: 0, y: 0 },
+      };
+      deltaMs = deltaMs * drift;
+      if (this.impactHoldMs <= 0) this.impactFrozenValid = false;
+    }
+    // Victim white-flash (row 6): mix EVERY body color toward white for
+    // the flash window — restored to base each frame, so this is a pure
+    // per-frame read of the channel clock.
+    const flashK =
+      this.impactParams && this.impactElapsedMs !== Infinity
+        ? flashMix(this.impactElapsedMs, this.impactParams, this.impactKill)
+        : 0;
+    this.color = flashK > 0.01 ? mixTowardWhite(this.baseColor, flashK) : this.baseColor;
+    this.colorDark = flashK > 0.01 ? mixTowardWhite(this.baseColorDark, flashK) : this.baseColorDark;
+    this.accentColor = flashK > 0.01 ? mixTowardWhite(this.baseAccentColor, flashK) : this.baseAccentColor;
 
     const walkTarget = Phaser.Math.Clamp(Math.abs(pose.velocity.x) / 180, 0, 1);
     if (deltaMs > 0) {
@@ -571,7 +681,7 @@ export class ProceduralPlayerRig implements CombatRig {
     this.leadThrow = Math.max(0, this.leadThrow - deltaMs / ProceduralPlayerRig.FIRE_RECOIL_MS);
     this.backThrow = Math.max(0, this.backThrow - deltaMs / ProceduralPlayerRig.FIRE_RECOIL_MS);
     this.shurikenSpin += deltaMs * 0.02;
-    this.hitDecay = Math.max(0, this.hitDecay - deltaMs / ProceduralPlayerRig.HIT_DECAY_MS);
+    this.hitDecay = Math.max(0, this.hitDecay - realDeltaMs / this.hitDurMs);
     this.parryFlashMs = Math.max(0, this.parryFlashMs - deltaMs);
     this.killPulseMs = Math.max(0, this.killPulseMs - deltaMs);
     this.combatHoldMs = Math.max(0, this.combatHoldMs - deltaMs);
@@ -786,10 +896,17 @@ export class ProceduralPlayerRig implements CombatRig {
   }
 
   /** Render-only melee sentence: coil, cross-body cut, committed travel past
-   * contact, then recovery. Simulation hit timing and position never move. */
-  triggerMeleeSwing(style: "interstice" | "kindled", dir: number): void {
+   * contact, then recovery. Simulation hit timing and position never move.
+   * `verb` "bash" (Kindled only) plays the slab-led body check instead of
+   * the sword arc — the chain's third beat (slash-feel-ledger). */
+  triggerMeleeSwing(
+    style: "interstice" | "kindled",
+    dir: number,
+    verb: "blade" | "bash" = "blade",
+  ): void {
     this.meleePoseStyle = style;
     this.meleePoseDir = dir >= 0 ? 1 : -1;
+    this.meleePoseVerb = style === "kindled" ? verb : "blade";
     this.meleePoseDurationMs = style === "interstice" ? 360 : 560;
     this.meleePoseMs = this.meleePoseDurationMs;
     this.combatHoldMs = Math.max(this.combatHoldMs, 900);
@@ -820,15 +937,52 @@ export class ProceduralPlayerRig implements CombatRig {
   }
 
   /**
-   * Trigger a visual knockback on hit. Direction is unit-ish; magnitude is
-   * scaled internally. Pure render — does not affect the authoritative sim.
-   * Per game-feel-juice §5.
+   * Trigger a visual knockback on hit. Direction is unit-ish; magnitude/
+   * duration default to the legacy generic-hit feel and are overridden by
+   * the victim channel's directional flinch (R1 row 7: instant full
+   * offset along the hit vector, ease-out). Pure render — does not affect
+   * the authoritative sim. Per game-feel-juice §5.
    */
-  triggerHit(dirX: number, dirY: number) {
-    const MAG = 6;
-    this.hitOffsetX = dirX * MAG;
-    this.hitOffsetY = dirY * MAG;
+  triggerHit(dirX: number, dirY: number, magPx = 6, durMs = ProceduralPlayerRig.HIT_DECAY_MS) {
+    const len = Math.hypot(dirX, dirY) || 1;
+    this.hitOffsetX = (dirX / len) * magPx;
+    this.hitOffsetY = (dirY / len) * magPx;
+    this.hitDurMs = durMs;
     this.hitDecay = 1;
+  }
+
+  /** Chassis silhouette id — see CombatRig.getClassId. */
+  getClassId(): string {
+    return this.classId;
+  }
+
+  /**
+   * Pair-scoped melee impact (victimChannel.ts, R1 rows 3-8). The
+   * ATTACKER rig freezes with ~10% drift; the VICTIM rig freezes fully,
+   * vibrates through the hold, white-flashes, flinches along the hit
+   * vector and squashes. HARD RULE: never stacks — a re-trigger during a
+   * live hold restarts at max(remaining, fresh), so mashed hits stay
+   * heavy-but-liquid instead of accumulating into sludge.
+   */
+  applyPairImpact(
+    role: "attacker" | "victim",
+    dirX: number,
+    dirY: number,
+    chassis: "interstice" | "kindled",
+    kill = false,
+  ): void {
+    const p = impactChannelParams(chassis);
+    const hold = pairHoldMs(p, role, kill);
+    this.impactHoldMs = Math.min(p.holdCapMs, Math.max(this.impactHoldMs, hold));
+    this.impactHoldTotalMs = this.impactHoldMs;
+    this.impactHoldRole = role;
+    this.impactFrozenValid = false;
+    this.impactParams = p;
+    if (role === "victim") {
+      this.impactKill = kill;
+      this.impactElapsedMs = 0;
+      this.triggerHit(dirX, dirY, p.flinchPx, p.flinchMs);
+    }
   }
 
   /** The guard just TURNED an attack — slide-parry reflect, timed parry, or a
@@ -1100,19 +1254,20 @@ export class ProceduralPlayerRig implements CombatRig {
     const meleeT = this.meleePoseMs > 0
       ? 1 - this.meleePoseMs / this.meleePoseDurationMs
       : 1;
-    const meleeAnticipationEnd = this.meleePoseStyle === "kindled" ? 0.38 : 0.32;
-    const meleeCutEnd = this.meleePoseStyle === "kindled" ? 0.61 : 0.52;
+    const meleeIsBash = this.meleePoseStyle === "kindled" && this.meleePoseVerb === "bash";
+    const meleeAnticipationEnd = meleeIsBash ? 0.36 : this.meleePoseStyle === "kindled" ? 0.38 : 0.32;
+    const meleeCutEnd = meleeIsBash ? 0.56 : this.meleePoseStyle === "kindled" ? 0.61 : 0.52;
     // Load from the floor: hips/chest/head sink together during anticipation,
     // then rise sharply into the cut. Feet retain their authoritative contact.
     const meleeGroundLoad = this.meleePoseMs <= 0
       ? 0
       : meleeT < meleeAnticipationEnd
         ? Math.sin((meleeT / meleeAnticipationEnd) * Math.PI * 0.5) *
-          (this.meleePoseStyle === "kindled" ? 14 : 10) * s
+          (meleeIsBash ? 19 : this.meleePoseStyle === "kindled" ? 17 : 10) * s
         : meleeT < meleeCutEnd
           ? (1 - (meleeT - meleeAnticipationEnd) /
             (meleeCutEnd - meleeAnticipationEnd)) *
-            (this.meleePoseStyle === "kindled" ? 14 : 10) * s
+            (meleeIsBash ? 19 : this.meleePoseStyle === "kindled" ? 17 : 10) * s
           : 0;
     // Key positions — head/chest lag hip for floppy chain.
     // gather dips the whole chain, slightly harder toward the head — the
@@ -1130,12 +1285,20 @@ export class ProceduralPlayerRig implements CombatRig {
     // coefficients tightened 2026-07-15 (Jake: "close more vert bounce") —
     // arms (pop-and-lock, below) are now the primary read; the body bounce
     // is a grounding undertone, not competing for attention.
+    // Victim squash (row 8): compress the body's height toward the ground
+    // while widening the stance/shoulders — volume-preserving, in the
+    // BODY (the spring chains ride the compressed targets), not a sprite
+    // scale/tint.
+    const impactSquash =
+      this.impactParams && this.impactElapsedMs !== Infinity
+        ? squashScale(this.impactElapsedMs, this.impactParams)
+        : { x: 1, y: 1 };
     const pelvisY =
-      ground - Phaser.Math.Linear(52, 28, cr) * sy - bob + gather * s + cushion + breathe * 0.4 + throwDrop - groove * 1.6 * sy + beatHit * 1 * sy + meleeGroundLoad;
+      ground - Phaser.Math.Linear(52, 28, cr) * sy * impactSquash.y - bob + gather * s + cushion + breathe * 0.4 + throwDrop - groove * 1.6 * sy + beatHit * 1 * sy + meleeGroundLoad;
     const chestYTarget =
-      ground - Phaser.Math.Linear(78, 52, cr) * sy - bob + gather * 1.2 * s + cushion * 1.15 + breathe + throwDrop * 0.5 - groove * 1.2 * sy + beatHit * 3 * sy + meleeGroundLoad * 0.82;
+      ground - Phaser.Math.Linear(78, 52, cr) * sy * impactSquash.y - bob + gather * 1.2 * s + cushion * 1.15 + breathe + throwDrop * 0.5 - groove * 1.2 * sy + beatHit * 3 * sy + meleeGroundLoad * 0.82;
     const headYTarget =
-      ground - Phaser.Math.Linear(100, 72, cr) * sy - bob + gather * 1.4 * s + cushion * 1.25 + breathe * 1.4 + throwDrop * 0.3 - groove * 1 * sy + beatHit * 5 * sy + meleeGroundLoad * 0.68;
+      ground - Phaser.Math.Linear(100, 72, cr) * sy * impactSquash.y - bob + gather * 1.4 * s + cushion * 1.25 + breathe * 1.4 + throwDrop * 0.3 - groove * 1 * sy + beatHit * 5 * sy + meleeGroundLoad * 0.68;
     const cx = pose.position.x + this.hitOffsetX * hitEased + drunkSway * 0.35;
     // Forward CENTRE OF MASS: the whole body chain (pelvis up) rides ahead
     // of the feet while moving — the falling-forward posture that makes a
@@ -1150,7 +1313,9 @@ export class ProceduralPlayerRig implements CombatRig {
       (pose.grounded ? 1 : 0.55) *
       s;
     const meleeChain = this.meleePoseMs > 0
-      ? meleeKineticChain(meleeT, this.meleePoseStyle)
+      ? meleeIsBash
+        ? bashKineticChain(meleeT)
+        : meleeKineticChain(meleeT, this.meleePoseStyle)
       : { pelvisDrive: 0, chestDrive: 0, headDrive: 0, shoulderTwist: 0, frontBrace: 0 };
     const abilityContract = ABILITY_ANIMATIONS[this.abilityPoseKind];
     const abilityT = this.abilityPoseMs > 0
@@ -1219,10 +1384,10 @@ export class ProceduralPlayerRig implements CombatRig {
     const perp = vec(Math.cos(shoulderAxis), Math.sin(shoulderAxis));
 
     // Joints
-    const hipL = vec(pelvis.x - 7 * s, pelvis.y);
-    const hipR = vec(pelvis.x + 7 * s, pelvis.y);
-    const shoulderLead = vec(chest.x + perp.x * 7 * s, chest.y + perp.y * 7 * s);
-    const shoulderBack = vec(chest.x - perp.x * 7 * s, chest.y - perp.y * 7 * s);
+    const hipL = vec(pelvis.x - 7 * s * impactSquash.x, pelvis.y);
+    const hipR = vec(pelvis.x + 7 * s * impactSquash.x, pelvis.y);
+    const shoulderLead = vec(chest.x + perp.x * 7 * s * impactSquash.x, chest.y + perp.y * 7 * s * impactSquash.x);
+    const shoulderBack = vec(chest.x - perp.x * 7 * s * impactSquash.x, chest.y - perp.y * 7 * s * impactSquash.x);
 
     // Hip drape: hangs straight down at rest, kicked backward by horizontal
     // speed (trails behind a sprint/dash) and by falling speed (streams up
@@ -1273,7 +1438,18 @@ export class ProceduralPlayerRig implements CombatRig {
       this.victoryPoseMs,
     );
 
-    if (this.meleePoseMs > 0) {
+    if (this.meleePoseMs > 0 && meleeIsBash) {
+      // SHIELD BASH — a body CHECK, not a cut: the SLAB (off hand) leads,
+      // chambering then punching straight along aim while the sword hand
+      // chambers back-low and visibly yields the beat. Weight transfers
+      // through the front foot via bashKineticChain above.
+      const slab = bashHandPose(aimAngle, meleeT);
+      armTargets.back.x = shoulderBack.x + Math.cos(slab.angle) * slab.reach * s;
+      armTargets.back.y = shoulderBack.y + Math.sin(slab.angle) * slab.reach * s;
+      const sword = bashSwordHandPose(aimAngle, this.meleePoseDir, meleeT);
+      armTargets.lead.x = shoulderLead.x + Math.cos(sword.angle) * sword.reach * s;
+      armTargets.lead.y = shoulderLead.y + Math.sin(sword.angle) * sword.reach * s;
+    } else if (this.meleePoseMs > 0) {
       // Kindled always cuts with the sword hand; alternating the combo only
       // reverses its travel. Interstice really alternates its two daggers.
       // Treating Kindled's shield hand as a sword hand on every other swing
@@ -1301,10 +1477,19 @@ export class ProceduralPlayerRig implements CombatRig {
       } else {
         const brace = meleeStage(meleeT, "kindled");
         const braceOpen = brace.recovery;
-        const guardAngle = aimAngle - this.meleePoseDir * (0.55 - braceOpen * 0.22);
-        const guardReach = (25 + braceOpen * 4) * s;
+        // Brace LOW and forward — the slab guards the body line during the
+        // swing. The old 0.55-rad off-aim angle let the shield ride up over
+        // the face whenever aim tilted upward (2026-07-24 tape, frames
+        // t=0.34-0.61: a floating rectangle covering the head/nameplate);
+        // the shallower angle + hard below-shoulder clamp keeps the board
+        // an instrument on the arm, never an icon over the silhouette.
+        const guardAngle = aimAngle - this.meleePoseDir * (0.38 - braceOpen * 0.16);
+        const guardReach = (24 + braceOpen * 4) * s;
         guard.x = guardShoulder.x + Math.cos(guardAngle) * guardReach;
-        guard.y = guardShoulder.y + Math.sin(guardAngle) * guardReach;
+        guard.y = Math.max(
+          guardShoulder.y + Math.sin(guardAngle) * guardReach,
+          guardShoulder.y + 6 * s,
+        );
       }
     } else if (this.abilityPoseMs > 0) {
       const a = abilityContract;
@@ -1376,6 +1561,43 @@ export class ProceduralPlayerRig implements CombatRig {
           break;
         }
       }
+    }
+
+    // KINDLED BRACED IDLE (2026-07-24, slash-feel-ledger "FULL ANIMATION
+    // GAMUT" — kindled-v2.jpg's grounded stance): when no combat sentence
+    // owns the arms, the paladin's rest pose is SET, not slack — sword
+    // held low-ready in the lead hand, slab braced forward of the chest.
+    // Blended down (never off) while moving so locomotion still carries
+    // the loadout, and suppressed while dashing/wall-planting/venue
+    // gestures own the arms. Weapons themselves are drawn by
+    // ConstructVfxController's held layer at these same hands.
+    const kindledBraceMix =
+      this.classId === "paladin" &&
+      this.meleePoseMs <= 0 &&
+      this.abilityPoseMs <= 0 &&
+      !dashing &&
+      wallDir === 0 &&
+      this.victoryPoseMs <= 0 &&
+      pose.grounded
+        ? (1 - Math.min(1, walkAmount) * 0.55) *
+          (1 - Math.min(1, Math.max(this.leadThrow, this.backThrow)))
+        : 0;
+    if (kindledBraceMix > 0.01) {
+      // "Down-forward" relative to wherever the aim points, on either side.
+      const downBias = Math.cos(aimAngle) >= 0 ? 1 : -1;
+      const swordAngle = aimAngle + downBias * 0.85;
+      const swordX = shoulderLead.x + Math.cos(swordAngle) * 27 * s;
+      const swordY = shoulderLead.y + Math.sin(swordAngle) * 27 * s;
+      const slabAngle = aimAngle + downBias * 0.16;
+      const slabX = shoulderBack.x + Math.cos(slabAngle) * 21 * s;
+      const slabY = Math.max(
+        shoulderBack.y + Math.sin(slabAngle) * 21 * s,
+        shoulderBack.y + 5 * s,
+      );
+      armTargets.lead.x = Phaser.Math.Linear(armTargets.lead.x, swordX, kindledBraceMix);
+      armTargets.lead.y = Phaser.Math.Linear(armTargets.lead.y, swordY, kindledBraceMix);
+      armTargets.back.x = Phaser.Math.Linear(armTargets.back.x, slabX, kindledBraceMix);
+      armTargets.back.y = Phaser.Math.Linear(armTargets.back.y, slabY, kindledBraceMix);
     }
 
     if (!this.leadHandSpringReady) {
@@ -1456,6 +1678,11 @@ export class ProceduralPlayerRig implements CombatRig {
       footRTarget.x = cx + this.facing * (9 + meleeChain.frontBrace * 3) * s;
       footLTarget.y = ground;
       footRTarget.y = ground;
+    } else if (kindledBraceMix > 0.6 && walkAmount < 0.15) {
+      // Braced idle plants a slightly wider base — weight visibly SET
+      // (kindled-v2's grounded stance), not a narrow neutral hover.
+      footLTarget.x -= 3.5 * s * kindledBraceMix;
+      footRTarget.x += 3.5 * s * kindledBraceMix;
     }
 
     if (!this.footSpringsReady) {
@@ -2763,4 +2990,17 @@ function solveTwoBone(
 
 function vec(x: number, y: number): Vec2 {
   return { x, y };
+}
+
+/** Mix a 0xRRGGBB color toward pure white by k (0..1) — the victim
+ *  white-flash (victimChannel.ts row 6). */
+function mixTowardWhite(color: number, k: number): number {
+  const r = (color >> 16) & 0xff;
+  const g = (color >> 8) & 0xff;
+  const b = color & 0xff;
+  const m = Math.max(0, Math.min(1, k));
+  const mr = Math.round(r + (255 - r) * m);
+  const mg = Math.round(g + (255 - g) * m);
+  const mb = Math.round(b + (255 - b) * m);
+  return (mr << 16) | (mg << 8) | mb;
 }

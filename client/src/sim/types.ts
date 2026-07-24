@@ -1361,6 +1361,14 @@ export type MeleeSwingMemory = {
    *  arc hit-check's atan2). */
   aimX: number;
   aimY: number;
+  /** Melee input buffer (slash-feel-ledger R1 row 1, 2026-07-24): ms
+   *  remaining in the buffered-press window; 0 = nothing queued. */
+  bufferedMs: number;
+  /** Cursor point (absolute aim coords, NOT a unit vector) captured at
+   *  the buffered press tick — the queued swing's aim, resolved against
+   *  the attacker's position at fire time. */
+  bufferedAimX: number;
+  bufferedAimY: number;
   /** Victim bitmask already hit by the CURRENT swing's active window —
    *  one bit per player slot index (MAX_PLAYERS=16 fits a u16). */
   hitThisSwingMask: number;
@@ -1368,6 +1376,9 @@ export type MeleeSwingMemory = {
    *  MeleeSwingPhase enum(u8), same shape as TS's NinjaSlashPhase /
    *  PaladinEdgePhase unions. */
   phase: 0 | 1 | 2 | 3;
+  /** SHIELD BASH chain position (2026-07-24; Kindled-only, always 0 for
+   *  ninja): 0/1 = blade swings, 2 = the current/next swing is the BASH. */
+  chainIndex: number;
   /** Victim bitmask already dash-through-tagged during the CURRENT dash
    *  burst (Razor Route substrate) — same slot-index shape as
    *  hitThisSwingMask. */
@@ -1376,6 +1387,9 @@ export type MeleeSwingMemory = {
   wasDashing: boolean;
   /** Razor Route empowerment latched at the current burst's start. */
   razorRouteActiveDash: boolean;
+  /** ms spent idle since the last swing's recovery ended — the bash
+   *  chain's reset clock (Kindled-only). */
+  chainGapMs: number;
 };
 
 export type WorldState = {
@@ -1759,7 +1773,20 @@ export type SimEvent = (
    * resolve. Drives local wind-up/whiff SFX; no gameplay state change.
    * Additive wire type — old clients ignore unknown event tags.
    */
-  | { t: 'slash-started'; playerId: PlayerId; x: number; y: number }
+  | {
+      t: 'slash-started';
+      playerId: PlayerId;
+      x: number;
+      y: number;
+      /**
+       * KINDLED SHIELD BASH (2026-07-24, slash-feel-ledger "THE SHIELD IS
+       * IN THE CHAIN"): 'bash' marks the chain's third swing — the slab-
+       * led shield bash — so the render leads with the slab from windup.
+       * Absent = an ordinary blade swing (both classes). Additive field —
+       * old clients ignore it and render a blade swing.
+       */
+      verb?: 'bash';
+    }
   /**
    * A ninja's melee arc landed on a player this tick (arc-vs-AABB test,
    * SLASH_RANGE/SLASH_ARC_RADIANS in World.ts). One event per victim hit —
@@ -1767,7 +1794,35 @@ export type SimEvent = (
    * reflects shield/parry mitigation (tryDeflectDamage) and evasion
    * (blocked hits never reach here). Additive wire type.
    */
-  | { t: 'slash-hit'; attackerId: PlayerId; victimId: PlayerId; damage: number }
+  | {
+      t: 'slash-hit';
+      attackerId: PlayerId;
+      victimId: PlayerId;
+      damage: number;
+      /** Unit swing direction (the knockback vector) — render-only payload
+       *  for the victim channel's directional flinch/pair impact (R1 row
+       *  7). Optional/additive; TS-authoritative emitters only. */
+      dirX?: number;
+      dirY?: number;
+    }
+  /**
+   * KINDLED SHIELD BASH landed (2026-07-24) — the chain's third swing
+   * connected. Distinct from 'slash-hit' so the render layer gives the
+   * blunt slab its own contact register (bass THUD, wider debris wedge)
+   * instead of the blade's shear. Damage is LOW by design (≤ half an Edge
+   * hit) — the payoff is the game's biggest knockback + a brief stagger
+   * (CONTROL, not DPS — see the ledger's design-decision block). Fired
+   * alongside the same tick's generic 'hit-confirmed'. Additive wire type.
+   */
+  | {
+      t: 'bash-landed';
+      attackerId: PlayerId;
+      victimId: PlayerId;
+      damage: number;
+      /** Unit shove direction — same render-only contract as slash-hit's. */
+      dirX?: number;
+      dirY?: number;
+    }
   /**
    * The short-range WAVE projectile spawned off a completed ninja swing
    * (docs: "wave is aftermath of contact... spawns from a swing that had

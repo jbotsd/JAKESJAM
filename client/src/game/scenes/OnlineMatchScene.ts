@@ -1032,8 +1032,9 @@ export class OnlineMatchScene extends Phaser.Scene {
         id: PlayerId,
         style: "interstice" | "kindled",
         dir: number,
+        verb: "blade" | "bash" = "blade",
       ): void => {
-        this.playerRigs.get(id as string)?.triggerMeleeSwing?.(style, dir);
+        this.playerRigs.get(id as string)?.triggerMeleeSwing?.(style, dir, verb);
       };
       // Shock Ring's landing slam and Wall Bloom's wall-kick burst fire with
       // NO SimEvent (combat.ts/World.ts's own silent-payoff comments), so
@@ -1609,6 +1610,8 @@ export class OnlineMatchScene extends Phaser.Scene {
         audio: this.audio ?? null,
         localPlayerId: this.localPlayerId,
         safeShake: (durationMs, intensity) => this.safeShake(durationMs, intensity),
+        directionalKick: (dirX, dirY, kickPx, durMs, noisePx) =>
+          this.cameraJuice.directionalKick(dirX, dirY, kickPx, durMs, noisePx),
         renderTime: this.renderTime,
         spawnDamageNumber: (vid, dmg, headshot) => this.spawnDamageNumber(vid, dmg, headshot),
         spawnDamageNumberAt: (x, y, dmg) => this.spawnDamageNumberAt(x, y, dmg),

@@ -1050,6 +1050,29 @@ pub const EDGE_ACTIVE_MS: f64 = 110.0;
 pub const EDGE_RECOVERY_MS: f64 = 340.0;
 pub const EDGE_CONTACT_DELAY_MS: f64 = 100.0;
 
+/// Melee input buffer window (ms), BOTH classes — slash-feel-ledger R1
+/// row 1 (2026-07-24). Bit-exact mirror of World.ts's MELEE_BUFFER_MS;
+/// consumed in stepMeleeSwing's FSM (queue on a mid-swing press, fire at
+/// phase 0 on the recovery→idle transition tick).
+pub const MELEE_BUFFER_MS: f64 = 100.0;
+
+// ── KINDLED SHIELD BASH (2026-07-24, slash-feel-ledger design-decision
+// block) — every THIRD Edge swing is the slab-led BASH: low damage, the
+// game's biggest knockback, brief stagger. Bit-exact mirrors of World.ts's
+// SHIELD_BASH_* / KIN_BASH_CHAIN_GAP_MS; the chain state itself lives in
+// MeleeSwingMemory.chain_index/chain_gap_ms (world_state.zig). Same FSM
+// phase timings as Edge — only reach/arc/damage/knockback/contact-gate
+// swap per verb.
+pub const SHIELD_BASH_RANGE: f64 = 62.0;
+pub const SHIELD_BASH_ARC_RADIANS: f64 = (5.0 * std.math.pi) / 9.0;
+pub const SHIELD_BASH_DAMAGE: f64 = 14.0;
+pub const SHIELD_BASH_KNOCKBACK: f64 = 760.0;
+pub const SHIELD_BASH_KNOCK_UP: f64 = 260.0;
+pub const SHIELD_BASH_CONTACT_DELAY_MS: f64 = 60.0;
+pub const SHIELD_BASH_STAGGER_MS: f64 = 300.0;
+pub const SHIELD_BASH_STAGGER_MULTIPLIER: f64 = 0.55;
+pub const KIN_BASH_CHAIN_GAP_MS: f64 = 350.0;
+
 // ── Ability-cast dispatch (Phase 1, docs/zig-step-world-parity-goal.md
 //    "the next unblock") — constants for the 6 melee-hook abilities wired
 //    this pass. Bit-exact port of the matching World.ts/constants.ts
@@ -2934,6 +2957,31 @@ fn stepAbilityDispatch(
     }
 }
 
+/// Start a melee swing toward an absolute aim POINT (cursor coords) —
+/// shared by the idle fresh-press path and the R1-row-1 buffered-press
+/// consume paths (2026-07-24). Bit-exact mirror of World.ts's
+/// `startSwing` closures (ninja + paladin blocks): direction normalizes
+/// from the attacker's position AT FIRE TIME toward the point (+X
+/// fallback when the cursor sits on the body), the per-swing victim mask
+/// clears, and the buffer zeroes so one press can never double-fire.
+fn startMeleeSwingFromAim(
+    mem: *world_state.MeleeSwingMemory,
+    attacker: *const world_state.PlayerEntity,
+    aim_point_x: f64,
+    aim_point_y: f64,
+    windup_ms: f64,
+) void {
+    const dx = aim_point_x - attacker.x;
+    const dy = aim_point_y - attacker.y;
+    const len = @sqrt(dx * dx + dy * dy);
+    mem.phase = .windup;
+    mem.phase_ms = windup_ms;
+    mem.aim_x = if (len > 1e-3) dx / len else 1.0;
+    mem.aim_y = if (len > 1e-3) dy / len else 0.0;
+    mem.hit_this_swing_mask = 0;
+    mem.buffered_ms = 0;
+}
+
 /// Advance one attacker's melee swing FSM one tick + resolve the arc
 /// hit-check when contact-delay-gated active. `fire_rising_edge` MUST be
 /// captured before section 6 (below, in stepWorld) rolls
@@ -2948,7 +2996,15 @@ fn stepMeleeSwing(
     fire_rising_edge: bool,
 ) void {
     const attacker = &state.players[attacker_idx];
-    if (!attacker.flags.alive) return;
+    if (!attacker.flags.alive) {
+        // Death resets the bash chain (ledger design-decision block, TS
+        // mirror: the dead-paladin branch of World.ts's 1z3 loop) — a
+        // respawn always re-opens with blades. Harmless no-op for every
+        // non-paladin (their chain fields are always 0).
+        state.melee_swing[attacker_idx].chain_index = 0;
+        state.melee_swing[attacker_idx].chain_gap_ms = 0;
+        return;
+    }
     // classIdForArchetype(...) === "ninja" / "paladin" (cardTypes.ts's
     // ARCHETYPE_CLASS_ID: sprinter->ninja, heavy->paladin) — same inline-
     // comparison convention section 6 already uses for `is_wizard_channel`
@@ -2983,22 +3039,39 @@ fn stepMeleeSwing(
     // the shared FSM update just to skip setting one bool.
     var wave_should_spawn = false;
 
+    // Age the buffered press BEFORE this tick's capture (a press stored
+    // this very tick keeps its full window, starts aging next tick) —
+    // exact ordering mirror of World.ts's own buffer block (2026-07-24,
+    // slash-feel-ledger R1 row 1).
+    if (mem.buffered_ms > 0) mem.buffered_ms = @max(0.0, mem.buffered_ms - eff_dt);
+
+    // Bash chain-reset clock (Kindled only — ledger design-decision
+    // block): idle time accrues; past the gap the chain cools back to
+    // blades. Runs BEFORE any swing start this tick — exact ordering
+    // mirror of World.ts's 1z3 block.
+    if (is_paladin and mem.phase == .idle) {
+        mem.chain_gap_ms += eff_dt;
+        if (mem.chain_gap_ms > KIN_BASH_CHAIN_GAP_MS) mem.chain_index = 0;
+    }
+
     if (mem.phase == .idle) {
-        // Re-trigger only accepted from idle — a Fire press while
-        // mem.phase != .idle is simply never read as a new swing (this
-        // branch isn't reached), satisfying "gate re-swinging during
-        // windup/active/recovery" by construction, same as TS's own FSM.
+        // A fresh press from idle starts a swing immediately; otherwise a
+        // still-live buffered press (queued mid-swing, consumed on the
+        // recovery→idle transition below — this branch is the defensive
+        // idle-consume mirror of TS's) fires now.
         if (fire_rising_edge) {
-            const dx = attacker.aim_x - attacker.x;
-            const dy = attacker.aim_y - attacker.y;
-            const len = @sqrt(dx * dx + dy * dy);
-            mem.phase = .windup;
-            mem.phase_ms = windup_ms;
-            mem.aim_x = if (len > 1e-3) dx / len else 1.0;
-            mem.aim_y = if (len > 1e-3) dy / len else 0.0;
-            mem.hit_this_swing_mask = 0;
+            startMeleeSwingFromAim(mem, attacker, attacker.aim_x, attacker.aim_y, windup_ms);
+        } else if (mem.buffered_ms > 0) {
+            startMeleeSwingFromAim(mem, attacker, mem.buffered_aim_x, mem.buffered_aim_y, windup_ms);
         }
     } else {
+        // Press mid-swing: QUEUE it (latest press wins, cursor point
+        // captured at press time) instead of eating it — R1 row 1.
+        if (fire_rising_edge) {
+            mem.buffered_ms = MELEE_BUFFER_MS;
+            mem.buffered_aim_x = attacker.aim_x;
+            mem.buffered_aim_y = attacker.aim_y;
+        }
         mem.phase_ms -= eff_dt;
         if (mem.phase_ms <= 0) {
             switch (mem.phase) {
@@ -3014,6 +3087,20 @@ fn stepMeleeSwing(
                 .recovery => {
                     mem.phase = .idle;
                     mem.phase_ms = 0;
+                    // Bash chain advances per STARTED swing (whiffs count
+                    // — cadence is rhythm, not hit-confirm), stamped at
+                    // the swing's end so the position is stable for the
+                    // swing's whole lifetime. Matches World.ts's 1z3.
+                    if (is_paladin) {
+                        mem.chain_index = (mem.chain_index + 1) % 3;
+                        mem.chain_gap_ms = 0;
+                    }
+                    // Buffered press fires AT phase 0 — the same tick
+                    // recovery expires, zero dead frames ("smooth on
+                    // retrig"), matching World.ts exactly.
+                    if (mem.buffered_ms > 0) {
+                        startMeleeSwingFromAim(mem, attacker, mem.buffered_aim_x, mem.buffered_aim_y, windup_ms);
+                    }
                 },
                 .idle => unreachable,
             }
@@ -3027,6 +3114,19 @@ fn stepMeleeSwing(
     //      World.ts's `hasReachedSlashContact`/equivalent Edge check
     //      exactly, including the "elapsed" accounting across the tick
     //      that just transitioned OUT of active (`wasActive`). ----
+    // Which verb is the CURRENT swing? (SHIELD BASH — chain position 2.)
+    // Stable for the swing's whole lifetime: chain_index only advances at
+    // recovery→idle, and the contact gate below can never be reached on
+    // that transition tick. Exact mirror of World.ts's swingIsBash/
+    // swing* locals.
+    const swing_is_bash = is_paladin and mem.chain_index == 2;
+    const eff_range: f64 = if (swing_is_bash) SHIELD_BASH_RANGE else range;
+    const eff_arc: f64 = if (swing_is_bash) SHIELD_BASH_ARC_RADIANS else arc;
+    const eff_damage: f64 = if (swing_is_bash) SHIELD_BASH_DAMAGE else damage;
+    const eff_knockback: f64 = if (swing_is_bash) SHIELD_BASH_KNOCKBACK else knockback;
+    const eff_knock_up: f64 = if (swing_is_bash) SHIELD_BASH_KNOCK_UP else knock_up;
+    const eff_contact_delay: f64 = if (swing_is_bash) SHIELD_BASH_CONTACT_DELAY_MS else contact_delay_ms;
+
     const is_active_now = mem.phase == .active;
     const active_elapsed_after: f64 = if (is_active_now)
         active_ms - mem.phase_ms
@@ -3034,13 +3134,13 @@ fn stepMeleeSwing(
         @min(active_ms, active_elapsed_before + eff_dt)
     else
         0;
-    const reached_contact = (was_active or is_active_now) and active_elapsed_after >= contact_delay_ms;
+    const reached_contact = (was_active or is_active_now) and active_elapsed_after >= eff_contact_delay;
     if (!reached_contact) return;
 
     // ---- Arc hit-check (from the contact-delay tick onward, every
     //      victim in the cone — not "first hit only") ----
     const aim_angle = trig.lutAtan2(mem.aim_y, mem.aim_x);
-    const half_arc = arc / 2.0;
+    const half_arc = eff_arc / 2.0;
 
     var vi: u32 = 0;
     while (vi < state.player_count) : (vi += 1) {
@@ -3050,7 +3150,7 @@ fn stepMeleeSwing(
         const victim = &state.players[vi];
         if (!victim.flags.alive) continue;
         const box = combat.playerHitboxAabb(victim.x, victim.y, victim.flags.crouching, victim.character_id);
-        if (!combat.isBodyInMeleeArc(attacker.x, attacker.y, aim_angle, half_arc, range, victim.x, victim.y, box)) {
+        if (!combat.isBodyInMeleeArc(attacker.x, attacker.y, aim_angle, half_arc, eff_range, victim.x, victim.y, box)) {
             continue;
         }
         mem.hit_this_swing_mask |= bit;
@@ -3075,8 +3175,9 @@ fn stepMeleeSwing(
 
         // Knockback lands on every arc hit that wasn't evaded above (TS:
         // `post` always gets the knockback velocity unless `mit.evaded`).
-        victim.vx = mem.aim_x * knockback;
-        victim.vy = mem.aim_y * knockback - knock_up;
+        // Bash knockback is the game's biggest (control, not DPS).
+        victim.vx = mem.aim_x * eff_knockback;
+        victim.vy = mem.aim_y * eff_knockback - eff_knock_up;
 
         // Self-Lattice (Priest) — Syzygist Ward's flat absorb pool, checked
         // BEFORE the generic shield step and mutually exclusive with it
@@ -3085,7 +3186,7 @@ fn stepMeleeSwing(
         // a genuine consumer here (this function's own doc comment above
         // now explains why), unlike parry/directional-shield which stay
         // correctly absent.
-        var damage_after_ward = damage;
+        var damage_after_ward = eff_damage;
         var syz_ward_consumed = false;
         if (victim.syz_ward_absorb_until_tick > state.header.tick and victim.syz_ward_absorb_remaining > 0) {
             syz_ward_consumed = true;
@@ -3196,22 +3297,27 @@ fn stepMeleeSwing(
         const was_alive = victim.flags.alive;
         victim.health = new_health;
         victim.flags.alive = new_health > 0;
-        if (stagger_victim) {
-            const stagger_ticks: u32 = @intFromFloat(@ceil(KIN_SEAL_STAGGER_MS / @max(1.0, eff_dt)));
+        if (stagger_victim or swing_is_bash) {
+            // Two stagger sources share the slowed_until_tick machinery
+            // (no new status system — ledger design-decision block):
+            // Unbroken Seal's 900ms/0.25 and the shield bash's brief
+            // 300ms/0.55. Seal's stronger one takes precedence when both
+            // apply to a single hit. Mirrors World.ts's combined block.
+            const stg_ms: f64 = if (stagger_victim) KIN_SEAL_STAGGER_MS else SHIELD_BASH_STAGGER_MS;
+            const stg_mul: f64 = if (stagger_victim) KIN_SEAL_STAGGER_MULTIPLIER else SHIELD_BASH_STAGGER_MULTIPLIER;
+            const stagger_ticks: u32 = @intFromFloat(@ceil(stg_ms / @max(1.0, eff_dt)));
             victim.slowed_until_tick = state.header.tick + stagger_ticks;
             // Kindled Resolve (Phase 4a follow-up): softens the stagger's
             // SEVERITY toward 1 if the VICTIM (not the attacker) currently
             // holds a live window — "resist", not immune. Mirrors TS's
-            // `applyKindledResolveStaggerResist` exactly (World.ts:5493-
-            // 5505's "edge-hit" call site — this Zig function's melee arc
-            // covers both Slash and Edge, but only Unbroken Seal ever sets
-            // `stagger_victim` true, matching TS's own "only Kindled Edge's
-            // Seal branch writes a stagger" shape; Ninja Slash has no
-            // stagger-write site to resist against in either codebase).
+            // `applyKindledResolveStaggerResist` exactly (World.ts's
+            // combined Seal/bash stagger site — only Kindled melee ever
+            // reaches this write in either codebase; Ninja Slash has no
+            // stagger-write site).
             victim.slow_multiplier = if (victim.kindled_resolve_until_tick > state.header.tick)
-                KIN_SEAL_STAGGER_MULTIPLIER + (1.0 - KIN_SEAL_STAGGER_MULTIPLIER) * KIN_KINDLED_RESOLVE_STAGGER_RESIST_FRACTION
+                stg_mul + (1.0 - stg_mul) * KIN_KINDLED_RESOLVE_STAGGER_RESIST_FRACTION
             else
-                KIN_SEAL_STAGGER_MULTIPLIER;
+                stg_mul;
             victim.flags.has_slow = true;
         }
         emitEvent(state, .hit_confirmed, @intCast(vi), @intCast(attacker_idx), 0, final_damage, victim.x, victim.y);

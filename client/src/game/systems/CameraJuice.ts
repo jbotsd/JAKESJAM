@@ -35,6 +35,32 @@ export class CameraJuice {
     this.intensity?.bump(Phaser.Math.Clamp(intensity * 12, 0.03, 0.35));
   }
 
+  /**
+   * Directional camera kick (slash-feel-ledger R1 row 9): a world-space
+   * impulse ALONG the hit vector (rides ActionCamera.sideSwipe — fast
+   * out, faster back, spring not tween) plus a small trauma bump as the
+   * NOISE layer. Directional-first: the first displaced frame moves with
+   * the hit, the random shake only textures it. No roll — Jake's standing
+   * "don't roll the camera" direction.
+   */
+  directionalKick(
+    dirX: number,
+    dirY: number,
+    kickPx: number,
+    durMs: number,
+    noisePx: number,
+  ): void {
+    const len = Math.hypot(dirX, dirY) || 1;
+    this.cam.sideSwipe(
+      (dirX / len) * kickPx,
+      (dirY / len) * kickPx,
+      durMs * 0.35,
+      durMs * 0.65,
+    );
+    this.cam.addTrauma(Math.min(0.6, noisePx * 0.09));
+    this.intensity?.bump(Phaser.Math.Clamp(noisePx * 0.04, 0.03, 0.3));
+  }
+
   /** Direct trauma add for movement feedback that isn't shaped like a shake. */
   addTrauma(amount: number): void {
     this.cam.addTrauma(amount);

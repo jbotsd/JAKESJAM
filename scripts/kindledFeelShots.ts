@@ -1,0 +1,91 @@
+// Kindled feel-loop tape (slash-feel-ledger, wave 1) — deterministic
+// rig-anchored filmstrips through the live-Phaser construct harness.
+// Capture discipline: single-shots with explicit waits (no bursts);
+// harnessRigFrame rebuilds the rig per requested frame so captures are
+// independent of screenshot latency.
+//
+//   (dev server must be up: cd client && bun run dev)
+//   BASE_URL=http://127.0.0.1:5173 bun run scripts/kindledFeelShots.ts
+
+import { chromium } from "@playwright/test";
+import { mkdirSync } from "node:fs";
+
+const OUT =
+  process.env.OUT ??
+  "/tmp/claude-1000/-home-jimothy/d9fd0248-ff4f-49ff-85d4-ab426f99cd6a/scratchpad/kindled-feel";
+mkdirSync(OUT, { recursive: true });
+const BASE = process.env.BASE_URL ?? "http://127.0.0.1:5173";
+const TAG = process.env.TAG ?? "base";
+
+const browser = await chromium.launch({ headless: true });
+const page = await browser.newPage({ viewport: { width: 720, height: 405 }, deviceScaleFactor: 2 });
+
+const errors: string[] = [];
+page.on("pageerror", (e) => errors.push(`${e.name}: ${e.message}`));
+page.on("console", (m) => {
+  if (m.type() === "error") errors.push(`console: ${m.text()}`);
+});
+
+await page.goto(`${BASE}/harness.html`, { waitUntil: "load" });
+await page.waitForFunction(
+  () => (window as unknown as { __harnessReady?: boolean }).__harnessReady === true,
+  { timeout: 20_000 },
+);
+await page.waitForTimeout(300);
+
+const canvas = page.locator("#harness-root canvas");
+
+const rigFrame = (classId: string, action: string, t: number) =>
+  page.evaluate(
+    ({ classId, action, t }) =>
+      (window as unknown as {
+        harnessRigFrame: (c: string, a: string, t: number) => void;
+      }).harnessRigFrame(classId as never, action as never, t),
+    { classId, action, t },
+  );
+
+// Kindled full-body melee sentence — the exact phase boundaries from
+// meleeTiming (anticipation ends 0.38, cut ends 0.61, follow 0.88).
+const MELEE_TS = [0.0, 0.12, 0.25, 0.34, 0.38, 0.44, 0.5, 0.56, 0.61, 0.7, 0.8, 0.9, 0.99];
+for (const t of MELEE_TS) {
+  await rigFrame("paladin", "melee", t);
+  await page.waitForTimeout(90);
+  await canvas.screenshot({
+    path: `${OUT}/${TAG}-melee-${String(Math.round(t * 100)).padStart(3, "0")}.png`,
+  });
+}
+
+// Bash sentence (harness action "bash" — present once the bash render
+// lands; skipped silently if the harness predates it).
+const hasBash = await page.evaluate(
+  () => (window as unknown as { __harnessHasBash?: boolean }).__harnessHasBash === true,
+);
+if (hasBash) {
+  for (const t of MELEE_TS) {
+    await rigFrame("paladin", "bash", t);
+    await page.waitForTimeout(90);
+    await canvas.screenshot({
+      path: `${OUT}/${TAG}-bash-${String(Math.round(t * 100)).padStart(3, "0")}.png`,
+    });
+  }
+}
+
+// Idle / locomotion stances (harness actions "idle"/"run" — present once
+// the braced-idle work lands; skipped silently before that).
+const hasIdle = await page.evaluate(
+  () => (window as unknown as { __harnessHasIdle?: boolean }).__harnessHasIdle === true,
+);
+if (hasIdle) {
+  for (const [action, t] of [["idle", 0.5], ["run", 0.5]] as const) {
+    await rigFrame("paladin", action, t);
+    await page.waitForTimeout(120);
+    await canvas.screenshot({ path: `${OUT}/${TAG}-${action}.png` });
+  }
+}
+
+await browser.close();
+if (errors.length) {
+  console.log("PAGE ERRORS (port bug!):\n" + errors.slice(0, 20).join("\n"));
+  process.exit(1);
+}
+console.log(`ok — wrote frames to ${OUT} (tag=${TAG})`);

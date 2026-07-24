@@ -25,6 +25,7 @@ import { transientVfx } from "./TransientVfx";
 import { GLOW_TEXTURE_SIZE } from "./glowTexture.js";
 import type { Vec2 } from "../../sim";
 import {
+  bashStage,
   meleeBladeAngle,
   meleeOffhandBladeAngle,
   meleeStage,
@@ -1598,6 +1599,172 @@ export function drawKindledSwing(
   g.fillStyle(tint.core, env);
   g.fillCircle(tipX, tipY, 4);
   // Confirmed slash-hit/hit-confirmed events own contact sparks and freeze.
+}
+
+/** KINDLED SHIELD BASH — the chain's third beat (slash-feel-ledger
+ *  design-decision block): the SLAB leads. A rotated circuit-board plate
+ *  chambers at the shoulder, punches straight along aim with a compressed
+ *  gold smear behind it, lands with a bright leading face, and returns.
+ *  The sword is drawn chambered back-low (it visibly yields the beat).
+ *  BLUNT grammar on purpose: no crescent, no tip trail — travel reads
+ *  through the stacked drag ghosts of the plate itself. Pure per-frame
+ *  paint into the caller's persistent layer, same as drawKindledSwing.
+ *  `slabPivot` = the rig's shield hand; `swordPivot` = the sword hand. */
+export function drawKindledBash(
+  g: Phaser.GameObjects.Graphics,
+  slabPivot: Vec2,
+  swordPivot: Vec2,
+  aimRad: number,
+  tint: ConstructTint,
+  t: number,
+): void {
+  const env = t < 0.86 ? 1 : Math.max(0, (1 - t) / 0.14);
+  const stage = bashStage(t);
+  const dx = Math.cos(aimRad);
+  const dy = Math.sin(aimRad);
+
+  // How far the plate rides ahead of the hand: with the hand itself
+  // already punching (bashHandPose), a small extra lead keeps the plate's
+  // face ahead of the knuckles — the SLAB arrives first.
+  // Same ease-out as bashHandPose — plate and hand accelerate together.
+  const thrust = t < 0.36 ? 0 : t < 0.56 ? 1 - (1 - stage.thrust) * (1 - stage.thrust) : t < 0.74 ? 1 : 1 - smoothstep(stage.recovery);
+  const leadPx = 6 + thrust * 10;
+  const cx = slabPivot.x + dx * leadPx;
+  const cy = slabPivot.y + dy * leadPx;
+
+  // Rotated plate: local +x along aim (thin depth), ±y across aim (the
+  // wide face). A slight chamber tilt during windup reads mass-gathering.
+  const tilt = (1 - Math.min(1, stage.thrust + stage.hold + stage.recovery)) * 0.22;
+  const a = aimRad + tilt;
+  const ux = Math.cos(a);
+  const uy = Math.sin(a);
+  const vx = -uy;
+  const vy = ux;
+  const plate = (px: number, py: number, scale: number): Phaser.Math.Vector2[] => {
+    const D = 8 * scale; // half-depth along aim
+    const W = 24 * scale; // half-width across aim
+    const local: Array<[number, number]> = [
+      [D * 0.7, -W], [D, -W * 0.45], [D, W * 0.45], [D * 0.7, W],
+      [-D * 0.7, W], [-D, W * 0.45], [-D, -W * 0.45], [-D * 0.7, -W],
+    ];
+    return local.map(([lx, ly]) => new Phaser.Math.Vector2(px + ux * lx + vx * ly, py + uy * lx + vy * ly));
+  };
+
+  // Drag ghosts — the compressed gold smear BEHIND the plate while it
+  // travels (the blunt cousin of the blade's tip trail).
+  const speedN = t >= 0.36 && t < 0.6 ? Math.sin(Math.min(1, stage.thrust) * Math.PI) : 0;
+  if (speedN > 0.05) {
+    for (let i = 1; i <= 3; i++) {
+      const drag = i * (7 + speedN * 9);
+      const verts = plate(cx - dx * drag, cy - dy * drag, 1 - i * 0.14);
+      g.lineStyle(2, tint.glow, 0.22 * speedN * env * (1 - i * 0.26));
+      strokeClosed(g, verts);
+    }
+    // Speed lines along the punch lane.
+    g.lineStyle(2, tint.glow, 0.3 * speedN * env);
+    for (const off of [-16, 0, 16]) {
+      g.beginPath();
+      g.moveTo(cx + vx * off - dx * (30 + speedN * 18), cy + vy * off - dy * (30 + speedN * 18));
+      g.lineTo(cx + vx * off - dx * 12, cy + vy * off - dy * 12);
+      g.strokePath();
+    }
+  }
+
+  // The plate itself — body, gold edge, circuit traces (the SAME
+  // circuit-slab grammar as the Ward, so blocking and bashing read as one
+  // instrument being USED two ways).
+  const verts = plate(cx, cy, 1);
+  g.fillStyle(tint.glow, 0.2 * env);
+  g.fillPoints(verts, true);
+  g.lineStyle(5, tint.glow, 0.4 * env);
+  strokeClosed(g, verts);
+  g.lineStyle(2, tint.core, 0.95 * env);
+  strokeClosed(g, verts);
+  // Circuit traces on the face (abbreviated Ward grammar).
+  g.lineStyle(1.3, tint.glow, 0.6 * env);
+  for (const [fy0, fy1, fd] of [[-14, -14, 3], [0, 8, -2], [12, 12, 4]] as const) {
+    g.beginPath();
+    g.moveTo(cx + vx * fy0 - ux * 4, cy + vy * fy0 - uy * 4);
+    g.lineTo(cx + vx * fy1 + ux * fd, cy + vy * fy1 + uy * fd);
+    g.strokePath();
+  }
+  // Leading-face highlight — brightest at full extension (the check).
+  const landGlow = t >= 0.5 && t < 0.74 ? 1 - stage.hold * 0.5 : 0;
+  if (landGlow > 0.02) {
+    g.lineStyle(4, tint.core, 0.6 * landGlow * env);
+    g.beginPath();
+    g.moveTo(cx + ux * 8 + vx * -22, cy + uy * 8 + vy * -22);
+    g.lineTo(cx + ux * 8 + vx * 22, cy + uy * 8 + vy * 22);
+    g.strokePath();
+  }
+  // Boss stud at the center.
+  g.fillStyle(tint.core, 0.85 * env);
+  g.fillCircle(cx, cy, 2.6);
+
+  // Sword — chambered back-low at the sword hand, clearly NOT swinging.
+  drawDagger(g, swordPivot, aimRad + Math.PI * 0.82, 34, 5, tint, 0.5 * env);
+  // Confirmed bash-landed owns contact punctuation; a whiffed bash still
+  // shows plate travel + smear, never a fake impact.
+}
+
+/** Trail afterglow for a finished Kindled swing — R1 row 12's "trail
+ *  persists 200% of the active window": the swing construct is gone, only
+ *  the swept ribbon remains, fading. `fade` 1→0. */
+export function drawKindledTrailOnly(
+  g: Phaser.GameObjects.Graphics,
+  tipHistory: readonly Vec2[],
+  tint: ConstructTint,
+  fade: number,
+): void {
+  if (fade <= 0.02) return;
+  drawWorldTipTrail(g, tipHistory, tint, fade * 0.6, 20);
+}
+
+/** Ground response for a heavy arc that ends low (R1 row 10, Kindled
+ *  column): a short directional dust wedge kicked along the swing's exit
+ *  direction at the ground line. One-shot pooled transient — fired once
+ *  per swing (never per frame), so it can't churn the shared bolt pool. */
+export function spawnGroundDust(
+  pool: ParticlePool,
+  at: Vec2,
+  dirRad: number,
+  tint: ConstructTint,
+): void {
+  const g = pool.acquireBolt();
+  if (!g) return;
+  g.setPosition(0, 0);
+  g.setAlpha(1);
+  g.setScale(1);
+  g.setRotation(0);
+  g.setBlendMode(Phaser.BlendModes.ADD);
+  const side = Math.cos(dirRad) >= 0 ? 1 : -1;
+  const draw = (t: number): void => {
+    g.clear();
+    const fade = (1 - t) * (1 - t);
+    // Low, wide puffs skidding along the ground away from the impact line.
+    for (let i = 0; i < 5; i++) {
+      const f = i / 4;
+      const dist = (10 + f * 34) * (0.35 + t * 0.65);
+      const px = at.x + side * dist;
+      const py = at.y - (4 + Math.sin(f * Math.PI) * (7 + t * 6));
+      g.fillStyle(tint.glow, 0.3 * fade * (1 - f * 0.5));
+      g.fillCircle(px, py, 3 + f * 4 + t * 3);
+    }
+    // A skid line hugging the ground.
+    g.lineStyle(2, tint.glow, 0.4 * fade);
+    g.beginPath();
+    g.moveTo(at.x + side * 6, at.y - 1);
+    g.lineTo(at.x + side * (18 + t * 30), at.y - 1);
+    g.strokePath();
+  };
+  draw(0);
+  transientVfx.spawn({
+    factory: () => g,
+    lifetimeMs: 300,
+    ease: "Sine.easeOut",
+    onTick: (_obj, t) => draw(t),
+    release: () => pool.release(g),
+  });
 }
 
 /** The honest slash arc: a single tapered, gradient-faded ribbon traced from

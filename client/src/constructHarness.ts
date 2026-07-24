@@ -31,6 +31,9 @@ import {
   SYZYGIST_TINT,
   drawBladeSwing,
   drawKindledSwing,
+  drawKindledBash,
+  drawHeldDaggers,
+  drawHeldEdges,
   spawnNovaBurst,
   drawBuffAura,
   spawnBlinkStreak,
@@ -48,10 +51,16 @@ import { ABILITY_ANIMATIONS, isAbilityKind } from "./game/render/abilityAnimatio
 
 type HarnessWindow = Window & {
   __harnessReady?: boolean;
+  __harnessHasBash?: boolean;
+  __harnessHasIdle?: boolean;
   __cmd?: string | null;
   harnessFire?: (name: string) => void;
   harnessMeleeFrame?: (kind: "ninja" | "paladin", t: number) => void;
-  harnessRigFrame?: (classId: ClassId, action: AbilityKind | "melee", t: number) => void;
+  harnessRigFrame?: (
+    classId: ClassId,
+    action: AbilityKind | "melee" | "bash" | "idle" | "run",
+    t: number,
+  ) => void;
 };
 
 const resolveClassId = (cid: CharacterArchetype): string => (cid === "shielded" ? "priest" : "wizard");
@@ -81,7 +90,7 @@ class HarnessScene extends Phaser.Scene {
   private reviewRig: ProceduralPlayerRig | null = null;
   private rigReview: {
     classId: ClassId;
-    action: AbilityKind | "melee";
+    action: AbilityKind | "melee" | "bash" | "idle" | "run";
     t: number;
     lead: Vec2;
     back: Vec2;
@@ -137,13 +146,16 @@ class HarnessScene extends Phaser.Scene {
     w.harnessFire = (name: string) => {
       w.__cmd = name;
     };
+    w.__harnessHasBash = true;
+    w.__harnessHasIdle = true;
     w.harnessMeleeFrame = (kind, t) => {
       this.meleeReview = { kind, t: Math.max(0, Math.min(0.999, t)) };
       this.rigReview = null;
     };
     w.harnessRigFrame = (classId, action, rawT) => {
       const t = Math.max(0, Math.min(0.999, rawT));
-      if (action !== "melee" && !isAbilityKind(action)) return;
+      const stanceAction = action === "idle" || action === "run";
+      if (action !== "melee" && action !== "bash" && !stanceAction && !isAbilityKind(action)) return;
       this.meleeReview = null;
       // Isolate the fighter review: hidden entanglement-demo actors must not
       // keep a live mark/tether behind the pose and contaminate silhouettes.
@@ -178,11 +190,32 @@ class HarnessScene extends Phaser.Scene {
       // fixed 120 Hz increments. Rebuilding per requested frame makes captures
       // independent of browser/screenshot latency.
       for (let i = 0; i < 16; i++) this.reviewRig.update(1000 / 120, pose);
+      // Stance reviews (braced idle / locomotion): no authored event — just
+      // settle the rig in the stance long enough for the springs to speak.
+      if (stanceAction) {
+        const stancePose: ProceduralPlayerPose = action === "run"
+          ? { ...pose, velocity: { x: 300, y: 0 } }
+          : pose;
+        for (let i = 0; i < 240; i++) this.reviewRig.update(1000 / 120, stancePose);
+        this.rigReview = {
+          classId,
+          action,
+          t,
+          lead: this.reviewRig.getHandWorld(0) ?? { x: 360, y: 300 },
+          back: this.reviewRig.getHandWorld(1) ?? { x: 340, y: 310 },
+          tipHistory: [],
+        };
+        for (const obj of [this.priest, this.priestHalo, this.victim, this.victimHalo, this.kindled, this.kindledHalo]) {
+          obj.setVisible(false);
+        }
+        return;
+      }
       const style = classId === "paladin" ? "kindled" : "interstice";
-      const duration = action === "melee"
+      const duration = action === "melee" || action === "bash"
         ? style === "kindled" ? 560 : 360
         : ABILITY_ANIMATIONS[action].durationMs;
       if (action === "melee") this.reviewRig.triggerMeleeSwing(style, 1);
+      else if (action === "bash") this.reviewRig.triggerMeleeSwing("kindled", 1, "bash");
       else this.reviewRig.triggerAbility(action);
       const tipHistory: Vec2[] = [];
       const totalMs = duration * t;
@@ -292,6 +325,32 @@ class HarnessScene extends Phaser.Scene {
             2.3,
           );
           break;
+        case "edge-low":
+          // Same controller-path swing but aimed so the arc EXITS low —
+          // exercises the ground-dust gate (R1 row 10) the fixed 2.3-rad
+          // aim never satisfies.
+          this.controller.triggerSwing(
+            "paladin",
+            KINDLED_POS,
+            { x: KINDLED_POS.x - 16, y: KINDLED_POS.y + 4 },
+            0.5,
+          );
+          break;
+        case "bash-swing":
+          // SHIELD BASH through the controller path (slab plate + drag
+          // smear + front-foot dust) — the render half a live bash chain's
+          // third slash-started drives.
+          this.controller.triggerSwing(
+            "paladin",
+            KINDLED_POS,
+            { x: KINDLED_POS.x + 10, y: KINDLED_POS.y + 6 },
+            0,
+            1,
+            undefined,
+            1,
+            true,
+          );
+          break;
         // ── Phase 3 primitive demos (2026-07-20) ──────────────────────────
         case "nova-slash":
           spawnNovaBurst(this.pool, { x: 300, y: 250 }, 90, INTERSTICE_TINT, "slash");
@@ -369,6 +428,20 @@ class HarnessScene extends Phaser.Scene {
         drawKindledSwing(this.meleeReviewLayer, r.lead, r.back, -0.276, 88, KINDLED_TINT, 2.5, 1, r.t, r.tipHistory);
       } else {
         drawBladeSwing(this.meleeReviewLayer, r.lead, r.back, -0.276, 82, INTERSTICE_TINT, 2.25, 1, r.t);
+      }
+    } else if (this.rigReview?.action === "bash") {
+      // SHIELD BASH review — slab leads at the shield hand, sword chambers.
+      const r = this.rigReview;
+      drawKindledBash(this.meleeReviewLayer, r.back, r.lead, -0.276, KINDLED_TINT, r.t);
+    } else if (this.rigReview && (this.rigReview.action === "idle" || this.rigReview.action === "run")) {
+      // Stance review — the held/resting weapons at the settled hands (the
+      // live game's ConstructVfxController held layer, reproduced here so
+      // the braced idle tapes WITH its loadout).
+      const r = this.rigReview;
+      if (r.classId === "paladin") {
+        drawHeldEdges(this.meleeReviewLayer, r.lead, r.back, -0.276, KINDLED_TINT, 1);
+      } else if (r.classId === "ninja") {
+        drawHeldDaggers(this.meleeReviewLayer, r.lead, r.back, -0.276, INTERSTICE_TINT, 1);
       }
     } else if (this.meleeReview?.kind === "ninja") {
       const t = this.meleeReview.t;
