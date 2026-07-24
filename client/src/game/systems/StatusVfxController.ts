@@ -3,7 +3,9 @@
 // WorldState and spawns fire sparks / freeze shards / frost rings / ward
 // rings / veil shrouds via a shared ParticlePool; hostile mark windows
 // (facet/judgment/read — render/markReadPlan.ts) draw their hunter's
-// instrument on the MARKED body. Lightning chain arcs come
+// instrument on the MARKED body; self-windows (counter/seal/tithe/measure/
+// surge/vuln/jam/fooled/aegis/fangs — render/statusWindowPlan.ts) read at
+// the fighter's own body for their whole duration. Lightning chain arcs come
 // from `chain-hit` SimEvents; crimson leech threads from `emission-leech`
 // (six-axes Drain — same arc language, re-tinted); the stride-refund feet
 // sweep from `stride-refunded`. Wall-clock cadence is per-player so tab
@@ -18,6 +20,9 @@ import {
   planVeilRead,
 } from "../render/veilReadPlan";
 import { planMarkReads, type MarkRead } from "../render/markReadPlan";
+import { planStatusWindows, type WindowRead } from "../render/statusWindowPlan";
+import { WARD_PEEL_RADIUS_PX } from "../../sim/combat.js";
+import { KIN_AEGIS_SHARE_RADIUS_MULTIPLIER } from "../../sim/constants.js";
 import type { PlayerId, SimEvent, Vec2, WorldState } from "../../sim";
 
 const BURN_SPARK_INTERVAL_MS = 80;
@@ -63,6 +68,35 @@ const MARK_ORBIT_RADIUS_PX = 17;
 /** Slow precession so the mark reads as a held instrument, not a blast. */
 const MARK_ORBIT_RAD_PER_MS = 0.0012;
 
+// Self-window body reads (Track L, render/statusWindowPlan.ts). Colors
+// follow each window's established register: chip colors for the debuff
+// family (the chip becomes the supplement to the SAME hue in-world),
+// class glows for class windows, the movement cyan for surge, drain
+// crimson for tithe/fangs.
+const WINDOW_COUNTER_COLOR = 0xf59e0b; // amber — the armed answer
+const WINDOW_SEAL_COLOR = 0xeab308; // gold — Kindled seal charge
+const WINDOW_MEASURE_COLOR = 0x35d6ff; // GEO cyan — calibration
+const WINDOW_VULN_COLOR = 0xfca5a5; // rose — cracked guard
+const WINDOW_JAM_COLOR = 0xc084fc; // violet — jammed shield electronics
+const WINDOW_FOOLED_COLOR = 0xff6ec7; // pink — the double's lie
+const WINDOW_AEGIS_COLOR = 0xffc24d; // Kindled gold — shared ward reach
+/** Aegis Share's painter draws the TRUE widened peel radius so the
+ *  mechanic itself is the read (the audit's named gap: "the widened peel
+ *  radius is never drawn"). */
+const AEGIS_TRUE_RADIUS_PX = WARD_PEEL_RADIUS_PX * KIN_AEGIS_SHARE_RADIUS_MULTIPLIER;
+const WINDOW_INTERVALS_MS: Record<WindowRead["kind"], number> = {
+  counter: 90, // ~500ms window — must read instantly
+  seal: 260,
+  tithe: 220,
+  measure: 240,
+  surge: 150,
+  vuln: 300,
+  jam: 280,
+  fooled: 320,
+  aegis: 400, // big quiet instrument — slowest beat of the family
+  fangs: 300,
+};
+
 const SPARK_DURATION_MS = 420;
 const SHARD_DURATION_MS = 520;
 const RING_DURATION_MS = 320;
@@ -80,6 +114,8 @@ export class StatusVfxController {
   // Keyed `${targetId}:${kind}` — one cadence per mark on a body, so a
   // double-marked target keeps both instruments beating independently.
   private readonly markCadence: Map<string, number> = new Map();
+  // Keyed `${playerId}:${kind}` — self-window reads (statusWindowPlan.ts).
+  private readonly windowCadence: Map<string, number> = new Map();
   /** Accumulated wall-clock for orbit phase — marks precess with time. */
   private clockMs = 0;
   // Frame-diff memory for the veil break (planner-owned semantics —
@@ -215,6 +251,28 @@ export class StatusVfxController {
       if (!seenMark.has(key)) this.markCadence.delete(key);
     }
 
+    // Self-window body reads (Track L, render/statusWindowPlan.ts): armed
+    // stances, amp windows, and debuffs that were nameplate-chip-only (or
+    // invisible everywhere, like Measure) now read at the fighter's body
+    // for their whole window, with an expiry fade.
+    const windowPlan = planStatusWindows(state, getPosition);
+    const seenWindow = new Set<string>();
+    for (const win of windowPlan) {
+      const key = `${win.id}:${win.kind}`;
+      seenWindow.add(key);
+      const interval = WINDOW_INTERVALS_MS[win.kind];
+      const next = (this.windowCadence.get(key) ?? interval) + deltaMs;
+      if (next >= interval) {
+        this.windowCadence.set(key, 0);
+        this.spawnWindowRead(win);
+      } else {
+        this.windowCadence.set(key, next);
+      }
+    }
+    for (const key of this.windowCadence.keys()) {
+      if (!seenWindow.has(key)) this.windowCadence.delete(key);
+    }
+
     // Drop cadence entries for players that no longer have an active status.
     for (const key of this.burnCadence.keys()) {
       if (!seenBurn.has(key)) this.burnCadence.delete(key);
@@ -258,7 +316,339 @@ export class StatusVfxController {
     this.slowCadence.clear();
     this.veilCadence.clear();
     this.markCadence.clear();
+    this.windowCadence.clear();
     this.veilMemo.wasLive.clear();
+  }
+
+  /** One self-window beat at the fighter's own body. Every painter is a
+   *  short-lived pooled transient (never per-frame pool churn), quiet by
+   *  construction, and distinct by geometry + register, not hue alone. */
+  private spawnWindowRead(win: WindowRead): void {
+    switch (win.kind) {
+      case "counter":
+        this.spawnCounterStanceTicks(win.pos, win.intensity);
+        break;
+      case "seal":
+        this.spawnSealDiamond(win.pos, win.intensity);
+        break;
+      case "tithe":
+        this.spawnTitheHungerTicks(win.pos, win.intensity);
+        break;
+      case "measure":
+        this.spawnMeasureCalipers(win.pos, win.intensity);
+        break;
+      case "surge":
+        this.spawnSurgeStreaks(win.pos, win.intensity, win.vxSign);
+        break;
+      case "vuln":
+        this.spawnVulnCrack(win.pos, win.intensity);
+        break;
+      case "jam":
+        this.spawnJamSputter(win.pos, win.intensity);
+        break;
+      case "fooled":
+        this.spawnFooledDouble(win.pos, win.intensity);
+        break;
+      case "aegis":
+        this.spawnAegisReachRing(win.pos, win.intensity);
+        break;
+      case "fangs":
+        this.spawnFangPips(win.pos, win.intensity, win.count);
+        break;
+    }
+  }
+
+  /** Severing Answer's armed stance: paired amber pincer ticks cocked
+   *  INWARD at chest height — a trap set, visible to whoever is about to
+   *  shoot into it. Fast cadence; the whole window is only ~500ms. */
+  private spawnCounterStanceTicks(position: Vec2, intensity: number): void {
+    const cy = position.y - 8;
+    for (let i = 0; i < 2; i++) {
+      const spark = this.pool.acquireSpark();
+      if (!spark) break;
+      const side = i === 0 ? -1 : 1;
+      const startX = position.x + side * 15;
+      spark.setPosition(startX, cy);
+      spark.setFillStyle(WINDOW_COUNTER_COLOR, 0.75 * intensity);
+      spark.setRotation(side * 0.6); // angled arms of the pincer
+      spark.setScale(0.7, 1.3);
+      spark.setAlpha(0.75 * intensity);
+      transientVfx.spawn({
+        factory: () => spark,
+        lifetimeMs: 160,
+        startAlpha: 0.75 * intensity,
+        ease: "Sine.easeOut",
+        onTick: (obj, t) => {
+          const s = obj as Phaser.GameObjects.Rectangle;
+          s.x = startX - side * 4 * t; // cocking inward — a closing trap
+        },
+        release: () => this.pool.release(spark),
+      });
+    }
+  }
+
+  /** Unbroken Seal's armed window: four gold ticks forming a diamond
+   *  outline around the chest (crystal/diamond grammar — the Kindled
+   *  identity shape), contracting slightly. The next Kindled Edge hit is
+   *  amped; the enemy can see the seal charged on the vessel. */
+  private spawnSealDiamond(position: Vec2, intensity: number): void {
+    const cy = position.y - 8;
+    const r = 15;
+    for (let i = 0; i < 4; i++) {
+      const spark = this.pool.acquireSpark();
+      if (!spark) break;
+      const angle = (i * Math.PI) / 2; // N/E/S/W diamond vertices
+      const sx = position.x + Math.cos(angle) * r;
+      const sy = cy + Math.sin(angle) * r;
+      spark.setPosition(sx, sy);
+      spark.setFillStyle(WINDOW_SEAL_COLOR, 0.5 * intensity);
+      // Lie along the diamond's edges, not point at the body — an outline,
+      // not rays.
+      spark.setRotation(angle + Math.PI / 4);
+      spark.setScale(0.6, 1.2);
+      spark.setAlpha(0.5 * intensity);
+      transientVfx.spawn({
+        factory: () => spark,
+        lifetimeMs: RING_DURATION_MS,
+        startAlpha: 0.5 * intensity,
+        ease: "Sine.easeOut",
+        onTick: (obj, t) => {
+          const s = obj as Phaser.GameObjects.Rectangle;
+          const contract = 1 - 0.18 * t; // the seal tightening, armed
+          s.x = position.x + Math.cos(angle) * r * contract;
+          s.y = cy + Math.sin(angle) * r * contract;
+        },
+        release: () => this.pool.release(spark),
+      });
+    }
+  }
+
+  /** Crimson Tithe's live window: paired crimson ticks spiralling INWARD
+   *  into the body — hunger drawing matter in (drain register; the leech
+   *  THREAD on each landed hit stays the payoff read). */
+  private spawnTitheHungerTicks(position: Vec2, intensity: number): void {
+    const cy = position.y - 6;
+    for (let i = 0; i < 2; i++) {
+      const spark = this.pool.acquireSpark();
+      if (!spark) break;
+      const angle = Math.random() * Math.PI * 2;
+      const r0 = 20;
+      spark.setPosition(position.x + Math.cos(angle) * r0, cy + Math.sin(angle) * r0);
+      spark.setFillStyle(LEECH_COLOR, 0.6 * intensity);
+      spark.setRotation(angle); // tangent — orbiting as it falls in
+      spark.setScale(0.6, 1.1);
+      spark.setAlpha(0.6 * intensity);
+      transientVfx.spawn({
+        factory: () => spark,
+        lifetimeMs: RING_DURATION_MS,
+        startAlpha: 0.6 * intensity,
+        ease: "Sine.easeIn", // accelerates into the body — a pull, not a drift
+        onTick: (obj, t) => {
+          const s = obj as Phaser.GameObjects.Rectangle;
+          const r = r0 * (1 - 0.6 * t);
+          const a = angle + 0.9 * t; // spiral, not a straight fall
+          s.x = position.x + Math.cos(a) * r;
+          s.y = cy + Math.sin(a) * r;
+          s.setRotation(a);
+        },
+        release: () => this.pool.release(spark),
+      });
+    }
+  }
+
+  /** Measure's perfect-accuracy window (previously invisible to EVERYONE
+   *  including the caster): two thin cyan caliper ticks at eye level
+   *  converging toward the head — calibration closing to zero spread. */
+  private spawnMeasureCalipers(position: Vec2, intensity: number): void {
+    const cy = position.y - 12;
+    for (let i = 0; i < 2; i++) {
+      const spark = this.pool.acquireSpark();
+      if (!spark) break;
+      const side = i === 0 ? -1 : 1;
+      const startX = position.x + side * 17;
+      spark.setPosition(startX, cy);
+      spark.setFillStyle(WINDOW_MEASURE_COLOR, 0.55 * intensity);
+      spark.setRotation(Math.PI / 2); // long axis horizontal — a sight line
+      spark.setScale(0.5, 1.1);
+      spark.setAlpha(0.55 * intensity);
+      transientVfx.spawn({
+        factory: () => spark,
+        lifetimeMs: RING_DURATION_MS,
+        startAlpha: 0.55 * intensity,
+        ease: "Sine.easeOut",
+        onTick: (obj, t) => {
+          const s = obj as Phaser.GameObjects.Rectangle;
+          s.x = startX - side * 8 * t; // calipers closing on the mark
+        },
+        release: () => this.pool.release(spark),
+      });
+    }
+  }
+
+  /** Speed surge (stride surge / any speedBoostUntilTick): horizontal
+   *  streaks trailing BEHIND the mover at body height — the movement
+   *  register's hotter cyan (stride family), read distinct from the
+   *  foot-level slow/stride rings. Stationary fighters streak both sides. */
+  private spawnSurgeStreaks(position: Vec2, intensity: number, vxSign: -1 | 0 | 1): void {
+    const sides: ReadonlyArray<-1 | 1> = vxSign === 0 ? [-1, 1] : [vxSign === 1 ? -1 : 1];
+    for (const side of sides) {
+      const spark = this.pool.acquireSpark();
+      if (!spark) break;
+      const startX = position.x + side * 10;
+      const sy = position.y - 4 + (Math.random() - 0.5) * 10;
+      spark.setPosition(startX, sy);
+      spark.setFillStyle(STRIDE_COLOR, 0.5 * intensity);
+      spark.setRotation(Math.PI / 2); // horizontal — motion lines
+      spark.setScale(0.5, 1.6);
+      spark.setAlpha(0.5 * intensity);
+      transientVfx.spawn({
+        factory: () => spark,
+        lifetimeMs: 220,
+        startAlpha: 0.5 * intensity,
+        ease: "Sine.easeOut",
+        onTick: (obj, t) => {
+          const s = obj as Phaser.GameObjects.Rectangle;
+          s.x = startX + side * 14 * t; // peeling off behind the mover
+          s.setScale(0.5, 1.6 + 1.2 * t); // stretching as it sheds
+        },
+        release: () => this.pool.release(spark),
+      });
+    }
+  }
+
+  /** Vulnerability: a small rose CRACK — two crossed ticks at a point on
+   *  the body's edge (the guard is split open; radiant amp will exploit
+   *  it). Distinct from burn's rising sparks by being static + crossed. */
+  private spawnVulnCrack(position: Vec2, intensity: number): void {
+    const angle = Math.random() * Math.PI * 2;
+    const cx = position.x + Math.cos(angle) * 13;
+    const cy = position.y - 6 + Math.sin(angle) * 13;
+    for (let i = 0; i < 2; i++) {
+      const spark = this.pool.acquireSpark();
+      if (!spark) break;
+      spark.setPosition(cx, cy);
+      spark.setFillStyle(WINDOW_VULN_COLOR, 0.55 * intensity);
+      spark.setRotation(i === 0 ? Math.PI / 4 : -Math.PI / 4); // the X of a crack
+      spark.setScale(0.5, 1.0);
+      spark.setAlpha(0.55 * intensity);
+      transientVfx.spawn({
+        factory: () => spark,
+        lifetimeMs: RING_DURATION_MS,
+        startAlpha: 0.55 * intensity,
+        ease: "Sine.easeOut",
+        release: () => this.pool.release(spark),
+      });
+    }
+  }
+
+  /** Block Jammer: violet sputter ticks fizzing at the body — the shield
+   *  electronics shorting. Explains both the silently-popped shield and
+   *  every dead block press while the jam lasts. */
+  private spawnJamSputter(position: Vec2, intensity: number): void {
+    for (let i = 0; i < 2; i++) {
+      const spark = this.pool.acquireSpark();
+      if (!spark) break;
+      const sx = position.x + (Math.random() - 0.5) * 24;
+      const sy = position.y - 4 + (Math.random() - 0.5) * 18;
+      spark.setPosition(sx, sy);
+      spark.setFillStyle(WINDOW_JAM_COLOR, 0.6 * intensity);
+      spark.setRotation(Math.random() * Math.PI); // sputter, no orientation
+      spark.setScale(0.5, 0.8);
+      spark.setAlpha(0.6 * intensity);
+      transientVfx.spawn({
+        factory: () => spark,
+        lifetimeMs: 150, // electrical — short, snappy pips
+        startAlpha: 0.6 * intensity,
+        ease: "Sine.easeIn",
+        onTick: (obj, t) => {
+          const s = obj as Phaser.GameObjects.Rectangle;
+          s.setScale(0.5 * (1 - 0.5 * t), 0.8 * (1 + 0.6 * t));
+        },
+        release: () => this.pool.release(spark),
+      });
+    }
+  }
+
+  /** Fooled: a pink offset "double" of the body's outline, displaced a few
+   *  px to one side — the read on this fighter is a lie, and every hit on
+   *  them is amped while it lasts. Alternates sides per beat. */
+  private spawnFooledDouble(position: Vec2, intensity: number): void {
+    const ring = this.pool.acquireRing();
+    if (!ring) return;
+    const side = Math.random() < 0.5 ? -1 : 1;
+    ring.setPosition(position.x + side * 6, position.y - 6);
+    ring.setFillStyle(WINDOW_FOOLED_COLOR, 0);
+    ring.setStrokeStyle(1.4, WINDOW_FOOLED_COLOR, 0.3 * intensity);
+    ring.setScale(0.95, 1.18); // the body-hugging silhouette (veil's ellipse)
+    ring.setAlpha(1);
+    transientVfx.spawn({
+      factory: () => ring,
+      lifetimeMs: RING_DURATION_MS,
+      startAlpha: 1,
+      ease: "Sine.easeOut",
+      onTick: (obj, t) => {
+        const r = obj as Phaser.GameObjects.Arc;
+        r.x = position.x + side * (6 + 4 * t); // the double sliding away
+      },
+      release: () => this.pool.release(ring),
+    });
+  }
+
+  /** Aegis Share: a thin gold ring at the TRUE widened peel radius — the
+   *  mechanic drawn honestly, so allies know where protection reaches and
+   *  enemies know which ground is contested (the audit's named gap). Very
+   *  low alpha + slow beat: an instrument line, not a dome effect. */
+  private spawnAegisReachRing(position: Vec2, intensity: number): void {
+    const ring = this.pool.acquireRing();
+    if (!ring) return;
+    ring.setPosition(position.x, position.y - 6);
+    ring.setFillStyle(WINDOW_AEGIS_COLOR, 0);
+    ring.setStrokeStyle(1.2, WINDOW_AEGIS_COLOR, 0.16 * intensity);
+    const scale = AEGIS_TRUE_RADIUS_PX / 18; // pool ring base radius is 18px
+    ring.setScale(scale * 0.985);
+    ring.setAlpha(1);
+    transientVfx.spawn({
+      factory: () => ring,
+      lifetimeMs: 380,
+      startAlpha: 1,
+      ease: "Sine.easeOut",
+      onTick: (obj, t) => {
+        const r = obj as Phaser.GameObjects.Arc;
+        const s = scale * (0.985 + 0.03 * t); // a breath at true radius
+        r.setScale(s, s);
+      },
+      release: () => this.pool.release(ring),
+    });
+  }
+
+  /** Stolen Fangs' banked lock charges: one small crimson fang tick per
+   *  charge hanging at the shoulders, pointed inward — the vampire lane's
+   *  register (leech crimson), visibly counting 1 or 2. */
+  private spawnFangPips(position: Vec2, intensity: number, count: number): void {
+    const pips = Math.max(1, Math.min(2, count));
+    for (let i = 0; i < pips; i++) {
+      const spark = this.pool.acquireSpark();
+      if (!spark) break;
+      const side = i === 0 ? -1 : 1;
+      const sx = position.x + side * 13;
+      const sy = position.y - 16;
+      spark.setPosition(sx, sy);
+      spark.setFillStyle(LEECH_COLOR, 0.7 * intensity);
+      spark.setRotation(side * 0.35); // fangs angled toward the body
+      spark.setScale(0.5, 1.0);
+      spark.setAlpha(0.7 * intensity);
+      transientVfx.spawn({
+        factory: () => spark,
+        lifetimeMs: RING_DURATION_MS,
+        startAlpha: 0.7 * intensity,
+        ease: "Sine.easeOut",
+        onTick: (obj, t) => {
+          const s = obj as Phaser.GameObjects.Rectangle;
+          s.y = sy + 3 * t; // a slight sink — a fang settling in
+        },
+        release: () => this.pool.release(spark),
+      });
+    }
   }
 
   /** One mark beat at the marked body. Stacked marks offset their orbit
