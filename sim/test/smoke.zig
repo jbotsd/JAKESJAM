@@ -3754,3 +3754,262 @@ test "first blood: clears on the countdown -> fighting transition and at countdo
     try std.testing.expectEqual(@intFromEnum(root.round.RoundPhase.countdown), state2.header.round_phase);
     try std.testing.expectEqual(@as(u32, 0), state2.header.first_blood_idx_plus1);
 }
+
+// ── Track Z1a item 3 (convergence-goal.md Z1) — ally substrate + the four
+//    ally-targeted abilities (Aegis Share / Rally Light / Borrowed Time /
+//    Glass Ward). Behavior ports of the expectations in TS's
+//    syzygistBuffs.test.ts / World.ts's own case blocks, exercised through
+//    the REAL stepWorld pipeline (equip + slot press), not by calling the
+//    private helpers directly — the same rigor shape as the ability-
+//    dispatch tests above. All constants asserted are the constants.ts
+//    values mirrored into world.zig's Z1a block.
+
+fn setTeamId(p: *root.world_state.PlayerEntity, team: []const u8) void {
+    p.flags.has_team_id = true;
+    p.team_id_len = @intCast(team.len);
+    @memcpy(p.team_id_bytes[0..team.len], team);
+}
+
+fn allyTestPlayer(state: *root.world_state.WorldState, idx: usize, id: []const u8, x: f64, health: f64) void {
+    state.players[idx].flags.alive = true;
+    state.players[idx].health = health;
+    state.players[idx].x = x;
+    state.players[idx].y = 300;
+    setPlayerId(&state.players[idx], id);
+}
+
+test "ally substrate: Glass Ward — FFA caster self-fallbacks at reduced absorb; a teamed caster wards the nearest ALLY even with an enemy standing closer (isAlly gate)" {
+    // FFA half: no team ids anywhere -> isAlly is unconditionally false ->
+    // the enemy 60px away is NOT a candidate -> self fallback at 28.
+    var state = freshFightingState();
+    state.player_count = 2;
+    allyTestPlayer(&state, 0, "p0", 100, 100);
+    allyTestPlayer(&state, 1, "p1", 160, 100);
+    equipSlot(&state, 0, 0, .glass_ward);
+    state.players[0].current_keys = SLOT1_BIT;
+    _ = root.world.stepWorld(&state, 1000.0); // tick 1
+    try std.testing.expectApproxEqAbs(@as(f64, 28.0), state.players[0].syz_ward_absorb_remaining, 1e-9);
+    // header.tick(1) + 1 + SYZ_WARD_DURATION_TICKS_DEFAULT(360) — the
+    // ward_shell/self_lattice tick-convention.
+    try std.testing.expectEqual(@as(u32, 362), state.players[0].syz_ward_absorb_until_tick);
+    // The bridge's unpack gates on this bit — without it the pool would be
+    // wiped by the next full-sync repack (the Z0e bug class).
+    try std.testing.expect(state.players[0].flags.has_syz_ward);
+    try std.testing.expectApproxEqAbs(@as(f64, 0.0), state.players[1].syz_ward_absorb_remaining, 1e-9);
+
+    // Duo half: enemy at 60px, teammate at 200px — the ward must SKIP the
+    // nearer enemy and land the full 45 pool on the teammate, with NO self
+    // fallback on the caster.
+    var duo = freshFightingState();
+    duo.player_count = 3;
+    allyTestPlayer(&duo, 0, "p0", 100, 100);
+    allyTestPlayer(&duo, 1, "p1", 160, 100); // enemy, nearest body
+    allyTestPlayer(&duo, 2, "p2", 300, 100); // teammate, farther
+    setTeamId(&duo.players[0], "t1");
+    setTeamId(&duo.players[2], "t1");
+    equipSlot(&duo, 0, 0, .glass_ward);
+    duo.players[0].current_keys = SLOT1_BIT;
+    _ = root.world.stepWorld(&duo, 1000.0);
+    try std.testing.expectApproxEqAbs(@as(f64, 45.0), duo.players[2].syz_ward_absorb_remaining, 1e-9);
+    try std.testing.expectEqual(@as(u32, 362), duo.players[2].syz_ward_absorb_until_tick);
+    try std.testing.expect(duo.players[2].flags.has_syz_ward);
+    try std.testing.expectApproxEqAbs(@as(f64, 0.0), duo.players[0].syz_ward_absorb_remaining, 1e-9);
+    try std.testing.expectApproxEqAbs(@as(f64, 0.0), duo.players[1].syz_ward_absorb_remaining, 1e-9);
+}
+
+test "ally substrate: Borrowed Time — nearest INJURED ally is chassis-aware (Kindled at 110/125 IS injured, the 2026-07-22 fix), heal caps at REAL max health, debt stamps delayed; FFA caster self-heals the solo figures" {
+    // Duo half: the CLOSER teammate is a heavy at 110 health — under the
+    // old flat-100 injury check it would read "full" and the cast would
+    // fall through to the farther 60-health teammate; under the ported
+    // chassis-aware check it MUST be picked and healed to exactly 125
+    // (min(maxHealthForPlayer=125, 110+30=140)).
+    var duo = freshFightingState();
+    duo.player_count = 4;
+    allyTestPlayer(&duo, 0, "p0", 100, 40); // caster
+    allyTestPlayer(&duo, 1, "p1", 160, 110); // teammate, heavy, CLOSER
+    duo.players[1].character_id = .heavy;
+    allyTestPlayer(&duo, 2, "p2", 300, 60); // teammate, injured, farther
+    allyTestPlayer(&duo, 3, "p3", 130, 10); // enemy, nearest + most injured — never a candidate
+    setTeamId(&duo.players[0], "t1");
+    setTeamId(&duo.players[1], "t1");
+    setTeamId(&duo.players[2], "t1");
+    equipSlot(&duo, 0, 0, .borrowed_time);
+    duo.players[0].current_keys = SLOT1_BIT;
+    _ = root.world.stepWorld(&duo, 1000.0); // tick 1
+    try std.testing.expectApproxEqAbs(@as(f64, 125.0), duo.players[1].health, 1e-9);
+    // header.tick(1) + 1 + SYZ_BORROWED_TIME_DEBT_DELAY_TICKS(360).
+    try std.testing.expectEqual(@as(u32, 362), duo.players[1].debt_until_tick);
+    try std.testing.expectApproxEqAbs(@as(f64, 15.0), duo.players[1].debt_amount, 1e-9);
+    try std.testing.expectApproxEqAbs(@as(f64, 60.0), duo.players[2].health, 1e-9); // untouched
+    try std.testing.expectApproxEqAbs(@as(f64, 10.0), duo.players[3].health, 1e-9); // untouched
+    try std.testing.expectApproxEqAbs(@as(f64, 40.0), duo.players[0].health, 1e-9); // no self heal on the ally branch
+    try std.testing.expectEqual(@as(u32, 0), duo.players[0].debt_until_tick);
+
+    // FFA half: no allies exist by definition -> self branch, weaker solo
+    // figures (heal 15, drain 8).
+    var solo = freshFightingState();
+    solo.player_count = 2;
+    allyTestPlayer(&solo, 0, "p0", 100, 50);
+    allyTestPlayer(&solo, 1, "p1", 160, 60); // injured bystander, NOT an ally
+    equipSlot(&solo, 0, 0, .borrowed_time);
+    solo.players[0].current_keys = SLOT1_BIT;
+    _ = root.world.stepWorld(&solo, 1000.0);
+    try std.testing.expectApproxEqAbs(@as(f64, 65.0), solo.players[0].health, 1e-9);
+    try std.testing.expectEqual(@as(u32, 362), solo.players[0].debt_until_tick);
+    try std.testing.expectApproxEqAbs(@as(f64, 8.0), solo.players[0].debt_amount, 1e-9);
+    try std.testing.expectApproxEqAbs(@as(f64, 60.0), solo.players[1].health, 1e-9);
+}
+
+test "ally substrate: Borrowed Time debt — drains ONCE at debt_until_tick, floored at 0 health without flipping alive; a corpse only clears the bookkeeping" {
+    var state = freshFightingState();
+    state.player_count = 4;
+    allyTestPlayer(&state, 0, "p0", 100, 20); // ordinary drain: 20 - 8 = 12
+    state.players[0].debt_until_tick = 2;
+    state.players[0].debt_amount = 8;
+    allyTestPlayer(&state, 1, "p1", 300, 3); // floor case: max(0, 3 - 8) = 0, alive stays true (TS parity)
+    state.players[1].debt_until_tick = 2;
+    state.players[1].debt_amount = 8;
+    allyTestPlayer(&state, 2, "p2", 500, 30); // corpse: clears, never drains
+    state.players[2].flags.alive = false;
+    state.players[2].debt_until_tick = 2;
+    state.players[2].debt_amount = 5;
+    allyTestPlayer(&state, 3, "p3", 700, 100); // bystander keeps the round running
+
+    _ = root.world.stepWorld(&state, 1000.0); // tick 1: 2 > 1, nothing lands
+    try std.testing.expectApproxEqAbs(@as(f64, 20.0), state.players[0].health, 1e-9);
+    _ = root.world.stepWorld(&state, 1000.0); // tick 2: debts land + clear
+    try std.testing.expectApproxEqAbs(@as(f64, 12.0), state.players[0].health, 1e-9);
+    try std.testing.expectEqual(@as(u32, 0), state.players[0].debt_until_tick);
+    try std.testing.expectApproxEqAbs(@as(f64, 0.0), state.players[0].debt_amount, 1e-9);
+    try std.testing.expectApproxEqAbs(@as(f64, 0.0), state.players[1].health, 1e-9);
+    try std.testing.expect(state.players[1].flags.alive); // floored, not killed — mirrors TS's max(0,...) with no alive write
+    try std.testing.expectApproxEqAbs(@as(f64, 30.0), state.players[2].health, 1e-9); // corpse untouched
+    try std.testing.expectEqual(@as(u32, 0), state.players[2].debt_until_tick); // ...but cleared
+    const health_after_land = state.players[0].health;
+    _ = root.world.stepWorld(&state, 1000.0); // tick 3: nothing re-drains
+    try std.testing.expectApproxEqAbs(health_after_land, state.players[0].health, 1e-9);
+}
+
+test "ally substrate: Rally Light — cast opens the source window; a TEAMMATE inside the 220px aura deals 1.12x ranged damage while an identical non-teammate shooter does not (section 4 amp, TS :1844 parity)" {
+    // Duo half: p0 casts Rally Light (source). p1 (teammate, 100px away,
+    // inside the 220px radius, NO window of their own) owns a projectile
+    // that hits p2 next tick — the hit must carry the 1.12x ally-aura amp.
+    var duo = freshFightingState();
+    duo.player_count = 3;
+    allyTestPlayer(&duo, 0, "p0", 100, 100); // caster/source
+    allyTestPlayer(&duo, 1, "p1", 200, 100); // teammate shooter, in aura
+    allyTestPlayer(&duo, 2, "p2", 500, 100); // victim
+    setTeamId(&duo.players[0], "t1");
+    setTeamId(&duo.players[1], "t1");
+    equipSlot(&duo, 0, 0, .rally_light);
+    duo.players[0].current_keys = SLOT1_BIT;
+    _ = root.world.stepWorld(&duo, 16.0); // tick 1: cast
+    // header.tick(1) + 1 + ceil(5000ms / 16ms = 312.5 -> 313) = 315.
+    try std.testing.expectEqual(@as(u32, 315), duo.players[0].rally_light_until_tick);
+    duo.players[0].current_keys = 0;
+
+    // Inject p1's shard so section 3's motion lands it INSIDE p2's body
+    // box this coming tick (section 4's player loop tests the END
+    // position): 460 + 3000px/s * 0.016s = 508, inside [485, 515].
+    duo.projectile_count = 1;
+    duo.projectiles[0] = .{
+        .x = 460,
+        .y = duo.players[2].y,
+        .vx = 3000,
+        .vy = 0,
+        .radius = 4,
+        .damage = 10,
+        .lifetime_ms = 1000,
+        .age_ms = 0,
+        .traveled_px = 0,
+        .origin_x = 460,
+        .origin_y = duo.players[2].y,
+        .homing_strength = 0,
+        .acceleration_multiplier = 0,
+        .gravity_scale = 0,
+        .range_px = 0,
+        .slow_multiplier = 1.0,
+        .sticky_fuse_ms = 0,
+        .impact_radius_px = 0,
+        .id = 9,
+        .bounces_remaining = 0,
+        .pierce_remaining = 0,
+        .split_count = 0,
+        .flags = .{
+            .has_owner = true,
+            .has_impact = false,
+            .has_split = false,
+            .has_slow = false,
+            .has_homing = false,
+            .has_acceleration = false,
+            .has_gravity_scale = false,
+            .has_range = false,
+            .has_age = false,
+            .has_traveled = false,
+            .has_origin = false,
+            .returning = false,
+            .has_sticky_fuse = false,
+            .has_impact_radius = false,
+        },
+        .pathing = .straight,
+        .element = .neutral,
+        .impact = .none,
+        .shape = .circle,
+        .owner_id_len = duo.players[1].id_len,
+        .owner_id_bytes = duo.players[1].id_bytes,
+    };
+    _ = root.world.stepWorld(&duo, 16.0); // tick 2: hit under the ally aura
+    try std.testing.expectApproxEqAbs(@as(f64, 100.0 - 10.0 * 1.12), duo.players[2].health, 1e-9);
+
+    // Control half: identical geometry, identical live window on p0, but
+    // NO team ids — the aura never reaches the shooter (self-source only
+    // covers p0), so the hit lands unamplified.
+    var ffa = freshFightingState();
+    ffa.player_count = 3;
+    allyTestPlayer(&ffa, 0, "p0", 100, 100);
+    allyTestPlayer(&ffa, 1, "p1", 200, 100);
+    allyTestPlayer(&ffa, 2, "p2", 500, 100);
+    equipSlot(&ffa, 0, 0, .rally_light);
+    ffa.players[0].current_keys = SLOT1_BIT;
+    _ = root.world.stepWorld(&ffa, 16.0);
+    ffa.players[0].current_keys = 0;
+    ffa.projectile_count = 1;
+    ffa.projectiles[0] = duo.projectiles[0];
+    ffa.projectiles[0].x = 460;
+    ffa.projectiles[0].y = ffa.players[2].y;
+    ffa.projectiles[0].lifetime_ms = 1000;
+    ffa.projectiles[0].owner_id_len = ffa.players[1].id_len;
+    ffa.projectiles[0].owner_id_bytes = ffa.players[1].id_bytes;
+    _ = root.world.stepWorld(&ffa, 16.0);
+    try std.testing.expectApproxEqAbs(@as(f64, 90.0), ffa.players[2].health, 1e-9);
+}
+
+test "ally substrate: Aegis Share — window stamps; a caster with NO ally inside the widened peel radius gets the flat Kindling tick (capped at 100), one WITH an ally in radius does not" {
+    // Solo half (FFA — nobody can be an ally): flat Kindling feed, capped.
+    var solo = freshFightingState();
+    solo.player_count = 2;
+    allyTestPlayer(&solo, 0, "p0", 100, 100);
+    allyTestPlayer(&solo, 1, "p1", 150, 100);
+    solo.players[0].kindling = 95; // 95 + 12 caps at KINDLING_MAX = 100
+    equipSlot(&solo, 0, 0, .aegis_share);
+    solo.players[0].current_keys = SLOT1_BIT;
+    _ = root.world.stepWorld(&solo, 1000.0); // tick 1
+    // header.tick(1) + 1 + ceil(3000/1000 = 3) = 5.
+    try std.testing.expectEqual(@as(u32, 5), solo.players[0].aegis_share_until_tick);
+    try std.testing.expectApproxEqAbs(@as(f64, 100.0), solo.players[0].kindling, 1e-9);
+
+    // Duo half: teammate 200px away — inside the widened radius
+    // (WARD_PEEL_RADIUS_PX 160 * KIN_AEGIS_SHARE_RADIUS_MULTIPLIER 1.6 =
+    // 256) — so the solo fallback must NOT fire; the window still opens.
+    var duo = freshFightingState();
+    duo.player_count = 2;
+    allyTestPlayer(&duo, 0, "p0", 100, 100);
+    allyTestPlayer(&duo, 1, "p1", 300, 100);
+    setTeamId(&duo.players[0], "t1");
+    setTeamId(&duo.players[1], "t1");
+    equipSlot(&duo, 0, 0, .aegis_share);
+    duo.players[0].current_keys = SLOT1_BIT;
+    _ = root.world.stepWorld(&duo, 1000.0);
+    try std.testing.expectEqual(@as(u32, 5), duo.players[0].aegis_share_until_tick);
+    try std.testing.expectApproxEqAbs(@as(f64, 0.0), duo.players[0].kindling, 1e-9);
+}

@@ -809,6 +809,40 @@ pub const PlayerEntity = extern struct {
     /// every tick, and TS's own ability cast opens the SAME window on the
     /// TS-authoritative path — both sides must share one clock).
     recoil_step_until_tick: u32 = 0,
+
+    /// Rally Light aura-source window (Track Z1a item 3 — the ally
+    /// substrate port; mirrors TS `PlayerEntity.rallyLightUntilTick`,
+    /// World.ts's "rally-light" case). While live, THIS player is an
+    /// aura SOURCE: they and every ally within KIN_RALLY_LIGHT_RADIUS_PX
+    /// (world.zig's hasRallyLightSource) get the move + ranged/AOE damage
+    /// multipliers. Plain `u32` tick, 0 = inactive — and BRIDGED (offset
+    /// 632, same reasoning as `recoil_step_until_tick` above: the
+    /// full-sync path repacks every tick, and TS's own cast opens the
+    /// same window on the TS-authoritative path).
+    rally_light_until_tick: u32 = 0,
+    /// Aegis Share window (Track Z1a item 3 — mirrors TS
+    /// `PlayerEntity.aegisShareUntilTick`, World.ts's "aegis-share"
+    /// case): widens THIS player's team-peel warder radius for allies.
+    /// CARRIED + cast-writable; its reader (`findTeamPeelWarder`) is the
+    /// still-unported team-peel Z1 item — the window crossing the ABI
+    /// correctly NOW is what lets that later port consume it without a
+    /// second growth cut (and the cast's solo Kindling fallback is live
+    /// either way). Bridged at offset 636, same contract as
+    /// rally_light_until_tick.
+    aegis_share_until_tick: u32 = 0,
+    /// Borrowed Time's pending debt (Track Z1a item 3 — mirrors TS
+    /// `PlayerEntity.debtUntilTick`/`debtAmount`, types.ts:475): the tick
+    /// the flat drain lands (section 8b's debt block), 0 = no pending
+    /// debt (a real stamp is always tick+1+delay ≥ 1). Bridged at offset
+    /// 640 (with `debt_amount` at 648 after the explicit pad) — an
+    /// unbridged debt would be wiped by the next repack and never land.
+    debt_until_tick: u32 = 0,
+    /// Explicit pad to 8-byte alignment for the f64 below (644 → 648) —
+    /// same explicit-pad shape as `_pad_throw_hand` above.
+    _pad_debt: [4]u8 = .{ 0, 0, 0, 0 },
+    /// The drain `debt_until_tick` applies (health floored at 0, never
+    /// alive-flipped — mirrors World.ts's debt-resolution block exactly).
+    debt_amount: f64 = 0,
 };
 
 /// Mirrors `ProjectileEntity`.
@@ -1935,15 +1969,30 @@ comptime {
     // Wire-bridged like respawn_at_tick/throw_hand_parity (see its own
     // doc comment); worldStateBridge.ts's codec tail reads/writes the u32
     // at offset 628 in the same cut.
-    std.debug.assert(@sizeOf(PlayerEntity) == 632);
+    // 632 → 656 (Track Z1a item 3, ally substrate + the four
+    // ally-targeted abilities): +4 content bytes each for
+    // `rally_light_until_tick` (632), `aegis_share_until_tick` (636) and
+    // `debt_until_tick` (640), +4 bytes EXPLICIT pad (`_pad_debt`,
+    // [644, 648)) so `debt_amount` (f64) lands 8-aligned at [648, 656).
+    // 656 = 82×8, no implicit tail pad. All four fields are wire-bridged
+    // (same reasoning as respawn_at_tick: the full-sync path repacks
+    // every tick, and TS's own casts open the same windows on the
+    // TS-authoritative path); worldStateBridge.ts's PLAYER_ENTITY_SIZE
+    // bumped 632 → 656 in the same cut, plus worldStateLayout.test.ts's
+    // matching literal.
+    std.debug.assert(@sizeOf(PlayerEntity) == 656);
     // Bridged-field offset locks for the codec notes above: packPlayer/
     // unpackPlayer hardcode a skip from the end of the syz-ward pair
-    // (relative offset 384) to reach these fields at 620/624/628 — if a
-    // future growth cut moves them, this trips before the bridge silently
-    // drifts.
+    // (relative offset 384) to reach these fields at 620/624/628 (and the
+    // Z1a ally-substrate tail at 632/636/640/648) — if a future growth
+    // cut moves them, this trips before the bridge silently drifts.
     std.debug.assert(@offsetOf(PlayerEntity, "respawn_at_tick") == 620);
     std.debug.assert(@offsetOf(PlayerEntity, "throw_hand_parity") == 624);
     std.debug.assert(@offsetOf(PlayerEntity, "recoil_step_until_tick") == 628);
+    std.debug.assert(@offsetOf(PlayerEntity, "rally_light_until_tick") == 632);
+    std.debug.assert(@offsetOf(PlayerEntity, "aegis_share_until_tick") == 636);
+    std.debug.assert(@offsetOf(PlayerEntity, "debt_until_tick") == 640);
+    std.debug.assert(@offsetOf(PlayerEntity, "debt_amount") == 648);
     // EquippedActives (Phase 1): [3]u8 = 3 bytes, no padding (u8 array
     // needs no alignment beyond 1). Doesn't cross the wasm ABI today (see
     // its own doc comment) — pure internal regression-catching, same role

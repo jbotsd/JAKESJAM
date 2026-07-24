@@ -95,7 +95,11 @@ describe("WorldState extern struct layout (Phase G1c)", () => {
     // See world_state.zig's comptime asserts (incl. the two bridged-field
     // offset locks at 620/624) and worldStateBridge.ts's
     // PLAYER_ENTITY_SIZE for the full accounting.
-    expect(ex.sizeof_player_entity()).toBe(632);
+    // 632 → 656 (Track Z1a item 3, ally substrate): rally_light/
+    // aegis_share/debt_until (u32 ×3) + explicit 4-byte pad + debt_amount
+    // (f64), all bridged — see world_state.zig's offset locks at
+    // 632/636/640/648.
+    expect(ex.sizeof_player_entity()).toBe(656);
     expect(ex.sizeof_projectile_entity()).toBe(216);
     expect(ex.sizeof_satellite_entity()).toBe(96);
     expect(ex.sizeof_destructible_entity()).toBe(64);

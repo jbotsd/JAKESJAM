@@ -738,9 +738,11 @@ fn emitEvent(
 ///   - Paladin Kindled Ward's partial-mitigation branch (combat.ts's
 ///     `classIdForArchetype(...) === "paladin"` shield branch)
 ///   - Team-peel (World.ts's `applyTeamPeel`/`findTeamPeelWarder`)
-///   - rallyLightDamageMultiplier / fooledDamageMultiplier (both read
-///     TS-only *UntilTick fields with no Zig mirror: fooledUntilTick and a
-///     team-based "rally light source" lookup)
+///   - fooledDamageMultiplier (reads a TS-only fooledUntilTick field with
+///     no Zig mirror). rallyLightDamageMultiplier is NO LONGER stubbed
+///     here (Track Z1a item 3) — the ally substrate landed and this
+///     function's damage block now applies the rally amp at the exact
+///     TS position (World.ts:4861, immediately before Kindled Resolve).
 /// kindledResolveDamageMultiplier / applyKindledResolveStaggerResist are NO
 /// LONGER stubbed here (Phase 4a follow-up, this pass) — `kindled_resolve_
 /// until_tick` is now a real PlayerEntity field (world_state.zig), wired at
@@ -829,6 +831,14 @@ pub fn resolveInstantAoeCasts(
 
             if (cast.damage > 0) {
                 var final_dmg = cast.damage;
+                // Rally Light (Track Z1a item 3) — caster-side amp,
+                // matches World.ts:4861's `finalDamage *=
+                // rallyLightDamageMultiplier(liveCaster, players, aoeTick)`
+                // and its position immediately BEFORE the Kindled Resolve
+                // amp below (:4862).
+                if (hasRallyLightSource(state, cast.caster_idx, tick)) {
+                    final_dmg *= KIN_RALLY_LIGHT_DAMAGE_MULTIPLIER;
+                }
                 // Kindled Resolve (Paladin, Phase 4a follow-up) —
                 // caster-side amp, matches World.ts:4662's
                 // `finalDamage *= kindledResolveDamageMultiplier(liveCaster, aoeTick)`
@@ -1337,6 +1347,46 @@ const GEO_LATTICE_ZONE_RADIUS_PX: f64 = 150.0;
 const GEO_LATTICE_ZONE_DURATION_MS: f64 = 2200.0;
 const GEO_LATTICE_ZONE_DPS: f64 = 11.0;
 
+// ── Track Z1a item 3: ally substrate + the four ally-targeted abilities
+//    (convergence-goal.md Z1 — the oldest named deferral block). Bit-exact
+//    mirror of the matching constants.ts/combat.ts values (re-verified
+//    live), same "duplicated as a local constant, not exported" convention
+//    as every block above.
+// Kindled — Rally Light (constants.ts:361-363). Consumed at the
+// movement speed-mul composition (section 7), section 4's ranged amp, and
+// resolveInstantAoeCasts' AOE amp — the EXACT TS consumption set
+// (World.ts:2552/1844/4861; TS melee sites apply kindledResolve but NOT
+// rally, verified by grep, despite :1844's own prose).
+const KIN_RALLY_LIGHT_RADIUS_PX: f64 = 220.0;
+const KIN_RALLY_LIGHT_DAMAGE_MULTIPLIER: f64 = 1.12;
+const KIN_RALLY_LIGHT_MOVE_MULTIPLIER: f64 = 1.08;
+// Kindled — Aegis Share (constants.ts:286/300; the search radius factors
+// combat.ts's WARD_PEEL_RADIUS_PX=160 — mirrored here since Zig has no
+// team-peel port yet, so combat.zig carries no peel constants to reuse).
+const KIN_AEGIS_SHARE_RADIUS_MULTIPLIER: f64 = 1.6;
+const KIN_AEGIS_SHARE_SOLO_KINDLING_FEED: f64 = 12.0;
+const WARD_PEEL_RADIUS_PX: f64 = 160.0;
+/// combat.ts:131 — the kindling resource cap (Aegis Share's solo
+/// fallback is the FIRST kindling write anywhere in sim/src, see the
+/// kindled_resolve arm's own "ZERO writes" audit note).
+const KINDLING_MAX: f64 = 100.0;
+// Syzygist — shared ally auto-target range (constants.ts:719).
+const SYZ_ALLY_SEARCH_RANGE_PX: f64 = 320.0;
+// Syzygist — Borrowed Time (constants.ts:780-786). DEBT_DELAY_TICKS is a
+// RAW TICK COUNT in TS (`Math.round(6000 / STEP_MS)`, STEP_MS=1000/60 →
+// 360) — mirrored as a literal, same reasoning as
+// SYZ_WARD_DURATION_TICKS_DEFAULT above.
+const SYZ_BORROWED_TIME_HEAL_ALLY: f64 = 30.0;
+const SYZ_BORROWED_TIME_DRAIN_ALLY: f64 = 15.0;
+const SYZ_BORROWED_TIME_HEAL_SELF: f64 = 15.0;
+const SYZ_BORROWED_TIME_DRAIN_SELF: f64 = 8.0;
+const SYZ_BORROWED_TIME_DEBT_DELAY_TICKS: u32 = 360;
+// Syzygist — Glass Ward (constants.ts:695/701); duration reuses
+// SYZ_WARD_DURATION_TICKS_DEFAULT above (TS applyWardToAlly's own
+// default), absorb amounts per branch.
+const SYZ_GLASS_WARD_ALLY_ABSORB: f64 = 45.0;
+const SYZ_GLASS_WARD_SELF_FALLBACK_ABSORB: f64 = 28.0;
+
 /// Half-extent of the REAL player body box (PLAYER_BODY_WIDTH=26 /
 /// PLAYER_BODY_HEIGHT=56 in player.ts) — the box World.ts's own
 /// `centerToAABB(cx, cy, PLAYER_BODY_WIDTH, PLAYER_BODY_HEIGHT)` uses inside
@@ -1423,17 +1473,15 @@ fn findCollisionFreeLanding(
 
 /// Nearest ALIVE other player within `range_px`, ignoring the caster —
 /// Read Mark's own targeting shape (World.ts's `findNearestEnemy` call at
-/// its cast site: omnidirectional, no cone). Team-awareness (`isAlly`) is
-/// DELIBERATELY not checked: Phase 3 (ally-targeting substrate) doesn't
-/// exist in Zig yet — docs/zig-step-world-parity-goal.md's own Phase 1
-/// section names the missing `isAlly`/`findNearestAlly` substrate as a
-/// Phase 3 dependency for ALLY-targeted abilities, and the same missing
-/// piece means an ENEMY-search can't exclude teammates either today. A
-/// real, named, deferred gap (a duo match could see this mark a
-/// teammate), not a silent one — step_world has no team-aware match mode
-/// exercised anywhere in this test suite yet (Phase 0/1 coverage is all
-/// FFA), so this is "correctness over completeness" per this goal doc's
-/// own doctrine, not a guess.
+/// its cast site: omnidirectional, no cone). Team-aware since Track Z1a
+/// item 3 (the ally substrate landed): allies are skipped, mirroring TS
+/// `findNearestEnemy`'s own `if (isAlly(caster, other)) continue` — the
+/// old "an ENEMY-search can't exclude teammates" deferral note here is
+/// closed. (`findNearestEnemyInCone` below deliberately does NOT get the
+/// same skip — TS's Judgment-Line inline cone scan has no isAlly check
+/// either, verified by grep; mirroring TS, not "improving" it.) In FFA
+/// (no team ids) `isAlly` is always false, so this is behavior-identical
+/// to the pre-Z1a helper for every existing FFA test.
 fn findNearestEnemyInRange(
     state: *const world_state.WorldState,
     caster_idx: u32,
@@ -1447,6 +1495,7 @@ fn findNearestEnemyInRange(
         if (i == caster_idx) continue;
         const other = &state.players[i];
         if (!other.flags.alive) continue;
+        if (isAlly(caster, other)) continue;
         const dx = other.x - caster.x;
         const dy = other.y - caster.y;
         const d2 = dx * dx + dy * dy;
@@ -1501,6 +1550,102 @@ fn findNearestEnemyInCone(
         }
     }
     return best_idx;
+}
+
+/// Team membership (Track Z1a item 3 — the ally substrate, port of
+/// team.ts's `isAlly`, deliberately the only place Zig reasons about team
+/// identity, same single-source-of-truth contract as the TS file): true
+/// iff BOTH players carry a defined team id and the ids are byte-equal.
+/// TS semantics mirrored exactly: `a.teamId !== undefined && a.teamId ===
+/// b.teamId` — two FFA players (no team id) are NOT allies, and a player
+/// with a team id IS trivially their own ally (`isAlly(a, a)`); callers
+/// that must exclude self-targeting filter separately, exactly as TS's
+/// doc comment prescribes.
+fn isAlly(a: *const world_state.PlayerEntity, b: *const world_state.PlayerEntity) bool {
+    if (!a.flags.has_team_id or !b.flags.has_team_id) return false;
+    if (a.team_id_len != b.team_id_len) return false;
+    return std.mem.eql(u8, a.team_id_bytes[0..a.team_id_len], b.team_id_bytes[0..b.team_id_len]);
+}
+
+/// Nearest ALIVE ally within `range_px`, excluding the caster — port of
+/// World.ts's `findNearestAlly` (the Syzygist low-aim auto-target helper;
+/// every call site this pass ports uses the default `excludeSelf: true`,
+/// so the option isn't carried). `require_injured` mirrors the
+/// `requireInjured` option INCLUDING the 2026-07-22 fix: "injured" means
+/// below the player's REAL max health (`maxHealthForPlayer` — chassis
+/// base + build maxHealthAdd), NOT a flat 100, so a Kindled at 110/125
+/// is a valid heal target.
+///
+/// ITERATION ORDER (the divergence trap the goal doc names): TS scans
+/// `Object.entries(players)` in record-insertion order and keeps the
+/// FIRST strictly-nearest candidate. On the wasm full-sync path that
+/// insertion order IS this array's slot order — packWorldState seats
+/// slots by sorted player id and unpackWorldState re-inserts in slot
+/// order — so iterating 0..player_count with the same strict `<` keeps
+/// distance ties resolved identically on both sides. Distances compare
+/// SQUARED (findNearestEnemyInRange's own shipped precedent) — same
+/// result as TS's hypot compare except in sub-ulp ties.
+fn findNearestAllyIdx(
+    state: *const world_state.WorldState,
+    caster_idx: u32,
+    range_px: f64,
+    require_injured: bool,
+) i32 {
+    const caster = &state.players[caster_idx];
+    var best_idx: i32 = -1;
+    var best_dist_sq: f64 = std.math.inf(f64);
+    var i: u32 = 0;
+    while (i < state.player_count) : (i += 1) {
+        if (i == caster_idx) continue;
+        const other = &state.players[i];
+        if (!other.flags.alive) continue;
+        if (!isAlly(caster, other)) continue;
+        if (require_injured and
+            other.health >= maxHealthForPlayer(other, &state.player_fire_config[i]))
+        {
+            continue;
+        }
+        const dx = other.x - caster.x;
+        const dy = other.y - caster.y;
+        const d2 = dx * dx + dy * dy;
+        if (d2 > range_px * range_px) continue;
+        if (d2 < best_dist_sq) {
+            best_dist_sq = d2;
+            best_idx = @intCast(i);
+        }
+    }
+    return best_idx;
+}
+
+/// Rally Light aura coverage (Track Z1a item 3 — port of World.ts's
+/// `hasRallyLightSource`): true when the beneficiary's OWN window is
+/// live (a player is always their own eligible source — the solo-viable
+/// clause that closed the axiom audit's AX.2 "Rally Light is solo-dead"
+/// flag; `isAlly` is only consulted for OTHER candidates) or a live
+/// ALLY source stands within KIN_RALLY_LIGHT_RADIUS_PX. Read-only —
+/// never writes another player's entity, so it's safe from any per-tick
+/// pass, same contract as the TS helper's own doc comment.
+fn hasRallyLightSource(
+    state: *const world_state.WorldState,
+    beneficiary_idx: u32,
+    tick: u32,
+) bool {
+    const b = &state.players[beneficiary_idx];
+    if (b.rally_light_until_tick > tick) return true;
+    var i: u32 = 0;
+    while (i < state.player_count) : (i += 1) {
+        if (i == beneficiary_idx) continue;
+        const other = &state.players[i];
+        if (!other.flags.alive) continue;
+        if (other.rally_light_until_tick <= tick) continue;
+        if (!isAlly(other, b)) continue;
+        const dx = other.x - b.x;
+        const dy = other.y - b.y;
+        if (dx * dx + dy * dy <= KIN_RALLY_LIGHT_RADIUS_PX * KIN_RALLY_LIGHT_RADIUS_PX) {
+            return true;
+        }
+    }
+    return false;
 }
 
 /// Shared shape for the single-shard ability-cast projectile spawns Phase
@@ -1617,7 +1762,11 @@ fn spawnAbilityShard(
 /// docs/zig-step-world-parity-goal.md's Phase 1 section calls for: add a
 /// 46th `AbilityKind` later and forget an arm here, `zig build` itself
 /// fails at compile time, not a silent runtime gap. No `else`/`_`
-/// catch-all exists anywhere in this switch. As of Phase 4c, 23 arms carry
+/// catch-all exists anywhere in this switch. As of Track Z1a item 3, 27
+/// arms carry a real cast-time effect (the four ally-substrate arms —
+/// Aegis Share/Rally Light/Borrowed Time/Glass Ward — joined the Phase 4c
+/// count of 23 below; same re-verify-by-grep caveat).
+/// Superseded count note: as of Phase 4c, 23 arms carried
 /// a real cast-time effect (updated from Phase 1's original 12 — each
 /// later sub-group's own commit grew this count; re-verify with a grep
 /// count, not this number, before trusting it further into the future):
@@ -2128,7 +2277,34 @@ fn stepAbilityDispatch(
                 attacker.shield_charge = @min(max_charge, attacker.shield_charge + refund);
                 activated = true;
             },
-            .aegis_share => {}, // Phase 4 — not yet ported
+            // Aegis Share (Kindled — Track Z1a item 3, ally substrate).
+            // World.ts's "aegis-share" case: opens the team-peel-radius
+            // window on the CASTER unconditionally; solo fallback
+            // (axiom-deviations audit, "Kindled — two structural gaps")
+            // grants a flat Kindling tick when NO ally stands inside the
+            // SAME radius the window actually widens. The window's reader
+            // (findTeamPeelWarder's aegisShareUntilTick check) is the
+            // still-unported team-peel Z1 item — the field is carried +
+            // bridged NOW so that port consumes it without another growth
+            // cut; the solo Kindling branch is live either way. `+1`
+            // matches the ward_shell/self_lattice tick-convention
+            // correction (Zig's header.tick is already TS's tick+1 at
+            // dispatch time, and Zig consumption sites compare against the
+            // new tick — see ward_shell's own arm).
+            .aegis_share => {
+                const dur_ticks: u32 = @intFromFloat(@ceil((active_spec.duration_ms orelse 0) / @max(1.0, eff_dt)));
+                const solo_ally = findNearestAllyIdx(
+                    state,
+                    player_idx,
+                    WARD_PEEL_RADIUS_PX * KIN_AEGIS_SHARE_RADIUS_MULTIPLIER,
+                    false,
+                );
+                attacker.aegis_share_until_tick = state.header.tick + 1 + dur_ticks;
+                if (solo_ally < 0) {
+                    attacker.kindling = @min(KINDLING_MAX, attacker.kindling + KIN_AEGIS_SHARE_SOLO_KINDLING_FEED);
+                }
+                activated = true;
+            },
             .plant_charge => {
                 // Phase 4c — same shared search as Slip Node above (shorter
                 // range: "plant-to-plant, not freeflow ninja"), plus a
@@ -2161,7 +2337,19 @@ fn stepAbilityDispatch(
                     activated = true;
                 }
             },
-            .rally_light => {}, // Phase 4 — not yet ported
+            // Rally Light (Kindled — Track Z1a item 3). World.ts's
+            // "rally-light" case: opens the aura-SOURCE window on the
+            // caster — no cross-player write (every beneficiary READS a
+            // nearby source's window via hasRallyLightSource and
+            // multiplies its OWN speed/damage; see that helper). Consumed
+            // at section 7's speed-mul composition, section 4's ranged
+            // amp, and resolveInstantAoeCasts — the exact TS consumption
+            // set. Same `+1` tick-convention correction as aegis_share.
+            .rally_light => {
+                const dur_ticks: u32 = @intFromFloat(@ceil((active_spec.duration_ms orelse 0) / @max(1.0, eff_dt)));
+                attacker.rally_light_until_tick = state.header.tick + 1 + dur_ticks;
+                activated = true;
+            },
             // Kindled Resolve (Paladin) — CONSUMPTION side shipped this
             // pass (Phase 4a follow-up): re-verified the original "SIX call
             // sites" citation directly against live World.ts rather than
@@ -2376,7 +2564,41 @@ fn stepAbilityDispatch(
                     activated = true;
                 }
             },
-            .borrowed_time => {}, // Phase 4 — not yet ported
+            // Borrowed Time (Syzygist — Track Z1a item 3). World.ts's
+            // "borrowed-time" case: instant heal to the nearest INJURED
+            // ally (auto-target, chassis-aware injury check — the
+            // 2026-07-22 maxHealthForPlayer fix, mirrored inside
+            // findNearestAllyIdx), self at the doc's weaker solo figures
+            // when none; a flat UNCONDITIONAL drain lands
+            // SYZ_BORROWED_TIME_DEBT_DELAY_TICKS later (section 8b's debt
+            // block). TS defers the ally branch to pendingSyzygistCasts
+            // purely for its snapshot-commit hazard — Zig mutates in
+            // place, so the cross-player write ships INLINE, same
+            // investigated-and-confirmed reasoning as the Contagion arm's
+            // own deferred-write note below. Heal caps at the target's
+            // REAL max health (chassis base + build add), both branches.
+            .borrowed_time => {
+                const ally_idx = findNearestAllyIdx(state, player_idx, SYZ_ALLY_SEARCH_RANGE_PX, true);
+                const debt_delay_tick: u32 = state.header.tick + 1 + SYZ_BORROWED_TIME_DEBT_DELAY_TICKS;
+                if (ally_idx >= 0) {
+                    const tidx: u32 = @intCast(ally_idx);
+                    const target = &state.players[tidx];
+                    target.health = @min(
+                        maxHealthForPlayer(target, &state.player_fire_config[tidx]),
+                        target.health + SYZ_BORROWED_TIME_HEAL_ALLY,
+                    );
+                    target.debt_until_tick = debt_delay_tick;
+                    target.debt_amount = SYZ_BORROWED_TIME_DRAIN_ALLY;
+                } else {
+                    attacker.health = @min(
+                        maxHealthForPlayer(attacker, &state.player_fire_config[player_idx]),
+                        attacker.health + SYZ_BORROWED_TIME_HEAL_SELF,
+                    );
+                    attacker.debt_until_tick = debt_delay_tick;
+                    attacker.debt_amount = SYZ_BORROWED_TIME_DRAIN_SELF;
+                }
+                activated = true;
+            },
             .focus_hex => {
                 // Omnidirectional auto-target mark on the CASTER — same
                 // shape as Read Mark above but consumed at the generic
@@ -2400,16 +2622,15 @@ fn stepAbilityDispatch(
             // case, not the goal doc's own "jump-targeting" gloss alone.
             //
             // Team-awareness: TS's own isAlly gate (excluding the caster's
-            // allies from being a source OR a jump target) has no Zig
-            // mirror yet (Phase 3 ally-targeting substrate, out of this
-            // pass's scope) — every OTHER alive player is currently a
-            // valid source/target, the SAME simplification
-            // findNearestEnemyInRange/InCone (and everything built on
-            // them: Facet Break/Judgment Line/Read Mark/Focus Hex/Flock
-            // Pulse's shipped base-damage-only cut) already ships with.
-            // This is NOT the ally-targeting substrate Phase 3 blocks —
-            // Contagion never needs to find an ALLY, only enemies, so it
-            // stays on this file's existing, already-accepted deferral.
+            // allies from being a source OR a jump target, World.ts:3968/
+            // 3977) is still unported HERE — but the blocking reason
+            // changed in Track Z1a item 3: the isAlly substrate now EXISTS
+            // (this file's own `isAlly`, and findNearestEnemyInRange now
+            // skips allies), so this arm's two gates are an unblocked
+            // one-line-each follow-up rather than a substrate deferral.
+            // Left un-ported by Z1a's own scoping (its four named
+            // abilities don't include Contagion) — a named, now-cheap gap,
+            // not a silent one.
             //
             // Deferred-write shape: TS pushes this onto `pendingSyzygistCasts`
             // — a queue resolved in its own dedicated pass after the per-
@@ -2528,9 +2749,40 @@ fn stepAbilityDispatch(
             .self_lattice => {
                 attacker.syz_ward_absorb_until_tick = state.header.tick + 1 + SYZ_WARD_DURATION_TICKS_DEFAULT;
                 attacker.syz_ward_absorb_remaining = SYZ_SELF_LATTICE_ABSORB;
+                // Track Z1a item 3 fix (found porting Glass Ward): without
+                // this bit the bridge's unpack drops the pool (its decode
+                // gates on hasSyzWard) and the next full-sync repack wipes
+                // it — the Z0e bug class, here as a one-flag omission.
+                attacker.flags.has_syz_ward = true;
                 activated = true;
             },
-            .glass_ward => {}, // Phase 4 — not yet ported
+            // Glass Ward (Syzygist — Track Z1a item 3). World.ts's
+            // "glass-ward" case: stronger absorb on the nearest ally
+            // (auto-target, injury NOT required), self at reduced strength
+            // if none in range. Writes the same field pair Self-Lattice
+            // (below) already writes — the ally branch is the isAlly-gated
+            // cross-player write TS routes through applyWardToAlly
+            // (deferred there, inline here — the Contagion precedent).
+            // `flags.has_syz_ward` is set alongside the fields on BOTH
+            // branches: the bridge's unpack gates the round-trip on that
+            // bit, so without it the pool would be invisible to TS and
+            // wiped by the next full-sync repack (the Z0e bug class).
+            // wardAbsorbSourceId stays unported (Self-Lattice's own
+            // documented reasoning — TS-cosmetic attribution only).
+            .glass_ward => {
+                const ally_idx = findNearestAllyIdx(state, player_idx, SYZ_ALLY_SEARCH_RANGE_PX, false);
+                if (ally_idx >= 0) {
+                    const target = &state.players[@as(usize, @intCast(ally_idx))];
+                    target.syz_ward_absorb_until_tick = state.header.tick + 1 + SYZ_WARD_DURATION_TICKS_DEFAULT;
+                    target.syz_ward_absorb_remaining = SYZ_GLASS_WARD_ALLY_ABSORB;
+                    target.flags.has_syz_ward = true;
+                } else {
+                    attacker.syz_ward_absorb_until_tick = state.header.tick + 1 + SYZ_WARD_DURATION_TICKS_DEFAULT;
+                    attacker.syz_ward_absorb_remaining = SYZ_GLASS_WARD_SELF_FALLBACK_ABSORB;
+                    attacker.flags.has_syz_ward = true;
+                }
+                activated = true;
+            },
             .haste_gift => {}, // Phase 4 — not yet ported
             .drift_step => {
                 // Phase 4c — same shared search as Slip Node/Plant Charge
@@ -2876,10 +3128,13 @@ fn stepMeleeSwing(
         //    completeness" scope as the rest of this pass — see the
         //    report): fooledDamageMultiplier (Paper Double burst — no
         //    fooled_until_tick field on PlayerEntity yet), rallyLight
-        //    damage multiplier (Rally Light is still a Phase 4 ability,
-        //    unreachable — nothing can equip it today, so its multiplier
-        //    is unconditionally 1 either way), and team peel (Phase 3 ally
-        //    substrate). kindledResolveDamageMultiplier/
+        //    damage multiplier (CORRECTED reasoning, Track Z1a item 3:
+        //    Rally Light is now live in Zig, but TS's melee sites apply
+        //    kindledResolve WITHOUT rally — grep World.ts: the rally amp's
+        //    only call sites are resolveRangedHit :1844 and the AOE
+        //    resolver :4861, despite :1844's own "bash/slash/edge" prose —
+        //    so its absence HERE is exact TS parity, not a stub), and team
+        //    peel (its own Z1 item). kindledResolveDamageMultiplier/
         //    applyKindledResolveStaggerResist are NO LONGER in this
         //    "unreachable" list (Phase 4a follow-up, this pass) — see the
         //    generic post-class-switch block below, right after this
@@ -3180,6 +3435,24 @@ pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
         // moveSpeedMultiplier).
         if (state.header.first_blood_idx_plus1 == pmi + 1) {
             speed_mul *= round.FIRST_BLOOD_SPEED_MULTIPLIER;
+        }
+        // Syzygist haste (Track Z1a item 3 ride-along — mechanism parity
+        // gap found porting Rally Light: TS composes hasteMul into the
+        // SAME speedMul chain, World.ts:2543-2546, and the fire-rate half
+        // was already consumed at section 6, but this movement half had
+        // no Zig mirror — a TS-authored haste crossing the bridge moved
+        // the player at 1.0x under wasm authority). Position in the chain
+        // mirrors TS exactly: slow × freeze × firstBlood × haste × rally
+        // × build move-speed.
+        if (ple.flags.has_haste and ple.haste_until_tick > state.header.tick) {
+            speed_mul *= ple.haste_multiplier;
+        }
+        // Rally Light "move tick" (Track Z1a item 3 — World.ts:2552's
+        // rallyMul): anyone the aura currently covers, self-source
+        // included. Read-only scan, same safety contract as the TS
+        // helper's own doc comment.
+        if (hasRallyLightSource(state, pmi, state.header.tick)) {
+            speed_mul *= KIN_RALLY_LIGHT_MOVE_MULTIPLIER;
         }
         // Card move-speed + gravity augments ride the existing step multipliers.
         if (has_cfg) speed_mul *= fcfg.move_speed_mul;
@@ -4597,6 +4870,16 @@ pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
                         {
                             final_dmg *= SYZ_FOCUS_HEX_AMP_MULTIPLIER;
                         }
+                        // Rally Light (Track Z1a item 3) — attacker-side
+                        // amp, port of World.ts:1844's `finalDamage *=
+                        // rallyLightDamageMultiplier(attackerEntity, ...)`
+                        // in resolveRangedHit (the shared ranged resolver;
+                        // this projectile loop is its Zig mirror — hitscan
+                        // stays unported, its own Z1 item). Ordered BEFORE
+                        // Kindled Resolve, matching TS's :1844/:1845 pair.
+                        if (hasRallyLightSource(state, @intCast(shooter_idx), state.header.tick)) {
+                            final_dmg *= KIN_RALLY_LIGHT_DAMAGE_MULTIPLIER;
+                        }
                         // Kindled Resolve (Paladin, Phase 4a follow-up) —
                         // attacker-side amp, same shooter-buff composition
                         // shape as damage_amp/overcharge/boss_mode above.
@@ -5305,6 +5588,26 @@ pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
                 emitEvent(state, .player_killed, @intCast(bi), -1, 0, 0, pp.x, pp.y);
             }
         }
+    }
+
+    // 8b'. Borrowed Time debt resolution (Track Z1a item 3 — port of
+    //      World.ts's debt block in the element-status pass, :6018-6041):
+    //      the flat, unconditional drain lands ONCE at debt_until_tick —
+    //      health floored at 0, `alive` never flipped (TS's own "never
+    //      lethal by construction" contract: every Borrowed Time cast
+    //      heals strictly more than it later drains). A player who died
+    //      before the debt came due just has the bookkeeping cleared —
+    //      never a drain on a corpse. 0 = no pending debt (the same
+    //      sentinel the bridge decodes to `undefined`).
+    var dbi: u32 = 0;
+    while (dbi < state.player_count) : (dbi += 1) {
+        const dp = &state.players[dbi];
+        if (dp.debt_until_tick == 0 or dp.debt_until_tick > state.header.tick) continue;
+        if (dp.flags.alive) {
+            dp.health = @max(0.0, dp.health - dp.debt_amount);
+        }
+        dp.debt_until_tick = 0;
+        dp.debt_amount = 0;
     }
 
     // 1. Round phase machine + winner detection (I6). RELOCATED to run

@@ -156,7 +156,13 @@ export const HEADER_SIZE = 56;
 // net zero. Packed/unpacked like respawn_at_tick (the window must survive
 // the full-sync repack, and TS's ability cast opens the same window on the
 // TS-authoritative path).
-export const PLAYER_ENTITY_SIZE = 632;
+// 632 → 656 (Track Z1a item 3, ally substrate): rally_light_until_tick
+// (632) + aegis_share_until_tick (636) + debt_until_tick (640) + 4-byte
+// explicit pad + debt_amount f64 (648). All four packed/unpacked like
+// respawn_at_tick — an unbridged window/debt would be wiped by the
+// next full-sync repack and the four ally-targeted abilities could
+// never hold state across ticks under live wasm authority.
+export const PLAYER_ENTITY_SIZE = 656;
 const PROJECTILE_ENTITY_SIZE = 216;
 const SATELLITE_ENTITY_SIZE = 96;
 const DESTRUCTIBLE_ENTITY_SIZE = 64;
@@ -938,6 +944,22 @@ function packPlayer(
   // TS `undefined`.
   view.setUint32(off, p.recoilStepUntilTick ?? 0, true);
   off += 4;
+
+  // Ally-substrate tail (Track Z1a item 3): Rally Light / Aegis Share
+  // windows + Borrowed Time's pending debt. Bridged like respawn_at_tick
+  // (the full-sync path repacks every tick; TS's own casts open the same
+  // windows on the TS-authoritative path). 0 = inactive/no-debt sentinel
+  // for all three ticks, mirroring TS `undefined`.
+  view.setUint32(off, p.rallyLightUntilTick ?? 0, true);
+  off += 4;
+  view.setUint32(off, p.aegisShareUntilTick ?? 0, true);
+  off += 4;
+  view.setUint32(off, p.debtUntilTick ?? 0, true);
+  off += 4;
+  view.setUint32(off, 0, true); // _pad_debt — f64 alignment
+  off += 4;
+  view.setFloat64(off, p.debtAmount ?? 0, true);
+  off += 8;
 }
 
 function unpackPlayer(view: DataView, offset: number): PlayerEntity {
@@ -1084,6 +1106,17 @@ function unpackPlayer(view: DataView, offset: number): PlayerEntity {
   off += 3; // _pad_throw_hand
   const recoilStepUntilTickRaw = view.getUint32(off, true);
   off += 4;
+  // Ally-substrate tail (Track Z1a item 3) — see packPlayer's matching
+  // comment.
+  const rallyLightUntilTickRaw = view.getUint32(off, true);
+  off += 4;
+  const aegisShareUntilTickRaw = view.getUint32(off, true);
+  off += 4;
+  const debtUntilTickRaw = view.getUint32(off, true);
+  off += 4;
+  off += 4; // _pad_debt
+  const debtAmountRaw = view.getFloat64(off, true);
+  off += 8;
 
   const out: PlayerEntity = {
     id: PlayerId(id),
@@ -1173,6 +1206,17 @@ function unpackPlayer(view: DataView, offset: number): PlayerEntity {
   // hands, and TS's `?? 1` unset convention was already normalized at
   // pack time — see packPlayer's throw_hand_parity comment.
   out.throwHandParity = throwHandParityRaw;
+  // Ally-substrate tail (Track Z1a item 3) — same 0-sentinel → undefined
+  // decode as respawnAtTick/recoilStepUntilTick above. debtAmount only
+  // exists alongside a live debtUntilTick (TS clears both together).
+  if (rallyLightUntilTickRaw > 0)
+    out.rallyLightUntilTick = Tick(rallyLightUntilTickRaw);
+  if (aegisShareUntilTickRaw > 0)
+    out.aegisShareUntilTick = Tick(aegisShareUntilTickRaw);
+  if (debtUntilTickRaw > 0) {
+    out.debtUntilTick = Tick(debtUntilTickRaw);
+    out.debtAmount = debtAmountRaw;
+  }
   return out;
 }
 
