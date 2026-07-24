@@ -1085,12 +1085,20 @@ export function drawBladeSwing(
   // dominant blade's silhouette during the wide follow-through sweep and read
   // as scissors. It returns to a clear guard read only once the dominant
   // blade has finished its dramatic travel, in recovery.
+  // Floor raised 0.08->0.14 (Interstice I6, wave-2 live-tape filmstrip
+  // review): Interstice is TWIN daggers — a class built on wielding two
+  // blades that reads as carrying only one for ~40% of every swing's
+  // duration (the follow-through plateau covers 93-196ms of the 245ms
+  // sentence) undersells the fantasy. 0.08 read as functionally invisible
+  // at gameplay scale on tape; 0.14 keeps the off-hand a dim, clearly-still-
+  // there presence without reintroducing the scissors-read the angle
+  // separation already guards against (only alpha changed, not the arc).
   const offAngle = meleeOffhandBladeAngle(aimRad, dir, t);
   const offFade =
     t < 0.15 ? 0.15 + (0.4 - 0.15) * smoothstep(stage.anticipation)
-    : t < 0.42 ? 0.4 + (0.08 - 0.4) * smoothstep(stage.cut)
-    : t < 0.80 ? 0.08
-    : 0.08 + (0.55 - 0.08) * smoothstep(stage.recovery);
+    : t < 0.42 ? 0.4 + (0.14 - 0.4) * smoothstep(stage.cut)
+    : t < 0.80 ? 0.14
+    : 0.14 + (0.55 - 0.14) * smoothstep(stage.recovery);
   drawDagger(g, offPivot, offAngle, reach * 0.6, 3.6, tint, offFade * env);
   // TIP GHOSTS (R1 row 12, I2): 4-6 hard-edged after-images of the blade
   // at its own sampled past tip positions — solid mini-daggers fading by

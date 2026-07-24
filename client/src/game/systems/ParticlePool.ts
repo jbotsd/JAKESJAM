@@ -22,28 +22,29 @@ export const STATUS_VFX = {
 // design (acquireX returns null, effect skipped), so a smaller pool IS the
 // particle-count dial: weak devices simply skip the overflow effects.
 const POOL_SIZES = {
-  // spark 64→96, ring 16→24, blastCircle 16→24 (K10): the same live-tape
-  // console sentinel that exposed the bolt starvation below also caught
-  // these three exhausted mid-brawl — melee-era effect density (contact
-  // chords + debris + kill bursts stacking) outgrew the pre-melee
-  // budgets. +50%, not a blank check: exhaustion stays the legitimate
-  // quality dial via particleScale on weaker profiles.
-  spark: 96,
-  shard: 32,
-  ring: 24,
-  // 4 → 16 (K10, 2026-07-24): sized when lightning arcs were the only
-  // Graphics consumer, but the melee overhaul made bolts the workhorse —
-  // 15 spawn sites now share this pool (slash marks, ground dust, melee
-  // debris, kill shock ring, ward raise/absorb/drop, nova bursts, cast
-  // tells, lances, blink streaks...) at 300-500ms lifetimes each. In a
-  // live melee brawl 4 was permanently exhausted, so later spawns were
-  // silently skipped — the K10 live tape's console sentinel caught
-  // "[ParticlePool] bolt pool exhausted" mid-brawl, and the R1 row-17
-  // kill shock ring had never once rendered in a real match while
-  // isolated harness strips (empty pool) showed it fine. Idle pooled
+  // spark 96→128, ring 24→32, blastCircle 24→32, shard 32→48 (Interstice
+  // I5, 2026-07-24 live tape at :8090, boxworks-mini, 8 real kills/59 hits
+  // over ~140s): K10's +50% Kindled-era bump was sized for Kindled's
+  // slower ~683ms observed cadence; a live Interstice tape at the SAME
+  // sustained-mash driving rhythm hit its true ~215ms sim FSM cycle far
+  // harder, and the console sentinel caught ALL FIVE pools (bolt, spark,
+  // blastCircle, ring, AND shard — shard is new, never exhausted on the
+  // Kindled tape) exhausted mid-brawl in one run. Confirms the wave-2
+  // brief's prediction: the same shared pools strain differently under a
+  // faster class's real contact density. Another +33-50% pass; exhaustion
+  // stays the legitimate quality dial via particleScale on weaker
+  // profiles — this is headroom for the desktop-tier live game, not a
+  // blank check.
+  spark: 128,
+  shard: 48,
+  ring: 32,
+  // 16 → 24 (Interstice I5): 20 spawn sites now share this pool (grew from
+  // K10's 15 — ward raise/absorb/drop and other wave-3 additions since),
+  // and the I5 live tape still caught "[ParticlePool] bolt pool exhausted"
+  // under sustained Interstice melee despite K10's 4→16 bump. Idle pooled
   // Graphics cost nothing to hold; render cost accrues only when spawned.
-  bolt: 16,
-  blastCircle: 24,
+  bolt: 24,
+  blastCircle: 32,
   glow: 64,
 } as const;
 
