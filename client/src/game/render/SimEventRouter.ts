@@ -20,6 +20,7 @@ import type { CombatRig } from "../rendering/ProceduralPlayerRig";
 import type { ParticlePool } from "../systems/ParticlePool";
 import type { RenderLayer } from "./RenderLayer";
 import { presentationBudget } from "./presentationBudgets.js";
+import { cameraKickParams } from "./victimChannel.js";
 import { RenderTimeArbiter } from "./RenderTimeArbiter.js";
 import { isAbilityKind } from "./abilityAnimation.js";
 
@@ -111,6 +112,15 @@ export type SimEventRouterDeps = {
 
   /** Camera-shake helper that already guards against stacking. */
   safeShake: (durationMs: number, intensity: number) => void;
+  /** Directional camera kick along a hit vector (R1 row 9) — optional:
+   *  scenes without the ActionCamera juice stack simply omit it. */
+  directionalKick?: (
+    dirX: number,
+    dirY: number,
+    kickPx: number,
+    durMs: number,
+    noisePx: number,
+  ) => void;
   /** Shared render-clock owner. When present, hit-stop composes with slow-mo. */
   renderTime?: RenderTimeArbiter;
 
@@ -331,6 +341,13 @@ export class SimEventRouter {
             meleePair.chassis,
             true,
           );
+          if (
+            (event.killerId === d.localPlayerId || event.victimId === d.localPlayerId) &&
+            d.directionalKick
+          ) {
+            const kick = cameraKickParams(meleePair.chassis, true);
+            d.directionalKick(meleePair.dirX, meleePair.dirY, kick.kickPx, kick.durMs, kick.noisePx);
+          }
           this.meleePairImpacts.delete(event.victimId as string);
         } else {
           this.holdHitStop(presentationBudget("kill").hitStopMs);
@@ -582,6 +599,15 @@ export class SimEventRouter {
           suppressNextConfirm: true,
           suppressNextConfirmAudio: false,
         });
+        // Directional-first camera (row 9): kick along the hit vector when
+        // the local player is in the pair; random shake is only noise.
+        if (
+          (event.attackerId === d.localPlayerId || event.victimId === d.localPlayerId) &&
+          d.directionalKick
+        ) {
+          const kick = cameraKickParams(chassis, false);
+          d.directionalKick(dirX, dirY, kick.kickPx, kick.durMs, kick.noisePx);
+        }
         break;
       }
       case "bash-landed": {
@@ -613,8 +639,16 @@ export class SimEventRouter {
           event.victimId === d.localPlayerId ||
           event.attackerId === d.localPlayerId
         ) {
-          const budget = presentationBudget("heavy");
-          d.safeShake(budget.shakeDurationMs, budget.shakeIntensity);
+          // Directional-first (row 9): the check's camera moves WITH the
+          // shove; noise rides inside the kick. Falls back to the old
+          // heavy random shake only when no kick surface exists.
+          if (d.directionalKick) {
+            const kick = cameraKickParams("kindled", false);
+            d.directionalKick(dirX, dirY, kick.kickPx, kick.durMs, kick.noisePx);
+          } else {
+            const budget = presentationBudget("heavy");
+            d.safeShake(budget.shakeDurationMs, budget.shakeIntensity);
+          }
         }
         break;
       }

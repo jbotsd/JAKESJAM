@@ -38,6 +38,7 @@ function makeDeps(): {
     chassis: string;
     kill: boolean;
   }>;
+  kicks: Array<{ dirX: number; dirY: number; kickPx: number; durMs: number; noisePx: number }>;
   rigFires: string[];
   rigParryFlashes: string[];
   rigKillPulses: string[];
@@ -132,6 +133,7 @@ function makeDeps(): {
     },
   } as unknown as SimEventRouterDeps["scene"];
 
+  const kicks: Array<{ dirX: number; dirY: number; kickPx: number; durMs: number; noisePx: number }> = [];
   const deps: SimEventRouterDeps = {
     scene: fakeScene,
     audio: {
@@ -142,6 +144,9 @@ function makeDeps(): {
     localPlayerId: PlayerId("local"),
     safeShake(durationMs, intensity) {
       shakeCalls.push([durationMs, intensity]);
+    },
+    directionalKick(dirX, dirY, kickPx, durMs, noisePx) {
+      kicks.push({ dirX, dirY, kickPx, durMs, noisePx });
     },
     spawnDamageNumber(victimId, damage) {
       damageNumbers.push([String(victimId), damage]);
@@ -202,6 +207,7 @@ function makeDeps(): {
     syzygistWardFlashes,
     rigHits,
     pairImpacts,
+    kicks,
     rigFires,
     rigParryFlashes,
     rigKillPulses,
@@ -711,6 +717,44 @@ describe("SimEventRouter — melee pair-scoped contact chord (R1 rows 3-5, 2026-
     ]);
     expect(h.tweens.timeScale).toBe(1); // pair-scoped, not world-scoped
     expect(h.killCinematics).toEqual(["local"]); // zoom stays kill-exclusive and alive
+  });
+
+  test("directional camera kick (row 9): melee hits kick ALONG the hit vector when local is in the pair; kill upgrades to 12px/180ms", () => {
+    const h = makeDeps();
+    const router = new SimEventRouter(h.deps);
+    router.dispatch({
+      t: "bash-landed",
+      attackerId: PlayerId("remote"),
+      victimId: PlayerId("local"),
+      damage: 14,
+      dirX: -1,
+      dirY: 0,
+    } as SimEvent);
+    expect(h.kicks).toEqual([{ dirX: -1, dirY: 0, kickPx: 8, durMs: 120, noisePx: 4 }]);
+    router.dispatch({
+      t: "player-killed",
+      victimId: PlayerId("local"),
+      killerId: PlayerId("remote"),
+      cause: "bash",
+    } as SimEvent);
+    expect(h.kicks[1]).toEqual({ dirX: -1, dirY: 0, kickPx: 12, durMs: 180, noisePx: 6 });
+  });
+
+  test("no kick when the local player is not in the melee pair (spectating a remote-vs-remote hit)", () => {
+    const h = makeDeps();
+    h.deps.playerRigs = {
+      get: () => undefined,
+    } as unknown as SimEventRouterDeps["playerRigs"];
+    const router = new SimEventRouter(h.deps);
+    router.dispatch({
+      t: "slash-hit",
+      attackerId: PlayerId("r1"),
+      victimId: PlayerId("r2"),
+      damage: 11,
+      dirX: 1,
+      dirY: 0,
+    } as SimEvent);
+    expect(h.kicks).toEqual([]);
   });
 
   test("non-melee kill keeps the world-tier kill stop unchanged", () => {

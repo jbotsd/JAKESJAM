@@ -6,6 +6,7 @@
 
 import { describe, expect, test } from "bun:test";
 import {
+  cameraKickParams,
   flashMix,
   flinchOffset,
   impactChannelParams,
@@ -123,5 +124,14 @@ describe("pair holds — kill tier, victim 1.5x, hard cap (rows 3-4)", () => {
     expect(pairHoldMs(i, "victim", false)).toBe(50);
     expect(pairHoldMs(i, "attacker", true)).toBe(117);
     expect(pairHoldMs(i, "victim", true)).toBeCloseTo(175.5, 5);
+  });
+});
+
+describe("directional camera kick params (row 9 — no roll, per Jake's camera direction)", () => {
+  test("hit: 8px/4px/120ms (K), 4px/2px/80ms (I); kill: 12px/6px/180ms both", () => {
+    expect(cameraKickParams("kindled", false)).toEqual({ kickPx: 8, noisePx: 4, durMs: 120 });
+    expect(cameraKickParams("interstice", false)).toEqual({ kickPx: 4, noisePx: 2, durMs: 80 });
+    expect(cameraKickParams("kindled", true)).toEqual({ kickPx: 12, noisePx: 6, durMs: 180 });
+    expect(cameraKickParams("interstice", true)).toEqual({ kickPx: 12, noisePx: 6, durMs: 180 });
   });
 });

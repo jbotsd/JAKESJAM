@@ -325,6 +325,32 @@ class HarnessScene extends Phaser.Scene {
             2.3,
           );
           break;
+        case "edge-low":
+          // Same controller-path swing but aimed so the arc EXITS low —
+          // exercises the ground-dust gate (R1 row 10) the fixed 2.3-rad
+          // aim never satisfies.
+          this.controller.triggerSwing(
+            "paladin",
+            KINDLED_POS,
+            { x: KINDLED_POS.x - 16, y: KINDLED_POS.y + 4 },
+            0.5,
+          );
+          break;
+        case "bash-swing":
+          // SHIELD BASH through the controller path (slab plate + drag
+          // smear + front-foot dust) — the render half a live bash chain's
+          // third slash-started drives.
+          this.controller.triggerSwing(
+            "paladin",
+            KINDLED_POS,
+            { x: KINDLED_POS.x + 10, y: KINDLED_POS.y + 6 },
+            0,
+            1,
+            undefined,
+            1,
+            true,
+          );
+          break;
         // ── Phase 3 primitive demos (2026-07-20) ──────────────────────────
         case "nova-slash":
           spawnNovaBurst(this.pool, { x: 300, y: 250 }, 90, INTERSTICE_TINT, "slash");

@@ -164,3 +164,18 @@ export function pairHoldMs(
   const held = role === "victim" && kill ? base * p.victimKillHoldMul : base;
   return Math.min(p.holdCapMs, held);
 }
+
+/** Directional camera kick (R1 row 9 — directional-FIRST shake): the
+ *  first camera displacement on a melee hit must be ALONG the hit vector;
+ *  the random layer is only noise on top. Roll is deliberately omitted —
+ *  Jake's standing camera direction is "don't roll the camera" (the peak
+ *  camera replaced roll with the AI lock for the same reason). */
+export function cameraKickParams(
+  chassis: MeleeChassis,
+  kill: boolean,
+): { kickPx: number; noisePx: number; durMs: number } {
+  if (kill) return { kickPx: 12, noisePx: 6, durMs: 180 };
+  return chassis === "kindled"
+    ? { kickPx: 8, noisePx: 4, durMs: 120 }
+    : { kickPx: 4, noisePx: 2, durMs: 80 };
+}

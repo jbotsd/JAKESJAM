@@ -1610,6 +1610,8 @@ export class OnlineMatchScene extends Phaser.Scene {
         audio: this.audio ?? null,
         localPlayerId: this.localPlayerId,
         safeShake: (durationMs, intensity) => this.safeShake(durationMs, intensity),
+        directionalKick: (dirX, dirY, kickPx, durMs, noisePx) =>
+          this.cameraJuice.directionalKick(dirX, dirY, kickPx, durMs, noisePx),
         renderTime: this.renderTime,
         spawnDamageNumber: (vid, dmg, headshot) => this.spawnDamageNumber(vid, dmg, headshot),
         spawnDamageNumberAt: (x, y, dmg) => this.spawnDamageNumberAt(x, y, dmg),
