@@ -1676,6 +1676,28 @@ export type SimEvent = (
    */
   | { t: 'shield-refunded'; playerId: PlayerId; amount: number; x: number; y: number }
   /**
+   * Emitted when Contagion actually copies a burn from a still-burning
+   * source enemy onto a fresh jump target (the pendingSyzygistCasts
+   * resolve site — the ONLY place the cross-player write really commits,
+   * so the event can never claim a jump the defensive re-check rejected).
+   * Track L legibility (docs/legibility-audit.md): the jump was a silent
+   * state write — the signature moment of the ability had no read at
+   * either body, and the new burn only surfaced via the generic
+   * state-driven burn sparks. from/to are the hit-time positions of the
+   * source and the jump target so the renderer can draw the causal
+   * source→target arc without position lookups (chain-hit's exact shape).
+   * Additive wire type — old clients ignore unknown event tags.
+   */
+  | {
+      t: 'contagion-jump';
+      sourceId: PlayerId;
+      targetId: PlayerId;
+      fromX: number;
+      fromY: number;
+      toX: number;
+      toY: number;
+    }
+  /**
    * Emitted when a drafted active fires (six-axes Layer 2: input bits
    * 10..13, validated against the slot's cooldown). Drives the router's
    * activation cue + the scene's slot flash; the effect itself is ordinary

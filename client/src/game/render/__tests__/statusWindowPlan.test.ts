@@ -34,6 +34,7 @@ const FIELD_BY_KIND: Record<Exclude<WindowKind, "fangs">, string> = {
   jam: "blockJammerUntilTick",
   fooled: "fooledUntilTick",
   aegis: "aegisShareUntilTick",
+  resonance: "resonanceUntilTick",
 };
 
 describe("planStatusWindows — self-window body reads", () => {

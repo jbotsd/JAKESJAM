@@ -4778,6 +4778,19 @@ export function stepWithRuntime(
           source.burnUntilTick !== undefined &&
           source.burnUntilTick > state.tick
         ) {
+          // Track L legibility: the copy is COMMITTING right here, so this
+          // is the one honest emission site for the source→target arc read
+          // (the cast-time push at the ability case would fire even if this
+          // defensive re-check rejected the jump).
+          events.push({
+            t: "contagion-jump",
+            sourceId: cast.sourceId,
+            targetId: cast.jumpTargetId,
+            fromX: source.x,
+            fromY: source.y,
+            toX: jumpTarget.x,
+            toY: jumpTarget.y,
+          });
           players[cast.jumpTargetId] = {
             ...jumpTarget,
             burnUntilTick: source.burnUntilTick,

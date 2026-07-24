@@ -731,6 +731,14 @@ export class SimEventRouter {
         // ability 'card' cue already carries the audio beat.
         break;
       }
+      case "contagion-jump": {
+        // Deliberately no router-side reaction (Track L): the world-space
+        // read is StatusVfxController's fire-tinted source→target arc, and
+        // the state-driven burn sparks starting on the new host carry the
+        // continuation. Silent by design (never-synthesize rule; the cast's
+        // own 'card' cue already fired this same press).
+        break;
+      }
       default: {
         // Exhaustiveness check.
         const _exhaustive: never = event;

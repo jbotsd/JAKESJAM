@@ -83,6 +83,10 @@ const WINDOW_VULN_COLOR = 0xfca5a5; // rose — cracked guard
 const WINDOW_JAM_COLOR = 0xc084fc; // violet — jammed shield electronics
 const WINDOW_FOOLED_COLOR = 0xff6ec7; // pink — the double's lie
 const WINDOW_AEGIS_COLOR = 0xffc24d; // Kindled gold — shared ward reach
+/** Resonance — PALETTE.sapphirePulse hand-copied (ui/palette.ts), the same
+ *  class-agnostic "ability system" accent the RES chip and the action-bar
+ *  ready-ping already use. Deliberately NOT a class color. */
+const RESONANCE_COLOR = 0x6b98f4;
 /** Aegis Share's painter draws the TRUE widened peel radius so the
  *  mechanic itself is the read (the audit's named gap: "the widened peel
  *  radius is never drawn"). */
@@ -98,6 +102,7 @@ const WINDOW_INTERVALS_MS: Record<WindowRead["kind"], number> = {
   fooled: 320,
   aegis: 400, // big quiet instrument — slowest beat of the family
   fangs: 300,
+  resonance: 350, // every cast opens one — must stay near-subliminal
 };
 
 const SPARK_DURATION_MS = 420;
@@ -312,6 +317,15 @@ export class StatusVfxController {
       if (ev.t === "shield-refunded") {
         this.spawnShieldRefundSnap({ x: ev.x, y: ev.y });
       }
+      if (ev.t === "contagion-jump") {
+        this.spawnContagionArc(
+          { x: ev.fromX, y: ev.fromY },
+          { x: ev.toX, y: ev.toY },
+        );
+      }
+      if (ev.t === "resonance-triggered") {
+        this.spawnResonanceGlyph({ x: ev.x, y: ev.y });
+      }
       if (ev.t === "hit-confirmed" && (ev.amped === true || ev.pierced === true)) {
         const pos = getPosition(ev.victimId);
         if (pos) {
@@ -368,7 +382,110 @@ export class StatusVfxController {
       case "fangs":
         this.spawnFangPips(win.pos, win.intensity, win.count);
         break;
+      case "resonance":
+        this.spawnResonanceWindowTick(win.pos, win.intensity);
+        break;
     }
+  }
+
+  /** Resonance's 2s chain window (opened by EVERY cast, so it must be the
+   *  quietest read of the family): a single small sapphire tick orbiting
+   *  the body — "the system is listening for an unlike ability". */
+  private spawnResonanceWindowTick(position: Vec2, intensity: number): void {
+    const spark = this.pool.acquireSpark();
+    if (!spark) return;
+    const angle = this.clockMs * MARK_ORBIT_RAD_PER_MS * 1.6;
+    const sx = position.x + Math.cos(angle) * 15;
+    const sy = position.y - 6 + Math.sin(angle) * 15;
+    spark.setPosition(sx, sy);
+    spark.setFillStyle(RESONANCE_COLOR, 0.4 * intensity);
+    spark.setRotation(angle); // tangent — orbiting, not radiating
+    spark.setScale(0.5, 0.9);
+    spark.setAlpha(0.4 * intensity);
+    transientVfx.spawn({
+      factory: () => spark,
+      lifetimeMs: RING_DURATION_MS,
+      startAlpha: 0.4 * intensity,
+      ease: "Sine.easeOut",
+      release: () => this.pool.release(spark),
+    });
+  }
+
+  /** Resonance consumed (`resonance-triggered` — an UNLIKE ability cast
+   *  inside the window): two linked sapphire rings expanding at the cast
+   *  site — the chain, drawn. Closes the registry's own recorded gap
+   *  ("audio/camera only, no draw call at the fighter"). */
+  private spawnResonanceGlyph(position: Vec2): void {
+    for (let i = 0; i < 2; i++) {
+      const ring = this.pool.acquireRing();
+      if (!ring) break;
+      const side = i === 0 ? -1 : 1;
+      ring.setPosition(position.x + side * 5, position.y - 8);
+      ring.setFillStyle(RESONANCE_COLOR, 0);
+      ring.setStrokeStyle(1.8, RESONANCE_COLOR, 0.7);
+      ring.setScale(0.35);
+      ring.setAlpha(1);
+      transientVfx.spawn({
+        factory: () => ring,
+        lifetimeMs: 240,
+        startAlpha: 1,
+        ease: "Sine.easeOut",
+        onTick: (obj, t) => {
+          const r = obj as Phaser.GameObjects.Arc;
+          const s = 0.35 + 0.45 * t;
+          r.setScale(s, s);
+          // The pair drifts slightly apart — two links, one chain.
+          r.x = position.x + side * (5 + 3 * t);
+        },
+        release: () => this.pool.release(ring),
+      });
+    }
+  }
+
+  /** Contagion's jump (`contagion-jump` — the burn copying to its next
+   *  host): a sagging fire-tinted thread from the burning source to the
+   *  fresh target — the leech thread's drawn-curve geometry in the burn
+   *  register (a curse crawling, NOT lightning's jitter strike), ending
+   *  exactly where the state-driven burn sparks will begin. */
+  private spawnContagionArc(from: Vec2, to: Vec2): void {
+    const graphics = this.pool.acquireBolt();
+    if (!graphics) return;
+    graphics.setPosition(0, 0);
+    graphics.setAlpha(1);
+    graphics.setScale(1);
+    graphics.setRotation(0);
+    graphics.setBlendMode(Phaser.BlendModes.ADD);
+
+    const dx = to.x - from.x;
+    const dy = to.y - from.y;
+    const len = Math.max(1, Math.hypot(dx, dy));
+    const px = -dy / len;
+    const py = dx / len;
+    const sag = len * 0.14;
+    const pts: Vec2[] = [
+      from,
+      { x: from.x + dx * 0.5 + px * sag, y: from.y + dy * 0.5 + py * sag },
+      to,
+    ];
+
+    graphics.lineStyle(4, STATUS_VFX.fire.color, 0.3);
+    graphics.beginPath();
+    graphics.moveTo(pts[0]!.x, pts[0]!.y);
+    for (let i = 1; i < pts.length; i++) graphics.lineTo(pts[i]!.x, pts[i]!.y);
+    graphics.strokePath();
+
+    graphics.lineStyle(1.5, STATUS_VFX.fire.hotColor, 0.9);
+    graphics.beginPath();
+    graphics.moveTo(pts[0]!.x, pts[0]!.y);
+    for (let i = 1; i < pts.length; i++) graphics.lineTo(pts[i]!.x, pts[i]!.y);
+    graphics.strokePath();
+
+    transientVfx.spawn({
+      factory: () => graphics,
+      lifetimeMs: LEECH_THREAD_DURATION_MS + 40,
+      ease: "Sine.easeOut",
+      release: () => this.pool.release(graphics),
+    });
   }
 
   /** Severing Answer's armed stance: paired amber pincer ticks cocked

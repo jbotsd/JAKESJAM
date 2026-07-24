@@ -286,6 +286,55 @@ describe("hit-confirmed.amped (victim-state damage amps)", () => {
   });
 });
 
+describe("contagion-jump (the burn copying to its next host)", () => {
+  test("a committed jump emits the source→target arc event alongside the copy", () => {
+    const caster = mkPlayer(A, 400, 400);
+    caster.cards = ["contagion"];
+    // Source inside the 260px pulse radius; the fresh enemy is the NEAREST
+    // un-burning body to the source (the sim's nearest-host scan does not
+    // exclude the caster, so keep the caster farther away than the target).
+    const source: PlayerEntity = {
+      ...mkPlayer(B, 600, 400),
+      burnUntilTick: Tick(9999),
+      burnDps: 8,
+      burnTickLastApplied: Tick(0),
+    };
+    const jumpTarget = mkPlayer(PlayerId("c"), 650, 400);
+    const res = stepWithRuntime(
+      mkState([caster, source, jumpTarget]),
+      createRuntime(flatMap),
+      inputsWith([caster, source, jumpTarget], { [A as string]: frame(SLOT1_BIT, 1) }),
+      DT_MS,
+    );
+    const jump = res.events.find((e) => e.t === "contagion-jump");
+    expect(jump).toBeDefined();
+    if (jump && jump.t === "contagion-jump") {
+      expect(jump.sourceId).toBe(B);
+      expect(jump.targetId).toBe(PlayerId("c"));
+      expect(jump.fromX).toBe(600);
+      expect(jump.toX).toBe(650);
+    }
+    // The event never lies: the copy really committed.
+    expect(res.state.players[PlayerId("c")]!.burnUntilTick).toBe(Tick(9999));
+    expect(res.state.players[PlayerId("c")]!.burnDps).toBe(8);
+  });
+
+  test("a dead press (no burning source in radius) emits nothing", () => {
+    const caster = mkPlayer(A, 400, 400);
+    caster.cards = ["contagion"];
+    const cleanEnemy = mkPlayer(B, 450, 400); // in radius but not burning
+    const res = stepWithRuntime(
+      mkState([caster, cleanEnemy]),
+      createRuntime(flatMap),
+      inputsWith([caster, cleanEnemy], { [A as string]: frame(SLOT1_BIT, 1) }),
+      DT_MS,
+    );
+    expect(res.events.some((e) => e.t === "contagion-jump")).toBe(false);
+    // activated=false is a dead press — no ability-activated either.
+    expect(res.events.some((e) => e.t === "ability-activated")).toBe(false);
+  });
+});
+
 describe("hit-confirmed.pierced (void through a held shield)", () => {
   test("void vs a HELD shield lands full damage with pierced: true, shield untouched", () => {
     const attacker = mkPlayer(A, 0, 400);

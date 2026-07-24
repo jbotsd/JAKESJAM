@@ -25,6 +25,8 @@
 //             painter draws the TRUE radius so the mechanic itself reads)
 //   fangs   — pendingLockCharges/pendingLockExpiresAtTick (Stolen Fangs
 //             banked lock charges; `count` carries the charge count)
+//   resonance — resonanceUntilTick    (the 2s chain-an-unlike-ability
+//             window EVERY cast opens; quietest read of the family)
 //
 // Expiry needs no frame-diff memo: the window stops planning and
 // `intensity` eases to 0 over the final fade so the end reads instead of
@@ -43,7 +45,8 @@ export type WindowKind =
   | "jam"
   | "fooled"
   | "aegis"
-  | "fangs";
+  | "fangs"
+  | "resonance";
 
 export type WindowRead = {
   id: string;
@@ -100,6 +103,7 @@ export function planStatusWindows(
     push("jam", player.blockJammerUntilTick, FADE_MS_DEFAULT);
     push("fooled", player.fooledUntilTick, FADE_MS_DEFAULT);
     push("aegis", player.aegisShareUntilTick, FADE_MS_DEFAULT);
+    push("resonance", player.resonanceUntilTick, FADE_MS_DEFAULT);
     if ((player.pendingLockCharges ?? 0) > 0) {
       push(
         "fangs",
