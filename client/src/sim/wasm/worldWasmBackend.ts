@@ -39,6 +39,10 @@ import {
   type UnpackedWorldState,
   type WasmSimEvent,
 } from "./worldStateBridge.js";
+import {
+  resolveFireConfigsViaZig,
+  type FireConfigResolverExports,
+} from "./fireConfigShared.js";
 
 type WorldExports = {
   step_world: (state_ptr: number, dt_ms: number) => number;
@@ -169,6 +173,7 @@ function runWasmStepSync(
   writeStaticsIntoMemory();
   writeTargetScoreIntoMemory();
   writeScoresIntoMemory(state);
+  writeLoadoutsIntoMemory(state);
   writePlayerInputsFromGlobal();
   const rc = ex.step_world(sim.statePtr, dt_ms);
   if (rc !== 0) {
@@ -218,13 +223,20 @@ function mergeUnpacked(
       // mirror the verdict out, including the explicit-undefined clear
       // (round.ts optional-field convention, same as suddenDeathActive).
       firstBloodPlayerId: unpacked.round.firstBloodPlayerId,
+      // Round winner (Track Z2): Zig's round machine owns the verdict on
+      // this path (fighting → round-over write; both →countdown clears) —
+      // mirror it out like suddenDeathActive/firstBloodPlayerId above.
+      winnerPlayerId: unpacked.round.winnerPlayerId,
       scores: { ...state.round.scores, ...unpacked.scores },
       // Kill tally REPLACES rather than spread-merges (unlike scores,
       // which are match-monotonic): the tally resets every round, so
       // stale prior-round entries must not survive the merge.
       roundKills: unpacked.roundKills,
     },
-    players: stableMergeRecord(state.players, unpacked.players),
+    players: stableMergeRecord(
+      state.players,
+      preservePlayerCards(state.players, unpacked.players),
+    ),
     firePatches: stableMergeRecord(state.firePatches, unpacked.firePatches),
     destructibles: stableMergeRecord(
       state.destructibles,
@@ -243,7 +255,36 @@ function mergeUnpacked(
     // without this, the next pack resets every swing to idle and melee
     // can never mature past windup on the wasm path.
     meleeSwingMemory: unpacked.meleeSwingMemory,
+    // And for draft bookkeeping (Track Z2): without this, the next pack
+    // wipes every rolled offer and landed pick — the wasm drafting phase
+    // could never hold a draft open.
+    draftMemory: unpacked.draftMemory,
   };
+}
+
+/**
+ * Re-seat the HOST's own card ids onto each unpacked player (Track Z1b).
+ * The pack encodes `cards` count-only (real ids never cross the ABI), so
+ * unpackPlayer returns placeholder empty strings — and before this helper
+ * the merge REPLACED every stepped player's hand with those placeholders,
+ * destroying the real card ids one tick after any wasm step. The very
+ * next tick's build resolution (`resolveFireConfigsViaZig` reads
+ * `state.players[..].cards`) then saw an empty hand: bare starter pistol,
+ * no equipped actives, broken draft uniqueness gates. Cards are host-owned
+ * roster data on this path (Zig only ever reads the index-mapped copy the
+ * host writes per tick), so the prior TS hand is authoritative here.
+ */
+function preservePlayerCards(
+  prev: WorldState["players"],
+  next: WorldState["players"],
+): WorldState["players"] {
+  const out = {} as WorldState["players"];
+  for (const k in next) {
+    const pid = k as keyof WorldState["players"];
+    const prior = prev[pid];
+    out[pid] = prior ? { ...next[pid]!, cards: prior.cards } : next[pid]!;
+  }
+  return out;
 }
 
 function stableMergeRecord<K extends string | number, V>(
@@ -384,6 +425,29 @@ export function writeScoresIntoMemory(state: WorldState): void {
     const playerOff = playersStart + i * PLAYER_ENTITY_SIZE;
     view.setUint32(playerOff + SCORE_OFF, score >>> 0, true);
   }
+}
+
+/**
+ * Resolve + write per-player loadouts (fire config + card hand + the
+ * EquippedActives rack) AFTER the pack and before step_world (Track Z1b
+ * findings (b)+(c)): the pack's `heap.set` overwrites the ENTIRE
+ * WorldState image including the loadout parallel arrays, so the old call
+ * order — wasmStepStrategy/World.ts writing fire configs BEFORE the step
+ * call whose pack then wiped them — delivered builds that step_world
+ * never saw. All-starter-pistol harnesses masked it (`valid=0` falls back
+ * to the starter pistol); carded clients on ?wasm-world=2 lost their
+ * builds, and no ability was castable at all (the rack read empty every
+ * tick). The server host (serverWasmHost.step) always had this ordering
+ * right — this brings the client step into line, and centralising it
+ * INSIDE the step means no future call site can get the order wrong.
+ */
+function writeLoadoutsIntoMemory(state: WorldState): void {
+  if (!cachedSim || !cachedEx) return;
+  const ex = cachedEx as unknown as FireConfigResolverExports & {
+    resolve_player_fire_config?: unknown;
+  };
+  if (typeof ex.resolve_player_fire_config !== "function") return;
+  resolveFireConfigsViaZig(ex, cachedSim.statePtr, state);
 }
 
 export function writePlayerInputsIntoMemory(

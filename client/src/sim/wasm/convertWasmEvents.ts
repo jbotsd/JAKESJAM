@@ -16,6 +16,7 @@ import {
 // about World) for the emission-cast element resolution; identity-cached,
 // so per-event cost is a WeakMap hit.
 import { resolvePlayerBuild } from "../weapon.js";
+import { cardIdForIndex } from "./fireConfigShared.js";
 
 export type WasmEvent = {
   kind: number;
@@ -134,6 +135,36 @@ export function convertWasmEventsToTs(
               : "crystal",
             volleyCount: Math.max(0, Math.round(e.scalar)),
           });
+        }
+        break;
+      case 13: // card_offered (Track Z2) — the offer CONTENTS live in
+        // state.draftMemory (the wasm event carries only the count; see
+        // world_state.zig's card_offered doc comment). Indices are
+        // +1-encoded; 0 = empty slot.
+        if (victim) {
+          const mem = state.draftMemory?.[victim];
+          const cardIds = (mem?.offers ?? [])
+            .filter((o) => o > 0)
+            .map((o) => cardIdForIndex(o - 1))
+            .filter((id): id is string => id !== undefined);
+          out.push({ t: "card-offered", playerId: victim, cardIds });
+        }
+        break;
+      case 14: // draft_resolved (Track Z2) — scalar = picked card's table
+        // index, player_idx_b = 1 when auto-picked on window expiry.
+        // Host-applied picks never reach this case (their Zig event is
+        // wiped by stepWorld's event reset — matchHost synthesizes those);
+        // this is the expiry auto-pick path.
+        if (victim) {
+          const cardId = cardIdForIndex(Math.round(e.scalar));
+          if (cardId !== undefined) {
+            out.push({
+              t: "draft-resolved",
+              playerId: victim,
+              cardId,
+              autoPicked: e.playerIdxB === 1,
+            });
+          }
         }
         break;
       case 16: // first_blood (Track Z0d) — player_idx_a = the claimant.

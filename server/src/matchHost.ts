@@ -7,7 +7,6 @@ import { SNAPSHOT_INTERVAL_TICKS, STEP_MS, World } from "@sim/index.ts";
 import { createRuntime, stepWithRuntime, type WorldRuntime } from "@sim/World.ts";
 import { isBotId } from "@sim/botId.ts";
 import { KILL_PLANE_MARGIN_PX } from "@sim/player.ts";
-import { stepRound, enterDrafting } from "@sim/round.ts";
 import { resolveHangoutTotems, stepTotems, type TotemDefinition } from "@sim/totem.ts";
 import { resolveMap, type MapId } from "@sim/data/maps.ts";
 import { resolveModeConfig } from "@sim/data/modeConfig.ts";
@@ -60,7 +59,9 @@ import { persistReplay } from "./replayStore.ts";
 import { enqueueMatchHighlights } from "./clipRenderQueue.ts";
 import { config } from "./config.ts";
 import { ReplayRecorder } from "./ReplayRecorder.ts";
-import { serverWasmHost } from "./serverWasmHost.ts";
+import { serverWasmHost, type QueuedCardPick } from "./serverWasmHost.ts";
+import { cardIdForIndex } from "@sim/wasm/fireConfigShared.ts";
+import { convertWasmEventsToTs } from "@sim/wasm/convertWasmEvents.ts";
 
 /**
  * Phase B3 feature flag. Default OFF again as of 2026-07-06 (direct user
@@ -471,9 +472,20 @@ export class MatchHost {
     // the wasm load finished — invisible live, but it makes the recorded
     // replay non-re-simulable (no single backend reproduces every tick).
     // Hangout matches are HARD-PINNED to TS regardless of
-    // USE_WASM_STEP_WORLD — no anti-cheat/competitive-integrity stakes in a
-    // non-combat lobby space, so there's no reason to route through wasm,
-    // and this sidesteps ever needing to mirror hangout-mode logic into Zig.
+    // USE_WASM_STEP_WORLD. Re-recorded 2026-07-24 (Track Z2 item 3) with
+    // current evidence — this is a CORRECTNESS pin, not merely a
+    // "no stakes in a lobby" convenience: hangout is a distinct TS sim
+    // MODE with no Zig mirror, and step_world would actively misbehave
+    // in the lobby. Verified by grep against World.ts's hangoutMode
+    // branches: (1) PvP damage immunity lives in the TS damage resolver
+    // (`if (!victim.alive || ctx.hangoutMode) return`, World.ts:1669) —
+    // Zig applies full damage, so lobby visitors could kill each other;
+    // (2) the round machine never steps in hangout (phase pinned
+    // "fighting", World.ts:2312-2316) — Zig's round machine would end
+    // the lobby's "round", roll drafts and bump scores; (3) projectiles
+    // and hitscan ghost through players (`projectilePlayerIds = []`,
+    // World.ts:2888/2893) — Zig resolves real hits. Lift this only
+    // after step_world grows a hangout mode flag covering all three.
     this.simBackend =
       this.mode === "hangout"
         ? "ts"
@@ -1029,6 +1041,23 @@ export class MatchHost {
     const alreadyPicked = round.draftingPicked?.[playerId];
     if (alreadyPicked !== undefined) return; // ignore double-clicks
 
+    if (this.simBackend === "wasm") {
+      // Track Z2: Zig owns the draft on this backend. Queue the validated
+      // pick for the next step (applied post-pack, pre-step_world);
+      // foldZigDraft appends the card to the TS hand + emits the
+      // draft-resolved event once Zig confirms it landed. The surfaced
+      // offers array's index equals the Zig offer_slot (empty slots only
+      // trail — see foldZigDraft's presentation comment); Zig's own
+      // applyCardPick re-gates idempotency, so a duplicate queued during
+      // the one-tick confirmation window is a no-op.
+      serverWasmHost.queueCardPick(
+        playerId,
+        offers.indexOf(message.cardId),
+        message.cardId,
+      );
+      return;
+    }
+
     const nextCards = [...player.cards, message.cardId];
     this.state = {
       ...this.state,
@@ -1474,16 +1503,27 @@ export class MatchHost {
         }
         serverWasmHost.writeInputs(inputsMap);
         const result = serverWasmHost.step(state, STEP_MS);
-        // The Zig round machine skips drafting; drive the between-rounds card
-        // menu host-side (deterministic, reuses the TS round machine). Physics
-        // stays authoritative in Zig. serverWasmHost's own WasmSimEvents are
-        // dropped (snapshot broadcast carries the WorldState); the overlay's
-        // round/draft events ARE returned so the loser-respawn + draft-resolved
-        // pipeline still fires.
-        const overlay = this.applyDraftingOverlay(state, result.state);
+        // Track Z2 item 2 (convergence-goal.md): forward the FULL converted
+        // wasm event stream. The old branch dropped every Zig-emitted
+        // SimEvent except the overlay's round/draft events — wasm-mode
+        // clients never received shot-fired/hit-confirmed/player-killed/
+        // first-blood/etc., so kill attribution, host clips
+        // (maybeSignalHostClip), spectator direction and every client
+        // presenter fed by the event pipeline were blind whenever the wasm
+        // backend was live. Conversion is the same numeric-kind → TS
+        // discriminated-union translation the client wasm path has always
+        // used (convertWasmEventsToTs).
+        const simEvents = convertWasmEventsToTs(result.events, result.state);
+        // Track Z2 item 1: the Zig round machine routes through drafting
+        // ITSELF (draft.zig — offers, picks, auto-pick expiry; parity-goal
+        // Phase 2, live under full-sync since the draftMemory bridge). The
+        // old TS "drafting overlay" (enterDrafting/stepRound driven off a
+        // host-side RNG cursor) is retired; what remains host-side is pure
+        // presentation + hand mirroring — see foldZigDraft.
+        const draft = this.foldZigDraft(result.state, result.appliedPicks, simEvents);
         return {
-          state: overlay.state,
-          events: overlay.events,
+          state: draft.state,
+          events: [...simEvents, ...draft.events],
           matchComplete: result.matchComplete,
         };
       } catch (err) {
@@ -1498,78 +1538,98 @@ export class MatchHost {
     return stepWithRuntime(state, this.runtime, inputsByPlayer, STEP_MS);
   }
 
-  /** Independent RNG cursor for host-driven drafting offers (kept off the sim
-   *  rng so offer rolls don't perturb wasm physics determinism). */
-  private roundRngCursor = 0x9e3779b9;
-
   /**
-   * Drafting overlay for the wasm path. The Zig round machine advances
-   * round-over → countdown (doing the heal/reset) but has no drafting phase.
-   * Here we CAPTURE that transition into a card-draft menu and RESOLVE it with
-   * the TS round machine, then hand back to Zig at countdown. Physics is
-   * untouched — only `state.round` (+ drafted `player.cards`) are overlaid.
+   * Track Z2 item 1 — the Zig-draft fold. Replaces the retired TS
+   * "drafting overlay" (which re-ran enterDrafting/stepRound host-side off
+   * a separate RNG cursor because "the Zig round machine skips drafting" —
+   * stale since parity-goal Phase 2 landed draft.zig, and actually
+   * non-functional until the Track Z2 draftMemory bridge let offers/picks
+   * survive the every-tick repack). Zig now owns ALL draft mechanics on
+   * this path: offer rolls (round_over → drafting transition, sim RNG,
+   * catch-up/winner weighting off the bridged round_winner_idx), pick
+   * application (host-queued via serverWasmHost.queueCardPick →
+   * world_apply_card_pick between pack and step), the all-picked early
+   * resolve, and the expiry auto-pick.
+   *
+   * What remains here is deliberately NOT mechanics:
+   *  1. HAND MIRRORING — Zig-applied picks must land in the TS-side
+   *     `player.cards` (the host-owned hand that feeds loadout delivery,
+   *     snapshots, and the next pack's card_count). Host-queued picks are
+   *     folded from `appliedPicks` (their Zig-side draft_resolved event is
+   *     wiped by stepWorld's event reset — see world_apply_card_pick's doc
+   *     comment) with a synthesized draft-resolved event; expiry
+   *     auto-picks arrive through the converted event stream.
+   *  2. PRESENTATION — clients read `round.draftingOffers`/
+   *     `draftingPicked` (card ids) from snapshots; Zig's truth is
+   *     `draftMemory` (raw +1-encoded table indices). Convert while
+   *     drafting; clear when the phase leaves drafting (round.ts's own
+   *     wipe semantics).
    */
-  private applyDraftingOverlay(
-    prevState: WorldState,
+  private foldZigDraft(
     stepped: WorldState,
+    appliedPicks: QueuedCardPick[],
+    simEvents: SimEvent[],
   ): { state: WorldState; events: SimEvent[] } {
-    const round = stepped.round;
-    const targetScore = resolveModeConfig(stepped.chaosModifierIds).targetScore;
-
-    // CAPTURE: the Zig transition round-over → countdown becomes drafting,
-    // unless the match just ended or nobody is present to draft.
-    if (prevState.round.phase === "round-over" && round.phase === "countdown") {
-      const matchOver = Object.values(round.scores).some((s) => s >= targetScore);
-      const anyDrafter = Object.keys(stepped.players).length > 0;
-      if (matchOver || !anyDrafter) return { state: stepped, events: [] };
-      const d = enterDrafting(
-        // The Zig transition already bumped roundIndex; undo it so the eventual
-        // drafting → countdown bump (in stepRound) lands on the right number.
-        { ...round, roundIndex: prevState.round.roundIndex },
-        stepped.players,
-        stepped.tick,
-        this.roundRngCursor,
-      );
-      this.roundRngCursor = d.rngState;
-      return { state: { ...stepped, round: d.state }, events: d.events };
+    const events: SimEvent[] = [];
+    let players = stepped.players;
+    const appendCard = (pid: PlayerId, cardId: string): void => {
+      const p = players[pid];
+      if (!p) return;
+      if (players === stepped.players) players = { ...players };
+      players[pid] = { ...p, cards: [...p.cards, cardId] };
+    };
+    for (const pick of appliedPicks) {
+      appendCard(pick.playerId, pick.cardId);
+      events.push({
+        t: "draft-resolved",
+        playerId: pick.playerId,
+        cardId: pick.cardId,
+        autoPicked: false,
+      });
+    }
+    for (const e of simEvents) {
+      if (e.t === "draft-resolved" && e.autoPicked) appendCard(e.playerId, e.cardId);
     }
 
-    // RESOLVE: run the TS round machine for the drafting phase (picks are
-    // recorded by applyDraftPick into round.draftingPicked). It stays in
-    // drafting until all pick or the tick-based window expires, then returns
-    // countdown + card patches.
+    let round = stepped.round;
     if (round.phase === "drafting") {
-      const r = stepRound({
-        state: round,
-        players: stepped.players,
-        dtMs: STEP_MS,
-        targetScore,
-        tick: stepped.tick,
-        rngState: this.roundRngCursor,
-      });
-      this.roundRngCursor = r.rngState ?? this.roundRngCursor;
-      // Display timer is tick-based (draftingExpiresAtTick) so it's immune to
-      // the Zig sim also decrementing countdownRemainingMs during the hold.
-      let nextRound = r.state;
-      if (nextRound.phase === "drafting" && nextRound.draftingExpiresAtTick !== undefined) {
-        const msLeft = Math.max(
-          0,
-          ((nextRound.draftingExpiresAtTick as number) - (stepped.tick as number)) * STEP_MS,
-        );
-        nextRound = { ...nextRound, countdownRemainingMs: msLeft };
-      }
-      let players = stepped.players;
-      if (r.playerPatches) {
-        players = { ...players };
-        for (const [pid, patch] of Object.entries(r.playerPatches)) {
-          const p = players[pid as PlayerId];
-          if (p) players[pid as PlayerId] = { ...p, ...patch };
+      const draftingOffers: Record<PlayerId, string[]> = {};
+      const draftingPicked: Record<PlayerId, string> = {};
+      const mem = stepped.draftMemory ?? {};
+      for (const pid of Object.keys(mem) as PlayerId[]) {
+        const d = mem[pid]!;
+        // Offers are written sequentially by rollOffersForPlayer, so empty
+        // (0) slots only ever TRAIL real ones — the filtered array's index
+        // therefore equals the Zig offer_slot index, which is what
+        // applyCardPick's `offers.indexOf(cardId)` relies on when queueing.
+        draftingOffers[pid] = d.offers
+          .filter((o) => o > 0)
+          .map((o) => cardIdForIndex(o - 1))
+          .filter((id): id is string => id !== undefined);
+        if (d.pickedSlot > 0) {
+          const rawPicked = d.offers[d.pickedSlot - 1] ?? 0;
+          const pickedId = rawPicked > 0 ? cardIdForIndex(rawPicked - 1) : undefined;
+          if (pickedId !== undefined) draftingPicked[pid] = pickedId;
         }
       }
-      return { state: { ...stepped, round: nextRound, players }, events: r.events };
+      round = { ...round, draftingOffers, draftingPicked };
+    } else if (
+      round.draftingOffers !== undefined ||
+      round.draftingPicked !== undefined ||
+      round.draftingExpiresAtTick !== undefined
+    ) {
+      round = {
+        ...round,
+        draftingOffers: undefined,
+        draftingPicked: undefined,
+        draftingExpiresAtTick: undefined,
+      };
     }
 
-    return { state: stepped, events: [] };
+    if (players === stepped.players && round === stepped.round) {
+      return { state: stepped, events };
+    }
+    return { state: { ...stepped, players, round }, events };
   }
 
   private logLagCompOutcomeChange(

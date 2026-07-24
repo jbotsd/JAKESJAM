@@ -196,6 +196,43 @@
 // substrate track item (bridge the tail span + equipment), not an
 // ability-by-ability port question.
 //
+// Z1b + Z2 (2026-07-24) closed exactly that substrate — findings (a),
+// (b), (c) plus the Z2 server-honesty items that share the same files.
+// BASELINE NOTE first: this slice branched from a later main than Z1a's
+// recorded run (the Kindled K5 amplitude retune + "Geometrician is
+// ALWAYS raycast" merges moved 4 of 5 seeds), so the honest before
+// column is the fork-point re-run, not Z1a's table:
+//
+//   Z1b BEFORE (fork re-run):        AFTER (a)+(b)+(c)+Z2:
+//   seed=1     : final  376.5px (230) | final 376.5px (onset 230)
+//   seed=42    : final  247.5px (175) | final 258.5px (onset 175)
+//   seed=1337  : final  222.9px (262) | final 219.2px (onset 262)
+//   seed=90210 : final  762.1px (144) | final 762.7px (onset 144)
+//   seed=271828: final  433.7px (229) | final 360.6px (onset 180)
+//
+// VERDICT: essentially flat, small mixed movement — the EXPECTED
+// reading, same shape as Z1a's: this harness's bots hold zero cards and
+// cast zero abilities, so the closed items (every [384,620) ability
+// window bridged field-level; equipped-actives/hand/fire-config loadout
+// delivered post-pack via resolve_player_loadout; the client's pre-pack
+// fire-config ordering fixed; Zig-owned drafting + full event
+// forwarding server-side) are structurally invisible here except two
+// ride-alongs that ARE visible: (1) the wizard fire channel
+// (channel_hold_ms) now survives the repack, so Zig's GEO ramp accrues
+// like TS's; (2) the "balanced"(=wizard) bots' class-aware resolved
+// config now actually reaches step_world (the old path stepped on the
+// valid=0 starter fallback every tick), so BOTH sides now fire the
+// geo-raycast delivery instead of TS-raycast-vs-Zig-projectile. Those
+// two nudged 4 seeds by <75px in both directions (271828's onset moved
+// earlier but its final tightened 73px). The real Z1b/Z2 wins are
+// proven at their own gates instead: abilityWindowBridge.test.ts,
+// loadoutBridge.test.ts, draftOfferParity.test.ts (offers byte-identical
+// + tick-identical draft timing for the same seed),
+// matchHostZigDraft.test.ts, matchHostWasmEvents.test.ts.
+// Still open on the Z1 list (Z1c's, deliberately untouched): team peel,
+// ninja dash i-frames, Kindled Ward partial mitigation, hitscan resolve
+// parity (+ headshot band), six-axes axis payloads.
+//
 // If the sweep exceeds its bound, the per-seed record above is the
 // deliverable the next track consumes.
 //

@@ -40,6 +40,7 @@ import {
   type ProjectilePathing,
   type ProjectileShape,
   type MeleeSwingMemory,
+  type PlayerDraftMemory,
   type PlayerMovementMemory,
   type RoundPhase,
   type RoundState,
@@ -162,6 +163,13 @@ export const HEADER_SIZE = 56;
 // respawn_at_tick — an unbridged window/debt would be wiped by the
 // next full-sync repack and the four ally-targeted abilities could
 // never hold state across ticks under live wasm authority.
+// 656 → 656 (Track Z1b, no growth): the [384, 620) ability-window tail —
+// every "TS bridge doesn't pack/unpack these tail fields yet" deferral in
+// the history notes above — is now packed AND unpacked field-by-field
+// (see packPlayer's tail-span comment). The wipe-on-repack consequence
+// those notes deferred ("host-only state for now") had become the live
+// bug multiSeedDivergence's Z1a header records as finding (a): every
+// Phase-4 ability window was one-tick-only under full-sync wasm.
 export const PLAYER_ENTITY_SIZE = 656;
 const PROJECTILE_ENTITY_SIZE = 216;
 const SATELLITE_ENTITY_SIZE = 96;
@@ -202,7 +210,17 @@ export const RESOLVED_FIRE_CONFIG_SIZE = 248; // +14 augment fields (movement/sh
 // world_state.zig's EquippedActives/PlayerCardIds/PlayerDraftState @sizeOf.
 const EQUIPPED_ACTIVES_SIZE = 3; // MAX_ABILITY_SLOTS
 const PLAYER_CARD_IDS_SIZE = 8; // MAX_PLAYER_CARDS
-const PLAYER_DRAFT_STATE_SIZE = 4; // DRAFT_OFFER_COUNT + 1
+// BRIDGED as of Track Z2 (the drafting bridge): packed from
+// `WorldState.draftMemory` and unpacked back, so mid-draft offers/picks
+// survive the hosts' every-tick repack — before this, the wasm-side
+// drafting phase forgot every rolled offer and every landed pick one
+// tick after it happened (same wipe-on-repack class as Z0e/Z1a/Z1b).
+// Unlike equipped actives / card ids just above (build-resolved,
+// host-re-delivered after every pack — see resolve_player_loadout),
+// draft state is GENUINE per-round sim state with no TS mirror to
+// re-derive from, so it gets the movementMemory-style carrier treatment.
+export const PLAYER_DRAFT_STATE_SIZE = 4; // DRAFT_OFFER_COUNT + 1
+export const DRAFT_OFFER_COUNT = 3;
 // Deferred-write instant-AOE cast queue (2026-07-20 gap-closure pass) — must
 // match world_state.zig's PendingInstantAoe/MAX_PENDING_INSTANT_AOE.
 const PENDING_INSTANT_AOE_SIZE = 80;
@@ -362,6 +380,24 @@ function unpackMovementMemory(
 // meleeSwingMemoryBridge.test.ts asserts the two derivations agree.
 export const MELEE_SWING_OFFSET =
   PLAYER_MOVEMENT_OFFSET + MAX_PLAYERS * PLAYER_MOVEMENT_MEMORY_SIZE;
+
+// Byte offset of `player_draft_state[0]` within the packed WorldState
+// (Track Z2 — the drafting bridge). Bridged for the same reason as
+// player_movement/melee_swing: the full-sync hosts repack the whole
+// buffer every tick, and an unbridged slot means every rolled offer and
+// every landed pick is wiped one tick later — the wasm drafting phase
+// could never hold a draft open. Must equal wasm's
+// `offset_player_draft_state()` export — draftOfferParity.test.ts
+// asserts the two derivations agree. (The equipped-actives and card-ids
+// arrays between melee_swing and this one stay unbridged: they are
+// build-resolved data the host re-delivers after every pack via
+// resolve_player_loadout.)
+export const PLAYER_DRAFT_STATE_OFFSET =
+  MELEE_SWING_OFFSET +
+  MAX_PLAYERS * MELEE_SWING_MEMORY_SIZE +
+  MAX_PLAYERS * RESOLVED_FIRE_CONFIG_SIZE +
+  MAX_PLAYERS * EQUIPPED_ACTIVES_SIZE +
+  MAX_PLAYERS * PLAYER_CARD_IDS_SIZE;
 
 /** Pack one MeleeSwingMemory into its 64-byte slot. Field offsets follow
  *  world_state.zig's MeleeSwingMemory extern struct exactly: six f64s
@@ -925,14 +961,109 @@ function packPlayer(
   view.setFloat64(off, p.wardAbsorbRemaining ?? 0, true);
   off += 8;
 
-  // Zig-only tail span (world_state.zig channel_hold_ms →
-  // razor_route_until_tick, relative offsets [384, 620)) — 236 bytes this
-  // codec deliberately does NOT carry (step_world-internal ability windows;
-  // the fresh pack buffer leaves them zero). Skipped, not written, so the
-  // ONE bridged field beyond them lands at its true Zig offset. Guarded on
-  // the Zig side by a comptime `@offsetOf(PlayerEntity, "respawn_at_tick")
-  // == 620` assert next to the PLAYER_ENTITY_SIZE assert.
-  off += 236;
+  // Ability-window tail span (world_state.zig channel_hold_ms →
+  // razor_route_until_tick, relative offsets [384, 620)) — BRIDGED as of
+  // Track Z1b. This used to be an `off += 236` skip ("step_world-internal
+  // ability windows; the fresh pack buffer leaves them zero"), which
+  // combined with the full-sync hosts' every-tick repack to WIPE every
+  // Phase-4 ability window one tick after it opened — sunlance/overclock/
+  // measure, facet/focus/judgment/read marks, kindled resolve, ghost
+  // guard, razor route, seal, second wind, edge storm, wall bloom, shock
+  // ring, ward shell, slot cooldowns, the wizard fire channel — the exact
+  // wipe-on-repack bug class Z0e (movement memory) and Z1a (melee swing)
+  // already closed for their families. CHOICE (over an off-wire opaque
+  // carrier like movementMemory): field-level pack/unpack from the TS
+  // PlayerEntity mirrors, because — unlike movement/melee memory, which
+  // has no TS-entity mirror — every field in this span has an
+  // identically-named optional field on the TS PlayerEntity (types.ts),
+  // maintained by the TS-authoritative path. Field-level bridging keeps
+  // ONE source of truth, works for windows opened on EITHER side, and is
+  // the same precedent respawn_at_tick/recoil_step/the ally tail set.
+  // Every offset below is pinned by a comptime @offsetOf assert in
+  // world_state.zig next to the PLAYER_ENTITY_SIZE assert.
+  view.setFloat64(off, p.channelHoldMs ?? 0, true); // 384
+  off += 8;
+  view.setUint32(off, p.slot1CooldownUntilTick ?? 0, true); // 392
+  off += 4;
+  view.setUint32(off, p.slot2CooldownUntilTick ?? 0, true);
+  off += 4;
+  view.setUint32(off, p.slot3CooldownUntilTick ?? 0, true);
+  off += 4;
+  view.setUint32(off, p.undercutUntilTick ?? 0, true); // 404
+  off += 4;
+  view.setUint32(off, p.edgeStormUntilTick ?? 0, true); // 408
+  off += 4;
+  view.setUint32(off, p.edgeStormChargesRemaining ?? 0, true); // 412
+  off += 4;
+  view.setUint32(off, p.sealUntilTick ?? 0, true); // 416
+  off += 4;
+  view.setUint32(off, p.secondWindUntilTick ?? 0, true); // 420
+  off += 4;
+  view.setUint32(off, p.judgmentMarkUntilTick ?? 0, true); // 424
+  off += 4;
+  view.setUint32(off, p.readMarkUntilTick ?? 0, true); // 428
+  off += 4;
+  // Mark target ids — length-prefixed fixed buffers, same convention as
+  // the entity id/weapon id fields above (and Zig's own *_target_id_len
+  // zero-length "no mark" sentinel).
+  const judgmentIdLen = p.judgmentTargetId
+    ? Math.min(textEncoder.encode(p.judgmentTargetId).length, PLAYER_ID_BYTES)
+    : 0;
+  view.setUint8(off, judgmentIdLen & 0xff); // 432
+  off += 1;
+  for (let i = 0; i < 3; i++) view.setUint8(off + i, 0); // _pad_judgment
+  off += 3;
+  writeString(view, off, PLAYER_ID_BYTES, p.judgmentTargetId ?? ""); // 436
+  off += PLAYER_ID_BYTES;
+  const readIdLen = p.readTargetId
+    ? Math.min(textEncoder.encode(p.readTargetId).length, PLAYER_ID_BYTES)
+    : 0;
+  view.setUint8(off, readIdLen & 0xff); // 468
+  off += 1;
+  for (let i = 0; i < 3; i++) view.setUint8(off + i, 0); // _pad_read
+  off += 3;
+  writeString(view, off, PLAYER_ID_BYTES, p.readTargetId ?? ""); // 472
+  off += PLAYER_ID_BYTES;
+  view.setUint32(off, p.wallBloomUntilTick ?? 0, true); // 504
+  off += 4;
+  view.setUint32(off, p.shockRingArmedUntilTick ?? 0, true); // 508
+  off += 4;
+  view.setUint32(off, p.wardShellUntilTick ?? 0, true); // 512
+  off += 4;
+  view.setUint32(off, p.sunlanceUntilTick ?? 0, true); // 516
+  off += 4;
+  view.setUint32(off, p.overclockUntilTick ?? 0, true); // 520
+  off += 4;
+  view.setUint32(off, p.measureUntilTick ?? 0, true); // 524
+  off += 4;
+  view.setUint32(off, p.facetMarkUntilTick ?? 0, true); // 528
+  off += 4;
+  view.setUint32(off, p.focusHexMarkUntilTick ?? 0, true); // 532
+  off += 4;
+  const facetIdLen = p.facetTargetId
+    ? Math.min(textEncoder.encode(p.facetTargetId).length, PLAYER_ID_BYTES)
+    : 0;
+  view.setUint8(off, facetIdLen & 0xff); // 536
+  off += 1;
+  for (let i = 0; i < 3; i++) view.setUint8(off + i, 0); // _pad_facet
+  off += 3;
+  writeString(view, off, PLAYER_ID_BYTES, p.facetTargetId ?? ""); // 540
+  off += PLAYER_ID_BYTES;
+  const focusHexIdLen = p.focusHexTargetId
+    ? Math.min(textEncoder.encode(p.focusHexTargetId).length, PLAYER_ID_BYTES)
+    : 0;
+  view.setUint8(off, focusHexIdLen & 0xff); // 572
+  off += 1;
+  for (let i = 0; i < 3; i++) view.setUint8(off + i, 0); // _pad_focus_hex
+  off += 3;
+  writeString(view, off, PLAYER_ID_BYTES, p.focusHexTargetId ?? ""); // 576
+  off += PLAYER_ID_BYTES;
+  view.setUint32(off, p.kindledResolveUntilTick ?? 0, true); // 608
+  off += 4;
+  view.setUint32(off, p.ghostGuardChargeUntilTick ?? 0, true); // 612
+  off += 4;
+  view.setUint32(off, p.razorRouteUntilTick ?? 0, true); // 616
+  off += 4;
 
   // respawn_at_tick (Track Z0b Item A, fast-respawn ruling 2026-07-17) —
   // the mid-round respawn stamp, parity with world_state.zig's
@@ -1115,10 +1246,73 @@ function unpackPlayer(view: DataView, offset: number): PlayerEntity {
   const syzWardRemainingRaw = view.getFloat64(off, true);
   off += 8;
 
-  // Zig-only tail span + respawn_at_tick + throw_hand_parity +
-  // recoil_step_until_tick — see packPlayer's matching comments (Track
-  // Z0b Items A + B, Z0c Item A).
-  off += 236;
+  // Ability-window tail span [384, 620) — BRIDGED as of Track Z1b, see
+  // packPlayer's matching comment for the full rationale (field-level
+  // mirror over an opaque carrier). Reads mirror the pack writes exactly;
+  // sentinel decode (0/zero-length → undefined) happens below with the
+  // other window fields.
+  const channelHoldMsRaw = view.getFloat64(off, true); // 384
+  off += 8;
+  const slot1CooldownRaw = view.getUint32(off, true); // 392
+  off += 4;
+  const slot2CooldownRaw = view.getUint32(off, true);
+  off += 4;
+  const slot3CooldownRaw = view.getUint32(off, true);
+  off += 4;
+  const undercutUntilRaw = view.getUint32(off, true); // 404
+  off += 4;
+  const edgeStormUntilRaw = view.getUint32(off, true); // 408
+  off += 4;
+  const edgeStormChargesRaw = view.getUint32(off, true); // 412
+  off += 4;
+  const sealUntilRaw = view.getUint32(off, true); // 416
+  off += 4;
+  const secondWindUntilRaw = view.getUint32(off, true); // 420
+  off += 4;
+  const judgmentMarkUntilRaw = view.getUint32(off, true); // 424
+  off += 4;
+  const readMarkUntilRaw = view.getUint32(off, true); // 428
+  off += 4;
+  const judgmentIdLenRaw = view.getUint8(off); // 432
+  off += 4; // len + _pad_judgment
+  const judgmentTargetIdRaw = readString(view, off, judgmentIdLenRaw); // 436
+  off += PLAYER_ID_BYTES;
+  const readIdLenRaw = view.getUint8(off); // 468
+  off += 4; // len + _pad_read
+  const readTargetIdRaw = readString(view, off, readIdLenRaw); // 472
+  off += PLAYER_ID_BYTES;
+  const wallBloomUntilRaw = view.getUint32(off, true); // 504
+  off += 4;
+  const shockRingArmedUntilRaw = view.getUint32(off, true); // 508
+  off += 4;
+  const wardShellUntilRaw = view.getUint32(off, true); // 512
+  off += 4;
+  const sunlanceUntilRaw = view.getUint32(off, true); // 516
+  off += 4;
+  const overclockUntilRaw = view.getUint32(off, true); // 520
+  off += 4;
+  const measureUntilRaw = view.getUint32(off, true); // 524
+  off += 4;
+  const facetMarkUntilRaw = view.getUint32(off, true); // 528
+  off += 4;
+  const focusHexMarkUntilRaw = view.getUint32(off, true); // 532
+  off += 4;
+  const facetIdLenRaw = view.getUint8(off); // 536
+  off += 4; // len + _pad_facet
+  const facetTargetIdRaw = readString(view, off, facetIdLenRaw); // 540
+  off += PLAYER_ID_BYTES;
+  const focusHexIdLenRaw = view.getUint8(off); // 572
+  off += 4; // len + _pad_focus_hex
+  const focusHexTargetIdRaw = readString(view, off, focusHexIdLenRaw); // 576
+  off += PLAYER_ID_BYTES;
+  const kindledResolveUntilRaw = view.getUint32(off, true); // 608
+  off += 4;
+  const ghostGuardChargeUntilRaw = view.getUint32(off, true); // 612
+  off += 4;
+  const razorRouteUntilRaw = view.getUint32(off, true); // 616
+  off += 4;
+  // respawn_at_tick + throw_hand_parity + recoil_step_until_tick — see
+  // packPlayer's matching comments (Track Z0b Items A + B, Z0c Item A).
   const respawnAtTickRaw = view.getUint32(off, true);
   off += 4;
   const throwHandParityRaw = view.getUint8(off) & 1;
@@ -1237,6 +1431,44 @@ function unpackPlayer(view: DataView, offset: number): PlayerEntity {
     out.debtUntilTick = Tick(debtUntilTickRaw);
     out.debtAmount = debtAmountRaw;
   }
+  // Ability-window tail (Track Z1b) — same 0-sentinel → undefined decode
+  // convention as respawnAtTick/recoilStepUntilTick above (every consumer
+  // on both sides gates with a strict `> tick` check, so 0 and undefined
+  // are semantically identical; decoding to undefined matches TS's own
+  // rest state and keeps identity-merge churn minimal). Mark target ids
+  // use the zero-length "no mark" sentinel, mirroring Zig's own
+  // `*_target_id_len == 0` convention.
+  if (channelHoldMsRaw !== 0) out.channelHoldMs = channelHoldMsRaw;
+  if (slot1CooldownRaw > 0) out.slot1CooldownUntilTick = Tick(slot1CooldownRaw);
+  if (slot2CooldownRaw > 0) out.slot2CooldownUntilTick = Tick(slot2CooldownRaw);
+  if (slot3CooldownRaw > 0) out.slot3CooldownUntilTick = Tick(slot3CooldownRaw);
+  if (undercutUntilRaw > 0) out.undercutUntilTick = Tick(undercutUntilRaw);
+  if (edgeStormUntilRaw > 0) out.edgeStormUntilTick = Tick(edgeStormUntilRaw);
+  if (edgeStormChargesRaw > 0) out.edgeStormChargesRemaining = edgeStormChargesRaw;
+  if (sealUntilRaw > 0) out.sealUntilTick = Tick(sealUntilRaw);
+  if (secondWindUntilRaw > 0) out.secondWindUntilTick = Tick(secondWindUntilRaw);
+  if (judgmentMarkUntilRaw > 0)
+    out.judgmentMarkUntilTick = Tick(judgmentMarkUntilRaw);
+  if (judgmentIdLenRaw > 0) out.judgmentTargetId = PlayerId(judgmentTargetIdRaw);
+  if (readMarkUntilRaw > 0) out.readMarkUntilTick = Tick(readMarkUntilRaw);
+  if (readIdLenRaw > 0) out.readTargetId = PlayerId(readTargetIdRaw);
+  if (wallBloomUntilRaw > 0) out.wallBloomUntilTick = Tick(wallBloomUntilRaw);
+  if (shockRingArmedUntilRaw > 0)
+    out.shockRingArmedUntilTick = Tick(shockRingArmedUntilRaw);
+  if (wardShellUntilRaw > 0) out.wardShellUntilTick = Tick(wardShellUntilRaw);
+  if (sunlanceUntilRaw > 0) out.sunlanceUntilTick = Tick(sunlanceUntilRaw);
+  if (overclockUntilRaw > 0) out.overclockUntilTick = Tick(overclockUntilRaw);
+  if (measureUntilRaw > 0) out.measureUntilTick = Tick(measureUntilRaw);
+  if (facetMarkUntilRaw > 0) out.facetMarkUntilTick = Tick(facetMarkUntilRaw);
+  if (facetIdLenRaw > 0) out.facetTargetId = PlayerId(facetTargetIdRaw);
+  if (focusHexMarkUntilRaw > 0)
+    out.focusHexMarkUntilTick = Tick(focusHexMarkUntilRaw);
+  if (focusHexIdLenRaw > 0) out.focusHexTargetId = PlayerId(focusHexTargetIdRaw);
+  if (kindledResolveUntilRaw > 0)
+    out.kindledResolveUntilTick = Tick(kindledResolveUntilRaw);
+  if (ghostGuardChargeUntilRaw > 0)
+    out.ghostGuardChargeUntilTick = Tick(ghostGuardChargeUntilRaw);
+  if (razorRouteUntilRaw > 0) out.razorRouteUntilTick = Tick(razorRouteUntilRaw);
   return out;
 }
 
@@ -1819,11 +2051,20 @@ export function packWorldState(state: WorldState): Uint8Array {
   // back. Encode -1 as 0xFFFFFFFF.
   view.setInt32(off, -1, true);
   off += 4;
-  // round_winner_idx (2026-07-20, Phase 2, docs/zig-step-world-parity-
-  // goal.md) — orchestrator writes this back at the fighting → round_over
-  // transition; -1 = no winner yet this round. See world_state.zig's
-  // WorldStateHeader.round_winner_idx doc comment.
-  view.setInt32(off, -1, true);
+  // round_winner_idx (2026-07-20, Phase 2; BRIDGED as of Track Z2) —
+  // Zig's round machine writes this at the fighting → round_over
+  // transition and draft.zig's offer roll reads it ROUND_OVER_HOLD_MS
+  // later for catch-up/winner role weighting. This used to hardcode -1,
+  // which wiped the winner on the very next repack (header edition of
+  // the scores/target_score bug class — every hosted draft rolled
+  // all-standard weights, and the round-over winner display read null on
+  // the wasm path). Encoded from state.round.winnerPlayerId by the same
+  // sorted-keys convention as first_blood below; -1 = draw/none.
+  const roundWinnerIdx =
+    state.round.winnerPlayerId != null
+      ? Object.keys(state.players).sort().indexOf(state.round.winnerPlayerId)
+      : -1;
+  view.setInt32(off, roundWinnerIdx, true);
   off += 4;
   // first_blood_idx_plus1 (Track Z0d) — reclaims what used to be the
   // alignment pad before countdown_remaining_ms (HEADER_SIZE unchanged).
@@ -1970,6 +2211,23 @@ export function packWorldState(state: WorldState): Uint8Array {
     );
   }
 
+  // player_draft_state parallel array (Track Z2 — the drafting bridge):
+  // same sorted-slot contract as the two loops directly above. Before
+  // this, the region was left zero-filled and the hosts' every-tick
+  // repack wiped every rolled offer and landed pick — the wasm drafting
+  // phase could never hold a draft open. Missing entries stay zero
+  // (nothing rolled / nothing picked — Zig's own `.{}` default; the
+  // fresh buffer is already zero-filled so no explicit write is needed).
+  for (let i = 0; i < players.length; i++) {
+    const d = state.draftMemory?.[players[i]!.id];
+    if (!d) continue;
+    const base = PLAYER_DRAFT_STATE_OFFSET + i * PLAYER_DRAFT_STATE_SIZE;
+    for (let s = 0; s < DRAFT_OFFER_COUNT; s++) {
+      view.setUint8(base + s, (d.offers[s] ?? 0) & 0xff);
+    }
+    view.setUint8(base + DRAFT_OFFER_COUNT, d.pickedSlot & 0xff);
+  }
+
   return buf;
 }
 
@@ -2011,6 +2269,7 @@ export type UnpackedWorldState = {
     | "roundIndex"
     | "suddenDeathActive"
     | "firstBloodPlayerId"
+    | "winnerPlayerId"
   >;
   scores: Record<string, number>;
   /** Per-round kill tally (PlayerEntity.round_kills), keyed by player id.
@@ -2037,6 +2296,12 @@ export type UnpackedWorldState = {
    *  (Track Z1a) — same round-trip contract as movementMemory, so the
    *  swing FSM survives the every-tick full-sync repack. */
   meleeSwingMemory: Record<PlayerId, MeleeSwingMemory>;
+  /** Zig's post-step `player_draft_state` parallel array, re-keyed by
+   *  player id (Track Z2 — the drafting bridge) — same round-trip
+   *  contract as the two above, so mid-draft offers/picks survive the
+   *  every-tick full-sync repack. Raw +1 encodings (see
+   *  WorldState.draftMemory's doc comment in types.ts). */
+  draftMemory: Record<PlayerId, PlayerDraftMemory>;
 };
 
 export function unpackWorldState(buf: Uint8Array): UnpackedWorldState {
@@ -2067,9 +2332,11 @@ export function unpackWorldState(buf: Uint8Array): UnpackedWorldState {
   off += 4;
   const matchWinnerIdx = view.getInt32(off, true);
   off += 4;
-  // round_winner_idx (2026-07-20, Phase 2) — not yet surfaced on
-  // UnpackedWorldState; skipped like next_entity_id/map_id above. See
-  // world_state.zig's WorldStateHeader doc comment.
+  // round_winner_idx (BRIDGED as of Track Z2 — see packWorldState's
+  // matching write): raw sorted-player index held here; resolved to a
+  // PlayerId after the players section below is unpacked, same
+  // convention as first_blood_idx_plus1 directly below.
+  const roundWinnerIdxRaw = view.getInt32(off, true);
   off += 4;
   // first_blood_idx_plus1 (Track Z0d) — raw index held here; resolved to
   // a PlayerId after the players section below is unpacked (sorted-keys
@@ -2217,11 +2484,30 @@ export function unpackWorldState(buf: Uint8Array): UnpackedWorldState {
   // Host-writable; no read-back needed (sim writes nothing here).
   off += MAX_PLAYERS * RESOLVED_FIRE_CONFIG_SIZE;
 
-  // Phase 2 (docs/zig-step-world-parity-goal.md) — equipped actives / card
-  // hand / per-round draft state parallel arrays. Skipped for now (no TS
-  // consumer reads these back through this bridge yet).
+  // Equipped actives / card hand — skipped: build-resolved data the host
+  // re-delivers after every pack (resolve_player_loadout, Track Z1b); no
+  // TS consumer reads them back through this bridge.
   off += MAX_PLAYERS * EQUIPPED_ACTIVES_SIZE;
   off += MAX_PLAYERS * PLAYER_CARD_IDS_SIZE;
+  // player_draft_state — BRIDGED as of Track Z2 (the drafting bridge):
+  // read back per live slot, keyed by that slot's player id, same
+  // contract as the player_movement/melee_swing sections above. Raw +1
+  // encodings preserved (carrier, not presentation).
+  const draftMemory: Record<PlayerId, PlayerDraftMemory> = {} as Record<
+    PlayerId,
+    PlayerDraftMemory
+  >;
+  for (let i = 0; i < playerIdBySlot.length; i++) {
+    const base = off + i * PLAYER_DRAFT_STATE_SIZE;
+    const offers: number[] = [];
+    for (let s = 0; s < DRAFT_OFFER_COUNT; s++) {
+      offers.push(view.getUint8(base + s));
+    }
+    draftMemory[playerIdBySlot[i]!] = {
+      offers,
+      pickedSlot: view.getUint8(base + DRAFT_OFFER_COUNT),
+    };
+  }
   off += MAX_PLAYERS * PLAYER_DRAFT_STATE_SIZE;
 
   // I15 static cache: 4 count + 4 pad + N×AABB + N×u8 + 4 tail.
@@ -2285,6 +2571,13 @@ export function unpackWorldState(buf: Uint8Array): UnpackedWorldState {
     firstBloodIdxPlus1 > 0 && firstBloodIdxPlus1 <= sortedIds.length
       ? PlayerId(sortedIds[firstBloodIdxPlus1 - 1]!)
       : undefined;
+  // round_winner_idx → PlayerId (Track Z2): same sorted-keys resolution
+  // as first_blood above. `null` (not undefined) when -1 — mirrors TS
+  // RoundState.winnerPlayerId's own `PlayerId | null` shape.
+  const winnerPlayerId =
+    roundWinnerIdxRaw >= 0 && roundWinnerIdxRaw < sortedIds.length
+      ? PlayerId(sortedIds[roundWinnerIdxRaw]!)
+      : null;
 
   const out: UnpackedWorldState = {
     tick,
@@ -2295,6 +2588,7 @@ export function unpackWorldState(buf: Uint8Array): UnpackedWorldState {
       roundIndex,
       suddenDeathActive,
       firstBloodPlayerId,
+      winnerPlayerId,
     },
     scores,
     roundKills,
@@ -2309,6 +2603,7 @@ export function unpackWorldState(buf: Uint8Array): UnpackedWorldState {
     events,
     movementMemory,
     meleeSwingMemory,
+    draftMemory,
   };
   if (chaosModifierIds.length > 0) out.chaosModifierIds = chaosModifierIds;
   if (fireHazardTimerMs !== 0) out.fireHazardTimerMs = fireHazardTimerMs;

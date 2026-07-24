@@ -2017,6 +2017,44 @@ comptime {
     std.debug.assert(@offsetOf(PlayerEntity, "aegis_share_until_tick") == 636);
     std.debug.assert(@offsetOf(PlayerEntity, "debt_until_tick") == 640);
     std.debug.assert(@offsetOf(PlayerEntity, "debt_amount") == 648);
+    // Track Z1b — the [384, 620) ability-window tail is now BRIDGED
+    // (packed AND unpacked field-by-field by worldStateBridge.ts; the old
+    // `off += 236` skip is gone). Before this cut the full-sync hosts'
+    // every-tick repack zero-filled the whole span, so EVERY Phase-4
+    // ability window (sunlance/overclock/measure, marks, kindled resolve,
+    // ghost guard, razor route, seal, second wind, edge storm, ...) was
+    // one-tick-only under live wasm authority — same wipe-on-repack bug
+    // class as Z0e's movement memory. Every bridged offset is pinned here
+    // so a future growth cut trips loudly at `zig build` before the TS
+    // codec silently drifts.
+    std.debug.assert(@offsetOf(PlayerEntity, "channel_hold_ms") == 384);
+    std.debug.assert(@offsetOf(PlayerEntity, "slot_cooldown_until_tick") == 392);
+    std.debug.assert(@offsetOf(PlayerEntity, "undercut_until_tick") == 404);
+    std.debug.assert(@offsetOf(PlayerEntity, "edge_storm_until_tick") == 408);
+    std.debug.assert(@offsetOf(PlayerEntity, "edge_storm_charges_remaining") == 412);
+    std.debug.assert(@offsetOf(PlayerEntity, "seal_until_tick") == 416);
+    std.debug.assert(@offsetOf(PlayerEntity, "second_wind_until_tick") == 420);
+    std.debug.assert(@offsetOf(PlayerEntity, "judgment_mark_until_tick") == 424);
+    std.debug.assert(@offsetOf(PlayerEntity, "read_mark_until_tick") == 428);
+    std.debug.assert(@offsetOf(PlayerEntity, "judgment_target_id_len") == 432);
+    std.debug.assert(@offsetOf(PlayerEntity, "judgment_target_id_bytes") == 436);
+    std.debug.assert(@offsetOf(PlayerEntity, "read_target_id_len") == 468);
+    std.debug.assert(@offsetOf(PlayerEntity, "read_target_id_bytes") == 472);
+    std.debug.assert(@offsetOf(PlayerEntity, "wall_bloom_until_tick") == 504);
+    std.debug.assert(@offsetOf(PlayerEntity, "shock_ring_armed_until_tick") == 508);
+    std.debug.assert(@offsetOf(PlayerEntity, "ward_shell_until_tick") == 512);
+    std.debug.assert(@offsetOf(PlayerEntity, "sunlance_until_tick") == 516);
+    std.debug.assert(@offsetOf(PlayerEntity, "overclock_until_tick") == 520);
+    std.debug.assert(@offsetOf(PlayerEntity, "measure_until_tick") == 524);
+    std.debug.assert(@offsetOf(PlayerEntity, "facet_mark_until_tick") == 528);
+    std.debug.assert(@offsetOf(PlayerEntity, "focus_hex_mark_until_tick") == 532);
+    std.debug.assert(@offsetOf(PlayerEntity, "facet_target_id_len") == 536);
+    std.debug.assert(@offsetOf(PlayerEntity, "facet_target_id_bytes") == 540);
+    std.debug.assert(@offsetOf(PlayerEntity, "focus_hex_target_id_len") == 572);
+    std.debug.assert(@offsetOf(PlayerEntity, "focus_hex_target_id_bytes") == 576);
+    std.debug.assert(@offsetOf(PlayerEntity, "kindled_resolve_until_tick") == 608);
+    std.debug.assert(@offsetOf(PlayerEntity, "ghost_guard_charge_until_tick") == 612);
+    std.debug.assert(@offsetOf(PlayerEntity, "razor_route_until_tick") == 616);
     // EquippedActives (Phase 1): [3]u8 = 3 bytes, no padding (u8 array
     // needs no alignment beyond 1). Doesn't cross the wasm ABI today (see
     // its own doc comment) — pure internal regression-catching, same role
@@ -2173,6 +2211,21 @@ pub export fn offset_melee_swing() u32 {
 /// Z1a) — same contract as sizeof_player_movement_memory above.
 pub export fn sizeof_melee_swing_memory() u32 {
     return @intCast(@sizeOf(MeleeSwingMemory));
+}
+
+/// Byte offset of `player_draft_state[0]` from the start of `WorldState`
+/// (Track Z2 — the drafting bridge). The full-sync hosts repack the whole
+/// buffer every tick, so mid-draft offers/picks must round-trip through
+/// the pack like player_movement/melee_swing before them —
+/// draftMemoryBridge assertions pin this against the TS-side derivation.
+pub export fn offset_player_draft_state() u32 {
+    return @intCast(@offsetOf(WorldState, "player_draft_state"));
+}
+
+/// @sizeOf pin for the bridge's PLAYER_DRAFT_STATE_SIZE stride (Track
+/// Z2) — same contract as sizeof_melee_swing_memory above.
+pub export fn sizeof_player_draft_state() u32 {
+    return @intCast(@sizeOf(PlayerDraftState));
 }
 
 pub export fn world_state_max_players() u32 {

@@ -216,7 +216,6 @@ import {
 import { MAX_ABILITY_SLOTS, classIdForArchetype, baseMaxHealthForArchetype } from "./data/cardTypes.js";
 import { RoundOrchestrator } from "./RoundOrchestrator.js";
 import { wasmHost } from "./wasm/wasmHost.js";
-import { writeFireConfigsForState } from "./wasm/writeFireConfigs.js";
 import { convertWasmEventsToTs } from "./wasm/convertWasmEvents.js";
 import type {
   FireEntity,
@@ -7329,12 +7328,11 @@ function maybeWasmActual(
     // `globalThis.__jakesjam_wasm_inputs__`, which `wasmHost`
     // mirrors for compat — A2 deletes the globalThis read.
     wasmHost.writeInputs(inputsMap);
-    // Phase 97: resolve + write per-player fire configs so cards
-    // finally apply. Without this every player fires bare starter
-    // pistol regardless of their card hand. The helper holds an
-    // internal per-player cache (re-resolved only when cards
-    // change).
-    writeFireConfigsForState(inputState);
+    // Loadout delivery (fire configs + card hand + equipped actives)
+    // happens INSIDE the step now, AFTER the pack (Track Z1b finding
+    // (c)): the old pre-step `writeFireConfigsForState(inputState)` call
+    // here wrote configs the step's own pack immediately zero-filled, so
+    // step_world never saw them — starter pistol regardless of cards.
     const result = wb.applyWasmWorldStepFullSync(inputState, dtMs);
     return {
       state: result.state,
