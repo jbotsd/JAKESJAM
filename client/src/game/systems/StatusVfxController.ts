@@ -1,7 +1,9 @@
 // Sim-authoritative status VFX driver. Reads burnUntilTick / freezeUntilTick
 // / wardShellUntilTick / veilUntilTick from each player in the snapshot
 // WorldState and spawns fire sparks / freeze shards / frost rings / ward
-// rings / veil shrouds via a shared ParticlePool. Lightning chain arcs come
+// rings / veil shrouds via a shared ParticlePool; hostile mark windows
+// (facet/judgment/read — render/markReadPlan.ts) draw their hunter's
+// instrument on the MARKED body. Lightning chain arcs come
 // from `chain-hit` SimEvents; crimson leech threads from `emission-leech`
 // (six-axes Drain — same arc language, re-tinted); the stride-refund feet
 // sweep from `stride-refunded`. Wall-clock cadence is per-player so tab
@@ -15,6 +17,7 @@ import {
   makeVeilReadMemo,
   planVeilRead,
 } from "../render/veilReadPlan";
+import { planMarkReads, type MarkRead } from "../render/markReadPlan";
 import type { PlayerId, SimEvent, Vec2, WorldState } from "../../sim";
 
 const BURN_SPARK_INTERVAL_MS = 80;
@@ -44,6 +47,22 @@ const LEECH_COLOR = 0xdc2626;
 const LEECH_GLOW = 0x7f1d1d;
 const LEECH_THREAD_DURATION_MS = 260;
 
+// Mark-window reads (Track L, render/markReadPlan.ts): the marked BODY
+// wears its hunter's register for the whole window. Chassis color law
+// (docs/chassis-design-axioms.md CA2): Geometrician and Interstice share
+// conjured-cyan and are distinguished by SHAPE — facet = flat crystal
+// chords, read = 45° blade slashes — while Kindled is gold (partial seal
+// arc: an instrument orbiting the quarry, never a full halo ring —
+// instrument-vs-icon test). Values mirror LightConstruct's canon tints
+// (GEOMETRICIAN_TINT.glow / KINDLED_TINT.glow) and the read chip's cyan.
+const MARK_FACET_COLOR = 0x35d6ff;
+const MARK_JUDGMENT_COLOR = 0xffc24d;
+const MARK_READ_COLOR = 0x67e8f9;
+const MARK_READ_INTERVAL_MS = 240;
+const MARK_ORBIT_RADIUS_PX = 17;
+/** Slow precession so the mark reads as a held instrument, not a blast. */
+const MARK_ORBIT_RAD_PER_MS = 0.0012;
+
 const SPARK_DURATION_MS = 420;
 const SHARD_DURATION_MS = 520;
 const RING_DURATION_MS = 320;
@@ -58,6 +77,11 @@ export class StatusVfxController {
   private readonly wardCadence: Map<string, number> = new Map();
   private readonly slowCadence: Map<string, number> = new Map();
   private readonly veilCadence: Map<string, number> = new Map();
+  // Keyed `${targetId}:${kind}` — one cadence per mark on a body, so a
+  // double-marked target keeps both instruments beating independently.
+  private readonly markCadence: Map<string, number> = new Map();
+  /** Accumulated wall-clock for orbit phase — marks precess with time. */
+  private clockMs = 0;
   // Frame-diff memory for the veil break (planner-owned semantics —
   // render/veilReadPlan.ts documents why the definedness edge is sound).
   private readonly veilMemo = makeVeilReadMemo();
@@ -167,6 +191,30 @@ export class StatusVfxController {
       this.spawnVeilBreakSeam(brk.pos);
     }
 
+    // Mark windows (Track L, render/markReadPlan.ts): the marked body wears
+    // its hunter's instrument for the whole window — facet chords /
+    // judgment arc / read slashes — so a watching enemy can see who is
+    // primed for amplified punishment BEFORE the payoff hit lands
+    // (doctrine #10; the payoff flourish already reads via
+    // ConstructVfxController's empowered-hit pass).
+    this.clockMs += deltaMs;
+    const markPlan = planMarkReads(state, getPosition);
+    const seenMark = new Set<string>();
+    for (const mark of markPlan) {
+      const key = `${mark.targetId}:${mark.kind}`;
+      seenMark.add(key);
+      const next = (this.markCadence.get(key) ?? MARK_READ_INTERVAL_MS) + deltaMs;
+      if (next >= MARK_READ_INTERVAL_MS) {
+        this.markCadence.set(key, 0);
+        this.spawnMarkRead(mark);
+      } else {
+        this.markCadence.set(key, next);
+      }
+    }
+    for (const key of this.markCadence.keys()) {
+      if (!seenMark.has(key)) this.markCadence.delete(key);
+    }
+
     // Drop cadence entries for players that no longer have an active status.
     for (const key of this.burnCadence.keys()) {
       if (!seenBurn.has(key)) this.burnCadence.delete(key);
@@ -209,7 +257,129 @@ export class StatusVfxController {
     this.wardCadence.clear();
     this.slowCadence.clear();
     this.veilCadence.clear();
+    this.markCadence.clear();
     this.veilMemo.wasLive.clear();
+  }
+
+  /** One mark beat at the marked body. Stacked marks offset their orbit
+   *  phase (stackIndex) so a double-marked target reads as two distinct
+   *  instruments, not one smeared glow. */
+  private spawnMarkRead(mark: MarkRead): void {
+    const phase =
+      this.clockMs * MARK_ORBIT_RAD_PER_MS + mark.stackIndex * (Math.PI / 3);
+    switch (mark.kind) {
+      case "facet":
+        this.spawnFacetMarkChords(mark.pos, mark.intensity, phase);
+        break;
+      case "judgment":
+        this.spawnJudgmentMarkArc(mark.pos, mark.intensity, phase);
+        break;
+      case "read":
+        this.spawnReadMarkSlashes(mark.pos, mark.intensity, phase);
+        break;
+    }
+  }
+
+  /** Facet Break mark: three flat crystal CHORDS precessing around the
+   *  body (crystal/diamond grammar — the target is being faceted for the
+   *  break). Geometrician cyan; shape, not hue, separates it from the
+   *  Interstice read slashes per CA2. */
+  private spawnFacetMarkChords(position: Vec2, intensity: number, phase: number): void {
+    const cy = position.y - 6;
+    for (let i = 0; i < 3; i++) {
+      const spark = this.pool.acquireSpark();
+      if (!spark) break;
+      const angle = phase + (i * Math.PI * 2) / 3;
+      const sx = position.x + Math.cos(angle) * MARK_ORBIT_RADIUS_PX;
+      const sy = cy + Math.sin(angle) * MARK_ORBIT_RADIUS_PX;
+      spark.setPosition(sx, sy);
+      spark.setFillStyle(MARK_FACET_COLOR, 0.55 * intensity);
+      // Long axis tangent to the orbit — a chord lying flat on the facet,
+      // not a ray shooting off it (instrument, not blast).
+      spark.setRotation(angle);
+      spark.setScale(0.7, 1.5);
+      spark.setAlpha(0.55 * intensity);
+      transientVfx.spawn({
+        factory: () => spark,
+        lifetimeMs: RING_DURATION_MS,
+        startAlpha: 0.55 * intensity,
+        ease: "Sine.easeOut",
+        onTick: (obj, t) => {
+          const s = obj as Phaser.GameObjects.Rectangle;
+          const drift = 1 + 0.12 * t; // a slight outward breath, then gone
+          s.x = position.x + Math.cos(angle) * MARK_ORBIT_RADIUS_PX * drift;
+          s.y = cy + Math.sin(angle) * MARK_ORBIT_RADIUS_PX * drift;
+        },
+        release: () => this.pool.release(spark),
+      });
+    }
+  }
+
+  /** Judgment Line mark: ONE partial gold arc orbiting the quarry,
+   *  contracting slightly as it fades — a seal instrument closing, never a
+   *  full halo ring (instrument-vs-icon hard line). Single pooled ring per
+   *  beat keeps the ring budget honest. */
+  private spawnJudgmentMarkArc(position: Vec2, intensity: number, phase: number): void {
+    const ring = this.pool.acquireRing();
+    if (!ring) return;
+    const startDeg = ((phase * 180) / Math.PI) % 360;
+    ring.setPosition(position.x, position.y - 6);
+    ring.setFillStyle(MARK_JUDGMENT_COLOR, 0);
+    ring.setStrokeStyle(1.8, MARK_JUDGMENT_COLOR, 0.5 * intensity);
+    ring.setStartAngle(startDeg);
+    ring.setEndAngle(startDeg + 80);
+    ring.setScale(1.22);
+    ring.setAlpha(1);
+    transientVfx.spawn({
+      factory: () => ring,
+      lifetimeMs: RING_DURATION_MS,
+      startAlpha: 1,
+      ease: "Sine.easeOut",
+      onTick: (obj, t) => {
+        const r = obj as Phaser.GameObjects.Arc;
+        const s = 1.22 - 0.17 * t; // the seal tightening on the marked body
+        r.setScale(s, s);
+      },
+      release: () => {
+        // The pool shares full-circle rings (ward/frost/veil) — restore the
+        // arc before returning it so the next acquirer draws a whole ring.
+        ring.setStartAngle(0);
+        ring.setEndAngle(360);
+        this.pool.release(ring);
+      },
+    });
+  }
+
+  /** Read Mark (and Razor Route's silent dash-cross tag — same fields):
+   *  paired 45° blade slashes at opposite shoulders of the orbit, drifting
+   *  up like a cut being read. Interstice cyan; the fixed slash angle is
+   *  the blade grammar that separates it from facet's flat chords. */
+  private spawnReadMarkSlashes(position: Vec2, intensity: number, phase: number): void {
+    const cy = position.y - 6;
+    for (let i = 0; i < 2; i++) {
+      const spark = this.pool.acquireSpark();
+      if (!spark) break;
+      const angle = phase + i * Math.PI;
+      const sx = position.x + Math.cos(angle) * (MARK_ORBIT_RADIUS_PX - 1);
+      const sy = cy + Math.sin(angle) * (MARK_ORBIT_RADIUS_PX - 1);
+      spark.setPosition(sx, sy);
+      spark.setFillStyle(MARK_READ_COLOR, 0.6 * intensity);
+      spark.setRotation(-Math.PI / 4); // the slash angle, always
+      spark.setScale(0.6, 1.3);
+      spark.setAlpha(0.6 * intensity);
+      transientVfx.spawn({
+        factory: () => spark,
+        lifetimeMs: RING_DURATION_MS,
+        startAlpha: 0.6 * intensity,
+        ease: "Sine.easeOut",
+        onTick: (obj, t) => {
+          const s = obj as Phaser.GameObjects.Rectangle;
+          s.x = sx;
+          s.y = sy - 6 * t; // reading upward along the body
+        },
+        release: () => this.pool.release(spark),
+      });
+    }
   }
 
   /** Veil-of-Nought presence read: a thin desaturated near-white outline
