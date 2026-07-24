@@ -16,7 +16,6 @@ import { classIdForArchetype } from "../data/cardTypes.js";
 import type { CardDefinition } from "../data/cardTypes.js";
 import {
   starterWeapon,
-  wizardStarterWeapon,
   priestStarterWeapon,
   paladinStarterWeapon,
   baseWeaponForClass,
@@ -370,29 +369,18 @@ describe("authored Paladin cards (docs/card-pool-v2.md universal per-class lines
 //    the part of Priest's kit that ships into pure FFA with no teammate. ──
 
 describe("Priest baseline: detuned starter bolt (docs/classes-goal.md 'modest projectile, wizard's starter, detuned')", () => {
-  test("baseWeaponForClass falls back to starterWeapon for Ninja only; Wizard/Priest/Paladin have their own baseline", () => {
+  test("baseWeaponForClass falls back to starterWeapon (object identity) for Wizard AND Ninja; Priest/Paladin have their own baseline", () => {
+    // THE GEOMETRICIAN RULING (2026-07-24, weapons.ts): the 2026-07-22
+    // `wizardStarterWeapon` (delivery "projectile") was a misread of Jake's
+    // intent and is deleted — Wizard shares starterWeapon's raycast gun by
+    // object identity again, exactly like Ninja always has. The full
+    // wizard-is-always-raycast lock lives in
+    // geometricianAlwaysRaycast.test.ts.
     expect(baseWeaponForClass(undefined)).toBe(starterWeapon);
     expect(baseWeaponForClass("ninja")).toBe(starterWeapon);
-    expect(baseWeaponForClass("wizard")).toBe(wizardStarterWeapon);
+    expect(baseWeaponForClass("wizard")).toBe(starterWeapon);
     expect(baseWeaponForClass("paladin")).toBe(paladinStarterWeapon);
     expect(baseWeaponForClass("priest")).toBe(priestStarterWeapon);
-  });
-
-  test("wizardStarterWeapon is a same-stat copy of starterWeapon, only delivery diverges (2026-07-22: Geometrician's basic attack reverted from hitscan back to a real projectile)", () => {
-    expect(wizardStarterWeapon.delivery).toBe("projectile");
-    expect(starterWeapon.delivery).toBe("raycast");
-    expect(wizardStarterWeapon.damage).toBe(starterWeapon.damage);
-    expect(wizardStarterWeapon.fireRate).toBe(starterWeapon.fireRate);
-    expect(wizardStarterWeapon.projectileSpeed).toBe(starterWeapon.projectileSpeed);
-    expect(wizardStarterWeapon.id).toBe(starterWeapon.id);
-    // Lock down that the override actually WORKS: without it, resolving
-    // through createWeaponBuild would silently pick up applyDeliveryFeel's
-    // raycast bump (speedMultiplier >= 3.2, lifetimeMultiplier <= 0.35,
-    // rangePx >= 880) and keep the shot instant despite the override.
-    const build = createWeaponBuild(wizardStarterWeapon, []);
-    expect(build.projectile.speedMultiplier).toBe(1);
-    expect(build.projectile.lifetimeMultiplier).toBe(1);
-    expect(build.projectile.rangePx).toBe(starterWeapon.projectile.rangePx);
   });
 
   test("priestStarterWeapon is a same-shape, lower-damage copy of starterWeapon", () => {
@@ -603,10 +591,12 @@ describe("Priest lifesteal: Stolen Fangs re-read as always-on drain (docs/card-p
     let nextId = 1;
     const result = stepWeapon(player, true, { x: 500, y: 0 }, 16, () => EntityId(nextId++));
     expect(result.fired).toBe(true);
-    // Wizard's basic shot fires via `projectiles`, not `hitscanPellets`
-    // (2026-07-22: Geometrician's hitscan reverted back to a projectile —
-    // weapons.ts's `wizardStarterWeapon`) — `result.hitscanPellets` is empty here.
-    expect(result.hitscanPellets.length).toBe(0);
-    expect(result.projectiles[0]!.leechFraction ?? 0).toBe(0);
+    // Wizard's basic shot is true hitscan again (THE GEOMETRICIAN RULING,
+    // 2026-07-24 — the 2026-07-22 projectile revert was a misread, see
+    // weapons.ts) — so the shot leaves via `hitscanPellets`, and the
+    // no-leech assertion reads the pellet, not a projectile.
+    expect(result.projectiles.length).toBe(0);
+    expect(result.hitscanPellets.length).toBeGreaterThan(0);
+    expect(result.hitscanPellets[0]!.leechFraction ?? 0).toBe(0);
   });
 });

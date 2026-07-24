@@ -198,25 +198,50 @@ describe("Veil of Nought", () => {
     // seeker gun shot aimed 90° away from A. It reaches A only if the
     // homing steer turns it — so the control run proves the curve, and the
     // veiled run proves the blindness.
+    //
+    // Shooter is "shielded" (priest), not the original "balanced" (wizard):
+    // wizard is ALWAYS raycast now (THE GEOMETRICIAN RULING, 2026-07-24,
+    // weapons.ts) — a wizard shot resolves as a same-tick straight ray
+    // (Seeker Facets' homing fields still ride the build, but only for
+    // real-projectile consumers like Emission/split children — the basic
+    // shot itself never curves), so a wizard rig can no longer produce the
+    // traveling homing projectile this LOCK test needs. Priest is the
+    // sim's class-true homing carrier (Seeker Facets' own priest
+    // classModifiers variant keeps `delivery: "projectile"`), driving the
+    // exact same closestNonOwnerPlayer lock path the veil must blind.
     const run = (veiled: boolean): number => {
-      // Long approach: the seeker's turn RADIUS is ~213px (533px/s at
-      // 2.5rad/s), so the correction arc needs room — 300px of flight
-      // with a ~50px lateral error is well inside its authority, while
-      // the straight path cleanly misses.
+      // Geometry, retuned for the priest tendril (~288px/s = 320 × 0.9, at
+      // 2.5rad/s → turn radius ~115px):
+      //   - The aim offset (~30° off the muzzle→A line) must EXCEED the
+      //     tendril fan's ±13° spread (SYZ_TENDRIL_SPREAD_RADIANS 0.45
+      //     across 3 tendrils) so no stray pellet connects by straight-
+      //     line luck in the veiled run — the wizard-era single-bolt
+      //     version could aim just ~12° wide, a fan cannot.
+      //   - It must stay head-on-ish: fired fully sideways the tendrils
+      //     ORBIT A at the turn circle forever without converging
+      //     (empirically traced), so ~30° is the working band between
+      //     "spread hits anyway" and "orbits without landing". Control
+      //     connects at ~tick 19.
+      //   - The 85-tick budget stays inside Veil of Nought's 1500ms
+      //     (90-tick) window: the surviving tendrils outlive the veil
+      //     (2.6s lifetime), and stepping past expiry would let them
+      //     re-lock and hit — which would be testing the veil's DURATION,
+      //     not its blindness.
       const target = mkPlayer(A, 480, 100);
       if (veiled) target.cards = ["veil-of-nought"];
       const shooter = mkPlayer(B, 480, 400);
+      shooter.characterId = "shielded";
       shooter.cards = ["seeker-facets"];
       let state = mkState([target, shooter]);
       const runtime = createRuntime(flatMap);
-      // Tick 1: A raises the veil (or idles); B fires slightly wide of A.
+      // Tick 1: A raises the veil (or idles); B fires wide of A.
       const first: Partial<Record<string, InputFrame>> = {
-        [B as string]: frame(FIRE_BIT, 1, 540, 60),
+        [B as string]: frame(FIRE_BIT, 1, 620, 160),
       };
       if (veiled) first[A as string] = frame(SLOT1_BIT, 1);
       let res = stepWithRuntime(state, runtime, inputsWith([target, shooter], first), DT_MS);
       state = res.state;
-      for (let t = 0; t < 80; t++) {
+      for (let t = 0; t < 85; t++) {
         res = stepWithRuntime(state, runtime, inputsWith([target, shooter], {}), DT_MS);
         state = res.state;
       }

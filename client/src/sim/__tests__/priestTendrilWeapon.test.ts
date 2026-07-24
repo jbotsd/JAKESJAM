@@ -655,20 +655,22 @@ describe("Priest tendrils: class gating, reverse direction — Wizard/Ninja/Pala
   // wrong thing. What THIS priest-only change must not do is add anything
   // ON TOP of that: wizard's pathing/element/tendril must stay exactly
   // what starterWeapon always resolved to, completely untouched by any
-  // SYZ_TENDRIL_* constant. Wizard's basic shot is a real `ProjectileEntity`
-  // again (2026-07-22: Geometrician's hitscan reverted back to a projectile
-  // — weapons.ts's `wizardStarterWeapon`), so this asserts against
-  // `result.projectiles`, not `hitscanPellets`.
+  // SYZ_TENDRIL_* constant. Wizard's basic shot is true hitscan again (THE
+  // GEOMETRICIAN RULING, 2026-07-24, weapons.ts — the 2026-07-22
+  // `wizardStarterWeapon` projectile era was a misread of Jake's intent and
+  // is reverted), so this asserts against `hitscanPellets`, same as the
+  // ninja test above — the two classes share the exact same base gun again.
   test("balanced (wizard): the priest tendril rework adds nothing beyond the wizard's own already-tested ramp — element/tendril unaffected", () => {
     const player = mkPlayer({ characterId: "balanced" });
     const build = resolvePlayerBuild(player);
-    expect(build.delivery).toBe("projectile");
+    expect(build.delivery).toBe("raycast");
     expect(build.projectile.element).toBe("crystal");
     let nextId = 1;
     const result = stepWeapon(player, true, { x: 500, y: 0 }, DT_MS, () => EntityId(nextId++));
     expect(result.fired).toBe(true);
-    expect(result.hitscanPellets).toHaveLength(0);
-    expect(result.projectiles[0]!.element).toBe("crystal");
-    expect(result.projectiles[0]!.tendril).toBeUndefined();
+    expect(result.projectiles).toHaveLength(0);
+    expect(result.hitscanPellets).toHaveLength(build.projectile.count);
+    expect(result.hitscanPellets[0]!.element).toBe("crystal");
+    expect(result.hitscanPellets[0]!.tendril).toBeUndefined();
   });
 });

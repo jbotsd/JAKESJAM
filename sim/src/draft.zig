@@ -406,8 +406,13 @@ pub fn applyCardPick(
     }
 
     const hand_count = state.players[player_idx].card_count;
+    // Class-aware (THE GEOMETRICIAN RULING, 2026-07-24): derived from
+    // character_id exactly like resolve_player_fire_config does, so a
+    // wizard's mid-draft pick can never flip the resolved delivery feel to
+    // projectile either.
     state.player_fire_config[player_idx] = weapon_build.resolveByIndices(
         state.player_card_ids[player_idx].indices[0..hand_count],
+        weapon_build.classForArchetype(state.players[player_idx].character_id),
     );
 
     ds.picked_slot = offer_slot + 1;

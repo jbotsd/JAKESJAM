@@ -99,7 +99,18 @@ function makePlayer(): PlayerEntity {
     crouching: false,
     alive: true,
     weaponId: "starter-pistol",
-    cards: [],
+    // Continuous Refractor (THE GEOMETRICIAN RULING, 2026-07-24): "balanced"
+    // is wizard, and wizard is ALWAYS raycast now — a bare wizard fires
+    // same-tick hitscan pellets (TS) and spawns NO ProjectileEntity, so the
+    // projectile this file measures would never exist. The beam delivery is
+    // wizard's one legal projectile-spawning delivery (the ruling's pinned
+    // carve-out, geometricianAlwaysRaycast.test.ts), resolves byte-
+    // identically in both resolvers (weaponBuildParity.test.ts walks the
+    // card), and drives the exact same muzzle-geometry + tick-order spawn
+    // path this file locks. (Priest fires 3 spread tendrils — not "only
+    // projectile" — and Ninja/Paladin's Fire is a melee arc, so wizard+beam
+    // is the ONE single-projectile rig the sim still has.)
+    cards: ["continuous-refractor"],
     fireCooldownMs: 0,
     ammo: 12,
     abilityCharge: 0,

@@ -19,8 +19,12 @@ const sim = await loadSimFromBytes(ab);
 const ex = sim.exports as unknown as {
   memory: WebAssembly.Memory;
   resolve_build_test: (i: number, out: number) => void;
+  resolve_build_test_class: (i: number, classIdx: number, out: number) => void;
   resolve_build_card_count: () => number;
 };
+
+// gen_card_data.ts's CLASS_ID order (mirrors cardTypes.ts's ClassId union).
+const WIZARD_CLASS_IDX = 0;
 
 // gen_card_data.ts emits a CardEntry for EVERY card now (not just the ones
 // with a `modifier` — see that file's "Every card gets an entry now" note,
@@ -35,19 +39,31 @@ const ex = sim.exports as unknown as {
 const cards = crystalRoundsCards;
 const SCRATCH = sim.statePtr + WORLD_STATE_TOTAL_SIZE + 4096;
 
-function zig(i: number): DataView {
-  ex.resolve_build_test(i, SCRATCH);
+function zig(i: number, wizard = false): DataView {
+  if (wizard) {
+    ex.resolve_build_test_class(i, WIZARD_CLASS_IDX, SCRATCH);
+  } else {
+    ex.resolve_build_test(i, SCRATCH);
+  }
   return new DataView(ex.memory.buffer, SCRATCH, 248);
 }
-function ts(i: number) {
+function ts(i: number, wizard = false) {
   return packResolvedFireConfig(
-    createWeaponBuild(starterWeapon, i < 0 ? [] : [cards[i]!]),
+    createWeaponBuild(
+      // baseWeaponForClass("wizard") IS starterWeapon again (object
+      // identity — THE GEOMETRICIAN RULING, 2026-07-24, weapons.ts), so
+      // both walks share the same base here, exactly like Zig's single
+      // StarterBase.
+      starterWeapon,
+      i < 0 ? [] : [cards[i]!],
+      wizard ? "wizard" : undefined,
+    ),
   );
 }
 
-function compare(i: number, label: string) {
-  const z = zig(i);
-  const t = ts(i);
+function compare(i: number, label: string, wizard = false) {
+  const z = zig(i, wizard);
+  const t = ts(i, wizard);
   const F = (off: number) => z.getFloat64(off, true);
   const U32 = (off: number) => z.getUint32(off, true);
   const U8 = (off: number) => z.getUint8(off);
@@ -104,4 +120,27 @@ describe("Zig build resolver ≡ TS createWeaponBuild → ResolvedFireConfig", (
   test("every card resolves identically", () => {
     for (let i = 0; i < cards.length; i++) compare(i, cards[i]!.id);
   });
+
+  // THE GEOMETRICIAN RULING (2026-07-24): wizard is ALWAYS raycast — the
+  // wizard-forces-raycast rule lives in BOTH resolvers (createWeaponBuild's
+  // post-card-loop enforcement ≡ weapon_build.zig resolveMods' pre-
+  // delivery-feel branch), so a class-AWARE walk must stay byte-identical
+  // too: every card whose `delivery: "projectile"` used to flip the feel
+  // numbers (speed/lifetime/range) now resolves through the raycast feel
+  // floors on both sides.
+  //
+  // Cards with an authored `classModifiers.wizard` are skipped: Zig carries
+  // no classModifiers data at all (gen_card_data.ts emits only the class-
+  // blind `modifier`; a pre-existing, documented gap orthogonal to the
+  // delivery rule), so TS-wizard resolution legitimately diverges from Zig
+  // for those few cards on OTHER fields (e.g. seeker-facets' wizard damage
+  // tax). The delivery rule itself is still fully exercised — every
+  // Category-A travel-time card except seeker-facets is class-blind.
+  test("every class-blind card resolves identically AS WIZARD (forced-raycast parity)", () => {
+    for (let i = 0; i < cards.length; i++) {
+      if (cards[i]!.classModifiers?.wizard) continue;
+      compare(i, `${cards[i]!.id} (wizard)`, true);
+    }
+  });
+  test("base (no cards) matches as wizard too", () => compare(-1, "base (wizard)", true));
 });

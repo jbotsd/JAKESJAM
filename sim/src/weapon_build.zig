@@ -14,8 +14,25 @@ fn round2(v: f64) f64 {
     return @round(v * 100.0) / 100.0;
 }
 
+/// archetype → class dev-id. Mirrors cardTypes.ts's ARCHETYPE_CLASS_ID map
+/// (balanced→wizard, heavy→paladin, sprinter→ninja, shielded→priest) —
+/// needed here because THE GEOMETRICIAN RULING (see resolveMods) makes the
+/// build resolver class-aware, and the live entry points below derive the
+/// class from the player's own `character_id` rather than widening the wasm
+/// ABI with a new parameter.
+pub fn classForArchetype(archetype: world_state.CharacterArchetype) gen.ClassId {
+    return switch (archetype) {
+        .balanced => .wizard,
+        .heavy => .paladin,
+        .sprinter => .ninja,
+        .shielded => .priest,
+    };
+}
+
 /// Resolve starter-base + `card_ids` → ResolvedFireConfig (valid=1).
-pub fn resolveBuild(card_ids: []const []const u8) world_state.ResolvedFireConfig {
+/// `class_id` null = class-blind resolution, byte-identical to the
+/// pre-class-era behavior (mirrors createWeaponBuild's optional classId).
+pub fn resolveBuild(card_ids: []const []const u8, class_id: ?gen.ClassId) world_state.ResolvedFireConfig {
     var buf: [world_state.MAX_PLAYER_CARDS]gen.CardMod = undefined;
     var n: usize = 0;
     for (card_ids) |id| {
@@ -25,11 +42,11 @@ pub fn resolveBuild(card_ids: []const []const u8) world_state.ResolvedFireConfig
             n += 1;
         }
     }
-    return resolveMods(buf[0..n]);
+    return resolveMods(buf[0..n], class_id);
 }
 
 /// Resolve starter-base + cards named by their index into `cards_gen.cards`.
-pub fn resolveByIndices(indices: []const u8) world_state.ResolvedFireConfig {
+pub fn resolveByIndices(indices: []const u8, class_id: ?gen.ClassId) world_state.ResolvedFireConfig {
     var buf: [world_state.MAX_PLAYER_CARDS]gen.CardMod = undefined;
     var n: usize = 0;
     for (indices) |idx| {
@@ -39,10 +56,10 @@ pub fn resolveByIndices(indices: []const u8) world_state.ResolvedFireConfig {
             n += 1;
         }
     }
-    return resolveMods(buf[0..n]);
+    return resolveMods(buf[0..n], class_id);
 }
 
-fn resolveMods(mods: []const gen.CardMod) world_state.ResolvedFireConfig {
+fn resolveMods(mods: []const gen.CardMod, class_id: ?gen.ClassId) world_state.ResolvedFireConfig {
     var damage = B.damage;
     var fire_rate = B.fire_rate;
     var projectile_speed = B.projectile_speed;
@@ -146,14 +163,39 @@ fn resolveMods(mods: []const gen.CardMod) world_state.ResolvedFireConfig {
         p_homing += m.proj_homing_add;
     }
 
+    // ── THE GEOMETRICIAN RULING (Jake, 2026-07-24 — supersedes 2026-07-22)
+    // Geometrician (classId "wizard") is ALWAYS raycast/hitscan delivery.
+    // Never projectile. Nothing may flip it — no card, no fallback. Mirrors
+    // createWeaponBuild's post-card-loop enforcement (weaponBuild.ts, see
+    // the full history there: the 2026-07-22 "abilities change the hitscan
+    // to a projectile — change that" message was about cards FLIPPING the
+    // hitscan, got misread as "make the base gun a projectile", and is now
+    // reverted). Same judgment call, pinned in the TS lock test:
+    // continuous-beam (2) is the one legal carve-out (instant-feel);
+    // "projectile" (0) and "area-pulse" (3, travel-time by construction)
+    // are forced back to raycast (1). Runs BEFORE the delivery-feel section
+    // below so the raycast feel floors apply — exact same ordering as TS.
+    if (class_id) |c| {
+        if (c == .wizard and delivery != 2) delivery = 1;
+    }
+
     // applyDeliveryFeel (weaponBuild.ts) — runs BEFORE clampBuild there, same
     // order here. Maps the rare delivery identity onto projectile params so
     // raycast/beam/pulse cards feel distinct without a separate hitscan step.
     // PATHING_RANK, by pathing enum index (0=straight..7=accelerate, see
     // gen_card_data.ts's PATHING array order) — mirrors weaponBuild.ts's
-    // PATHING_RANK table exactly; unlisted indices (5=anti-homing,
-    // 7=accelerate) fall back to rank 0 same as TS's `?? 0`.
-    const pathing_rank = [8]u8{ 0, 3, 1, 2, 5, 0, 4, 0 };
+    // PATHING_RANK table exactly; the one unlisted index (5=anti-homing)
+    // falls back to rank 0 same as TS's `?? 0`. Index 7 (accelerate) is
+    // rank 1 — TS added `accelerate: 1` in the i-rounds/falling-star
+    // speed-profile pass and this table was never updated (stale comment
+    // here even claimed accelerate was unlisted in TS), silently force-
+    // resetting accelerate→straight in the raycast/beam feel branch on the
+    // Zig side only. Invisible to the class-blind parity walk (i-rounds'
+    // own `delivery: "projectile"` fallback meant the raycast branch never
+    // ran for it) — caught 2026-07-24 by the wizard-forces-raycast parity
+    // walk the GEOMETRICIAN RULING added, which resolves i-rounds through
+    // the raycast branch for the first time.
+    const pathing_rank = [8]u8{ 0, 3, 1, 2, 5, 0, 4, 1 };
     if (delivery == 1) { // raycast
         p_count = @max(1.0, p_count);
         if (pathing_rank[p_pathing] == 0) p_pathing = 0; // → "straight"
@@ -347,12 +389,33 @@ pub export fn resolve_emission_test(card_index: i32, out_ptr: *[5]f64) void {
 }
 
 /// Parity-test export: resolve base (index<0) or base+cards[index] into `out`.
+/// Class-blind (mirrors createWeaponBuild with classId omitted).
 pub export fn resolve_build_test(card_index: i32, out_ptr: *world_state.ResolvedFireConfig) void {
     if (card_index < 0) {
-        out_ptr.* = resolveBuild(&.{});
+        out_ptr.* = resolveBuild(&.{}, null);
     } else {
         const one = [_][]const u8{gen.cards[@intCast(card_index)].id};
-        out_ptr.* = resolveBuild(&one);
+        out_ptr.* = resolveBuild(&one, null);
+    }
+}
+
+/// Parity-test export: class-AWARE resolve of base (index<0) or
+/// base+cards[index]. `class_idx` indexes gen.ClassId (0=wizard, 1=ninja,
+/// 2=paladin, 3=priest); any other value = class-blind, same as
+/// resolve_build_test. Added for THE GEOMETRICIAN RULING (2026-07-24) so
+/// weaponBuildParity.test.ts can walk every card as wizard and prove the
+/// wizard-forces-raycast rule resolves byte-identically on both sides.
+pub export fn resolve_build_test_class(
+    card_index: i32,
+    class_idx: u32,
+    out_ptr: *world_state.ResolvedFireConfig,
+) void {
+    const cls: ?gen.ClassId = if (class_idx < 4) @enumFromInt(class_idx) else null;
+    if (card_index < 0) {
+        out_ptr.* = resolveBuild(&.{}, cls);
+    } else {
+        const one = [_][]const u8{gen.cards[@intCast(card_index)].id};
+        out_ptr.* = resolveBuild(&one, cls);
     }
 }
 
@@ -371,7 +434,13 @@ pub export fn resolve_player_fire_config(
 ) void {
     if (player_index >= world_state.MAX_PLAYERS) return;
     const n = @min(count, @as(u32, world_state.MAX_PLAYER_CARDS));
-    state_ptr.player_fire_config[player_index] = resolveByIndices(indices_ptr[0..n]);
+    // Class derived from the player's own character_id (no ABI change) —
+    // THE GEOMETRICIAN RULING needs the resolver to know when the player is
+    // a wizard; every other class resolves exactly as before (the class
+    // only gates the wizard delivery rule, nothing else — Zig carries no
+    // classModifiers data, see gen_card_data.ts).
+    const cls = classForArchetype(state_ptr.players[player_index].character_id);
+    state_ptr.player_fire_config[player_index] = resolveByIndices(indices_ptr[0..n], cls);
 }
 
 // ── Ability-cast dispatch support (Phase 1, docs/zig-step-world-parity-
