@@ -303,6 +303,29 @@
 // max-health card leeches identically on both engines, capped at the real
 // 120 max health, not the old flat 100).
 //
+// Z1c "team peel" (2026-07-24): world.zig's new `findTeamPeelWarderIdx`/
+// `applyTeamPeel` (combat.zig's `isAllyBodyInWardCone`/
+// `computeTeamPeelMitigation`), wired into all four hit sites (real-
+// projectile, hitscan, resolveInstantAoeCasts, stepMeleeSwing):
+//
+//   BEFORE (leech's after, unchanged): AFTER (team peel):
+//   seed=1     : final  376.5px (230) | final  376.5px (onset 230)
+//   seed=42    : final  247.5px (175) | final  247.5px (onset 175)
+//   seed=1337  : final  230.0px (249) | final  230.0px (onset 249)
+//   seed=90210 : final  274.2px (160) | final  274.2px (onset 160)
+//   seed=271828: final  437.9px (229) | final  437.9px (onset 229)
+//
+// VERDICT: byte-identical, EXPECTED — this harness's bots are FFA (no
+// `teamId` set anywhere in its roster construction), and `isAlly`/
+// `findTeamPeelWarderIdx` both fail closed for any player without a team
+// id (same "true no-op outside team modes" contract TS's own
+// `findTeamPeelWarder` doc comment states) — structurally invisible here,
+// same shape as Z1a's ally-substrate entry above. The real proof is at its
+// own gate: teamPeelParity.test.ts (an eligible Warder mitigates a
+// teammate's hit identically on both engines — 60% blocked, Kindling
+// granted — and a control case with the Warder facing away shows zero
+// peel on both engines too).
+//
 // If the sweep exceeds its bound, the per-seed record above is the
 // deliverable the next track consumes.
 //

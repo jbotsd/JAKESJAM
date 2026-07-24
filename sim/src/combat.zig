@@ -425,6 +425,87 @@ pub fn isHeadshotAtHalfHeight(hit_y: f64, victim_y: f64, half_h: f64) bool {
     return hit_y <= top + (half_h * 2.0) * HEADSHOT_ZONE_FRAC;
 }
 
+// =================================================================
+// Team peel (Track Z1c "team peel" item) — bit-exact port of combat.ts's
+// TEAM PEEL section (WARD_PEEL_RADIUS_PX lives on the world.zig side
+// already, mirrored there since Aegis Share (Track Z1a) needed it before
+// this port existed — see that file's own doc comment on the constant).
+//
+// `isAllyBodyInWardCone` answers "is a nearby ALLY's BODY within the
+// ward-holder's frontal cone" — a DIFFERENT geometric question from
+// `isHitInArc` above (which tests whether an incoming hit's SOURCE lies
+// within the defender's own cone). Pure two-body geometry, no team/Ward-
+// active checks — world.zig's `findTeamPeelWarderIdx` is the one place
+// that combines it with `isAlly` to pick an eligible warding ally, exactly
+// mirroring TS's own split (`isAllyBodyInWardCone`/`computeTeamPeelMitigation`
+// here in combat.ts; `findTeamPeelWarder`/`applyTeamPeel` in World.ts).
+
+/// Ward's frontal cone width — matches `SHIELD_AIM_ARC_RADIANS` exactly
+/// (combat.ts: "a shield-board is a wall" reasoning carries over unchanged
+/// from Priest's innate directional shield"). Named separately (not a bare
+/// reuse at call sites) so a future balance pass can retune Ward without
+/// touching the aim-shield's own cone, matching combat.ts's own naming.
+pub const WARD_ARC_RADIANS: f64 = SHIELD_AIM_ARC_RADIANS;
+/// Fraction of incoming damage Ward (and team peel, which extends Ward's
+/// reach) absorbs on a covered hit. Mirrors combat.ts's
+/// WARD_MITIGATION_FRACTION exactly.
+pub const WARD_MITIGATION_FRACTION: f64 = 0.6;
+/// Kindling granted per point of damage Ward/peel actually blocks. Mirrors
+/// combat.ts's KINDLING_PER_DAMAGE_BLOCKED exactly (1:1 — a peeled hit's
+/// `kindlingGranted` therefore always equals its `damageBlocked`).
+pub const KINDLING_PER_DAMAGE_BLOCKED: f64 = 1.0;
+
+/// True iff `(victim_x, victim_y)` sits within a warder's frontal Ward cone
+/// (anchored on the warder's own aim, `(warder_aim_x, warder_aim_y)` minus
+/// `(warder_x, warder_y)`) AND within `radius_px` of the warder. Pure
+/// two-body geometry, no team/Ward-active checks — bit-exact port of
+/// combat.ts's `isAllyBodyInWardCone`. `radius_px` is caller-supplied (not
+/// defaulted here, unlike TS's optional param) since world.zig's own
+/// WARD_PEEL_RADIUS_PX/KIN_AEGIS_SHARE_RADIUS_MULTIPLIER constants already
+/// live there (Aegis Share, Track Z1a, predates this port) — no duplicate
+/// copy needed on this side.
+pub fn isAllyBodyInWardCone(
+    warder_x: f64,
+    warder_y: f64,
+    warder_aim_x: f64,
+    warder_aim_y: f64,
+    victim_x: f64,
+    victim_y: f64,
+    radius_px: f64,
+) bool {
+    const dx_aim = warder_aim_x - warder_x;
+    const dy_aim = warder_aim_y - warder_y;
+    const facing = if (dx_aim == 0.0 and dy_aim == 0.0) 0.0 else trig.lutAtan2(dy_aim, dx_aim);
+    const dx = victim_x - warder_x;
+    const dy = victim_y - warder_y;
+    const dist = @sqrt(dx * dx + dy * dy);
+    if (dist > radius_px or dist < 1e-3) return false;
+    const angle_to_victim = trig.lutAtan2(dy, dx);
+    const delta = wrapAngle(angle_to_victim - facing);
+    return @abs(delta) <= WARD_ARC_RADIANS / 2.0;
+}
+
+/// Mitigation math for a peeled hit — the SAME fraction/rate as self-Ward
+/// (WARD_MITIGATION_FRACTION, KINDLING_PER_DAMAGE_BLOCKED): peel is Ward
+/// extended to cover a second body, not a separate weaker mechanic. Bit-
+/// exact port of combat.ts's `computeTeamPeelMitigation`. Kindling from a
+/// peeled hit is granted to the WARDER (their block, their resource) —
+/// world.zig's `applyTeamPeel` is where that write actually happens.
+pub const TeamPeelMitigation = struct {
+    mitigated_damage: f64,
+    damage_blocked: f64,
+    kindling_granted: f64,
+};
+
+pub fn computeTeamPeelMitigation(damage: f64) TeamPeelMitigation {
+    const blocked = damage * WARD_MITIGATION_FRACTION;
+    return .{
+        .mitigated_damage = damage - blocked,
+        .damage_blocked = blocked,
+        .kindling_granted = blocked * KINDLING_PER_DAMAGE_BLOCKED,
+    };
+}
+
 /// Melee arc hit test — bit-exact port of World.ts's `isAABBInMeleeArc`
 /// (World.ts:707-734): sample the victim's AABB at its centre + 4 corners,
 /// hit if ANY sampled point is within `range` of `(origin_x, origin_y)` AND

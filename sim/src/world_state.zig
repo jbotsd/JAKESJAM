@@ -1586,6 +1586,18 @@ pub const SimEventKind = enum(u32) {
     /// the header IS the round state — no deferred commit step exists).
     /// player_idx_a = the claiming player, x/y = their position at claim.
     first_blood = 16,
+    /// Team peel absorbed a hit (Track Z1c "team peel" item — mirrors TS's
+    /// `{ t: "team-peel-absorbed", victimId, warderId, damageBlocked,
+    /// kindlingGranted }`). player_idx_a = the victim who WOULD have taken
+    /// the raw hit, player_idx_b = the warding Paladin ally who absorbed
+    /// it, scalar = damage blocked, x/y = victim's position. `kindling
+    /// Granted` is NOT carried separately — it always equals `damage
+    /// Blocked` exactly (KINDLING_PER_DAMAGE_BLOCKED is a fixed 1.0
+    /// multiplier, combat.zig), so the TS decoder derives it from the one
+    /// scalar slot rather than needing a second payload field, same
+    /// "thinned event" contract `emission_cast`/`card_offered` above
+    /// already use.
+    team_peel_absorbed = 17,
 };
 
 pub const SimEvent = extern struct {

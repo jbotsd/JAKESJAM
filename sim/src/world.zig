@@ -697,6 +697,10 @@ fn applyHitscanHitOnPlayer(
         return;
     }
 
+    // Team peel (Track Z1c "team peel" item) — same site/gate as the real-
+    // projectile path immediately above in this file (both mirror TS's
+    // shared `resolveRangedHit`); see `applyTeamPeel`'s own doc comment.
+    final_dmg = applyTeamPeel(state, victim_idx, final_dmg, state.header.tick);
     maybeAwardFirstBlood(state, shooter_idx, @intCast(victim_idx), is_fighting);
     state.players[victim_idx].health -= final_dmg;
     emitEvent(
@@ -1154,7 +1158,6 @@ fn emitEvent(
 ///     comment, world_state.zig's syz_ward_absorb_until_tick)
 ///   - Paladin Kindled Ward's partial-mitigation branch (combat.ts's
 ///     `classIdForArchetype(...) === "paladin"` shield branch)
-///   - Team-peel (World.ts's `applyTeamPeel`/`findTeamPeelWarder`)
 ///   - fooledDamageMultiplier (reads a TS-only fooledUntilTick field with
 ///     no Zig mirror). rallyLightDamageMultiplier is NO LONGER stubbed
 ///     here (Track Z1a item 3) — the ally substrate landed and this
@@ -1174,6 +1177,12 @@ fn emitEvent(
 /// vulnerabilityUntilTick at all (unlike the projectile-hit path in
 /// section 4 above, which does) — porting it here would be inventing
 /// behavior TS itself doesn't have for this code path.
+/// Team-peel is NO LONGER stubbed here either (Track Z1c "team peel" item)
+/// — `applyTeamPeel`/`findTeamPeelWarderIdx` (below, near `isAlly`) port
+/// World.ts's `applyTeamPeel`/`findTeamPeelWarder` using the Track Z1a
+/// ally substrate, wired at this function's own damage block (matching
+/// World.ts:5064's call site), the real-projectile hit site (section 4),
+/// the hitscan hit site (Track Z1c item 1), and `stepMeleeSwing`.
 pub fn resolveInstantAoeCasts(
     state: *world_state.WorldState,
     casts: []const world_state.PendingInstantAoe,
@@ -1264,6 +1273,14 @@ pub fn resolveInstantAoeCasts(
                 if (state.players[cast.caster_idx].kindled_resolve_until_tick > tick) {
                     final_dmg *= KIN_KINDLED_RESOLVE_DAMAGE_MULTIPLIER;
                 }
+                // Team peel (Track Z1c "team peel" item — CLOSES this
+                // function's own STUBBED-list entry above): extends a
+                // nearby warding Paladin ally's Ward to cover this AOE hit,
+                // matching World.ts:5064's `applyTeamPeel(victim, ...)`
+                // call in `resolveInstantAoeCasts` exactly. See
+                // `applyTeamPeel`'s own doc comment for the "not yet gated
+                // on Kindled Ward's own self-mitigation" caveat.
+                final_dmg = applyTeamPeel(state, vi, final_dmg, tick);
                 const new_health = @max(0.0, victim.health - final_dmg);
                 const was_alive = victim.flags.alive;
                 victim.health = new_health;
@@ -1807,14 +1824,22 @@ const KIN_RALLY_LIGHT_RADIUS_PX: f64 = 220.0;
 const KIN_RALLY_LIGHT_DAMAGE_MULTIPLIER: f64 = 1.12;
 const KIN_RALLY_LIGHT_MOVE_MULTIPLIER: f64 = 1.08;
 // Kindled — Aegis Share (constants.ts:286/300; the search radius factors
-// combat.ts's WARD_PEEL_RADIUS_PX=160 — mirrored here since Zig has no
-// team-peel port yet, so combat.zig carries no peel constants to reuse).
+// combat.ts's WARD_PEEL_RADIUS_PX=160 — mirrored here rather than imported
+// from combat.zig, which predates the team-peel port itself: this Aegis
+// Share window landed in Track Z1a, BEFORE Track Z1c's "team peel" item
+// added combat.zig's own WARD_ARC_RADIANS/WARD_MITIGATION_FRACTION/
+// KINDLING_PER_DAMAGE_BLOCKED — kept as the local duplicate rather than
+// re-plumbed, since `findTeamPeelWarderIdx` (below, near `isAlly`) ALSO
+// reads these two locals directly and world.zig already establishes the
+// "duplicated as a local constant, not exported" convention for every
+// other ability constant on this file).
 const KIN_AEGIS_SHARE_RADIUS_MULTIPLIER: f64 = 1.6;
 const KIN_AEGIS_SHARE_SOLO_KINDLING_FEED: f64 = 12.0;
 const WARD_PEEL_RADIUS_PX: f64 = 160.0;
 /// combat.ts:131 — the kindling resource cap (Aegis Share's solo
 /// fallback is the FIRST kindling write anywhere in sim/src, see the
-/// kindled_resolve arm's own "ZERO writes" audit note).
+/// kindled_resolve arm's own "ZERO writes" audit note). Team peel's own
+/// kindling grant (`applyTeamPeel`, Track Z1c) reuses this same constant.
 const KINDLING_MAX: f64 = 100.0;
 // Syzygist — shared ally auto-target range (constants.ts:719).
 const SYZ_ALLY_SEARCH_RANGE_PX: f64 = 320.0;
@@ -2061,6 +2086,92 @@ fn findNearestAllyIdx(
         }
     }
     return best_idx;
+}
+
+/// Team peel warder search (Track Z1c "team peel" item — port of World.ts's
+/// `findTeamPeelWarder`). A Paladin ally currently holding Ward
+/// (`shield_active`) within `WARD_PEEL_RADIUS_PX` of the victim (widened by
+/// `KIN_AEGIS_SHARE_RADIUS_MULTIPLIER` while THEIR OWN Aegis Share window is
+/// live — the window lives on the candidate warder, not the victim, so it's
+/// read directly off the candidate being tested, matching TS exactly) AND
+/// facing the victim's body extends their block to cover this hit. Returns
+/// -1 when no eligible warder exists — including, by construction, every
+/// solo/FFA victim (`isAlly` is false for any pairing when either side
+/// lacks a team id, per `isAlly`'s own doc comment). Multiple eligible
+/// warders (2+ paladins on one team, both holding Ward, both in range)
+/// resolve to the CLOSEST one, scanned in slot order for the same cross-
+/// platform determinism guarantee `findNearestAllyIdx` above already
+/// establishes (squared-distance compare — same "identical result except
+/// sub-ulp ties" precedent that function's own doc comment cites). A
+/// warder never peels for themselves (self-Ward is the separate existing
+/// mechanism, `syz_ward_absorb_*`/the still-unported Kindled Ward branch) —
+/// callers exclude `victim_idx` from the candidate scan below, matching
+/// TS's `if (wid === victim.id) continue`.
+fn findTeamPeelWarderIdx(state: *const world_state.WorldState, victim_idx: u32, tick: u32) i32 {
+    const victim = &state.players[victim_idx];
+    if (!victim.flags.has_team_id) return -1;
+    var best_idx: i32 = -1;
+    var best_dist_sq: f64 = std.math.inf(f64);
+    var i: u32 = 0;
+    while (i < state.player_count) : (i += 1) {
+        if (i == victim_idx) continue;
+        const candidate = &state.players[i];
+        if (!candidate.flags.alive or !candidate.flags.shield_active) continue;
+        if (candidate.character_id != .heavy) continue; // classIdForArchetype(...) === "paladin"
+        if (!isAlly(candidate, victim)) continue;
+        const aegis_active = candidate.aegis_share_until_tick > tick;
+        const radius_px = if (aegis_active)
+            WARD_PEEL_RADIUS_PX * KIN_AEGIS_SHARE_RADIUS_MULTIPLIER
+        else
+            WARD_PEEL_RADIUS_PX;
+        if (!combat.isAllyBodyInWardCone(candidate.x, candidate.y, candidate.aim_x, candidate.aim_y, victim.x, victim.y, radius_px)) continue;
+        const dx = victim.x - candidate.x;
+        const dy = victim.y - candidate.y;
+        const d2 = dx * dx + dy * dy;
+        if (d2 < best_dist_sq) {
+            best_dist_sq = d2;
+            best_idx = @intCast(i);
+        }
+    }
+    return best_idx;
+}
+
+/// Apply team peel to a hit landing on `victim_idx` for `raw_damage`, IFF an
+/// eligible warding ally exists (`findTeamPeelWarderIdx`) — port of World.ts's
+/// `applyTeamPeel`. Mutates the warder's kindling in place ("your block,
+/// your Kindling", same contract as self-Ward) and returns the mitigated
+/// damage (unchanged `raw_damage` when no warder exists or `raw_damage <=
+/// 0` — TS's optional-return + "callers only invoke on unmitigated hits"
+/// contract collapses to a plain damage-in/damage-out shape here since
+/// every Zig call site already just reassigns `final_dmg`/`final_damage`
+/// to this return value, no separate "did it happen" branch needed).
+///
+/// CALLER CONTRACT (matches every TS call site's own gate): only call this
+/// on a hit no OTHER mitigation already fully handled — self-Ward/Self-
+/// Lattice, parry, and the generic shield are all upstream, higher-
+/// priority outcomes that already `continue`/`break` before reaching this
+/// point at every site below. NOT yet gated on Kindled Ward's own self-
+/// mitigation branch (`!mitigation.warded` in TS) — that branch has no Zig
+/// mirror yet (a separate, still-open Z1 item); once it lands, every call
+/// site below needs the same gate TS already has.
+fn applyTeamPeel(state: *world_state.WorldState, victim_idx: u32, raw_damage: f64, tick: u32) f64 {
+    if (raw_damage <= 0) return raw_damage;
+    const warder_idx = findTeamPeelWarderIdx(state, victim_idx, tick);
+    if (warder_idx < 0) return raw_damage;
+    const mit = combat.computeTeamPeelMitigation(raw_damage);
+    const w: u32 = @intCast(warder_idx);
+    state.players[w].kindling = @min(KINDLING_MAX, state.players[w].kindling + mit.kindling_granted);
+    emitEvent(
+        state,
+        .team_peel_absorbed,
+        @intCast(victim_idx),
+        warder_idx,
+        0,
+        mit.damage_blocked,
+        state.players[victim_idx].x,
+        state.players[victim_idx].y,
+    );
+    return mit.mitigated_damage;
 }
 
 /// Rally Light aura coverage (Track Z1a item 3 — port of World.ts's
@@ -2729,10 +2840,11 @@ fn stepAbilityDispatch(
             // (axiom-deviations audit, "Kindled — two structural gaps")
             // grants a flat Kindling tick when NO ally stands inside the
             // SAME radius the window actually widens. The window's reader
-            // (findTeamPeelWarder's aegisShareUntilTick check) is the
-            // still-unported team-peel Z1 item — the field is carried +
-            // bridged NOW so that port consumes it without another growth
-            // cut; the solo Kindling branch is live either way. `+1`
+            // (`findTeamPeelWarderIdx`'s `aegis_share_until_tick` check) is
+            // NO LONGER stubbed (Track Z1c "team peel" item, landed after
+            // this field was bridged) — the field was carried + bridged
+            // here FIRST so that port could consume it without another
+            // growth cut; the solo Kindling branch is live either way. `+1`
             // matches the ward_shell/self_lattice tick-convention
             // correction (Zig's header.tick is already TS's tick+1 at
             // dispatch time, and Zig consumption sites compare against the
@@ -3683,8 +3795,10 @@ fn stepMeleeSwing(
         //    kindledResolve WITHOUT rally — grep World.ts: the rally amp's
         //    only call sites are resolveRangedHit :1844 and the AOE
         //    resolver :4861, despite :1844's own "bash/slash/edge" prose —
-        //    so its absence HERE is exact TS parity, not a stub), and team
-        //    peel (its own Z1 item). kindledResolveDamageMultiplier/
+        //    so its absence HERE is exact TS parity, not a stub). Team peel
+        //    is NO LONGER in this list either (Track Z1c "team peel" item)
+        //    — see the health-write site just below this if/else.
+        //    kindledResolveDamageMultiplier/
         //    applyKindledResolveStaggerResist are NO LONGER in this
         //    "unreachable" list (Phase 4a follow-up, this pass) — see the
         //    generic post-class-switch block below, right after this
@@ -3741,6 +3855,15 @@ fn stepMeleeSwing(
         if (attacker.kindled_resolve_until_tick > state.header.tick) {
             final_damage *= KIN_KINDLED_RESOLVE_DAMAGE_MULTIPLIER;
         }
+        // Team peel (Track Z1c "team peel" item — CLOSES this function's
+        // own "team peel (its own Z1 item)" note above): extends a nearby
+        // warding Paladin ally's Ward to cover this landed arc hit,
+        // matching World.ts's melee slash (:5592) / Kindled Edge (:6008)
+        // call sites exactly (both use the identical `applyTeamPeel(victim,
+        // ..., meleeIds, meleeTick)` shape this mirrors). See
+        // `applyTeamPeel`'s own doc comment for the "not yet gated on
+        // Kindled Ward's own self-mitigation" caveat.
+        final_damage = applyTeamPeel(state, vi, final_damage, state.header.tick);
 
         const new_health = @max(0.0, victim.health - final_damage);
         const was_alive = victim.flags.alive;
@@ -5720,6 +5843,16 @@ pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
                     }
                     break;
                 }
+                // Team peel (Track Z1c "team peel" item): extends a nearby
+                // warding Paladin ally's Ward to cover this hit, same gate
+                // as every other TS damage-resolution site (see
+                // `applyTeamPeel`'s own doc comment for the "not yet gated
+                // on Kindled Ward's own self-mitigation" caveat — that
+                // branch has no Zig mirror yet). Ordered right before the
+                // health write, matching World.ts's `resolveRangedHit`
+                // (team peel is its last mitigation step before `ev.damage
+                // = finalDamage`).
+                final_dmg = applyTeamPeel(state, ph2, final_dmg, state.header.tick);
                 // First-blood wager (Track Z0d): claimed by the round's
                 // first attacker-attributed hit that reaches the damage
                 // site — the parry/shield/i-frame branches above all

@@ -172,6 +172,26 @@ export function convertWasmEventsToTs(
         // own end-of-tick emission (World.ts:6807) reaches.
         if (victim) out.push({ t: "first-blood", playerId: victim });
         break;
+      case 17: {
+        // team_peel_absorbed (Track Z1c "team peel" item) — player_idx_a =
+        // the victim, player_idx_b = the warding Paladin ally, scalar =
+        // damage blocked. `kindlingGranted` is NOT a separate wasm payload
+        // slot (world_state.zig's SimEventKind.team_peel_absorbed doc
+        // comment) — it always equals `damageBlocked` exactly
+        // (KINDLING_PER_DAMAGE_BLOCKED is a fixed 1.0 multiplier both
+        // sides share), so it's derived here rather than carried.
+        const warder = pidByIdx(e.playerIdxB);
+        if (victim && warder) {
+          out.push({
+            t: "team-peel-absorbed",
+            victimId: victim,
+            warderId: warder,
+            damageBlocked: e.scalar,
+            kindlingGranted: e.scalar,
+          });
+        }
+        break;
+      }
     }
   }
   return out;
