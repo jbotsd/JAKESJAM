@@ -718,6 +718,7 @@ export class OnlineMatchScene extends Phaser.Scene {
           danceEnergy: info.danceEnergy,
           idleDanceMs: info.idleDanceMs,
           danceRaise: info.danceRaise,
+          impact: info.impact,
         });
       }
       return rows;

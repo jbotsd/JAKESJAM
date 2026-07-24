@@ -22,7 +22,8 @@ describe("chassis parameterization (rows 3-8, both columns)", () => {
     expect(k.pairStopKillMs).toBe(150);
     expect(k.victimKillHoldMul).toBe(1.5);
     expect(k.holdCapMs).toBe(250);
-    expect(k.vibrationPx).toBe(2.5);
+    // K5 live-tape retune: ±2.5 was sub-legible at real arena zoom.
+    expect(k.vibrationPx).toBe(3.5);
     expect(k.flashInMs).toBe(50);
     expect(k.flashOutMs).toBe(50);
     expect(k.flinchPx).toBe(7);

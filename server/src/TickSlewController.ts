@@ -21,8 +21,19 @@ const TARGET_LEAD_TICKS = 2;
 /** Rolling window of samples kept per player. */
 const WINDOW_SAMPLES = 30;
 
-/** Maximum adjustment magnitude per snapshot, in ms. */
+/** Maximum adjustment magnitude per snapshot, in ms (steady-state). */
 const MAX_SLEW_MS_PER_TICK = 1;
+
+/** Recovery mode (2026-07-24, kindled live tape): a client wedged FAR out
+ *  of the input window (e.g. the server's own loop fell behind wall-clock
+ *  under load and the client raced ahead of TICK_FUTURE_BOUND) needs more
+ *  than 1ms/snapshot to ever come home — at 1ms it loses the race against
+ *  ongoing drift and stays wedged forever. Past RECOVERY_ERROR_TICKS of
+ *  mean error the clamp widens to RECOVERY_MAX_SLEW_MS, which matches the
+ *  client's own 1ms-per-tick budget drain cap (~60ms/s) — the fastest the
+ *  client can actually apply, so anything larger is wasted. */
+const RECOVERY_ERROR_TICKS = 10;
+const RECOVERY_MAX_SLEW_MS = 3;
 
 /**
  * Arrival delta within ±DEAD_BAND_TICKS of the target is considered
@@ -113,9 +124,12 @@ export class TickSlewController {
     // Therefore negate: rawMs = -error * STEP_MS.
     const rawMs = -error * STEP_MS;
 
-    // Clamp to ±MAX_SLEW_MS_PER_TICK before EMA so extreme outliers don't
-    // contaminate the smooth signal.
-    const clampedRaw = Math.max(-MAX_SLEW_MS_PER_TICK, Math.min(MAX_SLEW_MS_PER_TICK, rawMs));
+    // Steady-state clamp, widened in recovery mode (see the constant's doc
+    // comment) so a far-out-of-window client actually converges.
+    const cap = Math.abs(error) > RECOVERY_ERROR_TICKS ? RECOVERY_MAX_SLEW_MS : MAX_SLEW_MS_PER_TICK;
+
+    // Clamp before EMA so extreme outliers don't contaminate the smooth signal.
+    const clampedRaw = Math.max(-cap, Math.min(cap, rawMs));
 
     // EMA smoothing.
     let smoothed: number;
@@ -128,6 +142,6 @@ export class TickSlewController {
     s.emaMs = smoothed;
 
     // Clamp the smoothed result too (EMA can't exceed the raw cap, but be safe).
-    return Math.max(-MAX_SLEW_MS_PER_TICK, Math.min(MAX_SLEW_MS_PER_TICK, smoothed));
+    return Math.max(-cap, Math.min(cap, smoothed));
   }
 }

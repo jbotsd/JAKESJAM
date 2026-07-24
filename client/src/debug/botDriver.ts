@@ -31,11 +31,23 @@ export type BotGoal = {
    * then releases until the token changes again.
    */
   parryToken?: number;
+  /**
+   * Pursuit jumping (2026-07-24, kindled live tape): while moveTowardFoe
+   * is chasing, pulse Jump when progress stalls (pylons/ledges) or the foe
+   * sits meaningfully above. Melee classes can't reach anyone without it —
+   * the horizontal-only walk wedges on the first collision box.
+   */
+  hopWhenStuck?: boolean;
 };
 
 let goal: BotGoal | null = null;
 let lastParryToken = 0;
 let parryHoldFrames = 0;
+// hopWhenStuck memory — module-level like the parry latch above.
+let lastSelfX = 0;
+let lastProgressAt = 0;
+let jumpHoldFrames = 0;
+let lastJumpAt = 0;
 
 type BotWindow = { __setBotInput?: (g: BotGoal | null) => void };
 
@@ -83,9 +95,28 @@ export function computeBotInput(
   if (foe && goal.moveTowardFoe) {
     const stopRange = goal.stopRangePx ?? 220;
     const dx = foe.x - self.x;
-    if (Math.abs(dx) > stopRange) {
+    const walking = Math.abs(dx) > stopRange;
+    if (walking) {
       keys |= dx > 0 ? InputBit.Right : InputBit.Left;
     }
+    if (goal.hopWhenStuck) {
+      const now = performance.now();
+      if (Math.abs(self.x - lastSelfX) > 4) {
+        lastSelfX = self.x;
+        lastProgressAt = now;
+      }
+      const stalled = walking && now - lastProgressAt > 450;
+      const foeAbove = foe.y < self.y - 60 && Math.abs(dx) < 480;
+      if ((stalled || foeAbove) && now - lastJumpAt > 650 && jumpHoldFrames === 0) {
+        jumpHoldFrames = 5;
+        lastJumpAt = now;
+        lastProgressAt = now; // give the hop a beat before re-triggering
+      }
+    }
+  }
+  if (jumpHoldFrames > 0) {
+    jumpHoldFrames -= 1;
+    keys |= InputBit.Jump;
   }
   if (goal.fire) keys |= InputBit.Fire;
   if (goal.shield) keys |= InputBit.Shield;

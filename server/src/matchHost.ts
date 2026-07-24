@@ -1092,6 +1092,19 @@ export class MatchHost {
     const TICK_FUTURE_BOUND = 30;
     const minTick = Math.max(0, serverTick - TICK_PAST_BOUND);
     const maxTick = serverTick + TICK_FUTURE_BOUND;
+    // Record the slew sample BEFORE the window check (2026-07-24 fix, found
+    // on the kindled live tape): a client whose clock drifted past
+    // TICK_FUTURE_BOUND had 100% of its inputs dropped BEFORE recordInput
+    // ran, so the slew controller had zero samples from it, computeAdjustMs
+    // stayed 0, and the client never received the slow-down hint that would
+    // walk it back into the window — a PERMANENT wedge (player stands at
+    // spawn, unevictable because each rejected input refreshes liveness).
+    // Out-of-window arrivals are exactly the samples the slew controller
+    // exists to see; the input itself is still dropped below.
+    this.tickSlew.recordInput(playerId, {
+      serverTick: this.state.tick,
+      inputTick: input.tick,
+    });
     if (input.tick < minTick || input.tick > maxTick) {
       // Drop the input entirely. Logging is throttled to avoid log spam from
       // a client whose clock is way off — once per second per player is enough.
@@ -1124,11 +1137,7 @@ export class MatchHost {
     // Memory bound between ticks; the tick-side soft-cap drain does the
     // real flow control (and acks what it drops).
     while (queue.length > INPUT_QUEUE_MAX_DEPTH) queue.shift();
-    // Record slew sample: server tick vs. the tick the client stamped this input.
-    this.tickSlew.recordInput(playerId, {
-      serverTick: this.state.tick,
-      inputTick: input.tick,
-    });
+    // (Slew sample already recorded above, ahead of the window check.)
   }
 
   private maybeStartLoop(): void {
