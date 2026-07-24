@@ -211,10 +211,30 @@ already pass.
   full-sync; (b) player_equipped_actives zero-filled per pack — no
   ability castable at all on the live wasm path; (c) client
   runWasmStepSync writes fire configs BEFORE pack (server does it after,
-  correctly). Still open on the Z1 list: team peel, ninja dash i-frames,
-  Kindled Ward partial mitigation, hitscan resolution (+ headshot band),
-  six-axes axis payloads; Aegis Share's team-peel READER lands with the
-  team-peel item (window is bridged and cast-live already).
+  correctly). **Z1c DONE (partial) 2026-07-24** — hitscan resolution +
+  headshot band CLOSED (two commits, 8f66981/2a57677): ResolvedFireConfig
+  grew 248->256B for a bridged `delivery` byte (priest/paladin class-gated
+  base delivery, matching baseWeaponForClass), world.zig's fire site now
+  branches on it — `resolveHitscanFire`/`applyHitscanHitOnPlayer` mirror
+  TS's resolveHitscanShot/resolveRangedHit (headshot/chaos/vulnerability/
+  ward/parry/Self-Lattice/shield/first-blood/elemental, same-tick,
+  bit-for-bit per hitscanResolveParity.test.ts); Z1a's pinned 92-vs-90.4
+  headshot gap flipped to real equality via combat.zig's
+  isHeadshotAtHalfHeight. DOCUMENTED v1 scope cuts (in world.zig's new
+  section header, not silent): no decoy/destructible hitscan candidates,
+  no split-spawn, no impact-AOE routing, no mirror-shield retrace, no
+  shooter-side amp chain (Facet Break/Focus Hex/Rally Light/Kindled
+  Resolve/Ghost Guard) on the hitscan path yet. Contagion self-jump guard
+  (item 6, ride-along) also closed: TS's scan let a Priest re-ignite
+  themselves in FFA; Zig already had the guard, TS didn't. Meter: MIXED,
+  reported honestly, not spun as a clean win — 3 seeds tightened, 2
+  worsened (seed=271828 360.6->437.9px), one seed's biggest single swing
+  in the file's history (seed=90210 762.7->274.2px). Still open on the
+  Z1 list: team peel, ninja dash i-frames, Kindled Ward partial
+  mitigation, six-axes axis payloads — each judged to need item-1-grade
+  investigation depth, deliberately not rushed. Aegis Share's team-peel
+  READER lands with the team-peel item (window is bridged and cast-live
+  already).
 - Z1b: **DONE** 2026-07-24 — the whole remaining wipe-on-repack substrate,
   three commits: (a) the [384,620) ability-window tail bridged
   field-level (28 comptime offset asserts; abilityWindowBridge.test.ts —
