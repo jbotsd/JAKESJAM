@@ -663,11 +663,42 @@ fn applyHitscanHitOnPlayer(
         }
     }
 
+    var kindled_warded = false;
     shield_block: {
         if (syz_ward_consumed) break :shield_block;
         if (!(state.players[victim_idx].flags.shield_active and
             state.players[victim_idx].flags.has_shield_charge and
             state.players[victim_idx].shield_charge > 0)) break :shield_block;
+        // Kindled Ward (Paladin) — REPLACES the generic mitigation below
+        // entirely for this class (Track Z1c "Kindled Ward partial
+        // mitigation" item), matching combat.ts's `tryDeflectDamage`
+        // exactly: partial (60%) if the source is in the player's own
+        // frontal cone, full damage with NO charge drain if not (an
+        // unwarded hit costs nothing to the bar either way). The "source"
+        // is the MUZZLE origin, same as the parry check above. `kindled_
+        // warded` gates team peel below — TS's own peel call is `if
+        // (!mitigation.warded)`, so an already-Warded hit never ALSO peels.
+        if (state.players[victim_idx].character_id == .heavy) {
+            const vp = &state.players[victim_idx];
+            const dx_aim = vp.aim_x - vp.x;
+            const dy_aim = vp.aim_y - vp.y;
+            const facing = if (dx_aim == 0.0 and dy_aim == 0.0) 0.0 else trig.lutAtan2(dy_aim, dx_aim);
+            const in_cone = combat.isSourceInWardCone(vp.x, vp.y, facing, origin_x, origin_y);
+            const mit = combat.computeKindledWardMitigation(final_dmg, in_cone);
+            if (mit.applies) {
+                vp.kindling = @min(KINDLING_MAX, vp.kindling + mit.kindling_granted);
+                kindled_warded = true;
+            }
+            final_dmg = mit.damage;
+            break :shield_block; // no charge drain either way — fall through to the health write below.
+        }
+        // Ninja/Interstice — LOCKED doctrine (docs/character-sheets-v1.md:
+        // "Dash i-frames only — never block"): held Shield still drains/
+        // recharges the charge economy via `tickShield` (untouched), but
+        // never mitigates a single point of damage. Simplest possible
+        // branch — fall straight through, byte-identical to
+        // shield_active===false.
+        if (state.players[victim_idx].character_id == .sprinter) break :shield_block;
         // Aim shield: only blocks hits arriving within the aim cone;
         // flank/back shots pass through to damage below.
         if (vcfg.valid != 0 and vcfg.directional_shield != 0) {
@@ -706,7 +737,11 @@ fn applyHitscanHitOnPlayer(
     // Team peel (Track Z1c "team peel" item) — same site/gate as the real-
     // projectile path immediately above in this file (both mirror TS's
     // shared `resolveRangedHit`); see `applyTeamPeel`'s own doc comment.
-    final_dmg = applyTeamPeel(state, victim_idx, final_dmg, state.header.tick);
+    // Gated on `!kindled_warded` (Track Z1c "Kindled Ward partial
+    // mitigation" item) — TS's own peel call is `if (!mitigation.warded)`.
+    if (!kindled_warded) {
+        final_dmg = applyTeamPeel(state, victim_idx, final_dmg, state.header.tick);
+    }
     maybeAwardFirstBlood(state, shooter_idx, @intCast(victim_idx), is_fighting);
     state.players[victim_idx].health -= final_dmg;
     emitEvent(
@@ -1159,8 +1194,6 @@ fn emitEvent(
 /// exactly the "large port" this pass's scoping asked NOT to take on):
 ///   - Syzygist Ward (already flagged TS-owned/TS-applied on its own field
 ///     comment, world_state.zig's syz_ward_absorb_until_tick)
-///   - Paladin Kindled Ward's partial-mitigation branch (combat.ts's
-///     `classIdForArchetype(...) === "paladin"` shield branch)
 ///   - fooledDamageMultiplier (reads a TS-only fooledUntilTick field with
 ///     no Zig mirror). rallyLightDamageMultiplier is NO LONGER stubbed
 ///     here (Track Z1a item 3) — the ally substrate landed and this
@@ -1189,7 +1222,14 @@ fn emitEvent(
 /// dash i-frames (Track Z1c "ninja dash i-frames" item) are NO LONGER
 /// stubbed either — `isNinjaEvading` (near `isAlly`) is checked ahead of
 /// Ghost Guard in this function's own damage block, the real-projectile
-/// site, the hitscan site, and `stepMeleeSwing`.
+/// site, the hitscan site, and `stepMeleeSwing`. Paladin Kindled Ward's
+/// partial-mitigation branch (Track Z1c "Kindled Ward partial mitigation"
+/// item) is ALSO no longer stubbed — `combat.isSourceInWardCone`/
+/// `combat.computeKindledWardMitigation` REPLACE the generic shield block
+/// in this function's own damage block (and at the real-projectile/
+/// hitscan/melee sites) for a Paladin specifically; Ninja is EXCLUDED from
+/// the generic block too (LOCKED doctrine: shield never mitigates for that
+/// class).
 pub fn resolveInstantAoeCasts(
     state: *world_state.WorldState,
     casts: []const world_state.PendingInstantAoe,
@@ -1250,15 +1290,56 @@ pub fn resolveInstantAoeCasts(
             // health below.
             const nominal: f64 = if (cast.damage > 0) cast.damage else 1.0;
 
-            // Generic shield block (see the doc comment above for exactly
-            // which mitigation steps this does and doesn't cover). Full
-            // block, no overflow carry — matches combat.ts's shield branch
-            // exactly (always `damage: 0` on block, never a partial-charge
-            // remainder).
+            // Kindled Ward (Paladin) — REPLACES the generic shield block
+            // below entirely for this class (Track Z1c "Kindled Ward
+            // partial mitigation" item): partial (60%) if the cast origin
+            // (`cast.x/cast.y` — the caster's position at cast time, this
+            // struct's own `attackerPos` equivalent) is in the player's own
+            // frontal cone, full damage with NO charge drain if not.
+            // `kindled_warded` gates team peel below (TS: `if
+            // (!mitigation.warded)`). Only meaningful when `cast.damage >
+            // 0` (a status-only entry has no real damage to mitigate), but
+            // computed unconditionally alongside the shield-active gate,
+            // matching the "nominal 1 damage" trick's own scope.
+            var kindled_warded = false;
+            // Nominal-damage-carrying seed for the health write below —
+            // `nominal` unmodified unless Kindled Ward mitigates it
+            // (nominal === cast.damage whenever cast.damage > 0, per this
+            // block's own definition above, so mitigating `nominal` here
+            // and reading it back below is exactly equivalent to
+            // mitigating `cast.damage` directly — no separate recompute
+            // needed).
+            var damage_after_ward = nominal;
             if (victim.flags.shield_active and
                 victim.flags.has_shield_charge and
-                victim.shield_charge > 0)
+                victim.shield_charge > 0 and
+                victim.character_id == .heavy)
             {
+                const dx_aim = victim.aim_x - victim.x;
+                const dy_aim = victim.aim_y - victim.y;
+                const facing = if (dx_aim == 0.0 and dy_aim == 0.0) 0.0 else trig.lutAtan2(dy_aim, dx_aim);
+                const in_cone = combat.isSourceInWardCone(victim.x, victim.y, facing, cast.x, cast.y);
+                const mit = combat.computeKindledWardMitigation(nominal, in_cone);
+                if (mit.applies) {
+                    victim.kindling = @min(KINDLING_MAX, victim.kindling + mit.kindling_granted);
+                    kindled_warded = true;
+                }
+                damage_after_ward = mit.damage;
+                // no charge drain either way — fall through to `cast.damage
+                // > 0` below.
+            } else if (victim.flags.shield_active and
+                victim.flags.has_shield_charge and
+                victim.shield_charge > 0 and
+                victim.character_id != .sprinter)
+            {
+                // Generic shield block (wizard/priest — see the doc
+                // comment above for exactly which mitigation steps this
+                // does and doesn't cover). Full block, no overflow carry —
+                // matches combat.ts's shield branch exactly (always
+                // `damage: 0` on block, never a partial-charge remainder).
+                // Ninja/Interstice is EXCLUDED here (LOCKED doctrine: shield
+                // never mitigates) — falls straight through unmitigated,
+                // same as `shield_active===false`.
                 victim.shield_charge -= nominal * combat.SHIELD_HIT_DRAIN_MULTIPLIER;
                 if (victim.shield_charge <= 0) {
                     victim.shield_charge = 0;
@@ -1271,7 +1352,7 @@ pub fn resolveInstantAoeCasts(
             }
 
             if (cast.damage > 0) {
-                var final_dmg = cast.damage;
+                var final_dmg = damage_after_ward;
                 // Rally Light (Track Z1a item 3) — caster-side amp,
                 // matches World.ts:4861's `finalDamage *=
                 // rallyLightDamageMultiplier(liveCaster, players, aoeTick)`
@@ -1292,10 +1373,12 @@ pub fn resolveInstantAoeCasts(
                 // function's own STUBBED-list entry above): extends a
                 // nearby warding Paladin ally's Ward to cover this AOE hit,
                 // matching World.ts:5064's `applyTeamPeel(victim, ...)`
-                // call in `resolveInstantAoeCasts` exactly. See
-                // `applyTeamPeel`'s own doc comment for the "not yet gated
-                // on Kindled Ward's own self-mitigation" caveat.
-                final_dmg = applyTeamPeel(state, vi, final_dmg, tick);
+                // call in `resolveInstantAoeCasts` exactly. Gated on
+                // `!kindled_warded` (Track Z1c "Kindled Ward partial
+                // mitigation" item) — TS: `if (!mitigation.warded)`.
+                if (!kindled_warded) {
+                    final_dmg = applyTeamPeel(state, vi, final_dmg, tick);
+                }
                 const new_health = @max(0.0, victim.health - final_dmg);
                 const was_alive = victim.flags.alive;
                 victim.health = new_health;
@@ -1438,11 +1521,14 @@ pub fn resolveInstantAoeCasts(
 // `projectile !== null` guard), so an equipped directional shield fully
 // blocks a melee hit from ANY angle, not just the front — exactly the same
 // port resolveInstantAoeCasts already made for AOE casts. Paladin's
-// Kindled Ward (a PARTIAL mitigation, not the generic 100% block) still has
-// NO Zig implementation anywhere (not in section 4's projectile path, not
-// in resolveInstantAoeCasts, not here) — this port stays consistent with
-// that pre-existing gap rather than becoming the first path to invent
-// paladin-aware mitigation math. Syzygist Ward (Self-Lattice, this pass)
+// Kindled Ward (a PARTIAL mitigation, not the generic 100% block) is NO
+// LONGER unimplemented (Track Z1c "Kindled Ward partial mitigation" item)
+// — `combat.isSourceInWardCone`/`combat.computeKindledWardMitigation`
+// REPLACE the generic shield block below for a Paladin specifically, at
+// this site AND section 4's projectile path AND resolveInstantAoeCasts
+// (all three now consistent); Ninja is EXCLUDED from the generic block
+// too (LOCKED doctrine: shield never mitigates for that class). Syzygist
+// Ward (Self-Lattice, this pass)
 // is DIFFERENT from Kindled Ward in exactly this respect: verified
 // directly against combat.ts, `trySyzygistWard`'s branch inside
 // `tryDeflectDamage` (1.7) has NO `projectile !== null` guard — unlike
@@ -2198,10 +2284,12 @@ fn findTeamPeelWarderIdx(state: *const world_state.WorldState, victim_idx: u32, 
 /// on a hit no OTHER mitigation already fully handled — self-Ward/Self-
 /// Lattice, parry, and the generic shield are all upstream, higher-
 /// priority outcomes that already `continue`/`break` before reaching this
-/// point at every site below. NOT yet gated on Kindled Ward's own self-
-/// mitigation branch (`!mitigation.warded` in TS) — that branch has no Zig
-/// mirror yet (a separate, still-open Z1 item); once it lands, every call
-/// site below needs the same gate TS already has.
+/// point at every site below. Callers ALSO gate this on their own local
+/// "was this hit already covered by Kindled Ward's self-mitigation"
+/// tracking (Track Z1c "Kindled Ward partial mitigation" item — matches
+/// TS's `if (!mitigation.warded)` at every one of its own peel call
+/// sites), since `applyTeamPeel` itself has no visibility into whether the
+/// victim's OWN Ward already ran at this call site.
 fn applyTeamPeel(state: *world_state.WorldState, victim_idx: u32, raw_damage: f64, tick: u32) f64 {
     if (raw_damage <= 0) return raw_damage;
     const warder_idx = findTeamPeelWarderIdx(state, victim_idx, tick);
@@ -2981,25 +3069,25 @@ fn stepAbilityDispatch(
             // verified gap among the 7, deferred alone rather than blocking
             // the other 6 on it, per doctrine #4's "partial-but-correct
             // beats all-or-nothing."
-            // CAST side deliberately STILL a no-op, for a DIFFERENT reason
-            // than before: TS's own "kindled-resolve" case (World.ts:3543-
-            // 3563) gates the cast on `nextEntity.kindling >=
-            // KIN_KINDLED_RESOLVE_KINDLING_COST` (40) — a real spendable
-            // resource, `kindling` (PlayerEntity.kindling, world_state.zig)
-            // already exists as a Zig field, but is documented (its own doc
-            // comment) as "TS-owned... mutated ONLY by TS combat.ts's
-            // Kindled Ward branch of tryDeflectDamage" — grepped directly,
-            // ZERO writes to `.kindling` exist anywhere in sim/src/, so it
-            // is permanently 0 in step_world today (Kindled Ward's own
-            // block-grant accrual isn't ported). Wiring the cast now would
-            // gate on a resource that can never be nonzero — a dead press
-            // forever, not a real ability — the exact "write a check
-            // nothing can ever satisfy" inversion of doctrine #4's usual
-            // "write a field nothing reads" hazard. `kindled_resolve_
-            // until_tick` (the new field this pass added) is proven correct
-            // by tests that set it directly, same as a future pass wiring
-            // Kindled Ward's kindling accrual would need anyway — that pass
-            // lights up the cast for free once it lands.
+            // CAST side deliberately STILL a no-op — UPDATED FINDING (Track
+            // Z1c "team peel" + "Kindled Ward partial mitigation" items):
+            // when this comment was first written, ZERO writes to
+            // `.kindling` existed anywhere in sim/src/, so it was
+            // permanently 0 and gating the cast on `nextEntity.kindling >=
+            // KIN_KINDLED_RESOLVE_KINDLING_COST` (40, World.ts:3543-3563)
+            // would have been a dead press forever. That's no longer true:
+            // `applyTeamPeel` (a warder's own block) AND
+            // `combat.computeKindledWardMitigation` (a Paladin's own
+            // self-Ward block, this item) both now grant real Kindling in
+            // Zig, so the resource CAN climb past 40 in a live match. Wiring
+            // the cast itself (spending the resource, opening
+            // `kindled_resolve_until_tick`) is still out of THIS item's
+            // scope — a distinct ability-cast port, not a mitigation-math
+            // port — but is no longer blocked on missing substrate; a
+            // future pass can wire it directly. `kindled_resolve_
+            // until_tick` (the field this earlier pass added) is proven
+            // correct by tests that set it directly, same shape that pass
+            // needs.
             .kindled_resolve => {}, // consumption shipped, cast genuinely blocked — see comment above
             .bulwark_step => {
                 // Phase 4c — same search SHAPE as Plant Charge above, but
@@ -3812,11 +3900,36 @@ fn stepMeleeSwing(
             }
         }
 
-        // Generic shield mitigation — see this section's own doc comment
-        // for why parry/directional-facing/Kindled-Ward are all correctly
-        // absent here. Skipped entirely when Syzygist Ward already
-        // consumed this hit above (mutual exclusivity, matches TS).
-        if (!syz_ward_consumed and victim.flags.shield_active and victim.flags.has_shield_charge and victim.shield_charge > 0) {
+        // Kindled Ward (Paladin) — REPLACES the generic shield mitigation
+        // below entirely for this class (Track Z1c "Kindled Ward partial
+        // mitigation" item — this section's own doc comment used to say
+        // Kindled Ward had "NO Zig implementation anywhere"). The "source"
+        // for melee's null-projectile hit is the ATTACKER's own CURRENT
+        // position, matching TS's melee call site's `attackerPos: {x:
+        // attacker.x, y: attacker.y}` exactly. `kindled_warded` gates team
+        // peel below (TS: `if (!mitigation.warded)`). Skipped entirely
+        // when Syzygist Ward already consumed this hit above (mutual
+        // exclusivity, matches TS).
+        var kindled_warded = false;
+        if (!syz_ward_consumed and victim.flags.shield_active and victim.flags.has_shield_charge and victim.shield_charge > 0 and victim.character_id == .heavy) {
+            const dx_aim = victim.aim_x - victim.x;
+            const dy_aim = victim.aim_y - victim.y;
+            const facing = if (dx_aim == 0.0 and dy_aim == 0.0) 0.0 else trig.lutAtan2(dy_aim, dx_aim);
+            const in_cone = combat.isSourceInWardCone(victim.x, victim.y, facing, attacker.x, attacker.y);
+            const mit = combat.computeKindledWardMitigation(damage_after_ward, in_cone);
+            if (mit.applies) {
+                victim.kindling = @min(KINDLING_MAX, victim.kindling + mit.kindling_granted);
+                kindled_warded = true;
+            }
+            damage_after_ward = mit.damage;
+            // no charge drain either way — falls through to the ability-
+            // card hooks / health write below.
+        } else if (!syz_ward_consumed and victim.flags.shield_active and victim.flags.has_shield_charge and victim.shield_charge > 0 and victim.character_id != .sprinter) {
+            // Generic shield mitigation (wizard/priest — see this
+            // section's own doc comment for why parry/directional-facing
+            // are correctly absent here). Ninja/Interstice is EXCLUDED
+            // (LOCKED doctrine: shield never mitigates) — falls straight
+            // through unmitigated, same as shield_active===false.
             victim.shield_charge -= damage_after_ward * combat.SHIELD_HIT_DRAIN_MULTIPLIER;
             if (victim.shield_charge <= 0) {
                 victim.shield_charge = 0;
@@ -3912,10 +4025,12 @@ fn stepMeleeSwing(
         // warding Paladin ally's Ward to cover this landed arc hit,
         // matching World.ts's melee slash (:5592) / Kindled Edge (:6008)
         // call sites exactly (both use the identical `applyTeamPeel(victim,
-        // ..., meleeIds, meleeTick)` shape this mirrors). See
-        // `applyTeamPeel`'s own doc comment for the "not yet gated on
-        // Kindled Ward's own self-mitigation" caveat.
-        final_damage = applyTeamPeel(state, vi, final_damage, state.header.tick);
+        // ..., meleeIds, meleeTick)` shape this mirrors). Gated on
+        // `!kindled_warded` (Track Z1c "Kindled Ward partial mitigation"
+        // item) — TS: `if (!mitigation.warded)`.
+        if (!kindled_warded) {
+            final_damage = applyTeamPeel(state, vi, final_damage, state.header.tick);
+        }
 
         const new_health = @max(0.0, victim.health - final_damage);
         const was_alive = victim.flags.alive;
@@ -5849,11 +5964,40 @@ pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
                 // mitigation handled in a follow-on cut once
                 // shield-vs-direct-damage is wired into the
                 // model).
+                var kindled_warded = false;
                 shield_block: {
                     if (syz_ward_consumed) break :shield_block;
                     if (!(state.players[ph2].flags.shield_active and
                         state.players[ph2].flags.has_shield_charge and
                         state.players[ph2].shield_charge > 0)) break :shield_block;
+                    // Kindled Ward (Paladin) — REPLACES the generic
+                    // mitigation below entirely for this class (Track Z1c
+                    // "Kindled Ward partial mitigation" item), matching
+                    // combat.ts's `tryDeflectDamage` exactly: partial (60%)
+                    // if the source (the LIVE projectile position, unlike
+                    // hitscan's muzzle-origin proxy) is in the player's own
+                    // frontal cone, full damage with NO charge drain if
+                    // not. `kindled_warded` gates team peel below (TS:
+                    // `if (!mitigation.warded)`).
+                    if (state.players[ph2].character_id == .heavy) {
+                        const vp = &state.players[ph2];
+                        const dx_aim = vp.aim_x - vp.x;
+                        const dy_aim = vp.aim_y - vp.y;
+                        const facing = if (dx_aim == 0.0 and dy_aim == 0.0) 0.0 else trig.lutAtan2(dy_aim, dx_aim);
+                        const in_cone = combat.isSourceInWardCone(vp.x, vp.y, facing, proj_ptr.x, proj_ptr.y);
+                        const mit = combat.computeKindledWardMitigation(final_dmg, in_cone);
+                        if (mit.applies) {
+                            vp.kindling = @min(KINDLING_MAX, vp.kindling + mit.kindling_granted);
+                            kindled_warded = true;
+                        }
+                        final_dmg = mit.damage;
+                        break :shield_block; // no charge drain either way — fall through below.
+                    }
+                    // Ninja/Interstice — LOCKED doctrine: shield never
+                    // mitigates (dash i-frames are Ninja's only defense
+                    // verb). Fall straight through, byte-identical to
+                    // shield_active===false.
+                    if (state.players[ph2].character_id == .sprinter) break :shield_block;
                     // Aim shield: only blocks hits arriving within the aim cone;
                     // flank/back shots pass through to damage below.
                     if (vcfg.valid != 0 and vcfg.directional_shield != 0) {
@@ -5906,14 +6050,15 @@ pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
                 }
                 // Team peel (Track Z1c "team peel" item): extends a nearby
                 // warding Paladin ally's Ward to cover this hit, same gate
-                // as every other TS damage-resolution site (see
-                // `applyTeamPeel`'s own doc comment for the "not yet gated
-                // on Kindled Ward's own self-mitigation" caveat — that
-                // branch has no Zig mirror yet). Ordered right before the
-                // health write, matching World.ts's `resolveRangedHit`
-                // (team peel is its last mitigation step before `ev.damage
-                // = finalDamage`).
-                final_dmg = applyTeamPeel(state, ph2, final_dmg, state.header.tick);
+                // as every other TS damage-resolution site. Gated on
+                // `!kindled_warded` (Track Z1c "Kindled Ward partial
+                // mitigation" item) — TS: `if (!mitigation.warded)`.
+                // Ordered right before the health write, matching
+                // World.ts's `resolveRangedHit` (team peel is its last
+                // mitigation step before `ev.damage = finalDamage`).
+                if (!kindled_warded) {
+                    final_dmg = applyTeamPeel(state, ph2, final_dmg, state.header.tick);
+                }
                 // First-blood wager (Track Z0d): claimed by the round's
                 // first attacker-attributed hit that reaches the damage
                 // site — the parry/shield/i-frame branches above all

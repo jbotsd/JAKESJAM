@@ -506,6 +506,77 @@ pub fn computeTeamPeelMitigation(damage: f64) TeamPeelMitigation {
     };
 }
 
+// =================================================================
+// Kindled Ward SELF-mitigation (Track Z1c "Kindled Ward partial
+// mitigation" item) — bit-exact port of combat.ts's `tryDeflectDamage`
+// step 2 paladin branch (docs/classes-goal.md: "Defense IS the engine"
+// for Kindled/Ward). DIFFERENT from team peel above: this is the
+// PALADIN'S OWN held-Shield mitigation on a hit landing on THEMSELVES,
+// not extending their block to a nearby ally. Before this item, every
+// world.zig damage site applied the GENERIC 100%-block-and-drain-charge
+// shield behavior uniformly regardless of class — a real, live gameplay
+// divergence: a Zig paladin took ZERO damage from any hit their generic
+// shield covered (omnidirectional, no cone check) instead of the intended
+// 60%-mitigated/Kindling-economy trade gated on facing the threat, AND a
+// Zig ninja's held shield incorrectly "blocked" too (TS: "Shield is
+// chassis-null for this class... must never mitigate a single point of
+// damage" — dash i-frames are Ninja's ONLY defense verb).
+
+/// True iff the damage SOURCE (an incoming projectile's position, or a
+/// caller-supplied attacker/muzzle position for a null-projectile melee/
+/// AOE hit) lies within `facing`'s WARD_ARC_RADIANS cone, anchored on the
+/// PLAYER'S OWN aim (NOT `isAllyBodyInWardCone`'s "ally's body in MY
+/// cone" question — this is "is the THREAT in front of me"). Bit-exact
+/// port of combat.ts's `isSourceInWardCone`: degenerate (source exactly
+/// at the player's position) fails closed — DELIBERATELY UNLIKE
+/// `isHitInArc`'s velocity fallback above; TS's own comment is explicit
+/// ("no direction info, no block" — a different geometric question from
+/// the parry/aim-shield arc checks that DO fall back to velocity).
+pub fn isSourceInWardCone(
+    player_x: f64,
+    player_y: f64,
+    facing: f64,
+    source_x: f64,
+    source_y: f64,
+) bool {
+    const dx = source_x - player_x;
+    const dy = source_y - player_y;
+    if (dx == 0.0 and dy == 0.0) return false;
+    const source_angle = trig.lutAtan2(dy, dx);
+    const delta = wrapAngle(source_angle - facing);
+    return @abs(delta) <= WARD_ARC_RADIANS / 2.0;
+}
+
+pub const KindledWardMitigation = struct {
+    /// True iff the hit was actually in-cone and mitigated (60% blocked,
+    /// Kindling granted). False means "out of cone: full damage, no
+    /// Kindling, shield/charge left completely untouched" (combat.ts's own
+    /// "an unwarded hit costs nothing to the bar either way") — `damage`
+    /// is still populated (unchanged) in that case so callers can use it
+    /// unconditionally.
+    applies: bool,
+    damage: f64,
+    kindling_granted: f64,
+};
+
+/// Kindled Ward's self-mitigation math — bit-exact port of combat.ts's
+/// paladin branch: 60% mitigated (WARD_MITIGATION_FRACTION), 1:1 Kindling
+/// (KINDLING_PER_DAMAGE_BLOCKED), NO extra shield-charge drain beyond
+/// `tickShield`'s own passive per-second cost of holding Ward (unlike the
+/// generic shield's 100%-block-but-charge-drains-per-hit economy — the
+/// partial damage getting through IS the per-hit cost). Caller has ALREADY
+/// confirmed `shield_active` + paladin class and resolved the cone check
+/// (`isSourceInWardCone`) — this is pure math on the two outcomes.
+pub fn computeKindledWardMitigation(damage: f64, in_cone: bool) KindledWardMitigation {
+    if (!in_cone) return .{ .applies = false, .damage = damage, .kindling_granted = 0 };
+    const blocked = damage * WARD_MITIGATION_FRACTION;
+    return .{
+        .applies = true,
+        .damage = damage - blocked,
+        .kindling_granted = blocked * KINDLING_PER_DAMAGE_BLOCKED,
+    };
+}
+
 /// Melee arc hit test — bit-exact port of World.ts's `isAABBInMeleeArc`
 /// (World.ts:707-734): sample the victim's AABB at its centre + 4 corners,
 /// hit if ANY sampled point is within `range` of `(origin_x, origin_y)` AND

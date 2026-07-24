@@ -382,10 +382,18 @@ pub const PlayerEntity = extern struct {
     /// Paladin/Kindred class-resource pool (2026-07-18, class-overhaul-
     /// workboard.md chunk 2.3, docs/classes-goal.md MANA section:
     /// "Resource: Kindling from blocked damage... Defense IS the engine").
-    /// Mutated ONLY by TS `combat.ts`'s Kindled Ward branch of
-    /// `tryDeflectDamage` — same TS-owned-resource contract as `energy`
-    /// above (physics step never touches it, just carries it through).
-    /// Appended after `team_id_bytes`: that field's own doc comment notes
+    /// Originally mutated ONLY by TS `combat.ts`'s Kindled Ward branch of
+    /// `tryDeflectDamage` (same TS-owned-resource contract as `energy`
+    /// above) — NO LONGER true (Track Z1c "team peel" + "Kindled Ward
+    /// partial mitigation" items): `world.zig`'s `applyTeamPeel` (a
+    /// warder's own block) and `combat.computeKindledWardMitigation`
+    /// (a Paladin's own self-Ward block, consumed at all four damage-
+    /// resolution sites) both grant real Kindling in Zig now, mirroring
+    /// TS's own two Kindling-granting sites. The `.kindled_resolve`
+    /// ABILITY CAST that SPENDS this resource is still TS-only (a
+    /// separate, still-open item — see world.zig's ability-dispatch
+    /// switch's own `.kindled_resolve` arm comment). Appended after
+    /// `team_id_bytes`: that field's own doc comment notes
     /// content ends at byte 321 with 7 bytes of IMPLICIT tail padding
     /// (321 → 328) purely because it used to be the last field. Adding
     /// `kindling` (f64, needs 8-byte alignment) reclaims that padding as

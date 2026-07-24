@@ -348,6 +348,35 @@
 // engines; three control cases — non-dashing Ninja, dashing non-Ninja —
 // prove the gate isn't an always-evade bug).
 //
+// Z1c "Kindled Ward partial mitigation" (2026-07-24), the FOURTH and final
+// item on the Z1 list: world.zig's new Paladin-specific branch inside
+// every "shield_active" check (`combat.isSourceInWardCone`/
+// `combat.computeKindledWardMitigation`), replacing the generic 100%-block
+// for Paladin (partial + Kindling, cone-gated) and excluding Ninja
+// entirely (shield never mitigates, dash i-frames only) at all four hit
+// sites:
+//
+//   BEFORE (ninja i-frames' after, unchanged): AFTER (Kindled Ward):
+//   seed=1     : final  376.5px (230) | final  376.5px (onset 230)
+//   seed=42    : final  247.5px (175) | final  247.5px (onset 175)
+//   seed=1337  : final  230.0px (249) | final  230.0px (onset 249)
+//   seed=90210 : final  274.2px (160) | final  274.2px (onset 160)
+//   seed=271828: final  437.9px (229) | final  437.9px (onset 229)
+//
+// VERDICT: byte-identical, EXPECTED — this harness's bots are all
+// "balanced" (wizard), never Paladin (heavy) or Ninja (sprinter), and the
+// PRE-EXISTING generic 100%-block path (Wizard/Priest) is explicitly
+// UNCHANGED by this item (proven by kindledWardMitigationParity.test.ts's
+// own regression case) — structurally invisible here. The real proof is
+// at its own gate: kindledWardMitigationParity.test.ts (a Paladin facing
+// the threat takes the mitigated 40% + banks Kindling identically on both
+// engines; three control cases — Paladin facing away, Ninja's shield,
+// Wizard's unaffected generic block — prove every gate, not a uniform
+// nerf/buff). This closes the Z1 list Z1c opened with six items (six-axes
+// axis payloads, team peel, ninja dash i-frames, Kindled Ward partial
+// mitigation, plus item 1's hitscan resolution + headshot band and the
+// contagion self-jump guard, both merged earlier) — zero remaining.
+//
 // If the sweep exceeds its bound, the per-seed record above is the
 // deliverable the next track consumes.
 //
