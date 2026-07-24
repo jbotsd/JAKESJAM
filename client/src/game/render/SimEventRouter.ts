@@ -213,6 +213,22 @@ export class SimEventRouter {
   private readonly renderTime: RenderTimeArbiter;
   private ownsRenderTime: boolean;
   private hitStopSequence = 0;
+  /** Melee pair-impact ledger, keyed by victim id (R1 rows 3-5): written
+   *  by slash-hit/bash-landed, consumed by the SAME tick's paired
+   *  hit-confirmed (suppresses the world-scope stop + the random flinch —
+   *  the pair rigs already spoke) and by a melee player-killed (upgrades
+   *  the hold to kill tier with the victim's 1.5x). Entries are
+   *  overwritten per victim and deleted on kill consumption. */
+  private readonly meleePairImpacts = new Map<
+    string,
+    {
+      dirX: number;
+      dirY: number;
+      chassis: "interstice" | "kindled";
+      suppressNextConfirm: boolean;
+      suppressNextConfirmAudio: boolean;
+    }
+  >();
   constructor(deps: SimEventRouterDeps) {
     this.deps = deps;
     this.renderTime = deps.renderTime ?? new RenderTimeArbiter(deps.scene);
@@ -261,11 +277,23 @@ export class SimEventRouter {
         break;
       }
       case "hit-confirmed": {
-        audio.play("hit", { intensity: Math.min(1, event.damage / 40) });
-        // Hit-stop: freeze render tweens for 35–50ms on a heavy hit.
-        // Per game-feel-juice/SKILL.md recipe 2 — render-only freeze, sim keeps ticking.
-        const stopMs = presentationBudget(event.damage >= 30 ? "heavy" : "hit").hitStopMs;
-        this.holdHitStop(stopMs);
+        // Melee pair-scope discipline (R1 row 3): when this confirm is the
+        // pair of a slash-hit/bash-landed dispatched THIS tick, the two
+        // rigs already own the stop/flinch — the world-scope hold and the
+        // random-direction flinch must NOT double-speak (and the bash's
+        // bass cue must not phase against a second generic hit cue).
+        const pairEntry = this.meleePairImpacts.get(event.victimId as string);
+        const pairScoped = event.sourceProjectileId === null && pairEntry?.suppressNextConfirm === true;
+        if (pairScoped && pairEntry) pairEntry.suppressNextConfirm = false;
+        if (!(pairScoped && pairEntry?.suppressNextConfirmAudio)) {
+          audio.play("hit", { intensity: Math.min(1, event.damage / 40) });
+        }
+        if (!pairScoped) {
+          // Hit-stop: freeze render tweens for 35–50ms on a heavy hit.
+          // Per game-feel-juice/SKILL.md recipe 2 — render-only freeze, sim keeps ticking.
+          const stopMs = presentationBudget(event.damage >= 30 ? "heavy" : "hit").hitStopMs;
+          this.holdHitStop(stopMs);
+        }
         if (event.victimId === d.localPlayerId) {
           const budget = presentationBudget("hit");
           d.safeShake(budget.shakeDurationMs, budget.shakeIntensity);
@@ -273,15 +301,40 @@ export class SimEventRouter {
         d.spawnDamageNumber(event.victimId, event.damage, event.headshot);
         d.spawnBlastAtPlayer(event.victimId, 22, event.damage);
         const victimRig = d.playerRigs.get(event.victimId);
-        if (victimRig) {
+        if (victimRig && !pairScoped) {
           const angle = Math.random() * Math.PI * 2;
           victimRig.triggerHit(Math.cos(angle), Math.sin(angle));
         }
         break;
       }
       case "player-killed": {
-        const killStopMs = presentationBudget("kill").hitStopMs;
-        this.holdHitStop(killStopMs);
+        // Melee kill (R1 row 4): upgrade the pair hold to kill tier — the
+        // victim rig holds 1.5x the attacker's (150ms/225ms for Kindled,
+        // 117ms/175ms for Interstice, capped 250ms) and the world-scope
+        // kill stop is skipped for the pair (zoom/cinematic still fire).
+        // Any non-melee kill keeps the world-tier stop unchanged.
+        const meleePair = event.killerId !== null && event.cause === "bash"
+          ? this.meleePairImpacts.get(event.victimId as string)
+          : undefined;
+        if (meleePair && event.killerId !== null) {
+          d.playerRigs.get(event.victimId)?.applyPairImpact?.(
+            "victim",
+            meleePair.dirX,
+            meleePair.dirY,
+            meleePair.chassis,
+            true,
+          );
+          d.playerRigs.get(event.killerId)?.applyPairImpact?.(
+            "attacker",
+            meleePair.dirX,
+            meleePair.dirY,
+            meleePair.chassis,
+            true,
+          );
+          this.meleePairImpacts.delete(event.victimId as string);
+        } else {
+          this.holdHitStop(presentationBudget("kill").hitStopMs);
+        }
         const killBudget = presentationBudget("kill");
         d.safeShake(killBudget.shakeDurationMs, killBudget.shakeIntensity);
         d.spawnBlastAtPlayer(event.victimId, 36, 50);
@@ -506,28 +559,56 @@ export class SimEventRouter {
         break;
       }
       case "slash-hit": {
-        // The landed-hit feedback (hit-stop, sound, damage number) already
-        // comes from the paired `hit-confirmed` event this same tick (see
-        // World.ts's NINJA MELEE section — every non-evaded slash-hit is
-        // always emitted alongside one). This event exists so fast-follow
-        // ninja-specific VFX (blade scrape / Read-tag flash) has a hook
-        // without re-deriving "was this hit a ninja slash" from
-        // hit-confirmed's generic shape.
+        // MELEE CONTACT CHORD (2026-07-24, R1 rows 3-8) — this event now
+        // OWNS the melee hit's feel: a PAIR-scoped stop on exactly the
+        // attacker+victim rigs (world tween clock untouched), with the
+        // victim's white-flash + directional flinch + squash + vibration
+        // riding the same impact clock inside the rig. Chassis params come
+        // from the ATTACKER's rig (Kindled hits at 100ms/7px/1.35 squash;
+        // Interstice at 50ms/4px/1.25 — victimChannel.ts). The paired
+        // hit-confirmed this tick keeps damage number/audio and skips its
+        // world stop + random flinch (see that case's pairScoped gate).
+        const attackerRig = d.playerRigs.get(event.attackerId);
+        const victimRig = d.playerRigs.get(event.victimId);
+        const chassis = attackerRig?.getClassId?.() === "paladin" ? "kindled" : "interstice";
+        const dirX = event.dirX ?? 1;
+        const dirY = event.dirY ?? 0;
+        victimRig?.applyPairImpact?.("victim", dirX, dirY, chassis, false);
+        attackerRig?.applyPairImpact?.("attacker", dirX, dirY, chassis, false);
+        this.meleePairImpacts.set(event.victimId as string, {
+          dirX,
+          dirY,
+          chassis,
+          suppressNextConfirm: true,
+          suppressNextConfirmAudio: false,
+        });
         break;
       }
       case "bash-landed": {
         // KINDLED SHIELD BASH connected (2026-07-24, slash-feel-ledger
-        // design-decision block) — the chain's blunt punctuation. Damage
-        // number/generic feedback ride the paired hit-confirmed (same
-        // tick, same contract as slash-hit above); THIS case owns the
-        // bash-specific register: the bass THUD (procedural "hit" cue in
-        // its heavy voicing — deepest melee contact in the game) and a
-        // heavy-tier hold so the check reads as a body CHECK, not a tap.
-        // The full contact chord (slab smear, ground dust, pair-scoped
-        // stop, victim launch read) is the Kindled feel-loop's iteration
-        // surface — see the ledger's Iteration log.
+        // design-decision block) — the chain's blunt punctuation. Bass
+        // THUD register (the procedural "hit" cue's heavy voicing) plus
+        // the FULL pair-scoped Kindled contact chord (R1 rows 3-8): the
+        // world tween clock is never touched; attacker+victim rigs freeze
+        // (victim vibrating), white-flash, flinch and squash along the
+        // shove vector. The paired hit-confirmed keeps the damage number
+        // and skips its own stop, random flinch AND generic hit cue (the
+        // THUD already spoke — two stacked cues read as phasing, not
+        // weight).
         audio.play("hit", { heavy: true, intensity: 1 });
-        this.holdHitStop(presentationBudget("heavy").hitStopMs);
+        const attackerRig = d.playerRigs.get(event.attackerId);
+        const victimRig = d.playerRigs.get(event.victimId);
+        const dirX = event.dirX ?? 1;
+        const dirY = event.dirY ?? 0;
+        victimRig?.applyPairImpact?.("victim", dirX, dirY, "kindled", false);
+        attackerRig?.applyPairImpact?.("attacker", dirX, dirY, "kindled", false);
+        this.meleePairImpacts.set(event.victimId as string, {
+          dirX,
+          dirY,
+          chassis: "kindled",
+          suppressNextConfirm: true,
+          suppressNextConfirmAudio: true,
+        });
         if (
           event.victimId === d.localPlayerId ||
           event.attackerId === d.localPlayerId

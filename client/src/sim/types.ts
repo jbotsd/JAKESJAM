@@ -1794,7 +1794,17 @@ export type SimEvent = (
    * reflects shield/parry mitigation (tryDeflectDamage) and evasion
    * (blocked hits never reach here). Additive wire type.
    */
-  | { t: 'slash-hit'; attackerId: PlayerId; victimId: PlayerId; damage: number }
+  | {
+      t: 'slash-hit';
+      attackerId: PlayerId;
+      victimId: PlayerId;
+      damage: number;
+      /** Unit swing direction (the knockback vector) — render-only payload
+       *  for the victim channel's directional flinch/pair impact (R1 row
+       *  7). Optional/additive; TS-authoritative emitters only. */
+      dirX?: number;
+      dirY?: number;
+    }
   /**
    * KINDLED SHIELD BASH landed (2026-07-24) — the chain's third swing
    * connected. Distinct from 'slash-hit' so the render layer gives the
@@ -1804,7 +1814,15 @@ export type SimEvent = (
    * (CONTROL, not DPS — see the ledger's design-decision block). Fired
    * alongside the same tick's generic 'hit-confirmed'. Additive wire type.
    */
-  | { t: 'bash-landed'; attackerId: PlayerId; victimId: PlayerId; damage: number }
+  | {
+      t: 'bash-landed';
+      attackerId: PlayerId;
+      victimId: PlayerId;
+      damage: number;
+      /** Unit shove direction — same render-only contract as slash-hit's. */
+      dirX?: number;
+      dirY?: number;
+    }
   /**
    * The short-range WAVE projectile spawned off a completed ninja swing
    * (docs: "wave is aftermath of contact... spawns from a swing that had

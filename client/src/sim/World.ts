@@ -5477,7 +5477,14 @@ export function stepWithRuntime(
             const newHealth = Math.max(0, post.health - slashFinalDamage);
             const wasAlive = post.alive;
             post = { ...post, health: newHealth, alive: newHealth > 0 };
-            events.push({ t: "slash-hit", attackerId: aid, victimId: vid, damage: slashFinalDamage });
+            events.push({
+              t: "slash-hit",
+              attackerId: aid,
+              victimId: vid,
+              damage: slashFinalDamage,
+              dirX: mem.aimX,
+              dirY: mem.aimY,
+            });
             events.push({
               t: "hit-confirmed",
               victimId: vid,
@@ -5888,9 +5895,23 @@ export function stepWithRuntime(
             // call: a distinct "bash-landed" so the blunt slab gets its
             // own contact register (bass THUD vs the blade's shear).
             if (swingIsBash) {
-              events.push({ t: "bash-landed", attackerId: aid, victimId: vid, damage: edgeDamage });
+              events.push({
+                t: "bash-landed",
+                attackerId: aid,
+                victimId: vid,
+                damage: edgeDamage,
+                dirX: mem.aimX,
+                dirY: mem.aimY,
+              });
             } else {
-              events.push({ t: "slash-hit", attackerId: aid, victimId: vid, damage: edgeDamage });
+              events.push({
+                t: "slash-hit",
+                attackerId: aid,
+                victimId: vid,
+                damage: edgeDamage,
+                dirX: mem.aimX,
+                dirY: mem.aimY,
+              });
             }
             events.push({
               t: "hit-confirmed",
