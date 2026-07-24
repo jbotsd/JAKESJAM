@@ -83,6 +83,28 @@ if (hasIdle) {
   }
 }
 
+// Victim-channel chord (R1 rows 3-8 — the gamut's "hurt" row; K8 wave 2).
+// "hurt" = ordinary Kindled contact, "hurt-kill" = kill tier (225ms victim
+// hold + 67ms full-white). t runs over the harness's 700ms chord envelope:
+// 0.00 impact frame (full-silhouette white + 12px flinch + 1.35/0.7 squash),
+// 0.07 in-hold vibration, 0.14 flash decay / hold end (hit tier),
+// 0.22 squash spring-back, 0.32 kill-hold end, 0.50 + 0.85 settle/quiet.
+const hasHurt = await page.evaluate(
+  () => (window as unknown as { __harnessHasHurt?: boolean }).__harnessHasHurt === true,
+);
+if (hasHurt) {
+  const HURT_TS = [0.0, 0.07, 0.14, 0.22, 0.32, 0.5, 0.85];
+  for (const action of ["hurt", "hurt-kill"] as const) {
+    for (const t of HURT_TS) {
+      await rigFrame("paladin", action, t);
+      await page.waitForTimeout(90);
+      await canvas.screenshot({
+        path: `${OUT}/${TAG}-${action}-${String(Math.round(t * 100)).padStart(3, "0")}.png`,
+      });
+    }
+  }
+}
+
 await browser.close();
 if (errors.length) {
   console.log("PAGE ERRORS (port bug!):\n" + errors.slice(0, 20).join("\n"));

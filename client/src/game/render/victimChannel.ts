@@ -70,7 +70,14 @@ export function impactChannelParams(chassis: MeleeChassis): ImpactChannelParams 
       flashInMs: 50,
       flashOutMs: 50,
       killFlashInMs: 67,
-      flinchPx: 7,
+      // 7 → 12 (K6 live-tape retune, 2026-07-24): during the pair hold the
+      // flinch is the ONLY body translation (knockback is frozen out), and
+      // at gameplay zoom (~45px fighter, ~0.9 world→screen) a 7px offset
+      // was under the motion-perception floor — the victim read as a
+      // statue. 12px puts the first flinch frame at ~11 screen px (~25% of
+      // body height), matching the research row's INTENT (a visible
+      // same-frame directional jolt) over its literal number.
+      flinchPx: 12,
       flinchMs: 175,
       squashX: 1.35,
       squashY: 0.7,

@@ -2526,9 +2526,23 @@ export class OnlineMatchScene extends Phaser.Scene {
     deltaMs: number,
   ) {
     if (!player.alive) {
-      rig.setVisible(false);
-      this.crouchHalfByPid.delete(player.id as string);
-      return;
+      // R1 row 4 fix (K7 tape, 2026-07-24): hiding the rig the instant
+      // `alive` flips false swallowed the ENTIRE victim-side melee-kill
+      // chord — the 1.5x kill hold (225ms Kindled), the 67ms full-white
+      // kill flash and the squash all start on the death tick and had
+      // never rendered a single live frame (the K7 trace showed every
+      // killed victim's rig frozen at elapsedMs=0). At 12fps tape that is
+      // literally "victim present one frame, gone the next" — Jake's
+      // clip. A rig still speaking its impact chord keeps rendering
+      // through it (the white, vibrating, squashed corpse IS the kill
+      // presentation — the hold freezes it in place); it hides the frame
+      // the chord finishes. Non-melee deaths (no chord) hide instantly,
+      // exactly as before.
+      if (!rig.isImpactSpeaking()) {
+        rig.setVisible(false);
+        this.crouchHalfByPid.delete(player.id as string);
+        return;
+      }
     }
     // Off-screen culling: an out-of-view rig still costs a full procedural
     // redraw (dozens of Graphics path ops) every frame. Skip it entirely —

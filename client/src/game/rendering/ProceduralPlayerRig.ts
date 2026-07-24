@@ -179,6 +179,14 @@ export class ProceduralPlayerRig implements CombatRig {
   private baseColor = 0xffffff;
   private baseColorDark = 0xffffff;
   private baseAccentColor = 0xffffff;
+  /** Dark-casing colors (DARK/DARK2), mutable for the same reason as the
+   *  three above: the victim flash must white the FULL silhouette — at
+   *  gameplay zoom the dark casing is most of the body's pixels, and a
+   *  flash that skips it doesn't read (K6 live-tape finding, 2026-07-24).
+   *  Every body-draw helper reads these instead of the DARK/DARK2
+   *  constants; restored every frame from the constants. */
+  protected outlineDark = DARK;
+  protected outlineDark2 = DARK2;
   /** Vessel Creator channels — see ProceduralPlayerRigOptions' docblock. */
   protected readonly visorColor: number;
   protected readonly palmColor: number;
@@ -653,6 +661,16 @@ export class ProceduralPlayerRig implements CombatRig {
     this.color = flashK > 0.01 ? mixTowardWhite(this.baseColor, flashK) : this.baseColor;
     this.colorDark = flashK > 0.01 ? mixTowardWhite(this.baseColorDark, flashK) : this.baseColorDark;
     this.accentColor = flashK > 0.01 ? mixTowardWhite(this.baseAccentColor, flashK) : this.baseAccentColor;
+    // FULL-SILHOUETTE flash (K6 live-tape fix, 2026-07-24): the dark
+    // casing (limb outlines, hood, torso outline, boots — the MAJORITY of
+    // the rig's pixel area at gameplay zoom, where a fighter is ~45px)
+    // stayed 0x07101c through the flash, swallowing the white inner
+    // strokes — exactly why Jake's 12fps clip showed victims with no
+    // visible flash between contact and death. Classic flash frames are
+    // FULL silhouettes (SNK/SFA3 [67][74]) — so the casing whites out on
+    // the same clock.
+    this.outlineDark = flashK > 0.01 ? mixTowardWhite(DARK, flashK) : DARK;
+    this.outlineDark2 = flashK > 0.01 ? mixTowardWhite(DARK2, flashK) : DARK2;
 
     const walkTarget = Phaser.Math.Clamp(Math.abs(pose.velocity.x) / 180, 0, 1);
     if (deltaMs > 0) {
@@ -916,6 +934,20 @@ export class ProceduralPlayerRig implements CombatRig {
           }
         : null,
     };
+  }
+
+  /** True while a pair-impact chord (R1 rows 3-8) is still speaking on
+   *  this rig — the same `speaking` read debugInfo() reports. The scene's
+   *  death gate consults this: hiding a victim the instant `alive` flips
+   *  false swallowed the ENTIRE victim-side kill presentation (the 1.5x
+   *  hold + kill flash + squash never rendered a single frame live — K7
+   *  tape finding, 2026-07-24), which is precisely the "no visible flash
+   *  between contact and death" Jake's clip showed. */
+  isImpactSpeaking(): boolean {
+    return (
+      this.impactParams !== null &&
+      (this.impactHoldMs > 0 || this.impactElapsedMs !== Infinity)
+    );
   }
 
   setVisible(visible: boolean) {
@@ -2079,7 +2111,7 @@ export class ProceduralPlayerRig implements CombatRig {
     footR: Vec2,
     s: number,
   ) {
-    g.fillStyle(DARK, 0.62);
+    g.fillStyle(this.outlineDark, 0.62);
     g.fillEllipse(chest.x, chest.y, 15 * s, 19 * s);
     g.fillEllipse(pelvis.x, pelvis.y, 12 * s, 12 * s);
     g.fillEllipse(head.x, head.y, 11 * s, 13 * s);
@@ -2093,7 +2125,7 @@ export class ProceduralPlayerRig implements CombatRig {
     const w2 = 7.5 * s; // pelvis width
 
     // Dark outline
-    g.fillStyle(DARK, 1);
+    g.fillStyle(this.outlineDark, 1);
     g.beginPath();
     g.moveTo(chest.x - w1 / 2 - 1, chest.y - 2 * s);
     g.lineTo(chest.x + w1 / 2 + 1, chest.y - 2 * s);
@@ -2123,7 +2155,7 @@ export class ProceduralPlayerRig implements CombatRig {
     g.fillPath();
 
     // Belt line
-    g.fillStyle(DARK, 0.9);
+    g.fillStyle(this.outlineDark, 0.9);
     g.fillRect(pelvis.x - w2 / 2 + 1, pelvis.y - 3 * s, w2 - 2, 4 * s);
 
     // Upper-hemisphere rim arc — simulates directional light from above.
@@ -2250,7 +2282,7 @@ export class ProceduralPlayerRig implements CombatRig {
     // Dark outline first (same outline-then-fill pattern as the limbs) so
     // the drape keeps a visible silhouette edge against the torso/legs
     // instead of blending into them.
-    g.fillStyle(DARK, 1);
+    g.fillStyle(this.outlineDark, 1);
     g.beginPath();
     g.moveTo(pelvis.x - px * 0.7 - 1, pelvis.y - py * 0.7 - 1);
     g.lineTo(pelvis.x + px * 0.7 + 1, pelvis.y + py * 0.7 + 1);
@@ -2294,7 +2326,7 @@ export class ProceduralPlayerRig implements CombatRig {
 
     // Dark base — bigger swept silhouette than the first pass, so it reads
     // as a real fin/horn rather than a hood wrinkle.
-    g.fillStyle(DARK, 1);
+    g.fillStyle(this.outlineDark, 1);
     g.beginPath();
     g.moveTo(crest.darkBase[0].x, crest.darkBase[0].y);
     g.lineTo(crest.darkBase[1].x, crest.darkBase[1].y);
@@ -2340,7 +2372,7 @@ export class ProceduralPlayerRig implements CombatRig {
     // Polygon length varies by class (e.g. Kindled's 5-point shield vs the
     // other classes' quads), so this walks the whole array rather than
     // indexing fixed slots.
-    g.fillStyle(DARK, 1);
+    g.fillStyle(this.outlineDark, 1);
     g.beginPath();
     g.moveTo(hood.shadow[0]!.x, hood.shadow[0]!.y);
     for (let i = 1; i < hood.shadow.length; i++) g.lineTo(hood.shadow[i]!.x, hood.shadow[i]!.y);
@@ -2356,7 +2388,7 @@ export class ProceduralPlayerRig implements CombatRig {
     g.fillPath();
 
     // Face plate (darker inset)
-    g.fillStyle(DARK2, 0.9);
+    g.fillStyle(this.outlineDark2, 0.9);
     g.fillRoundedRect(head.x + f * 2 * s - 5 * s, head.y - 6 * s, 10 * s, 9 * s, 2 * s);
 
     // VISOR SEAM — the vessel's "face" is a thin line of light, not a thick
@@ -2379,7 +2411,7 @@ export class ProceduralPlayerRig implements CombatRig {
 
   // --- SHOULDER STUB: crystal joint seal, not a bulky pauldron ---
   protected drawShoulderArmor(g: Phaser.GameObjects.Graphics, shoulder: Vec2, s: number) {
-    g.fillStyle(DARK, 1);
+    g.fillStyle(this.outlineDark, 1);
     g.fillCircle(shoulder.x, shoulder.y, 4.5 * s);
     g.fillStyle(this.color, 0.9);
     g.fillCircle(shoulder.x, shoulder.y, 3.4 * s);
@@ -2396,7 +2428,7 @@ export class ProceduralPlayerRig implements CombatRig {
   // either hand's pulse the same way without touching this method. ---
   protected drawHandGlow(g: Phaser.GameObjects.Graphics, hand: Vec2, s: number, pulse: number) {
     // Bare palm — small dark disc, no barrel/weapon geometry.
-    g.fillStyle(DARK, 1);
+    g.fillStyle(this.outlineDark, 1);
     g.fillCircle(hand.x, hand.y, 2.6 * s);
     g.fillStyle(this.colorDark, 1);
     g.fillCircle(hand.x, hand.y, 1.8 * s);
@@ -2470,7 +2502,7 @@ export class ProceduralPlayerRig implements CombatRig {
     innerW: number,
   ) {
     // Dark outline limb — thicker so vessel reads over dense vault geometry
-    g.lineStyle(outerW + 3.5, DARK, 1);
+    g.lineStyle(outerW + 3.5, this.outlineDark, 1);
     g.beginPath();
     g.moveTo(root.x, root.y);
     g.lineTo(solve.joint.x, solve.joint.y);
@@ -2493,7 +2525,7 @@ export class ProceduralPlayerRig implements CombatRig {
     g.strokePath();
 
     // Joint circle
-    g.fillStyle(DARK, 1);
+    g.fillStyle(this.outlineDark, 1);
     g.fillCircle(solve.joint.x, solve.joint.y, outerW * 0.45);
     g.fillStyle(this.colorDark, 0.9);
     g.fillCircle(solve.joint.x, solve.joint.y, outerW * 0.3);
@@ -2514,7 +2546,7 @@ export class ProceduralPlayerRig implements CombatRig {
     const bh = 5 * s;
 
     // Boot sole — bottom edge at foot.y, full height bh above.
-    g.fillStyle(DARK, 1);
+    g.fillStyle(this.outlineDark, 1);
     g.fillRoundedRect(foot.x - bw * 0.4 + f * 2 * s, foot.y - bh, bw, bh, 2 * s);
 
     // Boot upper — sits on top of the sole. Height 0.8*bh.

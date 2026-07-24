@@ -1767,6 +1767,168 @@ export function spawnGroundDust(
   });
 }
 
+/** R1 row 18 — melee contact debris with a DIRECTIONAL policy (BlazBlue
+ *  sharp-vs-blunt [3]; strike-vector debris [71]): chunks CONTINUE the
+ *  strike vector, never a radial puff. "edge" = Kindled Edge's blade — a
+ *  tight spray continuing the cut line, plus a short cut-streak through
+ *  the contact point; "bash" = the slab — a wider, slower, chunkier wedge
+ *  with a heavier gravity droop (its ground response stays
+ *  spawnGroundDust at the victim's feet, spawned by the same caller).
+ *  Chunks are faceted crystal chips (the house diamond grammar, same
+ *  family as spawnCrystalShards), gold via the caller's KINDLED_TINT.
+ *  One pooled bolt redrawn per frame — no per-particle objects,
+ *  transientVfx owns the clock. */
+export function spawnMeleeDebris(
+  pool: ParticlePool,
+  at: Vec2,
+  dirRad: number,
+  tint: ConstructTint,
+  register: "edge" | "bash",
+): void {
+  const g = pool.acquireBolt();
+  if (!g) return;
+  g.setPosition(0, 0);
+  g.setAlpha(1);
+  g.setScale(1);
+  g.setRotation(0);
+  g.setBlendMode(Phaser.BlendModes.ADD);
+  const isEdge = register === "edge";
+  const N = isEdge ? 7 : 9;
+  const spread = isEdge ? 0.5 : 1.35; // full wedge angle (rad)
+  const travel = isEdge ? 78 : 52; // max chunk travel (px) over the life
+  const chip = isEdge ? 2.6 : 3.8; // base chip half-size (px)
+  const droop = isEdge ? 14 : 30; // gravity droop at end-of-life (px)
+  const draw = (t: number): void => {
+    g.clear();
+    const fade = (1 - t) * (1 - t);
+    // Edge only: a fast-fading streak THROUGH the contact point along the
+    // cut line — the "the cut continued" read the radial orb never had.
+    if (isEdge) {
+      const sl = 26 * (1 - t * 0.5);
+      g.lineStyle(3, tint.glow, 0.5 * fade);
+      g.beginPath();
+      g.moveTo(at.x - Math.cos(dirRad) * sl * 0.35, at.y - Math.sin(dirRad) * sl * 0.35);
+      g.lineTo(at.x + Math.cos(dirRad) * sl, at.y + Math.sin(dirRad) * sl);
+      g.strokePath();
+      g.lineStyle(1.4, tint.core, 0.85 * fade);
+      g.beginPath();
+      g.moveTo(at.x, at.y);
+      g.lineTo(at.x + Math.cos(dirRad) * sl * 0.8, at.y + Math.sin(dirRad) * sl * 0.8);
+      g.strokePath();
+    }
+    for (let i = 0; i < N; i++) {
+      const f = i / (N - 1);
+      const a = dirRad + (f - 0.5) * spread;
+      const pace = 0.55 + (((i * 5) % 7) / 7) * 0.9; // deterministic per-chip variety
+      const dist = 7 + t * travel * pace;
+      const cx = at.x + Math.cos(a) * dist;
+      const cy = at.y + Math.sin(a) * dist + t * t * droop;
+      const s = chip * (0.7 + (((i * 3) % 5) / 5) * 0.8);
+      const spin = a + t * (i % 2 === 0 ? 2.4 : -2.0);
+      const dx = Math.cos(spin) * s * 1.6;
+      const dy = Math.sin(spin) * s * 1.6;
+      const px = -Math.sin(spin) * s;
+      const py = Math.cos(spin) * s;
+      // Faceted chip, oriented along its own tumble.
+      const pts = [
+        new Phaser.Math.Vector2(cx + dx, cy + dy),
+        new Phaser.Math.Vector2(cx + px, cy + py),
+        new Phaser.Math.Vector2(cx - dx, cy - dy),
+        new Phaser.Math.Vector2(cx - px, cy - py),
+      ];
+      g.fillStyle(tint.glow, 0.55 * fade);
+      g.fillPoints(pts, true);
+      g.lineStyle(1, tint.core, 0.9 * fade);
+      strokeClosed(g, pts);
+    }
+  };
+  draw(0);
+  transientVfx.spawn({
+    factory: () => g,
+    lifetimeMs: isEdge ? 340 : 380,
+    ease: "Sine.easeOut",
+    onTick: (_obj, t) => draw(t),
+    release: () => pool.release(g),
+  });
+}
+
+/** R1 row 17 — Kindled melee-kill ground shock ring: the kill's energy
+ *  slams down and travels through the FLOOR as a flattened expanding
+ *  ring (ellipse squashed to ~0.26 vertical), hugging the ground plane
+ *  at the victim's feet. INSTRUMENT, not icon (chassis-design-axioms
+ *  CA6): it is a physical shockwave in the world — never a halo around a
+ *  body — and it breaks into discrete plate segments as it expands (the
+ *  same broken-circle discipline spawnNovaBurst's header documents, so
+ *  nothing here can misread as a smooth ring emblem). Gold is Kindled's
+ *  earned color; the caller passes KINDLED_TINT. Kill-tier permanence:
+ *  outlives the kill flash (R1 row 17 "debris persists"). */
+export function spawnKillShockRing(
+  pool: ParticlePool,
+  feet: Vec2,
+  tint: ConstructTint,
+): void {
+  const g = pool.acquireBolt();
+  if (!g) return;
+  g.setPosition(0, 0);
+  g.setAlpha(1);
+  g.setScale(1);
+  g.setRotation(0);
+  g.setBlendMode(Phaser.BlendModes.ADD);
+  const SEGMENTS = 8;
+  const SEG_FILL = 0.58; // fraction of each sector that is plate, rest gap
+  const SQUASH = 0.26;
+  const drawBrokenEllipse = (r: number, width: number, color: number, alpha: number): void => {
+    if (alpha <= 0.01) return;
+    g.lineStyle(width, color, alpha);
+    for (let seg = 0; seg < SEGMENTS; seg++) {
+      const a0 = (seg / SEGMENTS) * Math.PI * 2 + 0.28; // offset so no seam sits axis-aligned
+      const a1 = a0 + (Math.PI * 2 * SEG_FILL) / SEGMENTS;
+      g.beginPath();
+      const steps = 5;
+      for (let k = 0; k <= steps; k++) {
+        const a = a0 + ((a1 - a0) * k) / steps;
+        const x = feet.x + Math.cos(a) * r;
+        const y = feet.y + Math.sin(a) * r * SQUASH;
+        if (k === 0) g.moveTo(x, y);
+        else g.lineTo(x, y);
+      }
+      g.strokePath();
+    }
+  };
+  const draw = (t: number): void => {
+    g.clear();
+    const fade = (1 - t) * (1 - t);
+    const r = 12 + t * 58;
+    // Leading edge: bright core over a wider glow — the shock front.
+    drawBrokenEllipse(r, 5, tint.glow, 0.5 * fade);
+    drawBrokenEllipse(r, 2, tint.core, 0.95 * fade);
+    // Trailing ring: the wave already passed here.
+    drawBrokenEllipse(r * 0.62, 2.5, tint.glow, 0.3 * fade);
+    // Ground chips kicked up just behind the front (discrete ticks, world
+    // response — not a glow decoration).
+    for (let i = 0; i < 6; i++) {
+      const a = (i / 6) * Math.PI * 2 + 0.8;
+      const bx = feet.x + Math.cos(a) * r * 0.82;
+      const by = feet.y + Math.sin(a) * r * 0.82 * SQUASH;
+      const h = 4 + ((i * 3) % 4) - t * 3;
+      if (h <= 0) continue;
+      g.lineStyle(1.5, tint.core, 0.6 * fade);
+      g.beginPath();
+      g.moveTo(bx, by);
+      g.lineTo(bx, by - h);
+      g.strokePath();
+    }
+  };
+  draw(0);
+  transientVfx.spawn({
+    factory: () => g,
+    lifetimeMs: 460,
+    ease: "Sine.easeOut",
+    onTick: (_obj, t) => draw(t),
+    release: () => pool.release(g),
+  });
+}
+
 /** The honest slash arc: a single tapered, gradient-faded ribbon traced from
  * recent world-space blade-tip positions (includes hand translation and full-
  * body drive, unlike a decorative wrist-centred circle). Deliberately ONE

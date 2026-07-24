@@ -33,6 +33,8 @@ import {
   drawKindledBash,
   drawKindledTrailOnly,
   spawnGroundDust,
+  spawnMeleeDebris,
+  spawnKillShockRing,
   drawHeldDaggers,
   drawHeldEdges,
   drawWardSlab,
@@ -569,16 +571,31 @@ export class ConstructVfxController {
       const attacker = state.players[ev.attackerId];
       if (!attacker) continue;
       const cls = resolveClassId(attacker.characterId);
-      if (cls !== "ninja") continue;
       const victimPos = getPosition(ev.victimId);
       if (!victimPos) continue;
       const attackerPos = getPosition(ev.attackerId);
-      const angle = attackerBladeAngle.get(ev.attackerId as string) ??
-        (attackerPos ? Math.atan2(victimPos.y - attackerPos.y, victimPos.x - attackerPos.x) : 0);
-      // Same 1→2→3 cycle as the swing itself — this hit landed FROM that
-      // swing, so its stamp variant matches the swing's own combo position.
-      const variant = toVariant(this.slashCombo.get(ev.attackerId as string)?.count);
-      spawnSlashMark(this.pool, victimPos, angle, INTERSTICE_TINT, variant);
+      if (cls === "ninja") {
+        const angle = attackerBladeAngle.get(ev.attackerId as string) ??
+          (attackerPos ? Math.atan2(victimPos.y - attackerPos.y, victimPos.x - attackerPos.x) : 0);
+        // Same 1→2→3 cycle as the swing itself — this hit landed FROM that
+        // swing, so its stamp variant matches the swing's own combo position.
+        const variant = toVariant(this.slashCombo.get(ev.attackerId as string)?.count);
+        spawnSlashMark(this.pool, victimPos, angle, INTERSTICE_TINT, variant);
+      } else if (cls === "paladin") {
+        // R1 row 18 (K6, 2026-07-24): Kindled Edge contact debris CONTINUES
+        // the cut line — a directional chunk spray along the sim's own shove
+        // vector (the event's dirX/dirY, the same vector the victim channel
+        // flinches along), replacing the class-agnostic radial orb the
+        // router no longer spawns for melee pairs. Blunt-adjacent chunky
+        // register, gold; the bash's WIDER wedge is spawned in the
+        // bash-landed block below.
+        const dirRad = ev.dirX !== undefined || ev.dirY !== undefined
+          ? Math.atan2(ev.dirY ?? 0, ev.dirX ?? 1)
+          : attackerPos
+            ? Math.atan2(victimPos.y - attackerPos.y, victimPos.x - attackerPos.x)
+            : 0;
+        spawnMeleeDebris(this.pool, victimPos, dirRad, KINDLED_TINT, "edge");
+      }
     }
 
     // Bash contact read — the check LANDS: a compact seal-burst at the
@@ -590,11 +607,46 @@ export class ConstructVfxController {
       const victimPos = getPosition(ev.victimId);
       if (!victimPos) continue;
       const attackerPos = getPosition(ev.attackerId);
-      const dirRad = attackerPos
-        ? Math.atan2(victimPos.y - attackerPos.y, victimPos.x - attackerPos.x)
-        : 0;
+      // Prefer the sim's own shove vector (same source as the victim
+      // channel's flinch) — the attacker-to-victim line is only the
+      // fallback for old hosts that don't emit dirX/dirY.
+      const dirRad = ev.dirX !== undefined || ev.dirY !== undefined
+        ? Math.atan2(ev.dirY ?? 0, ev.dirX ?? 1)
+        : attackerPos
+          ? Math.atan2(victimPos.y - attackerPos.y, victimPos.x - attackerPos.x)
+          : 0;
       spawnNovaBurst(this.pool, victimPos, 46, KINDLED_TINT, "seal");
+      // R1 row 18 (K6, 2026-07-24): the slab's debris is a WIDER, slower
+      // wedge than the Edge's cut-line spray — blunt vs sharp (BlazBlue
+      // pattern discipline), still strictly along the shove vector. The
+      // ground dust below is the row's "ground response" half.
+      spawnMeleeDebris(this.pool, victimPos, dirRad, KINDLED_TINT, "bash");
       spawnGroundDust(this.pool, { x: victimPos.x, y: victimPos.y + 26 }, dirRad, KINDLED_TINT);
+    }
+
+    // Kindled melee-kill ground SHOCK RING (R1 row 17, K6 2026-07-24) —
+    // the kill's energy travels through the floor: a flattened, broken-
+    // plate gold ring expanding from the victim's feet (instrument, not
+    // icon — see spawnKillShockRing's own header). Gated to a REAL melee-
+    // chain kill: cause "bash" alone also covers the universal dash-bash,
+    // so require the killing blow's own slash-hit/bash-landed for the same
+    // attacker→victim pair in this same events batch (the kill event rides
+    // the same tick as the blow that caused it).
+    for (const ev of events) {
+      if (ev.t !== "player-killed" || ev.killerId === null || ev.cause !== "bash") continue;
+      const killer = state.players[ev.killerId];
+      if (!killer || resolveClassId(killer.characterId) !== "paladin") continue;
+      const killerId = ev.killerId;
+      const paired = events.some(
+        (e) =>
+          (e.t === "slash-hit" || e.t === "bash-landed") &&
+          e.attackerId === killerId &&
+          e.victimId === ev.victimId,
+      );
+      if (!paired) continue;
+      const victimPos = getPosition(ev.victimId);
+      if (!victimPos) continue;
+      spawnKillShockRing(this.pool, { x: victimPos.x, y: victimPos.y + 26 }, KINDLED_TINT);
     }
 
     // Empowered-hit flourish — "the next hit should look like a spell took
