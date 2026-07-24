@@ -188,7 +188,7 @@ already pass.
   path; a Z1 item). NOTE for operators: sim.wasm is a
   gitignored build artifact — after pulling Zig changes, `zig build`
   before running wasm suites or they fail on the stale binary.
-- Z1 deferrals: **Z1a SHIPPED** 2026-07-24 (branch track-z/z1a) — three
+- Z1 deferrals: **Z1a DONE + MERGED** 2026-07-24 — three
   items, one commit each: (1) melee_swing bridged across the full-sync
   repack (Z0e's recorded sibling — the swing FSM survives every pack,
   melee resolves same-tick both sides; meleeSwingMemoryBridge.test.ts,
