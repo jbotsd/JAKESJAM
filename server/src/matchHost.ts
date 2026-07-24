@@ -61,6 +61,7 @@ import { enqueueMatchHighlights } from "./clipRenderQueue.ts";
 import { config } from "./config.ts";
 import { ReplayRecorder } from "./ReplayRecorder.ts";
 import { serverWasmHost } from "./serverWasmHost.ts";
+import { convertWasmEventsToTs } from "@sim/wasm/convertWasmEvents.ts";
 
 /**
  * Phase B3 feature flag. Default OFF again as of 2026-07-06 (direct user
@@ -1474,16 +1475,24 @@ export class MatchHost {
         }
         serverWasmHost.writeInputs(inputsMap);
         const result = serverWasmHost.step(state, STEP_MS);
-        // The Zig round machine skips drafting; drive the between-rounds card
-        // menu host-side (deterministic, reuses the TS round machine). Physics
-        // stays authoritative in Zig. serverWasmHost's own WasmSimEvents are
-        // dropped (snapshot broadcast carries the WorldState); the overlay's
-        // round/draft events ARE returned so the loser-respawn + draft-resolved
-        // pipeline still fires.
+        // Track Z2 item 2 (convergence-goal.md): forward the FULL converted
+        // wasm event stream. The old branch dropped every Zig-emitted
+        // SimEvent except the overlay's round/draft events — wasm-mode
+        // clients never received shot-fired/hit-confirmed/player-killed/
+        // first-blood/etc., so kill attribution, host clips
+        // (maybeSignalHostClip), spectator direction and every client
+        // presenter fed by the event pipeline were blind whenever the wasm
+        // backend was live. Conversion is the same numeric-kind → TS
+        // discriminated-union translation the client wasm path has always
+        // used (convertWasmEventsToTs).
+        const simEvents = convertWasmEventsToTs(result.events, result.state);
+        // The Zig round machine routes through drafting itself (draft.zig,
+        // parity-goal Phase 2); the overlay only drives the TS card menu on
+        // top — see applyDraftingOverlay's own header for its Z2 status.
         const overlay = this.applyDraftingOverlay(state, result.state);
         return {
           state: overlay.state,
-          events: overlay.events,
+          events: [...simEvents, ...overlay.events],
           matchComplete: result.matchComplete,
         };
       } catch (err) {
