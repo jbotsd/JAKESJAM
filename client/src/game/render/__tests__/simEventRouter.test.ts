@@ -630,6 +630,10 @@ describe("SimEventRouter — melee pair-scoped contact chord (R1 rows 3-5, 2026-
     // Pair-scoped: NO world hold, NO random-direction rig flinch...
     expect(h.tweens.timeScale).toBe(1);
     expect(h.rigHits.filter((r) => r.pid === "local")).toEqual([]);
+    // ...NO radial blast orb either (K6 live tape: the r=22 orb centered
+    // on a ~45px victim occluded the body flash for exactly its in-window
+    // — melee contact reads on the rig + the row-18 debris wedge now)...
+    expect(h.blasts).toEqual([]);
     // ...but the damage number and generic hit audio still speak.
     expect(h.damageNumbers).toEqual([["local", 32]]);
     expect(h.audioCalls).toContain("hit");
@@ -654,6 +658,7 @@ describe("SimEventRouter — melee pair-scoped contact chord (R1 rows 3-5, 2026-
       attackerId: PlayerId("remote"),
     } as SimEvent);
     expect(h.tweens.timeScale).toBe(1); // pair consumed the first
+    expect(h.blasts).toEqual([]); // melee confirm: no orb (K6)
     router.dispatch({
       t: "hit-confirmed",
       victimId: PlayerId("local"),
@@ -662,6 +667,7 @@ describe("SimEventRouter — melee pair-scoped contact chord (R1 rows 3-5, 2026-
       attackerId: PlayerId("remote"),
     } as SimEvent);
     expect(h.tweens.timeScale).toBe(0); // ranged hit: world stop as before
+    expect(h.blasts).toEqual([["local", 22, 11]]); // ranged keeps the orb
   });
 
   test("bash-landed: heavy hit cue + pair impacts, world clock untouched; paired confirm ALSO skips the generic cue (no phasing)", () => {

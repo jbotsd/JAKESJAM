@@ -187,6 +187,23 @@ const FULL_RECONCILE_INTERVAL_MS = 5000;
 const PENDING_INPUTS_MAX_DEPTH = 240;
 
 /**
+ * Ack-freeze depth at which the WEDGE RESYNC in applySnapshot fires (see
+ * its comment). 60 unacked inputs = a full second at 60Hz — several times
+ * any healthy RTT-driven in-flight depth (a 300ms-RTT client holds ~18),
+ * and acks ride the ordered WS stream, so a queue this deep that a
+ * snapshot's own ack-drop could not trim means the server is processing
+ * NONE of our inputs. Deliberately much tighter than
+ * PENDING_INPUTS_MAX_DEPTH: the wedge is SELF-AMPLIFYING — with acks
+ * frozen, every reconcile replays authTick + a queue that grows ~3 per
+ * snapshot, advancing the predicted tick ~2x real time (K7 tape:
+ * 117 input ticks per 60 server ticks), so the longer the fiction is
+ * allowed to build, the further out-of-window every subsequent input
+ * lands. At 240 the sawtooth was 4s of fiction per cycle; at 60 the
+ * client snaps back within a second of wedging.
+ */
+const WEDGE_RESYNC_QUEUE_DEPTH = 60;
+
+/**
  * How far in the past remote players are rendered (entity interpolation).
  * Remote entities always render at estimated-server-now minus this delay so
  * the renderer lerps BETWEEN two received snapshots instead of showing the
@@ -1021,6 +1038,30 @@ export class ClientLoop {
     const ackedSeq = message.lastProcessedInputSeq[this.playerId] ?? 0;
     while (this.pendingInputs.length > 0 && this.pendingInputs[0]!.seq <= ackedSeq) {
       this.pendingInputs.shift();
+    }
+
+    // WEDGE RESYNC (2026-07-24, slash-feel wave 2b K6 live tape — the
+    // permanent form of the showcase "player stationary >1s" bug): a
+    // client whose inputs left the server's accept window gets NO acks —
+    // the queue saturates at PENDING_INPUTS_MAX_DEPTH and from then on
+    // EVERY reconcile replays the full queue on top of the authoritative
+    // state, re-deriving predictedState.tick = authTick + DEPTH (~4s
+    // ahead at 240) on every snapshot. K5's recovery slew can never win
+    // that fight: it drains the accumulator ~60ms/s while the replay
+    // re-pins the offset wholesale 20x/s (taped live: offset flat at
+    // 236-239 ticks for 3+ minutes, exactly the queue cap). A queue still
+    // saturated AFTER the ack-drop above means the server processed NONE
+    // of it — that timeline is fiction. Drop it and let this snapshot's
+    // reconcile rebase prediction directly onto the authoritative state:
+    // inputs stamp in-window again next step, acks resume, and the normal
+    // slew trims the lead. One visible rubber-band beats a permanently
+    // wedged player. The accumulator is zeroed too: the oversized replays
+    // this state causes stall the main thread, and the resulting catch-up
+    // burst right after a rebase was taped (K7) overshooting the client
+    // straight back out of the window.
+    if (this.pendingInputs.length >= WEDGE_RESYNC_QUEUE_DEPTH) {
+      this.pendingInputs.length = 0;
+      this.accumulator = 0;
     }
 
     // Capture the position the renderer was showing for the local player

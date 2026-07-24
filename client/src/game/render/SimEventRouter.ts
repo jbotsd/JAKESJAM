@@ -309,7 +309,17 @@ export class SimEventRouter {
           d.safeShake(budget.shakeDurationMs, budget.shakeIntensity);
         }
         d.spawnDamageNumber(event.victimId, event.damage, event.headshot);
-        d.spawnBlastAtPlayer(event.victimId, 22, event.damage);
+        // K6 live-tape fix (2026-07-24): for pair-scoped MELEE contacts the
+        // radial blast orb (r=22) sat centered on a ~45px victim and
+        // OCCLUDED the body's white-flash for exactly its in-window — the
+        // victim channel fired at spec but was invisible behind the generic
+        // orb. Melee contacts own their read now: full-silhouette flash on
+        // the rig + the directional debris wedge (R1 row 18,
+        // ConstructVfxController) at the contact site. Ranged hits keep the
+        // orb unchanged.
+        if (!pairScoped) {
+          d.spawnBlastAtPlayer(event.victimId, 22, event.damage);
+        }
         const victimRig = d.playerRigs.get(event.victimId);
         if (victimRig && !pairScoped) {
           const angle = Math.random() * Math.PI * 2;

@@ -39,6 +39,8 @@ import {
   spawnBlinkStreak,
   drawGroundField,
   spawnGhostGuardDodge,
+  spawnMeleeDebris,
+  spawnKillShockRing,
 } from "./game/render/LightConstruct";
 import { meleeBladeAngle } from "./game/render/meleeTiming.js";
 import type { CharacterArchetype, PlayerId, Vec2, WorldState } from "./sim";
@@ -53,12 +55,15 @@ type HarnessWindow = Window & {
   __harnessReady?: boolean;
   __harnessHasBash?: boolean;
   __harnessHasIdle?: boolean;
+  /** Victim-channel review actions ("hurt"/"hurt-kill") exist — K2's
+   *  "harness can't stage victim interaction" limitation is closed. */
+  __harnessHasHurt?: boolean;
   __cmd?: string | null;
   harnessFire?: (name: string) => void;
   harnessMeleeFrame?: (kind: "ninja" | "paladin", t: number) => void;
   harnessRigFrame?: (
     classId: ClassId,
-    action: AbilityKind | "melee" | "bash" | "idle" | "run",
+    action: AbilityKind | "melee" | "bash" | "idle" | "run" | "hurt" | "hurt-kill",
     t: number,
   ) => void;
 };
@@ -90,7 +95,7 @@ class HarnessScene extends Phaser.Scene {
   private reviewRig: ProceduralPlayerRig | null = null;
   private rigReview: {
     classId: ClassId;
-    action: AbilityKind | "melee" | "bash" | "idle" | "run";
+    action: AbilityKind | "melee" | "bash" | "idle" | "run" | "hurt" | "hurt-kill";
     t: number;
     lead: Vec2;
     back: Vec2;
@@ -148,6 +153,7 @@ class HarnessScene extends Phaser.Scene {
     };
     w.__harnessHasBash = true;
     w.__harnessHasIdle = true;
+    w.__harnessHasHurt = true;
     w.harnessMeleeFrame = (kind, t) => {
       this.meleeReview = { kind, t: Math.max(0, Math.min(0.999, t)) };
       this.rigReview = null;
@@ -155,7 +161,8 @@ class HarnessScene extends Phaser.Scene {
     w.harnessRigFrame = (classId, action, rawT) => {
       const t = Math.max(0, Math.min(0.999, rawT));
       const stanceAction = action === "idle" || action === "run";
-      if (action !== "melee" && action !== "bash" && !stanceAction && !isAbilityKind(action)) return;
+      const hurtAction = action === "hurt" || action === "hurt-kill";
+      if (action !== "melee" && action !== "bash" && !stanceAction && !hurtAction && !isAbilityKind(action)) return;
       this.meleeReview = null;
       // Isolate the fighter review: hidden entanglement-demo actors must not
       // keep a live mark/tether behind the pose and contaminate silhouettes.
@@ -197,6 +204,37 @@ class HarnessScene extends Phaser.Scene {
           ? { ...pose, velocity: { x: 300, y: 0 } }
           : pose;
         for (let i = 0; i < 240; i++) this.reviewRig.update(1000 / 120, stancePose);
+        this.rigReview = {
+          classId,
+          action,
+          t,
+          lead: this.reviewRig.getHandWorld(0) ?? { x: 360, y: 300 },
+          back: this.reviewRig.getHandWorld(1) ?? { x: 340, y: 310 },
+          tipHistory: [],
+        };
+        for (const obj of [this.priest, this.priestHalo, this.victim, this.victimHalo, this.kindled, this.kindledHalo]) {
+          obj.setVisible(false);
+        }
+        return;
+      }
+      // Victim-channel review (R1 rows 3-8; K6/K8 wave 2 — closes K2's
+      // "harness can't stage victim interaction" limitation): stage the
+      // contact chord ON the rig exactly as SimEventRouter would —
+      // applyPairImpact with the class chassis — and advance t across a
+      // 700ms envelope (pair hold + flash decay + squash spring all
+      // complete inside it; kill tier's 225ms victim hold included). The
+      // hit vector is left-to-right with a slight downward bite so the
+      // directional flinch and squash read against the grounded stance.
+      if (hurtAction) {
+        const chassis = classId === "paladin" ? "kindled" : "interstice";
+        this.reviewRig.applyPairImpact("victim", 1, 0.15, chassis, action === "hurt-kill");
+        const HURT_ENVELOPE_MS = 700;
+        const totalMs = HURT_ENVELOPE_MS * t;
+        const steps = Math.max(1, Math.ceil(totalMs / (1000 / 120)));
+        for (let i = 0; i < steps; i++) {
+          const dt = i === steps - 1 ? Math.max(0, totalMs - i * (1000 / 120)) : 1000 / 120;
+          this.reviewRig.update(dt, pose);
+        }
         this.rigReview = {
           classId,
           action,
@@ -350,6 +388,19 @@ class HarnessScene extends Phaser.Scene {
             1,
             true,
           );
+          break;
+        // ── R1 rows 17/18 (K9, 2026-07-24) — melee contact debris + the
+        //    Kindled melee-kill ground shock ring ──────────────────────────
+        case "debris-edge":
+          // Edge contact: tight spray CONTINUING the cut line (left-to-right
+          // hit, slight downward bite — matches the hurt review's vector).
+          spawnMeleeDebris(this.pool, { x: 430, y: 300 }, 0.15, KINDLED_TINT, "edge");
+          break;
+        case "debris-bash":
+          spawnMeleeDebris(this.pool, { x: 430, y: 300 }, 0.15, KINDLED_TINT, "bash");
+          break;
+        case "kill-ring":
+          spawnKillShockRing(this.pool, { x: 430, y: 356 }, KINDLED_TINT);
           break;
         // ── Phase 3 primitive demos (2026-07-20) ──────────────────────────
         case "nova-slash":

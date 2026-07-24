@@ -505,4 +505,128 @@ describe("melee-swing-memory bridge (Track Z1a)", () => {
     expect(zigMem).toBeDefined();
     expect(zigMem!.chainIndex).toBe(tsChain.chainIndex);
   });
+
+  test("E. cancel-window parity — the row-16 dash cancel fires on the SAME tick both sides, exactly at the window edge", () => {
+    // R1 row 16 (2026-07-24 wave 2): dash/ward may cancel the final 40%
+    // of Edge recovery (phaseMs <= 340 * 0.4 = 136). This gate drives a
+    // SOLO paladin (a whiffed swing — the cancel is FSM bookkeeping, no
+    // victim needed) through the identical script on both orchestrators,
+    // twice: a dash edge ONE tick before the window (no cancel — both
+    // sides must ride recovery to its natural end) and ON the first
+    // in-window tick (cancel — both sides go idle the SAME tick with the
+    // chain advanced). Per-tick phase/chain sequences must be identical.
+    const PAL = PlayerId("p0");
+    const DASH_BIT = 1 << 9;
+    const FIRE_STEP = 5;
+
+    const mkSoloState = (): WorldState => ({
+      tick: Tick(0),
+      rngState: 1,
+      players: {
+        [PAL]: makePlayer("p0", NINJA_X, "heavy"),
+      } as Record<PlayerId, PlayerEntity>,
+      projectiles: {},
+      destructibles: {},
+      firePatches: {},
+      pickups: {},
+      satellites: {},
+      round: {
+        phase: "fighting",
+        countdownRemainingMs: 90_000,
+        scores: {},
+        roundIndex: 1,
+        winnerPlayerId: null,
+      },
+    });
+
+    const installStatics = (runtime: ReturnType<typeof createRuntime>): void => {
+      setWorldStatics(
+        MAP.platforms.map(platformToAABB),
+        MAP.platforms.map((p) => (p.kind === "platform" ? 1 : 0)),
+      );
+      setWorldArenaBounds(
+        runtime.ceilingClampY,
+        MAP.size.y > 0 ? MAP.size.y + KILL_PLANE_MARGIN_PX : 0,
+      );
+      setWorldLaunchPads([]);
+      setWorldSlopes([]);
+      setWorldSpawnPoints(MAP.spawns);
+      setWorldTargetScore(resolveModeConfig(undefined).targetScore);
+    };
+
+    // Probe (TS only): find the first post-step tick in recovery for a
+    // Fire press at FIRE_STEP — observation, not hand-derived constants.
+    const probeRuntime = createRuntime(MAP);
+    let probeState = mkSoloState();
+    let recoveryEntry = -1;
+    for (let t = 0; t < 80 && recoveryEntry < 0; t++) {
+      const keys = t === FIRE_STEP ? FireBit : 0;
+      probeState = stepWithRuntime(probeState, probeRuntime, {
+        [PAL]: { seq: InputSeq(t + 1), tick: Tick(t + 1), keys: keys as never, aimX: AIM_X, aimY: AIM_Y, dtMs: DT_MS },
+      }, DT_MS).state;
+      if (probeRuntime.paladinMelee.get(PAL)?.phase === 3) recoveryEntry = t;
+    }
+    expect(recoveryEntry).toBeGreaterThan(FIRE_STEP);
+    // First in-window decrement: smallest n with 340 - n*DT <= 136 (13).
+    const edgeN = Math.ceil((340 - 340 * 0.4) / DT_MS);
+
+    /** Run the same script on both sides; compare per-tick FSM reads. */
+    const runBoth = (dashStep: number, steps: number) => {
+      const runtime = createRuntime(MAP);
+      installStatics(runtime);
+      let tsState = mkSoloState();
+      let zigState = mkSoloState();
+      let prevKeys = 0;
+      const ts: { phase: number; chain: number }[] = [];
+      const zig: { phase: number; chain: number }[] = [];
+      for (let t = 0; t < steps; t++) {
+        const keys = t === FIRE_STEP ? FireBit : t === dashStep ? DASH_BIT : 0;
+        tsState = stepWithRuntime(tsState, runtime, {
+          [PAL]: { seq: InputSeq(t + 1), tick: Tick(t + 1), keys: keys as never, aimX: AIM_X, aimY: AIM_Y, dtMs: DT_MS },
+        }, DT_MS).state;
+
+        (globalThis as {
+          __jakesjam_wasm_inputs__?: ReadonlyMap<
+            string,
+            { keys: number; prevKeys: number; aimX: number; aimY: number }
+          >;
+        }).__jakesjam_wasm_inputs__ = new Map([
+          [String(PAL), { keys, prevKeys, aimX: AIM_X, aimY: AIM_Y }],
+        ]);
+        __clearFireConfigCacheForTests();
+        writeFireConfigsForState(zigState);
+        zigState = applyWasmWorldStepFullSync(zigState, DT_MS).state;
+        prevKeys = keys;
+
+        const tsMem = runtime.paladinMelee.get(PAL);
+        const zigMem = zigState.meleeSwingMemory?.[PAL];
+        ts.push({ phase: tsMem?.phase ?? -1, chain: tsMem?.chainIndex ?? -1 });
+        zig.push({ phase: (zigMem?.phase ?? -1) as number, chain: zigMem?.chainIndex ?? -1 });
+      }
+      return { ts, zig };
+    };
+
+    // Case A: dash edge ONE tick before the window — no cancel either
+    // side; recovery ends naturally 21 decrements in.
+    {
+      const steps = recoveryEntry + 25;
+      const { ts, zig } = runBoth(recoveryEntry + edgeN - 1, steps);
+      expect(zig).toEqual(ts);
+      expect(ts[recoveryEntry + edgeN - 1]!.phase).toBe(3);
+      expect(ts[recoveryEntry + edgeN]!.phase).toBe(3);
+      expect(ts[recoveryEntry + 21]!.phase).toBe(0);
+      expect(ts[recoveryEntry + 21]!.chain).toBe(1);
+    }
+
+    // Case B: dash edge ON the first in-window tick — cancel fires that
+    // SAME tick on both sides, chain advanced (beat counted, not reset).
+    {
+      const steps = recoveryEntry + 25;
+      const { ts, zig } = runBoth(recoveryEntry + edgeN, steps);
+      expect(zig).toEqual(ts);
+      expect(ts[recoveryEntry + edgeN - 1]!.phase).toBe(3);
+      expect(ts[recoveryEntry + edgeN]!.phase).toBe(0);
+      expect(ts[recoveryEntry + edgeN]!.chain).toBe(1);
+    }
+  });
 });

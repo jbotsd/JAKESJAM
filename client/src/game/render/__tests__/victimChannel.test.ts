@@ -26,7 +26,9 @@ describe("chassis parameterization (rows 3-8, both columns)", () => {
     expect(k.vibrationPx).toBe(3.5);
     expect(k.flashInMs).toBe(50);
     expect(k.flashOutMs).toBe(50);
-    expect(k.flinchPx).toBe(7);
+    // K6 live-tape retune: 7px was under the motion floor at gameplay zoom
+    // (the flinch is the only body translation during the frozen hold).
+    expect(k.flinchPx).toBe(12);
     expect(k.squashX).toBe(1.35);
     expect(k.squashY).toBe(0.7);
   });
@@ -80,10 +82,10 @@ describe("squash — hold then spring back through 1 (row 8)", () => {
 
 describe("flinch — instant full offset along the hit vector, ease-out (row 7)", () => {
   const k = impactChannelParams("kindled");
-  test("frame 0 is the full 7px along the (normalized) vector, zero cross-fade", () => {
+  test("frame 0 is the full flinchPx along the (normalized) vector, zero cross-fade", () => {
     const f = flinchOffset(0, k, 3, 4); // 3-4-5 triangle
-    expect(f.x).toBeCloseTo(7 * 0.6, 5);
-    expect(f.y).toBeCloseTo(7 * 0.8, 5);
+    expect(f.x).toBeCloseTo(k.flinchPx * 0.6, 5);
+    expect(f.y).toBeCloseTo(k.flinchPx * 0.8, 5);
   });
   test("monotonically eases out to nothing by flinchMs", () => {
     const a = Math.hypot(flinchOffset(40, k, 1, 0).x, 0);
