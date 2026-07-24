@@ -125,8 +125,8 @@ describe("ParticlePool", () => {
     console.warn = warn;
     try {
       // Ambient acquires may drain the bolt pool only down to the kill
-      // reserve (16 total − 2 reserved = 14 ambient).
-      for (let i = 0; i < 14; i++) {
+      // reserve (24 total — Interstice I5 bump — − 2 reserved = 22 ambient).
+      for (let i = 0; i < 22; i++) {
         const b = pool.acquireBolt();
         expect(b).not.toBeNull();
       }
@@ -145,7 +145,7 @@ describe("ParticlePool", () => {
     console.warn = mock(() => {});
     try {
       // Exhaust the ambient allowance.
-      for (let i = 0; i < 14; i++) expect(pool.acquireBolt()).not.toBeNull();
+      for (let i = 0; i < 22; i++) expect(pool.acquireBolt()).not.toBeNull();
       expect(pool.acquireBolt()).toBeNull();
       // Kill-tier spawns (the R1 row-17 shock ring) still get the reserved
       // tail — the kill moment must never lose the pool lottery to ambient
