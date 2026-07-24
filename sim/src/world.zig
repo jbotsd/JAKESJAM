@@ -504,6 +504,395 @@ fn maybeAwardFirstBlood(
     );
 }
 
+// =================================================================
+// Hitscan resolution (Track Z1c item 1 — convergence-goal.md). Same-tick
+// ray resolution for a `delivery == raycast` build, called from section 6's
+// fire site instead of the real-projectile spawn loop. Mirrors World.ts's
+// `resolveHitscanShot` (the ray geometry) + `resolveRangedHit` (the
+// mitigation/damage chain) — this is what makes THE GEOMETRICIAN RULING
+// (weapon_build.zig — wizard is ALWAYS raycast) actually apply damage
+// under wasm prediction: before this, world.zig ignored the resolved
+// `delivery` field entirely and spawned a traveling ProjectileEntity for
+// every build, hitscan included.
+//
+// SCOPE (v1 — deliberately narrower than TS's full chain; each cut is a
+// recorded gap, not an oversight, and each is orthogonal to whether the
+// core "hitscan build deals same-tick damage" behavior is correct):
+//   - Candidates are alive non-owner PLAYERS + static walls only. TS's
+//     `resolveHitscanShot` also sweeps Paper Double decoys and
+//     destructibles as candidate pools — unported here.
+//   - Pierce (ordered multi-hit along one ray, wall-terminated) IS ported.
+//     Split-spawn at the ray's terminal point is NOT — moot today, since
+//     no Zig code path (real projectiles included) reads `split_count` to
+//     spawn children yet; hitscan isn't a NEW gap here, the same
+//     pre-existing one.
+//   - Impact-AOE routing (explosive/slow-field) is NOT ported — a hitscan
+//     shot with an impact kind just applies direct damage instead of
+//     detonating into `pending_instant_aoe`.
+//   - Mirror shield's TS-side behavior ("no real projectile to reverse, so
+//     re-trace once back at the attacker instead") is NOT ported — a Zig
+//     hitscan mirror-shield block is a normal full absorb, same as the
+//     generic shield block.
+//   - The shooter-side amp chain (damage_amp/overcharge/boss_mode/Facet
+//     Break/Focus Hex/Rally Light/Kindled Resolve) and Ghost Guard evasion
+//     — both real `resolveRangedHit` mechanics already mirrored on the
+//     real-projectile path (section 4 above) — are NOT yet mirrored onto
+//     this new path.
+//   - Passive Tithe leech (`ResolvedWeaponBuild.leechFraction`) is NOT
+//     read here, but this is not a hitscan-specific gap: `ResolvedFireConfig`
+//     carries no leech field at all yet, so the real-projectile basic-fire
+//     spawn path doesn't apply it either (six-axes axis payloads — a
+//     separate, larger Z1 item).
+// Everything else `resolveRangedHit` does for a direct hit IS ported:
+// headshot, chaos scaling, victim vulnerability, Hard Aperture's ward-
+// shell halving, parry deflect, Self-Lattice's partial absorb, the
+// generic shield block (drain + pop), first blood, HP/kill, and
+// fire/ice/lightning-chain on-hit effects.
+
+/// Direct-hit damage + mitigation for ONE hitscan pellet landing on
+/// `victim_idx`, fired by `shooter_idx`. Mirrors World.ts's
+/// `resolveRangedHit` for the subset ported here (see the section header
+/// above this function for the exact scope line). `half_h` is the SAME
+/// half-height the caller's own sweep used to confirm the hit — passed
+/// through (rather than re-derived) so the headshot band stays self-
+/// consistent with whichever box actually decided the hit, matching
+/// `combat.isHeadshotAtHalfHeight`'s own doc comment.
+fn applyHitscanHitOnPlayer(
+    state: *world_state.WorldState,
+    victim_idx: u32,
+    shooter_idx: i32,
+    hit_x: f64,
+    hit_y: f64,
+    half_h: f64,
+    base_damage: f64,
+    element: world_state.ElementType,
+    chaos_profile: chaos.ChaosProfile,
+    origin_x: f64,
+    origin_y: f64,
+    aim_angle: f64,
+    eff_dt: f64,
+    is_fighting: bool,
+) void {
+    _ = hit_x; // kept for signature symmetry with the caller's hit point; only hit_y feeds the headshot band (a pure Y-band check, matching TS's isHeadshot).
+    if (!state.players[victim_idx].flags.alive) return; // belt-and-braces — the caller only ever builds candidates from alive players.
+
+    // Headshot (mirrors projectile.ts's applyHitOn — the multiplier applies
+    // to the RAW base damage BEFORE chaos scaling, same ordering as the
+    // real-projectile site's own headshot port above).
+    const headshot = combat.isHeadshotAtHalfHeight(hit_y, state.players[victim_idx].y, half_h);
+    const headshot_dmg: f64 = if (headshot) base_damage * combat.HEADSHOT_DAMAGE_MULTIPLIER else base_damage;
+    var final_dmg = headshot_dmg * chaos_profile.damage_multiplier;
+
+    // Victim buff: vulnerability multiplies incoming damage.
+    if (state.players[victim_idx].flags.has_vulnerability and
+        state.players[victim_idx].vulnerability_until_tick > state.header.tick)
+    {
+        final_dmg *= 1.5;
+    }
+    // Hard Aperture (Wizard) — ward shell: halves incoming damage BEFORE
+    // parry/shield mitigation. Same site as the real-projectile block.
+    if (state.players[victim_idx].ward_shell_until_tick > state.header.tick) {
+        final_dmg *= EMISSION_WARD_DAMAGE_MULT;
+    }
+
+    // Parry deflect: active parry window AND the shot's source direction
+    // lies within the parry arc (widened by cover mult). The "source"
+    // is the MUZZLE origin (not the hit point) with the aim unit vector as
+    // the direction fallback — exactly what TS's hitscan `RangedHitSource`
+    // carries (`x: pellet.originX, y: pellet.originY, vx: cos(aimAngle),
+    // vy: sin(aimAngle)`), not the real-projectile block's live proj_ptr
+    // position (which IS the current position for a traveling shard).
+    const vcfg = &state.player_fire_config[victim_idx];
+    const parry_arc = combat.PARRY_ARC_RADIANS *
+        (if (vcfg.valid != 0) vcfg.parry_cover_mul else 1.0);
+    const aim_ux = trig.lutCos(aim_angle);
+    const aim_uy = trig.lutSin(aim_angle);
+    if (combat.isParryActive(&state.players[victim_idx], state.header.tick) and
+        combat.isHitInArc(
+            state.players[victim_idx].x,
+            state.players[victim_idx].y,
+            state.players[victim_idx].parry_facing,
+            origin_x,
+            origin_y,
+            aim_ux,
+            aim_uy,
+            parry_arc,
+        ))
+    {
+        emitEvent(
+            state,
+            .parry_deflected,
+            @intCast(victim_idx),
+            -1,
+            0,
+            0,
+            state.players[victim_idx].x,
+            state.players[victim_idx].y,
+        );
+        // No bounce-back: a hitscan shot has no real entity to reverse —
+        // TS's own parry/mirror-shield reflect for a hitscan pellet is a
+        // SEPARATE immediate re-trace back at the attacker (unported, see
+        // this section's scope note); v1 just consumes the shot here.
+        return;
+    }
+
+    // Self-Lattice (Priest) — Syzygist Ward's flat absorb pool. Checked
+    // BEFORE the generic shield step and mutually exclusive with it,
+    // matching combat.ts's `trySyzygistWard` / the real-projectile site.
+    var syz_ward_consumed = false;
+    if (state.players[victim_idx].syz_ward_absorb_until_tick > state.header.tick and
+        state.players[victim_idx].syz_ward_absorb_remaining > 0)
+    {
+        syz_ward_consumed = true;
+        const blocked = @min(final_dmg, state.players[victim_idx].syz_ward_absorb_remaining);
+        state.players[victim_idx].syz_ward_absorb_remaining -= blocked;
+        final_dmg -= blocked;
+        if (state.players[victim_idx].syz_ward_absorb_remaining <= 0) {
+            state.players[victim_idx].syz_ward_absorb_remaining = 0;
+            state.players[victim_idx].syz_ward_absorb_until_tick = 0;
+        }
+    }
+
+    shield_block: {
+        if (syz_ward_consumed) break :shield_block;
+        if (!(state.players[victim_idx].flags.shield_active and
+            state.players[victim_idx].flags.has_shield_charge and
+            state.players[victim_idx].shield_charge > 0)) break :shield_block;
+        // Aim shield: only blocks hits arriving within the aim cone;
+        // flank/back shots pass through to damage below.
+        if (vcfg.valid != 0 and vcfg.directional_shield != 0) {
+            const vp = &state.players[victim_idx];
+            const adx = vp.aim_x - vp.x;
+            const ady = vp.aim_y - vp.y;
+            const aim_facing = if (adx == 0.0 and ady == 0.0)
+                0.0
+            else
+                trig.lutAtan2(ady, adx);
+            if (!combat.isHitInArc(vp.x, vp.y, aim_facing, origin_x, origin_y, aim_ux, aim_uy, combat.SHIELD_AIM_ARC_RADIANS))
+                break :shield_block; // not covered → take the hit
+        }
+        state.players[victim_idx].shield_charge -=
+            final_dmg * combat.SHIELD_HIT_DRAIN_MULTIPLIER;
+        if (state.players[victim_idx].shield_charge <= 0) {
+            state.players[victim_idx].shield_charge = 0;
+            state.players[victim_idx].flags.shield_active = false;
+            emitEvent(
+                state,
+                .shield_popped,
+                @intCast(victim_idx),
+                -1,
+                0,
+                0,
+                state.players[victim_idx].x,
+                state.players[victim_idx].y,
+            );
+        }
+        // Mirror shield v1: full absorb, no reflect (see section doc
+        // comment) — every shield block ends the hit here regardless of
+        // the mirror_shield flag.
+        return;
+    }
+
+    maybeAwardFirstBlood(state, shooter_idx, @intCast(victim_idx), is_fighting);
+    state.players[victim_idx].health -= final_dmg;
+    emitEvent(
+        state,
+        .hit_confirmed,
+        @intCast(victim_idx),
+        shooter_idx,
+        0,
+        final_dmg,
+        state.players[victim_idx].x,
+        state.players[victim_idx].y,
+    );
+    if (state.players[victim_idx].health <= 0) {
+        state.players[victim_idx].health = 0;
+        state.players[victim_idx].flags.alive = false;
+        creditKill(state, shooter_idx, @intCast(victim_idx));
+        emitEvent(
+            state,
+            .player_killed,
+            @intCast(victim_idx),
+            shooter_idx,
+            0,
+            0,
+            state.players[victim_idx].x,
+            state.players[victim_idx].y,
+        );
+    }
+
+    // Element on-hit effects (parity with World.ts phase 6d / the real-
+    // projectile site above).
+    switch (element) {
+        .fire => {
+            const burn_ticks: u32 = @intFromFloat(@ceil(EMISSION_BURN_CAP_MS / @max(1.0, eff_dt)));
+            state.players[victim_idx].flags.has_burn = true;
+            state.players[victim_idx].burn_until_tick = state.header.tick + burn_ticks;
+            state.players[victim_idx].burn_dps = final_dmg * 0.4;
+            state.players[victim_idx].burn_tick_last_applied = state.header.tick;
+        },
+        .ice => {
+            const freeze_ticks: u32 = @intFromFloat(@ceil(1000.0 / @max(1.0, eff_dt)));
+            state.players[victim_idx].flags.has_freeze = true;
+            state.players[victim_idx].freeze_until_tick = state.header.tick + freeze_ticks;
+            state.players[victim_idx].freeze_multiplier = 0.5;
+        },
+        .lightning, .electric => {
+            const chain_dmg = final_dmg * 0.5;
+            const hx = state.players[victim_idx].x;
+            const hy = state.players[victim_idx].y;
+            var best: i32 = -1;
+            var best_d2: f64 = 220.0 * 220.0;
+            var ci: u32 = 0;
+            while (ci < state.player_count) : (ci += 1) {
+                if (ci == victim_idx or !state.players[ci].flags.alive) continue;
+                const cdx = state.players[ci].x - hx;
+                const cdy = state.players[ci].y - hy;
+                const d2 = cdx * cdx + cdy * cdy;
+                if (d2 <= best_d2) {
+                    best_d2 = d2;
+                    best = @intCast(ci);
+                }
+            }
+            if (best >= 0) {
+                const cb: u32 = @intCast(best);
+                maybeAwardFirstBlood(state, shooter_idx, best, is_fighting);
+                state.players[cb].health -= chain_dmg;
+                emitEvent(state, .hit_confirmed, best, shooter_idx, 0, chain_dmg, state.players[cb].x, state.players[cb].y);
+                if (state.players[cb].health <= 0) {
+                    state.players[cb].health = 0;
+                    state.players[cb].flags.alive = false;
+                    creditKill(state, shooter_idx, best);
+                    emitEvent(state, .player_killed, best, shooter_idx, 0, 0, state.players[cb].x, state.players[cb].y);
+                }
+            }
+        },
+        else => {},
+    }
+}
+
+/// Ray-trace ONE hitscan pellet from `(origin_x, origin_y)` along
+/// `aim_angle` out to `range_px`, gathering ordered hits against alive
+/// non-owner PLAYERS (v1 candidate pool — see the section header above
+/// for the full scope line) and applying damage immediately via
+/// `applyHitscanHitOnPlayer` — mirrors World.ts's `resolveHitscanShot`
+/// geometry for the player-hit case. Unlike TS's own `pendingHitscanHits`
+/// batch (deferred to avoid a stale-copy-on-write overwrite hazard on
+/// `players`, a per-tick RECORD there), Zig's `state.players` is a flat,
+/// directly-mutated array — a hit lands immediately with no equivalent
+/// hazard to defer around.
+fn resolveHitscanFire(
+    state: *world_state.WorldState,
+    shooter_idx: u32,
+    origin_x: f64,
+    origin_y: f64,
+    aim_angle: f64,
+    range_px: f64,
+    radius: f64,
+    pierce_budget: u32,
+    base_damage: f64,
+    element: world_state.ElementType,
+    chaos_profile: chaos.ChaosProfile,
+    eff_dt: f64,
+    is_fighting: bool,
+) void {
+    const vxr = trig.lutCos(aim_angle) * range_px;
+    const vyr = trig.lutSin(aim_angle) * range_px;
+    const mover: collision_types.AABB = .{
+        .x = origin_x - radius,
+        .y = origin_y - radius,
+        .w = radius * 2.0,
+        .h = radius * 2.0,
+    };
+
+    // Wall stop is fixed for the whole ray — piercing never moves it
+    // (mirrors `resolveHitscanShot`'s own `wallT`, computed once outside
+    // the per-hit loop).
+    var wall_hit: collision_types.SweepHit = undefined;
+    const wall_found = collision_types.sweepAABBCached(
+        mover,
+        vxr,
+        vyr,
+        1.0,
+        state.statics[0..state.static_count],
+        state.one_way[0..state.static_count],
+        &wall_hit,
+    );
+    const wall_t: f64 = if (wall_found) wall_hit.t else 1.0;
+
+    // Candidate pool: every alive non-owner player. Fixed-size arrays
+    // (MAX_PLAYERS is small) with swap-remove on pierce instead of TS's
+    // order-preserving splice — the "next-nearest candidate behind a
+    // pierced hit" result is identical either way; only the tie-break
+    // loser on an EXACT-equal sweep `t` could differ, an astronomically
+    // unlikely float coincidence with real per-tick positions.
+    var cand_idx: [world_state.MAX_PLAYERS]u32 = undefined;
+    var cand_box: [world_state.MAX_PLAYERS]collision_types.AABB = undefined;
+    var cand_n: u32 = 0;
+    {
+        var cpi: u32 = 0;
+        while (cpi < state.player_count) : (cpi += 1) {
+            if (cpi == shooter_idx) continue;
+            if (!state.players[cpi].flags.alive) continue;
+            cand_idx[cand_n] = cpi;
+            cand_box[cand_n] = combat.playerHitboxAabb(
+                state.players[cpi].x,
+                state.players[cpi].y,
+                state.players[cpi].flags.crouching,
+                state.players[cpi].character_id,
+            );
+            cand_n += 1;
+        }
+    }
+
+    const max_hits = pierce_budget + 1;
+    var hits: u32 = 0;
+    while (hits < max_hits) : (hits += 1) {
+        var player_hit: collision_types.SweepHit = undefined;
+        const player_found = if (cand_n > 0)
+            collision_types.sweepAABB(mover, vxr, vyr, 1.0, cand_box[0..cand_n], &player_hit)
+        else
+            false;
+
+        var best_t: f64 = wall_t;
+        var hit_idx: i32 = -1;
+        var hit_slot: u32 = 0;
+        if (player_found and player_hit.t < best_t) {
+            best_t = player_hit.t;
+            hit_slot = @intCast(player_hit.index);
+            hit_idx = @intCast(cand_idx[hit_slot]);
+        }
+
+        if (hit_idx < 0) break; // wall, or a clean miss at max range — ray ends.
+
+        const hx = origin_x + vxr * best_t;
+        const hy = origin_y + vyr * best_t;
+        const half_h = cand_box[hit_slot].h / 2.0;
+        applyHitscanHitOnPlayer(
+            state,
+            @intCast(hit_idx),
+            @intCast(shooter_idx),
+            hx,
+            hy,
+            half_h,
+            base_damage,
+            element,
+            chaos_profile,
+            origin_x,
+            origin_y,
+            aim_angle,
+            eff_dt,
+            is_fighting,
+        );
+
+        // Splice the pierced candidate out of the live pool so the next
+        // pass's sweep finds whatever's next behind it.
+        cand_n -= 1;
+        cand_idx[hit_slot] = cand_idx[cand_n];
+        cand_box[hit_slot] = cand_box[cand_n];
+    }
+}
+
 /// Time-out / force-resolve winner (parity with round.ts
 /// decideRoundWinner's forceResolve branch — kill-tally rule 2026-07-17):
 ///   1. most `round_kills` wins, dead or alive (landing kills is the
@@ -4278,9 +4667,18 @@ pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
                 // weapon.ts itself has. `spawn_projectiles` gates ONLY the
                 // spawns (slappers-only chaos) — the hand toggle above already
                 // ran, matching TS's ordering.
+                // Delivery branch (Track Z1c item 1): a raycast-resolved
+                // build resolves same-tick hitscan instead of spawning
+                // traveling ProjectileEntitys — mirrors weapon.ts's
+                // `isHitscan` branch (`build.delivery === "raycast"`).
+                // Gated on `fcfg.valid` (an invalid/fallback config keeps
+                // the pre-existing projectile-spawn behavior — see
+                // `weapons_data.WeaponBase`'s doc comment: the class-blind
+                // fallback base has no `delivery` field at all yet, a
+                // separate, smaller, deliberately-untouched gap).
+                const is_hitscan = fcfg.valid != 0 and fcfg.delivery == 1;
                 var shot_i: u32 = 0;
                 while (spawn_projectiles and shot_i < proj_count) : (shot_i += 1) {
-                    if (state.projectile_count >= world_state.MAX_PROJECTILES) break;
                     const offset: f64 = if (proj_count <= 1)
                         0
                     else blk: {
@@ -4289,6 +4687,37 @@ pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
                         break :blk -spread_amp_total * 0.5 + t * spread_amp_total;
                     };
                     const ang = aim_angle + offset;
+
+                    if (is_hitscan) {
+                        resolveHitscanFire(
+                            state,
+                            pi3,
+                            muzzle.x,
+                            muzzle.y,
+                            ang,
+                            proj_range,
+                            radius_v,
+                            proj_pierce,
+                            damage_amp_v,
+                            proj_element,
+                            chaos_profile,
+                            eff_dt,
+                            is_fighting,
+                        );
+                        emitEvent(
+                            state,
+                            .shot_fired,
+                            @intCast(pi3),
+                            -1,
+                            0,
+                            ang,
+                            player_ptr.x,
+                            player_ptr.y,
+                        );
+                        continue;
+                    }
+
+                    if (state.projectile_count >= world_state.MAX_PROJECTILES) break;
                     const slot: u32 = state.projectile_count;
                     state.projectile_count += 1;
                     const new_id: u32 = state.header.next_entity_id;

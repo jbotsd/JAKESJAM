@@ -229,9 +229,52 @@
 // loadoutBridge.test.ts, draftOfferParity.test.ts (offers byte-identical
 // + tick-identical draft timing for the same seed),
 // matchHostZigDraft.test.ts, matchHostWasmEvents.test.ts.
-// Still open on the Z1 list (Z1c's, deliberately untouched): team peel,
-// ninja dash i-frames, Kindled Ward partial mitigation, hitscan resolve
-// parity (+ headshot band), six-axes axis payloads.
+//
+// Z1c item 1 (2026-07-24) closed exactly the hitscan-resolve gap Z1b's own
+// note above named: world.zig's fire site now branches on the resolved
+// `delivery` field (weapon_build.zig) instead of ignoring it, so a
+// raycast build (every "balanced"=wizard bot in this harness — none hold
+// cards, so none have flipped delivery) resolves same-tick hitscan damage
+// in Zig too, matching World.ts's resolveHitscanShot/resolveRangedHit
+// instead of spawning a traveling ProjectileEntity that lands its hit on
+// some LATER tick:
+//
+//   Z1c BEFORE (Z1b's after):        AFTER (hitscan resolve + headshot):
+//   seed=1     : final  376.5px (230) | final  376.5px (onset 230)
+//   seed=42    : final  258.5px (175) | final  247.5px (onset 175)
+//   seed=1337  : final  219.2px (262) | final  230.0px (onset 249)
+//   seed=90210 : final  762.7px (144) | final  274.2px (onset 160)
+//   seed=271828: final  360.6px (180) | final  437.9px (onset 229)
+//
+// VERDICT: mixed, not uniformly better — the honest reading, not a clean
+// win. seed=90210 improved dramatically (762.7px → 274.2px, the biggest
+// single-seed swing in this file's whole history), consistent with the
+// hypothesis this item targets: a same-tick hit no longer disagrees with
+// a delayed-travel-time one on WHICH tick a kill lands, which is exactly
+// the kind of one-tick death-timing fork this file's own header already
+// names as the dominant divergence engine (different death tick → the
+// two sims re-seat respawns at different spawn seals → the sample-window
+// frozen-position gap this whole sweep tracks). seeds 1337/271828 got
+// modestly WORSE (11-77px) — plausible explanations not yet isolated:
+// this is a v1 hitscan port (see resolveHitscanFire's own scope-note doc
+// comment in world.zig — decoys/destructibles/impact-AOE/split-spawn/the
+// shooter-side amp chain/mirror-shield reflect/Ghost Guard evasion are
+// all deliberately unported), so a shot that WOULD have been suppressed
+// or amplified by one of those mechanics on the TS side now resolves
+// through a plainer chain in Zig, which can just as easily shift a
+// death tick EARLIER as it can align it. seed=1's identical onset/final
+// (zero cards fired that round before the recorded window, or the first
+// divergent hit happened to be identical either way) is the null case,
+// not a regression signal. Recorded honestly per this file's own meter
+// contract — the CORE claim (same-tick hit resolution, headshot
+// agreement) is proven exactly, not statistically, by
+// hitscanResolveParity.test.ts and combatHitboxScaleParity.test.ts;
+// THIS file only ever measured aggregate full-match drift, never
+// per-mechanic correctness.
+//
+// Still open on the Z1 list (Z1c's remaining items, deliberately
+// untouched this pass): six-axes axis payloads, team peel, ninja dash
+// i-frames, Kindled Ward partial mitigation, contagion self-jump guard.
 //
 // If the sweep exceeds its bound, the per-seed record above is the
 // deliverable the next track consumes.
