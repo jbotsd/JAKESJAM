@@ -234,7 +234,41 @@ already pass.
   mitigation, six-axes axis payloads — each judged to need item-1-grade
   investigation depth, deliberately not rushed. Aegis Share's team-peel
   READER lands with the team-peel item (window is bridged and cast-live
-  already).
+  already). **Z1c the remaining four items ALL CLOSED 2026-07-24, four
+  commits, zero left on the list**: (1) six-axes axis payloads — passive
+  Tithe leech: `ResolvedFireConfig` grows a `leech_fraction` f32 reusing
+  `delivery`'s own pad (256B unchanged), consumed at both fire sites, PLUS
+  a real pre-existing bug fix (the shipped Bleed Tithe leech's cap was
+  flat 100, not chassis-aware — now `maxHealthForPlayer`); a documented
+  classModifiers-codegen stopgap (`fireConfigShared.ts`'s
+  `patchLeechFraction`) bridges the ONE card that needs it (Stolen Fangs),
+  since Zig's card codegen carries no classModifiers data at all (a
+  separate, larger, still-open gap — 9 cards, several fields each);
+  leechFractionParity.test.ts. (2) team peel: `findTeamPeelWarderIdx`/
+  `applyTeamPeel` (world.zig) + `isAllyBodyInWardCone`/
+  `computeTeamPeelMitigation` (combat.zig) using the Track Z1a ally
+  substrate, wired at all four hit sites (real-projectile, hitscan,
+  resolveInstantAoeCasts, stepMeleeSwing — dash-bash excluded, no Zig
+  equivalent exists); new `team_peel_absorbed` wire event;
+  teamPeelParity.test.ts. (3) ninja dash i-frames: `isNinjaEvading` reads
+  `player_movement[idx].dash_active_ms > 0.0` — ALREADY-bridged movement-
+  timer memory, not a new field, cheaper than either stubbed-list note
+  anticipated — checked ahead of Ghost Guard at all four hit sites;
+  ninjaDashIframesParity.test.ts (hitscan + a directly-injected real
+  ProjectileEntity, since no class can reach that path reliably via its
+  own Fire button in a bounded tick budget). (4) Kindled Ward partial
+  mitigation: every "shield_active" check at all four hit sites now
+  class-branches — Paladin gets `isSourceInWardCone`-gated 60% mitigation
+  + Kindling (was: generic 100% block, a real gameplay divergence), Ninja
+  is excluded entirely (LOCKED doctrine, was ALSO incorrectly blocking),
+  everyone else keeps the untouched generic block; team peel now
+  correctly gated on `!kindled_warded` at all four sites too;
+  kindledWardMitigationParity.test.ts. Meter: byte-identical across all
+  four (376.5/247.5/230.0/274.2/437.9), expected every time — this
+  harness's bots are cardless/FFA/all-Wizard, so every one of the four
+  class/team/card gates fails closed for them; each item's own dedicated
+  parity test is the real proof, not this meter. Commits: e0268c9 (leech),
+  1422994 (team peel), e537bdc (ninja i-frames), 1ea9344 (Kindled Ward).
 - Z1b: **DONE** 2026-07-24 — the whole remaining wipe-on-repack substrate,
   three commits: (a) the [384,620) ability-window tail bridged
   field-level (28 comptime offset asserts; abilityWindowBridge.test.ts —
