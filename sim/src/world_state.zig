@@ -2213,6 +2213,21 @@ pub export fn sizeof_melee_swing_memory() u32 {
     return @intCast(@sizeOf(MeleeSwingMemory));
 }
 
+/// Byte offset of `player_draft_state[0]` from the start of `WorldState`
+/// (Track Z2 — the drafting bridge). The full-sync hosts repack the whole
+/// buffer every tick, so mid-draft offers/picks must round-trip through
+/// the pack like player_movement/melee_swing before them —
+/// draftMemoryBridge assertions pin this against the TS-side derivation.
+pub export fn offset_player_draft_state() u32 {
+    return @intCast(@offsetOf(WorldState, "player_draft_state"));
+}
+
+/// @sizeOf pin for the bridge's PLAYER_DRAFT_STATE_SIZE stride (Track
+/// Z2) — same contract as sizeof_melee_swing_memory above.
+pub export fn sizeof_player_draft_state() u32 {
+    return @intCast(@sizeOf(PlayerDraftState));
+}
+
 pub export fn world_state_max_players() u32 {
     return @intCast(MAX_PLAYERS);
 }

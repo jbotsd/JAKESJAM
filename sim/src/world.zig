@@ -5867,6 +5867,13 @@ pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
         // countdown→fighting block re-clears it anyway.
         state.header.first_blood_idx_plus1 = 0;
 
+        // Round winner clears at the →countdown transition too (round.ts
+        // sets `next.winnerPlayerId = null` in BOTH →countdown branches).
+        // Track Z2: round_winner_idx is now BRIDGED (packed from
+        // state.round.winnerPlayerId / unpacked back), so a stale index
+        // here would survive onto the wire where TS reads null.
+        state.header.round_winner_idx = -1;
+
         state.header.round_index += 1;
         // Reset transient entities for the new round (I28).
         // Players keep their score + buff durations; everything
@@ -6063,4 +6070,34 @@ pub export fn world_state_set_target_score(
 ) void {
     state_ptr.header.target_score = target;
     state_ptr.header.match_winner_idx = -1;
+}
+
+/// Host entry (Track Z2 — the drafting bridge): apply one player's draft
+/// pick into the live wasm-side state, between the host's pack and this
+/// tick's `step_world` call. Thin wrapper over `draft.applyCardPick`
+/// (`auto_picked=false` — the auto path is `stepWorld`'s own expiry
+/// block); returns 1 if the pick landed, 0 on any of applyCardPick's
+/// no-op gates (wrong phase, bad indices, empty offer slot, already
+/// picked). NOTE for callers: the `draft_resolved` event this emits is
+/// wiped by `stepWorld`'s own `event_count = 0` reset at the top of the
+/// step — the HOST synthesizes the TS-side draft-resolved event for
+/// picks it queued (it knows player + card already); only the expiry
+/// auto-picks surface through the wasm event stream.
+pub export fn world_apply_card_pick(
+    state_ptr: *world_state.WorldState,
+    player_idx: u32,
+    offer_slot: u32,
+) u32 {
+    if (offer_slot > 255) return 0;
+    return if (draft.applyCardPick(state_ptr, player_idx, @intCast(offer_slot), false)) 1 else 0;
+}
+
+/// Parity-test entry (Track Z2): roll this round's draft offers for every
+/// roster player — `draft.rollOffersForRound` exactly as `stepWorld`'s
+/// round_over → drafting transition calls it, but host-invokable on a
+/// hand-seeded state so the TS-vs-Zig offer-roll parity suite can compare
+/// the deterministic parts precisely (draft.zig's own testing doctrine)
+/// without driving a whole round through the phase machine first.
+pub export fn world_draft_roll_offers(state_ptr: *world_state.WorldState) void {
+    draft.rollOffersForRound(state_ptr);
 }

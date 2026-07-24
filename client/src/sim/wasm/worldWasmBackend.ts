@@ -223,6 +223,10 @@ function mergeUnpacked(
       // mirror the verdict out, including the explicit-undefined clear
       // (round.ts optional-field convention, same as suddenDeathActive).
       firstBloodPlayerId: unpacked.round.firstBloodPlayerId,
+      // Round winner (Track Z2): Zig's round machine owns the verdict on
+      // this path (fighting → round-over write; both →countdown clears) —
+      // mirror it out like suddenDeathActive/firstBloodPlayerId above.
+      winnerPlayerId: unpacked.round.winnerPlayerId,
       scores: { ...state.round.scores, ...unpacked.scores },
       // Kill tally REPLACES rather than spread-merges (unlike scores,
       // which are match-monotonic): the tally resets every round, so
@@ -251,6 +255,10 @@ function mergeUnpacked(
     // without this, the next pack resets every swing to idle and melee
     // can never mature past windup on the wasm path.
     meleeSwingMemory: unpacked.meleeSwingMemory,
+    // And for draft bookkeeping (Track Z2): without this, the next pack
+    // wipes every rolled offer and landed pick — the wasm drafting phase
+    // could never hold a draft open.
+    draftMemory: unpacked.draftMemory,
   };
 }
 

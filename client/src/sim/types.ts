@@ -1485,6 +1485,36 @@ export type WorldState = {
    * in `WorldRuntime.melee`/`paladinMelee`.
    */
   meleeSwingMemory?: Record<PlayerId, MeleeSwingMemory>;
+  /**
+   * Zig full-sync path ONLY (Track Z2 — the drafting bridge): per-player
+   * draft bookkeeping bridged across the every-tick WorldState repack,
+   * the byte-faithful image of world_state.zig's `PlayerDraftState`.
+   * `offers` are +1-encoded card-table indices (0 = empty slot);
+   * `pickedSlot` is the +1-encoded picked offer slot (0 = not picked) —
+   * raw Zig encoding on purpose: this is a carrier, not a presentation
+   * surface. The server host converts indices ↔ card ids at its own
+   * presentation layer (matchHost's Zig-draft mirror →
+   * `round.draftingOffers`/`draftingPicked`).
+   *
+   * Without this carrier the wasm drafting phase forgot every rolled
+   * offer and every landed pick one tick after it happened (same
+   * wipe-on-repack bug class as movementMemory/meleeSwingMemory above).
+   * Keyed by PlayerId; missing entries pack as zeros (nothing rolled /
+   * nothing picked — Zig's own `.{}` default). Optional/additive +
+   * OFF-WIRE per the movementMemory contract.
+   */
+  draftMemory?: Record<PlayerId, PlayerDraftMemory>;
+};
+
+/**
+ * Byte-faithful TS image of world_state.zig's `PlayerDraftState` (Track
+ * Z2) — see `WorldState.draftMemory` for the encoding contract.
+ */
+export type PlayerDraftMemory = {
+  /** +1-encoded card-table indices, length DRAFT_OFFER_COUNT (3). */
+  offers: number[];
+  /** +1-encoded picked offer slot; 0 = not picked yet. */
+  pickedSlot: number;
 };
 
 export type SimEvent = (

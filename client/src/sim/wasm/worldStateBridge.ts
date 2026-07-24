@@ -40,6 +40,7 @@ import {
   type ProjectilePathing,
   type ProjectileShape,
   type MeleeSwingMemory,
+  type PlayerDraftMemory,
   type PlayerMovementMemory,
   type RoundPhase,
   type RoundState,
@@ -209,7 +210,17 @@ export const RESOLVED_FIRE_CONFIG_SIZE = 248; // +14 augment fields (movement/sh
 // world_state.zig's EquippedActives/PlayerCardIds/PlayerDraftState @sizeOf.
 const EQUIPPED_ACTIVES_SIZE = 3; // MAX_ABILITY_SLOTS
 const PLAYER_CARD_IDS_SIZE = 8; // MAX_PLAYER_CARDS
-const PLAYER_DRAFT_STATE_SIZE = 4; // DRAFT_OFFER_COUNT + 1
+// BRIDGED as of Track Z2 (the drafting bridge): packed from
+// `WorldState.draftMemory` and unpacked back, so mid-draft offers/picks
+// survive the hosts' every-tick repack — before this, the wasm-side
+// drafting phase forgot every rolled offer and every landed pick one
+// tick after it happened (same wipe-on-repack class as Z0e/Z1a/Z1b).
+// Unlike equipped actives / card ids just above (build-resolved,
+// host-re-delivered after every pack — see resolve_player_loadout),
+// draft state is GENUINE per-round sim state with no TS mirror to
+// re-derive from, so it gets the movementMemory-style carrier treatment.
+export const PLAYER_DRAFT_STATE_SIZE = 4; // DRAFT_OFFER_COUNT + 1
+export const DRAFT_OFFER_COUNT = 3;
 // Deferred-write instant-AOE cast queue (2026-07-20 gap-closure pass) — must
 // match world_state.zig's PendingInstantAoe/MAX_PENDING_INSTANT_AOE.
 const PENDING_INSTANT_AOE_SIZE = 80;
@@ -369,6 +380,24 @@ function unpackMovementMemory(
 // meleeSwingMemoryBridge.test.ts asserts the two derivations agree.
 export const MELEE_SWING_OFFSET =
   PLAYER_MOVEMENT_OFFSET + MAX_PLAYERS * PLAYER_MOVEMENT_MEMORY_SIZE;
+
+// Byte offset of `player_draft_state[0]` within the packed WorldState
+// (Track Z2 — the drafting bridge). Bridged for the same reason as
+// player_movement/melee_swing: the full-sync hosts repack the whole
+// buffer every tick, and an unbridged slot means every rolled offer and
+// every landed pick is wiped one tick later — the wasm drafting phase
+// could never hold a draft open. Must equal wasm's
+// `offset_player_draft_state()` export — draftOfferParity.test.ts
+// asserts the two derivations agree. (The equipped-actives and card-ids
+// arrays between melee_swing and this one stay unbridged: they are
+// build-resolved data the host re-delivers after every pack via
+// resolve_player_loadout.)
+export const PLAYER_DRAFT_STATE_OFFSET =
+  MELEE_SWING_OFFSET +
+  MAX_PLAYERS * MELEE_SWING_MEMORY_SIZE +
+  MAX_PLAYERS * RESOLVED_FIRE_CONFIG_SIZE +
+  MAX_PLAYERS * EQUIPPED_ACTIVES_SIZE +
+  MAX_PLAYERS * PLAYER_CARD_IDS_SIZE;
 
 /** Pack one MeleeSwingMemory into its 64-byte slot. Field offsets follow
  *  world_state.zig's MeleeSwingMemory extern struct exactly: six f64s
@@ -2022,11 +2051,20 @@ export function packWorldState(state: WorldState): Uint8Array {
   // back. Encode -1 as 0xFFFFFFFF.
   view.setInt32(off, -1, true);
   off += 4;
-  // round_winner_idx (2026-07-20, Phase 2, docs/zig-step-world-parity-
-  // goal.md) — orchestrator writes this back at the fighting → round_over
-  // transition; -1 = no winner yet this round. See world_state.zig's
-  // WorldStateHeader.round_winner_idx doc comment.
-  view.setInt32(off, -1, true);
+  // round_winner_idx (2026-07-20, Phase 2; BRIDGED as of Track Z2) —
+  // Zig's round machine writes this at the fighting → round_over
+  // transition and draft.zig's offer roll reads it ROUND_OVER_HOLD_MS
+  // later for catch-up/winner role weighting. This used to hardcode -1,
+  // which wiped the winner on the very next repack (header edition of
+  // the scores/target_score bug class — every hosted draft rolled
+  // all-standard weights, and the round-over winner display read null on
+  // the wasm path). Encoded from state.round.winnerPlayerId by the same
+  // sorted-keys convention as first_blood below; -1 = draw/none.
+  const roundWinnerIdx =
+    state.round.winnerPlayerId != null
+      ? Object.keys(state.players).sort().indexOf(state.round.winnerPlayerId)
+      : -1;
+  view.setInt32(off, roundWinnerIdx, true);
   off += 4;
   // first_blood_idx_plus1 (Track Z0d) — reclaims what used to be the
   // alignment pad before countdown_remaining_ms (HEADER_SIZE unchanged).
@@ -2173,6 +2211,23 @@ export function packWorldState(state: WorldState): Uint8Array {
     );
   }
 
+  // player_draft_state parallel array (Track Z2 — the drafting bridge):
+  // same sorted-slot contract as the two loops directly above. Before
+  // this, the region was left zero-filled and the hosts' every-tick
+  // repack wiped every rolled offer and landed pick — the wasm drafting
+  // phase could never hold a draft open. Missing entries stay zero
+  // (nothing rolled / nothing picked — Zig's own `.{}` default; the
+  // fresh buffer is already zero-filled so no explicit write is needed).
+  for (let i = 0; i < players.length; i++) {
+    const d = state.draftMemory?.[players[i]!.id];
+    if (!d) continue;
+    const base = PLAYER_DRAFT_STATE_OFFSET + i * PLAYER_DRAFT_STATE_SIZE;
+    for (let s = 0; s < DRAFT_OFFER_COUNT; s++) {
+      view.setUint8(base + s, (d.offers[s] ?? 0) & 0xff);
+    }
+    view.setUint8(base + DRAFT_OFFER_COUNT, d.pickedSlot & 0xff);
+  }
+
   return buf;
 }
 
@@ -2214,6 +2269,7 @@ export type UnpackedWorldState = {
     | "roundIndex"
     | "suddenDeathActive"
     | "firstBloodPlayerId"
+    | "winnerPlayerId"
   >;
   scores: Record<string, number>;
   /** Per-round kill tally (PlayerEntity.round_kills), keyed by player id.
@@ -2240,6 +2296,12 @@ export type UnpackedWorldState = {
    *  (Track Z1a) — same round-trip contract as movementMemory, so the
    *  swing FSM survives the every-tick full-sync repack. */
   meleeSwingMemory: Record<PlayerId, MeleeSwingMemory>;
+  /** Zig's post-step `player_draft_state` parallel array, re-keyed by
+   *  player id (Track Z2 — the drafting bridge) — same round-trip
+   *  contract as the two above, so mid-draft offers/picks survive the
+   *  every-tick full-sync repack. Raw +1 encodings (see
+   *  WorldState.draftMemory's doc comment in types.ts). */
+  draftMemory: Record<PlayerId, PlayerDraftMemory>;
 };
 
 export function unpackWorldState(buf: Uint8Array): UnpackedWorldState {
@@ -2270,9 +2332,11 @@ export function unpackWorldState(buf: Uint8Array): UnpackedWorldState {
   off += 4;
   const matchWinnerIdx = view.getInt32(off, true);
   off += 4;
-  // round_winner_idx (2026-07-20, Phase 2) — not yet surfaced on
-  // UnpackedWorldState; skipped like next_entity_id/map_id above. See
-  // world_state.zig's WorldStateHeader doc comment.
+  // round_winner_idx (BRIDGED as of Track Z2 — see packWorldState's
+  // matching write): raw sorted-player index held here; resolved to a
+  // PlayerId after the players section below is unpacked, same
+  // convention as first_blood_idx_plus1 directly below.
+  const roundWinnerIdxRaw = view.getInt32(off, true);
   off += 4;
   // first_blood_idx_plus1 (Track Z0d) — raw index held here; resolved to
   // a PlayerId after the players section below is unpacked (sorted-keys
@@ -2420,11 +2484,30 @@ export function unpackWorldState(buf: Uint8Array): UnpackedWorldState {
   // Host-writable; no read-back needed (sim writes nothing here).
   off += MAX_PLAYERS * RESOLVED_FIRE_CONFIG_SIZE;
 
-  // Phase 2 (docs/zig-step-world-parity-goal.md) — equipped actives / card
-  // hand / per-round draft state parallel arrays. Skipped for now (no TS
-  // consumer reads these back through this bridge yet).
+  // Equipped actives / card hand — skipped: build-resolved data the host
+  // re-delivers after every pack (resolve_player_loadout, Track Z1b); no
+  // TS consumer reads them back through this bridge.
   off += MAX_PLAYERS * EQUIPPED_ACTIVES_SIZE;
   off += MAX_PLAYERS * PLAYER_CARD_IDS_SIZE;
+  // player_draft_state — BRIDGED as of Track Z2 (the drafting bridge):
+  // read back per live slot, keyed by that slot's player id, same
+  // contract as the player_movement/melee_swing sections above. Raw +1
+  // encodings preserved (carrier, not presentation).
+  const draftMemory: Record<PlayerId, PlayerDraftMemory> = {} as Record<
+    PlayerId,
+    PlayerDraftMemory
+  >;
+  for (let i = 0; i < playerIdBySlot.length; i++) {
+    const base = off + i * PLAYER_DRAFT_STATE_SIZE;
+    const offers: number[] = [];
+    for (let s = 0; s < DRAFT_OFFER_COUNT; s++) {
+      offers.push(view.getUint8(base + s));
+    }
+    draftMemory[playerIdBySlot[i]!] = {
+      offers,
+      pickedSlot: view.getUint8(base + DRAFT_OFFER_COUNT),
+    };
+  }
   off += MAX_PLAYERS * PLAYER_DRAFT_STATE_SIZE;
 
   // I15 static cache: 4 count + 4 pad + N×AABB + N×u8 + 4 tail.
@@ -2488,6 +2571,13 @@ export function unpackWorldState(buf: Uint8Array): UnpackedWorldState {
     firstBloodIdxPlus1 > 0 && firstBloodIdxPlus1 <= sortedIds.length
       ? PlayerId(sortedIds[firstBloodIdxPlus1 - 1]!)
       : undefined;
+  // round_winner_idx → PlayerId (Track Z2): same sorted-keys resolution
+  // as first_blood above. `null` (not undefined) when -1 — mirrors TS
+  // RoundState.winnerPlayerId's own `PlayerId | null` shape.
+  const winnerPlayerId =
+    roundWinnerIdxRaw >= 0 && roundWinnerIdxRaw < sortedIds.length
+      ? PlayerId(sortedIds[roundWinnerIdxRaw]!)
+      : null;
 
   const out: UnpackedWorldState = {
     tick,
@@ -2498,6 +2588,7 @@ export function unpackWorldState(buf: Uint8Array): UnpackedWorldState {
       roundIndex,
       suddenDeathActive,
       firstBloodPlayerId,
+      winnerPlayerId,
     },
     scores,
     roundKills,
@@ -2512,6 +2603,7 @@ export function unpackWorldState(buf: Uint8Array): UnpackedWorldState {
     events,
     movementMemory,
     meleeSwingMemory,
+    draftMemory,
   };
   if (chaosModifierIds.length > 0) out.chaosModifierIds = chaosModifierIds;
   if (fireHazardTimerMs !== 0) out.fireHazardTimerMs = fireHazardTimerMs;

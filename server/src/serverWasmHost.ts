@@ -49,6 +49,23 @@ export type WasmStepResult = {
   state: WorldState;
   events: WasmSimEvent[];
   matchComplete: boolean;
+  /** Queued draft picks that landed in Zig this step (Track Z2 — the
+   *  drafting bridge). The caller (matchHost) folds these into the TS
+   *  state: appends the card id to `player.cards` and synthesizes the
+   *  draft-resolved event (Zig's own event for a host-applied pick is
+   *  wiped by stepWorld's event-buffer reset — see world.zig's
+   *  world_apply_card_pick doc comment). */
+  appliedPicks: QueuedCardPick[];
+};
+
+/** One host-queued draft pick (Track Z2). `cardId` rides along opaquely —
+ *  serverWasmHost never interprets it; matchHost queued it after
+ *  validating against the surfaced offers and needs it back to fold the
+ *  applied pick into the TS-side hand. */
+export type QueuedCardPick = {
+  playerId: PlayerId;
+  offerSlot: number;
+  cardId: string;
 };
 
 /**
@@ -82,6 +99,13 @@ type WorldExports = {
   /** Optional — older sim.wasm builds predate spawn points (Track Z0b
    *  Item A). Flat f64 array, 2 per point: [x, y], map.spawns order. */
   world_state_set_spawn_points?: (points_ptr: number, count: number) => number;
+  /** Track Z2 — apply one queued draft pick post-pack, pre-step (see
+   *  world.zig's doc comment). Returns 1 if the pick landed. */
+  world_apply_card_pick?: (
+    state_ptr: number,
+    player_idx: number,
+    offer_slot: number,
+  ) => number;
   resolve_player_fire_config?: (
     state_ptr: number,
     player_index: number,
@@ -107,6 +131,9 @@ class ServerWasmHost {
   private cachedSpawnPoints: { x: number; y: number }[] | null = null;
   private cachedArenaSize: { x: number; y: number } | null = null;
   private cachedTargetScore: number | null = null;
+  /** Draft picks queued since the last step (Track Z2) — applied into the
+   *  wasm state between pack and step_world, then drained. */
+  private pendingCardPicks: QueuedCardPick[] = [];
   private preloadPromise: Promise<void> | null = null;
   private resolvedReady = false;
   private readyResolvers: Array<() => void> = [];
@@ -176,6 +203,16 @@ class ServerWasmHost {
 
   writeInputs(inputs: ReadonlyMap<string, PlayerInputBits>): void {
     this.cachedInputs = inputs;
+  }
+
+  /** Queue a validated draft pick for the next step (Track Z2 — the
+   *  drafting bridge). Applied into wasm memory AFTER the next pack (so
+   *  the pack can't wipe it) and BEFORE step_world (so an all-picked
+   *  draft resolves that very tick, matching TS's stepRound cadence).
+   *  Zig's applyCardPick gates idempotency (phase/slot/already-picked);
+   *  entries that don't land are silently dropped from the applied list. */
+  queueCardPick(playerId: PlayerId, offerSlot: number, cardId: string): void {
+    this.pendingCardPicks.push({ playerId, offerSlot, cardId });
   }
 
   /** Ceiling-clamp + void kill-plane bounds (World.ts computeCeilingClampY +
@@ -276,6 +313,11 @@ class ServerWasmHost {
     // + setArenaBounds). Without these the server runs every player's build inert
     // (no card augments) while the client predicts WITH them → desync.
     this.writeFireConfigsIntoMemory(state);
+    // Queued draft picks (Track Z2) — after the loadout delivery above
+    // (applyCardPick re-resolves the picker's fire config from the
+    // just-delivered hand) and before step_world (an all-picked draft
+    // resolves this very tick).
+    const appliedPicks = this.applyQueuedCardPicks(state);
     this.writeArenaBoundsIntoMemory();
     this.writeArenaSizeIntoMemory();
     this.writeLaunchPadsIntoMemory();
@@ -296,7 +338,31 @@ class ServerWasmHost {
       state: mergeUnpacked(state, unpacked),
       events: unpacked.events,
       matchComplete: unpacked.matchWinnerIdx >= 0,
+      appliedPicks,
     };
+  }
+
+  /** Drain the pick queue into the packed wasm state (Track Z2). Player
+   *  ids resolve to entity slots by the SAME localeCompare sort
+   *  packWorldState uses, so the pick lands on the slot packPlayer wrote. */
+  private applyQueuedCardPicks(state: WorldState): QueuedCardPick[] {
+    if (this.pendingCardPicks.length === 0) return [];
+    const queue = this.pendingCardPicks;
+    this.pendingCardPicks = [];
+    if (!this.ex || this.statePtr === null) return [];
+    if (typeof this.ex.world_apply_card_pick !== "function") return [];
+    const sortedIds = Object.keys(state.players).sort((a, b) =>
+      a.localeCompare(b),
+    );
+    const applied: QueuedCardPick[] = [];
+    for (const pick of queue) {
+      const idx = sortedIds.indexOf(pick.playerId);
+      if (idx < 0) continue;
+      if (this.ex.world_apply_card_pick(this.statePtr, idx, pick.offerSlot) === 1) {
+        applied.push(pick);
+      }
+    }
+    return applied;
   }
 
   __resetForTests(): void {
@@ -310,6 +376,7 @@ class ServerWasmHost {
     this.cachedSpawnPoints = null;
     this.cachedArenaSize = null;
     this.cachedTargetScore = null;
+    this.pendingCardPicks = [];
     this.preloadPromise = null;
     this.resolvedReady = false;
     this.readyResolvers.length = 0;
@@ -526,6 +593,9 @@ function mergeUnpacked(
       // First-blood wager (Track Z0d): Zig owns the claim on this path —
       // same mirror-out + explicit-undefined clear as suddenDeathActive.
       firstBloodPlayerId: unpacked.round.firstBloodPlayerId,
+      // Round winner (Track Z2): Zig's round machine owns the verdict on
+      // this path — mirror it out like the two fields above.
+      winnerPlayerId: unpacked.round.winnerPlayerId,
       scores: { ...state.round.scores, ...unpacked.scores },
     },
     players: stableMergeRecord(
@@ -546,6 +616,10 @@ function mergeUnpacked(
     // can never mature past windup on the wasm path. Mirrors the client
     // backend's mergeUnpacked exactly.
     meleeSwingMemory: unpacked.meleeSwingMemory,
+    // And for draft bookkeeping (Track Z2): without this, the next pack
+    // wipes every rolled offer and landed pick — the wasm drafting phase
+    // could never hold a draft open. Mirrors the client backend exactly.
+    draftMemory: unpacked.draftMemory,
   };
 }
 
