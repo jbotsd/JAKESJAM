@@ -776,3 +776,92 @@ describe("SimEventRouter — melee pair-scoped contact chord (R1 rows 3-5, 2026-
     expect(h.pairImpacts).toEqual([]);
   });
 });
+
+describe("SimEventRouter — whiff camera kick (K12, R1 row 10)", () => {
+  const flush = (h: ReturnType<typeof makeDeps>) => {
+    const cbs = h.delayedCalls.splice(0);
+    cbs.forEach((fn) => fn());
+  };
+
+  test("a local swing with no contact kicks the camera OPPOSITE the aim at whiff amplitude", () => {
+    const h = makeDeps();
+    const router = new SimEventRouter({
+      ...h.deps,
+      resolveAimDir: () => ({ x: 1, y: 0 }),
+    });
+    router.dispatch({ t: "slash-started", playerId: PlayerId("local"), x: 0, y: 0 } as SimEvent);
+    expect(h.kicks).toEqual([]); // nothing until the deadline
+    flush(h);
+    // Local rig is a ninja → interstice whiff params (2px/70ms, ZERO noise),
+    // direction exactly opposite the swing aim.
+    expect(h.kicks).toEqual([{ dirX: -1, dirY: -0, kickPx: 2, durMs: 70, noisePx: 0 }]);
+  });
+
+  test("a swing that CONNECTS never whiff-kicks (slash-hit disarms; only the row-9 contact kick fires)", () => {
+    const h = makeDeps();
+    const router = new SimEventRouter({
+      ...h.deps,
+      resolveAimDir: () => ({ x: 0, y: 1 }),
+    });
+    router.dispatch({ t: "slash-started", playerId: PlayerId("local"), x: 0, y: 0 } as SimEvent);
+    router.dispatch({
+      t: "slash-hit",
+      attackerId: PlayerId("local"),
+      victimId: PlayerId("remote"),
+      damage: 11,
+      dirX: 0,
+      dirY: 1,
+    } as SimEvent);
+    const kicksAfterContact = h.kicks.length; // the row-9 kick
+    expect(kicksAfterContact).toBe(1);
+    flush(h);
+    expect(h.kicks.length).toBe(kicksAfterContact); // no whiff kick on top
+  });
+
+  test("bash-landed and a melee parry (projectileId null) also disarm the watch", () => {
+    const h = makeDeps();
+    const router = new SimEventRouter({
+      ...h.deps,
+      resolveAimDir: () => ({ x: 1, y: 0 }),
+    });
+    router.dispatch({ t: "slash-started", playerId: PlayerId("local"), x: 0, y: 0 } as SimEvent);
+    router.dispatch({
+      t: "parry-deflected",
+      playerId: PlayerId("remote"),
+      projectileId: null,
+    } as SimEvent);
+    flush(h);
+    expect(h.kicks).toEqual([]); // parried = contact, not a whiff
+  });
+
+  test("a remote swing never arms the watch (camera feel is local-scoped)", () => {
+    const h = makeDeps();
+    const router = new SimEventRouter({
+      ...h.deps,
+      resolveAimDir: () => ({ x: 1, y: 0 }),
+    });
+    router.dispatch({ t: "slash-started", playerId: PlayerId("remote"), x: 0, y: 0 } as SimEvent);
+    flush(h);
+    expect(h.kicks).toEqual([]);
+  });
+
+  test("a retrig supersedes the previous watch — sustained mashing yields ONE kick per unresolved swing, never a stack", () => {
+    const h = makeDeps();
+    const router = new SimEventRouter({
+      ...h.deps,
+      resolveAimDir: () => ({ x: 1, y: 0 }),
+    });
+    router.dispatch({ t: "slash-started", playerId: PlayerId("local"), x: 0, y: 0 } as SimEvent);
+    router.dispatch({ t: "slash-started", playerId: PlayerId("local"), x: 0, y: 0 } as SimEvent);
+    flush(h); // both deadline callbacks run; only the CURRENT arm may fire
+    expect(h.kicks.length).toBe(1);
+  });
+
+  test("scenes without resolveAimDir have no whiff read (optional dep, old contract intact)", () => {
+    const h = makeDeps();
+    const router = new SimEventRouter(h.deps);
+    router.dispatch({ t: "slash-started", playerId: PlayerId("local"), x: 0, y: 0 } as SimEvent);
+    flush(h);
+    expect(h.kicks).toEqual([]);
+  });
+});

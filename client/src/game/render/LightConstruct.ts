@@ -1872,7 +1872,11 @@ export function spawnKillShockRing(
   feet: Vec2,
   tint: ConstructTint,
 ): void {
-  const g = pool.acquireBolt();
+  // Kill tier — allowed into the pool's reserved tail. The K10 live tape
+  // proved this exact spawn was the one that silently starved under real
+  // kill-tick pool pressure (bolt pool exhausted every brawl), which is
+  // why the ring existed in harness strips but had never rendered live.
+  const g = pool.acquireBolt("kill");
   if (!g) return;
   g.setPosition(0, 0);
   g.setAlpha(1);

@@ -59,12 +59,14 @@ type HarnessWindow = Window & {
   /** Victim-channel review actions ("hurt"/"hurt-kill") exist — K2's
    *  "harness can't stage victim interaction" limitation is closed. */
   __harnessHasHurt?: boolean;
+  /** Ward-brace stance review ("ward") exists — K11's whole-body ward. */
+  __harnessHasWard?: boolean;
   __cmd?: string | null;
   harnessFire?: (name: string) => void;
   harnessMeleeFrame?: (kind: "ninja" | "paladin", t: number) => void;
   harnessRigFrame?: (
     classId: ClassId,
-    action: AbilityKind | "melee" | "bash" | "idle" | "run" | "hurt" | "hurt-kill",
+    action: AbilityKind | "melee" | "bash" | "idle" | "run" | "ward" | "hurt" | "hurt-kill",
     t: number,
   ) => void;
 };
@@ -96,7 +98,7 @@ class HarnessScene extends Phaser.Scene {
   private reviewRig: ProceduralPlayerRig | null = null;
   private rigReview: {
     classId: ClassId;
-    action: AbilityKind | "melee" | "bash" | "idle" | "run" | "hurt" | "hurt-kill";
+    action: AbilityKind | "melee" | "bash" | "idle" | "run" | "ward" | "hurt" | "hurt-kill";
     t: number;
     lead: Vec2;
     back: Vec2;
@@ -164,13 +166,14 @@ class HarnessScene extends Phaser.Scene {
     w.__harnessHasBash = true;
     w.__harnessHasIdle = true;
     w.__harnessHasHurt = true;
+    w.__harnessHasWard = true;
     w.harnessMeleeFrame = (kind, t) => {
       this.meleeReview = { kind, t: Math.max(0, Math.min(0.999, t)) };
       this.rigReview = null;
     };
     w.harnessRigFrame = (classId, action, rawT) => {
       const t = Math.max(0, Math.min(0.999, rawT));
-      const stanceAction = action === "idle" || action === "run";
+      const stanceAction = action === "idle" || action === "run" || action === "ward";
       const hurtAction = action === "hurt" || action === "hurt-kill";
       if (action !== "melee" && action !== "bash" && !stanceAction && !hurtAction && !isAbilityKind(action)) return;
       this.meleeReview = null;
@@ -212,7 +215,9 @@ class HarnessScene extends Phaser.Scene {
       if (stanceAction) {
         const stancePose: ProceduralPlayerPose = action === "run"
           ? { ...pose, velocity: { x: 300, y: 0 } }
-          : pose;
+          : action === "ward"
+            ? { ...pose, shieldHeld: true }
+            : pose;
         for (let i = 0; i < 240; i++) this.reviewRig.update(1000 / 120, stancePose);
         this.rigReview = {
           classId,
@@ -600,6 +605,14 @@ class HarnessScene extends Phaser.Scene {
       // SHIELD BASH review — slab leads at the shield hand, sword chambers.
       const r = this.rigReview;
       drawKindledBash(this.meleeReviewLayer, r.back, r.lead, -0.276, KINDLED_TINT, r.t);
+    } else if (this.rigReview?.action === "ward") {
+      // Ward-brace stance review (K11) — the body is braced by the rig
+      // (shieldHeld pose); reproduce the live held layer: sword still in
+      // the lead hand, the circuit SLAB at the braced back hand — exactly
+      // where ConstructVfxController's drawWardSlab anchors it live.
+      const r = this.rigReview;
+      drawHeldEdges(this.meleeReviewLayer, r.lead, r.back, -0.276, KINDLED_TINT, 1);
+      drawWardSlab(this.wardLayer, r.back, KINDLED_TINT, this.wardPhase);
     } else if (this.rigReview && (this.rigReview.action === "idle" || this.rigReview.action === "run")) {
       // Stance review — the held/resting weapons at the settled hands (the
       // live game's ConstructVfxController held layer, reproduced here so

@@ -1613,6 +1613,16 @@ export class OnlineMatchScene extends Phaser.Scene {
         safeShake: (durationMs, intensity) => this.safeShake(durationMs, intensity),
         directionalKick: (dirX, dirY, kickPx, durMs, noisePx) =>
           this.cameraJuice.directionalKick(dirX, dirY, kickPx, durMs, noisePx),
+        // K12 whiff kick (R1 row 10): the swing direction at slash-started
+        // time, straight off the live render state.
+        resolveAimDir: (pid) => {
+          const p = this.loop?.getRenderState()?.players[pid];
+          if (!p) return undefined;
+          const dx = p.aimX - p.x;
+          const dy = p.aimY - p.y;
+          const len = Math.hypot(dx, dy);
+          return len > 0.001 ? { x: dx / len, y: dy / len } : undefined;
+        },
         renderTime: this.renderTime,
         spawnDamageNumber: (vid, dmg, headshot) => this.spawnDamageNumber(vid, dmg, headshot),
         spawnDamageNumberAt: (x, y, dmg) => this.spawnDamageNumberAt(x, y, dmg),
@@ -2512,6 +2522,7 @@ export class OnlineMatchScene extends Phaser.Scene {
     dashing: false,
     shieldArcScale: 1,
     platingGlow: 0,
+    shieldHeld: false,
   };
   /** Cull margin (world px) beyond the camera's view — generous enough that
    *  a rig's trail/shield arc never visibly pops at the screen edge. */
@@ -2612,6 +2623,8 @@ export class OnlineMatchScene extends Phaser.Scene {
     // dashing (same optional/additive pattern as grounded above).
     pose.touchingWallDir = player.touchingWallDir ?? 0;
     pose.dashing = player.dashing ?? false;
+    // K11 ward brace: same snapshot boolean the ward slab VFX frame-diffs.
+    pose.shieldHeld = player.shieldActive === true;
     rig.update(deltaMs, pose);
   }
 

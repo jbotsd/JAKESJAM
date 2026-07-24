@@ -24,6 +24,7 @@ import {
   meleeKineticChain,
   meleeOffhandPose,
   meleeStage,
+  wardBracePose,
 } from "../render/meleeTiming.js";
 
 /** The minimal surface SimEventRouter drives on ANY on-screen combatant —
@@ -148,6 +149,12 @@ export type ProceduralPlayerPose = {
   shieldArcScale?: number;
   /** Crystal Plating stacks: draw a hex shell outline on the body. */
   platingGlow?: number;
+  /** True while the universal held-Shield is engaged (`player.shieldActive`).
+   *  Drives the Kindled WARD BRACE body pose (K11 — gamut "Ward raise/
+   *  hold"): before this the ward was only the slab VFX at the off-hand,
+   *  the body never braced. Optional/additive — non-Kindled rigs and old
+   *  callers ignore it. */
+  shieldHeld?: boolean;
 };
 
 export type LimbSolve = {
@@ -204,6 +211,10 @@ export class ProceduralPlayerRig implements CombatRig {
   private facing = 1;
   /** Smoothed crouch 0..1 — eases pelvis height so crouch/uncrouch doesn't pop. */
   private crouchBlend = 0;
+  /** Smoothed 0..1 Kindled WARD BRACE (K11) — raise eases in fast (the
+   *  plate SETS), drop eases out a touch slower. Pose math lives in
+   *  meleeTiming.wardBracePose (pure, tested); this is just the clock. */
+  private wardBraceK = 0;
   private static readonly CROUCH_BLEND_TAU_MS = 70;
   // ── Dance groove (2026-07-13, Jake: "rotate my arms around like I
   // rotate the mouse in a circle... lean deeply into that... rhythm sync
@@ -752,6 +763,30 @@ export class ProceduralPlayerRig implements CombatRig {
       if (Math.abs(this.crouchBlend - crouchTarget) < 0.001) {
         this.crouchBlend = crouchTarget;
       }
+    }
+
+    // KINDLED WARD BRACE clock (K11): eases the whole-body brace in/out.
+    // Suppressed whenever another sentence owns the body (swing/bash,
+    // ability cast, dash, wall-plant, victory) or the fighter is airborne —
+    // a ward held mid-air still draws its slab VFX, but the PLANTED stance
+    // is a grounded statement. Raise is faster than drop (60 vs 110ms tau):
+    // the plate SETS, then relaxes.
+    const wardTarget =
+      this.classId === "paladin" &&
+      pose.shieldHeld === true &&
+      pose.grounded &&
+      pose.dashing !== true &&
+      (pose.touchingWallDir ?? 0) === 0 &&
+      this.meleePoseMs <= 0 &&
+      this.abilityPoseMs <= 0 &&
+      this.victoryPoseMs <= 0
+        ? 1
+        : 0;
+    if (deltaMs > 0) {
+      const tau = wardTarget > this.wardBraceK ? 60 : 110;
+      const wk = 1 - Math.exp(-deltaMs / tau);
+      this.wardBraceK += (wardTarget - this.wardBraceK) * wk;
+      if (Math.abs(this.wardBraceK - wardTarget) < 0.001) this.wardBraceK = wardTarget;
     }
 
     // Trail sampling — local/full only (remotes skip for CPU).
@@ -1369,12 +1404,19 @@ export class ProceduralPlayerRig implements CombatRig {
       this.impactParams && this.impactElapsedMs !== Infinity
         ? squashScale(this.impactElapsedMs, this.impactParams)
         : { x: 1, y: 1 };
+    // Ward brace (K11): knees bend — the same falloff-up-the-chain shape
+    // as meleeGroundLoad (pelvis full, chest 0.82, head 0.68) so the brace
+    // reads as a squat-set, not an elevator drop. Aim-independent numbers
+    // (angle args unused for the body row).
+    const wardDrop = this.wardBraceK > 0.01
+      ? wardBracePose(this.wardBraceK, 0, 1).kneeDropPx * s
+      : 0;
     const pelvisY =
-      ground - Phaser.Math.Linear(52, 28, cr) * sy * impactSquash.y - bob + gather * s + cushion + breathe * 0.4 + throwDrop - groove * 1.6 * sy + beatHit * 1 * sy + meleeGroundLoad;
+      ground - Phaser.Math.Linear(52, 28, cr) * sy * impactSquash.y - bob + gather * s + cushion + breathe * 0.4 + throwDrop - groove * 1.6 * sy + beatHit * 1 * sy + meleeGroundLoad + wardDrop;
     const chestYTarget =
-      ground - Phaser.Math.Linear(78, 52, cr) * sy * impactSquash.y - bob + gather * 1.2 * s + cushion * 1.15 + breathe + throwDrop * 0.5 - groove * 1.2 * sy + beatHit * 3 * sy + meleeGroundLoad * 0.82;
+      ground - Phaser.Math.Linear(78, 52, cr) * sy * impactSquash.y - bob + gather * 1.2 * s + cushion * 1.15 + breathe + throwDrop * 0.5 - groove * 1.2 * sy + beatHit * 3 * sy + meleeGroundLoad * 0.82 + wardDrop * 0.82;
     const headYTarget =
-      ground - Phaser.Math.Linear(100, 72, cr) * sy * impactSquash.y - bob + gather * 1.4 * s + cushion * 1.25 + breathe * 1.4 + throwDrop * 0.3 - groove * 1 * sy + beatHit * 5 * sy + meleeGroundLoad * 0.68;
+      ground - Phaser.Math.Linear(100, 72, cr) * sy * impactSquash.y - bob + gather * 1.4 * s + cushion * 1.25 + breathe * 1.4 + throwDrop * 0.3 - groove * 1 * sy + beatHit * 5 * sy + meleeGroundLoad * 0.68 + wardDrop * 0.68;
     const cx = pose.position.x + this.hitOffsetX * hitEased + drunkSway * 0.35;
     // Forward CENTRE OF MASS: the whole body chain (pelvis up) rides ahead
     // of the feet while moving — the falling-forward posture that makes a
@@ -1406,7 +1448,12 @@ export class ProceduralPlayerRig implements CombatRig {
             (abilityContract.actionEnd - abilityContract.anticipationEnd)) * Math.PI * 0.5) * abilityContract.bodyCommit
           : (1 - (abilityT - abilityContract.actionEnd) /
             Math.max(0.01, 1 - abilityContract.actionEnd)) * abilityContract.bodyCommit;
-    const bodyCx = cx + comShift + weightShift +
+    // Ward brace (K11): the center of mass presses INTO the shield —
+    // facingSmooth tracks aim, so the lean lands toward the threat.
+    const wardLean = this.wardBraceK > 0.01
+      ? this.facingSmooth * wardBracePose(this.wardBraceK, 0, 1).leanPx * s
+      : 0;
+    const bodyCx = cx + comShift + weightShift + wardLean +
       this.facing * (meleeChain.pelvisDrive + abilityCommit) * s;
 
     this.chestLagX = springTo(
@@ -1676,6 +1723,24 @@ export class ProceduralPlayerRig implements CombatRig {
       armTargets.back.y = Phaser.Math.Linear(armTargets.back.y, slabY, kindledBraceMix);
     }
 
+    // KINDLED WARD BRACE arms (K11, gamut "Ward raise/hold") — layered
+    // OVER the braced idle (the ward is the stronger statement): off-hand
+    // slab punches forward-square along aim at chest height (drawWardSlab
+    // anchors at this same back hand, so the plate PLANTS between fighter
+    // and threat), sword pulls to the low-rear guard — the same lines the
+    // bash chambers from, so ward → bash reads as the stance exploding.
+    if (this.wardBraceK > 0.01) {
+      const ward = wardBracePose(this.wardBraceK, aimAngle, this.facing);
+      const slabX = shoulderBack.x + Math.cos(ward.slab.angle) * ward.slab.reach * s;
+      const slabY = shoulderBack.y + Math.sin(ward.slab.angle) * ward.slab.reach * s;
+      const swordX = shoulderLead.x + Math.cos(ward.sword.angle) * ward.sword.reach * s;
+      const swordY = shoulderLead.y + Math.sin(ward.sword.angle) * ward.sword.reach * s;
+      armTargets.back.x = Phaser.Math.Linear(armTargets.back.x, slabX, this.wardBraceK);
+      armTargets.back.y = Phaser.Math.Linear(armTargets.back.y, slabY, this.wardBraceK);
+      armTargets.lead.x = Phaser.Math.Linear(armTargets.lead.x, swordX, this.wardBraceK);
+      armTargets.lead.y = Phaser.Math.Linear(armTargets.lead.y, swordY, this.wardBraceK);
+    }
+
     if (!this.leadHandSpringReady) {
       this.leadHandSpringX = springState(armTargets.lead.x);
       this.leadHandSpringY = springState(armTargets.lead.y);
@@ -1754,6 +1819,12 @@ export class ProceduralPlayerRig implements CombatRig {
       footRTarget.x = cx + this.facing * (9 + meleeChain.frontBrace * 3) * s;
       footLTarget.y = ground;
       footRTarget.y = ground;
+    } else if (this.wardBraceK > 0.05 && walkAmount < 0.15 && pose.grounded) {
+      // Ward brace (K11): the slab PLANTS — feet set wider than even the
+      // braced idle (±6 vs ±3.5), knees already bent via wardDrop above.
+      const widen = wardBracePose(this.wardBraceK, 0, 1).stanceWidenPx;
+      footLTarget.x -= widen * s;
+      footRTarget.x += widen * s;
     } else if (kindledBraceMix > 0.6 && walkAmount < 0.15) {
       // Braced idle plants a slightly wider base — weight visibly SET
       // (kindled-v2's grounded stance), not a narrow neutral hover.

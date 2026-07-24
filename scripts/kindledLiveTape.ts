@@ -50,17 +50,53 @@ const ctx = await browser.newContext({
   recordVideo: { dir: OUT, size: { width: 1280, height: 720 } },
 });
 const page = await ctx.newPage();
+// Wall-clock anchor for the video timeline: recording starts at page
+// creation, raw events carry `epoch` (Date.now() at batch arrival), so
+// video_time_s ≈ (epoch - videoT0)/1000 — good to ~±100ms, enough to
+// land frame extraction inside a kill chord (K10 on-camera-kill tape).
+const videoT0 = Date.now();
+// Pool-exhaustion sentinel (K10): ParticlePool.warnExhausted console.warns
+// once per starved pool — a kill-tier spawn silently skipped is EXACTLY the
+// failure mode that made rows 17/18 invisible live while harness strips
+// (isolated, empty pool) showed them.
+page.on("console", (msg) => {
+  const text = msg.text();
+  if (text.includes("ParticlePool")) console.log(`[page-console] ${text}`);
+});
 const errors: string[] = [];
-page.on("pageerror", (e) => errors.push(`${e.name}: ${e.message}`));
+page.on("pageerror", (e) => {
+  errors.push(`${e.name}: ${e.message}`);
+  // Print immediately — a join-phase throw used to abort the script before
+  // the end-of-run error dump, leaving handoff failures unexplained.
+  console.log(`[pageerror] ${e.name}: ${e.message.slice(0, 300)}`);
+});
 
 // Persist collected evidence/trace ACROSS reloads on the Node side.
 const allEvents: unknown[] = [];
 const allTrace: unknown[] = [];
 const allRaw: unknown[] = [];
 
-await page.addInitScript(() => {
-  localStorage.setItem("jakesjam.playerId", "player_feelK_live");
+// Unique per-run id (K10d fix): a reused id inside the server's reconnect
+// grace makes the client AUTO-enter the arena (venue-admitted frame on
+// reconnect), and joinArena's forced venue-admitted dispatch then RESTARTS
+// the already-live arena scene — which wedges it (isActive stays false
+// through every retry). Three consecutive "arena handoff never happened"
+// failures reproduced only when a run started <25s after the previous
+// run's player died out of the world.
+const RUN_ID = Math.random().toString(36).slice(2, 8);
+// QUALITY_TIER pin is OPT-IN ONLY (K10d finding): a recordVideo context
+// runs SwiftShader + per-frame ReadPixels screencast, and pinning
+// "standard" there makes the page CRAWL (26 probe cycles in 300s — the
+// sim loop starves, swings stall, the tape is fiction). Unpinned, the
+// auto-probe lands potato in this context, which is the CONSERVATIVE
+// read: quartered pools + 0.75 renderScale under-read what Jake's
+// desktop renders, so anything that reads on a potato tape reads live.
+const TIER = process.env.QUALITY_TIER ?? "";
+await page.addInitScript(({ runId, tier }) => {
+  localStorage.setItem("jakesjam.playerId", `player_feelK_${runId}`);
   localStorage.setItem("jakesjam.playerCharacter", "heavy"); // Kindled chassis
+  if (tier) localStorage.setItem("jj_quality_tier", tier);
+  else localStorage.removeItem("jj_quality_tier");
   const w = window as unknown as { __feelEvents: unknown[] };
   w.__feelEvents = [];
   window.addEventListener("jakesjam:presentation-event", (e) => {
@@ -75,24 +111,37 @@ await page.addInitScript(() => {
       if (w.__feelEvents.length > 4000) w.__feelEvents.shift();
     }
   });
-});
+}, { runId: RUN_ID, tier: TIER });
 
 /** Full join flow: venue lobby → venue-admitted seam → arena scene →
  *  bell admission (no mid-fight spawns). Then installs the rAF trace
  *  collector + the pursuit driver. */
 async function joinArena(p: Page): Promise<void> {
   await p.goto(`${BASE}/?world=1&evidence=1&gate=off`, { waitUntil: "load" });
+  // Wait for EITHER scene: a fresh join lands in the venue lobby, but a
+  // reconnect inside the server's grace window auto-enters the arena
+  // (venue-admitted frame) — dispatching our own venue-admitted on top of
+  // a LIVE arena scene restarts it into a wedge (the K10d failure).
   await p.waitForFunction(
-    () =>
-      (window as unknown as { __jakesjam_game__?: { scene: { isActive(k: string): boolean } } })
-        .__jakesjam_game__?.scene.isActive("HangoutScene") ?? false,
+    () => {
+      const g = (window as unknown as { __jakesjam_game__?: { scene: { isActive(k: string): boolean } } })
+        .__jakesjam_game__;
+      return (g?.scene.isActive("HangoutScene") || g?.scene.isActive("OnlineMatchScene")) ?? false;
+    },
     undefined,
     { timeout: 30_000 },
   );
   await p.waitForTimeout(1500);
   // Dispatch-and-retry: the hangout scene must be listening before the
   // admitted event lands; a single early dispatch can vanish into nothing.
+  // Skipped entirely when the arena is already live (see above).
   for (let attempt = 0; attempt < 6; attempt++) {
+    const alreadyInArena = await p.evaluate(
+      () =>
+        (window as unknown as { __jakesjam_game__?: { scene: { isActive(k: string): boolean } } })
+          .__jakesjam_game__?.scene.isActive("OnlineMatchScene") ?? false,
+    );
+    if (alreadyInArena) break;
     await p.evaluate(() => window.dispatchEvent(new CustomEvent("jakesjam:venue-admitted")));
     const arrived = await p
       .waitForFunction(
@@ -167,8 +216,9 @@ async function joinArena(p: Page): Promise<void> {
       const orig = loop.onEvents?.bind(loop);
       loop.onEvents = (evs: unknown[]) => {
         const t = performance.now();
+        const epoch = Date.now();
         for (const e of evs) {
-          w.__rawEvents.push({ t, me: scene?.localPlayerId, ...(e as object) });
+          w.__rawEvents.push({ t, epoch, me: scene?.localPlayerId, ...(e as object) });
           if (w.__rawEvents.length > 8000) w.__rawEvents.shift();
         }
         orig?.(evs);
@@ -235,6 +285,11 @@ type Probe = {
   slashHit: number;
   bashLanded: number;
   killed: number;
+  /** Melee-CHAIN kills by ME (the shock-ring gate condition: player-killed
+   *  killerId===me with a same-batch slash-hit/bash-landed attackerId===me).
+   *  THE wave-3 target — every one of these is on-camera by construction
+   *  (the camera follows the local player). */
+  myMeleeKills: number;
   trace: number;
   phase: string | null;
   meAlive: boolean | null;
@@ -261,6 +316,20 @@ const probe = (): Promise<Probe> =>
     };
     const ev = w.__feelEvents ?? [];
     const by = (k: string) => ev.filter((e) => e.kind === k).length;
+    // NOTE the raw-hook wrapper spreads the event LAST, so the sim event's
+    // own `t` (its TYPE tag, e.g. "player-killed") overwrites the wrapper's
+    // perf stamp — `epoch` + `me` survive. Batch = same-epoch rows.
+    let myMeleeKills = 0;
+    const rows = ((window as unknown as { __rawEvents?: Record<string, unknown>[] }).__rawEvents ??
+      []) as ({ t?: string; epoch?: number; me?: string } & Record<string, unknown>)[];
+    for (const r of rows) {
+      if (r.t !== "player-killed" || !r.me || r.killerId !== r.me) continue;
+      const batch = rows.filter((o) => o.epoch === r.epoch);
+      const meleeContact = batch.some(
+        (o) => (o.t === "slash-hit" || o.t === "bash-landed") && o.attackerId === r.me,
+      );
+      if (meleeContact) myMeleeKills += 1;
+    }
     const scene = w.__jakesjam_game__?.scene.getScene("OnlineMatchScene");
     const state = scene?.loop?.getRenderState?.() ?? null;
     const me = scene?.localPlayerId ? state?.players[scene.localPlayerId] : undefined;
@@ -277,6 +346,7 @@ const probe = (): Promise<Probe> =>
       slashHit: by("slash-hit"),
       bashLanded: by("bash-landed"),
       killed: by("player-killed"),
+      myMeleeKills,
       trace: (w.__feelTrace ?? []).length,
       phase: state?.round.phase ?? null,
       meAlive: me?.alive ?? null,
@@ -309,6 +379,17 @@ async function harvest(): Promise<void> {
   allEvents.push(...dump.events);
   allTrace.push(...dump.trace);
   allRaw.push(...dump.raw);
+  // Roll the page-side melee-kill count into the cross-reload accumulator
+  // (the page buffer is cleared by this drain; probe() restarts at 0).
+  const rows = dump.raw as ({ t?: string; epoch?: number; me?: string } & Record<string, unknown>)[];
+  for (const r of rows) {
+    if (r.t !== "player-killed" || !r.me || r.killerId !== r.me) continue;
+    const batch = rows.filter((o) => o.epoch === r.epoch);
+    if (batch.some((o) => (o.t === "slash-hit" || o.t === "bash-landed") && o.attackerId === r.me)) {
+      harvestedMyMeleeKills += 1;
+    }
+  }
+  lastMyMeleeKills = 0;
 }
 
 await joinArena(page);
@@ -321,6 +402,8 @@ let lastLogAt = 0;
 let totalSlashHit = 0;
 let totalBash = 0;
 let totalKills = 0;
+let lastMyMeleeKills = 0;
+let harvestedMyMeleeKills = 0;
 while (Date.now() - started < CAP_MS) {
   await page.waitForTimeout(400);
   await autoPick();
@@ -356,8 +439,16 @@ while (Date.now() - started < CAP_MS) {
     lastLogAt = Date.now();
     console.log(
       `[probe] phase=${c.phase} alive=${c.meAlive} hp=${c.meHp} foeDist=${c.foeDist} ` +
-        `swings=${c.slashStarted} hits=${c.slashHit} bash=${c.bashLanded} kills=${c.killed} trace=${c.trace}`,
+        `swings=${c.slashStarted} hits=${c.slashHit} bash=${c.bashLanded} kills=${c.killed} ` +
+        `MYMELEEKILLS=${c.myMeleeKills} trace=${c.trace}`,
     );
+  }
+  if (c.myMeleeKills > lastMyMeleeKills) {
+    lastMyMeleeKills = c.myMeleeKills;
+    console.log(`[tape] *** MELEE-CHAIN KILL BY ME #${c.myMeleeKills} — on camera ***`);
+    await page.screenshot({
+      path: `${OUT}/${TAG}-mykill-${String(c.myMeleeKills).padStart(2, "0")}.png`,
+    }).catch(() => {});
   }
   if (
     prev &&
@@ -376,7 +467,16 @@ while (Date.now() - started < CAP_MS) {
   totalSlashHit = allEventsCount("slash-hit") + c.slashHit;
   totalBash = allEventsCount("bash-landed") + c.bashLanded;
   totalKills = allEventsCount("player-killed") + c.killed;
-  if (totalBash >= 3 && totalSlashHit >= 6 && totalKills >= 1 && Date.now() - started > 60_000) {
+  // Wave-3 exit: at least ONE on-camera melee-chain kill by me (rows 17/18
+  // verdict needs it) + the wave-2 contact floor. Linger 2s past the last
+  // kill so the full 225ms corpse chord + ring/debris tail are on tape.
+  if (
+    harvestedMyMeleeKills + c.myMeleeKills >= 1 &&
+    totalBash >= 3 &&
+    totalSlashHit >= 6 &&
+    Date.now() - started > 60_000
+  ) {
+    await page.waitForTimeout(2000);
     break;
   }
 }
@@ -388,6 +488,10 @@ await harvest();
 writeFileSync(`${OUT}/${TAG}-events.json`, JSON.stringify(allEvents, null, 1));
 writeFileSync(`${OUT}/${TAG}-trace.json`, JSON.stringify(allTrace));
 writeFileSync(`${OUT}/${TAG}-raw.json`, JSON.stringify(allRaw, null, 1));
+writeFileSync(
+  `${OUT}/${TAG}-meta.json`,
+  JSON.stringify({ videoT0, myMeleeKills: harvestedMyMeleeKills }, null, 1),
+);
 console.log(
   `[tape] events=${allEvents.length} traceSamples=${allTrace.length} → ${OUT}/${TAG}-{events,trace}.json`,
 );

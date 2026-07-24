@@ -20,7 +20,7 @@ import type { CombatRig } from "../rendering/ProceduralPlayerRig";
 import type { ParticlePool } from "../systems/ParticlePool";
 import type { RenderLayer } from "./RenderLayer";
 import { presentationBudget } from "./presentationBudgets.js";
-import { cameraKickParams } from "./victimChannel.js";
+import { cameraKickParams, whiffKickParams } from "./victimChannel.js";
 import { RenderTimeArbiter } from "./RenderTimeArbiter.js";
 import { isAbilityKind } from "./abilityAnimation.js";
 
@@ -121,6 +121,10 @@ export type SimEventRouterDeps = {
     durMs: number,
     noisePx: number,
   ) => void;
+  /** Unit aim direction for a player right now — the swing direction at
+   *  slash-started time, read off the live render state (K12 whiff kick,
+   *  R1 row 10). Optional: scenes without it simply have no whiff read. */
+  resolveAimDir?: (playerId: PlayerId) => { x: number; y: number } | undefined;
   /** Shared render-clock owner. When present, hit-stop composes with slow-mo. */
   renderTime?: RenderTimeArbiter;
 
@@ -239,6 +243,25 @@ export class SimEventRouter {
       suppressNextConfirmAudio: boolean;
     }
   >();
+  /** LOCAL whiff watch (K12, R1 row 10): armed on the local player's
+   *  slash-started, disarmed by any same-swing melee contact (slash-hit /
+   *  bash-landed / a melee parry). If the deadline passes with no contact,
+   *  the swing hit AIR — fire the small camera-OPPOSITE kick
+   *  (whiffKickParams). Generation-counter guard (not just timer.remove):
+   *  the deadline callback only fires while its own arm id is current, so
+   *  a disarm or a retrig re-arm always supersedes a stale callback even
+   *  where the scene clock can't cancel (headless test fakes). */
+  private whiffArmId = 0;
+  private whiffArmed = false;
+  private whiffTimer: Phaser.Time.TimerEvent | undefined;
+
+  private disarmWhiff(): void {
+    if (!this.whiffArmed) return;
+    this.whiffArmed = false;
+    this.whiffArmId++;
+    this.whiffTimer?.remove?.(false);
+    this.whiffTimer = undefined;
+  }
   constructor(deps: SimEventRouterDeps) {
     this.deps = deps;
     this.renderTime = deps.renderTime ?? new RenderTimeArbiter(deps.scene);
@@ -408,6 +431,11 @@ export class SimEventRouter {
         // and impact," Jake, 2026-07-19). A clean parry is a genuine skill
         // moment; it should hit at least as hard as a landed attack, not softer.
         audio.play("parry");
+        // A MELEE parry (projectileId null) is contact, not a whiff — the
+        // blade STOPPED on something and the parry flash speaks for it.
+        // Disarm the local whiff watch (K12); with a watch pending, the
+        // parried swing is almost certainly ours.
+        if (event.projectileId === null) this.disarmWhiff();
         d.playerRigs.get(event.playerId)?.triggerParryFlash();
         const budget = presentationBudget("heavy");
         this.holdHitStop(budget.hitStopMs);
@@ -583,6 +611,39 @@ export class SimEventRouter {
         // the hard rule is never synthesize audio (rip only) — left silent
         // rather than reusing an unrelated cue. Fast-follow: a real swing
         // SFX + rig animation once assets exist.
+        //
+        // WHIFF WATCH (K12, R1 row 10) — local swings only (camera feel is
+        // local-scoped, same rule as every kick above). Deadline = the
+        // SIM's own contact gate for this verb + 100ms slack for the
+        // authoritative slash-hit's snapshot latency (a late kick during
+        // recovery is honest; a kick racing a real hit's arrival is a lie).
+        // Kindled Edge gate 300ms / bash 260ms (aligned with the render
+        // sentence, R1 row 2); Interstice sim gate 82ms after the input
+        // edge (row 2's misalignment note — the whiff must follow the SIM,
+        // it is the sim's silence that makes a whiff).
+        if (event.playerId === d.localPlayerId && d.directionalKick && d.resolveAimDir) {
+          const chassis =
+            d.playerRigs.get(event.playerId)?.getClassId?.() === "paladin"
+              ? ("kindled" as const)
+              : ("interstice" as const);
+          const aim = d.resolveAimDir(event.playerId);
+          if (aim) {
+            const contactMs =
+              chassis === "kindled" ? (event.verb === "bash" ? 260 : 300) : 82;
+            this.disarmWhiff();
+            this.whiffArmed = true;
+            const armId = ++this.whiffArmId;
+            const kick = whiffKickParams(chassis);
+            this.whiffTimer = d.scene.time.delayedCall(contactMs + 100, () => {
+              if (this.whiffArmId !== armId || !this.whiffArmed) return;
+              this.whiffArmed = false;
+              this.whiffTimer = undefined;
+              // Camera-opposite: the swing's momentum yanks the frame,
+              // nothing arrests it (see whiffKickParams' header).
+              d.directionalKick?.(-aim.x, -aim.y, kick.kickPx, kick.durMs, kick.noisePx);
+            });
+          }
+        }
         break;
       }
       case "slash-hit": {
@@ -600,6 +661,8 @@ export class SimEventRouter {
         const chassis = attackerRig?.getClassId?.() === "paladin" ? "kindled" : "interstice";
         const dirX = event.dirX ?? 1;
         const dirY = event.dirY ?? 0;
+        // The local swing CONNECTED — disarm the whiff watch (K12).
+        if (event.attackerId === d.localPlayerId) this.disarmWhiff();
         victimRig?.applyPairImpact?.("victim", dirX, dirY, chassis, false);
         attackerRig?.applyPairImpact?.("attacker", dirX, dirY, chassis, false);
         this.meleePairImpacts.set(event.victimId as string, {
@@ -636,6 +699,8 @@ export class SimEventRouter {
         const victimRig = d.playerRigs.get(event.victimId);
         const dirX = event.dirX ?? 1;
         const dirY = event.dirY ?? 0;
+        // The local bash CONNECTED — disarm the whiff watch (K12).
+        if (event.attackerId === d.localPlayerId) this.disarmWhiff();
         victimRig?.applyPairImpact?.("victim", dirX, dirY, "kindled", false);
         attackerRig?.applyPairImpact?.("attacker", dirX, dirY, "kindled", false);
         this.meleePairImpacts.set(event.victimId as string, {
