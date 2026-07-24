@@ -472,9 +472,20 @@ export class MatchHost {
     // the wasm load finished — invisible live, but it makes the recorded
     // replay non-re-simulable (no single backend reproduces every tick).
     // Hangout matches are HARD-PINNED to TS regardless of
-    // USE_WASM_STEP_WORLD — no anti-cheat/competitive-integrity stakes in a
-    // non-combat lobby space, so there's no reason to route through wasm,
-    // and this sidesteps ever needing to mirror hangout-mode logic into Zig.
+    // USE_WASM_STEP_WORLD. Re-recorded 2026-07-24 (Track Z2 item 3) with
+    // current evidence — this is a CORRECTNESS pin, not merely a
+    // "no stakes in a lobby" convenience: hangout is a distinct TS sim
+    // MODE with no Zig mirror, and step_world would actively misbehave
+    // in the lobby. Verified by grep against World.ts's hangoutMode
+    // branches: (1) PvP damage immunity lives in the TS damage resolver
+    // (`if (!victim.alive || ctx.hangoutMode) return`, World.ts:1669) —
+    // Zig applies full damage, so lobby visitors could kill each other;
+    // (2) the round machine never steps in hangout (phase pinned
+    // "fighting", World.ts:2312-2316) — Zig's round machine would end
+    // the lobby's "round", roll drafts and bump scores; (3) projectiles
+    // and hitscan ghost through players (`projectilePlayerIds = []`,
+    // World.ts:2888/2893) — Zig resolves real hits. Lift this only
+    // after step_world grows a hangout mode flag covering all three.
     this.simBackend =
       this.mode === "hangout"
         ? "ts"
