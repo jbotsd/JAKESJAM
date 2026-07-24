@@ -152,6 +152,53 @@ blunt finisher.** Reasoning, gameplay-first per Jake's override:
   `bash-landed` (distinct from `slash-hit`) so the contact chord gets its
   own bass-THUD register.
 
+## Cancel-window precedence decision (wave 2b, 2026-07-24 — R1 row 16)
+
+**DECIDED: a QUEUED SWING WINS over a pending cancel.** Kindled dash/ward
+may cancel the final 40% of Edge recovery (from 204ms/12t of the 340ms
+in), but `bufferedMs > 0` suppresses the cancel entirely. Reasoning,
+gameplay-first:
+
+- **Row 1 is a promise.** "Mashing never eats a swing" is absolute — a
+  buffered press that a simultaneous defensive flick could silently void
+  would resurface the exact dropped-input feel the buffer was built to
+  kill. The buffer holds only 100ms, so a queued press is always the
+  player's MOST RECENT attack intent, not stale state.
+- **No cycle-compression tech by construction.** If the cancel outranked
+  the buffer, cancel→instantly-firing-buffered-swing would start the next
+  swing up to 136ms early — a mandatory APM tech that compresses the
+  650ms cycle, power-creeps melee DPS sideways, and makes the
+  swing·swing·BASH beat uncountable for the defender. With swing-wins,
+  the only way to swing is ON the rhythm; the bash stays parryable by
+  count.
+- **The cancel is an escape hatch, not a combo verb.** Dash/ward express
+  "I'm done swinging"; a buffered press expresses "I'm still swinging."
+  The FSM believes whichever intent is actually pending. Crucially the
+  DASH ITSELF is never suppressed — movement is independent of the melee
+  FSM; only the recovery-pose cancel is. A panicking masher keeps full
+  dash mobility, they just carry the follow-through pose into the burst.
+- **Triggers are rising edges landing inside the tail.** A dash begun
+  earlier in recovery or a shield held since before the swing never
+  cancels, and the ward must actually ENGAGE (a dead-battery press buys
+  nothing) — the cancel rewards a deliberate defensive DECISION made in
+  the tail, not held state.
+- **A cancel still ADVANCES the chain.** The swing's beat happened;
+  canceling its tail is not a chain reset (Dead Cells
+  roll-doesn't-reset-combo [24][25]). Ward-cancel into Kindling absorb
+  into the held bash beat is the intended defense-is-the-engine loop.
+
+Sim implementation is TS + Zig mirrored (`KIN_CANCEL_TAIL_FRACTION`,
+World.ts 1z3 cancel block ↔ world.zig stepMeleeSwing) with a
+tick-identical parity gate (meleeSwingMemoryBridge gate E) + a
+window-edge/precedence suite (cancelWindow.test.ts). **Parity bug found
+by the gate:** the full-Zig path never had TS `resolvePlayerBuild`'s
+baseline dash-charge floor (`max(dashCharges, 1)` — dash-bash is a core
+move for everyone), so card-less players could never dash in
+`step_world`: dash-bash, Razor Route, and this cancel were all silently
+dead there. Fixed at the section-8 player-step read (world.zig), keeping
+the raw fire-config bytes pure card resolution per
+orchestratorAugmentParity's pinned contract.
+
 ## Research tuning table (R1, verbatim from the report)
 
 *Source: `~/Documents/Slash_Feel_Research_20260724/research_report_20260724_slash_feel.md`

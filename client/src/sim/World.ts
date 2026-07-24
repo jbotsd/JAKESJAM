@@ -294,6 +294,11 @@ const JumpBit = 1 << 4;
  *  same "read here only for X" precedent as JumpBit above. */
 const LeftBit = 1 << 0;
 const RightBit = 1 << 1;
+/** InputBit.Shield — read here only for the R1 row-16 ward-raise cancel
+ *  edge (PALADIN MELEE section, 2026-07-24 wave 2); the shield mechanic
+ *  itself reads the same bit inside combat.ts's own private `Bit.Shield`,
+ *  same "read here only for X" precedent as JumpBit above. */
+const ShieldBit = 1 << 8;
 
 /**
  * Per-tick scratch state the WorldState doesn't carry. The host (server or
@@ -504,6 +509,12 @@ export type PaladinMeleeMemory = {
   /** ms spent idle since the last swing's recovery ended — the chain-
    *  reset clock. Only meaningful while phase === 0. */
   chainGapMs: number;
+  /** Last tick's `dashActiveMs > 0` — the dash burst's rising edge, for
+   *  the R1 row-16 cancel window (2026-07-24 wave 2). NOT the ninja's
+   *  dash-through debounce (Paladin still has no dash-through verb —
+   *  the trimming note in this type's header stands); this field only
+   *  answers "did a dash START this tick" for the recovery cancel. */
+  wasDashing: boolean;
 };
 
 export function freshPaladinMeleeMemory(): PaladinMeleeMemory {
@@ -520,6 +531,7 @@ export function freshPaladinMeleeMemory(): PaladinMeleeMemory {
     bufferedAimY: 0,
     chainIndex: 0,
     chainGapMs: 0,
+    wasDashing: false,
   };
 }
 
@@ -767,6 +779,21 @@ const SHIELD_BASH_STAGGER_MULTIPLIER = 0.55;
  *  1000ms start-to-start minus the 650ms swing cycle, so the sim chain
  *  and the render's combo read agree on what "still chaining" means. */
 const KIN_BASH_CHAIN_GAP_MS = 350;
+
+// ── KINDLED CANCEL WINDOW (2026-07-24 wave 2, slash-feel-ledger R1 row
+// 16) — dash/ward may cancel the FINAL 40% of Edge recovery (from 204ms
+// of the 340ms in). The cancel is a defensive escape hatch, NOT a combo
+// tech: it triggers only on a dash that STARTS or a Ward that RAISES
+// (rising edges landing inside the tail — a dash begun earlier, or a
+// shield held since before the swing, does not cancel), and a QUEUED
+// SWING WINS over a cancel (bufferedMs > 0 suppresses it) — R1 row 1's
+// "mashing never eats a swing" is absolute, the bash cadence stays
+// countable for the defender, and no dash-cancel cycle-compression DPS
+// tech exists by construction. A cancel still advances the chain (the
+// swing's beat happened; canceling the tail is not a chain reset).
+// Mirrored in sim/src/world.zig (KIN_CANCEL_TAIL_FRACTION) — sim
+// behavior, both sides must agree.
+const KIN_CANCEL_TAIL_FRACTION = 0.4;
 
 /**
  * Melee arc hit test — more rigorous than DASH BASH's plain centre-point
@@ -2394,6 +2421,12 @@ export function stepWithRuntime(
    *  Edge (class-overhaul-workboard.md chunk 2.1) — see the "1z3. PALADIN
    *  MELEE" section below, right after the ninja melee block. */
   const paladinEdgeEdges = new Map<PlayerId, { aimX: number; aimY: number }>();
+  /** Shield-key RISING edges for paladins this tick (R1 row 16 ward-raise
+   *  cancel, 2026-07-24 wave 2) — same pre-overwrite-prevKeys capture
+   *  contract as the two melee-edge maps above. The 1z3 loop combines this
+   *  with the post-tickShield `shieldActive` (the ward actually ENGAGED —
+   *  a dead-battery shield press must not buy a free cancel). */
+  const paladinWardRaiseEdges = new Set<PlayerId>();
 
   /**
    * Syzygist deferred ally-target casts (class-overhaul-workboard.md chunk
@@ -2827,6 +2860,17 @@ export function stepWithRuntime(
         } else {
           paladinEdgeEdges.set(pid, { aimX, aimY });
         }
+      }
+      // Ward-raise edge for the row-16 recovery cancel (paladin only) —
+      // captured here for the same prevKeys-lifetime reason as the melee
+      // edges above; whether the ward actually ENGAGED is judged in 1z3
+      // against the post-tickShield shieldActive.
+      if (
+        classId === "paladin" &&
+        (currKeys & ShieldBit) !== 0 &&
+        (prevKeys & ShieldBit) === 0
+      ) {
+        paladinWardRaiseEdges.add(pid);
       }
       // Passive energy regen ("fast regen" — classes-goal.md MANA section)
       // is a NINJA-ONLY resource source. Paladin has no analogous passive
@@ -5756,6 +5800,37 @@ export function stepWithRuntime(
             // tick, so swing·swing·BASH flows without a reset window.
             if (mem.bufferedMs > 0) startSwing(mem.bufferedAimX, mem.bufferedAimY);
           }
+        }
+      }
+      // ---- Cancel window (R1 row 16, 2026-07-24 wave 2): dash/ward may
+      //      cancel the FINAL 40% of recovery. Runs AFTER the FSM advance
+      //      so a natural recovery→idle transition this tick wins (phase
+      //      is already 0 — nothing to cancel, no double chain-advance).
+      //      Triggers are RISING edges landing inside the tail (a dash
+      //      begun earlier / a shield held through the swing never
+      //      cancels), the ward must have actually ENGAGED (shieldActive
+      //      is post-tickShield, this-tick-final), and A QUEUED SWING
+      //      WINS (bufferedMs > 0 suppresses the cancel — see the
+      //      KIN_CANCEL_TAIL_FRACTION doc block for the full precedence
+      //      reasoning). The chain still advances: the swing's beat
+      //      happened, canceling its tail is not a chain reset. ----
+      {
+        const mv = runtime.movement.get(aid);
+        const dashingNow = (mv?.dashActiveMs ?? 0) > 0;
+        const dashStartedThisTick = dashingNow && !mem.wasDashing;
+        mem.wasDashing = dashingNow;
+        const wardRaisedThisTick =
+          paladinWardRaiseEdges.has(aid) && players[aid]!.shieldActive;
+        if (
+          mem.phase === 3 &&
+          mem.phaseMs <= EDGE_RECOVERY_MS * KIN_CANCEL_TAIL_FRACTION &&
+          mem.bufferedMs <= 0 &&
+          (dashStartedThisTick || wardRaisedThisTick)
+        ) {
+          mem.phase = 0;
+          mem.phaseMs = 0;
+          mem.chainIndex = (mem.chainIndex + 1) % 3;
+          mem.chainGapMs = 0;
         }
       }
       // Which verb is the CURRENT swing? Stable for the swing's whole

@@ -1072,6 +1072,12 @@ pub const SHIELD_BASH_CONTACT_DELAY_MS: f64 = 60.0;
 pub const SHIELD_BASH_STAGGER_MS: f64 = 300.0;
 pub const SHIELD_BASH_STAGGER_MULTIPLIER: f64 = 0.55;
 pub const KIN_BASH_CHAIN_GAP_MS: f64 = 350.0;
+/// KINDLED CANCEL WINDOW (2026-07-24 wave 2, slash-feel-ledger R1 row 16)
+/// — dash/ward may cancel the FINAL 40% of Edge recovery. Bit-exact mirror
+/// of World.ts's KIN_CANCEL_TAIL_FRACTION; see that constant's doc block
+/// for the full design (rising-edge triggers only, engaged-ward gate, and
+/// the "a queued swing WINS over a cancel" precedence).
+pub const KIN_CANCEL_TAIL_FRACTION: f64 = 0.4;
 
 // ── Ability-cast dispatch (Phase 1, docs/zig-step-world-parity-goal.md
 //    "the next unblock") — constants for the 6 melee-hook abilities wired
@@ -2994,6 +3000,7 @@ fn stepMeleeSwing(
     attacker_idx: u32,
     eff_dt: f64,
     fire_rising_edge: bool,
+    ward_raise_edge: bool,
 ) void {
     const attacker = &state.players[attacker_idx];
     if (!attacker.flags.alive) {
@@ -3104,6 +3111,31 @@ fn stepMeleeSwing(
                 },
                 .idle => unreachable,
             }
+        }
+    }
+
+    // ---- Cancel window (R1 row 16, 2026-07-24 wave 2) — exact mirror of
+    //      World.ts's 1z3 cancel block (see KIN_CANCEL_TAIL_FRACTION's TS
+    //      doc block for the design): runs AFTER the FSM advance, rising
+    //      edges only, engaged-ward gate (flags.shield_active is section-
+    //      6-final by the time 6a runs), a queued swing WINS, and the
+    //      chain still advances on cancel. `was_dashing` is free on the
+    //      paladin path — the ninja dash-through pass that rolls it is
+    //      gated `character_id == .sprinter`. ----
+    if (is_paladin) {
+        const dashing_now = state.player_movement[attacker_idx].dash_active_ms > 0.0;
+        const dash_started_this_tick = dashing_now and !mem.was_dashing;
+        mem.was_dashing = dashing_now;
+        const ward_raised_this_tick = ward_raise_edge and attacker.flags.shield_active;
+        if (mem.phase == .recovery and
+            mem.phase_ms <= EDGE_RECOVERY_MS * KIN_CANCEL_TAIL_FRACTION and
+            mem.buffered_ms <= 0 and
+            (dash_started_this_tick or ward_raised_this_tick))
+        {
+            mem.phase = .idle;
+            mem.phase_ms = 0;
+            mem.chain_index = (mem.chain_index + 1) % 3;
+            mem.chain_gap_ms = 0;
         }
     }
 
@@ -3504,7 +3536,19 @@ pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
             .wall_jump_mul = if (has_cfg) fcfg.wall_jump_mul else 1.0,
             .wall_slide_mul = if (has_cfg) fcfg.wall_slide_mul else 1.0,
             .air_jumps = if (has_cfg) @intCast(fcfg.air_jumps) else 0,
-            .dash_charges = if (has_cfg) @intCast(fcfg.dash_charges) else 0,
+            // BASELINE dash floor — mirror of weapon.ts resolvePlayerBuild's
+            // `Math.max(withInnate.dashCharges, 1)` ("the dash-bash
+            // power-slide is a core move for EVERYONE"). TS layers that
+            // floor AFTER createWeaponBuild, so the raw fire-config bytes
+            // stay pure card resolution (orchestratorAugmentParity pins
+            // no-cards → dash_charges 0) — the Zig mirror therefore lands
+            // HERE, at the player-step read (the exact analog of World.ts
+            // handing build.dashCharges into the movement step), NOT inside
+            // resolve_player_fire_config. Without it a card-less player
+            // could never dash on the full-Zig path — dash-bash, Razor
+            // Route, and the R1 row-16 dash cancel all silently dead
+            // (found 2026-07-24 by the cancel-window parity gate).
+            .dash_charges = @max(1, if (has_cfg) @as(i32, @intCast(fcfg.dash_charges)) else 0),
             .dash_cooldown_mul = if (has_cfg) fcfg.dash_cooldown_mul else 1.0,
             // Augment MEMORY carried from world state.
             .dash_cooldown_ms = state.player_movement[pmi].dash_cooldown_ms,
@@ -3874,6 +3918,25 @@ pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
             melee_fire_rising_edge[mfi] =
                 (mp.current_keys & MELEE_FIRE_BIT) != 0 and
                 (mp.prev_keys & MELEE_FIRE_BIT) == 0;
+        }
+    }
+
+    // Shield-key rising-edge capture (R1 row 16 ward-raise cancel,
+    // 2026-07-24 wave 2) — same "captured before section 6 rolls
+    // prev_keys" contract as `melee_fire_rising_edge` immediately above,
+    // for the identical reason. Mirrors World.ts's paladinWardRaiseEdges
+    // (its ShieldBit local, 1 << 8); whether the ward actually ENGAGED is
+    // judged inside stepMeleeSwing against the section-6-final
+    // flags.shield_active.
+    var shield_rising_edge: [world_state.MAX_PLAYERS]bool = @splat(false);
+    {
+        const SHIELD_BIT: u32 = 1 << 8;
+        var sri: u32 = 0;
+        while (sri < state.player_count) : (sri += 1) {
+            const sp = &state.players[sri];
+            shield_rising_edge[sri] =
+                (sp.current_keys & SHIELD_BIT) != 0 and
+                (sp.prev_keys & SHIELD_BIT) == 0;
         }
     }
 
@@ -4365,7 +4428,7 @@ pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
     if (state.header.round_phase == @intFromEnum(round.RoundPhase.fighting)) {
         var mai: u32 = 0;
         while (mai < state.player_count) : (mai += 1) {
-            stepMeleeSwing(state, mai, eff_dt, melee_fire_rising_edge[mai]);
+            stepMeleeSwing(state, mai, eff_dt, melee_fire_rising_edge[mai], shield_rising_edge[mai]);
         }
     }
 
