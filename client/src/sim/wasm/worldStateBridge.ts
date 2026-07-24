@@ -211,7 +211,13 @@ export const MELEE_SWING_MEMORY_SIZE = 64;
 // wizard-forces-raycast ruling + the delivery-feel floors both branch on
 // it) but previously dropped it from the returned config, so world.zig's
 // fire site could never branch on it either.
-export const RESOLVED_FIRE_CONFIG_SIZE = 256; // +14 augment fields (movement/shield/parry) +dash_cooldown_mul +recoil_impulse (Z0c Item A) +delivery (Z1c item 1)
+// 256 → 256 (Track Z1c "six-axes axis payloads" — leech): NO size growth —
+// `leech_fraction` (f32, offset 252) reclaims 4 of `delivery`'s own 7
+// trailing pad bytes. Passive Tithe leech (`ResolvedWeaponBuild.
+// leechFraction`), consumed at world.zig's fire sites (both the real-
+// projectile spawn loop and the hitscan resolve path) exactly like
+// weapon.ts's stepWeapon stamps it onto a fired shot.
+export const RESOLVED_FIRE_CONFIG_SIZE = 256; // +14 augment fields (movement/shield/parry) +dash_cooldown_mul +recoil_impulse (Z0c Item A) +delivery (Z1c item 1) +leech_fraction reusing delivery's pad (Z1c six-axes item)
 // Ability-slot equipment / card hand / per-round draft bookkeeping (Phase 2,
 // docs/zig-step-world-parity-goal.md — draft/offer-roll system). Parallel to
 // players[], host-only/off-wire like the rows above. Must match

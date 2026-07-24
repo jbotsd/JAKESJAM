@@ -4,8 +4,9 @@
 // writes the loadout in place. No TS createWeaponBuild / packResolvedFireConfig.
 
 import type { PlayerId, WorldState } from "../types.js";
-import { WORLD_STATE_TOTAL_SIZE } from "./worldStateBridge.js";
+import { WORLD_STATE_TOTAL_SIZE, RESOLVED_FIRE_CONFIG_SIZE } from "./worldStateBridge.js";
 import { crystalRoundsCards } from "../data/cards.js";
+import { resolvePlayerBuild } from "../weapon.js";
 
 // card id → index into the Zig card table. Mirrors cards_gen.zig ordering,
 // which is `crystalRoundsCards` UNFILTERED — gen_card_data.ts emits an
@@ -53,7 +54,51 @@ export type FireConfigResolverExports = {
     indices_ptr: number,
     count: number,
   ) => void;
+  /** Byte offset of `player_fire_config[0]` from `state_ptr` (world_state.zig
+   *  — already existed for test use, e.g. loadoutBridge.test.ts's gate A).
+   *  Reused here (Track Z1c "six-axes axis payloads") to patch the ONE
+   *  `leech_fraction` field the Zig card resolver can't derive on its own —
+   *  see `LEECH_FRACTION_PATCH` below. Optional so older sim.wasm builds
+   *  degrade gracefully (passive Tithe leech just stays inert for them,
+   *  same as before this pass). */
+  offset_player_fire_config?: () => number;
 };
+
+/** Byte offset of `ResolvedFireConfig.leech_fraction` within one player's
+ *  slot (world_state.zig: offset 252, an f32 reusing `delivery`'s own
+ *  trailing pad — see that field's doc comment). */
+const LEECH_FRACTION_OFFSET = 252;
+
+/**
+ * STOPGAP (Track Z1c "six-axes axis payloads", documented, not silent):
+ * Zig's card codegen (`gen_card_data.ts` → `cards_gen.zig`'s `CardMod`)
+ * carries no `classModifiers` data at all (weapon_build.zig's
+ * `resolve_player_fire_config` doc comment already flags this exact gap
+ * for a different field) — so a class-gated leech reading (Stolen Fangs'
+ * Priest-only `classModifiers.priest.leechFraction`, the only card that
+ * sets this field today) can never resolve correctly through the normal
+ * Zig card resolver above. Porting `classModifiers` generally is a much
+ * larger, separate item (9 cards, several fields each); this patches JUST
+ * the one field this pass adds, straight from the REAL TS build resolution
+ * (`resolvePlayerBuild`, the same production function World.ts/weapon.ts
+ * use), the same "host resolves in TS, patches into wasm memory" shape
+ * every other augment field on `ResolvedFireConfig` already uses.
+ */
+function patchLeechFraction(
+  ex: FireConfigResolverExports,
+  statePtr: number,
+  playerIndex: number,
+  leechFraction: number,
+): void {
+  if (typeof ex.offset_player_fire_config !== "function") return;
+  const view = new DataView(ex.memory.buffer);
+  const base =
+    statePtr +
+    ex.offset_player_fire_config() +
+    playerIndex * RESOLVED_FIRE_CONFIG_SIZE +
+    LEECH_FRACTION_OFFSET;
+  view.setFloat32(base, leechFraction, true);
+}
 
 /**
  * Resolve every player's build IN THE ZIG SIM: write their card indices to a
@@ -94,5 +139,10 @@ export function resolveFireConfigsViaZig(
       }
     }
     resolver(statePtr, i, scratch, n);
+    // Leech-fraction stopgap (see `patchLeechFraction`'s own doc comment) —
+    // always overwrites (not just when >0) so a hand that DROPS the card
+    // correctly zeroes it back out too, matching every other build field's
+    // "re-derived fresh every tick" contract.
+    patchLeechFraction(ex, statePtr, i, resolvePlayerBuild(player).leechFraction);
   }
 }

@@ -1321,7 +1321,44 @@ pub const ResolvedFireConfig = extern struct {
     /// `delivery === "raycast"` (weapon.ts:497's `isHitscan` branch).
     /// Appended (growth pattern), keeping every offset above stable.
     delivery: u8 = 0,
-    _pad3: [7]u8 = .{ 0, 0, 0, 0, 0, 0, 0 },
+    /// Explicit pad to 4-byte alignment for the f32 below (249 → 252) —
+    /// reclaims 3 of the 7 bytes `delivery`'s own cut left as trailing
+    /// padding (same "reuse the pad, don't grow the struct" precedent as
+    /// `PlayerEntity`'s `ghost_guard_charge_until_tick`/`razor_route_
+    /// until_tick` growth-history comments document).
+    _pad3: [3]u8 = .{ 0, 0, 0 },
+    /// Passive Tithe leech (Track Z1c item — six-axes axis payloads):
+    /// `ResolvedWeaponBuild.leechFraction` (weaponBuild.ts — Stolen Fangs'
+    /// class-gated Priest reading, card-pool-v2.md "Tithe"), READ at
+    /// world.zig's fire sites (both the real-projectile spawn loop and the
+    /// hitscan resolve path) and stamped onto the fired shot exactly like
+    /// weapon.ts:514/577-579 does, closing the gap that section header
+    /// comment (world.zig, "Hitscan resolution") flagged: "`ResolvedFireConfig`
+    /// carries no leech field at all yet, so the real-projectile basic-fire
+    /// spawn path doesn't apply it either." f32 (not f64): same precision-
+    /// tradeoff precedent as `ProjectileEntity.leech_fraction` (this file,
+    /// "2026-07-20 gap-closure pass" doc comment) — a 0..0.5-range fraction
+    /// round-trips through f32 with ample precision, and f32 is exactly what
+    /// fits the 4 bytes `_pad3` gave up above without growing the struct.
+    ///
+    /// KNOWN GAP, NOT closed by this field (recorded, not silent): Zig's
+    /// card codegen (`gen_card_data.ts` → `cards_gen.zig`'s `CardMod`)
+    /// carries no `classModifiers` data at all — ONLY Stolen Fangs' base
+    /// (class-blind) `modifier` would cross via normal card resolution, and
+    /// that variant has no `leechFraction` (only the `classModifiers.priest`
+    /// override does — weapon_build.zig's `resolve_player_fire_config` doc
+    /// comment already flags this exact gap for a different field:
+    /// "Zig carries no classModifiers data"). Porting `classModifiers`
+    /// generally is a separate, much larger item (9 cards use it across 4
+    /// fields each) — out of scope here. The STOPGAP that makes this field
+    /// actually reach a real Priest build today: `fireConfigShared.ts`'s
+    /// `resolveFireConfigsViaZig` ALSO patches this one field from the TS-
+    /// resolved `resolvePlayerBuild(player).leechFraction` right after the
+    /// Zig card resolver runs (same "host resolves in TS, patches into wasm
+    /// memory" shape every other augment field on this struct already uses
+    /// — see `sizeof_resolved_fire_config`'s neighbors), via the existing
+    /// `offset_player_fire_config` export — no new Zig export needed.
+    leech_fraction: f32 = 0,
 };
 
 /// Sentinel for `EquippedActives.slot_kind[N]` meaning "slot N is empty" —
@@ -2142,8 +2179,12 @@ comptime {
     // 248 → 256 (Track Z1c item 1, hitscan resolution): +1 for the
     // appended `delivery` u8 at 248 + 7 pad — worldStateBridge.ts's
     // RESOLVED_FIRE_CONFIG_SIZE bumped 248 → 256 in the same cut.
+    // 256 → 256 (Track Z1c "six-axes axis payloads" — leech): no growth,
+    // `leech_fraction` (f32) reclaims 4 of `delivery`'s own 7 trailing pad
+    // bytes at [252, 256) — see that field's own doc comment.
     std.debug.assert(@sizeOf(ResolvedFireConfig) == 256);
     std.debug.assert(@offsetOf(ResolvedFireConfig, "delivery") == 248);
+    std.debug.assert(@offsetOf(ResolvedFireConfig, "leech_fraction") == 252);
 }
 
 // -----------------------------------------------------------------

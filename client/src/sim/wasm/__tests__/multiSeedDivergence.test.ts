@@ -276,6 +276,33 @@
 // untouched this pass): six-axes axis payloads, team peel, ninja dash
 // i-frames, Kindled Ward partial mitigation, contagion self-jump guard.
 //
+// Z1c "six-axes axis payloads" — leech (2026-07-24): appended
+// `ResolvedFireConfig.leech_fraction`, consumed at both the real-projectile
+// spawn/hit site and the hitscan resolve site, plus the chassis-aware
+// max-health cap fix (was a flat 100 — see world.zig's leech-application
+// comment). Contagion's self-jump guard (item 6) was already closed the
+// same pass as item 1 (see the ledger row above); this is the actual
+// six-axes-payloads item named in the "still open" note directly above:
+//
+//   BEFORE (item 1's after, unchanged): AFTER (leech + cap fix):
+//   seed=1     : final  376.5px (230) | final  376.5px (onset 230)
+//   seed=42    : final  247.5px (175) | final  247.5px (onset 175)
+//   seed=1337  : final  230.0px (249) | final  230.0px (onset 249)
+//   seed=90210 : final  274.2px (160) | final  274.2px (onset 160)
+//   seed=271828: final  437.9px (229) | final  437.9px (onset 229)
+//
+// VERDICT: byte-identical, EXPECTED — this harness's bots are cardless
+// (same header note as Z1a/Z1b above), and the only card that carries a
+// nonzero `leechFraction` today (Stolen Fangs, `classModifiers.priest`) is
+// both class-gated AND behind a documented, separate classModifiers-codegen
+// gap (see world_state.zig's `leech_fraction` field doc comment and
+// `fireConfigShared.ts`'s `patchLeechFraction` stopgap) — structurally
+// invisible to a cardless sweep, same shape as every prior "flat, expected"
+// entry in this ledger. The real proof is at its own gate:
+// leechFractionParity.test.ts (a Priest build with Stolen Fangs + a
+// max-health card leeches identically on both engines, capped at the real
+// 120 max health, not the old flat 100).
+//
 // If the sweep exceeds its bound, the per-seed record above is the
 // deliverable the next track consumes.
 //

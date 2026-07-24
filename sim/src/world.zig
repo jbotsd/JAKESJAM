@@ -538,16 +538,19 @@ fn maybeAwardFirstBlood(
 //     — both real `resolveRangedHit` mechanics already mirrored on the
 //     real-projectile path (section 4 above) — are NOT yet mirrored onto
 //     this new path.
-//   - Passive Tithe leech (`ResolvedWeaponBuild.leechFraction`) is NOT
-//     read here, but this is not a hitscan-specific gap: `ResolvedFireConfig`
-//     carries no leech field at all yet, so the real-projectile basic-fire
-//     spawn path doesn't apply it either (six-axes axis payloads — a
-//     separate, larger Z1 item).
 // Everything else `resolveRangedHit` does for a direct hit IS ported:
 // headshot, chaos scaling, victim vulnerability, Hard Aperture's ward-
 // shell halving, parry deflect, Self-Lattice's partial absorb, the
-// generic shield block (drain + pop), first blood, HP/kill, and
-// fire/ice/lightning-chain on-hit effects.
+// generic shield block (drain + pop), first blood, HP/kill,
+// fire/ice/lightning-chain on-hit effects, AND (CLOSED, Track Z1c "six-axes
+// axis payloads") passive Tithe leech — `ResolvedFireConfig.leech_fraction`
+// now crosses (that field's own doc comment in world_state.zig has the
+// full story, including the STOPGAP that bridges the classModifiers gap
+// for this one field) and is consumed at `applyHitscanHitOnPlayer`'s tail,
+// same formula/cap as the real-projectile site. No real card reaches
+// hitscan+leech together today (see that consumption site's own note), but
+// the CODE path is complete on both hit sites now, matching the item's
+// "both the existing projectile path AND the new hitscan path" ask.
 
 /// Direct-hit damage + mitigation for ONE hitscan pellet landing on
 /// `victim_idx`, fired by `shooter_idx`. Mirrors World.ts's
@@ -572,6 +575,7 @@ fn applyHitscanHitOnPlayer(
     aim_angle: f64,
     eff_dt: f64,
     is_fighting: bool,
+    leech_fraction: f64,
 ) void {
     _ = hit_x; // kept for signature symmetry with the caller's hit point; only hit_y feeds the headshot band (a pure Y-band check, matching TS's isHeadshot).
     if (!state.players[victim_idx].flags.alive) return; // belt-and-braces — the caller only ever builds candidates from alive players.
@@ -769,6 +773,28 @@ fn applyHitscanHitOnPlayer(
         },
         else => {},
     }
+
+    // Drain axis (Track Z1c "six-axes axis payloads"): passive Tithe leech
+    // on a hitscan pellet, mirroring the real-projectile site's own leech
+    // block immediately above in this file (same formula, same chassis-
+    // aware `maxHealthForPlayer` cap, same self-damage guard, same
+    // relative ordering — right after the element on-hit switch). No real
+    // card reaches this combination today (Priest — the only class whose
+    // build can carry a nonzero `leechFraction`, via Stolen Fangs' class-
+    // gated reading — is ALWAYS `delivery: projectile` per THE GEOMETRICIAN
+    // RULING's class-gated base, weapon_build.zig's `base_delivery`), so
+    // this path's coverage rides on sharing the exact same formula as the
+    // proven real-projectile site rather than a same-input parity test;
+    // recorded here so the next reader knows this is a deliberate, honest
+    // scope note, not an oversight.
+    if (leech_fraction > 0 and shooter_idx >= 0 and @as(u32, @intCast(shooter_idx)) != victim_idx) {
+        const healer_idx: usize = @intCast(shooter_idx);
+        const healer = &state.players[healer_idx];
+        if (healer.flags.alive) {
+            const cap = maxHealthForPlayer(healer, &state.player_fire_config[healer_idx]);
+            healer.health = @min(@max(cap, healer.health), healer.health + final_dmg * leech_fraction);
+        }
+    }
 }
 
 /// Ray-trace ONE hitscan pellet from `(origin_x, origin_y)` along
@@ -795,6 +821,7 @@ fn resolveHitscanFire(
     chaos_profile: chaos.ChaosProfile,
     eff_dt: f64,
     is_fighting: bool,
+    leech_fraction: f64,
 ) void {
     const vxr = trig.lutCos(aim_angle) * range_px;
     const vyr = trig.lutSin(aim_angle) * range_px;
@@ -883,6 +910,7 @@ fn resolveHitscanFire(
             aim_angle,
             eff_dt,
             is_fighting,
+            leech_fraction,
         );
 
         // Splice the pierced candidate out of the live pool so the next
@@ -4571,6 +4599,11 @@ pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
             const proj_element = if (fcfg.valid != 0) fcfg.element else weapons_data.weaponBaseById(.starter_pistol).projectile_element;
             const proj_pathing = if (fcfg.valid != 0) fcfg.pathing else weapons_data.weaponBaseById(.starter_pistol).projectile_pathing;
             const proj_impact_kind = if (fcfg.valid != 0) fcfg.impact else .none;
+            // Passive Tithe leech (Track Z1c "six-axes axis payloads" —
+            // ResolvedFireConfig.leech_fraction's own doc comment):
+            // build-resolved, stamped onto the fired shot exactly like
+            // weapon.ts:514/577-579's `build.leechFraction ?? 0` stamp.
+            const proj_leech: f64 = if (fcfg.valid != 0) fcfg.leech_fraction else 0;
             // Syzygist haste (2026-07-20 gap-closure pass — parity with
             // weapon.ts:318-322): fire-rate multiplier while the window is
             // live, reading the per-entity haste_multiplier set by TS's
@@ -4703,6 +4736,7 @@ pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
                             chaos_profile,
                             eff_dt,
                             is_fighting,
+                            proj_leech,
                         );
                         emitEvent(
                             state,
@@ -4760,6 +4794,7 @@ pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
                             .returning = false,
                             .has_sticky_fuse = false,
                             .has_impact_radius = proj_impact_radius > 0,
+                            .has_leech_fraction = proj_leech > 0,
                         },
                         .pathing = proj_pathing,
                         .element = proj_element,
@@ -4767,6 +4802,7 @@ pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
                         .shape = proj_shape,
                         .owner_id_len = player_ptr.id_len,
                         .owner_id_bytes = player_ptr.id_bytes,
+                        .leech_fraction = @floatCast(proj_leech),
                     };
                     emitEvent(
                         state,
@@ -5796,30 +5832,40 @@ pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
                     },
                     else => {},
                 }
-                // Drain axis (Bleed Tithe, this pass — six-axes-goal.md
+                // Drain axis (Bleed Tithe + the passive Tithe build-leech,
+                // Track Z1c "six-axes axis payloads" — six-axes-goal.md
                 // Layer 1): a leech-flagged shard heals its owner a
                 // fraction of the post-mitigation damage that just landed.
                 // Independent of element (TS's own `leechFrac = proj.
                 // leechFraction ?? 0` check has no element gate either —
                 // it happens to only ever be nonzero on the fire-element
-                // Bleed Tithe shard today, but the mechanic itself is
-                // general), so this lives OUTSIDE the switch above rather
-                // than inside the `.fire` arm — matches World.ts's own
-                // relative ordering (leech runs right after the
-                // burn/freeze write, independent of which one fired).
-                // Self-damage never leeches (owner-index guard, mirrors
-                // TS's `proj.ownerId !== ev.victimId`) — `shooter_idx` is
-                // already resolved above (the owner lookup that also feeds
-                // damage_amp/overcharge/boss-mode). Cap mirrors World.ts's
-                // `Math.min(Math.max(100, health), health + finalDamage *
-                // leechFrac)` — never reduces (a boss-mode body above 100
-                // stays safe) and never overheals a normal-health caster
-                // past 100.
+                // Bleed Tithe shard or a passive-Tithe basic-fire shot
+                // today, but the mechanic itself is general), so this lives
+                // OUTSIDE the switch above rather than inside the `.fire`
+                // arm — matches World.ts's own relative ordering (leech
+                // runs right after the burn/freeze write, independent of
+                // which one fired). Self-damage never leeches (owner-index
+                // guard, mirrors TS's `proj.ownerId !== ev.victimId`) —
+                // `shooter_idx` is already resolved above (the owner lookup
+                // that also feeds damage_amp/overcharge/boss-mode). Cap
+                // mirrors World.ts's CURRENT `Math.min(Math.max(
+                // maxHealthForPlayer(leechCaster), leechCaster.health),
+                // leechCaster.health + finalDamage * leechFrac)` (World.ts:
+                // 2077-2084, 2026-07-22 bug fix) — never reduces (a boss-
+                // mode body above max is safe) and never overheals past the
+                // CHASSIS-AWARE max health (`maxHealthForPlayer`), NOT a
+                // flat 100 (the pre-fix formula this replaces silently
+                // capped a Kindled leecher's heal well under their real 125,
+                // and — now that a build-resolved leech can co-occur with a
+                // build-resolved `maxHealthAdd` card on ANY class, including
+                // Priest's own 100 base — a flat 100 cap would ALSO clip a
+                // Priest wearing a max-health card, not just heavy chassis).
                 if (proj_ptr.leech_fraction > 0 and shooter_idx >= 0 and @as(u32, @intCast(shooter_idx)) != ph2) {
-                    const healer = &state.players[@as(usize, @intCast(shooter_idx))];
+                    const healer_idx: usize = @intCast(shooter_idx);
+                    const healer = &state.players[healer_idx];
                     if (healer.flags.alive) {
-                        const cap = @max(100.0, healer.health);
-                        healer.health = @min(cap, healer.health + final_dmg * proj_ptr.leech_fraction);
+                        const cap = maxHealthForPlayer(healer, &state.player_fire_config[healer_idx]);
+                        healer.health = @min(@max(cap, healer.health), healer.health + final_dmg * proj_ptr.leech_fraction);
                     }
                 }
                 // Pierce-chain: decrement and survive; otherwise
