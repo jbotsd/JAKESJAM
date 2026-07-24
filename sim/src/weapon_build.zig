@@ -93,7 +93,23 @@ fn resolveMods(mods: []const gen.CardMod, class_id: ?gen.ClassId) world_state.Re
     // upgraded it away, a later "projectile" (0) card never stomps that
     // upgrade. See weaponBuild.ts's `applyCard`'s own `baseDelivery` param
     // doc comment for the full reasoning.
-    var delivery: u8 = B.delivery;
+    //
+    // Track Z1c item 1: the base delivery is CLASS-GATED, mirroring
+    // weapons.ts's `baseWeaponForClass` — priest (priestStarterWeapon)
+    // and paladin (paladinStarterWeapon) both carry an explicit
+    // `delivery: "projectile"` override ("homing tendrils need real
+    // travel time to curve in"); wizard and ninja share `starterWeapon`'s
+    // raycast, and class-blind resolution (`class_id == null`) uses
+    // `starterWeapon` too (TS `baseWeaponForClass(undefined)`). ONLY the
+    // delivery seed is class-gated here — the per-class starter STAT
+    // overrides (priest tendril damage/speed/homing, paladin's heavier
+    // bolt) remain an unported, recorded gap (they predate this cut and
+    // are not delivery-shaped work).
+    const base_delivery: u8 = if (class_id) |c| switch (c) {
+        .priest, .paladin => 0,
+        else => B.delivery,
+    } else B.delivery;
+    var delivery: u8 = base_delivery;
 
     var p_shape: u8 = B.p_shape;
     var p_element: u8 = B.p_element;
@@ -115,7 +131,7 @@ fn resolveMods(mods: []const gen.CardMod, class_id: ?gen.ClassId) world_state.Re
 
     for (mods) |m| {
         if (m.delivery) |d| {
-            if (delivery == B.delivery or d != 0) delivery = d;
+            if (delivery == base_delivery or d != 0) delivery = d;
         }
         damage *= m.damage_mul;
         fire_rate *= m.fire_rate_mul;
@@ -322,6 +338,7 @@ fn resolveMods(mods: []const gen.CardMod, class_id: ?gen.ClassId) world_state.Re
         .mirror_shield = if (mirror) 1 else 0,
         .directional_shield = if (directional) 1 else 0,
         .recoil_impulse = recoil_impulse * p_recoil_mul,
+        .delivery = delivery,
     };
 }
 

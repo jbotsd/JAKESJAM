@@ -4972,9 +4972,29 @@ pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
             const dx = proj_ptr.x - closest_x;
             const dy = proj_ptr.y - closest_y;
             if (dx * dx + dy * dy <= proj_ptr.radius * proj_ptr.radius) {
+                // Headshot (Track Z1c item 1 — closes combatHitboxScale-
+                // Parity.test.ts's residual #2): mirrors projectile.ts's
+                // `applyHitOn`, which bakes HEADSHOT_DAMAGE_MULTIPLIER into
+                // the event's damage BEFORE any of resolveRangedHit's own
+                // scaling (chaos included) — same ordering here: the
+                // headshot multiplier applies to the RAW `proj_ptr.damage`
+                // first, then chaos, matching TS's `(proj.damage *
+                // HEADSHOT_DAMAGE_MULTIPLIER) * chaosProfile.
+                // damageMultiplier` bit for bit. `proj_ptr.y` is the
+                // projectile's post-integration position THIS tick — TS's
+                // own `hitY` param is exactly that (`applyHitOn(proj,
+                // hitPid, x, y, ...)` passes the post-move `x, y`, not a
+                // true swept-intersection point), so no separate sweep-hit
+                // Y is needed here. Uses THIS site's own `half_h` (not
+                // `combat.playerHitboxAabb`) — see `isHeadshotAtHalfHeight`'s
+                // own doc comment for why the head band must stay
+                // self-consistent with the (non-crouch-aware) box that
+                // just confirmed the hit, not the real crouch-aware one.
+                const headshot = combat.isHeadshotAtHalfHeight(proj_ptr.y, py, half_h);
+                const headshot_dmg: f64 = if (headshot) proj_ptr.damage * combat.HEADSHOT_DAMAGE_MULTIPLIER else proj_ptr.damage;
                 // Compose damage multipliers (I36):
-                //   chaos × shooter damage_amp × victim vulnerability
-                var final_dmg = proj_ptr.damage * chaos_profile.damage_multiplier;
+                //   headshot × chaos × shooter damage_amp × victim vulnerability
+                var final_dmg = headshot_dmg * chaos_profile.damage_multiplier;
                 // Shooter lookup by owner_id_bytes — feeds the damage_amp/
                 // overcharge/boss buffs below AND is stamped into the
                 // hit_confirmed event's player_idx_b so the end-of-step

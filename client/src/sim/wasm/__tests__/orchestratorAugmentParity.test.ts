@@ -118,11 +118,12 @@ function configView(cards: string[]): DataView {
 }
 
 describe("cutover gate — card augments reach the Zig orchestrator's config", () => {
-  test("struct size matches the 248B extended ResolvedFireConfig", () => {
+  test("struct size matches the 256B extended ResolvedFireConfig", () => {
     const ex = __getCachedEx()! as unknown as { sizeof_resolved_fire_config: () => number };
     // 232 + dash_cooldown_mul (Quick Parry, repurposed onto the dash-bash
-    // slide) + recoil_impulse (Track Z0c Item A, fire-recoil substrate).
-    expect(ex.sizeof_resolved_fire_config()).toBe(248);
+    // slide) + recoil_impulse (Track Z0c Item A, fire-recoil substrate)
+    // + delivery (Track Z1c item 1, hitscan resolution).
+    expect(ex.sizeof_resolved_fire_config()).toBe(256);
   });
 
   test("no cards → inert augments (valid config, all multipliers 1, counts 0)", () => {

@@ -54,6 +54,15 @@ const SHAPE_INDEX: Record<string, number> = {
   x: 5,
   bar: 6,
 };
+// Mirrors cards_gen.zig's CardMod.delivery ordinals (gen_card_data.ts's
+// DELIVERY array order) — the same enum world_state.zig's appended
+// `ResolvedFireConfig.delivery` field (Track Z1c item 1) uses.
+const DELIVERY_INDEX: Record<string, number> = {
+  projectile: 0,
+  raycast: 1,
+  "continuous-beam": 2,
+  "area-pulse": 3,
+};
 
 /**
  * Convert a resolved weapon build (cards already applied) into the
@@ -110,5 +119,13 @@ export function packResolvedFireConfig(
     // Chaos / Recoil Step / chassis recoil-control stay fire-time terms on
     // both sides (see ResolvedFireConfig.recoil_impulse's Zig doc comment).
     recoilImpulse: build.recoilImpulse * (p.recoilMultiplier ?? 1),
+    // Delivery identity (Track Z1c item 1) — already fully resolved by
+    // createWeaponBuild by the time it reaches here (class-gated base seed
+    // + card upgrades + THE GEOMETRICIAN RULING's post-loop wizard-forces-
+    // raycast enforcement all happened upstream), so this is a pure enum
+    // lookup, not a re-derivation. `?? 1` mirrors weapon_build.zig's
+    // `StarterBase.delivery` fallback (raycast) for a build whose
+    // `.delivery` somehow isn't one of the four known strings.
+    delivery: DELIVERY_INDEX[build.delivery] ?? 1,
   };
 }

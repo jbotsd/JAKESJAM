@@ -25,12 +25,12 @@
 //      of the box differs at the base, so side-edge grazes were already
 //      non-parity before class scaling existed. This test's graze runs
 //      VERTICALLY (top edge), where both bases agree at 56 tall.
-//   2. Zig's projectile path has NO headshot band at all (isHeadshot is
-//      TS-only until the hitscan-resolution Z1 item ports it), so a hit
-//      in the head zone does 1.2× on TS and 1.0× on Zig. The behavior
-//      gate below asserts BOTH exact numbers so the gap stays visible —
-//      when the headshot port lands, its author must flip the Zig-side
-//      expectation here from 92 to 90.4 (and delete this paragraph).
+//   2. CLOSED (Track Z1c item 1, 2026-07-24): Zig's projectile path now
+//      applies the same HEADSHOT_DAMAGE_MULTIPLIER TS's isHeadshot does
+//      (combat.zig's isHeadshotAtHalfHeight, world.zig section 4) — the
+//      graze below lands in the head zone and both sides now agree at
+//      90.4 (100 - 8×1.2). Residual #1 (width approximation) is
+//      untouched and stays its own item.
 
 import { describe, expect, test } from "bun:test";
 import { readFile } from "node:fs/promises";
@@ -308,12 +308,10 @@ describe("class-scaled combat hitboxes (Track Z1a item 2)", () => {
     const kin = runGraze("heavy");
     expect(kin.tsHitTick).not.toBeNull();
     expect(kin.zigHitTick).toBe(kin.tsHitTick);
-    // Damage residual #2 (header): the graze lands in the head band, so
-    // TS applies HEADSHOT_DAMAGE_MULTIPLIER (1.2 → 9.6) while Zig's
-    // projectile path has no headshot resolution yet (the un-ported
-    // hitscan Z1 item). Both numbers pinned exactly — the headshot port
-    // must consciously flip the Zig side to 90.4.
+    // Residual #2 CLOSED (header): the graze lands in the head band, so
+    // BOTH sides now apply HEADSHOT_DAMAGE_MULTIPLIER (1.2 → 9.6 damage,
+    // 90.4 final health).
     expect(kin.tsHealth).toBeCloseTo(100 - PROJ_DAMAGE * HEADSHOT_DAMAGE_MULTIPLIER, 9);
-    expect(kin.zigHealth).toBeCloseTo(100 - PROJ_DAMAGE, 9);
+    expect(kin.zigHealth).toBeCloseTo(100 - PROJ_DAMAGE * HEADSHOT_DAMAGE_MULTIPLIER, 9);
   });
 });

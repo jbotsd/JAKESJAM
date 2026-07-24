@@ -203,7 +203,15 @@ export const MELEE_SWING_MEMORY_SIZE = 64;
 // I-final — ResolvedFireConfig parallel array (per-player fire
 // build resolved by the host from createWeaponBuild). 14 × f64 +
 // 4 × u32 + 4 × u8(enum) + 1 × u8(valid) + 3 × u8(pad) = 136.
-export const RESOLVED_FIRE_CONFIG_SIZE = 248; // +14 augment fields (movement/shield/parry) +dash_cooldown_mul +recoil_impulse (Z0c Item A)
+// 248 → 256 (Track Z1c item 1, hitscan resolution): +1 for the appended
+// `delivery` u8 at offset 248 (0=projectile/1=raycast/2=continuous-beam/
+// 3=area-pulse — the same CardMod.delivery ordinals) + 7 pad bytes. See
+// world_state.zig's ResolvedFireConfig.delivery doc comment for why this
+// field exists: `resolveMods` always COMPUTED the resolved delivery (the
+// wizard-forces-raycast ruling + the delivery-feel floors both branch on
+// it) but previously dropped it from the returned config, so world.zig's
+// fire site could never branch on it either.
+export const RESOLVED_FIRE_CONFIG_SIZE = 256; // +14 augment fields (movement/shield/parry) +dash_cooldown_mul +recoil_impulse (Z0c Item A) +delivery (Z1c item 1)
 // Ability-slot equipment / card hand / per-round draft bookkeeping (Phase 2,
 // docs/zig-step-world-parity-goal.md — draft/offer-roll system). Parallel to
 // players[], host-only/off-wire like the rows above. Must match

@@ -11,7 +11,8 @@ import { WORLD_STATE_TOTAL_SIZE } from "../worldStateBridge";
 import { createWeaponBuild } from "../../data/weaponBuild";
 import { packResolvedFireConfig } from "../../data/packResolvedFireConfig";
 import { crystalRoundsCards } from "../../data/cards";
-import { starterWeapon } from "../../data/weapons";
+import { baseWeaponForClass } from "../../data/weapons";
+import type { ClassId } from "../../data/cardTypes";
 
 const bytes = await readFile(resolve(import.meta.dir, "..", "sim.wasm"));
 const ab = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
@@ -25,6 +26,8 @@ const ex = sim.exports as unknown as {
 
 // gen_card_data.ts's CLASS_ID order (mirrors cardTypes.ts's ClassId union).
 const WIZARD_CLASS_IDX = 0;
+const PALADIN_CLASS_IDX = 2;
+const PRIEST_CLASS_IDX = 3;
 
 // gen_card_data.ts emits a CardEntry for EVERY card now (not just the ones
 // with a `modifier` — see that file's "Every card gets an entry now" note,
@@ -39,31 +42,42 @@ const WIZARD_CLASS_IDX = 0;
 const cards = crystalRoundsCards;
 const SCRATCH = sim.statePtr + WORLD_STATE_TOTAL_SIZE + 4096;
 
-function zig(i: number, wizard = false): DataView {
-  if (wizard) {
-    ex.resolve_build_test_class(i, WIZARD_CLASS_IDX, SCRATCH);
+// gen.ClassId ordinal for each class-blind→class-aware walk below (mirrors
+// gen_card_data.ts's CLASS_ID declaration order — see the constants above).
+const CLASS_IDX: Record<ClassId, number> = {
+  wizard: WIZARD_CLASS_IDX,
+  ninja: 1,
+  paladin: PALADIN_CLASS_IDX,
+  priest: PRIEST_CLASS_IDX,
+};
+
+function zig(i: number, classId?: ClassId): DataView {
+  if (classId !== undefined) {
+    ex.resolve_build_test_class(i, CLASS_IDX[classId], SCRATCH);
   } else {
     ex.resolve_build_test(i, SCRATCH);
   }
-  return new DataView(ex.memory.buffer, SCRATCH, 248);
+  return new DataView(ex.memory.buffer, SCRATCH, 256);
 }
-function ts(i: number, wizard = false) {
+function ts(i: number, classId?: ClassId) {
   return packResolvedFireConfig(
     createWeaponBuild(
-      // baseWeaponForClass("wizard") IS starterWeapon again (object
-      // identity — THE GEOMETRICIAN RULING, 2026-07-24, weapons.ts), so
-      // both walks share the same base here, exactly like Zig's single
-      // StarterBase.
-      starterWeapon,
+      // baseWeaponForClass(classId) — class-gated base weapon (Track Z1c
+      // item 1: priest/paladin resolve priestStarterWeapon/
+      // paladinStarterWeapon, both `delivery: "projectile"`; wizard/ninja/
+      // class-blind all fall back to the shared `starterWeapon` object,
+      // matching weapon_build.zig's StarterBase + class-gated base_delivery
+      // seed exactly).
+      baseWeaponForClass(classId),
       i < 0 ? [] : [cards[i]!],
-      wizard ? "wizard" : undefined,
+      classId,
     ),
   );
 }
 
-function compare(i: number, label: string, wizard = false) {
-  const z = zig(i, wizard);
-  const t = ts(i, wizard);
+function compare(i: number, label: string, classId?: ClassId) {
+  const z = zig(i, classId);
+  const t = ts(i, classId);
   const F = (off: number) => z.getFloat64(off, true);
   const U32 = (off: number) => z.getUint32(off, true);
   const U8 = (off: number) => z.getUint8(off);
@@ -110,6 +124,10 @@ function compare(i: number, label: string, wizard = false) {
   // Z0c Item A — the fire-recoil substrate: base 95 × card recoil_mul
   // (clamped) × projectile recoil channel, baked to one f64.
   expect(F(240), "recoilImpulse" + ctx).toBeCloseTo(t.recoilImpulse, 6);
+  // Track Z1c item 1 — the resolved delivery identity (class-gated seed +
+  // card upgrades + wizard-forces-raycast enforcement), now actually
+  // returned from `resolveMods` instead of being silently dropped.
+  expect(U8(248), "delivery" + ctx).toBe(t.delivery);
 }
 
 describe("Zig build resolver ≡ TS createWeaponBuild → ResolvedFireConfig", () => {
@@ -139,8 +157,48 @@ describe("Zig build resolver ≡ TS createWeaponBuild → ResolvedFireConfig", (
   test("every class-blind card resolves identically AS WIZARD (forced-raycast parity)", () => {
     for (let i = 0; i < cards.length; i++) {
       if (cards[i]!.classModifiers?.wizard) continue;
-      compare(i, `${cards[i]!.id} (wizard)`, true);
+      compare(i, `${cards[i]!.id} (wizard)`, "wizard");
     }
   });
-  test("base (no cards) matches as wizard too", () => compare(-1, "base (wizard)", true));
+  test("base (no cards) matches as wizard too", () => compare(-1, "base (wizard)", "wizard"));
+
+  // Track Z1c item 1 — class-gated BASE DELIVERY: priest/paladin resolve
+  // from priestStarterWeapon/paladinStarterWeapon, both explicit
+  // `delivery: "projectile"` overrides (weapons.ts), not the shared
+  // starterWeapon's raycast — mirroring weapon_build.zig's `base_delivery`
+  // switch (`.priest, .paladin => 0, else => B.delivery`) exactly.
+  //
+  // Deliberately NARROW (delivery byte only, not a full `compare()` walk):
+  // priestStarterWeapon/paladinStarterWeapon also carry distinct STAT
+  // overrides (priest's tendril damage/speed/homing, paladin's heavier
+  // bolt) that weapon_build.zig's `StarterBase` does NOT mirror — Zig
+  // still resolves every class from the ONE class-blind `StarterBase`
+  // regardless of `class_id`, so a full-struct priest/paladin walk would
+  // fail on `damage`/`projectileSpeed`/etc for every card, not prove
+  // anything about delivery. That gap is real, pre-existing (predates
+  // this cut — see weapon_build.zig's `base_delivery` doc comment: "the
+  // per-class starter STAT overrides... remain an unported, recorded
+  // gap"), and out of THIS item's delivery-routing scope; recorded here so
+  // the next reader doesn't mistake the narrow scope for an oversight.
+  test("priest resolves the PROJECTILE delivery ordinal (class-gated base, not the shared raycast starter)", () => {
+    const PROJECTILE = 0;
+    const zigDelivery = zig(-1, "priest").getUint8(248);
+    const tsDelivery = ts(-1, "priest").delivery;
+    expect(tsDelivery, "TS priestStarterWeapon.delivery").toBe(PROJECTILE);
+    expect(zigDelivery, "Zig class-gated base_delivery (priest)").toBe(PROJECTILE);
+  });
+  test("paladin resolves the PROJECTILE delivery ordinal (class-gated base, not the shared raycast starter)", () => {
+    const PROJECTILE = 0;
+    const zigDelivery = zig(-1, "paladin").getUint8(248);
+    const tsDelivery = ts(-1, "paladin").delivery;
+    expect(tsDelivery, "TS paladinStarterWeapon.delivery").toBe(PROJECTILE);
+    expect(zigDelivery, "Zig class-gated base_delivery (paladin)").toBe(PROJECTILE);
+  });
+  test("ninja/class-blind still resolve the RAYCAST delivery ordinal (unaffected by the priest/paladin gate)", () => {
+    const RAYCAST = 1;
+    expect(ts(-1, "ninja").delivery, "TS ninja (shares starterWeapon)").toBe(RAYCAST);
+    expect(zig(-1, "ninja").getUint8(248), "Zig ninja base_delivery").toBe(RAYCAST);
+    expect(ts(-1).delivery, "TS class-blind").toBe(RAYCAST);
+    expect(zig(-1).getUint8(248), "Zig class-blind base_delivery").toBe(RAYCAST);
+  });
 });

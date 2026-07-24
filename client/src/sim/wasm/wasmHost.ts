@@ -107,6 +107,13 @@ export type ResolvedFireConfigBytes = {
    *  projectile.recoilMultiplier, mirroring world_state.zig's appended
    *  `recoil_impulse` (offset 240). */
   recoilImpulse: number;
+  /** Delivery identity (Track Z1c item 1 — hitscan resolution): 0 =
+   *  projectile, 1 = raycast/hitscan, 2 = continuous-beam, 3 = area-pulse
+   *  — mirroring world_state.zig's appended `delivery` u8 (offset 248).
+   *  Class-gated at resolve time (priest/paladin force 0, wizard forces 1
+   *  unless a card upgraded to continuous-beam) exactly like
+   *  `weapon_build.zig`'s `resolveMods`. */
+  delivery: number;
 };
 
 /**

@@ -1309,6 +1309,19 @@ pub const ResolvedFireConfig = extern struct {
     /// three compose at world.zig's fire site, mirroring weapon.ts's own
     /// fire-time composition. Appended, keeping every offset above stable.
     recoil_impulse: f64 = 0,
+    /// Delivery identity (Track Z1c item 1 — hitscan resolution): 0 =
+    /// projectile, 1 = raycast/hitscan, 2 = continuous-beam, 3 =
+    /// area-pulse — the SAME enum ordinals `cards_gen.zig`'s `CardMod.
+    /// delivery` already uses. `resolveMods` (weapon_build.zig) always
+    /// computed this (the wizard-forces-raycast ruling + the delivery-feel
+    /// floors both branch on it) but then DROPPED it from the returned
+    /// config — so world.zig's fire site could never know a resolved
+    /// build was `raycast` and spawned traveling projectiles for every
+    /// build, while TS's `stepWeapon` emits same-tick hitscan pellets for
+    /// `delivery === "raycast"` (weapon.ts:497's `isHitscan` branch).
+    /// Appended (growth pattern), keeping every offset above stable.
+    delivery: u8 = 0,
+    _pad3: [7]u8 = .{ 0, 0, 0, 0, 0, 0, 0 },
 };
 
 /// Sentinel for `EquippedActives.slot_kind[N]` meaning "slot N is empty" —
@@ -2126,7 +2139,11 @@ comptime {
     // appended `recoil_impulse` f64 at [240, 248) — 240 is 8-aligned, no
     // padding anywhere. worldStateBridge.ts's RESOLVED_FIRE_CONFIG_SIZE
     // bumped 240 → 248 in the same cut.
-    std.debug.assert(@sizeOf(ResolvedFireConfig) == 248);
+    // 248 → 256 (Track Z1c item 1, hitscan resolution): +1 for the
+    // appended `delivery` u8 at 248 + 7 pad — worldStateBridge.ts's
+    // RESOLVED_FIRE_CONFIG_SIZE bumped 248 → 256 in the same cut.
+    std.debug.assert(@sizeOf(ResolvedFireConfig) == 256);
+    std.debug.assert(@offsetOf(ResolvedFireConfig, "delivery") == 248);
 }
 
 // -----------------------------------------------------------------

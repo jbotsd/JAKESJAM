@@ -391,6 +391,40 @@ pub fn playerHitboxAabb(
     };
 }
 
+// =================================================================
+// Headshot band (Track Z1c item 1, closing combatHitboxScaleParity.test.ts's
+// residual #2 — "Zig's projectile path has NO headshot band at all... a hit
+// in the head zone does 1.2× on TS and 1.0× on Zig"). Bit-exact port of
+// player.ts's HEADSHOT_ZONE_FRAC/HEADSHOT_DAMAGE_MULTIPLIER/isHeadshot.
+
+/// Fraction of the (crouch-aware) body height, measured from the top, that
+/// counts as the head zone. Mirrors player.ts's HEADSHOT_ZONE_FRAC exactly.
+pub const HEADSHOT_ZONE_FRAC: f64 = 0.32;
+/// Damage boon for a headshot. Mirrors player.ts's HEADSHOT_DAMAGE_MULTIPLIER.
+pub const HEADSHOT_DAMAGE_MULTIPLIER: f64 = 1.2;
+
+/// True when a hit at world-space `hit_y` landed in the victim's head zone
+/// — the top HEADSHOT_ZONE_FRAC of `half_h * 2` (the SAME half-height the
+/// caller's own hit test already used), centred on `victim_y`. Pure Y-band
+/// check, mirroring player.ts's `isHeadshot`: a hit already confirmed
+/// against the body only needs the vertical placement to qualify, not a
+/// second full AABB test.
+///
+/// Takes `half_h` directly (rather than re-deriving it from crouching +
+/// archetype via `playerHitboxAabb`) so each call site can pass the EXACT
+/// half-height it used to confirm the hit in the first place — world.zig
+/// section 4's projectile-vs-player box is a pre-existing, non-crouch-aware
+/// 30×56 approximation (see `playerHitboxAabb`'s own doc comment), NOT the
+/// real crouch-aware box `playerHitboxAabb` returns; the head band must
+/// stay self-consistent with whichever box actually decided the hit,
+/// exactly like TS's `isHeadshot` stays self-consistent with
+/// `playerHitboxAABB` (both read `combatHitboxScale`, never a second
+/// independent number).
+pub fn isHeadshotAtHalfHeight(hit_y: f64, victim_y: f64, half_h: f64) bool {
+    const top = victim_y - half_h;
+    return hit_y <= top + (half_h * 2.0) * HEADSHOT_ZONE_FRAC;
+}
+
 /// Melee arc hit test — bit-exact port of World.ts's `isAABBInMeleeArc`
 /// (World.ts:707-734): sample the victim's AABB at its centre + 4 corners,
 /// hit if ANY sampled point is within `range` of `(origin_x, origin_y)` AND
