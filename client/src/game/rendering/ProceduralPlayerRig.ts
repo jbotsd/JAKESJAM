@@ -936,6 +936,16 @@ export class ProceduralPlayerRig implements CombatRig {
       flinchX: number;
       flinchY: number;
     } | null;
+    /** Live melee sentence clock (I4, R1 row 2 epoch→frame alignment
+     *  tooling): elapsedMs into the render sentence this frame — an rAF
+     *  sampler can pin "where was the render clock when the sim's
+     *  slash-hit arrived" without frame-counting video. Null at rest. */
+    melee: {
+      style: "interstice" | "kindled";
+      verb: "blade" | "bash";
+      elapsedMs: number;
+      durationMs: number;
+    } | null;
   } {
     const ip = this.impactParams;
     const speaking =
@@ -968,6 +978,14 @@ export class ProceduralPlayerRig implements CombatRig {
             squashY: squash.y,
             flinchX: this.hitOffsetX * hitEased,
             flinchY: this.hitOffsetY * hitEased,
+          }
+        : null,
+      melee: this.meleePoseMs > 0
+        ? {
+            style: this.meleePoseStyle,
+            verb: this.meleePoseVerb,
+            elapsedMs: this.meleePoseDurationMs - this.meleePoseMs,
+            durationMs: this.meleePoseDurationMs,
           }
         : null,
     };
