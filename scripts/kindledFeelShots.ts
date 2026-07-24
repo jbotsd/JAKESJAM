@@ -83,6 +83,17 @@ if (hasIdle) {
   }
 }
 
+// Ward-brace stance (K11 — gamut "Ward raise/hold": braced set, knees
+// bent, slab planted). Skipped silently on harnesses predating it.
+const hasWard = await page.evaluate(
+  () => (window as unknown as { __harnessHasWard?: boolean }).__harnessHasWard === true,
+);
+if (hasWard) {
+  await rigFrame("paladin", "ward", 0.5);
+  await page.waitForTimeout(120);
+  await canvas.screenshot({ path: `${OUT}/${TAG}-ward.png` });
+}
+
 // Victim-channel chord (R1 rows 3-8 — the gamut's "hurt" row; K8 wave 2).
 // "hurt" = ordinary Kindled contact, "hurt-kill" = kill tier (225ms victim
 // hold + 67ms full-white). t runs over the harness's 700ms chord envelope:

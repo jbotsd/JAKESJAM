@@ -512,6 +512,50 @@ export function appendBladeTip(
   return next;
 }
 
+/** KINDLED WARD BRACE (K11, slash-feel-ledger FULL ANIMATION GAMUT "Ward
+ * raise/hold": "braced set, knees bent, slab planted — an instrument being
+ * USED, not an icon displayed"). Before this, holding Shield only drew the
+ * circuit-slab VFX at the off-hand — the BODY never changed, so the ward
+ * read as a decal over a neutral rig (the exact "perfect blade over a dead
+ * body" failure the gamut calls out). Pure pose math, rig applies it:
+ *
+ * - `slab`: off-hand punches forward-square along aim at chest height —
+ *   the plate PLANTS between the fighter and the threat. Reach mirrors
+ *   bashHandPose's chamber neighborhood so raise → bash flows without a
+ *   pose pop (the bash IS this stance exploding forward).
+ * - `sword`: lead hand pulls to the low-rear guard — same behind-the-body
+ *   line as bashSwordHandPose (the blade yields the beat to the slab).
+ * - `kneeDropPx`: the stance SETS — pelvis chain drops (rig applies its
+ *   own falloff up the chain, same pattern as meleeGroundLoad).
+ * - `stanceWidenPx`: feet plant wider than the braced idle's ±3.5.
+ * - `leanPx`: center-of-mass presses INTO the shield along aim.
+ *
+ * Everything scales with braceK (the rig's smoothed raise clock) so raise
+ * and drop ease instead of popping. */
+export function wardBracePose(
+  braceK: number,
+  aimRad: number,
+  dir: number,
+): {
+  slab: { angle: number; reach: number };
+  sword: { angle: number; reach: number };
+  kneeDropPx: number;
+  stanceWidenPx: number;
+  leanPx: number;
+} {
+  const k = clamp01(braceK);
+  const d = dir >= 0 ? 1 : -1;
+  return {
+    // Slightly high of square (-0.08): guarding the chest/visor line.
+    slab: { angle: aimRad - 0.08 * k, reach: lerp(21, 34, k) },
+    // bashSwordHandPose's chamber line (aim + d*2.35, low) — held, not swung.
+    sword: { angle: aimRad + d * 2.35 * k, reach: lerp(24, 28, k) },
+    kneeDropPx: 7 * k,
+    stanceWidenPx: 6 * k,
+    leanPx: 4 * k,
+  };
+}
+
 function cutWhip(v: number): number {
   const x = Math.max(0, Math.min(1, v));
   const contact = MELEE_CONTACT_CUT_FRACTION;

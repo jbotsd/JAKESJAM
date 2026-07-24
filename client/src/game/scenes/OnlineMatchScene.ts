@@ -2512,6 +2512,7 @@ export class OnlineMatchScene extends Phaser.Scene {
     dashing: false,
     shieldArcScale: 1,
     platingGlow: 0,
+    shieldHeld: false,
   };
   /** Cull margin (world px) beyond the camera's view — generous enough that
    *  a rig's trail/shield arc never visibly pops at the screen edge. */
@@ -2612,6 +2613,8 @@ export class OnlineMatchScene extends Phaser.Scene {
     // dashing (same optional/additive pattern as grounded above).
     pose.touchingWallDir = player.touchingWallDir ?? 0;
     pose.dashing = player.dashing ?? false;
+    // K11 ward brace: same snapshot boolean the ward slab VFX frame-diffs.
+    pose.shieldHeld = player.shieldActive === true;
     rig.update(deltaMs, pose);
   }
 

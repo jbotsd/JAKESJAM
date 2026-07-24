@@ -1523,6 +1523,10 @@ export class HangoutScene extends Phaser.Scene {
       maxHealth: character.maxHealth,
       touchingWallDir: player.touchingWallDir ?? 0,
       dashing: player.dashing ?? false,
+      // K11 ward brace: the held-Shield boolean drives the Kindled braced
+      // BODY (knees bent, slab planted) — same snapshot field the ward
+      // slab VFX already frame-diffs (ConstructVfxController).
+      shieldHeld: player.shieldActive === true,
       // Venue mode (Fix 1, live playtest 2026-07-18): cards ARE now live on
       // the venue lobby player (VenueHost.pushLoadoutDraft → setPlayerCards)
       // — plating glow/parry-cover must track the resolved build here too,
