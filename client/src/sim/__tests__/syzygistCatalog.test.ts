@@ -481,6 +481,29 @@ describe("Syzygist catalog v1 — representative sim effects (low-aim auto-targe
     expect(res.state.players[PlayerId("c")]!.burnDps).toBe(7);
   });
 
+  test("Contagion: never jumps the burn onto the CASTER themselves (self-jump guard, Track Z1c item 6)", () => {
+    // The caster sits CLOSER to the burning source than the only other
+    // eligible candidate — before the self-jump guard, `isAlly(nextEntity,
+    // other)` is false whenever `other === nextEntity` in an untagged FFA
+    // match (no teamId — see isAlly's own doc comment), so the caster
+    // themselves was a valid "nearest un-burned enemy" and the burn
+    // re-ignited THEM instead of `clean`.
+    const caster = mkPlayer(A, 450, 400, "shielded", { cards: ["contagion"] });
+    const burning = mkPlayer(B, 460, 400, "balanced", {
+      burnUntilTick: Tick(600), burnDps: 7, burnTickLastApplied: Tick(0),
+    });
+    const clean = mkPlayer(PlayerId("c"), 500, 400, "balanced");
+    let state = mkState([caster, burning, clean]);
+    const runtime = createRuntime(flatMap);
+    const res = stepWithRuntime(
+      state, runtime,
+      inputsWith([caster, burning, clean], { [A as string]: frame(SLOT1_BIT, 1) }), DT_MS,
+    );
+    expect(res.state.players[A]!.burnUntilTick).toBeUndefined();
+    expect(res.state.players[PlayerId("c")]!.burnUntilTick).toBeDefined();
+    expect(res.state.players[PlayerId("c")]!.burnDps).toBe(7);
+  });
+
   test("Contagion: no burning enemy nearby is a dead press", () => {
     const caster = mkPlayer(A, 400, 400, "shielded", { cards: ["contagion"] });
     const clean = mkPlayer(B, 460, 400, "balanced");

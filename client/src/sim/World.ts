@@ -4147,6 +4147,18 @@ export function stepWithRuntime(
             let bestDist = Infinity;
             for (const [otherId, other] of Object.entries(state.players)) {
               if (otherId === srcId) continue;
+              // Self-jump guard (Track Z1c item 6): the CASTER is never a
+              // valid jump target. Without this, `isAlly(nextEntity, other)`
+              // right below is FALSE whenever `other === nextEntity` in an
+              // untagged FFA match (isAlly's own doc comment: "a player is
+              // trivially their own ally... whenever a.teamId is set" — no
+              // teamId means it's never true) — so a Priest standing closer
+              // to the burning source than any other candidate could have
+              // their own Contagion pulse re-ignite THEM. Zig's mirror
+              // (world.zig's `.contagion` dispatch arm) already excludes
+              // `player_idx` here; this brings World.ts into line with it
+              // rather than the other way around.
+              if (otherId === pid) continue;
               if (!other.alive) continue;
               if (isAlly(nextEntity, other)) continue;
               if (other.burnUntilTick !== undefined && other.burnUntilTick > state.tick) continue;
