@@ -188,7 +188,33 @@ already pass.
   path; a Z1 item). NOTE for operators: sim.wasm is a
   gitignored build artifact — after pulling Zig changes, `zig build`
   before running wasm suites or they fail on the stale binary.
-- Z1 deferrals: **NOT STARTED**
+- Z1 deferrals: **Z1a SHIPPED** 2026-07-24 (branch track-z/z1a) — three
+  items, one commit each: (1) melee_swing bridged across the full-sync
+  repack (Z0e's recorded sibling — the swing FSM survives every pack,
+  melee resolves same-tick both sides; meleeSwingMemoryBridge.test.ts,
+  verified failing 2/3 on the old pack path); (2) sizeScale mirrored into
+  Zig combat hitboxes (combat.zig combatHitboxScale — melee arc,
+  dash-through, projectile, fire-patch; movement box deliberately
+  untouched; graze-parity gate + two residuals pinned honestly: the
+  30×56-vs-26×56 projectile width approximation and Zig's missing
+  headshot band, asserted at exact numbers); (3) ally substrate + all
+  FOUR ally-targeted abilities (isAlly/findNearestAllyIdx/
+  hasRallyLightSource + Aegis Share/Rally Light/Borrowed Time/Glass Ward,
+  PlayerEntity 632→656 with bridged tail, chassis-aware requireInjured,
+  debt resolution pass; ride-along fixes: haste move-mul missing from
+  Zig's speed_mul, self_lattice's missing has_syz_ward flag). Meter
+  byte-identical (376.5/196.2/449.6/280.4/378.0) — EXPECTED, the sweep's
+  all-balanced FFA non-melee bots can't trigger any of the three (header
+  has the full verdict). NEW Z1a findings for the next slice, same
+  wipe-on-repack class: (a) the whole Zig-only PlayerEntity tail span
+  [384,620) — every Phase-4 ability window is one-tick-only under
+  full-sync; (b) player_equipped_actives zero-filled per pack — no
+  ability castable at all on the live wasm path; (c) client
+  runWasmStepSync writes fire configs BEFORE pack (server does it after,
+  correctly). Still open on the Z1 list: team peel, ninja dash i-frames,
+  Kindled Ward partial mitigation, hitscan resolution (+ headshot band),
+  six-axes axis payloads; Aegis Share's team-peel READER lands with the
+  team-peel item (window is bridged and cast-live already).
 - Z2 server honesty: **NOT STARTED**
 - Z3 sweep + bench: **NOT STARTED**
 - Z4 flip: **AWAITING JAKE** (after Z0–Z3)

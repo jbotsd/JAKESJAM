@@ -142,6 +142,60 @@
 // irrelevant to this sweep (scripted bots never melee) but the swing FSM
 // can never leave windup on the live wasm path.
 //
+// Z1a (2026-07-24) closed three Z1 items — all CORRECTNESS items whose
+// code paths this sweep structurally cannot exercise, and the meter says
+// exactly that:
+//
+//   Z1a BEFORE (Z0e's after):     AFTER items 1+2+3:
+//   seed=1     : final  376.5px | final  376.5px (onset 230)
+//   seed=42    : final  196.2px | final  196.2px (onset 267)
+//   seed=1337  : final  449.6px | final  449.6px (onset 309)
+//   seed=90210 : final  280.4px | final  280.4px (onset 267)
+//   seed=271828: final  378.0px | final  378.0px (onset 181)
+//
+// VERDICT: byte-identical, and that is the EXPECTED reading, not a miss —
+// each item's trigger is absent from this harness by construction:
+//   1. melee_swing bridged (Z0e's sibling finding above, CLOSED — the
+//      swing FSM survives the repack; meleeSwingMemoryBridge.test.ts's
+//      lockstep gate proves both sides resolve melee on the same tick):
+//      scripted bots never melee here.
+//   2. class-scaled combat hitboxes mirrored into Zig (combat.zig
+//      combatHitboxScale — melee arc, dash-through, projectile, fire-
+//      patch; combatHitboxScaleParity.test.ts): every bot in this sweep
+//      is characterId "balanced", scale 1.0, boxes byte-identical.
+//   3. ally substrate (isAlly + findNearestAllyIdx + hasRallyLightSource)
+//      + Aegis Share / Rally Light / Borrowed Time / Glass Ward ported
+//      (smoke.zig's "ally substrate" suite; allySubstrateBridge.test.ts),
+//      incl. the haste move-multiplier ride-along fix in Zig's speed_mul
+//      chain: this sweep is FFA (isAlly always false) with no equipped
+//      abilities.
+//
+// NEXT evidenced hypotheses recorded by Z1a's own digging — the SAME
+// wipe-on-repack bug class Z0e/Z1a-item-1 fixed, in WIDER families,
+// verified in-code against packWorldState/runWasmStepSync:
+//   (a) the entire Zig-only PlayerEntity tail span [384, 620) — EVERY
+//       Phase-4 ability window (sunlance/overclock/measure, facet/focus/
+//       judgment/read marks, kindled_resolve, ghost_guard, razor_route,
+//       undercut, edge_storm, seal, second_wind, channel_hold_ms...) is
+//       zero-filled by every pack: under live full-sync wasm authority
+//       every cast window is ONE-TICK-ONLY. (Z1a's four new fields were
+//       bridged at [632, 656) precisely to not join this family; Z1a
+//       also fixed self_lattice's missing has_syz_ward flag, whose
+//       absence wiped its ward pool the same way.)
+//   (b) player_equipped_actives is zero-filled by every pack too (bridge:
+//       "Skipped for now") — under full-sync, ability EQUIPMENT is
+//       stripped every tick, so no ability can be cast at all on the
+//       live wasm path; smoke.zig drives casts through raw stepWorld
+//       instead.
+//   (c) client runWasmStepSync writes fire configs BEFORE the pack
+//       overwrites that region (server's serverWasmHost writes them
+//       AFTER pack, correctly ordered) — all-starter-pistol harnesses
+//       mask it; carded clients on ?wasm-world=2 would lose their
+//       builds.
+// Together (a)+(b) mean "abilities under live wasm authority" is a
+// substrate track item (bridge the tail span + equipment), not an
+// ability-by-ability port question.
+//
 // If the sweep exceeds its bound, the per-seed record above is the
 // deliverable the next track consumes.
 //
