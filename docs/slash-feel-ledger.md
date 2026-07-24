@@ -15,6 +15,14 @@ words win.*
 > FEELs like it should and with insterstace HACKY AND FUCKEN SLASHHY AND
 > STABBY MORE SO
 
+> kindled also has a shield do not fort that like 1 out of 3 swings
+> should be a shield bash
+
+> or like think about the game play of it all rihgt
+
+(Read: the ~1-in-3 bash is a sketch, not a spec — design the shield into
+the melee GRAMMAR from gameplay first, then make it feel right.)
+
 ## Translation into feel channels (correct me if misread)
 
 ### Kindled — meaty · weighty · BIG · crunchy · smooth on retrig
@@ -31,6 +39,25 @@ words win.*
   pose reset, no dead frames), input buffered so mashing never eats a
   swing, hit-stop never STACKS into sludge under rapid retriggers. The
   rhythm is heavy-but-liquid.
+- **THE SHIELD IS IN THE CHAIN (gameplay-first, then feel):** Kindled
+  fights sword AND slab — the shield must be part of the melee grammar,
+  not a separate button's cosmetics. Jake's sketch: ~1 swing in 3 is a
+  SHIELD BASH; his follow-up: design it from the gameplay. Iteration 1
+  of the Kindled loop PROPOSES the design before touching feel.
+  Candidates to weigh: (a) fixed cadence — swing·swing·BASH as the chain
+  finisher; (b) contextual bash (held-direction / point-blank range
+  gates it); (c) economy-coupled — bash spends/feeds Kindling, ties into
+  Ward's block-to-power identity. DESIGN HOOK: the banked balance
+  finding says perfectly-played melee LOSES the point-blank DPS trade —
+  the bash is the natural answer if its payoff is CONTROL, not DPS
+  (knockback/stagger that breaks the enemy's return fire), which also
+  keeps it from power-creeping the damage table. Whatever wins: bash =
+  the chain's blunt punctuation — slab leads, shortest reach, biggest
+  knockback, deepest hit-stop, bass THUD vs the blade's shear, gold
+  circuit-slab smear (chassis-axioms: gold is Kindled's earned color).
+  Sim implications are real (chain-position state in the melee FSM, TS +
+  Zig mirror + parity test — melee FSM lives on both sides since Z1a
+  bridged its memory) — the loop owns that work, not just pixels.
 
 ### Interstice — hacky · slashy · STABBY · more so
 - **Snap:** minimal windup, whip-crack active window, fast recovery, high
