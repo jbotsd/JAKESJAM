@@ -256,8 +256,13 @@ misled about what the game is or what remains.
 - P1 chassis truth: **DONE (code)** 2026-07-23 — commits 52890d8 (table +
   speed + recoil + display reads sim) and 8c868bd (flagged hitbox scaling);
   P1.7 feel-check AWAITING JAKE on :8088
-- P2 one voice: **NOT STARTED** (register decided 2026-07-23)
-- P3 legibility: **NOT STARTED**
+- P2 one voice: **DONE** — executed as `convergence-goal.md` Track V,
+  applied + merged + live 2026-07-23 (1536849); see that doc's Status
+  block for the full ledger (88/104 card rewrites, voiceRegister.test.ts
+  lint). Sign-off items live in `docs/voice-pass-inventory.md`.
+- P3 legibility: **DONE** — executed as `convergence-goal.md` Track L,
+  now at `docs/legibility-audit.md`'s 70 SHIPPED / 9 PARTIAL / 0 MISSING
+  (the 9 remaining rows are `docs/finish-line-goal.md` Track P).
 - P4 fight loops: **UNBLOCKED** (P1 merged) — matrix run 2026-07-23:
   harness found incapable of cross-class measurement (see P4.2's FINDING;
   per-class bot policy is the new prereq); TTK guardrails pass;

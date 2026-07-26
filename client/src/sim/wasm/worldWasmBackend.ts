@@ -1,31 +1,30 @@
-// Phase J0 — minimal TS shim that calls the wasm `step_world`
-// orchestrator (Phase I2). Opt-in via `?wasm-world=1`. Default
-// off until full parity against the TS World.step is proven.
+// TS shim that calls the wasm `step_world` orchestrator. Opt-in via
+// `USE_WASM_STEP_WORLD` / `?wasm-world=1`; off by default in prod
+// (Track Z4 gates the flip on Z3's sweep-until-dry, not yet run).
 //
-// Coverage today (matches the I2 step_world skeleton):
-//   - tick increment
-//   - round phase machine transitions (countdown / fighting /
-//     round-over → countdown)
-//   - fire-patch lifetime decay
-//   - projectile pre-step lifecycle (sticky / lifetime expire)
-//   - per-pair projectile×destructible HP application
-//
-// NOT YET covered (these still run TS-side):
-//   - player physics (walk / jump / jetpack / crouch / collision)
-//   - projectile motion + pathing dispatch
-//   - weapon spawn from resolved build
-//   - satellite owner-target lookup + spawn
-//   - combat shield drain + parry start (input-driven)
+// Updated 2026-07-26 (finish-line-goal.md Track D4) — the Phase-J0-era
+// coverage list below was written before Tracks Z0-Z2 landed and had
+// gone stale. Current coverage, full-sync path
+// (applyWasmWorldStepFull/Sync):
+//   - tick increment, round phase machine, fire-patch decay
+//   - player physics (stepPlayer: walk/jump/jetpack/crouch/collision)
+//   - projectile motion + pathing (step_projectile_v2)
+//   - weapon spawn from resolved build + loadout delivery
+//     (resolve_player_loadout, Z1b)
+//   - satellite owner-target lookup + spawn (satellites merge above)
+//   - combat shield drain + parry start, incl. class-branched Ward
+//     mitigation (Z2 kindledWardMitigationParity)
 //   - score keeping + winner detection
-//   - drafting orchestration
+//   - drafting orchestration (draft.zig owns offers/picks, Z2 item 1)
 //
-// Strategy: callers run TS World.step FIRST, then call
-// `applyWasmWorldStep(state, dt)` to layer the wasm-driven
-// pieces on top. This is a STRICT no-regress rollout: every
-// piece wasm owns is a piece TS no longer mutates, but TS still
-// owns everything else. As H phase ports land in wasm, this
-// shim grows; eventually World.step becomes a thin wrapper
-// around `applyWasmWorldStep` (Phase J1).
+// Remaining real gaps are tracked in docs/finish-line-goal.md Track Z5
+// (kindled_resolve cast no-op, a 9-card classModifiers-codegen gap,
+// hitscan v1 scope cuts) — not a "NOT YET covered" subsystem list.
+//
+// Strategy unchanged: this is a STRICT no-regress rollout — every piece
+// wasm owns is a piece TS no longer mutates, but TS still owns
+// everything not yet ported. Eventually World.step becomes a thin
+// wrapper around `applyWasmWorldStep` (Phase J1).
 
 import type { LaunchPadDefinition, PlayerId, WorldState } from "../types.js";
 import { MAX_SLOPES, type SlopeStatic } from "../collision.js";

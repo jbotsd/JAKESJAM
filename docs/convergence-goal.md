@@ -313,7 +313,10 @@ already pass.
   epigraphs, the paper-double 160-char trim, and the deferred DeathOverlay
   in-play line.
 - L legibility: **AUDIT DONE + TOP FIXES MERGED/LIVE** 2026-07-23 —
-  docs/legibility-audit.md now 0 MISSING / 32 PARTIAL / 47 SHIPPED.
+  docs/legibility-audit.md now 0 MISSING / 9 PARTIAL / 70 SHIPPED (updated
+  2026-07-26: the polish-lane fixes below landed after this line was
+  first written and the count was never refreshed; the remaining 9 rows
+  are tracked as `docs/finish-line-goal.md` Track P).
   Shipped: stride-refunded site event + feet sweep, execute severance
   shear on death-FX, shadow-step blink streak, veil body shroud +
   break-snap (pure planner, 6 headless tests). AWAITING JAKE live-eyes:
