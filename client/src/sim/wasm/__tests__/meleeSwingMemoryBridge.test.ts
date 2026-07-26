@@ -354,10 +354,11 @@ describe("melee-swing-memory bridge (Track Z1a)", () => {
     // through the repack), same tick both sides.
     expect(tsSecondDamageTick).not.toBeNull();
     expect(zigSecondDamageTick).toBe(tsSecondDamageTick);
-    // Two SLASH_DAMAGE (11) hits, no more no less — the per-swing victim
-    // debounce (hitThisSwingMask) survived the repack as well; a wiped
-    // mask would re-hit every contact-gated tick of the active window.
-    expect(zigState.players[VICTIM]!.health).toBe(78);
+    // Two SLASH_DAMAGE (14, 2026-07-26 balance pass) hits, no more no less —
+    // the per-swing victim debounce (hitThisSwingMask) survived the repack
+    // as well; a wiped mask would re-hit every contact-gated tick of the
+    // active window.
+    expect(zigState.players[VICTIM]!.health).toBe(72);
     // And the carried memory itself reads sane post-run: swing 2 finished
     // its whole cycle → idle, with the horizontal capture aim intact.
     const finalMem = zigState.meleeSwingMemory?.[NINJA];
@@ -373,7 +374,8 @@ describe("melee-swing-memory bridge (Track Z1a)", () => {
     // MeleeSwingMemory (chain_index/chain_gap_ms). This gate proves the
     // TS orchestrator and the every-tick-repacked Zig world agree on the
     // WHOLE cadence: per-tick damage sequences must be identical, and the
-    // damage pattern itself must read 32·32·14 repeating.
+    // damage pattern itself must read 38·38·14 repeating (EDGE_DAMAGE
+    // bumped 32->38, 2026-07-26 balance pass).
     //
     // Harness note: the victim is PINNED back to its spot (and healed to
     // full) after every step — applied identically to both states — so
@@ -492,11 +494,12 @@ describe("melee-swing-memory bridge (Track Z1a)", () => {
     // lands and HOW HARD, across the whole mash.
     expect(zigDamages).toEqual(tsDamages);
 
-    // The cadence itself: blades hit for 32, the chain's every third
-    // swing bashes for 14 — at least two full cycles landed in-run.
+    // The cadence itself: blades hit for 38 (2026-07-26 balance pass), the
+    // chain's every third swing bashes for 14 — at least two full cycles
+    // landed in-run.
     const landed = tsDamages.filter((d) => d > 0);
     expect(landed.length).toBeGreaterThanOrEqual(6);
-    expect(landed.slice(0, 6)).toEqual([32, 32, 14, 32, 32, 14]);
+    expect(landed.slice(0, 6)).toEqual([38, 38, 14, 38, 38, 14]);
 
     // And the bridged chain state agrees with the TS orchestrator's own
     // off-wire memory at the end of the run.

@@ -182,6 +182,31 @@ precedent as convergence-goal.md.
 - F3 live-eyes verification: **NOT STARTED**
 - P legibility (9 rows): **NOT STARTED** (unblocked)
 - D doc hygiene (4 items): **NOT STARTED**
-- B balance tuning: **NOT STARTED** (unblocked, ready)
+- B balance tuning: **DONE** (2026-07-26) — re-ran the fixed CLASS_POLICY
+  matchup matrix + TTK guardrail suite on the settled chassis/melee numbers
+  (before: 6/12 cross-class cells hard 0/100, all mirrors variant, matching
+  30ed713's baseline exactly; TTK guardrails 37/37 green). Applied both
+  banked findings: (a) melee-vs-pistol point-blank DPS — bumped
+  SLASH_DAMAGE 11->14 and EDGE_DAMAGE 32->38 (World.ts), trimmed
+  GEO_CHANNEL_RAMP_FIRE_RATE_MULTIPLIER_MAX 1.6->1.3 (constants.ts);
+  stationary point-blank harness measured ~47/~39 (ninja/paladin) vs pistol
+  ~84 before, ~60/~45 vs ~71 after — meaningfully narrowed, pistol identity
+  intact. (b) Kindled-vs-tendril evasion — SYZ_TENDRIL_SPEED 320->305
+  (below Kindled's 318.56px/s run speed, was 1.4px/s ABOVE it), lifetime
+  2.6->2.75 to keep Priest's longest-basic-gun-range claim true; left
+  Kindled's moveSpeedMultiplier untouched (cohesion-goal.md's
+  test-pinned canonical quad, not the narrowly-scoped lever). Re-ran
+  matrix+guardrails after: still 6/12 hard cells, SAME set (no new
+  degenerate 0/100, no mirror flipped), TTK guardrails still 37/37.
+  Kindled-vs-Geometrician and Kindled-vs-Syzygist stay hard 0% — verified
+  this is a SEPARATE, out-of-scope structural fact (heavy is the slowest
+  chassis in the game, 318.56px/s < both Geometrician's 362 and
+  Syzygist's 347.5, so Kindled can never force melee range against either
+  kiting class regardless of tendril-dodge math), not a failure of either
+  banked fix. Side-effect surfaced, not hidden: Kindled-vs-Interstice
+  flipped from 83% Kindled-favored to 41% (Ninja's proportionally larger
+  DPS bump plus its faster chassis) — a real balance shift worth a human
+  look, not a regression bug. Full before/after numbers + all touched
+  files in the session report.
 - Human gates: **6 items AWAITING JAKE**, collected, none blocking
 - R render/perf: **OPT-IN, not activated**

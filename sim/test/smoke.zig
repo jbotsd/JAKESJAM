@@ -972,7 +972,7 @@ test "melee: paladin kindled edge lands its own EDGE_DAMAGE/EDGE_RANGE/EDGE_* ti
 
     // dt = 1 crosses the 100ms gate exactly.
     _ = root.world.stepWorld(&state, 1.0);
-    try std.testing.expectEqual(@as(f64, 68.0), state.players[1].health); // 100 - EDGE_DAMAGE(32)
+    try std.testing.expectEqual(@as(f64, 62.0), state.players[1].health); // 100 - EDGE_DAMAGE(38)
     // Tolerance loosened same as the ninja hit test above (gravity-drift
     // artifact on the captured swing direction, not a bug).
     try std.testing.expect(@abs(state.players[1].vx - 420.0) < 0.01); // EDGE_KNOCKBACK
@@ -1185,7 +1185,7 @@ test "ability dispatch: an empty slot (ABILITY_KIND_NONE, the zero-init default)
     try std.testing.expectEqual(@as(f64, 100.0), state.players[0].health);
 }
 
-test "ability dispatch: Undercut (Ninja) — cast opens the window and sets cooldown; a landed slash against a victim at/under the execute threshold still lands the ordinary lethal hit (the execute clamp is exercised, not skipped, even though it's numerically redundant against the base 22 slash vs. threshold 15 — see this pass's own report)" {
+test "ability dispatch: Undercut (Ninja) — cast opens the window and sets cooldown; a landed slash against a victim at/under the execute threshold still lands the ordinary lethal hit (the execute clamp IS load-bearing here: base SLASH_DAMAGE 14 < threshold 15, so the clamp is what actually pushes this to a kill)" {
     var state = freshFightingState();
     state.player_count = 2;
     state.players[0].flags.alive = true;
@@ -1212,9 +1212,10 @@ test "ability dispatch: Undercut (Ninja) — cast opens the window and sets cool
     _ = root.world.stepWorld(&state, 120.0); // active starts
     _ = root.world.stepWorld(&state, 44.0); // contact tick — hit resolves
 
-    // Execute clamp: max(SLASH_DAMAGE(22), victim.health(15)) == 22 — the
-    // formula is bit-exact with World.ts's own `Math.max`, and produces a
-    // guaranteed kill either way at this threshold (0 health, not alive).
+    // Execute clamp: max(SLASH_DAMAGE(14), victim.health(15)) == 15 — the
+    // formula is bit-exact with World.ts's own `Math.max`; a plain unclamped
+    // slash (14) would only leave the victim at 1 health, so the clamp is
+    // what actually produces the kill here (0 health, not alive).
     try std.testing.expectEqual(@as(f64, 0.0), state.players[1].health);
     try std.testing.expectEqual(false, state.players[1].flags.alive);
 }
@@ -1373,9 +1374,10 @@ test "ability dispatch: Judgment Line (Paladin) — marks the nearest foe in the
     _ = root.world.stepWorld(&state, 200.0); // active starts (EDGE_WINDUP_MS)
     _ = root.world.stepWorld(&state, 100.0); // contact tick (EDGE_CONTACT_DELAY_MS)
 
-    // 100 - (32 * 1.3) == 58.4 — a plain unamplified Edge hit would leave
-    // 68.0 (the base melee test's own number), proving the amp landed.
-    try std.testing.expect(@abs(state.players[1].health - 58.4) < 1e-9);
+    // 100 - (38 * 1.3) == 50.6 — a plain unamplified Edge hit would leave
+    // 62.0 (the base melee test's own number, EDGE_DAMAGE=38), proving the
+    // amp landed.
+    try std.testing.expect(@abs(state.players[1].health - 50.6) < 1e-9);
 }
 
 test "ability dispatch: Unbroken Seal (Paladin) — single-use window amplifies + staggers the FIRST landed Kindled Edge hit only; a second victim in the same swing takes ordinary damage with no stagger" {
@@ -1405,15 +1407,15 @@ test "ability dispatch: Unbroken Seal (Paladin) — single-use window amplifies 
     _ = root.world.stepWorld(&state, 200.0); // active starts
     _ = root.world.stepWorld(&state, 100.0); // contact tick — both victims hit
 
-    // First victim (index 1, scanned first): amplified 32 * 1.45 = 46.4,
+    // First victim (index 1, scanned first): amplified 38 * 1.45 = 55.1,
     // plus the stagger status.
-    try std.testing.expect(@abs(state.players[1].health - 53.6) < 1e-9);
+    try std.testing.expect(@abs(state.players[1].health - 44.9) < 1e-9);
     try std.testing.expect(state.players[1].flags.has_slow);
     try std.testing.expect(state.players[1].slowed_until_tick > state.header.tick);
     try std.testing.expect(@abs(state.players[1].slow_multiplier - 0.25) < 1e-9);
 
     // Second victim: seal already consumed — ordinary damage, no stagger.
-    try std.testing.expectEqual(@as(f64, 68.0), state.players[2].health);
+    try std.testing.expectEqual(@as(f64, 62.0), state.players[2].health);
     try std.testing.expectEqual(false, state.players[2].flags.has_slow);
 
     // Window cleared.
@@ -2413,15 +2415,15 @@ test "ability dispatch: Self-Lattice (Priest) — cast opens a flat absorb pool;
     _ = root.world.stepWorld(&state, 120.0); // windup -> active (0ms elapsed)
     _ = root.world.stepWorld(&state, 44.0); // contact tick — arc hit resolves
 
-    // SLASH_DAMAGE (11.0) is fully covered by the 20.0 pool: victim takes
+    // SLASH_DAMAGE (14.0) is fully covered by the 20.0 pool: victim takes
     // ZERO damage (unlike the generic shield step, which would have
     // suppressed the whole hit-confirmed event too — Syzygist Ward still
     // lands a real, just-zeroed, hit).
     try std.testing.expectApproxEqAbs(@as(f64, 100.0), state.players[1].health, 1e-9);
-    // Pool genuinely drained by the absorbed amount (11), not just a
+    // Pool genuinely drained by the absorbed amount (14), not just a
     // boolean flag — proves the depletion math, not merely "blocked".
-    try std.testing.expectApproxEqAbs(@as(f64, 9.0), state.players[1].syz_ward_absorb_remaining, 1e-9);
-    // Still live (9 > 0) — the window was NOT cleared by a partial absorb.
+    try std.testing.expectApproxEqAbs(@as(f64, 6.0), state.players[1].syz_ward_absorb_remaining, 1e-9);
+    // Still live (6 > 0) — the window was NOT cleared by a partial absorb.
     try std.testing.expect(state.players[1].syz_ward_absorb_until_tick > state.header.tick);
 }
 
@@ -2552,9 +2554,9 @@ test "Kindled Resolve: melee damage amp is CLASS-BLIND — a Ninja Slash from an
     _ = root.world.stepWorld(&state, 120.0); // active starts
     _ = root.world.stepWorld(&state, 44.0); // contact tick — hit resolves
 
-    // SLASH_DAMAGE (11.0) * KIN_KINDLED_RESOLVE_DAMAGE_MULTIPLIER (1.1) ==
-    // 12.1 — a plain unbuffed slash would leave 89.0.
-    try std.testing.expectApproxEqAbs(@as(f64, 87.9), state.players[1].health, 1e-9);
+    // SLASH_DAMAGE (14.0) * KIN_KINDLED_RESOLVE_DAMAGE_MULTIPLIER (1.1) ==
+    // 15.4 — a plain unbuffed slash would leave 86.0.
+    try std.testing.expectApproxEqAbs(@as(f64, 84.6), state.players[1].health, 1e-9);
 }
 
 test "Kindled Resolve: melee stagger-resist softens an Unbroken-Seal-triggered stagger toward 1 when the VICTIM (not the attacker) holds the window, without changing the landed damage" {
@@ -2581,10 +2583,10 @@ test "Kindled Resolve: melee stagger-resist softens an Unbroken-Seal-triggered s
     _ = root.world.stepWorld(&state, 200.0); // active starts
     _ = root.world.stepWorld(&state, 100.0); // contact tick — hit resolves
 
-    // Damage UNCHANGED from the plain Unbroken Seal test above (32 * 1.45
-    // == 46.4, attacker has no Kindled Resolve of their own here) — proves
+    // Damage UNCHANGED from the plain Unbroken Seal test above (38 * 1.45
+    // == 55.1, attacker has no Kindled Resolve of their own here) — proves
     // stagger-resist doesn't leak into the damage multiplier.
-    try std.testing.expect(@abs(state.players[1].health - 53.6) < 1e-9);
+    try std.testing.expect(@abs(state.players[1].health - 44.9) < 1e-9);
     try std.testing.expect(state.players[1].flags.has_slow);
     // Resisted: 0.25 + (1 - 0.25) * 0.5 == 0.625 — a plain unresisted Seal
     // stagger would leave 0.25 (the Unbroken Seal test above proves that
@@ -3189,9 +3191,9 @@ test "ability dispatch: Ghost Guard (Ninja) — melee: an active charge on a MOV
     try std.testing.expectApproxEqAbs(@as(f64, 100.0), state.players[1].health, 1e-9);
     try std.testing.expectEqual(@as(u32, 0), state.players[1].ghost_guard_charge_until_tick);
 
-    // Victim 2: NOT moving fast enough — full SLASH_DAMAGE (11.0) lands,
+    // Victim 2: NOT moving fast enough — full SLASH_DAMAGE (14.0) lands,
     // charge stays live (the gate never triggered for it).
-    try std.testing.expectApproxEqAbs(@as(f64, 89.0), state.players[2].health, 1e-9);
+    try std.testing.expectApproxEqAbs(@as(f64, 86.0), state.players[2].health, 1e-9);
     try std.testing.expectEqual(@as(u32, 100_000), state.players[2].ghost_guard_charge_until_tick);
 }
 

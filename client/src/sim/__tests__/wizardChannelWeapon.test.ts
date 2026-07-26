@@ -168,9 +168,9 @@ describe("Wizard channel ramp: the ramp itself", () => {
     expect(Math.abs(firstInterval - baselineIntervalMs)).toBeLessThanOrEqual(DT_MS + 1);
     // Later, fully-ramped gap is measurably shorter than the first...
     expect(lastInterval).toBeLessThan(firstInterval);
-    // ...and converges on the documented ceiling (1/1.6x the baseline),
-    // never firing FASTER than the ceiling allows (a full tick of
-    // quantisation slack either side).
+    // ...and converges on the documented ceiling (1/GEO_CHANNEL_RAMP_FIRE_
+    // RATE_MULTIPLIER_MAX x the baseline), never firing FASTER than the
+    // ceiling allows (a full tick of quantisation slack either side).
     expect(lastInterval).toBeGreaterThanOrEqual(rampedIntervalMs - 1);
     expect(lastInterval).toBeLessThanOrEqual(rampedIntervalMs + DT_MS + 1);
   });

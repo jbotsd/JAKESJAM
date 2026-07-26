@@ -487,9 +487,9 @@ describe("Kindled catalog v1 — representative sim effects", () => {
     }
     const sealedDamage = 100 - state.players[B]!.health;
     expect(sealedDamage).toBeGreaterThan(0);
-    // Baseline unsealed Edge hit is EDGE_DAMAGE (32) — the sealed hit must
-    // exceed it by roughly KIN_SEAL_DAMAGE_MULTIPLIER.
-    expect(sealedDamage).toBeCloseTo(32 * KIN_SEAL_DAMAGE_MULTIPLIER, 0);
+    // Baseline unsealed Edge hit is EDGE_DAMAGE (38, 2026-07-26 balance
+    // pass) — the sealed hit must exceed it by roughly KIN_SEAL_DAMAGE_MULTIPLIER.
+    expect(sealedDamage).toBeCloseTo(38 * KIN_SEAL_DAMAGE_MULTIPLIER, 0);
     // Stagger: victim is heavily slowed.
     expect(state.players[B]!.slowedUntilTick).toBeDefined();
     expect(state.players[B]!.slowMultiplier).toBeCloseTo(KIN_SEAL_STAGGER_MULTIPLIER, 5);

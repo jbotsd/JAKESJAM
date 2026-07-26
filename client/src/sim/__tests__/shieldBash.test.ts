@@ -206,7 +206,7 @@ describe("shield bash — the landed hit (control, not DPS)", () => {
     const { state: s, allEvents } = runScript(
       state, runtime, [attacker, victim], A, 40, [0], { x: 900, y: 470 },
     );
-    // Damage: exactly SHIELD_BASH_DAMAGE, under half an Edge hit (32).
+    // Damage: exactly SHIELD_BASH_DAMAGE, under half an Edge hit (38, 2026-07-26 balance pass).
     expect(s.players[B]!.health).toBe(100 - 14);
     // Events: bash-landed (with the same damage) + generic hit-confirmed;
     // NO slash-hit for a bash.

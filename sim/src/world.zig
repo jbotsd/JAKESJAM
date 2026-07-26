@@ -1855,7 +1855,11 @@ pub const SLASH_ARC_RADIANS: f64 = (5.0 * std.math.pi) / 9.0;
 // 2026-07-20 balance pass ("hits faster, same DPS"): damage + the three
 // commit-frame timings below scaled by a uniform 0.5x together (22->11,
 // 430ms->215ms cycle) — bit-exact mirror of World.ts's own comment/math.
-pub const SLASH_DAMAGE: f64 = 11.0;
+// 2026-07-26 balance pass (finish-line-goal.md Track B, banked finding a):
+// 11->14, cadence untouched this time (a deliberate DPS raise, not a
+// neutral rescale) — bit-exact mirror of World.ts's own SLASH_DAMAGE doc
+// comment, which has the full sustained-DPS measurement.
+pub const SLASH_DAMAGE: f64 = 14.0;
 pub const SLASH_KNOCKBACK: f64 = 260.0;
 pub const SLASH_KNOCK_UP: f64 = 60.0;
 pub const SLASH_WINDUP_MS: f64 = 60.0;
@@ -1865,7 +1869,11 @@ pub const SLASH_CONTACT_DELAY_MS: f64 = 22.0;
 
 pub const EDGE_RANGE: f64 = 84.0;
 pub const EDGE_ARC_RADIANS: f64 = (7.0 * std.math.pi) / 18.0;
-pub const EDGE_DAMAGE: f64 = 32.0;
+// 2026-07-26 balance pass (finish-line-goal.md Track B, banked finding a):
+// 32->38 — bit-exact mirror of World.ts's own EDGE_DAMAGE doc comment,
+// which has the full sustained-DPS measurement (shield-bash's mixed-in
+// third beat pulled the chain-average below the original bare-swing DPS).
+pub const EDGE_DAMAGE: f64 = 38.0;
 pub const EDGE_KNOCKBACK: f64 = 420.0;
 pub const EDGE_KNOCK_UP: f64 = 110.0;
 pub const EDGE_WINDUP_MS: f64 = 200.0;

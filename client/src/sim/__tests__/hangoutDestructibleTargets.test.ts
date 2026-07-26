@@ -177,7 +177,7 @@ describe("ninja/paladin melee vs. destructibles in hangout mode", () => {
 
   test("a destructible melee-broken to 0 health is REMOVED, not left as a dead entry, and fires destructible-broken", () => {
     const attacker = mkPlayer(A, 500, GROUND_Y, "sprinter", { aimX: 900, aimY: GROUND_Y });
-    const target = dummy(1, 560, GROUND_Y, 5); // one hit (SLASH_DAMAGE=22) easily kills it
+    const target = dummy(1, 560, GROUND_Y, 5); // one hit (SLASH_DAMAGE=15) easily kills it
     const state = mkState([attacker], [target]);
     const runtime = createRuntime(flatMap, "hangout");
 

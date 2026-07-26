@@ -584,20 +584,31 @@ const SLASH_RANGE = 78;
 const SLASH_ARC_RADIANS = (5 * Math.PI) / 9;
 /** A landed arc hit. Lower than BASH_DAMAGE (34) because the swing cadence
  *  (~4.65/s, see the commit-frame constants below) is far higher than a
- *  dash-bash's (~0.33/s, gated by DASH_COOLDOWN_MS=3000) — per-hit damage is
- *  tuned down so sustained arc DPS (~51) lands in the same neighbourhood as
+ *  dash-bash's (~0.33/s, gated by DASH_COOLDOWN_MS=3000) — per-hit damage
+ *  stays tuned down so sustained arc DPS lands in the same neighbourhood as
  *  bash's burst, not multiplies it.
  *  2026-07-20 balance pass ("hits faster, same DPS, make it elegant"): the
- *  whole commit-frame trio below was scaled by a uniform 0.5x alongside
- *  this damage halving (22->11) — same DPS (~51, unchanged, that's the
- *  point), same internal windup:active:recovery shape, just delivered in
- *  half-sized, twice-as-frequent hits. One scale factor, applied to every
- *  timing AND damage number together, so DPS-neutrality falls out of the
- *  arithmetic instead of needing a separate re-tune-and-check pass. The
- *  render-side BLADE_SWING_MS (meleeTiming.ts) and NINJA_PAPER_DOUBLE_MAX_HEALTH
- *  (constants.ts, "pops in exactly one slash") were scaled the same way to
- *  keep the visual and the paper-double invariant in lockstep. */
-const SLASH_DAMAGE = 11;
+ *  whole commit-frame trio below was scaled by a uniform 0.5x alongside a
+ *  damage halving (22->11) so DPS held exactly (11/0.215s == 22/0.430s),
+ *  same internal windup:active:recovery shape, just delivered in
+ *  half-sized, twice-as-frequent hits.
+ *  2026-07-26 (finish-line-goal.md Track B, banked finding a): bumped
+ *  11->14 (cadence UNCHANGED this pass — a deliberate, non-DPS-neutral
+ *  raise, unlike 07-20's own halving). Held below NINJA_UNDERCUT_HEALTH_
+ *  THRESHOLD (15, constants.ts) on purpose — Undercut's whole "execute a
+ *  threshold-health target the base swing alone can't" identity needs a
+ *  normal hit to survive that check (ninjaCatalog.test.ts's own "genuinely
+ *  survives" case), so 15 was one damage point too many.
+ *  Measured via a throwaway stationary point-blank harness (mashed Fire
+ *  against a pinned, undefended dummy — NOT scripts/balance-sim.ts, which
+ *  measures full duels with approach/movement, a different question):
+ *  sustained DPS went ~47 -> ~60, closing most of the gap to Wizard's own
+ *  ramped-pistol point-blank ceiling (measured ~71 post this same pass, see
+ *  GEO_CHANNEL_RAMP_FIRE_RATE_MULTIPLIER_MAX's doc comment) without
+ *  erasing it outright — melee still trades its zero standoff reach for
+ *  real teeth up close, it just no longer loses that trade nearly as badly
+ *  as the pre-pass ~47/~84 split. */
+const SLASH_DAMAGE = 14;
 /** Gentle shove + pop on a landed arc hit — "hit-stop + scrape... victim
  *  micro-knock" (character-sheets-v1.md), NOT a heavy bash-style launch. */
 const SLASH_KNOCKBACK = 260;
@@ -607,9 +618,12 @@ const SLASH_KNOCK_UP = 60;
 // cast" — recovery IS the re-swing gate; there is no additional ability-
 // style cooldown layered on top (this is the always-on chassis verb, not a
 // card-gated active). Total cycle 215ms (~4.65 swings/sec cap) — halved
-// 2026-07-20 (was 430ms/~2.3/s) alongside SLASH_DAMAGE so DPS holds exactly
-// (11 / 0.215s == 22 / 0.430s); no longer tracks dash's ~410ms rhythm,
-// that coincidence wasn't load-bearing.
+// 2026-07-20 (was 430ms/~2.3/s) alongside SLASH_DAMAGE so DPS held exactly
+// at the time (11 / 0.215s == 22 / 0.430s); no longer tracks dash's ~410ms
+// rhythm, that coincidence wasn't load-bearing. The cycle itself is
+// UNTOUCHED by the 2026-07-26 SLASH_DAMAGE 11->14 balance pass (see that
+// constant's own doc comment) — only the per-hit number moved, on purpose,
+// so this is no longer a DPS-neutral cadence.
 const SLASH_WINDUP_MS = 60; // the readable tell before the arc goes live
 const SLASH_ACTIVE_MS = 45; // contact-gated hit checks, then a late-entry tail
 const SLASH_RECOVERY_MS = 110; // endlag; whiffing costs
@@ -710,17 +724,33 @@ const EDGE_RANGE = 84;
  *  telegraphed, not more forgiving, versus dual light blades). First-
  *  draft/playtest-pending. */
 const EDGE_ARC_RADIANS = (7 * Math.PI) / 18;
-/** A landed arc hit. NOTICEABLY more than ninja's SLASH_DAMAGE (22) per the
- *  task's explicit "harder hit" requirement — chosen alongside the commit-
- *  frame constants below so sustained arc DPS (EDGE_DAMAGE / cycle seconds,
- *  see below) lands in the SAME neighbourhood as ninja's own ~51 sustained
- *  slash DPS, not above it: Paladin's tank identity is delivered through
- *  Ward's mitigation (combat.ts WARD_MITIGATION_FRACTION), not through
- *  out-damaging every other chassis on top of also out-tanking them ("higher
- *  effective toughness via mitigation, not raw damage output" — task
- *  doctrine). 32 damage / 0.65s cycle ≈ 49.2 DPS, matching ninja's ~51.
- *  First-draft/playtest-pending. */
-const EDGE_DAMAGE = 32;
+/** A landed arc hit. NOTICEABLY more than ninja's SLASH_DAMAGE per the
+ *  task's explicit "harder hit" requirement. Originally chosen (32) so bare
+ *  sustained arc DPS landed alongside ninja's own — Paladin's tank identity
+ *  is delivered through Ward's mitigation (combat.ts WARD_MITIGATION_
+ *  FRACTION), not through out-damaging every other chassis on top of also
+ *  out-tanking them ("higher effective toughness via mitigation, not raw
+ *  damage output" — task doctrine).
+ *  SHIELD BASH (2026-07-24, below) mixes a weaker third beat into every
+ *  swing·swing·BASH chain, which pulled the CHAIN-AVERAGE sustained DPS
+ *  down below that original bare-Edge figure — (2×32+14)/1.95s ≈ 40, not
+ *  ~49 — a real, un-intentional drift the shield-bash design pass didn't
+ *  itself account for.
+ *  2026-07-26 (finish-line-goal.md Track B, banked finding a): bumped
+ *  32->38 to claw the chain-average back up — measured point-blank
+ *  sustained DPS (throwaway stationary point-blank harness, mashed Fire,
+ *  full swing·swing·BASH chain — NOT scripts/balance-sim.ts, which measures
+ *  full duels with approach/movement, a different question) went ~39 ->
+ *  ~45, narrowing the gap to Wizard's ramped-pistol ceiling (~71 post this
+ *  same pass) without matching ninja's own newly-bumped ~60 outright —
+ *  Kindled's third beat still deliberately spends damage on bash's CONTROL
+ *  payoff (knockback/stagger, slash-feel-
+ *  ledger.md's explicit decision), so it's expected to trail ninja's DPS a
+ *  little now, not sit level with it. Held at 38, not higher: KIN_SUNSPIKE_
+ *  DAMAGE (40, constants.ts) is meant to sit ABOVE the base chassis swing —
+ *  pushing EDGE_DAMAGE past that would need re-deriving Sunspike too, out
+ *  of scope for this pass. First-draft/playtest-pending. */
+const EDGE_DAMAGE = 38;
 /** Meaningfully more than ninja's SLASH_KNOCKBACK/SLASH_KNOCK_UP (260/60)
  *  per "harder hit... more knockback than Ninja's slash" — a heavy weapon
  *  shoves harder, short of BASH's full lance-charge launch (660/240, a
@@ -735,11 +765,12 @@ const EDGE_KNOCK_UP = 110;
 // hit), similar active window, and noticeably longer recovery (whiffing a
 // big committed swing should cost more than whiffing a quick dagger flick).
 // Total cycle 650ms (~1.54 swings/sec cap) — see EDGE_DAMAGE's doc comment
-// for how this cadence was chosen alongside the damage number to land Edge's
-// sustained DPS in the same neighbourhood as ninja's, not above it. No
-// additional ability-style cooldown layered on top — same "recovery IS the
-// re-swing gate" contract as ninja's slash (this is the always-on chassis
-// verb, not a card-gated active).
+// for the full sustained-DPS history (the cycle itself is UNTOUCHED by the
+// 2026-07-26 balance pass, same "don't touch cadence — it's mirrored in
+// render/Zig lockstep" reasoning as ninja's own cycle). No additional
+// ability-style cooldown layered on top — same "recovery IS the re-swing
+// gate" contract as ninja's slash (this is the always-on chassis verb, not
+// a card-gated active).
 const EDGE_WINDUP_MS = 200;
 const EDGE_ACTIVE_MS = 110;
 const EDGE_RECOVERY_MS = 340;
@@ -762,7 +793,7 @@ const EDGE_CONTACT_DELAY_MS = 100;
 // the slab LEADS: earlier contact gate, shorter reach, wider blunt arc.
 const SHIELD_BASH_RANGE = 62; // px — shortest melee reach in the game (slab, not blade)
 const SHIELD_BASH_ARC_RADIANS = (5 * Math.PI) / 9; // 100° — a wide blunt wall vs Edge's 70° blade
-const SHIELD_BASH_DAMAGE = 14; // ≤ half an Edge hit (32) — control verb, not a DPS verb
+const SHIELD_BASH_DAMAGE = 14; // ≤ half an Edge hit (38, 2026-07-26 balance pass) — control verb, not a DPS verb
 const SHIELD_BASH_KNOCKBACK = 760; // px/s — biggest in the game, > dash-bash's 660
 const SHIELD_BASH_KNOCK_UP = 260; // > dash-bash's 240 pop — launched, not slid
 const SHIELD_BASH_CONTACT_DELAY_MS = 60; // slab leads — earlier than Edge's 100ms gate

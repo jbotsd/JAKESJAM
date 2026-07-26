@@ -257,8 +257,8 @@ describe("paladin melee — arc hit detection (reuses P2's isBodyInMeleeArc prim
 
     const s1 = stepWithRuntime(state, runtime, pressInputs([attacker, victim], A, 900, 300, 1), DT_MS);
     const after = stepIdle(s1.state, runtime, [attacker, victim], WINDUP_TICKS + CONTACT_TICKS);
-    // EDGE_DAMAGE (32) > ninja's SLASH_DAMAGE (22) — "harder hit".
-    expect(after.players[B]!.health).toBe(68);
+    // EDGE_DAMAGE (38, 2026-07-26 balance pass) > ninja's SLASH_DAMAGE (15) — "harder hit".
+    expect(after.players[B]!.health).toBe(62);
   });
 
   test("re-swinging is blocked during recovery, then allowed once recovery ends", () => {

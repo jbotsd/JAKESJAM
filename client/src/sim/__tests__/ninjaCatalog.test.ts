@@ -410,11 +410,14 @@ describe("Interstice catalog v1 — representative sim effects", () => {
     // the old 22 damage actually overkilled the 15-health threshold victim
     // anyway (a known, previously-flagged imprecision — the old comment
     // here said "use a slightly higher starting health to actually
-    // distinguish 'execute' from 'would have died anyway'"). 11 < 15 makes
+    // distinguish 'execute' from 'would have died anyway'"). 11 < 15 made
     // the title true for the first time: a normal hit genuinely doesn't
     // execute-kill a threshold-health target absent the Undercut card.
+    // 2026-07-26 balance pass (finish-line-goal.md Track B): SLASH_DAMAGE
+    // bumped again, 11->14 — still < 15, so this still holds (by a single
+    // point now, not four).
     expect(after.players[B]!.alive).toBe(true);
-    expect(after.players[B]!.health).toBe(NINJA_UNDERCUT_HEALTH_THRESHOLD - 11);
+    expect(after.players[B]!.health).toBe(NINJA_UNDERCUT_HEALTH_THRESHOLD - 14);
   });
 
   test("Edge Storm: the next wave-off-swing deals amplified damage", () => {
@@ -797,7 +800,7 @@ describe("Interstice catalog v1 — Paper Double (decoy entity)", () => {
     expect(doubles[0]!.health).toBe(NINJA_PAPER_DOUBLE_MAX_HEALTH - 12);
   });
 
-  test("melee lands on and damages a decoy, but no longer one-shots it (2026-07-20: SLASH_DAMAGE 11 < 20)", () => {
+  test("melee lands on and damages a decoy, but no longer one-shots it (SLASH_DAMAGE 14 < 20)", () => {
     // A casts, decoy runs +x toward B. B (also ninja — this arc-hit-check
     // has no classId gate, but a swing needs the ninja melee FSM to reach
     // it at all) is positioned so the decoy enters B's slash arc well
@@ -826,11 +829,12 @@ describe("Interstice catalog v1 — Paper Double (decoy entity)", () => {
     // Pre-2026-07-20 this popped in one hit (SLASH_DAMAGE was 22 >= the
     // decoy's doc-specified 20 max health, constants.ts's own "Lives 2.5s
     // or 20 damage" — an independently-tuned number, not intentionally
-    // paired with ninja's own slash damage, so it wasn't touched by the
-    // balance pass). Now SLASH_DAMAGE is 11 < 20 — damaged, not killed.
+    // paired with ninja's own slash damage, so it wasn't touched by either
+    // balance pass). SLASH_DAMAGE is now 14 (2026-07-26 balance pass,
+    // finish-line-goal.md Track B) — still < 20 — damaged, not killed.
     const doubles = Object.values(after.paperDoubles ?? {});
     expect(doubles.length).toBe(1);
-    expect(doubles[0]!.health).toBe(NINJA_PAPER_DOUBLE_MAX_HEALTH - 11);
+    expect(doubles[0]!.health).toBe(NINJA_PAPER_DOUBLE_MAX_HEALTH - 14);
   });
 
   test("a decoy's death (lethal projectile fire) bursts AOE damage on a nearby bystander, without hitting whoever's far off the shot's own path", () => {

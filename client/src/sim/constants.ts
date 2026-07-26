@@ -207,9 +207,22 @@ export const GEO_RECOIL_STEP_RECOIL_MULTIPLIER = 0.3;
  *  ramp — composes into weapon.ts's fireRate calc exactly like
  *  GEO_OVERCLOCK_FIRE_RATE_MULTIPLIER/hasteFireRateMul (a multiplicative
  *  factor on top of build.fireRate), just driven by continuous-hold
- *  duration (ramping 1.0x → this ceiling) instead of a fixed timed window. */
+ *  duration (ramping 1.0x → this ceiling) instead of a fixed timed window.
+ *  TRIMMED 1.6->1.3 (2026-07-26, finish-line-goal.md Track B, banked
+ *  finding a): a throwaway stationary point-blank harness (mashed/held Fire
+ *  against a pinned, undefended dummy — NOT scripts/balance-sim.ts, which
+ *  measures full duels with approach/movement, a different question) put
+ *  the ramped pistol's sustained DPS well clear of both melee arcs (~84 vs
+ *  ~39-47) — narrowing that gap is split across both sides rather than
+ *  loaded entirely onto buffing melee (see SLASH_DAMAGE/EDGE_DAMAGE's own
+ *  doc comments in World.ts for the melee side of this same pass). 1.3
+ *  still delivers a real, clearly-felt ramp (a held stream noticeably
+ *  outpaces a flicking one) — the mechanic's identity survives; only the
+ *  extreme top end of its ceiling was trimmed. Post-pass measured point-
+ *  blank sustained DPS (same harness): pistol ~71 (was ~84), ninja slash
+ *  ~60 (was ~47), paladin Edge/Bash chain ~45 (was ~39). */
 export const GEO_CHANNEL_RAMP_MS = 2000;
-export const GEO_CHANNEL_RAMP_FIRE_RATE_MULTIPLIER_MAX = 1.6;
+export const GEO_CHANNEL_RAMP_FIRE_RATE_MULTIPLIER_MAX = 1.3;
 
 // Kindled catalog v1 (docs/class-ability-catalogs-v1.md — the paladin's
 // 10-ability class catalog; class-overhaul-workboard.md chunk 2.6). Same
@@ -901,12 +914,32 @@ export const SYZ_DRIFT_STEP_RANGE_PX = 210;
 // originally tuned to only *restore* rough range parity with the other
 // classes' basic guns (780px); Jake's follow-up call is that Priest should
 // be the LONGEST-range basic gun in the game, not merely parity — bumped
-// further so effective range (speed × lifetime = 320 × 2.6 = 832px) clears
-// starterWeapon's 780px outright. The extra hang time also gives the
-// per-tick homing more real distance to actually curve — a shot that
-// arrives before it can turn wouldn't read as self-guiding at all, and a
-// longer flight window makes that curve-in read more deliberate at range,
-// which is the whole "measured pace" identity this class is going for.
+// so effective range (speed × lifetime) clears starterWeapon's 780px
+// outright. The extra hang time also gives the per-tick homing more real
+// distance to actually curve — a shot that arrives before it can turn
+// wouldn't read as self-guiding at all, and a longer flight window makes
+// that curve-in read more deliberate at range, which is the whole
+// "measured pace" identity this class is going for.
+//
+// SPEED RE-TUNED 2026-07-26 (finish-line-goal.md Track B, banked finding
+// b): 320px/s made the tendril literally UN-OUTRUNNABLE by Kindled
+// specifically (heavy chassis run speed = 362 × 0.88 = 318.56px/s, 1.4px/s
+// SLOWER than the tendril) — the balance-sim CLASS_POLICY's own intended
+// evasion counter (any inbound homer slower than a chassis's run speed
+// gets dodge-run) was mathematically unavailable to that one class, not a
+// policy gap. Dropped to 305 (13.56px/s clear of Kindled's 318.56 — a real,
+// meaningfully-outrunnable margin, not a hair-thin one) — the ONLY lever
+// touched here, per the task's own framing ("adjust Kindled's
+// moveSpeedMultiplier... or the tendril's speed, whichever is the more
+// correct fix"): chassis `moveSpeedMultiplier` is a cross-referenced,
+// test-pinned cohesion invariant shared with sizeScale/recoilControl
+// (cohesion-goal.md's canonical quad, chassisStats.test.ts's exact
+// toBeCloseTo(0.88, 5)) tied to Kindled's whole "biggest/slowest" visual
+// identity — the tendril's own speed is the narrowly-scoped, single-
+// consumer number with no such cross-references. Lifetime bumped 2.6->2.75
+// alongside it so effective range stays clearly the game's longest despite
+// the slower shard (305 × 2.75 = 838.75px, actually a hair ABOVE the old
+// 832px figure, still clearing starterWeapon's 780px by a real margin).
 export const SYZ_TENDRIL_COUNT = 3;
 /** 3 × 2.5 = 7.5 — deliberately BELOW the old single-shot's 9 (see the
  *  block comment above): Priest's basic fire is the weak, long-range,
@@ -918,10 +951,10 @@ export const SYZ_TENDRIL_COUNT = 3;
  *  basic gun stops being a credible threat at all; 2.5 is the weakest value
  *  that still clears that floor. */
 export const SYZ_TENDRIL_DAMAGE = 2.5;
-export const SYZ_TENDRIL_SPEED = 320;
-/** speed × lifetime = 832px — intentionally the longest basic-gun range of
- *  any class (starterWeapon's own 650×1.2 = 780px is the next-longest). */
-export const SYZ_TENDRIL_LIFETIME_SECONDS = 2.6;
+export const SYZ_TENDRIL_SPEED = 305;
+/** speed × lifetime = 838.75px — intentionally the longest basic-gun range
+ *  of any class (starterWeapon's own 650×1.2 = 780px is the next-longest). */
+export const SYZ_TENDRIL_LIFETIME_SECONDS = 2.75;
 /** Widens the 3-tendril fan from starterWeapon's near-zero 0.03 rad spread
  *  so the tendrils visibly reach out in slightly different directions
  *  before homing curls them back onto one target — selling "several
