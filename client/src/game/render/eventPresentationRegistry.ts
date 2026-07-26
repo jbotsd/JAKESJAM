@@ -329,6 +329,16 @@ export const EVENT_PRESENTATION_REGISTRY = {
     state: "partial",
     note: "Sim (low damage, max knockback, stagger) + bass-voiced hit cue + heavy hold live; slab-led contact chord, gold circuit smear, ground dust, and the pair-scoped stop are the Kindled feel-loop's iterations (slash-feel-ledger).",
   },
+  "stab-landed": {
+    action: "Interstice's chain finisher — the linear STAB — punctures a victim",
+    stateChange: "Victim eats a longer-reach precision hit and a harder shove along the thrust line",
+    lead: "world-vfx",
+    channels: ["world-vfx", "camera", "animation", "world-state"],
+    intensity: "heavy",
+    lowTierCore: "Thrust contact and the victim's shove along the line remain visible",
+    state: "partial",
+    note: "Sim (equal damage, longer reach, narrower arc, harder shove than the ordinary arc) + thrust rig pose + pair-scoped contact chord (reusing Interstice's own R1 rows 3-9 chassis tuning, same precedent as Kindled's bash reusing its own) live (Track F1, 2026-07-26); a bespoke puncture-register sound cue is blocked on F2's audio picks (no-synthesis rule) and reuses the generic hit-confirmed cue for now.",
+  },
   "wave-spawned": {
     action: "A committed slash releases its aftermath wave",
     stateChange: "The blade action visibly produces a traveling wave",

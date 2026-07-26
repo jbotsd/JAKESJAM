@@ -66,13 +66,24 @@ proves it, full suites + meter stay green.
 
 ## Track F — Finish the melee-feel loops
 
-**F1 — The STAB verb (unblocked — sim files are free now).** Both class
-loops declared render-complete with this as the one deferred sim
-addition. Full design spec already sits in
-`docs/slash-feel-ledger.md`'s Interstice section (chain position,
-damage/knockback numbers, gameplay reasoning) — build it: TS melee FSM +
-Zig mirror + parity test, then the render pass (thrust animation, its
-own hit-stop/flash/camera-kick tuning per R1's channel discipline).
+**F1 — The STAB verb — BUILT (2026-07-26, branch `feat/interstice-stab-verb`,
+awaiting human-supervised review/merge).** Both class loops declared
+render-complete with this as the one deferred sim addition. The Interstice
+section's original design note only named the CADENCE ("arc-arc-STAB"), not
+concrete numbers — the actual chain position/damage/knockback numbers +
+full gameplay reasoning were decided during this build (a real, flagged
+judgment call, not a transcribed spec) and now live in their own "STAB verb
+design decision" section in `docs/slash-feel-ledger.md`, structurally
+mirroring the shield-bash's own decision block. Built: TS melee FSM
+(World.ts) + Zig mirror (world.zig) + a tick-identical parity test
+(meleeSwingMemoryBridge gate F) + a dedicated TS suite (ninjaStab.test.ts),
+plus the render pass (thrust animation on ProceduralPlayerRig, its own
+construct reach/sweep + debris register, camera-kick/whiff-watch timing —
+reusing Interstice's existing R1 rows 3-9 chassis tuning unchanged, same
+precedent Kindled's own bash set). Open for a future wave: on-camera
+live-tape verification (the bash's own K5-K12/I5-I13 tape passes are a
+dozens-of-iterations investment, out of scope for this build task) and F2's
+audio wiring once unblocked.
 
 **F2 — Audio wiring (blocked on Jake).** `~/Music/jakesjam-slash-audio/`
 has 34 candidates + ranked recommendations in `CANDIDATES.md`, untouched
@@ -177,7 +188,17 @@ precedent as convergence-goal.md.
   included — not a hitscan-specific gap, nothing to mirror). See
   world.zig's "Hitscan resolution" section header for the authoritative
   per-sub-item STATUS list.
-- F1 STAB verb: **NOT STARTED** (unblocked)
+- F1 STAB verb: **BUILT (2026-07-26, on branch `feat/interstice-stab-verb`,
+  NOT YET MERGED — awaiting human-supervised review)**: TS FSM + Zig mirror
+  + parity gate (meleeSwingMemoryBridge gate F) + dedicated TS suite
+  (ninjaStab.test.ts) + the render pass (thrust pose, construct reach/
+  sweep, debris register, camera-kick/whiff-watch timing). Full design
+  spec + every number's reasoning in slash-feel-ledger.md's "STAB verb
+  design decision" section — flagged there for Jake's own sanity-check
+  (damage/knockback/timing are new feel judgment calls, not a transcribed
+  spec). Open: on-camera live-tape verification of the render (a future
+  wave's job, same investment class as the bash's own K5-K12/I5-I13
+  tape passes).
 - F2 audio wiring: **BLOCKED ON JAKE** (picks)
 - F3 live-eyes verification: **NOT STARTED**
 - P legibility (9 rows): **NOT STARTED** (unblocked)

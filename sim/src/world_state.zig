@@ -1197,13 +1197,20 @@ pub const MeleeSwingMemory = extern struct {
     /// extern-struct-safe equivalent for a fixed MAX_PLAYERS roster.
     hit_this_swing_mask: u16 = 0,
     phase: MeleeSwingPhase = .idle,
-    /// SHIELD BASH chain position (2026-07-24, slash-feel-ledger design-
-    /// decision block; Kindled-only, always 0 for ninja): 0/1 = blade
-    /// swings, 2 = the current/next swing is the BASH. Advances per
-    /// STARTED swing at recovery→idle; resets after KIN_BASH_CHAIN_GAP_MS
-    /// of idle (chain_gap_ms below) or on death. Reclaims the old _pad
-    /// byte — no size change from this field. Mirrors
-    /// PaladinMeleeMemory.chainIndex.
+    /// Chain position (0/1 = ordinary swings, 2 = the current/next swing is
+    /// the chain's THIRD BEAT): Kindled's SHIELD BASH (2026-07-24,
+    /// slash-feel-ledger design-decision block) — mirrors
+    /// PaladinMeleeMemory.chainIndex — or Ninja's own STAB (2026-07-26,
+    /// finish-line-goal.md Track F1) — mirrors NinjaMeleeMemory.chainIndex.
+    /// Shared field, same "a player is exactly one chassis at a time"
+    /// reasoning this struct's own header comment gives for combining the
+    /// two FSMs onto one slot; each class advances/resets ITS OWN chain
+    /// using ITS OWN gap constant (KIN_BASH_CHAIN_GAP_MS /
+    /// NINJA_STAB_CHAIN_GAP_MS) — a player is never both, so there is no
+    /// cross-class interference. Advances per STARTED swing at
+    /// recovery→idle; resets after the class's own gap constant worth of
+    /// idle (chain_gap_ms below) or on death. Reclaims the old _pad byte —
+    /// no size change from this field.
     chain_index: u8 = 0,
 
     /// Razor Route substrate (this pass, docs/zig-step-world-parity-
@@ -1238,10 +1245,11 @@ pub const MeleeSwingMemory = extern struct {
     /// Read-tagged ("one body, one lie"). Mirrors NinjaMeleeMemory.
     /// razorRouteActiveDash.
     razor_route_active_dash: bool = false,
-    /// ms spent idle since the last swing's recovery ended — the bash
-    /// chain's reset clock (Kindled-only; see chain_index above). Only
-    /// meaningful while phase == .idle. Mirrors
-    /// PaladinMeleeMemory.chainGapMs.
+    /// ms spent idle since the last swing's recovery ended — the chain's
+    /// reset clock (see chain_index above; Kindled's bash OR Ninja's STAB,
+    /// whichever class this player is). Only meaningful while phase ==
+    /// .idle. Mirrors PaladinMeleeMemory.chainGapMs / NinjaMeleeMemory.
+    /// chainGapMs.
     chain_gap_ms: f64 = 0,
 };
 

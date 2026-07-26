@@ -435,6 +435,131 @@ export function bashKineticChain(t: number): {
   };
 }
 
+// ── NINJA STAB (2026-07-26, Track F1 — the STAB verb's render half) — the
+// Interstice chain's third beat: a linear thrust, not another arc. Fast and
+// front-loaded (Interstice's snap identity — "the hand is always ahead of
+// the eye"): a short chamber, an explosive punch that's ALREADY near full
+// extension by the sim's own contact gate, a brief hold (far shorter than
+// Kindled's blunt-check hold — a dagger punches and is already withdrawing,
+// it doesn't linger on the target the way a slab check does), then a quick
+// retract. Pure/Phaser-free like every other function in this module.
+//
+// JUDGMENT CALL, same flag as World.ts's NINJA_STAB_* constants: every
+// number below is a new feel decision, not a transcribed spec.
+
+/** Where inside the 245ms render sentence (BLADE_SWING_MS) the thrust meets
+ *  the target — matches the SIM's own contact gate exactly: SLASH_WINDUP_MS
+ *  (60ms) + NINJA_STAB_CONTACT_DELAY_MS (12ms) = 72ms → 72/245 ≈ 0.294. */
+export const NINJA_STAB_CONTACT_T = 0.294;
+
+/** STAB stage clocks: chamber (a short pull-back coil) → thrust (the
+ *  explosive punch) → hold (BRIEF — a dagger doesn't linger) → recovery. */
+export function stabStage(t: number): {
+  chamber: number;
+  thrust: number;
+  hold: number;
+  recovery: number;
+} {
+  const clamp = (v: number) => Math.max(0, Math.min(1, v));
+  return {
+    chamber: clamp(t / 0.18),
+    thrust: clamp((t - 0.18) / (0.32 - 0.18)),
+    hold: clamp((t - 0.32) / (0.42 - 0.32)),
+    recovery: clamp((t - 0.42) / (1 - 0.42)),
+  };
+}
+
+/** Main-hand (dagger) pose through the stab — reach pulls in tight during
+ *  chamber, then punches out FARTHER than either the ordinary arc's own
+ *  contact reach or Kindled's slab (matches NINJA_STAB_RANGE (104) being the
+ *  longest-reach of the three sim verbs), already near-full extension by
+ *  the contact tick (compress-the-lag, same discipline meleeHandPose's own
+ *  header comment names for Owlboy/Hollow Knight). Angle stays close to the
+ *  aim axis throughout — a precise poke, not a wide arc. The off-hand keeps
+ *  its EXISTING tight counterbalance guard (meleeOffhandPose, unchanged) —
+ *  the stab's identity is carried by this hand's reach/timing, not by both
+ *  blades driving forward together (a lower-risk, smaller-surface design
+ *  choice than a genuine twin-thrust — flagged, not hidden). */
+export function stabHandPose(
+  aimRad: number,
+  t: number,
+): { angle: number; reach: number } {
+  const s = stabStage(t);
+  if (t < 0.18) {
+    const e = smooth(s.chamber);
+    return { angle: aimRad + 0.12 * e, reach: lerp(20, 13, e) };
+  }
+  if (t < 0.32) {
+    // Explosive punch, decelerating INTO the extension — same ease-out
+    // discipline bashHandPose's own thrust phase uses (the input already
+    // happened; spend the frame budget on the payoff).
+    const e = 1 - (1 - s.thrust) * (1 - s.thrust);
+    return { angle: aimRad + lerp(0.12, -0.02, e), reach: lerp(13, 48, e) };
+  }
+  if (t < 0.42) {
+    const e = smooth(s.hold);
+    return { angle: aimRad - 0.02, reach: lerp(48, 44, e) };
+  }
+  const e = smooth(s.recovery);
+  return { angle: aimRad + lerp(-0.02, 0.14, e), reach: lerp(44, 22, e) };
+}
+
+/** STAB body sentence — a piercing forward drive: pelvis/chest/head surge
+ *  along aim HARDER than the ordinary arc's own kinetic chain (the whole
+ *  body punches through the line — "the body driving through" a linear
+ *  thrust), with much LESS shoulder rotation than the arc (a thrust is
+ *  linear, not a wide rotational cut). Same return shape as
+ *  meleeKineticChain/bashKineticChain so the rig consumes any of the three
+ *  interchangeably. */
+export function stabKineticChain(t: number): {
+  pelvisDrive: number;
+  chestDrive: number;
+  headDrive: number;
+  shoulderTwist: number;
+  frontBrace: number;
+} {
+  const s = stabStage(t);
+  if (t < 0.18) {
+    const e = smooth(s.chamber);
+    return {
+      pelvisDrive: lerp(0, -5, e),
+      chestDrive: lerp(0, -7, e),
+      headDrive: lerp(0, -7, e),
+      shoulderTwist: lerp(0, -0.12, e),
+      frontBrace: smooth(clamp01((s.chamber - 0.5) / 0.5)),
+    };
+  }
+  if (t < 0.32) {
+    const pelvis = easeOutCubic(clamp01(s.thrust / 0.5));
+    const chest = smooth(clamp01((s.thrust - 0.1) / 0.75));
+    return {
+      pelvisDrive: lerp(-5, 18, pelvis),
+      chestDrive: lerp(-7, 26, chest),
+      headDrive: lerp(-7, 18, chest),
+      shoulderTwist: lerp(-0.12, 0.06, smooth(s.thrust)),
+      frontBrace: 1,
+    };
+  }
+  if (t < 0.42) {
+    const e = smooth(s.hold);
+    return {
+      pelvisDrive: 18,
+      chestDrive: lerp(26, 22, e),
+      headDrive: lerp(18, 15, e),
+      shoulderTwist: 0.06,
+      frontBrace: 1,
+    };
+  }
+  const r = smooth(s.recovery);
+  return {
+    pelvisDrive: lerp(18, 0, r),
+    chestDrive: lerp(22, 0, r),
+    headDrive: lerp(15, 0, r),
+    shoulderTwist: lerp(0.06, 0, r),
+    frontBrace: 1 - r,
+  };
+}
+
 type Vec2Like = { x: number; y: number };
 
 /** Which hand is actually swinging the blade this frame. Mirrors the

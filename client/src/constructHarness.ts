@@ -66,7 +66,7 @@ type HarnessWindow = Window & {
   harnessMeleeFrame?: (kind: "ninja" | "paladin", t: number) => void;
   harnessRigFrame?: (
     classId: ClassId,
-    action: AbilityKind | "melee" | "bash" | "idle" | "run" | "ward" | "hurt" | "hurt-kill",
+    action: AbilityKind | "melee" | "bash" | "stab" | "idle" | "run" | "ward" | "hurt" | "hurt-kill",
     t: number,
   ) => void;
 };
@@ -98,7 +98,7 @@ class HarnessScene extends Phaser.Scene {
   private reviewRig: ProceduralPlayerRig | null = null;
   private rigReview: {
     classId: ClassId;
-    action: AbilityKind | "melee" | "bash" | "idle" | "run" | "ward" | "hurt" | "hurt-kill";
+    action: AbilityKind | "melee" | "bash" | "stab" | "idle" | "run" | "ward" | "hurt" | "hurt-kill";
     t: number;
     lead: Vec2;
     back: Vec2;
@@ -175,7 +175,7 @@ class HarnessScene extends Phaser.Scene {
       const t = Math.max(0, Math.min(0.999, rawT));
       const stanceAction = action === "idle" || action === "run" || action === "ward";
       const hurtAction = action === "hurt" || action === "hurt-kill";
-      if (action !== "melee" && action !== "bash" && !stanceAction && !hurtAction && !isAbilityKind(action)) return;
+      if (action !== "melee" && action !== "bash" && action !== "stab" && !stanceAction && !hurtAction && !isAbilityKind(action)) return;
       this.meleeReview = null;
       // Isolate the fighter review: hidden entanglement-demo actors must not
       // keep a live mark/tether behind the pose and contaminate silhouettes.
@@ -264,11 +264,12 @@ class HarnessScene extends Phaser.Scene {
         return;
       }
       const style = classId === "paladin" ? "kindled" : "interstice";
-      const duration = action === "melee" || action === "bash"
+      const duration = action === "melee" || action === "bash" || action === "stab"
         ? style === "kindled" ? EDGE_SWING_MS : BLADE_SWING_MS
         : ABILITY_ANIMATIONS[action].durationMs;
       if (action === "melee") this.reviewRig.triggerMeleeSwing(style, 1);
       else if (action === "bash") this.reviewRig.triggerMeleeSwing("kindled", 1, "bash");
+      else if (action === "stab") this.reviewRig.triggerMeleeSwing("interstice", 1, "stab");
       else this.reviewRig.triggerAbility(action);
       const tipHistory: Vec2[] = [];
       const totalMs = duration * t;
@@ -413,6 +414,11 @@ class HarnessScene extends Phaser.Scene {
           break;
         case "debris-bash":
           spawnMeleeDebris(this.pool, { x: 430, y: 300 }, 0.15, KINDLED_TINT, "bash");
+          break;
+        case "debris-stab":
+          // NINJA STAB contact debris (Track F1, 2026-07-26) — tighter,
+          // longer-traveling puncture spray vs the edge's own cut-line spray.
+          spawnMeleeDebris(this.pool, { x: 430, y: 300 }, 0.15, INTERSTICE_TINT, "stab");
           break;
         case "kill-ring":
           spawnKillShockRing(this.pool, { x: 430, y: 356 }, KINDLED_TINT);
@@ -605,6 +611,13 @@ class HarnessScene extends Phaser.Scene {
       // SHIELD BASH review — slab leads at the shield hand, sword chambers.
       const r = this.rigReview;
       drawKindledBash(this.meleeReviewLayer, r.back, r.lead, -0.276, KINDLED_TINT, r.t);
+    } else if (this.rigReview?.action === "stab") {
+      // NINJA STAB review (Track F1, 2026-07-26) — same drawBladeSwing
+      // construct as the ordinary arc, parameterized with the STAB's own
+      // longer reach (108, ConstructVfxController's STAB_REACH) and much
+      // narrower sweep (0.55, STAB_SWEEP) — a linear thrust, not a wide cone.
+      const r = this.rigReview;
+      drawBladeSwing(this.meleeReviewLayer, r.lead, r.back, -0.276, 108, INTERSTICE_TINT, 0.55, 1, r.t, 1, r.tipHistory);
     } else if (this.rigReview?.action === "ward") {
       // Ward-brace stance review (K11) — the body is braced by the rig
       // (shieldHeld pose); reproduce the live held layer: sword still in

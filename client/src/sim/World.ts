@@ -435,6 +435,20 @@ export type NinjaMeleeMemory = {
    *  ("one body, one lie" — one mark per empowered dash). Host-only, same
    *  off-wire contract as `wasDashing`/`dashThroughTagged`. */
   razorRouteActiveDash: boolean;
+  /** STAB verb chain position (2026-07-26, finish-line-goal.md Track F1 —
+   *  slash-feel-ledger's "arc-arc-STAB cadence" direction, decided here the
+   *  same gameplay-first way the Kindled shield-bash chain was: fixed
+   *  cadence, structural parity with PaladinMeleeMemory.chainIndex): 0/1 =
+   *  ordinary arc slashes, 2 = the current/next swing is the STAB. Advances
+   *  per STARTED swing (whiffs count) at the recovery→idle transition;
+   *  resets after NINJA_STAB_CHAIN_GAP_MS of idle or on death — same rules
+   *  as Kindled's chain, see that field's own doc comment for the full
+   *  reasoning this mirrors. */
+  chainIndex: number;
+  /** ms spent idle since the last swing's recovery ended — the STAB chain's
+   *  reset clock. Only meaningful while phase === 0. Mirrors
+   *  PaladinMeleeMemory.chainGapMs. */
+  chainGapMs: number;
 };
 
 export function freshNinjaMeleeMemory(): NinjaMeleeMemory {
@@ -452,6 +466,8 @@ export function freshNinjaMeleeMemory(): NinjaMeleeMemory {
     bufferedMs: 0,
     bufferedAimX: 0,
     bufferedAimY: 0,
+    chainIndex: 0,
+    chainGapMs: 0,
   };
 }
 
@@ -674,6 +690,82 @@ const NINJA_ENERGY_ON_DASH_THROUGH = 15;
 /** Matches Slipstream's documented wall-kick grant — same baseline-adoption
  *  reasoning as dash-through above. */
 const NINJA_ENERGY_ON_WALL_KICK = 12;
+
+// ── NINJA STAB (2026-07-26, finish-line-goal.md Track F1 — the STAB verb,
+// the one sim addition both melee-feel loops deferred) — slash-feel-
+// ledger's Interstice section: "the grammar gains linear THRUSTS, not only
+// arcs... e.g. arc-arc-STAB cadence". DESIGN CALL (the ledger names the
+// cadence but not the numbers — this pass makes the same gameplay-first
+// judgment call the Kindled shield-bash design-decision block made,
+// structurally mirrored): FIXED CADENCE, arc·arc·STAB, chain position 2 —
+// same reasoning as Kindled's own choice (a fixed chain position is
+// plannable/countable; a range gate inside melee range is illegible; an
+// economy-coupled trigger has no Interstice economy to couple to — ninja's
+// energy is a class RESOURCE, not a defense-engine analog to Kindling).
+// Chain advances per STARTED swing (whiffs count — cadence is rhythm, not
+// hit-confirm) at recovery→idle, resets after NINJA_STAB_CHAIN_GAP_MS of
+// idle or on death — bit-identical rule shape to KIN_BASH_CHAIN_GAP_MS.
+// Same FSM phase timings as the ordinary slash (SLASH_WINDUP_MS/ACTIVE_MS/
+// RECOVERY_MS untouched — "the chain keeps one rhythm", same call Kindled's
+// bash made): only reach/arc/damage/knockback/contact-gate swap per verb.
+//
+// FLAG FOR REVIEW — every number below is a NEW gameplay-feel judgment
+// call, not a value transcribed from an existing decided spec (unlike the
+// shield bash, which got its own fully-numbered "design decision" ledger
+// block before implementation). Reasoning is documented per-constant; Jake
+// should sanity-check all of them specifically.
+/** Longer than SLASH_RANGE (78) — "linear THRUSTS" reads as a deeper poke
+ *  than the arc's own sweep, and a longer reach is the STAB's one clean,
+ *  legible reason to ever prefer it over the arc mid-chain (it can touch a
+ *  target the arc's own 78px can't). Kept short of EDGE_RANGE+20 territory
+ *  — still unambiguously melee, not a lunge-ability's reach (compare
+ *  NINJA_NEEDLE_LUNGE_PX 230, a wholly different card verb). JUDGMENT CALL. */
+const NINJA_STAB_RANGE = 104;
+/** MUCH narrower than SLASH_ARC_RADIANS (100°=5π/9) — "linear" is the whole
+ *  point: a precise forward poke, not a wide cone. 30°=π/6, tighter than
+ *  even Kindled's tightest arc (EDGE_ARC_RADIANS, 70°) — the STAB trades
+ *  area coverage for reach + a harder-to-avoid line. JUDGMENT CALL. */
+const NINJA_STAB_ARC_RADIANS = Math.PI / 6;
+/** Deliberately EQUAL to SLASH_DAMAGE, not a DPS lever — same "keeps it
+ *  from power-creeping the damage table" reasoning the shield bash's own
+ *  design decision names, PLUS a hard correctness guardrail: SLASH_DAMAGE's
+ *  own doc comment is explicit that 14 is held below
+ *  NINJA_UNDERCUT_HEALTH_THRESHOLD (15) ON PURPOSE so Undercut's "execute a
+ *  threshold-health target the base swing alone can't" identity survives a
+ *  bare hit — the STAB is still "the base swing" (chassis-baseline, no card
+ *  gate), so it must respect the exact same ≤14 ceiling or it quietly
+ *  undercuts Undercut for any STAB landing on a 15hp target. JUDGMENT CALL
+ *  (the "reuse the arc's damage exactly" choice, not the guardrail itself,
+ *  which is load-bearing). */
+const NINJA_STAB_DAMAGE = 14;
+/** More than SLASH_KNOCKBACK (260) — a piercing thrust drives the target
+ *  back along the line harder than the arc's own gentle "hit-stop + scrape"
+ *  shove, but well short of EDGE_KNOCKBACK (420) / SHIELD_BASH_KNOCKBACK
+ *  (760) — Interstice is not the class with a knockback identity. The
+ *  STAB's actual payoff is reach + precision, not control-via-shove; this
+ *  number just keeps a thrust from feeling like the exact same bump as the
+ *  arc. JUDGMENT CALL. */
+const NINJA_STAB_KNOCKBACK = 340;
+/** LESS than SLASH_KNOCK_UP (60) — a straight-line puncture reads as driving
+ *  the victim BACK, not popping them UP (an arc's rotational sweep has more
+ *  natural vertical component than a thrust along a fixed line). JUDGMENT
+ *  CALL. */
+const NINJA_STAB_KNOCK_UP = 30;
+/** SHORTER than SLASH_CONTACT_DELAY_MS (22) — a direct thrust reaches its
+ *  line faster than an arc has to sweep to it; "the hand is always ahead of
+ *  the eye" (ledger, Interstice's snap identity) argues for the STAB being
+ *  the MOST immediate of the three chain beats, not a laggier one.
+ *  JUDGMENT CALL. */
+const NINJA_STAB_CONTACT_DELAY_MS = 12;
+/** Idle gap (ms, after recovery ends) beyond which the STAB chain resets to
+ *  position 0 — DERIVED exactly like KIN_BASH_CHAIN_GAP_MS (not a fresh
+ *  guess): the render combo window stays 1000ms start-to-start for
+ *  Interstice too (R1 row 13, "keep 1000ms"), and the sim's own swing cycle
+ *  is SLASH_WINDUP_MS + SLASH_ACTIVE_MS + SLASH_RECOVERY_MS = 60+45+110 =
+ *  215ms, so 1000 - 215 = 785ms keeps the sim chain and the render's combo
+ *  read agreeing on what "still chaining" means, same formula Kindled's own
+ *  350 (1000-650) used. */
+const NINJA_STAB_CHAIN_GAP_MS = 785;
 
 // ── PALADIN MELEE (2026-07-18) — Kindled Edge, class-overhaul-workboard.md
 // chunk 2.1. Reuses `isBodyInMeleeArc` (below) VERBATIM — the actual "arc
@@ -5436,7 +5528,17 @@ export function stepWithRuntime(
     for (const aid of meleeIds) {
       const attacker = players[aid]!;
       if (classIdForArchetype(attacker.characterId) !== "ninja") continue;
-      if (!attacker.alive) continue;
+      if (!attacker.alive) {
+        // Death resets the STAB chain (mirrors Kindled's own dead-branch
+        // reset, ledger design-decision block precedent) — a respawn
+        // always re-opens with ordinary arcs.
+        const deadMem = runtime.melee.get(aid);
+        if (deadMem) {
+          deadMem.chainIndex = 0;
+          deadMem.chainGapMs = 0;
+        }
+        continue;
+      }
 
       let mem = runtime.melee.get(aid);
       if (!mem) {
@@ -5524,6 +5626,13 @@ export function stepWithRuntime(
       // stored this very tick keeps its full window and only starts aging
       // next tick. Uses effDtMs (chaos-scaled) like every other FSM timer.
       if (mem.bufferedMs > 0) mem.bufferedMs = Math.max(0, mem.bufferedMs - effDtMs);
+      // STAB chain-reset clock (Track F1): idle time accrues; past the gap
+      // the chain cools back to ordinary arcs. Runs BEFORE any swing start
+      // this tick — exact mirror of Kindled's own 1z3 block.
+      if (mem.phase === 0) {
+        mem.chainGapMs += effDtMs;
+        if (mem.chainGapMs > NINJA_STAB_CHAIN_GAP_MS) mem.chainIndex = 0;
+      }
       const startSwing = (aimPointX: number, aimPointY: number): void => {
         const len = Math.hypot(aimPointX - attacker.x, aimPointY - attacker.y);
         mem.phase = 1;
@@ -5538,7 +5647,14 @@ export function stepWithRuntime(
         mem.hitDestructiblesThisSwing.clear();
         mem.hitPaperDoublesThisSwing.clear();
         mem.bufferedMs = 0; // one press, one swing — never double-fires
-        events.push({ t: "slash-started", playerId: aid, x: attacker.x, y: attacker.y });
+        // Chain position 2 = the STAB — the verb rides slash-started (same
+        // shape as Kindled's own bash marker) so the render leads with the
+        // thrust from the first windup frame.
+        if (mem.chainIndex === 2) {
+          events.push({ t: "slash-started", playerId: aid, x: attacker.x, y: attacker.y, verb: "stab" });
+        } else {
+          events.push({ t: "slash-started", playerId: aid, x: attacker.x, y: attacker.y });
+        }
       };
       if (mem.phase === 0) {
         if (edge) {
@@ -5570,6 +5686,12 @@ export function stepWithRuntime(
           } else if (mem.phase === 3) {
             mem.phase = 0;
             mem.phaseMs = 0;
+            // Chain advances per STARTED swing (whiffs count — cadence is
+            // rhythm, not hit-confirm), stamped at the swing's end so the
+            // position is stable for the whole swing above. Mirrors
+            // Kindled's own 1z3 block exactly.
+            mem.chainIndex = (mem.chainIndex + 1) % 3;
+            mem.chainGapMs = 0;
             // Buffered press fires AT phase 0 — the same tick recovery
             // expires, so a queued re-swing has zero dead frames between
             // endlag and the next windup ("smooth on retrig").
@@ -5577,6 +5699,18 @@ export function stepWithRuntime(
           }
         }
       }
+      // Which verb is the CURRENT swing? (STAB — chain position 2.) Stable
+      // for the swing's whole lifetime: chainIndex only advances at
+      // recovery→idle, and the contact gate below can never be reached on
+      // that transition tick. Exact mirror of Kindled's own swingIsBash/
+      // swing* locals.
+      const swingIsStab = mem.chainIndex === 2;
+      const swingRange = swingIsStab ? NINJA_STAB_RANGE : SLASH_RANGE;
+      const swingArc = swingIsStab ? NINJA_STAB_ARC_RADIANS : SLASH_ARC_RADIANS;
+      const swingDamage = swingIsStab ? NINJA_STAB_DAMAGE : SLASH_DAMAGE;
+      const swingKnockback = swingIsStab ? NINJA_STAB_KNOCKBACK : SLASH_KNOCKBACK;
+      const swingKnockUp = swingIsStab ? NINJA_STAB_KNOCK_UP : SLASH_KNOCK_UP;
+      const swingContactDelay = swingIsStab ? NINJA_STAB_CONTACT_DELAY_MS : SLASH_CONTACT_DELAY_MS;
       const isActiveNow = mem.phase === 2;
       const activeElapsedAfterStep = isActiveNow
         ? SLASH_ACTIVE_MS - mem.phaseMs
@@ -5584,7 +5718,7 @@ export function stepWithRuntime(
           ? Math.min(SLASH_ACTIVE_MS, activeElapsedBeforeStep + effDtMs)
           : 0;
       const hasReachedSlashContact =
-        (wasActive || isActiveNow) && activeElapsedAfterStep >= SLASH_CONTACT_DELAY_MS;
+        (wasActive || isActiveNow) && activeElapsedAfterStep >= swingContactDelay;
 
       // ---- Arc hit-check (from the radial intercept onward, all victims
       //      in the cone — not "first hit only" like bash) ----
@@ -5594,13 +5728,13 @@ export function stepWithRuntime(
           if (vid === aid) continue;
           const victim = players[vid]!;
           if (!victim.alive || mem.hitThisSwing.has(vid)) continue;
-          if (!isBodyInMeleeArc(attacker.x, attacker.y, aimAngle, SLASH_ARC_RADIANS / 2, SLASH_RANGE, victim)) {
+          if (!isBodyInMeleeArc(attacker.x, attacker.y, aimAngle, swingArc / 2, swingRange, victim)) {
             continue;
           }
           mem.hitThisSwing.add(vid);
 
           const victimBuild = resolvePlayerBuild(victim);
-          const mit = tryDeflectDamage(victim, null, SLASH_DAMAGE, meleeTick, {
+          const mit = tryDeflectDamage(victim, null, swingDamage, meleeTick, {
             mirrorShield: victimBuild.mirrorShield,
             directionalShield: victimBuild.directionalShield,
             parryCoverMultiplier: victimBuild.parryCoverMultiplier,
@@ -5613,8 +5747,8 @@ export function stepWithRuntime(
             ? mit.player
             : {
                 ...mit.player,
-                vx: mem.aimX * SLASH_KNOCKBACK,
-                vy: mem.aimY * SLASH_KNOCKBACK - SLASH_KNOCK_UP,
+                vx: mem.aimX * swingKnockback,
+                vy: mem.aimY * swingKnockback - swingKnockUp,
               };
           const blocked = mit.shielded || mit.deflected;
           if (mit.evaded) {
@@ -5664,14 +5798,30 @@ export function stepWithRuntime(
             const newHealth = Math.max(0, post.health - slashFinalDamage);
             const wasAlive = post.alive;
             post = { ...post, health: newHealth, alive: newHealth > 0 };
-            events.push({
-              t: "slash-hit",
-              attackerId: aid,
-              victimId: vid,
-              damage: slashFinalDamage,
-              dirX: mem.aimX,
-              dirY: mem.aimY,
-            });
+            // STAB gets its own contact register (mirrors Kindled's
+            // bash-landed vs slash-hit split exactly) — distinct from the
+            // ordinary arc's slash-hit so the render layer can give the
+            // thrust its own hit-stop/camera-kick/flash tuning (slash-feel-
+            // ledger R1 table).
+            if (swingIsStab) {
+              events.push({
+                t: "stab-landed",
+                attackerId: aid,
+                victimId: vid,
+                damage: slashFinalDamage,
+                dirX: mem.aimX,
+                dirY: mem.aimY,
+              });
+            } else {
+              events.push({
+                t: "slash-hit",
+                attackerId: aid,
+                victimId: vid,
+                damage: slashFinalDamage,
+                dirX: mem.aimX,
+                dirY: mem.aimY,
+              });
+            }
             events.push({
               t: "hit-confirmed",
               victimId: vid,
@@ -5755,11 +5905,11 @@ export function stepWithRuntime(
         const aimAngle = Math.atan2(mem.aimY, mem.aimX);
         for (const [did, d] of Object.entries(state.destructibles)) {
           if (d.health <= 0 || mem.hitDestructiblesThisSwing.has(did)) continue;
-          if (!isAABBInMeleeArc(attacker.x, attacker.y, aimAngle, SLASH_ARC_RADIANS / 2, SLASH_RANGE, d.x, d.y, destructibleAABB(d))) {
+          if (!isAABBInMeleeArc(attacker.x, attacker.y, aimAngle, swingArc / 2, swingRange, d.x, d.y, destructibleAABB(d))) {
             continue;
           }
           mem.hitDestructiblesThisSwing.add(did);
-          pendingHangoutDestructibleDamage.push({ destructibleId: did, attackerId: aid, damage: SLASH_DAMAGE });
+          pendingHangoutDestructibleDamage.push({ destructibleId: did, attackerId: aid, damage: swingDamage });
         }
       }
 
@@ -5779,11 +5929,11 @@ export function stepWithRuntime(
         const aimAngle = Math.atan2(mem.aimY, mem.aimX);
         for (const [pdIdStr, pd] of Object.entries(state.paperDoubles ?? {})) {
           if (pd.ownerId === aid || mem.hitPaperDoublesThisSwing.has(pdIdStr)) continue;
-          if (!isAABBInMeleeArc(attacker.x, attacker.y, aimAngle, SLASH_ARC_RADIANS / 2, SLASH_RANGE, pd.x, pd.y, paperDoubleAABB(pd))) {
+          if (!isAABBInMeleeArc(attacker.x, attacker.y, aimAngle, swingArc / 2, swingRange, pd.x, pd.y, paperDoubleAABB(pd))) {
             continue;
           }
           mem.hitPaperDoublesThisSwing.add(pdIdStr);
-          pendingPaperDoubleDamage.push({ paperDoubleId: pdIdStr, attackerId: aid, damage: SLASH_DAMAGE });
+          pendingPaperDoubleDamage.push({ paperDoubleId: pdIdStr, attackerId: aid, damage: swingDamage });
         }
       }
 
