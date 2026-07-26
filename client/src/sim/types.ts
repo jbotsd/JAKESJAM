@@ -1080,8 +1080,25 @@ export type ProjectileEntity = {
    *  `drawSpikeBody`) — the class's "committed, not flicked" heaven-tank
    *  weight (chassis-design-axioms.md), as distinct from Interstice's
    *  asymmetric "insidious" blade-sliver as the two chassis are from each
-   *  other. Render-only; `element` stays whatever the build resolves to. */
+   *  other. Render-only; `element` stays whatever the build resolves to.
+   *  Stamped at TWO sites (Track P legibility, docs/legibility-audit.md's
+   *  "double-jump" row, 2026-07-26): the Sunspike cast above, AND Second
+   *  Wind's stomp-jump ring (World.ts's paladin air-jump branch) — the
+   *  ring's 6 radius-6 shards were previously indistinguishable from an
+   *  ordinary shot; sharing Sunspike's identity reads them as a deliberate
+   *  radial burst of Kindled kinetic fragments (both are "Kindled solid
+   *  impact," same reasoning `ninjaBladeShard`'s own two-site share gives). */
   kindledThrust?: boolean;
+  /** Severance's burst curse-detonate shard (Track P legibility,
+   *  docs/legibility-audit.md's "severance" row, 2026-07-26) — same pure-
+   *  IDENTITY-flag shape as `ninjaBladeShard`/`kindledThrust` above, but a
+   *  SHAPE-only override: `element`/`color` stay whatever the build
+   *  resolves to (a fire-handed priest's Severance still burns), only the
+   *  silhouette changes to a narrow bi-pointed sliver with a perpendicular
+   *  cross-notch near the nose (ProjectileVfx.ts's `drawSeveranceShardBody`
+   *  — the "sever" made literal in the shape), so the shot no longer reads
+   *  as "a generic straight shot in whatever your element happens to be." */
+  severanceShard?: boolean;
   /** Tracking state set/maintained by the projectile stepper. */
   ageMs?: number;
   traveledPx?: number;
@@ -1577,6 +1594,18 @@ export type SimEvent = (
        *  (Track L legibility, docs/legibility-audit.md "emission void
        *  fork"). Additive wire field. */
       pierced?: true;
+      /** True when Severance's burst shard landed on a target that was
+       *  STILL cursed (burn/freeze/slow) at the moment of impact — "the
+       *  curse being severed," not just an ordinary hit (Track P legibility,
+       *  docs/legibility-audit.md's "severance" row: the ability's whole
+       *  identity — execute-adjacent, take-polarity punish on an
+       *  already-afflicted target — had no distinct read at resolution).
+       *  Honest by construction: a straight 1300px/s shard CAN in principle
+       *  outrace a very short remaining status window, so this only stamps
+       *  when the target's own state confirms the curse was still live —
+       *  same "flag can never lie about the math" contract as `amped`.
+       *  Additive wire field. */
+      severed?: true;
     }
   | { t: 'destructible-broken'; entityId: EntityId; x: number; y: number }
   | {

@@ -938,6 +938,28 @@ describe("Second Wind — Paladin classModifiers expression (card-pool-v2.md 'st
     expect(state.players[B]!.health).toBeLessThan(100);
   });
 
+  test("Track P legibility close (docs/legibility-audit.md 'double-jump'): every stomp-jump shard carries the kindledThrust render identity flag", () => {
+    const JUMP_BIT = 1 << 4;
+    const caster = mkPlayer(A, 400, 300, "heavy", { cards: ["double-jump"] });
+    let state = mkState([caster]);
+    const runtime = createRuntime(flatMap);
+    const res = stepWithRuntime(
+      state, runtime,
+      inputsWith([caster], { [A as string]: frame(JUMP_BIT, 1) }), DT_MS,
+    );
+    state = res.state;
+    const casterShards = Object.values(state.projectiles).filter(
+      (p) => p.ownerId === A,
+    );
+    // 6 radius-6 shards spawned in a ring (World.ts's stompCount) — every
+    // one of them must carry the identity flag, not just some (the ring
+    // reads as one coherent burst, not a mix of flagged/unflagged shots).
+    expect(casterShards.length).toBe(6);
+    for (const shard of casterShards) {
+      expect(shard.kindledThrust).toBe(true);
+    }
+  });
+
   test("without the card equipped, a paladin's jump deals no ring damage", () => {
     const JUMP_BIT = 1 << 4;
     const caster = mkPlayer(A, 400, 300, "heavy");

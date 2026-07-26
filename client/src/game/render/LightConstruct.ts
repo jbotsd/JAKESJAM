@@ -2711,6 +2711,54 @@ export function drawGroundField(
   }
 }
 
+// ── Paper Double decoy body (Track P legibility close, 2026-07-26) ──────────
+// docs/legibility-audit.md's "paper-double" row: the decoy (sim/paperDouble.ts,
+// `state.paperDoubles`) was a fully networked, hit-testable world entity with
+// ZERO renderer anywhere — the entire point of the ability (a body-shaped
+// lure) was completely invisible, to both the caster AND enemies who needed
+// to see it to shoot it (types.ts's own PaperDoubleEntity header: "an enemy
+// genuinely needs to SEE this entity"). A convincing double built from the
+// full rig system (ProceduralPlayerRig) is the eventual v2 (that file's own
+// melee-loop lock is what deferred this row) — this v1 closes the "totally
+// invisible" gap honestly: a FLAT paper-silhouette standee, deliberately not
+// volumetric, matching the ability's own name (a "paper" double, not a
+// perfect one) — a fold-line down the center and a slight standee sway sell
+// "flat cutout," distinct at a glance from a real fighter's rig up close,
+// while still giving every viewer an unambiguous body-shaped site read at
+// the decoy's real hitbox.
+
+/** Paper Double's decoy body, redrawn every frame into a caller-owned
+ *  persistent Graphics (same technique as the Ward slab / channel-charge /
+ *  ground-field). `healthFrac` 1=fresh..0=about to burst dims the fill
+ *  slightly so a nearly-spent decoy reads as thinner, not just numerically
+ *  lower health. `phaseSec` drives the standee's slow sway — a flat cutout
+ *  catching a breeze, never a full rig's weight shift. */
+export function drawPaperDoubleBody(
+  g: Phaser.GameObjects.Graphics,
+  at: Vec2,
+  tint: ConstructTint,
+  width: number,
+  height: number,
+  phaseSec: number,
+  healthFrac: number,
+): void {
+  const sway = Math.sin(phaseSec * 1.4) * 0.05; // a standee's slow lean, not a stride
+  const halfW = (width / 2) * (1 - Math.abs(sway) * 0.4);
+  const halfH = height / 2;
+  const fillAlpha = 0.22 + 0.1 * healthFrac;
+  // Body — a flat, slightly translucent panel (a cutout, not a solid mass).
+  g.fillStyle(tint.glow, fillAlpha);
+  g.fillRoundedRect(at.x - halfW + sway * width, at.y - halfH, halfW * 2, height, halfW * 0.5);
+  // Edge — a bright thin outline so the silhouette reads clearly against a
+  // busy background (the ONLY channel that must survive at fxLevel 0).
+  g.lineStyle(1.4, tint.core, 0.7);
+  g.strokeRoundedRect(at.x - halfW + sway * width, at.y - halfH, halfW * 2, height, halfW * 0.5);
+  // Fold-line — a single vertical crease down the center, the "paper" tell
+  // that separates this from a real rig at a glance.
+  g.lineStyle(1, tint.mote, 0.45);
+  g.lineBetween(at.x + sway * width, at.y - halfH + 3, at.x + sway * width, at.y + halfH - 3);
+}
+
 // ── Ghost Guard near-miss (Phase 3 read) ────────────────────────────────────
 // Ghost Guard's banked-dodge charge is consumed SILENTLY (combat.ts's
 // tryDeflectDamage: "victim phased through, nothing to apply or announce" —

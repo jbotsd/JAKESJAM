@@ -1611,7 +1611,12 @@ type RangedHitSource = Pick<
   ProjectileEntity,
   "id" | "ownerId" | "element" | "x" | "y" | "vx" | "vy" | "damage" | "radius"
 > &
-  Partial<Pick<ProjectileEntity, "tendril" | "executeBelowFrac" | "statusScale" | "leechFraction">>;
+  Partial<
+    Pick<
+      ProjectileEntity,
+      "tendril" | "executeBelowFrac" | "statusScale" | "leechFraction" | "severanceShard"
+    >
+  >;
 
 /** Tick-scoped, read-mostly context `resolveRangedHit` needs — everything
  *  the original inline block read from `stepWithRuntime`'s closure, now
@@ -1898,6 +1903,20 @@ function resolveRangedHit(
     !mitigation.syzWarded
   ) {
     ev.pierced = true;
+  }
+  // Severance (Track L/P legibility, docs/legibility-audit.md's "severance"
+  // row): stamp the event ONLY when the target is STILL cursed at the
+  // moment this hit resolves — a fast straight shard can, in principle,
+  // outrace a very short remaining status window between cast and impact,
+  // so this reads the victim's OWN post-mitigation state rather than
+  // trusting the cast-time gate (same "flag can never lie about the math"
+  // contract as `amped` above). Purely additive — doesn't touch damage.
+  if (proj.severanceShard === true) {
+    const stillCursed =
+      (postPlayer.burnUntilTick !== undefined && postPlayer.burnUntilTick > ctx.nextTick) ||
+      (postPlayer.freezeUntilTick !== undefined && postPlayer.freezeUntilTick > ctx.nextTick) ||
+      (postPlayer.slowedUntilTick !== undefined && postPlayer.slowedUntilTick > ctx.nextTick);
+    if (stillCursed) ev.severed = true;
   }
   let finalDamage = mitigation.damage;
   const element = proj.element;
@@ -2846,6 +2865,15 @@ export function stepWithRuntime(
               element: build.projectile.element,
             });
             shard.rangePx = KIN_STOMP_JUMP_RADIUS_PX;
+            // Bespoke render identity (Track P legibility close, 2026-07-26,
+            // docs/legibility-audit.md's "double-jump" row) — see types.ts's
+            // `kindledThrust` field comment: reuses Sunspike's own solid
+            // gold-spike identity (both are "Kindled kinetic impact") so the
+            // 6-shard ring reads as a deliberate radial burst of Kindled
+            // fragments landing at the jump site, not 6 generic shots that
+            // happen to be symmetric. Render-only; element/shape above stay
+            // build-resolved.
+            shard.kindledThrust = true;
             projectilesCow.set(shard.id, shard);
           }
         }
@@ -4069,6 +4097,13 @@ export function stepWithRuntime(
               pathing: "straight",
               element: build.projectile.element,
             });
+            // Bespoke render identity (Track P legibility close, 2026-07-26,
+            // docs/legibility-audit.md's "severance" row) — see types.ts's
+            // `severanceShard` field comment: a shape-only override (Sunspike/
+            // Needle's own precedent) so the burst curse-detonate no longer
+            // renders as "a generic straight shot in whatever element your
+            // build happens to be." element/shape stay build-resolved.
+            shard.severanceShard = true;
             projectilesCow.set(shard.id, shard);
             activated = true;
           }

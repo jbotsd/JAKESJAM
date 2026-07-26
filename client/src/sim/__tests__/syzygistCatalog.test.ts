@@ -45,6 +45,7 @@ import {
   type InputFrame,
   type MapDefinition,
   type PlayerEntity,
+  type SimEvent,
   type WorldState,
 } from "../types.js";
 
@@ -381,6 +382,47 @@ describe("Syzygist catalog v1 — representative sim effects (low-aim auto-targe
     const dealt = 100 - state.players[B]!.health;
     expect(dealt).toBeGreaterThan(0);
     expect(dealt).toBeGreaterThanOrEqual(SYZ_SEVERANCE_DAMAGE - 0.5 - 5 /* the burn's own DoT may also tick */);
+  });
+
+  test("Track P legibility close (docs/legibility-audit.md 'severance'): the shard carries the severanceShard render-identity flag at spawn", () => {
+    const caster = mkPlayer(A, 400, 400, "shielded", { cards: ["severance"] });
+    const cursedVictim = mkPlayer(B, 460, 400, "balanced", {
+      burnUntilTick: Tick(600), burnDps: 5, burnTickLastApplied: Tick(0),
+    });
+    const state = mkState([caster, cursedVictim]);
+    const runtime = createRuntime(flatMap);
+    const res = stepWithRuntime(
+      state, runtime,
+      inputsWith([caster, cursedVictim], { [A as string]: frame(SLOT1_BIT, 1) }), DT_MS,
+    );
+    const shards = Object.values(res.state.projectiles).filter((p) => p.ownerId === A);
+    expect(shards.length).toBe(1);
+    expect(shards[0]!.severanceShard).toBe(true);
+  });
+
+  test("Track P legibility close: a landed hit on a STILL-cursed target stamps hit-confirmed.severed — silent once the curse has expired", () => {
+    const caster = mkPlayer(A, 400, 400, "shielded", { cards: ["severance"] });
+    const cursedVictim = mkPlayer(B, 460, 400, "balanced", {
+      burnUntilTick: Tick(6000), burnDps: 5, burnTickLastApplied: Tick(0),
+    });
+    let state = mkState([caster, cursedVictim]);
+    const runtime = createRuntime(flatMap);
+    let res = stepWithRuntime(
+      state, runtime,
+      inputsWith([caster, cursedVictim], { [A as string]: frame(SLOT1_BIT, 1) }), DT_MS,
+    );
+    state = res.state;
+    let severedEvent: Extract<SimEvent, { t: "hit-confirmed" }> | undefined;
+    for (let i = 0; i < 15 && severedEvent === undefined; i++) {
+      res = stepWithRuntime(state, runtime, inputsWith([caster, cursedVictim], {}), DT_MS);
+      state = res.state;
+      severedEvent = res.events.find(
+        (e): e is Extract<SimEvent, { t: "hit-confirmed" }> =>
+          e.t === "hit-confirmed" && e.victimId === B,
+      );
+    }
+    expect(severedEvent).toBeDefined();
+    expect(severedEvent!.severed).toBe(true);
   });
 
   test("Borrowed Time: heals the nearest injured ally on its own, then drains back later — net always positive", () => {

@@ -27,6 +27,25 @@
 //             banked lock charges; `count` carries the charge count)
 //   resonance — resonanceUntilTick    (the 2s chain-an-unlike-ability
 //             window EVERY cast opens; quietest read of the family)
+//   kindled — kindledResolveUntilTick (Kindled Resolve's armed self-buff —
+//             Track P legibility close, docs/legibility-audit.md: was
+//             byte-identical to Aegis Share's ambient aura with no site
+//             identity of its own)
+//   haste   — hasteUntilTick          (Haste Gift's speed+fire-rate window —
+//             Track P: reads regardless of the RECIPIENT's class, closing
+//             the "ally-cast Haste Gift on a non-priest ally renders
+//             NOTHING" gap the CVC buff-aura's cls==='priest' gate left)
+//   wardHold — wardAbsorbUntilTick    (a live Syzygist Ward absorb pool —
+//             Track P: same class-gate gap as haste above; Glass Ward's
+//             ally branch previously had no read until the pool was hit)
+//   regen   — regenUntilTick          (Track P: was nameplate-only; the
+//             priest buff-aura scan never read this field at all)
+//   recoil  — recoilStepUntilTick     (Recoil Step's self-knockback-
+//             reduction rider window; Track P: had NO read anywhere)
+//   debt    — debtUntilTick           (Borrowed Time's pending drain window
+//             on the ally/self who was just healed; Track P: the window
+//             popping into existence IS the application read this row was
+//             missing — the healed body visibly starts "owing")
 //
 // Expiry needs no frame-diff memo: the window stops planning and
 // `intensity` eases to 0 over the final fade so the end reads instead of
@@ -46,7 +65,13 @@ export type WindowKind =
   | "fooled"
   | "aegis"
   | "fangs"
-  | "resonance";
+  | "resonance"
+  | "kindled"
+  | "haste"
+  | "wardHold"
+  | "regen"
+  | "recoil"
+  | "debt";
 
 export type WindowRead = {
   id: string;
@@ -104,6 +129,12 @@ export function planStatusWindows(
     push("fooled", player.fooledUntilTick, FADE_MS_DEFAULT);
     push("aegis", player.aegisShareUntilTick, FADE_MS_DEFAULT);
     push("resonance", player.resonanceUntilTick, FADE_MS_DEFAULT);
+    push("kindled", player.kindledResolveUntilTick, FADE_MS_DEFAULT);
+    push("haste", player.hasteUntilTick, FADE_MS_DEFAULT);
+    push("wardHold", player.wardAbsorbUntilTick, FADE_MS_DEFAULT);
+    push("regen", player.regenUntilTick, FADE_MS_DEFAULT);
+    push("recoil", player.recoilStepUntilTick, FADE_MS_DEFAULT);
+    push("debt", player.debtUntilTick, FADE_MS_DEFAULT);
     if ((player.pendingLockCharges ?? 0) > 0) {
       push(
         "fangs",

@@ -35,6 +35,12 @@ const FIELD_BY_KIND: Record<Exclude<WindowKind, "fangs">, string> = {
   fooled: "fooledUntilTick",
   aegis: "aegisShareUntilTick",
   resonance: "resonanceUntilTick",
+  kindled: "kindledResolveUntilTick",
+  haste: "hasteUntilTick",
+  wardHold: "wardAbsorbUntilTick",
+  regen: "regenUntilTick",
+  recoil: "recoilStepUntilTick",
+  debt: "debtUntilTick",
 };
 
 describe("planStatusWindows — self-window body reads", () => {
@@ -134,5 +140,39 @@ describe("planStatusWindows — self-window body reads", () => {
       getPosition,
     );
     expect(plan.length).toBe(0);
+  });
+
+  // Track P (docs/legibility-audit.md, the 9 residual PARTIAL rows):
+  // kindled/haste/wardHold/regen/recoil/debt all close the SAME shape of
+  // gap — a self-window that was nameplate-only (or, for haste/wardHold,
+  // class-gated in ConstructVfxController's buff-aura scan so an ally
+  // outside the caster's own class rendered NOTHING). This planner is
+  // class-blind by construction (it only ever reads the *UntilTick field
+  // off the player's own snapshot entry), so haste/wardHold read here
+  // regardless of what `characterId` the buffed player happens to hold —
+  // the exact gate the aura scan lacked.
+  test("haste and wardHold read on ANY class holding the field — no priest gate (the audit's named gap)", () => {
+    const nonPriestAlly = { characterId: "heavy", hasteUntilTick: 140, wardAbsorbUntilTick: 140 };
+    const plan = planStatusWindows(stateWith(50, { a: nonPriestAlly }), getPosition);
+    const kinds = plan.map((w) => w.kind).sort();
+    expect(kinds).toEqual(["haste", "wardHold"]);
+  });
+
+  test("Track P windows stack independently alongside the existing family", () => {
+    const plan = planStatusWindows(
+      stateWith(50, {
+        a: {
+          kindledResolveUntilTick: 140,
+          hasteUntilTick: 140,
+          wardAbsorbUntilTick: 140,
+          regenUntilTick: 140,
+          recoilStepUntilTick: 140,
+          debtUntilTick: 140,
+        },
+      }),
+      getPosition,
+    );
+    const kinds = plan.map((w) => w.kind).sort();
+    expect(kinds).toEqual(["debt", "haste", "kindled", "recoil", "regen", "wardHold"]);
   });
 });

@@ -76,6 +76,11 @@ const MARK_ORBIT_RAD_PER_MS = 0.0012;
 /** Void pierce streaks — ProjectileVfx's void core (pale violet), so the
  *  pass-through wears the element that did it. */
 const PIERCE_COLOR = 0xd9c8ff;
+/** Severance's curse-detonate punish (Track P) — a violet-magenta "curse
+ *  severed" register, distinct from Pierce's pale violet pass-through and
+ *  Vulnerability's rose crack (a different family: this is a STATUS being
+ *  cut away, not a guard failing or cracking open). */
+const SEVERANCE_COLOR = 0xc026d3;
 const WINDOW_COUNTER_COLOR = 0xf59e0b; // amber — the armed answer
 const WINDOW_SEAL_COLOR = 0xeab308; // gold — Kindled seal charge
 const WINDOW_MEASURE_COLOR = 0x35d6ff; // GEO cyan — calibration
@@ -91,6 +96,18 @@ const RESONANCE_COLOR = 0x6b98f4;
  *  mechanic itself is the read (the audit's named gap: "the widened peel
  *  radius is never drawn"). */
 const AEGIS_TRUE_RADIUS_PX = WARD_PEEL_RADIUS_PX * KIN_AEGIS_SHARE_RADIUS_MULTIPLIER;
+// Track P (docs/legibility-audit.md, the 9 residual PARTIAL rows closed in
+// one pass now that ProceduralPlayerRig.ts/ConstructVfxController.ts's
+// melee-loop lock is released). Same "chip colors for debuffs, class glows
+// for class windows" convention as the family above — each of these reuses
+// its OWNING class's hue (CA2: same class = same hue, DIFFER by shape/
+// motion, never by color alone) rather than inventing a new register.
+const WINDOW_KINDLED_COLOR = 0xeab308; // Kindled gold — same family as seal/judgment/aegis
+const WINDOW_HASTE_COLOR = 0x5eead4; // Syzygist quickened-teal — distinct from stride cyan/ward blue
+const WINDOW_WARD_HOLD_COLOR = 0x93c5fd; // lighter periwinkle — distinct from the wardShellUntilTick sapphire shell
+const WINDOW_REGEN_COLOR = 0x86efac; // soft green — the one status family member that HEALS
+const WINDOW_RECOIL_COLOR = 0x22d3ee; // GEO cyan family, punchier than measure's calibration cyan
+const WINDOW_DEBT_COLOR = 0x94a3b8; // slate — a looming weight, deliberately desaturated (not a class glow)
 const WINDOW_INTERVALS_MS: Record<WindowRead["kind"], number> = {
   counter: 90, // ~500ms window — must read instantly
   seal: 260,
@@ -103,6 +120,12 @@ const WINDOW_INTERVALS_MS: Record<WindowRead["kind"], number> = {
   aegis: 400, // big quiet instrument — slowest beat of the family
   fangs: 300,
   resonance: 350, // every cast opens one — must stay near-subliminal
+  kindled: 280,
+  haste: 130, // quickened tempo — the fastest beat outside counter
+  wardHold: 260,
+  regen: 340, // gentle, unhurried — a heal, not an alarm
+  recoil: 240,
+  debt: 420, // a slow, quiet weight — the slowest beat of the family
 };
 
 const SPARK_DURATION_MS = 420;
@@ -326,11 +349,15 @@ export class StatusVfxController {
       if (ev.t === "resonance-triggered") {
         this.spawnResonanceGlyph({ x: ev.x, y: ev.y });
       }
-      if (ev.t === "hit-confirmed" && (ev.amped === true || ev.pierced === true)) {
+      if (
+        ev.t === "hit-confirmed" &&
+        (ev.amped === true || ev.pierced === true || ev.severed === true)
+      ) {
         const pos = getPosition(ev.victimId);
         if (pos) {
           if (ev.amped === true) this.spawnAmpPunishBurst(pos);
           if (ev.pierced === true) this.spawnPierceSeam(pos);
+          if (ev.severed === true) this.spawnSeveranceBurst(pos);
         }
       }
     }
@@ -384,6 +411,24 @@ export class StatusVfxController {
         break;
       case "resonance":
         this.spawnResonanceWindowTick(win.pos, win.intensity);
+        break;
+      case "kindled":
+        this.spawnKindledResolveBrace(win.pos, win.intensity);
+        break;
+      case "haste":
+        this.spawnHasteQuicken(win.pos, win.intensity);
+        break;
+      case "wardHold":
+        this.spawnWardHoldShimmer(win.pos, win.intensity);
+        break;
+      case "regen":
+        this.spawnRegenMotes(win.pos, win.intensity);
+        break;
+      case "recoil":
+        this.spawnRecoilBrace(win.pos, win.intensity);
+        break;
+      case "debt":
+        this.spawnDebtWeight(win.pos, win.intensity);
         break;
     }
   }
@@ -759,6 +804,196 @@ export class StatusVfxController {
     });
   }
 
+  /** Kindled Resolve's armed window (Track P, docs/legibility-audit.md):
+   *  the CVC buff-aura scan draws this byte-identical to Aegis Share's own
+   *  ambient aura (same tint/shape/radius), so a paladin wearing ONLY
+   *  Kindled Resolve had no site identity distinct from Aegis. A "braced
+   *  stance" read at the collarbone — two short gold ticks pulsing INWARD
+   *  together (bracing against the next hit) — never orbits or contracts
+   *  to a diamond/arc, so it can never be confused with Unbroken Seal's
+   *  armed diamond or Judgment's orbiting arc (CA2: same Kindled gold,
+   *  different shape/motion). */
+  private spawnKindledResolveBrace(position: Vec2, intensity: number): void {
+    const cy = position.y - 10;
+    for (let i = 0; i < 2; i++) {
+      const spark = this.pool.acquireSpark();
+      if (!spark) break;
+      const side = i === 0 ? -1 : 1;
+      const startX = position.x + side * 9;
+      spark.setPosition(startX, cy);
+      spark.setFillStyle(WINDOW_KINDLED_COLOR, 0.6 * intensity);
+      spark.setRotation(0); // upright — a brace, not a radiating ray
+      spark.setScale(0.55, 1.15);
+      spark.setAlpha(0.6 * intensity);
+      transientVfx.spawn({
+        factory: () => spark,
+        lifetimeMs: RING_DURATION_MS,
+        startAlpha: 0.6 * intensity,
+        ease: "Sine.easeInOut",
+        onTick: (obj, t) => {
+          const s = obj as Phaser.GameObjects.Rectangle;
+          // Breathes inward then back — bracing, not consumed.
+          const breathe = Math.sin(t * Math.PI);
+          s.x = startX - side * 3 * breathe;
+        },
+        release: () => this.pool.release(spark),
+      });
+    }
+  }
+
+  /** Haste Gift's live window (Track P): reads on WHOEVER holds
+   *  `hasteUntilTick`, regardless of their own class — closing the gap
+   *  where the CVC buff-aura scan only drew this for `cls === 'priest'`,
+   *  stranding a non-priest ally with zero read. Quickened tempo: two
+   *  small ticks orbiting TIGHT and FAST (the fastest cadence outside
+   *  Counter) — the movement/tempo register, distinct from the ambient
+   *  ooze aura it rides alongside. */
+  private spawnHasteQuicken(position: Vec2, intensity: number): void {
+    const cy = position.y - 8;
+    for (let i = 0; i < 2; i++) {
+      const spark = this.pool.acquireSpark();
+      if (!spark) break;
+      const angle = this.clockMs * 0.02 + i * Math.PI;
+      const r = 11;
+      const sx = position.x + Math.cos(angle) * r;
+      const sy = cy + Math.sin(angle) * r * 0.6;
+      spark.setPosition(sx, sy);
+      spark.setFillStyle(WINDOW_HASTE_COLOR, 0.55 * intensity);
+      spark.setRotation(angle); // tangent — quickened orbit, not a ray
+      spark.setScale(0.5, 1.0);
+      spark.setAlpha(0.55 * intensity);
+      transientVfx.spawn({
+        factory: () => spark,
+        lifetimeMs: 140,
+        startAlpha: 0.55 * intensity,
+        ease: "Sine.easeOut",
+        release: () => this.pool.release(spark),
+      });
+    }
+  }
+
+  /** Glass Ward / self-Ward's live absorb pool (Track P): reads on ANY
+   *  class holding `wardAbsorbUntilTick` — the same class-gate gap Haste
+   *  had. Deliberately NOT the wardShellUntilTick sapphire rings (a
+   *  DIFFERENT mechanic — see ward-absorb's own audit row) — a lighter
+   *  periwinkle, and STATIC flickering ticks rather than pulsing full
+   *  rings, so the two ward families never blur into one read. */
+  private spawnWardHoldShimmer(position: Vec2, intensity: number): void {
+    for (let i = 0; i < 3; i++) {
+      const spark = this.pool.acquireSpark();
+      if (!spark) break;
+      const angle = (i / 3) * Math.PI * 2 + 0.4;
+      const r = 14;
+      const sx = position.x + Math.cos(angle) * r;
+      const sy = position.y - 6 + Math.sin(angle) * r * 0.55;
+      spark.setPosition(sx, sy);
+      // Flicker — a held charge shimmering, not a steady glow.
+      const flicker = 0.3 + 0.3 * Math.abs(Math.sin(this.clockMs * 0.006 + i * 2));
+      spark.setFillStyle(WINDOW_WARD_HOLD_COLOR, flicker * intensity);
+      spark.setRotation(angle);
+      spark.setScale(0.45, 0.8);
+      spark.setAlpha(flicker * intensity);
+      transientVfx.spawn({
+        factory: () => spark,
+        lifetimeMs: RING_DURATION_MS,
+        startAlpha: flicker * intensity,
+        ease: "Sine.easeOut",
+        release: () => this.pool.release(spark),
+      });
+    }
+  }
+
+  /** Regen's heal-over-time window (Track P): the ONE status family member
+   *  that heals rather than harms or buffs a stat — soft green motes
+   *  rising slowly off the body, gentler and slower than Burn's hot fast
+   *  sparks (the DoT's opposite-sign sibling) so the two never read the
+   *  same even though both "rise off the body." */
+  private spawnRegenMotes(position: Vec2, intensity: number): void {
+    for (let i = 0; i < 2; i++) {
+      const spark = this.pool.acquireSpark();
+      if (!spark) break;
+      const ox = (Math.random() - 0.5) * 22;
+      const startX = position.x + ox;
+      const startY = position.y + 2;
+      spark.setPosition(startX, startY);
+      spark.setFillStyle(WINDOW_REGEN_COLOR, 0.55 * intensity);
+      spark.setRotation(0);
+      spark.setScale(0.6, 0.9);
+      spark.setAlpha(0.55 * intensity);
+      transientVfx.spawn({
+        factory: () => spark,
+        lifetimeMs: 480,
+        startAlpha: 0.55 * intensity,
+        ease: "Sine.easeOut",
+        onTick: (obj, t) => {
+          const s = obj as Phaser.GameObjects.Rectangle;
+          s.y = startY - 24 * t; // slow, gentle rise — a heal, not an alarm
+          const sc = 0.9 * (1 - 0.3 * t);
+          s.setScale(0.6, sc);
+        },
+        release: () => this.pool.release(spark),
+      });
+    }
+  }
+
+  /** Recoil Step's rider window (Track P): self-knockback reduction on
+   *  shots fired while live had NO read anywhere. A braced-footing read at
+   *  the FEET — two short ticks planted and angled outward (an anchored
+   *  stance) — GEO cyan family (Geometrician-owned ability), a punchier
+   *  cyan than Measure's eye-level calibration ticks so the two windows
+   *  never blur despite sharing a class. */
+  private spawnRecoilBrace(position: Vec2, intensity: number): void {
+    const feetY = position.y + 13;
+    for (let i = 0; i < 2; i++) {
+      const spark = this.pool.acquireSpark();
+      if (!spark) break;
+      const side = i === 0 ? -1 : 1;
+      const sx = position.x + side * 9;
+      spark.setPosition(sx, feetY);
+      spark.setFillStyle(WINDOW_RECOIL_COLOR, 0.55 * intensity);
+      spark.setRotation(side * 0.5); // angled outward — a planted brace
+      spark.setScale(0.55, 1.0);
+      spark.setAlpha(0.55 * intensity);
+      transientVfx.spawn({
+        factory: () => spark,
+        lifetimeMs: RING_DURATION_MS,
+        startAlpha: 0.55 * intensity,
+        ease: "Sine.easeOut",
+        release: () => this.pool.release(spark),
+      });
+    }
+  }
+
+  /** Borrowed Time's pending debt window (Track P): the window POPPING
+   *  INTO EXISTENCE is the application read this row was missing (an ally
+   *  silently gained HP with no tell) — same "the read appearing at the
+   *  body IS the application read" contract Vulnerability's own row
+   *  established. A single slate tick sinking slowly downward from the
+   *  chest — a weight accruing, about to call due — deliberately
+   *  desaturated (not a class glow: the debt is a cost, not a buff). */
+  private spawnDebtWeight(position: Vec2, intensity: number): void {
+    const spark = this.pool.acquireSpark();
+    if (!spark) return;
+    const startY = position.y - 14;
+    spark.setPosition(position.x, startY);
+    spark.setFillStyle(WINDOW_DEBT_COLOR, 0.5 * intensity);
+    spark.setRotation(0);
+    spark.setScale(0.6, 1.0);
+    spark.setAlpha(0.5 * intensity);
+    transientVfx.spawn({
+      factory: () => spark,
+      lifetimeMs: 520,
+      startAlpha: 0.5 * intensity,
+      ease: "Sine.easeIn", // accelerates downward — a weight falling due
+      onTick: (obj, t) => {
+        const s = obj as Phaser.GameObjects.Rectangle;
+        s.y = startY + 20 * t;
+        s.setScale(0.6, 1.0 - 0.3 * t);
+      },
+      release: () => this.pool.release(spark),
+    });
+  }
+
   /** Shield charge instantly restored (`shield-refunded` — Return Glass /
    *  Bastion Pulse / Plant Charge's landing tick): a fast sapphire ring
    *  SNAPPING onto the body plus one rising charge tick. Same hue as the
@@ -889,6 +1124,38 @@ export class StatusVfxController {
       },
       release: () => this.pool.release(tick),
     });
+  }
+
+  /** Severance's curse-detonate landing (Track P, docs/legibility-audit.md):
+   *  `hit-confirmed`'s `severed` flag only stamps when the target was
+   *  STILL cursed at impact (World.ts's honest-by-construction check, same
+   *  contract as `amped`/`pierced`) — a decisive CROSS-cut through the
+   *  body, two blades meeting at right angles (the curse being severed,
+   *  not just cracked like Vulnerability or pierced-through like Void),
+   *  layered on top of the generic hit stack same as amp/pierce. */
+  private spawnSeveranceBurst(position: Vec2): void {
+    const cy = position.y - 6;
+    for (let i = 0; i < 2; i++) {
+      const spark = this.pool.acquireSpark();
+      if (!spark) break;
+      spark.setPosition(position.x, cy);
+      spark.setFillStyle(SEVERANCE_COLOR, 0.95);
+      spark.setRotation(i === 0 ? Math.PI / 4 : -Math.PI / 4); // the cross-cut
+      spark.setScale(0.7, 2.1);
+      spark.setAlpha(0.95);
+      transientVfx.spawn({
+        factory: () => spark,
+        lifetimeMs: 200,
+        startAlpha: 0.95,
+        ease: "Sine.easeOut",
+        onTick: (obj, t) => {
+          const s = obj as Phaser.GameObjects.Rectangle;
+          const sc = 2.1 * (1 + 0.3 * t);
+          s.setScale(0.7 * (1 - 0.4 * t), sc);
+        },
+        release: () => this.pool.release(spark),
+      });
+    }
   }
 
   /** Stolen Fangs' banked lock charges: one small crimson fang tick per

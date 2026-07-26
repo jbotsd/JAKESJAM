@@ -51,6 +51,7 @@ import {
   drawBuffAura,
   spawnBlinkStreak,
   drawGroundField,
+  drawPaperDoubleBody,
   spawnGhostGuardDodge,
   type ClassConstructStyle,
   swingEnv,
@@ -80,8 +81,10 @@ import {
   SYZ_FLOCK_PULSE_RADIUS_PX,
   SYZ_BORROWED_TIME_DEBT_BURST_RADIUS_PX,
   KIN_SHOCK_RING_RADIUS_PX,
+  NINJA_PAPER_DOUBLE_MAX_HEALTH,
   STEP_MS,
 } from "../../sim/constants.js";
+import { PLAYER_BODY_WIDTH, PLAYER_BODY_HEIGHT } from "../../sim/player.js";
 
 // Interstice twin-blade reach / Kindled Kindled Edge reach (px), from the
 // harness-dialed values.
@@ -122,6 +125,10 @@ const SWING_DEPTH = 13;
 // A ground field sits under everything — even under the tether — since it's a
 // floor decal, not a held/worn construct.
 const GROUND_FIELD_DEPTH = 3;
+// Just under the rig's own body depth (12) so a real fighter standing on
+// the decoy still reads as the loudest thing on screen (A18), while the
+// decoy itself sits well above auras/ground-fields/tethers.
+const PAPER_DOUBLE_DEPTH = 11;
 // The continuous buff-aura orbits/pulses around the body, above the tether but
 // below the held weapon (it's ambient, not a wielded object).
 const AURA_DEPTH = 9;
@@ -226,6 +233,14 @@ export class ConstructVfxController {
     durationMs: number;
   }> = [];
   private readonly latticeLayer: Phaser.GameObjects.Graphics;
+  // Paper Double decoy bodies (Track P legibility close) — state-driven
+  // straight off `state.paperDoubles` every frame (no event plumbing
+  // needed; the collection is already fully networked, see types.ts's
+  // PaperDoubleEntity header). One persistent layer, same "the per-frame
+  // redraw of a persistent layer is the path that renders reliably"
+  // lesson as the Ward slab / lattice ground-field above.
+  private readonly paperDoubleLayer: Phaser.GameObjects.Graphics;
+  private paperDoublePhaseSec = 0;
   // Last-seen position per player, updated at the END of every update() —
   // the blink abilities (Slip Node/Drift Step/Plant Charge/Bulwark Step) are
   // instant position snaps, so ability-activated's own x/y IS the
@@ -303,6 +318,12 @@ export class ConstructVfxController {
     this.latticeLayer.setBlendMode(Phaser.BlendModes.ADD);
     this.latticeLayer.setDepth(GROUND_FIELD_DEPTH);
     applyConstructGlow(this.latticeLayer, GEOMETRICIAN_TINT.glow);
+    // Deliberately NORMAL blend, no glow filter — every other layer in this
+    // file is additive self-light by design (the file header's whole
+    // ethos), but a decoy needs to read as an OBJECT occupying space, not
+    // a bloom; ADD would wash it into a ghost rather than a body.
+    this.paperDoubleLayer = scene.add.graphics();
+    this.paperDoubleLayer.setDepth(PAPER_DOUBLE_DEPTH);
     this.auraLayerWizard = scene.add.graphics();
     this.auraLayerWizard.setBlendMode(Phaser.BlendModes.ADD);
     this.auraLayerWizard.setDepth(AURA_DEPTH);
@@ -1110,6 +1131,29 @@ export class ConstructVfxController {
       }
     }
 
+    // Paper Double decoy bodies (Track P legibility close, docs/
+    // legibility-audit.md's "paper-double" row): read straight off
+    // `state.paperDoubles` every frame — the collection is already fully
+    // networked (net/snapshotDelta.ts), so no event plumbing is needed, the
+    // same "read the live snapshot field" technique the Ward slab / buff-
+    // auras above already use. Interstice cyan (this is a ninja-only
+    // ability, hardcoded like Focus Hex's tether/Facet Break's flourish
+    // above hardcode their own owning class's tint).
+    this.paperDoublePhaseSec += deltaMs / 1000;
+    this.paperDoubleLayer.clear();
+    for (const pd of Object.values(state.paperDoubles ?? {})) {
+      const healthFrac = Math.max(0, Math.min(1, pd.health / NINJA_PAPER_DOUBLE_MAX_HEALTH));
+      drawPaperDoubleBody(
+        this.paperDoubleLayer,
+        { x: pd.x, y: pd.y },
+        INTERSTICE_TINT,
+        PLAYER_BODY_WIDTH,
+        PLAYER_BODY_HEIGHT,
+        this.paperDoublePhaseSec + pd.id, // per-decoy phase offset — a wall of clones never syncs
+        healthFrac,
+      );
+    }
+
     // Last-seen position cache — MUST update after every read above (the
     // blink-streak block needs the PRE-move position from THIS pass).
     for (const pidKey of Object.keys(state.players)) {
@@ -1157,6 +1201,7 @@ export class ConstructVfxController {
     this.channelLayer.destroy();
     this.latticeLayer.destroy();
     this.latticeZones.length = 0;
+    this.paperDoubleLayer.destroy();
     this.lastPos.clear();
     this.ghostGuardWasArmed.clear();
     this.shockRingWasArmed.clear();

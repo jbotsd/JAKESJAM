@@ -80,6 +80,13 @@ export type ProjectileRenderModel = {
    * (ProjectileVfx.ts's `drawSpikeBody`) instead of inheriting whatever
    * shape/element the caster's own card build resolves to. */
   kindledThrust: boolean;
+  /** True for Severance's burst curse-detonate shard specifically —
+   * `proj.severanceShard === true` (types.ts). Shape-only override (unlike
+   * `kindledThrust` above, this does NOT override color) — opts into a
+   * narrow bi-pointed sliver with a cross-notch near the nose
+   * (ProjectileVfx.ts's `drawSeveranceShardBody`) while `element`/color
+   * keep inheriting whatever the caster's own card build resolves to. */
+  severanceShard: boolean;
   /** True when the shard wraps the map rect (six-axes Mystery —
    * `proj.wrapShots === true`). Track L: the wasm bridge round-trips this
    * flag but NO renderer consumed it — the trail teleport-discontinuity
@@ -114,6 +121,7 @@ function blankProjectile(): ProjectileRenderModel {
     tendril: false,
     ninjaBladeShard: false,
     kindledThrust: false,
+    severanceShard: false,
     wrapShots: false,
     leech: false,
   };
@@ -157,6 +165,7 @@ export function produceProjectiles(
     m.tendril = proj.tendril === true;
     m.ninjaBladeShard = proj.ninjaBladeShard === true;
     m.kindledThrust = proj.kindledThrust === true;
+    m.severanceShard = proj.severanceShard === true;
     m.wrapShots = proj.wrapShots === true;
     m.leech = (proj.leechFraction ?? 0) > 0;
   }

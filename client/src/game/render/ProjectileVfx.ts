@@ -206,6 +206,11 @@ export class ProjectileVfx {
       // writhing-ribbon body instead of the shape-based renderer below;
       // every other class/shape/element is completely untouched.
       const isTendril = proj.tendril;
+      // Severance's burst curse-detonate (renderContract.ts's
+      // `severanceShard` flag, Track P legibility): a shape-ONLY override —
+      // color stays whatever `color` above already resolved to (element/
+      // ownerId-derived, untouched), only the silhouette changes.
+      const isSeveranceShard = proj.severanceShard === true;
 
       // First sight of an id = the shot's muzzle frame: the spawn point IS
       // the muzzle and we have element/velocity/damage right here, so fire
@@ -334,6 +339,13 @@ export class ProjectileVfx {
         // element/shape dispatch below for the same reason as the ninja
         // branch above.
         this.drawSpikeBody(body, proj.x, proj.y, radius, angle, color, KINDLED_THRUST_CORE, bodyAlpha);
+      } else if (isSeveranceShard) {
+        // Severance — a narrow bi-pointed sliver with a cross-notch near
+        // the nose, the "sever" made literal in the silhouette. Checked
+        // before the generic element/shape dispatch for the same reason as
+        // the ninja/Kindled branches above; `color`/`lang.core` stay
+        // whatever the build resolved to (shape-only override).
+        this.drawSeveranceShardBody(body, proj.x, proj.y, radius, angle, color, lang.core, bodyAlpha);
       } else if (proj.element === "crystal") {
         // The wizard's elongated dart — an element override, not a `shape`
         // value (see drawShardBody's own doc comment for why).
@@ -968,6 +980,51 @@ export class ProjectileVfx {
     // Hot core — matches drawShardBody's own convention.
     g.fillStyle(core, bodyAlpha);
     g.fillCircle(x, y, Math.max(1, r * 0.45));
+  }
+
+  /** Severance's burst curse-detonate (Track P legibility close, 2026-07-26,
+   *  `severanceShard` identity flag — see types.ts's field comment). Unlike
+   *  `drawSpikeBody`/`drawBladeSliverBody` above, this is a SHAPE-only
+   *  override — `color`/`core` still come from the build-resolved element,
+   *  same as the plain `drawShardBody` dart. The silhouette itself is a
+   *  narrow bi-pointed sliver (both ends drawn to a point — a "double-
+   *  edged" read, unlike the dart/spike/sliver's single wide nose) with a
+   *  short perpendicular cross-notch just behind the tip: the "sever" made
+   *  literal — the shape reads as an instrument cutting something away,
+   *  not just a faster copy of a basic shot. */
+  private drawSeveranceShardBody(
+    g: Phaser.GameObjects.Graphics,
+    x: number,
+    y: number,
+    r: number,
+    angle: number,
+    color: number,
+    core: number,
+    bodyAlpha: number,
+  ): void {
+    const cos = Math.cos(angle);
+    const sin = Math.sin(angle);
+    const rot = (dx: number, dy: number): [number, number] => [x + dx * cos - dy * sin, y + dx * sin + dy * cos];
+    const nose = rot(r * 2.1, 0);
+    const tail = rot(-r * 2.1, 0);
+    const midF = rot(0, r * 0.55);
+    const midB = rot(0, -r * 0.55);
+    g.fillStyle(color, 0.95 * bodyAlpha);
+    g.fillTriangle(nose[0], nose[1], midF[0], midF[1], midB[0], midB[1]);
+    g.fillTriangle(tail[0], tail[1], midF[0], midF[1], midB[0], midB[1]);
+    // Spine — both points meeting at the center, unlike the single-nose
+    // shapes above.
+    g.lineStyle(Math.max(1, r * 0.3), core, bodyAlpha);
+    g.lineBetween(tail[0], tail[1], nose[0], nose[1]);
+    // The cross-notch — a short perpendicular tick just behind the nose,
+    // the "sever" cut made literal.
+    const notchNear = rot(r * 1.2, r * 0.4);
+    const notchFar = rot(r * 1.2, -r * 0.4);
+    g.lineStyle(Math.max(1, r * 0.28), core, 0.85 * bodyAlpha);
+    g.lineBetween(notchNear[0], notchNear[1], notchFar[0], notchFar[1]);
+    // Hot core at the true center — matches the family's convention.
+    g.fillStyle(core, bodyAlpha);
+    g.fillCircle(x, y, Math.max(1, r * 0.38));
   }
 
   private tweenRelease(
