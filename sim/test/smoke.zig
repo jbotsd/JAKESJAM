@@ -2519,14 +2519,19 @@ test "ability dispatch: Self-Lattice (Priest) — mutually exclusive with the ge
 }
 
 // ── Kindled Resolve (Paladin, Phase 4a follow-up, docs/zig-step-world-
-//    parity-goal.md) — consumption side only (the cast stays a genuine
-//    no-op today, see the `.kindled_resolve` switch arm's own comment for
-//    why: it's gated on a `kindling` resource step_world never accrues).
-//    Every test below sets `kindled_resolve_until_tick` directly rather
-//    than going through a cast — bypassing an unreachable-today dispatch
-//    path to focus purely on proving the READ sites, matching the same
-//    "bypass the cast, focus on the read site" precedent the Self-Lattice
-//    depletion test above already established.
+//    parity-goal.md) — consumption side. The CAST itself is no longer a
+//    no-op (Track Z5 item 1, 2026-07-26 — see the `.kindled_resolve`
+//    switch arm's own comment for the fix + the tick-base finding it
+//    caught); its own dedicated cross-engine parity coverage lives in
+//    client/src/sim/wasm/__tests__/kindledResolveCastParity.test.ts (a
+//    real TS/Zig wasm lockstep, pressing the actual ability slot — this
+//    native smoke.zig file has no wasm/TS side to lockstep against).
+//    Every test below still sets `kindled_resolve_until_tick` directly
+//    rather than going through a cast — a deliberate isolation choice
+//    (focus purely on proving the READ sites, matching the same "bypass
+//    the cast, focus on the read site" precedent the Self-Lattice
+//    depletion test above already established), not a reflection of the
+//    cast being unreachable any more.
 test "Kindled Resolve: melee damage amp is CLASS-BLIND — a Ninja Slash from an attacker holding the window is amplified too, matching World.ts's own class-blind composition site" {
     var state = freshFightingState();
     state.player_count = 2;

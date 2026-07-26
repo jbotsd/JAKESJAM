@@ -431,6 +431,21 @@
 // If the sweep exceeds its bound, the per-seed record above is the
 // deliverable the next track consumes.
 //
+// Z5 (2026-07-26) — the residuals Z1c documented rather than hid, item 1
+// (kindled_resolve cast wired) + item 2 (all 9 classModifiers-codegen-gap
+// cards now cross) + item 3 (hitscan v1 scope cuts: shooter-side amp
+// chain + Ghost Guard, mirror-shield retrace, impact-AOE routing for the
+// player-hit case — 3 of 5 sub-items; decoy/destructible candidates and
+// split-spawn remain open, see world.zig's "Hitscan resolution" section
+// header). Re-ran byte-identical to Z3's row (376.5/247.5/230.0/274.2/
+// 437.9px, same onsets) — expected: this sweep's bots are all "balanced"
+// (wizard), so every class-gated fix here (Paladin's Kindled Resolve,
+// Ninja's Ghost Guard, the classModifiers cards' non-wizard readings, the
+// Mirror Shield card, explosive/slow-field impact cards) is structurally
+// invisible to bots that never equip or qualify for any of them — the
+// SAME "cardless/class-blind bots can't exercise a class-gated fix" note
+// every prior class-scoped entry in this ledger already records.
+//
 // Harness-fidelity lessons KEPT from the branch (5e1676a + 3f16fe3):
 //   - setWorldArenaBounds is called (5e1676a's root-cause fix: without it,
 //     Zig's void kill-plane gate is never armed → a player who falls off the

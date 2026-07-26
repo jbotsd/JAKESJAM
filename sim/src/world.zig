@@ -515,29 +515,40 @@ fn maybeAwardFirstBlood(
 // `delivery` field entirely and spawned a traveling ProjectileEntity for
 // every build, hitscan included.
 //
-// SCOPE (v1 — deliberately narrower than TS's full chain; each cut is a
+// SCOPE (v1 — deliberately narrower than TS's full chain; each cut was a
 // recorded gap, not an oversight, and each is orthogonal to whether the
-// core "hitscan build deals same-tick damage" behavior is correct):
-//   - Candidates are alive non-owner PLAYERS + static walls only. TS's
-//     `resolveHitscanShot` also sweeps Paper Double decoys and
-//     destructibles as candidate pools — unported here.
-//   - Pierce (ordered multi-hit along one ray, wall-terminated) IS ported.
-//     Split-spawn at the ray's terminal point is NOT — moot today, since
-//     no Zig code path (real projectiles included) reads `split_count` to
-//     spawn children yet; hitscan isn't a NEW gap here, the same
-//     pre-existing one.
-//   - Impact-AOE routing (explosive/slow-field) is NOT ported — a hitscan
-//     shot with an impact kind just applies direct damage instead of
-//     detonating into `pending_instant_aoe`.
-//   - Mirror shield's TS-side behavior ("no real projectile to reverse, so
-//     re-trace once back at the attacker instead") is NOT ported — a Zig
-//     hitscan mirror-shield block is a normal full absorb, same as the
-//     generic shield block.
-//   - The shooter-side amp chain (damage_amp/overcharge/boss_mode/Facet
-//     Break/Focus Hex/Rally Light/Kindled Resolve) and Ghost Guard evasion
-//     — both real `resolveRangedHit` mechanics already mirrored on the
-//     real-projectile path (section 4 above) — are NOT yet mirrored onto
-//     this new path.
+// core "hitscan build deals same-tick damage" behavior is correct).
+// Track Z5 item 3 (finish-line-goal.md) closed 3 of the 5 v1 cuts —
+// STATUS as of that pass:
+//   - STILL CUT: candidates are alive non-owner PLAYERS + static walls
+//     only. TS's `resolveHitscanShot` also sweeps Paper Double decoys and
+//     destructibles as candidate pools — unported here (a real geometry
+//     change: a THIRD candidate-kind category plus decoy/destructible
+//     damage-application hookup, bigger than the other 4 sub-items — left
+//     for a future pass, not attempted this one).
+//   - STILL CUT: pierce (ordered multi-hit along one ray, wall-terminated)
+//     IS ported. Split-spawn at the ray's terminal point is NOT — moot
+//     today, since no Zig code path (real projectiles included) reads
+//     `split_count` to spawn children yet; hitscan isn't a NEW gap here,
+//     the same pre-existing one — there is no equivalent-projectile-path
+//     pattern to mirror, so this isn't a "small port" the way the other 4
+//     sub-items were.
+//   - CLOSED (partial — player-hit case only): impact-AOE routing
+//     (explosive/slow-field) now detonates into `pending_instant_aoe` at
+//     the ray's terminal point exactly like World.ts's own
+//     `pellet.impact === "explosive" || "slow-field"` branch, replacing
+//     per-hit direct damage entirely. A direct decoy/destructible hit
+//     ALSO taking its own point damage before the splash (World.ts:3047-
+//     3062) still depends on the decoy/destructible candidates cut above
+//     — not covered.
+//   - CLOSED: mirror shield's TS-side behavior ("no real projectile to
+//     reverse, so re-trace once back at the attacker instead") is now
+//     ported — see `HitscanHitOutcome` + `resolveHitscanMirrorBounce`.
+//   - CLOSED: the shooter-side amp chain (damage_amp/overcharge/boss_mode/
+//     Facet Break/Focus Hex/Rally Light/Kindled Resolve) and Ghost Guard
+//     evasion — both real `resolveRangedHit` mechanics already mirrored on
+//     the real-projectile path (section 4 above) — are now mirrored onto
+//     this path too, inside `applyHitscanHitOnPlayer`.
 // Everything else `resolveRangedHit` does for a direct hit IS ported:
 // headshot, chaos scaling, victim vulnerability, Hard Aperture's ward-
 // shell halving, parry deflect, Self-Lattice's partial absorb, the
@@ -552,6 +563,19 @@ fn maybeAwardFirstBlood(
 // the CODE path is complete on both hit sites now, matching the item's
 // "both the existing projectile path AND the new hitscan path" ask.
 
+/// Signal from `applyHitscanHitOnPlayer` back to its caller
+/// (`resolveHitscanFire`): mirror shield has no real traveling entity to
+/// physically reverse (unlike the real-projectile site's `proj_ptr.vx =
+/// -proj_ptr.vx * 1.15` reassignment) — TS's own fix (World.ts:4950-4995,
+/// the `pendingHitscanHits` drain) is a SEPARATE immediate re-trace, once,
+/// back toward the original shot's source, now owned by the blocker. Track
+/// Z5 item 3's "mirror-shield retrace" sub-item — `bouncer_idx` is only
+/// meaningful when `mirror_bounce` is true.
+const HitscanHitOutcome = struct {
+    mirror_bounce: bool = false,
+    bouncer_idx: u32 = 0,
+};
+
 /// Direct-hit damage + mitigation for ONE hitscan pellet landing on
 /// `victim_idx`, fired by `shooter_idx`. Mirrors World.ts's
 /// `resolveRangedHit` for the subset ported here (see the section header
@@ -559,7 +583,10 @@ fn maybeAwardFirstBlood(
 /// half-height the caller's own sweep used to confirm the hit — passed
 /// through (rather than re-derived) so the headshot band stays self-
 /// consistent with whichever box actually decided the hit, matching
-/// `combat.isHeadshotAtHalfHeight`'s own doc comment.
+/// `combat.isHeadshotAtHalfHeight`'s own doc comment. Returns a
+/// `HitscanHitOutcome` (Track Z5 item 3) — non-default only when a mirror
+/// shield just absorbed the hit, telling the caller to fire ONE reflected
+/// retrace; every other exit returns the all-default `.{}`.
 fn applyHitscanHitOnPlayer(
     state: *world_state.WorldState,
     victim_idx: u32,
@@ -576,15 +603,35 @@ fn applyHitscanHitOnPlayer(
     eff_dt: f64,
     is_fighting: bool,
     leech_fraction: f64,
-) void {
+) HitscanHitOutcome {
     _ = hit_x; // kept for signature symmetry with the caller's hit point; only hit_y feeds the headshot band (a pure Y-band check, matching TS's isHeadshot).
-    if (!state.players[victim_idx].flags.alive) return; // belt-and-braces — the caller only ever builds candidates from alive players.
+    if (!state.players[victim_idx].flags.alive) return .{}; // belt-and-braces — the caller only ever builds candidates from alive players.
 
     // Ninja dash i-frames (Track Z1c "ninja dash i-frames" item) — ahead of
     // everything else (headshot/vulnerability/ward/parry/shield/peel), same
     // "wasn't there" pre-emption as the real-projectile site below. No
     // event, no damage — the shot is simply consumed by returning here.
-    if (isNinjaEvading(state, victim_idx)) return;
+    if (isNinjaEvading(state, victim_idx)) return .{};
+
+    // Ghost Guard (Ninja, Track Z5 item 3's "shooter-side amp chain" sub-
+    // item, which also names this victim-side evasion): banked
+    // evasion charge, mirrors the real-projectile site's own block exactly
+    // (character_id gate + charge window + move-speed threshold), checked
+    // here ahead of headshot/damage composition — matches this function's
+    // own existing "early-return checks first" shape (ninja dash i-frames
+    // immediately above), not a behavior change from the real-projectile
+    // site's relative ordering (an evaded hit deals zero damage regardless
+    // of when in the chain it's detected — nothing before this point has
+    // written any state yet). Full evasion: zero damage, no event, the
+    // pellet is simply consumed by returning here.
+    if (state.players[victim_idx].character_id == .sprinter and
+        state.players[victim_idx].ghost_guard_charge_until_tick > state.header.tick and
+        @sqrt(state.players[victim_idx].vx * state.players[victim_idx].vx +
+            state.players[victim_idx].vy * state.players[victim_idx].vy) > combat.NINJA_GHOST_GUARD_MOVE_SPEED_THRESHOLD)
+    {
+        state.players[victim_idx].ghost_guard_charge_until_tick = 0;
+        return .{};
+    }
 
     // Headshot (mirrors projectile.ts's applyHitOn — the multiplier applies
     // to the RAW base damage BEFORE chaos scaling, same ordering as the
@@ -592,6 +639,52 @@ fn applyHitscanHitOnPlayer(
     const headshot = combat.isHeadshotAtHalfHeight(hit_y, state.players[victim_idx].y, half_h);
     const headshot_dmg: f64 = if (headshot) base_damage * combat.HEADSHOT_DAMAGE_MULTIPLIER else base_damage;
     var final_dmg = headshot_dmg * chaos_profile.damage_multiplier;
+
+    // Shooter-side amp chain (Track Z5 item 3's "shooter-side amp chain"
+    // sub-item) — same composition shape
+    // as the real-projectile site's own block (section 4 above), just
+    // without that site's owner_id_bytes lookup: `shooter_idx` already
+    // arrives here as a resolved player INDEX (the caller's own candidate
+    // sweep never deals in ids), so this reads straight off it.
+    if (shooter_idx >= 0) {
+        const sp = &state.players[@as(usize, @intCast(shooter_idx))];
+        if (sp.flags.has_damage_amp and sp.damage_amp_until_tick > state.header.tick) {
+            final_dmg *= 2.0;
+        }
+        if (sp.flags.has_overcharge and sp.overcharge_until_tick > state.header.tick) {
+            final_dmg *= 1.5;
+        }
+        if (sp.flags.has_boss_mode and sp.boss_mode_until_tick > state.header.tick) {
+            final_dmg *= 2.0;
+        }
+        // Facet Break (Wizard) / Focus Hex (Priest) — mark lives on the
+        // SHOOTER; a landed hit against the exact marked victim is
+        // amplified. Same "until_tick check first" short-circuit shape as
+        // the real-projectile site (guards the zero-length-id vacuous
+        // match at tick 0).
+        if (sp.facet_mark_until_tick > state.header.tick and
+            sp.facet_target_id_len == state.players[victim_idx].id_len and
+            std.mem.eql(u8, sp.facet_target_id_bytes[0..sp.facet_target_id_len], state.players[victim_idx].id_bytes[0..state.players[victim_idx].id_len]))
+        {
+            final_dmg *= GEO_FACET_BREAK_AMP_MULTIPLIER;
+        }
+        if (sp.focus_hex_mark_until_tick > state.header.tick and
+            sp.focus_hex_target_id_len == state.players[victim_idx].id_len and
+            std.mem.eql(u8, sp.focus_hex_target_id_bytes[0..sp.focus_hex_target_id_len], state.players[victim_idx].id_bytes[0..state.players[victim_idx].id_len]))
+        {
+            final_dmg *= SYZ_FOCUS_HEX_AMP_MULTIPLIER;
+        }
+        // Rally Light — attacker-side amp, ordered BEFORE Kindled Resolve,
+        // matching the real-projectile site's own World.ts-mirrored order.
+        if (hasRallyLightSource(state, @as(u32, @intCast(shooter_idx)), state.header.tick)) {
+            final_dmg *= KIN_RALLY_LIGHT_DAMAGE_MULTIPLIER;
+        }
+        // Kindled Resolve (Paladin) — attacker-side amp, same shooter-buff
+        // composition shape as damage_amp/overcharge/boss_mode above.
+        if (sp.kindled_resolve_until_tick > state.header.tick) {
+            final_dmg *= KIN_KINDLED_RESOLVE_DAMAGE_MULTIPLIER;
+        }
+    }
 
     // Victim buff: vulnerability multiplies incoming damage.
     if (state.players[victim_idx].flags.has_vulnerability and
@@ -639,11 +732,14 @@ fn applyHitscanHitOnPlayer(
             state.players[victim_idx].x,
             state.players[victim_idx].y,
         );
-        // No bounce-back: a hitscan shot has no real entity to reverse —
-        // TS's own parry/mirror-shield reflect for a hitscan pellet is a
-        // SEPARATE immediate re-trace back at the attacker (unported, see
-        // this section's scope note); v1 just consumes the shot here.
-        return;
+        // No bounce-back: TS's own parry deflect for a hitscan pellet is
+        // ALSO just a consume (World.ts's `resolveRangedHit` returns
+        // `{ suppressed: true }` for parry with no `reflectedVictimId` set
+        // — only the MIRROR-SHIELD branch below sets that, see
+        // `HitscanHitOutcome`'s own doc comment). v1 just consumes the
+        // shot here, matching TS exactly (not a cut — parry never bounces
+        // on either engine).
+        return .{};
     }
 
     // Self-Lattice (Priest) — Syzygist Ward's flat absorb pool. Checked
@@ -728,10 +824,20 @@ fn applyHitscanHitOnPlayer(
                 state.players[victim_idx].y,
             );
         }
-        // Mirror shield v1: full absorb, no reflect (see section doc
-        // comment) — every shield block ends the hit here regardless of
-        // the mirror_shield flag.
-        return;
+        // Mirror shield (Track Z5 item 3's "mirror-shield retrace" sub-
+        // item, CLOSED): a hitscan shot has no real traveling entity to
+        // reverse in place (unlike the real-projectile site's `proj_ptr.vx
+        // = -proj_ptr.vx * 1.15`), so signal the caller to fire ONE
+        // reflected retrace instead — exactly TS's own fix (World.ts:
+        // 4950-4995: "a hitscan shot has no entity to reverse, so
+        // re-resolve ONE more trace from the victim back along the same
+        // line toward where it came from — single bounce only, no further
+        // reflection"). Every OTHER shield block (no mirror_shield card)
+        // still ends the hit here with a plain full absorb.
+        if (vcfg.valid != 0 and vcfg.mirror_shield != 0) {
+            return .{ .mirror_bounce = true, .bouncer_idx = victim_idx };
+        }
+        return .{};
     }
 
     // Team peel (Track Z1c "team peel" item) — same site/gate as the real-
@@ -840,6 +946,7 @@ fn applyHitscanHitOnPlayer(
             healer.health = @min(@max(cap, healer.health), healer.health + final_dmg * leech_fraction);
         }
     }
+    return .{}; // normal (non-mirror-shield) hit — no retrace requested.
 }
 
 /// Ray-trace ONE hitscan pellet from `(origin_x, origin_y)` along
@@ -867,6 +974,9 @@ fn resolveHitscanFire(
     eff_dt: f64,
     is_fighting: bool,
     leech_fraction: f64,
+    impact_kind: world_state.ProjectileImpact,
+    impact_radius_px: f64,
+    slow_multiplier: f64,
 ) void {
     const vxr = trig.lutCos(aim_angle) * range_px;
     const vyr = trig.lutSin(aim_angle) * range_px;
@@ -917,6 +1027,59 @@ fn resolveHitscanFire(
         }
     }
 
+    // Impact-AOE routing (Track Z5 item 3's "impact-AOE routing" sub-item)
+    // — mirrors World.ts's own `pellet.impact === "explosive" || "slow-
+    // field"` branch (World.ts:3044-3068) EXACTLY: for these two impact
+    // kinds the ray's per-hit direct-damage resolution is REPLACED
+    // entirely by a single radial cast at the ray's terminal point (queued
+    // onto the SAME `pending_instant_aoe` batch instant-AOE ability casts
+    // already use, so headshot/leech never apply here — matches TS routing
+    // through `resolveInstantAoeCasts`, never `resolveRangedHit`, for
+    // these two impacts). A single nearest-candidate sweep (no pierce
+    // loop) is exactly equivalent to TS's own "read only the FINAL trace"
+    // shortcut — neither impact kind combines with `pierceCount` in the
+    // shipped card pool (Explosive Facet/Cataclysmic Prism/Slow Field/
+    // Frost Prism all resolve at pierceCount 0, the same fact World.ts's
+    // own comment there relies on). PARTIAL vs TS: a direct hit on a decoy
+    // or destructible additionally takes its own point damage before the
+    // splash there (World.ts:3047-3062) — this function's candidate pool
+    // is still players-only (item 3's OWN "decoy/destructible hitscan
+    // candidates" sub-item, unported, see the section header above), so
+    // that half stays a recorded gap, not silently claimed here.
+    if (impact_kind == .explosive or impact_kind == .slow_field) {
+        var player_hit: collision_types.SweepHit = undefined;
+        const player_found = if (cand_n > 0)
+            collision_types.sweepAABB(mover, vxr, vyr, 1.0, cand_box[0..cand_n], &player_hit)
+        else
+            false;
+        const best_t: f64 = if (player_found and player_hit.t < wall_t) player_hit.t else wall_t;
+        const hx = origin_x + vxr * best_t;
+        const hy = origin_y + vyr * best_t;
+        if (state.pending_instant_aoe_count < world_state.MAX_PENDING_INSTANT_AOE) {
+            state.pending_instant_aoe[state.pending_instant_aoe_count] = .{
+                .x = hx,
+                .y = hy,
+                .radius = impact_radius_px,
+                // Explosive: real damage (matches TS's `pellet.damage`,
+                // this function's own `base_damage` param). Slow-field:
+                // status-only — `resolveInstantAoeCasts`'s own "nominal 1
+                // damage" branch handles the shield-mitigation check
+                // without writing real HP, matching TS's `damage: 0`.
+                .damage = if (impact_kind == .explosive) base_damage else 0,
+                .caster_idx = shooter_idx,
+                .has_slow = if (impact_kind == .slow_field) 1 else 0,
+                .slow_multiplier = slow_multiplier,
+                // SLOW_FIELD_DURATION_MS (client/src/sim/projectile.ts:67)
+                // — same literal the real-projectile slow-field impact
+                // site above already hardcodes (no named Zig constant
+                // exists yet for it).
+                .slow_duration_ms = 1500.0,
+            };
+            state.pending_instant_aoe_count += 1;
+        }
+        return;
+    }
+
     const max_hits = pierce_budget + 1;
     var hits: u32 = 0;
     while (hits < max_hits) : (hits += 1) {
@@ -940,7 +1103,7 @@ fn resolveHitscanFire(
         const hx = origin_x + vxr * best_t;
         const hy = origin_y + vyr * best_t;
         const half_h = cand_box[hit_slot].h / 2.0;
-        applyHitscanHitOnPlayer(
+        const outcome = applyHitscanHitOnPlayer(
             state,
             @intCast(hit_idx),
             @intCast(shooter_idx),
@@ -958,12 +1121,133 @@ fn resolveHitscanFire(
             leech_fraction,
         );
 
+        // Mirror-shield retrace (Track Z5 item 3's "mirror-shield retrace"
+        // sub-item) — mirrors World.ts's own post-`resolveRangedHit` bounce
+        // exactly (World.ts:4950-4995): ONE fresh ray back the way this
+        // pellet came, fired FROM the blocker's own position, now owned by
+        // the blocker. `backAngle = atan2(pending.source.vy, pending.
+        // source.vx) + PI` in TS reduces to `aim_angle + PI` here (TS's
+        // pellet vx/vy are `cos(aimAngle)`/`sin(aimAngle)`, the exact same
+        // unit vector `vxr`/`vyr` above are scaled from) — no separate
+        // atan2 round-trip needed. Single bounce only, no further
+        // reflection (TS: "never pierces — [0] is always the only trace" —
+        // this discards the retrace's OWN `HitscanHitOutcome`, so a second
+        // mirror shield on the bounced-back target never chains again),
+        // and it never touches this ray's own `cand_*`/pierce bookkeeping —
+        // a fully separate, self-contained side event.
+        if (outcome.mirror_bounce) {
+            resolveHitscanMirrorBounce(
+                state,
+                outcome.bouncer_idx,
+                aim_angle,
+                range_px,
+                radius,
+                base_damage,
+                element,
+                chaos_profile,
+                eff_dt,
+                is_fighting,
+                leech_fraction,
+            );
+        }
+
         // Splice the pierced candidate out of the live pool so the next
         // pass's sweep finds whatever's next behind it.
         cand_n -= 1;
         cand_idx[hit_slot] = cand_idx[cand_n];
         cand_box[hit_slot] = cand_box[cand_n];
     }
+}
+
+/// The single reflected retrace a mirror-shield block requests (see
+/// `HitscanHitOutcome`'s own doc comment). Fired FROM `bouncer_idx`'s own
+/// position (TS: `bouncer.x, bouncer.y`, not the original hit point) along
+/// `aim_angle + PI`, excluding only the bouncer itself — the original
+/// shooter is a valid, often-intended target. One candidate only (no
+/// pierce, matching TS's `[0]`); its own `HitscanHitOutcome` is discarded
+/// (single bounce, never chains).
+fn resolveHitscanMirrorBounce(
+    state: *world_state.WorldState,
+    bouncer_idx: u32,
+    aim_angle: f64,
+    range_px: f64,
+    radius: f64,
+    base_damage: f64,
+    element: world_state.ElementType,
+    chaos_profile: chaos.ChaosProfile,
+    eff_dt: f64,
+    is_fighting: bool,
+    leech_fraction: f64,
+) void {
+    const back_angle = aim_angle + std.math.pi;
+    const bvxr = trig.lutCos(back_angle) * range_px;
+    const bvyr = trig.lutSin(back_angle) * range_px;
+    const bouncer_x = state.players[bouncer_idx].x;
+    const bouncer_y = state.players[bouncer_idx].y;
+    const bmover: collision_types.AABB = .{
+        .x = bouncer_x - radius,
+        .y = bouncer_y - radius,
+        .w = radius * 2.0,
+        .h = radius * 2.0,
+    };
+    var bwall_hit: collision_types.SweepHit = undefined;
+    const bwall_found = collision_types.sweepAABBCached(
+        bmover,
+        bvxr,
+        bvyr,
+        1.0,
+        state.statics[0..state.static_count],
+        state.one_way[0..state.static_count],
+        &bwall_hit,
+    );
+    const bwall_t: f64 = if (bwall_found) bwall_hit.t else 1.0;
+
+    var bcand_idx: [world_state.MAX_PLAYERS]u32 = undefined;
+    var bcand_box: [world_state.MAX_PLAYERS]collision_types.AABB = undefined;
+    var bcand_n: u32 = 0;
+    var bci: u32 = 0;
+    while (bci < state.player_count) : (bci += 1) {
+        if (bci == bouncer_idx) continue;
+        if (!state.players[bci].flags.alive) continue;
+        bcand_idx[bcand_n] = bci;
+        bcand_box[bcand_n] = combat.playerHitboxAabb(
+            state.players[bci].x,
+            state.players[bci].y,
+            state.players[bci].flags.crouching,
+            state.players[bci].character_id,
+        );
+        bcand_n += 1;
+    }
+
+    var bhit: collision_types.SweepHit = undefined;
+    const bfound = if (bcand_n > 0)
+        collision_types.sweepAABB(bmover, bvxr, bvyr, 1.0, bcand_box[0..bcand_n], &bhit)
+    else
+        false;
+    if (!bfound or bhit.t >= bwall_t) return; // wall, or nothing behind the blocker.
+
+    const bslot: u32 = @intCast(bhit.index);
+    const bvictim_idx = bcand_idx[bslot];
+    const bhx = bouncer_x + bvxr * bhit.t;
+    const bhy = bouncer_y + bvyr * bhit.t;
+    const bhalf_h = bcand_box[bslot].h / 2.0;
+    _ = applyHitscanHitOnPlayer(
+        state,
+        bvictim_idx,
+        @intCast(bouncer_idx),
+        bhx,
+        bhy,
+        bhalf_h,
+        base_damage,
+        element,
+        chaos_profile,
+        bouncer_x,
+        bouncer_y,
+        back_angle,
+        eff_dt,
+        is_fighting,
+        leech_fraction,
+    );
 }
 
 /// Time-out / force-resolve winner (parity with round.ts
@@ -1663,10 +1947,11 @@ const KIN_JUDGMENT_CONE_RADIANS: f64 = (60.0 * std.math.pi) / 180.0;
 const KIN_SEAL_DAMAGE_MULTIPLIER: f64 = 1.45;
 const KIN_SEAL_STAGGER_MS: f64 = 900.0;
 const KIN_SEAL_STAGGER_MULTIPLIER: f64 = 0.25;
-// Paladin — Kindled Resolve (constants.ts:417/423, Phase 4a follow-up —
-// consumption sites shipped this pass, see `.kindled_resolve`'s own switch
-// arm comment below for why the CAST itself stays deferred). Self-only
-// outgoing-damage amp + incoming-stagger-resist window.
+// Paladin — Kindled Resolve (constants.ts:416-423). Self-only outgoing-
+// damage amp + incoming-stagger-resist window. Consumption sites shipped
+// Phase 4a follow-up; the CAST itself (spend Kindling, open the window)
+// shipped Track Z5 item 1 — see `.kindled_resolve`'s own switch arm below.
+const KIN_KINDLED_RESOLVE_KINDLING_COST: f64 = 40.0;
 const KIN_KINDLED_RESOLVE_DAMAGE_MULTIPLIER: f64 = 1.1;
 /// Fraction of an incoming stagger's SEVERITY removed while Kindled Resolve
 /// is live on the VICTIM: `resisted = mul + (1 - mul) * this` — mirrors
@@ -3044,13 +3329,13 @@ fn stepAbilityDispatch(
                 attacker.rally_light_until_tick = state.header.tick + 1 + dur_ticks;
                 activated = true;
             },
-            // Kindled Resolve (Paladin) — CONSUMPTION side shipped this
-            // pass (Phase 4a follow-up): re-verified the original "SIX call
-            // sites" citation directly against live World.ts rather than
-            // trusting the old line numbers (doctrine #6, the file moves).
-            // Found 7 raw call sites, one genuine class-blind pair
-            // (:5163 Ninja Slash + :5478 Kindled Edge both call the SAME
-            // helper, so "melee damage" is one consumption SHAPE, not two):
+            // Kindled Resolve (Paladin) — CONSUMPTION side shipped Phase 4a
+            // follow-up: re-verified the original "SIX call sites" citation
+            // directly against live World.ts rather than trusting the old
+            // line numbers (doctrine #6, the file moves). Found 7 raw call
+            // sites, one genuine class-blind pair (:5163 Ninja Slash +
+            // :5478 Kindled Edge both call the SAME helper, so "melee
+            // damage" is one consumption SHAPE, not two):
             // projectile hit (:1815) — wired, section 4 above, alongside
             // Facet Break/Focus Hex.
             // melee damage, both classes (:5163/:5478) — wired,
@@ -3069,26 +3354,49 @@ fn stepAbilityDispatch(
             // verified gap among the 7, deferred alone rather than blocking
             // the other 6 on it, per doctrine #4's "partial-but-correct
             // beats all-or-nothing."
-            // CAST side deliberately STILL a no-op — UPDATED FINDING (Track
-            // Z1c "team peel" + "Kindled Ward partial mitigation" items):
-            // when this comment was first written, ZERO writes to
-            // `.kindling` existed anywhere in sim/src/, so it was
-            // permanently 0 and gating the cast on `nextEntity.kindling >=
-            // KIN_KINDLED_RESOLVE_KINDLING_COST` (40, World.ts:3543-3563)
-            // would have been a dead press forever. That's no longer true:
-            // `applyTeamPeel` (a warder's own block) AND
-            // `combat.computeKindledWardMitigation` (a Paladin's own
-            // self-Ward block, this item) both now grant real Kindling in
-            // Zig, so the resource CAN climb past 40 in a live match. Wiring
-            // the cast itself (spending the resource, opening
-            // `kindled_resolve_until_tick`) is still out of THIS item's
-            // scope — a distinct ability-cast port, not a mitigation-math
-            // port — but is no longer blocked on missing substrate; a
-            // future pass can wire it directly. `kindled_resolve_
-            // until_tick` (the field this earlier pass added) is proven
-            // correct by tests that set it directly, same shape that pass
-            // needs.
-            .kindled_resolve => {}, // consumption shipped, cast genuinely blocked — see comment above
+            // CAST side — CLOSED (Track Z5 item 1, 2026-07-26). Prior finding
+            // stands (ZERO writes to `.kindling` existed anywhere in
+            // sim/src/ when this comment was first written, so gating the
+            // cast on `kindling >= KIN_KINDLED_RESOLVE_KINDLING_COST` would
+            // have been a dead press forever); that's been false since
+            // `applyTeamPeel`/`combat.computeKindledWardMitigation` started
+            // granting real Kindling (Track Z1c), so the resource now climbs
+            // past 40 in a live match. Wires the cast itself: matches
+            // World.ts's "kindled-resolve" case exactly (World.ts:3944-3963)
+            // — insufficient Kindling is a dead press (legibility law, same
+            // "activated stays false" contract as Judgment Line's no-target
+            // case above), no cooldown burn, no spend. On affordability:
+            // spends KIN_KINDLED_RESOLVE_KINDLING_COST and opens
+            // `kindled_resolve_until_tick`.
+            //
+            // TICK BASE — verified directly against a real TS/Zig wasm
+            // lockstep (kindledResolveCastParity.test.ts), NOT copied blind
+            // from rally_light/aegis_share's own "+1" (both untested against
+            // a real lockstep cast — only smoke.zig's native hardcoded-
+            // number checks exist for them, which can't catch a cross-engine
+            // tick-base drift). `stepAbilityDispatch` runs AFTER
+            // `state.header.tick += 1` already ran for this step (line
+            // ~4449 above), so `state.header.tick` here is ALREADY the
+            // POST-increment tick — numerically equal to TS's own
+            // `state.tick + 1` (TS's `state.tick` is read PRE-increment
+            // throughout `stepWithRuntime`, only becoming `tick+1` in the
+            // returned next state). TS's "kindled-resolve" case computes
+            // `state.tick + 1 + durTicks`; the Zig-side numeric equivalent
+            // is therefore `state.header.tick + dur_ticks` — NO extra `+1`
+            // — exactly `.sunlance`'s own already-shipped, already-tested
+            // pattern two arms up in this same switch (`sunlance_until_tick
+            // = state.header.tick + dur_ticks`), not rally_light/
+            // aegis_share's. Adding rally_light's uncritically-copied `+1`
+            // here landed the window ONE TICK LATE vs TS on every cast
+            // (confirmed empirically before this line was corrected).
+            .kindled_resolve => {
+                if (attacker.kindling >= KIN_KINDLED_RESOLVE_KINDLING_COST) {
+                    const dur_ticks: u32 = @intFromFloat(@ceil((active_spec.duration_ms orelse 0) / @max(1.0, eff_dt)));
+                    attacker.kindling -= KIN_KINDLED_RESOLVE_KINDLING_COST;
+                    attacker.kindled_resolve_until_tick = state.header.tick + dur_ticks;
+                    activated = true;
+                }
+            },
             .bulwark_step => {
                 // Phase 4c — same search SHAPE as Plant Charge above, but
                 // the direction comes from currently-HELD movement input
@@ -4005,16 +4313,16 @@ fn stepMeleeSwing(
                 attacker.seal_until_tick = 0;
             }
         }
-        // Kindled Resolve (Paladin, Phase 4a follow-up — shipped this
-        // pass). Attacker-side damage amp, applied GENERICALLY regardless
-        // of class: verified directly against World.ts, `slashFinalDamage
-        // *= kindledResolveDamageMultiplier(...)` (Ninja Slash, :5163) AND
+        // Kindled Resolve (Paladin, Phase 4a follow-up). Attacker-side
+        // damage amp, applied GENERICALLY regardless of class: verified
+        // directly against World.ts, `slashFinalDamage *=
+        // kindledResolveDamageMultiplier(...)` (Ninja Slash, :5163) AND
         // `edgeDamage *= kindledResolveDamageMultiplier(...)` (Kindled
         // Edge, :5478) both call the SAME class-blind helper — a Ninja who
-        // somehow held a live Kindled Resolve window would be amplified
-        // too (today that can never happen: the card is Paladin-exclusive
-        // and the cast itself stays a no-op, see `.kindled_resolve`'s own
-        // switch-arm comment below — but the READ site itself must not
+        // somehow held a live Kindled Resolve window would be amplified too
+        // (today that can never happen: the card is Paladin-exclusive, and
+        // even the now-real cast, Track Z5 item 1, is gated behind the
+        // catalog's own class-lock — but the READ site itself must not
         // silently assume Paladin-only, matching what TS's own composition
         // site actually does).
         if (attacker.kindled_resolve_until_tick > state.header.tick) {
@@ -5027,6 +5335,9 @@ pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
                             eff_dt,
                             is_fighting,
                             proj_leech,
+                            proj_impact_kind,
+                            proj_impact_radius,
+                            proj_slow,
                         );
                         emitEvent(
                             state,

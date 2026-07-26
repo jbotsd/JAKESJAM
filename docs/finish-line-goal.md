@@ -161,7 +161,22 @@ precedent as convergence-goal.md.
 - Z3 sweep+bench: **DONE** (2026-07-26 — dry after round 3, 7 rounds of
   margin; bench baseline refreshed and stepPlayer reversal settled)
 - Z4 flip: **AWAITING JAKE** (unblocked — Z3 is done, ready to ask)
-- Z5 residuals: **NOT STARTED** (3 items)
+- Z5 residuals: **DONE, item 1 + item 2 fully closed; item 3 (hitscan v1
+  scope cuts) closed 3 of 5 sub-items** (2026-07-26): kindled_resolve cast
+  wired (KIN_KINDLED_RESOLVE_KINDLING_COST added, parity test in
+  sim/test/smoke.zig — search "Kindled Resolve: cast"); all 9
+  classModifiers-codegen-gap cards now cross (8 via a generalized
+  `patchClassModifierGapFields` stopgap in fireConfigShared.ts, Stolen
+  Fangs' leech already had one — parity in
+  classModifierGapFieldsParity.test.ts); hitscan's shooter-side amp chain +
+  Ghost Guard evasion and mirror-shield retrace are now ported (parity in
+  hitscanZ5ScopeCutsParity.test.ts) and impact-AOE routing is ported for
+  the player-hit case. Still open: decoy/destructible hitscan candidates
+  (a real geometry change, bigger than a small port) and split-spawn (no
+  Zig substrate exists for ANY delivery path yet, real-projectile
+  included — not a hitscan-specific gap, nothing to mirror). See
+  world.zig's "Hitscan resolution" section header for the authoritative
+  per-sub-item STATUS list.
 - F1 STAB verb: **NOT STARTED** (unblocked)
 - F2 audio wiring: **BLOCKED ON JAKE** (picks)
 - F3 live-eyes verification: **NOT STARTED**
