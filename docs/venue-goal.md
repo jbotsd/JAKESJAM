@@ -397,3 +397,255 @@ deployed + live-probed same day. Ops note: server restarts must WAIT
 for the graceful-shutdown grace ("SIGTERM — beginning graceful
 shutdown" → "shutdown grace expired") before rebinding :8088 — racing
 it EADDRINUSEs the replacement and leaves the old code serving.
+
+**Pillar 2 — MOSTLY COMPLETE, 2 items OPEN (2026-07-16, executed as
+`docs/venue-sprint2-goal.md` S2.A/S2.B/S2.C — commits 6ad2cd0, b2ae6d1,
+2f06689, 0b6e5cb; lobby tableau polish 2026-07-18, commit 413a371)**
+
+Backfilled 2026-07-26 (Track D item 3) — every item below re-verified
+against current code before marking, not transcribed on faith.
+
+1. PASSED — the feed: `venue-status` protocol frame ({arenaPhase,
+   roundIndex, scores, humans/bots, nextBellMs, queued}) pushed at 1Hz
+   and on `MatchHost.onRoundPhaseChange` edges, threaded through every
+   `WorldHost` rebuild/recycle so the tap survives cycle ends; rendered
+   diegetically in `HangoutScene.ts` (`` `THE ARENA — ...NEXT BELL
+   mm:ss` `` at HangoutScene.ts:1112). `venueHost.test.ts` + live probe
+   (server/probe-s2c.ts) confirm frames flowing on a real /ws/lobby
+   socket. (S2.B, commit b2ae6d1.)
+2. PASSED — practice dummies: `venueLobbyMap()` injects 3 destructible
+   dummies (60hp) as a resolved MapDefinition; the targets-only
+   carve-out in World.ts lets projectiles damage dummies while ghosting
+   through players — `hangoutMode.test.ts` (8 pass): fire live, target
+   immune through a bystander in the line of fire, dummy breaks. 413a371
+   additionally fixed Ninja/Paladin melee having ZERO destructible-hit
+   path in hangout mode (only player-damage sites existed). (S2.C,
+   commit 0b6e5cb + 413a371.)
+3. PASSED — the queue totem: the bell totem (`totem-bell`, kind
+   "launch") toggles the server-side `readyQueue` Set
+   (server/src/venueHost.ts); `HangoutScene.ts` shows the live "NEXT
+   BELL mm:ss" countdown plus a "· QUEUED" glow. Re-verified 2026-07-26:
+   grep of venueHost.ts shows `readyQueue` is read only by the
+   bell-drain and status-broadcast paths — never by movement/input
+   processing — so queueing structurally cannot freeze the player.
+   (S2.B.3; the totem itself split into loadout+bell stations 2026-07-17,
+   see Pillar 3.2.)
+4. PASSED — callsign at the door: the server refuses nameless queue
+   entry (toggleQueue checks the socket's name); nameless spawns read
+   "RECRUIT" (machine-name spawns unreachable); the client prompts
+   before connecting via a DOM overlay so the name always rides
+   /ws/lobby. `venueHost.test.ts` (11 pass) + live probe: nameless
+   roster name RECRUIT confirmed on a real socket. (S2.C, commit
+   0b6e5cb.)
+5. OPEN (half-verified) — time-to-play: `tests/e2e/venueRoundTrip.spec.ts`
+   measures and logs load→venue-lobby-scene at 1770ms (comfortably under
+   the <3s input bar), but re-reading the spec 2026-07-26 finds no
+   assertion anywhere for "load→dummy-hit-possible <8s/10s" — no
+   dummy/hit timing metric is captured at all. The input-acceptance half
+   is evidenced; the dummy-hit half is not — left OPEN rather than
+   claimed PASSED on a metric that was never measured.
+6. OPEN — presence floor: no lobby-side bot/persona system exists (grep
+   for `lobbyBots`/`hangoutBots`/venue-side bot brains across server/src
+   returns nothing — `WorldBots` only ever drives the arena roster).
+   With zero humans connected, the venue lobby is a genuinely empty
+   room, contradicting "the lobby is never an empty room." Real
+   functionality gap, not a doc gap.
+7. PASSED — the venue's music: `venue-lobby.mp3` plays via the existing
+   fadeMusic/crossfade machinery, gated through `shell/musicMute.ts` (a
+   compile-time-exhaustive `Record` over contexts, 4 tests) and loaded
+   only via `getAudioUrl` (grep: no hardcoded path, no new audio
+   category). (S2.C, commit 0b6e5cb.)
+
+Suites at last pillar-2 touch (S2.C close): server 183 / client 925,
+typechecks clean, deployed. Live probe (server/probe-s2c.ts) all green.
+
+**Pillar 3 — MOSTLY COMPLETE, 1 item OPEN (2026-07-16/17, executed as
+`docs/venue-sprint2-goal.md` S2.D/S2.E/S2.F — commits c47dccb, f1482a6,
+73fc418; amended 2026-07-17 per Jake's loadout/bell-station overrule of
+contested call #3)**
+
+Backfilled 2026-07-26 (Track D item 3) — every item below re-verified
+against current code before marking.
+
+1. PASSED — no mid-fight spawns, structurally: `WorldHost.attach()`
+   never calls `addPlayer` directly — a new player is parked in
+   `pendingEntrants` (spectator-pending: hello + snapshots, no entity)
+   and the ONLY insertion path is `drainPendingEntrants()`, fired on the
+   real `onRoundPhaseChange` edge into countdown. A source-scan test
+   pins exactly one `addPlayer` call site, inside the drain.
+   `worldBellGate.test.ts` (8 pass): spectator-pending across all three
+   non-countdown phases, immediate insertion at countdown attach,
+   reconnect-grace bypass, pending-disconnect dequeue. Live probe
+   (server/probe-s2d.ts): 2150 snapshots as a spectator through a full
+   fighting phase, entity absent until the phase flipped, inserted at
+   "countdown" after 106s. (S2.D, commit c47dccb.)
+2. PASSED (amended) — starter draft, per contested call #3's overrule
+   (Jake, 2026-07-17: "seperate the card selector test room thing with
+   the bell queue"): the one-pick-from-three offer is now a walk-up
+   LOADOUT STATION (`totem-loadout`, kind "ready", 0.25W, flanking the
+   practice dummies) separate from the bell (`totem-bell`, kind
+   "launch", 0.75W) — `resolveVenueTotems` places both.
+   `VenueHost.loadouts` holds per-player {offers, pick}, rolled once at
+   first station touch, re-pushed idempotently, consumed once at
+   admission; NO auto-pick in the lobby — an unpicked rider is admitted
+   plain and covered by the arena's ordinary next drafting phase
+   (S2.E.2's late-joiner contract). Client: `CardDraftOverlay` opens on
+   walking into the station / closes on walking out (proximity +
+   hysteresis; modal-on-spawn structurally prevented). 413a371 also
+   built the functional grand-hall tableau (crystal table, 3 dummies, 2
+   stationary NPCs) the station physically lives in, and fixed the
+   melee-vs-dummy hit-path bug (Pillar 2.2). Tests: `venueHost.test.ts`
+   (station rolls once + re-pushes idempotently, pick lands, re-pick
+   overwrites, bell admits no-pick queuers with nothing), `totem.test.ts`
+   (station placement), `venueRoundTrip.spec.ts` rewritten for the
+   two-walk flow. Suites at amendment: server 223 / client 1092. (S2.E
+   commit f1482a6; amendment + 413a371.)
+3. PASSED — the joiner is never confused: the lobby feed
+   (`HangoutScene.ts`) renders the live "NEXT BELL mm:ss" + "· QUEUED"
+   state continuously while queued, so no unexplained frozen state is
+   reachable lobby-side; on the arena side a pending (direct-join)
+   entrant gets hello + live snapshots, not a frozen screen — proven by
+   `worldBellGate.test.ts`'s spectator-pending coverage (item 1). Grep
+   confirms `readyQueue`/`loadouts` membership is read only by the
+   status-broadcast and bell-drain paths — never gating movement or
+   input — so a queued player keeps walking/firing by construction.
+   Noted honestly: no single test carries this acceptance line's exact
+   wording ("scene state across enqueue-during-draft") — the PASSED
+   verdict rests on the combination above, not one dedicated test.
+4. OPEN — no orphan ceremonies: not directly tested. The two-host
+   separation (lobby clients on /ws/lobby, arena clients on /ws/world —
+   Pillar 1) makes it structurally implausible for a lobby-only client
+   to receive a MATCH WINNER/`MatchResultsOverlay` frame for a fight it
+   wasn't in (no code path pushes arena WorldState to a lobby socket),
+   but there is no dedicated regression test pinning this claim — marked
+   OPEN rather than PASSED on architecture alone.
+5. PASSED — elastic bots: bot count adjusts toward `max(0,
+   WORLD_BOT_FLOOR − humansFighting)` (default 4, cap 6, env override)
+   ONLY at the countdown-entry edge (`adjustElasticBots`) and on fresh
+   builds (a recycle IS a bell edge); removal via
+   `MatchHost.removeRosterPlayer` (mirrors grace-eviction, replay
+   `noteLeave` included); displaced bot brains no-op when their entity
+   is absent. `worldBellGate.test.ts` (14 pass) sweeps a 0→4-human
+   bot-delta series across several bells, asserting deltas land
+   exclusively on edges, cap 6 respected, floor-0 legacy mode intact.
+   Live: `/venue/summary` showed bots:4 with 0 humans at boot (a fixed 2
+   before). (S2.E, commit f1482a6.)
+
+Suites at S2.F close: server 201 / client 925; the amendment brought it
+to server 223 / client 1092. Typechecks clean, deployed, round-trip e2e
+(`venueRoundTrip.spec.ts`) green against the live :8088. Jake
+live-tested concurrently at S2.F close (server log shows his session
+queueing, drafting, and being admitted).
+
+**Pillar 4 — NOT STARTED (verified 2026-07-26, Track D item 3
+backfill; the doc claim "Pillars 2-6 are functionally live" does NOT
+hold for this pillar — a real functionality gap, not a doc gap)**
+
+No commits implementing this pillar's outcome exist. Every item below
+was checked directly against current source, not assumed:
+
+1. OPEN — run record: no `roundsSurvived` / `joinedAtRound` /
+   `bestStreak` / `cardsDrafted` fields exist anywhere in World.ts or
+   elsewhere (grep across client/src, server/src for all four names:
+   zero hits). What DOES exist is `client/src/shell/playerStats.ts` — a
+   separate, localStorage-backed, PROCESS-lifetime "player record"
+   (kills/deaths/bestStreak/matches/wins), shipped 2026-07-16 (commit
+   0cbbf44) as the splash-badge replacement. That is Pillar 0/6
+   badge-honesty work, not the sim-side per-run bookkeeping this item
+   specifies — no `joinedAtRound`, no per-cycle scoping, nothing on the
+   player entity.
+2. OPEN — run strip: the HUD (`HudCompositor.ts`) has no rounds/kills/
+   streak strip (grep for "streak"/"rounds" in that file: zero hits).
+3. OPEN — death without lies or blindness (run facts on the death
+   card): `DeathOverlay.ts` carries phase-honest countdown copy (Pillar
+   0.2's `deathWaitCountdown()`) but no run facts — grep confirms no
+   kills/streak/rounds content in the file.
+4. OPEN — shared draft: `draft-resolved` events exist and DO carry
+   `autoPicked` (pre-existing, per this doc's own note at the pillar's
+   acceptance text) — but they only drive a `BuildChangeToast` for the
+   LOCAL player (`OnlineMatchScene.ts:1654`, gated on
+   `event.playerId === this.localPlayerId`), plus a shared "card" sound
+   cue for everyone. There is no visible pick ticker/stage showing
+   OTHER fighters' picks, and no reverse-standings pick order —
+   `enterDrafting` (client/src/sim/round.ts) rolls every seat's offer in
+   parallel, keyed by `Object.keys(players).sort()` (alphabetical/
+   deterministic, not score order).
+5. OPEN — cycle scoreboard honesty ("joined R4"): no `joinedAtRound`
+   field exists (same grep as item 1); `MatchResultsOverlay` rows carry
+   only `score` / `cardIds` / `characterId` — no join-round provenance.
+
+**Pillar 5 — NOT STARTED (verified 2026-07-26, Track D item 3
+backfill; real functionality gap, not a doc gap)**
+
+1. OPEN — return, not modal: cycle end (round.winnerPlayerId reaching
+   target score) still shows `MatchResultsOverlay` as a MODAL on top of
+   `OnlineMatchScene` (`showMatchResults()`, OnlineMatchScene.ts:2962)
+   with Rematch/Back-to-Lobby buttons — "Rematch" just hides the overlay
+   and waits in place for the server's next round (world mode never
+   force-transitions the scene); only clicking "Back to Lobby" manually
+   dispatches `jakesjam:return-to-lobby`. There is no automatic
+   client-side scene handoff to VenueLobbyScene at cycle end, and no
+   podium/MVP/run-card rendering — grep for "podium"/"MVP" across
+   client/server turns up exactly one hit, a code COMMENT using
+   "podium" as a metaphor for the existing results screen, not an
+   actual podium UI.
+2. OPEN — map vote: no map-vote mechanism exists (grep for
+   "mapVote"/"map vote"/"nominee" across client/src, server/src: zero
+   hits).
+3. OPEN — the arena never dies (through ceremony + vote): not
+   applicable — there is no ceremony+vote phase for the arena to stay
+   alive through.
+4. OPEN — re-entry is two steps: the only re-entry path today is the
+   manual "Back to Lobby" button → `joinWorld()`, one explicit action,
+   not the two-step armed-totem re-queue this item describes; no
+   ceremony precedes it.
+5. OPEN — the board ("this week at the venue"): no such surface exists
+   (grep for "this week at the venue"/"venueBoard" and a scan of every
+   "ring buffer" hit in the repo: all belong to unrelated netcode/VFX
+   interpolation buffers, none to a leaderboard).
+
+**Pillar 6 — PARTIAL, mostly OPEN (verified 2026-07-26, Track D item 3
+backfill; venue vocabulary landed piecemeal 2026-07-16/17 but the
+pillar's structural acceptance tests do not pass)**
+
+1. OPEN — one source of naming: no `client/src/venueNames.ts` exists
+   (confirmed by `find`) and no `VENUE_NAME` / `VENUE_CTA` /
+   `LOBBY_NAME` / `BELL_COPY` constants exist anywhere (grep: zero
+   hits). The chosen COPY itself did land inline at multiple sites —
+   the splash CTA literally reads "▶ ENTER THE ARENA · FIGHT NIGHT
+   EVERY FRIDAY ◀" (main.ts:326) and the lobby feed reads "THE ARENA —
+   ..." (HangoutScene.ts:1112), matching contested call #5's default —
+   but it is hand-typed at each site, not sourced from one constant. And
+   "Hot Lobby" is still very much alive in current source: `grep -in
+   "hot lobby" client/src server/src` returns 26 hits (comments/
+   identifiers in main.ts, OnlineMatchScene.ts, palette.ts, maps.ts,
+   skyseam.ts, vessel-nexus.ts, tutorial-arena.ts, mapGen.ts, index.ts,
+   worldHost.ts, botArenaNav.ts, worldBots.ts, clipSharePage.ts) — the
+   acceptance bar ("ZERO hits outside historical docs/commit history")
+   is not met.
+2. OPEN — lobby-first landing: the default entry (bare load, no URL
+   params) still starts MainMenu (the splash). The venue lobby is
+   reached only via `?world=1`, `?venue=1`, a room/code link, or the
+   CrazyGames instant-multiplayer flag (grep of the `urlParams` branch
+   in main.ts, ~line 2225). The splash's own "Lobby" button is one of
+   five equal-weight buttons (Practice / Join room / Private room /
+   Lobby) — not an overlay over a lobby-first landing.
+3. OPEN — `?fight` fast path: no `?fight` handling exists anywhere in
+   main.ts (grep: zero hits) — no such deep link, and consequently no
+   `?world=1` alias-redirect TO it either (today's `?world=1`/`?venue=1`
+   aliasing lands on `joinWorld()` itself, not on a `?fight` link).
+4. PARTIAL — badge speaks venue: `client/src/shell/playerStats.ts`
+   (commit 0cbbf44, 2026-07-16) replaced the old polling world-status
+   badge with an honest, localStorage-backed kills/deaths/streak/
+   matches/wins strip — satisfies the "honest counts" half (ties to
+   Pillar 0.1) but was not audited here against every external surface
+   (CrazyGames listing copy, share pages) for venue vocabulary.
+5. PARTIAL — docs follow: `docs/ui-button-map.md` was updated (line 18:
+   "Lobby (was 'Hot Lobby', renamed 2026-07-16)"). `docs/ui-axioms.md`,
+   `docs/hosting-elyad-io.md`, and README show no stale "Hot Lobby" hits
+   (grep clean) but also carry no explicit rename note the way
+   ui-button-map.md does — not confirmed as a deliberate update.
+
+Items flagged OPEN across Pillars 4-6 above are a real functionality
+gap uncovered during this backfill, reported (not silently fixed) per
+the Track D item 3 brief — see the session's itemsSkippedOrBlocked.
