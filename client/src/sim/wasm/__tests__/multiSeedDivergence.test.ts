@@ -377,6 +377,57 @@
 // mitigation, plus item 1's hitscan resolution + headshot band and the
 // contagion self-jump guard, both merged earlier) — zero remaining.
 //
+// Z3 (2026-07-26) — sweep until dry: the first true COVERAGE pass over
+// this meter, distinct from every entry above (each of which measured ONE
+// port's before/after on the same fixed 5 seeds). No sim code changed for
+// this entry — the canonical SEEDS=[1,42,1337,90210,271828] table below
+// was re-run first and came back byte-identical to Z1c's last row (376.5 /
+// 247.5 / 230.0 / 274.2 / 437.9px, onsets 230/175/249/160/229), confirming
+// the codebase is unchanged since Z1c. The sweep then drove the SAME
+// harness logic (runOneSeed, byte-for-byte copy) across 500 ADDITIONAL
+// seeds the canonical 5 never cover, in 8 rounds, tracking two running
+// maxima (worst FINAL divergence, worst MID-MATCH sample) plus any bound
+// break (>=2000px or non-finite) as the "new divergence" signal:
+//
+//   round 1 (seeds      2-    51, 50 seeds):   worst final 1669.3px
+//     (seed=45), worst mid-match sample 1877.3px (seed=45)
+//   round 2 (seeds   1000-  1049, 50 seeds):   worst final 1163.2px
+//     (seed=1029) — no new ceiling
+//   round 3 (seeds  90000- 90049, 50 seeds, near canonical 90210's order):
+//     worst final 1267.1px (seed=90040) — no new ceiling
+//   round 4 (seeds 271800-271849, 50 seeds, near canonical 271828's order):
+//     worst final 1168.4px (seed=271833) — no new ceiling
+//   round 5 (seeds 500000-500049, 50 seeds):   worst final  669.2px
+//     (seed=500004) — no new ceiling
+//   round 6 (seeds 999950-999999, 50 seeds):   worst final  487.6px
+//     (seed=999997) — no new ceiling
+//   round 7 (100 seeds, uniform-random over [0, 2^31)): worst final
+//     1367.3px (seed=1027092698) — no new ceiling
+//   round 8 (100 seeds, uniform-random over [0, 2^31)): worst final
+//     1387.8px (seed=673305906) — no new ceiling
+//
+// No round ever broke the 2000px bound or produced a non-finite delta.
+// Round 1 WAS new information — its 1669.3/1877.3px ceiling sits far above
+// anything the canonical 5 seeds show (their worst final is 437.9px,
+// seed=271828) — recorded honestly rather than folded away. Rounds 2-8
+// (SEVEN consecutive rounds, well past the 2-consecutive bar this doc's
+// acceptance requires) never exceeded round 1's ceiling. VERDICT: DRY.
+// The meter's true worst-case shape, given today's unchanged code, tops
+// out around 1,670-1,880px — meaningfully closer to the 2,000px assertion
+// bound than the 5 canonical seeds alone ever suggested, but still inside
+// it on every one of 505 seeds tried (5 canonical + 500 swept). This is a
+// coverage finding, not a code change: the canonical 5 remain the
+// permanent CI gate (fast, already characterized in the ledger above); the
+// 500 swept seeds ran through a throwaway driver
+// (`_z3_sweep_scratch.ts`, deleted after this run, never committed — this
+// file's own SEEDS array was not widened, to keep CI runtime the same)
+// built specifically to answer whether a wider seed population hides a
+// failure mode the fixed 5 miss. On this pass, it doesn't — up to the
+// bound's own margin. Whoever next touches the death-timing/respawn-
+// reseat divergence engine this file's header already names (the
+// dominant driver of every entry above) should know the real ceiling is
+// ~1.7-1.9k px, not the ~440px the canonical seeds alone imply.
+//
 // If the sweep exceeds its bound, the per-seed record above is the
 // deliverable the next track consumes.
 //

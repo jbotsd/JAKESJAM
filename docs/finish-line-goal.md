@@ -23,19 +23,27 @@ piggyback onto this list. Say the word to activate it.
 
 ## Track Z — Close the Zig-first suite
 
-**Z3 — Sweep until dry + the honest bench (NOT STARTED).** The
-divergence-sweep meter (`multiSeedDivergence.test.ts`) has been run
-per-item all week but never to loop-until-dry (2 consecutive rounds, 0
-new divergence, logged coverage — the original acceptance bar). Then
-`tools/wasm-bench.ts` re-runs fresh and `zig-wasm-perf-baseline.md`'s
-2026-05-05 staleness banner gets replaced with real numbers — whatever
-they say. (Its one appended 2026-07-20 spot-check, marked "not a settled
-conclusion," found wasm-swap stepPlayer FASTER than TS-native for the
-first time — 661.7ns vs 1284ns — which is itself worth confirming
-properly, not left as a footnote.)
+**Z3 — Sweep until dry + the honest bench (DONE, 2026-07-26).** No sim
+code changed. The divergence-sweep meter's canonical 5 seeds re-ran
+byte-identical to Z1c's last row (376.5/247.5/230.0/274.2/437.9px). A
+throwaway driver copying its exact harness logic then swept 500
+additional seeds across 8 rounds (seed ranges + rounds logged in
+`multiSeedDivergence.test.ts`'s own header ledger) looking for anything
+the canonical 5 miss: round 1 found a genuinely worse ceiling (seed=45,
+final 1669.3px / mid-match peak 1877.3px — still under the file's
+2000px bound, still finite), then 7 CONSECUTIVE rounds (well past the
+2-consecutive bar) found nothing worse. DRY, honestly reached — real
+worst-case ceiling on today's code is ~1.7-1.9k px, not the ~440px the
+canonical 5 alone imply, but still inside the bound on all 505 seeds
+tried. `tools/wasm-bench.ts` re-ran fresh (6 back-to-back runs,
+averaged) and `zig-wasm-perf-baseline.md`'s stale banner is replaced
+with a current 2026-07-26 baseline. The 2026-07-20 spot-check's
+"wasm-swap stepPlayer faster than TS-native, not a settled conclusion"
+footnote is now SETTLED: confirmed in 6 of 6 runs, ~2× faster on
+average (1126.9ns vs 556.5ns).
 
-**Z4 — The flip (AWAITING JAKE, blocked on Z3).** `USE_WASM_STEP_WORLD=1`
-on :8088 for a real session. Not ready to ask for yet — Z3 isn't done.
+**Z4 — The flip (AWAITING JAKE, unblocked — Z3 is done).**
+`USE_WASM_STEP_WORLD=1` on :8088 for a real session. Ready to ask for.
 
 **Z5 — The residuals Z1c documented rather than hid** (real gaps, not
 doctrine — distinguish from Six Axes' *intentional* TS-only Layer-2
@@ -134,7 +142,7 @@ not anymore (both class loops declared complete). Re-run:
   open question)
 - Six Axes Phase 4 — ≥5 rounds live drafting ability cards, your verdict
 - Audio picks from the candidate slate (unlocks Track F2)
-- The Z4 flip, once Z3 lands
+- The Z4 flip — Z3 landed 2026-07-26, ready to ask for now
 
 ## Track R — Render/perf (OPT-IN ONLY, not default scope)
 
@@ -150,8 +158,9 @@ precedent as convergence-goal.md.
 
 ## Status
 
-- Z3 sweep+bench: **NOT STARTED**
-- Z4 flip: **AWAITING JAKE** (blocked on Z3)
+- Z3 sweep+bench: **DONE** (2026-07-26 — dry after round 3, 7 rounds of
+  margin; bench baseline refreshed and stepPlayer reversal settled)
+- Z4 flip: **AWAITING JAKE** (unblocked — Z3 is done, ready to ask)
 - Z5 residuals: **NOT STARTED** (3 items)
 - F1 STAB verb: **NOT STARTED** (unblocked)
 - F2 audio wiring: **BLOCKED ON JAKE** (picks)

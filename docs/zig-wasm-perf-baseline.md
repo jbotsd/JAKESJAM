@@ -1,21 +1,25 @@
 # Zig→WASM perf baseline
 
-> **STALE — the 2026-05-05 numbers below pre-date the export-surface
-> roughly doubling (144 wasm exports as of the pre-Phase-0
+> **CURRENT baseline: 2026-07-26 (Track Z3), see the section of that name
+> below.** The 2026-05-05 numbers and the 2026-07-20 spot-check further
+> down are KEPT as historical record (the ledger style this repo uses
+> elsewhere — extend, don't erase) but are superseded: both pre-date the
+> export-surface roughly doubling (144 wasm exports as of the pre-Phase-0
 > `zig-wasm-exports.md` audit, growing further through
-> `docs/zig-step-world-parity-goal.md` Phases 0-4, active as of
-> 2026-07-20) and pre-date `step_world` itself gaining substantial new
-> logic (melee, AOE-queue abilities, Paper Double, ability-cast
-> dispatch, draft/offer-roll). This doc's own "Architectural takeaways"
-> conclusion (no perf concerns, wasm boundary tax is negligible) is NOT
-> being reversed here — nothing in this staleness note claims the
-> conclusion is wrong, only that the specific ns/op numbers below are
-> old and the wasm binary they were measured against was much smaller.
-> A fresh spot-check run on 2026-07-20 (below, same dev machine, NOT a
-> full re-benchmark of the newly-added `step_world` surface) is
-> included as a bonus data point, not a replacement baseline — if you
-> need current numbers for a real decision, re-run
-> `bun run tools/wasm-bench.ts` yourself first.
+> `docs/zig-step-world-parity-goal.md` Phases 0-4 and Track Z1/Z2, 157
+> exports as of this run) and pre-date `step_world` gaining substantial
+> new logic (melee, AOE-queue abilities, Paper Double, ability-cast
+> dispatch, draft/offer-roll, first-blood, team peel, ninja i-frames,
+> Kindled Ward). The 2026-07-20 spot-check flagged its own `stepPlayer`
+> reversal (wasm-swap faster than TS-native, 661.7ns vs 1284.4ns) as "not
+> a settled conclusion — a single run, not averaged, not isolated from
+> background load." Track Z3 (2026-07-26) re-ran the SAME bench 6 times
+> back-to-back on the same dev machine specifically to settle that: see
+> below for the averaged numbers and the answer (confirmed, not a fluke —
+> wasm was faster in all 6 of 6 runs). This doc's own original
+> "Architectural takeaways" conclusion (no perf concerns, wasm boundary
+> tax is negligible for production) still holds; only the specific
+> ns/op numbers and the stepPlayer relative-speed claim change.
 
 Generated 2026-05-05 from `tools/wasm-bench.ts` on the dev machine
 (Bun 1.3.10, Linux x86_64). Numbers are illustrative — re-run on
@@ -88,12 +92,28 @@ frame budget.
    primitives.** A 22 ns boundary cost on a 350 ns operation is
    6%; on a 13 ns operation it's 3.4×. Package multiple ops
    into single wasm calls (like `step_projectile_v2`'s
-   all-pathings dispatch) to amortise.
+   all-pathings dispatch) to amortise. *(2026-07-26 update: the
+   specific "22 ns / 6% slower" `stepPlayer` numbers this point
+   was built on are the stale 2026-05-05 ones — see the
+   "2026-07-26 baseline" section below. The composite-vs-primitive
+   shape of the argument still holds; the sign on `stepPlayer`
+   flipped.)*
 
 3. **No perf concerns for the default-on production deploy.**
    Player physics + collision (the modules wired through wasm)
    complete in well under the frame budget. The trig LUT is the
    common path everywhere and is plenty fast.
+
+4. **`stepPlayer` wasm-swap is now the faster path, confirmed
+   (Track Z3, 2026-07-26).** The 2026-05-05 baseline measured wasm
+   ~6% slower than TS-native; a single 2026-07-20 spot-check found
+   the opposite and explicitly declined to call it settled. A
+   6-run averaged re-bench (below) confirms the reversal is real —
+   wasm-swap won in 6 of 6 runs, ~2× faster on average. This
+   strengthens takeaway 3, it doesn't change it: production
+   `stepPlayer` was already fine on cost grounds even under the old
+   "6% slower" number, and is fine (better, even) under the current
+   one.
 
 ## Re-running the bench
 
@@ -136,3 +156,59 @@ reversal as "worth re-checking properly," not as a settled new
 conclusion — the honest move here is to record what was actually
 measured, not to quietly discard an inconvenient number or promote it
 to a confident claim either way.
+
+## 2026-07-26 baseline (Track Z3 — CURRENT, 6-run average)
+
+Same dev machine, same `tools/wasm-bench.ts`, freshly built `sim.wasm`
+(142,354 bytes; `sim && mise exec zig@0.15.2 -- zig build` run
+immediately before benching — no Zig source changed this pass, this is
+just confirming the binary on disk matches HEAD). Bun 1.3.14. Unlike
+every prior entry in this doc, this pass ran the bench **6 times
+back-to-back** and reports the average of all 6, specifically to answer
+the 2026-07-20 spot-check's own open question honestly rather than
+leave it a single-sample footnote forever. Per-run values are given too
+(min–max) so the reader can see the actual spread, not just a smoothed
+average:
+
+| Op | Backend | Avg (n=6) | Min–Max |
+|---|---|---|---|
+| `sin(x)` | libm | 3.2 ns | 3.1–3.3 ns |
+| `sin(x)` | TS-LUT | 15.5 ns | 13.6–17.4 ns |
+| `sin(x)` | wasm-LUT | 23.2 ns | 16.4–26.9 ns |
+| `cos(x)` | libm | 5.1 ns | 4.4–5.6 ns |
+| `cos(x)` | TS-LUT | 20.9 ns | 14.6–23.4 ns |
+| `cos(x)` | wasm-LUT | 26.4 ns | 18.6–32.6 ns |
+| `atan2(y, x)` | libm | 36.1 ns | 27.0–44.7 ns |
+| `atan2(y, x)` | TS-LUT | 28.1 ns | 23.1–33.2 ns |
+| `atan2(y, x)` | wasm-LUT | 22.1 ns | 16.1–27.9 ns |
+| `nextU32` | TS | 15.1 ns | 13.2–16.9 ns |
+| `nextU32` | wasm | 60.3 ns | 40.0–76.4 ns |
+| `resolveMoveCached` | TS-native | 264.3 ns | 203.3–350.1 ns |
+| `stepPlayer` | TS-native | **1126.9 ns** | 840.3–1432.1 ns |
+| `stepPlayer` | wasm-swap | **556.5 ns** | 433.2–683.5 ns |
+
+**The stepPlayer question, SETTLED:** wasm-swap beat TS-native in all
+6 of 6 runs, by a roughly consistent ~2× margin (average 1126.9 ns vs
+556.5 ns) despite substantial run-to-run noise in the absolute numbers
+on this actively-used dev machine (TS-native ranged 840–1432 ns; wasm
+ranged 433–684 ns — machine load noise, not a Zig/wasm change, matches
+the 2026-07-20 note's own explanation for its similarly noisy numbers).
+This confirms the 2026-07-20 spot-check's reversal was real, not a
+fluke of one noisy run: **wasm-swap `stepPlayer` is now the reliably
+faster path**, the opposite of the original 2026-05-05 "~6% slower"
+finding. Nothing has been identified in this pass that explains the
+mechanism (the wasm boundary-tax model from the original takeaways
+still applies structurally) — the most likely honest explanation is
+that `stepPlayer`'s TS-native cost has grown substantially since May
+(same `resolveMoveCached` TS-native call also nearly doubled, 191→264
+ns average) as the sim gained logic, while the wasm-side kernel's own
+growth has been smaller, but this doc does not have a per-commit
+breakdown to prove that causal claim — recorded as the honest
+observation, not oversold as a diagnosed root cause.
+
+`resolveMoveCached` wasm-swap end-to-end and the newer `step_world`
+surface (melee, abilities, draft/offer-roll, first-blood, team peel,
+Kindled Ward etc.) are still NOT covered by this bench — same gap the
+2026-07-20 banner already named, still open. If that surface becomes a
+real perf question, it needs its own kernels added to
+`tools/wasm-bench.ts`, not an inference from `stepPlayer` alone.
