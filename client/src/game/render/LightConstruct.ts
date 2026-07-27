@@ -1836,17 +1836,23 @@ export function spawnGroundDust(
  *  tight spray continuing the cut line, plus a short cut-streak through
  *  the contact point; "bash" = the slab — a wider, slower, chunkier wedge
  *  with a heavier gravity droop (its ground response stays
- *  spawnGroundDust at the victim's feet, spawned by the same caller).
- *  Chunks are faceted crystal chips (the house diamond grammar, same
- *  family as spawnCrystalShards), gold via the caller's KINDLED_TINT.
- *  One pooled bolt redrawn per frame — no per-particle objects,
- *  transientVfx owns the clock. */
+ *  spawnGroundDust at the victim's feet, spawned by the same caller);
+ *  "stab" (Track F1, 2026-07-26) = Interstice's chain-finisher thrust — a
+ *  TIGHTER spray than even the edge's own (a precise puncture, not a cut),
+ *  traveling FURTHER (matches the verb's own longer reach) with the
+ *  lightest droop of the three (a fast puncture doesn't sag the way a
+ *  heavier chunk does) — same cut-streak-through-contact treatment as the
+ *  edge (a piercing line deserves the "the strike continued" read at least
+ *  as much as a cut does). Chunks are faceted crystal chips (the house
+ *  diamond grammar, same family as spawnCrystalShards); the caller supplies
+ *  tint (gold for Kindled, cyan for Interstice). One pooled bolt redrawn
+ *  per frame — no per-particle objects, transientVfx owns the clock. */
 export function spawnMeleeDebris(
   pool: ParticlePool,
   at: Vec2,
   dirRad: number,
   tint: ConstructTint,
-  register: "edge" | "bash",
+  register: "edge" | "bash" | "stab",
 ): void {
   const g = pool.acquireBolt();
   if (!g) return;
@@ -1856,11 +1862,12 @@ export function spawnMeleeDebris(
   g.setRotation(0);
   g.setBlendMode(Phaser.BlendModes.ADD);
   const isEdge = register === "edge";
-  const N = isEdge ? 7 : 9;
-  const spread = isEdge ? 0.5 : 1.35; // full wedge angle (rad)
-  const travel = isEdge ? 92 : 58; // max chunk travel (px) over the life
-  const chip = isEdge ? 3.2 : 4.6; // base chip half-size (px)
-  const droop = isEdge ? 14 : 30; // gravity droop at end-of-life (px)
+  const isStab = register === "stab";
+  const N = isStab ? 6 : isEdge ? 7 : 9;
+  const spread = isStab ? 0.32 : isEdge ? 0.5 : 1.35; // full wedge angle (rad)
+  const travel = isStab ? 112 : isEdge ? 92 : 58; // max chunk travel (px) over the life
+  const chip = isStab ? 2.8 : isEdge ? 3.2 : 4.6; // base chip half-size (px)
+  const droop = isStab ? 10 : isEdge ? 14 : 30; // gravity droop at end-of-life (px)
   const draw = (t: number): void => {
     g.clear();
     // K9 harness-strip retune: the original (1-t)^2 fade killed the chips
@@ -1868,9 +1875,10 @@ export function spawnMeleeDebris(
     // before the chips finished traveling. Linear fade lets the spray
     // speak for its full flight; only the streak keeps the sharper decay.
     const fade = 1 - t;
-    // Edge only: a fast-fading streak THROUGH the contact point along the
-    // cut line — the "the cut continued" read the radial orb never had.
-    if (isEdge) {
+    // Edge/stab only: a fast-fading streak THROUGH the contact point along
+    // the strike line — the "the cut/thrust continued" read the radial orb
+    // never had. Bash (a blunt check, not an edged/pointed weapon) skips it.
+    if (isEdge || isStab) {
       const streakFade = fade * fade;
       const sl = 26 * (1 - t * 0.5);
       g.lineStyle(3, tint.glow, 0.6 * streakFade);
@@ -1913,7 +1921,7 @@ export function spawnMeleeDebris(
   draw(0);
   transientVfx.spawn({
     factory: () => g,
-    lifetimeMs: isEdge ? 340 : 380,
+    lifetimeMs: isStab ? 300 : isEdge ? 340 : 380,
     ease: "Sine.easeOut",
     onTick: (_obj, t) => draw(t),
     release: () => pool.release(g),

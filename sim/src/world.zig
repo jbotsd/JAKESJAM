@@ -1910,6 +1910,23 @@ pub const KIN_BASH_CHAIN_GAP_MS: f64 = 350.0;
 /// the "a queued swing WINS over a cancel" precedence).
 pub const KIN_CANCEL_TAIL_FRACTION: f64 = 0.4;
 
+// ── NINJA STAB (2026-07-26, finish-line-goal.md Track F1) — Interstice's
+// own chain's third beat, a linear thrust. Bit-exact mirrors of World.ts's
+// NINJA_STAB_*; the chain state itself lives in the SAME
+// MeleeSwingMemory.chain_index/chain_gap_ms the Kindled bash uses (see that
+// struct's own doc comment, world_state.zig). Same FSM phase timings as the
+// ordinary slash — only reach/arc/damage/knockback/contact-gate swap per
+// verb. Every number here is a JUDGMENT CALL per World.ts's own doc
+// comments on these constants (not a transcribed spec) — see those comments
+// for the per-constant reasoning this mirrors bit-for-bit.
+pub const NINJA_STAB_RANGE: f64 = 104.0;
+pub const NINJA_STAB_ARC_RADIANS: f64 = std.math.pi / 6.0;
+pub const NINJA_STAB_DAMAGE: f64 = 14.0;
+pub const NINJA_STAB_KNOCKBACK: f64 = 340.0;
+pub const NINJA_STAB_KNOCK_UP: f64 = 30.0;
+pub const NINJA_STAB_CONTACT_DELAY_MS: f64 = 12.0;
+pub const NINJA_STAB_CHAIN_GAP_MS: f64 = 785.0;
+
 // ── Ability-cast dispatch (Phase 1, docs/zig-step-world-parity-goal.md
 //    "the next unblock") — constants for the 6 melee-hook abilities wired
 //    this pass. Bit-exact port of the matching World.ts/constants.ts
@@ -4033,13 +4050,15 @@ fn stepMeleeSwing(
     // slash-feel-ledger R1 row 1).
     if (mem.buffered_ms > 0) mem.buffered_ms = @max(0.0, mem.buffered_ms - eff_dt);
 
-    // Bash chain-reset clock (Kindled only — ledger design-decision
-    // block): idle time accrues; past the gap the chain cools back to
-    // blades. Runs BEFORE any swing start this tick — exact ordering
-    // mirror of World.ts's 1z3 block.
-    if (is_paladin and mem.phase == .idle) {
+    // Chain-reset clock (Kindled's bash OR Ninja's own STAB, 2026-07-26
+    // Track F1 — ledger design-decision block): idle time accrues; past the
+    // class's own gap the chain cools back to ordinary swings. Runs BEFORE
+    // any swing start this tick — exact ordering mirror of World.ts's 1z3/
+    // 1z2 blocks.
+    if ((is_paladin or is_ninja) and mem.phase == .idle) {
         mem.chain_gap_ms += eff_dt;
-        if (mem.chain_gap_ms > KIN_BASH_CHAIN_GAP_MS) mem.chain_index = 0;
+        const chain_gap_limit: f64 = if (is_paladin) KIN_BASH_CHAIN_GAP_MS else NINJA_STAB_CHAIN_GAP_MS;
+        if (mem.chain_gap_ms > chain_gap_limit) mem.chain_index = 0;
     }
 
     if (mem.phase == .idle) {
@@ -4075,11 +4094,12 @@ fn stepMeleeSwing(
                 .recovery => {
                     mem.phase = .idle;
                     mem.phase_ms = 0;
-                    // Bash chain advances per STARTED swing (whiffs count
-                    // — cadence is rhythm, not hit-confirm), stamped at
-                    // the swing's end so the position is stable for the
-                    // swing's whole lifetime. Matches World.ts's 1z3.
-                    if (is_paladin) {
+                    // Chain advances per STARTED swing (whiffs count —
+                    // cadence is rhythm, not hit-confirm), stamped at the
+                    // swing's end so the position is stable for the swing's
+                    // whole lifetime. Matches World.ts's 1z3 (Kindled bash)
+                    // / 1z2 (Ninja stab, Track F1).
+                    if (is_paladin or is_ninja) {
                         mem.chain_index = (mem.chain_index + 1) % 3;
                         mem.chain_gap_ms = 0;
                     }
@@ -4127,18 +4147,19 @@ fn stepMeleeSwing(
     //      World.ts's `hasReachedSlashContact`/equivalent Edge check
     //      exactly, including the "elapsed" accounting across the tick
     //      that just transitioned OUT of active (`wasActive`). ----
-    // Which verb is the CURRENT swing? (SHIELD BASH — chain position 2.)
-    // Stable for the swing's whole lifetime: chain_index only advances at
-    // recovery→idle, and the contact gate below can never be reached on
-    // that transition tick. Exact mirror of World.ts's swingIsBash/
-    // swing* locals.
+    // Which verb is the CURRENT swing? (SHIELD BASH / NINJA STAB — chain
+    // position 2, whichever class this player is.) Stable for the swing's
+    // whole lifetime: chain_index only advances at recovery→idle, and the
+    // contact gate below can never be reached on that transition tick.
+    // Exact mirror of World.ts's swingIsBash/swingIsStab/swing* locals.
     const swing_is_bash = is_paladin and mem.chain_index == 2;
-    const eff_range: f64 = if (swing_is_bash) SHIELD_BASH_RANGE else range;
-    const eff_arc: f64 = if (swing_is_bash) SHIELD_BASH_ARC_RADIANS else arc;
-    const eff_damage: f64 = if (swing_is_bash) SHIELD_BASH_DAMAGE else damage;
-    const eff_knockback: f64 = if (swing_is_bash) SHIELD_BASH_KNOCKBACK else knockback;
-    const eff_knock_up: f64 = if (swing_is_bash) SHIELD_BASH_KNOCK_UP else knock_up;
-    const eff_contact_delay: f64 = if (swing_is_bash) SHIELD_BASH_CONTACT_DELAY_MS else contact_delay_ms;
+    const swing_is_stab = is_ninja and mem.chain_index == 2;
+    const eff_range: f64 = if (swing_is_bash) SHIELD_BASH_RANGE else if (swing_is_stab) NINJA_STAB_RANGE else range;
+    const eff_arc: f64 = if (swing_is_bash) SHIELD_BASH_ARC_RADIANS else if (swing_is_stab) NINJA_STAB_ARC_RADIANS else arc;
+    const eff_damage: f64 = if (swing_is_bash) SHIELD_BASH_DAMAGE else if (swing_is_stab) NINJA_STAB_DAMAGE else damage;
+    const eff_knockback: f64 = if (swing_is_bash) SHIELD_BASH_KNOCKBACK else if (swing_is_stab) NINJA_STAB_KNOCKBACK else knockback;
+    const eff_knock_up: f64 = if (swing_is_bash) SHIELD_BASH_KNOCK_UP else if (swing_is_stab) NINJA_STAB_KNOCK_UP else knock_up;
+    const eff_contact_delay: f64 = if (swing_is_bash) SHIELD_BASH_CONTACT_DELAY_MS else if (swing_is_stab) NINJA_STAB_CONTACT_DELAY_MS else contact_delay_ms;
 
     const is_active_now = mem.phase == .active;
     const active_elapsed_after: f64 = if (is_active_now)

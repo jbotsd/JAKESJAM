@@ -632,8 +632,14 @@ export class SimEventRouter {
               : ("interstice" as const);
           const aim = d.resolveAimDir(event.playerId);
           if (aim) {
-            const contactMs =
-              chassis === "kindled" ? (event.verb === "bash" ? 260 : 300) : 82;
+            // Interstice STAB (Track F1, 2026-07-26): sim contact gate is
+            // SLASH_WINDUP_MS + NINJA_STAB_CONTACT_DELAY_MS = 60+12 = 72ms,
+            // shorter than the ordinary arc's 60+22=82ms (World.ts) — the
+            // whiff watch must follow the SIM per verb or a whiffed stab's
+            // camera-opposite kick fires 10ms late.
+            const contactMs = chassis === "kindled"
+              ? (event.verb === "bash" ? 260 : 300)
+              : (event.verb === "stab" ? 72 : 82);
             this.disarmWhiff();
             this.whiffArmed = true;
             const armId = ++this.whiffArmId;
@@ -728,6 +734,45 @@ export class SimEventRouter {
             const budget = presentationBudget("heavy");
             d.safeShake(budget.shakeDurationMs, budget.shakeIntensity);
           }
+        }
+        break;
+      }
+      case "stab-landed": {
+        // NINJA STAB connected (2026-07-26, Track F1) — Interstice's chain
+        // finisher, the linear thrust. Same "own contact register" split as
+        // Kindled's bash-landed, but reuses Interstice's OWN existing R1
+        // rows 3-9 chassis tuning (pairStopHitMs/flash/squash/camera-kick)
+        // rather than inventing a third tuning tier — the established
+        // architecture (victimChannel.ts's impactChannelParams/
+        // cameraKickParams) is keyed by CHASSIS only, and Kindled's own
+        // bash already set the precedent of reusing its chassis tier
+        // unchanged for these numbers (only the WIRE EVENT + downstream
+        // debris/hit-mark are distinct — see ConstructVfxController.ts).
+        // No direct audio.play() here, matching slash-hit's own pattern
+        // (not bash-landed's) — F2 (audio wiring) is blocked on Jake's
+        // picks, so this deliberately does NOT invent a new cue; the paired
+        // hit-confirmed's generic "hit" cue covers it for now.
+        const attackerRig = d.playerRigs.get(event.attackerId);
+        const victimRig = d.playerRigs.get(event.victimId);
+        const dirX = event.dirX ?? 1;
+        const dirY = event.dirY ?? 0;
+        // The local stab CONNECTED — disarm the whiff watch (K12 pattern).
+        if (event.attackerId === d.localPlayerId) this.disarmWhiff();
+        victimRig?.applyPairImpact?.("victim", dirX, dirY, "interstice", false);
+        attackerRig?.applyPairImpact?.("attacker", dirX, dirY, "interstice", false);
+        this.meleePairImpacts.set(event.victimId as string, {
+          dirX,
+          dirY,
+          chassis: "interstice",
+          suppressNextConfirm: true,
+          suppressNextConfirmAudio: false,
+        });
+        if (
+          (event.attackerId === d.localPlayerId || event.victimId === d.localPlayerId) &&
+          d.directionalKick
+        ) {
+          const kick = cameraKickParams("interstice", false);
+          d.directionalKick(dirX, dirY, kick.kickPx, kick.durMs, kick.noisePx);
         }
         break;
       }

@@ -26,6 +26,8 @@ import {
   meleeKineticChain,
   meleeOffhandPose,
   meleeStage,
+  stabHandPose,
+  stabKineticChain,
   wardBracePose,
 } from "../render/meleeTiming.js";
 
@@ -41,7 +43,7 @@ export interface CombatRig {
   triggerHit(dirX: number, dirY: number, magPx?: number, durMs?: number): void;
   triggerParryFlash(): void;
   triggerKillPulse(): void;
-  triggerMeleeSwing?(style: "interstice" | "kindled", dir: number, verb?: "blade" | "bash"): void;
+  triggerMeleeSwing?(style: "interstice" | "kindled", dir: number, verb?: "blade" | "bash" | "stab"): void;
   triggerAbility?(kind: AbilityKind): void;
   /** Chassis silhouette id, when the rig knows it — lets SimEventRouter
    *  pick the attacker-chassis victim-channel params (R1 rows 3-8). */
@@ -451,7 +453,7 @@ export class ProceduralPlayerRig implements CombatRig {
    *  the Kindled melee sentence from the sword arc to the slab-led body
    *  CHECK — shield hand punches along aim, sword chambers back, and the
    *  kinetic chain surges through the front foot (bashKineticChain). */
-  private meleePoseVerb: "blade" | "bash" = "blade";
+  private meleePoseVerb: "blade" | "bash" | "stab" = "blade";
   private abilityPoseMs = 0;
   private abilityPoseDurationMs = 1;
   private abilityPoseKind: AbilityKind = "sunlance";
@@ -952,7 +954,7 @@ export class ProceduralPlayerRig implements CombatRig {
      *  or retrig is what proves (or disproves) a visible pose-snap. */
     melee: {
       style: "interstice" | "kindled";
-      verb: "blade" | "bash";
+      verb: "blade" | "bash" | "stab";
       elapsedMs: number;
       durationMs: number;
       stage: "anticipation" | "cut" | "followThrough" | "recovery";
@@ -1002,7 +1004,7 @@ export class ProceduralPlayerRig implements CombatRig {
             stage: meleeStageName(
               Phaser.Math.Clamp(1 - this.meleePoseMs / this.meleePoseDurationMs, 0, 1),
               this.meleePoseStyle,
-              this.meleePoseStyle === "kindled" && this.meleePoseVerb === "bash",
+              this.meleePoseVerb,
             ),
             handLead: this.lastLeadHandWorld,
             handBack: this.lastBackHandWorld,
@@ -1049,15 +1051,24 @@ export class ProceduralPlayerRig implements CombatRig {
   /** Render-only melee sentence: coil, cross-body cut, committed travel past
    * contact, then recovery. Simulation hit timing and position never move.
    * `verb` "bash" (Kindled only) plays the slab-led body check instead of
-   * the sword arc — the chain's third beat (slash-feel-ledger). */
+   * the sword arc; `verb` "stab" (Interstice only, Track F1 2026-07-26)
+   * plays the linear thrust instead of the arc — both are the chain's
+   * third beat (slash-feel-ledger). */
   triggerMeleeSwing(
     style: "interstice" | "kindled",
     dir: number,
-    verb: "blade" | "bash" = "blade",
+    verb: "blade" | "bash" | "stab" = "blade",
   ): void {
     this.meleePoseStyle = style;
     this.meleePoseDir = dir >= 0 ? 1 : -1;
-    this.meleePoseVerb = style === "kindled" ? verb : "blade";
+    // Cross-validate style/verb — a mismatched pairing (e.g. a "bash" verb
+    // arriving for an "interstice" style, which should never happen but
+    // shouldn't silently mis-render if it somehow did) safely falls back to
+    // the ordinary blade, same defensive shape the old ternary already had.
+    this.meleePoseVerb =
+      style === "kindled" && verb === "bash" ? "bash"
+      : style === "interstice" && verb === "stab" ? "stab"
+      : "blade";
     // ONE clock per chassis, shared with ConstructVfxController's swing
     // layer (I1, R1 row 2): body sentence and blade construct consume the
     // same constant so hand and blade agree on every phase boundary — the
@@ -1411,24 +1422,32 @@ export class ProceduralPlayerRig implements CombatRig {
       ? 1 - this.meleePoseMs / this.meleePoseDurationMs
       : 1;
     const meleeIsBash = this.meleePoseStyle === "kindled" && this.meleePoseVerb === "bash";
+    // NINJA STAB (Track F1, 2026-07-26) — same "own stage boundaries"
+    // treatment as the bash got: stabStage's chamber/thrust boundaries
+    // (0.18/0.32), not the ordinary arc's 0.15/0.42.
+    const meleeIsStab = this.meleePoseStyle === "interstice" && this.meleePoseVerb === "stab";
     // Ground-load phase boundaries MATCH meleeTiming's own stage boundaries
     // per style (I2, 2026-07-24): interstice ran a stale 0.32/0.52 here —
     // the body was still SINKING at t=0.32 while the blade's cut (0.15-0.42)
     // was already past contact (0.334). Coil loads BY cut start, releases
     // THROUGH the cut — the crouch is the spring, the cut is the release.
-    const meleeAnticipationEnd = meleeIsBash ? 0.36 : this.meleePoseStyle === "kindled" ? 0.38 : 0.15;
-    const meleeCutEnd = meleeIsBash ? 0.56 : this.meleePoseStyle === "kindled" ? 0.61 : 0.42;
+    const meleeAnticipationEnd = meleeIsBash ? 0.36 : meleeIsStab ? 0.18 : this.meleePoseStyle === "kindled" ? 0.38 : 0.15;
+    const meleeCutEnd = meleeIsBash ? 0.56 : meleeIsStab ? 0.32 : this.meleePoseStyle === "kindled" ? 0.61 : 0.42;
+    // Load magnitude: bash 19 (deepest — a slab check), ordinary arc 17
+    // (kindled) / 10 (interstice), STAB 14 (Track F1) — a snappier, more
+    // moderate chamber than bash's deep squat but more committed than the
+    // ordinary arc's own light coil (the thrust punches the whole body
+    // forward, per stabKineticChain's own bigger chest/pelvis drive).
+    const meleeLoadMag = meleeIsBash ? 19 : meleeIsStab ? 14 : this.meleePoseStyle === "kindled" ? 17 : 10;
     // Load from the floor: hips/chest/head sink together during anticipation,
     // then rise sharply into the cut. Feet retain their authoritative contact.
     const meleeGroundLoad = this.meleePoseMs <= 0
       ? 0
       : meleeT < meleeAnticipationEnd
-        ? Math.sin((meleeT / meleeAnticipationEnd) * Math.PI * 0.5) *
-          (meleeIsBash ? 19 : this.meleePoseStyle === "kindled" ? 17 : 10) * s
+        ? Math.sin((meleeT / meleeAnticipationEnd) * Math.PI * 0.5) * meleeLoadMag * s
         : meleeT < meleeCutEnd
           ? (1 - (meleeT - meleeAnticipationEnd) /
-            (meleeCutEnd - meleeAnticipationEnd)) *
-            (meleeIsBash ? 19 : this.meleePoseStyle === "kindled" ? 17 : 10) * s
+            (meleeCutEnd - meleeAnticipationEnd)) * meleeLoadMag * s
           : 0;
     // Key positions — head/chest lag hip for floppy chain.
     // gather dips the whole chain, slightly harder toward the head — the
@@ -1504,7 +1523,9 @@ export class ProceduralPlayerRig implements CombatRig {
     const meleeChain = this.meleePoseMs > 0
       ? meleeIsBash
         ? bashKineticChain(meleeT)
-        : meleeKineticChain(meleeT, this.meleePoseStyle)
+        : meleeIsStab
+          ? stabKineticChain(meleeT)
+          : meleeKineticChain(meleeT, this.meleePoseStyle)
       : { pelvisDrive: 0, chestDrive: 0, headDrive: 0, shoulderTwist: 0, frontBrace: 0 };
     const abilityContract = ABILITY_ANIMATIONS[this.abilityPoseKind];
     const abilityT = this.abilityPoseMs > 0
@@ -1646,6 +1667,23 @@ export class ProceduralPlayerRig implements CombatRig {
       const sword = bashSwordHandPose(aimAngle, this.meleePoseDir, meleeT);
       armTargets.lead.x = shoulderLead.x + Math.cos(sword.angle) * sword.reach * s;
       armTargets.lead.y = shoulderLead.y + Math.sin(sword.angle) * sword.reach * s;
+    } else if (this.meleePoseMs > 0 && meleeIsStab) {
+      // NINJA STAB (Track F1, 2026-07-26) — a linear thrust: the active
+      // dagger punches straight along aim (stabHandPose), the off-hand
+      // keeps its EXISTING tight counterbalance guard unchanged
+      // (meleeOffhandPose) — same combo-alternation rule as the ordinary
+      // arc (Interstice really alternates its two daggers).
+      const activeLead = this.meleePoseDir > 0;
+      const shoulder = activeLead ? shoulderLead : shoulderBack;
+      const guardShoulder = activeLead ? shoulderBack : shoulderLead;
+      const active = activeLead ? armTargets.lead : armTargets.back;
+      const guard = activeLead ? armTargets.back : armTargets.lead;
+      const thrust = stabHandPose(aimAngle, meleeT);
+      active.x = shoulder.x + Math.cos(thrust.angle) * thrust.reach * s;
+      active.y = shoulder.y + Math.sin(thrust.angle) * thrust.reach * s;
+      const offPose = meleeOffhandPose(aimAngle, this.meleePoseDir, meleeT);
+      guard.x = guardShoulder.x + Math.cos(offPose.angle) * offPose.reach * s;
+      guard.y = guardShoulder.y + Math.sin(offPose.angle) * offPose.reach * s;
     } else if (this.meleePoseMs > 0) {
       // Kindled always cuts with the sword hand; alternating the combo only
       // reverses its travel. Interstice really alternates its two daggers.
@@ -3250,11 +3288,17 @@ function vec(x: number, y: number): Vec2 {
 function meleeStageName(
   t: number,
   style: "interstice" | "kindled",
-  isBash: boolean,
+  verb: "blade" | "bash" | "stab",
 ): "anticipation" | "cut" | "followThrough" | "recovery" {
-  const aEnd = isBash ? 0.36 : style === "kindled" ? 0.38 : 0.15;
-  const cutEnd = isBash ? 0.56 : style === "kindled" ? 0.61 : 0.42;
-  const followEnd = isBash ? 0.74 : style === "kindled" ? 0.88 : 0.80;
+  const isBash = style === "kindled" && verb === "bash";
+  const isStab = style === "interstice" && verb === "stab";
+  // Field names here are the shared cross-verb vocabulary (meleeStage's own
+  // anticipation/cut/followThrough/recovery) — "cut" doubles as bash's
+  // "thrust"/stab's "thrust" phase and "followThrough" doubles as bash's
+  // "hold"/stab's "hold", same reuse bashStage's own callers already lean on.
+  const aEnd = isBash ? 0.36 : isStab ? 0.18 : style === "kindled" ? 0.38 : 0.15;
+  const cutEnd = isBash ? 0.56 : isStab ? 0.32 : style === "kindled" ? 0.61 : 0.42;
+  const followEnd = isBash ? 0.74 : isStab ? 0.42 : style === "kindled" ? 0.88 : 0.80;
   if (t < aEnd) return "anticipation";
   if (t < cutEnd) return "cut";
   if (t < followEnd) return "followThrough";

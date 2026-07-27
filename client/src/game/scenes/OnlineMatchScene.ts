@@ -1034,7 +1034,7 @@ export class OnlineMatchScene extends Phaser.Scene {
         id: PlayerId,
         style: "interstice" | "kindled",
         dir: number,
-        verb: "blade" | "bash" = "blade",
+        verb: "blade" | "bash" | "stab" = "blade",
       ): void => {
         this.playerRigs.get(id as string)?.triggerMeleeSwing?.(style, dir, verb);
       };

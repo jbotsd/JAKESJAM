@@ -94,6 +94,18 @@ const EDGE_REACH = 88;
 // a short acceleration cliff; Kindled carries a broad greatsword diagonal.
 const BLADE_SWEEP = 2.25;
 const EDGE_SWEEP = 2.5;
+// NINJA STAB (Track F1, 2026-07-26) — the chain's third beat, a linear
+// thrust, not another arc. Longer reach (matches NINJA_STAB_RANGE (104) >
+// SLASH_RANGE (78) in World.ts being proportionally longer than BLADE_REACH)
+// and a MUCH narrower sweep (a precise poke, not a wide cone) — reuses the
+// same drawBladeSwing construct as the ordinary arc, just parameterized
+// differently, the identical "one function, two reach/sweep pairs" pattern
+// EDGE/BLADE already share (bash gets its own bespoke drawKindledBash only
+// because it's a genuinely different silhouette — a slab check, not a
+// blade; the stab is still a blade). JUDGMENT CALL, visual-only, no test
+// pins these two literals.
+const STAB_REACH = 108;
+const STAB_SWEEP = 0.55;
 // Fallback hand height above the sim (feet) position when no rig hand is known —
 // roughly torso/hand height so the swing reads at the body, not the ground ring.
 const HAND_RAISE = 34;
@@ -155,6 +167,14 @@ type Swing = {
    *  paladin swing renders the slab-led body check (drawKindledBash), not
    *  the sword arc. Driven by slash-started's `verb` field. */
   bash: boolean;
+  /** NINJA STAB (Track F1, 2026-07-26): true = this ninja swing is the
+   *  chain's linear-thrust beat — reach/sweep are already baked into this
+   *  swing's own `reach`/`sweep` fields above (STAB_REACH/STAB_SWEEP), so
+   *  the draw path itself needs no branch; this flag exists purely so the
+   *  contact-time debris/hit-mark block (below) can tell a stab apart from
+   *  an ordinary arc hit on the SAME swing record. Driven by
+   *  slash-started's `verb` field, same mechanism as `bash`. */
+  stab: boolean;
   /** Ground-response one-shot latch (R1 row 10): the dust wedge fires
    *  once per swing, never per frame. */
   dustFired: boolean;
@@ -349,14 +369,16 @@ export class ConstructVfxController {
     pid?: string,
     comboCount = 1,
     bash = false,
+    stab = false,
   ): void {
+    const isStab = kind === "ninja" && stab;
     this.swings.push({
       kind,
       pivot: { x: pivot.x, y: pivot.y },
       backPivot: { x: backPivot.x, y: backPivot.y },
       aim,
-      reach: kind === "ninja" ? BLADE_REACH : EDGE_REACH,
-      sweep: kind === "ninja" ? BLADE_SWEEP : EDGE_SWEEP,
+      reach: kind === "ninja" ? (isStab ? STAB_REACH : BLADE_REACH) : EDGE_REACH,
+      sweep: kind === "ninja" ? (isStab ? STAB_SWEEP : BLADE_SWEEP) : EDGE_SWEEP,
       dir,
       elapsedMs: 0,
       durMs: kind === "ninja" ? BLADE_SWING_MS : EDGE_SWING_MS,
@@ -364,6 +386,7 @@ export class ConstructVfxController {
       pid,
       comboCount,
       bash: kind === "paladin" && bash,
+      stab: isStab,
       dustFired: false,
     });
   }
@@ -383,7 +406,7 @@ export class ConstructVfxController {
       id: PlayerId,
       style: "interstice" | "kindled",
       dir: number,
-      verb?: "blade" | "bash",
+      verb?: "blade" | "bash" | "stab",
     ) => void,
     // Shock Ring's landing slam and Wall Bloom's wall-kick burst fire
     // SILENTLY (no SimEvent — see combat.ts/World.ts's own "nothing to
@@ -448,13 +471,16 @@ export class ConstructVfxController {
       // first windup frame, both on the rig (body CHECK pose) and in the
       // construct (drawKindledBash), never guessing from its own counter.
       const isBash = cls === "paladin" && ev.verb === "bash";
+      // NINJA STAB (Track F1, 2026-07-26): same "sim marks it, render never
+      // guesses" contract as the bash above.
+      const isStab = cls === "ninja" && ev.verb === "stab";
       triggerMeleePose?.(
         ev.playerId,
         cls === "ninja" ? "interstice" : "kindled",
         dir,
-        isBash ? "bash" : "blade",
+        isBash ? "bash" : isStab ? "stab" : "blade",
       );
-      this.triggerSwing(cls, pivot, backPivot, aim, dir, key, comboCount, isBash);
+      this.triggerSwing(cls, pivot, backPivot, aim, dir, key, comboCount, isBash, isStab);
     }
 
     // Advance + repaint all live swings into the one persistent layer. Each
@@ -634,6 +660,32 @@ export class ConstructVfxController {
       }
     }
 
+    // STAB contact read (Track F1, 2026-07-26) — Interstice's chain
+    // finisher connected. Same slash-mark stamp as the ordinary arc (it's
+    // still a blade, not a different weapon), but the debris gets its OWN
+    // "stab" register (spawnMeleeDebris) — a tight, deep, forward-
+    // continuing puncture spray, distinct from the arc's own tight-but-
+    // wider cut-line spray (R1 row 18 directionality discipline). One-shot
+    // per stab-landed event, straight into the pool.
+    for (const ev of events) {
+      if (ev.t !== "stab-landed") continue;
+      const attacker = state.players[ev.attackerId];
+      if (!attacker) continue;
+      const victimPos = getPosition(ev.victimId);
+      if (!victimPos) continue;
+      const attackerPos = getPosition(ev.attackerId);
+      const angle = attackerBladeAngle.get(ev.attackerId as string) ??
+        (attackerPos ? Math.atan2(victimPos.y - attackerPos.y, victimPos.x - attackerPos.x) : 0);
+      const variant = toVariant(this.slashCombo.get(ev.attackerId as string)?.count);
+      spawnSlashMark(this.pool, victimPos, angle, INTERSTICE_TINT, variant);
+      const dirRad = ev.dirX !== undefined || ev.dirY !== undefined
+        ? Math.atan2(ev.dirY ?? 0, ev.dirX ?? 1)
+        : attackerPos
+          ? Math.atan2(victimPos.y - attackerPos.y, victimPos.x - attackerPos.x)
+          : 0;
+      spawnMeleeDebris(this.pool, victimPos, dirRad, INTERSTICE_TINT, "stab");
+    }
+
     // Bash contact read — the check LANDS: a compact seal-burst at the
     // victim + dust kicked at their feet (blunt register: bloom + ground
     // response, deliberately NOT the ninja's sharp slash-mark). One-shot
@@ -689,11 +741,15 @@ export class ConstructVfxController {
     // place" (Jake, 2026-07-19): every window/mark ability whose actual
     // payoff lands on a LATER hit, not at cast time. Checked directly off the
     // live snapshot (zero sim edits) at the moment the payoff hit's own event
-    // fires. Melee payoffs ride slash-hit (both classes fire it, unlike the
-    // ninja-only slash-mark above); ranged/status payoffs ride hit-confirmed
-    // below. Layered ON TOP of the existing hit read, never replacing it.
+    // fires. Melee payoffs ride slash-hit/stab-landed (both classes fire one
+    // of the three, unlike the ninja-only slash-mark above); ranged/status
+    // payoffs ride hit-confirmed below. Layered ON TOP of the existing hit
+    // read, never replacing it. `stab-landed` included (Track F1,
+    // 2026-07-26): World.ts's Read Mark/Undercut checks are NOT gated by
+    // which ninja verb landed — a STAB with either window live must still
+    // get the flourish, or it silently regresses for that one verb.
     for (const ev of events) {
-      if (ev.t !== "slash-hit" && ev.t !== "bash-landed") continue;
+      if (ev.t !== "slash-hit" && ev.t !== "bash-landed" && ev.t !== "stab-landed") continue;
       const attacker = state.players[ev.attackerId];
       if (!attacker) continue;
       const cls = resolveClassId(attacker.characterId);

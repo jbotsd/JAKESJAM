@@ -632,4 +632,164 @@ describe("melee-swing-memory bridge (Track Z1a)", () => {
       expect(ts[recoveryEntry + edgeN]!.chain).toBe(1);
     }
   });
+
+  test("F. STAB-chain parity — Interstice's arc·arc·STAB cadence resolves lockstep on both sides", () => {
+    // NINJA STAB (2026-07-26, finish-line-goal.md Track F1): every third
+    // ninja swing is the linear-thrust STAB — same chain state (chain_index/
+    // chain_gap_ms) the Kindled shield-bash chain uses (world_state.zig's
+    // MeleeSwingMemory is shared across classes), same "own contact
+    // register" (`stab-landed` vs `slash-hit`) split bash-landed already
+    // established. Unlike the bash, NINJA_STAB_DAMAGE is DELIBERATELY equal
+    // to SLASH_DAMAGE (the Undercut-threshold guardrail — see World.ts's own
+    // doc comment), so this gate can't tell verbs apart by a damage-cadence
+    // fingerprint the way test D's 38·38·14 pattern does. It instead proves
+    // parity on: (a) the WHOLE per-tick damage sequence lockstep (would
+    // catch any divergence regardless of verb), and (b) the WHOLE per-tick
+    // knockback (victim vx at the hit tick) sequence lockstep, whose
+    // repeating pattern IS verb-distinguishing (STAB's 340 vs the arc's own
+    // 260) — both must read IDENTICAL, tick-for-tick, on both orchestrators.
+    //
+    // Harness note: same "pin the victim back to spot + full health" trick
+    // test D uses, applied identically to both states, so the STAB's own
+    // (bigger, longer-range) knockback can't carry the victim out of arc
+    // range and decouple the two runs from the cadence being proven.
+    const NINJA2 = PlayerId("n2");
+    const TARGET2 = PlayerId("v3");
+    const TARGET2_X = 460;
+    const TARGET2_Y = 672; // grounded standing height on the 700-top floor
+    const playerIds2 = [String(NINJA2), String(TARGET2)];
+
+    const mkStabState = (): WorldState => ({
+      tick: Tick(0),
+      rngState: 1,
+      players: {
+        [NINJA2]: makePlayer("n2", NINJA_X, "sprinter"),
+        [TARGET2]: makePlayer("v3", TARGET2_X, "balanced"),
+      } as Record<PlayerId, PlayerEntity>,
+      projectiles: {},
+      destructibles: {},
+      firePatches: {},
+      pickups: {},
+      satellites: {},
+      round: {
+        phase: "fighting",
+        countdownRemainingMs: 90_000,
+        scores: {},
+        roundIndex: 1,
+        winnerPlayerId: null,
+      },
+    });
+
+    const runtime = createRuntime(MAP);
+    let tsState = mkStabState();
+
+    setWorldStatics(
+      MAP.platforms.map(platformToAABB),
+      MAP.platforms.map((p) => (p.kind === "platform" ? 1 : 0)),
+    );
+    setWorldArenaBounds(
+      runtime.ceilingClampY,
+      MAP.size.y > 0 ? MAP.size.y + KILL_PLANE_MARGIN_PX : 0,
+    );
+    setWorldLaunchPads([]);
+    setWorldSlopes([]);
+    setWorldSpawnPoints(MAP.spawns);
+    setWorldTargetScore(resolveModeConfig(undefined).targetScore);
+    let zigState: WorldState = mkStabState();
+
+    // Mash script: settle 0..29, then a Fire press every 5 ticks — the
+    // ninja swing cycle is ~13 ticks (WINDUP 60 + ACTIVE 45 + RECOVERY
+    // 110ms), so each press lands inside the 100ms buffer window or a
+    // sub-785ms idle gap, and the chain never cools mid-run.
+    const ninjaKeysForTick = (t: number): number =>
+      t >= 30 && (t - 30) % 5 === 0 ? FireBit : 0;
+
+    const prevKeys: Record<string, number> = {};
+    for (const id of playerIds2) prevKeys[id] = 0;
+
+    const pinVictim = (state: WorldState): WorldState => ({
+      ...state,
+      players: {
+        ...state.players,
+        [TARGET2]: {
+          ...state.players[TARGET2]!,
+          x: TARGET2_X,
+          y: TARGET2_Y,
+          vx: 0,
+          vy: 0,
+          health: 100,
+          alive: true,
+        },
+      },
+    });
+
+    const tsDamages: number[] = [];
+    const zigDamages: number[] = [];
+    const tsKnockbacks: number[] = [];
+    const zigKnockbacks: number[] = [];
+    for (let t = 0; t < 300; t++) {
+      const tsInputs: Record<PlayerId, InputFrame | null> = {};
+      for (const id of playerIds2) {
+        tsInputs[PlayerId(id)] = {
+          seq: InputSeq(t + 1),
+          tick: Tick(t + 1),
+          keys: id === String(NINJA2) ? ninjaKeysForTick(t) : 0,
+          aimX: AIM_X,
+          aimY: AIM_Y,
+          dtMs: DT_MS,
+        };
+      }
+      tsState = stepWithRuntime(tsState, runtime, tsInputs, DT_MS).state;
+
+      (globalThis as {
+        __jakesjam_wasm_inputs__?: ReadonlyMap<
+          string,
+          { keys: number; prevKeys: number; aimX: number; aimY: number }
+        >;
+      }).__jakesjam_wasm_inputs__ = new Map(
+        playerIds2.map((id) => {
+          const keys = id === String(NINJA2) ? ninjaKeysForTick(t) : 0;
+          return [id, { keys, prevKeys: prevKeys[id]!, aimX: AIM_X, aimY: AIM_Y }];
+        }),
+      );
+      __clearFireConfigCacheForTests();
+      writeFireConfigsForState(zigState);
+      zigState = applyWasmWorldStepFullSync(zigState, DT_MS).state;
+      for (const id of playerIds2)
+        prevKeys[id] = id === String(NINJA2) ? ninjaKeysForTick(t) : 0;
+
+      tsDamages.push(100 - tsState.players[TARGET2]!.health);
+      zigDamages.push(100 - zigState.players[TARGET2]!.health);
+      tsKnockbacks.push(tsState.players[TARGET2]!.vx);
+      zigKnockbacks.push(zigState.players[TARGET2]!.vx);
+
+      tsState = pinVictim(tsState);
+      zigState = pinVictim(zigState);
+    }
+
+    // Lockstep: the two orchestrators agree on WHICH tick every hit lands,
+    // HOW HARD (damage), and how hard it SHOVES (knockback) — across the
+    // whole mash.
+    expect(zigDamages).toEqual(tsDamages);
+    expect(zigKnockbacks).toEqual(tsKnockbacks);
+
+    // The cadence itself: at least two full arc·arc·STAB cycles landed
+    // in-run, damage is a flat 14 every time (the Undercut guardrail — NOT
+    // a DPS lever, unlike the bash), and the knockback pattern shows the
+    // STAB's bigger 340 shove every third landed hit.
+    const landedTicks = tsDamages
+      .map((d, i) => (d > 0 ? i : -1))
+      .filter((i) => i >= 0);
+    expect(landedTicks.length).toBeGreaterThanOrEqual(6);
+    for (const i of landedTicks) expect(tsDamages[i]).toBe(14);
+    const landedKnockbacks = landedTicks.map((i) => tsKnockbacks[i]!);
+    expect(landedKnockbacks.slice(0, 3).map((v) => v > 300)).toEqual([false, false, true]);
+
+    // And the bridged chain state agrees with the TS orchestrator's own
+    // off-wire memory at the end of the run.
+    const tsChain = runtime.melee.get(NINJA2)!;
+    const zigMem = zigState.meleeSwingMemory?.[NINJA2];
+    expect(zigMem).toBeDefined();
+    expect(zigMem!.chainIndex).toBe(tsChain.chainIndex);
+  });
 });

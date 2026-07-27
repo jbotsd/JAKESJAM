@@ -1393,8 +1393,10 @@ export type MeleeSwingMemory = {
    *  MeleeSwingPhase enum(u8), same shape as TS's NinjaSlashPhase /
    *  PaladinEdgePhase unions. */
   phase: 0 | 1 | 2 | 3;
-  /** SHIELD BASH chain position (2026-07-24; Kindled-only, always 0 for
-   *  ninja): 0/1 = blade swings, 2 = the current/next swing is the BASH. */
+  /** Chain position — 0/1 = ordinary swings, 2 = the current/next swing is
+   *  the chain's third beat: Kindled's SHIELD BASH (2026-07-24) or Ninja's
+   *  own STAB (2026-07-26, finish-line-goal.md Track F1), whichever class
+   *  this player is (a player is exactly one chassis at a time). */
   chainIndex: number;
   /** Victim bitmask already dash-through-tagged during the CURRENT dash
    *  burst (Razor Route substrate) — same slot-index shape as
@@ -1404,8 +1406,9 @@ export type MeleeSwingMemory = {
   wasDashing: boolean;
   /** Razor Route empowerment latched at the current burst's start. */
   razorRouteActiveDash: boolean;
-  /** ms spent idle since the last swing's recovery ended — the bash
-   *  chain's reset clock (Kindled-only). */
+  /** ms spent idle since the last swing's recovery ended — the chain's
+   *  reset clock (Kindled's bash or Ninja's stab, whichever class this
+   *  player is). */
   chainGapMs: number;
 };
 
@@ -1892,10 +1895,13 @@ export type SimEvent = (
        * KINDLED SHIELD BASH (2026-07-24, slash-feel-ledger "THE SHIELD IS
        * IN THE CHAIN"): 'bash' marks the chain's third swing — the slab-
        * led shield bash — so the render leads with the slab from windup.
-       * Absent = an ordinary blade swing (both classes). Additive field —
-       * old clients ignore it and render a blade swing.
+       * NINJA STAB (2026-07-26, finish-line-goal.md Track F1): 'stab' marks
+       * Interstice's own chain's third swing — the linear thrust — same
+       * shape, so the render leads with the thrust from windup. Absent = an
+       * ordinary blade swing (both classes). Additive field — old clients
+       * ignore it and render a blade swing.
        */
-      verb?: 'bash';
+      verb?: 'bash' | 'stab';
     }
   /**
    * A ninja's melee arc landed on a player this tick (arc-vs-AABB test,
@@ -1926,6 +1932,26 @@ export type SimEvent = (
    */
   | {
       t: 'bash-landed';
+      attackerId: PlayerId;
+      victimId: PlayerId;
+      damage: number;
+      /** Unit shove direction — same render-only contract as slash-hit's. */
+      dirX?: number;
+      dirY?: number;
+    }
+  /**
+   * NINJA STAB landed (2026-07-26, finish-line-goal.md Track F1) — the
+   * Interstice chain's third swing, the linear thrust, connected. Distinct
+   * from 'slash-hit' so the render layer gives the thrust its own contact
+   * register (slash-feel-ledger R1 table), same "own contact register"
+   * precedent as 'bash-landed' vs Kindled's own 'slash-hit'. Damage/
+   * knockback numbers are documented on NINJA_STAB_* (World.ts) — held
+   * equal to the ordinary arc's own SLASH_DAMAGE (a reach/precision verb,
+   * not a DPS lever). Fired alongside the same tick's generic
+   * 'hit-confirmed'. Additive wire type.
+   */
+  | {
+      t: 'stab-landed';
       attackerId: PlayerId;
       victimId: PlayerId;
       damage: number;

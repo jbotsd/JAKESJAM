@@ -199,6 +199,136 @@ dead there. Fixed at the section-8 player-step read (world.zig), keeping
 the raw fire-config bytes pure card resolution per
 orchestratorAugmentParity's pinned contract.
 
+## STAB verb design decision (wave 4, 2026-07-26, finish-line-goal.md Track F1)
+
+**DECIDED: candidate (a), same as Kindled's own precedent — fixed cadence,
+arc·arc·STAB, chain position 2.** The ledger's Interstice section names the
+cadence ("arc-arc-STAB cadence") but — unlike the shield bash, which got a
+fully-numbered decision block before implementation — leaves every actual
+number undecided. This section makes that same gameplay-first judgment call
+explicit, structurally mirroring the bash's own block, so it can be
+sanity-checked as one unit rather than scattered across code comments.
+**FLAG FOR REVIEW: every number below is new feel/balance judgment, not a
+transcribed spec — check all of it specifically**, the same flag World.ts's
+own `NINJA_STAB_*` doc comments carry per-constant.
+
+- **Why fixed cadence, not contextual/economy-coupled:** same reasoning
+  Kindled's own decision block gives, re-derived for Interstice — a range
+  gate inside melee range is illegible; Interstice's energy is a class
+  RESOURCE (fast regen, contact-fed), not a Kindling-shaped "economy" a
+  bash-style verb could plausibly spend/feed, so candidate (c) has no
+  Interstice equivalent to couple to. A fixed chain position is plannable
+  (hold the stab for a fleeing target one reach-increment out; back off to
+  reset the chain) and countable by the defender, same as Kindled's.
+- **Payoff is REACH + PRECISION, not damage or control.** Unlike the bash
+  (payoff = CONTROL, because perfectly-played melee loses the point-blank
+  DPS trade), Interstice's whole recent balance history (Track B,
+  2026-07-26) is about NARROWING that same DPS gap, not widening it — so a
+  third damage lever on top would be a real power-creep risk. Instead:
+  `NINJA_STAB_DAMAGE` is held EQUAL to `SLASH_DAMAGE` (14), which is also a
+  hard correctness guardrail (see below), and the STAB's actual identity is
+  a longer, narrower poke — it touches targets the arc's own 78px/100° cone
+  can't, at the cost of covering far less area per swing.
+- **The Undercut guardrail (non-negotiable, not a judgment call):**
+  `SLASH_DAMAGE`'s own doc comment is explicit that 14 is held below
+  `NINJA_UNDERCUT_HEALTH_THRESHOLD` (15) ON PURPOSE, so Undercut's "execute
+  a threshold-health target the base swing alone can't" identity survives a
+  bare hit. The STAB is still "the base swing" (chassis-baseline, no card
+  gate) — if its damage ever exceeded 14 it would quietly undercut
+  Undercut's exclusive niche for any STAB landing on a 15hp target. Pinned
+  by `ninjaStab.test.ts`'s own guardrail case (a stab on a 15hp victim
+  survives at 1hp without the window live).
+- **Chain rules (sim, TS + Zig mirrored):** identical shape to Kindled's —
+  chain position advances per STARTED swing (whiffs count), resets after
+  `NINJA_STAB_CHAIN_GAP_MS` (785ms) of idle or on death. 785 is DERIVED the
+  same way 350 was for Kindled: combo window (1000ms, R1 row 13's own "keep
+  1000ms") minus the swing cycle (215ms = `SLASH_WINDUP_MS` +
+  `SLASH_ACTIVE_MS` + `SLASH_RECOVERY_MS`), so the sim chain and the
+  render's combo read agree on "still chaining". Same FSM phase timings as
+  the ordinary slash (windup/active/recovery untouched) — "the chain keeps
+  one rhythm", same call the bash made.
+- **STAB numbers:** range 104px (vs the arc's 78 — the verb's one clean,
+  legible reason to prefer it mid-chain: it reaches a target the arc
+  can't); arc 30° (vs the arc's own 100° — a precise line, not a cone);
+  damage 14 (= `SLASH_DAMAGE`, the Undercut guardrail); knockback 340px/s +
+  30 up (more than the arc's 260/60 — a piercing shove along the line, well
+  short of Kindled's own knockback identity); contact gate 12ms into active
+  (vs the arc's 22ms — a direct thrust reaches its line faster than an arc
+  sweeps to it, "the hand is always ahead of the eye").
+- **Events:** `slash-started` carries `verb: "stab"` on the third swing
+  (same shape as the bash's own `verb: "bash"` marker) so the render leads
+  with the thrust from the first windup frame; a landed stab emits
+  `stab-landed` (distinct from `slash-hit`) so the contact gets its own
+  register — same "own contact register" precedent as `bash-landed`.
+- **Render channel reuse (R1 rows 3-9, hit-stop/flash/flinch/squash/camera-
+  kick):** DELIBERATELY REUSES Interstice's existing chassis tuning
+  UNCHANGED, not a new tier — `victimChannel.ts`'s `impactChannelParams`/
+  `cameraKickParams` are keyed by CHASSIS only, and Kindled's own bash
+  already set this exact precedent (its hit-stop/flash/squash/camera-kick
+  are the plain "kindled" tier too; only the wire event + downstream
+  debris/hit-mark are bash-specific). STAB follows the same discipline.
+  **R1 row 11 (knockback, sim/balance-owned):** STAB adds 340px/s + 30 up
+  alongside the table's existing I 260/60 — K 420/110 pair (same "the table
+  lists the base verb; a chain's third beat gets its own number in its own
+  decision block" precedent the bash's own 760/260 already set — that
+  number was never added to the table row either).
+  **R1 row 12 (smear/afterimage):** the construct reuses `drawBladeSwing`
+  parameterized with a longer reach (108px) and a MUCH narrower sweep
+  (0.55rad) than the ordinary arc's own 82px/2.25rad — one function, two
+  reach/sweep pairs, the same pattern EDGE/BLADE already share (bash gets
+  its own bespoke `drawKindledBash` only because it's a genuinely different
+  silhouette — a slab check, not a blade; the stab is still a blade).
+  **R1 row 18 (debris directionality):** a new `"stab"` register in
+  `spawnMeleeDebris` — tighter than even the edge's own spray (0.32rad vs
+  0.5), traveling FURTHER (112px vs 92, matching the verb's own longer
+  reach), lightest droop of the three (10px), keeping the edge's own
+  cut-streak-through-contact treatment (a piercing line deserves "the
+  strike continued" at least as much as a cut does; bash, a blunt check,
+  skips it).
+- **Render pose (thrust animation, ProceduralPlayerRig):** a NEW dedicated
+  pose triple (`stabStage`/`stabHandPose`/`stabKineticChain`,
+  meleeTiming.ts) — short chamber (0-18%), an explosive punch already
+  near-full-extension by the sim's own contact gate (`NINJA_STAB_CONTACT_T`
+  ≈0.294, same "render contact tick = sim contact tick" discipline R1 row 2
+  established), a BRIEF hold (18-42%, far shorter than Kindled's own
+  blunt-check hold — a dagger punches and is already withdrawing, it
+  doesn't linger the way a slab check does), then retract. Body drive is
+  HARDER than the ordinary arc's own kinetic chain (pelvis/chest/head surge
+  more, "the body driving through" a linear punch) with LESS shoulder
+  rotation (a thrust is linear, not a wide rotational cut). The off-hand
+  keeps its EXISTING tight counterbalance guard unchanged
+  (`meleeOffhandPose`) — a smaller-surface, lower-risk design choice than a
+  genuine twin-thrust, flagged here rather than silently simplified.
+- **Scope fence, explicitly NOT done this pass** (matches Track F1's own
+  "build it" scope, not a full iteration-loop polish pass — see the
+  Interstice loop's own I1-I13 history for what that level of tape-verified
+  polish actually costs): no on-camera live-tape verification of the
+  render (the bash's own K5-K12/I5-I13 tape passes are a dozens-of-
+  iterations investment, out of scope for a single build task); no bespoke
+  sound cue (F2, blocked on Jake's audio picks — stab-landed reuses the
+  generic hit-confirmed cue for now, matching slash-hit's own pattern, not
+  bash-landed's direct `audio.play`); no ground-response/dust read (Row 10
+  is currently arc/bash-only); no Undercut/Read Mark render-side check
+  beyond confirming the existing empowered-hit flourish still fires for a
+  stab-landed hit (it does — `stab-landed` was added to that block's own
+  event filter).
+
+Sim implementation is TS + Zig mirrored (`NINJA_STAB_*`, World.ts 1z2
+ninja-melee block ↔ world.zig `stepMeleeSwing`, sharing the SAME
+`MeleeSwingMemory.chain_index`/`chain_gap_ms` fields the Kindled bash
+uses — a player is exactly one chassis at a time, so there's no cross-class
+interference) with a tick-identical parity gate
+(`meleeSwingMemoryBridge.test.ts` gate F, mirroring gate D's bash-chain
+proof) plus a dedicated TS-only suite (`ninjaStab.test.ts`: cadence, chain
+reset, death reset, the landed hit's damage/knockback/events, the reach/arc
+differentials against the ordinary arc, classId gating, and the Undercut
+guardrail). Gate F can't fingerprint verbs by a damage-cadence pattern the
+way gate D's 38·38·14 does (STAB_DAMAGE deliberately equals SLASH_DAMAGE),
+so it instead proves the WHOLE per-tick damage sequence AND the whole
+per-tick knockback sequence lockstep between orchestrators — the knockback
+sequence's own repeating pattern (260·260·340) is what's actually
+verb-distinguishing.
+
 ## Research tuning table (R1, verbatim from the report)
 
 *Source: `~/Documents/Slash_Feel_Research_20260724/research_report_20260724_slash_feel.md`
@@ -322,14 +452,22 @@ kill-blast pool reserve), I13 (full-gamut re-verification, no shared-rig
 regression). The FULL ANIMATION GAMUT checklist (idle/locomotion/melee/
 hurt/hurt-kill) reads clean on both classes sharing the rig substrate.
 
-**The only work remaining for either class loop is:**
-1. **The STAB verb** (Interstice's queued new melee thrust attack) — a real
-   sim addition, gated on Z1c fully clearing `sim/src/**`/`client/src/sim/**`
-   (six-axes payloads, team peel, dash i-frames, ward mitigation). Wave 4.
+**The only work remaining for either class loop was:**
+1. ~~**The STAB verb**~~ **BUILT (wave 4, 2026-07-26, finish-line-goal.md
+   Track F1)** — see "STAB verb design decision" above for the full
+   sim+render build: TS FSM (World.ts) + Zig mirror (world.zig) + a
+   tick-identical parity gate (meleeSwingMemoryBridge gate F) + a dedicated
+   TS suite (ninjaStab.test.ts) + the render pass (thrust pose on
+   ProceduralPlayerRig, its own construct reach/sweep + debris register,
+   camera-kick/whiff-watch timing). Flagged open: no on-camera live-tape
+   verification yet (a future wave's job, mirroring the bash's own K5-K12/
+   I5-I13 tape-iteration investment) and every design-judgment number in
+   that section should get Jake's own sanity-check pass.
 2. **Audio wiring** (R1 rows 13/14, the layered whoosh/contact/kill sound
    stack for both classes) — blocked on Jake's picks; no-synthesis rule
    means this cannot proceed without his canonical recordings.
 
 No further render-only iteration is queued against either rig unless a
-regression surfaces (e.g. from the STAB verb's own render half, once wave 4
-starts) or Jake's own playtest flags something this ledger's tooling missed.
+regression surfaces or Jake's own playtest flags something this ledger's
+tooling missed (the STAB verb's own on-camera tape pass being the most
+likely next candidate, per item 1 above).
