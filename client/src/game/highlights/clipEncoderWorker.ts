@@ -12,6 +12,14 @@
 // Protocol (all messages {t: ...}):
 //   in:  begin  {width, height, bitrate}   — start a segment
 //        frame  {frame: VideoFrame}        — transferred; closed here
+//        audioFrame {frame: AudioData}     — LIVE audio (ClipRecorder, clip-
+//                                            goal D4/B3), transferred, one
+//                                            per real-time chunk; distinct
+//                                            from `audio` below, which is
+//                                            ReplayScene's one-shot offline
+//                                            render (CL.B)
+//        audio  {sampleRate, channels}     — offline OfflineAudioContext
+//                                            render, whole track at once
 //        finish {}                         — finalize → out: file
 //        cancel {}                         — drop the in-flight segment
 //   out: file   {buffer: ArrayBuffer, width, height} (buffer transferred)
@@ -37,22 +45,36 @@ type BeginMsg = {
   width: number;
   height: number;
   bitrate: number;
-  /** Announce an audio track (offline replay renders, clip-goal CL.B) —
-   *  tracks must be registered before Output.start(), but the rendered
-   *  PCM only exists at the end, so begin declares and finish delivers. */
+  /** Announce an audio track — either an offline replay render (clip-goal
+   *  CL.B, one `audio` message with the whole rendered track at `finish`)
+   *  or ClipRecorder's live capture (clip-goal D4/B3, a stream of
+   *  `audioFrame` messages as they arrive). Either way, tracks must be
+   *  registered before Output.start(). */
   audio?: boolean;
 };
 type FrameMsg = { t: "frame"; frame: VideoFrame };
 /** Planar f32 PCM from an OfflineAudioContext render — one channel per
  *  entry, all the same length, scheduled from timestamp 0. */
 type AudioMsg = { t: "audio"; sampleRate: number; channels: Float32Array[] };
-type InMsg = BeginMsg | FrameMsg | AudioMsg | { t: "finish" } | { t: "cancel" };
+/** One live audio chunk (clip-goal D4/B3 — ClipRecorder's real-time path,
+ *  via MediaStreamTrackProcessor). Mirrors FrameMsg's video handling
+ *  exactly: transferred, closed here, dropped harmlessly if no audio track
+ *  is open for the current segment. */
+type AudioFrameMsg = { t: "audioFrame"; frame: AudioData };
+type InMsg = BeginMsg | FrameMsg | AudioMsg | AudioFrameMsg | { t: "finish" } | { t: "cancel" };
 
 let output: Output | null = null;
 let source: VideoSampleSource | null = null;
 let audioSource: AudioSampleSource | null = null;
 let encodedW = 0;
 let encodedH = 0;
+/** First live AudioData timestamp (microseconds, its own capture-time
+ *  clock) seen THIS segment — subtracted from every subsequent frame so the
+ *  audio track's zero lines up with the segment's video-frame zero (which
+ *  is performance.now()-based, a totally different clock). Reset on every
+ *  `begin`. Loose (±one chunk) sync is fine here — MediaRecorder's own
+ *  native muxing needs none of this; only the WebCodecs worker path does. */
+let audioSegmentZeroUs: number | null = null;
 /** Serialize async handling — messages must apply in arrival order. */
 let chain: Promise<void> = Promise.resolve();
 
@@ -63,6 +85,7 @@ function fail(err: unknown): void {
 }
 
 async function handleBegin(msg: BeginMsg): Promise<void> {
+  audioSegmentZeroUs = null;
   const scale = msg.width > MAX_WIDTH ? MAX_WIDTH / msg.width : 1;
   // avc requires EVEN dimensions (a 1920x937 canvas is a real case — window
   // height is whatever it is). Always normalize through the transform.
@@ -140,6 +163,31 @@ async function handleFrame(msg: FrameMsg): Promise<void> {
   }
 }
 
+/** Live audio path (clip-goal D4/B3 — ClipRecorder's real-time capture).
+ *  Mirrors handleFrame's video handling: the audio track only exists once
+ *  `begin` declared one (msg.audio), so a frame arriving with no
+ *  `audioSource` (segment boundary race, or MediaRecorder fallback active)
+ *  is just closed, never queued or thrown. Rebases each segment's FIRST
+ *  live AudioData timestamp to 0 so it lines up with the video clock (see
+ *  audioSegmentZeroUs's own comment) — loose (±one chunk) sync is the
+ *  documented, accepted tolerance for a real-time capture. */
+async function handleAudioFrame(msg: AudioFrameMsg): Promise<void> {
+  const frame = msg.frame;
+  if (!audioSource) {
+    frame.close();
+    return;
+  }
+  if (audioSegmentZeroUs === null) audioSegmentZeroUs = frame.timestamp;
+  const sample = new AudioSample(frame);
+  try {
+    sample.setTimestamp(Math.max(0, (frame.timestamp - audioSegmentZeroUs) / 1_000_000));
+    await audioSource.add(sample);
+  } finally {
+    sample.close();
+    frame.close();
+  }
+}
+
 async function handleFinish(): Promise<void> {
   if (!output) return;
   const out = output;
@@ -175,6 +223,8 @@ self.onmessage = (e: MessageEvent<InMsg>) => {
           return handleFrame(msg);
         case "audio":
           return handleAudio(msg);
+        case "audioFrame":
+          return handleAudioFrame(msg);
         case "finish":
           return handleFinish();
         case "cancel":
@@ -183,6 +233,7 @@ self.onmessage = (e: MessageEvent<InMsg>) => {
     })
     .catch((err) => {
       if (msg.t === "frame") (msg as FrameMsg).frame.close();
+      else if (msg.t === "audioFrame") (msg as AudioFrameMsg).frame.close();
       fail(err);
     });
 };

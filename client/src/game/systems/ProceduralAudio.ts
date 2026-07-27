@@ -16,6 +16,18 @@
 
 import { sampleEngine } from "../audio/SampleEngine.js";
 import { getSfxVolume01, onSfxVolumeChange } from "../audio/sfxVolume.js";
+import { isClipsEnabled } from "../highlights/clipConsent.js";
+
+/** Pure predicate for whether the live-audio evidence tap should exist.
+ *  Extracted so the on/off logic is unit-testable without a real
+ *  AudioContext/window (clip-goal D4): the tap was originally `?evidence=1`
+ *  only (Playwright evidence runs — see scripts/autoplay.ts, which still
+ *  forces it via the URL param); it now ALSO backs ClipRecorder's live audio
+ *  capture (B3: canvas.captureStream() never carries audio, so ClipRecorder
+ *  shipped 100% silent clips) whenever the player has clip capture on. */
+export function shouldTapEvidenceAudio(evidenceParam: boolean, clipsEnabled: boolean): boolean {
+  return evidenceParam || clipsEnabled;
+}
 
 export type AudioCue =
   | "shoot"
@@ -270,11 +282,18 @@ export class ProceduralAudio {
     // Playwright's video recorder is intentionally video-only. Evidence runs
     // therefore mirror the already-mixed master bus into a MediaStream so the
     // audio-only review is a real artifact, not a filename pointing at silence.
-    // This branch is absent from normal play and never changes cue scheduling.
+    // clip-goal D4: ClipRecorder.ts (the live "record my own gameplay"
+    // capture) taps this SAME stream now — canvas.captureStream() never
+    // carries audio on its own, and this is the game's real mixed output
+    // (post master, post limiter), matching the house audio rule. This
+    // branch never changes cue scheduling either way.
     if (
       !this.offline &&
       typeof window !== "undefined" &&
-      new URLSearchParams(window.location.search).get("evidence") === "1"
+      shouldTapEvidenceAudio(
+        new URLSearchParams(window.location.search).get("evidence") === "1",
+        isClipsEnabled(),
+      )
     ) {
       const liveCtx = ctx as AudioContext;
       const destination = liveCtx.createMediaStreamDestination();

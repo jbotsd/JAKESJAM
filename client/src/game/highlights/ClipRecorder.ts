@@ -46,11 +46,46 @@
 // for browsers without WebCodecs and as the escape hatch if the worker
 // errors mid-session.
 
-/** Mezzanine output width (height derived from source aspect, both capped
- *  at the source size). Full-res: the single stream this recorder encodes is
- *  BOTH the landscape deliverable and the master the server NVENC-crops the
- *  vertical from — 1280 here meant a soft upscaled 720p everywhere. */
-const MEZZANINE_MAX_WIDTH = 1920;
+/**
+ * Fixed broadcast output box (clip-goal D4/B1). The live source canvas is
+ * whatever size the browser window happens to be — the studied clips
+ * reproduced the ORIGINAL baseline's exact failure mode (1824×1026,
+ * 1920×937, etc. — never quite 16:9, never exactly 1920×1080), because the
+ * old mezzanine canvas just scaled proportionally FROM whatever the source
+ * was. ReplayScene's render mode fixes this for offline renders by pinning
+ * its OWN canvas before any camera math runs (CL.A); ClipRecorder can't do
+ * that — resizing `this.sourceCanvas` would resize the live player's actual
+ * game window. Instead every captured frame is composited (cover-cropped,
+ * never distorted/letterboxed) onto a fixed BROADCAST_WIDTH×HEIGHT canvas
+ * BEFORE encoding (see composeBroadcastFrame) — same destination box
+ * regardless of the live window's shape.
+ */
+const BROADCAST_WIDTH = 1920;
+const BROADCAST_HEIGHT = 1080;
+/** Persistent identity mark (clip-goal D4/B11 — "the file sells nothing
+ *  once separated from its share page"). Stamped into the SAME composited
+ *  frame the crop above produces — corner, dim, house language (Space
+ *  Mono), ≤4% of 1080 tall like CL.D's own ceiling for the render pipeline's
+ *  watermark. Text and scrim are pre-rendered ONCE (buildWatermark) and
+ *  blitted per frame — a cheap draw, not a re-rasterized glyph run. */
+const WATERMARK_TEXT = "JAKESJAM · play.elyad.io";
+const WATERMARK_HEIGHT_PX = 30;
+const WATERMARK_PAD_X = 14;
+const WATERMARK_MARGIN_PX = 18;
+/**
+ * Closing fade (clip-goal D4/B5-sibling): the "ends on raw mid-fight dead
+ * air with zero banner/fade/hold" regression — a hard cut is worse than the
+ * ORIGINAL studied baseline's wrong-banner ending. computeSegmentEndAtMs
+ * (above) already stops extending the segment shortly after a trigger's own
+ * lookahead instead of riding to an arbitrary boundary; this adds the
+ * missing visual resolution on top of that: the last FADE_MS of any
+ * trigger-covered segment ease to black in composeBroadcastFrame, so an
+ * uploaded clip always closes on a deliberate beat instead of a freeze-frame
+ * mid-swing. Never fully opaque (0.92 ceiling) — a hint of the final frame
+ * still reads through, closer to a broadcast fade than a blackout.
+ */
+const CLOSING_FADE_MS = 500;
+const CLOSING_FADE_MAX_ALPHA = 0.92;
 /** Normal segment length — also the max lookback a trigger can capture. */
 const SEGMENT_MS = 10_000;
 /** Extra time recorded AFTER a trigger so the aftermath (death cam, VFX
@@ -69,9 +104,15 @@ const CAPTURE_FPS = 30;
 /** Explicit bitrate — MediaRecorder's implicit default can be low enough to
  *  look noticeably blocky on fast-moving gameplay. Bitrate is nearly free
  *  CPU-wise for a realtime software encoder (pixels×fps is the expensive
- *  axis), and this stream is the MASTER the server transcodes from — spend
- *  bits: 16Mbps holds the thin-line arena art at 1080p30. */
-const VIDEO_BITS_PER_SECOND = 16_000_000;
+ *  axis).
+ *  clip-goal D4/B4: this was 16Mbps, well over probe-clip's ≤9Mbps ceiling
+ *  (measured 8.5-9.9Mbps on real ClipRecorder.ts output — the studied dark
+ *  arena content looks identical at a much lower rate, per ReplayScene's own
+ *  CLIP_BITRATE finding). Matched to that same 7.5Mbps choice for house
+ *  consistency rather than importing it — this is a genuinely different
+ *  capture path (live realtime vs. offline render) and shouldn't share a
+ *  private constant across files. */
+const VIDEO_BITS_PER_SECOND = 7_500_000;
 /** Draw-loop pacing interval. rAF fires at display rate; we only pay the
  *  two drawImage calls when this much time has passed since the last draw. */
 const DRAW_INTERVAL_MS = 1000 / CAPTURE_FPS;
@@ -85,6 +126,81 @@ const MIN_UPLOAD_BYTES = 100_000;
  *  0.12 factor panned at half speed whenever the frame rate halved.
  *  τ=130ms ≈ settles in ~0.4s: pans like a camera operator, never snaps. */
 const FOCUS_TAU_MS = 130;
+
+/**
+ * Pure segment-end math, extracted for unit testing (clip-goal D4/B5-sibling:
+ * "ends on raw mid-fight dead air with zero banner/fade/hold" — a worse
+ * ending than the original studied baseline's wrong-banner problem).
+ *
+ * BUG THIS FIXES: the old formula was `max(naturalEndAt, pendingFinishAtMs)`
+ * — so a trigger firing EARLY in a segment (say t=1s of a 10s segment) still
+ * rode all the way to the arbitrary 10s natural-rotation boundary instead of
+ * wrapping up shortly after its own lookahead, because `naturalEndAt` (10s)
+ * is bigger than `pendingFinishAtMs` (~4s). That natural boundary exists only
+ * to bound the CONTINUOUS rolling buffer when nothing has happened yet — once
+ * a highlight actually fires, the goal is "end soon after the beat" (the same
+ * trim-discipline spirit as CL.C's window law), not "keep recording until the
+ * next arbitrary clock tick" and cut whatever unrelated moment is on screen
+ * then. A pending trigger now governs the end ON ITS OWN; MAX_SEGMENT_MS
+ * still caps runaway extension from repeated late triggers.
+ */
+export function computeSegmentEndAtMs(
+  segmentStartedAtMs: number,
+  pendingFinishAtMs: number | null,
+): number {
+  const naturalEndAt = segmentStartedAtMs + SEGMENT_MS;
+  const desiredEndAt = pendingFinishAtMs !== null ? pendingFinishAtMs : naturalEndAt;
+  return Math.min(desiredEndAt, segmentStartedAtMs + MAX_SEGMENT_MS);
+}
+
+/**
+ * Pure closing-fade math (clip-goal D4/B5-sibling), extracted for unit
+ * testing: 0 while more than CLOSING_FADE_MS remains before the segment's
+ * scheduled end, ramping linearly to CLOSING_FADE_MAX_ALPHA exactly at
+ * (and past) the deadline. `msLeft` is signed — negative (already past the
+ * deadline, e.g. a stalled main thread skipped a frame) clamps to the same
+ * max alpha rather than overshooting or going negative.
+ */
+export function computeClosingFadeAlpha(msLeft: number): number {
+  if (msLeft >= CLOSING_FADE_MS) return 0;
+  return Math.min(1, Math.max(0, 1 - msLeft / CLOSING_FADE_MS)) * CLOSING_FADE_MAX_ALPHA;
+}
+
+export type CoverRect = { sx: number; sy: number; sw: number; sh: number };
+
+/**
+ * Pure "object-fit: cover" crop math (clip-goal D4/B1), extracted for unit
+ * testing: given a source box and a destination box of DIFFERENT aspect
+ * ratio, returns the centered source sub-rect that fills the destination
+ * with no distortion and no letterbox bars (the overflow is cropped, never
+ * squashed — matching how a real broadcast camera reframes rather than
+ * stretches). Equal-aspect source/destination returns the full source rect
+ * (a pure upscale/downscale, no crop needed).
+ */
+export function computeCoverRect(
+  srcW: number,
+  srcH: number,
+  dstW: number,
+  dstH: number,
+): CoverRect {
+  if (srcW <= 0 || srcH <= 0 || dstW <= 0 || dstH <= 0) {
+    return { sx: 0, sy: 0, sw: Math.max(1, srcW), sh: Math.max(1, srcH) };
+  }
+  const srcAspect = srcW / srcH;
+  const dstAspect = dstW / dstH;
+  if (srcAspect > dstAspect) {
+    // Source is WIDER than the destination box — crop the left/right edges,
+    // keep full height.
+    const sh = srcH;
+    const sw = sh * dstAspect;
+    return { sx: (srcW - sw) / 2, sy: 0, sw, sh };
+  }
+  // Source is TALLER than (or exactly matches) the destination box — crop
+  // the top/bottom edges, keep full width.
+  const sw = srcW;
+  const sh = sw / dstAspect;
+  return { sx: 0, sy: (srcH - sh) / 2, sw, sh };
+}
 
 export type ClipKind = "vertical" | "original";
 
@@ -121,6 +237,21 @@ function pickSupportedMimeType(): string | null {
   return null;
 }
 
+/** clip-goal D4/B3: the live game's real mixed audio output, when
+ *  ProceduralAudio has stood up the evidence tap (see shouldTapEvidenceAudio
+ *  in ProceduralAudio.ts — on by default whenever clip capture is on). Read
+ *  fresh every time rather than cached once: the tap doesn't exist until the
+ *  AudioContext is unlocked by a user gesture, which can happen AFTER
+ *  ClipRecorder.start(), so later callers (segment/rotation boundaries) get
+ *  a real chance to pick it up once play begins. House audio rule: this is
+ *  the game engine's own output, never a synthesized/stock substitute. */
+function evidenceAudioTrack(): MediaStreamTrack | null {
+  if (typeof window === "undefined") return null;
+  const stream = (window as Window & { __jakesjam_evidence_audio_stream__?: MediaStream })
+    .__jakesjam_evidence_audio_stream__;
+  return stream?.getAudioTracks()[0] ?? null;
+}
+
 /** One capture chain: offscreen dest canvas → captureStream → MediaRecorder.
  *  The owning ClipRecorder rotates all pipelines on the same shared timer so
  *  the vertical + original files cover the same moment. */
@@ -151,6 +282,21 @@ export class ClipRecorder {
   private readonly sourceCanvas: HTMLCanvasElement;
   private lastDrawAtMs = 0;
   private readonly deps: ClipRecorderDeps;
+  /** Fixed BROADCAST_WIDTH×HEIGHT composite canvas (clip-goal D4/B1/B11) —
+   *  every captured frame is drawn here (cover-cropped from the live source
+   *  + watermark stamped) BEFORE it reaches either encode path. Built once
+   *  in start(); see composeBroadcastFrame. */
+  private broadcastCanvas: HTMLCanvasElement | null = null;
+  private broadcastCtx: CanvasRenderingContext2D | null = null;
+  /** Pre-rendered watermark bitmap (built once — see buildWatermark). Null
+   *  only if canvas 2D context creation fails; frames still encode without
+   *  it rather than dropping capture entirely. */
+  private watermark: HTMLCanvasElement | null = null;
+  /** When the CURRENT segment is scheduled to stop (set by scheduleRotation
+   *  — see computeSegmentEndAtMs). Used only to drive the closing fade
+   *  below; the actual stop is still the real setTimeout in
+   *  scheduleRotation, this is just that same deadline read back. */
+  private scheduledEndAtMs: number | null = null;
   /** Smoothed crop-window center (source-canvas px). NaN = uninitialised —
    *  first frame snaps straight to the target instead of panning in. */
   private focusX = Number.NaN;
@@ -163,6 +309,154 @@ export class ClipRecorder {
   private pendingStops = 0;
   /** Whether the segment being stopped should upload once all stops land. */
   private uploadOnStop = false;
+  /** Worker-path live audio (clip-goal D4/B3): the MediaStreamTrackProcessor
+   *  reader pumping AudioData frames to the encoder worker for the whole
+   *  session's life (NOT per-segment — see ensureWorkerAudioTap). Null until
+   *  a track is available and the tap is stood up. */
+  private audioReader: ReadableStreamDefaultReader<AudioData> | null = null;
+  /** Whether the worker has an audio track for the CURRENT segment — decides
+   *  the `audio:` flag on each segment's `begin` message. */
+  private workerHasAudio = false;
+
+  /** Worker path only: stand up the live-audio pump once a track exists.
+   *  Retried at the top of every segment (beginWorkerSegment) rather than
+   *  once at start(), because ProceduralAudio's evidence tap doesn't exist
+   *  until the AudioContext is unlocked by a user gesture — which can land
+   *  after ClipRecorder.start() but almost always lands within one 10s
+   *  segment of match start. Idempotent: no-ops once a reader exists. */
+  private ensureWorkerAudioTap(): void {
+    if (this.audioReader) {
+      this.workerHasAudio = true;
+      return;
+    }
+    if (typeof MediaStreamTrackProcessor === "undefined") return;
+    const track = evidenceAudioTrack();
+    if (!track) return;
+    try {
+      const processor = new MediaStreamTrackProcessor<AudioData>({ track });
+      this.audioReader = processor.readable.getReader();
+      this.workerHasAudio = true;
+      void this.pumpAudioFrames(this.audioReader);
+    } catch (err) {
+      this.deps.onError?.(err);
+    }
+  }
+
+  /** Continuously forwards live AudioData frames to the encoder worker.
+   *  Runs for the whole session (see ensureWorkerAudioTap) — the worker
+   *  itself gates whether a frame lands anywhere (no audio track declared
+   *  for the current segment → it just closes the frame, mirroring how
+   *  handleFrame already drops video frames with no active `source`). */
+  private async pumpAudioFrames(reader: ReadableStreamDefaultReader<AudioData>): Promise<void> {
+    try {
+      for (;;) {
+        const { value, done } = await reader.read();
+        if (done) return;
+        if (!this.encoderWorker) {
+          value.close();
+          continue;
+        }
+        try {
+          this.encoderWorker.postMessage({ t: "audioFrame", frame: value }, [
+            value as unknown as Transferable,
+          ]);
+        } catch (err) {
+          value.close();
+          this.deps.onError?.(err);
+        }
+      }
+    } catch {
+      // reader.cancel() (stop()) rejects the in-flight read — expected.
+    }
+  }
+
+  /** Builds the fixed BROADCAST_WIDTH×HEIGHT composite canvas + watermark
+   *  once. Idempotent — safe to call from both start() entry points (worker
+   *  path and MediaRecorder fallback both need it). */
+  private ensureBroadcastCanvas(): void {
+    if (this.broadcastCanvas) return;
+    const canvas = document.createElement("canvas");
+    canvas.width = BROADCAST_WIDTH;
+    canvas.height = BROADCAST_HEIGHT;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) {
+      this.deps.onError?.(new Error("2D context unavailable for broadcast canvas"));
+      return;
+    }
+    this.broadcastCanvas = canvas;
+    this.broadcastCtx = ctx;
+    this.watermark = this.buildWatermark();
+  }
+
+  /** Pre-renders the "JAKESJAM · play.elyad.io" mark once (text metrics +
+   *  a legibility scrim behind it) so per-frame compositing is a single
+   *  cheap drawImage blit rather than re-rasterizing glyphs 30×/sec. */
+  private buildWatermark(): HTMLCanvasElement | null {
+    const fontPx = Math.round(WATERMARK_HEIGHT_PX * 0.56);
+    const font = `600 ${fontPx}px "Space Mono", ui-monospace, monospace`;
+    const probe = document.createElement("canvas").getContext("2d");
+    if (!probe) return null;
+    probe.font = font;
+    const width = Math.ceil(probe.measureText(WATERMARK_TEXT).width) + WATERMARK_PAD_X * 2;
+
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.max(1, width);
+    canvas.height = WATERMARK_HEIGHT_PX;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return null;
+    ctx.font = font;
+    ctx.textBaseline = "middle";
+    // Quiet scrim so ink-colored text stays legible over bright AND dark
+    // game backgrounds alike (ui-axioms.md: instrument-ink quiet, never
+    // fights the action for attention).
+    ctx.fillStyle = "rgba(10, 9, 14, 0.42)";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.fillStyle = "rgba(230, 224, 208, 0.85)";
+    ctx.fillText(WATERMARK_TEXT, WATERMARK_PAD_X, canvas.height / 2 + 1);
+    return canvas;
+  }
+
+  /** Composites the CURRENT live frame onto the fixed broadcast canvas:
+   *  cover-crop from whatever the live window's shape happens to be (B1),
+   *  then stamp the watermark (B11). Returns null only when the source
+   *  canvas has no pixels yet (0×0, e.g. before first layout) or the 2D
+   *  context failed to construct. This is the ONE place either capture
+   *  path reads frame pixels from — both get the fix for free. */
+  private composeBroadcastFrame(): HTMLCanvasElement | null {
+    if (!this.broadcastCanvas || !this.broadcastCtx) return null;
+    const sw = this.sourceCanvas.width;
+    const sh = this.sourceCanvas.height;
+    if (sw === 0 || sh === 0) return null;
+    const rect = computeCoverRect(sw, sh, BROADCAST_WIDTH, BROADCAST_HEIGHT);
+    this.broadcastCtx.drawImage(
+      this.sourceCanvas,
+      rect.sx,
+      rect.sy,
+      rect.sw,
+      rect.sh,
+      0,
+      0,
+      BROADCAST_WIDTH,
+      BROADCAST_HEIGHT,
+    );
+    if (this.watermark) {
+      const x = BROADCAST_WIDTH - this.watermark.width - WATERMARK_MARGIN_PX;
+      const y = BROADCAST_HEIGHT - this.watermark.height - WATERMARK_MARGIN_PX;
+      this.broadcastCtx.drawImage(this.watermark, x, y);
+    }
+    // Closing fade (clip-goal D4/B5-sibling — see CLOSING_FADE_MS's own
+    // comment): only when a trigger is actually driving this segment toward
+    // its end — an un-triggered segment rotating naturally is discarded
+    // unread, so fading it would be wasted work for zero visual benefit.
+    if (this.pendingFinishAtMs !== null && this.scheduledEndAtMs !== null) {
+      const alpha = computeClosingFadeAlpha(this.scheduledEndAtMs - performance.now());
+      if (alpha > 0) {
+        this.broadcastCtx.fillStyle = `rgba(4, 4, 8, ${alpha})`;
+        this.broadcastCtx.fillRect(0, 0, BROADCAST_WIDTH, BROADCAST_HEIGHT);
+      }
+    }
+    return this.broadcastCanvas;
+  }
 
   constructor(canvas: HTMLCanvasElement, deps: ClipRecorderDeps = {}) {
     this.sourceCanvas = canvas;
@@ -172,6 +466,7 @@ export class ClipRecorder {
   /** Start continuous segmented capture. Safe to call once per match. */
   start(): void {
     if (!this.stopped) return;
+    this.ensureBroadcastCanvas();
     if (
       typeof VideoEncoder !== "undefined" &&
       !this.workerPathFailed &&
@@ -184,15 +479,13 @@ export class ClipRecorder {
       this.deps.onError?.(new Error("no supported MediaRecorder mimeType"));
       return;
     }
-    // SINGLE pipeline: the landscape mezzanine at native resolution (capped
-    // 1920 wide). The vertical is produced server-side from this stream +
-    // the focus trace (NVENC) — encoding it here too was the main-thread
-    // stall that made gameplay stutter during recording.
-    const srcW = this.sourceCanvas.width || 1280;
-    const srcH = this.sourceCanvas.height || 720;
-    const mezzW = Math.min(MEZZANINE_MAX_WIDTH, srcW);
-    const mezzH = Math.max(2, Math.round((mezzW * srcH) / srcW / 2) * 2);
-    const original = this.makePipeline("original", mezzW, mezzH);
+    // SINGLE pipeline: the broadcast-fixed composite (clip-goal D4/B1 — see
+    // BROADCAST_WIDTH/HEIGHT and composeBroadcastFrame), always exactly
+    // 1920×1080 regardless of the live window's actual shape. The vertical
+    // is produced server-side from this stream + the focus trace (NVENC) —
+    // encoding it here too was the main-thread stall that made gameplay
+    // stutter during recording.
+    const original = this.makePipeline("original", BROADCAST_WIDTH, BROADCAST_HEIGHT);
     if (!original) {
       this.deps.onError?.(new Error("2D context unavailable for clip canvas"));
       return;
@@ -215,6 +508,11 @@ export class ClipRecorder {
       this.rotateTimer = null;
     }
     this.pendingFinishAtMs = null;
+    if (this.audioReader) {
+      void this.audioReader.cancel().catch(() => {});
+      this.audioReader = null;
+    }
+    this.workerHasAudio = false;
     if (this.encoderWorker) {
       this.encoderWorker.postMessage({ t: "cancel" });
       this.encoderWorker.terminate();
@@ -260,6 +558,9 @@ export class ClipRecorder {
     this.segmentStartedAtMs = performance.now();
     this.segEpochMs = this.segmentStartedAtMs;
     this.focusTrace = [];
+    // clip-goal D4/B3: retried every segment — see ensureWorkerAudioTap's
+    // own comment for why this can't just run once in tryStartWorkerPath.
+    this.ensureWorkerAudioTap();
     // DIAGNOSTIC (camera-skew investigation): every clip segment start,
     // timestamped and with the source canvas size at that instant — cheap,
     // and lets you eyeball in DevTools whether [diag:governor]/[diag:resize]
@@ -267,11 +568,16 @@ export class ClipRecorder {
     console.log(
       `[diag:clip] segment begin at t=${this.segmentStartedAtMs.toFixed(0)}ms, source ${this.sourceCanvas.width}x${this.sourceCanvas.height}`,
     );
+    // width/height are always the fixed broadcast box now (clip-goal
+    // D4/B1) — every frame posted to the worker is already composited onto
+    // BROADCAST_WIDTH×HEIGHT (see composeBroadcastFrame), never the raw
+    // (variable-shaped) source canvas.
     this.encoderWorker.postMessage({
       t: "begin",
-      width: this.sourceCanvas.width || 1280,
-      height: this.sourceCanvas.height || 720,
+      width: BROADCAST_WIDTH,
+      height: BROADCAST_HEIGHT,
       bitrate: VIDEO_BITS_PER_SECOND,
+      audio: this.workerHasAudio,
     });
     this.scheduleRotation();
   }
@@ -356,13 +662,23 @@ export class ClipRecorder {
       this.focusY += (ty - this.focusY) * a;
     }
 
+    // Every captured frame goes through the SAME broadcast composite
+    // (clip-goal D4/B1/B11: fixed 1920×1080 cover-crop + watermark stamp)
+    // before either encode path ever sees it.
+    const composed = this.composeBroadcastFrame();
+    if (!composed) return;
+    // Trace mapping accounts for the cover-crop's offset/scale, not just a
+    // plain ratio — focusTrace is currently dead weight downstream (the
+    // vertical NVENC crop it fed was dropped 2026-07-15), kept correct
+    // anyway rather than left silently wrong.
+    const rect = computeCoverRect(sw, sh, BROADCAST_WIDTH, BROADCAST_HEIGHT);
+    const traceX = Math.round(((this.focusX - rect.sx) * BROADCAST_WIDTH) / rect.sw);
+
     if (this.encoderWorker) {
       // Worker path: one GPU-side copy + transfer; encode/mux off-thread.
-      // The worker caps encoded width at 1920 like the old mezzanine, so
-      // the trace is logged in ENCODED px (the uploaded coordinate space).
       const tMs = performance.now() - this.segEpochMs;
       try {
-        const frame = new VideoFrame(this.sourceCanvas, {
+        const frame = new VideoFrame(composed, {
           timestamp: Math.max(0, Math.round(tMs * 1000)),
         });
         this.encoderWorker.postMessage({ t: "frame", frame }, [frame as unknown as Transferable]);
@@ -370,23 +686,17 @@ export class ClipRecorder {
         this.deps.onError?.(err);
         return;
       }
-      const encodedW = Math.min(1920, sw);
-      this.focusTrace.push({
-        t: Math.max(0, Math.round(tMs)),
-        x: Math.round(this.focusX * (encodedW / sw)),
-      });
+      this.focusTrace.push({ t: Math.max(0, Math.round(tMs)), x: traceX });
       return;
     }
 
     for (const p of this.pipelines) {
-      // Full view scaled to the mezzanine canvas. The vertical crop is no
-      // longer drawn or encoded here — the smoothed focus is LOGGED and the
-      // server NVENC-crops along it (clipTranscode.ts).
-      p.ctx.drawImage(this.sourceCanvas, 0, 0, sw, sh, 0, 0, p.canvas.width, p.canvas.height);
+      // p.canvas is ALSO exactly BROADCAST_WIDTH×HEIGHT (see start()) — a
+      // straight 1:1 blit, no further scaling.
+      p.ctx.drawImage(composed, 0, 0);
       this.focusTrace.push({
         t: Math.max(0, Math.round(performance.now() - this.segmentStartedAtMs)),
-        // Trace in MEZZANINE px (the uploaded video's coordinate space).
-        x: Math.round(this.focusX * (p.canvas.width / sw)),
+        x: traceX,
       });
     }
   }
@@ -406,11 +716,21 @@ export class ClipRecorder {
     if (this.stopped || !this.mimeType) return;
     this.segmentStartedAtMs = performance.now();
     this.focusTrace = [];
+    // clip-goal D4/B3: MediaRecorder muxes multi-track streams natively, so
+    // the fallback path just needs the live audio track ADDED to the video
+    // stream it already captures — no manual timestamp bookkeeping needed
+    // (unlike the worker path's per-frame AudioData pump). Read fresh per
+    // segment: the tap may not have existed yet at start() (see
+    // evidenceAudioTrack's own comment).
+    const audioTrack = evidenceAudioTrack();
     for (const p of this.pipelines) {
       p.chunks = [];
+      const recordStream = audioTrack
+        ? new MediaStream([...p.stream.getVideoTracks(), audioTrack])
+        : p.stream;
       let recorder: MediaRecorder;
       try {
-        recorder = new MediaRecorder(p.stream, {
+        recorder = new MediaRecorder(recordStream, {
           mimeType: this.mimeType,
           videoBitsPerSecond: VIDEO_BITS_PER_SECOND,
         });
@@ -433,10 +753,8 @@ export class ClipRecorder {
    *  but never past MAX_SEGMENT_MS from this segment's own start. */
   private scheduleRotation(): void {
     if (this.rotateTimer !== null) clearTimeout(this.rotateTimer);
-    const naturalEndAt = this.segmentStartedAtMs + SEGMENT_MS;
-    const desiredEndAt =
-      this.pendingFinishAtMs !== null ? Math.max(naturalEndAt, this.pendingFinishAtMs) : naturalEndAt;
-    const cappedEndAt = Math.min(desiredEndAt, this.segmentStartedAtMs + MAX_SEGMENT_MS);
+    const cappedEndAt = computeSegmentEndAtMs(this.segmentStartedAtMs, this.pendingFinishAtMs);
+    this.scheduledEndAtMs = cappedEndAt;
     const delay = Math.max(0, cappedEndAt - performance.now());
     this.rotateTimer = setTimeout(() => {
       const endedAtMs = performance.now();
@@ -485,12 +803,14 @@ export class ClipRecorder {
       const form = new FormData();
       const ext = blob.type.includes("webm") ? "webm" : "mp4";
       form.append("file", blob, `clip-original.${ext}`);
-      // Aspect-ratio fix (2026-07-20): the browser already knows exactly
-      // what it captured — the share page used to just assume every clip
-      // was 1920x1080 (wrong whenever the game canvas wasn't a 16:9 window,
-      // e.g. a narrower/taller browser size), causing giant unnecessary
-      // letterbox bars. Send the real encoded size so the server can render
-      // the page's box at the actual aspect ratio instead of guessing.
+      // Aspect-ratio fix (2026-07-20), now largely moot: width/height used
+      // to vary with whatever the live window's shape was (a narrower/
+      // taller browser caused giant unnecessary letterbox bars on the share
+      // page, which assumed 1920x1080). clip-goal D4/B1 fixed the root
+      // cause — every encoded frame is now composited onto the fixed
+      // BROADCAST_WIDTH×HEIGHT box (composeBroadcastFrame), so these are
+      // always exactly 1920x1080. Still sent explicitly rather than
+      // omitted: correct and stated beats correct-by-server-default.
       if (width && height) {
         form.append("width", String(width));
         form.append("height", String(height));
