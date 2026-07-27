@@ -17,6 +17,14 @@
 //   faststart    moov atom before mdat (instant share-page scrubbing)
 //   motion       no two consecutive sampled frames (10fps, middle 60%)
 //                byte-identical — catches dropped-frame stutter
+//   static-span  no run of ≥3s (default) where per-frame pixel-delta stays
+//                essentially zero — catches a genuinely static scene (no
+//                gameplay action/camera/VFX) that the "motion" check above
+//                CANNOT see: real encoder output is quantization-noisy, so
+//                two frames of dead air are almost never byte-identical
+//                even though nothing is happening (clip-goal STUDY 3, D7).
+//                Distinct failure mode, distinct check — "motion" catches
+//                dropped-frame stutter, "static-span" catches dead air.
 //
 // Also usable as a module: `import { probeClip } from "./probe-clip.ts"`.
 
@@ -30,6 +38,18 @@ import { join } from "node:path";
  *  exist. /usr/bin is always the unwrapped binary on Arch. */
 export const FFPROBE = existsSync("/usr/bin/ffprobe") ? "/usr/bin/ffprobe" : "ffprobe";
 export const FFMPEG = existsSync("/usr/bin/ffmpeg") ? "/usr/bin/ffmpeg" : "ffmpeg";
+
+/** Sampling rate (fps) for the static-span pixel-delta scan. */
+export const STATIC_SPAN_SAMPLE_FPS = 10;
+
+/** Per-adjacent-sampled-frame luma delta (0–255 scale) below this is
+ *  "essentially zero" — real encoder quantization noise on a genuinely
+ *  static scene measures well under 0.1 on this scale; real motion
+ *  measures single digits or higher. Wide margin either side. */
+export const STATIC_SPAN_DELTA_THRESHOLD = 1.0;
+
+/** Default longest-allowed near-zero-delta run before static-span fails. */
+export const STATIC_SPAN_DEFAULT_SECONDS = 3;
 
 export type ProbeCheck = {
   name: string;
@@ -178,9 +198,56 @@ async function staticFramePairs(
   }
 }
 
+/** Per-adjacent-sampled-frame average luma delta (0–255 scale) across the
+ *  WHOLE clip, via ffmpeg `tblend=all_mode=difference` + `signalstats`:
+ *  blend each sampled frame against the previous one and read the mean
+ *  brightness of the resulting difference image. Unlike `staticFramePairs`
+ *  (byte-identity of the encoded PNG), this measures actual pixel-level
+ *  change, so it sees through encoder quantization noise that makes two
+ *  frames of a static scene differ in bytes without differing in content. */
+async function motionDeltas(file: string, sampleFps: number): Promise<number[]> {
+  const { out } = await run([
+    FFMPEG,
+    "-v",
+    "error",
+    "-i",
+    file,
+    "-vf",
+    `fps=${sampleFps},tblend=all_mode=difference,signalstats,metadata=print:file=-`,
+    "-f",
+    "null",
+    "-",
+  ]);
+  const deltas: number[] = [];
+  for (const m of out.matchAll(/lavfi\.signalstats\.YAVG=([\d.]+)/g)) {
+    deltas.push(Number(m[1]));
+  }
+  return deltas;
+}
+
+/** Longest run of consecutive near-zero deltas, expressed in seconds. */
+function longestStaticRunSeconds(deltas: number[], sampleFps: number, threshold: number): number {
+  let longest = 0;
+  let current = 0;
+  for (const d of deltas) {
+    if (d <= threshold) {
+      current += 1;
+      if (current > longest) longest = current;
+    } else {
+      current = 0;
+    }
+  }
+  return longest / sampleFps;
+}
+
 export async function probeClip(
   file: string,
-  opts: { ticks?: number; targetFps?: number; slowmoFrames?: number } = {},
+  opts: {
+    ticks?: number;
+    targetFps?: number;
+    slowmoFrames?: number;
+    staticSpanSeconds?: number;
+  } = {},
 ): Promise<ProbeResult> {
   const targetFps = opts.targetFps ?? 30;
   const checks: ProbeCheck[] = [];
@@ -251,13 +318,29 @@ export async function probeClip(
     fast === null ? "could not locate moov/mdat" : fast ? "moov before mdat" : "mdat before moov",
   );
 
-  // motion
+  // motion (dropped-frame stutter — byte-identical consecutive frames)
   const { pairs, sampled } = await staticFramePairs(file, durationS);
   add(
     "motion",
     sampled >= 5 && pairs === 0,
     `${pairs} identical consecutive pair(s) across ${sampled} sampled frames (want 0)`,
   );
+
+  // static-span (dead air — sustained near-zero pixel-delta; catches what
+  // byte-identity above cannot: a genuinely static scene whose frames are
+  // never byte-identical because of encoder quantization noise, D7)
+  const staticSpanWant = opts.staticSpanSeconds ?? STATIC_SPAN_DEFAULT_SECONDS;
+  const deltas = await motionDeltas(file, STATIC_SPAN_SAMPLE_FPS);
+  if (deltas.length < 3) {
+    add("static-span", true, `${deltas.length} sampled delta(s) — too short a clip to assess`);
+  } else {
+    const longestRunS = longestStaticRunSeconds(deltas, STATIC_SPAN_SAMPLE_FPS, STATIC_SPAN_DELTA_THRESHOLD);
+    add(
+      "static-span",
+      longestRunS < staticSpanWant,
+      `${longestRunS.toFixed(2)}s longest near-zero pixel-delta run across ${deltas.length} sampled deltas (want <${staticSpanWant}s)`,
+    );
+  }
 
   return { file, checks, passed: checks.every((c) => c.pass) };
 }
@@ -267,7 +350,9 @@ if (import.meta.main) {
   const args = process.argv.slice(2);
   const file = args.find((a) => !a.startsWith("--"));
   if (!file) {
-    console.error("usage: bun scripts/probe-clip.ts <file.mp4> [--ticks 720] [--fps 30]");
+    console.error(
+      "usage: bun scripts/probe-clip.ts <file.mp4> [--ticks 720] [--fps 30] [--static-span-seconds 3]",
+    );
     process.exit(2);
   }
   const optOf = (name: string): number | undefined => {
@@ -278,11 +363,12 @@ if (import.meta.main) {
     ticks: optOf("ticks"),
     targetFps: optOf("fps"),
     slowmoFrames: optOf("slowmo"),
+    staticSpanSeconds: optOf("static-span-seconds"),
   });
   console.log(`\nprobe-clip — ${result.file}`);
   console.log("─".repeat(72));
   for (const c of result.checks) {
-    console.log(`  ${c.pass ? "PASS" : "FAIL"}  ${c.name.padEnd(11)} ${c.detail}`);
+    console.log(`  ${c.pass ? "PASS" : "FAIL"}  ${c.name.padEnd(12)} ${c.detail}`);
   }
   console.log("─".repeat(72));
   console.log(result.passed ? "  ALL PASS" : "  FAILED");
