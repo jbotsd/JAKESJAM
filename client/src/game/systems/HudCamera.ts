@@ -11,6 +11,22 @@ const EVT_POST_UPDATE = "postupdate"; // Phaser.Scenes.Events.POST_UPDATE
 const EVT_SHUTDOWN = "shutdown"; // Phaser.Scenes.Events.SHUTDOWN
 const EVT_RESIZE = "resize"; // Phaser.Scale.Events.RESIZE
 
+// Footage-study D6 (docs/clip-goal.md, 2026-07-27): a scrolling world platform
+// rendered directly over the always-on-top roster row for ~0.8s mid-clip.
+// The one-shot partition below (classify once, at ADDED_TO_SCENE time, never
+// again) has no way to correct a GameObject that drifts out of its bucket
+// AFTER that one classification — e.g. a stray `.setScrollFactor()` call
+// somewhere down the line, or the HUD camera's own scroll/zoom/rotation
+// getting nudged by anything that ever touches camera state broadly (the
+// exact class of bug OnlineMatchScene's/renderResolution's "camera-skew
+// investigation" [diag:camera]/[diag:governor] comments already flag as
+// live and unresolved). Either failure silently exposes world geometry
+// wherever the HUD used to (or should) paint, for as long as it takes for
+// something else to re-trigger a partition pass — which could be the rest
+// of the match. RESYNC_EVERY_N_FRAMES bounds that exposure window instead
+// of leaving it open-ended.
+const RESYNC_EVERY_N_FRAMES = 30; // ~0.5s at 60Hz — cheap safety net, not a hot path.
+
 /**
  * installHudCamera — split rendering between a zoomed WORLD camera
  * (cameras.main) and a fixed HUD camera, so the world can crop in
@@ -80,31 +96,91 @@ export function installHudCamera(scene: Phaser.Scene): Phaser.Cameras.Scene2D.Ca
   for (const obj of [...scene.children.list]) partition(obj);
   hudRoot.sort("depth");
 
+  // Re-pin the HUD camera's own transform every frame. It must NEVER
+  // scroll/zoom/rotate — anything that ever does (a future screen-shake
+  // helper looping every camera, a stray `.pan()`/`.zoomTo()` aimed at the
+  // wrong `cam` variable) would otherwise leave the HUD's viewport drifted
+  // away from (0,0)/zoom 1 for however long that effect runs, exposing
+  // whatever the world camera already painted underneath wherever the HUD
+  // used to land. Guarded compares so the common (no-drift) case is just a
+  // few property reads, not a matrix recompute every frame.
+  const pinHudCamera = (): void => {
+    if (hud.scrollX !== 0 || hud.scrollY !== 0) hud.setScroll(0, 0);
+    if (hud.zoom !== 1) hud.setZoom(1);
+    // No guarded read here: Phaser 4.2.1's own .d.ts doesn't expose a
+    // `rotation` getter on Camera (the runtime accessor exists — the JS
+    // source defines one — the types just don't declare it), so there's
+    // nothing typed to compare against. Calling setRotation(0)
+    // unconditionally is still cheap — one assignment, no matrix rebuild
+    // beyond what setScroll/setZoom already trigger when they fire.
+    hud.setRotation(0);
+  };
+
+  // Safety-net re-scan: catch any top-level scene object whose
+  // scrollFactorX has drifted to 0 (declaring itself screen-fixed) SINCE it
+  // was last classified as world by `partition()` above. `partition()` only
+  // ever runs once per object (initial scan, or the ADDED_TO_SCENE/
+  // POST_UPDATE pair below) — it has no ongoing opinion, so a later
+  // `.setScrollFactor(0)` on an already-classified-world object would
+  // otherwise stick as world (rendered by `main`, ignored by `hud`) forever,
+  // which is the opposite failure (HUD content silently going invisible)
+  // but the same root cause as D6. Iterated backwards because `partition()`
+  // reparents matches into `hudRoot`, splicing them out of
+  // `scene.children.list` — forward iteration with in-place removal skips
+  // the element that shifts into the just-removed slot.
+  const resyncDriftedWorldObjects = (): boolean => {
+    const list = scene.children.list;
+    let migratedAny = false;
+    for (let i = list.length - 1; i >= 0; i -= 1) {
+      const obj = list[i] as unknown as Phaser.GameObjects.GameObject;
+      if (obj === (hudRoot as unknown as Phaser.GameObjects.GameObject)) continue;
+      const sf = (obj as unknown as { scrollFactorX?: number }).scrollFactorX;
+      if (sf === 0) {
+        partition(obj);
+        migratedAny = true;
+      }
+    }
+    return migratedAny;
+  };
+
   const pending: Phaser.GameObjects.GameObject[] = [];
   const onAdded = (obj: Phaser.GameObjects.GameObject): void => {
     pending.push(obj);
   };
+  let framesSinceResync = 0;
   const onPostUpdate = (): void => {
-    if (pending.length === 0) return;
+    // Cheap, unconditional — must run every frame regardless of whether
+    // anything else changed this tick (see pinHudCamera's rationale above).
+    pinHudCamera();
+
     let addedHud = false;
-    for (const obj of pending) {
-      // ADDED_TO_SCENE queues here; POST_UPDATE (this callback) drains it a
-      // step later. An object created and destroy()'d again inside that
-      // same gap (e.g. a HUD banner/text superseded while the client
-      // fast-forwards a backlog of buffered ticks after a stall/reconnect)
-      // is still in `pending` but is no longer live — Phaser's own
-      // destroy() clears `.scene` to undefined. Passing that stale
-      // reference into `hudRoot.add()` walks into Phaser's DisplayList
-      // internals (Container.addHandler -> removeFromDisplayList) and
-      // throws reading `.sys` off the undefined scene. Same defensive
-      // shape as the statusText/combatFx null-before-use guards in
-      // OnlineMatchScene.teardown() — check liveness before touching it.
-      if (!(obj as unknown as { scene?: Phaser.Scene }).scene) continue;
-      const wasHud = (obj as unknown as { scrollFactorX?: number }).scrollFactorX === 0;
-      partition(obj);
-      addedHud ||= wasHud;
+    if (pending.length > 0) {
+      for (const obj of pending) {
+        // ADDED_TO_SCENE queues here; POST_UPDATE (this callback) drains it a
+        // step later. An object created and destroy()'d again inside that
+        // same gap (e.g. a HUD banner/text superseded while the client
+        // fast-forwards a backlog of buffered ticks after a stall/reconnect)
+        // is still in `pending` but is no longer live — Phaser's own
+        // destroy() clears `.scene` to undefined. Passing that stale
+        // reference into `hudRoot.add()` walks into Phaser's DisplayList
+        // internals (Container.addHandler -> removeFromDisplayList) and
+        // throws reading `.sys` off the undefined scene. Same defensive
+        // shape as the statusText/combatFx null-before-use guards in
+        // OnlineMatchScene.teardown() — check liveness before touching it.
+        if (!(obj as unknown as { scene?: Phaser.Scene }).scene) continue;
+        const wasHud = (obj as unknown as { scrollFactorX?: number }).scrollFactorX === 0;
+        partition(obj);
+        addedHud ||= wasHud;
+      }
+      pending.length = 0;
     }
-    pending.length = 0;
+
+    framesSinceResync += 1;
+    if (framesSinceResync >= RESYNC_EVERY_N_FRAMES) {
+      framesSinceResync = 0;
+      if (resyncDriftedWorldObjects()) addedHud = true;
+    }
+
     // Children render in list order — keep scene depth semantics.
     if (addedHud) hudRoot.sort("depth");
   };

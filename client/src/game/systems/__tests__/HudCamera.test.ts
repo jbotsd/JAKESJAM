@@ -91,7 +91,25 @@ function makeFakeScene() {
   };
 
   const hudContainer = makeContainer();
-  const hudCamera = { setName: () => undefined, setSize: () => undefined, ignore: () => undefined };
+  const hudCamera = {
+    setName: () => undefined,
+    setSize: () => undefined,
+    ignore: () => undefined,
+    scrollX: 0,
+    scrollY: 0,
+    zoom: 1,
+    rotation: 0,
+    setScroll(x: number, y: number) {
+      hudCamera.scrollX = x;
+      hudCamera.scrollY = y;
+    },
+    setZoom(z: number) {
+      hudCamera.zoom = z;
+    },
+    setRotation(r: number) {
+      hudCamera.rotation = r;
+    },
+  };
   const mainCamera = { ignore: () => undefined };
 
   const scale = { width: 800, height: 600, on: () => undefined, off: () => undefined };
@@ -107,6 +125,8 @@ function makeFakeScene() {
   return {
     scene: scene as unknown as Phaser.Scene,
     hudContainer,
+    hudCamera,
+    sceneChildren: scene.children.list,
     fireAdded: (obj: FakeGameObject) => emit("addedtoscene", obj),
     firePostUpdate: () => emit("postupdate"),
     fireShutdown: () => emit("shutdown"),
@@ -149,5 +169,73 @@ describe("installHudCamera POST_UPDATE partition", () => {
     destroyHudObject(obj);
     fireAdded(obj); // no-op: onAdded was unsubscribed by shutdown
     expect(() => firePostUpdate()).not.toThrow();
+  });
+});
+
+// Footage-study D6 (docs/clip-goal.md, 2026-07-27): world geometry rendered
+// over the always-on-top roster row for ~0.8s mid-clip. Both regressions
+// below are one-shot-partition gaps: `partition()` only ever judges an
+// object once, so anything that drifts out of its bucket AFTERWARD (or
+// nudges the HUD camera's own transform) stayed broken indefinitely with no
+// prior test pinning either invariant.
+describe("installHudCamera D6 self-healing (world/HUD never mis-layers, regardless of drift)", () => {
+  test("the HUD camera's scroll/zoom/rotation are re-pinned every POST_UPDATE", () => {
+    const { scene, hudCamera, firePostUpdate } = makeFakeScene();
+    installHudCamera(scene);
+
+    // Simulate anything that ever touches camera state broadly (a
+    // screen-shake helper looping every camera, a stray `.pan()`/`.zoomTo()`
+    // aimed at the wrong camera variable) nudging the HUD camera off its
+    // required identity transform.
+    hudCamera.scrollX = 42;
+    hudCamera.scrollY = -17;
+    hudCamera.zoom = 1.4;
+    hudCamera.rotation = 0.3;
+
+    firePostUpdate();
+
+    expect(hudCamera.scrollX).toBe(0);
+    expect(hudCamera.scrollY).toBe(0);
+    expect(hudCamera.zoom).toBe(1);
+    expect(hudCamera.rotation).toBe(0);
+  });
+
+  test("a world object whose scrollFactorX drifts to 0 after classification migrates into hudRoot within the resync window", () => {
+    const { scene, hudContainer, sceneChildren, firePostUpdate } = makeFakeScene();
+    installHudCamera(scene);
+
+    // Placed directly into the live scene child list — exactly where a real
+    // GameObject already classified as world by a prior partition() pass
+    // sits forever (world objects are never reparented, so nothing about
+    // them is normally revisited again).
+    const obj: FakeGameObject = { scrollFactorX: 1, scene: {}, displayList: null };
+    sceneChildren.push(obj);
+
+    firePostUpdate(); // still world — untouched
+    expect(hudContainer.children).not.toContain(obj);
+
+    // Something declares it screen-fixed sometime later (the drift D6's
+    // mechanism-class is built on) without going through installHudCamera
+    // at all — there is no other code path that would ever re-classify it.
+    obj.scrollFactorX = 0;
+
+    // Drive POST_UPDATE through the full resync window — the safety net is
+    // throttled, not immediate, but it must fire within its documented
+    // bound rather than never.
+    for (let i = 0; i < 30; i += 1) firePostUpdate();
+
+    expect(hudContainer.children).toContain(obj);
+  });
+
+  test("a world object that never drifts is left alone across many resync windows (no spurious migration)", () => {
+    const { scene, hudContainer, sceneChildren, firePostUpdate } = makeFakeScene();
+    installHudCamera(scene);
+
+    const obj: FakeGameObject = { scrollFactorX: 1, scene: {}, displayList: null };
+    sceneChildren.push(obj);
+
+    for (let i = 0; i < 90; i += 1) firePostUpdate();
+
+    expect(hudContainer.children).not.toContain(obj);
   });
 });
