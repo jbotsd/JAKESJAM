@@ -23,9 +23,12 @@
 import Phaser from "phaser";
 import { decode as msgpackDecode } from "@msgpack/msgpack";
 import { STEP_MS, World, stepSpectatorDirector, createDirectorState, directorToPose } from "../../sim";
-import { createRuntime, stepWithRuntime } from "../../sim/World";
+import { createRuntime } from "../../sim/World";
 import { resolveMap } from "../../sim/data/maps";
 import { applyMidMatchJoin, applyRosterLeave } from "../../sim/rosterOps";
+import { LagCompensator } from "../../sim/LagCompensator";
+import { stepTickWithLagCompensation } from "../../sim/lagCompensatedStep";
+import { fastForwardBatches } from "../../sim/fastForwardPlan";
 import type {
   InputFrame,
   MapDefinition,
@@ -34,8 +37,15 @@ import type {
   WorldState,
 } from "../../sim/types";
 import type { DirectorState } from "../../sim/spectatorDirector";
-import { ProceduralPlayerRig } from "../rendering/ProceduralPlayerRig";
+import {
+  ProceduralPlayerRig,
+  nameplateWidth,
+  approxNameplateAnchorY,
+  NAMEPLATE_HEIGHT,
+} from "../rendering/ProceduralPlayerRig";
 import { BakedPlayerRig } from "../rendering/BakedPlayerRig";
+import { resolveNameplateLifts, type NameplateActor } from "../render/nameplateLayout";
+import { computeLowerThirdAlpha } from "../render/lowerThirdAlpha";
 import { ProceduralAudio } from "../systems/ProceduralAudio";
 import { SimEventRouter } from "../render/SimEventRouter";
 import { EntityRenderCoordinator } from "../render/EntityRenderCoordinator";
@@ -81,6 +91,7 @@ import { installHudCamera } from "../systems/HudCamera.js";
 import {
   killBeatEnvelope,
   makeHighlightCamState,
+  resolveEngagedVictimId,
   slowMoTickRange,
   stepHighlightCamera,
   type HighlightCamState,
@@ -129,6 +140,17 @@ export class ReplayScene extends Phaser.Scene {
   private runtime!: ReturnType<typeof createRuntime>;
   private inputsByTick = new Map<number, Array<{ playerId: string; frame: InputFrame }>>();
   private rosterByTick = new Map<number, NonNullable<ReplayFile["rosterEvents"]>>();
+  /** Human callsigns by playerId (clip-goal STUDY 3, D3) — the lower-third
+   *  already resolved this correctly via `players.find(...)`; the in-world
+   *  nameplate used a raw `pid.slice(-4)` fragment instead. Single source
+   *  for both now. Seeded from the match-start roster, extended on
+   *  mid-match joins (rosterEvents carry the joiner's name too). */
+  private playerNames = new Map<string, string>();
+  /** Re-simulation must reproduce the SAME lag-compensated rewinds the live
+   *  match applied (clip-goal STUDY 3, D1) — a fresh instance per replay,
+   *  fed every tick from tick 0 so its position history builds up exactly
+   *  like matchHost's did live. See lagCompensatedStep.ts's module doc. */
+  private readonly lagComp = new LagCompensator();
   private totalTicks = 0;
   private renderMode = false;
   /** &follow=<playerId|first> locks the camera on one player (rig A/B). */
@@ -162,6 +184,7 @@ export class ReplayScene extends Phaser.Scene {
     maxHealth: 100 as number | undefined,
     touchingWallDir: 0 as number | undefined,
     dashing: false as boolean | undefined,
+    nameplateLift: 0 as number | undefined,
   };
 
   // Offline render state
@@ -184,6 +207,10 @@ export class ReplayScene extends Phaser.Scene {
   private renderStartTick = 0;
   /** Kill ticks relative to the window start (&kills= from the queue). */
   private killTicks: number[] = [];
+  /** Parallel to killTicks (&victims= from the queue) — each kill's real
+   *  victim (clip-goal STUDY 3, D1/CL.E), so the highlight camera frames
+   *  the actual combatant instead of guessing by proximity. */
+  private killVictims: string[] = [];
   // Highlight camera (clip-goal CL.E) — render-mode follow becomes a
   // beat-aware camera: star↔victim framing, kill punch-ins, and a 2×
   // slow-mo stretch around the final kill (1 sim tick per frame across
@@ -252,6 +279,7 @@ export class ReplayScene extends Phaser.Scene {
       ...header.chaosModifierIds,
     ]);
     this.runtime = createRuntime(this.map);
+    for (const p of header.players) this.playerNames.set(p.playerId, p.name);
     for (const e of file.inputs) {
       let b = this.inputsByTick.get(e.atTick);
       if (!b) this.inputsByTick.set(e.atTick, (b = []));
@@ -272,6 +300,13 @@ export class ReplayScene extends Phaser.Scene {
         drawDestructible: (g, obj, flashing) => drawDestructible(g, obj, flashing),
         drawFirePatch: (g, fire, nowMs) => drawFirePatch(g, fire, nowMs),
         drawPickup: (g, pickup, nowMs) => drawPickup(g, pickup, nowMs),
+        // STUDY 3 D5: in a rendered highlight, a homing shot's seeker
+        // reticle should only draw for the STAR's own shots — anyone
+        // else's homing ability (an inert bystander bot included) is
+        // exactly the kind of unrelated-effect noise the North Star's
+        // "understands what happened" bar fails against. Realtime replay
+        // playback (rig showcases, not renders) keeps every reticle.
+        seekerReticleGate: (ownerId) => !this.renderMode || ownerId === this.followId,
       },
       pool,
     );
@@ -291,14 +326,33 @@ export class ReplayScene extends Phaser.Scene {
     const rangeTicks = Number(params.get("ticks") ?? 0) || 0;
     // Cluster kill ticks relative to `from` (clip-goal CL.C) — the queue
     // computes them from the trim window; the lower-third + probes key
-    // off these (published as frame indexes in every status).
+    // off these (published as frame indexes in every status). Guard
+    // against "".split(",") → [""] → Number("") = 0: an EMPTY kills param
+    // must parse to an empty array, not a phantom kill at tick 0.
     this.killTicks = (params.get("kills") ?? "")
       .split(",")
+      .filter((s) => s.length > 0)
       .map((s) => Number(s))
       .filter((n) => Number.isFinite(n) && n >= 0);
+    // Parallel victim ids (clip-goal STUDY 3, D1/CL.E) — same guard.
+    // URLSearchParams.get() already decodes the whole value once; each id
+    // was percent-encoded individually before joining (clipRenderQueue.ts),
+    // and playerIds never contain a literal comma, so no further decoding
+    // is needed here (same treatment as `follow` above).
+    this.killVictims = (params.get("victims") ?? "").split(",").filter((s) => s.length > 0);
     if (fromTick > 0) {
-      while ((this.state.tick as number) < Math.min(fromTick, this.totalTicks)) {
-        this.stepTicks(60);
+      // Fast-forward to the window start in batches, but never OVERSHOOT it
+      // (clip-goal STUDY 3, CL.C regression): a fixed stepTicks(60) batch
+      // could land anywhere up to 59 ticks (~1s) past `fromTick` depending
+      // on the remainder — eating up to two-thirds of the entire ~1.5s
+      // (90-tick) approach lead-in, or in a short trade (`80ea1663`: kills
+      // close together, window small) skipping past the credited kill
+      // entirely so the render opens on pure aftermath. fastForwardBatches
+      // caps the last batch to exactly the remaining distance so this
+      // always lands on `fromTick` precisely.
+      const target = Math.min(fromTick, this.totalTicks);
+      for (const batch of fastForwardBatches(this.state.tick as number, target, 60)) {
+        this.stepTicks(batch);
       }
     }
     if (rangeTicks > 0) {
@@ -315,7 +369,7 @@ export class ReplayScene extends Phaser.Scene {
       // world layers use scrollFactors 0.65–1, never 0, so the partition
       // rule captures exactly the chrome.
       installHudCamera(this);
-      this.buildClipChrome(file.header.players);
+      this.buildClipChrome();
       await this.startOfflineAudio();
       this.startEncoder();
     }
@@ -377,13 +431,24 @@ export class ReplayScene extends Phaser.Scene {
 
   /** Step N ticks (roster events + inputs applied like the live host).
    *  Returns ALL ticks' events — a 2-tick frame step used to return only
-   *  the last tick's, silently dropping half the audio/fx cues (CL.B). */
+   *  the last tick's, silently dropping half the audio/fx cues (CL.B).
+   *
+   *  Lag-compensated (clip-goal STUDY 3, D1): matchHost rewinds opponents
+   *  for a shooter whose input trails the server tick, then unshifts after
+   *  stepping — stepping the SAME recorded inputs without that rewind is a
+   *  different simulation, and every hit that only connected live because
+   *  of it silently fails to reproduce here. `stepTickWithLagCompensation`
+   *  is the exact same sequence matchHost.ts runs inline, sharing its
+   *  LagCompensator so this can never drift out of parity again. */
   private stepTicks(n: number): SimEvent[] {
     const events: SimEvent[] = [];
     for (let i = 0; i < n && this.state.tick < this.totalTicks; i++) {
       const roster = this.rosterByTick.get(this.state.tick as number);
       if (roster) {
         for (const ev of roster) {
+          if (ev.t === "join") {
+            this.playerNames.set(ev.spawn.playerId, ev.spawn.name ?? ev.spawn.playerId);
+          }
           this.state =
             ev.t === "join"
               ? applyMidMatchJoin(
@@ -398,12 +463,22 @@ export class ReplayScene extends Phaser.Scene {
       for (const e of this.inputsByTick.get(this.state.tick as number) ?? []) {
         inputs[e.playerId as PlayerId] = e.frame;
       }
-      const result = stepWithRuntime(this.state, this.runtime, inputs, STEP_MS);
+      const result = stepTickWithLagCompensation(this.state, this.runtime, inputs, this.lagComp, STEP_MS);
       this.state = result.state;
       events.push(...result.events);
       this.director = stepSpectatorDirector(this.director, this.state, result.events, STEP_MS / 1000);
     }
     return events;
+  }
+
+  /** Human callsign (via playerNames — D3) or bot label, matching the
+   *  lower-third's own resolution, plus this player's rig scale. Shared by
+   *  the CL.A nameplate-collision pre-pass and rig creation so neither can
+   *  silently disagree with the other about a plate's footprint. */
+  private nameAndScaleFor(pid: string, characterId: string): { name: string; scale: number } {
+    const character = characters.find((c) => (c.id as string) === characterId) ?? characters[0]!;
+    const name = isBotId(pid) ? botLabel(pid) : (this.playerNames.get(pid) ?? pid.slice(-4));
+    return { name, scale: PLAYER_VISUAL_SCALE * character.sizeScale };
   }
 
   private renderState(deltaMs: number, events: SimEvent[]): void {
@@ -412,6 +487,26 @@ export class ReplayScene extends Phaser.Scene {
     // scans) — this consume makes replay-rendered clips show the same
     // soul-return rite as live play.
     noteDeathEvents(state, events, this.deathFxState);
+
+    // Nameplate-collision pre-pass (clip-goal STUDY 3, CL.A regression):
+    // computed BEFORE any rig draws this frame, from every living player's
+    // approximate (un-lifted) anchor — two characters standing close
+    // together must not draw their plates directly on top of each other.
+    const actors: NameplateActor[] = [];
+    for (const pid in state.players) {
+      const p = state.players[pid as PlayerId]!;
+      if (!p.alive) continue;
+      const { name, scale } = this.nameAndScaleFor(pid, p.characterId);
+      actors.push({
+        id: pid,
+        x: p.x,
+        y: approxNameplateAnchorY(p.y, scale),
+        width: nameplateWidth(name, scale),
+        height: NAMEPLATE_HEIGHT * scale,
+      });
+    }
+    const nameplateLifts = resolveNameplateLifts(actors);
+
     // Rigs (lite detail — replay is a broadcast view).
     const seen = new Set<string>();
     for (const pid in state.players) {
@@ -419,14 +514,16 @@ export class ReplayScene extends Phaser.Scene {
       seen.add(pid);
       let rig = this.rigs.get(pid);
       if (!rig) {
-        const character =
-          characters.find((c) => (c.id as string) === p.characterId) ?? characters[0]!;
         const rigOverride = new URLSearchParams(window.location.search).get("rig");
         const RigClass = rigOverride === "baked" ? BakedPlayerRig : ProceduralPlayerRig;
+        const { name, scale } = this.nameAndScaleFor(pid, p.characterId);
         rig = new RigClass(this, {
           color: isBotId(pid) ? BOT_RIG_COLOR : 0x8ff8ff,
-          name: isBotId(pid) ? botLabel(pid) : pid.slice(-4),
-          scale: PLAYER_VISUAL_SCALE * character.sizeScale,
+          // STUDY 3 D3: this used to be a raw 4-char id fragment for humans
+          // (e.g. "VVOC") while the lower-third resolved the real callsign
+          // for the SAME player — same lookup here now, one source of truth.
+          name,
+          scale,
           detail: "lite",
         });
         this.rigs.set(pid, rig);
@@ -448,6 +545,7 @@ export class ReplayScene extends Phaser.Scene {
       pose.health = p.health;
       pose.touchingWallDir = p.touchingWallDir ?? 0;
       pose.dashing = p.dashing ?? false;
+      pose.nameplateLift = nameplateLifts.get(pid) ?? 0;
       rig.update(deltaMs, pose);
     }
     for (const [pid, rig] of this.rigs) {
@@ -476,18 +574,33 @@ export class ReplayScene extends Phaser.Scene {
     if (this.renderMode && this.followId) {
       const star = state.players[this.followId as PlayerId];
       if (star) {
-        // Engaged victim: nearest living opponent; a fresh corpse holds
-        // the camera's attention briefly (kill framing must not snap).
+        // Engaged victim (clip-goal STUDY 3, D1/CL.E): resolve the
+        // CREDITED kill's actual victim by identity (killVictims, parallel
+        // to killTicks) — live verification found the old proximity-only
+        // guess ("nearest living opponent") locking onto the star alone
+        // whenever the true victim was far away on screen, which is
+        // routine for a ranged hitscan kill (most of them). Only when no
+        // identity data is available (older jobs, realtime rig-showcase
+        // playback) does it fall back to the proximity guess. A fresh
+        // corpse holds the camera's attention briefly either way (kill
+        // framing must not snap).
+        const rel = (state.tick as number) - this.renderStartTick;
+        const engagedVictimId = resolveEngagedVictimId(rel, this.killTicks, this.killVictims);
         let victim: { x: number; y: number } | null = null;
-        let best = Infinity;
-        for (const pid in state.players) {
-          if (pid === (this.followId as string)) continue;
-          const p = state.players[pid as PlayerId]!;
-          if (!p.alive) continue;
-          const d = Math.hypot(p.x - star.x, p.y - star.y);
-          if (d < best && d < 1500) {
-            best = d;
-            victim = { x: p.x, y: p.y };
+        if (engagedVictimId) {
+          const v = state.players[engagedVictimId as PlayerId];
+          if (v && v.alive) victim = { x: v.x, y: v.y };
+        } else {
+          let best = Infinity;
+          for (const pid in state.players) {
+            if (pid === (this.followId as string)) continue;
+            const p = state.players[pid as PlayerId]!;
+            if (!p.alive) continue;
+            const d = Math.hypot(p.x - star.x, p.y - star.y);
+            if (d < best && d < 1500) {
+              best = d;
+              victim = { x: p.x, y: p.y };
+            }
           }
         }
         if (victim) {
@@ -607,7 +720,7 @@ export class ReplayScene extends Phaser.Scene {
 
   /** Broadcast dressing: letterbox + watermark built once; the lower-third
    *  is built hidden and toggled by the kill timeline in update(). */
-  private buildClipChrome(players: ReplayFile["header"]["players"]): void {
+  private buildClipChrome(): void {
     const depth = 5000; // above everything the world draws
     const g = this.add.graphics().setScrollFactor(0).setDepth(depth);
     g.fillStyle(0x000000, 1);
@@ -628,9 +741,21 @@ export class ReplayScene extends Phaser.Scene {
 
     // Lower-third: star callsign + feat, house ink/gold. Hidden until the
     // first kill lands; removed shortly before the out-point.
+    //
+    // STUDY 3 D3 FOLLOW-UP (found via live re-verification of the D3 fix,
+    // 2026-07-27): this used to resolve the name from the match-START
+    // roster ONLY (`header.players`) — a star who joined MID-match (a
+    // genuinely common case; this exact replay's real kill exercised it)
+    // isn't in that array, so the lower-third fell back to the raw
+    // 4-char id fragment ("VVOC") while the in-world nameplate (fixed via
+    // `this.playerNames`, which DOES include mid-match joins) correctly
+    // showed the real callsign — the exact inverse of D3's original bug,
+    // same root cause (two independent name lookups that can disagree).
+    // One source of truth now: `this.playerNames` is fully populated
+    // (start roster + every join processed during fast-forward) by the
+    // time this runs.
     const starName =
-      players.find((p) => p.playerId === this.followId)?.name ??
-      (this.followId ?? "").slice(-4).toUpperCase();
+      this.playerNames.get(this.followId ?? "") ?? (this.followId ?? "").slice(-4).toUpperCase();
     const feat =
       this.killTicks.length >= 4
         ? "MULTI KILL"
@@ -685,16 +810,20 @@ export class ReplayScene extends Phaser.Scene {
   /** Kill-timeline chrome: lower-third enters on the first kill (300ms
    *  fade via per-frame step — offline render, wall clock is meaningless),
    *  exits 0.6s before the out-point. */
+  /** Kill-timeline chrome: lower-third enters on the first kill, fades out
+   *  BEFORE the out-point (clip-goal CL.D). STUDY 3 regression (2 clips
+   *  rode to the hard cut still full-opacity): the old per-frame ±0.12
+   *  increment was an iterative approach toward 0/1 with no guarantee of
+   *  enough frames of runway to fully converge. `computeLowerThirdAlpha`
+   *  is a closed-form function of the current tick instead — identically
+   *  0 at and after the hide point, no convergence to fall short of. */
   private updateClipChrome(): void {
     if (!this.lowerThird || this.killTicks.length === 0) return;
     const rel = (this.state.tick as number) - this.renderStartTick;
     const clipTicks = this.totalTicks - this.renderStartTick;
-    const shouldShow = rel >= this.killTicks[0]! && rel < clipTicks - 36;
-    this.lowerThirdVisible = shouldShow;
-    const target = shouldShow ? 1 : 0;
-    // ~300ms fade at 30fps render cadence = ~0.11/frame.
-    const a = this.lowerThird.alpha;
-    this.lowerThird.setAlpha(a + Math.sign(target - a) * Math.min(0.12, Math.abs(target - a)));
+    const alpha = computeLowerThirdAlpha(rel, clipTicks, this.killTicks[0]!);
+    this.lowerThirdVisible = alpha > 0;
+    this.lowerThird.setAlpha(alpha);
   }
 
   // ── Offline render (WebCodecs worker — same one the live recorder uses) ──

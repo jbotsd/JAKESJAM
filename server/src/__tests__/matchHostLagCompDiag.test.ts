@@ -14,7 +14,7 @@
 // independent of the diagnostic flag.
 import { describe, test, expect, spyOn, afterEach } from "bun:test";
 import { MatchHost } from "../matchHost.ts";
-import { LagCompensator } from "../LagCompensator.ts";
+import { LagCompensator } from "@sim/LagCompensator.ts";
 import { config } from "../config.ts";
 import { PlayerId, type PlayerSpawnInfo, type WorldState } from "@sim/types.ts";
 

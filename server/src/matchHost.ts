@@ -30,7 +30,7 @@ import type {
   WorldState,
 } from "@sim/types.ts";
 import { EntityId } from "@sim/types.ts";
-import { LagCompensator, LAG_COMP_MAX_TICKS, type RewindPlan } from "./LagCompensator.ts";
+import { LagCompensator, LAG_COMP_MAX_TICKS, type RewindPlan } from "@sim/LagCompensator.ts";
 
 /**
  * Acceptable lookback for client-stamped input ticks. The server will drop
@@ -304,7 +304,7 @@ export class MatchHost {
    *  mutation). One flag per host == one write per match lifetime. */
   private matchCompletePosted = false;
   /** Human-killer moments for host-rendered highlight clips. */
-  private humanKillMoments: Array<{ tick: number; killerId: string }> = [];
+  private humanKillMoments: Array<{ tick: number; killerId: string; victimId: string }> = [];
   /** Round-phase edges for clip trim discipline (clip-goal CL.C). */
   private roundMarks: Array<import("./clipWindow.ts").RoundMark> = [];
 
@@ -1416,7 +1416,14 @@ export class MatchHost {
     // phone player's highlight is rendered by the 4080, not their phone.
     for (const e of events) {
       if (e.t === "player-killed" && e.killerId && !e.killerId.startsWith("bot_")) {
-        this.humanKillMoments.push({ tick: this.state.tick as number, killerId: e.killerId });
+        this.humanKillMoments.push({
+          tick: this.state.tick as number,
+          killerId: e.killerId,
+          // STUDY 3 D1/CL.E: the render-side camera used to guess the
+          // engaged victim by proximity because this was never recorded —
+          // recording the real one lets it frame the actual combatant.
+          victimId: e.victimId,
+        });
       }
     }
 

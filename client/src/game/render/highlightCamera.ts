@@ -127,6 +127,36 @@ export function killBeatEnvelope(
   return { punch, finalPunch };
 }
 
+// ── Engaged-victim identity (clip-goal STUDY 3, D1/CL.E) ────────────────
+
+/**
+ * Resolves which victimId the camera should engage with at the given
+ * relative tick — the credited kill nearest in time, BY IDENTITY, not a
+ * proximity guess. Live verification (STUDY 3 follow-up) found the old
+ * "nearest living opponent" heuristic locking onto the star alone (or a
+ * bystander) whenever the true victim was far away on screen — routine for
+ * a ranged hitscan kill, which is most of them. `killTicks`/`killVictims`
+ * are parallel arrays (same order/length) from the render window's
+ * `&kills=`/`&victims=` params.
+ */
+export function resolveEngagedVictimId(
+  rel: number,
+  killTicks: readonly number[],
+  killVictims: readonly string[],
+): string | null {
+  if (killTicks.length === 0 || killTicks.length !== killVictims.length) return null;
+  let bestIdx = -1;
+  let bestDist = Infinity;
+  for (let i = 0; i < killTicks.length; i++) {
+    const d = Math.abs(killTicks[i]! - rel);
+    if (d < bestDist) {
+      bestDist = d;
+      bestIdx = i;
+    }
+  }
+  return bestIdx >= 0 ? killVictims[bestIdx]! : null;
+}
+
 // ── Slow-mo schedule ────────────────────────────────────────────────────
 
 /** Sim ticks (relative to window start) rendered at 1 tick/frame instead

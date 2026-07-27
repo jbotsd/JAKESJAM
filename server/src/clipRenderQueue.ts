@@ -32,6 +32,10 @@ export type RenderJob = {
   /** Cluster kill ticks relative to fromTick (clip-goal CL.C/CL.D) —
    *  rides the render URL for the lower-third + probes. */
   killTicks: number[];
+  /** Parallel to killTicks — each kill's real victim (clip-goal STUDY 3
+   *  D1/CL.E), so the render-side camera frames the actual combatant
+   *  instead of guessing by proximity. */
+  killVictims: string[];
   label: string;
 };
 
@@ -84,6 +88,7 @@ export function enqueueMatchHighlights(
       ticks: w.ticks,
       followId: w.followId,
       killTicks: w.killTicks,
+      killVictims: w.killVictims,
       label: `${w.followId}@${w.fromTick}+${w.ticks}`,
     });
     queued += 1;
@@ -124,7 +129,10 @@ async function runJob(job: RenderJob, port: number): Promise<void> {
     `http://127.0.0.1:${port}/?replay=${encodeURIComponent(job.replayFile)}` +
     `&render=1&from=${job.fromTick}&ticks=${job.ticks}` +
     `&follow=${encodeURIComponent(job.followId)}` +
-    `&kills=${job.killTicks.join(",")}&rs=1`;
+    `&kills=${job.killTicks.join(",")}` +
+    // STUDY 3 D1/CL.E: parallel to &kills= — each kill's real victim, so
+    // the render-side camera doesn't have to guess one by proximity.
+    `&victims=${job.killVictims.map((v) => encodeURIComponent(v)).join(",")}&rs=1`;
   console.log(`[clip-render] rendering ${job.label} …`);
   const proc = Bun.spawn(
     [

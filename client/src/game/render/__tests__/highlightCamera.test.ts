@@ -7,6 +7,7 @@ import {
   SLOWMO_SPAN_TICKS,
   killBeatEnvelope,
   makeHighlightCamState,
+  resolveEngagedVictimId,
   slowMoTickRange,
   stepHighlightCamera,
 } from "../highlightCamera.js";
@@ -105,5 +106,39 @@ describe("highlight camera (CL.E)", () => {
     const clamped = slowMoTickRange([200], 210)!;
     expect(clamped.end).toBe(210);
     expect(slowMoTickRange([], 210)).toBeNull();
+  });
+
+  // clip-goal STUDY 3, D1/CL.E: the old ReplayScene resolved "engaged
+  // victim" by proximity ("nearest living opponent") — live verification
+  // (a real human-credited kill re-rendered through the fixed pipeline)
+  // found this locks onto the star ALONE for the whole clip whenever the
+  // true victim is far away on screen, which is routine for a ranged
+  // hitscan kill. resolveEngagedVictimId picks the credited kill's victim
+  // BY IDENTITY instead of guessing.
+  describe("resolveEngagedVictimId (STUDY 3 D1/CL.E)", () => {
+    test("picks the nearest kill's victim by tick distance", () => {
+      const killTicks = [90, 300];
+      const killVictims = ["bot_a", "bot_b"];
+      expect(resolveEngagedVictimId(85, killTicks, killVictims)).toBe("bot_a");
+      expect(resolveEngagedVictimId(90, killTicks, killVictims)).toBe("bot_a");
+      expect(resolveEngagedVictimId(195, killTicks, killVictims)).toBe("bot_a"); // exact tie (105 vs 105) — first wins
+      expect(resolveEngagedVictimId(205, killTicks, killVictims)).toBe("bot_b"); // now bot_b is closer (95 vs 115)
+      expect(resolveEngagedVictimId(300, killTicks, killVictims)).toBe("bot_b");
+    });
+
+    test("returns the victim regardless of distance from the star — the whole point", () => {
+      // The exact reproduced bug: a real off-screen bystander victim (far
+      // from the star) must still resolve by identity, not vanish because
+      // a proximity search would never have found them.
+      expect(resolveEngagedVictimId(90, [90], ["bot_piston_far_away"])).toBe("bot_piston_far_away");
+    });
+
+    test("no kill data (older job / realtime playback): returns null so the caller falls back", () => {
+      expect(resolveEngagedVictimId(90, [], [])).toBeNull();
+    });
+
+    test("mismatched array lengths (malformed data): returns null rather than misreading", () => {
+      expect(resolveEngagedVictimId(90, [90, 150], ["only_one"])).toBeNull();
+    });
   });
 });

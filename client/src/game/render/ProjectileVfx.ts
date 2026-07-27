@@ -141,10 +141,25 @@ export class ProjectileVfx {
   /** Contract model pool — grows once to peak projectile count. */
   private readonly modelPool: ProjectileRenderModel[] = [];
   private readonly staleScratch: number[] = [];
+  /** Gate for the homing seeker-reticle (clip-goal STUDY 3, D5): given a
+   *  projectile's ownerId, return whether its lock-reticle should draw.
+   *  Undefined (the default, live gameplay's behavior — UNCHANGED) draws
+   *  for every homing shot. A rendered highlight passes a gate that only
+   *  shows it for the star's own shots — the reticle is correctly doing
+   *  its job (marking what a homing shot is seeking), the bug was showing
+   *  it for combat that has nothing to do with the credited kill
+   *  (`80ea1663`: a reticle on an inert bystander bot the star never
+   *  engaged, misdirecting viewer attention). */
+  private readonly seekerReticleGate?: (ownerId: PlayerId | null) => boolean;
 
-  constructor(scene: Phaser.Scene, pool: ParticlePool | null) {
+  constructor(
+    scene: Phaser.Scene,
+    pool: ParticlePool | null,
+    seekerReticleGate?: (ownerId: PlayerId | null) => boolean,
+  ) {
     this.scene = scene;
     this.pool = pool;
+    this.seekerReticleGate = seekerReticleGate;
     this.trailGfx = scene.add.graphics();
     this.trailGfx.setDepth(TRAIL_DEPTH);
     this.trailGfx.setBlendMode(1); // ADD
@@ -296,7 +311,7 @@ export class ProjectileVfx {
       // — so a Stolen-Fangs spend (or any homing card) is visibly SEEKING
       // in flight instead of rendering identically to a straight shot.
       // Immediate-mode into the per-frame body gfx: zero pool churn.
-      if (proj.pathing === "homing") {
+      if (proj.pathing === "homing" && (!this.seekerReticleGate || this.seekerReticleGate(proj.ownerId))) {
         const phase = this.clockMs * 0.008;
         const rr = radius + 5;
         body.lineStyle(1, color, 0.55 * proj.bodyAlpha);
