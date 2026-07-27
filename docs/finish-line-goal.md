@@ -188,21 +188,32 @@ precedent as convergence-goal.md.
   included — not a hitscan-specific gap, nothing to mirror). See
   world.zig's "Hitscan resolution" section header for the authoritative
   per-sub-item STATUS list.
-- F1 STAB verb: **BUILT (2026-07-26, on branch `feat/interstice-stab-verb`,
-  NOT YET MERGED — awaiting human-supervised review)**: TS FSM + Zig mirror
-  + parity gate (meleeSwingMemoryBridge gate F) + dedicated TS suite
-  (ninjaStab.test.ts) + the render pass (thrust pose, construct reach/
-  sweep, debris register, camera-kick/whiff-watch timing). Full design
-  spec + every number's reasoning in slash-feel-ledger.md's "STAB verb
-  design decision" section — flagged there for Jake's own sanity-check
-  (damage/knockback/timing are new feel judgment calls, not a transcribed
-  spec). Open: on-camera live-tape verification of the render (a future
-  wave's job, same investment class as the bash's own K5-K12/I5-I13
-  tape passes).
+- F1 STAB verb: **DONE — reviewed, MERGED, deployed live** (2026-07-26/27,
+  commit 66c5e1f). TS FSM + Zig mirror + parity gate (meleeSwingMemoryBridge
+  gate F) + dedicated TS suite (ninjaStab.test.ts) + the render pass (thrust
+  pose, construct reach/sweep, debris register, camera-kick/whiff-watch
+  timing). Full design spec + every number's reasoning in
+  slash-feel-ledger.md's "STAB verb design decision" section — every number
+  is a new feel judgment call, not a transcribed spec, still worth Jake's
+  own sanity-check when he plays it. Open: on-camera live-tape verification
+  of the render (a future wave's job, same investment class as the bash's
+  own K5-K12/I5-I13 tape passes).
 - F2 audio wiring: **BLOCKED ON JAKE** (picks)
-- F3 live-eyes verification: **NOT STARTED**
-- P legibility (9 rows): **NOT STARTED** (unblocked)
-- D doc hygiene (4 items): **NOT STARTED**
+- F3 live-eyes verification: **PARTIALLY DONE, ad hoc** — the 2026-07-27
+  footage-study STUDY 3/4 cycle exercised real live-eyes verification on
+  fresh tape (STUDY 4 confirmed D1/CL.E/CL.D/nameplate/watermark fixes on
+  real gameplay), but that was scoped to clip-goal.md's own defect list,
+  not F3's original "both classes together, multi-round" brief — still
+  worth a dedicated pass.
+- P legibility (9 rows): **DONE** (2026-07-26) — legibility-audit.md is now
+  79/79 SHIPPED, 0 PARTIAL, 0 MISSING.
+- D doc hygiene (4 items): **DONE** (2026-07-26) — all 4 fixed (cohesion
+  P2/P3 lines, convergence Track L count, venue-goal.md Evidence Ledger
+  backfill for Pillars 2-6, worldWasmBackend.ts header). The venue backfill
+  surfaced a real finding beyond doc hygiene: Pillars 4 (run/draft record),
+  5 (ceremony/map-vote), and 6 (naming/front-door) turned out to be
+  actually UNBUILT, not just undocumented — see venue-goal.md's own ledger
+  for specifics. That's new real scope, not covered by this doc's 4 items.
 - B balance tuning: **DONE** (2026-07-26) — re-ran the fixed CLASS_POLICY
   matchup matrix + TTK guardrail suite on the settled chassis/melee numbers
   (before: 6/12 cross-class cells hard 0/100, all mirrors variant, matching
