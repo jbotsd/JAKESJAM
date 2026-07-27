@@ -924,6 +924,188 @@ retire ClipRecorder.ts, not more client-side patching):
 
 ---
 
+**STUDY 4 (2026-07-27)** — footage-study close-the-loop pass on the merged
+`fix/hud-layering` + `fix/probe-tool-motion-gap` + `fix/cliprecorder-pillars`
++ `fix/core-replay-pipeline` batch (merge commit `79945fe`), per the
+merge-coordinator's request for FRESH real footage rather than re-reading
+the 12 STUDY 3 clips. Acquisition note (methodologically equivalent, not
+literally the public URL): the production `jakesjam-host.service` had no
+clips rendered after its 15:10:23 redeploy at study time, so fresh footage
+was produced from a clean worktree checkout of the exact same merged commit
+(`79945fe`) running as an isolated local server (`PORT=8099`,
+`PRESENTATION_EVIDENCE_FORCE_JOIN=1` to let `scripts/autoplay.ts
+--direct-arena` skip the venue walk) — identical code path
+(`matchHost → clipRenderQueue.ts → ReplayScene`), same binary. Two autoplay
+pilot sessions fought real bots until the world's cumulative target-score-5
+match completed; `matchHost`'s existing automatic highlight pipeline fired
+on its own (no manual trigger), rendering **3 real production-path clips**
+from one persisted replay (`world-1785138576434.jjr`, all three
+`follow=autopilot_fhr57r_auto`):
+- **Clip A** `29d24f2d-022a-4a66-9060-c5cc604be8e8.mp4` — single kill,
+  `victims=bot_spark`, `ticks=210`, melee range.
+- **Clip B** `351b4e01-138e-4ed5-bd59-fe1126569619.mp4` — two-kill cluster,
+  `victims=bot_ratchet,bot_ratchet`, `ticks=544`, both kills at long range.
+- **Clip C** `24113dfa-3666-40d1-b352-c57f11282b12.mp4` — single kill,
+  `victims=bot_ratchet`, `ticks=210`, melee range, upper-platform victim.
+
+`scripts/probe-clip.ts` (with `--slowmo 15`, matching the automatic slow-mo
+param the queue now attaches whenever `killTicks` are present): **ALL PASS
+8/8 on all 3 clips**, including the STUDY 3-added static-span check — 1920×
+1080, ~29.85–29.96fps real, 30/1 nominal, exact duration, opus audio
+present and non-silent (−31.5 to −38.9dB mean), 7.4–7.6Mbps, faststart,
+zero identical consecutive frames, static-span 0.00–0.30s (well under the
+3s ceiling). 2fps + dense-burst frame-by-frame read of all 3 (every 2fps
+frame, plus frame-number-exact `select` bursts around every declared kill
+tick — timestamp-based `-ss` seeking was cross-checked against this and
+found imprecise near kill moments, so the frame-accurate method is what the
+findings below are based on).
+
+**D1 (invisible/uncorroborated kill) — CONFIRMED FIXED for proximate
+(melee-range) kills, 2 of 3 clips; PARTIALLY REPRODUCES for long-range
+kills within a multi-kill cluster, 1 of 3 clips (both its kills).** This is
+the headline finding the merge-coordinator asked to close the loop on:
+
+- Clip A: frame f-03 (t=1.0s) shows AUTOPILOT and BOT · SPARK already
+  adjacent (melee range); f-04 (t=1.5s, the credited kill tick) shows a
+  gold/white death-burst exactly at the victim's position, immediately
+  followed by "AUTOPILOT — THE KILL" fading in (burst frames b-15 through
+  b-30 show a slash-arc VFX, then the death-pop, then rising soul-fragment
+  particles — a real, legible, correctly-attributed kill). RETIRED for
+  this case.
+- Clip C: burst frame b-25 (~t=1.83s) shows the same pattern one platform
+  up — BOT · RATCHET dying directly above AUTOPILOT, camera vertical bias
+  correctly re-framing upward (CL.E.3's spec, confirmed live), lower-third
+  reads "AUTOPILOT — THE KILL". RETIRED for this case.
+- **Clip B, kill 1** (rel tick 90, `victims[0]=bot_ratchet`): frame-exact
+  extraction at video frame 45 (the credited tick) shows AUTOPILOT alone,
+  camera having zoomed OUT to its widest (frame 39, pre-kill, confirms the
+  zoom-to-fit system IS trying), yet BOT · RATCHET is only a sliver at the
+  extreme right edge (nameplate cut off mid-word) — the separation at the
+  moment of credit exceeds what CL.E's 1.25× zoom floor can contain. By
+  frame 64 (~0.6s later, lower-third at full opacity reading "AUTOPILOT —
+  DOUBLE KILL") the camera has instead zoomed BACK IN on AUTOPILOT alone;
+  the victim never appears, no death-pop ever renders anywhere in the
+  visible frame.
+- **Clip B, kill 2** (rel tick 424, `victims[1]=bot_ratchet`, the cluster's
+  FINAL kill — the one CL.E's slow-mo beat is specifically for): frame-
+  exact extraction across the credited tick's mapped video frame (≈227,
+  accounting for the +15-frame slow-mo insert) through the last frame of
+  the clip (287) shows BOT · RATCHET alive at full HP the entire time,
+  still exchanging fire with AUTOPILOT at range (visible tracer in an
+  intermediate frame) — no slow-mo dilation is visible in the motion
+  between sampled frames, no death-pop, no HP-bar drop, right up to the
+  hard end of the window. The window's own math (`OUT = last kill + 120
+  ticks` = exactly this clip's end) means this final ~2s IS meant to be the
+  kill's aftermath hold; instead it's ordinary ongoing combat with the
+  "credited" victim never dying on screen.
+
+Read together: the STUDY 3 root cause (wrong `victimId` — the camera
+engaging a proximity-guessed bystander instead of the real credited victim)
+is genuinely fixed; `resolveEngagedVictimId` demonstrably resolves the
+correct entity now (confirmed by exclusion — in clip B the camera is
+clearly trying to reach `bot_ratchet` specifically, not locking onto a nearer
+bystander). What survives is a **narrower, adjacent condition**: when the
+real separation between star and credited victim at kill-time exceeds
+what the zoom-to-fit's practical floor can frame, the result is
+visually indistinguishable from the original bug (no visual kill proof) even
+though the underlying identity resolution is correct. This reproduced on
+both kills of the one cluster in this batch that happened to be long-range;
+the two melee-range single kills were flawless. Recommend as the next fix:
+either lower the zoom-to-fit floor further for extreme separations, or add
+an explicit off-screen-victim assist (arrow/ping/hard cut) for the case
+zoom genuinely cannot solve — a camera can't out-zoom a fight that's
+Just Too Far Apart.
+
+**CL.E (camera language) — RETIRED for the proximate case, same caveat as
+D1 above.** Punch-in confirmed live in clips A and C (visibly tighter
+framing at the kill frame vs. one second prior), vertical bias confirmed
+live in clip C (camera follows the victim onto the platform above), no
+teleport/cut anywhere in any of the 3 clips (every sampled frame shows
+smooth continuous camera motion), release-after-hold confirmed (clip A's
+last frame is back near base zoom). Zoom-to-fit's wide-separation floor is
+the same gap D1 cites — not re-filed twice.
+
+**CL.D (lower-third + watermark + chrome) — RETIRED, all 3 clips.**
+Lower-third enters after the window's first kill and is fully gone by each
+clip's final frame (clip A f-08, clip B f-19, clip C f-08 all confirmed
+absent) — no recurrence of STUDY 3's `909e0a8a`/`80ea1663` "rides to the
+hard cut" regression. Feat text is correct and monotone-per-window ("THE
+KILL" for the two single-kill clips, "DOUBLE KILL" for the two-kill
+cluster from its first kill onward — this matches the goal's own spec,
+"feat... from the window's killTicks" computed once for the whole window,
+not a live-updating counter, so this is NOT filed as a defect). Watermark
+present bottom-right, ≤4% tall, every sampled frame across all 3 clips.
+Letterbox bars present. Zero spectator chrome (no roster, hotbar, timer,
+latency badge) in any frame — B7 stays retired by construction.
+
+**CL.A nameplate collision — RETIRED, reproduced-then-confirmed-fixed.**
+Clip A frame f-03 has AUTOPILOT's and BOT · SPARK's nameplates directly
+adjacent (near-touching, melee range) and they resolve cleanly side by
+side with no overlap/garbling — the exact STUDY 3 `0e21238e` scenario,
+now clean.
+
+**D3 (nameplate ≠ lower-third identity) — RETIRED.** AUTOPILOT's own
+nameplate reads "AUTOPILOT" (the real callsign) in every frame across all
+3 clips, matching the lower-third — no raw player-ID-fragment nameplate
+anywhere on the star.
+
+**C1 (opening rig-streak) — RETIRED, holds.** Frame 0 of all 3 clips opens
+on fully-converged rigs (no noodle-limb artifact).
+
+**Spot-checked, not independently reconfirmed this session (budget/no
+applicable footage):**
+- **CL.B.1 (kill-SFX-to-frame sync)** — audio presence/level is probe-
+  confirmed non-silent and reasonable on all 3 (−31.5 to −38.9dB mean), but
+  a fine-grained loudest-window check attempted this session was
+  inconclusive: `volumedetect` over 0.2s buckets across clip A shows a
+  near-constant −13.0/−13.3dB max ceiling from t≈0.2s onward (a
+  limiter/bed-dominated signal), which can't isolate a transient kill SFX
+  peak the way the original CL.B ledger entry's method did. Not re-derived
+  under this session's budget — flag for a proper spot-check next pass,
+  not claimed as either regressed or confirmed.
+- **D5 (homing-shot reticle on a bystander)** — no homing weapon fired in
+  any of the 3 clips (starter-shot loadout only); can't confirm or refute
+  on this tape.
+- **D6 (HUD/world layering bleed-through)** — unchanged from the fix's own
+  ledger note: this defect lives in the LIVE `OnlineMatchScene` roster HUD,
+  which doesn't exist in render-mode output by construction, so render-path
+  footage structurally cannot confirm or refute it. Still AWAITING JAKE
+  (real live-multiplayer capture needed, same blocker as before).
+- **B2 (real fps under load)** — all 3 clips hit 29.85–29.96fps real
+  against a 30fps target (well within tolerance); this is the render-path,
+  which was already good pre-session — the STUDY 3 B2 note was specifically
+  about the separate ClipRecorder.ts path, untouched by this check.
+
+**Bottom line for whoever reads this next:** the fix batch's headline
+claim — D1 fixed — holds for the common case (2 of 3 fresh clips, both
+melee-range single kills, are genuinely excellent: correct camera, correct
+victim, correct death VFX, correct identity, correct lower-third, clean
+exit). It does NOT yet hold unconditionally: a real fresh clip with a
+long-range multi-kill cluster reproduced the "credited kill, zero visual
+proof" symptom on BOTH of its kills, via a different and narrower
+mechanism (zoom-floor insufficient for the actual separation) than the
+original bug (wrong victim identity). This is real footage, not a
+constructed edge case — recommend it go back into the fix queue as a
+scoped follow-up (D9) rather than being considered closed.
+
+- **D9 (NEW, this session) — zoom-to-fit's separation floor is
+  insufficient for long-range kills, reproducing D1's symptom via a new
+  mechanism.** 1 of 3 fresh clips (`351b4e01`, both its kills). See the D1
+  writeup above for full frame citations (video frames 39/45/64 for kill 1;
+  frames ~227–287 for kill 2). Root cause is DIFFERENT from original D1
+  (camera correctly targets the right victim now — it just can't zoom out
+  far enough to reach them), so indexed separately rather than reopening
+  D1 wholesale.
+
+**Baseline/pillar map for this study:** D1 → PARTIALLY RETIRED (2/3 clips
+fully fixed; 1/3 reproduces via D9's narrower mechanism). CL.E → RETIRED
+for the proximate case, same D9 caveat. CL.D, CL.A nameplate collision, D3,
+C1, B7, B11 → RETIRED, confirmed clean on all 3 fresh clips. CL.B.1, D5,
+D6, B2 → not independently reconfirmed this session (see above; not
+regressed, just not tractable with this footage/budget). D9 → NEW.
+
+---
+
 **BASELINE (2026-07-17)** — study of `/c/dff7f450-55dc-4316-8df7-654ebf4e2ccb`:
 1896×950 @ 21.6fps real (215/360 expected frames, 9.96s of 12s intent),
 57600/1 fps metadata, zero audio streams, 10.8Mbps, ends on a bot's
