@@ -26,6 +26,7 @@ import {
 } from "./cardSeals.js";
 import { rarityColorCss } from "./rarityColors.js";
 import { describeBuild } from "./buildDescription.js";
+import { matchResultsClassTag, type MatchResultsClassTag } from "./matchResultsClassTag.js";
 import type { CharacterArchetype } from "../../sim/types.js";
 
 export type MatchResultsRow = {
@@ -257,11 +258,21 @@ export class MatchResultsOverlay {
       nameEl.style.color = row.color;
     }
 
+    // Name + class tag as one flex group so the tag rides next to the name
+    // without disturbing the header's name/score space-between split.
+    const nameRow = document.createElement("div");
+    Object.assign(nameRow.style, ROW_NAME_ROW_STYLE);
+    nameRow.appendChild(nameEl);
+    const classTag = matchResultsClassTag(row.characterId);
+    if (classTag) {
+      nameRow.appendChild(this.makeClassTagElement(classTag));
+    }
+
     const scoreEl = document.createElement("div");
     scoreEl.textContent = `${row.score}`;
     Object.assign(scoreEl.style, ROW_SCORE_STYLE);
 
-    header.append(nameEl, scoreEl);
+    header.append(nameRow, scoreEl);
 
     const cards = findCardsById(crystalRoundsCards, row.cardIds);
     const build = describeBuild(row.cardIds, row.characterId);
@@ -281,6 +292,15 @@ export class MatchResultsOverlay {
 
     el.append(header, buildEl, cardListEl);
     return el;
+  }
+
+  private makeClassTagElement(tag: MatchResultsClassTag): HTMLSpanElement {
+    const chip = document.createElement("span");
+    Object.assign(chip.style, CLASS_TAG_CHIP_STYLE);
+    chip.style.borderColor = tag.colorCss;
+    chip.style.color = tag.colorCss;
+    chip.textContent = tag.label;
+    return chip;
   }
 
   private makeCardChipElement(card: CardDefinition): HTMLSpanElement {
@@ -427,6 +447,31 @@ const ROW_NAME_STYLE: Partial<CSSStyleDeclaration> = {
   letterSpacing: "0.04em",
   color: "#f7fbff",
   fontFamily: "'Space Grotesk', Inter, Arial, sans-serif",
+};
+
+const ROW_NAME_ROW_STYLE: Partial<CSSStyleDeclaration> = {
+  display: "flex",
+  alignItems: "center",
+  gap: "8px",
+  minWidth: "0",
+};
+
+// Class tag chip — GEO/INT/KIN/SYZ, the exact abbreviations + monospace
+// font family the in-match roster nameplate uses (HudSystem.updateScoreRows
+// / classAccentColors.classShortLabel), colored per the class's accent
+// register (chassis-design-axioms CA2) since this overlay has the visual
+// budget for it that the compact nameplate text doesn't. Chamfered, not a
+// capsule (G1 — "no sausage").
+const CLASS_TAG_CHIP_STYLE: Partial<CSSStyleDeclaration> = {
+  padding: "2px 7px",
+  borderRadius: "5px",
+  border: "1px solid currentColor",
+  fontFamily: "'Space Mono', 'Courier New', monospace",
+  fontSize: "10px",
+  fontWeight: "900",
+  letterSpacing: "0.08em",
+  lineHeight: "1.4",
+  flexShrink: "0",
 };
 
 const ROW_SCORE_STYLE: Partial<CSSStyleDeclaration> = {
