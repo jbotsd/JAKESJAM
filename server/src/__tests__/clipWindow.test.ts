@@ -17,7 +17,7 @@ import {
 import { MatchHost } from "../matchHost.ts";
 import { PlayerId, type PlayerSpawnInfo, type RoundState } from "@sim/types.ts";
 
-const kill = (tick: number, killerId = "p_star") => ({ tick, killerId });
+const kill = (tick: number, killerId = "p_star", victimId = "bot_x") => ({ tick, killerId, victimId });
 
 describe("computeClipWindows (CL.C)", () => {
   test("single kill: IN = kill − PRE, OUT = kill + POST", () => {
@@ -29,13 +29,20 @@ describe("computeClipWindows (CL.C)", () => {
     expect(w!.killTicks).toEqual([CLIP_PRE_TICKS]);
   });
 
+  test("STUDY 3 D1/CL.E: killVictims is parallel to killTicks (same length/order) so the render-side camera never has to guess", () => {
+    const [w] = computeClipWindows([kill(1000, "p_star", "bot_piston")], []);
+    expect(w!.killVictims).toEqual(["bot_piston"]);
+    expect(w!.killVictims.length).toBe(w!.killTicks.length);
+  });
+
   test("cluster: window spans first−PRE … last+POST; star = last kill's killer", () => {
-    const kills = [kill(1000, "p_a"), kill(1200, "p_a"), kill(1400, "p_b")];
+    const kills = [kill(1000, "p_a", "bot_1"), kill(1200, "p_a", "bot_2"), kill(1400, "p_b", "bot_3")];
     const [w] = computeClipWindows(kills, []);
     expect(w!.fromTick).toBe(1000 - CLIP_PRE_TICKS);
     expect(w!.fromTick + w!.ticks).toBe(1400 + CLIP_POST_TICKS);
     expect(w!.followId).toBe("p_b");
     expect(w!.killTicks.length).toBe(3);
+    expect(w!.killVictims).toEqual(["bot_1", "bot_2", "bot_3"]);
   });
 
   test("LAW: foreign round-over after the last kill shrinks the window", () => {
@@ -73,15 +80,40 @@ describe("computeClipWindows (CL.C)", () => {
     // One chained cluster (gaps ≤ MAX) whose total span exceeds the cap.
     const kills = [kill(1000), kill(1650), kill(2300)];
     const [w] = computeClipWindows(kills, []);
-    expect(w!.ticks).toBe(CLIP_MAX_TICKS);
     const out = w!.fromTick + w!.ticks;
     expect(out).toBe(2300 + CLIP_POST_TICKS); // tail kept
-    expect(w!.fromTick).toBe(out - CLIP_MAX_TICKS); // lead-up shed
+    expect(w!.ticks).toBeLessThanOrEqual(CLIP_MAX_TICKS);
     // killTicks only lists kills INSIDE the window (1000 AND 1650 were
-    // shed with the lead-up — window is [1700, 2420)) and all are
-    // in-range relative offsets.
+    // shed with the lead-up) and all are in-range relative offsets.
     expect(w!.killTicks.every((t) => t >= 0 && t < w!.ticks)).toBe(true);
     expect(w!.killTicks.length).toBe(1);
+  });
+
+  test("CL.C regression (STUDY 3, 2026-07-27): the END-anchored cap must not leave a huge dead lead-in before the SURVIVING first kill", () => {
+    // Same sparse, widely-spread cluster as above. Before this fix, the raw
+    // end-anchored cap alone left `from` far from the one kill that
+    // actually survives inside the window — the window's OWN first visible
+    // kill sat hundreds of ticks in with nothing happening before it
+    // (`0e21238e`: ~6.8s of dead lead-in instead of the ~1.5s law). The
+    // re-anchor step must tighten `from` so the surviving first kill sits
+    // within CLIP_PRE_TICKS of the window start, same as any other window.
+    const kills = [kill(1000), kill(1650), kill(2300)];
+    const [w] = computeClipWindows(kills, []);
+    expect(w!.killTicks.length).toBe(1);
+    expect(w!.killTicks[0]).toBe(CLIP_PRE_TICKS);
+    expect(w!.ticks).toBe(CLIP_PRE_TICKS + CLIP_POST_TICKS);
+  });
+
+  test("CL.C regression: re-anchoring never re-admits a kill the cap already shed, and never shrinks below what a single surviving kill needs", () => {
+    // Four kills, one cluster (every gap ≤ CLIP_MAX_TICKS so they merge):
+    // a tight early trio, then a lone kill 700 ticks later. After the cap
+    // sheds the trio, re-anchoring must land on the LAST kill alone, not
+    // accidentally resurrect any of the shed trio just because they're now
+    // "close enough" to the new anchor.
+    const kills = [kill(1000), kill(1050), kill(1100), kill(1800)];
+    const [w] = computeClipWindows(kills, []);
+    expect(w!.killTicks.length).toBe(1);
+    expect(w!.killTicks[0]).toBe(CLIP_PRE_TICKS);
   });
 
   test("totalTicks clamps the tail (replay simply ends)", () => {

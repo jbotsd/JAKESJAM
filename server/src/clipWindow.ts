@@ -15,7 +15,15 @@
 //          the beat). A fighting-start edge before the first kill clamps
 //          the lead-in so no stale between-round chrome leaks in.
 
-export type KillMoment = { tick: number; killerId: string };
+/** `victimId` (clip-goal STUDY 3, D1/CL.E) — the render-side highlight
+ *  camera used to GUESS the engaged victim by proximity ("nearest living
+ *  opponent") because this type never carried the real one. That guess
+ *  fails whenever the true victim is far from the star on screen (routine
+ *  for a ranged hitscan kill) — live verification found exactly this: a
+ *  human-credited kill on a bot standing off-screen, the camera locked on
+ *  the star alone the whole clip. Recording the real victim here lets the
+ *  camera frame the ACTUAL combatant instead of a guess. */
+export type KillMoment = { tick: number; killerId: string; victimId: string };
 
 export type RoundMark =
   | { tick: number; kind: "round-over"; winnerId: string | null }
@@ -28,6 +36,9 @@ export type ClipWindow = {
   /** Cluster kill ticks relative to fromTick — probes + the lower-third
    *  (CL.D) both key off these. */
   killTicks: number[];
+  /** Parallel to killTicks (same order/length) — each kill's real victim,
+   *  so the render-side camera never has to guess (STUDY 3 D1/CL.E). */
+  killVictims: string[];
 };
 
 export const CLIP_PRE_TICKS = 90; // 1.5s approach
@@ -104,6 +115,23 @@ export function computeClipWindows(
     // early), render nothing rather than a kill-less "highlight".
     if (to <= last || to <= from) continue;
 
+    // Re-anchor the lead-in to whichever kill actually SURVIVES as the
+    // first visible one (clip-goal STUDY 3, CL.C regression, 2026-07-27):
+    // the END-anchored cap above can shed the cluster's true first kill
+    // from a long/spread cluster, leaving a LATER kill as the window's
+    // effective first beat — but `from` was still computed relative to the
+    // (now-shed) original first kill, so the surviving first kill could
+    // land hundreds of ticks into the window with nothing happening before
+    // it (`0e21238e`: ~6.8s of dead lead-in instead of ~1.5s). Tighten
+    // `from` FORWARD (never backward — this only shrinks the window,
+    // never re-admits an excluded round-over) so the ~1.5s approach law
+    // holds against the kill the viewer will actually see first.
+    const firstSurviving = cluster.find((k) => k.tick >= from && k.tick < to);
+    if (firstSurviving) {
+      const reanchored = firstSurviving.tick - CLIP_PRE_TICKS;
+      if (reanchored > from) from = Math.min(reanchored, to - 1);
+    }
+
     windows.push({
       fromTick: from,
       ticks: to - from,
@@ -113,6 +141,9 @@ export function computeClipWindows(
       killTicks: cluster
         .filter((k) => k.tick >= from && k.tick < to)
         .map((k) => k.tick - from),
+      killVictims: cluster
+        .filter((k) => k.tick >= from && k.tick < to)
+        .map((k) => k.victimId),
     });
   }
   return windows;

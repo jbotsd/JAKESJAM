@@ -248,6 +248,51 @@ describe("ProjectileVfx Track L identity reads", () => {
     expect(graphics2[1]!.strokeOps).toBe(0);
   });
 
+  // clip-goal STUDY 3, D5: a homing shot's seeker reticle must respect an
+  // injected gate — the rendered-highlight path only wants it for the
+  // star's own shots, not any bystander's unrelated homing ability
+  // (`80ea1663`: a reticle on an inert bystander bot, misdirecting viewer
+  // attention).
+  test("seekerReticleGate suppresses the reticle when it returns false", () => {
+    const graphics: FakeGraphics[] = [];
+    const vfx = new ProjectileVfx(fakeScene(graphics), null, () => false);
+    const s = emptyState();
+    const homing = projectile(1, "neutral", "circle");
+    (homing as { pathing: string }).pathing = "homing";
+    s.projectiles = { [1]: homing } as unknown as WorldState["projectiles"];
+    vfx.render(s, resolve);
+    expect(graphics[1]!.strokeOps).toBe(0);
+  });
+
+  test("seekerReticleGate allows the reticle when it returns true, and receives the projectile's ownerId", () => {
+    const graphics: FakeGraphics[] = [];
+    const seenOwnerIds: Array<string | null> = [];
+    const vfx = new ProjectileVfx(fakeScene(graphics), null, (ownerId) => {
+      seenOwnerIds.push(ownerId as string | null);
+      return ownerId === "star";
+    });
+    const s = emptyState();
+    const homing = projectile(1, "neutral", "circle");
+    (homing as { pathing: string }).pathing = "homing";
+    (homing as { ownerId: string | null }).ownerId = "star";
+    s.projectiles = { [1]: homing } as unknown as WorldState["projectiles"];
+    vfx.render(s, resolve);
+    expect(seenOwnerIds).toContain("star");
+    expect(graphics[1]!.strokeOps).toBeGreaterThan(0);
+  });
+
+  test("no gate provided (live gameplay default) draws the reticle for every homing shot, unchanged", () => {
+    const graphics: FakeGraphics[] = [];
+    const vfx = new ProjectileVfx(fakeScene(graphics), null); // no gate arg
+    const s = emptyState();
+    const homing = projectile(1, "neutral", "circle");
+    (homing as { pathing: string }).pathing = "homing";
+    (homing as { ownerId: string | null }).ownerId = "some_bystander_bot";
+    s.projectiles = { [1]: homing } as unknown as WorldState["projectiles"];
+    vfx.render(s, resolve);
+    expect(graphics[1]!.strokeOps).toBeGreaterThan(0);
+  });
+
   test("leech-stamped shot draws the crimson accent ring", () => {
     const graphics: FakeGraphics[] = [];
     const vfx = new ProjectileVfx(fakeScene(graphics), null);

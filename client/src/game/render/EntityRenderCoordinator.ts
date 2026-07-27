@@ -74,6 +74,10 @@ export type EntityRenderConfig = {
   drawDestructible: DestructibleDrawer;
   drawFirePatch: FireDrawer;
   drawPickup: PickupDrawer;
+  /** Homing seeker-reticle gate (clip-goal STUDY 3, D5) — see
+   *  ProjectileVfx's constructor doc. Omit for live gameplay's unchanged
+   *  behavior (reticle shows for every homing shot). */
+  seekerReticleGate?: (ownerId: PlayerId | null) => boolean;
 };
 
 export class EntityRenderCoordinator {
@@ -99,7 +103,7 @@ export class EntityRenderCoordinator {
   constructor(scene: Phaser.Scene, cfg: EntityRenderConfig, pool: ParticlePool | null = null) {
     this.scene = scene;
     this.cfg = cfg;
-    this.projectileVfx = new ProjectileVfx(scene, pool);
+    this.projectileVfx = new ProjectileVfx(scene, pool, cfg.seekerReticleGate);
     this.pickupGraphics = scene.add.graphics();
     this.pickupGraphics.setDepth(2);
     this.destructibleGraphics = scene.add.graphics();

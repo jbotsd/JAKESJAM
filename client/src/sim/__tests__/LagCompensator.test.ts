@@ -2,10 +2,10 @@
 // tick interpolation, rewind plan construction, and post-step unshift.
 
 import { describe, test, expect, beforeEach } from "bun:test";
-import { STEP_MS } from "@sim/index.ts";
-import { LagCompensator, LAG_COMP_MAX_TICKS } from "../LagCompensator.ts";
-import { InputSeq, PlayerId, Tick } from "@sim/types.ts";
-import type { PlayerEntity, WorldState } from "@sim/types.ts";
+import { STEP_MS } from "../constants";
+import { LagCompensator, LAG_COMP_MAX_TICKS } from "../LagCompensator";
+import { InputSeq, PlayerId, Tick } from "../types";
+import type { PlayerEntity, WorldState } from "../types";
 
 const A = PlayerId("a");
 const B = PlayerId("b");

@@ -137,6 +137,40 @@ export type ProceduralPlayerRigOptions = {
   detail?: "full" | "lite";
 };
 
+/** Nameplate badge diameter at scale 1 — shared with `render/nameplateLayout.ts`
+ *  so collision resolution measures the SAME box `drawNameplate` actually
+ *  draws (clip-goal STUDY 3, CL.A). */
+export const NAMEPLATE_BADGE_R = 9;
+/** Plate height at scale 1 — mirrors `drawNameplate`'s `plateH`. */
+export const NAMEPLATE_HEIGHT = 15;
+/** Gap between badge and name column at scale 1 — mirrors `drawNameplate`'s `gap`. */
+export const NAMEPLATE_GAP = 5;
+
+/** Full plate width (badge + gap + name column) at the given scale — single
+ *  source of truth for both the actual draw call and any pre-pass that
+ *  needs to know a plate's footprint before it's drawn (collision layout). */
+export function nameplateWidth(name: string, scale: number): number {
+  const nameWidth = Math.max(52, name.length * 6.5) * scale;
+  return NAMEPLATE_BADGE_R * 2 * scale + NAMEPLATE_GAP * scale + nameWidth;
+}
+
+/** Standing head height above `pose.position.y`, at scale 1 (headYTarget's
+ *  `ground - 100*sy` at crouch-ratio 0, plus drawNameplate's own `-24`
+ *  offset from head.y). A caller that needs to pre-compute nameplate
+ *  collisions BEFORE the rig has actually drawn this frame (i.e. a
+ *  multi-rig scene doing a layout pass, clip-goal STUDY 3 CL.A) doesn't
+ *  have the real spring-lagged head position yet — this constant is close
+ *  enough for collision detection (the oscillating terms it omits — bob,
+ *  breathe, gather — are a few px, negligible next to a ~15px-tall plate)
+ *  without needing to duplicate the full IK chain. */
+export const NAMEPLATE_APPROX_HEAD_OFFSET = 124;
+
+/** Approximate un-lifted nameplate anchor y for a player standing at
+ *  `positionY` (world), at the given scale — see NAMEPLATE_APPROX_HEAD_OFFSET. */
+export function approxNameplateAnchorY(positionY: number, scale: number): number {
+  return positionY - NAMEPLATE_APPROX_HEAD_OFFSET * scale;
+}
+
 export type ProceduralPlayerPose = {
   position: Vec2;
   velocity: Vec2;
@@ -159,6 +193,14 @@ export type ProceduralPlayerPose = {
    *  the body never braced. Optional/additive — non-Kindled rigs and old
    *  callers ignore it. */
   shieldHeld?: boolean;
+  /** World-px vertical lift applied to the nameplate anchor, on top of the
+   *  usual `head.y - 24*s` (clip-goal STUDY 3, CL.A regression — adjacent
+   *  players' plates draw directly on top of each other and garble
+   *  together). Callers that track multiple rigs at once compute this via
+   *  `render/nameplateLayout.ts`'s `resolveNameplateLifts` and set it per
+   *  player per frame; callers with only one rig on screen (or old
+   *  call sites) omit it and get the unmodified anchor. */
+  nameplateLift?: number;
 };
 
 export type LimbSolve = {
@@ -2052,7 +2094,14 @@ export class ProceduralPlayerRig implements CombatRig {
     this.drawAura(g, pelvis, chest, s, danceGlowBoost);
 
     // 1. Nameplate + health bar (topmost layer visually but drawn first for z)
-    this.drawNameplate(g, head.x, head.y - 24 * s, s, pose.health ?? 100, pose.maxHealth ?? 100);
+    this.drawNameplate(
+      g,
+      head.x,
+      head.y - 24 * s - (pose.nameplateLift ?? 0),
+      s,
+      pose.health ?? 100,
+      pose.maxHealth ?? 100,
+    );
 
     // 1b. Silhouette backing — a dark halo drawn BEHIND the whole figure
     // (audit finding: the hero is a mid-gray value that nearly vanishes
@@ -2792,7 +2841,9 @@ export class ProceduralPlayerRig implements CombatRig {
     // stay visually balanced against the badge rather than the badge
     // floating off-center once names get long.
     const gap = 5 * s;
-    const plateW = badgeR * 2 + gap + nameWidth;
+    // Single-sourced with nameplateWidth() (module export, above) — CL.A's
+    // collision pre-pass needs the exact same footprint this draws.
+    const plateW = nameplateWidth(this.name, s);
     const plateLeft = x - plateW / 2;
     const badgeCx = plateLeft + badgeR;
     const nameCx = plateLeft + badgeR * 2 + gap + nameWidth / 2;

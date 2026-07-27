@@ -16,9 +16,19 @@
 //
 // Anti-cheat clamp: anything more than ~250 ms of lookback is suspect so we
 // hard-cap. 250 ms / 16.67 ms/tick ≈ 15 ticks.
+//
+// LIVES IN sim/ (not server/), and MUST stay here (clip-goal STUDY 3, D1):
+// matchHost.ts applies this inline in its tick loop, but the offline replay
+// re-simulation (ReplayScene.ts, via lagCompensatedStep.ts) needs the exact
+// same class to reproduce the exact same rewind — a replay that steps the
+// recorded inputs WITHOUT it diverges from the live match at every hit that
+// only connected because of a lag-comp rewind (i.e. almost every hit against
+// a moving target under real network latency). Server code reaches this via
+// the `@sim/LagCompensator.ts` alias; it must never import anything
+// server-only (no Bun/node APIs) so both sides can share it verbatim.
 
-import { STEP_MS } from "@sim/index.ts";
-import type { InputFrame, PlayerId, Tick, WorldState } from "@sim/types.ts";
+import { STEP_MS } from "./constants";
+import type { InputFrame, PlayerId, Tick, WorldState } from "./types";
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 
