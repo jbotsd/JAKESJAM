@@ -254,6 +254,20 @@ export class MatchHost {
   private interval: ReturnType<typeof setInterval> | null = null;
   private readonly rngSeed: number;
   private startedAt = 0;
+  /**
+   * Server-tick perf instrument (2026-07-27 lag/perf audit). Fixed-size
+   * ring buffer of `tick()` wall-times (ms), one `performance.now()` delta
+   * per tick — two timestamp reads + one array write, no allocation, no
+   * string/console work on the hot path. Cheap enough to leave on
+   * permanently (same "surface the frame-time, don't just assume" instinct
+   * as RENDER_OVERHAUL_PLAN.md Phase 0's client-side actualFps ask, applied
+   * server-side). 3600 samples = 60s of history at 60Hz before wrapping.
+   * Read via `getTickTimingStats()` — ops/probe consumers only, never
+   * gates or branches sim behavior.
+   */
+  private readonly tickTimingsMs = new Float64Array(3600);
+  private tickTimingWriteIdx = 0;
+  private tickTimingCount = 0;
   /** Spatial grid for per-recipient snapshot filtering (AOI). Rebuilt each
    *  snapshot tick in broadcastSnapshot before per-client filtering runs. */
   private readonly grid: InterestGrid;
@@ -1273,7 +1287,72 @@ export class MatchHost {
     }
   }
 
+  /**
+   * Timing wrapper around `tickInner` (2026-07-27 lag/perf audit) — the
+   * ONLY thing added to the hot path itself: two `performance.now()` reads
+   * and one ring-buffer write. All real tick work is unchanged, still in
+   * `tickInner` below, byte-for-byte.
+   */
   private tick(): void {
+    const t0 = performance.now();
+    this.tickInner();
+    const dt = performance.now() - t0;
+    this.recordTickTiming(dt);
+    // TEMPORARY diagnostic (2026-07-27 lag/perf audit spike-hunt) — attribute
+    // rare slow ticks to a phase + entity-count fingerprint instead of
+    // guessing. Remove once the spike source is confirmed. Threshold 5ms
+    // is well above the measured p95 (~0.5ms) so this only fires on real
+    // outliers, not steady-state noise.
+    if (dt > 5 && process.env.JJ_TICK_SPIKE_LOG === "1") {
+      console.log(
+        `[tick-spike] dt=${dt.toFixed(2)}ms tick=${this.state.tick} phase=${this.state.round.phase} ` +
+          `players=${Object.keys(this.state.players).length} proj=${Object.keys(this.state.projectiles).length} ` +
+          `destr=${Object.keys(this.state.destructibles).length} sat=${Object.keys(this.state.satellites ?? {}).length}`,
+      );
+    }
+  }
+
+  /** Append one tick-duration sample (ms) to the ring buffer. O(1), no
+   *  allocation. See `tickTimingsMs`'s own doc for the sizing rationale. */
+  private recordTickTiming(ms: number): void {
+    this.tickTimingsMs[this.tickTimingWriteIdx] = ms;
+    this.tickTimingWriteIdx = (this.tickTimingWriteIdx + 1) % this.tickTimingsMs.length;
+    if (this.tickTimingCount < this.tickTimingsMs.length) this.tickTimingCount += 1;
+  }
+
+  /**
+   * p50/p95/p99/max/mean over the buffered tick-duration history. O(n log n)
+   * on however many samples are currently buffered (<=3600) — call this from
+   * an operator/probe surface, never from inside the tick loop itself.
+   */
+  getTickTimingStats(): {
+    count: number;
+    meanMs: number;
+    p50Ms: number;
+    p95Ms: number;
+    p99Ms: number;
+    maxMs: number;
+  } {
+    const n = this.tickTimingCount;
+    if (n === 0) {
+      return { count: 0, meanMs: 0, p50Ms: 0, p95Ms: 0, p99Ms: 0, maxMs: 0 };
+    }
+    const samples = Array.from(this.tickTimingsMs.slice(0, n));
+    samples.sort((a, b) => a - b);
+    const pct = (p: number) => samples[Math.min(n - 1, Math.floor(p * n))]!;
+    let sum = 0;
+    for (const s of samples) sum += s;
+    return {
+      count: n,
+      meanMs: sum / n,
+      p50Ms: pct(0.5),
+      p95Ms: pct(0.95),
+      p99Ms: pct(0.99),
+      maxMs: samples[n - 1]!,
+    };
+  }
+
+  private tickInner(): void {
     this.sweepStaleConnections();
     this.evictExpiredDisconnects();
 
@@ -1942,19 +2021,29 @@ export class MatchHost {
     const obs = this.grid.observed(cells);
 
     // Filter the four high-cardinality collections.
-    const projectilesBefore = Object.keys(state.projectiles).length;
-    const destructiblesBefore = Object.keys(state.destructibles).length;
-    const firePatchesBefore = Object.keys(state.firePatches).length;
-    const pickupsBefore = Object.keys(state.pickups).length;
-    const satellitesBefore = Object.keys(state.satellites).length;
-
     const projectiles = filterRecord(state.projectiles, obs.projectileIds);
     const destructibles = filterRecord(state.destructibles, obs.destructibleIds);
     const firePatches = filterRecord(state.firePatches, obs.firePatchIds);
     const pickups = filterRecord(state.pickups, obs.pickupIds);
     const satellites = filterRecord(state.satellites, obs.satelliteIds);
 
+    // (2026-07-27 lag/perf audit item 1) The "*Before" counts used to be
+    // computed unconditionally, above, even though they're only ever read
+    // inside this `if (debugAoi)` block — five `Object.keys(...).length`
+    // calls (O(n) each) thrown away on every recipient, every tick, in the
+    // overwhelmingly common case (debugAoi is only true under `DEBUG_AOI=1`
+    // for a match's first 30 snapshots). A real-WS-client scaling probe
+    // (scripts/broadcastSnapshotClientScalingProbe.ts) measured this whole
+    // per-recipient path scaling with attached client count — moving these
+    // five allocations behind the same gate the console.log itself already
+    // uses is a direct, safe cut to that per-client cost with zero behavior
+    // change on the debug path (still computed, same values, just lazily).
     if (debugAoi) {
+      const projectilesBefore = Object.keys(state.projectiles).length;
+      const destructiblesBefore = Object.keys(state.destructibles).length;
+      const firePatchesBefore = Object.keys(state.firePatches).length;
+      const pickupsBefore = Object.keys(state.pickups).length;
+      const satellitesBefore = Object.keys(state.satellites).length;
       const totalBefore =
         projectilesBefore + destructiblesBefore + firePatchesBefore +
         pickupsBefore + satellitesBefore;

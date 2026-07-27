@@ -13,7 +13,7 @@
 //   - never within 60s of a step-down (thermal hysteresis)
 
 import Phaser from "phaser";
-import { getQualityProfile, forceRigDowngrade, isRigDowngraded } from "./qualityProfile.js";
+import { getQualityProfile, forceRigDowngrade, isRigDowngraded, type QualityTier } from "./qualityProfile.js";
 import { getRenderScale, setRenderScaleRuntime } from "./renderResolution.js";
 import { crumb, record } from "../../telemetry.js";
 
@@ -21,24 +21,79 @@ const CHECK_INTERVAL_MS = 2_000;
 const DOWN_FACTOR = 1.35;
 const UP_FACTOR = 0.85;
 const DOWN_STREAK = 3; // 3 consecutive bad checks (~6s) before stepping
-/** Ultra-tier (detected discrete GPU — RTX/Radeon RX etc.) gets 3x the
- *  streak requirement (~18s) before EVER touching resolution. This is a
- *  SECOND, PROACTIVE fix on top of the futility-detection safety net
- *  below — that net already proved (2026-07-11, Jake's 4080) that on this
- *  hardware class, elevated dt is never fill-bound, only CPU/presentation-
- *  bound, so dropping resolution doesn't help AND still visibly degrades
- *  the game for the ~12+ seconds it takes the net to notice and revert.
- *  A much longer fuse means brief periodic hitches (GC, network snapshot
- *  processing, clip-encoder work) get far more room to pass on their own
- *  before the game ever blurs itself — the net still exists underneath
- *  for genuine sustained struggle (e.g. thermal-throttled gaming laptops). */
-const ULTRA_DOWN_STREAK_MULT = 3;
+/**
+ * Ultra-tier (detected discrete GPU — RTX/Radeon RX etc.) gets a longer
+ * streak requirement before EVER touching resolution — a SECOND, PROACTIVE
+ * fix on top of the futility-detection safety net below. That net already
+ * proved (2026-07-11, Jake's 4080) that on this hardware class, elevated dt
+ * is never fill-bound, only CPU/presentation-bound, so dropping resolution
+ * doesn't help.
+ *
+ * (2026-07-27 lag/perf audit item 2 — "verify and retune the trigger")
+ * Retuned 3→2 here. The 2026-07-11 evidence cuts BOTH ways on the old 3x:
+ * a longer fuse gives brief hitches (GC, network snapshot processing,
+ * clip-encoder work) more room to pass on their own, but the SAME evidence
+ * also proves the resolution-scaling lever itself is futile on this exact
+ * hardware class — so every extra second spent waiting to try it is a
+ * second NOT spent reaching the lever that actually works
+ * (forceRigDowngrade, one futile step later). A false-positive trigger's
+ * blast radius is small and self-correcting either way (one renderScale
+ * step, auto-reverted at the very next 2s check once futility is detected)
+ * — so shortening the fuse trades a marginally-more-likely brief visible
+ * blur for materially faster recovery on the ACTUAL bottleneck. Old total
+ * time-to-rig-downgrade on sustained bad dt: ~20s (9 checks × 2s + 1 more
+ * to detect futility). New: ~14s (6 checks × 2s + 1 more). Non-ultra tiers
+ * (phone/standard/potato, genuinely fill-bound cases where stepping DOES
+ * help) are untouched — this tightening is scoped to the one tier the real
+ * evidence is actually about. See `deriveGovernorTiming` (exported for
+ * `renderGovernorTiming.test.ts`) for the numbers this derives.
+ */
+const ULTRA_DOWN_STREAK_MULT = 2;
 const UP_HOLD_MS = 30_000;
 const UP_LOCKOUT_AFTER_DOWN_MS = 60_000;
 /** Weak-GPU tiers may trade far more resolution before motion: VideoCore
  *  at 0.5 floor still ran out of fill on a real Pi 5 (2026-07-10). */
 const FLOOR = 0.5;
 const FLOOR_POTATO = 0.35;
+
+/** Everything the constructor derives from tier alone, pulled out as a pure
+ *  function so it's testable without booting a real Phaser.Game (see
+ *  `renderGovernorTiming.test.ts`) — this pass's item 2 tunes exactly these
+ *  numbers for ultra, so a direct assertion on them is the honest test,
+ *  not a re-implementation of the constructor's logic in the test file. */
+export type GovernorTiming = {
+  downStreakNeeded: number;
+  /** Ultra tier self-corrects after 1 futile step instead of 2 — if the
+   *  fuse above still wasn't enough to avoid a bad down-step, don't make
+   *  it wait through a second one before reverting. */
+  futileStepsToRestore: number;
+  floor: number;
+  targetDtMs: number;
+  /** Wall-clock ms from the first sustained-bad check to `forceRigDowngrade`
+   *  firing, under dt that never improves. Each of the `futileStepsToRestore`
+   *  down-steps needs a fresh `downStreakNeeded`-check wait (badStreak resets
+   *  to 0 after every step), plus one final check to detect the LAST step
+   *  was futile — i.e. `downStreakNeeded * futileStepsToRestore + 1` checks
+   *  total. Verified against the real class in
+   *  `renderGovernorTiming.test.ts`'s behavior test, not just asserted here.
+   *  Derived, not independently tuned — the number this pass's retune is
+   *  actually about. */
+  worstCaseMsToRigDowngrade: number;
+};
+
+export function deriveGovernorTiming(tier: QualityTier, fpsLimit: number): GovernorTiming {
+  const isUltra = tier === "ultra";
+  const downStreakNeeded = isUltra ? DOWN_STREAK * ULTRA_DOWN_STREAK_MULT : DOWN_STREAK;
+  const futileStepsToRestore = isUltra ? 1 : 2;
+  return {
+    downStreakNeeded,
+    futileStepsToRestore,
+    floor: tier === "potato" ? FLOOR_POTATO : FLOOR,
+    targetDtMs: fpsLimit > 0 ? 1000 / fpsLimit : 1000 / 60,
+    worstCaseMsToRigDowngrade:
+      (downStreakNeeded * futileStepsToRestore + 1) * CHECK_INTERVAL_MS,
+  };
+}
 
 export class RenderGovernor {
   private readonly game: Phaser.Game;
@@ -66,11 +121,11 @@ export class RenderGovernor {
     this.game = game;
     this.ceilingScale = getRenderScale();
     const profile = getQualityProfile();
-    this.floor = profile.tier === "potato" ? FLOOR_POTATO : FLOOR;
-    this.targetDtMs = profile.fpsLimit > 0 ? 1000 / profile.fpsLimit : 1000 / 60;
-    const isUltra = profile.tier === "ultra";
-    this.downStreakNeeded = isUltra ? DOWN_STREAK * ULTRA_DOWN_STREAK_MULT : DOWN_STREAK;
-    this.futileStepsToRestore = isUltra ? 1 : 2;
+    const timing = deriveGovernorTiming(profile.tier, profile.fpsLimit);
+    this.floor = timing.floor;
+    this.targetDtMs = timing.targetDtMs;
+    this.downStreakNeeded = timing.downStreakNeeded;
+    this.futileStepsToRestore = timing.futileStepsToRestore;
   }
 
   /** Call once per frame with the render-loop dt EMA (NetStats.frameDtEmaMs). */

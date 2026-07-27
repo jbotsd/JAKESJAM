@@ -260,6 +260,13 @@ function serveOnPort(port: number) {
           region: config.region,
           matches: registry.size(),
           world: worldHost.summary(),
+          // Server-tick perf instrument (2026-07-27 lag/perf audit) — the
+          // WorldHost ring-buffer percentiles, piggybacked onto the health
+          // poll that already exists rather than a new dedicated endpoint.
+          // `null` while the world hasn't booted yet (no client has ever
+          // attached). Cheap: a sort over <=3600 buffered floats, only run
+          // when something actually requests /health.
+          perf: worldHost.tickTimingStats(),
         }),
         { headers: { "content-type": "application/json", ...corsHeaders } },
       );

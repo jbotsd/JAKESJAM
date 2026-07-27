@@ -664,6 +664,13 @@ export class WorldHost {
     return this.host ? this.host.summary() : null;
   }
 
+  /** Server-tick perf instrument pass-through (2026-07-27 lag/perf audit) —
+   *  same null-when-unbooted shape as `summary()` above. `null` reads as
+   *  "no data yet", not "zero cost". */
+  tickTimingStats(): ReturnType<MatchHost["getTickTimingStats"]> | null {
+    return this.host ? this.host.getTickTimingStats() : null;
+  }
+
   private spawnFor(
     playerIdRaw: string,
     chosenName?: string,
