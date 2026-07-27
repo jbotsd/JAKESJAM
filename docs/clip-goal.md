@@ -814,6 +814,114 @@ needs the full autoplay pilot, which is out of scope for this fix. The unit
 tests above are the tool-verifiable proof; a human eye-test against a fresh
 production clip is AWAITING JAKE.
 
+**D4 FOLLOW-UP (2026-07-27) — ClipRecorder.ts partially closed, NOT merged
+into the CL.0-G render pipeline.** Investigated full reuse first (route
+ClipRecorder's trigger into `clipRenderQueue`/`ReplayScene` the way
+matchHost already does automatically for every human kill): rejected as
+architecturally unclean, not attempted — `clipRenderQueue` is server-side,
+headless-Chromium-driven, and async (up to `JOB_TIMEOUT_MS`=6min); more
+fundamentally, ClipRecorder shares `this.game.canvas` — the SAME backing
+store the live player is looking at — so anything that strips a HUD element
+from what gets ENCODED strips it from what the PLAYER sees too, for the
+whole match, not just the captured window. That constraint blocks true
+reuse of CL.D's HUD-camera partition (`installHudCamera` ignores HUD
+objects per-camera, but both cameras still composite onto one canvas) and
+is the reason B7/B8/B9/B10 remain open below — closing them for real needs
+either a second render target (a world-only camera rendering to its own
+offscreen texture, which ClipRecorder would read instead of the live
+canvas) or retiring ClipRecorder.ts in favor of the render queue, which
+already exists and already fires automatically for every human player's
+kills (`matchHost.humanKillMoments` → `enqueueMatchHighlights`, unrelated to
+clip-consent opt-in). Neither is a call a single pass should make
+unilaterally; flagged for a real decision next `/goal`.
+
+Given that, fixes landed by PORTING the specific already-shipped remedies
+(or genuinely new ones bounded by the single-canvas constraint) rather than
+re-deriving all eight:
+- **B4 (bitrate)** — RETIRED. `VIDEO_BITS_PER_SECOND` 16Mbps → 7.5Mbps,
+  matching CL.A's own choice (probe-clip's 9Mbps ceiling was measured
+  8.5-9.9Mbps against the old constant on 3 of 5 studied clips).
+- **B1 (resolution)** — RETIRED for ClipRecorder's own output (can't touch
+  the live game's actual window, so this is a compositing fix, not a
+  capture-size fix): every frame from EITHER capture path (WebCodecs worker
+  or MediaRecorder fallback) now composites onto a fixed 1920×1080 canvas
+  first (`composeBroadcastFrame`) via a pure "object-fit: cover" crop
+  (`computeCoverRect`, unit-tested) — never distorted, never letterboxed,
+  always exactly the probed resolution regardless of the live browser
+  window's actual shape (the studied 1824×1026/1920×937 failure mode).
+- **B11 (no watermark/identity)** — RETIRED (watermark half only; no
+  lower-third — see open items). The same composite stamps a persistent
+  "JAKESJAM · play.elyad.io" mark (pre-rendered once, corner, dim ink,
+  Space Mono, ≤4% tall) into every encoded frame of either path.
+- **B5-sibling (ends on raw mid-fight dead air, worse than the original
+  wrong-banner ending)** — RETIRED. Root-caused: the old rotation formula
+  was `max(naturalEndAt, pendingFinishAtMs)`, so a trigger firing EARLY in a
+  10s segment still rode the full 10s natural boundary instead of ending
+  ~3s after its own lookahead (`computeSegmentEndAtMs`, unit-tested, red
+  before/green after against the exact early-trigger case). On top of that,
+  the last 500ms before a triggered segment's end now eases to black
+  (`computeClosingFadeAlpha`, unit-tested truth table) instead of hard-
+  cutting mid-action — every uploaded clip now closes on a deliberate beat.
+- **B3 (silent/zero-stream audio)** — RETIRED, but this session had to
+  FINISH it: the in-progress diff this task inherited wired
+  `ProceduralAudio`'s evidence-tap (`shouldTapEvidenceAudio`, already
+  unit-tested) and a `MediaStreamTrackProcessor` pump posting `audioFrame`
+  messages to the encoder worker, but `clipEncoderWorker.ts`'s message
+  switch had NO `case "audioFrame"` — every posted AudioData frame fell
+  through unhandled (silently leaked, never muxed; the worker path would
+  have shipped functionally silent regardless of the tap). Added
+  `handleAudioFrame` (constructs an `AudioSample` from the live `AudioData`,
+  rebases each segment's first frame to t=0 against the video clock, mirrors
+  `handleFrame`'s close-on-error discipline) and wired the case. The
+  MediaRecorder fallback path's native multi-track muxing (no per-frame
+  bookkeeping needed) was already complete. House audio rule holds: the
+  game's own mixed master-bus output, no synthesized substitute.
+- Full client (1859 pass/3 skip) + server (339 pass) suites green, both
+  typechecks clean; 19 new unit tests across `ClipRecorder.test.ts`
+  (`computeSegmentEndAtMs`, `computeCoverRect`, `computeClosingFadeAlpha`)
+  covering every pure function this pass touched.
+
+**Explicitly NOT closed this pass** (see the architectural note above for
+why each needs either a second render target or a product decision to
+retire ClipRecorder.ts, not more client-side patching):
+- **B7 (spectator chrome incl. the dev latency badge)** — OPEN. The
+  roster/hotbar/round-timer/latency-badge are live, scrollFactor(0) HUD
+  objects the PLAYER legitimately needs for the whole match; hiding them
+  from the shared canvas hides them from the player too. No safe fix found
+  that doesn't either break live UX or require a genuinely separate
+  render target.
+- **B8/B9 (duplicate/ghosting banners+damage text)** — OPEN, same root
+  cause as B7 (this is the live scene's NORMAL chrome, faithfully
+  captured). Per CL.F's own finding, the "duplicate" case is usually two
+  real sequential events, not a bug — likely applies here too, unconfirmed
+  without a live capture to inspect.
+- **B10 (illegible damage numbers)** — OPEN, same root cause as B7.
+- **B2 (real fps well under the 30 target, nominal fps metadata
+  implausible)** — OPEN, and NOT attempted via timestamp quantization: a
+  fixed-grid timestamp scheme was considered and rejected — snapping video
+  timestamps to an even 1/30s grid when the real capture can't sustain 30fps
+  would shorten the ENCODED duration below real elapsed wall-clock time,
+  speeding up motion and breaking the A/V sync B3 just fixed. This is
+  inherent to real-time software encoding on this box (documented already
+  in this file's own history — OpenH264/WebCodecs software encode has never
+  hit its target fps under load) and isn't safely fixable without either
+  more encode headroom or accepting honest-but-lower real fps. Root cause of
+  the specific "57600/1"-style nominal metadata was NOT confirmed (would
+  need a live capture + ffprobe to diagnose further, not attempted here) —
+  flagged, not guessed at with an unverified fix.
+- **B11's lower-third half** (star callsign + feat label, vs. the
+  watermark alone which IS done) — OPEN. `highlightRules.ts`'s `Highlight`
+  already carries `label`/`kind`, and `OnlineMatchScene.ts`'s trigger call
+  site discards it (`this.clipRecorder.trigger()`, no args) — plumbing it
+  through to a timed overlay in `composeBroadcastFrame` is a bounded,
+  tractable follow-up, just not completed this session (budget).
+- A pre-existing (not introduced this session) latent edge case noted in
+  passing: `scheduleRotation`'s `shouldUpload` check
+  (`endedAtMs >= this.pendingFinishAtMs`) can go false-negative when
+  `MAX_SEGMENT_MS` clamps `cappedEndAt` below a very-late-firing trigger's
+  own `pendingFinishAtMs` — an extreme multi-trigger-in-one-segment case,
+  unrelated to D4, not fixed here (scope).
+
 ---
 
 **BASELINE (2026-07-17)** — study of `/c/dff7f450-55dc-4316-8df7-654ebf4e2ccb`:
