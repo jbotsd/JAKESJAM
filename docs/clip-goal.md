@@ -771,6 +771,49 @@ reproduced (`0e21238e`). NEW: D1 (7/12, top priority), D2 (HARD RULE,
 2/12 explicit + 2/12 adjacent), D3 (4/12, code-cited one-line fix), D4
 (5/12, structural/process), D5-D7 (1/12 each, minor), D8 (unconfirmed).
 
+**D6 fix (2026-07-27, `client/src/game/systems/HudCamera.ts`)** — the roster
+HUD/world split (`installHudCamera`) is architecturally a two-camera
+compositor (`main` renders world first, `hud` renders HUD-classified objects
+second into the same framebuffer — confirmed against Phaser 4.2.1's own
+`CameraManager.render`/`WebGLRenderer.render`, which walk `this.cameras` in
+array order into one shared `DrawingContext`; nothing in this codebase ever
+reorders or removes a camera, so `hud` painting after `main` is guaranteed).
+That rules out a camera-order bug. What the partition DOESN'T guard against:
+it classifies every object exactly ONCE (initial scan, or the
+ADDED_TO_SCENE→POST_UPDATE pair) and never again, and the HUD camera's own
+scroll/zoom/rotation are set once at creation with nothing re-asserting them
+— both are one-shot, both silently stay broken for however long it takes
+something else to re-trigger a partition pass (which, mid-match, could be
+never). Either gap — a `main`-classified object's `scrollFactorX` drifting
+to 0 sometime after classification, or anything nudging the HUD camera's own
+transform (the exact class of bug this file's neighbors already flag as live
+and unresolved: OnlineMatchScene's `[diag:camera]`/renderResolution's
+`[diag:governor]` "camera-skew investigation" comments) — silently exposes
+whatever `main` painted underneath wherever HUD used to (or should) land.
+Fixed both: `hud`'s scroll/zoom/rotation are re-pinned to identity every
+POST_UPDATE (cheap, unconditional), and a throttled backward-iterating
+resync (every 30 frames, ~0.5s) re-classifies any top-level scene object
+whose `scrollFactorX` has drifted to 0 since its last classification,
+bounding the exposure window instead of leaving it open-ended. Tests: 3 new
+in `HudCamera.test.ts` (camera transform re-pinned after an external nudge;
+a drifted world→HUD object migrates within the resync window; a
+never-drifting object is never spuriously migrated across 90 frames) — all
+pass, plus the 3 pre-existing tests in the same file still green. Full
+suites green (client 1845 pass/3 skip, server 296 pass), both typechecks
+clean. Honest scope note: clip `181fee23`'s own artifact no longer exists on
+disk (this study's per-clip crops/frames were scratch files from the prior
+session), and per the structural finding above that clip is a
+ClipRecorder.ts-path capture — a verbatim `drawImage` of whatever the live
+OnlineMatchScene canvas actually composited, so the bug is genuinely in the
+shared live-rendering path this fix touches, not a capture artifact. A fresh
+live re-capture was attempted (Playwright against a local Vite dev server,
+Practice mode) but Practice lands in the venue lobby (walk-to-bell → queue →
+admitted, per `scripts/autoplay.ts`'s own documented flow) rather than
+directly in the combat HUD; reaching a real `OnlineMatchScene` roster frame
+needs the full autoplay pilot, which is out of scope for this fix. The unit
+tests above are the tool-verifiable proof; a human eye-test against a fresh
+production clip is AWAITING JAKE.
+
 ---
 
 **BASELINE (2026-07-17)** — study of `/c/dff7f450-55dc-4316-8df7-654ebf4e2ccb`:
