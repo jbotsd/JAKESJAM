@@ -572,7 +572,10 @@ video{width:100%;height:100%;object-fit:contain;display:block}</style>
       const res = await serveClip(filename);
       if (res) {
         if (req.method === "HEAD") {
-          return new Response(null, { status: 200, headers: res.headers });
+          // Preserve res.status rather than hardcoding 200 — serveClip can
+          // now return a 302 redirect to the R2 custom domain (r2Clips.ts)
+          // once that's configured, and HEAD must reflect that faithfully.
+          return new Response(null, { status: res.status, headers: res.headers });
         }
         return res;
       }
@@ -660,7 +663,10 @@ video{width:100%;height:100%;object-fit:contain;display:block}</style>
       const res = await serveClip(filename);
       if (res) {
         if (req.method === "HEAD") {
-          return new Response(null, { status: 200, headers: res.headers });
+          // Preserve res.status rather than hardcoding 200 — serveClip can
+          // now return a 302 redirect to the R2 custom domain (r2Clips.ts)
+          // once that's configured, and HEAD must reflect that faithfully.
+          return new Response(null, { status: res.status, headers: res.headers });
         }
         return res;
       }

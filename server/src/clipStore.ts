@@ -8,6 +8,15 @@ import { copyFile, mkdir, readdir, readFile, stat, unlink } from "node:fs/promis
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { randomUUID } from "node:crypto";
+import {
+  contentTypeForExt,
+  getPublicClipUrl,
+  hasR2Marker,
+  r2ClipsConfigured,
+  r2ServingConfigured,
+  uploadClipToR2,
+  writeR2Marker,
+} from "./r2Clips.ts";
 
 // Overridable so tests never write into the real production clip store —
 // discovered live 2026-07-18: clipStore.test.ts and ops.test.ts called
@@ -277,6 +286,27 @@ export async function handleClipUpload(
   const full = resolve(CLIPS_DIR, filename);
   await Bun.write(full, file);
 
+  // R2 mirror (best-effort, never fails the upload — see r2Clips.ts). A
+  // no-op until R2_ACCOUNT_ID/R2_ACCESS_KEY_ID/R2_SECRET_ACCESS_KEY/
+  // R2_BUCKET are all set; local disk stays the write of record either
+  // way until a separate later cleanup step removes it. Writing the
+  // marker sidecar is what lets serveClip() start redirecting THIS clip
+  // at the R2 custom domain the moment both the mirror succeeds and a
+  // domain is connected (r2ServingConfigured()).
+  if (r2ClipsConfigured()) {
+    const bucket = (process.env.R2_BUCKET ?? "").trim();
+    const uploaded = await uploadClipToR2(filename, file, contentTypeForExt(ext));
+    if (uploaded.ok) {
+      try {
+        await writeR2Marker(CLIPS_DIR, id, { bucket, key: filename });
+      } catch {
+        /* best effort — worst case this clip just keeps serving locally */
+      }
+    } else {
+      console.warn(`[clip-store] R2 mirror failed for ${filename}: ${uploaded.error}`);
+    }
+  }
+
   // Aspect-ratio fix (2026-07-20): the share page used to always assume
   // 1920x1080 (clipSharePage.ts), regardless of what shape the browser
   // actually captured — wrong whenever the game canvas wasn't 16:9 at
@@ -321,6 +351,28 @@ export async function handleClipUpload(
 export async function serveClip(filename: string): Promise<Response | null> {
   if (!/^[a-f0-9-]+\.(webm|mp4)$/i.test(filename)) return null;
   await loadPinnedNames();
+
+  // R2 serving (no-op until R2_PUBLIC_CLIP_DOMAIN is connected — see
+  // r2Clips.ts). Redirecting (rather than proxying the bytes ourselves)
+  // means byte-range requests for <video> scrubbing are handled by R2's
+  // edge on the second hop, not reimplemented here.
+  if (r2ServingConfigured()) {
+    const parsed = parseClipFilename(filename);
+    if (parsed && (await hasR2Marker(CLIPS_DIR, parsed.id))) {
+      const publicUrl = getPublicClipUrl(filename);
+      if (publicUrl) {
+        return new Response(null, {
+          status: 302,
+          headers: {
+            location: publicUrl,
+            "cache-control": "public, max-age=300",
+            "access-control-allow-origin": "*",
+          },
+        });
+      }
+    }
+  }
+
   // Prefer live dir, then kept/ backup for pinned highlight reels.
   const candidates = [resolve(CLIPS_DIR, filename), resolve(KEPT_DIR, filename)];
   for (const full of candidates) {
