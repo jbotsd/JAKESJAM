@@ -87,21 +87,51 @@ export function headCrestGeometry(
     // nameplate badge, which occupies roughly [-41s, -26s] above head.y
     // (see ProceduralPlayerRig.drawNameplate) — a taller spike would
     // visually poke through the name/HP plate.
+    //
+    // REVISED 2026-07-27 (Jake, live screenshot: "looks silly," nowhere near
+    // as cool as the other 3 classes): rendering the live rig and comparing
+    // side-by-side against Geometrician/Interstice/Syzygist found the ACTUAL
+    // bug isn't the width above — it's that this triangle is almost entirely
+    // INVISIBLE. `drawHead` paints `headHoodGeometry`'s shadow/main polygons
+    // (opaque, `outlineDark`/`colorDark` fill) OVER this crest every frame
+    // (drawHeadCrest runs first, hood second — ProceduralPlayerRig.drawHead).
+    // The shared `rootY` (`head.y - 8*s`, used by every class below) sits
+    // deep inside paladin's hood silhouette, which — as of the 2026-07-22
+    // KKK-read fix — peaked at `head.y - 20*s`. Only the sliver of this
+    // triangle ABOVE that line survived being painted over, and because the
+    // shape tapers linearly to a point, that sliver was a nearly-zero-width
+    // fragment of the tip: rendering the live harness rig and zooming in
+    // confirmed nothing crown-like was visible at all, just a soft glow dot
+    // (`tipGlow`) floating above a shapeless hood blob — exactly the "silly"
+    // read, and exactly why it didn't look "biggest thing in the room" next
+    // to the other three classes' fully-visible fin/hood crests. Fix: this
+    // class now roots its OWN taller local point (`paladinRootY`, NOT the
+    // shared `rootY`) right at the shortened hood's new peak (see
+    // `headHoodGeometry`'s paladin case, also revised this session) so the
+    // full triangle clears the hood and is actually on-screen, and widens
+    // moderately (still well short of the rejected wide/flat original —
+    // height still ~3x width at the base, an unambiguous blade, not an
+    // icon-triangle). Verified side-by-side against the harness rig render
+    // (this rig still can't be constructed under `bun test`, see file
+    // header) before/after, and against all 3 sibling classes' current
+    // in-game silhouettes at the same harness scale — not just kindled-v2.jpg
+    // in isolation, per the "match the shipped 3, not just concept art" call.
+    const paladinRootY = head.y - 16 * s;
     const tipX = head.x;
     const tipY = head.y - 25 * s;
     return {
       darkBase: [
-        { x: rootX - f * 1.7 * s, y: rootY + 4 * s },
+        { x: rootX - f * 2.4 * s, y: paladinRootY + 3 * s },
         { x: tipX, y: tipY },
-        { x: rootX + f * 2.2 * s, y: rootY - 2 * s },
+        { x: rootX + f * 3.0 * s, y: paladinRootY - 1.5 * s },
       ],
       brightPlate: [
-        { x: rootX - f * 0.8 * s, y: rootY + 2 * s },
+        { x: rootX - f * 1.2 * s, y: paladinRootY + 1.5 * s },
         { x: tipX, y: tipY + 2 * s },
-        { x: rootX + f * 1.3 * s, y: rootY - 1 * s },
+        { x: rootX + f * 1.8 * s, y: paladinRootY - 0.8 * s },
       ],
       edgeLine: [
-        { x: rootX + f * 1.3 * s, y: rootY - 1 * s },
+        { x: rootX + f * 1.8 * s, y: paladinRootY - 0.8 * s },
         { x: tipX, y: tipY + 2 * s },
       ],
       tipGlow: { x: tipX, y: tipY + 2 * s },
@@ -181,20 +211,39 @@ export function headHoodGeometry(classId: ClassId, head: Point, s: number, f: nu
       // CA3) via the flared shoulders. Verified side-by-side against the old
       // geometry as a rendered PNG before committing (this rig can't be
       // constructed under `bun test`, see file header).
+      //
+      // REVISED 2026-07-27 (Jake, live screenshot: "looks silly" vs. the
+      // other 3 classes): this shape itself was never the problem, but it
+      // peaked at `head.y - 20*s` — so tall it fully swallowed the crest
+      // spike drawn just underneath it in z-order (see `headCrestGeometry`'s
+      // paladin case for the full accounting: that crest's base sat inside
+      // THIS shape and got painted over almost entirely, leaving only a
+      // faint glow dot visible above a shapeless hood — the actual "silly"
+      // read). Shortened the peak (-20/-18 -> -13/-11.5) to hand that
+      // vertical room to the crest, which is where the concept art's height
+      // statement actually lives, and widened the flare slightly (+0.5s at
+      // the shoulder/top edges) so "broadest" doesn't get lost in the
+      // trade — net silhouette footprint is comparable, just proportioned
+      // so the crest can do its job on top of it. Taper direction (wide top
+      // -> single point at chin) is UNCHANGED — that's the specific fix for
+      // the KKK read and this pass doesn't touch it. Verified side-by-side,
+      // rendered, against the pre-existing shape and against the other 3
+      // classes' current in-game silhouettes (not just kindled-v2.jpg) at
+      // the same harness scale.
       return {
         shadow: [
-          { x: head.x - 7 * s, y: head.y - 20 * s },
-          { x: head.x + 7 * s, y: head.y - 20 * s },
-          { x: head.x + 8.5 * s, y: head.y - 10 * s },
+          { x: head.x - 7.5 * s, y: head.y - 13 * s },
+          { x: head.x + 7.5 * s, y: head.y - 13 * s },
+          { x: head.x + 9 * s, y: head.y - 6 * s },
           { x: head.x, y: head.y + 6 * s },
-          { x: head.x - 8.5 * s, y: head.y - 10 * s },
+          { x: head.x - 9 * s, y: head.y - 6 * s },
         ],
         main: [
-          { x: head.x - 5.3 * s, y: head.y - 18 * s },
-          { x: head.x + 5.3 * s, y: head.y - 18 * s },
-          { x: head.x + 6.5 * s, y: head.y - 9 * s },
+          { x: head.x - 5.8 * s, y: head.y - 11.5 * s },
+          { x: head.x + 5.8 * s, y: head.y - 11.5 * s },
+          { x: head.x + 7.2 * s, y: head.y - 5 * s },
           { x: head.x, y: head.y + 4 * s },
-          { x: head.x - 6.5 * s, y: head.y - 9 * s },
+          { x: head.x - 7.2 * s, y: head.y - 5 * s },
         ],
       };
 
